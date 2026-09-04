@@ -28,3 +28,12 @@ def console(kernel_image: str):
     con.start()
     yield con
     con.stop()
+
+
+@pytest.fixture
+def fresh_console(kernel_image: str):
+    """A freshly booted console per test (clean screen for graphics tests)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    yield con
+    con.stop()

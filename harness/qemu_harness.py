@@ -206,6 +206,42 @@ class MMBasicConsole:
             time.sleep(0.1)
         raise HarnessError("screendump did not produce a file")
 
+    def capture_png(self, dest_png: str | None = None) -> str:
+        """Capture the framebuffer to a .png file and return its path."""
+        ppm = self.screendump()
+        png = dest_png or ppm.replace(".ppm", ".png")
+        subprocess.run(["convert", ppm, png], check=True, capture_output=True)
+        return png
+
+    def screen_pixel(self, x: int, y: int) -> tuple[int, int, int]:
+        """Return the (r, g, b) colour of the framebuffer pixel at (x, y)."""
+        png = self.capture_png()
+        out = subprocess.run(
+            ["convert", png, "-format", f"%[pixel:p{{{x},{y}}}]", "info:"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        nums = out[out.find("(") + 1 : out.find(")")].split(",")
+        r, g, b = (int(float(n)) for n in nums[:3])
+        return r, g, b
+
+    def image_diff_ratio(self, golden_png: str, fuzz: str = "12%") -> float:
+        """Fraction of pixels that differ between the current screen and a
+        golden image (ImageMagick absolute-error metric)."""
+        png = self.capture_png()
+        proc = subprocess.run(
+            ["compare", "-metric", "AE", "-fuzz", fuzz, png, golden_png, "null:"],
+            capture_output=True, text=True,
+        )
+        # AE count is reported on stderr (e.g. "1234" or "1.2e+03")
+        token = proc.stderr.strip().split()[0].replace(",", "")
+        diff = float(token)
+        info = subprocess.run(
+            ["identify", "-format", "%w %h", golden_png],
+            check=True, capture_output=True, text=True,
+        ).stdout.split()
+        total = int(info[0]) * int(info[1])
+        return diff / total if total else 1.0
+
     def ocr_screen(
         self,
         crop: str | None = "640x300+0+0",
