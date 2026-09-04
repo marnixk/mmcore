@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Console build artifacts
+console/*.o
+console/*.d
+console/*.elf
+console/*.img
+console/*.lst
+console/*.map
+
+# Captured framebuffers
+*.ppm
