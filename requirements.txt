@@ -1,0 +1,4 @@
+# Python test dependencies for the QEMU harness.
+# The harness itself uses only the standard library plus the system tools
+# qemu-system-aarch64, ImageMagick (convert) and tesseract-ocr.
+pytest>=8.0
