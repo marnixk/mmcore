@@ -313,13 +313,10 @@ def test_text_draws_pixels(fresh_console):
     c = fresh_console
     c.send_line("CLS")
     assert c.send_line('TEXT 8,8,"A",RGB(255,255,255)') == ""
-    lit = False
-    for x, y in ((12, 8), (13, 8), (10, 12), (11, 10), (8, 8)):
-        pix = int(c.send_line(f"PRINT PIXEL({x},{y})"))
-        if pix != 0:
-            lit = True
-            break
-    assert lit
+    pix = int(c.send_line("PRINT PIXEL(10,8)"))
+    if pix == 0:
+        pix = int(c.send_line("PRINT PIXEL(11,8)"))
+    assert pix != 0
 
 
 def test_box_fill_pixels(fresh_console):

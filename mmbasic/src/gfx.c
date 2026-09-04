@@ -574,7 +574,7 @@ void mmb_gfx_text(int x, int y, const char *s, unsigned rgb)
 		{
 			bits = kFont8x8[gi][row];
 			for (col = 0; col < 8; col++)
-				if (bits & (0x80 >> col))
+				if (bits & (1u << col))
 				{
 					int sx, sy;
 					for (sy = 0; sy < scale; sy++)
