@@ -36,6 +36,7 @@ a submodule.
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
 | `scripts/package-release.sh` | Hardware Pi 3 and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
+| `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
 | `.cursor/` | Cloud Agent environment (toolchains, QEMU, OCR, Python) |
 
 ## Toolchain

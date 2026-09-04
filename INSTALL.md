@@ -274,6 +274,15 @@ Each zip includes `install-sdcard.sh`. Override the version with
 `VERSION=0.2.0 scripts/package-release.sh`. Set `FORCE_FIRMWARE=1` to
 re-download Raspberry Pi firmware blobs.
 
+To tag and upload a GitHub Release (after choosing a semantic version; default
+is a **minor** bump), use the `github-release` skill or:
+
+```bash
+scripts/github-release.sh last-version    # currently 0.1.1
+scripts/github-release.sh next-minor      # default next: 0.2.0
+scripts/github-release.sh publish 0.2.0
+```
+
 `scripts/build.sh` alone produces `console/kernel8.img` for QEMU (Pi 3).
 `QEMU=0 RASPPI=4 scripts/build.sh` produces `console/kernel8-rpi4.img`.
 The release script builds **without** Circle’s `--qemu` flags so SD host and

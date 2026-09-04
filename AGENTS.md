@@ -18,3 +18,7 @@ scripts/build.sh
 ```
 
 The QEMU harness in `harness/` drives `console/kernel8.img`.
+
+Linux SD-card install: `scripts/install-sdcard.sh --help`. Publishing a
+GitHub Release: run the `github-release` skill (it looks up the last `vX.Y.Z`
+and asks before building; default is a **minor** bump).
