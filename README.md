@@ -49,8 +49,10 @@ Circle bare-metal images are built with ARM **freestanding** cross-toolchains
 scripts/build.sh          # produces console/kernel8.img (RPi3 AArch64, QEMU)
 ```
 
-Run it on real hardware by copying `console/kernel8.img` plus the Raspberry Pi
-firmware to a FAT SD card (see `circle/boot/`). Run it under QEMU with:
+Run it on real hardware: see [`INSTALL.md`](INSTALL.md). In short, copy the
+files from a GitHub **Release** zip onto a FAT32 SD card (Pi 3 / 3B+ / 3A+).
+You can also copy `console/kernel8.img` plus Raspberry Pi firmware yourself
+(see `circle/boot/`). Run it under QEMU with:
 
 ```bash
 qemu-system-aarch64 -M raspi3b -kernel console/kernel8.img -serial stdio -display none
