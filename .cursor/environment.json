@@ -1,0 +1,4 @@
+{
+  "name": "raspberrypi-mmbasic (bare-metal Pi + Circle)",
+  "install": "bash .cursor/install.sh"
+}
