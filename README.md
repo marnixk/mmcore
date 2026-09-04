@@ -11,6 +11,9 @@ interpreter that boots straight on the Pi — no Linux underneath — by combini
   the [`picomite-fork/`](picomite-fork) submodule; its language core is the code
   being ported onto Circle.
 
+The behavioural compatibility target is the **Colour Maximite 2 (CMM2)**, with
+graphics-library equivalence as the priority — see [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 The bare-metal build target is a Raspberry Pi `kernel8.img` (AArch64), which is
 also directly runnable under QEMU.
 
@@ -20,7 +23,7 @@ also directly runnable under QEMU.
 | --- | --- |
 | `circle/` | Circle bare-metal runtime (git submodule) |
 | `picomite-fork/` | MMBasic interpreter source to be ported (git submodule) |
-| `console/` | Bare-metal console app (Circle kernel). Today a placeholder `PRINT` REPL; grows into the MMBasic console. |
+| `console/` | Bare-metal console app (Circle kernel). Today a placeholder REPL (`PRINT` + CMM2-style graphics); grows into the MMBasic console. |
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
@@ -68,3 +71,20 @@ Each test types a command and checks the console output — e.g. `PRINT 2+3`
 must print `5`, and `PRINT "HELLO"` must print `HELLO`. As the MMBasic core is
 ported onto Circle, the same pattern extends into a large regression suite for
 the real language.
+
+### Demonstrator commands
+
+The placeholder console exists only to exercise the harness end-to-end until
+the MMBasic core is ported. It understands:
+
+- `PRINT <expr>` — integer arithmetic (`+ - * /`) or a quoted string
+- CMM2-style graphics on the shared framebuffer (verified by pixel and
+  golden-image tests):
+  - `CLS [colour]`
+  - `PIXEL x,y[,colour]`
+  - `LINE x1,y1,x2,y2[,colour]`
+  - `BOX x,y,w,h[,colour]`
+  - `CIRCLE x,y,r[,colour]`
+
+Colours: `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK`. These map onto the
+CMM2 graphics commands tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
