@@ -35,6 +35,7 @@ a submodule.
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
 | `scripts/package-release.sh` | Hardware Pi 3 and Pi 400 SD-card zips in `dist/` |
+| `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `.cursor/` | Cloud Agent environment (toolchains, QEMU, OCR, Python) |
 
 ## Toolchain
@@ -55,6 +56,13 @@ scripts/package-release.sh               # both hardware zips in dist/
 
 Run it on real hardware: see [`INSTALL.md`](INSTALL.md). GitHub **Releases**
 ship two FAT32 SD-card zips — Pi 3 / 3B+ / 3A+, and Pi 400 (also Pi 4B / CM4).
+On Linux, unzip a release and run `install-sdcard.sh`:
+
+```bash
+sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
+sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
+```
+
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:
 

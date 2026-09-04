@@ -51,6 +51,7 @@ Unzip it.
 | `fixup.dat` | Firmware relocation data |
 | `LICENCE.broadcom` | Raspberry Pi firmware licence |
 | `INSTALL.md` | This document |
+| `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
 | `VERSION.txt` | Build identity |
 
 ### Raspberry Pi 400 zip
@@ -67,16 +68,44 @@ Unzip it.
 | `LICENCE.broadcom` | Raspberry Pi firmware licence |
 | `COPYING.linux` | Licence for the device tree binaries |
 | `INSTALL.md` | This document |
+| `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
 | `VERSION.txt` | Build identity |
 
 Pi 4 / 400 load firmware from EEPROM, so `bootcode.bin` is not used.
 
-## 2. Format the SD card
+## 2. Write the SD card
 
 The Pi only reads the **first partition**, which must be **FAT16 or FAT32**
 (the firmware does not understand ext4/exFAT for boot).
 
-### Linux
+### Linux (recommended)
+
+Unzip the matching release zip, then run `install-sdcard.sh` as root.
+`--bootstrap` partitions the card (MBR + one FAT32 volume named `MMBASIC`) and
+copies the boot files. **It erases the whole card.** `--update` overwrites
+kernel, firmware, and `config.txt` only, so BASIC files already on `C:` stay.
+
+```bash
+# Replace sdX with your card (check with lsblk).
+unzip mmbasic-console-rpi3-v*.zip        # or the pi400 zip
+sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
+# Pi 400 / 4B / CM4:
+# sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
+```
+
+Later kernel updates:
+
+```bash
+sudo ./install-sdcard.sh --update --model rpi3 /dev/sdX
+```
+
+`./install-sdcard.sh --help` lists `--from` (directory or zip), `--yes`, and
+model aliases. The script refuses virtio/nvme/sata disks and the host root
+device; pass `--allow-non-removable` only if you are sure.
+
+### Linux (manual)
+
+If you would rather format the card yourself:
 
 ```bash
 # Replace sdX with your card (check with lsblk). This erases the card.
@@ -117,7 +146,10 @@ small FAT32 partition with Disk Management.
 
 ## 3. Copy the release files
 
-Copy **every file from the zip** to the **root** of the FAT partition.
+If you used `install-sdcard.sh --bootstrap` or `--update`, skip this section —
+the boot files are already on the card.
+
+Otherwise copy **every file from the zip** to the **root** of the FAT partition.
 Do not put them in a subfolder.
 
 ### Raspberry Pi 3 card
@@ -128,6 +160,7 @@ Do not put them in a subfolder.
 ├── config.txt
 ├── fixup.dat
 ├── INSTALL.md
+├── install-sdcard.sh
 ├── kernel8.img
 ├── LICENCE.broadcom
 ├── start.elf
@@ -138,7 +171,7 @@ Linux example (after the mount in step 2):
 
 ```bash
 sudo cp -a kernel8.img config.txt bootcode.bin start.elf fixup.dat \
-           LICENCE.broadcom INSTALL.md VERSION.txt /mnt/mmbasic/
+           LICENCE.broadcom INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
 
@@ -153,6 +186,7 @@ sudo umount /mnt/mmbasic
 ├── COPYING.linux
 ├── fixup4.dat
 ├── INSTALL.md
+├── install-sdcard.sh
 ├── kernel8-rpi4.img
 ├── LICENCE.broadcom
 ├── start4.elf
@@ -164,7 +198,7 @@ Linux example:
 ```bash
 sudo cp -a kernel8-rpi4.img config.txt armstub8-rpi4.bin \
            start4.elf fixup4.dat bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
-           LICENCE.broadcom COPYING.linux INSTALL.md VERSION.txt /mnt/mmbasic/
+           LICENCE.broadcom COPYING.linux INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
 
@@ -236,8 +270,9 @@ That writes both:
 - `dist/mmbasic-console-rpi3-v0.1.1.zip`
 - `dist/mmbasic-console-pi400-v0.1.1.zip`
 
-Override the version with `VERSION=0.2.0 scripts/package-release.sh`.
-Set `FORCE_FIRMWARE=1` to re-download Raspberry Pi firmware blobs.
+Each zip includes `install-sdcard.sh`. Override the version with
+`VERSION=0.2.0 scripts/package-release.sh`. Set `FORCE_FIRMWARE=1` to
+re-download Raspberry Pi firmware blobs.
 
 `scripts/build.sh` alone produces `console/kernel8.img` for QEMU (Pi 3).
 `QEMU=0 RASPPI=4 scripts/build.sh` produces `console/kernel8-rpi4.img`.
