@@ -17,13 +17,19 @@ graphics-library equivalence as the priority — see [`docs/ROADMAP.md`](docs/RO
 The bare-metal build target is a Raspberry Pi `kernel8.img` (AArch64), which is
 also directly runnable under QEMU.
 
+MMBasic itself is **local code** in [`mmbasic/`](mmbasic). The
+[`picomite-fork/`](picomite-fork) submodule is an upstream reference only;
+codecs and command behaviour are copied into `mmbasic/` as needed. Circle stays
+a submodule.
+
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `circle/` | Circle bare-metal runtime (git submodule) |
-| `picomite-fork/` | MMBasic interpreter source to be ported (git submodule) |
-| `console/` | Bare-metal console app (Circle kernel). Today a placeholder REPL (`PRINT` + CMM2-style graphics); grows into the MMBasic console. |
+| `picomite-fork/` | Upstream MMBasic reference submodule (not compiled) |
+| `mmbasic/` | Local MMBasic interpreter, commands, and vendored codecs |
+| `console/` | Bare-metal console app (Circle kernel) hosting the interpreter |
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
@@ -68,23 +74,27 @@ Run the suite:
 ```
 
 Each test types a command and checks the console output — e.g. `PRINT 2+3`
-must print `5`, and `PRINT "HELLO"` must print `HELLO`. As the MMBasic core is
-ported onto Circle, the same pattern extends into a large regression suite for
-the real language.
+must print `5`, and `PRINT "HELLO"` must print `HELLO`. The suite also covers
+types (`$`, `%`, `ARRAY()`), `OPTION` subcommands, graphics `MODE`s, file
+commands, JPEG/PNG loaders, MP3/MOD/XM playback, and the nano-style `EDIT`
+command.
 
-### Demonstrator commands
+### Language surface (local MMBasic)
 
-The placeholder console exists only to exercise the harness end-to-end until
-the MMBasic core is ported. It understands:
+The console runs the local interpreter in `mmbasic/`. Immediate mode at the
+`>` prompt understands regular MMBasic plus CMM2-style graphics:
 
-- `PRINT <expr>` — integer arithmetic (`+ - * /`) or a quoted string
-- CMM2-style graphics on the shared framebuffer (verified by pixel and
-  golden-image tests):
-  - `CLS [colour]`
-  - `PIXEL x,y[,colour]`
-  - `LINE x1,y1,x2,y2[,colour]`
-  - `BOX x,y,w,h[,colour]`
-  - `CIRCLE x,y,r[,colour]`
+- expressions, `PRINT`, `DIM` / `DIM AS`, typed variables (`A$`, `A%`) and arrays
+- control flow: `GOTO`, `GOSUB`/`RETURN`, `FOR`/`NEXT`, `WHILE`/`WEND`, `DO`/`LOOP`,
+  `IF`/`THEN`/`ELSE`/`ENDIF`, `SELECT CASE`, `SUB`/`FUNCTION`, `DATA`/`READ`/`RESTORE`, `CONST`
+- `OPTION` and CMM2 subcommands (`BASE`, `DEFAULT`, `EXPLICIT`, `ANGLE`, `LIST`, `RESET`, …)
+- `MODE r, bits` (modes 1–17, bitdepths 8/12/16/32) and drawing: `CLS`, `PIXEL`, `LINE`,
+  `BOX`, `CIRCLE`, `RBOX`, `TRIANGLE`, `POLYGON`, `ARC`, `TEXT`, `FONT`, `COLOUR`, `PAGE`,
+  `BLIT`, `RGB()`, `PIXEL()`
+- files: `CHDIR`, `DIR`/`FILES`, `MKDIR`, `RMDIR`, `COPY`, `RENAME`/`NAME`,
+  `KILL`, `OPEN`/`CLOSE`, `PRINT #`, `INPUT #`, `SEEK`, `SAVE`
+- `LOAD PNG` / `LOAD JPG`, `PLAY MP3` / `PLAY MODFILE` / `PLAY XM`
+- `EDIT "file.bas"` — nano-like (`Ctrl+O` write, `Ctrl+X` exit, `Ctrl+R` run)
 
-Colours: `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK`. These map onto the
-CMM2 graphics commands tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Colours: `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK` and `RGB(r,g,b)`.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md).

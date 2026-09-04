@@ -27,19 +27,19 @@ def make_png(path, w, h, rgb=(255, 0, 0)):
 
 
 def make_jpeg(path):
-    # 1x1 red JPEG (standard baseline, non-progressive)
-    # Generated to be picojpeg-friendly (SOF0 baseline).
-    # A well-known 134-byte 1x1 red JPEG:
-    jpeg = bytes.fromhex(
-        "ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707070909080a0c140d0c0b0b0c191213"
-        "0f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0000b0800010001"
-        "01011100ffc4001f0000010501010101010100000000000000000102030405060708090a0bffc400b510000201030302"
-        "0403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f0243362728209"
-        "0a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a7374757677"
-        "78797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2"
-        "d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda000800010001003f00fb94ae92d0028a2803ffd9"
-    )
-    # If that's too large/malformed, fall back to a tiny valid JPEG created with a simple SOF0.
+    import subprocess
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=red:s=8x8:d=0.1",
+                "-frames:v", "1", "-pix_fmt", "yuvj420p", "-q:v", "5",
+                path,
+            ],
+            check=True, capture_output=True,
+        )
+        return open(path, "rb").read()
+    except Exception:
+        pass
     try:
         from PIL import Image
         import io
@@ -47,10 +47,11 @@ def make_jpeg(path):
         buf = io.BytesIO()
         im.save(buf, format="JPEG", quality=80, progressive=False)
         jpeg = buf.getvalue()
+        open(path, "wb").write(jpeg)
+        return jpeg
     except Exception:
         pass
-    open(path, "wb").write(jpeg)
-    return jpeg
+    raise RuntimeError("cannot generate a picojpeg-friendly 8x8 baseline JPEG")
 
 
 def make_mod(path):

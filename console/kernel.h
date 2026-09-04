@@ -28,6 +28,9 @@ public:
 	boolean Initialize (void);
 	TShutdownMode Run (void);
 
+	CScreenDevice &Screen (void) { return m_Screen; }
+	CSerialDevice &Serial (void) { return m_Serial; }
+
 private:
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
