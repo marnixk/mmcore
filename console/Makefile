@@ -4,7 +4,7 @@
 CIRCLEHOME = ../circle
 MMB        = ../mmbasic
 
-OBJS	= main.o kernel.o platform.o \
+OBJS	= main.o kernel.o platform.o storage.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/expr.o \
@@ -23,7 +23,12 @@ OBJS	= main.o kernel.o platform.o \
 	  $(MMB)/third_party/picojpeg.o \
 	  $(MMB)/third_party/hxcmod.o
 
-LIBS = $(CIRCLEHOME)/lib/libcircle.a
+LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
+	  $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
+	  $(CIRCLEHOME)/lib/usb/libusb.a \
+	  $(CIRCLEHOME)/lib/input/libinput.a \
+	  $(CIRCLEHOME)/lib/fs/libfs.a \
+	  $(CIRCLEHOME)/lib/libcircle.a
 
 EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party
 

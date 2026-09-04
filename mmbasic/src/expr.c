@@ -717,12 +717,12 @@ int mmb_try_function(mmb_val *out)
 			G.p++;
 			mmb_expect(')');
 		}
-		*out = mmb_str_val(G.cwd);
+		*out = mmb_str_val(mmb_vfs_cwd());
 		return 1;
 	}
 	if (mmb_match("INPUT$"))
 	{
-		int fn, c, nch = 0;
+		int fn, nch = 0;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 2, &n);
 		if (n != 2 || a[0].type != T_INT && a[0].type != T_NUM)
@@ -734,21 +734,16 @@ int mmb_try_function(mmb_val *out)
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			mmb_error("?FILE");
 		{
-			const unsigned char *ptr;
-			unsigned sz;
-			if (mmb_vfs_read_ptr(G.files[fn].path, &ptr, &sz) != 0)
-				b[0] = 0;
-			else
-			{
-				int i;
-				if (nch < 0)
-					nch = 0;
-				if (nch > MMB_MAX_STR)
-					nch = MMB_MAX_STR;
-				for (i = 0; i < nch && (unsigned)G.files[fn].pos < sz; i++)
-					b[i] = (char)ptr[G.files[fn].pos++];
-				b[i] = 0;
-			}
+			unsigned got = 0;
+			if (nch < 0)
+				nch = 0;
+			if (nch > MMB_MAX_STR)
+				nch = MMB_MAX_STR;
+			if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
+					    b, (unsigned)nch, &got) != 0)
+				got = 0;
+			G.files[fn].pos += (int)got;
+			b[got] = 0;
 			*out = mmb_str_val(b);
 		}
 		return 1;

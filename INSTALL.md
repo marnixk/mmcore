@@ -19,6 +19,11 @@ files from both zips on the same card.
 This first release talks to the keyboard over the **serial UART**, not a USB
 keyboard (the Pi 400’s built-in keyboard is not used yet). Video goes to HDMI.
 
+DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
+slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
+`DRIVE` lists them; `CHDIR "C:"` selects the SD card. File commands without a
+drive letter use the current drive (boot default `A:`).
+
 ## What you need
 
 - The matching release zip from GitHub Releases

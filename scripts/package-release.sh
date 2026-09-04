@@ -15,6 +15,11 @@ log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
 clean_build_tree() {
 	make -C "${CIRCLE_DIR}/lib" clean
+	make -C "${CIRCLE_DIR}/addon/SDCard" clean
+	make -C "${CIRCLE_DIR}/addon/fatfs" clean
+	make -C "${CIRCLE_DIR}/lib/usb" clean
+	make -C "${CIRCLE_DIR}/lib/fs" clean
+	make -C "${CIRCLE_DIR}/lib/input" clean
 	make -C "${CONSOLE_DIR}" clean
 }
 

@@ -274,15 +274,14 @@ static void sub_register(const char *name, int pc, int is_func)
 
 static int file_getc(int fn)
 {
-	const unsigned char *ptr;
-	unsigned n;
+	unsigned char c;
+	unsigned got = 0;
 	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 		mmb_error("?FILE");
-	if (mmb_vfs_read_ptr(G.files[fn].path, &ptr, &n) != 0)
+	if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos, &c, 1, &got) != 0 || !got)
 		return -1;
-	if ((unsigned)G.files[fn].pos >= n)
-		return -1;
-	return ptr[G.files[fn].pos++];
+	G.files[fn].pos++;
+	return c;
 }
 
 static void file_ungetc(int fn, int c)
@@ -1582,6 +1581,11 @@ static void exec_statement(void)
 		mmb_cmd_chdir();
 		return;
 	}
+	if (mmb_match("DRIVE"))
+	{
+		mmb_cmd_drive();
+		return;
+	}
 	if (mmb_match("MKDIR"))
 	{
 		mmb_cmd_mkdir();
@@ -1773,7 +1777,6 @@ void mmb_init(const mmb_platform *plat)
 	mmb_vfs_init();
 	mmb_gfx_init();
 	mmb_assets_seed();
-	strcpy(G.cwd, "/");
 }
 
 void mmb_reset(void)
@@ -1787,5 +1790,5 @@ void mmb_reset(void)
 
 void mmb_poll(void)
 {
-	/* audio mixing happens in cmd_play */
+	mmb_storage_poll();
 }

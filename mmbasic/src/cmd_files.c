@@ -1,7 +1,5 @@
 #include "mmb_priv.h"
 
-extern void mmb_vfs_list_set_pattern(const char *pat);
-
 static char *need_path(void)
 {
 	static char buf[128];
@@ -17,8 +15,13 @@ static char *need_path(void)
 
 void mmb_cmd_chdir(void)
 {
-	if (mmb_vfs_chdir(need_path()) != 0)
+	char *p = need_path();
+	if (mmb_vfs_chdir(p) != 0)
+	{
+		if (p[1] == ':' && (p[2] == 0 || p[2] == '/' || p[2] == '\\'))
+			mmb_error("?DRIVE");
 		mmb_error("?DIRECTORY");
+	}
 }
 
 void mmb_cmd_mkdir(void)
@@ -75,21 +78,20 @@ void mmb_cmd_name(void)
 void mmb_cmd_files(const char *kw)
 {
 	char buf[1024];
-	char pat[128];
+	char spec[128];
 	mmb_val v;
 	(void)kw;
-	pat[0] = 0;
+	spec[0] = 0;
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
 		v = mmb_expr();
 		if (v.type == T_STR)
-			strncpy(pat, v.s, sizeof(pat) - 1);
+			strncpy(spec, v.s, sizeof(spec) - 1);
 	}
 	buf[0] = 0;
-	mmb_vfs_list_set_pattern(pat[0] ? pat : 0);
-	mmb_vfs_list(buf, sizeof(buf));
-	mmb_vfs_list_set_pattern(0);
+	if (mmb_vfs_list(spec[0] ? spec : 0, buf, sizeof(buf)) != 0)
+		mmb_error("?DRIVE");
 	mmb_out(buf[0] ? buf : "(empty)");
 }
 
@@ -100,7 +102,13 @@ void mmb_cmd_open(void)
 	mmb_val v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
-	strncpy(path, v.s, sizeof(path) - 1);
+	{
+		char full[128];
+		if (mmb_vfs_resolve(v.s, full, sizeof(full)) != 0)
+			mmb_syntax();
+		strncpy(path, full, sizeof(path) - 1);
+		path[sizeof(path) - 1] = 0;
+	}
 	if (mmb_match("FOR"))
 	{
 		if (mmb_match("INPUT"))

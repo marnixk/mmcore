@@ -31,6 +31,13 @@ log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 log "Building Circle core library"
 make -C "${CIRCLE_DIR}/lib" -j"$(nproc)"
 
+log "Building Circle SD card, FatFs, USB, and filesystem libraries"
+make -C "${CIRCLE_DIR}/addon/SDCard" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/addon/fatfs" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/lib/fs" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/lib/input" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/lib/usb" -j"$(nproc)"
+
 log "Building console kernel image"
 make -C "${CONSOLE_DIR}" -j"$(nproc)"
 

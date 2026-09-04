@@ -9,7 +9,8 @@ static const char FromKernel[] = "console";
 CKernel::CKernel (void)
 :	m_Screen (m_Options.GetWidth (), m_Options.GetHeight ()),
 	m_Timer (&m_Interrupt),
-	m_Logger (m_Options.GetLogLevel (), &m_Timer)
+	m_Logger (m_Options.GetLogLevel (), &m_Timer),
+	m_Storage (&m_Interrupt, &m_Timer, &m_ActLED)
 {
 	m_ActLED.Blink (2);
 }
@@ -24,9 +25,11 @@ boolean CKernel::Initialize (void)
 
 	if (bOK) bOK = m_Screen.Initialize ();
 	if (bOK) bOK = m_Serial.Initialize (115200);
-	if (bOK) bOK = m_Logger.Initialize (&m_Screen);
+	if (bOK) bOK = m_Logger.Initialize (&m_Null);
 	if (bOK) bOK = m_Interrupt.Initialize ();
 	if (bOK) bOK = m_Timer.Initialize ();
+	if (bOK)
+		m_Storage.Initialize ();
 	if (bOK)
 		mmb_platform_bind (this);
 
@@ -56,13 +59,11 @@ TShutdownMode CKernel::Run (void)
 
 	for (;;)
 	{
+		mmb_poll ();
 		char Buffer[64];
 		int nBytes = m_Serial.Read (Buffer, sizeof (Buffer));
 		if (nBytes <= 0)
-		{
-			mmb_poll ();
 			continue;
-		}
 
 		for (int i = 0; i < nBytes; i++)
 		{

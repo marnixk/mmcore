@@ -35,9 +35,10 @@ class MMBasicConsole:
         kernel: str,
         machine: str = "raspi3b",
         qemu: str = "qemu-system-aarch64",
-        boot_timeout: float = 15.0,
+        boot_timeout: float = 25.0,
         ready_marker: bytes = b"MMBASIC-CONSOLE READY",
         prompt: bytes = b"> ",
+        extra_qemu: list[str] | None = None,
     ) -> None:
         if not os.path.isfile(kernel):
             raise HarnessError(f"kernel image not found: {kernel}")
@@ -47,6 +48,7 @@ class MMBasicConsole:
         self.boot_timeout = boot_timeout
         self.ready_marker = ready_marker
         self.prompt = prompt
+        self.extra_qemu = extra_qemu or []
 
         self._tmp = tempfile.mkdtemp(prefix="mmb-harness-")
         self._ser_path = os.path.join(self._tmp, "serial.sock")
@@ -65,6 +67,7 @@ class MMBasicConsole:
             "-serial", f"unix:{self._ser_path},server,nowait",
             "-monitor", f"unix:{self._mon_path},server,nowait",
         ]
+        cmd.extend(self.extra_qemu)
         self._proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )

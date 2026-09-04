@@ -159,6 +159,7 @@ typedef struct mmb {
 	mmb_editor ed;
 	mmb_audio audio;
 	char cwd[128];
+	int drive;             /* 'A'..'H', default 'A' (ramdisk) */
 	int data_line, data_pos;
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
@@ -306,14 +307,34 @@ int mmb_vfs_rmdir(const char *path);
 int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
-int mmb_vfs_list(char *out, int outsz);
+int mmb_vfs_list(const char *spec, char *out, int outsz);
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append);
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n);
+int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_size(const char *path);
+int mmb_vfs_resolve(const char *path, char *out, int outsz);
+void mmb_vfs_drives(char *out, int outsz);
 const char *mmb_vfs_cwd(void);
 void mmb_vfs_seed_file(const char *path, const void *data, unsigned n);
 int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n);
+void mmb_cmd_drive(void);
+
+/* Physical volumes C: (SD) and D+ (USB). Implemented in console/storage.cpp. */
+int mmb_fat_ready(int letter);
+int mmb_fat_chdir(int letter, const char *path);
+int mmb_fat_mkdir(int letter, const char *path);
+int mmb_fat_rmdir(int letter, const char *path);
+int mmb_fat_unlink(int letter, const char *path);
+int mmb_fat_rename(int letter, const char *from, const char *to);
+int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
+int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append);
+int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
+int mmb_fat_size(int letter, const char *path);
+int mmb_fat_exists(int letter, const char *path);
+const char *mmb_fat_cwd(int letter);
+void mmb_fat_drive_line(int letter, char *out, int outsz);
+void mmb_storage_poll(void);
 
 int mmb_find_line_pc(int num);
 int mmb_const_lookup(const char *name, int type, mmb_val *out);

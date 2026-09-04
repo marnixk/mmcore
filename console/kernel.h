@@ -10,7 +10,9 @@
 #include <circle/interrupt.h>
 #include <circle/timer.h>
 #include <circle/logger.h>
+#include <circle/nulldevice.h>
 #include <circle/types.h>
+#include "storage.h"
 
 enum TShutdownMode
 {
@@ -32,6 +34,7 @@ public:
 	CSerialDevice &Serial (void) { return m_Serial; }
 
 private:
+	// do not change this order
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
 	CDeviceNameService	m_DeviceNameService;
@@ -40,7 +43,9 @@ private:
 	CExceptionHandler	m_ExceptionHandler;
 	CInterruptSystem	m_Interrupt;
 	CTimer			m_Timer;
+	CNullDevice		m_Null;
 	CLogger			m_Logger;
+	CStorage		m_Storage;
 };
 
 #endif
