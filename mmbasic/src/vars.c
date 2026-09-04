@@ -1,0 +1,372 @@
+#include "mmb_priv.h"
+
+static int name_eq(const char *a, const char *b)
+{
+	return mmb_keyword_eq(a, b);
+}
+
+void mmb_clear_consts(void)
+{
+	int i;
+	for (i = 0; i < MMB_MAX_CONST; i++)
+		G.consts[i].used = 0;
+	G.nconst = 0;
+}
+
+void mmb_const_define(const char *name, int type, mmb_val val)
+{
+	int i, slot = -1;
+	char nbuf[MMB_MAX_NAME];
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	if (type == 0)
+		type = val.type;
+	for (i = 0; i < MMB_MAX_CONST; i++)
+	{
+		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
+			mmb_error("?ALREADY DECLARED");
+		if (!G.consts[i].used && slot < 0)
+			slot = i;
+	}
+	if (slot < 0)
+		mmb_error("?OUT OF MEMORY");
+	memset(&G.consts[slot], 0, sizeof(G.consts[slot]));
+	strncpy(G.consts[slot].name, nbuf, MMB_MAX_NAME - 1);
+	G.consts[slot].type = type;
+	G.consts[slot].val = val;
+	G.consts[slot].used = 1;
+	G.nconst++;
+}
+
+int mmb_const_lookup(const char *name, int type, mmb_val *out)
+{
+	int i;
+	char nbuf[MMB_MAX_NAME];
+	int t;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	t = mmb_type_suffix(nbuf);
+	if (t)
+		type = t;
+	for (i = 0; i < MMB_MAX_CONST; i++)
+	{
+		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
+		{
+			if (type && G.consts[i].type != type)
+				return 0;
+			*out = G.consts[i].val;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+void mmb_clear_vars(int keep_options)
+{
+	int i, d;
+	(void)keep_options;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		if (G.vars[i].used)
+		{
+			if (G.vars[i].type == T_STR && G.vars[i].data.s)
+			{
+				for (d = 0; d < G.vars[i].size; d++)
+					G.plat->free(G.vars[i].data.s[d]);
+				G.plat->free(G.vars[i].data.s);
+			}
+			else if (G.vars[i].type == T_INT && G.vars[i].data.i)
+				G.plat->free(G.vars[i].data.i);
+			else if (G.vars[i].type == T_NUM && G.vars[i].data.f)
+				G.plat->free(G.vars[i].data.f);
+		}
+		memset(&G.vars[i], 0, sizeof(G.vars[i]));
+	}
+	G.nvars = 0;
+	G.dim_used = 0;
+}
+
+static int elem_count(const int *dim, int ndims)
+{
+	int n = 1, i;
+	for (i = 0; i < ndims; i++)
+		n *= (dim[i] - G.opt.base + 1);
+	return n;
+}
+
+static int offset_of(mmb_var *v, const int *idx)
+{
+	int off = 0, i, stride = 1;
+	for (i = v->dims - 1; i >= 0; i--)
+	{
+		if (idx[i] < G.opt.base || idx[i] > v->dim[i])
+			mmb_error("?INDEX OUT OF BOUNDS");
+		off += (idx[i] - G.opt.base) * stride;
+		stride *= (v->dim[i] - G.opt.base + 1);
+	}
+	return off;
+}
+
+mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
+{
+	int i;
+	char nbuf[MMB_MAX_NAME];
+	int t;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	t = mmb_type_suffix(nbuf);
+	if (t)
+		type = t;
+	else if (type == 0)
+		type = G.opt.default_type;
+	if (type == 0 && G.opt.explicit)
+		mmb_error("?EXPLICIT");
+	if (type == 0)
+		type = T_NUM;
+
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		if (G.vars[i].used && name_eq(G.vars[i].name, nbuf) && G.vars[i].type == type)
+		{
+			if (nidx != G.vars[i].dims)
+			{
+				if (nidx == 0 && G.vars[i].dims > 0)
+					mmb_error("?ARRAY");
+				if (nidx > 0 && G.vars[i].dims == 0)
+					mmb_error("?NOT AN ARRAY");
+				if (nidx != G.vars[i].dims)
+					mmb_error("?SUBSCRIPT");
+			}
+			if (idx && nidx == 0)
+				*idx = 0;
+			return &G.vars[i];
+		}
+	}
+
+	if (!create)
+		return 0;
+	if (G.opt.explicit)
+		mmb_error("?UNDECLARED");
+	if (nidx > 0)
+		mmb_error("?UNDECLARED"); /* arrays must be DIMmed */
+
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (!G.vars[i].used)
+			break;
+	if (i >= MMB_MAX_VARS)
+		mmb_error("?OUT OF MEMORY");
+
+	memset(&G.vars[i], 0, sizeof(G.vars[i]));
+	strncpy(G.vars[i].name, nbuf, MMB_MAX_NAME - 1);
+	G.vars[i].type = type;
+	G.vars[i].dims = 0;
+	G.vars[i].size = 1;
+	G.vars[i].used = 1;
+	if (type == T_INT)
+	{
+		G.vars[i].data.i = G.plat->alloc(sizeof(int64_t));
+		G.vars[i].data.i[0] = 0;
+	}
+	else if (type == T_STR)
+	{
+		G.vars[i].data.s = G.plat->alloc(sizeof(char *));
+		G.vars[i].data.s[0] = G.plat->alloc(MMB_MAX_STR + 1);
+		G.vars[i].data.s[0][0] = 0;
+	}
+	else
+	{
+		G.vars[i].data.f = G.plat->alloc(sizeof(double));
+		G.vars[i].data.f[0] = 0;
+	}
+	G.nvars++;
+	if (idx)
+		*idx = 0;
+	return &G.vars[i];
+}
+
+void mmb_cmd_dim(void)
+{
+	/* DIM name(d1[,d2...]) [AS type] [, ...] */
+	for (;;)
+	{
+		char name[MMB_MAX_NAME];
+		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot;
+		int idxdummy[MMB_MAX_DIMS];
+		mmb_ident(name, sizeof(name));
+		type = mmb_type_suffix(name);
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			do
+			{
+				mmb_val v;
+				if (dims >= MMB_MAX_DIMS)
+					mmb_syntax();
+				v = mmb_expr();
+				dim[dims++] = (int)mmb_as_int(v);
+				mmb_skip_sp();
+				if (*G.p == ',')
+					G.p++;
+				else
+					break;
+			} while (1);
+			mmb_expect(')');
+		}
+		mmb_skip_sp();
+		if (mmb_match("AS"))
+		{
+			if (mmb_match("INTEGER"))
+				type = T_INT;
+			else if (mmb_match("STRING"))
+				type = T_STR;
+			else if (mmb_match("FLOAT"))
+				type = T_NUM;
+			else
+				mmb_syntax();
+		}
+		if (type == 0)
+			type = G.opt.default_type ? G.opt.default_type : T_NUM;
+
+		for (i = 0; i < MMB_MAX_VARS; i++)
+			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
+				mmb_error("?ALREADY DECLARED");
+
+		for (slot = 0; slot < MMB_MAX_VARS; slot++)
+			if (!G.vars[slot].used)
+				break;
+		if (slot >= MMB_MAX_VARS)
+			mmb_error("?OUT OF MEMORY");
+
+		memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
+		strncpy(G.vars[slot].name, name, MMB_MAX_NAME - 1);
+		mmb_upper(G.vars[slot].name);
+		G.vars[slot].type = type;
+		G.vars[slot].dims = dims;
+		for (i = 0; i < dims; i++)
+			G.vars[slot].dim[i] = dim[i];
+		n = dims ? elem_count(dim, dims) : 1;
+		if (n <= 0)
+			mmb_error("?INVALID DIMENSION");
+		G.vars[slot].size = n;
+		G.vars[slot].used = 1;
+		if (type == T_INT)
+		{
+			G.vars[slot].data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
+			memset(G.vars[slot].data.i, 0, (unsigned)n * sizeof(int64_t));
+		}
+		else if (type == T_STR)
+		{
+			G.vars[slot].data.s = G.plat->alloc((unsigned)n * sizeof(char *));
+			for (i = 0; i < n; i++)
+			{
+				G.vars[slot].data.s[i] = G.plat->alloc(MMB_MAX_STR + 1);
+				G.vars[slot].data.s[i][0] = 0;
+			}
+		}
+		else
+		{
+			G.vars[slot].data.f = G.plat->alloc((unsigned)n * sizeof(double));
+			memset(G.vars[slot].data.f, 0, (unsigned)n * sizeof(double));
+		}
+		G.nvars++;
+		if (dims)
+			G.dim_used = 1;
+		(void)idxdummy;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+}
+
+static void store(mmb_var *v, int off, mmb_val val)
+{
+	if (v->type == T_STR)
+	{
+		if (val.type != T_STR)
+			mmb_error("?TYPE MISMATCH");
+		strncpy(v->data.s[off], val.s, MMB_MAX_STR);
+		v->data.s[off][MMB_MAX_STR] = 0;
+	}
+	else if (v->type == T_INT)
+	{
+		if (val.type == T_STR)
+			mmb_error("?TYPE MISMATCH");
+		v->data.i[off] = mmb_as_int(val);
+	}
+	else
+	{
+		if (val.type == T_STR)
+			mmb_error("?TYPE MISMATCH");
+		v->data.f[off] = mmb_as_float(val);
+	}
+}
+
+mmb_val mmb_load_var(mmb_var *v, int off)
+{
+	if (v->type == T_STR)
+		return mmb_str_val(v->data.s[off]);
+	if (v->type == T_INT)
+		return mmb_int_val(v->data.i[off]);
+	return mmb_num_val(v->data.f[off]);
+}
+
+void mmb_assign_from_parse(void); /* defined in expr.c via parse of LET / implied LET */
+
+int mmb_parse_var_ref(char *name, int *nidx, int *idx)
+{
+	int t;
+	mmb_ident(name, MMB_MAX_NAME);
+	t = mmb_type_suffix(name);
+	*nidx = 0;
+	mmb_skip_sp();
+	if (*G.p == '(')
+	{
+		G.p++;
+		do
+		{
+			mmb_val v;
+			if (*nidx >= MMB_MAX_DIMS)
+				mmb_syntax();
+			v = mmb_expr();
+			idx[*nidx] = (int)mmb_as_int(v);
+			(*nidx)++;
+			mmb_skip_sp();
+			if (*G.p == ',')
+				G.p++;
+			else
+				break;
+		} while (1);
+		mmb_expect(')');
+	}
+	return t;
+}
+
+void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val)
+{
+	int off = 0;
+	int idxcopy[MMB_MAX_DIMS];
+	int i;
+	mmb_val dummy;
+	mmb_var *v;
+	if (nidx == 0 && mmb_const_lookup(name, type_hint, &dummy))
+		mmb_error("?CONST");
+	for (i = 0; i < nidx; i++)
+		idxcopy[i] = idx[i];
+	v = mmb_find_var(name, type_hint, 1, nidx, idxcopy);
+	if (nidx)
+		off = offset_of(v, idx);
+	store(v, off, val);
+}
+
+void mmb_cmd_clear(void)
+{
+	mmb_clear_vars(1);
+}

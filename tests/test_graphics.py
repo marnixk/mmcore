@@ -82,6 +82,12 @@ def test_bad_arg_count_is_syntax_error(fresh_console):
     assert fresh_console.send_line("BOX 1,2,3") == "?SYNTAX ERROR"
 
 
+def test_filled_box_interior(fresh_console):
+    fresh_console.send_line("CLS")
+    fresh_console.send_line("BOX 80,80,40,40,1,RGB(0,255,0),RGB(0,255,0)")
+    assert _is_green(fresh_console.screen_pixel(100, 100))
+
+
 def test_scene_matches_golden(fresh_console):
     golden = os.path.join(GOLDEN_DIR, "scene.png")
     assert os.path.isfile(golden), "run scripts/gen_golden.py to create the golden"

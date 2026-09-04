@@ -1,0 +1,21 @@
+---
+description: Keep MMBasic sources local; do not depend on the picomite-fork submodule at build time
+alwaysApply: true
+---
+
+# MMBasic is local code
+
+The `picomite-fork/` tree is a git submodule used only as an upstream reference
+for MMBasic behaviour, command tables, algorithms, and third-party codecs.
+
+**Do not compile against `picomite-fork/`.** Copy whatever is needed into
+`mmbasic/` (interpreter, command implementations, codecs, fonts, tests assets)
+and adapt it to Circle / AArch64. Prefer a local, maintainable port over
+linking the Pico-specific tree.
+
+Circle (`circle/`) stays a submodule: it is the bare-metal runtime, not the
+language implementation.
+
+When a PicoMite file is required, bring it across into `mmbasic/` (or
+`mmbasic/third_party/`), strip Pico SDK / hardware includes, and wire it
+through the local interpreter. Subsequent work should edit the local copy.

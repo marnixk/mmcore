@@ -11,6 +11,11 @@ console/*.elf
 console/*.img
 console/*.lst
 console/*.map
+mmbasic/**/*.o
+mmbasic/**/*.d
 
 # Captured framebuffers
 *.ppm
+
+# Release packaging (firmware + zip stay out of git)
+dist/

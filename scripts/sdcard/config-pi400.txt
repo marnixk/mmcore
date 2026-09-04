@@ -1,0 +1,16 @@
+# Raspberry Pi 400 / Pi 4 / CM4 64-bit boot for the MMBasic console.
+# Copy this file to the FAT partition as config.txt (already named that
+# in the Pi 400 release zip).
+
+arm_64bit=1
+kernel_address=0x80000
+initial_turbo=0
+enable_uart=1
+hdmi_force_hotplug=1
+hdmi_group=1
+hdmi_mode=4
+
+[pi4]
+armstub=armstub8-rpi4.bin
+kernel=kernel8-rpi4.img
+max_framebuffers=2

@@ -1,0 +1,12 @@
+# Raspberry Pi 3 / 3B+ / 3A+ 64-bit boot for the MMBasic console.
+# Copy this file to the FAT partition as config.txt (already named that
+# in the release zip).
+
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel8.img
+initial_turbo=0
+enable_uart=1
+hdmi_force_hotplug=1
+hdmi_group=1
+hdmi_mode=4
