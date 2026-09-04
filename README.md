@@ -14,8 +14,9 @@ interpreter that boots straight on the Pi — no Linux underneath — by combini
 The behavioural compatibility target is the **Colour Maximite 2 (CMM2)**, with
 graphics-library equivalence as the priority — see [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-The bare-metal build target is a Raspberry Pi `kernel8.img` (AArch64), which is
-also directly runnable under QEMU.
+The default build target is a Raspberry Pi 3 `kernel8.img` (AArch64), which is
+also directly runnable under QEMU. Hardware releases also ship a Pi 400 /
+Pi 4 `kernel8-rpi4.img`.
 
 MMBasic itself is **local code** in [`mmbasic/`](mmbasic). The
 [`picomite-fork/`](picomite-fork) submodule is an upstream reference only;
@@ -33,6 +34,7 @@ a submodule.
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
+| `scripts/package-release.sh` | Hardware Pi 3 and Pi 400 SD-card zips in `dist/` |
 | `.cursor/` | Cloud Agent environment (toolchains, QEMU, OCR, Python) |
 
 ## Toolchain
@@ -46,13 +48,15 @@ Circle bare-metal images are built with ARM **freestanding** cross-toolchains
 ## Building
 
 ```bash
-scripts/build.sh          # produces console/kernel8.img (RPi3 AArch64, QEMU)
+scripts/build.sh                         # console/kernel8.img (RPi3, QEMU)
+QEMU=0 RASPPI=4 scripts/build.sh         # console/kernel8-rpi4.img (Pi 400)
+scripts/package-release.sh               # both hardware zips in dist/
 ```
 
-Run it on real hardware: see [`INSTALL.md`](INSTALL.md). In short, copy the
-files from a GitHub **Release** zip onto a FAT32 SD card (Pi 3 / 3B+ / 3A+).
-You can also copy `console/kernel8.img` plus Raspberry Pi firmware yourself
-(see `circle/boot/`). Run it under QEMU with:
+Run it on real hardware: see [`INSTALL.md`](INSTALL.md). GitHub **Releases**
+ship two FAT32 SD-card zips — Pi 3 / 3B+ / 3A+, and Pi 400 (also Pi 4B / CM4).
+You can also copy a kernel plus Raspberry Pi firmware yourself (see
+`circle/boot/`). Run the Pi 3 image under QEMU with:
 
 ```bash
 qemu-system-aarch64 -M raspi3b -kernel console/kernel8.img -serial stdio -display none

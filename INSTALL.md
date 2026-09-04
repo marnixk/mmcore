@@ -1,31 +1,41 @@
 # Installing MMBasic on a Raspberry Pi SD card
 
 This image is a **bare-metal** MMBasic console. There is no Linux on the card.
-The Pi boots firmware from the FAT partition, loads `kernel8.img`, and shows:
+The Pi boots firmware from the FAT partition, loads the kernel, and shows:
 
 ```
 MMBASIC-CONSOLE READY
 >
 ```
 
+Releases ship **two zips** — pick the one that matches your board. Do not mix
+files from both zips on the same card.
+
+| Zip | Boards |
+| --- | --- |
+| `mmbasic-console-rpi3-v*.zip` | Raspberry Pi **3**, **3B+**, **3A+** |
+| `mmbasic-console-pi400-v*.zip` | Raspberry Pi **400** (also Pi **4B** / **CM4**) |
+
+This first release talks to the keyboard over the **serial UART**, not a USB
+keyboard (the Pi 400’s built-in keyboard is not used yet). Video goes to HDMI.
+
 ## What you need
 
-- A **Raspberry Pi 3**, **3B+**, or **3A+** (64-bit / AArch64)
+- The matching release zip from GitHub Releases
 - A microSD card (1 GB or larger is plenty)
 - An HDMI monitor and HDMI cable
 - A USB-to-TTL **3.3 V** serial adapter (to type commands)
-- The release zip `mmbasic-console-rpi3-v*.zip` from GitHub Releases
-
-This first release talks to the keyboard over the **serial UART**, not a USB
-keyboard. Video goes to HDMI.
 
 ## 1. Download the release
 
-From the repository’s **Releases** page, download:
+From the repository’s **Releases** page, download **one** zip:
 
-`mmbasic-console-rpi3-v0.1.0.zip`
+- Pi 3 family: `mmbasic-console-rpi3-v0.1.1.zip`
+- Pi 400 / Pi 4: `mmbasic-console-pi400-v0.1.1.zip`
 
-Unzip it. You should see:
+Unzip it.
+
+### Raspberry Pi 3 zip
 
 | File | Role |
 | --- | --- |
@@ -37,6 +47,24 @@ Unzip it. You should see:
 | `LICENCE.broadcom` | Raspberry Pi firmware licence |
 | `INSTALL.md` | This document |
 | `VERSION.txt` | Build identity |
+
+### Raspberry Pi 400 zip
+
+| File | Role |
+| --- | --- |
+| `kernel8-rpi4.img` | MMBasic console (Circle kernel, BCM2711) |
+| `config.txt` | Firmware boot settings (`[pi4]` + ARM stub) |
+| `armstub8-rpi4.bin` | Circle ARM stub (FIQ / GIC on Pi 4 / 400) |
+| `start4.elf` | VideoCore firmware for Pi 4 / 400 |
+| `fixup4.dat` | Firmware relocation data |
+| `bcm2711-rpi-400.dtb` | Device tree for Pi 400 |
+| `bcm2711-rpi-4-b.dtb` | Device tree for Pi 4B |
+| `LICENCE.broadcom` | Raspberry Pi firmware licence |
+| `COPYING.linux` | Licence for the device tree binaries |
+| `INSTALL.md` | This document |
+| `VERSION.txt` | Build identity |
+
+Pi 4 / 400 load firmware from EEPROM, so `bootcode.bin` is not used.
 
 ## 2. Format the SD card
 
@@ -87,7 +115,7 @@ small FAT32 partition with Disk Management.
 Copy **every file from the zip** to the **root** of the FAT partition.
 Do not put them in a subfolder.
 
-The card should look like this:
+### Raspberry Pi 3 card
 
 ```
 (SD card, FAT)
@@ -101,8 +129,6 @@ The card should look like this:
 └── VERSION.txt
 ```
 
-Unmount / eject the card safely.
-
 Linux example (after the mount in step 2):
 
 ```bash
@@ -111,16 +137,46 @@ sudo cp -a kernel8.img config.txt bootcode.bin start.elf fixup.dat \
 sudo umount /mnt/mmbasic
 ```
 
+### Raspberry Pi 400 card
+
+```
+(SD card, FAT)
+├── armstub8-rpi4.bin
+├── bcm2711-rpi-4-b.dtb
+├── bcm2711-rpi-400.dtb
+├── config.txt
+├── COPYING.linux
+├── fixup4.dat
+├── INSTALL.md
+├── kernel8-rpi4.img
+├── LICENCE.broadcom
+├── start4.elf
+└── VERSION.txt
+```
+
+Linux example:
+
+```bash
+sudo cp -a kernel8-rpi4.img config.txt armstub8-rpi4.bin \
+           start4.elf fixup4.dat bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
+           LICENCE.broadcom COPYING.linux INSTALL.md VERSION.txt /mnt/mmbasic/
+sudo umount /mnt/mmbasic
+```
+
+Unmount / eject the card safely.
+
 ## 4. Hook up the Pi
 
 1. Insert the SD card.
 2. Connect HDMI to a monitor.
+   - Pi 400: use the micro-HDMI port **next to USB-C power** (HDMI0).
 3. Connect serial (optional but needed to type):
    - Adapter GND → Pi pin **6** (GND)
    - Adapter RX  → Pi pin **8** (GPIO14 / TXD)
    - Adapter TX  → Pi pin **10** (GPIO15 / RXD)
    - Use a **3.3 V** adapter only (5 V will damage the Pi)
-4. Power the Pi from the usual USB power supply.
+   - Pi 400: the GPIO header is on the back of the keyboard
+4. Power the Pi from the usual USB / USB-C power supply.
 
 On the PC, open a serial terminal at **115200 8N1**, no flow control
 (for example `minicom -b 115200 -D /dev/ttyUSB0`, PuTTY, or Screen).
@@ -155,12 +211,14 @@ CIRCLE 440,200,90,CYAN
 | Symptom | What to check |
 | --- | --- |
 | ACT LED does not flash, no HDMI | Card not FAT, files not in the partition root, or `config.txt` missing |
-| Rainbow splash then black | `kernel8.img` missing or not 64-bit; this zip is Pi 3 only |
+| Rainbow splash then black | Wrong kernel for the board, or files mixed from both zips |
 | HDMI works, serial garbage | Baud rate not 115200 8N1, or 5 V adapter; swap TX/RX |
 | HDMI works, serial silent | `enable_uart=1` is in `config.txt`; GND connected |
-| Wrong Pi model | This zip is **Pi 3 / 3B+ / 3A+**. Pi 4/5 need different kernels |
+| Pi 400 built-in keyboard does nothing | Expected — this kernel is serial-only so far |
+| Pi 400 no HDMI | Use HDMI0 (port next to USB-C); `hdmi_force_hotplug=1` is in `config.txt` |
+| Wrong zip | Pi 3 needs `kernel8.img` + `start.elf`. Pi 400 needs `kernel8-rpi4.img` + `start4.elf` + `armstub8-rpi4.bin` |
 
-## Building the zip yourself
+## Building the zips yourself
 
 From a clone of this repository (AArch64 GNU toolchain on `PATH`):
 
@@ -168,9 +226,15 @@ From a clone of this repository (AArch64 GNU toolchain on `PATH`):
 scripts/package-release.sh
 ```
 
-That writes `dist/mmbasic-console-rpi3-v0.1.0.zip`. Override the version with
-`VERSION=0.2.0 scripts/package-release.sh`.
+That writes both:
 
-`scripts/build.sh` alone produces `console/kernel8.img` for QEMU. The release
-script builds **without** Circle’s `--qemu` flags so SD host and display DMA
-match real hardware.
+- `dist/mmbasic-console-rpi3-v0.1.1.zip`
+- `dist/mmbasic-console-pi400-v0.1.1.zip`
+
+Override the version with `VERSION=0.2.0 scripts/package-release.sh`.
+Set `FORCE_FIRMWARE=1` to re-download Raspberry Pi firmware blobs.
+
+`scripts/build.sh` alone produces `console/kernel8.img` for QEMU (Pi 3).
+`QEMU=0 RASPPI=4 scripts/build.sh` produces `console/kernel8-rpi4.img`.
+The release script builds **without** Circle’s `--qemu` flags so SD host and
+display DMA match real hardware.

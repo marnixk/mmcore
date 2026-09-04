@@ -27,6 +27,11 @@ LIBS = $(CIRCLEHOME)/lib/libcircle.a
 
 EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party
 
+# MMBasic objects live outside console/; drop them on `make clean` so a
+# RASPPI switch (Pi 3 vs Pi 4 / 400) cannot relink stale -mcpu objects.
+EXTRACLEAN = $(MMB)/src/*.o $(MMB)/src/*.d \
+	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d
+
 include $(CIRCLEHOME)/Rules.mk
 
 -include $(DEPS)

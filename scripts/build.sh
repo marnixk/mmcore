@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the bare-metal console (and the Circle core library it links against).
 #
-# Idempotent: safe to run repeatedly. Produces console/kernel8.img, the
-# bootable Raspberry Pi image exercised by the QEMU test harness.
+# Idempotent: safe to run repeatedly. Default produces console/kernel8.img,
+# the Raspberry Pi 3 image exercised by the QEMU test harness. RASPPI=4
+# produces console/kernel8-rpi4.img for Pi 4 / Pi 400.
 #
 # Target defaults to a 64-bit Raspberry Pi 3 built for QEMU, which is what the
 # automated harness emulates. Override with RASPPI / QEMU env vars.
@@ -33,5 +34,12 @@ make -C "${CIRCLE_DIR}/lib" -j"$(nproc)"
 log "Building console kernel image"
 make -C "${CONSOLE_DIR}" -j"$(nproc)"
 
-log "Build complete: ${CONSOLE_DIR}/kernel8.img"
-ls -la "${CONSOLE_DIR}/kernel8.img"
+KERNEL_NAME="kernel8.img"
+if [ "${RASPPI}" = "4" ]; then
+  KERNEL_NAME="kernel8-rpi4.img"
+elif [ "${RASPPI}" = "5" ]; then
+  KERNEL_NAME="kernel_2712.img"
+fi
+
+log "Build complete: ${CONSOLE_DIR}/${KERNEL_NAME}"
+ls -la "${CONSOLE_DIR}/${KERNEL_NAME}"
