@@ -16,6 +16,12 @@
 #define MMB_LINE_LEN      256
 #define MMB_MAX_FILES     10
 #define MMB_MAX_PAGES     8
+#define MMB_MAX_BLIT      16
+#define MMB_FB_MAX_W      1024
+#define MMB_FB_MAX_H      768
+#define MMB_PAGE_CUR      (-1)
+#define MMB_PAGE_FB       (-2)
+#define MMB_TURTLE_MAX    128
 #define MMB_OUT_LEN       4096
 #define MMB_ED_TABS       6
 #define MMB_ED_BUF        16384
@@ -109,6 +115,12 @@ typedef struct mmb_file {
 	char path[128];
 } mmb_file;
 
+typedef struct mmb_blit_buf {
+	int used;
+	int w, h;
+	uint32_t *pix; /* user-order RGB888 */
+} mmb_blit_buf;
+
 typedef struct mmb_gfx {
 	int mode;
 	int bits;
@@ -116,6 +128,19 @@ typedef struct mmb_gfx {
 	int pages;
 	int write_page;
 	int display_page;
+	int write_fb;          /* drawing goes to framebuffer */
+	int fb_w, fb_h;
+	uint32_t *fb;
+	uint32_t *fb_bak;
+	mmb_blit_buf blit[MMB_MAX_BLIT];
+	int turtle_on;
+	double turtle_x, turtle_y, turtle_hdg;
+	int turtle_pen;
+	unsigned turtle_pen_col, turtle_fill_col;
+	int turtle_filling;
+	int turtle_fn;
+	int turtle_fx[MMB_TURTLE_MAX];
+	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
 	uint32_t *page[MMB_MAX_PAGES]; /* RGB888 */
@@ -310,6 +335,10 @@ void mmb_cmd_pixel(void);
 void mmb_cmd_line(void);
 void mmb_cmd_box(void);
 void mmb_cmd_circle(void);
+void mmb_cmd_image(void);
+void mmb_cmd_framebuffer(void);
+void mmb_cmd_turtle(void);
+void mmb_cmd_bitmap(void);
 void mmb_cmd_save(void);
 void mmb_cmd_input(void);
 void mmb_cmd_line_input(void);
@@ -341,12 +370,43 @@ void mmb_gfx_set_mode(int mode, int bits);
 void mmb_gfx_cls(unsigned rgb);
 void mmb_gfx_plot(int x, int y, unsigned rgb);
 unsigned mmb_gfx_get(int x, int y);
+unsigned mmb_gfx_get_page(int x, int y, int page);
 void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw);
 void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill);
 void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned rgb, int fill);
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
+void mmb_gfx_present(void);
+void mmb_gfx_present_if(int page);
+uint32_t *mmb_gfx_buf_for(int page, int *w, int *h);
+int mmb_gfx_map_y(int y, int h);
+int mmb_gfx_writing_fb(void);
+void mmb_gfx_fb_create(int w, int h);
+void mmb_gfx_fb_write(void);
+void mmb_gfx_fb_backup(void);
+void mmb_gfx_fb_restore(int x, int y, int w, int h, int all);
+void mmb_gfx_fb_window(int x, int y, int page);
+void mmb_gfx_fb_close(void);
+void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage, int ori);
+void mmb_gfx_blit_read(int n, int x, int y, int w, int h, int srcpage);
+void mmb_gfx_blit_write(int n, int x, int y, int ori);
+void mmb_gfx_blit_close(int n);
+void mmb_gfx_image_resize(int x, int y, int w, int h, int nx, int ny, int nw, int nh,
+			  int srcpage, int fast, int skip_black);
+void mmb_gfx_image_rotate(int x, int y, int w, int h, int nx, int ny, double angle,
+			  int srcpage, int fast, int skip_black);
+void mmb_gfx_image_warp_h(int x, int y, int w, int h, int x1, int y1, int h1,
+			  int x2, int y2, int h2, int srcpage, int skip_black);
+void mmb_gfx_image_warp_v(int x, int y, int w, int h, int x1, int y1, int w1,
+			  int x2, int y2, int w2, int srcpage, int skip_black);
+void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill);
+void mmb_gfx_page_logic(int op, int p1, int p2, int dst);
+void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int page);
+void mmb_gfx_bitmap(int x, int y, const unsigned char *bits, int nbytes,
+		    int bw, int bh, int scale, unsigned fg, unsigned bg, int fill_bg);
+void mmb_gfx_fill_poly(const int *xs, const int *ys, int n, unsigned rgb);
+void mmb_turtle_init_state(int cls);
 unsigned mmb_rgb_pack(int r, int g, int b);
 void mmb_rgb_unpack(unsigned c, int *r, int *g, int *b);
 unsigned mmb_quantize(unsigned rgb888);

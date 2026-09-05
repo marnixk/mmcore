@@ -13,6 +13,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o net.o \
 	  $(MMB)/src/cmd_option.o \
 	  $(MMB)/src/settings.o \
 	  $(MMB)/src/gfx.o \
+	  $(MMB)/src/gfx_cmm2.o \
 	  $(MMB)/src/cmd_graphics.o \
 	  $(MMB)/src/vfs.o \
 	  $(MMB)/src/cmd_files.o \

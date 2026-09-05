@@ -1,9 +1,8 @@
 #include "mmb_priv.h"
 #include <math.h>
+#include <string.h>
 
 extern void mmb_gfx_copy_page(int src, int dst);
-extern void mmb_gfx_blit(int sx, int sy, int w, int h, int dx, int dy);
-extern void mmb_gfx_present(void);
 
 static int parse_args(mmb_val *a, int maxn)
 {
@@ -41,6 +40,61 @@ static unsigned colour_from(mmb_val *a, int n, int *used_last, unsigned def)
 static int is_colour_val(mmb_val v)
 {
 	return v.type != T_STR && mmb_as_int(v) > 7;
+}
+
+/* IMAGE/BLIT/PAGE accept the FRAMEBUFFER keyword where a page number goes. */
+static int parse_gfx_args(mmb_val *a, int *is_fb, int maxn)
+{
+	int n = 0;
+	mmb_skip_sp();
+	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+		return 0;
+	while (n < maxn && *G.p && *G.p != ':' && *G.p != '\'')
+	{
+		mmb_skip_sp();
+		if (mmb_match("FRAMEBUFFER"))
+		{
+			a[n] = mmb_int_val(0);
+			is_fb[n] = 1;
+		}
+		else
+		{
+			is_fb[n] = 0;
+			a[n] = mmb_expr();
+		}
+		n++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	return n;
+}
+
+static int arg_page(mmb_val v, int is_fb)
+{
+	if (is_fb)
+		return MMB_PAGE_FB;
+	return (int)mmb_as_int(v);
+}
+
+static int parse_page_token(void)
+{
+	mmb_skip_sp();
+	if (mmb_match("FRAMEBUFFER"))
+		return MMB_PAGE_FB;
+	return (int)mmb_as_int(mmb_expr());
+}
+
+static int parse_blit_id(void)
+{
+	mmb_skip_sp();
+	if (*G.p == '#')
+		G.p++;
+	return (int)mmb_as_int(mmb_expr());
 }
 
 void mmb_cmd_cls(void)
@@ -88,8 +142,27 @@ void mmb_cmd_line(void)
 void mmb_cmd_box(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8), lw = 1, fill = -1;
+	int n, lw = 1, fill = -1, is_fb[8];
 	unsigned c = G.gfx.fg;
+	int op = 0;
+	if (mmb_match("AND_PIXELS"))
+		op = '&';
+	else if (mmb_match("OR_PIXELS"))
+		op = '|';
+	else if (mmb_match("XOR_PIXELS"))
+		op = '^';
+	if (op)
+	{
+		n = parse_gfx_args(a, is_fb, 6);
+		if (n < 5)
+			mmb_syntax();
+		mmb_gfx_box_logic(op, (int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				  (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+				  (unsigned)mmb_as_int(a[4]),
+				  n >= 6 ? arg_page(a[5], is_fb[5]) : MMB_PAGE_CUR);
+		return;
+	}
+	n = parse_args(a, 8);
 	if (n < 4)
 		mmb_syntax();
 	if (n >= 7)
@@ -310,11 +383,48 @@ void mmb_cmd_mode(void)
 
 void mmb_cmd_page(void)
 {
+	if (mmb_match("SCROLL"))
+	{
+		mmb_val a[4];
+		int is_fb[4], n = parse_gfx_args(a, is_fb, 4);
+		if (n < 3)
+			mmb_syntax();
+		mmb_gfx_page_scroll(arg_page(a[0], is_fb[0]),
+				    (int)mmb_as_int(a[1]), (int)mmb_as_int(a[2]),
+				    n >= 4 ? (int)mmb_as_int(a[3]) : 0, n >= 4);
+		return;
+	}
+	{
+		int op = 0;
+		if (mmb_match("AND_PIXELS"))
+			op = '&';
+		else if (mmb_match("OR_PIXELS"))
+			op = '|';
+		else if (mmb_match("XOR_PIXELS"))
+			op = '^';
+		if (op)
+		{
+			mmb_val a[3];
+			int is_fb[3], n = parse_gfx_args(a, is_fb, 3);
+			if (n < 3)
+				mmb_syntax();
+			mmb_gfx_page_logic(op, arg_page(a[0], is_fb[0]),
+					   arg_page(a[1], is_fb[1]),
+					   arg_page(a[2], is_fb[2]));
+			return;
+		}
+	}
 	if (mmb_match("WRITE"))
 	{
-		int pg = (int)mmb_as_int(mmb_expr());
+		int pg = parse_page_token();
+		if (pg == MMB_PAGE_FB)
+		{
+			mmb_gfx_fb_write();
+			return;
+		}
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
+		G.gfx.write_fb = 0;
 		G.gfx.write_page = pg;
 		return;
 	}
@@ -334,6 +444,7 @@ void mmb_cmd_page(void)
 		if (mmb_match("TO"))
 			dst = (int)mmb_as_int(mmb_expr());
 		mmb_gfx_copy_page(src, dst);
+		mmb_gfx_present_if(dst);
 		return;
 	}
 	mmb_syntax();
@@ -342,12 +453,421 @@ void mmb_cmd_page(void)
 void mmb_cmd_blit(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8);
+	int is_fb[8], n;
+	if (mmb_match("READ"))
+	{
+		int id = parse_blit_id();
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		n = parse_gfx_args(a, is_fb, 5);
+		if (n < 4)
+			mmb_syntax();
+		mmb_gfx_blit_read(id, (int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				  (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+				  n >= 5 ? arg_page(a[4], is_fb[4]) : MMB_PAGE_CUR);
+		return;
+	}
+	if (mmb_match("WRITE"))
+	{
+		int id = parse_blit_id();
+		int ori = 4;
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		n = parse_args(a, 3);
+		if (n < 2)
+			mmb_syntax();
+		if (n >= 3)
+			ori = (int)mmb_as_int(a[2]);
+		mmb_gfx_blit_write(id, (int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]), ori);
+		return;
+	}
+	if (mmb_match("CLOSE"))
+	{
+		mmb_gfx_blit_close(parse_blit_id());
+		return;
+	}
+	n = parse_gfx_args(a, is_fb, 8);
 	if (n < 6)
 		mmb_syntax();
-	mmb_gfx_blit((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
-		     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
-		     (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]));
+	mmb_gfx_blit_copy((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+			  (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+			  (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]),
+			  n >= 7 ? arg_page(a[6], is_fb[6]) : MMB_PAGE_CUR,
+			  n >= 8 ? (int)mmb_as_int(a[7]) : 0);
+}
+
+void mmb_cmd_image(void)
+{
+	mmb_val a[12];
+	int is_fb[12], n, fast = 0, skip = 0, page = MMB_PAGE_CUR;
+	if (mmb_match("RESIZE_FAST"))
+		fast = 1;
+	else if (!mmb_match("RESIZE"))
+	{
+		if (mmb_match("ROTATE_FAST"))
+			fast = 1;
+		else if (mmb_match("ROTATE"))
+			fast = 0;
+		else if (mmb_match("WARP_H"))
+		{
+			n = parse_gfx_args(a, is_fb, 12);
+			if (n < 10)
+				mmb_syntax();
+			if (n >= 11)
+				page = arg_page(a[10], is_fb[10]);
+			if (n >= 12)
+				skip = (int)mmb_as_int(a[11]);
+			mmb_gfx_image_warp_h((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+					     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+					     (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]),
+					     (int)mmb_as_int(a[6]), (int)mmb_as_int(a[7]),
+					     (int)mmb_as_int(a[8]), (int)mmb_as_int(a[9]),
+					     page, skip);
+			return;
+		}
+		else if (mmb_match("WARP_V"))
+		{
+			n = parse_gfx_args(a, is_fb, 12);
+			if (n < 10)
+				mmb_syntax();
+			if (n >= 11)
+				page = arg_page(a[10], is_fb[10]);
+			if (n >= 12)
+				skip = (int)mmb_as_int(a[11]);
+			mmb_gfx_image_warp_v((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+					     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+					     (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]),
+					     (int)mmb_as_int(a[6]), (int)mmb_as_int(a[7]),
+					     (int)mmb_as_int(a[8]), (int)mmb_as_int(a[9]),
+					     page, skip);
+			return;
+		}
+		else
+			mmb_syntax();
+		/* ROTATE / ROTATE_FAST */
+		n = parse_gfx_args(a, is_fb, 9);
+		if (n < 7)
+			mmb_syntax();
+		if (n >= 8)
+			page = arg_page(a[7], is_fb[7]);
+		if (n >= 9)
+			skip = (int)mmb_as_int(a[8]);
+		mmb_gfx_image_rotate((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+				     (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]),
+				     mmb_as_float(a[6]), page, fast, skip);
+		return;
+	}
+	/* RESIZE / RESIZE_FAST */
+	n = parse_gfx_args(a, is_fb, 10);
+	if (n < 8)
+		mmb_syntax();
+	if (n >= 9)
+		page = arg_page(a[8], is_fb[8]);
+	if (n >= 10)
+		skip = (int)mmb_as_int(a[9]);
+	mmb_gfx_image_resize((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+			     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+			     (int)mmb_as_int(a[4]), (int)mmb_as_int(a[5]),
+			     (int)mmb_as_int(a[6]), (int)mmb_as_int(a[7]),
+			     page, fast, skip);
+}
+
+void mmb_cmd_framebuffer(void)
+{
+	if (mmb_match("CREATE"))
+	{
+		mmb_val a[2];
+		int n = parse_args(a, 2);
+		if (n < 2)
+			mmb_syntax();
+		mmb_gfx_fb_create((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]));
+		return;
+	}
+	if (mmb_match("WRITE"))
+	{
+		mmb_gfx_fb_write();
+		return;
+	}
+	if (mmb_match("BACKUP"))
+	{
+		mmb_gfx_fb_backup();
+		return;
+	}
+	if (mmb_match("RESTORE"))
+	{
+		mmb_val a[4];
+		int n = parse_args(a, 4);
+		if (n == 0)
+			mmb_gfx_fb_restore(0, 0, 0, 0, 1);
+		else if (n < 4)
+			mmb_syntax();
+		else
+			mmb_gfx_fb_restore((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+					   (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]), 0);
+		return;
+	}
+	if (mmb_match("WINDOW"))
+	{
+		mmb_val a[4];
+		int is_fb[4], n = parse_gfx_args(a, is_fb, 4);
+		if (n < 3)
+			mmb_syntax();
+		mmb_gfx_fb_window((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				  arg_page(a[2], is_fb[2]));
+		return;
+	}
+	if (mmb_match("CLOSE"))
+	{
+		mmb_gfx_fb_close();
+		return;
+	}
+	mmb_syntax();
+}
+
+static double turtle_norm(double d)
+{
+	while (d < 0)
+		d += 360;
+	while (d >= 360)
+		d -= 360;
+	return d;
+}
+
+static void turtle_ensure(void)
+{
+	if (!G.gfx.turtle_on)
+		mmb_turtle_init_state(0);
+}
+
+static void turtle_record(double x, double y)
+{
+	if (!G.gfx.turtle_filling)
+		return;
+	if (G.gfx.turtle_fn >= MMB_TURTLE_MAX)
+		return;
+	G.gfx.turtle_fx[G.gfx.turtle_fn] = (int)(x + 0.5);
+	G.gfx.turtle_fy[G.gfx.turtle_fn] = (int)(y + 0.5);
+	G.gfx.turtle_fn++;
+}
+
+static void turtle_goto(double nx, double ny)
+{
+	int x0 = (int)(G.gfx.turtle_x + 0.5);
+	int y0 = (int)(G.gfx.turtle_y + 0.5);
+	int x1 = (int)(nx + 0.5);
+	int y1 = (int)(ny + 0.5);
+	if (G.gfx.turtle_pen)
+		mmb_gfx_line(x0, y0, x1, y1, G.gfx.turtle_pen_col, 1);
+	G.gfx.turtle_x = nx;
+	G.gfx.turtle_y = ny;
+	turtle_record(nx, ny);
+}
+
+void mmb_cmd_turtle(void)
+{
+	if (mmb_match("RESET"))
+	{
+		mmb_turtle_init_state(1);
+		G.home_prompt = 1;
+		return;
+	}
+	turtle_ensure();
+	if (mmb_match("PEN"))
+	{
+		if (mmb_match("UP"))
+		{
+			G.gfx.turtle_pen = 0;
+			return;
+		}
+		if (mmb_match("DOWN"))
+		{
+			G.gfx.turtle_pen = 1;
+			return;
+		}
+		if (mmb_match("COLOUR") || mmb_match("COLOR"))
+		{
+			G.gfx.turtle_pen_col = (unsigned)mmb_as_int(mmb_expr());
+			return;
+		}
+		mmb_syntax();
+	}
+	if (mmb_match("FILL"))
+	{
+		if (mmb_match("COLOUR") || mmb_match("COLOR"))
+		{
+			G.gfx.turtle_fill_col = (unsigned)mmb_as_int(mmb_expr());
+			return;
+		}
+		if (mmb_match("PIXEL"))
+		{
+			int x = (int)mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			if (*G.p == ',')
+				G.p++;
+			mmb_gfx_plot(x, (int)mmb_as_int(mmb_expr()), G.gfx.turtle_fill_col);
+			return;
+		}
+		mmb_syntax();
+	}
+	if (mmb_match("BEGIN") && mmb_match("FILL"))
+	{
+		G.gfx.turtle_filling = 1;
+		G.gfx.turtle_fn = 0;
+		turtle_record(G.gfx.turtle_x, G.gfx.turtle_y);
+		return;
+	}
+	if (mmb_match("END") && mmb_match("FILL"))
+	{
+		G.gfx.turtle_filling = 0;
+		if (G.gfx.turtle_fn > 2)
+			mmb_gfx_fill_poly(G.gfx.turtle_fx, G.gfx.turtle_fy,
+					  G.gfx.turtle_fn, G.gfx.turtle_fill_col);
+		G.gfx.turtle_fn = 0;
+		return;
+	}
+	if (mmb_match("FORWARD"))
+	{
+		double n = mmb_as_float(mmb_expr());
+		double rad = G.gfx.turtle_hdg * 3.14159265358979323846 / 180.0;
+		turtle_goto(G.gfx.turtle_x + n * sin(rad),
+			    G.gfx.turtle_y - n * cos(rad));
+		return;
+	}
+	if (mmb_match("BACKWARD"))
+	{
+		double n = mmb_as_float(mmb_expr());
+		double rad = G.gfx.turtle_hdg * 3.14159265358979323846 / 180.0;
+		turtle_goto(G.gfx.turtle_x - n * sin(rad),
+			    G.gfx.turtle_y + n * cos(rad));
+		return;
+	}
+	if (mmb_match("TURN"))
+	{
+		if (mmb_match("LEFT"))
+		{
+			G.gfx.turtle_hdg = turtle_norm(G.gfx.turtle_hdg - mmb_as_float(mmb_expr()));
+			return;
+		}
+		if (mmb_match("RIGHT"))
+		{
+			G.gfx.turtle_hdg = turtle_norm(G.gfx.turtle_hdg + mmb_as_float(mmb_expr()));
+			return;
+		}
+		mmb_syntax();
+	}
+	if (mmb_match("HEADING"))
+	{
+		G.gfx.turtle_hdg = turtle_norm(mmb_as_float(mmb_expr()));
+		return;
+	}
+	if (mmb_match("MOVE"))
+	{
+		double x = mmb_as_float(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		turtle_goto(x, mmb_as_float(mmb_expr()));
+		return;
+	}
+	if (mmb_match("DOT"))
+	{
+		mmb_gfx_plot((int)(G.gfx.turtle_x + 0.5), (int)(G.gfx.turtle_y + 0.5),
+			     G.gfx.turtle_pen_col);
+		return;
+	}
+	if (mmb_match("DRAW"))
+	{
+		if (mmb_match("TURTLE"))
+		{
+			double rad = G.gfx.turtle_hdg * 3.14159265358979323846 / 180.0;
+			int x = (int)(G.gfx.turtle_x + 0.5);
+			int y = (int)(G.gfx.turtle_y + 0.5);
+			int tx = x + (int)(12 * sin(rad));
+			int ty = y - (int)(12 * cos(rad));
+			int lx = x + (int)(8 * sin(rad + 2.4));
+			int ly = y - (int)(8 * cos(rad + 2.4));
+			int rx = x + (int)(8 * sin(rad - 2.4));
+			int ry = y - (int)(8 * cos(rad - 2.4));
+			mmb_gfx_triangle(tx, ty, lx, ly, rx, ry, G.gfx.turtle_pen_col, -1);
+			return;
+		}
+		if (mmb_match("PIXEL"))
+		{
+			int x = (int)mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			if (*G.p == ',')
+				G.p++;
+			mmb_gfx_plot(x, (int)mmb_as_int(mmb_expr()), G.gfx.turtle_pen_col);
+			return;
+		}
+		if (mmb_match("LINE"))
+		{
+			mmb_val a[4];
+			int n = parse_args(a, 4);
+			if (n < 4)
+				mmb_syntax();
+			mmb_gfx_line((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]),
+				     G.gfx.turtle_pen_col, 1);
+			return;
+		}
+		if (mmb_match("CIRCLE"))
+		{
+			mmb_val a[3];
+			int n = parse_args(a, 3);
+			if (n < 3)
+				mmb_syntax();
+			mmb_gfx_circle((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+				       (int)mmb_as_int(a[2]), G.gfx.turtle_pen_col, 1, -1);
+			return;
+		}
+		mmb_syntax();
+	}
+	mmb_syntax();
+}
+
+void mmb_cmd_bitmap(void)
+{
+	mmb_val a[8];
+	int n = parse_args(a, 8);
+	int w = 8, h = 8, scale = G.gfx.font_scale, fill_bg = 0;
+	unsigned fg = G.gfx.fg, bg = G.gfx.bg;
+	unsigned char bytes[32];
+	const unsigned char *bits;
+	int nbytes, i;
+	if (n < 3)
+		mmb_syntax();
+	if (n >= 4)
+		w = (int)mmb_as_int(a[3]);
+	if (n >= 5)
+		h = (int)mmb_as_int(a[4]);
+	if (n >= 6)
+		scale = (int)mmb_as_int(a[5]);
+	if (n >= 7)
+		fg = (unsigned)mmb_as_int(a[6]);
+	if (n >= 8)
+	{
+		bg = (unsigned)mmb_as_int(a[7]);
+		fill_bg = 1;
+	}
+	if (a[2].type == T_STR)
+	{
+		bits = (const unsigned char *)a[2].s;
+		nbytes = (int)strlen(a[2].s);
+	}
+	else
+	{
+		int64_t v = mmb_as_int(a[2]);
+		for (i = 0; i < 8; i++)
+			bytes[i] = (unsigned char)((v >> (8 * i)) & 0xFF);
+		bits = bytes;
+		nbytes = 8;
+	}
+	mmb_gfx_bitmap((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
+		       bits, nbytes, w, h, scale, fg, bg, fill_bg);
 }
 
 void mmb_cmd_graphics(const char *kw)

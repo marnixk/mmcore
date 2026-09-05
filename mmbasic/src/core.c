@@ -1885,6 +1885,34 @@ static void exec_statement(void)
 		mmb_cmd_blit();
 		return;
 	}
+	if (mmb_match("IMAGE"))
+	{
+		mmb_cmd_image();
+		return;
+	}
+	if (mmb_match("FRAMEBUFFER"))
+	{
+		mmb_cmd_framebuffer();
+		return;
+	}
+	if (mmb_match("TURTLE"))
+	{
+		mmb_cmd_turtle();
+		return;
+	}
+	if (mmb_match("BITMAP"))
+	{
+		mmb_cmd_bitmap();
+		return;
+	}
+	if (mmb_match("GUI"))
+	{
+		if (mmb_match("BITMAP"))
+			mmb_cmd_bitmap();
+		else
+			mmb_syntax();
+		return;
+	}
 	if (mmb_match("CHDIR"))
 	{
 		mmb_cmd_chdir();

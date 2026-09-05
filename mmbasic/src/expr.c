@@ -193,10 +193,30 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("PIXEL"))
 	{
-		call_args(a, 2, &n);
-		if (n != 2)
-			mmb_syntax();
-		*out = mmb_int_val((int64_t)mmb_gfx_get((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1])));
+		int x, y, page = MMB_PAGE_CUR;
+		mmb_skip_sp();
+		if (*G.p != '(')
+		{
+			G.p = save;
+			return 0;
+		}
+		G.p++;
+		x = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		mmb_expect(',');
+		y = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (mmb_match("FRAMEBUFFER"))
+				page = MMB_PAGE_FB;
+			else
+				page = (int)mmb_as_int(mmb_expr());
+		}
+		mmb_expect(')');
+		*out = mmb_int_val((int64_t)mmb_gfx_get_page(x, y, page));
 		return 1;
 	}
 	if (mmb_match("LEN"))

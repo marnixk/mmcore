@@ -179,6 +179,8 @@ void mmb_cmd_load(void)
 	}
 	if (is_jpg)
 	{
+		if (mmb_gfx_writing_fb())
+			mmb_error("?FRAMEBUFFER");
 		if (mmb_load_jpeg(kind, x, y) != 0)
 			mmb_error("?JPEG");
 	}

@@ -93,16 +93,66 @@ unsigned mmb_named_colour(const char *name, int *ok)
 	return 0;
 }
 
-static int map_y(int y)
+int mmb_gfx_map_y(int y, int h)
 {
 	if (G.opt.y_axis_up)
-		return G.gfx.h - 1 - y;
+		return h - 1 - y;
 	return y;
+}
+
+int mmb_gfx_writing_fb(void)
+{
+	return G.gfx.write_fb && G.gfx.fb != 0;
+}
+
+static int tgt_w(void)
+{
+	return mmb_gfx_writing_fb() ? G.gfx.fb_w : G.gfx.w;
+}
+
+static int tgt_h(void)
+{
+	return mmb_gfx_writing_fb() ? G.gfx.fb_h : G.gfx.h;
+}
+
+static int map_y(int y)
+{
+	return mmb_gfx_map_y(y, tgt_h());
+}
+
+static void free_soft(void)
+{
+	int i;
+	if (G.gfx.fb)
+	{
+		G.plat->free(G.gfx.fb);
+		G.gfx.fb = 0;
+	}
+	if (G.gfx.fb_bak)
+	{
+		G.plat->free(G.gfx.fb_bak);
+		G.gfx.fb_bak = 0;
+	}
+	G.gfx.write_fb = 0;
+	G.gfx.fb_w = 0;
+	G.gfx.fb_h = 0;
+	for (i = 0; i < MMB_MAX_BLIT; i++)
+	{
+		if (G.gfx.blit[i].pix)
+		{
+			G.plat->free(G.gfx.blit[i].pix);
+			G.gfx.blit[i].pix = 0;
+		}
+		G.gfx.blit[i].used = 0;
+		G.gfx.blit[i].w = 0;
+		G.gfx.blit[i].h = 0;
+	}
 }
 
 static void free_pages(void)
 {
 	int i;
+	free_soft();
 	for (i = 0; i < MMB_MAX_PAGES; i++)
 	{
 		if (G.gfx.page[i])
@@ -128,6 +178,48 @@ static uint32_t *page_buf(int n)
 	return G.gfx.page[n];
 }
 
+uint32_t *mmb_gfx_buf_for(int page, int *w, int *h)
+{
+	if (page == MMB_PAGE_CUR)
+	{
+		if (mmb_gfx_writing_fb())
+		{
+			*w = G.gfx.fb_w;
+			*h = G.gfx.fb_h;
+			return G.gfx.fb;
+		}
+		page = G.gfx.write_page;
+	}
+	if (page == MMB_PAGE_FB)
+	{
+		if (!G.gfx.fb)
+			mmb_error("?FRAMEBUFFER");
+		*w = G.gfx.fb_w;
+		*h = G.gfx.fb_h;
+		return G.gfx.fb;
+	}
+	if (page < 0 || page >= G.gfx.pages)
+		mmb_error("?PAGE");
+	*w = G.gfx.w;
+	*h = G.gfx.h;
+	return page_buf(page);
+}
+
+void mmb_gfx_present_if(int page)
+{
+	int p = page;
+	if (p == MMB_PAGE_FB)
+		return;
+	if (p == MMB_PAGE_CUR)
+	{
+		if (mmb_gfx_writing_fb())
+			return;
+		p = G.gfx.write_page;
+	}
+	if (p == G.gfx.display_page)
+		mmb_gfx_present();
+}
+
 void mmb_gfx_copy_page(int src, int dst)
 {
 	unsigned bytes;
@@ -140,48 +232,7 @@ void mmb_gfx_copy_page(int src, int dst)
 	memcpy(d, s, bytes);
 }
 
-void mmb_gfx_blit(int sx, int sy, int w, int h, int dx, int dy)
-{
-	uint32_t *pg;
-	int xi, yi;
-	int xstep, ystep, xend, yend;
-
-	if (w <= 0 || h <= 0)
-		return;
-	pg = page_buf(G.gfx.write_page);
-	if (dy > sy || (dy == sy && dx > sx))
-	{
-		xstep = 1;
-		ystep = 1;
-		xend = w;
-		yend = h;
-	}
-	else
-	{
-		xstep = -1;
-		ystep = -1;
-		xend = -1;
-		yend = -1;
-	}
-	for (yi = (ystep > 0 ? 0 : h - 1); yi != yend; yi += ystep)
-	{
-		for (xi = (xstep > 0 ? 0 : w - 1); xi != xend; xi += xstep)
-		{
-			int ux = sx + xi, uy = sy + yi;
-			int vx = dx + xi, vy = dy + yi;
-			int by, bv;
-			if (ux < 0 || uy < 0 || ux >= G.gfx.w || uy >= G.gfx.h)
-				continue;
-			if (vx < 0 || vy < 0 || vx >= G.gfx.w || vy >= G.gfx.h)
-				continue;
-			by = map_y(uy);
-			bv = map_y(vy);
-			pg[bv * G.gfx.w + vx] = pg[by * G.gfx.w + ux];
-			if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
-				G.plat->set_pixel(vx, bv, pg[bv * G.gfx.w + vx]);
-		}
-	}
-}
+/* CMM2 BLIT lives in gfx_cmm2.c (source page + orientation). */
 
 void mmb_gfx_present(void)
 {
@@ -256,41 +307,55 @@ void mmb_gfx_set_mode(int mode, int bits)
 void mmb_gfx_plot(int x, int y, unsigned rgb)
 {
 	uint32_t *pg;
-	int by;
+	int tw, th, by;
+	tw = tgt_w();
+	th = tgt_h();
 	y = map_y(y);
-	if (x < 0 || y < 0 || x >= G.gfx.w || y >= G.gfx.h)
+	if (x < 0 || y < 0 || x >= tw || y >= th)
 		return;
 	rgb = mmb_quantize(rgb);
-	pg = page_buf(G.gfx.write_page);
+	if (mmb_gfx_writing_fb())
+		pg = G.gfx.fb;
+	else
+		pg = page_buf(G.gfx.write_page);
 	by = y;
-	pg[by * G.gfx.w + x] = rgb;
-	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
+	pg[by * tw + x] = rgb;
+	if (!mmb_gfx_writing_fb() && G.gfx.write_page == G.gfx.display_page &&
+	    G.plat && G.plat->set_pixel)
 		G.plat->set_pixel(x, by, rgb);
+}
+
+unsigned mmb_gfx_get_page(int x, int y, int page)
+{
+	int w, h, by;
+	uint32_t *pg = mmb_gfx_buf_for(page, &w, &h);
+	by = mmb_gfx_map_y(y, h);
+	if (x < 0 || by < 0 || x >= w || by >= h)
+		return 0;
+	return pg[by * w + x];
 }
 
 unsigned mmb_gfx_get(int x, int y)
 {
-	uint32_t *pg;
-	y = map_y(y);
-	if (x < 0 || y < 0 || x >= G.gfx.w || y >= G.gfx.h)
-		return 0;
-	pg = page_buf(G.gfx.write_page);
-	return pg[y * G.gfx.w + x];
+	return mmb_gfx_get_page(x, y, MMB_PAGE_CUR);
 }
 
 void mmb_gfx_cls(unsigned rgb)
 {
-	int x, y;
+	int x, y, tw, th;
 	uint32_t *pg;
-	unsigned bytes;
 	rgb = mmb_quantize(rgb);
-	pg = page_buf(G.gfx.write_page);
-	bytes = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-	for (y = 0; y < G.gfx.h; y++)
-		for (x = 0; x < G.gfx.w; x++)
-			pg[y * G.gfx.w + x] = rgb;
-	(void)bytes;
-	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->fill_screen)
+	tw = tgt_w();
+	th = tgt_h();
+	if (mmb_gfx_writing_fb())
+		pg = G.gfx.fb;
+	else
+		pg = page_buf(G.gfx.write_page);
+	for (y = 0; y < th; y++)
+		for (x = 0; x < tw; x++)
+			pg[y * tw + x] = rgb;
+	if (!mmb_gfx_writing_fb() && G.gfx.write_page == G.gfx.display_page &&
+	    G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(rgb);
 }
 
