@@ -41,6 +41,8 @@ public:
 private:
 	void AttachKeyboard (void);
 	void ProcessChar (char c, char *Line, unsigned *pLen);
+	void PollUsbRepeat (void);
+	void ApplyRawKeys (void);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
 	static void KeyStatusHandlerRaw (unsigned char ucModifiers,
@@ -66,6 +68,16 @@ private:
 	char			m_Line[256];
 	unsigned		m_nLen;
 	int			m_nEsc;
+	char			m_Hist[256];
+	char			m_RepeatSeq[16];
+	unsigned		m_RepeatLen;
+	unsigned		m_HoldMs;
+	unsigned		m_LastRepeatMs;
+	int			m_DidRepeat;
+	unsigned char		m_HeldHid;
+	unsigned char		m_RawKeys[6];
+	unsigned char		m_LastMods;
+	int			m_UsbBurst;
 };
 
 #endif

@@ -25,7 +25,7 @@ void mmb_const_define(const char *name, int type, mmb_val val)
 	for (i = 0; i < MMB_MAX_CONST; i++)
 	{
 		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
-			mmb_error("?ALREADY DECLARED");
+			return; /* CMM2 allows CONST inside a SUB on each call */
 		if (!G.consts[i].used && slot < 0)
 			slot = i;
 	}
@@ -204,7 +204,7 @@ void mmb_cmd_dim(void)
 	/* DIM [INTEGER|FLOAT|STRING] name(d1[,d2...]) [AS type] [, ...] */
 	int group = 0;
 	mmb_skip_sp();
-	if (mmb_match("INTEGER"))
+	if (mmb_match("INTEGER") || mmb_match("INT"))
 		group = T_INT;
 	else if (mmb_match("STRING"))
 		group = T_STR;
@@ -264,7 +264,14 @@ void mmb_cmd_dim(void)
 
 		for (i = 0; i < MMB_MAX_VARS; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
+			{
+				if (G.dim_local)
+				{
+					slot = i;
+					goto dim_init;
+				}
 				mmb_error("?ALREADY DECLARED");
+			}
 
 		for (slot = 0; slot < MMB_MAX_VARS; slot++)
 			if (!G.vars[slot].used)
@@ -308,22 +315,61 @@ void mmb_cmd_dim(void)
 		if (dims)
 			G.dim_used = 1;
 		(void)idxdummy;
+	dim_init:
 		mmb_skip_sp();
 		if (*G.p == '=')
 		{
-			mmb_val init;
+			int ei = 0;
 			G.p++;
-			init = mmb_expr();
-			if (type == T_STR)
+			mmb_skip_sp();
+			if (*G.p == '(')
 			{
-				if (init.type != T_STR)
-					mmb_error("?TYPE MISMATCH");
-				strncpy(G.vars[slot].data.s[0], init.s, MMB_MAX_STR);
+				G.p++;
+				while (ei < G.vars[slot].size)
+				{
+					mmb_val init;
+					mmb_skip_sp();
+					if (*G.p == ')')
+						break;
+					init = mmb_expr();
+					if (type == T_STR)
+					{
+						if (init.type != T_STR)
+							mmb_error("?TYPE MISMATCH");
+						strncpy(G.vars[slot].data.s[ei], init.s, MMB_MAX_STR);
+					}
+					else if (type == T_INT)
+						G.vars[slot].data.i[ei] = mmb_as_int(init);
+					else
+						G.vars[slot].data.f[ei] = mmb_as_float(init);
+					ei++;
+					mmb_skip_sp();
+					if (*G.p == ',')
+					{
+						G.p++;
+						continue;
+					}
+					break;
+				}
+				mmb_skip_sp();
+				if (*G.p == ')')
+					G.p++;
 			}
-			else if (type == T_INT)
-				G.vars[slot].data.i[0] = mmb_as_int(init);
 			else
-				G.vars[slot].data.f[0] = mmb_as_float(init);
+			{
+				mmb_val init;
+				init = mmb_expr();
+				if (type == T_STR)
+				{
+					if (init.type != T_STR)
+						mmb_error("?TYPE MISMATCH");
+					strncpy(G.vars[slot].data.s[0], init.s, MMB_MAX_STR);
+				}
+				else if (type == T_INT)
+					G.vars[slot].data.i[0] = mmb_as_int(init);
+				else
+					G.vars[slot].data.f[0] = mmb_as_float(init);
+			}
 			mmb_skip_sp();
 		}
 		if (*G.p == ',')

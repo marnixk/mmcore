@@ -30,12 +30,14 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/cmd_lang.o \
 	  $(MMB)/src/cmd_load.o \
 	  $(MMB)/src/png.o \
+	  $(MMB)/src/cmd_sprite.o \
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/editor.o \
 	  $(MMB)/src/assets.o \
 	  $(MMB)/src/libc_shims.o \
 	  $(MMB)/third_party/picojpeg.o \
-	  $(MMB)/third_party/hxcmod.o
+	  $(MMB)/third_party/hxcmod.o \
+	  $(MMB)/third_party/upng.o
 
 LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
 	  $(CIRCLEHOME)/addon/SDCard/libsdcard.a \

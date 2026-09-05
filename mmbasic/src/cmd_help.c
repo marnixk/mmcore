@@ -21,7 +21,7 @@ static const char kIndexCommands[] =
 	"Graphics\n"
 	"  CLS PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
-	"  IMAGE FRAMEBUFFER TURTLE\n"
+	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"\n"
 	"Files\n"
 	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
@@ -33,7 +33,7 @@ static const char kIndexCommands[] =
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
-	"  FACTORY_RESET CONNECT CONTINUE EXIT LS\n"
+	"  SETTICK FACTORY_RESET CONNECT CONTINUE EXIT LS\n"
 	"\n"
 	"Wi-Fi\n"
 	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
@@ -290,6 +290,7 @@ static const char kHelpPage[] =
 	"PAGE WRITE n | FRAMEBUFFER\n"
 	"PAGE DISPLAY n\n"
 	"PAGE COPY src [TO dst]\n"
+	"PAGE COPY src, dst [, I|B]\n"
 	"PAGE SCROLL n, x, y [, fillcolour]\n"
 	"PAGE AND_PIXELS s1, s2, dest\n"
 	"PAGE OR_PIXELS  s1, s2, dest\n"
@@ -437,12 +438,12 @@ static const char kHelpEdit[] =
 	"Open the colour TUI editor (menu bar, tabs, status).\n"
 	"With no file, uses the current program name if set.\n"
 	"\n"
-	"Menus: Esc+F File  Esc+E Edit  Esc+R Run  Esc+H Help\n"
-	"       F10 File menu   Esc+1..9 switch tabs\n"
+	"Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+H Help\n"
+	"       F10 File menu   Alt+1..9 switch tabs\n"
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
 	"      ^R save and run  ^K cut line  ^U paste\n"
-	"      Tab inserts 4 spaces   Esc+1..9 switch tabs\n"
+	"      Tab inserts 4 spaces   Alt+1..9 switch tabs\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
@@ -465,6 +466,9 @@ static const char kHelpFiles[] =
 	"opens it. Enter on a .BAS file RUNs it. View (v/F3)\n"
 	"previews PNG/JPG or plays MP3/XM/MOD when supported.\n"
 	"Tab switches panes. q or Esc leaves FILES.\n"
+	"Menus: Alt+L Left  Alt+F File  Alt+C Command\n"
+	"       Alt+O Options  Alt+R Right.\n"
+	"View (v/F3) also shows .BAS/.INC/.TXT with colour.\n"
 	"\n"
 	"Example:  FILES";
 
@@ -694,7 +698,7 @@ static const char kHelpOn[] =
 	"ON n GOTO line [, line]...\n"
 	"ON n GOSUB line [, line]...\n"
 	"ON ERROR ...     (accepted, not trapped)\n"
-	"ON KEY ...       (accepted, no keyboard hook)\n"
+	"ON KEY subname   Call subname when a key is waiting.\n"
 	"\n"
 	"Jump to the n-th line number (1-based).\n"
 	"\n"
@@ -747,6 +751,7 @@ static const char kHelpCmm2[] =
 	"  SELECT CASE CASE IS CASE TO CASE ELSE\n"
 	"  GOTO GOSUB RETURN labels ON GOTO ON GOSUB\n"
 	"  DATA READ RESTORE SUB FUNCTION CALL\n"
+	"  #INCLUDE SETTICK ON KEY\n"
 	"  EXIT DO|FOR|SUB|FUNCTION  CONTINUE FOR|DO\n"
 	"  INC DEC CAT ERROR MEMORY RANDOMIZE SORT\n"
 	"  MID$(s$,n[,m])=  DATE$= TIME$= TIMER=\n"
@@ -755,7 +760,7 @@ static const char kHelpCmm2[] =
 	"  PRINT INPUT LINE INPUT CLS\n"
 	"  PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
-	"  IMAGE FRAMEBUFFER TURTLE\n"
+	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME KILL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
@@ -765,22 +770,21 @@ static const char kHelpCmm2[] =
 	"Implemented functions: HELP FUNCTIONS.\n"
 	"\n"
 	"Accepted but not trapped:\n"
-	"  ON ERROR  ON KEY\n"
+	"  ON ERROR\n"
 	"\n"
 	"Not on this Pi (CMM2 hardware / firmware):\n"
-	"  #INCLUDE #DEFINE #COMMENT #MMDEBUG\n"
+	"  #DEFINE #COMMENT #MMDEBUG\n"
 	"  ADC AUTOSAVE BITBANG CSUB CPU DAC\n"
 	"  CONTROLLER CLASSIC/MOUSE/NUNCHUK\n"
 	"  DEFINEFONT DRAW3D EXECUTE FLASH\n"
 	"  GUI controls HUMID I2C IR\n"
 	"  LIBRARY MATH MMDEBUG PIN SETPIN PWM PORT\n"
-	"  POKE PEEK SPI SPRITE VAR SAVE\n"
+	"  POKE PEEK SPI VAR\n"
 	"  WATCHDOG WII XMODEM COM GPS 1-WIRE\n"
 	"  UPDATE FIRMWARE  preprocessor  CFUNCTION\n"
 	"\n"
-	"SUB/FUNCTION arguments and CALL name$ are not\n"
-	"implemented; use CALL name. Typed console INPUT\n"
-	"is not implemented (file INPUT and LINE INPUT are).\n"
+	"Typed console INPUT is not implemented\n"
+	"(file INPUT and LINE INPUT are).\n"
 	"\n"
 	"Type HELP or HELP BASIC for syntax.";
 
@@ -1119,7 +1123,7 @@ static const char kHelpFunctions[] =
 	"\n"
 	"Strings: LEN ASC CHR$ STR$ VAL LEFT$ RIGHT$ MID$\n"
 	"  UCASE$ LCASE$ SPACE$ STRING$ INSTR HEX$ OCT$ BIN$\n"
-	"  FORMAT$ INKEY$ TAB\n"
+	"  FORMAT$ INKEY$ KEYDOWN TAB\n"
 	"Math: ABS INT FIX SQR/SQRT SIN COS TAN ATN/ATAN\n"
 	"  ATN2 ACOS ASIN RND SGN EXP LOG PI MAX MIN\n"
 	"  DEG RAD CHOICE BOUND\n"
@@ -1134,6 +1138,29 @@ static const char kHelpFunctions[] =
 	"\n"
 	"Example:  PRINT LEFT$(\"MMBASIC\",2)\n"
 	"          PRINT RGB(255,0,0)";
+
+static const char kHelpSprite[] =
+	"SPRITE LOADPNG n, file$ [, page]\n"
+	"SPRITE READ n, x, y, w, h [, page]\n"
+	"SPRITE SHOW n, x, y [, layer]\n"
+	"SPRITE HIDE n\n"
+	"SPRITE MOVE n, x, y\n"
+	"SPRITE CLOSE n | CLOSE ALL\n"
+	"\n"
+	"CMM2-style sprites composited over PAGE DISPLAY.\n"
+	"LOADPNG accepts a path with or without .PNG.\n"
+	"Missing image files create an empty placeholder.\n"
+	"\n"
+	"Example:  SPRITE LOADPNG 1, \"SHIP.PNG\"\n"
+	"          SPRITE SHOW 1, 40, 40, 1";
+
+static const char kHelpSettick[] =
+	"SETTICK period, handler [, slot]\n"
+	"\n"
+	"Call SUB handler every period milliseconds.\n"
+	"slot is 0 to 3 (default 0). period 0 disables.\n"
+	"\n"
+	"Example:  SETTICK 10, GameTick";
 
 static const help_topic kTopics[] = {
 	{ "HELP",        HELP_CMD,  kHelpHelp },
@@ -1158,6 +1185,8 @@ static const help_topic kTopics[] = {
 	{ "FRAMEBUFFER", HELP_CMD,  kHelpFramebuffer },
 	{ "BITMAP",      HELP_CMD,  kHelpBitmap },
 	{ "TURTLE",      HELP_CMD,  kHelpTurtle },
+	{ "SPRITE",      HELP_CMD,  kHelpSprite },
+	{ "SETTICK",     HELP_CMD,  kHelpSettick },
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
 	{ "AUDIO_TARGET", HELP_CMD, kHelpAudioTarget },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },

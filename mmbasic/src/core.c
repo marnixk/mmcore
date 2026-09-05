@@ -2,8 +2,11 @@
 
 extern int mmb_parse_var_ref(char *name, int *nidx, int *idx);
 extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val);
+extern mmb_val mmb_load_var(mmb_var *v, int off);
 
 static void exec_statement(void);
+static void gosub_restore_top(void);
+static void exec_line_body(const char *body);
 static void run_program(void);
 static int line_match(const char *body, const char *kw);
 static int find_wend_pc(int from);
@@ -348,6 +351,30 @@ static void sub_register(const char *name, int pc, int is_func)
 	G.subs[slot].line_pc = pc;
 	G.subs[slot].is_func = is_func;
 	G.subs[slot].used = 1;
+	G.subs[slot].nargs = 0;
+	mmb_skip_sp();
+	if (*G.p == '(')
+		G.p++;
+	while (G.subs[slot].nargs < MMB_MAX_SUB_ARGS)
+	{
+		mmb_skip_sp();
+		if (*G.p == ')' || *G.p == 0 || *G.p == '\'' || *G.p == ':')
+			break;
+		if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_'))
+			break;
+		mmb_ident(G.subs[slot].args[G.subs[slot].nargs], MMB_MAX_NAME);
+		G.subs[slot].nargs++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	mmb_skip_sp();
+	if (*G.p == ')')
+		G.p++;
 	G.nsubs++;
 }
 
@@ -430,7 +457,10 @@ void mmb_cmd_gosub(void)
 {
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
 		mmb_error("?GOSUB");
-	G.gosub_stack[G.gosub_sp++] = G.run_pc + 1;
+	G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
+	G.gosub_event[G.gosub_sp] = 0;
+	G.gosub_nsave[G.gosub_sp] = 0;
+	G.gosub_sp++;
 	G.branch_pc = parse_target();
 }
 
@@ -438,7 +468,9 @@ void mmb_cmd_return(void)
 {
 	if (G.gosub_sp <= 0)
 		mmb_error("?RETURN WITHOUT GOSUB");
-	G.branch_pc = G.gosub_stack[--G.gosub_sp];
+	G.gosub_sp--;
+	gosub_restore_top();
+	G.branch_pc = G.gosub_stack[G.gosub_sp];
 }
 
 void mmb_cmd_while(void)
@@ -772,19 +804,32 @@ void mmb_cmd_restore(void)
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
-		mmb_val v = mmb_expr();
+		int pc = -1, i;
+		if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
 		{
-			int pc = mmb_find_line_pc((int)mmb_as_int(v));
-			int i;
-			G.data_line = pc;
-			G.data_pos = 0;
-			for (i = pc; i < G.nprog; i++)
-			{
-				if (line_match(G.prog[i], "DATA"))
-					return;
-			}
-			mmb_error("?NO DATA");
+			const char *save = G.p;
+			char name[MMB_MAX_NAME];
+			mmb_ident(name, sizeof(name));
+			mmb_type_suffix(name);
+			mmb_skip_sp();
+			if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+				pc = find_label_pc(name);
+			else
+				G.p = save;
 		}
+		if (pc < 0)
+		{
+			mmb_val v = mmb_expr();
+			pc = mmb_find_line_pc((int)mmb_as_int(v));
+		}
+		G.data_line = pc;
+		G.data_pos = 0;
+		for (i = pc; i < G.nprog; i++)
+		{
+			if (line_match(G.prog[i], "DATA"))
+				return;
+		}
+		mmb_error("?NO DATA");
 	}
 	else
 	{
@@ -795,15 +840,25 @@ void mmb_cmd_restore(void)
 
 void mmb_cmd_const(void)
 {
-	char name[MMB_MAX_NAME];
-	int t;
-	mmb_val v;
-	mmb_ident(name, sizeof(name));
-	t = mmb_type_suffix(name);
-	mmb_skip_sp();
-	mmb_expect('=');
-	v = mmb_expr();
-	mmb_const_define(name, t, v);
+	for (;;)
+	{
+		char name[MMB_MAX_NAME];
+		int t;
+		mmb_val v;
+		mmb_ident(name, sizeof(name));
+		t = mmb_type_suffix(name);
+		mmb_skip_sp();
+		mmb_expect('=');
+		v = mmb_expr();
+		mmb_const_define(name, t, v);
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
 }
 
 void mmb_cmd_save(void)
@@ -1039,16 +1094,121 @@ void mmb_cmd_line_input(void)
 void mmb_cmd_call(void)
 {
 	char name[MMB_MAX_NAME];
-	int si;
 	mmb_ident(name, sizeof(name));
 	mmb_type_suffix(name);
-	si = sub_find(name);
-	if (si < 0)
+	if (!mmb_call_named_sub(name))
 		mmb_error("?SUB NOT FOUND");
+}
+
+static void gosub_restore_top(void)
+{
+	int g, i, ex;
+	if (G.gosub_sp < 0)
+		return;
+	g = G.gosub_sp;
+	ex = G.opt.explicit;
+	G.opt.explicit = 0;
+	for (i = 0; i < G.gosub_nsave[g]; i++)
+	{
+		if (!G.gosub_saven[g][i][0])
+			continue;
+		if (G.gosub_savev[g][i].type == 0)
+			continue;
+		mmb_do_assign(G.gosub_saven[g][i], G.gosub_savev[g][i].type, 0, 0,
+			      G.gosub_savev[g][i]);
+	}
+	G.opt.explicit = ex;
+	G.gosub_nsave[g] = 0;
+}
+
+int mmb_call_named_sub(const char *name)
+{
+	int si, i, narg = 0, ex, g;
+	mmb_val args[MMB_MAX_SUB_ARGS];
+	char nbuf[MMB_MAX_NAME];
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	si = sub_find(nbuf);
+	if (si < 0)
+		return 0;
+	mmb_skip_sp();
+	if (*G.p == '(')
+	{
+		G.p++;
+		mmb_skip_sp();
+		if (*G.p != ')')
+		{
+			while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ')' && *G.p != ':' && *G.p != '\'')
+			{
+				mmb_skip_sp();
+				if (*G.p == ',')
+				{
+					args[narg++] = mmb_int_val(0);
+					G.p++;
+					continue;
+				}
+				args[narg++] = mmb_expr();
+				mmb_skip_sp();
+				if (*G.p == ',')
+				{
+					G.p++;
+					continue;
+				}
+				break;
+			}
+		}
+		mmb_skip_sp();
+		if (*G.p == ')')
+			G.p++;
+	}
+	else if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
+		{
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				args[narg++] = mmb_int_val(0);
+				G.p++;
+				continue;
+			}
+			args[narg++] = mmb_expr();
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
+	}
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
 		mmb_error("?GOSUB");
-	G.gosub_stack[G.gosub_sp++] = G.run_pc + 1;
+	g = G.gosub_sp;
+	G.gosub_stack[g] = G.run_pc + 1;
+	G.gosub_event[g] = 0;
+	G.gosub_nsave[g] = G.subs[si].nargs;
+	ex = G.opt.explicit;
+	G.opt.explicit = 0;
+	for (i = 0; i < G.subs[si].nargs; i++)
+	{
+		mmb_var *v;
+		int idx = 0;
+		strncpy(G.gosub_saven[g][i], G.subs[si].args[i], MMB_MAX_NAME - 1);
+		G.gosub_saven[g][i][MMB_MAX_NAME - 1] = 0;
+		v = mmb_find_var(G.subs[si].args[i], 0, 0, 0, &idx);
+		if (v)
+			G.gosub_savev[g][i] = mmb_load_var(v, 0);
+		else
+			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
+		if (i < narg)
+			mmb_do_assign(G.subs[si].args[i], 0, 0, 0, args[i]);
+	}
+	G.opt.explicit = ex;
+	G.gosub_sp++;
 	G.branch_pc = G.subs[si].line_pc;
+	return 1;
 }
 
 void mmb_cmd_sub(void)
@@ -1078,7 +1238,11 @@ void mmb_cmd_function(void)
 void mmb_cmd_end_sub(void)
 {
 	if (G.gosub_sp > 0)
-		G.branch_pc = G.gosub_stack[--G.gosub_sp];
+	{
+		G.gosub_sp--;
+		gosub_restore_top();
+		G.branch_pc = G.gosub_stack[G.gosub_sp];
+	}
 	else
 		G.branch_pc = G.nprog;
 	G.in_sub = 0;
@@ -1274,17 +1438,146 @@ static void do_let(void)
 	}
 	if (mmb_keyword_eq(name, "DATE") && (t == T_STR || v.type == T_STR))
 	{
-		strncpy(G.date_s, v.s, sizeof(G.date_s) - 1);
-		G.date_s[sizeof(G.date_s) - 1] = 0;
+		if (mmb_clock_set_date(v.s) != 0)
+			strncpy(G.date_s, v.s, sizeof(G.date_s) - 1);
 		return;
 	}
 	if (mmb_keyword_eq(name, "TIME") && (t == T_STR || v.type == T_STR))
 	{
-		strncpy(G.time_s, v.s, sizeof(G.time_s) - 1);
-		G.time_s[sizeof(G.time_s) - 1] = 0;
+		if (mmb_clock_set_time(v.s) != 0)
+			strncpy(G.time_s, v.s, sizeof(G.time_s) - 1);
 		return;
 	}
 	mmb_do_assign(name, t, nidx, idx, v);
+}
+
+static int is_include_line(const char *line, char *inc, int incsz)
+{
+	const char *p = line;
+	int n = 0;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p != '#')
+		return 0;
+	p++;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (!((p[0] == 'I' || p[0] == 'i') && (p[1] == 'N' || p[1] == 'n') &&
+	      (p[2] == 'C' || p[2] == 'c') && (p[3] == 'L' || p[3] == 'l') &&
+	      (p[4] == 'U' || p[4] == 'u') && (p[5] == 'D' || p[5] == 'd') &&
+	      (p[6] == 'E' || p[6] == 'e')))
+		return 1; /* other preprocessor: treat as skip */
+	p += 7;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '"')
+	{
+		p++;
+		while (*p && *p != '"' && n < incsz - 1)
+			inc[n++] = *p++;
+	}
+	else
+	{
+		while (*p && *p != ' ' && *p != '\t' && *p != '\'' && n < incsz - 1)
+			inc[n++] = *p++;
+	}
+	inc[n] = 0;
+	return n ? 2 : 1;
+}
+
+static void join_rel(const char *base, const char *rel, char *out, int outsz)
+{
+	int i, last = -1;
+	if (rel[0] == '/' || (rel[1] == ':' && rel[2] == '/'))
+	{
+		strncpy(out, rel, outsz - 1);
+		out[outsz - 1] = 0;
+		return;
+	}
+	strncpy(out, base, outsz - 1);
+	out[outsz - 1] = 0;
+	for (i = 0; out[i]; i++)
+		if (out[i] == '/' || out[i] == '\\')
+			last = i;
+	if (last >= 0)
+		out[last + 1] = 0;
+	else
+		out[0] = 0;
+	strncat(out, rel, outsz - strlen(out) - 1);
+}
+
+static void load_basic_text(const char *path, const char *text, int *auto_n, int depth);
+
+static void load_basic_file(const char *path, int *auto_n, int depth)
+{
+	int sz;
+	unsigned got = 0;
+	char *buf;
+	if (depth > 8)
+		mmb_error("?INCLUDE");
+	sz = mmb_vfs_size(path);
+	if (sz < 0)
+		mmb_error("?FILE NOT FOUND");
+	buf = G.plat->alloc((unsigned)sz + 2);
+	if (!buf)
+		mmb_error("?OUT OF MEMORY");
+	if (mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(buf);
+		mmb_error("?FILE NOT FOUND");
+	}
+	buf[got] = 0;
+	load_basic_text(path, buf, auto_n, depth);
+	G.plat->free(buf);
+}
+
+static void load_basic_text(const char *path, const char *text, int *auto_n, int depth)
+{
+	const char *s = text;
+	while (*s)
+	{
+		char line[MMB_LINE_LEN];
+		char inc[128], full[160];
+		int li = 0, num = 0, kind;
+		const char *rest;
+		while (*s && *s != '\n' && *s != '\r' && li < MMB_LINE_LEN - 1)
+			line[li++] = *s++;
+		line[li] = 0;
+		while (*s == '\n' || *s == '\r')
+			s++;
+		kind = is_include_line(line, inc, sizeof(inc));
+		if (kind == 2)
+		{
+			join_rel(path, inc, full, sizeof(full));
+			load_basic_file(full, auto_n, depth + 1);
+			continue;
+		}
+		if (kind == 1)
+			continue;
+		if (starts_with_line_number(line, &num, &rest))
+			store_line(num, rest);
+		else if (line[0])
+		{
+			store_line(*auto_n, line);
+			*auto_n += 10;
+		}
+	}
+}
+
+static void chdir_to_file(const char *path)
+{
+	char dir[160];
+	int i, last = -1;
+	strncpy(dir, path, sizeof(dir) - 1);
+	dir[sizeof(dir) - 1] = 0;
+	for (i = 0; dir[i]; i++)
+		if (dir[i] == '/' || dir[i] == '\\')
+			last = i;
+	if (last <= 0)
+		return;
+	dir[last] = 0;
+	if (dir[0])
+		mmb_vfs_chdir(dir);
 }
 
 void mmb_cmd_new(void)
@@ -1346,33 +1639,11 @@ void mmb_cmd_run(void)
 		if (!strchr(fname, '.'))
 			strncat(fname, ".BAS", sizeof(fname) - strlen(fname) - 1);
 		{
-			char buf[8192];
-			unsigned got = 0;
-			if (mmb_vfs_read(fname, buf, sizeof(buf) - 1, &got) != 0)
-				mmb_error("?FILE NOT FOUND");
-			buf[got] = 0;
+			int auto_n = 10;
 			strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
 			G.nprog = 0;
-			{
-				char *s = buf;
-				int auto_n = 10;
-				while (*s)
-				{
-					char line[MMB_LINE_LEN];
-					int li = 0, num = 0;
-					const char *rest;
-					while (*s && *s != '\n' && *s != '\r' && li < MMB_LINE_LEN - 1)
-						line[li++] = *s++;
-					line[li] = 0;
-					while (*s == '\n' || *s == '\r')
-						s++;
-					if (starts_with_line_number(line, &num, &rest))
-						store_line(num, rest);
-					else if (line[0])
-						store_line(auto_n, line);
-					auto_n += 10;
-				}
-			}
+			chdir_to_file(fname);
+			load_basic_file(fname, &auto_n, 0);
 		}
 	}
 	run_program();
@@ -1408,7 +1679,17 @@ void mmb_cmd_if(void)
 			mmb_ident(name, sizeof(name));
 			mmb_type_suffix(name);
 			mmb_skip_sp();
-			if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			if ((*G.p == 0 || *G.p == ':' || *G.p == '\'') &&
+			    sub_find(name) < 0 &&
+			    !mmb_keyword_eq(name, "RETURN") &&
+			    !mmb_keyword_eq(name, "EXIT") &&
+			    !mmb_keyword_eq(name, "END") &&
+			    !mmb_keyword_eq(name, "STOP") &&
+			    !mmb_keyword_eq(name, "CONTINUE") &&
+			    !mmb_keyword_eq(name, "GOTO") &&
+			    !mmb_keyword_eq(name, "GOSUB") &&
+			    !mmb_keyword_eq(name, "NEW") &&
+			    !mmb_keyword_eq(name, "RUN"))
 			{
 				G.branch_pc = find_label_pc(name);
 				return;
@@ -1458,7 +1739,7 @@ void mmb_cmd_for(void)
 	step = mmb_int_val(1);
 	if (mmb_match("STEP"))
 		step = mmb_expr();
-	mmb_do_assign(name, t ? t : T_NUM, nidx, idx, from);
+	mmb_do_assign(name, t, nidx, idx, from);
 	if (G.for_sp >= 16)
 		mmb_error("?FOR");
 	strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
@@ -1502,8 +1783,43 @@ void mmb_cmd_next(void)
 		}
 		else
 		{
+			/* CMM2: extra NEXT varname acts as CONTINUE; when the loop
+			 * ends, skip any later NEXT for the same variable. */
+			char vname[MMB_MAX_NAME];
+			int i;
+			strncpy(vname, G.forstack[G.for_sp - 1].var, MMB_MAX_NAME - 1);
+			vname[MMB_MAX_NAME - 1] = 0;
 			G.for_sp--;
 			G.forstack[G.for_sp].stmt = 0;
+			for (i = G.run_pc + 1; i < G.nprog; i++)
+			{
+				const char *save = G.p;
+				char nbuf[MMB_MAX_NAME];
+				G.p = after_label(G.prog[i]);
+				if (mmb_match("FOR"))
+				{
+					G.p = save;
+					break;
+				}
+				if (mmb_match("NEXT"))
+				{
+					mmb_skip_sp();
+					if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+					{
+						mmb_ident(nbuf, sizeof(nbuf));
+						mmb_type_suffix(nbuf);
+						if (mmb_keyword_eq(nbuf, vname))
+						{
+							G.p = save;
+							G.branch_pc = i + 1;
+							break;
+						}
+					}
+					G.p = save;
+					break;
+				}
+				G.p = save;
+			}
 		}
 	}
 }
@@ -1549,6 +1865,7 @@ void mmb_check_break(void)
 	mmb_play_mix();
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
+	mmb_run_events();
 	if (G.plat && G.plat->take_break && G.plat->take_break())
 	{
 		G.running = 0;
@@ -1556,14 +1873,59 @@ void mmb_check_break(void)
 	}
 }
 
+static void skip_balanced_paren(void)
+{
+	int depth = 0;
+	mmb_skip_sp();
+	if (*G.p != '(')
+		return;
+	while (*G.p)
+	{
+		if (*G.p == '"')
+		{
+			G.p++;
+			while (*G.p)
+			{
+				if (*G.p == '"')
+				{
+					if (G.p[1] == '"')
+					{
+						G.p += 2;
+						continue;
+					}
+					G.p++;
+					break;
+				}
+				G.p++;
+			}
+			continue;
+		}
+		if (*G.p == '(')
+			depth++;
+		else if (*G.p == ')')
+		{
+			depth--;
+			G.p++;
+			if (depth == 0)
+				return;
+			continue;
+		}
+		G.p++;
+	}
+}
+
 static int is_assign_start(void)
 {
 	const char *save = G.p;
 	char name[MMB_MAX_NAME];
-	int nidx, idx[MMB_MAX_DIMS];
 	if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_'))
 		return 0;
-	mmb_parse_var_ref(name, &nidx, idx);
+	/* Scan only — do not evaluate (SUB fnt.draw("hi") is not an array index). */
+	mmb_ident(name, sizeof(name));
+	(void)name;
+	mmb_skip_sp();
+	if (*G.p == '(')
+		skip_balanced_paren();
 	mmb_skip_sp();
 	if (*G.p == '=')
 	{
@@ -1590,6 +1952,21 @@ static void exec_statement(void)
 		do_let();
 		return;
 	}
+	if (mmb_match("ELSEIF"))
+	{
+		/* Block IF already consumed this line; leftover ELSE IF runs as IF. */
+		mmb_cmd_if();
+		return;
+	}
+	if (mmb_match("ELSE"))
+	{
+		mmb_skip_sp();
+		if (*G.p && *G.p != ':' && *G.p != '\'')
+			exec_statement();
+		return;
+	}
+	if (mmb_match("ENDIF"))
+		return;
 	if (mmb_match("MID$"))
 	{
 		mmb_cmd_mid();
@@ -2044,6 +2421,38 @@ static void exec_statement(void)
 		mmb_cmd_clear();
 		return;
 	}
+	if (mmb_match("SPRITE"))
+	{
+		mmb_cmd_sprite();
+		return;
+	}
+	if (mmb_match("SETTICK"))
+	{
+		mmb_cmd_settick();
+		return;
+	}
+	if (*G.p == '#')
+	{
+		while (*G.p)
+			G.p++;
+		return;
+	}
+	{
+		const char *save = G.p;
+		char name[MMB_MAX_NAME];
+		if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
+		{
+			mmb_ident(name, sizeof(name));
+			mmb_type_suffix(name);
+			if (sub_find(name) >= 0)
+			{
+				if (!mmb_call_named_sub(name))
+					mmb_syntax();
+				return;
+			}
+			G.p = save;
+		}
+	}
 	mmb_syntax();
 }
 
@@ -2071,6 +2480,86 @@ static void exec_line_body(const char *body)
 	}
 }
 
+void mmb_run_events(void)
+{
+	unsigned now;
+	int i, saved_pc, saved_sp, saved_branch;
+	const char *saved_p;
+
+	if (!G.running || G.tick_busy)
+		return;
+	now = mmb_now_ms();
+	for (i = 0; i < MMB_MAX_TICK; i++)
+	{
+		if (G.tick[i].period <= 0 || !G.tick[i].sub[0])
+			continue;
+		if (now - G.tick[i].last < (unsigned)G.tick[i].period)
+			continue;
+		G.tick[i].last = now;
+		saved_pc = G.run_pc;
+		saved_p = G.p;
+		saved_branch = G.branch_pc;
+		saved_sp = G.gosub_sp;
+		G.tick_busy = 1;
+		G.p = "";
+		if (mmb_call_named_sub(G.tick[i].sub))
+		{
+			if (G.gosub_sp > 0)
+				G.gosub_stack[G.gosub_sp - 1] = -2;
+			G.run_pc = G.branch_pc;
+			G.branch_pc = -1;
+			while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
+			{
+				G.branch_pc = -1;
+				exec_line_body(G.prog[G.run_pc]);
+				if (G.branch_pc == -2)
+					break;
+				if (G.branch_pc >= 0)
+					G.run_pc = G.branch_pc;
+				else
+					G.run_pc++;
+			}
+		}
+		G.run_pc = saved_pc;
+		G.p = saved_p;
+		G.branch_pc = saved_branch;
+		G.gosub_sp = saved_sp;
+		G.tick_busy = 0;
+	}
+	if (G.on_key[0] && G.inkey_n > 0)
+	{
+		saved_pc = G.run_pc;
+		saved_p = G.p;
+		saved_branch = G.branch_pc;
+		saved_sp = G.gosub_sp;
+		G.tick_busy = 1;
+		G.p = "";
+		if (mmb_call_named_sub(G.on_key))
+		{
+			if (G.gosub_sp > 0)
+				G.gosub_stack[G.gosub_sp - 1] = -2;
+			G.run_pc = G.branch_pc;
+			G.branch_pc = -1;
+			while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
+			{
+				G.branch_pc = -1;
+				exec_line_body(G.prog[G.run_pc]);
+				if (G.branch_pc == -2)
+					break;
+				if (G.branch_pc >= 0)
+					G.run_pc = G.branch_pc;
+				else
+					G.run_pc++;
+			}
+		}
+		G.run_pc = saved_pc;
+		G.p = saved_p;
+		G.branch_pc = saved_branch;
+		G.gosub_sp = saved_sp;
+		G.tick_busy = 0;
+	}
+}
+
 static void run_program(void)
 {
 	int pc = 0;
@@ -2088,6 +2577,10 @@ static void run_program(void)
 	G.data_pos = 0;
 	memset(G.subs, 0, sizeof(G.subs));
 	G.nsubs = 0;
+	memset(G.tick, 0, sizeof(G.tick));
+	G.on_key[0] = 0;
+	G.tick_busy = 0;
+	G.inkey_n = G.inkey_r = G.inkey_w = 0;
 	scan_labels();
 	mmb_clear_vars(1);
 	G.opt.explicit = 0;
@@ -2145,6 +2638,57 @@ const char *mmb_exec_line(const char *line)
 		line++;
 	if (*line == 0)
 		return G.out;
+	/* Immediate drive / cd shortcuts (CMM2 console). */
+	{
+		char a, b;
+		a = line[0];
+		b = line[1];
+		if (((a >= 'A' && a <= 'Z') || (a >= 'a' && a <= 'z')) && b == ':')
+		{
+			const char *p = line + 2;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (*p == 0 || *p == '/' || *p == '\\')
+			{
+				char cmd[8];
+				cmd[0] = '"';
+				cmd[1] = a;
+				cmd[2] = ':';
+				cmd[3] = '"';
+				cmd[4] = 0;
+				G.p = cmd;
+				mmb_cmd_chdir();
+				return G.out;
+			}
+		}
+		if ((line[0] == 'c' || line[0] == 'C') && (line[1] == 'd' || line[1] == 'D') &&
+		    (line[2] == ' ' || line[2] == '\t'))
+		{
+			const char *p = line + 3;
+			char path[128], cmd[140];
+			int n = 0;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (*p == '"')
+			{
+				p++;
+				while (*p && *p != '"' && n < 120)
+					path[n++] = *p++;
+			}
+			else
+			{
+				while (*p && *p != ' ' && n < 120)
+					path[n++] = *p++;
+			}
+			path[n] = 0;
+			cmd[0] = '"';
+			strncpy(cmd + 1, path, sizeof(cmd) - 3);
+			strcat(cmd, "\"");
+			G.p = cmd;
+			mmb_cmd_chdir();
+			return G.out;
+		}
+	}
 	if (starts_with_line_number(line, &num, &rest))
 	{
 		store_line(num, rest);
@@ -2189,8 +2733,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_audio_apply_options();
 	G.timer_base = 0;
 	G.rnd_seed = 0x12345678u;
-	strncpy(G.date_s, "01-01-26", sizeof(G.date_s) - 1);
-	strncpy(G.time_s, "12:00:00", sizeof(G.time_s) - 1);
+	mmb_clock_init();
 }
 
 void mmb_reset(void)

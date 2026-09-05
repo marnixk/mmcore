@@ -12,11 +12,15 @@
 #define MMB_MAX_STR       255
 #define MMB_MAX_VARS      256
 #define MMB_MAX_DIMS      4
-#define MMB_MAX_LINES     512
+#define MMB_MAX_LINES     2048
 #define MMB_LINE_LEN      256
 #define MMB_MAX_FILES     10
 #define MMB_MAX_PAGES     8
-#define MMB_MAX_BLIT      16
+#define MMB_MAX_BLIT      64
+#define MMB_MAX_SPRITE    64
+#define MMB_MAX_SUB_ARGS  16
+#define MMB_MAX_TICK      4
+#define MMB_INKEY         64
 #define MMB_FB_MAX_W      1024
 #define MMB_FB_MAX_H      768
 #define MMB_PAGE_CUR      (-1)
@@ -26,10 +30,10 @@
 #define MMB_ED_TABS       6
 #define MMB_ED_BUF        16384
 #define MMB_PROG_NAME     80
-#define MMB_MAX_GOSUB     16
+#define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
-#define MMB_MAX_CONST     64
-#define MMB_MAX_SUBS      64
+#define MMB_MAX_CONST     256
+#define MMB_MAX_SUBS      128
 #define MMB_MAX_LABELS    64
 
 #define T_NUM   1
@@ -135,6 +139,10 @@ typedef struct mmb_gfx {
 	uint32_t *fb;
 	uint32_t *fb_bak;
 	mmb_blit_buf blit[MMB_MAX_BLIT];
+	struct {
+		int used, vis, x, y, layer, w, h;
+		uint32_t *pix;
+	} sprite[MMB_MAX_SPRITE];
 	int turtle_on;
 	double turtle_x, turtle_y, turtle_hdg;
 	int turtle_pen;
@@ -211,6 +219,10 @@ typedef struct mmb {
 	int data_line, data_pos;
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
+	int gosub_event[MMB_MAX_GOSUB];
+	int gosub_nsave[MMB_MAX_GOSUB];
+	char gosub_saven[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
+	mmb_val gosub_savev[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
 	int run_pc;            /* current program line index */
 	int ctrl_sp;
@@ -238,6 +250,8 @@ typedef struct mmb {
 		int line_pc;
 		int is_func;
 		int used;
+		int nargs;
+		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
@@ -245,6 +259,20 @@ typedef struct mmb {
 	uint32_t rnd_seed;
 	char date_s[16];
 	char time_s[16];
+	int clk_y, clk_mo, clk_d, clk_h, clk_mi, clk_s;
+	unsigned clk_ms;
+	int dim_local;
+	char on_key[MMB_MAX_NAME];
+	int tick_busy;
+	struct {
+		int period;
+		char sub[MMB_MAX_NAME];
+		unsigned last;
+	} tick[MMB_MAX_TICK];
+	int inkey_q[MMB_INKEY];
+	int inkey_r, inkey_w, inkey_n;
+	int keydown[6];
+	int nkeydown;
 	int nlabels;
 	struct {
 		char name[MMB_MAX_NAME];
@@ -494,6 +522,22 @@ int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
 int mmb_load_png(const char *path, int x, int y);
+int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
+			uint32_t **out, int *w, int *h);
+void mmb_clock_init(void);
+void mmb_clock_refresh(void);
+int mmb_clock_set_date(const char *s);
+int mmb_clock_set_time(const char *s);
+int mmb_inkey_pop(void);
+int mmb_keydown_get(int n);
+void mmb_run_events(void);
+void mmb_cmd_settick(void);
+void mmb_cmd_sprite(void);
+void mmb_sprite_reset(void);
+void mmb_sprite_overlay(void);
+int mmb_call_named_sub(const char *name);
+int mmb_play_wav(const char *path);
+void mmb_play_tts(void);
 
 void mmb_assets_seed(void);
 

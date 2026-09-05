@@ -30,6 +30,8 @@ static int ed_rows(void) { return tui_rows(); }
 #define C_EDIT_FG   TUI_BRWHITE
 #define C_EDIT_BG   TUI_BLUE
 #define C_STR_FG    TUI_BRYELLOW
+#define C_NUM_FG    TUI_BRBLUE
+#define C_CMT_FG    TUI_WHITE
 #define C_BRD_FG    TUI_WHITE
 #define C_BRD_BG    TUI_BLUE
 #define C_TAB_FG    TUI_WHITE
@@ -59,13 +61,14 @@ static int ed_rows(void) { return tui_rows(); }
 
 static char killbuf[512];
 static int killlen;
+static int alt_pend;
 static int esc_state;
 static int csi_n;
 static int csi_arg;
 
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'H' };
-static const int menu_col[MENU_COUNT] = { 1, 7, 13, 18 };
+static int menu_x[MENU_COUNT];
 
 static const char *file_items[] = {
 	"Open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
@@ -512,6 +515,7 @@ static void draw_menu_bar(void)
 	for (i = 0; i < MENU_COUNT; i++)
 	{
 		int sel = G.ed.menu_open && G.ed.menu == i;
+		menu_x[i] = x;
 		draw_hot_word(&x, ROW_MENU, menu_name[i], menu_hot[i], sel);
 		tui_put(x++, ROW_MENU, ' ', C_MENU_FG, C_MENU_BG);
 	}
@@ -587,37 +591,64 @@ static void draw_border_row(int row, int top)
 	tui_puts(1 + left, row, titled, C_BRD_FG, C_BRD_BG);
 }
 
+static int line_is_comment(const char *s, int n)
+{
+	int i = 0;
+	while (i < n && (s[i] == ' ' || s[i] == '\t'))
+		i++;
+	while (i < n && s[i] >= '0' && s[i] <= '9')
+		i++;
+	while (i < n && (s[i] == ' ' || s[i] == '\t'))
+		i++;
+	if (i < n && s[i] == '\'')
+		return 1;
+	if (i + 2 < n)
+	{
+		char a = s[i], b = s[i + 1], c = s[i + 2];
+		if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+		if (b >= 'a' && b <= 'z') b = (char)(b - 32);
+		if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+		if (a == 'R' && b == 'E' && c == 'M' &&
+		    (i + 3 >= n || s[i + 3] == ' ' || s[i + 3] == '\t'))
+			return 1;
+	}
+	return 0;
+}
+
 static void draw_text_line(int x, int y, const char *s, int n, int col0)
 {
-	int i, vis = 0, shown = 0, in_str = 0;
-	char q = 0;
+	int i, vis = 0, shown = 0, in_str = 0, in_cmt;
+	in_cmt = line_is_comment(s, n);
 	for (i = 0; i < n && shown < TEXT_COLS; i++)
 	{
 		char ch = s[i];
-		int want, k, w;
-		if (!in_str && (ch == '"' || ch == '\''))
-		{
+		int fg, k, w;
+		if (!in_cmt && !in_str && ch == '\'')
+			in_cmt = 1;
+		if (!in_cmt && !in_str && ch == '"')
 			in_str = 1;
-			q = ch;
-			want = 1;
-		}
-		else if (in_str && ch == q)
-			want = 1;
+		else if (in_str && ch == '"')
+			in_str = 2;
+		if (in_cmt)
+			fg = C_CMT_FG;
+		else if (in_str)
+			fg = C_STR_FG;
+		else if (ch >= '0' && ch <= '9')
+			fg = C_NUM_FG;
 		else
-			want = in_str ? 1 : 0;
+			fg = C_EDIT_FG;
 		w = ch_cols(ch);
 		for (k = 0; k < w && shown < TEXT_COLS; k++)
 		{
 			if (vis >= col0)
 			{
 				char out = (ch == '\t') ? ' ' : ch;
-				tui_put(x + shown, y, (unsigned char)out,
-					want ? C_STR_FG : C_EDIT_FG, C_EDIT_BG);
+				tui_put(x + shown, y, (unsigned char)out, fg, C_EDIT_BG);
 				shown++;
 			}
 			vis++;
 		}
-		if (in_str && ch == q && i > 0)
+		if (in_str == 2)
 			in_str = 0;
 	}
 	if (shown < TEXT_COLS)
@@ -683,7 +714,7 @@ static void draw_dropdown(void)
 		return;
 	it = menu_items(G.ed.menu, &n);
 	w = menu_width(G.ed.menu);
-	c0 = menu_col[G.ed.menu];
+	c0 = menu_x[G.ed.menu];
 	if (c0 + w + 2 > COLS)
 		c0 = COLS - w - 2;
 	if (c0 < 0)
@@ -695,11 +726,11 @@ static void draw_dropdown(void)
 	{
 		fg = (i == G.ed.menu_item) ? C_SEL_FG : C_DLG_FG;
 		bg = (i == G.ed.menu_item) ? C_SEL_BG : C_DLG_BG;
-		tui_put(c0, r0 + 1 + i, TUI_V, fg, bg);
+		tui_put(c0, r0 + 1 + i, TUI_V, C_DLG_FG, C_DLG_BG);
 		tui_put(c0 + 1, r0 + 1 + i, ' ', fg, bg);
 		tui_pad(c0 + 2, r0 + 1 + i, it[i], w - 4, fg, bg);
 		tui_put(c0 + w - 2, r0 + 1 + i, ' ', fg, bg);
-		tui_put(c0 + w - 1, r0 + 1 + i, TUI_V, fg, bg);
+		tui_put(c0 + w - 1, r0 + 1 + i, TUI_V, C_DLG_FG, C_DLG_BG);
 		tui_pad(c0 + w, r0 + 1 + i, "", 2, C_SH_FG, C_SH_BG);
 	}
 	tui_hline(c0, r0 + 1 + n, w, TUI_BL, TUI_H, TUI_BR, C_DLG_FG, C_DLG_BG);
@@ -752,14 +783,14 @@ static void draw_dialog(void)
 	if (G.ed.dialog == DLG_HELP)
 	{
 		static const char *lines[] = {
-			"Esc+F  File menu     Esc+E  Edit",
-			"Esc+R  Run menu      Esc+H  Help",
+			"Alt+F  File menu     Alt+E  Edit",
+			"Alt+R  Run menu      Alt+H  Help",
 			"F10    File menu     Esc    close",
 			"F1     This help     F2     Save",
 			"F3     Open          F9     Run",
 			"^O     Save          ^X     Quit",
 			"^R     Save and Run  ^K/^U  Cut/Paste",
-			"Tab    4 spaces      Esc+1..9 file tab",
+			"Tab    4 spaces      Alt+1..9 file tab",
 			"Arrows move          Enter  activate",
 			"",
 			"     Enter or Esc closes this box",
@@ -1318,6 +1349,21 @@ const char *mmb_editor_feed(char c)
 {
 	G.outn = 0;
 	G.out[0] = 0;
+	if (alt_pend)
+	{
+		alt_pend = 0;
+		if (handle_alt(c))
+		{
+			if (G.ed.active)
+				redraw();
+			return G.out;
+		}
+	}
+	if ((unsigned char)c == 1)
+	{
+		alt_pend = 1;
+		return G.out;
+	}
 	if (esc_state)
 	{
 		if (c == 27 && esc_state == ESC_GOT)

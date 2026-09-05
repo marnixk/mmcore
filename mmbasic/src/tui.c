@@ -321,7 +321,14 @@ void tui_flush(void)
 			any_serial = 1;
 	}
 	if (prev_cx >= 0 && prev_cy >= 0 && prev_cx < cols && prev_cy < rows)
+	{
+		int py0 = prev_cy * 16, py1 = py0 + 15;
 		blit_cell(prev_cx, prev_cy, &shown[prev_cy][prev_cx], 0);
+		if (pix0 < 0 || py0 < pix0)
+			pix0 = py0;
+		if (pix1 < py1)
+			pix1 = py1;
+	}
 	if (cur_vis && cur_x >= 0 && cur_y >= 0 && cur_x < cols && cur_y < rows)
 	{
 		int py0 = cur_y * 16, py1 = py0 + 15;

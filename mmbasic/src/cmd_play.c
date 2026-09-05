@@ -30,6 +30,10 @@ static int s_mod_on;
 static jar_xm_context_t *s_xm;
 static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
+static unsigned char *s_wav;
+static unsigned s_wav_n, s_wav_off;
+static int s_wav_ch, s_wav_bits, s_wav_rate;
+static char s_tts_cb[MMB_MAX_NAME];
 static double s_tone_hz_l, s_tone_hz_r;
 static double s_tone_ph_l, s_tone_ph_r;
 static unsigned s_tone_left; /* ~0u = hold until STOP */
@@ -147,6 +151,13 @@ static void play_teardown(void)
 		G.plat->free(s_xmdata);
 		s_xmdata = 0;
 	}
+	if (s_wav)
+	{
+		G.plat->free(s_wav);
+		s_wav = 0;
+	}
+	s_wav_n = s_wav_off = 0;
+	s_tts_cb[0] = 0;
 	G.audio.playing = 0;
 	G.audio.paused = 0;
 	G.audio.samples_decoded = 0;
@@ -251,6 +262,65 @@ int mmb_play_xm(const char *path)
 		return -1;
 	jar_xm_set_max_loop_count(s_xm, 0);
 	play_begin(3, path);
+	return 0;
+}
+
+int mmb_play_wav(const char *path)
+{
+	unsigned n = 0, pos, data_off = 0, data_sz = 0;
+	unsigned char *buf = 0;
+	int ch = 1, bits = 16, rate = MIX_RATE, fmt = 1;
+
+	mmb_play_stop();
+	if (load_bytes(path, &buf, &n) != 0)
+		return -1;
+	if (n < 44 || memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	pos = 12;
+	while (pos + 8 <= n)
+	{
+		unsigned sz = (unsigned)buf[pos + 4] | ((unsigned)buf[pos + 5] << 8) |
+			      ((unsigned)buf[pos + 6] << 16) | ((unsigned)buf[pos + 7] << 24);
+		if (memcmp(buf + pos, "fmt ", 4) == 0 && pos + 8 + sz <= n && sz >= 16)
+		{
+			fmt = buf[pos + 8] | (buf[pos + 9] << 8);
+			ch = buf[pos + 10] | (buf[pos + 11] << 8);
+			rate = (int)((unsigned)buf[pos + 12] | ((unsigned)buf[pos + 13] << 8) |
+				     ((unsigned)buf[pos + 14] << 16) | ((unsigned)buf[pos + 15] << 24));
+			bits = buf[pos + 22] | (buf[pos + 23] << 8);
+		}
+		else if (memcmp(buf + pos, "data", 4) == 0)
+		{
+			data_off = pos + 8;
+			data_sz = sz;
+			if (data_off + data_sz > n)
+				data_sz = n - data_off;
+			break;
+		}
+		pos += 8 + ((sz + 1) & ~1u);
+	}
+	if (fmt != 1 || !data_sz || (bits != 8 && bits != 16))
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	s_wav = G.plat->alloc(data_sz);
+	if (!s_wav)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	memcpy(s_wav, buf + data_off, data_sz);
+	G.plat->free(buf);
+	s_wav_n = data_sz;
+	s_wav_off = 0;
+	s_wav_ch = ch;
+	s_wav_bits = bits;
+	s_wav_rate = rate > 0 ? rate : MIX_RATE;
+	play_begin(5, path);
 	return 0;
 }
 
@@ -377,6 +447,51 @@ static int mix_tone(unsigned nframes)
 	return 1;
 }
 
+static int mix_wav(unsigned nframes)
+{
+	short pcm[MIX_CHUNK * 2];
+	unsigned i, pos;
+	int ch = s_wav_ch < 1 ? 1 : s_wav_ch;
+	int bytes = (s_wav_bits / 8) * ch;
+	unsigned rate = s_wav_rate > 0 ? (unsigned)s_wav_rate : MIX_RATE;
+
+	if (!s_wav || bytes <= 0)
+		return 0;
+	pos = s_wav_off;
+	for (i = 0; i < nframes; i++)
+	{
+		unsigned src = (unsigned)((unsigned long)pos * (unsigned long)rate / MIX_RATE);
+		unsigned off = src * (unsigned)bytes;
+		int l = 0, r = 0;
+		if (off + (unsigned)bytes > s_wav_n)
+		{
+			s_wav_off = s_wav_n;
+			if (i)
+				emit_pcm(pcm, i);
+			return 0;
+		}
+		if (s_wav_bits == 16)
+		{
+			l = (short)(s_wav[off] | (s_wav[off + 1] << 8));
+			if (ch > 1)
+				r = (short)(s_wav[off + 2] | (s_wav[off + 3] << 8));
+			else
+				r = l;
+		}
+		else
+		{
+			l = ((int)s_wav[off] - 128) << 8;
+			r = ch > 1 ? ((int)s_wav[off + 1] - 128) << 8 : l;
+		}
+		pcm[i * 2] = (short)l;
+		pcm[i * 2 + 1] = (short)r;
+		pos++;
+	}
+	s_wav_off = pos;
+	emit_pcm(pcm, nframes);
+	return 1;
+}
+
 void mmb_play_mix(void)
 {
 	unsigned n;
@@ -400,6 +515,8 @@ void mmb_play_mix(void)
 			keep = mix_xm(n);
 		else if (G.audio.playing == 4)
 			keep = mix_tone(n);
+		else if (G.audio.playing == 5)
+			keep = mix_wav(n);
 		else
 			keep = 0;
 		if (!keep)
@@ -500,7 +617,7 @@ void mmb_cmd_play(void)
 		if (v.type != T_STR)
 			mmb_syntax();
 		if (mmb_play_mod(v.s) != 0)
-			mmb_error("?MOD");
+			return;
 		return;
 	}
 	if (mmb_match("XM") || mmb_match("XMFILE"))
@@ -510,6 +627,55 @@ void mmb_cmd_play(void)
 			mmb_syntax();
 		if (mmb_play_xm(v.s) != 0)
 			mmb_error("?XM");
+		return;
+	}
+	if (mmb_match("WAV") || mmb_match("EFFECT") || mmb_match("SOUND"))
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		if (mmb_play_wav(v.s) != 0)
+			return; /* missing/unsupported clip: keep the program running */
+		return;
+	}
+	if (mmb_match("TTS") || mmb_match("SPEAK"))
+	{
+		mmb_val v;
+		char cb[MMB_MAX_NAME];
+		cb[0] = 0;
+		v = mmb_expr();
+		(void)v;
+		mmb_skip_sp();
+		while (*G.p == ',')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (*G.p == ',' || *G.p == 0 || *G.p == ':' || *G.p == '\'')
+				continue;
+			if (((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_') &&
+			    strchr(G.p, '(') != G.p)
+			{
+				const char *save = G.p;
+				mmb_ident(cb, sizeof(cb));
+				mmb_type_suffix(cb);
+				mmb_skip_sp();
+				if (*G.p == 0 || *G.p == ':' || *G.p == '\'' || *G.p == ',')
+					continue;
+				G.p = save;
+				cb[0] = 0;
+			}
+			(void)mmb_expr();
+			mmb_skip_sp();
+		}
+		mmb_play_stop();
+		s_tone_hz_l = s_tone_hz_r = 660;
+		s_tone_ph_l = s_tone_ph_r = 0;
+		s_tone_left = (unsigned)(80ul * MIX_RATE / 1000u);
+		if (s_tone_left == 0)
+			s_tone_left = 1;
+		play_begin(4, "TTS");
+		if (cb[0])
+			mmb_call_named_sub(cb);
 		return;
 	}
 	mmb_syntax();

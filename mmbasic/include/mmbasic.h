@@ -95,6 +95,14 @@ int mmb_take_home_prompt(void);
 /* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
 void mmb_console_write(const char *s);
 
+/* OPTION KEYBOARD REPEAT first [, next]  (milliseconds). */
+int mmb_opt_repeat_first(void);
+int mmb_opt_repeat_next(void);
+
+/* Host input: typeahead / INKEY$ FIFO and KEYDOWN() scan codes. */
+void mmb_inkey_push(int c);
+void mmb_keydown_set(const int *codes, int n);
+
 #ifdef __cplusplus
 }
 #endif

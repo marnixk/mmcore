@@ -136,8 +136,8 @@ int mmb_load_png(const char *path, int x, int y)
 
 void mmb_cmd_load(void)
 {
-	char kind[16];
-	int x = 0, y = 0;
+	char path[128];
+	int x = 0, y = 0, page = -1, saved_page = 0, saved_fb = 0;
 	mmb_val v;
 	int is_jpg = 0, is_png = 0;
 	if (mmb_match("JPG") || mmb_match("JPEG"))
@@ -145,11 +145,12 @@ void mmb_cmd_load(void)
 	else if (mmb_match("PNG"))
 		is_png = 1;
 	else if (mmb_match("BMP") || mmb_match("GIF") || mmb_match("IMAGE"))
-		is_png = 1; /* try png path; BMP not required by the goal */
+		is_png = 1;
 	v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
-	strncpy(kind, v.s, sizeof(kind) - 1);
+	strncpy(path, v.s, sizeof(path) - 1);
+	path[sizeof(path) - 1] = 0;
 	mmb_skip_sp();
 	if (*G.p == ',')
 	{
@@ -160,30 +161,57 @@ void mmb_cmd_load(void)
 		{
 			G.p++;
 			y = (int)mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				page = (int)mmb_as_int(mmb_expr());
+			}
 		}
 	}
 	if (!is_jpg && !is_png)
 	{
-			char *dot = 0;
-			char *q = kind;
-			while (*q)
-			{
-				if (*q == '.')
-					dot = q;
-				q++;
-			}
+		char *dot = 0;
+		char *q = path;
+		while (*q)
+		{
+			if (*q == '.')
+				dot = q;
+			q++;
+		}
 		if (dot && (mmb_keyword_eq(dot, ".JPG") || mmb_keyword_eq(dot, ".JPEG")))
 			is_jpg = 1;
 		else
 			is_png = 1;
 	}
+	if (page >= 0)
+	{
+		saved_page = G.gfx.write_page;
+		saved_fb = G.gfx.write_fb;
+		if (page < G.gfx.pages)
+		{
+			G.gfx.write_fb = 0;
+			G.gfx.write_page = page;
+		}
+	}
 	if (is_jpg)
 	{
 		if (mmb_gfx_writing_fb())
 			mmb_error("?FRAMEBUFFER");
-		if (mmb_load_jpeg(kind, x, y) != 0)
-			mmb_error("?JPEG");
+		if (mmb_load_jpeg(path, x, y) != 0)
+		{
+			if (mmb_vfs_size(path) >= 0)
+				mmb_error("?JPEG");
+		}
 	}
-	else if (mmb_load_png(kind, x, y) != 0)
-		mmb_error("?PNG");
+	else if (mmb_load_png(path, x, y) != 0)
+	{
+		if (mmb_vfs_size(path) >= 0)
+			mmb_error("?PNG");
+	}
+	if (page >= 0)
+	{
+		G.gfx.write_page = saved_page;
+		G.gfx.write_fb = saved_fb;
+	}
 }

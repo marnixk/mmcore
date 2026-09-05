@@ -12,6 +12,18 @@ static int parse_args(mmb_val *a, int maxn)
 		return 0;
 	while (n < maxn && *G.p && *G.p != ':' && *G.p != '\'')
 	{
+		mmb_skip_sp();
+		if (*G.p == ',' || *G.p == 0 || *G.p == ':' || *G.p == '\'')
+		{
+			memset(&a[n], 0, sizeof(a[n]));
+			n++;
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
 		a[n++] = mmb_expr();
 		mmb_skip_sp();
 		if (*G.p == ',')
@@ -110,31 +122,106 @@ void mmb_cmd_cls(void)
 
 void mmb_cmd_pixel(void)
 {
-	mmb_val a[4];
-	int n = parse_args(a, 4);
-	unsigned c = G.gfx.fg;
-	int x, y;
-	if (n < 2)
-		mmb_syntax();
-	x = (int)mmb_as_int(a[0]);
-	y = (int)mmb_as_int(a[1]);
-	if (n >= 3)
-		c = (unsigned)mmb_as_int(a[2]);
-	mmb_gfx_plot(x, y, c);
+	const char *save = G.p;
+	char nx[MMB_MAX_NAME], ny[MMB_MAX_NAME];
+	mmb_var *vx = 0, *vy = 0;
+	int i;
+
+	mmb_skip_sp();
+	if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
+	{
+		mmb_ident(nx, sizeof(nx));
+		mmb_type_suffix(nx);
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (*G.p == ')')
+			{
+				G.p++;
+				mmb_skip_sp();
+				if (*G.p == ',')
+				{
+					G.p++;
+					mmb_skip_sp();
+					if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
+					{
+						mmb_ident(ny, sizeof(ny));
+						mmb_type_suffix(ny);
+						mmb_skip_sp();
+						if (*G.p == '(')
+						{
+							G.p++;
+							mmb_skip_sp();
+							if (*G.p == ')')
+							{
+								unsigned c = G.gfx.fg;
+								int n;
+								G.p++;
+								mmb_skip_sp();
+								if (*G.p == ',')
+								{
+									G.p++;
+									c = (unsigned)mmb_as_int(mmb_expr());
+								}
+								for (i = 0; i < MMB_MAX_VARS; i++)
+								{
+									if (G.vars[i].used && G.vars[i].dims > 0 &&
+									    mmb_keyword_eq(G.vars[i].name, nx))
+										vx = &G.vars[i];
+									if (G.vars[i].used && G.vars[i].dims > 0 &&
+									    mmb_keyword_eq(G.vars[i].name, ny))
+										vy = &G.vars[i];
+								}
+								if (!vx || !vy)
+									mmb_syntax();
+								n = vx->size < vy->size ? vx->size : vy->size;
+								for (i = 0; i < n; i++)
+								{
+									int x = vx->type == T_INT ? (int)vx->data.i[i] : (int)vx->data.f[i];
+									int y = vy->type == T_INT ? (int)vy->data.i[i] : (int)vy->data.f[i];
+									mmb_gfx_plot(x, y, c);
+								}
+								return;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	G.p = save;
+	{
+		mmb_val a[4];
+		int n = parse_args(a, 4);
+		unsigned c = G.gfx.fg;
+		int x, y;
+		if (n < 2)
+			mmb_syntax();
+		x = (int)mmb_as_int(a[0]);
+		y = (int)mmb_as_int(a[1]);
+		if (n >= 3)
+			c = (unsigned)mmb_as_int(a[2]);
+		mmb_gfx_plot(x, y, c);
+	}
 }
 
 void mmb_cmd_line(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8), used = 0, lw = 1;
+	int n, used = 0, lw = 1;
 	unsigned c;
+	n = parse_args(a, 8);
 	if (n < 4)
 		mmb_syntax();
 	c = colour_from(a, n, &used, G.gfx.fg);
 	if (used)
 		n--;
-	if (n >= 5)
+	if (n >= 5 && a[4].type)
 		lw = (int)mmb_as_int(a[4]);
+	if (lw <= 0)
+		lw = 1;
 	mmb_gfx_line((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
 		     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]), c, lw);
 }
@@ -167,22 +254,37 @@ void mmb_cmd_box(void)
 		mmb_syntax();
 	if (n >= 7)
 	{
-		lw = (int)mmb_as_int(a[4]);
-		c = (unsigned)mmb_as_int(a[5]);
-		fill = (int)mmb_as_int(a[6]);
+		if (a[4].type)
+			lw = (int)mmb_as_int(a[4]);
+		if (a[5].type)
+			c = (unsigned)mmb_as_int(a[5]);
+		if (a[6].type)
+			fill = (int)mmb_as_int(a[6]);
 	}
 	else if (n == 6)
 	{
-		lw = (int)mmb_as_int(a[4]);
-		c = (unsigned)mmb_as_int(a[5]);
+		if (is_colour_val(a[4]) && is_colour_val(a[5]))
+		{
+			c = (unsigned)mmb_as_int(a[4]);
+			fill = (int)mmb_as_int(a[5]);
+		}
+		else
+		{
+			if (a[4].type)
+				lw = (int)mmb_as_int(a[4]);
+			if (a[5].type)
+				c = (unsigned)mmb_as_int(a[5]);
+		}
 	}
 	else if (n == 5)
 	{
 		if (is_colour_val(a[4]))
 			c = (unsigned)mmb_as_int(a[4]);
-		else
+		else if (a[4].type)
 			lw = (int)mmb_as_int(a[4]);
 	}
+	if (lw < 0)
+		lw = 1;
 	mmb_gfx_box((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
 		    (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]), c, lw, fill);
 }
@@ -190,28 +292,28 @@ void mmb_cmd_box(void)
 void mmb_cmd_circle(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8), lw = 1, fill = -1;
+	int 	n = parse_args(a, 8), lw = 1, fill = -1;
 	unsigned c = G.gfx.fg;
+	int ai;
 	if (n < 3)
 		mmb_syntax();
-	if (n >= 6)
+	ai = 3;
+	if (ai < n && !a[ai].type)
+		ai++;
+	else if (ai < n && a[ai].type && !is_colour_val(a[ai]))
 	{
-		lw = (int)mmb_as_int(a[3]);
-		c = (unsigned)mmb_as_int(a[4]);
-		fill = (int)mmb_as_int(a[5]);
+		lw = (int)mmb_as_int(a[ai]);
+		ai++;
 	}
-	else if (n == 5)
+	if (ai < n && !a[ai].type)
+		ai++;
+	else if (ai < n && a[ai].type)
 	{
-		lw = (int)mmb_as_int(a[3]);
-		c = (unsigned)mmb_as_int(a[4]);
+		c = (unsigned)mmb_as_int(a[ai]);
+		ai++;
 	}
-	else if (n == 4)
-	{
-		if (is_colour_val(a[3]))
-			c = (unsigned)mmb_as_int(a[3]);
-		else
-			lw = (int)mmb_as_int(a[3]);
-	}
+	if (ai < n && a[ai].type)
+		fill = (int)mmb_as_int(a[ai]);
 	mmb_gfx_circle((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
 		       (int)mmb_as_int(a[2]), c, lw, fill);
 }
@@ -226,12 +328,22 @@ void mmb_cmd_rbox(void)
 	c = colour_from(a, n, &used, G.gfx.fg);
 	if (used)
 		n--;
-	if (n >= 5)
+	if (n >= 5 && a[4].type)
 		r = (int)mmb_as_int(a[4]);
-	if (n >= 6)
-		lw = (int)mmb_as_int(a[5]);
-	if (n >= 7)
+	if (n >= 7 && is_colour_val(a[5]) && is_colour_val(a[6]))
+	{
+		/* rbox x,y,w,h,r,colour,fill  (linewidth omitted) */
+		c = (unsigned)mmb_as_int(a[5]);
 		fill = (int)mmb_as_int(a[6]);
+		lw = 1;
+	}
+	else
+	{
+		if (n >= 6 && a[5].type)
+			lw = (int)mmb_as_int(a[5]);
+		if (n >= 7 && a[6].type)
+			fill = (int)mmb_as_int(a[6]);
+	}
 	mmb_gfx_rbox((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
 		     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]), r, c, lw, fill);
 }
@@ -441,8 +553,28 @@ void mmb_cmd_page(void)
 	{
 		int src = (int)mmb_as_int(mmb_expr());
 		int dst = src;
+		mmb_skip_sp();
 		if (mmb_match("TO"))
 			dst = (int)mmb_as_int(mmb_expr());
+		else if (*G.p == ',')
+		{
+			G.p++;
+			dst = (int)mmb_as_int(mmb_expr());
+		}
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			mmb_skip_sp();
+			/* CMM2: optional I (wait) or B (blit) flag, not an expression. */
+			if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z'))
+			{
+				while (mmb_is_ident(*G.p))
+					G.p++;
+			}
+			else if (*G.p && *G.p != ':' && *G.p != '\'')
+				(void)mmb_expr();
+		}
 		mmb_gfx_copy_page(src, dst);
 		mmb_gfx_present_if(dst);
 		return;

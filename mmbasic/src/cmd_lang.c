@@ -6,7 +6,9 @@ extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, m
 
 void mmb_cmd_local(void)
 {
+	G.dim_local = 1;
 	mmb_cmd_dim();
+	G.dim_local = 0;
 }
 
 void mmb_cmd_static(void)
@@ -133,11 +135,22 @@ void mmb_cmd_on(void)
 	mmb_val v;
 	int n, i, gosub, target;
 	mmb_skip_sp();
-	if (mmb_match("ERROR") || mmb_match("KEY"))
+	if (mmb_match("ERROR"))
 	{
-		/* Parsed so programs do not die; ignore hardware/error traps. */
 		while (*G.p && *G.p != ':' && *G.p != '\'')
 			G.p++;
+		return;
+	}
+	if (mmb_match("KEY"))
+	{
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+		{
+			G.on_key[0] = 0;
+			return;
+		}
+		mmb_ident(G.on_key, sizeof(G.on_key));
+		mmb_type_suffix(G.on_key);
 		return;
 	}
 	v = mmb_expr();
@@ -171,7 +184,10 @@ void mmb_cmd_on(void)
 	{
 		if (G.gosub_sp >= MMB_MAX_GOSUB)
 			mmb_error("?GOSUB");
-		G.gosub_stack[G.gosub_sp++] = G.run_pc + 1;
+		G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
+		G.gosub_event[G.gosub_sp] = 0;
+		G.gosub_nsave[G.gosub_sp] = 0;
+		G.gosub_sp++;
 	}
 	G.branch_pc = mmb_find_line_pc(target);
 }
@@ -291,4 +307,41 @@ void mmb_cmd_sort(void)
 				}
 			}
 		}
+}
+
+void mmb_cmd_settick(void)
+{
+	int period, slot = 0;
+	char name[MMB_MAX_NAME];
+	period = (int)mmb_as_int(mmb_expr());
+	mmb_skip_sp();
+	if (*G.p == ',')
+		G.p++;
+	mmb_skip_sp();
+	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+	{
+		G.tick[0].period = 0;
+		G.tick[0].sub[0] = 0;
+		return;
+	}
+	mmb_ident(name, sizeof(name));
+	mmb_type_suffix(name);
+	mmb_skip_sp();
+	if (*G.p == ',')
+	{
+		G.p++;
+		slot = (int)mmb_as_int(mmb_expr());
+	}
+	if (slot < 0 || slot >= MMB_MAX_TICK)
+		slot = 0;
+	if (period <= 0)
+	{
+		G.tick[slot].period = 0;
+		G.tick[slot].sub[0] = 0;
+		return;
+	}
+	G.tick[slot].period = period;
+	strncpy(G.tick[slot].sub, name, MMB_MAX_NAME - 1);
+	G.tick[slot].sub[MMB_MAX_NAME - 1] = 0;
+	G.tick[slot].last = mmb_now_ms();
 }

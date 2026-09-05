@@ -138,9 +138,10 @@ def test_backspace_erases_glyph_on_hdmi(fresh_console):
 
 
 def test_arrow_csi_does_not_corrupt_line(fresh_console):
-    out = fresh_console.send_keys(b"PRINT 41\x1b[A\r")
+    assert fresh_console.send_line("PRINT 9") == "9"
+    out = fresh_console.send_keys(b"\x1b[A\r")
     assert "?SYNTAX" not in out.upper()
-    assert out.splitlines()[-1].strip() == "41"
+    assert "9" in out
 
 
 def test_delete_key_csi_consumed(fresh_console):

@@ -2,6 +2,7 @@
 #include "host_mmb_priv.h"
 #else
 #include "mmb_priv.h"
+#include "upng.h"
 #endif
 
 /* Stack-safe PNG decoder: zlib stored blocks only (zlib.compress level 0). */
@@ -122,7 +123,102 @@ static int png_unfilter(unsigned char *raw, unsigned w, unsigned h, unsigned bpp
 	return 0;
 }
 
+static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y);
+
+int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
+			uint32_t **out, int *ow, int *oh)
+{
+#ifndef HOST_PNG_TEST
+	upng_t *u;
+	unsigned w, h, i, j;
+	upng_format fmt;
+	const unsigned char *buf;
+	uint32_t *pix;
+	unsigned bpp;
+
+	*out = 0;
+	if (!file || !n || !out || !ow || !oh)
+		return -1;
+	u = upng_new_from_bytes(file, n);
+	if (!u)
+		return -1;
+	if (upng_header(u) != UPNG_EOK || upng_decode(u) != UPNG_EOK)
+	{
+		upng_free(u);
+		return -1;
+	}
+	w = upng_get_width(u);
+	h = upng_get_height(u);
+	fmt = upng_get_format(u);
+	buf = upng_get_buffer(u);
+	if (!buf || !w || !h)
+	{
+		upng_free(u);
+		return -1;
+	}
+	if (fmt == UPNG_RGB8)
+		bpp = 3;
+	else if (fmt == UPNG_RGBA8)
+		bpp = 4;
+	else
+	{
+		upng_free(u);
+		return -1;
+	}
+	pix = G.plat->alloc(w * h * sizeof(uint32_t));
+	if (!pix)
+	{
+		upng_free(u);
+		return -1;
+	}
+	for (j = 0; j < h; j++)
+		for (i = 0; i < w; i++)
+		{
+			const unsigned char *p = buf + (j * w + i) * bpp;
+			unsigned a = (bpp == 4) ? p[3] : 255;
+			unsigned rgb = mmb_rgb_pack(p[0], p[1], p[2]);
+			pix[j * w + i] = (a == 0) ? 0 : (rgb | 0xFF000000u);
+		}
+	upng_free(u);
+	*out = pix;
+	*ow = (int)w;
+	*oh = (int)h;
+	return 0;
+#else
+	(void)file;
+	(void)n;
+	(void)out;
+	(void)ow;
+	(void)oh;
+	return -1;
+#endif
+}
+
 int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y)
+{
+	uint32_t *pix = 0;
+	int w = 0, h = 0, i, j, rc;
+
+	rc = png_decode_stored(file, n, x, y);
+	if (rc == 0)
+		return 0;
+	if (mmb_png_decode_rgba(file, n, &pix, &w, &h) == 0)
+	{
+		for (j = 0; j < h; j++)
+			for (i = 0; i < w; i++)
+			{
+				unsigned c = pix[j * w + i];
+				if ((c & 0xFF000000u) == 0)
+					continue;
+				mmb_gfx_plot(x + i, y + j, c & 0xFFFFFFu);
+			}
+		G.plat->free(pix);
+		return 0;
+	}
+	return -1;
+}
+
+static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y)
 {
 	unsigned pos = 0;
 	unsigned w = 0, h = 0, bpp = 0;

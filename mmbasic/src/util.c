@@ -60,7 +60,7 @@ int mmb_match(const char *kw)
 		p++;
 		k++;
 	}
-	if (mmb_is_ident(*p) && *p != '.')
+	if (mmb_is_ident(*p))
 	{
 		G.p = save;
 		return 0;
@@ -124,6 +124,39 @@ void mmb_error(const char *msg)
 	unsigned i;
 	for (i = 0; i < sizeof(G.err) - 1 && msg[i]; i++)
 		G.err[i] = msg[i];
+	if (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
+	{
+		const char *p = G.prog[G.run_pc];
+		int64_t num = G.prog_num[G.run_pc];
+		char nbuf[16];
+		int k = 0;
+		if (i < sizeof(G.err) - 4)
+		{
+			G.err[i++] = ' ';
+			G.err[i++] = '@';
+		}
+		if (num <= 0)
+			nbuf[k++] = '0';
+		else
+		{
+			char tmp[16];
+			int t = 0;
+			while (num && t < 15)
+			{
+				tmp[t++] = (char)('0' + (int)(num % 10));
+				num /= 10;
+			}
+			while (t)
+				nbuf[k++] = tmp[--t];
+		}
+		nbuf[k] = 0;
+		for (k = 0; nbuf[k] && i < sizeof(G.err) - 2; k++)
+			G.err[i++] = nbuf[k];
+		if (i < sizeof(G.err) - 2)
+			G.err[i++] = ':';
+		while (*p && i < sizeof(G.err) - 1)
+			G.err[i++] = *p++;
+	}
 	G.err[i] = 0;
 	longjmp(G.errjmp, 1);
 }
@@ -339,4 +372,232 @@ void mmb_print_val(mmb_val v)
 		fmt_double(v.f, buf, sizeof(buf));
 		mmb_out(buf);
 	}
+}
+
+int mmb_opt_repeat_first(void)
+{
+	return G.opt.repeat_first > 0 ? G.opt.repeat_first : 600;
+}
+
+int mmb_opt_repeat_next(void)
+{
+	return G.opt.repeat_next > 0 ? G.opt.repeat_next : 150;
+}
+
+static const int k_mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+static int parse_int_part(const char **ps)
+{
+	int n = 0;
+	const char *p = *ps;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p < '0' || *p > '9')
+		return -1;
+	while (*p >= '0' && *p <= '9')
+		n = n * 10 + (*p++ - '0');
+	*ps = p;
+	return n;
+}
+
+static void clock_norm(void)
+{
+	unsigned now = mmb_now_ms();
+	int add;
+
+	if (now < G.clk_ms)
+		G.clk_ms = now;
+	add = (int)((now - G.clk_ms) / 1000u);
+	if (add <= 0)
+		return;
+	G.clk_ms += (unsigned)add * 1000u;
+	G.clk_s += add;
+	while (G.clk_s >= 60)
+	{
+		G.clk_s -= 60;
+		G.clk_mi++;
+	}
+	while (G.clk_mi >= 60)
+	{
+		G.clk_mi -= 60;
+		G.clk_h++;
+	}
+	while (G.clk_h >= 24)
+	{
+		G.clk_h -= 24;
+		G.clk_d++;
+	}
+	for (;;)
+	{
+		int md, mo = G.clk_mo;
+		if (mo < 1)
+			mo = 1;
+		if (mo > 12)
+			mo = 12;
+		md = k_mdays[mo - 1];
+		if (mo == 2 && ((G.clk_y % 4) == 0))
+			md = 29;
+		if (G.clk_d <= md)
+			break;
+		G.clk_d -= md;
+		G.clk_mo++;
+		if (G.clk_mo > 12)
+		{
+			G.clk_mo = 1;
+			G.clk_y++;
+			if (G.clk_y > 99)
+				G.clk_y = 0;
+		}
+	}
+}
+
+static void fmt2(char *p, int n)
+{
+	p[0] = (char)('0' + (n / 10) % 10);
+	p[1] = (char)('0' + n % 10);
+}
+
+void mmb_clock_refresh(void)
+{
+	char *p;
+	int n;
+	clock_norm();
+	p = G.date_s;
+	n = G.clk_d;
+	if (n >= 10)
+		*p++ = (char)('0' + n / 10);
+	*p++ = (char)('0' + n % 10);
+	*p++ = '-';
+	n = G.clk_mo;
+	if (n >= 10)
+		*p++ = (char)('0' + n / 10);
+	*p++ = (char)('0' + n % 10);
+	*p++ = '-';
+	fmt2(p, G.clk_y);
+	p[2] = 0;
+	fmt2(G.time_s, G.clk_h);
+	G.time_s[2] = ':';
+	fmt2(G.time_s + 3, G.clk_mi);
+	G.time_s[5] = ':';
+	fmt2(G.time_s + 6, G.clk_s);
+	G.time_s[8] = 0;
+}
+
+void mmb_clock_init(void)
+{
+	G.clk_d = 1;
+	G.clk_mo = 1;
+	G.clk_y = 26;
+	G.clk_h = 12;
+	G.clk_mi = 0;
+	G.clk_s = 0;
+	G.clk_ms = mmb_now_ms();
+	mmb_clock_refresh();
+}
+
+int mmb_clock_set_date(const char *s)
+{
+	const char *p = s;
+	int d, m, y;
+	if (!s)
+		return -1;
+	d = parse_int_part(&p);
+	while (*p == ' ')
+		p++;
+	if (*p != '-' && *p != '/')
+		return -1;
+	p++;
+	m = parse_int_part(&p);
+	while (*p == ' ')
+		p++;
+	if (*p != '-' && *p != '/')
+		return -1;
+	p++;
+	y = parse_int_part(&p);
+	if (d < 1 || d > 31 || m < 1 || m > 12 || y < 0)
+		return -1;
+	if (y >= 100)
+		y %= 100;
+	clock_norm();
+	G.clk_d = d;
+	G.clk_mo = m;
+	G.clk_y = y;
+	G.clk_ms = mmb_now_ms();
+	mmb_clock_refresh();
+	return 0;
+}
+
+int mmb_clock_set_time(const char *s)
+{
+	const char *p = s;
+	int h, mi, sec;
+	if (!s)
+		return -1;
+	h = parse_int_part(&p);
+	while (*p == ' ')
+		p++;
+	if (*p != ':')
+		return -1;
+	p++;
+	mi = parse_int_part(&p);
+	sec = 0;
+	while (*p == ' ')
+		p++;
+	if (*p == ':')
+	{
+		p++;
+		sec = parse_int_part(&p);
+	}
+	if (h < 0 || h > 23 || mi < 0 || mi > 59 || sec < 0 || sec > 59)
+		return -1;
+	clock_norm();
+	G.clk_h = h;
+	G.clk_mi = mi;
+	G.clk_s = sec;
+	G.clk_ms = mmb_now_ms();
+	mmb_clock_refresh();
+	return 0;
+}
+
+void mmb_inkey_push(int c)
+{
+	if (c <= 0 || c > 255)
+		return;
+	if (G.inkey_n >= MMB_INKEY)
+		return;
+	G.inkey_q[G.inkey_w] = c;
+	G.inkey_w = (G.inkey_w + 1) % MMB_INKEY;
+	G.inkey_n++;
+}
+
+int mmb_inkey_pop(void)
+{
+	int c;
+	if (G.inkey_n <= 0)
+		return -1;
+	c = G.inkey_q[G.inkey_r];
+	G.inkey_r = (G.inkey_r + 1) % MMB_INKEY;
+	G.inkey_n--;
+	return c;
+}
+
+void mmb_keydown_set(const int *codes, int n)
+{
+	int i;
+	if (n < 0)
+		n = 0;
+	if (n > 6)
+		n = 6;
+	G.nkeydown = n;
+	for (i = 0; i < n; i++)
+		G.keydown[i] = codes[i];
+}
+
+int mmb_keydown_get(int n)
+{
+	if (n == 0)
+		return G.nkeydown;
+	if (n < 1 || n > G.nkeydown)
+		return 0;
+	return G.keydown[n - 1];
 }

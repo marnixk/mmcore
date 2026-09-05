@@ -13,6 +13,7 @@
 #define FU_INFO     5
 #define FU_PREVIEW  6
 #define FU_PLAY     7
+#define FU_VIEW     8
 
 #define FU_PR_COPY  1
 #define FU_PR_MOVE  2
@@ -47,6 +48,14 @@ typedef struct {
 	char info_name[FU_NAME];
 	char info_path[FU_PATH];
 	int info_size;
+	int drop; /* -1 none, 0..4 aligned dropdown */
+	int drop_item;
+	int menu_x[5];
+	int alt;
+	char view_path[FU_PATH];
+	char view_buf[4096];
+	int view_len;
+	int view_top;
 } fu_state;
 
 static fu_state F;
@@ -172,7 +181,13 @@ static int is_aud(const char *n)
 {
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".MP3") || mmb_keyword_eq(e, ".XM") ||
-	       mmb_keyword_eq(e, ".MOD");
+	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".WAV");
+}
+
+static int is_text(const char *n)
+{
+	const char *e = ext_of(n);
+	return is_bas(n) || mmb_keyword_eq(e, ".TXT") || mmb_keyword_eq(e, ".MD");
 }
 
 static int is_dotdot(const fu_ent *e)
@@ -441,15 +456,190 @@ static void emit_status(void)
 
 static void draw_top_menu(void)
 {
-	tui_pad(0, 0, " Left   File   Command  Options   Right", fu_cols(),
-		FU_MENU_FG, FU_MENU_BG);
+	int x = 0;
+	const char *names[] = { "Left", "File", "Command", "Options", "Right" };
+	const char hots[] = { 'L', 'F', 'C', 'O', 'R' };
+	int i;
+	tui_put(x++, 0, ' ', FU_MENU_FG, FU_MENU_BG);
+	for (i = 0; i < 5; i++)
+	{
+		int j, sel = (F.drop == i);
+		int fg, bg;
+		fg = sel ? TUI_BLACK : FU_MENU_FG;
+		bg = sel ? TUI_GREEN : FU_MENU_BG;
+		F.menu_x[i] = x;
+		for (j = 0; names[i][j]; j++)
+		{
+			int c_fg = fg;
+			if (names[i][j] == hots[i] || names[i][j] == hots[i] + 32)
+				c_fg = TUI_BRRED;
+			tui_put(x++, 0, (unsigned char)names[i][j], c_fg, bg);
+		}
+		tui_put(x++, 0, ' ', FU_MENU_FG, FU_MENU_BG);
+		tui_put(x++, 0, ' ', FU_MENU_FG, FU_MENU_BG);
+	}
+	if (x < fu_cols())
+		tui_pad(x, 0, "", fu_cols() - x, FU_MENU_FG, FU_MENU_BG);
 }
 
-static void draw_border_row(int row, const char *left_mid, const char *right_mid)
+static const char **drop_items(int menu, int *n, const char **hots)
+{
+	static const char *left[] = { "Drive A:", "Drive C:", "Drive D:" };
+	static const char left_h[] = { 'a', 'c', 'd' };
+	static const char *file[] = { "View", "Edit", "Copy", "Move", "Delete" };
+	static const char file_h[] = { 'v', 'e', 'c', 'm', 'd' };
+	static const char *cmd[] = { "MkDir", "Help", "Quit" };
+	static const char cmd_h[] = { 'k', 'h', 'q' };
+	static const char *opt[] = { "Help" };
+	static const char opt_h[] = { 'h' };
+	static const char *right[] = { "Focus right", "Drive A:", "Drive C:", "Drive D:" };
+	static const char right_h[] = { 'f', 'a', 'c', 'd' };
+	switch (menu)
+	{
+	case 0: *n = 3; *hots = left_h; return left;
+	case 1: *n = 5; *hots = file_h; return file;
+	case 2: *n = 3; *hots = cmd_h; return cmd;
+	case 3: *n = 1; *hots = opt_h; return opt;
+	default: *n = 4; *hots = right_h; return right;
+	}
+}
+
+static void draw_files_dropdown(void)
+{
+	int n, i, w, r0, c0;
+	const char *hots = 0;
+	const char **it;
+	if (F.drop < 0)
+		return;
+	it = drop_items(F.drop, &n, &hots);
+	w = 14;
+	for (i = 0; i < n; i++)
+	{
+		int L = (int)strlen(it[i]) + 4;
+		if (L > w)
+			w = L;
+	}
+	c0 = F.menu_x[F.drop];
+	if (c0 + w + 2 > fu_cols())
+		c0 = fu_cols() - w - 2;
+	if (c0 < 0)
+		c0 = 0;
+	r0 = 1;
+	tui_hline(c0, r0, w, TUI_TL, TUI_H, TUI_TR, FU_MENU_FG, FU_MENU_BG);
+	for (i = 0; i < n; i++)
+	{
+		int sel = (i == F.drop_item);
+		int fg = sel ? FU_SEL_FG : FU_MENU_FG;
+		int bg = sel ? FU_SEL_BG : FU_MENU_BG;
+		tui_put(c0, r0 + 1 + i, TUI_V, FU_MENU_FG, FU_MENU_BG);
+		tui_put(c0 + 1, r0 + 1 + i, ' ', fg, bg);
+		tui_pad(c0 + 2, r0 + 1 + i, it[i], w - 4, fg, bg);
+		tui_put(c0 + w - 2, r0 + 1 + i, ' ', fg, bg);
+		tui_put(c0 + w - 1, r0 + 1 + i, TUI_V, FU_MENU_FG, FU_MENU_BG);
+	}
+	tui_hline(c0, r0 + 1 + n, w, TUI_BL, TUI_H, TUI_BR, FU_MENU_FG, FU_MENU_BG);
+}
+
+static int line_is_comment(const char *s, int n)
+{
+	int i = 0;
+	while (i < n && (s[i] == ' ' || s[i] == '\t'))
+		i++;
+	while (i < n && s[i] >= '0' && s[i] <= '9')
+		i++;
+	while (i < n && (s[i] == ' ' || s[i] == '\t'))
+		i++;
+	if (i < n && s[i] == '\'')
+		return 1;
+	if (i + 2 < n)
+	{
+		char a = s[i], b = s[i + 1], c = s[i + 2];
+		if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+		if (b >= 'a' && b <= 'z') b = (char)(b - 32);
+		if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+		if (a == 'R' && b == 'E' && c == 'M' &&
+		    (i + 3 >= n || s[i + 3] == ' ' || s[i + 3] == '\t'))
+			return 1;
+	}
+	return 0;
+}
+
+static void draw_syntax_span(int x, int y, const char *s, int n, int width)
+{
+	int i, shown = 0, in_str = 0, in_cmt;
+	in_cmt = line_is_comment(s, n);
+	for (i = 0; i < n && shown < width; i++)
+	{
+		char ch = s[i];
+		int fg;
+		if (!in_cmt && !in_str && ch == '\'')
+			in_cmt = 1;
+		if (!in_cmt && !in_str && ch == '"')
+			in_str = 1;
+		else if (in_str && ch == '"')
+			in_str = 2;
+		if (in_cmt)
+			fg = TUI_WHITE;
+		else if (in_str)
+			fg = TUI_BRYELLOW;
+		else if (ch >= '0' && ch <= '9')
+			fg = TUI_BRBLUE;
+		else
+			fg = TUI_BRWHITE;
+		tui_put(x + shown, y, (unsigned char)((ch == '\t') ? ' ' : ch), fg, TUI_BLUE);
+		shown++;
+		if (in_str == 2)
+			in_str = 0;
+	}
+	if (shown < width)
+		tui_pad(x + shown, y, "", width - shown, TUI_BRWHITE, TUI_BLUE);
+}
+
+static void draw_text_view(void)
+{
+	int w = fu_cols() - 4, h = fu_rows() - 6, r0 = 2, c0 = 2, y, pos, line;
+	if (w < 20)
+		w = fu_cols() > 4 ? fu_cols() - 2 : fu_cols();
+	if (h < 6)
+		h = fu_rows() > 4 ? fu_rows() - 4 : fu_rows();
+	tui_fill(c0, r0, w, h, ' ', TUI_BRWHITE, TUI_BLUE);
+	tui_frame(c0, r0, w, h, FU_MENU_FG, FU_MENU_BG);
+	tui_pad(c0 + 1, r0 + 1, F.info_name, w - 2, FU_MENU_FG, FU_MENU_BG);
+	pos = 0;
+	line = 0;
+	y = r0 + 2;
+	while (pos < F.view_len && y < r0 + h - 2)
+	{
+		int start = pos, n = 0;
+		while (pos < F.view_len && F.view_buf[pos] != '\n' && F.view_buf[pos] != '\r')
+		{
+			n++;
+			pos++;
+		}
+		if (line >= F.view_top)
+		{
+			draw_syntax_span(c0 + 1, y, F.view_buf + start, n, w - 2);
+			y++;
+		}
+		line++;
+		if (pos < F.view_len && F.view_buf[pos] == '\r')
+			pos++;
+		if (pos < F.view_len && F.view_buf[pos] == '\n')
+			pos++;
+	}
+	tui_pad(c0 + 1, r0 + h - 2, "Arrows scroll  any other key closes", w - 2,
+		TUI_CYAN, TUI_BLUE);
+}
+
+static void draw_border_row(int row, int top, const char *left_mid, const char *right_mid)
 {
 	int lw = fu_left_w(), rw = fu_right_w();
-	tui_hline(0, row, lw, TUI_TL, TUI_H, TUI_TR, FU_PAN_FG, FU_PAN_BG);
-	tui_hline(lw, row, rw, TUI_TL, TUI_H, TUI_TR, FU_PAN_FG, FU_PAN_BG);
+	int L = top ? TUI_TL : TUI_BL;
+	int R = top ? TUI_TR : TUI_BR;
+	int join = top ? TUI_TT : TUI_BT;
+	tui_hline(0, row, lw, L, TUI_H, join, FU_PAN_FG, FU_PAN_BG);
+	if (rw > 0)
+		tui_hline(lw, row, rw, TUI_H, TUI_H, R, FU_PAN_FG, FU_PAN_BG);
 	if (left_mid && left_mid[0] && lw > 8)
 	{
 		int n = (int)strlen(left_mid);
@@ -476,6 +666,9 @@ static void draw_border_row(int row, const char *left_mid, const char *right_mid
 		}
 		tui_put(lw + 3 + n, row, ' ', FU_PAN_FG, FU_PAN_BG);
 	}
+	tui_put(0, row, L, FU_PAN_FG, FU_PAN_BG);
+	if (fu_cols() > 0)
+		tui_put(fu_cols() - 1, row, R, FU_PAN_FG, FU_PAN_BG);
 }
 
 static void draw_header_cols(void)
@@ -549,10 +742,10 @@ static void draw_file_row(int side, int vis)
 		fg = FU_PAN_FG;
 		bg = FU_PAN_BG;
 	}
-	tui_put(x0, row, TUI_V, fg, bg);
+	tui_put(x0, row, TUI_V, FU_PAN_FG, FU_PAN_BG);
 	tui_pad(x0 + 1, row, shown, name_w, fg, bg);
 	tui_pad(x0 + 1 + name_w, row, szs, size_w, fg, bg);
-	tui_put(x0 + pw - 1, row, TUI_V, fg, bg);
+	tui_put(x0 + pw - 1, row, TUI_V, FU_PAN_FG, FU_PAN_BG);
 }
 
 static void draw_hint(void)
@@ -653,10 +846,11 @@ static void draw_help(void)
 		"Enter dir=open  .BAS=RUN  image=view  audio=play",
 		"v/F3 view   e/F4 edit   c/F5 copy   m/F6 move",
 		"k/F7 mkdir  d/F8 delete  F9 menu   q/Esc quit",
+		"Alt+L/F/C/O/R menus  Alt+L/R panels  F9 command menu",
 		"Type A: or C: to change the active panel drive",
 		"Any key closes this help",
 	};
-	draw_overlay_box(" FILES  (Midnight Commander style) ", lines, 6);
+	draw_overlay_box(" FILES  (Midnight Commander style) ", lines, 7);
 }
 
 static void draw_menu(void)
@@ -709,7 +903,7 @@ static void files_draw(void)
 	tui_begin();
 	tui_clear(FU_PAN_FG, FU_PAN_BG);
 	draw_top_menu();
-	draw_border_row(1, F.pan[0].path, F.pan[1].path);
+	draw_border_row(1, 1, F.pan[0].path, F.pan[1].path);
 	draw_header_cols();
 	for (i = 0; i < fu_list(); i++)
 	{
@@ -725,7 +919,7 @@ static void files_draw(void)
 	pad(footL, namew, e ? e->name : "", 0);
 	e = F.pan[1].n ? &F.pan[1].ent[F.pan[1].sel] : 0;
 	pad(footR, namew, e ? e->name : "", 0);
-	draw_border_row(3 + fu_list(), footL, footR);
+	draw_border_row(3 + fu_list(), 0, footL, footR);
 	draw_hint();
 	draw_prompt_row();
 	draw_fkeys();
@@ -737,6 +931,10 @@ static void files_draw(void)
 		draw_info();
 	else if (F.mode == FU_PLAY)
 		draw_play();
+	else if (F.mode == FU_VIEW)
+		draw_text_view();
+	if (F.drop >= 0)
+		draw_files_dropdown();
 	tui_flush();
 	emit_status();
 }
@@ -776,6 +974,36 @@ static void enter_dir(void)
 	set_hint("Opened directory");
 }
 
+static void show_info_for(const char *path, const char *name);
+
+static void do_text_view(const char *path, const char *name)
+{
+	unsigned got = 0;
+	int sz;
+	strncpy(F.view_path, path, sizeof(F.view_path) - 1);
+	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
+	F.view_len = 0;
+	F.view_top = 0;
+	F.view_buf[0] = 0;
+	sz = mmb_vfs_size(path);
+	if (sz < 0)
+	{
+		show_info_for(path, name);
+		return;
+	}
+	if (sz > (int)sizeof(F.view_buf) - 1)
+		sz = (int)sizeof(F.view_buf) - 1;
+	if (mmb_vfs_read(path, F.view_buf, (unsigned)sz, &got) != 0)
+	{
+		show_info_for(path, name);
+		return;
+	}
+	F.view_len = (int)got;
+	F.view_buf[F.view_len] = 0;
+	F.mode = FU_VIEW;
+	set_hint("Text view  arrows scroll");
+}
+
 static void show_info_for(const char *path, const char *name)
 {
 	strncpy(F.info_path, path, sizeof(F.info_path) - 1);
@@ -787,7 +1015,9 @@ static void show_info_for(const char *path, const char *name)
 
 static void do_preview(const char *path, const char *name)
 {
-	(void)name;
+	ser("[FILES] PREVIEW ");
+	ser(name);
+	ser("\r\n");
 	mmb_gfx_cls(0);
 	if (is_img(name))
 	{
@@ -824,6 +1054,8 @@ static void do_play(const char *path, const char *name)
 		rc = mmb_play_mod(path);
 	else if (mmb_keyword_eq(e, ".XM"))
 		rc = mmb_play_xm(path);
+	else if (mmb_keyword_eq(e, ".WAV"))
+		rc = mmb_play_wav(path);
 	if (rc != 0)
 	{
 		show_info_for(path, name);
@@ -1031,6 +1263,8 @@ static void do_view(void)
 		do_preview(path, e->name);
 	else if (is_aud(e->name))
 		do_play(path, e->name);
+	else if (is_text(e->name))
+		do_text_view(path, e->name);
 	else
 		show_info_for(path, e->name);
 }
@@ -1066,6 +1300,7 @@ static void close_overlay(void)
 	if (F.mode == FU_PREVIEW)
 		mmb_gfx_cls(0x000028);
 	F.mode = FU_BROWSE;
+	F.drop = -1;
 	set_hint("");
 	tui_invalidate();
 }
@@ -1076,6 +1311,7 @@ static void files_open(const char *start)
 	memset(&F, 0, sizeof(F));
 	F.active = 1;
 	F.mode = FU_BROWSE;
+	F.drop = -1;
 	strncpy(cwd, start && start[0] ? start : mmb_vfs_cwd(), sizeof(cwd) - 1);
 	if (!strchr(cwd, ':'))
 	{
@@ -1138,9 +1374,139 @@ static void handle_fkey(int n)
 		files_close_tui();
 }
 
+static void activate_drop(void)
+{
+	int menu = F.drop;
+	int item = F.drop_item;
+	F.drop = -1;
+	if (menu == 0)
+	{
+		if (item == 0)
+			set_drive_letter('A');
+		else if (item == 1)
+			set_drive_letter('C');
+		else
+			set_drive_letter('D');
+	}
+	else if (menu == 1)
+	{
+		if (item == 0)
+			do_view();
+		else if (item == 1)
+		{
+			fu_ent *e = cursel();
+			char path[FU_PATH];
+			if (e && !e->is_dir)
+			{
+				sel_path(path, sizeof(path));
+				do_edit(path);
+			}
+		}
+		else if (item == 2)
+			start_copy_or_move(0);
+		else if (item == 3)
+			start_copy_or_move(1);
+		else
+			start_delete();
+	}
+	else if (menu == 2)
+	{
+		if (item == 0)
+			start_mkdir();
+		else if (item == 1)
+			F.mode = FU_HELP;
+		else
+			files_close_tui();
+	}
+	else if (menu == 3)
+		F.mode = FU_HELP;
+	else
+	{
+		if (item == 0)
+		{
+			F.cur = 1;
+			chdir_panel(curpan());
+			set_hint("Right panel");
+		}
+		else if (item == 1)
+			set_drive_letter('A');
+		else if (item == 2)
+			set_drive_letter('C');
+		else
+			set_drive_letter('D');
+	}
+}
+
+static int files_alt(char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		c = (char)(c - 'A' + 'a');
+	if (c == 'l')
+	{
+		F.drop = 0;
+		F.drop_item = 0;
+		return 1;
+	}
+	if (c == 'f')
+	{
+		F.drop = 1;
+		F.drop_item = 0;
+		return 1;
+	}
+	if (c == 'c')
+	{
+		F.drop = 2;
+		F.drop_item = 0;
+		return 1;
+	}
+	if (c == 'o')
+	{
+		F.drop = 3;
+		F.drop_item = 0;
+		return 1;
+	}
+	if (c == 'r')
+	{
+		F.drop = 4;
+		F.drop_item = 0;
+		return 1;
+	}
+	return 0;
+}
+
 static void handle_arrow(int which)
 {
 	fu_panel *p = curpan();
+	if (F.mode == FU_VIEW)
+	{
+		if (which == 0 && F.view_top > 0)
+			F.view_top--;
+		else if (which == 1)
+			F.view_top++;
+		return;
+	}
+	if (F.drop >= 0)
+	{
+		int n;
+		const char *hots;
+		drop_items(F.drop, &n, &hots);
+		(void)hots;
+		if (which == 0)
+			F.drop_item = F.drop_item > 0 ? F.drop_item - 1 : n - 1;
+		else if (which == 1)
+			F.drop_item = F.drop_item + 1 < n ? F.drop_item + 1 : 0;
+		else if (which == 2)
+		{
+			F.drop = (F.drop + 1) % 5;
+			F.drop_item = 0;
+		}
+		else if (which == 3)
+		{
+			F.drop = F.drop > 0 ? F.drop - 1 : 4;
+			F.drop_item = 0;
+		}
+		return;
+	}
 	if (F.mode == FU_PREVIEW || F.mode == FU_INFO || F.mode == FU_HELP ||
 	    F.mode == FU_PLAY)
 	{
@@ -1179,6 +1545,23 @@ static int handle_esc_char(char c)
 			return 1;
 		}
 		F.esc = 0;
+		if (c == 27)
+		{
+			if (F.drop >= 0)
+				F.drop = -1;
+			else if (F.mode == FU_BROWSE)
+				files_close_tui();
+			else
+				close_overlay();
+			return 1;
+		}
+		if (files_alt(c))
+			return 1;
+		if (F.drop >= 0)
+		{
+			F.drop = -1;
+			return 1;
+		}
 		if (F.mode == FU_BROWSE)
 			files_close_tui();
 		else
@@ -1264,7 +1647,29 @@ static void handle_letter(char c)
 	char lc = c;
 	if (lc >= 'A' && lc <= 'Z')
 		lc = (char)(lc + 32);
-	if (F.mode == FU_HELP || F.mode == FU_INFO || F.mode == FU_PREVIEW)
+	if (F.drop >= 0)
+	{
+		int n, i;
+		const char *hots;
+		drop_items(F.drop, &n, &hots);
+		for (i = 0; i < n; i++)
+		{
+			if (hots[i] == lc)
+			{
+				F.drop_item = i;
+				activate_drop();
+				return;
+			}
+		}
+		return;
+	}
+	if (F.mode == FU_VIEW)
+	{
+		close_overlay();
+		return;
+	}
+	if (F.mode == FU_HELP || F.mode == FU_INFO || F.mode == FU_PREVIEW ||
+	    F.mode == FU_VIEW)
 	{
 		close_overlay();
 		return;
@@ -1473,6 +1878,19 @@ const char *mmb_files_key(char c)
 	if (!F.active)
 		return G.out;
 	was_active = 1;
+	if (F.alt)
+	{
+		F.alt = 0;
+		files_alt(c);
+		if (F.active && F.mode != FU_PREVIEW)
+			files_draw();
+		return G.out;
+	}
+	if ((unsigned char)c == 1)
+	{
+		F.alt = 1;
+		return G.out;
+	}
 	if (F.esc)
 	{
 		handle_esc_char(c);
@@ -1540,7 +1958,7 @@ const char *mmb_files_key(char c)
 			}
 		}
 		else if (F.mode == FU_CONFIRM || F.mode == FU_MENU || F.mode == FU_HELP ||
-			 F.mode == FU_INFO || F.mode == FU_PLAY)
+			 F.mode == FU_INFO || F.mode == FU_PLAY || F.mode == FU_VIEW)
 			close_overlay();
 		if (F.active)
 			files_draw();
@@ -1548,9 +1966,12 @@ const char *mmb_files_key(char c)
 	}
 	if (c == '\r' || c == '\n')
 	{
-		if (F.mode == FU_PLAY)
+		if (F.drop >= 0)
+			activate_drop();
+		else if (F.mode == FU_PLAY)
 			close_overlay();
-		else if (F.mode == FU_HELP || F.mode == FU_INFO || F.mode == FU_MENU)
+		else if (F.mode == FU_HELP || F.mode == FU_INFO || F.mode == FU_MENU ||
+			 F.mode == FU_VIEW)
 			close_overlay();
 		else if (F.mode == FU_CONFIRM)
 			apply_delete();

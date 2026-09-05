@@ -111,8 +111,19 @@ static mmb_val parse_string(void)
 	char buf[MMB_MAX_STR + 1];
 	int n = 0;
 	G.p++; /* quote */
-	while (*G.p && *G.p != '"')
+	while (*G.p)
 	{
+		if (*G.p == '"')
+		{
+			if (G.p[1] == '"')
+			{
+				if (n < MMB_MAX_STR)
+					buf[n++] = '"';
+				G.p += 2;
+				continue;
+			}
+			break;
+		}
 		if (n < MMB_MAX_STR)
 			buf[n++] = *G.p;
 		G.p++;
@@ -167,7 +178,7 @@ int mmb_try_function(mmb_val *out)
 
 	if (mmb_match("RGB"))
 	{
-		call_args(a, 3, &n);
+		call_args(a, 4, &n);
 		if (n == 1 && a[0].type == T_STR)
 		{
 			col = named_or_fail(a[0].s, &ok);
@@ -181,7 +192,7 @@ int mmb_try_function(mmb_val *out)
 			*out = mmb_int_val(mmb_as_int(a[0]));
 			return 1;
 		}
-		if (n == 3)
+		if (n == 3 || n == 4)
 		{
 			int r = (int)mmb_as_int(a[0]);
 			int g = (int)mmb_as_int(a[1]);
@@ -578,16 +589,28 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("INSTR"))
 	{
 		int start = 1, i, j, len, nlen;
-		char *hay, *ndl;
+		char *hay = "", *ndl = "";
 		call_args(a, 3, &n);
-		if (n < 2 || n > 3 || a[0].type != T_STR || a[1].type != T_STR)
-			mmb_error("?TYPE MISMATCH");
+		/* CMM2: INSTR([start,] haystack$, needle$) */
 		if (n == 3)
-			start = (int)mmb_as_int(a[2]);
+		{
+			if (a[1].type != T_STR || a[2].type != T_STR)
+				mmb_error("?TYPE MISMATCH");
+			start = (int)mmb_as_int(a[0]);
+			hay = a[1].s;
+			ndl = a[2].s;
+		}
+		else if (n == 2)
+		{
+			if (a[0].type != T_STR || a[1].type != T_STR)
+				mmb_error("?TYPE MISMATCH");
+			hay = a[0].s;
+			ndl = a[1].s;
+		}
+		else
+			mmb_error("?TYPE MISMATCH");
 		if (start < 1)
 			start = 1;
-		hay = a[0].s;
-		ndl = a[1].s;
 		len = (int)strlen(hay);
 		nlen = (int)strlen(ndl);
 		if (nlen == 0)
@@ -716,23 +739,42 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("DATE$"))
 	{
-		*out = mmb_str_val(G.date_s[0] ? G.date_s : "01-01-26");
+		mmb_clock_refresh();
+		*out = mmb_str_val(G.date_s[0] ? G.date_s : "1-1-26");
 		return 1;
 	}
 	if (mmb_match("TIME$"))
 	{
+		mmb_clock_refresh();
 		*out = mmb_str_val(G.time_s[0] ? G.time_s : "12:00:00");
 		return 1;
 	}
 	if (mmb_match("INKEY$"))
 	{
+		int c;
+		char b[2];
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
 			G.p++;
 			mmb_expect(')');
 		}
-		*out = mmb_str_val("");
+		c = mmb_inkey_pop();
+		if (c < 0)
+			*out = mmb_str_val("");
+		else
+		{
+			b[0] = (char)c;
+			b[1] = 0;
+			*out = mmb_str_val(b);
+		}
+		return 1;
+	}
+	if (match_fun("KEYDOWN"))
+	{
+		int narg = 0;
+		call_args(a, 1, &narg);
+		*out = mmb_int_val(mmb_keydown_get(narg ? (int)mmb_as_int(a[0]) : 0));
 		return 1;
 	}
 	if (mmb_match("TIMER"))

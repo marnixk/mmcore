@@ -250,12 +250,14 @@ void mmb_gfx_present(void)
 	for (y = 0; y < hh; y++)
 		for (x = 0; x < hw; x++)
 			G.plat->set_pixel(x, y, pg[y * G.gfx.w + x]);
+	mmb_sprite_overlay();
 }
 
 void mmb_gfx_init(void)
 {
 	int hw = G.plat && G.plat->hdmi_width ? G.plat->hdmi_width() : 640;
 	int hh = G.plat && G.plat->hdmi_height ? G.plat->hdmi_height() : 480;
+	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
 	G.gfx.fg = 0xFFFFFF;

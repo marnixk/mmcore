@@ -6,8 +6,9 @@ def test_help_lists_commands(console):
     assert out
     for cmd in ("CLS", "PRINT", "PIXEL", "DIR", "FILES", "OPEN", "MODE", "PLAY", "FACTORY_RESET", "CONNECT"):
         assert cmd in out, cmd
-    for junk in ("DELETE", "SPRITE", "GUI", "CAMERA", "MAP", "TILE"):
+    for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
         assert junk not in out, junk
+    assert "SPRITE" in out
     assert "HELP BASIC" in out
     assert "OPTION WIFI" in out
     assert "ssid" in out.lower()
