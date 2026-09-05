@@ -31,7 +31,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Other\n"
 	"  PRINT INPUT OPTION PLAY PAUSE CLEAR END CALL HELP\n"
-	"  FACTORY_RESET\n"
+	"  FACTORY_RESET CONNECT\n"
 	"\n"
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.";
 
@@ -454,6 +454,21 @@ static const char kHelpFactoryReset[] =
 	"\n"
 	"Example:  FACTORY_RESET";
 
+static const char kHelpConnect[] =
+	"CONNECT host$, port\n"
+	"\n"
+	"Open a telnet-style TCP session to host$ on port.\n"
+	"Incoming bytes (including ANSI) are shown on HDMI\n"
+	"and serial. Starts in line mode with local echo.\n"
+	"Telnet IAC WILL ECHO turns local echo off; IAC\n"
+	"SGA switches to character mode. Ctrl+] quits.\n"
+	"\n"
+	"QEMU has no network device; CONNECT then reports\n"
+	"that the network is not available and returns to\n"
+	"the prompt.\n"
+	"\n"
+	"Example:  CONNECT \"192.168.1.10\", 23";
+
 static const char kHelpChdir[] =
 	"CHDIR path$\n"
 	"\n"
@@ -810,6 +825,7 @@ static const help_topic kTopics[] = {
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
+	{ "CONNECT",     HELP_CMD,  kHelpConnect },
 	{ "CHDIR",       HELP_CMD,  kHelpChdir },
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },
 	{ "RMDIR",       HELP_CMD,  kHelpRmdir },

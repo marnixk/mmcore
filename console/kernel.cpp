@@ -107,6 +107,16 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
+	if (mmb_in_connect ())
+	{
+		const char *out = mmb_connect_key (c);
+		if (out && out[0])
+			emit (&m_Serial, &m_Screen, out);
+		if (!mmb_in_connect ())
+			emit (&m_Serial, &m_Screen, "> ");
+		return;
+	}
+
 	/* ESC / CSI from Circle keymap (arrows, Home/End/Delete/Insert, F-keys). */
 	if (m_nEsc == 1)
 	{
@@ -158,6 +168,11 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		else if (mmb_in_files ())
 		{
 			/* Dual-pane TUI already streamed to HDMI/serial. */
+		}
+		else if (mmb_in_connect ())
+		{
+			if (Result && Result[0])
+				emit (&m_Serial, &m_Screen, Result);
 		}
 		else
 		{

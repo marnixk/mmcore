@@ -4,7 +4,7 @@
 CIRCLEHOME = ../circle
 MMB        = ../mmbasic
 
-OBJS	= main.o kernel.o platform.o storage.o wlan.o \
+OBJS	= main.o kernel.o platform.o storage.o wlan.o net.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/expr.o \
@@ -17,6 +17,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o \
 	  $(MMB)/src/vfs.o \
 	  $(MMB)/src/cmd_files.o \
 	  $(MMB)/src/cmd_files_ui.o \
+	  $(MMB)/src/cmd_connect.o \
 	  $(MMB)/src/cmd_load.o \
 	  $(MMB)/src/png.o \
 	  $(MMB)/src/cmd_play.o \

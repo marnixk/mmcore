@@ -1646,6 +1646,11 @@ static void exec_statement(void)
 		mmb_cmd_files_ui();
 		return;
 	}
+	if (mmb_match("CONNECT"))
+	{
+		mmb_cmd_connect();
+		return;
+	}
 	if (mmb_match("OPEN"))
 	{
 		mmb_cmd_open();
@@ -1829,4 +1834,5 @@ void mmb_reset(void)
 void mmb_poll(void)
 {
 	mmb_storage_poll();
+	mmb_connect_poll();
 }

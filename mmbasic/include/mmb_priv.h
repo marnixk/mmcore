@@ -381,6 +381,17 @@ int mmb_wlan_scan(char ssids[][64], int maxn);
 int mmb_wlan_connect(const char *ssid, const char *psk);
 int mmb_wlan_status(void);
 
+int mmb_net_available(void);
+int mmb_net_tcp_open(const char *host, int port);
+int mmb_net_tcp_send(const void *data, unsigned n);
+int mmb_net_tcp_recv(void *data, unsigned maxn);
+void mmb_net_tcp_close(void);
+
+void mmb_cmd_connect(void);
+int mmb_in_connect(void);
+const char *mmb_connect_key(char c);
+void mmb_connect_poll(void);
+
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);
 

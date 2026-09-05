@@ -51,6 +51,12 @@ const char *mmb_files_key(char c);
 /* Redraw FILES after the editor returns, or close it if EDIT ran a program. */
 const char *mmb_files_on_editor_exit(void);
 
+/* True while CONNECT owns the keyboard (telnet-style session). */
+int mmb_in_connect(void);
+
+/* Feed a keystroke to CONNECT. Returns text to emit (may be empty). */
+const char *mmb_connect_key(char c);
+
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 
