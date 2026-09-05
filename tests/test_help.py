@@ -112,3 +112,5 @@ def test_help_option_wifi(console):
     out = console.send_line("HELP OPTION")
     assert "WIFI" in out
     assert ".mmbasic.ini" in out
+    assert "firmware" in out.lower()
+    assert "WPA2" in out or "wpa" in out.lower()

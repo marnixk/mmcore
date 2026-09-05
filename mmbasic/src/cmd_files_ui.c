@@ -1,8 +1,6 @@
 #include "mmb_priv.h"
+#include "tui.h"
 
-#define FU_COLS     80
-#define FU_ROWS     30
-#define FU_LIST     23
 #define FU_MAX_ENT  96
 #define FU_NAME     80
 #define FU_PATH     128
@@ -53,14 +51,29 @@ typedef struct {
 
 static fu_state F;
 
-static void scr(const char *s)
+#define FU_MENU_FG TUI_BLACK
+#define FU_MENU_BG TUI_CYAN
+#define FU_PAN_FG  TUI_WHITE
+#define FU_PAN_BG  TUI_BLUE
+#define FU_SEL_FG  TUI_BLACK
+#define FU_SEL_BG  TUI_CYAN
+#define FU_DIR_FG  TUI_BRCYAN
+#define FU_DIR_BG  TUI_BLUE
+#define FU_ST_FG   TUI_CYAN
+#define FU_ST_BG   TUI_BLACK
+#define FU_FN_FG   TUI_WHITE
+#define FU_FN_BG   TUI_BLUE
+#define FU_FL_FG   TUI_BLACK
+#define FU_FL_BG   TUI_CYAN
+
+static int fu_cols(void) { return tui_cols(); }
+static int fu_rows(void) { return tui_rows(); }
+static int fu_left_w(void) { return fu_cols() / 2; }
+static int fu_right_w(void) { return fu_cols() - fu_left_w(); }
+static int fu_list(void)
 {
-	unsigned n;
-	if (!s || !G.plat || !G.plat->write_screen)
-		return;
-	n = (unsigned)strlen(s);
-	if (n)
-		G.plat->write_screen(s, n);
+	int n = fu_rows() - 7;
+	return n < 3 ? 3 : n;
 }
 
 static void ser(const char *s)
@@ -72,69 +85,6 @@ static void ser(const char *s)
 	if (n)
 		G.plat->write_serial(s, n);
 }
-
-static void at(int row, int col)
-{
-	char b[20];
-	int n, i;
-	if (row < 1)
-		row = 1;
-	if (col < 1)
-		col = 1;
-	b[0] = 0x1b;
-	b[1] = '[';
-	n = 2;
-	if (row >= 10)
-		b[n++] = (char)('0' + row / 10);
-	b[n++] = (char)('0' + row % 10);
-	b[n++] = ';';
-	if (col >= 10)
-		b[n++] = (char)('0' + col / 10);
-	b[n++] = (char)('0' + col % 10);
-	b[n++] = 'H';
-	b[n] = 0;
-	scr(b);
-	(void)i;
-}
-
-static void sgr0(void) { scr("\x1b[0m"); }
-static void sgr1(void) { scr("\x1b[1m"); }
-static void fg(int c)
-{
-	char b[8];
-	b[0] = 0x1b;
-	b[1] = '[';
-	if (c >= 100)
-	{
-		b[2] = (char)('0' + c / 100);
-		b[3] = (char)('0' + (c / 10) % 10);
-		b[4] = (char)('0' + c % 10);
-		b[5] = 'm';
-		b[6] = 0;
-	}
-	else if (c >= 10)
-	{
-		b[2] = (char)('0' + c / 10);
-		b[3] = (char)('0' + c % 10);
-		b[4] = 'm';
-		b[5] = 0;
-	}
-	else
-	{
-		b[2] = (char)('0' + c);
-		b[3] = 'm';
-		b[4] = 0;
-	}
-	scr(b);
-}
-
-static void col_menu(void) { sgr0(); fg(30); fg(46); }
-static void col_panel(void) { sgr0(); fg(37); fg(44); }
-static void col_sel(void) { sgr0(); fg(30); fg(46); }
-static void col_dir(void) { sgr0(); sgr1(); fg(36); fg(44); }
-static void col_status(void) { sgr0(); fg(36); fg(40); }
-static void col_fn(void) { sgr0(); fg(37); fg(44); }
-static void col_fl(void) { sgr0(); fg(30); fg(46); }
 
 static void fmt_uint(char *dst, unsigned v)
 {
@@ -173,16 +123,6 @@ static void pad(char *dst, int width, const char *s, int right)
 		for (i = n; i < width; i++)
 			dst[i] = ' ';
 	}
-	dst[width] = 0;
-}
-
-static void hline(char *dst, int width, char l, char m, char r)
-{
-	int i;
-	dst[0] = l;
-	for (i = 1; i < width - 1; i++)
-		dst[i] = m;
-	dst[width - 1] = r;
 	dst[width] = 0;
 }
 
@@ -426,8 +366,8 @@ static void panel_reload(fu_panel *p)
 		p->sel = p->n ? p->n - 1 : 0;
 	if (p->sel < p->top)
 		p->top = p->sel;
-	if (p->sel >= p->top + FU_LIST)
-		p->top = p->sel - FU_LIST + 1;
+	if (p->sel >= p->top + fu_list())
+		p->top = p->sel - fu_list() + 1;
 	if (p->top < 0)
 		p->top = 0;
 }
@@ -452,8 +392,8 @@ static void clamp_sel(fu_panel *p)
 		p->sel = p->n - 1;
 	if (p->sel < p->top)
 		p->top = p->sel;
-	if (p->sel >= p->top + FU_LIST)
-		p->top = p->sel - FU_LIST + 1;
+	if (p->sel >= p->top + fu_list())
+		p->top = p->sel - fu_list() + 1;
 	if (p->top < 0)
 		p->top = 0;
 }
@@ -478,6 +418,12 @@ static void emit_status(void)
 	ser(" N=");
 	fmt_uint(nbuf, (unsigned)curpan()->n);
 	ser(nbuf);
+	ser(" COLS=");
+	fmt_uint(nbuf, (unsigned)fu_cols());
+	ser(nbuf);
+	ser(" ROWS=");
+	fmt_uint(nbuf, (unsigned)fu_rows());
+	ser(nbuf);
 	ser("\r\n[FILES-LIST]");
 	{
 		int i;
@@ -495,71 +441,81 @@ static void emit_status(void)
 
 static void draw_top_menu(void)
 {
-	char line[FU_COLS + 1];
-	pad(line, FU_COLS, " Left   File   Command  Options   Right", 0);
-	at(1, 1);
-	col_menu();
-	scr(line);
+	tui_pad(0, 0, " Left   File   Command  Options   Right", fu_cols(),
+		FU_MENU_FG, FU_MENU_BG);
 }
 
 static void draw_border_row(int row, const char *left_mid, const char *right_mid)
 {
-	char L[41], R[41], mid[38];
-	hline(L, 40, '+', '-', '+');
-	hline(R, 40, '+', '-', '+');
-	if (left_mid && left_mid[0])
+	int lw = fu_left_w(), rw = fu_right_w();
+	tui_hline(0, row, lw, TUI_TL, TUI_H, TUI_TR, FU_PAN_FG, FU_PAN_BG);
+	tui_hline(lw, row, rw, TUI_TL, TUI_H, TUI_TR, FU_PAN_FG, FU_PAN_BG);
+	if (left_mid && left_mid[0] && lw > 8)
 	{
 		int n = (int)strlen(left_mid);
-		if (n > 34)
-			n = 34;
-		L[2] = ' ';
-		memcpy(L + 3, left_mid, (unsigned)n);
-		L[3 + n] = ' ';
+		if (n > lw - 8)
+			n = lw - 8;
+		tui_put(2, row, ' ', FU_PAN_FG, FU_PAN_BG);
+		{
+			int i;
+			for (i = 0; i < n; i++)
+				tui_put(3 + i, row, (unsigned char)left_mid[i], FU_PAN_FG, FU_PAN_BG);
+		}
+		tui_put(3 + n, row, ' ', FU_PAN_FG, FU_PAN_BG);
 	}
-	if (right_mid && right_mid[0])
+	if (right_mid && right_mid[0] && rw > 8)
 	{
 		int n = (int)strlen(right_mid);
-		if (n > 34)
-			n = 34;
-		R[2] = ' ';
-		memcpy(R + 3, right_mid, (unsigned)n);
-		R[3 + n] = ' ';
+		if (n > rw - 8)
+			n = rw - 8;
+		tui_put(lw + 2, row, ' ', FU_PAN_FG, FU_PAN_BG);
+		{
+			int i;
+			for (i = 0; i < n; i++)
+				tui_put(lw + 3 + i, row, (unsigned char)right_mid[i], FU_PAN_FG, FU_PAN_BG);
+		}
+		tui_put(lw + 3 + n, row, ' ', FU_PAN_FG, FU_PAN_BG);
 	}
-	(void)mid;
-	at(row, 1);
-	col_panel();
-	scr(L);
-	scr(R);
 }
 
 static void draw_header_cols(void)
 {
-	char L[40], R[40], name[26], size[12];
-	pad(name, 25, "Name", 0);
-	pad(size, 11, "Size", 1);
-	L[0] = '|';
-	memcpy(L + 1, name, 25);
-	memcpy(L + 26, size, 11);
-	L[37] = ' ';
-	L[38] = '|';
-	L[39] = 0;
-	memcpy(R, L, 40);
-	at(3, 1);
-	col_panel();
-	sgr1();
-	scr(L);
-	scr(R);
+	int lw = fu_left_w(), rw = fu_right_w();
+	int size_w = 11;
+	int name_w;
+	if (lw < 28)
+		size_w = 4;
+	name_w = lw - 2 - size_w;
+	if (name_w < 4)
+		name_w = 4;
+	tui_put(0, 2, TUI_V, FU_PAN_FG, FU_PAN_BG);
+	tui_pad(1, 2, "Name", name_w, FU_PAN_FG, FU_PAN_BG);
+	tui_pad(1 + name_w, 2, "Size", size_w, FU_PAN_FG, FU_PAN_BG);
+	tui_put(lw - 1, 2, TUI_V, FU_PAN_FG, FU_PAN_BG);
+	tui_put(lw, 2, TUI_V, FU_PAN_FG, FU_PAN_BG);
+	tui_pad(lw + 1, 2, "Name", name_w, FU_PAN_FG, FU_PAN_BG);
+	tui_pad(lw + 1 + name_w, 2, "Size", size_w, FU_PAN_FG, FU_PAN_BG);
+	tui_put(lw + rw - 1, 2, TUI_V, FU_PAN_FG, FU_PAN_BG);
+	(void)rw;
 }
 
 static void draw_file_row(int side, int vis)
 {
 	fu_panel *p = &F.pan[side];
 	int idx = p->top + vis;
-	int row = 4 + vis;
+	int row = 3 + vis;
 	int active = (side == F.cur);
-	char body[40], nm[26], sz[12], shown[28], szs[16];
+	int lw = fu_left_w();
+	int pw = side ? fu_right_w() : lw;
+	int x0 = side ? lw : 0;
+	int size_w = (pw < 28) ? 4 : 11;
+	int name_w = pw - 2 - size_w;
+	int fg, bg;
+	char shown[80], szs[16];
 	const fu_ent *e = (idx >= 0 && idx < p->n) ? &p->ent[idx] : 0;
 	int selected = e && active && idx == p->sel;
+	if (name_w < 4)
+		name_w = 4;
 	shown[0] = 0;
 	szs[0] = 0;
 	if (e)
@@ -567,50 +523,48 @@ static void draw_file_row(int side, int vis)
 		if (e->is_dir)
 		{
 			shown[0] = '/';
-			strncpy(shown + 1, e->name, 24);
-			shown[25] = 0;
+			strncpy(shown + 1, e->name, sizeof(shown) - 2);
+			shown[sizeof(shown) - 1] = 0;
 			strcpy(szs, "<DIR>");
 		}
 		else
 		{
-			strncpy(shown, e->name, 25);
-			shown[25] = 0;
+			strncpy(shown, e->name, sizeof(shown) - 1);
+			shown[sizeof(shown) - 1] = 0;
 			fmt_uint(szs, (unsigned)e->size);
 		}
 	}
-	pad(nm, 25, shown, 0);
-	pad(sz, 11, szs, 1);
-	body[0] = '|';
-	memcpy(body + 1, nm, 25);
-	memcpy(body + 26, sz, 11);
-	body[37] = ' ';
-	body[38] = '|';
-	body[39] = 0;
-	at(row, side ? 41 : 1);
 	if (selected)
-		col_sel();
+	{
+		fg = FU_SEL_FG;
+		bg = FU_SEL_BG;
+	}
 	else if (e && e->is_dir)
-		col_dir();
+	{
+		fg = FU_DIR_FG;
+		bg = FU_DIR_BG;
+	}
 	else
-		col_panel();
-	scr(body);
+	{
+		fg = FU_PAN_FG;
+		bg = FU_PAN_BG;
+	}
+	tui_put(x0, row, TUI_V, fg, bg);
+	tui_pad(x0 + 1, row, shown, name_w, fg, bg);
+	tui_pad(x0 + 1 + name_w, row, szs, size_w, fg, bg);
+	tui_put(x0 + pw - 1, row, TUI_V, fg, bg);
 }
 
 static void draw_hint(void)
 {
-	char line[FU_COLS + 1];
 	const char *h = F.hint[0] ? F.hint
 				  : "Tab panels  Enter open/run  q quit  v view  e edit  h help";
-	pad(line, FU_COLS, h, 0);
-	at(28, 1);
-	col_status();
-	scr(line);
+	tui_pad(0, fu_rows() - 3, h, fu_cols(), FU_ST_FG, FU_ST_BG);
 }
 
 static void draw_prompt_row(void)
 {
-	char line[FU_COLS + 1];
-	char tmp[FU_COLS];
+	char tmp[256];
 	tmp[0] = 0;
 	if (F.mode == FU_PROMPT)
 	{
@@ -639,68 +593,57 @@ static void draw_prompt_row(void)
 	}
 	else
 		strncpy(tmp, "$  (type A: C: to change drive)", sizeof(tmp) - 1);
-	pad(line, FU_COLS, tmp, 0);
-	at(29, 1);
-	col_status();
-	scr(line);
+	tui_pad(0, fu_rows() - 2, tmp, fu_cols(), FU_ST_FG, FU_ST_BG);
 }
 
-static void fkey_slot(const char *num, const char *lab)
+static void fkey_slot(int *x, int y, const char *num, const char *lab)
 {
-	col_fn();
-	scr(num);
-	col_fl();
-	scr(lab);
+	int nlen = (int)strlen(num);
+	int llen = (int)strlen(lab);
+	tui_puts(*x, y, num, FU_FN_FG, FU_FN_BG);
+	*x += nlen;
+	tui_puts(*x, y, lab, FU_FL_FG, FU_FL_BG);
+	*x += llen;
 }
 
 static void draw_fkeys(void)
 {
-	at(30, 1);
-	fkey_slot(" 1", "Help ");
-	fkey_slot(" 3", "View ");
-	fkey_slot(" 4", "Edit ");
-	fkey_slot(" 5", "Copy ");
-	fkey_slot(" 6", "Move ");
-	fkey_slot(" 7", "MkDir");
-	fkey_slot(" 8", "Del  ");
-	fkey_slot(" 9", "Menu ");
-	fkey_slot(" Q", "Quit ");
-	col_fn();
-	scr("  ");
+	int y = fu_rows() - 1;
+	int x = 0;
+	fkey_slot(&x, y, " 1", "Help ");
+	fkey_slot(&x, y, " 3", "View ");
+	fkey_slot(&x, y, " 4", "Edit ");
+	fkey_slot(&x, y, " 5", "Copy ");
+	fkey_slot(&x, y, " 6", "Move ");
+	fkey_slot(&x, y, " 7", "MkDir");
+	fkey_slot(&x, y, " 8", "Del  ");
+	fkey_slot(&x, y, " 9", "Menu ");
+	fkey_slot(&x, y, " Q", "Quit ");
+	if (x < fu_cols())
+		tui_pad(x, y, "", fu_cols() - x, FU_FN_FG, FU_FN_BG);
 }
 
 static void draw_overlay_box(const char *title, const char **lines, int nlines)
 {
-	int w = 48, r0 = 8, c0 = 17, i;
-	char bar[64], body[64], tbuf[48];
-	hline(bar, w, '+', '-', '+');
-	at(r0, c0);
-	col_menu();
-	scr(bar);
-	pad(tbuf, w - 2, title, 0);
-	body[0] = '|';
-	memcpy(body + 1, tbuf, (unsigned)(w - 2));
-	body[w - 1] = '|';
-	body[w] = 0;
-	at(r0 + 1, c0);
-	col_menu();
-	scr(body);
+	int w = fu_cols() - 16;
+	int h, r0, c0, i;
+	if (w > 56)
+		w = 56;
+	if (w < 28)
+		w = fu_cols() > 28 ? 28 : fu_cols() - 2;
+	h = nlines + 4;
+	r0 = (fu_rows() - h) / 2;
+	c0 = (fu_cols() - w) / 2;
+	if (r0 < 1)
+		r0 = 1;
+	if (c0 < 1)
+		c0 = 1;
+	tui_fill(c0, r0, w, h, ' ', TUI_WHITE, TUI_BLACK);
+	tui_frame(c0, r0, w, h, FU_MENU_FG, FU_MENU_BG);
+	tui_pad(c0 + 1, r0 + 1, title, w - 2, FU_MENU_FG, FU_MENU_BG);
 	for (i = 0; i < nlines; i++)
-	{
-		pad(tbuf, w - 2, lines[i] ? lines[i] : "", 0);
-		body[0] = '|';
-		memcpy(body + 1, tbuf, (unsigned)(w - 2));
-		body[w - 1] = '|';
-		body[w] = 0;
-		at(r0 + 2 + i, c0);
-		sgr0();
-		fg(37);
-		fg(40);
-		scr(body);
-	}
-	at(r0 + 2 + nlines, c0);
-	col_menu();
-	scr(bar);
+		tui_pad(c0 + 1, r0 + 2 + i, lines[i] ? lines[i] : "", w - 2,
+			TUI_WHITE, TUI_BLACK);
 }
 
 static void draw_help(void)
@@ -761,22 +704,28 @@ static void files_draw(void)
 {
 	int i;
 	fu_ent *e;
-	char footL[36], footR[36];
-	scr("\x1b[H\x1b[J");
-	scr("\x1b[?25l");
+	char footL[80], footR[80];
+	int namew;
+	tui_begin();
+	tui_clear(FU_PAN_FG, FU_PAN_BG);
 	draw_top_menu();
-	draw_border_row(2, F.pan[0].path, F.pan[1].path);
+	draw_border_row(1, F.pan[0].path, F.pan[1].path);
 	draw_header_cols();
-	for (i = 0; i < FU_LIST; i++)
+	for (i = 0; i < fu_list(); i++)
 	{
 		draw_file_row(0, i);
 		draw_file_row(1, i);
 	}
+	namew = fu_left_w() - 6;
+	if (namew > 70)
+		namew = 70;
+	if (namew < 4)
+		namew = 4;
 	e = F.pan[0].n ? &F.pan[0].ent[F.pan[0].sel] : 0;
-	pad(footL, 34, e ? e->name : "", 0);
+	pad(footL, namew, e ? e->name : "", 0);
 	e = F.pan[1].n ? &F.pan[1].ent[F.pan[1].sel] : 0;
-	pad(footR, 34, e ? e->name : "", 0);
-	draw_border_row(27, footL, footR);
+	pad(footR, namew, e ? e->name : "", 0);
+	draw_border_row(3 + fu_list(), footL, footR);
 	draw_hint();
 	draw_prompt_row();
 	draw_fkeys();
@@ -788,7 +737,7 @@ static void files_draw(void)
 		draw_info();
 	else if (F.mode == FU_PLAY)
 		draw_play();
-	sgr0();
+	tui_flush();
 	emit_status();
 }
 
@@ -802,7 +751,7 @@ static void files_close_tui(void)
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
-	scr("\x1b[0m\x1b[?25h\x1b[H\x1b[J");
+	tui_end();
 	ser("\r\n");
 }
 
@@ -1118,6 +1067,7 @@ static void close_overlay(void)
 		mmb_gfx_cls(0x000028);
 	F.mode = FU_BROWSE;
 	set_hint("");
+	tui_invalidate();
 }
 
 static void files_open(const char *start)

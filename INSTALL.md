@@ -38,11 +38,13 @@ the INI (including wiping Wi-Fi SSID/PSK) but does not delete `.BAS`
 programs.
 
 `OPTION WIFI` (also `OPTIONS WIFI`) scans for networks when the Circle
-WLAN driver and firmware are present (Pi 3/4 onboard radio; firmware in
-`C:/firmware/`). QEMU does not emulate Wi-Fi: the command reports that the
-radio is unavailable. `OPTION WIFI "ssid","password"` still stores
-credentials for the next real boot. The PSK is written to the INI and is
-not printed on the serial console.
+WLAN driver and firmware are present (Pi 3 / 3B+ / 4 / 400 onboard radio;
+CYW4343x blobs in `C:/firmware/`). Hardware release zips include that
+`firmware/` directory. QEMU does not emulate Wi-Fi: the command reports
+that the radio is unavailable. `OPTION WIFI "ssid","password"` stores
+credentials and, on a real Pi with firmware, brings the radio up with
+WPA2. The PSK is written to the INI and is not printed on the serial
+console.
 
 ## What you need
 
@@ -75,6 +77,7 @@ Unzip it.
 | `INSTALL.md` | This document |
 | `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
 | `VERSION.txt` | Build identity |
+| `firmware/` | CYW4343x WLAN firmware (`brcmfmac43430-sdio.*` on Pi 3) |
 
 ### Raspberry Pi 400 zip
 
@@ -93,6 +96,7 @@ Unzip it.
 | `INSTALL.md` | This document |
 | `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
 | `VERSION.txt` | Build identity |
+| `firmware/` | CYW4343x WLAN firmware (`brcmfmac43455-sdio.*` on Pi 4 / 400) |
 
 Pi 4 / 400 load firmware from EEPROM, so `bootcode.bin` is not used.
 
@@ -173,7 +177,8 @@ If you used `install-sdcard.sh --bootstrap` or `--update`, skip this section —
 the boot files are already on the card.
 
 Otherwise copy **every file from the zip** to the **root** of the FAT partition.
-Do not put them in a subfolder.
+Keep the `firmware/` directory as a subdirectory (Circle loads Wi-Fi blobs
+from `C:/firmware/`). Do not nest the kernel in another folder.
 
 ### Raspberry Pi 3 card
 
@@ -188,7 +193,11 @@ Do not put them in a subfolder.
 ├── kernel8.img
 ├── LICENCE.broadcom
 ├── start.elf
-└── VERSION.txt
+├── VERSION.txt
+└── firmware/
+    ├── brcmfmac43430-sdio.bin
+    ├── brcmfmac43430-sdio.txt
+    └── …
 ```
 
 Linux example (after the mount in step 2):
@@ -196,6 +205,7 @@ Linux example (after the mount in step 2):
 ```bash
 sudo cp kernel8.img config.txt cmdline.txt bootcode.bin start.elf fixup.dat \
            LICENCE.broadcom INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
+sudo cp -a firmware /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
 
@@ -215,7 +225,11 @@ sudo umount /mnt/mmbasic
 ├── kernel8-rpi4.img
 ├── LICENCE.broadcom
 ├── start4.elf
-└── VERSION.txt
+├── VERSION.txt
+└── firmware/
+    ├── brcmfmac43455-sdio.bin
+    ├── brcmfmac43455-sdio.txt
+    └── …
 ```
 
 Linux example:
@@ -224,6 +238,7 @@ Linux example:
 sudo cp kernel8-rpi4.img config.txt cmdline.txt armstub8-rpi4.bin \
            start4.elf fixup4.dat bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
            LICENCE.broadcom COPYING.linux INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
+sudo cp -a firmware /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
 
@@ -286,6 +301,7 @@ CIRCLE 440,200,90,CYAN
 | Wrong symbols (`"` vs `@`) | Edit `cmdline.txt`: `keymap=US` (default), `UK`, `DE`, `FR`, `ES`, `IT` |
 | USB keyboard on Pi 3 does nothing | Plug into a USB-A port; hub-only setups can take a moment after READY |
 | Pi 400 no HDMI | Use HDMI0 (port next to USB-C); `hdmi_force_hotplug=1` is in `config.txt` |
+| Wi-Fi not available | Card missing `firmware/brcmfmac*.bin`, or this is QEMU (no radio). Hardware zips include `firmware/`. |
 | Wrong zip | Pi 3 needs `kernel8.img` + `start.elf`. Pi 400 needs `kernel8-rpi4.img` + `start4.elf` + `armstub8-rpi4.bin` |
 
 ## Building the zips yourself
@@ -303,7 +319,8 @@ That writes both:
 
 Each zip includes `install-sdcard.sh`. Override the version with
 `VERSION=0.2.0 scripts/package-release.sh`. Set `FORCE_FIRMWARE=1` to
-re-download Raspberry Pi firmware blobs.
+re-download Raspberry Pi GPU firmware blobs, or `FORCE_WLAN_FIRMWARE=1`
+to re-download the CYW4343x Wi-Fi blobs.
 
 To tag and upload a GitHub Release (after choosing a semantic version; default
 is a **minor** bump), use the `github-release` skill or:

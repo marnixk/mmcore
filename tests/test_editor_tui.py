@@ -48,6 +48,9 @@ def test_editor_ocr_file_label(kernel_image):
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
         assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        # Full-height box vertical at the left of the text pane (row 3, glyph y=0).
+        r, g, b = con.screen_pixel(3, 3 * 16)
+        assert r > 100 and g > 100 and b > 100, (r, g, b)
         _quit(con)
     finally:
         con.stop()
@@ -118,5 +121,38 @@ def test_editor_quit_returns_prompt(kernel_image):
         _edit(con, "Q.BAS")
         _quit(con)
         assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_editor_tab_inserts_four_spaces(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "TABIN.BAS")
+        _keys(con, b"A\tB")
+        _quit(con)
+        assert con.send_line('OPEN "TABIN.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT LEN(A$)") == "6"
+        assert con.send_line("PRINT A$") == "A    B"
+        assert con.send_line("PRINT INSTR(A$, CHR$(9))") == "0"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_tab_char_does_not_shift_border(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "TABSHOW.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "X" + CHR$(9) + "Y"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "TABSHOW.BAS")
+        # Right pane border stays in the last character column (79 * 8 + 3).
+        r, g, b = con.screen_pixel(79 * 8 + 3, 3 * 16)
+        assert r > 100 and g > 100 and b > 100, (r, g, b)
+        _quit(con)
     finally:
         con.stop()

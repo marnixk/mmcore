@@ -135,3 +135,43 @@ def test_files_view_seeded_png_smoke(fresh_console):
 def test_dir_still_lists(console):
     listing = console.send_line('DIR "A:/"')
     assert "TEST.PNG" in listing.upper()
+
+
+def test_files_reports_video_cell_size(fresh_console):
+    con = fresh_console
+    _prep_tree(con)
+    seen = _open_files(con)
+    assert "COLS=80" in seen
+    assert "ROWS=30" in seen
+    _keys(con, b"q")
+
+
+def test_files_box_drawing_covers_cell_height(fresh_console):
+    """Vertical pane border is a full-height line, not ASCII '|' with gaps."""
+    con = fresh_console
+    _prep_tree(con)
+    _open_files(con)
+    # Header row (y=2) left pane border is white-on-blue │; glyph row 0 of
+    # ASCII '|' is empty, so a lit pixel here is the full-height box line.
+    r, g, b = con.screen_pixel(3, 2 * 16)
+    assert r > 100 and g > 100 and b > 100, (r, g, b)
+    # Horizontal ─ on the top pane border, away from the path caption.
+    r, g, b = con.screen_pixel(80, 16 + 7)
+    assert r > 100 and g > 100 and b > 100, (r, g, b)
+    # Last fkey row covers the bottom of 640x480.
+    br, bg_, bb = con.screen_pixel(24, 464)
+    assert br + bg_ + bb > 40, (br, bg_, bb)
+    _keys(con, b"q")
+
+
+def test_files_tracks_mode_resolution(fresh_console):
+    con = fresh_console
+    assert con.send_line("MODE 7,8") == ""
+    assert con.send_line("PRINT MM.HRES") == "320"
+    assert con.send_line("PRINT MM.VRES") == "240"
+    _prep_tree(con)
+    seen = _open_files(con)
+    assert "COLS=40" in seen
+    assert "ROWS=15" in seen
+    _keys(con, b"q")
+    assert con.send_line("MODE 8,16") == ""

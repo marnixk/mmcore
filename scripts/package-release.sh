@@ -21,6 +21,12 @@ clean_build_tree() {
 	make -C "${CIRCLE_DIR}/lib/fs" clean
 	make -C "${CIRCLE_DIR}/lib/input" clean
 	make -C "${CIRCLE_DIR}/lib/sound" clean
+	make -C "${CIRCLE_DIR}/lib/net" clean || true
+	make -C "${CIRCLE_DIR}/lib/sched" clean || true
+	make -C "${CIRCLE_DIR}/addon/wlan" clean || true
+	if [ -f "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant/Makefile.circle" ]; then
+		make -C "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant" -f Makefile.circle clean || true
+	fi
 	make -C "${CONSOLE_DIR}" clean
 }
 
@@ -56,6 +62,42 @@ ensure_firmware() {
 
 	log "Building Circle ARM stub for Raspberry Pi 4 / 400"
 	make -C "${BOOT_DIR}" armstub64
+}
+
+ensure_wlan_firmware() {
+	local fw_dir="${CIRCLE_DIR}/addon/wlan/firmware"
+	local needed=(
+		brcmfmac43430-sdio.bin brcmfmac43430-sdio.txt
+		brcmfmac43455-sdio.bin brcmfmac43455-sdio.txt
+	)
+	local missing=0
+	local f
+	if [ "${FORCE_WLAN_FIRMWARE:-0}" = "1" ]; then
+		missing=1
+	else
+		for f in "${needed[@]}"; do
+			if [ ! -f "${fw_dir}/${f}" ]; then
+				missing=1
+				break
+			fi
+		done
+	fi
+	if [ "${missing}" = "1" ]; then
+		log "Downloading CYW4343x WLAN firmware (Circle addon/wlan/firmware)"
+		make -C "${fw_dir}"
+	else
+		log "Reusing existing WLAN firmware (set FORCE_WLAN_FIRMWARE=1 to re-download)"
+	fi
+}
+
+copy_wlan_firmware() {
+	local stage="$1"
+	local fw_dir="${CIRCLE_DIR}/addon/wlan/firmware"
+	mkdir -p "${stage}/firmware"
+	# Circle looks up brcmfmac* by chip; ship the full set both zips.
+	find "${fw_dir}" -maxdepth 1 -type f \( \
+		-name 'brcmfmac*' -o -name 'LICENCE*' \
+	\) -exec cp -a {} "${stage}/firmware/" \;
 }
 
 write_version() {
@@ -96,6 +138,7 @@ package_rpi3() {
 	cp -a "${BOOT_DIR}/fixup.dat" "${stage}/fixup.dat"
 	cp -a "${BOOT_DIR}/LICENCE.broadcom" "${stage}/LICENCE.broadcom"
 	write_version "${stage}" "Raspberry Pi 3 / 3B+ / 3A+ (AArch64)" "${kernel}"
+	copy_wlan_firmware "${stage}"
 	zip_stage "${stage}" "${zip_name}"
 }
 
@@ -122,10 +165,12 @@ package_pi400() {
 	write_version "${stage}" \
 		"Raspberry Pi 400 (BCM2711; also Pi 4B / CM4) (AArch64)" \
 		"${kernel}"
+	copy_wlan_firmware "${stage}"
 	zip_stage "${stage}" "${zip_name}"
 }
 
 ensure_firmware
+ensure_wlan_firmware
 build_hardware 3
 package_rpi3
 build_hardware 4

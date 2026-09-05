@@ -17,5 +17,8 @@ mmbasic/**/*.d
 # Captured framebuffers
 *.ppm
 
+# Circle QEMU vs hardware rebuild stamp (scripts/build.sh)
+console/.circle-build-mode
+
 # Release packaging (firmware + zip stay out of git)
 dist/

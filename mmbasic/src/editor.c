@@ -1,38 +1,45 @@
 #include "mmb_priv.h"
+#include "tui.h"
 
 /*
- * Turbo-style full-screen editor (80x30). Circle Font8x16 is Latin-1, so
- * borders are ASCII (= + |) rather than CP437 box drawing. Alt+letter is
- * not a distinct USB sequence in Circle (keymap returns KeyNone); Esc then
- * letter is the serial/USB fallback, and F10 opens File.
+ * Turbo-style full-screen editor. Layout tracks the current HDMI mode
+ * (8x16 cells). Borders use box-drawing glyphs via the offscreen TUI.
  */
 
 #define ED (G.ed.tab[G.ed.cur])
 
-#define COLS        80
-#define ROWS        30
-#define TEXT_ROWS   25
-#define TEXT_COLS   78
-#define ROW_MENU    1
-#define ROW_TABS    2
-#define ROW_BTOP    3
-#define ROW_TEXT    4
-#define ROW_BBOT    29
-#define ROW_STAT    30
+static int ed_cols(void) { return tui_cols(); }
+static int ed_rows(void) { return tui_rows(); }
+#define COLS        ed_cols()
+#define ROWS        ed_rows()
+#define TEXT_ROWS   (ed_rows() - 5)
+#define TEXT_COLS   (ed_cols() - 2)
+#define ROW_MENU    0
+#define ROW_TABS    1
+#define ROW_BTOP    2
+#define ROW_TEXT    3
+#define ROW_BBOT    (ed_rows() - 2)
+#define ROW_STAT    (ed_rows() - 1)
+#define ED_TAB      4
 
-/* Circle SGR takes one parameter per CSI; do not combine 0;30;47. */
-#define UI_MENU     "\x1b[0m\x1b[30m\x1b[47m"
-#define UI_HOT      "\x1b[91m"
-#define UI_BLACK    "\x1b[30m"
-#define UI_SEL      "\x1b[0m\x1b[30m\x1b[42m"
-#define UI_EDIT     "\x1b[0m\x1b[97m\x1b[44m"
-#define UI_STR      "\x1b[93m"
-#define UI_BRD      "\x1b[0m\x1b[37m\x1b[44m"
-#define UI_TAB      "\x1b[0m\x1b[37m\x1b[44m"
-#define UI_TABCUR   "\x1b[0m\x1b[30m\x1b[47m"
-#define UI_DLG      "\x1b[0m\x1b[30m\x1b[47m"
-#define UI_SHADOW   "\x1b[0m\x1b[40m"
-#define UI_RST      "\x1b[0m"
+#define C_MENU_FG   TUI_BLACK
+#define C_MENU_BG   TUI_WHITE
+#define C_HOT       TUI_BRRED
+#define C_SEL_FG    TUI_BLACK
+#define C_SEL_BG    TUI_GREEN
+#define C_EDIT_FG   TUI_BRWHITE
+#define C_EDIT_BG   TUI_BLUE
+#define C_STR_FG    TUI_BRYELLOW
+#define C_BRD_FG    TUI_WHITE
+#define C_BRD_BG    TUI_BLUE
+#define C_TAB_FG    TUI_WHITE
+#define C_TAB_BG    TUI_BLUE
+#define C_TABCUR_FG TUI_BLACK
+#define C_TABCUR_BG TUI_WHITE
+#define C_DLG_FG    TUI_BLACK
+#define C_DLG_BG    TUI_WHITE
+#define C_SH_FG     TUI_BLACK
+#define C_SH_BG     TUI_BLACK
 
 #define ESC_NONE    0
 #define ESC_GOT     1
@@ -58,7 +65,7 @@ static int csi_arg;
 
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'H' };
-static const int menu_col[MENU_COUNT] = { 2, 8, 14, 19 };
+static const int menu_col[MENU_COUNT] = { 1, 7, 13, 18 };
 
 static const char *file_items[] = {
 	"Open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
@@ -79,18 +86,6 @@ static void activate_menu(void);
 static int add_or_switch(const char *path);
 static void next_tab(void);
 
-static void ed_flush(const char *s)
-{
-	unsigned n;
-	if (!s || !s[0] || !G.plat)
-		return;
-	n = (unsigned)strlen(s);
-	if (G.plat->write_screen)
-		G.plat->write_screen(s, n);
-	if (G.plat->write_serial)
-		G.plat->write_serial(s, n);
-}
-
 static char *put_uint(char *p, int n)
 {
 	char tmp[12];
@@ -108,56 +103,6 @@ static char *put_uint(char *p, int n)
 	while (i--)
 		*p++ = tmp[i];
 	return p;
-}
-
-static void ed_at(int r, int c)
-{
-	char b[20];
-	char *p = b;
-	*p++ = '\x1b';
-	*p++ = '[';
-	p = put_uint(p, r);
-	*p++ = ';';
-	p = put_uint(p, c);
-	*p++ = 'H';
-	*p = 0;
-	ed_flush(b);
-}
-
-static void ed_rep(char ch, int n)
-{
-	char b[81];
-	int i;
-	if (n > 80)
-		n = 80;
-	if (n < 0)
-		n = 0;
-	for (i = 0; i < n; i++)
-		b[i] = ch;
-	b[n] = 0;
-	if (n)
-		ed_flush(b);
-}
-
-static void ed_span(const char *s, int width)
-{
-	int n = 0;
-	if (s)
-	{
-		while (s[n] && n < width)
-			n++;
-		if (n)
-		{
-			char b[81];
-			int i;
-			for (i = 0; i < n; i++)
-				b[i] = s[i];
-			b[n] = 0;
-			ed_flush(b);
-		}
-	}
-	if (n < width)
-		ed_rep(' ', width - n);
 }
 
 static void ensure_bas(char *path, int sz)
@@ -181,6 +126,11 @@ static const char *tab_label(int i)
 		p++;
 	}
 	return s[0] ? s : "UNTITLED";
+}
+
+static int ch_cols(char ch)
+{
+	return (ch == '\t') ? ED_TAB : 1;
 }
 
 static mmb_ed_tab *cur_tab(void)
@@ -272,7 +222,7 @@ static void pos_to_rowcol(int pos, int *row, int *col)
 			c = 0;
 		}
 		else
-			c++;
+			c += ch_cols(t->buf[i]);
 	}
 	if (row)
 		*row = r;
@@ -296,7 +246,12 @@ static int rowcol_to_pos(int row, int col)
 			c = 0;
 		}
 		else
-			c++;
+		{
+			int w = ch_cols(t->buf[i]);
+			if (r == row && col > c && col < c + w)
+				return i;
+			c += w;
+		}
 	}
 	if (r == row && c == col)
 		return i;
@@ -534,82 +489,62 @@ static int menu_width(int menu)
 	return w + 2;
 }
 
-static void draw_hot_word(const char *word, char hot, int selected)
+static void draw_hot_word(int *x, int y, const char *word, char hot, int selected)
 {
 	int i;
-	ed_flush(selected ? UI_SEL : UI_MENU);
+	int fg = selected ? C_SEL_FG : C_MENU_FG;
+	int bg = selected ? C_SEL_BG : C_MENU_BG;
 	for (i = 0; word[i]; i++)
 	{
-		char b[2];
+		int c_fg = fg;
 		if ((word[i] == hot || word[i] == hot + 32 || word[i] == hot - 32) &&
 		    (i == 0 || hot == word[i]))
-		{
-			ed_flush(UI_HOT);
-			b[0] = word[i];
-			b[1] = 0;
-			ed_flush(b);
-			ed_flush(selected ? "\x1b[30m\x1b[42m" : "\x1b[30m\x1b[47m");
-		}
-		else
-		{
-			b[0] = word[i];
-			b[1] = 0;
-			ed_flush(b);
-		}
+			c_fg = C_HOT;
+		tui_put(*x, y, (unsigned char)word[i], c_fg, bg);
+		(*x)++;
 	}
 }
 
 static void draw_menu_bar(void)
 {
-	int i, used = 1;
-	ed_at(ROW_MENU, 1);
-	ed_flush(UI_MENU);
-	ed_flush(" ");
+	int i, x = 0;
+	tui_put(x++, ROW_MENU, ' ', C_MENU_FG, C_MENU_BG);
 	for (i = 0; i < MENU_COUNT; i++)
 	{
 		int sel = G.ed.menu_open && G.ed.menu == i;
-		draw_hot_word(menu_name[i], menu_hot[i], sel);
-		ed_flush(UI_MENU);
-		ed_flush(" ");
-		used += (int)strlen(menu_name[i]) + 1;
+		draw_hot_word(&x, ROW_MENU, menu_name[i], menu_hot[i], sel);
+		tui_put(x++, ROW_MENU, ' ', C_MENU_FG, C_MENU_BG);
 	}
-	if (used < COLS)
-		ed_rep(' ', COLS - used);
+	if (x < COLS)
+		tui_pad(x, ROW_MENU, "", COLS - x, C_MENU_FG, C_MENU_BG);
 }
 
 static void draw_tabs(void)
 {
-	int i, used = 0;
-	ed_at(ROW_TABS, 1);
-	ed_flush(UI_TAB);
-	for (i = 0; i < G.ed.ntabs && used < COLS; i++)
+	int i, x = 0;
+	for (i = 0; i < G.ed.ntabs && x < COLS; i++)
 	{
 		const char *name = tab_label(i);
 		int n = (int)strlen(name);
+		int fg = (i == G.ed.cur) ? C_TABCUR_FG : C_TAB_FG;
+		int bg = (i == G.ed.cur) ? C_TABCUR_BG : C_TAB_BG;
+		char lab[16];
+		int k;
 		if (n > 12)
 			n = 12;
-		if (used + n + 3 > COLS)
+		if (x + n + 3 > COLS)
 			break;
-		ed_flush(i == G.ed.cur ? UI_TABCUR : UI_TAB);
-		ed_flush(" ");
-		{
-			char b[16];
-			int k;
-			for (k = 0; k < n; k++)
-				b[k] = name[k];
-			b[n] = 0;
-			ed_flush(b);
-		}
-		if (G.ed.tab[i].dirty)
-			ed_flush("*");
-		else
-			ed_flush(" ");
-		ed_flush(" ");
-		used += n + 3;
+		tui_put(x++, ROW_TABS, ' ', fg, bg);
+		for (k = 0; k < n; k++)
+			lab[k] = name[k];
+		lab[n] = 0;
+		tui_puts(x, ROW_TABS, lab, fg, bg);
+		x += n;
+		tui_put(x++, ROW_TABS, G.ed.tab[i].dirty ? '*' : ' ', fg, bg);
+		tui_put(x++, ROW_TABS, ' ', fg, bg);
 	}
-	ed_flush(UI_TAB);
-	if (used < COLS)
-		ed_rep(' ', COLS - used);
+	if (x < COLS)
+		tui_pad(x, ROW_TABS, "", COLS - x, C_TAB_FG, C_TAB_BG);
 }
 
 static void draw_border_row(int row, int top)
@@ -618,8 +553,7 @@ static void draw_border_row(int row, int top)
 	const char *title;
 	char titled[40];
 	int n, left, i;
-	ed_at(row, 1);
-	ed_flush(UI_BRD);
+	tui_hline(0, row, COLS, TUI_TL, TUI_H, TUI_TR, C_BRD_FG, C_BRD_BG);
 	if (!top)
 	{
 		int r = 1, c = 1;
@@ -632,10 +566,9 @@ static void draw_border_row(int row, int top)
 		*p++ = ':';
 		p = put_uint(p, c + 1);
 		*p = 0;
-		ed_flush("+");
-		ed_flush(loc);
-		ed_rep('=', COLS - 2 - (int)strlen(loc));
-		ed_flush("+");
+		tui_put(0, row, TUI_BL, C_BRD_FG, C_BRD_BG);
+		tui_puts(1, row, loc, C_BRD_FG, C_BRD_BG);
+		tui_put(COLS - 1, row, TUI_BR, C_BRD_FG, C_BRD_BG);
 		return;
 	}
 	title = t ? tab_label(G.ed.cur) : "UNTITLED";
@@ -651,26 +584,17 @@ static void draw_border_row(int row, int top)
 	left = (COLS - 2 - n) / 2;
 	if (left < 1)
 		left = 1;
-	ed_flush("+");
-	ed_rep('=', left);
-	ed_flush(titled);
-	ed_rep('=', COLS - 2 - left - n);
-	ed_flush("+");
+	tui_puts(1 + left, row, titled, C_BRD_FG, C_BRD_BG);
 }
 
-static void draw_text_line(const char *s, int n, int col0)
+static void draw_text_line(int x, int y, const char *s, int n, int col0)
 {
-	int i, shown = 0, in_str = 0;
+	int i, vis = 0, shown = 0, in_str = 0;
 	char q = 0;
-	char run[81];
-	int rn = 0;
-	int colour = 0; /* 0 white 1 yellow */
-
-	ed_flush(UI_EDIT);
 	for (i = 0; i < n && shown < TEXT_COLS; i++)
 	{
 		char ch = s[i];
-		int want;
+		int want, k, w;
 		if (!in_str && (ch == '"' || ch == '\''))
 		{
 			in_str = 1;
@@ -681,38 +605,30 @@ static void draw_text_line(const char *s, int n, int col0)
 			want = 1;
 		else
 			want = in_str ? 1 : 0;
-		if (i >= col0)
+		w = ch_cols(ch);
+		for (k = 0; k < w && shown < TEXT_COLS; k++)
 		{
-			if (want != colour && rn)
+			if (vis >= col0)
 			{
-				run[rn] = 0;
-				ed_flush(run);
-				rn = 0;
+				char out = (ch == '\t') ? ' ' : ch;
+				tui_put(x + shown, y, (unsigned char)out,
+					want ? C_STR_FG : C_EDIT_FG, C_EDIT_BG);
+				shown++;
 			}
-			if (want != colour)
-			{
-				ed_flush(want ? UI_STR : "\x1b[97m");
-				colour = want;
-			}
-			run[rn++] = ch;
-			shown++;
+			vis++;
 		}
 		if (in_str && ch == q && i > 0)
 			in_str = 0;
-		if (!in_str && i == 0 && (ch == '"' || ch == '\''))
-			; /* opened above */
-	}
-	if (rn)
-	{
-		run[rn] = 0;
-		ed_flush(run);
 	}
 	if (shown < TEXT_COLS)
-	{
-		if (colour)
-			ed_flush("\x1b[97m");
-		ed_rep(' ', TEXT_COLS - shown);
-	}
+		tui_pad(x + shown, y, "", TEXT_COLS - shown, C_EDIT_FG, C_EDIT_BG);
+}
+
+static void draw_empty_text_row(int y)
+{
+	tui_put(0, y, TUI_V, C_BRD_FG, C_BRD_BG);
+	tui_pad(1, y, "", TEXT_COLS, C_EDIT_FG, C_EDIT_BG);
+	tui_put(COLS - 1, y, TUI_V, C_BRD_FG, C_BRD_BG);
 }
 
 static void draw_editor_body(void)
@@ -722,15 +638,7 @@ static void draw_editor_body(void)
 	if (!t)
 	{
 		for (vis = 0; vis < TEXT_ROWS; vis++)
-		{
-			ed_at(ROW_TEXT + vis, 1);
-			ed_flush(UI_BRD);
-			ed_flush("|");
-			ed_flush(UI_EDIT);
-			ed_rep(' ', TEXT_COLS);
-			ed_flush(UI_BRD);
-			ed_flush("|");
-		}
+			draw_empty_text_row(ROW_TEXT + vis);
 		return;
 	}
 	pos = 0;
@@ -744,9 +652,8 @@ static void draw_editor_body(void)
 	for (vis = 0; vis < TEXT_ROWS; vis++)
 	{
 		int start = pos, n = 0;
-		ed_at(ROW_TEXT + vis, 1);
-		ed_flush(UI_BRD);
-		ed_flush("|");
+		int y = ROW_TEXT + vis;
+		tui_put(0, y, TUI_V, C_BRD_FG, C_BRD_BG);
 		if (pos > t->len)
 			pos = t->len;
 		while (pos < t->len && t->buf[pos] != '\n')
@@ -754,24 +661,14 @@ static void draw_editor_body(void)
 			n++;
 			pos++;
 		}
-		draw_text_line(t->buf + start, n, t->col0);
-		ed_flush(UI_BRD);
-		ed_flush("|");
+		draw_text_line(1, y, t->buf + start, n, t->col0);
+		tui_put(COLS - 1, y, TUI_V, C_BRD_FG, C_BRD_BG);
 		if (pos < t->len && t->buf[pos] == '\n')
 			pos++;
 		else if (pos >= t->len && vis + 1 < TEXT_ROWS)
 		{
-			/* remaining empty lines */
 			for (i = vis + 1; i < TEXT_ROWS; i++)
-			{
-				ed_at(ROW_TEXT + i, 1);
-				ed_flush(UI_BRD);
-				ed_flush("|");
-				ed_flush(UI_EDIT);
-				ed_rep(' ', TEXT_COLS);
-				ed_flush(UI_BRD);
-				ed_flush("|");
-			}
+				draw_empty_text_row(ROW_TEXT + i);
 			break;
 		}
 	}
@@ -781,6 +678,7 @@ static void draw_dropdown(void)
 {
 	int n, i, w, r0, c0;
 	const char **it;
+	int fg, bg;
 	if (!G.ed.menu_open)
 		return;
 	it = menu_items(G.ed.menu, &n);
@@ -788,34 +686,25 @@ static void draw_dropdown(void)
 	c0 = menu_col[G.ed.menu];
 	if (c0 + w + 2 > COLS)
 		c0 = COLS - w - 2;
+	if (c0 < 0)
+		c0 = 0;
 	r0 = ROW_TABS;
-	ed_at(r0, c0);
-	ed_flush(UI_DLG);
-	ed_flush("+");
-	ed_rep('-', w - 2);
-	ed_flush("+");
-	ed_flush(UI_SHADOW);
-	ed_flush("  ");
+	tui_hline(c0, r0, w, TUI_TL, TUI_H, TUI_TR, C_DLG_FG, C_DLG_BG);
+	tui_pad(c0 + w, r0, "", 2, C_SH_FG, C_SH_BG);
 	for (i = 0; i < n; i++)
 	{
-		ed_at(r0 + 1 + i, c0);
-		ed_flush(i == G.ed.menu_item ? UI_SEL : UI_DLG);
-		ed_flush("| ");
-		ed_span(it[i], w - 4);
-		ed_flush(" |");
-		ed_flush(UI_SHADOW);
-		ed_flush("  ");
+		fg = (i == G.ed.menu_item) ? C_SEL_FG : C_DLG_FG;
+		bg = (i == G.ed.menu_item) ? C_SEL_BG : C_DLG_BG;
+		tui_put(c0, r0 + 1 + i, TUI_V, fg, bg);
+		tui_put(c0 + 1, r0 + 1 + i, ' ', fg, bg);
+		tui_pad(c0 + 2, r0 + 1 + i, it[i], w - 4, fg, bg);
+		tui_put(c0 + w - 2, r0 + 1 + i, ' ', fg, bg);
+		tui_put(c0 + w - 1, r0 + 1 + i, TUI_V, fg, bg);
+		tui_pad(c0 + w, r0 + 1 + i, "", 2, C_SH_FG, C_SH_BG);
 	}
-	ed_at(r0 + 1 + n, c0);
-	ed_flush(UI_DLG);
-	ed_flush("+");
-	ed_rep('-', w - 2);
-	ed_flush("+");
-	ed_flush(UI_SHADOW);
-	ed_flush("  ");
-	ed_at(r0 + 2 + n, c0 + 2);
-	ed_flush(UI_SHADOW);
-	ed_rep(' ', w);
+	tui_hline(c0, r0 + 1 + n, w, TUI_BL, TUI_H, TUI_BR, C_DLG_FG, C_DLG_BG);
+	tui_pad(c0 + w, r0 + 1 + n, "", 2, C_SH_FG, C_SH_BG);
+	tui_pad(c0 + 2, r0 + 2 + n, "", w, C_SH_FG, C_SH_BG);
 }
 
 static void draw_dialog(void)
@@ -834,44 +723,31 @@ static void draw_dialog(void)
 		title = " Open ";
 	else
 		title = " Save As ";
+	if (w > COLS - 2)
+		w = COLS - 2;
+	if (h > ROWS - 2)
+		h = ROWS - 2;
 	r0 = (ROWS - h) / 2;
 	c0 = (COLS - w) / 2;
-	if (r0 < 3)
-		r0 = 3;
-	ed_at(r0, c0);
-	ed_flush(UI_DLG);
-	ed_flush("+");
+	if (r0 < 2)
+		r0 = 2;
+	if (c0 < 0)
+		c0 = 0;
+	tui_frame(c0, r0, w, h, C_DLG_FG, C_DLG_BG);
 	{
 		int left = (w - 2 - (int)strlen(title)) / 2;
 		if (left < 1)
 			left = 1;
-		ed_rep('-', left);
-		ed_flush(title);
-		ed_rep('-', w - 2 - left - (int)strlen(title));
+		tui_puts(c0 + 1 + left, r0, title, C_DLG_FG, C_DLG_BG);
 	}
-	ed_flush("+");
-	ed_flush(UI_SHADOW);
-	ed_flush("  ");
+	tui_pad(c0 + w, r0, "", 2, C_SH_FG, C_SH_BG);
 	for (i = 1; i < h - 1; i++)
 	{
-		ed_at(r0 + i, c0);
-		ed_flush(UI_DLG);
-		ed_flush("|");
-		ed_rep(' ', w - 2);
-		ed_flush("|");
-		ed_flush(UI_SHADOW);
-		ed_flush("  ");
+		tui_pad(c0 + 1, r0 + i, "", w - 2, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + w, r0 + i, "", 2, C_SH_FG, C_SH_BG);
 	}
-	ed_at(r0 + h - 1, c0);
-	ed_flush(UI_DLG);
-	ed_flush("+");
-	ed_rep('-', w - 2);
-	ed_flush("+");
-	ed_flush(UI_SHADOW);
-	ed_flush("  ");
-	ed_at(r0 + h, c0 + 2);
-	ed_flush(UI_SHADOW);
-	ed_rep(' ', w);
+	tui_pad(c0 + w, r0 + h - 1, "", 2, C_SH_FG, C_SH_BG);
+	tui_pad(c0 + 2, r0 + h, "", w, C_SH_FG, C_SH_BG);
 
 	if (G.ed.dialog == DLG_HELP)
 	{
@@ -883,81 +759,56 @@ static void draw_dialog(void)
 			"F3     Open          F9     Run",
 			"^O     Save          ^X     Quit",
 			"^R     Save and Run  ^K/^U  Cut/Paste",
-			"Tab    Next tab      Esc+1..9 tab",
+			"Tab    4 spaces      Esc+1..9 file tab",
 			"Arrows move          Enter  activate",
 			"",
 			"     Enter or Esc closes this box",
 		};
 		int L = (int)(sizeof(lines) / sizeof(lines[0]));
-		for (i = 0; i < L; i++)
-		{
-			ed_at(r0 + 2 + i, c0 + 2);
-			ed_flush(UI_DLG);
-			ed_span(lines[i], w - 4);
-		}
+		for (i = 0; i < L && r0 + 2 + i < r0 + h - 1; i++)
+			tui_pad(c0 + 2, r0 + 2 + i, lines[i], w - 4, C_DLG_FG, C_DLG_BG);
 	}
 	else
 	{
-		ed_at(r0 + 2, c0 + 2);
-		ed_flush(UI_DLG);
-		ed_span("Path:", w - 4);
-		ed_at(r0 + 3, c0 + 2);
-		ed_flush(UI_SEL);
-		ed_span(G.ed.dlg, w - 4);
-		ed_at(r0 + 5, c0 + 2);
-		ed_flush(UI_DLG);
-		ed_span("Enter=OK   Esc=Cancel", w - 4);
+		tui_pad(c0 + 2, r0 + 2, "Path:", w - 4, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + 2, r0 + 3, G.ed.dlg, w - 4, C_SEL_FG, C_SEL_BG);
+		tui_pad(c0 + 2, r0 + 5, "Enter=OK   Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
 	}
+}
+
+static void draw_fkey(int *x, int y, const char *key, const char *lab)
+{
+	tui_puts(*x, y, key, C_HOT, C_MENU_BG);
+	*x += (int)strlen(key);
+	tui_puts(*x, y, lab, C_MENU_FG, C_MENU_BG);
+	*x += (int)strlen(lab);
 }
 
 static void draw_status(void)
 {
-	int row, col;
-	char right[40];
+	int row, col, x = 0;
+	char right[48];
 	char *p;
-	int leftn, rightn;
+	int rightn;
 	mmb_ed_tab *t = cur_tab();
-	ed_at(ROW_STAT, 1);
-	ed_flush(UI_MENU);
-	ed_flush(UI_HOT);
-	ed_flush("F1");
-	ed_flush(UI_BLACK);
-	ed_flush(" Help ");
-	ed_flush(UI_HOT);
-	ed_flush("F2");
-	ed_flush(UI_BLACK);
-	ed_flush(" Save ");
-	ed_flush(UI_HOT);
-	ed_flush("F3");
-	ed_flush(UI_BLACK);
-	ed_flush(" Open ");
-	ed_flush(UI_HOT);
-	ed_flush("F9");
-	ed_flush(UI_BLACK);
-	ed_flush(" Run ");
-	ed_flush(UI_HOT);
-	ed_flush("Alt+X");
-	ed_flush(UI_BLACK);
-	ed_flush(" Quit");
+	draw_fkey(&x, ROW_STAT, "F1", " Help ");
+	draw_fkey(&x, ROW_STAT, "F2", " Save ");
+	draw_fkey(&x, ROW_STAT, "F3", " Open ");
+	draw_fkey(&x, ROW_STAT, "F9", " Run ");
+	draw_fkey(&x, ROW_STAT, "Alt+X", " Quit");
 	if (G.ed.status[0])
 	{
-		ed_flush(" | ");
-		ed_span(G.ed.status, 18);
-		leftn = 48 + 3 + (int)strlen(G.ed.status);
-		if (leftn > 60)
-			leftn = 60;
+		tui_puts(x, ROW_STAT, " + ", C_MENU_FG, C_MENU_BG);
+		x += 3;
+		tui_pad(x, ROW_STAT, G.ed.status, 18, C_MENU_FG, C_MENU_BG);
+		x += 18;
 	}
-	else
-		leftn = 48;
 	row = 1;
 	col = 1;
 	if (t)
 		pos_to_rowcol(t->cx, &row, &col);
 	p = right;
-	if (t && t->dirty)
-		*p++ = '*';
-	else
-		*p++ = ' ';
+	*p++ = (t && t->dirty) ? '*' : ' ';
 	*p++ = ' ';
 	{
 		const char *name = t ? tab_label(G.ed.cur) : "";
@@ -973,9 +824,12 @@ static void draw_status(void)
 	p = put_uint(p, col + 1);
 	*p = 0;
 	rightn = (int)strlen(right);
-	if (leftn + rightn < COLS)
-		ed_rep(' ', COLS - leftn - rightn);
-	ed_flush(right);
+	if (x + rightn < COLS)
+	{
+		tui_pad(x, ROW_STAT, "", COLS - x - rightn, C_MENU_FG, C_MENU_BG);
+		x = COLS - rightn;
+	}
+	tui_puts(x, ROW_STAT, right, C_MENU_FG, C_MENU_BG);
 }
 
 static void place_cursor(void)
@@ -988,13 +842,12 @@ static void place_cursor(void)
 		int col = G.ed.dlglen;
 		if (col > w - 4)
 			col = w - 4;
-		ed_at(r0 + 3, c0 + 2 + col);
-		ed_flush("\x1b[?25h");
+		tui_cursor(c0 + 2 + col, r0 + 3, 1);
 		return;
 	}
 	if (G.ed.dialog || G.ed.menu_open)
 	{
-		ed_flush("\x1b[?25l");
+		tui_cursor(-1, -1, 0);
 		return;
 	}
 	{
@@ -1003,17 +856,16 @@ static void place_cursor(void)
 		if (t)
 			pos_to_rowcol(t->cx, &row, &col);
 		sr = ROW_TEXT + (t ? row - t->row0 : 0);
-		sc = 2 + (t ? col - t->col0 : 0);
+		sc = 1 + (t ? col - t->col0 : 0);
 		if (sr < ROW_TEXT)
 			sr = ROW_TEXT;
 		if (sr > ROW_BBOT - 1)
 			sr = ROW_BBOT - 1;
-		if (sc < 2)
-			sc = 2;
-		if (sc > COLS - 1)
-			sc = COLS - 1;
-		ed_at(sr, sc);
-		ed_flush("\x1b[?25h");
+		if (sc < 1)
+			sc = 1;
+		if (sc > COLS - 2)
+			sc = COLS - 2;
+		tui_cursor(sc, sr, 1);
 	}
 }
 
@@ -1022,7 +874,8 @@ static void redraw(void)
 	G.outn = 0;
 	G.out[0] = 0;
 	ensure_visible();
-	ed_flush("\x1b[?25l\x1b[H\x1b[J");
+	tui_begin();
+	tui_clear(C_EDIT_FG, C_EDIT_BG);
 	draw_menu_bar();
 	draw_tabs();
 	draw_border_row(ROW_BTOP, 1);
@@ -1034,7 +887,9 @@ static void redraw(void)
 	if (G.ed.dialog)
 		draw_dialog();
 	place_cursor();
+	tui_flush();
 }
+
 
 static void save_tab(void)
 {
@@ -1056,7 +911,7 @@ static void editor_leave(int run)
 		save_tab();
 	else if (t && t->dirty)
 		save_tab();
-	ed_flush("\x1b[0m\x1b[?25h\x1b[H\x1b[J");
+	tui_end();
 	G.ed.active = 0;
 	G.ed.menu_open = 0;
 	G.ed.dialog = 0;
@@ -1454,6 +1309,8 @@ void mmb_editor_open(const char *path)
 	add_or_switch(path && path[0] ? path : "");
 	if (G.ed.ntabs <= 0)
 		add_or_switch("");
+	tui_begin();
+	tui_invalidate();
 	redraw();
 }
 
@@ -1550,7 +1407,9 @@ const char *mmb_editor_feed(char c)
 	}
 	if (c == '\t')
 	{
-		next_tab();
+		int i;
+		for (i = 0; i < ED_TAB; i++)
+			insert_char(' ');
 		redraw();
 		return G.out;
 	}

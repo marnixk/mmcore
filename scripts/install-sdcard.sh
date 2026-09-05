@@ -26,10 +26,11 @@ This image is bare-metal: there is no Linux on the card.
 
 Modes:
   --bootstrap         Partition and format DEVICE (MBR + one FAT32 partition),
-                      then copy the boot files. ERASES THE WHOLE CARD.
-  --update            Overwrite kernel, firmware, and config.txt on the existing
-                      first FAT partition. BASIC programs and other files on C:
-                      are left in place.
+                      then copy the boot files (including `firmware/` WLAN blobs).
+                      ERASES THE WHOLE CARD.
+  --update            Overwrite kernel, GPU firmware, WLAN firmware, and
+                      config.txt on the existing first FAT partition. BASIC
+                      programs and other files on C: are left in place.
 
 Options:
   --model MODEL       Board family (required):
@@ -505,7 +506,22 @@ copy_boot_files() {
 			copy_file_to_fat "${src}/${f}" "${dest}/${f}"
 		fi
 	done < <(optional_files_for_model "${MODEL}")
+	copy_wlan_firmware_dir "${src}" "${dest}"
 	sync
+}
+
+copy_wlan_firmware_dir() {
+	local src="$1"
+	local dest="$2"
+	local f
+	if [ ! -d "${src}/firmware" ]; then
+		return 0
+	fi
+	mkdir -p "${dest}/firmware"
+	for f in "${src}/firmware/"*; do
+		[ -f "${f}" ] || continue
+		copy_file_to_fat "${f}" "${dest}/firmware/$(basename "${f}")"
+	done
 }
 
 run_mtools() {
@@ -538,7 +554,23 @@ copy_boot_files_mtools() {
 			run_mtools mcopy -o -i "${fat}" "${src}/${f}" "::${f}"
 		fi
 	done < <(optional_files_for_model "${MODEL}")
+	copy_wlan_firmware_mtools "${src}" "${fat}"
 	sync
+}
+
+copy_wlan_firmware_mtools() {
+	local src="$1"
+	local fat="$2"
+	local f
+	if [ ! -d "${src}/firmware" ]; then
+		return 0
+	fi
+	export MTOOLS_SKIP_CHECK=1
+	run_mtools mmd -i "${fat}" ::firmware || true
+	for f in "${src}/firmware/"*; do
+		[ -f "${f}" ] || continue
+		run_mtools mcopy -o -i "${fat}" "${f}" "::firmware/$(basename "${f}")"
+	done
 }
 
 install_boot_files() {
