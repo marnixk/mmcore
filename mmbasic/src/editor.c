@@ -1092,14 +1092,6 @@ static void next_tab(void)
 	set_status(0);
 }
 
-static void prev_tab(void)
-{
-	if (G.ed.ntabs <= 1)
-		return;
-	G.ed.cur = (G.ed.cur + G.ed.ntabs - 1) % G.ed.ntabs;
-	set_status(0);
-}
-
 static void close_tab(void)
 {
 	int i;
