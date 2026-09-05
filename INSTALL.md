@@ -170,7 +170,7 @@ Do not put them in a subfolder.
 Linux example (after the mount in step 2):
 
 ```bash
-sudo cp -a kernel8.img config.txt bootcode.bin start.elf fixup.dat \
+sudo cp kernel8.img config.txt bootcode.bin start.elf fixup.dat \
            LICENCE.broadcom INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
@@ -196,7 +196,7 @@ sudo umount /mnt/mmbasic
 Linux example:
 
 ```bash
-sudo cp -a kernel8-rpi4.img config.txt armstub8-rpi4.bin \
+sudo cp kernel8-rpi4.img config.txt armstub8-rpi4.bin \
            start4.elf fixup4.dat bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
            LICENCE.broadcom COPYING.linux INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
