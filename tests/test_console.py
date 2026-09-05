@@ -78,3 +78,35 @@ def test_screen_shows_typed_text(kernel_image):
         assert "READY" in text  # boot banner still on screen
     finally:
         con.stop()
+
+
+def test_cls_homes_prompt_after_printed_lines(fresh_console):
+    """CLS must wipe printed text and home the next prompt to the top.
+
+    Graphics tests always CLS on a fresh boot then draw; they never type
+    several PRINT lines first. Without homing Circle's text cursor, the
+    framebuffer goes black but the next PRINT stays mid-screen.
+    """
+    fresh_console.send_line('PRINT "LINEONE"')
+    fresh_console.send_line('PRINT "LINETWO"')
+    fresh_console.send_line('PRINT "LINETHREE"')
+    before = fresh_console.ocr_screen(crop="640x300+0+0")
+    assert "LINEONE" in before
+    assert "LINETWO" in before
+    assert "LINETHREE" in before
+
+    assert fresh_console.send_line("CLS") == ""
+
+    after_cls = fresh_console.ocr_screen(crop="640x300+0+0")
+    assert "LINEONE" not in after_cls
+    assert "LINETWO" not in after_cls
+    assert "LINETHREE" not in after_cls
+
+    fresh_console.send_line('PRINT "TOPAFTERCLS"')
+    # Font is 8x16. After three PRINTs the un-homed cursor is ~150px down,
+    # so a 64px top crop misses TOPAFTERCLS unless CLS homes the prompt.
+    top = fresh_console.ocr_screen(crop="640x64+0+0")
+    assert "TOPAFTERCLS" in top
+    assert "LINEONE" not in top
+    assert "LINETWO" not in top
+    assert "LINETHREE" not in top
