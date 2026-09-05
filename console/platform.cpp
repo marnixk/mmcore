@@ -89,6 +89,14 @@ static unsigned plat_millis(void)
 	return CTimer::GetClockTicks() / 1000;
 }
 
+
+static int plat_read_line(char *buf, unsigned maxn, int hide)
+{
+	if (!s_kernel)
+		return -1;
+	return s_kernel->ReadLine(buf, maxn, hide);
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -103,5 +111,6 @@ void mmb_platform_bind(CKernel *k)
 	plat.alloc = plat_alloc;
 	plat.free = plat_free;
 	plat.millis = plat_millis;
+	plat.read_line = plat_read_line;
 	mmb_init(&plat);
 }

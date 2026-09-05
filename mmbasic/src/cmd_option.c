@@ -90,9 +90,134 @@ static void parse_touch(void)
 	skip_hw_rest();
 }
 
+static void cons_write(const char *s)
+{
+	unsigned n = (unsigned)strlen(s);
+	if (G.plat && G.plat->write_serial)
+		G.plat->write_serial(s, n);
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen(s, n);
+}
+
+static int read_console_line(char *buf, unsigned maxn, int hide)
+{
+	if (G.plat && G.plat->read_line)
+		return G.plat->read_line(buf, maxn, hide);
+	return -1;
+}
+
+static void wifi_store(const char *ssid, const char *psk)
+{
+	strncpy(G.opt.wifi_ssid, ssid ? ssid : "", sizeof(G.opt.wifi_ssid) - 1);
+	G.opt.wifi_ssid[sizeof(G.opt.wifi_ssid) - 1] = 0;
+	strncpy(G.opt.wifi_psk, psk ? psk : "", sizeof(G.opt.wifi_psk) - 1);
+	G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
+	G.opt.wifi_enabled = G.opt.wifi_ssid[0] ? 1 : 0;
+	mmb_settings_save();
+}
+
+static void wifi_try_connect(const char *ssid, const char *psk)
+{
+	if (mmb_wlan_connect(ssid, psk) == 0)
+		mmb_out("Wi-Fi connected");
+	else if (!mmb_wlan_available())
+		mmb_out("Wi-Fi credentials saved (radio not available)");
+	else
+		mmb_out("Wi-Fi connect failed");
+}
+
+static void parse_wifi_interactive(void)
+{
+	char ssids[16][64];
+	char line[80];
+	char psk[64];
+	int n, i, pick;
+	if (!mmb_wlan_available())
+	{
+		mmb_out("Wi-Fi not available");
+		return;
+	}
+	n = mmb_wlan_scan(ssids, 16);
+	if (n <= 0)
+		cons_write("No networks found\r\nSSID: ");
+	else
+	{
+		cons_write("Wi-Fi networks:\r\n");
+		for (i = 0; i < n; i++)
+		{
+			char num[8];
+			num[0] = (char)('1' + i);
+			if (i >= 9)
+			{
+				num[0] = (char)('0' + (i + 1) / 10);
+				num[1] = (char)('0' + (i + 1) % 10);
+				num[2] = 0;
+			}
+			else
+			{
+				num[1] = 0;
+			}
+			cons_write(num);
+			cons_write(". ");
+			cons_write(ssids[i]);
+			cons_write("\r\n");
+		}
+		cons_write("SSID or number: ");
+	}
+	if (read_console_line(line, sizeof(line), 0) != 0)
+	{
+		mmb_out("Wi-Fi not available");
+		return;
+	}
+	pick = 0;
+	if (line[0] >= '1' && line[0] <= '9' && (line[1] == 0 || (line[1] >= '0' && line[1] <= '9' && line[2] == 0)))
+	{
+		pick = line[0] - '0';
+		if (line[1])
+			pick = pick * 10 + (line[1] - '0');
+		if (pick < 1 || pick > n)
+			pick = 0;
+		else
+			strncpy(line, ssids[pick - 1], sizeof(line) - 1);
+	}
+	if (!line[0])
+	{
+		mmb_out("Wi-Fi cancelled");
+		return;
+	}
+	cons_write("Password: ");
+	if (read_console_line(psk, sizeof(psk), 1) != 0)
+		psk[0] = 0;
+	wifi_store(line, psk);
+	wifi_try_connect(line, psk);
+}
+
 static void parse_wifi(void)
 {
-	skip_hw_rest();
+	mmb_skip_sp();
+	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+	{
+		parse_wifi_interactive();
+		return;
+	}
+	{
+		mmb_val ssid = mmb_expr();
+		mmb_val psk;
+		if (ssid.type != T_STR)
+			mmb_syntax();
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			psk = mmb_str_val("");
+		else
+			psk = mmb_expr();
+		if (psk.type != T_STR)
+			mmb_syntax();
+		wifi_store(ssid.s, psk.s);
+		wifi_try_connect(ssid.s, psk.s);
+	}
 }
 
 static void parse_sdcard(void)
@@ -110,7 +235,7 @@ static void parse_clock(void)
 	skip_hw_rest();
 }
 
-void mmb_cmd_option(void)
+static void option_dispatch(void)
 {
 	if (mmb_match("BASE"))
 	{
@@ -544,7 +669,18 @@ void mmb_cmd_option(void)
 	if (mmb_match("F12")) { set_fkey(12); return; }
 	if (mmb_match("RESET"))
 	{
+		char ssid[64], psk[64];
+		int en = G.opt.wifi_enabled;
+		strncpy(ssid, G.opt.wifi_ssid, sizeof(ssid) - 1);
+		ssid[sizeof(ssid) - 1] = 0;
+		strncpy(psk, G.opt.wifi_psk, sizeof(psk) - 1);
+		psk[sizeof(psk) - 1] = 0;
 		mmb_option_reset();
+		strncpy(G.opt.wifi_ssid, ssid, sizeof(G.opt.wifi_ssid) - 1);
+		G.opt.wifi_ssid[sizeof(G.opt.wifi_ssid) - 1] = 0;
+		strncpy(G.opt.wifi_psk, psk, sizeof(G.opt.wifi_psk) - 1);
+		G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
+		G.opt.wifi_enabled = en;
 		return;
 	}
 	if (mmb_match("LIST"))
@@ -562,6 +698,27 @@ void mmb_cmd_option(void)
 		return;
 	}
 	mmb_syntax();
+}
+
+void mmb_cmd_option(void)
+{
+	const char *save = G.p;
+	mmb_skip_sp();
+	if (mmb_match("LIST"))
+	{
+		G.p = save;
+		option_dispatch();
+		return;
+	}
+	if (mmb_match("WIFI"))
+	{
+		G.p = save;
+		option_dispatch();
+		return;
+	}
+	G.p = save;
+	option_dispatch();
+	mmb_settings_save();
 }
 
 static void ol_line(int *n, const char *text)

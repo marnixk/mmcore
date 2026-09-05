@@ -93,6 +93,9 @@ typedef struct mmb_options {
 	char fkey[12][65];     /* F1..F12 */
 	int list_changed_only;
 	int error_continue;    /* 0 ABORT (default) 1 CONTINUE */
+	char wifi_ssid[64];
+	char wifi_psk[64];
+	int wifi_enabled;
 } mmb_options;
 
 typedef struct mmb_file {
@@ -343,6 +346,16 @@ void mmb_clear_consts(void);
 
 void mmb_option_reset(void);
 void mmb_option_list(int all);
+void mmb_settings_load(void);
+void mmb_settings_save(void);
+const char *mmb_settings_path(void);
+void mmb_cmd_factory_reset(void);
+int mmb_vfs_hidden_name(const char *name);
+
+int mmb_wlan_available(void);
+int mmb_wlan_scan(char ssids[][64], int maxn);
+int mmb_wlan_connect(const char *ssid, const char *psk);
+int mmb_wlan_status(void);
 
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);

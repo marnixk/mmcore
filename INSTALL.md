@@ -25,6 +25,25 @@ slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
 `DRIVE` lists them; `CHDIR "C:"` selects the SD card. File commands without a
 drive letter use the current drive (boot default `A:`).
 
+Persistent options live in a hidden INI file: `C:/.mmbasic.ini` on the SD
+card (survives reboot). If `C:` is missing (typical QEMU run with no SD
+image), the same file is written to the `A:` ramdisk so tests still work —
+that copy is lost on power-off. `DIR` and `FILES` hide names that start with
+`.`; `OPEN` of the exact path still works.
+
+`OPTION` values that should survive reboot (keyboard, colours, tab, break
+key, console, search path, function keys, Wi-Fi credentials, …) are saved
+when they change. `FACTORY_RESET` restores firmware defaults and rewrites
+the INI (including wiping Wi-Fi SSID/PSK) but does not delete `.BAS`
+programs.
+
+`OPTION WIFI` (also `OPTIONS WIFI`) scans for networks when the Circle
+WLAN driver and firmware are present (Pi 3/4 onboard radio; firmware in
+`C:/firmware/`). QEMU does not emulate Wi-Fi: the command reports that the
+radio is unavailable. `OPTION WIFI "ssid","password"` still stores
+credentials for the next real boot. The PSK is written to the INI and is
+not printed on the serial console.
+
 ## What you need
 
 - The matching release zip from GitHub Releases

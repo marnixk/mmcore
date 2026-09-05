@@ -1493,9 +1493,14 @@ static void exec_statement(void)
 		mmb_cmd_next();
 		return;
 	}
-	if (mmb_match("OPTION"))
+	if (mmb_match("OPTION") || mmb_match("OPTIONS"))
 	{
 		mmb_cmd_option();
+		return;
+	}
+	if (mmb_match("FACTORY_RESET") || (mmb_match("FACTORY") && mmb_match("RESET")))
+	{
+		mmb_cmd_factory_reset();
 		return;
 	}
 	if (mmb_match("CLS"))
@@ -1777,6 +1782,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_vfs_init();
 	mmb_gfx_init();
 	mmb_assets_seed();
+	mmb_settings_load();
 }
 
 void mmb_reset(void)

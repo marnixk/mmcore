@@ -22,6 +22,8 @@ typedef struct mmb_platform {
 	void *(*alloc)(unsigned n);
 	void (*free)(void *p);
 	unsigned (*millis)(void);
+	/* Optional blocking console line. hide!=0 echoes '*'. 0=ok, -1=none. */
+	int (*read_line)(char *buf, unsigned maxn, int hide);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
