@@ -21,6 +21,7 @@ static const char kIndexCommands[] =
 	"Graphics\n"
 	"  CLS PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
+	"  IMAGE FRAMEBUFFER TURTLE\n"
 	"\n"
 	"Files\n"
 	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
@@ -102,11 +103,12 @@ static const char kHelpPrint[] =
 
 static const char kHelpPixel[] =
 	"PIXEL x, y [, colour]\n"
-	"PIXEL(x, y)   (function)\n"
+	"PIXEL(x, y [, page])   (function)\n"
 	"\n"
 	"Set the pixel at (x,y). colour defaults to the\n"
 	"current foreground (see COLOUR).\n"
 	"PIXEL(x,y) as a function returns that pixel's RGB.\n"
+	"Optional page is a page number or FRAMEBUFFER.\n"
 	"\n"
 	"Example:  PIXEL 10,10,RGB(255,0,0)\n"
 	"          PRINT PIXEL(10,10)";
@@ -141,7 +143,15 @@ static const char kHelpBox[] =
 	"the foreground. fill >= 0 fills the interior\n"
 	"(use an RGB value such as RGB(0,255,0)).\n"
 	"\n"
-	"Example:  BOX 20,20,40,40,1,RGB(0,255,0),1";
+	"BOX AND_PIXELS x, y, w, h, colour [, page]\n"
+	"BOX OR_PIXELS  x, y, w, h, colour [, page]\n"
+	"BOX XOR_PIXELS x, y, w, h, colour [, page]\n"
+	"\n"
+	"AND, OR or XOR colour with every pixel in the\n"
+	"rectangle. page defaults to the write page.\n"
+	"\n"
+	"Example:  BOX 20,20,40,40,1,RGB(0,255,0),1\n"
+	"          BOX XOR_PIXELS 20,20,40,40,RGB(255,255,255)";
 
 static const char kHelpCircle[] =
 	"CIRCLE x, y, r [, lw] [, colour] [, fill]\n"
@@ -276,24 +286,108 @@ static const char kHelpMode[] =
 	"          MODE 17,8";
 
 static const char kHelpPage[] =
-	"PAGE WRITE n\n"
+	"PAGE WRITE n | FRAMEBUFFER\n"
 	"PAGE DISPLAY n\n"
 	"PAGE COPY src [TO dst]\n"
+	"PAGE SCROLL n, x, y [, fillcolour]\n"
+	"PAGE AND_PIXELS s1, s2, dest\n"
+	"PAGE OR_PIXELS  s1, s2, dest\n"
+	"PAGE XOR_PIXELS s1, s2, dest\n"
 	"\n"
-	"Off-screen pages. WRITE selects the draw target.\n"
-	"DISPLAY shows page n. COPY copies src to dst (or\n"
-	"onto itself if TO is omitted).\n"
+	"Off-screen pages. WRITE selects the draw target\n"
+	"(a page number or FRAMEBUFFER). DISPLAY shows\n"
+	"page n. COPY copies src to dst.\n"
+	"SCROLL moves the page right by x and up by y.\n"
+	"Omitted fillcolour wraps; -1 leaves the gap;\n"
+	"any other colour fills it.\n"
 	"\n"
 	"Example:  PAGE COPY 0 TO 1\n"
-	"          PAGE WRITE 1";
+	"          PAGE SCROLL 0, 8, 0";
 
 static const char kHelpBlit[] =
-	"BLIT sx, sy, w, h, dx, dy\n"
+	"BLIT x1, y1, x2, y2, w, h [, page] [, ori]\n"
+	"BLIT READ [#]n, x, y, w, h [, page]\n"
+	"BLIT WRITE [#]n, x, y [, ori]\n"
+	"BLIT CLOSE [#]n\n"
 	"\n"
-	"Copy a w by h rectangle from (sx,sy) to (dx,dy)\n"
-	"on the current write page.\n"
+	"Copy a w by h rectangle from (x1,y1) to (x2,y2).\n"
+	"page is the source (write page if omitted, or\n"
+	"FRAMEBUFFER). ori bits: 1 mirror L/R, 2 mirror\n"
+	"T/B, 4 skip black. WRITE defaults ori to 4.\n"
+	"READ/WRITE/CLOSE use buffers 1 to 16.\n"
 	"\n"
-	"Example:  BLIT 0,0,32,32,100,80";
+	"Example:  BLIT 0,0,100,80,32,32\n"
+	"          BLIT READ #1,0,0,32,32\n"
+	"          BLIT WRITE #1,200,80";
+
+static const char kHelpImage[] =
+	"IMAGE RESIZE x,y,w,h,nx,ny,nw,nh [,page]\n"
+	"IMAGE RESIZE_FAST ... [,page] [,flag]\n"
+	"IMAGE ROTATE x,y,w,h,nx,ny,angle [,page]\n"
+	"IMAGE ROTATE_FAST ... [,page] [,flag]\n"
+	"IMAGE WARP_H x,y,w,h,x1,y1,h1,x2,y2,h2 [,page] [,flag]\n"
+	"IMAGE WARP_V x,y,w,h,x1,y1,w1,x2,y2,w2 [,page] [,flag]\n"
+	"\n"
+	"Software scale, rotate and warp. RESIZE uses\n"
+	"bilinear sampling; RESIZE_FAST is nearest\n"
+	"neighbour. ROTATE is clockwise in degrees about\n"
+	"the source centre and cropped to w by h.\n"
+	"page is the source (write page or FRAMEBUFFER).\n"
+	"flag=1 skips black pixels.\n"
+	"BITMAP (or GUI BITMAP) plots a 1-bit image;\n"
+	"type HELP BITMAP.\n"
+	"\n"
+	"Example:  IMAGE RESIZE_FAST 0,0,10,10,100,80,40,40";
+
+static const char kHelpFramebuffer[] =
+	"FRAMEBUFFER CREATE w, h\n"
+	"FRAMEBUFFER WRITE\n"
+	"FRAMEBUFFER BACKUP\n"
+	"FRAMEBUFFER RESTORE [x, y, w, h]\n"
+	"FRAMEBUFFER WINDOW x, y, page\n"
+	"FRAMEBUFFER CLOSE\n"
+	"\n"
+	"Off-screen buffer. w,h must be at least MM.HRES\n"
+	"by MM.VRES and at most 1024x768. WRITE sends\n"
+	"drawing to the buffer. WINDOW copies MM.HRES by\n"
+	"MM.VRES from (x,y) onto a page. MODE frees it.\n"
+	"LOAD JPG cannot target the framebuffer.\n"
+	"\n"
+	"Example:  FRAMEBUFFER CREATE 640,480\n"
+	"          FRAMEBUFFER WRITE\n"
+	"          BOX 10,10,40,40,1,RGB(255,0,0),RGB(255,0,0)\n"
+	"          FRAMEBUFFER WINDOW 0,0,0";
+
+static const char kHelpBitmap[] =
+	"BITMAP x, y, bits [, w] [, h] [, scale] [, c] [, bc]\n"
+	"GUI BITMAP ...     (CMM2 name)\n"
+	"\n"
+	"Plot a 1-bit bitmap. bits is an integer or a\n"
+	"string (MSB of each byte first, top line first).\n"
+	"Default size is 8x8. scale defaults to FONT.\n"
+	"c and bc default to the current colours.\n"
+	"\n"
+	"Example:  BITMAP 20,20,&HFF000000000000FF,8,8,2,RGB(255,255,255)";
+
+static const char kHelpTurtle[] =
+	"TURTLE RESET | PEN UP | PEN DOWN\n"
+	"TURTLE FORWARD n | BACKWARD n\n"
+	"TURTLE TURN LEFT deg | TURN RIGHT deg\n"
+	"TURTLE HEADING deg | MOVE x, y | DOT\n"
+	"TURTLE PEN COLOUR c | FILL COLOUR c\n"
+	"TURTLE BEGIN FILL | END FILL\n"
+	"TURTLE DRAW PIXEL x,y | DRAW LINE x1,y1,x2,y2\n"
+	"TURTLE DRAW CIRCLE x,y,r | DRAW TURTLE\n"
+	"TURTLE FILL PIXEL x, y\n"
+	"\n"
+	"Software turtle. Heading 0 is up, 90 is right.\n"
+	"RESET clears the screen and homes to the centre.\n"
+	"Default pen is white, fill is green.\n"
+	"END FILL fills a polygon of up to 128 sides.\n"
+	"\n"
+	"Example:  TURTLE RESET\n"
+	"          TURTLE HEADING 90\n"
+	"          TURTLE FORWARD 80";
 
 static const char kHelpPlay[] =
 	"PLAY STOP\n"
@@ -623,6 +717,7 @@ static const char kHelpCmm2[] =
 	"  PRINT INPUT LINE INPUT CLS\n"
 	"  PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
+	"  IMAGE FRAMEBUFFER TURTLE\n"
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME KILL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
@@ -637,10 +732,10 @@ static const char kHelpCmm2[] =
 	"  #INCLUDE #DEFINE #COMMENT #MMDEBUG\n"
 	"  ADC AUTOSAVE BITBANG CSUB CPU DAC\n"
 	"  CONTROLLER CLASSIC/MOUSE/NUNCHUK\n"
-	"  DEFINEFONT DRAW3D EXECUTE FLASH FRAMEBUFFER\n"
-	"  GUI HUMID I2C IR IMAGE RESIZE/ROTATE/WARP\n"
+	"  DEFINEFONT DRAW3D EXECUTE FLASH\n"
+	"  GUI controls HUMID I2C IR\n"
 	"  LIBRARY MATH MMDEBUG PIN SETPIN PWM PORT\n"
-	"  POKE PEEK SPI SPRITE TURTLE VAR SAVE\n"
+	"  POKE PEEK SPI SPRITE VAR SAVE\n"
 	"  WATCHDOG WII XMODEM COM GPS 1-WIRE\n"
 	"  UPDATE FIRMWARE  preprocessor  CFUNCTION\n"
 	"\n"
@@ -1010,6 +1105,10 @@ static const help_topic kTopics[] = {
 	{ "MODE",        HELP_CMD,  kHelpMode },
 	{ "PAGE",        HELP_CMD,  kHelpPage },
 	{ "BLIT",        HELP_CMD,  kHelpBlit },
+	{ "IMAGE",       HELP_CMD,  kHelpImage },
+	{ "FRAMEBUFFER", HELP_CMD,  kHelpFramebuffer },
+	{ "BITMAP",      HELP_CMD,  kHelpBitmap },
+	{ "TURTLE",      HELP_CMD,  kHelpTurtle },
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },
 	{ "DIR",         HELP_CMD,  kHelpDir },
@@ -1072,6 +1171,7 @@ static const struct {
 	const char *canon;
 } kAlias[] = {
 	{ "COLOR",        "COLOUR" },
+	{ "GUI BITMAP",   "BITMAP" },
 	{ "FACTORY RESET", "FACTORY_RESET" },
 	{ "FACTORY",      "FACTORY_RESET" },
 	{ "NAME",         "RENAME" },
