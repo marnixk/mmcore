@@ -85,6 +85,24 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *out = mmb_editor_key (c);
 		emit (&m_Serial, &m_Screen, out);
 		if (!mmb_in_editor ())
+		{
+			if (mmb_in_files ())
+			{
+				emit (&m_Serial, &m_Screen, mmb_files_on_editor_exit ());
+				if (!mmb_in_files ())
+					emit (&m_Serial, &m_Screen, "> ");
+			}
+			else
+				emit (&m_Serial, &m_Screen, "> ");
+		}
+		return;
+	}
+
+	if (mmb_in_files ())
+	{
+		const char *out = mmb_files_key (c);
+		emit (&m_Serial, &m_Screen, out);
+		if (!mmb_in_files () && !mmb_in_editor ())
 			emit (&m_Serial, &m_Screen, "> ");
 		return;
 	}
@@ -136,6 +154,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		{
 			emit (&m_Serial, &m_Screen, Result);
 			emit (&m_Serial, &m_Screen, "> ");
+		}
+		else if (mmb_in_files ())
+		{
+			/* Dual-pane TUI already streamed to HDMI/serial. */
 		}
 		else
 		{
