@@ -192,6 +192,62 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	}
 }
 
+
+int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
+{
+	unsigned n = 0;
+	if (!buf || maxn == 0)
+		return -1;
+	buf[0] = 0;
+	for (;;)
+	{
+		char tmp[8];
+		int nBytes, i;
+		mmb_poll ();
+		AttachKeyboard ();
+		nBytes = m_Serial.Read (tmp, sizeof tmp);
+		if (nBytes < 0)
+			nBytes = 0;
+		if (m_pKbdBuf != 0)
+		{
+			int nKbd = m_pKbdBuf->Read (tmp + nBytes,
+						    sizeof tmp - (size_t) nBytes);
+			if (nKbd > 0)
+				nBytes += nKbd;
+		}
+		if (nBytes <= 0)
+			continue;
+		for (i = 0; i < nBytes; i++)
+		{
+			char c = tmp[i];
+			if (c == '\r' || c == '\n')
+			{
+				buf[n] = 0;
+				m_Serial.Write ("\r\n", 2);
+				m_Screen.Write ("\r\n", 2);
+				return 0;
+			}
+			if (c == 8 || c == 127)
+			{
+				if (n > 0)
+				{
+					n--;
+					m_Serial.Write ("\b \b", 3);
+					m_Screen.Write ("\b \b", 3);
+				}
+				continue;
+			}
+			if (n + 1 < maxn)
+			{
+				char e = hide ? '*' : c;
+				buf[n++] = c;
+				m_Serial.Write (&e, 1);
+				m_Screen.Write (&e, 1);
+			}
+		}
+	}
+}
+
 TShutdownMode CKernel::Run (void)
 {
 	m_Logger.Write (FromKernel, LogNotice, "console ready");

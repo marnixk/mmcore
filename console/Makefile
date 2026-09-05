@@ -4,13 +4,14 @@
 CIRCLEHOME = ../circle
 MMB        = ../mmbasic
 
-OBJS	= main.o kernel.o platform.o storage.o \
+OBJS	= main.o kernel.o platform.o storage.o wlan.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/expr.o \
 	  $(MMB)/src/core.o \
 	  $(MMB)/src/cmd_help.o \
 	  $(MMB)/src/cmd_option.o \
+	  $(MMB)/src/settings.o \
 	  $(MMB)/src/gfx.o \
 	  $(MMB)/src/cmd_graphics.o \
 	  $(MMB)/src/vfs.o \

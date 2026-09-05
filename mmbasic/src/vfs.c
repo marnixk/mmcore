@@ -157,6 +157,8 @@ static int ram_list(const char *dir, const char *pat, char *out, int outsz)
 		int len;
 		if (!nodes[i].used || nodes[i].parent != parent)
 			continue;
+		if (mmb_vfs_hidden_name(nodes[i].name))
+			continue;
 		if (pat && pat[0] && !glob_match(nodes[i].name, pat))
 			continue;
 		len = (int)strlen(out);
@@ -687,6 +689,11 @@ int mmb_vfs_rename(const char *src, const char *dst)
 	strncpy(nodes[s].name, base, 79);
 	nodes[s].name[79] = 0;
 	return 0;
+}
+
+int mmb_vfs_hidden_name(const char *name)
+{
+	return name && name[0] == '.';
 }
 
 int mmb_vfs_list(const char *spec, char *out, int outsz)

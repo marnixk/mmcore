@@ -67,6 +67,11 @@ sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
 Type at HDMI with a USB keyboard (Pi 400: the built-in keyboard). Serial on
 GPIO 14/15 is optional.
 
+Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
+`C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores
+defaults without deleting programs. `OPTION WIFI` stores credentials; QEMU
+has no radio.
+
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:
 
