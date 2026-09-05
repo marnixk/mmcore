@@ -236,6 +236,8 @@ void mmb_gfx_set_mode(int mode, int bits)
 		}
 	if (!w)
 		mmb_error("?INVALID MODE");
+	if (G.plat && G.plat->resize_hdmi)
+		G.plat->resize_hdmi(w, h);
 	free_pages();
 	G.gfx.mode = mode;
 	G.gfx.bits = bits;

@@ -79,6 +79,27 @@ static int plat_h(void)
 	return s_kernel ? (int)s_kernel->Screen().GetHeight() : 480;
 }
 
+static int plat_resize_hdmi(int w, int h)
+{
+	unsigned prev_w, prev_h;
+
+	if (!s_kernel || w < 1 || h < 1)
+		return 0;
+
+	CScreenDevice &sc = s_kernel->Screen();
+	prev_w = sc.GetWidth();
+	prev_h = sc.GetHeight();
+	if (prev_w == (unsigned)w && prev_h == (unsigned)h)
+		return 1;
+
+	/* Resize() leaves the device unusable on failure; restore the
+	 * previous timing immediately so later writes cannot crash. */
+	if (sc.Resize((unsigned)w, (unsigned)h))
+		return 1;
+	sc.Resize(prev_w, prev_h);
+	return 0;
+}
+
 static void *plat_alloc(unsigned n)
 {
 	return malloc(n);
@@ -106,6 +127,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.fill_screen = plat_fill;
 	plat.hdmi_width = plat_w;
 	plat.hdmi_height = plat_h;
+	plat.resize_hdmi = plat_resize_hdmi;
 	plat.alloc = plat_alloc;
 	plat.free = plat_free;
 	plat.millis = plat_millis;

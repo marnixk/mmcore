@@ -305,6 +305,7 @@ void mmb_cmd_mode(void)
 	mmb_gfx_set_mode(mode, bits);
 	if (n >= 3)
 		mmb_gfx_cls((unsigned)mmb_as_int(a[2]));
+	G.home_prompt = 1;
 }
 
 void mmb_cmd_page(void)

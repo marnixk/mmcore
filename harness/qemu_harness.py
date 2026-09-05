@@ -237,6 +237,15 @@ class MMBasicConsole:
         subprocess.run(["convert", ppm, png], check=True, capture_output=True)
         return png
 
+    def screen_size(self) -> tuple[int, int]:
+        """Return the emulated HDMI framebuffer (width, height) in pixels."""
+        png = self.capture_png()
+        out = subprocess.run(
+            ["identify", "-format", "%w %h", png],
+            check=True, capture_output=True, text=True,
+        ).stdout.split()
+        return int(out[0]), int(out[1])
+
     def screen_pixel(self, x: int, y: int) -> tuple[int, int, int]:
         """Return the (r, g, b) colour of the framebuffer pixel at (x, y)."""
         png = self.capture_png()

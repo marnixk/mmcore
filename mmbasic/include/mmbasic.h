@@ -19,6 +19,8 @@ typedef struct mmb_platform {
 	void (*fill_screen)(unsigned rgb888);
 	int (*hdmi_width)(void);
 	int (*hdmi_height)(void);
+	/* Retune the HDMI framebuffer. Returns 1 on success, 0 on failure. */
+	int (*resize_hdmi)(int w, int h);
 	void *(*alloc)(unsigned n);
 	void (*free)(void *p);
 	unsigned (*millis)(void);
