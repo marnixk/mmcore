@@ -4,7 +4,7 @@
 def test_help_lists_commands(console):
     out = console.send_line("HELP")
     assert out
-    for cmd in ("CLS", "PRINT", "PIXEL", "DIR", "OPEN", "MODE", "PLAY"):
+    for cmd in ("CLS", "PRINT", "PIXEL", "DIR", "FILES", "OPEN", "MODE", "PLAY"):
         assert cmd in out, cmd
     for junk in ("DELETE", "SPRITE", "GUI", "CAMERA", "MAP", "TILE"):
         assert junk not in out, junk
@@ -85,3 +85,12 @@ def test_help_mode_case_insensitive(console):
     mixed = console.send_line("Help Mode", timeout=8.0)
     assert "1920x1080" in mixed
     assert "MM.HRES" in mixed
+
+
+def test_help_files(console):
+    out = console.send_line("HELP FILES")
+    assert out != "?SYNTAX ERROR"
+    assert "dual-pane" in out.lower() or "file manager" in out.lower()
+    assert "DIR listing" in out or "not a DIR" in out
+    listing = console.send_line("HELP DIR")
+    assert "alias" not in listing.lower()

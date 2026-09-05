@@ -23,7 +23,7 @@ static const char kIndexCommands[] =
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
 	"\n"
 	"Files\n"
-	"  DIR OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
+	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
 	"  KILL DRIVE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
@@ -315,13 +315,23 @@ static const char kHelpEdit[] =
 
 static const char kHelpDir[] =
 	"DIR [spec$]\n"
-	"FILES [spec$]     (alias)\n"
 	"\n"
 	"List files in the current directory, or matching\n"
 	"optional spec$ (a path or wildcard).\n"
 	"\n"
 	"Example:  DIR\n"
 	"          DIR \"A:/*.PNG\"";
+
+static const char kHelpFiles[] =
+	"FILES\n"
+	"\n"
+	"Open the dual-pane file manager (not a DIR listing).\n"
+	"Navigate drives and folders. Enter on a directory\n"
+	"opens it. Enter on a .BAS file RUNs it. View (v/F3)\n"
+	"previews PNG/JPG or plays MP3/XM/MOD when supported.\n"
+	"Tab switches panes. q or Esc leaves FILES.\n"
+	"\n"
+	"Example:  FILES";
 
 static const char kHelpOpen[] =
 	"OPEN file$ [FOR INPUT|OUTPUT|APPEND] AS #n\n"
@@ -769,6 +779,7 @@ static const help_topic kTopics[] = {
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },
 	{ "DIR",         HELP_CMD,  kHelpDir },
+	{ "FILES",       HELP_CMD,  kHelpFiles },
 	{ "OPEN",        HELP_CMD,  kHelpOpen },
 	{ "CLOSE",       HELP_CMD,  kHelpClose },
 	{ "LOAD",        HELP_CMD,  kHelpLoad },
@@ -811,7 +822,6 @@ static const struct {
 	const char *canon;
 } kAlias[] = {
 	{ "COLOR",        "COLOUR" },
-	{ "FILES",        "DIR" },
 	{ "NAME",         "RENAME" },
 	{ "ERASE",        "CLEAR" },
 	{ "?",            "PRINT" },
