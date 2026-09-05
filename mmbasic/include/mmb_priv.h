@@ -17,6 +17,8 @@
 #define MMB_MAX_FILES     10
 #define MMB_MAX_PAGES     8
 #define MMB_OUT_LEN       4096
+#define MMB_ED_TABS       6
+#define MMB_ED_BUF        16384
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     16
 #define MMB_MAX_CTRL      32
@@ -114,14 +116,28 @@ typedef struct mmb_gfx {
 	uint32_t *page[MMB_MAX_PAGES]; /* RGB888 */
 } mmb_gfx;
 
+typedef struct mmb_ed_tab {
+	int used;
+	char path[128];
+	char buf[MMB_ED_BUF];
+	int len;
+	int cx, cy, row0, col0;
+	int dirty;
+} mmb_ed_tab;
+
 typedef struct mmb_editor {
 	int active;
-	char path[128];
-	char buf[16384];
-	int len;
-	int cx, cy, row0;
-	int dirty;
 	int run_on_exit;
+	int ntabs;
+	int cur;
+	int menu_open;     /* dropdown visible */
+	int menu;          /* 0 File 1 Edit 2 Run 3 Help */
+	int menu_item;
+	int dialog;        /* 0 none 1 open 2 saveas 3 help */
+	char dlg[128];
+	int dlglen;
+	char status[80];
+	mmb_ed_tab tab[MMB_ED_TABS];
 } mmb_editor;
 
 typedef struct mmb_audio {
