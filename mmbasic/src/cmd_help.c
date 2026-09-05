@@ -16,7 +16,7 @@ typedef struct {
 } help_topic;
 
 static const char kIndexCommands[] =
-	"Commands  (HELP <name> for details)\n"
+	"Commands  (HELP topic for details)\n"
 	"\n"
 	"Graphics\n"
 	"  CLS PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
@@ -35,7 +35,7 @@ static const char kIndexCommands[] =
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.";
 
 static const char kIndexBasic[] =
-	"Language constructs  (HELP BASIC <name> or HELP <name>)\n"
+	"Language constructs  (HELP BASIC topic or HELP topic)\n"
 	"\n"
 	"  FOR NEXT            WHILE WEND\n"
 	"  DO LOOP EXIT DO     IF THEN ELSE ELSEIF ENDIF\n"
@@ -43,21 +43,21 @@ static const char kIndexBasic[] =
 	"  DATA READ RESTORE   SUB FUNCTION CALL\n"
 	"  GOTO GOSUB RETURN   LET REM END\n"
 	"\n"
-	"Type HELP <construct> for syntax and examples.";
+	"Type HELP topic for syntax and examples.";
 
 static const char kHelpHelp[] =
 	"HELP\n"
-	"HELP <command>\n"
+	"HELP command\n"
 	"HELP BASIC\n"
-	"HELP BASIC <construct>\n"
+	"HELP BASIC construct\n"
 	"\n"
 	"Show built-in help. Keywords are case-insensitive\n"
 	"(help, HELP, Help CLS all work).\n"
 	"\n"
 	"HELP lists commands that have help text.\n"
-	"HELP <command> shows syntax and details.\n"
+	"HELP command shows syntax and details.\n"
 	"HELP BASIC lists language constructs.\n"
-	"HELP BASIC <construct> (or HELP <construct>)\n"
+	"HELP BASIC construct (or HELP construct)\n"
 	"shows syntax, notes, and short examples.\n"
 	"\n"
 	"Unknown topics print a message; they do not raise\n"
@@ -141,7 +141,7 @@ static const char kHelpRbox[] =
 	"RBOX x, y, w, h [, radius] [, lw] [, fill] [, colour]\n"
 	"\n"
 	"Rounded rectangle. radius defaults to 8.\n"
-	"If the last numeric argument is > 7 it is treated\n"
+	"If the last numeric argument is above 7 it is treated\n"
 	"as an RGB colour.\n"
 	"\n"
 	"Example:  RBOX 80,20,40,40,6,RGB(0,0,255)";
@@ -345,7 +345,7 @@ static const char kHelpInput[] =
 	"          CLOSE #1";
 
 static const char kHelpOption[] =
-	"OPTION <setting> ...\n"
+	"OPTION setting ...\n"
 	"OPTION LIST [ALL]\n"
 	"OPTION RESET\n"
 	"\n"
@@ -648,7 +648,7 @@ static const char kHelpSelect[] =
 	"CASE ELSE\n"
 	"END SELECT\n"
 	"\n"
-	"Choose a branch matching expr. relop is = <> < > <= >=.\n"
+	"Choose a branch matching expr. relop is =, <>, <, >, <=, >=.\n"
 	"\n"
 	"Example:\n"
 	"  10 N=2\n"
