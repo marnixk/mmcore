@@ -465,8 +465,10 @@ int mmb_vfs_hidden_name(const char *name);
 
 int mmb_wlan_available(void);
 int mmb_wlan_scan(char ssids[][64], int maxn);
+int mmb_wlan_start(const char *ssid, const char *psk);
 int mmb_wlan_connect(const char *ssid, const char *psk);
 int mmb_wlan_status(void);
+void mmb_wlan_poll(void);
 
 int mmb_net_available(void);
 int mmb_net_tcp_open(const char *host, int port);

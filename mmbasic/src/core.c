@@ -1545,6 +1545,7 @@ void mmb_check_break(void)
 	if (!G.running)
 		return;
 	mmb_storage_poll();
+	mmb_wlan_poll();
 	mmb_play_mix();
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
@@ -2203,7 +2204,15 @@ void mmb_reset(void)
 
 void mmb_poll(void)
 {
+	static int wifi_boot;
 	mmb_storage_poll();
+	mmb_wlan_poll();
+	if (!wifi_boot)
+	{
+		wifi_boot = 1;
+		if (G.opt.wifi_enabled && G.opt.wifi_ssid[0])
+			mmb_wlan_start(G.opt.wifi_ssid, G.opt.wifi_psk);
+	}
 	mmb_connect_poll();
 	mmb_play_mix();
 }

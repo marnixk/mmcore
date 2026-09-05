@@ -28,6 +28,30 @@ fi
 log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 ( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} -f )
 
+MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
+MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
+if [ -f "${CIRCLE_DIR}/Config.mk" ]; then
+	MODE="${MODE} $(tr '\n' ' ' < "${CIRCLE_DIR}/Config.mk")"
+fi
+if [ ! -f "${MODE_STAMP}" ] || [ "$(cat "${MODE_STAMP}")" != "${MODE}" ]; then
+	log "Circle build mode changed; cleaning libraries so NO_SDHOST/RASPPI match"
+	make -C "${CIRCLE_DIR}/lib" clean
+	make -C "${CIRCLE_DIR}/addon/SDCard" clean
+	make -C "${CIRCLE_DIR}/addon/fatfs" clean
+	make -C "${CIRCLE_DIR}/lib/usb" clean
+	make -C "${CIRCLE_DIR}/lib/fs" clean
+	make -C "${CIRCLE_DIR}/lib/input" clean
+	make -C "${CIRCLE_DIR}/lib/sound" clean
+	make -C "${CIRCLE_DIR}/lib/net" clean || true
+	make -C "${CIRCLE_DIR}/lib/sched" clean || true
+	make -C "${CIRCLE_DIR}/addon/wlan" clean || true
+	if [ -f "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant/Makefile.circle" ]; then
+		make -C "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant" -f Makefile.circle clean || true
+	fi
+	make -C "${CONSOLE_DIR}" clean
+	printf '%s\n' "${MODE}" > "${MODE_STAMP}"
+fi
+
 log "Building Circle core library"
 make -C "${CIRCLE_DIR}/lib" -j"$(nproc)"
 
@@ -38,6 +62,22 @@ make -C "${CIRCLE_DIR}/lib/fs" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/input" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/usb" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/sound" -j"$(nproc)"
+
+if [ "${QEMU:-1}" = "0" ]; then
+  if [ ! -f "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant/Makefile.circle" ]; then
+    log "Initialising Circle hostap submodule (WPA2 supplicant)"
+    git -C "${CIRCLE_DIR}" submodule update --init addon/wlan/hostap
+  fi
+  log "Building Circle WLAN, hostap, net, and scheduler libraries"
+  make -C "${CIRCLE_DIR}/lib/sched" -j"$(nproc)"
+  make -C "${CIRCLE_DIR}/lib/net" -j"$(nproc)"
+  make -C "${CIRCLE_DIR}/addon/wlan" -j"$(nproc)"
+  make -C "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant" -f Makefile.circle -j"$(nproc)"
+fi
+
+# wlan.o / net.o change with MMB_CIRCLE_WLAN when switching QEMU <-> hardware.
+rm -f "${CONSOLE_DIR}/wlan.o" "${CONSOLE_DIR}/wlan.d" \
+      "${CONSOLE_DIR}/net.o" "${CONSOLE_DIR}/net.d"
 
 log "Building console kernel image"
 make -C "${CONSOLE_DIR}" -j"$(nproc)"

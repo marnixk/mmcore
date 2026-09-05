@@ -4,6 +4,13 @@
 CIRCLEHOME = ../circle
 MMB        = ../mmbasic
 
+# Circle --qemu sets NO_SDHOST (no CYW4343x on raspi3b). Hardware images
+# leave SDHOST on so Pi 3 Wi-Fi can share the board with the SD card.
+-include $(CIRCLEHOME)/Config.mk
+ifeq ($(findstring NO_SDHOST,$(DEFINE)),)
+DEFINE += -DMMB_CIRCLE_WLAN
+endif
+
 OBJS	= main.o kernel.o platform.o storage.o wlan.o net.o audio.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/vars.o \
@@ -37,6 +44,14 @@ LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
 	  $(CIRCLEHOME)/lib/input/libinput.a \
 	  $(CIRCLEHOME)/lib/fs/libfs.a \
 	  $(CIRCLEHOME)/lib/libcircle.a
+
+ifeq ($(findstring MMB_CIRCLE_WLAN,$(DEFINE)),MMB_CIRCLE_WLAN)
+LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
+	$(CIRCLEHOME)/addon/wlan/libwlan.a \
+	$(CIRCLEHOME)/lib/net/libnet.a \
+	$(CIRCLEHOME)/lib/sched/libsched.a \
+	$(LIBS)
+endif
 
 EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party
 
