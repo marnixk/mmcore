@@ -9,6 +9,9 @@ def test_help_lists_commands(console):
     for junk in ("DELETE", "SPRITE", "GUI", "CAMERA", "MAP", "TILE"):
         assert junk not in out, junk
     assert "HELP BASIC" in out
+    assert "OPTION WIFI" in out
+    assert "ssid" in out.lower()
+    assert ".mmbasic.ini" in out
 
 
 def test_help_cls(console):

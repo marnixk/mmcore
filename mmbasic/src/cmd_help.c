@@ -34,6 +34,12 @@ static const char kIndexCommands[] =
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
 	"  FACTORY_RESET CONNECT CONTINUE EXIT LS\n"
 	"\n"
+	"Wi-Fi\n"
+	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
+	"  OPTION WIFI                    scan and prompt\n"
+	"  Credentials persist in C:/.mmbasic.ini (A: if no SD).\n"
+	"  Needs a radio; QEMU has none. HELP OPTION for more.\n"
+	"\n"
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.\n"
 	"Type HELP CMM2 for the full CMM2 command inventory.";
 
