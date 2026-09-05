@@ -48,6 +48,9 @@ def test_editor_ocr_file_label(kernel_image):
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
         assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        # Full-height box vertical at the left of the text pane (row 3, glyph y=0).
+        r, g, b = con.screen_pixel(3, 3 * 16)
+        assert r > 100 and g > 100 and b > 100, (r, g, b)
         _quit(con)
     finally:
         con.stop()
