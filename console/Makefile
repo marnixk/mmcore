@@ -11,7 +11,7 @@ ifeq ($(findstring NO_SDHOST,$(DEFINE)),)
 DEFINE += -DMMB_CIRCLE_WLAN
 endif
 
-OBJS	= main.o kernel.o platform.o storage.o wlan.o net.o audio.o \
+OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/expr.o \

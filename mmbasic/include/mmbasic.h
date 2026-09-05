@@ -92,6 +92,9 @@ int mmb_break_key(void);
 /* True once after CLS: caller should emit the prompt without leading newlines. */
 int mmb_take_home_prompt(void);
 
+/* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
+void mmb_console_write(const char *s);
+
 #ifdef __cplusplus
 }
 #endif

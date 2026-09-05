@@ -228,6 +228,20 @@ unsigned mmb_now_ms(void)
 	return G.plat && G.plat->millis ? G.plat->millis() : 0;
 }
 
+void mmb_console_write(const char *s)
+{
+	unsigned n;
+	if (!s)
+		return;
+	n = (unsigned)strlen(s);
+	if (!n)
+		return;
+	if (G.plat && G.plat->write_serial)
+		G.plat->write_serial(s, n);
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen(s, n);
+}
+
 static void fmt_double(double x, char *buf, int buflen)
 {
 	int neg = 0, i, n;
