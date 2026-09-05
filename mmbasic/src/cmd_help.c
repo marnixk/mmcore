@@ -28,7 +28,7 @@ static const char kIndexCommands[] =
 	"  KILL DRIVE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
-	"  NEW LIST RUN EDIT MEMORY\n"
+	"  NEW LIST RUN EDIT MEMORY REBOOT\n"
 	"\n"
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
@@ -483,6 +483,9 @@ static const char kHelpRun[] =
 	"\n"
 	"Run the program in memory. With file$, load that\n"
 	"program first (.BAS appended if needed) then run.\n"
+	"Stop a running program with Print Screen (PrtScr)\n"
+	"or the OPTION BREAK key (Ctrl-C by default).\n"
+	"That prints ?BREAK and returns to the prompt.\n"
 	"\n"
 	"Example:  RUN\n"
 	"          RUN \"HI.BAS\"";
@@ -523,6 +526,7 @@ static const char kHelpOption[] =
 	"  DEFAULT MODE n    DEFAULT COLOURS fg [, bg]\n"
 	"  ANGLE DEGREES|RADIANS    Y_AXIS UP|DOWN\n"
 	"  TAB 2|3|4|8       BREAK n     AUTORUN ON|OFF\n"
+	"  (BREAK n is the cooked key; PrtScr always breaks)\n"
 	"  COLOURCODE ON|OFF|REVERSE\n"
 	"  CONSOLE SCREEN|SERIAL|BOTH|NONE|SAVE|PORT n\n"
 	"  CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE\n"
@@ -721,7 +725,8 @@ static const char kHelpCmm2[] =
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME KILL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
-	"  OPTION FACTORY_RESET CONNECT HELP CLEAR END\n"
+	"  REBOOT OPTION FACTORY_RESET CONNECT HELP\n"
+	"  CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
 	"\n"
@@ -815,6 +820,16 @@ static const char kHelpPause[] =
 	"Wait for the given number of milliseconds.\n"
 	"\n"
 	"Example:  PAUSE 100";
+
+static const char kHelpReboot[] =
+	"REBOOT\n"
+	"RESTART     (alias)\n"
+	"\n"
+	"Hardware-reset the Raspberry Pi (PM watchdog full\n"
+	"reset). The machine restarts from firmware; this\n"
+	"does not return to MMBasic.\n"
+	"\n"
+	"Example:  REBOOT";
 
 static const char kHelpSeek[] =
 	"SEEK #n, pos\n"
@@ -1133,6 +1148,7 @@ static const help_topic kTopics[] = {
 	{ "DRIVE",       HELP_CMD,  kHelpDrive },
 	{ "CLEAR",       HELP_CMD,  kHelpClear },
 	{ "PAUSE",       HELP_CMD,  kHelpPause },
+	{ "REBOOT",      HELP_CMD,  kHelpReboot },
 	{ "SEEK",        HELP_CMD,  kHelpSeek },
 	{ "END",         HELP_CMD,  kHelpEnd },
 	{ "CALL",        HELP_CMD,  kHelpCall },
@@ -1171,6 +1187,7 @@ static const struct {
 	const char *canon;
 } kAlias[] = {
 	{ "COLOR",        "COLOUR" },
+	{ "RESTART",      "REBOOT" },
 	{ "GUI BITMAP",   "BITMAP" },
 	{ "FACTORY RESET", "FACTORY_RESET" },
 	{ "FACTORY",      "FACTORY_RESET" },
