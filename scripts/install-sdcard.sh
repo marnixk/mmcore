@@ -481,16 +481,28 @@ resolve_fat_partition() {
 	attach_offset_loop "${disk}" "${start}" "${count}"
 }
 
+# vfat/exfat cannot store Unix uid/gid. GNU archive-mode copy tries to
+# chown the destination and fails with "Operation not permitted", which
+# aborts the install under `set -e` after the first file.
+copy_file_to_fat() {
+	local src="$1"
+	local dest="$2"
+	if cp -f --preserve=timestamps --no-preserve=ownership,mode "${src}" "${dest}" 2>/dev/null; then
+		return 0
+	fi
+	cp -f "${src}" "${dest}"
+}
+
 copy_boot_files() {
 	local src="$1"
 	local dest="$2"
 	local f
 	while read -r f; do
-		cp -a "${src}/${f}" "${dest}/${f}"
+		copy_file_to_fat "${src}/${f}" "${dest}/${f}"
 	done < <(required_files_for_model "${MODEL}")
 	while read -r f; do
 		if [ -f "${src}/${f}" ]; then
-			cp -a "${src}/${f}" "${dest}/${f}"
+			copy_file_to_fat "${src}/${f}" "${dest}/${f}"
 		fi
 	done < <(optional_files_for_model "${MODEL}")
 	sync
