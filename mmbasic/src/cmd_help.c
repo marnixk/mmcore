@@ -27,22 +27,26 @@ static const char kIndexCommands[] =
 	"  KILL DRIVE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
-	"  NEW LIST RUN EDIT\n"
+	"  NEW LIST RUN EDIT MEMORY\n"
 	"\n"
 	"Other\n"
-	"  PRINT INPUT OPTION PLAY PAUSE CLEAR END CALL HELP\n"
-	"  FACTORY_RESET CONNECT\n"
+	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
+	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
+	"  FACTORY_RESET CONNECT CONTINUE EXIT LS\n"
 	"\n"
-	"Type HELP BASIC for language, HELP FUNCTIONS for functions.";
+	"Type HELP BASIC for language, HELP FUNCTIONS for functions.\n"
+	"Type HELP CMM2 for the full CMM2 command inventory.";
 
 static const char kIndexBasic[] =
 	"Language constructs  (HELP BASIC topic or HELP topic)\n"
 	"\n"
-	"  FOR NEXT            WHILE WEND\n"
-	"  DO LOOP EXIT DO     IF THEN ELSE ELSEIF ENDIF\n"
-	"  SELECT CASE         DIM CONST\n"
-	"  DATA READ RESTORE   SUB FUNCTION CALL\n"
-	"  GOTO GOSUB RETURN   LET REM END\n"
+	"  FOR NEXT EXIT FOR   CONTINUE FOR\n"
+	"  WHILE WEND          DO LOOP EXIT DO  CONTINUE DO\n"
+	"  IF THEN ELSE ELSEIF ENDIF\n"
+	"  SELECT CASE         DIM LOCAL STATIC CONST\n"
+	"  DATA READ RESTORE   SUB FUNCTION CALL EXIT SUB\n"
+	"  GOTO GOSUB RETURN   ON GOTO  ON GOSUB\n"
+	"  LET REM END ERROR   labels (name:)\n"
 	"\n"
 	"Type HELP topic for syntax and examples.";
 
@@ -320,10 +324,12 @@ static const char kHelpDir[] =
 	"DIR [spec$]\n"
 	"\n"
 	"List files in the current directory, or matching\n"
-	"optional spec$ (a path or wildcard).\n"
+	"optional spec$ (a path or wildcard). LS and LIST FILES\n"
+	"do the same listing (CMM2 names).\n"
 	"\n"
 	"Example:  DIR\n"
-	"          DIR \"A:/*.PNG\"";
+	"          DIR \"A:/*.PNG\"\n"
+	"          LS";
 
 static const char kHelpFiles[] =
 	"FILES\n"
@@ -470,6 +476,173 @@ static const char kHelpConnect[] =
 	"the prompt.\n"
 	"\n"
 	"Example:  CONNECT \"192.168.1.10\", 23";
+
+static const char kHelpLocal[] =
+	"LOCAL name [(dims)] [AS type] [, ...]\n"
+	"\n"
+	"Same syntax as DIM. Declare a variable inside a\n"
+	"SUB or FUNCTION. Required when OPTION EXPLICIT is on.\n"
+	"\n"
+	"Example:  LOCAL T AS INTEGER";
+
+static const char kHelpStatic[] =
+	"STATIC name [(dims)] [AS type] [, ...]\n"
+	"\n"
+	"Like LOCAL but the value is kept between calls.\n"
+	"Same syntax as DIM. Only used in SUB/FUNCTION.\n"
+	"\n"
+	"Example:  STATIC N = 0";
+
+static const char kHelpError[] =
+	"ERROR [message$]\n"
+	"\n"
+	"Stop with an error. message$ is shown if given.\n"
+	"\n"
+	"Example:  IF X=0 THEN ERROR \"bad\"";
+
+static const char kHelpMemory[] =
+	"MEMORY\n"
+	"\n"
+	"Show how many program lines, variables, and open\n"
+	"files the interpreter is using.\n"
+	"\n"
+	"Example:  MEMORY";
+
+static const char kHelpRandomize[] =
+	"RANDOMIZE [n]\n"
+	"\n"
+	"Seed RND. With no n, uses the millisecond timer.\n"
+	"RND(-n) also sets the seed.\n"
+	"\n"
+	"Example:  RANDOMIZE 1 : PRINT RND";
+
+static const char kHelpInc[] =
+	"INC var [, amount]\n"
+	"DEC var [, amount]\n"
+	"\n"
+	"Add or subtract amount (default 1) from a numeric\n"
+	"variable.\n"
+	"\n"
+	"Example:  A=10 : INC A,2 : PRINT A";
+
+static const char kHelpCat[] =
+	"CAT s$, t$\n"
+	"\n"
+	"Append t$ to s$ (same as s$ = s$ + t$).\n"
+	"\n"
+	"Example:  A$=\"MM\" : CAT A$,\"BASIC\" : PRINT A$";
+
+static const char kHelpSort[] =
+	"SORT array()\n"
+	"\n"
+	"Sort a one-dimensional array in place (numeric or string).\n"
+	"\n"
+	"Example:\n"
+	"  DIM A(2)\n"
+	"  A(0)=3 : A(1)=1 : A(2)=2\n"
+	"  SORT A()\n"
+	"  PRINT A(0);A(1);A(2)";
+
+static const char kHelpMidStmt[] =
+	"MID$(s$, start [, length]) = t$\n"
+	"MID$(s$, start [, length])   (function)\n"
+	"\n"
+	"As a statement, overwrite length characters of s$ from\n"
+	"start (1-based) with t$. As a function, return a slice.\n"
+	"\n"
+	"Example:  A$=\"MMXXXX\" : MID$(A$,3,4)=\"BASIC\" : PRINT A$";
+
+static const char kHelpOn[] =
+	"ON n GOTO line [, line]...\n"
+	"ON n GOSUB line [, line]...\n"
+	"ON ERROR ...     (accepted, not trapped)\n"
+	"ON KEY ...       (accepted, no keyboard hook)\n"
+	"\n"
+	"Jump to the n-th line number (1-based).\n"
+	"\n"
+	"Example:\n"
+	"  10 N=2\n"
+	"  20 ON N GOTO 30,40,50\n"
+	"  40 PRINT 42\n"
+	"  RUN";
+
+static const char kHelpContinue[] =
+	"CONTINUE FOR\n"
+	"CONTINUE DO\n"
+	"\n"
+	"Skip to the NEXT or LOOP of the current loop, then\n"
+	"test the loop condition.\n"
+	"\n"
+	"Example:\n"
+	"  10 FOR I=1 TO 3\n"
+	"  20 IF I=2 THEN CONTINUE FOR\n"
+	"  30 PRINT I\n"
+	"  40 NEXT I\n"
+	"  RUN";
+
+static const char kHelpExit[] =
+	"EXIT DO\n"
+	"EXIT FOR\n"
+	"EXIT SUB\n"
+	"EXIT FUNCTION\n"
+	"\n"
+	"Leave the current DO, FOR, SUB or FUNCTION.\n"
+	"\n"
+	"Example:\n"
+	"  10 FOR I=1 TO 10\n"
+	"  20 IF I=3 THEN EXIT FOR\n"
+	"  30 PRINT I\n"
+	"  40 NEXT I\n"
+	"  RUN";
+
+static const char kHelpCmm2[] =
+	"CMM2 / MMBasic inventory (this Pi console)\n"
+	"\n"
+	"Manuals used: Colour Maximite 2 User Manual 5.07,\n"
+	"Programming with the CMM2, MMBasic Language Manual.\n"
+	"Target is CMM2 software, not PicoMite GUI/camera.\n"
+	"\n"
+	"Implemented language:\n"
+	"  ' REM ? LET DIM LOCAL STATIC CONST\n"
+	"  FOR NEXT WHILE WEND DO LOOP\n"
+	"  IF THEN ELSE ELSEIF ENDIF\n"
+	"  SELECT CASE CASE IS CASE TO CASE ELSE\n"
+	"  GOTO GOSUB RETURN labels ON GOTO ON GOSUB\n"
+	"  DATA READ RESTORE SUB FUNCTION CALL\n"
+	"  EXIT DO|FOR|SUB|FUNCTION  CONTINUE FOR|DO\n"
+	"  INC DEC CAT ERROR MEMORY RANDOMIZE SORT\n"
+	"  MID$(s$,n[,m])=  DATE$= TIME$= TIMER=\n"
+	"\n"
+	"Implemented commands:\n"
+	"  PRINT INPUT LINE INPUT CLS\n"
+	"  PIXEL LINE BOX CIRCLE RBOX ARC TRIANGLE\n"
+	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
+	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
+	"  CHDIR MKDIR RMDIR COPY RENAME KILL DRIVE\n"
+	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
+	"  OPTION FACTORY_RESET CONNECT HELP CLEAR END\n"
+	"\n"
+	"Implemented functions: HELP FUNCTIONS.\n"
+	"\n"
+	"Accepted but not trapped:\n"
+	"  ON ERROR  ON KEY\n"
+	"\n"
+	"Not on this Pi (CMM2 hardware / firmware):\n"
+	"  #INCLUDE #DEFINE #COMMENT #MMDEBUG\n"
+	"  ADC AUTOSAVE BITBANG CSUB CPU DAC\n"
+	"  CONTROLLER CLASSIC/MOUSE/NUNCHUK\n"
+	"  DEFINEFONT DRAW3D EXECUTE FLASH FRAMEBUFFER\n"
+	"  GUI HUMID I2C IR IMAGE RESIZE/ROTATE/WARP\n"
+	"  LIBRARY MATH MMDEBUG PIN SETPIN PWM PORT\n"
+	"  POKE PEEK SPI SPRITE TURTLE VAR SAVE\n"
+	"  WATCHDOG WII XMODEM COM GPS 1-WIRE\n"
+	"  UPDATE FIRMWARE  preprocessor  CFUNCTION\n"
+	"\n"
+	"SUB/FUNCTION arguments and CALL name$ are not\n"
+	"implemented; use CALL name. Typed console INPUT\n"
+	"is not implemented (file INPUT and LINE INPUT are).\n"
+	"\n"
+	"Type HELP or HELP BASIC for syntax.";
 
 static const char kHelpChdir[] =
 	"CHDIR path$\n"
@@ -635,6 +808,7 @@ static const char kHelpIf[] =
 	"ENDIF\n"
 	"\n"
 	"Single-line IF runs the THEN (or ELSE) statement.\n"
+	"IF cond THEN linenumber is a GOTO when cond is true.\n"
 	"A THEN at end of line starts a multiline IF closed\n"
 	"by ENDIF (or END IF).\n"
 	"\n"
@@ -651,12 +825,17 @@ static const char kHelpIf[] =
 	"  60 ENDIF";
 
 static const char kHelpDim[] =
-	"DIM name[(d1[,d2...])] [AS INTEGER|FLOAT|STRING] [, ...]\n"
+	"DIM [INTEGER|FLOAT|STRING] name[(d1[,d2...])]\n"
+	"    [AS INTEGER|FLOAT|STRING] [, ...]\n"
+	"LOCAL ...     (same syntax; use in SUB/FUNCTION)\n"
+	"STATIC ...    (same syntax; value kept between calls)\n"
 	"\n"
 	"Declare a variable or array. Suffixes $ % ! also set\n"
 	"type. Bounds are inclusive upper bounds. OPTION BASE\n"
 	"0 (default) or 1 sets the lower bound and must come\n"
-	"before DIM.\n"
+	"before DIM. OPTION EXPLICIT requires DIM/LOCAL/STATIC.\n"
+	"LENGTH n is accepted (strings still use 255 characters).\n"
+	"DIM INTEGER|FLOAT|STRING applies that type to the list.\n"
 	"\n"
 	"Example:\n"
 	"  DIM A(2)\n"
@@ -714,17 +893,25 @@ static const char kHelpSub[] =
 
 static const char kHelpGoto[] =
 	"GOTO line\n"
+	"GOTO label\n"
 	"\n"
-	"Jump to a numbered program line.\n"
+	"Jump to a numbered program line or a label. A label is an\n"
+	"identifier at the start of a line, ended with a colon.\n"
 	"\n"
 	"Example:\n"
 	"  10 GOTO 30\n"
 	"  20 PRINT \"NO\"\n"
 	"  30 PRINT 42\n"
+	"  RUN\n"
+	"\n"
+	"  10 GOTO DONE\n"
+	"  20 PRINT \"NO\"\n"
+	"  30 DONE: PRINT 42\n"
 	"  RUN";
 
 static const char kHelpGosub[] =
 	"GOSUB line\n"
+	"GOSUB label\n"
 	"RETURN\n"
 	"\n"
 	"Call a numbered subroutine. RETURN continues after\n"
@@ -745,12 +932,13 @@ static const char kHelpSelect[] =
 	"END SELECT\n"
 	"\n"
 	"Choose a branch matching expr. relop is =, <>, <, >, <=, >=.\n"
+	"CASE low TO high matches an inclusive range.\n"
 	"\n"
 	"Example:\n"
 	"  10 N=2\n"
 	"  20 SELECT CASE N\n"
 	"  30 CASE 1 : PRINT \"ONE\"\n"
-	"  40 CASE 2 : PRINT \"TWO\"\n"
+	"  40 CASE 2 TO 4 : PRINT \"TWO\"\n"
 	"  50 CASE ELSE : PRINT \"OTHER\"\n"
 	"  60 END SELECT\n"
 	"  RUN";
@@ -781,13 +969,16 @@ static const char kHelpFunctions[] =
 	"\n"
 	"Strings: LEN ASC CHR$ STR$ VAL LEFT$ RIGHT$ MID$\n"
 	"  UCASE$ LCASE$ SPACE$ STRING$ INSTR HEX$ OCT$ BIN$\n"
+	"  FORMAT$ INKEY$ TAB\n"
 	"Math: ABS INT FIX SQR/SQRT SIN COS TAN ATN/ATAN\n"
-	"  ATN2 RND SGN EXP LOG PI\n"
+	"  ATN2 ACOS ASIN RND SGN EXP LOG PI MAX MIN\n"
+	"  DEG RAD CHOICE BOUND\n"
 	"Graphics: RGB(r,g,b)|RGB(\"NAME\")  PIXEL(x,y)\n"
 	"  MM.HRES MM.VRES MM.INFO(MODE)\n"
-	"Files: EOF(#n) LOF(#n) CWD$ INPUT$(n,#fn)\n"
-	"Other: PLAYING() DATE$ TIME$ TIMER\n"
+	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(n,#fn)\n"
+	"Other: PLAYING() DATE$ TIME$ TIMER POS\n"
 	"  MM.VER MM.DEVICE$ MM.CMDLINE$\n"
+	"  DATE$= and TIME$= set the clock strings.\n"
 	"\n"
 	"OPTION ANGLE DEGREES makes SIN/COS/TAN/ATN use degrees.\n"
 	"\n"
@@ -840,6 +1031,20 @@ static const help_topic kTopics[] = {
 	{ "SEEK",        HELP_CMD,  kHelpSeek },
 	{ "END",         HELP_CMD,  kHelpEnd },
 	{ "CALL",        HELP_CMD,  kHelpCall },
+	{ "LOCAL",       HELP_LANG, kHelpLocal },
+	{ "STATIC",      HELP_LANG, kHelpStatic },
+	{ "ERROR",       HELP_CMD,  kHelpError },
+	{ "MEMORY",      HELP_CMD,  kHelpMemory },
+	{ "RANDOMIZE",   HELP_CMD,  kHelpRandomize },
+	{ "INC",         HELP_CMD,  kHelpInc },
+	{ "DEC",         HELP_CMD,  kHelpInc },
+	{ "CAT",         HELP_CMD,  kHelpCat },
+	{ "SORT",        HELP_CMD,  kHelpSort },
+	{ "MID$",        HELP_CMD,  kHelpMidStmt },
+	{ "ON",          HELP_CMD,  kHelpOn },
+	{ "CONTINUE",    HELP_LANG, kHelpContinue },
+	{ "EXIT",        HELP_LANG, kHelpExit },
+	{ "CMM2",        HELP_CMD,  kHelpCmm2 },
 	{ "FUNCTIONS",   HELP_CMD,  kHelpFunctions },
 	{ "FOR",         HELP_LANG, kHelpFor },
 	{ "WHILE",       HELP_LANG, kHelpWhile },
@@ -865,13 +1070,80 @@ static const struct {
 	{ "FACTORY",      "FACTORY_RESET" },
 	{ "NAME",         "RENAME" },
 	{ "ERASE",        "CLEAR" },
+	{ "LS",           "DIR" },
+	{ "LIST FILES",   "DIR" },
 	{ "?",            "PRINT" },
 	{ "LINEINPUT",    "LINE INPUT" },
 	{ "NEXT",         "FOR" },
 	{ "WEND",         "WHILE" },
 	{ "LOOP",         "DO" },
-	{ "EXIT",         "DO" },
-	{ "EXIT DO",      "DO" },
+	{ "EXIT DO",      "EXIT" },
+	{ "EXIT FOR",     "EXIT" },
+	{ "EXIT SUB",     "EXIT" },
+	{ "EXIT FUNCTION","EXIT" },
+	{ "CONTINUE FOR", "CONTINUE" },
+	{ "CONTINUE DO",  "CONTINUE" },
+	{ "ON GOTO",      "ON" },
+	{ "ON GOSUB",     "ON" },
+	{ "LOCAL",        "LOCAL" },
+	{ "ABS",          "FUNCTIONS" },
+	{ "SIN",          "FUNCTIONS" },
+	{ "COS",          "FUNCTIONS" },
+	{ "TAN",          "FUNCTIONS" },
+	{ "ATN",          "FUNCTIONS" },
+	{ "ACOS",         "FUNCTIONS" },
+	{ "ASIN",         "FUNCTIONS" },
+	{ "RND",          "FUNCTIONS" },
+	{ "LEN",          "FUNCTIONS" },
+	{ "LEFT$",        "FUNCTIONS" },
+	{ "RIGHT$",       "FUNCTIONS" },
+	{ "INSTR",        "FUNCTIONS" },
+	{ "VAL",          "FUNCTIONS" },
+	{ "STR$",         "FUNCTIONS" },
+	{ "CHR$",         "FUNCTIONS" },
+	{ "ASC",          "FUNCTIONS" },
+	{ "EOF",          "FUNCTIONS" },
+	{ "LOF",          "FUNCTIONS" },
+	{ "LOC",          "FUNCTIONS" },
+	{ "TIMER",        "FUNCTIONS" },
+	{ "RGB",          "FUNCTIONS" },
+	{ "MAX",          "FUNCTIONS" },
+	{ "MIN",          "FUNCTIONS" },
+	{ "INKEY$",       "FUNCTIONS" },
+	{ "FORMAT$",      "FUNCTIONS" },
+	{ "BOUND",        "FUNCTIONS" },
+	{ "DEG",          "FUNCTIONS" },
+	{ "RAD",          "FUNCTIONS" },
+	{ "POS",          "FUNCTIONS" },
+	{ "CHOICE",       "FUNCTIONS" },
+	{ "TAB",          "FUNCTIONS" },
+	{ "SGN",          "FUNCTIONS" },
+	{ "EXP",          "FUNCTIONS" },
+	{ "LOG",          "FUNCTIONS" },
+	{ "PI",           "FUNCTIONS" },
+	{ "DATE$",        "FUNCTIONS" },
+	{ "TIME$",        "FUNCTIONS" },
+	{ "CWD$",         "FUNCTIONS" },
+	{ "UCASE$",       "FUNCTIONS" },
+	{ "LCASE$",       "FUNCTIONS" },
+	{ "HEX$",         "FUNCTIONS" },
+	{ "OCT$",         "FUNCTIONS" },
+	{ "BIN$",         "FUNCTIONS" },
+	{ "SPACE$",       "FUNCTIONS" },
+	{ "STRING$",      "FUNCTIONS" },
+	{ "FIX",          "FUNCTIONS" },
+	{ "SQR",          "FUNCTIONS" },
+	{ "SQRT",         "FUNCTIONS" },
+	{ "ATAN",         "FUNCTIONS" },
+	{ "ATN2",         "FUNCTIONS" },
+	{ "INT",          "FUNCTIONS" },
+	{ "PLAYING",      "FUNCTIONS" },
+	{ "MM.HRES",      "FUNCTIONS" },
+	{ "MM.VRES",      "FUNCTIONS" },
+	{ "MM.INFO",      "FUNCTIONS" },
+	{ "MM.VER",       "FUNCTIONS" },
+	{ "MM.DEVICE$",   "FUNCTIONS" },
+	{ "PIXEL",        "PIXEL" },
 	{ "ENDIF",        "IF" },
 	{ "END IF",       "IF" },
 	{ "ELSE",         "IF" },

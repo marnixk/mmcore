@@ -113,15 +113,26 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 {
 	int i;
 	char nbuf[MMB_MAX_NAME];
-	int t;
+	int t, typed_lookup;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
 	t = mmb_type_suffix(nbuf);
+	typed_lookup = (type != 0) || t;
 	if (t)
 		type = t;
 	else if (type == 0)
-		type = G.opt.default_type;
+	{
+		/* Unsuffixed N after DIM INTEGER N. Do not steal A% for PRINT A. */
+		for (i = 0; i < MMB_MAX_VARS; i++)
+			if (G.vars[i].used && G.vars[i].unsuffixed && name_eq(G.vars[i].name, nbuf))
+			{
+				type = G.vars[i].type;
+				break;
+			}
+		if (type == 0)
+			type = G.opt.default_type;
+	}
 	if (type == 0 && G.opt.explicit)
 		mmb_error("?EXPLICIT");
 	if (type == 0)
@@ -165,6 +176,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	G.vars[i].dims = 0;
 	G.vars[i].size = 1;
 	G.vars[i].used = 1;
+	G.vars[i].unsuffixed = !typed_lookup;
 	if (type == T_INT)
 	{
 		G.vars[i].data.i = G.plat->alloc(sizeof(int64_t));
@@ -189,14 +201,28 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 
 void mmb_cmd_dim(void)
 {
-	/* DIM name(d1[,d2...]) [AS type] [, ...] */
+	/* DIM [INTEGER|FLOAT|STRING] name(d1[,d2...]) [AS type] [, ...] */
+	int group = 0;
+	mmb_skip_sp();
+	if (mmb_match("INTEGER"))
+		group = T_INT;
+	else if (mmb_match("STRING"))
+		group = T_STR;
+	else if (mmb_match("FLOAT"))
+		group = T_NUM;
 	for (;;)
 	{
 		char name[MMB_MAX_NAME];
-		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot;
+		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot, had_suffix;
 		int idxdummy[MMB_MAX_DIMS];
 		mmb_ident(name, sizeof(name));
+		{
+			int sl = (int)strlen(name);
+			had_suffix = sl && (name[sl - 1] == '$' || name[sl - 1] == '%' || name[sl - 1] == '!');
+		}
 		type = mmb_type_suffix(name);
+		if (group)
+			type = group;
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -228,6 +254,11 @@ void mmb_cmd_dim(void)
 			else
 				mmb_syntax();
 		}
+		if (mmb_match("LENGTH"))
+		{
+			mmb_val lv = mmb_expr();
+			(void)lv; /* accepted; strings stay MMB_MAX_STR */
+		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
 
@@ -253,6 +284,7 @@ void mmb_cmd_dim(void)
 			mmb_error("?INVALID DIMENSION");
 		G.vars[slot].size = n;
 		G.vars[slot].used = 1;
+		G.vars[slot].unsuffixed = !had_suffix;
 		if (type == T_INT)
 		{
 			G.vars[slot].data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
@@ -277,6 +309,23 @@ void mmb_cmd_dim(void)
 			G.dim_used = 1;
 		(void)idxdummy;
 		mmb_skip_sp();
+		if (*G.p == '=')
+		{
+			mmb_val init;
+			G.p++;
+			init = mmb_expr();
+			if (type == T_STR)
+			{
+				if (init.type != T_STR)
+					mmb_error("?TYPE MISMATCH");
+				strncpy(G.vars[slot].data.s[0], init.s, MMB_MAX_STR);
+			}
+			else if (type == T_INT)
+				G.vars[slot].data.i[0] = mmb_as_int(init);
+			else
+				G.vars[slot].data.f[0] = mmb_as_float(init);
+			mmb_skip_sp();
+		}
 		if (*G.p == ',')
 		{
 			G.p++;

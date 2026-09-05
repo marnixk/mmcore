@@ -16,6 +16,21 @@ static int peek_kw(const char *kw)
 	return r;
 }
 
+/* Functions that need arguments must see '(' so CONST MAX and PRINT MAX*2 work. */
+static int match_fun(const char *name)
+{
+	const char *save = G.p;
+	if (!mmb_match(name))
+		return 0;
+	mmb_skip_sp();
+	if (*G.p != '(')
+	{
+		G.p = save;
+		return 0;
+	}
+	return 1;
+}
+
 static mmb_val parse_number(void)
 {
 	int is_int = 1;
@@ -455,16 +470,17 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("RND"))
 	{
-		static uint32_t seed = 0x12345678u;
+		if (G.rnd_seed == 0)
+			G.rnd_seed = 0x12345678u;
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
 			call_args(a, 1, &n);
 			if (n == 1 && mmb_as_int(a[0]) < 0)
-				seed = (uint32_t)(-mmb_as_int(a[0]));
+				G.rnd_seed = (uint32_t)(-mmb_as_int(a[0]));
 		}
-		seed = seed * 1664525u + 1013904223u;
-		*out = mmb_num_val((seed >> 8) / 16777216.0);
+		G.rnd_seed = G.rnd_seed * 1664525u + 1013904223u;
+		*out = mmb_num_val((G.rnd_seed >> 8) / 16777216.0);
 		return 1;
 	}
 	if (mmb_match("MM.HRES"))
@@ -680,12 +696,23 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("DATE$"))
 	{
-		*out = mmb_str_val("01-01-26");
+		*out = mmb_str_val(G.date_s[0] ? G.date_s : "01-01-26");
 		return 1;
 	}
 	if (mmb_match("TIME$"))
 	{
-		*out = mmb_str_val("12:00:00");
+		*out = mmb_str_val(G.time_s[0] ? G.time_s : "12:00:00");
+		return 1;
+	}
+	if (mmb_match("INKEY$"))
+	{
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+		*out = mmb_str_val("");
 		return 1;
 	}
 	if (mmb_match("TIMER"))
@@ -696,7 +723,7 @@ int mmb_try_function(mmb_val *out)
 			G.p++;
 			mmb_expect(')');
 		}
-		*out = mmb_int_val((int64_t)mmb_now_ms());
+		*out = mmb_int_val((int64_t)mmb_now_ms() - G.timer_base);
 		return 1;
 	}
 	if (mmb_match("LOF"))
@@ -754,6 +781,77 @@ int mmb_try_function(mmb_val *out)
 		}
 		return 1;
 	}
+	if (mmb_match("ACOS") || mmb_match("ACS"))
+	{
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		{
+			double x = acos(mmb_as_float(a[0]));
+			if (G.opt.angle_degrees)
+				x *= 180.0 / 3.14159265358979323846;
+			*out = mmb_num_val(x);
+		}
+		return 1;
+	}
+	if (mmb_match("ASIN") || mmb_match("ASN"))
+	{
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		{
+			double x = asin(mmb_as_float(a[0]));
+			if (G.opt.angle_degrees)
+				x *= 180.0 / 3.14159265358979323846;
+			*out = mmb_num_val(x);
+		}
+		return 1;
+	}
+	if (match_fun("MAX"))
+	{
+		call_args(a, 8, &n);
+		if (n < 1)
+			mmb_syntax();
+		{
+			double m = mmb_as_float(a[0]);
+			int i;
+			for (i = 1; i < n; i++)
+				if (mmb_as_float(a[i]) > m)
+					m = mmb_as_float(a[i]);
+			*out = mmb_num_val(m);
+		}
+		return 1;
+	}
+	if (match_fun("MIN"))
+	{
+		call_args(a, 8, &n);
+		if (n < 1)
+			mmb_syntax();
+		{
+			double m = mmb_as_float(a[0]);
+			int i;
+			for (i = 1; i < n; i++)
+				if (mmb_as_float(a[i]) < m)
+					m = mmb_as_float(a[i]);
+			*out = mmb_num_val(m);
+		}
+		return 1;
+	}
+	if (mmb_match("LOC"))
+	{
+		int fn;
+		mmb_skip_sp();
+		mmb_expect('(');
+		mmb_skip_sp();
+		if (*G.p == '#')
+			G.p++;
+		fn = (int)mmb_as_int(mmb_expr());
+		mmb_expect(')');
+		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
+			mmb_error("?FILE");
+		*out = mmb_int_val(G.files[fn].pos);
+		return 1;
+	}
 	if (mmb_match("SGN"))
 	{
 		call_args(a, 1, &n);
@@ -790,6 +888,135 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_num_val(3.14159265358979323846);
+		return 1;
+	}
+	if (match_fun("DEG"))
+	{
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		*out = mmb_num_val(mmb_as_float(a[0]) * 180.0 / 3.14159265358979323846);
+		return 1;
+	}
+	if (match_fun("RAD"))
+	{
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		*out = mmb_num_val(mmb_as_float(a[0]) * 3.14159265358979323846 / 180.0);
+		return 1;
+	}
+	if (match_fun("POS"))
+	{
+		call_args(a, 1, &n);
+		(void)n;
+		*out = mmb_int_val(1);
+		return 1;
+	}
+	if (match_fun("CHOICE"))
+	{
+		call_args(a, 3, &n);
+		if (n != 3)
+			mmb_syntax();
+		*out = mmb_as_int(a[0]) ? a[1] : a[2];
+		return 1;
+	}
+	if (match_fun("FORMAT$"))
+	{
+		call_args(a, 2, &n);
+		if (n < 1)
+			mmb_syntax();
+		{
+			char buf[48];
+			mmb_val num = a[0];
+			int64_t v, neg = 0;
+			int k = 0;
+			char tmp[32];
+			if (n >= 1 && a[0].type == T_STR && n >= 2)
+				num = a[1];
+			v = mmb_as_int(num);
+			if (v < 0)
+			{
+				neg = 1;
+				v = -v;
+			}
+			if (v == 0)
+				tmp[k++] = '0';
+			while (v && k < 30)
+			{
+				tmp[k++] = (char)('0' + (int)(v % 10));
+				v /= 10;
+			}
+			if (neg)
+				tmp[k++] = '-';
+			{
+				int i;
+				for (i = 0; i < k; i++)
+					buf[i] = tmp[k - 1 - i];
+				buf[k] = 0;
+			}
+			*out = mmb_str_val(buf);
+		}
+		return 1;
+	}
+	if (match_fun("BOUND"))
+	{
+		char name[MMB_MAX_NAME];
+		int dim = 1, i;
+		mmb_var *v;
+		mmb_skip_sp();
+		mmb_expect('(');
+		mmb_ident(name, sizeof(name));
+		mmb_type_suffix(name);
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_skip_sp();
+			mmb_expect(')');
+		}
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			dim = (int)mmb_as_int(mmb_expr());
+		}
+		mmb_expect(')');
+		v = 0;
+		for (i = 0; i < MMB_MAX_VARS; i++)
+			if (G.vars[i].used && mmb_keyword_eq(G.vars[i].name, name))
+			{
+				v = &G.vars[i];
+				break;
+			}
+		if (!v)
+			mmb_error("?UNDECLARED");
+		if (dim < 1)
+			dim = 1;
+		if (dim > v->dims)
+			*out = mmb_int_val(0);
+		else
+			*out = mmb_int_val(v->dim[dim - 1]);
+		return 1;
+	}
+	if (match_fun("TAB"))
+	{
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		{
+			int sp = (int)mmb_as_int(a[0]);
+			char buf[MMB_MAX_STR + 1];
+			int i;
+			if (sp < 0)
+				sp = 0;
+			if (sp > MMB_MAX_STR)
+				sp = MMB_MAX_STR;
+			for (i = 0; i < sp; i++)
+				buf[i] = ' ';
+			buf[sp] = 0;
+			*out = mmb_str_val(buf);
+		}
 		return 1;
 	}
 	if (mmb_match("MM.VER"))

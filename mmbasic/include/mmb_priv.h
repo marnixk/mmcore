@@ -24,6 +24,7 @@
 #define MMB_MAX_CTRL      32
 #define MMB_MAX_CONST     64
 #define MMB_MAX_SUBS      64
+#define MMB_MAX_LABELS    64
 
 #define T_NUM   1
 #define T_INT   2
@@ -48,6 +49,7 @@ typedef struct mmb_var {
 		char **s;
 	} data;
 	int used;
+	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
 } mmb_var;
 
 typedef struct mmb_options {
@@ -212,6 +214,16 @@ typedef struct mmb {
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
+	int64_t timer_base;    /* TIMER = n  →  TIMER reports now-ms minus this */
+	uint32_t rnd_seed;
+	char date_s[16];
+	char time_s[16];
+	int nlabels;
+	struct {
+		char name[MMB_MAX_NAME];
+		int pc;
+		int used;
+	} labels[MMB_MAX_LABELS];
 } mmb;
 
 extern mmb G;
@@ -240,6 +252,19 @@ void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 void mmb_cmd_print(void);
 void mmb_cmd_dim(void);
+void mmb_cmd_local(void);
+void mmb_cmd_static(void);
+void mmb_cmd_error(void);
+void mmb_cmd_memory(void);
+void mmb_cmd_randomize(void);
+void mmb_cmd_inc(void);
+void mmb_cmd_dec(void);
+void mmb_cmd_cat(void);
+void mmb_cmd_on(void);
+void mmb_cmd_continue(void);
+void mmb_cmd_exit(void);
+void mmb_cmd_mid(void);
+void mmb_cmd_sort(void);
 void mmb_cmd_clear(void);
 void mmb_cmd_new(void);
 void mmb_cmd_list(void);

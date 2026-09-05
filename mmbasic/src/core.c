@@ -29,11 +29,90 @@ int mmb_find_line_pc(int num)
 	return 0;
 }
 
+static const char *after_label(const char *body)
+{
+	const char *save = G.p;
+	const char *result = body;
+	char name[MMB_MAX_NAME];
+	G.p = body;
+	mmb_skip_sp();
+	if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_')
+	{
+		mmb_ident(name, sizeof(name));
+		mmb_skip_sp();
+		if (*G.p == ':')
+		{
+			G.p++;
+			result = G.p;
+		}
+	}
+	G.p = save;
+	return result;
+}
+
+static int find_label_pc(const char *name)
+{
+	int i;
+	for (i = 0; i < MMB_MAX_LABELS; i++)
+		if (G.labels[i].used && mmb_keyword_eq(G.labels[i].name, name))
+			return G.labels[i].pc;
+	mmb_error("?LABEL NOT FOUND");
+	return 0;
+}
+
+static int parse_target(void)
+{
+	mmb_skip_sp();
+	if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+	{
+		char name[MMB_MAX_NAME];
+		const char *save = G.p;
+		mmb_ident(name, sizeof(name));
+		mmb_type_suffix(name);
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'' || *G.p == ',')
+			return find_label_pc(name);
+		G.p = save;
+	}
+	{
+		mmb_val v = mmb_expr();
+		return mmb_find_line_pc((int)mmb_as_int(v));
+	}
+}
+
+static void scan_labels(void)
+{
+	int i;
+	memset(G.labels, 0, sizeof(G.labels));
+	G.nlabels = 0;
+	for (i = 0; i < G.nprog && G.nlabels < MMB_MAX_LABELS; i++)
+	{
+		const char *save = G.p;
+		char name[MMB_MAX_NAME];
+		G.p = G.prog[i];
+		mmb_skip_sp();
+		if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_')
+		{
+			mmb_ident(name, sizeof(name));
+			mmb_skip_sp();
+			if (*G.p == ':')
+			{
+				mmb_upper(name);
+				strncpy(G.labels[G.nlabels].name, name, MMB_MAX_NAME - 1);
+				G.labels[G.nlabels].pc = i;
+				G.labels[G.nlabels].used = 1;
+				G.nlabels++;
+			}
+		}
+		G.p = save;
+	}
+}
+
 static int line_match(const char *body, const char *kw)
 {
 	const char *save = G.p;
 	int r;
-	G.p = body;
+	G.p = after_label(body);
 	r = mmb_match(kw);
 	G.p = save;
 	return r;
@@ -83,7 +162,7 @@ static int find_endif_pc(int from)
 		if (line_match(G.prog[i], "IF"))
 		{
 			const char *save = G.p;
-			G.p = G.prog[i];
+			G.p = after_label(G.prog[i]);
 			mmb_match("IF");
 			{
 				mmb_val v = mmb_expr();
@@ -110,7 +189,7 @@ static int find_end_select_pc(int from)
 	for (i = from + 1; i < G.nprog; i++)
 	{
 		const char *save = G.p;
-		G.p = G.prog[i];
+		G.p = after_label(G.prog[i]);
 		if (mmb_match("SELECT"))
 			depth++;
 		if (mmb_match("END") && mmb_match("SELECT"))
@@ -134,7 +213,7 @@ static int find_end_sub_pc(int from)
 	for (i = from + 1; i < G.nprog; i++)
 	{
 		const char *save = G.p;
-		G.p = G.prog[i];
+		G.p = after_label(G.prog[i]);
 		if (mmb_match("END"))
 		{
 			if (mmb_match("SUB") || mmb_match("FUNCTION"))
@@ -158,7 +237,7 @@ static int at_end_of_statement(void)
 static int process_line_structure(const char *body)
 {
 	const char *save = G.p;
-	G.p = body;
+	G.p = after_label(body);
 	mmb_skip_sp();
 
 	if (G.sel_skip)
@@ -344,17 +423,15 @@ static mmb_val read_data_item(void)
 
 void mmb_cmd_goto(void)
 {
-	mmb_val v = mmb_expr();
-	G.branch_pc = mmb_find_line_pc((int)mmb_as_int(v));
+	G.branch_pc = parse_target();
 }
 
 void mmb_cmd_gosub(void)
 {
-	mmb_val v = mmb_expr();
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
 		mmb_error("?GOSUB");
 	G.gosub_stack[G.gosub_sp++] = G.run_pc + 1;
-	G.branch_pc = mmb_find_line_pc((int)mmb_as_int(v));
+	G.branch_pc = parse_target();
 }
 
 void mmb_cmd_return(void)
@@ -454,6 +531,72 @@ void mmb_cmd_exit_do(void)
 	mmb_error("?EXIT DO");
 }
 
+static int find_next_pc(int from)
+{
+	int depth = 1, i;
+	for (i = from + 1; i < G.nprog; i++)
+	{
+		if (line_match(G.prog[i], "FOR"))
+			depth++;
+		if (line_match(G.prog[i], "NEXT"))
+		{
+			depth--;
+			if (depth == 0)
+				return i;
+		}
+	}
+	mmb_error("?NEXT");
+	return G.nprog;
+}
+
+void mmb_cmd_exit(void)
+{
+	if (mmb_match("DO"))
+	{
+		mmb_cmd_exit_do();
+		return;
+	}
+	if (mmb_match("FOR"))
+	{
+		if (G.for_sp <= 0)
+			mmb_error("?EXIT FOR");
+		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].line - 1) + 1;
+		G.for_sp--;
+		return;
+	}
+	if (mmb_match("SUB") || mmb_match("FUNCTION"))
+	{
+		mmb_cmd_end_sub();
+		return;
+	}
+	/* CMM2: bare EXIT leaves a DO loop. */
+	mmb_cmd_exit_do();
+}
+
+void mmb_cmd_continue(void)
+{
+	if (mmb_match("FOR"))
+	{
+		if (G.for_sp <= 0)
+			mmb_error("?CONTINUE FOR");
+		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].line - 1);
+		return;
+	}
+	if (mmb_match("DO"))
+	{
+		int i;
+		for (i = G.ctrl_sp - 1; i >= 0; i--)
+		{
+			if (G.ctrlstack[i].type == 2)
+			{
+				G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
+				return;
+			}
+		}
+		mmb_error("?CONTINUE DO");
+	}
+}
+
 void mmb_cmd_select(void)
 {
 	mmb_skip_sp();
@@ -522,7 +665,18 @@ static int case_matches(mmb_val sel)
 		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 			break;
 		v = mmb_expr();
-		if (sel.type == T_STR || v.type == T_STR)
+		mmb_skip_sp();
+		if (mmb_match("TO"))
+		{
+			mmb_val v2 = mmb_expr();
+			if (sel.type != T_STR && v.type != T_STR && v2.type != T_STR)
+			{
+				double x = mmb_as_float(sel);
+				if (x >= mmb_as_float(v) && x <= mmb_as_float(v2))
+					matched = 1;
+			}
+		}
+		else if (sel.type == T_STR || v.type == T_STR)
 		{
 			if (sel.type == T_STR && v.type == T_STR && strcmp(sel.s, v.s) == 0)
 				matched = 1;
@@ -563,6 +717,12 @@ void mmb_cmd_case(void)
 	{
 		G.sel_skip = 0;
 		G.sel_active = 1;
+	}
+	else
+	{
+		G.sel_skip = 1;
+		while (*G.p)
+			G.p++;
 	}
 }
 
@@ -826,7 +986,26 @@ void mmb_cmd_line_input(void)
 	mmb_val v;
 	mmb_skip_sp();
 	if (*G.p != '#')
-		mmb_syntax();
+	{
+		if (*G.p == '"')
+		{
+			mmb_val pr = mmb_expr();
+			if (G.plat && G.plat->write_serial && pr.type == T_STR)
+				G.plat->write_serial(pr.s, (unsigned)strlen(pr.s));
+			mmb_skip_sp();
+			if (*G.p == ',' || *G.p == ';')
+				G.p++;
+		}
+		t = mmb_parse_var_ref(name, &nidx, idx);
+		if (t != T_STR && name[strlen(name) - 1] != '$')
+			mmb_error("?TYPE MISMATCH");
+		buf[0] = 0;
+		if (G.plat && G.plat->read_line)
+			G.plat->read_line(buf, sizeof(buf), 0);
+		v = mmb_str_val(buf);
+		mmb_do_assign(name, t ? t : T_STR, nidx, idx, v);
+		return;
+	}
 	G.p++;
 	fn = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
@@ -1083,6 +1262,23 @@ static void do_let(void)
 	mmb_skip_sp();
 	mmb_expect('=');
 	v = mmb_expr();
+	if (mmb_keyword_eq(name, "TIMER"))
+	{
+		G.timer_base = (int64_t)mmb_now_ms() - mmb_as_int(v);
+		return;
+	}
+	if (mmb_keyword_eq(name, "DATE") && (t == T_STR || v.type == T_STR))
+	{
+		strncpy(G.date_s, v.s, sizeof(G.date_s) - 1);
+		G.date_s[sizeof(G.date_s) - 1] = 0;
+		return;
+	}
+	if (mmb_keyword_eq(name, "TIME") && (t == T_STR || v.type == T_STR))
+	{
+		strncpy(G.time_s, v.s, sizeof(G.time_s) - 1);
+		G.time_s[sizeof(G.time_s) - 1] = 0;
+		return;
+	}
 	mmb_do_assign(name, t, nidx, idx, v);
 }
 
@@ -1191,7 +1387,31 @@ void mmb_cmd_if(void)
 		return;
 	}
 	if (cond)
+	{
+		if (*G.p >= '0' && *G.p <= '9')
+		{
+			int num = 0;
+			while (*G.p >= '0' && *G.p <= '9')
+				num = num * 10 + (*G.p++ - '0');
+			G.branch_pc = mmb_find_line_pc(num);
+			return;
+		}
+		if (mmb_is_ident(*G.p))
+		{
+			char name[MMB_MAX_NAME];
+			const char *save = G.p;
+			mmb_ident(name, sizeof(name));
+			mmb_type_suffix(name);
+			mmb_skip_sp();
+			if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			{
+				G.branch_pc = find_label_pc(name);
+				return;
+			}
+			G.p = save;
+		}
 		exec_statement();
+	}
 	else
 	{
 		while (*G.p && *G.p != ':')
@@ -1329,6 +1549,11 @@ static void exec_statement(void)
 		do_let();
 		return;
 	}
+	if (mmb_match("MID$"))
+	{
+		mmb_cmd_mid();
+		return;
+	}
 	if (is_assign_start())
 	{
 		do_let();
@@ -1349,6 +1574,56 @@ static void exec_statement(void)
 		mmb_cmd_dim();
 		return;
 	}
+	if (mmb_match("LOCAL"))
+	{
+		mmb_cmd_local();
+		return;
+	}
+	if (mmb_match("STATIC"))
+	{
+		mmb_cmd_static();
+		return;
+	}
+	if (mmb_match("ERROR"))
+	{
+		mmb_cmd_error();
+		return;
+	}
+	if (mmb_match("MEMORY"))
+	{
+		mmb_cmd_memory();
+		return;
+	}
+	if (mmb_match("RANDOMIZE"))
+	{
+		mmb_cmd_randomize();
+		return;
+	}
+	if (mmb_match("INC"))
+	{
+		mmb_cmd_inc();
+		return;
+	}
+	if (mmb_match("DEC"))
+	{
+		mmb_cmd_dec();
+		return;
+	}
+	if (mmb_match("CAT"))
+	{
+		mmb_cmd_cat();
+		return;
+	}
+	if (mmb_match("SORT"))
+	{
+		mmb_cmd_sort();
+		return;
+	}
+	if (mmb_match("ON"))
+	{
+		mmb_cmd_on();
+		return;
+	}
 	if (mmb_match("CLEAR"))
 	{
 		mmb_cmd_clear();
@@ -1361,7 +1636,15 @@ static void exec_statement(void)
 	}
 	if (mmb_match("LIST"))
 	{
-		mmb_cmd_list();
+		if (mmb_match("FILES"))
+			mmb_cmd_files("DIR");
+		else
+			mmb_cmd_list();
+		return;
+	}
+	if (mmb_match("LS"))
+	{
+		mmb_cmd_files("DIR");
 		return;
 	}
 	if (mmb_match("RUN"))
@@ -1419,14 +1702,15 @@ static void exec_statement(void)
 		mmb_cmd_wend();
 		return;
 	}
+	if (mmb_match("EXIT"))
 	{
-		const char *save = G.p;
-		if (mmb_match("EXIT") && mmb_match("DO"))
-		{
-			mmb_cmd_exit_do();
-			return;
-		}
-		G.p = save;
+		mmb_cmd_exit();
+		return;
+	}
+	if (mmb_match("CONTINUE"))
+	{
+		mmb_cmd_continue();
+		return;
 	}
 	if (mmb_match("DO"))
 	{
@@ -1693,9 +1977,7 @@ static void exec_line_body(const char *body)
 {
 	if (process_line_structure(body))
 		return;
-	if (G.if_skip || G.sel_skip)
-		return;
-	G.p = body;
+	G.p = after_label(body);
 	for (;;)
 	{
 		exec_statement();
@@ -1732,6 +2014,7 @@ static void run_program(void)
 	G.data_pos = 0;
 	memset(G.subs, 0, sizeof(G.subs));
 	G.nsubs = 0;
+	scan_labels();
 	mmb_clear_vars(1);
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;
@@ -1790,6 +2073,12 @@ const char *mmb_exec_line(const char *line)
 		store_line(num, rest);
 		return G.out;
 	}
+	if (line[0] == '*')
+	{
+		G.p = line + 1;
+		mmb_cmd_run();
+		return G.out;
+	}
 	exec_line_body(line);
 	return G.out;
 }
@@ -1820,6 +2109,10 @@ void mmb_init(const mmb_platform *plat)
 	mmb_gfx_init();
 	mmb_assets_seed();
 	mmb_settings_load();
+	G.timer_base = 0;
+	G.rnd_seed = 0x12345678u;
+	strncpy(G.date_s, "01-01-26", sizeof(G.date_s) - 1);
+	strncpy(G.time_s, "12:00:00", sizeof(G.time_s) - 1);
 }
 
 void mmb_reset(void)
