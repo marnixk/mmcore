@@ -178,6 +178,27 @@ class MMBasicConsole:
                     break
         return self._extract_response(buf, text)
 
+    def send_keys(self, data: bytes, timeout: float = 3.0) -> str:
+        """Send raw keystrokes (no automatic Enter) and return text up to the next prompt."""
+        assert self._ser is not None
+        self.drain(quiet=0.1)
+        self._ser.sendall(data)
+
+        deadline = time.time() + timeout
+        buf = b""
+        while time.time() < deadline:
+            chunk = self._recv(self._ser)
+            if chunk:
+                buf += chunk
+                if buf.count(self.prompt) >= 1 and buf.rstrip().endswith(
+                    self.prompt.rstrip()
+                ):
+                    break
+            else:
+                if buf and self.prompt in buf:
+                    break
+        return self._extract_response(buf, "")
+
     def _extract_response(self, raw: bytes, echoed: str) -> str:
         text = raw.decode(errors="replace")
         # strip the echoed command and surrounding prompt/whitespace

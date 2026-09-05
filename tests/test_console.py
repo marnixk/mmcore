@@ -110,3 +110,45 @@ def test_cls_homes_prompt_after_printed_lines(fresh_console):
     assert "LINEONE" not in top
     assert "LINETWO" not in top
     assert "LINETHREE" not in top
+
+
+def _ocr_compact(text: str) -> str:
+    return "".join(text.split())
+
+
+def test_backspace_del_corrects_line(fresh_console):
+    """USB Backspace is 0x7f; serial often sends 0x08. Both must drop the last char."""
+    out = fresh_console.send_keys(b"PRINT 123X\x7f\r")
+    assert "?SYNTAX" not in out.upper()
+    assert out.splitlines()[-1].strip() == "123"
+
+    out = fresh_console.send_keys(b"PRINT 123X\x08\r")
+    assert "?SYNTAX" not in out.upper()
+    assert out.splitlines()[-1].strip() == "123"
+
+
+def test_backspace_erases_glyph_on_hdmi(fresh_console):
+    """Correcting a typo must remove the deleted glyph from HDMI, not only Line[]."""
+    out = fresh_console.send_keys(b'PRINT "ABCX\x7f"\r')
+    assert "ABC" in out
+    assert "?SYNTAX" not in out.upper()
+    text = _ocr_compact(fresh_console.ocr_screen(crop="640x300+0+0"))
+    assert "ABC" in text
+    assert "ABCX" not in text
+
+
+def test_arrow_csi_does_not_corrupt_line(fresh_console):
+    out = fresh_console.send_keys(b"PRINT 41\x1b[A\r")
+    assert "?SYNTAX" not in out.upper()
+    assert out.splitlines()[-1].strip() == "41"
+
+
+def test_delete_key_csi_consumed(fresh_console):
+    out = fresh_console.send_keys(b"PRINT 8\x1b[3~\r")
+    assert "?SYNTAX" not in out.upper()
+    assert out.splitlines()[-1].strip() == "8"
+
+
+def test_ctrl_c_cancels_line(fresh_console):
+    fresh_console.send_keys(b"PRINT 999\x03")
+    assert fresh_console.send_line("PRINT 7") == "7"
