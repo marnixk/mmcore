@@ -64,6 +64,9 @@ sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
 ```
 
+Type at HDMI with a USB keyboard (Pi 400: the built-in keyboard). Serial on
+GPIO 14/15 is optional.
+
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:
 

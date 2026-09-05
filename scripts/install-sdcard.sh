@@ -126,12 +126,12 @@ required_files_for_model() {
 optional_files_for_model() {
 	case "$1" in
 		rpi3)
-			printf '%s\n' LICENCE.broadcom INSTALL.md VERSION.txt install-sdcard.sh
+			printf '%s\n' LICENCE.broadcom INSTALL.md VERSION.txt install-sdcard.sh cmdline.txt
 			;;
 		pi400)
 			printf '%s\n' \
 				bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
-				LICENCE.broadcom COPYING.linux INSTALL.md VERSION.txt install-sdcard.sh
+				LICENCE.broadcom COPYING.linux INSTALL.md VERSION.txt install-sdcard.sh cmdline.txt
 			;;
 	esac
 }

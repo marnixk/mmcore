@@ -16,8 +16,9 @@ files from both zips on the same card.
 | `mmbasic-console-rpi3-v*.zip` | Raspberry Pi **3**, **3B+**, **3A+** |
 | `mmbasic-console-pi400-v*.zip` | Raspberry Pi **400** (also Pi **4B** / **CM4**) |
 
-This first release talks to the keyboard over the **serial UART**, not a USB
-keyboard (the Pi 400’s built-in keyboard is not used yet). Video goes to HDMI.
+Type at the HDMI prompt with a USB keyboard (the Pi 400’s built-in keyboard
+counts). Serial UART at 115200 8N1 on GPIO 14/15 still works as a second
+console. Video goes to HDMI.
 
 DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
 slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
@@ -29,7 +30,8 @@ drive letter use the current drive (boot default `A:`).
 - The matching release zip from GitHub Releases
 - A microSD card (1 GB or larger is plenty)
 - An HDMI monitor and HDMI cable
-- A USB-to-TTL **3.3 V** serial adapter (to type commands)
+- A USB keyboard (Pi 400: the built-in keyboard)
+- Optional: a USB-to-TTL **3.3 V** serial adapter
 
 ## 1. Download the release
 
@@ -46,6 +48,7 @@ Unzip it.
 | --- | --- |
 | `kernel8.img` | MMBasic console (Circle kernel) |
 | `config.txt` | Firmware boot settings |
+| `cmdline.txt` | Circle options (`keymap=US`; change to `UK`, `DE`, …) |
 | `bootcode.bin` | GPU boot loader (Pi 1–3) |
 | `start.elf` | VideoCore firmware |
 | `fixup.dat` | Firmware relocation data |
@@ -60,6 +63,7 @@ Unzip it.
 | --- | --- |
 | `kernel8-rpi4.img` | MMBasic console (Circle kernel, BCM2711) |
 | `config.txt` | Firmware boot settings (`[pi4]` + ARM stub) |
+| `cmdline.txt` | Circle options (`keymap=US`; change to `UK`, `DE`, …) |
 | `armstub8-rpi4.bin` | Circle ARM stub (FIQ / GIC on Pi 4 / 400) |
 | `start4.elf` | VideoCore firmware for Pi 4 / 400 |
 | `fixup4.dat` | Firmware relocation data |
@@ -157,6 +161,7 @@ Do not put them in a subfolder.
 ```
 (SD card, FAT)
 ├── bootcode.bin
+├── cmdline.txt
 ├── config.txt
 ├── fixup.dat
 ├── INSTALL.md
@@ -170,7 +175,7 @@ Do not put them in a subfolder.
 Linux example (after the mount in step 2):
 
 ```bash
-sudo cp kernel8.img config.txt bootcode.bin start.elf fixup.dat \
+sudo cp kernel8.img config.txt cmdline.txt bootcode.bin start.elf fixup.dat \
            LICENCE.broadcom INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
@@ -182,6 +187,7 @@ sudo umount /mnt/mmbasic
 ├── armstub8-rpi4.bin
 ├── bcm2711-rpi-4-b.dtb
 ├── bcm2711-rpi-400.dtb
+├── cmdline.txt
 ├── config.txt
 ├── COPYING.linux
 ├── fixup4.dat
@@ -196,7 +202,7 @@ sudo umount /mnt/mmbasic
 Linux example:
 
 ```bash
-sudo cp kernel8-rpi4.img config.txt armstub8-rpi4.bin \
+sudo cp kernel8-rpi4.img config.txt cmdline.txt armstub8-rpi4.bin \
            start4.elf fixup4.dat bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
            LICENCE.broadcom COPYING.linux INSTALL.md install-sdcard.sh VERSION.txt /mnt/mmbasic/
 sudo umount /mnt/mmbasic
@@ -209,15 +215,19 @@ Unmount / eject the card safely.
 1. Insert the SD card.
 2. Connect HDMI to a monitor.
    - Pi 400: use the micro-HDMI port **next to USB-C power** (HDMI0).
-3. Connect serial (optional but needed to type):
+3. Type on a USB keyboard (Pi 400: the built-in keyboard).
+4. Serial is optional (second console, same prompt):
    - Adapter GND → Pi pin **6** (GND)
    - Adapter RX  → Pi pin **8** (GPIO14 / TXD)
    - Adapter TX  → Pi pin **10** (GPIO15 / RXD)
    - Use a **3.3 V** adapter only (5 V will damage the Pi)
    - Pi 400: the GPIO header is on the back of the keyboard
-4. Power the Pi from the usual USB / USB-C power supply.
+5. Power the Pi from the usual USB / USB-C power supply.
 
-On the PC, open a serial terminal at **115200 8N1**, no flow control
+On HDMI you should see the banner. Type `PRINT 6*7` and press Enter; it should
+print `42`. Keyboard layout defaults to US (`keymap=US` in `cmdline.txt`).
+
+If you use serial as well, open a terminal at **115200 8N1**, no flow control
 (for example `minicom -b 115200 -D /dev/ttyUSB0`, PuTTY, or Screen).
 
 ## 5. Confirm it started
@@ -229,7 +239,7 @@ MMBASIC-CONSOLE READY
 >
 ```
 
-Type a command and press Enter (over serial):
+Type a command and press Enter on the USB keyboard (or over serial):
 
 ```
 PRINT 6*7
@@ -253,7 +263,9 @@ CIRCLE 440,200,90,CYAN
 | Rainbow splash then black | Wrong kernel for the board, or files mixed from both zips |
 | HDMI works, serial garbage | Baud rate not 115200 8N1, or 5 V adapter; swap TX/RX |
 | HDMI works, serial silent | `enable_uart=1` is in `config.txt`; GND connected |
-| Pi 400 built-in keyboard does nothing | Expected — this kernel is serial-only so far |
+| Pi 400 built-in keyboard does nothing | Use the Pi 400 zip (`kernel8-rpi4.img`); wait a second after the banner for USB to enumerate; try `keymap=` in `cmdline.txt` |
+| Wrong symbols (`"` vs `@`) | Edit `cmdline.txt`: `keymap=US` (default), `UK`, `DE`, `FR`, `ES`, `IT` |
+| USB keyboard on Pi 3 does nothing | Plug into a USB-A port; hub-only setups can take a moment after READY |
 | Pi 400 no HDMI | Use HDMI0 (port next to USB-C); `hdmi_force_hotplug=1` is in `config.txt` |
 | Wrong zip | Pi 3 needs `kernel8.img` + `start.elf`. Pi 400 needs `kernel8-rpi4.img` + `start4.elf` + `armstub8-rpi4.bin` |
 
