@@ -1,6 +1,10 @@
 #include "mmbasic.h"
-#include "mmb_priv.h"
 #include <circle/util.h>
+
+extern "C" {
+int mmb_vfs_exists(const char *path);
+int mmb_keyword_eq(const char *a, const char *b);
+}
 
 /*
  * Thin WLAN platform layer.

@@ -31,6 +31,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Other\n"
 	"  PRINT INPUT OPTION PLAY PAUSE CLEAR END CALL HELP\n"
+	"  FACTORY_RESET\n"
 	"\n"
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.";
 
@@ -428,11 +429,30 @@ static const char kHelpOption[] =
 	"  EDIT FONT SMALL|NORMAL|MEDIUM|LARGE|VERY LARGE\n"
 	"  ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT\n"
 	"  F1..F12 string$    AUDIO/DISPLAY/LCDPANEL/TOUCH/\n"
-	"  WIFI/SDCARD/RESOLUTION/CLOCK/CPUSPEED/HEARTBEAT\n"
+	"  SDCARD/RESOLUTION/CLOCK/CPUSPEED/HEARTBEAT\n"
 	"  (hardware lines are parsed and stored)\n"
+	"  WIFI [ssid$ [, password$]]\n"
+	"    No args: scan and prompt (needs a radio).\n"
+	"    With args: store credentials in .mmbasic.ini\n"
+	"    and try to connect. QEMU has no Wi-Fi radio.\n"
+	"\n"
+	"Settings persist in C:/.mmbasic.ini (A: if no SD).\n"
+	"FACTORY_RESET restores defaults and rewrites the INI.\n"
 	"\n"
 	"Example:  OPTION BASE 1\n"
+	"          OPTION WIFI \"MyNet\",\"secret\"\n"
 	"          OPTION LIST";
+
+static const char kHelpFactoryReset[] =
+	"FACTORY_RESET\n"
+	"FACTORY RESET     (alias)\n"
+	"\n"
+	"Restore firmware OPTION defaults and rewrite the\n"
+	"hidden settings file (.mmbasic.ini). Programs and\n"
+	"other user files are kept. Wi-Fi credentials are\n"
+	"cleared.\n"
+	"\n"
+	"Example:  FACTORY_RESET";
 
 static const char kHelpChdir[] =
 	"CHDIR path$\n"
@@ -789,6 +809,7 @@ static const help_topic kTopics[] = {
 	{ "LIST",        HELP_CMD,  kHelpList },
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
+	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
 	{ "CHDIR",       HELP_CMD,  kHelpChdir },
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },
 	{ "RMDIR",       HELP_CMD,  kHelpRmdir },
@@ -822,6 +843,8 @@ static const struct {
 	const char *canon;
 } kAlias[] = {
 	{ "COLOR",        "COLOUR" },
+	{ "FACTORY RESET", "FACTORY_RESET" },
+	{ "FACTORY",      "FACTORY_RESET" },
 	{ "NAME",         "RENAME" },
 	{ "ERASE",        "CLEAR" },
 	{ "?",            "PRINT" },

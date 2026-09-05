@@ -1,16 +1,38 @@
 """Persistent INI settings, hidden dotfiles, FACTORY_RESET, and OPTION WIFI."""
 
 
-def _read_ini(con, path="A:/.mmbasic.ini"):
+def _ini_path(con):
+    for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
+        out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
+        con.send_line("CLOSE #1")
+        if out == "":
+            return path
+    raise AssertionError("settings INI not found on A: or C:")
+
+
+def _read_ini(con, path=None):
+    if not path:
+        path = _ini_path(con)
     assert con.send_line("NEW") == ""
     assert con.send_line(f'10 OPEN "{path}" FOR INPUT AS #1') == ""
-    assert con.send_line("20 IF EOF(#1) THEN 70") == ""
+    assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
     assert con.send_line("30 LINE INPUT #1, A$") == ""
     assert con.send_line("40 PRINT A$") == ""
     assert con.send_line("50 GOTO 20") == ""
-    assert con.send_line("60") == ""
     assert con.send_line("70 CLOSE #1") == ""
-    return con.send_line("RUN", timeout=6)
+    return con.send_line("RUN", timeout=8)
+
+
+def test_eof_hash_file_number(console):
+    assert console.send_line('OPEN "A:/EOFTEST.TXT" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "hi"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert console.send_line('OPEN "A:/EOFTEST.TXT" FOR INPUT AS #1') == ""
+    assert console.send_line("PRINT EOF(#1)") == "0"
+    assert console.send_line("LINE INPUT #1, A$") == ""
+    assert console.send_line("PRINT A$") == "hi"
+    assert console.send_line("PRINT EOF(#1)") == "1"
+    assert console.send_line("CLOSE #1") == ""
 
 
 def test_option_persists_to_hidden_ini(console):
@@ -87,3 +109,27 @@ def test_options_wifi_alias(console):
     ini = _read_ini(console)
     assert "ssid=AliasNet" in ini
     assert "psk=aliaspass" in ini
+
+
+def test_files_hides_dotfiles(fresh_console):
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('OPEN "A:/.secret.txt" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "secret"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('OPEN "A:/VISIBLE.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "ok"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line("OPTION TAB 4") == ""
+    listing = con.send_line('DIR "A:/"')
+    assert "VISIBLE.TXT" in listing.upper()
+    assert ".SECRET" not in listing.upper()
+    assert con._ser is not None
+    con.drain(quiet=0.15)
+    con._ser.sendall(b"FILES\r")
+    seen = con.drain(quiet=0.8).decode(errors="replace").upper()
+    assert "VISIBLE.TXT" in seen
+    assert ".SECRET" not in seen
+    assert ".MMBASIC" not in seen
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.3)

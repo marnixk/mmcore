@@ -523,10 +523,13 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("EOF"))
 	{
 		int fn;
-		call_args(a, 1, &n);
-		if (n != 1)
-			mmb_syntax();
-		fn = (int)mmb_as_int(a[0]);
+		mmb_skip_sp();
+		mmb_expect('(');
+		mmb_skip_sp();
+		if (*G.p == '#')
+			G.p++;
+		fn = (int)mmb_as_int(mmb_expr());
+		mmb_expect(')');
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			*out = mmb_int_val(1);
 		else
@@ -699,10 +702,13 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("LOF"))
 	{
 		int fn, sz;
-		call_args(a, 1, &n);
-		if (n != 1)
-			mmb_syntax();
-		fn = (int)mmb_as_int(a[0]);
+		mmb_skip_sp();
+		mmb_expect('(');
+		mmb_skip_sp();
+		if (*G.p == '#')
+			G.p++;
+		fn = (int)mmb_as_int(mmb_expr());
+		mmb_expect(')');
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			mmb_error("?FILE");
 		sz = mmb_vfs_size(G.files[fn].path);
