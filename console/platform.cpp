@@ -6,6 +6,8 @@
 #include <circle/timer.h>
 #include <circle/screen.h>
 #include <circle/bcmframebuffer.h>
+#include <circle/display.h>
+#include <circle/font.h>
 #include <circle/startup.h>
 
 static CKernel *s_kernel;
@@ -163,6 +165,154 @@ static unsigned plat_audio_free_frames(void)
 	return audio_free_frames();
 }
 
+#define TUI_CW 8
+#define TUI_CH 16
+#define BOX_V  0xB3
+#define BOX_H  0xC4
+#define BOX_TL 0xDA
+#define BOX_TR 0xBF
+#define BOX_BL 0xC0
+#define BOX_BR 0xD9
+#define BOX_LT 0xC3
+#define BOX_RT 0xB4
+#define BOX_TT 0xC2
+#define BOX_BT 0xC1
+#define BOX_X  0xC5
+
+static u8 *s_tui_pix;
+static unsigned s_tui_cap;
+static unsigned s_tui_w, s_tui_h, s_tui_pitch;
+
+static int plat_video_cols(void)
+{
+	int w = plat_w();
+	if (w < TUI_CW)
+		w = 640;
+	return w / TUI_CW;
+}
+
+static int plat_video_rows(void)
+{
+	int h = plat_h();
+	if (h < TUI_CH)
+		h = 480;
+	return h / TUI_CH;
+}
+
+static u8 box_row(unsigned ch, unsigned y)
+{
+	const u8 cx = 0x18, L = 0xF8, R = 0x1F, H = 0xFF;
+	int mid = (y == 7 || y == 8);
+	int up = (y <= 8);
+	int down = (y >= 7);
+	switch (ch)
+	{
+	case BOX_V:  return cx;
+	case BOX_H:  return mid ? H : 0;
+	case BOX_TL: return mid ? R : (down ? cx : 0);
+	case BOX_TR: return mid ? L : (down ? cx : 0);
+	case BOX_BL: return mid ? R : (up ? cx : 0);
+	case BOX_BR: return mid ? L : (up ? cx : 0);
+	case BOX_LT: return mid ? R : cx;
+	case BOX_RT: return mid ? L : cx;
+	case BOX_TT: return mid ? H : (down ? cx : 0);
+	case BOX_BT: return mid ? H : (up ? cx : 0);
+	case BOX_X:  return mid ? H : cx;
+	default:     return 0;
+	}
+}
+
+static int is_box(unsigned ch)
+{
+	return ch == BOX_V || ch == BOX_H || ch == BOX_TL || ch == BOX_TR ||
+	       ch == BOX_BL || ch == BOX_BR || ch == BOX_LT || ch == BOX_RT ||
+	       ch == BOX_TT || ch == BOX_BT || ch == BOX_X;
+}
+
+static u8 glyph_row(unsigned ch, unsigned y)
+{
+	const u8 *data;
+	if (y >= TUI_CH)
+		return 0;
+	if (is_box(ch))
+		return box_row(ch, y);
+	if (ch < Font8x16.first_char || ch > Font8x16.last_char)
+		return 0;
+	data = static_cast<const u8 *>(Font8x16.data);
+	return data[(ch - Font8x16.first_char) * Font8x16.height + y];
+}
+
+static void plat_tui_prepare(void)
+{
+	unsigned w = s_kernel ? s_kernel->Screen().GetWidth() : 640;
+	unsigned h = s_kernel ? s_kernel->Screen().GetHeight() : 480;
+	unsigned pitch = w * (DEPTH / 8);
+	unsigned need = pitch * h;
+	if (!s_tui_pix || s_tui_cap < need)
+	{
+		if (s_tui_pix)
+			free(s_tui_pix);
+		s_tui_pix = static_cast<u8 *>(malloc(need));
+		s_tui_cap = s_tui_pix ? need : 0;
+	}
+	s_tui_w = w;
+	s_tui_h = h;
+	s_tui_pitch = pitch;
+	if (s_tui_pix)
+		memset(s_tui_pix, 0, need);
+}
+
+static void plat_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
+{
+	unsigned x0, y0, x, y;
+	TScreenColor fg, bg;
+	if (!s_tui_pix || col < 0 || row < 0)
+		return;
+	x0 = (unsigned)col * TUI_CW;
+	y0 = (unsigned)row * TUI_CH;
+	if (x0 + TUI_CW > s_tui_w || y0 + TUI_CH > s_tui_h)
+		return;
+	fg = (TScreenColor)rgb_to_raw(fg_rgb);
+	bg = (TScreenColor)rgb_to_raw(bg_rgb);
+	for (y = 0; y < TUI_CH; y++)
+	{
+		u8 bits = glyph_row(ch, y);
+		u8 *dst = s_tui_pix + (y0 + y) * s_tui_pitch + x0 * (DEPTH / 8);
+		for (x = 0; x < TUI_CW; x++)
+		{
+			TScreenColor c = (bits & (u8)(0x80 >> x)) ? fg : bg;
+#if DEPTH == 32
+			reinterpret_cast<u32 *>(dst)[x] = (u32)c;
+#elif DEPTH == 16
+			reinterpret_cast<u16 *>(dst)[x] = (u16)c;
+#else
+			dst[x] = (u8)c;
+#endif
+		}
+	}
+}
+
+static void plat_tui_present(int y0, int y1)
+{
+	CDisplay::TArea area;
+	if (!s_kernel || !s_tui_pix || y0 > y1)
+		return;
+	if (!s_kernel->Screen().GetFrameBuffer())
+		return;
+	if (y0 < 0)
+		y0 = 0;
+	if (y1 >= (int)s_tui_h)
+		y1 = (int)s_tui_h - 1;
+	if (y1 < y0)
+		return;
+	area.x1 = 0;
+	area.x2 = s_tui_w - 1;
+	area.y1 = (unsigned)y0;
+	area.y2 = (unsigned)y1;
+	s_kernel->Screen().GetFrameBuffer()->SetArea(
+		area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -186,6 +336,11 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_enable = plat_audio_enable;
 	plat.audio_write = plat_audio_write;
 	plat.audio_free_frames = plat_audio_free_frames;
+	plat.video_cols = plat_video_cols;
+	plat.video_rows = plat_video_rows;
+	plat.tui_prepare = plat_tui_prepare;
+	plat.tui_glyph = plat_tui_glyph;
+	plat.tui_present = plat_tui_present;
 	audio_init();
 	mmb_init(&plat);
 }

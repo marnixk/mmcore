@@ -18,6 +18,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o net.o audio.o \
 	  $(MMB)/src/vfs.o \
 	  $(MMB)/src/cmd_files.o \
 	  $(MMB)/src/cmd_files_ui.o \
+	  $(MMB)/src/tui.o \
 	  $(MMB)/src/cmd_connect.o \
 	  $(MMB)/src/cmd_lang.o \
 	  $(MMB)/src/cmd_load.o \

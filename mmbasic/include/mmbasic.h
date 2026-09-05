@@ -38,6 +38,13 @@ typedef struct mmb_platform {
 	/* Write interleaved stereo s16le frames. Returns frames consumed. */
 	int (*audio_write)(const short *stereo_s16, unsigned nframes);
 	unsigned (*audio_free_frames)(void);
+	/* Character-cell TUI: 8x16 cells covering the current HDMI mode. */
+	int (*video_cols)(void);
+	int (*video_rows)(void);
+	void (*tui_prepare)(void);
+	void (*tui_glyph)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
+	/* Copy dirty pixel rows [y0, y1] from the offscreen buffer to HDMI. */
+	void (*tui_present)(int y0, int y1);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
