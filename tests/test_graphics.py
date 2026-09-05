@@ -94,6 +94,26 @@ def test_circle_outline(fresh_console):
     assert _is_black(fresh_console.screen_pixel(320, 240))   # centre is empty
 
 
+def test_circle_fill_centre_and_rim(fresh_console):
+    fresh_console.send_line("CLS")
+    fresh_console.send_line("CIRCLE 200,180,60,1,RGB(255,0,0),RGB(0,255,0)")
+    assert _is_green(fresh_console.screen_pixel(200, 180))   # filled centre
+    assert _is_green(fresh_console.screen_pixel(230, 180))   # interior
+    assert _is_red(fresh_console.screen_pixel(260, 180))     # rim
+    assert _is_black(fresh_console.screen_pixel(270, 180))   # outside
+    assert _is_red(fresh_console.screen_pixel(200, 120))     # top rim
+    assert _is_black(fresh_console.screen_pixel(200, 110))   # above
+
+
+def test_circle_fill_solid_disk(fresh_console):
+    fresh_console.send_line("CLS")
+    fresh_console.send_line("CIRCLE 100,100,40,1,RGB(0,0,255),RGB(0,0,255)")
+    assert _is_blue(fresh_console.screen_pixel(100, 100))
+    assert _is_blue(fresh_console.screen_pixel(100, 130))
+    assert _is_blue(fresh_console.screen_pixel(128, 128))
+    assert _is_black(fresh_console.screen_pixel(100, 145))
+
+
 def test_bad_arg_count_is_syntax_error(fresh_console):
     assert fresh_console.send_line("BOX 1,2,3") == "?SYNTAX ERROR"
 

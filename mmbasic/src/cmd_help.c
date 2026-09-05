@@ -137,7 +137,9 @@ static const char kHelpCircle[] =
 	"CIRCLE x, y, r [, lw] [, colour] [, fill]\n"
 	"\n"
 	"Draw a circle centred at (x,y) with radius r.\n"
-	"Optional line width, colour, and fill as for BOX.\n"
+	"Fill uses a midpoint disk (horizontal spans), not\n"
+	"stacked outlines. Optional line width, colour, and\n"
+	"fill as for BOX.\n"
 	"\n"
 	"Example:  CIRCLE 100,80,30,1,RGB(0,255,255)";
 

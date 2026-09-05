@@ -354,6 +354,19 @@ void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill)
 	}
 }
 
+static void hspan(int x0, int x1, int y, unsigned rgb)
+{
+	int x;
+	if (x0 > x1)
+	{
+		int t = x0;
+		x0 = x1;
+		x1 = t;
+	}
+	for (x = x0; x <= x1; x++)
+		mmb_gfx_plot(x, y, rgb);
+}
+
 static void circle_outline(int cx, int cy, int r, unsigned rgb)
 {
 	int x = r, y = 0, err = 0;
@@ -380,28 +393,98 @@ static void circle_outline(int cx, int cy, int r, unsigned rgb)
 	}
 }
 
+/* Midpoint disk: eight-way symmetry, one horizontal span per pair. */
+static void fill_disk(int cx, int cy, int r, unsigned rgb)
+{
+	int x = 0, y = r;
+	int f = 1 - r;
+	int ddx = 1;
+	int ddy = -2 * r;
+	if (r < 0)
+		return;
+	hspan(cx - r, cx + r, cy, rgb);
+	while (x < y)
+	{
+		if (f >= 0)
+		{
+			y--;
+			ddy += 2;
+			f += ddy;
+		}
+		x++;
+		ddx += 2;
+		f += ddx;
+		hspan(cx - x, cx + x, cy + y, rgb);
+		hspan(cx - x, cx + x, cy - y, rgb);
+		hspan(cx - y, cx + y, cy + x, rgb);
+		hspan(cx - y, cx + y, cy - x, rgb);
+	}
+}
+
+/* Annulus r_in < radius <= r_out using incremental integer extents. */
+static void fill_ring(int cx, int cy, int r_out, int r_in, unsigned rgb)
+{
+	int y, xo = 0, xi = 0;
+	if (r_out < 0)
+		return;
+	if (r_in < 0)
+	{
+		fill_disk(cx, cy, r_out, rgb);
+		return;
+	}
+	for (y = r_out; y >= 0; y--)
+	{
+		int64_t y2 = (int64_t)y * y;
+		int64_t ro2 = (int64_t)r_out * r_out;
+		int64_t ri2 = (int64_t)r_in * r_in;
+		while ((int64_t)(xo + 1) * (xo + 1) + y2 <= ro2)
+			xo++;
+		while (xo > 0 && (int64_t)xo * xo + y2 > ro2)
+			xo--;
+		if (y > r_in)
+			xi = -1;
+		else
+		{
+			while ((int64_t)(xi + 1) * (xi + 1) + y2 <= ri2)
+				xi++;
+			while (xi > 0 && (int64_t)xi * xi + y2 > ri2)
+				xi--;
+		}
+		if (xi < 0)
+		{
+			hspan(cx - xo, cx + xo, cy + y, rgb);
+			if (y)
+				hspan(cx - xo, cx + xo, cy - y, rgb);
+		}
+		else
+		{
+			if (cx - xo <= cx - xi - 1)
+				hspan(cx - xo, cx - xi - 1, cy + y, rgb);
+			if (cx + xi + 1 <= cx + xo)
+				hspan(cx + xi + 1, cx + xo, cy + y, rgb);
+			if (y)
+			{
+				if (cx - xo <= cx - xi - 1)
+					hspan(cx - xo, cx - xi - 1, cy - y, rgb);
+				if (cx + xi + 1 <= cx + xo)
+					hspan(cx + xi + 1, cx + xo, cy - y, rgb);
+			}
+		}
+	}
+}
+
 void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill)
 {
-	int yy, ri;
 	if (r < 0)
 		return;
 	if (lw < 1)
 		lw = 1;
 	if (fill >= 0)
-	{
-		unsigned fcol = mmb_quantize((unsigned)fill);
-		for (yy = -r; yy <= r; yy++)
-		{
-			int xx, w2 = 0;
-			while (w2 * w2 + yy * yy <= r * r)
-				w2++;
-			w2--;
-			for (xx = -w2; xx <= w2; xx++)
-				mmb_gfx_plot(cx + xx, cy + yy, fcol);
-		}
-	}
-	for (ri = r; ri > r - lw; ri--)
-		circle_outline(cx, cy, ri, rgb);
+		fill_disk(cx, cy, r, mmb_quantize((unsigned)fill));
+	if (lw <= 1)
+		circle_outline(cx, cy, r, rgb);
+	else
+		fill_ring(cx, cy, r, r - lw, rgb);
 }
 
 void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int fill)
