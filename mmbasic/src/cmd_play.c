@@ -1,7 +1,11 @@
 #include "mmb_priv.h"
+#include <math.h>
 #include <stdbool.h>
 
-/* Decoders pulled in locally so we do not compile picomite-fork. */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define DR_MP3_NO_STDIO
 #define DR_MP3_IMPLEMENTATION
 #include "dr_mp3.h"
@@ -12,6 +16,10 @@
 #define JAR_XM_IMPLEMENTATION
 #include "jar_xm.h"
 
+#define MIX_RATE     44100
+#define MIX_CHUNK    512
+#define MIX_PREROLL  1024
+
 static drmp3 s_mp3;
 static int s_mp3_on;
 static modcontext s_mod;
@@ -19,6 +27,44 @@ static int s_mod_on;
 static jar_xm_context_t *s_xm;
 static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
+static double s_tone_hz_l, s_tone_hz_r;
+static double s_tone_ph_l, s_tone_ph_r;
+static unsigned s_tone_end_ms;
+static unsigned s_mix_origin;
+static unsigned s_pause_at;
+
+static void apply_vol(short *pcm, unsigned nframes)
+{
+	int i, n = (int)(nframes * 2);
+	int vl = G.audio.vol_l, vr = G.audio.vol_r;
+	if (vl < 0) vl = 0;
+	if (vl > 100) vl = 100;
+	if (vr < 0) vr = 0;
+	if (vr > 100) vr = 100;
+	if (vl == 100 && vr == 100)
+		return;
+	for (i = 0; i < n; i += 2)
+	{
+		int l = (pcm[i] * vl) / 100;
+		int r = (pcm[i + 1] * vr) / 100;
+		if (l > 32767) l = 32767;
+		if (l < -32768) l = -32768;
+		if (r > 32767) r = 32767;
+		if (r < -32768) r = -32768;
+		pcm[i] = (short)l;
+		pcm[i + 1] = (short)r;
+	}
+}
+
+static void emit_pcm(short *pcm, unsigned nframes)
+{
+	if (!nframes)
+		return;
+	apply_vol(pcm, nframes);
+	if (G.opt.audio_on && G.plat && G.plat->audio_write)
+		G.plat->audio_write(pcm, nframes);
+	G.audio.samples_decoded += nframes;
+}
 
 void mmb_play_stop(void)
 {
@@ -51,6 +97,19 @@ void mmb_play_stop(void)
 	G.audio.paused = 0;
 	G.audio.samples_decoded = 0;
 	G.audio.name[0] = 0;
+	s_tone_end_ms = 0;
+	s_tone_hz_l = s_tone_hz_r = 0;
+	s_tone_ph_l = s_tone_ph_r = 0;
+}
+
+void mmb_audio_apply_options(void)
+{
+	if (!G.plat)
+		return;
+	if (G.plat->audio_set_target)
+		G.plat->audio_set_target(G.opt.audio_target);
+	if (G.plat->audio_enable)
+		G.plat->audio_enable(G.opt.audio_on);
 }
 
 static int load_bytes(const char *path, unsigned char **out, unsigned *n)
@@ -72,10 +131,23 @@ static int load_bytes(const char *path, unsigned char **out, unsigned *n)
 	return 0;
 }
 
+static void play_begin(int kind, const char *path)
+{
+	G.audio.playing = kind;
+	G.audio.paused = 0;
+	G.audio.vol_l = G.audio.vol_r = 100;
+	G.audio.samples_decoded = 0;
+	G.audio.name[0] = 0;
+	if (path)
+		strncpy(G.audio.name, path, sizeof(G.audio.name) - 1);
+	s_mix_origin = mmb_now_ms();
+	s_pause_at = 0;
+	mmb_audio_apply_options();
+}
+
 int mmb_play_mp3(const char *path)
 {
 	unsigned n = 0;
-	drmp3_int16 pcm[256];
 	mmb_play_stop();
 	if (load_bytes(path, &s_moddata, &n) != 0)
 		return -1;
@@ -86,48 +158,149 @@ int mmb_play_mp3(const char *path)
 		return -1;
 	}
 	s_mp3_on = 1;
-	G.audio.samples_decoded = (unsigned)drmp3_read_pcm_frames_s16(&s_mp3, 128, pcm);
-	G.audio.playing = 1;
-	G.audio.vol_l = G.audio.vol_r = 100;
-	strncpy(G.audio.name, path, sizeof(G.audio.name) - 1);
-	return G.audio.samples_decoded ? 0 : -1;
+	play_begin(1, path);
+	return 0;
 }
 
 int mmb_play_mod(const char *path)
 {
 	unsigned n = 0;
-	msample out[256];
 	mmb_play_stop();
 	if (load_bytes(path, &s_moddata, &n) != 0)
 		return -1;
 	hxcmod_init(&s_mod);
-	hxcmod_setcfg(&s_mod, 44100, 1, 1);
+	hxcmod_setcfg(&s_mod, MIX_RATE, 1, 1);
 	if (!hxcmod_load(&s_mod, s_moddata, (int)n))
 		return -1;
 	s_mod_on = 1;
-	hxcmod_fillbuffer(&s_mod, out, 64, 0, 0);
-	G.audio.samples_decoded = 64;
-	G.audio.playing = 2;
-	G.audio.vol_l = G.audio.vol_r = 100;
-	strncpy(G.audio.name, path, sizeof(G.audio.name) - 1);
+	play_begin(2, path);
 	return 0;
 }
 
 int mmb_play_xm(const char *path)
 {
 	unsigned n = 0;
-	float out[128];
 	mmb_play_stop();
 	if (load_bytes(path, &s_xmdata, &n) != 0)
 		return -1;
-	if (jar_xm_create_context_safe(&s_xm, (const char *)s_xmdata, n, 44100) != 0)
+	if (jar_xm_create_context_safe(&s_xm, (const char *)s_xmdata, n, MIX_RATE) != 0)
 		return -1;
-	jar_xm_generate_samples(s_xm, out, 64);
-	G.audio.samples_decoded = 64;
-	G.audio.playing = 3;
-	G.audio.vol_l = G.audio.vol_r = 100;
-	strncpy(G.audio.name, path, sizeof(G.audio.name) - 1);
+	jar_xm_set_max_loop_count(s_xm, 0);
+	play_begin(3, path);
 	return 0;
+}
+
+static unsigned due_frames(void)
+{
+	unsigned elapsed = mmb_now_ms() - s_mix_origin;
+	unsigned due = MIX_PREROLL + (unsigned)((unsigned long)elapsed * MIX_RATE / 1000u);
+	if (due < G.audio.samples_decoded)
+		return 0;
+	due -= G.audio.samples_decoded;
+	if (due > MIX_CHUNK)
+		due = MIX_CHUNK;
+	if (G.opt.audio_on && G.plat && G.plat->audio_free_frames)
+	{
+		unsigned free_n = G.plat->audio_free_frames();
+		if (free_n < due)
+			due = free_n;
+	}
+	return due;
+}
+
+static int mix_mp3(unsigned nframes)
+{
+	short pcm[MIX_CHUNK * 2];
+	drmp3_uint64 got;
+	unsigned i;
+
+	got = drmp3_read_pcm_frames_s16(&s_mp3, nframes, pcm);
+	if (got == 0)
+		return 0;
+	if (s_mp3.channels == 1)
+	{
+		for (i = (unsigned)got; i-- > 0;)
+		{
+			short s = pcm[i];
+			pcm[i * 2] = s;
+			pcm[i * 2 + 1] = s;
+		}
+	}
+	emit_pcm(pcm, (unsigned)got);
+	return got >= nframes ? 1 : 0;
+}
+
+static int mix_mod(unsigned nframes)
+{
+	msample pcm[MIX_CHUNK * 2];
+	hxcmod_fillbuffer(&s_mod, pcm, nframes, 0, 0);
+	emit_pcm((short *)pcm, nframes);
+	return 1;
+}
+
+static int mix_xm(unsigned nframes)
+{
+	float tmp[MIX_CHUNK * 2];
+	short pcm[MIX_CHUNK * 2];
+	unsigned i;
+	jar_xm_generate_samples(s_xm, tmp, nframes);
+	for (i = 0; i < nframes * 2; i++)
+	{
+		int v = (int)(tmp[i] * 32767.0f);
+		if (v > 32767) v = 32767;
+		if (v < -32768) v = -32768;
+		pcm[i] = (short)v;
+	}
+	emit_pcm(pcm, nframes);
+	return 1;
+}
+
+static int mix_tone(unsigned nframes)
+{
+	short pcm[MIX_CHUNK * 2];
+	unsigned i;
+	double step_l = 2.0 * M_PI * s_tone_hz_l / (double)MIX_RATE;
+	double step_r = 2.0 * M_PI * s_tone_hz_r / (double)MIX_RATE;
+
+	if (s_tone_end_ms && mmb_now_ms() >= s_tone_end_ms)
+		return 0;
+	for (i = 0; i < nframes; i++)
+	{
+		pcm[i * 2] = (short)(sin(s_tone_ph_l) * 8000.0);
+		pcm[i * 2 + 1] = (short)(sin(s_tone_ph_r) * 8000.0);
+		s_tone_ph_l += step_l;
+		s_tone_ph_r += step_r;
+		if (s_tone_ph_l > 2.0 * M_PI) s_tone_ph_l -= 2.0 * M_PI;
+		if (s_tone_ph_r > 2.0 * M_PI) s_tone_ph_r -= 2.0 * M_PI;
+	}
+	emit_pcm(pcm, nframes);
+	if (s_tone_end_ms && mmb_now_ms() >= s_tone_end_ms)
+		return 0;
+	return 1;
+}
+
+void mmb_play_mix(void)
+{
+	unsigned n;
+	int keep = 1;
+
+	if (!G.audio.playing || G.audio.paused)
+		return;
+	n = due_frames();
+	if (n == 0)
+		return;
+	if (G.audio.playing == 1 && s_mp3_on)
+		keep = mix_mp3(n);
+	else if (G.audio.playing == 2 && s_mod_on)
+		keep = mix_mod(n);
+	else if (G.audio.playing == 3 && s_xm)
+		keep = mix_xm(n);
+	else if (G.audio.playing == 4)
+		keep = mix_tone(n);
+	else
+		keep = 0;
+	if (!keep)
+		mmb_play_stop();
 }
 
 void mmb_cmd_play(void)
@@ -139,12 +312,22 @@ void mmb_cmd_play(void)
 	}
 	if (mmb_match("PAUSE"))
 	{
-		G.audio.paused = 1;
+		if (G.audio.playing && !G.audio.paused)
+		{
+			G.audio.paused = 1;
+			s_pause_at = mmb_now_ms();
+		}
 		return;
 	}
 	if (mmb_match("RESUME"))
 	{
-		G.audio.paused = 0;
+		if (G.audio.playing && G.audio.paused)
+		{
+			G.audio.paused = 0;
+			s_mix_origin += mmb_now_ms() - s_pause_at;
+			if (s_tone_end_ms)
+				s_tone_end_ms += mmb_now_ms() - s_pause_at;
+		}
 		return;
 	}
 	if (mmb_match("VOLUME"))
@@ -162,16 +345,26 @@ void mmb_cmd_play(void)
 	}
 	if (mmb_match("TONE"))
 	{
-		/* PLAY TONE l, r [, dur] — mark as playing */
-		mmb_expr();
+		mmb_val l = mmb_expr();
+		mmb_val r;
+		unsigned dur = 0;
+		mmb_skip_sp();
+		if (*G.p != ',')
+			mmb_syntax();
+		G.p++;
+		r = mmb_expr();
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
 			G.p++;
-			mmb_expr();
+			dur = (unsigned)mmb_as_int(mmb_expr());
 		}
-		G.audio.playing = 4;
-		G.audio.paused = 0;
+		mmb_play_stop();
+		s_tone_hz_l = mmb_as_float(l);
+		s_tone_hz_r = mmb_as_float(r);
+		s_tone_ph_l = s_tone_ph_r = 0;
+		s_tone_end_ms = dur ? mmb_now_ms() + dur : 0;
+		play_begin(4, "TONE");
 		return;
 	}
 	if (mmb_match("MP3"))
@@ -204,7 +397,6 @@ void mmb_cmd_play(void)
 	mmb_syntax();
 }
 
-/* stdio leftovers referenced by jar_xm's unused from_file helper */
 #include <stdio.h>
 FILE *fopen(const char *p, const char *m)
 {

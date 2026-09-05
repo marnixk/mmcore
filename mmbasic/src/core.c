@@ -1107,6 +1107,8 @@ void mmb_option_reset(void)
 	G.opt.repeat_next = 150;
 	G.opt.edit_font = 1;
 	G.opt.mouse_sens = 1;
+	G.opt.audio_on = 1;
+	G.opt.audio_target = 1; /* HDMI */
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)
@@ -1543,6 +1545,7 @@ void mmb_check_break(void)
 	if (!G.running)
 		return;
 	mmb_storage_poll();
+	mmb_play_mix();
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
 	if (G.plat && G.plat->take_break && G.plat->take_break())
@@ -2182,6 +2185,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_gfx_init();
 	mmb_assets_seed();
 	mmb_settings_load();
+	mmb_audio_apply_options();
 	G.timer_base = 0;
 	G.rnd_seed = 0x12345678u;
 	strncpy(G.date_s, "01-01-26", sizeof(G.date_s) - 1);
@@ -2201,4 +2205,5 @@ void mmb_poll(void)
 {
 	mmb_storage_poll();
 	mmb_connect_poll();
+	mmb_play_mix();
 }

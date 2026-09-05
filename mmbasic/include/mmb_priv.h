@@ -106,6 +106,8 @@ typedef struct mmb_options {
 	char wifi_ssid[64];
 	char wifi_psk[64];
 	int wifi_enabled;
+	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
+	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 } mmb_options;
 
 typedef struct mmb_file {
@@ -483,6 +485,8 @@ void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);
 
 void mmb_play_stop(void);
+void mmb_play_mix(void);
+void mmb_audio_apply_options(void);
 int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);

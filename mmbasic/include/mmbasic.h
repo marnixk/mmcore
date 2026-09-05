@@ -32,6 +32,12 @@ typedef struct mmb_platform {
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */
 	void (*reboot)(void);
+	/* 0 = analogue jack (PWM), 1 = HDMI. */
+	void (*audio_set_target)(int target);
+	void (*audio_enable)(int on);
+	/* Write interleaved stereo s16le frames. Returns frames consumed. */
+	int (*audio_write)(const short *stereo_s16, unsigned nframes);
+	unsigned (*audio_free_frames)(void);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

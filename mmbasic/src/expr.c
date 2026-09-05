@@ -535,9 +535,9 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_int_val(G.gfx.w);
 				return 1;
 			}
-			if (mmb_keyword_eq(key, "VRES"))
+			if (mmb_keyword_eq(key, "AUDIO") || peek_kw("AUDIO"))
 			{
-				*out = mmb_int_val(G.gfx.h);
+				*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
 				return 1;
 			}
 		}

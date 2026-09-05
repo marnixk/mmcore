@@ -399,12 +399,34 @@ static const char kHelpPlay[] =
 	"PLAY MODFILE file$     (PLAY MOD file$)\n"
 	"PLAY XM file$          (PLAY XMFILE file$)\n"
 	"\n"
-	"Play audio from a file on the current drive, or a\n"
-	"tone. PLAYING() is 1 while audio is playing and not\n"
-	"paused.\n"
+	"Decode and play audio to OPTION AUDIO_TARGET.\n"
+	"HDMI sends IEC958 stereo on HDMI0. JACK sends PWM\n"
+	"to the 3.5mm analogue socket (Pi 3 / Pi 4B). Pi 400\n"
+	"has no analogue jack; use HDMI there.\n"
+	"TONE frequencies are Hz; duration is milliseconds.\n"
+	"Omit duration to hold the tone until PLAY STOP.\n"
+	"PLAYING() is 1 while audio is playing and not paused.\n"
+	"QEMU has no sound device; decode and PLAYING() still\n"
+	"run in real time.\n"
 	"\n"
-	"Example:  PLAY MP3 \"TEST.MP3\"\n"
+	"Example:  OPTION AUDIO_TARGET HDMI\n"
+	"          PLAY MP3 \"TEST.MP3\"\n"
 	"          PRINT PLAYING()";
+
+static const char kHelpAudioTarget[] =
+	"OPTION AUDIO_TARGET HDMI|JACK\n"
+	"OPTION AUDIO TARGET HDMI|JACK\n"
+	"OPTION AUDIO ON|OFF\n"
+	"\n"
+	"Select where PLAY sends PCM. HDMI is HDMI0 audio\n"
+	"(default). JACK is the 3.5mm PWM analogue output\n"
+	"on Pi 3 and Pi 4B. Pi 400 has no analogue jack.\n"
+	"AUDIO OFF mutes the device; PLAYING() still tracks\n"
+	"decode. Setting is stored in .mmbasic.ini.\n"
+	"PRINT MM.INFO$(\"AUDIO\") returns HDMI or JACK.\n"
+	"\n"
+	"Example:  OPTION AUDIO_TARGET JACK\n"
+	"          PLAY TONE 440, 440, 500";
 
 static const char kHelpEdit[] =
 	"EDIT [file$]\n"
@@ -540,9 +562,11 @@ static const char kHelpOption[] =
 	"  KEYBOARD REPEAT first [, next]\n"
 	"  EDIT FONT SMALL|NORMAL|MEDIUM|LARGE|VERY LARGE\n"
 	"  ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT\n"
-	"  F1..F12 string$    AUDIO/DISPLAY/LCDPANEL/TOUCH/\n"
-	"  SDCARD/RESOLUTION/CLOCK/CPUSPEED/HEARTBEAT\n"
-	"  (hardware lines are parsed and stored)\n"
+	"  F1..F12 string$    AUDIO ON|OFF\n"
+	"  AUDIO_TARGET HDMI|JACK   (HDMI0 or 3.5mm PWM jack)\n"
+	"  AUDIO TARGET HDMI|JACK   (same)\n"
+	"  DISPLAY/LCDPANEL/TOUCH/SDCARD/RESOLUTION/CLOCK/\n"
+	"  CPUSPEED/HEARTBEAT (other hardware lines are parsed)\n"
 	"  WIFI [ssid$ [, password$]]\n"
 	"    No args: scan and prompt (needs a radio).\n"
 	"    With args: store credentials in .mmbasic.ini\n"
@@ -1125,6 +1149,7 @@ static const help_topic kTopics[] = {
 	{ "BITMAP",      HELP_CMD,  kHelpBitmap },
 	{ "TURTLE",      HELP_CMD,  kHelpTurtle },
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
+	{ "AUDIO_TARGET", HELP_CMD, kHelpAudioTarget },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },
 	{ "DIR",         HELP_CMD,  kHelpDir },
 	{ "FILES",       HELP_CMD,  kHelpFiles },
@@ -1188,6 +1213,7 @@ static const struct {
 } kAlias[] = {
 	{ "COLOR",        "COLOUR" },
 	{ "RESTART",      "REBOOT" },
+	{ "AUDIO",        "AUDIO_TARGET" },
 	{ "GUI BITMAP",   "BITMAP" },
 	{ "FACTORY RESET", "FACTORY_RESET" },
 	{ "FACTORY",      "FACTORY_RESET" },

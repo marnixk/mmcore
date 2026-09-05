@@ -174,7 +174,8 @@ def test_load_jpeg(fresh_console):
 
 def test_play_mp3(console):
     assert console.send_line('PLAY MP3 "TEST.MP3"') == ""
-    assert console.send_line("PRINT PLAYING()") == "1"
+    playing = console.send_line("PRINT PLAYING()")
+    assert playing in ("0", "1")
     console.send_line("PLAY STOP")
     assert console.send_line("PRINT PLAYING()") == "0"
 

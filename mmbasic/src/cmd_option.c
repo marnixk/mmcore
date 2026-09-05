@@ -50,11 +50,42 @@ static void skip_hw_rest(void)
 	}
 }
 
+static int parse_audio_target_name(void)
+{
+	if (mmb_match("HDMI") || mmb_match("HDMI0") || mmb_match("TV") ||
+	    mmb_match("MONITOR"))
+		return 1;
+	if (mmb_match("JACK") || mmb_match("HEADPHONE") ||
+	    mmb_match("HEADPHONES") || mmb_match("PHONES") ||
+	    mmb_match("PWM") || mmb_match("ANALOG") || mmb_match("ANALOGUE"))
+		return 0;
+	mmb_syntax();
+	return 1;
+}
+
+static void parse_audio_target(void)
+{
+	G.opt.audio_target = parse_audio_target_name();
+}
+
 static void parse_audio(void)
 {
 	mmb_skip_sp();
-	if (mmb_match("ON") || mmb_match("OFF"))
+	if (mmb_match("TARGET"))
+	{
+		parse_audio_target();
 		return;
+	}
+	if (mmb_match("ON"))
+	{
+		G.opt.audio_on = 1;
+		return;
+	}
+	if (mmb_match("OFF"))
+	{
+		G.opt.audio_on = 0;
+		return;
+	}
 	skip_hw_rest();
 }
 
@@ -604,6 +635,11 @@ static void option_dispatch(void)
 			mmb_syntax();
 		return;
 	}
+	if (mmb_match("AUDIO_TARGET"))
+	{
+		parse_audio_target();
+		return;
+	}
 	if (mmb_match("AUDIO"))
 	{
 		parse_audio();
@@ -718,6 +754,7 @@ void mmb_cmd_option(void)
 	}
 	G.p = save;
 	option_dispatch();
+	mmb_audio_apply_options();
 	mmb_settings_save();
 }
 
@@ -963,6 +1000,10 @@ void mmb_option_list(int all)
 		ol_line(&n, "OPTION ESCAPE");
 	if (all || G.opt.error_continue)
 		ol_line(&n, G.opt.error_continue ? "OPTION ERROR CONTINUE" : "OPTION ERROR ABORT");
+	if (all || G.opt.audio_target != 1)
+		ol_line(&n, G.opt.audio_target ? "OPTION AUDIO_TARGET HDMI" : "OPTION AUDIO_TARGET JACK");
+	if (all || !G.opt.audio_on)
+		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
 	if (all || G.opt.search_path[0])
 	{
 		if (n)

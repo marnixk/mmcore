@@ -20,6 +20,7 @@ clean_build_tree() {
 	make -C "${CIRCLE_DIR}/lib/usb" clean
 	make -C "${CIRCLE_DIR}/lib/fs" clean
 	make -C "${CIRCLE_DIR}/lib/input" clean
+	make -C "${CIRCLE_DIR}/lib/sound" clean
 	make -C "${CONSOLE_DIR}" clean
 }
 

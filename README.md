@@ -117,7 +117,8 @@ The console runs the local interpreter in `mmbasic/`. Immediate mode at the
 - files: `DRIVE`, `CHDIR`, `DIR`/`FILES`, `MKDIR`, `RMDIR`, `COPY`, `RENAME`/`NAME`,
   `KILL`, `OPEN`/`CLOSE`, `PRINT #`, `INPUT #`, `SEEK`, `SAVE`
   (`A:` ramdisk, `C:` SD card, `D:`… USB mass storage)
-- `LOAD PNG` / `LOAD JPG`, `PLAY MP3` / `PLAY MODFILE` / `PLAY XM`
+- `LOAD PNG` / `LOAD JPG`, `PLAY MP3` / `PLAY MODFILE` / `PLAY XM` / `PLAY TONE`
+  (`OPTION AUDIO_TARGET HDMI|JACK`)
 - `EDIT "file.bas"` — nano-like (`Ctrl+O` write, `Ctrl+X` exit, `Ctrl+R` run)
 
 Colours: `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK` and `RGB(r,g,b)`.

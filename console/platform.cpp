@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "audio.h"
 #include "mmbasic.h"
 #include <circle/alloc.h>
 #include <circle/util.h>
@@ -142,6 +143,26 @@ static void plat_reboot(void)
 	reboot();
 }
 
+static void plat_audio_set_target(int target)
+{
+	audio_set_target(target);
+}
+
+static void plat_audio_enable(int on)
+{
+	audio_enable(on);
+}
+
+static int plat_audio_write(const short *pcm, unsigned nframes)
+{
+	return audio_write(pcm, nframes);
+}
+
+static unsigned plat_audio_free_frames(void)
+{
+	return audio_free_frames();
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -161,5 +182,10 @@ void mmb_platform_bind(CKernel *k)
 	plat.poll_input = plat_poll_input;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;
+	plat.audio_set_target = plat_audio_set_target;
+	plat.audio_enable = plat_audio_enable;
+	plat.audio_write = plat_audio_write;
+	plat.audio_free_frames = plat_audio_free_frames;
+	audio_init();
 	mmb_init(&plat);
 }
