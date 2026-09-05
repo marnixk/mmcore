@@ -1,0 +1,44 @@
+' Define the array and number of words
+DIM total_words = 200
+DIM words$(total_words - 1)
+
+Sub LoadWords()
+  global words$
+  local word_idx
+
+  ' Load the words into the array
+  RESTORE WordList
+  FOR word_idx = 0 TO total_words - 1
+    READ words$(word_idx)
+  NEXT word_idx
+
+End Sub
+
+LoadWords()
+
+' Your word list follows
+WordList:
+DATA "ant", "bat", "bed", "bee", "big", "box", "boy", "bus", "can", "cat"
+DATA "cup", "dad", "day", "dig", "dog", "dot", "eat", "egg", "fan", "fly"
+DATA "fox", "fun", "get", "gum", "hat", "hen", "hop", "hot", "ice", "jam"
+DATA "jet", "key", "leg", "lid", "lip", "log", "mad", "map", "mom", "mud"
+DATA "nap", "net", "new", "nut", "old", "owl", "pan", "pen", "pet", "pig"
+DATA "pin", "pot", "rat", "red", "run", "sad", "sat", "sea", "sit", "sky"
+DATA "sun", "tap", "ten", "toy", "two", "up!", "wet", "wig", "win", "zoo"
+DATA "baby", "ball", "barn", "bath", "bear", "bell", "best", "bike", "bird"
+DATA "blue", "boat", "book", "boot", "cake", "card", "chew", "cold", "come"
+DATA "cook", "cool", "corn", "cute", "deer", "desk", "dish", "door", "draw"
+DATA "drum", "duck", "fast", "fish", "five", "flag", "foot", "frog", "game"
+DATA "girl", "glad", "goat", "gold", "good", "hand", "help", "home", "hose"
+DATA "jump", "kite", "lamb", "lamp", "leaf", "lion", "milk", "moon", "nose"
+DATA "pear", "pink", "play", "rain", "read", "ride", "rock", "rope", "sand"
+DATA "shoe", "sing", "snow", "soup", "star", "swim", "tree", "apple", "beach"
+DATA "bread", "brush", "candy", "chair", "clean", "cloud", "color", "dance"
+DATA "drink", "earth", "floor", "fruit", "glass", "grass", "green", "happy"
+DATA "heart", "horse", "house", "juice", "light", "lunch", "mouse", "mouth"
+DATA "night", "paper", "party", "pizza", "plant", "quiet", "radio", "river"
+DATA "robot", "shark", "sheep", "shirt", "sleep", "small", "smile", "snack"
+DATA "spoon", "table", "tiger", "train", "truck", "water", "whale", "white"
+DATA "animal", "banana", "basket", "butter", "circle", "cookie", "family"
+DATA "flower", "garden", "rabbit"
+

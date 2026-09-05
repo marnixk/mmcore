@@ -1,0 +1,38 @@
+const fnt.page = 6
+dim integer fnt.width(5) = (5, 8, 8, 8, 8, 16)
+dim integer fnt.height(5) = (9, 8, 8, 8, 16, 16)
+dim integer fnt.start(5) = (0, 25, 41, 57, 73, 105)
+dim string fnt.chars = " !" + chr$(34) + "#$%^'()*+,-./0123456789:;<=>?@abcdefghijklmnopqrstuvwxyz[\]^_'"
+
+'
+' Load the fonts from file
+'
+sub fnt.init 
+  page write fnt.page
+  load png "gfx/fonts.png", 0, 0, 4
+  page write 0
+end sub
+
+'
+' Draw a font
+'
+sub fnt.draw text$, x%, y%, fntNr%
+
+  local integer width = fnt.width(fntNr%), height = fnt.height(fntNr%)
+  local integer tIdx, cPos, cx, cy
+  local string ch
+
+  for tIdx = 1 to len(text$)
+    ch = mid$(text$, tIdx, 1)
+    cPos = instr(1, fnt.chars, ch)
+    if (cPos <> 0) then
+      cPos = cPos - 1
+      cx = (cPos * width) mod 320      
+      cy = ((cPos * width) \ 320) * height
+
+      blit cx, cy + fnt.start(fntNr%), x% + (tIdx * width), y%, width, height, fnt.page, &B100
+    end if
+  next tIdx
+
+end sub
+
