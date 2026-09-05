@@ -11,6 +11,8 @@
 #include <circle/timer.h>
 #include <circle/logger.h>
 #include <circle/nulldevice.h>
+#include <circle/usb/usbkeyboard.h>
+#include <circle/input/keyboardbuffer.h>
 #include <circle/types.h>
 #include "storage.h"
 
@@ -34,6 +36,12 @@ public:
 	CSerialDevice &Serial (void) { return m_Serial; }
 
 private:
+	void AttachKeyboard (void);
+	void ProcessChar (char c, char *Line, unsigned *pLen);
+
+	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
+
+private:
 	// do not change this order
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
@@ -46,6 +54,11 @@ private:
 	CNullDevice		m_Null;
 	CLogger			m_Logger;
 	CStorage		m_Storage;
+
+	CUSBKeyboardDevice	* volatile m_pKeyboard;
+	CKeyboardBuffer		*m_pKbdBuf;
+	char			m_Line[256];
+	unsigned		m_nLen;
 };
 
 #endif
