@@ -38,6 +38,15 @@ int mmb_in_editor(void);
 /* Feed a keystroke to the editor. Returns text to emit (may be empty). */
 const char *mmb_editor_key(char c);
 
+/* True while the FILES dual-pane TUI owns the keyboard. */
+int mmb_in_files(void);
+
+/* Feed a keystroke to FILES. Returns text to emit (may be empty). */
+const char *mmb_files_key(char c);
+
+/* Redraw FILES after the editor returns, or close it if EDIT ran a program. */
+const char *mmb_files_on_editor_exit(void);
+
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 

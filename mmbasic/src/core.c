@@ -1611,9 +1611,14 @@ static void exec_statement(void)
 		mmb_cmd_name();
 		return;
 	}
-	if (mmb_match("DIR") || mmb_match("FILES"))
+	if (mmb_match("DIR"))
 	{
 		mmb_cmd_files("DIR");
+		return;
+	}
+	if (mmb_match("FILES"))
+	{
+		mmb_cmd_files_ui();
 		return;
 	}
 	if (mmb_match("OPEN"))
