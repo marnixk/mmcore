@@ -63,9 +63,13 @@ static const int menu_col[MENU_COUNT] = { 2, 8, 14, 19 };
 static const char *file_items[] = {
 	"Open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
 };
+static const char file_hots[] = { 'o', 's', 'a', 'c', 'n', 'q' };
 static const char *edit_items[] = { "Cut line", "Paste" };
+static const char edit_hots[] = { 'c', 'p' };
 static const char *run_items[] = { "Run" };
+static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys..." };
+static const char help_hots[] = { 'k' };
 
 static void redraw(void);
 static void save_tab(void);
@@ -499,6 +503,21 @@ static const char **menu_items(int menu, int *n)
 	default:
 		*n = (int)(sizeof(help_items) / sizeof(help_items[0]));
 		return help_items;
+	}
+}
+
+static const char *menu_hots(int menu)
+{
+	switch (menu)
+	{
+	case MENU_FILE:
+		return file_hots;
+	case MENU_EDIT:
+		return edit_hots;
+	case MENU_RUN:
+		return run_hots;
+	default:
+		return help_hots;
 	}
 }
 
@@ -1482,9 +1501,11 @@ const char *mmb_editor_feed(char c)
 			char u = c;
 			if (u >= 'A' && u <= 'Z')
 				u = (char)(u - 'A' + 'a');
+			const char *hots = menu_hots(G.ed.menu);
+			(void)it;
 			for (i = 0; i < n; i++)
 			{
-				char h = it[i][0];
+				char h = hots[i];
 				if (h >= 'A' && h <= 'Z')
 					h = (char)(h - 'A' + 'a');
 				if (h == u)
