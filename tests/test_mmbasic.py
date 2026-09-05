@@ -201,6 +201,20 @@ def test_for_next_numbered(console):
     assert "1" in out and "2" in out and "3" in out
 
 
+def test_print_newline_unless_semicolon(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I=0 TO 2") == ""
+    assert console.send_line("20 PRINT I") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("RUN") == "0\n1\n2"
+
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I=0 TO 2") == ""
+    assert console.send_line("20 PRINT I;") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("RUN") == "012"
+
+
 def test_data_read_restore(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 DATA 10,20,12") == ""

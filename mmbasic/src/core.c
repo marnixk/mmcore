@@ -990,9 +990,13 @@ static void store_line(int num, const char *text)
 void mmb_cmd_print(void)
 {
 	int first = 1;
+	int no_nl = 0;
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == '\'' || *G.p == ':')
+	{
+		mmb_out("\n");
 		return;
+	}
 	while (*G.p && *G.p != ':' && *G.p != '\'')
 	{
 		mmb_val v;
@@ -1012,6 +1016,7 @@ void mmb_cmd_print(void)
 				int save = G.outn;
 				G.outn = 0;
 				G.out[0] = 0;
+				no_nl = 0;
 				while (*G.p && *G.p != ':' && *G.p != '\'')
 				{
 					v = mmb_expr();
@@ -1020,16 +1025,21 @@ void mmb_cmd_print(void)
 					if (*G.p == ';' )
 					{
 						G.p++;
+						no_nl = 1;
 						continue;
 					}
 					if (*G.p == ',')
 					{
 						mmb_out(" ");
 						G.p++;
+						no_nl = 0;
 						continue;
 					}
+					no_nl = 0;
 					break;
 				}
+				if (!no_nl)
+					mmb_out("\n");
 				strncpy(buf, G.out, sizeof(buf) - 1);
 				if (fn >= 1 && fn <= MMB_MAX_FILES && G.files[fn].open)
 					mmb_vfs_write(G.files[fn].path, buf, (unsigned)strlen(buf), 1);
@@ -1047,16 +1057,21 @@ void mmb_cmd_print(void)
 		if (*G.p == ';')
 		{
 			G.p++;
+			no_nl = 1;
 			continue;
 		}
 		if (*G.p == ',')
 		{
 			mmb_out(" ");
 			G.p++;
+			no_nl = 0;
 			continue;
 		}
+		no_nl = 0;
 		break;
 	}
+	if (!no_nl)
+		mmb_out("\n");
 }
 
 static void do_let(void)
