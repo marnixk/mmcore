@@ -42,9 +42,9 @@ def test_editor_ocr_file_label(kernel_image):
     con.start()
     try:
         _edit(con, "HI.BAS")
-        # Sample the menu bar (y~8) and editor pane (y~80). QEMU dumps can
-        # include a black margin, so try a few x positions.
-        bar = [con.screen_pixel(x, 8) for x in (40, 80, 160, 320)]
+        # Status bar is the last text row (~y 464 on 640x480 / 8x16).
+        # The editor pane is deep blue.
+        bar = [con.screen_pixel(x, 464) for x in (8, 40, 80, 200)]
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
         assert any(b > r + 20 and b > 40 for r, g, b in pane), pane

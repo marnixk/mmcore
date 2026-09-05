@@ -302,11 +302,14 @@ static const char kHelpPlay[] =
 static const char kHelpEdit[] =
 	"EDIT [file$]\n"
 	"\n"
-	"Open the on-screen editor. With no file, uses the\n"
-	"current program name if one is set.\n"
+	"Open the colour TUI editor (menu bar, tabs, status).\n"
+	"With no file, uses the current program name if set.\n"
 	"\n"
-	"Keys: ^O write  ^X exit  ^R save and run\n"
-	"      ^K cut line  ^U paste\n"
+	"Menus: Esc+F File  Esc+E Edit  Esc+R Run  Esc+H Help\n"
+	"       F10 File menu   Esc+1..9 switch tabs\n"
+	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
+	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
+	"      ^R save and run  ^K cut line  ^U paste\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
