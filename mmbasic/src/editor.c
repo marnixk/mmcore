@@ -20,6 +20,7 @@ static int ed_rows(void) { return tui_rows(); }
 #define ROW_TEXT    3
 #define ROW_BBOT    (ed_rows() - 2)
 #define ROW_STAT    (ed_rows() - 1)
+#define ED_TAB      4
 
 #define C_MENU_FG   TUI_BLACK
 #define C_MENU_BG   TUI_WHITE
@@ -127,6 +128,11 @@ static const char *tab_label(int i)
 	return s[0] ? s : "UNTITLED";
 }
 
+static int ch_cols(char ch)
+{
+	return (ch == '\t') ? ED_TAB : 1;
+}
+
 static mmb_ed_tab *cur_tab(void)
 {
 	if (G.ed.ntabs <= 0 || G.ed.cur < 0 || G.ed.cur >= G.ed.ntabs)
@@ -216,7 +222,7 @@ static void pos_to_rowcol(int pos, int *row, int *col)
 			c = 0;
 		}
 		else
-			c++;
+			c += ch_cols(t->buf[i]);
 	}
 	if (row)
 		*row = r;
@@ -240,7 +246,12 @@ static int rowcol_to_pos(int row, int col)
 			c = 0;
 		}
 		else
-			c++;
+		{
+			int w = ch_cols(t->buf[i]);
+			if (r == row && col > c && col < c + w)
+				return i;
+			c += w;
+		}
 	}
 	if (r == row && c == col)
 		return i;
@@ -578,12 +589,12 @@ static void draw_border_row(int row, int top)
 
 static void draw_text_line(int x, int y, const char *s, int n, int col0)
 {
-	int i, shown = 0, in_str = 0;
+	int i, vis = 0, shown = 0, in_str = 0;
 	char q = 0;
 	for (i = 0; i < n && shown < TEXT_COLS; i++)
 	{
 		char ch = s[i];
-		int want;
+		int want, k, w;
 		if (!in_str && (ch == '"' || ch == '\''))
 		{
 			in_str = 1;
@@ -594,11 +605,17 @@ static void draw_text_line(int x, int y, const char *s, int n, int col0)
 			want = 1;
 		else
 			want = in_str ? 1 : 0;
-		if (i >= col0)
+		w = ch_cols(ch);
+		for (k = 0; k < w && shown < TEXT_COLS; k++)
 		{
-			tui_put(x + shown, y, (unsigned char)ch,
-				want ? C_STR_FG : C_EDIT_FG, C_EDIT_BG);
-			shown++;
+			if (vis >= col0)
+			{
+				char out = (ch == '\t') ? ' ' : ch;
+				tui_put(x + shown, y, (unsigned char)out,
+					want ? C_STR_FG : C_EDIT_FG, C_EDIT_BG);
+				shown++;
+			}
+			vis++;
 		}
 		if (in_str && ch == q && i > 0)
 			in_str = 0;
@@ -742,7 +759,7 @@ static void draw_dialog(void)
 			"F3     Open          F9     Run",
 			"^O     Save          ^X     Quit",
 			"^R     Save and Run  ^K/^U  Cut/Paste",
-			"Tab    Next tab      Esc+1..9 tab",
+			"Tab    4 spaces      Esc+1..9 file tab",
 			"Arrows move          Enter  activate",
 			"",
 			"     Enter or Esc closes this box",
@@ -1390,7 +1407,9 @@ const char *mmb_editor_feed(char c)
 	}
 	if (c == '\t')
 	{
-		next_tab();
+		int i;
+		for (i = 0; i < ED_TAB; i++)
+			insert_char(' ');
 		redraw();
 		return G.out;
 	}

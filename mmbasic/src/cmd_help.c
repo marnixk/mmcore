@@ -439,6 +439,7 @@ static const char kHelpEdit[] =
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
 	"      ^R save and run  ^K cut line  ^U paste\n"
+	"      Tab inserts 4 spaces   Esc+1..9 switch tabs\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
