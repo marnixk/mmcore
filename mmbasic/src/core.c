@@ -1319,6 +1319,11 @@ static void exec_statement(void)
 		do_let();
 		return;
 	}
+	if (mmb_match("HELP"))
+	{
+		mmb_cmd_help();
+		return;
+	}
 	if (mmb_match("PRINT") || mmb_match("?"))
 	{
 		mmb_cmd_print();
