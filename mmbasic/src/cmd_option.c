@@ -226,6 +226,12 @@ static void parse_wifi_interactive(void)
 static void parse_wifi(void)
 {
 	mmb_skip_sp();
+	if (mmb_match("DEBUG"))
+	{
+		G.opt.wifi_debug = onoff();
+		mmb_settings_save();
+		return;
+	}
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
 		parse_wifi_interactive();
@@ -1004,6 +1010,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.audio_target ? "OPTION AUDIO_TARGET HDMI" : "OPTION AUDIO_TARGET JACK");
 	if (all || !G.opt.audio_on)
 		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
+	if (all || G.opt.wifi_debug)
+		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
 	if (all || G.opt.search_path[0])
 	{
 		if (n)

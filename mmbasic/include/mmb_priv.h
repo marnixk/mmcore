@@ -110,6 +110,7 @@ typedef struct mmb_options {
 	char wifi_ssid[64];
 	char wifi_psk[64];
 	int wifi_enabled;
+	int wifi_debug;        /* OPTION WIFI DEBUG ON|OFF (default OFF) */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 } mmb_options;

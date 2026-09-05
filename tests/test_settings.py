@@ -111,6 +111,29 @@ def test_options_wifi_alias(console):
     assert "psk=aliaspass" in ini
 
 
+def test_option_wifi_debug_default_off(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST")
+    assert "WIFI DEBUG" not in listed
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION WIFI DEBUG OFF" in all_listed
+    ini = _read_ini(console)
+    assert "debug=0" in ini
+
+
+def test_option_wifi_debug_on_persists(console):
+    assert console.send_line("OPTION WIFI DEBUG ON") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION WIFI DEBUG ON" in listed
+    ini = _read_ini(console)
+    assert "debug=1" in ini
+    assert console.send_line("OPTION WIFI DEBUG OFF") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "WIFI DEBUG" not in listed
+    ini = _read_ini(console)
+    assert "debug=0" in ini
+
+
 def test_files_hides_dotfiles(fresh_console):
     con = fresh_console
     assert con.send_line('CHDIR "A:/"') == ""

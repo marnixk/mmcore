@@ -55,6 +55,9 @@ static void wlan_log(const char *fmt, ...)
 {
 	CString line;
 	va_list ap;
+
+	if (!mmb_opt_wifi_debug())
+		return;
 	va_start(ap, fmt);
 	line.FormatV(fmt, ap);
 	va_end(ap);

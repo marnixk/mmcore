@@ -12,6 +12,7 @@ def test_help_lists_commands(console):
     assert "HELP BASIC" in out
     assert "OPTION WIFI" in out
     assert "ssid" in out.lower()
+    assert "DEBUG" in out
     assert ".mmbasic.ini" in out
 
 
@@ -118,3 +119,5 @@ def test_help_option_wifi(console):
     assert "beacon" in out.lower()
     assert "country=US" in out or "US" in out
     assert "[wifi]" in out
+    assert "DEBUG" in out
+    assert "default OFF" in out or "Default OFF" in out

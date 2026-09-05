@@ -384,6 +384,11 @@ int mmb_opt_repeat_next(void)
 	return G.opt.repeat_next > 0 ? G.opt.repeat_next : 150;
 }
 
+int mmb_opt_wifi_debug(void)
+{
+	return G.opt.wifi_debug != 0;
+}
+
 static const int k_mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 static int parse_int_part(const char **ps)

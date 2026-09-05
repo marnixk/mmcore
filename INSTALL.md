@@ -44,7 +44,8 @@ CYW4343x blobs in `C:/firmware/`). Hardware release zips include that
 that the radio is unavailable. `OPTION WIFI "ssid","password"` stores
 credentials and, on a real Pi with firmware, brings the radio up with
 WPA2. The PSK is written to the INI and is not printed on the serial
-console.
+console. `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and
+serial; the default is off.
 
 ## What you need
 

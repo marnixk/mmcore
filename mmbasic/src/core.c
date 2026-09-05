@@ -1273,6 +1273,7 @@ void mmb_option_reset(void)
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */
+	G.opt.wifi_debug = 0;
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)

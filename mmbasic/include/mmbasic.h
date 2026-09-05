@@ -99,6 +99,9 @@ void mmb_console_write(const char *s);
 int mmb_opt_repeat_first(void);
 int mmb_opt_repeat_next(void);
 
+/* OPTION WIFI DEBUG ON|OFF (default OFF). */
+int mmb_opt_wifi_debug(void);
+
 /* Host input: typeahead / INKEY$ FIFO and KEYDOWN() scan codes. */
 void mmb_inkey_push(int c);
 void mmb_keydown_set(const int *codes, int n);

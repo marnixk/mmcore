@@ -71,7 +71,8 @@ Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
 `C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores
 defaults without deleting programs. `OPTION WIFI` stores credentials and
 joins a WPA2 network on a real Pi 3 / 4 / 400 (firmware in `C:/firmware/`).
-QEMU has no radio.
+`OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
+(default off; the password is never printed). QEMU has no radio.
 
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:

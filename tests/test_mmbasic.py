@@ -285,6 +285,8 @@ def test_option_hardware_parse(console):
         "OPTION RESOLUTION 640x480",
         "OPTION DISPLAY DISABLE",
         "OPTION WIFI \"x\",\"y\"",
+        "OPTION WIFI DEBUG ON",
+        "OPTION WIFI DEBUG OFF",
         "OPTION TOUCH DISABLE",
         "OPTION LCDPANEL ILI9341",
         "OPTION CLOCK DS3231",

@@ -265,6 +265,8 @@ static void apply_wifi(const char *k, const char *v)
 	}
 	else if (mmb_keyword_eq(k, "enabled"))
 		G.opt.wifi_enabled = parse_int(v);
+	else if (mmb_keyword_eq(k, "debug"))
+		G.opt.wifi_debug = parse_int(v);
 }
 
 void mmb_settings_save(void)
@@ -347,6 +349,7 @@ void mmb_settings_save(void)
 	kv_str(buf, sizeof(buf), "ssid", G.opt.wifi_ssid);
 	kv_str(buf, sizeof(buf), "psk", G.opt.wifi_psk);
 	kv_int(buf, sizeof(buf), "enabled", G.opt.wifi_enabled);
+	kv_int(buf, sizeof(buf), "debug", G.opt.wifi_debug);
 	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
 }
 
@@ -417,6 +420,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_ssid[0] = 0;
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
+	G.opt.wifi_debug = 0;
 	mmb_audio_apply_options();
 	mmb_settings_save();
 	mmb_out("Factory defaults restored");
