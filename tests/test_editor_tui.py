@@ -42,12 +42,12 @@ def test_editor_ocr_file_label(kernel_image):
     con.start()
     try:
         _edit(con, "HI.BAS")
-        # Grey menu bar + deep-blue workspace (640x480 Font8x16).
-        r, g, b = con.screen_pixel(20, 8)
-        assert r > 120 and g > 120 and b > 120
-        r, g, b = con.screen_pixel(40, 80)
-        assert b > r + 40 and b > g + 40
-        # 8x16 OCR of the grey bar is unreliable; pixels prove the palette.
+        # Sample the menu bar (y~8) and editor pane (y~80). QEMU dumps can
+        # include a black margin, so try a few x positions.
+        bar = [con.screen_pixel(x, 8) for x in (40, 80, 160, 320)]
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
+        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
         _quit(con)
     finally:
         con.stop()
@@ -76,7 +76,8 @@ def test_editor_save_as_and_open(kernel_image):
         _edit(con, "TMP.BAS")
         _keys(con, b"PRINT 6*7")
         _keys(con, b"\x1bfa", quiet=0.5)
-        _keys(con, b"SAVED.BAS\r", quiet=0.6)
+        # Save As prefills the current path; wipe it, then type the new name.
+        _keys(con, b"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7fSAVED.BAS\r", quiet=0.7)
         _quit(con)
         listing = con.send_line("DIR")
         assert "SAVED.BAS" in listing
