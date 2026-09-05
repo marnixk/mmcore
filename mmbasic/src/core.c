@@ -1764,6 +1764,13 @@ int mmb_in_editor(void)
 	return G.ed.active;
 }
 
+int mmb_take_home_prompt(void)
+{
+	int v = G.home_prompt;
+	G.home_prompt = 0;
+	return v;
+}
+
 const char *mmb_editor_key(char c)
 {
 	return mmb_editor_feed(c);

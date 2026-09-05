@@ -14,7 +14,8 @@ CKernel::CKernel (void)
 	m_Storage (&m_Interrupt, &m_Timer, &m_ActLED),
 	m_pKeyboard (0),
 	m_pKbdBuf (0),
-	m_nLen (0)
+	m_nLen (0),
+	m_nEsc (0)
 {
 	m_Line[0] = '\0';
 	m_ActLED.Blink (2);
@@ -88,19 +89,52 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
-	/* USB Enter is '\n'; serial is usually '\r'. Echo CR so HDMI wraps. */
-	char echo = (c == '\n') ? '\r' : c;
-	m_Serial.Write (&echo, 1);
-	m_Screen.Write (&echo, 1);
+	/* ESC / CSI from Circle keymap (arrows, Home/End/Delete/Insert, F-keys). */
+	if (m_nEsc == 1)
+	{
+		if (c == '[' || c == 'O')
+		{
+			m_nEsc = 2;
+			return;
+		}
+		m_nEsc = 0;
+		if (c == 0x1b)
+		{
+			m_nEsc = 1;
+			return;
+		}
+		return;
+	}
+	if (m_nEsc >= 2)
+	{
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '~')
+			m_nEsc = 0;
+		return;
+	}
+	if (c == 0x1b)
+	{
+		m_nEsc = 1;
+		return;
+	}
 
 	if (c == '\r' || c == '\n')
 	{
+		/* USB Enter is '\n'; serial is usually '\r'. Echo CR so HDMI wraps. */
+		char echo = '\r';
+		m_Serial.Write (&echo, 1);
+		m_Screen.Write (&echo, 1);
+
 		Line[*pLen] = '\0';
 		const char *Result = mmb_exec_line (Line);
 		if (mmb_in_editor ())
 		{
 			emit (&m_Serial, &m_Screen, "\r\n");
 			emit (&m_Serial, &m_Screen, Result);
+		}
+		else if (mmb_take_home_prompt ())
+		{
+			emit (&m_Serial, &m_Screen, Result);
+			emit (&m_Serial, &m_Screen, "> ");
 		}
 		else
 		{
@@ -113,11 +147,25 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	else if (c == 8 || c == 127)
 	{
 		if (*pLen > 0)
+		{
 			(*pLen)--;
+			emit (&m_Serial, &m_Screen, "\b \b");
+		}
+	}
+	else if (c == 3)
+	{
+		*pLen = 0;
+		emit (&m_Serial, &m_Screen, "\r\n> ");
+	}
+	else if (c == '\t' || (unsigned char) c < 32)
+	{
+		/* Tab and other controls must not enter Line[]. */
 	}
 	else if (*pLen < sizeof (m_Line) - 1)
 	{
 		Line[(*pLen)++] = c;
+		m_Serial.Write (&c, 1);
+		m_Screen.Write (&c, 1);
 	}
 }
 

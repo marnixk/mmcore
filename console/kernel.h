@@ -59,6 +59,7 @@ private:
 	CKeyboardBuffer		*m_pKbdBuf;
 	char			m_Line[256];
 	unsigned		m_nLen;
+	int			m_nEsc;
 };
 
 #endif

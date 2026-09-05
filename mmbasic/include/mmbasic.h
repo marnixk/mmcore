@@ -41,6 +41,9 @@ const char *mmb_editor_key(char c);
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 
+/* True once after CLS: caller should emit the prompt without leading newlines. */
+int mmb_take_home_prompt(void);
+
 #ifdef __cplusplus
 }
 #endif
