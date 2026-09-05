@@ -34,7 +34,7 @@ void mmb_reset(void);
  * until the next mmb_* call. */
 const char *mmb_exec_line(const char *line);
 
-/* True while the nano-style editor owns the keyboard. */
+/* True while the full-screen editor owns the keyboard. */
 int mmb_in_editor(void);
 
 /* Feed a keystroke to the editor. Returns text to emit (may be empty). */

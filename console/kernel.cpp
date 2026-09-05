@@ -128,8 +128,9 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *Result = mmb_exec_line (Line);
 		if (mmb_in_editor ())
 		{
-			emit (&m_Serial, &m_Screen, "\r\n");
-			emit (&m_Serial, &m_Screen, Result);
+			/* Editor streams a full frame via write_screen/write_serial. */
+			if (Result && Result[0])
+				emit (&m_Serial, &m_Screen, Result);
 		}
 		else if (mmb_take_home_prompt ())
 		{
