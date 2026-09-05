@@ -406,6 +406,8 @@ static const char kHelpPlay[] =
 	"TONE frequencies are Hz; duration is milliseconds.\n"
 	"Omit duration to hold the tone until PLAY STOP.\n"
 	"PLAYING() is 1 while audio is playing and not paused.\n"
+	"Hardware keeps ~160ms in the DMA queue so HDMI/PWM\n"
+	"chunks are not padded with silence on a brief stall.\n"
 	"QEMU has no sound device; decode and PLAYING() still\n"
 	"run in real time.\n"
 	"\n"

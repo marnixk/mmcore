@@ -19,6 +19,9 @@
 #define MIX_RATE     44100
 #define MIX_CHUNK    512
 #define MIX_PREROLL  1024
+/* Keep ~160ms in the DMA queue (two HDMI IEC958 periods are ~87ms). */
+#define MIX_TARGET   ((MIX_RATE * 160) / 1000)
+#define MIX_FILL_MAX 24
 
 static drmp3 s_mp3;
 static int s_mp3_on;
@@ -29,9 +32,11 @@ static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
 static double s_tone_hz_l, s_tone_hz_r;
 static double s_tone_ph_l, s_tone_ph_r;
-static unsigned s_tone_end_ms;
+static unsigned s_tone_left; /* ~0u = hold until STOP */
 static unsigned s_mix_origin;
 static unsigned s_pause_at;
+static short s_pending[MIX_CHUNK * 2];
+static unsigned s_pending_n;
 
 static void apply_vol(short *pcm, unsigned nframes)
 {
@@ -56,17 +61,66 @@ static void apply_vol(short *pcm, unsigned nframes)
 	}
 }
 
-static void emit_pcm(short *pcm, unsigned nframes)
+static int flush_pending(void)
 {
-	if (!nframes)
-		return;
-	apply_vol(pcm, nframes);
-	if (G.opt.audio_on && G.plat && G.plat->audio_write)
-		G.plat->audio_write(pcm, nframes);
-	G.audio.samples_decoded += nframes;
+	int w;
+
+	if (!s_pending_n)
+		return 1;
+	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
+	{
+		G.audio.samples_decoded += s_pending_n;
+		s_pending_n = 0;
+		return 1;
+	}
+	w = G.plat->audio_write(s_pending, s_pending_n);
+	if (w < 0)
+		w = 0;
+	if ((unsigned)w >= s_pending_n)
+	{
+		G.audio.samples_decoded += s_pending_n;
+		s_pending_n = 0;
+		return 1;
+	}
+	if (w > 0)
+	{
+		unsigned left = s_pending_n - (unsigned)w;
+		memmove(s_pending, s_pending + (unsigned)w * 2,
+			left * 2 * sizeof(short));
+		s_pending_n = left;
+		G.audio.samples_decoded += (unsigned)w;
+	}
+	return 0;
 }
 
-void mmb_play_stop(void)
+static unsigned emit_pcm(short *pcm, unsigned nframes)
+{
+	int w;
+
+	if (!nframes)
+		return 0;
+	apply_vol(pcm, nframes);
+	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
+	{
+		G.audio.samples_decoded += nframes;
+		return nframes;
+	}
+	w = G.plat->audio_write(pcm, nframes);
+	if (w < 0)
+		w = 0;
+	if ((unsigned)w < nframes)
+	{
+		unsigned left = nframes - (unsigned)w;
+		if (left > MIX_CHUNK)
+			left = MIX_CHUNK;
+		memcpy(s_pending, pcm + (unsigned)w * 2, left * 2 * sizeof(short));
+		s_pending_n = left;
+	}
+	G.audio.samples_decoded += (unsigned)w;
+	return (unsigned)w;
+}
+
+static void play_teardown(void)
 {
 	if (s_mp3_on)
 	{
@@ -97,9 +151,17 @@ void mmb_play_stop(void)
 	G.audio.paused = 0;
 	G.audio.samples_decoded = 0;
 	G.audio.name[0] = 0;
-	s_tone_end_ms = 0;
+	s_tone_left = 0;
 	s_tone_hz_l = s_tone_hz_r = 0;
 	s_tone_ph_l = s_tone_ph_r = 0;
+	s_pending_n = 0;
+}
+
+void mmb_play_stop(void)
+{
+	if (G.plat && G.plat->audio_flush)
+		G.plat->audio_flush();
+	play_teardown();
 }
 
 void mmb_audio_apply_options(void)
@@ -143,6 +205,8 @@ static void play_begin(int kind, const char *path)
 	s_mix_origin = mmb_now_ms();
 	s_pause_at = 0;
 	mmb_audio_apply_options();
+	/* Queue a DMA preroll before the caller redraws HDMI. */
+	mmb_play_mix();
 }
 
 int mmb_play_mp3(const char *path)
@@ -192,20 +256,42 @@ int mmb_play_xm(const char *path)
 
 static unsigned due_frames(void)
 {
-	unsigned elapsed = mmb_now_ms() - s_mix_origin;
-	unsigned due = MIX_PREROLL + (unsigned)((unsigned long)elapsed * MIX_RATE / 1000u);
-	if (due < G.audio.samples_decoded)
-		return 0;
-	due -= G.audio.samples_decoded;
-	if (due > MIX_CHUNK)
-		due = MIX_CHUNK;
+	unsigned free_n = ~0u;
+
 	if (G.opt.audio_on && G.plat && G.plat->audio_free_frames)
+		free_n = G.plat->audio_free_frames();
+
+	if (G.opt.audio_on && G.plat && G.plat->audio_have_device &&
+	    G.plat->audio_have_device())
 	{
-		unsigned free_n = G.plat->audio_free_frames();
+		unsigned queued = 0;
+		unsigned room;
+
+		if (G.plat->audio_queued_frames)
+			queued = G.plat->audio_queued_frames();
+		if (queued >= MIX_TARGET)
+			return 0;
+		room = MIX_TARGET - queued;
+		if (free_n < room)
+			room = free_n;
+		if (room > MIX_CHUNK)
+			room = MIX_CHUNK;
+		return room;
+	}
+
+	{
+		unsigned elapsed = mmb_now_ms() - s_mix_origin;
+		unsigned due = MIX_PREROLL +
+			(unsigned)((unsigned long)elapsed * MIX_RATE / 1000u);
+		if (due < G.audio.samples_decoded)
+			return 0;
+		due -= G.audio.samples_decoded;
+		if (due > MIX_CHUNK)
+			due = MIX_CHUNK;
 		if (free_n < due)
 			due = free_n;
+		return due;
 	}
-	return due;
 }
 
 static int mix_mp3(unsigned nframes)
@@ -262,8 +348,13 @@ static int mix_tone(unsigned nframes)
 	double step_l = 2.0 * M_PI * s_tone_hz_l / (double)MIX_RATE;
 	double step_r = 2.0 * M_PI * s_tone_hz_r / (double)MIX_RATE;
 
-	if (s_tone_end_ms && mmb_now_ms() >= s_tone_end_ms)
-		return 0;
+	if (s_tone_left != ~0u)
+	{
+		if (s_tone_left == 0)
+			return 0;
+		if (nframes > s_tone_left)
+			nframes = s_tone_left;
+	}
 	for (i = 0; i < nframes; i++)
 	{
 		pcm[i * 2] = (short)(sin(s_tone_ph_l) * 8000.0);
@@ -274,8 +365,15 @@ static int mix_tone(unsigned nframes)
 		if (s_tone_ph_r > 2.0 * M_PI) s_tone_ph_r -= 2.0 * M_PI;
 	}
 	emit_pcm(pcm, nframes);
-	if (s_tone_end_ms && mmb_now_ms() >= s_tone_end_ms)
-		return 0;
+	if (s_tone_left != ~0u)
+	{
+		if (s_tone_left <= nframes)
+		{
+			s_tone_left = 0;
+			return 0;
+		}
+		s_tone_left -= nframes;
+	}
 	return 1;
 }
 
@@ -283,24 +381,39 @@ void mmb_play_mix(void)
 {
 	unsigned n;
 	int keep = 1;
+	int loops;
 
 	if (!G.audio.playing || G.audio.paused)
 		return;
-	n = due_frames();
-	if (n == 0)
+	if (!flush_pending())
 		return;
-	if (G.audio.playing == 1 && s_mp3_on)
-		keep = mix_mp3(n);
-	else if (G.audio.playing == 2 && s_mod_on)
-		keep = mix_mod(n);
-	else if (G.audio.playing == 3 && s_xm)
-		keep = mix_xm(n);
-	else if (G.audio.playing == 4)
-		keep = mix_tone(n);
-	else
-		keep = 0;
+	for (loops = 0; loops < MIX_FILL_MAX; loops++)
+	{
+		n = due_frames();
+		if (n == 0)
+			break;
+		if (G.audio.playing == 1 && s_mp3_on)
+			keep = mix_mp3(n);
+		else if (G.audio.playing == 2 && s_mod_on)
+			keep = mix_mod(n);
+		else if (G.audio.playing == 3 && s_xm)
+			keep = mix_xm(n);
+		else if (G.audio.playing == 4)
+			keep = mix_tone(n);
+		else
+			keep = 0;
+		if (!keep)
+			break;
+		if (s_pending_n)
+			break;
+	}
 	if (!keep)
-		mmb_play_stop();
+	{
+		(void)flush_pending();
+		if (G.plat && G.plat->audio_kick)
+			G.plat->audio_kick();
+		play_teardown();
+	}
 }
 
 void mmb_cmd_play(void)
@@ -325,8 +438,6 @@ void mmb_cmd_play(void)
 		{
 			G.audio.paused = 0;
 			s_mix_origin += mmb_now_ms() - s_pause_at;
-			if (s_tone_end_ms)
-				s_tone_end_ms += mmb_now_ms() - s_pause_at;
 		}
 		return;
 	}
@@ -363,7 +474,14 @@ void mmb_cmd_play(void)
 		s_tone_hz_l = mmb_as_float(l);
 		s_tone_hz_r = mmb_as_float(r);
 		s_tone_ph_l = s_tone_ph_r = 0;
-		s_tone_end_ms = dur ? mmb_now_ms() + dur : 0;
+		if (dur)
+		{
+			s_tone_left = (unsigned)((unsigned long)dur * MIX_RATE / 1000u);
+			if (s_tone_left == 0)
+				s_tone_left = 1;
+		}
+		else
+			s_tone_left = ~0u;
 		play_begin(4, "TONE");
 		return;
 	}

@@ -15,6 +15,13 @@ static int s_enabled = 1;
 static int s_started;
 
 #ifndef NO_SDHOST
+static unsigned chunk_frames(void)
+{
+	if (s_target == AUDIO_TARGET_JACK)
+		return PWM_CHUNK / 2;
+	return HDMI_CHUNK / 2;
+}
+
 static CSoundBaseDevice *make_dev(int target)
 {
 	CInterruptSystem *irq = CInterruptSystem::Get();
@@ -23,6 +30,22 @@ static CSoundBaseDevice *make_dev(int target)
 	if (target == AUDIO_TARGET_JACK)
 		return new CPWMSoundBaseDevice(irq, AUDIO_RATE, PWM_CHUNK);
 	return new CHDMISoundBaseDevice(irq, AUDIO_RATE, HDMI_CHUNK);
+}
+
+static void maybe_start(int force)
+{
+	unsigned used, need;
+
+	if (s_started || !s_dev || !s_enabled)
+		return;
+	used = s_dev->GetQueueFramesAvail();
+	if (used == 0)
+		return;
+	need = chunk_frames() * 2;
+	if (!force && used < need)
+		return;
+	if (s_dev->Start())
+		s_started = 1;
 }
 #endif
 
@@ -61,8 +84,8 @@ static void open_dev(void)
 		return;
 	}
 	s_dev->SetWriteFormat(SoundFormatSigned16, 2);
-	if (s_enabled && s_dev->Start())
-		s_started = 1;
+	/* DMA starts after the mixer has queued at least two chunk periods
+	 * so the first GetChunk() is not padded with silence. */
 #endif
 }
 
@@ -109,7 +132,11 @@ int audio_write(const short *stereo_s16, unsigned nframes)
 	n = s_dev->Write(stereo_s16, nframes * 2 * sizeof(short));
 	if (n < 0)
 		return 0;
-	return n / (int)(2 * sizeof(short));
+	n /= (int)(2 * sizeof(short));
+#ifndef NO_SDHOST
+	maybe_start(0);
+#endif
+	return n;
 }
 
 unsigned audio_free_frames(void)
@@ -124,4 +151,30 @@ unsigned audio_free_frames(void)
 	q = s_dev->GetQueueSizeFrames();
 	used = s_dev->GetQueueFramesAvail();
 	return q > used ? q - used : 0;
+}
+
+unsigned audio_queued_frames(void)
+{
+	if (!s_enabled || !s_dev)
+		return 0;
+	return s_dev->GetQueueFramesAvail();
+}
+
+int audio_have_device(void)
+{
+	return s_dev != 0;
+}
+
+void audio_kick(void)
+{
+#ifndef NO_SDHOST
+	maybe_start(1);
+#endif
+}
+
+void audio_flush(void)
+{
+	if (!s_dev)
+		return;
+	s_dev->Flush();
 }

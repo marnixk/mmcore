@@ -165,6 +165,26 @@ static unsigned plat_audio_free_frames(void)
 	return audio_free_frames();
 }
 
+static unsigned plat_audio_queued_frames(void)
+{
+	return audio_queued_frames();
+}
+
+static int plat_audio_have_device(void)
+{
+	return audio_have_device();
+}
+
+static void plat_audio_kick(void)
+{
+	audio_kick();
+}
+
+static void plat_audio_flush(void)
+{
+	audio_flush();
+}
+
 #define TUI_CW 8
 #define TUI_CH 16
 #define BOX_V  0xB3
@@ -336,6 +356,10 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_enable = plat_audio_enable;
 	plat.audio_write = plat_audio_write;
 	plat.audio_free_frames = plat_audio_free_frames;
+	plat.audio_queued_frames = plat_audio_queued_frames;
+	plat.audio_have_device = plat_audio_have_device;
+	plat.audio_kick = plat_audio_kick;
+	plat.audio_flush = plat_audio_flush;
 	plat.video_cols = plat_video_cols;
 	plat.video_rows = plat_video_rows;
 	plat.tui_prepare = plat_tui_prepare;
