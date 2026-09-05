@@ -54,3 +54,32 @@ def test_help_case_insensitive(console):
     mixed = console.send_line("Help CLS")
     assert "CLS" in mixed
     assert "screen" in mixed.lower()
+
+
+def test_help_mode_resolutions(console):
+    out = console.send_line("HELP MODE", timeout=8.0)
+    assert out != "?SYNTAX ERROR"
+    assert "MODE n" in out
+    assert "MM.HRES" in out
+    assert "MM.VRES" in out
+    for size in (
+        "384x240",
+        "1024x768",
+        "1920x1080",
+        "640x480",
+        "800x600",
+        "1280x720",
+        "1280x1024",
+    ):
+        assert size in out, size
+    assert "MODE 8,16" in out
+
+
+def test_help_mode_case_insensitive(console):
+    out = console.send_line("help mode", timeout=8.0)
+    assert out != "?SYNTAX ERROR"
+    assert "384x240" in out
+    assert "1024x768" in out
+    mixed = console.send_line("Help Mode", timeout=8.0)
+    assert "1920x1080" in mixed
+    assert "MM.HRES" in mixed
