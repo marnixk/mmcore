@@ -192,6 +192,7 @@ typedef struct mmb {
 		int used;
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
+	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
 } mmb;
 
 extern mmb G;

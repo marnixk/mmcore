@@ -51,6 +51,7 @@ void mmb_cmd_cls(void)
 	if (n >= 1)
 		c = (unsigned)mmb_as_int(a[0]);
 	mmb_gfx_cls(c);
+	G.home_prompt = 1;
 }
 
 void mmb_cmd_pixel(void)

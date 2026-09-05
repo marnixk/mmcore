@@ -55,6 +55,12 @@ static void plat_fill(unsigned rgb)
 {
 	if (!s_kernel)
 		return;
+	/* HDMI only: home + erase-to-end, then paint pixels so a coloured
+	 * CLS is not undone by the terminal wipe. Never write ANSI to serial
+	 * (tests assert send_line("CLS") == ""). */
+	static const char home[] = "\x1b[H\x1b[J";
+	s_kernel->Screen().Write(home, sizeof(home) - 1);
+
 	CScreenDevice &sc = s_kernel->Screen();
 	TScreenColor c = (TScreenColor)rgb_to_raw(rgb);
 	unsigned w = sc.GetWidth(), h = sc.GetHeight(), x, y;

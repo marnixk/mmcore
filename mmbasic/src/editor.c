@@ -15,7 +15,7 @@ static void redraw(void)
 {
 	char line[200];
 	int i, row, col, n;
-	ed_out("\x1b[2J\x1b[H");
+	ed_out("\x1b[H\x1b[J");
 	mmb_out("-- nano MMBasic  ^O write  ^X exit  ^R run --\r\n");
 	if (G.ed.path[0])
 	{
