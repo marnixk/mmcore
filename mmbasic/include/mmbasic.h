@@ -26,6 +26,12 @@ typedef struct mmb_platform {
 	unsigned (*millis)(void);
 	/* Optional blocking console line. hide!=0 echoes '*'. 0=ok, -1=none. */
 	int (*read_line)(char *buf, unsigned maxn, int hide);
+	/* Drain serial/USB while a program is running (sets break on PrtScr / BREAK key). */
+	void (*poll_input)(void);
+	/* 1 if a break was requested since the last call (clears the flag). */
+	int (*take_break)(void);
+	/* Hardware reset. Does not return. */
+	void (*reboot)(void);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
@@ -59,6 +65,12 @@ const char *mmb_connect_key(char c);
 
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
+
+/* 1 while RUN is executing a program. */
+int mmb_is_running(void);
+
+/* OPTION BREAK key (ASCII). 0 disables the cooked break key; PrtScr still breaks. */
+int mmb_break_key(void);
 
 /* True once after CLS: caller should emit the prompt without leading newlines. */
 int mmb_take_home_prompt(void);

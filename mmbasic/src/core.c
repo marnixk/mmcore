@@ -1001,7 +1001,10 @@ void mmb_cmd_line_input(void)
 			mmb_error("?TYPE MISMATCH");
 		buf[0] = 0;
 		if (G.plat && G.plat->read_line)
-			G.plat->read_line(buf, sizeof(buf), 0);
+		{
+			if (G.plat->read_line(buf, sizeof(buf), 0) == -2)
+				mmb_error("?BREAK");
+		}
 		v = mmb_str_val(buf);
 		mmb_do_assign(name, t ? t : T_STR, nidx, idx, v);
 		return;
@@ -1511,8 +1514,42 @@ void mmb_cmd_pause(void)
 	unsigned start = mmb_now_ms();
 	if (G.plat && G.plat->millis)
 		while ((mmb_now_ms() - start) < ms)
+		{
 			mmb_poll();
+			mmb_check_break();
+		}
 	(void)ms;
+}
+
+void mmb_cmd_reboot(void)
+{
+	if (G.plat && G.plat->reboot)
+		G.plat->reboot();
+	mmb_error("?REBOOT");
+}
+
+int mmb_is_running(void)
+{
+	return G.running;
+}
+
+int mmb_break_key(void)
+{
+	return G.opt.break_key;
+}
+
+void mmb_check_break(void)
+{
+	if (!G.running)
+		return;
+	mmb_storage_poll();
+	if (G.plat && G.plat->poll_input)
+		G.plat->poll_input();
+	if (G.plat && G.plat->take_break && G.plat->take_break())
+	{
+		G.running = 0;
+		mmb_error("?BREAK");
+	}
 }
 
 static int is_assign_start(void)
@@ -1993,6 +2030,11 @@ static void exec_statement(void)
 		mmb_cmd_pause();
 		return;
 	}
+	if (mmb_match("REBOOT") || mmb_match("RESTART"))
+	{
+		mmb_cmd_reboot();
+		return;
+	}
 	if (mmb_match("ERASE"))
 	{
 		mmb_cmd_clear();
@@ -2048,9 +2090,12 @@ static void run_program(void)
 	G.opt.default_type = T_NUM;
 	G.opt.base = 0;
 	G.opt.angle_degrees = 0;
+	if (G.plat && G.plat->take_break)
+		G.plat->take_break();
 	while (pc < G.nprog && G.running)
 	{
 		int loop;
+		mmb_check_break();
 		do
 		{
 			loop = 0;

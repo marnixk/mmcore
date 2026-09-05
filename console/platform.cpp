@@ -5,6 +5,7 @@
 #include <circle/timer.h>
 #include <circle/screen.h>
 #include <circle/bcmframebuffer.h>
+#include <circle/startup.h>
 
 static CKernel *s_kernel;
 
@@ -124,6 +125,23 @@ static int plat_read_line(char *buf, unsigned maxn, int hide)
 	return s_kernel->ReadLine(buf, maxn, hide);
 }
 
+static void plat_poll_input(void)
+{
+	if (!s_kernel || !mmb_is_running())
+		return;
+	s_kernel->PollInputChars(mmb_break_key());
+}
+
+static int plat_take_break(void)
+{
+	return s_kernel ? s_kernel->TakeBreak() : 0;
+}
+
+static void plat_reboot(void)
+{
+	reboot();
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -140,5 +158,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.free = plat_free;
 	plat.millis = plat_millis;
 	plat.read_line = plat_read_line;
+	plat.poll_input = plat_poll_input;
+	plat.take_break = plat_take_break;
+	plat.reboot = plat_reboot;
 	mmb_init(&plat);
 }

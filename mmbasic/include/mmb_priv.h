@@ -473,6 +473,8 @@ int mmb_net_tcp_recv(void *data, unsigned maxn);
 void mmb_net_tcp_close(void);
 
 void mmb_cmd_connect(void);
+void mmb_cmd_reboot(void);
+void mmb_check_break(void);
 int mmb_in_connect(void);
 const char *mmb_connect_key(char c);
 void mmb_connect_poll(void);

@@ -14,6 +14,7 @@ CKernel::CKernel (void)
 	m_Storage (&m_Interrupt, &m_Timer, &m_ActLED),
 	m_pKeyboard (0),
 	m_pKbdBuf (0),
+	m_nBreak (0),
 	m_nLen (0),
 	m_nEsc (0)
 {
@@ -67,6 +68,55 @@ void CKernel::AttachKeyboard (void)
 
 	m_pKeyboard->RegisterRemovedHandler (KeyboardRemovedHandler, this);
 	m_pKbdBuf = new CKeyboardBuffer (m_pKeyboard);
+	/* Mixed mode: cooked keys still fill the buffer; raw sees PrtScr (HID 0x46). */
+	m_pKeyboard->RegisterKeyStatusHandlerRaw (KeyStatusHandlerRaw, TRUE, this);
+}
+
+void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
+				   const unsigned char RawKeys[6], void *pArg)
+{
+	CKernel *pThis = (CKernel *) pArg;
+	unsigned i;
+	(void) ucModifiers;
+	if (pThis == 0)
+		return;
+	for (i = 0; i < 6; i++)
+	{
+		/* USB HID: 0x46 Print Screen, 0x48 Pause/Break */
+		if (RawKeys[i] == 0x46 || RawKeys[i] == 0x48)
+			pThis->m_nBreak = 1;
+	}
+}
+
+void CKernel::PollInputChars (int breakKey)
+{
+	char tmp[32];
+	int nBytes, i;
+
+	AttachKeyboard ();
+	nBytes = m_Serial.Read (tmp, sizeof tmp);
+	if (nBytes < 0)
+		nBytes = 0;
+	if (m_pKbdBuf != 0)
+	{
+		int nKbd = m_pKbdBuf->Read (tmp + nBytes,
+					    sizeof tmp - (size_t) nBytes);
+		if (nKbd > 0)
+			nBytes += nKbd;
+	}
+	for (i = 0; i < nBytes; i++)
+	{
+		unsigned char c = (unsigned char) tmp[i];
+		if (breakKey && c == (unsigned char) breakKey)
+			m_nBreak = 1;
+	}
+}
+
+int CKernel::TakeBreak (void)
+{
+	int v = m_nBreak;
+	m_nBreak = 0;
+	return v;
 }
 
 void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
@@ -230,11 +280,16 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 			if (nKbd > 0)
 				nBytes += nKbd;
 		}
+		if (TakeBreak ())
+			return -2;
 		if (nBytes <= 0)
 			continue;
 		for (i = 0; i < nBytes; i++)
 		{
 			char c = tmp[i];
+			int bk = mmb_break_key ();
+			if ((bk && (unsigned char) c == (unsigned char) bk) || TakeBreak ())
+				return -2;
 			if (c == '\r' || c == '\n')
 			{
 				buf[n] = 0;

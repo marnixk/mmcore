@@ -35,12 +35,16 @@ public:
 	CScreenDevice &Screen (void) { return m_Screen; }
 	CSerialDevice &Serial (void) { return m_Serial; }
 	int ReadLine (char *buf, unsigned maxn, int hide);
+	void PollInputChars (int breakKey);
+	int TakeBreak (void);
 
 private:
 	void AttachKeyboard (void);
 	void ProcessChar (char c, char *Line, unsigned *pLen);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
+	static void KeyStatusHandlerRaw (unsigned char ucModifiers,
+					 const unsigned char RawKeys[6], void *pArg);
 
 private:
 	// do not change this order
@@ -58,6 +62,7 @@ private:
 
 	CUSBKeyboardDevice	* volatile m_pKeyboard;
 	CKeyboardBuffer		*m_pKbdBuf;
+	volatile int		m_nBreak;
 	char			m_Line[256];
 	unsigned		m_nLen;
 	int			m_nEsc;
