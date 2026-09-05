@@ -230,6 +230,7 @@ void mmb_cmd_if(void);
 void mmb_cmd_for(void);
 void mmb_cmd_next(void);
 void mmb_cmd_option(void);
+void mmb_cmd_help(void);
 void mmb_cmd_graphics(const char *kw);
 void mmb_cmd_files(const char *kw);
 void mmb_cmd_play(void);
