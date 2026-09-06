@@ -300,6 +300,15 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
+	if (mmb_in_ihelp ())
+	{
+		const char *out = mmb_ihelp_key (c);
+		emit (this, out);
+		if (!mmb_in_ihelp ())
+			emit (this, "> ");
+		return;
+	}
+
 	if (mmb_in_connect ())
 	{
 		const char *out = mmb_connect_key (c);
@@ -385,6 +394,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		else if (mmb_in_files ())
 		{
 			/* Dual-pane TUI already streamed to HDMI/serial. */
+		}
+		else if (mmb_in_ihelp ())
+		{
+			/* Interactive HELP TUI already streamed to HDMI/serial. */
 		}
 		else if (mmb_in_connect ())
 		{

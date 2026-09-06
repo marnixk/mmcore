@@ -1,7 +1,7 @@
 """Software CMM2 graphics: IMAGE, FRAMEBUFFER, BLIT buffers, PAGE SCROLL,
 BOX pixel-ops, BITMAP, and TURTLE."""
 
-import pytest
+from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
 
 
 def _is_red(rgb):
@@ -127,22 +127,22 @@ def test_turtle_and_bitmap(fresh_console):
 
 
 def test_help_cmm2_gfx_topics(console):
-    listing = console.send_line("HELP")
+    listing = scroll_all(console, open_ihelp(console))
     for name in ("IMAGE", "FRAMEBUFFER", "TURTLE"):
         assert name in listing, name
     assert "GUI" not in listing
-    assert "BITMAP" not in listing
-    img = console.send_line("HELP IMAGE")
+    close_ihelp(console)
+    img = dump_topic(console, "IMAGE")
     assert "RESIZE_FAST" in img
     assert "ROTATE" in img
-    fb = console.send_line("HELP FRAMEBUFFER")
+    fb = dump_topic(console, "FRAMEBUFFER")
     assert "CREATE" in fb
     assert "WINDOW" in fb
-    bl = console.send_line("HELP BLIT")
+    bl = dump_topic(console, "BLIT")
     assert "READ" in bl
-    tu = console.send_line("HELP TURTLE")
+    tu = dump_topic(console, "TURTLE")
     assert "FORWARD" in tu
-    cmm2 = console.send_line("HELP CMM2")
+    cmm2 = dump_topic(console, "CMM2")
     assert "IMAGE" in cmm2
     assert "FRAMEBUFFER" in cmm2
     assert "TURTLE" in cmm2

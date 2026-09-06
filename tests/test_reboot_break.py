@@ -2,17 +2,20 @@
 
 import time
 
+from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
+
 
 def test_help_reboot(console):
-    listing = console.send_line("HELP")
+    listing = scroll_all(console, open_ihelp(console))
     assert "REBOOT" in listing
-    out = console.send_line("HELP REBOOT")
+    close_ihelp(console)
+    out = dump_topic(console, "REBOOT")
     assert out != "?SYNTAX ERROR"
     assert "REBOOT" in out
     assert "reset" in out.lower() or "watchdog" in out.lower()
-    alias = console.send_line("HELP RESTART")
+    alias = dump_topic(console, "RESTART")
     assert "REBOOT" in alias
-    run = console.send_line("HELP RUN")
+    run = dump_topic(console, "RUN")
     assert "PrtScr" in run or "Print Screen" in run
     assert "BREAK" in run
 

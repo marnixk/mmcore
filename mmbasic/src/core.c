@@ -2095,7 +2095,7 @@ static void exec_statement(void)
 		do_let();
 		return;
 	}
-	if (mmb_match("HELP"))
+	if (mmb_match("IHELP") || mmb_match("HELP"))
 	{
 		mmb_cmd_help();
 		return;

@@ -81,8 +81,11 @@ def test_line_input_console(fresh_console):
     assert "abc def" in out
 
 
+from ihelp_util import dump_topic
+
+
 def test_help_input_describes_console(console):
-    out = console.send_line("HELP INPUT")
+    out = dump_topic(console, "INPUT")
     assert "not implemented" not in out.lower()
     assert "prompt" in out.lower()
     assert "INPUT" in out

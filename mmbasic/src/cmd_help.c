@@ -62,20 +62,25 @@ static const char kIndexBasic[] =
 
 static const char kHelpHelp[] =
 	"HELP\n"
+	"IHELP\n"
 	"HELP command\n"
+	"IHELP command\n"
 	"HELP BASIC\n"
 	"HELP BASIC construct\n"
 	"\n"
-	"Show built-in help. Keywords are case-insensitive\n"
-	"(help, HELP, Help CLS all work).\n"
+	"Open interactive help (QuickBASIC-style). HELP and\n"
+	"IHELP are the same command. Keywords are\n"
+	"case-insensitive (help, HELP, Help CLS, ihelp).\n"
 	"\n"
-	"HELP lists commands that have help text.\n"
-	"HELP command shows syntax and details.\n"
-	"HELP BASIC lists language constructs.\n"
-	"HELP BASIC construct (or HELP construct)\n"
-	"shows syntax, notes, and short examples.\n"
+	"HELP opens the topic Index. HELP command (or\n"
+	"IHELP command) opens that topic. Escape returns to\n"
+	"the Index on that command; Escape again quits.\n"
+	"HELP BASIC opens the Contents overview.\n"
 	"\n"
-	"Unknown topics print a message; they do not raise\n"
+	"Move with arrows, Page Up, and Page Down.\n"
+	"Enter follows a <link>. Escape goes back.\n"
+	"\n"
+	"Unknown topics stay on the Index; they do not raise\n"
 	"?SYNTAX ERROR.";
 
 static const char kHelpCls[] =
@@ -1261,6 +1266,7 @@ static const struct {
 	const char *alias;
 	const char *canon;
 } kAlias[] = {
+	{ "IHELP",        "HELP" },
 	{ "COLOR",        "COLOUR" },
 	{ "RESTART",      "REBOOT" },
 	{ "AUDIO",        "AUDIO_TARGET" },
@@ -1445,37 +1451,94 @@ static void read_topic(char *dst, int dstsz)
 	dst[n] = 0;
 }
 
+int mmb_help_topic_count(void)
+{
+	return (int)(sizeof(kTopics) / sizeof(kTopics[0]));
+}
+
+const char *mmb_help_topic_name(int i)
+{
+	int n = mmb_help_topic_count();
+	if (i < 0 || i >= n)
+		return "";
+	return kTopics[i].name;
+}
+
+const char *mmb_help_topic_text(int i)
+{
+	int n = mmb_help_topic_count();
+	if (i < 0 || i >= n)
+		return "";
+	return kTopics[i].text;
+}
+
+int mmb_help_topic_kind(int i)
+{
+	int n = mmb_help_topic_count();
+	if (i < 0 || i >= n)
+		return 0;
+	return kTopics[i].kind;
+}
+
+int mmb_help_lookup(const char *name)
+{
+	const help_topic *t;
+	if (!name || !name[0])
+		return -1;
+	t = find_topic(name);
+	if (!t)
+		return -1;
+	return (int)(t - kTopics);
+}
+
+int mmb_help_alias_count(void)
+{
+	return (int)(sizeof(kAlias) / sizeof(kAlias[0]));
+}
+
+const char *mmb_help_alias_name(int i)
+{
+	int n = mmb_help_alias_count();
+	if (i < 0 || i >= n)
+		return "";
+	return kAlias[i].alias;
+}
+
+const char *mmb_help_alias_canon(int i)
+{
+	int n = mmb_help_alias_count();
+	if (i < 0 || i >= n)
+		return "";
+	return kAlias[i].canon;
+}
+
+const char *mmb_help_commands_overview(void)
+{
+	return kIndexCommands;
+}
+
+const char *mmb_help_basic_overview(void)
+{
+	return kIndexBasic;
+}
+
 void mmb_cmd_help(void)
 {
 	char topic[48];
-	const help_topic *t;
 
 	if (at_end())
 	{
-		mmb_out(kIndexCommands);
+		mmb_ihelp_open("");
 		return;
 	}
 	if (mmb_match("BASIC"))
 	{
 		if (at_end())
 		{
-			mmb_out(kIndexBasic);
+			mmb_ihelp_open("BASIC");
 			return;
 		}
 	}
 	read_topic(topic, sizeof(topic));
-	if (!topic[0])
-	{
-		mmb_out(kIndexCommands);
-		return;
-	}
-	t = find_topic(topic);
-	if (!t)
-	{
-		mmb_out("Unknown topic: ");
-		mmb_out(topic);
-		mmb_out("\nType HELP for commands, HELP BASIC for language.");
-		return;
-	}
-	mmb_out(t->text);
+	mmb_ihelp_open(topic);
 }
