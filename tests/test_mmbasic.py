@@ -239,7 +239,40 @@ def test_goto_gosub(console):
     assert console.send_line("RUN") == "42"
 
 
-def test_while_wend(console):
+def test_print_flushes_in_goto_loop(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 PRINT "hi"') == ""
+    assert console.send_line("20 GOTO 10") == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"RUN\r")
+    raw = console.drain(quiet=0.4).decode(errors="replace")
+    assert "hi" in raw
+    console._ser.sendall(bytes([3]))
+    after = console.drain(quiet=0.8).decode(errors="replace")
+    assert "BREAK" in after.upper() or ">" in after
+    assert console.send_line("PRINT 1") == "1"
+
+
+def test_print_flushes_label_goto_file(console):
+    assert console.send_line('OPEN "LP.BAS" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "mylabel:"') == ""
+    assert console.send_line('PRINT #1, "PRINT ";CHR$(34);"hi";CHR$(34)') == ""
+    assert console.send_line('PRINT #1, "GOTO mylabel"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b'RUN "LP.BAS"\r')
+    raw = console.drain(quiet=0.4).decode(errors="replace")
+    assert "hi" in raw
+    console._ser.sendall(bytes([3]))
+    after = console.drain(quiet=0.8).decode(errors="replace")
+    assert "BREAK" in after.upper() or ">" in after
+    assert console.send_line("PRINT 1") == "1"
+
+
+def test_print_run_once_not_duplicated(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 PRINT "hi"') == ""
+    assert console.send_line("RUN") == "hi"
     assert console.send_line("NEW") == ""
     assert console.send_line("10 I=0") == ""
     assert console.send_line("20 WHILE I<3") == ""

@@ -1458,14 +1458,14 @@ void mmb_cmd_print(void)
 {
 	int first = 1;
 	int no_nl = 0;
+	int start = G.outn;
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == '\'' || *G.p == ':')
-	{
 		mmb_out("\n");
-		return;
-	}
-	while (*G.p && *G.p != ':' && *G.p != '\'')
+	else
 	{
+		while (*G.p && *G.p != ':' && *G.p != '\'')
+		{
 		mmb_val v;
 		mmb_skip_sp();
 		if (*G.p == '#' )
@@ -1536,9 +1536,17 @@ void mmb_cmd_print(void)
 		}
 		no_nl = 0;
 		break;
+		}
+		if (!no_nl)
+			mmb_out("\n");
 	}
-	if (!no_nl)
-		mmb_out("\n");
+	if (G.running && G.outn > start)
+	{
+		G.out[G.outn] = 0;
+		mmb_console_write(G.out + start);
+		G.outn = start;
+		G.out[G.outn] = 0;
+	}
 }
 
 static void do_let(void)

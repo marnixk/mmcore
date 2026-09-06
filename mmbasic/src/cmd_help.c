@@ -109,7 +109,9 @@ static const char kHelpPrint[] =
 	"with PRINT #fn. PRINT always ends with a newline\n"
 	"unless the statement ends with ; . A comma inserts\n"
 	"a space between items. Bare PRINT prints a blank\n"
-	"line.\n"
+	"line. While a program is running, each PRINT is\n"
+	"sent to the console immediately (a GOTO loop still\n"
+	"shows output).\n"
 	"\n"
 	"Example:  PRINT 6*7\n"
 	"          PRINT #1, \"HELLO\"";
