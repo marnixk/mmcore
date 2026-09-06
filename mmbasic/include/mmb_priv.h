@@ -117,7 +117,7 @@ typedef struct mmb_options {
 	char wifi_psk[64];
 	int wifi_enabled;
 	int wifi_debug;        /* OPTION WIFI DEBUG ON|OFF (default OFF) */
-	char wifi_country[4];  /* ISO 3166-1 alpha-2, default US */
+	char wifi_country[4];  /* ISO 3166-1 alpha-2 Circle accepts; default US */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " */
@@ -520,6 +520,7 @@ int mmb_wlan_connect(const char *ssid, const char *psk);
 int mmb_wlan_status(void);
 void mmb_wlan_poll(void);
 void mmb_wlan_apply_country(void);
+int mmb_wifi_country_normalize(const char *s, char out[3]);
 
 int mmb_net_available(void);
 int mmb_net_tcp_open(const char *host, int port);

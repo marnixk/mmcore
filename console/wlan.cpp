@@ -149,6 +149,21 @@ static int wait_dhcp(unsigned ms)
 	return s_net->IsRunning() ? 1 : 0;
 }
 
+static int apply_radio_country(void)
+{
+	const char *cc = mmb_opt_wifi_country();
+
+	if (!s_wlan)
+		return 0;
+	if (!s_wlan->Control("country %s", cc))
+	{
+		wlan_log("radio country %s rejected", cc);
+		return 0;
+	}
+	wlan_log("radio country %s", cc);
+	return 1;
+}
+
 static int wlan_ensure(void)
 {
 	if (s_tried)
@@ -176,6 +191,8 @@ static int wlan_ensure(void)
 		return 0;
 	}
 	wlan_log("radio up");
+	if (!apply_radio_country())
+		wlan_log("country apply failed; join needs a Circle-accepted code");
 	s_net = new CNetSubSystem(0, 0, 0, 0, "mmbasic", NetDeviceTypeWLAN);
 	if (!s_net)
 		wlan_log("net stack alloc failed");
@@ -327,6 +344,8 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 
 	if (!wlan_ensure() || !s_wlan || maxn <= 0)
 		return 0;
+	if (!apply_radio_country())
+		return 0;
 	wlan_log("scan start (5s escan)");
 	s_wlan->Control("escan 5");
 	start = CTimer::GetClockTicks();
@@ -358,6 +377,8 @@ int mmb_wlan_start(const char *ssid, const char *psk)
 	if (!ssid || !ssid[0])
 		return -1;
 	if (!wlan_ensure() || !s_wlan)
+		return -1;
+	if (!apply_radio_country())
 		return -1;
 	if (!psk || !psk[0])
 	{
@@ -403,7 +424,11 @@ int mmb_wlan_status(void)
 
 void mmb_wlan_apply_country(void)
 {
-	if (s_last_ssid[0])
+	if (s_wlan && !apply_radio_country())
+		return;
+	if (s_last_ssid[0] && s_wpa)
+		start_wpa(s_last_ssid, s_last_psk);
+	else if (s_last_ssid[0])
 		write_wpa_conf(s_last_ssid, s_last_psk);
 }
 

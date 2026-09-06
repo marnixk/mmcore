@@ -221,19 +221,11 @@ static void parse_wifi_interactive(void)
 
 static int wifi_country_set(const char *s)
 {
-	char a, b;
-	if (!s || !s[0] || !s[1] || s[2])
+	char cc[3];
+	if (!mmb_wifi_country_normalize(s, cc))
 		return 0;
-	a = s[0];
-	b = s[1];
-	if (a >= 'a' && a <= 'z')
-		a = (char)(a - 32);
-	if (b >= 'a' && b <= 'z')
-		b = (char)(b - 32);
-	if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z')
-		return 0;
-	G.opt.wifi_country[0] = a;
-	G.opt.wifi_country[1] = b;
+	G.opt.wifi_country[0] = cc[0];
+	G.opt.wifi_country[1] = cc[1];
 	G.opt.wifi_country[2] = 0;
 	return 1;
 }

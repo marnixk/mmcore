@@ -271,12 +271,13 @@ static void apply_wifi(const char *k, const char *v)
 		G.opt.wifi_debug = parse_int(v);
 	else if (mmb_keyword_eq(k, "country"))
 	{
-		strncpy(G.opt.wifi_country, v, sizeof(G.opt.wifi_country) - 1);
-		G.opt.wifi_country[sizeof(G.opt.wifi_country) - 1] = 0;
-		if (G.opt.wifi_country[0] >= 'a' && G.opt.wifi_country[0] <= 'z')
-			G.opt.wifi_country[0] = (char)(G.opt.wifi_country[0] - 32);
-		if (G.opt.wifi_country[1] >= 'a' && G.opt.wifi_country[1] <= 'z')
-			G.opt.wifi_country[1] = (char)(G.opt.wifi_country[1] - 32);
+		char cc[3];
+		if (mmb_wifi_country_normalize(v, cc))
+		{
+			G.opt.wifi_country[0] = cc[0];
+			G.opt.wifi_country[1] = cc[1];
+			G.opt.wifi_country[2] = 0;
+		}
 	}
 }
 

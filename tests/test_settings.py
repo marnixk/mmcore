@@ -140,12 +140,19 @@ def test_option_wifi_country_persists(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "USA"').upper()
     assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "00"').upper()
+    assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "ZZ"').upper()
+    assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "WW"').upper()
     assert console.send_line('OPTION WIFI COUNTRY "nz"') == ""
     listed = console.send_line("OPTION LIST")
     assert "WIFI COUNTRY" in listed
     assert "NZ" in listed
     ini = _read_ini(console)
     assert "country=NZ" in ini
+    assert console.send_line('OPTION WIFI COUNTRY "uk"') == ""
+    listed = console.send_line("OPTION LIST")
+    assert "GB" in listed
+    ini = _read_ini(console)
+    assert "country=GB" in ini
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     all_listed = console.send_line("OPTION LIST ALL")
     assert "WIFI COUNTRY" in all_listed

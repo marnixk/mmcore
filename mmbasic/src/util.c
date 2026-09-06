@@ -427,6 +427,58 @@ const char *mmb_opt_wifi_country(void)
 	return "US";
 }
 
+/* Circle hostap driver_circle.cpp: associate is refused unless the
+ * country is on this list. UK is not listed; GB is. */
+static const char k_wifi_countries[][3] = {
+	"AD","AE","AF","AI","AL","AM","AN","AR","AS","AT","AU","AW","AZ",
+	"BA","BB","BD","BE","BF","BG","BH","BL","BM","BN","BO","BR","BS",
+	"BT","BY","BZ","CA","CF","CH","CI","CL","CN","CO","CR","CU","CX",
+	"CY","CZ","DE","DK","DM","DO","DZ","EC","EE","EG","ES","ET","FI",
+	"FM","FR","GB","GD","GE","GF","GH","GL","GP","GR","GT","GU","GY",
+	"HK","HN","HR","HT","HU","ID","IE","IL","IN","IR","IS","IT","JM",
+	"JO","JP","KE","KH","KN","KP","KR","KW","KY","KZ","LB","LC","LI",
+	"LK","LS","LT","LU","LV","MA","MC","MD","ME","MF","MH","MK","MN",
+	"MO","MP","MQ","MR","MT","MU","MV","MW","MX","MY","NG","NI","NL",
+	"NO","NP","NZ","OM","PA","PE","PF","PG","PH","PK","PL","PM","PR",
+	"PT","PW","PY","QA","RE","RO","RS","RU","RW","SA","SE","SG","SI",
+	"SK","SN","SR","SV","SY","TC","TD","TG","TH","TN","TR","TT","TW",
+	"TZ","UA","UG","US","UY","UZ","VC","VE","VI","VN","VU","WF","WS",
+	"YE","YT","ZA","ZW"
+};
+
+int mmb_wifi_country_normalize(const char *s, char out[3])
+{
+	char a, b;
+	unsigned i;
+
+	if (!s || !s[0] || !s[1] || s[2] || !out)
+		return 0;
+	a = s[0];
+	b = s[1];
+	if (a >= 'a' && a <= 'z')
+		a = (char)(a - 32);
+	if (b >= 'a' && b <= 'z')
+		b = (char)(b - 32);
+	if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z')
+		return 0;
+	if (a == 'U' && b == 'K')
+	{
+		a = 'G';
+		b = 'B';
+	}
+	for (i = 0; i < sizeof k_wifi_countries / sizeof k_wifi_countries[0]; i++)
+	{
+		if (k_wifi_countries[i][0] == a && k_wifi_countries[i][1] == b)
+		{
+			out[0] = a;
+			out[1] = b;
+			out[2] = 0;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static const int k_mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 static int parse_int_part(const char **ps)
