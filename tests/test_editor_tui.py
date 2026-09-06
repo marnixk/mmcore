@@ -396,3 +396,83 @@ def test_editor_typing_replaces_selection(kernel_image):
         assert _read_bas(con, "SELTYP.BAS") == "XLLO"
     finally:
         con.stop()
+
+
+def _seed_switcher_tree(con):
+    assert con.send_line('MKDIR "SWP"') == ""
+    assert con.send_line('CHDIR "SWP"') == ""
+    assert con.send_line('OPEN "MAIN.BAS" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "PRINT 11"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('MKDIR "NEST"') == ""
+    assert con.send_line('OPEN "NEST/CHILD.BAS" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "PRINT 22"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_editor_ctrl_p_lists_recursive_files(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_switcher_tree(con)
+        _edit(con, "MAIN.BAS")
+        seen = _keys(con, bytes([16]))
+        assert "Quick open" in seen
+        assert "MAIN.BAS" in seen
+        assert "CHILD.BAS" in seen or "NEST/CHILD" in seen
+        _keys(con, b"\x1b\x1b")
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_switcher_tree(con)
+        seen = _edit(con, "MAIN.BAS")
+        assert "MAIN" in seen
+        _keys(con, bytes([16]))
+        opened = _keys(con, b"\x1b[B\r")
+        assert "MAIN" in opened
+        assert "CHILD" in opened
+        _quit(con)
+        listing = con.send_line("DIR")
+        assert "MAIN.BAS" in listing
+        assert "22" in con.send_line('RUN "NEST/CHILD.BAS"')
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_p_reuses_existing_tab(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_switcher_tree(con)
+        _edit(con, "MAIN.BAS")
+        _keys(con, bytes([16]))
+        _keys(con, b"\x1b[B\r")
+        both = _keys(con, bytes([16]))
+        assert "MAIN.BAS" in both and ("CHILD" in both or "NEST" in both)
+        back = _keys(con, b"\r")
+        assert "MAIN" in back
+        assert "CHILD" in back
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_p_filter_then_enter(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_switcher_tree(con)
+        _edit(con, "MAIN.BAS")
+        _keys(con, bytes([16]))
+        opened = _keys(con, b"CHILD\r")
+        assert "CHILD" in opened
+        _quit(con)
+        assert "22" in con.send_line('RUN "NEST/CHILD.BAS"')
+    finally:
+        con.stop()

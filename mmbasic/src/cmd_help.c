@@ -461,6 +461,7 @@ static const char kHelpEdit[] =
 	"      ^Ins copy  Shift+Del cut  Shift+Ins paste\n"
 	"      Del erases the selection (no clipboard)\n"
 	"      Tab inserts 4 spaces   Enter copies line indent\n"
+	"      ^P quick open (files under the start folder)\n"
 	"      Alt+1..9 switch tabs\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
