@@ -78,6 +78,17 @@ static void emit (CKernel *k, const char *s)
 		emit_n (k, s, (unsigned) strlen (s));
 }
 
+static void emit_prompt (CKernel *k)
+{
+	emit (k, mmb_prompt ());
+}
+
+static void emit_nl_prompt (CKernel *k)
+{
+	emit (k, "\r\n");
+	emit_prompt (k);
+}
+
 void CKernel::AttachKeyboard (void)
 {
 	if (m_pKeyboard != 0)
@@ -326,10 +337,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 			{
 				emit (this, mmb_files_on_editor_exit ());
 				if (!mmb_in_files ())
-					emit (this, "> ");
+					emit_prompt (this);
 			}
 			else
-				emit (this, "> ");
+				emit_prompt (this);
 		}
 		return;
 	}
@@ -339,7 +350,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *out = mmb_files_key (c);
 		emit (this, out);
 		if (!mmb_in_files () && !mmb_in_editor ())
-			emit (this, "> ");
+			emit_prompt (this);
 		return;
 	}
 
@@ -348,7 +359,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *out = mmb_ihelp_key (c);
 		emit (this, out);
 		if (!mmb_in_ihelp ())
-			emit (this, "> ");
+			emit_prompt (this);
 		return;
 	}
 
@@ -358,7 +369,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		if (out && out[0])
 			emit (this, out);
 		if (!mmb_in_connect ())
-			emit (this, "> ");
+			emit_prompt (this);
 		return;
 	}
 
@@ -432,7 +443,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		else if (mmb_take_home_prompt ())
 		{
 			emit (this, Result);
-			emit (this, "> ");
+			emit_prompt (this);
 		}
 		else if (mmb_in_files ())
 		{
@@ -448,12 +459,12 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 				emit (this, Result);
 		}
 		else if (!Result || !Result[0])
-			emit (this, "\r\n> ");
+			emit_nl_prompt (this);
 		else
 		{
 			emit (this, "\r\n");
 			emit (this, Result);
-			emit (this, "\r\n> ");
+			emit_nl_prompt (this);
 		}
 		*pLen = 0;
 	}
@@ -468,7 +479,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	else if (c == 3)
 	{
 		*pLen = 0;
-		emit (this, "\r\n> ");
+		emit_nl_prompt (this);
 	}
 	else if (c == '\t' || (unsigned char) c < 32)
 	{
@@ -543,8 +554,9 @@ TShutdownMode CKernel::Run (void)
 {
 	m_Logger.Write (FromKernel, LogNotice, "console ready");
 
-	const char Banner[] = "MMBASIC-CONSOLE READY\r\n> ";
+	const char Banner[] = "MMBASIC-CONSOLE READY\r\n";
 	emit_n (this, Banner, sizeof (Banner) - 1);
+	emit_prompt (this);
 
 	AttachKeyboard ();
 

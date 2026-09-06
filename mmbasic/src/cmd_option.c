@@ -498,6 +498,16 @@ static void option_dispatch(void)
 		G.opt.pin = (int)mmb_as_int(mmb_expr());
 		return;
 	}
+	if (mmb_match("PROMPT"))
+	{
+		if (mmb_match("BARE"))
+			G.opt.prompt = 0;
+		else if (mmb_match("CWD"))
+			G.opt.prompt = 1;
+		else
+			mmb_syntax();
+		return;
+	}
 	if (mmb_match("PROFILING"))
 	{
 		G.opt.profiling = onoff();
@@ -948,6 +958,8 @@ void mmb_option_list(int all)
 	}
 	if (all || G.opt.pin)
 		ol_line_int(&n, "OPTION PIN ", G.opt.pin);
+	if (all || G.opt.prompt)
+		ol_line(&n, G.opt.prompt ? "OPTION PROMPT CWD" : "OPTION PROMPT BARE");
 	if (all || G.opt.profiling)
 		ol_line(&n, G.opt.profiling ? "OPTION PROFILING ON" : "OPTION PROFILING OFF");
 	if (all || G.opt.ram_prog || (!G.opt.ram_prog && G.opt.flash_page))

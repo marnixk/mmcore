@@ -573,6 +573,7 @@ static const char kHelpOption[] =
 	"  CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE\n"
 	"  LEGACY ON|OFF     MILLISECONDS ON|OFF\n"
 	"  MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF\n"
+	"  PROMPT BARE|CWD   (BARE is \"> \"; CWD is DOS $p$g)\n"
 	"  RAM   FLASH [page]     STATUS ON|OFF\n"
 	"  VCC n    SLEEP n    SD TIMING FAST|NORMAL\n"
 	"  SERIAL PULLUP ENABLE|DISABLE\n"

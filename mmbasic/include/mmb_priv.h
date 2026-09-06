@@ -120,6 +120,7 @@ typedef struct mmb_options {
 	char wifi_country[4];  /* ISO 3166-1 alpha-2, default US */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
+	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " */
 } mmb_options;
 
 typedef struct mmb_file {
