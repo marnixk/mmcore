@@ -907,6 +907,8 @@ void mmb_cmd_save(void)
 	out[pos] = 0;
 	mmb_vfs_write(fname, out, pos, 0);
 	G.plat->free(out);
+	strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
+	G.current_prog[sizeof(G.current_prog) - 1] = 0;
 }
 
 void mmb_cmd_seek(void)
@@ -1735,9 +1737,25 @@ void mmb_cmd_end(void)
 	G.running = 0;
 }
 
+static void load_prog_from_disk(const char *name)
+{
+	char fname[128];
+	int auto_n = 10;
+	strncpy(fname, name, sizeof(fname) - 1);
+	fname[sizeof(fname) - 1] = 0;
+	if (!strchr(fname, '.'))
+		strncat(fname, ".BAS", sizeof(fname) - strlen(fname) - 1);
+	strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
+	G.current_prog[sizeof(G.current_prog) - 1] = 0;
+	G.nprog = 0;
+	chdir_to_file(fname);
+	load_basic_file(fname, &auto_n, 0);
+}
+
 void mmb_cmd_run(void)
 {
 	char fname[128];
+	int from_disk = 0;
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
@@ -1747,6 +1765,7 @@ void mmb_cmd_run(void)
 			if (v.type != T_STR)
 				mmb_syntax();
 			strncpy(fname, v.s, sizeof(fname) - 1);
+			fname[sizeof(fname) - 1] = 0;
 		}
 		else
 		{
@@ -1755,16 +1774,16 @@ void mmb_cmd_run(void)
 				fname[n++] = *G.p++;
 			fname[n] = 0;
 		}
-		if (!strchr(fname, '.'))
-			strncat(fname, ".BAS", sizeof(fname) - strlen(fname) - 1);
-		{
-			int auto_n = 10;
-			strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
-			G.nprog = 0;
-			chdir_to_file(fname);
-			load_basic_file(fname, &auto_n, 0);
-		}
+		from_disk = 1;
 	}
+	else if (G.current_prog[0])
+	{
+		strncpy(fname, G.current_prog, sizeof(fname) - 1);
+		fname[sizeof(fname) - 1] = 0;
+		from_disk = 1;
+	}
+	if (from_disk)
+		load_prog_from_disk(fname);
 	run_program();
 }
 
