@@ -39,6 +39,7 @@ static const char kIndexCommands[] =
 	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
 	"  OPTION WIFI                    scan and prompt\n"
 	"  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)\n"
+	"  OPTION WIFI COUNTRY \"NZ\"       ISO domain (default US)\n"
 	"  Credentials persist in C:/.mmbasic.ini (A: if no SD).\n"
 	"  Scan lists beacon SSIDs. WPA2 join needs C: and\n"
 	"  C:/firmware/. QEMU has no radio. HELP OPTION.\n"
@@ -399,6 +400,7 @@ static const char kHelpPlay[] =
 	"PLAY VOLUME left [, right]\n"
 	"PLAY TONE left, right [, duration]\n"
 	"PLAY MP3 file$\n"
+	"PLAY WAV file$\n"
 	"PLAY MODFILE file$     (PLAY MOD file$)\n"
 	"PLAY XM file$          (PLAY XMFILE file$)\n"
 	"\n"
@@ -415,6 +417,7 @@ static const char kHelpPlay[] =
 	"run in real time.\n"
 	"\n"
 	"Example:  OPTION AUDIO_TARGET HDMI\n"
+	"          PLAY WAV \"TEST.WAV\"\n"
 	"          PLAY MP3 \"TEST.MP3\"\n"
 	"          PRINT PLAYING()";
 
@@ -533,18 +536,20 @@ static const char kHelpList[] =
 	"List the program in memory with line numbers.";
 
 static const char kHelpInput[] =
+	"INPUT [prompt$;|,] var [, var...]\n"
 	"INPUT #n, var [, var...]\n"
-	"INPUT var [, var...]\n"
+	"LINE INPUT [prompt$] var$\n"
 	"LINE INPUT #fn, var$\n"
 	"\n"
-	"INPUT #n reads comma-separated values from an open\n"
-	"file. Without #n, INPUT stores an empty value\n"
-	"(typed console INPUT is not implemented).\n"
-	"LINE INPUT reads a whole file line into a string.\n"
+	"Console INPUT prints an optional prompt, then ?\n"
+	"if the prompt is followed by ; (or if there is no\n"
+	"prompt). A comma after the prompt skips the ?.\n"
+	"Type a line; comma-separated fields fill the vars.\n"
+	"INPUT #n reads those fields from an open file.\n"
+	"LINE INPUT reads a whole line into a string.\n"
 	"\n"
-	"Example:  OPEN \"N.TXT\" FOR INPUT AS #1\n"
-	"          INPUT #1, N\n"
-	"          CLOSE #1";
+	"Example:  INPUT \"Name\"; N$\n"
+	"          PRINT N$";
 
 static const char kHelpOption[] =
 	"OPTION setting ...\n"
@@ -581,9 +586,13 @@ static const char kHelpOption[] =
 	"    Lists printable SSIDs from the CYW4343x escan\n"
 	"    result, not random bytes in the scan blob.\n"
 	"    With args: store credentials in .mmbasic.ini\n"
-	"    and join with WPA2 (country=US required by the\n"
-	"    Circle driver). Hardware images ship C:/firmware/.\n"
+	"    and join with WPA2. Circle needs a 2-letter ISO\n"
+	"    country (default US). OPTION WIFI COUNTRY \"NZ\"\n"
+	"    persists in the INI and wpa_supplicant.conf.\n"
+	"    Hardware images ship C:/firmware/.\n"
 	"    QEMU has no Wi-Fi radio.\n"
+	"  WIFI COUNTRY \"XX\"\n"
+	"    Regulatory domain (A-Z A-Z). Default US.\n"
 	"  WIFI DEBUG ON|OFF\n"
 	"    Print [wifi] progress on HDMI and serial.\n"
 	"    Default OFF. The PSK is never printed.\n"
@@ -592,6 +601,7 @@ static const char kHelpOption[] =
 	"FACTORY_RESET restores defaults and rewrites the INI.\n"
 	"\n"
 	"Example:  OPTION BASE 1\n"
+	"          OPTION WIFI COUNTRY \"NZ\"\n"
 	"          OPTION WIFI \"MyNet\",\"secret\"\n"
 	"          OPTION WIFI DEBUG ON\n"
 	"          OPTION LIST";
@@ -618,7 +628,8 @@ static const char kHelpConnect[] =
 	"\n"
 	"QEMU has no network device; CONNECT then reports\n"
 	"that the network is not available and returns to\n"
-	"the prompt.\n"
+	"the prompt. On hardware, wait for Wi-Fi/DHCP first\n"
+	"(OPTION WIFI), then CONNECT uses Circle TCP.\n"
 	"\n"
 	"Example:  CONNECT \"192.168.1.10\", 23";
 
@@ -785,9 +796,6 @@ static const char kHelpCmm2[] =
 	"  POKE PEEK SPI VAR\n"
 	"  WATCHDOG WII XMODEM COM GPS 1-WIRE\n"
 	"  UPDATE FIRMWARE  preprocessor  CFUNCTION\n"
-	"\n"
-	"Typed console INPUT is not implemented\n"
-	"(file INPUT and LINE INPUT are).\n"
 	"\n"
 	"Type HELP or HELP BASIC for syntax.";
 

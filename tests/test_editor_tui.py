@@ -114,6 +114,28 @@ def test_editor_two_tabs_and_switch(kernel_image):
         con.stop()
 
 
+def test_editor_up_from_shorter_line_clamps_column(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "CLAMP.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "HI"') == ""
+        assert con.send_line('PRINT #1, "HELLO!!!"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "CLAMP.BAS")
+        _keys(con, b"\x1b[B")
+        _keys(con, b"\x1b[F")
+        _keys(con, b"\x1b[A")
+        _keys(con, b"X")
+        _quit(con)
+        assert con.send_line('OPEN "CLAMP.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "HIX"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()
+
+
 def test_editor_quit_returns_prompt(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

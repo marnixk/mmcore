@@ -245,6 +245,8 @@ static int rowcol_to_pos(int row, int col)
 			return i;
 		if (t->buf[i] == '\n')
 		{
+			if (r == row)
+				return i;
 			r++;
 			c = 0;
 		}

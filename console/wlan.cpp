@@ -45,6 +45,8 @@ static CNetSubSystem *s_net;
 static CWPASupplicant *s_wpa;
 static int s_tried;
 static int s_ready;
+static char s_last_ssid[64];
+static char s_last_psk[64];
 
 static void wlan_emit(const char *s)
 {
@@ -118,6 +120,35 @@ static int wait_link(unsigned ms)
 	       (s_wpa && CWPASupplicant::IsConnected()) ? 1 : 0;
 }
 
+static int wait_dhcp(unsigned ms)
+{
+	unsigned start, limit, last_note;
+
+	if (!s_net)
+		return 0;
+	start = CTimer::GetClockTicks();
+	limit = ms * 1000u;
+	last_note = 0;
+	while (CTimer::GetClockTicks() - start < limit)
+	{
+		if (s_net->IsRunning())
+			return 1;
+		{
+			unsigned elapsed = (CTimer::GetClockTicks() - start) / 1000000u;
+			if (elapsed >= last_note + 2)
+			{
+				last_note = elapsed;
+				wlan_log("waiting for DHCP %us/%us", elapsed, ms / 1000u);
+			}
+		}
+		if (CScheduler::IsActive())
+			CScheduler::Get()->MsSleep(100);
+		else
+			CTimer::SimpleMsDelay(100);
+	}
+	return s_net->IsRunning() ? 1 : 0;
+}
+
 static int wlan_ensure(void)
 {
 	if (s_tried)
@@ -178,15 +209,25 @@ static int write_wpa_conf(const char *ssid, const char *psk)
 {
 	char buf[512];
 	unsigned n = 0;
-	/* Circle's driver refuses associate() until a valid ISO country
-	 * is set. country=00 is not in that list, so joins always failed.
-	 * proto=WPA2 matches Circle's hello_wlan sample. */
-	const char *head = "country=US\nnetwork={\n\tssid=";
+	const char *cc = mmb_opt_wifi_country();
 	const char *mid = "\n\tpsk=";
 	const char *wpa = "\n\tproto=WPA2\n\tkey_mgmt=WPA-PSK\n}\n";
 	const char *open_tail = "\n\tkey_mgmt=NONE\n}\n";
-	while (*head && n + 1 < sizeof buf)
-		buf[n++] = *head++;
+	const char *p;
+
+	strncpy(s_last_ssid, ssid ? ssid : "", sizeof(s_last_ssid) - 1);
+	s_last_ssid[sizeof(s_last_ssid) - 1] = 0;
+	strncpy(s_last_psk, psk ? psk : "", sizeof(s_last_psk) - 1);
+	s_last_psk[sizeof(s_last_psk) - 1] = 0;
+
+	p = "country=";
+	while (*p && n + 1 < sizeof buf)
+		buf[n++] = *p++;
+	while (*cc && n + 1 < sizeof buf)
+		buf[n++] = *cc++;
+	p = "\nnetwork={\n\tssid=";
+	while (*p && n + 1 < sizeof buf)
+		buf[n++] = *p++;
 	append_quoted(buf, &n, sizeof buf, ssid);
 	if (psk && psk[0])
 	{
@@ -207,8 +248,8 @@ static int write_wpa_conf(const char *ssid, const char *psk)
 		wlan_log("cannot write C:/wpa_supplicant.conf (need SD C:)");
 		return 0;
 	}
-	wlan_log("wrote C:/wpa_supplicant.conf ssid=%s psk=%s country=US proto=WPA2",
-		 ssid, (psk && psk[0]) ? "yes" : "no");
+	wlan_log("wrote C:/wpa_supplicant.conf ssid=%s psk=%s country=%s proto=WPA2",
+		 ssid, (psk && psk[0]) ? "yes" : "no", mmb_opt_wifi_country());
 	return 1;
 }
 
@@ -339,6 +380,10 @@ int mmb_wlan_connect(const char *ssid, const char *psk)
 	if (wait_link(20000))
 	{
 		wlan_log("link up");
+		if (wait_dhcp(15000))
+			wlan_log("DHCP bound");
+		else
+			wlan_log("DHCP timeout");
 		return 0;
 	}
 	wlan_log("link timeout (radio=%d wpa=%d)",
@@ -354,6 +399,12 @@ int mmb_wlan_status(void)
 	if (s_wpa && CWPASupplicant::IsConnected())
 		return 1;
 	return s_wlan->IsLinkUp() ? 1 : 0;
+}
+
+void mmb_wlan_apply_country(void)
+{
+	if (s_last_ssid[0])
+		write_wpa_conf(s_last_ssid, s_last_psk);
 }
 
 #else /* !MMB_CIRCLE_WLAN */
@@ -391,6 +442,10 @@ int mmb_wlan_connect(const char *ssid, const char *psk)
 int mmb_wlan_status(void)
 {
 	return 0;
+}
+
+void mmb_wlan_apply_country(void)
+{
 }
 
 #endif

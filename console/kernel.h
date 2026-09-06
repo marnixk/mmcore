@@ -49,14 +49,14 @@ private:
 					 const unsigned char RawKeys[6], void *pArg);
 
 private:
-	// do not change this order
+	// do not change this order (Interrupt must exist before Serial)
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
 	CDeviceNameService	m_DeviceNameService;
-	CScreenDevice		m_Screen;
-	CSerialDevice		m_Serial;
 	CExceptionHandler	m_ExceptionHandler;
 	CInterruptSystem	m_Interrupt;
+	CScreenDevice		m_Screen;
+	CSerialDevice		m_Serial;
 	CTimer			m_Timer;
 	CNullDevice		m_Null;
 	CLogger			m_Logger;

@@ -134,6 +134,22 @@ def test_option_wifi_debug_on_persists(console):
     assert "debug=0" in ini
 
 
+def test_option_wifi_country_persists(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "USA"').upper()
+    assert "?SYNTAX ERROR" in console.send_line('OPTION WIFI COUNTRY "00"').upper()
+    assert console.send_line('OPTION WIFI COUNTRY "nz"') == ""
+    listed = console.send_line("OPTION LIST")
+    assert "WIFI COUNTRY" in listed
+    assert "NZ" in listed
+    ini = _read_ini(console)
+    assert "country=NZ" in ini
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "WIFI COUNTRY" in all_listed
+    assert "US" in all_listed
+
+
 def test_files_hides_dotfiles(fresh_console):
     con = fresh_console
     assert con.send_line('CHDIR "A:/"') == ""

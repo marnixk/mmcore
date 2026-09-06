@@ -43,6 +43,21 @@ def test_audio_target_jack_and_hdmi(console):
     assert console.send_line("OPTION AUDIO_TARGET HDMI") == ""
 
 
+def test_play_wav_mixes_and_stops(console):
+    listing = console.send_line("DIR")
+    assert "TEST.WAV" in listing.upper()
+    assert console.send_line('PLAY WAV "TEST.WAV"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_help_play_mentions_wav(console):
+    out = console.send_line("HELP PLAY")
+    assert "WAV" in out
+    assert "TEST.WAV" in out
+
+
 def test_play_mp3_mixes_and_stops(console):
     assert console.send_line('PLAY MP3 "TEST.MP3"') == ""
     # Seeded MP3 is short; real-time mix may already have finished.

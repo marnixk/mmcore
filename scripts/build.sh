@@ -26,7 +26,9 @@ if [ ! -f "${CIRCLE_DIR}/Rules.mk" ]; then
 fi
 
 log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
-( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} -f )
+# Hardware images grew past Circle's 2MB default (TUI, 2048 program
+# lines, WLAN). Without this, sysinit halt()s before any banner.
+( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} --kernel-max-size 4 -f )
 
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
