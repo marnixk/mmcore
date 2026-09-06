@@ -1987,7 +1987,7 @@ static void draw_dialog(void)
 	if (G.ed.dialog == DLG_HELP)
 	{
 		w = 48;
-		h = 18;
+		h = 20;
 		title = " Help ";
 	}
 	else if (G.ed.dialog == DLG_OPEN)
