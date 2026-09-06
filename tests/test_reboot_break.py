@@ -13,6 +13,7 @@ def test_help_reboot(console):
     assert out != "?SYNTAX ERROR"
     assert "REBOOT" in out
     assert "reset" in out.lower() or "watchdog" in out.lower()
+    assert "Ctrl+Alt+Del" in out or "ctrl+alt+del" in out.lower()
     alias = dump_topic(console, "RESTART")
     assert "REBOOT" in alias
     run = dump_topic(console, "RUN")

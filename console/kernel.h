@@ -43,6 +43,7 @@ private:
 	void ProcessChar (char c, char *Line, unsigned *pLen);
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
+	void PollCadReboot (void);
 	void ApplyRawKeys (void);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
@@ -66,6 +67,7 @@ private:
 	CUSBKeyboardDevice	* volatile m_pKeyboard;
 	CKeyboardBuffer		*m_pKbdBuf;
 	volatile int		m_nBreak;
+	volatile int		m_nCad;
 	char			m_Line[256];
 	unsigned		m_nLen;
 	int			m_nEsc;

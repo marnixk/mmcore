@@ -937,8 +937,10 @@ static const char kHelpReboot[] =
 	"RESTART     (alias)\n"
 	"\n"
 	"Hardware-reset the Raspberry Pi (PM watchdog full\n"
-	"reset). The machine restarts from firmware; this\n"
-	"does not return to MMBasic.\n"
+	"reset). Stops audio, writes .mmbasic.ini, and\n"
+	"unmounts SD/USB volumes first. Ctrl+Alt+Del on a\n"
+	"USB keyboard does the same. The machine restarts\n"
+	"from firmware; this does not return to MMBasic.\n"
 	"\n"
 	"Example:  REBOOT";
 

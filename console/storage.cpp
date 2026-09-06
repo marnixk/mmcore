@@ -136,6 +136,20 @@ void mmb_storage_poll (void)
 		s_st->Poll ();
 }
 
+void mmb_storage_unmount (void)
+{
+	int i;
+	if (!s_st)
+		return;
+	for (i = 0; i < kNMap; i++)
+	{
+		if (!s_ready[i])
+			continue;
+		f_mount (0, kMap[i].vol, 0);
+		s_ready[i] = 0;
+	}
+}
+
 int mmb_fat_ready(int letter)
 {
 	int i = slot_of(letter);
