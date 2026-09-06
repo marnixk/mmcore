@@ -355,18 +355,24 @@ const char *mmb_connect_key(char c)
 
 void mmb_connect_poll(void)
 {
-	unsigned char buf[128];
-	int n, i;
+	unsigned char buf[512];
+	int n, i, loops;
+
 	if (!C.active)
 		return;
-	n = mmb_net_tcp_recv(buf, sizeof(buf));
-	if (n < 0)
+	for (loops = 0; loops < 32; loops++)
 	{
-		session_close("\r\nConnection closed\r\n");
-		return;
+		n = mmb_net_tcp_recv(buf, sizeof(buf));
+		if (n < 0)
+		{
+			session_close("\r\nConnection closed\r\n");
+			return;
+		}
+		if (n == 0)
+			return;
+		for (i = 0; i < n; i++)
+			incoming_byte(buf[i]);
 	}
-	for (i = 0; i < n; i++)
-		incoming_byte(buf[i]);
 }
 
 void mmb_cmd_ipconfig(void)
