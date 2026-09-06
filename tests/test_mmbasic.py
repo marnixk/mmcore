@@ -250,6 +250,51 @@ def test_while_wend(console):
     assert "1" in out and "2" in out and "3" in out
 
 
+def test_do_loop_until(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 I=0") == ""
+    assert console.send_line("20 DO") == ""
+    assert console.send_line("30 I=I+1") == ""
+    assert console.send_line("40 PRINT I;") == ""
+    assert console.send_line("50 LOOP UNTIL I=3") == ""
+    out = console.send_line("RUN")
+    assert "1" in out and "2" in out and "3" in out
+
+
+def test_do_loop_is_infinite_until_exit(console):
+    """Bare DO/LOOP must not overflow the control stack (~32 frames)."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 N=0") == ""
+    assert console.send_line("20 DO") == ""
+    assert console.send_line("30 N=N+1") == ""
+    assert console.send_line("40 IF N=50 THEN EXIT DO") == ""
+    assert console.send_line("50 LOOP") == ""
+    assert console.send_line("60 PRINT N") == ""
+    assert console.send_line("RUN") == "50"
+
+
+def test_do_loop_from_unnumbered_file(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line('OPEN "DOLP.BAS" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "DO"') == ""
+    assert console.send_line('PRINT #1, "N=N+1"') == ""
+    assert console.send_line('PRINT #1, "IF N=40 THEN EXIT DO"') == ""
+    assert console.send_line('PRINT #1, "LOOP"') == ""
+    assert console.send_line('PRINT #1, "PRINT N"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert console.send_line('RUN "DOLP.BAS"') == "40"
+
+
+def test_while_many_iterations(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 N=0") == ""
+    assert console.send_line("20 WHILE N<50") == ""
+    assert console.send_line("30 N=N+1") == ""
+    assert console.send_line("40 WEND") == ""
+    assert console.send_line("50 PRINT N") == ""
+    assert console.send_line("RUN") == "50"
+
+
 def test_const_and_dim_as(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("CONST MAX=21") == ""

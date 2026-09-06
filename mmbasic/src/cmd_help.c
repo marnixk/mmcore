@@ -1014,6 +1014,7 @@ static const char kHelpDo[] =
 	"LOOP [WHILE condition | UNTIL condition]\n"
 	"\n"
 	"Repeat a block. Test on DO and/or LOOP.\n"
+	"With no test, loops until EXIT DO (or BREAK).\n"
 	"EXIT DO jumps to the statement after LOOP.\n"
 	"\n"
 	"Example:\n"

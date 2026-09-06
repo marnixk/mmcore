@@ -473,9 +473,23 @@ void mmb_cmd_return(void)
 	G.branch_pc = G.gosub_stack[G.gosub_sp];
 }
 
+static void ctrl_reenter(int type)
+{
+	int i;
+	for (i = 0; i < G.ctrl_sp; i++)
+	{
+		if (G.ctrlstack[i].type == type && G.ctrlstack[i].line_pc == G.run_pc)
+		{
+			G.ctrl_sp = i;
+			return;
+		}
+	}
+}
+
 void mmb_cmd_while(void)
 {
 	mmb_val v = mmb_expr();
+	ctrl_reenter(1);
 	if (mmb_as_int(v))
 	{
 		if (G.ctrl_sp >= MMB_MAX_CTRL)
@@ -511,14 +525,18 @@ void mmb_cmd_do(void)
 		mmb_val v = mmb_expr();
 		cond = mmb_as_int(v) == 0;
 	}
+	ctrl_reenter(2);
+	if (!cond)
+	{
+		G.branch_pc = find_loop_pc(G.run_pc) + 1;
+		return;
+	}
 	if (G.ctrl_sp >= MMB_MAX_CTRL)
 		mmb_error("?DO");
 	G.ctrlstack[G.ctrl_sp].type = 2;
 	G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
-	G.ctrlstack[G.ctrl_sp].skip = cond ? 0 : 1;
+	G.ctrlstack[G.ctrl_sp].skip = 0;
 	G.ctrl_sp++;
-	if (!cond)
-		G.branch_pc = find_loop_pc(G.run_pc) + 1;
 }
 
 void mmb_cmd_loop(void)
