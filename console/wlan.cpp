@@ -22,6 +22,8 @@
 #include <wlan/bcm4343.h>
 #include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
 #include <circle/net/netsubsystem.h>
+#include <circle/net/ipaddress.h>
+#include <circle/macaddress.h>
 #include <circle/netdevice.h>
 #include <circle/sched/scheduler.h>
 #include <circle/string.h>
@@ -380,6 +382,10 @@ int mmb_wlan_start(const char *ssid, const char *psk)
 		return -1;
 	if (!apply_radio_country())
 		return -1;
+	strncpy(s_last_ssid, ssid, sizeof(s_last_ssid) - 1);
+	s_last_ssid[sizeof(s_last_ssid) - 1] = 0;
+	strncpy(s_last_psk, psk ? psk : "", sizeof(s_last_psk) - 1);
+	s_last_psk[sizeof(s_last_psk) - 1] = 0;
 	if (!psk || !psk[0])
 	{
 		wlan_log("join open ssid=\"%s\"", ssid);
@@ -420,6 +426,120 @@ int mmb_wlan_status(void)
 	if (s_wpa && CWPASupplicant::IsConnected())
 		return 1;
 	return s_wlan->IsLinkUp() ? 1 : 0;
+}
+
+static void copy_out(char *buf, int bufsize, const char *s)
+{
+	int i = 0;
+
+	if (!buf || bufsize < 1)
+		return;
+	if (!s)
+		s = "";
+	while (s[i] && i < bufsize - 1)
+	{
+		buf[i] = s[i];
+		i++;
+	}
+	buf[i] = 0;
+}
+
+static void append_ip(CString *out, const char *label, const CIPAddress *ip)
+{
+	CString s;
+
+	if (!out || !label || !ip || !ip->IsSet())
+		return;
+	ip->Format(&s);
+	out->Append(label);
+	out->Append((const char *)s);
+	out->Append("\n");
+}
+
+int mmb_wlan_ipconfig(char *buf, int bufsize)
+{
+	CString out;
+	CNetConfig *cfg;
+	const CIPAddress *ip;
+	CString ipstr;
+
+	if (!buf || bufsize < 1)
+		return -1;
+	buf[0] = 0;
+	if (!wlan_ensure() || !s_wlan)
+	{
+		copy_out(buf, bufsize, "Wi-Fi not available");
+		return -1;
+	}
+	if (!s_net)
+	{
+		out = "Not connected";
+		if (s_last_ssid[0])
+		{
+			out.Append("\n  SSID: ");
+			out.Append(s_last_ssid);
+		}
+		copy_out(buf, bufsize, (const char *)out);
+		return -1;
+	}
+	cfg = s_net->GetConfig();
+	ip = cfg ? cfg->GetIPAddress() : 0;
+	if (!s_net->IsRunning() || !ip || !ip->IsSet() || ip->IsNull())
+	{
+		out = "Not connected";
+		if (s_last_ssid[0])
+		{
+			out.Append("\n  SSID: ");
+			out.Append(s_last_ssid);
+		}
+		if (mmb_wlan_status())
+			out.Append("\n  Link is up; waiting for DHCP");
+		copy_out(buf, bufsize, (const char *)out);
+		return -1;
+	}
+	ip->Format(&ipstr);
+	out.Format("Connected as %s\n", (const char *)ipstr);
+	if (s_last_ssid[0])
+	{
+		out.Append("  SSID: ");
+		out.Append(s_last_ssid);
+		out.Append("\n");
+	}
+	if (cfg)
+	{
+		const u8 *mask = cfg->GetNetMask();
+		append_ip(&out, "  Gateway: ", cfg->GetDefaultGateway());
+		if (mask)
+		{
+			CIPAddress netmask(mask);
+			append_ip(&out, "  Netmask: ", &netmask);
+		}
+		append_ip(&out, "  DNS: ", cfg->GetDNSServer());
+		out.Append(cfg->IsDHCPUsed() ? "  DHCP: yes\n" : "  DHCP: no\n");
+	}
+	{
+		const char *cc = mmb_opt_wifi_country();
+		if (cc && cc[0])
+		{
+			out.Append("  Country: ");
+			out.Append(cc);
+			out.Append("\n");
+		}
+	}
+	if (s_net->GetNetDeviceLayer())
+	{
+		const CMACAddress *mac = s_net->GetNetDeviceLayer()->GetMACAddress();
+		if (mac)
+		{
+			CString macstr;
+			mac->Format(&macstr);
+			out.Append("  MAC: ");
+			out.Append((const char *)macstr);
+			out.Append("\n");
+		}
+	}
+	copy_out(buf, bufsize, (const char *)out);
+	return 0;
 }
 
 void mmb_wlan_apply_country(void)
@@ -467,6 +587,22 @@ int mmb_wlan_connect(const char *ssid, const char *psk)
 int mmb_wlan_status(void)
 {
 	return 0;
+}
+
+int mmb_wlan_ipconfig(char *buf, int bufsize)
+{
+	const char *msg = "Wi-Fi not available";
+	int i = 0;
+
+	if (!buf || bufsize < 1)
+		return -1;
+	while (msg[i] && i < bufsize - 1)
+	{
+		buf[i] = msg[i];
+		i++;
+	}
+	buf[i] = 0;
+	return -1;
 }
 
 void mmb_wlan_apply_country(void)

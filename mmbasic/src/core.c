@@ -2470,7 +2470,7 @@ static void exec_statement(void)
 		mmb_cmd_rmdir();
 		return;
 	}
-	if (mmb_match("KILL"))
+	if (mmb_match("KILL") || mmb_match("RM") || mmb_match("DEL"))
 	{
 		mmb_cmd_kill();
 		return;
@@ -2480,7 +2480,7 @@ static void exec_statement(void)
 		mmb_cmd_copy();
 		return;
 	}
-	if (mmb_match("RENAME") || mmb_match("NAME"))
+	if (mmb_match("RENAME") || mmb_match("NAME") || mmb_match("MV"))
 	{
 		mmb_cmd_name();
 		return;
@@ -2498,6 +2498,11 @@ static void exec_statement(void)
 	if (mmb_match("CONNECT"))
 	{
 		mmb_cmd_connect();
+		return;
+	}
+	if (mmb_match("IPCONFIG"))
+	{
+		mmb_cmd_ipconfig();
 		return;
 	}
 	if (mmb_match("OPEN"))

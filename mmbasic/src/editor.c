@@ -307,6 +307,26 @@ static void insert_char(char c)
 	t->dirty = 1;
 }
 
+static void insert_newline_indent(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	char indent[64];
+	int n = 0;
+	int i;
+
+	if (!t)
+		return;
+	i = t->cx;
+	while (i > 0 && t->buf[i - 1] != '\n')
+		i--;
+	while (i < t->len && t->buf[i] != '\n' && n < (int)sizeof(indent) &&
+	       (t->buf[i] == ' ' || t->buf[i] == '\t'))
+		indent[n++] = t->buf[i++];
+	insert_char('\n');
+	for (i = 0; i < n; i++)
+		insert_char(indent[i]);
+}
+
 static void backspace(void)
 {
 	mmb_ed_tab *t = cur_tab();
@@ -1469,7 +1489,7 @@ const char *mmb_editor_feed(char c)
 	}
 	if (c == '\r' || c == '\n')
 	{
-		insert_char('\n');
+		insert_newline_indent();
 		redraw();
 		return G.out;
 	}

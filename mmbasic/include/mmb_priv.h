@@ -518,6 +518,7 @@ int mmb_wlan_scan(char ssids[][64], int maxn);
 int mmb_wlan_start(const char *ssid, const char *psk);
 int mmb_wlan_connect(const char *ssid, const char *psk);
 int mmb_wlan_status(void);
+int mmb_wlan_ipconfig(char *buf, int bufsize);
 void mmb_wlan_poll(void);
 void mmb_wlan_apply_country(void);
 int mmb_wifi_country_normalize(const char *s, char out[3]);
@@ -529,6 +530,7 @@ int mmb_net_tcp_recv(void *data, unsigned maxn);
 void mmb_net_tcp_close(void);
 
 void mmb_cmd_connect(void);
+void mmb_cmd_ipconfig(void);
 void mmb_cmd_reboot(void);
 void mmb_check_break(void);
 int mmb_in_connect(void);

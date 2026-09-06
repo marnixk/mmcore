@@ -34,3 +34,22 @@ def test_help_connect(console):
     assert "host" in out.lower()
     assert "Ctrl+]" in out or "quit" in out.lower()
     assert "telnet" in out.lower() or "ANSI" in out or "ansi" in out.lower()
+    assert "CR LF" in out or "newline" in out.lower()
+
+
+def test_ipconfig_without_radio(console):
+    out = console.send_line("IPCONFIG")
+    assert "?SYNTAX ERROR" not in out.upper()
+    assert "not available" in out.lower() or "not connected" in out.lower()
+    assert console.send_line("PRINT 3+4") == "7"
+
+
+def test_help_ipconfig(console):
+    listing = scroll_all(console, open_ihelp(console))
+    assert "IPCONFIG" in listing
+    close_ihelp(console)
+    out = dump_topic(console, "IPCONFIG")
+    assert out != "?SYNTAX ERROR"
+    assert "Connected as" in out
+    assert "SSID" in out
+    assert "gateway" in out.lower() or "DHCP" in out

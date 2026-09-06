@@ -16,6 +16,7 @@ def test_help_lists_commands(console):
         "PLAY",
         "FACTORY_RESET",
         "CONNECT",
+        "IPCONFIG",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
@@ -116,6 +117,24 @@ def test_help_files(console):
     assert "alias" not in listing.lower()
 
 
+def test_help_kill_rm_del(console):
+    out = dump_topic(console, "KILL")
+    assert "Delete" in out or "delete" in out.lower()
+    assert "RM" in out
+    assert "DEL" in out
+    assert "There is no DELETE" not in out
+    assert "RM" in dump_topic(console, "RM")
+    assert "DEL" in dump_topic(console, "DEL")
+
+
+def test_help_rename_mv(console):
+    out = dump_topic(console, "RENAME")
+    assert "Rename" in out or "rename" in out.lower()
+    assert "MV" in out
+    mv = dump_topic(console, "MV")
+    assert "RENAME" in mv or "Rename" in mv or "move" in mv.lower()
+
+
 def test_help_factory_reset(console):
     out = dump_topic(console, "FACTORY_RESET")
     assert out != "?SYNTAX ERROR"
@@ -137,6 +156,8 @@ def test_help_option_wifi(console):
     assert "[wifi]" in out
     assert "DEBUG" in out
     assert "default OFF" in out or "Default OFF" in out
+    assert "PROMPT" in out
+    assert "CWD" in out
 
 
 def test_ihelp_enter_opens_link(console):

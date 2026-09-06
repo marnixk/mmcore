@@ -167,6 +167,13 @@ def test_option_prompt_bare_is_default(console):
     assert "OPTION PROMPT BARE" in all_listed
     help_opt = dump_topic(console, "OPTION")
     assert "PROMPT BARE|CWD" in help_opt or ("PROMPT" in help_opt and "CWD" in help_opt)
+    help_prompt = dump_topic(console, "PROMPT")
+    assert "OPTION PROMPT" in help_prompt
+    assert "BARE" in help_prompt
+    assert "CWD" in help_prompt
+    assert "$p$g" in help_prompt or "A:/>" in help_prompt
+    via_option = dump_topic(console, "OPTION PROMPT")
+    assert "BARE" in via_option and "CWD" in via_option
     console.drain(quiet=0.1)
     console._ser.sendall(b"PRINT 1\r")
     raw = console.drain(quiet=0.5).decode(errors="replace")

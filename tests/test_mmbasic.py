@@ -153,6 +153,10 @@ def test_files_mkdir_copy_rename(console):
     assert console.send_line('RENAME "B.TXT" AS "C.TXT"') == ""
     listing = console.send_line("DIR")
     assert "C.TXT" in listing
+    assert console.send_line('MV "C.TXT" TO "D.TXT"') == ""
+    listing = console.send_line("DIR")
+    assert "D.TXT" in listing
+    assert "C.TXT" not in listing
     assert console.send_line('CHDIR "/"') == ""
 
 
@@ -360,6 +364,18 @@ def test_files_kill_and_cwd(console):
     assert console.send_line('KILL "Z.TXT"') == ""
     listing = console.send_line("DIR")
     assert "Z.TXT" not in listing
+    assert console.send_line('OPEN "R.TXT" FOR OUTPUT AS #2') == ""
+    assert console.send_line('PRINT #2, "Y"') == ""
+    assert console.send_line("CLOSE #2") == ""
+    assert console.send_line('RM "R.TXT"') == ""
+    listing = console.send_line("DIR")
+    assert "R.TXT" not in listing
+    assert console.send_line('OPEN "D.TXT" FOR OUTPUT AS #2') == ""
+    assert console.send_line('PRINT #2, "Z"') == ""
+    assert console.send_line("CLOSE #2") == ""
+    assert console.send_line('DEL "D.TXT"') == ""
+    listing = console.send_line("DIR")
+    assert "D.TXT" not in listing
     assert console.send_line('CHDIR "/"') == ""
     assert console.send_line('RMDIR "TMPDIR"') == ""
 

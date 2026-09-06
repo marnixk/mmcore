@@ -174,7 +174,40 @@ def test_editor_quit_returns_prompt(kernel_image):
         con.stop()
 
 
-def test_editor_tab_inserts_four_spaces(kernel_image):
+def test_editor_enter_autoindents(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "IND.BAS")
+        _keys(con, b"    PRINT 1\rPRINT 2")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "IND.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "    PRINT 1"
+        assert con.send_line("LINE INPUT #1, B$") == ""
+        assert con.send_line("PRINT B$") == "    PRINT 2"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_enter_without_indent(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "NOIND.BAS")
+        _keys(con, b"PRINT 1\rPRINT 2")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "NOIND.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "PRINT 1"
+        assert con.send_line("LINE INPUT #1, B$") == ""
+        assert con.send_line("PRINT B$") == "PRINT 2"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()
     con = MMBasicConsole(kernel_image)
     con.start()
     try:

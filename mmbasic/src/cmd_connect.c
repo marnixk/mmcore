@@ -7,8 +7,11 @@
 #define WILL  251
 #define SB    250
 #define SE    240
-#define TELOPT_ECHO 1
-#define TELOPT_SGA  3
+#define TELOPT_ECHO  1
+#define TELOPT_SGA   3
+#define TELOPT_TTYPE 24
+#define TTYPE_IS     0
+#define TTYPE_SEND   1
 
 #define CN_LINE  256
 
@@ -19,6 +22,9 @@ typedef struct {
 	int iac;
 	int iac_cmd;
 	int sb;
+	int last_eol;
+	int sb_opt;
+	int sb_cmd;
 	char host[80];
 	int port;
 	char line[CN_LINE];
@@ -52,6 +58,16 @@ static void send_iac(int cmd, int opt)
 	b[1] = (unsigned char)cmd;
 	b[2] = (unsigned char)opt;
 	mmb_net_tcp_send(b, 3);
+}
+
+static void send_ttype(void)
+{
+	static const unsigned char ttype[] = {
+		IAC, SB, TELOPT_TTYPE, TTYPE_IS,
+		'A', 'N', 'S', 'I',
+		IAC, SE
+	};
+	mmb_net_tcp_send(ttype, (unsigned)sizeof(ttype));
 }
 
 static void apply_option(int cmd, int opt)
@@ -98,6 +114,19 @@ static void apply_option(int cmd, int opt)
 		}
 		return;
 	}
+	if (opt == TELOPT_TTYPE)
+	{
+		if (cmd == DO)
+		{
+			send_iac(WILL, TELOPT_TTYPE);
+			send_ttype();
+		}
+		else if (cmd == WILL)
+			send_iac(DONT, TELOPT_TTYPE);
+		else
+			send_iac(WONT, TELOPT_TTYPE);
+		return;
+	}
 	if (cmd == WILL)
 		send_iac(DONT, opt);
 	else if (cmd == DO)
@@ -112,10 +141,18 @@ static void incoming_byte(unsigned char b)
 		{
 			C.iac = 0;
 			if (b == SE)
+			{
+				if (C.sb_opt == TELOPT_TTYPE && C.sb_cmd == TTYPE_SEND)
+					send_ttype();
 				C.sb = 0;
+			}
 		}
 		else if (b == IAC)
 			C.iac = 1;
+		else if (C.sb_opt < 0)
+			C.sb_opt = (int)b;
+		else if (C.sb_cmd < 0)
+			C.sb_cmd = (int)b;
 		return;
 	}
 	if (C.iac == 1)
@@ -130,6 +167,8 @@ static void incoming_byte(unsigned char b)
 		{
 			C.iac = 0;
 			C.sb = 1;
+			C.sb_opt = -1;
+			C.sb_cmd = -1;
 			return;
 		}
 		if (b == WILL || b == WONT || b == DO || b == DONT)
@@ -152,6 +191,8 @@ static void incoming_byte(unsigned char b)
 		C.iac = 1;
 		return;
 	}
+	if (b == 0)
+		return;
 	{
 		char c = (char)b;
 		emit_both(&c, 1);
@@ -207,6 +248,9 @@ void mmb_cmd_connect(void)
 	C.no_echo = 0;
 	C.iac = 0;
 	C.sb = 0;
+	C.last_eol = 0;
+	C.sb_opt = -1;
+	C.sb_cmd = -1;
 	C.linelen = 0;
 
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
@@ -226,6 +270,29 @@ int mmb_in_connect(void)
 	return C.active;
 }
 
+static int swallow_crlf_pair(char c)
+{
+	if (c != '\r' && c != '\n')
+	{
+		C.last_eol = 0;
+		return 0;
+	}
+	if (C.last_eol && C.last_eol != (unsigned char)c)
+	{
+		C.last_eol = 0;
+		return 1;
+	}
+	C.last_eol = (unsigned char)c;
+	return 0;
+}
+
+static void send_enter(void)
+{
+	mmb_net_tcp_send("\r\n", 2);
+	if (!C.no_echo)
+		emit_both("\n", 1);
+}
+
 const char *mmb_connect_key(char c)
 {
 	unsigned char b;
@@ -237,10 +304,15 @@ const char *mmb_connect_key(char c)
 		session_close("\r\nConnection closed\r\n");
 		return "";
 	}
+	if (swallow_crlf_pair(c))
+		return "";
 	if (C.char_mode)
 	{
-		if (c == '\n')
-			c = '\r';
+		if (c == '\r' || c == '\n')
+		{
+			send_enter();
+			return "";
+		}
 		b = (unsigned char)c;
 		if (b == IAC)
 		{
@@ -256,7 +328,7 @@ const char *mmb_connect_key(char c)
 	if (c == '\r' || c == '\n')
 	{
 		if (!C.no_echo)
-			emit_both("\r\n", 2);
+			emit_both("\n", 1);
 		send_line();
 		return "";
 	}
@@ -295,4 +367,14 @@ void mmb_connect_poll(void)
 	}
 	for (i = 0; i < n; i++)
 		incoming_byte(buf[i]);
+}
+
+void mmb_cmd_ipconfig(void)
+{
+	char buf[512];
+
+	if (mmb_wlan_ipconfig(buf, (int)sizeof(buf)) != 0 && !buf[0])
+		mmb_out("Wi-Fi not available");
+	else
+		mmb_out(buf);
 }

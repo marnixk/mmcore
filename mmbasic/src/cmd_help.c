@@ -25,7 +25,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Files\n"
 	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
-	"  KILL DRIVE LOAD SAVE SEEK\n"
+	"  KILL RM DEL MV DRIVE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
 	"  NEW LIST RUN EDIT MEMORY REBOOT\n"
@@ -33,13 +33,18 @@ static const char kIndexCommands[] =
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
-	"  SETTICK FACTORY_RESET CONNECT CONTINUE EXIT LS\n"
+	"  SETTICK FACTORY_RESET CONNECT IPCONFIG CONTINUE EXIT LS\n"
+	"\n"
+	"Prompt\n"
+	"  OPTION PROMPT BARE|CWD         \"> \" or DOS $p$g (A:/>)\n"
+	"  HELP PROMPT for details. Persists in .mmbasic.ini.\n"
 	"\n"
 	"Wi-Fi\n"
 	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
 	"  OPTION WIFI                    scan and prompt\n"
 	"  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)\n"
 	"  OPTION WIFI COUNTRY \"NZ\"       ISO domain (default US; UK=GB)\n"
+	"  IPCONFIG                       WLAN IP, SSID, gateway, DHCP\n"
 	"  Credentials persist in C:/.mmbasic.ini (A: if no SD).\n"
 	"  Scan lists beacon SSIDs. WPA2 join needs C: and\n"
 	"  C:/firmware/. QEMU has no radio. HELP OPTION.\n"
@@ -452,7 +457,8 @@ static const char kHelpEdit[] =
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
 	"      ^R save and run  ^K cut line  ^U paste\n"
-	"      Tab inserts 4 spaces   Alt+1..9 switch tabs\n"
+	"      Tab inserts 4 spaces   Enter copies line indent\n"
+	"      Alt+1..9 switch tabs\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
@@ -573,7 +579,11 @@ static const char kHelpOption[] =
 	"  CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE\n"
 	"  LEGACY ON|OFF     MILLISECONDS ON|OFF\n"
 	"  MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF\n"
-	"  PROMPT BARE|CWD   (BARE is \"> \"; CWD is DOS $p$g)\n"
+	"  PROMPT BARE|CWD   immediate prompt (see HELP PROMPT)\n"
+	"    BARE (default) is \"> \". CWD is DOS $p$g: drive\n"
+	"    and path then >, e.g. A:/> or A:/PRDIR>. Stored\n"
+	"    as prompt=0|1 in .mmbasic.ini. OPTION LIST shows\n"
+	"    CWD when selected; LIST ALL always shows the mode.\n"
 	"  RAM   FLASH [page]     STATUS ON|OFF\n"
 	"  VCC n    SLEEP n    SD TIMING FAST|NORMAL\n"
 	"  SERIAL PULLUP ENABLE|DISABLE\n"
@@ -612,6 +622,7 @@ static const char kHelpOption[] =
 	"          OPTION WIFI COUNTRY \"NZ\"\n"
 	"          OPTION WIFI \"MyNet\",\"secret\"\n"
 	"          OPTION WIFI DEBUG ON\n"
+	"          OPTION PROMPT CWD\n"
 	"          OPTION LIST";
 
 static const char kHelpFactoryReset[] =
@@ -625,6 +636,24 @@ static const char kHelpFactoryReset[] =
 	"\n"
 	"Example:  FACTORY_RESET";
 
+static const char kHelpPrompt[] =
+	"OPTION PROMPT BARE\n"
+	"OPTION PROMPT CWD\n"
+	"\n"
+	"Choose the immediate-mode prompt.\n"
+	"  BARE  (default)  \"> \"\n"
+	"  CWD              DOS $p$g: current drive and\n"
+	"                   directory, then >, e.g. A:/>\n"
+	"                   or A:/PRDIR>\n"
+	"\n"
+	"CWD is stored as prompt=1 in .mmbasic.ini (A: if\n"
+	"no SD). OPTION LIST shows CWD when it is selected;\n"
+	"OPTION LIST ALL always prints the mode.\n"
+	"FACTORY_RESET restores BARE.\n"
+	"\n"
+	"Example:  OPTION PROMPT CWD\n"
+	"          OPTION PROMPT BARE";
+
 static const char kHelpConnect[] =
 	"CONNECT host$, port\n"
 	"\n"
@@ -632,7 +661,9 @@ static const char kHelpConnect[] =
 	"Incoming bytes (including ANSI) are shown on HDMI\n"
 	"and serial. Starts in line mode with local echo.\n"
 	"Telnet IAC WILL ECHO turns local echo off; IAC\n"
-	"SGA switches to character mode. Ctrl+] quits.\n"
+	"SGA switches to character mode. Enter sends CR LF\n"
+	"(NVT newline) so BBS hosts do not see a lone CR.\n"
+	"Ctrl+] quits.\n"
 	"\n"
 	"QEMU has no network device; CONNECT then reports\n"
 	"that the network is not available and returns to\n"
@@ -640,6 +671,21 @@ static const char kHelpConnect[] =
 	"(OPTION WIFI), then CONNECT uses Circle TCP.\n"
 	"\n"
 	"Example:  CONNECT \"192.168.1.10\", 23";
+
+static const char kHelpIpconfig[] =
+	"IPCONFIG\n"
+	"\n"
+	"Show WLAN configuration. When DHCP has bound:\n"
+	"  Connected as <ip>\n"
+	"    SSID, gateway, netmask, DNS, DHCP, country,\n"
+	"    and MAC as the radio provides them.\n"
+	"If the radio is missing (QEMU) the command prints\n"
+	"Wi-Fi not available. If the link is down it prints\n"
+	"Not connected (and the last SSID when known).\n"
+	"\n"
+	"Join with OPTION WIFI first on hardware.\n"
+	"\n"
+	"Example:  IPCONFIG";
 
 static const char kHelpLocal[] =
 	"LOCAL name [(dims)] [AS type] [, ...]\n"
@@ -784,9 +830,10 @@ static const char kHelpCmm2[] =
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
 	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
-	"  CHDIR MKDIR RMDIR COPY RENAME KILL DRIVE\n"
+	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
+	"  KILL RM DEL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
-	"  REBOOT OPTION FACTORY_RESET CONNECT HELP\n"
+	"  REBOOT OPTION FACTORY_RESET CONNECT IPCONFIG HELP\n"
 	"  CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
@@ -842,17 +889,24 @@ static const char kHelpCopy[] =
 static const char kHelpRename[] =
 	"RENAME src$ [AS|TO] dst$\n"
 	"NAME src$ AS dst$     (alias)\n"
+	"MV src$ [AS|TO] dst$  (alias)\n"
 	"\n"
-	"Rename or move a file.\n"
+	"Rename a file, or move it to another folder on the\n"
+	"same drive. Destination may be a new name or a path.\n"
 	"\n"
-	"Example:  RENAME \"B.TXT\" AS \"C.TXT\"";
+	"Example:  RENAME \"B.TXT\" AS \"C.TXT\"\n"
+	"          MV \"C.TXT\" TO \"DATA/C.TXT\"";
 
 static const char kHelpKill[] =
 	"KILL path$\n"
+	"RM path$     (alias)\n"
+	"DEL path$    (alias)\n"
 	"\n"
-	"Delete a file. There is no DELETE command.\n"
+	"Delete a file. Directories use RMDIR.\n"
 	"\n"
-	"Example:  KILL \"Z.TXT\"";
+	"Example:  KILL \"Z.TXT\"\n"
+	"          RM \"Z.TXT\"\n"
+	"          DEL \"Z.TXT\"";
 
 static const char kHelpDrive[] =
 	"DRIVE [letter$]\n"
@@ -1221,7 +1275,9 @@ static const help_topic kTopics[] = {
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
+	{ "PROMPT",      HELP_CMD,  kHelpPrompt },
 	{ "CONNECT",     HELP_CMD,  kHelpConnect },
+	{ "IPCONFIG",    HELP_CMD,  kHelpIpconfig },
 	{ "CHDIR",       HELP_CMD,  kHelpChdir },
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },
 	{ "RMDIR",       HELP_CMD,  kHelpRmdir },
@@ -1277,6 +1333,10 @@ static const struct {
 	{ "FACTORY RESET", "FACTORY_RESET" },
 	{ "FACTORY",      "FACTORY_RESET" },
 	{ "NAME",         "RENAME" },
+	{ "MV",           "RENAME" },
+	{ "RM",           "KILL" },
+	{ "DEL",          "KILL" },
+	{ "OPTION PROMPT","PROMPT" },
 	{ "ERASE",        "CLEAR" },
 	{ "LS",           "DIR" },
 	{ "LIST FILES",   "DIR" },
