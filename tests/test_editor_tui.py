@@ -184,10 +184,15 @@ def test_editor_enter_autoindents(kernel_image):
         _quit(con)
         assert con.send_line('OPEN "IND.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
-        assert con.send_line("PRINT A$") == "    PRINT 1"
         assert con.send_line("LINE INPUT #1, B$") == ""
-        assert con.send_line("PRINT B$") == "    PRINT 2"
         assert con.send_line("CLOSE #1") == ""
+        # send_line() strips leading spaces; LEN/ASC check the indent.
+        assert con.send_line("PRINT LEN(A$)") == "11"
+        assert con.send_line("PRINT ASC(A$)") == "32"
+        assert con.send_line("PRINT LEN(B$)") == "11"
+        assert con.send_line("PRINT ASC(B$)") == "32"
+        assert "PRINT 1" in con.send_line("PRINT MID$(A$,5)")
+        assert "PRINT 2" in con.send_line("PRINT MID$(B$,5)")
     finally:
         con.stop()
 
@@ -208,6 +213,9 @@ def test_editor_enter_without_indent(kernel_image):
         assert con.send_line("CLOSE #1") == ""
     finally:
         con.stop()
+
+
+def test_editor_tab_inserts_four_spaces(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:

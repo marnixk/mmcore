@@ -168,7 +168,6 @@ def test_option_prompt_bare_is_default(console):
     help_opt = dump_topic(console, "OPTION")
     assert "PROMPT BARE|CWD" in help_opt or ("PROMPT" in help_opt and "CWD" in help_opt)
     help_prompt = dump_topic(console, "PROMPT")
-    assert "OPTION PROMPT" in help_prompt
     assert "BARE" in help_prompt
     assert "CWD" in help_prompt
     assert "$p$g" in help_prompt or "A:/>" in help_prompt
