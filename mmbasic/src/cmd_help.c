@@ -463,8 +463,12 @@ static const char kHelpEdit[] =
 	"       F10 File menu   Alt+1..9 switch tabs\n"
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
-	"      ^R save and run  ^K cut line  ^U paste\n"
+	"      ^R save and run  ^K/^Y cut line  ^U paste\n"
+	"      Shift+Arrows select text (QBasic-style)\n"
+	"      ^Ins copy  Shift+Del cut  Shift+Ins paste\n"
+	"      Del erases the selection (no clipboard)\n"
 	"      Tab inserts 4 spaces   Enter copies line indent\n"
+	"      ^P quick open (files under the start folder)\n"
 	"      Alt+1..9 switch tabs\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
