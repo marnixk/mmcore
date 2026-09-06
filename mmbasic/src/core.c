@@ -992,9 +992,82 @@ static void input_to_var(int fn)
 	mmb_do_assign(name, t, nidx, idx, v);
 }
 
+static void input_assign_mem(const char **ps)
+{
+	char name[MMB_MAX_NAME];
+	int nidx, idx[MMB_MAX_DIMS], t;
+	char buf[MMB_MAX_STR + 1];
+	int n = 0;
+	const char *p = *ps;
+	mmb_val v;
+
+	t = mmb_parse_var_ref(name, &nidx, idx);
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '"')
+	{
+		p++;
+		while (*p && *p != '"')
+		{
+			if (n < MMB_MAX_STR)
+				buf[n++] = *p;
+			p++;
+		}
+		if (*p == '"')
+			p++;
+	}
+	else
+	{
+		while (*p && *p != ',')
+		{
+			if (n < MMB_MAX_STR)
+				buf[n++] = *p;
+			p++;
+		}
+		while (n > 0 && (buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+			n--;
+	}
+	buf[n] = 0;
+	if (*p == ',')
+		p++;
+	*ps = p;
+	if (t == T_STR || name[strlen(name) - 1] == '$')
+		v = mmb_str_val(buf);
+	else
+	{
+		int neg = 0, dot = 0, i;
+		double f = 0, frac = 0.1;
+		for (i = 0; buf[i]; i++)
+		{
+			if (buf[i] == '-')
+				neg = 1;
+			else if (buf[i] == '.')
+				dot = 1;
+			else if (buf[i] >= '0' && buf[i] <= '9')
+			{
+				if (dot)
+				{
+					f += (buf[i] - '0') * frac;
+					frac *= 0.1;
+				}
+				else
+					f = f * 10 + (buf[i] - '0');
+			}
+		}
+		if (neg)
+			f = -f;
+		v = dot ? mmb_num_val(f) : mmb_int_val((int64_t)f);
+	}
+	mmb_do_assign(name, t, nidx, idx, v);
+}
+
 void mmb_cmd_input(void)
 {
 	int fn = 0;
+	char extra[3];
+	char line[MMB_MAX_STR + 1];
+	const char *sp;
+
 	mmb_skip_sp();
 	if (*G.p == '#')
 	{
@@ -1003,24 +1076,65 @@ void mmb_cmd_input(void)
 		mmb_skip_sp();
 		if (*G.p == ',')
 			G.p++;
+		for (;;)
+		{
+			mmb_skip_sp();
+			if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+				break;
+			input_to_var(fn);
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
+		return;
 	}
+
+	extra[0] = 0;
+	if (*G.p == '"')
+	{
+		mmb_val pr = mmb_expr();
+		if (pr.type == T_STR)
+			mmb_console_write(pr.s);
+		mmb_skip_sp();
+		if (*G.p == ';')
+		{
+			extra[0] = '?';
+			extra[1] = ' ';
+			extra[2] = 0;
+			G.p++;
+		}
+		else if (*G.p == ',')
+			G.p++;
+	}
+	else
+	{
+		extra[0] = '?';
+		extra[1] = ' ';
+		extra[2] = 0;
+	}
+	if (extra[0])
+		mmb_console_write(extra);
+
+	line[0] = 0;
+	if (G.plat && G.plat->read_line)
+	{
+		int rc = G.plat->read_line(line, sizeof(line), 0);
+		if (rc == -2)
+			mmb_error("?BREAK");
+		if (rc != 0)
+			line[0] = 0;
+	}
+	sp = line;
 	for (;;)
 	{
 		mmb_skip_sp();
 		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 			break;
-		if (fn)
-			input_to_var(fn);
-		else
-		{
-			char name[MMB_MAX_NAME];
-			int nidx, idx[MMB_MAX_DIMS], t;
-			mmb_val v;
-			t = mmb_parse_var_ref(name, &nidx, idx);
-			(void)t;
-			v = mmb_str_val("");
-			mmb_do_assign(name, t, nidx, idx, v);
-		}
+		input_assign_mem(&sp);
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
@@ -1045,8 +1159,8 @@ void mmb_cmd_line_input(void)
 		if (*G.p == '"')
 		{
 			mmb_val pr = mmb_expr();
-			if (G.plat && G.plat->write_serial && pr.type == T_STR)
-				G.plat->write_serial(pr.s, (unsigned)strlen(pr.s));
+			if (pr.type == T_STR)
+				mmb_console_write(pr.s);
 			mmb_skip_sp();
 			if (*G.p == ',' || *G.p == ';')
 				G.p++;
@@ -1260,7 +1374,7 @@ void mmb_option_reset(void)
 	G.opt.tab = 2;
 	G.opt.break_key = 3;
 	G.opt.colourcode = 1;
-	G.opt.console = 3;
+	G.opt.console = MMB_DEFAULT_CONSOLE;
 	G.opt.console_port = 3;
 	G.opt.crlf = 2;
 	G.opt.default_mode = 1;
@@ -1274,6 +1388,9 @@ void mmb_option_reset(void)
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */
 	G.opt.wifi_debug = 0;
+	G.opt.wifi_country[0] = 'U';
+	G.opt.wifi_country[1] = 'S';
+	G.opt.wifi_country[2] = 0;
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)

@@ -389,6 +389,23 @@ int mmb_opt_wifi_debug(void)
 	return G.opt.wifi_debug != 0;
 }
 
+int mmb_opt_console_serial(void)
+{
+	return G.opt.console == 1 || G.opt.console == 3;
+}
+
+int mmb_opt_console_screen(void)
+{
+	return G.opt.console == 2 || G.opt.console == 3;
+}
+
+const char *mmb_opt_wifi_country(void)
+{
+	if (G.opt.wifi_country[0] && G.opt.wifi_country[1])
+		return G.opt.wifi_country;
+	return "US";
+}
+
 static const int k_mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 static int parse_int_part(const char **ps)

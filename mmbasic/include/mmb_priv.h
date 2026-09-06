@@ -62,6 +62,12 @@ typedef struct mmb_var {
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
 } mmb_var;
 
+#ifdef MMB_CIRCLE_WLAN
+#define MMB_DEFAULT_CONSOLE 2 /* SCREEN on hardware so TUI does not stall UART */
+#else
+#define MMB_DEFAULT_CONSOLE 3 /* BOTH in QEMU so pytest can drive the prompt */
+#endif
+
 typedef struct mmb_options {
 	int base;              /* 0 or 1 */
 	int explicit;          /* OPTION EXPLICIT */
@@ -111,6 +117,7 @@ typedef struct mmb_options {
 	char wifi_psk[64];
 	int wifi_enabled;
 	int wifi_debug;        /* OPTION WIFI DEBUG ON|OFF (default OFF) */
+	char wifi_country[4];  /* ISO 3166-1 alpha-2, default US */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 } mmb_options;
@@ -498,6 +505,7 @@ int mmb_wlan_start(const char *ssid, const char *psk);
 int mmb_wlan_connect(const char *ssid, const char *psk);
 int mmb_wlan_status(void);
 void mmb_wlan_poll(void);
+void mmb_wlan_apply_country(void);
 
 int mmb_net_available(void);
 int mmb_net_tcp_open(const char *host, int port);

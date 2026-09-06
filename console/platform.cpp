@@ -28,12 +28,16 @@ static unsigned rgb_to_raw(unsigned rgb)
 
 static void plat_write_serial(const char *s, unsigned n)
 {
+	if (!mmb_opt_console_serial())
+		return;
 	if (s_kernel)
 		s_kernel->Serial().Write(s, n);
 }
 
 static void plat_write_screen(const char *s, unsigned n)
 {
+	if (!mmb_opt_console_screen())
+		return;
 	if (s_kernel)
 		s_kernel->Screen().Write(s, n);
 }

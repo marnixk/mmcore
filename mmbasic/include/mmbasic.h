@@ -102,6 +102,13 @@ int mmb_opt_repeat_next(void);
 /* OPTION WIFI DEBUG ON|OFF (default OFF). */
 int mmb_opt_wifi_debug(void);
 
+/* OPTION CONSOLE: serial and/or HDMI. */
+int mmb_opt_console_serial(void);
+int mmb_opt_console_screen(void);
+
+/* OPTION WIFI COUNTRY "XX" (ISO 3166-1 alpha-2, default US). */
+const char *mmb_opt_wifi_country(void);
+
 /* Host input: typeahead / INKEY$ FIFO and KEYDOWN() scan codes. */
 void mmb_inkey_push(int c);
 void mmb_keydown_set(const int *codes, int n);

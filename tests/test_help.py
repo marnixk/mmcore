@@ -118,6 +118,7 @@ def test_help_option_wifi(console):
     assert "WPA2" in out or "wpa" in out.lower()
     assert "beacon" in out.lower()
     assert "country=US" in out or "US" in out
+    assert "COUNTRY" in out
     assert "[wifi]" in out
     assert "DEBUG" in out
     assert "default OFF" in out or "Default OFF" in out

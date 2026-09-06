@@ -123,11 +123,7 @@ static void parse_touch(void)
 
 static void cons_write(const char *s)
 {
-	unsigned n = (unsigned)strlen(s);
-	if (G.plat && G.plat->write_serial)
-		G.plat->write_serial(s, n);
-	if (G.plat && G.plat->write_screen)
-		G.plat->write_screen(s, n);
+	mmb_console_write(s);
 }
 
 static int read_console_line(char *buf, unsigned maxn, int hide)
@@ -223,6 +219,25 @@ static void parse_wifi_interactive(void)
 	wifi_try_connect(line, psk);
 }
 
+static int wifi_country_set(const char *s)
+{
+	char a, b;
+	if (!s || !s[0] || !s[1] || s[2])
+		return 0;
+	a = s[0];
+	b = s[1];
+	if (a >= 'a' && a <= 'z')
+		a = (char)(a - 32);
+	if (b >= 'a' && b <= 'z')
+		b = (char)(b - 32);
+	if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z')
+		return 0;
+	G.opt.wifi_country[0] = a;
+	G.opt.wifi_country[1] = b;
+	G.opt.wifi_country[2] = 0;
+	return 1;
+}
+
 static void parse_wifi(void)
 {
 	mmb_skip_sp();
@@ -230,6 +245,17 @@ static void parse_wifi(void)
 	{
 		G.opt.wifi_debug = onoff();
 		mmb_settings_save();
+		return;
+	}
+	if (mmb_match("COUNTRY"))
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		if (!wifi_country_set(v.s))
+			mmb_error("?SYNTAX ERROR");
+		mmb_settings_save();
+		mmb_wlan_apply_country();
 		return;
 	}
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
@@ -865,7 +891,7 @@ void mmb_option_list(int all)
 		else
 			ol_line(&n, "OPTION COLOURCODE OFF");
 	}
-	if (all || G.opt.console != 3 || G.opt.console_port != 3)
+	if (all || G.opt.console != MMB_DEFAULT_CONSOLE || G.opt.console_port != 3)
 	{
 		if (G.opt.console == 2)
 			ol_line(&n, "OPTION CONSOLE SCREEN");
@@ -1012,6 +1038,17 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
 	if (all || G.opt.wifi_debug)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
+	if (all || (G.opt.wifi_country[0] &&
+		    !(G.opt.wifi_country[0] == 'U' && G.opt.wifi_country[1] == 'S' &&
+		      G.opt.wifi_country[2] == 0)))
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION WIFI COUNTRY \"");
+		mmb_out(mmb_opt_wifi_country());
+		mmb_out("\"");
+		n++;
+	}
 	if (all || G.opt.search_path[0])
 	{
 		if (n)

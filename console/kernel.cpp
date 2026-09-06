@@ -10,6 +10,9 @@ static const char FromKernel[] = "console";
 
 CKernel::CKernel (void)
 :	m_Screen (m_Options.GetWidth (), m_Options.GetHeight ()),
+#ifdef MMB_CIRCLE_WLAN
+	m_Serial (&m_Interrupt),
+#endif
 	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_Storage (&m_Interrupt, &m_Timer, &m_ActLED),
@@ -44,11 +47,11 @@ boolean CKernel::Initialize (void)
 {
 	boolean bOK = TRUE;
 
+	if (bOK) bOK = m_Interrupt.Initialize ();
 	if (bOK) bOK = m_Screen.Initialize ();
 	if (bOK) bOK = m_Serial.Initialize (115200);
-	if (bOK) bOK = m_Logger.Initialize (&m_Null);
-	if (bOK) bOK = m_Interrupt.Initialize ();
 	if (bOK) bOK = m_Timer.Initialize ();
+	if (bOK) bOK = m_Logger.Initialize (&m_Null);
 	if (bOK)
 		m_Storage.Initialize ();
 	if (bOK)
@@ -57,14 +60,20 @@ boolean CKernel::Initialize (void)
 	return bOK;
 }
 
-static void emit (CSerialDevice *ser, CScreenDevice *scr, const char *s)
+static void emit_n (CKernel *k, const void *p, unsigned n)
 {
-	unsigned n = (unsigned) strlen (s);
-	if (n)
-	{
-		ser->Write (s, n);
-		scr->Write (s, n);
-	}
+	if (!k || !p || !n)
+		return;
+	if (mmb_opt_console_serial ())
+		k->Serial ().Write (p, n);
+	if (mmb_opt_console_screen ())
+		k->Screen ().Write (p, n);
+}
+
+static void emit (CKernel *k, const char *s)
+{
+	if (s)
+		emit_n (k, s, (unsigned) strlen (s));
 }
 
 void CKernel::AttachKeyboard (void)
@@ -267,17 +276,17 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	if (mmb_in_editor ())
 	{
 		const char *out = mmb_editor_key (c);
-		emit (&m_Serial, &m_Screen, out);
+		emit (this, out);
 		if (!mmb_in_editor ())
 		{
 			if (mmb_in_files ())
 			{
-				emit (&m_Serial, &m_Screen, mmb_files_on_editor_exit ());
+				emit (this, mmb_files_on_editor_exit ());
 				if (!mmb_in_files ())
-					emit (&m_Serial, &m_Screen, "> ");
+					emit (this, "> ");
 			}
 			else
-				emit (&m_Serial, &m_Screen, "> ");
+				emit (this, "> ");
 		}
 		return;
 	}
@@ -285,9 +294,9 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	if (mmb_in_files ())
 	{
 		const char *out = mmb_files_key (c);
-		emit (&m_Serial, &m_Screen, out);
+		emit (this, out);
 		if (!mmb_in_files () && !mmb_in_editor ())
-			emit (&m_Serial, &m_Screen, "> ");
+			emit (this, "> ");
 		return;
 	}
 
@@ -295,9 +304,9 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	{
 		const char *out = mmb_connect_key (c);
 		if (out && out[0])
-			emit (&m_Serial, &m_Screen, out);
+			emit (this, out);
 		if (!mmb_in_connect ())
-			emit (&m_Serial, &m_Screen, "> ");
+			emit (this, "> ");
 		return;
 	}
 
@@ -327,13 +336,12 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 			while (*pLen > 0)
 			{
 				(*pLen)--;
-				emit (&m_Serial, &m_Screen, "\b \b");
+				emit (this, "\b \b");
 			}
 			for (i = 0; m_Hist[i] && *pLen < sizeof (m_Line) - 1; i++)
 			{
 				Line[(*pLen)++] = m_Hist[i];
-				m_Serial.Write (&m_Hist[i], 1);
-				m_Screen.Write (&m_Hist[i], 1);
+				emit_n (this, &m_Hist[i], 1);
 			}
 			Line[*pLen] = '\0';
 			return;
@@ -352,8 +360,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	{
 		/* USB Enter is '\n'; serial is usually '\r'. Echo CR so HDMI wraps. */
 		char echo = '\r';
-		m_Serial.Write (&echo, 1);
-		m_Screen.Write (&echo, 1);
+		emit_n (this, &echo, 1);
 
 		Line[*pLen] = '\0';
 		if (Line[0])
@@ -368,12 +375,12 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		{
 			/* Editor streams a full frame via write_screen/write_serial. */
 			if (Result && Result[0])
-				emit (&m_Serial, &m_Screen, Result);
+				emit (this, Result);
 		}
 		else if (mmb_take_home_prompt ())
 		{
-			emit (&m_Serial, &m_Screen, Result);
-			emit (&m_Serial, &m_Screen, "> ");
+			emit (this, Result);
+			emit (this, "> ");
 		}
 		else if (mmb_in_files ())
 		{
@@ -382,15 +389,15 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		else if (mmb_in_connect ())
 		{
 			if (Result && Result[0])
-				emit (&m_Serial, &m_Screen, Result);
+				emit (this, Result);
 		}
 		else if (!Result || !Result[0])
-			emit (&m_Serial, &m_Screen, "\r\n> ");
+			emit (this, "\r\n> ");
 		else
 		{
-			emit (&m_Serial, &m_Screen, "\r\n");
-			emit (&m_Serial, &m_Screen, Result);
-			emit (&m_Serial, &m_Screen, "\r\n> ");
+			emit (this, "\r\n");
+			emit (this, Result);
+			emit (this, "\r\n> ");
 		}
 		*pLen = 0;
 	}
@@ -399,13 +406,13 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		if (*pLen > 0)
 		{
 			(*pLen)--;
-			emit (&m_Serial, &m_Screen, "\b \b");
+			emit (this, "\b \b");
 		}
 	}
 	else if (c == 3)
 	{
 		*pLen = 0;
-		emit (&m_Serial, &m_Screen, "\r\n> ");
+		emit (this, "\r\n> ");
 	}
 	else if (c == '\t' || (unsigned char) c < 32)
 	{
@@ -414,8 +421,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	else if (*pLen < sizeof (m_Line) - 1)
 	{
 		Line[(*pLen)++] = c;
-		m_Serial.Write (&c, 1);
-		m_Screen.Write (&c, 1);
+		emit_n (this, &c, 1);
 	}
 }
 
@@ -455,8 +461,7 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 			if (c == '\r' || c == '\n')
 			{
 				buf[n] = 0;
-				m_Serial.Write ("\r\n", 2);
-				m_Screen.Write ("\r\n", 2);
+				emit_n (this, "\r\n", 2);
 				return 0;
 			}
 			if (c == 8 || c == 127)
@@ -464,8 +469,7 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 				if (n > 0)
 				{
 					n--;
-					m_Serial.Write ("\b \b", 3);
-					m_Screen.Write ("\b \b", 3);
+					emit_n (this, "\b \b", 3);
 				}
 				continue;
 			}
@@ -473,8 +477,7 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 			{
 				char e = hide ? '*' : c;
 				buf[n++] = c;
-				m_Serial.Write (&e, 1);
-				m_Screen.Write (&e, 1);
+				emit_n (this, &e, 1);
 			}
 		}
 	}
@@ -485,8 +488,7 @@ TShutdownMode CKernel::Run (void)
 	m_Logger.Write (FromKernel, LogNotice, "console ready");
 
 	const char Banner[] = "MMBASIC-CONSOLE READY\r\n> ";
-	m_Serial.Write (Banner, sizeof (Banner) - 1);
-	m_Screen.Write (Banner, sizeof (Banner) - 1);
+	emit_n (this, Banner, sizeof (Banner) - 1);
 
 	AttachKeyboard ();
 

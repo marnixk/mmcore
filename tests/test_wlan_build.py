@@ -22,6 +22,7 @@ def test_build_script_builds_hostap_only_for_hardware():
     assert "${QEMU:-1}" in text
     assert "wpa_supplicant" in text
     assert 'QEMU:-1}" = "0"' in text or '[ "${QEMU:-1}" = "0" ]' in text
+    assert "--kernel-max-size 4" in text
 
 
 def test_package_and_install_ship_brcmfmac_firmware():

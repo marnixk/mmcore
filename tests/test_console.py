@@ -80,6 +80,22 @@ def test_screen_shows_typed_text(kernel_image):
         con.stop()
 
 
+def test_option_console_screen_hides_print_on_serial(fresh_console):
+    import time
+
+    c = fresh_console
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"OPTION CONSOLE SCREEN\r")
+    time.sleep(0.35)
+    c._ser.sendall(b'PRINT "HIDDEN_XYZ"\r')
+    time.sleep(0.35)
+    c._ser.sendall(b"OPTION CONSOLE BOTH\r")
+    time.sleep(0.5)
+    seen = c.drain(quiet=0.4).decode(errors="replace")
+    assert "HIDDEN_XYZ" not in seen
+    assert c.send_line("PRINT 1+1") == "2"
+
+
 def test_cls_homes_prompt_after_printed_lines(fresh_console):
     """CLS must wipe printed text and home the next prompt to the top.
 

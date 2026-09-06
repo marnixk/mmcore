@@ -496,9 +496,53 @@ extern const unsigned asset_mp3_len;
 
 void mmb_assets_seed(void)
 {
-    mmb_vfs_seed_file("TEST.PNG", asset_png, asset_png_len);
-    mmb_vfs_seed_file("TEST.JPG", asset_jpg, asset_jpg_len);
-    mmb_vfs_seed_file("TEST.MOD", asset_mod, asset_mod_len);
-    mmb_vfs_seed_file("TEST.XM", asset_xm, asset_xm_len);
-    mmb_vfs_seed_file("TEST.MP3", asset_mp3, asset_mp3_len);
+	static const unsigned wav_rate = 8000;
+	static const unsigned wav_ns = 24000;
+	unsigned char *wav;
+	unsigned i, n;
+
+	mmb_vfs_seed_file("TEST.PNG", asset_png, asset_png_len);
+	mmb_vfs_seed_file("TEST.JPG", asset_jpg, asset_jpg_len);
+	mmb_vfs_seed_file("TEST.MOD", asset_mod, asset_mod_len);
+	mmb_vfs_seed_file("TEST.XM", asset_xm, asset_xm_len);
+	mmb_vfs_seed_file("TEST.MP3", asset_mp3, asset_mp3_len);
+
+	n = 44 + wav_ns;
+	if (!G.plat || !G.plat->alloc)
+		return;
+	wav = (unsigned char *)G.plat->alloc(n);
+	if (!wav)
+		return;
+	memcpy(wav, "RIFF", 4);
+	wav[4] = (unsigned char)((n - 8) & 255);
+	wav[5] = (unsigned char)(((n - 8) >> 8) & 255);
+	wav[6] = (unsigned char)(((n - 8) >> 16) & 255);
+	wav[7] = (unsigned char)(((n - 8) >> 24) & 255);
+	memcpy(wav + 8, "WAVEfmt ", 8);
+	wav[16] = 16;
+	wav[17] = wav[18] = wav[19] = 0;
+	wav[20] = 1;
+	wav[21] = 0;
+	wav[22] = 1;
+	wav[23] = 0;
+	wav[24] = (unsigned char)(wav_rate & 255);
+	wav[25] = (unsigned char)((wav_rate >> 8) & 255);
+	wav[26] = (unsigned char)((wav_rate >> 16) & 255);
+	wav[27] = (unsigned char)((wav_rate >> 24) & 255);
+	wav[28] = (unsigned char)(wav_rate & 255);
+	wav[29] = (unsigned char)((wav_rate >> 8) & 255);
+	wav[30] = wav[31] = 0;
+	wav[32] = 1;
+	wav[33] = 0;
+	wav[34] = 8;
+	wav[35] = 0;
+	memcpy(wav + 36, "data", 4);
+	wav[40] = (unsigned char)(wav_ns & 255);
+	wav[41] = (unsigned char)((wav_ns >> 8) & 255);
+	wav[42] = (unsigned char)((wav_ns >> 16) & 255);
+	wav[43] = (unsigned char)((wav_ns >> 24) & 255);
+	for (i = 0; i < wav_ns; i++)
+		wav[44 + i] = (unsigned char)((i / 9) & 1 ? 200 : 56);
+	mmb_vfs_seed_file("TEST.WAV", wav, n);
+	G.plat->free(wav);
 }

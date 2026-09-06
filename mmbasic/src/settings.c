@@ -267,6 +267,15 @@ static void apply_wifi(const char *k, const char *v)
 		G.opt.wifi_enabled = parse_int(v);
 	else if (mmb_keyword_eq(k, "debug"))
 		G.opt.wifi_debug = parse_int(v);
+	else if (mmb_keyword_eq(k, "country"))
+	{
+		strncpy(G.opt.wifi_country, v, sizeof(G.opt.wifi_country) - 1);
+		G.opt.wifi_country[sizeof(G.opt.wifi_country) - 1] = 0;
+		if (G.opt.wifi_country[0] >= 'a' && G.opt.wifi_country[0] <= 'z')
+			G.opt.wifi_country[0] = (char)(G.opt.wifi_country[0] - 32);
+		if (G.opt.wifi_country[1] >= 'a' && G.opt.wifi_country[1] <= 'z')
+			G.opt.wifi_country[1] = (char)(G.opt.wifi_country[1] - 32);
+	}
 }
 
 void mmb_settings_save(void)
@@ -350,6 +359,7 @@ void mmb_settings_save(void)
 	kv_str(buf, sizeof(buf), "psk", G.opt.wifi_psk);
 	kv_int(buf, sizeof(buf), "enabled", G.opt.wifi_enabled);
 	kv_int(buf, sizeof(buf), "debug", G.opt.wifi_debug);
+	kv_str(buf, sizeof(buf), "country", mmb_opt_wifi_country());
 	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
 }
 
