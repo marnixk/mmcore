@@ -273,6 +273,9 @@ def test_print_run_once_not_duplicated(console):
     assert console.send_line("NEW") == ""
     assert console.send_line('10 PRINT "hi"') == ""
     assert console.send_line("RUN") == "hi"
+
+
+def test_while_wend(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 I=0") == ""
     assert console.send_line("20 WHILE I<3") == ""
