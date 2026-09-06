@@ -1,12 +1,46 @@
 """Console INPUT reads a typed line into variables."""
 
+import time
+
+
+def _wait_contains(con, token: bytes, timeout: float = 5.0) -> bytes:
+    deadline = time.time() + timeout
+    seen = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            seen += chunk
+            if token in seen:
+                return seen
+        else:
+            time.sleep(0.05)
+    return seen
+
+
+def _until_prompt(con, timeout: float = 5.0) -> str:
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+        else:
+            time.sleep(0.05)
+    return buf.decode(errors="replace")
+
 
 def test_input_console_string(fresh_console):
     c = fresh_console
     c.send_line("NEW")
     c.send_line("10 INPUT a$")
     c.send_line('20 PRINT "[" + a$ + "]"')
-    out = c.send_keys(b"RUN\rhello\r", timeout=6.0)
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    assert b"?" in _wait_contains(c, b"?")
+    c._ser.sendall(b"hello\r")
+    out = _until_prompt(c)
     assert "[hello]" in out
 
 
@@ -14,12 +48,23 @@ def test_input_console_prompt_and_csv(fresh_console):
     c = fresh_console
     c.send_line("NEW")
     c.send_line('10 INPUT "Name"; n$')
-    c.send_line("20 INPUT a, b$")
-    c.send_line("30 PRINT n$")
-    c.send_line('40 PRINT STR$(a) + "/" + b$')
-    out = c.send_keys(b"RUN\rAda\r3,xyz\r", timeout=8.0)
-    assert "Name?" in out or "Name? " in out
+    c.send_line("20 PRINT n$")
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    first = _wait_contains(c, b"Name?")
+    assert b"Name?" in first
+    c._ser.sendall(b"Ada\r")
+    out = _until_prompt(c)
     assert "Ada" in out
+
+    c.send_line("NEW")
+    c.send_line("10 INPUT a, b$")
+    c.send_line('20 PRINT STR$(a) + "/" + b$')
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    assert b"?" in _wait_contains(c, b"?")
+    c._ser.sendall(b"3,xyz\r")
+    out = _until_prompt(c)
     assert "3/xyz" in out
 
 
@@ -28,7 +73,11 @@ def test_line_input_console(fresh_console):
     c.send_line("NEW")
     c.send_line('10 LINE INPUT "Go"; s$')
     c.send_line("20 PRINT s$")
-    out = c.send_keys(b"RUN\rabc def\r", timeout=6.0)
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    assert b"Go" in _wait_contains(c, b"Go")
+    c._ser.sendall(b"abc def\r")
+    out = _until_prompt(c)
     assert "abc def" in out
 
 
