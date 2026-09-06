@@ -82,7 +82,7 @@ def test_files_alt_file_menu_aligns(fresh_console):
     con.drain(quiet=0.1)
     con._ser.sendall(b"FILES\r")
     con.drain(quiet=0.8)
-    con._ser.sendall(b"\x1bf")
+    con._ser.sendall(bytes([1]) + b"f")
     seen = con.drain(quiet=0.6).decode(errors="replace")
     assert "View" in seen or "Edit" in seen or "Copy" in seen
     con._ser.sendall(b"q")

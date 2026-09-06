@@ -3,6 +3,7 @@
 #include <circle/new.h>
 #include <circle/util.h>
 #include <circle/timer.h>
+#include <circle/usb/usbhid.h>
 
 extern void mmb_platform_bind(CKernel *k);
 
@@ -31,6 +32,7 @@ CKernel::CKernel (void)
 	m_DidRepeat = 0;
 	m_HeldHid = 0;
 	m_LastMods = 0;
+	m_AltHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -145,6 +147,16 @@ static int hid_to_cmm2 (unsigned char hid)
 	return 0;
 }
 
+/* Letters and digits for TUI Alt+key. Circle's cooked keymap returns
+ * KeyNone for Left Alt, so USB Alt never reaches ProcessChar otherwise. */
+static int hid_alt_char (unsigned char hid)
+{
+	int c = hid_to_cmm2 (hid);
+	if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+		return c;
+	return 0;
+}
+
 void CKernel::ApplyRawKeys (void)
 {
 	int codes[6];
@@ -189,6 +201,34 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 			pThis->m_RepeatLen = 0;
 	}
 	pThis->ApplyRawKeys ();
+}
+
+void CKernel::PollUsbAlt (void)
+{
+	unsigned char hid;
+	int ch;
+
+	if ((m_LastMods & ALT) == 0 || (m_LastMods & (LCTRL | RCTRL)) != 0)
+	{
+		m_AltHidSent = 0;
+		return;
+	}
+	if (!mmb_in_editor () && !mmb_in_files ())
+		return;
+	hid = m_HeldHid;
+	if (hid == 0 || hid == m_AltHidSent)
+		return;
+	ch = hid_alt_char (hid);
+	if (ch == 0)
+	{
+		m_AltHidSent = hid;
+		return;
+	}
+	m_AltHidSent = hid;
+	m_UsbBurst = 1;
+	ProcessChar (1, m_Line, &m_nLen);
+	ProcessChar ((char) ch, m_Line, &m_nLen);
+	m_UsbBurst = 0;
 }
 
 void CKernel::PollUsbRepeat (void)
@@ -269,6 +309,9 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	delete pThis->m_pKbdBuf;
 	pThis->m_pKbdBuf = 0;
 	pThis->m_pKeyboard = 0;
+	pThis->m_HeldHid = 0;
+	pThis->m_LastMods = 0;
+	pThis->m_AltHidSent = 0;
 }
 
 void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
@@ -530,6 +573,7 @@ TShutdownMode CKernel::Run (void)
 			}
 		}
 
+		PollUsbAlt ();
 		if (nBytes <= 0)
 		{
 			PollUsbRepeat ();
