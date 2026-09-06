@@ -526,8 +526,11 @@ static const char kHelpSave[] =
 static const char kHelpRun[] =
 	"RUN [file$]\n"
 	"\n"
-	"Run the program in memory. With file$, load that\n"
-	"program first (.BAS appended if needed) then run.\n"
+	"Run the program. With file$, load that program\n"
+	"from disk first (.BAS appended if needed) then\n"
+	"run. Bare RUN does the same for the current file\n"
+	"(from RUN file$, SAVE, or the editor). With no\n"
+	"associated file, RUN uses the program in memory.\n"
 	"Stop a running program with Print Screen (PrtScr)\n"
 	"or the OPTION BREAK key (Ctrl-C by default).\n"
 	"That prints ?BREAK and returns to the prompt.\n"
