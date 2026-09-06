@@ -1958,11 +1958,24 @@ void mmb_cmd_pause(void)
 	(void)ms;
 }
 
-void mmb_cmd_reboot(void)
+void mmb_reboot(void)
 {
+	int i;
+	G.running = 0;
+	mmb_play_stop();
+	for (i = 1; i <= MMB_MAX_FILES; i++)
+		G.files[i].open = 0;
+	mmb_settings_save();
+	mmb_storage_unmount();
+	mmb_console_write("Rebooting...\r\n");
 	if (G.plat && G.plat->reboot)
 		G.plat->reboot();
 	mmb_error("?REBOOT");
+}
+
+void mmb_cmd_reboot(void)
+{
+	mmb_reboot();
 }
 
 int mmb_is_running(void)

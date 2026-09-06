@@ -20,6 +20,7 @@ CKernel::CKernel (void)
 	m_pKeyboard (0),
 	m_pKbdBuf (0),
 	m_nBreak (0),
+	m_nCad (0),
 	m_nLen (0),
 	m_nEsc (0)
 {
@@ -190,6 +191,7 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 	CKernel *pThis = (CKernel *) pArg;
 	unsigned i;
 	unsigned char held = 0;
+	int have_del = 0;
 	if (pThis == 0)
 		return;
 	pThis->m_LastMods = ucModifiers;
@@ -199,9 +201,16 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 		/* USB HID: 0x46 Print Screen, 0x48 Pause/Break */
 		if (RawKeys[i] == 0x46 || RawKeys[i] == 0x48)
 			pThis->m_nBreak = 1;
+		/* 0x4C Keyboard Delete Forward */
+		if (RawKeys[i] == 0x4C)
+			have_del = 1;
 		if (!held && RawKeys[i] >= 4)
 			held = RawKeys[i];
 	}
+	if (have_del &&
+	    (ucModifiers & (LCTRL | RCTRL)) != 0 &&
+	    (ucModifiers & (ALT | ALTGR)) != 0)
+		pThis->m_nCad = 1;
 	if (held != pThis->m_HeldHid)
 	{
 		pThis->m_HeldHid = held;
@@ -284,6 +293,7 @@ void CKernel::PollInputChars (int breakKey)
 
 	AttachKeyboard ();
 	ApplyRawKeys ();
+	PollCadReboot ();
 	nBytes = m_Serial.Read (tmp, sizeof tmp);
 	if (nBytes < 0)
 		nBytes = 0;
@@ -311,6 +321,14 @@ int CKernel::TakeBreak (void)
 	int v = m_nBreak;
 	m_nBreak = 0;
 	return v;
+}
+
+void CKernel::PollCadReboot (void)
+{
+	if (!m_nCad)
+		return;
+	m_nCad = 0;
+	mmb_reboot ();
 }
 
 void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
@@ -505,6 +523,7 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 		int nBytes, i;
 		mmb_poll ();
 		AttachKeyboard ();
+		PollCadReboot ();
 		nBytes = m_Serial.Read (tmp, sizeof tmp);
 		if (nBytes < 0)
 			nBytes = 0;
@@ -586,6 +605,7 @@ TShutdownMode CKernel::Run (void)
 		}
 
 		PollUsbAlt ();
+		PollCadReboot ();
 		if (nBytes <= 0)
 		{
 			PollUsbRepeat ();

@@ -500,6 +500,8 @@ const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
 void mmb_storage_poll(void);
 
+void mmb_storage_unmount(void);
+
 int mmb_find_line_pc(int num);
 int mmb_const_lookup(const char *name, int type, mmb_val *out);
 void mmb_const_define(const char *name, int type, mmb_val val);
