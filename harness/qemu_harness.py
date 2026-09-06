@@ -204,8 +204,17 @@ class MMBasicConsole:
         # strip the echoed command and surrounding prompt/whitespace
         lines = [ln.strip() for ln in text.replace("\r", "\n").split("\n")]
         lines = [ln for ln in lines if ln and ln != echoed.strip()]
-        cleaned = [ln for ln in lines if ln not in (">", self.prompt.decode().strip())]
+        cleaned = [ln for ln in lines if not self._is_prompt_line(ln)]
         return "\n".join(cleaned).strip()
+
+    @staticmethod
+    def _is_prompt_line(ln: str) -> bool:
+        if ln == ">":
+            return True
+        # OPTION PROMPT CWD: A:/> or A:/DIR>
+        if ln.endswith(">") and len(ln) >= 3 and ln[1] == ":":
+            return True
+        return False
 
     # -- screen (framebuffer) ---------------------------------------------
     def _monitor_cmd(self, cmd: str) -> None:

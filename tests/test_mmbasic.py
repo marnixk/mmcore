@@ -280,6 +280,8 @@ def test_option_hardware_parse(console):
         "OPTION ERROR CONTINUE",
         "OPTION ERROR ABORT",
         "OPTION AUDIO ON",
+        "OPTION PROMPT CWD",
+        "OPTION PROMPT BARE",
         "OPTION HEARTBEAT OFF",
         "OPTION CPUSPEED 504000",
         "OPTION RESOLUTION 640x480",

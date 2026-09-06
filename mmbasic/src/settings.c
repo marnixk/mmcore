@@ -197,6 +197,8 @@ static void apply_core(const char *k, const char *v)
 		G.opt.pin = parse_int(v);
 	else if (mmb_keyword_eq(k, "profiling"))
 		G.opt.profiling = parse_int(v);
+	else if (mmb_keyword_eq(k, "prompt"))
+		G.opt.prompt = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "status"))
 		G.opt.status = parse_int(v);
 	else if (mmb_keyword_eq(k, "vcc"))
@@ -306,6 +308,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "mouse_sens", G.opt.mouse_sens);
 	kv_int(buf, sizeof(buf), "pin", G.opt.pin);
 	kv_int(buf, sizeof(buf), "profiling", G.opt.profiling);
+	kv_int(buf, sizeof(buf), "prompt", G.opt.prompt);
 	kv_int(buf, sizeof(buf), "status", G.opt.status);
 	append(buf, sizeof(buf), "vcc=");
 	{

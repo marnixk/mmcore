@@ -1,5 +1,7 @@
 """Persistent INI settings, hidden dotfiles, FACTORY_RESET, and OPTION WIFI."""
 
+from ihelp_util import dump_topic
+
 
 def _ini_path(con):
     for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
@@ -148,6 +150,56 @@ def test_option_wifi_country_persists(console):
     all_listed = console.send_line("OPTION LIST ALL")
     assert "WIFI COUNTRY" in all_listed
     assert "US" in all_listed
+
+
+def test_option_prompt_bare_is_default(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST")
+    assert "PROMPT" not in listed
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION PROMPT BARE" in all_listed
+    help_opt = dump_topic(console, "OPTION")
+    assert "PROMPT BARE|CWD" in help_opt or ("PROMPT" in help_opt and "CWD" in help_opt)
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 1\r")
+    raw = console.drain(quiet=0.5).decode(errors="replace")
+    assert raw.rstrip().endswith(">") or "> " in raw
+
+
+def test_option_prompt_cwd_shows_path(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line("OPTION PROMPT CWD") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION PROMPT CWD" in listed
+    assert console.send_line('CHDIR "A:/"') == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 7\r")
+    raw = console.drain(quiet=0.5).decode(errors="replace")
+    assert "A:/>" in raw.replace("\r", "")
+    assert console.send_line('MKDIR "PRDIR"') == ""
+    assert console.send_line("cd PRDIR") == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 8\r")
+    raw = console.drain(quiet=0.5).decode(errors="replace")
+    assert "PRDIR>" in raw.replace("\r", "").upper()
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line("OPTION PROMPT BARE") == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 9\r")
+    raw = console.drain(quiet=0.5).decode(errors="replace")
+    assert "A:/>" not in raw.replace("\r", "")
+
+
+def test_option_prompt_cwd_persists(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line("OPTION PROMPT CWD") == ""
+    ini = _read_ini(console)
+    assert "prompt=1" in ini
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION PROMPT BARE" in listed
+    ini = _read_ini(console)
+    assert "prompt=0" in ini
 
 
 def test_files_hides_dotfiles(fresh_console):

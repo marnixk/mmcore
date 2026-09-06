@@ -1391,6 +1391,7 @@ void mmb_option_reset(void)
 	G.opt.wifi_country[0] = 'U';
 	G.opt.wifi_country[1] = 'S';
 	G.opt.wifi_country[2] = 0;
+	G.opt.prompt = 0; /* BARE ">" */
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)
