@@ -56,7 +56,36 @@ def test_editor_ocr_file_label(kernel_image):
         con.stop()
 
 
+def test_editor_alt_f_opens_file_menu(kernel_image):
+    """USB Left-Alt+key is SOH then the letter (Circle cooked keymap drops Alt)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "MENU.BAS")
+        opened = _keys(con, bytes([1]) + b"f")
+        assert "Open" in opened or "Save" in opened or "Quit" in opened
+        _keys(con, b"\x1b[B")
+        closed = _keys(con, b"\x1b\x1b")
+        assert "File" in closed
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_editor_alt_x_quits(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ALTX.BAS")
+        _keys(con, bytes([1]) + b"x")
+        assert con.send_line("PRINT 9") == "9"
+    finally:
+        con.stop()
+
+
 def test_editor_esc_menu_open_close(kernel_image):
+    """Serial Meta fallback: ESC+letter still opens the same menus."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -78,7 +107,7 @@ def test_editor_save_as_and_open(kernel_image):
     try:
         _edit(con, "TMP.BAS")
         _keys(con, b"PRINT 6*7")
-        _keys(con, b"\x1bfa", quiet=0.5)
+        _keys(con, bytes([1]) + b"fa", quiet=0.5)
         # Save As prefills the current path; wipe it, then type the new name.
         _keys(con, b"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7fSAVED.BAS\r", quiet=0.7)
         _quit(con)
@@ -97,12 +126,12 @@ def test_editor_two_tabs_and_switch(kernel_image):
         _edit(con, "AAA.BAS")
         _keys(con, b"PRINT 11")
         _keys(con, bytes([15]), quiet=0.4)
-        _keys(con, b"\x1bfo", quiet=0.5)
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
         seen = _keys(con, b"BBB.BAS\r", quiet=0.6)
         assert "AAA" in seen and "BBB" in seen
         _keys(con, b"PRINT 22")
         _keys(con, bytes([15]), quiet=0.4)
-        back = _keys(con, b"\x1b1", quiet=0.5)
+        back = _keys(con, bytes([1]) + b"1", quiet=0.5)
         assert "AAA" in back
         _quit(con)
         listing = con.send_line("DIR")

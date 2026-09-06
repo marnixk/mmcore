@@ -42,6 +42,7 @@ private:
 	void AttachKeyboard (void);
 	void ProcessChar (char c, char *Line, unsigned *pLen);
 	void PollUsbRepeat (void);
+	void PollUsbAlt (void);
 	void ApplyRawKeys (void);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
@@ -77,6 +78,7 @@ private:
 	unsigned char		m_HeldHid;
 	unsigned char		m_RawKeys[6];
 	unsigned char		m_LastMods;
+	unsigned char		m_AltHidSent;
 	int			m_UsbBurst;
 };
 
