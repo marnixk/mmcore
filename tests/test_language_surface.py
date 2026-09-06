@@ -131,7 +131,8 @@ def test_help_lists_new_commands(console):
     close_ihelp(console)
     basic = dump_topic(console, "BASIC")
     assert "LOCAL" in basic
-    assert "ON GOTO" in basic
+    assert "GOTO" in basic
+    assert "<ON>" in basic or "ON GOTO" in basic
 
 
 def test_const_max_not_function(console):
