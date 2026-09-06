@@ -286,7 +286,7 @@ def test_editor_shift_arrows_highlight_selection(kernel_image):
         _keys(con, b"\x1b[H")
         _keys(con, b"\x1b[1;2C\x1b[1;2C\x1b[1;2C")
         marked = _cell_samples(con, 1, 3)
-        rest = _cell_samples(con, 4, 3)
+        rest = _cell_samples(con, 5, 3)
         assert any(_is_sel_light(p) for p in marked), marked
         assert not all(_is_edit_blue(p) for p in marked), marked
         assert any(_is_edit_blue(p) for p in rest), rest
