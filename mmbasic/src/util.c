@@ -173,6 +173,15 @@ void mmb_out(const char *s)
 	G.out[G.outn] = 0;
 }
 
+void mmb_out_flush(void)
+{
+	if (!G.outn)
+		return;
+	mmb_console_write(G.out);
+	G.outn = 0;
+	G.out[0] = 0;
+}
+
 void mmb_outf(const char *unused, int64_t n)
 {
 	char buf[32];
@@ -273,6 +282,83 @@ void mmb_console_write(const char *s)
 		G.plat->write_serial(s, n);
 	if (G.plat && G.plat->write_screen)
 		G.plat->write_screen(s, n);
+}
+
+static int rgb_dist2(unsigned a, unsigned b)
+{
+	int dr = (int)((a >> 16) & 255) - (int)((b >> 16) & 255);
+	int dg = (int)((a >> 8) & 255) - (int)((b >> 8) & 255);
+	int db = (int)(a & 255) - (int)(b & 255);
+	return dr * dr + dg * dg + db * db;
+}
+
+static int rgb_to_ansi(unsigned rgb, int fg)
+{
+	static const unsigned pal[] = {
+		0x000000, 0xAA0000, 0x00AA00, 0xAA5500,
+		0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
+		0x555555, 0xFF0000, 0x00FF00, 0xFFFF00,
+		0x0000FF, 0xFF00FF, 0x00FFFF, 0xFFFFFF
+	};
+	static const int fgcode[] = {
+		30, 31, 32, 33, 34, 35, 36, 37,
+		90, 91, 92, 93, 94, 95, 96, 97
+	};
+	static const int bgcode[] = {
+		40, 41, 42, 43, 44, 45, 46, 47,
+		100, 101, 102, 103, 104, 105, 106, 107
+	};
+	int best = 0, i, d, bd;
+
+	bd = rgb_dist2(rgb, pal[0]);
+	for (i = 1; i < 16; i++)
+	{
+		d = rgb_dist2(rgb, pal[i]);
+		if (d < bd)
+		{
+			bd = d;
+			best = i;
+		}
+	}
+	return fg ? fgcode[best] : bgcode[best];
+}
+
+static void ansi_put_int(char *seq, int *n, int v)
+{
+	char tmp[4];
+	int i = 0;
+	if (v <= 0)
+	{
+		seq[(*n)++] = '0';
+		return;
+	}
+	while (v > 0 && i < 4)
+	{
+		tmp[i++] = (char)('0' + (v % 10));
+		v /= 10;
+	}
+	while (i > 0)
+		seq[(*n)++] = tmp[--i];
+}
+
+void mmb_console_apply_colour(void)
+{
+	char seq[24];
+	int n = 0;
+
+	if (!G.plat || !G.plat->write_screen)
+		return;
+	/* Circle only honours SGR when the CSI has a single parameter
+	 * (`ESC[91m`). `ESC[91;40m` is ignored. */
+	seq[n++] = '\x1b';
+	seq[n++] = '[';
+	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.fg, 1));
+	seq[n++] = 'm';
+	seq[n++] = '\x1b';
+	seq[n++] = '[';
+	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
+	seq[n++] = 'm';
+	G.plat->write_screen(seq, (unsigned)n);
 }
 
 static void fmt_double(double x, char *buf, int buflen)

@@ -1,5 +1,7 @@
 """MMBasic language, OPTION, types, files, loaders, audio, editor tests."""
 
+import subprocess
+
 import pytest
 
 
@@ -330,6 +332,35 @@ def test_page_copy_and_colour(fresh_console):
     pix2 = int(c.send_line("PRINT PIXEL(12,12)"))
     assert ((pix2 >> 16) & 255) > 150
     assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_colour_rgb_red_print_text(fresh_console):
+    c = fresh_console
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS") == ""
+    assert c.send_line("20 COLOR RGB(RED)") == ""
+    assert c.send_line('30 PRINT "XXXX"') == ""
+    out = c.send_line("RUN")
+    assert "XXXX" in out
+    png = c.capture_png()
+    txt = subprocess.run(
+        ["convert", png, "-crop", "48x20+0+0", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    found = False
+    for line in txt.splitlines():
+        if "(" not in line:
+            continue
+        nums = line[line.find("(") + 1 : line.find(")")].split(",")
+        if len(nums) < 3:
+            continue
+        r, g, b = (int(float(n)) for n in nums[:3])
+        if r > 150 and g < 130 and b < 130:
+            found = True
+            break
+    assert found, txt[:800]
 
 
 def test_text_draws_pixels(fresh_console):

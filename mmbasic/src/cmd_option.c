@@ -333,6 +333,7 @@ static void option_dispatch(void)
 				G.p++;
 				G.gfx.bg = (unsigned)mmb_as_int(mmb_expr());
 			}
+			mmb_console_apply_colour();
 			return;
 		}
 		if (mmb_match("INTEGER"))

@@ -232,12 +232,17 @@ static const char kHelpColour[] =
 	"COLOUR fg [, bg]\n"
 	"COLOR fg [, bg]     (alias)\n"
 	"\n"
-	"Set foreground and optional background colour.\n"
-	"Colours are RGB integers: RGB(r,g,b) or RGB(\"RED\").\n"
+	"Set foreground and optional background colour for\n"
+	"PRINT / INPUT text and for graphics when a colour\n"
+	"argument is omitted. HDMI text uses the nearest\n"
+	"ANSI colour (RGB(RED) is bright red).\n"
+	"Colours are RGB integers: RGB(r,g,b), RGB(RED),\n"
+	"or RGB(\"RED\").\n"
 	"Named colours include BLACK RED GREEN BLUE YELLOW\n"
 	"CYAN MAGENTA WHITE ORANGE PINK GOLD BROWN GRAY.\n"
 	"\n"
-	"Example:  COLOUR RGB(255,0,0)";
+	"Example:  COLOUR RGB(RED)\n"
+	"          COLOUR RGB(255,0,0)";
 
 static const char kHelpMode[] =
 	"MODE n [, bits] [, clscolour]\n"

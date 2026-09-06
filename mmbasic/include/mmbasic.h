@@ -101,6 +101,9 @@ int mmb_take_home_prompt(void);
 /* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
 void mmb_console_write(const char *s);
 
+/* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
+void mmb_console_apply_colour(void);
+
 /* OPTION KEYBOARD REPEAT first [, next]  (milliseconds). */
 int mmb_opt_repeat_first(void);
 int mmb_opt_repeat_next(void);
