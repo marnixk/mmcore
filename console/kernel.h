@@ -44,6 +44,19 @@ private:
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
 	void ApplyRawKeys (void);
+	void LineGoEnd (char *Line, unsigned *pLen);
+	void LineClearVis (char *Line, unsigned *pLen);
+	void LineReplace (char *Line, unsigned *pLen, const char *s);
+	void LineLeft (void);
+	void LineRight (char *Line, unsigned *pLen);
+	void LineHome (void);
+	void LineInsert (char c, char *Line, unsigned *pLen);
+	void LineBackspace (char *Line, unsigned *pLen);
+	void LineDelete (char *Line, unsigned *pLen);
+	void HistAdd (const char *s);
+	void HistUp (char *Line, unsigned *pLen);
+	void HistDown (char *Line, unsigned *pLen);
+	void HandleCsi (char final, char *Line, unsigned *pLen);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
 	static void KeyStatusHandlerRaw (unsigned char ucModifiers,
@@ -68,8 +81,14 @@ private:
 	volatile int		m_nBreak;
 	char			m_Line[256];
 	unsigned		m_nLen;
+	unsigned		m_nPos;
 	int			m_nEsc;
-	char			m_Hist[256];
+	int			m_nCsiArg;
+	enum { HistMax = 32 };
+	char			m_Hist[HistMax][256];
+	unsigned		m_nHist;
+	int			m_nHistIdx;
+	char			m_Draft[256];
 	char			m_RepeatSeq[16];
 	unsigned		m_RepeatLen;
 	unsigned		m_HoldMs;
