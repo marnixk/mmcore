@@ -855,6 +855,17 @@ static int fd_has_glob(const char *s)
 	return s && (strchr(s, '*') || strchr(s, '?'));
 }
 
+static const char *fd_rchr(const char *s, char ch)
+{
+	const char *last = 0;
+	if (!s)
+		return 0;
+	for (; *s; s++)
+		if (*s == ch)
+			last = s;
+	return last;
+}
+
 static int fd_is_dir(const char *path)
 {
 	if (!path || !path[0])
@@ -935,7 +946,7 @@ static void fd_dirname(char *out, int n, const char *path)
 	char tmp[128];
 	char *slash;
 	fd_copy(tmp, sizeof(tmp), path);
-	slash = strrchr(tmp, '/');
+	slash = (char *)fd_rchr(tmp, '/');
 	if (!slash)
 	{
 		out[0] = 0;
@@ -1249,7 +1260,7 @@ static void fd_submit_path(const char *path)
 
 static void fd_apply_glob(const char *spec)
 {
-	const char *slash = strrchr(spec, '/');
+	const char *slash = fd_rchr(spec, '/');
 	char dirpart[128];
 	if (slash)
 	{
