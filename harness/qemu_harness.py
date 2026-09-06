@@ -143,12 +143,15 @@ class MMBasicConsole:
         except OSError:
             return b""
 
-    def drain(self, quiet: float = 0.2) -> bytes:
-        """Read everything currently available until the line goes quiet."""
+    def drain(self, quiet: float = 0.2, timeout: float = 12.0) -> bytes:
+        """Read until the line is quiet, or until timeout if output never stops."""
         assert self._ser is not None
         buf = b""
         last = time.time()
+        start = last
         while time.time() - last < quiet:
+            if time.time() - start >= timeout:
+                break
             chunk = self._recv(self._ser)
             if chunk:
                 buf += chunk
