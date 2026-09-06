@@ -162,7 +162,7 @@ class MMBasicConsole:
         """Type ``text`` + Enter and return the response text (between the
         echoed command and the next prompt)."""
         assert self._ser is not None
-        self.drain(quiet=0.1)
+        self.drain(quiet=0.1, timeout=0.4)
         self._ser.sendall(text.encode() + b"\r")
 
         deadline = time.time() + timeout
@@ -184,7 +184,7 @@ class MMBasicConsole:
     def send_keys(self, data: bytes, timeout: float = 3.0) -> str:
         """Send raw keystrokes (no automatic Enter) and return text up to the next prompt."""
         assert self._ser is not None
-        self.drain(quiet=0.1)
+        self.drain(quiet=0.1, timeout=0.4)
         self._ser.sendall(data)
 
         deadline = time.time() + timeout

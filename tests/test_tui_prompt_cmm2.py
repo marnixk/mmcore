@@ -376,12 +376,19 @@ def test_then_return_from_sub(console):
 
 
 def _run_until_break(con, path, timeout=4.0):
-    con.drain(quiet=0.1)
+    con.drain(quiet=0.1, timeout=0.4)
     con._ser.sendall(f'RUN "{path}"\r'.encode())
     time.sleep(timeout)
     con._ser.sendall(b"\x03")
-    raw = con.drain(quiet=1.2).decode(errors="replace")
-    return raw
+    deadline = time.time() + 3.0
+    buf = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+    return buf.decode(errors="replace")
 
 
 def test_cmm2_compat_syntaxshock_runs(console):
