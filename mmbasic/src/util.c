@@ -399,6 +399,27 @@ int mmb_opt_console_screen(void)
 	return G.opt.console == 2 || G.opt.console == 3;
 }
 
+const char *mmb_prompt(void)
+{
+	static char buf[140];
+	const char *cwd;
+	int n;
+
+	if (!G.opt.prompt)
+		return "> ";
+	cwd = mmb_vfs_cwd();
+	n = 0;
+	while (cwd[n] && n < (int)sizeof(buf) - 3)
+	{
+		buf[n] = cwd[n];
+		n++;
+	}
+	buf[n++] = '>';
+	buf[n++] = ' ';
+	buf[n] = 0;
+	return buf;
+}
+
 const char *mmb_opt_wifi_country(void)
 {
 	if (G.opt.wifi_country[0] && G.opt.wifi_country[1])

@@ -112,6 +112,9 @@ int mmb_opt_wifi_debug(void);
 int mmb_opt_console_serial(void);
 int mmb_opt_console_screen(void);
 
+/* Immediate-mode prompt. BARE is "> "; CWD is DOS $p$g, e.g. "A:/> ". */
+const char *mmb_prompt(void);
+
 /* OPTION WIFI COUNTRY "XX" (ISO 3166-1 alpha-2, default US). */
 const char *mmb_opt_wifi_country(void);
 
