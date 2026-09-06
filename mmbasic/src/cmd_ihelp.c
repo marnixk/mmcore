@@ -366,13 +366,13 @@ static int name_cmp(int a, int b)
 
 static int body_h(void)
 {
-	int h = tui_rows() - 4;
+	int h = tui_rows() - 3;
 	return h < 3 ? 3 : h;
 }
 
 static int body_y0(void)
 {
-	return 3;
+	return 2;
 }
 
 static void load_index(void)
@@ -783,7 +783,6 @@ static void ih_draw(void)
 {
 	int x, y, w, h, bh, by, sbx, maxs, thumb;
 	int i;
-	const char *menu = " File  Edit  View  Search  Run  Debug  Options  Help";
 	char st[96];
 
 	if (!H.active)
@@ -792,19 +791,17 @@ static void ih_draw(void)
 	w = tui_cols();
 	h = tui_rows();
 	tui_clear(TUI_WHITE, TUI_BLACK);
-	tui_fill(0, 0, w, 1, ' ', TUI_BLACK, TUI_WHITE);
-	tui_pad(1, 0, menu, w - 1, TUI_BLACK, TUI_WHITE);
-	tui_fill(0, 1, w, 1, ' ', TUI_BRWHITE, TUI_BRBLACK);
+	tui_fill(0, 0, w, 1, ' ', TUI_BRWHITE, TUI_BRBLACK);
 	{
 		int n = (int)strlen(H.title);
 		int tx = (w - n) / 2;
 		if (tx < 1)
 			tx = 1;
-		tui_puts(tx, 1, H.title, TUI_BRWHITE, TUI_BRBLACK);
+		tui_puts(tx, 0, H.title, TUI_BRWHITE, TUI_BRBLACK);
 	}
-	tui_fill(0, 2, w, 1, ' ', TUI_WHITE, TUI_BLACK);
+	tui_fill(0, 1, w, 1, ' ', TUI_WHITE, TUI_BLACK);
 	for (i = 0; i < NAV_N && i < H.nlinks; i++)
-		draw_link_span(H.links[i].col, 2, H.links[i].label, H.sel == i);
+		draw_link_span(H.links[i].col, 1, H.links[i].label, H.sel == i);
 
 	bh = body_h();
 	by = body_y0();

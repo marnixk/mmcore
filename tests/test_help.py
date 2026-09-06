@@ -160,6 +160,14 @@ def test_help_option_wifi(console):
     assert "CWD" in out
 
 
+def test_ihelp_has_no_menu_bar(console):
+    seen = open_ihelp(console)
+    assert "File  Edit  View  Search" not in seen
+    assert "Debug  Options" not in seen
+    assert "HELP: Index" in seen or "<Contents>" in seen
+    close_ihelp(console)
+
+
 def test_ihelp_enter_opens_link(console):
     seen = open_ihelp(console)
     assert "<Contents>" in seen
