@@ -65,6 +65,8 @@ static int ed_rows(void) { return tui_rows(); }
 #define MENU_HELP   3
 #define MENU_COUNT  4
 
+static char killbuf[8192];
+static int killlen;
 static char pick_root[128];
 static char pick_path[ED_PICK_MAX][128];
 static int pick_n;
@@ -409,7 +411,14 @@ static void set_pick_root(const char *path)
 	}
 	if (!(mmb_vfs_exists(full) && mmb_vfs_size(full) < 0))
 	{
-		char *slash = strrchr(full, '/');
+		char *slash = 0;
+		char *q = full;
+		while (*q)
+		{
+			if (*q == '/')
+				slash = q;
+			q++;
+		}
 		if (slash)
 		{
 			if (slash <= full + 2)

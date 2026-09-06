@@ -438,9 +438,9 @@ def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
         assert "MAIN" in opened
         assert "CHILD" in opened
         _quit(con)
-        listing = con.send_line("DIR")
+        listing = con.send_line('DIR "A:/SWP"')
         assert "MAIN.BAS" in listing
-        assert "22" in con.send_line('RUN "NEST/CHILD.BAS"')
+        assert "22" in con.send_line('RUN "A:/SWP/NEST/CHILD.BAS"')
     finally:
         con.stop()
 
@@ -473,6 +473,6 @@ def test_editor_ctrl_p_filter_then_enter(kernel_image):
         opened = _keys(con, b"CHILD\r")
         assert "CHILD" in opened
         _quit(con)
-        assert "22" in con.send_line('RUN "NEST/CHILD.BAS"')
+        assert "22" in con.send_line('RUN "A:/SWP/NEST/CHILD.BAS"')
     finally:
         con.stop()
