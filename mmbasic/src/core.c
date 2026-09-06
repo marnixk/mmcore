@@ -1113,6 +1113,7 @@ void mmb_cmd_input(void)
 		return;
 	}
 
+	mmb_out_flush();
 	extra[0] = 0;
 	if (*G.p == '"')
 	{
@@ -1176,6 +1177,7 @@ void mmb_cmd_line_input(void)
 	mmb_skip_sp();
 	if (*G.p != '#')
 	{
+		mmb_out_flush();
 		if (*G.p == '"')
 		{
 			mmb_val pr = mmb_expr();
@@ -2913,6 +2915,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_assets_seed();
 	mmb_settings_load();
 	mmb_audio_apply_options();
+	mmb_console_apply_colour();
 	G.timer_base = 0;
 	G.rnd_seed = 0x12345678u;
 	mmb_clock_init();

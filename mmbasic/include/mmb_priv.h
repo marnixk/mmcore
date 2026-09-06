@@ -311,6 +311,7 @@ int64_t mmb_as_int(mmb_val v);
 void mmb_need_num(mmb_val v);
 void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
+void mmb_out_flush(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);

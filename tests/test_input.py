@@ -68,6 +68,37 @@ def test_input_console_prompt_and_csv(fresh_console):
     assert "3/xyz" in out
 
 
+def test_print_semicolon_then_input_shows_print_first(fresh_console):
+    c = fresh_console
+    c.send_line("NEW")
+    c.send_line('10 PRINT "what is happening?";')
+    c.send_line("20 INPUT a$")
+    c.send_line('30 PRINT "Oh interesting, I never thought of"; a$')
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    first = _wait_contains(c, b"what is happening?", timeout=8.0)
+    assert b"what is happening?" in first, first
+    c._ser.sendall(b"bananas\r")
+    out = _until_prompt(c, timeout=8.0)
+    assert "Oh interesting, I never thought ofbananas" in out.replace("\r", "")
+
+
+def test_print_then_line_input_shows_print_first(fresh_console):
+    c = fresh_console
+    c.send_line("NEW")
+    c.send_line('10 PRINT "ahead";')
+    c.send_line('20 LINE INPUT "Go"; s$')
+    c.send_line("30 PRINT s$")
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    first = _wait_contains(c, b"aheadGo", timeout=8.0)
+    assert b"aheadGo" in first, first
+    assert first.find(b"ahead") <= first.find(b"Go")
+    c._ser.sendall(b"xyz\r")
+    out = _until_prompt(c, timeout=8.0)
+    assert "xyz" in out
+
+
 def test_line_input_console(fresh_console):
     c = fresh_console
     c.send_line("NEW")

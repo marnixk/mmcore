@@ -436,6 +436,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
 	mmb_audio_apply_options();
+	mmb_console_apply_colour();
 	mmb_settings_save();
 	mmb_out("Factory defaults restored");
 }

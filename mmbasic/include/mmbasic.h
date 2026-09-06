@@ -104,6 +104,9 @@ void mmb_console_write(const char *s);
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
 
+/* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
+void mmb_console_apply_colour(void);
+
 /* OPTION KEYBOARD REPEAT first [, next]  (milliseconds). */
 int mmb_opt_repeat_first(void);
 int mmb_opt_repeat_next(void);

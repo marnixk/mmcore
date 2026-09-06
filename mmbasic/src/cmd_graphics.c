@@ -475,6 +475,7 @@ void mmb_cmd_colour(void)
 	G.gfx.fg = (unsigned)mmb_as_int(a[0]);
 	if (n >= 2)
 		G.gfx.bg = (unsigned)mmb_as_int(a[1]);
+	mmb_console_apply_colour();
 }
 
 void mmb_cmd_mode(void)
