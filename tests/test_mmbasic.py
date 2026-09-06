@@ -1,6 +1,33 @@
 """MMBasic language, OPTION, types, files, loaders, audio, editor tests."""
 
+import time
+
 import pytest
+
+
+def _read_until(con, needle: bytes, timeout: float = 2.0) -> bytes:
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            buf += chunk
+            if needle in buf:
+                break
+    return buf
+
+
+def _break_to_prompt(con, timeout: float = 3.0) -> str:
+    con._ser.sendall(bytes([3]))
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+    return buf.decode(errors="replace")
 
 
 def test_integer_type(console):
@@ -245,11 +272,10 @@ def test_print_flushes_in_goto_loop(console):
     assert console.send_line("20 GOTO 10") == ""
     console.drain(quiet=0.1)
     console._ser.sendall(b"RUN\r")
-    raw = console.drain(quiet=0.4).decode(errors="replace")
-    assert "hi" in raw
-    console._ser.sendall(bytes([3]))
-    after = console.drain(quiet=0.8).decode(errors="replace")
-    assert "BREAK" in after.upper() or ">" in after
+    raw = _read_until(console, b"hi")
+    assert b"hi" in raw
+    after = _break_to_prompt(console)
+    assert ">" in after or "BREAK" in after.upper()
     assert console.send_line("PRINT 1") == "1"
 
 
@@ -261,11 +287,10 @@ def test_print_flushes_label_goto_file(console):
     assert console.send_line("CLOSE #1") == ""
     console.drain(quiet=0.1)
     console._ser.sendall(b'RUN "LP.BAS"\r')
-    raw = console.drain(quiet=0.4).decode(errors="replace")
-    assert "hi" in raw
-    console._ser.sendall(bytes([3]))
-    after = console.drain(quiet=0.8).decode(errors="replace")
-    assert "BREAK" in after.upper() or ">" in after
+    raw = _read_until(console, b"hi")
+    assert b"hi" in raw
+    after = _break_to_prompt(console)
+    assert ">" in after or "BREAK" in after.upper()
     assert console.send_line("PRINT 1") == "1"
 
 
