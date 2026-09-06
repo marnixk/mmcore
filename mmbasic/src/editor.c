@@ -59,6 +59,12 @@ static int ed_rows(void) { return tui_rows(); }
 #define ED_PICK_MAX   80
 #define ED_PICK_DEPTH 8
 
+#define FD_MAX        64
+#define FD_NAME       40
+#define FD_FOCUS_NAME 0
+#define FD_FOCUS_FILE 1
+#define FD_FOCUS_DIR  2
+
 #define MENU_FILE   0
 #define MENU_EDIT   1
 #define MENU_RUN    2
@@ -79,6 +85,15 @@ static int esc_state;
 static int csi_n;
 static int csi_arg;
 static int csi_semi;
+
+static char fd_dir[128];
+static char fd_mask[32];
+static char fd_files[FD_MAX][FD_NAME];
+static char fd_dirs[FD_MAX][FD_NAME];
+static int fd_nfile, fd_ndir;
+static int fd_fsel, fd_dsel;
+static int fd_ftop, fd_dtop;
+static int fd_focus;
 
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'H' };
@@ -103,6 +118,7 @@ static void open_picker(void);
 static void activate_menu(void);
 static int add_or_switch(const char *path);
 static void next_tab(void);
+static void close_ui(void);
 
 static char *put_uint(char *p, int n)
 {
@@ -1306,6 +1322,657 @@ static void draw_dropdown(void)
 	tui_pad(c0 + 2, r0 + 2 + n, "", w, C_SH_FG, C_SH_BG);
 }
 
+static int fd_on(void)
+{
+	return G.ed.dialog == DLG_OPEN || G.ed.dialog == DLG_SAVEAS;
+}
+
+static void fd_copy(char *dst, int n, const char *s)
+{
+	if (!dst || n <= 0)
+		return;
+	if (!s)
+		s = "";
+	strncpy(dst, s, (unsigned)n - 1);
+	dst[n - 1] = 0;
+}
+
+static int fd_icmp(const char *a, const char *b)
+{
+	for (;;)
+	{
+		unsigned char ca = (unsigned char)*a++;
+		unsigned char cb = (unsigned char)*b++;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (unsigned char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (unsigned char)(cb - 32);
+		if (ca != cb)
+			return (int)ca - (int)cb;
+		if (!ca)
+			return 0;
+	}
+}
+
+static int fd_match(const char *name, const char *pat)
+{
+	const char *n, *p, *star, *match;
+	if (!pat || !pat[0] || (pat[0] == '*' && pat[1] == 0))
+		return 1;
+	n = name;
+	p = pat;
+	star = 0;
+	match = 0;
+	while (*n)
+	{
+		char cn = *n, cp = *p;
+		if (cn >= 'a' && cn <= 'z')
+			cn = (char)(cn - 32);
+		if (cp >= 'a' && cp <= 'z')
+			cp = (char)(cp - 32);
+		if (cp == '*')
+		{
+			star = p++;
+			match = n;
+			continue;
+		}
+		if (cp == '?' || cn == cp)
+		{
+			n++;
+			p++;
+			continue;
+		}
+		if (star)
+		{
+			p = star + 1;
+			match++;
+			n = match;
+			continue;
+		}
+		return 0;
+	}
+	while (*p == '*')
+		p++;
+	return *p == 0;
+}
+
+static int fd_has_glob(const char *s)
+{
+	return s && (strchr(s, '*') || strchr(s, '?'));
+}
+
+static const char *fd_rchr(const char *s, char ch)
+{
+	const char *last = 0;
+	if (!s)
+		return 0;
+	for (; *s; s++)
+		if (*s == ch)
+			last = s;
+	return last;
+}
+
+static int fd_is_dir(const char *path)
+{
+	if (!path || !path[0])
+		return 0;
+	if (!mmb_vfs_exists(path))
+		return 0;
+	return mmb_vfs_size(path) < 0;
+}
+
+static void fd_parent(char *path)
+{
+	char *slash = 0, *p;
+	if (!path[0])
+		return;
+	if (path[0] && path[1] == ':' && path[2] == 0)
+	{
+		path[2] = '/';
+		path[3] = 0;
+		return;
+	}
+	for (p = path + 2; *p; p++)
+		if (*p == '/')
+			slash = p;
+	if (!slash || slash <= path + 2)
+	{
+		if (path[0] && path[1] == ':')
+		{
+			path[2] = '/';
+			path[3] = 0;
+		}
+		return;
+	}
+	*slash = 0;
+}
+
+static void fd_join(char *dst, int n, const char *dir, const char *name)
+{
+	int last;
+	fd_copy(dst, n, dir);
+	if (!name || !name[0])
+		return;
+	last = dst[0] ? (int)(unsigned char)dst[strlen(dst) - 1] : 0;
+	if (last && last != '/' && last != ':')
+		strncat(dst, "/", (unsigned)n - strlen(dst) - 1);
+	else if (last == ':')
+		strncat(dst, "/", (unsigned)n - strlen(dst) - 1);
+	strncat(dst, name, (unsigned)n - strlen(dst) - 1);
+}
+
+static void fd_make_full(char *dst, int n, const char *name)
+{
+	if (!name || !name[0])
+	{
+		fd_copy(dst, n, fd_dir);
+		return;
+	}
+	if (name[1] == ':')
+	{
+		fd_copy(dst, n, name);
+		return;
+	}
+	fd_join(dst, n, fd_dir, name);
+}
+
+static void fd_basename(char *out, int n, const char *path)
+{
+	const char *s = path, *p;
+	if (!path)
+		path = "";
+	for (p = path; *p; p++)
+		if (*p == '/' || *p == ':')
+			s = p + 1;
+	fd_copy(out, n, s);
+}
+
+static void fd_dirname(char *out, int n, const char *path)
+{
+	char tmp[128];
+	char *slash;
+	fd_copy(tmp, sizeof(tmp), path);
+	slash = (char *)fd_rchr(tmp, '/');
+	if (!slash)
+	{
+		out[0] = 0;
+		return;
+	}
+	if (slash <= tmp + 2 && tmp[1] == ':')
+	{
+		tmp[2] = '/';
+		tmp[3] = 0;
+		fd_copy(out, n, tmp);
+		return;
+	}
+	*slash = 0;
+	if (tmp[0] && tmp[1] == ':' && tmp[2] == 0)
+	{
+		tmp[2] = '/';
+		tmp[3] = 0;
+	}
+	fd_copy(out, n, tmp);
+}
+
+static void fd_add(char arr[][FD_NAME], int *n, const char *s)
+{
+	int i;
+	if (*n >= FD_MAX || !s || !s[0])
+		return;
+	for (i = 0; i < *n; i++)
+		if (mmb_keyword_eq(arr[i], s))
+			return;
+	strncpy(arr[*n], s, FD_NAME - 1);
+	arr[*n][FD_NAME - 1] = 0;
+	(*n)++;
+}
+
+static void fd_swap(char arr[][FD_NAME], int i, int j)
+{
+	char t[FD_NAME];
+	memcpy(t, arr[i], FD_NAME);
+	memcpy(arr[i], arr[j], FD_NAME);
+	memcpy(arr[j], t, FD_NAME);
+}
+
+static int fd_dir_rank(const char *s)
+{
+	if (s[0] == '.' && s[1] == '.' && s[2] == 0)
+		return 0;
+	if (s[0] == '[' && s[1] == '-')
+		return 2;
+	return 1;
+}
+
+static void fd_sort_files(void)
+{
+	int i, j;
+	for (i = 0; i < fd_nfile; i++)
+		for (j = i + 1; j < fd_nfile; j++)
+			if (fd_icmp(fd_files[j], fd_files[i]) < 0)
+				fd_swap(fd_files, i, j);
+}
+
+static void fd_sort_dirs(void)
+{
+	int i, j;
+	for (i = 0; i < fd_ndir; i++)
+		for (j = i + 1; j < fd_ndir; j++)
+		{
+			int ra = fd_dir_rank(fd_dirs[i]);
+			int rb = fd_dir_rank(fd_dirs[j]);
+			if (rb < ra || (rb == ra && fd_icmp(fd_dirs[j], fd_dirs[i]) < 0))
+				fd_swap(fd_dirs, i, j);
+		}
+}
+
+static void fd_scan(void)
+{
+	char list[2048], drives[256];
+	char *s, *nl;
+	fd_nfile = 0;
+	fd_ndir = 0;
+	fd_add(fd_dirs, &fd_ndir, "..");
+	list[0] = 0;
+	if (mmb_vfs_list(fd_dir, list, sizeof(list)) != 0)
+		list[0] = 0;
+	s = list;
+	while (*s)
+	{
+		char name[FD_NAME];
+		int n, is_dir = 0;
+		nl = s;
+		while (*nl && *nl != '\n' && *nl != '\r')
+			nl++;
+		n = (int)(nl - s);
+		if (n >= FD_NAME)
+			n = FD_NAME - 1;
+		memcpy(name, s, (unsigned)n);
+		name[n] = 0;
+		if (n > 0 && name[n - 1] == '/')
+			is_dir = 1;
+		if (name[0] && !(name[0] == '.' && name[1] == 0) &&
+		    !(name[0] == '.' && name[1] == '.' &&
+		      (name[2] == 0 || name[2] == '/')))
+		{
+			if (is_dir)
+				fd_add(fd_dirs, &fd_ndir, name);
+			else if (fd_match(name, fd_mask))
+				fd_add(fd_files, &fd_nfile, name);
+		}
+		s = nl;
+		if (*s == '\r')
+			s++;
+		if (*s == '\n')
+			s++;
+	}
+	drives[0] = 0;
+	mmb_vfs_drives(drives, sizeof(drives));
+	s = drives;
+	while (*s)
+	{
+		nl = s;
+		while (*nl && *nl != '\n' && *nl != '\r')
+			nl++;
+		if (s[0] && s[1] == ':')
+		{
+			char spec[8];
+			char L = s[0];
+			if (L >= 'a' && L <= 'z')
+				L = (char)(L - 32);
+			spec[0] = '[';
+			spec[1] = '-';
+			spec[2] = L;
+			spec[3] = '-';
+			spec[4] = ']';
+			spec[5] = 0;
+			fd_add(fd_dirs, &fd_ndir, spec);
+		}
+		s = nl;
+		if (*s == '\r')
+			s++;
+		if (*s == '\n')
+			s++;
+	}
+	fd_sort_files();
+	fd_sort_dirs();
+	fd_fsel = 0;
+	fd_dsel = 0;
+	fd_ftop = 0;
+	fd_dtop = 0;
+}
+
+static void fd_geom(int *c0, int *r0, int *w, int *h)
+{
+	*w = 62;
+	*h = 18;
+	if (*w > COLS - 2)
+		*w = COLS - 2;
+	if (*h > ROWS - 2)
+		*h = ROWS - 2;
+	*r0 = (ROWS - *h) / 2;
+	*c0 = (COLS - *w) / 2;
+	if (*r0 < 2)
+		*r0 = 2;
+	if (*c0 < 0)
+		*c0 = 0;
+}
+
+static int fd_list_h(void)
+{
+	int c0, r0, w, h, lh;
+	fd_geom(&c0, &r0, &w, &h);
+	lh = h - 8;
+	return lh < 4 ? 4 : lh;
+}
+
+static void fd_clamp(void)
+{
+	int lh = fd_list_h();
+	if (fd_nfile <= 0)
+	{
+		fd_fsel = 0;
+		fd_ftop = 0;
+	}
+	else
+	{
+		if (fd_fsel < 0)
+			fd_fsel = 0;
+		if (fd_fsel >= fd_nfile)
+			fd_fsel = fd_nfile - 1;
+		if (fd_fsel < fd_ftop)
+			fd_ftop = fd_fsel;
+		if (fd_fsel >= fd_ftop + lh)
+			fd_ftop = fd_fsel - lh + 1;
+		if (fd_ftop < 0)
+			fd_ftop = 0;
+	}
+	if (fd_ndir <= 0)
+	{
+		fd_dsel = 0;
+		fd_dtop = 0;
+	}
+	else
+	{
+		if (fd_dsel < 0)
+			fd_dsel = 0;
+		if (fd_dsel >= fd_ndir)
+			fd_dsel = fd_ndir - 1;
+		if (fd_dsel < fd_dtop)
+			fd_dtop = fd_dsel;
+		if (fd_dsel >= fd_dtop + lh)
+			fd_dtop = fd_dsel - lh + 1;
+		if (fd_dtop < 0)
+			fd_dtop = 0;
+	}
+}
+
+static void fd_copy_file_to_name(void)
+{
+	if (fd_fsel < 0 || fd_fsel >= fd_nfile)
+		return;
+	fd_copy(G.ed.dlg, sizeof(G.ed.dlg), fd_files[fd_fsel]);
+	G.ed.dlglen = (int)strlen(G.ed.dlg);
+}
+
+static void fd_clear_name(void)
+{
+	G.ed.dlg[0] = 0;
+	G.ed.dlglen = 0;
+}
+
+static void fd_set_dir(const char *path)
+{
+	char resolved[128];
+	if (mmb_vfs_resolve(path, resolved, sizeof(resolved)) == 0)
+		fd_copy(fd_dir, sizeof(fd_dir), resolved);
+	else
+		fd_copy(fd_dir, sizeof(fd_dir), path);
+	fd_scan();
+	fd_clamp();
+}
+
+static void fd_after_dir_nav(int from_lists)
+{
+	if (from_lists && fd_nfile > 0)
+	{
+		fd_focus = FD_FOCUS_FILE;
+		fd_copy_file_to_name();
+	}
+	else
+	{
+		if (from_lists)
+			fd_focus = FD_FOCUS_DIR;
+		fd_clear_name();
+	}
+}
+
+static void fd_enter_listed(const char *name, int from_lists)
+{
+	char full[128], tmp[FD_NAME];
+	int n;
+	if (!name || !name[0])
+		return;
+	if (name[0] == '[' && name[1] == '-' && name[3] == '-' && name[4] == ']')
+	{
+		tmp[0] = name[2];
+		tmp[1] = ':';
+		tmp[2] = '/';
+		tmp[3] = 0;
+		fd_set_dir(tmp);
+		fd_after_dir_nav(from_lists);
+		return;
+	}
+	if (name[0] == '.' && name[1] == '.' && name[2] == 0)
+	{
+		fd_copy(full, sizeof(full), fd_dir);
+		fd_parent(full);
+		fd_set_dir(full);
+		fd_after_dir_nav(from_lists);
+		return;
+	}
+	fd_copy(tmp, sizeof(tmp), name);
+	n = (int)strlen(tmp);
+	if (n > 0 && tmp[n - 1] == '/')
+		tmp[n - 1] = 0;
+	fd_join(full, sizeof(full), fd_dir, tmp);
+	fd_set_dir(full);
+	fd_after_dir_nav(from_lists);
+}
+
+static void fd_submit_path(const char *path)
+{
+	char full[128];
+	fd_copy(full, sizeof(full), path);
+	if (G.ed.dialog == DLG_OPEN)
+	{
+		if (full[0] && add_or_switch(full) < 0)
+			set_status("Open failed");
+		close_ui();
+		return;
+	}
+	if (G.ed.dialog == DLG_SAVEAS)
+	{
+		mmb_ed_tab *t = cur_tab();
+		if (t && full[0])
+		{
+			strncpy(t->path, full, sizeof(t->path) - 1);
+			ensure_bas(t->path, sizeof(t->path));
+			save_tab();
+		}
+		close_ui();
+	}
+}
+
+static void fd_apply_glob(const char *spec)
+{
+	const char *slash = fd_rchr(spec, '/');
+	char dirpart[128];
+	if (slash)
+	{
+		int n = (int)(slash - spec);
+		if (n >= (int)sizeof(dirpart))
+			n = (int)sizeof(dirpart) - 1;
+		memcpy(dirpart, spec, (unsigned)n);
+		dirpart[n] = 0;
+		if (dirpart[0] && dirpart[1] == ':' && dirpart[2] == 0)
+		{
+			dirpart[2] = '/';
+			dirpart[3] = 0;
+		}
+		if (dirpart[0])
+			fd_set_dir(dirpart);
+		else
+			fd_scan();
+		fd_copy(fd_mask, sizeof(fd_mask), slash + 1);
+		fd_scan();
+		fd_clamp();
+		return;
+	}
+	if (spec[0] && spec[1] == ':')
+	{
+		dirpart[0] = spec[0];
+		dirpart[1] = ':';
+		dirpart[2] = '/';
+		dirpart[3] = 0;
+		fd_set_dir(dirpart);
+		fd_copy(fd_mask, sizeof(fd_mask), spec + 2);
+		fd_scan();
+		fd_clamp();
+		return;
+	}
+	fd_copy(fd_mask, sizeof(fd_mask), spec);
+	fd_scan();
+	fd_clamp();
+}
+
+static void fd_enter_key(void)
+{
+	char full[128];
+	if (fd_focus == FD_FOCUS_DIR)
+	{
+		if (fd_dsel >= 0 && fd_dsel < fd_ndir)
+			fd_enter_listed(fd_dirs[fd_dsel], 1);
+		return;
+	}
+	if (fd_focus == FD_FOCUS_FILE)
+	{
+		if (fd_fsel >= 0 && fd_fsel < fd_nfile)
+		{
+			fd_make_full(full, sizeof(full), fd_files[fd_fsel]);
+			fd_submit_path(full);
+		}
+		return;
+	}
+	if (!G.ed.dlg[0])
+		return;
+	if (fd_has_glob(G.ed.dlg))
+	{
+		fd_apply_glob(G.ed.dlg);
+		fd_clear_name();
+		return;
+	}
+	fd_make_full(full, sizeof(full), G.ed.dlg);
+	if (fd_is_dir(full))
+	{
+		fd_set_dir(full);
+		fd_clear_name();
+		fd_focus = FD_FOCUS_NAME;
+		return;
+	}
+	fd_submit_path(full);
+}
+
+static void fd_tab(void)
+{
+	if (fd_focus == FD_FOCUS_NAME)
+		fd_focus = fd_nfile ? FD_FOCUS_FILE : FD_FOCUS_DIR;
+	else if (fd_focus == FD_FOCUS_FILE)
+		fd_focus = fd_ndir ? FD_FOCUS_DIR : FD_FOCUS_NAME;
+	else
+		fd_focus = FD_FOCUS_NAME;
+	if (fd_focus == FD_FOCUS_FILE)
+		fd_copy_file_to_name();
+}
+
+static void fd_move_sel(int *sel, int n, int delta)
+{
+	if (n <= 0)
+		return;
+	*sel += delta;
+	if (*sel < 0)
+		*sel = 0;
+	if (*sel >= n)
+		*sel = n - 1;
+}
+
+static int fd_arrow(int kind)
+{
+	int lh = fd_list_h();
+	if (kind == 0)
+		return 0;
+	if (fd_focus == FD_FOCUS_NAME)
+	{
+		if (kind == 2)
+			fd_tab();
+		return 1;
+	}
+	if (kind == 3 && fd_focus == FD_FOCUS_FILE)
+	{
+		fd_focus = FD_FOCUS_DIR;
+		return 1;
+	}
+	if (kind == 4 && fd_focus == FD_FOCUS_DIR)
+	{
+		fd_focus = fd_nfile ? FD_FOCUS_FILE : FD_FOCUS_NAME;
+		if (fd_focus == FD_FOCUS_FILE)
+			fd_copy_file_to_name();
+		return 1;
+	}
+	if (fd_focus == FD_FOCUS_FILE)
+	{
+		if (kind == 1)
+			fd_move_sel(&fd_fsel, fd_nfile, -1);
+		else if (kind == 2)
+			fd_move_sel(&fd_fsel, fd_nfile, 1);
+		else if (kind == 5)
+			fd_fsel = 0;
+		else if (kind == 6)
+			fd_fsel = fd_nfile ? fd_nfile - 1 : 0;
+		else if (kind == 9)
+			fd_move_sel(&fd_fsel, fd_nfile, -lh);
+		else if (kind == 10)
+			fd_move_sel(&fd_fsel, fd_nfile, lh);
+		fd_clamp();
+		fd_copy_file_to_name();
+		return 1;
+	}
+	if (kind == 1)
+		fd_move_sel(&fd_dsel, fd_ndir, -1);
+	else if (kind == 2)
+		fd_move_sel(&fd_dsel, fd_ndir, 1);
+	else if (kind == 5)
+		fd_dsel = 0;
+	else if (kind == 6)
+		fd_dsel = fd_ndir ? fd_ndir - 1 : 0;
+	else if (kind == 9)
+		fd_move_sel(&fd_dsel, fd_ndir, -lh);
+	else if (kind == 10)
+		fd_move_sel(&fd_dsel, fd_ndir, lh);
+	fd_clamp();
+	return 1;
+}
+
+static void fd_status_line(char *out, int n)
+{
+	int last;
+	fd_copy(out, n, fd_dir);
+	last = out[0] ? (int)(unsigned char)out[strlen(out) - 1] : 0;
+	if (last && last != '/')
+		strncat(out, "/", (unsigned)n - strlen(out) - 1);
+	strncat(out, fd_mask, (unsigned)n - strlen(out) - 1);
+}
+
 static void draw_dialog(void)
 {
 	int w = 50, h = 8, r0, c0, i;
@@ -1320,23 +1987,32 @@ static void draw_dialog(void)
 	if (G.ed.dialog == DLG_HELP)
 	{
 		w = 48;
-		h = 16;
+		h = 18;
 		title = " Help ";
 	}
 	else if (G.ed.dialog == DLG_OPEN)
+	{
+		fd_geom(&c0, &r0, &w, &h);
 		title = " Open ";
+	}
 	else
+	{
+		fd_geom(&c0, &r0, &w, &h);
 		title = " Save As ";
-	if (w > COLS - 2)
-		w = COLS - 2;
-	if (h > ROWS - 2)
-		h = ROWS - 2;
-	r0 = (ROWS - h) / 2;
-	c0 = (COLS - w) / 2;
-	if (r0 < 2)
-		r0 = 2;
-	if (c0 < 0)
-		c0 = 0;
+	}
+	if (G.ed.dialog == DLG_HELP)
+	{
+		if (w > COLS - 2)
+			w = COLS - 2;
+		if (h > ROWS - 2)
+			h = ROWS - 2;
+		r0 = (ROWS - h) / 2;
+		c0 = (COLS - w) / 2;
+		if (r0 < 2)
+			r0 = 2;
+		if (c0 < 0)
+			c0 = 0;
+	}
 	tui_frame(c0, r0, w, h, C_DLG_FG, C_DLG_BG);
 	{
 		int left = (w - 2 - (int)strlen(title)) / 2;
@@ -1368,6 +2044,9 @@ static void draw_dialog(void)
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
 			"Arrows move          Enter  activate",
+			"Open/Save: Name, Files, Directories",
+			"        Tab cycles  Enter file/folder",
+			"",
 			"     Enter or Esc closes this box",
 		};
 		int L = (int)(sizeof(lines) / sizeof(lines[0]));
@@ -1376,9 +2055,60 @@ static void draw_dialog(void)
 	}
 	else
 	{
-		tui_pad(c0 + 2, r0 + 2, "Path:", w - 4, C_DLG_FG, C_DLG_BG);
-		tui_pad(c0 + 2, r0 + 3, G.ed.dlg, w - 4, C_SEL_FG, C_SEL_BG);
-		tui_pad(c0 + 2, r0 + 5, "Enter=OK   Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
+		int inner = w - 4;
+		int fw = inner * 3 / 5;
+		int dw;
+		int fx = c0 + 2;
+		int dx, ly, lh, nfg, nbg, ffg, fbg, dfg, dbg;
+		char st[160];
+		if (fw < 18)
+			fw = 18;
+		dw = inner - fw - 1;
+		if (dw < 12)
+		{
+			dw = 12;
+			fw = inner - dw - 1;
+		}
+		dx = fx + fw + 1;
+		ly = r0 + 4;
+		lh = fd_list_h();
+		nfg = (fd_focus == FD_FOCUS_NAME) ? C_SEL_FG : C_DLG_FG;
+		nbg = (fd_focus == FD_FOCUS_NAME) ? C_SEL_BG : TUI_CYAN;
+		ffg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_FG : C_DLG_FG;
+		fbg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_BG : C_DLG_BG;
+		dfg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_FG : C_DLG_FG;
+		dbg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_BG : C_DLG_BG;
+		tui_pad(c0 + 2, r0 + 1, "Name", w - 4, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + 2, r0 + 2, G.ed.dlg, w - 4, nfg, nbg);
+		tui_pad(fx, r0 + 3, "Files", fw, ffg, fbg);
+		tui_pad(dx, r0 + 3, "Directories", dw, dfg, dbg);
+		for (i = 0; i < lh && ly + i < r0 + h - 3; i++)
+		{
+			int fi = fd_ftop + i;
+			int di = fd_dtop + i;
+			int sfg, sbg;
+			const char *fn = (fi >= 0 && fi < fd_nfile) ? fd_files[fi] : "";
+			sfg = C_DLG_FG;
+			sbg = C_DLG_BG;
+			if (fi == fd_fsel && fd_nfile > 0)
+			{
+				sfg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_FG : C_DLG_FG;
+				sbg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_BG : TUI_CYAN;
+			}
+			tui_pad(fx, ly + i, fn, fw, sfg, sbg);
+			fn = (di >= 0 && di < fd_ndir) ? fd_dirs[di] : "";
+			sfg = C_DLG_FG;
+			sbg = C_DLG_BG;
+			if (di == fd_dsel && fd_ndir > 0)
+			{
+				sfg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_FG : C_DLG_FG;
+				sbg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_BG : TUI_CYAN;
+			}
+			tui_pad(dx, ly + i, fn, dw, sfg, sbg);
+		}
+		fd_status_line(st, sizeof(st));
+		tui_pad(c0 + 2, r0 + h - 3, st, w - 4, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
 	}
 }
 
@@ -1450,15 +2180,19 @@ static void place_cursor(void)
 		tui_cursor(c0 + 2 + col, r0 + 2, 1);
 		return;
 	}
-	if (G.ed.dialog == DLG_OPEN || G.ed.dialog == DLG_SAVEAS)
+	if (fd_on())
 	{
-		int w = 50, h = 8;
-		int r0 = (ROWS - h) / 2;
-		int c0 = (COLS - w) / 2;
-		int col = G.ed.dlglen;
+		int w, h, r0, c0, col;
+		if (fd_focus != FD_FOCUS_NAME)
+		{
+			tui_cursor(-1, -1, 0);
+			return;
+		}
+		fd_geom(&c0, &r0, &w, &h);
+		col = G.ed.dlglen;
 		if (col > w - 4)
 			col = w - 4;
-		tui_cursor(c0 + 2 + col, r0 + 3, 1);
+		tui_cursor(c0 + 2 + col, r0 + 2, 1);
 		return;
 	}
 	if (G.ed.dialog || G.ed.menu_open)
@@ -1567,10 +2301,23 @@ static void open_dialog(int which)
 	G.ed.dialog = which;
 	G.ed.dlg[0] = 0;
 	G.ed.dlglen = 0;
-	if (which == DLG_SAVEAS && cur_tab() && cur_tab()->path[0])
+	if (which == DLG_OPEN || which == DLG_SAVEAS)
 	{
-		strncpy(G.ed.dlg, cur_tab()->path, sizeof(G.ed.dlg) - 1);
-		G.ed.dlglen = (int)strlen(G.ed.dlg);
+		fd_focus = FD_FOCUS_NAME;
+		fd_copy(fd_mask, sizeof(fd_mask), "*.BAS");
+		fd_copy(fd_dir, sizeof(fd_dir), mmb_vfs_cwd());
+		if (which == DLG_SAVEAS && cur_tab() && cur_tab()->path[0])
+		{
+			char base[128], dir[128];
+			fd_dirname(dir, sizeof(dir), cur_tab()->path);
+			fd_basename(base, sizeof(base), cur_tab()->path);
+			if (dir[0])
+				fd_copy(fd_dir, sizeof(fd_dir), dir);
+			fd_copy(G.ed.dlg, sizeof(G.ed.dlg), base);
+			G.ed.dlglen = (int)strlen(G.ed.dlg);
+		}
+		fd_scan();
+		fd_clamp();
 	}
 }
 
@@ -1619,25 +2366,10 @@ static void submit_dialog(void)
 		close_ui();
 		return;
 	}
+	if (G.ed.dialog == DLG_OPEN || G.ed.dialog == DLG_SAVEAS)
 	{
-		if (G.ed.dlg[0])
-		{
-			if (add_or_switch(G.ed.dlg) < 0)
-				set_status("Open failed");
-		}
-		close_ui();
+		fd_enter_key();
 		return;
-	}
-	if (G.ed.dialog == DLG_SAVEAS)
-	{
-		mmb_ed_tab *t = cur_tab();
-		if (t && G.ed.dlg[0])
-		{
-			strncpy(t->path, G.ed.dlg, sizeof(t->path) - 1);
-			ensure_bas(t->path, sizeof(t->path));
-			save_tab();
-		}
-		close_ui();
 	}
 }
 
@@ -1767,12 +2499,13 @@ static int handle_arrow_or_special(int kind, int mod)
 			pick_move(vis);
 		return 1;
 	}
-	if (G.ed.dialog)
+	if (fd_on())
 	{
-		if (kind == 4 && G.ed.dlglen > 0)
-			; /* no cursor in field besides end */
+		fd_arrow(kind);
 		return 1;
 	}
+	if (G.ed.dialog)
+		return 1;
 	if (G.ed.menu_open)
 	{
 		int n;
@@ -2024,8 +2757,16 @@ static int dialog_key(char c)
 			redraw();
 		return 1;
 	}
+	if (fd_on() && c == 9)
+	{
+		fd_tab();
+		redraw();
+		return 1;
+	}
 	if (c == 8 || c == 127)
 	{
+		if (fd_on() && fd_focus != FD_FOCUS_NAME)
+			fd_focus = FD_FOCUS_NAME;
 		if (G.ed.dlglen > 0)
 		{
 			G.ed.dlg[--G.ed.dlglen] = 0;
@@ -2035,6 +2776,11 @@ static int dialog_key(char c)
 	}
 	if (c >= 32 && c < 127 && G.ed.dlglen < (int)sizeof(G.ed.dlg) - 1)
 	{
+		if (fd_on() && fd_focus != FD_FOCUS_NAME)
+		{
+			fd_focus = FD_FOCUS_NAME;
+			fd_clear_name();
+		}
 		G.ed.dlg[G.ed.dlglen++] = c;
 		G.ed.dlg[G.ed.dlglen] = 0;
 		redraw();

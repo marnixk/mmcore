@@ -470,6 +470,9 @@ static const char kHelpEdit[] =
 	"      Tab inserts 4 spaces   Enter copies line indent\n"
 	"      ^P quick open (files under the start folder)\n"
 	"      Alt+1..9 switch tabs\n"
+	"Open/Save As: Name field plus Files and\n"
+	"Directories. Tab cycles. Enter opens a\n"
+	"file or enters a folder. Esc cancels.\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 

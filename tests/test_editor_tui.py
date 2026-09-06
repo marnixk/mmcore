@@ -174,6 +174,79 @@ def test_editor_quit_returns_prompt(kernel_image):
         con.stop()
 
 
+def test_editor_open_dialog_has_file_and_dir_lists(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "FOO.BAS")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Name" in seen
+        assert "Files" in seen
+        assert "Directories" in seen
+        assert "*.BAS" in seen
+        assert ".." in seen
+        assert "[-A-]" in seen
+        # White dialog chrome; green Name field (focused).
+        r0, c0 = 6, 9
+        wr, wg, wb = con.screen_pixel((c0 + 6) * 8 + 4, (r0 + 1) * 16 + 8)
+        assert wr > 100 and wg > 100 and wb > 100, (wr, wg, wb)
+        gr, gg, gb = con.screen_pixel((c0 + 4) * 8 + 4, (r0 + 2) * 16 + 8)
+        assert gg > gr + 20 and gg > 40, (gr, gg, gb)
+        _keys(con, b"\x1b\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_open_types_into_folder(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('MKDIR "TPN"') == ""
+        assert con.send_line('OPEN "TPN/IN.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 77"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert "IN.BAS" in con.send_line('DIR "TPN"')
+        _edit(con, "FOO.BAS")
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        seen = _keys(con, b"TPN\r", quiet=0.6)
+        assert "IN.BAS" in seen
+        assert "TPN" in seen
+        opened = _keys(con, b"IN.BAS\r", quiet=0.6)
+        assert "PRINT 77" in opened
+        _quit(con)
+        assert "IN.BAS" in con.send_line('DIR "TPN"')
+        assert con.send_line('CHDIR "TPN"') == ""
+        assert "77" in con.send_line('RUN "IN.BAS"')
+    finally:
+        con.stop()
+
+
+def test_editor_open_navigates_dirs_with_arrows(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('MKDIR "TPN"') == ""
+        assert con.send_line('OPEN "TPN/IN.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 88"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('OPEN "FOO.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 1"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "FOO.BAS")
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        # Name -> Files -> Directories, Down from .. onto TPN/, Enter.
+        seen = _keys(con, b"\t\t\x1b[B\r", quiet=0.7)
+        assert "IN.BAS" in seen
+        opened = _keys(con, b"\r", quiet=0.6)
+        assert "PRINT 88" in opened
+        _quit(con)
+        assert con.send_line('CHDIR "TPN"') == ""
+        assert "88" in con.send_line('RUN "IN.BAS"')
+    finally:
+        con.stop()
+
+
 def test_editor_enter_autoindents(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
