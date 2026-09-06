@@ -17,6 +17,41 @@ def test_prompt_up_recalls_last(console):
     assert "PRINT 41+1" in raw.replace("\r", "")
 
 
+def test_prompt_up_down_walks_history(console):
+    assert console.send_line("PRINT 101") == "101"
+    assert console.send_line("PRINT 202") == "202"
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"\x1b[A\x1b[A\r")
+    older = console.drain(quiet=0.7).decode(errors="replace").replace("\r", "")
+    assert "PRINT 101" in older
+    assert "101" in older
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"\x1b[A\x1b[A\x1b[B\r")
+    newer = console.drain(quiet=0.7).decode(errors="replace").replace("\r", "")
+    assert "PRINT 202" in newer
+    assert "202" in newer
+
+
+def test_prompt_down_restores_draft(console):
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 9")
+    console.drain(quiet=0.2)
+    console._ser.sendall(b"\x1b[A\x1b[B\r")
+    raw = console.drain(quiet=0.7).decode(errors="replace").replace("\r", "")
+    assert "PRINT 9" in raw
+    assert "9" in raw
+
+
+def test_prompt_left_inserts_in_place(console):
+    console.drain(quiet=0.1)
+    # "PRINT 8" then Left, insert "1" -> "PRINT 18"
+    console._ser.sendall(b"PRINT 8\x1b[D1\r")
+    raw = console.drain(quiet=0.7).decode(errors="replace")
+    text = raw.replace("\r", "")
+    assert "18" in text
+    assert console.send_line("PRINT 0") == "0"
+
+
 def test_prompt_drive_and_cd(console):
     assert console.send_line("D:") == "" or console.send_line("D:").startswith("?")
     # A: always exists

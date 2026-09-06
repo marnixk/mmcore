@@ -22,10 +22,15 @@ CKernel::CKernel (void)
 	m_nBreak (0),
 	m_nCad (0),
 	m_nLen (0),
-	m_nEsc (0)
+	m_nPos (0),
+	m_nEsc (0),
+	m_nCsiArg (0),
+	m_nHist (0),
+	m_nHistIdx (-1)
 {
 	m_Line[0] = '\0';
-	m_Hist[0] = '\0';
+	m_Draft[0] = '\0';
+	memset (m_Hist, 0, sizeof m_Hist);
 	m_RepeatSeq[0] = '\0';
 	m_RepeatLen = 0;
 	m_HoldMs = 0;
@@ -432,6 +437,198 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_NavHidSent = 0;
 }
 
+void CKernel::LineGoEnd (char *Line, unsigned *pLen)
+{
+	while (m_nPos < *pLen)
+	{
+		emit_n (this, &Line[m_nPos], 1);
+		m_nPos++;
+	}
+}
+
+void CKernel::LineClearVis (char *Line, unsigned *pLen)
+{
+	LineGoEnd (Line, pLen);
+	while (*pLen > 0)
+	{
+		(*pLen)--;
+		emit (this, "\b \b");
+	}
+	m_nPos = 0;
+	Line[0] = '\0';
+}
+
+void CKernel::LineReplace (char *Line, unsigned *pLen, const char *s)
+{
+	unsigned i;
+	LineClearVis (Line, pLen);
+	if (!s)
+		s = "";
+	for (i = 0; s[i] && *pLen < sizeof (m_Line) - 1; i++)
+	{
+		Line[(*pLen)++] = s[i];
+		emit_n (this, &s[i], 1);
+	}
+	Line[*pLen] = '\0';
+	m_nPos = *pLen;
+}
+
+void CKernel::LineLeft (void)
+{
+	if (m_nPos == 0)
+		return;
+	m_nPos--;
+	emit (this, "\b");
+}
+
+void CKernel::LineRight (char *Line, unsigned *pLen)
+{
+	if (m_nPos >= *pLen)
+		return;
+	emit_n (this, &Line[m_nPos], 1);
+	m_nPos++;
+}
+
+void CKernel::LineHome (void)
+{
+	while (m_nPos > 0)
+	{
+		m_nPos--;
+		emit (this, "\b");
+	}
+}
+
+void CKernel::LineInsert (char c, char *Line, unsigned *pLen)
+{
+	unsigned i, rest;
+	if (*pLen >= sizeof (m_Line) - 1)
+		return;
+	if (m_nPos > *pLen)
+		m_nPos = *pLen;
+	rest = *pLen - m_nPos;
+	if (rest)
+		memmove (Line + m_nPos + 1, Line + m_nPos, rest);
+	Line[m_nPos] = c;
+	(*pLen)++;
+	Line[*pLen] = '\0';
+	for (i = m_nPos; i < *pLen; i++)
+		emit_n (this, &Line[i], 1);
+	for (i = 0; i < rest; i++)
+		emit (this, "\b");
+	m_nPos++;
+}
+
+void CKernel::LineBackspace (char *Line, unsigned *pLen)
+{
+	unsigned i, rest;
+	if (m_nPos == 0)
+		return;
+	m_nPos--;
+	rest = *pLen - m_nPos - 1;
+	if (rest)
+		memmove (Line + m_nPos, Line + m_nPos + 1, rest);
+	(*pLen)--;
+	Line[*pLen] = '\0';
+	emit (this, "\b");
+	for (i = 0; i < rest; i++)
+		emit_n (this, &Line[m_nPos + i], 1);
+	emit (this, " ");
+	for (i = 0; i < rest + 1; i++)
+		emit (this, "\b");
+}
+
+void CKernel::LineDelete (char *Line, unsigned *pLen)
+{
+	unsigned i, rest;
+	if (m_nPos >= *pLen)
+		return;
+	rest = *pLen - m_nPos - 1;
+	if (rest)
+		memmove (Line + m_nPos, Line + m_nPos + 1, rest);
+	(*pLen)--;
+	Line[*pLen] = '\0';
+	for (i = 0; i < rest; i++)
+		emit_n (this, &Line[m_nPos + i], 1);
+	emit (this, " ");
+	for (i = 0; i < rest + 1; i++)
+		emit (this, "\b");
+}
+
+void CKernel::HistAdd (const char *s)
+{
+	if (!s || !s[0])
+		return;
+	if (m_nHist > 0 && strcmp (m_Hist[m_nHist - 1], s) == 0)
+		return;
+	if (m_nHist >= (unsigned) HistMax)
+	{
+		memmove (m_Hist[0], m_Hist[1],
+			 (HistMax - 1) * sizeof m_Hist[0]);
+		m_nHist = (unsigned) HistMax - 1;
+	}
+	strncpy (m_Hist[m_nHist], s, sizeof m_Hist[0] - 1);
+	m_Hist[m_nHist][sizeof m_Hist[0] - 1] = '\0';
+	m_nHist++;
+	m_nHistIdx = -1;
+}
+
+void CKernel::HistUp (char *Line, unsigned *pLen)
+{
+	if (m_nHist == 0)
+		return;
+	if (m_nHistIdx < 0)
+	{
+		unsigned n = *pLen;
+		if (n >= sizeof m_Draft)
+			n = sizeof m_Draft - 1;
+		memcpy (m_Draft, Line, n);
+		m_Draft[n] = '\0';
+		m_nHistIdx = (int) m_nHist - 1;
+	}
+	else if (m_nHistIdx > 0)
+		m_nHistIdx--;
+	LineReplace (Line, pLen, m_Hist[m_nHistIdx]);
+}
+
+void CKernel::HistDown (char *Line, unsigned *pLen)
+{
+	if (m_nHistIdx < 0)
+		return;
+	if (m_nHistIdx >= (int) m_nHist - 1)
+	{
+		m_nHistIdx = -1;
+		LineReplace (Line, pLen, m_Draft);
+		return;
+	}
+	m_nHistIdx++;
+	LineReplace (Line, pLen, m_Hist[m_nHistIdx]);
+}
+
+void CKernel::HandleCsi (char final, char *Line, unsigned *pLen)
+{
+	if (final == 'A')
+		HistUp (Line, pLen);
+	else if (final == 'B')
+		HistDown (Line, pLen);
+	else if (final == 'C')
+		LineRight (Line, pLen);
+	else if (final == 'D')
+		LineLeft ();
+	else if (final == 'H')
+		LineHome ();
+	else if (final == 'F')
+		LineGoEnd (Line, pLen);
+	else if (final == '~')
+	{
+		if (m_nCsiArg == 3)
+			LineDelete (Line, pLen);
+		else if (m_nCsiArg == 1 || m_nCsiArg == 7)
+			LineHome ();
+		else if (m_nCsiArg == 4 || m_nCsiArg == 8)
+			LineGoEnd (Line, pLen);
+	}
+}
+
 void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 {
 	if (mmb_in_editor ())
@@ -480,12 +677,18 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
-	/* ESC / CSI from Circle keymap (arrows, Home/End/Delete/Insert, F-keys). */
+	/* ESC / CSI from Circle keymap (arrows, Home/End/Delete, F-keys). */
 	if (m_nEsc == 1)
 	{
-		if (c == '[' || c == 'O')
+		if (c == '[')
 		{
 			m_nEsc = 2;
+			m_nCsiArg = 0;
+			return;
+		}
+		if (c == 'O')
+		{
+			m_nEsc = 3;
 			return;
 		}
 		m_nEsc = 0;
@@ -497,27 +700,26 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		/* ESC+letter is Alt (serial stand-in / USB Meta). Ignore at prompt. */
 		return;
 	}
-	if (m_nEsc >= 2)
+	if (m_nEsc == 2)
 	{
-		if (m_nEsc == 2 && c == 'A')
+		if (c >= '0' && c <= '9')
 		{
-			unsigned i;
-			m_nEsc = 0;
-			while (*pLen > 0)
-			{
-				(*pLen)--;
-				emit (this, "\b \b");
-			}
-			for (i = 0; m_Hist[i] && *pLen < sizeof (m_Line) - 1; i++)
-			{
-				Line[(*pLen)++] = m_Hist[i];
-				emit_n (this, &m_Hist[i], 1);
-			}
-			Line[*pLen] = '\0';
+			m_nCsiArg = m_nCsiArg * 10 + (c - '0');
 			return;
 		}
-		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '~')
-			m_nEsc = 0;
+		if (c == ';')
+		{
+			m_nCsiArg = 0;
+			return;
+		}
+		m_nEsc = 0;
+		HandleCsi (c, Line, pLen);
+		return;
+	}
+	if (m_nEsc == 3)
+	{
+		m_nEsc = 0;
+		HandleCsi (c, Line, pLen);
 		return;
 	}
 	if (c == 0x1b)
@@ -533,13 +735,9 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		emit_n (this, &echo, 1);
 
 		Line[*pLen] = '\0';
-		if (Line[0])
-		{
-			unsigned i;
-			for (i = 0; i < sizeof (m_Hist) - 1 && Line[i]; i++)
-				m_Hist[i] = Line[i];
-			m_Hist[i] = '\0';
-		}
+		HistAdd (Line);
+		m_nPos = 0;
+		m_nHistIdx = -1;
 		const char *Result = mmb_exec_line (Line);
 		if (mmb_in_editor ())
 		{
@@ -574,29 +772,23 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 			emit_nl_prompt (this);
 		}
 		*pLen = 0;
+		m_nPos = 0;
 	}
 	else if (c == 8 || c == 127)
-	{
-		if (*pLen > 0)
-		{
-			(*pLen)--;
-			emit (this, "\b \b");
-		}
-	}
+		LineBackspace (Line, pLen);
 	else if (c == 3)
 	{
 		*pLen = 0;
+		m_nPos = 0;
+		m_nHistIdx = -1;
 		emit_nl_prompt (this);
 	}
 	else if (c == '\t' || (unsigned char) c < 32)
 	{
 		/* Tab and other controls must not enter Line[]. */
 	}
-	else if (*pLen < sizeof (m_Line) - 1)
-	{
-		Line[(*pLen)++] = c;
-		emit_n (this, &c, 1);
-	}
+	else
+		LineInsert (c, Line, pLen);
 }
 
 
