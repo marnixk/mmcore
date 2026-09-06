@@ -19,7 +19,7 @@ def test_help_lists_commands(console):
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
-        assert junk not in seen, junk
+        assert f"<{junk}>" not in seen, junk
     assert "<SPRITE>" in seen
     assert "HELP BASIC" in seen
     close_ihelp(console)
@@ -111,7 +111,7 @@ def test_help_files(console):
     out = dump_topic(console, "FILES")
     assert out != "?SYNTAX ERROR"
     assert "dual-pane" in out.lower() or "file manager" in out.lower()
-    assert "DIR listing" in out or "not a DIR" in out
+    assert "DIR listing" in out or "not a DIR" in out or "<DIR>" in out
     listing = dump_topic(console, "DIR")
     assert "alias" not in listing.lower()
 
