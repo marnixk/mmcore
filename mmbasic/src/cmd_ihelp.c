@@ -159,13 +159,6 @@ static void build_matches(void)
 	n = mmb_help_topic_count();
 	for (i = 0; i < n; i++)
 		add_match(mmb_help_topic_name(i), i);
-	a = mmb_help_alias_count();
-	for (i = 0; i < a; i++)
-	{
-		j = mmb_help_lookup(mmb_help_alias_canon(i));
-		if (j >= 0)
-			add_match(mmb_help_alias_name(i), j);
-	}
 	for (i = 0; i < H.nmatches; i++)
 	{
 		for (j = i + 1; j < H.nmatches; j++)
