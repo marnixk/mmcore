@@ -77,7 +77,7 @@ int mmb_net_tcp_open(const char *host, int port)
 	if (!s_sock)
 		return -1;
 	portstr.Format("%u", (unsigned)port);
-	if (s_sock->Connect(host, (const char *)portstr) < 0)
+	if (static_cast<CNetSocket *>(s_sock)->Connect(host, (const char *)portstr) < 0)
 	{
 		delete s_sock;
 		s_sock = 0;

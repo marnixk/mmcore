@@ -38,6 +38,13 @@ def test_package_and_install_ship_brcmfmac_firmware():
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "build.sh")], check=True)
 
 
+def test_net_cpp_uses_hostname_connect_overload():
+    """CSocket::Connect(CIPAddress, u16) hides the DNS overload; call it via the base."""
+    text = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
+    assert "static_cast<CNetSocket *>" in text
+    assert "Connect(host" in text
+
+
 def test_qemu_kernel_does_not_link_wlan_driver(kernel_image):
     """raspi3b has no CYW4343x; the QEMU image must keep the stub path."""
     map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")
