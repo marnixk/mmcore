@@ -68,7 +68,8 @@ install_toolchain() {
   else
     log "Downloading ${tarball}"
     src="${OPT_DIR}/${tarball}"
-    $SUDO curl -fSL "${ARM_BASE}/${tarball}" -o "${src}"
+    $SUDO curl -fSL --retry 5 --retry-all-errors --retry-delay 4 \
+      --connect-timeout 30 "${ARM_BASE}/${tarball}" -o "${src}"
   fi
 
   log "Extracting ${name} toolchain into ${OPT_DIR}"
