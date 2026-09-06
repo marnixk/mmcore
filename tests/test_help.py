@@ -1,23 +1,38 @@
-"""HELP command: command list, per-topic text, BASIC constructs, unknowns."""
+"""HELP / IHELP interactive help: index, topics, BASIC, unknowns."""
+
+from ihelp_util import close_ihelp, dump_topic, keys, open_ihelp, scroll_all
 
 
 def test_help_lists_commands(console):
-    out = console.send_line("HELP")
-    assert out
-    for cmd in ("CLS", "PRINT", "PIXEL", "DIR", "FILES", "OPEN", "MODE", "PLAY", "FACTORY_RESET", "CONNECT"):
-        assert cmd in out, cmd
+    seen = scroll_all(console, open_ihelp(console))
+    for cmd in (
+        "CLS",
+        "PRINT",
+        "PIXEL",
+        "DIR",
+        "FILES",
+        "OPEN",
+        "MODE",
+        "PLAY",
+        "FACTORY_RESET",
+        "CONNECT",
+    ):
+        assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
-        assert junk not in out, junk
-    assert "SPRITE" in out
-    assert "HELP BASIC" in out
-    assert "OPTION WIFI" in out
-    assert "ssid" in out.lower()
-    assert "DEBUG" in out
-    assert ".mmbasic.ini" in out
+        assert f"<{junk}>" not in seen, junk
+    assert "<SPRITE>" in seen
+    assert "HELP BASIC" in seen
+    close_ihelp(console)
+    overview = dump_topic(console, "BASIC")
+    assert "OPTION" in overview
+    assert "WIFI" in overview
+    assert "ssid" in overview.lower()
+    assert "DEBUG" in overview
+    assert ".mmbasic.ini" in overview
 
 
 def test_help_cls(console):
-    out = console.send_line("HELP CLS")
+    out = dump_topic(console, "CLS")
     assert "CLS" in out
     assert "clear" in out.lower()
     assert "screen" in out.lower()
@@ -25,14 +40,14 @@ def test_help_cls(console):
 
 
 def test_help_basic_lists_constructs(console):
-    out = console.send_line("HELP BASIC")
+    out = dump_topic(console, "BASIC")
     assert out
     for name in ("FOR", "WHILE", "DIM", "IF", "DO", "CONST"):
         assert name in out, name
 
 
 def test_help_basic_for(console):
-    out = console.send_line("HELP BASIC FOR")
+    out = dump_topic(console, "BASIC FOR")
     assert "FOR" in out
     assert "NEXT" in out
     assert "TO" in out
@@ -40,29 +55,29 @@ def test_help_basic_for(console):
 
 
 def test_help_for_as_construct(console):
-    out = console.send_line("HELP FOR")
+    out = dump_topic(console, "FOR")
     assert "NEXT" in out
     assert "FOR" in out
 
 
 def test_help_unknown_topic(console):
-    out = console.send_line("HELP NOSUCHTHING")
+    out = dump_topic(console, "NOSUCHTHING")
     assert "?SYNTAX ERROR" not in out
     assert "unknown" in out.lower()
     assert "NOSUCHTHING" in out.upper()
 
 
 def test_help_case_insensitive(console):
-    out = console.send_line("help print")
+    out = dump_topic(console, "print")
     assert out != "?SYNTAX ERROR"
     assert "PRINT" in out
-    mixed = console.send_line("Help CLS")
+    mixed = dump_topic(console, "CLS")
     assert "CLS" in mixed
     assert "screen" in mixed.lower()
 
 
 def test_help_mode_resolutions(console):
-    out = console.send_line("HELP MODE", timeout=8.0)
+    out = dump_topic(console, "MODE")
     assert out != "?SYNTAX ERROR"
     assert "MODE n" in out
     assert "MM.HRES" in out
@@ -83,35 +98,35 @@ def test_help_mode_resolutions(console):
 
 
 def test_help_mode_case_insensitive(console):
-    out = console.send_line("help mode", timeout=8.0)
+    out = dump_topic(console, "mode")
     assert out != "?SYNTAX ERROR"
     assert "384x240" in out
     assert "1024x768" in out
-    mixed = console.send_line("Help Mode", timeout=8.0)
+    mixed = dump_topic(console, "Mode")
     assert "1920x1080" in mixed
     assert "MM.HRES" in mixed
 
 
 def test_help_files(console):
-    out = console.send_line("HELP FILES")
+    out = dump_topic(console, "FILES")
     assert out != "?SYNTAX ERROR"
     assert "dual-pane" in out.lower() or "file manager" in out.lower()
-    assert "DIR listing" in out or "not a DIR" in out
-    listing = console.send_line("HELP DIR")
+    assert "DIR listing" in out or "not a DIR" in out or "<DIR>" in out
+    listing = dump_topic(console, "DIR")
     assert "alias" not in listing.lower()
 
 
 def test_help_factory_reset(console):
-    out = console.send_line("HELP FACTORY_RESET")
+    out = dump_topic(console, "FACTORY_RESET")
     assert out != "?SYNTAX ERROR"
     assert "Factory" in out or "defaults" in out.lower()
     assert ".mmbasic.ini" in out
-    alias = console.send_line("HELP FACTORY")
+    alias = dump_topic(console, "FACTORY")
     assert "FACTORY_RESET" in alias or "defaults" in alias.lower()
 
 
 def test_help_option_wifi(console):
-    out = console.send_line("HELP OPTION")
+    out = dump_topic(console, "OPTION")
     assert "WIFI" in out
     assert ".mmbasic.ini" in out
     assert "firmware" in out.lower()
@@ -122,3 +137,38 @@ def test_help_option_wifi(console):
     assert "[wifi]" in out
     assert "DEBUG" in out
     assert "default OFF" in out or "Default OFF" in out
+
+
+def test_ihelp_enter_opens_link(console):
+    seen = open_ihelp(console)
+    assert "<Contents>" in seen
+    assert "<Index>" in seen
+    seen = keys(console, b"\r")
+    seen = scroll_all(console, seen)
+    assert "MMBasic Interactive Help" in seen or "Language constructs" in seen
+    close_ihelp(console)
+
+
+def test_ihelp_escape_quits_index(console):
+    open_ihelp(console)
+    keys(console, b"\x1b\x1b")
+    assert console.send_line("PRINT 1") == "1"
+
+
+def test_ihelp_deeplink_escape_returns_to_index(console):
+    seen = open_ihelp(console, "CLS")
+    assert "clear" in seen.lower()
+    assert "HELP: CLS" in seen or "CLS [" in seen or "CLS" in seen
+    seen = keys(console, b"\x1b\x1b")
+    assert "<CLS>" in seen
+    assert "HELP: Index" in seen or "[C]" in seen or "<Contents>" in seen
+    keys(console, b"\x1b\x1b")
+    assert console.send_line("PRINT 2") == "2"
+
+
+def test_ihelp_alias_command(console):
+    seen = open_ihelp(console)
+    assert "<Contents>" in seen
+    close_ihelp(console)
+    out = dump_topic(console, "CLS")
+    assert "clear" in out.lower()

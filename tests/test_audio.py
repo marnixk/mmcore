@@ -1,8 +1,10 @@
 """Real PLAY decode/mix and OPTION AUDIO_TARGET."""
 
+from ihelp_util import dump_topic
+
 
 def test_help_play_mentions_targets(console):
-    out = console.send_line("HELP PLAY")
+    out = dump_topic(console, "PLAY")
     assert "AUDIO_TARGET" in out
     assert "HDMI" in out
     assert "JACK" in out
@@ -11,16 +13,16 @@ def test_help_play_mentions_targets(console):
 
 
 def test_help_audio_target(console):
-    out = console.send_line("HELP AUDIO_TARGET")
+    out = dump_topic(console, "AUDIO_TARGET")
     assert out != "?SYNTAX ERROR"
     assert "HDMI" in out
     assert "JACK" in out
-    alias = console.send_line("HELP AUDIO")
+    alias = dump_topic(console, "AUDIO")
     assert "AUDIO_TARGET" in alias or "HDMI" in alias
 
 
 def test_help_option_lists_audio_target(console):
-    out = console.send_line("HELP OPTION")
+    out = dump_topic(console, "OPTION")
     assert "AUDIO_TARGET" in out
     assert "JACK" in out
 
@@ -53,7 +55,7 @@ def test_play_wav_mixes_and_stops(console):
 
 
 def test_help_play_mentions_wav(console):
-    out = console.send_line("HELP PLAY")
+    out = dump_topic(console, "PLAY")
     assert "WAV" in out
     assert "TEST.WAV" in out
 

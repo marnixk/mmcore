@@ -74,6 +74,12 @@ const char *mmb_files_key(char c);
 /* Redraw FILES after the editor returns, or close it if EDIT ran a program. */
 const char *mmb_files_on_editor_exit(void);
 
+/* True while interactive HELP owns the keyboard. */
+int mmb_in_ihelp(void);
+
+/* Feed a keystroke to IHELP. Returns text to emit (may be empty). */
+const char *mmb_ihelp_key(char c);
+
 /* True while CONNECT owns the keyboard (telnet-style session). */
 int mmb_in_connect(void);
 

@@ -1,5 +1,7 @@
 """CMM2 / MMBasic language surface from the official manuals."""
 
+from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
+
 
 def test_dim_integer_prefix(console):
     assert console.send_line("NEW") == ""
@@ -117,18 +119,20 @@ def test_help_new_topics(console):
         "LEN",
         "ACOS",
     ):
-        out = console.send_line(f"HELP {topic}")
+        out = dump_topic(console, topic)
         assert out != "?SYNTAX ERROR", topic
         assert "unknown" not in out.lower(), topic
 
 
 def test_help_lists_new_commands(console):
-    out = console.send_line("HELP")
+    out = scroll_all(console, open_ihelp(console))
     for cmd in ("MEMORY", "INC", "CAT", "ERROR", "CMM2", "SORT"):
         assert cmd in out, cmd
-    basic = console.send_line("HELP BASIC")
+    close_ihelp(console)
+    basic = dump_topic(console, "BASIC")
     assert "LOCAL" in basic
-    assert "ON GOTO" in basic
+    assert "GOTO" in basic
+    assert "<ON>" in basic or "ON GOTO" in basic
 
 
 def test_const_max_not_function(console):

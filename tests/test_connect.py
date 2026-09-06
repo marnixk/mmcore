@@ -1,5 +1,7 @@
 """CONNECT telnet-style client: syntax and a clean QEMU failure."""
 
+from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
+
 
 def test_connect_requires_host_and_port(console):
     assert "?SYNTAX ERROR" in console.send_line("CONNECT").upper()
@@ -24,9 +26,10 @@ def test_connect_numeric_host_still_fails_cleanly(console):
 
 
 def test_help_connect(console):
-    listing = console.send_line("HELP")
+    listing = scroll_all(console, open_ihelp(console))
     assert "CONNECT" in listing
-    out = console.send_line("HELP CONNECT")
+    close_ihelp(console)
+    out = dump_topic(console, "CONNECT")
     assert out != "?SYNTAX ERROR"
     assert "host" in out.lower()
     assert "Ctrl+]" in out or "quit" in out.lower()
