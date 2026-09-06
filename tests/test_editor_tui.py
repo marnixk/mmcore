@@ -206,6 +206,7 @@ def test_editor_open_types_into_folder(kernel_image):
         assert con.send_line('OPEN "TPN/IN.BAS" FOR OUTPUT AS #1') == ""
         assert con.send_line('PRINT #1, "PRINT 77"') == ""
         assert con.send_line("CLOSE #1") == ""
+        assert "IN.BAS" in con.send_line('DIR "TPN"')
         _edit(con, "FOO.BAS")
         _keys(con, bytes([1]) + b"fo", quiet=0.5)
         seen = _keys(con, b"TPN\r", quiet=0.6)
@@ -214,7 +215,9 @@ def test_editor_open_types_into_folder(kernel_image):
         opened = _keys(con, b"IN.BAS\r", quiet=0.6)
         assert "PRINT 77" in opened
         _quit(con)
-        assert "77" in con.send_line('RUN "TPN/IN.BAS"')
+        assert "IN.BAS" in con.send_line('DIR "TPN"')
+        assert con.send_line('CHDIR "TPN"') == ""
+        assert "77" in con.send_line('RUN "IN.BAS"')
     finally:
         con.stop()
 
@@ -238,7 +241,8 @@ def test_editor_open_navigates_dirs_with_arrows(kernel_image):
         opened = _keys(con, b"\r", quiet=0.6)
         assert "PRINT 88" in opened
         _quit(con)
-        assert "88" in con.send_line('RUN "TPN/IN.BAS"')
+        assert con.send_line('CHDIR "TPN"') == ""
+        assert "88" in con.send_line('RUN "IN.BAS"')
     finally:
         con.stop()
 
