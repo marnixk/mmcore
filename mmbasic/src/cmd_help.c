@@ -235,7 +235,7 @@ static const char kHelpColour[] =
 	"Set foreground and optional background colour for\n"
 	"PRINT / INPUT text and for graphics when a colour\n"
 	"argument is omitted. HDMI text uses the nearest\n"
-	"ANSI colour (RGB(RED) is bright red).\n"
+	"of the 16 ANSI colours (RGB(RED) is red).\n"
 	"Colours are RGB integers: RGB(r,g,b), RGB(RED),\n"
 	"or RGB(\"RED\").\n"
 	"Named colours include BLACK RED GREEN BLUE YELLOW\n"
