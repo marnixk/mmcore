@@ -172,6 +172,8 @@ typedef struct mmb_ed_tab {
 	int len;
 	int cx, cy, row0, col0;
 	int dirty;
+	int sel;
+	int sel_anchor;
 } mmb_ed_tab;
 
 typedef struct mmb_editor {

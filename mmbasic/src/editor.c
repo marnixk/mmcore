@@ -29,6 +29,8 @@ static int ed_rows(void) { return tui_rows(); }
 #define C_SEL_BG    TUI_GREEN
 #define C_EDIT_FG   TUI_BRWHITE
 #define C_EDIT_BG   TUI_BLUE
+#define C_MARK_FG   TUI_BLACK
+#define C_MARK_BG   TUI_WHITE
 #define C_STR_FG    TUI_BRYELLOW
 #define C_NUM_FG    TUI_BRBLUE
 #define C_CMT_FG    TUI_WHITE
@@ -59,12 +61,13 @@ static int ed_rows(void) { return tui_rows(); }
 #define MENU_HELP   3
 #define MENU_COUNT  4
 
-static char killbuf[512];
+static char killbuf[8192];
 static int killlen;
 static int alt_pend;
 static int esc_state;
 static int csi_n;
 static int csi_arg;
+static int csi_semi;
 
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'H' };
@@ -74,8 +77,8 @@ static const char *file_items[] = {
 	"Open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
 };
 static const char file_hots[] = { 'o', 's', 'a', 'c', 'n', 'q' };
-static const char *edit_items[] = { "Cut line", "Paste" };
-static const char edit_hots[] = { 'c', 'p' };
+static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste" };
+static const char edit_hots[] = { 'o', 't', 'c', 'p' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys..." };
@@ -273,6 +276,173 @@ static int line_end(int pos)
 	return pos;
 }
 
+static int line_start(int pos)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t)
+		return 0;
+	while (pos > 0 && t->buf[pos - 1] != '\n')
+		pos--;
+	return pos;
+}
+
+static int is_word_char(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+	       (c >= '0' && c <= '9') || c == '_';
+}
+
+static int sel_bounds(int *lo, int *hi)
+{
+	mmb_ed_tab *t = cur_tab();
+	int a, b;
+	if (!t || !t->sel)
+		return 0;
+	a = t->sel_anchor;
+	b = t->cx;
+	if (a > b)
+	{
+		int x = a;
+		a = b;
+		b = x;
+	}
+	if (a < 0)
+		a = 0;
+	if (b > t->len)
+		b = t->len;
+	if (a >= b)
+		return 0;
+	if (lo)
+		*lo = a;
+	if (hi)
+		*hi = b;
+	return 1;
+}
+
+static int in_sel(int off)
+{
+	int lo, hi;
+	if (!sel_bounds(&lo, &hi))
+		return 0;
+	return off >= lo && off < hi;
+}
+
+static void sel_clear(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (t)
+		t->sel = 0;
+}
+
+static void sel_prepare(int shift)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t)
+		return;
+	if (!shift)
+	{
+		t->sel = 0;
+		return;
+	}
+	if (!t->sel)
+	{
+		t->sel_anchor = t->cx;
+		t->sel = 1;
+	}
+}
+
+static void clip_store(const char *s, int n)
+{
+	if (n >= (int)sizeof(killbuf))
+		n = (int)sizeof(killbuf) - 1;
+	if (n < 0)
+		n = 0;
+	memcpy(killbuf, s, (unsigned)n);
+	killlen = n;
+	killbuf[killlen] = 0;
+}
+
+static int delete_range(int lo, int hi, int to_clip)
+{
+	mmb_ed_tab *t = cur_tab();
+	int n;
+	if (!t || hi <= lo)
+		return 0;
+	n = hi - lo;
+	if (to_clip)
+		clip_store(t->buf + lo, n);
+	memmove(t->buf + lo, t->buf + hi, (unsigned)(t->len - hi + 1));
+	t->len -= n;
+	t->cx = lo;
+	t->sel = 0;
+	t->dirty = 1;
+	return 1;
+}
+
+static int delete_selection(int to_clip)
+{
+	int lo, hi;
+	if (!sel_bounds(&lo, &hi))
+	{
+		sel_clear();
+		return 0;
+	}
+	return delete_range(lo, hi, to_clip);
+}
+
+static void copy_selection(void)
+{
+	int lo, hi;
+	mmb_ed_tab *t = cur_tab();
+	if (!sel_bounds(&lo, &hi) || !t)
+		return;
+	clip_store(t->buf + lo, hi - lo);
+	set_status("Copied");
+}
+
+static void cut_selection(void)
+{
+	if (delete_selection(1))
+		set_status("Cut");
+}
+
+static void move_word_left(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t || t->cx <= 0)
+		return;
+	t->cx--;
+	while (t->cx > 0 && !is_word_char(t->buf[t->cx]))
+		t->cx--;
+	while (t->cx > 0 && is_word_char(t->buf[t->cx - 1]))
+		t->cx--;
+}
+
+static void move_word_right(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t)
+		return;
+	while (t->cx < t->len && is_word_char(t->buf[t->cx]))
+		t->cx++;
+	while (t->cx < t->len && !is_word_char(t->buf[t->cx]))
+		t->cx++;
+}
+
+static void move_file_home(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (t)
+		t->cx = 0;
+}
+
+static void move_file_end(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (t)
+		t->cx = t->len;
+}
+
 static void ensure_visible(void)
 {
 	mmb_ed_tab *t = cur_tab();
@@ -299,6 +469,9 @@ static void insert_char(char c)
 	mmb_ed_tab *t = cur_tab();
 	if (!t || t->len >= (int)sizeof(t->buf) - 1)
 		return;
+	delete_selection(0);
+	if (t->len >= (int)sizeof(t->buf) - 1)
+		return;
 	if (t->cx < t->len)
 		memmove(t->buf + t->cx + 1, t->buf + t->cx, (unsigned)(t->len - t->cx));
 	t->buf[t->cx++] = c;
@@ -316,6 +489,7 @@ static void insert_newline_indent(void)
 
 	if (!t)
 		return;
+	delete_selection(0);
 	i = t->cx;
 	while (i > 0 && t->buf[i - 1] != '\n')
 		i--;
@@ -330,7 +504,11 @@ static void insert_newline_indent(void)
 static void backspace(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	if (!t || t->cx <= 0)
+	if (!t)
+		return;
+	if (delete_selection(0))
+		return;
+	if (t->cx <= 0)
 		return;
 	memmove(t->buf + t->cx - 1, t->buf + t->cx, (unsigned)(t->len - t->cx + 1));
 	t->cx--;
@@ -341,7 +519,11 @@ static void backspace(void)
 static void delete_char(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	if (!t || t->cx >= t->len)
+	if (!t)
+		return;
+	if (delete_selection(0))
+		return;
+	if (t->cx >= t->len)
 		return;
 	memmove(t->buf + t->cx, t->buf + t->cx + 1, (unsigned)(t->len - t->cx));
 	t->len--;
@@ -429,18 +611,14 @@ static void cut_line(void)
 	int end;
 	if (!t)
 		return;
+	sel_clear();
 	end = line_end(t->cx);
 	if (end < t->len && t->buf[end] == '\n')
 		end++;
 	killlen = 0;
 	if (end > t->cx)
 	{
-		int n = end - t->cx;
-		if (n >= (int)sizeof(killbuf))
-			n = (int)sizeof(killbuf) - 1;
-		memcpy(killbuf, t->buf + t->cx, (unsigned)n);
-		killlen = n;
-		killbuf[killlen] = 0;
+		clip_store(t->buf + t->cx, end - t->cx);
 		memmove(t->buf + t->cx, t->buf + end, (unsigned)(t->len - end + 1));
 		t->len -= (end - t->cx);
 		t->dirty = 1;
@@ -453,6 +631,7 @@ static void paste_kill(void)
 	int n;
 	if (!t || killlen <= 0)
 		return;
+	delete_selection(0);
 	n = killlen;
 	if (t->len + n >= (int)sizeof(t->buf) - 1)
 		n = (int)sizeof(t->buf) - 1 - t->len;
@@ -637,35 +816,54 @@ static int line_is_comment(const char *s, int n)
 	return 0;
 }
 
-static void draw_text_line(int x, int y, const char *s, int n, int col0)
+static void draw_text_line(int x, int y, const char *s, int n, int col0, int buf_off)
 {
 	int i, vis = 0, shown = 0, in_str = 0, in_cmt;
+	int pad_mark;
 	in_cmt = line_is_comment(s, n);
 	for (i = 0; i < n && shown < TEXT_COLS; i++)
 	{
 		char ch = s[i];
-		int fg, k, w;
+		int fg, bg, k, w, marked;
 		if (!in_cmt && !in_str && ch == '\'')
 			in_cmt = 1;
 		if (!in_cmt && !in_str && ch == '"')
 			in_str = 1;
 		else if (in_str && ch == '"')
 			in_str = 2;
-		if (in_cmt)
+		marked = in_sel(buf_off + i);
+		if (marked)
+		{
+			fg = C_MARK_FG;
+			bg = C_MARK_BG;
+		}
+		else if (in_cmt)
+		{
 			fg = C_CMT_FG;
+			bg = C_EDIT_BG;
+		}
 		else if (in_str)
+		{
 			fg = C_STR_FG;
+			bg = C_EDIT_BG;
+		}
 		else if (ch >= '0' && ch <= '9')
+		{
 			fg = C_NUM_FG;
+			bg = C_EDIT_BG;
+		}
 		else
+		{
 			fg = C_EDIT_FG;
+			bg = C_EDIT_BG;
+		}
 		w = ch_cols(ch);
 		for (k = 0; k < w && shown < TEXT_COLS; k++)
 		{
 			if (vis >= col0)
 			{
 				char out = (ch == '\t') ? ' ' : ch;
-				tui_put(x + shown, y, (unsigned char)out, fg, C_EDIT_BG);
+				tui_put(x + shown, y, (unsigned char)out, fg, bg);
 				shown++;
 			}
 			vis++;
@@ -673,8 +871,11 @@ static void draw_text_line(int x, int y, const char *s, int n, int col0)
 		if (in_str == 2)
 			in_str = 0;
 	}
+	pad_mark = in_sel(buf_off + n);
 	if (shown < TEXT_COLS)
-		tui_pad(x + shown, y, "", TEXT_COLS - shown, C_EDIT_FG, C_EDIT_BG);
+		tui_pad(x + shown, y, "", TEXT_COLS - shown,
+			pad_mark ? C_MARK_FG : C_EDIT_FG,
+			pad_mark ? C_MARK_BG : C_EDIT_BG);
 }
 
 static void draw_empty_text_row(int y)
@@ -714,7 +915,7 @@ static void draw_editor_body(void)
 			n++;
 			pos++;
 		}
-		draw_text_line(1, y, t->buf + start, n, t->col0);
+		draw_text_line(1, y, t->buf + start, n, t->col0, start);
 		tui_put(COLS - 1, y, TUI_V, C_BRD_FG, C_BRD_BG);
 		if (pos < t->len && t->buf[pos] == '\n')
 			pos++;
@@ -812,9 +1013,10 @@ static void draw_dialog(void)
 			"F3     Open          F9     Run",
 			"^O     Save          ^X     Quit",
 			"^R     Save and Run  ^K/^U  Cut/Paste",
+			"Shift+Arrows select  Del    erase sel",
+			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
 			"Arrows move          Enter  activate",
-			"",
 			"     Enter or Esc closes this box",
 		};
 		int L = (int)(sizeof(lines) / sizeof(lines[0]));
@@ -1091,6 +1293,10 @@ static void activate_menu(void)
 	else if (menu == MENU_EDIT)
 	{
 		if (item == 0)
+			copy_selection();
+		else if (item == 1)
+			cut_selection();
+		else if (item == 2)
 			cut_line();
 		else
 			paste_kill();
@@ -1154,9 +1360,15 @@ static void do_fkey(int n)
 		open_menu(MENU_FILE);
 }
 
-static int handle_arrow_or_special(int kind)
+static int handle_arrow_or_special(int kind, int mod)
 {
 	/* kind: 1 up 2 down 3 right 4 left 5 home 6 end 7 del 8 ins 9 pgup 10 pgdn */
+	int shift = 0, ctrl = 0;
+	if (mod > 1)
+	{
+		shift = ((mod - 1) & 1) != 0;
+		ctrl = ((mod - 1) & 4) != 0;
+	}
 	if (G.ed.dialog == DLG_HELP)
 	{
 		if (kind == 0)
@@ -1194,7 +1406,60 @@ static int handle_arrow_or_special(int kind)
 		}
 		return 1;
 	}
-	if (kind == 1)
+	if (kind == 7)
+	{
+		if (shift)
+			cut_selection();
+		else
+			delete_char();
+		return 1;
+	}
+	if (kind == 8)
+	{
+		if (ctrl)
+			copy_selection();
+		else if (shift)
+			paste_kill();
+		return 1;
+	}
+	if (shift && !ctrl && (kind == 1 || kind == 2))
+	{
+		mmb_ed_tab *t = cur_tab();
+		if (t && !t->sel)
+		{
+			t->sel_anchor = line_start(t->cx);
+			t->sel = 1;
+		}
+		else
+			sel_prepare(shift);
+		if (t && kind == 2)
+		{
+			int e = line_end(t->cx);
+			if (e < t->len && t->buf[e] == '\n')
+				t->cx = e + 1;
+			else
+				t->cx = e;
+		}
+		else if (t)
+		{
+			int s = line_start(t->cx);
+			if (s > 0)
+				t->cx = line_start(s - 1);
+			else
+				t->cx = 0;
+		}
+		return 1;
+	}
+	sel_prepare(shift);
+	if (ctrl && kind == 4)
+		move_word_left();
+	else if (ctrl && kind == 3)
+		move_word_right();
+	else if (ctrl && kind == 5)
+		move_file_home();
+	else if (ctrl && kind == 6)
+		move_file_end();
+	else if (kind == 1)
 		move_up();
 	else if (kind == 2)
 		move_down();
@@ -1206,8 +1471,6 @@ static int handle_arrow_or_special(int kind)
 		move_home();
 	else if (kind == 6)
 		move_end();
-	else if (kind == 7)
-		delete_char();
 	else if (kind == 9)
 		page_up();
 	else if (kind == 10)
@@ -1224,6 +1487,7 @@ static int handle_escape(char c)
 			esc_state = ESC_CSI;
 			csi_n = 0;
 			csi_arg = 0;
+			csi_semi = 0;
 			return 1;
 		}
 		esc_state = ESC_NONE;
@@ -1263,6 +1527,7 @@ static int handle_escape(char c)
 			if (!csi_n)
 				csi_n = csi_arg;
 			csi_arg = 0;
+			csi_semi = 1;
 			return 1;
 		}
 		if (c == '[')
@@ -1271,37 +1536,40 @@ static int handle_escape(char c)
 			return 1;
 		}
 		esc_state = ESC_NONE;
-		if (c == 'A')
-			handle_arrow_or_special(1);
-		else if (c == 'B')
-			handle_arrow_or_special(2);
-		else if (c == 'C')
-			handle_arrow_or_special(3);
-		else if (c == 'D')
-			handle_arrow_or_special(4);
-		else if (c == 'H')
-			handle_arrow_or_special(5);
-		else if (c == 'F')
-			handle_arrow_or_special(6);
-		else if (c == '~')
 		{
-			int n = csi_arg;
-			if (n == 1 || n == 7)
-				handle_arrow_or_special(5);
-			else if (n == 4 || n == 8)
-				handle_arrow_or_special(6);
-			else if (n == 3)
-				handle_arrow_or_special(7);
-			else if (n == 2)
-				;
-			else if (n == 5)
-				handle_arrow_or_special(9);
-			else if (n == 6)
-				handle_arrow_or_special(10);
-			else if (n >= 11 && n <= 15)
-				do_fkey(n - 10);
-			else if (n >= 17 && n <= 21)
-				do_fkey(n - 11);
+			int mod = csi_semi ? csi_arg : 0;
+			if (c == 'A')
+				handle_arrow_or_special(1, mod);
+			else if (c == 'B')
+				handle_arrow_or_special(2, mod);
+			else if (c == 'C')
+				handle_arrow_or_special(3, mod);
+			else if (c == 'D')
+				handle_arrow_or_special(4, mod);
+			else if (c == 'H')
+				handle_arrow_or_special(5, mod);
+			else if (c == 'F')
+				handle_arrow_or_special(6, mod);
+			else if (c == '~')
+			{
+				int n = csi_semi ? csi_n : csi_arg;
+				if (n == 1 || n == 7)
+					handle_arrow_or_special(5, mod);
+				else if (n == 4 || n == 8)
+					handle_arrow_or_special(6, mod);
+				else if (n == 3)
+					handle_arrow_or_special(7, mod);
+				else if (n == 2)
+					handle_arrow_or_special(8, mod);
+				else if (n == 5)
+					handle_arrow_or_special(9, mod);
+				else if (n == 6)
+					handle_arrow_or_special(10, mod);
+				else if (n >= 11 && n <= 15)
+					do_fkey(n - 10);
+				else if (n >= 17 && n <= 21)
+					do_fkey(n - 11);
+			}
 		}
 		if (G.ed.active)
 			redraw();
@@ -1462,6 +1730,12 @@ const char *mmb_editor_feed(char c)
 		return G.out;
 	}
 	if (c == 11) /* Ctrl+K cut */
+	{
+		cut_line();
+		redraw();
+		return G.out;
+	}
+	if (c == 25) /* Ctrl+Y cut line (QBasic) */
 	{
 		cut_line();
 		redraw();

@@ -246,3 +246,153 @@ def test_editor_tab_char_does_not_shift_border(kernel_image):
         _quit(con)
     finally:
         con.stop()
+
+
+def _cell_samples(con, col, row):
+    x0, y0 = col * 8, row * 16
+    return [
+        con.screen_pixel(x0 + 1, y0 + 1),
+        con.screen_pixel(x0 + 6, y0 + 1),
+        con.screen_pixel(x0 + 1, y0 + 14),
+        con.screen_pixel(x0 + 6, y0 + 14),
+    ]
+
+
+def _is_edit_blue(rgb):
+    r, g, b = rgb
+    return b > r + 20 and b > 40 and r < 80
+
+
+def _is_sel_light(rgb):
+    r, g, b = rgb
+    return r > 100 and g > 100 and b > 100
+
+
+def _read_bas(con, path):
+    assert con.send_line(f'OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("LINE INPUT #1, A$") == ""
+    text = con.send_line("PRINT A$")
+    con.send_line("CLOSE #1")
+    return text
+
+
+def test_editor_shift_arrows_highlight_selection(kernel_image):
+    """Shift+Left/Right paints selected glyphs with inverted fg/bg (not editor blue)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELHL.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2C\x1b[1;2C\x1b[1;2C")
+        marked = _cell_samples(con, 1, 3)
+        rest = _cell_samples(con, 4, 3)
+        assert any(_is_sel_light(p) for p in marked), marked
+        assert not all(_is_edit_blue(p) for p in marked), marked
+        assert any(_is_edit_blue(p) for p in rest), rest
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_shift_del_cut_and_shift_ins_paste(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELCUT.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2F")
+        _keys(con, b"\x1b[3;2~")
+        _keys(con, b"ZZ")
+        _keys(con, b"\x1b[2;2~")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "SELCUT.BAS") == "ZZHELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_ins_copies_selection(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELCP.BAS")
+        _keys(con, b"AB")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2F")
+        _keys(con, b"\x1b[2;5~")
+        _keys(con, b"\x1b[F")
+        _keys(con, b"\x1b[2;2~")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "SELCP.BAS") == "ABAB"
+    finally:
+        con.stop()
+
+
+def test_editor_del_erases_selection_without_clipboard(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELDEL.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2C\x1b[1;2C")
+        _keys(con, b"\x1b[3~")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "SELDEL.BAS") == "LLO"
+    finally:
+        con.stop()
+
+
+def test_editor_unshifted_arrow_clears_selection(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELCLR.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2F")
+        _keys(con, b"\x1b[D")
+        _keys(con, b"\x1b[3~")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        text = _read_bas(con, "SELCLR.BAS")
+        assert text == "HELL"
+        assert text != ""
+    finally:
+        con.stop()
+
+
+def test_editor_shift_down_selects_current_line(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELLN.BAS")
+        _keys(con, b"AAA\rBBB")
+        _keys(con, b"\x1b[1;5H")
+        _keys(con, b"\x1b[1;2B")
+        _keys(con, b"\x1b[3~")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "SELLN.BAS") == "BBB"
+    finally:
+        con.stop()
+
+
+def test_editor_typing_replaces_selection(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELTYP.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2C\x1b[1;2C")
+        _keys(con, b"X")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "SELTYP.BAS") == "XLLO"
+    finally:
+        con.stop()

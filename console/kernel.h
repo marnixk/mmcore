@@ -43,6 +43,7 @@ private:
 	void ProcessChar (char c, char *Line, unsigned *pLen);
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
+	void PollUsbEditorNav (void);
 	void ApplyRawKeys (void);
 
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
@@ -79,6 +80,7 @@ private:
 	unsigned char		m_RawKeys[6];
 	unsigned char		m_LastMods;
 	unsigned char		m_AltHidSent;
+	unsigned char		m_NavHidSent;
 	int			m_UsbBurst;
 };
 

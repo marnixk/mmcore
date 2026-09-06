@@ -33,6 +33,7 @@ CKernel::CKernel (void)
 	m_HeldHid = 0;
 	m_LastMods = 0;
 	m_AltHidSent = 0;
+	m_NavHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -242,6 +243,93 @@ void CKernel::PollUsbAlt (void)
 	m_UsbBurst = 0;
 }
 
+/*
+ * Circle's cooked keymap maps Shift+arrows/Ins/Del to KeyNone, so those
+ * chords never reach the editor. Inject xterm CSI with a modifier byte
+ * (2=Shift, 5=Ctrl, 6=Ctrl+Shift) while the TUI editor is active.
+ */
+void CKernel::PollUsbEditorNav (void)
+{
+	unsigned char hid, mods;
+	int shift, ctrl;
+	char seq[8];
+	unsigned n = 0, i;
+	int tilde = 0;
+	char letter = 0;
+	int mod;
+
+	if (!mmb_in_editor ())
+	{
+		m_NavHidSent = 0;
+		return;
+	}
+	if ((m_LastMods & ALT) != 0)
+		return;
+
+	hid = m_HeldHid;
+	if (hid == 0)
+	{
+		m_NavHidSent = 0;
+		return;
+	}
+	if (hid == m_NavHidSent)
+		return;
+
+	mods = m_LastMods;
+	shift = (mods & (LSHIFT | RSHIFT)) != 0;
+	ctrl = (mods & (LCTRL | RCTRL)) != 0;
+
+	switch (hid)
+	{
+	case 0x52: letter = 'A'; break;
+	case 0x51: letter = 'B'; break;
+	case 0x4F: letter = 'C'; break;
+	case 0x50: letter = 'D'; break;
+	case 0x4A: tilde = 1; break;
+	case 0x4B: tilde = 5; break;
+	case 0x4C: tilde = 3; break;
+	case 0x4D: tilde = 4; break;
+	case 0x4E: tilde = 6; break;
+	case 0x49: tilde = 2; break;
+	default:
+		return;
+	}
+
+	if (!shift && !(ctrl && hid == 0x49))
+		return;
+	if (ctrl && !shift && hid != 0x49)
+		return;
+
+	mod = 1 + (shift ? 1 : 0) + (ctrl ? 4 : 0);
+	seq[n++] = 0x1b;
+	seq[n++] = '[';
+	if (letter)
+	{
+		seq[n++] = '1';
+		seq[n++] = ';';
+		seq[n++] = (char) ('0' + mod);
+		seq[n++] = letter;
+	}
+	else
+	{
+		seq[n++] = (char) ('0' + tilde);
+		seq[n++] = ';';
+		seq[n++] = (char) ('0' + mod);
+		seq[n++] = '~';
+	}
+
+	m_NavHidSent = hid;
+	if (n < sizeof (m_RepeatSeq))
+	{
+		memcpy (m_RepeatSeq, seq, n);
+		m_RepeatLen = n;
+	}
+	m_UsbBurst = 1;
+	for (i = 0; i < n; i++)
+		ProcessChar (seq[i], m_Line, &m_nLen);
+	m_UsbBurst = 0;
+}
+
 void CKernel::PollUsbRepeat (void)
 {
 	unsigned now, first, next;
@@ -323,6 +411,7 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_HeldHid = 0;
 	pThis->m_LastMods = 0;
 	pThis->m_AltHidSent = 0;
+	pThis->m_NavHidSent = 0;
 }
 
 void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
@@ -586,6 +675,7 @@ TShutdownMode CKernel::Run (void)
 		}
 
 		PollUsbAlt ();
+		PollUsbEditorNav ();
 		if (nBytes <= 0)
 		{
 			PollUsbRepeat ();
