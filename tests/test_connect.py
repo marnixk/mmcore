@@ -35,6 +35,7 @@ def test_help_connect(console):
     assert "Ctrl+]" in out or "quit" in out.lower()
     assert "telnet" in out.lower() or "ANSI" in out or "ansi" in out.lower()
     assert "CR LF" in out or "newline" in out.lower()
+    assert "drain" in out.lower() or "truncated" in out.lower()
 
 
 def test_ipconfig_without_radio(console):

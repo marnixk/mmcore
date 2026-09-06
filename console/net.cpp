@@ -11,9 +11,11 @@
 #include <circle/net/netsubsystem.h>
 #include <circle/net/socket.h>
 #include <circle/net/in.h>
+#include <circle/netdevice.h>
 #include <circle/sched/scheduler.h>
 #include <circle/string.h>
 #include <circle/timer.h>
+#include <circle/util.h>
 #include <circle/new.h>
 #endif
 
@@ -22,9 +24,14 @@ extern "C" {
 #ifdef MMB_CIRCLE_WLAN
 
 static CSocket *s_sock;
+static u8 s_rx[FRAME_BUFFER_SIZE];
+static unsigned s_rxn;
+static unsigned s_rxoff;
 
 void mmb_net_tcp_close(void)
 {
+	s_rxn = 0;
+	s_rxoff = 0;
 	if (s_sock)
 	{
 		delete s_sock;
@@ -100,14 +107,45 @@ int mmb_net_tcp_send(const void *data, unsigned n)
 
 int mmb_net_tcp_recv(void *data, unsigned maxn)
 {
-	int n;
+	unsigned char *dst;
+	unsigned out = 0;
 
 	if (!s_sock)
 		return -1;
-	n = s_sock->Receive(data, maxn, MSG_DONTWAIT);
-	if (CScheduler::IsActive())
-		CScheduler::Get()->Yield();
-	return n;
+	if (!data || !maxn)
+		return 0;
+	dst = (unsigned char *)data;
+	/* Circle CSocket::Receive copies min(buflen, segment) then frees
+	 * the rest of the TCP buffer, so a small dest would drop bytes.
+	 * Always pull a full FRAME_BUFFER_SIZE and hold leftovers. */
+	for (;;)
+	{
+		if (s_rxoff < s_rxn)
+		{
+			unsigned n = s_rxn - s_rxoff;
+			if (n > maxn - out)
+				n = maxn - out;
+			memcpy(dst + out, s_rx + s_rxoff, n);
+			s_rxoff += n;
+			out += n;
+			if (out == maxn)
+				return (int)out;
+			continue;
+		}
+		s_rxn = 0;
+		s_rxoff = 0;
+		{
+			int n = s_sock->Receive(s_rx, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
+			if (CScheduler::IsActive())
+				CScheduler::Get()->Yield();
+			if (n < 0)
+				return out ? (int)out : n;
+			if (n == 0)
+				return (int)out;
+			s_rxn = (unsigned)n;
+			s_rxoff = 0;
+		}
+	}
 }
 
 #else /* !MMB_CIRCLE_WLAN */
