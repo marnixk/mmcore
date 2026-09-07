@@ -32,6 +32,9 @@ extern void mmb_gfx_copy_page(int src, int dst);
 #define TM_SCROLL_MS    100
 #define TM_DEMO_MIN_MS  120
 #define TM_DEMO_MAX_MS  200
+#define TM_ESC_IDLE_MS  60
+#define TM_MENU_BG      0x243040u
+#define TM_MENU_HI      0x3A6EA5u
 
 typedef struct {
 	int active;
@@ -76,6 +79,9 @@ typedef struct {
 	int csi_n;
 	char esc_buf[TM_ESC_BUF];
 	int esc_len;
+	unsigned esc_at;
+	int alt;
+	int menu;
 	int demo_line;
 	unsigned demo_next;
 	int serial_gen;
@@ -215,6 +221,11 @@ static void term_serial_dump(void)
 		line[TM_COLS] = 0;
 		ser(line);
 		ser("\r\n");
+	}
+	if (T.menu)
+	{
+		ser("File\r\n");
+		ser("Exit\r\n");
 	}
 	T.serial_gen++;
 }
@@ -366,7 +377,7 @@ static void term_draw_status(void)
 	x0 = T.pane_left * TM_CW;
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 		    TM_BG, 1, (int)TM_BG);
-	strcpy(left, "F10  exit");
+	strcpy(left, "F10/Alt-X  Alt-F");
 	term_put_str(x0, y, left, TM_DIM);
 	right[0] = 0;
 	if (T.net_fail && T.net_msg[0])
@@ -380,6 +391,21 @@ static void term_draw_status(void)
 	if (n > TM_COLS)
 		n = TM_COLS;
 	term_put_str(x0 + (TM_COLS - n) * TM_CW, y, right, TM_DIM);
+}
+
+static void term_draw_menu(void)
+{
+	int x0, y0, w;
+
+	if (!T.menu)
+		return;
+	x0 = T.pane_left * TM_CW;
+	y0 = 0;
+	w = 10 * TM_CW;
+	mmb_gfx_box(x0, y0, w, 3 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	term_put_str(x0 + TM_CW, y0 + 4, "File", TM_FG);
+	mmb_gfx_box(x0, y0 + TM_CH, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
+	term_put_str(x0 + TM_CW, y0 + TM_CH + 4, "Exit", TM_FG);
 }
 
 static void term_draw(void)
@@ -410,6 +436,7 @@ static void term_draw(void)
 		}
 	}
 	term_draw_status();
+	term_draw_menu();
 	mmb_gfx_copy_page(1, 0);
 	mmb_gfx_present();
 	G.gfx.write_page = saved;
@@ -986,8 +1013,18 @@ static int esc_feed(char c)
 	}
 	if (T.esc == 2)
 	{
+		if (c == '[')
+		{
+			T.esc = 6;
+			return 1;
+		}
 		if (c == 'A' || c == 'B' || c == 'C' || c == 'D')
 		{
+			if (T.menu)
+			{
+				esc_reset();
+				return 1;
+			}
 			esc_send();
 			return 1;
 		}
@@ -995,6 +1032,11 @@ static int esc_feed(char c)
 		{
 			T.csi_n = c - '0';
 			T.esc = 4;
+			return 1;
+		}
+		if (T.menu)
+		{
+			esc_reset();
 			return 1;
 		}
 		esc_send();
@@ -1015,7 +1057,17 @@ static int esc_feed(char c)
 				term_exit();
 				return 1;
 			}
+			if (T.menu)
+			{
+				esc_reset();
+				return 1;
+			}
 			esc_send();
+			return 1;
+		}
+		if (T.menu)
+		{
+			esc_reset();
 			return 1;
 		}
 		esc_send();
@@ -1023,13 +1075,17 @@ static int esc_feed(char c)
 	}
 	if (T.esc == 5)
 	{
-		if (c == 'P')
+		if (T.menu)
 		{
 			esc_reset();
-			term_exit();
 			return 1;
 		}
 		esc_send();
+		return 1;
+	}
+	if (T.esc == 6)
+	{
+		esc_reset();
 		return 1;
 	}
 	return 0;
@@ -1157,12 +1213,54 @@ const char *mmb_term_key(char c)
 
 	if (!T.active)
 		return "";
+	if (T.alt)
+	{
+		T.alt = 0;
+		if (c >= 'A' && c <= 'Z')
+			c = (char)(c - 'A' + 'a');
+		if (c == 'x')
+		{
+			term_exit();
+			return "";
+		}
+		if (c == 'f')
+		{
+			T.menu = 1;
+			term_draw();
+			term_serial_dump();
+			return "";
+		}
+		return "";
+	}
+	if ((unsigned char)c == 1)
+	{
+		T.alt = 1;
+		return "";
+	}
 	if (c == 27)
 	{
+		if (T.esc == 1)
+		{
+			if (T.menu)
+			{
+				T.menu = 0;
+				esc_reset();
+				term_draw();
+				term_serial_dump();
+				return "";
+			}
+			if (T.esc_len <= 0)
+			{
+				T.esc_buf[0] = 27;
+				T.esc_len = 1;
+			}
+			esc_send();
+		}
 		T.esc = 1;
 		T.esc_len = 0;
-		if (T.esc_len < TM_ESC_BUF)
-			T.esc_buf[T.esc_len++] = c;
+		T.esc_buf[0] = 27;
+		T.esc_len = 1;
+		T.esc_at = mmb_now_ms();
 		return "";
 	}
 	if (T.esc)
@@ -1173,6 +1271,16 @@ const char *mmb_term_key(char c)
 				return "";
 			return "";
 		}
+	}
+	if (T.menu)
+	{
+		if (c == '\r' || c == '\n' || c == 'x' || c == 'X' ||
+		    c == 'e' || c == 'E')
+		{
+			term_exit();
+			return "";
+		}
+		return "";
 	}
 	if (!T.tcp)
 		return "";
@@ -1186,6 +1294,8 @@ const char *mmb_term_key(char c)
 			return "";
 		}
 		b = (unsigned char)c;
+		if (b == 127)
+			b = 8;
 		if (b == IAC)
 		{
 			unsigned char esc[2] = { IAC, IAC };
@@ -1220,6 +1330,26 @@ void mmb_term_poll(void)
 
 	if (!T.active)
 		return;
+	if (T.esc == 1 && T.esc_at &&
+	    mmb_now_ms() - T.esc_at >= TM_ESC_IDLE_MS)
+	{
+		if (T.menu)
+		{
+			T.menu = 0;
+			esc_reset();
+			term_draw();
+			term_serial_dump();
+		}
+		else
+		{
+			if (T.esc_len <= 0)
+			{
+				T.esc_buf[0] = 27;
+				T.esc_len = 1;
+			}
+			esc_send();
+		}
+	}
 	if (T.demo && T.demo_line <= 42 && mmb_now_ms() >= T.demo_next)
 		demo_emit_line();
 	if (T.need_draw)

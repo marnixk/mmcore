@@ -14,6 +14,7 @@
 #define TTYPE_SEND   1
 
 #define CN_LINE  256
+#define CN_ESC_IDLE_MS  60
 
 typedef struct {
 	int active;
@@ -29,6 +30,11 @@ typedef struct {
 	int port;
 	char line[CN_LINE];
 	int linelen;
+	int esc;
+	int csi_n;
+	unsigned esc_at;
+	int alt;
+	int menu;
 } cn_state;
 
 static cn_state C;
@@ -252,6 +258,11 @@ void mmb_cmd_connect(void)
 	C.sb_opt = -1;
 	C.sb_cmd = -1;
 	C.linelen = 0;
+	C.esc = 0;
+	C.csi_n = 0;
+	C.esc_at = 0;
+	C.alt = 0;
+	C.menu = 0;
 
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
 	{
@@ -262,7 +273,7 @@ void mmb_cmd_connect(void)
 		return;
 	}
 	C.active = 1;
-	mmb_out("Connected. Ctrl+] to quit.");
+	mmb_out("Connected. F10 / Alt+X / Ctrl+] to quit.");
 }
 
 int mmb_in_connect(void)
@@ -293,15 +304,162 @@ static void send_enter(void)
 		emit_both("\n", 1);
 }
 
+static void connect_send_esc(void)
+{
+	unsigned char e = 27;
+	C.char_mode = 1;
+	mmb_net_tcp_send(&e, 1);
+	C.esc = 0;
+	C.csi_n = 0;
+	C.esc_at = 0;
+}
+
+static int connect_esc_feed(char c)
+{
+	if (C.esc == 1)
+	{
+		if (c == '[')
+		{
+			C.esc = 2;
+			C.csi_n = 0;
+			return 1;
+		}
+		if (c == 'O')
+		{
+			C.esc = 5;
+			return 1;
+		}
+		{
+			unsigned char b[2];
+			b[0] = 27;
+			b[1] = (unsigned char)c;
+			C.char_mode = 1;
+			mmb_net_tcp_send(b, 2);
+		}
+		C.esc = 0;
+		C.esc_at = 0;
+		return 1;
+	}
+	if (C.esc == 2)
+	{
+		if (c == '[')
+		{
+			C.esc = 0;
+			return 1;
+		}
+		if (c >= '0' && c <= '9')
+		{
+			C.csi_n = c - '0';
+			C.esc = 4;
+			return 1;
+		}
+		if (c == 'A' || c == 'B' || c == 'C' || c == 'D')
+		{
+			unsigned char b[3];
+			b[0] = 27;
+			b[1] = '[';
+			b[2] = (unsigned char)c;
+			mmb_net_tcp_send(b, 3);
+			C.esc = 0;
+			return 1;
+		}
+		C.esc = 0;
+		return 1;
+	}
+	if (C.esc == 4)
+	{
+		if (c >= '0' && c <= '9')
+		{
+			C.csi_n = C.csi_n * 10 + (c - '0');
+			return 1;
+		}
+		if (c == '~')
+		{
+			if (C.csi_n == 21)
+			{
+				C.esc = 0;
+				session_close("\r\nConnection closed\r\n");
+				return 1;
+			}
+			C.esc = 0;
+			return 1;
+		}
+		C.esc = 0;
+		return 1;
+	}
+	if (C.esc == 5)
+	{
+		C.esc = 0;
+		return 1;
+	}
+	return 0;
+}
+
 const char *mmb_connect_key(char c)
 {
 	unsigned char b;
 
 	if (!C.active)
 		return "";
-	if ((unsigned char)c == 0x1d) /* Ctrl+] telnet escape */
+	if ((unsigned char)c == 0x1d)
 	{
 		session_close("\r\nConnection closed\r\n");
+		return "";
+	}
+	if (C.alt)
+	{
+		C.alt = 0;
+		if (c >= 'A' && c <= 'Z')
+			c = (char)(c - 'A' + 'a');
+		if (c == 'x')
+		{
+			session_close("\r\nConnection closed\r\n");
+			return "";
+		}
+		if (c == 'f')
+		{
+			C.menu = 1;
+			emit_both("\r\n[File] Exit\r\n", 16);
+			return "";
+		}
+		return "";
+	}
+	if ((unsigned char)c == 1)
+	{
+		C.alt = 1;
+		return "";
+	}
+	if (c == 27)
+	{
+		if (C.esc == 1)
+		{
+			if (C.menu)
+			{
+				C.menu = 0;
+				C.esc = 0;
+				C.esc_at = 0;
+				return "";
+			}
+			connect_send_esc();
+		}
+		C.esc = 1;
+		C.csi_n = 0;
+		C.esc_at = mmb_now_ms();
+		return "";
+	}
+	if (C.esc)
+	{
+		if (connect_esc_feed(c))
+			return "";
+	}
+	if (C.menu)
+	{
+		if (c == '\r' || c == '\n' || c == 'x' || c == 'X' ||
+		    c == 'e' || c == 'E')
+		{
+			session_close("\r\nConnection closed\r\n");
+			return "";
+		}
 		return "";
 	}
 	if (swallow_crlf_pair(c))
@@ -314,6 +472,15 @@ const char *mmb_connect_key(char c)
 			return "";
 		}
 		b = (unsigned char)c;
+		if (b == 127)
+			b = 8;
+		if (b == 8)
+		{
+			mmb_net_tcp_send(&b, 1);
+			if (!C.no_echo)
+				emit_both("\b \b", 3);
+			return "";
+		}
 		if (b == IAC)
 		{
 			unsigned char esc[2] = { IAC, IAC };
@@ -321,7 +488,7 @@ const char *mmb_connect_key(char c)
 		}
 		else
 			mmb_net_tcp_send(&b, 1);
-		if (!C.no_echo)
+		if (!C.no_echo && b >= 32)
 			emit_both(&c, 1);
 		return "";
 	}
@@ -360,6 +527,18 @@ void mmb_connect_poll(void)
 
 	if (!C.active)
 		return;
+	if (C.esc == 1 && C.esc_at &&
+	    mmb_now_ms() - C.esc_at >= CN_ESC_IDLE_MS)
+	{
+		if (C.menu)
+		{
+			C.menu = 0;
+			C.esc = 0;
+			C.esc_at = 0;
+		}
+		else
+			connect_send_esc();
+	}
 	for (loops = 0; loops < 32; loops++)
 	{
 		n = mmb_net_tcp_recv(buf, sizeof(buf));

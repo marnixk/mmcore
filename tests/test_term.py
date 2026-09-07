@@ -62,6 +62,8 @@ def test_help_term(console):
     low = out.lower()
     assert "host" in low
     assert "f10" in low
+    assert "alt" in low
+    assert "esc" in low
     assert "14" in low and "mode" in low
     assert "demo" in low
     assert "ansi" in low
@@ -143,5 +145,78 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
         assert "network not available" in low or "connect failed" in low
         _f10(con)
         assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
+
+
+def test_term_alt_x_exits(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        con.stop()
+
+
+def test_term_alt_f_file_menu_then_enter_exits(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"f")
+        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "File" in menu
+        assert "Exit" in menu
+        con._ser.sendall(b"\r")
+        _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_term_f1_does_not_exit(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1bOP")
+        time.sleep(0.4)
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        assert con.screen_size() == (960, 540)
+        con._ser.sendall(b"\x1b[[A")
+        time.sleep(0.3)
+        assert con.screen_size() == (960, 540)
+        _f10(con)
+        assert con.send_line("PRINT 8+1") == "9"
+        assert con.screen_size() == (640, 480)
+    finally:
+        con.stop()
+
+
+def test_term_esc_idle_then_f10(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.15)
+        _f10(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
+def test_term_double_esc_then_f10(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b\x1b")
+        time.sleep(0.1)
+        _f10(con)
+        assert con.send_line("PRINT 5+5") == "10"
     finally:
         con.stop()
