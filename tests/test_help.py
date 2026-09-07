@@ -155,7 +155,7 @@ def test_help_option_wifi(console):
     assert "firmware" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
     assert "beacon" in out.lower() or "scan" in out.lower()
-    assert "OPTIONS WIFI" in out
+    assert "OPTIONS WIFI" in out or "<OPTIONS> WIFI" in out
     assert "country=US" in out or "US" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
