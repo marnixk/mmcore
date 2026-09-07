@@ -2503,8 +2503,8 @@ static void editor_run(void)
 	mmb_exec_line(cmd);
 	if (G.err[0])
 	{
-		editor_resume();
 		set_status(G.err);
+		editor_resume();
 		return;
 	}
 	if (G.outn && G.out[G.outn - 1] != '\n' && G.out[G.outn - 1] != '\r')

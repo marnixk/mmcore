@@ -153,12 +153,18 @@ void tui_invalidate(void)
 
 void tui_end(void)
 {
+	int h;
 	inited = 0;
 	cols = rows = 0;
 	hide_hw_cursor(0);
-	if (G.plat && G.plat->fill_screen)
-		G.plat->fill_screen(0);
-	else if (G.plat && G.plat->write_screen)
+	if (G.plat && G.plat->tui_prepare)
+		G.plat->tui_prepare();
+	h = (G.plat && G.plat->hdmi_height) ? G.plat->hdmi_height() : 480;
+	if (h < 1)
+		h = 480;
+	if (G.plat && G.plat->tui_present)
+		G.plat->tui_present(0, h - 1);
+	if (G.plat && G.plat->write_screen)
 		G.plat->write_screen("\x1b[0m\x1b[H\x1b[J", 11);
 }
 

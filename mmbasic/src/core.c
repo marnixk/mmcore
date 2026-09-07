@@ -237,6 +237,28 @@ static int at_end_of_statement(void)
 	return *G.p == 0 || *G.p == ':' || *G.p == '\'';
 }
 
+static int match_endif(void)
+{
+	const char *save = G.p;
+	if (mmb_match("ENDIF"))
+		return 1;
+	if (mmb_match("END") && mmb_match("IF"))
+		return 1;
+	G.p = save;
+	return 0;
+}
+
+static int match_else_if(void)
+{
+	const char *save = G.p;
+	if (mmb_match("ELSEIF"))
+		return 1;
+	if (mmb_match("ELSE") && mmb_match("IF"))
+		return 1;
+	G.p = save;
+	return 0;
+}
+
 static int process_line_structure(const char *body)
 {
 	const char *save = G.p;
@@ -263,16 +285,17 @@ static int process_line_structure(const char *body)
 
 	if (G.if_skip)
 	{
-		if (mmb_match("ENDIF"))
+		if (match_endif())
 		{
-			G.if_skip = 0;
-			G.if_taken = 0;
+			G.if_skip--;
+			if (!G.if_skip)
+				G.if_taken = 0;
 			G.p = save;
 			return 1;
 		}
-		if (mmb_match("ELSEIF"))
+		if (match_else_if())
 		{
-			if (!G.if_taken)
+			if (G.if_skip == 1 && !G.if_taken)
 			{
 				mmb_val v = mmb_expr();
 				if (mmb_as_int(v))
@@ -286,13 +309,22 @@ static int process_line_structure(const char *body)
 		}
 		if (mmb_match("ELSE"))
 		{
-			if (!G.if_taken)
+			if (G.if_skip == 1 && !G.if_taken)
 			{
 				G.if_skip = 0;
 				G.if_taken = 1;
 			}
 			G.p = save;
-			return G.if_skip;
+			return G.if_skip != 0;
+		}
+		if (mmb_match("IF"))
+		{
+			mmb_val v = mmb_expr();
+			(void)v;
+			if (mmb_match("THEN") && at_end_of_statement())
+				G.if_skip++;
+			G.p = save;
+			return 1;
 		}
 		G.p = save;
 		return 1;
@@ -300,13 +332,13 @@ static int process_line_structure(const char *body)
 
 	if (G.if_taken)
 	{
-		if (mmb_match("ELSEIF") || mmb_match("ELSE"))
+		if (match_else_if() || mmb_match("ELSE"))
 		{
 			G.if_skip = 1;
 			G.p = save;
 			return 1;
 		}
-		if (mmb_match("ENDIF"))
+		if (match_endif())
 		{
 			G.if_taken = 0;
 			G.p = save;
@@ -2824,6 +2856,16 @@ static void run_program(void)
 	G.running = 0;
 }
 
+static void clear_exec_flags(void)
+{
+	G.running = 0;
+	G.if_skip = 0;
+	G.if_taken = 0;
+	G.sel_skip = 0;
+	G.sel_active = 0;
+	G.branch_pc = -1;
+}
+
 const char *mmb_exec_line(const char *line)
 {
 	int num;
@@ -2835,9 +2877,11 @@ const char *mmb_exec_line(const char *line)
 	{
 		G.outn = 0;
 		G.out[0] = 0;
+		clear_exec_flags();
 		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
 		return G.out;
 	}
+	clear_exec_flags();
 	if (!line)
 		return G.out;
 	while (*line == ' ' || *line == '\t')

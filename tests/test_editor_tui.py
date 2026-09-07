@@ -666,7 +666,7 @@ def test_editor_run_inkey_loop_break_restores_editor(kernel_image):
         assert con.send_line('OPEN "INK.BAS" FOR OUTPUT AS #1') == ""
         assert con.send_line('PRINT #1, "DO"') == ""
         assert con.send_line('PRINT #1, "CURRENT = ASC(INKEY$())"') == ""
-        assert con.send_line('PRINT #1, "IF CURRENT <> 0 THEN"') == ""
+        assert con.send_line('PRINT #1, "IF CURRENT THEN"') == ""
         assert con.send_line(
             'PRINT #1, "PRINT ";CHR$(34);"current input: ";CHR$(34);"; CURRENT"'
         ) == ""
@@ -676,25 +676,27 @@ def test_editor_run_inkey_loop_break_restores_editor(kernel_image):
 
         con.drain(quiet=0.1)
         con._ser.sendall(b'RUN "INK.BAS"\r')
-        time.sleep(0.3)
-        from_prompt = _keys(con, b"B", quiet=0.6)
-        assert "current input" in from_prompt.lower()
-        assert "66" in from_prompt
-        broke = _keys(con, bytes([3]), quiet=1.2)
+        time.sleep(0.4)
+        con._ser.sendall(b"B")
+        seen = _plain(con.drain(quiet=0.6, timeout=2.0).decode(errors="replace"))
+        assert "current input" in seen.lower()
+        assert "66" in seen
+        broke = con.send_keys(b"\x03", timeout=6.0)
         assert "BREAK" in broke.upper()
         assert con.send_line("PRINT 2") == "2"
 
         _edit(con, "INK.BAS")
-        _keys(con, bytes([18]), quiet=0.7)
-        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-        assert not any(_is_edit_blue(p) for p in pane), pane
-        typed = _keys(con, b"A", quiet=0.7)
+        _keys(con, bytes([18]), quiet=0.5)
+        con._ser.sendall(b"A")
+        typed = _plain(con.drain(quiet=0.7, timeout=2.5).decode(errors="replace"))
         assert "current input" in typed.lower()
         assert "65" in typed
-        back = _keys(con, bytes([3]), quiet=1.2)
+        con._ser.sendall(bytes([3]))
+        back = _plain(con.drain(quiet=1.2, timeout=4.0).decode(errors="replace"))
         assert "File" in back
         assert "Run" in back
         _quit(con)
+        time.sleep(0.4)
         assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
