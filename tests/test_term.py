@@ -64,7 +64,10 @@ def test_help_term(console):
     assert "f10" in low
     assert "14" in low and "mode" in low
     assert "demo" in low
-    assert any(k in low for k in ("fade", "scroll", "slate"))
+    assert "ansi" in low
+    assert "page" in low
+    assert "fade out" not in low
+    assert any(k in low for k in ("scroll", "slate"))
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -76,6 +79,7 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
         assert con.screen_size() == (960, 540)
         r, g, b = con.screen_pixel(40, 200)
         assert _is_dark_slate(r, g, b), (r, g, b)
+        assert not re.search(r"\.{8,}", seen), seen[:200]
         assert "TERM demo" in seen or "term demo" in seen.lower()
         assert "Luxurious terminal" in seen or "luxurious terminal" in seen.lower()
         assert "F10" in seen
