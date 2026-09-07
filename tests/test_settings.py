@@ -125,7 +125,7 @@ def test_options_wifi_connects_with_stored_credentials(console):
     assert "?WIFI not configured" not in out
     assert "?SYNTAX ERROR" not in out
     assert "secretpass" not in out
-    assert "Wi-Fi not available" in out or "Wi-Fi connected" in out or "connect failed" in out.lower()
+    assert "Wi-Fi not available" in out or "Connected to" in out or "Wi-Fi connected" in out or "connect failed" in out.lower()
     assert console.send_line("PRINT 1+1") == "2"
     assert "?SYNTAX ERROR" in console.send_line('OPTIONS WIFI "x","y"').upper()
     assert "?SYNTAX ERROR" in console.send_line("OPTIONS").upper()

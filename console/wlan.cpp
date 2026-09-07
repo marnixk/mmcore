@@ -456,11 +456,38 @@ static void append_ip(CString *out, const char *label, const CIPAddress *ip)
 	out->Append("\n");
 }
 
+static int current_ipv4(CString *ipstr)
+{
+	CNetConfig *cfg;
+	const CIPAddress *ip;
+
+	if (!ipstr || !s_net)
+		return -1;
+	cfg = s_net->GetConfig();
+	ip = cfg ? cfg->GetIPAddress() : 0;
+	if (!s_net->IsRunning() || !ip || !ip->IsSet() || ip->IsNull())
+		return -1;
+	ip->Format(ipstr);
+	return 0;
+}
+
+int mmb_wlan_ip(char *buf, int bufsize)
+{
+	CString ipstr;
+
+	if (!buf || bufsize < 1)
+		return -1;
+	buf[0] = 0;
+	if (current_ipv4(&ipstr) != 0)
+		return -1;
+	copy_out(buf, bufsize, (const char *)ipstr);
+	return 0;
+}
+
 int mmb_wlan_ipconfig(char *buf, int bufsize)
 {
 	CString out;
 	CNetConfig *cfg;
-	const CIPAddress *ip;
 	CString ipstr;
 
 	if (!buf || bufsize < 1)
@@ -483,8 +510,7 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 		return -1;
 	}
 	cfg = s_net->GetConfig();
-	ip = cfg ? cfg->GetIPAddress() : 0;
-	if (!s_net->IsRunning() || !ip || !ip->IsSet() || ip->IsNull())
+	if (current_ipv4(&ipstr) != 0)
 	{
 		out = "Not connected";
 		if (s_last_ssid[0])
@@ -497,7 +523,6 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 		copy_out(buf, bufsize, (const char *)out);
 		return -1;
 	}
-	ip->Format(&ipstr);
 	out.Format("Connected as %s\n", (const char *)ipstr);
 	if (s_last_ssid[0])
 	{
@@ -587,6 +612,13 @@ int mmb_wlan_connect(const char *ssid, const char *psk)
 int mmb_wlan_status(void)
 {
 	return 0;
+}
+
+int mmb_wlan_ip(char *buf, int bufsize)
+{
+	if (buf && bufsize > 0)
+		buf[0] = 0;
+	return -1;
 }
 
 int mmb_wlan_ipconfig(char *buf, int bufsize)
