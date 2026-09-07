@@ -18,6 +18,7 @@ def test_help_lists_commands(console):
         "CONNECT",
         "TERM",
         "WORDPAD",
+        "CREDITS",
         "IPCONFIG",
     ):
         assert f"<{cmd}>" in seen, cmd

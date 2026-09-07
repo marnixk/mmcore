@@ -33,7 +33,7 @@ static const char kIndexCommands[] =
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
-	"  SETTICK FACTORY_RESET CONNECT TERM IPCONFIG CONTINUE EXIT LS\n"
+	"  SETTICK FACTORY_RESET CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
 	"Prompt\n"
 	"  OPTION PROMPT BARE|CWD         \"> \" or DOS $p$g (A:/>)\n"
@@ -505,6 +505,17 @@ static const char kHelpWordpad[] =
 	"Example:  WORDPAD\n"
 	"          WORDPAD \"NOTES.MD\"";
 
+static const char kHelpCredits[] =
+	"CREDITS\n"
+	"\n"
+	"Show MMBasic / PicoMite copyright (Geoff Graham,\n"
+	"Peter Mather), Circle runtime credit, ASCII homage\n"
+	"to the Colour Maximite, and the Raspberry Pi port\n"
+	"line. The MMBasic licence requires the original\n"
+	"copyright message to remain available.\n"
+	"\n"
+	"Example:  CREDITS";
+
 static const char kHelpDir[] =
 	"DIR [spec$]\n"
 	"\n"
@@ -906,7 +917,7 @@ static const char kHelpCmm2[] =
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
-	"  REBOOT OPTION FACTORY_RESET CONNECT TERM IPCONFIG HELP\n"
+	"  REBOOT OPTION FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
 	"  CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
@@ -1340,6 +1351,7 @@ static const help_topic kTopics[] = {
 	{ "AUDIO_TARGET", HELP_CMD, kHelpAudioTarget },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },
 	{ "WORDPAD",     HELP_CMD,  kHelpWordpad },
+	{ "CREDITS",     HELP_CMD,  kHelpCredits },
 	{ "DIR",         HELP_CMD,  kHelpDir },
 	{ "FILES",       HELP_CMD,  kHelpFiles },
 	{ "OPEN",        HELP_CMD,  kHelpOpen },
