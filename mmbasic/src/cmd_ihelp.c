@@ -557,9 +557,13 @@ static void close_ihelp(void)
 	H.esc = 0;
 	H.stack_n = 0;
 	tui_end();
-	ser("\r\n");
 	if (resume_ed)
 		mmb_editor_on_ihelp_exit();
+	else
+	{
+		mmb_console_write("\r\n");
+		mmb_console_write(mmb_prompt());
+	}
 }
 
 static void do_back(void)
