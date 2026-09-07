@@ -150,16 +150,6 @@ static void term_reset_pen(void)
 	T.ansi_inv = 0;
 }
 
-static void wait_ms(unsigned ms)
-{
-	unsigned start = mmb_now_ms();
-	while (mmb_now_ms() - start < ms)
-	{
-		if (G.plat && G.plat->poll_input)
-			G.plat->poll_input();
-	}
-}
-
 static void ser(const char *s)
 {
 	unsigned n;
@@ -280,7 +270,7 @@ static void pane_scroll_up(void)
 static void pane_scroll_smooth(void)
 {
 	uint32_t *pg;
-	int i, x0, y, w, h, pw, ph, saved;
+	int x0, y, w, h, pw, ph, saved;
 	unsigned fill = TM_BG;
 
 	x0 = T.pane_left * TM_CW;
@@ -289,22 +279,23 @@ static void pane_scroll_smooth(void)
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	pg = mmb_gfx_buf_for(1, &w, &h);
-	for (i = 0; i < TM_CH; i++)
+	if (pg && ph > TM_CH)
 	{
-		for (y = 0; y < ph - 1 && y + 1 < h; y++)
-			memmove(pg + y * w + x0, pg + (y + 1) * w + x0,
+		for (y = 0; y < ph - TM_CH && y + TM_CH < h; y++)
+			memmove(pg + y * w + x0, pg + (y + TM_CH) * w + x0,
 				(unsigned)pw * sizeof(uint32_t));
-		for (y = 0; y < pw && x0 + y < w; y++)
-			pg[(ph - 1) * w + x0 + y] = fill;
+		for (y = ph - TM_CH; y < ph && y < h; y++)
+		{
+			int x;
+			for (x = 0; x < pw && x0 + x < w; x++)
+				pg[y * w + x0 + x] = fill;
+		}
 		mmb_gfx_copy_page(1, 0);
 		mmb_gfx_present();
-		wait_ms(TM_SCROLL_MS / TM_CH);
 	}
 	G.gfx.write_page = saved;
 	pane_scroll_up();
 	T.need_draw = 1;
-	term_draw();
-	term_serial_dump();
 }
 
 static void pane_newline(void)
