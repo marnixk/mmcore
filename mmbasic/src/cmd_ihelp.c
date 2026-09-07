@@ -104,16 +104,6 @@ static int ieq_n(const char *a, const char *b, int n)
 	return 1;
 }
 
-static void ser(const char *s)
-{
-	unsigned n;
-	if (!s || !G.plat || !G.plat->write_serial)
-		return;
-	n = (unsigned)strlen(s);
-	if (n)
-		G.plat->write_serial(s, n);
-}
-
 static void set_status(const char *s)
 {
 	int i;
