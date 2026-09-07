@@ -322,9 +322,9 @@ static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'T', 'H' };
 static int menu_x[MENU_COUNT];
 
 static const char *file_items[] = {
-	"Open...", "Quick open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
+	"New", "Open...", "Quick open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
 };
-static const char file_hots[] = { 'o', 'p', 's', 'a', 'c', 'n', 'q' };
+static const char file_hots[] = { 'n', 'o', 'p', 's', 'a', 'c', 't', 'q' };
 static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste" };
 static const char edit_hots[] = { 'o', 't', 'c', 'p' };
 static const char *run_items[] = { "Run" };
@@ -334,7 +334,7 @@ static const char help_hots[] = { 'k', 'm' };
 static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
 
 static void redraw(void);
-static void save_tab(void);
+static int save_tab(void);
 static void editor_leave(void);
 static void editor_run(void);
 static void editor_resume(void);
@@ -342,6 +342,7 @@ static void open_dialog(int which);
 static void open_picker(void);
 static void activate_menu(void);
 static int add_or_switch(const char *path);
+static void new_file(void);
 static void next_tab(void);
 static void close_ui(void);
 
@@ -491,6 +492,14 @@ static int add_or_switch(const char *path)
 	load_into(i, p[0] ? p : path);
 	G.ed.cur = i;
 	return i;
+}
+
+static void new_file(void)
+{
+	if (add_or_switch("") < 0)
+		set_status("Too many tabs");
+	else
+		set_status("New file");
 }
 
 static int ed_ch_eq(char a, char b)
@@ -2403,7 +2412,7 @@ static void draw_dialog(void)
 			"F1     This help     F2     Save",
 			"F3     Open          F4     #include",
 			"F9     Run           Alt+X  Quit",
-			"^C/^X/^V copy/cut/paste  ^W close tab",
+			"Alt+F N New file    ^W     Close tab",
 			"Alt+Left/Right tabs (no wrap)",
 			"^O     Save            ^K/^U  Cut line/Paste",
 			"^R/F9  Run; press a key to return",
@@ -2609,24 +2618,28 @@ static void redraw(void)
 }
 
 
-static void save_tab(void)
+static int save_tab(void)
 {
 	mmb_ed_tab *t = cur_tab();
 	if (!t)
-		return;
+		return 0;
 	if (!t->path[0])
-		strcpy(t->path, "UNTITLED.BAS");
+	{
+		open_dialog(DLG_SAVEAS);
+		return 0;
+	}
 	mmb_vfs_write(t->path, t->buf, (unsigned)t->len, 0);
 	t->dirty = 0;
 	strncpy(G.current_prog, t->path, sizeof(G.current_prog) - 1);
 	set_status("Saved");
+	return 1;
 }
 
 static void editor_leave(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	if (t && t->dirty)
-		save_tab();
+	if (t && t->dirty && !save_tab())
+		return;
 	tui_end();
 	G.ed.active = 0;
 	G.ed.wait_continue = 0;
@@ -2660,8 +2673,8 @@ static void editor_run(void)
 	mmb_ed_tab *t = cur_tab();
 	char cmd[160];
 
-	if (t)
-		save_tab();
+	if (!t || !save_tab())
+		return;
 	G.ed.saved_mode = G.gfx.mode;
 	G.ed.saved_bits = G.gfx.bits;
 	G.ed.saved_write_page = G.gfx.write_page;
@@ -2782,8 +2795,8 @@ static void close_tab(void)
 {
 	int i;
 	mmb_ed_tab *t = cur_tab();
-	if (t && t->dirty)
-		save_tab();
+	if (t && t->dirty && !save_tab())
+		return;
 	if (G.ed.ntabs <= 1)
 	{
 		editor_leave();
@@ -2834,18 +2847,20 @@ static void activate_menu(void)
 	if (menu == MENU_FILE)
 	{
 		if (item == 0)
-			open_dialog(DLG_OPEN);
+			new_file();
 		else if (item == 1)
-			open_picker();
+			open_dialog(DLG_OPEN);
 		else if (item == 2)
-			save_tab();
+			open_picker();
 		else if (item == 3)
-			open_dialog(DLG_SAVEAS);
+			save_tab();
 		else if (item == 4)
-			close_tab();
+			open_dialog(DLG_SAVEAS);
 		else if (item == 5)
-			next_tab();
+			close_tab();
 		else if (item == 6)
+			next_tab();
+		else if (item == 7)
 			editor_leave();
 	}
 	else if (menu == MENU_EDIT)
