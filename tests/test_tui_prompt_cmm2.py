@@ -105,7 +105,7 @@ def test_editor_alt_prefix_opens_file_menu(kernel_image):
         con._ser.sendall(bytes([1]) + b"f")
         seen = con.drain(quiet=0.6).decode(errors="replace")
         assert "Open" in seen or "Save" in seen or "Quit" in seen
-        con._ser.sendall(bytes([24]))
+        con._ser.sendall(bytes([1]) + b"x")
         con.drain(quiet=0.5)
     finally:
         con.stop()
