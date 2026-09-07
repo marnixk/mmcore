@@ -34,9 +34,11 @@ Modes:
 
 Options:
   --model MODEL       Board family (required):
-                        rpi3    Raspberry Pi 3, 3B+, 3A+
-                        pi400   Raspberry Pi 400 (also Pi 4B / CM4)
-                      Aliases: pi3, 3, rpi4, pi4, 400
+                        rpi3      Raspberry Pi 3, 3B+, 3A+
+                        pizero2   Raspberry Pi Zero 2 (no WLAN)
+                        pizero2w  Raspberry Pi Zero 2 W (wireless)
+                        pi400     Raspberry Pi 400 (also Pi 4B / CM4)
+                      Aliases: pi3, 3, zero2, zero2w, rpi4, pi4, 400
   --from PATH         Directory or zip of boot files. Defaults to this script's
                       directory when it already contains the kernel, otherwise a
                       matching mmbasic-console-<model>-v*.zip next to the script,
@@ -53,6 +55,8 @@ not a partition, to --bootstrap.
 
 Examples:
   sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdb
+  sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdb
+  sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdb
   sudo ./install-sdcard.sh --update --model pi400 /dev/mmcblk0
   sudo ./install-sdcard.sh --bootstrap --model pi400 \
       --from mmbasic-console-pi400-v0.2.0.zip --yes /dev/sdb
@@ -97,11 +101,17 @@ canonical_model() {
 		rpi3|pi3|3|raspberrypi3|rp3)
 			printf 'rpi3\n'
 			;;
+		pizero2w|zero2w|pi02w|raspberrypizero2w|rpizero2w)
+			printf 'pizero2w\n'
+			;;
+		pizero2|zero2|pi02|raspberrypizero2|rpizero2)
+			printf 'pizero2\n'
+			;;
 		pi400|rpi400|400|rpi4|pi4|raspberrypi400|cm4)
 			printf 'pi400\n'
 			;;
 		*)
-			die "unknown --model '${1}' (expected rpi3 or pi400)"
+			die "unknown --model '${1}' (expected rpi3, pizero2, pizero2w, or pi400)"
 			;;
 	esac
 }
@@ -109,6 +119,8 @@ canonical_model() {
 model_label() {
 	case "$1" in
 		rpi3) printf 'Raspberry Pi 3 / 3B+ / 3A+\n' ;;
+		pizero2) printf 'Raspberry Pi Zero 2\n' ;;
+		pizero2w) printf 'Raspberry Pi Zero 2 W\n' ;;
 		pi400) printf 'Raspberry Pi 400 (also Pi 4B / CM4)\n' ;;
 	esac
 }
@@ -117,6 +129,10 @@ required_files_for_model() {
 	case "$1" in
 		rpi3)
 			printf '%s\n' kernel8.img config.txt bootcode.bin start.elf fixup.dat
+			;;
+		pizero2|pizero2w)
+			printf '%s\n' kernel8.img config.txt bootcode.bin start.elf fixup.dat \
+				bcm2710-rpi-zero-2-w.dtb
 			;;
 		pi400)
 			printf '%s\n' kernel8-rpi4.img config.txt armstub8-rpi4.bin start4.elf fixup4.dat
@@ -129,6 +145,11 @@ optional_files_for_model() {
 		rpi3)
 			printf '%s\n' LICENCE.broadcom INSTALL.md VERSION.txt install-sdcard.sh cmdline.txt
 			;;
+		pizero2|pizero2w)
+			printf '%s\n' \
+				bcm2710-rpi-zero-2.dtb \
+				LICENCE.broadcom COPYING.linux INSTALL.md VERSION.txt install-sdcard.sh cmdline.txt
+			;;
 		pi400)
 			printf '%s\n' \
 				bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb \
@@ -139,7 +160,7 @@ optional_files_for_model() {
 
 kernel_name_for_model() {
 	case "$1" in
-		rpi3) printf 'kernel8.img\n' ;;
+		rpi3|pizero2|pizero2w) printf 'kernel8.img\n' ;;
 		pi400) printf 'kernel8-rpi4.img\n' ;;
 	esac
 }
@@ -147,6 +168,8 @@ kernel_name_for_model() {
 zip_glob_for_model() {
 	case "$1" in
 		rpi3) printf 'mmbasic-console-rpi3-v*.zip\n' ;;
+		pizero2) printf 'mmbasic-console-pizero2-v*.zip\n' ;;
+		pizero2w) printf 'mmbasic-console-pizero2w-v*.zip\n' ;;
 		pi400) printf 'mmbasic-console-pi400-v*.zip\n' ;;
 	esac
 }
@@ -669,7 +692,7 @@ main() {
 	parse_args "$@"
 
 	[ -n "${MODE}" ] || die "choose --bootstrap or --update (see --help)"
-	[ -n "${MODEL}" ] || die "--model is required (rpi3 or pi400)"
+	[ -n "${MODEL}" ] || die "--model is required (rpi3, pizero2, pizero2w, or pi400)"
 	[ -n "${DEVICE}" ] || die "DEVICE is required, e.g. /dev/sdb"
 
 	need_cmd lsblk

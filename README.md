@@ -15,8 +15,8 @@ The behavioural compatibility target is the **Colour Maximite 2 (CMM2)**, with
 graphics-library equivalence as the priority — see [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 The default build target is a Raspberry Pi 3 `kernel8.img` (AArch64), which is
-also directly runnable under QEMU. Hardware releases also ship a Pi 400 /
-Pi 4 `kernel8-rpi4.img`.
+also directly runnable under QEMU. Hardware releases also ship that same kernel
+for Pi Zero 2 / Zero 2 W, plus a Pi 400 / Pi 4 `kernel8-rpi4.img`.
 
 MMBasic itself is **local code** in [`mmbasic/`](mmbasic). The
 [`picomite-fork/`](picomite-fork) submodule is an upstream reference only;
@@ -34,7 +34,7 @@ a submodule.
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
-| `scripts/package-release.sh` | Hardware Pi 3 and Pi 400 SD-card zips in `dist/` |
+| `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
 | `.cursor/` | Cloud Agent environment (toolchains, QEMU, OCR, Python) |
@@ -52,15 +52,17 @@ Circle bare-metal images are built with ARM **freestanding** cross-toolchains
 ```bash
 scripts/build.sh                         # console/kernel8.img (RPi3, QEMU)
 QEMU=0 RASPPI=4 scripts/build.sh         # console/kernel8-rpi4.img (Pi 400)
-scripts/package-release.sh               # both hardware zips in dist/
+scripts/package-release.sh               # hardware zips in dist/
 ```
 
 Run it on real hardware: see [`INSTALL.md`](INSTALL.md). GitHub **Releases**
-ship two FAT32 SD-card zips — Pi 3 / 3B+ / 3A+, and Pi 400 (also Pi 4B / CM4).
-On Linux, unzip a release and run `install-sdcard.sh`:
+ship FAT32 SD-card zips for Pi 3 / 3B+ / 3A+, Pi Zero 2, Pi Zero 2 W, and
+Pi 400 (also Pi 4B / CM4). On Linux, unzip a release and run `install-sdcard.sh`:
 
 ```bash
 sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
+sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX
+sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX
 sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
 ```
 
@@ -70,7 +72,7 @@ GPIO 14/15 is optional.
 Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
 `C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores
 defaults without deleting programs. `OPTION WIFI` stores credentials and
-joins a WPA2 network on a real Pi 3 / 4 / 400 (firmware in `C:/firmware/`).
+joins a WPA2 network on a real Pi 3 / 4 / 400 / Zero 2 W (firmware in `C:/firmware/`).
 `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
 (default off; the password is never printed). QEMU has no radio.
 

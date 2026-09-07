@@ -64,13 +64,15 @@ scripts/github-release.sh publish VERSION
 
 That script:
 
-1. Builds both hardware kernels (`RASPPI=3` and `RASPPI=4`, `QEMU=0`) and packs:
+1. Builds hardware kernels (`RASPPI=3` and `RASPPI=4`, `QEMU=0`) and packs:
    - `dist/mmbasic-console-rpi3-vVERSION.zip`
+   - `dist/mmbasic-console-pizero2-vVERSION.zip`
+   - `dist/mmbasic-console-pizero2w-vVERSION.zip`
    - `dist/mmbasic-console-pi400-vVERSION.zip`
-   Each zip includes `install-sdcard.sh`.
+   Zero 2 / Zero 2 W reuse the Pi 3 kernel. Each zip includes `install-sdcard.sh`.
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
 3. Creates annotated tag `vVERSION` and pushes it to `origin`.
-4. Creates the GitHub release with those two zips **and** a top-level
+4. Creates the GitHub release with those zips **and** a top-level
    `install-sdcard.sh` asset.
 
 Do not force-push tags. If `vVERSION` already exists, stop.
@@ -89,5 +91,6 @@ unzip mmbasic-console-rpi3-vVERSION.zip
 sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 ```
 
-`--model pi400` selects the Pi 400 / Pi 4 zip. `--update` refreshes kernel and
-firmware without wiping user files on `C:`.
+`--model pi400` selects the Pi 400 / Pi 4 zip. `--model pizero2` and
+`--model pizero2w` select the Zero 2 zips (same `kernel8.img` as Pi 3).
+`--update` refreshes kernel and firmware without wiping user files on `C:`.
