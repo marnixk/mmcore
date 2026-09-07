@@ -242,6 +242,7 @@ typedef struct mmb {
 	int gosub_nsave[MMB_MAX_GOSUB];
 	char gosub_saven[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	mmb_val gosub_savev[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
+	mmb_val func_ret;
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
 	int run_pc;            /* current program line index */
 	int ctrl_sp;
@@ -593,6 +594,7 @@ void mmb_cmd_sprite(void);
 void mmb_sprite_reset(void);
 void mmb_sprite_overlay(void);
 int mmb_call_named_sub(const char *name);
+int mmb_try_user_function(mmb_val *out);
 int mmb_play_wav(const char *path);
 void mmb_play_tts(void);
 

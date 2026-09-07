@@ -366,6 +366,32 @@ def test_multiline_end_if_skips_false_branch(console):
     assert console.send_line('RUN "IF0.BAS"') == "2"
 
 
+def test_cmm2_function_add(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FUNCTION ADD(A,B)") == ""
+    assert console.send_line("20 ADD = A+B") == ""
+    assert console.send_line("30 END FUNCTION") == ""
+    assert console.send_line("40 PRINT ADD(6,7)") == ""
+    assert console.send_line("RUN") == "13"
+
+
+def test_cmm2_function_randbyte(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line('OPEN "RB.BAS" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "FUNCTION RandByte()"') == ""
+    assert console.send_line('PRINT #1, "RandByte = INT(RND * 256)"') == ""
+    assert console.send_line('PRINT #1, "END FUNCTION"') == ""
+    assert console.send_line('PRINT #1, "RANDOMIZE"') == ""
+    assert console.send_line(
+        'PRINT #1, "PRINT ";CHR$(34);"Random byte:";CHR$(34);"; RandByte()"'
+    ) == ""
+    assert console.send_line("CLOSE #1") == ""
+    out = console.send_line('RUN "RB.BAS"')
+    assert "Random byte:" in out
+    n = int(out.split(":")[-1].strip())
+    assert 0 <= n <= 255
+
+
 def test_while_many_iterations(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 N=0") == ""
