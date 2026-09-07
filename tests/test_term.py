@@ -1,0 +1,143 @@
+"""TERM full-screen terminal app: syntax, help, demo UI, network failure."""
+
+import re
+import time
+
+from harness import MMBasicConsole
+from ihelp_util import close_ihelp, dump_topic, open_ihelp, scroll_all
+
+
+def _plain(s: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
+
+
+def _open_term(con, cmd: str, quiet=0.6, timeout=12.0):
+    con.drain(quiet=0.1)
+    con._ser.sendall((cmd + "\r").encode())
+    return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
+
+
+def _f10(con):
+    con._ser.sendall(b"\x1b[21~")
+    return _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+
+
+def _luminance(r: int, g: int, b: int) -> float:
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _is_dark_slate(r: int, g: int, b: int) -> bool:
+    return (
+        r < 50
+        and g < 50
+        and b < 50
+        and abs(r - 18) <= 25
+        and abs(g - 22) <= 25
+        and abs(b - 28) <= 25
+    )
+
+
+def _is_creamish(r: int, g: int, b: int) -> bool:
+    return r > 80 and g > 75 and b > 65
+
+
+def _line_numbers(text: str) -> list[int]:
+    return [int(m) for m in re.findall(r"line\s+(\d+)", text, re.I)]
+
+
+def test_term_requires_host_and_port(console):
+    assert "?SYNTAX ERROR" in console.send_line("TERM").upper()
+    assert "?SYNTAX ERROR" in console.send_line('TERM "example.com"').upper()
+    assert "?SYNTAX ERROR" in console.send_line("TERM 23").upper()
+    assert "?SYNTAX ERROR" in console.send_line('TERM "h", 0').upper()
+    assert "?SYNTAX ERROR" in console.send_line('TERM "h", 70000').upper()
+
+
+def test_help_term(console):
+    listing = scroll_all(console, open_ihelp(console))
+    assert "TERM" in listing
+    close_ihelp(console)
+    out = dump_topic(console, "TERM")
+    assert out != "?SYNTAX ERROR"
+    low = out.lower()
+    assert "host" in low
+    assert "f10" in low
+    assert "14" in low and "mode" in low
+    assert "demo" in low
+    assert any(k in low for k in ("fade", "scroll", "slate"))
+
+
+def test_term_demo_mode14_slate_and_f10(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.4)
+        assert con.screen_size() == (960, 540)
+        r, g, b = con.screen_pixel(40, 200)
+        assert _is_dark_slate(r, g, b), (r, g, b)
+        assert "TERM demo" in seen or "term demo" in seen.lower()
+        assert "Luxurious terminal" in seen or "luxurious terminal" in seen.lower()
+        assert "F10" in seen
+        _f10(con)
+        assert con.send_line("PRINT 6*7") == "42"
+        assert con.screen_size() == (640, 480)
+    finally:
+        con.stop()
+
+
+def test_term_demo_centered_80col_and_cream_text(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(1.2)
+        margin = con.screen_pixel(20, 200)
+        assert _is_dark_slate(*margin), margin
+        found_cream = False
+        for x in (164, 168, 172, 180, 188):
+            for y in (8, 24, 40, 200, 248):
+                rgb = con.screen_pixel(x, y)
+                if _luminance(*rgb) > _luminance(*margin) + 30 and _is_creamish(*rgb):
+                    found_cream = True
+                    break
+            if found_cream:
+                break
+        assert found_cream, "expected cream text lighter than left margin inside 80-col pane"
+        _f10(con)
+    finally:
+        con.stop()
+
+
+def test_term_demo_new_text_and_scroll(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        early = _open_term(con, 'TERM "demo", 23', quiet=0.25, timeout=3.5)
+        early_nums = _line_numbers(early)
+        time.sleep(4.0)
+        later = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        later_nums = _line_numbers(later)
+        early_max = max(early_nums) if early_nums else 0
+        later_max = max(later_nums) if later_nums else 0
+        later_count = len(re.findall(r"line\s+\d+", later, re.I))
+        assert later_max > early_max or later_count >= 3, (
+            f"expected new scrolled lines (early_max={early_max}, later_max={later_max}, "
+            f"later_count={later_count})"
+        )
+        _f10(con)
+    finally:
+        con.stop()
+
+
+def test_term_network_host_stays_in_ui_until_f10(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=0.8, timeout=10.0)
+        low = seen.lower()
+        assert "network not available" in low or "connect failed" in low
+        _f10(con)
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()

@@ -33,7 +33,7 @@ static const char kIndexCommands[] =
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
-	"  SETTICK FACTORY_RESET CONNECT IPCONFIG CONTINUE EXIT LS\n"
+	"  SETTICK FACTORY_RESET CONNECT TERM IPCONFIG CONTINUE EXIT LS\n"
 	"\n"
 	"Prompt\n"
 	"  OPTION PROMPT BARE|CWD         \"> \" or DOS $p$g (A:/>)\n"
@@ -697,6 +697,26 @@ static const char kHelpConnect[] =
 	"\n"
 	"Example:  CONNECT \"192.168.1.10\", 23";
 
+static const char kHelpTerm[] =
+	"TERM host$, port\n"
+	"\n"
+	"Fullscreen telnet-style terminal with an 80-column\n"
+	"pane centred on a dark slate background and cream\n"
+	"text. Default MODE 14 (960x540); if already MODE 16\n"
+	"uses MODE 16 (1920x1080). On entry the current screen\n"
+	"fades out line-by-line (~1s), then the TERM UI starts.\n"
+	"New lines fade in; scrolling is smooth. F10 exits and\n"
+	"restores the previous MODE.\n"
+	"\n"
+	"Telnet IAC handling matches CONNECT. Line mode with\n"
+	"local echo until the server negotiates otherwise.\n"
+	"\n"
+	"TERM \"demo\", port  runs a local demo (no TCP).\n"
+	"QEMU has no network device for real hosts.\n"
+	"\n"
+	"Example:  TERM \"demo\", 23\n"
+	"          TERM \"192.168.1.10\", 23";
+
 static const char kHelpIpconfig[] =
 	"IPCONFIG\n"
 	"\n"
@@ -858,7 +878,7 @@ static const char kHelpCmm2[] =
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
-	"  REBOOT OPTION FACTORY_RESET CONNECT IPCONFIG HELP\n"
+	"  REBOOT OPTION FACTORY_RESET CONNECT TERM IPCONFIG HELP\n"
 	"  CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
@@ -1305,6 +1325,7 @@ static const help_topic kTopics[] = {
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
 	{ "PROMPT",      HELP_CMD,  kHelpPrompt },
 	{ "CONNECT",     HELP_CMD,  kHelpConnect },
+	{ "TERM",        HELP_CMD,  kHelpTerm },
 	{ "IPCONFIG",    HELP_CMD,  kHelpIpconfig },
 	{ "CHDIR",       HELP_CMD,  kHelpChdir },
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },

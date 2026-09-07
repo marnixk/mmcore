@@ -2560,6 +2560,11 @@ static void exec_statement(void)
 		mmb_cmd_connect();
 		return;
 	}
+	if (mmb_match("TERM"))
+	{
+		mmb_cmd_term();
+		return;
+	}
 	if (mmb_match("IPCONFIG"))
 	{
 		mmb_cmd_ipconfig();
@@ -2942,5 +2947,6 @@ void mmb_poll(void)
 			mmb_wlan_start(G.opt.wifi_ssid, G.opt.wifi_psk);
 	}
 	mmb_connect_poll();
+	mmb_term_poll();
 	mmb_play_mix();
 }

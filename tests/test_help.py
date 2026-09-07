@@ -16,6 +16,7 @@ def test_help_lists_commands(console):
         "PLAY",
         "FACTORY_RESET",
         "CONNECT",
+        "TERM",
         "IPCONFIG",
     ):
         assert f"<{cmd}>" in seen, cmd

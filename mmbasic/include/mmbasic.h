@@ -49,6 +49,8 @@ typedef struct mmb_platform {
 	void (*tui_glyph)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
 	/* Copy dirty pixel rows [y0, y1] from the offscreen buffer to HDMI. */
 	void (*tui_present)(int y0, int y1);
+	/* Scroll a pixel rectangle up by dy rows and fill the vacated band. */
+	void (*tui_scroll)(int x, int y, int w, int h, int dy, unsigned fill_rgb);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
@@ -85,6 +87,12 @@ int mmb_in_connect(void);
 
 /* Feed a keystroke to CONNECT. Returns text to emit (may be empty). */
 const char *mmb_connect_key(char c);
+
+/* True while TERM fullscreen terminal owns the keyboard. */
+int mmb_in_term(void);
+
+/* Feed a keystroke to TERM. Returns text to emit (may be empty). */
+const char *mmb_term_key(char c);
 
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
