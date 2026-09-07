@@ -348,6 +348,24 @@ def test_do_loop_from_unnumbered_file(console):
     assert console.send_line('RUN "DOLP.BAS"') == "40"
 
 
+def test_multiline_end_if_skips_false_branch(console):
+    """CMM2 uses END IF (two words). A false IF must not skip LOOP/later lines."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 IF 0 THEN") == ""
+    assert console.send_line("20 PRINT 1") == ""
+    assert console.send_line("30 END IF") == ""
+    assert console.send_line("40 PRINT 2") == ""
+    assert console.send_line("RUN") == "2"
+    assert console.send_line("NEW") == ""
+    assert console.send_line('OPEN "IF0.BAS" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "IF 0 THEN"') == ""
+    assert console.send_line('PRINT #1, "PRINT 1"') == ""
+    assert console.send_line('PRINT #1, "END IF"') == ""
+    assert console.send_line('PRINT #1, "PRINT 2"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert console.send_line('RUN "IF0.BAS"') == "2"
+
+
 def test_while_many_iterations(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 N=0") == ""

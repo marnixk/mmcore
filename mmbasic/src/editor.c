@@ -2501,6 +2501,12 @@ static void editor_run(void)
 	strncat(cmd, t->path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	mmb_exec_line(cmd);
+	if (G.err[0])
+	{
+		set_status(G.err);
+		editor_resume();
+		return;
+	}
 	if (G.outn && G.out[G.outn - 1] != '\n' && G.out[G.outn - 1] != '\r')
 		mmb_out("\n");
 	mmb_out("Press any key to continue");
