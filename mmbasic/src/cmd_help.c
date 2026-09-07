@@ -125,14 +125,20 @@ static const char kHelpPrint[] =
 
 static const char kHelpPixel[] =
 	"PIXEL x, y [, colour]\n"
+	"PIXEL x(), y() [, colour | c()]\n"
 	"PIXEL(x, y [, page])   (function)\n"
 	"\n"
 	"Set the pixel at (x,y). colour defaults to the\n"
 	"current foreground (see COLOUR).\n"
+	"x and y must both be scalars or both be arrays.\n"
+	"If colour is an array, each point uses that\n"
+	"element. The number of pixels is the length of\n"
+	"the smallest array.\n"
 	"PIXEL(x,y) as a function returns that pixel's RGB.\n"
 	"Optional page is a page number or FRAMEBUFFER.\n"
 	"\n"
 	"Example:  PIXEL 10,10,RGB(255,0,0)\n"
+	"          PIXEL XX(), YY(), CC()\n"
 	"          PRINT PIXEL(10,10)";
 
 static const char kHelpLine[] =

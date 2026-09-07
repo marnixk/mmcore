@@ -264,6 +264,27 @@ def test_pixel_array_form(console):
     assert console.send_line("PIXEL PX(), PY()") == ""
 
 
+def test_pixel_colour_array(fresh_console):
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("DIM INTEGER XX(2) = (80, 90, 100)") == ""
+    assert c.send_line("DIM INTEGER YY(2) = (300, 310, 320)") == ""
+    assert c.send_line("DIM INTEGER CC(2)") == ""
+    assert c.send_line("CC(0) = RGB(255,0,0)") == ""
+    assert c.send_line("CC(1) = RGB(0,255,0)") == ""
+    assert c.send_line("CC(2) = RGB(0,0,255)") == ""
+    assert c.send_line("PIXEL XX(), YY(), CC()") == ""
+    red = int(c.send_line("PRINT PIXEL(80,300)"))
+    green = int(c.send_line("PRINT PIXEL(90,310)"))
+    blue = int(c.send_line("PRINT PIXEL(100,320)"))
+    assert ((red >> 16) & 255) > 150 and ((red >> 8) & 255) < 80
+    assert ((green >> 8) & 255) > 150 and ((green >> 16) & 255) < 80
+    assert (blue & 255) > 150 and ((blue >> 16) & 255) < 80
+    assert c.send_line("PIXEL XX(), YY(), RGB(255,255,255)") == ""
+    white = int(c.send_line("PRINT PIXEL(80,300)"))
+    assert ((white >> 16) & 255) > 200 and (white & 255) > 200
+
+
 def _mkdir(con, path):
     out = con.send_line(f'MKDIR "{path}"')
     assert out == "" or "DIRECTORY" in out.upper()
