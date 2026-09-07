@@ -547,7 +547,7 @@ def test_editor_write_and_run(kernel_image):
         con._ser.sendall(b'PRINT 6*7')
         con._ser.sendall(bytes([15]))  # Ctrl+O write
         con.drain(quiet=0.4)
-        con._ser.sendall(bytes([24]))  # Ctrl+X exit
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X exit
         con.drain(quiet=0.4)
         result = con.send_line('RUN "HI.BAS"')
         assert "42" in result

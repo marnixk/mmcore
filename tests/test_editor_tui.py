@@ -21,7 +21,7 @@ def _keys(con, data: bytes, quiet: float = 0.5) -> str:
 
 
 def _quit(con) -> str:
-    return _keys(con, bytes([24]), quiet=0.5)
+    return _keys(con, bytes([1]) + b"x", quiet=0.5)
 
 
 def test_editor_menu_labels_on_serial(kernel_image):
@@ -81,6 +81,46 @@ def test_editor_alt_x_quits(kernel_image):
         _edit(con, "ALTX.BAS")
         _keys(con, bytes([1]) + b"x")
         assert con.send_line("PRINT 9") == "9"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_x_does_not_quit(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _edit(con, "NOQUIT.BAS")
+        assert "File" in seen
+        _keys(con, bytes([24]), quiet=0.4)
+        _quit(con)
+        assert con.send_line("PRINT 8") == "8"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_c_x_v_copy_cut_paste(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "CXV.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2F")
+        _keys(con, bytes([3]))
+        _keys(con, b"\x1b[F")
+        _keys(con, bytes([22]))
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "CXV.BAS") == "HELLOHELLO"
+        _edit(con, "CXV.BAS")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"\x1b[1;2F")
+        _keys(con, bytes([24]))
+        _keys(con, b"ZZ")
+        _keys(con, bytes([22]))
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "CXV.BAS") == "ZZHELLOHELLO"
     finally:
         con.stop()
 

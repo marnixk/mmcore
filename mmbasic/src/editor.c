@@ -2227,8 +2227,9 @@ static void draw_dialog(void)
 			"Alt+H  Help          Esc    close",
 			"F1     This help     F2     Save",
 			"F3     Open          F9     Run",
-			"^P     Quick open      ^X     Quit",
-			"^O     Save            ^K/^U  Cut/Paste",
+			"^P     Quick open      Alt+X  Quit",
+			"^C/^X/^V copy/cut/paste",
+			"^O     Save            ^K/^U  Cut line/Paste",
 			"^R/F9  Run; press a key to return",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
@@ -3165,9 +3166,25 @@ const char *mmb_editor_feed(char c)
 		redraw();
 		return G.out;
 	}
-	if (c == 24) /* Ctrl+X quit */
+	if (c == 3) /* Ctrl+C copy */
 	{
-		editor_leave();
+		copy_selection();
+		if (G.ed.active)
+			redraw();
+		return G.out;
+	}
+	if (c == 24) /* Ctrl+X cut */
+	{
+		cut_selection();
+		if (G.ed.active)
+			redraw();
+		return G.out;
+	}
+	if (c == 22) /* Ctrl+V paste */
+	{
+		paste_kill();
+		if (G.ed.active)
+			redraw();
 		return G.out;
 	}
 	if (c == 18) /* Ctrl+R run */
