@@ -67,6 +67,8 @@ def test_help_term(console):
     assert "14" in low and "mode" in low
     assert "demo" in low
     assert "ansi" in low
+    assert "cp437" in low or "437" in low
+    assert "vga" in low
     assert "page" in low
     assert "fade out" not in low
     assert any(k in low for k in ("scroll", "slate"))

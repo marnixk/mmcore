@@ -355,16 +355,11 @@ static void pane_puts(const char *s)
 
 static void term_put_str(int x, int y, const char *s, unsigned fg)
 {
-	char buf[2];
 	int i;
 	if (!s)
 		return;
-	buf[1] = 0;
 	for (i = 0; s[i]; i++)
-	{
-		buf[0] = s[i];
-		mmb_gfx_text(x + i * TM_CW, y, buf, fg);
-	}
+		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)s[i], fg);
 }
 
 static void term_draw_status(void)
@@ -373,11 +368,23 @@ static void term_draw_status(void)
 	char right[64];
 	int y, n, x0;
 
-	y = (T.vid_rows - 1) * TM_CH + 4;
+	y = (T.vid_rows - 1) * TM_CH;
 	x0 = T.pane_left * TM_CW;
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 		    TM_BG, 1, (int)TM_BG);
 	strcpy(left, "F10/Alt-X  Alt-F");
+	if (T.demo)
+	{
+		n = (int)strlen(left);
+		if (n + 4 < (int)sizeof(left))
+		{
+			left[n] = ' ';
+			left[n + 1] = (char)176;
+			left[n + 2] = (char)177;
+			left[n + 3] = (char)178;
+			left[n + 4] = 0;
+		}
+	}
 	term_put_str(x0, y, left, TM_DIM);
 	right[0] = 0;
 	if (T.net_fail && T.net_msg[0])
@@ -403,21 +410,19 @@ static void term_draw_menu(void)
 	y0 = 0;
 	w = 10 * TM_CW;
 	mmb_gfx_box(x0, y0, w, 3 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_put_str(x0 + TM_CW, y0 + 4, "File", TM_FG);
+	term_put_str(x0 + TM_CW, y0, "File", TM_FG);
 	mmb_gfx_box(x0, y0 + TM_CH, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-	term_put_str(x0 + TM_CW, y0 + TM_CH + 4, "Exit", TM_FG);
+	term_put_str(x0 + TM_CW, y0 + TM_CH, "Exit", TM_FG);
 }
 
 static void term_draw(void)
 {
 	int c, r, saved;
-	char chs[2];
 
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
-	chs[1] = 0;
 	for (r = 0; r < T.pane_rows; r++)
 	{
 		for (c = 0; c < TM_COLS; c++)
@@ -431,8 +436,7 @@ static void term_draw(void)
 				ch = ' ';
 			if (bg != TM_BG)
 				mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
-			chs[0] = (char)ch;
-			mmb_gfx_text(x, y + 4, chs, fg);
+			mmb_gfx_glyph_cp437(x, y, ch, fg);
 		}
 	}
 	term_draw_status();
@@ -1102,9 +1106,11 @@ static void demo_emit_line(void)
 		s = "Luxurious terminal";
 	else if (T.demo_line == 2)
 		s = "F10 to leave";
-	else if (T.demo_line <= 42)
+	else if (T.demo_line == 3)
+		s = "CP437 shades";
+	else if (T.demo_line <= 43)
 	{
-		fmt_line_num(buf, T.demo_line - 2);
+		fmt_line_num(buf, T.demo_line - 3);
 		s = buf;
 	}
 	else
@@ -1350,7 +1356,7 @@ void mmb_term_poll(void)
 			esc_send();
 		}
 	}
-	if (T.demo && T.demo_line <= 42 && mmb_now_ms() >= T.demo_next)
+	if (T.demo && T.demo_line <= 43 && mmb_now_ms() >= T.demo_next)
 		demo_emit_line();
 	if (T.need_draw)
 		term_draw();

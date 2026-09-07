@@ -723,6 +723,22 @@ static const unsigned char kFont8x8[95][8] = {
 	{0x6E,0x3B,0x00,0x00,0x00,0x00,0x00,0x00},
 };
 
+void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
+{
+	unsigned row, col;
+
+	ch &= 0xFFu;
+	for (row = 0; row < 16; row++)
+	{
+		unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
+		for (col = 0; col < 8; col++)
+		{
+			if (bits & (unsigned char)(0x80u >> col))
+				mmb_gfx_plot(x + (int)col, y + (int)row, rgb);
+		}
+	}
+}
+
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb)
 {
 	int cx = x, scale = G.gfx.font_scale;

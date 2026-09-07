@@ -7,7 +7,6 @@
 #include <circle/screen.h>
 #include <circle/bcmframebuffer.h>
 #include <circle/display.h>
-#include <circle/font.h>
 #include <circle/startup.h>
 
 static CKernel *s_kernel;
@@ -222,21 +221,20 @@ static void plat_audio_flush(void)
 
 #define TUI_CW 8
 #define TUI_CH 16
-#define BOX_V  0xB3
-#define BOX_H  0xC4
-#define BOX_TL 0xDA
-#define BOX_TR 0xBF
-#define BOX_BL 0xC0
-#define BOX_BR 0xD9
-#define BOX_LT 0xC3
-#define BOX_RT 0xB4
-#define BOX_TT 0xC2
-#define BOX_BT 0xC1
-#define BOX_X  0xC5
 
 static u8 *s_tui_pix;
 static unsigned s_tui_cap;
 static unsigned s_tui_w, s_tui_h, s_tui_pitch;
+
+extern "C" const u8 mmb_cp437_8x16[256 * 16];
+
+static u8 glyph_row(unsigned ch, unsigned y)
+{
+	if (y >= TUI_CH)
+		return 0;
+	ch &= 0xFFu;
+	return mmb_cp437_8x16[ch * TUI_CH + y];
+}
 
 static int plat_video_cols(void)
 {
@@ -252,49 +250,6 @@ static int plat_video_rows(void)
 	if (h < TUI_CH)
 		h = 480;
 	return h / TUI_CH;
-}
-
-static u8 box_row(unsigned ch, unsigned y)
-{
-	const u8 cx = 0x18, L = 0xF8, R = 0x1F, H = 0xFF;
-	int mid = (y == 7 || y == 8);
-	int up = (y <= 8);
-	int down = (y >= 7);
-	switch (ch)
-	{
-	case BOX_V:  return cx;
-	case BOX_H:  return mid ? H : 0;
-	case BOX_TL: return mid ? R : (down ? cx : 0);
-	case BOX_TR: return mid ? L : (down ? cx : 0);
-	case BOX_BL: return mid ? R : (up ? cx : 0);
-	case BOX_BR: return mid ? L : (up ? cx : 0);
-	case BOX_LT: return mid ? R : cx;
-	case BOX_RT: return mid ? L : cx;
-	case BOX_TT: return mid ? H : (down ? cx : 0);
-	case BOX_BT: return mid ? H : (up ? cx : 0);
-	case BOX_X:  return mid ? H : cx;
-	default:     return 0;
-	}
-}
-
-static int is_box(unsigned ch)
-{
-	return ch == BOX_V || ch == BOX_H || ch == BOX_TL || ch == BOX_TR ||
-	       ch == BOX_BL || ch == BOX_BR || ch == BOX_LT || ch == BOX_RT ||
-	       ch == BOX_TT || ch == BOX_BT || ch == BOX_X;
-}
-
-static u8 glyph_row(unsigned ch, unsigned y)
-{
-	const u8 *data;
-	if (y >= TUI_CH)
-		return 0;
-	if (is_box(ch))
-		return box_row(ch, y);
-	if (ch < Font8x16.first_char || ch > Font8x16.last_char)
-		return 0;
-	data = static_cast<const u8 *>(Font8x16.data);
-	return data[(ch - Font8x16.first_char) * Font8x16.height + y];
 }
 
 static void plat_tui_prepare(void)

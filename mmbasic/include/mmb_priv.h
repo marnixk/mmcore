@@ -447,6 +447,8 @@ void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned rgb, int fill);
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
+extern const unsigned char mmb_cp437_8x16[256 * 16];
+void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_present(void);
 void mmb_gfx_present_if(int page);
 uint32_t *mmb_gfx_buf_for(int page, int *w, int *h);
