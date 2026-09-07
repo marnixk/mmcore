@@ -887,6 +887,16 @@ static int line_start(int pos)
 	return pos;
 }
 
+static int line_end(int pos)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t)
+		return 0;
+	while (pos < t->len && t->buf[pos] != '\n')
+		pos++;
+	return pos;
+}
+
 static int is_word_char(char c)
 {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -1079,6 +1089,112 @@ static void insert_char(char c)
 	t->len++;
 	t->buf[t->len] = 0;
 	t->dirty = 1;
+}
+
+static int insert_at(int pos, const char *s, int n)
+{
+	mmb_ed_tab *t = cur_tab();
+
+	if (!t || !s || n <= 0)
+		return 0;
+	if (pos < 0)
+		pos = 0;
+	if (pos > t->len)
+		pos = t->len;
+	if (t->len + n >= (int)sizeof(t->buf) - 1)
+		n = (int)sizeof(t->buf) - 1 - t->len;
+	if (n <= 0)
+		return 0;
+	if (pos < t->len)
+		memmove(t->buf + pos + n, t->buf + pos, (unsigned)(t->len - pos));
+	memcpy(t->buf + pos, s, (unsigned)n);
+	t->len += n;
+	t->buf[t->len] = 0;
+	t->dirty = 1;
+	return n;
+}
+
+static void shift_off(int *p, int at, int delta)
+{
+	if (!p)
+		return;
+	if (delta > 0)
+	{
+		if (*p >= at)
+			*p += delta;
+		return;
+	}
+	if (*p > at)
+	{
+		int d = -delta;
+		if (*p - at < d)
+			*p = at;
+		else
+			*p -= d;
+	}
+}
+
+static void indent_lines(int outdent)
+{
+	mmb_ed_tab *t = cur_tab();
+	int lo, hi, s, last, n = 0, i;
+	int starts[256];
+	char pad[ED_TAB];
+
+	if (!t)
+		return;
+	if (sel_bounds(&lo, &hi))
+	{
+		if (hi > lo && t->buf[hi - 1] == '\n')
+			hi--;
+		s = line_start(lo);
+		last = line_start(hi > 0 ? hi : lo);
+	}
+	else
+	{
+		s = last = line_start(t->cx);
+		lo = hi = t->cx;
+	}
+	while (n < 256 && s <= last)
+	{
+		starts[n++] = s;
+		s = line_end(s);
+		if (s < t->len && t->buf[s] == '\n')
+			s++;
+		else
+			break;
+	}
+	for (i = 0; i < ED_TAB; i++)
+		pad[i] = ' ';
+	for (i = n - 1; i >= 0; i--)
+	{
+		int p = starts[i];
+		int k = 0;
+
+		if (outdent)
+		{
+			while (k < ED_TAB && p + k < t->len && t->buf[p + k] == ' ')
+				k++;
+			if (k == 0 && p < t->len && t->buf[p] == '\t')
+				k = 1;
+			if (k)
+			{
+				memmove(t->buf + p, t->buf + p + k,
+					(unsigned)(t->len - p - k + 1));
+				t->len -= k;
+				shift_off(&t->cx, p, -k);
+				if (t->sel)
+					shift_off(&t->sel_anchor, p, -k);
+			}
+		}
+		else
+		{
+			k = insert_at(p, pad, ED_TAB);
+			shift_off(&t->cx, p, k);
+			if (t->sel)
+				shift_off(&t->sel_anchor, p, k);
+		}
+	}
 }
 
 static void insert_newline_indent(void)
@@ -3176,6 +3292,8 @@ static int handle_escape(char c)
 				else if (n >= 17 && n <= 21)
 					do_fkey(n - 11);
 			}
+			else if (c == 'Z')
+				indent_lines(1);
 		}
 		if (G.ed.active)
 			redraw();
@@ -3435,9 +3553,14 @@ const char *mmb_editor_feed(char c)
 	}
 	if (c == '\t')
 	{
-		int i;
-		for (i = 0; i < ED_TAB; i++)
-			insert_char(' ');
+		if (cur_tab() && cur_tab()->sel)
+			indent_lines(0);
+		else
+		{
+			int i;
+			for (i = 0; i < ED_TAB; i++)
+				insert_char(' ');
+		}
 		redraw();
 		return G.out;
 	}
