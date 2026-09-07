@@ -2,7 +2,6 @@
 
 import os
 import re
-import time
 
 from harness import MMBasicConsole
 from test_term import _f10, _is_creamish, _is_dark_slate, _luminance, _open_term
@@ -45,9 +44,11 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        time.sleep(1.2)
-        x0, y0 = 20 * 8, 3 * 16
+        seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        assert "CP437" in seen
+        # MODE 14 is 960x540 / 8x16 = 120x33. Status row is last.
+        # "F10/Alt-X  Alt-F " is 17 chars; demo appends ░▒▓ there.
+        x0, y0 = (20 + 17) * 8, 32 * 16
         on = con.screen_pixel(x0 + 3, y0)
         off = con.screen_pixel(x0 + 0, y0)
         assert _is_creamish(*on), on

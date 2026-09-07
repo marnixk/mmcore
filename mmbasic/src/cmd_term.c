@@ -373,6 +373,18 @@ static void term_draw_status(void)
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 		    TM_BG, 1, (int)TM_BG);
 	strcpy(left, "F10/Alt-X  Alt-F");
+	if (T.demo)
+	{
+		n = (int)strlen(left);
+		if (n + 4 < (int)sizeof(left))
+		{
+			left[n] = ' ';
+			left[n + 1] = (char)176;
+			left[n + 2] = (char)177;
+			left[n + 3] = (char)178;
+			left[n + 4] = 0;
+		}
+	}
 	term_put_str(x0, y, left, TM_DIM);
 	right[0] = 0;
 	if (T.net_fail && T.net_msg[0])
@@ -1095,10 +1107,7 @@ static void demo_emit_line(void)
 	else if (T.demo_line == 2)
 		s = "F10 to leave";
 	else if (T.demo_line == 3)
-	{
-		static const char shades[] = { (char)176, (char)177, (char)178, 0 };
-		s = shades;
-	}
+		s = "CP437 shades";
 	else if (T.demo_line <= 43)
 	{
 		fmt_line_num(buf, T.demo_line - 3);
