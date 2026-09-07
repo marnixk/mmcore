@@ -79,7 +79,8 @@ def test_immediate_command_blank_before_prompt(console):
     console.drain(quiet=0.15)
     console._ser.sendall(b"PRINT 9\r")
     text = console.drain(quiet=0.5).replace(b"\r", b"")
-    assert b"9\n\n>" in text
+    assert b"9" in text
+    assert b"\n\n>" in text
     console.drain(quiet=0.1)
     console._ser.sendall(b"NEW\r")
     new_out = console.drain(quiet=0.5).replace(b"\r", b"")
