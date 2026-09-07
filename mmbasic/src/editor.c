@@ -22,28 +22,203 @@ static int ed_rows(void) { return tui_rows(); }
 #define ROW_STAT    (ed_rows() - 1)
 #define ED_TAB      4
 
-#define C_MENU_FG   TUI_BLACK
-#define C_MENU_BG   TUI_WHITE
-#define C_HOT       TUI_BRRED
-#define C_SEL_FG    TUI_BLACK
-#define C_SEL_BG    TUI_GREEN
-#define C_EDIT_FG   TUI_BRWHITE
-#define C_EDIT_BG   TUI_BLUE
-#define C_MARK_FG   TUI_BLACK
-#define C_MARK_BG   TUI_WHITE
-#define C_STR_FG    TUI_BRYELLOW
-#define C_NUM_FG    TUI_BRBLUE
-#define C_CMT_FG    TUI_WHITE
-#define C_BRD_FG    TUI_WHITE
-#define C_BRD_BG    TUI_BLUE
-#define C_TAB_FG    TUI_WHITE
-#define C_TAB_BG    TUI_BLUE
-#define C_TABCUR_FG TUI_BLACK
-#define C_TABCUR_BG TUI_WHITE
-#define C_DLG_FG    TUI_BLACK
-#define C_DLG_BG    TUI_WHITE
-#define C_SH_FG     TUI_BLACK
-#define C_SH_BG     TUI_BLACK
+#define MENU_FILE   0
+#define MENU_EDIT   1
+#define MENU_RUN    2
+#define MENU_THEME  3
+#define MENU_HELP   4
+#define MENU_COUNT  5
+
+#define ED_THEME_N     10
+#define ED_THEME_TURBO 8
+
+typedef struct ed_theme {
+	const char *name;
+	unsigned char menu_fg, menu_bg, hot;
+	unsigned char sel_fg, sel_bg;
+	unsigned char edit_fg, edit_bg;
+	unsigned char mark_fg, mark_bg;
+	unsigned char str_fg, num_fg, cmt_fg;
+	unsigned char brd_fg, brd_bg;
+	unsigned char tab_fg, tab_bg, tabcur_fg, tabcur_bg;
+	unsigned char dlg_fg, dlg_bg;
+	unsigned char sh_fg, sh_bg;
+	unsigned char list_bg;
+} ed_theme;
+
+static const ed_theme k_themes[ED_THEME_N] = {
+	/* 3 modern light */
+	{ "Paper",
+	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
+	  TUI_WHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_WHITE, TUI_BLUE,
+	  TUI_RED, TUI_BLUE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_BRWHITE, TUI_WHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN },
+	{ "Cloud",
+	  TUI_BLACK, TUI_BRCYAN, TUI_RED,
+	  TUI_WHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_BRCYAN,
+	  TUI_WHITE, TUI_BLUE,
+	  TUI_RED, TUI_MAGENTA, TUI_BLUE,
+	  TUI_BLUE, TUI_BRCYAN,
+	  TUI_BLACK, TUI_CYAN, TUI_WHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	{ "Snow",
+	  TUI_BLACK, TUI_BRWHITE, TUI_BRRED,
+	  TUI_WHITE, TUI_CYAN,
+	  TUI_BLACK, TUI_BRWHITE,
+	  TUI_BLACK, TUI_YELLOW,
+	  TUI_MAGENTA, TUI_BLUE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_BRWHITE,
+	  TUI_BLACK, TUI_WHITE, TUI_WHITE, TUI_CYAN,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN },
+	/* 5 modern dark */
+	{ "Night",
+	  TUI_BRWHITE, TUI_BRBLACK, TUI_BRCYAN,
+	  TUI_BLACK, TUI_CYAN,
+	  TUI_BRWHITE, TUI_BLACK,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRGREEN, TUI_BRCYAN, TUI_BRBLACK,
+	  TUI_WHITE, TUI_BLACK,
+	  TUI_WHITE, TUI_BRBLACK, TUI_BLACK, TUI_CYAN,
+	  TUI_BRWHITE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE },
+	{ "Nord",
+	  TUI_BRWHITE, TUI_BLUE, TUI_BRCYAN,
+	  TUI_BLACK, TUI_CYAN,
+	  TUI_BRWHITE, TUI_BLACK,
+	  TUI_BLACK, TUI_CYAN,
+	  TUI_BRCYAN, TUI_BRBLUE, TUI_CYAN,
+	  TUI_CYAN, TUI_BLACK,
+	  TUI_BRWHITE, TUI_BLUE, TUI_BLACK, TUI_CYAN,
+	  TUI_BRWHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE },
+	{ "Slate",
+	  TUI_WHITE, TUI_BRBLACK, TUI_BRYELLOW,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRMAGENTA, TUI_BRYELLOW, TUI_CYAN,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	{ "Forest",
+	  TUI_BRGREEN, TUI_BLACK, TUI_BRYELLOW,
+	  TUI_BLACK, TUI_GREEN,
+	  TUI_BRGREEN, TUI_BLACK,
+	  TUI_BLACK, TUI_GREEN,
+	  TUI_BRYELLOW, TUI_BRCYAN, TUI_GREEN,
+	  TUI_GREEN, TUI_BLACK,
+	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
+	  TUI_BRGREEN, TUI_BLACK,
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN },
+	{ "Violet",
+	  TUI_BRWHITE, TUI_BLACK, TUI_BRMAGENTA,
+	  TUI_BLACK, TUI_MAGENTA,
+	  TUI_BRWHITE, TUI_BLACK,
+	  TUI_BLACK, TUI_BRMAGENTA,
+	  TUI_BRMAGENTA, TUI_BRCYAN, TUI_MAGENTA,
+	  TUI_MAGENTA, TUI_BLACK,
+	  TUI_BRWHITE, TUI_BLACK, TUI_BLACK, TUI_MAGENTA,
+	  TUI_BRWHITE, TUI_BLACK,
+	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA },
+	/* 2 retro — Turbo is the historical default */
+	{ "Turbo",
+	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
+	  TUI_BLACK, TUI_GREEN,
+	  TUI_BRWHITE, TUI_BLUE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRYELLOW, TUI_BRBLUE, TUI_WHITE,
+	  TUI_WHITE, TUI_BLUE,
+	  TUI_WHITE, TUI_BLUE, TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	{ "Phosphor",
+	  TUI_GREEN, TUI_BLACK, TUI_BRYELLOW,
+	  TUI_BLACK, TUI_GREEN,
+	  TUI_GREEN, TUI_BLACK,
+	  TUI_BLACK, TUI_BRGREEN,
+	  TUI_BRGREEN, TUI_BRYELLOW, TUI_GREEN,
+	  TUI_GREEN, TUI_BLACK,
+	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
+	  TUI_BRGREEN, TUI_BLACK,
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN },
+};
+
+static const ed_theme *th(void)
+{
+	int i = G.opt.edit_theme;
+	if (i < 0 || i >= ED_THEME_N)
+		i = ED_THEME_TURBO;
+	return &k_themes[i];
+}
+
+#define C_MENU_FG   ((int)th()->menu_fg)
+#define C_MENU_BG   ((int)th()->menu_bg)
+#define C_HOT       ((int)th()->hot)
+#define C_SEL_FG    ((int)th()->sel_fg)
+#define C_SEL_BG    ((int)th()->sel_bg)
+#define C_EDIT_FG   ((int)th()->edit_fg)
+#define C_EDIT_BG   ((int)th()->edit_bg)
+#define C_MARK_FG   ((int)th()->mark_fg)
+#define C_MARK_BG   ((int)th()->mark_bg)
+#define C_STR_FG    ((int)th()->str_fg)
+#define C_NUM_FG    ((int)th()->num_fg)
+#define C_CMT_FG    ((int)th()->cmt_fg)
+#define C_BRD_FG    ((int)th()->brd_fg)
+#define C_BRD_BG    ((int)th()->brd_bg)
+#define C_TAB_FG    ((int)th()->tab_fg)
+#define C_TAB_BG    ((int)th()->tab_bg)
+#define C_TABCUR_FG ((int)th()->tabcur_fg)
+#define C_TABCUR_BG ((int)th()->tabcur_bg)
+#define C_DLG_FG    ((int)th()->dlg_fg)
+#define C_DLG_BG    ((int)th()->dlg_bg)
+#define C_SH_FG     ((int)th()->sh_fg)
+#define C_SH_BG     ((int)th()->sh_bg)
+#define C_LIST_BG   ((int)th()->list_bg)
+
+int mmb_editor_theme_count(void)
+{
+	return ED_THEME_N;
+}
+
+const char *mmb_editor_theme_name(int i)
+{
+	if (i < 0 || i >= ED_THEME_N)
+		return k_themes[ED_THEME_TURBO].name;
+	return k_themes[i].name;
+}
+
+int mmb_editor_theme_lookup(const char *s)
+{
+	char want[32], have[32];
+	int i, n;
+
+	if (!s || !s[0])
+		return -1;
+	n = (int)strlen(s);
+	if (n >= (int)sizeof(want))
+		n = (int)sizeof(want) - 1;
+	memcpy(want, s, (unsigned)n);
+	want[n] = 0;
+	mmb_upper(want);
+	for (i = 0; i < ED_THEME_N; i++)
+	{
+		strncpy(have, k_themes[i].name, sizeof(have) - 1);
+		have[sizeof(have) - 1] = 0;
+		mmb_upper(have);
+		if (mmb_keyword_eq(want, have))
+			return i;
+	}
+	return -1;
+}
 
 #define ESC_NONE    0
 #define ESC_GOT     1
@@ -64,12 +239,6 @@ static int ed_rows(void) { return tui_rows(); }
 #define FD_FOCUS_NAME 0
 #define FD_FOCUS_FILE 1
 #define FD_FOCUS_DIR  2
-
-#define MENU_FILE   0
-#define MENU_EDIT   1
-#define MENU_RUN    2
-#define MENU_HELP   3
-#define MENU_COUNT  4
 
 static char killbuf[8192];
 static int killlen;
@@ -95,8 +264,8 @@ static int fd_fsel, fd_dsel;
 static int fd_ftop, fd_dtop;
 static int fd_focus;
 
-static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Help" };
-static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'H' };
+static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Theme", "Help" };
+static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'T', 'H' };
 static int menu_x[MENU_COUNT];
 
 static const char *file_items[] = {
@@ -109,6 +278,7 @@ static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys..." };
 static const char help_hots[] = { 'k' };
+static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
 
 static void redraw(void);
 static void save_tab(void);
@@ -1022,6 +1192,20 @@ static const char **menu_items(int menu, int *n)
 	case MENU_RUN:
 		*n = (int)(sizeof(run_items) / sizeof(run_items[0]));
 		return run_items;
+	case MENU_THEME:
+	{
+		static const char *names[ED_THEME_N];
+		static int ready;
+		int i;
+		if (!ready)
+		{
+			for (i = 0; i < ED_THEME_N; i++)
+				names[i] = k_themes[i].name;
+			ready = 1;
+		}
+		*n = ED_THEME_N;
+		return names;
+	}
 	default:
 		*n = (int)(sizeof(help_items) / sizeof(help_items[0]));
 		return help_items;
@@ -1038,6 +1222,8 @@ static const char *menu_hots(int menu)
 		return edit_hots;
 	case MENU_RUN:
 		return run_hots;
+	case MENU_THEME:
+		return theme_hots;
 	default:
 		return help_hots;
 	}
@@ -2035,8 +2221,8 @@ static void draw_dialog(void)
 	{
 		static const char *lines[] = {
 			"Alt+F  File menu     Alt+E  Edit",
-			"Alt+R  Run menu      Alt+H  Help",
-			"F10    File menu     Esc    close",
+			"Alt+R  Run menu      Alt+T  Theme",
+			"Alt+H  Help          Esc    close",
 			"F1     This help     F2     Save",
 			"F3     Open          F9     Run",
 			"^P     Quick open      ^X     Quit",
@@ -2075,7 +2261,7 @@ static void draw_dialog(void)
 		ly = r0 + 4;
 		lh = fd_list_h();
 		nfg = (fd_focus == FD_FOCUS_NAME) ? C_SEL_FG : C_DLG_FG;
-		nbg = (fd_focus == FD_FOCUS_NAME) ? C_SEL_BG : TUI_CYAN;
+		nbg = (fd_focus == FD_FOCUS_NAME) ? C_SEL_BG : C_LIST_BG;
 		ffg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_FG : C_DLG_FG;
 		fbg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_BG : C_DLG_BG;
 		dfg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_FG : C_DLG_FG;
@@ -2095,7 +2281,7 @@ static void draw_dialog(void)
 			if (fi == fd_fsel && fd_nfile > 0)
 			{
 				sfg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_FG : C_DLG_FG;
-				sbg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_BG : TUI_CYAN;
+				sbg = (fd_focus == FD_FOCUS_FILE) ? C_SEL_BG : C_LIST_BG;
 			}
 			tui_pad(fx, ly + i, fn, fw, sfg, sbg);
 			fn = (di >= 0 && di < fd_ndir) ? fd_dirs[di] : "";
@@ -2104,7 +2290,7 @@ static void draw_dialog(void)
 			if (di == fd_dsel && fd_ndir > 0)
 			{
 				sfg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_FG : C_DLG_FG;
-				sbg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_BG : TUI_CYAN;
+				sbg = (fd_focus == FD_FOCUS_DIR) ? C_SEL_BG : C_LIST_BG;
 			}
 			tui_pad(dx, ly + i, fn, dw, sfg, sbg);
 		}
@@ -2336,6 +2522,12 @@ static void open_menu(int which)
 	G.ed.menu_open = 1;
 	G.ed.menu = which;
 	G.ed.menu_item = 0;
+	if (which == MENU_THEME)
+	{
+		int cur = G.opt.edit_theme;
+		if (cur >= 0 && cur < ED_THEME_N)
+			G.ed.menu_item = cur;
+	}
 	menu_items(which, &n);
 	(void)n;
 }
@@ -2461,6 +2653,15 @@ static void activate_menu(void)
 	}
 	else if (menu == MENU_RUN)
 		editor_run();
+	else if (menu == MENU_THEME)
+	{
+		if (item >= 0 && item < ED_THEME_N)
+		{
+			G.opt.edit_theme = item;
+			mmb_settings_save();
+			set_status(k_themes[item].name);
+		}
+	}
 	else
 		open_dialog(DLG_HELP);
 }
@@ -2482,6 +2683,11 @@ static int handle_alt(char c)
 	if (c == 'r')
 	{
 		open_menu(MENU_RUN);
+		return 1;
+	}
+	if (c == 't')
+	{
+		open_menu(MENU_THEME);
 		return 1;
 	}
 	if (c == 'h')

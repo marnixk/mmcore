@@ -217,6 +217,8 @@ static void apply_core(const char *k, const char *v)
 		G.opt.baseline = parse_int(v);
 	else if (mmb_keyword_eq(k, "edit_font"))
 		G.opt.edit_font = parse_int(v);
+	else if (mmb_keyword_eq(k, "edit_theme"))
+		G.opt.edit_theme = parse_int(v);
 	else if (mmb_keyword_eq(k, "y_axis_up"))
 		G.opt.y_axis_up = parse_int(v);
 	else if (mmb_keyword_eq(k, "angle_degrees"))
@@ -329,6 +331,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "ds3231", G.opt.ds3231);
 	kv_int(buf, sizeof(buf), "baseline", G.opt.baseline);
 	kv_int(buf, sizeof(buf), "edit_font", G.opt.edit_font);
+	kv_int(buf, sizeof(buf), "edit_theme", G.opt.edit_theme);
 	kv_int(buf, sizeof(buf), "y_axis_up", G.opt.y_axis_up);
 	kv_int(buf, sizeof(buf), "angle_degrees", G.opt.angle_degrees);
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
@@ -424,6 +427,8 @@ void mmb_settings_load(void)
 		}
 		p = nl;
 	}
+	if (G.opt.edit_theme < 0 || G.opt.edit_theme >= 10)
+		G.opt.edit_theme = 8;
 }
 
 void mmb_cmd_factory_reset(void)

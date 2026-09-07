@@ -108,6 +108,7 @@ typedef struct mmb_options {
 	int repeat_first;
 	int repeat_next;
 	int edit_font;         /* 0 small .. 4 very large */
+	int edit_theme;        /* editor colour theme, default Turbo */
 	int escape;
 	char search_path[128];
 	char fkey[12][65];     /* F1..F12 */
@@ -188,7 +189,7 @@ typedef struct mmb_editor {
 	int ntabs;
 	int cur;
 	int menu_open;     /* dropdown visible */
-	int menu;          /* 0 File 1 Edit 2 Run 3 Help */
+	int menu;          /* 0 File 1 Edit 2 Run 3 Theme 4 Help */
 	int menu_item;
 	int dialog;        /* 0 none 1 open 2 saveas 3 help */
 	char dlg[128];
@@ -561,6 +562,9 @@ void mmb_cmd_credits(void);
 
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);
+int mmb_editor_theme_count(void);
+const char *mmb_editor_theme_name(int i);
+int mmb_editor_theme_lookup(const char *s);
 
 void mmb_play_stop(void);
 void mmb_play_mix(void);
