@@ -551,11 +551,15 @@ static void pop_frame(void)
 
 static void close_ihelp(void)
 {
+	int resume_ed = mmb_in_editor();
+
 	H.active = 0;
 	H.esc = 0;
 	H.stack_n = 0;
 	tui_end();
 	ser("\r\n");
+	if (resume_ed)
+		mmb_editor_on_ihelp_exit();
 }
 
 static void do_back(void)

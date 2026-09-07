@@ -80,6 +80,9 @@ const char *mmb_files_key(char c);
 /* Redraw FILES after the editor returns, or close it if EDIT ran a program. */
 const char *mmb_files_on_editor_exit(void);
 
+/* Restore the editor TUI after nested interactive HELP closes. */
+void mmb_editor_on_ihelp_exit(void);
+
 /* True while interactive HELP owns the keyboard. */
 int mmb_in_ihelp(void);
 

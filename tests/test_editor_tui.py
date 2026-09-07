@@ -686,3 +686,22 @@ def test_option_edit_theme_phosphor(kernel_image):
         assert "TURBO" in listed.upper()
     finally:
         con.stop()
+
+
+def test_editor_help_manual_opens_ihelp_and_returns(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _edit(con, "MANUAL.BAS")
+        _keys(con, b"PRINT 42")
+        menu = _keys(con, bytes([1]) + b"h", quiet=0.5)
+        assert "Manual" in menu
+        help_seen = _keys(con, b"m", quiet=1.0)
+        low = help_seen.lower()
+        assert "help" in low or "basic" in low or "edit" in low
+        back = _keys(con, b"\x03", quiet=0.8)
+        assert "PRINT" in back or "42" in back or "MANUAL" in back
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
