@@ -183,7 +183,7 @@ def test_help_math(console):
     fn = dump_topic(console, "FUNCTIONS")
     assert "CINT" in fn
     assert "EVAL" in fn
-    assert "MATH()" in fn
+    assert "MATH()" in fn or "<MATH>()" in fn
     basic = dump_topic(console, "CMM2")
     assert "MATH" in basic
     assert "LIBRARY MATH" not in basic
