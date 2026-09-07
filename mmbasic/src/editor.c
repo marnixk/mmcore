@@ -2244,8 +2244,8 @@ static void draw_dialog(void)
 			"Alt+R  Run menu      Alt+T  Theme",
 			"Alt+H  Help          Esc    close",
 			"F1     This help     F2     Save",
-			"F3     Open          F9     Run",
-			"^P     Quick open      Alt+X  Quit",
+			"F3     Open          F4     #include",
+			"F9     Run           Alt+X  Quit",
 			"^C/^X/^V copy/cut/paste  ^W close tab",
 			"Alt+Left/Right tabs (no wrap)",
 			"^O     Save            ^K/^U  Cut line/Paste",
@@ -2765,6 +2765,107 @@ static int handle_alt(char c)
 	return 0;
 }
 
+static int parse_include_line(const char *line, char *inc, int incsz)
+{
+	const char *p = line;
+	int n = 0;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p != '#')
+		return 0;
+	p++;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (!((p[0] == 'I' || p[0] == 'i') && (p[1] == 'N' || p[1] == 'n') &&
+	      (p[2] == 'C' || p[2] == 'c') && (p[3] == 'L' || p[3] == 'l') &&
+	      (p[4] == 'U' || p[4] == 'u') && (p[5] == 'D' || p[5] == 'd') &&
+	      (p[6] == 'E' || p[6] == 'e')))
+		return 0;
+	p += 7;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '"')
+	{
+		p++;
+		while (*p && *p != '"' && n < incsz - 1)
+			inc[n++] = *p++;
+	}
+	else
+	{
+		while (*p && *p != ' ' && *p != '\t' && *p != '\'' && n < incsz - 1)
+			inc[n++] = *p++;
+	}
+	inc[n] = 0;
+	return n ? 1 : 0;
+}
+
+static int copy_line_at(mmb_ed_tab *t, int pos, char *line, int linesz)
+{
+	int s, e, n;
+	s = line_start(pos);
+	e = line_end(pos);
+	n = e - s;
+	if (n < 0)
+		n = 0;
+	if (n >= linesz)
+		n = linesz - 1;
+	memcpy(line, t->buf + s, (unsigned)n);
+	line[n] = 0;
+	if (n > 0 && line[n - 1] == '\r')
+		line[--n] = 0;
+	return n;
+}
+
+static void goto_include(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int n;
+	char line[256], inc[128], full[128], dir[128];
+	if (!t || G.ed.dialog)
+		return;
+	n = copy_line_at(t, t->cx, line, (int)sizeof(line));
+	if (!parse_include_line(line, inc, sizeof(inc)))
+	{
+		if (n == 0 && t->cx > 0)
+			copy_line_at(t, t->cx - 1, line, (int)sizeof(line));
+		if (!parse_include_line(line, inc, sizeof(inc)))
+		{
+			set_status("No #include on this line");
+			return;
+		}
+	}
+	if ((inc[0] && inc[1] == ':') || inc[0] == '/')
+		ed_copy(full, sizeof(full), inc);
+	else
+	{
+		fd_dirname(dir, sizeof(dir), t->path[0] ? t->path : mmb_vfs_cwd());
+		if (!dir[0])
+			ed_copy(dir, sizeof(dir), mmb_vfs_cwd());
+		ed_join(full, sizeof(full), dir, inc);
+	}
+	if (!strchr(inc, '.'))
+	{
+		char with_inc[128], with_bas[128];
+		ed_copy(with_inc, sizeof(with_inc), full);
+		strncat(with_inc, ".INC", sizeof(with_inc) - strlen(with_inc) - 1);
+		ed_copy(with_bas, sizeof(with_bas), full);
+		strncat(with_bas, ".BAS", sizeof(with_bas) - strlen(with_bas) - 1);
+		if (mmb_vfs_exists(with_inc))
+			ed_copy(full, sizeof(full), with_inc);
+		else if (mmb_vfs_exists(with_bas))
+			ed_copy(full, sizeof(full), with_bas);
+		else
+			ed_copy(full, sizeof(full), with_inc);
+	}
+	if (add_or_switch(full) < 0)
+		set_status("Open failed");
+	else
+	{
+		set_status(0);
+		tui_invalidate();
+	}
+}
+
 static void do_fkey(int n)
 {
 	if (n == 1)
@@ -2773,6 +2874,8 @@ static void do_fkey(int n)
 		save_tab();
 	else if (n == 3)
 		open_dialog(DLG_OPEN);
+	else if (n == 4)
+		goto_include();
 	else if (n == 9)
 		editor_run();
 	else if (n == 10)
