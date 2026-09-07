@@ -574,6 +574,24 @@ int mmb_editor_theme_count(void);
 const char *mmb_editor_theme_name(int i);
 int mmb_editor_theme_lookup(const char *s);
 
+typedef struct mmb_ed_theme {
+	const char *name;
+	unsigned char menu_fg, menu_bg, hot;
+	unsigned char sel_fg, sel_bg;
+	unsigned char edit_fg, edit_bg;
+	unsigned char mark_fg, mark_bg;
+	unsigned char str_fg, num_fg, cmt_fg;
+	unsigned char brd_fg, brd_bg;
+	unsigned char tab_fg, tab_bg, tabcur_fg, tabcur_bg;
+	unsigned char dlg_fg, dlg_bg;
+	unsigned char sh_fg, sh_bg;
+	unsigned char list_bg;
+	const unsigned *pal;
+} mmb_ed_theme;
+
+const mmb_ed_theme *mmb_editor_theme(void);
+void mmb_editor_apply_tui_palette(void);
+
 void mmb_play_stop(void);
 void mmb_play_mix(void);
 void mmb_audio_apply_options(void);
