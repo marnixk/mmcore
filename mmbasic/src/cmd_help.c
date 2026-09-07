@@ -1228,16 +1228,21 @@ static const char kHelpSub[] =
 	"\n"
 	"CALL name\n"
 	"\n"
-	"Define a subroutine. CALL name runs it. Arguments\n"
-	"and calling FUNCTION from an expression are not\n"
-	"implemented; use CALL for both SUB and FUNCTION.\n"
+	"Define a subroutine or function. CALL name runs a SUB.\n"
+	"A FUNCTION is used in an expression as name(). Assign to\n"
+	"the function name to set the return value (CMM2).\n"
 	"\n"
 	"Example:\n"
 	"  10 SUB HI\n"
 	"  20 PRINT 6*7\n"
 	"  30 END SUB\n"
 	"  40 CALL HI\n"
-	"  RUN";
+	"  RUN\n"
+	"\n"
+	"  FUNCTION RandByte()\n"
+	"    RandByte = INT(RND * 256)\n"
+	"  END FUNCTION\n"
+	"  PRINT RandByte()\n";
 
 static const char kHelpGoto[] =
 	"GOTO line\n"

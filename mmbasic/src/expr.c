@@ -1114,6 +1114,8 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_str_val(G.current_prog[0] ? G.current_prog : "");
 		return 1;
 	}
+	if (mmb_try_user_function(out))
+		return 1;
 
 	/* named colours as identifiers */
 	{

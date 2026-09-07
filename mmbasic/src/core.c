@@ -646,9 +646,14 @@ void mmb_cmd_exit(void)
 		G.for_sp--;
 		return;
 	}
-	if (mmb_match("SUB") || mmb_match("FUNCTION"))
+	if (mmb_match("SUB"))
 	{
 		mmb_cmd_end_sub();
+		return;
+	}
+	if (mmb_match("FUNCTION"))
+	{
+		mmb_cmd_end_function();
 		return;
 	}
 	/* CMM2: bare EXIT leaves a DO loop. */
@@ -1373,6 +1378,27 @@ int mmb_call_named_sub(const char *name)
 		if (i < narg)
 			mmb_do_assign(G.subs[si].args[i], 0, 0, 0, args[i]);
 	}
+	if (G.subs[si].is_func)
+	{
+		mmb_var *v;
+		int idx = 0;
+		int slot = G.gosub_nsave[g];
+		G.gosub_event[g] = 2;
+		if (slot >= MMB_MAX_SUB_ARGS)
+			mmb_error("?OUT OF MEMORY");
+		strncpy(G.gosub_saven[g][slot], nbuf, MMB_MAX_NAME - 1);
+		G.gosub_saven[g][slot][MMB_MAX_NAME - 1] = 0;
+		v = mmb_find_var(nbuf, 0, 0, 0, &idx);
+		if (v)
+			G.gosub_savev[g][slot] = mmb_load_var(v, 0);
+		else
+			memset(&G.gosub_savev[g][slot], 0, sizeof(G.gosub_savev[g][slot]));
+		G.gosub_nsave[g] = slot + 1;
+		if (nbuf[0] && nbuf[strlen(nbuf) - 1] == '$')
+			mmb_do_assign(nbuf, T_STR, 0, 0, mmb_str_val(""));
+		else
+			mmb_do_assign(nbuf, T_NUM, 0, 0, mmb_num_val(0));
+	}
 	G.opt.explicit = ex;
 	G.gosub_sp++;
 	G.branch_pc = G.subs[si].line_pc;
@@ -1418,6 +1444,25 @@ void mmb_cmd_end_sub(void)
 
 void mmb_cmd_end_function(void)
 {
+	int g;
+	if (G.gosub_sp > 0)
+	{
+		g = G.gosub_sp - 1;
+		if (G.gosub_event[g] == 2 && G.gosub_nsave[g] > 0)
+		{
+			char *fname = G.gosub_saven[g][G.gosub_nsave[g] - 1];
+			mmb_var *v;
+			int idx = 0;
+			v = mmb_find_var(fname, 0, 0, 0, &idx);
+			if (v)
+				G.func_ret = mmb_load_var(v, 0);
+			else
+			{
+				memset(&G.func_ret, 0, sizeof(G.func_ret));
+				G.func_ret.type = T_NUM;
+			}
+		}
+	}
 	mmb_cmd_end_sub();
 }
 void mmb_option_reset(void)
@@ -2718,6 +2763,108 @@ static void exec_line_body(const char *body)
 	}
 }
 
+static void run_gosub_body(void)
+{
+	int saved_if_skip = G.if_skip;
+	int saved_if_taken = G.if_taken;
+	int saved_sel_skip = G.sel_skip;
+	int saved_sel_active = G.sel_active;
+	int saved_ctrl = G.ctrl_sp;
+	int saved_for = G.for_sp;
+	int saved_running = G.running;
+
+	G.if_skip = 0;
+	G.if_taken = 0;
+	G.sel_skip = 0;
+	G.sel_active = 0;
+	G.running = 1;
+	if (G.gosub_sp > 0)
+		G.gosub_stack[G.gosub_sp - 1] = -2;
+	G.run_pc = G.branch_pc;
+	G.branch_pc = -1;
+	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
+	{
+		int loop;
+		mmb_check_break();
+		do
+		{
+			loop = 0;
+			G.branch_pc = -1;
+			exec_line_body(G.prog[G.run_pc]);
+			if (G.branch_pc == -2)
+				break;
+			if (G.branch_pc >= 0)
+			{
+				G.run_pc = G.branch_pc;
+				break;
+			}
+			if (G.for_sp > 0 && G.forstack[G.for_sp - 1].stmt == 1)
+			{
+				G.forstack[G.for_sp - 1].stmt = 0;
+				G.run_pc = G.forstack[G.for_sp - 1].line;
+				loop = 1;
+			}
+		} while (loop && G.running);
+		if (G.branch_pc == -2)
+			break;
+		if (G.branch_pc >= 0)
+			continue;
+		G.run_pc++;
+	}
+	G.if_skip = saved_if_skip;
+	G.if_taken = saved_if_taken;
+	G.sel_skip = saved_sel_skip;
+	G.sel_active = saved_sel_active;
+	G.ctrl_sp = saved_ctrl;
+	G.for_sp = saved_for;
+	G.running = saved_running;
+}
+
+int mmb_try_user_function(mmb_val *out)
+{
+	const char *save = G.p;
+	char name[MMB_MAX_NAME];
+	int saved_pc, saved_sp, saved_branch;
+	const char *saved_p;
+	int si;
+
+	mmb_skip_sp();
+	if (!mmb_is_ident(*G.p))
+		return 0;
+	mmb_ident(name, sizeof(name));
+	mmb_type_suffix(name);
+	si = sub_find(name);
+	if (si < 0 || !G.subs[si].is_func)
+	{
+		G.p = save;
+		return 0;
+	}
+	mmb_skip_sp();
+	if (*G.p != '(')
+	{
+		G.p = save;
+		return 0;
+	}
+	saved_pc = G.run_pc;
+	saved_branch = G.branch_pc;
+	saved_sp = G.gosub_sp;
+	memset(&G.func_ret, 0, sizeof(G.func_ret));
+	G.func_ret.type = T_NUM;
+	if (!mmb_call_named_sub(name))
+	{
+		G.p = save;
+		return 0;
+	}
+	saved_p = G.p;
+	run_gosub_body();
+	G.run_pc = saved_pc;
+	G.branch_pc = saved_branch;
+	G.gosub_sp = saved_sp;
+	G.p = saved_p;
+	*out = G.func_ret;
+	return 1;
+}
+
 void mmb_run_events(void)
 {
 	unsigned now;
@@ -2741,23 +2888,7 @@ void mmb_run_events(void)
 		G.tick_busy = 1;
 		G.p = "";
 		if (mmb_call_named_sub(G.tick[i].sub))
-		{
-			if (G.gosub_sp > 0)
-				G.gosub_stack[G.gosub_sp - 1] = -2;
-			G.run_pc = G.branch_pc;
-			G.branch_pc = -1;
-			while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
-			{
-				G.branch_pc = -1;
-				exec_line_body(G.prog[G.run_pc]);
-				if (G.branch_pc == -2)
-					break;
-				if (G.branch_pc >= 0)
-					G.run_pc = G.branch_pc;
-				else
-					G.run_pc++;
-			}
-		}
+			run_gosub_body();
 		G.run_pc = saved_pc;
 		G.p = saved_p;
 		G.branch_pc = saved_branch;
@@ -2773,23 +2904,7 @@ void mmb_run_events(void)
 		G.tick_busy = 1;
 		G.p = "";
 		if (mmb_call_named_sub(G.on_key))
-		{
-			if (G.gosub_sp > 0)
-				G.gosub_stack[G.gosub_sp - 1] = -2;
-			G.run_pc = G.branch_pc;
-			G.branch_pc = -1;
-			while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
-			{
-				G.branch_pc = -1;
-				exec_line_body(G.prog[G.run_pc]);
-				if (G.branch_pc == -2)
-					break;
-				if (G.branch_pc >= 0)
-					G.run_pc = G.branch_pc;
-				else
-					G.run_pc++;
-			}
-		}
+			run_gosub_body();
 		G.run_pc = saved_pc;
 		G.p = saved_p;
 		G.branch_pc = saved_branch;
