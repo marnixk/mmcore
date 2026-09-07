@@ -498,6 +498,22 @@ def test_page_copy_and_colour(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
 
 
+def test_page_write_7_in_large_mode(fresh_console):
+    c = fresh_console
+    assert c.send_line("MODE 11,8") == ""
+    assert c.send_line("PRINT MM.HRES") == "1280"
+    assert c.send_line("PAGE WRITE 7") == ""
+    assert c.send_line("PIXEL 40,50,RGB(255,0,0)") == ""
+    pix = int(c.send_line("PRINT PIXEL(40,50)"))
+    assert ((pix >> 16) & 255) > 150
+    assert c.send_line("PAGE COPY 7 TO 0") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    pix2 = int(c.send_line("PRINT PIXEL(40,50)"))
+    assert ((pix2 >> 16) & 255) > 150
+    assert c.send_line("PAGE DISPLAY 7") == ""
+    assert c.send_line("MODE 8,16") == ""
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""

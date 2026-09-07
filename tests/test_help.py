@@ -103,6 +103,8 @@ def test_help_mode_resolutions(console):
     assert "retune" in out.lower()
     assert "overscan" in out.lower()
     assert "hdmi_mode=82" in out
+    assert "2 when larger" not in out.lower()
+    assert "0-7" in out
 
 
 def test_help_mode_case_insensitive(console):
