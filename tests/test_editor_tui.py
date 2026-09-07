@@ -581,6 +581,70 @@ def test_editor_ctrl_p_reuses_existing_tab(kernel_image):
         con.stop()
 
 
+def test_editor_ctrl_p_after_theme_opens_file(kernel_image):
+    """#69: quick-open must still load a file after a theme change."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME PAPER") == ""
+        _seed_switcher_tree(con)
+        seen = _edit(con, "MAIN.BAS")
+        assert "MAIN" in seen or "File" in seen
+        themed = _keys(con, bytes([1]) + b"t", quiet=0.6)
+        assert "Paper" in themed or "Snow" in themed or "Turbo" in themed
+        _keys(con, b"\x1b[B\x1b[B\r", quiet=0.8)
+        _keys(con, bytes([16]), quiet=0.8)
+        opened = _keys(con, b"CHILD\r", quiet=1.2)
+        assert "CHILD" in opened
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_p_after_theme_opens_file(kernel_image):
+    """#69: quick-open must still load a file after a theme change."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME PAPER") == ""
+        _seed_switcher_tree(con)
+        seen = _edit(con, "MAIN.BAS")
+        assert "MAIN" in seen or "File" in seen
+        themed = _keys(con, bytes([1]) + b"t", quiet=0.6)
+        assert "Paper" in themed or "Snow" in themed or "Turbo" in themed
+        _keys(con, b"\x1b[B\x1b[B\r", quiet=0.8)
+        _keys(con, bytes([16]), quiet=0.8)
+        opened = _keys(con, b"CHILD\r", quiet=1.2)
+        assert "CHILD" in opened
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_open_enter_uses_highlighted_file(kernel_image):
+    """#69: File/Open Enter with an empty name opens the highlighted *.BAS."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME SLATE") == ""
+        assert con.send_line('OPEN "PICKME.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 77"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "UNTITLED.BAS")
+        _keys(con, bytes([1]) + b"fo", quiet=0.7)
+        opened = _keys(con, b"\r", quiet=1.0)
+        assert "PICKME" in opened or "77" in opened
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
 def test_editor_ctrl_p_filter_then_enter(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

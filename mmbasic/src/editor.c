@@ -313,6 +313,16 @@ static char *put_uint(char *p, int n)
 	return p;
 }
 
+static void ed_copy(char *dst, int dstsz, const char *src)
+{
+	if (!dst || dstsz <= 0)
+		return;
+	if (!src)
+		src = "";
+	strncpy(dst, src, (unsigned)dstsz - 1);
+	dst[dstsz - 1] = 0;
+}
+
 static void ensure_bas(char *path, int sz)
 {
 	if (!path[0])
@@ -396,7 +406,7 @@ static void load_into(int i, const char *path)
 	t->used = 1;
 	if (path && path[0])
 	{
-		strncpy(t->path, path, sizeof(t->path) - 1);
+		ed_copy(t->path, sizeof(t->path), path);
 		ensure_bas(t->path, sizeof(t->path));
 		if (mmb_vfs_read(t->path, t->buf, sizeof(t->buf) - 1, &got) == 0)
 			t->len = (int)got;
@@ -412,7 +422,7 @@ static int add_or_switch(const char *path)
 	p[0] = 0;
 	if (path && path[0])
 	{
-		strncpy(p, path, sizeof(p) - 1);
+		ed_copy(p, sizeof(p), path);
 		ensure_bas(p, sizeof(p));
 		i = find_tab_path(p);
 		if (i >= 0)
@@ -1979,6 +1989,7 @@ static void fd_submit_path(const char *path)
 		if (full[0] && add_or_switch(full) < 0)
 			set_status("Open failed");
 		close_ui();
+		tui_invalidate();
 		return;
 	}
 	if (G.ed.dialog == DLG_SAVEAS)
@@ -2055,7 +2066,14 @@ static void fd_enter_key(void)
 		return;
 	}
 	if (!G.ed.dlg[0])
+	{
+		if (fd_nfile > 0 && fd_fsel >= 0 && fd_fsel < fd_nfile)
+		{
+			fd_make_full(full, sizeof(full), fd_files[fd_fsel]);
+			fd_submit_path(full);
+		}
 		return;
+	}
 	if (fd_has_glob(G.ed.dlg))
 	{
 		fd_apply_glob(G.ed.dlg);
@@ -2633,10 +2651,14 @@ static void submit_dialog(void)
 		if (pick_vn > 0 && pick_sel >= 0 && pick_sel < pick_vn)
 		{
 			int idx = pick_view[pick_sel];
-			if (add_or_switch(pick_path[idx]) < 0)
-				set_status("Open failed");
+			if (idx >= 0 && idx < pick_n)
+			{
+				if (add_or_switch(pick_path[idx]) < 0)
+					set_status("Open failed");
+			}
 		}
 		close_ui();
+		tui_invalidate();
 		return;
 	}
 	if (G.ed.dialog == DLG_OPEN || G.ed.dialog == DLG_SAVEAS)
