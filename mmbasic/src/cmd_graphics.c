@@ -120,90 +120,128 @@ void mmb_cmd_cls(void)
 	G.home_prompt = 1;
 }
 
+static int ident_start(void)
+{
+	return (G.p[0] >= 'A' && G.p[0] <= 'Z') ||
+	       (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_';
+}
+
+static int parse_empty_array_ref(char *name, int nsz)
+{
+	const char *save = G.p;
+
+	if (!ident_start())
+		return 0;
+	mmb_ident(name, nsz);
+	mmb_type_suffix(name);
+	mmb_skip_sp();
+	if (*G.p != '(')
+	{
+		G.p = save;
+		return 0;
+	}
+	G.p++;
+	mmb_skip_sp();
+	if (*G.p != ')')
+	{
+		G.p = save;
+		return 0;
+	}
+	G.p++;
+	mmb_skip_sp();
+	return 1;
+}
+
+static mmb_var *find_array(const char *name)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used && G.vars[i].dims > 0 &&
+		    mmb_keyword_eq(G.vars[i].name, name))
+			return &G.vars[i];
+	return 0;
+}
+
+static int array_int_at(mmb_var *v, int i)
+{
+	if (v->type == T_INT)
+		return (int)v->data.i[i];
+	if (v->type == T_NUM)
+		return (int)v->data.f[i];
+	return 0;
+}
+
 void mmb_cmd_pixel(void)
 {
 	const char *save = G.p;
-	char nx[MMB_MAX_NAME], ny[MMB_MAX_NAME];
-	mmb_var *vx = 0, *vy = 0;
-	int i;
+	char nx[MMB_MAX_NAME], ny[MMB_MAX_NAME], nc[MMB_MAX_NAME];
+	mmb_var *vx, *vy, *vc;
+	int i, n, colour_is_array;
+	unsigned c;
 
 	mmb_skip_sp();
-	if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
+	if (parse_empty_array_ref(nx, sizeof(nx)) && *G.p == ',')
 	{
-		mmb_ident(nx, sizeof(nx));
-		mmb_type_suffix(nx);
+		G.p++;
 		mmb_skip_sp();
-		if (*G.p == '(')
+		if (parse_empty_array_ref(ny, sizeof(ny)))
 		{
-			G.p++;
-			mmb_skip_sp();
-			if (*G.p == ')')
+			c = G.gfx.fg;
+			vc = 0;
+			colour_is_array = 0;
+			if (*G.p == ',')
 			{
+				const char *colp;
+
 				G.p++;
 				mmb_skip_sp();
-				if (*G.p == ',')
+				colp = G.p;
+				if (parse_empty_array_ref(nc, sizeof(nc)))
 				{
-					G.p++;
-					mmb_skip_sp();
-					if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
-					{
-						mmb_ident(ny, sizeof(ny));
-						mmb_type_suffix(ny);
-						mmb_skip_sp();
-						if (*G.p == '(')
-						{
-							G.p++;
-							mmb_skip_sp();
-							if (*G.p == ')')
-							{
-								unsigned c = G.gfx.fg;
-								int n;
-								G.p++;
-								mmb_skip_sp();
-								if (*G.p == ',')
-								{
-									G.p++;
-									c = (unsigned)mmb_as_int(mmb_expr());
-								}
-								for (i = 0; i < MMB_MAX_VARS; i++)
-								{
-									if (G.vars[i].used && G.vars[i].dims > 0 &&
-									    mmb_keyword_eq(G.vars[i].name, nx))
-										vx = &G.vars[i];
-									if (G.vars[i].used && G.vars[i].dims > 0 &&
-									    mmb_keyword_eq(G.vars[i].name, ny))
-										vy = &G.vars[i];
-								}
-								if (!vx || !vy)
-									mmb_syntax();
-								n = vx->size < vy->size ? vx->size : vy->size;
-								for (i = 0; i < n; i++)
-								{
-									int x = vx->type == T_INT ? (int)vx->data.i[i] : (int)vx->data.f[i];
-									int y = vy->type == T_INT ? (int)vy->data.i[i] : (int)vy->data.f[i];
-									mmb_gfx_plot(x, y, c);
-								}
-								return;
-							}
-						}
-					}
+					vc = find_array(nc);
+					if (vc)
+						colour_is_array = 1;
+				}
+				if (!colour_is_array)
+				{
+					G.p = colp;
+					c = (unsigned)mmb_as_int(mmb_expr());
 				}
 			}
+			vx = find_array(nx);
+			vy = find_array(ny);
+			if (!vx || !vy)
+				mmb_syntax();
+			n = vx->size < vy->size ? vx->size : vy->size;
+			if (colour_is_array)
+			{
+				if (vc->size < n)
+					n = vc->size;
+			}
+			for (i = 0; i < n; i++)
+			{
+				int x = array_int_at(vx, i);
+				int y = array_int_at(vy, i);
+				unsigned col = colour_is_array ? (unsigned)array_int_at(vc, i) : c;
+				mmb_gfx_plot(x, y, col);
+			}
+			return;
 		}
 	}
 	G.p = save;
 	{
 		mmb_val a[4];
-		int n = parse_args(a, 4);
-		unsigned c = G.gfx.fg;
+		int nargs = parse_args(a, 4);
+		unsigned col = G.gfx.fg;
 		int x, y;
-		if (n < 2)
+		if (nargs < 2)
 			mmb_syntax();
 		x = (int)mmb_as_int(a[0]);
 		y = (int)mmb_as_int(a[1]);
-		if (n >= 3)
-			c = (unsigned)mmb_as_int(a[2]);
-		mmb_gfx_plot(x, y, c);
+		if (nargs >= 3)
+			col = (unsigned)mmb_as_int(a[2]);
+		mmb_gfx_plot(x, y, col);
 	}
 }
 
