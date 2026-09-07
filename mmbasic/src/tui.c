@@ -15,12 +15,14 @@ static int inited;
 static int cur_x = -1, cur_y = -1, cur_vis;
 static int prev_cx = -1, prev_cy = -1;
 
-static unsigned palette[16] = {
-	0x000000, 0xAA0000, 0x00AA00, 0xAA5500,
-	0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
-	0x555555, 0xFF5555, 0x55FF55, 0xFFFF55,
+#define TUI_VGA_PALETTE \
+	0x000000, 0xAA0000, 0x00AA00, 0xAA5500, \
+	0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA, \
+	0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, \
 	0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF
-};
+
+static const unsigned k_vga[16] = { TUI_VGA_PALETTE };
+static unsigned palette[16] = { TUI_VGA_PALETTE };
 
 static int clampi(int v, int lo, int hi)
 {
@@ -151,10 +153,28 @@ void tui_invalidate(void)
 	prev_cx = prev_cy = -1;
 }
 
+void tui_set_palette(const unsigned *rgb16)
+{
+	const unsigned *src = rgb16 ? rgb16 : k_vga;
+	int i, changed = 0;
+	for (i = 0; i < 16; i++)
+	{
+		unsigned v = src[i] & 0xFFFFFFu;
+		if (palette[i] != v)
+		{
+			palette[i] = v;
+			changed = 1;
+		}
+	}
+	if (changed && inited)
+		tui_invalidate();
+}
+
 void tui_end(void)
 {
 	int h;
 	inited = 0;
+	tui_set_palette(0);
 	cols = rows = 0;
 	hide_hw_cursor(0);
 	if (G.plat && G.plat->tui_prepare)

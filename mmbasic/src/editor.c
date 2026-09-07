@@ -44,7 +44,63 @@ typedef struct ed_theme {
 	unsigned char dlg_fg, dlg_bg;
 	unsigned char sh_fg, sh_bg;
 	unsigned char list_bg;
+	const unsigned *pal;
 } ed_theme;
+
+static const unsigned pal_paper[16] = {
+	0x2C261Cu, 0xC45C48u, 0x5A8A4Au, 0xC49A4Au,
+	0x3D6A9Eu, 0xA05A8Au, 0x4A8A9Eu, 0xF3EBDDu,
+	0xE8DCC8u, 0xE07060u, 0x7AB86Au, 0xE0B85Au,
+	0x5A8AC8u, 0xC070B0u, 0x6AB8D0u, 0xFFF8F0u
+};
+static const unsigned pal_cloud[16] = {
+	0x1A3040u, 0xC05050u, 0x409060u, 0xC09040u,
+	0x2B6CB0u, 0x9050A0u, 0x3090A8u, 0xD0E8F0u,
+	0x7AA8B8u, 0xE06060u, 0x50C080u, 0xE0C060u,
+	0x4080D0u, 0xC060C0u, 0xC5E8F4u, 0xF5FBFFu
+};
+static const unsigned pal_snow[16] = {
+	0x1A202Cu, 0xC45C5Cu, 0x5A9A6Au, 0xC4A05Au,
+	0x4A6AA0u, 0xA05A9Au, 0x4A9AB0u, 0xE8EEF4u,
+	0xD0D8E0u, 0xE07070u, 0x70C080u, 0xE8C060u,
+	0x6080D0u, 0xC070C0u, 0x90D0E8u, 0xF7FAFCu
+};
+static const unsigned pal_night[16] = {
+	0x0A0A0Cu, 0xC45C5Cu, 0x5A9A6Au, 0xC4A05Au,
+	0x4A6AB0u, 0xA05A9Au, 0x6AB4C8u, 0xC8C8D0u,
+	0x16161Cu, 0xE07070u, 0x70C080u, 0xE8C060u,
+	0x6080D0u, 0xC070C0u, 0x80D0E0u, 0xECECF0u
+};
+static const unsigned pal_nord[16] = {
+	0x2E3440u, 0xBF616Au, 0xA3BE8Cu, 0xEBCB8Bu,
+	0x5E81ACu, 0xB48EADu, 0x88C0D0u, 0xD8DEE9u,
+	0x3B4252u, 0xD08770u, 0xA3BE8Cu, 0xEBCB8Bu,
+	0x81A1C1u, 0xB48EADu, 0x8FBCBBu, 0xECEFF4u
+};
+static const unsigned pal_slate[16] = {
+	0x0C0E12u, 0xC45C5Cu, 0x6A9B72u, 0xC4A06Au,
+	0x5A7AB0u, 0xB07AA0u, 0x7EB6C9u, 0xC8CCD4u,
+	0x1A1D24u, 0xE07878u, 0x8FBF8Fu, 0xE8C85Au,
+	0x7A9AD0u, 0xD090C0u, 0x8FCBD8u, 0xE8EAEEu
+};
+static const unsigned pal_forest[16] = {
+	0x0A140Cu, 0xC45C5Cu, 0x2A5A30u, 0xC4A05Au,
+	0x3A6A90u, 0x8A5A8Au, 0x4A9A8Au, 0xC8D8C8u,
+	0x122018u, 0xE07070u, 0x6ED06Au, 0xE0C060u,
+	0x5A90C0u, 0xC070C0u, 0x70D0B0u, 0xE8F0E8u
+};
+static const unsigned pal_violet[16] = {
+	0x120A18u, 0xC45C5Cu, 0x5A9A6Au, 0xC4A05Au,
+	0x5A4AB0u, 0x6A3A88u, 0x6A90B0u, 0xD0C8D8u,
+	0x1C1224u, 0xE07070u, 0x70C080u, 0xE8C060u,
+	0x8070D0u, 0xC080E0u, 0x90C0E0u, 0xF0E8F8u
+};
+static const unsigned pal_phosphor[16] = {
+	0x000000u, 0xAA0000u, 0x2A8A2Au, 0x8A8A20u,
+	0x0000AAu, 0xAA00AAu, 0x2A8A8Au, 0x88AA88u,
+	0x0A1A0Au, 0xFF5555u, 0x55FF66u, 0xD4FF4Au,
+	0x5555FFu, 0xFF55FFu, 0x55FFCCu, 0xC8FFC8u
+};
 
 static const ed_theme k_themes[ED_THEME_N] = {
 	/* 3 modern light */
@@ -57,7 +113,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLACK, TUI_WHITE,
 	  TUI_BLACK, TUI_BRWHITE, TUI_WHITE, TUI_BLUE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN },
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, pal_paper },
 	{ "Cloud",
 	  TUI_BLACK, TUI_BRCYAN, TUI_RED,
 	  TUI_WHITE, TUI_BLUE,
@@ -67,7 +123,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLUE, TUI_BRCYAN,
 	  TUI_BLACK, TUI_CYAN, TUI_WHITE, TUI_BLUE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, pal_cloud },
 	{ "Snow",
 	  TUI_BLACK, TUI_BRWHITE, TUI_BRRED,
 	  TUI_WHITE, TUI_CYAN,
@@ -77,7 +133,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLACK, TUI_BRWHITE,
 	  TUI_BLACK, TUI_WHITE, TUI_WHITE, TUI_CYAN,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN },
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, pal_snow },
 	/* 5 modern dark */
 	{ "Night",
 	  TUI_BRWHITE, TUI_BRBLACK, TUI_BRCYAN,
@@ -88,7 +144,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_WHITE, TUI_BLACK,
 	  TUI_WHITE, TUI_BRBLACK, TUI_BLACK, TUI_CYAN,
 	  TUI_BRWHITE, TUI_BRBLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_BLUE },
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE, pal_night },
 	{ "Nord",
 	  TUI_BRWHITE, TUI_BLUE, TUI_BRCYAN,
 	  TUI_BLACK, TUI_CYAN,
@@ -98,17 +154,17 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_CYAN, TUI_BLACK,
 	  TUI_BRWHITE, TUI_BLUE, TUI_BLACK, TUI_CYAN,
 	  TUI_BRWHITE, TUI_BLUE,
-	  TUI_BLACK, TUI_BLACK, TUI_BLUE },
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE, pal_nord },
 	{ "Slate",
 	  TUI_WHITE, TUI_BRBLACK, TUI_BRYELLOW,
-	  TUI_BLACK, TUI_WHITE,
+	  TUI_BLACK, TUI_CYAN,
 	  TUI_WHITE, TUI_BRBLACK,
 	  TUI_BLACK, TUI_WHITE,
 	  TUI_BRMAGENTA, TUI_BRYELLOW, TUI_CYAN,
 	  TUI_WHITE, TUI_BRBLACK,
 	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, pal_slate },
 	{ "Forest",
 	  TUI_BRGREEN, TUI_BLACK, TUI_BRYELLOW,
 	  TUI_BLACK, TUI_GREEN,
@@ -118,7 +174,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK,
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_GREEN },
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN, pal_forest },
 	{ "Violet",
 	  TUI_BRWHITE, TUI_BLACK, TUI_BRMAGENTA,
 	  TUI_BLACK, TUI_MAGENTA,
@@ -128,8 +184,8 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_MAGENTA, TUI_BLACK,
 	  TUI_BRWHITE, TUI_BLACK, TUI_BLACK, TUI_MAGENTA,
 	  TUI_BRWHITE, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA },
-	/* 2 retro — Turbo is the historical default */
+	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA, pal_violet },
+	/* 2 retro — Turbo is the historical default (VGA palette) */
 	{ "Turbo",
 	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
 	  TUI_BLACK, TUI_GREEN,
@@ -139,7 +195,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_WHITE, TUI_BLUE,
 	  TUI_WHITE, TUI_BLUE, TUI_BLACK, TUI_WHITE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, 0 },
 	{ "Phosphor",
 	  TUI_GREEN, TUI_BLACK, TUI_BRYELLOW,
 	  TUI_BLACK, TUI_GREEN,
@@ -149,7 +205,7 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK,
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_GREEN },
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN, pal_phosphor },
 };
 
 static const ed_theme *th(void)
@@ -2435,6 +2491,7 @@ static void redraw(void)
 	G.out[0] = 0;
 	ensure_visible();
 	tui_begin();
+	tui_set_palette(th()->pal);
 	tui_clear(C_EDIT_FG, C_EDIT_BG);
 	draw_menu_bar();
 	draw_tabs();
