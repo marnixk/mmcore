@@ -887,16 +887,6 @@ static int line_start(int pos)
 	return pos;
 }
 
-static int line_end(int pos)
-{
-	mmb_ed_tab *t = cur_tab();
-	if (!t)
-		return 0;
-	while (pos < t->len && t->buf[pos] != '\n')
-		pos++;
-	return pos;
-}
-
 static int is_word_char(char c)
 {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
