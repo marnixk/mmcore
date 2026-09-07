@@ -75,6 +75,17 @@ def test_numbered_line_no_extra_blank(console):
     assert b">" in text
 
 
+def test_immediate_command_blank_before_prompt(console):
+    console.drain(quiet=0.15)
+    console._ser.sendall(b"PRINT 9\r")
+    text = console.drain(quiet=0.5).replace(b"\r", b"")
+    assert b"9\n\n>" in text
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"NEW\r")
+    new_out = console.drain(quiet=0.5).replace(b"\r", b"")
+    assert b"\n\n>" in new_out
+
+
 def test_date_time_tick_with_clock(console):
     assert console.send_line('DATE$="28-7-26"') == ""
     assert console.send_line('TIME$="12:00:00"') == ""
