@@ -87,8 +87,6 @@ typedef struct {
 	int cx_vcol;
 	int total_vrows;
 	wp_vrow vrows[WP_MAX_VR];
-	char serial[256];
-	int serial_len;
 } wp_state;
 
 static wp_state W;
@@ -544,39 +542,15 @@ static char *put_uint(char *p, int n)
 	return p;
 }
 
-static void serial_reset(void)
-{
-	W.serial_len = 0;
-	W.serial[0] = 0;
-}
-
-static void serial_put(const char *s)
-{
-	int n, room;
-
-	if (!s)
-		return;
-	n = (int)strlen(s);
-	room = (int)sizeof(W.serial) - 1 - W.serial_len;
-	if (n > room)
-		n = room;
-	if (n <= 0)
-		return;
-	memcpy(W.serial + W.serial_len, s, (unsigned)n);
-	W.serial_len += n;
-	W.serial[W.serial_len] = 0;
-}
-
 static void serial_row(const char *s)
 {
-	serial_put(s);
-	serial_put("\r\n");
+	if (s)
+		ser(s);
+	ser("\r\n");
 }
 
 static void wp_serial_dump(void)
 {
-	ser(W.serial);
-	serial_reset();
 }
 
 static void wp_leave(void)
@@ -631,6 +605,9 @@ static void sel_prepare(int shift)
 	}
 }
 
+static int line_start(int off);
+static int line_end(int off);
+
 static void clip_store(const char *s, int n)
 {
 	if (n >= WP_CLIP)
@@ -680,9 +657,22 @@ static void copy_selection(void)
 	clip_store(W.buf + lo, hi - lo);
 }
 
+static void cut_line(void)
+{
+	int a, b;
+
+	a = line_start(W.cx);
+	b = line_end(W.cx);
+	if (b < W.len && W.buf[b] == '\n')
+		b++;
+	if (b > a)
+		delete_range(a, b, 1);
+}
+
 static void cut_selection(void)
 {
-	delete_selection(1);
+	if (!delete_selection(1))
+		cut_line();
 }
 
 static void paste_clip(void)
@@ -2152,7 +2142,6 @@ static void wp_redraw(void)
 	if (!G.plat || !G.plat->tui_glyph || !G.plat->tui_present)
 		return;
 	wp_layout_geom();
-	serial_reset();
 	for (row = 0; row < W.vid_rows; row++)
 		wp_fill_row(row, t->fg, t->bg);
 	draw_menu_bar();
