@@ -112,7 +112,9 @@ static const char help_hots[] = { 'k' };
 
 static void redraw(void);
 static void save_tab(void);
-static void editor_leave(int run);
+static void editor_leave(void);
+static void editor_run(void);
+static void editor_resume(void);
 static void open_dialog(int which);
 static void open_picker(void);
 static void activate_menu(void);
@@ -2039,7 +2041,7 @@ static void draw_dialog(void)
 			"F3     Open          F9     Run",
 			"^P     Quick open      ^X     Quit",
 			"^O     Save            ^K/^U  Cut/Paste",
-			"^R     Save and Run    F3     Open",
+			"^R/F9  Run; press a key to return",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
@@ -2254,26 +2256,77 @@ static void save_tab(void)
 	set_status("Saved");
 }
 
-static void editor_leave(int run)
+static void editor_leave(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	if (run)
-		save_tab();
-	else if (t && t->dirty)
+	if (t && t->dirty)
 		save_tab();
 	tui_end();
 	G.ed.active = 0;
+	G.ed.wait_continue = 0;
 	G.ed.menu_open = 0;
 	G.ed.dialog = 0;
-	if (run && t)
+}
+
+static void editor_restore_gfx(void)
+{
+	if (G.ed.saved_mode != G.gfx.mode || G.ed.saved_bits != G.gfx.bits)
+		mmb_gfx_set_mode(G.ed.saved_mode, G.ed.saved_bits);
+	G.gfx.write_fb = 0;
+	if (G.ed.saved_write_fb && G.gfx.fb)
+		G.gfx.write_fb = 1;
+	else
 	{
-		char cmd[160];
-		G.ed.run_on_exit = 1;
-		strcpy(cmd, "RUN \"");
-		strncat(cmd, t->path, sizeof(cmd) - 8);
-		strcat(cmd, "\"");
-		mmb_exec_line(cmd);
+		int pg = G.ed.saved_write_page;
+		if (pg < 0 || pg >= G.gfx.pages)
+			pg = 0;
+		G.gfx.write_page = pg;
 	}
+	if (G.ed.saved_display_page >= 0 && G.ed.saved_display_page < G.gfx.pages)
+		G.gfx.display_page = G.ed.saved_display_page;
+	else
+		G.gfx.display_page = 0;
+	mmb_gfx_present();
+}
+
+static void editor_run(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	char cmd[160];
+
+	if (t)
+		save_tab();
+	G.ed.saved_mode = G.gfx.mode;
+	G.ed.saved_bits = G.gfx.bits;
+	G.ed.saved_write_page = G.gfx.write_page;
+	G.ed.saved_display_page = G.gfx.display_page;
+	G.ed.saved_write_fb = G.gfx.write_fb;
+	G.ed.menu_open = 0;
+	G.ed.dialog = 0;
+	tui_end();
+	G.ed.active = 0;
+	if (!t)
+		return;
+	strcpy(cmd, "RUN \"");
+	strncat(cmd, t->path, sizeof(cmd) - 8);
+	strcat(cmd, "\"");
+	mmb_exec_line(cmd);
+	if (G.outn && G.out[G.outn - 1] != '\n' && G.out[G.outn - 1] != '\r')
+		mmb_out("\n");
+	mmb_out("Press any key to continue");
+	G.ed.wait_continue = 1;
+}
+
+static void editor_resume(void)
+{
+	G.ed.wait_continue = 0;
+	G.ed.active = 1;
+	esc_state = 0;
+	alt_pend = 0;
+	editor_restore_gfx();
+	tui_begin();
+	tui_invalidate();
+	redraw();
 }
 
 static void open_menu(int which)
@@ -2337,7 +2390,7 @@ static void close_tab(void)
 		save_tab();
 	if (G.ed.ntabs <= 1)
 	{
-		editor_leave(0);
+		editor_leave();
 		return;
 	}
 	for (i = G.ed.cur; i < G.ed.ntabs - 1; i++)
@@ -2393,7 +2446,7 @@ static void activate_menu(void)
 		else if (item == 5)
 			next_tab();
 		else if (item == 6)
-			editor_leave(0);
+			editor_leave();
 	}
 	else if (menu == MENU_EDIT)
 	{
@@ -2407,7 +2460,7 @@ static void activate_menu(void)
 			paste_kill();
 	}
 	else if (menu == MENU_RUN)
-		editor_leave(1);
+		editor_run();
 	else
 		open_dialog(DLG_HELP);
 }
@@ -2438,7 +2491,7 @@ static int handle_alt(char c)
 	}
 	if (c == 'x')
 	{
-		editor_leave(0);
+		editor_leave();
 		return 1;
 	}
 	if (c >= '1' && c <= '9')
@@ -2460,7 +2513,7 @@ static void do_fkey(int n)
 	else if (n == 3)
 		open_dialog(DLG_OPEN);
 	else if (n == 9)
-		editor_leave(1);
+		editor_run();
 	else if (n == 10)
 		open_menu(MENU_FILE);
 }
@@ -2807,6 +2860,12 @@ const char *mmb_editor_feed(char c)
 {
 	G.outn = 0;
 	G.out[0] = 0;
+	if (G.ed.wait_continue)
+	{
+		(void)c;
+		editor_resume();
+		return G.out;
+	}
 	if (alt_pend)
 	{
 		alt_pend = 0;
@@ -2896,12 +2955,12 @@ const char *mmb_editor_feed(char c)
 	}
 	if (c == 24) /* Ctrl+X quit */
 	{
-		editor_leave(0);
+		editor_leave();
 		return G.out;
 	}
 	if (c == 18) /* Ctrl+R run */
 	{
-		editor_leave(1);
+		editor_run();
 		return G.out;
 	}
 	if (c == 11) /* Ctrl+K cut */

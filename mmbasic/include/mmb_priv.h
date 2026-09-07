@@ -179,6 +179,12 @@ typedef struct mmb_ed_tab {
 typedef struct mmb_editor {
 	int active;
 	int run_on_exit;
+	int wait_continue;
+	int saved_mode;
+	int saved_bits;
+	int saved_write_page;
+	int saved_display_page;
+	int saved_write_fb;
 	int ntabs;
 	int cur;
 	int menu_open;     /* dropdown visible */

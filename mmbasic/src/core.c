@@ -2910,7 +2910,7 @@ const char *mmb_exec_line(const char *line)
 
 int mmb_in_editor(void)
 {
-	return G.ed.active;
+	return G.ed.active || G.ed.wait_continue;
 }
 
 int mmb_take_home_prompt(void)
