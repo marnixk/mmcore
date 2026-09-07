@@ -2965,4 +2965,8 @@ void mmb_poll(void)
 	mmb_connect_poll();
 	mmb_term_poll();
 	mmb_play_mix();
+	mmb_editor_poll();
+	mmb_ihelp_poll();
+	mmb_files_poll();
+	mmb_wordpad_poll();
 }

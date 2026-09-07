@@ -39,6 +39,7 @@ typedef struct {
 	int mode;
 	int prompt_kind;
 	int esc;
+	unsigned esc_at;
 	int csi_n;
 	int pend_drive;
 	int menu_i;
@@ -1534,6 +1535,16 @@ static void handle_arrow(int which)
 		;
 }
 
+static void files_lone_esc(void)
+{
+	if (F.drop >= 0)
+		F.drop = -1;
+	else if (F.mode == FU_BROWSE)
+		files_close_tui();
+	else
+		close_overlay();
+}
+
 static int handle_esc_char(char c)
 {
 	if (F.esc == 1)
@@ -1545,27 +1556,7 @@ static int handle_esc_char(char c)
 			return 1;
 		}
 		F.esc = 0;
-		if (c == 27)
-		{
-			if (F.drop >= 0)
-				F.drop = -1;
-			else if (F.mode == FU_BROWSE)
-				files_close_tui();
-			else
-				close_overlay();
-			return 1;
-		}
-		if (files_alt(c))
-			return 1;
-		if (F.drop >= 0)
-		{
-			F.drop = -1;
-			return 1;
-		}
-		if (F.mode == FU_BROWSE)
-			files_close_tui();
-		else
-			close_overlay();
+		files_lone_esc();
 		return 1;
 	}
 	if (F.esc == 2)
@@ -1901,6 +1892,7 @@ const char *mmb_files_key(char c)
 	if (c == 27)
 	{
 		F.esc = 1;
+		F.esc_at = mmb_now_ms();
 		return G.out;
 	}
 	if (F.mode == FU_PREVIEW)
@@ -2001,4 +1993,16 @@ const char *mmb_files_key(char c)
 	if (was_active && F.active && F.mode != FU_PREVIEW)
 		files_draw();
 	return G.out;
+}
+
+void mmb_files_poll(void)
+{
+	if (!F.active || F.esc != 1)
+		return;
+	if (mmb_now_ms() - F.esc_at < 60)
+		return;
+	F.esc = 0;
+	files_lone_esc();
+	if (F.active && F.mode != FU_PREVIEW)
+		files_draw();
 }

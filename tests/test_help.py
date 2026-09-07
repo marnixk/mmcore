@@ -198,7 +198,7 @@ def test_ihelp_enter_opens_link(console):
 
 def test_ihelp_escape_quits_index(console):
     open_ihelp(console)
-    keys(console, b"\x1b\x1b")
+    keys(console, b"\x1b", quiet=0.6)
     assert console.send_line("PRINT 1") == "1"
 
 
@@ -206,10 +206,10 @@ def test_ihelp_deeplink_escape_returns_to_index(console):
     seen = open_ihelp(console, "CLS")
     assert "clear" in seen.lower()
     assert "HELP: CLS" in seen or "CLS [" in seen or "CLS" in seen
-    seen = keys(console, b"\x1b\x1b")
+    seen = keys(console, b"\x1b", quiet=0.6)
     assert "<CLS>" in seen
     assert "HELP: Index" in seen or "[C]" in seen or "<Contents>" in seen
-    keys(console, b"\x1b\x1b")
+    keys(console, b"\x1b", quiet=0.6)
     assert console.send_line("PRINT 2") == "2"
 
 

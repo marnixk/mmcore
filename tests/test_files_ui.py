@@ -93,8 +93,7 @@ def test_files_quit_q_and_esc(fresh_console):
     seen = _keys(con, b"q")
     assert ">" in seen or con.send_line("PRINT 7") == "7"
     _open_files(con)
-    # Esc then a follow-up byte completes the lone-ESC detect
-    _keys(con, b"\x1bX")
+    _keys(con, b"\x1b", quiet=0.6)
     assert con.send_line("PRINT 8") == "8"
 
 

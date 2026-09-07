@@ -66,7 +66,7 @@ def test_editor_alt_f_opens_file_menu(kernel_image):
         opened = _keys(con, bytes([1]) + b"f")
         assert "Open" in opened or "Save" in opened or "Quit" in opened
         _keys(con, b"\x1b[B")
-        closed = _keys(con, b"\x1b\x1b")
+        closed = _keys(con, b"\x1b", quiet=0.6)
         assert "File" in closed
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
@@ -86,16 +86,19 @@ def test_editor_alt_x_quits(kernel_image):
 
 
 def test_editor_esc_menu_open_close(kernel_image):
-    """Serial Meta fallback: ESC+letter still opens the same menus."""
+    """A single ESC dismisses a menu. ESC+letter is not an Alt shortcut."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _edit(con, "MENU.BAS")
-        opened = _keys(con, b"\x1bf")
+        leftover = _keys(con, b"\x1bf", quiet=0.6)
+        assert "Open" not in leftover
+        assert "Quit" not in leftover
+        opened = _keys(con, bytes([1]) + b"f")
         assert "Open" in opened or "Save" in opened or "Quit" in opened
-        _keys(con, b"\x1b[B")
-        closed = _keys(con, b"\x1b\x1b")
+        closed = _keys(con, b"\x1b", quiet=0.6)
         assert "File" in closed
+        assert "Quit" not in closed
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
     finally:
@@ -193,7 +196,7 @@ def test_editor_open_dialog_has_file_and_dir_lists(kernel_image):
         assert wr > 100 and wg > 100 and wb > 100, (wr, wg, wb)
         gr, gg, gb = con.screen_pixel((c0 + 4) * 8 + 4, (r0 + 2) * 16 + 8)
         assert gg > gr + 20 and gg > 40, (gr, gg, gb)
-        _keys(con, b"\x1b\x1b", quiet=0.4)
+        _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
     finally:
         con.stop()
@@ -494,7 +497,7 @@ def test_editor_ctrl_p_lists_recursive_files(kernel_image):
         assert "Quick open" in seen
         assert "MAIN.BAS" in seen
         assert "CHILD.BAS" in seen or "NEST/CHILD" in seen
-        _keys(con, b"\x1b\x1b")
+        _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
     finally:
         con.stop()
@@ -633,7 +636,7 @@ def test_editor_theme_menu_lists_ten_themes(kernel_image):
             "Phosphor",
         ):
             assert name in seen, name
-        _keys(con, b"\x1b\x1b")
+        _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
     finally:
         con.stop()

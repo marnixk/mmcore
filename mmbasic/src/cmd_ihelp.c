@@ -23,6 +23,7 @@
 #define PAGE_TOPIC    2
 
 #define NAV_N 3
+#define ESC_IDLE_MS 60
 
 typedef struct {
 	int line;
@@ -57,6 +58,7 @@ static struct {
 	int cx;
 	int cy;
 	int esc;
+	unsigned esc_at;
 	int csi_n;
 	int stack_n;
 	char title[64];
@@ -1082,6 +1084,7 @@ const char *mmb_ihelp_key(char c)
 	if (c == 27)
 	{
 		H.esc = 1;
+		H.esc_at = mmb_now_ms();
 		return G.out;
 	}
 	if (c == 3)
@@ -1100,4 +1103,16 @@ const char *mmb_ihelp_key(char c)
 	if (H.active)
 		ih_draw();
 	return G.out;
+}
+
+void mmb_ihelp_poll(void)
+{
+	if (!H.active || H.esc != 1)
+		return;
+	if (mmb_now_ms() - H.esc_at < ESC_IDLE_MS)
+		return;
+	H.esc = 0;
+	do_back();
+	if (H.active)
+		ih_draw();
 }

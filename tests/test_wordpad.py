@@ -91,7 +91,7 @@ def test_wordpad_markdown_heading_style(kernel_image):
         _open(con)
         seen = _keys(con, b"# Title\rbody text", quiet=0.8)
         _alt_menu(con, b"f", quiet=0.4)
-        closed = _keys(con, b"\x1b\x1b", quiet=0.6)
+        closed = _keys(con, b"\x1b", quiet=0.6)
         time.sleep(0.3)
         serial = seen + " " + closed + " " + _plain(con.drain(quiet=0.4).decode(errors="replace"))
         pixel_diff = False
