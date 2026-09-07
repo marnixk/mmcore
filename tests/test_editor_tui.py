@@ -31,6 +31,7 @@ def test_editor_menu_labels_on_serial(kernel_image):
         seen = _edit(con, "HI.BAS")
         assert "File" in seen
         assert "Run" in seen
+        assert "Theme" in seen
         assert "F2" in seen
         _quit(con)
     finally:
@@ -609,5 +610,76 @@ def test_editor_run_restores_mode_and_page(kernel_image):
         assert con.send_line("PIXEL 12,12,RGB(255,0,0)") == ""
         pix = int(con.send_line("PRINT PIXEL(12,12)"))
         assert ((pix >> 16) & 255) > 150
+    finally:
+        con.stop()
+
+
+def test_editor_theme_menu_lists_ten_themes(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "TH.BAS")
+        seen = _keys(con, bytes([1]) + b"t")
+        for name in (
+            "Paper",
+            "Cloud",
+            "Snow",
+            "Night",
+            "Nord",
+            "Slate",
+            "Forest",
+            "Violet",
+            "Turbo",
+            "Phosphor",
+        ):
+            assert name in seen, name
+        _keys(con, b"\x1b\x1b")
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_theme_paper_changes_pane_and_persists(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "THP.BAS")
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        _keys(con, bytes([1]) + b"tp", quiet=0.8)
+        paper = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert any(r > 140 and g > 140 and b > 140 for r, g, b in paper), paper
+        _quit(con)
+        listing = con.send_line("OPTION LIST")
+        assert "PAPER" in listing.upper()
+        assert con.send_line("NEW") == ""
+        assert con.send_line('10 OPEN "A:/.mmbasic.ini" FOR INPUT AS #1') == ""
+        assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+        assert con.send_line("30 LINE INPUT #1, A$") == ""
+        assert con.send_line("40 PRINT A$") == ""
+        assert con.send_line("50 GOTO 20") == ""
+        assert con.send_line("70 CLOSE #1") == ""
+        ini = con.send_line("RUN", timeout=8)
+        assert "edit_theme=0" in ini
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
+def test_option_edit_theme_phosphor(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
+        _edit(con, "PHOS.BAS")
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert all(r + g + b < 40 for r, g, b in pane), pane
+        r, g, b = con.screen_pixel(3, 3 * 16)
+        assert g > r + 20 and g > 40, (r, g, b)
+        _quit(con)
+        assert "PHOSPHOR" in con.send_line("OPTION LIST").upper()
+        assert con.send_line("OPTION EDIT THEME 8") == ""
+        listed = con.send_line("OPTION LIST ALL")
+        assert "TURBO" in listed.upper()
     finally:
         con.stop()

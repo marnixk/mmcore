@@ -116,6 +116,7 @@ def test_remaining_option_subcommands(console):
         "OPTION DEFAULT MODE 8",
         "OPTION Y_AXIS DOWN",
         "OPTION EDIT FONT NORMAL",
+        "OPTION EDIT THEME TURBO",
         "OPTION USBKEYBOARD US",
         "OPTION RESET",
     ]
