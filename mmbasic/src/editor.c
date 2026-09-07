@@ -3210,8 +3210,9 @@ static int handle_escape(char c)
 			close_ui();
 			if (G.ed.active)
 				redraw();
+			return 1;
 		}
-		return 1;
+		return 0;
 	}
 	if (esc_state == ESC_SS3)
 	{
@@ -3416,6 +3417,13 @@ const char *mmb_editor_feed(char c)
 	{
 		if (c == 27 && esc_state == ESC_GOT)
 		{
+			/* USB/serial arrows are CSI (\x1b[C). A lone Esc left pending
+			 * must not steal that introducer (that left "[C" in the buffer). */
+			if (!G.ed.menu_open && !G.ed.dialog)
+			{
+				esc_at = mmb_now_ms();
+				return G.out;
+			}
 			esc_state = ESC_NONE;
 			close_ui();
 			if (G.ed.active)
@@ -3590,13 +3598,14 @@ void mmb_editor_poll(void)
 {
 	if (!G.ed.active || esc_state != ESC_GOT)
 		return;
-	if (!G.ed.menu_open && !G.ed.dialog)
-		return;
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
 		return;
 	esc_state = ESC_NONE;
-	close_ui();
-	redraw();
+	if (G.ed.menu_open || G.ed.dialog)
+	{
+		close_ui();
+		redraw();
+	}
 }
 
 void mmb_editor_on_ihelp_exit(void)

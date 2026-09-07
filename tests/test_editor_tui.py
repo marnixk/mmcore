@@ -126,6 +126,37 @@ def test_editor_ctrl_c_x_v_copy_cut_paste(kernel_image):
         con.stop()
 
 
+def test_editor_esc_then_right_does_not_insert_csi(kernel_image):
+    """Esc then Right must move the cursor, not insert the CSI leftover [C."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ESCCSI.BAS")
+        _keys(con, b"HELLO")
+        seen = _keys(con, b"\x1b\x1b[C")
+        assert "[C" not in seen
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "ESCCSI.BAS") == "HELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_esc_then_letter_inserts_letter(kernel_image):
+    """A lone Esc is ignored; the next printable key inserts normally."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ESCA.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1ba")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "ESCA.BAS") == "HELLOa"
+    finally:
+        con.stop()
+
+
 def test_editor_esc_menu_open_close(kernel_image):
     """A single ESC dismisses a menu. ESC+letter is not an Alt shortcut."""
     con = MMBasicConsole(kernel_image)
