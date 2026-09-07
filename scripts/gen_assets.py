@@ -11,7 +11,7 @@ def chunk(tag, data):
     return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
 
-def make_png(path, w, h, rgb=(255, 0, 0)):
+def make_png(path, w, h, rgb=(255, 0, 0), level=0):
     raw = b""
     for y in range(h):
         raw += b"\x00"
@@ -19,7 +19,7 @@ def make_png(path, w, h, rgb=(255, 0, 0)):
     data = (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 0))
+        + chunk(b"IDAT", zlib.compress(raw, level))
         + chunk(b"IEND", b"")
     )
     open(path, "wb").write(data)
@@ -190,7 +190,8 @@ def c_array(name, data):
 
 
 def main():
-    png = make_png(os.path.join(OUT_DIR, "test.png"), 8, 8, (255, 0, 0))
+    png = make_png(os.path.join(OUT_DIR, "test.png"), 8, 8, (255, 0, 0), 0)
+    pngz = make_png(os.path.join(OUT_DIR, "testz.png"), 8, 8, (0, 255, 0), 9)
     jpg = make_jpeg(os.path.join(OUT_DIR, "test.jpg"))
     mod = make_mod(os.path.join(OUT_DIR, "test.mod"))
     xm = make_xm(os.path.join(OUT_DIR, "test.xm"))
@@ -199,6 +200,7 @@ def main():
 
 """
     src += c_array("asset_png", png) + "\n"
+    src += c_array("asset_pngz", pngz) + "\n"
     src += c_array("asset_jpg", jpg) + "\n"
     src += c_array("asset_mod", mod) + "\n"
     src += c_array("asset_xm", xm) + "\n"
@@ -206,6 +208,8 @@ def main():
     src += """
 extern const unsigned char asset_png[];
 extern const unsigned asset_png_len;
+extern const unsigned char asset_pngz[];
+extern const unsigned asset_pngz_len;
 extern const unsigned char asset_jpg[];
 extern const unsigned asset_jpg_len;
 extern const unsigned char asset_mod[];
@@ -218,6 +222,7 @@ extern const unsigned asset_mp3_len;
 void mmb_assets_seed(void)
 {
     mmb_vfs_seed_file("TEST.PNG", asset_png, asset_png_len);
+    mmb_vfs_seed_file("TESTZ.PNG", asset_pngz, asset_pngz_len);
     mmb_vfs_seed_file("TEST.JPG", asset_jpg, asset_jpg_len);
     mmb_vfs_seed_file("TEST.MOD", asset_mod, asset_mod_len);
     mmb_vfs_seed_file("TEST.XM", asset_xm, asset_xm_len);
