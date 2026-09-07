@@ -514,7 +514,7 @@ static const char kHelpWordpad[] =
 	"       Neon, Terminal (saved between sessions).\n"
 	"\n"
 	"Markdown: # / ## headings (larger type), -/* bullets,\n"
-	"> quotes, ``` fenced code blocks.\n"
+	"> quotes, ``` fenced code blocks, **bold** / __bold__.\n"
 	"Word wrap at the column width; Enter inserts a\n"
 	"real newline. Shift+Arrows select text.\n"
 	"\n"

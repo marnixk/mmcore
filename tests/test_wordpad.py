@@ -65,6 +65,7 @@ def test_help_wordpad(console):
     low = out.lower()
     assert "markdown" in low
     assert "theme" in low or "wide" in low
+    assert "bold" in low
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
     assert "ctrl+p" in low or "quick-open" in low
 
@@ -205,6 +206,20 @@ def _lum(rgb):
     return r * 3 + g * 6 + b
 
 
+def _cell_corners(con, col, row):
+    x0, y0 = col * 8, row * 16
+    return [
+        con.screen_pixel(x0 + 1, y0 + 1),
+        con.screen_pixel(x0 + 6, y0 + 1),
+        con.screen_pixel(x0 + 1, y0 + 14),
+        con.screen_pixel(x0 + 6, y0 + 14),
+    ]
+
+
+def _is_solid_cursor(con, col, row):
+    return all(_lum(p) > 1500 for p in _cell_corners(con, col, row))
+
+
 def test_wordpad_cursor_visible(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -327,5 +342,87 @@ def test_wordpad_autosave_on_switch(kernel_image):
         line = con.send_line("PRINT A$")
         con.send_line("CLOSE #1")
         assert "extra" in line
+    finally:
+        con.stop()
+
+
+def test_wordpad_empty_line_cursor_and_up(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"A\r", quiet=0.6)
+        time.sleep(0.2)
+        empty = con.screen_pixel(4, 16 + 8)
+        below = con.screen_pixel(4, 32 + 8)
+        assert _lum(empty) > _lum(below) + 80, (empty, below)
+        _keys(con, b"\x1b[A", quiet=0.5)
+        time.sleep(0.2)
+        on_a = con.screen_pixel(4, 8)
+        still_empty = con.screen_pixel(4, 16 + 8)
+        assert _lum(on_a) > _lum(still_empty) + 80, (on_a, still_empty)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_up_from_longer_line_end(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"ab\rabcd", quiet=0.7)
+        _keys(con, b"\x1b[A", quiet=0.5)
+        time.sleep(0.2)
+        assert _is_solid_cursor(con, 2, 0)
+        assert not _is_solid_cursor(con, 0, 1)
+        assert not _is_solid_cursor(con, 0, 0)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_bold_is_more_intense(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"xx**bold**yy", quiet=0.7)
+        time.sleep(0.2)
+        plain = con.screen_pixel(4, 8)
+        strong = con.screen_pixel(2 * 8 + 4, 8)
+        assert _lum(strong) != _lum(plain), (strong, plain)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_menu_status_and_hotkeys(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        w, h = con.screen_size()
+        _open(con)
+        _keys(con, b"hello", quiet=0.5)
+        pane = con.screen_pixel(8, 80)
+        seen = _alt_menu(con, b"f", quiet=0.6)
+        time.sleep(0.2)
+        low = seen.lower()
+        assert "untitled" in low
+        assert "words" in low
+        assert not low.rstrip().endswith("80")
+        assert not low.rstrip().endswith("120")
+        menu_bar = con.screen_pixel(4 * 8 + 4, 8)
+        drop = con.screen_pixel(12, 3 * 16 + 8)
+        assert _lum(menu_bar) > _lum(pane) + 30, (menu_bar, pane)
+        assert _lum(drop) > _lum(pane) + 30, (drop, pane)
+        hot_f = con.screen_pixel(4, 8)
+        letter_i = con.screen_pixel(12, 8)
+        assert hot_f != letter_i, (hot_f, letter_i)
+        status_y = (h // 16 - 1) * 16 + 8
+        chip = con.screen_pixel(4, status_y)
+        assert _lum(chip) > _lum(pane) + 30, (chip, pane)
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
     finally:
         con.stop()
