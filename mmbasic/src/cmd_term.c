@@ -170,11 +170,31 @@ static void term_layout(void)
 		T.pane_rows = TM_MAX_ROWS;
 }
 
+static void wait_ms(unsigned ms)
+{
+	unsigned start = mmb_now_ms();
+	while (mmb_now_ms() - start < ms)
+	{
+		if (G.plat && G.plat->poll_input)
+			G.plat->poll_input();
+	}
+}
+
+static void fade_row(int y0, int y1, int w, int t256)
+{
+	int x, y;
+	for (y = y0; y < y1; y++)
+		for (x = 0; x < w; x++)
+		{
+			unsigned px = G.plat->get_pixel(x, y);
+			G.plat->set_pixel(x, y, lerp_rgb(px, TM_BG, t256));
+		}
+}
+
 static void fade_out_screen(void)
 {
-	int w, h, rows, r, y, x;
-	unsigned row_dur, row_start, now;
-	int t256;
+	int w, h, rows, r, y0, y1;
+	unsigned step;
 
 	if (!G.plat || !G.plat->get_pixel || !G.plat->set_pixel)
 		return;
@@ -183,29 +203,21 @@ static void fade_out_screen(void)
 	rows = h / TM_CH;
 	if (rows < 1)
 		rows = 1;
-	row_dur = 1000u / (unsigned)rows;
-	if (row_dur < 1u)
-		row_dur = 1u;
+	step = 1000u / (unsigned)(rows * 3);
+	if (step < 1u)
+		step = 1u;
 	for (r = 0; r < rows; r++)
 	{
-		row_start = mmb_now_ms();
-		for (;;)
-		{
-			now = mmb_now_ms();
-			if (now - row_start >= row_dur)
-				t256 = 256;
-			else
-				t256 = (int)((now - row_start) * 256u / row_dur);
-			for (y = r * TM_CH; y < (r + 1) * TM_CH && y < h; y++)
-				for (x = 0; x < w; x++)
-				{
-					unsigned px = G.plat->get_pixel(x, y);
-					unsigned np = lerp_rgb(px, TM_BG, t256);
-					G.plat->set_pixel(x, y, np);
-				}
-			if (t256 >= 256)
-				break;
-		}
+		y0 = r * TM_CH;
+		y1 = y0 + TM_CH;
+		if (y1 > h)
+			y1 = h;
+		fade_row(y0, y1, w, 85);
+		wait_ms(step);
+		fade_row(y0, y1, w, 170);
+		wait_ms(step);
+		fade_row(y0, y1, w, 256);
+		wait_ms(step);
 	}
 }
 
@@ -809,6 +821,7 @@ void mmb_cmd_term(void)
 	}
 	T.cur_row = 0;
 	T.cur_col = 0;
+	T.active = 1;
 
 	if (!T.demo)
 	{
@@ -819,16 +832,21 @@ void mmb_cmd_term(void)
 				strncpy(T.net_msg, "Network not available", sizeof(T.net_msg) - 1);
 			else
 				strncpy(T.net_msg, "Connect failed", sizeof(T.net_msg) - 1);
+			T.row_alpha[0] = 0;
+			T.row_fade_start[0] = mmb_now_ms();
+			pane_puts(T.net_msg);
+			pane_newline();
 		}
 		else
 			T.tcp = 1;
 	}
 	else
 	{
-		T.demo_next = mmb_now_ms() + TM_DEMO_MIN_MS;
+		T.demo_next = mmb_now_ms();
+		demo_emit_line();
+		demo_emit_line();
 	}
 
-	T.active = 1;
 	term_draw();
 	term_serial_dump();
 }

@@ -11,10 +11,10 @@ def _plain(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
 
 
-def _open_term(con, cmd: str, quiet=1.8):
+def _open_term(con, cmd: str, quiet=0.6, timeout=12.0):
     con.drain(quiet=0.1)
     con._ser.sendall((cmd + "\r").encode())
-    return _plain(con.drain(quiet=quiet, timeout=25).decode(errors="replace"))
+    return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
 
 
 def _f10(con):
@@ -71,8 +71,8 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        seen = _open_term(con, 'TERM "demo", 23', quiet=1.8)
-        time.sleep(1.2)
+        seen = _open_term(con, 'TERM "demo", 23', quiet=0.6, timeout=8.0)
+        time.sleep(1.0)
         assert con.screen_size() == (960, 540)
         r, g, b = con.screen_pixel(40, 200)
         assert _is_dark_slate(r, g, b), (r, g, b)
@@ -90,8 +90,8 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        _open_term(con, 'TERM "demo", 23', quiet=2.0)
-        time.sleep(1.5)
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(1.2)
         margin = con.screen_pixel(20, 200)
         assert _is_dark_slate(*margin), margin
         found_cream = False
@@ -113,10 +113,10 @@ def test_term_demo_new_text_and_scroll(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        early = _open_term(con, 'TERM "demo", 23', quiet=1.5)
+        early = _open_term(con, 'TERM "demo", 23', quiet=0.25, timeout=3.5)
         early_nums = _line_numbers(early)
         time.sleep(4.0)
-        later = _plain(con.drain(quiet=1.0, timeout=10).decode(errors="replace"))
+        later = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         later_nums = _line_numbers(later)
         early_max = max(early_nums) if early_nums else 0
         later_max = max(later_nums) if later_nums else 0
@@ -134,7 +134,7 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=2.0)
+        seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=0.8, timeout=8.0)
         low = seen.lower()
         assert "network not available" in low or "connect failed" in low
         _f10(con)
