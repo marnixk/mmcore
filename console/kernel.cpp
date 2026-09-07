@@ -96,6 +96,15 @@ static void emit_nl_prompt (CKernel *k)
 	emit_prompt (k);
 }
 
+static int line_is_numbered (const char *s)
+{
+	if (!s)
+		return 0;
+	while (*s == ' ' || *s == '\t')
+		s++;
+	return *s >= '0' && *s <= '9';
+}
+
 void CKernel::AttachKeyboard (void)
 {
 	if (m_pKeyboard != 0)
@@ -791,6 +800,7 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		m_nPos = 0;
 		m_nHistIdx = -1;
 		const char *Result = mmb_exec_line (Line);
+		int numbered = line_is_numbered (Line);
 		if (mmb_in_editor ())
 		{
 			/* Editor streams a full frame via write_screen/write_serial. */
@@ -826,11 +836,17 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 				emit (this, Result);
 		}
 		else if (!Result || !Result[0])
+		{
+			if (!numbered)
+				emit (this, "\r\n");
 			emit_nl_prompt (this);
+		}
 		else
 		{
 			emit (this, "\r\n");
 			emit (this, Result);
+			if (!numbered)
+				emit (this, "\r\n");
 			emit_nl_prompt (this);
 		}
 		*pLen = 0;
