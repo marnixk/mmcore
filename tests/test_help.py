@@ -153,7 +153,7 @@ def test_help_option_wifi(console):
     assert ".mmbasic.ini" in out
     assert "firmware" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
-    assert "beacon" in out.lower()
+    assert "not configured" in out.lower()
     assert "country=US" in out or "US" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
