@@ -224,6 +224,7 @@ int mmb_editor_theme_lookup(const char *s)
 #define ESC_GOT     1
 #define ESC_CSI     2
 #define ESC_SS3     3
+#define ESC_IDLE_MS 60
 
 #define DLG_NONE    0
 #define DLG_OPEN    1
@@ -251,6 +252,7 @@ static int pick_view[ED_PICK_MAX];
 static int pick_vn;
 static int alt_pend;
 static int esc_state;
+static unsigned esc_at;
 static int csi_n;
 static int csi_arg;
 static int csi_semi;
@@ -2874,21 +2876,19 @@ static int handle_escape(char c)
 			csi_semi = 0;
 			return 1;
 		}
-		esc_state = ESC_NONE;
-		if (handle_alt(c))
+		if (c == 'O')
 		{
-			if (G.ed.active)
-				redraw();
+			esc_state = ESC_SS3;
 			return 1;
 		}
+		esc_state = ESC_NONE;
 		if (G.ed.menu_open || G.ed.dialog)
 		{
 			close_ui();
 			if (G.ed.active)
 				redraw();
-			return 1;
 		}
-		return 0;
+		return 1;
 	}
 	if (esc_state == ESC_SS3)
 	{
@@ -3103,6 +3103,7 @@ const char *mmb_editor_feed(char c)
 	if (c == 27)
 	{
 		esc_state = ESC_GOT;
+		esc_at = mmb_now_ms();
 		return G.out;
 	}
 	if (c == 16) /* Ctrl+P quick open */
@@ -3230,4 +3231,17 @@ void mmb_cmd_edit(void)
 	else if (G.current_prog[0])
 		strncpy(path, G.current_prog, sizeof(path) - 1);
 	mmb_editor_open(path);
+}
+
+void mmb_editor_poll(void)
+{
+	if (!G.ed.active || esc_state != ESC_GOT)
+		return;
+	if (!G.ed.menu_open && !G.ed.dialog)
+		return;
+	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
+		return;
+	esc_state = ESC_NONE;
+	close_ui();
+	redraw();
 }

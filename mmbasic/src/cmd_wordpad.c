@@ -13,6 +13,7 @@
 #define WP_ESC_GOT  1
 #define WP_ESC_CSI  2
 #define WP_ESC_SS3  3
+#define WP_ESC_IDLE_MS 60
 
 #define WP_DLG_NONE   0
 #define WP_DLG_OPEN   1
@@ -79,6 +80,7 @@ typedef struct {
 	int pane_width;
 	int text_rows;
 	int esc_state;
+	unsigned esc_at;
 	int csi_n;
 	int csi_arg;
 	int csi_semi;
@@ -1800,15 +1802,15 @@ static int handle_escape(char c)
 			W.csi_semi = 0;
 			return 1;
 		}
-		W.esc_state = WP_ESC_NONE;
-		if (handle_alt(c))
-			return 1;
-		if (W.menu_open || W.dialog)
+		if (c == 'O')
 		{
-			close_ui();
+			W.esc_state = WP_ESC_SS3;
 			return 1;
 		}
-		return 0;
+		W.esc_state = WP_ESC_NONE;
+		if (W.menu_open || W.dialog)
+			close_ui();
+		return 1;
 	}
 	if (W.esc_state == WP_ESC_SS3)
 	{
@@ -1885,6 +1887,7 @@ static int dialog_key(char c)
 	if (c == 27)
 	{
 		W.esc_state = WP_ESC_GOT;
+		W.esc_at = mmb_now_ms();
 		return 1;
 	}
 	if (c == '\r' || c == '\n')
@@ -2168,6 +2171,7 @@ static int menu_key(char c)
 	if (c == 27)
 	{
 		W.esc_state = WP_ESC_GOT;
+		W.esc_at = mmb_now_ms();
 		return 1;
 	}
 	if (c == '\r' || c == '\n')
@@ -2234,6 +2238,7 @@ static const char *wp_feed(char c)
 	if (c == 27)
 	{
 		W.esc_state = WP_ESC_GOT;
+		W.esc_at = mmb_now_ms();
 		return G.out;
 	}
 	if (menu_key(c))
@@ -2337,4 +2342,17 @@ int mmb_in_wordpad(void)
 const char *mmb_wordpad_key(char c)
 {
 	return wp_feed(c);
+}
+
+void mmb_wordpad_poll(void)
+{
+	if (!W.active || W.esc_state != WP_ESC_GOT)
+		return;
+	if (!W.menu_open && !W.dialog)
+		return;
+	if (mmb_now_ms() - W.esc_at < WP_ESC_IDLE_MS)
+		return;
+	W.esc_state = WP_ESC_NONE;
+	close_ui();
+	wp_redraw();
 }
