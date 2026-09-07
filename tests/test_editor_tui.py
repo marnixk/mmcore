@@ -164,13 +164,14 @@ def test_editor_esc_menu_open_close(kernel_image):
     try:
         _edit(con, "MENU.BAS")
         leftover = _keys(con, b"\x1bf", quiet=0.6)
-        assert "Open" not in leftover
-        assert "Quit" not in leftover
+        assert "Open..." not in leftover
+        assert "Quick open" not in leftover
         opened = _keys(con, bytes([1]) + b"f")
-        assert "Open" in opened or "Save" in opened or "Quit" in opened
+        assert "Open..." in opened or "Quick open" in opened
         closed = _keys(con, b"\x1b", quiet=0.6)
         assert "File" in closed
-        assert "Quit" not in closed
+        assert "Open..." not in closed
+        assert "Quick open" not in closed
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
     finally:
