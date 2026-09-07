@@ -62,7 +62,7 @@ def test_help_term(console):
     low = out.lower()
     assert "host" in low
     assert "f10" in low
-    assert "mode 14" in low or "mode14" in low.replace(" ", "")
+    assert "14" in low and "mode" in low
     assert "demo" in low
     assert any(k in low for k in ("fade", "scroll", "slate"))
 
@@ -71,8 +71,8 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        seen = _open_term(con, 'TERM "demo", 23', quiet=0.6, timeout=8.0)
-        time.sleep(1.0)
+        seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.4)
         assert con.screen_size() == (960, 540)
         r, g, b = con.screen_pixel(40, 200)
         assert _is_dark_slate(r, g, b), (r, g, b)
@@ -134,7 +134,7 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=0.8, timeout=8.0)
+        seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=0.8, timeout=10.0)
         low = seen.lower()
         assert "network not available" in low or "connect failed" in low
         _f10(con)

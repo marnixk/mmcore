@@ -203,7 +203,7 @@ static void fade_out_screen(void)
 	rows = h / TM_CH;
 	if (rows < 1)
 		rows = 1;
-	step = 1000u / (unsigned)(rows * 3);
+	step = 1000u / (unsigned)rows;
 	if (step < 1u)
 		step = 1u;
 	for (r = 0; r < rows; r++)
@@ -212,13 +212,12 @@ static void fade_out_screen(void)
 		y1 = y0 + TM_CH;
 		if (y1 > h)
 			y1 = h;
-		fade_row(y0, y1, w, 85);
-		wait_ms(step);
-		fade_row(y0, y1, w, 170);
-		wait_ms(step);
+		fade_row(y0, y1, w, 128);
 		fade_row(y0, y1, w, 256);
+		ser(".");
 		wait_ms(step);
 	}
+	ser("\r\n");
 }
 
 static void pane_clear_row(int row)
@@ -803,6 +802,7 @@ void mmb_cmd_term(void)
 	T.saved_bits = G.gfx.bits;
 	T.demo = (strcasecmp(T.host, "demo") == 0);
 
+	ser("TERM\r\n");
 	fade_out_screen();
 
 	mode = (G.gfx.mode == 16) ? 16 : 14;
