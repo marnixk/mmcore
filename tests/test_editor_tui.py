@@ -549,3 +549,65 @@ def test_editor_ctrl_p_filter_then_enter(kernel_image):
         assert "22" in con.send_line('RUN "A:/SWP/NEST/CHILD.BAS"')
     finally:
         con.stop()
+
+
+def test_editor_run_press_key_returns(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "RUNRET.BAS")
+        _keys(con, b"PRINT 6*7")
+        ran = _keys(con, bytes([18]), quiet=1.2)
+        assert "42" in ran
+        assert "Press any key to continue" in ran
+        back = _keys(con, b" ", quiet=0.8)
+        assert "File" in back
+        assert "Run" in back
+        assert "PRINT 6*7" in back or "6*7" in back
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+        assert "42" in con.send_line('RUN "RUNRET.BAS"')
+    finally:
+        con.stop()
+
+
+def test_editor_f9_run_press_key_returns(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "F9RUN.BAS")
+        _keys(con, b"PRINT 8+1")
+        ran = _keys(con, b"\x1b[20~", quiet=1.2)
+        assert "9" in ran
+        assert "Press any key to continue" in ran
+        back = _keys(con, b"x", quiet=0.8)
+        assert "File" in back
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
+    finally:
+        con.stop()
+
+
+def test_editor_run_restores_mode_and_page(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "GFXRUN.BAS")
+        _keys(con, b"MODE 7,8\rPAGE WRITE 1\rPAGE DISPLAY 1\rPRINT 99")
+        ran = _keys(con, bytes([18]), quiet=1.5)
+        assert "99" in ran
+        assert "Press any key to continue" in ran
+        back = _keys(con, b" ", quiet=1.0)
+        assert "File" in back
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        _quit(con)
+        assert con.send_line("PRINT MM.HRES") == "640"
+        assert con.send_line("PRINT MM.VRES") == "480"
+        assert con.send_line("PAGE WRITE 0") == ""
+        assert con.send_line("CLS") == ""
+        assert con.send_line("PIXEL 12,12,RGB(255,0,0)") == ""
+        pix = int(con.send_line("PRINT PIXEL(12,12)"))
+        assert ((pix >> 16) & 255) > 150
+    finally:
+        con.stop()

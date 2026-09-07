@@ -466,6 +466,8 @@ static const char kHelpEdit[] =
 	"Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+H Help\n"
 	"       F10 File menu   Alt+1..9 switch tabs\n"
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
+	"After Run, press any key to return to the editor.\n"
+	"MODE and PAGE WRITE are restored on return.\n"
 	"Keys: F2 save  F3 open  F9 run  ^O save  ^X quit\n"
 	"      ^R save and run  ^K/^Y cut line  ^U paste\n"
 	"      Shift+Arrows select text (QBasic-style)\n"
