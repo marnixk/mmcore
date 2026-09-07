@@ -439,9 +439,9 @@ void CKernel::PollUsbRepeat (void)
 	first = (unsigned) mmb_opt_repeat_first ();
 	next = (unsigned) mmb_opt_repeat_next ();
 	if (first == 0)
-		first = 600;
+		first = MMB_REPEAT_FIRST_DEFAULT;
 	if (next == 0)
-		next = 150;
+		next = MMB_REPEAT_NEXT_DEFAULT;
 	if (!m_DidRepeat)
 	{
 		if (now - m_HoldMs < first)

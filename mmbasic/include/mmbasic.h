@@ -132,6 +132,8 @@ void mmb_reboot(void);
 void mmb_console_apply_colour(void);
 
 /* OPTION KEYBOARD REPEAT first [, next]  (milliseconds). */
+#define MMB_REPEAT_FIRST_DEFAULT 300
+#define MMB_REPEAT_NEXT_DEFAULT  75
 int mmb_opt_repeat_first(void);
 int mmb_opt_repeat_next(void);
 

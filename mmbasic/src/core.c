@@ -1480,8 +1480,8 @@ void mmb_option_reset(void)
 	G.opt.baudrate = 115200;
 	G.opt.status = 1;
 	G.opt.vcc = 3.3;
-	G.opt.repeat_first = 600;
-	G.opt.repeat_next = 150;
+	G.opt.repeat_first = MMB_REPEAT_FIRST_DEFAULT;
+	G.opt.repeat_next = MMB_REPEAT_NEXT_DEFAULT;
 	G.opt.edit_font = 1;
 	G.opt.edit_theme = 8; /* Turbo */
 	G.opt.wordpad_theme = 0; /* Dark */

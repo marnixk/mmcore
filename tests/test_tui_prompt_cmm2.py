@@ -107,6 +107,14 @@ def test_option_keyboard_repeat(console):
     assert "80" in listing
 
 
+def test_option_keyboard_repeat_default_is_faster(fresh_console):
+    listing = fresh_console.send_line("OPTION LIST ALL")
+    compact = listing.replace(" ", "")
+    assert "KEYBOARDREPEAT300,75" in compact
+    hidden = fresh_console.send_line("OPTION LIST")
+    assert "KEYBOARD REPEAT" not in hidden
+
+
 def test_editor_alt_prefix_opens_file_menu(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

@@ -475,12 +475,12 @@ void mmb_print_val(mmb_val v)
 
 int mmb_opt_repeat_first(void)
 {
-	return G.opt.repeat_first > 0 ? G.opt.repeat_first : 600;
+	return G.opt.repeat_first > 0 ? G.opt.repeat_first : MMB_REPEAT_FIRST_DEFAULT;
 }
 
 int mmb_opt_repeat_next(void)
 {
-	return G.opt.repeat_next > 0 ? G.opt.repeat_next : 150;
+	return G.opt.repeat_next > 0 ? G.opt.repeat_next : MMB_REPEAT_NEXT_DEFAULT;
 }
 
 int mmb_opt_wifi_debug(void)

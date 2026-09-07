@@ -1078,7 +1078,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.ds3231 ? "OPTION DS3231 ON" : "OPTION DS3231 OFF");
 	if (all || G.opt.baseline)
 		ol_line(&n, G.opt.baseline ? "OPTION BASELINE ON" : "OPTION BASELINE OFF");
-	if (all || G.opt.repeat_first != 600 || G.opt.repeat_next != 150)
+	if (all || G.opt.repeat_first != MMB_REPEAT_FIRST_DEFAULT ||
+	    G.opt.repeat_next != MMB_REPEAT_NEXT_DEFAULT)
 	{
 		if (n)
 			mmb_out("\n");
