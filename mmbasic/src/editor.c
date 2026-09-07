@@ -2577,6 +2577,24 @@ static void next_tab(void)
 	set_status(0);
 }
 
+static void tab_right(void)
+{
+	if (G.ed.cur + 1 < G.ed.ntabs)
+	{
+		G.ed.cur++;
+		set_status(0);
+	}
+}
+
+static void tab_left(void)
+{
+	if (G.ed.cur > 0)
+	{
+		G.ed.cur--;
+		set_status(0);
+	}
+}
+
 static void close_tab(void)
 {
 	int i;
@@ -2735,10 +2753,11 @@ static void do_fkey(int n)
 static int handle_arrow_or_special(int kind, int mod)
 {
 	/* kind: 1 up 2 down 3 right 4 left 5 home 6 end 7 del 8 ins 9 pgup 10 pgdn */
-	int shift = 0, ctrl = 0;
+	int shift = 0, ctrl = 0, alt = 0;
 	if (mod > 1)
 	{
 		shift = ((mod - 1) & 1) != 0;
+		alt = ((mod - 1) & 2) != 0;
 		ctrl = ((mod - 1) & 4) != 0;
 	}
 	if (G.ed.dialog == DLG_HELP)
@@ -2796,6 +2815,14 @@ static int handle_arrow_or_special(int kind, int mod)
 			G.ed.menu = (G.ed.menu + 1) % MENU_COUNT;
 			G.ed.menu_item = 0;
 		}
+		return 1;
+	}
+	if (alt && !ctrl && !shift)
+	{
+		if (kind == 3)
+			tab_right();
+		else if (kind == 4)
+			tab_left();
 		return 1;
 	}
 	if (kind == 7)
@@ -3164,6 +3191,13 @@ const char *mmb_editor_feed(char c)
 	{
 		save_tab();
 		redraw();
+		return G.out;
+	}
+	if (c == 23) /* Ctrl+W close tab */
+	{
+		close_tab();
+		if (G.ed.active)
+			redraw();
 		return G.out;
 	}
 	if (c == 3) /* Ctrl+C copy */
