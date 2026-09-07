@@ -535,12 +535,17 @@ int mmb_net_tcp_recv(void *data, unsigned maxn);
 void mmb_net_tcp_close(void);
 
 void mmb_cmd_connect(void);
+void mmb_cmd_term(void);
 void mmb_cmd_ipconfig(void);
 void mmb_cmd_reboot(void);
 void mmb_check_break(void);
 int mmb_in_connect(void);
 const char *mmb_connect_key(char c);
 void mmb_connect_poll(void);
+
+int mmb_in_term(void);
+const char *mmb_term_key(char c);
+void mmb_term_poll(void);
 
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);

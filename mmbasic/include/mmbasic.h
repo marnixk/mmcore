@@ -86,6 +86,12 @@ int mmb_in_connect(void);
 /* Feed a keystroke to CONNECT. Returns text to emit (may be empty). */
 const char *mmb_connect_key(char c);
 
+/* True while TERM fullscreen terminal owns the keyboard. */
+int mmb_in_term(void);
+
+/* Feed a keystroke to TERM. Returns text to emit (may be empty). */
+const char *mmb_term_key(char c);
+
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 

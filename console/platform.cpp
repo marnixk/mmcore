@@ -54,9 +54,40 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 
 static unsigned plat_get_pixel(int x, int y)
 {
-	(void)x;
-	(void)y;
-	return 0;
+	TScreenColor raw;
+
+	if (!s_kernel)
+		return 0;
+	CScreenDevice &sc = s_kernel->Screen();
+	if (x < 0 || y < 0 || (unsigned)x >= sc.GetWidth() || (unsigned)y >= sc.GetHeight())
+		return 0;
+	raw = sc.GetPixel((unsigned)x, (unsigned)y);
+#if DEPTH == 32
+	{
+		unsigned b = (unsigned)raw & 0xFF;
+		unsigned g = ((unsigned)raw >> 8) & 0xFF;
+		unsigned r = ((unsigned)raw >> 16) & 0xFF;
+		return (r << 16) | (g << 8) | b;
+	}
+#elif DEPTH == 16
+	{
+		unsigned r = ((unsigned)raw >> 11) & 0x1F;
+		unsigned g = ((unsigned)raw >> 6) & 0x1F;
+		unsigned b = (unsigned)raw & 0x1F;
+		r = r * 255 / 31;
+		g = g * 255 / 31;
+		b = b * 255 / 31;
+		return (r << 16) | (g << 8) | b;
+	}
+#else
+	{
+		unsigned v = (unsigned)raw;
+		unsigned r = v & 0xE0;
+		unsigned g = (v << 3) & 0xE0;
+		unsigned b = (v << 6) & 0xC0;
+		return (r << 16) | (g << 8) | b;
+	}
+#endif
 }
 
 static void plat_fill(unsigned rgb)

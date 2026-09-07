@@ -667,6 +667,16 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
+	if (mmb_in_term ())
+	{
+		const char *out = mmb_term_key (c);
+		if (out && out[0])
+			emit (this, out);
+		if (!mmb_in_term ())
+			emit_prompt (this);
+		return;
+	}
+
 	if (mmb_in_connect ())
 	{
 		const char *out = mmb_connect_key (c);
@@ -757,6 +767,11 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		else if (mmb_in_ihelp ())
 		{
 			/* Interactive HELP TUI already streamed to HDMI/serial. */
+		}
+		else if (mmb_in_term ())
+		{
+			if (Result && Result[0])
+				emit (this, Result);
 		}
 		else if (mmb_in_connect ())
 		{
