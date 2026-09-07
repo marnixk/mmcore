@@ -438,6 +438,38 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_int_val((int64_t)mmb_as_float(a[0]));
 		return 1;
 	}
+	if (match_fun("CINT"))
+	{
+		double x;
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		x = mmb_as_float(a[0]);
+		*out = mmb_int_val(x >= 0.0 ? (int64_t)floor(x + 0.5)
+					     : (int64_t)ceil(x - 0.5));
+		return 1;
+	}
+	if (match_fun("EVAL"))
+	{
+		char buf[MMB_MAX_STR + 1];
+		const char *savep;
+
+		call_args(a, 1, &n);
+		if (n != 1 || a[0].type != T_STR)
+			mmb_error("?TYPE MISMATCH");
+		strncpy(buf, a[0].s, MMB_MAX_STR);
+		buf[MMB_MAX_STR] = 0;
+		savep = G.p;
+		G.p = buf;
+		*out = mmb_expr();
+		G.p = savep;
+		return 1;
+	}
+	if (match_fun("MATH"))
+	{
+		G.p++;
+		return mmb_try_math_fn(out);
+	}
 	if (mmb_match("SQR") || mmb_match("SQRT"))
 	{
 		call_args(a, 1, &n);
