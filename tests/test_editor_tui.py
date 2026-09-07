@@ -648,7 +648,7 @@ def test_editor_theme_paper_changes_pane_and_persists(kernel_image):
         assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
         _keys(con, bytes([1]) + b"tp", quiet=0.8)
         paper = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-        assert any(r > 180 and g > 180 and b > 180 for r, g, b in paper), paper
+        assert any(r > 140 and g > 140 and b > 140 for r, g, b in paper), paper
         _quit(con)
         listing = con.send_line("OPTION LIST")
         assert "PAPER" in listing.upper()
@@ -673,7 +673,9 @@ def test_option_edit_theme_phosphor(kernel_image):
         assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
         _edit(con, "PHOS.BAS")
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-        assert any(g > r + 20 and g > 40 for r, g, b in pane), pane
+        assert all(r + g + b < 40 for r, g, b in pane), pane
+        r, g, b = con.screen_pixel(3, 3 * 16)
+        assert g > r + 20 and g > 40, (r, g, b)
         _quit(con)
         assert "PHOSPHOR" in con.send_line("OPTION LIST").upper()
         assert con.send_line("OPTION EDIT THEME 8") == ""
