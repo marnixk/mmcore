@@ -347,7 +347,50 @@ static void plat_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsig
 	}
 }
 
-static void plat_tui_present(int y0, int y1)
+static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
+{
+	int row, px, bpp;
+	u8 *dst, *src;
+	TScreenColor fill;
+
+	if (!s_tui_pix || w < 1 || h < 1 || dy < 1)
+		return;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if ((unsigned)x >= s_tui_w || (unsigned)y >= s_tui_h)
+		return;
+	if ((unsigned)(x + w) > s_tui_w)
+		w = (int)s_tui_w - x;
+	if ((unsigned)(y + h) > s_tui_h)
+		h = (int)s_tui_h - y;
+	if (w < 1 || h < 1 || dy >= h)
+		return;
+	bpp = DEPTH / 8;
+	for (row = y; row < y + h - dy; row++)
+	{
+		dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+		src = s_tui_pix + (unsigned)(row + dy) * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+		memcpy(dst, src, (unsigned)w * (unsigned)bpp);
+	}
+	fill = (TScreenColor)rgb_to_raw(fill_rgb);
+	for (row = y + h - dy; row < y + h; row++)
+	{
+		dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+		for (px = 0; px < w; px++)
+		{
+#if DEPTH == 32
+			reinterpret_cast<u32 *>(dst)[px] = (u32)fill;
+#elif DEPTH == 16
+			reinterpret_cast<u16 *>(dst)[px] = (u16)fill;
+#else
+			dst[px] = (u8)fill;
+#endif
+		}
+	}
+	plat_tui_present(y, y + h - 1);
+}
 {
 	CDisplay::TArea area;
 	if (!s_kernel || !s_tui_pix || y0 > y1)
@@ -400,6 +443,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_prepare = plat_tui_prepare;
 	plat.tui_glyph = plat_tui_glyph;
 	plat.tui_present = plat_tui_present;
+	plat.tui_scroll = plat_tui_scroll;
 	audio_init();
 	mmb_init(&plat);
 }

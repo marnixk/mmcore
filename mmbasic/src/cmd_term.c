@@ -305,29 +305,19 @@ static void pane_puts(const char *s)
 }
 
 static int pane_x0(void) { return T.pane_left * TM_CW; }
-static int pane_x1(void) { return (T.pane_left + TM_COLS) * TM_CW - 1; }
 static int pane_y1(void) { return T.pane_rows * TM_CH - 1; }
 
 static void scroll_pixels_up_one(void)
 {
-	int x, y, x0, x1, y1;
-	unsigned px;
+	int x0, y0, w, h;
 
-	if (!G.plat || !G.plat->get_pixel || !G.plat->set_pixel)
+	if (!G.plat || !G.plat->tui_scroll)
 		return;
 	x0 = pane_x0();
-	x1 = pane_x1();
-	y1 = pane_y1();
-	for (y = 0; y < y1; y++)
-		for (x = x0; x <= x1; x++)
-		{
-			px = G.plat->get_pixel(x, y + 1);
-			G.plat->set_pixel(x, y, px);
-		}
-	for (x = x0; x <= x1; x++)
-		for (y = y1 - TM_CH + 1; y <= y1; y++)
-			if (y >= 0)
-				G.plat->set_pixel(x, y, TM_BG);
+	y0 = 0;
+	w = TM_COLS * TM_CW;
+	h = pane_y1() + 1;
+	G.plat->tui_scroll(x0, y0, w, h, 1, TM_BG);
 }
 
 static void term_draw_status(void)
@@ -739,7 +729,7 @@ static void term_update_fade(void)
 
 static void term_update_scroll(void)
 {
-	int want, y0, y1;
+	int want;
 
 	if (!T.scroll_anim)
 		return;
@@ -762,12 +752,6 @@ static void term_update_scroll(void)
 		term_serial_dump();
 		return;
 	}
-	y0 = pane_y1() - TM_CH + 1;
-	y1 = pane_y1();
-	if (y0 < 0)
-		y0 = 0;
-	if (G.plat && G.plat->tui_present)
-		G.plat->tui_present(y0, y1);
 }
 
 void mmb_cmd_term(void)
