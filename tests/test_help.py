@@ -20,6 +20,7 @@ def test_help_lists_commands(console):
         "WORDPAD",
         "CREDITS",
         "IPCONFIG",
+        "OPTIONS",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
@@ -153,7 +154,8 @@ def test_help_option_wifi(console):
     assert ".mmbasic.ini" in out
     assert "firmware" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
-    assert "not configured" in out.lower()
+    assert "beacon" in out.lower() or "scan" in out.lower()
+    assert "OPTIONS WIFI" in out or "<OPTIONS> WIFI" in out
     assert "country=US" in out or "US" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
@@ -161,6 +163,19 @@ def test_help_option_wifi(console):
     assert "default OFF" in out or "Default OFF" in out
     assert "PROMPT" in out
     assert "CWD" in out
+
+
+def test_help_options_wifi(console):
+    listing = scroll_all(console, open_ihelp(console))
+    assert "<OPTIONS>" in listing
+    close_ihelp(console)
+    out = dump_topic(console, "OPTIONS")
+    assert out != "?SYNTAX ERROR"
+    assert "OPTIONS WIFI" in out
+    assert "not configured" in out.lower()
+    assert "not an alias" in out.lower()
+    via = dump_topic(console, "OPTIONS WIFI")
+    assert "OPTIONS WIFI" in via
 
 
 def test_ihelp_has_no_menu_bar(console):
