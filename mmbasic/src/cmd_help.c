@@ -33,7 +33,7 @@ static const char kIndexCommands[] =
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
-	"  SETTICK FACTORY_RESET CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
+	"  SETTICK FACTORY_RESET OPTIONS CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
 	"Prompt\n"
 	"  OPTION PROMPT BARE|CWD         \"> \" or DOS $p$g (A:/>)\n"
@@ -42,15 +42,16 @@ static const char kIndexCommands[] =
 	"\n"
 	"Wi-Fi\n"
 	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
-	"  OPTION WIFI                    connect with stored credentials\n"
+	"  OPTION WIFI                    scan and prompt\n"
 	"  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)\n"
 	"  OPTION WIFI COUNTRY \"NZ\"       ISO domain (default US; UK=GB)\n"
+	"  OPTIONS WIFI                   connect with stored credentials\n"
 	"  IPCONFIG                       WLAN IP, SSID, gateway, DHCP\n"
 	"  Credentials persist in C:/.mmbasic.ini (A: if no SD).\n"
-	"  Bare OPTION WIFI joins using stored SSID/PSK.\n"
+	"  OPTIONS WIFI joins using stored SSID/PSK.\n"
 	"  ?WIFI not configured if none are stored.\n"
-	"  WPA2 join needs C: and C:/firmware/. QEMU has no radio.\n"
-	"  HELP OPTION.\n"
+	"  Scan lists beacon SSIDs. WPA2 join needs C: and\n"
+	"  C:/firmware/. QEMU has no radio. HELP OPTION.\n"
 	"\n"
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.\n"
 	"Type HELP CMM2 for the full CMM2 command inventory.";
@@ -657,8 +658,9 @@ static const char kHelpOption[] =
 	"  DISPLAY/LCDPANEL/TOUCH/SDCARD/RESOLUTION/CLOCK/\n"
 	"  CPUSPEED/HEARTBEAT (other hardware lines are parsed)\n"
 	"  WIFI [ssid$ [, password$]]\n"
-	"    No args: join using stored SSID/PSK from the INI.\n"
-	"    ?WIFI not configured if none are stored.\n"
+	"    No args: scan beacons and prompt (needs radio).\n"
+	"    Lists printable SSIDs from the CYW4343x escan\n"
+	"    result, not random bytes in the scan blob.\n"
 	"    With args: store credentials in .mmbasic.ini\n"
 	"    and join with WPA2. Circle needs a 2-letter ISO\n"
 	"    country it will associate (default US; use GB\n"
@@ -666,6 +668,7 @@ static const char kHelpOption[] =
 	"    the INI and wpa_supplicant.conf.\n"
 	"    Hardware images ship C:/firmware/.\n"
 	"    QEMU has no Wi-Fi radio.\n"
+	"    Use OPTIONS WIFI to join stored credentials.\n"
 	"  WIFI COUNTRY \"XX\"\n"
 	"    Regulatory domain Circle accepts. Default US.\n"
 	"    UK is stored as GB. Unknown codes are rejected.\n"
@@ -679,10 +682,24 @@ static const char kHelpOption[] =
 	"Example:  OPTION BASE 1\n"
 	"          OPTION WIFI COUNTRY \"NZ\"\n"
 	"          OPTION WIFI \"MyNet\",\"secret\"\n"
-	"          OPTION WIFI\n"
+	"          OPTIONS WIFI\n"
 	"          OPTION WIFI DEBUG ON\n"
 	"          OPTION PROMPT CWD\n"
 	"          OPTION LIST";
+
+static const char kHelpOptions[] =
+	"OPTIONS WIFI\n"
+	"\n"
+	"Join Wi-Fi using SSID and password already stored\n"
+	"by OPTION WIFI. This is not an alias of OPTION.\n"
+	"\n"
+	"?WIFI not configured if no credentials are stored.\n"
+	"On hardware with C:/firmware/ this starts WPA2.\n"
+	"QEMU has no radio and reports Wi-Fi not available.\n"
+	"The PSK is never printed.\n"
+	"\n"
+	"Example:  OPTION WIFI \"MyNet\",\"secret\"\n"
+	"          OPTIONS WIFI";
 
 static const char kHelpFactoryReset[] =
 	"FACTORY_RESET\n"
@@ -734,7 +751,7 @@ static const char kHelpConnect[] =
 	"QEMU has no network device; CONNECT then reports\n"
 	"that the network is not available and returns to\n"
 	"the prompt. On hardware, wait for Wi-Fi/DHCP first\n"
-	"(OPTION WIFI), then CONNECT uses Circle TCP.\n"
+	"(OPTIONS WIFI), then CONNECT uses Circle TCP.\n"
 	"\n"
 	"Example:  CONNECT \"192.168.1.10\", 23";
 
@@ -769,7 +786,7 @@ static const char kHelpIpconfig[] =
 	"Wi-Fi not available. If the link is down it prints\n"
 	"Not connected (and the last SSID when known).\n"
 	"\n"
-	"Join with OPTION WIFI first on hardware.\n"
+	"Join with OPTIONS WIFI first on hardware.\n"
 	"\n"
 	"Example:  IPCONFIG";
 
@@ -919,7 +936,7 @@ static const char kHelpCmm2[] =
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
-	"  REBOOT OPTION FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
+	"  REBOOT OPTION OPTIONS FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
 	"  CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
@@ -1365,6 +1382,7 @@ static const help_topic kTopics[] = {
 	{ "LIST",        HELP_CMD,  kHelpList },
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
+	{ "OPTIONS",     HELP_CMD,  kHelpOptions },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
 	{ "PROMPT",      HELP_CMD,  kHelpPrompt },
 	{ "CONNECT",     HELP_CMD,  kHelpConnect },

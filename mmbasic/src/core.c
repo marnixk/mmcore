@@ -2394,7 +2394,12 @@ static void exec_statement(void)
 		mmb_cmd_next();
 		return;
 	}
-	if (mmb_match("OPTION") || mmb_match("OPTIONS"))
+	if (mmb_match("OPTIONS"))
+	{
+		mmb_cmd_options();
+		return;
+	}
+	if (mmb_match("OPTION"))
 	{
 		mmb_cmd_option();
 		return;

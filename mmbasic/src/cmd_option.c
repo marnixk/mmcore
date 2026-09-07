@@ -121,6 +121,18 @@ static void parse_touch(void)
 	skip_hw_rest();
 }
 
+static void cons_write(const char *s)
+{
+	mmb_console_write(s);
+}
+
+static int read_console_line(char *buf, unsigned maxn, int hide)
+{
+	if (G.plat && G.plat->read_line)
+		return G.plat->read_line(buf, maxn, hide);
+	return -1;
+}
+
 static void wifi_store(const char *ssid, const char *psk)
 {
 	strncpy(G.opt.wifi_ssid, ssid ? ssid : "", sizeof(G.opt.wifi_ssid) - 1);
@@ -148,6 +160,72 @@ static void wifi_connect_stored(void)
 	if (!G.opt.wifi_ssid[0])
 		mmb_error("?WIFI not configured");
 	wifi_try_connect(G.opt.wifi_ssid, G.opt.wifi_psk, 0);
+}
+
+static void parse_wifi_interactive(void)
+{
+	char ssids[16][64];
+	char line[80];
+	char psk[64];
+	int n, i, pick;
+	if (!mmb_wlan_available())
+	{
+		mmb_out("Wi-Fi not available");
+		return;
+	}
+	n = mmb_wlan_scan(ssids, 16);
+	if (n <= 0)
+		cons_write("No networks found\r\nSSID: ");
+	else
+	{
+		cons_write("Wi-Fi networks:\r\n");
+		for (i = 0; i < n; i++)
+		{
+			char num[8];
+			num[0] = (char)('1' + i);
+			if (i >= 9)
+			{
+				num[0] = (char)('0' + (i + 1) / 10);
+				num[1] = (char)('0' + (i + 1) % 10);
+				num[2] = 0;
+			}
+			else
+			{
+				num[1] = 0;
+			}
+			cons_write(num);
+			cons_write(". ");
+			cons_write(ssids[i]);
+			cons_write("\r\n");
+		}
+		cons_write("SSID or number: ");
+	}
+	if (read_console_line(line, sizeof(line), 0) != 0)
+	{
+		mmb_out("Wi-Fi not available");
+		return;
+	}
+	pick = 0;
+	if (line[0] >= '1' && line[0] <= '9' && (line[1] == 0 || (line[1] >= '0' && line[1] <= '9' && line[2] == 0)))
+	{
+		pick = line[0] - '0';
+		if (line[1])
+			pick = pick * 10 + (line[1] - '0');
+		if (pick < 1 || pick > n)
+			pick = 0;
+		else
+			strncpy(line, ssids[pick - 1], sizeof(line) - 1);
+	}
+	if (!line[0])
+	{
+		mmb_out("Wi-Fi cancelled");
+		return;
+	}
+	cons_write("Password: ");
+	if (read_console_line(psk, sizeof(psk), 1) != 0)
+		psk[0] = 0;
+	wifi_store(line, psk);
+	wifi_try_connect(line, psk, 1);
 }
 
 static int wifi_country_set(const char *s)
@@ -183,7 +261,7 @@ static void parse_wifi(void)
 	}
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
-		wifi_connect_stored();
+		parse_wifi_interactive();
 		return;
 	}
 	{
@@ -700,6 +778,17 @@ static void option_dispatch(void)
 		return;
 	}
 	mmb_syntax();
+}
+
+void mmb_cmd_options(void)
+{
+	mmb_skip_sp();
+	if (!mmb_match("WIFI"))
+		mmb_syntax();
+	mmb_skip_sp();
+	if (*G.p != 0 && *G.p != ':' && *G.p != '\'')
+		mmb_syntax();
+	wifi_connect_stored();
 }
 
 void mmb_cmd_option(void)
