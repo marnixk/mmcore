@@ -466,6 +466,8 @@ static const char kHelpEdit[] =
 	"\n"
 	"Menus: Alt+F File  Alt+E Edit  Alt+R Run\n"
 	"       Alt+T Theme  Alt+H Help  F10 File\n"
+	"Help: Keys... (shortcut list) and Manual (opens\n"
+	"interactive HELP; Esc/Ctrl+C returns to the editor).\n"
 	"File: Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"After Run, press any key to return to the editor.\n"
 	"MODE and PAGE WRITE are restored on return.\n"

@@ -636,6 +636,16 @@ void CKernel::HandleCsi (char final, char *Line, unsigned *pLen)
 
 void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 {
+	if (mmb_in_ihelp ())
+	{
+		const char *out = mmb_ihelp_key (c);
+		emit (this, out);
+		if (!mmb_in_ihelp () && !mmb_in_editor () && !mmb_in_files () &&
+		    !mmb_in_wordpad ())
+			emit_prompt (this);
+		return;
+	}
+
 	if (mmb_in_editor ())
 	{
 		const char *out = mmb_editor_key (c);
@@ -659,15 +669,6 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *out = mmb_files_key (c);
 		emit (this, out);
 		if (!mmb_in_files () && !mmb_in_editor ())
-			emit_prompt (this);
-		return;
-	}
-
-	if (mmb_in_ihelp ())
-	{
-		const char *out = mmb_ihelp_key (c);
-		emit (this, out);
-		if (!mmb_in_ihelp ())
 			emit_prompt (this);
 		return;
 	}

@@ -278,8 +278,8 @@ static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste" };
 static const char edit_hots[] = { 'o', 't', 'c', 'p' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
-static const char *help_items[] = { "Keys..." };
-static const char help_hots[] = { 'k' };
+static const char *help_items[] = { "Keys...", "Manual" };
+static const char help_hots[] = { 'k', 'm' };
 static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
 
 static void redraw(void);
@@ -2664,8 +2664,13 @@ static void activate_menu(void)
 			set_status(k_themes[item].name);
 		}
 	}
-	else
-		open_dialog(DLG_HELP);
+	else if (menu == MENU_HELP)
+	{
+		if (item == 1)
+			mmb_ihelp_open("");
+		else
+			open_dialog(DLG_HELP);
+	}
 }
 
 static int handle_alt(char c)
@@ -3125,7 +3130,7 @@ const char *mmb_editor_feed(char c)
 		if (c == '\r' || c == '\n')
 		{
 			activate_menu();
-			if (G.ed.active)
+			if (G.ed.active && !mmb_in_ihelp())
 				redraw();
 			return G.out;
 		}
@@ -3146,7 +3151,7 @@ const char *mmb_editor_feed(char c)
 				{
 					G.ed.menu_item = i;
 					activate_menu();
-					if (G.ed.active)
+					if (G.ed.active && !mmb_in_ihelp())
 						redraw();
 					return G.out;
 				}
@@ -3243,5 +3248,14 @@ void mmb_editor_poll(void)
 		return;
 	esc_state = ESC_NONE;
 	close_ui();
+	redraw();
+}
+
+void mmb_editor_on_ihelp_exit(void)
+{
+	if (!G.ed.active)
+		return;
+	tui_begin();
+	tui_invalidate();
 	redraw();
 }
