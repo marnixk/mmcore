@@ -1038,9 +1038,8 @@ static upng_format determine_format(upng_t *upng)
 
 static void upng_free_source(upng_t *upng)
 {
-	//	if (upng->source.owning != 0) {
-	FreeMemorySafe((void *)&upng->source.buffer);
-	//	}
+	if (upng->source.owning != 0)
+		FreeMemorySafe((void *)&upng->source.buffer);
 
 	upng->source.buffer = NULL;
 	upng->source.size = 0;

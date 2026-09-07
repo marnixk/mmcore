@@ -211,6 +211,17 @@ def test_load_png(fresh_console):
     assert r > 150
 
 
+def test_load_image_deflate_png_returns_prompt(fresh_console):
+    """Compressed PNGs go through uPNG; freeing a from_bytes source used to hang after blit."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line('LOAD IMAGE "TESTZ.PNG"') == ""
+    pix = int(c.send_line("PRINT PIXEL(0,0)"))
+    g = (pix >> 8) & 255
+    assert g > 150
+    assert c.send_line("PRINT 1") == "1"
+
+
 def test_load_jpeg(fresh_console):
     assert fresh_console.send_line("CLS") == ""
     assert fresh_console.send_line('LOAD JPG "TEST.JPG"') == ""
