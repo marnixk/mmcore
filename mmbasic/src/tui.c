@@ -156,7 +156,9 @@ void tui_end(void)
 	inited = 0;
 	cols = rows = 0;
 	hide_hw_cursor(0);
-	if (G.plat && G.plat->write_screen)
+	if (G.plat && G.plat->fill_screen)
+		G.plat->fill_screen(0);
+	else if (G.plat && G.plat->write_screen)
 		G.plat->write_screen("\x1b[0m\x1b[H\x1b[J", 11);
 }
 

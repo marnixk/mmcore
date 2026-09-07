@@ -1,6 +1,7 @@
 """Turbo-style MMBasic editor TUI: menus, file ops, tabs, quit."""
 
 import re
+import time
 
 from harness import MMBasicConsole
 
@@ -653,6 +654,48 @@ def test_editor_run_restores_mode_and_page(kernel_image):
         assert con.send_line("PIXEL 12,12,RGB(255,0,0)") == ""
         pix = int(con.send_line("PRINT PIXEL(12,12)"))
         assert ((pix >> 16) & 255) > 150
+    finally:
+        con.stop()
+
+
+def test_editor_run_inkey_loop_break_restores_editor(kernel_image):
+    """Issue #62: DO/INKEY$ from editor Run must not leave a dead prompt."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "INK.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "DO"') == ""
+        assert con.send_line('PRINT #1, "CURRENT = ASC(INKEY$())"') == ""
+        assert con.send_line('PRINT #1, "IF CURRENT <> 0 THEN"') == ""
+        assert con.send_line(
+            'PRINT #1, "PRINT ";CHR$(34);"current input: ";CHR$(34);"; CURRENT"'
+        ) == ""
+        assert con.send_line('PRINT #1, "END IF"') == ""
+        assert con.send_line('PRINT #1, "LOOP"') == ""
+        assert con.send_line("CLOSE #1") == ""
+
+        con.drain(quiet=0.1)
+        con._ser.sendall(b'RUN "INK.BAS"\r')
+        time.sleep(0.3)
+        from_prompt = _keys(con, b"B", quiet=0.6)
+        assert "current input" in from_prompt.lower()
+        assert "66" in from_prompt
+        broke = _keys(con, bytes([3]), quiet=1.2)
+        assert "BREAK" in broke.upper()
+        assert con.send_line("PRINT 2") == "2"
+
+        _edit(con, "INK.BAS")
+        _keys(con, bytes([18]), quiet=0.7)
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert not any(_is_edit_blue(p) for p in pane), pane
+        typed = _keys(con, b"A", quiet=0.7)
+        assert "current input" in typed.lower()
+        assert "65" in typed
+        back = _keys(con, bytes([3]), quiet=1.2)
+        assert "File" in back
+        assert "Run" in back
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
 
