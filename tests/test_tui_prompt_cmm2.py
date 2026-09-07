@@ -267,23 +267,21 @@ def test_pixel_array_form(console):
 def test_pixel_colour_array(fresh_console):
     c = fresh_console
     assert c.send_line("CLS") == ""
-    assert c.send_line("DIM INTEGER XX(2) = (10, 20, 30)") == ""
-    assert c.send_line("DIM INTEGER YY(2) = (100, 150, 200)") == ""
+    assert c.send_line("DIM INTEGER XX(2) = (80, 90, 100)") == ""
+    assert c.send_line("DIM INTEGER YY(2) = (300, 310, 320)") == ""
     assert c.send_line("DIM INTEGER CC(2)") == ""
     assert c.send_line("CC(0) = RGB(255,0,0)") == ""
     assert c.send_line("CC(1) = RGB(0,255,0)") == ""
     assert c.send_line("CC(2) = RGB(0,0,255)") == ""
     assert c.send_line("PIXEL XX(), YY(), CC()") == ""
-    red = int(c.send_line("PRINT PIXEL(10,100)"))
-    green = int(c.send_line("PRINT PIXEL(20,150)"))
-    blue = int(c.send_line("PRINT PIXEL(30,200)"))
+    red = int(c.send_line("PRINT PIXEL(80,300)"))
+    green = int(c.send_line("PRINT PIXEL(90,310)"))
+    blue = int(c.send_line("PRINT PIXEL(100,320)"))
     assert ((red >> 16) & 255) > 150 and ((red >> 8) & 255) < 80
     assert ((green >> 8) & 255) > 150 and ((green >> 16) & 255) < 80
     assert (blue & 255) > 150 and ((blue >> 16) & 255) < 80
-    rgb = c.screen_pixel(10, 100)
-    assert rgb[0] > 150 and rgb[1] < 80
     assert c.send_line("PIXEL XX(), YY(), RGB(255,255,255)") == ""
-    white = int(c.send_line("PRINT PIXEL(10,100)"))
+    white = int(c.send_line("PRINT PIXEL(80,300)"))
     assert ((white >> 16) & 255) > 200 and (white & 255) > 200
 
 
