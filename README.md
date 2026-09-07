@@ -71,8 +71,9 @@ GPIO 14/15 is optional.
 
 Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
 `C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores
-defaults without deleting programs. `OPTION WIFI` stores credentials and
+defaults without deleting programs. `OPTION WIFI "ssid","password"` stores credentials and
 joins a WPA2 network on a real Pi 3 / 4 / 400 / Zero 2 W (firmware in `C:/firmware/`).
+Bare `OPTION WIFI` reconnects with stored credentials (`?WIFI not configured` if none).
 `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
 (default off; the password is never printed). QEMU has no radio.
 

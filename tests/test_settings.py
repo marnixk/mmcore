@@ -99,10 +99,38 @@ def test_option_wifi_persists_credentials(console):
     assert "enabled=1" in ini
 
 
-def test_option_wifi_interactive_no_crash(console):
+def test_option_wifi_bare_errors_without_credentials(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     out = console.send_line("OPTION WIFI")
-    assert "?SYNTAX ERROR" not in out
-    assert "Wi-Fi not available" in out or "not available" in out.lower()
+    assert "?WIFI not configured" in out
+    assert console.send_line("PRINT 6*7") == "42"
+
+
+def test_option_wifi_bare_connects_with_stored_credentials(console):
+    stored = console.send_line('OPTION WIFI "TestSSID","secretpass"')
+    assert "?SYNTAX ERROR" not in stored
+    assert "?WIFI not configured" not in stored
+    assert "secretpass" not in stored
+    out = console.send_line("OPTION WIFI")
+    assert "?WIFI not configured" not in out
+    assert "secretpass" not in out
+    assert "Wi-Fi not available" in out or "Wi-Fi connected" in out or "connect failed" in out.lower()
+    assert console.send_line("PRINT 1+1") == "2"
+
+
+def test_option_wifi_program_reconnects_or_errors(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 OPTION WIFI") == ""
+    run = console.send_line("RUN")
+    assert "?WIFI not configured" in run
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 OPTION WIFI "ProgNet","progpass"') == ""
+    assert console.send_line("20 OPTION WIFI") == ""
+    assert console.send_line("30 PRINT 42") == ""
+    run = console.send_line("RUN")
+    assert "?WIFI not configured" not in run
+    assert "42" in run
+    assert "progpass" not in run
 
 
 def test_options_wifi_alias(console):
