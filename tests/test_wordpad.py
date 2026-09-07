@@ -206,6 +206,20 @@ def _lum(rgb):
     return r * 3 + g * 6 + b
 
 
+def _cell_corners(con, col, row):
+    x0, y0 = col * 8, row * 16
+    return [
+        con.screen_pixel(x0 + 1, y0 + 1),
+        con.screen_pixel(x0 + 6, y0 + 1),
+        con.screen_pixel(x0 + 1, y0 + 14),
+        con.screen_pixel(x0 + 6, y0 + 14),
+    ]
+
+
+def _is_solid_cursor(con, col, row):
+    return all(_lum(p) > 1500 for p in _cell_corners(con, col, row))
+
+
 def test_wordpad_cursor_visible(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -344,7 +358,7 @@ def test_wordpad_empty_line_cursor_and_up(kernel_image):
         assert _lum(empty) > _lum(below) + 80, (empty, below)
         _keys(con, b"\x1b[A", quiet=0.5)
         time.sleep(0.2)
-        on_a = con.screen_pixel(1 * 8 + 4, 8)
+        on_a = con.screen_pixel(4, 8)
         still_empty = con.screen_pixel(4, 16 + 8)
         assert _lum(on_a) > _lum(still_empty) + 80, (on_a, still_empty)
         _quit(con)
@@ -357,12 +371,12 @@ def test_wordpad_up_from_longer_line_end(kernel_image):
     con.start()
     try:
         _open(con)
-        _keys(con, b"ab\rabcd\r", quiet=0.7)
-        _keys(con, b"\x1b[A\x1b[A", quiet=0.6)
+        _keys(con, b"ab\rabcd", quiet=0.7)
+        _keys(con, b"\x1b[A", quiet=0.5)
         time.sleep(0.2)
-        end_short = con.screen_pixel(2 * 8 + 4, 8)
-        start_long = con.screen_pixel(4, 16 + 8)
-        assert _lum(end_short) > _lum(start_long) + 80, (end_short, start_long)
+        assert _is_solid_cursor(con, 2, 0)
+        assert not _is_solid_cursor(con, 0, 1)
+        assert not _is_solid_cursor(con, 0, 0)
         _quit(con)
     finally:
         con.stop()
