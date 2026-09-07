@@ -745,3 +745,48 @@ def test_editor_help_manual_opens_ihelp_and_returns(kernel_image):
         assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()
+
+
+def test_editor_ctrl_w_closes_tab_and_quits_last(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "W1.BAS")
+        _keys(con, b"PRINT 1")
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        _keys(con, b"W2.BAS\r", quiet=0.6)
+        _keys(con, b"PRINT 2")
+        after = _keys(con, bytes([23]), quiet=0.5)
+        assert "W1" in after or "File" in after
+        _keys(con, bytes([23]), quiet=0.5)
+        assert con.send_line("PRINT 5") == "5"
+        listing = con.send_line("DIR")
+        assert "W1.BAS" in listing
+        assert "W2.BAS" in listing
+    finally:
+        con.stop()
+
+
+def test_editor_alt_arrows_switch_tabs_no_wrap(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "L.BAS")
+        _keys(con, b"PRINT 1")
+        _keys(con, bytes([15]), quiet=0.4)
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        seen = _keys(con, b"R.BAS\r", quiet=0.6)
+        assert "L.BAS" in seen and "R.BAS" in seen
+        _keys(con, b"PRINT 2")
+        _keys(con, bytes([15]), quiet=0.4)
+        left = _keys(con, b"\x1b[1;3D", quiet=0.5)
+        assert "L.BAS" in left
+        still = _keys(con, b"\x1b[1;3D", quiet=0.5)
+        assert "L.BAS" in still
+        right = _keys(con, b"\x1b[1;3C", quiet=0.5)
+        assert "R.BAS" in right
+        still_r = _keys(con, b"\x1b[1;3C", quiet=0.5)
+        assert "R.BAS" in still_r
+        _quit(con)
+    finally:
+        con.stop()

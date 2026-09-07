@@ -283,7 +283,36 @@ void CKernel::PollUsbEditorNav (void)
 		return;
 	}
 	if ((m_LastMods & ALT) != 0)
+	{
+		int alt_left, alt_right;
+		if ((m_LastMods & (LCTRL | RCTRL)) != 0)
+			return;
+		hid = m_HeldHid;
+		if (hid == 0)
+		{
+			m_NavHidSent = 0;
+			return;
+		}
+		if (hid == m_NavHidSent)
+			return;
+		alt_left = (hid == 0x50);
+		alt_right = (hid == 0x4F);
+		if (!alt_left && !alt_right)
+			return;
+		seq[0] = 0x1b;
+		seq[1] = '[';
+		seq[2] = '1';
+		seq[3] = ';';
+		seq[4] = '3';
+		seq[5] = alt_left ? 'D' : 'C';
+		n = 6;
+		m_NavHidSent = hid;
+		m_UsbBurst = 1;
+		for (i = 0; i < n; i++)
+			ProcessChar (seq[i], m_Line, &m_nLen);
+		m_UsbBurst = 0;
 		return;
+	}
 
 	hid = m_HeldHid;
 	if (hid == 0)
