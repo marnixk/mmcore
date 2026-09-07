@@ -331,6 +331,7 @@ static void option_dispatch(void)
 		if (mmb_match("MODE"))
 		{
 			G.opt.default_mode = (int)mmb_as_int(mmb_expr());
+			mmb_gfx_apply_default_mode();
 			return;
 		}
 		if (mmb_match("COLOURS") || mmb_match("COLORS"))

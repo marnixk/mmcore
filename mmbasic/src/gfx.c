@@ -272,6 +272,27 @@ void mmb_gfx_init(void)
 		mmb_gfx_set_mode(1, 8);
 }
 
+void mmb_gfx_apply_default_mode(void)
+{
+	int mode = G.opt.default_mode;
+	int bits = G.gfx.bits ? G.gfx.bits : 8;
+	unsigned i;
+	int ok = 0;
+
+	if (mode <= 0)
+		return;
+	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
+		if (kModes[i].id == mode)
+			ok = 1;
+	if (!ok)
+		return;
+	if ((mode == 9 || mode == 11 || mode == 12 || mode == 14) && bits == 12)
+		bits = 8;
+	if (G.gfx.mode == mode && G.gfx.bits == bits)
+		return;
+	mmb_gfx_set_mode(mode, bits);
+}
+
 void mmb_gfx_set_mode(int mode, int bits)
 {
 	unsigned i;

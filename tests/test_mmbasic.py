@@ -145,6 +145,20 @@ def test_mode_and_resolution(console):
     assert console.send_line("MODE 8,16") == ""
 
 
+def test_option_default_mode_applies(console):
+    assert console.send_line("OPTION DEFAULT MODE 7") == ""
+    assert console.send_line("PRINT MM.HRES") == "320"
+    assert console.send_line("PRINT MM.VRES") == "240"
+    listing = console.send_line("OPTION LIST")
+    assert "DEFAULT MODE 7" in listing
+    assert console.send_line("OPTION DEFAULT MODE 14") == ""
+    assert console.send_line("PRINT MM.HRES") == "960"
+    assert console.send_line("PRINT MM.VRES") == "540"
+    assert console.send_line("OPTION DEFAULT MODE 8") == ""
+    assert console.send_line("MODE 8,16") == ""
+    assert console.send_line("PRINT MM.HRES") == "640"
+
+
 def test_graphics_bitdepths(console):
     for bits in (8, 12, 16, 32):
         assert console.send_line(f"MODE 8,{bits}") == ""

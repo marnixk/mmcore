@@ -3095,6 +3095,8 @@ void mmb_init(const mmb_platform *plat)
 	mmb_gfx_init();
 	mmb_assets_seed();
 	mmb_settings_load();
+	if (G.opt.default_mode != 1)
+		mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	G.timer_base = 0;

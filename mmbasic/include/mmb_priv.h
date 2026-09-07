@@ -433,6 +433,7 @@ void mmb_cmd_end_sub(void);
 void mmb_cmd_end_function(void);
 
 void mmb_gfx_init(void);
+void mmb_gfx_apply_default_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
 void mmb_gfx_cls(unsigned rgb);
 void mmb_gfx_plot(int x, int y, unsigned rgb);
