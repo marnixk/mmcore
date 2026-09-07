@@ -279,7 +279,7 @@ static const char edit_hots[] = { 'o', 't', 'c', 'p' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
-static const char help_hots[] = { 'k' };
+static const char help_hots[] = { 'k', 'm' };
 static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
 
 static void redraw(void);
@@ -3130,7 +3130,7 @@ const char *mmb_editor_feed(char c)
 		if (c == '\r' || c == '\n')
 		{
 			activate_menu();
-			if (G.ed.active)
+			if (G.ed.active && !mmb_in_ihelp())
 				redraw();
 			return G.out;
 		}
@@ -3151,7 +3151,7 @@ const char *mmb_editor_feed(char c)
 				{
 					G.ed.menu_item = i;
 					activate_menu();
-					if (G.ed.active)
+					if (G.ed.active && !mmb_in_ihelp())
 						redraw();
 					return G.out;
 				}
