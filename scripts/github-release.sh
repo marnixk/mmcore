@@ -15,9 +15,13 @@ Commands:
   next-patch       Print last-version with the patch number incremented
   next-major       Print last-version with the major number incremented
   publish VERSION  Build hardware zips and create GitHub release vVERSION
+  release-notes VERSION
+                   Print the GitHub release notes for VERSION (no build)
 
-publish builds both board images with scripts/package-release.sh, then uploads:
+publish builds board images with scripts/package-release.sh, then uploads:
   dist/mmbasic-console-rpi3-vVERSION.zip
+  dist/mmbasic-console-pizero2-vVERSION.zip
+  dist/mmbasic-console-pizero2w-vVERSION.zip
   dist/mmbasic-console-pi400-vVERSION.zip
   scripts/install-sdcard.sh
 
@@ -25,6 +29,12 @@ Each zip also contains install-sdcard.sh so a consumer can:
 
   unzip mmbasic-console-rpi3-vVERSION.zip
   sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
+
+  unzip mmbasic-console-pizero2-vVERSION.zip
+  sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX
+
+  unzip mmbasic-console-pizero2w-vVERSION.zip
+  sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX
 
 Examples:
   scripts/github-release.sh last-version
@@ -149,6 +159,12 @@ print("```bash")
 print(f"unzip mmbasic-console-rpi3-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX   # Pi 3 / 3B+ / 3A+")
 print()
+print(f"unzip mmbasic-console-pizero2-v{version}.zip")
+print("sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX  # Pi Zero 2")
+print()
+print(f"unzip mmbasic-console-pizero2w-v{version}.zip")
+print("sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX # Pi Zero 2 W")
+print()
 print(f"unzip mmbasic-console-pi400-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX  # Pi 400 / 4B / CM4")
 print("```")
@@ -158,6 +174,8 @@ print()
 print("## Artifacts")
 print()
 print(f"- `mmbasic-console-rpi3-v{version}.zip` — Raspberry Pi 3 / 3B+ / 3A+")
+print(f"- `mmbasic-console-pizero2-v{version}.zip` — Raspberry Pi Zero 2 (no onboard WLAN)")
+print(f"- `mmbasic-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CYW43436)")
 print(f"- `mmbasic-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
 print()
@@ -184,10 +202,12 @@ assert_zip_has_installer() {
 
 publish() {
 	local version="$1"
-	local tag rpi3 pi400 installer notes
+	local tag rpi3 pizero2 pizero2w pi400 installer notes
 	version="$(normalize_version "${version}")"
 	tag="v${version}"
 	rpi3="${DIST}/mmbasic-console-rpi3-v${version}.zip"
+	pizero2="${DIST}/mmbasic-console-pizero2-v${version}.zip"
+	pizero2w="${DIST}/mmbasic-console-pizero2w-v${version}.zip"
 	pi400="${DIST}/mmbasic-console-pi400-v${version}.zip"
 	installer="${REPO_ROOT}/scripts/install-sdcard.sh"
 
@@ -205,8 +225,12 @@ publish() {
 	log "Building hardware zips for ${tag}"
 	VERSION="${version}" bash "${REPO_ROOT}/scripts/package-release.sh"
 	[ -f "${rpi3}" ] || die "missing ${rpi3}"
+	[ -f "${pizero2}" ] || die "missing ${pizero2}"
+	[ -f "${pizero2w}" ] || die "missing ${pizero2w}"
 	[ -f "${pi400}" ] || die "missing ${pi400}"
 	assert_zip_has_installer "${rpi3}"
+	assert_zip_has_installer "${pizero2}"
+	assert_zip_has_installer "${pizero2w}"
 	assert_zip_has_installer "${pi400}"
 
 	notes="$(release_notes "${version}")"
@@ -220,6 +244,8 @@ publish() {
 		--title "MMBasic console ${tag}" \
 		--notes "${notes}" \
 		"${rpi3}" \
+		"${pizero2}" \
+		"${pizero2w}" \
 		"${pi400}" \
 		"${installer}"
 
@@ -252,6 +278,10 @@ case "${cmd}" in
 	publish)
 		[ $# -eq 2 ] || die "publish needs VERSION (see --help)"
 		publish "$2"
+		;;
+	release-notes)
+		[ $# -eq 2 ] || die "release-notes needs VERSION (see --help)"
+		release_notes "$(normalize_version "$2")"
 		;;
 	*)
 		die "unknown command: ${cmd} (see --help)"

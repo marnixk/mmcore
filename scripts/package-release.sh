@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Build hardware images for Raspberry Pi 3 and Raspberry Pi 400 and pack
-# FAT-ready SD card zips — one zip per platform.
+# Build hardware images for Raspberry Pi 3, Zero 2 / Zero 2 W, and
+# Raspberry Pi 400 and pack FAT-ready SD card zips — one zip per platform.
+# Pi Zero 2 and Zero 2 W reuse the RASPPI=3 kernel (BCM2710).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CIRCLE_DIR="${REPO_ROOT}/circle"
-CONSOLE_DIR="${REPO_ROOT}/console"
-BOOT_DIR="${CIRCLE_DIR}/boot"
+CIRCLE_DIR="${CIRCLE_DIR:-${REPO_ROOT}/circle}"
+CONSOLE_DIR="${CONSOLE_DIR:-${REPO_ROOT}/console}"
+BOOT_DIR="${BOOT_DIR:-${CIRCLE_DIR}/boot}"
+WLAN_FW_DIR="${WLAN_FW_DIR:-${CIRCLE_DIR}/addon/wlan/firmware}"
 VERSION="${VERSION:-0.1.1}"
-DIST="${REPO_ROOT}/dist"
+DIST="${DIST:-${REPO_ROOT}/dist}"
 PREFIX64="${PREFIX64:-aarch64-none-elf-}"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+
+die() {
+	printf 'package-release: %s\n' "$*" >&2
+	exit 1
+}
 
 clean_build_tree() {
 	make -C "${CIRCLE_DIR}/lib" clean
@@ -37,9 +44,31 @@ build_hardware() {
 	QEMU=0 RASPPI="${rasppi}" PREFIX64="${PREFIX64}" bash "${REPO_ROOT}/scripts/build.sh"
 }
 
+firmware_git_rev() {
+	awk -F'= ' '/^FIRMWARE \?=/{print $2; exit}' "${CIRCLE_DIR}/boot/Makefile"
+}
+
+ensure_dtb() {
+	local name="$1"
+	local dest="${BOOT_DIR}/${name}"
+	local rev url
+	if [ -f "${dest}" ]; then
+		return 0
+	fi
+	rev="$(firmware_git_rev)"
+	[ -n "${rev}" ] || die "could not read Circle boot firmware revision"
+	url="https://github.com/raspberrypi/firmware/raw/${rev}/boot/${name}"
+	log "Downloading ${name}"
+	wget -q -O "${dest}" "${url}" || {
+		rm -f "${dest}"
+		die "failed to download ${url}"
+	}
+}
+
 ensure_firmware() {
 	local needed=(
 		bootcode.bin start.elf start4.elf fixup.dat fixup4.dat
+		bcm2710-rpi-zero-2-w.dtb
 		bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb LICENCE.broadcom COPYING.linux
 	)
 	local missing=0
@@ -60,14 +89,18 @@ ensure_firmware() {
 		log "Reusing existing firmware in circle/boot (set FORCE_FIRMWARE=1 to re-download)"
 	fi
 
+	ensure_dtb bcm2710-rpi-zero-2-w.dtb
+	ensure_dtb bcm2710-rpi-zero-2.dtb
+
 	log "Building Circle ARM stub for Raspberry Pi 4 / 400"
 	make -C "${BOOT_DIR}" armstub64
 }
 
 ensure_wlan_firmware() {
-	local fw_dir="${CIRCLE_DIR}/addon/wlan/firmware"
 	local needed=(
 		brcmfmac43430-sdio.bin brcmfmac43430-sdio.txt
+		brcmfmac43436-sdio.bin brcmfmac43436-sdio.txt
+		brcmfmac43436s-sdio.bin brcmfmac43436s-sdio.txt
 		brcmfmac43455-sdio.bin brcmfmac43455-sdio.txt
 	)
 	local missing=0
@@ -76,7 +109,7 @@ ensure_wlan_firmware() {
 		missing=1
 	else
 		for f in "${needed[@]}"; do
-			if [ ! -f "${fw_dir}/${f}" ]; then
+			if [ ! -f "${WLAN_FW_DIR}/${f}" ]; then
 				missing=1
 				break
 			fi
@@ -84,7 +117,7 @@ ensure_wlan_firmware() {
 	fi
 	if [ "${missing}" = "1" ]; then
 		log "Downloading CYW4343x WLAN firmware (Circle addon/wlan/firmware)"
-		make -C "${fw_dir}"
+		make -C "${WLAN_FW_DIR}"
 	else
 		log "Reusing existing WLAN firmware (set FORCE_WLAN_FIRMWARE=1 to re-download)"
 	fi
@@ -92,12 +125,19 @@ ensure_wlan_firmware() {
 
 copy_wlan_firmware() {
 	local stage="$1"
-	local fw_dir="${CIRCLE_DIR}/addon/wlan/firmware"
 	mkdir -p "${stage}/firmware"
-	# Circle looks up brcmfmac* by chip; ship the full set both zips.
-	find "${fw_dir}" -maxdepth 1 -type f \( \
+	# Circle looks up brcmfmac* by chip; ship the full set on WLAN zips.
+	find "${WLAN_FW_DIR}" -maxdepth 1 -type f \( \
 		-name 'brcmfmac*' -o -name 'LICENCE*' \
 	\) -exec cp -a {} "${stage}/firmware/" \;
+}
+
+copy_if_present() {
+	local src="$1"
+	local dest="$2"
+	if [ -f "${src}" ]; then
+		cp -a "${src}" "${dest}"
+	fi
 }
 
 write_version() {
@@ -122,14 +162,19 @@ zip_stage() {
 	unzip -l "${DIST}/${zip_name}"
 }
 
-package_rpi3() {
-	local stage="${DIST}/sdcard-rpi3"
-	local zip_name="mmbasic-console-rpi3-v${VERSION}.zip"
+package_kernel8_board() {
+	local slug="$1"
+	local label="$2"
+	local config_src="$3"
+	local with_wlan="$4"
+	local with_zero2_dtb="$5"
+	local stage="${DIST}/sdcard-${slug}"
+	local zip_name="mmbasic-console-${slug}-v${VERSION}.zip"
 	local kernel="kernel8.img"
 	rm -rf "${stage}"
 	mkdir -p "${stage}"
 	cp -a "${CONSOLE_DIR}/${kernel}" "${stage}/${kernel}"
-	cp -a "${REPO_ROOT}/scripts/sdcard/config.txt" "${stage}/config.txt"
+	cp -a "${config_src}" "${stage}/config.txt"
 	cp -a "${REPO_ROOT}/scripts/sdcard/cmdline.txt" "${stage}/cmdline.txt"
 	cp -a "${REPO_ROOT}/INSTALL.md" "${stage}/INSTALL.md"
 	cp -a "${REPO_ROOT}/scripts/install-sdcard.sh" "${stage}/install-sdcard.sh"
@@ -137,9 +182,41 @@ package_rpi3() {
 	cp -a "${BOOT_DIR}/start.elf" "${stage}/start.elf"
 	cp -a "${BOOT_DIR}/fixup.dat" "${stage}/fixup.dat"
 	cp -a "${BOOT_DIR}/LICENCE.broadcom" "${stage}/LICENCE.broadcom"
-	write_version "${stage}" "Raspberry Pi 3 / 3B+ / 3A+ (AArch64)" "${kernel}"
-	copy_wlan_firmware "${stage}"
+	if [ "${with_zero2_dtb}" = "1" ]; then
+		[ -f "${BOOT_DIR}/bcm2710-rpi-zero-2-w.dtb" ] \
+			|| die "missing ${BOOT_DIR}/bcm2710-rpi-zero-2-w.dtb"
+		cp -a "${BOOT_DIR}/bcm2710-rpi-zero-2-w.dtb" \
+			"${stage}/bcm2710-rpi-zero-2-w.dtb"
+		copy_if_present "${BOOT_DIR}/bcm2710-rpi-zero-2.dtb" \
+			"${stage}/bcm2710-rpi-zero-2.dtb"
+		copy_if_present "${BOOT_DIR}/COPYING.linux" "${stage}/COPYING.linux"
+	fi
+	write_version "${stage}" "${label}" "${kernel}"
+	if [ "${with_wlan}" = "1" ]; then
+		copy_wlan_firmware "${stage}"
+	fi
 	zip_stage "${stage}" "${zip_name}"
+}
+
+package_rpi3() {
+	package_kernel8_board rpi3 \
+		"Raspberry Pi 3 / 3B+ / 3A+ (AArch64)" \
+		"${REPO_ROOT}/scripts/sdcard/config.txt" \
+		1 0
+}
+
+package_pizero2() {
+	package_kernel8_board pizero2 \
+		"Raspberry Pi Zero 2 (AArch64, no onboard WLAN)" \
+		"${REPO_ROOT}/scripts/sdcard/config-pizero2.txt" \
+		0 1
+}
+
+package_pizero2w() {
+	package_kernel8_board pizero2w \
+		"Raspberry Pi Zero 2 W (AArch64, CYW43436 WLAN)" \
+		"${REPO_ROOT}/scripts/sdcard/config-pizero2w.txt" \
+		1 1
 }
 
 package_pi400() {
@@ -159,9 +236,7 @@ package_pi400() {
 	cp -a "${BOOT_DIR}/bcm2711-rpi-400.dtb" "${stage}/bcm2711-rpi-400.dtb"
 	cp -a "${BOOT_DIR}/bcm2711-rpi-4-b.dtb" "${stage}/bcm2711-rpi-4-b.dtb"
 	cp -a "${BOOT_DIR}/LICENCE.broadcom" "${stage}/LICENCE.broadcom"
-	if [ -f "${BOOT_DIR}/COPYING.linux" ]; then
-		cp -a "${BOOT_DIR}/COPYING.linux" "${stage}/COPYING.linux"
-	fi
+	copy_if_present "${BOOT_DIR}/COPYING.linux" "${stage}/COPYING.linux"
 	write_version "${stage}" \
 		"Raspberry Pi 400 (BCM2711; also Pi 4B / CM4) (AArch64)" \
 		"${kernel}"
@@ -169,10 +244,28 @@ package_pi400() {
 	zip_stage "${stage}" "${zip_name}"
 }
 
+pack_all() {
+	package_rpi3
+	package_pizero2
+	package_pizero2w
+	package_pi400
+}
+
+if [ "${PACK_ONLY:-0}" = "1" ]; then
+	[ -f "${CONSOLE_DIR}/kernel8.img" ] || die "PACK_ONLY needs ${CONSOLE_DIR}/kernel8.img"
+	[ -f "${CONSOLE_DIR}/kernel8-rpi4.img" ] || die "PACK_ONLY needs ${CONSOLE_DIR}/kernel8-rpi4.img"
+	pack_all
+	log "PACK_ONLY artifacts"
+	ls -la "${DIST}"/mmbasic-console-*-v"${VERSION}".zip
+	exit 0
+fi
+
 ensure_firmware
 ensure_wlan_firmware
 build_hardware 3
 package_rpi3
+package_pizero2
+package_pizero2w
 build_hardware 4
 package_pi400
 

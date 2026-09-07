@@ -8,13 +8,19 @@ MMBASIC-CONSOLE READY
 >
 ```
 
-Releases ship **two zips** — pick the one that matches your board. Do not mix
-files from both zips on the same card.
+Releases ship **four zips** — pick the one that matches your board. Do not mix
+files from different zips on the same card.
 
 | Zip | Boards |
 | --- | --- |
 | `mmbasic-console-rpi3-v*.zip` | Raspberry Pi **3**, **3B+**, **3A+** |
+| `mmbasic-console-pizero2-v*.zip` | Raspberry Pi **Zero 2** (no onboard Wi-Fi) |
+| `mmbasic-console-pizero2w-v*.zip` | Raspberry Pi **Zero 2 W** (onboard Wi-Fi) |
 | `mmbasic-console-pi400-v*.zip` | Raspberry Pi **400** (also Pi **4B** / **CM4**) |
+
+The Zero 2 and Zero 2 W zips reuse the same 64-bit BCM2710 kernel as the Pi 3
+zip (`kernel8.img`). Zero 2 W includes CYW43436 blobs under `firmware/`; the
+non-wireless Zero 2 zip does not.
 
 Type at the HDMI prompt with a USB keyboard (the Pi 400’s built-in keyboard
 counts). Serial UART at 115200 8N1 on GPIO 14/15 still works as a second
@@ -38,10 +44,10 @@ the INI (including wiping Wi-Fi SSID/PSK) but does not delete `.BAS`
 programs.
 
 `OPTION WIFI` (also `OPTIONS WIFI`) scans for networks when the Circle
-WLAN driver and firmware are present (Pi 3 / 3B+ / 4 / 400 onboard radio;
-CYW4343x blobs in `C:/firmware/`). Hardware release zips include that
-`firmware/` directory. QEMU does not emulate Wi-Fi: the command reports
-that the radio is unavailable. `OPTION WIFI "ssid","password"` stores
+WLAN driver and firmware are present (Pi 3 / 3B+ / 4 / 400 / Zero 2 W onboard
+radio; CYW4343x blobs in `C:/firmware/`). Hardware release zips for those
+boards include that `firmware/` directory. The Pi Zero 2 (non-W) zip does not.
+QEMU does not emulate Wi-Fi: the command reports that the radio is unavailable. `OPTION WIFI "ssid","password"` stores
 credentials and, on a real Pi with firmware, brings the radio up with
 WPA2. The PSK is written to the INI and is not printed on the serial
 console. `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and
@@ -60,6 +66,8 @@ serial; the default is off.
 From the repository’s **Releases** page, download **one** zip:
 
 - Pi 3 family: `mmbasic-console-rpi3-v0.1.1.zip`
+- Pi Zero 2: `mmbasic-console-pizero2-v0.1.1.zip`
+- Pi Zero 2 W: `mmbasic-console-pizero2w-v0.1.1.zip`
 - Pi 400 / Pi 4: `mmbasic-console-pi400-v0.1.1.zip`
 
 Unzip it.
@@ -79,6 +87,32 @@ Unzip it.
 | `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
 | `VERSION.txt` | Build identity |
 | `firmware/` | CYW4343x WLAN firmware (`brcmfmac43430-sdio.*` on Pi 3) |
+
+### Raspberry Pi Zero 2 zip
+
+Same BCM2710 `kernel8.img` as the Pi 3 zip. No `firmware/` directory (this
+board has no onboard radio).
+
+| File | Role |
+| --- | --- |
+| `kernel8.img` | MMBasic console (Circle kernel, same as Pi 3) |
+| `config.txt` | Firmware boot settings (`[pi02]`) |
+| `cmdline.txt` | Circle options (`keymap=US`; change to `UK`, `DE`, …) |
+| `bootcode.bin` | GPU boot loader |
+| `start.elf` | VideoCore firmware |
+| `fixup.dat` | Firmware relocation data |
+| `bcm2710-rpi-zero-2-w.dtb` | Device tree (required) |
+| `bcm2710-rpi-zero-2.dtb` | Device tree (included when the firmware tree has it) |
+| `LICENCE.broadcom` | Raspberry Pi firmware licence |
+| `COPYING.linux` | Licence for the device tree binaries |
+| `INSTALL.md` | This document |
+| `install-sdcard.sh` | Linux `--bootstrap` / `--update` helper |
+| `VERSION.txt` | Build identity |
+
+### Raspberry Pi Zero 2 W zip
+
+Same files as the Zero 2 zip, plus `firmware/` for the onboard CYW43436
+(`brcmfmac43436-sdio.*` / `brcmfmac43436s-sdio.*`).
 
 ### Raspberry Pi 400 zip
 
@@ -115,9 +149,10 @@ kernel, firmware, and `config.txt` only, so BASIC files already on `C:` stay.
 
 ```bash
 # Replace sdX with your card (check with lsblk).
-unzip mmbasic-console-rpi3-v*.zip        # or the pi400 zip
+unzip mmbasic-console-rpi3-v*.zip        # or pizero2 / pizero2w / pi400
 sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
-# Pi 400 / 4B / CM4:
+# sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX
+# sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX
 # sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
 ```
 
@@ -210,6 +245,31 @@ sudo cp -a firmware /mnt/mmbasic/
 sudo umount /mnt/mmbasic
 ```
 
+### Raspberry Pi Zero 2 / Zero 2 W card
+
+```
+(SD card, FAT)
+├── bcm2710-rpi-zero-2-w.dtb
+├── bcm2710-rpi-zero-2.dtb      # when present
+├── bootcode.bin
+├── cmdline.txt
+├── config.txt
+├── COPYING.linux
+├── fixup.dat
+├── INSTALL.md
+├── install-sdcard.sh
+├── kernel8.img
+├── LICENCE.broadcom
+├── start.elf
+├── VERSION.txt
+└── firmware/                   # Zero 2 W zip only
+    ├── brcmfmac43436-sdio.bin
+    ├── brcmfmac43436-sdio.txt
+    └── …
+```
+
+Omit `firmware/` on the non-wireless Zero 2 zip.
+
 ### Raspberry Pi 400 card
 
 ```
@@ -250,6 +310,7 @@ Unmount / eject the card safely.
 1. Insert the SD card.
 2. Connect HDMI to a monitor.
    - Pi 400: use the micro-HDMI port **next to USB-C power** (HDMI0).
+   - Pi Zero 2 / Zero 2 W: mini-HDMI.
 3. Type on a USB keyboard (Pi 400: the built-in keyboard).
 4. Serial is optional (second console, same prompt):
    - Adapter GND → Pi pin **6** (GND)
@@ -295,15 +356,16 @@ CIRCLE 440,200,90,CYAN
 | Symptom | What to check |
 | --- | --- |
 | ACT LED does not flash, no HDMI | Card not FAT, files not in the partition root, or `config.txt` missing |
-| Rainbow splash then black | Wrong kernel for the board, or files mixed from both zips |
+| Rainbow splash then black | Wrong kernel for the board, or files mixed from different zips |
 | HDMI works, serial garbage | Baud rate not 115200 8N1, or 5 V adapter; swap TX/RX |
 | HDMI works, serial silent | `enable_uart=1` is in `config.txt`; GND connected |
 | Pi 400 built-in keyboard does nothing | Use the Pi 400 zip (`kernel8-rpi4.img`); wait a second after the banner for USB to enumerate; try `keymap=` in `cmdline.txt` |
 | Wrong symbols (`"` vs `@`) | Edit `cmdline.txt`: `keymap=US` (default), `UK`, `DE`, `FR`, `ES`, `IT` |
-| USB keyboard on Pi 3 does nothing | Plug into a USB-A port; hub-only setups can take a moment after READY |
+| USB keyboard on Pi 3 / Zero 2 does nothing | Plug into a USB-A port (Zero 2: micro-USB OTG); hub-only setups can take a moment after READY |
 | Pi 400 no HDMI | Use HDMI0 (port next to USB-C); `hdmi_force_hotplug=1` is in `config.txt` |
-| Wi-Fi not available | Card missing `firmware/brcmfmac*.bin`, or this is QEMU (no radio). Hardware zips include `firmware/`. |
-| Wrong zip | Pi 3 needs `kernel8.img` + `start.elf`. Pi 400 needs `kernel8-rpi4.img` + `start4.elf` + `armstub8-rpi4.bin` |
+| Pi Zero 2 no HDMI | Mini-HDMI fully seated; `hdmi_force_hotplug=1` is in `config.txt` |
+| Wi-Fi not available | Card missing `firmware/brcmfmac*.bin`, this is a Zero 2 (non-W) zip, or this is QEMU (no radio). WLAN zips include `firmware/`. |
+| Wrong zip | Pi 3 / Zero 2 / Zero 2 W need `kernel8.img` + `start.elf`. Pi 400 needs `kernel8-rpi4.img` + `start4.elf` + `armstub8-rpi4.bin` |
 
 ## Building the zips yourself
 
@@ -313,12 +375,15 @@ From a clone of this repository (AArch64 GNU toolchain on `PATH`):
 scripts/package-release.sh
 ```
 
-That writes both:
+That writes:
 
 - `dist/mmbasic-console-rpi3-v0.1.1.zip`
+- `dist/mmbasic-console-pizero2-v0.1.1.zip`
+- `dist/mmbasic-console-pizero2w-v0.1.1.zip`
 - `dist/mmbasic-console-pi400-v0.1.1.zip`
 
-Each zip includes `install-sdcard.sh`. Override the version with
+Zero 2 / Zero 2 W packaging reuses the Pi 3 hardware kernel (no third Circle
+rebuild). Each zip includes `install-sdcard.sh`. Override the version with
 `VERSION=0.2.0 scripts/package-release.sh`. Set `FORCE_FIRMWARE=1` to
 re-download Raspberry Pi GPU firmware blobs, or `FORCE_WLAN_FIRMWARE=1`
 to re-download the CYW4343x Wi-Fi blobs.

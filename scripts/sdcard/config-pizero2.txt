@@ -1,0 +1,16 @@
+# Raspberry Pi Zero 2 (no WLAN) 64-bit boot for the MMBasic console.
+# Same BCM2710 / Cortex-A53 kernel as the Pi 3 zip (kernel8.img).
+# Copy this file to the FAT partition as config.txt.
+
+arm_64bit=1
+kernel_address=0x80000
+kernel=kernel8.img
+initial_turbo=0
+enable_uart=1
+hdmi_force_hotplug=1
+hdmi_group=1
+hdmi_mode=4
+
+[pi02]
+arm_64bit=1
+kernel=kernel8.img

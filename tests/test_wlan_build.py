@@ -29,6 +29,7 @@ def test_package_and_install_ship_brcmfmac_firmware():
     pkg = open(os.path.join(REPO, "scripts", "package-release.sh"), encoding="utf-8").read()
     inst = open(os.path.join(REPO, "scripts", "install-sdcard.sh"), encoding="utf-8").read()
     assert "brcmfmac43430-sdio.bin" in pkg
+    assert "brcmfmac43436-sdio.bin" in pkg
     assert "brcmfmac43455-sdio.bin" in pkg
     assert "copy_wlan_firmware" in pkg
     assert "copy_wlan_firmware_dir" in inst
