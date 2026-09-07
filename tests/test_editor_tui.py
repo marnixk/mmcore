@@ -126,6 +126,37 @@ def test_editor_ctrl_c_x_v_copy_cut_paste(kernel_image):
         con.stop()
 
 
+def test_editor_esc_then_right_does_not_insert_csi(kernel_image):
+    """Esc then Right must move the cursor, not insert the CSI leftover [C."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ESCCSI.BAS")
+        _keys(con, b"HELLO")
+        seen = _keys(con, b"\x1b\x1b[C")
+        assert "[C" not in seen
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "ESCCSI.BAS") == "HELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_esc_then_letter_inserts_letter(kernel_image):
+    """A lone Esc is ignored; the next printable key inserts normally."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ESCA.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1ba")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "ESCA.BAS") == "HELLOa"
+    finally:
+        con.stop()
+
+
 def test_editor_esc_menu_open_close(kernel_image):
     """A single ESC dismisses a menu. ESC+letter is not an Alt shortcut."""
     con = MMBasicConsole(kernel_image)
@@ -133,13 +164,14 @@ def test_editor_esc_menu_open_close(kernel_image):
     try:
         _edit(con, "MENU.BAS")
         leftover = _keys(con, b"\x1bf", quiet=0.6)
-        assert "Open" not in leftover
-        assert "Quit" not in leftover
+        assert "Open..." not in leftover
+        assert "Quick open" not in leftover
         opened = _keys(con, bytes([1]) + b"f")
-        assert "Open" in opened or "Save" in opened or "Quit" in opened
+        assert "Open..." in opened or "Quick open" in opened
         closed = _keys(con, b"\x1b", quiet=0.6)
         assert "File" in closed
-        assert "Quit" not in closed
+        assert "Open..." not in closed
+        assert "Quick open" not in closed
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
     finally:
