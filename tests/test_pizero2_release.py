@@ -13,6 +13,22 @@ def _run(args, **kwargs):
     return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs)
 
 
+def test_hdmi_boot_config_is_dmt_1080p_without_overscan():
+    sd = os.path.join(SCRIPTS, "sdcard")
+    for name in (
+        "config.txt",
+        "config-pi400.txt",
+        "config-pizero2.txt",
+        "config-pizero2w.txt",
+    ):
+        text = open(os.path.join(sd, name), encoding="utf-8").read()
+        assert "hdmi_group=2" in text, name
+        assert "hdmi_mode=82" in text, name
+        assert "disable_overscan=1" in text, name
+        assert "hdmi_group=1" not in text, name
+        assert "hdmi_mode=4" not in text, name
+
+
 def test_scripts_parse_and_help_lists_zero2_models():
     for name in ("package-release.sh", "install-sdcard.sh", "github-release.sh"):
         _run(["bash", "-n", os.path.join(SCRIPTS, name)])

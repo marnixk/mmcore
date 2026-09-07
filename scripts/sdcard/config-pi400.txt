@@ -7,8 +7,9 @@ kernel_address=0x80000
 initial_turbo=0
 enable_uart=1
 hdmi_force_hotplug=1
-hdmi_group=1
-hdmi_mode=4
+hdmi_group=2
+hdmi_mode=82
+disable_overscan=1
 
 [pi4]
 armstub=armstub8-rpi4.bin
