@@ -2704,6 +2704,11 @@ static void exec_statement(void)
 		mmb_cmd_clear();
 		return;
 	}
+	if (mmb_match("MATH"))
+	{
+		mmb_cmd_math();
+		return;
+	}
 	if (mmb_match("SPRITE"))
 	{
 		mmb_cmd_sprite();

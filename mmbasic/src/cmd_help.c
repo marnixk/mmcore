@@ -985,7 +985,7 @@ static const char kHelpCmm2[] =
 	"  KILL RM DEL DRIVE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
 	"  REBOOT OPTION OPTIONS FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
-	"  CLEAR END\n"
+	"  MATH CLEAR END\n"
 	"\n"
 	"Implemented functions: HELP FUNCTIONS.\n"
 	"\n"
@@ -998,7 +998,7 @@ static const char kHelpCmm2[] =
 	"  CONTROLLER CLASSIC/MOUSE/NUNCHUK\n"
 	"  DEFINEFONT DRAW3D EXECUTE FLASH\n"
 	"  GUI controls HUMID I2C IR\n"
-	"  LIBRARY MATH MMDEBUG PIN SETPIN PWM PORT\n"
+	"  LIBRARY MMDEBUG PIN SETPIN PWM PORT\n"
 	"  POKE PEEK SPI VAR\n"
 	"  WATCHDOG WII XMODEM COM GPS 1-WIRE\n"
 	"  UPDATE FIRMWARE  preprocessor  CFUNCTION\n"
@@ -1356,9 +1356,9 @@ static const char kHelpFunctions[] =
 	"Strings: LEN ASC CHR$ STR$ VAL LEFT$ RIGHT$ MID$\n"
 	"  UCASE$ LCASE$ SPACE$ STRING$ INSTR HEX$ OCT$ BIN$\n"
 	"  FORMAT$ INKEY$ KEYDOWN TAB\n"
-	"Math: ABS INT FIX SQR/SQRT SIN COS TAN ATN/ATAN\n"
+	"Math: ABS INT FIX CINT SQR/SQRT SIN COS TAN ATN/ATAN\n"
 	"  ATN2 ACOS ASIN RND SGN EXP LOG PI MAX MIN\n"
-	"  DEG RAD CHOICE BOUND\n"
+	"  DEG RAD CHOICE BOUND EVAL MATH()\n"
 	"Graphics: RGB(r,g,b)|RGB(\"NAME\")  PIXEL(x,y)\n"
 	"  MM.HRES MM.VRES MM.INFO(MODE)\n"
 	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(n,#fn)\n"
@@ -1370,6 +1370,48 @@ static const char kHelpFunctions[] =
 	"\n"
 	"Example:  PRINT LEFT$(\"MMBASIC\",2)\n"
 	"          PRINT RGB(255,0,0)";
+
+static const char kHelpMath[] =
+	"CINT(n)\n"
+	"EVAL(expr$)\n"
+	"MATH(fn args)\n"
+	"MATH command  SET|SCALE|ADD|POWER|INTERPOLATE|\n"
+	"  SLICE|INSERT|M_*|V_*|Q_*|FFT\n"
+	"\n"
+	"CINT rounds to nearest; .5 goes away from zero\n"
+	"(unlike INT=floor and FIX=truncate).\n"
+	"EVAL evaluates a string as an expression.\n"
+	"MATH() uses a space after the name, not extra\n"
+	"parentheses: MATH(ATAN3 x, y) not MATH(ATAN3(x,y)).\n"
+	"\n"
+	"MATH(ATAN3 x, y)  angle of vector (x,y) in 0..2*PI\n"
+	"MATH(SINH a) MATH(COSH a) MATH(TANH a)\n"
+	"MATH(LOG10 a)\n"
+	"MATH(MAX a()) MATH(MIN a()) MATH(MEAN a())\n"
+	"MATH(MEDIAN a()) MATH(SUM a()) MATH(SD a())\n"
+	"MATH(MAGNITUDE v()) MATH(DOTPRODUCT a(), b())\n"
+	"MATH(M_DETERMINANT a())\n"
+	"MATH(CHI a()) MATH(CHI_P a()) MATH(CORREL a(), b())\n"
+	"\n"
+	"MATH SET n, a()     fill every element\n"
+	"MATH SCALE a(), k, b()\n"
+	"MATH ADD a(), k, b()\n"
+	"MATH INTERPOLATE a(), b(), t, c()\n"
+	"MATH SLICE a(), i, , b()   (omit one index)\n"
+	"MATH INSERT a(), i, , b()\n"
+	"MATH M_INVERSE a(), b()    MATH M_TRANSPOSE a(), b()\n"
+	"MATH M_MULT a(), b(), c()  MATH M_PRINT a()\n"
+	"MATH V_PRINT a()  MATH V_NORMALISE a(), b()\n"
+	"MATH V_MULT m(), v(), o()  MATH V_CROSS a(), b(), c()\n"
+	"MATH Q_INVERT|Q_VECTOR|Q_EULER|Q_CREATE|Q_MULT|Q_ROTATE\n"
+	"MATH FFT a(), b()  (also INVERSE|MAGNITUDE|PHASE)\n"
+	"\n"
+	"SD is sample stdev (n-1). Arrays are numeric.\n"
+	"OPTION ANGLE DEGREES applies to ATAN3 and Q_*.\n"
+	"\n"
+	"Example:  PRINT CINT(45.57)\n"
+	"          PRINT EVAL(\"1+2*3\")\n"
+	"          PRINT MATH(SUM A())";
 
 static const char kHelpSprite[] =
 	"SPRITE LOADPNG n, file$ [, page]\n"
@@ -1418,6 +1460,7 @@ static const help_topic kTopics[] = {
 	{ "BITMAP",      HELP_CMD,  kHelpBitmap },
 	{ "TURTLE",      HELP_CMD,  kHelpTurtle },
 	{ "SPRITE",      HELP_CMD,  kHelpSprite },
+	{ "MATH",        HELP_CMD,  kHelpMath },
 	{ "SETTICK",     HELP_CMD,  kHelpSettick },
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
 	{ "AUDIO_TARGET", HELP_CMD, kHelpAudioTarget },
@@ -1568,6 +1611,14 @@ static const struct {
 	{ "ATAN",         "FUNCTIONS" },
 	{ "ATN2",         "FUNCTIONS" },
 	{ "INT",          "FUNCTIONS" },
+	{ "CINT",         "MATH" },
+	{ "EVAL",         "MATH" },
+	{ "MATH",         "MATH" },
+	{ "SINH",         "MATH" },
+	{ "COSH",         "MATH" },
+	{ "TANH",         "MATH" },
+	{ "LOG10",        "MATH" },
+	{ "ATAN3",        "MATH" },
 	{ "PLAYING",      "FUNCTIONS" },
 	{ "MM.HRES",      "FUNCTIONS" },
 	{ "MM.VRES",      "FUNCTIONS" },

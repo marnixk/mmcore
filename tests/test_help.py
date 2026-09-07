@@ -22,6 +22,7 @@ def test_help_lists_commands(console):
         "CREDITS",
         "IPCONFIG",
         "OPTIONS",
+        "MATH",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
