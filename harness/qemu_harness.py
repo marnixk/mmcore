@@ -36,7 +36,7 @@ class MMBasicConsole:
         machine: str = "raspi3b",
         qemu: str = "qemu-system-aarch64",
         boot_timeout: float = 25.0,
-        ready_marker: bytes = b"MMBASIC-CONSOLE READY",
+        ready_marker: bytes = b"get started",
         prompt: bytes = b"> ",
         extra_qemu: list[str] | None = None,
     ) -> None:
@@ -49,6 +49,7 @@ class MMBasicConsole:
         self.ready_marker = ready_marker
         self.prompt = prompt
         self.extra_qemu = extra_qemu or []
+        self.boot_log = b""
 
         self._tmp = tempfile.mkdtemp(prefix="mmb-harness-")
         self._ser_path = os.path.join(self._tmp, "serial.sock")
@@ -75,14 +76,18 @@ class MMBasicConsole:
         self._mon = self._connect(self._mon_path)
         self._ser.settimeout(0.4)
 
-        # wait for the firmware to announce it is ready
+        # wait for the firmware to announce it is ready, then the prompt
         deadline = time.time() + self.boot_timeout
         seen = b""
+        got_marker = False
         while time.time() < deadline:
             chunk = self._recv(self._ser)
             if chunk:
                 seen += chunk
                 if self.ready_marker in seen:
+                    got_marker = True
+                if got_marker and self.prompt in seen:
+                    self.boot_log = seen
                     return self
             else:
                 time.sleep(0.05)
