@@ -176,6 +176,7 @@ def test_help_options_wifi(console):
     assert "not an alias" in out.lower()
     via = dump_topic(console, "OPTIONS WIFI")
     assert "OPTIONS WIFI" in via
+    assert "Connected to" in via
 
 
 def test_ihelp_has_no_menu_bar(console):

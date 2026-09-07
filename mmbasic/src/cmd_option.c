@@ -146,7 +146,31 @@ static void wifi_store(const char *ssid, const char *psk)
 static void wifi_try_connect(const char *ssid, const char *psk, int saved_now)
 {
 	if (mmb_wlan_connect(ssid, psk) == 0)
-		mmb_out("Wi-Fi connected");
+	{
+		char ip[40];
+		char msg[192];
+		int n = 0;
+
+		ip[0] = 0;
+		if (mmb_wlan_ip(ip, (int)sizeof(ip)) == 0 && ip[0] && ssid && ssid[0])
+		{
+			const char *a = "Connected to '";
+			const char *b = "' as ";
+			while (*a && n < (int)sizeof(msg) - 1)
+				msg[n++] = *a++;
+			while (*ssid && n < (int)sizeof(msg) - 1)
+				msg[n++] = *ssid++;
+			while (*b && n < (int)sizeof(msg) - 1)
+				msg[n++] = *b++;
+			a = ip;
+			while (*a && n < (int)sizeof(msg) - 1)
+				msg[n++] = *a++;
+			msg[n] = 0;
+			mmb_out(msg);
+		}
+		else
+			mmb_out("Wi-Fi connected");
+	}
 	else if (!mmb_wlan_available())
 		mmb_out(saved_now
 			? "Wi-Fi credentials saved (radio not available)"
