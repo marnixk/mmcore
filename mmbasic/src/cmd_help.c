@@ -809,6 +809,8 @@ static const char kHelpTerm[] =
 	"copied to PAGE 0; scrolling is a PAGE pixel shift.\n"
 	"ANSI/VT100 (SGR colours, cursor, ED/EL) plus telnet\n"
 	"TTYPE=ANSI and DA/DSR replies for BBS autodetection.\n"
+	"Glyphs are IBM VGA 8x16 (CP437), so box drawing and\n"
+	"shade characters 176-178 match a DOS VGA terminal.\n"
 	"F10 or Alt+X exits and restores the previous MODE.\n"
 	"Alt+F opens a File menu (Exit). Esc is sent to the\n"
 	"host; press Esc twice or wait briefly to flush a\n"
