@@ -674,6 +674,7 @@ static const char kHelpOption[] =
 	"  RTC CALIBRATE n   DS3231 ON|OFF   BASELINE ON|OFF\n"
 	"  USBKEYBOARD US|UK|DE|FR|ES [, NOLED]\n"
 	"  KEYBOARD REPEAT first [, next]\n"
+	"    Default 300,75 ms (first delay, then repeat).\n"
 	"  EDIT FONT SMALL|NORMAL|MEDIUM|LARGE|VERY LARGE\n"
 	"  EDIT THEME name|n   (10 editor colour themes)\n"
 	"  ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT\n"
