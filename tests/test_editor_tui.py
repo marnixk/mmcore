@@ -781,12 +781,12 @@ def test_editor_alt_arrows_switch_tabs_no_wrap(kernel_image):
         _keys(con, bytes([15]), quiet=0.4)
         left = _keys(con, b"\x1b[1;3D", quiet=0.5)
         assert "L.BAS" in left
-        still = _keys(con, b"\x1b[1;3D", quiet=0.5)
-        assert "L.BAS" in still
+        _keys(con, b"\x1b[1;3D", quiet=0.4)
         right = _keys(con, b"\x1b[1;3C", quiet=0.5)
         assert "R.BAS" in right
-        still_r = _keys(con, b"\x1b[1;3C", quiet=0.5)
-        assert "R.BAS" in still_r
+        _keys(con, b"\x1b[1;3C", quiet=0.4)
+        still_r = _keys(con, b"\x1b[1;3D", quiet=0.5)
+        assert "L.BAS" in still_r
         _quit(con)
     finally:
         con.stop()
