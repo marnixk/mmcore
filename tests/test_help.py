@@ -202,6 +202,29 @@ def test_ihelp_escape_quits_index(console):
     assert console.send_line("PRINT 1") == "1"
 
 
+def test_ihelp_escape_prints_prompt(console):
+    """Esc from HELP should reprint the prompt without needing Enter."""
+    open_ihelp(console)
+    console.drain(quiet=0.15)
+    assert console._ser is not None
+    console._ser.sendall(b"\x1b")
+    out = console.drain(quiet=0.6).decode(errors="replace")
+    assert "> " in out
+    assert out.count("> ") == 1
+    assert console.send_line("PRINT 3") == "3"
+
+
+def test_ihelp_ctrl_c_prints_prompt(console):
+    open_ihelp(console)
+    console.drain(quiet=0.15)
+    assert console._ser is not None
+    console._ser.sendall(b"\x03")
+    out = console.drain(quiet=0.5).decode(errors="replace")
+    assert "> " in out
+    assert out.count("> ") == 1
+    assert console.send_line("PRINT 4") == "4"
+
+
 def test_ihelp_deeplink_escape_returns_to_index(console):
     seen = open_ihelp(console, "CLS")
     assert "clear" in seen.lower()

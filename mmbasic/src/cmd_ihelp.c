@@ -104,16 +104,6 @@ static int ieq_n(const char *a, const char *b, int n)
 	return 1;
 }
 
-static void ser(const char *s)
-{
-	unsigned n;
-	if (!s || !G.plat || !G.plat->write_serial)
-		return;
-	n = (unsigned)strlen(s);
-	if (n)
-		G.plat->write_serial(s, n);
-}
-
 static void set_status(const char *s)
 {
 	int i;
@@ -557,9 +547,13 @@ static void close_ihelp(void)
 	H.esc = 0;
 	H.stack_n = 0;
 	tui_end();
-	ser("\r\n");
 	if (resume_ed)
 		mmb_editor_on_ihelp_exit();
+	else
+	{
+		mmb_console_write("\r\n");
+		mmb_console_write(mmb_prompt());
+	}
 }
 
 static void do_back(void)

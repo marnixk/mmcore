@@ -669,9 +669,6 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 	{
 		const char *out = mmb_ihelp_key (c);
 		emit (this, out);
-		if (!mmb_in_ihelp () && !mmb_in_editor () && !mmb_in_files () &&
-		    !mmb_in_wordpad ())
-			emit_prompt (this);
 		return;
 	}
 
