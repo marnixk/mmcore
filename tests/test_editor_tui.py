@@ -350,6 +350,47 @@ def test_editor_tab_inserts_four_spaces(kernel_image):
         con.stop()
 
 
+def test_editor_tab_indents_selection(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SELIND.BAS")
+        _keys(con, b"AA\rBB")
+        _keys(con, b"\x1b[1;5H")
+        _keys(con, b"\x1b[1;2B\x1b[1;2B")
+        _keys(con, b"\t")
+        _keys(con, bytes([15]), quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "SELIND.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("LINE INPUT #1, B$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT LEN(A$)") == "6"
+        assert con.send_line("PRINT ASC(A$)") == "32"
+        assert con.send_line("PRINT MID$(A$,5)") == "AA"
+        assert con.send_line("PRINT LEN(B$)") == "6"
+        assert con.send_line("PRINT ASC(B$)") == "32"
+        assert con.send_line("PRINT MID$(B$,5)") == "BB"
+    finally:
+        con.stop()
+
+
+def test_editor_shift_tab_outdents_line(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "OUT.BAS")
+        _keys(con, b"    HI")
+        _keys(con, b"\x1b[Z")
+        _quit(con)
+        assert con.send_line('OPEN "OUT.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "HI"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()
+
+
 def test_editor_tab_char_does_not_shift_border(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
