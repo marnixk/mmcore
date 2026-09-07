@@ -550,6 +550,7 @@ void mmb_term_poll(void);
 void mmb_cmd_wordpad(void);
 int mmb_in_wordpad(void);
 const char *mmb_wordpad_key(char c);
+void mmb_cmd_credits(void);
 
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);

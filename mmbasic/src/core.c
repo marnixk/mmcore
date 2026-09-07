@@ -2600,6 +2600,11 @@ static void exec_statement(void)
 		mmb_cmd_wordpad();
 		return;
 	}
+	if (mmb_match("CREDITS"))
+	{
+		mmb_cmd_credits();
+		return;
+	}
 	if (mmb_match("PAUSE"))
 	{
 		mmb_cmd_pause();
