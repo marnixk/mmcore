@@ -837,6 +837,33 @@ def test_option_edit_theme_phosphor(kernel_image):
         con.stop()
 
 
+def test_editor_slate_palette_and_menu_contrast(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME SLATE") == ""
+        _edit(con, "SLATE.BAS")
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
+        assert all(abs(r - 85) > 12 or abs(g - 85) > 12 for r, g, b in pane), pane
+        assert all(b < r + 30 for r, g, b in pane), pane
+        con.capture_png("/opt/cursor/artifacts/issue71_slate_pane.png")
+        _keys(con, bytes([1]) + b"f", quiet=0.6)
+        sel = [con.screen_pixel(x, 2 * 16 + 8) for x in range(16, 128, 8)]
+        uns = [con.screen_pixel(x, 3 * 16 + 8) for x in range(16, 128, 8)]
+
+        def dist(a, b):
+            return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
+
+        assert any(dist(s, u) > 80 for s, u in zip(sel, uns)), (sel[:6], uns[:6])
+        con.capture_png("/opt/cursor/artifacts/issue71_slate_menu.png")
+        _keys(con, b"\x1b", quiet=0.5)
+        _quit(con)
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
 def test_editor_help_manual_opens_ihelp_and_returns(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

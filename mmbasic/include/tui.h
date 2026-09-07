@@ -42,6 +42,7 @@
 void tui_begin(void);
 void tui_end(void);
 void tui_invalidate(void);
+void tui_set_palette(const unsigned *rgb16);
 int tui_cols(void);
 int tui_rows(void);
 void tui_clear(int fg, int bg);
