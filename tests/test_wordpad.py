@@ -43,11 +43,13 @@ def test_wordpad_opens_untitled(kernel_image):
     con.start()
     try:
         seen = _open(con)
-        assert "File" in seen
-        assert "Edit" in seen
-        assert "Settings" in seen
-        assert "Theme" in seen
-        assert "words" in seen.lower()
+        assert "[WORDPAD]" in seen
+        assert "File" not in seen
+        assert "Edit" not in seen
+        assert "words" not in seen.lower()
+        menu = _alt_menu(con, b"f", quiet=0.5)
+        assert "File" in menu
+        _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
         assert con.send_line("PRINT 3+4") == "7"
     finally:
@@ -64,6 +66,7 @@ def test_help_wordpad(console):
     assert "markdown" in low
     assert "theme" in low or "wide" in low
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
+    assert "ctrl+p" in low or "quick-open" in low
 
 
 def test_wordpad_type_save_and_reload(kernel_image):
@@ -193,5 +196,136 @@ def test_wordpad_copy_paste(kernel_image):
         assert "xyz" in pasted
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def _lum(rgb):
+    r, g, b = rgb
+    return r * 3 + g * 6 + b
+
+
+def test_wordpad_cursor_visible(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"Hello")
+        time.sleep(0.2)
+        cursor = con.screen_pixel(5 * 8 + 4, 8)
+        page = con.screen_pixel(20 * 8 + 4, 8)
+        assert _lum(cursor) > _lum(page) + 80, (cursor, page)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_h1_is_taller(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"# Title\rbody text", quiet=0.8)
+        time.sleep(0.2)
+        heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
+        body = [con.screen_pixel(x, 2 * 16 + 8) for x in (12, 20, 28, 36)]
+        assert any(h != b for h, b in zip(heading_mid, body))
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_dialog_surface_stands_out(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        margin = con.screen_pixel(8, 80)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"o", quiet=0.8)
+        time.sleep(0.2)
+        dlg = con.screen_pixel(320, 240)
+        assert _lum(dlg) > _lum(margin) + 30, (dlg, margin)
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_theme_persists(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _alt_menu(con, b"t", quiet=0.5)
+        _keys(con, b"n", quiet=0.8)
+        _quit(con)
+        assert con.send_line("NEW") == ""
+        assert con.send_line('10 OPEN "A:/.mmbasic.ini" FOR INPUT AS #1') == ""
+        assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+        assert con.send_line("30 LINE INPUT #1, A$") == ""
+        assert con.send_line("40 PRINT A$") == ""
+        assert con.send_line("50 GOTO 20") == ""
+        assert con.send_line("70 CLOSE #1") == ""
+        ini = con.send_line("RUN", timeout=8)
+        assert "wordpad_theme=4" in ini
+        reopened = _open(con, quiet=1.0)
+        found_neon = False
+        for x in (20, 40, 80):
+            for y in (56, 80, 120):
+                r, g, b = con.screen_pixel(x, y)
+                if r + g + b < 80 or _is_neon_ink(r, g, b):
+                    found_neon = True
+                    break
+            if found_neon:
+                break
+        assert found_neon, "expected Neon theme after reopen " + reopened[:80]
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def _seed_wp_files(con):
+    assert con.send_line('OPEN "A.MD" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "alpha-doc"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('MKDIR "NEST"') == ""
+    assert con.send_line('OPEN "NEST/B.MD" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "beta-doc"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_wordpad_ctrl_p_quick_open(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_wp_files(con)
+        _open(con, 'WORDPAD "A.MD"')
+        seen = _keys(con, bytes([16]), quiet=0.8)
+        assert "Quick open" in seen
+        assert "A.MD" in seen
+        assert "B.MD" in seen or "NEST" in seen
+        opened = _keys(con, b"b\r", quiet=0.8)
+        assert "beta" in opened.lower() or "B.MD" in opened
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_autosave_on_switch(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_wp_files(con)
+        _open(con, 'WORDPAD "A.MD"')
+        _keys(con, b"\x1b[F extra", quiet=0.6)
+        _keys(con, bytes([16]), quiet=0.6)
+        _keys(con, b"b\r", quiet=0.8)
+        _quit(con)
+        assert con.send_line('OPEN "A.MD" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        line = con.send_line("PRINT A$")
+        con.send_line("CLOSE #1")
+        assert "extra" in line
     finally:
         con.stop()
