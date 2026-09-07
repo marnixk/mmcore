@@ -95,8 +95,8 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
         margin = con.screen_pixel(20, 200)
         assert _is_dark_slate(*margin), margin
         found_cream = False
-        for x in (200, 320, 480, 600, 700):
-            for y in (80, 160, 240, 320, 400):
+        for x in (164, 168, 172, 180, 188):
+            for y in (8, 24, 40, 200, 248):
                 rgb = con.screen_pixel(x, y)
                 if _luminance(*rgb) > _luminance(*margin) + 30 and _is_creamish(*rgb):
                     found_cream = True
