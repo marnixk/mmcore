@@ -45,6 +45,7 @@ private:
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
 	void PollUsbEditorNav (void);
+	void PollUsbFKeys (void);
 	void PollCadReboot (void);
 	void ApplyRawKeys (void);
 	void LineGoEnd (char *Line, unsigned *pLen);
@@ -103,6 +104,7 @@ private:
 	unsigned char		m_LastMods;
 	unsigned char		m_AltHidSent;
 	unsigned char		m_NavHidSent;
+	unsigned char		m_FkeyHidSent;
 	int			m_UsbBurst;
 };
 

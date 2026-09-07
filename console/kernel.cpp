@@ -40,6 +40,7 @@ CKernel::CKernel (void)
 	m_LastMods = 0;
 	m_AltHidSent = 0;
 	m_NavHidSent = 0;
+	m_FkeyHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -253,7 +254,8 @@ void CKernel::PollUsbAlt (void)
 		m_AltHidSent = 0;
 		return;
 	}
-	if (!mmb_in_editor () && !mmb_in_files () && !mmb_in_wordpad ())
+	if (!mmb_in_editor () && !mmb_in_files () && !mmb_in_wordpad () &&
+	    !mmb_in_term () && !mmb_in_connect ())
 		return;
 	hid = m_HeldHid;
 	if (hid == 0 || hid == m_AltHidSent)
@@ -387,6 +389,41 @@ void CKernel::PollUsbEditorNav (void)
 	m_UsbBurst = 0;
 }
 
+void CKernel::PollUsbFKeys (void)
+{
+	unsigned char hid;
+	char seq[8];
+	unsigned n = 0, i;
+
+	if (!mmb_in_term () && !mmb_in_connect ())
+	{
+		m_FkeyHidSent = 0;
+		return;
+	}
+	if ((m_LastMods & ALT) != 0)
+		return;
+	hid = m_HeldHid;
+	if (hid == 0)
+	{
+		m_FkeyHidSent = 0;
+		return;
+	}
+	if (hid == m_FkeyHidSent)
+		return;
+	if (hid != 0x43)
+		return;
+	seq[n++] = 0x1b;
+	seq[n++] = '[';
+	seq[n++] = '2';
+	seq[n++] = '1';
+	seq[n++] = '~';
+	m_FkeyHidSent = hid;
+	m_UsbBurst = 1;
+	for (i = 0; i < n; i++)
+		ProcessChar (seq[i], m_Line, &m_nLen);
+	m_UsbBurst = 0;
+}
+
 void CKernel::PollUsbRepeat (void)
 {
 	unsigned now, first, next;
@@ -478,6 +515,7 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_LastMods = 0;
 	pThis->m_AltHidSent = 0;
 	pThis->m_NavHidSent = 0;
+	pThis->m_FkeyHidSent = 0;
 }
 
 void CKernel::LineGoEnd (char *Line, unsigned *pLen)
@@ -964,6 +1002,7 @@ TShutdownMode CKernel::Run (void)
 
 		PollUsbAlt ();
 		PollUsbEditorNav ();
+		PollUsbFKeys ();
 		PollCadReboot ();
 		if (nBytes <= 0)
 		{
