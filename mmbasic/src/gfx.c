@@ -318,8 +318,6 @@ void mmb_gfx_set_mode(int mode, int bits)
 	G.gfx.w = w;
 	G.gfx.h = h;
 	G.gfx.pages = MMB_MAX_PAGES;
-	if ((unsigned)w * (unsigned)h > 800u * 600u)
-		G.gfx.pages = 2;
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	page_buf(0);
