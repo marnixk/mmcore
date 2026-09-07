@@ -239,7 +239,7 @@ void CKernel::PollUsbAlt (void)
 		m_AltHidSent = 0;
 		return;
 	}
-	if (!mmb_in_editor () && !mmb_in_files ())
+	if (!mmb_in_editor () && !mmb_in_files () && !mmb_in_wordpad ())
 		return;
 	hid = m_HeldHid;
 	if (hid == 0 || hid == m_AltHidSent)
@@ -272,7 +272,7 @@ void CKernel::PollUsbEditorNav (void)
 	char letter = 0;
 	int mod;
 
-	if (!mmb_in_editor ())
+	if (!mmb_in_editor () && !mmb_in_wordpad ())
 	{
 		m_NavHidSent = 0;
 		return;
@@ -677,6 +677,16 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
+	if (mmb_in_wordpad ())
+	{
+		const char *out = mmb_wordpad_key (c);
+		if (out && out[0])
+			emit (this, out);
+		if (!mmb_in_wordpad ())
+			emit_prompt (this);
+		return;
+	}
+
 	if (mmb_in_connect ())
 	{
 		const char *out = mmb_connect_key (c);
@@ -769,6 +779,11 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 			/* Interactive HELP TUI already streamed to HDMI/serial. */
 		}
 		else if (mmb_in_term ())
+		{
+			if (Result && Result[0])
+				emit (this, Result);
+		}
+		else if (mmb_in_wordpad ())
 		{
 			if (Result && Result[0])
 				emit (this, Result);
