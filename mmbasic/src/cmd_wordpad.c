@@ -420,6 +420,8 @@ static void wp_build_layout(void)
 			}
 			pos++;
 		}
+		else
+			break;
 	}
 	W.total_vrows = vr;
 	if (!found_cx)
