@@ -347,6 +347,8 @@ static void plat_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsig
 	}
 }
 
+static void plat_tui_present(int y0, int y1);
+
 static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
 {
 	int row, px, bpp;
@@ -391,6 +393,8 @@ static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rg
 	}
 	plat_tui_present(y, y + h - 1);
 }
+
+static void plat_tui_present(int y0, int y1)
 {
 	CDisplay::TArea area;
 	if (!s_kernel || !s_tui_pix || y0 > y1)
