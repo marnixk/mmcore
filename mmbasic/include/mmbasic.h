@@ -94,6 +94,12 @@ int mmb_in_term(void);
 /* Feed a keystroke to TERM. Returns text to emit (may be empty). */
 const char *mmb_term_key(char c);
 
+/* True while WORDPAD markdown editor owns the keyboard. */
+int mmb_in_wordpad(void);
+
+/* Feed a keystroke to WORDPAD. Returns text to emit (may be empty). */
+const char *mmb_wordpad_key(char c);
+
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 

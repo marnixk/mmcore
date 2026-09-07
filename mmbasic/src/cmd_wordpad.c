@@ -1,0 +1,2349 @@
+#include "mmb_priv.h"
+
+#define WP_BUF      65536
+#define WP_CLIP     8192
+#define WP_DLG      128
+#define WP_WRAP_N   80
+#define WP_WRAP_W   120
+#define WP_MAX_VR   4096
+#define WP_FD_MAX   64
+#define WP_FD_NAME  40
+
+#define WP_ESC_NONE 0
+#define WP_ESC_GOT  1
+#define WP_ESC_CSI  2
+#define WP_ESC_SS3  3
+
+#define WP_DLG_NONE   0
+#define WP_DLG_OPEN   1
+#define WP_DLG_SAVEAS 2
+
+#define WP_MENU_FILE     0
+#define WP_MENU_EDIT     1
+#define WP_MENU_SETTINGS 2
+#define WP_MENU_THEME    3
+#define WP_MENU_COUNT    4
+
+#define WP_FD_FOCUS_NAME 0
+#define WP_FD_FOCUS_FILE 1
+#define WP_FD_FOCUS_DIR  2
+
+#define WP_STYLE_NORM   0
+#define WP_STYLE_H1     1
+#define WP_STYLE_H2     2
+#define WP_STYLE_H3     3
+#define WP_STYLE_BULLET 4
+#define WP_STYLE_QUOTE  5
+#define WP_STYLE_CODE   6
+
+typedef struct {
+	unsigned bg;
+	unsigned fg;
+	unsigned heading;
+	unsigned dim;
+} wp_theme;
+
+typedef struct {
+	int off0;
+	int off1;
+	int len;
+	int style;
+	int line_start;
+	int prefix_len;
+	int hide_prefix;
+} wp_vrow;
+
+typedef struct {
+	int active;
+	char buf[WP_BUF];
+	int len;
+	char path[128];
+	int dirty;
+	int cx;
+	int sel;
+	int sel_anchor;
+	char clip[WP_CLIP];
+	int cliplen;
+	int wide;
+	int theme;
+	int menu_open;
+	int menu;
+	int menu_item;
+	int dialog;
+	char dlg[WP_DLG];
+	int dlglen;
+	int scroll;
+	int vid_cols;
+	int vid_rows;
+	int pane_left;
+	int pane_width;
+	int text_rows;
+	int esc_state;
+	int csi_n;
+	int csi_arg;
+	int csi_semi;
+	int alt_pend;
+	int cx_vrow;
+	int cx_vcol;
+	int total_vrows;
+	wp_vrow vrows[WP_MAX_VR];
+	char serial[256];
+	int serial_len;
+} wp_state;
+
+static wp_state W;
+
+static const wp_theme k_themes[] = {
+	{ 0x1A1B26u, 0xC8C9D0u, 0x7AA2F7u, 0x565A6Eu },
+	{ 0xF4F1EAu, 0x2C2C2Cu, 0x1A5A9Au, 0x8A8680u },
+	{ 0x2A2A2Au, 0x9A9A9Au, 0xB0B0B0u, 0x6A6A6Au },
+	{ 0x000000u, 0xFFFFFFu, 0xFFFF00u, 0xAAAAAAu },
+	{ 0x0A0A12u, 0x39FF14u, 0xFF00FFu, 0x00FFFFu },
+	{ 0x000000u, 0x00AA00u, 0x00FF00u, 0x007700u }
+};
+
+static const char *menu_names[] = { "File", "Edit", "Settings", "Theme" };
+static const char menu_hots[] = { 'F', 'E', 'S', 'T' };
+static int menu_x[WP_MENU_COUNT];
+
+static const char *file_items[] = { "New", "Open...", "Save", "Save As...", "Quit" };
+static const char *edit_items[] = { "Copy", "Cut", "Paste" };
+static const char *settings_items[] = { "Wide view" };
+static const char *theme_items[] = {
+	"Dark", "Light", "Low contrast", "High contrast", "Neon", "Terminal"
+};
+
+static char fd_dir[128];
+static char fd_mask[32];
+static char fd_files[WP_FD_MAX][WP_FD_NAME];
+static char fd_dirs[WP_FD_MAX][WP_FD_NAME];
+static int fd_nfile, fd_ndir;
+static int fd_fsel, fd_dsel;
+static int fd_ftop, fd_dtop;
+static int fd_focus;
+
+static const wp_theme *th(void)
+{
+	if (W.theme < 0)
+		W.theme = 0;
+	if (W.theme >= (int)(sizeof(k_themes) / sizeof(k_themes[0])))
+		W.theme = 0;
+	return &k_themes[W.theme];
+}
+
+static unsigned code_bg(void)
+{
+	const wp_theme *t = th();
+	unsigned r = (t->bg >> 16) & 255;
+	unsigned g = (t->bg >> 8) & 255;
+	unsigned b = t->bg & 255;
+	return mmb_rgb_pack((int)(r * 7 / 8), (int)(g * 7 / 8), (int)(b * 7 / 8));
+}
+
+static void ser(const char *s)
+{
+	unsigned n;
+	if (!s || !G.plat || !G.plat->write_serial)
+		return;
+	n = (unsigned)strlen(s);
+	if (n)
+		G.plat->write_serial(s, n);
+}
+
+static const char *wp_basename(void)
+{
+	const char *s = W.path;
+	const char *p = s;
+
+	if (!s[0])
+		return "untitled";
+	while (*p)
+	{
+		if (*p == '/' || *p == ':')
+			s = p + 1;
+		p++;
+	}
+	return s[0] ? s : "untitled";
+}
+
+static void wp_puts(int col, int row, const char *s, unsigned fg, unsigned bg)
+{
+	if (!G.plat || !G.plat->tui_glyph || !s)
+		return;
+	while (*s)
+		G.plat->tui_glyph(col++, row, (unsigned)*s++, fg, bg);
+}
+
+static void wp_fill_row(int row, unsigned fg, unsigned bg)
+{
+	int c;
+	if (!G.plat || !G.plat->tui_glyph)
+		return;
+	for (c = 0; c < W.vid_cols; c++)
+		G.plat->tui_glyph(c, row, ' ', fg, bg);
+}
+
+static void wp_layout_geom(void)
+{
+	int wrap;
+
+	W.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
+	W.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 25;
+	wrap = W.wide ? WP_WRAP_W : WP_WRAP_N;
+	if (W.vid_cols < wrap)
+	{
+		W.pane_width = W.vid_cols;
+		W.pane_left = 0;
+	}
+	else
+	{
+		W.pane_width = wrap;
+		W.pane_left = (W.vid_cols - wrap) / 2;
+		if (W.pane_left < 0)
+			W.pane_left = 0;
+	}
+	W.text_rows = W.vid_rows - 2;
+	if (W.text_rows < 1)
+		W.text_rows = 1;
+}
+
+static void ensure_md(char *path, int sz)
+{
+	if (!path || !path[0])
+		return;
+	if (!strchr(path, '.'))
+		strncat(path, ".MD", (unsigned)sz - strlen(path) - 1);
+}
+
+static void canon_path(const char *path, char *out, int outsz)
+{
+	char tmp[128];
+
+	out[0] = 0;
+	if (!path || !path[0] || outsz < 2)
+		return;
+	if (mmb_vfs_resolve(path, tmp, sizeof(tmp)) == 0)
+		strncpy(out, tmp, (unsigned)outsz - 1);
+	else
+		strncpy(out, path, (unsigned)outsz - 1);
+	out[outsz - 1] = 0;
+	ensure_md(out, outsz);
+}
+
+static int line_is_fence(int ls, int le)
+{
+	return (le - ls) == 3 && W.buf[ls] == '`' && W.buf[ls + 1] == '`' &&
+	       W.buf[ls + 2] == '`';
+}
+
+static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
+		       int *prefix_len, int *hide_prefix)
+{
+	*style = WP_STYLE_NORM;
+	*prefix_len = 0;
+	*hide_prefix = 0;
+	if (in_code)
+	{
+		*style = WP_STYLE_CODE;
+		return;
+	}
+	if (le > ls + 3 && W.buf[ls] == '#' && W.buf[ls + 1] == '#' &&
+	    W.buf[ls + 2] == '#' && W.buf[ls + 3] == ' ')
+	{
+		*style = WP_STYLE_H3;
+		*prefix_len = 4;
+	}
+	else if (le > ls + 2 && W.buf[ls] == '#' && W.buf[ls + 1] == '#' &&
+		 W.buf[ls + 2] == ' ')
+	{
+		*style = WP_STYLE_H2;
+		*prefix_len = 3;
+	}
+	else if (le > ls + 1 && W.buf[ls] == '#' && W.buf[ls + 1] == ' ')
+	{
+		*style = WP_STYLE_H1;
+		*prefix_len = 2;
+	}
+	else if (le > ls + 1 && W.buf[ls] == '-' && W.buf[ls + 1] == ' ')
+	{
+		*style = WP_STYLE_BULLET;
+		*prefix_len = 2;
+	}
+	else if (le > ls + 1 && W.buf[ls] == '*' && W.buf[ls + 1] == ' ')
+	{
+		*style = WP_STYLE_BULLET;
+		*prefix_len = 2;
+	}
+	else if (le > ls + 1 && W.buf[ls] == '>' && W.buf[ls + 1] == ' ')
+	{
+		*style = WP_STYLE_QUOTE;
+		*prefix_len = 2;
+	}
+	if (*prefix_len > 0 && !cursor_on)
+		*hide_prefix = 1;
+}
+
+static int in_sel(int off)
+{
+	int lo, hi, a, b;
+
+	if (!W.sel)
+		return 0;
+	a = W.sel_anchor;
+	b = W.cx;
+	if (a > b)
+	{
+		int x = a;
+		a = b;
+		b = x;
+	}
+	if (a < 0)
+		a = 0;
+	if (b > W.len)
+		b = W.len;
+	if (a >= b)
+		return 0;
+	lo = a;
+	hi = b;
+	return off >= lo && off < hi;
+}
+
+static void wp_build_layout(void)
+{
+	int pos = 0;
+	int vr = 0;
+	int in_code = 0;
+	int width = W.pane_width;
+	int found_cx = 0;
+
+	W.total_vrows = 0;
+	W.cx_vrow = 0;
+	W.cx_vcol = 0;
+	while (pos <= W.len && vr < WP_MAX_VR)
+	{
+		int ls = pos;
+		int le = pos;
+		int style, prefix_len, hide_prefix;
+		int cursor_on;
+		int i, col;
+		int break_at, break_col;
+
+		while (le < W.len && W.buf[le] != '\n')
+			le++;
+		if (line_is_fence(ls, le))
+			in_code = !in_code;
+		cursor_on = (W.cx >= ls && W.cx <= le);
+		line_style(ls, le, in_code && !line_is_fence(ls, le), cursor_on,
+			   &style, &prefix_len, &hide_prefix);
+		i = ls;
+		col = 0;
+		break_at = -1;
+		break_col = 0;
+		W.vrows[vr].off0 = i;
+		W.vrows[vr].style = style;
+		W.vrows[vr].line_start = ls;
+		W.vrows[vr].prefix_len = prefix_len;
+		W.vrows[vr].hide_prefix = hide_prefix;
+		while (i < le)
+		{
+			if (hide_prefix && i < ls + prefix_len)
+			{
+				if (W.cx == i)
+				{
+					W.cx_vrow = vr;
+					W.cx_vcol = col;
+					found_cx = 1;
+				}
+				i++;
+				continue;
+			}
+			if (col >= width && col > 0)
+			{
+				if (break_at >= ls)
+				{
+					W.vrows[vr].off1 = break_at + 1;
+					W.vrows[vr].len = break_col + 1;
+					vr++;
+					i = break_at + 1;
+					col = 0;
+					break_at = -1;
+					break_col = 0;
+					if (vr >= WP_MAX_VR)
+						break;
+					W.vrows[vr].off0 = i;
+					W.vrows[vr].style = style;
+					W.vrows[vr].line_start = ls;
+					W.vrows[vr].prefix_len = prefix_len;
+					W.vrows[vr].hide_prefix = hide_prefix;
+					continue;
+				}
+				W.vrows[vr].off1 = i;
+				W.vrows[vr].len = col;
+				vr++;
+				col = 0;
+				break_at = -1;
+				break_col = 0;
+				if (vr >= WP_MAX_VR)
+					break;
+				W.vrows[vr].off0 = i;
+				W.vrows[vr].style = style;
+				W.vrows[vr].line_start = ls;
+				W.vrows[vr].prefix_len = prefix_len;
+				W.vrows[vr].hide_prefix = hide_prefix;
+				continue;
+			}
+			if (W.buf[i] == ' ')
+			{
+				break_at = i;
+				break_col = col;
+			}
+			if (W.cx == i)
+			{
+				W.cx_vrow = vr;
+				W.cx_vcol = col;
+				found_cx = 1;
+			}
+			col++;
+			i++;
+		}
+		if (vr >= WP_MAX_VR)
+			break;
+		W.vrows[vr].off1 = le;
+		W.vrows[vr].len = col;
+		vr++;
+		pos = le;
+		if (pos < W.len && W.buf[pos] == '\n')
+		{
+			if (W.cx == pos)
+			{
+				W.cx_vrow = vr;
+				W.cx_vcol = 0;
+				found_cx = 1;
+			}
+			pos++;
+		}
+	}
+	W.total_vrows = vr;
+	if (!found_cx)
+	{
+		if (W.cx == W.len)
+		{
+			if (W.total_vrows > 0 && W.len > 0 && W.buf[W.len - 1] == '\n')
+			{
+				W.cx_vrow = W.total_vrows;
+				W.cx_vcol = 0;
+			}
+			else if (W.total_vrows > 0)
+			{
+				W.cx_vrow = W.total_vrows - 1;
+				W.cx_vcol = W.vrows[W.total_vrows - 1].len;
+			}
+		}
+	}
+}
+
+static int vrow_col_to_off(int vr, int vc)
+{
+	int ls, i, col;
+	int prefix_len, hide_prefix;
+
+	if (vr < 0 || vr >= W.total_vrows)
+		return W.len;
+	ls = W.vrows[vr].line_start;
+	prefix_len = W.vrows[vr].prefix_len;
+	hide_prefix = W.vrows[vr].hide_prefix;
+	i = W.vrows[vr].off0;
+	col = 0;
+	while (i < W.vrows[vr].off1)
+	{
+		if (hide_prefix && i < ls + prefix_len)
+		{
+			i++;
+			continue;
+		}
+		if (col >= vc)
+			return i;
+		col++;
+		i++;
+	}
+	return W.vrows[vr].off1;
+}
+
+static void ensure_scroll(void)
+{
+	if (W.cx_vrow < W.scroll)
+		W.scroll = W.cx_vrow;
+	if (W.cx_vrow >= W.scroll + W.text_rows)
+		W.scroll = W.cx_vrow - W.text_rows + 1;
+	if (W.scroll < 0)
+		W.scroll = 0;
+	if (W.total_vrows > 0 && W.scroll > W.total_vrows - 1)
+		W.scroll = W.total_vrows - 1;
+}
+
+static unsigned style_fg(int style)
+{
+	const wp_theme *t = th();
+
+	switch (style)
+	{
+	case WP_STYLE_H1:
+	case WP_STYLE_H2:
+	case WP_STYLE_H3:
+	case WP_STYLE_BULLET:
+		return t->heading;
+	case WP_STYLE_QUOTE:
+		return t->dim;
+	default:
+		return t->fg;
+	}
+}
+
+static unsigned style_bg(int style)
+{
+	if (style == WP_STYLE_CODE)
+		return code_bg();
+	return th()->bg;
+}
+
+static int count_words(void)
+{
+	int n = 0, in_word = 0, i;
+
+	for (i = 0; i < W.len; i++)
+	{
+		char c = W.buf[i];
+		if (c == ' ' || c == '\n' || c == '\t' || c == '\r')
+			in_word = 0;
+		else if (!in_word)
+		{
+			in_word = 1;
+			n++;
+		}
+	}
+	return n;
+}
+
+static char *put_uint(char *p, int n)
+{
+	char tmp[12];
+	int i = 0;
+
+	if (n <= 0)
+	{
+		*p++ = '0';
+		return p;
+	}
+	while (n > 0 && i < 11)
+	{
+		tmp[i++] = (char)('0' + (n % 10));
+		n /= 10;
+	}
+	while (i--)
+		*p++ = tmp[i];
+	return p;
+}
+
+static void serial_reset(void)
+{
+	W.serial_len = 0;
+	W.serial[0] = 0;
+}
+
+static void serial_put(const char *s)
+{
+	int n, room;
+
+	if (!s)
+		return;
+	n = (int)strlen(s);
+	room = (int)sizeof(W.serial) - 1 - W.serial_len;
+	if (n > room)
+		n = room;
+	if (n <= 0)
+		return;
+	memcpy(W.serial + W.serial_len, s, (unsigned)n);
+	W.serial_len += n;
+	W.serial[W.serial_len] = 0;
+}
+
+static void serial_row(const char *s)
+{
+	serial_put(s);
+	serial_put("\r\n");
+}
+
+static void wp_serial_dump(void)
+{
+	ser(W.serial);
+	serial_reset();
+}
+
+static void wp_leave(void)
+{
+	mmb_console_apply_colour();
+	memset(&W, 0, sizeof(W));
+}
+
+static void sel_clear(void)
+{
+	W.sel = 0;
+}
+
+static int sel_bounds(int *lo, int *hi)
+{
+	int a, b;
+
+	if (!W.sel)
+		return 0;
+	a = W.sel_anchor;
+	b = W.cx;
+	if (a > b)
+	{
+		int x = a;
+		a = b;
+		b = x;
+	}
+	if (a < 0)
+		a = 0;
+	if (b > W.len)
+		b = W.len;
+	if (a >= b)
+		return 0;
+	if (lo)
+		*lo = a;
+	if (hi)
+		*hi = b;
+	return 1;
+}
+
+static void sel_prepare(int shift)
+{
+	if (!shift)
+	{
+		W.sel = 0;
+		return;
+	}
+	if (!W.sel)
+	{
+		W.sel_anchor = W.cx;
+		W.sel = 1;
+	}
+}
+
+static void clip_store(const char *s, int n)
+{
+	if (n >= WP_CLIP)
+		n = WP_CLIP - 1;
+	if (n < 0)
+		n = 0;
+	memcpy(W.clip, s, (unsigned)n);
+	W.cliplen = n;
+	W.clip[W.cliplen] = 0;
+}
+
+static int delete_range(int lo, int hi, int to_clip)
+{
+	int n;
+
+	if (hi <= lo)
+		return 0;
+	n = hi - lo;
+	if (to_clip)
+		clip_store(W.buf + lo, n);
+	memmove(W.buf + lo, W.buf + hi, (unsigned)(W.len - hi + 1));
+	W.len -= n;
+	W.cx = lo;
+	W.sel = 0;
+	W.dirty = 1;
+	return 1;
+}
+
+static int delete_selection(int to_clip)
+{
+	int lo, hi;
+
+	if (!sel_bounds(&lo, &hi))
+	{
+		sel_clear();
+		return 0;
+	}
+	return delete_range(lo, hi, to_clip);
+}
+
+static void copy_selection(void)
+{
+	int lo, hi;
+
+	if (!sel_bounds(&lo, &hi))
+		return;
+	clip_store(W.buf + lo, hi - lo);
+}
+
+static void cut_selection(void)
+{
+	delete_selection(1);
+}
+
+static void paste_clip(void)
+{
+	int n;
+
+	if (W.cliplen <= 0)
+		return;
+	delete_selection(0);
+	n = W.cliplen;
+	if (W.len + n >= WP_BUF - 1)
+		n = WP_BUF - 1 - W.len;
+	if (n <= 0)
+		return;
+	if (W.cx < W.len)
+		memmove(W.buf + W.cx + n, W.buf + W.cx, (unsigned)(W.len - W.cx + 1));
+	memcpy(W.buf + W.cx, W.clip, (unsigned)n);
+	W.cx += n;
+	W.len += n;
+	W.buf[W.len] = 0;
+	W.dirty = 1;
+}
+
+static int line_start(int off)
+{
+	while (off > 0 && W.buf[off - 1] != '\n')
+		off--;
+	return off;
+}
+
+static int line_end(int off)
+{
+	while (off < W.len && W.buf[off] != '\n')
+		off++;
+	return off;
+}
+
+static void insert_char(char c)
+{
+	if (W.len >= WP_BUF - 1)
+		return;
+	delete_selection(0);
+	if (W.len >= WP_BUF - 1)
+		return;
+	if (W.cx < W.len)
+		memmove(W.buf + W.cx + 1, W.buf + W.cx, (unsigned)(W.len - W.cx));
+	W.buf[W.cx++] = c;
+	W.len++;
+	W.buf[W.len] = 0;
+	W.dirty = 1;
+}
+
+static void backspace(void)
+{
+	if (delete_selection(0))
+		return;
+	if (W.cx <= 0)
+		return;
+	memmove(W.buf + W.cx - 1, W.buf + W.cx, (unsigned)(W.len - W.cx + 1));
+	W.cx--;
+	W.len--;
+	W.dirty = 1;
+}
+
+static void delete_char(void)
+{
+	if (delete_selection(0))
+		return;
+	if (W.cx >= W.len)
+		return;
+	memmove(W.buf + W.cx, W.buf + W.cx + 1, (unsigned)(W.len - W.cx));
+	W.len--;
+	W.dirty = 1;
+}
+
+static void move_left(void)
+{
+	if (W.cx > 0)
+		W.cx--;
+}
+
+static void move_right(void)
+{
+	if (W.cx < W.len)
+		W.cx++;
+}
+
+static void move_up(void)
+{
+	int vr, vc;
+
+	wp_build_layout();
+	vr = W.cx_vrow - 1;
+	vc = W.cx_vcol;
+	if (vr < 0)
+		return;
+	W.cx = vrow_col_to_off(vr, vc);
+}
+
+static void move_down(void)
+{
+	int vr, vc;
+
+	wp_build_layout();
+	vr = W.cx_vrow + 1;
+	vc = W.cx_vcol;
+	if (vr >= W.total_vrows && W.cx < W.len)
+	{
+		W.cx = W.len;
+		return;
+	}
+	if (vr >= W.total_vrows)
+		return;
+	W.cx = vrow_col_to_off(vr, vc);
+}
+
+static void move_home(void)
+{
+	wp_build_layout();
+	W.cx = W.vrows[W.cx_vrow].off0;
+}
+
+static void move_end(void)
+{
+	wp_build_layout();
+	W.cx = W.vrows[W.cx_vrow].off1;
+}
+
+static void page_up(void)
+{
+	int vr, vc;
+
+	wp_build_layout();
+	vr = W.cx_vrow - W.text_rows;
+	vc = W.cx_vcol;
+	if (vr < 0)
+		vr = 0;
+	W.cx = vrow_col_to_off(vr, vc);
+}
+
+static void page_down(void)
+{
+	int vr, vc;
+
+	wp_build_layout();
+	vr = W.cx_vrow + W.text_rows;
+	vc = W.cx_vcol;
+	if (vr >= W.total_vrows)
+		vr = W.total_vrows > 0 ? W.total_vrows - 1 : 0;
+	W.cx = vrow_col_to_off(vr, vc);
+}
+
+static void wp_new_doc(void)
+{
+	W.buf[0] = 0;
+	W.len = 0;
+	W.path[0] = 0;
+	W.dirty = 0;
+	W.cx = 0;
+	W.scroll = 0;
+	sel_clear();
+}
+
+static void wp_load_file(const char *path)
+{
+	char canon[128];
+	unsigned got;
+
+	canon_path(path, canon, sizeof(canon));
+	W.buf[0] = 0;
+	W.len = 0;
+	if (mmb_vfs_read(canon, W.buf, sizeof(W.buf) - 1, &got) == 0)
+	{
+		W.len = (int)got;
+		W.buf[W.len] = 0;
+	}
+	strncpy(W.path, canon, sizeof(W.path) - 1);
+	W.path[sizeof(W.path) - 1] = 0;
+	W.dirty = 0;
+	W.cx = 0;
+	W.scroll = 0;
+	sel_clear();
+}
+
+static int wp_save(void)
+{
+	if (!W.path[0])
+		return 0;
+	if (mmb_vfs_write(W.path, W.buf, (unsigned)W.len, 0) != 0)
+		return -1;
+	W.dirty = 0;
+	return 1;
+}
+
+static const char **menu_items(int menu, int *n)
+{
+	switch (menu)
+	{
+	case WP_MENU_FILE:
+		*n = (int)(sizeof(file_items) / sizeof(file_items[0]));
+		return file_items;
+	case WP_MENU_EDIT:
+		*n = (int)(sizeof(edit_items) / sizeof(edit_items[0]));
+		return edit_items;
+	case WP_MENU_SETTINGS:
+		*n = (int)(sizeof(settings_items) / sizeof(settings_items[0]));
+		return settings_items;
+	default:
+		*n = (int)(sizeof(theme_items) / sizeof(theme_items[0]));
+		return theme_items;
+	}
+}
+
+static int menu_width(int menu)
+{
+	int n, i, w = 10;
+	const char **it = menu_items(menu, &n);
+
+	for (i = 0; i < n; i++)
+	{
+		int L = (int)strlen(it[i]);
+		if (L + 2 > w)
+			w = L + 2;
+	}
+	return w + 2;
+}
+
+static void close_ui(void)
+{
+	W.menu_open = 0;
+	W.dialog = WP_DLG_NONE;
+	W.dlglen = 0;
+	W.dlg[0] = 0;
+}
+
+static int fd_on(void)
+{
+	return W.dialog == WP_DLG_OPEN || W.dialog == WP_DLG_SAVEAS;
+}
+
+static void fd_copy(char *dst, int n, const char *s)
+{
+	if (!dst || n <= 0)
+		return;
+	if (!s)
+		s = "";
+	strncpy(dst, s, (unsigned)n - 1);
+	dst[n - 1] = 0;
+}
+
+static int fd_icmp(const char *a, const char *b)
+{
+	for (;;)
+	{
+		unsigned char ca = (unsigned char)*a++;
+		unsigned char cb = (unsigned char)*b++;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (unsigned char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (unsigned char)(cb - 32);
+		if (ca != cb)
+			return (int)ca - (int)cb;
+		if (!ca)
+			return 0;
+	}
+}
+
+static int fd_match(const char *name, const char *pat)
+{
+	const char *n, *p, *star, *match;
+
+	if (!pat || !pat[0] || (pat[0] == '*' && pat[1] == 0))
+		return 1;
+	n = name;
+	p = pat;
+	star = 0;
+	match = 0;
+	while (*n)
+	{
+		char cn = *n, cp = *p;
+		if (cn >= 'a' && cn <= 'z')
+			cn = (char)(cn - 32);
+		if (cp >= 'a' && cp <= 'z')
+			cp = (char)(cp - 32);
+		if (cp == '*')
+		{
+			star = p++;
+			match = n;
+			continue;
+		}
+		if (cp == '?' || cn == cp)
+		{
+			n++;
+			p++;
+			continue;
+		}
+		if (star)
+		{
+			p = star + 1;
+			match++;
+			n = match;
+			continue;
+		}
+		return 0;
+	}
+	while (*p == '*')
+		p++;
+	return *p == 0;
+}
+
+static int fd_has_glob(const char *s)
+{
+	return s && (strchr(s, '*') || strchr(s, '?'));
+}
+
+static const char *fd_rchr(const char *s, char ch)
+{
+	const char *last = 0;
+
+	if (!s)
+		return 0;
+	for (; *s; s++)
+		if (*s == ch)
+			last = s;
+	return last;
+}
+
+static int fd_is_dir(const char *path)
+{
+	if (!path || !path[0])
+		return 0;
+	if (!mmb_vfs_exists(path))
+		return 0;
+	return mmb_vfs_size(path) < 0;
+}
+
+static void fd_parent(char *path)
+{
+	char *slash = 0, *p;
+
+	if (!path[0])
+		return;
+	if (path[0] && path[1] == ':' && path[2] == 0)
+	{
+		path[2] = '/';
+		path[3] = 0;
+		return;
+	}
+	for (p = path + 2; *p; p++)
+		if (*p == '/')
+			slash = p;
+	if (!slash || slash <= path + 2)
+	{
+		if (path[0] && path[1] == ':')
+		{
+			path[2] = '/';
+			path[3] = 0;
+		}
+		return;
+	}
+	*slash = 0;
+}
+
+static void fd_join(char *dst, int n, const char *dir, const char *name)
+{
+	int last;
+
+	fd_copy(dst, n, dir);
+	if (!name || !name[0])
+		return;
+	last = dst[0] ? (int)(unsigned char)dst[strlen(dst) - 1] : 0;
+	if (last && last != '/' && last != ':')
+		strncat(dst, "/", (unsigned)n - strlen(dst) - 1);
+	else if (last == ':')
+		strncat(dst, "/", (unsigned)n - strlen(dst) - 1);
+	strncat(dst, name, (unsigned)n - strlen(dst) - 1);
+}
+
+static void fd_make_full(char *dst, int n, const char *name)
+{
+	if (!name || !name[0])
+	{
+		fd_copy(dst, n, fd_dir);
+		return;
+	}
+	if (name[1] == ':')
+	{
+		fd_copy(dst, n, name);
+		return;
+	}
+	fd_join(dst, n, fd_dir, name);
+}
+
+static void fd_basename(char *out, int n, const char *path)
+{
+	const char *s = path, *p;
+
+	if (!path)
+		path = "";
+	for (p = path; *p; p++)
+		if (*p == '/' || *p == ':')
+			s = p + 1;
+	fd_copy(out, n, s);
+}
+
+static void fd_dirname(char *out, int n, const char *path)
+{
+	char tmp[128];
+	char *slash;
+
+	fd_copy(tmp, sizeof(tmp), path);
+	slash = (char *)fd_rchr(tmp, '/');
+	if (!slash)
+	{
+		out[0] = 0;
+		return;
+	}
+	if (slash <= tmp + 2 && tmp[1] == ':')
+	{
+		tmp[2] = '/';
+		tmp[3] = 0;
+		fd_copy(out, n, tmp);
+		return;
+	}
+	*slash = 0;
+	if (tmp[0] && tmp[1] == ':' && tmp[2] == 0)
+	{
+		tmp[2] = '/';
+		tmp[3] = 0;
+	}
+	fd_copy(out, n, tmp);
+}
+
+static void fd_add(char arr[][WP_FD_NAME], int *n, const char *s)
+{
+	int i;
+
+	if (*n >= WP_FD_MAX || !s || !s[0])
+		return;
+	for (i = 0; i < *n; i++)
+		if (mmb_keyword_eq(arr[i], s))
+			return;
+	strncpy(arr[*n], s, WP_FD_NAME - 1);
+	arr[*n][WP_FD_NAME - 1] = 0;
+	(*n)++;
+}
+
+static void fd_swap(char arr[][WP_FD_NAME], int i, int j)
+{
+	char t[WP_FD_NAME];
+
+	memcpy(t, arr[i], WP_FD_NAME);
+	memcpy(arr[i], arr[j], WP_FD_NAME);
+	memcpy(arr[j], t, WP_FD_NAME);
+}
+
+static int fd_dir_rank(const char *s)
+{
+	if (s[0] == '.' && s[1] == '.' && s[2] == 0)
+		return 0;
+	if (s[0] == '[' && s[1] == '-')
+		return 2;
+	return 1;
+}
+
+static void fd_sort_files(void)
+{
+	int i, j;
+
+	for (i = 0; i < fd_nfile; i++)
+		for (j = i + 1; j < fd_nfile; j++)
+			if (fd_icmp(fd_files[j], fd_files[i]) < 0)
+				fd_swap(fd_files, i, j);
+}
+
+static void fd_sort_dirs(void)
+{
+	int i, j;
+
+	for (i = 0; i < fd_ndir; i++)
+		for (j = i + 1; j < fd_ndir; j++)
+		{
+			int ra = fd_dir_rank(fd_dirs[i]);
+			int rb = fd_dir_rank(fd_dirs[j]);
+			if (rb < ra || (rb == ra && fd_icmp(fd_dirs[j], fd_dirs[i]) < 0))
+				fd_swap(fd_dirs, i, j);
+		}
+}
+
+static void fd_scan(void)
+{
+	char list[2048], drives[256];
+	char *s, *nl;
+
+	fd_nfile = 0;
+	fd_ndir = 0;
+	fd_add(fd_dirs, &fd_ndir, "..");
+	list[0] = 0;
+	if (mmb_vfs_list(fd_dir, list, sizeof(list)) != 0)
+		list[0] = 0;
+	s = list;
+	while (*s)
+	{
+		char name[WP_FD_NAME];
+		int n, is_dir = 0;
+
+		nl = s;
+		while (*nl && *nl != '\n' && *nl != '\r')
+			nl++;
+		n = (int)(nl - s);
+		if (n >= WP_FD_NAME)
+			n = WP_FD_NAME - 1;
+		memcpy(name, s, (unsigned)n);
+		name[n] = 0;
+		if (n > 0 && name[n - 1] == '/')
+			is_dir = 1;
+		if (name[0] && !(name[0] == '.' && name[1] == 0) &&
+		    !(name[0] == '.' && name[1] == '.' &&
+		      (name[2] == 0 || name[2] == '/')))
+		{
+			if (is_dir)
+				fd_add(fd_dirs, &fd_ndir, name);
+			else if (fd_match(name, fd_mask))
+				fd_add(fd_files, &fd_nfile, name);
+		}
+		s = nl;
+		if (*s == '\r')
+			s++;
+		if (*s == '\n')
+			s++;
+	}
+	drives[0] = 0;
+	mmb_vfs_drives(drives, sizeof(drives));
+	s = drives;
+	while (*s)
+	{
+		nl = s;
+		while (*nl && *nl != '\n' && *nl != '\r')
+			nl++;
+		if (s[0] && s[1] == ':')
+		{
+			char spec[8];
+			char L = s[0];
+			if (L >= 'a' && L <= 'z')
+				L = (char)(L - 32);
+			spec[0] = '[';
+			spec[1] = '-';
+			spec[2] = L;
+			spec[3] = '-';
+			spec[4] = ']';
+			spec[5] = 0;
+			fd_add(fd_dirs, &fd_ndir, spec);
+		}
+		s = nl;
+		if (*s == '\r')
+			s++;
+		if (*s == '\n')
+			s++;
+	}
+	fd_sort_files();
+	fd_sort_dirs();
+	fd_fsel = 0;
+	fd_dsel = 0;
+	fd_ftop = 0;
+	fd_dtop = 0;
+}
+
+static void fd_geom(int *c0, int *r0, int *w, int *h)
+{
+	*w = 62;
+	*h = 18;
+	if (*w > W.vid_cols - 2)
+		*w = W.vid_cols - 2;
+	if (*h > W.vid_rows - 2)
+		*h = W.vid_rows - 2;
+	*r0 = (W.vid_rows - *h) / 2;
+	*c0 = (W.vid_cols - *w) / 2;
+	if (*r0 < 2)
+		*r0 = 2;
+	if (*c0 < 0)
+		*c0 = 0;
+}
+
+static int fd_list_h(void)
+{
+	int c0, r0, w, h, lh;
+
+	fd_geom(&c0, &r0, &w, &h);
+	lh = h - 8;
+	return lh < 4 ? 4 : lh;
+}
+
+static void fd_clamp(void)
+{
+	int lh = fd_list_h();
+
+	if (fd_nfile <= 0)
+	{
+		fd_fsel = 0;
+		fd_ftop = 0;
+	}
+	else
+	{
+		if (fd_fsel < 0)
+			fd_fsel = 0;
+		if (fd_fsel >= fd_nfile)
+			fd_fsel = fd_nfile - 1;
+		if (fd_fsel < fd_ftop)
+			fd_ftop = fd_fsel;
+		if (fd_fsel >= fd_ftop + lh)
+			fd_ftop = fd_fsel - lh + 1;
+		if (fd_ftop < 0)
+			fd_ftop = 0;
+	}
+	if (fd_ndir <= 0)
+	{
+		fd_dsel = 0;
+		fd_dtop = 0;
+	}
+	else
+	{
+		if (fd_dsel < 0)
+			fd_dsel = 0;
+		if (fd_dsel >= fd_ndir)
+			fd_dsel = fd_ndir - 1;
+		if (fd_dsel < fd_dtop)
+			fd_dtop = fd_dsel;
+		if (fd_dsel >= fd_dtop + lh)
+			fd_dtop = fd_dsel - lh + 1;
+		if (fd_dtop < 0)
+			fd_dtop = 0;
+	}
+}
+
+static void fd_copy_file_to_name(void)
+{
+	if (fd_fsel < 0 || fd_fsel >= fd_nfile)
+		return;
+	fd_copy(W.dlg, sizeof(W.dlg), fd_files[fd_fsel]);
+	W.dlglen = (int)strlen(W.dlg);
+}
+
+static void fd_clear_name(void)
+{
+	W.dlg[0] = 0;
+	W.dlglen = 0;
+}
+
+static void fd_set_dir(const char *path)
+{
+	char resolved[128];
+
+	if (mmb_vfs_resolve(path, resolved, sizeof(resolved)) == 0)
+		fd_copy(fd_dir, sizeof(fd_dir), resolved);
+	else
+		fd_copy(fd_dir, sizeof(fd_dir), path);
+	fd_scan();
+	fd_clamp();
+}
+
+static void fd_after_dir_nav(int from_lists)
+{
+	if (from_lists && fd_nfile > 0)
+	{
+		fd_focus = WP_FD_FOCUS_FILE;
+		fd_copy_file_to_name();
+	}
+	else
+	{
+		if (fd_ndir > 0)
+			fd_focus = WP_FD_FOCUS_DIR;
+		fd_clear_name();
+	}
+}
+
+static void fd_enter_listed(const char *name, int from_lists)
+{
+	char full[128], tmp[128];
+
+	if (name[0] == '[' && name[1] == '-' && name[3] == '-' && name[4] == ']')
+	{
+		tmp[0] = name[2];
+		tmp[1] = ':';
+		tmp[2] = '/';
+		tmp[3] = 0;
+		fd_set_dir(tmp);
+		fd_after_dir_nav(from_lists);
+		return;
+	}
+	if (name[0] == '.' && name[1] == '.' && name[2] == 0)
+	{
+		fd_copy(full, sizeof(full), fd_dir);
+		fd_parent(full);
+		fd_set_dir(full);
+		fd_after_dir_nav(from_lists);
+		return;
+	}
+	fd_copy(tmp, sizeof(tmp), name);
+	if (tmp[strlen(tmp) - 1] == '/')
+		tmp[strlen(tmp) - 1] = 0;
+	fd_join(full, sizeof(full), fd_dir, tmp);
+	fd_set_dir(full);
+	fd_after_dir_nav(from_lists);
+}
+
+static void fd_submit_path(const char *path)
+{
+	char full[128];
+
+	fd_copy(full, sizeof(full), path);
+	ensure_md(full, sizeof(full));
+	if (W.dialog == WP_DLG_OPEN)
+	{
+		wp_load_file(full);
+		close_ui();
+		return;
+	}
+	if (W.dialog == WP_DLG_SAVEAS)
+	{
+		if (full[0])
+		{
+			strncpy(W.path, full, sizeof(W.path) - 1);
+			W.path[sizeof(W.path) - 1] = 0;
+			wp_save();
+		}
+		close_ui();
+	}
+}
+
+static void fd_apply_glob(const char *spec)
+{
+	const char *slash = fd_rchr(spec, '/');
+	char dirpart[128];
+
+	if (slash)
+	{
+		int n = (int)(slash - spec);
+		if (n >= (int)sizeof(dirpart))
+			n = (int)sizeof(dirpart) - 1;
+		memcpy(dirpart, spec, (unsigned)n);
+		dirpart[n] = 0;
+		if (dirpart[0] && dirpart[1] == ':' && dirpart[2] == 0)
+		{
+			dirpart[2] = '/';
+			dirpart[3] = 0;
+		}
+		if (dirpart[0])
+			fd_set_dir(dirpart);
+		else
+			fd_scan();
+		fd_copy(fd_mask, sizeof(fd_mask), slash + 1);
+		fd_scan();
+		fd_clamp();
+		return;
+	}
+	if (spec[0] && spec[1] == ':')
+	{
+		dirpart[0] = spec[0];
+		dirpart[1] = ':';
+		dirpart[2] = '/';
+		dirpart[3] = 0;
+		fd_set_dir(dirpart);
+		fd_copy(fd_mask, sizeof(fd_mask), spec + 2);
+		fd_scan();
+		fd_clamp();
+		return;
+	}
+	fd_copy(fd_mask, sizeof(fd_mask), spec);
+	fd_scan();
+	fd_clamp();
+}
+
+static void fd_enter_key(void)
+{
+	char full[128];
+
+	if (fd_focus == WP_FD_FOCUS_DIR)
+	{
+		if (fd_dsel >= 0 && fd_dsel < fd_ndir)
+			fd_enter_listed(fd_dirs[fd_dsel], 1);
+		return;
+	}
+	if (fd_focus == WP_FD_FOCUS_FILE)
+	{
+		if (fd_fsel >= 0 && fd_fsel < fd_nfile)
+		{
+			fd_make_full(full, sizeof(full), fd_files[fd_fsel]);
+			fd_submit_path(full);
+		}
+		return;
+	}
+	if (!W.dlg[0])
+		return;
+	if (fd_has_glob(W.dlg))
+	{
+		fd_apply_glob(W.dlg);
+		fd_clear_name();
+		return;
+	}
+	fd_make_full(full, sizeof(full), W.dlg);
+	if (fd_is_dir(full))
+	{
+		fd_set_dir(full);
+		fd_clear_name();
+		fd_focus = WP_FD_FOCUS_NAME;
+		return;
+	}
+	fd_submit_path(full);
+}
+
+static void fd_tab(void)
+{
+	if (fd_focus == WP_FD_FOCUS_NAME)
+		fd_focus = fd_nfile ? WP_FD_FOCUS_FILE : WP_FD_FOCUS_DIR;
+	else if (fd_focus == WP_FD_FOCUS_FILE)
+		fd_focus = fd_ndir ? WP_FD_FOCUS_DIR : WP_FD_FOCUS_NAME;
+	else
+		fd_focus = WP_FD_FOCUS_NAME;
+	if (fd_focus == WP_FD_FOCUS_FILE)
+		fd_copy_file_to_name();
+}
+
+static void fd_move_sel(int *sel, int n, int delta)
+{
+	if (n <= 0)
+		return;
+	*sel += delta;
+	if (*sel < 0)
+		*sel = 0;
+	if (*sel >= n)
+		*sel = n - 1;
+}
+
+static int fd_arrow(int kind)
+{
+	int lh = fd_list_h();
+
+	if (fd_focus == WP_FD_FOCUS_NAME)
+	{
+		if (kind == 3 || kind == 4)
+			fd_tab();
+		return 1;
+	}
+	if (kind == 3 && fd_focus == WP_FD_FOCUS_FILE)
+	{
+		fd_focus = WP_FD_FOCUS_DIR;
+		return 1;
+	}
+	if (kind == 4 && fd_focus == WP_FD_FOCUS_DIR)
+	{
+		fd_focus = fd_nfile ? WP_FD_FOCUS_FILE : WP_FD_FOCUS_NAME;
+		if (fd_focus == WP_FD_FOCUS_FILE)
+			fd_copy_file_to_name();
+		return 1;
+	}
+	if (fd_focus == WP_FD_FOCUS_FILE)
+	{
+		if (kind == 1)
+			fd_move_sel(&fd_fsel, fd_nfile, -1);
+		else if (kind == 2)
+			fd_move_sel(&fd_fsel, fd_nfile, 1);
+		else if (kind == 5)
+			fd_fsel = 0;
+		else if (kind == 6)
+			fd_fsel = fd_nfile ? fd_nfile - 1 : 0;
+		else if (kind == 9)
+			fd_move_sel(&fd_fsel, fd_nfile, -lh);
+		else if (kind == 10)
+			fd_move_sel(&fd_fsel, fd_nfile, lh);
+		fd_clamp();
+		fd_copy_file_to_name();
+		return 1;
+	}
+	if (kind == 1)
+		fd_move_sel(&fd_dsel, fd_ndir, -1);
+	else if (kind == 2)
+		fd_move_sel(&fd_dsel, fd_ndir, 1);
+	else if (kind == 5)
+		fd_dsel = 0;
+	else if (kind == 6)
+		fd_dsel = fd_ndir ? fd_ndir - 1 : 0;
+	else if (kind == 9)
+		fd_move_sel(&fd_dsel, fd_ndir, -lh);
+	else if (kind == 10)
+		fd_move_sel(&fd_dsel, fd_ndir, lh);
+	fd_clamp();
+	return 1;
+}
+
+static void open_dialog(int which)
+{
+	char dir[128], base[128];
+
+	W.menu_open = 0;
+	W.dialog = which;
+	W.dlg[0] = 0;
+	W.dlglen = 0;
+	if (which == WP_DLG_OPEN || which == WP_DLG_SAVEAS)
+	{
+		fd_focus = WP_FD_FOCUS_NAME;
+		fd_copy(fd_mask, sizeof(fd_mask), "*.MD");
+		fd_copy(fd_dir, sizeof(fd_dir), mmb_vfs_cwd());
+		if (which == WP_DLG_SAVEAS && W.path[0])
+		{
+			fd_dirname(dir, sizeof(dir), W.path);
+			fd_basename(base, sizeof(base), W.path);
+			if (dir[0])
+				fd_copy(fd_dir, sizeof(fd_dir), dir);
+			fd_copy(W.dlg, sizeof(W.dlg), base);
+			W.dlglen = (int)strlen(W.dlg);
+		}
+		fd_scan();
+		fd_clamp();
+	}
+}
+
+static void open_menu(int which)
+{
+	W.dialog = WP_DLG_NONE;
+	W.menu_open = 1;
+	W.menu = which;
+	W.menu_item = 0;
+}
+
+static void activate_menu(void)
+{
+	int menu = W.menu;
+	int item = W.menu_item;
+
+	W.menu_open = 0;
+	if (menu == WP_MENU_FILE)
+	{
+		if (item == 0)
+			wp_new_doc();
+		else if (item == 1)
+			open_dialog(WP_DLG_OPEN);
+		else if (item == 2)
+		{
+			if (!wp_save())
+				open_dialog(WP_DLG_SAVEAS);
+		}
+		else if (item == 3)
+			open_dialog(WP_DLG_SAVEAS);
+		else if (item == 4)
+			wp_leave();
+	}
+	else if (menu == WP_MENU_EDIT)
+	{
+		if (item == 0)
+			copy_selection();
+		else if (item == 1)
+			cut_selection();
+		else
+			paste_clip();
+	}
+	else if (menu == WP_MENU_SETTINGS)
+	{
+		W.wide = !W.wide;
+		W.scroll = 0;
+	}
+	else if (menu == WP_MENU_THEME)
+	{
+		W.theme = item;
+	}
+}
+
+static int handle_alt(char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		c = (char)(c - 'A' + 'a');
+	if (c == 'f')
+	{
+		open_menu(WP_MENU_FILE);
+		return 1;
+	}
+	if (c == 'e')
+	{
+		open_menu(WP_MENU_EDIT);
+		return 1;
+	}
+	if (c == 's')
+	{
+		open_menu(WP_MENU_SETTINGS);
+		return 1;
+	}
+	if (c == 't')
+	{
+		open_menu(WP_MENU_THEME);
+		return 1;
+	}
+	if (c == 'x')
+	{
+		wp_leave();
+		return 1;
+	}
+	return 0;
+}
+
+static void do_fkey(int n)
+{
+	if (n == 2)
+	{
+		if (!wp_save())
+			open_dialog(WP_DLG_SAVEAS);
+	}
+	else if (n == 3)
+		open_dialog(WP_DLG_OPEN);
+	else if (n == 10)
+		open_menu(WP_MENU_FILE);
+}
+
+static int handle_arrow_or_special(int kind, int mod)
+{
+	int shift = 0, ctrl = 0;
+
+	if (mod > 1)
+	{
+		shift = ((mod - 1) & 1) != 0;
+		ctrl = ((mod - 1) & 4) != 0;
+	}
+	if (fd_on())
+	{
+		fd_arrow(kind);
+		return 1;
+	}
+	if (W.menu_open)
+	{
+		int n;
+		menu_items(W.menu, &n);
+		if (kind == 1)
+		{
+			if (W.menu_item > 0)
+				W.menu_item--;
+			else
+				W.menu_item = n - 1;
+		}
+		else if (kind == 2)
+			W.menu_item = (W.menu_item + 1) % n;
+		else if (kind == 4)
+		{
+			W.menu = (W.menu + WP_MENU_COUNT - 1) % WP_MENU_COUNT;
+			W.menu_item = 0;
+		}
+		else if (kind == 3)
+		{
+			W.menu = (W.menu + 1) % WP_MENU_COUNT;
+			W.menu_item = 0;
+		}
+		return 1;
+	}
+	if (kind == 7)
+	{
+		if (shift)
+			cut_selection();
+		else
+			delete_char();
+		return 1;
+	}
+	if (kind == 8)
+	{
+		if (ctrl)
+			copy_selection();
+		else if (shift)
+			paste_clip();
+		return 1;
+	}
+	if (shift && !ctrl && (kind == 1 || kind == 2))
+	{
+		if (!W.sel)
+		{
+			W.sel_anchor = line_start(W.cx);
+			W.sel = 1;
+		}
+		else
+			sel_prepare(shift);
+		if (kind == 2)
+		{
+			int e = line_end(W.cx);
+			if (e < W.len && W.buf[e] == '\n')
+				W.cx = e + 1;
+			else
+				W.cx = e;
+		}
+		else
+		{
+			int s = line_start(W.cx);
+			if (s > 0)
+				W.cx = line_start(s - 1);
+			else
+				W.cx = 0;
+		}
+		return 1;
+	}
+	sel_prepare(shift);
+	if (kind == 1)
+		move_up();
+	else if (kind == 2)
+		move_down();
+	else if (kind == 3)
+		move_right();
+	else if (kind == 4)
+		move_left();
+	else if (kind == 5)
+		move_home();
+	else if (kind == 6)
+		move_end();
+	else if (kind == 9)
+		page_up();
+	else if (kind == 10)
+		page_down();
+	return 1;
+}
+
+static int handle_escape(char c)
+{
+	if (W.esc_state == WP_ESC_GOT)
+	{
+		if (c == '[')
+		{
+			W.esc_state = WP_ESC_CSI;
+			W.csi_n = 0;
+			W.csi_arg = 0;
+			W.csi_semi = 0;
+			return 1;
+		}
+		W.esc_state = WP_ESC_NONE;
+		if (handle_alt(c))
+			return 1;
+		if (W.menu_open || W.dialog)
+		{
+			close_ui();
+			return 1;
+		}
+		return 0;
+	}
+	if (W.esc_state == WP_ESC_SS3)
+	{
+		W.esc_state = WP_ESC_NONE;
+		if (c >= 'A' && c <= 'E')
+			do_fkey(c - 'A' + 1);
+		return 1;
+	}
+	if (W.esc_state == WP_ESC_CSI)
+	{
+		if (c >= '0' && c <= '9')
+		{
+			W.csi_arg = W.csi_arg * 10 + (c - '0');
+			return 1;
+		}
+		if (c == ';')
+		{
+			if (!W.csi_n)
+				W.csi_n = W.csi_arg;
+			W.csi_arg = 0;
+			W.csi_semi = 1;
+			return 1;
+		}
+		if (c == '[')
+		{
+			W.esc_state = WP_ESC_SS3;
+			return 1;
+		}
+		W.esc_state = WP_ESC_NONE;
+		{
+			int mod = W.csi_semi ? W.csi_arg : 0;
+			if (c == 'A')
+				handle_arrow_or_special(1, mod);
+			else if (c == 'B')
+				handle_arrow_or_special(2, mod);
+			else if (c == 'C')
+				handle_arrow_or_special(3, mod);
+			else if (c == 'D')
+				handle_arrow_or_special(4, mod);
+			else if (c == 'H')
+				handle_arrow_or_special(5, mod);
+			else if (c == 'F')
+				handle_arrow_or_special(6, mod);
+			else if (c == '~')
+			{
+				int n = W.csi_semi ? W.csi_n : W.csi_arg;
+				if (n == 1 || n == 7)
+					handle_arrow_or_special(5, mod);
+				else if (n == 4 || n == 8)
+					handle_arrow_or_special(6, mod);
+				else if (n == 3)
+					handle_arrow_or_special(7, mod);
+				else if (n == 2)
+					handle_arrow_or_special(8, mod);
+				else if (n == 5)
+					handle_arrow_or_special(9, mod);
+				else if (n == 6)
+					handle_arrow_or_special(10, mod);
+				else if (n >= 11 && n <= 15)
+					do_fkey(n - 10);
+				else if (n >= 17 && n <= 21)
+					do_fkey(n - 11);
+			}
+		}
+		return 1;
+	}
+	return 0;
+}
+
+static int dialog_key(char c)
+{
+	if (!W.dialog)
+		return 0;
+	if (c == 27)
+	{
+		W.esc_state = WP_ESC_GOT;
+		return 1;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		fd_enter_key();
+		return 1;
+	}
+	if (fd_on() && c == 9)
+	{
+		fd_tab();
+		return 1;
+	}
+	if (c == 8 || c == 127)
+	{
+		if (fd_on() && fd_focus != WP_FD_FOCUS_NAME)
+			fd_focus = WP_FD_FOCUS_NAME;
+		if (W.dlglen > 0)
+		{
+			W.dlg[--W.dlglen] = 0;
+		}
+		return 1;
+	}
+	if (c >= 32 && c < 127 && W.dlglen < (int)sizeof(W.dlg) - 1)
+	{
+		if (fd_on() && fd_focus != WP_FD_FOCUS_NAME)
+		{
+			fd_focus = WP_FD_FOCUS_NAME;
+			fd_clear_name();
+		}
+		W.dlg[W.dlglen++] = c;
+		W.dlg[W.dlglen] = 0;
+		return 1;
+	}
+	return 1;
+}
+
+static void draw_menu_bar(void)
+{
+	const wp_theme *t = th();
+	int i, x = 0;
+	char line[160];
+	int pos = 0;
+
+	wp_fill_row(0, t->fg, t->bg);
+	for (i = 0; i < WP_MENU_COUNT; i++)
+	{
+		int sel = W.menu_open && W.menu == i;
+		unsigned fg = sel ? t->bg : t->fg;
+		unsigned bg = sel ? t->heading : t->bg;
+		menu_x[i] = x;
+		wp_puts(x, 0, menu_names[i], fg, bg);
+		x += (int)strlen(menu_names[i]);
+		wp_puts(x, 0, "  ", fg, bg);
+		x += 2;
+		if (pos + 32 < (int)sizeof(line))
+		{
+			int k;
+			for (k = 0; menu_names[i][k] && pos + 1 < (int)sizeof(line); k++)
+				line[pos++] = menu_names[i][k];
+			line[pos++] = ' ';
+			line[pos++] = ' ';
+		}
+	}
+	line[pos] = 0;
+	serial_row(line);
+}
+
+static void draw_dropdown(void)
+{
+	const wp_theme *t = th();
+	int n, i, w, x0, y0;
+	const char **it = menu_items(W.menu, &n);
+
+	w = menu_width(W.menu);
+	x0 = menu_x[W.menu];
+	if (x0 + w > W.vid_cols)
+		x0 = W.vid_cols - w;
+	if (x0 < 0)
+		x0 = 0;
+	y0 = 1;
+	for (i = 0; i < n; i++)
+	{
+		unsigned fg = (i == W.menu_item) ? t->bg : t->fg;
+		unsigned bg = (i == W.menu_item) ? t->heading : t->bg;
+		char row[64];
+		int j;
+
+		wp_fill_row(y0 + i, fg, bg);
+		for (j = 0; j < w; j++)
+			row[j] = ' ';
+		strncpy(row, it[i], (unsigned)w - 1);
+		row[w] = 0;
+		wp_puts(x0, y0 + i, row, fg, bg);
+		serial_row(it[i]);
+	}
+}
+
+static void draw_file_dialog(void)
+{
+	const wp_theme *t = th();
+	int c0, r0, w, h, lh, i;
+	unsigned nfg, nbg, ffg, fbg, dfg, dbg;
+	char st[128];
+
+	fd_geom(&c0, &r0, &w, &h);
+	lh = fd_list_h();
+	for (i = 0; i < h; i++)
+		wp_fill_row(r0 + i, t->fg, t->bg);
+	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? t->bg : t->fg;
+	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? t->heading : t->dim;
+	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
+	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->bg;
+	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
+	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->bg;
+	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", t->heading, t->bg);
+	wp_puts(c0 + 2, r0 + 2, "Name:", t->dim, t->bg);
+	{
+		char namebuf[WP_DLG + 4];
+		namebuf[0] = ' ';
+		strncpy(namebuf + 1, W.dlg, sizeof(namebuf) - 2);
+		namebuf[sizeof(namebuf) - 1] = 0;
+		wp_puts(c0 + 2, r0 + 3, namebuf, nfg, nbg);
+	}
+	wp_puts(c0 + 2, r0 + 5, "Files", t->dim, t->bg);
+	wp_puts(c0 + 2 + w / 2, r0 + 5, "Directories", t->dim, t->bg);
+	for (i = 0; i < lh; i++)
+	{
+		int fi = fd_ftop + i;
+		int di = fd_dtop + i;
+		const char *fn = (fi >= 0 && fi < fd_nfile) ? fd_files[fi] : "";
+		const char *dn = (di >= 0 && di < fd_ndir) ? fd_dirs[di] : "";
+		unsigned sfg = ffg, sbg = fbg;
+
+		if (fi == fd_fsel && fd_nfile > 0)
+		{
+			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
+			sbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->dim;
+		}
+		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg);
+		sfg = dfg;
+		sbg = dbg;
+		if (di == fd_dsel && fd_ndir > 0)
+		{
+			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
+			sbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->dim;
+		}
+		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg);
+	}
+	st[0] = 0;
+	strncat(st, fd_dir, sizeof(st) - 1);
+	strncat(st, "  ", sizeof(st) - strlen(st) - 1);
+	strncat(st, fd_mask, sizeof(st) - strlen(st) - 1);
+	wp_puts(c0 + 2, r0 + h - 3, st, t->dim, t->bg);
+	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", t->dim, t->bg);
+}
+
+static void draw_body(void)
+{
+	const wp_theme *t = th();
+	int r, vr, c, i, col;
+	unsigned fg, bg;
+	char srow[WP_WRAP_W + 1];
+	int spos;
+
+	wp_build_layout();
+	ensure_scroll();
+	for (r = 0; r < W.text_rows; r++)
+	{
+		int screen_row = 1 + r;
+		vr = W.scroll + r;
+		wp_fill_row(screen_row, t->fg, t->bg);
+		for (c = 0; c < W.pane_left; c++)
+			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
+		for (c = W.pane_left + W.pane_width; c < W.vid_cols; c++)
+			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
+		spos = 0;
+		if (vr >= 0 && vr < W.total_vrows)
+		{
+			int ls = W.vrows[vr].line_start;
+			int style = W.vrows[vr].style;
+			int hide_prefix = W.vrows[vr].hide_prefix;
+			int prefix_len = W.vrows[vr].prefix_len;
+			i = W.vrows[vr].off0;
+			col = 0;
+			fg = style_fg(style);
+			bg = style_bg(style);
+			while (i < W.vrows[vr].off1 && col < W.pane_width)
+			{
+				unsigned chfg, chbg;
+				char ch;
+
+				if (hide_prefix && i < ls + prefix_len)
+				{
+					i++;
+					continue;
+				}
+				ch = W.buf[i];
+				chfg = fg;
+				chbg = bg;
+				if (in_sel(i))
+				{
+					chfg = t->bg;
+					chbg = t->heading;
+				}
+				G.plat->tui_glyph(W.pane_left + col, screen_row, (unsigned)ch, chfg, chbg);
+				if (spos < W.pane_width)
+					srow[spos++] = ch;
+				col++;
+				i++;
+			}
+		}
+		while (spos < W.pane_width)
+			srow[spos++] = ' ';
+		srow[spos] = 0;
+		serial_row(srow);
+	}
+}
+
+static void draw_status(void)
+{
+	const wp_theme *t = th();
+	char left[160];
+	char right[64];
+	char *p;
+	int row = W.vid_rows - 1;
+	int words = count_words();
+	const char *name = wp_basename();
+
+	wp_fill_row(row, t->dim, t->bg);
+	p = left;
+	if (W.dirty)
+		*p++ = '*';
+	else
+		*p++ = ' ';
+	*p++ = ' ';
+	while (*name && p < left + sizeof(left) - 1)
+		*p++ = *name++;
+	*p++ = ' ';
+	p = put_uint(p, words);
+	strncpy(p, " words", sizeof(left) - (size_t)(p - left) - 1);
+	left[sizeof(left) - 1] = 0;
+	wp_puts(0, row, left, t->dim, t->bg);
+	right[0] = 0;
+	if (W.wide)
+		strncpy(right, "120", sizeof(right) - 1);
+	else
+		strncpy(right, "80", sizeof(right) - 1);
+	wp_puts(W.vid_cols - (int)strlen(right), row, right, t->dim, t->bg);
+	serial_row(left);
+}
+
+static void wp_redraw(void)
+{
+	const wp_theme *t = th();
+	int row;
+
+	if (!G.plat || !G.plat->tui_glyph || !G.plat->tui_present)
+		return;
+	wp_layout_geom();
+	serial_reset();
+	for (row = 0; row < W.vid_rows; row++)
+		wp_fill_row(row, t->fg, t->bg);
+	draw_menu_bar();
+	if (!W.dialog)
+		draw_body();
+	if (W.menu_open)
+		draw_dropdown();
+	if (W.dialog)
+		draw_file_dialog();
+	draw_status();
+	G.plat->tui_present(0, W.vid_rows * 16 - 1);
+	wp_serial_dump();
+}
+
+static int menu_key(char c)
+{
+	int n;
+	const char **it;
+
+	if (!W.menu_open)
+		return 0;
+	if (c == 27)
+	{
+		W.esc_state = WP_ESC_GOT;
+		return 1;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		activate_menu();
+		return 1;
+	}
+	menu_items(W.menu, &n);
+	it = menu_items(W.menu, &n);
+	if (c >= '1' && c < '1' + n)
+	{
+		W.menu_item = c - '1';
+		activate_menu();
+		return 1;
+	}
+	if (c >= 'a' && c <= 'z')
+		c = (char)(c - 32);
+	{
+		int i;
+		for (i = 0; i < n; i++)
+		{
+			const char *s = it[i];
+			if (s[0] == c || (s[0] >= 'a' && s[0] <= 'z' && s[0] - 32 == c))
+			{
+				W.menu_item = i;
+				activate_menu();
+				return 1;
+			}
+		}
+	}
+	return 1;
+}
+
+static const char *wp_feed(char c)
+{
+	G.outn = 0;
+	G.out[0] = 0;
+	if (!W.active)
+		return G.out;
+	if (W.alt_pend)
+	{
+		W.alt_pend = 0;
+		if (handle_alt(c))
+		{
+			if (W.active)
+				wp_redraw();
+			return G.out;
+		}
+	}
+	if (c == 1)
+	{
+		W.alt_pend = 1;
+		return G.out;
+	}
+	if (W.esc_state)
+	{
+		if (handle_escape(c))
+		{
+			if (W.active)
+				wp_redraw();
+			return G.out;
+		}
+	}
+	if (c == 27)
+	{
+		W.esc_state = WP_ESC_GOT;
+		return G.out;
+	}
+	if (menu_key(c))
+	{
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (dialog_key(c))
+	{
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c == 24)
+	{
+		wp_leave();
+		return G.out;
+	}
+	if (c == 3)
+	{
+		copy_selection();
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c == 11)
+	{
+		cut_selection();
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c == 21)
+	{
+		paste_clip();
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		insert_char('\n');
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c == 8 || c == 127)
+	{
+		backspace();
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	if (c >= 32 && c < 127)
+	{
+		insert_char(c);
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
+	return G.out;
+}
+
+void mmb_cmd_wordpad(void)
+{
+	char path[128];
+	char canon[128];
+
+	path[0] = 0;
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		mmb_val v = mmb_expr();
+		if (v.type == T_STR)
+			strncpy(path, v.s, sizeof(path) - 1);
+	}
+	memset(&W, 0, sizeof(W));
+	W.active = 1;
+	W.theme = 0;
+	W.wide = 0;
+	if (path[0])
+	{
+		canon_path(path, canon, sizeof(canon));
+		strncpy(W.path, canon, sizeof(W.path) - 1);
+		W.path[sizeof(W.path) - 1] = 0;
+		wp_load_file(W.path);
+	}
+	ser("[WORDPAD]\r\n");
+	if (G.plat && G.plat->tui_prepare)
+		G.plat->tui_prepare();
+	wp_layout_geom();
+	wp_redraw();
+}
+
+int mmb_in_wordpad(void)
+{
+	return W.active;
+}
+
+const char *mmb_wordpad_key(char c)
+{
+	return wp_feed(c);
+}

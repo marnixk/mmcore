@@ -28,7 +28,7 @@ static const char kIndexCommands[] =
 	"  KILL RM DEL MV DRIVE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
-	"  NEW LIST RUN EDIT MEMORY REBOOT\n"
+	"  NEW LIST RUN EDIT WORDPAD MEMORY REBOOT\n"
 	"\n"
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
@@ -477,6 +477,34 @@ static const char kHelpEdit[] =
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
+static const char kHelpWordpad[] =
+	"WORDPAD [file$]\n"
+	"\n"
+	"Typora-style markdown editor with a centred text\n"
+	"column, menu bar, and status line. With no argument\n"
+	"opens an empty untitled document. Optional file$\n"
+	"loads via the filesystem when present; otherwise an\n"
+	"empty buffer is used with that path (.MD default).\n"
+	"\n"
+	"Menus: Alt+F File  Alt+E Edit  Alt+S Settings\n"
+	"       Alt+T Theme   F10 File menu\n"
+	"File: New, Open..., Save, Save As..., Quit.\n"
+	"Edit: Copy, Cut, Paste (^C /^K /^U like EDIT).\n"
+	"Settings: Wide view toggles wrap 80/120 columns.\n"
+	"Theme: Dark, Light, Low contrast, High contrast,\n"
+	"       Neon, Terminal (custom RGB colours).\n"
+	"\n"
+	"Markdown: # headings, -/* bullets, > quotes,\n"
+	"``` fenced code blocks (no syntax highlighting).\n"
+	"Word wrap at the column width; Enter inserts a\n"
+	"real newline. Shift+Arrows select text.\n"
+	"\n"
+	"F2 save  F3 open  Ctrl+X or Quit leaves WORDPAD.\n"
+	"Open/Save As use a file picker (*.MD).\n"
+	"\n"
+	"Example:  WORDPAD\n"
+	"          WORDPAD \"NOTES.MD\"";
+
 static const char kHelpDir[] =
 	"DIR [spec$]\n"
 	"\n"
@@ -877,7 +905,7 @@ static const char kHelpCmm2[] =
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE\n"
-	"  LOAD SAVE RUN * NEW LIST EDIT PLAY PAUSE\n"
+	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
 	"  REBOOT OPTION FACTORY_RESET CONNECT TERM IPCONFIG HELP\n"
 	"  CLEAR END\n"
 	"\n"
@@ -1311,6 +1339,7 @@ static const help_topic kTopics[] = {
 	{ "PLAY",        HELP_CMD,  kHelpPlay },
 	{ "AUDIO_TARGET", HELP_CMD, kHelpAudioTarget },
 	{ "EDIT",        HELP_CMD,  kHelpEdit },
+	{ "WORDPAD",     HELP_CMD,  kHelpWordpad },
 	{ "DIR",         HELP_CMD,  kHelpDir },
 	{ "FILES",       HELP_CMD,  kHelpFiles },
 	{ "OPEN",        HELP_CMD,  kHelpOpen },

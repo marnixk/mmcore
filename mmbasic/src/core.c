@@ -2595,6 +2595,11 @@ static void exec_statement(void)
 		mmb_cmd_edit();
 		return;
 	}
+	if (mmb_match("WORDPAD"))
+	{
+		mmb_cmd_wordpad();
+		return;
+	}
 	if (mmb_match("PAUSE"))
 	{
 		mmb_cmd_pause();
