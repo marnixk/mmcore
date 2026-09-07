@@ -196,6 +196,29 @@ def test_editor_save_as_and_open(kernel_image):
         con.stop()
 
 
+def test_editor_new_file_save_asks_for_name(kernel_image):
+    """File/New opens an unnamed buffer; Save prompts Save As instead of UNTITLED.BAS."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _edit(con, "KEEP.BAS")
+        menu = _keys(con, bytes([1]) + b"f", quiet=0.5)
+        assert "New" in menu
+        untitled = _keys(con, b"n", quiet=0.5)
+        assert "UNTITLED" in untitled
+        _keys(con, b"PRINT 123")
+        dlg = _keys(con, bytes([15]), quiet=0.6)
+        assert "Name" in dlg or "Save As" in dlg
+        _keys(con, b"BRAND.BAS\r", quiet=0.7)
+        _quit(con)
+        listing = con.send_line("DIR")
+        assert "BRAND.BAS" in listing
+        assert "UNTITLED.BAS" not in listing
+        assert "123" in con.send_line('RUN "BRAND.BAS"')
+    finally:
+        con.stop()
+
+
 def test_editor_two_tabs_and_switch(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
