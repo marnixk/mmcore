@@ -1,5 +1,7 @@
 """CMM2 CINT, EVAL, MATH() and MATH command."""
 
+from ihelp_util import dump_topic
+
 
 def test_cint_round_half_away(console):
     assert console.send_line("NEW") == ""
@@ -172,16 +174,16 @@ def test_math_chi_correl(console):
 
 
 def test_help_math(console):
-    out = console.send_line("HELP MATH")
+    out = dump_topic(console, "MATH")
     assert "CINT" in out
     assert "EVAL" in out
     assert "ATAN3" in out
     assert "MATH SET" in out
     assert "FFT" in out
-    fn = console.send_line("HELP FUNCTIONS")
+    fn = dump_topic(console, "FUNCTIONS")
     assert "CINT" in fn
     assert "EVAL" in fn
     assert "MATH()" in fn
-    basic = console.send_line("HELP CMM2")
+    basic = dump_topic(console, "CMM2")
     assert "MATH" in basic
     assert "LIBRARY MATH" not in basic
