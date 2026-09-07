@@ -214,6 +214,33 @@ static unsigned dlg_bg(void)
 	return mmb_rgb_pack(r, g, b);
 }
 
+static unsigned intense_fg(void)
+{
+	const wp_theme *t = th();
+	int r = (int)((t->fg >> 16) & 255);
+	int g = (int)((t->fg >> 8) & 255);
+	int b = (int)(t->fg & 255);
+	int br = (int)((t->bg >> 16) & 255);
+	int bg = (int)((t->bg >> 8) & 255);
+	int bb = (int)(t->bg & 255);
+	int fg_lum = (r * 3 + g * 6 + b) / 10;
+	int bg_lum = (br * 3 + bg * 6 + bb) / 10;
+
+	if (fg_lum >= bg_lum)
+	{
+		r = r + (255 - r) * 2 / 5;
+		g = g + (255 - g) * 2 / 5;
+		b = b + (255 - b) * 2 / 5;
+	}
+	else
+	{
+		r = r * 3 / 5;
+		g = g * 3 / 5;
+		b = b * 3 / 5;
+	}
+	return mmb_rgb_pack(r, g, b);
+}
+
 static int wp_chrome(void)
 {
 	if (W.menu_open || W.dialog || W.alt_pend)
@@ -492,6 +519,50 @@ static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
 		*hide_prefix = 1;
 }
 
+static int emph_mark_len(int i, int lim)
+{
+	if (i < 0 || i + 1 >= lim)
+		return 0;
+	if ((W.buf[i] == '*' && W.buf[i + 1] == '*') ||
+	    (W.buf[i] == '_' && W.buf[i + 1] == '_'))
+		return 2;
+	return 0;
+}
+
+static int emph_at(int pos, int ls, int le, int style)
+{
+	int i, on = 0;
+
+	if (style == WP_STYLE_CODE)
+		return 0;
+	for (i = ls; i < pos && i < le; )
+	{
+		int n = emph_mark_len(i, le);
+		if (n)
+		{
+			on = !on;
+			i += n;
+		}
+		else
+			i++;
+	}
+	return on;
+}
+
+static int skip_emph_mark(int i, int le, int style)
+{
+	int n;
+
+	if (style == WP_STYLE_CODE)
+		return 0;
+	n = emph_mark_len(i, le);
+	if (!n)
+		return 0;
+	if (W.cx >= i && W.cx < i + n)
+		return 0;
+	return n;
+}
+
 static int in_sel(int off)
 {
 	int lo, hi, a, b;
@@ -571,6 +642,14 @@ static void wp_build_layout(void)
 				i++;
 				continue;
 			}
+			{
+				int skip = skip_emph_mark(i, le, style);
+				if (skip)
+				{
+					i += skip;
+					continue;
+				}
+			}
 			if (col >= width && col > 0)
 			{
 				if (break_at >= ls)
@@ -630,10 +709,10 @@ static void wp_build_layout(void)
 		pos = le;
 		if (pos < W.len && W.buf[pos] == '\n')
 		{
-			if (W.cx == pos)
+			if (W.cx == pos && vr > 0)
 			{
-				W.cx_vrow = vr;
-				W.cx_vcol = 0;
+				W.cx_vrow = vr - 1;
+				W.cx_vcol = W.vrows[vr - 1].len;
 				found_cx = 1;
 			}
 			pos++;
@@ -642,27 +721,16 @@ static void wp_build_layout(void)
 			break;
 	}
 	W.total_vrows = vr;
-	if (!found_cx)
+	if (!found_cx && W.cx == W.len && W.total_vrows > 0)
 	{
-		if (W.cx == W.len)
-		{
-			if (W.total_vrows > 0 && W.len > 0 && W.buf[W.len - 1] == '\n')
-			{
-				W.cx_vrow = W.total_vrows;
-				W.cx_vcol = 0;
-			}
-			else if (W.total_vrows > 0)
-			{
-				W.cx_vrow = W.total_vrows - 1;
-				W.cx_vcol = W.vrows[W.total_vrows - 1].len;
-			}
-		}
+		W.cx_vrow = W.total_vrows - 1;
+		W.cx_vcol = W.vrows[W.total_vrows - 1].len;
 	}
 }
 
 static int vrow_col_to_off(int vr, int vc)
 {
-	int ls, i, col;
+	int ls, i, col, le;
 	int prefix_len, hide_prefix;
 
 	if (vr < 0 || vr >= W.total_vrows)
@@ -670,13 +738,24 @@ static int vrow_col_to_off(int vr, int vc)
 	ls = W.vrows[vr].line_start;
 	prefix_len = W.vrows[vr].prefix_len;
 	hide_prefix = W.vrows[vr].hide_prefix;
+	le = ls;
+	while (le < W.len && W.buf[le] != '\n')
+		le++;
 	i = W.vrows[vr].off0;
 	col = 0;
 	while (i < W.vrows[vr].off1)
 	{
+		int skip;
+
 		if (hide_prefix && i < ls + prefix_len)
 		{
 			i++;
+			continue;
+		}
+		skip = skip_emph_mark(i, le, W.vrows[vr].style);
+		if (skip)
+		{
+			i += skip;
 			continue;
 		}
 		if (col >= vc)
@@ -2498,23 +2577,47 @@ static int dialog_key(char c)
 	return 1;
 }
 
+static void draw_hot_str(int x, int y, const char *word, char hot, unsigned fg,
+			 unsigned bg, unsigned hot_fg)
+{
+	int i, used = 0;
+
+	if (!G.plat || !G.plat->tui_glyph || !word)
+		return;
+	for (i = 0; word[i]; i++)
+	{
+		unsigned c_fg = fg;
+		char ch = word[i];
+
+		if (!used && (ch == hot || ch == hot + 32 || ch == hot - 32))
+		{
+			c_fg = hot_fg;
+			used = 1;
+		}
+		G.plat->tui_glyph(x++, y, (unsigned)ch, c_fg, bg);
+	}
+}
+
 static void draw_menu_bar(void)
 {
 	const wp_theme *t = th();
+	unsigned mbg = dlg_bg();
 	int i, x = 0;
 	char line[160];
 	int pos = 0;
 
-	wp_fill_row(0, t->fg, t->bg);
+	wp_fill_row(0, t->fg, mbg);
 	for (i = 0; i < WP_MENU_COUNT; i++)
 	{
 		int sel = W.menu_open && W.menu == i;
 		unsigned fg = sel ? t->bg : t->fg;
-		unsigned bg = sel ? t->heading : t->bg;
+		unsigned bg = sel ? t->heading : mbg;
+		unsigned hot = sel ? t->fg : t->heading;
+
 		menu_x[i] = x;
-		wp_puts(x, 0, menu_names[i], fg, bg);
+		draw_hot_str(x, 0, menu_names[i], menu_hots[i], fg, bg, hot);
 		x += (int)strlen(menu_names[i]);
-		wp_puts(x, 0, "  ", t->fg, t->bg);
+		wp_puts(x, 0, "  ", t->fg, mbg);
 		x += 2;
 		if (pos + 32 < (int)sizeof(line))
 		{
@@ -2548,13 +2651,14 @@ static void draw_dropdown(void)
 	{
 		unsigned fg = (i == W.menu_item) ? t->bg : t->fg;
 		unsigned bg = (i == W.menu_item) ? t->heading : sbg;
+		unsigned hot = (i == W.menu_item) ? t->fg : t->heading;
 		char row[64];
 
 		for (j = 0; j < w - 2; j++)
 			G.plat->tui_glyph(x0 + 1 + j, y0 + 1 + i, ' ', fg, bg);
 		strncpy(row, it[i], sizeof(row) - 1);
 		row[sizeof(row) - 1] = 0;
-		wp_puts(x0 + 1, y0 + 1 + i, row, fg, bg);
+		draw_hot_str(x0 + 1, y0 + 1 + i, row, row[0], fg, bg, hot);
 		serial_row(it[i]);
 	}
 }
@@ -2708,9 +2812,13 @@ static void draw_body(void)
 		int prefix_len = W.vrows[vr].prefix_len;
 		int wrap = W.pane_width / scale;
 		int screen_row;
+		int le;
 
 		if (wrap < 1)
 			wrap = 1;
+		le = ls;
+		while (le < W.len && W.buf[le] != '\n')
+			le++;
 		vis = screen_y - W.scroll;
 		screen_row = W.text_top + vis;
 		spos = 0;
@@ -2726,15 +2834,24 @@ static void draw_body(void)
 				{
 					unsigned chfg, chbg;
 					char ch;
+					int skip;
 
 					if (hide_prefix && i < ls + prefix_len)
 					{
 						i++;
 						continue;
 					}
+					skip = skip_emph_mark(i, le, style);
+					if (skip)
+					{
+						i += skip;
+						continue;
+					}
 					ch = W.buf[i];
 					chfg = fg;
 					chbg = bg;
+					if (emph_at(i, ls, le, style))
+						chfg = intense_fg();
 					if (in_sel(i))
 					{
 						chfg = t->bg;
@@ -2784,34 +2901,30 @@ static void draw_body(void)
 static void draw_status(void)
 {
 	const wp_theme *t = th();
-	char left[160];
+	char chip[160];
 	char right[64];
 	char *p;
 	int row = W.vid_rows - 1;
 	int words = count_words();
 	const char *name = wp_basename();
+	unsigned cbg = dlg_bg();
 
 	wp_fill_row(row, t->dim, t->bg);
-	p = left;
-	if (W.dirty)
-		*p++ = '*';
-	else
-		*p++ = ' ';
+	p = chip;
 	*p++ = ' ';
-	while (*name && p < left + sizeof(left) - 1)
+	*p++ = W.dirty ? '*' : ' ';
+	while (*name && p < chip + sizeof(chip) - 2)
 		*p++ = *name++;
 	*p++ = ' ';
+	*p = 0;
+	wp_puts(0, row, chip, t->fg, cbg);
+	p = right;
 	p = put_uint(p, words);
-	strncpy(p, " words", sizeof(left) - (size_t)(p - left) - 1);
-	left[sizeof(left) - 1] = 0;
-	wp_puts(0, row, left, t->dim, t->bg);
-	right[0] = 0;
-	if (W.wide)
-		strncpy(right, "120", sizeof(right) - 1);
-	else
-		strncpy(right, "80", sizeof(right) - 1);
+	strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
+	right[sizeof(right) - 1] = 0;
 	wp_puts(W.vid_cols - (int)strlen(right), row, right, t->dim, t->bg);
-	serial_row(left);
+	serial_row(chip);
+	serial_row(right);
 }
 
 static void wp_smooth_scroll(int from, int to)
