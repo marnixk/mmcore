@@ -109,6 +109,7 @@ typedef struct mmb_options {
 	int repeat_next;
 	int edit_font;         /* 0 small .. 4 very large */
 	int edit_theme;        /* editor colour theme, default Turbo */
+	int wordpad_theme;     /* WORDPAD colour theme, default Dark */
 	int escape;
 	char search_path[128];
 	char fkey[12][65];     /* F1..F12 */

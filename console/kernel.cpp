@@ -229,6 +229,11 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 	pThis->ApplyRawKeys ();
 }
 
+int CKernel::AltHeld (void) const
+{
+	return (m_LastMods & ALT) != 0;
+}
+
 void CKernel::PollUsbAlt (void)
 {
 	unsigned char hid;

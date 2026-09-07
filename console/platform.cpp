@@ -349,35 +349,12 @@ static void plat_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsig
 
 static void plat_tui_present(int y0, int y1);
 
-static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
+static void plat_fill_rows(int x, int y0, int y1, int w, int bpp, TScreenColor fill)
 {
-	int row, px, bpp;
-	u8 *dst, *src;
-	TScreenColor fill;
+	int row, px;
+	u8 *dst;
 
-	if (!s_tui_pix || w < 1 || h < 1 || dy < 1)
-		return;
-	if (x < 0)
-		x = 0;
-	if (y < 0)
-		y = 0;
-	if ((unsigned)x >= s_tui_w || (unsigned)y >= s_tui_h)
-		return;
-	if ((unsigned)(x + w) > s_tui_w)
-		w = (int)s_tui_w - x;
-	if ((unsigned)(y + h) > s_tui_h)
-		h = (int)s_tui_h - y;
-	if (w < 1 || h < 1 || dy >= h)
-		return;
-	bpp = DEPTH / 8;
-	for (row = y; row < y + h - dy; row++)
-	{
-		dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
-		src = s_tui_pix + (unsigned)(row + dy) * s_tui_pitch + (unsigned)x * (unsigned)bpp;
-		memcpy(dst, src, (unsigned)w * (unsigned)bpp);
-	}
-	fill = (TScreenColor)rgb_to_raw(fill_rgb);
-	for (row = y + h - dy; row < y + h; row++)
+	for (row = y0; row < y1; row++)
 	{
 		dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
 		for (px = 0; px < w; px++)
@@ -391,7 +368,96 @@ static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rg
 #endif
 		}
 	}
+}
+
+static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
+{
+	int row, bpp, ady;
+	u8 *dst, *src;
+	TScreenColor fill;
+
+	if (!s_tui_pix || w < 1 || h < 1 || dy == 0)
+		return;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if ((unsigned)x >= s_tui_w || (unsigned)y >= s_tui_h)
+		return;
+	if ((unsigned)(x + w) > s_tui_w)
+		w = (int)s_tui_w - x;
+	if ((unsigned)(y + h) > s_tui_h)
+		h = (int)s_tui_h - y;
+	ady = dy < 0 ? -dy : dy;
+	if (w < 1 || h < 1 || ady >= h)
+		return;
+	bpp = DEPTH / 8;
+	if (dy > 0)
+	{
+		for (row = y; row < y + h - dy; row++)
+		{
+			dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+			src = s_tui_pix + (unsigned)(row + dy) * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+			memcpy(dst, src, (unsigned)w * (unsigned)bpp);
+		}
+		fill = (TScreenColor)rgb_to_raw(fill_rgb);
+		plat_fill_rows(x, y + h - dy, y + h, w, bpp, fill);
+	}
+	else
+	{
+		for (row = y + h - 1; row >= y + ady; row--)
+		{
+			dst = s_tui_pix + (unsigned)row * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+			src = s_tui_pix + (unsigned)(row - ady) * s_tui_pitch + (unsigned)x * (unsigned)bpp;
+			memcpy(dst, src, (unsigned)w * (unsigned)bpp);
+		}
+		fill = (TScreenColor)rgb_to_raw(fill_rgb);
+		plat_fill_rows(x, y, y + ady, w, bpp, fill);
+	}
 	plat_tui_present(y, y + h - 1);
+}
+
+static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
+{
+	unsigned x0, y0, x, y, sx, sy;
+	TScreenColor fg, bg, c;
+	u8 *dst;
+
+	if (!s_tui_pix || col < 0 || row < 0)
+		return;
+	x0 = (unsigned)col * TUI_CW;
+	y0 = (unsigned)row * TUI_CH;
+	if (x0 + TUI_CW * 2 > s_tui_w || y0 + TUI_CH * 2 > s_tui_h)
+		return;
+	fg = (TScreenColor)rgb_to_raw(fg_rgb);
+	bg = (TScreenColor)rgb_to_raw(bg_rgb);
+	for (y = 0; y < TUI_CH; y++)
+	{
+		u8 bits = glyph_row(ch, y);
+		for (sy = 0; sy < 2; sy++)
+		{
+			dst = s_tui_pix + (y0 + y * 2 + sy) * s_tui_pitch + x0 * (DEPTH / 8);
+			for (x = 0; x < TUI_CW; x++)
+			{
+				c = (bits & (u8)(0x80 >> x)) ? fg : bg;
+				for (sx = 0; sx < 2; sx++)
+				{
+#if DEPTH == 32
+					reinterpret_cast<u32 *>(dst)[x * 2 + sx] = (u32)c;
+#elif DEPTH == 16
+					reinterpret_cast<u16 *>(dst)[x * 2 + sx] = (u16)c;
+#else
+					dst[x * 2 + sx] = (u8)c;
+#endif
+				}
+			}
+		}
+	}
+}
+
+static int plat_alt_held(void)
+{
+	return s_kernel ? s_kernel->AltHeld() : 0;
 }
 
 static void plat_tui_present(int y0, int y1)
@@ -448,6 +514,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_glyph = plat_tui_glyph;
 	plat.tui_present = plat_tui_present;
 	plat.tui_scroll = plat_tui_scroll;
+	plat.tui_glyph2x = plat_tui_glyph2x;
+	plat.alt_held = plat_alt_held;
 	audio_init();
 	mmb_init(&plat);
 }

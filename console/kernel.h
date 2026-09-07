@@ -37,6 +37,7 @@ public:
 	int ReadLine (char *buf, unsigned maxn, int hide);
 	void PollInputChars (int breakKey);
 	int TakeBreak (void);
+	int AltHeld (void) const;
 
 private:
 	void AttachKeyboard (void);

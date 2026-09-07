@@ -49,8 +49,12 @@ typedef struct mmb_platform {
 	void (*tui_glyph)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
 	/* Copy dirty pixel rows [y0, y1] from the offscreen buffer to HDMI. */
 	void (*tui_present)(int y0, int y1);
-	/* Scroll a pixel rectangle up by dy rows and fill the vacated band. */
+	/* Scroll a pixel rectangle by dy pixels (positive = content up) and fill. */
 	void (*tui_scroll)(int x, int y, int w, int h, int dy, unsigned fill_rgb);
+	/* 8x16 glyph drawn at 2x (16x32 pixels, two cells wide and tall). */
+	void (*tui_glyph2x)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
+	/* Nonzero while a USB Alt modifier is held (0 if unknown). */
+	int (*alt_held)(void);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

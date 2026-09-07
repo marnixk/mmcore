@@ -18,6 +18,18 @@
 #define WP_DLG_NONE   0
 #define WP_DLG_OPEN   1
 #define WP_DLG_SAVEAS 2
+#define WP_DLG_PICK   3
+
+#define WP_DOCS       8
+#define WP_PICK_MAX   80
+#define WP_PICK_DEPTH 5
+
+#define WP_BOX_V  0xB3
+#define WP_BOX_H  0xC4
+#define WP_BOX_TL 0xDA
+#define WP_BOX_TR 0xBF
+#define WP_BOX_BL 0xC0
+#define WP_BOX_BR 0xD9
 
 #define WP_MENU_FILE     0
 #define WP_MENU_EDIT     1
@@ -52,7 +64,19 @@ typedef struct {
 	int line_start;
 	int prefix_len;
 	int hide_prefix;
+	int scale;
 } wp_vrow;
+
+typedef struct {
+	char buf[WP_BUF];
+	int len;
+	char path[128];
+	int dirty;
+	int cx;
+	int sel;
+	int sel_anchor;
+	int scroll;
+} wp_doc;
 
 typedef struct {
 	int active;
@@ -79,6 +103,7 @@ typedef struct {
 	int pane_left;
 	int pane_width;
 	int text_rows;
+	int text_top;
 	int esc_state;
 	unsigned esc_at;
 	int csi_n;
@@ -88,10 +113,23 @@ typedef struct {
 	int cx_vrow;
 	int cx_vcol;
 	int total_vrows;
+	int ndoc;
+	int cur;
+	int chrome_shown;
+	int last_scroll;
 	wp_vrow vrows[WP_MAX_VR];
 } wp_state;
 
 static wp_state W;
+static wp_doc docs[WP_DOCS];
+static char pick_path[WP_PICK_MAX][128];
+static char pick_root[128];
+static int pick_n, pick_sel, pick_row0, pick_vn;
+static int pick_view[WP_PICK_MAX];
+
+static int wp_save(void);
+static void wp_autosave(void);
+static void wp_stash(void);
 
 static const wp_theme k_themes[] = {
 	{ 0x1A1B26u, 0xC8C9D0u, 0x7AA2F7u, 0x565A6Eu },
@@ -138,6 +176,176 @@ static unsigned code_bg(void)
 	unsigned g = (t->bg >> 8) & 255;
 	unsigned b = t->bg & 255;
 	return mmb_rgb_pack((int)(r * 7 / 8), (int)(g * 7 / 8), (int)(b * 7 / 8));
+}
+
+static unsigned dlg_bg(void)
+{
+	const wp_theme *t = th();
+	int r = (int)((t->bg >> 16) & 255);
+	int g = (int)((t->bg >> 8) & 255);
+	int b = (int)(t->bg & 255);
+	int lum = (r * 3 + g * 6 + b) / 10;
+	int d = 28;
+
+	if (lum < 140)
+	{
+		r += d;
+		g += d;
+		b += d;
+	}
+	else
+	{
+		r -= d;
+		g -= d;
+		b -= d;
+	}
+	if (r < 0)
+		r = 0;
+	if (g < 0)
+		g = 0;
+	if (b < 0)
+		b = 0;
+	if (r > 255)
+		r = 255;
+	if (g > 255)
+		g = 255;
+	if (b > 255)
+		b = 255;
+	return mmb_rgb_pack(r, g, b);
+}
+
+static int wp_chrome(void)
+{
+	if (W.menu_open || W.dialog || W.alt_pend)
+		return 1;
+	if (G.plat && G.plat->alt_held && G.plat->alt_held())
+		return 1;
+	return 0;
+}
+
+static int heading_scale(int style)
+{
+	if (style == WP_STYLE_H1 || style == WP_STYLE_H2)
+		return 2;
+	return 1;
+}
+
+static int vrow_h(int vr)
+{
+	if (vr < 0 || vr >= W.total_vrows)
+		return 1;
+	return W.vrows[vr].scale >= 2 ? 2 : 1;
+}
+
+static int screen_row_of_vrow(int vr)
+{
+	int s = 0, i, n;
+
+	n = vr;
+	if (n > W.total_vrows)
+		n = W.total_vrows;
+	for (i = 0; i < n; i++)
+		s += vrow_h(i);
+	return s;
+}
+
+static void wp_glyph(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
+{
+	if (!G.plat || !G.plat->tui_glyph)
+		return;
+	if (scale >= 2 && G.plat->tui_glyph2x)
+		G.plat->tui_glyph2x(col, row, ch, fg, bg);
+	else
+		G.plat->tui_glyph(col, row, ch, fg, bg);
+}
+
+static void wp_box(int c0, int r0, int w, int h, unsigned fg, unsigned bg)
+{
+	int c, r;
+
+	if (w < 2 || h < 2 || !G.plat || !G.plat->tui_glyph)
+		return;
+	G.plat->tui_glyph(c0, r0, WP_BOX_TL, fg, bg);
+	G.plat->tui_glyph(c0 + w - 1, r0, WP_BOX_TR, fg, bg);
+	G.plat->tui_glyph(c0, r0 + h - 1, WP_BOX_BL, fg, bg);
+	G.plat->tui_glyph(c0 + w - 1, r0 + h - 1, WP_BOX_BR, fg, bg);
+	for (c = 1; c < w - 1; c++)
+	{
+		G.plat->tui_glyph(c0 + c, r0, WP_BOX_H, fg, bg);
+		G.plat->tui_glyph(c0 + c, r0 + h - 1, WP_BOX_H, fg, bg);
+	}
+	for (r = 1; r < h - 1; r++)
+	{
+		G.plat->tui_glyph(c0, r0 + r, WP_BOX_V, fg, bg);
+		G.plat->tui_glyph(c0 + w - 1, r0 + r, WP_BOX_V, fg, bg);
+	}
+}
+
+static void wp_stash(void)
+{
+	wp_doc *d;
+
+	if (W.cur < 0 || W.cur >= WP_DOCS)
+		return;
+	d = &docs[W.cur];
+	if (W.len < 0)
+		W.len = 0;
+	if (W.len >= WP_BUF)
+		W.len = WP_BUF - 1;
+	memcpy(d->buf, W.buf, (unsigned)W.len);
+	d->buf[W.len] = 0;
+	d->len = W.len;
+	strncpy(d->path, W.path, sizeof(d->path) - 1);
+	d->path[sizeof(d->path) - 1] = 0;
+	d->dirty = W.dirty;
+	d->cx = W.cx;
+	d->sel = W.sel;
+	d->sel_anchor = W.sel_anchor;
+	d->scroll = W.scroll;
+}
+
+static void wp_restore(void)
+{
+	wp_doc *d;
+
+	if (W.cur < 0)
+		W.cur = 0;
+	if (W.cur >= W.ndoc)
+		W.cur = W.ndoc > 0 ? W.ndoc - 1 : 0;
+	d = &docs[W.cur];
+	W.len = d->len;
+	if (W.len < 0)
+		W.len = 0;
+	if (W.len >= WP_BUF)
+		W.len = WP_BUF - 1;
+	memcpy(W.buf, d->buf, (unsigned)W.len);
+	W.buf[W.len] = 0;
+	strncpy(W.path, d->path, sizeof(W.path) - 1);
+	W.path[sizeof(W.path) - 1] = 0;
+	W.dirty = d->dirty;
+	W.cx = d->cx;
+	W.sel = d->sel;
+	W.sel_anchor = d->sel_anchor;
+	W.scroll = d->scroll;
+}
+
+static int wp_path_eq(const char *a, const char *b)
+{
+	if (!a)
+		a = "";
+	if (!b)
+		b = "";
+	while (*a && *b)
+	{
+		char ca = *a++, cb = *b++;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (char)(cb - 32);
+		if (ca != cb)
+			return 0;
+	}
+	return *a == 0 && *b == 0;
 }
 
 static void ser(const char *s)
@@ -202,7 +410,8 @@ static void wp_layout_geom(void)
 		if (W.pane_left < 0)
 			W.pane_left = 0;
 	}
-	W.text_rows = W.vid_rows - 2;
+	W.text_top = wp_chrome() ? 1 : 0;
+	W.text_rows = W.vid_rows - (wp_chrome() ? 2 : 0);
 	if (W.text_rows < 1)
 		W.text_rows = 1;
 }
@@ -313,7 +522,6 @@ static void wp_build_layout(void)
 	int pos = 0;
 	int vr = 0;
 	int in_code = 0;
-	int width = W.pane_width;
 	int found_cx = 0;
 
 	W.total_vrows = 0;
@@ -321,6 +529,7 @@ static void wp_build_layout(void)
 	W.cx_vcol = 0;
 	while (pos <= W.len && vr < WP_MAX_VR)
 	{
+		int width, scale;
 		int ls = pos;
 		int le = pos;
 		int style, prefix_len, hide_prefix;
@@ -335,6 +544,10 @@ static void wp_build_layout(void)
 		cursor_on = (W.cx >= ls && W.cx <= le);
 		line_style(ls, le, in_code && !line_is_fence(ls, le), cursor_on,
 			   &style, &prefix_len, &hide_prefix);
+		scale = heading_scale(style);
+		width = W.pane_width / scale;
+		if (width < 1)
+			width = 1;
 		i = ls;
 		col = 0;
 		break_at = -1;
@@ -344,6 +557,7 @@ static void wp_build_layout(void)
 		W.vrows[vr].line_start = ls;
 		W.vrows[vr].prefix_len = prefix_len;
 		W.vrows[vr].hide_prefix = hide_prefix;
+		W.vrows[vr].scale = scale;
 		while (i < le)
 		{
 			if (hide_prefix && i < ls + prefix_len)
@@ -375,6 +589,7 @@ static void wp_build_layout(void)
 					W.vrows[vr].line_start = ls;
 					W.vrows[vr].prefix_len = prefix_len;
 					W.vrows[vr].hide_prefix = hide_prefix;
+					W.vrows[vr].scale = scale;
 					continue;
 				}
 				W.vrows[vr].off1 = i;
@@ -390,6 +605,7 @@ static void wp_build_layout(void)
 				W.vrows[vr].line_start = ls;
 				W.vrows[vr].prefix_len = prefix_len;
 				W.vrows[vr].hide_prefix = hide_prefix;
+				W.vrows[vr].scale = scale;
 				continue;
 			}
 			if (W.buf[i] == ' ')
@@ -473,14 +689,24 @@ static int vrow_col_to_off(int vr, int vc)
 
 static void ensure_scroll(void)
 {
-	if (W.cx_vrow < W.scroll)
-		W.scroll = W.cx_vrow;
-	if (W.cx_vrow >= W.scroll + W.text_rows)
-		W.scroll = W.cx_vrow - W.text_rows + 1;
+	int cy, ch, total;
+
+	cy = screen_row_of_vrow(W.cx_vrow);
+	ch = vrow_h(W.cx_vrow);
+	if (W.cx_vrow >= W.total_vrows)
+	{
+		cy = screen_row_of_vrow(W.total_vrows);
+		ch = 1;
+	}
+	if (cy < W.scroll)
+		W.scroll = cy;
+	if (cy + ch > W.scroll + W.text_rows)
+		W.scroll = cy + ch - W.text_rows;
 	if (W.scroll < 0)
 		W.scroll = 0;
-	if (W.total_vrows > 0 && W.scroll > W.total_vrows - 1)
-		W.scroll = W.total_vrows - 1;
+	total = screen_row_of_vrow(W.total_vrows);
+	if (total > 0 && W.scroll > total - 1)
+		W.scroll = total - 1;
 }
 
 static unsigned style_fg(int style)
@@ -559,6 +785,7 @@ static void wp_serial_dump(void)
 
 static void wp_leave(void)
 {
+	wp_autosave();
 	mmb_console_apply_colour();
 	memset(&W, 0, sizeof(W));
 }
@@ -829,17 +1056,6 @@ static void page_down(void)
 	W.cx = vrow_col_to_off(vr, vc);
 }
 
-static void wp_new_doc(void)
-{
-	W.buf[0] = 0;
-	W.len = 0;
-	W.path[0] = 0;
-	W.dirty = 0;
-	W.cx = 0;
-	W.scroll = 0;
-	sel_clear();
-}
-
 static void wp_load_file(const char *path)
 {
 	char canon[128];
@@ -869,6 +1085,57 @@ static int wp_save(void)
 		return -1;
 	W.dirty = 0;
 	return 1;
+}
+
+static void wp_autosave(void)
+{
+	if (W.path[0] && W.dirty)
+		wp_save();
+}
+
+static int wp_open_path(const char *path)
+{
+	char full[128];
+	int i;
+
+	wp_autosave();
+	wp_stash();
+	canon_path(path, full, sizeof(full));
+	for (i = 0; i < W.ndoc; i++)
+	{
+		if (full[0] && wp_path_eq(docs[i].path, full))
+		{
+			W.cur = i;
+			wp_restore();
+			return 1;
+		}
+	}
+	if (W.ndoc < WP_DOCS)
+		W.cur = W.ndoc++;
+	wp_load_file(full);
+	wp_stash();
+	return 1;
+}
+
+static void wp_new_doc(void)
+{
+	wp_autosave();
+	wp_stash();
+	if (!W.path[0] && W.len == 0)
+	{
+		sel_clear();
+		return;
+	}
+	if (W.ndoc < WP_DOCS)
+		W.cur = W.ndoc++;
+	W.buf[0] = 0;
+	W.len = 0;
+	W.path[0] = 0;
+	W.dirty = 0;
+	W.cx = 0;
+	W.scroll = 0;
+	sel_clear();
+	wp_stash();
 }
 
 static const char **menu_items(int menu, int *n)
@@ -915,6 +1182,284 @@ static void close_ui(void)
 static int fd_on(void)
 {
 	return W.dialog == WP_DLG_OPEN || W.dialog == WP_DLG_SAVEAS;
+}
+
+static int pick_on(void)
+{
+	return W.dialog == WP_DLG_PICK;
+}
+
+static int wp_ch_eq(char a, char b)
+{
+	if (a >= 'a' && a <= 'z')
+		a = (char)(a - 32);
+	if (b >= 'a' && b <= 'z')
+		b = (char)(b - 32);
+	return a == b;
+}
+
+static int wp_contains(const char *s, const char *sub)
+{
+	int i, j;
+
+	if (!sub || !sub[0])
+		return 1;
+	if (!s)
+		return 0;
+	for (i = 0; s[i]; i++)
+	{
+		for (j = 0; sub[j] && s[i + j] && wp_ch_eq(s[i + j], sub[j]); j++)
+			;
+		if (!sub[j])
+			return 1;
+	}
+	return 0;
+}
+
+static void wp_join(char *dst, int dstsz, const char *dir, const char *name)
+{
+	int n;
+
+	strncpy(dst, dir ? dir : "", (unsigned)dstsz - 1);
+	dst[dstsz - 1] = 0;
+	n = (int)strlen(dst);
+	if (n > 0 && dst[n - 1] != '/' && dst[n - 1] != ':' && n + 1 < dstsz)
+	{
+		dst[n] = '/';
+		dst[n + 1] = 0;
+	}
+	strncat(dst, name ? name : "", (unsigned)dstsz - strlen(dst) - 1);
+}
+
+static int wp_icmp(const char *a, const char *b)
+{
+	for (;;)
+	{
+		unsigned char ca = (unsigned char)*a++;
+		unsigned char cb = (unsigned char)*b++;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (unsigned char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (unsigned char)(cb - 32);
+		if (ca != cb)
+			return (int)ca - (int)cb;
+		if (!ca)
+			return 0;
+	}
+}
+
+static const char *pick_rel(const char *full)
+{
+	int i;
+
+	if (!full)
+		return "";
+	for (i = 0; pick_root[i]; i++)
+	{
+		if (!full[i] || !wp_ch_eq(full[i], pick_root[i]))
+			return full;
+	}
+	if (full[i] == '/')
+		i++;
+	return full[i] ? full + i : full;
+}
+
+static void pick_walk(const char *dir, int depth)
+{
+	char list[2048];
+	char *s;
+
+	if (!dir || !dir[0] || depth > WP_PICK_DEPTH || pick_n >= WP_PICK_MAX)
+		return;
+	list[0] = 0;
+	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
+		return;
+	s = list;
+	while (*s && pick_n < WP_PICK_MAX)
+	{
+		char name[128];
+		int n = 0, is_dir = 0;
+
+		while (*s && *s != '\n' && *s != '\r' && n < (int)sizeof(name) - 1)
+			name[n++] = *s++;
+		name[n] = 0;
+		while (*s == '\r' || *s == '\n')
+			s++;
+		if (n > 0 && name[n - 1] == '/')
+		{
+			name[n - 1] = 0;
+			is_dir = 1;
+		}
+		if (!name[0] || (name[0] == '.' && (!name[1] || (name[1] == '.' && !name[2]))))
+			continue;
+		{
+			char full[128];
+
+			wp_join(full, sizeof(full), dir, name);
+			if (is_dir)
+				pick_walk(full, depth + 1);
+			else
+			{
+				strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
+				pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
+				pick_n++;
+			}
+		}
+	}
+}
+
+static void set_pick_root(const char *path)
+{
+	char full[128];
+	const char *src = (path && path[0]) ? path : mmb_vfs_cwd();
+
+	pick_root[0] = 0;
+	if (mmb_vfs_resolve(src, full, sizeof(full)) != 0)
+	{
+		strncpy(pick_root, mmb_vfs_cwd(), sizeof(pick_root) - 1);
+		pick_root[sizeof(pick_root) - 1] = 0;
+		return;
+	}
+	if (!(mmb_vfs_exists(full) && mmb_vfs_size(full) < 0))
+	{
+		char *slash = 0;
+		char *q = full;
+
+		while (*q)
+		{
+			if (*q == '/')
+				slash = q;
+			q++;
+		}
+		if (slash)
+		{
+			if (slash <= full + 2)
+				slash[1] = 0;
+			else
+				*slash = 0;
+		}
+	}
+	strncpy(pick_root, full, sizeof(pick_root) - 1);
+	pick_root[sizeof(pick_root) - 1] = 0;
+}
+
+static void pick_sort(void)
+{
+	int i, j;
+
+	for (i = 0; i < pick_n; i++)
+		for (j = i + 1; j < pick_n; j++)
+			if (wp_icmp(pick_rel(pick_path[j]), pick_rel(pick_path[i])) < 0)
+			{
+				char tmp[128];
+
+				strncpy(tmp, pick_path[i], sizeof(tmp) - 1);
+				tmp[sizeof(tmp) - 1] = 0;
+				strncpy(pick_path[i], pick_path[j], sizeof(pick_path[i]) - 1);
+				pick_path[i][sizeof(pick_path[i]) - 1] = 0;
+				strncpy(pick_path[j], tmp, sizeof(pick_path[j]) - 1);
+				pick_path[j][sizeof(pick_path[j]) - 1] = 0;
+			}
+}
+
+static void pick_rebuild_view(void)
+{
+	int i;
+
+	pick_vn = 0;
+	for (i = 0; i < pick_n; i++)
+	{
+		if (!wp_contains(pick_rel(pick_path[i]), W.dlg))
+			continue;
+		pick_view[pick_vn++] = i;
+	}
+	if (pick_sel >= pick_vn)
+		pick_sel = pick_vn > 0 ? pick_vn - 1 : 0;
+	if (pick_sel < 0)
+		pick_sel = 0;
+}
+
+static void pick_geom(int *w, int *h, int *r0, int *c0)
+{
+	int ww = 58, hh = 16;
+
+	if (ww > W.vid_cols - 2)
+		ww = W.vid_cols - 2;
+	if (hh > W.vid_rows - 2)
+		hh = W.vid_rows - 2;
+	if (w)
+		*w = ww;
+	if (h)
+		*h = hh;
+	if (r0)
+	{
+		*r0 = (W.vid_rows - hh) / 2;
+		if (*r0 < 1)
+			*r0 = 1;
+	}
+	if (c0)
+	{
+		*c0 = (W.vid_cols - ww) / 2;
+		if (*c0 < 0)
+			*c0 = 0;
+	}
+}
+
+static int pick_list_h(int h)
+{
+	int n = h - 6;
+
+	return n > 1 ? n : 1;
+}
+
+static void pick_move(int delta)
+{
+	int vis, w, h, r0, c0;
+
+	if (pick_vn <= 0)
+		return;
+	pick_sel += delta;
+	if (pick_sel < 0)
+		pick_sel = 0;
+	if (pick_sel >= pick_vn)
+		pick_sel = pick_vn - 1;
+	pick_geom(&w, &h, &r0, &c0);
+	(void)w;
+	(void)r0;
+	(void)c0;
+	vis = pick_list_h(h);
+	if (pick_sel < pick_row0)
+		pick_row0 = pick_sel;
+	if (pick_sel >= pick_row0 + vis)
+		pick_row0 = pick_sel - vis + 1;
+}
+
+static void open_picker(void)
+{
+	W.menu_open = 0;
+	W.dialog = WP_DLG_PICK;
+	W.dlg[0] = 0;
+	W.dlglen = 0;
+	pick_n = 0;
+	pick_sel = 0;
+	pick_row0 = 0;
+	pick_vn = 0;
+	if (!pick_root[0])
+		set_pick_root(mmb_vfs_cwd());
+	pick_walk(pick_root, 0);
+	pick_sort();
+	pick_rebuild_view();
+}
+
+static void pick_submit(void)
+{
+	if (pick_vn > 0 && pick_sel >= 0 && pick_sel < pick_vn)
+	{
+		int idx = pick_view[pick_sel];
+
+		wp_open_path(pick_path[idx]);
+	}
+	close_ui();
 }
 
 static void fd_copy(char *dst, int n, const char *s)
@@ -1390,7 +1935,7 @@ static void fd_submit_path(const char *path)
 	ensure_md(full, sizeof(full));
 	if (W.dialog == WP_DLG_OPEN)
 	{
-		wp_load_file(full);
+		wp_open_path(full);
 		close_ui();
 		return;
 	}
@@ -1640,6 +2185,8 @@ static void activate_menu(void)
 	else if (menu == WP_MENU_THEME)
 	{
 		W.theme = item;
+		G.opt.wordpad_theme = item;
+		mmb_settings_save();
 	}
 }
 
@@ -1696,6 +2243,28 @@ static int handle_arrow_or_special(int kind, int mod)
 	{
 		shift = ((mod - 1) & 1) != 0;
 		ctrl = ((mod - 1) & 4) != 0;
+	}
+	if (pick_on())
+	{
+		int vis, w, h, r0, c0;
+		pick_geom(&w, &h, &r0, &c0);
+		(void)w;
+		(void)r0;
+		(void)c0;
+		vis = pick_list_h(h);
+		if (kind == 1)
+			pick_move(-1);
+		else if (kind == 2)
+			pick_move(1);
+		else if (kind == 5)
+			pick_move(-pick_vn);
+		else if (kind == 6)
+			pick_move(pick_vn);
+		else if (kind == 9)
+			pick_move(-vis);
+		else if (kind == 10)
+			pick_move(vis);
+		return 1;
 	}
 	if (fd_on())
 	{
@@ -1892,7 +2461,10 @@ static int dialog_key(char c)
 	}
 	if (c == '\r' || c == '\n')
 	{
-		fd_enter_key();
+		if (pick_on())
+			pick_submit();
+		else
+			fd_enter_key();
 		return 1;
 	}
 	if (fd_on() && c == 9)
@@ -1905,9 +2477,9 @@ static int dialog_key(char c)
 		if (fd_on() && fd_focus != WP_FD_FOCUS_NAME)
 			fd_focus = WP_FD_FOCUS_NAME;
 		if (W.dlglen > 0)
-		{
 			W.dlg[--W.dlglen] = 0;
-		}
+		if (pick_on())
+			pick_rebuild_view();
 		return 1;
 	}
 	if (c >= 32 && c < 127 && W.dlglen < (int)sizeof(W.dlg) - 1)
@@ -1919,6 +2491,8 @@ static int dialog_key(char c)
 		}
 		W.dlg[W.dlglen++] = c;
 		W.dlg[W.dlglen] = 0;
+		if (pick_on())
+			pick_rebuild_view();
 		return 1;
 	}
 	return 1;
@@ -1940,7 +2514,7 @@ static void draw_menu_bar(void)
 		menu_x[i] = x;
 		wp_puts(x, 0, menu_names[i], fg, bg);
 		x += (int)strlen(menu_names[i]);
-		wp_puts(x, 0, "  ", fg, bg);
+		wp_puts(x, 0, "  ", t->fg, t->bg);
 		x += 2;
 		if (pos + 32 < (int)sizeof(line))
 		{
@@ -1958,7 +2532,8 @@ static void draw_menu_bar(void)
 static void draw_dropdown(void)
 {
 	const wp_theme *t = th();
-	int n, i, w, x0, y0;
+	unsigned sbg = dlg_bg();
+	int n, i, w, x0, y0, j;
 	const char **it = menu_items(W.menu, &n);
 
 	w = menu_width(W.menu);
@@ -1968,19 +2543,18 @@ static void draw_dropdown(void)
 	if (x0 < 0)
 		x0 = 0;
 	y0 = 1;
+	wp_box(x0, y0, w, n + 2, t->heading, sbg);
 	for (i = 0; i < n; i++)
 	{
 		unsigned fg = (i == W.menu_item) ? t->bg : t->fg;
-		unsigned bg = (i == W.menu_item) ? t->heading : t->bg;
+		unsigned bg = (i == W.menu_item) ? t->heading : sbg;
 		char row[64];
-		int j;
 
-		wp_fill_row(y0 + i, fg, bg);
-		for (j = 0; j < w; j++)
-			row[j] = ' ';
-		strncpy(row, it[i], (unsigned)w - 1);
-		row[w] = 0;
-		wp_puts(x0, y0 + i, row, fg, bg);
+		for (j = 0; j < w - 2; j++)
+			G.plat->tui_glyph(x0 + 1 + j, y0 + 1 + i, ' ', fg, bg);
+		strncpy(row, it[i], sizeof(row) - 1);
+		row[sizeof(row) - 1] = 0;
+		wp_puts(x0 + 1, y0 + 1 + i, row, fg, bg);
 		serial_row(it[i]);
 	}
 }
@@ -1988,22 +2562,25 @@ static void draw_dropdown(void)
 static void draw_file_dialog(void)
 {
 	const wp_theme *t = th();
-	int c0, r0, w, h, lh, i;
+	unsigned sbg = dlg_bg();
+	int c0, r0, w, h, lh, i, c, r;
 	unsigned nfg, nbg, ffg, fbg, dfg, dbg;
 	char st[128];
 
 	fd_geom(&c0, &r0, &w, &h);
 	lh = fd_list_h();
-	for (i = 0; i < h; i++)
-		wp_fill_row(r0 + i, t->fg, t->bg);
+	for (r = 0; r < h; r++)
+		for (c = 0; c < w; c++)
+			G.plat->tui_glyph(c0 + c, r0 + r, ' ', t->fg, sbg);
+	wp_box(c0, r0, w, h, t->heading, sbg);
 	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? t->bg : t->fg;
 	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? t->heading : t->dim;
 	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
-	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->bg;
+	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : sbg;
 	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
-	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->bg;
-	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", t->heading, t->bg);
-	wp_puts(c0 + 2, r0 + 2, "Name:", t->dim, t->bg);
+	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : sbg;
+	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", t->heading, sbg);
+	wp_puts(c0 + 2, r0 + 2, "Name:", t->dim, sbg);
 	{
 		char namebuf[WP_DLG + 4];
 		namebuf[0] = ' ';
@@ -2011,98 +2588,196 @@ static void draw_file_dialog(void)
 		namebuf[sizeof(namebuf) - 1] = 0;
 		wp_puts(c0 + 2, r0 + 3, namebuf, nfg, nbg);
 	}
-	wp_puts(c0 + 2, r0 + 5, "Files", t->dim, t->bg);
-	wp_puts(c0 + 2 + w / 2, r0 + 5, "Directories", t->dim, t->bg);
+	wp_puts(c0 + 2, r0 + 5, "Files", t->dim, sbg);
+	wp_puts(c0 + 2 + w / 2, r0 + 5, "Directories", t->dim, sbg);
 	for (i = 0; i < lh; i++)
 	{
 		int fi = fd_ftop + i;
 		int di = fd_dtop + i;
 		const char *fn = (fi >= 0 && fi < fd_nfile) ? fd_files[fi] : "";
 		const char *dn = (di >= 0 && di < fd_ndir) ? fd_dirs[di] : "";
-		unsigned sfg = ffg, sbg = fbg;
+		unsigned sfg = ffg, sbg2 = fbg;
 
 		if (fi == fd_fsel && fd_nfile > 0)
 		{
 			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
-			sbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->dim;
+			sbg2 = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->dim;
 		}
-		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg);
+		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg2);
 		sfg = dfg;
-		sbg = dbg;
+		sbg2 = dbg;
 		if (di == fd_dsel && fd_ndir > 0)
 		{
 			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
-			sbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->dim;
+			sbg2 = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->dim;
 		}
-		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg);
+		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg2);
 	}
 	st[0] = 0;
 	strncat(st, fd_dir, sizeof(st) - 1);
 	strncat(st, "  ", sizeof(st) - strlen(st) - 1);
 	strncat(st, fd_mask, sizeof(st) - strlen(st) - 1);
-	wp_puts(c0 + 2, r0 + h - 3, st, t->dim, t->bg);
-	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", t->dim, t->bg);
+	wp_puts(c0 + 2, r0 + h - 3, st, t->dim, sbg);
+	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", t->dim, sbg);
+}
+
+static void draw_picker(void)
+{
+	const wp_theme *t = th();
+	unsigned sbg = dlg_bg();
+	int w, h, r0, c0, i, vis, y, c, r;
+	const char *title = " Quick open ";
+
+	pick_geom(&w, &h, &r0, &c0);
+	vis = pick_list_h(h);
+	if (pick_sel < pick_row0)
+		pick_row0 = pick_sel;
+	if (pick_sel >= pick_row0 + vis)
+		pick_row0 = pick_sel - vis + 1;
+	if (pick_row0 < 0)
+		pick_row0 = 0;
+	for (r = 0; r < h; r++)
+		for (c = 0; c < w; c++)
+			G.plat->tui_glyph(c0 + c, r0 + r, ' ', t->fg, sbg);
+	wp_box(c0, r0, w, h, t->heading, sbg);
+	{
+		int left = (w - 2 - (int)strlen(title)) / 2;
+		if (left < 1)
+			left = 1;
+		wp_puts(c0 + left, r0, title, t->heading, sbg);
+	}
+	serial_row("Quick open");
+	wp_puts(c0 + 2, r0 + 1, pick_root, t->dim, sbg);
+	wp_puts(c0 + 2, r0 + 2, W.dlg[0] ? W.dlg : "(type to filter)",
+		W.dlg[0] ? t->bg : t->dim,
+		W.dlg[0] ? t->heading : sbg);
+	for (i = 0; i < vis; i++)
+	{
+		unsigned fg = t->fg, bg = sbg;
+		const char *lab = "";
+
+		y = r0 + 3 + i;
+		if (pick_row0 + i < pick_vn)
+		{
+			int idx = pick_view[pick_row0 + i];
+			lab = pick_rel(pick_path[idx]);
+			if (pick_row0 + i == pick_sel)
+			{
+				fg = t->bg;
+				bg = t->heading;
+			}
+			serial_row(lab);
+		}
+		wp_puts(c0 + 2, y, lab, fg, bg);
+	}
+	wp_puts(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", t->dim, sbg);
+}
+
+static void draw_cursor_cell(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
+{
+	wp_glyph(col, row, ch, bg, fg, scale);
 }
 
 static void draw_body(void)
 {
 	const wp_theme *t = th();
-	int r, vr, c, i, col;
+	int vr, c, i, col, screen_y, vis;
 	unsigned fg, bg;
 	char srow[WP_WRAP_W + 1];
 	int spos;
 
 	wp_build_layout();
 	ensure_scroll();
-	for (r = 0; r < W.text_rows; r++)
+	for (i = 0; i < W.text_rows; i++)
 	{
-		int screen_row = 1 + r;
-		vr = W.scroll + r;
+		int screen_row = W.text_top + i;
 		wp_fill_row(screen_row, t->fg, t->bg);
 		for (c = 0; c < W.pane_left; c++)
 			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
 		for (c = W.pane_left + W.pane_width; c < W.vid_cols; c++)
 			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
+	}
+	screen_y = 0;
+	for (vr = 0; vr < W.total_vrows; vr++)
+	{
+		int scale = W.vrows[vr].scale >= 2 ? 2 : 1;
+		int vh = scale;
+		int ls = W.vrows[vr].line_start;
+		int style = W.vrows[vr].style;
+		int hide_prefix = W.vrows[vr].hide_prefix;
+		int prefix_len = W.vrows[vr].prefix_len;
+		int wrap = W.pane_width / scale;
+		int screen_row;
+
+		if (wrap < 1)
+			wrap = 1;
+		vis = screen_y - W.scroll;
+		screen_row = W.text_top + vis;
 		spos = 0;
-		if (vr >= 0 && vr < W.total_vrows)
+		if (vis + vh > 0 && vis < W.text_rows)
 		{
-			int ls = W.vrows[vr].line_start;
-			int style = W.vrows[vr].style;
-			int hide_prefix = W.vrows[vr].hide_prefix;
-			int prefix_len = W.vrows[vr].prefix_len;
 			i = W.vrows[vr].off0;
 			col = 0;
 			fg = style_fg(style);
 			bg = style_bg(style);
-			while (i < W.vrows[vr].off1 && col < W.pane_width)
+			if (vis >= 0)
 			{
-				unsigned chfg, chbg;
-				char ch;
+				while (i < W.vrows[vr].off1 && col < wrap)
+				{
+					unsigned chfg, chbg;
+					char ch;
 
-				if (hide_prefix && i < ls + prefix_len)
-				{
+					if (hide_prefix && i < ls + prefix_len)
+					{
+						i++;
+						continue;
+					}
+					ch = W.buf[i];
+					chfg = fg;
+					chbg = bg;
+					if (in_sel(i))
+					{
+						chfg = t->bg;
+						chbg = t->heading;
+					}
+					if (vr == W.cx_vrow && col == W.cx_vcol && !W.dialog)
+					{
+						chfg = bg;
+						chbg = fg;
+					}
+					if (vis >= 0 && vis < W.text_rows)
+						wp_glyph(W.pane_left + col * scale, screen_row,
+							 (unsigned)ch, chfg, chbg, scale);
+					if (spos < W.pane_width)
+						srow[spos++] = ch;
+					col++;
 					i++;
-					continue;
 				}
-				ch = W.buf[i];
-				chfg = fg;
-				chbg = bg;
-				if (in_sel(i))
+				if (vr == W.cx_vrow && W.cx_vcol >= col && !W.dialog)
 				{
-					chfg = t->bg;
-					chbg = t->heading;
+					if (vis >= 0 && vis < W.text_rows)
+						draw_cursor_cell(W.pane_left + W.cx_vcol * scale,
+								 screen_row, ' ', fg, bg, scale);
 				}
-				G.plat->tui_glyph(W.pane_left + col, screen_row, (unsigned)ch, chfg, chbg);
-				if (spos < W.pane_width)
-					srow[spos++] = ch;
-				col++;
-				i++;
+				while (spos < wrap)
+					srow[spos++] = ' ';
+				srow[spos] = 0;
+				serial_row(srow);
 			}
 		}
-		while (spos < W.pane_width)
-			srow[spos++] = ' ';
-		srow[spos] = 0;
-		serial_row(srow);
+		screen_y += vh;
+	}
+	if (W.total_vrows == 0 && !W.dialog)
+	{
+		int screen_row = W.text_top;
+		draw_cursor_cell(W.pane_left, screen_row, ' ', t->fg, t->bg, 1);
+		serial_row("");
+	}
+	else if (W.cx_vrow >= W.total_vrows && !W.dialog)
+	{
+		int vis2 = screen_row_of_vrow(W.total_vrows) - W.scroll;
+		if (vis2 >= 0 && vis2 < W.text_rows)
+			draw_cursor_cell(W.pane_left, W.text_top + vis2, ' ', t->fg, t->bg, 1);
 	}
 }
 
@@ -2139,25 +2814,68 @@ static void draw_status(void)
 	serial_row(left);
 }
 
+static void wp_smooth_scroll(int from, int to)
+{
+	int delta, x, y, w, h, pixels, step, done, dir, d;
+
+	if (!G.plat || !G.plat->tui_scroll || from == to)
+		return;
+	delta = to - from;
+	if (delta > 3 || delta < -3)
+		return;
+	x = W.pane_left * 8;
+	y = W.text_top * 16;
+	w = W.pane_width * 8;
+	h = W.text_rows * 16;
+	if (w < 8 || h < 16)
+		return;
+	dir = delta > 0 ? 1 : -1;
+	pixels = (delta < 0 ? -delta : delta) * 16;
+	step = 4;
+	done = 0;
+	while (done < pixels)
+	{
+		d = step;
+		if (d > pixels - done)
+			d = pixels - done;
+		G.plat->tui_scroll(x, y, w, h, dir * d, th()->bg);
+		done += d;
+	}
+}
+
 static void wp_redraw(void)
 {
 	const wp_theme *t = th();
-	int row;
+	int row, chrome;
+	int old_scroll;
 
 	if (!G.plat || !G.plat->tui_glyph || !G.plat->tui_present)
 		return;
 	wp_layout_geom();
+	chrome = wp_chrome();
+	old_scroll = W.last_scroll;
+	wp_build_layout();
+	ensure_scroll();
+	if (!W.dialog && !W.menu_open && old_scroll >= 0 &&
+	    W.chrome_shown == chrome && W.scroll != old_scroll)
+		wp_smooth_scroll(old_scroll, W.scroll);
 	for (row = 0; row < W.vid_rows; row++)
 		wp_fill_row(row, t->fg, t->bg);
-	draw_menu_bar();
+	if (chrome)
+		draw_menu_bar();
 	if (!W.dialog)
 		draw_body();
 	if (W.menu_open)
 		draw_dropdown();
-	if (W.dialog)
+	if (W.dialog == WP_DLG_PICK)
+		draw_picker();
+	else if (W.dialog)
 		draw_file_dialog();
-	draw_status();
+	if (chrome)
+		draw_status();
 	G.plat->tui_present(0, W.vid_rows * 16 - 1);
+	W.last_scroll = W.scroll;
+	W.chrome_shown = chrome;
 	wp_serial_dump();
 }
 
@@ -2224,6 +2942,7 @@ static const char *wp_feed(char c)
 	if (c == 1)
 	{
 		W.alt_pend = 1;
+		wp_redraw();
 		return G.out;
 	}
 	if (W.esc_state)
@@ -2251,6 +2970,12 @@ static const char *wp_feed(char c)
 	{
 		if (W.active)
 			wp_redraw();
+		return G.out;
+	}
+	if (c == 16)
+	{
+		open_picker();
+		wp_redraw();
 		return G.out;
 	}
 	if (c == 24)
@@ -2317,15 +3042,22 @@ void mmb_cmd_wordpad(void)
 			strncpy(path, v.s, sizeof(path) - 1);
 	}
 	memset(&W, 0, sizeof(W));
+	memset(docs, 0, sizeof(docs));
 	W.active = 1;
-	W.theme = 0;
+	W.theme = G.opt.wordpad_theme;
+	if (W.theme < 0 || W.theme > 5)
+		W.theme = 0;
 	W.wide = 0;
+	W.ndoc = 1;
+	W.cur = 0;
+	W.last_scroll = -1;
 	if (path[0])
 	{
 		canon_path(path, canon, sizeof(canon));
 		strncpy(W.path, canon, sizeof(W.path) - 1);
 		W.path[sizeof(W.path) - 1] = 0;
 		wp_load_file(W.path);
+		wp_stash();
 	}
 	ser("[WORDPAD]\r\n");
 	if (G.plat && G.plat->tui_prepare)
@@ -2346,13 +3078,19 @@ const char *mmb_wordpad_key(char c)
 
 void mmb_wordpad_poll(void)
 {
-	if (!W.active || W.esc_state != WP_ESC_GOT)
+	int chrome;
+
+	if (!W.active)
 		return;
-	if (!W.menu_open && !W.dialog)
+	if (W.esc_state == WP_ESC_GOT && (W.menu_open || W.dialog) &&
+	    mmb_now_ms() - W.esc_at >= WP_ESC_IDLE_MS)
+	{
+		W.esc_state = WP_ESC_NONE;
+		close_ui();
+		wp_redraw();
 		return;
-	if (mmb_now_ms() - W.esc_at < WP_ESC_IDLE_MS)
-		return;
-	W.esc_state = WP_ESC_NONE;
-	close_ui();
-	wp_redraw();
+	}
+	chrome = wp_chrome();
+	if (chrome != W.chrome_shown)
+		wp_redraw();
 }
