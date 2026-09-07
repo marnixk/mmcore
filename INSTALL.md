@@ -1,12 +1,8 @@
 # Installing MMBasic on a Raspberry Pi SD card
 
 This image is a **bare-metal** MMBasic console. There is no Linux on the card.
-The Pi boots firmware from the FAT partition, loads the kernel, and shows:
-
-```
-MMBASIC-CONSOLE READY
->
-```
+The Pi boots firmware from the FAT partition, loads the kernel, and shows a
+short copyright notice, then `Type HELP to get started` and the `>` prompt.
 
 Releases ship **four zips** — pick the one that matches your board. Do not mix
 files from different zips on the same card.
@@ -331,7 +327,13 @@ If you use serial as well, open a terminal at **115200 8N1**, no flow control
 On HDMI and on serial you should see:
 
 ```
-MMBASIC-CONSOLE READY
+Copyright 2011-2026 Geoff Graham
+Copyright 2016-2026 Peter Mather
+Adapted and extended by Marnix Kok
+
+Type HELP to get started.
+
+
 >
 ```
 
@@ -361,7 +363,7 @@ CIRCLE 440,200,90,CYAN
 | HDMI works, serial silent | `enable_uart=1` is in `config.txt`; GND connected |
 | Pi 400 built-in keyboard does nothing | Use the Pi 400 zip (`kernel8-rpi4.img`); wait a second after the banner for USB to enumerate; try `keymap=` in `cmdline.txt` |
 | Wrong symbols (`"` vs `@`) | Edit `cmdline.txt`: `keymap=US` (default), `UK`, `DE`, `FR`, `ES`, `IT` |
-| USB keyboard on Pi 3 / Zero 2 does nothing | Plug into a USB-A port (Zero 2: micro-USB OTG); hub-only setups can take a moment after READY |
+| USB keyboard on Pi 3 / Zero 2 does nothing | Plug into a USB-A port (Zero 2: micro-USB OTG); hub-only setups can take a moment after the banner |
 | Pi 400 no HDMI | Use HDMI0 (port next to USB-C); `hdmi_force_hotplug=1` is in `config.txt` |
 | Pi Zero 2 no HDMI | Mini-HDMI fully seated; `hdmi_force_hotplug=1` is in `config.txt` |
 | Wi-Fi not available | Card missing `firmware/brcmfmac*.bin`, this is a Zero 2 (non-W) zip, or this is QEMU (no radio). WLAN zips include `firmware/`. |

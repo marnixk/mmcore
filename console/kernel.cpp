@@ -919,8 +919,7 @@ TShutdownMode CKernel::Run (void)
 {
 	m_Logger.Write (FromKernel, LogNotice, "console ready");
 
-	const char Banner[] = "MMBASIC-CONSOLE READY\r\n";
-	emit_n (this, Banner, sizeof (Banner) - 1);
+	mmb_print_startup ();
 	emit_prompt (this);
 
 	AttachKeyboard ();

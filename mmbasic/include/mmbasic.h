@@ -122,6 +122,9 @@ int mmb_take_home_prompt(void);
 /* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
 void mmb_console_write(const char *s);
 
+/* PicoMite/MMBasic copyright plus HELP hint. Call once at boot. */
+void mmb_print_startup(void);
+
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
 
