@@ -45,6 +45,14 @@ def test_help_cls(console):
     assert "[" in out or "colour" in out.lower() or "color" in out.lower()
 
 
+def test_help_pixel_array_form(console):
+    out = dump_topic(console, "PIXEL")
+    assert out != "?SYNTAX ERROR"
+    assert "x()" in out or "XX()" in out
+    assert "array" in out.lower()
+    assert "smallest" in out.lower()
+
+
 def test_help_basic_lists_constructs(console):
     out = dump_topic(console, "BASIC")
     assert out
