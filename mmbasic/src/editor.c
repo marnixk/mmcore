@@ -32,21 +32,6 @@ static int ed_rows(void) { return tui_rows(); }
 #define ED_THEME_N     10
 #define ED_THEME_TURBO 8
 
-typedef struct ed_theme {
-	const char *name;
-	unsigned char menu_fg, menu_bg, hot;
-	unsigned char sel_fg, sel_bg;
-	unsigned char edit_fg, edit_bg;
-	unsigned char mark_fg, mark_bg;
-	unsigned char str_fg, num_fg, cmt_fg;
-	unsigned char brd_fg, brd_bg;
-	unsigned char tab_fg, tab_bg, tabcur_fg, tabcur_bg;
-	unsigned char dlg_fg, dlg_bg;
-	unsigned char sh_fg, sh_bg;
-	unsigned char list_bg;
-	const unsigned *pal;
-} ed_theme;
-
 static const unsigned pal_paper[16] = {
 	0x2C261Cu, 0xC45C48u, 0x5A8A4Au, 0xC49A4Au,
 	0x3D6A9Eu, 0xA05A8Au, 0x4A8A9Eu, 0xF3EBDDu,
@@ -102,7 +87,7 @@ static const unsigned pal_phosphor[16] = {
 	0x5555FFu, 0xFF55FFu, 0x55FFCCu, 0xC8FFC8u
 };
 
-static const ed_theme k_themes[ED_THEME_N] = {
+static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	/* 3 modern light */
 	{ "Paper",
 	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
@@ -208,12 +193,22 @@ static const ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLACK, TUI_BLACK, TUI_GREEN, pal_phosphor },
 };
 
-static const ed_theme *th(void)
+static const mmb_ed_theme *th(void)
 {
 	int i = G.opt.edit_theme;
 	if (i < 0 || i >= ED_THEME_N)
 		i = ED_THEME_TURBO;
 	return &k_themes[i];
+}
+
+const mmb_ed_theme *mmb_editor_theme(void)
+{
+	return th();
+}
+
+void mmb_editor_apply_tui_palette(void)
+{
+	tui_set_palette(th()->pal);
 }
 
 #define C_MENU_FG   ((int)th()->menu_fg)

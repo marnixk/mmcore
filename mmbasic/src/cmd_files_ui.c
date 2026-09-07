@@ -61,20 +61,28 @@ typedef struct {
 
 static fu_state F;
 
-#define FU_MENU_FG TUI_BLACK
-#define FU_MENU_BG TUI_CYAN
-#define FU_PAN_FG  TUI_WHITE
-#define FU_PAN_BG  TUI_BLUE
-#define FU_SEL_FG  TUI_BLACK
-#define FU_SEL_BG  TUI_CYAN
-#define FU_DIR_FG  TUI_BRCYAN
-#define FU_DIR_BG  TUI_BLUE
-#define FU_ST_FG   TUI_CYAN
-#define FU_ST_BG   TUI_BLACK
-#define FU_FN_FG   TUI_WHITE
-#define FU_FN_BG   TUI_BLUE
-#define FU_FL_FG   TUI_BLACK
-#define FU_FL_BG   TUI_CYAN
+#define FU_MENU_FG ((int)mmb_editor_theme()->menu_fg)
+#define FU_MENU_BG ((int)mmb_editor_theme()->menu_bg)
+#define FU_PAN_FG  ((int)mmb_editor_theme()->brd_fg)
+#define FU_PAN_BG  ((int)mmb_editor_theme()->brd_bg)
+#define FU_SEL_FG  ((int)mmb_editor_theme()->sel_fg)
+#define FU_SEL_BG  ((int)mmb_editor_theme()->sel_bg)
+#define FU_DIR_FG  ((int)mmb_editor_theme()->str_fg)
+#define FU_DIR_BG  ((int)mmb_editor_theme()->edit_bg)
+#define FU_ST_FG   ((int)mmb_editor_theme()->cmt_fg)
+#define FU_ST_BG   ((int)mmb_editor_theme()->edit_bg)
+#define FU_FN_FG   ((int)mmb_editor_theme()->tab_fg)
+#define FU_FN_BG   ((int)mmb_editor_theme()->edit_bg)
+#define FU_FL_FG   ((int)mmb_editor_theme()->menu_fg)
+#define FU_FL_BG   ((int)mmb_editor_theme()->list_bg)
+#define FU_HOT     ((int)mmb_editor_theme()->hot)
+#define FU_DLG_FG  ((int)mmb_editor_theme()->dlg_fg)
+#define FU_DLG_BG  ((int)mmb_editor_theme()->dlg_bg)
+#define FU_EDIT_FG ((int)mmb_editor_theme()->edit_fg)
+#define FU_EDIT_BG ((int)mmb_editor_theme()->edit_bg)
+#define FU_CMT_FG  ((int)mmb_editor_theme()->cmt_fg)
+#define FU_STR_FG  ((int)mmb_editor_theme()->str_fg)
+#define FU_NUM_FG  ((int)mmb_editor_theme()->num_fg)
 
 static int fu_cols(void) { return tui_cols(); }
 static int fu_rows(void) { return tui_rows(); }
@@ -466,14 +474,14 @@ static void draw_top_menu(void)
 	{
 		int j, sel = (F.drop == i);
 		int fg, bg;
-		fg = sel ? TUI_BLACK : FU_MENU_FG;
-		bg = sel ? TUI_GREEN : FU_MENU_BG;
+		fg = sel ? FU_SEL_FG : FU_MENU_FG;
+		bg = sel ? FU_SEL_BG : FU_MENU_BG;
 		F.menu_x[i] = x;
 		for (j = 0; names[i][j]; j++)
 		{
 			int c_fg = fg;
 			if (names[i][j] == hots[i] || names[i][j] == hots[i] + 32)
-				c_fg = TUI_BRRED;
+				c_fg = FU_HOT;
 			tui_put(x++, 0, (unsigned char)names[i][j], c_fg, bg);
 		}
 		tui_put(x++, 0, ' ', FU_MENU_FG, FU_MENU_BG);
@@ -580,20 +588,20 @@ static void draw_syntax_span(int x, int y, const char *s, int n, int width)
 		else if (in_str && ch == '"')
 			in_str = 2;
 		if (in_cmt)
-			fg = TUI_WHITE;
+			fg = FU_CMT_FG;
 		else if (in_str)
-			fg = TUI_BRYELLOW;
+			fg = FU_STR_FG;
 		else if (ch >= '0' && ch <= '9')
-			fg = TUI_BRBLUE;
+			fg = FU_NUM_FG;
 		else
-			fg = TUI_BRWHITE;
-		tui_put(x + shown, y, (unsigned char)((ch == '\t') ? ' ' : ch), fg, TUI_BLUE);
+			fg = FU_EDIT_FG;
+		tui_put(x + shown, y, (unsigned char)((ch == '\t') ? ' ' : ch), fg, FU_EDIT_BG);
 		shown++;
 		if (in_str == 2)
 			in_str = 0;
 	}
 	if (shown < width)
-		tui_pad(x + shown, y, "", width - shown, TUI_BRWHITE, TUI_BLUE);
+		tui_pad(x + shown, y, "", width - shown, FU_EDIT_FG, FU_EDIT_BG);
 }
 
 static void draw_text_view(void)
@@ -603,7 +611,7 @@ static void draw_text_view(void)
 		w = fu_cols() > 4 ? fu_cols() - 2 : fu_cols();
 	if (h < 6)
 		h = fu_rows() > 4 ? fu_rows() - 4 : fu_rows();
-	tui_fill(c0, r0, w, h, ' ', TUI_BRWHITE, TUI_BLUE);
+	tui_fill(c0, r0, w, h, ' ', FU_EDIT_FG, FU_EDIT_BG);
 	tui_frame(c0, r0, w, h, FU_MENU_FG, FU_MENU_BG);
 	tui_pad(c0 + 1, r0 + 1, F.info_name, w - 2, FU_MENU_FG, FU_MENU_BG);
 	pos = 0;
@@ -629,7 +637,7 @@ static void draw_text_view(void)
 			pos++;
 	}
 	tui_pad(c0 + 1, r0 + h - 2, "Arrows scroll  any other key closes", w - 2,
-		TUI_CYAN, TUI_BLUE);
+		FU_ST_FG, FU_EDIT_BG);
 }
 
 static void draw_border_row(int row, int top, const char *left_mid, const char *right_mid)
@@ -832,12 +840,12 @@ static void draw_overlay_box(const char *title, const char **lines, int nlines)
 		r0 = 1;
 	if (c0 < 1)
 		c0 = 1;
-	tui_fill(c0, r0, w, h, ' ', TUI_WHITE, TUI_BLACK);
+	tui_fill(c0, r0, w, h, ' ', FU_DLG_FG, FU_DLG_BG);
 	tui_frame(c0, r0, w, h, FU_MENU_FG, FU_MENU_BG);
 	tui_pad(c0 + 1, r0 + 1, title, w - 2, FU_MENU_FG, FU_MENU_BG);
 	for (i = 0; i < nlines; i++)
 		tui_pad(c0 + 1, r0 + 2 + i, lines[i] ? lines[i] : "", w - 2,
-			TUI_WHITE, TUI_BLACK);
+			FU_DLG_FG, FU_DLG_BG);
 }
 
 static void draw_help(void)
@@ -902,6 +910,7 @@ static void files_draw(void)
 	char footL[80], footR[80];
 	int namew;
 	tui_begin();
+	mmb_editor_apply_tui_palette();
 	tui_clear(FU_PAN_FG, FU_PAN_BG);
 	draw_top_menu();
 	draw_border_row(1, 1, F.pan[0].path, F.pan[1].path);

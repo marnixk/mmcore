@@ -25,6 +25,25 @@
 #define NAV_N 3
 #define ESC_IDLE_MS 60
 
+static const mmb_ed_theme *ihth(void)
+{
+	return mmb_editor_theme();
+}
+
+#define IH_FG      ((int)ihth()->edit_fg)
+#define IH_BG      ((int)ihth()->edit_bg)
+#define IH_TITLE_FG ((int)ihth()->menu_fg)
+#define IH_TITLE_BG ((int)ihth()->menu_bg)
+#define IH_HOT     ((int)ihth()->hot)
+#define IH_SEL_FG  ((int)ihth()->sel_fg)
+#define IH_SEL_BG  ((int)ihth()->sel_bg)
+#define IH_HEAD    ((int)ihth()->num_fg)
+#define IH_DIM     ((int)ihth()->cmt_fg)
+#define IH_LINK    ((int)ihth()->str_fg)
+#define IH_ST_FG   ((int)ihth()->menu_fg)
+#define IH_ST_BG   ((int)ihth()->list_bg)
+#define IH_BRD     ((int)ihth()->brd_fg)
+
 typedef struct {
 	int line;
 	int col;
@@ -771,12 +790,12 @@ static void activate(void)
 static void draw_link_span(int x, int y, const char *label, int selected)
 {
 	int i;
-	tui_put(x, y, '<', TUI_BRGREEN, selected ? TUI_BRWHITE : TUI_BLACK);
+	int bg = selected ? IH_SEL_BG : IH_BG;
+	int fg = selected ? IH_SEL_FG : IH_LINK;
+	tui_put(x, y, '<', IH_HOT, bg);
 	for (i = 0; label[i]; i++)
-		tui_put(x + 1 + i, y, (unsigned char)label[i],
-			selected ? TUI_BLACK : TUI_BRWHITE,
-			selected ? TUI_BRWHITE : TUI_BLACK);
-	tui_put(x + 1 + i, y, '>', TUI_BRGREEN, selected ? TUI_BRWHITE : TUI_BLACK);
+		tui_put(x + 1 + i, y, (unsigned char)label[i], fg, bg);
+	tui_put(x + 1 + i, y, '>', IH_HOT, bg);
 }
 
 static void ih_draw(void)
@@ -788,18 +807,19 @@ static void ih_draw(void)
 	if (!H.active)
 		return;
 	tui_begin();
+	mmb_editor_apply_tui_palette();
 	w = tui_cols();
 	h = tui_rows();
-	tui_clear(TUI_WHITE, TUI_BLACK);
-	tui_fill(0, 0, w, 1, ' ', TUI_BRWHITE, TUI_BRBLACK);
+	tui_clear(IH_FG, IH_BG);
+	tui_fill(0, 0, w, 1, ' ', IH_TITLE_FG, IH_TITLE_BG);
 	{
 		int n = (int)strlen(H.title);
 		int tx = (w - n) / 2;
 		if (tx < 1)
 			tx = 1;
-		tui_puts(tx, 0, H.title, TUI_BRWHITE, TUI_BRBLACK);
+		tui_puts(tx, 0, H.title, IH_TITLE_FG, IH_TITLE_BG);
 	}
-	tui_fill(0, 1, w, 1, ' ', TUI_WHITE, TUI_BLACK);
+	tui_fill(0, 1, w, 1, ' ', IH_FG, IH_BG);
 	for (i = 0; i < NAV_N && i < H.nlinks; i++)
 		draw_link_span(H.links[i].col, 1, H.links[i].label, H.sel == i);
 
@@ -812,22 +832,22 @@ static void ih_draw(void)
 		int ry = by + y;
 		if (ly < 0 || ly >= H.nlines)
 		{
-			tui_fill(0, ry, w - 1, 1, ' ', TUI_WHITE, TUI_BLACK);
+			tui_fill(0, ry, w - 1, 1, ' ', IH_FG, IH_BG);
 			continue;
 		}
 		for (x = 0; x < w - 1; x++)
 		{
 			char ch = (x < H.wrap_w) ? H.lines[ly][x] : ' ';
 			unsigned char a = (x < H.wrap_w) ? H.attr[ly][x] : ATTR_TEXT;
-			int fg = TUI_WHITE, bg = TUI_BLACK;
+			int fg = IH_FG, bg = IH_BG;
 			if (a == ATTR_BRACK)
-				fg = TUI_BRGREEN;
+				fg = IH_HOT;
 			else if (a == ATTR_LINK)
-				fg = TUI_BRWHITE;
+				fg = IH_LINK;
 			else if (a == ATTR_HEAD)
-				fg = TUI_BRWHITE;
+				fg = IH_HEAD;
 			else if (a == ATTR_DIM)
-				fg = TUI_WHITE;
+				fg = IH_DIM;
 			tui_put(x, ry, (unsigned char)ch, fg, bg);
 		}
 	}
@@ -842,11 +862,11 @@ static void ih_draw(void)
 	}
 
 	maxs = H.nlines > bh ? H.nlines - bh : 0;
-	tui_put(sbx, by, '^', TUI_BRGREEN, TUI_BLACK);
+	tui_put(sbx, by, '^', IH_HOT, IH_BG);
 	for (y = 1; y < bh - 1; y++)
-		tui_put(sbx, by + y, '|', TUI_GREEN, TUI_BLACK);
+		tui_put(sbx, by + y, '|', IH_BRD, IH_BG);
 	if (bh > 1)
-		tui_put(sbx, by + bh - 1, 'v', TUI_BRGREEN, TUI_BLACK);
+		tui_put(sbx, by + bh - 1, 'v', IH_HOT, IH_BG);
 	if (bh > 2)
 	{
 		if (maxs <= 0)
@@ -857,10 +877,10 @@ static void ih_draw(void)
 			thumb = 1;
 		if (thumb > bh - 2)
 			thumb = bh - 2;
-		tui_put(sbx, by + thumb, '#', TUI_BRGREEN, TUI_BLACK);
+		tui_put(sbx, by + thumb, '#', IH_HOT, IH_BG);
 	}
 
-	tui_fill(0, h - 1, w, 1, ' ', TUI_BLACK, TUI_CYAN);
+	tui_fill(0, h - 1, w, 1, ' ', IH_ST_FG, IH_ST_BG);
 	if (H.status[0])
 		strncpy(st, H.status, sizeof(st) - 1);
 	else
@@ -873,22 +893,22 @@ static void ih_draw(void)
 		{
 			if (*s == '<')
 			{
-				tui_put(p++, h - 1, '<', TUI_BRGREEN, TUI_CYAN);
+				tui_put(p++, h - 1, '<', IH_HOT, IH_ST_BG);
 				s++;
 				while (*s && *s != '>' && p < w - 1)
 				{
-					tui_put(p++, h - 1, (unsigned char)*s, TUI_BLACK, TUI_CYAN);
+					tui_put(p++, h - 1, (unsigned char)*s, IH_ST_FG, IH_ST_BG);
 					s++;
 				}
 				if (*s == '>' && p < w - 1)
 				{
-					tui_put(p++, h - 1, '>', TUI_BRGREEN, TUI_CYAN);
+					tui_put(p++, h - 1, '>', IH_HOT, IH_ST_BG);
 					s++;
 				}
 			}
 			else
 			{
-				tui_put(p++, h - 1, (unsigned char)*s, TUI_BLACK, TUI_CYAN);
+				tui_put(p++, h - 1, (unsigned char)*s, IH_ST_FG, IH_ST_BG);
 				s++;
 			}
 		}
@@ -940,6 +960,7 @@ void mmb_ihelp_open(const char *topic)
 	memset(&H, 0, sizeof(H));
 	H.active = 1;
 	tui_begin();
+	mmb_editor_apply_tui_palette();
 	tui_invalidate();
 	H.wrap_w = tui_cols() - 1;
 	if (H.wrap_w > IH_COLS)

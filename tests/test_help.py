@@ -1,5 +1,6 @@
 """HELP / IHELP interactive help: index, topics, BASIC, unknowns."""
 
+from harness import MMBasicConsole
 from ihelp_util import close_ihelp, dump_topic, keys, open_ihelp, scroll_all
 
 
@@ -117,6 +118,7 @@ def test_help_files(console):
     assert out != "?SYNTAX ERROR"
     assert "dual-pane" in out.lower() or "file manager" in out.lower()
     assert "DIR listing" in out or "not a DIR" in out or "<DIR>" in out
+    assert "theme" in out.lower() or "EDIT THEME" in out.upper()
     listing = dump_topic(console, "DIR")
     assert "alias" not in listing.lower()
 
@@ -243,3 +245,36 @@ def test_ihelp_alias_command(console):
     close_ihelp(console)
     out = dump_topic(console, "CLS")
     assert "clear" in out.lower()
+
+
+def test_help_mentions_edit_theme_colours(console):
+    out = dump_topic(console, "HELP")
+    assert "theme" in out.lower()
+    files = dump_topic(console, "FILES")
+    assert "theme" in files.lower() or "EDIT THEME" in files.upper()
+
+
+def test_ihelp_follows_editor_theme_phosphor(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
+        open_ihelp(con)
+        empty = [con.screen_pixel(x, 80) for x in (480, 520, 560)]
+        assert all(r + g + b < 50 for r, g, b in empty), empty
+        close_ihelp(con)
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
+def test_ihelp_turbo_body_is_blue(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        open_ihelp(con)
+        empty = [con.screen_pixel(x, 80) for x in (480, 520, 560)]
+        assert any(b > r + 40 and b > 80 for r, g, b in empty), empty
+        close_ihelp(con)
+    finally:
+        con.stop()

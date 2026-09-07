@@ -89,6 +89,8 @@ static const char kHelpHelp[] =
 	"Move with arrows, Page Up, and Page Down.\n"
 	"Enter follows a <link>. A single Escape goes back\n"
 	"or quits from the Index. Arrow keys still work.\n"
+	"Colours follow OPTION EDIT THEME (same palettes\n"
+	"as the editor).\n"
 	"\n"
 	"Unknown topics stay on the Index; they do not raise\n"
 	"?SYNTAX ERROR.";
@@ -560,6 +562,8 @@ static const char kHelpFiles[] =
 	"Tab switches panes. q or Esc leaves FILES.\n"
 	"Menus: Alt+L Left  Alt+F File  Alt+C Command\n"
 	"       Alt+O Options  Alt+R Right.\n"
+	"Colours follow OPTION EDIT THEME (same palettes\n"
+	"as the editor).\n"
 	"View (v/F3) also shows .BAS/.INC/.TXT with colour.\n"
 	"\n"
 	"Example:  FILES";

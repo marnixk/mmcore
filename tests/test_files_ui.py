@@ -174,3 +174,27 @@ def test_files_tracks_mode_resolution(fresh_console):
     assert "ROWS=15" in seen
     _keys(con, b"q")
     assert con.send_line("MODE 8,16") == ""
+
+
+def test_files_follows_editor_theme_phosphor(fresh_console):
+    con = fresh_console
+    assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
+    _prep_tree(con)
+    _open_files(con)
+    empty = [con.screen_pixel(x, 176) for x in (40, 80, 360, 400)]
+    assert all(r + g + b < 50 for r, g, b in empty), empty
+    r, g, b = con.screen_pixel(3, 2 * 16)
+    assert g > r + 20 and g > 40, (r, g, b)
+    _keys(con, b"q")
+    assert con.send_line("OPTION EDIT THEME TURBO") == ""
+
+
+def test_files_follows_editor_theme_paper(fresh_console):
+    con = fresh_console
+    assert con.send_line("OPTION EDIT THEME PAPER") == ""
+    _prep_tree(con)
+    _open_files(con)
+    empty = [con.screen_pixel(x, 176) for x in (40, 80, 360, 400)]
+    assert any(r > 140 and g > 130 and b > 120 for r, g, b in empty), empty
+    _keys(con, b"q")
+    assert con.send_line("OPTION EDIT THEME TURBO") == ""
