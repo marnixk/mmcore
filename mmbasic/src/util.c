@@ -364,12 +364,12 @@ void mmb_console_apply_colour(void)
 void mmb_print_startup(void)
 {
 	mmb_console_write("\x1b[37m");
-	mmb_console_write("Copyright 2011-2026 Geoff Graham\r\n");
-	mmb_console_write("Copyright 2016-2026 Peter Mather\r\n");
-	mmb_console_write("Adapted and extended by Marnix Kok\r\n");
-	mmb_console_write("\r\n");
-	mmb_console_write("Type \x1b[97mHELP\x1b[37m to get started.\r\n");
-	mmb_console_write("\r\n\r\n");
+	mmb_console_write("Copyright 2011-2026 Geoff Graham\n");
+	mmb_console_write("Copyright 2016-2026 Peter Mather\n");
+	mmb_console_write("Adapted and extended by Marnix Kok\n");
+	mmb_console_write("\n");
+	mmb_console_write("Type \x1b[97mHELP\x1b[37m to get started.\n");
+	mmb_console_write("\n\n");
 	mmb_console_write("\x1b[0m");
 	mmb_console_apply_colour();
 }
