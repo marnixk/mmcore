@@ -856,6 +856,49 @@ def test_editor_help_manual_opens_ihelp_and_returns(kernel_image):
         con.stop()
 
 
+def test_editor_f4_opens_include_and_reuses_tab(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('MKDIR "INC"') == ""
+        assert con.send_line('CHDIR "INC"') == ""
+        assert con.send_line('OPEN "CHILD.INC" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "CONST X=22"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('OPEN "MAIN.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "#include ""CHILD.INC"""') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _edit(con, "MAIN.BAS")
+        assert "include" in seen.lower() or "CHILD" in seen or "MAIN" in seen
+        opened = _keys(con, b"\x1b[14~", quiet=0.8)
+        assert "CHILD" in opened
+        assert "CONST" in opened or "X=22" in opened or "22" in opened
+        con.capture_png("/opt/cursor/artifacts/issue78_f4_include.png")
+        again = _keys(con, b"\x1b[14~", quiet=0.6)
+        assert "CHILD" in again
+        _keys(con, bytes([1]) + b"1", quiet=0.5)
+        back = _keys(con, b"\x1b[14~", quiet=0.6)
+        assert "CHILD" in back
+        _quit(con)
+        assert con.send_line("PRINT 8+1") == "9"
+    finally:
+        con.stop()
+
+
+def test_editor_f4_without_include_sets_status(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "NOINC.BAS")
+        _keys(con, b"PRINT 1")
+        seen = _keys(con, b"\x1b[14~", quiet=0.6)
+        assert "No #include" in seen or "include" in seen.lower()
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
 def test_editor_ctrl_w_closes_tab_and_quits_last(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
