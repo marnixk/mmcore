@@ -107,6 +107,7 @@ def test_option_wifi_bare_errors_without_credentials(console):
 
 
 def test_option_wifi_bare_connects_with_stored_credentials(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     stored = console.send_line('OPTION WIFI "TestSSID","secretpass"')
     assert "?SYNTAX ERROR" not in stored
     assert "?WIFI not configured" not in stored
@@ -119,6 +120,7 @@ def test_option_wifi_bare_connects_with_stored_credentials(console):
 
 
 def test_option_wifi_program_reconnects_or_errors(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     assert console.send_line("NEW") == ""
     assert console.send_line("10 OPTION WIFI") == ""
     run = console.send_line("RUN")
