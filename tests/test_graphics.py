@@ -114,6 +114,23 @@ def test_circle_fill_solid_disk(fresh_console):
     assert _is_black(fresh_console.screen_pixel(100, 145))
 
 
+def test_circle_thick_stroke_no_background_leak(fresh_console):
+    """#137: thick stroke + different fill must not leave CLS gaps in the rim."""
+    c = fresh_console
+    c.send_line("CLS")
+    c.send_line("CIRCLE 200,180,60,4,RGB(255,0,0),RGB(0,255,0)")
+    assert _is_green(c.screen_pixel(200, 180))
+    assert _is_green(c.screen_pixel(248, 180))
+    for x, y in ((258, 180), (200, 122), (142, 180), (200, 238), (242, 222)):
+        pix = c.screen_pixel(x, y)
+        assert _is_red(pix) or _is_green(pix), (x, y, pix)
+    assert _is_black(c.screen_pixel(270, 180))
+    v = int(c.send_line("PRINT PIXEL(258,180)").split()[0])
+    r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
+    assert r > 150 or g > 150, (v, r, g, b)
+    assert not (r < 40 and g < 40 and b < 40)
+
+
 def test_bad_arg_count_is_syntax_error(fresh_console):
     assert fresh_console.send_line("BOX 1,2,3") == "?SYNTAX ERROR"
 

@@ -566,6 +566,14 @@ void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill)
 		return;
 	if (lw < 1)
 		lw = 1;
+	if (fill >= 0 && lw > 1)
+	{
+		int inner = r - lw;
+		fill_disk(cx, cy, r, rgb);
+		if (inner >= 0)
+			fill_disk(cx, cy, inner, mmb_quantize((unsigned)fill));
+		return;
+	}
 	if (fill >= 0)
 		fill_disk(cx, cy, r, mmb_quantize((unsigned)fill));
 	if (lw <= 1)
