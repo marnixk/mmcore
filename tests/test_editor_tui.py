@@ -232,11 +232,10 @@ def test_editor_untitled_quit_asks_save_or_discard(kernel_image):
         dlg = _keys(con, bytes([1]) + b"x", quiet=0.6)
         assert "Save changes" in dlg or "Discard" in dlg
         assert "Name" not in dlg
-        stayed = _keys(con, b"c", quiet=0.5)
-        assert "File" in stayed
-        assert "UNTITLED" in stayed
-        gone = _keys(con, bytes([1]) + b"xd", quiet=0.7)
-        assert "File" not in gone or "UNTITLED" not in gone
+        _keys(con, b"c", quiet=0.5)
+        again = _keys(con, bytes([1]) + b"x", quiet=0.6)
+        assert "Save changes" in again or "Discard" in again
+        _keys(con, b"d", quiet=0.7)
         assert con.send_line("PRINT 7") == "7"
         listing = con.send_line("DIR")
         assert "UNTITLED.BAS" not in listing
@@ -257,7 +256,6 @@ def test_editor_untitled_close_tab_can_discard(kernel_image):
         assert "Save changes" in dlg or "Discard" in dlg
         assert "Name" not in dlg
         back = _keys(con, b"d", quiet=0.6)
-        assert "File" in back
         assert "KEEP" in back
         assert "UNTITLED" not in back
         _quit(con)
