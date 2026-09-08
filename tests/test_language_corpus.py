@@ -74,7 +74,7 @@ def test_for_unnamed_next_and_step(console):
     assert console.send_line("20 PRINT I;") == ""
     assert console.send_line("30 NEXT") == ""
     assert console.send_line("40 PRINT I") == ""
-    assert console.send_line("RUN") == "531\n-1"
+    assert console.send_line("RUN") == "531-1"
 
 
 def test_nested_if_elseif_else_end_if(console):
