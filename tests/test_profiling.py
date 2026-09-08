@@ -58,7 +58,18 @@ def test_profiling_integer_for(console):
     assert p["match"] < 5000
     assert p["expr"] > 0
     assert p["findvar"] > 0
+    assert p["findvar"] < 500
     assert p["break"] >= 200
+
+
+def test_profiling_for_next_skips_findvar(console):
+    p = _run_kernel(
+        console,
+        "PNXT.BAS",
+        ["FOR I=1 TO 200", "NEXT I", "PRINT I"],
+    )
+    assert p["statements"] >= 200
+    assert p["findvar"] < 20
 
 
 def test_profiling_false_same_line_if_skip(console):

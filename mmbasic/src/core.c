@@ -2231,49 +2231,59 @@ void mmb_cmd_for(void)
 	mmb_do_assign(name, t, nidx, idx, from);
 	if (G.for_sp >= 16)
 		mmb_error("?FOR");
-	strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
-	G.forstack[G.for_sp].to = mmb_as_int(to);
-	G.forstack[G.for_sp].step = mmb_as_int(step);
-	G.forstack[G.for_sp].line = G.run_pc + 1;
-	G.for_sp++;
+	{
+		int off = 0;
+		mmb_var *v = mmb_find_var(name, t, 0, nidx, idx);
+		if (!v)
+			mmb_error("?FOR");
+		off = mmb_var_offset(v, nidx, idx);
+		strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
+		G.forstack[G.for_sp].var[MMB_MAX_NAME - 1] = 0;
+		G.forstack[G.for_sp].vp = v;
+		G.forstack[G.for_sp].off = off;
+		G.forstack[G.for_sp].to = mmb_as_int(to);
+		G.forstack[G.for_sp].step = mmb_as_int(step);
+		G.forstack[G.for_sp].line = G.run_pc + 1;
+		G.for_sp++;
+	}
 }
 
 void mmb_cmd_next(void)
 {
 	char name[MMB_MAX_NAME];
-	int off = 0;
 	mmb_var *v;
+	int named = 0;
+	int off;
 	mmb_skip_sp();
 	if (mmb_is_ident(*G.p))
+	{
 		mmb_ident(name, sizeof(name));
-	else if (G.for_sp > 0)
-		strncpy(name, G.forstack[G.for_sp - 1].var, sizeof(name) - 1);
-	else
-		mmb_syntax();
-	mmb_type_suffix(name);
+		mmb_type_suffix(name);
+		named = 1;
+	}
 	if (G.for_sp <= 0)
 		mmb_error("?NEXT WITHOUT FOR");
-	v = mmb_find_var(name, 0, 0, 0, &off);
+	if (named && !mmb_keyword_eq(name, G.forstack[G.for_sp - 1].var))
+		mmb_error("?NEXT WITHOUT FOR");
+	v = G.forstack[G.for_sp - 1].vp;
+	off = G.forstack[G.for_sp - 1].off;
 	if (!v)
 		mmb_error("?NEXT WITHOUT FOR");
 	{
-		int64_t cur = v->type == T_INT ? v->data.i[0] : (int64_t)v->data.f[0];
+		int64_t cur = v->type == T_INT ? v->data.i[off] : (int64_t)v->data.f[off];
 		int64_t step = G.forstack[G.for_sp - 1].step;
 		int64_t to = G.forstack[G.for_sp - 1].to;
 		cur += step;
 		if (v->type == T_INT)
-			v->data.i[0] = cur;
+			v->data.i[off] = cur;
 		else
-			v->data.f[0] = (double)cur;
+			v->data.f[off] = (double)cur;
 		if ((step >= 0 && cur <= to) || (step < 0 && cur >= to))
 		{
-			/* continue loop: signal by leaving for_sp and setting a flag via line=-2 handled in run */
-			G.forstack[G.for_sp - 1].stmt = 1; /* still looping */
+			G.forstack[G.for_sp - 1].stmt = 1;
 		}
 		else
 		{
-			/* CMM2: extra NEXT varname acts as CONTINUE; when the loop
-			 * ends, skip any later NEXT for the same variable. */
 			char vname[MMB_MAX_NAME];
 			int i;
 			strncpy(vname, G.forstack[G.for_sp - 1].var, MMB_MAX_NAME - 1);
