@@ -451,6 +451,7 @@ void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
 extern const unsigned char mmb_cp437_8x16[256 * 16];
 void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_present(void);
+void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_if(int page);
 uint32_t *mmb_gfx_buf_for(int page, int *w, int *h);
 int mmb_gfx_map_y(int y, int h);
@@ -589,6 +590,7 @@ const char *mmb_net_tcp_errmsg(void);
 int mmb_net_tcp_send(const void *data, unsigned n);
 int mmb_net_tcp_recv(void *data, unsigned maxn);
 void mmb_net_tcp_close(void);
+void mmb_net_yield(void);
 
 void mmb_cmd_connect(void);
 void mmb_cmd_term(void);

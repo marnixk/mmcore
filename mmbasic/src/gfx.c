@@ -253,6 +253,44 @@ void mmb_gfx_present(void)
 	mmb_sprite_overlay();
 }
 
+void mmb_gfx_present_rect(int x, int y, int w, int h)
+{
+	int px, py, hw, hh, x1, y1;
+	uint32_t *pg;
+	if (!G.plat || !G.plat->set_pixel)
+		return;
+	pg = page_buf(G.gfx.display_page);
+	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
+	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
+	if (hw > G.gfx.w)
+		hw = G.gfx.w;
+	if (hh > G.gfx.h)
+		hh = G.gfx.h;
+	if (x < 0)
+	{
+		w += x;
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		y = 0;
+	}
+	if (w < 0)
+		w = 0;
+	if (h < 0)
+		h = 0;
+	x1 = x + w;
+	y1 = y + h;
+	if (x1 > hw)
+		x1 = hw;
+	if (y1 > hh)
+		y1 = hh;
+	for (py = y; py < y1; py++)
+		for (px = x; px < x1; px++)
+			G.plat->set_pixel(px, py, pg[py * G.gfx.w + px]);
+}
+
 void mmb_gfx_init(void)
 {
 	int hw = G.plat && G.plat->hdmi_width ? G.plat->hdmi_width() : 640;

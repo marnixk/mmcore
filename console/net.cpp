@@ -530,6 +530,12 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 	}
 }
 
+void mmb_net_yield(void)
+{
+	if (CScheduler::IsActive())
+		CScheduler::Get()->Yield();
+}
+
 }
 
 #else /* !MMB_CIRCLE_WLAN */
@@ -591,6 +597,10 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 }
 
 void mmb_net_tcp_close(void)
+{
+}
+
+void mmb_net_yield(void)
 {
 }
 
