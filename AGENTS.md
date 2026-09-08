@@ -21,4 +21,6 @@ The QEMU harness in `harness/` drives `console/kernel8.img`.
 
 Linux SD-card install: `scripts/install-sdcard.sh --help`. Publishing a
 GitHub Release: run the `github-release` skill (it looks up the last `vX.Y.Z`
-and asks before building; default is a **minor** bump).
+and asks before building; default is a **minor** bump). Draining the GitHub
+issue tracker: run the `issue-loop` skill (one issue, merge to `master`, minor
+release, repeat; skip titles starting with `[not ready]`).
