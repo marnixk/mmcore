@@ -141,6 +141,25 @@ def test_filled_box_interior(fresh_console):
     assert _is_green(fresh_console.screen_pixel(100, 100))
 
 
+def test_cls_repeats_rgb_dword(fresh_console):
+    """CLS fills the page with a repeating 32-bit RGB (GH-192), not memset."""
+    c = fresh_console
+    assert c.send_line("MODE 17, 16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS RGB(40, 80, 160)") == ""
+    a = int(c.send_line("PRINT PIXEL(0,0)").split()[0])
+    b = int(c.send_line("PRINT PIXEL(1,0)").split()[0])
+    mid = int(c.send_line("PRINT PIXEL(192,120)").split()[0])
+    corner = int(c.send_line("PRINT PIXEL(383,239)").split()[0])
+    assert a == b == mid == corner
+    assert (a & 255) > 100
+    assert ((a >> 16) & 255) < 80
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+    assert int(c.send_line("PRINT PIXEL(0,0,1)").split()[0]) == a
+    assert int(c.send_line("PRINT PIXEL(0,0)").split()[0]) == 0
+
+
 def test_scene_matches_golden(fresh_console):
     golden = os.path.join(GOLDEN_DIR, "scene.png")
     assert os.path.isfile(golden), "run scripts/gen_golden.py to create the golden"

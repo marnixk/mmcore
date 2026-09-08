@@ -436,9 +436,43 @@ unsigned mmb_gfx_get(int x, int y)
 	return mmb_gfx_get_page(x, y, MMB_PAGE_CUR);
 }
 
+/* AArch64 has no REP STOSD; STP of a duplicated RGB dword writes four pixels. */
+static void fill_u32(uint32_t *dst, unsigned n, uint32_t v)
+{
+	uint32_t *end;
+
+	if (!n)
+		return;
+	end = dst + n;
+#if defined(__aarch64__)
+	{
+		uint32_t *blk;
+		uint64_t pair;
+
+		if (((uintptr_t)dst & 4u) && dst < end)
+			*dst++ = v;
+		blk = dst + ((unsigned)(end - dst) & ~3u);
+		if (dst < blk)
+		{
+			pair = ((uint64_t)v << 32) | (uint64_t)v;
+			__asm__ volatile(
+				"1:\n\t"
+				"stp %[pair], %[pair], [%[p]], #16\n\t"
+				"cmp %[p], %[blk]\n\t"
+				"b.lo 1b\n"
+				: [p] "+r"(dst)
+				: [blk] "r"(blk), [pair] "r"(pair)
+				: "memory", "cc");
+		}
+	}
+#endif
+	while (dst < end)
+		*dst++ = v;
+}
+
 void mmb_gfx_cls(unsigned rgb)
 {
-	int x, y, tw, th;
+	int tw, th;
 	uint32_t *pg;
 	rgb = mmb_quantize(rgb);
 	tw = tgt_w();
@@ -447,9 +481,7 @@ void mmb_gfx_cls(unsigned rgb)
 		pg = G.gfx.fb;
 	else
 		pg = page_buf(G.gfx.write_page);
-	for (y = 0; y < th; y++)
-		for (x = 0; x < tw; x++)
-			pg[y * tw + x] = rgb;
+	fill_u32(pg, (unsigned)tw * (unsigned)th, rgb);
 	if (!mmb_gfx_writing_fb() && G.gfx.write_page == G.gfx.display_page &&
 	    G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(rgb);
