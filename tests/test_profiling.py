@@ -53,7 +53,7 @@ def test_profiling_integer_for(console):
         ["A=0", "FOR I=1 TO 200", "A=A+1", "NEXT I", "PRINT A"],
     )
     assert p["statements"] >= 200
-    assert p["match"] > 0
+    assert p["match"] < 5000
     assert p["expr"] > 0
     assert p["findvar"] > 0
     assert p["break"] >= 200

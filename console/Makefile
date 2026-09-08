@@ -13,6 +13,7 @@ endif
 
 OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/util.o \
+	  $(MMB)/src/tok.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/expr.o \
 	  $(MMB)/src/core.o \

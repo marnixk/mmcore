@@ -1763,11 +1763,19 @@ static void read_topic(char *dst, int dstsz)
 	}
 	while (*G.p && *G.p != ':' && *G.p != '\'' && n < dstsz - 2)
 	{
+		char tok[48];
 		if (*G.p == ' ' || *G.p == '\t')
 		{
 			mmb_skip_sp();
 			if (*G.p && *G.p != ':' && *G.p != '\'' && n > 0 && dst[n - 1] != ' ')
 				dst[n++] = ' ';
+			continue;
+		}
+		if (mmb_tok_expand(tok, (int)sizeof(tok)))
+		{
+			int i;
+			for (i = 0; tok[i] && n < dstsz - 2; i++)
+				dst[n++] = tok[i];
 			continue;
 		}
 		{

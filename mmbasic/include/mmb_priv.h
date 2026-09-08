@@ -336,6 +336,13 @@ void mmb_out_flush(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
+void mmb_tokenize_program(void);
+const char *mmb_tok_line(int pc);
+const char *mmb_tok_immediate(const char *src);
+int mmb_kw_id(const char *kw);
+void mmb_tokenize_text(const char *src, char *dst, int dstsz);
+int mmb_match_token(const char *kw);
+int mmb_tok_expand(char *dst, int dstsz);
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 void mmb_cmd_print(void);
