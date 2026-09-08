@@ -383,6 +383,13 @@ void mmb_console_apply_colour(void)
 	G.plat->write_screen(seq, (unsigned)n);
 }
 
+void mmb_console_reset_prompt(void)
+{
+	G.gfx.fg = 0x808080u;
+	G.gfx.bg = 0;
+	mmb_console_apply_colour();
+}
+
 void mmb_print_startup(void)
 {
 	mmb_console_write("\x1b[37m");

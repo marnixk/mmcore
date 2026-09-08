@@ -885,7 +885,6 @@ static void wp_leave(void)
 	wp_autosave();
 	tui_end();
 	mmb_gfx_cls(G.gfx.bg);
-	mmb_console_apply_colour();
 	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
 }

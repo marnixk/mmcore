@@ -212,6 +212,7 @@ static void session_close(const char *why)
 	C.linelen = 0;
 	if (why && why[0])
 		emit_both(why, (unsigned)strlen(why));
+	mmb_console_reset_prompt();
 }
 
 static void send_line(void)

@@ -133,6 +133,7 @@ void mmb_reboot(void);
 
 /* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
 void mmb_console_apply_colour(void);
+void mmb_console_reset_prompt(void);
 
 /* OPTION KEYBOARD REPEAT first [, next]  (milliseconds). */
 #define MMB_REPEAT_FIRST_DEFAULT 300

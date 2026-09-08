@@ -186,6 +186,7 @@ void tui_end(void)
 		G.plat->tui_present(0, h - 1);
 	if (G.plat && G.plat->write_screen)
 		G.plat->write_screen("\x1b[0m\x1b[H\x1b[J", 11);
+	mmb_console_reset_prompt();
 }
 
 void tui_clear(int fg, int bg)

@@ -601,7 +601,7 @@ static void term_exit(void)
 	}
 	else if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	mmb_console_apply_colour();
+	mmb_console_reset_prompt();
 	memset(&T, 0, sizeof(T));
 }
 
