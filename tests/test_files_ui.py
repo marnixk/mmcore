@@ -86,6 +86,27 @@ def test_files_run_bas(fresh_console):
     assert con.send_line("PRINT 1+1") == "2"
 
 
+def test_files_quit_prints_prompt(fresh_console):
+    """q/Esc from FILES should reprint the prompt without needing Enter."""
+    con = fresh_console
+    _prep_tree(con)
+    _open_files(con)
+    con.drain(quiet=0.15)
+    con._ser.sendall(b"q")
+    out = con.drain(quiet=0.6).decode(errors="replace")
+    assert "> " in out
+    assert out.count("> ") == 1
+    assert con.send_line("PRINT 3") == "3"
+
+    _open_files(con)
+    con.drain(quiet=0.15)
+    con._ser.sendall(b"\x1b")
+    out = con.drain(quiet=0.7).decode(errors="replace")
+    assert "> " in out
+    assert out.count("> ") == 1
+    assert con.send_line("PRINT 4") == "4"
+
+
 def test_files_quit_q_and_esc(fresh_console):
     con = fresh_console
     _prep_tree(con)

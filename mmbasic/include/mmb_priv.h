@@ -372,6 +372,7 @@ void mmb_cmd_graphics(const char *kw);
 void mmb_cmd_files(const char *kw);
 void mmb_cmd_files_ui(void);
 int mmb_in_files(void);
+int mmb_files_take_prompt(void);
 const char *mmb_files_key(char c);
 void mmb_files_poll(void);
 const char *mmb_files_resume(void);
