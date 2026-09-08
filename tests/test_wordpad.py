@@ -90,6 +90,7 @@ def test_help_wordpad(console):
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
     assert "ctrl+p" in low or "quick-open" in low
     assert "serif" in low or "times" in low or "h1" in low
+    assert "native" in low or "32x64" in low or "16x32" in low
 
 
 def test_wordpad_type_save_and_reload(kernel_image):
