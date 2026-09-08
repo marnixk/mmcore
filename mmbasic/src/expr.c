@@ -176,6 +176,9 @@ int mmb_try_function(mmb_val *out)
 	unsigned col;
 	const char *save = G.p;
 
+	if ((unsigned char)*G.p != 0x80)
+		goto ident_tail;
+
 	if (mmb_match("RGB"))
 	{
 		call_args(a, 4, &n);
@@ -460,8 +463,12 @@ int mmb_try_function(mmb_val *out)
 		strncpy(buf, a[0].s, MMB_MAX_STR);
 		buf[MMB_MAX_STR] = 0;
 		savep = G.p;
-		G.p = buf;
-		*out = mmb_expr();
+		{
+			char tbuf[MMB_LINE_LEN];
+			mmb_tokenize_text(buf, tbuf, (int)sizeof(tbuf));
+			G.p = tbuf;
+			*out = mmb_expr();
+		}
 		G.p = savep;
 		return 1;
 	}
@@ -1146,19 +1153,18 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_str_val(G.current_prog[0] ? G.current_prog : "");
 		return 1;
 	}
+ident_tail:
 	if (mmb_try_user_function(out))
 		return 1;
 
 	/* named colours as identifiers */
 	{
 		char name[32];
-		const char *p = G.p;
-		int i = 0;
+		const char *save2 = G.p;
+		int ok = 0;
+		unsigned col;
 		mmb_skip_sp();
-		while (mmb_is_ident(*G.p) && i < 31)
-			name[i++] = *G.p++;
-		name[i] = 0;
-		if (i)
+		if (mmb_tok_expand(name, (int)sizeof(name)))
 		{
 			col = mmb_named_colour(name, &ok);
 			if (ok)
@@ -1166,8 +1172,25 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_int_val((int64_t)col);
 				return 1;
 			}
+			G.p = save2;
 		}
-		G.p = save;
+		else
+		{
+			int i = 0;
+			while (mmb_is_ident(*G.p) && i < 31)
+				name[i++] = *G.p++;
+			name[i] = 0;
+			if (i)
+			{
+				col = mmb_named_colour(name, &ok);
+				if (ok)
+				{
+					*out = mmb_int_val((int64_t)col);
+					return 1;
+				}
+			}
+			G.p = save;
+		}
 	}
 	(void)save;
 	return 0;
@@ -1238,7 +1261,8 @@ static mmb_val expr_unary(void)
 		G.p++;
 		return expr_unary();
 	}
-	if (mmb_match("NOT"))
+	mmb_skip_sp();
+	if (((unsigned char)*G.p == 0x80 || *G.p == 'N' || *G.p == 'n') && mmb_match("NOT"))
 	{
 		mmb_val v = expr_unary();
 		return mmb_int_val(mmb_as_int(v) ? 0 : 1);
@@ -1296,7 +1320,7 @@ static mmb_val expr_mul(void)
 				a = mmb_int_val(d == 0 ? 0 : mmb_as_int(a) / d);
 			}
 		}
-		else if (mmb_match("MOD"))
+		else if (((unsigned char)*G.p == 0x80 || *G.p == 'M' || *G.p == 'm') && mmb_match("MOD"))
 		{
 			mmb_val b = expr_pow();
 			int64_t d = mmb_as_int(b);
@@ -1421,10 +1445,15 @@ static mmb_val expr_rel(void)
 static mmb_val expr_and(void)
 {
 	mmb_val a = expr_rel();
-	while (mmb_match("AND"))
+	for (;;)
 	{
-		mmb_val b = expr_rel();
-		a = mmb_int_val(mmb_as_int(a) && mmb_as_int(b));
+		mmb_skip_sp();
+		if (!(((unsigned char)*G.p == 0x80 || *G.p == 'A' || *G.p == 'a') && mmb_match("AND")))
+			break;
+		{
+			mmb_val b = expr_rel();
+			a = mmb_int_val(mmb_as_int(a) && mmb_as_int(b));
+		}
 	}
 	return a;
 }
@@ -1434,12 +1463,13 @@ static mmb_val expr_or(void)
 	mmb_val a = expr_and();
 	for (;;)
 	{
-		if (mmb_match("OR"))
+		mmb_skip_sp();
+		if (((unsigned char)*G.p == 0x80 || *G.p == 'O' || *G.p == 'o') && mmb_match("OR"))
 		{
 			mmb_val b = expr_and();
 			a = mmb_int_val(mmb_as_int(a) || mmb_as_int(b));
 		}
-		else if (mmb_match("XOR"))
+		else if (((unsigned char)*G.p == 0x80 || *G.p == 'X' || *G.p == 'x') && mmb_match("XOR"))
 		{
 			mmb_val b = expr_and();
 			a = mmb_int_val((mmb_as_int(a) != 0) ^ (mmb_as_int(b) != 0));

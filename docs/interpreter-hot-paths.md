@@ -28,5 +28,21 @@ equality. Behavioural freeze is `tests/test_language_corpus.py` (#144).
 - Graphics **present** shows up on `PAGE COPY`, not on `PIXEL`/`LINE` (those
   write the page buffer only). PAGE COPY elapsed is present-bound on QEMU.
 
-Re-run `tests/test_profiling.py` after #132–#134 and record an “after” table
-in the PR. Do not treat QEMU ms as a pass/fail equality check.
+## After tokenize (#132)
+
+Tokenize at `RUN` / immediate mode; `exec_statement` dispatches on token id.
+`mmb_try_function` skips the keyword ladder unless the primary is a token.
+`OPTION CLOCK DS3231`-style hardware lines skip 16-bit tokens in `skip_hw_rest`.
+
+| Kernel | elapsed ms | statements | match | expr | findvar | break | present |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| integer FOR (`A=A+1` × 200) | 8 | 403 | 1214 | 204 | 603 | 204 | 0 |
+| float math (× 80) | 3 | 163 | 510 | 85 | 243 | 84 | 0 |
+| string concat (× 20) | 2 | 43 | 138 | 25 | 63 | 24 | 0 |
+| PIXEL / LINE (× 21) | 16 | 65 | 69 | 212 | 106 | 45 | 0 |
+| PAGE COPY | 69 | 5 | 26 | 9 | 0 | 5 | 1 |
+
+Integer-FOR **match** dropped from 26557 to 1214 (QEMU-relative, not equality).
+Elapsed is still dominated by QEMU noise at this scale; jump tables (#133) and
+cheaper values (#134) target remaining `match` / `findvar` / `expr` cost.
+

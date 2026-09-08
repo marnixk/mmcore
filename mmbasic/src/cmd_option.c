@@ -42,11 +42,15 @@ static void skip_hw_rest(void)
 		{
 			mmb_expr();
 		}
-		else
+		else if ((unsigned char)*G.p == 0x80)
+			G.p += 3;
+		else if (mmb_is_ident(*G.p) || *G.p == 'x' || *G.p == 'X')
 		{
 			while (mmb_is_ident(*G.p) || *G.p == 'x' || *G.p == 'X')
 				G.p++;
 		}
+		else
+			G.p++;
 	}
 }
 

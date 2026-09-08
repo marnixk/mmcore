@@ -69,6 +69,13 @@ int mmb_match(const char *kw)
 	if (G.opt.profiling && G.running)
 		G.prof.match++;
 	mmb_skip_sp();
+	if ((unsigned char)*G.p == 0x80)
+	{
+		if (mmb_match_token(kw))
+			return 1;
+		G.p = save;
+		return 0;
+	}
 	const char *p = G.p;
 	const char *k = kw;
 	while (*k)
@@ -105,6 +112,8 @@ void mmb_ident(char *dst, int dstsz)
 {
 	int n = 0;
 	mmb_skip_sp();
+	if (mmb_tok_expand(dst, dstsz))
+		return;
 	if (!((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_'))
 		mmb_syntax();
 	while (mmb_is_ident(*G.p) && n < dstsz - 2)

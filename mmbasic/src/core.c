@@ -2203,7 +2203,8 @@ static int is_assign_start(void)
 {
 	const char *save = G.p;
 	char name[MMB_MAX_NAME];
-	if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_'))
+	if ((unsigned char)G.p[0] != 0x80 &&
+	    !((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_'))
 		return 0;
 	/* Scan only — do not evaluate (SUB fnt.draw("hi") is not an array index). */
 	mmb_ident(name, sizeof(name));
@@ -2221,6 +2222,214 @@ static int is_assign_start(void)
 	return 0;
 }
 
+static void tok_cmd_end(void)
+{
+	if (mmb_match("IF"))
+		mmb_cmd_endif();
+	else if (mmb_match("SELECT"))
+		mmb_cmd_end_select();
+	else if (mmb_match("SUB"))
+		mmb_cmd_end_sub();
+	else if (mmb_match("FUNCTION"))
+		mmb_cmd_end_function();
+	else
+		mmb_cmd_end();
+}
+
+static void tok_cmd_list(void)
+{
+	if (mmb_match("FILES"))
+		mmb_cmd_files("DIR");
+	else
+		mmb_cmd_list();
+}
+
+static void tok_cmd_line(void)
+{
+	if (mmb_match("INPUT"))
+		mmb_cmd_line_input();
+	else
+		mmb_cmd_line();
+}
+
+static void tok_cmd_else(void)
+{
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+		exec_statement();
+}
+
+static void tok_cmd_elseif(void)
+{
+	mmb_cmd_if();
+}
+
+static void tok_cmd_endif(void)
+{
+}
+
+static void tok_cmd_rem(void)
+{
+	while (*G.p)
+		G.p++;
+}
+
+static void tok_cmd_let(void)
+{
+	do_let();
+}
+
+static void tok_cmd_factory(void)
+{
+	mmb_match("RESET");
+	mmb_cmd_factory_reset();
+}
+
+static void tok_cmd_gui(void)
+{
+	if (mmb_match("BITMAP"))
+		mmb_cmd_bitmap();
+	else
+		mmb_syntax();
+}
+
+static void tok_cmd_help(void)
+{
+	mmb_cmd_help();
+}
+
+static void tok_cmd_dir(void)
+{
+	mmb_cmd_files("DIR");
+}
+
+static int try_tok_cmd(void)
+{
+	static void (*tab[512])(void);
+	static int inited;
+	int id;
+	if ((unsigned char)*G.p != 0x80)
+		return 0;
+	if (!inited)
+	{
+		tab[mmb_kw_id("REM")] = tok_cmd_rem;
+		tab[mmb_kw_id("LET")] = tok_cmd_let;
+		tab[mmb_kw_id("ELSEIF")] = tok_cmd_elseif;
+		tab[mmb_kw_id("ELSE")] = tok_cmd_else;
+		tab[mmb_kw_id("ENDIF")] = tok_cmd_endif;
+		tab[mmb_kw_id("MID$")] = mmb_cmd_mid;
+		tab[mmb_kw_id("IHELP")] = tok_cmd_help;
+		tab[mmb_kw_id("HELP")] = tok_cmd_help;
+		tab[mmb_kw_id("PRINT")] = mmb_cmd_print;
+		tab[mmb_kw_id("DIM")] = mmb_cmd_dim;
+		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
+		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
+		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
+		tab[mmb_kw_id("MEMORY")] = mmb_cmd_memory;
+		tab[mmb_kw_id("RANDOMIZE")] = mmb_cmd_randomize;
+		tab[mmb_kw_id("INC")] = mmb_cmd_inc;
+		tab[mmb_kw_id("DEC")] = mmb_cmd_dec;
+		tab[mmb_kw_id("CAT")] = mmb_cmd_cat;
+		tab[mmb_kw_id("SORT")] = mmb_cmd_sort;
+		tab[mmb_kw_id("ON")] = mmb_cmd_on;
+		tab[mmb_kw_id("CLEAR")] = mmb_cmd_clear;
+		tab[mmb_kw_id("NEW")] = mmb_cmd_new;
+		tab[mmb_kw_id("LIST")] = tok_cmd_list;
+		tab[mmb_kw_id("LS")] = tok_cmd_dir;
+		tab[mmb_kw_id("RUN")] = mmb_cmd_run;
+		tab[mmb_kw_id("END")] = tok_cmd_end;
+		tab[mmb_kw_id("GOTO")] = mmb_cmd_goto;
+		tab[mmb_kw_id("GOSUB")] = mmb_cmd_gosub;
+		tab[mmb_kw_id("RETURN")] = mmb_cmd_return;
+		tab[mmb_kw_id("WHILE")] = mmb_cmd_while;
+		tab[mmb_kw_id("WEND")] = mmb_cmd_wend;
+		tab[mmb_kw_id("EXIT")] = mmb_cmd_exit;
+		tab[mmb_kw_id("CONTINUE")] = mmb_cmd_continue;
+		tab[mmb_kw_id("DO")] = mmb_cmd_do;
+		tab[mmb_kw_id("LOOP")] = mmb_cmd_loop;
+		tab[mmb_kw_id("SELECT")] = mmb_cmd_select;
+		tab[mmb_kw_id("CASE")] = mmb_cmd_case;
+		tab[mmb_kw_id("DATA")] = mmb_cmd_data;
+		tab[mmb_kw_id("READ")] = mmb_cmd_read;
+		tab[mmb_kw_id("RESTORE")] = mmb_cmd_restore;
+		tab[mmb_kw_id("CONST")] = mmb_cmd_const;
+		tab[mmb_kw_id("SAVE")] = mmb_cmd_save;
+		tab[mmb_kw_id("SEEK")] = mmb_cmd_seek;
+		tab[mmb_kw_id("INPUT")] = mmb_cmd_input;
+		tab[mmb_kw_id("CALL")] = mmb_cmd_call;
+		tab[mmb_kw_id("SUB")] = mmb_cmd_sub;
+		tab[mmb_kw_id("FUNCTION")] = mmb_cmd_function;
+		tab[mmb_kw_id("IF")] = mmb_cmd_if;
+		tab[mmb_kw_id("FOR")] = mmb_cmd_for;
+		tab[mmb_kw_id("NEXT")] = mmb_cmd_next;
+		tab[mmb_kw_id("OPTIONS")] = mmb_cmd_options;
+		tab[mmb_kw_id("OPTION")] = mmb_cmd_option;
+		tab[mmb_kw_id("FACTORY_RESET")] = mmb_cmd_factory_reset;
+		tab[mmb_kw_id("FACTORY")] = tok_cmd_factory;
+		tab[mmb_kw_id("CLS")] = mmb_cmd_cls;
+		tab[mmb_kw_id("PIXEL")] = mmb_cmd_pixel;
+		tab[mmb_kw_id("LINE")] = tok_cmd_line;
+		tab[mmb_kw_id("BOX")] = mmb_cmd_box;
+		tab[mmb_kw_id("CIRCLE")] = mmb_cmd_circle;
+		tab[mmb_kw_id("RBOX")] = mmb_cmd_rbox;
+		tab[mmb_kw_id("ARC")] = mmb_cmd_arc;
+		tab[mmb_kw_id("TRIANGLE")] = mmb_cmd_triangle;
+		tab[mmb_kw_id("POLYGON")] = mmb_cmd_polygon;
+		tab[mmb_kw_id("TEXT")] = mmb_cmd_text;
+		tab[mmb_kw_id("FONT")] = mmb_cmd_font;
+		tab[mmb_kw_id("COLOUR")] = mmb_cmd_colour;
+		tab[mmb_kw_id("COLOR")] = mmb_cmd_colour;
+		tab[mmb_kw_id("MODE")] = mmb_cmd_mode;
+		tab[mmb_kw_id("PAGE")] = mmb_cmd_page;
+		tab[mmb_kw_id("BLIT")] = mmb_cmd_blit;
+		tab[mmb_kw_id("IMAGE")] = mmb_cmd_image;
+		tab[mmb_kw_id("FRAMEBUFFER")] = mmb_cmd_framebuffer;
+		tab[mmb_kw_id("TURTLE")] = mmb_cmd_turtle;
+		tab[mmb_kw_id("BITMAP")] = mmb_cmd_bitmap;
+		tab[mmb_kw_id("GUI")] = tok_cmd_gui;
+		tab[mmb_kw_id("PACKAGE")] = mmb_cmd_package;
+		tab[mmb_kw_id("CHDIR")] = mmb_cmd_chdir;
+		tab[mmb_kw_id("DRIVE")] = mmb_cmd_drive;
+		tab[mmb_kw_id("MKDIR")] = mmb_cmd_mkdir;
+		tab[mmb_kw_id("RMDIR")] = mmb_cmd_rmdir;
+		tab[mmb_kw_id("KILL")] = mmb_cmd_kill;
+		tab[mmb_kw_id("RM")] = mmb_cmd_kill;
+		tab[mmb_kw_id("DEL")] = mmb_cmd_kill;
+		tab[mmb_kw_id("COPY")] = mmb_cmd_copy;
+		tab[mmb_kw_id("RENAME")] = mmb_cmd_name;
+		tab[mmb_kw_id("NAME")] = mmb_cmd_name;
+		tab[mmb_kw_id("MV")] = mmb_cmd_name;
+		tab[mmb_kw_id("DIR")] = tok_cmd_dir;
+		tab[mmb_kw_id("FILES")] = mmb_cmd_files_ui;
+		tab[mmb_kw_id("CONNECT")] = mmb_cmd_connect;
+		tab[mmb_kw_id("TERM")] = mmb_cmd_term;
+		tab[mmb_kw_id("IPCONFIG")] = mmb_cmd_ipconfig;
+		tab[mmb_kw_id("OPEN")] = mmb_cmd_open;
+		tab[mmb_kw_id("CLOSE")] = mmb_cmd_close;
+		tab[mmb_kw_id("PLAY")] = mmb_cmd_play;
+		tab[mmb_kw_id("LOAD")] = mmb_cmd_load;
+		tab[mmb_kw_id("EDIT")] = mmb_cmd_edit;
+		tab[mmb_kw_id("WORDPAD")] = mmb_cmd_wordpad;
+		tab[mmb_kw_id("CREDITS")] = mmb_cmd_credits;
+		tab[mmb_kw_id("PAUSE")] = mmb_cmd_pause;
+		tab[mmb_kw_id("REBOOT")] = mmb_cmd_reboot;
+		tab[mmb_kw_id("RESTART")] = mmb_cmd_reboot;
+		tab[mmb_kw_id("ERASE")] = mmb_cmd_clear;
+		tab[mmb_kw_id("MATH")] = mmb_cmd_math;
+		tab[mmb_kw_id("SPRITE")] = mmb_cmd_sprite;
+		tab[mmb_kw_id("SETTICK")] = mmb_cmd_settick;
+		inited = 1;
+	}
+	id = (unsigned char)G.p[1] | ((unsigned char)G.p[2] << 8);
+	if (id && id < 512 && tab[id])
+	{
+		G.p += 3;
+		tab[id]();
+		return 1;
+	}
+	return 0;
+}
+
 static void exec_statement(void)
 {
 	mmb_skip_sp();
@@ -2228,6 +2437,8 @@ static void exec_statement(void)
 		return;
 	if (G.opt.profiling && G.running)
 		G.prof.stmt++;
+	if (try_tok_cmd())
+		return;
 	if (mmb_match("REM"))
 	{
 		while (*G.p)
@@ -2829,7 +3040,7 @@ static void run_gosub_body(void)
 		{
 			loop = 0;
 			G.branch_pc = -1;
-			exec_line_body(G.prog[G.run_pc]);
+			exec_line_body(mmb_tok_line(G.run_pc));
 			if (G.branch_pc == -2)
 				break;
 			if (G.branch_pc >= 0)
@@ -2976,6 +3187,7 @@ static void run_program(void)
 	G.tick_busy = 0;
 	G.inkey_n = G.inkey_r = G.inkey_w = 0;
 	scan_labels();
+	mmb_tokenize_program();
 	mmb_clear_vars(1);
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;
@@ -2992,7 +3204,7 @@ static void run_program(void)
 			loop = 0;
 			G.run_pc = pc;
 			G.branch_pc = -1;
-			exec_line_body(G.prog[pc]);
+			exec_line_body(mmb_tok_line(pc));
 			if (G.branch_pc >= 0)
 			{
 				pc = G.branch_pc;
@@ -3110,7 +3322,7 @@ const char *mmb_exec_line(const char *line)
 		mmb_cmd_run();
 		return G.out;
 	}
-	exec_line_body(line);
+	exec_line_body(mmb_tok_immediate(line));
 	return G.out;
 }
 
