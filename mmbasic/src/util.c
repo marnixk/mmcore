@@ -368,10 +368,6 @@ void mmb_console_apply_colour(void)
 	char seq[24];
 	int n = 0;
 
-	if (!G.plat || !G.plat->write_screen)
-		return;
-	/* Circle only honours SGR when the CSI has a single parameter
-	 * (`ESC[91m`). `ESC[91;40m` is ignored. */
 	seq[n++] = '\x1b';
 	seq[n++] = '[';
 	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.fg, 1));
@@ -380,7 +376,8 @@ void mmb_console_apply_colour(void)
 	seq[n++] = '[';
 	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
 	seq[n++] = 'm';
-	G.plat->write_screen(seq, (unsigned)n);
+	seq[n] = 0;
+	mmb_console_write(seq);
 }
 
 void mmb_console_reset_prompt(void)
