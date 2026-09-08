@@ -969,6 +969,8 @@ static void files_close_tui(int restore_prompt)
 		mmb_console_write(mmb_prompt());
 		s_files_prompted = 1;
 	}
+	else
+		ser("\r\n");
 }
 
 int mmb_files_take_prompt(void)
@@ -1100,6 +1102,7 @@ static void do_run(const char *path)
 {
 	char cmd[160];
 	files_close_tui(0);
+	strcpy(cmd, "RUN \"");
 	strncat(cmd, path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	mmb_exec_line(cmd);
