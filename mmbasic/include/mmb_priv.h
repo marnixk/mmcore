@@ -537,6 +537,7 @@ void mmb_cmd_factory_reset(void);
 int mmb_vfs_hidden_name(const char *name);
 
 int mmb_wlan_available(void);
+int mmb_wlan_radio_pending(void);
 int mmb_wlan_scan(char ssids[][64], int maxn);
 int mmb_wlan_start(const char *ssid, const char *psk);
 int mmb_wlan_connect(const char *ssid, const char *psk);
