@@ -4,8 +4,30 @@ mmb G;
 
 void mmb_skip_sp(void)
 {
-	while (*G.p == ' ' || *G.p == '\t')
+	while (*G.p == ' ' || *G.p == '\t' || *G.p == '\r')
 		G.p++;
+}
+
+int mmb_normalize_newlines(char *buf, int len)
+{
+	int i, o = 0;
+
+	if (!buf)
+		return 0;
+	if (len < 0)
+	{
+		len = 0;
+		while (buf[len])
+			len++;
+	}
+	for (i = 0; i < len; i++)
+	{
+		if (buf[i] == '\r')
+			continue;
+		buf[o++] = buf[i];
+	}
+	buf[o] = 0;
+	return o;
 }
 
 int mmb_is_digit(char c)

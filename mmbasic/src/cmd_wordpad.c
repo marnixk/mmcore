@@ -1020,6 +1020,9 @@ static void paste_clip(void)
 	W.cx += n;
 	W.len += n;
 	W.buf[W.len] = 0;
+	W.len = mmb_normalize_newlines(W.buf, W.len);
+	if (W.cx > W.len)
+		W.cx = W.len;
 	W.dirty = 1;
 }
 
@@ -1039,6 +1042,8 @@ static int line_end(int off)
 
 static void insert_char(char c)
 {
+	if (c == '\r')
+		return;
 	if (W.len >= WP_BUF - 1)
 		return;
 	delete_selection(0);
@@ -1162,7 +1167,7 @@ static void wp_load_file(const char *path)
 	W.len = 0;
 	if (mmb_vfs_read(canon, W.buf, sizeof(W.buf) - 1, &got) == 0)
 	{
-		W.len = (int)got;
+		W.len = mmb_normalize_newlines(W.buf, (int)got);
 		W.buf[W.len] = 0;
 	}
 	strncpy(W.path, canon, sizeof(W.path) - 1);
@@ -2868,6 +2873,11 @@ static void draw_body(void)
 						continue;
 					}
 					ch = W.buf[i];
+					if (ch == '\r')
+					{
+						i++;
+						continue;
+					}
 					chfg = fg;
 					chbg = bg;
 					if (emph_at(i, ls, le, style))

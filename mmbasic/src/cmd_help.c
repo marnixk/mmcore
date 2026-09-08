@@ -512,8 +512,9 @@ static const char kHelpEdit[] =
 	"         (or switches to its tab if already open)\n"
 	"      Alt+1..9 switch tabs\n"
 	"Open/Save As: Name field plus Files and\n"
-	"Directories. Tab cycles. Enter opens a\n"
-	"file or enters a folder. Esc cancels.\n"
+	"Directories (.BAS and .INC). Tab cycles. Enter\n"
+	"opens a file or enters a folder. Esc cancels.\n"
+	"CR in a file is ignored (not drawn as a CP437 glyph).\n"
 	"\n"
 	"Example:  EDIT \"HI.BAS\"";
 
