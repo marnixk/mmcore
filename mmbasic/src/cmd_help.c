@@ -711,6 +711,7 @@ static const char kHelpOption[] =
 	"  CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE\n"
 	"  LEGACY ON|OFF     MILLISECONDS ON|OFF\n"
 	"  MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF\n"
+	"  TRACECACHE ON|OFF     pin vars in hot numeric LET/IF\n"
 	"  PROMPT BARE|CWD   immediate prompt (see HELP PROMPT)\n"
 	"    BARE (default) is \"> \". CWD is DOS $p$g: drive\n"
 	"    and path then >, e.g. A:/> or A:/PRDIR>. Stored\n"

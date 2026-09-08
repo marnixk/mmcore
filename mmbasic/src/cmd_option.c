@@ -544,6 +544,16 @@ static void option_dispatch(void)
 		G.opt.profiling = onoff();
 		return;
 	}
+	if (mmb_match("TRACECACHE"))
+	{
+		G.opt.tracecache = onoff();
+		if (G.opt.tracecache == 0)
+			mmb_tcache_invalidate();
+		mmb_skip_sp();
+		if (*G.p && *G.p != ':' && *G.p != '\'')
+			mmb_expr();
+		return;
+	}
 	if (mmb_match("RAM"))
 	{
 		G.opt.ram_prog = 1;
@@ -1034,6 +1044,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.prompt ? "OPTION PROMPT CWD" : "OPTION PROMPT BARE");
 	if (all || G.opt.profiling)
 		ol_line(&n, G.opt.profiling ? "OPTION PROFILING ON" : "OPTION PROFILING OFF");
+	if (all || !G.opt.tracecache)
+		ol_line(&n, G.opt.tracecache ? "OPTION TRACECACHE ON" : "OPTION TRACECACHE OFF");
 	if (all || G.opt.ram_prog || (!G.opt.ram_prog && G.opt.flash_page))
 	{
 		if (G.opt.ram_prog)

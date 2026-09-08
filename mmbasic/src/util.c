@@ -253,6 +253,9 @@ void mmb_prof_reset(void)
 	G.prof.find_var = 0;
 	G.prof.check_break = 0;
 	G.prof.gfx_present = 0;
+	G.prof.tcache_hit = 0;
+	G.prof.tcache_comp = 0;
+	G.prof.tcache_bad = 0;
 }
 
 void mmb_prof_report(void)
@@ -277,6 +280,12 @@ void mmb_prof_report(void)
 	mmb_outf(0, G.prof.check_break);
 	mmb_out("  present=");
 	mmb_outf(0, G.prof.gfx_present);
+	mmb_out("  tcache=");
+	mmb_outf(0, G.prof.tcache_hit);
+	mmb_out("/");
+	mmb_outf(0, G.prof.tcache_comp);
+	mmb_out("/");
+	mmb_outf(0, G.prof.tcache_bad);
 }
 
 mmb_val mmb_num_val(double f)

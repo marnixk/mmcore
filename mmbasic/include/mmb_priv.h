@@ -92,6 +92,7 @@ typedef struct mmb_options {
 	int mouse_sens;
 	int pin;
 	int profiling;
+	int tracecache;
 	int ram_prog;
 	int status;
 	int vcc_mv;            /* millivolts * 10? store as float via vcc */
@@ -313,6 +314,9 @@ typedef struct mmb {
 		unsigned find_var;
 		unsigned check_break;
 		unsigned gfx_present;
+		unsigned tcache_hit;
+		unsigned tcache_comp;
+		unsigned tcache_bad;
 	} prof;
 } mmb;
 
@@ -354,6 +358,9 @@ int mmb_tok_expand(char *dst, int dstsz);
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
+void mmb_tcache_invalidate(void);
+int mmb_tcache_try_let(void);
+int mmb_tcache_try_if(void);
 void mmb_cmd_print(void);
 void mmb_cmd_dim(void);
 void mmb_cmd_local(void);

@@ -20,6 +20,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/cmd_help.o \
 	  $(MMB)/src/cmd_ihelp.o \
 	  $(MMB)/src/cmd_option.o \
+	  $(MMB)/src/tracecache.o \
 	  $(MMB)/src/settings.o \
 	  $(MMB)/src/gfx.o \
 	  $(MMB)/src/gfx_cmm2.o \
