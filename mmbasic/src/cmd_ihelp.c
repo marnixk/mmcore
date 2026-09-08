@@ -579,24 +579,8 @@ static void do_back(void)
 {
 	if (H.stack_n > 0)
 		pop_frame();
-	else if (H.page == PAGE_INDEX)
-		close_ihelp();
 	else
-	{
-		load_index();
-		set_status("<Esc=Quit>  <Enter=Open>  <PgUp/PgDn=Scroll>");
-	}
-}
-
-static int find_body_link(int target)
-{
-	int i;
-	for (i = NAV_N; i < H.nlinks; i++)
-	{
-		if (H.links[i].target == target)
-			return i;
-	}
-	return -1;
+		close_ihelp();
 }
 
 static void ensure_visible(void)
@@ -944,14 +928,6 @@ static void apply_open(const char *topic)
 		set_status(msg);
 		return;
 	}
-	load_index();
-	{
-		int idx = find_body_link(ti);
-		if (idx >= 0)
-			H.sel = idx;
-		ensure_visible();
-	}
-	push_frame();
 	load_topic(ti);
 }
 

@@ -242,15 +242,29 @@ def test_ihelp_ctrl_c_prints_prompt(console):
     assert console.send_line("PRINT 4") == "4"
 
 
-def test_ihelp_deeplink_escape_returns_to_index(console):
+def test_ihelp_deeplink_escape_returns_to_prompt(console):
     seen = open_ihelp(console, "CLS")
     assert "clear" in seen.lower()
     assert "HELP: CLS" in seen or "CLS [" in seen or "CLS" in seen
-    seen = keys(console, b"\x1b", quiet=0.6)
-    assert "<CLS>" in seen
-    assert "HELP: Index" in seen or "[C]" in seen or "<Contents>" in seen
-    keys(console, b"\x1b", quiet=0.6)
+    console.drain(quiet=0.15)
+    assert console._ser is not None
+    console._ser.sendall(b"\x1b")
+    out = console.drain(quiet=0.6).decode(errors="replace")
+    assert "> " in out
+    assert "HELP: Index" not in out
     assert console.send_line("PRINT 2") == "2"
+
+
+def test_help_colour_esc_returns_to_prompt(console):
+    assert console._ser is not None
+    console._ser.sendall(b"HELP colour\r")
+    seen = console.drain(quiet=0.85).decode(errors="replace")
+    assert "COLOUR" in seen or "COLOR" in seen or "colour" in seen.lower()
+    console._ser.sendall(b"\x1b")
+    out = console.drain(quiet=0.6).decode(errors="replace")
+    assert "> " in out
+    assert "HELP: Index" not in out
+    assert console.send_line("PRINT 8") == "8"
 
 
 def test_help_colour_ibm(console):
