@@ -52,7 +52,8 @@ def test_help_connect(console):
     assert "esc" in out.lower()
     assert "backspace" in out.lower() or "DEL" in out or "del" in out.lower()
     assert "telnet" in out.lower() or "ANSI" in out or "ansi" in out.lower()
-    assert "CR LF" in out or "newline" in out.lower()
+    assert "CR" in out
+    assert "character mode" in out.lower() or "SGA" in out
     assert "drain" in out.lower() or "truncated" in out.lower()
 
 

@@ -296,7 +296,7 @@ static int swallow_crlf_pair(char c)
 
 static void send_enter(void)
 {
-	mmb_net_tcp_send("\r\n", 2);
+	mmb_net_tcp_send("\r", 1);
 	if (!C.no_echo)
 		emit_both("\n", 1);
 }
