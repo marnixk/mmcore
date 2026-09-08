@@ -332,7 +332,7 @@ void mmb_gfx_init(void)
 	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
-	G.gfx.fg = 0xFFFFFF;
+	G.gfx.fg = 0x808080u;
 	G.gfx.bg = 0;
 	G.gfx.font = 1;
 	G.gfx.font_scale = 1;

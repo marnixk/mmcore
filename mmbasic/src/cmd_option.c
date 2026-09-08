@@ -940,7 +940,7 @@ void mmb_option_list(int all)
 	}
 	if (all || G.opt.default_mode != 1)
 		ol_line_int(&n, "OPTION DEFAULT MODE ", G.opt.default_mode);
-	if (all || G.gfx.fg != 0xFFFFFF || G.gfx.bg != 0)
+	if (all || G.gfx.fg != 0x808080u || G.gfx.bg != 0)
 	{
 		if (n)
 			mmb_out("\n");

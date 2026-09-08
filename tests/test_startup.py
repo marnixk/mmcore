@@ -71,3 +71,24 @@ def test_startup_copyright_banner(kernel_image):
         assert con.send_line("PRINT 6*7") == "42"
     finally:
         con.stop()
+
+
+def test_prompt_grey_after_boot_and_term(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        raw = con.boot_log
+        reset = raw.rfind(b"\x1b[0m")
+        assert reset >= 0
+        tail = raw[reset:]
+        assert b"\x1b[37m" in tail
+        assert b"\x1b[97m" not in tail
+        from test_term import _open_term
+
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b[21~")
+        raw_exit = con.drain(quiet=0.8, timeout=15)
+        assert b"\x1b[37m" in raw_exit
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
