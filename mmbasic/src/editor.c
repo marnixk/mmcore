@@ -527,7 +527,7 @@ static void load_into(int i, const char *path)
 			t->len = mmb_normalize_newlines(t->buf, (int)got);
 		t->buf[t->len] = 0;
 	}
-	t->cx = t->len;
+	t->cx = 0;
 }
 
 static int add_or_switch(const char *path)
