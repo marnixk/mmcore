@@ -482,6 +482,8 @@ static const char kHelpEdit[] =
 	"interactive HELP; Esc/Ctrl+C returns to the editor).\n"
 	"File: New, Open, Save, Save As, Quit. Run saves and RUN.\n"
 	"New opens an unnamed buffer; Save asks for a name.\n"
+	"Quit or Close tab on a dirty untitled buffer asks\n"
+	"Save, Discard, or Cancel (does not force Save As).\n"
 	"After Run, press any key to return to the editor.\n"
 	"MODE and PAGE WRITE are restored on return.\n"
 	"Theme menu (Alt+T): 10 colour schemes. Syntax\n"

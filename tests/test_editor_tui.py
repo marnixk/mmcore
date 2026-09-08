@@ -219,6 +219,76 @@ def test_editor_new_file_save_asks_for_name(kernel_image):
         con.stop()
 
 
+def test_editor_untitled_quit_asks_save_or_discard(kernel_image):
+    """Dirty untitled quit must confirm; Discard leaves without writing a file."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "KEEP.BAS")
+        _keys(con, bytes([1]) + b"f", quiet=0.4)
+        untitled = _keys(con, b"n", quiet=0.5)
+        assert "UNTITLED" in untitled
+        _keys(con, b"PRINT 99")
+        dlg = _keys(con, bytes([1]) + b"x", quiet=0.6)
+        assert "Save changes" in dlg or "Discard" in dlg
+        assert "Name" not in dlg
+        stayed = _keys(con, b"c", quiet=0.5)
+        assert "File" in stayed
+        assert "UNTITLED" in stayed
+        gone = _keys(con, bytes([1]) + b"xd", quiet=0.7)
+        assert "File" not in gone or "UNTITLED" not in gone
+        assert con.send_line("PRINT 7") == "7"
+        listing = con.send_line("DIR")
+        assert "UNTITLED.BAS" not in listing
+    finally:
+        con.stop()
+
+
+def test_editor_untitled_close_tab_can_discard(kernel_image):
+    """Close tab on a dirty untitled buffer offers Discard instead of Save As."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _edit(con, "KEEP.BAS")
+        assert "KEEP" in seen
+        _keys(con, bytes([1]) + b"fn", quiet=0.5)
+        _keys(con, b"PRINT 1")
+        dlg = _keys(con, bytes([23]), quiet=0.6)
+        assert "Save changes" in dlg or "Discard" in dlg
+        assert "Name" not in dlg
+        back = _keys(con, b"d", quiet=0.6)
+        assert "File" in back
+        assert "KEEP" in back
+        assert "UNTITLED" not in back
+        _quit(con)
+        assert con.send_line("PRINT 3") == "3"
+        listing = con.send_line("DIR")
+        assert "UNTITLED.BAS" not in listing
+    finally:
+        con.stop()
+
+
+def test_editor_untitled_quit_save_still_asks_name(kernel_image):
+    """Choosing Save on the confirm dialog still opens Save As."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "KEEP.BAS")
+        _keys(con, bytes([1]) + b"fn", quiet=0.5)
+        _keys(con, b"PRINT 55")
+        dlg = _keys(con, bytes([1]) + b"x", quiet=0.6)
+        assert "Save changes" in dlg or "Discard" in dlg
+        named = _keys(con, b"s", quiet=0.6)
+        assert "Name" in named or "Save As" in named
+        _keys(con, b"ASKED.BAS\r", quiet=0.8)
+        assert con.send_line("PRINT 4") == "4"
+        listing = con.send_line("DIR")
+        assert "ASKED.BAS" in listing
+        assert "55" in con.send_line('RUN "ASKED.BAS"')
+    finally:
+        con.stop()
+
+
 def test_editor_two_tabs_and_switch(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

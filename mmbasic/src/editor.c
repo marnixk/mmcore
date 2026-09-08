@@ -282,6 +282,11 @@ int mmb_editor_theme_lookup(const char *s)
 #define DLG_SAVEAS  2
 #define DLG_HELP    3
 #define DLG_PICK    4
+#define DLG_CONFIRM 5
+
+#define PEND_NONE   0
+#define PEND_CLOSE  1
+#define PEND_QUIT    2
 
 #define ED_PICK_MAX   80
 #define ED_PICK_DEPTH 8
@@ -302,6 +307,8 @@ static int pick_row0;
 static int pick_view[ED_PICK_MAX];
 static int pick_vn;
 static int alt_pend;
+static int confirm_pending;
+static int confirm_btn;
 static int esc_state;
 static unsigned esc_at;
 static int csi_n;
@@ -336,6 +343,7 @@ static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 
 static void redraw(void);
 static int save_tab(void);
 static void editor_leave(void);
+static void editor_leave_now(void);
 static void editor_run(void);
 static void editor_resume(void);
 static void open_dialog(int which);
@@ -344,7 +352,10 @@ static void activate_menu(void);
 static int add_or_switch(const char *path);
 static void new_file(void);
 static void next_tab(void);
+static void close_tab(void);
+static void close_tab_now(void);
 static void close_ui(void);
+static void finish_pending(void);
 
 static char *put_uint(char *p, int n)
 {
@@ -2161,6 +2172,7 @@ static void fd_submit_path(const char *path)
 	if (G.ed.dialog == DLG_SAVEAS)
 	{
 		mmb_ed_tab *t = cur_tab();
+		int p = confirm_pending;
 		if (t && full[0])
 		{
 			strncpy(t->path, full, sizeof(t->path) - 1);
@@ -2168,6 +2180,11 @@ static void fd_submit_path(const char *path)
 			save_tab();
 		}
 		close_ui();
+		if (p)
+		{
+			confirm_pending = p;
+			finish_pending();
+		}
 	}
 }
 
@@ -2358,10 +2375,65 @@ static void draw_dialog(void)
 		draw_picker();
 		return;
 	}
+	if (G.ed.dialog == DLG_CONFIRM)
+	{
+		static const char *btns[3] = { " Save ", " Discard ", " Cancel " };
+		int bw[3], x, msgx;
+		const char *msg = "Save changes to untitled file?";
+		w = 46;
+		h = 8;
+		if (w > COLS - 2)
+			w = COLS - 2;
+		if (h > ROWS - 2)
+			h = ROWS - 2;
+		r0 = (ROWS - h) / 2;
+		c0 = (COLS - w) / 2;
+		if (r0 < 2)
+			r0 = 2;
+		if (c0 < 0)
+			c0 = 0;
+		title = " Save changes ";
+		tui_frame(c0, r0, w, h, C_DLG_FG, C_DLG_BG);
+		{
+			int left = (w - 2 - (int)strlen(title)) / 2;
+			if (left < 1)
+				left = 1;
+			tui_puts(c0 + 1 + left, r0, title, C_DLG_FG, C_DLG_BG);
+		}
+		tui_pad(c0 + w, r0, "", 2, C_SH_FG, C_SH_BG);
+		for (i = 1; i < h - 1; i++)
+		{
+			tui_pad(c0 + 1, r0 + i, "", w - 2, C_DLG_FG, C_DLG_BG);
+			tui_pad(c0 + w, r0 + i, "", 2, C_SH_FG, C_SH_BG);
+		}
+		tui_pad(c0 + w, r0 + h - 1, "", 2, C_SH_FG, C_SH_BG);
+		tui_pad(c0 + 2, r0 + h, "", w, C_SH_FG, C_SH_BG);
+		msgx = (w - 2 - (int)strlen(msg)) / 2;
+		if (msgx < 1)
+			msgx = 1;
+		tui_pad(c0 + 1, r0 + 2, "", w - 2, C_DLG_FG, C_DLG_BG);
+		tui_puts(c0 + 1 + msgx, r0 + 2, msg, C_DLG_FG, C_DLG_BG);
+		bw[0] = (int)strlen(btns[0]);
+		bw[1] = (int)strlen(btns[1]);
+		bw[2] = (int)strlen(btns[2]);
+		x = c0 + (w - (bw[0] + bw[1] + bw[2] + 4)) / 2;
+		if (x < c0 + 2)
+			x = c0 + 2;
+		for (i = 0; i < 3; i++)
+		{
+			int fg = (i == confirm_btn) ? C_SEL_FG : C_DLG_FG;
+			int bg = (i == confirm_btn) ? C_SEL_BG : C_DLG_BG;
+			tui_puts(x, r0 + 4, btns[i], fg, bg);
+			x += bw[i] + 2;
+		}
+		tui_pad(c0 + 2, r0 + h - 2, "S Save  D Discard  C Cancel  Esc", w - 4,
+			C_DLG_FG, C_DLG_BG);
+		return;
+	}
 	if (G.ed.dialog == DLG_HELP)
 	{
 		w = 48;
-		h = 20;
+		h = 21;
 		title = " Help ";
 	}
 	else if (G.ed.dialog == DLG_OPEN)
@@ -2413,6 +2485,7 @@ static void draw_dialog(void)
 			"F3     Open          F4     #include",
 			"F9     Run           Alt+X  Quit",
 			"Alt+F N New file    ^W     Close tab",
+			"Untitled close/quit: Save/Discard/Cancel",
 			"Alt+Left/Right tabs (no wrap)",
 			"^O     Save            ^K/^U  Cut line/Paste",
 			"^R/F9  Run; press a key to return",
@@ -2635,16 +2708,113 @@ static int save_tab(void)
 	return 1;
 }
 
-static void editor_leave(void)
+static void open_confirm(int pending)
+{
+	confirm_pending = pending;
+	confirm_btn = 0;
+	G.ed.menu_open = 0;
+	G.ed.dialog = DLG_CONFIRM;
+}
+
+static int save_or_confirm(int pending)
 {
 	mmb_ed_tab *t = cur_tab();
-	if (t && t->dirty && !save_tab())
-		return;
+	if (!t || !t->dirty)
+		return 1;
+	if (!t->path[0])
+	{
+		open_confirm(pending);
+		return 0;
+	}
+	return save_tab();
+}
+
+static void editor_leave_now(void)
+{
 	tui_end();
 	G.ed.active = 0;
 	G.ed.wait_continue = 0;
 	G.ed.menu_open = 0;
 	G.ed.dialog = 0;
+	confirm_pending = PEND_NONE;
+}
+
+static void editor_leave(void)
+{
+	if (!save_or_confirm(PEND_QUIT))
+		return;
+	editor_leave_now();
+}
+
+static void close_tab_now(void)
+{
+	int i;
+	if (G.ed.ntabs <= 1)
+	{
+		editor_leave_now();
+		return;
+	}
+	for (i = G.ed.cur; i < G.ed.ntabs - 1; i++)
+		G.ed.tab[i] = G.ed.tab[i + 1];
+	G.ed.ntabs--;
+	memset(&G.ed.tab[G.ed.ntabs], 0, sizeof(G.ed.tab[0]));
+	if (G.ed.cur >= G.ed.ntabs)
+		G.ed.cur = G.ed.ntabs - 1;
+}
+
+static void finish_pending(void)
+{
+	int p = confirm_pending;
+	confirm_pending = PEND_NONE;
+	if (p == PEND_CLOSE)
+		close_tab_now();
+	else if (p == PEND_QUIT)
+		editor_leave_now();
+}
+
+static void confirm_save(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int p = confirm_pending;
+	G.ed.dialog = DLG_NONE;
+	if (!t)
+	{
+		confirm_pending = PEND_NONE;
+		return;
+	}
+	if (!t->path[0])
+	{
+		open_dialog(DLG_SAVEAS);
+		confirm_pending = p;
+		return;
+	}
+	if (save_tab())
+		finish_pending();
+}
+
+static void confirm_discard(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (t)
+		t->dirty = 0;
+	G.ed.dialog = DLG_NONE;
+	finish_pending();
+}
+
+static void confirm_cancel(void)
+{
+	confirm_pending = PEND_NONE;
+	G.ed.dialog = DLG_NONE;
+}
+
+static void confirm_activate(void)
+{
+	if (confirm_btn == 0)
+		confirm_save();
+	else if (confirm_btn == 1)
+		confirm_discard();
+	else
+		confirm_cancel();
 }
 
 static void editor_restore_gfx(void)
@@ -2737,6 +2907,7 @@ static void close_ui(void)
 	G.ed.dialog = 0;
 	G.ed.dlglen = 0;
 	G.ed.dlg[0] = 0;
+	confirm_pending = PEND_NONE;
 }
 
 static void open_dialog(int which)
@@ -2793,21 +2964,9 @@ static void tab_left(void)
 
 static void close_tab(void)
 {
-	int i;
-	mmb_ed_tab *t = cur_tab();
-	if (t && t->dirty && !save_tab())
+	if (!save_or_confirm(PEND_CLOSE))
 		return;
-	if (G.ed.ntabs <= 1)
-	{
-		editor_leave();
-		return;
-	}
-	for (i = G.ed.cur; i < G.ed.ntabs - 1; i++)
-		G.ed.tab[i] = G.ed.tab[i + 1];
-	G.ed.ntabs--;
-	memset(&G.ed.tab[G.ed.ntabs], 0, sizeof(G.ed.tab[0]));
-	if (G.ed.cur >= G.ed.ntabs)
-		G.ed.cur = G.ed.ntabs - 1;
+	close_tab_now();
 }
 
 static void submit_dialog(void)
@@ -3071,6 +3230,14 @@ static int handle_arrow_or_special(int kind, int mod)
 			return 0;
 		return 1;
 	}
+	if (G.ed.dialog == DLG_CONFIRM)
+	{
+		if (kind == 3 || kind == 2)
+			confirm_btn = (confirm_btn + 1) % 3;
+		else if (kind == 4 || kind == 1)
+			confirm_btn = (confirm_btn + 2) % 3;
+		return 1;
+	}
 	if (G.ed.dialog == DLG_PICK)
 	{
 		int vis, h;
@@ -3312,6 +3479,43 @@ static int dialog_key(char c)
 		esc_state = ESC_GOT;
 		return 1;
 	}
+	if (G.ed.dialog == DLG_CONFIRM)
+	{
+		char u = c;
+		if (c == '\r' || c == '\n')
+		{
+			confirm_activate();
+			if (G.ed.active)
+				redraw();
+			return 1;
+		}
+		if (c == '\t')
+		{
+			confirm_btn = (confirm_btn + 1) % 3;
+			redraw();
+			return 1;
+		}
+		if (u >= 'A' && u <= 'Z')
+			u = (char)(u - 'A' + 'a');
+		if (u == 's')
+		{
+			confirm_btn = 0;
+			confirm_activate();
+		}
+		else if (u == 'd')
+		{
+			confirm_btn = 1;
+			confirm_activate();
+		}
+		else if (u == 'c')
+		{
+			confirm_btn = 2;
+			confirm_activate();
+		}
+		if (G.ed.active)
+			redraw();
+		return 1;
+	}
 	if (G.ed.dialog == DLG_HELP)
 	{
 		if (c == '\r' || c == '\n' || c == ' ')
@@ -3393,6 +3597,8 @@ void mmb_editor_open(const char *path)
 {
 	memset(&G.ed, 0, sizeof(G.ed));
 	esc_state = 0;
+	confirm_pending = PEND_NONE;
+	confirm_btn = 0;
 	G.ed.active = 1;
 	set_pick_root(path && path[0] ? path : mmb_vfs_cwd());
 	add_or_switch(path && path[0] ? path : "");
