@@ -108,6 +108,22 @@ def test_option_wifi_bare_scans_or_reports_unavailable(console):
     assert console.send_line("PRINT 6*7") == "42"
 
 
+def test_option_wifi_status_is_on_a_new_line(console):
+    """Enter after OPTION WIFI must LF before status, not only CR."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    console.drain(quiet=0.15)
+    console._ser.sendall(b"OPTION WIFI\r")
+    raw = console.drain(quiet=0.8).decode(errors="replace")
+    low = raw.lower()
+    assert "wi-fi not available" in low or "no networks found" in low
+    mark = low.find("wi-fi")
+    if mark < 0:
+        mark = low.find("no networks")
+    assert mark > 0
+    assert "\n" in raw[:mark]
+    assert console.send_line("PRINT 3") == "3"
+
+
 def test_options_wifi_errors_without_credentials(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     out = console.send_line("OPTIONS WIFI")
