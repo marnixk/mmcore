@@ -57,6 +57,9 @@ typedef struct mmb_platform {
 			     int scale);
 	void (*tui_set_font)(const unsigned char *font256x16);
 	int (*alt_held)(void);
+	/* Blit RGB888 pixels to HDMI (native depth + SetArea). stride is
+	 * pixels per source row. NULL falls back to set_pixel. */
+	void (*present_rgb)(int x, int y, int w, int h, const unsigned *rgb888, int stride);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

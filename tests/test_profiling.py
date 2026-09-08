@@ -30,10 +30,12 @@ def parse_perf(out: str) -> dict[str, int]:
     return {k: int(v) for k, v in zip(keys, m.groups())}
 
 
-def _run_kernel(console: MMBasicConsole, name: str, lines: list[str]) -> dict[str, int]:
+def _run_kernel(
+    console: MMBasicConsole, name: str, lines: list[str], timeout: float = 8.0
+) -> dict[str, int]:
     _write_bas(console, name, lines)
     assert console.send_line("OPTION PROFILING ON") == ""
-    out = console.send_line(f'RUN "{name}"', timeout=8.0)
+    out = console.send_line(f'RUN "{name}"', timeout=timeout)
     return parse_perf(out)
 
 
@@ -103,3 +105,21 @@ def test_profiling_page_copy(console):
     )
     assert p["present"] >= 1
     assert p["statements"] >= 4
+
+
+def test_profiling_page_copy_mode17_bulk(console):
+    p = _run_kernel(
+        console,
+        "PPAGE17.BAS",
+        [
+            "MODE 17,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,32,0)",
+            "FOR I=1 TO 20",
+            "PAGE COPY 1 TO 0",
+            "NEXT I",
+        ],
+        timeout=12.0,
+    )
+    assert p["present"] == 20
+    assert p["elapsed"] < 120
