@@ -76,6 +76,7 @@ def test_help_term(console):
     assert "character mode" in low or "sga" in low
     assert "cr only" in low or "enter sends cr" in low
     assert "drain" in low or "starve" in low or "pane" in low
+    assert "echo" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -207,6 +208,7 @@ def test_term_alt_f_file_menu_then_enter_exits(kernel_image):
         menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "File" in menu
         assert "Exit" in menu
+        assert "Echo ON" in menu
         con._ser.sendall(b"\r")
         _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
         assert con.send_line("PRINT 3+4") == "7"
@@ -242,6 +244,65 @@ def test_term_esc_idle_then_f10(kernel_image):
         time.sleep(0.15)
         _f10(con)
         assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
+def test_term_file_menu_echo_toggle(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"f")
+        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Echo ON" in menu
+        con._ser.sendall(b"e")
+        toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Echo OFF" in toggled
+        con._ser.sendall(b"e")
+        again = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Echo ON" in again
+        _f10(con)
+        assert con.send_line("PRINT 2+3") == "5"
+    finally:
+        con.stop()
+
+
+def _wait_demo_idle(con, timeout=12.0):
+    t0 = time.monotonic()
+    seen = ""
+    while time.monotonic() - t0 < timeout:
+        seen += _plain(con.drain(quiet=0.35, timeout=2).decode(errors="replace"))
+        nums = _line_numbers(seen)
+        if nums and max(nums) >= 39:
+            time.sleep(0.8)
+            seen += _plain(con.drain(quiet=0.4, timeout=2).decode(errors="replace"))
+            return seen
+    return seen
+
+
+def test_term_demo_local_echo_and_hide(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        _wait_demo_idle(con)
+        con._ser.sendall(b"ECHOTEST99")
+        shown = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "ECHOTEST99" in shown
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"e")
+        off = _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        assert "Echo OFF" in off
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.12)
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"ECHOHIDE77")
+        hidden = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "ECHOHIDE77" not in hidden
+        _f10(con)
+        assert con.send_line("PRINT 4+4") == "8"
     finally:
         con.stop()
 
