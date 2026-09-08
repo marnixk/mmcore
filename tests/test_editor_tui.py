@@ -751,6 +751,28 @@ def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
         con.stop()
 
 
+def test_editor_load_starts_at_top(kernel_image):
+    """#186: loading a file places the cursor at 1:1, not EOF."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "TOP.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "AAAA"') == ""
+        for _ in range(40):
+            assert con.send_line('PRINT #1, "BBBB"') == ""
+        assert con.send_line('PRINT #1, "ZZZZ"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _edit(con, "TOP.BAS")
+        assert "AAAA" in seen
+        assert "1:1" in seen
+        _keys(con, b"X")
+        _keys(con, bytes([15]), quiet=0.5)
+        _quit(con)
+        assert _read_bas(con, "TOP.BAS") == "XAAAA"
+    finally:
+        con.stop()
+
+
 def test_editor_quick_open_after_moved_file(kernel_image):
     """#130: quick-open must still load a file after the originally edited path is moved."""
     con = MMBasicConsole(kernel_image)
