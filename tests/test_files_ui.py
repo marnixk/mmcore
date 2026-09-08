@@ -236,3 +236,23 @@ def test_files_follows_editor_theme_paper(fresh_console):
     assert any(r > 140 and g > 130 and b > 120 for r, g, b in empty), empty
     _keys(con, b"q")
     assert con.send_line("OPTION EDIT THEME TURBO") == ""
+
+
+def test_files_f4_shows_editor_immediately(fresh_console):
+    """#135: F4/e from FILES must paint the editor without waiting for another key."""
+    con = fresh_console
+    _prep_tree(con)
+    seen = _open_files(con)
+    for _ in range(12):
+        if "SEL=HELLO.BAS" in seen.upper() or "SEL=HELLO.BAS" in seen:
+            break
+        seen = _keys(con, b"\x1b[B", quiet=0.25)
+    assert "HELLO" in seen.upper()
+    opened = _keys(con, b"\x1b[14~", quiet=0.9)
+    assert "File" in opened
+    assert "Run" in opened or "Alt+X" in opened
+    pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+    assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+    _keys(con, bytes([1]) + b"x", quiet=0.6)
+    _keys(con, b"q")
+    assert con.send_line("PRINT 5") == "5"
