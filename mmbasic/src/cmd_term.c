@@ -1,8 +1,6 @@
 #include "mmb_priv.h"
 #include <string.h>
 
-extern void mmb_gfx_copy_page(int src, int dst);
-
 #define IAC   255
 #define DONT  254
 #define DO    253
@@ -34,6 +32,7 @@ extern void mmb_gfx_copy_page(int src, int dst);
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
 #define TM_CONNECT_MS   25000
+#define TM_RECV_MS      20
 #define TM_MENU_BG      0x243040u
 #define TM_MENU_HI      0x3A6EA5u
 
@@ -89,6 +88,9 @@ typedef struct {
 	unsigned demo_next;
 	int serial_gen;
 	int need_draw;
+	int dirty_full;
+	int dirty_lo;
+	int dirty_hi;
 } tm_state;
 
 static tm_state T;
@@ -260,6 +262,31 @@ static void pane_clear_row(int row)
 	}
 }
 
+static void mark_dirty_row(int row)
+{
+	if (row < 0 || row >= T.pane_rows)
+		return;
+	T.need_draw = 1;
+	if (T.dirty_full)
+		return;
+	if (T.dirty_lo < 0)
+	{
+		T.dirty_lo = row;
+		T.dirty_hi = row;
+		return;
+	}
+	if (row < T.dirty_lo)
+		T.dirty_lo = row;
+	if (row > T.dirty_hi)
+		T.dirty_hi = row;
+}
+
+static void mark_dirty_full(void)
+{
+	T.dirty_full = 1;
+	T.need_draw = 1;
+}
+
 static void term_draw(void);
 
 static void pane_scroll_up(void)
@@ -304,12 +331,18 @@ static void pane_scroll_smooth(void)
 			for (x = 0; x < pw && x0 + x < w; x++)
 				pg[y * w + x0 + x] = fill;
 		}
-		mmb_gfx_copy_page(1, 0);
-		mmb_gfx_present();
 	}
 	G.gfx.write_page = saved;
 	pane_scroll_up();
-	T.need_draw = 1;
+	if (pg && ph > TM_CH)
+	{
+		T.dirty_full = 0;
+		T.dirty_lo = T.pane_rows - 1;
+		T.dirty_hi = T.pane_rows - 1;
+		T.need_draw = 1;
+	}
+	else
+		mark_dirty_full();
 }
 
 static void pane_newline(void)
@@ -321,7 +354,7 @@ static void pane_newline(void)
 	}
 	T.cur_row++;
 	T.cur_col = 0;
-	T.need_draw = 1;
+	mark_dirty_row(T.cur_row);
 }
 
 static void pane_put(char ch)
@@ -336,7 +369,7 @@ static void pane_put(char ch)
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
 		T.cur_col++;
-		T.need_draw = 1;
+		mark_dirty_row(T.cur_row);
 	}
 }
 
@@ -425,36 +458,96 @@ static void term_draw_menu(void)
 	term_put_str(x0 + TM_CW, y0 + TM_CH, "Exit", TM_FG);
 }
 
+static void term_draw_row(int r)
+{
+	int c, x, y;
+	unsigned ch, fg, bg;
+
+	if (r < 0 || r >= T.pane_rows)
+		return;
+	y = r * TM_CH;
+	for (c = 0; c < TM_COLS; c++)
+	{
+		x = (T.pane_left + c) * TM_CW;
+		ch = (unsigned char)T.cell[r][c];
+		fg = T.cell_fg[r][c];
+		bg = T.cell_bg[r][c];
+		if (!ch)
+			ch = ' ';
+		if (bg != TM_BG)
+			mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
+		else
+			mmb_gfx_box(x, y, TM_CW, TM_CH, TM_BG, 1, (int)TM_BG);
+		mmb_gfx_glyph_cp437(x, y, ch, fg);
+	}
+}
+
+static void term_copy_pane(void)
+{
+	uint32_t *s, *d;
+	int w, h, y, x0, pw, ph;
+
+	s = mmb_gfx_buf_for(1, &w, &h);
+	d = mmb_gfx_buf_for(0, &w, &h);
+	if (!s || !d)
+		return;
+	x0 = T.pane_left * TM_CW;
+	pw = TM_COLS * TM_CW;
+	ph = T.vid_rows * TM_CH;
+	if (x0 < 0)
+		x0 = 0;
+	if (x0 + pw > w)
+		pw = w - x0;
+	if (pw <= 0)
+		return;
+	if (ph > h)
+		ph = h;
+	for (y = 0; y < ph; y++)
+		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint32_t));
+}
+
+static void term_present_pane(void)
+{
+	int x0 = T.pane_left * TM_CW;
+	int pw = TM_COLS * TM_CW;
+	int ph = T.vid_rows * TM_CH;
+
+	mmb_gfx_present_rect(x0, 0, pw, ph);
+}
+
 static void term_draw(void)
 {
-	int c, r, saved;
+	int r, saved, lo, hi;
 
+	if (!T.need_draw)
+		return;
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
-	mmb_gfx_cls(TM_BG);
-	for (r = 0; r < T.pane_rows; r++)
+	if (T.dirty_full)
 	{
-		for (c = 0; c < TM_COLS; c++)
-		{
-			int x = (T.pane_left + c) * TM_CW;
-			int y = r * TM_CH;
-			unsigned ch = (unsigned char)T.cell[r][c];
-			unsigned fg = T.cell_fg[r][c];
-			unsigned bg = T.cell_bg[r][c];
-			if (!ch)
-				ch = ' ';
-			if (bg != TM_BG)
-				mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
-			mmb_gfx_glyph_cp437(x, y, ch, fg);
-		}
+		lo = 0;
+		hi = T.pane_rows - 1;
+	}
+	else
+	{
+		lo = T.dirty_lo;
+		hi = T.dirty_hi;
+	}
+	if (lo >= 0 && hi >= lo)
+	{
+		for (r = lo; r <= hi; r++)
+			term_draw_row(r);
 	}
 	term_draw_status();
 	term_draw_menu();
-	mmb_gfx_copy_page(1, 0);
-	mmb_gfx_present();
+	term_copy_pane();
+	term_present_pane();
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
+	T.dirty_full = 0;
+	T.dirty_lo = -1;
+	T.dirty_hi = -1;
 }
 
 static void term_exit(void)
@@ -706,7 +799,7 @@ static void ansi_erase_line(int mode)
 		T.cell_fg[T.cur_row][c] = term_pen();
 		T.cell_bg[T.cur_row][c] = term_paper();
 	}
-	T.need_draw = 1;
+	mark_dirty_row(T.cur_row);
 }
 
 static void ansi_erase_disp(int mode)
@@ -724,8 +817,11 @@ static void ansi_erase_disp(int mode)
 	{
 		T.cur_row = 0;
 		T.cur_col = 0;
+		mark_dirty_full();
+		return;
 	}
-	T.need_draw = 1;
+	for (r = a; r < b; r++)
+		mark_dirty_row(r);
 }
 
 static void ansi_exec_csi(char cmd)
@@ -779,7 +875,6 @@ static void ansi_exec_csi(char cmd)
 	}
 	else if (cmd == 'c')
 		ansi_reply("\x1b[?1;2c");
-	T.need_draw = 1;
 }
 
 static void ansi_reset_csi(void)
@@ -951,7 +1046,7 @@ static void incoming_byte(unsigned char b)
 		{
 			T.cur_col--;
 			T.cell[T.cur_row][T.cur_col] = ' ';
-			T.need_draw = 1;
+			mark_dirty_row(T.cur_row);
 		}
 	}
 	else if (b >= 32)
@@ -1179,7 +1274,7 @@ void mmb_cmd_term(void)
 		}
 	}
 
-	mode = (G.gfx.mode == 16) ? 16 : 14;
+	mode = 14;
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
@@ -1197,6 +1292,9 @@ void mmb_cmd_term(void)
 	T.cur_row = 0;
 	T.cur_col = 0;
 	T.active = 1;
+	T.dirty_lo = -1;
+	T.dirty_hi = -1;
+	mark_dirty_full();
 
 	if (T.tcp)
 		telnet_announce();
@@ -1245,6 +1343,7 @@ const char *mmb_term_key(char c)
 		if (c == 'f')
 		{
 			T.menu = 1;
+			mark_dirty_full();
 			term_draw();
 			term_serial_dump();
 			return "";
@@ -1264,6 +1363,7 @@ const char *mmb_term_key(char c)
 			{
 				T.menu = 0;
 				esc_reset();
+				mark_dirty_full();
 				term_draw();
 				term_serial_dump();
 				return "";
@@ -1345,7 +1445,8 @@ const char *mmb_term_key(char c)
 void mmb_term_poll(void)
 {
 	unsigned char buf[512];
-	int n, i, loops;
+	int n, i, loops, got;
+	unsigned t0;
 
 	if (!T.active)
 		return;
@@ -1356,6 +1457,7 @@ void mmb_term_poll(void)
 		{
 			T.menu = 0;
 			esc_reset();
+			mark_dirty_full();
 			term_draw();
 			term_serial_dump();
 		}
@@ -1380,7 +1482,10 @@ void mmb_term_poll(void)
 		{
 			if (mmb_net_tcp_cancelling() &&
 			    mmb_now_ms() - T.connect_at >= 400)
+			{
+				mark_dirty_full();
 				term_draw();
+			}
 			return;
 		}
 		T.connecting = 0;
@@ -1411,6 +1516,8 @@ void mmb_term_poll(void)
 	}
 	if (!T.tcp)
 		return;
+	got = 0;
+	t0 = mmb_now_ms();
 	for (loops = 0; loops < 32; loops++)
 	{
 		n = mmb_net_tcp_recv(buf, sizeof(buf));
@@ -1420,11 +1527,16 @@ void mmb_term_poll(void)
 			return;
 		}
 		if (n == 0)
-			return;
+			break;
 		for (i = 0; i < n; i++)
 			incoming_byte(buf[i]);
-		term_serial_dump();
-		if (T.need_draw)
-			term_draw();
+		got = 1;
+		if (mmb_now_ms() - t0 >= TM_RECV_MS)
+			break;
 	}
+	if (got)
+		term_serial_dump();
+	if (T.need_draw)
+		term_draw();
+	mmb_net_yield();
 }

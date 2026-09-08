@@ -75,6 +75,7 @@ def test_help_term(console):
     assert "dns" in low or "tcp" in low
     assert "character mode" in low or "sga" in low
     assert "cr only" in low or "enter sends cr" in low
+    assert "drain" in low or "starve" in low or "pane" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
