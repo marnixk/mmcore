@@ -299,19 +299,59 @@ mmb_val mmb_int_val(int64_t i)
 	return v;
 }
 
+#define MMB_STR_POOL (64 * 1024)
+static char str_pool[MMB_STR_POOL];
+static int str_off;
+
+void mmb_str_reset(void)
+{
+	str_off = 0;
+}
+
+static char *str_bump(const char *s)
+{
+	int n = 0;
+	char *p;
+	if (!s)
+		s = "";
+	while (s[n] && n < MMB_MAX_STR)
+		n++;
+	if (str_off + n + 1 > MMB_STR_POOL)
+		str_off = 0;
+	if (str_off + n + 1 > MMB_STR_POOL)
+		mmb_error("?OUT OF MEMORY");
+	p = str_pool + str_off;
+	memcpy(p, s, (unsigned)n);
+	p[n] = 0;
+	str_off += n + 1;
+	return p;
+}
+
+void mmb_val_own(mmb_val *v, char *buf, int bufsz)
+{
+	int n = 0;
+	if (!v || v->type != T_STR)
+		return;
+	if (!buf || bufsz < 2)
+		return;
+	if (v->s)
+	{
+		while (v->s[n] && n < bufsz - 1 && n < MMB_MAX_STR)
+		{
+			buf[n] = v->s[n];
+			n++;
+		}
+	}
+	buf[n] = 0;
+	v->s = buf;
+}
+
 mmb_val mmb_str_val(const char *s)
 {
 	mmb_val v;
 	memset(&v, 0, sizeof(v));
 	v.type = T_STR;
-	unsigned n = 0;
-	if (s)
-		while (s[n] && n < MMB_MAX_STR)
-		{
-			v.s[n] = s[n];
-			n++;
-		}
-	v.s[n] = 0;
+	v.s = str_bump(s);
 	return v;
 }
 
@@ -539,7 +579,7 @@ static void fmt_double(double x, char *buf, int buflen)
 void mmb_print_val(mmb_val v)
 {
 	if (v.type == T_STR)
-		mmb_out(v.s);
+		mmb_out(v.s ? v.s : "");
 	else if (v.type == T_INT)
 		mmb_outf(0, v.i);
 	else

@@ -44,7 +44,7 @@ typedef struct mmb_val {
 	int type;          /* T_NUM, T_INT, T_STR */
 	double f;
 	int64_t i;
-	char s[MMB_MAX_STR + 1];
+	const char *s;
 } mmb_val;
 
 typedef struct mmb_var {
@@ -257,11 +257,15 @@ typedef struct mmb {
 	int sel_active;
 	int sel_skip;
 	mmb_val sel_val;
+	char sel_str[MMB_MAX_STR + 1];
+	char func_ret_s[MMB_MAX_STR + 1];
+	char gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_STR + 1];
 	int nconst;
 	struct {
 		char name[MMB_MAX_NAME];
 		int type;
 		mmb_val val;
+		char s[MMB_MAX_STR + 1];
 		int used;
 	} consts[MMB_MAX_CONST];
 	int nsubs;
@@ -327,6 +331,8 @@ mmb_val mmb_expr(void);
 mmb_val mmb_num_val(double f);
 mmb_val mmb_int_val(int64_t i);
 mmb_val mmb_str_val(const char *s);
+void mmb_str_reset(void);
+void mmb_val_own(mmb_val *v, char *buf, int bufsz);
 double mmb_as_float(mmb_val v);
 int64_t mmb_as_int(mmb_val v);
 void mmb_need_num(mmb_val v);
