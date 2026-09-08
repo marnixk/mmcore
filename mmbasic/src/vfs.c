@@ -893,6 +893,25 @@ static int pkg_add_file(const char *path, const void *data, unsigned n, void *ct
 	full[sizeof(full) - 1] = 0;
 	if (n == 0 && !data)
 		return ram_walk(pkg_nodes, PKG_MAX, full, 0, 1) < 0 ? -1 : 0;
+	{
+		char dir[160];
+		char *p;
+		strncpy(dir, full, sizeof(dir) - 1);
+		dir[sizeof(dir) - 1] = 0;
+		p = dir + 1;
+		while (*p)
+		{
+			while (*p && *p != '/')
+				p++;
+			if (*p == 0)
+				break;
+			*p = 0;
+			if (ram_walk(pkg_nodes, PKG_MAX, dir, 0, 1) < 0)
+				return -1;
+			*p = '/';
+			p++;
+		}
+	}
 	if (ram_write(pkg_nodes, PKG_MAX, full, data, n, 0) != 0)
 		return -1;
 	base = path;
