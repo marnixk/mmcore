@@ -33,7 +33,7 @@ extern void mmb_gfx_copy_page(int src, int dst);
 #define TM_DEMO_MIN_MS  120
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
-#define TM_CONNECT_MS   8000
+#define TM_CONNECT_MS   25000
 #define TM_MENU_BG      0x243040u
 #define TM_MENU_HI      0x3A6EA5u
 
@@ -44,7 +44,7 @@ typedef struct {
 	int connecting;
 	unsigned connect_at;
 	int net_fail;
-	char net_msg[48];
+	char net_msg[64];
 	char host[80];
 	int port;
 	int saved_mode;
@@ -391,7 +391,12 @@ static void term_draw_status(void)
 	term_put_str(x0, y, left, TM_DIM);
 	right[0] = 0;
 	if (T.connecting)
-		strncpy(right, "Connecting...", sizeof(right) - 1);
+	{
+		if (mmb_net_tcp_cancelling())
+			strncpy(right, "Cancelling...", sizeof(right) - 1);
+		else
+			strncpy(right, "Connecting...", sizeof(right) - 1);
+	}
 	else if (T.net_fail && T.net_msg[0])
 		strncpy(right, T.net_msg, sizeof(right) - 1);
 	else if (T.demo)
@@ -1165,10 +1170,7 @@ void mmb_cmd_term(void)
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)
 		{
 			T.net_fail = 1;
-			if (!mmb_net_available())
-				strncpy(T.net_msg, "Network not available", sizeof(T.net_msg) - 1);
-			else
-				strncpy(T.net_msg, "Connect failed", sizeof(T.net_msg) - 1);
+			strncpy(T.net_msg, mmb_net_tcp_errmsg(), sizeof(T.net_msg) - 1);
 		}
 		else
 		{
@@ -1375,7 +1377,12 @@ void mmb_term_poll(void)
 	{
 		int st = mmb_net_tcp_status();
 		if (st == 0 && mmb_now_ms() - T.connect_at < TM_CONNECT_MS)
+		{
+			if (mmb_net_tcp_cancelling() &&
+			    mmb_now_ms() - T.connect_at >= 400)
+				term_draw();
 			return;
+		}
 		T.connecting = 0;
 		if (st == 1)
 		{
@@ -1388,14 +1395,13 @@ void mmb_term_poll(void)
 		}
 		else
 		{
+			if (mmb_now_ms() - T.connect_at >= TM_CONNECT_MS && st == 0)
+				strncpy(T.net_msg, "TCP timeout", sizeof(T.net_msg) - 1);
+			else
+				strncpy(T.net_msg, mmb_net_tcp_errmsg(),
+					sizeof(T.net_msg) - 1);
 			mmb_net_tcp_close();
 			T.net_fail = 1;
-			if (!mmb_net_available())
-				strncpy(T.net_msg, "Network not available",
-					sizeof(T.net_msg) - 1);
-			else
-				strncpy(T.net_msg, "Connect failed",
-					sizeof(T.net_msg) - 1);
 			pane_puts(T.net_msg);
 			pane_newline();
 			term_draw();

@@ -75,7 +75,9 @@ defaults without deleting programs. `OPTION WIFI "ssid","password"` stores crede
 joins a WPA2 network on a real Pi 3 / 4 / 400 / Zero 2 W (firmware in `C:/firmware/`).
 `OPTIONS WIFI` reconnects with stored credentials (`?WIFI not configured` if none).
 `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
-(default off; the password is never printed). QEMU has no radio.
+(default off; the password is never printed). Hardware images program a
+firmware keep-alive on CYW43455/43456 (Pi 4 / 400) as well as 4330.
+`IPCONFIG` reports connected only after a live gateway probe. QEMU has no radio.
 
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:

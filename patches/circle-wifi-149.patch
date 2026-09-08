@@ -1,0 +1,73 @@
+diff --git a/addon/wlan/ether4330.c b/addon/wlan/ether4330.c
+index 4e17e0db..a11b5c47 100644
+--- a/addon/wlan/ether4330.c
++++ b/addon/wlan/ether4330.c
+@@ -2171,6 +2171,9 @@ wlinit(Ether *edev, Ctlr *ctlr)
+ 	if(ctlr->chipid == 0x4330){
+ 		wlsetint(ctlr, "btc_wire", 4);
+ 		wlsetint(ctlr, "btc_mode", 1);
++	}
++	/* mmbasic-issue-149: firmware null keepalive on 43455/43456 (Pi 4/400), not only 4330 */
++	if(ctlr->chipid == 0x4330 || ctlr->chipid == 0x4345){
+ 		wlsetvar(ctlr, "mkeep_alive", keepalive, 11);
+ 	}
+ 	memset(eventmask, 0xFF, sizeof eventmask);
+diff --git a/include/circle/net/transportlayer.h b/include/circle/net/transportlayer.h
+index 74f6ad0e..ed082414 100644
+--- a/include/circle/net/transportlayer.h
++++ b/include/circle/net/transportlayer.h
+@@ -52,6 +52,9 @@ public:
+ 
+ 	int Disconnect (int hConnection);
+ 
++	/// Abort in-flight TCP SYN (wake blocking Connect). Used by MMBasic TERM.
++	void AbortConnecting (void);
++
+ 	int Send (CNetBuffer *pData, int nFlags, int hConnection);
+ 
+ 	int Receive (CNetBuffer **ppBuffer, int nFlags, int hConnection);
+diff --git a/lib/net/tcpconnection.cpp b/lib/net/tcpconnection.cpp
+index d1b5c121..31b6edde 100644
+--- a/lib/net/tcpconnection.cpp
++++ b/lib/net/tcpconnection.cpp
+@@ -362,7 +362,12 @@ int CTCPConnection::Close (void)
+ 	case TCPStateListen:
+ 	case TCPStateSynSent:
+ 		StopTimer (TCPTimerRetransmission);
++		/* mmbasic-issue-149: wake CSocket::Connect() so TERM can abort a 90s SYN */
++		if (m_State == TCPStateSynSent)
++			m_nErrno = -NET_ERROR_CONNECTION_RESET;
+ 		NEW_STATE (TCPStateClosed);
++		m_Event.Set ();
++		m_TxEvent.Set ();
+ 		break;
+ 
+ 	case TCPStateSynReceived:
+diff --git a/lib/net/transportlayer.cpp b/lib/net/transportlayer.cpp
+index 453d01c8..70a0b45a 100644
+--- a/lib/net/transportlayer.cpp
++++ b/lib/net/transportlayer.cpp
+@@ -339,6 +339,23 @@ int CTransportLayer::Disconnect (int hConnection)
+ 	return ((CNetConnection *) m_pConnection[hConnection])->Close ();
+ }
+ 
++void CTransportLayer::AbortConnecting (void)
++{
++	unsigned i;
++
++	for (i = 0; i < m_pConnection.GetCount (); i++)
++	{
++		CNetConnection *pConn = (CNetConnection *) m_pConnection[i];
++		if (pConn == 0)
++			continue;
++		if (pConn->GetProtocol () != IPPROTO_TCP)
++			continue;
++		const char *pState = pConn->GetStateName ();
++		if (pState != 0 && strcmp (pState, "SYN-SENT") == 0)
++			pConn->Close ();
++	}
++}
++
+ int CTransportLayer::Send (CNetBuffer *pNetBuffer, int nFlags, int hConnection)
+ {
+ 	assert (hConnection >= 0);

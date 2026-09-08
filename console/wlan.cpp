@@ -35,6 +35,7 @@ extern "C" {
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append);
 int mmb_keyword_eq(const char *a, const char *b);
+int mmb_net_gateway_ok(int force);
 }
 
 extern "C" {
@@ -200,6 +201,7 @@ static int wlan_ensure(void)
 		return 0;
 	}
 	wlan_log("radio up");
+	wlan_log("firmware mkeep_alive is set in wlinit for 4330 and 4345");
 	if (CScheduler::IsActive())
 		CScheduler::Get()->MsSleep(300);
 	else
@@ -542,6 +544,31 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 		}
 		if (mmb_wlan_status())
 			out.Append("\n  Link is up; waiting for DHCP");
+		if (mmb_opt_wifi_debug())
+		{
+			out.Append("\n  WPA: ");
+			out.Append((s_wpa && CWPASupplicant::IsConnected()) ? "completed" : "not completed");
+			out.Append("\n  DHCP: unbound");
+		}
+		copy_out(buf, bufsize, (const char *)out);
+		return -1;
+	}
+	if (!mmb_wlan_status() || mmb_net_gateway_ok(1) != 1)
+	{
+		out = "Not connected";
+		if (s_last_ssid[0])
+		{
+			out.Append("\n  SSID: ");
+			out.Append(s_last_ssid);
+		}
+		if (mmb_wlan_status())
+			out.Append("\n  Link is up; gateway unreachable");
+		if (mmb_opt_wifi_debug())
+		{
+			out.Append("\n  WPA: ");
+			out.Append((s_wpa && CWPASupplicant::IsConnected()) ? "completed" : "not completed");
+			out.Append(s_net->IsRunning() ? "\n  DHCP: bound" : "\n  DHCP: unbound");
+		}
 		copy_out(buf, bufsize, (const char *)out);
 		return -1;
 	}
@@ -584,6 +611,12 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 			out.Append((const char *)macstr);
 			out.Append("\n");
 		}
+	}
+	if (mmb_opt_wifi_debug())
+	{
+		out.Append("  WPA: ");
+		out.Append((s_wpa && CWPASupplicant::IsConnected()) ? "completed" : "not completed");
+		out.Append(s_net->IsRunning() ? "\n  DHCP: bound\n" : "\n  DHCP: unbound\n");
 	}
 	copy_out(buf, bufsize, (const char *)out);
 	return 0;
