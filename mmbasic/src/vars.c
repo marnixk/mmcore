@@ -1,8 +1,98 @@
 #include "mmb_priv.h"
 
+static int var_tab[MMB_MAX_VARS];
+static int unsuf_tab[MMB_MAX_VARS];
+
 static int name_eq(const char *a, const char *b)
 {
 	return mmb_keyword_eq(a, b);
+}
+
+static unsigned hash_key(const char *n, int type)
+{
+	unsigned h = 2166136261u;
+	while (*n)
+	{
+		h ^= (unsigned char)*n++;
+		h *= 16777619u;
+	}
+	h ^= (unsigned)type * 0x9e3779b9u;
+	return h;
+}
+
+static void hash_clear(void)
+{
+	int i;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		var_tab[i] = -1;
+		unsuf_tab[i] = -1;
+	}
+}
+
+static void hash_ins(int vi)
+{
+	unsigned h;
+	int i;
+	if (vi < 0 || !G.vars[vi].used)
+		return;
+	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_MAX_VARS;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		if (var_tab[s] < 0)
+		{
+			var_tab[s] = vi;
+			break;
+		}
+	}
+	if (G.vars[vi].unsuffixed)
+	{
+		h = hash_key(G.vars[vi].name, 0) % MMB_MAX_VARS;
+		for (i = 0; i < MMB_MAX_VARS; i++)
+		{
+			int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+			if (unsuf_tab[s] < 0)
+			{
+				unsuf_tab[s] = vi;
+				break;
+			}
+		}
+	}
+}
+
+static int hash_lookup(const char *nbuf, int type)
+{
+	unsigned h = hash_key(nbuf, type) % MMB_MAX_VARS;
+	int i;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int vi = var_tab[s];
+		if (vi < 0)
+			return -1;
+		if (!G.vars[vi].used)
+			continue;
+		if (G.vars[vi].type == type && name_eq(G.vars[vi].name, nbuf))
+			return vi;
+	}
+	return -1;
+}
+
+static int unsuf_lookup(const char *nbuf)
+{
+	unsigned h = hash_key(nbuf, 0) % MMB_MAX_VARS;
+	int i;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+	{
+		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int vi = unsuf_tab[s];
+		if (vi < 0)
+			return -1;
+		if (G.vars[vi].used && G.vars[vi].unsuffixed && name_eq(G.vars[vi].name, nbuf))
+			return vi;
+	}
+	return -1;
 }
 
 void mmb_clear_consts(void)
@@ -35,6 +125,8 @@ void mmb_const_define(const char *name, int type, mmb_val val)
 	strncpy(G.consts[slot].name, nbuf, MMB_MAX_NAME - 1);
 	G.consts[slot].type = type;
 	G.consts[slot].val = val;
+	if (val.type == T_STR)
+		mmb_val_own(&G.consts[slot].val, G.consts[slot].s, (int)sizeof(G.consts[slot].s));
 	G.consts[slot].used = 1;
 	G.nconst++;
 }
@@ -86,6 +178,7 @@ void mmb_clear_vars(int keep_options)
 	}
 	G.nvars = 0;
 	G.dim_used = 0;
+	hash_clear();
 }
 
 static int elem_count(const int *dim, int ndims)
@@ -125,13 +218,9 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		type = t;
 	else if (type == 0)
 	{
-		/* Unsuffixed N after DIM INTEGER N. Do not steal A% for PRINT A. */
-		for (i = 0; i < MMB_MAX_VARS; i++)
-			if (G.vars[i].used && G.vars[i].unsuffixed && name_eq(G.vars[i].name, nbuf))
-			{
-				type = G.vars[i].type;
-				break;
-			}
+		int ui = unsuf_lookup(nbuf);
+		if (ui >= 0)
+			type = G.vars[ui].type;
 		if (type == 0)
 			type = G.opt.default_type;
 	}
@@ -140,23 +229,32 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (type == 0)
 		type = T_NUM;
 
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	i = hash_lookup(nbuf, type);
+	if (i < 0)
 	{
-		if (G.vars[i].used && name_eq(G.vars[i].name, nbuf) && G.vars[i].type == type)
-		{
-			if (nidx != G.vars[i].dims)
+		for (i = 0; i < MMB_MAX_VARS; i++)
+			if (G.vars[i].used && G.vars[i].type == type && name_eq(G.vars[i].name, nbuf))
 			{
-				if (nidx == 0 && G.vars[i].dims > 0)
-					mmb_error("?ARRAY");
-				if (nidx > 0 && G.vars[i].dims == 0)
-					mmb_error("?NOT AN ARRAY");
-				if (nidx != G.vars[i].dims)
-					mmb_error("?SUBSCRIPT");
+				hash_ins(i);
+				break;
 			}
-			if (idx && nidx == 0)
-				*idx = 0;
-			return &G.vars[i];
+		if (i >= MMB_MAX_VARS)
+			i = -1;
+	}
+	if (i >= 0)
+	{
+		if (nidx != G.vars[i].dims)
+		{
+			if (nidx == 0 && G.vars[i].dims > 0)
+				mmb_error("?ARRAY");
+			if (nidx > 0 && G.vars[i].dims == 0)
+				mmb_error("?NOT AN ARRAY");
+			if (nidx != G.vars[i].dims)
+				mmb_error("?SUBSCRIPT");
 		}
+		if (idx && nidx == 0)
+			*idx = 0;
+		return &G.vars[i];
 	}
 
 	if (!create)
@@ -196,6 +294,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		G.vars[i].data.f[0] = 0;
 	}
 	G.nvars++;
+	hash_ins(i);
 	if (idx)
 		*idx = 0;
 	return &G.vars[i];
@@ -314,6 +413,7 @@ void mmb_cmd_dim(void)
 			memset(G.vars[slot].data.f, 0, (unsigned)n * sizeof(double));
 		}
 		G.nvars++;
+		hash_ins(slot);
 		if (dims)
 			G.dim_used = 1;
 		(void)idxdummy;
@@ -389,7 +489,7 @@ static void store(mmb_var *v, int off, mmb_val val)
 	{
 		if (val.type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		strncpy(v->data.s[off], val.s, MMB_MAX_STR);
+		strncpy(v->data.s[off], val.s ? val.s : "", MMB_MAX_STR);
 		v->data.s[off][MMB_MAX_STR] = 0;
 	}
 	else if (v->type == T_INT)

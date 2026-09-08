@@ -43,6 +43,15 @@ Tokenize at `RUN` / immediate mode; `exec_statement` dispatches on token id.
 | PAGE COPY | 69 | 5 | 26 | 9 | 0 | 5 | 1 |
 
 Integer-FOR **match** dropped from 26557 to 1214 (QEMU-relative, not equality).
-Elapsed is still dominated by QEMU noise at this scale; jump tables (#133) and
-cheaper values (#134) target remaining `match` / `findvar` / `expr` cost.
+Elapsed is still dominated by QEMU noise at this scale.
+
+## After jump tables (#133) and cheaper values (#134)
+
+`mmb_val` is a type/number/pointer descriptor (string data lives in a bump
+arena or owned buffers). `mmb_find_var` uses open-address hashing with a
+linear repair if a hit is missed.
+
+Integer FOR after #134: elapsed=8 ms, statements=403, match=1268, expr=204,
+findvar=603. Match stays in the same range as tokenize; QEMU ms is not a
+pass/fail check. The #144 corpus remains the equality proof.
 

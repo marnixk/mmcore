@@ -768,6 +768,7 @@ void mmb_cmd_select(void)
 	if (!mmb_match("CASE"))
 		mmb_syntax();
 	G.sel_val = mmb_expr();
+	mmb_val_own(&G.sel_val, G.sel_str, (int)sizeof(G.sel_str));
 	G.sel_active = 0;
 	G.sel_skip = 1;
 }
@@ -1450,7 +1451,10 @@ int mmb_call_named_sub(const char *name)
 		G.gosub_saven[g][i][MMB_MAX_NAME - 1] = 0;
 		v = mmb_find_var(G.subs[si].args[i], 0, 0, 0, &idx);
 		if (v)
+		{
 			G.gosub_savev[g][i] = mmb_load_var(v, 0);
+			mmb_val_own(&G.gosub_savev[g][i], G.gosub_ss[g][i], MMB_MAX_STR + 1);
+		}
 		else
 			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
 		if (i < narg)
@@ -1468,7 +1472,10 @@ int mmb_call_named_sub(const char *name)
 		G.gosub_saven[g][slot][MMB_MAX_NAME - 1] = 0;
 		v = mmb_find_var(nbuf, 0, 0, 0, &idx);
 		if (v)
+		{
 			G.gosub_savev[g][slot] = mmb_load_var(v, 0);
+			mmb_val_own(&G.gosub_savev[g][slot], G.gosub_ss[g][slot], MMB_MAX_STR + 1);
+		}
 		else
 			memset(&G.gosub_savev[g][slot], 0, sizeof(G.gosub_savev[g][slot]));
 		G.gosub_nsave[g] = slot + 1;
@@ -1533,7 +1540,10 @@ void mmb_cmd_end_function(void)
 			int idx = 0;
 			v = mmb_find_var(fname, 0, 0, 0, &idx);
 			if (v)
+			{
 				G.func_ret = mmb_load_var(v, 0);
+				mmb_val_own(&G.func_ret, G.func_ret_s, (int)sizeof(G.func_ret_s));
+			}
 			else
 			{
 				memset(&G.func_ret, 0, sizeof(G.func_ret));
@@ -3247,6 +3257,7 @@ static void run_program(void)
 	G.running = 1;
 	if (G.opt.profiling)
 		mmb_prof_reset();
+	mmb_str_reset();
 	G.for_sp = 0;
 	G.gosub_sp = 0;
 	G.ctrl_sp = 0;
@@ -3323,6 +3334,7 @@ const char *mmb_exec_line(const char *line)
 	G.outn = 0;
 	G.out[0] = 0;
 	G.err[0] = 0;
+	mmb_str_reset();
 	if (setjmp(G.errjmp))
 	{
 		G.outn = 0;

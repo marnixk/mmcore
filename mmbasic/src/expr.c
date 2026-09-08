@@ -1348,7 +1348,7 @@ static mmb_val expr_add(void)
 					char buf[MMB_MAX_STR + 1];
 					if (a.type != T_STR || b.type != T_STR)
 						mmb_error("?TYPE MISMATCH");
-					strncpy(buf, a.s, MMB_MAX_STR);
+					strncpy(buf, a.s ? a.s : "", MMB_MAX_STR);
 					buf[MMB_MAX_STR] = 0;
 					strncat(buf, b.s, MMB_MAX_STR - strlen(buf));
 					a = mmb_str_val(buf);
