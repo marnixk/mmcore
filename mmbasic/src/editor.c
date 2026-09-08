@@ -2575,7 +2575,7 @@ static void draw_dialog(void)
 			"Alt+F  File menu     Alt+E  Edit",
 			"Alt+R  Run menu      Alt+T  Theme",
 			"Alt+H  Help          Esc    close",
-			"F1     This help     F2     Save",
+			"F1     Keyword HELP  F2     Save",
 			"F3     Open          F4     #include",
 			"F9     Run           Alt+X  Quit",
 			"Alt+F N New file    ^W     Close tab",
@@ -3297,10 +3297,59 @@ static void goto_include(void)
 	}
 }
 
+static int is_kw_char(char c)
+{
+	return is_word_char(c) || c == '$' || c == '%' || c == '!';
+}
+
+static void word_at_cx(char *dst, int dstsz)
+{
+	mmb_ed_tab *t = cur_tab();
+	int a, b, n;
+
+	dst[0] = 0;
+	if (!t || dstsz < 2)
+		return;
+	a = t->cx;
+	if (a > t->len)
+		a = t->len;
+	if (a > 0 && (a >= t->len || !is_kw_char(t->buf[a])) && is_kw_char(t->buf[a - 1]))
+		a--;
+	b = a;
+	while (a > 0 && is_kw_char(t->buf[a - 1]))
+		a--;
+	while (b < t->len && is_kw_char(t->buf[b]))
+		b++;
+	n = b - a;
+	if (n <= 0)
+		return;
+	if (n >= dstsz)
+		n = dstsz - 1;
+	memcpy(dst, t->buf + a, (unsigned)n);
+	dst[n] = 0;
+}
+
+static void help_at_cursor(void)
+{
+	char word[40];
+
+	if (G.ed.dialog)
+		return;
+	word_at_cx(word, (int)sizeof(word));
+	if (!word[0])
+	{
+		set_status("No keyword");
+		return;
+	}
+	G.ed.menu_open = 0;
+	G.ed.dialog = 0;
+	mmb_ihelp_open(word);
+}
+
 static void do_fkey(int n)
 {
 	if (n == 1)
-		open_dialog(DLG_HELP);
+		help_at_cursor();
 	else if (n == 2)
 		save_tab();
 	else if (n == 3)
