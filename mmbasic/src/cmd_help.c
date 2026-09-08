@@ -25,7 +25,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Files\n"
 	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
-	"  KILL RM DEL MV DRIVE LOAD SAVE SEEK\n"
+	"  KILL RM DEL MV DRIVE PACKAGE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
 	"  NEW LIST RUN EDIT WORDPAD MEMORY REBOOT\n"
@@ -622,15 +622,36 @@ static const char kHelpRun[] =
 	"\n"
 	"Run the program. With file$, load that program\n"
 	"from disk first (.BAS appended if needed) then\n"
-	"run. Bare RUN does the same for the current file\n"
-	"(from RUN file$, SAVE, or the editor). With no\n"
-	"associated file, RUN uses the program in memory.\n"
+	"run. RUN \"name.pkg\" mounts the package read-only\n"
+	"as B:, CHDIRs into it, and runs MAIN.BAS. When that\n"
+	"run ends, B: is unmounted. Bare RUN does the same\n"
+	"for the current file (from RUN file$, SAVE, or the\n"
+	"editor), except a previous package is not remounted\n"
+	"- the program stays in memory. With no associated\n"
+	"file, RUN uses the program in memory.\n"
 	"Stop a running program with Print Screen (PrtScr)\n"
 	"or the OPTION BREAK key (Ctrl-C by default).\n"
 	"That prints ?BREAK and returns to the prompt.\n"
 	"\n"
 	"Example:  RUN\n"
-	"          RUN \"HI.BAS\"";
+	"          RUN \"HI.BAS\"\n"
+	"          RUN \"GAME.PKG\"";
+
+static const char kHelpPackage[] =
+	"PACKAGE pkg$, folder$\n"
+	"\n"
+	"Zip the contents of folder$ into pkg$ (ZIP store).\n"
+	"Paths inside the archive are relative to that folder.\n"
+	"folder$ must contain MAIN.BAS. If pkg$ exists at the\n"
+	"prompt: File exists, overwrite? [Y/n]\n"
+	"Empty or Y overwrites; N leaves the file. From a\n"
+	"running program a collision is ?FILE EXISTS.\n"
+	"RUN \"name.pkg\" mounts the zip read-only as B: and\n"
+	"runs MAIN.BAS. B: is not listed by DRIVE and cannot\n"
+	"be selected in FILES or CHDIR at the prompt.\n"
+	"\n"
+	"Example:  PACKAGE \"GAME.PKG\", \"GAME/\"\n"
+	"          RUN \"GAME.PKG\"";
 
 static const char kHelpNew[] =
 	"NEW\n"
@@ -986,7 +1007,7 @@ static const char kHelpCmm2[] =
 	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
-	"  KILL RM DEL DRIVE\n"
+	"  KILL RM DEL DRIVE PACKAGE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
 	"  REBOOT OPTION OPTIONS FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
 	"  MATH CLEAR END\n"
@@ -1070,6 +1091,7 @@ static const char kHelpDrive[] =
 	"With a letter such as \"A:\" or \"C:\", make that the\n"
 	"current drive. A: is the RAM disk. C: is the SD card\n"
 	"slot. D: and later are USB volumes when present.\n"
+	"B: is an internal package mount and is never listed.\n"
 	"\n"
 	"Example:  DRIVE\n"
 	"          DRIVE \"A:\"";
@@ -1495,6 +1517,7 @@ static const help_topic kTopics[] = {
 	{ "RENAME",      HELP_CMD,  kHelpRename },
 	{ "KILL",        HELP_CMD,  kHelpKill },
 	{ "DRIVE",       HELP_CMD,  kHelpDrive },
+	{ "PACKAGE",     HELP_CMD,  kHelpPackage },
 	{ "CLEAR",       HELP_CMD,  kHelpClear },
 	{ "PAUSE",       HELP_CMD,  kHelpPause },
 	{ "REBOOT",      HELP_CMD,  kHelpReboot },

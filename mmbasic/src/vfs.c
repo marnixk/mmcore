@@ -1,6 +1,7 @@
 #include "mmb_priv.h"
 
 #define VFS_MAX 128
+#define PKG_MAX 96
 #define MMB_DRIVE_LO  'A'
 #define MMB_DRIVE_HI  'H'
 
@@ -20,20 +21,40 @@ typedef struct {
 
 static vfs_node nodes[VFS_MAX];
 static int ram_cwd;
+static vfs_node pkg_nodes[PKG_MAX];
+static int pkg_cwd;
+static int pkg_on;
+static char pkg_prev[128];
+static int pkg_have_prev;
 
-/* ---- ramdisk (A:) ----------------------------------------------------- */
+/* ---- ramdisk (A: and package B:) ----------------------------------- */
 
-static int ram_find_child(int parent, const char *name)
+static vfs_node *vol_nodes(int letter, int *max, int **cwd)
+{
+	if (letter == 'B')
+	{
+		*max = PKG_MAX;
+		if (cwd)
+			*cwd = &pkg_cwd;
+		return pkg_nodes;
+	}
+	*max = VFS_MAX;
+	if (cwd)
+		*cwd = &ram_cwd;
+	return nodes;
+}
+
+static int ram_find_child(vfs_node *ns, int max, int parent, const char *name)
 {
 	int i;
-	for (i = 0; i < VFS_MAX; i++)
-		if (nodes[i].used && nodes[i].parent == parent &&
-		    mmb_keyword_eq(nodes[i].name, name))
+	for (i = 0; i < max; i++)
+		if (ns[i].used && ns[i].parent == parent &&
+		    mmb_keyword_eq(ns[i].name, name))
 			return i;
 	return -1;
 }
 
-static int ram_walk(const char *path, int create_file, int create_dir)
+static int ram_walk(vfs_node *ns, int max, const char *path, int create_file, int create_dir)
 {
 	char buf[160], *p, *tok;
 	int node = 0;
@@ -55,27 +76,27 @@ static int ram_walk(const char *path, int create_file, int create_dir)
 			continue;
 		if (mmb_keyword_eq(tok, ".."))
 		{
-			if (nodes[node].parent >= 0)
-				node = nodes[node].parent;
+			if (ns[node].parent >= 0)
+				node = ns[node].parent;
 			continue;
 		}
 		{
-			int ch = ram_find_child(node, tok);
+			int ch = ram_find_child(ns, max, node, tok);
 			if (ch < 0)
 			{
 				int i, last = !*p;
 				if (!(create_dir || (create_file && last)))
 					return -1;
-				for (i = 0; i < VFS_MAX; i++)
-					if (!nodes[i].used)
+				for (i = 0; i < max; i++)
+					if (!ns[i].used)
 						break;
-				if (i >= VFS_MAX)
+				if (i >= max)
 					return -1;
-				memset(&nodes[i], 0, sizeof(nodes[i]));
-				strncpy(nodes[i].name, tok, 79);
-				nodes[i].is_dir = create_dir || !last;
-				nodes[i].parent = node;
-				nodes[i].used = 1;
+				memset(&ns[i], 0, sizeof(ns[i]));
+				strncpy(ns[i].name, tok, 79);
+				ns[i].is_dir = create_dir || !last;
+				ns[i].parent = node;
+				ns[i].used = 1;
 				ch = i;
 			}
 			node = ch;
@@ -84,15 +105,15 @@ static int ram_walk(const char *path, int create_file, int create_dir)
 	return node;
 }
 
-static void ram_path_from_node(int node, char *out, int outsz)
+static void ram_path_from_node(vfs_node *ns, int node, char *out, int outsz)
 {
 	char stack[8][80];
 	int sp = 0, n = node;
 	out[0] = 0;
 	while (n > 0 && sp < 8)
 	{
-		strncpy(stack[sp++], nodes[n].name, 79);
-		n = nodes[n].parent;
+		strncpy(stack[sp++], ns[n].name, 79);
+		n = ns[n].parent;
 	}
 	strncpy(out, "/", (unsigned)outsz - 1);
 	out[outsz - 1] = 0;
@@ -146,78 +167,78 @@ static int glob_match(const char *name, const char *pat)
 	return *p == 0;
 }
 
-static int ram_list(const char *dir, const char *pat, char *out, int outsz)
+static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, char *out, int outsz)
 {
-	int parent = ram_walk(dir, 0, 0), i, n = 0;
+	int parent = ram_walk(ns, max, dir, 0, 0), i, n = 0;
 	out[0] = 0;
-	if (parent < 0 || !nodes[parent].is_dir)
+	if (parent < 0 || !ns[parent].is_dir)
 		return -1;
-	for (i = 0; i < VFS_MAX; i++)
+	for (i = 0; i < max; i++)
 	{
 		int len;
-		if (!nodes[i].used || nodes[i].parent != parent)
+		if (!ns[i].used || ns[i].parent != parent)
 			continue;
-		if (mmb_vfs_hidden_name(nodes[i].name))
+		if (mmb_vfs_hidden_name(ns[i].name))
 			continue;
-		if (pat && pat[0] && !glob_match(nodes[i].name, pat))
+		if (pat && pat[0] && !glob_match(ns[i].name, pat))
 			continue;
 		len = (int)strlen(out);
 		if (len + 90 >= outsz)
 			break;
 		if (n++)
 			strcat(out, "\n");
-		strcat(out, nodes[i].name);
-		if (nodes[i].is_dir)
+		strcat(out, ns[i].name);
+		if (ns[i].is_dir)
 			strcat(out, "/");
 	}
 	return 0;
 }
 
-static int ram_write(const char *path, const void *data, unsigned n, int append)
+static int ram_write(vfs_node *ns, int max, const char *path, const void *data, unsigned n, int append)
 {
-	int id = ram_walk(path, 1, 0);
+	int id = ram_walk(ns, max, path, 1, 0);
 	unsigned need;
-	if (id < 0 || nodes[id].is_dir)
+	if (id < 0 || ns[id].is_dir)
 		return -1;
-	need = append ? nodes[id].size + n : n;
-	if (need + 1 > nodes[id].cap)
+	need = append ? ns[id].size + n : n;
+	if (need + 1 > ns[id].cap)
 	{
 		unsigned cap = need + 64;
 		unsigned char *p = G.plat->alloc(cap);
 		if (!p)
 			return -1;
-		if (nodes[id].data)
+		if (ns[id].data)
 		{
-			if (append && nodes[id].size)
-				memcpy(p, nodes[id].data, nodes[id].size);
-			G.plat->free(nodes[id].data);
+			if (append && ns[id].size)
+				memcpy(p, ns[id].data, ns[id].size);
+			G.plat->free(ns[id].data);
 		}
-		nodes[id].data = p;
-		nodes[id].cap = cap;
+		ns[id].data = p;
+		ns[id].cap = cap;
 	}
 	if (!append)
-		nodes[id].size = 0;
+		ns[id].size = 0;
 	if (n)
-		memcpy(nodes[id].data + nodes[id].size, data, n);
-	nodes[id].size += n;
-	nodes[id].data[nodes[id].size] = 0;
+		memcpy(ns[id].data + ns[id].size, data, n);
+	ns[id].size += n;
+	ns[id].data[ns[id].size] = 0;
 	return 0;
 }
 
-static int ram_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
+static int ram_read_at(vfs_node *ns, int max, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
-	int id = ram_walk(path, 0, 0);
+	int id = ram_walk(ns, max, path, 0, 0);
 	unsigned avail;
 	*got = 0;
-	if (id < 0 || nodes[id].is_dir)
+	if (id < 0 || ns[id].is_dir)
 		return -1;
-	if (pos >= nodes[id].size)
+	if (pos >= ns[id].size)
 		return 0;
-	avail = nodes[id].size - pos;
+	avail = ns[id].size - pos;
 	if (avail > n)
 		avail = n;
 	if (avail && data)
-		memcpy(data, nodes[id].data + pos, avail);
+		memcpy(data, ns[id].data + pos, avail);
 	*got = avail;
 	return 0;
 }
@@ -287,10 +308,12 @@ static void collapse_path(char *path)
 
 static void drive_cwd_path(int letter, char *out, int outsz)
 {
-	if (letter == 'A')
+	if (letter == 'A' || (letter == 'B' && pkg_on))
 	{
 		char tmp[128];
-		ram_path_from_node(ram_cwd, tmp, sizeof(tmp));
+		int max, *cwd;
+		vfs_node *ns = vol_nodes(letter, &max, &cwd);
+		ram_path_from_node(ns, *cwd, tmp, sizeof(tmp));
 		strncpy(out, tmp, (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
 		return;
@@ -409,7 +432,7 @@ static int require_drive(int letter)
 	if (letter == 'A')
 		return 0;
 	if (letter == 'B')
-		return -1;
+		return pkg_on ? 0 : -1;
 	if (!physical(letter))
 		return -1;
 	return mmb_fat_ready(letter) ? 0 : -1;
@@ -425,6 +448,11 @@ void mmb_vfs_init(void)
 	nodes[0].parent = -1;
 	nodes[0].used = 1;
 	ram_cwd = 0;
+	memset(pkg_nodes, 0, sizeof(pkg_nodes));
+	pkg_cwd = 0;
+	pkg_on = 0;
+	pkg_have_prev = 0;
+	pkg_prev[0] = 0;
 	G.drive = 'A';
 	strcpy(G.cwd, "A:/");
 }
@@ -454,13 +482,18 @@ int mmb_vfs_chdir(const char *path)
 	mmb_xpath x;
 	if (split_path(path, &x) != 0)
 		return -1;
-	if (x.letter == 'A')
+	if (x.letter == 'A' || x.letter == 'B')
 	{
-		int n = ram_walk(x.path, 0, 0);
-		if (n < 0 || !nodes[n].is_dir)
+		int max, *cwd, n;
+		vfs_node *ns;
+		if (x.letter == 'B' && !pkg_on)
 			return -1;
-		ram_cwd = n;
-		G.drive = 'A';
+		ns = vol_nodes(x.letter, &max, &cwd);
+		n = ram_walk(ns, max, x.path, 0, 0);
+		if (n < 0 || !ns[n].is_dir)
+			return -1;
+		*cwd = n;
+		G.drive = x.letter;
 		refresh_public_cwd();
 		return 0;
 	}
@@ -478,8 +511,10 @@ int mmb_vfs_mkdir(const char *path)
 	mmb_xpath x;
 	if (split_path(path, &x) != 0)
 		return -1;
+	if (x.letter == 'B')
+		return -1;
 	if (x.letter == 'A')
-		return ram_walk(x.path, 0, 1) < 0 ? -1 : 0;
+		return ram_walk(nodes, VFS_MAX, x.path, 0, 1) < 0 ? -1 : 0;
 	if (require_drive(x.letter) != 0)
 		return -1;
 	return mmb_fat_mkdir(x.letter, x.path);
@@ -488,8 +523,11 @@ int mmb_vfs_mkdir(const char *path)
 int mmb_vfs_rmdir(const char *path)
 {
 	mmb_xpath x;
-	int n, i;
+	int n, i, max;
+	vfs_node *ns;
 	if (split_path(path, &x) != 0)
+		return -1;
+	if (x.letter == 'B')
 		return -1;
 	if (x.letter != 'A')
 	{
@@ -497,21 +535,26 @@ int mmb_vfs_rmdir(const char *path)
 			return -1;
 		return mmb_fat_rmdir(x.letter, x.path);
 	}
-	n = ram_walk(x.path, 0, 0);
-	if (n <= 0 || !nodes[n].is_dir)
+	ns = nodes;
+	max = VFS_MAX;
+	n = ram_walk(ns, max, x.path, 0, 0);
+	if (n <= 0 || !ns[n].is_dir)
 		return -1;
-	for (i = 0; i < VFS_MAX; i++)
-		if (nodes[i].used && nodes[i].parent == n)
+	for (i = 0; i < max; i++)
+		if (ns[i].used && ns[i].parent == n)
 			return -1;
-	nodes[n].used = 0;
+	ns[n].used = 0;
 	return 0;
 }
 
 int mmb_vfs_kill(const char *path)
 {
 	mmb_xpath x;
-	int n;
+	int n, max;
+	vfs_node *ns;
 	if (split_path(path, &x) != 0)
+		return -1;
+	if (x.letter == 'B')
 		return -1;
 	if (x.letter != 'A')
 	{
@@ -519,22 +562,29 @@ int mmb_vfs_kill(const char *path)
 			return -1;
 		return mmb_fat_unlink(x.letter, x.path);
 	}
-	n = ram_walk(x.path, 0, 0);
-	if (n <= 0 || nodes[n].is_dir)
+	ns = nodes;
+	max = VFS_MAX;
+	n = ram_walk(ns, max, x.path, 0, 0);
+	if (n <= 0 || ns[n].is_dir)
 		return -1;
-	if (nodes[n].data)
-		G.plat->free(nodes[n].data);
-	nodes[n].used = 0;
+	if (ns[n].data)
+		G.plat->free(ns[n].data);
+	ns[n].used = 0;
 	return 0;
 }
 
 int mmb_vfs_exists(const char *path)
 {
 	mmb_xpath x;
+	int max;
+	vfs_node *ns;
 	if (split_path(path, &x) != 0)
 		return 0;
-	if (x.letter == 'A')
-		return ram_walk(x.path, 0, 0) >= 0;
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
+	{
+		ns = vol_nodes(x.letter, &max, 0);
+		return ram_walk(ns, max, x.path, 0, 0) >= 0;
+	}
 	if (require_drive(x.letter) != 0)
 		return 0;
 	return mmb_fat_exists(x.letter, x.path);
@@ -543,19 +593,21 @@ int mmb_vfs_exists(const char *path)
 int mmb_vfs_size(const char *path)
 {
 	mmb_xpath x;
-	int n;
+	int n, max;
+	vfs_node *ns;
 	if (split_path(path, &x) != 0)
 		return -1;
-	if (x.letter != 'A')
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		if (require_drive(x.letter) != 0)
+		ns = vol_nodes(x.letter, &max, 0);
+		n = ram_walk(ns, max, x.path, 0, 0);
+		if (n < 0 || ns[n].is_dir)
 			return -1;
-		return mmb_fat_size(x.letter, x.path);
+		return (int)ns[n].size;
 	}
-	n = ram_walk(x.path, 0, 0);
-	if (n < 0 || nodes[n].is_dir)
+	if (require_drive(x.letter) != 0)
 		return -1;
-	return (int)nodes[n].size;
+	return mmb_fat_size(x.letter, x.path);
 }
 
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
@@ -563,8 +615,10 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 	mmb_xpath x;
 	if (split_path(path, &x) != 0)
 		return -1;
+	if (x.letter == 'B')
+		return -1;
 	if (x.letter == 'A')
-		return ram_write(x.path, data, n, append);
+		return ram_write(nodes, VFS_MAX, x.path, data, n, append);
 	if (require_drive(x.letter) != 0)
 		return -1;
 	return mmb_fat_write(x.letter, x.path, data, n, append);
@@ -573,11 +627,16 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
 	mmb_xpath x;
+	int max;
+	vfs_node *ns;
 	*got = 0;
 	if (split_path(path, &x) != 0)
 		return -1;
-	if (x.letter == 'A')
-		return ram_read_at(x.path, pos, data, n, got);
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
+	{
+		ns = vol_nodes(x.letter, &max, 0);
+		return ram_read_at(ns, max, x.path, pos, data, n, got);
+	}
 	if (require_drive(x.letter) != 0)
 		return -1;
 	return mmb_fat_read_at(x.letter, x.path, pos, data, n, got);
@@ -591,16 +650,20 @@ int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n)
 int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
 {
 	mmb_xpath x;
-	int id;
+	int id, max;
+	vfs_node *ns;
 	*ptr = 0;
 	*n = 0;
-	if (split_path(path, &x) != 0 || x.letter != 'A')
+	if (split_path(path, &x) != 0)
 		return -1;
-	id = ram_walk(x.path, 0, 0);
-	if (id < 0 || nodes[id].is_dir)
+	if (x.letter != 'A' && !(x.letter == 'B' && pkg_on))
 		return -1;
-	*ptr = nodes[id].data;
-	*n = nodes[id].size;
+	ns = vol_nodes(x.letter, &max, 0);
+	id = ram_walk(ns, max, x.path, 0, 0);
+	if (id < 0 || ns[id].is_dir)
+		return -1;
+	*ptr = ns[id].data;
+	*n = ns[id].size;
 	return 0;
 }
 
@@ -652,13 +715,15 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		return -1;
 	if (a.letter != b.letter)
 		return -1;
+	if (a.letter == 'B')
+		return -1;
 	if (a.letter != 'A')
 	{
 		if (require_drive(a.letter) != 0)
 			return -1;
 		return mmb_fat_rename(a.letter, a.path, b.path);
 	}
-	s = ram_walk(a.path, 0, 0);
+	s = ram_walk(nodes, VFS_MAX, a.path, 0, 0);
 	if (s < 0)
 		return -1;
 	slash = last_slash(b.path);
@@ -681,9 +746,9 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		strncpy(base, slash + 1, 79);
 		base[79] = 0;
 	}
-	if (ram_walk(dir, 0, 0) != nodes[s].parent)
+	if (ram_walk(nodes, VFS_MAX, dir, 0, 0) != nodes[s].parent)
 		return -1;
-	ch = ram_find_child(nodes[s].parent, base);
+	ch = ram_find_child(nodes, VFS_MAX, nodes[s].parent, base);
 	if (ch >= 0 && ch != s)
 		return -1;
 	strncpy(nodes[s].name, base, 79);
@@ -704,9 +769,11 @@ int mmb_vfs_list(const char *spec, char *out, int outsz)
 	if (split_path(spec ? spec : "", &x) != 0)
 		return -1;
 	split_dir_glob(x.path, dir, glob);
-	if (x.letter == 'A')
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		if (ram_list(dir, glob, out, outsz) != 0)
+		int max;
+		vfs_node *ns = vol_nodes(x.letter, &max, 0);
+		if (ram_list(ns, max, dir, glob, out, outsz) != 0)
 			return -1;
 		return 0;
 	}
@@ -739,6 +806,171 @@ void mmb_vfs_drives(char *out, int outsz)
 	}
 }
 
+int mmb_vfs_isdir(const char *path)
+{
+	mmb_xpath x;
+	int n, max;
+	vfs_node *ns;
+	if (split_path(path, &x) != 0)
+		return 0;
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
+	{
+		ns = vol_nodes(x.letter, &max, 0);
+		n = ram_walk(ns, max, x.path, 0, 0);
+		return n >= 0 && ns[n].is_dir;
+	}
+	if (require_drive(x.letter) != 0)
+		return 0;
+	return mmb_fat_exists(x.letter, x.path) && mmb_fat_size(x.letter, x.path) < 0;
+}
+
+int mmb_vfs_readonly_path(const char *path)
+{
+	mmb_xpath x;
+	if (split_path(path, &x) != 0)
+		return 0;
+	return x.letter == 'B';
+}
+
+int mmb_pkg_mounted(void)
+{
+	return pkg_on;
+}
+
+static void pkg_free_nodes(void)
+{
+	int i;
+	for (i = 0; i < PKG_MAX; i++)
+	{
+		if (pkg_nodes[i].used && pkg_nodes[i].data)
+			G.plat->free(pkg_nodes[i].data);
+		pkg_nodes[i].used = 0;
+		pkg_nodes[i].data = 0;
+	}
+	memset(pkg_nodes, 0, sizeof(pkg_nodes));
+	strcpy(pkg_nodes[0].name, "/");
+	pkg_nodes[0].is_dir = 1;
+	pkg_nodes[0].parent = -1;
+	pkg_nodes[0].used = 1;
+	pkg_cwd = 0;
+}
+
+void mmb_pkg_unmount(void)
+{
+	char saved[128];
+	int have, i;
+	have = pkg_have_prev;
+	strncpy(saved, pkg_prev, sizeof(saved) - 1);
+	saved[sizeof(saved) - 1] = 0;
+	pkg_have_prev = 0;
+	pkg_prev[0] = 0;
+	for (i = 1; i <= MMB_MAX_FILES; i++)
+	{
+		if (G.files[i].open && G.files[i].path[0] &&
+		    (G.files[i].path[0] == 'B' || G.files[i].path[0] == 'b') &&
+		    G.files[i].path[1] == ':')
+			G.files[i].open = 0;
+	}
+	pkg_free_nodes();
+	pkg_on = 0;
+	if (G.drive == 'B')
+	{
+		G.drive = 'A';
+		refresh_public_cwd();
+	}
+	if (have && saved[0])
+		mmb_vfs_chdir(saved);
+}
+
+static int pkg_add_file(const char *path, const void *data, unsigned n, void *ctx)
+{
+	int *have_main = (int *)ctx;
+	char full[160];
+	int nested = 0;
+	const char *q, *base;
+	full[0] = '/';
+	strncpy(full + 1, path, sizeof(full) - 2);
+	full[sizeof(full) - 1] = 0;
+	if (n == 0 && !data)
+		return ram_walk(pkg_nodes, PKG_MAX, full, 0, 1) < 0 ? -1 : 0;
+	if (ram_write(pkg_nodes, PKG_MAX, full, data, n, 0) != 0)
+		return -1;
+	base = path;
+	for (q = path; *q; q++)
+	{
+		if (*q == '/')
+		{
+			nested = 1;
+			base = q + 1;
+		}
+	}
+	if (!nested && mmb_keyword_eq(base, "MAIN.BAS"))
+		*have_main = 1;
+	return 0;
+}
+
+int mmb_pkg_is_name(const char *path)
+{
+	const char *dot = 0, *p = path ? path : "";
+	while (*p)
+	{
+		if (*p == '.' )
+			dot = p;
+		if (*p == '/' || *p == '\\')
+			dot = 0;
+		p++;
+	}
+	return dot && mmb_keyword_eq(dot, ".PKG");
+}
+
+int mmb_pkg_mount(const char *path)
+{
+	unsigned char *buf = 0;
+	unsigned got = 0;
+	int sz, have_main = 0;
+	char saved[128];
+
+	mmb_pkg_unmount();
+	sz = mmb_vfs_size(path);
+	if (sz < 0)
+		mmb_error("?FILE NOT FOUND");
+	if (sz > 512 * 1024)
+		mmb_error("?PACKAGE");
+	buf = G.plat->alloc((unsigned)sz + 1);
+	if (!buf)
+		mmb_error("?OUT OF MEMORY");
+	if (mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(buf);
+		mmb_error("?FILE NOT FOUND");
+	}
+	strncpy(saved, mmb_vfs_cwd(), sizeof(saved) - 1);
+	saved[sizeof(saved) - 1] = 0;
+	pkg_free_nodes();
+	if (mmb_zip_foreach(buf, got, pkg_add_file, &have_main) != 0)
+	{
+		pkg_free_nodes();
+		G.plat->free(buf);
+		mmb_error("?PACKAGE");
+	}
+	G.plat->free(buf);
+	if (!have_main)
+	{
+		pkg_free_nodes();
+		mmb_error("?NO MAIN.BAS");
+	}
+	strncpy(pkg_prev, saved, sizeof(pkg_prev) - 1);
+	pkg_prev[sizeof(pkg_prev) - 1] = 0;
+	pkg_have_prev = 1;
+	pkg_on = 1;
+	if (mmb_vfs_chdir("B:/") != 0)
+	{
+		mmb_pkg_unmount();
+		mmb_error("?PACKAGE");
+	}
+	return 0;
+}
+
 void mmb_cmd_drive(void)
 {
 	mmb_skip_sp();
@@ -752,6 +984,9 @@ void mmb_cmd_drive(void)
 		spec[sizeof(spec) - 1] = 0;
 		if (!strchr(spec, ':'))
 			strncat(spec, ":", sizeof(spec) - strlen(spec) - 1);
+		if (!G.running && spec[0] && (spec[0] == 'B' || spec[0] == 'b') &&
+		    spec[1] == ':')
+			mmb_error("?DRIVE");
 		if (mmb_vfs_chdir(spec) != 0)
 			mmb_error("?DRIVE");
 		return;

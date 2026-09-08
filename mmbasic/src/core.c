@@ -1610,7 +1610,12 @@ void mmb_cmd_print(void)
 					mmb_out("\n");
 				strncpy(buf, G.out, sizeof(buf) - 1);
 				if (fn >= 1 && fn <= MMB_MAX_FILES && G.files[fn].open)
-					mmb_vfs_write(G.files[fn].path, buf, (unsigned)strlen(buf), 1);
+				{
+					if (mmb_vfs_readonly_path(G.files[fn].path))
+						mmb_error("?READ ONLY");
+					if (mmb_vfs_write(G.files[fn].path, buf, (unsigned)strlen(buf), 1) != 0)
+						mmb_error("?FILE");
+				}
 				G.outn = save;
 				G.out[G.outn] = 0;
 				return;
@@ -1812,6 +1817,7 @@ void mmb_cmd_new(void)
 {
 	G.nprog = 0;
 	G.current_prog[0] = 0;
+	mmb_pkg_unmount();
 	mmb_clear_vars(1);
 	mmb_clear_consts();
 	memset(G.subs, 0, sizeof(G.subs));
@@ -1863,6 +1869,7 @@ void mmb_cmd_run(void)
 {
 	char fname[128];
 	int from_disk = 0;
+	int mounted_pkg = 0;
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
@@ -1883,15 +1890,32 @@ void mmb_cmd_run(void)
 		}
 		from_disk = 1;
 	}
-	else if (G.current_prog[0])
+	else if (G.current_prog[0] && !mmb_pkg_is_name(G.current_prog) &&
+		 !(G.current_prog[0] == 'B' && G.current_prog[1] == ':'))
 	{
 		strncpy(fname, G.current_prog, sizeof(fname) - 1);
 		fname[sizeof(fname) - 1] = 0;
 		from_disk = 1;
 	}
 	if (from_disk)
-		load_prog_from_disk(fname);
+	{
+		mmb_pkg_unmount();
+		if (mmb_pkg_is_name(fname))
+		{
+			mmb_pkg_mount(fname);
+			load_prog_from_disk("B:/MAIN.BAS");
+			mounted_pkg = 1;
+		}
+		else
+			load_prog_from_disk(fname);
+	}
 	run_program();
+	if (mounted_pkg)
+	{
+		strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
+		G.current_prog[sizeof(G.current_prog) - 1] = 0;
+		mmb_pkg_unmount();
+	}
 }
 
 void mmb_cmd_if(void)
@@ -2594,6 +2618,11 @@ static void exec_statement(void)
 			mmb_syntax();
 		return;
 	}
+	if (mmb_match("PACKAGE"))
+	{
+		mmb_cmd_package();
+		return;
+	}
 	if (mmb_match("CHDIR"))
 	{
 		mmb_cmd_chdir();
@@ -2998,6 +3027,7 @@ const char *mmb_exec_line(const char *line)
 		G.outn = 0;
 		G.out[0] = 0;
 		clear_exec_flags();
+		mmb_pkg_unmount();
 		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
 		return G.out;
 	}
@@ -3111,6 +3141,7 @@ void mmb_init(const mmb_platform *plat)
 
 void mmb_reset(void)
 {
+	mmb_pkg_unmount();
 	mmb_clear_vars(0);
 	mmb_option_reset();
 	mmb_play_stop();

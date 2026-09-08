@@ -1205,7 +1205,9 @@ static void apply_prompt(void)
 		int letter = F.prompt[0];
 		if (letter >= 'a' && letter <= 'z')
 			letter = (char)(letter - 32);
-		if (letter >= 'A' && letter <= 'H')
+		if (letter == 'B')
+			set_hint("Drive not available");
+		else if (letter >= 'A' && letter <= 'H')
 		{
 			char spec[8];
 			spec[0] = (char)letter;
@@ -1307,6 +1309,11 @@ static void set_drive_letter(int letter)
 	char spec[8];
 	if (letter >= 'a' && letter <= 'z')
 		letter -= 32;
+	if (letter == 'B')
+	{
+		set_hint("Drive not available");
+		return;
+	}
 	if (letter < 'A' || letter > 'H')
 		return;
 	if (letter != 'A' && !mmb_fat_ready(letter))

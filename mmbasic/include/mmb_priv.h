@@ -536,6 +536,37 @@ const char *mmb_settings_path(void);
 void mmb_cmd_factory_reset(void);
 int mmb_vfs_hidden_name(const char *name);
 
+int mmb_vfs_isdir(const char *path);
+int mmb_vfs_readonly_path(const char *path);
+
+#define MMB_ZIP_MAX_FILES 64
+
+typedef struct mmb_zip_w {
+	unsigned char *buf;
+	unsigned cap, len;
+	struct {
+		char name[128];
+		unsigned local_off, size, crc, nlen;
+	} ent[MMB_ZIP_MAX_FILES];
+	int nent;
+} mmb_zip_w;
+
+typedef int (*mmb_zip_file_fn)(const char *path, const void *data, unsigned n, void *ctx);
+
+int mmb_zip_begin(mmb_zip_w *z);
+int mmb_zip_add(mmb_zip_w *z, const char *name, const void *data, unsigned n);
+int mmb_zip_finish(mmb_zip_w *z, unsigned char **out, unsigned *n);
+void mmb_zip_abort(mmb_zip_w *z);
+int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, void *ctx);
+int mmb_zip_path_ok(const char *name);
+unsigned mmb_crc32(const void *data, unsigned n);
+
+int mmb_pkg_mounted(void);
+void mmb_pkg_unmount(void);
+int mmb_pkg_mount(const char *path);
+int mmb_pkg_is_name(const char *path);
+void mmb_cmd_package(void);
+
 int mmb_wlan_available(void);
 int mmb_wlan_radio_pending(void);
 int mmb_wlan_scan(char ssids[][64], int maxn);
