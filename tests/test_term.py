@@ -77,6 +77,9 @@ def test_help_term(console):
     assert "cr only" in low or "enter sends cr" in low
     assert "drain" in low or "starve" in low or "pane" in low
     assert "echo" in low
+    assert "boxed" in low
+    assert "full" in low
+    assert "120" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -209,6 +212,7 @@ def test_term_alt_f_file_menu_then_enter_exits(kernel_image):
         assert "File" in menu
         assert "Exit" in menu
         assert "Echo ON" in menu
+        assert "Boxed" in menu
         con._ser.sendall(b"\r")
         _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
         assert con.send_line("PRINT 3+4") == "7"
@@ -244,6 +248,46 @@ def test_term_esc_idle_then_f10(kernel_image):
         time.sleep(0.15)
         _f10(con)
         assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
+def _max_dump_width(text: str) -> int:
+    return max((len(ln.replace("\r", "")) for ln in text.split("\n")), default=0)
+
+
+def test_term_file_menu_boxed_full_toggle(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        opened = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.4)
+        assert _max_dump_width(opened) == 80
+        margin = con.screen_pixel(20, 200)
+        assert _is_dark_slate(*margin), margin
+        con._ser.sendall(bytes([1]) + b"f")
+        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Boxed" in menu
+        con._ser.sendall(b"b")
+        full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Full" in full
+        assert _max_dump_width(full) == 120
+        found_cream = False
+        for x in (4, 8, 12, 16, 24, 32):
+            for y in (4, 8, 12, 20, 24, 40):
+                rgb = con.screen_pixel(x, y)
+                if _is_creamish(*rgb):
+                    found_cream = True
+                    break
+            if found_cream:
+                break
+        assert found_cream, "expected cream glyphs at the left edge in full-width mode"
+        con._ser.sendall(b"b")
+        boxed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Boxed" in boxed
+        assert _max_dump_width(boxed) == 80
+        _f10(con)
+        assert con.send_line("PRINT 1+2") == "3"
     finally:
         con.stop()
 
