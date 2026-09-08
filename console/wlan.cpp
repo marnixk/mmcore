@@ -65,7 +65,7 @@ static void wlan_log(const char *fmt, ...)
 	va_start(ap, fmt);
 	line.FormatV(fmt, ap);
 	va_end(ap);
-	wlan_emit("[wifi] ");
+	wlan_emit("\n[wifi] ");
 	wlan_emit((const char *)line);
 	wlan_emit("\r\n");
 }

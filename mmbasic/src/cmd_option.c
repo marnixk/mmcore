@@ -199,10 +199,10 @@ static void parse_wifi_interactive(void)
 	}
 	n = mmb_wlan_scan(ssids, 16);
 	if (n <= 0)
-		cons_write("No networks found\r\nSSID: ");
+		cons_write("\nNo networks found\r\nSSID: ");
 	else
 	{
-		cons_write("Wi-Fi networks:\r\n");
+		cons_write("\nWi-Fi networks:\r\n");
 		for (i = 0; i < n; i++)
 		{
 			char num[8];
