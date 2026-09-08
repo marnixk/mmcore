@@ -14,6 +14,17 @@ static int find_loop_pc(int from);
 static int find_endif_pc(int from);
 static int find_end_select_pc(int from);
 static int find_end_sub_pc(int from);
+static int find_next_pc(int from);
+static void build_jumps(void);
+
+static int jmp_wend[MMB_MAX_LINES];
+static int jmp_loop[MMB_MAX_LINES];
+static int jmp_next[MMB_MAX_LINES];
+static int jmp_endsub[MMB_MAX_LINES];
+static int jmp_else[MMB_MAX_LINES];
+static int jmp_endif[MMB_MAX_LINES];
+static int jmp_endsel[MMB_MAX_LINES];
+static int jmp_ready;
 static int at_end_of_statement(void);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
@@ -121,112 +132,189 @@ static int line_match(const char *body, const char *kw)
 	return r;
 }
 
-static int find_wend_pc(int from)
+static int line_match_end(const char *body, const char *kw)
 {
-	int depth = 1, i;
-	for (i = from + 1; i < G.nprog; i++)
+	const char *save = G.p;
+	int r = 0;
+	G.p = after_label(body);
+	if (mmb_match("END") && mmb_match(kw))
+		r = 1;
+	G.p = save;
+	return r;
+}
+
+static int line_is_block_if(const char *body)
+{
+	const char *save = G.p;
+	G.p = after_label(body);
+	if (!mmb_match("IF"))
+	{
+		G.p = save;
+		return 0;
+	}
+	while (*G.p && *G.p != '\'')
+	{
+		mmb_skip_sp();
+		if (mmb_match("THEN"))
+		{
+			int r = at_end_of_statement();
+			G.p = save;
+			return r;
+		}
+		if (*G.p == ':')
+			break;
+		if ((unsigned char)*G.p == 0x80)
+			G.p += 3;
+		else if (mmb_is_ident(*G.p))
+		{
+			while (mmb_is_ident(*G.p))
+				G.p++;
+		}
+		else if (*G.p)
+			G.p++;
+		else
+			break;
+	}
+	G.p = save;
+	return 0;
+}
+
+static void build_jumps(void)
+{
+	int i, sp;
+	int st[MMB_MAX_CTRL];
+	jmp_ready = 0;
+	for (i = 0; i < G.nprog; i++)
+	{
+		jmp_wend[i] = jmp_loop[i] = jmp_next[i] = -1;
+		jmp_endsub[i] = jmp_else[i] = jmp_endif[i] = jmp_endsel[i] = -1;
+	}
+	sp = 0;
+	for (i = 0; i < G.nprog; i++)
 	{
 		if (line_match(G.prog[i], "WHILE"))
-			depth++;
-		if (line_match(G.prog[i], "WEND"))
 		{
-			depth--;
-			if (depth == 0)
-				return i;
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
 		}
+		else if (line_match(G.prog[i], "WEND") && sp > 0)
+			jmp_wend[st[--sp]] = i;
 	}
+	sp = 0;
+	for (i = 0; i < G.nprog; i++)
+	{
+		if (line_match(G.prog[i], "DO"))
+		{
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
+		}
+		else if (line_match(G.prog[i], "LOOP") && sp > 0)
+			jmp_loop[st[--sp]] = i;
+	}
+	sp = 0;
+	for (i = 0; i < G.nprog; i++)
+	{
+		if (line_match(G.prog[i], "FOR"))
+		{
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
+		}
+		else if (line_match(G.prog[i], "NEXT") && sp > 0)
+			jmp_next[st[--sp]] = i;
+	}
+	for (i = 0; i < G.nprog; i++)
+	{
+		const char *save = G.p;
+		G.p = after_label(G.prog[i]);
+		if (mmb_match("SUB") || mmb_match("FUNCTION"))
+		{
+			int j;
+			for (j = i + 1; j < G.nprog; j++)
+			{
+				const char *s2 = G.p;
+				G.p = after_label(G.prog[j]);
+				if (mmb_match("END") && (mmb_match("SUB") || mmb_match("FUNCTION")))
+				{
+					jmp_endsub[i] = j;
+					G.p = s2;
+					break;
+				}
+				G.p = s2;
+			}
+		}
+		G.p = save;
+	}
+	sp = 0;
+	for (i = 0; i < G.nprog; i++)
+	{
+		if (line_is_block_if(G.prog[i]))
+		{
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
+		}
+		else if (sp > 0 && (line_match(G.prog[i], "ELSE") ||
+				     line_match(G.prog[i], "ELSEIF")))
+		{
+			if (jmp_else[st[sp - 1]] < 0)
+				jmp_else[st[sp - 1]] = i;
+		}
+		else if (sp > 0 && (line_match(G.prog[i], "ENDIF") ||
+				     line_match_end(G.prog[i], "IF")))
+			jmp_endif[st[--sp]] = i;
+	}
+	sp = 0;
+	for (i = 0; i < G.nprog; i++)
+	{
+		const char *save = G.p;
+		G.p = after_label(G.prog[i]);
+		if (mmb_match("SELECT"))
+		{
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
+		}
+		else if (mmb_match("END") && mmb_match("SELECT") && sp > 0)
+			jmp_endsel[st[--sp]] = i;
+		G.p = save;
+	}
+	jmp_ready = 1;
+}
+
+static int find_wend_pc(int from)
+{
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_wend[from] >= 0)
+		return jmp_wend[from];
 	mmb_error("?WEND");
 	return G.nprog;
 }
 
 static int find_loop_pc(int from)
 {
-	int depth = 1, i;
-	for (i = from + 1; i < G.nprog; i++)
-	{
-		if (line_match(G.prog[i], "DO"))
-			depth++;
-		if (line_match(G.prog[i], "LOOP"))
-		{
-			depth--;
-			if (depth == 0)
-				return i;
-		}
-	}
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_loop[from] >= 0)
+		return jmp_loop[from];
 	mmb_error("?LOOP");
 	return G.nprog;
 }
 
 static int find_endif_pc(int from)
 {
-	int depth = 1, i;
-	for (i = from + 1; i < G.nprog; i++)
-	{
-		if (line_match(G.prog[i], "IF"))
-		{
-			const char *save = G.p;
-			G.p = after_label(G.prog[i]);
-			mmb_match("IF");
-			{
-				mmb_val v = mmb_expr();
-				(void)v;
-				if (mmb_match("THEN") && at_end_of_statement())
-					depth++;
-			}
-			G.p = save;
-		}
-		if (line_match(G.prog[i], "ENDIF"))
-		{
-			depth--;
-			if (depth == 0)
-				return i;
-		}
-	}
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endif[from] >= 0)
+		return jmp_endif[from];
 	mmb_error("?ENDIF");
 	return G.nprog;
 }
 
 static int find_end_select_pc(int from)
 {
-	int depth = 1, i;
-	for (i = from + 1; i < G.nprog; i++)
-	{
-		const char *save = G.p;
-		G.p = after_label(G.prog[i]);
-		if (mmb_match("SELECT"))
-			depth++;
-		if (mmb_match("END") && mmb_match("SELECT"))
-		{
-			depth--;
-			if (depth == 0)
-			{
-				G.p = save;
-				return i;
-			}
-		}
-		G.p = save;
-	}
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endsel[from] >= 0)
+		return jmp_endsel[from];
 	mmb_error("?END SELECT");
 	return G.nprog;
 }
 
 static int find_end_sub_pc(int from)
 {
-	int i;
-	for (i = from + 1; i < G.nprog; i++)
-	{
-		const char *save = G.p;
-		G.p = after_label(G.prog[i]);
-		if (mmb_match("END"))
-		{
-			if (mmb_match("SUB") || mmb_match("FUNCTION"))
-			{
-				G.p = save;
-				return i;
-			}
-		}
-		G.p = save;
-	}
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endsub[from] >= 0)
+		return jmp_endsub[from];
 	mmb_error("?END SUB");
 	return G.nprog;
 }
@@ -615,18 +703,8 @@ void mmb_cmd_exit_do(void)
 
 static int find_next_pc(int from)
 {
-	int depth = 1, i;
-	for (i = from + 1; i < G.nprog; i++)
-	{
-		if (line_match(G.prog[i], "FOR"))
-			depth++;
-		if (line_match(G.prog[i], "NEXT"))
-		{
-			depth--;
-			if (depth == 0)
-				return i;
-		}
-	}
+	if (jmp_ready && from >= 0 && from < G.nprog && jmp_next[from] >= 0)
+		return jmp_next[from];
 	mmb_error("?NEXT");
 	return G.nprog;
 }
@@ -3188,6 +3266,7 @@ static void run_program(void)
 	G.inkey_n = G.inkey_r = G.inkey_w = 0;
 	scan_labels();
 	mmb_tokenize_program();
+	build_jumps();
 	mmb_clear_vars(1);
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;
