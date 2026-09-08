@@ -1848,6 +1848,7 @@ void mmb_cmd_list(void)
 void mmb_cmd_end(void)
 {
 	G.running = 0;
+	mmb_play_stop();
 }
 
 static void load_prog_from_disk(const char *name)
@@ -2150,6 +2151,7 @@ void mmb_check_break(void)
 	if (G.plat && G.plat->take_break && G.plat->take_break())
 	{
 		G.running = 0;
+		mmb_play_stop();
 		mmb_error("?BREAK");
 	}
 }
@@ -3002,6 +3004,7 @@ static void run_program(void)
 		pc++;
 	}
 	G.running = 0;
+	mmb_play_stop();
 }
 
 static void clear_exec_flags(void)

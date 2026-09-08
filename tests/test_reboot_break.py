@@ -31,3 +31,17 @@ def test_ctrl_c_breaks_running_program(fresh_console):
     out = c.send_keys(b"\x03", timeout=6.0)
     assert "BREAK" in out.upper()
     assert c.send_line("PRINT 1+1") == "2"
+
+
+def test_ctrl_c_stops_play(fresh_console):
+    c = fresh_console
+    assert c.send_line("PLAY TONE 440, 440") == ""
+    assert c.send_line("PRINT PLAYING()") == "1"
+    assert c.send_line("10 PAUSE 20") == ""
+    assert c.send_line("20 GOTO 10") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    time.sleep(0.4)
+    out = c.send_keys(b"\x03", timeout=6.0)
+    assert "BREAK" in out.upper()
+    assert c.send_line("PRINT PLAYING()") == "0"
