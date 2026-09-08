@@ -1408,6 +1408,7 @@ static void activate_drop(void)
 	F.drop = -1;
 	if (menu == 0)
 	{
+		F.cur = 0;
 		if (item == 0)
 			set_drive_letter('A');
 		else if (item == 1)
@@ -1449,9 +1450,9 @@ static void activate_drop(void)
 		F.mode = FU_HELP;
 	else
 	{
+		F.cur = 1;
 		if (item == 0)
 		{
-			F.cur = 1;
 			chdir_panel(curpan());
 			set_hint("Right panel");
 		}
