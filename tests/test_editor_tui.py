@@ -767,7 +767,8 @@ def test_editor_quick_open_after_moved_file(kernel_image):
         assert "11" in con.send_line('RUN "TEST.BAS"')
         _edit(con, "TEST.BAS")
         _quit(con)
-        assert con.send_line('RENAME "TEST.BAS" AS "TEST/TEST.BAS"') == ""
+        assert con.send_line('COPY "TEST.BAS" TO "TEST/TEST.BAS"') == ""
+        assert con.send_line('KILL "TEST.BAS"') == ""
         con.drain(quiet=0.1)
         con._ser.sendall(b"EDIT\r")
         seen = _plain(con.drain(quiet=0.8).decode(errors="replace"))
