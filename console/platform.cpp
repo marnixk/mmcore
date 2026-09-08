@@ -227,7 +227,6 @@ static unsigned s_tui_cap;
 static unsigned s_tui_w, s_tui_h, s_tui_pitch;
 
 extern "C" const u8 mmb_cp437_8x16[256 * 16];
-extern "C" const u8 mmb_tnr_8x16[256 * 16];
 extern "C" const u8 mmb_tnr_16x32[95 * 32 * 2];
 extern "C" const u8 mmb_tnr_24x48[95 * 48 * 3];
 extern "C" const u8 mmb_tnr_32x64[95 * 64 * 4];
@@ -462,7 +461,7 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 	}
 	for (y = 0; y < TUI_CH; y++)
 	{
-		bits = glyph_row(mmb_tnr_8x16, ch, y);
+		bits = glyph_row(s_tui_font, ch, y);
 		for (sy = 0; sy < n; sy++)
 		{
 			dst = s_tui_pix + (y0 + y * n + sy) * s_tui_pitch + x0 * (DEPTH / 8);

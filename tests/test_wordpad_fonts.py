@@ -53,3 +53,45 @@ def test_tnr_heading_fonts_are_not_nearest_neighbour():
             if len(block) > 1:
                 mixed += 1
     assert mixed >= 4
+
+
+def _ink_bottom(rows):
+    last = -1
+    for y, row in enumerate(rows):
+        if any(row):
+            last = y
+    return last
+
+
+def test_heading_capitals_share_baseline():
+    """GH-187: A-Z sit on one baseline; Q's tail and gpqy hang below."""
+    h1 = _load_bytes("font_tnr_32x64.c")
+    bottoms = {}
+    for ch in range(ord("A"), ord("Z") + 1):
+        rows = _unpack(h1, ch - 32, 32, 64)
+        b = _ink_bottom(rows)
+        assert b >= 0, chr(ch)
+        bottoms[chr(ch)] = b
+    body = [bottoms[c] for c in bottoms if c != "Q"]
+    cap = max(set(body), key=body.count)
+    assert max(body) - min(body) <= 1, bottoms
+    assert bottoms["Q"] >= cap
+    assert _ink_bottom(_unpack(h1, ord(".") - 32, 32, 64)) == cap
+    for ch in "gjpqy":
+        rows = _unpack(h1, ord(ch) - 32, 32, 64)
+        assert _ink_bottom(rows) >= cap + 3, (ch, _ink_bottom(rows), cap)
+
+
+def test_h2_h3_capitals_share_baseline():
+    for name, w, h in (
+        ("font_tnr_24x48.c", 24, 48),
+        ("font_tnr_16x32.c", 16, 32),
+    ):
+        data = _load_bytes(name)
+        bottoms = {
+            chr(ch): _ink_bottom(_unpack(data, ch - 32, w, h))
+            for ch in range(ord("A"), ord("Z") + 1)
+        }
+        body = [bottoms[c] for c in bottoms if c != "Q"]
+        assert max(body) - min(body) <= 1, (name, bottoms)
+
