@@ -253,11 +253,11 @@ static int wp_chrome(void)
 static int heading_scale(int style)
 {
 	if (style == WP_STYLE_H1)
-		return 3;
+		return 4;
 	if (style == WP_STYLE_H2)
-		return 2;
+		return 3;
 	if (style == WP_STYLE_H3)
-		return 1;
+		return 2;
 	return 1;
 }
 
@@ -269,6 +269,8 @@ static int vrow_h(int vr)
 	s = W.vrows[vr].scale;
 	if (s < 1)
 		return 1;
+	if (s > 4)
+		return 4;
 	return s;
 }
 
@@ -880,8 +882,6 @@ static void wp_serial_dump(void)
 static void wp_leave(void)
 {
 	wp_autosave();
-	if (G.plat && G.plat->tui_set_font)
-		G.plat->tui_set_font(0);
 	mmb_console_apply_colour();
 	memset(&W, 0, sizeof(W));
 }
@@ -2824,7 +2824,7 @@ static void draw_body(void)
 	screen_y = 0;
 	for (vr = 0; vr < W.total_vrows; vr++)
 	{
-		int scale = W.vrows[vr].scale >= 2 ? 2 : 1;
+		int scale = vrow_h(vr);
 		int vh = scale;
 		int ls = W.vrows[vr].line_start;
 		int style = W.vrows[vr].style;
@@ -3195,8 +3195,6 @@ void mmb_cmd_wordpad(void)
 	ser("[WORDPAD]\r\n");
 	if (G.plat && G.plat->tui_prepare)
 		G.plat->tui_prepare();
-	if (G.plat && G.plat->tui_set_font)
-		G.plat->tui_set_font(mmb_tnr_8x16);
 	wp_layout_geom();
 	wp_redraw();
 }

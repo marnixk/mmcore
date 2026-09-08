@@ -227,15 +227,16 @@ static unsigned s_tui_cap;
 static unsigned s_tui_w, s_tui_h, s_tui_pitch;
 
 extern "C" const u8 mmb_cp437_8x16[256 * 16];
+extern "C" const u8 mmb_tnr_8x16[256 * 16];
 
 static const u8 *s_tui_font = mmb_cp437_8x16;
 
-static u8 glyph_row(unsigned ch, unsigned y)
+static u8 glyph_row(const u8 *font, unsigned ch, unsigned y)
 {
 	if (y >= TUI_CH)
 		return 0;
 	ch &= 0xFFu;
-	return s_tui_font[ch * TUI_CH + y];
+	return font[ch * TUI_CH + y];
 }
 
 static void plat_tui_set_font(const unsigned char *font)
@@ -293,7 +294,7 @@ static void plat_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsig
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
 	for (y = 0; y < TUI_CH; y++)
 	{
-		u8 bits = glyph_row(ch, y);
+		u8 bits = glyph_row(s_tui_font, ch, y);
 		u8 *dst = s_tui_pix + (y0 + y) * s_tui_pitch + x0 * (DEPTH / 8);
 		for (x = 0; x < TUI_CW; x++)
 		{
@@ -401,7 +402,7 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
 	for (y = 0; y < TUI_CH; y++)
 	{
-		u8 bits = glyph_row(ch, y);
+		u8 bits = glyph_row(mmb_tnr_8x16, ch, y);
 		for (sy = 0; sy < n; sy++)
 		{
 			dst = s_tui_pix + (y0 + y * n + sy) * s_tui_pitch + x0 * (DEPTH / 8);
