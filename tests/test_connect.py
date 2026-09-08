@@ -14,14 +14,28 @@ def test_connect_requires_host_and_port(console):
 def test_connect_fails_cleanly_without_network(console):
     out = console.send_line('CONNECT "example.com", 23')
     assert "?SYNTAX ERROR" not in out.upper()
-    assert "network not available" in out.lower() or "connect failed" in out.lower()
+    low = out.lower()
+    assert (
+        "network not available" in low
+        or "connect failed" in low
+        or "dns failed" in low
+        or "tcp timeout" in low
+        or "tcp refused" in low
+    )
     assert console.send_line("PRINT 6*7") == "42"
 
 
 def test_connect_numeric_host_still_fails_cleanly(console):
     out = console.send_line('CONNECT "127.0.0.1", 1')
     assert "?SYNTAX ERROR" not in out.upper()
-    assert "network not available" in out.lower() or "connect failed" in out.lower()
+    low = out.lower()
+    assert (
+        "network not available" in low
+        or "connect failed" in low
+        or "dns failed" in low
+        or "tcp timeout" in low
+        or "tcp refused" in low
+    )
     assert console.send_line("PRINT 1+1") == "2"
 
 
@@ -58,3 +72,4 @@ def test_help_ipconfig(console):
     assert "Connected as" in out
     assert "SSID" in out
     assert "gateway" in out.lower() or "DHCP" in out
+    assert "probe" in out.lower() or "unreachable" in out.lower()

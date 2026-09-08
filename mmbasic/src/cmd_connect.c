@@ -266,10 +266,7 @@ void mmb_cmd_connect(void)
 
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
 	{
-		if (!mmb_net_available())
-			mmb_out("Network not available");
-		else
-			mmb_out("Connect failed");
+		mmb_out(mmb_net_tcp_errmsg());
 		return;
 	}
 	C.active = 1;

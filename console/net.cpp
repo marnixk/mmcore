@@ -9,23 +9,34 @@
  * Circle's CSocket::Connect waits until SYN completes or TCP retransmits
  * give up (~90s). That must not run on the interpreter task: TERM/CONNECT
  * would freeze the UI. Open runs on a CTask; the caller polls with a short
- * timeout.
+ * timeout. Circle patch circle-wifi-149.patch wakes Connect() on abort.
  */
 
 #ifdef MMB_CIRCLE_WLAN
 #include <circle/net/netsubsystem.h>
 #include <circle/net/socket.h>
 #include <circle/net/in.h>
+#include <circle/net/dnsclient.h>
+#include <circle/net/ipaddress.h>
+#include <circle/net/error.h>
+#include <circle/net/networklayer.h>
+#include <circle/net/checksumcalculator.h>
+#include <circle/net/icmphandler.h>
+#include <circle/net/transportlayer.h>
 #include <circle/netdevice.h>
 #include <circle/sched/scheduler.h>
 #include <circle/sched/task.h>
 #include <circle/string.h>
 #include <circle/timer.h>
 #include <circle/util.h>
+#include <circle/macros.h>
 #include <circle/new.h>
 #endif
 
 #ifdef MMB_CIRCLE_WLAN
+
+#define MMB_NET_CONNECT_MS  25000
+#define MMB_NET_GW_PROBE_MS 2000
 
 static CSocket *s_sock;
 static u8 s_rx[FRAME_BUFFER_SIZE];
@@ -38,6 +49,44 @@ static volatile unsigned s_gen;
 static volatile int s_open_done;
 static volatile int s_open_result;
 static volatile int s_abandon;
+static volatile int s_task_busy;
+static volatile int s_open_error;
+static char s_pending_host[80];
+static int s_pending_port;
+static volatile int s_pending;
+
+static unsigned s_gw_at;
+static int s_gw_cached;
+
+static void set_error(int err)
+{
+	s_open_error = err;
+}
+
+static const char *err_text(int err)
+{
+	switch (err)
+	{
+	case 1:
+		return "Network not available";
+	case 2:
+		return "DNS failed";
+	case 3:
+		return "TCP timeout";
+	case 4:
+		return "TCP refused";
+	default:
+		return "Connect failed";
+	}
+}
+
+static void abort_inflight(void)
+{
+	CNetSubSystem *net = CNetSubSystem::Get();
+
+	if (net && net->GetTransportLayer())
+		net->GetTransportLayer()->AbortConnecting();
+}
 
 static int wait_net(unsigned ms)
 {
@@ -62,28 +111,161 @@ static int wait_net(unsigned ms)
 	return net->IsRunning() ? 1 : 0;
 }
 
+static int gateway_probe(int force)
+{
+	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetConfig *cfg;
+	CNetworkLayer *nl;
+	const CIPAddress *gw;
+	const CIPAddress *own;
+	unsigned start, now;
+	u8 pkt[12];
+	u8 rx[FRAME_BUFFER_SIZE];
+	unsigned rxn;
+	CIPAddress sender, recv;
+	static u16 s_seq;
+
+	now = CTimer::GetClockTicks();
+	if (!force && s_gw_at && now - s_gw_at < 2000u * 1000u)
+		return s_gw_cached;
+
+	s_gw_cached = 0;
+	s_gw_at = now;
+	if (!net)
+		return 0;
+	cfg = net->GetConfig();
+	nl = net->GetNetworkLayer();
+	if (!cfg || !nl)
+		return 0;
+	gw = cfg->GetDefaultGateway();
+	own = cfg->GetIPAddress();
+	if (!gw || !gw->IsSet() || gw->IsNull() || !own || !own->IsSet() || own->IsNull())
+		return 0;
+
+	memset(pkt, 0, sizeof pkt);
+	pkt[0] = ICMP_TYPE_ECHO;
+	pkt[1] = ICMP_CODE_ECHO;
+	s_seq++;
+	pkt[4] = (u8)(0x4D);
+	pkt[5] = (u8)(0x4D);
+	pkt[6] = (u8)(s_seq >> 8);
+	pkt[7] = (u8)(s_seq & 0xFF);
+	pkt[8] = 'm';
+	pkt[9] = 'm';
+	pkt[10] = 'b';
+	pkt[11] = 0;
+	{
+		u16 csum = CChecksumCalculator::SimpleCalculate(pkt, sizeof pkt);
+		memcpy(pkt + 2, &csum, sizeof csum);
+	}
+
+	nl->EnableReceiveICMP(TRUE);
+	if (!nl->Send(*gw, pkt, sizeof pkt, IPPROTO_ICMP))
+	{
+		nl->EnableReceiveICMP(FALSE);
+		return 0;
+	}
+
+	start = CTimer::GetClockTicks();
+	while (CTimer::GetClockTicks() - start < MMB_NET_GW_PROBE_MS * 1000u)
+	{
+		rxn = 0;
+		if (nl->ReceiveICMP(rx, &rxn, &sender, &recv) && rxn >= 8)
+		{
+			if (rx[0] == ICMP_TYPE_ECHO_REPLY &&
+			    rx[4] == pkt[4] && rx[5] == pkt[5])
+			{
+				s_gw_cached = 1;
+				s_gw_at = CTimer::GetClockTicks();
+				nl->EnableReceiveICMP(FALSE);
+				return 1;
+			}
+		}
+		if (CScheduler::IsActive())
+			CScheduler::Get()->MsSleep(50);
+		else
+			CTimer::SimpleMsDelay(50);
+	}
+	nl->EnableReceiveICMP(FALSE);
+	return 0;
+}
+
+static int live_net(void)
+{
+	CNetSubSystem *net = CNetSubSystem::Get();
+
+	if (!net || !net->IsRunning())
+		return 0;
+	return gateway_probe(0);
+}
+
+static int map_connect_rc(int rc)
+{
+	if (rc == 0)
+		return 0;
+	if (s_abandon)
+	{
+		set_error(3);
+		return -1;
+	}
+	if (rc == -NET_ERROR_CONNECTION_REFUSED)
+	{
+		set_error(4);
+		return -1;
+	}
+	if (rc == -NET_ERROR_CONNECTION_TIMED_OUT)
+	{
+		set_error(3);
+		return -1;
+	}
+	set_error(5);
+	return -1;
+}
+
 static int tcp_connect_once(CSocket **out_sock)
 {
 	CNetSubSystem *net = CNetSubSystem::Get();
-	CString portstr;
 	CSocket *sock;
+	CIPAddress ip;
+	int rc;
 
 	*out_sock = 0;
 	if (!net)
+	{
+		set_error(1);
 		return -1;
-	if (!wait_net(3000))
+	}
+	if (!wait_net(3000) || !live_net())
+	{
+		set_error(1);
+		return -1;
+	}
+	if (s_abandon)
+		return -1;
+	{
+		CDNSClient dns(net);
+		if (!dns.Resolve(s_open_host, &ip))
+		{
+			set_error(2);
+			return -1;
+		}
+	}
+	if (s_abandon)
 		return -1;
 	sock = new CSocket(net, IPPROTO_TCP);
 	if (!sock)
-		return -1;
-	portstr.Format("%u", (unsigned)s_open_port);
-	if (static_cast<CNetSocket *>(sock)->Connect(s_open_host,
-						      (const char *)portstr) < 0)
 	{
-		delete sock;
+		set_error(5);
 		return -1;
 	}
+	rc = sock->Connect(ip, (u16)s_open_port);
+	if (s_abandon || rc < 0)
+	{
+		delete sock;
+		return map_connect_rc(rc);
+	}
 	*out_sock = sock;
+	set_error(0);
 	return 0;
 }
 
@@ -99,12 +281,16 @@ public:
 	void Run(void)
 	{
 		CSocket *sock = 0;
-		int rc = tcp_connect_once(&sock);
+		int rc;
+
+		s_task_busy = 1;
+		rc = tcp_connect_once(&sock);
 
 		if (m_gen != s_gen || s_abandon)
 		{
 			if (sock)
 				delete sock;
+			s_task_busy = 0;
 			return;
 		}
 		if (rc == 0)
@@ -117,20 +303,41 @@ public:
 			s_open_result = -1;
 		}
 		s_open_done = 1;
+		s_task_busy = 0;
 	}
 
 private:
 	unsigned m_gen;
 };
 
+static void start_open_task(void)
+{
+	s_open_done = 0;
+	s_open_result = -1;
+	s_abandon = 0;
+	s_gen++;
+	new CTcpOpenTask(s_gen);
+}
+
 extern "C" {
+
+int mmb_net_gateway_ok(int force)
+{
+	CNetSubSystem *net = CNetSubSystem::Get();
+
+	if (!net || !net->IsRunning())
+		return 0;
+	return gateway_probe(force ? 1 : 0);
+}
 
 void mmb_net_tcp_close(void)
 {
 	s_abandon = 1;
+	s_pending = 0;
 	s_gen++;
 	s_rxn = 0;
 	s_rxoff = 0;
+	abort_inflight();
 	if (s_sock)
 	{
 		delete s_sock;
@@ -140,8 +347,17 @@ void mmb_net_tcp_close(void)
 
 int mmb_net_available(void)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
-	return (net && net->IsRunning()) ? 1 : 0;
+	return live_net() ? 1 : 0;
+}
+
+const char *mmb_net_tcp_errmsg(void)
+{
+	return err_text(s_open_error);
+}
+
+int mmb_net_tcp_cancelling(void)
+{
+	return (s_pending && s_task_busy) ? 1 : 0;
 }
 
 int mmb_net_tcp_begin(const char *host, int port)
@@ -149,14 +365,24 @@ int mmb_net_tcp_begin(const char *host, int port)
 	unsigned n;
 
 	if (!host || !host[0] || port < 1 || port > 65535)
+	{
+		set_error(5);
 		return -1;
+	}
 	if (!CNetSubSystem::Get())
+	{
+		set_error(1);
 		return -1;
+	}
 	if (!CScheduler::IsActive())
+	{
+		set_error(1);
 		return -1;
+	}
 
 	s_abandon = 1;
 	s_gen++;
+	abort_inflight();
 	if (s_sock)
 	{
 		delete s_sock;
@@ -173,11 +399,24 @@ int mmb_net_tcp_begin(const char *host, int port)
 	}
 	s_open_host[n] = 0;
 	s_open_port = port;
-	s_open_done = 0;
-	s_open_result = -1;
-	s_abandon = 0;
-	s_gen++;
-	new CTcpOpenTask(s_gen);
+	set_error(0);
+
+	if (s_task_busy)
+	{
+		n = 0;
+		while (host[n] && n + 1 < sizeof s_pending_host)
+		{
+			s_pending_host[n] = host[n];
+			n++;
+		}
+		s_pending_host[n] = 0;
+		s_pending_port = port;
+		s_pending = 1;
+		return 0;
+	}
+
+	s_pending = 0;
+	start_open_task();
 	return 0;
 }
 
@@ -185,7 +424,24 @@ int mmb_net_tcp_status(void)
 {
 	if (s_sock)
 		return 1;
-	if (s_abandon)
+	if (s_pending && !s_task_busy)
+	{
+		unsigned n = 0;
+
+		while (s_pending_host[n] && n + 1 < sizeof s_open_host)
+		{
+			s_open_host[n] = s_pending_host[n];
+			n++;
+		}
+		s_open_host[n] = 0;
+		s_open_port = s_pending_port;
+		s_pending = 0;
+		start_open_task();
+		return 0;
+	}
+	if (s_pending)
+		return 0;
+	if (s_abandon && !s_task_busy && !s_open_done)
 		return -1;
 	if (s_open_done)
 		return s_open_result == 0 ? 1 : -1;
@@ -206,8 +462,9 @@ int mmb_net_tcp_open(const char *host, int port)
 			return 0;
 		if (st < 0)
 			return -1;
-		if (CTimer::GetClockTicks() - start > 8000u * 1000u)
+		if (CTimer::GetClockTicks() - start > MMB_NET_CONNECT_MS * 1000u)
 		{
+			set_error(3);
 			mmb_net_tcp_close();
 			return -1;
 		}
@@ -280,6 +537,22 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 extern "C" {
 
 int mmb_net_available(void)
+{
+	return 0;
+}
+
+int mmb_net_gateway_ok(int force)
+{
+	(void)force;
+	return 0;
+}
+
+const char *mmb_net_tcp_errmsg(void)
+{
+	return "Network not available";
+}
+
+int mmb_net_tcp_cancelling(void)
 {
 	return 0;
 }

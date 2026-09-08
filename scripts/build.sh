@@ -30,6 +30,13 @@ log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 # lines, WLAN). Without this, sysinit halt()s before any banner.
 ( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} --kernel-max-size 4 -f )
 
+if grep -q 'mmbasic-issue-149' "${CIRCLE_DIR}/addon/wlan/ether4330.c" 2>/dev/null; then
+	:
+else
+	log "Applying Circle Wi-Fi patches (#149)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-wifi-149.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

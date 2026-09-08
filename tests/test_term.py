@@ -72,6 +72,7 @@ def test_help_term(console):
     assert "page" in low
     assert "fade out" not in low
     assert any(k in low for k in ("scroll", "slate"))
+    assert "dns" in low or "tcp" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -144,7 +145,13 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
     try:
         seen = _open_term(con, 'TERM "127.0.0.1", 23', quiet=0.8, timeout=10.0)
         low = seen.lower()
-        assert "network not available" in low or "connect failed" in low
+        assert (
+            "network not available" in low
+            or "connect failed" in low
+            or "dns failed" in low
+            or "tcp timeout" in low
+            or "tcp refused" in low
+        )
         _f10(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
@@ -165,6 +172,10 @@ def test_term_wrong_port_does_not_hang(kernel_image):
             "network not available" in low
             or "connect failed" in low
             or "connecting" in low
+            or "dns failed" in low
+            or "tcp timeout" in low
+            or "tcp refused" in low
+            or "cancelling" in low
         )
         _f10(con)
         assert con.send_line("PRINT 9") == "9"
