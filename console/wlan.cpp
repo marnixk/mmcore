@@ -168,15 +168,22 @@ static int apply_radio_country(void)
 
 static int wlan_ensure(void)
 {
-	if (s_tried)
-		return s_ready;
-	s_tried = 1;
-	s_ready = 0;
+	if (s_ready)
+		return 1;
 	if (!firmware_present())
 	{
-		wlan_log("no brcmfmac firmware on C:/firmware/");
+		static int noted;
+		if (!noted)
+		{
+			wlan_log("no brcmfmac firmware on C:/firmware/");
+			noted = 1;
+		}
 		return 0;
 	}
+	if (s_tried)
+		return 0;
+	s_tried = 1;
+	s_ready = 0;
 	wlan_log("firmware present, initialising radio");
 	sched_ensure();
 	s_wlan = new CBcm4343Device("SD:/firmware/");
@@ -193,6 +200,10 @@ static int wlan_ensure(void)
 		return 0;
 	}
 	wlan_log("radio up");
+	if (CScheduler::IsActive())
+		CScheduler::Get()->MsSleep(300);
+	else
+		CTimer::SimpleMsDelay(300);
 	if (!apply_radio_country())
 		wlan_log("country apply failed; join needs a Circle-accepted code");
 	s_net = new CNetSubSystem(0, 0, 0, 0, "mmbasic", NetDeviceTypeWLAN);
@@ -208,6 +219,13 @@ static int wlan_ensure(void)
 		wlan_log("net stack ready (DHCP after link)");
 	s_ready = 1;
 	return 1;
+}
+
+int mmb_wlan_radio_pending(void)
+{
+	if (s_ready || s_tried)
+		return 0;
+	return firmware_present() ? 0 : 1;
 }
 
 static void append_quoted(char *out, unsigned *n, unsigned max, const char *s)
@@ -281,6 +299,10 @@ static int start_wpa(const char *ssid, const char *psk)
 		wlan_log("restarting wpa_supplicant");
 		delete s_wpa;
 		s_wpa = 0;
+		if (CScheduler::IsActive())
+			CScheduler::Get()->MsSleep(200);
+		else
+			CTimer::SimpleMsDelay(200);
 	}
 	s_wpa = new CWPASupplicant("SD:/wpa_supplicant.conf");
 	if (!s_wpa)
@@ -580,6 +602,11 @@ void mmb_wlan_apply_country(void)
 #else /* !MMB_CIRCLE_WLAN */
 
 int mmb_wlan_available(void)
+{
+	return 0;
+}
+
+int mmb_wlan_radio_pending(void)
 {
 	return 0;
 }

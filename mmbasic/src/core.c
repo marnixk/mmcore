@@ -3123,11 +3123,12 @@ void mmb_poll(void)
 	static int wifi_boot;
 	mmb_storage_poll();
 	mmb_wlan_poll();
-	if (!wifi_boot)
+	if (!wifi_boot && G.opt.wifi_enabled && G.opt.wifi_ssid[0])
 	{
-		wifi_boot = 1;
-		if (G.opt.wifi_enabled && G.opt.wifi_ssid[0])
-			mmb_wlan_start(G.opt.wifi_ssid, G.opt.wifi_psk);
+		if (mmb_wlan_start(G.opt.wifi_ssid, G.opt.wifi_psk) == 0)
+			wifi_boot = 1;
+		else if (!mmb_wlan_radio_pending())
+			wifi_boot = 1;
 	}
 	mmb_connect_poll();
 	mmb_term_poll();
