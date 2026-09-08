@@ -66,10 +66,8 @@ def test_wordpad_exit_cls_and_restores_colour(kernel_image):
         _keys(con, b"Hello")
         time.sleep(0.2)
         pane = con.screen_pixel(80, 80)
-        con._ser.sendall(bytes([24]))
-        raw = con.drain(quiet=0.6)
-        assert b"\x1b[J" in raw or b"\x1b[H" in raw
-        time.sleep(0.2)
+        _quit(con)
+        time.sleep(0.3)
         after = con.screen_pixel(80, 80)
         assert after != pane or (after[0] + after[1] + after[2] < 40)
         pix = int(con.send_line("PRINT PIXEL(40,80)"))
