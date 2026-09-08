@@ -120,8 +120,8 @@ The console runs the local interpreter in `mmbasic/`. Immediate mode at the
   `BOX`, `CIRCLE`, `RBOX`, `TRIANGLE`, `POLYGON`, `ARC`, `TEXT`, `FONT`, `COLOUR`, `PAGE`,
   `BLIT`, `RGB()`, `PIXEL()`
 - files: `DRIVE`, `CHDIR`, `DIR`/`FILES`, `MKDIR`, `RMDIR`, `COPY`, `RENAME`/`NAME`,
-  `KILL`, `OPEN`/`CLOSE`, `PRINT #`, `INPUT #`, `SEEK`, `SAVE`
-  (`A:` ramdisk, `C:` SD card, `D:`… USB mass storage)
+  `KILL`, `OPEN`/`CLOSE`, `PRINT #`, `INPUT #`, `SEEK`, `SAVE`, `PACKAGE`
+  (`A:` ramdisk, `C:` SD card, `D:`… USB mass storage; `RUN "name.pkg"` mounts `B:`)
 - `LOAD PNG` / `LOAD JPG`, `PLAY MP3` / `PLAY MODFILE` / `PLAY XM` / `PLAY TONE`
   (`OPTION AUDIO_TARGET HDMI|JACK`)
 - `EDIT "file.bas"` — nano-like (`Ctrl+O` write, `Ctrl+X` exit, `Ctrl+R` run)

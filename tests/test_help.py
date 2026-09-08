@@ -12,6 +12,7 @@ def test_help_lists_commands(console):
         "PIXEL",
         "DIR",
         "FILES",
+        "PACKAGE",
         "OPEN",
         "MODE",
         "PLAY",

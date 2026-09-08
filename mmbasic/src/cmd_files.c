@@ -16,6 +16,8 @@ static char *need_path(void)
 void mmb_cmd_chdir(void)
 {
 	char *p = need_path();
+	if (!G.running && p[0] && (p[0] == 'B' || p[0] == 'b') && p[1] == ':')
+		mmb_error("?DRIVE");
 	if (mmb_vfs_chdir(p) != 0)
 	{
 		if (p[1] == ':' && (p[2] == 0 || p[2] == '/' || p[2] == '\\'))
@@ -26,19 +28,28 @@ void mmb_cmd_chdir(void)
 
 void mmb_cmd_mkdir(void)
 {
-	if (mmb_vfs_mkdir(need_path()) != 0)
+	char *p = need_path();
+	if (mmb_vfs_readonly_path(p))
+		mmb_error("?READ ONLY");
+	if (mmb_vfs_mkdir(p) != 0)
 		mmb_error("?DIRECTORY");
 }
 
 void mmb_cmd_rmdir(void)
 {
-	if (mmb_vfs_rmdir(need_path()) != 0)
+	char *p = need_path();
+	if (mmb_vfs_readonly_path(p))
+		mmb_error("?READ ONLY");
+	if (mmb_vfs_rmdir(p) != 0)
 		mmb_error("?DIRECTORY");
 }
 
 void mmb_cmd_kill(void)
 {
-	if (mmb_vfs_kill(need_path()) != 0)
+	char *p = need_path();
+	if (mmb_vfs_readonly_path(p))
+		mmb_error("?READ ONLY");
+	if (mmb_vfs_kill(p) != 0)
 		mmb_error("?FILE NOT FOUND");
 }
 
@@ -56,6 +67,8 @@ void mmb_cmd_copy(void)
 			G.p++;
 	}
 	strncpy(dst, need_path(), sizeof(dst) - 1);
+	if (mmb_vfs_readonly_path(dst))
+		mmb_error("?READ ONLY");
 	if (mmb_vfs_copy(src, dst) != 0)
 		mmb_error("?FILE");
 }
@@ -71,6 +84,8 @@ void mmb_cmd_name(void)
 			G.p++;
 	}
 	strncpy(dst, need_path(), sizeof(dst) - 1);
+	if (mmb_vfs_readonly_path(dst) || mmb_vfs_readonly_path(src))
+		mmb_error("?READ ONLY");
 	if (mmb_vfs_rename(src, dst) != 0)
 		mmb_error("?FILE");
 }
@@ -128,8 +143,13 @@ void mmb_cmd_open(void)
 	fn = (int)mmb_as_int(mmb_expr());
 	if (fn < 1 || fn > MMB_MAX_FILES)
 		mmb_error("?FILE NUMBER");
-	if (mode == 1)
-		mmb_vfs_write(path, "", 0, 0);
+	if (mode == 1 || mode == 2)
+	{
+		if (mmb_vfs_readonly_path(path))
+			mmb_error("?READ ONLY");
+		if (mode == 1 && mmb_vfs_write(path, "", 0, 0) != 0)
+			mmb_error("?FILE");
+	}
 	memset(&G.files[fn], 0, sizeof(G.files[fn]));
 	G.files[fn].open = 1;
 	G.files[fn].mode = mode;
