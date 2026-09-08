@@ -451,6 +451,9 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
 extern const unsigned char mmb_cp437_8x16[256 * 16];
 extern const unsigned char mmb_tnr_8x16[256 * 16];
+extern const unsigned char mmb_tnr_16x32[95 * 32 * 2];
+extern const unsigned char mmb_tnr_24x48[95 * 48 * 3];
+extern const unsigned char mmb_tnr_32x64[95 * 64 * 4];
 void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);

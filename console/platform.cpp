@@ -228,6 +228,9 @@ static unsigned s_tui_w, s_tui_h, s_tui_pitch;
 
 extern "C" const u8 mmb_cp437_8x16[256 * 16];
 extern "C" const u8 mmb_tnr_8x16[256 * 16];
+extern "C" const u8 mmb_tnr_16x32[95 * 32 * 2];
+extern "C" const u8 mmb_tnr_24x48[95 * 48 * 3];
+extern "C" const u8 mmb_tnr_32x64[95 * 64 * 4];
 
 static const u8 *s_tui_font = mmb_cp437_8x16;
 
@@ -380,12 +383,54 @@ static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rg
 	plat_tui_present(y, y + h - 1);
 }
 
+static void plat_plot_tui(u8 *dst, unsigned x, TScreenColor c)
+{
+#if DEPTH == 32
+	reinterpret_cast<u32 *>(dst)[x] = (u32)c;
+#elif DEPTH == 16
+	reinterpret_cast<u16 *>(dst)[x] = (u16)c;
+#else
+	dst[x] = (u8)c;
+#endif
+}
+
+static const u8 *tnr_native(int scale, unsigned ch, unsigned *gw, unsigned *gh, unsigned *rowb)
+{
+	if (ch < 32 || ch > 126)
+		return 0;
+	ch -= 32;
+	if (scale == 2)
+	{
+		*gw = 16;
+		*gh = 32;
+		*rowb = 2;
+		return mmb_tnr_16x32 + ch * 32 * 2;
+	}
+	if (scale == 3)
+	{
+		*gw = 24;
+		*gh = 48;
+		*rowb = 3;
+		return mmb_tnr_24x48 + ch * 48 * 3;
+	}
+	if (scale == 4)
+	{
+		*gw = 32;
+		*gh = 64;
+		*rowb = 4;
+		return mmb_tnr_32x64 + ch * 64 * 4;
+	}
+	return 0;
+}
+
 static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
 			     int scale)
 {
-	unsigned x0, y0, x, y, sx, sy, n;
+	unsigned x0, y0, x, y, sx, sy, n, gw, gh, rowb;
+	const u8 *glyph;
 	TScreenColor fg, bg, c;
 	u8 *dst;
+	u8 bits;
 
 	if (scale < 1)
 		scale = 1;
@@ -400,9 +445,24 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 		return;
 	fg = (TScreenColor)rgb_to_raw(fg_rgb);
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
+	glyph = tnr_native(scale, ch, &gw, &gh, &rowb);
+	if (glyph)
+	{
+		for (y = 0; y < gh; y++)
+		{
+			dst = s_tui_pix + (y0 + y) * s_tui_pitch + x0 * (DEPTH / 8);
+			for (x = 0; x < gw; x++)
+			{
+				bits = glyph[y * rowb + x / 8];
+				c = (bits & (u8)(0x80 >> (x % 8))) ? fg : bg;
+				plat_plot_tui(dst, x, c);
+			}
+		}
+		return;
+	}
 	for (y = 0; y < TUI_CH; y++)
 	{
-		u8 bits = glyph_row(mmb_tnr_8x16, ch, y);
+		bits = glyph_row(mmb_tnr_8x16, ch, y);
 		for (sy = 0; sy < n; sy++)
 		{
 			dst = s_tui_pix + (y0 + y * n + sy) * s_tui_pitch + x0 * (DEPTH / 8);
@@ -410,15 +470,7 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 			{
 				c = (bits & (u8)(0x80 >> x)) ? fg : bg;
 				for (sx = 0; sx < n; sx++)
-				{
-#if DEPTH == 32
-					reinterpret_cast<u32 *>(dst)[x * n + sx] = (u32)c;
-#elif DEPTH == 16
-					reinterpret_cast<u16 *>(dst)[x * n + sx] = (u16)c;
-#else
-					dst[x * n + sx] = (u8)c;
-#endif
-				}
+					plat_plot_tui(dst, x * n + sx, c);
 			}
 		}
 	}
