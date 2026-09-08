@@ -270,9 +270,24 @@ class MMBasicConsole:
             ["convert", png, "-format", f"%[pixel:p{{{x},{y}}}]", "info:"],
             check=True, capture_output=True, text=True,
         ).stdout.strip()
-        nums = out[out.find("(") + 1 : out.find(")")].split(",")
-        r, g, b = (int(float(n)) for n in nums[:3])
-        return r, g, b
+        if "(" in out and ")" in out:
+            nums = out[out.find("(") + 1 : out.find(")")].split(",")
+            r, g, b = (int(float(n)) for n in nums[:3])
+            return r, g, b
+        named = {
+            "black": (0, 0, 0),
+            "white": (255, 255, 255),
+            "red": (255, 0, 0),
+            "green": (0, 128, 0),
+            "lime": (0, 255, 0),
+            "blue": (0, 0, 255),
+            "gray": (128, 128, 128),
+            "grey": (128, 128, 128),
+        }
+        key = out.lower().split()[0]
+        if key in named:
+            return named[key]
+        raise HarnessError(f"unparsed pixel colour: {out!r}")
 
     def image_diff_ratio(self, golden_png: str, fuzz: str = "12%") -> float:
         """Fraction of pixels that differ between the current screen and a
