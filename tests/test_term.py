@@ -253,7 +253,7 @@ def test_term_esc_idle_then_f10(kernel_image):
 
 
 def _max_dump_width(text: str) -> int:
-    return max((len(ln.rstrip("\r")) for ln in text.split("\n")), default=0)
+    return max((len(ln.replace("\r", "")) for ln in text.split("\n")), default=0)
 
 
 def test_term_file_menu_boxed_full_toggle(kernel_image):
