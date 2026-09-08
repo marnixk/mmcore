@@ -485,6 +485,8 @@ unsigned mmb_rgb_pack(int r, int g, int b);
 void mmb_rgb_unpack(unsigned c, int *r, int *g, int *b);
 unsigned mmb_quantize(unsigned rgb888);
 unsigned mmb_named_colour(const char *name, int *ok);
+unsigned mmb_ibm_colour(int n);
+unsigned mmb_colour_from_int(int64_t v);
 
 void mmb_vfs_init(void);
 int mmb_vfs_chdir(const char *path);

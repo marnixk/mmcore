@@ -360,12 +360,12 @@ static void option_dispatch(void)
 		}
 		if (mmb_match("COLOURS") || mmb_match("COLORS"))
 		{
-			G.gfx.fg = (unsigned)mmb_as_int(mmb_expr());
+			G.gfx.fg = mmb_colour_from_int(mmb_as_int(mmb_expr()));
 			mmb_skip_sp();
 			if (*G.p == ',')
 			{
 				G.p++;
-				G.gfx.bg = (unsigned)mmb_as_int(mmb_expr());
+				G.gfx.bg = mmb_colour_from_int(mmb_as_int(mmb_expr()));
 			}
 			mmb_console_apply_colour();
 			return;

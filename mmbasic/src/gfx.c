@@ -62,6 +62,29 @@ unsigned mmb_quantize(unsigned rgb888)
 	return mmb_rgb_pack(r, g, b);
 }
 
+unsigned mmb_ibm_colour(int n)
+{
+	static const unsigned pal[16] = {
+		0x000000u, 0x0000AAu, 0x00AA00u, 0x00AAAAu,
+		0xAA0000u, 0xAA00AAu, 0xAA5500u, 0xAAAAAAu,
+		0x555555u, 0x5555FFu, 0x55FF55u, 0x55FFFFu,
+		0xFF5555u, 0xFF55FFu, 0xFFFF55u, 0xFFFFFFu
+	};
+	if (n < 0)
+		n = 0;
+	n &= 31;
+	if (n >= 16)
+		n -= 16;
+	return pal[n];
+}
+
+unsigned mmb_colour_from_int(int64_t v)
+{
+	if (v >= 0 && v <= 31)
+		return mmb_ibm_colour((int)v);
+	return (unsigned)v;
+}
+
 unsigned mmb_named_colour(const char *name, int *ok)
 {
 	char n[32];
@@ -74,21 +97,32 @@ unsigned mmb_named_colour(const char *name, int *ok)
 	}
 	n[i] = 0;
 	mmb_upper(n);
-	if (mmb_keyword_eq(n, "BLACK")) return 0x000000;
-	if (mmb_keyword_eq(n, "RED")) return 0xFF0000;
-	if (mmb_keyword_eq(n, "GREEN")) return 0x00FF00;
-	if (mmb_keyword_eq(n, "BLUE")) return 0x0000FF;
-	if (mmb_keyword_eq(n, "YELLOW")) return 0xFFFF00;
-	if (mmb_keyword_eq(n, "CYAN")) return 0x00FFFF;
-	if (mmb_keyword_eq(n, "MAGENTA")) return 0xFF00FF;
-	if (mmb_keyword_eq(n, "WHITE")) return 0xFFFFFF;
+	if (mmb_keyword_eq(n, "BLACK")) return mmb_ibm_colour(0);
+	if (mmb_keyword_eq(n, "BLUE")) return mmb_ibm_colour(1);
+	if (mmb_keyword_eq(n, "GREEN")) return mmb_ibm_colour(2);
+	if (mmb_keyword_eq(n, "CYAN")) return mmb_ibm_colour(3);
+	if (mmb_keyword_eq(n, "RED")) return mmb_ibm_colour(4);
+	if (mmb_keyword_eq(n, "MAGENTA")) return mmb_ibm_colour(5);
+	if (mmb_keyword_eq(n, "BROWN")) return mmb_ibm_colour(6);
+	if (mmb_keyword_eq(n, "LIGHTGRAY") || mmb_keyword_eq(n, "LIGHTGREY"))
+		return mmb_ibm_colour(7);
+	if (mmb_keyword_eq(n, "DARKGRAY") || mmb_keyword_eq(n, "DARKGREY") ||
+	    mmb_keyword_eq(n, "LIGHTBLACK"))
+		return mmb_ibm_colour(8);
+	if (mmb_keyword_eq(n, "LIGHTBLUE")) return mmb_ibm_colour(9);
+	if (mmb_keyword_eq(n, "LIGHTGREEN")) return mmb_ibm_colour(10);
+	if (mmb_keyword_eq(n, "LIGHTCYAN")) return mmb_ibm_colour(11);
+	if (mmb_keyword_eq(n, "LIGHTRED")) return mmb_ibm_colour(12);
+	if (mmb_keyword_eq(n, "LIGHTMAGENTA")) return mmb_ibm_colour(13);
+	if (mmb_keyword_eq(n, "YELLOW") || mmb_keyword_eq(n, "LIGHTYELLOW"))
+		return mmb_ibm_colour(14);
+	if (mmb_keyword_eq(n, "WHITE") || mmb_keyword_eq(n, "LIGHTWHITE"))
+		return mmb_ibm_colour(15);
+	if (mmb_keyword_eq(n, "GRAY") || mmb_keyword_eq(n, "GREY")) return 0x808080;
 	if (mmb_keyword_eq(n, "ORANGE")) return 0xFF8000;
 	if (mmb_keyword_eq(n, "PINK")) return 0xFF80FF;
 	if (mmb_keyword_eq(n, "GOLD")) return 0xFFD700;
 	if (mmb_keyword_eq(n, "SALMON")) return 0xFA8072;
-	if (mmb_keyword_eq(n, "BROWN")) return 0xA52A2A;
-	if (mmb_keyword_eq(n, "GRAY")) return 0x808080;
-	if (mmb_keyword_eq(n, "GREY")) return 0x808080;
 	*ok = 0;
 	return 0;
 }

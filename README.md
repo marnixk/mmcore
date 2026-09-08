@@ -128,5 +128,6 @@ The console runs the local interpreter in `mmbasic/`. Immediate mode at the
   (`OPTION AUDIO_TARGET HDMI|JACK`)
 - `EDIT "file.bas"` — nano-like (`Ctrl+O` write, `Ctrl+X` exit, `Ctrl+R` run)
 
-Colours: `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK` and `RGB(r,g,b)`.
+Colours: IBM PC palette 0-31 (`COLOUR 4`, `LIGHTRED`) plus
+`WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK` and `RGB(r,g,b)`.
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
