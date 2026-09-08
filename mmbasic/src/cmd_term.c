@@ -33,6 +33,7 @@ extern void mmb_gfx_copy_page(int src, int dst);
 #define TM_DEMO_MIN_MS  120
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
+#define TM_CONNECT_MS   8000
 #define TM_MENU_BG      0x243040u
 #define TM_MENU_HI      0x3A6EA5u
 
@@ -40,6 +41,8 @@ typedef struct {
 	int active;
 	int demo;
 	int tcp;
+	int connecting;
+	unsigned connect_at;
 	int net_fail;
 	char net_msg[48];
 	char host[80];
@@ -387,7 +390,9 @@ static void term_draw_status(void)
 	}
 	term_put_str(x0, y, left, TM_DIM);
 	right[0] = 0;
-	if (T.net_fail && T.net_msg[0])
+	if (T.connecting)
+		strncpy(right, "Connecting...", sizeof(right) - 1);
+	else if (T.net_fail && T.net_msg[0])
 		strncpy(right, T.net_msg, sizeof(right) - 1);
 	else if (T.demo)
 		strncpy(right, "demo", sizeof(right) - 1);
@@ -449,11 +454,9 @@ static void term_draw(void)
 
 static void term_exit(void)
 {
-	if (T.tcp)
-	{
-		mmb_net_tcp_close();
-		T.tcp = 0;
-	}
+	mmb_net_tcp_close();
+	T.tcp = 0;
+	T.connecting = 0;
 	if (T.saved_mode)
 	{
 		int bits = T.saved_bits;
@@ -1159,7 +1162,7 @@ void mmb_cmd_term(void)
 	ser("TERM\r\n");
 	if (!T.demo)
 	{
-		if (mmb_net_tcp_open(T.host, T.port) != 0)
+		if (mmb_net_tcp_begin(T.host, T.port) != 0)
 		{
 			T.net_fail = 1;
 			if (!mmb_net_available())
@@ -1168,7 +1171,10 @@ void mmb_cmd_term(void)
 				strncpy(T.net_msg, "Connect failed", sizeof(T.net_msg) - 1);
 		}
 		else
-			T.tcp = 1;
+		{
+			T.connecting = 1;
+			T.connect_at = mmb_now_ms();
+		}
 	}
 
 	mode = (G.gfx.mode == 16) ? 16 : 14;
@@ -1195,6 +1201,11 @@ void mmb_cmd_term(void)
 	if (T.net_fail && T.net_msg[0])
 	{
 		pane_puts(T.net_msg);
+		pane_newline();
+	}
+	else if (T.connecting)
+	{
+		pane_puts("Connecting...");
 		pane_newline();
 	}
 	else if (T.demo)
@@ -1360,6 +1371,38 @@ void mmb_term_poll(void)
 		demo_emit_line();
 	if (T.need_draw)
 		term_draw();
+	if (T.connecting)
+	{
+		int st = mmb_net_tcp_status();
+		if (st == 0 && mmb_now_ms() - T.connect_at < TM_CONNECT_MS)
+			return;
+		T.connecting = 0;
+		if (st == 1)
+		{
+			T.tcp = 1;
+			telnet_announce();
+			pane_puts("Connected");
+			pane_newline();
+			term_draw();
+			term_serial_dump();
+		}
+		else
+		{
+			mmb_net_tcp_close();
+			T.net_fail = 1;
+			if (!mmb_net_available())
+				strncpy(T.net_msg, "Network not available",
+					sizeof(T.net_msg) - 1);
+			else
+				strncpy(T.net_msg, "Connect failed",
+					sizeof(T.net_msg) - 1);
+			pane_puts(T.net_msg);
+			pane_newline();
+			term_draw();
+			term_serial_dump();
+			return;
+		}
+	}
 	if (!T.tcp)
 		return;
 	for (loops = 0; loops < 32; loops++)

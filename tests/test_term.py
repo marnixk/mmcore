@@ -151,6 +151,27 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
         con.stop()
 
 
+def test_term_wrong_port_does_not_hang(kernel_image):
+    """Wrong host/port must enter the TUI quickly so F10 can quit."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        t0 = time.monotonic()
+        seen = _open_term(con, 'TERM "20forbeers.com", 137', quiet=0.8, timeout=6.0)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 5.0, elapsed
+        low = seen.lower()
+        assert (
+            "network not available" in low
+            or "connect failed" in low
+            or "connecting" in low
+        )
+        _f10(con)
+        assert con.send_line("PRINT 9") == "9"
+    finally:
+        con.stop()
+
+
 def test_term_alt_x_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

@@ -549,6 +549,8 @@ int mmb_wifi_country_normalize(const char *s, char out[3]);
 
 int mmb_net_available(void);
 int mmb_net_tcp_open(const char *host, int port);
+int mmb_net_tcp_begin(const char *host, int port);
+int mmb_net_tcp_status(void);
 int mmb_net_tcp_send(const void *data, unsigned n);
 int mmb_net_tcp_recv(void *data, unsigned maxn);
 void mmb_net_tcp_close(void);
