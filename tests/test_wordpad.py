@@ -68,6 +68,7 @@ def test_help_wordpad(console):
     assert "bold" in low
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
     assert "ctrl+p" in low or "quick-open" in low
+    assert "serif" in low or "times" in low or "h1" in low
 
 
 def test_wordpad_type_save_and_reload(kernel_image):
@@ -99,8 +100,8 @@ def test_wordpad_markdown_heading_style(kernel_image):
         time.sleep(0.3)
         serial = seen + " " + closed + " " + _plain(con.drain(quiet=0.4).decode(errors="replace"))
         pixel_diff = False
-        for heading_y in (1 * 16 + 8, 3 * 16 + 8):
-            body_y = heading_y + 16
+        for heading_y in (1 * 16 + 8, 2 * 16 + 8):
+            body_y = heading_y + 4 * 16
             heading_samples = [con.screen_pixel(x, heading_y) for x in (12, 20, 28, 36, 44)]
             body_samples = [con.screen_pixel(x, body_y) for x in (12, 20, 28, 36, 44)]
             if any(h != b for h, b in zip(heading_samples, body_samples)):
@@ -220,6 +221,15 @@ def _is_solid_cursor(con, col, row):
     return all(_lum(p) > 1500 for p in _cell_corners(con, col, row))
 
 
+def _cell_max_lum(con, col, row):
+    x0, y0 = col * 8, row * 16
+    m = 0
+    for y in (y0 + 2, y0 + 7, y0 + 11, y0 + 14):
+        for x in (x0 + 1, x0 + 3, x0 + 5, x0 + 6):
+            m = max(m, _lum(con.screen_pixel(x, y)))
+    return m
+
+
 def test_wordpad_cursor_visible(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -241,6 +251,21 @@ def test_wordpad_h1_is_taller(kernel_image):
     try:
         _open(con)
         _keys(con, b"# Title\rbody text", quiet=0.8)
+        time.sleep(0.2)
+        heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
+        body = [con.screen_pixel(x, 4 * 16 + 8) for x in (12, 20, 28, 36)]
+        assert any(h != b for h, b in zip(heading_mid, body))
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_h3_is_taller_than_body(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"### Head\rbody text", quiet=0.8)
         time.sleep(0.2)
         heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
         body = [con.screen_pixel(x, 2 * 16 + 8) for x in (12, 20, 28, 36)]
@@ -353,14 +378,12 @@ def test_wordpad_empty_line_cursor_and_up(kernel_image):
         _open(con)
         _keys(con, b"A\r", quiet=0.6)
         time.sleep(0.2)
-        empty = con.screen_pixel(4, 16 + 8)
-        below = con.screen_pixel(4, 32 + 8)
-        assert _lum(empty) > _lum(below) + 80, (empty, below)
+        assert _is_solid_cursor(con, 0, 1)
+        assert not _is_solid_cursor(con, 0, 2)
         _keys(con, b"\x1b[A", quiet=0.5)
         time.sleep(0.2)
-        on_a = con.screen_pixel(4, 8)
-        still_empty = con.screen_pixel(4, 16 + 8)
-        assert _lum(on_a) > _lum(still_empty) + 80, (on_a, still_empty)
+        assert not _is_solid_cursor(con, 0, 1)
+        assert _cell_max_lum(con, 0, 0) > _cell_max_lum(con, 0, 1) + 80
         _quit(con)
     finally:
         con.stop()
@@ -389,9 +412,9 @@ def test_wordpad_bold_is_more_intense(kernel_image):
         _open(con)
         _keys(con, b"xx**bold**yy", quiet=0.7)
         time.sleep(0.2)
-        plain = con.screen_pixel(4, 8)
-        strong = con.screen_pixel(2 * 8 + 4, 8)
-        assert _lum(strong) != _lum(plain), (strong, plain)
+        plain = _cell_max_lum(con, 0, 0)
+        strong = _cell_max_lum(con, 2, 0)
+        assert strong != plain, (strong, plain)
         _quit(con)
     finally:
         con.stop()
