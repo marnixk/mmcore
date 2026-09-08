@@ -338,6 +338,27 @@ void CKernel::PollUsbEditorNav (void)
 	shift = (mods & (LSHIFT | RSHIFT)) != 0;
 	ctrl = (mods & (LCTRL | RCTRL)) != 0;
 
+	/* Circle maps Shift+Tab to Tab. Inject CSI Z (backtab) so the
+	 * editor outdents instead of indenting. */
+	if (hid == 0x2B && shift && mmb_in_editor ())
+	{
+		seq[0] = 0x1b;
+		seq[1] = '[';
+		seq[2] = 'Z';
+		n = 3;
+		m_NavHidSent = hid;
+		if (n < sizeof (m_RepeatSeq))
+		{
+			memcpy (m_RepeatSeq, seq, n);
+			m_RepeatLen = n;
+		}
+		m_UsbBurst = 1;
+		for (i = 0; i < n; i++)
+			ProcessChar (seq[i], m_Line, &m_nLen);
+		m_UsbBurst = 0;
+		return;
+	}
+
 	switch (hid)
 	{
 	case 0x52: letter = 'A'; break;
@@ -721,6 +742,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 
 	if (mmb_in_editor ())
 	{
+		/* USB Shift+Tab arrives as Tab from Circle; PollUsbEditorNav
+		 * already injected CSI Z. Drop the cooked Tab. */
+		if (c == '\t' && (m_LastMods & (LSHIFT | RSHIFT)) != 0)
+			return;
 		const char *out = mmb_editor_key (c);
 		emit (this, out);
 		if (!mmb_in_editor ())
