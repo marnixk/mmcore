@@ -180,6 +180,8 @@ void mmb_error(const char *msg)
 			G.err[i++] = *p++;
 	}
 	G.err[i] = 0;
+	if (G.running)
+		mmb_play_stop();
 	longjmp(G.errjmp, 1);
 }
 

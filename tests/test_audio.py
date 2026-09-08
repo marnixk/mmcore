@@ -112,3 +112,19 @@ def test_audio_off_still_tracks_playing(console):
     console.send_line("PAUSE 400")
     assert console.send_line("PRINT PLAYING()") == "0"
     assert console.send_line("OPTION AUDIO ON") == ""
+
+
+def test_play_stops_when_program_ends(console):
+    assert console.send_line("PLAY TONE 440, 440") == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    assert console.send_line("10 END") == ""
+    assert console.send_line("RUN") == ""
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_stops_when_program_falls_off_end(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 PLAY TONE 440, 440") == ""
+    assert console.send_line("20 PRINT 1") == ""
+    assert console.send_line("RUN") == "1"
+    assert console.send_line("PRINT PLAYING()") == "0"
