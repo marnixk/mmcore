@@ -60,6 +60,23 @@ def test_files_tab_switches_panels(fresh_console):
     _keys(con, b"q")
 
 
+def test_files_right_menu_drive_updates_right_pane(fresh_console):
+    """Right-menu drive change must not rewrite the focused left pane."""
+    con = fresh_console
+    _prep_tree(con)
+    _open_files(con)
+    seen = _keys(con, b"\x1b[B\r")
+    assert "L=A:/DEMO" in seen.upper() or "PATH=A:/DEMO" in seen.upper()
+    assert "P=L" in seen
+    # Alt+R, then Drive A: (hotkey a). Left stays in DEMO; right is A:/.
+    seen = _keys(con, bytes([1]) + b"ra")
+    upper = seen.upper()
+    assert "L=A:/DEMO" in upper
+    assert "R=A:/" in upper
+    assert "P=R" in seen
+    _keys(con, b"q")
+
+
 def test_files_enter_subdir_and_parent(fresh_console):
     con = fresh_console
     _prep_tree(con)
