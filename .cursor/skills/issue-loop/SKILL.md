@@ -25,10 +25,15 @@ If Cursor goals are available (`CreateGoal` / `UpdateGoal`):
 
 ## Skip
 
-Skip an issue when its **title** starts with `[not ready]` (case
-insensitive). Leave it open. It does not block the loop.
+Skip an issue when it is marked **not ready** in **any** of these places
+(case insensitive). Leave it open. It does not block the loop.
 
-Treat every other `OPEN` issue as work.
+- **Title** — contains `not ready` (including `[not ready]`).
+- **Label** — any label named `not ready` or `not-ready`.
+- **Description** — the issue body contains `not ready`.
+
+Check with `gh issue list --state open --json number,title,body,labels`
+before picking work. Treat every other `OPEN` issue as work.
 
 ## Per-issue cycle
 
@@ -131,8 +136,9 @@ scripts/build.sh
 
 Before declaring the loop done, verify **current** state:
 
-1. `gh issue list --state open` — every remaining issue is `[not ready]`,
-   or the list is empty.
+1. `gh issue list --state open --json number,title,body,labels` — every
+   remaining issue is marked **not ready** (title, label, or body), or
+   the list is empty.
 2. Each implemented issue has a merged PR and a `vX.Y.Z` release that
    includes its merge (or a later minor that includes it).
 3. Local `master` matches `origin/master`.
