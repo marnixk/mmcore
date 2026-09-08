@@ -73,6 +73,7 @@ const char *mmb_editor_key(char c);
 
 /* True while the FILES dual-pane TUI owns the keyboard. */
 int mmb_in_files(void);
+int mmb_files_take_prompt(void);
 
 /* Feed a keystroke to FILES. Returns text to emit (may be empty). */
 const char *mmb_files_key(char c);

@@ -742,7 +742,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		const char *out = mmb_files_key (c);
 		emit (this, out);
 		if (!mmb_in_files () && !mmb_in_editor ())
-			emit_prompt (this);
+		{
+			if (!mmb_files_take_prompt ())
+				emit_prompt (this);
+		}
 		return;
 	}
 

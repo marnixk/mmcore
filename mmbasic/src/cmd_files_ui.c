@@ -954,13 +954,28 @@ static void set_hint(const char *s)
 	strncpy(F.hint, s ? s : "", sizeof(F.hint) - 1);
 }
 
-static void files_close_tui(void)
+static int s_files_prompted;
+
+static void files_close_tui(int restore_prompt)
 {
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
 	tui_end();
-	ser("\r\n");
+	s_files_prompted = 0;
+	if (restore_prompt)
+	{
+		mmb_console_write("\r\n");
+		mmb_console_write(mmb_prompt());
+		s_files_prompted = 1;
+	}
+}
+
+int mmb_files_take_prompt(void)
+{
+	int v = s_files_prompted;
+	s_files_prompted = 0;
+	return v;
 }
 
 static void chdir_panel(fu_panel *p)
@@ -1084,8 +1099,7 @@ static void do_play(const char *path, const char *name)
 static void do_run(const char *path)
 {
 	char cmd[160];
-	files_close_tui();
-	strcpy(cmd, "RUN \"");
+	files_close_tui(0);
 	strncat(cmd, path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	mmb_exec_line(cmd);
@@ -1381,7 +1395,7 @@ static void handle_fkey(int n)
 	else if (n == 9)
 		F.mode = FU_MENU;
 	else if (n == 10)
-		files_close_tui();
+		files_close_tui(1);
 }
 
 static void activate_drop(void)
@@ -1426,7 +1440,7 @@ static void activate_drop(void)
 		else if (item == 1)
 			F.mode = FU_HELP;
 		else
-			files_close_tui();
+			files_close_tui(1);
 	}
 	else if (menu == 3)
 		F.mode = FU_HELP;
@@ -1549,7 +1563,7 @@ static void files_lone_esc(void)
 	if (F.drop >= 0)
 		F.drop = -1;
 	else if (F.mode == FU_BROWSE)
-		files_close_tui();
+		files_close_tui(1);
 	else
 		close_overlay();
 }
@@ -1683,7 +1697,7 @@ static void handle_letter(char c)
 	if (F.mode == FU_MENU)
 	{
 		if (lc == 'q')
-			files_close_tui();
+			files_close_tui(1);
 		else if (lc == 'h')
 			F.mode = FU_HELP;
 		else if (lc == 'v')
@@ -1754,7 +1768,7 @@ static void handle_letter(char c)
 		return;
 	if (lc == 'q')
 	{
-		files_close_tui();
+		files_close_tui(1);
 		return;
 	}
 	if (lc == 'h')
@@ -1843,7 +1857,7 @@ int mmb_in_files(void)
 void mmb_files_close(void)
 {
 	if (F.active)
-		files_close_tui();
+		files_close_tui(1);
 }
 
 const char *mmb_files_resume(void)
@@ -1863,7 +1877,7 @@ const char *mmb_files_on_editor_exit(void)
 		return G.out;
 	if (G.ed.run_on_exit)
 	{
-		files_close_tui();
+		files_close_tui(0);
 		return G.out;
 	}
 	files_draw();
