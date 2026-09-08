@@ -40,6 +40,7 @@
 typedef struct {
 	int active;
 	int demo;
+	int demo_burst;
 	int tcp;
 	int connecting;
 	unsigned connect_at;
@@ -320,6 +321,37 @@ static void mark_dirty_full(void)
 }
 
 static void term_draw(void);
+static void term_draw_row(int r);
+
+static void pane_flush_dirty_pixels(void)
+{
+	int r, saved, lo, hi;
+
+	if (!T.need_draw)
+		return;
+	saved = G.gfx.write_page;
+	G.gfx.write_page = 1;
+	if (T.dirty_full)
+	{
+		lo = 0;
+		hi = T.pane_rows - 1;
+	}
+	else
+	{
+		lo = T.dirty_lo;
+		hi = T.dirty_hi;
+	}
+	if (lo >= 0 && hi >= lo)
+	{
+		for (r = lo; r <= hi; r++)
+			term_draw_row(r);
+	}
+	G.gfx.write_page = saved;
+	T.need_draw = 0;
+	T.dirty_full = 0;
+	T.dirty_lo = -1;
+	T.dirty_hi = -1;
+}
 
 static void pane_scroll_up(void)
 {
@@ -346,6 +378,7 @@ static void pane_scroll_smooth(void)
 	int x0, y, w, h, pw, ph, saved;
 	unsigned fill = TM_BG;
 
+	pane_flush_dirty_pixels();
 	x0 = T.pane_left * TM_CW;
 	pw = term_width() * TM_CW;
 	ph = T.pane_rows * TM_CH;
@@ -1440,7 +1473,9 @@ void mmb_cmd_term(void)
 	T.port = port;
 	T.saved_mode = G.gfx.mode;
 	T.saved_bits = G.gfx.bits;
-	T.demo = (strcasecmp(T.host, "demo") == 0);
+	T.demo = (strcasecmp(T.host, "demo") == 0 ||
+		  strcasecmp(T.host, "demoburst") == 0);
+	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.letterbox = 1;
 	term_reset_pen();
 
@@ -1495,9 +1530,13 @@ void mmb_cmd_term(void)
 	}
 	else if (T.demo)
 	{
+		int n = T.demo_burst ? 40 : 2;
 		T.demo_next = mmb_now_ms();
-		demo_emit_line();
-		demo_emit_line();
+		while (n > 0 && T.demo_line <= 43)
+		{
+			demo_emit_line();
+			n--;
+		}
 	}
 
 	term_draw();

@@ -190,6 +190,31 @@ def test_term_wrong_port_does_not_hang(kernel_image):
         con.stop()
 
 
+def test_term_demoburst_hdmi_keeps_scrolled_text(kernel_image):
+    """A burst of newlines must paint glyphs before pixel-scroll (issue #190)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _open_term(con, 'TERM "demoburst", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.5)
+        nums = _line_numbers(seen)
+        assert nums and max(nums) >= 30, seen[-400:]
+        found_cream = False
+        for x in (164, 168, 172, 180, 188):
+            for y in (200, 248, 320, 360, 400):
+                rgb = con.screen_pixel(x, y)
+                if _is_creamish(*rgb):
+                    found_cream = True
+                    break
+            if found_cream:
+                break
+        assert found_cream, "expected cream text in the pane after a burst scroll"
+        _f10(con)
+        assert con.send_line("PRINT 5+6") == "11"
+    finally:
+        con.stop()
+
+
 def test_term_alt_x_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
