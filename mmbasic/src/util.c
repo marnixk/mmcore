@@ -66,6 +66,8 @@ int mmb_keyword_eq(const char *a, const char *b)
 int mmb_match(const char *kw)
 {
 	const char *save = G.p;
+	if (G.opt.profiling && G.running)
+		G.prof.match++;
 	mmb_skip_sp();
 	const char *p = G.p;
 	const char *k = kw;
@@ -231,6 +233,41 @@ void mmb_outf(const char *unused, int64_t n)
 	if (neg)
 		*--p = '-';
 	mmb_out(p);
+}
+
+void mmb_prof_reset(void)
+{
+	G.prof.t0_ms = mmb_now_ms();
+	G.prof.stmt = 0;
+	G.prof.match = 0;
+	G.prof.expr = 0;
+	G.prof.find_var = 0;
+	G.prof.check_break = 0;
+	G.prof.gfx_present = 0;
+}
+
+void mmb_prof_report(void)
+{
+	unsigned elapsed;
+	if (!G.opt.profiling)
+		return;
+	elapsed = mmb_now_ms() - G.prof.t0_ms;
+	if (G.outn)
+		mmb_out("\n");
+	mmb_out("[PERF] elapsed=");
+	mmb_outf(0, elapsed);
+	mmb_out(" ms  statements=");
+	mmb_outf(0, G.prof.stmt);
+	mmb_out("  match=");
+	mmb_outf(0, G.prof.match);
+	mmb_out("  expr=");
+	mmb_outf(0, G.prof.expr);
+	mmb_out("  findvar=");
+	mmb_outf(0, G.prof.find_var);
+	mmb_out("  break=");
+	mmb_outf(0, G.prof.check_break);
+	mmb_out("  present=");
+	mmb_outf(0, G.prof.gfx_present);
 }
 
 mmb_val mmb_num_val(double f)

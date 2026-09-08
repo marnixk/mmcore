@@ -272,6 +272,8 @@ void mmb_gfx_present(void)
 {
 	int x, y, hw, hh;
 	uint32_t *pg;
+	if (G.opt.profiling && G.running)
+		G.prof.gfx_present++;
 	if (!G.plat || !G.plat->set_pixel)
 		return;
 	pg = page_buf(G.gfx.display_page);

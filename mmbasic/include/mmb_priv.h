@@ -299,6 +299,15 @@ typedef struct mmb {
 		int pc;
 		int used;
 	} labels[MMB_MAX_LABELS];
+	struct {
+		unsigned t0_ms;
+		unsigned stmt;
+		unsigned match;
+		unsigned expr;
+		unsigned find_var;
+		unsigned check_break;
+		unsigned gfx_present;
+	} prof;
 } mmb;
 
 extern mmb G;
@@ -325,6 +334,8 @@ void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
 void mmb_out_flush(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
+void mmb_prof_reset(void);
+void mmb_prof_report(void);
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 void mmb_cmd_print(void);
