@@ -415,10 +415,7 @@ static void term_draw_status(void)
 	x0 = T.pane_left * TM_CW;
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 		    TM_BG, 1, (int)TM_BG);
-	if (term_want_echo())
-		strcpy(left, "F10/Alt-X  Alt-F  Echo ON");
-	else
-		strcpy(left, "F10/Alt-X  Alt-F  Echo OFF");
+	strcpy(left, "F10/Alt-X  Alt-F");
 	if (T.demo)
 	{
 		n = (int)strlen(left);
@@ -446,6 +443,26 @@ static void term_draw_status(void)
 		strncpy(right, "demo", sizeof(right) - 1);
 	else if (T.host[0])
 		fmt_hostport(right, sizeof(right));
+	{
+		char echo[16];
+		char mixed[80];
+		strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
+		if (right[0])
+		{
+			strncpy(mixed, echo, sizeof(mixed) - 1);
+			mixed[sizeof(mixed) - 1] = 0;
+			n = (int)strlen(mixed);
+			if (n + 2 < (int)sizeof(mixed))
+			{
+				mixed[n] = ' ';
+				mixed[n + 1] = 0;
+				strncat(mixed, right, sizeof(mixed) - 1 - (unsigned)n - 1);
+			}
+			strncpy(right, mixed, sizeof(right) - 1);
+		}
+		else
+			strncpy(right, echo, sizeof(right) - 1);
+	}
 	right[sizeof(right) - 1] = 0;
 	n = (int)strlen(right);
 	if (n > TM_COLS)
