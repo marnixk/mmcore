@@ -226,6 +226,8 @@ typedef struct mmb {
 	int for_sp;
 	struct {
 		char var[MMB_MAX_NAME];
+		mmb_var *vp;
+		int off;
 		int64_t to, step;
 		int line, stmt;
 	} forstack[16];
@@ -351,6 +353,7 @@ int mmb_match_token(const char *kw);
 int mmb_tok_expand(char *dst, int dstsz);
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
+int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
 void mmb_cmd_print(void);
 void mmb_cmd_dim(void);
 void mmb_cmd_local(void);

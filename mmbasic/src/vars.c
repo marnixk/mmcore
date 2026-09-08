@@ -202,6 +202,13 @@ static int offset_of(mmb_var *v, const int *idx)
 	return off;
 }
 
+int mmb_var_offset(mmb_var *v, int nidx, const int *idx)
+{
+	if (!v || nidx == 0)
+		return 0;
+	return offset_of(v, idx);
+}
+
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
 {
 	int i;
