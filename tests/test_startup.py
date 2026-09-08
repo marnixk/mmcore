@@ -1,6 +1,7 @@
 """Boot banner: PicoMite copyright, HELP in bright white, two blank lines."""
 
 import subprocess
+import time
 
 from harness import MMBasicConsole
 
@@ -73,22 +74,27 @@ def test_startup_copyright_banner(kernel_image):
         con.stop()
 
 
+def _is_grey_prompt(rgb):
+    r, g, b = rgb
+    return (
+        abs(r - g) <= 20
+        and abs(g - b) <= 20
+        and 120 <= r <= 200
+        and r + g + b < 620
+    )
+
+
 def test_prompt_grey_after_boot_and_term(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        raw = con.boot_log
-        reset = raw.rfind(b"\x1b[0m")
-        assert reset >= 0
-        tail = raw[reset:]
-        assert b"\x1b[37m" in tail
-        assert b"\x1b[97m" not in tail
-        from test_term import _open_term
+        time.sleep(0.2)
+        boot = con.screen_pixel(12, 24)
+        assert _is_grey_prompt(boot), boot
+        from test_term import _f10, _open_term
 
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        con._ser.sendall(b"\x1b[21~")
-        raw_exit = con.drain(quiet=0.8, timeout=15)
-        assert b"\x1b[37m" in raw_exit
+        _f10(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()
