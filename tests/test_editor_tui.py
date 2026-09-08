@@ -751,6 +751,39 @@ def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
         con.stop()
 
 
+def test_editor_quick_open_after_moved_file(kernel_image):
+    """#130: quick-open must still load a file after the originally edited path is moved."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert con.send_line('MKDIR "TEST"') == ""
+        assert con.send_line('OPEN "TEST.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 11"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('OPEN "TEST2.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 22"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert "11" in con.send_line('RUN "TEST.BAS"')
+        _edit(con, "TEST.BAS")
+        _quit(con)
+        assert con.send_line('COPY "TEST.BAS" TO "TEST/TEST.BAS"') == ""
+        assert con.send_line('KILL "TEST.BAS"') == ""
+        con.drain(quiet=0.1)
+        con._ser.sendall(b"EDIT\r")
+        seen = _plain(con.drain(quiet=0.8).decode(errors="replace"))
+        assert "File" in seen or "UNTITLED" in seen or "TEST" in seen
+        listed = _keys(con, bytes([16]), quiet=0.8)
+        assert "Quick open" in listed or "TEST2" in listed or "TEST" in listed
+        opened = _keys(con, b"TEST2\r", quiet=1.2)
+        assert "TEST2" in opened
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
+        assert "22" in con.send_line('RUN "TEST2.BAS"')
+    finally:
+        con.stop()
+
+
 def test_editor_ctrl_p_reuses_existing_tab(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

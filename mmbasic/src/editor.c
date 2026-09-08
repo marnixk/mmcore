@@ -455,7 +455,7 @@ static int find_tab_path(const char *path)
 		if (!G.ed.tab[i].used)
 			continue;
 		canon_ed_path(G.ed.tab[i].path, have, sizeof(have));
-		if (mmb_keyword_eq(have, want) || mmb_keyword_eq(G.ed.tab[i].path, path))
+		if (mmb_keyword_eq(have, want))
 			return i;
 	}
 	return -1;
@@ -628,11 +628,31 @@ static void pick_rebuild_view(void)
 		pick_row0 = pick_sel;
 }
 
+static int pick_skip_name(const char *name)
+{
+	if (!name || !name[0])
+		return 1;
+	if (name[0] == '.')
+		return 1;
+	if (ed_str_icmp(name, "System Volume Information") == 0)
+		return 1;
+	if (ed_str_icmp(name, "$RECYCLE.BIN") == 0)
+		return 1;
+	return 0;
+}
+
+static int path_is_dir(const char *path)
+{
+	return path && path[0] && mmb_vfs_exists(path) && mmb_vfs_size(path) < 0;
+}
+
 static void pick_walk(const char *dir, int depth)
 {
 	char list[2048];
 	char *s;
 	if (!dir || !dir[0] || depth > ED_PICK_DEPTH || pick_n >= ED_PICK_MAX)
+		return;
+	if (!path_is_dir(dir))
 		return;
 	list[0] = 0;
 	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
@@ -652,11 +672,13 @@ static void pick_walk(const char *dir, int depth)
 			name[n - 1] = 0;
 			is_dir = 1;
 		}
-		if (!name[0] || (name[0] == '.' && (!name[1] || (name[1] == '.' && !name[2]))))
+		if (pick_skip_name(name))
 			continue;
 		{
 			char full[128];
 			ed_join(full, sizeof(full), dir, name);
+			if (!full[0] || mmb_keyword_eq(full, dir))
+				continue;
 			if (is_dir)
 				pick_walk(full, depth + 1);
 			else
@@ -680,7 +702,7 @@ static void set_pick_root(const char *path)
 		pick_root[sizeof(pick_root) - 1] = 0;
 		return;
 	}
-	if (!(mmb_vfs_exists(full) && mmb_vfs_size(full) < 0))
+	if (!path_is_dir(full))
 	{
 		char *slash = 0;
 		char *q = full;
@@ -696,6 +718,22 @@ static void set_pick_root(const char *path)
 				slash[1] = 0;
 			else
 				*slash = 0;
+		}
+	}
+	if (!path_is_dir(full))
+	{
+		const char *cwd = mmb_vfs_cwd();
+		if (mmb_vfs_resolve(cwd, full, sizeof(full)) != 0)
+		{
+			strncpy(pick_root, cwd, sizeof(pick_root) - 1);
+			pick_root[sizeof(pick_root) - 1] = 0;
+			return;
+		}
+		if (!path_is_dir(full))
+		{
+			strncpy(pick_root, cwd, sizeof(pick_root) - 1);
+			pick_root[sizeof(pick_root) - 1] = 0;
+			return;
 		}
 	}
 	strncpy(pick_root, full, sizeof(pick_root) - 1);
@@ -817,7 +855,7 @@ static void open_picker(void)
 	pick_sel = 0;
 	pick_row0 = 0;
 	pick_vn = 0;
-	if (!pick_root[0])
+	if (!pick_root[0] || !path_is_dir(pick_root))
 		set_pick_root(mmb_vfs_cwd());
 	pick_walk(pick_root, 0);
 	pick_sort();
@@ -2701,7 +2739,11 @@ static int save_tab(void)
 		open_dialog(DLG_SAVEAS);
 		return 0;
 	}
-	mmb_vfs_write(t->path, t->buf, (unsigned)t->len, 0);
+	if (mmb_vfs_write(t->path, t->buf, (unsigned)t->len, 0) != 0)
+	{
+		set_status("Save failed");
+		return 0;
+	}
 	t->dirty = 0;
 	strncpy(G.current_prog, t->path, sizeof(G.current_prog) - 1);
 	set_status("Saved");
