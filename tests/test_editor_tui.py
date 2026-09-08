@@ -1116,6 +1116,12 @@ def test_editor_f1_opens_help_for_word_and_esc_returns(kernel_image):
         low = help_seen.lower()
         assert "sub" in low
         assert "end sub" in low or "procedure" in low or "function" in low
+        assert "HELP:" in help_seen or "<Index>" in help_seen
+        later = _plain(con.drain(quiet=0.6).decode(errors="replace"))
+        assert "File  Edit" not in later
+        assert "F2 Save" not in later
+        stay = help_seen + later
+        assert "HELP:" in stay or "<Index>" in stay
         back = _keys(con, b"\x1b", quiet=0.8)
         assert "SUB" in back or "Foo" in back or "F1SUB" in back
         _quit(con)

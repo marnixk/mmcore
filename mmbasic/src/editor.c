@@ -3549,7 +3549,7 @@ static int handle_escape(char c)
 		esc_state = ESC_NONE;
 		if (c >= 'A' && c <= 'E')
 			do_fkey(c - 'A' + 1);
-		if (G.ed.active)
+		if (G.ed.active && !mmb_in_ihelp())
 			redraw();
 		return 1;
 	}
@@ -3611,7 +3611,7 @@ static int handle_escape(char c)
 			else if (c == 'Z')
 				indent_lines(1);
 		}
-		if (G.ed.active)
+		if (G.ed.active && !mmb_in_ihelp())
 			redraw();
 		return 1;
 	}
@@ -3968,7 +3968,7 @@ void mmb_cmd_edit(void)
 
 void mmb_editor_poll(void)
 {
-	if (!G.ed.active || esc_state != ESC_GOT)
+	if (!G.ed.active || mmb_in_ihelp() || esc_state != ESC_GOT)
 		return;
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
 		return;
