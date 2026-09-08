@@ -2457,8 +2457,11 @@ static int handle_escape(char c)
 		}
 		W.esc_state = WP_ESC_NONE;
 		if (W.menu_open || W.dialog)
+		{
 			close_ui();
-		return 1;
+			return 1;
+		}
+		return 0;
 	}
 	if (W.esc_state == WP_ESC_SS3)
 	{
@@ -3195,13 +3198,16 @@ void mmb_wordpad_poll(void)
 
 	if (!W.active)
 		return;
-	if (W.esc_state == WP_ESC_GOT && (W.menu_open || W.dialog) &&
+	if (W.esc_state == WP_ESC_GOT &&
 	    mmb_now_ms() - W.esc_at >= WP_ESC_IDLE_MS)
 	{
 		W.esc_state = WP_ESC_NONE;
-		close_ui();
-		wp_redraw();
-		return;
+		if (W.menu_open || W.dialog)
+		{
+			close_ui();
+			wp_redraw();
+			return;
+		}
 	}
 	chrome = wp_chrome();
 	if (chrome != W.chrome_shown)
