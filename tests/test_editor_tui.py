@@ -1104,6 +1104,26 @@ def test_editor_help_manual_opens_ihelp_and_returns(kernel_image):
         con.stop()
 
 
+def test_editor_f1_opens_help_for_word_and_esc_returns(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "F1SUB.BAS")
+        _keys(con, b"SUB Foo")
+        _keys(con, b"\x1b[H", quiet=0.3)
+        _keys(con, b"\x1b[C", quiet=0.3)
+        help_seen = _keys(con, b"\x1b[11~", quiet=1.0)
+        low = help_seen.lower()
+        assert "sub" in low
+        assert "end sub" in low or "procedure" in low or "function" in low
+        back = _keys(con, b"\x1b", quiet=0.8)
+        assert "SUB" in back or "Foo" in back or "F1SUB" in back
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
+    finally:
+        con.stop()
+
+
 def test_editor_f4_opens_include_and_reuses_tab(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
