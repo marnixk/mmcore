@@ -1912,9 +1912,8 @@ void mmb_cmd_run(void)
 	run_program();
 	if (mounted_pkg)
 	{
-		strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
-		G.current_prog[sizeof(G.current_prog) - 1] = 0;
 		mmb_pkg_unmount();
+		G.current_prog[0] = 0;
 	}
 }
 

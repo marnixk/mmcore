@@ -939,7 +939,7 @@ int mmb_pkg_is_name(const char *path)
 			dot = 0;
 		p++;
 	}
-	return dot && mmb_keyword_eq(dot, ".PKG");
+	return dot && mmb_keyword_eq(dot, ".APP");
 }
 
 int mmb_pkg_mount(const char *path)

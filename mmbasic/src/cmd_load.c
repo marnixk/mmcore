@@ -179,7 +179,7 @@ void mmb_cmd_load(void)
 				dot = q;
 			q++;
 		}
-		if (dot && mmb_keyword_eq(dot, ".PKG"))
+		if (dot && mmb_keyword_eq(dot, ".APP"))
 			mmb_error("?FILE");
 		if (dot && (mmb_keyword_eq(dot, ".JPG") || mmb_keyword_eq(dot, ".JPEG")))
 			is_jpg = 1;

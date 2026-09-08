@@ -3852,8 +3852,11 @@ void mmb_cmd_edit(void)
 		if (v.type == T_STR)
 			strncpy(path, v.s, sizeof(path) - 1);
 	}
-	else if (G.current_prog[0])
+	else if (G.current_prog[0] && !mmb_pkg_is_name(G.current_prog) &&
+		 !(G.current_prog[0] == 'B' && G.current_prog[1] == ':'))
 		strncpy(path, G.current_prog, sizeof(path) - 1);
+	if (path[0] && mmb_pkg_is_name(path))
+		path[0] = 0;
 	mmb_editor_open(path);
 }
 

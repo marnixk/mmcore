@@ -1,4 +1,4 @@
-"""PACKAGE / RUN name.pkg: zip archive mounted read-only as B:."""
+"""PACKAGE / RUN name.app: zip archive mounted read-only as B:."""
 
 import time
 
@@ -33,10 +33,10 @@ def _make_game(con, folder, main_lines=None):
 
 def test_package_run_mounts_b(console):
     _make_game(console, "PKGAME")
-    assert console.send_line('PACKAGE "GAME.PKG", "PKGAME/"') == ""
+    assert console.send_line('PACKAGE "GAME.APP", "PKGAME/"') == ""
     listing = console.send_line('DIR "A:/"')
-    assert "GAME.PKG" in listing.upper()
-    out = console.send_line('RUN "GAME.PKG"')
+    assert "GAME.APP" in listing.upper()
+    out = console.send_line('RUN "GAME.APP"')
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     assert any(ln.upper().startswith("B:") for ln in lines), out
     assert "HELLOPKG" in out
@@ -58,8 +58,8 @@ def test_package_readonly_and_bare_run(console):
             "PRINT 1",
         ],
     )
-    assert console.send_line('PACKAGE "RO.PKG", "PKRO/"') == ""
-    out = console.send_line('RUN "RO.PKG"')
+    assert console.send_line('PACKAGE "RO.APP", "PKRO/"') == ""
+    out = console.send_line('RUN "RO.APP"')
     assert "?READ ONLY" in out.upper()
     cwd = console.send_line("PRINT CWD$")
     assert cwd.upper().startswith("A:")
@@ -70,19 +70,19 @@ def test_package_readonly_and_bare_run(console):
 
 def test_package_file_exists_in_program(console):
     _make_game(console, "PKDUP")
-    assert console.send_line('PACKAGE "DUP.PKG", "PKDUP/"') == ""
+    assert console.send_line('PACKAGE "DUP.APP", "PKDUP/"') == ""
     assert console.send_line("NEW") == ""
-    assert console.send_line('10 PACKAGE "DUP.PKG", "PKDUP/"') == ""
+    assert console.send_line('10 PACKAGE "DUP.APP", "PKDUP/"') == ""
     out = console.send_line("RUN")
     assert "FILE EXISTS" in out.upper()
 
 
 def test_package_overwrite_prompt(console):
     _make_game(console, "PKOW")
-    assert console.send_line('PACKAGE "OW.PKG", "PKOW/"') == ""
+    assert console.send_line('PACKAGE "OW.APP", "PKOW/"') == ""
     con = console
     con.drain(quiet=0.1, timeout=0.4)
-    con._ser.sendall(b'PACKAGE "OW.PKG", "PKOW/"\r')
+    con._ser.sendall(b'PACKAGE "OW.APP", "PKOW/"\r')
     deadline = time.time() + 4.0
     buf = b""
     while time.time() < deadline:
@@ -101,9 +101,9 @@ def test_package_overwrite_prompt(console):
             if buf.rstrip().endswith(b">"):
                 break
     assert b"?FILE EXISTS" not in buf.upper()
-    assert "HELLOPKG" in console.send_line('RUN "OW.PKG"')
+    assert "HELLOPKG" in console.send_line('RUN "OW.APP"')
     con.drain(quiet=0.1, timeout=0.4)
-    con._ser.sendall(b'PACKAGE "OW.PKG", "PKOW/"\r')
+    con._ser.sendall(b'PACKAGE "OW.APP", "PKOW/"\r')
     deadline = time.time() + 4.0
     buf = b""
     while time.time() < deadline:
@@ -120,7 +120,7 @@ def test_package_overwrite_prompt(console):
             buf += chunk
             if buf.rstrip().endswith(b">"):
                 break
-    assert "HELLOPKG" in console.send_line('RUN "OW.PKG"')
+    assert "HELLOPKG" in console.send_line('RUN "OW.APP"')
 
 
 def test_package_missing_main(console):
@@ -128,7 +128,7 @@ def test_package_missing_main(console):
     assert console.send_line('MKDIR "NOMAIN"') == ""
     _write_lines(console, "GAMELESS.TXT", ["x"])
     assert console.send_line('COPY "GAMELESS.TXT" TO "NOMAIN/X.TXT"') == ""
-    out = console.send_line('PACKAGE "BAD.PKG", "NOMAIN/"')
+    out = console.send_line('PACKAGE "BAD.APP", "NOMAIN/"')
     assert "MAIN" in out.upper()
 
 
@@ -141,8 +141,8 @@ def test_package_chdir_dotdot_stays_on_b(console):
             "PRINT CWD$",
         ],
     )
-    assert console.send_line('PACKAGE "DOT.PKG", "PKDOT/"') == ""
-    out = console.send_line('RUN "DOT.PKG"')
+    assert console.send_line('PACKAGE "DOT.APP", "PKDOT/"') == ""
+    out = console.send_line('RUN "DOT.APP"')
     assert "B:" in out.upper()
     assert console.send_line("PRINT CWD$").upper().startswith("A:")
 
@@ -150,8 +150,8 @@ def test_package_chdir_dotdot_stays_on_b(console):
 def test_package_run_bas_unmounts(console):
     _write_lines(console, "OTHER.BAS", ["PRINT 99"])
     _make_game(console, "PKNEST", ['RUN "A:/OTHER.BAS"'])
-    assert console.send_line('PACKAGE "NEST.PKG", "PKNEST/"') == ""
-    out = console.send_line('RUN "NEST.PKG"')
+    assert console.send_line('PACKAGE "NEST.APP", "PKNEST/"') == ""
+    out = console.send_line('RUN "NEST.APP"')
     assert "99" in out
     assert console.send_line("PRINT CWD$").upper().startswith("A:")
 
@@ -161,3 +161,48 @@ def test_help_package(console):
     assert "PACKAGE" in out.upper()
     assert "MAIN.BAS" in out.upper()
     assert "RUN" in out.upper()
+    assert ".APP" in out.upper()
+    assert ".PKG" not in out.upper()
+
+
+def test_load_app_is_rejected(console):
+    _make_game(console, "PKLD")
+    assert console.send_line('PACKAGE "L.APP", "PKLD/"') == ""
+    out = console.send_line('LOAD "L.APP"')
+    assert "?FILE" in out.upper()
+
+
+def test_package_default_extension_is_app(console):
+    _make_game(console, "PKEXT")
+    assert console.send_line('PACKAGE "EXTGAME", "PKEXT/"') == ""
+    listing = console.send_line('DIR "A:/"')
+    assert "EXTGAME.APP" in listing.upper()
+
+
+def test_package_edit_after_run_is_untitled(kernel_image):
+    import re
+
+    from harness import MMBasicConsole
+
+    def _plain(s: str) -> str:
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
+
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _make_game(con, "PKED")
+        assert con.send_line('PACKAGE "GAME.APP", "PKED/"') == ""
+        console_out = con.send_line('RUN "GAME.APP"')
+        assert "HELLOPKG" in console_out
+        assert con.send_line("PRINT MM.CMDLINE$") == ""
+        con.drain(quiet=0.1)
+        con._ser.sendall(b"EDIT\r")
+        seen = _plain(con.drain(quiet=0.8, timeout=12).decode(errors="replace"))
+        upper = seen.upper()
+        assert "UNTITLED" in upper
+        assert "GAME.APP" not in upper
+        con._ser.sendall(bytes([1]) + b"x")
+        _plain(con.drain(quiet=0.8, timeout=12).decode(errors="replace"))
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
