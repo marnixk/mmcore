@@ -554,6 +554,22 @@ def test_colour_rgb_red_print_text(fresh_console):
     assert found, txt[:800]
 
 
+def test_ibm_palette_and_light_names(console):
+    assert console.send_line("PRINT HEX$(RGB(RED))") == "AA0000"
+    assert console.send_line("PRINT HEX$(RGB(LIGHTRED))") == "FF5555"
+    assert console.send_line("PRINT HEX$(RGB(GREEN))") == "AA00"
+    assert console.send_line("PRINT HEX$(RGB(LIGHTGREEN))") == "55FF55"
+    assert console.send_line("PRINT HEX$(RGB(BLUE))") == "AA"
+    assert console.send_line("PRINT HEX$(RGB(LIGHTBLUE))") == "5555FF"
+    assert console.send_line("PRINT RGB(4)") == console.send_line("PRINT RGB(RED)")
+    assert console.send_line("PRINT RGB(12)") == console.send_line("PRINT RGB(LIGHTRED)")
+    assert console.send_line("PRINT RGB(20)") == console.send_line("PRINT RGB(4)")
+    assert console.send_line("PRINT RGB(31)") == console.send_line("PRINT RGB(WHITE)")
+    assert console.send_line("PRINT RGB(LIGHTRED)") == console.send_line("PRINT LIGHTRED")
+    assert console.send_line("COLOUR 12, 0") == ""
+    assert console.send_line("COLOUR LIGHTGREEN, BLACK") == ""
+
+
 def test_text_draws_pixels(fresh_console):
     c = fresh_console
     c.send_line("CLS")

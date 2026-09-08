@@ -510,9 +510,9 @@ void mmb_cmd_colour(void)
 	int n = parse_args(a, 2);
 	if (n < 1)
 		mmb_syntax();
-	G.gfx.fg = (unsigned)mmb_as_int(a[0]);
+	G.gfx.fg = mmb_colour_from_int(mmb_as_int(a[0]));
 	if (n >= 2)
-		G.gfx.bg = (unsigned)mmb_as_int(a[1]);
+		G.gfx.bg = mmb_colour_from_int(mmb_as_int(a[1]));
 	mmb_console_apply_colour();
 }
 

@@ -189,7 +189,7 @@ int mmb_try_function(mmb_val *out)
 		}
 		if (n == 1 && a[0].type != T_STR)
 		{
-			*out = mmb_int_val(mmb_as_int(a[0]));
+			*out = mmb_int_val((int64_t)mmb_colour_from_int(mmb_as_int(a[0])));
 			return 1;
 		}
 		if (n == 3 || n == 4)

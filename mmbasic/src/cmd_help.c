@@ -252,12 +252,18 @@ static const char kHelpColour[] =
 	"argument is omitted. HDMI text uses the nearest\n"
 	"of the 16 ANSI colours (RGB(RED) is red).\n"
 	"Colours are RGB integers: RGB(r,g,b), RGB(RED),\n"
-	"or RGB(\"RED\").\n"
-	"Named colours include BLACK RED GREEN BLUE YELLOW\n"
-	"CYAN MAGENTA WHITE ORANGE PINK GOLD BROWN GRAY.\n"
+	"or RGB(\"RED\"). Integers 0 to 31 are the IBM PC\n"
+	"palette (CGA/VGA): 0-7 normal, 8-15 bright, 16-31\n"
+	"repeat 0-15. COLOUR 4 is the same as COLOUR RED.\n"
+	"Named colours: BLACK BLUE GREEN CYAN RED MAGENTA\n"
+	"BROWN LIGHTGRAY DARKGRAY LIGHTBLUE LIGHTGREEN\n"
+	"LIGHTCYAN LIGHTRED LIGHTMAGENTA YELLOW WHITE, plus\n"
+	"ORANGE PINK GOLD SALMON GRAY. LIGHT* names are the\n"
+	"bright IBM set (LIGHTRED, LIGHTGREEN, ...).\n"
 	"\n"
 	"Example:  COLOUR RGB(RED)\n"
-	"          COLOUR RGB(255,0,0)";
+	"          COLOUR LIGHTRED, BLACK\n"
+	"          COLOUR 12";
 
 static const char kHelpMode[] =
 	"MODE n [, bits] [, clscolour]\n"

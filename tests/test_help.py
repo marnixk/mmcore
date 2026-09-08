@@ -253,6 +253,17 @@ def test_ihelp_deeplink_escape_returns_to_index(console):
     assert console.send_line("PRINT 2") == "2"
 
 
+def test_help_colour_ibm(console):
+    out = dump_topic(console, "COLOUR")
+    assert out != "?SYNTAX ERROR"
+    low = out.lower()
+    assert "lightred" in low
+    assert "ibm" in low
+    assert "31" in out
+    alias = dump_topic(console, "COLOR")
+    assert "COLOUR" in alias or "COLOR" in alias
+
+
 def test_ihelp_alias_command(console):
     seen = open_ihelp(console)
     assert "<Contents>" in seen
