@@ -418,7 +418,16 @@ static void fit_name(char *dst, int maxn, const char *name)
 		dst[n] = 0;
 		return;
 	}
-	dot = strrchr(name, '.');
+	dot = 0;
+	{
+		const char *p = name;
+		while (*p)
+		{
+			if (*p == '.')
+				dot = p;
+			p++;
+		}
+	}
 	if (dot)
 		ext = (int)strlen(dot);
 	if (ext > 0 && ext < maxn - 1)
