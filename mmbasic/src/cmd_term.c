@@ -69,6 +69,7 @@ typedef struct {
 	int sav_col;
 	int char_mode;
 	int no_echo;
+	int echo_user;
 	int iac;
 	int iac_cmd;
 	int sb;
@@ -84,6 +85,7 @@ typedef struct {
 	unsigned esc_at;
 	int alt;
 	int menu;
+	int menu_sel;
 	int demo_line;
 	unsigned demo_next;
 	int serial_gen;
@@ -94,6 +96,10 @@ typedef struct {
 } tm_state;
 
 static tm_state T;
+
+static int term_want_echo(void);
+static void pane_rubout(void);
+static void term_echo_byte(unsigned char b);
 
 static unsigned ansi_pal(int n)
 {
@@ -231,6 +237,7 @@ static void term_serial_dump(void)
 	{
 		ser("File\r\n");
 		ser("Exit\r\n");
+		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
 	}
 	T.serial_gen++;
 }
@@ -400,7 +407,7 @@ static void term_put_str(int x, int y, const char *s, unsigned fg)
 
 static void term_draw_status(void)
 {
-	char left[24];
+	char left[32];
 	char right[64];
 	int y, n, x0;
 
@@ -408,7 +415,10 @@ static void term_draw_status(void)
 	x0 = T.pane_left * TM_CW;
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 		    TM_BG, 1, (int)TM_BG);
-	strcpy(left, "F10/Alt-X  Alt-F");
+	if (term_want_echo())
+		strcpy(left, "F10/Alt-X  Alt-F  Echo ON");
+	else
+		strcpy(left, "F10/Alt-X  Alt-F  Echo OFF");
 	if (T.demo)
 	{
 		n = (int)strlen(left);
@@ -445,17 +455,27 @@ static void term_draw_status(void)
 
 static void term_draw_menu(void)
 {
-	int x0, y0, w;
+	int x0, y0, w, i;
+	const char *items[2];
+	char echo[16];
 
 	if (!T.menu)
 		return;
 	x0 = T.pane_left * TM_CW;
 	y0 = 0;
-	w = 10 * TM_CW;
-	mmb_gfx_box(x0, y0, w, 3 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	w = 12 * TM_CW;
+	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
+	items[0] = "Exit";
+	items[1] = echo;
+	mmb_gfx_box(x0, y0, w, 4 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
 	term_put_str(x0 + TM_CW, y0, "File", TM_FG);
-	mmb_gfx_box(x0, y0 + TM_CH, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-	term_put_str(x0 + TM_CW, y0 + TM_CH, "Exit", TM_FG);
+	for (i = 0; i < 2; i++)
+	{
+		int y = y0 + (i + 1) * TM_CH;
+		if (i == T.menu_sel)
+			mmb_gfx_box(x0, y, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
+		term_put_str(x0 + TM_CW, y, items[i], TM_FG);
+	}
 }
 
 static void term_draw_row(int r)
@@ -612,10 +632,84 @@ static void telnet_announce(void)
 	send_ttype();
 }
 
+static int term_want_echo(void)
+{
+	if (T.echo_user == 1)
+		return 1;
+	if (T.echo_user == 2)
+		return 0;
+	return !T.no_echo;
+}
+
+static void pane_rubout(void)
+{
+	if (T.cur_col > 0)
+	{
+		T.cur_col--;
+		T.cell[T.cur_row][T.cur_col] = ' ';
+		T.cell_fg[T.cur_row][T.cur_col] = TM_FG;
+		T.cell_bg[T.cur_row][T.cur_col] = TM_BG;
+		mark_dirty_row(T.cur_row);
+	}
+}
+
+static void term_echo_byte(unsigned char b)
+{
+	if (!term_want_echo())
+		return;
+	if (b == 8 || b == 127)
+		pane_rubout();
+	else if (b == '\r' || b == '\n')
+		pane_newline();
+	else if (b >= 32)
+		pane_put((char)b);
+}
+
+static void term_echo_flush(void)
+{
+	if (T.need_draw)
+		term_draw();
+	term_serial_dump();
+}
+
+static void term_menu_move(int dir)
+{
+	T.menu_sel += dir;
+	if (T.menu_sel < 0)
+		T.menu_sel = 1;
+	if (T.menu_sel > 1)
+		T.menu_sel = 0;
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static void term_toggle_echo(void)
+{
+	if (term_want_echo())
+		T.echo_user = 2;
+	else
+		T.echo_user = 1;
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static void term_menu_activate(void)
+{
+	if (T.menu_sel == 1)
+	{
+		term_toggle_echo();
+		return;
+	}
+	term_exit();
+}
+
 static void apply_option(int cmd, int opt)
 {
 	if (opt == TELOPT_ECHO)
 	{
+		T.echo_user = 0;
 		if (cmd == WILL)
 		{
 			T.no_echo = 1;
@@ -1041,14 +1135,7 @@ static void incoming_byte(unsigned char b)
 	else if (b == '\n')
 		pane_newline();
 	else if (b == 8 || b == 127)
-	{
-		if (T.cur_col > 0)
-		{
-			T.cur_col--;
-			T.cell[T.cur_row][T.cur_col] = ' ';
-			mark_dirty_row(T.cur_row);
-		}
-	}
+		pane_rubout();
 	else if (b >= 32)
 		pane_put((char)b);
 }
@@ -1129,6 +1216,8 @@ static int esc_feed(char c)
 		{
 			if (T.menu)
 			{
+				if (c == 'A' || c == 'B')
+					term_menu_move(c == 'A' ? -1 : 1);
 				esc_reset();
 				return 1;
 			}
@@ -1343,6 +1432,7 @@ const char *mmb_term_key(char c)
 		if (c == 'f')
 		{
 			T.menu = 1;
+			T.menu_sel = 0;
 			mark_dirty_full();
 			term_draw();
 			term_serial_dump();
@@ -1393,15 +1483,24 @@ const char *mmb_term_key(char c)
 	}
 	if (T.menu)
 	{
-		if (c == '\r' || c == '\n' || c == 'x' || c == 'X' ||
-		    c == 'e' || c == 'E')
+		if (c == '\r' || c == '\n')
+		{
+			term_menu_activate();
+			return "";
+		}
+		if (c == 'x' || c == 'X')
 		{
 			term_exit();
 			return "";
 		}
+		if (c == 'e' || c == 'E')
+		{
+			term_toggle_echo();
+			return "";
+		}
 		return "";
 	}
-	if (!T.tcp)
+	if (!T.tcp && !T.demo)
 		return "";
 	if (swallow_crlf_pair(c))
 		return "";
@@ -1409,36 +1508,55 @@ const char *mmb_term_key(char c)
 	{
 		if (c == '\r' || c == '\n')
 		{
-			send_enter();
+			if (T.tcp)
+				send_enter();
+			term_echo_byte('\n');
+			term_echo_flush();
 			return "";
 		}
 		b = (unsigned char)c;
 		if (b == 127)
 			b = 8;
-		if (b == IAC)
+		if (T.tcp)
 		{
-			unsigned char esc[2] = { IAC, IAC };
-			mmb_net_tcp_send(esc, 2);
+			if (b == IAC)
+			{
+				unsigned char esc[2] = { IAC, IAC };
+				mmb_net_tcp_send(esc, 2);
+			}
+			else
+				mmb_net_tcp_send(&b, 1);
 		}
-		else
-			mmb_net_tcp_send(&b, 1);
+		term_echo_byte(b);
+		term_echo_flush();
 		return "";
 	}
 	if (c == '\r' || c == '\n')
 	{
-		send_line();
+		if (T.tcp)
+			send_line();
+		else
+			T.linelen = 0;
+		term_echo_byte('\n');
+		term_echo_flush();
 		return "";
 	}
 	if (c == 8 || c == 127)
 	{
 		if (T.linelen > 0)
 			T.linelen--;
+		term_echo_byte(8);
+		term_echo_flush();
 		return "";
 	}
 	if ((unsigned char)c < 32)
 		return "";
 	if (T.linelen + 1 < TM_LINE)
+	{
 		T.line[T.linelen++] = c;
+		term_echo_byte((unsigned char)c);
+		term_echo_flush();
+	}
 	return "";
 }
 
