@@ -15,10 +15,11 @@
 #define TTYPE_IS     0
 #define TTYPE_SEND   1
 
-#define TM_COLS     80
-#define TM_CH       16
-#define TM_CW       8
-#define TM_MAX_ROWS 66
+#define TM_COLS_BOXED 80
+#define TM_MAX_COLS   120
+#define TM_CH         16
+#define TM_CW         8
+#define TM_MAX_ROWS   66
 #define TM_LINE     256
 #define TM_ESC_BUF  16
 #define TM_ANSI_ARGS 8
@@ -50,13 +51,15 @@ typedef struct {
 	int saved_bits;
 	int pane_left;
 	int pane_rows;
+	int pane_cols;
+	int letterbox;
 	int vid_rows;
 	int vid_cols;
 	int cur_row;
 	int cur_col;
-	char cell[TM_MAX_ROWS][TM_COLS];
-	unsigned cell_fg[TM_MAX_ROWS][TM_COLS];
-	unsigned cell_bg[TM_MAX_ROWS][TM_COLS];
+	char cell[TM_MAX_ROWS][TM_MAX_COLS];
+	unsigned cell_fg[TM_MAX_ROWS][TM_MAX_COLS];
+	unsigned cell_bg[TM_MAX_ROWS][TM_MAX_COLS];
 	unsigned cur_fg;
 	unsigned cur_bg;
 	int ansi_bold;
@@ -100,6 +103,7 @@ static tm_state T;
 static int term_want_echo(void);
 static void pane_rubout(void);
 static void term_echo_byte(unsigned char b);
+static void send_naws(void);
 
 static unsigned ansi_pal(int n)
 {
@@ -218,18 +222,29 @@ static void fmt_line_num(char *dst, int n)
 	dst[7] = 0;
 }
 
+static int term_width(void)
+{
+	return T.pane_cols > 0 ? T.pane_cols : TM_COLS_BOXED;
+}
+
+static const char *term_width_label(void)
+{
+	return T.letterbox ? "Boxed" : "Full";
+}
+
 static void term_serial_dump(void)
 {
-	int r, c;
-	char line[TM_COLS + 1];
+	int r, c, cols;
+	char line[TM_MAX_COLS + 1];
 
 	if (!T.active)
 		return;
+	cols = term_width();
 	for (r = 0; r < T.pane_rows; r++)
 	{
-		for (c = 0; c < TM_COLS; c++)
+		for (c = 0; c < cols; c++)
 			line[c] = T.cell[r][c] ? T.cell[r][c] : ' ';
-		line[TM_COLS] = 0;
+		line[cols] = 0;
 		ser(line);
 		ser("\r\n");
 	}
@@ -238,6 +253,8 @@ static void term_serial_dump(void)
 		ser("File\r\n");
 		ser("Exit\r\n");
 		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
+		ser(term_width_label());
+		ser("\r\n");
 	}
 	T.serial_gen++;
 }
@@ -246,7 +263,15 @@ static void term_layout(void)
 {
 	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 120;
 	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
-	T.pane_left = (T.vid_cols - TM_COLS) / 2;
+	if (T.letterbox)
+		T.pane_cols = TM_COLS_BOXED;
+	else
+		T.pane_cols = T.vid_cols;
+	if (T.pane_cols > TM_MAX_COLS)
+		T.pane_cols = TM_MAX_COLS;
+	if (T.pane_cols < 1)
+		T.pane_cols = 1;
+	T.pane_left = (T.vid_cols - T.pane_cols) / 2;
 	if (T.pane_left < 0)
 		T.pane_left = 0;
 	T.pane_rows = T.vid_rows - 1;
@@ -261,7 +286,7 @@ static void pane_clear_row(int row)
 	int c;
 	if (row < 0 || row >= T.pane_rows)
 		return;
-	for (c = 0; c < TM_COLS; c++)
+	for (c = 0; c < term_width(); c++)
 	{
 		T.cell[row][c] = ' ';
 		T.cell_fg[row][c] = TM_FG;
@@ -303,7 +328,7 @@ static void pane_scroll_up(void)
 		return;
 	for (r = 0; r < T.pane_rows - 1; r++)
 	{
-		for (c = 0; c < TM_COLS; c++)
+		for (c = 0; c < term_width(); c++)
 		{
 			T.cell[r][c] = T.cell[r + 1][c];
 			T.cell_fg[r][c] = T.cell_fg[r + 1][c];
@@ -322,7 +347,7 @@ static void pane_scroll_smooth(void)
 	unsigned fill = TM_BG;
 
 	x0 = T.pane_left * TM_CW;
-	pw = TM_COLS * TM_CW;
+	pw = term_width() * TM_CW;
 	ph = T.pane_rows * TM_CH;
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
@@ -368,9 +393,9 @@ static void pane_put(char ch)
 {
 	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
 		return;
-	if (T.cur_col >= TM_COLS)
+	if (T.cur_col >= term_width())
 		pane_newline();
-	if (T.cur_col < TM_COLS && T.cur_row < T.pane_rows)
+	if (T.cur_col < term_width() && T.cur_row < T.pane_rows)
 	{
 		T.cell[T.cur_row][T.cur_col] = ch;
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
@@ -465,15 +490,15 @@ static void term_draw_status(void)
 	}
 	right[sizeof(right) - 1] = 0;
 	n = (int)strlen(right);
-	if (n > TM_COLS)
-		n = TM_COLS;
-	term_put_str(x0 + (TM_COLS - n) * TM_CW, y, right, TM_DIM);
+	if (n > term_width())
+		n = term_width();
+	term_put_str(x0 + (term_width() - n) * TM_CW, y, right, TM_DIM);
 }
 
 static void term_draw_menu(void)
 {
 	int x0, y0, w, i;
-	const char *items[2];
+	const char *items[3];
 	char echo[16];
 
 	if (!T.menu)
@@ -484,9 +509,10 @@ static void term_draw_menu(void)
 	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
 	items[0] = "Exit";
 	items[1] = echo;
-	mmb_gfx_box(x0, y0, w, 4 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	items[2] = term_width_label();
+	mmb_gfx_box(x0, y0, w, 5 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
 	term_put_str(x0 + TM_CW, y0, "File", TM_FG);
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < 3; i++)
 	{
 		int y = y0 + (i + 1) * TM_CH;
 		if (i == T.menu_sel)
@@ -503,7 +529,7 @@ static void term_draw_row(int r)
 	if (r < 0 || r >= T.pane_rows)
 		return;
 	y = r * TM_CH;
-	for (c = 0; c < TM_COLS; c++)
+	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
 		ch = (unsigned char)T.cell[r][c];
@@ -529,7 +555,7 @@ static void term_copy_pane(void)
 	if (!s || !d)
 		return;
 	x0 = T.pane_left * TM_CW;
-	pw = TM_COLS * TM_CW;
+	pw = term_width() * TM_CW;
 	ph = T.vid_rows * TM_CH;
 	if (x0 < 0)
 		x0 = 0;
@@ -546,7 +572,7 @@ static void term_copy_pane(void)
 static void term_present_pane(void)
 {
 	int x0 = T.pane_left * TM_CW;
-	int pw = TM_COLS * TM_CW;
+	int pw = term_width() * TM_CW;
 	int ph = T.vid_rows * TM_CH;
 
 	mmb_gfx_present_rect(x0, 0, pw, ph);
@@ -632,7 +658,7 @@ static void send_naws(void)
 	b[1] = SB;
 	b[2] = TELOPT_NAWS;
 	b[3] = 0;
-	b[4] = (unsigned char)TM_COLS;
+	b[4] = (unsigned char)term_width();
 	b[5] = (unsigned char)((rows >> 8) & 255);
 	b[6] = (unsigned char)(rows & 255);
 	b[7] = IAC;
@@ -693,8 +719,8 @@ static void term_menu_move(int dir)
 {
 	T.menu_sel += dir;
 	if (T.menu_sel < 0)
-		T.menu_sel = 1;
-	if (T.menu_sel > 1)
+		T.menu_sel = 2;
+	if (T.menu_sel > 2)
 		T.menu_sel = 0;
 	mark_dirty_full();
 	term_draw();
@@ -712,11 +738,63 @@ static void term_toggle_echo(void)
 	term_serial_dump();
 }
 
+static void term_fill_pages(void)
+{
+	int saved = G.gfx.write_page;
+	G.gfx.write_page = 1;
+	mmb_gfx_cls(TM_BG);
+	G.gfx.write_page = 0;
+	mmb_gfx_cls(TM_BG);
+	G.gfx.write_page = saved;
+}
+
+static void term_init_extra_cols(int old_cols)
+{
+	int r, c, cols = term_width();
+	if (cols <= old_cols)
+		return;
+	for (r = 0; r < T.pane_rows; r++)
+	{
+		for (c = old_cols; c < cols; c++)
+		{
+			if (!T.cell[r][c])
+			{
+				T.cell[r][c] = ' ';
+				T.cell_fg[r][c] = TM_FG;
+				T.cell_bg[r][c] = TM_BG;
+			}
+		}
+	}
+}
+
+static void term_toggle_letterbox(void)
+{
+	int old_cols = term_width();
+	T.letterbox = T.letterbox ? 0 : 1;
+	term_layout();
+	term_init_extra_cols(old_cols);
+	if (T.cur_col >= term_width())
+		T.cur_col = term_width() - 1;
+	term_fill_pages();
+	if (T.tcp)
+		send_naws();
+	mark_dirty_full();
+	term_draw();
+	if (T.letterbox)
+		mmb_gfx_present();
+	term_serial_dump();
+}
+
 static void term_menu_activate(void)
 {
 	if (T.menu_sel == 1)
 	{
 		term_toggle_echo();
+		return;
+	}
+	if (T.menu_sel == 2)
+	{
+		term_toggle_letterbox();
 		return;
 	}
 	term_exit();
@@ -809,8 +887,8 @@ static void ansi_cup(int row, int col)
 	T.cur_col = col - 1;
 	if (T.cur_row >= T.pane_rows)
 		T.cur_row = T.pane_rows - 1;
-	if (T.cur_col >= TM_COLS)
-		T.cur_col = TM_COLS - 1;
+	if (T.cur_col >= term_width())
+		T.cur_col = term_width() - 1;
 	if (T.cur_row < 0)
 		T.cur_row = 0;
 	if (T.cur_col < 0)
@@ -899,7 +977,7 @@ static void ansi_erase_line(int mode)
 	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
 		return;
 	a = 0;
-	b = TM_COLS;
+	b = term_width();
 	if (mode == 0)
 		a = T.cur_col;
 	else if (mode == 1)
@@ -953,8 +1031,8 @@ static void ansi_exec_csi(char cmd)
 	else if (cmd == 'C')
 	{
 		T.cur_col += n;
-		if (T.cur_col >= TM_COLS)
-			T.cur_col = TM_COLS - 1;
+		if (T.cur_col >= term_width())
+			T.cur_col = term_width() - 1;
 	}
 	else if (cmd == 'D')
 	{
@@ -1363,6 +1441,7 @@ void mmb_cmd_term(void)
 	T.saved_mode = G.gfx.mode;
 	T.saved_bits = G.gfx.bits;
 	T.demo = (strcasecmp(T.host, "demo") == 0);
+	T.letterbox = 1;
 	term_reset_pen();
 
 	ser("TERM\r\n");
@@ -1513,6 +1592,11 @@ const char *mmb_term_key(char c)
 		if (c == 'e' || c == 'E')
 		{
 			term_toggle_echo();
+			return "";
+		}
+		if (c == 'b' || c == 'B' || c == 'w' || c == 'W')
+		{
+			term_toggle_letterbox();
 			return "";
 		}
 		return "";
