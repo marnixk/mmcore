@@ -2092,6 +2092,28 @@ static int if_take_else_kw(const char *then0, int else_id, int elseif_id)
 	return 0;
 }
 
+static void if_skip_to_stmt_end(void)
+{
+	while (*G.p && *G.p != ':')
+	{
+		if (*G.p == '\'')
+			break;
+		if (*G.p == ' ' || *G.p == '\t')
+		{
+			G.p++;
+			continue;
+		}
+		if (if_skip_string())
+			continue;
+		if ((unsigned char)*G.p == 0x80)
+		{
+			G.p += 3;
+			continue;
+		}
+		G.p++;
+	}
+}
+
 void mmb_cmd_if(void)
 {
 	mmb_val v = mmb_expr();
@@ -2142,6 +2164,7 @@ void mmb_cmd_if(void)
 			G.p = save;
 		}
 		exec_statement();
+		if_skip_to_stmt_end();
 		return;
 	}
 	else_id = mmb_kw_id("ELSE");
@@ -2169,6 +2192,7 @@ void mmb_cmd_if(void)
 			if (mmb_as_int(v))
 			{
 				exec_statement();
+				if_skip_to_stmt_end();
 				return;
 			}
 			then0 = G.p;
@@ -2178,6 +2202,7 @@ void mmb_cmd_if(void)
 		{
 			mmb_skip_sp();
 			exec_statement();
+			if_skip_to_stmt_end();
 			return;
 		}
 		if ((unsigned char)*G.p == 0x80)
