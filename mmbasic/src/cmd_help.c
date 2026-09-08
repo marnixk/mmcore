@@ -622,7 +622,7 @@ static const char kHelpRun[] =
 	"\n"
 	"Run the program. With file$, load that program\n"
 	"from disk first (.BAS appended if needed) then\n"
-	"run. RUN \"name.pkg\" mounts the package read-only\n"
+	"run. RUN \"name.app\" mounts the package read-only\n"
 	"as B:, CHDIRs into it, and runs MAIN.BAS. When that\n"
 	"run ends, B: is unmounted. Bare RUN does the same\n"
 	"for the current file (from RUN file$, SAVE, or the\n"
@@ -635,7 +635,7 @@ static const char kHelpRun[] =
 	"\n"
 	"Example:  RUN\n"
 	"          RUN \"HI.BAS\"\n"
-	"          RUN \"GAME.PKG\"";
+	"          RUN \"GAME.APP\"";
 
 static const char kHelpPackage[] =
 	"PACKAGE pkg$, folder$\n"
@@ -646,12 +646,13 @@ static const char kHelpPackage[] =
 	"prompt: File exists, overwrite? [Y/n]\n"
 	"Empty or Y overwrites; N leaves the file. From a\n"
 	"running program a collision is ?FILE EXISTS.\n"
-	"RUN \"name.pkg\" mounts the zip read-only as B: and\n"
+	"RUN \"name.app\" mounts the zip read-only as B: and\n"
 	"runs MAIN.BAS. B: is not listed by DRIVE and cannot\n"
 	"be selected in FILES or CHDIR at the prompt.\n"
+	"After RUN, EDIT does not open the zip file.\n"
 	"\n"
-	"Example:  PACKAGE \"GAME.PKG\", \"GAME/\"\n"
-	"          RUN \"GAME.PKG\"";
+	"Example:  PACKAGE \"GAME.APP\", \"GAME/\"\n"
+	"          RUN \"GAME.APP\"";
 
 static const char kHelpNew[] =
 	"NEW\n"

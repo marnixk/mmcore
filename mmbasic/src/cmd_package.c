@@ -161,7 +161,7 @@ void mmb_cmd_package(void)
 	folder[sizeof(folder) - 1] = 0;
 	strip_slash(folder);
 	if (!strchr(pkg, '.'))
-		strncat(pkg, ".PKG", sizeof(pkg) - strlen(pkg) - 1);
+		strncat(pkg, ".APP", sizeof(pkg) - strlen(pkg) - 1);
 	if (!folder[0] || !mmb_vfs_isdir(folder))
 		mmb_error("?DIRECTORY");
 	if (!folder_has_main(folder))
