@@ -225,6 +225,8 @@ static void plat_audio_flush(void)
 static u8 *s_tui_pix;
 static unsigned s_tui_cap;
 static unsigned s_tui_w, s_tui_h, s_tui_pitch;
+static u8 *s_present_pix;
+static unsigned s_present_cap;
 
 extern "C" const u8 mmb_cp437_8x16[256 * 16];
 extern "C" const u8 mmb_tnr_16x32[95 * 32 * 2];
@@ -506,6 +508,65 @@ static void plat_tui_present(int y0, int y1)
 		area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
 }
 
+static void plat_present_rgb(int x, int y, int w, int h,
+			    const unsigned *rgb888, int stride)
+{
+	CDisplay::TArea area;
+	CBcmFrameBuffer *fb;
+	CScreenDevice *sc;
+	int px, py;
+	unsigned need, bpp = (unsigned)(DEPTH / 8);
+	TScreenColor *dst;
+
+	if (!s_kernel || !rgb888 || w < 1 || h < 1 || stride < w)
+		return;
+	sc = &s_kernel->Screen();
+	fb = sc->GetFrameBuffer();
+	if (!fb)
+		return;
+	if (x < 0)
+	{
+		w += x;
+		rgb888 -= x;
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		rgb888 += (unsigned)(-y) * (unsigned)stride;
+		y = 0;
+	}
+	if (x + w > (int)sc->GetWidth())
+		w = (int)sc->GetWidth() - x;
+	if (y + h > (int)sc->GetHeight())
+		h = (int)sc->GetHeight() - y;
+	if (w < 1 || h < 1)
+		return;
+	need = (unsigned)w * (unsigned)h * bpp;
+	if (!s_present_pix || s_present_cap < need)
+	{
+		if (s_present_pix)
+			free(s_present_pix);
+		s_present_pix = static_cast<u8 *>(malloc(need));
+		s_present_cap = s_present_pix ? need : 0;
+	}
+	if (!s_present_pix)
+		return;
+	dst = reinterpret_cast<TScreenColor *>(s_present_pix);
+	for (py = 0; py < h; py++)
+	{
+		const unsigned *src = rgb888 + py * stride;
+		TScreenColor *out = dst + py * w;
+		for (px = 0; px < w; px++)
+			out[px] = (TScreenColor)rgb_to_raw(src[px]);
+	}
+	area.x1 = (unsigned)x;
+	area.x2 = (unsigned)(x + w - 1);
+	area.y1 = (unsigned)y;
+	area.y2 = (unsigned)(y + h - 1);
+	fb->SetArea(area, s_present_pix);
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -543,6 +604,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_glyph_n = plat_tui_glyph_n;
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
+	plat.present_rgb = plat_present_rgb;
 	audio_init();
 	mmb_init(&plat);
 }

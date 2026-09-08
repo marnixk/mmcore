@@ -274,7 +274,7 @@ void mmb_gfx_present(void)
 	uint32_t *pg;
 	if (G.opt.profiling && G.running)
 		G.prof.gfx_present++;
-	if (!G.plat || !G.plat->set_pixel)
+	if (!G.plat)
 		return;
 	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
@@ -283,9 +283,14 @@ void mmb_gfx_present(void)
 		hw = G.gfx.w;
 	if (hh > G.gfx.h)
 		hh = G.gfx.h;
-	for (y = 0; y < hh; y++)
-		for (x = 0; x < hw; x++)
-			G.plat->set_pixel(x, y, pg[y * G.gfx.w + x]);
+	if (G.plat->present_rgb)
+		G.plat->present_rgb(0, 0, hw, hh, pg, G.gfx.w);
+	else if (G.plat->set_pixel)
+	{
+		for (y = 0; y < hh; y++)
+			for (x = 0; x < hw; x++)
+				G.plat->set_pixel(x, y, pg[y * G.gfx.w + x]);
+	}
 	mmb_sprite_overlay();
 }
 
@@ -293,7 +298,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 {
 	int px, py, hw, hh, x1, y1;
 	uint32_t *pg;
-	if (!G.plat || !G.plat->set_pixel)
+	if (!G.plat)
 		return;
 	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
@@ -322,6 +327,15 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 		x1 = hw;
 	if (y1 > hh)
 		y1 = hh;
+	if (x >= x1 || y >= y1)
+		return;
+	if (G.plat->present_rgb)
+	{
+		G.plat->present_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
+		return;
+	}
+	if (!G.plat->set_pixel)
+		return;
 	for (py = y; py < y1; py++)
 		for (px = x; px < x1; px++)
 			G.plat->set_pixel(px, py, pg[py * G.gfx.w + px]);
