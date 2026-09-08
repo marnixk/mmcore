@@ -1641,7 +1641,9 @@ static int handle_esc_char(char c)
 		F.esc = 0;
 		if (c == '~')
 		{
-			if (F.csi_n == 17)
+			if (F.csi_n >= 11 && F.csi_n <= 15)
+				handle_fkey(F.csi_n - 10);
+			else if (F.csi_n == 17)
 				handle_fkey(6);
 			else if (F.csi_n == 18)
 				handle_fkey(7);
