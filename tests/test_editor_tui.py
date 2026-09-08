@@ -1190,3 +1190,50 @@ def test_editor_alt_arrows_switch_tabs_no_wrap(kernel_image):
         _quit(con)
     finally:
         con.stop()
+
+
+def test_editor_inc_tab_shows_extension(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "UTILITIES.INC" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "CONST Z=1"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _edit(con, "UTILITIES.INC")
+        assert "UTILITIES.INC" in seen
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_editor_open_lists_inc_files(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "LIB.INC" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "CONST Q=3"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "HOST.BAS")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "LIB.INC" in seen
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_cr_is_ignored_and_run(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "CRLF.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 9"; CHR$(13)') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('RUN "CRLF.BAS"') == "9"
+        seen = _edit(con, "CRLF.BAS")
+        assert "PRINT 9" in seen
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()

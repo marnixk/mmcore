@@ -388,10 +388,49 @@ static void ed_copy(char *dst, int dstsz, const char *src)
 
 static void ensure_bas(char *path, int sz)
 {
+	char inc[128];
+
 	if (!path[0])
 		return;
-	if (!strchr(path, '.'))
+	if (strchr(path, '.'))
+		return;
+	ed_copy(inc, sizeof(inc), path);
+	strncat(inc, ".INC", sizeof(inc) - strlen(inc) - 1);
+	if (mmb_vfs_exists(inc))
+		strncat(path, ".INC", (unsigned)sz - strlen(path) - 1);
+	else
 		strncat(path, ".BAS", (unsigned)sz - strlen(path) - 1);
+}
+
+static void fit_name(char *dst, int maxn, const char *name)
+{
+	int n, ext = 0;
+	const char *dot;
+
+	if (!dst || maxn < 2)
+		return;
+	if (!name)
+		name = "";
+	n = (int)strlen(name);
+	if (n <= maxn)
+	{
+		memcpy(dst, name, (unsigned)n);
+		dst[n] = 0;
+		return;
+	}
+	dot = strrchr(name, '.');
+	if (dot)
+		ext = (int)strlen(dot);
+	if (ext > 0 && ext < maxn - 1)
+	{
+		int keep = maxn - ext;
+		memcpy(dst, name, (unsigned)keep);
+		memcpy(dst + keep, dot, (unsigned)ext);
+		dst[maxn] = 0;
+		return;
+	}
+	memcpy(dst, name, (unsigned)maxn);
+	dst[maxn] = 0;
 }
 
 static const char *tab_label(int i)
@@ -411,7 +450,11 @@ static const char *tab_label(int i)
 
 static int ch_cols(char ch)
 {
-	return (ch == '\t') ? ED_TAB : 1;
+	if (ch == '\t')
+		return ED_TAB;
+	if ((unsigned char)ch < 32)
+		return 0;
+	return 1;
 }
 
 static mmb_ed_tab *cur_tab(void)
@@ -472,7 +515,7 @@ static void load_into(int i, const char *path)
 		ed_copy(t->path, sizeof(t->path), path);
 		ensure_bas(t->path, sizeof(t->path));
 		if (mmb_vfs_read(t->path, t->buf, sizeof(t->buf) - 1, &got) == 0)
-			t->len = (int)got;
+			t->len = mmb_normalize_newlines(t->buf, (int)got);
 		t->buf[t->len] = 0;
 	}
 	t->cx = t->len;
@@ -1121,6 +1164,8 @@ static void ensure_visible(void)
 static void insert_char(char c)
 {
 	mmb_ed_tab *t = cur_tab();
+	if (c == '\r')
+		return;
 	if (!t || t->len >= (int)sizeof(t->buf) - 1)
 		return;
 	delete_selection(0);
@@ -1153,6 +1198,9 @@ static int insert_at(int pos, const char *s, int n)
 	memcpy(t->buf + pos, s, (unsigned)n);
 	t->len += n;
 	t->buf[t->len] = 0;
+	t->len = mmb_normalize_newlines(t->buf, t->len);
+	if (t->cx > t->len)
+		t->cx = t->len;
 	t->dirty = 1;
 	return n;
 }
@@ -1506,19 +1554,15 @@ static void draw_tabs(void)
 	for (i = 0; i < G.ed.ntabs && x < COLS; i++)
 	{
 		const char *name = tab_label(i);
-		int n = (int)strlen(name);
 		int fg = (i == G.ed.cur) ? C_TABCUR_FG : C_TAB_FG;
 		int bg = (i == G.ed.cur) ? C_TABCUR_BG : C_TAB_BG;
-		char lab[16];
-		int k;
-		if (n > 12)
-			n = 12;
+		char lab[20];
+		int n;
+		fit_name(lab, 16, name);
+		n = (int)strlen(lab);
 		if (x + n + 3 > COLS)
 			break;
 		tui_put(x++, ROW_TABS, ' ', fg, bg);
-		for (k = 0; k < n; k++)
-			lab[k] = name[k];
-		lab[n] = 0;
 		tui_puts(x, ROW_TABS, lab, fg, bg);
 		x += n;
 		tui_put(x++, ROW_TABS, G.ed.tab[i].dirty ? '*' : ' ', fg, bg);
@@ -1633,6 +1677,8 @@ static void draw_text_line(int x, int y, const char *s, int n, int col0, int buf
 			fg = C_EDIT_FG;
 			bg = C_EDIT_BG;
 		}
+		if ((unsigned char)ch < 32 && ch != '\t')
+			continue;
 		w = ch_cols(ch);
 		for (k = 0; k < w && shown < TEXT_COLS; k++)
 		{
@@ -2012,7 +2058,8 @@ static void fd_scan(void)
 		{
 			if (is_dir)
 				fd_add(fd_dirs, &fd_ndir, name);
-			else if (fd_match(name, fd_mask))
+			else if (fd_match(name, fd_mask) ||
+				 (mmb_keyword_eq(fd_mask, "*.BAS") && fd_match(name, "*.INC")))
 				fd_add(fd_files, &fd_nfile, name);
 		}
 		s = nl;
@@ -2635,11 +2682,12 @@ static void draw_status(void)
 	*p++ = ' ';
 	{
 		const char *name = t ? tab_label(G.ed.cur) : "";
-		int k, n = (int)strlen(name);
-		if (n > 12)
-			n = 12;
+		char lab[20];
+		int k, n;
+		fit_name(lab, 16, name);
+		n = (int)strlen(lab);
 		for (k = 0; k < n; k++)
-			*p++ = name[k];
+			*p++ = lab[k];
 	}
 	*p++ = ' ';
 	p = put_uint(p, row + 1);

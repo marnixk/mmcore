@@ -486,3 +486,18 @@ def test_wordpad_esc_then_letter_inserts_letter(kernel_image):
         _quit(con)
     finally:
         con.stop()
+
+
+def test_wordpad_cr_is_ignored(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "CR.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "Hello"; CHR$(13); "World"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _open(con, 'WORDPAD "CR.MD"', quiet=1.0)
+        assert "Hello" in seen
+        assert "World" in seen
+        _quit(con)
+    finally:
+        con.stop()

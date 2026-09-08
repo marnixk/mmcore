@@ -306,6 +306,7 @@ extern mmb G;
 void mmb_error(const char *msg);
 void mmb_syntax(void);
 void mmb_skip_sp(void);
+int mmb_normalize_newlines(char *buf, int len);
 int mmb_match(const char *kw);
 int mmb_match_exact(const char *kw);
 void mmb_expect(char c);
