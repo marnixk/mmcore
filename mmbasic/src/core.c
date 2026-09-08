@@ -2142,6 +2142,8 @@ void mmb_check_break(void)
 {
 	if (!G.running)
 		return;
+	if (G.opt.profiling)
+		G.prof.check_break++;
 	mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_play_mix();
@@ -2224,6 +2226,8 @@ static void exec_statement(void)
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == '\'')
 		return;
+	if (G.opt.profiling && G.running)
+		G.prof.stmt++;
 	if (mmb_match("REM"))
 	{
 		while (*G.p)
@@ -2952,6 +2956,8 @@ static void run_program(void)
 {
 	int pc = 0;
 	G.running = 1;
+	if (G.opt.profiling)
+		mmb_prof_reset();
 	G.for_sp = 0;
 	G.gosub_sp = 0;
 	G.ctrl_sp = 0;
@@ -3003,6 +3009,8 @@ static void run_program(void)
 			continue;
 		pc++;
 	}
+	if (G.opt.profiling)
+		mmb_prof_report();
 	G.running = 0;
 	mmb_play_stop();
 }

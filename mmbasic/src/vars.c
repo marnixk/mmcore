@@ -114,6 +114,8 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	int i;
 	char nbuf[MMB_MAX_NAME];
 	int t, typed_lookup;
+	if (G.opt.profiling && G.running)
+		G.prof.find_var++;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);

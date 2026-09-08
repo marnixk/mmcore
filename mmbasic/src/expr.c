@@ -1452,5 +1452,7 @@ static mmb_val expr_or(void)
 
 mmb_val mmb_expr(void)
 {
+	if (G.opt.profiling && G.running)
+		G.prof.expr++;
 	return expr_or();
 }
