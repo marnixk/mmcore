@@ -426,3 +426,40 @@ def test_wordpad_menu_status_and_hotkeys(kernel_image):
         _quit(con)
     finally:
         con.stop()
+
+
+def test_wordpad_esc_then_right_does_not_insert_csi(kernel_image):
+    """Esc then Right must move the cursor, not insert the CSI leftover [C."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "WPESC.MD"')
+        _keys(con, b"HELLO")
+        seen = _keys(con, b"\x1b\x1b[C")
+        assert "[C" not in seen
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        reopened = _open(con, 'WORDPAD "WPESC.MD"', quiet=1.0)
+        assert "HELLO" in reopened
+        assert "[C" not in reopened
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_esc_then_letter_inserts_letter(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "WPA.MD"')
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1ba")
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        reopened = _open(con, 'WORDPAD "WPA.MD"', quiet=1.0)
+        assert "HELLOa" in reopened
+        _quit(con)
+    finally:
+        con.stop()
