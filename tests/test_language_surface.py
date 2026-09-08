@@ -78,10 +78,7 @@ def test_exit_for(console):
     assert console.send_line("30 PRINT I") == ""
     assert console.send_line("40 NEXT I") == ""
     assert console.send_line("50 PRINT 99") == ""
-    out = console.send_line("RUN")
-    assert "3" not in out.split()
-    assert "99" in out
-    assert "1" in out
+    assert console.send_line("RUN") == "1\n2\n99"
 
 
 def test_continue_for(console):
@@ -90,11 +87,7 @@ def test_continue_for(console):
     assert console.send_line("20 IF I=2 THEN CONTINUE FOR") == ""
     assert console.send_line("30 PRINT I") == ""
     assert console.send_line("40 NEXT I") == ""
-    out = console.send_line("RUN")
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    assert "2" not in lines
-    assert "1" in lines
-    assert "3" in lines
+    assert console.send_line("RUN") == "1\n3"
 
 
 def test_max_min_acos(console):

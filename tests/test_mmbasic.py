@@ -256,8 +256,7 @@ def test_for_next_numbered(console):
     assert console.send_line("10 FOR I=1 TO 3") == ""
     assert console.send_line("20 PRINT I;") == ""
     assert console.send_line("30 NEXT I") == ""
-    out = console.send_line("RUN")
-    assert "1" in out and "2" in out and "3" in out
+    assert console.send_line("RUN") == "123"
 
 
 def test_print_newline_unless_semicolon(console):
@@ -334,8 +333,7 @@ def test_while_wend(console):
     assert console.send_line("30 I=I+1") == ""
     assert console.send_line("40 PRINT I;") == ""
     assert console.send_line("50 WEND") == ""
-    out = console.send_line("RUN")
-    assert "1" in out and "2" in out and "3" in out
+    assert console.send_line("RUN") == "123"
 
 
 def test_do_loop_until(console):
@@ -345,8 +343,7 @@ def test_do_loop_until(console):
     assert console.send_line("30 I=I+1") == ""
     assert console.send_line("40 PRINT I;") == ""
     assert console.send_line("50 LOOP UNTIL I=3") == ""
-    out = console.send_line("RUN")
-    assert "1" in out and "2" in out and "3" in out
+    assert console.send_line("RUN") == "123"
 
 
 def test_do_loop_is_infinite_until_exit(console):
