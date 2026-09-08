@@ -53,7 +53,9 @@ typedef struct mmb_platform {
 	void (*tui_scroll)(int x, int y, int w, int h, int dy, unsigned fill_rgb);
 	/* 8x16 glyph drawn at 2x (16x32 pixels, two cells wide and tall). */
 	void (*tui_glyph2x)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
-	/* Nonzero while a USB Alt modifier is held (0 if unknown). */
+	void (*tui_glyph_n)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
+			     int scale);
+	void (*tui_set_font)(const unsigned char *font256x16);
 	int (*alt_held)(void);
 } mmb_platform;
 

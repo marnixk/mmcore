@@ -228,12 +228,19 @@ static unsigned s_tui_w, s_tui_h, s_tui_pitch;
 
 extern "C" const u8 mmb_cp437_8x16[256 * 16];
 
+static const u8 *s_tui_font = mmb_cp437_8x16;
+
 static u8 glyph_row(unsigned ch, unsigned y)
 {
 	if (y >= TUI_CH)
 		return 0;
 	ch &= 0xFFu;
-	return mmb_cp437_8x16[ch * TUI_CH + y];
+	return s_tui_font[ch * TUI_CH + y];
+}
+
+static void plat_tui_set_font(const unsigned char *font)
+{
+	s_tui_font = font ? font : mmb_cp437_8x16;
 }
 
 static int plat_video_cols(void)
@@ -372,42 +379,53 @@ static void plat_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rg
 	plat_tui_present(y, y + h - 1);
 }
 
-static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
+static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
+			     int scale)
 {
-	unsigned x0, y0, x, y, sx, sy;
+	unsigned x0, y0, x, y, sx, sy, n;
 	TScreenColor fg, bg, c;
 	u8 *dst;
 
+	if (scale < 1)
+		scale = 1;
+	if (scale > 4)
+		scale = 4;
+	n = (unsigned)scale;
 	if (!s_tui_pix || col < 0 || row < 0)
 		return;
 	x0 = (unsigned)col * TUI_CW;
 	y0 = (unsigned)row * TUI_CH;
-	if (x0 + TUI_CW * 2 > s_tui_w || y0 + TUI_CH * 2 > s_tui_h)
+	if (x0 + TUI_CW * n > s_tui_w || y0 + TUI_CH * n > s_tui_h)
 		return;
 	fg = (TScreenColor)rgb_to_raw(fg_rgb);
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
 	for (y = 0; y < TUI_CH; y++)
 	{
 		u8 bits = glyph_row(ch, y);
-		for (sy = 0; sy < 2; sy++)
+		for (sy = 0; sy < n; sy++)
 		{
-			dst = s_tui_pix + (y0 + y * 2 + sy) * s_tui_pitch + x0 * (DEPTH / 8);
+			dst = s_tui_pix + (y0 + y * n + sy) * s_tui_pitch + x0 * (DEPTH / 8);
 			for (x = 0; x < TUI_CW; x++)
 			{
 				c = (bits & (u8)(0x80 >> x)) ? fg : bg;
-				for (sx = 0; sx < 2; sx++)
+				for (sx = 0; sx < n; sx++)
 				{
 #if DEPTH == 32
-					reinterpret_cast<u32 *>(dst)[x * 2 + sx] = (u32)c;
+					reinterpret_cast<u32 *>(dst)[x * n + sx] = (u32)c;
 #elif DEPTH == 16
-					reinterpret_cast<u16 *>(dst)[x * 2 + sx] = (u16)c;
+					reinterpret_cast<u16 *>(dst)[x * n + sx] = (u16)c;
 #else
-					dst[x * 2 + sx] = (u8)c;
+					dst[x * n + sx] = (u8)c;
 #endif
 				}
 			}
 		}
 	}
+}
+
+static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
+{
+	plat_tui_glyph_n(col, row, ch, fg_rgb, bg_rgb, 2);
 }
 
 static int plat_alt_held(void)
@@ -470,6 +488,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_present = plat_tui_present;
 	plat.tui_scroll = plat_tui_scroll;
 	plat.tui_glyph2x = plat_tui_glyph2x;
+	plat.tui_glyph_n = plat_tui_glyph_n;
+	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	audio_init();
 	mmb_init(&plat);

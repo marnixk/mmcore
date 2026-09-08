@@ -252,16 +252,24 @@ static int wp_chrome(void)
 
 static int heading_scale(int style)
 {
-	if (style == WP_STYLE_H1 || style == WP_STYLE_H2)
+	if (style == WP_STYLE_H1)
+		return 3;
+	if (style == WP_STYLE_H2)
 		return 2;
+	if (style == WP_STYLE_H3)
+		return 1;
 	return 1;
 }
 
 static int vrow_h(int vr)
 {
+	int s;
 	if (vr < 0 || vr >= W.total_vrows)
 		return 1;
-	return W.vrows[vr].scale >= 2 ? 2 : 1;
+	s = W.vrows[vr].scale;
+	if (s < 1)
+		return 1;
+	return s;
 }
 
 static int screen_row_of_vrow(int vr)
@@ -278,11 +286,18 @@ static int screen_row_of_vrow(int vr)
 
 static void wp_glyph(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
 {
-	if (!G.plat || !G.plat->tui_glyph)
+	if (!G.plat)
 		return;
+	if (scale < 1)
+		scale = 1;
+	if (G.plat->tui_glyph_n)
+	{
+		G.plat->tui_glyph_n(col, row, ch, fg, bg, scale);
+		return;
+	}
 	if (scale >= 2 && G.plat->tui_glyph2x)
 		G.plat->tui_glyph2x(col, row, ch, fg, bg);
-	else
+	else if (G.plat->tui_glyph)
 		G.plat->tui_glyph(col, row, ch, fg, bg);
 }
 
@@ -865,6 +880,8 @@ static void wp_serial_dump(void)
 static void wp_leave(void)
 {
 	wp_autosave();
+	if (G.plat && G.plat->tui_set_font)
+		G.plat->tui_set_font(0);
 	mmb_console_apply_colour();
 	memset(&W, 0, sizeof(W));
 }
@@ -3178,6 +3195,8 @@ void mmb_cmd_wordpad(void)
 	ser("[WORDPAD]\r\n");
 	if (G.plat && G.plat->tui_prepare)
 		G.plat->tui_prepare();
+	if (G.plat && G.plat->tui_set_font)
+		G.plat->tui_set_font(mmb_tnr_8x16);
 	wp_layout_geom();
 	wp_redraw();
 }

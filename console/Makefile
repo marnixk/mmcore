@@ -35,6 +35,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/cmd_credits.o \
 	  $(MMB)/src/cmd_math.o \
 	  $(MMB)/src/font_cp437_8x16.o \
+	  $(MMB)/src/font_tnr_8x16.o \
 	  $(MMB)/src/cmd_lang.o \
 	  $(MMB)/src/cmd_load.o \
 	  $(MMB)/src/png.o \

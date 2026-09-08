@@ -68,6 +68,7 @@ def test_help_wordpad(console):
     assert "bold" in low
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
     assert "ctrl+p" in low or "quick-open" in low
+    assert "serif" in low or "times" in low or "h1" in low
 
 
 def test_wordpad_type_save_and_reload(kernel_image):
@@ -99,8 +100,8 @@ def test_wordpad_markdown_heading_style(kernel_image):
         time.sleep(0.3)
         serial = seen + " " + closed + " " + _plain(con.drain(quiet=0.4).decode(errors="replace"))
         pixel_diff = False
-        for heading_y in (1 * 16 + 8, 3 * 16 + 8):
-            body_y = heading_y + 16
+        for heading_y in (1 * 16 + 8, 2 * 16 + 8):
+            body_y = heading_y + 3 * 16
             heading_samples = [con.screen_pixel(x, heading_y) for x in (12, 20, 28, 36, 44)]
             body_samples = [con.screen_pixel(x, body_y) for x in (12, 20, 28, 36, 44)]
             if any(h != b for h, b in zip(heading_samples, body_samples)):
@@ -243,7 +244,7 @@ def test_wordpad_h1_is_taller(kernel_image):
         _keys(con, b"# Title\rbody text", quiet=0.8)
         time.sleep(0.2)
         heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
-        body = [con.screen_pixel(x, 2 * 16 + 8) for x in (12, 20, 28, 36)]
+        body = [con.screen_pixel(x, 3 * 16 + 8) for x in (12, 20, 28, 36)]
         assert any(h != b for h, b in zip(heading_mid, body))
         _quit(con)
     finally:
