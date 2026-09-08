@@ -949,6 +949,12 @@ static void files_draw(void)
 	emit_status();
 }
 
+static void files_draw_if_idle(void)
+{
+	if (F.active && F.mode != FU_PREVIEW && !mmb_in_editor())
+		files_draw();
+}
+
 static void set_hint(const char *s)
 {
 	strncpy(F.hint, s ? s : "", sizeof(F.hint) - 1);
@@ -1635,7 +1641,9 @@ static int handle_esc_char(char c)
 		F.esc = 0;
 		if (c == '~')
 		{
-			if (F.csi_n == 17)
+			if (F.csi_n >= 11 && F.csi_n <= 15)
+				handle_fkey(F.csi_n - 10);
+			else if (F.csi_n == 17)
 				handle_fkey(6);
 			else if (F.csi_n == 18)
 				handle_fkey(7);
@@ -1869,7 +1877,7 @@ const char *mmb_files_resume(void)
 	G.outn = 0;
 	G.out[0] = 0;
 	if (F.active)
-		files_draw();
+		files_draw_if_idle();
 	return G.out;
 }
 
@@ -1901,7 +1909,7 @@ const char *mmb_files_key(char c)
 		F.alt = 0;
 		files_alt(c);
 		if (F.active && F.mode != FU_PREVIEW)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if ((unsigned char)c == 1)
@@ -1913,7 +1921,7 @@ const char *mmb_files_key(char c)
 	{
 		handle_esc_char(c);
 		if (F.active && F.mode != FU_PREVIEW)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if (c == 27)
@@ -1925,7 +1933,7 @@ const char *mmb_files_key(char c)
 	if (F.mode == FU_PREVIEW)
 	{
 		close_overlay();
-		files_draw();
+		files_draw_if_idle();
 		return G.out;
 	}
 	if (F.mode == FU_PROMPT)
@@ -1933,12 +1941,12 @@ const char *mmb_files_key(char c)
 		if (c == 27)
 		{
 			F.mode = FU_BROWSE;
-			files_draw();
+			files_draw_if_idle();
 			return G.out;
 		}
 		handle_prompt_char(c);
 		if (F.active)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if (c == '\t')
@@ -1950,7 +1958,7 @@ const char *mmb_files_key(char c)
 			set_hint(F.cur ? "Right panel" : "Left panel");
 		}
 		if (F.active)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if (c == 8 || c == 127)
@@ -1980,7 +1988,7 @@ const char *mmb_files_key(char c)
 			 F.mode == FU_INFO || F.mode == FU_PLAY || F.mode == FU_VIEW)
 			close_overlay();
 		if (F.active)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if (c == '\r' || c == '\n')
@@ -1997,7 +2005,7 @@ const char *mmb_files_key(char c)
 		else if (F.mode == FU_BROWSE)
 			activate_enter();
 		if (F.active)
-			files_draw();
+			files_draw_if_idle();
 		return G.out;
 	}
 	if (c == ':')
@@ -2007,7 +2015,7 @@ const char *mmb_files_key(char c)
 			set_drive_letter(F.pend_drive);
 			F.pend_drive = 0;
 			if (F.active)
-				files_draw();
+				files_draw_if_idle();
 			return G.out;
 		}
 	}
@@ -2018,7 +2026,7 @@ const char *mmb_files_key(char c)
 	if (c >= 32 && c < 127)
 		handle_letter(c);
 	if (was_active && F.active && F.mode != FU_PREVIEW)
-		files_draw();
+		files_draw_if_idle();
 	return G.out;
 }
 
@@ -2031,5 +2039,5 @@ void mmb_files_poll(void)
 	F.esc = 0;
 	files_lone_esc();
 	if (F.active && F.mode != FU_PREVIEW)
-		files_draw();
+		files_draw_if_idle();
 }
