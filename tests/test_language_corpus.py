@@ -109,6 +109,27 @@ def test_false_if_does_not_skip_next(console):
     assert console.send_line("RUN") == "1\n2\n3"
 
 
+def test_same_line_if_else_elseif_and_string(console):
+    assert console.send_line("IF 0 THEN PRINT 1") == ""
+    assert console.send_line("IF 0 THEN PRINT 1 ELSE PRINT 2") == "2"
+    assert console.send_line("IF 1 THEN PRINT 1 ELSE PRINT 2") == "1"
+    assert console.send_line("IF 0 THEN PRINT 1 ELSEIF 1 THEN PRINT 3") == "3"
+    assert console.send_line("IF 1 THEN PRINT 4 ELSEIF 1 THEN PRINT 5") == "4"
+    assert console.send_line('IF 0 THEN PRINT "ELSE" ELSE PRINT 9') == "9"
+    assert console.send_line('IF 0 THEN PRINT "ELSE": PRINT 7') == "7"
+    _write_bas(
+        console,
+        "IFSL.BAS",
+        [
+            "X=0",
+            "IF X<0 THEN X=X+384",
+            "IF X=0 THEN PRINT 1 ELSE PRINT 2",
+            'IF 0 THEN PRINT "ELSE" ELSE PRINT 8',
+        ],
+    )
+    assert console.send_line('RUN "IFSL.BAS"') == "1\n8"
+
+
 def test_while_and_for_mixed(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 I=0") == ""

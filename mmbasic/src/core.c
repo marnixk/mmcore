@@ -2006,10 +2006,120 @@ void mmb_cmd_run(void)
 	}
 }
 
+static int if_tok_id(const char *p)
+{
+	if ((unsigned char)*p != 0x80)
+		return 0;
+	return (unsigned char)p[1] | ((unsigned char)p[2] << 8);
+}
+
+static int if_ascii_kw(const char *kw)
+{
+	const char *p = G.p;
+	const char *k = kw;
+	while (*k)
+	{
+		char a = *p, b = *k;
+		if (a >= 'a' && a <= 'z')
+			a = (char)(a - 32);
+		if (b >= 'a' && b <= 'z')
+			b = (char)(b - 32);
+		if (a != b)
+			return 0;
+		p++;
+		k++;
+	}
+	if (mmb_is_ident(*p))
+		return 0;
+	G.p = p;
+	return 1;
+}
+
+static int if_at_ident_start(const char *then0)
+{
+	if (G.p == then0)
+		return 1;
+	return !mmb_is_ident(G.p[-1]);
+}
+
+static int if_skip_string(void)
+{
+	if (*G.p != '"')
+		return 0;
+	G.p++;
+	while (*G.p)
+	{
+		if (*G.p != '"')
+		{
+			G.p++;
+			continue;
+		}
+		G.p++;
+		if (*G.p == '"')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	return 1;
+}
+
+static int if_take_else_kw(const char *then0, int else_id, int elseif_id)
+{
+	int id;
+	if ((unsigned char)*G.p == 0x80)
+	{
+		id = if_tok_id(G.p);
+		if (id == elseif_id)
+		{
+			G.p += 3;
+			return 2;
+		}
+		if (id == else_id)
+		{
+			G.p += 3;
+			return 1;
+		}
+		return 0;
+	}
+	if (!if_at_ident_start(then0))
+		return 0;
+	if (if_ascii_kw("ELSEIF"))
+		return 2;
+	if (if_ascii_kw("ELSE"))
+		return 1;
+	return 0;
+}
+
+static void if_skip_to_stmt_end(void)
+{
+	while (*G.p && *G.p != ':')
+	{
+		if (*G.p == '\'')
+			break;
+		if (*G.p == ' ' || *G.p == '\t')
+		{
+			G.p++;
+			continue;
+		}
+		if (if_skip_string())
+			continue;
+		if ((unsigned char)*G.p == 0x80)
+		{
+			G.p += 3;
+			continue;
+		}
+		G.p++;
+	}
+}
+
 void mmb_cmd_if(void)
 {
 	mmb_val v = mmb_expr();
 	int cond = mmb_as_int(v) != 0;
+	int else_id, elseif_id;
+	const char *then0;
 	if (!mmb_match("THEN"))
 		mmb_syntax();
 	mmb_skip_sp();
@@ -2054,31 +2164,53 @@ void mmb_cmd_if(void)
 			G.p = save;
 		}
 		exec_statement();
+		if_skip_to_stmt_end();
+		return;
 	}
-	else
+	else_id = mmb_kw_id("ELSE");
+	elseif_id = mmb_kw_id("ELSEIF");
+	then0 = G.p;
+	while (*G.p && *G.p != ':')
 	{
-		while (*G.p && *G.p != ':')
+		int which;
+		if (*G.p == '\'')
+			break;
+		if (*G.p == ' ' || *G.p == '\t')
 		{
-			if (mmb_match("ELSEIF"))
+			G.p++;
+			continue;
+		}
+		if (if_skip_string())
+			continue;
+		which = if_take_else_kw(then0, else_id, elseif_id);
+		if (which == 2)
+		{
+			v = mmb_expr();
+			if (!mmb_match("THEN"))
+				mmb_syntax();
+			mmb_skip_sp();
+			if (mmb_as_int(v))
 			{
-				v = mmb_expr();
-				if (!mmb_match("THEN"))
-					mmb_syntax();
-				mmb_skip_sp();
-				if (mmb_as_int(v))
-				{
-					exec_statement();
-					return;
-				}
-			}
-			else if (mmb_match("ELSE"))
-			{
-				mmb_skip_sp();
 				exec_statement();
+				if_skip_to_stmt_end();
 				return;
 			}
-			G.p++;
+			then0 = G.p;
+			continue;
 		}
+		if (which == 1)
+		{
+			mmb_skip_sp();
+			exec_statement();
+			if_skip_to_stmt_end();
+			return;
+		}
+		if ((unsigned char)*G.p == 0x80)
+		{
+			G.p += 3;
+			continue;
+		}
+		G.p++;
 	}
 }
 

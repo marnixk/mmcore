@@ -61,6 +61,24 @@ def test_profiling_integer_for(console):
     assert p["break"] >= 200
 
 
+def test_profiling_false_same_line_if_skip(console):
+    p = _run_kernel(
+        console,
+        "PIF.BAS",
+        [
+            "A=0",
+            "FOR I=1 TO 101",
+            "IF I<0 THEN I=I+384",
+            "IF I>999 THEN I=I-384",
+            "A=A+1",
+            "NEXT I",
+            "PRINT A",
+        ],
+    )
+    assert p["statements"] >= 400
+    assert p["match"] < 4000
+
+
 def test_profiling_float_math(console):
     p = _run_kernel(
         console,
