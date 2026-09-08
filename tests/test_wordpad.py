@@ -56,6 +56,27 @@ def test_wordpad_opens_untitled(kernel_image):
         con.stop()
 
 
+def test_wordpad_exit_cls_and_restores_colour(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("COLOUR RGB(255,255,255), RGB(0,0,0)") == ""
+        assert con.send_line("CLS RGB(0,0,0)") == ""
+        _open(con)
+        _keys(con, b"Hello")
+        time.sleep(0.2)
+        pane = con.screen_pixel(80, 80)
+        _quit(con)
+        time.sleep(0.3)
+        after = con.screen_pixel(80, 80)
+        assert after != pane or (after[0] + after[1] + after[2] < 40)
+        pix = int(con.send_line("PRINT PIXEL(40,80)"))
+        assert pix == 0
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
 def test_help_wordpad(console):
     listing = scroll_all(console, open_ihelp(console))
     assert "WORDPAD" in listing

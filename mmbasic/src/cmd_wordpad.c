@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "tui.h"
 
 #define WP_BUF      65536
 #define WP_CLIP     8192
@@ -882,7 +883,10 @@ static void wp_serial_dump(void)
 static void wp_leave(void)
 {
 	wp_autosave();
+	tui_end();
+	mmb_gfx_cls(G.gfx.bg);
 	mmb_console_apply_colour();
+	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
 }
 
