@@ -281,6 +281,14 @@ def test_help_open_tcp_stream(console):
     assert "nbr" in dollar.lower() or "count" in dollar.lower()
 
 
+def test_help_json_dollar(console):
+    out = dump_topic(console, "JSON$")
+    assert out != "?SYNTAX ERROR"
+    assert "path$" in out
+    fns = dump_topic(console, "FUNCTIONS")
+    assert "JSON$" in fns
+
+
 def test_help_colour_ibm(console):
     out = dump_topic(console, "COLOUR")
     assert out != "?SYNTAX ERROR"

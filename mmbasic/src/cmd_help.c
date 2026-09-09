@@ -723,6 +723,19 @@ static const char kHelpInputDollar[] =
 	"\n"
 	"Example:  A$ = INPUT$(LOC(#1), #1)";
 
+static const char kHelpJson[] =
+	"JSON$(json$, path$)\n"
+	"\n"
+	"Query a JSON object stored in a STRING (255).\n"
+	"path$ uses dotted keys and [n] array indexes:\n"
+	"  main.temp   weather[0].description\n"
+	"Missing keys, null, objects and arrays return \"\".\n"
+	"Invalid JSON is an error.\n"
+	"\n"
+	"Example:\n"
+	"  PRINT VAL(JSON$(js$, \"main.temp\"))\n"
+	"  PRINT JSON$(js$, \"name\")";
+
 static const char kHelpOption[] =
 	"OPTION setting ...\n"
 	"OPTION LIST [ALL]\n"
@@ -1486,6 +1499,7 @@ static const char kHelpFunctions[] =
 	"Other: PLAYING() DATE$ TIME$ TIMER POS\n"
 	"  MM.VER MM.DEVICE$ MM.CMDLINE$\n"
 	"  STRUCT() SIZEOF|OFFSET|TYPE|FIND\n"
+	"  JSON$(json$, path$)\n"
 	"  DATE$= and TIME$= set the clock strings.\n"
 	"\n"
 	"OPTION ANGLE DEGREES makes SIN/COS/TAN/ATN use degrees.\n"
@@ -1649,6 +1663,7 @@ static const help_topic kTopics[] = {
 	{ "LIST",        HELP_CMD,  kHelpList },
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "INPUT$",      HELP_CMD,  kHelpInputDollar },
+	{ "JSON$",       HELP_CMD,  kHelpJson },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
 	{ "OPTIONS",     HELP_CMD,  kHelpOptions },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
@@ -1775,6 +1790,8 @@ static const struct {
 	{ "TIME$",        "FUNCTIONS" },
 	{ "CWD$",         "FUNCTIONS" },
 	{ "INPUT$",       "INPUT$" },
+	{ "JSON$",        "JSON$" },
+	{ "JSON",         "JSON$" },
 	{ "UCASE$",       "FUNCTIONS" },
 	{ "LCASE$",       "FUNCTIONS" },
 	{ "HEX$",         "FUNCTIONS" },
