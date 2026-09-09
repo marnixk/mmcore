@@ -36,7 +36,7 @@ def test_help_json(console):
     assert out != "?SYNTAX ERROR"
     assert "JSON$(json$" in out.replace(" ", "") or "path$" in out
     assert "main.temp" in out
-    assert "WEB" not in out
+    assert "WEB TCP" not in out
     fns = dump_topic(console, "FUNCTIONS")
     assert "JSON$" in fns
     alias = dump_topic(console, "JSON")

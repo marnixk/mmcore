@@ -730,7 +730,7 @@ static const char kHelpJson[] =
 	"path$ uses dotted keys and [n] array indexes:\n"
 	"  main.temp   weather[0].description\n"
 	"Missing keys, null, objects and arrays return \"\".\n"
-	"Invalid JSON is an error. No WEB helpers.\n"
+	"Invalid JSON is an error.\n"
 	"\n"
 	"Example:\n"
 	"  PRINT VAL(JSON$(js$, \"main.temp\"))\n"
