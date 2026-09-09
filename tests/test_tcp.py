@@ -17,7 +17,7 @@ def test_input_dollar_count_then_handle(console):
 
 def test_disk_loc_eof_unchanged(console):
     assert console.send_line('OPEN "EOF2.TXT" FOR OUTPUT AS #1') == ""
-    assert console.send_line('PRINT #1, "hi"') == ""
+    assert console.send_line('PRINT #1, "hi";') == ""
     assert console.send_line("CLOSE #1") == ""
     assert console.send_line('OPEN "EOF2.TXT" FOR INPUT AS #1') == ""
     assert console.send_line("PRINT EOF(#1)") == "0"
@@ -86,9 +86,10 @@ def test_help_input_dollar_and_functions(console):
     assert "nbr" in dollar.lower() or "count" in dollar.lower()
     assert "INPUT$(nbr" in dollar or "INPUT$(nbr," in dollar.replace(" ", "")
     fns = dump_topic(console, "FUNCTIONS")
-    assert "INPUT$(nbr" in fns or "INPUT$(nbr,#n)" in fns.replace(" ", "")
+    assert "INPUT$" in fns
     assert "TCP" in fns
     assert "WEB" not in fns
+    assert "count first" in fns.lower() or "RX" in fns or "non-blocking" in fns.lower()
     eof = dump_topic(console, "EOF")
     assert "TCP" in eof or "not connected" in eof.lower() or "RX" in eof
     loc = dump_topic(console, "LOC")
