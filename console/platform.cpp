@@ -425,13 +425,14 @@ static const u8 *tnr_native(int scale, unsigned ch, unsigned *gw, unsigned *gh, 
 }
 
 static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
-				unsigned bg_rgb, int scale)
+				unsigned bg_rgb, int scale, int ink_only)
 {
 	unsigned x0, y0, x, y, sx, sy, n, gw, gh, rowb;
 	const u8 *glyph;
 	TScreenColor fg, bg, c;
 	u8 *dst;
 	u8 bits;
+	int on;
 
 	if (scale < 1)
 		scale = 1;
@@ -451,11 +452,18 @@ static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb
 	{
 		for (y = 0; y < gh; y++)
 		{
+			if (y0 + y >= s_tui_h)
+				break;
 			dst = s_tui_pix + (y0 + y) * s_tui_pitch + x0 * (DEPTH / 8);
 			for (x = 0; x < gw; x++)
 			{
+				if (x0 + x >= s_tui_w)
+					break;
 				bits = glyph[y * rowb + x / 8];
-				c = (bits & (u8)(0x80 >> (x % 8))) ? fg : bg;
+				on = (bits & (u8)(0x80 >> (x % 8))) != 0;
+				if (ink_only && !on)
+					continue;
+				c = on ? fg : bg;
 				plat_plot_tui(dst, x, c);
 			}
 		}
@@ -466,12 +474,21 @@ static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb
 		bits = glyph_row(s_tui_font, ch, y);
 		for (sy = 0; sy < n; sy++)
 		{
+			if (y0 + y * n + sy >= s_tui_h)
+				return;
 			dst = s_tui_pix + (y0 + y * n + sy) * s_tui_pitch + x0 * (DEPTH / 8);
 			for (x = 0; x < TUI_CW; x++)
 			{
-				c = (bits & (u8)(0x80 >> x)) ? fg : bg;
+				on = (bits & (u8)(0x80 >> x)) != 0;
+				if (ink_only && !on)
+					continue;
+				c = on ? fg : bg;
 				for (sx = 0; sx < n; sx++)
+				{
+					if (x0 + x * n + sx >= s_tui_w)
+						break;
 					plat_plot_tui(dst, x * n + sx, c);
+				}
 			}
 		}
 	}
@@ -489,7 +506,7 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 	if ((unsigned)col * TUI_CW + TUI_CW * (unsigned)scale > s_tui_w ||
 	    (unsigned)row * TUI_CH + TUI_CH * (unsigned)scale > s_tui_h)
 		return;
-	plat_tui_glyph_n_px(col * TUI_CW, row * TUI_CH, ch, fg_rgb, bg_rgb, scale);
+	plat_tui_glyph_n_px(col * TUI_CW, row * TUI_CH, ch, fg_rgb, bg_rgb, scale, 0);
 }
 
 static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)

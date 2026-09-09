@@ -1,10 +1,13 @@
 """WORDPAD markdown editor TUI: menus, save, wrap, wide view, themes."""
 
+import os
 import re
 import time
 
 from harness import MMBasicConsole
 from ihelp_util import close_ihelp, dump_topic, open_ihelp, scroll_all
+
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _plain(s: str) -> str:
@@ -134,6 +137,54 @@ def test_wordpad_markdown_heading_style(kernel_image):
                 pixel_diff = True
                 break
         assert pixel_diff or "Title" in serial
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def _tnr32_rows(ch):
+    text = open(os.path.join(_REPO, "mmbasic", "src", "font_tnr_32x64.c"), encoding="utf-8").read()
+    data = [int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]{2}", text)]
+    w, h = 32, 64
+    rowb = (w + 7) // 8
+    off = (ord(ch) - 32) * h * rowb
+    rows = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            b = data[off + y * rowb + x // 8]
+            row.append(1 if (b & (0x80 >> (x % 8))) else 0)
+        rows.append(row)
+    return rows
+
+
+def _heading_overlap_ink(left, right, advance=25):
+    a = _tnr32_rows(left)
+    b = _tnr32_rows(right)
+    pts = []
+    for y in range(64):
+        for ax in range(advance, 32):
+            if a[y][ax] and not b[y][ax - advance]:
+                pts.append((ax, y))
+    return pts
+
+
+def test_wordpad_heading_overlap_keeps_ink(kernel_image):
+    """H1 glyphs advance at 0.8 width; later letters must not paint black over earlier ink."""
+    pts = _heading_overlap_ink("M", "M")
+    assert len(pts) >= 20
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _keys(con, b"# MM\rbody", quiet=0.8)
+        time.sleep(0.3)
+        ink = 0
+        for x, y in pts[:24]:
+            r, g, b = con.screen_pixel(x, y)
+            if r + g + b >= 80:
+                ink += 1
+        assert ink >= 8, "expected leftover H1 ink in the 0.8-advance overlap"
         _quit(con)
     finally:
         con.stop()
