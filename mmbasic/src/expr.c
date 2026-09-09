@@ -775,6 +775,11 @@ int mmb_try_function(mmb_val *out)
 		mmb_expect(')');
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			*out = mmb_int_val(1);
+		else if (G.files[fn].kind == MMB_FK_TCP)
+		{
+			int st = mmb_net_tcp_status();
+			*out = mmb_int_val((st != 1 || mmb_net_tcp_peer_closed()) ? 1 : 0);
+		}
 		else
 		{
 			int sz = mmb_vfs_size(G.files[fn].path);
@@ -1007,8 +1012,16 @@ int mmb_try_function(mmb_val *out)
 		mmb_expect(')');
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			mmb_error("?FILE");
-		sz = mmb_vfs_size(G.files[fn].path);
-		*out = mmb_int_val(sz < 0 ? 0 : sz);
+		if (G.files[fn].kind == MMB_FK_TCP)
+		{
+			mmb_net_tcp_status();
+			*out = mmb_int_val(0);
+		}
+		else
+		{
+			sz = mmb_vfs_size(G.files[fn].path);
+			*out = mmb_int_val(sz < 0 ? 0 : sz);
+		}
 		return 1;
 	}
 	if (mmb_match("CWD$"))
@@ -1033,20 +1046,19 @@ int mmb_try_function(mmb_val *out)
 			mmb_syntax();
 		if (a[1].type != T_INT && a[1].type != T_NUM)
 			mmb_syntax();
-		fn = (int)mmb_as_int(a[0]);
-		nch = (int)mmb_as_int(a[1]);
+		nch = (int)mmb_as_int(a[0]);
+		fn = (int)mmb_as_int(a[1]);
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			mmb_error("?FILE");
 		{
-			unsigned got = 0;
+			int got;
 			if (nch < 0)
 				nch = 0;
 			if (nch > MMB_MAX_STR)
 				nch = MMB_MAX_STR;
-			if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
-					    b, (unsigned)nch, &got) != 0)
+			got = mmb_file_read(fn, b, nch);
+			if (got < 0)
 				got = 0;
-			G.files[fn].pos += (int)got;
 			b[got] = 0;
 			*out = mmb_str_val(b);
 		}
@@ -1125,7 +1137,17 @@ int mmb_try_function(mmb_val *out)
 		mmb_expect(')');
 		if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 			mmb_error("?FILE");
-		*out = mmb_int_val(G.files[fn].pos);
+		if (G.files[fn].kind == MMB_FK_TCP)
+		{
+			int n;
+			mmb_net_tcp_status();
+			n = mmb_net_tcp_rx_avail();
+			if (G.files[fn].ungot >= 0)
+				n++;
+			*out = mmb_int_val(n);
+		}
+		else
+			*out = mmb_int_val(G.files[fn].pos);
 		return 1;
 	}
 	if (mmb_match("SGN"))
@@ -1431,6 +1453,11 @@ static mmb_val expr_unary(void)
 		}
 	}
 	if (*G.p == '+')
+	{
+		G.p++;
+		return expr_unary();
+	}
+	if (*G.p == '#')
 	{
 		G.p++;
 		return expr_unary();

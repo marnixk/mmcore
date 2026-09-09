@@ -1506,7 +1506,14 @@ static void term_bm_connect(void)
 	term_fill_pages();
 	if (!T.demo)
 	{
-		if (mmb_net_tcp_begin(T.host, T.port) != 0)
+		if (mmb_tcp_any_open())
+		{
+			T.net_fail = 1;
+			strncpy(T.net_msg, "TCP file open", sizeof(T.net_msg) - 1);
+			pane_puts(T.net_msg);
+			pane_newline();
+		}
+		else if (mmb_net_tcp_begin(T.host, T.port) != 0)
 		{
 			T.net_fail = 1;
 			strncpy(T.net_msg, mmb_net_tcp_errmsg(), sizeof(T.net_msg) - 1);
@@ -2446,6 +2453,8 @@ void mmb_cmd_term(void)
 	term_reset_pen();
 
 	ser("TERM\r\n");
+	if (!T.demo && mmb_tcp_any_open())
+		mmb_error("?FILE");
 	if (!T.demo && T.host[0])
 	{
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)

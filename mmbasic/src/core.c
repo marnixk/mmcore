@@ -534,12 +534,8 @@ static void sub_register(const char *name, int pc, int is_func)
 static int file_getc(int fn)
 {
 	unsigned char c;
-	unsigned got = 0;
-	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
-		mmb_error("?FILE");
-	if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos, &c, 1, &got) != 0 || !got)
+	if (mmb_file_read(fn, (char *)&c, 1) != 1)
 		return -1;
-	G.files[fn].pos++;
 	return c;
 }
 
@@ -547,7 +543,9 @@ static void file_ungetc(int fn, int c)
 {
 	if (fn >= 1 && fn <= MMB_MAX_FILES && G.files[fn].open && c >= 0)
 	{
-		if (G.files[fn].pos > 0)
+		if (G.files[fn].kind == MMB_FK_TCP)
+			G.files[fn].ungot = c;
+		else if (G.files[fn].pos > 0)
 			G.files[fn].pos--;
 	}
 }
@@ -1092,6 +1090,8 @@ void mmb_cmd_seek(void)
 		G.p++;
 	v = mmb_expr();
 	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
+		mmb_error("?FILE");
+	if (G.files[fn].kind == MMB_FK_TCP)
 		mmb_error("?FILE");
 	G.files[fn].pos = (int)mmb_as_int(v);
 }
@@ -1746,13 +1746,7 @@ void mmb_cmd_print(void)
 				if (!no_nl)
 					mmb_out("\n");
 				strncpy(buf, G.out, sizeof(buf) - 1);
-				if (fn >= 1 && fn <= MMB_MAX_FILES && G.files[fn].open)
-				{
-					if (mmb_vfs_readonly_path(G.files[fn].path))
-						mmb_error("?READ ONLY");
-					if (mmb_vfs_write(G.files[fn].path, buf, (unsigned)strlen(buf), 1) != 0)
-						mmb_error("?FILE");
-				}
+				mmb_file_write(fn, buf, (unsigned)strlen(buf));
 				G.outn = save;
 				G.out[G.outn] = 0;
 				return;
@@ -1960,6 +1954,7 @@ void mmb_cmd_new(void)
 	mmb_clear_vars(1);
 	mmb_struct_clear();
 	mmb_clear_consts();
+	mmb_close_tcp_files();
 	memset(G.subs, 0, sizeof(G.subs));
 	G.nsubs = 0;
 	G.opt.autorun = 0;
@@ -2418,6 +2413,7 @@ void mmb_reboot(void)
 	int i;
 	G.running = 0;
 	mmb_play_stop();
+	mmb_close_tcp_files();
 	for (i = 1; i <= MMB_MAX_FILES; i++)
 		G.files[i].open = 0;
 	mmb_settings_save();
