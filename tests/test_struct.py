@@ -115,7 +115,7 @@ def test_struct_sort_extract_sizeof(console):
             "pos(2).x = 4",
             "STRUCT SORT pos().x",
             "STRUCT EXTRACT pos().x, xs()",
-            "PRINT xs(0); xs(1); xs(2); STRUCT(SIZEOF \"Point\")",
+            "PRINT xs(0)+100; xs(1)+100; xs(2)+100; STRUCT(SIZEOF \"Point\")",
         ],
     )
     out = console.send_line("RUN")

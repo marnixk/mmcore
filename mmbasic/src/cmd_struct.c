@@ -509,8 +509,12 @@ static int at_name(void)
 static int parse_empty_member(char *aname, int asz, char *mname, int msz)
 {
 	const char *save = G.p;
+	mmb_skip_sp();
 	if (!at_name())
+	{
+		G.p = save;
 		return 0;
+	}
 	mmb_ident(aname, asz);
 	mmb_type_suffix(aname);
 	mmb_skip_sp();
