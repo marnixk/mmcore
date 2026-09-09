@@ -173,12 +173,107 @@ def test_math_chi_correl(console):
     assert console.send_line("PRINT MATH(CORREL X(), Y())") == "1"
 
 
+def test_math_array_add_mul(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("DIM A(2)") == ""
+    assert console.send_line("DIM B(2)") == ""
+    assert console.send_line("DIM C(2)") == ""
+    assert console.send_line("A(0)=1") == ""
+    assert console.send_line("A(1)=2") == ""
+    assert console.send_line("A(2)=3") == ""
+    assert console.send_line("B(0)=10") == ""
+    assert console.send_line("B(1)=20") == ""
+    assert console.send_line("B(2)=30") == ""
+    assert console.send_line("MATH ADD A(), B(), C()") == ""
+    assert console.send_line("PRINT C(0);C(1);C(2)") == "112233"
+    assert console.send_line("MATH MUL A(), B(), C()") == ""
+    assert console.send_line("PRINT C(0);C(1);C(2)") == "104060"
+    assert console.send_line("MATH SCALE A(), B(), C()") == ""
+    assert console.send_line("PRINT C(0);C(1);C(2)") == "104060"
+    assert console.send_line("MATH ADD A(), 5, C()") == ""
+    assert console.send_line("PRINT C(2)") == "8"
+    assert console.send_line("MATH SCALE A(), 4, C()") == ""
+    assert console.send_line("PRINT C(1)") == "8"
+    assert console.send_line("MATH MUL A(), 4, C()") == ""
+    assert console.send_line("PRINT C(1)") == "8"
+    assert console.send_line("MATH ADD A(), COS(0), C()") == ""
+    assert console.send_line("PRINT C(0)") == "2"
+    assert console.send_line("DIM D(3)") == ""
+    err = console.send_line("MATH ADD A(), D(), C()")
+    assert "SIZE MISMATCH" in err.upper()
+    err = console.send_line("MATH MUL A(), D(), C()")
+    assert "SIZE MISMATCH" in err.upper()
+    err = console.send_line("MATH SCALE A(), D(), C()")
+    assert "SIZE MISMATCH" in err.upper()
+
+
+def _write_bas(console, path, lines):
+    assert console.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        esc = line.replace('"', '""')
+        assert console.send_line(f'PRINT #1, "{esc}"') == ""
+    assert console.send_line("CLOSE #1") == ""
+
+
+def _run_bas(console, path, lines, timeout=20.0):
+    _write_bas(console, path, lines)
+    out = console.send_line(f'RUN "{path}"', timeout=timeout)
+    parts = [p.strip() for p in out.replace("\r", "\n").split("\n") if p.strip()]
+    return parts
+
+
+def test_math_scale_add_kernel_faster_than_for(console):
+    setup = [
+        "DIM POS.X(100), SPEED(100), DX(100)",
+        "RATIO=1.5",
+        "FOR I=0 TO 100",
+        "POS.X(I)=I",
+        "SPEED(I)=2",
+        "NEXT I",
+    ]
+    for_parts = _run_bas(
+        console,
+        "MFOR.BAS",
+        setup
+        + [
+            "TIMER=0",
+            "FOR F=1 TO 400",
+            "FOR I=0 TO 100",
+            "POS.X(I)=POS.X(I)+(SPEED(I)*RATIO)",
+            "NEXT I",
+            "NEXT F",
+            "PRINT TIMER",
+            "PRINT INT(POS.X(50))",
+        ],
+    )
+    math_parts = _run_bas(
+        console,
+        "MMATH.BAS",
+        setup
+        + [
+            "TIMER=0",
+            "FOR F=1 TO 400",
+            "MATH SCALE SPEED(), RATIO, DX()",
+            "MATH ADD POS.X(), DX(), POS.X()",
+            "NEXT F",
+            "PRINT TIMER",
+            "PRINT INT(POS.X(50))",
+        ],
+    )
+    for_ms = int(for_parts[0])
+    math_ms = int(math_parts[0])
+    assert int(math_parts[1]) == int(for_parts[1])
+    assert for_ms > 0
+    assert math_ms * 2 < for_ms
+
+
 def test_help_math(console):
     out = dump_topic(console, "MATH")
     assert "CINT" in out
     assert "EVAL" in out
     assert "ATAN3" in out
     assert "MATH SET" in out
+    assert "MATH MUL" in out
     assert "FFT" in out
     fn = dump_topic(console, "FUNCTIONS")
     assert "CINT" in fn

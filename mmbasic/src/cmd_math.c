@@ -819,28 +819,42 @@ static void cmd_set(void)
 		array_set(a, i, mmb_as_float(v));
 }
 
+static int peek_empty_array_ref(void)
+{
+	char name[MMB_MAX_NAME];
+	const char *save = G.p;
+	int ok = parse_empty_array_ref(name, sizeof(name));
+
+	G.p = save;
+	return ok;
+}
+
 static void cmd_scale_add_pow(int mode)
 {
-	mmb_var *src, *dst;
-	double k;
+	mmb_var *src, *dst, *rhs = 0;
+	double k = 0.0;
 	int i;
 
 	src = parse_array(0);
 	expect_comma();
-	k = mmb_as_float(mmb_expr());
+	if (mode != 2 && peek_empty_array_ref())
+		rhs = parse_array(0);
+	else
+		k = mmb_as_float(mmb_expr());
 	expect_comma();
 	dst = parse_array(0);
-	if (src->size != dst->size)
+	if (src->size != dst->size || (rhs && rhs->size != src->size))
 		mmb_error("?SIZE MISMATCH");
 	for (i = 0; i < src->size; i++)
 	{
 		double x = array_get(src, i);
+		double y = rhs ? array_get(rhs, i) : k;
 		if (mode == 0)
-			array_set(dst, i, x * k);
+			array_set(dst, i, x * y);
 		else if (mode == 1)
-			array_set(dst, i, x + k);
+			array_set(dst, i, x + y);
 		else
-			array_set(dst, i, pow(x, k));
+			array_set(dst, i, pow(x, y));
 	}
 }
 
@@ -1434,7 +1448,7 @@ void mmb_cmd_math(void)
 		cmd_set();
 		return;
 	}
-	if (mmb_match("SCALE"))
+	if (mmb_match("SCALE") || mmb_match("MUL"))
 	{
 		cmd_scale_add_pow(0);
 		return;
