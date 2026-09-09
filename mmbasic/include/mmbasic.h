@@ -60,6 +60,8 @@ typedef struct mmb_platform {
 	/* Blit RGB888 pixels to HDMI (native depth + SetArea). stride is
 	 * pixels per source row. NULL falls back to set_pixel. */
 	void (*present_rgb)(int x, int y, int w, int h, const unsigned *rgb888, int stride);
+	/* Wait for the next HDMI vblank. Returns 1 if the firmware wait ran. */
+	int (*wait_vsync)(void);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

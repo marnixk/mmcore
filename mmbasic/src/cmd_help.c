@@ -31,7 +31,7 @@ static const char kIndexCommands[] =
 	"  NEW LIST RUN EDIT WORDPAD MEMORY REBOOT\n"
 	"\n"
 	"Other\n"
-	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE CLEAR END\n"
+	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE VSYNC_WAIT CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
 	"  SETTICK FACTORY_RESET OPTIONS CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
@@ -1040,7 +1040,7 @@ static const char kHelpCmm2[] =
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
 	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE PACKAGE\n"
-	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE\n"
+	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE VSYNC_WAIT\n"
 	"  REBOOT OPTION OPTIONS FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
 	"  MATH CLEAR END\n"
 	"\n"
@@ -1140,6 +1140,21 @@ static const char kHelpPause[] =
 	"Wait for the given number of milliseconds.\n"
 	"\n"
 	"Example:  PAUSE 100";
+
+static const char kHelpVsyncWait[] =
+	"VSYNC_WAIT\n"
+	"\n"
+	"Wait until the next display refresh (60 Hz).\n"
+	"Use at the end of a game or animation loop to cap\n"
+	"the frame rate to the monitor. On hardware this waits\n"
+	"for HDMI vblank; on QEMU it waits 16 ms per call.\n"
+	"Ctrl+C / BREAK still aborts a running program.\n"
+	"\n"
+	"Example:\n"
+	"  10 DO\n"
+	"  20   PAGE COPY 1 TO 0\n"
+	"  30   VSYNC_WAIT\n"
+	"  40 LOOP";
 
 static const char kHelpReboot[] =
 	"REBOOT\n"
@@ -1553,6 +1568,7 @@ static const help_topic kTopics[] = {
 	{ "PACKAGE",     HELP_CMD,  kHelpPackage },
 	{ "CLEAR",       HELP_CMD,  kHelpClear },
 	{ "PAUSE",       HELP_CMD,  kHelpPause },
+	{ "VSYNC_WAIT",  HELP_CMD,  kHelpVsyncWait },
 	{ "REBOOT",      HELP_CMD,  kHelpReboot },
 	{ "SEEK",        HELP_CMD,  kHelpSeek },
 	{ "END",         HELP_CMD,  kHelpEnd },

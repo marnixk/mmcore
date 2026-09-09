@@ -2346,6 +2346,25 @@ void mmb_cmd_pause(void)
 	(void)ms;
 }
 
+void mmb_cmd_vsync_wait(void)
+{
+	static unsigned last;
+	unsigned now;
+
+	if (G.plat && G.plat->wait_vsync)
+		G.plat->wait_vsync();
+	now = mmb_now_ms();
+	if (last != 0 && (now - last) < 50)
+	{
+		while ((mmb_now_ms() - last) < 16)
+		{
+			mmb_poll();
+			mmb_check_break();
+		}
+	}
+	last = mmb_now_ms();
+}
+
 void mmb_reboot(void)
 {
 	int i;
@@ -2650,6 +2669,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("WORDPAD")] = mmb_cmd_wordpad;
 		tab[mmb_kw_id("CREDITS")] = mmb_cmd_credits;
 		tab[mmb_kw_id("PAUSE")] = mmb_cmd_pause;
+		tab[mmb_kw_id("VSYNC_WAIT")] = mmb_cmd_vsync_wait;
 		tab[mmb_kw_id("REBOOT")] = mmb_cmd_reboot;
 		tab[mmb_kw_id("RESTART")] = mmb_cmd_reboot;
 		tab[mmb_kw_id("ERASE")] = mmb_cmd_clear;
@@ -3175,6 +3195,11 @@ static void exec_statement(void)
 	if (mmb_match("PAUSE"))
 	{
 		mmb_cmd_pause();
+		return;
+	}
+	if (mmb_match("VSYNC_WAIT"))
+	{
+		mmb_cmd_vsync_wait();
 		return;
 	}
 	if (mmb_match("REBOOT") || mmb_match("RESTART"))

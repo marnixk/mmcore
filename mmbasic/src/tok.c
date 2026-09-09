@@ -50,7 +50,7 @@ static const char *const kws[] = {
 	"TO", "THEN", "TERM", "TRIANGLE", "TEXT", "TURTLE", "TIMER", "TIME$",
 	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING",
 	"UNTIL", "UCASE$", "UP", "UPPER", "USBKEYBOARD",
-	"VAL", "WHILE", "WEND", "WORDPAD",
+	"VAL", "VSYNC_WAIT", "WHILE", "WEND", "WORDPAD",
 	"WARP_H", "WARP_V", "WINDOW", "WRITE", "WIFI", "VERY", "XOR",
 	"XOR_PIXELS", "Y_AXIS",
 	"FORMAT$", "CHOICE", "BOUND", "CINT", "EVAL", "KEYDOWN", "ASC",
