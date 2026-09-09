@@ -7,6 +7,15 @@
 #define WONT  252
 #define WILL  251
 #define SB    250
+#define GA    249
+#define EL    248
+#define EC    247
+#define AYT   246
+#define AO    245
+#define IP    244
+#define BRK   243
+#define DM    242
+#define NOP   241
 #define SE    240
 #define TELOPT_ECHO  1
 #define TELOPT_SGA   3
@@ -30,6 +39,8 @@
 #define TM_ESC_IDLE_MS  60
 #define TM_CONNECT_MS   25000
 #define TM_RECV_MS      20
+#define TM_SB_MAX       512
+#define TM_SB_MS        2000
 #define TM_BM_MAX       32
 #define TM_BM_NAME      40
 #define TM_DLG_NONE     0
@@ -46,6 +57,8 @@ typedef struct {
 	int active;
 	int demo;
 	int demo_burst;
+	int demo_iac;
+	int demo_iac_step;
 	int tcp;
 	int connecting;
 	unsigned connect_at;
@@ -82,9 +95,13 @@ typedef struct {
 	int iac;
 	int iac_cmd;
 	int sb;
+	int sb_n;
+	unsigned sb_at;
 	int last_eol;
 	int sb_opt;
 	int sb_cmd;
+	unsigned char hold[2];
+	int hold_n;
 	char line[TM_LINE];
 	int linelen;
 	int esc;
@@ -117,6 +134,13 @@ typedef struct {
 } tm_state;
 
 static tm_state T;
+
+static int host_is_demo(void)
+{
+	return strcasecmp(T.host, "demo") == 0 ||
+	       strcasecmp(T.host, "demoburst") == 0 ||
+	       strcasecmp(T.host, "demoiac") == 0;
+}
 
 typedef struct {
 	char name[TM_BM_NAME];
@@ -1537,9 +1561,9 @@ static void term_bm_connect(void)
 	strncpy(T.host, b->host, sizeof(T.host) - 1);
 	T.host[sizeof(T.host) - 1] = 0;
 	T.port = b->port;
-	T.demo = (strcasecmp(T.host, "demo") == 0 ||
-		  strcasecmp(T.host, "demoburst") == 0);
+	T.demo = host_is_demo();
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
+	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
 	T.letterbox = b->letterboxed ? 1 : 0;
 	term_reset_pen();
 	term_apply_session_mode();
@@ -1575,12 +1599,15 @@ static void term_bm_connect(void)
 	}
 	else
 	{
-		n = T.demo_burst ? 40 : 2;
-		T.demo_next = mmb_now_ms();
-		while (n > 0 && T.demo_line <= 43)
+		if (!T.demo_iac)
 		{
-			demo_emit_line();
-			n--;
+			n = T.demo_burst ? 40 : 2;
+			T.demo_next = mmb_now_ms();
+			while (n > 0 && T.demo_line <= 43)
+			{
+				demo_emit_line();
+				n--;
+			}
 		}
 	}
 	if (T.tcp)
@@ -2203,10 +2230,41 @@ static int ansi_feed(unsigned char b)
 	return 1;
 }
 
+static int telopt_known(unsigned char o)
+{
+	return o == TELOPT_ECHO || o == TELOPT_SGA ||
+	       o == TELOPT_TTYPE || o == TELOPT_NAWS;
+}
+
+static int iac_cmd_byte(unsigned char b)
+{
+	return b == IAC || b == WILL || b == WONT || b == DO || b == DONT ||
+	       (b >= NOP && b <= GA);
+}
+
+static void sb_watchdog(void)
+{
+	if (!T.sb)
+		return;
+	if (T.sb_n > TM_SB_MAX)
+	{
+		T.sb = 0;
+		T.iac = 0;
+		return;
+	}
+	if (T.sb_at && mmb_now_ms() - T.sb_at > TM_SB_MS)
+	{
+		T.sb = 0;
+		T.iac = 0;
+	}
+}
+
 static void incoming_byte(unsigned char b)
 {
+	sb_watchdog();
 	if (T.sb)
 	{
+		T.sb_n++;
 		if (T.iac == 1)
 		{
 			T.iac = 0;
@@ -2237,6 +2295,8 @@ static void incoming_byte(unsigned char b)
 		{
 			T.iac = 0;
 			T.sb = 1;
+			T.sb_n = 0;
+			T.sb_at = mmb_now_ms();
 			T.sb_opt = -1;
 			T.sb_cmd = -1;
 			return;
@@ -2273,6 +2333,118 @@ static void incoming_byte(unsigned char b)
 		pane_rubout();
 	else if (b >= 32)
 		pane_put((char)b);
+}
+
+static void incoming_feed(const unsigned char *src, int n)
+{
+	unsigned char buf[514];
+	const unsigned char *p;
+	int m, i;
+
+	if (n < 0)
+		return;
+	if (T.hold_n > 0)
+	{
+		if (T.hold_n + n > (int)sizeof(buf))
+			n = (int)sizeof(buf) - T.hold_n;
+		memcpy(buf, T.hold, (unsigned)T.hold_n);
+		if (n > 0)
+			memcpy(buf + T.hold_n, src, (unsigned)n);
+		m = T.hold_n + n;
+		p = buf;
+		T.hold_n = 0;
+	}
+	else
+	{
+		p = src;
+		m = n;
+	}
+	i = 0;
+	while (i < m)
+	{
+		sb_watchdog();
+		if (T.sb || T.iac)
+		{
+			incoming_byte(p[i++]);
+			continue;
+		}
+		if (p[i] != IAC)
+		{
+			incoming_byte(p[i++]);
+			continue;
+		}
+		if (i + 1 >= m)
+		{
+			T.hold[0] = IAC;
+			T.hold_n = 1;
+			return;
+		}
+		if (p[i + 1] == SB)
+		{
+			if (i + 2 >= m)
+			{
+				T.hold[0] = IAC;
+				T.hold[1] = SB;
+				T.hold_n = 2;
+				return;
+			}
+			if (telopt_known(p[i + 2]))
+			{
+				incoming_byte(IAC);
+				i++;
+				continue;
+			}
+			pane_put((char)IAC);
+			i++;
+			continue;
+		}
+		if (iac_cmd_byte(p[i + 1]))
+		{
+			incoming_byte(IAC);
+			i++;
+			continue;
+		}
+		pane_put((char)IAC);
+		i++;
+	}
+}
+
+static void demo_iac_tick(void)
+{
+	static const unsigned char g1[] = {
+		'G', '1', ':', IAC, SB, 'K', 'E', 'E', 'P',
+		IAC, SE, 'A', IAC, 0x80, 'B', '\r', '\n'
+	};
+	static const unsigned char g2[] = {
+		'G', '2', ':', IAC, WILL, TELOPT_ECHO,
+		IAC, DO, TELOPT_SGA, 'O', 'K', '\r', '\n'
+	};
+	static const unsigned char g3[] = {
+		'G', '3', ':', IAC, IAC, 'X', '\r', '\n'
+	};
+	static const unsigned char g4[] = {
+		'G', '4', ':', IAC, SB, TELOPT_TTYPE, TTYPE_SEND, IAC, SE,
+		'T', 'Y', '\r', '\n'
+	};
+	static const unsigned char g5a[] = { 'G', '5', ':', IAC };
+	static const unsigned char g5b[] = { 0x80, 'G', 'O', '\r', '\n' };
+
+	if (T.demo_iac_step == 0)
+		incoming_feed(g1, (int)sizeof(g1));
+	else if (T.demo_iac_step == 1)
+		incoming_feed(g2, (int)sizeof(g2));
+	else if (T.demo_iac_step == 2)
+		incoming_feed(g3, (int)sizeof(g3));
+	else if (T.demo_iac_step == 3)
+		incoming_feed(g4, (int)sizeof(g4));
+	else if (T.demo_iac_step == 4)
+		incoming_feed(g5a, (int)sizeof(g5a));
+	else if (T.demo_iac_step == 5)
+		incoming_feed(g5b, (int)sizeof(g5b));
+	else
+		return;
+	T.demo_iac_step++;
+	term_serial_dump();
 }
 
 static void tcp_close_quiet(void)
@@ -2491,9 +2663,9 @@ void mmb_cmd_term(void)
 	}
 	T.saved_mode = G.gfx.mode;
 	T.saved_bits = G.gfx.bits;
-	T.demo = (strcasecmp(T.host, "demo") == 0 ||
-		  strcasecmp(T.host, "demoburst") == 0);
+	T.demo = host_is_demo();
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
+	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
 	T.letterbox = 1;
 	term_reset_pen();
 
@@ -2549,7 +2721,7 @@ void mmb_cmd_term(void)
 		pane_puts("Disconnected - Alt+F for Bookmarks");
 		pane_newline();
 	}
-	else if (T.demo)
+	else if (T.demo && !T.demo_iac)
 	{
 		int n = T.demo_burst ? 40 : 2;
 		T.demo_next = mmb_now_ms();
@@ -2756,7 +2928,7 @@ const char *mmb_term_key(char c)
 void mmb_term_poll(void)
 {
 	unsigned char buf[512];
-	int n, i, loops, got;
+	int n, loops, got;
 	unsigned t0;
 
 	if (!T.active)
@@ -2787,7 +2959,9 @@ void mmb_term_poll(void)
 			esc_send();
 		}
 	}
-	if (T.demo && T.demo_line <= 43 && mmb_now_ms() >= T.demo_next)
+	if (T.demo_iac)
+		demo_iac_tick();
+	else if (T.demo && T.demo_line <= 43 && mmb_now_ms() >= T.demo_next)
 		demo_emit_line();
 	if (T.need_draw)
 		term_draw();
@@ -2844,8 +3018,7 @@ void mmb_term_poll(void)
 		}
 		if (n == 0)
 			break;
-		for (i = 0; i < n; i++)
-			incoming_byte(buf[i]);
+		incoming_feed(buf, n);
 		got = 1;
 		if (mmb_now_ms() - t0 >= TM_RECV_MS)
 			break;

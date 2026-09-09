@@ -86,6 +86,7 @@ def test_help_term(console):
     assert "boxed" in low
     assert "full" in low
     assert "bookmark" in low
+    assert "255" in low or "iac" in low
     assert "disconnect" in low or "no argument" in low or "[host" in low
     assert "theme" in low or "editor" in low
     assert "restore" in low or "started" in low
@@ -555,5 +556,33 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
         assert "Beta" in again
         _f10(con)
         assert con.send_line("PRINT 7+8") == "15"
+    finally:
+        con.stop()
+
+
+def test_term_demoiac_glyphs_and_commands(kernel_image):
+    """0xFF is IAC only after a command peek; CP437 0xFF must not freeze the pane."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.1)
+        con._ser.sendall(b'TERM "demoiac", 23\r')
+        raw = b""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 10.0:
+            raw += con.drain(quiet=0.35, timeout=2)
+            if b"KEEP" in raw and b"GO" in raw and b"TY" in raw:
+                break
+        assert b"KEEP" in raw
+        assert b"G1:" in raw
+        assert b"OK" in raw
+        assert b"G3:" in raw and b"X" in raw
+        assert b"TY" in raw
+        assert b"GO" in raw
+        assert b"\xfa" in raw
+        assert b"\xf0" in raw
+        assert b"\x80" in raw
+        _f10(con)
+        assert con.send_line("PRINT 1+2") == "3"
     finally:
         con.stop()
