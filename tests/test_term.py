@@ -11,6 +11,10 @@ def _plain(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
 
 
+def _apply_slate_theme(con):
+    assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+
+
 def _open_term(con, cmd: str, quiet=0.6, timeout=12.0):
     con.drain(quiet=0.1)
     con._ser.sendall((cmd + "\r").encode())
@@ -46,7 +50,6 @@ def _line_numbers(text: str) -> list[int]:
 
 
 def test_term_requires_host_and_port(console):
-    assert "?SYNTAX ERROR" in console.send_line("TERM").upper()
     assert "?SYNTAX ERROR" in console.send_line('TERM "example.com"').upper()
     assert "?SYNTAX ERROR" in console.send_line("TERM 23").upper()
     assert "?SYNTAX ERROR" in console.send_line('TERM "h", 0').upper()
@@ -80,14 +83,37 @@ def test_help_term(console):
     assert "boxed" in low
     assert "full" in low
     assert "bookmark" in low
+    assert "disconnect" in low or "no argument" in low or "[host" in low
+    assert "theme" in low or "editor" in low
     assert "restore" in low or "started" in low
     assert "capped" not in low
+
+
+def test_term_no_args_disconnected(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        seen = _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        assert "Disconnected" in seen
+        assert "?SYNTAX ERROR" not in seen.upper()
+        con._ser.sendall(bytes([1]) + b"f")
+        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Bookmarks" in menu
+        con._ser.sendall(b"k")
+        listing = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Bookmarks" in listing
+        _f10(con)
+        assert con.send_line("PRINT 9*9") == "81"
+    finally:
+        con.stop()
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        _apply_slate_theme(con)
         seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.4)
         assert con.screen_size() == (960, 540)
@@ -108,6 +134,7 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        _apply_slate_theme(con)
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(1.2)
         margin = con.screen_pixel(20, 200)
@@ -287,6 +314,7 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        _apply_slate_theme(con)
         opened = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.4)
         assert _max_dump_width(opened) == 80
