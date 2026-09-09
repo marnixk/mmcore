@@ -266,6 +266,7 @@ def test_pixel_array_form(console):
 
 def test_pixel_colour_array(fresh_console):
     c = fresh_console
+    assert c.send_line("NEW") == ""
     assert c.send_line("CLS") == ""
     assert c.send_line("DIM INTEGER XX(2) = (80, 90, 100)") == ""
     assert c.send_line("DIM INTEGER YY(2) = (300, 310, 320)") == ""
