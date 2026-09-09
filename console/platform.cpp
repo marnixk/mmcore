@@ -424,8 +424,8 @@ static const u8 *tnr_native(int scale, unsigned ch, unsigned *gw, unsigned *gh, 
 	return 0;
 }
 
-static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
-			     int scale)
+static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
+				unsigned bg_rgb, int scale)
 {
 	unsigned x0, y0, x, y, sx, sy, n, gw, gh, rowb;
 	const u8 *glyph;
@@ -438,11 +438,11 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 	if (scale > 4)
 		scale = 4;
 	n = (unsigned)scale;
-	if (!s_tui_pix || col < 0 || row < 0)
+	if (!s_tui_pix || x_px < 0 || y_px < 0)
 		return;
-	x0 = (unsigned)col * TUI_CW;
-	y0 = (unsigned)row * TUI_CH;
-	if (x0 + TUI_CW * n > s_tui_w || y0 + TUI_CH * n > s_tui_h)
+	x0 = (unsigned)x_px;
+	y0 = (unsigned)y_px;
+	if (x0 >= s_tui_w || y0 >= s_tui_h)
 		return;
 	fg = (TScreenColor)rgb_to_raw(fg_rgb);
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
@@ -475,6 +475,21 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 			}
 		}
 	}
+}
+
+static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
+			     int scale)
+{
+	if (scale < 1)
+		scale = 1;
+	if (scale > 4)
+		scale = 4;
+	if (!s_tui_pix || col < 0 || row < 0)
+		return;
+	if ((unsigned)col * TUI_CW + TUI_CW * (unsigned)scale > s_tui_w ||
+	    (unsigned)row * TUI_CH + TUI_CH * (unsigned)scale > s_tui_h)
+		return;
+	plat_tui_glyph_n_px(col * TUI_CW, row * TUI_CH, ch, fg_rgb, bg_rgb, scale);
 }
 
 static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
@@ -618,6 +633,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_scroll = plat_tui_scroll;
 	plat.tui_glyph2x = plat_tui_glyph2x;
 	plat.tui_glyph_n = plat_tui_glyph_n;
+	plat.tui_glyph_n_px = plat_tui_glyph_n_px;
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	plat.present_rgb = plat_present_rgb;
