@@ -396,6 +396,8 @@ void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
 int mmb_elem_off(mmb_var *v, int nidx, const int *idx);
+int mmb_parse_var_ref(char *name, int *nidx, int *idx);
+mmb_val mmb_load_var(mmb_var *v, int off);
 mmb_var *mmb_lookup_struct_var(const char *name);
 void mmb_bind_struct_var(const char *name, int sid);
 void mmb_tcache_invalidate(void);
