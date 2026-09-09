@@ -91,6 +91,22 @@ def test_profiling_false_same_line_if_skip(console):
     assert p["findvar"] < 80
 
 
+def test_profiling_cos_rnd_int_opcode(console):
+    p = _run_kernel(
+        console,
+        "PCOS.BAS",
+        [
+            "X=0",
+            "FOR I=1 TO 80",
+            "X=COS(I/100)+INT(RND()*2)",
+            "NEXT I",
+            "PRINT INT(X)",
+        ],
+    )
+    assert p["statements"] >= 80
+    assert p["match"] < 2500
+
+
 def test_profiling_tracecache_array_let(console):
     lines = [
         "DIM POS.X(100), SPEED(100)",
