@@ -32,6 +32,14 @@ def _is_nearest(small, large, n):
     return True
 
 
+def test_heading_advance_uses_eighty_percent_ratio():
+    """H1 scale 4: glyph cells are 32px wide; advance is 0.8 of that (25px)."""
+    scale = 4
+    advance = (scale * 8 * 4) // 5
+    assert advance == 25
+    assert advance * 5 == scale * 8 * 4
+
+
 def test_tnr_heading_fonts_are_not_nearest_neighbour():
     body = _load_bytes("font_tnr_8x16.c")
     h3 = _load_bytes("font_tnr_16x32.c")

@@ -11,6 +11,10 @@ def _plain(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
 
 
+def _apply_slate_theme(con):
+    assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+
+
 def _open(con, cmd: str = "WORDPAD", quiet: float = 0.8) -> str:
     con.drain(quiet=0.1)
     con._ser.sendall((cmd + "\r").encode())
@@ -85,7 +89,7 @@ def test_help_wordpad(console):
     assert out != "?SYNTAX ERROR"
     low = out.lower()
     assert "markdown" in low
-    assert "theme" in low or "wide" in low
+    assert "edit theme" in low or "wide" in low
     assert "bold" in low
     assert any(k in low for k in ("ctrl+x", "f10", "quit"))
     assert "ctrl+p" in low or "quick-open" in low
@@ -161,6 +165,7 @@ def test_wordpad_wide_view_toggle(kernel_image):
     con.start()
     try:
         assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
         time.sleep(0.3)
         assert con.screen_size() == (960, 540)
         _open(con, quiet=1.0)
@@ -183,27 +188,24 @@ def test_wordpad_wide_view_toggle(kernel_image):
         con.stop()
 
 
-def test_wordpad_theme_neon(kernel_image):
+def test_wordpad_follows_edit_theme_phosphor(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        assert con.send_line('OPTION EDIT THEME "Phosphor"') == ""
         _open(con)
-        menu = _alt_menu(con, b"t", quiet=0.5)
-        if "Neon" in menu:
-            _keys(con, b"\x1b[B\r", quiet=0.8)
-        else:
-            _keys(con, b"n", quiet=0.8)
+        _keys(con, b"hello", quiet=0.5)
         time.sleep(0.3)
-        found_neon = False
-        for x in (20, 40, 80):
-            for y in (56, 80, 120):
+        found_green = False
+        for x in range(0, 160, 4):
+            for y in range(8, 40, 4):
                 r, g, b = con.screen_pixel(x, y)
-                if r + g + b < 80 or _is_neon_ink(r, g, b):
-                    found_neon = True
+                if g > r + 40 and g > b + 40:
+                    found_green = True
                     break
-            if found_neon:
+            if found_green:
                 break
-        assert found_neon, "expected Neon theme colours on pane or margin"
+        assert found_green, "expected Phosphor edit-theme colours in WORDPAD"
         _quit(con)
     finally:
         con.stop()
@@ -314,13 +316,12 @@ def test_wordpad_dialog_surface_stands_out(kernel_image):
         con.stop()
 
 
-def test_wordpad_theme_persists(kernel_image):
+def test_wordpad_edit_theme_persists(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
         _open(con)
-        _alt_menu(con, b"t", quiet=0.5)
-        _keys(con, b"n", quiet=0.8)
         _quit(con)
         assert con.send_line("NEW") == ""
         assert con.send_line('10 OPEN "A:/.mmbasic.ini" FOR INPUT AS #1') == ""
@@ -330,18 +331,12 @@ def test_wordpad_theme_persists(kernel_image):
         assert con.send_line("50 GOTO 20") == ""
         assert con.send_line("70 CLOSE #1") == ""
         ini = con.send_line("RUN", timeout=8)
-        assert "wordpad_theme=4" in ini
-        reopened = _open(con, quiet=1.0)
-        found_neon = False
-        for x in (20, 40, 80):
-            for y in (56, 80, 120):
-                r, g, b = con.screen_pixel(x, y)
-                if r + g + b < 80 or _is_neon_ink(r, g, b):
-                    found_neon = True
-                    break
-            if found_neon:
-                break
-        assert found_neon, "expected Neon theme after reopen " + reopened[:80]
+        assert "edit_theme=4" in ini
+        _open(con, quiet=1.0)
+        time.sleep(0.3)
+        r, g, b = con.screen_pixel(40, 80)
+        assert (r, g, b) != (0, 0, 168), "WORDPAD should not use default Turbo blue"
+        assert b > r and b > g, f"expected Nord bluish background, got {(r, g, b)}"
         _quit(con)
     finally:
         con.stop()
@@ -431,11 +426,12 @@ def test_wordpad_bold_is_more_intense(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        _apply_slate_theme(con)
         _open(con)
         _keys(con, b"xx**bold**yy", quiet=0.7)
         time.sleep(0.2)
         plain = _cell_max_lum(con, 0, 0)
-        strong = _cell_max_lum(con, 2, 0)
+        strong = _cell_max_lum(con, 4, 0)
         assert strong != plain, (strong, plain)
         _quit(con)
     finally:

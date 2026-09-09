@@ -1574,7 +1574,6 @@ void mmb_option_reset(void)
 	G.opt.repeat_next = MMB_REPEAT_NEXT_DEFAULT;
 	G.opt.edit_font = 1;
 	G.opt.edit_theme = 8; /* Turbo */
-	G.opt.wordpad_theme = 0; /* Dark */
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */

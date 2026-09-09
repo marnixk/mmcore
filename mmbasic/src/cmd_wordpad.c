@@ -35,8 +35,7 @@
 #define WP_MENU_FILE     0
 #define WP_MENU_EDIT     1
 #define WP_MENU_SETTINGS 2
-#define WP_MENU_THEME    3
-#define WP_MENU_COUNT    4
+#define WP_MENU_COUNT    3
 
 #define WP_FD_FOCUS_NAME 0
 #define WP_FD_FOCUS_FILE 1
@@ -49,13 +48,6 @@
 #define WP_STYLE_BULLET 4
 #define WP_STYLE_QUOTE  5
 #define WP_STYLE_CODE   6
-
-typedef struct {
-	unsigned bg;
-	unsigned fg;
-	unsigned heading;
-	unsigned dim;
-} wp_theme;
 
 typedef struct {
 	int off0;
@@ -91,7 +83,6 @@ typedef struct {
 	char clip[WP_CLIP];
 	int cliplen;
 	int wide;
-	int theme;
 	int menu_open;
 	int menu;
 	int menu_item;
@@ -132,25 +123,13 @@ static int wp_save(void);
 static void wp_autosave(void);
 static void wp_stash(void);
 
-static const wp_theme k_themes[] = {
-	{ 0x1A1B26u, 0xC8C9D0u, 0x7AA2F7u, 0x565A6Eu },
-	{ 0xF4F1EAu, 0x2C2C2Cu, 0x1A5A9Au, 0x8A8680u },
-	{ 0x2A2A2Au, 0x9A9A9Au, 0xB0B0B0u, 0x6A6A6Au },
-	{ 0x000000u, 0xFFFFFFu, 0xFFFF00u, 0xAAAAAAu },
-	{ 0x0A0A12u, 0x39FF14u, 0xFF00FFu, 0x00FFFFu },
-	{ 0x000000u, 0x00AA00u, 0x00FF00u, 0x007700u }
-};
-
-static const char *menu_names[] = { "File", "Edit", "Settings", "Theme" };
-static const char menu_hots[] = { 'F', 'E', 'S', 'T' };
+static const char *menu_names[] = { "File", "Edit", "Settings" };
+static const char menu_hots[] = { 'F', 'E', 'S' };
 static int menu_x[WP_MENU_COUNT];
 
 static const char *file_items[] = { "New", "Open...", "Save", "Save As...", "Quit" };
 static const char *edit_items[] = { "Copy", "Cut", "Paste" };
 static const char *settings_items[] = { "Wide view" };
-static const char *theme_items[] = {
-	"Dark", "Light", "Low contrast", "High contrast", "Neon", "Terminal"
-};
 
 static char fd_dir[128];
 static char fd_mask[32];
@@ -161,30 +140,59 @@ static int fd_fsel, fd_dsel;
 static int fd_ftop, fd_dtop;
 static int fd_focus;
 
-static const wp_theme *th(void)
+static const mmb_ed_theme *wpth(void)
 {
-	if (W.theme < 0)
-		W.theme = 0;
-	if (W.theme >= (int)(sizeof(k_themes) / sizeof(k_themes[0])))
-		W.theme = 0;
-	return &k_themes[W.theme];
+	return mmb_editor_theme();
 }
+
+static unsigned wp_vga_rgb(int idx)
+{
+	static const unsigned pal[16] = {
+		0x000000u, 0xAA0000u, 0x00AA00u, 0xAA5500u,
+		0x0000AAu, 0xAA00AAu, 0x00AAAAu, 0xAAAAAAu,
+		0x555555u, 0xFF5555u, 0x55FF55u, 0xFFFF55u,
+		0x5555FFu, 0xFF55FFu, 0x55FFFFu, 0xFFFFFFu
+	};
+	if (idx < 0)
+		idx = 0;
+	if (idx > 15)
+		idx = 15;
+	return pal[idx];
+}
+
+static unsigned wp_rgb(unsigned char idx)
+{
+	const unsigned *pal = wpth()->pal;
+	int i = (int)idx & 15;
+
+	if (!pal)
+		return wp_vga_rgb(i);
+	return pal[i] & 0xFFFFFFu;
+}
+
+#define WP_BG      wp_rgb(wpth()->edit_bg)
+#define WP_FG      wp_rgb(wpth()->edit_fg)
+#define WP_HEAD    wp_rgb(wpth()->num_fg)
+#define WP_DIM     wp_rgb(wpth()->cmt_fg)
+#define WP_SEL_FG  wp_rgb(wpth()->sel_fg)
+#define WP_SEL_BG  wp_rgb(wpth()->sel_bg)
+#define WP_MENU_FG wp_rgb(wpth()->menu_fg)
+#define WP_HOT     wp_rgb(wpth()->hot)
+#define WP_STR     wp_rgb(wpth()->str_fg)
 
 static unsigned code_bg(void)
 {
-	const wp_theme *t = th();
-	unsigned r = (t->bg >> 16) & 255;
-	unsigned g = (t->bg >> 8) & 255;
-	unsigned b = t->bg & 255;
+	unsigned r = (WP_BG >> 16) & 255;
+	unsigned g = (WP_BG >> 8) & 255;
+	unsigned b = WP_BG & 255;
 	return mmb_rgb_pack((int)(r * 7 / 8), (int)(g * 7 / 8), (int)(b * 7 / 8));
 }
 
 static unsigned dlg_bg(void)
 {
-	const wp_theme *t = th();
-	int r = (int)((t->bg >> 16) & 255);
-	int g = (int)((t->bg >> 8) & 255);
-	int b = (int)(t->bg & 255);
+	int r = (int)((WP_BG >> 16) & 255);
+	int g = (int)((WP_BG >> 8) & 255);
+	int b = (int)(WP_BG & 255);
 	int lum = (r * 3 + g * 6 + b) / 10;
 	int d = 28;
 
@@ -217,13 +225,12 @@ static unsigned dlg_bg(void)
 
 static unsigned intense_fg(void)
 {
-	const wp_theme *t = th();
-	int r = (int)((t->fg >> 16) & 255);
-	int g = (int)((t->fg >> 8) & 255);
-	int b = (int)(t->fg & 255);
-	int br = (int)((t->bg >> 16) & 255);
-	int bg = (int)((t->bg >> 8) & 255);
-	int bb = (int)(t->bg & 255);
+	int r = (int)((WP_FG >> 16) & 255);
+	int g = (int)((WP_FG >> 8) & 255);
+	int b = (int)(WP_FG & 255);
+	int br = (int)((WP_BG >> 16) & 255);
+	int bg = (int)((WP_BG >> 8) & 255);
+	int bb = (int)(WP_BG & 255);
 	int fg_lum = (r * 3 + g * 6 + b) / 10;
 	int bg_lum = (br * 3 + bg * 6 + bb) / 10;
 
@@ -287,6 +294,18 @@ static int screen_row_of_vrow(int vr)
 	return s;
 }
 
+static int heading_advance_px(int scale)
+{
+	if (scale <= 1)
+		return 8;
+	return (scale * 8 * 4) / 5;
+}
+
+static int heading_x_px(int col, int scale)
+{
+	return W.pane_left * 8 + col * heading_advance_px(scale);
+}
+
 static void wp_glyph(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
 {
 	if (!G.plat)
@@ -302,6 +321,26 @@ static void wp_glyph(int col, int row, unsigned ch, unsigned fg, unsigned bg, in
 		G.plat->tui_glyph2x(col, row, ch, fg, bg);
 	else if (G.plat->tui_glyph)
 		G.plat->tui_glyph(col, row, ch, fg, bg);
+}
+
+static void wp_glyph_px(int x_px, int y_px, unsigned ch, unsigned fg, unsigned bg,
+			int scale)
+{
+	if (!G.plat)
+		return;
+	if (scale < 1)
+		scale = 1;
+	if (G.plat->tui_glyph_n_px)
+	{
+		G.plat->tui_glyph_n_px(x_px, y_px, ch, fg, bg, scale);
+		return;
+	}
+	if (G.plat->tui_glyph_n)
+		G.plat->tui_glyph_n(x_px / 8, y_px / 16, ch, fg, bg, scale);
+	else if (scale >= 2 && G.plat->tui_glyph2x)
+		G.plat->tui_glyph2x(x_px / 8, y_px / 16, ch, fg, bg);
+	else if (G.plat->tui_glyph)
+		G.plat->tui_glyph(x_px / 8, y_px / 16, ch, fg, bg);
 }
 
 static void wp_box(int c0, int r0, int w, int h, unsigned fg, unsigned bg)
@@ -634,7 +673,10 @@ static void wp_build_layout(void)
 		line_style(ls, le, in_code && !line_is_fence(ls, le), cursor_on,
 			   &style, &prefix_len, &hide_prefix);
 		scale = heading_scale(style);
-		width = W.pane_width / scale;
+		if (scale > 1)
+			width = (W.pane_width * 5) / (scale * 4);
+		else
+			width = W.pane_width / scale;
 		if (width < 1)
 			width = 1;
 		i = ls;
@@ -808,19 +850,17 @@ static void ensure_scroll(void)
 
 static unsigned style_fg(int style)
 {
-	const wp_theme *t = th();
-
 	switch (style)
 	{
 	case WP_STYLE_H1:
 	case WP_STYLE_H2:
 	case WP_STYLE_H3:
 	case WP_STYLE_BULLET:
-		return t->heading;
+		return WP_HEAD;
 	case WP_STYLE_QUOTE:
-		return t->dim;
+		return WP_DIM;
 	default:
-		return t->fg;
+		return WP_FG;
 	}
 }
 
@@ -828,7 +868,7 @@ static unsigned style_bg(int style)
 {
 	if (style == WP_STYLE_CODE)
 		return code_bg();
-	return th()->bg;
+	return WP_BG;
 }
 
 static int count_words(void)
@@ -1256,8 +1296,8 @@ static const char **menu_items(int menu, int *n)
 		*n = (int)(sizeof(settings_items) / sizeof(settings_items[0]));
 		return settings_items;
 	default:
-		*n = (int)(sizeof(theme_items) / sizeof(theme_items[0]));
-		return theme_items;
+		*n = 0;
+		return settings_items;
 	}
 }
 
@@ -2286,12 +2326,6 @@ static void activate_menu(void)
 		W.wide = !W.wide;
 		W.scroll = 0;
 	}
-	else if (menu == WP_MENU_THEME)
-	{
-		W.theme = item;
-		G.opt.wordpad_theme = item;
-		mmb_settings_save();
-	}
 }
 
 static int handle_alt(char c)
@@ -2311,11 +2345,6 @@ static int handle_alt(char c)
 	if (c == 's')
 	{
 		open_menu(WP_MENU_SETTINGS);
-		return 1;
-	}
-	if (c == 't')
-	{
-		open_menu(WP_MENU_THEME);
 		return 1;
 	}
 	if (c == 'x')
@@ -2628,24 +2657,23 @@ static void draw_hot_str(int x, int y, const char *word, char hot, unsigned fg,
 
 static void draw_menu_bar(void)
 {
-	const wp_theme *t = th();
 	unsigned mbg = dlg_bg();
 	int i, x = 0;
 	char line[160];
 	int pos = 0;
 
-	wp_fill_row(0, t->fg, mbg);
+	wp_fill_row(0, WP_MENU_FG, mbg);
 	for (i = 0; i < WP_MENU_COUNT; i++)
 	{
 		int sel = W.menu_open && W.menu == i;
-		unsigned fg = sel ? t->bg : t->fg;
-		unsigned bg = sel ? t->heading : mbg;
-		unsigned hot = sel ? t->fg : t->heading;
+		unsigned fg = sel ? WP_SEL_FG : WP_MENU_FG;
+		unsigned bg = sel ? WP_SEL_BG : mbg;
+		unsigned hot = sel ? WP_HOT : WP_HEAD;
 
 		menu_x[i] = x;
 		draw_hot_str(x, 0, menu_names[i], menu_hots[i], fg, bg, hot);
 		x += (int)strlen(menu_names[i]);
-		wp_puts(x, 0, "  ", t->fg, mbg);
+		wp_puts(x, 0, "  ", WP_MENU_FG, mbg);
 		x += 2;
 		if (pos + 32 < (int)sizeof(line))
 		{
@@ -2662,7 +2690,6 @@ static void draw_menu_bar(void)
 
 static void draw_dropdown(void)
 {
-	const wp_theme *t = th();
 	unsigned sbg = dlg_bg();
 	int n, i, w, x0, y0, j;
 	const char **it = menu_items(W.menu, &n);
@@ -2674,12 +2701,12 @@ static void draw_dropdown(void)
 	if (x0 < 0)
 		x0 = 0;
 	y0 = 1;
-	wp_box(x0, y0, w, n + 2, t->heading, sbg);
+	wp_box(x0, y0, w, n + 2, WP_HEAD, sbg);
 	for (i = 0; i < n; i++)
 	{
-		unsigned fg = (i == W.menu_item) ? t->bg : t->fg;
-		unsigned bg = (i == W.menu_item) ? t->heading : sbg;
-		unsigned hot = (i == W.menu_item) ? t->fg : t->heading;
+		unsigned fg = (i == W.menu_item) ? WP_SEL_FG : WP_FG;
+		unsigned bg = (i == W.menu_item) ? WP_SEL_BG : sbg;
+		unsigned hot = (i == W.menu_item) ? WP_HOT : WP_HEAD;
 		char row[64];
 
 		for (j = 0; j < w - 2; j++)
@@ -2693,7 +2720,6 @@ static void draw_dropdown(void)
 
 static void draw_file_dialog(void)
 {
-	const wp_theme *t = th();
 	unsigned sbg = dlg_bg();
 	int c0, r0, w, h, lh, i, c, r;
 	unsigned nfg, nbg, ffg, fbg, dfg, dbg;
@@ -2703,16 +2729,16 @@ static void draw_file_dialog(void)
 	lh = fd_list_h();
 	for (r = 0; r < h; r++)
 		for (c = 0; c < w; c++)
-			G.plat->tui_glyph(c0 + c, r0 + r, ' ', t->fg, sbg);
-	wp_box(c0, r0, w, h, t->heading, sbg);
-	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? t->bg : t->fg;
-	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? t->heading : t->dim;
-	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
-	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : sbg;
-	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
-	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : sbg;
-	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", t->heading, sbg);
-	wp_puts(c0 + 2, r0 + 2, "Name:", t->dim, sbg);
+			G.plat->tui_glyph(c0 + c, r0 + r, ' ', WP_FG, sbg);
+	wp_box(c0, r0, w, h, WP_HEAD, sbg);
+	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_FG : WP_FG;
+	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_BG : WP_DIM;
+	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
+	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : sbg;
+	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
+	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : sbg;
+	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", WP_HEAD, sbg);
+	wp_puts(c0 + 2, r0 + 2, "Name:", WP_DIM, sbg);
 	{
 		char namebuf[WP_DLG + 4];
 		namebuf[0] = ' ';
@@ -2720,8 +2746,8 @@ static void draw_file_dialog(void)
 		namebuf[sizeof(namebuf) - 1] = 0;
 		wp_puts(c0 + 2, r0 + 3, namebuf, nfg, nbg);
 	}
-	wp_puts(c0 + 2, r0 + 5, "Files", t->dim, sbg);
-	wp_puts(c0 + 2 + w / 2, r0 + 5, "Directories", t->dim, sbg);
+	wp_puts(c0 + 2, r0 + 5, "Files", WP_DIM, sbg);
+	wp_puts(c0 + 2 + w / 2, r0 + 5, "Directories", WP_DIM, sbg);
 	for (i = 0; i < lh; i++)
 	{
 		int fi = fd_ftop + i;
@@ -2732,16 +2758,16 @@ static void draw_file_dialog(void)
 
 		if (fi == fd_fsel && fd_nfile > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? t->bg : t->fg;
-			sbg2 = (fd_focus == WP_FD_FOCUS_FILE) ? t->heading : t->dim;
+			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
+			sbg2 = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : WP_DIM;
 		}
 		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg2);
 		sfg = dfg;
 		sbg2 = dbg;
 		if (di == fd_dsel && fd_ndir > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? t->bg : t->fg;
-			sbg2 = (fd_focus == WP_FD_FOCUS_DIR) ? t->heading : t->dim;
+			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
+			sbg2 = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : WP_DIM;
 		}
 		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg2);
 	}
@@ -2749,13 +2775,12 @@ static void draw_file_dialog(void)
 	strncat(st, fd_dir, sizeof(st) - 1);
 	strncat(st, "  ", sizeof(st) - strlen(st) - 1);
 	strncat(st, fd_mask, sizeof(st) - strlen(st) - 1);
-	wp_puts(c0 + 2, r0 + h - 3, st, t->dim, sbg);
-	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", t->dim, sbg);
+	wp_puts(c0 + 2, r0 + h - 3, st, WP_DIM, sbg);
+	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", WP_DIM, sbg);
 }
 
 static void draw_picker(void)
 {
-	const wp_theme *t = th();
 	unsigned sbg = dlg_bg();
 	int w, h, r0, c0, i, vis, y, c, r;
 	const char *title = " Quick open ";
@@ -2770,22 +2795,22 @@ static void draw_picker(void)
 		pick_row0 = 0;
 	for (r = 0; r < h; r++)
 		for (c = 0; c < w; c++)
-			G.plat->tui_glyph(c0 + c, r0 + r, ' ', t->fg, sbg);
-	wp_box(c0, r0, w, h, t->heading, sbg);
+			G.plat->tui_glyph(c0 + c, r0 + r, ' ', WP_FG, sbg);
+	wp_box(c0, r0, w, h, WP_HEAD, sbg);
 	{
 		int left = (w - 2 - (int)strlen(title)) / 2;
 		if (left < 1)
 			left = 1;
-		wp_puts(c0 + left, r0, title, t->heading, sbg);
+		wp_puts(c0 + left, r0, title, WP_HEAD, sbg);
 	}
 	serial_row("Quick open");
-	wp_puts(c0 + 2, r0 + 1, pick_root, t->dim, sbg);
+	wp_puts(c0 + 2, r0 + 1, pick_root, WP_DIM, sbg);
 	wp_puts(c0 + 2, r0 + 2, W.dlg[0] ? W.dlg : "(type to filter)",
-		W.dlg[0] ? t->bg : t->dim,
-		W.dlg[0] ? t->heading : sbg);
+		W.dlg[0] ? WP_SEL_FG : WP_DIM,
+		W.dlg[0] ? WP_SEL_BG : sbg);
 	for (i = 0; i < vis; i++)
 	{
-		unsigned fg = t->fg, bg = sbg;
+		unsigned fg = WP_FG, bg = sbg;
 		const char *lab = "";
 
 		y = r0 + 3 + i;
@@ -2795,24 +2820,27 @@ static void draw_picker(void)
 			lab = pick_rel(pick_path[idx]);
 			if (pick_row0 + i == pick_sel)
 			{
-				fg = t->bg;
-				bg = t->heading;
+				fg = WP_SEL_FG;
+				bg = WP_SEL_BG;
 			}
 			serial_row(lab);
 		}
 		wp_puts(c0 + 2, y, lab, fg, bg);
 	}
-	wp_puts(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", t->dim, sbg);
+	wp_puts(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", WP_DIM, sbg);
 }
 
-static void draw_cursor_cell(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
+static void draw_cursor_cell(int col, int row, unsigned ch, unsigned fg, unsigned bg,
+			     int scale)
 {
-	wp_glyph(col, row, ch, bg, fg, scale);
+	if (scale > 1)
+		wp_glyph_px(heading_x_px(col, scale), row * 16, ch, bg, fg, scale);
+	else
+		wp_glyph(W.pane_left + col, row, ch, bg, fg, scale);
 }
 
 static void draw_body(void)
 {
-	const wp_theme *t = th();
 	int vr, c, i, col, screen_y, vis;
 	unsigned fg, bg;
 	char srow[WP_WRAP_W + 1];
@@ -2823,11 +2851,11 @@ static void draw_body(void)
 	for (i = 0; i < W.text_rows; i++)
 	{
 		int screen_row = W.text_top + i;
-		wp_fill_row(screen_row, t->fg, t->bg);
+		wp_fill_row(screen_row, WP_FG, WP_BG);
 		for (c = 0; c < W.pane_left; c++)
-			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
+			G.plat->tui_glyph(c, screen_row, ' ', WP_BG, WP_BG);
 		for (c = W.pane_left + W.pane_width; c < W.vid_cols; c++)
-			G.plat->tui_glyph(c, screen_row, ' ', t->bg, t->bg);
+			G.plat->tui_glyph(c, screen_row, ' ', WP_BG, WP_BG);
 	}
 	screen_y = 0;
 	for (vr = 0; vr < W.total_vrows; vr++)
@@ -2838,10 +2866,14 @@ static void draw_body(void)
 		int style = W.vrows[vr].style;
 		int hide_prefix = W.vrows[vr].hide_prefix;
 		int prefix_len = W.vrows[vr].prefix_len;
-		int wrap = W.pane_width / scale;
+		int wrap;
 		int screen_row;
 		int le;
 
+		if (scale > 1)
+			wrap = (W.pane_width * 5) / (scale * 4);
+		else
+			wrap = W.pane_width / scale;
 		if (wrap < 1)
 			wrap = 1;
 		le = ls;
@@ -2887,8 +2919,8 @@ static void draw_body(void)
 						chfg = intense_fg();
 					if (in_sel(i))
 					{
-						chfg = t->bg;
-						chbg = t->heading;
+						chfg = WP_SEL_FG;
+						chbg = WP_SEL_BG;
 					}
 					if (vr == W.cx_vrow && col == W.cx_vcol && !W.dialog)
 					{
@@ -2896,8 +2928,15 @@ static void draw_body(void)
 						chbg = fg;
 					}
 					if (vis >= 0 && vis < W.text_rows)
-						wp_glyph(W.pane_left + col * scale, screen_row,
-							 (unsigned)ch, chfg, chbg, scale);
+					{
+						if (scale > 1)
+							wp_glyph_px(heading_x_px(col, scale),
+								      screen_row * 16, (unsigned)ch,
+								      chfg, chbg, scale);
+						else
+							wp_glyph(W.pane_left + col, screen_row,
+								 (unsigned)ch, chfg, chbg, scale);
+					}
 					if (spos < W.pane_width)
 						srow[spos++] = ch;
 					col++;
@@ -2906,8 +2945,8 @@ static void draw_body(void)
 				if (vr == W.cx_vrow && W.cx_vcol >= col && !W.dialog)
 				{
 					if (vis >= 0 && vis < W.text_rows)
-						draw_cursor_cell(W.pane_left + W.cx_vcol * scale,
-								 screen_row, ' ', fg, bg, scale);
+						draw_cursor_cell(W.cx_vcol, screen_row, ' ',
+								 fg, bg, scale);
 				}
 				while (spos < wrap)
 					srow[spos++] = ' ';
@@ -2920,20 +2959,19 @@ static void draw_body(void)
 	if (W.total_vrows == 0 && !W.dialog)
 	{
 		int screen_row = W.text_top;
-		draw_cursor_cell(W.pane_left, screen_row, ' ', t->fg, t->bg, 1);
+		draw_cursor_cell(0, screen_row, ' ', WP_FG, WP_BG, 1);
 		serial_row("");
 	}
 	else if (W.cx_vrow >= W.total_vrows && !W.dialog)
 	{
 		int vis2 = screen_row_of_vrow(W.total_vrows) - W.scroll;
 		if (vis2 >= 0 && vis2 < W.text_rows)
-			draw_cursor_cell(W.pane_left, W.text_top + vis2, ' ', t->fg, t->bg, 1);
+			draw_cursor_cell(0, W.text_top + vis2, ' ', WP_FG, WP_BG, 1);
 	}
 }
 
 static void draw_status(void)
 {
-	const wp_theme *t = th();
 	char chip[160];
 	char right[64];
 	char *p;
@@ -2942,7 +2980,7 @@ static void draw_status(void)
 	const char *name = wp_basename();
 	unsigned cbg = dlg_bg();
 
-	wp_fill_row(row, t->dim, t->bg);
+	wp_fill_row(row, WP_DIM, WP_BG);
 	p = chip;
 	*p++ = ' ';
 	*p++ = W.dirty ? '*' : ' ';
@@ -2950,12 +2988,12 @@ static void draw_status(void)
 		*p++ = *name++;
 	*p++ = ' ';
 	*p = 0;
-	wp_puts(0, row, chip, t->fg, cbg);
+	wp_puts(0, row, chip, WP_FG, cbg);
 	p = right;
 	p = put_uint(p, words);
 	strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
 	right[sizeof(right) - 1] = 0;
-	wp_puts(W.vid_cols - (int)strlen(right), row, right, t->dim, t->bg);
+	wp_puts(W.vid_cols - (int)strlen(right), row, right, WP_DIM, WP_BG);
 	serial_row(chip);
 	serial_row(right);
 }
@@ -2984,14 +3022,13 @@ static void wp_smooth_scroll(int from, int to)
 		d = step;
 		if (d > pixels - done)
 			d = pixels - done;
-		G.plat->tui_scroll(x, y, w, h, dir * d, th()->bg);
+		G.plat->tui_scroll(x, y, w, h, dir * d, WP_BG);
 		done += d;
 	}
 }
 
 static void wp_redraw(void)
 {
-	const wp_theme *t = th();
 	int row, chrome;
 	int old_scroll;
 
@@ -3006,7 +3043,7 @@ static void wp_redraw(void)
 	    W.chrome_shown == chrome && W.scroll != old_scroll)
 		wp_smooth_scroll(old_scroll, W.scroll);
 	for (row = 0; row < W.vid_rows; row++)
-		wp_fill_row(row, t->fg, t->bg);
+		wp_fill_row(row, WP_FG, WP_BG);
 	if (chrome)
 		draw_menu_bar();
 	if (!W.dialog)
@@ -3190,9 +3227,6 @@ void mmb_cmd_wordpad(void)
 	memset(&W, 0, sizeof(W));
 	memset(docs, 0, sizeof(docs));
 	W.active = 1;
-	W.theme = G.opt.wordpad_theme;
-	if (W.theme < 0 || W.theme > 5)
-		W.theme = 0;
 	W.wide = 0;
 	W.ndoc = 1;
 	W.cur = 0;
@@ -3206,6 +3240,7 @@ void mmb_cmd_wordpad(void)
 		wp_stash();
 	}
 	ser("[WORDPAD]\r\n");
+	mmb_editor_apply_tui_palette();
 	if (G.plat && G.plat->tui_prepare)
 		G.plat->tui_prepare();
 	wp_layout_geom();
