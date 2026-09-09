@@ -179,6 +179,7 @@ void mmb_clear_vars(int keep_options)
 	G.nvars = 0;
 	G.dim_used = 0;
 	hash_clear();
+	mmb_tcache_invalidate();
 }
 
 static int elem_count(const int *dim, int ndims)
@@ -311,6 +312,7 @@ void mmb_cmd_dim(void)
 {
 	/* DIM [INTEGER|FLOAT|STRING] name(d1[,d2...]) [AS type] [, ...] */
 	int group = 0;
+	mmb_tcache_invalidate();
 	mmb_skip_sp();
 	if (mmb_match("INTEGER") || mmb_match("INT"))
 		group = T_INT;

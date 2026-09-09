@@ -58,7 +58,7 @@ def test_profiling_integer_for(console):
     assert p["match"] < 5000
     assert p["expr"] > 0
     assert p["findvar"] > 0
-    assert p["findvar"] < 500
+    assert p["findvar"] < 80
     assert p["break"] >= 200
 
 
@@ -88,6 +88,29 @@ def test_profiling_false_same_line_if_skip(console):
     )
     assert p["statements"] >= 400
     assert p["match"] < 4000
+    assert p["findvar"] < 80
+
+
+def test_profiling_tracecache_array_let(console):
+    lines = [
+        "DIM POS.X(100), SPEED(100)",
+        "RATIO=1.5",
+        "FOR I=0 TO 100",
+        "POS.X(I)=I",
+        "SPEED(I)=2",
+        "NEXT I",
+        "FOR I=0 TO 100",
+        "POS.X(I)=POS.X(I)+(SPEED(I)*RATIO)",
+        "IF POS.X(I)<0 THEN POS.X(I)=POS.X(I)+384",
+        "NEXT I",
+        "PRINT INT(POS.X(50))",
+    ]
+    assert console.send_line("OPTION TRACECACHE OFF") == ""
+    off = _run_kernel(console, "TCOFF.BAS", lines)
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    on = _run_kernel(console, "TCON.BAS", lines)
+    assert on["findvar"] < off["findvar"] // 2
+    assert on["expr"] < off["expr"] // 2
 
 
 def test_profiling_float_math(console):

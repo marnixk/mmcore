@@ -77,6 +77,27 @@ def test_for_unnamed_next_and_step(console):
     assert console.send_line("RUN") == "531-1"
 
 
+def test_array_let_mul_add_and_wrap_if(console):
+    _write_bas(
+        console,
+        "TCARR.BAS",
+        [
+            "DIM POS.X(4), SPEED(4)",
+            "RATIO=2",
+            "FOR I=0 TO 4",
+            "POS.X(I)=I",
+            "SPEED(I)=3",
+            "NEXT I",
+            "FOR I=0 TO 4",
+            "POS.X(I)=POS.X(I)+(SPEED(I)*RATIO)",
+            "IF POS.X(I)>7 THEN POS.X(I)=POS.X(I)-7",
+            "NEXT I",
+            "PRINT INT(POS.X(0));INT(POS.X(1));INT(POS.X(2))",
+        ],
+    )
+    assert console.send_line('RUN "TCARR.BAS"') == "671"
+
+
 def test_nested_if_elseif_else_end_if(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 N=2") == ""

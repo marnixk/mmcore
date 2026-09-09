@@ -1560,6 +1560,8 @@ void mmb_option_reset(void)
 	G.opt.default_type = T_NUM;
 	G.opt.tab = 2;
 	G.opt.break_key = 3;
+	G.opt.profiling = 0;
+	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;
 	G.opt.console = MMB_DEFAULT_CONSOLE;
 	G.opt.console_port = 3;
@@ -1748,6 +1750,8 @@ static void do_let(void)
 	char name[MMB_MAX_NAME];
 	int nidx = 0, idx[MMB_MAX_DIMS], t;
 	mmb_val v;
+	if (mmb_tcache_try_let())
+		return;
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
 	mmb_expect('=');
@@ -2116,10 +2120,14 @@ static void if_skip_to_stmt_end(void)
 
 void mmb_cmd_if(void)
 {
-	mmb_val v = mmb_expr();
-	int cond = mmb_as_int(v) != 0;
+	mmb_val v;
+	int cond;
 	int else_id, elseif_id;
 	const char *then0;
+	if (mmb_tcache_try_if())
+		return;
+	v = mmb_expr();
+	cond = mmb_as_int(v) != 0;
 	if (!mmb_match("THEN"))
 		mmb_syntax();
 	mmb_skip_sp();
