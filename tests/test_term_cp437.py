@@ -4,7 +4,7 @@ import os
 import re
 
 from harness import MMBasicConsole
-from test_term import _f10, _is_creamish, _is_dark_slate, _luminance, _open_term
+from test_term import _is_creamish, _is_dark_slate, _luminance, _menu, _open_term, _quit
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_C = os.path.join(REPO, "mmbasic", "src", "font_cp437_8x16.c")
@@ -46,9 +46,10 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
     try:
         seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         assert "CP437" in seen
-        # MODE 14 is 960x540 / 8x16 = 120x33. Status row is last.
-        # "F10/Alt-X  Alt-F " is 17 chars; demo appends ░▒▓ there.
-        x0, y0 = (20 + 17) * 8, 32 * 16
+        _menu(con)
+        # MODE 14 is 960x540 / 8x16 = 120x33. Status row is last, full width.
+        # "Alt-X  Alt-T" is 12 chars; demo appends ░▒▓ there.
+        x0, y0 = 12 * 8, 32 * 16
         on = con.screen_pixel(x0 + 3, y0)
         off = con.screen_pixel(x0 + 0, y0)
         assert _is_creamish(*on), on
@@ -56,6 +57,6 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
         assert _luminance(*on) > _luminance(*off) + 40
         med = con.screen_pixel(x0 + 8 + 1, y0)
         assert _is_creamish(*med), med
-        _f10(con)
+        _quit(con)
     finally:
         con.stop()

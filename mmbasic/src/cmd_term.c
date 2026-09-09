@@ -52,6 +52,15 @@
 #define TM_BTN_DEL      2
 #define TM_BTN_CONN     3
 #define TM_LIST_VIEW    12
+#define TM_RS          0x1e
+#define TM_BOX_H       0xC4u
+#define TM_BOX_V       0xB3u
+#define TM_BOX_TL      0xDAu
+#define TM_BOX_TR      0xBFu
+#define TM_BOX_BL      0xC0u
+#define TM_BOX_BR      0xD9u
+#define TM_ANSI_OSC_MS  2000
+#define TM_REPLAY_HEX   512
 
 typedef struct {
 	int active;
@@ -110,8 +119,17 @@ typedef struct {
 	int esc_len;
 	unsigned esc_at;
 	int alt;
+	int alt_pend;
 	int menu;
 	int menu_sel;
+	int replay;
+	int replay_st;
+	char replay_hex[TM_REPLAY_HEX + 4];
+	int replay_hex_n;
+	unsigned ansi_at;
+	int mon_ansi;
+	int mon_iac;
+	int mon_sb;
 	int dlg;
 	int dlg_btn;
 	int dlg_sel;
@@ -142,6 +160,11 @@ static int host_is_demo(void)
 	       strcasecmp(T.host, "demoiac") == 0;
 }
 
+static int host_is_replay(void)
+{
+	return strcasecmp(T.host, "replay") == 0;
+}
+
 typedef struct {
 	char name[TM_BM_NAME];
 	char host[80];
@@ -152,6 +175,7 @@ typedef struct {
 
 static term_bm g_bm[TM_BM_MAX];
 static int g_bm_n;
+static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
 
 static const mmb_ed_theme *term_th(void)
 {
@@ -213,6 +237,11 @@ static void term_reset_pen(void);
 static void demo_emit_line(void);
 static void esc_reset(void);
 static int term_width(void);
+static void incoming_feed(const unsigned char *src, int n);
+static void term_open_menu(void);
+static void term_close_menu(void);
+static void term_dlg_refresh(void);
+static void term_overlay_chrome(void);
 
 static int term_want_echo(void);
 static void pane_rubout(void);
@@ -362,14 +391,14 @@ static void term_serial_dump(void)
 		ser(line);
 		ser("\r\n");
 	}
-	if (T.menu)
+	if (T.menu || T.alt_pend)
 	{
-		ser("File\r\n");
-		ser("Exit\r\n");
+		ser("Terminal\r\n");
+		ser("Bookmarks\r\n");
 		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
 		ser(term_width_label());
 		ser("\r\n");
-		ser("Bookmarks\r\n");
+		ser("Exit\r\n");
 	}
 	term_serial_dump_dlg();
 	T.serial_gen++;
@@ -578,7 +607,29 @@ static void term_put_str(int x, int y, const char *s, unsigned fg)
 		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)s[i], fg);
 }
 
-static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg, unsigned hot_fg)
+static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+{
+	mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
+	mmb_gfx_glyph_cp437(x, y, ch, fg);
+}
+
+static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
+{
+	int i;
+	if (!s)
+		return;
+	for (i = 0; s[i]; i++)
+		term_cell(x + i * TM_CW, y, (unsigned char)s[i], fg, bg);
+}
+
+static void term_fill_cells(int x, int y, int n, unsigned bg)
+{
+	if (n > 0)
+		mmb_gfx_box(x, y, n * TM_CW, TM_CH, bg, 1, (int)bg);
+}
+
+static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
+			 unsigned hot_fg, unsigned bg)
 {
 	int i, used = 0;
 
@@ -594,7 +645,7 @@ static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg, uns
 			c_fg = hot_fg;
 			used = 1;
 		}
-		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)ch, c_fg);
+		term_cell(x + i * TM_CW, y, (unsigned char)ch, c_fg, bg);
 	}
 }
 
@@ -606,13 +657,12 @@ static void term_draw_status(void)
 	unsigned bg = TM_MENU_BG;
 	unsigned fg = TM_MENU_FG;
 
-	if (!T.menu)
+	if (!T.menu && !T.alt_pend)
 		return;
 	y = (T.vid_rows - 1) * TM_CH;
-	x0 = T.pane_left * TM_CW;
-	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
-		    bg, 1, (int)bg);
-	strcpy(left, "F10/Alt-X  Alt-F");
+	x0 = 0;
+	mmb_gfx_box(0, y, T.vid_cols * TM_CW, TM_CH, bg, 1, (int)bg);
+	strcpy(left, "Alt-X  Alt-T");
 	if (T.demo)
 	{
 		n = (int)strlen(left);
@@ -625,7 +675,7 @@ static void term_draw_status(void)
 			left[n + 4] = 0;
 		}
 	}
-	term_put_str(x0, y, left, fg);
+	term_put_str_bg(x0, y, left, fg, bg);
 	right[0] = 0;
 	if (T.connecting)
 	{
@@ -664,50 +714,85 @@ static void term_draw_status(void)
 	}
 	right[sizeof(right) - 1] = 0;
 	n = (int)strlen(right);
-	if (n > term_width())
-		n = term_width();
-	term_put_str(x0 + (term_width() - n) * TM_CW, y, right, fg);
+	if (n > T.vid_cols)
+		n = T.vid_cols;
+	term_put_str_bg((T.vid_cols - n) * TM_CW, y, right, fg, bg);
 }
 
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i, bar_w;
+	int x0, y0, w, i, bar_w, drop_h;
 	const char *items[4];
+	char hots[4];
 	char echo[16];
+	unsigned brd = TM_MENU_FG;
 
-	if (!T.menu)
+	if (!T.menu && !T.alt_pend)
 		return;
-	x0 = T.pane_left * TM_CW;
+	x0 = 0;
 	y0 = TM_CH;
-	w = 12 * TM_CW;
+	w = 14;
 	bar_w = T.vid_cols * TM_CW;
 	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
-	items[0] = "Exit";
+	items[0] = "Bookmarks";
 	items[1] = echo;
 	items[2] = term_width_label();
-	items[3] = "Bookmarks";
+	items[3] = "Exit";
+	hots[0] = 'B';
+	hots[1] = 'E';
+	hots[2] = items[2][0];
+	hots[3] = 'X';
 	mmb_gfx_box(0, 0, bar_w, TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_put_str(x0, 0, " ", TM_MENU_FG);
-	term_put_hot(x0 + TM_CW, 0, "File", 'F', TM_MENU_FG, TM_HOT);
-	mmb_gfx_box(x0, y0, w, 4 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	term_put_hot(TM_CW, 0, "Terminal", 'T', TM_MENU_FG, TM_HOT, TM_MENU_BG);
+	if (!T.menu)
+		return;
+	drop_h = 6;
+	mmb_gfx_box(x0, y0, (w + 2) * TM_CW, drop_h * TM_CH, TM_SH_BG, 1,
+		    (int)TM_SH_BG);
+	mmb_gfx_box(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG, 1,
+		    (int)TM_DLG_BG);
+	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
+	term_fill_cells(x0 + TM_CW, y0, w - 2, TM_DLG_BG);
+	{
+		int k;
+		for (k = 1; k < w - 1; k++)
+			term_cell(x0 + k * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
+	}
+	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
 	for (i = 0; i < 4; i++)
 	{
-		int y = y0 + i * TM_CH;
-		if (i == T.menu_sel)
-			mmb_gfx_box(x0, y, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-		term_put_hot(x0 + TM_CW, y, items[i], items[i][0],
-			     i == T.menu_sel ? TM_SEL_FG : TM_MENU_FG, TM_HOT);
+		int y = y0 + (1 + i) * TM_CH;
+		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
+		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
+		unsigned hot = (i == T.menu_sel) ? TM_HOT : TM_HOT;
+		term_cell(x0, y, TM_BOX_V, brd, TM_DLG_BG);
+		term_fill_cells(x0 + TM_CW, y, w - 2, bg);
+		term_put_hot(x0 + TM_CW, y, items[i], hots[i], fg, hot, bg);
+		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
+	}
+	{
+		int y = y0 + 5 * TM_CH;
+		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
+		{
+			int k;
+			for (k = 1; k < w - 1; k++)
+				term_cell(x0 + k * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
+		}
+		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
 }
 
 static void term_draw_row(int r)
 {
-	int c, x, y;
+	int c, x, y, wpx;
 	unsigned ch, fg, bg;
 
 	if (r < 0 || r >= T.pane_rows)
 		return;
 	y = r * TM_CH;
+	x = T.pane_left * TM_CW;
+	wpx = term_width() * TM_CW;
+	mmb_gfx_box(x, y, wpx, TM_CH, TM_BG, 1, (int)TM_BG);
 	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
@@ -718,10 +803,38 @@ static void term_draw_row(int r)
 			ch = ' ';
 		if (bg != TM_BG)
 			mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
-		else
-			mmb_gfx_box(x, y, TM_CW, TM_CH, TM_BG, 1, (int)TM_BG);
 		mmb_gfx_glyph_cp437(x, y, ch, fg);
 	}
+}
+
+static void term_copy_rect(int x, int y, int pw, int ph)
+{
+	uint32_t *s, *d;
+	int w, h, row;
+
+	s = mmb_gfx_buf_for(1, &w, &h);
+	d = mmb_gfx_buf_for(0, &w, &h);
+	if (!s || !d || pw <= 0 || ph <= 0)
+		return;
+	if (x < 0)
+	{
+		pw += x;
+		x = 0;
+	}
+	if (y < 0)
+	{
+		ph += y;
+		y = 0;
+	}
+	if (x + pw > w)
+		pw = w - x;
+	if (y + ph > h)
+		ph = h - y;
+	if (pw <= 0 || ph <= 0)
+		return;
+	for (row = 0; row < ph; row++)
+		memcpy(d + (y + row) * w + x, s + (y + row) * w + x,
+		       (unsigned)pw * sizeof(uint32_t));
 }
 
 static void term_copy_pane(void)
@@ -781,7 +894,7 @@ static void term_draw(void)
 		for (r = lo; r <= hi; r++)
 			term_draw_row(r);
 	}
-	if (T.menu)
+	if (T.menu || T.alt_pend)
 		term_draw_status();
 	else
 		mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
@@ -815,13 +928,173 @@ static void term_exit(void)
 	memset(&T, 0, sizeof(T));
 }
 
+static void replay_tx(const unsigned char *p, unsigned n)
+{
+	static const char hexdig[] = "0123456789ABCDEF";
+	char line[8 + TM_REPLAY_HEX + 4];
+	unsigned i, o, chunk;
+
+	while (n > 0)
+	{
+		chunk = n > (TM_REPLAY_HEX / 2) ? (TM_REPLAY_HEX / 2) : n;
+		o = 0;
+		line[o++] = '!';
+		line[o++] = 'T';
+		line[o++] = 'X';
+		line[o++] = ' ';
+		for (i = 0; i < chunk; i++)
+		{
+			line[o++] = hexdig[p[i] >> 4];
+			line[o++] = hexdig[p[i] & 15];
+		}
+		line[o++] = '\r';
+		line[o++] = '\n';
+		line[o] = 0;
+		ser(line);
+		p += chunk;
+		n -= chunk;
+	}
+}
+
+static void term_net_send(const void *data, unsigned n)
+{
+	if (!data || n == 0)
+		return;
+	if (T.replay)
+		replay_tx((const unsigned char *)data, n);
+	else if (T.tcp)
+		mmb_net_tcp_send(data, n);
+}
+
+static int hexval(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	return -1;
+}
+
+static void replay_flush_hex(void)
+{
+	unsigned char buf[TM_REPLAY_HEX / 2];
+	int n = 0, i, hi, lo;
+
+	if (T.replay_hex_n < 2)
+	{
+		T.replay_hex_n = 0;
+		return;
+	}
+	for (i = 0; i + 1 < T.replay_hex_n && n < (int)sizeof(buf); i += 2)
+	{
+		hi = hexval(T.replay_hex[i]);
+		lo = hexval(T.replay_hex[i + 1]);
+		if (hi < 0 || lo < 0)
+			break;
+		buf[n++] = (unsigned char)((hi << 4) | lo);
+	}
+	T.replay_hex_n = 0;
+	if (n > 0)
+		incoming_feed(buf, n);
+}
+
+static int replay_key(char c)
+{
+	unsigned char b = (unsigned char)c;
+
+	if (T.replay_st == 0)
+	{
+		if (b == TM_RS)
+		{
+			T.replay_st = 1;
+			T.replay_hex_n = 0;
+			return 1;
+		}
+		return 0;
+	}
+	if (T.replay_st == 1)
+	{
+		if (c == 'R' || c == 'r')
+		{
+			T.replay_st = 2;
+			return 1;
+		}
+		T.replay_st = 0;
+		return 0;
+	}
+	if (T.replay_st == 2)
+	{
+		if (c == 'X' || c == 'x')
+		{
+			T.replay_st = 3;
+			T.replay_hex_n = 0;
+			return 1;
+		}
+		T.replay_st = 0;
+		return 0;
+	}
+	if (c == '\n' || c == '\r')
+	{
+		T.replay_st = 0;
+		replay_flush_hex();
+		return 1;
+	}
+	if (hexval(c) >= 0 && T.replay_hex_n < TM_REPLAY_HEX)
+		T.replay_hex[T.replay_hex_n++] = c;
+	return 1;
+}
+
+static void replay_mon(void)
+{
+	char line[96];
+	int n = 0;
+
+	if (!T.replay)
+		return;
+	if (T.mon_ansi == T.ansi_st && T.mon_iac == T.iac && T.mon_sb == T.sb)
+		return;
+	T.mon_ansi = T.ansi_st;
+	T.mon_iac = T.iac;
+	T.mon_sb = T.sb;
+	line[n++] = '!';
+	line[n++] = 'M';
+	line[n++] = 'O';
+	line[n++] = 'N';
+	line[n++] = ' ';
+	line[n++] = 'a';
+	line[n++] = '=';
+	line[n++] = (char)('0' + (T.ansi_st % 10));
+	line[n++] = ' ';
+	line[n++] = 'i';
+	line[n++] = '=';
+	line[n++] = (char)('0' + (T.iac % 10));
+	line[n++] = ' ';
+	line[n++] = 's';
+	line[n++] = '=';
+	line[n++] = (char)('0' + (T.sb ? 1 : 0));
+	line[n++] = ' ';
+	line[n++] = 'c';
+	line[n++] = '=';
+	line[n++] = (char)('0' + (T.char_mode ? 1 : 0));
+	line[n++] = ' ';
+	line[n++] = 'e';
+	line[n++] = '=';
+	line[n++] = (char)('0' + (term_want_echo() ? 1 : 0));
+	line[n++] = '\r';
+	line[n++] = '\n';
+	line[n] = 0;
+	ser(line);
+}
+
 static void send_iac(int cmd, int opt)
 {
 	unsigned char b[3];
 	b[0] = IAC;
 	b[1] = (unsigned char)cmd;
 	b[2] = (unsigned char)opt;
-	mmb_net_tcp_send(b, 3);
+	term_net_send(b, 3);
 }
 
 static void send_ttype(void)
@@ -831,7 +1104,7 @@ static void send_ttype(void)
 		'A', 'N', 'S', 'I',
 		IAC, SE
 	};
-	mmb_net_tcp_send(ttype, (unsigned)sizeof(ttype));
+	term_net_send(ttype, (unsigned)sizeof(ttype));
 }
 
 static void send_naws(void)
@@ -848,7 +1121,7 @@ static void send_naws(void)
 	b[6] = (unsigned char)(rows & 255);
 	b[7] = IAC;
 	b[8] = SE;
-	mmb_net_tcp_send(b, 9);
+	term_net_send(b, 9);
 }
 
 static void telnet_announce(void)
@@ -919,9 +1192,7 @@ static void term_menu_move(int dir)
 		T.menu_sel = 3;
 	if (T.menu_sel > 3)
 		T.menu_sel = 0;
-	mark_dirty_full();
-	term_draw();
-	term_serial_dump();
+	term_overlay_chrome();
 }
 
 static void term_toggle_echo(void)
@@ -930,9 +1201,14 @@ static void term_toggle_echo(void)
 		T.echo_user = 2;
 	else
 		T.echo_user = 1;
-	mark_dirty_full();
-	term_draw();
-	term_serial_dump();
+	if (T.menu || T.alt_pend)
+		term_overlay_chrome();
+	else
+	{
+		mark_dirty_full();
+		term_draw();
+		term_serial_dump();
+	}
 }
 
 static void term_fill_pages(void)
@@ -1023,6 +1299,67 @@ static void term_toggle_letterbox(void)
 
 static void term_ui_refresh(void)
 {
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static void term_present_overlay(int extra_w, int extra_h)
+{
+	int x, y, pw, ph;
+
+	if (dlg_cw <= 0 || dlg_ch <= 0)
+		return;
+	x = dlg_c0 * TM_CW;
+	y = dlg_r0 * TM_CH;
+	pw = (dlg_cw + extra_w) * TM_CW;
+	ph = (dlg_ch + extra_h) * TM_CH;
+	term_copy_rect(x, y, pw, ph);
+	mmb_gfx_present_rect(x, y, pw, ph);
+}
+
+static void term_dlg_refresh(void)
+{
+	int saved;
+
+	saved = G.gfx.write_page;
+	G.gfx.write_page = 1;
+	term_draw_dlg();
+	term_present_overlay(2, 1);
+	G.gfx.write_page = saved;
+	term_serial_dump_dlg();
+}
+
+static void term_overlay_chrome(void)
+{
+	int saved;
+
+	saved = G.gfx.write_page;
+	G.gfx.write_page = 1;
+	term_draw_status();
+	term_draw_menu();
+	term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+	mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+	term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH);
+	mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
+			    TM_CH);
+	G.gfx.write_page = saved;
+	term_serial_dump();
+}
+
+static void term_open_menu(void)
+{
+	T.menu = 1;
+	T.menu_sel = 0;
+	T.alt_pend = 0;
+	T.dlg = TM_DLG_NONE;
+	term_ui_refresh();
+}
+
+static void term_close_menu(void)
+{
+	T.menu = 0;
+	T.alt_pend = 0;
 	mark_dirty_full();
 	term_draw();
 	term_serial_dump();
@@ -1249,35 +1586,60 @@ static void term_bm_load(void)
 	bm_sort();
 }
 
-static void term_dlg_hline(int x0, int y0, int cw, unsigned left, unsigned mid,
-			   unsigned right)
+static void dlg_center(int cw, int ch)
 {
-	int i;
-	unsigned brd_fg = TM_MENU_FG;
+	int shw = 2, shh = 1;
 
-	mmb_gfx_glyph_cp437(x0, y0, left, brd_fg);
-	for (i = 1; i < cw - 1; i++)
-		mmb_gfx_glyph_cp437(x0 + i * TM_CW, y0, mid, brd_fg);
-	mmb_gfx_glyph_cp437(x0 + (cw - 1) * TM_CW, y0, right, brd_fg);
+	dlg_cw = cw;
+	dlg_ch = ch;
+	dlg_c0 = (T.vid_cols - cw) / 2;
+	dlg_r0 = (T.vid_rows - ch) / 2;
+	if (dlg_c0 < 0)
+		dlg_c0 = 0;
+	if (dlg_r0 < 0)
+		dlg_r0 = 0;
+	if (dlg_c0 + cw + shw > T.vid_cols && T.vid_cols > cw + shw)
+		dlg_c0 = T.vid_cols - cw - shw;
+	if (dlg_r0 + ch + shh > T.vid_rows && T.vid_rows > ch + shh)
+		dlg_r0 = T.vid_rows - ch - shh;
+	if (dlg_c0 < 0)
+		dlg_c0 = 0;
+	if (dlg_r0 < 0)
+		dlg_r0 = 0;
 }
 
-static void term_dlg_frame(int col, int row, int cw, int ch, const char *title)
+static void term_dlg_hline_bg(int x0, int y0, int cw, unsigned left, unsigned mid,
+			      unsigned right)
+{
+	int i;
+	unsigned brd = TM_DLG_FG;
+
+	term_cell(x0, y0, left, brd, TM_DLG_BG);
+	for (i = 1; i < cw - 1; i++)
+		term_cell(x0 + i * TM_CW, y0, mid, brd, TM_DLG_BG);
+	term_cell(x0 + (cw - 1) * TM_CW, y0, right, brd, TM_DLG_BG);
+}
+
+static void term_dlg_frame(int cw, int ch, const char *title)
 {
 	int x0, y0, w, h, i, tw, tx;
-	unsigned brd_fg = TM_MENU_FG;
+	unsigned brd = TM_DLG_FG;
 
-	x0 = (T.pane_left + col) * TM_CW;
-	y0 = row * TM_CH;
+	dlg_center(cw, ch);
+	x0 = dlg_c0 * TM_CW;
+	y0 = dlg_r0 * TM_CH;
 	w = cw * TM_CW;
 	h = ch * TM_CH;
 	mmb_gfx_box(x0, y0, w, h, TM_DLG_BG, 1, (int)TM_DLG_BG);
-	term_dlg_hline(x0, y0, cw, 0xDAu, 0xC4u, 0xBFu);
-	term_dlg_hline(x0, y0 + (ch - 1) * TM_CH, cw, 0xC0u, 0xC4u, 0xD9u);
+	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
+	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
+			 TM_BOX_BR);
 	for (i = 1; i < ch - 1; i++)
 	{
-		mmb_gfx_glyph_cp437(x0, y0 + i * TM_CH, 0xB3u, brd_fg);
-		mmb_gfx_glyph_cp437(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, 0xB3u,
-				    brd_fg);
+		term_cell(x0, y0 + i * TM_CH, TM_BOX_V, brd, TM_DLG_BG);
+		term_fill_cells(x0 + TM_CW, y0 + i * TM_CH, cw - 2, TM_DLG_BG);
+		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
+			  TM_DLG_BG);
 	}
 	mmb_gfx_box(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG, 1,
 		    (int)TM_SH_BG);
@@ -1285,25 +1647,64 @@ static void term_dlg_frame(int col, int row, int cw, int ch, const char *title)
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
-		tx = col + (cw - tw) / 2;
-		if (tx < col + 1)
-			tx = col + 1;
-		term_put_str((T.pane_left + tx) * TM_CW, y0, title, brd_fg);
+		tx = dlg_c0 + (cw - tw) / 2;
+		if (tx < dlg_c0 + 1)
+			tx = dlg_c0 + 1;
+		term_put_str_bg(tx * TM_CW, y0, title, brd, TM_DLG_BG);
 	}
 }
 
-static void dlg_text(int col, int row, const char *s, int hi)
+static void dlg_text_at(int dcol, int drow, const char *s, int hi)
 {
 	int x, y, n;
+	unsigned fg, bg;
 
 	if (!s)
 		return;
 	n = (int)strlen(s);
-	x = (T.pane_left + col) * TM_CW;
-	y = row * TM_CH;
-	if (hi && n > 0)
-		mmb_gfx_box(x, y, n * TM_CW, TM_CH, TM_SEL_BG, 1, (int)TM_SEL_BG);
-	term_put_str(x, y, s, hi ? TM_SEL_FG : TM_DLG_FG);
+	x = (dlg_c0 + dcol) * TM_CW;
+	y = (dlg_r0 + drow) * TM_CH;
+	fg = hi ? TM_SEL_FG : TM_DLG_FG;
+	bg = hi ? TM_SEL_BG : TM_DLG_BG;
+	if (n > 0)
+		term_put_str_bg(x, y, s, fg, bg);
+}
+
+static void dlg_field(int dcol, int drow, int width, const char *s, int hi)
+{
+	int x, y, i, n;
+	unsigned fg, bg;
+
+	x = (dlg_c0 + dcol) * TM_CW;
+	y = (dlg_r0 + drow) * TM_CH;
+	fg = hi ? TM_SEL_FG : TM_DLG_FG;
+	bg = hi ? TM_SEL_BG : TM_SH_BG;
+	if (width < 1)
+		width = 1;
+	term_fill_cells(x, y, width, bg);
+	s = s ? s : "";
+	n = (int)strlen(s);
+	if (n > width)
+		n = width;
+	for (i = 0; i < n; i++)
+		term_cell(x + i * TM_CW, y, (unsigned char)s[i], fg, bg);
+}
+
+static void dlg_btn(int dcol, int drow, const char *s, int hi)
+{
+	char buf[24];
+	int n;
+
+	if (!s)
+		return;
+	n = (int)strlen(s);
+	if (n > 20)
+		n = 20;
+	buf[0] = ' ';
+	memcpy(buf + 1, s, (unsigned)n);
+	buf[n + 1] = ' ';
+	buf[n + 2] = 0;
+	dlg_text_at(dcol, drow, buf, hi);
 }
 
 static void term_draw_dlg_list(void)
@@ -1311,7 +1712,7 @@ static void term_draw_dlg_list(void)
 	int i, row;
 	const char *btns[4];
 
-	term_dlg_frame(8, 2, 48, 18, " Bookmarks ");
+	term_dlg_frame(48, 18, " Bookmarks ");
 	if (T.dlg_sel < T.dlg_top)
 		T.dlg_top = T.dlg_sel;
 	if (T.dlg_sel >= T.dlg_top + TM_LIST_VIEW)
@@ -1319,24 +1720,27 @@ static void term_draw_dlg_list(void)
 	if (T.dlg_top < 0)
 		T.dlg_top = 0;
 	if (g_bm_n == 0)
-		dlg_text(10, 4, "(none)", 0);
+		dlg_text_at(2, 2, "(none)", 0);
 	for (i = 0; i < TM_LIST_VIEW; i++)
 	{
 		int idx = T.dlg_top + i;
+		char name[40];
 		if (idx >= g_bm_n)
 			break;
-		row = 4 + i;
-		dlg_text(10, row, g_bm[idx].name[0] ? g_bm[idx].name : "(unnamed)",
-			 idx == T.dlg_sel);
+		row = 2 + i;
+		strncpy(name, g_bm[idx].name[0] ? g_bm[idx].name : "(unnamed)",
+			sizeof(name) - 1);
+		name[sizeof(name) - 1] = 0;
+		dlg_field(2, row, 44, name, idx == T.dlg_sel);
 	}
 	btns[0] = "New";
 	btns[1] = "Edit";
 	btns[2] = "Delete";
 	btns[3] = "Connect";
-	dlg_text(10, 17, btns[0], T.dlg_btn == 0);
-	dlg_text(16, 17, btns[1], T.dlg_btn == 1);
-	dlg_text(23, 17, btns[2], T.dlg_btn == 2);
-	dlg_text(44, 17, btns[3], T.dlg_btn == 3);
+	dlg_btn(2, 16, btns[0], T.dlg_btn == 0);
+	dlg_btn(8, 16, btns[1], T.dlg_btn == 1);
+	dlg_btn(15, 16, btns[2], T.dlg_btn == 2);
+	dlg_btn(36, 16, btns[3], T.dlg_btn == 3);
 }
 
 static void term_draw_dlg_edit(void)
@@ -1346,36 +1750,36 @@ static void term_draw_dlg_edit(void)
 	char box[16];
 	const char *save;
 
-	term_dlg_frame(8, 4, 48, 14,
+	term_dlg_frame(48, 14,
 		       T.dlg_edit_idx < 0 ? " New bookmark " : " Edit bookmark ");
-	dlg_text(10, 6, "Name", 0);
-	dlg_text(16, 6, T.dlg_name[0] ? T.dlg_name : "_", T.dlg_focus == 0);
-	dlg_text(10, 8, "Host", 0);
-	dlg_text(16, 8, T.dlg_host[0] ? T.dlg_host : "_", T.dlg_focus == 1);
-	dlg_text(40, 8, "Port", 0);
+	dlg_text_at(2, 2, "Name", 0);
+	dlg_field(8, 2, 36, T.dlg_name, T.dlg_focus == 0);
+	dlg_text_at(2, 4, "Host", 0);
+	dlg_field(8, 4, 22, T.dlg_host, T.dlg_focus == 1);
+	dlg_text_at(32, 4, "Port", 0);
 	port[0] = 0;
 	bm_append_int(port, sizeof(port), T.dlg_port);
-	dlg_text(46, 8, port[0] ? port : "_", T.dlg_focus == 2);
+	dlg_field(38, 4, 6, port[0] ? port : "", T.dlg_focus == 2);
 	strcpy(echo, T.dlg_echo ? "[X] Echo ON" : "[ ] Echo ON");
 	strcpy(box, T.dlg_letterbox ? "[X] Letterboxed" : "[ ] Letterboxed");
-	dlg_text(10, 10, echo, T.dlg_focus == 3);
-	dlg_text(10, 11, box, T.dlg_focus == 4);
+	dlg_text_at(2, 6, echo, T.dlg_focus == 3);
+	dlg_text_at(2, 7, box, T.dlg_focus == 4);
 	save = T.dlg_edit_idx < 0 ? "Save" : "Update";
-	dlg_text(10, 15, "Cancel", T.dlg_focus == 5);
-	dlg_text(44, 15, save, T.dlg_focus == 6);
+	dlg_btn(2, 12, "Cancel", T.dlg_focus == 5);
+	dlg_btn(36, 12, save, T.dlg_focus == 6);
 }
 
 static void term_draw_dlg_del(void)
 {
 	const char *nm;
 
-	term_dlg_frame(12, 8, 40, 7, " Delete bookmark? ");
+	term_dlg_frame(40, 7, " Delete bookmark? ");
 	nm = (T.dlg_sel >= 0 && T.dlg_sel < g_bm_n && g_bm[T.dlg_sel].name[0])
 		     ? g_bm[T.dlg_sel].name
 		     : "";
-	dlg_text(14, 10, nm, 0);
-	dlg_text(14, 13, "Yes", T.dlg_btn == 0);
-	dlg_text(40, 13, "No", T.dlg_btn == 1);
+	dlg_text_at(2, 2, nm, 0);
+	dlg_btn(2, 5, "Yes", T.dlg_btn == 0);
+	dlg_btn(28, 5, "No", T.dlg_btn == 1);
 }
 
 static void term_draw_dlg(void)
@@ -1564,6 +1968,7 @@ static void term_bm_connect(void)
 	T.demo = host_is_demo();
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
+	T.replay = host_is_replay();
 	T.letterbox = b->letterboxed ? 1 : 0;
 	term_reset_pen();
 	term_apply_session_mode();
@@ -1573,7 +1978,16 @@ static void term_bm_connect(void)
 	for (i = 0; i < T.pane_rows; i++)
 		pane_clear_row(i);
 	term_fill_pages();
-	if (!T.demo)
+	if (T.replay)
+	{
+		T.tcp = 1;
+		T.mon_ansi = -1;
+		T.mon_iac = -1;
+		T.mon_sb = -1;
+		pane_puts("Connected");
+		pane_newline();
+	}
+	else if (!T.demo)
 	{
 		if (mmb_tcp_any_open())
 		{
@@ -1737,13 +2151,13 @@ static int term_dlg_key(char c)
 			if (T.dlg_focus == 3)
 			{
 				T.dlg_echo = !T.dlg_echo;
-				term_ui_refresh();
+				term_dlg_refresh();
 				return 1;
 			}
 			if (T.dlg_focus == 4)
 			{
 				T.dlg_letterbox = !T.dlg_letterbox;
-				term_ui_refresh();
+				term_dlg_refresh();
 				return 1;
 			}
 			if (T.dlg_focus == 5)
@@ -1757,7 +2171,7 @@ static int term_dlg_key(char c)
 		if (c == 8 || c == 127)
 		{
 			term_edit_backspace();
-			term_ui_refresh();
+			term_dlg_refresh();
 			return 1;
 		}
 		if (c == ' ' && (T.dlg_focus == 3 || T.dlg_focus == 4))
@@ -1766,13 +2180,13 @@ static int term_dlg_key(char c)
 				T.dlg_echo = !T.dlg_echo;
 			else
 				T.dlg_letterbox = !T.dlg_letterbox;
-			term_ui_refresh();
+			term_dlg_refresh();
 			return 1;
 		}
 		if (c >= 32 && c < 127)
 		{
 			term_edit_add_char(c);
-			term_ui_refresh();
+			term_dlg_refresh();
 			return 1;
 		}
 		return 1;
@@ -1808,14 +2222,14 @@ static void term_dlg_arrow(int c)
 			if (T.dlg_btn < TM_BTN_NEW)
 				T.dlg_btn = TM_BTN_CONN;
 		}
-		term_ui_refresh();
+		term_dlg_refresh();
 		return;
 	}
 	if (T.dlg == TM_DLG_DEL)
 	{
 		if (c == 'C' || c == 'D')
 			T.dlg_btn = T.dlg_btn ? 0 : 1;
-		term_ui_refresh();
+		term_dlg_refresh();
 		return;
 	}
 	if (T.dlg == TM_DLG_EDIT)
@@ -1843,12 +2257,17 @@ static void term_dlg_arrow(int c)
 			else if (T.dlg_focus == 6)
 				T.dlg_focus = 5;
 		}
-		term_ui_refresh();
+		term_dlg_refresh();
 	}
 }
 
 static void term_menu_activate(void)
 {
+	if (T.menu_sel == 0)
+	{
+		term_bm_open_list();
+		return;
+	}
 	if (T.menu_sel == 1)
 	{
 		term_toggle_echo();
@@ -1857,11 +2276,6 @@ static void term_menu_activate(void)
 	if (T.menu_sel == 2)
 	{
 		term_toggle_letterbox();
-		return;
-	}
-	if (T.menu_sel == 3)
-	{
-		term_bm_open_list();
 		return;
 	}
 	term_exit();
@@ -2008,7 +2422,7 @@ static void ansi_sgr(void)
 static void ansi_reply(const char *s)
 {
 	if (T.tcp && s)
-		mmb_net_tcp_send(s, (unsigned)strlen(s));
+		term_net_send(s, (unsigned)strlen(s));
 }
 
 static void ansi_dsr(void)
@@ -2164,6 +2578,7 @@ static int ansi_feed(unsigned char b)
 		if (b == ']')
 		{
 			T.ansi_st = 4;
+			T.ansi_at = mmb_now_ms();
 			return 1;
 		}
 		if (b == '7')
@@ -2186,11 +2601,26 @@ static int ansi_feed(unsigned char b)
 			T.ansi_st = 0;
 			return 1;
 		}
+		if (b == '(' || b == ')' || b == '*' || b == '+' || b == '-')
+		{
+			T.ansi_st = 7;
+			return 1;
+		}
+		T.ansi_st = 0;
+		return 1;
+	}
+	if (T.ansi_st == 7)
+	{
 		T.ansi_st = 0;
 		return 1;
 	}
 	if (T.ansi_st == 4)
 	{
+		if (T.ansi_at && mmb_now_ms() - T.ansi_at > TM_ANSI_OSC_MS)
+		{
+			T.ansi_st = 0;
+			return ansi_feed(b);
+		}
 		if (b == 7 || b == 27)
 			T.ansi_st = (b == 27) ? 5 : 0;
 		return 1;
@@ -2242,6 +2672,14 @@ static int iac_cmd_byte(unsigned char b)
 	       (b >= NOP && b <= GA);
 }
 
+static void ansi_watchdog(void)
+{
+	if (T.ansi_st != 4 && T.ansi_st != 5)
+		return;
+	if (T.ansi_at && mmb_now_ms() - T.ansi_at > TM_ANSI_OSC_MS)
+		T.ansi_st = 0;
+}
+
 static void sb_watchdog(void)
 {
 	if (!T.sb)
@@ -2262,6 +2700,7 @@ static void sb_watchdog(void)
 static void incoming_byte(unsigned char b)
 {
 	sb_watchdog();
+	ansi_watchdog();
 	if (T.sb)
 	{
 		T.sb_n++;
@@ -2363,6 +2802,7 @@ static void incoming_feed(const unsigned char *src, int n)
 	while (i < m)
 	{
 		sb_watchdog();
+	ansi_watchdog();
 		if (T.sb || T.iac)
 		{
 			incoming_byte(p[i++]);
@@ -2471,15 +2911,15 @@ static int swallow_crlf_pair(char c)
 
 static void send_enter(void)
 {
-	mmb_net_tcp_send("\r", 1);
+	term_net_send("\r", 1);
 }
 
 static void send_line(void)
 {
 	T.line[T.linelen] = 0;
 	if (T.linelen)
-		mmb_net_tcp_send(T.line, (unsigned)T.linelen);
-	mmb_net_tcp_send("\r\n", 2);
+		term_net_send(T.line, (unsigned)T.linelen);
+	term_net_send("\r\n", 2);
 	T.linelen = 0;
 }
 
@@ -2493,7 +2933,7 @@ static void esc_reset(void)
 static void esc_send(void)
 {
 	if (T.tcp && T.esc_len > 0)
-		mmb_net_tcp_send(T.esc_buf, (unsigned)T.esc_len);
+		term_net_send(T.esc_buf, (unsigned)T.esc_len);
 	esc_reset();
 }
 
@@ -2563,7 +3003,7 @@ static int esc_feed(char c)
 			if (T.csi_n == 21)
 			{
 				esc_reset();
-				term_exit();
+				term_open_menu();
 				return 1;
 			}
 			if (T.dlg || T.menu)
@@ -2610,7 +3050,7 @@ static void demo_emit_line(void)
 	else if (T.demo_line == 1)
 		s = "Luxurious terminal";
 	else if (T.demo_line == 2)
-		s = "F10 to leave";
+		s = "Alt-X to leave";
 	else if (T.demo_line == 3)
 		s = "CP437 shades";
 	else if (T.demo_line <= 43)
@@ -2666,13 +3106,21 @@ void mmb_cmd_term(void)
 	T.demo = host_is_demo();
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
+	T.replay = host_is_replay();
 	T.letterbox = 1;
 	term_reset_pen();
 
 	ser("TERM\r\n");
-	if (!T.demo && mmb_tcp_any_open())
+	if (!T.demo && !T.replay && mmb_tcp_any_open())
 		mmb_error("?FILE");
-	if (!T.demo && T.host[0])
+	if (T.replay)
+	{
+		T.tcp = 1;
+		T.mon_ansi = -1;
+		T.mon_iac = -1;
+		T.mon_sb = -1;
+	}
+	else if (!T.demo && T.host[0])
 	{
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)
 		{
@@ -2718,7 +3166,7 @@ void mmb_cmd_term(void)
 	}
 	else if (no_args)
 	{
-		pane_puts("Disconnected - Alt+F for Bookmarks");
+		pane_puts("Disconnected - Alt+T for Bookmarks");
 		pane_newline();
 	}
 	else if (T.demo && !T.demo_iac)
@@ -2747,6 +3195,13 @@ const char *mmb_term_key(char c)
 
 	if (!T.active)
 		return "";
+	if (T.replay && replay_key(c))
+	{
+		if (T.need_draw)
+			term_draw();
+		replay_mon();
+		return "";
+	}
 	if (T.alt)
 	{
 		T.alt = 0;
@@ -2757,14 +3212,9 @@ const char *mmb_term_key(char c)
 			term_exit();
 			return "";
 		}
-		if (c == 'f')
+		if (c == 't' || c == 'f')
 		{
-			T.menu = 1;
-			T.menu_sel = 0;
-			T.dlg = TM_DLG_NONE;
-			mark_dirty_full();
-			term_draw();
-			term_serial_dump();
+			term_open_menu();
 			return "";
 		}
 		if (T.dlg == TM_DLG_EDIT)
@@ -2780,11 +3230,16 @@ const char *mmb_term_key(char c)
 				return "";
 			}
 		}
+		T.alt_pend = 0;
+		if (!T.menu)
+			term_close_menu();
 		return "";
 	}
 	if ((unsigned char)c == 1)
 	{
 		T.alt = 1;
+		T.alt_pend = 1;
+		term_overlay_chrome();
 		return "";
 	}
 	if (c == 27)
@@ -2851,12 +3306,12 @@ const char *mmb_term_key(char c)
 			term_toggle_echo();
 			return "";
 		}
-		if (c == 'b' || c == 'B' || c == 'w' || c == 'W')
+		if (c == 'w' || c == 'W' || c == 'o' || c == 'O')
 		{
 			term_toggle_letterbox();
 			return "";
 		}
-		if (c == 'k' || c == 'K')
+		if (c == 'b' || c == 'B' || c == 'k' || c == 'K')
 		{
 			term_bm_open_list();
 			return "";
@@ -2885,10 +3340,10 @@ const char *mmb_term_key(char c)
 			if (b == IAC)
 			{
 				unsigned char esc[2] = { IAC, IAC };
-				mmb_net_tcp_send(esc, 2);
+				term_net_send(esc, 2);
 			}
 			else
-				mmb_net_tcp_send(&b, 1);
+				term_net_send(&b, 1);
 		}
 		term_echo_byte(b);
 		term_echo_flush();
@@ -2965,6 +3420,11 @@ void mmb_term_poll(void)
 		demo_emit_line();
 	if (T.need_draw)
 		term_draw();
+	if (T.replay)
+	{
+		replay_mon();
+		return;
+	}
 	if (T.connecting)
 	{
 		int st = mmb_net_tcp_status();

@@ -91,10 +91,10 @@ def test_prompt_grey_after_boot_and_term(kernel_image):
         time.sleep(0.2)
         boot = con.screen_pixel(12, 24)
         assert _is_grey_prompt(boot), boot
-        from test_term import _f10, _open_term
+        from test_term import _open_term, _quit
 
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()

@@ -23,7 +23,17 @@ def _open_term(con, cmd: str, quiet=0.6, timeout=12.0):
 
 def _f10(con):
     con._ser.sendall(b"\x1b[21~")
+    return _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+
+
+def _quit(con):
+    con._ser.sendall(bytes([1]) + b"x")
     return _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+
+
+def _menu(con):
+    con._ser.sendall(bytes([1]) + b"t")
+    return _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
 
 
 def _luminance(r: int, g: int, b: int) -> float:
@@ -86,6 +96,7 @@ def test_help_term(console):
     assert "boxed" in low
     assert "full" in low
     assert "bookmark" in low
+    assert "replay" in low
     assert "255" in low or "iac" in low
     assert "disconnect" in low or "no argument" in low or "[host" in low
     assert "theme" in low or "editor" in low
@@ -101,13 +112,13 @@ def test_term_no_args_disconnected(kernel_image):
         seen = _open_term(con, "TERM", quiet=0.8, timeout=10.0)
         assert "Disconnected" in seen
         assert "?SYNTAX ERROR" not in seen.upper()
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Bookmarks" in menu
         con._ser.sendall(b"k")
         listing = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Bookmarks" in listing
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 9*9") == "81"
     finally:
         con.stop()
@@ -126,8 +137,8 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
         assert not re.search(r"\.{8,}", seen), seen[:200]
         assert "TERM demo" in seen or "term demo" in seen.lower()
         assert "Luxurious terminal" in seen or "luxurious terminal" in seen.lower()
-        assert "F10" in seen
-        _f10(con)
+        assert "Alt-X" in seen or "alt-x" in seen.lower()
+        _quit(con)
         assert con.send_line("PRINT 6*7") == "42"
         assert con.screen_size() == (640, 480)
     finally:
@@ -153,7 +164,7 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
             if found_cream:
                 break
         assert found_cream, "expected cream text lighter than left margin inside 80-col pane"
-        _f10(con)
+        _quit(con)
     finally:
         con.stop()
 
@@ -174,7 +185,7 @@ def test_term_demo_new_text_and_scroll(kernel_image):
             f"expected new scrolled lines (early_max={early_max}, later_max={later_max}, "
             f"later_count={later_count})"
         )
-        _f10(con)
+        _quit(con)
     finally:
         con.stop()
 
@@ -192,7 +203,7 @@ def test_term_network_host_stays_in_ui_until_f10(kernel_image):
             or "tcp timeout" in low
             or "tcp refused" in low
         )
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()
@@ -217,7 +228,7 @@ def test_term_wrong_port_does_not_hang(kernel_image):
             or "tcp refused" in low
             or "cancelling" in low
         )
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 9") == "9"
     finally:
         con.stop()
@@ -242,7 +253,7 @@ def test_term_demoburst_hdmi_keeps_scrolled_text(kernel_image):
             if found_cream:
                 break
         assert found_cream, "expected cream text in the pane after a burst scroll"
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 5+6") == "11"
     finally:
         con.stop()
@@ -260,18 +271,19 @@ def test_term_alt_x_exits(kernel_image):
         con.stop()
 
 
-def test_term_alt_f_file_menu_then_enter_exits(kernel_image):
+def test_term_alt_t_terminal_menu_then_x_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        con._ser.sendall(bytes([1]) + b"f")
-        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "File" in menu
+        menu = _menu(con)
+        assert "Terminal" in menu
+        assert "File" not in menu
         assert "Exit" in menu
         assert "Echo ON" in menu
         assert "Boxed" in menu
-        con._ser.sendall(b"\r")
+        assert "Bookmarks" in menu
+        con._ser.sendall(b"x")
         _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
         assert con.send_line("PRINT 3+4") == "7"
     finally:
@@ -290,21 +302,58 @@ def test_term_f1_does_not_exit(kernel_image):
         con._ser.sendall(b"\x1b[[A")
         time.sleep(0.3)
         assert con.screen_size() == (960, 540)
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 8+1") == "9"
         assert con.screen_size() == (640, 480)
     finally:
         con.stop()
 
 
-def test_term_esc_idle_then_f10(kernel_image):
+def test_term_f10_opens_menu_does_not_exit(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        menu = _f10(con)
+        assert "Terminal" in menu
+        assert "Exit" in menu
+        assert con.screen_size() == (960, 540)
+        _quit(con)
+        assert con.send_line("PRINT 8+1") == "9"
+    finally:
+        con.stop()
+
+
+def test_term_menu_bar_full_width_when_open(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.3)
+        closed = con.screen_pixel(8, 4)
+        edge = con.screen_pixel(940, 4)
+        assert _luminance(*closed) < 40, closed
+        assert _luminance(*edge) < 40, edge
+        _menu(con)
+        bar = con.screen_pixel(8, 4)
+        far = con.screen_pixel(940, 4)
+        assert _luminance(*bar) > _luminance(*closed) + 10, (bar, closed)
+        assert abs(bar[0] - far[0]) < 40 and abs(bar[1] - far[1]) < 40
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
+
+
+def test_term_esc_idle_then_quit(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         con._ser.sendall(b"\x1b")
         time.sleep(0.15)
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 2+2") == "4"
     finally:
         con.stop()
@@ -324,10 +373,9 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
         assert _max_dump_width(opened) == 80
         margin = con.screen_pixel(20, 200)
         assert _is_dark_slate(*margin), margin
-        con._ser.sendall(bytes([1]) + b"f")
-        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        menu = _menu(con)
         assert "Boxed" in menu
-        con._ser.sendall(b"b")
+        con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Full" in full
         assert con.screen_size() == (640, 480)
@@ -342,12 +390,12 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
             if found_cream:
                 break
         assert found_cream, "expected cream glyphs at the left edge in full-width mode"
-        con._ser.sendall(b"b")
+        con._ser.sendall(b"w")
         boxed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Boxed" in boxed
         assert _max_dump_width(boxed) == 80
         assert con.screen_size() == (960, 540)
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 1+2") == "3"
     finally:
         con.stop()
@@ -362,14 +410,14 @@ def test_term_full_keeps_mode14_if_started_there(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
         assert con.screen_size() == (960, 540)
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=8).decode(errors="replace"))
-        con._ser.sendall(b"b")
+        con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Full" in full
         assert con.screen_size() == (960, 540)
         assert _max_dump_width(full) == 120
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 9+1") == "10"
     finally:
         con.stop()
@@ -383,14 +431,14 @@ def test_term_full_uses_wide_start_mode(kernel_image):
         assert con.screen_size() == (1024, 768)
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=8).decode(errors="replace"))
-        con._ser.sendall(b"b")
+        con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Full" in full
         assert con.screen_size() == (1024, 768)
         assert _max_dump_width(full) == 128
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 8+2") == "10"
     finally:
         con.stop()
@@ -401,7 +449,7 @@ def test_term_file_menu_echo_toggle(kernel_image):
     con.start()
     try:
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Echo ON" in menu
         con._ser.sendall(b"e")
@@ -410,7 +458,7 @@ def test_term_file_menu_echo_toggle(kernel_image):
         con._ser.sendall(b"e")
         again = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Echo ON" in again
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 2+3") == "5"
     finally:
         con.stop()
@@ -442,7 +490,7 @@ def test_term_demo_local_echo_and_hide(kernel_image):
         rubbed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "ECHOTEST99" not in rubbed
         assert "line " in rubbed.lower()
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"e")
         off = _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
@@ -453,7 +501,7 @@ def test_term_demo_local_echo_and_hide(kernel_image):
         con._ser.sendall(b"ECHOHIDE77")
         hidden = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "ECHOHIDE77" not in hidden
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 4+4") == "8"
     finally:
         con.stop()
@@ -466,7 +514,7 @@ def test_term_double_esc_then_f10(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         con._ser.sendall(b"\x1b\x1b")
         time.sleep(0.1)
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 5+5") == "10"
     finally:
         con.stop()
@@ -497,7 +545,7 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
     con.start()
     try:
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Bookmarks" in menu
         con._ser.sendall(b"k")
@@ -526,7 +574,7 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
         con._ser.sendall(b"\r")
         gone = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Alpha" not in gone
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.4, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"k")
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
@@ -541,7 +589,7 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
         con._ser.sendall(bytes([1]) + b"s")
         saved2 = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Beta" in saved2
-        _f10(con)
+        _quit(con)
         path = _termconfig_path(con)
         assert path, "expected A:/.termconfig or C:/.termconfig"
         ini = _read_termconfig(con, path)
@@ -549,12 +597,12 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
         assert "demo" in ini
         assert "letterboxed" in ini.lower() or "letterboxed=" in ini.lower()
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
-        con._ser.sendall(bytes([1]) + b"f")
+        con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"k")
         again = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Beta" in again
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 7+8") == "15"
     finally:
         con.stop()
@@ -582,7 +630,7 @@ def test_term_demoiac_glyphs_and_commands(kernel_image):
         assert b"\xfa" in raw
         assert b"\xf0" in raw
         assert b"\x80" in raw
-        _f10(con)
+        _quit(con)
         assert con.send_line("PRINT 1+2") == "3"
     finally:
         con.stop()
