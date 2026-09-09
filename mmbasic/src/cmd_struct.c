@@ -585,7 +585,12 @@ static void cmd_copy(void)
 		else
 			mmb_syntax();
 	}
-	if (!mmb_match("TO"))
+	mmb_skip_sp();
+	if (mmb_match("TO"))
+		;
+	else if (*G.p == ',')
+		G.p++;
+	else
 		mmb_syntax();
 	mmb_ident(n2, sizeof(n2));
 	mmb_type_suffix(n2);
