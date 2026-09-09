@@ -262,6 +262,34 @@ int mmb_try_function(mmb_val *out)
 		goto ident_tail;
 	}
 
+	{
+		const char *s2 = G.p;
+		char name[MMB_MAX_NAME];
+		int nn = 0, aid;
+		mmb_skip_sp();
+		if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+		{
+			while (mmb_is_ident(*G.p) && nn < MMB_MAX_NAME - 2)
+			{
+				char ch = *G.p++;
+				if (ch >= 'a' && ch <= 'z')
+					ch = (char)(ch - 32);
+				name[nn++] = ch;
+			}
+			if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+				name[nn++] = *G.p++;
+			name[nn] = 0;
+			aid = mmb_kw_id(name);
+			if (aid > 0 && aid < 512 && fun_tab[aid])
+			{
+				mmb_skip_sp();
+				goto *fun_tab[aid];
+			}
+			G.p = s2;
+			goto ident_tail;
+		}
+		G.p = s2;
+	}
 
 	if (mmb_match("RGB"))
 	{

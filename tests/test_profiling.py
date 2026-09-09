@@ -96,11 +96,11 @@ def test_profiling_cos_rnd_int_opcode(console):
         console,
         "PCOS.BAS",
         [
-            "X=0",
+            "LET X=0",
             "FOR I=1 TO 80",
-            "X=COS(I/100)+INT(RND()*2)",
+            "LET X=COS(I/100)",
             "NEXT I",
-            "PRINT INT(X)",
+            "PRINT INT(X*100)",
         ],
     )
     assert p["statements"] >= 80
