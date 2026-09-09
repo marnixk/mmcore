@@ -36,6 +36,17 @@
 #define TM_RECV_MS      20
 #define TM_MENU_BG      0x243040u
 #define TM_MENU_HI      0x3A6EA5u
+#define TM_BM_MAX       32
+#define TM_BM_NAME      40
+#define TM_DLG_NONE     0
+#define TM_DLG_LIST     1
+#define TM_DLG_EDIT     2
+#define TM_DLG_DEL      3
+#define TM_BTN_NEW      0
+#define TM_BTN_EDIT     1
+#define TM_BTN_DEL      2
+#define TM_BTN_CONN     3
+#define TM_LIST_VIEW    12
 
 typedef struct {
 	int active;
@@ -90,6 +101,17 @@ typedef struct {
 	int alt;
 	int menu;
 	int menu_sel;
+	int dlg;
+	int dlg_btn;
+	int dlg_sel;
+	int dlg_top;
+	int dlg_focus;
+	int dlg_edit_idx;
+	char dlg_name[40];
+	char dlg_host[80];
+	int dlg_port;
+	int dlg_echo;
+	int dlg_letterbox;
 	int demo_line;
 	unsigned demo_next;
 	int serial_gen;
@@ -100,6 +122,34 @@ typedef struct {
 } tm_state;
 
 static tm_state T;
+
+typedef struct {
+	char name[TM_BM_NAME];
+	char host[80];
+	int port;
+	int echo;
+	int letterboxed;
+} term_bm;
+
+static term_bm g_bm[TM_BM_MAX];
+static int g_bm_n;
+
+static void term_draw(void);
+static void term_draw_dlg(void);
+static void term_serial_dump(void);
+static void term_serial_dump_dlg(void);
+static void mark_dirty_full(void);
+static void term_layout(void);
+static void term_fill_pages(void);
+static void pane_clear_row(int row);
+static void pane_puts(const char *s);
+static void pane_newline(void);
+static void tcp_close_quiet(void);
+static void telnet_announce(void);
+static void term_reset_pen(void);
+static void demo_emit_line(void);
+static void esc_reset(void);
+static int term_width(void);
 
 static int term_want_echo(void);
 static void pane_rubout(void);
@@ -256,7 +306,9 @@ static void term_serial_dump(void)
 		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
 		ser(term_width_label());
 		ser("\r\n");
+		ser("Bookmarks\r\n");
 	}
+	term_serial_dump_dlg();
 	T.serial_gen++;
 }
 
@@ -531,7 +583,7 @@ static void term_draw_status(void)
 static void term_draw_menu(void)
 {
 	int x0, y0, w, i;
-	const char *items[3];
+	const char *items[4];
 	char echo[16];
 
 	if (!T.menu)
@@ -543,9 +595,10 @@ static void term_draw_menu(void)
 	items[0] = "Exit";
 	items[1] = echo;
 	items[2] = term_width_label();
-	mmb_gfx_box(x0, y0, w, 5 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	items[3] = "Bookmarks";
+	mmb_gfx_box(x0, y0, w, 6 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
 	term_put_str(x0 + TM_CW, y0, "File", TM_FG);
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 4; i++)
 	{
 		int y = y0 + (i + 1) * TM_CH;
 		if (i == T.menu_sel)
@@ -637,6 +690,7 @@ static void term_draw(void)
 	}
 	term_draw_status();
 	term_draw_menu();
+	term_draw_dlg();
 	term_copy_pane();
 	term_present_pane();
 	G.gfx.write_page = saved;
@@ -752,8 +806,8 @@ static void term_menu_move(int dir)
 {
 	T.menu_sel += dir;
 	if (T.menu_sel < 0)
-		T.menu_sel = 2;
-	if (T.menu_sel > 2)
+		T.menu_sel = 3;
+	if (T.menu_sel > 3)
 		T.menu_sel = 0;
 	mark_dirty_full();
 	term_draw();
@@ -818,6 +872,793 @@ static void term_toggle_letterbox(void)
 	term_serial_dump();
 }
 
+static void term_ui_refresh(void)
+{
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static int bm_name_cmp(const char *a, const char *b)
+{
+	while (*a && *b)
+	{
+		char ca = *a, cb = *b;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (char)(cb - 32);
+		if (ca != cb)
+			return (unsigned char)ca - (unsigned char)cb;
+		a++;
+		b++;
+	}
+	return (unsigned char)*a - (unsigned char)*b;
+}
+
+static void bm_sort(void)
+{
+	int i, j;
+	term_bm tmp;
+
+	for (i = 1; i < g_bm_n; i++)
+	{
+		tmp = g_bm[i];
+		j = i;
+		while (j > 0 && bm_name_cmp(g_bm[j - 1].name, tmp.name) > 0)
+		{
+			g_bm[j] = g_bm[j - 1];
+			j--;
+		}
+		g_bm[j] = tmp;
+	}
+}
+
+static int bm_find_name(const char *name)
+{
+	int i;
+	for (i = 0; i < g_bm_n; i++)
+		if (bm_name_cmp(g_bm[i].name, name) == 0)
+			return i;
+	return 0;
+}
+
+static void bm_path(char *dst, unsigned n)
+{
+	if (mmb_fat_ready('C'))
+		strncpy(dst, "C:/.termconfig", n - 1);
+	else
+		strncpy(dst, "A:/.termconfig", n - 1);
+	dst[n - 1] = 0;
+}
+
+static void bm_append(char *buf, int sz, const char *s)
+{
+	int n = (int)strlen(buf);
+	int i;
+	for (i = 0; s && s[i] && n + 1 < sz; i++)
+		buf[n++] = s[i];
+	buf[n] = 0;
+}
+
+static void bm_append_int(char *buf, int sz, int v)
+{
+	char tmp[12];
+	int i = 0, n;
+	if (v < 0)
+		v = 0;
+	if (v == 0)
+	{
+		bm_append(buf, sz, "0");
+		return;
+	}
+	n = v;
+	while (n && i < 11)
+	{
+		tmp[i++] = (char)('0' + (n % 10));
+		n /= 10;
+	}
+	while (i > 0)
+	{
+		char c[2];
+		c[0] = tmp[--i];
+		c[1] = 0;
+		bm_append(buf, sz, c);
+	}
+}
+
+static void term_bm_save(void)
+{
+	char path[24];
+	char buf[4096];
+	int i;
+
+	bm_sort();
+	bm_path(path, sizeof(path));
+	buf[0] = 0;
+	bm_append(buf, sizeof(buf), "# TERM bookmarks\n");
+	for (i = 0; i < g_bm_n; i++)
+	{
+		bm_append(buf, sizeof(buf), "\n[bm.");
+		bm_append_int(buf, sizeof(buf), i);
+		bm_append(buf, sizeof(buf), "]\nname=");
+		bm_append(buf, sizeof(buf), g_bm[i].name);
+		bm_append(buf, sizeof(buf), "\nhost=");
+		bm_append(buf, sizeof(buf), g_bm[i].host);
+		bm_append(buf, sizeof(buf), "\nport=");
+		bm_append_int(buf, sizeof(buf), g_bm[i].port);
+		bm_append(buf, sizeof(buf), "\necho=");
+		bm_append_int(buf, sizeof(buf), g_bm[i].echo ? 1 : 0);
+		bm_append(buf, sizeof(buf), "\nletterboxed=");
+		bm_append_int(buf, sizeof(buf), g_bm[i].letterboxed ? 1 : 0);
+		bm_append(buf, sizeof(buf), "\n");
+	}
+	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
+}
+
+static void bm_trim(char *s)
+{
+	char *e;
+	while (*s == ' ' || *s == '\t')
+	{
+		memmove(s, s + 1, strlen(s));
+	}
+	e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
+		*--e = 0;
+}
+
+static int bm_parse_int(const char *s)
+{
+	int n = 0;
+	while (*s >= '0' && *s <= '9')
+		n = n * 10 + (*s++ - '0');
+	return n;
+}
+
+static void term_bm_load(void)
+{
+	char path[24];
+	char buf[4096];
+	unsigned got = 0;
+	char *p, *nl;
+	int cur = -1;
+
+	g_bm_n = 0;
+	memset(g_bm, 0, sizeof(g_bm));
+	bm_path(path, sizeof(path));
+	if (!mmb_vfs_exists(path))
+		return;
+	if (mmb_vfs_read(path, buf, sizeof(buf) - 1, &got) != 0)
+		return;
+	buf[got] = 0;
+	p = buf;
+	while (*p)
+	{
+		nl = p;
+		while (*nl && *nl != '\n')
+			nl++;
+		if (*nl)
+			*nl++ = 0;
+		if (p[0] && p[strlen(p) - 1] == '\r')
+			p[strlen(p) - 1] = 0;
+		bm_trim(p);
+		if (p[0] == 0 || p[0] == '#' || p[0] == ';')
+		{
+			p = nl;
+			continue;
+		}
+		if (p[0] == '[')
+		{
+			if (p[1] == 'b' || p[1] == 'B')
+			{
+				if (g_bm_n < TM_BM_MAX)
+				{
+					cur = g_bm_n;
+					memset(&g_bm[cur], 0, sizeof(g_bm[cur]));
+					g_bm[cur].port = 23;
+					g_bm[cur].echo = 1;
+					g_bm[cur].letterboxed = 1;
+					g_bm_n++;
+				}
+				else
+					cur = -1;
+			}
+			else
+				cur = -1;
+			p = nl;
+			continue;
+		}
+		if (cur >= 0)
+		{
+			char *eq = p;
+			while (*eq && *eq != '=')
+				eq++;
+			if (*eq == '=')
+			{
+				*eq++ = 0;
+				bm_trim(p);
+				bm_trim(eq);
+				if (mmb_keyword_eq(p, "name"))
+					strncpy(g_bm[cur].name, eq, TM_BM_NAME - 1);
+				else if (mmb_keyword_eq(p, "host"))
+					strncpy(g_bm[cur].host, eq, sizeof(g_bm[cur].host) - 1);
+				else if (mmb_keyword_eq(p, "port"))
+				{
+					g_bm[cur].port = bm_parse_int(eq);
+					if (g_bm[cur].port < 1 || g_bm[cur].port > 65535)
+						g_bm[cur].port = 23;
+				}
+				else if (mmb_keyword_eq(p, "echo"))
+					g_bm[cur].echo = bm_parse_int(eq) ? 1 : 0;
+				else if (mmb_keyword_eq(p, "letterboxed"))
+					g_bm[cur].letterboxed = bm_parse_int(eq) ? 1 : 0;
+			}
+		}
+		p = nl;
+	}
+	bm_sort();
+}
+
+static void dlg_text(int col, int row, const char *s, int hi)
+{
+	int x, y, n;
+
+	if (!s)
+		return;
+	n = (int)strlen(s);
+	x = (T.pane_left + col) * TM_CW;
+	y = row * TM_CH;
+	if (hi && n > 0)
+		mmb_gfx_box(x, y, n * TM_CW, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
+	term_put_str(x, y, s, TM_FG);
+}
+
+static void term_draw_dlg_list(void)
+{
+	int x0, y0, w, h, i, row;
+	const char *btns[4];
+
+	x0 = (T.pane_left + 8) * TM_CW;
+	y0 = 2 * TM_CH;
+	w = 48 * TM_CW;
+	h = 18 * TM_CH;
+	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	dlg_text(10, 2, "Bookmarks", 0);
+	if (T.dlg_sel < T.dlg_top)
+		T.dlg_top = T.dlg_sel;
+	if (T.dlg_sel >= T.dlg_top + TM_LIST_VIEW)
+		T.dlg_top = T.dlg_sel - TM_LIST_VIEW + 1;
+	if (T.dlg_top < 0)
+		T.dlg_top = 0;
+	if (g_bm_n == 0)
+		dlg_text(10, 4, "(none)", 0);
+	for (i = 0; i < TM_LIST_VIEW; i++)
+	{
+		int idx = T.dlg_top + i;
+		if (idx >= g_bm_n)
+			break;
+		row = 4 + i;
+		dlg_text(10, row, g_bm[idx].name[0] ? g_bm[idx].name : "(unnamed)",
+			 idx == T.dlg_sel);
+	}
+	btns[0] = "New";
+	btns[1] = "Edit";
+	btns[2] = "Delete";
+	btns[3] = "Connect";
+	dlg_text(10, 17, btns[0], T.dlg_btn == 0);
+	dlg_text(16, 17, btns[1], T.dlg_btn == 1);
+	dlg_text(23, 17, btns[2], T.dlg_btn == 2);
+	dlg_text(44, 17, btns[3], T.dlg_btn == 3);
+}
+
+static void term_draw_dlg_edit(void)
+{
+	int x0, y0, w, h;
+	char port[8];
+	char echo[16];
+	char box[16];
+	const char *save;
+
+	x0 = (T.pane_left + 8) * TM_CW;
+	y0 = 4 * TM_CH;
+	w = 48 * TM_CW;
+	h = 14 * TM_CH;
+	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	dlg_text(10, 4, T.dlg_edit_idx < 0 ? "New bookmark" : "Edit bookmark", 0);
+	dlg_text(10, 6, "Name", 0);
+	dlg_text(16, 6, T.dlg_name[0] ? T.dlg_name : "_", T.dlg_focus == 0);
+	dlg_text(10, 8, "Host", 0);
+	dlg_text(16, 8, T.dlg_host[0] ? T.dlg_host : "_", T.dlg_focus == 1);
+	dlg_text(40, 8, "Port", 0);
+	port[0] = 0;
+	bm_append_int(port, sizeof(port), T.dlg_port);
+	dlg_text(46, 8, port[0] ? port : "_", T.dlg_focus == 2);
+	strcpy(echo, T.dlg_echo ? "[X] Echo ON" : "[ ] Echo ON");
+	strcpy(box, T.dlg_letterbox ? "[X] Letterboxed" : "[ ] Letterboxed");
+	dlg_text(10, 10, echo, T.dlg_focus == 3);
+	dlg_text(10, 11, box, T.dlg_focus == 4);
+	save = T.dlg_edit_idx < 0 ? "Save" : "Update";
+	dlg_text(10, 15, "Cancel", T.dlg_focus == 5);
+	dlg_text(44, 15, save, T.dlg_focus == 6);
+}
+
+static void term_draw_dlg_del(void)
+{
+	int x0, y0, w, h;
+	const char *nm;
+
+	x0 = (T.pane_left + 12) * TM_CW;
+	y0 = 8 * TM_CH;
+	w = 40 * TM_CW;
+	h = 7 * TM_CH;
+	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	dlg_text(14, 8, "Delete bookmark?", 0);
+	nm = (T.dlg_sel >= 0 && T.dlg_sel < g_bm_n && g_bm[T.dlg_sel].name[0])
+		     ? g_bm[T.dlg_sel].name
+		     : "";
+	dlg_text(14, 10, nm, 0);
+	dlg_text(14, 13, "Yes", T.dlg_btn == 0);
+	dlg_text(40, 13, "No", T.dlg_btn == 1);
+}
+
+static void term_draw_dlg(void)
+{
+	if (T.dlg == TM_DLG_LIST)
+		term_draw_dlg_list();
+	else if (T.dlg == TM_DLG_EDIT)
+		term_draw_dlg_edit();
+	else if (T.dlg == TM_DLG_DEL)
+		term_draw_dlg_del();
+}
+
+static void term_serial_dump_dlg(void)
+{
+	int i;
+	char port[8];
+
+	if (T.dlg == TM_DLG_NONE)
+		return;
+	if (T.dlg == TM_DLG_LIST)
+	{
+		ser("Bookmarks\r\n");
+		for (i = 0; i < g_bm_n; i++)
+		{
+			ser(g_bm[i].name);
+			ser("\r\n");
+		}
+		ser("New\r\n");
+		ser("Edit\r\n");
+		ser("Delete\r\n");
+		ser("Connect\r\n");
+		return;
+	}
+	if (T.dlg == TM_DLG_EDIT)
+	{
+		ser(T.dlg_edit_idx < 0 ? "New bookmark\r\n" : "Edit bookmark\r\n");
+		ser("Name\r\n");
+		ser(T.dlg_name);
+		ser("\r\nHost\r\n");
+		ser(T.dlg_host);
+		ser("\r\nPort\r\n");
+		port[0] = 0;
+		bm_append_int(port, sizeof(port), T.dlg_port);
+		ser(port);
+		ser("\r\n");
+		ser(T.dlg_echo ? "[X] Echo ON\r\n" : "[ ] Echo ON\r\n");
+		ser(T.dlg_letterbox ? "[X] Letterboxed\r\n" : "[ ] Letterboxed\r\n");
+		ser("Cancel\r\n");
+		ser(T.dlg_edit_idx < 0 ? "Save\r\n" : "Update\r\n");
+		return;
+	}
+	if (T.dlg == TM_DLG_DEL)
+	{
+		ser("Delete bookmark?\r\n");
+		if (T.dlg_sel >= 0 && T.dlg_sel < g_bm_n)
+		{
+			ser(g_bm[T.dlg_sel].name);
+			ser("\r\n");
+		}
+		ser("Yes\r\n");
+		ser("No\r\n");
+	}
+}
+
+static void term_bm_open_list(void)
+{
+	term_bm_load();
+	T.menu = 0;
+	T.dlg = TM_DLG_LIST;
+	if (T.dlg_sel < 0 || T.dlg_sel >= g_bm_n)
+		T.dlg_sel = 0;
+	T.dlg_btn = TM_BTN_CONN;
+	term_ui_refresh();
+}
+
+static void term_bm_open_edit(int is_new)
+{
+	if (!is_new && g_bm_n <= 0)
+		return;
+	T.dlg = TM_DLG_EDIT;
+	T.dlg_focus = 0;
+	if (is_new)
+	{
+		T.dlg_edit_idx = -1;
+		T.dlg_name[0] = 0;
+		T.dlg_host[0] = 0;
+		T.dlg_port = 23;
+		T.dlg_echo = 1;
+		T.dlg_letterbox = 1;
+	}
+	else
+	{
+		term_bm *b = &g_bm[T.dlg_sel];
+		T.dlg_edit_idx = T.dlg_sel;
+		strncpy(T.dlg_name, b->name, sizeof(T.dlg_name) - 1);
+		T.dlg_name[sizeof(T.dlg_name) - 1] = 0;
+		strncpy(T.dlg_host, b->host, sizeof(T.dlg_host) - 1);
+		T.dlg_host[sizeof(T.dlg_host) - 1] = 0;
+		T.dlg_port = b->port;
+		T.dlg_echo = b->echo ? 1 : 0;
+		T.dlg_letterbox = b->letterboxed ? 1 : 0;
+	}
+	term_ui_refresh();
+}
+
+static void term_bm_save_edit(void)
+{
+	term_bm *b;
+	char keep[TM_BM_NAME];
+
+	if (!T.dlg_name[0] || !T.dlg_host[0])
+		return;
+	if (T.dlg_port < 1 || T.dlg_port > 65535)
+		T.dlg_port = 23;
+	if (T.dlg_edit_idx < 0)
+	{
+		if (g_bm_n >= TM_BM_MAX)
+			return;
+		b = &g_bm[g_bm_n++];
+	}
+	else
+		b = &g_bm[T.dlg_edit_idx];
+	memset(b, 0, sizeof(*b));
+	strncpy(b->name, T.dlg_name, TM_BM_NAME - 1);
+	strncpy(b->host, T.dlg_host, sizeof(b->host) - 1);
+	b->port = T.dlg_port;
+	b->echo = T.dlg_echo ? 1 : 0;
+	b->letterboxed = T.dlg_letterbox ? 1 : 0;
+	strncpy(keep, b->name, TM_BM_NAME - 1);
+	keep[TM_BM_NAME - 1] = 0;
+	term_bm_save();
+	T.dlg_sel = bm_find_name(keep);
+	T.dlg = TM_DLG_LIST;
+	T.dlg_btn = TM_BTN_CONN;
+	term_ui_refresh();
+}
+
+static void term_bm_delete(void)
+{
+	int i;
+	if (T.dlg_sel < 0 || T.dlg_sel >= g_bm_n)
+		return;
+	for (i = T.dlg_sel; i + 1 < g_bm_n; i++)
+		g_bm[i] = g_bm[i + 1];
+	g_bm_n--;
+	if (T.dlg_sel >= g_bm_n && g_bm_n > 0)
+		T.dlg_sel = g_bm_n - 1;
+	term_bm_save();
+	T.dlg = TM_DLG_LIST;
+	T.dlg_btn = TM_BTN_CONN;
+	term_ui_refresh();
+}
+
+static void term_bm_connect(void)
+{
+	term_bm *b;
+	int i, old_cols, n;
+
+	if (T.dlg_sel < 0 || T.dlg_sel >= g_bm_n)
+		return;
+	b = &g_bm[T.dlg_sel];
+	if (!b->host[0])
+		return;
+	tcp_close_quiet();
+	T.connecting = 0;
+	T.net_fail = 0;
+	T.net_msg[0] = 0;
+	T.char_mode = 0;
+	T.no_echo = 0;
+	T.echo_user = b->echo ? 1 : 2;
+	T.iac = 0;
+	T.iac_cmd = 0;
+	T.sb = 0;
+	T.linelen = 0;
+	T.last_eol = 0;
+	esc_reset();
+	T.menu = 0;
+	T.dlg = TM_DLG_NONE;
+	T.cur_row = 0;
+	T.cur_col = 0;
+	T.demo_line = 0;
+	old_cols = term_width();
+	strncpy(T.host, b->host, sizeof(T.host) - 1);
+	T.host[sizeof(T.host) - 1] = 0;
+	T.port = b->port;
+	T.demo = (strcasecmp(T.host, "demo") == 0 ||
+		  strcasecmp(T.host, "demoburst") == 0);
+	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
+	T.letterbox = b->letterboxed ? 1 : 0;
+	term_reset_pen();
+	term_layout();
+	term_init_extra_cols(old_cols);
+	for (i = 0; i < T.pane_rows; i++)
+		pane_clear_row(i);
+	term_fill_pages();
+	if (!T.demo)
+	{
+		if (mmb_net_tcp_begin(T.host, T.port) != 0)
+		{
+			T.net_fail = 1;
+			strncpy(T.net_msg, mmb_net_tcp_errmsg(), sizeof(T.net_msg) - 1);
+			pane_puts(T.net_msg);
+			pane_newline();
+		}
+		else
+		{
+			T.connecting = 1;
+			T.connect_at = mmb_now_ms();
+			pane_puts("Connecting...");
+			pane_newline();
+		}
+	}
+	else
+	{
+		n = T.demo_burst ? 40 : 2;
+		T.demo_next = mmb_now_ms();
+		while (n > 0 && T.demo_line <= 43)
+		{
+			demo_emit_line();
+			n--;
+		}
+	}
+	if (T.tcp)
+		telnet_announce();
+	term_ui_refresh();
+}
+
+static void term_dlg_close(void)
+{
+	if (T.dlg == TM_DLG_EDIT || T.dlg == TM_DLG_DEL)
+	{
+		T.dlg = TM_DLG_LIST;
+		T.dlg_btn = TM_BTN_CONN;
+		term_ui_refresh();
+		return;
+	}
+	T.dlg = TM_DLG_NONE;
+	term_ui_refresh();
+}
+
+static void term_edit_add_char(char c)
+{
+	int n;
+	if (T.dlg_focus == 0)
+	{
+		n = (int)strlen(T.dlg_name);
+		if (n + 1 < (int)sizeof(T.dlg_name) && c >= 32 && c < 127)
+		{
+			T.dlg_name[n] = c;
+			T.dlg_name[n + 1] = 0;
+		}
+	}
+	else if (T.dlg_focus == 1)
+	{
+		n = (int)strlen(T.dlg_host);
+		if (n + 1 < (int)sizeof(T.dlg_host) && c >= 32 && c < 127)
+		{
+			T.dlg_host[n] = c;
+			T.dlg_host[n + 1] = 0;
+		}
+	}
+	else if (T.dlg_focus == 2 && c >= '0' && c <= '9')
+	{
+		int v = T.dlg_port * 10 + (c - '0');
+		if (T.dlg_port == 0 && c == '0')
+			v = 0;
+		if (v <= 65535)
+			T.dlg_port = v;
+	}
+}
+
+static void term_edit_backspace(void)
+{
+	int n;
+	if (T.dlg_focus == 0)
+	{
+		n = (int)strlen(T.dlg_name);
+		if (n > 0)
+			T.dlg_name[n - 1] = 0;
+	}
+	else if (T.dlg_focus == 1)
+	{
+		n = (int)strlen(T.dlg_host);
+		if (n > 0)
+			T.dlg_host[n - 1] = 0;
+	}
+	else if (T.dlg_focus == 2)
+		T.dlg_port /= 10;
+}
+
+static void term_dlg_list_activate(void)
+{
+	if (T.dlg_btn == TM_BTN_NEW)
+		term_bm_open_edit(1);
+	else if (T.dlg_btn == TM_BTN_EDIT)
+		term_bm_open_edit(0);
+	else if (T.dlg_btn == TM_BTN_DEL)
+	{
+		if (g_bm_n <= 0)
+			return;
+		T.dlg = TM_DLG_DEL;
+		T.dlg_btn = 0;
+		term_ui_refresh();
+	}
+	else
+		term_bm_connect();
+}
+
+static int term_dlg_key(char c)
+{
+	if (T.dlg == TM_DLG_LIST)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			term_dlg_list_activate();
+			return 1;
+		}
+		return 1;
+	}
+	if (T.dlg == TM_DLG_DEL)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			if (T.dlg_btn == 0)
+				term_bm_delete();
+			else
+			{
+				T.dlg = TM_DLG_LIST;
+				T.dlg_btn = TM_BTN_CONN;
+				term_ui_refresh();
+			}
+		}
+		if (c == 'y' || c == 'Y')
+			term_bm_delete();
+		if (c == 'n' || c == 'N')
+		{
+			T.dlg = TM_DLG_LIST;
+			T.dlg_btn = TM_BTN_CONN;
+			term_ui_refresh();
+		}
+		return 1;
+	}
+	if (T.dlg == TM_DLG_EDIT)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			if (T.dlg_focus == 3)
+			{
+				T.dlg_echo = !T.dlg_echo;
+				term_ui_refresh();
+				return 1;
+			}
+			if (T.dlg_focus == 4)
+			{
+				T.dlg_letterbox = !T.dlg_letterbox;
+				term_ui_refresh();
+				return 1;
+			}
+			if (T.dlg_focus == 5)
+			{
+				term_dlg_close();
+				return 1;
+			}
+			term_bm_save_edit();
+			return 1;
+		}
+		if (c == 8 || c == 127)
+		{
+			term_edit_backspace();
+			term_ui_refresh();
+			return 1;
+		}
+		if (c == ' ' && (T.dlg_focus == 3 || T.dlg_focus == 4))
+		{
+			if (T.dlg_focus == 3)
+				T.dlg_echo = !T.dlg_echo;
+			else
+				T.dlg_letterbox = !T.dlg_letterbox;
+			term_ui_refresh();
+			return 1;
+		}
+		if (c >= 32 && c < 127)
+		{
+			term_edit_add_char(c);
+			term_ui_refresh();
+			return 1;
+		}
+		return 1;
+	}
+	return 0;
+}
+
+static void term_dlg_arrow(int c)
+{
+	if (T.dlg == TM_DLG_LIST)
+	{
+		if (c == 'A' && g_bm_n > 0)
+		{
+			T.dlg_sel--;
+			if (T.dlg_sel < 0)
+				T.dlg_sel = g_bm_n - 1;
+		}
+		else if (c == 'B' && g_bm_n > 0)
+		{
+			T.dlg_sel++;
+			if (T.dlg_sel >= g_bm_n)
+				T.dlg_sel = 0;
+		}
+		else if (c == 'C')
+		{
+			T.dlg_btn++;
+			if (T.dlg_btn > TM_BTN_CONN)
+				T.dlg_btn = TM_BTN_NEW;
+		}
+		else if (c == 'D')
+		{
+			T.dlg_btn--;
+			if (T.dlg_btn < TM_BTN_NEW)
+				T.dlg_btn = TM_BTN_CONN;
+		}
+		term_ui_refresh();
+		return;
+	}
+	if (T.dlg == TM_DLG_DEL)
+	{
+		if (c == 'C' || c == 'D')
+			T.dlg_btn = T.dlg_btn ? 0 : 1;
+		term_ui_refresh();
+		return;
+	}
+	if (T.dlg == TM_DLG_EDIT)
+	{
+		if (c == 'A')
+		{
+			T.dlg_focus--;
+			if (T.dlg_focus < 0)
+				T.dlg_focus = 6;
+		}
+		else if (c == 'B')
+		{
+			T.dlg_focus++;
+			if (T.dlg_focus > 6)
+				T.dlg_focus = 0;
+		}
+		else if (c == 'C' || c == 'D')
+		{
+			if (T.dlg_focus == 1)
+				T.dlg_focus = 2;
+			else if (T.dlg_focus == 2)
+				T.dlg_focus = 1;
+			else if (T.dlg_focus == 5)
+				T.dlg_focus = 6;
+			else if (T.dlg_focus == 6)
+				T.dlg_focus = 5;
+		}
+		term_ui_refresh();
+	}
+}
+
 static void term_menu_activate(void)
 {
 	if (T.menu_sel == 1)
@@ -828,6 +1669,11 @@ static void term_menu_activate(void)
 	if (T.menu_sel == 2)
 	{
 		term_toggle_letterbox();
+		return;
+	}
+	if (T.menu_sel == 3)
+	{
+		term_bm_open_list();
 		return;
 	}
 	term_exit();
@@ -1342,6 +2188,12 @@ static int esc_feed(char c)
 		}
 		if (c == 'A' || c == 'B' || c == 'C' || c == 'D')
 		{
+			if (T.dlg)
+			{
+				term_dlg_arrow(c);
+				esc_reset();
+				return 1;
+			}
 			if (T.menu)
 			{
 				if (c == 'A' || c == 'B')
@@ -1358,7 +2210,7 @@ static int esc_feed(char c)
 			T.esc = 4;
 			return 1;
 		}
-		if (T.menu)
+		if (T.dlg || T.menu)
 		{
 			esc_reset();
 			return 1;
@@ -1381,7 +2233,7 @@ static int esc_feed(char c)
 				term_exit();
 				return 1;
 			}
-			if (T.menu)
+			if (T.dlg || T.menu)
 			{
 				esc_reset();
 				return 1;
@@ -1389,7 +2241,7 @@ static int esc_feed(char c)
 			esc_send();
 			return 1;
 		}
-		if (T.menu)
+		if (T.dlg || T.menu)
 		{
 			esc_reset();
 			return 1;
@@ -1399,7 +2251,7 @@ static int esc_feed(char c)
 	}
 	if (T.esc == 5)
 	{
-		if (T.menu)
+		if (T.dlg || T.menu)
 		{
 			esc_reset();
 			return 1;
@@ -1568,10 +2420,24 @@ const char *mmb_term_key(char c)
 		{
 			T.menu = 1;
 			T.menu_sel = 0;
+			T.dlg = TM_DLG_NONE;
 			mark_dirty_full();
 			term_draw();
 			term_serial_dump();
 			return "";
+		}
+		if (T.dlg == TM_DLG_EDIT)
+		{
+			if (c == 'c')
+			{
+				term_dlg_close();
+				return "";
+			}
+			if (c == 's')
+			{
+				term_bm_save_edit();
+				return "";
+			}
 		}
 		return "";
 	}
@@ -1584,6 +2450,12 @@ const char *mmb_term_key(char c)
 	{
 		if (T.esc == 1)
 		{
+			if (T.dlg)
+			{
+				term_dlg_close();
+				esc_reset();
+				return "";
+			}
 			if (T.menu)
 			{
 				T.menu = 0;
@@ -1616,6 +2488,11 @@ const char *mmb_term_key(char c)
 			return "";
 		}
 	}
+	if (T.dlg)
+	{
+		term_dlg_key(c);
+		return "";
+	}
 	if (T.menu)
 	{
 		if (c == '\r' || c == '\n')
@@ -1636,6 +2513,11 @@ const char *mmb_term_key(char c)
 		if (c == 'b' || c == 'B' || c == 'w' || c == 'W')
 		{
 			term_toggle_letterbox();
+			return "";
+		}
+		if (c == 'k' || c == 'K')
+		{
+			term_bm_open_list();
 			return "";
 		}
 		return "";
@@ -1711,7 +2593,12 @@ void mmb_term_poll(void)
 	if (T.esc == 1 && T.esc_at &&
 	    mmb_now_ms() - T.esc_at >= TM_ESC_IDLE_MS)
 	{
-		if (T.menu)
+		if (T.dlg)
+		{
+			term_dlg_close();
+			esc_reset();
+		}
+		else if (T.menu)
 		{
 			T.menu = 0;
 			esc_reset();

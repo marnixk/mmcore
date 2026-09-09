@@ -80,6 +80,7 @@ def test_help_term(console):
     assert "boxed" in low
     assert "full" in low
     assert "120" in low
+    assert "bookmark" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -385,5 +386,93 @@ def test_term_double_esc_then_f10(kernel_image):
         time.sleep(0.1)
         _f10(con)
         assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        con.stop()
+
+
+def _termconfig_path(con):
+    for path in ("A:/.termconfig", "C:/.termconfig"):
+        out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
+        con.send_line("CLOSE #1")
+        if out == "":
+            return path
+    return None
+
+
+def _read_termconfig(con, path):
+    assert con.send_line("NEW") == ""
+    assert con.send_line(f'10 OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+    assert con.send_line("30 LINE INPUT #1, A$") == ""
+    assert con.send_line("40 PRINT A$") == ""
+    assert con.send_line("50 GOTO 20") == ""
+    assert con.send_line("70 CLOSE #1") == ""
+    return con.send_line("RUN", timeout=8)
+
+
+def test_term_bookmarks_new_persist_delete(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"f")
+        menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Bookmarks" in menu
+        con._ser.sendall(b"k")
+        listing = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Bookmarks" in listing
+        assert "New" in listing
+        assert "Connect" in listing
+        con._ser.sendall(b"\x1b[D\x1b[D\x1b[D")
+        _plain(con.drain(quiet=0.35, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"\r")
+        form = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Name" in form
+        assert "Save" in form
+        con._ser.sendall(b"Alpha")
+        con._ser.sendall(b"\x1b[B")
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"demo")
+        con._ser.sendall(bytes([1]) + b"s")
+        saved = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Alpha" in saved
+        con._ser.sendall(b"\x1b[D")
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"\r")
+        confirm = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Delete" in confirm
+        con._ser.sendall(b"\r")
+        gone = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Alpha" not in gone
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.4, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"k")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"\x1b[D\x1b[D\x1b[D")
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"\r")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"Beta")
+        con._ser.sendall(b"\x1b[B")
+        _plain(con.drain(quiet=0.25, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"demo")
+        con._ser.sendall(bytes([1]) + b"s")
+        saved2 = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Beta" in saved2
+        _f10(con)
+        path = _termconfig_path(con)
+        assert path, "expected A:/.termconfig or C:/.termconfig"
+        ini = _read_termconfig(con, path)
+        assert "Beta" in ini
+        assert "demo" in ini
+        assert "letterboxed" in ini.lower() or "letterboxed=" in ini.lower()
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"k")
+        again = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Beta" in again
+        _f10(con)
+        assert con.send_line("PRINT 7+8") == "15"
     finally:
         con.stop()
