@@ -1493,7 +1493,8 @@ int mmb_call_named_sub(const char *name)
 		if (G.subs[si].arg_sid[i] >= 0)
 			mmb_bind_struct_var(G.subs[si].args[i], G.subs[si].arg_sid[i]);
 		if (i < narg)
-			mmb_do_assign(G.subs[si].args[i], 0, 0, 0, args[i]);
+			mmb_do_assign(G.subs[si].args[i],
+				      G.subs[si].arg_sid[i] >= 0 ? T_STRUCT : 0, 0, 0, args[i]);
 	}
 	if (G.subs[si].is_func)
 	{

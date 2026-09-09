@@ -173,6 +173,119 @@ def test_function_as_type(console):
     assert "4" in out
 
 
+def test_struct_copy_comma(console):
+    _prog(
+        console,
+        [
+            "TYPE Point",
+            "x AS INTEGER",
+            "y AS INTEGER",
+            "END TYPE",
+            "DIM a AS Point",
+            "DIM b AS Point",
+            "a.x = 8",
+            "a.y = 9",
+            "STRUCT COPY a, b",
+            "PRINT b.x; b.y",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "8" in out
+    assert "9" in out
+
+
+def test_sub_as_type(console):
+    _prog(
+        console,
+        [
+            "TYPE Point",
+            "x AS INTEGER",
+            "y AS INTEGER",
+            "END TYPE",
+            "SUB PrintPoint(pt AS Point)",
+            'PRINT "[" + STR$(pt.x) + "," + STR$(pt.y) + "]"',
+            "END SUB",
+            "DIM p AS Point = (3, 4)",
+            "PrintPoint(p)",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "3" in out
+    assert "4" in out
+
+
+def test_function_as_type_copy_and_assign(console):
+    _prog(
+        console,
+        [
+            "TYPE Point",
+            "x AS INTEGER",
+            "y AS INTEGER",
+            "END TYPE",
+            "FUNCTION Make() AS Point",
+            "LOCAL p AS Point",
+            "p.x = 5",
+            "p.y = 6",
+            "Make = p",
+            "END FUNCTION",
+            "FUNCTION CopyOf() AS Point",
+            "LOCAL p AS Point",
+            "p.x = 7",
+            "p.y = 8",
+            "STRUCT COPY p, CopyOf",
+            "END FUNCTION",
+            "DIM a AS Point",
+            "DIM b AS Point",
+            "a = Make()",
+            "b = CopyOf()",
+            "PRINT a.x; a.y; b.x; b.y",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "5" in out
+    assert "6" in out
+    assert "7" in out
+    assert "8" in out
+
+
+def test_message_json_function_and_sub(console):
+    _prog(
+        console,
+        [
+            "TYPE Message",
+            "nick AS STRING",
+            "message AS STRING",
+            "END TYPE",
+            "FUNCTION waitForServerResponse() AS Message",
+            'LOCAL response$ = ""',
+            "LOCAL msg AS Message",
+            "DO",
+            "LINE INPUT #1, response$",
+            "LOOP UNTIL response$ <> \"\"",
+            "JSON_PARSE response$, msg",
+            "STRUCT COPY msg, waitForServerResponse",
+            "END FUNCTION",
+            "SUB PrintMessage(msg AS Message)",
+            "COLOR WHITE",
+            'PRINT "[" + msg.nick + "] ";',
+            "COLOR GREY",
+            "PRINT msg.message",
+            "END SUB",
+            "DIM serverMessage AS Message",
+            'OPEN "MSG.TXT" FOR OUTPUT AS #1',
+            'PRINT #1, "{""nick"":""alice"",""message"":""hello""}"',
+            "CLOSE #1",
+            'OPEN "MSG.TXT" FOR INPUT AS #1',
+            "serverMessage = waitForServerResponse()",
+            "CLOSE #1",
+            "PrintMessage(serverMessage)",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "[alice]" in out.replace(" ", "") or "[alice]" in out
+    assert "hello" in out
+
+
 def test_cmm2_dotted_name_without_type(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("DIM INTEGER glove.pos.x(3) = (130, 210, 150, 170)") == ""
@@ -246,6 +359,9 @@ def test_help_type_and_struct(console):
     assert "COPY" in s
     assert "SIZEOF" in s
     assert "PIXEL" in s and "MATH" in s
+    subh = dump_topic(console, "SUB")
+    assert "AS typename" in subh or "AS name" in subh.lower()
+    assert "FUNCTION" in subh
     endt = dump_topic(console, "END TYPE")
     assert "INTEGER" in endt
     basic = dump_topic(console, "BASIC")
