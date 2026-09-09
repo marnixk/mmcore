@@ -77,11 +77,11 @@ def test_help_term(console):
     assert "cr only" in low or "enter sends cr" in low
     assert "drain" in low or "starve" in low or "pane" in low
     assert "echo" in low
-        assert "boxed" in low
-        assert "full" in low
-        assert "120" in low
-        assert "bookmark" in low
-        assert "restore" in low or "started" in low
+    assert "boxed" in low
+    assert "full" in low
+    assert "120" in low
+    assert "bookmark" in low
+    assert "restore" in low or "started" in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
