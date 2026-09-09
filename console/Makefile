@@ -16,6 +16,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/tok.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/cmd_struct.o \
+	  $(MMB)/src/cmd_json.o \
 	  $(MMB)/src/expr.o \
 	  $(MMB)/src/core.o \
 	  $(MMB)/src/cmd_help.o \
@@ -52,7 +53,8 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
 	  $(MMB)/src/libc_shims.o \
 	  $(MMB)/third_party/picojpeg.o \
 	  $(MMB)/third_party/hxcmod.o \
-	  $(MMB)/third_party/upng.o
+	  $(MMB)/third_party/upng.o \
+	  $(MMB)/third_party/cJSON.o
 
 LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
 	  $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
