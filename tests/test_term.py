@@ -79,9 +79,9 @@ def test_help_term(console):
     assert "echo" in low
     assert "boxed" in low
     assert "full" in low
-    assert "120" in low
     assert "bookmark" in low
     assert "restore" in low or "started" in low
+    assert "capped" not in low
 
 
 def test_term_demo_mode14_slate_and_f10(kernel_image):
@@ -339,6 +339,27 @@ def test_term_full_keeps_mode14_if_started_there(kernel_image):
         assert _max_dump_width(full) == 120
         _f10(con)
         assert con.send_line("PRINT 9+1") == "10"
+    finally:
+        con.stop()
+
+
+def test_term_full_uses_wide_start_mode(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 9,16") == ""
+        assert con.screen_size() == (1024, 768)
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.3)
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.5, timeout=8).decode(errors="replace"))
+        con._ser.sendall(b"b")
+        full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Full" in full
+        assert con.screen_size() == (1024, 768)
+        assert _max_dump_width(full) == 128
+        _f10(con)
+        assert con.send_line("PRINT 8+2") == "10"
     finally:
         con.stop()
 

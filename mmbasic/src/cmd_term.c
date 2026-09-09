@@ -16,10 +16,10 @@
 #define TTYPE_SEND   1
 
 #define TM_COLS_BOXED 80
-#define TM_MAX_COLS   120
+#define TM_MAX_COLS   256
 #define TM_CH         16
 #define TM_CW         8
-#define TM_MAX_ROWS   66
+#define TM_MAX_ROWS   80
 #define TM_LINE     256
 #define TM_ESC_BUF  16
 #define TM_ANSI_ARGS 8
@@ -314,7 +314,7 @@ static void term_serial_dump(void)
 
 static void term_layout(void)
 {
-	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 120;
+	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
 	if (T.letterbox)
 		T.pane_cols = TM_COLS_BOXED;
@@ -740,12 +740,13 @@ static void send_ttype(void)
 static void send_naws(void)
 {
 	unsigned char b[9];
+	int cols = term_width();
 	int rows = T.pane_rows > 0 ? T.pane_rows : 24;
 	b[0] = IAC;
 	b[1] = SB;
 	b[2] = TELOPT_NAWS;
-	b[3] = 0;
-	b[4] = (unsigned char)term_width();
+	b[3] = (unsigned char)((cols >> 8) & 255);
+	b[4] = (unsigned char)(cols & 255);
 	b[5] = (unsigned char)((rows >> 8) & 255);
 	b[6] = (unsigned char)(rows & 255);
 	b[7] = IAC;
