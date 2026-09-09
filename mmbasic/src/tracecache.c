@@ -229,7 +229,6 @@ static int tc_compile_primary(tc_ent *e)
 			G.acc_on = 0;
 			return 0;
 		}
-			return 0;
 		vi = tc_add_var(e, v);
 		if (vi < 0)
 			return 0;
@@ -346,7 +345,10 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 	{
 		dst = mmb_find_var(name, 0, 1, 0, 0);
 		if (!dst || dst->dims != 0 || dst->type == T_STR || dst->type == T_STRUCT || G.acc_on)
+		{
+			G.acc_on = 0;
 			return 0;
+		}
 	}
 	mmb_skip_sp();
 	if (*G.p != '=')
