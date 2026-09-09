@@ -197,15 +197,55 @@ def test_list_type_after_run(console):
     assert "INTEGER" in out.upper()
 
 
+def test_pixel_and_math_member_view(fresh_console):
+    c = fresh_console
+    _prog(
+        c,
+        [
+            "TYPE Point",
+            "x AS INTEGER",
+            "y AS INTEGER",
+            "END TYPE",
+            "DIM pos(2) AS Point",
+            "pos(0).x = 80",
+            "pos(0).y = 300",
+            "pos(1).x = 90",
+            "pos(1).y = 310",
+            "pos(2).x = 100",
+            "pos(2).y = 320",
+            "CLS",
+            "PIXEL pos().x, pos().y, RGB(255,0,0)",
+            "PRINT PIXEL(80,300)",
+            "MATH SCALE pos().x, 2, pos().x",
+            "PRINT pos(0).x",
+            "PRINT pos(1).x",
+            "PRINT MATH(SUM pos().x)",
+            "DIM INTEGER YY(2) = (40, 50, 60)",
+            "PIXEL pos().x, YY(), RGB(0,255,0)",
+            "PRINT PIXEL(160,40)",
+        ],
+    )
+    lines = [ln.strip() for ln in c.send_line("RUN").split("\n") if ln.strip() != ""]
+    red = int(lines[0])
+    assert ((red >> 16) & 255) > 150 and ((red >> 8) & 255) < 80
+    assert lines[1] == "160"
+    assert lines[2] == "180"
+    assert lines[3] == "540"
+    green = int(lines[4])
+    assert ((green >> 8) & 255) > 150 and ((green >> 16) & 255) < 80
+
+
 def test_help_type_and_struct(console):
     t = dump_topic(console, "TYPE")
     assert t != "?SYNTAX ERROR"
     assert "HELP: TYPE" in t or "TYPE name" in t or "user type" in t.lower()
     assert "INTEGER" in t
     assert "DIM" in t
+    assert "arr().member" in t or "pos().x" in t
     s = dump_topic(console, "STRUCT")
     assert "COPY" in s
     assert "SIZEOF" in s
+    assert "PIXEL" in s and "MATH" in s
     endt = dump_topic(console, "END TYPE")
     assert "INTEGER" in endt
     basic = dump_topic(console, "BASIC")

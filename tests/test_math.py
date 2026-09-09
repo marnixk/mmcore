@@ -275,6 +275,7 @@ def test_help_math(console):
     assert "MATH SET" in out
     assert "MATH MUL" in out
     assert "FFT" in out
+    assert "pos().x" in out or "pts().x" in out
     fn = dump_topic(console, "FUNCTIONS")
     assert "CINT" in fn
     assert "EVAL" in fn

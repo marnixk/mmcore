@@ -120,76 +120,24 @@ void mmb_cmd_cls(void)
 	G.home_prompt = 1;
 }
 
-static int ident_start(void)
-{
-	return (G.p[0] >= 'A' && G.p[0] <= 'Z') ||
-	       (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_';
-}
-
-static int parse_empty_array_ref(char *name, int nsz)
-{
-	const char *save = G.p;
-
-	if (!ident_start())
-		return 0;
-	mmb_ident(name, nsz);
-	mmb_type_suffix(name);
-	mmb_skip_sp();
-	if (*G.p != '(')
-	{
-		G.p = save;
-		return 0;
-	}
-	G.p++;
-	mmb_skip_sp();
-	if (*G.p != ')')
-	{
-		G.p = save;
-		return 0;
-	}
-	G.p++;
-	mmb_skip_sp();
-	return 1;
-}
-
-static mmb_var *find_array(const char *name)
-{
-	int i;
-
-	for (i = 0; i < MMB_MAX_VARS; i++)
-		if (G.vars[i].used && G.vars[i].dims > 0 &&
-		    mmb_keyword_eq(G.vars[i].name, name))
-			return &G.vars[i];
-	return 0;
-}
-
-static int array_int_at(mmb_var *v, int i)
-{
-	if (v->type == T_INT)
-		return (int)v->data.i[i];
-	if (v->type == T_NUM)
-		return (int)v->data.f[i];
-	return 0;
-}
-
 void mmb_cmd_pixel(void)
 {
 	const char *save = G.p;
-	char nx[MMB_MAX_NAME], ny[MMB_MAX_NAME], nc[MMB_MAX_NAME];
-	mmb_var *vx, *vy, *vc;
+	mmb_arrview vx, vy, vc;
 	int i, n, colour_is_array;
 	unsigned c;
 
 	mmb_skip_sp();
-	if (parse_empty_array_ref(nx, sizeof(nx)) && *G.p == ',')
+	if (mmb_try_parse_arrview(&vx) && *G.p == ',')
 	{
 		G.p++;
 		mmb_skip_sp();
-		if (parse_empty_array_ref(ny, sizeof(ny)))
+		if (mmb_try_parse_arrview(&vy))
 		{
 			c = G.gfx.fg;
-			vc = 0;
 			colour_is_array = 0;
+			memset(&vc, 0, sizeof(vc));
+			vc.moff = -1;
 			if (*G.p == ',')
 			{
 				const char *colp;
@@ -197,33 +145,32 @@ void mmb_cmd_pixel(void)
 				G.p++;
 				mmb_skip_sp();
 				colp = G.p;
-				if (parse_empty_array_ref(nc, sizeof(nc)))
-				{
-					vc = find_array(nc);
-					if (vc)
-						colour_is_array = 1;
-				}
+				if (mmb_try_parse_arrview(&vc))
+					colour_is_array = 1;
 				if (!colour_is_array)
 				{
 					G.p = colp;
 					c = (unsigned)mmb_as_int(mmb_expr());
 				}
 			}
-			vx = find_array(nx);
-			vy = find_array(ny);
-			if (!vx || !vy)
+			if (!vx.v || !vy.v)
 				mmb_syntax();
-			n = vx->size < vy->size ? vx->size : vy->size;
+			if ((vx.mtype != T_INT && vx.mtype != T_NUM) ||
+			    (vy.mtype != T_INT && vy.mtype != T_NUM))
+				mmb_error("?TYPE MISMATCH");
+			n = vx.count < vy.count ? vx.count : vy.count;
 			if (colour_is_array)
 			{
-				if (vc->size < n)
-					n = vc->size;
+				if (vc.mtype != T_INT && vc.mtype != T_NUM)
+					mmb_error("?TYPE MISMATCH");
+				if (vc.count < n)
+					n = vc.count;
 			}
 			for (i = 0; i < n; i++)
 			{
-				int x = array_int_at(vx, i);
-				int y = array_int_at(vy, i);
-				unsigned col = colour_is_array ? (unsigned)array_int_at(vc, i) : c;
+				int x = mmb_arrview_int(vx, i);
+				int y = mmb_arrview_int(vy, i);
+				unsigned col = colour_is_array ? (unsigned)mmb_arrview_int(vc, i) : c;
 				mmb_gfx_plot(x, y, col);
 			}
 			return;

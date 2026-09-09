@@ -90,6 +90,13 @@ typedef struct mmb_var {
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
 } mmb_var;
 
+typedef struct mmb_arrview {
+	mmb_var *v;
+	int moff;
+	int mtype;
+	int count;
+} mmb_arrview;
+
 #ifdef MMB_CIRCLE_WLAN
 #define MMB_DEFAULT_CONSOLE 2 /* SCREEN on hardware so TUI does not stall UART */
 #else
@@ -422,6 +429,10 @@ void mmb_cmd_end_type(void);
 void mmb_cmd_struct(void);
 void mmb_cmd_list_type(void);
 unsigned char *mmb_struct_elem(mmb_var *v, int off);
+int mmb_try_parse_arrview(mmb_arrview *out);
+double mmb_arrview_get(mmb_arrview a, int i);
+void mmb_arrview_set(mmb_arrview a, int i, double x);
+int mmb_arrview_int(mmb_arrview a, int i);
 int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx);
 void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val);
 mmb_val mmb_struct_load_member(mmb_var *v, int eoff);

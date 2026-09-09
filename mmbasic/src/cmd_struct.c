@@ -1290,3 +1290,130 @@ int mmb_try_struct_fun(mmb_val *out)
 	mmb_expect(')');
 	return 1;
 }
+
+int mmb_try_parse_arrview(mmb_arrview *out)
+{
+	const char *save = G.p;
+	char name[MMB_MAX_NAME], mem[MMB_MAX_NAME];
+	mmb_var *v;
+	int i;
+
+	memset(out, 0, sizeof(*out));
+	out->moff = -1;
+	mmb_skip_sp();
+	if (!at_name())
+		return 0;
+	mmb_ident(name, sizeof(name));
+	mmb_type_suffix(name);
+	mmb_skip_sp();
+	if (*G.p != '(')
+	{
+		G.p = save;
+		return 0;
+	}
+	G.p++;
+	mmb_skip_sp();
+	if (*G.p != ')')
+	{
+		G.p = save;
+		return 0;
+	}
+	G.p++;
+	mmb_skip_sp();
+	mem[0] = 0;
+	if (*G.p == '.')
+	{
+		G.p++;
+		mmb_ident(mem, sizeof(mem));
+		mmb_type_suffix(mem);
+		mmb_skip_sp();
+	}
+	v = 0;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used && G.vars[i].dims > 0 &&
+		    mmb_keyword_eq(G.vars[i].name, name))
+		{
+			v = &G.vars[i];
+			break;
+		}
+	if (!v)
+	{
+		G.p = save;
+		return 0;
+	}
+	out->v = v;
+	out->count = v->size;
+	if (mem[0])
+	{
+		int mi;
+		mmb_smem *m;
+
+		if (v->type != T_STRUCT)
+		{
+			G.p = save;
+			return 0;
+		}
+		mi = find_member(&G.sdef[v->struct_idx], mem);
+		if (mi < 0)
+			mmb_error("?UNKNOWN");
+		m = &G.sdef[v->struct_idx].mem[mi];
+		if (m->dims > 0)
+			mmb_error("?ARRAY");
+		out->moff = m->offset;
+		out->mtype = m->type;
+	}
+	else
+	{
+		out->mtype = v->type;
+	}
+	return 1;
+}
+
+double mmb_arrview_get(mmb_arrview a, int i)
+{
+	if (!a.v || i < 0 || i >= a.count)
+		mmb_error("?INDEX OUT OF BOUNDS");
+	if (a.moff >= 0)
+	{
+		unsigned char *p = mmb_struct_elem(a.v, i) + a.moff;
+		if (a.mtype == T_INT)
+			return (double)*(int64_t *)p;
+		if (a.mtype == T_NUM)
+			return *(double *)p;
+		mmb_error("?TYPE MISMATCH");
+	}
+	if (a.v->type == T_INT)
+		return (double)a.v->data.i[i];
+	if (a.v->type == T_NUM)
+		return a.v->data.f[i];
+	mmb_error("?TYPE MISMATCH");
+	return 0;
+}
+
+void mmb_arrview_set(mmb_arrview a, int i, double x)
+{
+	if (!a.v || i < 0 || i >= a.count)
+		mmb_error("?INDEX OUT OF BOUNDS");
+	if (a.moff >= 0)
+	{
+		unsigned char *p = mmb_struct_elem(a.v, i) + a.moff;
+		if (a.mtype == T_INT)
+			*(int64_t *)p = (int64_t)(x >= 0.0 ? x + 0.5 : x - 0.5);
+		else if (a.mtype == T_NUM)
+			*(double *)p = x;
+		else
+			mmb_error("?TYPE MISMATCH");
+		return;
+	}
+	if (a.v->type == T_INT)
+		a.v->data.i[i] = (int64_t)(x >= 0.0 ? x + 0.5 : x - 0.5);
+	else if (a.v->type == T_NUM)
+		a.v->data.f[i] = x;
+	else
+		mmb_error("?TYPE MISMATCH");
+}
+
+int mmb_arrview_int(mmb_arrview a, int i)
+{
+	return (int)mmb_arrview_get(a, i);
+}
