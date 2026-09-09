@@ -268,6 +268,19 @@ def test_help_colour_esc_returns_to_prompt(console):
     assert console.send_line("PRINT 8") == "8"
 
 
+def test_help_open_tcp_stream(console):
+    out = dump_topic(console, "OPEN")
+    assert out != "?SYNTAX ERROR"
+    assert "TCP:" in out
+    assert "WEB" not in out
+    fns = dump_topic(console, "FUNCTIONS")
+    assert "INPUT$(nbr" in fns or "nbr,#n" in fns.replace(" ", "")
+    assert "TCP" in fns
+    dollar = dump_topic(console, "INPUT$")
+    assert dollar != "?SYNTAX ERROR"
+    assert "nbr" in dollar.lower() or "count" in dollar.lower()
+
+
 def test_help_colour_ibm(console):
     out = dump_topic(console, "COLOUR")
     assert out != "?SYNTAX ERROR"

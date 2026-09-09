@@ -990,6 +990,8 @@ static void cmd_save_load(int save)
 	mmb_expect(',');
 	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 		mmb_error("?FILE");
+	if (G.files[fn].kind == MMB_FK_TCP)
+		mmb_error("?FILE");
 	mmb_ident(name, sizeof(name));
 	mmb_type_suffix(name);
 	mmb_skip_sp();

@@ -114,12 +114,13 @@ static const char kHelpPrint[] =
 	"?  is an alias for PRINT.\n"
 	"\n"
 	"Write values to the console, or to an open file\n"
-	"with PRINT #fn. PRINT always ends with a newline\n"
-	"unless the statement ends with ; . A comma inserts\n"
-	"a space between items. Bare PRINT prints a blank\n"
-	"line. While a program is running, each PRINT is\n"
-	"sent to the console immediately (a GOTO loop still\n"
-	"shows output).\n"
+	"or TCP stream with PRINT #fn. PRINT always ends\n"
+	"with a newline unless the statement ends with ; .\n"
+	"A comma inserts a space between items. Bare PRINT\n"
+	"prints a blank line. While a program is running,\n"
+	"each PRINT is sent to the console immediately (a\n"
+	"GOTO loop still shows output).\n"
+	"#fn may be a disk file or OPEN \"TCP:host:port\".\n"
 	"\n"
 	"Example:  PRINT 6*7\n"
 	"          PRINT #1, \"HELLO\"";
@@ -156,8 +157,11 @@ static const char kHelpLine[] =
 static const char kHelpLineInput[] =
 	"LINE INPUT #fn, var$\n"
 	"\n"
-	"Read one line from an open file into a string\n"
-	"variable. var$ must be a string.\n"
+	"Read one line from an open file or TCP stream\n"
+	"into a string variable. var$ must be a string.\n"
+	"#fn may be a disk file or OPEN \"TCP:host:port\".\n"
+	"TCP reads are non-blocking: an empty string if\n"
+	"no complete line is waiting.\n"
 	"\n"
 	"Example:\n"
 	"  OPEN \"N.TXT\" FOR INPUT AS #1\n"
@@ -595,18 +599,27 @@ static const char kHelpFiles[] =
 
 static const char kHelpOpen[] =
 	"OPEN file$ [FOR INPUT|OUTPUT|APPEND] AS #n\n"
+	"OPEN \"TCP:host:port\" [FOR INPUT|OUTPUT] AS #n\n"
 	"\n"
-	"Open a file. n is 1 to 10. OUTPUT creates/truncates.\n"
+	"Open a disk file, or a TCP client stream.\n"
+	"n is 1 to 10. Disk OUTPUT creates/truncates.\n"
 	"APPEND writes at the end. INPUT reads.\n"
+	"\n"
+	"TCP: host is an IP or DNS name; port is\n"
+	"required. No FOR means both directions.\n"
+	"One TCP client at a time. CONNECT and TERM\n"
+	"use the same socket. QEMU has no NIC, so\n"
+	"OPEN \"TCP:...\" fails (network not available).\n"
 	"\n"
 	"Example:  OPEN \"A.TXT\" FOR OUTPUT AS #1\n"
 	"          PRINT #1, \"HELLO\"\n"
-	"          CLOSE #1";
+	"          CLOSE #1\n"
+	"          OPEN \"TCP:192.168.1.50:80\" AS #1";
 
 static const char kHelpClose[] =
 	"CLOSE #n\n"
 	"\n"
-	"Close file number n (1 to 10).\n"
+	"Close file or TCP stream number n (1 to 10).\n"
 	"\n"
 	"Example:  CLOSE #1";
 
@@ -692,11 +705,23 @@ static const char kHelpInput[] =
 	"if the prompt is followed by ; (or if there is no\n"
 	"prompt). A comma after the prompt skips the ?.\n"
 	"Type a line; comma-separated fields fill the vars.\n"
-	"INPUT #n reads those fields from an open file.\n"
-	"LINE INPUT reads a whole line into a string.\n"
+	"INPUT #n reads those fields from an open file or\n"
+	"TCP stream. LINE INPUT reads a whole line into a\n"
+	"string. HELP INPUT$ for INPUT$(nbr, #n).\n"
 	"\n"
 	"Example:  INPUT \"Name\"; N$\n"
 	"          PRINT N$";
+
+static const char kHelpInputDollar[] =
+	"INPUT$(nbr, #n)\n"
+	"\n"
+	"Read up to nbr characters from file or TCP\n"
+	"handle #n. Count comes first, then the handle.\n"
+	"Disk: advances the file position.\n"
+	"TCP: non-blocking; returns \"\" if nothing is\n"
+	"waiting. LOC(#n) is the number of RX bytes.\n"
+	"\n"
+	"Example:  A$ = INPUT$(LOC(#1), #1)";
 
 static const char kHelpOption[] =
 	"OPTION setting ...\n"
@@ -1454,7 +1479,10 @@ static const char kHelpFunctions[] =
 	"  DEG RAD CHOICE BOUND EVAL MATH()\n"
 	"Graphics: RGB(r,g,b)|RGB(\"NAME\")  PIXEL(x,y)\n"
 	"  MM.HRES MM.VRES MM.INFO(MODE)\n"
-	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(n,#fn)\n"
+	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)\n"
+	"  Disk: LOC=seek pos  LOF=size  EOF=pos>=size\n"
+	"  TCP:  LOC=RX waiting  LOF=0  EOF=not connected\n"
+	"  INPUT$(nbr,#n) count first; TCP non-blocking\n"
 	"Other: PLAYING() DATE$ TIME$ TIMER POS\n"
 	"  MM.VER MM.DEVICE$ MM.CMDLINE$\n"
 	"  STRUCT() SIZEOF|OFFSET|TYPE|FIND\n"
@@ -1620,6 +1648,7 @@ static const help_topic kTopics[] = {
 	{ "NEW",         HELP_CMD,  kHelpNew },
 	{ "LIST",        HELP_CMD,  kHelpList },
 	{ "INPUT",       HELP_CMD,  kHelpInput },
+	{ "INPUT$",      HELP_CMD,  kHelpInputDollar },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
 	{ "OPTIONS",     HELP_CMD,  kHelpOptions },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
@@ -1745,6 +1774,7 @@ static const struct {
 	{ "DATE$",        "FUNCTIONS" },
 	{ "TIME$",        "FUNCTIONS" },
 	{ "CWD$",         "FUNCTIONS" },
+	{ "INPUT$",       "INPUT$" },
 	{ "UCASE$",       "FUNCTIONS" },
 	{ "LCASE$",       "FUNCTIONS" },
 	{ "HEX$",         "FUNCTIONS" },

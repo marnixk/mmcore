@@ -153,10 +153,16 @@ typedef struct mmb_options {
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " */
 } mmb_options;
 
+#define MMB_FK_FILE 0
+#define MMB_FK_TCP  1
+#define MMB_FM_BOTH 3
+
 typedef struct mmb_file {
 	int open;
-	int mode; /* 0 input 1 output 2 append */
+	int mode; /* 0 input 1 output 2 append 3 both (TCP default) */
 	int pos;
+	int kind;  /* MMB_FK_FILE or MMB_FK_TCP */
+	int ungot; /* TCP pushback, -1 none */
 	char path[128];
 } mmb_file;
 
@@ -473,6 +479,12 @@ void mmb_cmd_load(void);
 void mmb_cmd_edit(void);
 void mmb_cmd_open(void);
 void mmb_cmd_close(void);
+int mmb_file_is_tcp(int fn);
+int mmb_tcp_any_open(void);
+void mmb_file_close_n(int fn);
+void mmb_close_tcp_files(void);
+int mmb_file_read(int fn, char *buf, int nch);
+void mmb_file_write(int fn, const char *buf, unsigned n);
 void mmb_cmd_chdir(void);
 void mmb_cmd_mkdir(void);
 void mmb_cmd_rmdir(void);
@@ -686,6 +698,8 @@ int mmb_net_tcp_cancelling(void);
 const char *mmb_net_tcp_errmsg(void);
 int mmb_net_tcp_send(const void *data, unsigned n);
 int mmb_net_tcp_recv(void *data, unsigned maxn);
+int mmb_net_tcp_rx_avail(void);
+int mmb_net_tcp_peer_closed(void);
 void mmb_net_tcp_close(void);
 void mmb_net_yield(void);
 

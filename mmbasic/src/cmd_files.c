@@ -110,13 +110,164 @@ void mmb_cmd_files(const char *kw)
 	mmb_out(buf[0] ? buf : "(empty)");
 }
 
+int mmb_file_is_tcp(int fn)
+{
+	return fn >= 1 && fn <= MMB_MAX_FILES && G.files[fn].open &&
+	       G.files[fn].kind == MMB_FK_TCP;
+}
+
+int mmb_tcp_any_open(void)
+{
+	int i;
+	for (i = 1; i <= MMB_MAX_FILES; i++)
+		if (mmb_file_is_tcp(i))
+			return i;
+	return 0;
+}
+
+void mmb_file_close_n(int fn)
+{
+	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
+		return;
+	if (G.files[fn].kind == MMB_FK_TCP)
+		mmb_net_tcp_close();
+	memset(&G.files[fn], 0, sizeof(G.files[fn]));
+	G.files[fn].ungot = -1;
+}
+
+void mmb_close_tcp_files(void)
+{
+	int i;
+	for (i = 1; i <= MMB_MAX_FILES; i++)
+		if (mmb_file_is_tcp(i))
+			mmb_file_close_n(i);
+}
+
+int mmb_file_read(int fn, char *buf, int nch)
+{
+	unsigned got = 0;
+	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
+		mmb_error("?FILE");
+	if (nch < 0)
+		nch = 0;
+	if (nch > MMB_MAX_STR)
+		nch = MMB_MAX_STR;
+	if (G.files[fn].kind == MMB_FK_TCP)
+	{
+		int n = 0;
+		if (G.files[fn].mode == 1)
+			mmb_error("?FILE");
+		mmb_net_tcp_status();
+		if (G.files[fn].ungot >= 0 && nch > 0)
+		{
+			buf[n++] = (char)G.files[fn].ungot;
+			G.files[fn].ungot = -1;
+		}
+		if (n < nch)
+		{
+			int r = mmb_net_tcp_recv(buf + n, (unsigned)(nch - n));
+			if (r > 0)
+				n += r;
+		}
+		buf[n] = 0;
+		return n;
+	}
+	if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
+			    buf, (unsigned)nch, &got) != 0)
+		got = 0;
+	G.files[fn].pos += (int)got;
+	buf[got] = 0;
+	return (int)got;
+}
+
+void mmb_file_write(int fn, const char *buf, unsigned n)
+{
+	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
+		return;
+	if (G.files[fn].kind == MMB_FK_TCP)
+	{
+		if (G.files[fn].mode == 0)
+			mmb_error("?FILE");
+		mmb_net_tcp_status();
+		if (n && mmb_net_tcp_send(buf, n) < 0)
+			mmb_error("?FILE");
+		return;
+	}
+	if (mmb_vfs_readonly_path(G.files[fn].path))
+		mmb_error("?READ ONLY");
+	if (mmb_vfs_write(G.files[fn].path, buf, n, 1) != 0)
+		mmb_error("?FILE");
+}
+
+static int is_tcp_spec(const char *s)
+{
+	return s && (s[0] == 'T' || s[0] == 't') &&
+	       (s[1] == 'C' || s[1] == 'c') &&
+	       (s[2] == 'P' || s[2] == 'p') && s[3] == ':';
+}
+
+static int parse_tcp_host_port(const char *s, char *host, int hostsz, int *port)
+{
+	const char *colon = 0;
+	int n, p, i;
+
+	s += 4;
+	if (!s[0])
+		return -1;
+	for (i = 0; s[i]; i++)
+		if (s[i] == ':')
+			colon = s + i;
+	if (!colon || colon == s || !colon[1])
+		return -1;
+	n = (int)(colon - s);
+	if (n >= hostsz)
+		n = hostsz - 1;
+	for (i = 0; i < n; i++)
+		host[i] = s[i];
+	host[n] = 0;
+	p = 0;
+	for (i = 1; colon[i]; i++)
+	{
+		if (colon[i] < '0' || colon[i] > '9')
+			return -1;
+		p = p * 10 + (colon[i] - '0');
+		if (p > 65535)
+			return -1;
+	}
+	if (p < 1)
+		return -1;
+	*port = p;
+	return 0;
+}
+
+static void tcp_open_fail(void)
+{
+	char e[96];
+	const char *m = mmb_net_tcp_errmsg();
+	e[0] = '?';
+	strncpy(e + 1, m && m[0] ? m : "FILE", sizeof(e) - 2);
+	e[sizeof(e) - 1] = 0;
+	mmb_error(e);
+}
+
 void mmb_cmd_open(void)
 {
 	char path[128];
-	int mode = 0, fn = 1;
+	int mode = 0, fn = 1, tcp = 0;
+	char host[80];
+	int port = 0;
 	mmb_val v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
+	tcp = is_tcp_spec(v.s);
+	if (tcp)
+	{
+		strncpy(path, v.s, sizeof(path) - 1);
+		path[sizeof(path) - 1] = 0;
+		if (parse_tcp_host_port(v.s, host, sizeof(host), &port) != 0)
+			mmb_syntax();
+	}
+	else
 	{
 		char full[128];
 		if (mmb_vfs_resolve(v.s, full, sizeof(full)) != 0)
@@ -135,6 +286,10 @@ void mmb_cmd_open(void)
 		else
 			mmb_syntax();
 	}
+	else if (tcp)
+		mode = MMB_FM_BOTH;
+	if (tcp && mode == 2)
+		mmb_syntax();
 	if (!mmb_match("AS"))
 		mmb_syntax();
 	mmb_skip_sp();
@@ -143,6 +298,26 @@ void mmb_cmd_open(void)
 	fn = (int)mmb_as_int(mmb_expr());
 	if (fn < 1 || fn > MMB_MAX_FILES)
 		mmb_error("?FILE NUMBER");
+	if (tcp)
+	{
+		int other;
+		if (mmb_in_connect() || mmb_in_term())
+			mmb_error("?FILE");
+		other = mmb_tcp_any_open();
+		if (other && other != fn)
+			mmb_error("?FILE");
+		if (G.files[fn].open)
+			mmb_file_close_n(fn);
+		if (mmb_net_tcp_begin(host, port) != 0)
+			tcp_open_fail();
+		memset(&G.files[fn], 0, sizeof(G.files[fn]));
+		G.files[fn].open = 1;
+		G.files[fn].mode = mode;
+		G.files[fn].kind = MMB_FK_TCP;
+		G.files[fn].ungot = -1;
+		strncpy(G.files[fn].path, path, sizeof(G.files[fn].path) - 1);
+		return;
+	}
 	if (mode == 1 || mode == 2)
 	{
 		if (mmb_vfs_readonly_path(path))
@@ -150,9 +325,13 @@ void mmb_cmd_open(void)
 		if (mode == 1 && mmb_vfs_write(path, "", 0, 0) != 0)
 			mmb_error("?FILE");
 	}
+	if (G.files[fn].open)
+		mmb_file_close_n(fn);
 	memset(&G.files[fn], 0, sizeof(G.files[fn]));
 	G.files[fn].open = 1;
 	G.files[fn].mode = mode;
+	G.files[fn].kind = MMB_FK_FILE;
+	G.files[fn].ungot = -1;
 	G.files[fn].pos = mode == 2 ? mmb_vfs_size(path) : 0;
 	strncpy(G.files[fn].path, path, sizeof(G.files[fn].path) - 1);
 }
@@ -164,6 +343,5 @@ void mmb_cmd_close(void)
 	if (*G.p == '#')
 		G.p++;
 	fn = (int)mmb_as_int(mmb_expr());
-	if (fn >= 1 && fn <= MMB_MAX_FILES)
-		G.files[fn].open = 0;
+	mmb_file_close_n(fn);
 }

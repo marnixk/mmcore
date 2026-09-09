@@ -54,6 +54,7 @@ static volatile int s_open_error;
 static char s_pending_host[80];
 static int s_pending_port;
 static volatile int s_pending;
+static int s_peer_closed;
 
 static unsigned s_gw_at;
 static int s_gw_cached;
@@ -334,6 +335,7 @@ void mmb_net_tcp_close(void)
 {
 	s_abandon = 1;
 	s_pending = 0;
+	s_peer_closed = 0;
 	s_gen++;
 	s_rxn = 0;
 	s_rxoff = 0;
@@ -390,6 +392,7 @@ int mmb_net_tcp_begin(const char *host, int port)
 	}
 	s_rxn = 0;
 	s_rxoff = 0;
+	s_peer_closed = 0;
 
 	n = 0;
 	while (host[n] && n + 1 < sizeof s_open_host)
@@ -521,13 +524,44 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 			if (CScheduler::IsActive())
 				CScheduler::Get()->Yield();
 			if (n < 0)
+			{
+				s_peer_closed = 1;
 				return out ? (int)out : n;
+			}
 			if (n == 0)
 				return (int)out;
 			s_rxn = (unsigned)n;
 			s_rxoff = 0;
 		}
 	}
+}
+
+int mmb_net_tcp_rx_avail(void)
+{
+	if (!s_sock || s_peer_closed)
+		return 0;
+	if (s_rxoff < s_rxn)
+		return (int)(s_rxn - s_rxoff);
+	{
+		int n = s_sock->Receive(s_rx, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
+		if (CScheduler::IsActive())
+			CScheduler::Get()->Yield();
+		if (n < 0)
+		{
+			s_peer_closed = 1;
+			return 0;
+		}
+		if (n <= 0)
+			return 0;
+		s_rxn = (unsigned)n;
+		s_rxoff = 0;
+		return n;
+	}
+}
+
+int mmb_net_tcp_peer_closed(void)
+{
+	return s_peer_closed;
 }
 
 void mmb_net_yield(void)
@@ -594,6 +628,16 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 	(void)data;
 	(void)maxn;
 	return 0;
+}
+
+int mmb_net_tcp_rx_avail(void)
+{
+	return 0;
+}
+
+int mmb_net_tcp_peer_closed(void)
+{
+	return 1;
 }
 
 void mmb_net_tcp_close(void)
