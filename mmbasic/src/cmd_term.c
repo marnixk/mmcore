@@ -16,10 +16,10 @@
 #define TTYPE_SEND   1
 
 #define TM_COLS_BOXED 80
-#define TM_MAX_COLS   120
+#define TM_MAX_COLS   256
 #define TM_CH         16
 #define TM_CW         8
-#define TM_MAX_ROWS   66
+#define TM_MAX_ROWS   80
 #define TM_LINE     256
 #define TM_ESC_BUF  16
 #define TM_ANSI_ARGS 8
@@ -314,7 +314,7 @@ static void term_serial_dump(void)
 
 static void term_layout(void)
 {
-	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 120;
+	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
 	if (T.letterbox)
 		T.pane_cols = TM_COLS_BOXED;
@@ -740,12 +740,13 @@ static void send_ttype(void)
 static void send_naws(void)
 {
 	unsigned char b[9];
+	int cols = term_width();
 	int rows = T.pane_rows > 0 ? T.pane_rows : 24;
 	b[0] = IAC;
 	b[1] = SB;
 	b[2] = TELOPT_NAWS;
-	b[3] = 0;
-	b[4] = (unsigned char)term_width();
+	b[3] = (unsigned char)((cols >> 8) & 255);
+	b[4] = (unsigned char)(cols & 255);
 	b[5] = (unsigned char)((rows >> 8) & 255);
 	b[6] = (unsigned char)(rows & 255);
 	b[7] = IAC;
@@ -854,21 +855,60 @@ static void term_init_extra_cols(int old_cols)
 	}
 }
 
+static void term_clamp_cursor(void)
+{
+	if (T.cur_col >= term_width())
+		T.cur_col = term_width() - 1;
+	if (T.cur_col < 0)
+		T.cur_col = 0;
+	if (T.cur_row >= T.pane_rows)
+		T.cur_row = T.pane_rows - 1;
+	if (T.cur_row < 0)
+		T.cur_row = 0;
+}
+
+static void term_apply_session_mode(void)
+{
+	int mode, bits;
+
+	bits = T.saved_bits;
+	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
+		bits = 16;
+	if (T.letterbox)
+	{
+		mode = 14;
+		if (bits == 12)
+			bits = 16;
+	}
+	else
+	{
+		mode = T.saved_mode;
+		if (mode < 1 || mode > 17)
+			mode = 14;
+		if ((mode == 9 || mode == 11 || mode == 12 || mode == 14) &&
+		    bits == 12)
+			bits = 16;
+	}
+	if (G.gfx.mode != mode || G.gfx.bits != bits)
+		mmb_gfx_set_mode(mode, bits);
+	G.gfx.write_page = 1;
+	G.gfx.display_page = 0;
+}
+
 static void term_toggle_letterbox(void)
 {
 	int old_cols = term_width();
 	T.letterbox = T.letterbox ? 0 : 1;
+	term_apply_session_mode();
 	term_layout();
 	term_init_extra_cols(old_cols);
-	if (T.cur_col >= term_width())
-		T.cur_col = term_width() - 1;
+	term_clamp_cursor();
 	term_fill_pages();
 	if (T.tcp)
 		send_naws();
 	mark_dirty_full();
 	term_draw();
-	if (T.letterbox)
-		mmb_gfx_present();
+	mmb_gfx_present();
 	term_serial_dump();
 }
 
@@ -1390,8 +1430,10 @@ static void term_bm_connect(void)
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.letterbox = b->letterboxed ? 1 : 0;
 	term_reset_pen();
+	term_apply_session_mode();
 	term_layout();
 	term_init_extra_cols(old_cols);
+	term_clamp_cursor();
 	for (i = 0; i < T.pane_rows; i++)
 		pane_clear_row(i);
 	term_fill_pages();
@@ -2298,7 +2340,7 @@ static void demo_emit_line(void)
 void mmb_cmd_term(void)
 {
 	mmb_val host, portv;
-	int port, mode, bits, i;
+	int port, i;
 
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
@@ -2346,11 +2388,7 @@ void mmb_cmd_term(void)
 		}
 	}
 
-	mode = 14;
-	bits = T.saved_bits;
-	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
-		bits = 16;
-	mmb_gfx_set_mode(mode, bits);
+	term_apply_session_mode();
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
