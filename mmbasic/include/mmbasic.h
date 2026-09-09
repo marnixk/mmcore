@@ -56,7 +56,7 @@ typedef struct mmb_platform {
 	void (*tui_glyph_n)(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,
 			     int scale);
 	void (*tui_glyph_n_px)(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
-			       unsigned bg_rgb, int scale);
+			       unsigned bg_rgb, int scale, int ink_only);
 	void (*tui_set_font)(const unsigned char *font256x16);
 	int (*alt_held)(void);
 	/* Blit RGB888 pixels to HDMI (native depth + SetArea). stride is

@@ -332,7 +332,7 @@ static void wp_glyph_px(int x_px, int y_px, unsigned ch, unsigned fg, unsigned b
 		scale = 1;
 	if (G.plat->tui_glyph_n_px)
 	{
-		G.plat->tui_glyph_n_px(x_px, y_px, ch, fg, bg, scale);
+		G.plat->tui_glyph_n_px(x_px, y_px, ch, fg, bg, scale, scale > 1);
 		return;
 	}
 	if (G.plat->tui_glyph_n)
