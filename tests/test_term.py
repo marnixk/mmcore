@@ -80,6 +80,9 @@ def test_help_term(console):
     assert "cr only" in low or "enter sends cr" in low
     assert "drain" in low or "starve" in low or "pane" in low
     assert "echo" in low
+    assert "status" in low
+    assert "menu" in low
+    assert "backspace" in low
     assert "boxed" in low
     assert "full" in low
     assert "bookmark" in low
@@ -434,6 +437,10 @@ def test_term_demo_local_echo_and_hide(kernel_image):
         con._ser.sendall(b"ECHOTEST99")
         shown = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "ECHOTEST99" in shown
+        con._ser.sendall(b"\x08" * 20)
+        rubbed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "ECHOTEST99" not in rubbed
+        assert "TERM demo" in rubbed or "term demo" in rubbed.lower()
         con._ser.sendall(bytes([1]) + b"f")
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"e")

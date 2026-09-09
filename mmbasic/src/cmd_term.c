@@ -113,6 +113,7 @@ typedef struct {
 	int dirty_full;
 	int dirty_lo;
 	int dirty_hi;
+	int echo_typed;
 } tm_state;
 
 static tm_state T;
@@ -164,6 +165,7 @@ static unsigned term_rgb(unsigned char idx)
 #define TM_MENU_BG term_rgb(term_th()->menu_bg)
 #define TM_MENU_FG term_rgb(term_th()->menu_fg)
 #define TM_MENU_HI term_rgb(term_th()->sel_bg)
+#define TM_HOT     term_rgb(term_th()->hot)
 #define TM_SEL_FG  term_rgb(term_th()->sel_fg)
 #define TM_SEL_BG  term_rgb(term_th()->sel_bg)
 #define TM_DLG_FG  term_rgb(term_th()->dlg_fg)
@@ -552,16 +554,40 @@ static void term_put_str(int x, int y, const char *s, unsigned fg)
 		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)s[i], fg);
 }
 
+static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg, unsigned hot_fg)
+{
+	int i, used = 0;
+
+	if (!s)
+		return;
+	for (i = 0; s[i]; i++)
+	{
+		unsigned c_fg = fg;
+		char ch = s[i];
+
+		if (!used && (ch == hot || ch == hot + 32 || ch == hot - 32))
+		{
+			c_fg = hot_fg;
+			used = 1;
+		}
+		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)ch, c_fg);
+	}
+}
+
 static void term_draw_status(void)
 {
 	char left[32];
 	char right[64];
 	int y, n, x0;
+	unsigned bg = TM_MENU_BG;
+	unsigned fg = TM_MENU_FG;
 
+	if (!T.menu)
+		return;
 	y = (T.vid_rows - 1) * TM_CH;
 	x0 = T.pane_left * TM_CW;
 	mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
-		    TM_BG, 1, (int)TM_BG);
+		    bg, 1, (int)bg);
 	strcpy(left, "F10/Alt-X  Alt-F");
 	if (T.demo)
 	{
@@ -575,7 +601,7 @@ static void term_draw_status(void)
 			left[n + 4] = 0;
 		}
 	}
-	term_put_str(x0, y, left, TM_DIM);
+	term_put_str(x0, y, left, fg);
 	right[0] = 0;
 	if (T.connecting)
 	{
@@ -616,34 +642,37 @@ static void term_draw_status(void)
 	n = (int)strlen(right);
 	if (n > term_width())
 		n = term_width();
-	term_put_str(x0 + (term_width() - n) * TM_CW, y, right, TM_DIM);
+	term_put_str(x0 + (term_width() - n) * TM_CW, y, right, fg);
 }
 
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i;
+	int x0, y0, w, i, bar_w;
 	const char *items[4];
 	char echo[16];
 
 	if (!T.menu)
 		return;
 	x0 = T.pane_left * TM_CW;
-	y0 = 0;
+	y0 = TM_CH;
 	w = 12 * TM_CW;
+	bar_w = T.vid_cols * TM_CW;
 	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
 	items[0] = "Exit";
 	items[1] = echo;
 	items[2] = term_width_label();
 	items[3] = "Bookmarks";
-	mmb_gfx_box(x0, y0, w, 6 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_put_str(x0 + TM_CW, y0, "File", TM_MENU_FG);
+	mmb_gfx_box(0, 0, bar_w, TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	term_put_str(x0, 0, " ", TM_MENU_FG);
+	term_put_hot(x0 + TM_CW, 0, "File", 'F', TM_MENU_FG, TM_HOT);
+	mmb_gfx_box(x0, y0, w, 4 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
 	for (i = 0; i < 4; i++)
 	{
-		int y = y0 + (i + 1) * TM_CH;
+		int y = y0 + i * TM_CH;
 		if (i == T.menu_sel)
 			mmb_gfx_box(x0, y, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-		term_put_str(x0 + TM_CW, y, items[i],
-			     i == T.menu_sel ? TM_SEL_FG : TM_MENU_FG);
+		term_put_hot(x0 + TM_CW, y, items[i], items[i][0],
+			     i == T.menu_sel ? TM_SEL_FG : TM_MENU_FG, TM_HOT);
 	}
 }
 
@@ -728,7 +757,11 @@ static void term_draw(void)
 		for (r = lo; r <= hi; r++)
 			term_draw_row(r);
 	}
-	term_draw_status();
+	if (T.menu)
+		term_draw_status();
+	else
+		mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
+			    TM_BG, 1, (int)TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	term_copy_pane();
@@ -829,11 +862,23 @@ static void term_echo_byte(unsigned char b)
 	if (!term_want_echo())
 		return;
 	if (b == 8 || b == 127)
-		pane_rubout();
+	{
+		if (T.echo_typed > 0)
+		{
+			T.echo_typed--;
+			pane_rubout();
+		}
+	}
 	else if (b == '\r' || b == '\n')
+	{
+		T.echo_typed = 0;
 		pane_newline();
+	}
 	else if (b >= 32)
+	{
+		T.echo_typed++;
 		pane_put((char)b);
+	}
 }
 
 static void term_echo_flush(void)
@@ -2690,9 +2735,11 @@ const char *mmb_term_key(char c)
 	if (c == 8 || c == 127)
 	{
 		if (T.linelen > 0)
+		{
 			T.linelen--;
-		term_echo_byte(8);
-		term_echo_flush();
+			term_echo_byte(8);
+			term_echo_flush();
+		}
 		return "";
 	}
 	if ((unsigned char)c < 32)
