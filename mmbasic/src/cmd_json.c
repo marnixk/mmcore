@@ -1,5 +1,6 @@
 #include "mmb_priv.h"
 #include "cJSON.h"
+#include <stdio.h>
 
 static void *json_malloc(size_t n)
 {
@@ -153,5 +154,377 @@ mmb_val mmb_json_query(const char *js, const char *path)
 	item = json_walk(parse, path);
 	json_item_text(item, buf, sizeof(buf));
 	cJSON_Delete(parse);
+	return mmb_str_val(buf);
+}
+
+static int mem_esz(const mmb_smem *m)
+{
+	if (m->type == T_INT || m->type == T_NUM)
+		return 8;
+	if (m->type == T_STR)
+		return m->size + 1;
+	if (m->type == T_STRUCT && m->size >= 0 && m->size < G.nstruct)
+		return G.sdef[m->size].total;
+	return 0;
+}
+
+static void json_pack_str(unsigned char *p, int max, const char *s)
+{
+	int n = 0;
+
+	if (!s)
+		s = "";
+	while (s[n] && n < max)
+		n++;
+	p[0] = (unsigned char)n;
+	if (n)
+		memcpy(p + 1, s, (unsigned)n);
+	if (n < max)
+		memset(p + 1 + n, 0, (unsigned)(max - n));
+}
+
+static void json_unpack_str(const unsigned char *p, int max, char *out, int outsz)
+{
+	int n = p[0];
+
+	if (n > max)
+		n = max;
+	if (n > outsz - 1)
+		n = outsz - 1;
+	if (n)
+		memcpy(out, p + 1, (unsigned)n);
+	out[n] = 0;
+}
+
+static int64_t json_to_int(const cJSON *item)
+{
+	double x = item->valuedouble;
+
+	if (x != x || x >= 9223372036854775808.0 || x <= -9223372036854775808.0)
+		mmb_error("?OVERFLOW");
+	return (int64_t)x;
+}
+
+static void json_fill_value(unsigned char *p, const mmb_smem *m, const cJSON *item);
+static void json_fill_struct(unsigned char *rec, int sid, const cJSON *obj);
+
+static void json_fill_value(unsigned char *p, const mmb_smem *m, const cJSON *item)
+{
+	if (!item || cJSON_IsNull(item) || cJSON_IsInvalid(item))
+		return;
+	if (m->type == T_INT)
+	{
+		int64_t x;
+
+		if (cJSON_IsBool(item))
+			x = cJSON_IsTrue(item) ? 1 : 0;
+		else if (cJSON_IsNumber(item))
+			x = json_to_int(item);
+		else
+			return;
+		memcpy(p, &x, 8);
+		return;
+	}
+	if (m->type == T_NUM)
+	{
+		double x;
+
+		if (cJSON_IsBool(item))
+			x = cJSON_IsTrue(item) ? 1.0 : 0.0;
+		else if (cJSON_IsNumber(item))
+			x = item->valuedouble;
+		else
+			return;
+		memcpy(p, &x, 8);
+		return;
+	}
+	if (m->type == T_STR)
+	{
+		if (cJSON_IsString(item) && item->valuestring)
+			json_pack_str(p, m->size, item->valuestring);
+		return;
+	}
+	if (m->type == T_STRUCT && cJSON_IsObject(item))
+		json_fill_struct(p, m->size, item);
+}
+
+static void json_fill_struct(unsigned char *rec, int sid, const cJSON *obj)
+{
+	mmb_sdef *d;
+	int i;
+
+	if (!rec || sid < 0 || sid >= G.nstruct || !cJSON_IsObject(obj))
+		return;
+	d = &G.sdef[sid];
+	for (i = 0; i < d->nmem; i++)
+	{
+		mmb_smem *m = &d->mem[i];
+		const cJSON *item = cJSON_GetObjectItem(obj, m->name);
+		int esz, n, j;
+
+		if (!item || cJSON_IsNull(item))
+			continue;
+		esz = mem_esz(m);
+		if (esz <= 0)
+			continue;
+		if (m->dims > 0)
+		{
+			if (!cJSON_IsArray(item))
+				continue;
+			n = cJSON_GetArraySize(item);
+			if (n > m->count)
+				n = m->count;
+			for (j = 0; j < n; j++)
+				json_fill_value(rec + m->offset + j * esz, m,
+						cJSON_GetArrayItem(item, j));
+		}
+		else
+			json_fill_value(rec + m->offset, m, item);
+	}
+}
+
+void mmb_cmd_json_parse(void)
+{
+	mmb_val js;
+	char name[MMB_MAX_NAME];
+	int nidx, idx[MMB_MAX_DIMS], t, eoff;
+	mmb_var *v;
+	cJSON *root;
+
+	js = mmb_expr();
+	if (js.type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	mmb_skip_sp();
+	mmb_expect(',');
+	mmb_skip_sp();
+	G.acc_on = 0;
+	t = mmb_parse_var_ref(name, &nidx, idx);
+	v = mmb_find_var(name, t, 0, nidx, idx);
+	if (!v || v->type != T_STRUCT)
+		mmb_error("?TYPE MISMATCH");
+	if (G.acc_on)
+		mmb_error("?TYPE MISMATCH");
+	eoff = nidx ? mmb_var_offset(v, nidx, idx) : 0;
+	json_hooks();
+	root = cJSON_Parse(js.s ? js.s : "");
+	if (!root)
+		mmb_error("?JSON");
+	if (v->dims > 0 && nidx == 0)
+	{
+		if (cJSON_IsArray(root))
+		{
+			int n = cJSON_GetArraySize(root);
+			int i;
+
+			if (n > v->size)
+				n = v->size;
+			for (i = 0; i < n; i++)
+				json_fill_struct(mmb_struct_elem(v, i), v->struct_idx,
+						 cJSON_GetArrayItem(root, i));
+		}
+	}
+	else
+		json_fill_struct(mmb_struct_elem(v, eoff), v->struct_idx, root);
+	cJSON_Delete(root);
+}
+
+static int emit_ch(char *dst, int cap, int n, char c)
+{
+	if (n < 0 || n + 1 >= cap)
+		return -1;
+	dst[n] = c;
+	return n + 1;
+}
+
+static int emit_str(char *dst, int cap, int n, const char *s)
+{
+	if (n < 0)
+		return -1;
+	while (*s)
+	{
+		n = emit_ch(dst, cap, n, *s++);
+		if (n < 0)
+			return -1;
+	}
+	return n;
+}
+
+static int emit_quoted(char *dst, int cap, int n, const char *s)
+{
+	n = emit_ch(dst, cap, n, '"');
+	if (n < 0)
+		return -1;
+	if (!s)
+		s = "";
+	while (*s)
+	{
+		unsigned char c = (unsigned char)*s++;
+		char hex[8];
+		const char *esc = 0;
+
+		if (c == '"' || c == '\\')
+		{
+			n = emit_ch(dst, cap, n, '\\');
+			if (n < 0)
+				return -1;
+			n = emit_ch(dst, cap, n, (char)c);
+		}
+		else if (c == '\n')
+			esc = "\\n";
+		else if (c == '\r')
+			esc = "\\r";
+		else if (c == '\t')
+			esc = "\\t";
+		else if (c < 32)
+		{
+			sprintf(hex, "\\u%04x", c);
+			n = emit_str(dst, cap, n, hex);
+		}
+		else
+			n = emit_ch(dst, cap, n, (char)c);
+		if (esc)
+			n = emit_str(dst, cap, n, esc);
+		if (n < 0)
+			return -1;
+	}
+	return emit_ch(dst, cap, n, '"');
+}
+
+static int emit_i64(char *dst, int cap, int n, int64_t v)
+{
+	char tmp[24];
+	int t = 0;
+	uint64_t u;
+
+	if (v < 0)
+	{
+		n = emit_ch(dst, cap, n, '-');
+		if (n < 0)
+			return -1;
+		u = (uint64_t)(-(v + 1)) + 1;
+	}
+	else
+		u = (uint64_t)v;
+	if (u == 0)
+		tmp[t++] = '0';
+	while (u)
+	{
+		tmp[t++] = (char)('0' + (u % 10));
+		u /= 10;
+	}
+	while (t)
+	{
+		n = emit_ch(dst, cap, n, tmp[--t]);
+		if (n < 0)
+			return -1;
+	}
+	return n;
+}
+
+static int emit_num(char *dst, int cap, int n, double x)
+{
+	char tmp[48];
+
+	sprintf(tmp, "%1.15g", x);
+	return emit_str(dst, cap, n, tmp);
+}
+
+static int emit_struct(char *dst, int cap, int n, const unsigned char *rec, int sid);
+
+static int emit_value(char *dst, int cap, int n, const unsigned char *p, const mmb_smem *m)
+{
+	if (m->type == T_INT)
+	{
+		int64_t x = 0;
+		memcpy(&x, p, 8);
+		return emit_i64(dst, cap, n, x);
+	}
+	if (m->type == T_NUM)
+	{
+		double x = 0;
+		memcpy(&x, p, 8);
+		return emit_num(dst, cap, n, x);
+	}
+	if (m->type == T_STR)
+	{
+		char tmp[MMB_MAX_STR + 1];
+		json_unpack_str(p, m->size, tmp, sizeof(tmp));
+		return emit_quoted(dst, cap, n, tmp);
+	}
+	if (m->type == T_STRUCT)
+		return emit_struct(dst, cap, n, p, m->size);
+	return n;
+}
+
+static int emit_struct(char *dst, int cap, int n, const unsigned char *rec, int sid)
+{
+	mmb_sdef *d;
+	int i, first = 1;
+
+	if (!rec || sid < 0 || sid >= G.nstruct)
+		return n;
+	d = &G.sdef[sid];
+	n = emit_ch(dst, cap, n, '{');
+	if (n < 0)
+		return -1;
+	for (i = 0; i < d->nmem; i++)
+	{
+		mmb_smem *m = &d->mem[i];
+		int esz = mem_esz(m);
+		int j;
+
+		if (esz <= 0)
+			continue;
+		if (!first)
+		{
+			n = emit_ch(dst, cap, n, ',');
+			if (n < 0)
+				return -1;
+		}
+		first = 0;
+		n = emit_quoted(dst, cap, n, m->name);
+		if (n < 0)
+			return -1;
+		n = emit_ch(dst, cap, n, ':');
+		if (n < 0)
+			return -1;
+		if (m->dims > 0)
+		{
+			n = emit_ch(dst, cap, n, '[');
+			if (n < 0)
+				return -1;
+			for (j = 0; j < m->count; j++)
+			{
+				if (j)
+				{
+					n = emit_ch(dst, cap, n, ',');
+					if (n < 0)
+						return -1;
+				}
+				n = emit_value(dst, cap, n, rec + m->offset + j * esz, m);
+				if (n < 0)
+					return -1;
+			}
+			n = emit_ch(dst, cap, n, ']');
+		}
+		else
+			n = emit_value(dst, cap, n, rec + m->offset, m);
+		if (n < 0)
+			return -1;
+	}
+	return emit_ch(dst, cap, n, '}');
+}
+
+mmb_val mmb_json_stringify(mmb_val v)
+{
+	char buf[MMB_MAX_STR + 2];
+	int n;
+
+	if (v.type != T_STRUCT || !v.blob)
+		mmb_error("?TYPE MISMATCH");
+	n = emit_struct(buf, MMB_MAX_STR + 1, 0, v.blob, v.struct_idx);
+	if (n < 0)
+		mmb_error("?OVERFLOW");
+	buf[n] = 0;
 	return mmb_str_val(buf);
 }

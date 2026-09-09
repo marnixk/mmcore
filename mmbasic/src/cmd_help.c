@@ -32,7 +32,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE VSYNC_WAIT CLEAR END\n"
-	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT STRUCT\n"
+	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT STRUCT JSON_PARSE\n"
 	"  SETTICK FACTORY_RESET OPTIONS CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
 	"Prompt\n"
@@ -735,10 +735,39 @@ static const char kHelpJson[] =
 	"  main.temp   weather[0].description\n"
 	"Missing keys, null, objects and arrays return \"\".\n"
 	"Invalid JSON is an error.\n"
+	"HELP JSON_PARSE and JSON_STRINGIFY$ map a TYPE.\n"
 	"\n"
 	"Example:\n"
 	"  PRINT VAL(JSON$(js$, \"main.temp\"))\n"
 	"  PRINT JSON$(js$, \"name\")";
+
+static const char kHelpJsonParse[] =
+	"JSON_PARSE json$, var\n"
+	"\n"
+	"Fill a TYPE variable from a JSON STRING (255).\n"
+	"Object keys match member names case-insensitively.\n"
+	"Missing keys, extra keys and null leave members\n"
+	"unchanged. JSON bool becomes INTEGER 0 or 1.\n"
+	"JSON number to INTEGER truncates toward zero;\n"
+	"overflow is an error. STRING members truncate to\n"
+	"LENGTH. Nested objects fill nested TYPEs. JSON\n"
+	"arrays fill array members (extra ignored).\n"
+	"\n"
+	"Example:\n"
+	"  JSON_PARSE js$, w\n"
+	"  PRINT w.temp";
+
+static const char kHelpJsonStringify[] =
+	"JSON_STRINGIFY$(var)\n"
+	"\n"
+	"Turn a TYPE variable into a JSON STRING (255).\n"
+	"Keys are the member names. Integers have no\n"
+	"decimal. Longer than 255 characters is an error.\n"
+	"JSON$ can query the result.\n"
+	"\n"
+	"Example:\n"
+	"  s$ = JSON_STRINGIFY$(w)\n"
+	"  PRINT JSON$(s$, \"temp\")";
 
 static const char kHelpOption[] =
 	"OPTION setting ...\n"
@@ -1504,6 +1533,7 @@ static const char kHelpFunctions[] =
 	"  MM.VER MM.DEVICE$ MM.CMDLINE$\n"
 	"  STRUCT() SIZEOF|OFFSET|TYPE|FIND\n"
 	"  JSON$(json$, path$)\n"
+	"  JSON_STRINGIFY$(var)\n"
 	"  DATE$= and TIME$= set the clock strings.\n"
 	"\n"
 	"OPTION ANGLE DEGREES makes SIN/COS/TAN/ATN use degrees.\n"
@@ -1676,6 +1706,8 @@ static const help_topic kTopics[] = {
 	{ "INPUT",       HELP_CMD,  kHelpInput },
 	{ "INPUT$",      HELP_CMD,  kHelpInputDollar },
 	{ "JSON$",       HELP_CMD,  kHelpJson },
+	{ "JSON_PARSE",  HELP_CMD,  kHelpJsonParse },
+	{ "JSON_STRINGIFY$", HELP_CMD, kHelpJsonStringify },
 	{ "OPTION",      HELP_CMD,  kHelpOption },
 	{ "OPTIONS",     HELP_CMD,  kHelpOptions },
 	{ "FACTORY_RESET", HELP_CMD, kHelpFactoryReset },
@@ -1804,6 +1836,8 @@ static const struct {
 	{ "INPUT$",       "INPUT$" },
 	{ "JSON$",        "JSON$" },
 	{ "JSON",         "JSON$" },
+	{ "JSON_PARSE",   "JSON_PARSE" },
+	{ "JSON_STRINGIFY$", "JSON_STRINGIFY$" },
 	{ "UCASE$",       "FUNCTIONS" },
 	{ "LCASE$",       "FUNCTIONS" },
 	{ "HEX$",         "FUNCTIONS" },
