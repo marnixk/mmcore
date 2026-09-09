@@ -24,18 +24,12 @@
 #define TM_ESC_BUF  16
 #define TM_ANSI_ARGS 8
 
-#define TM_BG       0x0C1016u
-#define TM_FG       0xD4CFC4u
-#define TM_DIM      0x8A8680u
-
 #define TM_SCROLL_MS    100
 #define TM_DEMO_MIN_MS  120
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
 #define TM_CONNECT_MS   25000
 #define TM_RECV_MS      20
-#define TM_MENU_BG      0x243040u
-#define TM_MENU_HI      0x3A6EA5u
 #define TM_BM_MAX       32
 #define TM_BM_NAME      40
 #define TM_DLG_NONE     0
@@ -133,6 +127,49 @@ typedef struct {
 
 static term_bm g_bm[TM_BM_MAX];
 static int g_bm_n;
+
+static const mmb_ed_theme *term_th(void)
+{
+	return mmb_editor_theme();
+}
+
+static unsigned term_vga_rgb(int idx)
+{
+	static const unsigned pal[16] = {
+		0x000000u, 0xAA0000u, 0x00AA00u, 0xAA5500u,
+		0x0000AAu, 0xAA00AAu, 0x00AAAAu, 0xAAAAAAu,
+		0x555555u, 0xFF5555u, 0x55FF55u, 0xFFFF55u,
+		0x5555FFu, 0xFF55FFu, 0x55FFFFu, 0xFFFFFFu
+	};
+	if (idx < 0)
+		idx = 0;
+	if (idx > 15)
+		idx = 15;
+	return pal[idx];
+}
+
+static unsigned term_rgb(unsigned char idx)
+{
+	const unsigned *pal = term_th()->pal;
+	int i = (int)idx & 15;
+
+	if (!pal)
+		return term_vga_rgb(i);
+	return pal[i] & 0xFFFFFFu;
+}
+
+#define TM_BG      term_rgb(term_th()->edit_bg)
+#define TM_FG      term_rgb(term_th()->edit_fg)
+#define TM_DIM     term_rgb(term_th()->cmt_fg)
+#define TM_MENU_BG term_rgb(term_th()->menu_bg)
+#define TM_MENU_FG term_rgb(term_th()->menu_fg)
+#define TM_MENU_HI term_rgb(term_th()->sel_bg)
+#define TM_SEL_FG  term_rgb(term_th()->sel_fg)
+#define TM_SEL_BG  term_rgb(term_th()->sel_bg)
+#define TM_DLG_FG  term_rgb(term_th()->dlg_fg)
+#define TM_DLG_BG  term_rgb(term_th()->dlg_bg)
+#define TM_SH_FG   term_rgb(term_th()->sh_fg)
+#define TM_SH_BG   term_rgb(term_th()->sh_bg)
 
 static void term_draw(void);
 static void term_draw_dlg(void);
@@ -551,6 +588,8 @@ static void term_draw_status(void)
 		strncpy(right, T.net_msg, sizeof(right) - 1);
 	else if (T.demo)
 		strncpy(right, "demo", sizeof(right) - 1);
+	else if (!T.host[0] && !T.tcp && !T.connecting)
+		strncpy(right, "Disconnected", sizeof(right) - 1);
 	else if (T.host[0])
 		fmt_hostport(right, sizeof(right));
 	{
@@ -597,13 +636,14 @@ static void term_draw_menu(void)
 	items[2] = term_width_label();
 	items[3] = "Bookmarks";
 	mmb_gfx_box(x0, y0, w, 6 * TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_put_str(x0 + TM_CW, y0, "File", TM_FG);
+	term_put_str(x0 + TM_CW, y0, "File", TM_MENU_FG);
 	for (i = 0; i < 4; i++)
 	{
 		int y = y0 + (i + 1) * TM_CH;
 		if (i == T.menu_sel)
 			mmb_gfx_box(x0, y, w, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-		term_put_str(x0 + TM_CW, y, items[i], TM_FG);
+		term_put_str(x0 + TM_CW, y, items[i],
+			     i == T.menu_sel ? TM_SEL_FG : TM_MENU_FG);
 	}
 }
 
@@ -1140,6 +1180,49 @@ static void term_bm_load(void)
 	bm_sort();
 }
 
+static void term_dlg_hline(int x0, int y0, int cw, unsigned left, unsigned mid,
+			   unsigned right)
+{
+	int i;
+	unsigned brd_fg = TM_MENU_FG;
+
+	mmb_gfx_glyph_cp437(x0, y0, left, brd_fg);
+	for (i = 1; i < cw - 1; i++)
+		mmb_gfx_glyph_cp437(x0 + i * TM_CW, y0, mid, brd_fg);
+	mmb_gfx_glyph_cp437(x0 + (cw - 1) * TM_CW, y0, right, brd_fg);
+}
+
+static void term_dlg_frame(int col, int row, int cw, int ch, const char *title)
+{
+	int x0, y0, w, h, i, tw, tx;
+	unsigned brd_fg = TM_MENU_FG;
+
+	x0 = (T.pane_left + col) * TM_CW;
+	y0 = row * TM_CH;
+	w = cw * TM_CW;
+	h = ch * TM_CH;
+	mmb_gfx_box(x0, y0, w, h, TM_DLG_BG, 1, (int)TM_DLG_BG);
+	term_dlg_hline(x0, y0, cw, 0xDAu, 0xC4u, 0xBFu);
+	term_dlg_hline(x0, y0 + (ch - 1) * TM_CH, cw, 0xC0u, 0xC4u, 0xD9u);
+	for (i = 1; i < ch - 1; i++)
+	{
+		mmb_gfx_glyph_cp437(x0, y0 + i * TM_CH, 0xB3u, brd_fg);
+		mmb_gfx_glyph_cp437(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, 0xB3u,
+				    brd_fg);
+	}
+	mmb_gfx_box(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG, 1,
+		    (int)TM_SH_BG);
+	mmb_gfx_box(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG, 1, (int)TM_SH_BG);
+	if (title && title[0])
+	{
+		tw = (int)strlen(title);
+		tx = col + (cw - tw) / 2;
+		if (tx < col + 1)
+			tx = col + 1;
+		term_put_str((T.pane_left + tx) * TM_CW, y0, title, brd_fg);
+	}
+}
+
 static void dlg_text(int col, int row, const char *s, int hi)
 {
 	int x, y, n;
@@ -1150,21 +1233,16 @@ static void dlg_text(int col, int row, const char *s, int hi)
 	x = (T.pane_left + col) * TM_CW;
 	y = row * TM_CH;
 	if (hi && n > 0)
-		mmb_gfx_box(x, y, n * TM_CW, TM_CH, TM_MENU_HI, 1, (int)TM_MENU_HI);
-	term_put_str(x, y, s, TM_FG);
+		mmb_gfx_box(x, y, n * TM_CW, TM_CH, TM_SEL_BG, 1, (int)TM_SEL_BG);
+	term_put_str(x, y, s, hi ? TM_SEL_FG : TM_DLG_FG);
 }
 
 static void term_draw_dlg_list(void)
 {
-	int x0, y0, w, h, i, row;
+	int i, row;
 	const char *btns[4];
 
-	x0 = (T.pane_left + 8) * TM_CW;
-	y0 = 2 * TM_CH;
-	w = 48 * TM_CW;
-	h = 18 * TM_CH;
-	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	dlg_text(10, 2, "Bookmarks", 0);
+	term_dlg_frame(8, 2, 48, 18, " Bookmarks ");
 	if (T.dlg_sel < T.dlg_top)
 		T.dlg_top = T.dlg_sel;
 	if (T.dlg_sel >= T.dlg_top + TM_LIST_VIEW)
@@ -1194,18 +1272,13 @@ static void term_draw_dlg_list(void)
 
 static void term_draw_dlg_edit(void)
 {
-	int x0, y0, w, h;
 	char port[8];
 	char echo[16];
 	char box[16];
 	const char *save;
 
-	x0 = (T.pane_left + 8) * TM_CW;
-	y0 = 4 * TM_CH;
-	w = 48 * TM_CW;
-	h = 14 * TM_CH;
-	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	dlg_text(10, 4, T.dlg_edit_idx < 0 ? "New bookmark" : "Edit bookmark", 0);
+	term_dlg_frame(8, 4, 48, 14,
+		       T.dlg_edit_idx < 0 ? " New bookmark " : " Edit bookmark ");
 	dlg_text(10, 6, "Name", 0);
 	dlg_text(16, 6, T.dlg_name[0] ? T.dlg_name : "_", T.dlg_focus == 0);
 	dlg_text(10, 8, "Host", 0);
@@ -1225,15 +1298,9 @@ static void term_draw_dlg_edit(void)
 
 static void term_draw_dlg_del(void)
 {
-	int x0, y0, w, h;
 	const char *nm;
 
-	x0 = (T.pane_left + 12) * TM_CW;
-	y0 = 8 * TM_CH;
-	w = 40 * TM_CW;
-	h = 7 * TM_CH;
-	mmb_gfx_box(x0, y0, w, h, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	dlg_text(14, 8, "Delete bookmark?", 0);
+	term_dlg_frame(12, 8, 40, 7, " Delete bookmark? ");
 	nm = (T.dlg_sel >= 0 && T.dlg_sel < g_bm_n && g_bm[T.dlg_sel].name[0])
 		     ? g_bm[T.dlg_sel].name
 		     : "";
@@ -2340,31 +2407,36 @@ static void demo_emit_line(void)
 void mmb_cmd_term(void)
 {
 	mmb_val host, portv;
-	int port, i;
+	int port, i, no_args;
 
 	mmb_skip_sp();
-	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
-		mmb_syntax();
-	host = mmb_expr();
-	if (host.type != T_STR)
-		mmb_syntax();
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	mmb_skip_sp();
-	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
-		mmb_syntax();
-	portv = mmb_expr();
-	if (portv.type != T_INT && portv.type != T_NUM)
-		mmb_syntax();
-	port = (int)mmb_as_int(portv);
-	if (port < 1 || port > 65535)
-		mmb_error("?SYNTAX ERROR");
+	no_args = (*G.p == 0 || *G.p == ':' || *G.p == '\'');
+	if (!no_args)
+	{
+		host = mmb_expr();
+		if (host.type != T_STR)
+			mmb_syntax();
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			mmb_syntax();
+		portv = mmb_expr();
+		if (portv.type != T_INT && portv.type != T_NUM)
+			mmb_syntax();
+		port = (int)mmb_as_int(portv);
+		if (port < 1 || port > 65535)
+			mmb_error("?SYNTAX ERROR");
+	}
 
 	memset(&T, 0, sizeof(T));
-	strncpy(T.host, host.s, sizeof(T.host) - 1);
-	T.host[sizeof(T.host) - 1] = 0;
-	T.port = port;
+	if (!no_args)
+	{
+		strncpy(T.host, host.s, sizeof(T.host) - 1);
+		T.host[sizeof(T.host) - 1] = 0;
+		T.port = port;
+	}
 	T.saved_mode = G.gfx.mode;
 	T.saved_bits = G.gfx.bits;
 	T.demo = (strcasecmp(T.host, "demo") == 0 ||
@@ -2374,7 +2446,7 @@ void mmb_cmd_term(void)
 	term_reset_pen();
 
 	ser("TERM\r\n");
-	if (!T.demo)
+	if (!T.demo && T.host[0])
 	{
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)
 		{
@@ -2416,6 +2488,11 @@ void mmb_cmd_term(void)
 	else if (T.connecting)
 	{
 		pane_puts("Connecting...");
+		pane_newline();
+	}
+	else if (no_args)
+	{
+		pane_puts("Disconnected - Alt+F for Bookmarks");
 		pane_newline();
 	}
 	else if (T.demo)
