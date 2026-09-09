@@ -175,12 +175,125 @@ int mmb_try_function(mmb_val *out)
 	int n = 0, ok;
 	unsigned col;
 	const char *save = G.p;
+	static void *fun_tab[512];
+	static int finited;
 
-	if ((unsigned char)*G.p != 0x80)
+	if (!finited)
+	{
+		fun_tab[mmb_kw_id("RGB")] = &&lbl_rgb;
+		fun_tab[mmb_kw_id("PIXEL")] = &&lbl_pixel;
+		fun_tab[mmb_kw_id("LEN")] = &&lbl_len;
+		fun_tab[mmb_kw_id("ASC")] = &&lbl_asc;
+		fun_tab[mmb_kw_id("CHR$")] = &&lbl_chr;
+		fun_tab[mmb_kw_id("STR$")] = &&lbl_str;
+		fun_tab[mmb_kw_id("VAL")] = &&lbl_val;
+		fun_tab[mmb_kw_id("LEFT$")] = &&lbl_left;
+		fun_tab[mmb_kw_id("RIGHT$")] = &&lbl_right;
+		fun_tab[mmb_kw_id("MID$")] = &&lbl_mid;
+		fun_tab[mmb_kw_id("UCASE$")] = &&lbl_ucase;
+		fun_tab[mmb_kw_id("LCASE$")] = &&lbl_lcase;
+		fun_tab[mmb_kw_id("SPACE$")] = &&lbl_space;
+		fun_tab[mmb_kw_id("ABS")] = &&lbl_abs;
+		fun_tab[mmb_kw_id("INT")] = &&lbl_int;
+		fun_tab[mmb_kw_id("FIX")] = &&lbl_fix;
+		fun_tab[mmb_kw_id("CINT")] = &&lbl_cint;
+		fun_tab[mmb_kw_id("EVAL")] = &&lbl_eval;
+		fun_tab[mmb_kw_id("MATH")] = &&lbl_math;
+		fun_tab[mmb_kw_id("SQR")] = &&lbl_sqr;
+		fun_tab[mmb_kw_id("SQRT")] = &&lbl_sqr;
+		fun_tab[mmb_kw_id("SIN")] = &&lbl_sin;
+		fun_tab[mmb_kw_id("COS")] = &&lbl_cos;
+		fun_tab[mmb_kw_id("TAN")] = &&lbl_tan;
+		fun_tab[mmb_kw_id("ATN")] = &&lbl_atn;
+		fun_tab[mmb_kw_id("ATN2")] = &&lbl_atn;
+		fun_tab[mmb_kw_id("ATAN")] = &&lbl_atn;
+		fun_tab[mmb_kw_id("RND")] = &&lbl_rnd;
+		fun_tab[mmb_kw_id("MM.HRES")] = &&lbl_mmhres;
+		fun_tab[mmb_kw_id("MM.VRES")] = &&lbl_mmvres;
+		fun_tab[mmb_kw_id("MM.INFO$")] = &&lbl_mminfo;
+		fun_tab[mmb_kw_id("MM.INFO")] = &&lbl_mminfo;
+		fun_tab[mmb_kw_id("PLAYING")] = &&lbl_playing;
+		fun_tab[mmb_kw_id("EOF")] = &&lbl_eof;
+		fun_tab[mmb_kw_id("INSTR")] = &&lbl_instr;
+		fun_tab[mmb_kw_id("STRING$")] = &&lbl_string;
+		fun_tab[mmb_kw_id("HEX$")] = &&lbl_hex;
+		fun_tab[mmb_kw_id("OCT$")] = &&lbl_oct;
+		fun_tab[mmb_kw_id("BIN$")] = &&lbl_bin;
+		fun_tab[mmb_kw_id("DATE$")] = &&lbl_date;
+		fun_tab[mmb_kw_id("TIME$")] = &&lbl_time;
+		fun_tab[mmb_kw_id("INKEY$")] = &&lbl_inkey;
+		fun_tab[mmb_kw_id("KEYDOWN")] = &&lbl_keydown;
+		fun_tab[mmb_kw_id("TIMER")] = &&lbl_timer;
+		fun_tab[mmb_kw_id("LOF")] = &&lbl_lof;
+		fun_tab[mmb_kw_id("CWD$")] = &&lbl_cwd;
+		fun_tab[mmb_kw_id("INPUT$")] = &&lbl_input;
+		fun_tab[mmb_kw_id("ACOS")] = &&lbl_acos;
+		fun_tab[mmb_kw_id("ACS")] = &&lbl_acos;
+		fun_tab[mmb_kw_id("ASIN")] = &&lbl_asin;
+		fun_tab[mmb_kw_id("ASN")] = &&lbl_asin;
+		fun_tab[mmb_kw_id("LOC")] = &&lbl_loc;
+		fun_tab[mmb_kw_id("SGN")] = &&lbl_sgn;
+		fun_tab[mmb_kw_id("EXP")] = &&lbl_exp;
+		fun_tab[mmb_kw_id("LOG")] = &&lbl_log;
+		fun_tab[mmb_kw_id("PI")] = &&lbl_pi;
+		fun_tab[mmb_kw_id("DEG")] = &&lbl_deg;
+		fun_tab[mmb_kw_id("RAD")] = &&lbl_rad;
+		fun_tab[mmb_kw_id("POS")] = &&lbl_pos;
+		fun_tab[mmb_kw_id("CHOICE")] = &&lbl_choice;
+		fun_tab[mmb_kw_id("FORMAT$")] = &&lbl_format;
+		fun_tab[mmb_kw_id("BOUND")] = &&lbl_bound;
+		fun_tab[mmb_kw_id("TAB")] = &&lbl_tab;
+		fun_tab[mmb_kw_id("MM.VER")] = &&lbl_mmver;
+		fun_tab[mmb_kw_id("MM.DEVICE$")] = &&lbl_mmdev;
+		fun_tab[mmb_kw_id("MM.CMDLINE$")] = &&lbl_mmcmd;
+		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
+		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
+		finited = 1;
+	}
+	if ((unsigned char)*G.p == 0x80)
+	{
+		int id = (unsigned char)G.p[1] | ((unsigned char)G.p[2] << 8);
+		if (id > 0 && id < 512 && fun_tab[id])
+		{
+			G.p += 3;
+			mmb_skip_sp();
+			goto *fun_tab[id];
+		}
 		goto ident_tail;
+	}
+
+	{
+		const char *s2 = G.p;
+		char name[MMB_MAX_NAME];
+		int nn = 0, aid;
+		mmb_skip_sp();
+		if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+		{
+			while (mmb_is_ident(*G.p) && nn < MMB_MAX_NAME - 2)
+			{
+				char ch = *G.p++;
+				if (ch >= 'a' && ch <= 'z')
+					ch = (char)(ch - 32);
+				name[nn++] = ch;
+			}
+			if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+				name[nn++] = *G.p++;
+			name[nn] = 0;
+			aid = mmb_kw_id(name);
+			if (aid > 0 && aid < 512 && fun_tab[aid])
+			{
+				mmb_skip_sp();
+				goto *fun_tab[aid];
+			}
+			G.p = s2;
+			goto ident_tail;
+		}
+		G.p = s2;
+	}
 
 	if (mmb_match("RGB"))
 	{
+	lbl_rgb:
 		call_args(a, 4, &n);
 		if (n == 1 && a[0].type == T_STR)
 		{
@@ -207,6 +320,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("PIXEL"))
 	{
+	lbl_pixel:
 		int x, y, page = MMB_PAGE_CUR;
 		mmb_skip_sp();
 		if (*G.p != '(')
@@ -235,6 +349,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LEN"))
 	{
+	lbl_len:
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
@@ -243,6 +358,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("ASC"))
 	{
+	lbl_asc:
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
@@ -251,6 +367,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("CHR$"))
 	{
+	lbl_chr:
 		char s[2];
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -262,6 +379,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("STR$"))
 	{
+	lbl_str:
 		char buf[48];
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -278,6 +396,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("VAL"))
 	{
+	lbl_val:
 		const char *s;
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
@@ -316,6 +435,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LEFT$"))
 	{
+	lbl_left:
 		int k, i;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 2, &n);
@@ -332,6 +452,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("RIGHT$"))
 	{
+	lbl_right:
 		int k, i, len;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 2, &n);
@@ -351,6 +472,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("MID$"))
 	{
+	lbl_mid:
 		int start, num, i, len;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 3, &n);
@@ -371,6 +493,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("UCASE$"))
 	{
+	lbl_ucase:
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
@@ -383,6 +506,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LCASE$"))
 	{
+	lbl_lcase:
 		int i;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 1, &n);
@@ -398,6 +522,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("SPACE$"))
 	{
+	lbl_space:
 		int k, i;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 1, &n);
@@ -416,6 +541,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("ABS"))
 	{
+	lbl_abs:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -427,6 +553,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("INT"))
 	{
+	lbl_int:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -435,6 +562,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("FIX"))
 	{
+	lbl_fix:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -443,6 +571,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("CINT"))
 	{
+	lbl_cint:
 		double x;
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -454,6 +583,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("EVAL"))
 	{
+	lbl_eval:
 		char buf[MMB_MAX_STR + 1];
 		const char *savep;
 
@@ -474,11 +604,13 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("MATH"))
 	{
+	lbl_math:
 		G.p++;
 		return mmb_try_math_fn(out);
 	}
 	if (mmb_match("SQR") || mmb_match("SQRT"))
 	{
+	lbl_sqr:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -487,6 +619,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("SIN"))
 	{
+	lbl_sin:
 		double x;
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -499,6 +632,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("COS"))
 	{
+	lbl_cos:
 		double x;
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -511,6 +645,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("TAN"))
 	{
+	lbl_tan:
 		double x;
 		call_args(a, 1, &n);
 		if (n != 1)
@@ -523,6 +658,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("ATN") || mmb_match("ATN2") || mmb_match("ATAN"))
 	{
+	lbl_atn:
 		double x;
 		call_args(a, 2, &n);
 		if (n == 2)
@@ -540,6 +676,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("RND"))
 	{
+	lbl_rnd:
 		if (G.rnd_seed == 0)
 			G.rnd_seed = 0x12345678u;
 		mmb_skip_sp();
@@ -555,16 +692,19 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("MM.HRES"))
 	{
+	lbl_mmhres:
 		*out = mmb_int_val(G.gfx.w);
 		return 1;
 	}
 	if (mmb_match("MM.VRES"))
 	{
+	lbl_mmvres:
 		*out = mmb_int_val(G.gfx.h);
 		return 1;
 	}
 	if (mmb_match("MM.INFO$") || mmb_match("MM.INFO"))
 	{
+	lbl_mminfo:
 		call_args(a, 2, &n);
 		if (n >= 1)
 		{
@@ -597,6 +737,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("PLAYING"))
 	{
+	lbl_playing:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -608,6 +749,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("EOF"))
 	{
+	lbl_eof:
 		int fn;
 		mmb_skip_sp();
 		mmb_expect('(');
@@ -627,6 +769,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("INSTR"))
 	{
+	lbl_instr:
 		int start = 1, i, j, len, nlen;
 		char *hay = "", *ndl = "";
 		call_args(a, 3, &n);
@@ -672,6 +815,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("STRING$"))
 	{
+	lbl_string:
 		int k, i;
 		char b[MMB_MAX_STR + 1];
 		char ch = ' ';
@@ -695,6 +839,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("HEX$"))
 	{
+	lbl_hex:
 		char b[32];
 		int64_t v;
 		int i, nhex;
@@ -726,6 +871,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("OCT$"))
 	{
+	lbl_oct:
 		char b[32];
 		char *p;
 		int64_t v;
@@ -749,6 +895,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("BIN$"))
 	{
+	lbl_bin:
 		char b[66];
 		int64_t v;
 		int i, nb;
@@ -778,18 +925,21 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("DATE$"))
 	{
+	lbl_date:
 		mmb_clock_refresh();
 		*out = mmb_str_val(G.date_s[0] ? G.date_s : "1-1-26");
 		return 1;
 	}
 	if (mmb_match("TIME$"))
 	{
+	lbl_time:
 		mmb_clock_refresh();
 		*out = mmb_str_val(G.time_s[0] ? G.time_s : "12:00:00");
 		return 1;
 	}
 	if (mmb_match("INKEY$"))
 	{
+	lbl_inkey:
 		int c;
 		char b[2];
 		mmb_skip_sp();
@@ -811,6 +961,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("KEYDOWN"))
 	{
+	lbl_keydown:
 		int narg = 0;
 		call_args(a, 1, &narg);
 		*out = mmb_int_val(mmb_keydown_get(narg ? (int)mmb_as_int(a[0]) : 0));
@@ -818,6 +969,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("TIMER"))
 	{
+	lbl_timer:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -829,6 +981,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LOF"))
 	{
+	lbl_lof:
 		int fn, sz;
 		mmb_skip_sp();
 		mmb_expect('(');
@@ -845,6 +998,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("CWD$"))
 	{
+	lbl_cwd:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -856,6 +1010,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("INPUT$"))
 	{
+	lbl_input:
 		int fn, nch = 0;
 		char b[MMB_MAX_STR + 1];
 		call_args(a, 2, &n);
@@ -884,6 +1039,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("ACOS") || mmb_match("ACS"))
 	{
+	lbl_acos:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -897,6 +1053,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("ASIN") || mmb_match("ASN"))
 	{
+	lbl_asin:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -910,6 +1067,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("MAX"))
 	{
+	lbl_max:
 		call_args(a, 8, &n);
 		if (n < 1)
 			mmb_syntax();
@@ -925,6 +1083,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("MIN"))
 	{
+	lbl_min:
 		call_args(a, 8, &n);
 		if (n < 1)
 			mmb_syntax();
@@ -940,6 +1099,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LOC"))
 	{
+	lbl_loc:
 		int fn;
 		mmb_skip_sp();
 		mmb_expect('(');
@@ -955,6 +1115,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("SGN"))
 	{
+	lbl_sgn:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -966,6 +1127,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("EXP"))
 	{
+	lbl_exp:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -974,6 +1136,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("LOG"))
 	{
+	lbl_log:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -982,6 +1145,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("PI"))
 	{
+	lbl_pi:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -993,6 +1157,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("DEG"))
 	{
+	lbl_deg:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -1001,6 +1166,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("RAD"))
 	{
+	lbl_rad:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -1009,6 +1175,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("POS"))
 	{
+	lbl_pos:
 		call_args(a, 1, &n);
 		(void)n;
 		*out = mmb_int_val(1);
@@ -1016,6 +1183,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("CHOICE"))
 	{
+	lbl_choice:
 		call_args(a, 3, &n);
 		if (n != 3)
 			mmb_syntax();
@@ -1024,6 +1192,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("FORMAT$"))
 	{
+	lbl_format:
 		call_args(a, 2, &n);
 		if (n < 1)
 			mmb_syntax();
@@ -1062,6 +1231,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("BOUND"))
 	{
+	lbl_bound:
 		char name[MMB_MAX_NAME];
 		int dim = 1, i;
 		mmb_var *v;
@@ -1102,6 +1272,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (match_fun("TAB"))
 	{
+	lbl_tab:
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
@@ -1122,6 +1293,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("MM.VER"))
 	{
+	lbl_mmver:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -1133,6 +1305,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("MM.DEVICE$"))
 	{
+	lbl_mmdev:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -1144,6 +1317,7 @@ int mmb_try_function(mmb_val *out)
 	}
 	if (mmb_match("MM.CMDLINE$"))
 	{
+	lbl_mmcmd:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
