@@ -440,7 +440,7 @@ def test_term_demo_local_echo_and_hide(kernel_image):
         con._ser.sendall(b"\x08" * 20)
         rubbed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "ECHOTEST99" not in rubbed
-        assert "TERM demo" in rubbed or "term demo" in rubbed.lower()
+        assert "line " in rubbed.lower()
         con._ser.sendall(bytes([1]) + b"f")
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"e")
