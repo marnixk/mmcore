@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <string.h>
 
 extern int mmb_parse_var_ref(char *name, int *nidx, int *idx);
 extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val);
@@ -451,6 +452,24 @@ static int sub_find(const char *name)
 	return -1;
 }
 
+static int parse_as_sid(void)
+{
+	if (!mmb_match("AS"))
+		return -1;
+	if (mmb_match("INTEGER") || mmb_match("INT") || mmb_match("FLOAT") || mmb_match("STRING"))
+		return -2;
+	{
+		char tn[MMB_MAX_NAME];
+		int sid;
+		mmb_ident(tn, sizeof(tn));
+		mmb_type_suffix(tn);
+		sid = mmb_struct_lookup(tn);
+		if (sid < 0)
+			mmb_error("?UNKNOWN TYPE");
+		return sid;
+	}
+}
+
 static void sub_register(const char *name, int pc, int is_func)
 {
 	int i, slot = -1;
@@ -472,17 +491,25 @@ static void sub_register(const char *name, int pc, int is_func)
 	G.subs[slot].is_func = is_func;
 	G.subs[slot].used = 1;
 	G.subs[slot].nargs = 0;
+	G.subs[slot].ret_sid = -1;
+	for (i = 0; i < MMB_MAX_SUB_ARGS; i++)
+		G.subs[slot].arg_sid[i] = -1;
 	mmb_skip_sp();
 	if (*G.p == '(')
 		G.p++;
 	while (G.subs[slot].nargs < MMB_MAX_SUB_ARGS)
 	{
+		int sid;
 		mmb_skip_sp();
 		if (*G.p == ')' || *G.p == 0 || *G.p == '\'' || *G.p == ':')
 			break;
-		if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_'))
+		if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_' ||
+		      (unsigned char)G.p[0] == 0x80))
 			break;
 		mmb_ident(G.subs[slot].args[G.subs[slot].nargs], MMB_MAX_NAME);
+		sid = parse_as_sid();
+		if (sid >= 0)
+			G.subs[slot].arg_sid[G.subs[slot].nargs] = sid;
 		G.subs[slot].nargs++;
 		mmb_skip_sp();
 		if (*G.p == ',')
@@ -495,6 +522,12 @@ static void sub_register(const char *name, int pc, int is_func)
 	mmb_skip_sp();
 	if (*G.p == ')')
 		G.p++;
+	if (is_func)
+	{
+		int sid = parse_as_sid();
+		if (sid >= 0)
+			G.subs[slot].ret_sid = sid;
+	}
 	G.nsubs++;
 }
 
@@ -1457,6 +1490,8 @@ int mmb_call_named_sub(const char *name)
 		}
 		else
 			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
+		if (G.subs[si].arg_sid[i] >= 0)
+			mmb_bind_struct_var(G.subs[si].args[i], G.subs[si].arg_sid[i]);
 		if (i < narg)
 			mmb_do_assign(G.subs[si].args[i], 0, 0, 0, args[i]);
 	}
@@ -1479,7 +1514,9 @@ int mmb_call_named_sub(const char *name)
 		else
 			memset(&G.gosub_savev[g][slot], 0, sizeof(G.gosub_savev[g][slot]));
 		G.gosub_nsave[g] = slot + 1;
-		if (nbuf[0] && nbuf[strlen(nbuf) - 1] == '$')
+		if (G.subs[si].ret_sid >= 0)
+			mmb_bind_struct_var(nbuf, G.subs[si].ret_sid);
+		else if (nbuf[0] && nbuf[strlen(nbuf) - 1] == '$')
 			mmb_do_assign(nbuf, T_STR, 0, 0, mmb_str_val(""));
 		else
 			mmb_do_assign(nbuf, T_NUM, 0, 0, mmb_num_val(0));
@@ -1539,10 +1576,21 @@ void mmb_cmd_end_function(void)
 			mmb_var *v;
 			int idx = 0;
 			v = mmb_find_var(fname, 0, 0, 0, &idx);
+			if (!v)
+				v = mmb_find_var(fname, T_STRUCT, 0, 0, &idx);
 			if (v)
 			{
 				G.func_ret = mmb_load_var(v, 0);
-				mmb_val_own(&G.func_ret, G.func_ret_s, (int)sizeof(G.func_ret_s));
+				if (G.func_ret.type == T_STRUCT && G.func_ret.blob)
+				{
+					int sz = G.sdef[G.func_ret.struct_idx].total;
+					if (sz > MMB_STRUCT_RET_MAX)
+						mmb_error("?OVERFLOW");
+					memcpy(G.func_ret_blob, G.func_ret.blob, (unsigned)sz);
+					G.func_ret.blob = G.func_ret_blob;
+				}
+				else
+					mmb_val_own(&G.func_ret, G.func_ret_s, (int)sizeof(G.func_ret_s));
 			}
 			else
 			{
@@ -1910,6 +1958,7 @@ void mmb_cmd_new(void)
 	G.current_prog[0] = 0;
 	mmb_pkg_unmount();
 	mmb_clear_vars(1);
+	mmb_struct_clear();
 	mmb_clear_consts();
 	memset(G.subs, 0, sizeof(G.subs));
 	G.nsubs = 0;
@@ -2469,6 +2518,18 @@ static int is_assign_start(void)
 	if (*G.p == '(')
 		skip_balanced_paren();
 	mmb_skip_sp();
+	while (*G.p == '.')
+	{
+		G.p++;
+		if (!((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_' ||
+		      (unsigned char)G.p[0] == 0x80))
+			break;
+		mmb_ident(name, sizeof(name));
+		mmb_skip_sp();
+		if (*G.p == '(')
+			skip_balanced_paren();
+		mmb_skip_sp();
+	}
 	if (*G.p == '=')
 	{
 		G.p = save;
@@ -2488,6 +2549,8 @@ static void tok_cmd_end(void)
 		mmb_cmd_end_sub();
 	else if (mmb_match("FUNCTION"))
 		mmb_cmd_end_function();
+	else if (mmb_match("TYPE"))
+		mmb_cmd_end_type();
 	else
 		mmb_cmd_end();
 }
@@ -2496,6 +2559,8 @@ static void tok_cmd_list(void)
 {
 	if (mmb_match("FILES"))
 		mmb_cmd_files("DIR");
+	else if (mmb_match("TYPE"))
+		mmb_cmd_list_type();
 	else
 		mmb_cmd_list();
 }
@@ -2578,6 +2643,8 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("HELP")] = tok_cmd_help;
 		tab[mmb_kw_id("PRINT")] = mmb_cmd_print;
 		tab[mmb_kw_id("DIM")] = mmb_cmd_dim;
+		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
+		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
 		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
 		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
@@ -2747,6 +2814,16 @@ static void exec_statement(void)
 		mmb_cmd_dim();
 		return;
 	}
+	if (mmb_match("TYPE"))
+	{
+		mmb_cmd_type();
+		return;
+	}
+	if (mmb_match("STRUCT"))
+	{
+		mmb_cmd_struct();
+		return;
+	}
 	if (mmb_match("LOCAL"))
 	{
 		mmb_cmd_local();
@@ -2811,6 +2888,8 @@ static void exec_statement(void)
 	{
 		if (mmb_match("FILES"))
 			mmb_cmd_files("DIR");
+		else if (mmb_match("TYPE"))
+			mmb_cmd_list_type();
 		else
 			mmb_cmd_list();
 		return;
@@ -2845,6 +2924,11 @@ static void exec_statement(void)
 		if (mmb_match("FUNCTION"))
 		{
 			mmb_cmd_end_function();
+			return;
+		}
+		if (mmb_match("TYPE"))
+		{
+			mmb_cmd_end_type();
 			return;
 		}
 		mmb_cmd_end();
@@ -3453,6 +3537,7 @@ static void run_program(void)
 	mmb_tokenize_program();
 	build_jumps();
 	mmb_clear_vars(1);
+	mmb_struct_prepare();
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;
 	G.opt.base = 0;

@@ -24,6 +24,7 @@ def test_help_lists_commands(console):
         "IPCONFIG",
         "OPTIONS",
         "MATH",
+        "STRUCT",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
@@ -58,7 +59,7 @@ def test_help_pixel_array_form(console):
 def test_help_basic_lists_constructs(console):
     out = dump_topic(console, "BASIC")
     assert out
-    for name in ("FOR", "WHILE", "DIM", "IF", "DO", "CONST"):
+    for name in ("FOR", "WHILE", "DIM", "IF", "DO", "CONST", "TYPE"):
         assert name in out, name
 
 

@@ -39,13 +39,39 @@
 #define T_NUM   1
 #define T_INT   2
 #define T_STR   4
+#define T_STRUCT 8
+
+#define MMB_MAX_STRUCT_TYPES    32
+#define MMB_MAX_STRUCT_MEMBERS  16
+#define MMB_MAX_STRUCT_NEST     8
+#define MMB_STRUCT_RET_MAX      8192
 
 typedef struct mmb_val {
-	int type;          /* T_NUM, T_INT, T_STR */
+	int type;          /* T_NUM, T_INT, T_STR, T_STRUCT */
 	double f;
 	int64_t i;
 	const char *s;
+	unsigned char *blob;
+	int struct_idx;
 } mmb_val;
+
+typedef struct mmb_smem {
+	char name[MMB_MAX_NAME];
+	int type;
+	int size;
+	int offset;
+	int dims;
+	int dim[MMB_MAX_DIMS];
+	int count;
+} mmb_smem;
+
+typedef struct mmb_sdef {
+	char name[MMB_MAX_NAME];
+	int nmem;
+	mmb_smem mem[MMB_MAX_STRUCT_MEMBERS];
+	int total;
+	int used;
+} mmb_sdef;
 
 typedef struct mmb_var {
 	char name[MMB_MAX_NAME];
@@ -53,10 +79,12 @@ typedef struct mmb_var {
 	int dims;
 	int dim[MMB_MAX_DIMS]; /* inclusive upper bound */
 	int size;              /* element count */
+	int struct_idx;
 	union {
 		double *f;
 		int64_t *i;
 		char **s;
+		unsigned char *blob;
 	} data;
 	int used;
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
@@ -218,6 +246,14 @@ typedef struct mmb {
 	mmb_var vars[MMB_MAX_VARS];
 	int nvars;
 	int dim_used;
+	mmb_sdef sdef[MMB_MAX_STRUCT_TYPES];
+	int nstruct;
+	int acc_on;
+	int acc_mtype;
+	int acc_moff;
+	int acc_msize;
+	int acc_sid;
+	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
 	char prog[MMB_MAX_LINES][MMB_LINE_LEN];
 	int prog_num[MMB_MAX_LINES];
 	int nprog;
@@ -277,6 +313,8 @@ typedef struct mmb {
 		int is_func;
 		int used;
 		int nargs;
+		int ret_sid;
+		int arg_sid[MMB_MAX_SUB_ARGS];
 		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
@@ -357,11 +395,27 @@ int mmb_tok_expand(char *dst, int dstsz);
 void mmb_clear_vars(int keep_options);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
+int mmb_elem_off(mmb_var *v, int nidx, const int *idx);
+mmb_var *mmb_lookup_struct_var(const char *name);
+void mmb_bind_struct_var(const char *name, int sid);
 void mmb_tcache_invalidate(void);
 int mmb_tcache_try_let(void);
 int mmb_tcache_try_if(void);
 void mmb_cmd_print(void);
 void mmb_cmd_dim(void);
+void mmb_struct_clear(void);
+void mmb_struct_prepare(void);
+int mmb_struct_lookup(const char *name);
+mmb_sdef *mmb_struct_def(int idx);
+int mmb_try_struct_fun(mmb_val *out);
+void mmb_cmd_type(void);
+void mmb_cmd_end_type(void);
+void mmb_cmd_struct(void);
+void mmb_cmd_list_type(void);
+unsigned char *mmb_struct_elem(mmb_var *v, int off);
+int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx);
+void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val);
+mmb_val mmb_struct_load_member(mmb_var *v, int eoff);
 void mmb_cmd_local(void);
 void mmb_cmd_static(void);
 void mmb_cmd_error(void);

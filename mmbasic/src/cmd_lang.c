@@ -81,13 +81,14 @@ static void bump_var(int sign)
 	v = mmb_find_var(name, t, 1, nidx, idx);
 	if (!v)
 		mmb_syntax();
-	if (v->type == T_STR)
+	cur = mmb_load_var(v, mmb_elem_off(v, nidx, idx));
+	if (cur.type == T_STR || cur.type == T_STRUCT)
 		mmb_error("?TYPE MISMATCH");
-	if (v->type == T_INT)
-		cur = mmb_int_val(v->data.i[0] + sign * mmb_as_int(delta));
+	if (cur.type == T_INT)
+		cur = mmb_int_val(cur.i + sign * mmb_as_int(delta));
 	else
-		cur = mmb_num_val(v->data.f[0] + sign * mmb_as_float(delta));
-	mmb_do_assign(name, v->type, nidx, idx, cur);
+		cur = mmb_num_val(mmb_as_float(cur) + sign * mmb_as_float(delta));
+	mmb_do_assign(name, t, nidx, idx, cur);
 }
 
 void mmb_cmd_inc(void)
