@@ -500,10 +500,16 @@ static void copy_struct(mmb_var *dst, int doff, mmb_var *src, int soff)
 	memcpy(mmb_struct_elem(dst, doff), mmb_struct_elem(src, soff), (unsigned)sz);
 }
 
+static int at_name(void)
+{
+	unsigned char c = (unsigned char)*G.p;
+	return c == 0x80 || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
 static int parse_empty_member(char *aname, int asz, char *mname, int msz)
 {
 	const char *save = G.p;
-	if (!((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_'))
+	if (!at_name())
 		return 0;
 	mmb_ident(aname, asz);
 	mmb_type_suffix(aname);
