@@ -2641,6 +2641,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("DIM")] = mmb_cmd_dim;
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
+		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
 		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
 		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
 		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
@@ -2818,6 +2819,11 @@ static void exec_statement(void)
 	if (mmb_match("STRUCT"))
 	{
 		mmb_cmd_struct();
+		return;
+	}
+	if (mmb_match("JSON_PARSE"))
+	{
+		mmb_cmd_json_parse();
 		return;
 	}
 	if (mmb_match("LOCAL"))

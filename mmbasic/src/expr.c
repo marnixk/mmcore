@@ -231,6 +231,7 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("CWD$")] = &&lbl_cwd;
 		fun_tab[mmb_kw_id("INPUT$")] = &&lbl_input;
 		fun_tab[mmb_kw_id("JSON$")] = &&lbl_json;
+		fun_tab[mmb_kw_id("JSON_STRINGIFY$")] = &&lbl_json_stringify;
 		fun_tab[mmb_kw_id("ACOS")] = &&lbl_acos;
 		fun_tab[mmb_kw_id("ACS")] = &&lbl_acos;
 		fun_tab[mmb_kw_id("ASIN")] = &&lbl_asin;
@@ -1072,6 +1073,15 @@ int mmb_try_function(mmb_val *out)
 		if (n != 2 || a[0].type != T_STR || a[1].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
 		*out = mmb_json_query(a[0].s, a[1].s);
+		return 1;
+	}
+	if (match_fun("JSON_STRINGIFY$"))
+	{
+	lbl_json_stringify:
+		call_args(a, 1, &n);
+		if (n != 1)
+			mmb_syntax();
+		*out = mmb_json_stringify(a[0]);
 		return 1;
 	}
 	if (mmb_match("ACOS") || mmb_match("ACS"))

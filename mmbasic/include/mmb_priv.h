@@ -393,6 +393,8 @@ double mmb_as_float(mmb_val v);
 int64_t mmb_as_int(mmb_val v);
 void mmb_need_num(mmb_val v);
 mmb_val mmb_json_query(const char *js, const char *path);
+void mmb_cmd_json_parse(void);
+mmb_val mmb_json_stringify(mmb_val v);
 void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
 void mmb_out_flush(void);
