@@ -567,6 +567,22 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	fb->SetArea(area, s_present_pix);
 }
 
+static int plat_wait_vsync(void)
+{
+#ifdef NO_SDHOST
+	return 0;
+#else
+	CBcmFrameBuffer *fb;
+
+	if (!s_kernel)
+		return 0;
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (!fb)
+		return 0;
+	return fb->WaitForVerticalSync() ? 1 : 0;
+#endif
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -605,6 +621,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	plat.present_rgb = plat_present_rgb;
+	plat.wait_vsync = plat_wait_vsync;
 	audio_init();
 	mmb_init(&plat);
 }

@@ -425,6 +425,7 @@ void mmb_cmd_kill(void);
 void mmb_cmd_copy(void);
 void mmb_cmd_name(void);
 void mmb_cmd_pause(void);
+void mmb_cmd_vsync_wait(void);
 void mmb_cmd_cls(void);
 void mmb_cmd_mode(void);
 void mmb_cmd_colour(void);
