@@ -128,11 +128,14 @@ static const char kHelpPrint[] =
 static const char kHelpPixel[] =
 	"PIXEL x, y [, colour]\n"
 	"PIXEL x(), y() [, colour | c()]\n"
+	"PIXEL pos().x, pos().y [, colour]\n"
 	"PIXEL(x, y [, page])   (function)\n"
 	"\n"
 	"Set the pixel at (x,y). colour defaults to the\n"
 	"current foreground (see COLOUR).\n"
 	"x and y must both be scalars or both be arrays.\n"
+	"TYPE arrays use arr().member as a numeric view\n"
+	"(see TYPE). Mix with plain x() / y() arrays.\n"
 	"If colour is an array, each point uses that\n"
 	"element. The number of pixels is the length of\n"
 	"the smallest array.\n"
@@ -141,6 +144,7 @@ static const char kHelpPixel[] =
 	"\n"
 	"Example:  PIXEL 10,10,RGB(255,0,0)\n"
 	"          PIXEL XX(), YY(), CC()\n"
+	"          PIXEL pos().x, pos().y, RGB(WHITE)\n"
 	"          PRINT PIXEL(10,10)";
 
 static const char kHelpLine[] =
@@ -1531,6 +1535,7 @@ static const char kHelpMath[] =
 	"\n"
 	"MATH SET n, a()     fill every element\n"
 	"MATH SCALE a(), k, b()   or a(), b(), c()\n"
+	"MATH SCALE pts().x, k, pts().x\n"
 	"MATH ADD a(), k, b()     or a(), b(), c()\n"
 	"MATH MUL a(), b(), c()   element-wise (SCALE too)\n"
 	"MATH INTERPOLATE a(), b(), t, c()\n"
@@ -1544,11 +1549,14 @@ static const char kHelpMath[] =
 	"MATH FFT a(), b()  (also INVERSE|MAGNITUDE|PHASE)\n"
 	"\n"
 	"SD is sample stdev (n-1). Arrays are numeric.\n"
+	"TYPE arrays use arr().member the same way as\n"
+	"plain a() (PIXEL too; see TYPE).\n"
 	"OPTION ANGLE DEGREES applies to ATAN3 and Q_*.\n"
 	"\n"
 	"Example:  PRINT CINT(45.57)\n"
 	"          PRINT EVAL(\"1+2*3\")\n"
-	"          PRINT MATH(SUM A())";
+	"          PRINT MATH(SUM A())\n"
+	"          MATH SCALE pos().x, 2, pos().x";
 
 static const char kHelpSprite[] =
 	"SPRITE LOADPNG n, file$ [, page]\n"
@@ -1586,7 +1594,9 @@ static const char kHelpType[] =
 	"var.member and arr(i).member. Whole-struct assign\n"
 	"copies the same type only. Period is still a name\n"
 	"character unless the left side is a TYPE variable.\n"
-	"LIST TYPE [name] lists definitions. HELP STRUCT.\n"
+	"PIXEL and MATH accept arr().member as a view of\n"
+	"that field across the array. HELP STRUCT.\n"
+	"LIST TYPE [name] lists definitions.\n"
 	"\n"
 	"Example:\n"
 	"  TYPE Point\n"
@@ -1615,6 +1625,8 @@ static const char kHelpStruct[] =
 	"only (binary MMBasic layout). SIZEOF is the record\n"
 	"size in bytes. TYPE() returns 1 FLOAT, 2 STRING,\n"
 	"4 INTEGER. FIND returns the index or -1.\n"
+	"PIXEL pos().x, pos().y and MATH SCALE arr().x use\n"
+	"the same empty-index member view (HELP PIXEL / MATH).\n"
 	"HELP TYPE for DIM AS and dots.\n"
 	"\n"
 	"Example:\n"

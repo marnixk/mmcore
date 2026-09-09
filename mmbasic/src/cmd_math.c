@@ -63,68 +63,21 @@ static const double chitable[51][15] = {
 	{27.991, 29.707, 32.357, 34.764, 37.689, 49.335, 58.164, 63.167, 67.505, 71.420, 72.613, 76.154, 79.490, 83.657, 86.661}
 };
 
-static int ident_start(void)
+static mmb_arrview parse_array(int want_str)
 {
-	return (G.p[0] >= 'A' && G.p[0] <= 'Z') ||
-	       (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_';
-}
-
-static int parse_empty_array_ref(char *name, int nsz)
-{
-	const char *save = G.p;
-
-	if (!ident_start())
-		return 0;
-	mmb_ident(name, nsz);
-	mmb_type_suffix(name);
-	mmb_skip_sp();
-	if (*G.p != '(')
-	{
-		G.p = save;
-		return 0;
-	}
-	G.p++;
-	mmb_skip_sp();
-	if (*G.p != ')')
-	{
-		G.p = save;
-		return 0;
-	}
-	G.p++;
-	mmb_skip_sp();
-	return 1;
-}
-
-static mmb_var *find_array(const char *name)
-{
-	int i;
-
-	for (i = 0; i < MMB_MAX_VARS; i++)
-		if (G.vars[i].used && G.vars[i].dims > 0 &&
-		    mmb_keyword_eq(G.vars[i].name, name))
-			return &G.vars[i];
-	return 0;
-}
-
-static mmb_var *parse_array(int want_str)
-{
-	char name[MMB_MAX_NAME];
-	mmb_var *v;
+	mmb_arrview a;
 
 	mmb_skip_sp();
-	if (!parse_empty_array_ref(name, sizeof(name)))
+	if (!mmb_try_parse_arrview(&a))
 		mmb_syntax();
-	v = find_array(name);
-	if (!v)
-		mmb_error("?ARRAY");
 	if (want_str)
 	{
-		if (v->type != T_STR)
+		if (a.mtype != T_STR)
 			mmb_error("?TYPE MISMATCH");
 	}
-	else if (v->type == T_STR)
+	else if (a.mtype != T_INT && a.mtype != T_NUM)
 		mmb_error("?TYPE MISMATCH");
-	return v;
+	return a;
 }
 
 static void expect_comma(void)
@@ -163,28 +116,31 @@ static int var_off(mmb_var *v, const int *idx)
 	return off;
 }
 
-static double array_get(mmb_var *v, int i)
+static double array_get(mmb_arrview a, int i)
 {
-	if (i < 0 || i >= v->size)
-		mmb_error("?INDEX OUT OF BOUNDS");
-	if (v->type == T_INT)
-		return (double)v->data.i[i];
-	return v->data.f[i];
+	return mmb_arrview_get(a, i);
 }
 
-static int64_t f_to_i(double x)
+static void array_set(mmb_arrview a, int i, double x)
 {
-	return (int64_t)(x >= 0.0 ? x + 0.5 : x - 0.5);
+	mmb_arrview_set(a, i, x);
 }
 
-static void array_set(mmb_var *v, int i, double x)
+static mmb_arrview view_of(mmb_var *v)
 {
-	if (i < 0 || i >= v->size)
-		mmb_error("?INDEX OUT OF BOUNDS");
-	if (v->type == T_INT)
-		v->data.i[i] = f_to_i(x);
-	else
-		v->data.f[i] = x;
+	mmb_arrview a;
+
+	memset(&a, 0, sizeof(a));
+	a.v = v;
+	a.moff = -1;
+	a.mtype = v ? v->type : 0;
+	a.count = v ? v->size : 0;
+	return a;
+}
+
+static int views_same(mmb_arrview a, mmb_arrview b)
+{
+	return a.v == b.v && a.moff == b.moff;
 }
 
 static double mat_get(mmb_var *v, int r, int c)
@@ -196,7 +152,7 @@ static double mat_get(mmb_var *v, int r, int c)
 		idx[i] = G.opt.base;
 	idx[0] = r;
 	idx[1] = c;
-	return array_get(v, var_off(v, idx));
+	return array_get(view_of(v), var_off(v, idx));
 }
 
 static void mat_set(mmb_var *v, int r, int c, double x)
@@ -208,7 +164,7 @@ static void mat_set(mmb_var *v, int r, int c, double x)
 		idx[i] = G.opt.base;
 	idx[0] = r;
 	idx[1] = c;
-	array_set(v, var_off(v, idx), x);
+	array_set(view_of(v), var_off(v, idx), x);
 }
 
 static void *tmp_alloc(unsigned n)
@@ -432,7 +388,7 @@ static void load_quat(mmb_var *v, double *q)
 
 	need_quat(v);
 	for (i = 0; i < 5; i++)
-		q[i] = array_get(v, i);
+		q[i] = array_get(view_of(v), i);
 }
 
 static void store_quat(mmb_var *v, const double *q)
@@ -441,7 +397,7 @@ static void store_quat(mmb_var *v, const double *q)
 
 	need_quat(v);
 	for (i = 0; i < 5; i++)
-		array_set(v, i, q[i]);
+		array_set(view_of(v), i, q[i]);
 }
 
 static void set_scalar_int(const char *name, int64_t val)
@@ -475,15 +431,15 @@ static double parse_num_arg(void)
 	return mmb_as_float(mmb_expr());
 }
 
-static int chi_stats(mmb_var *v, int want_p, double *out)
+static int chi_stats(mmb_arrview v, int want_p, double *out)
 {
 	int rows, cols, i, j, df;
 	double total = 0, chi = 0, *obs, *rowsum, *colsum, *expv;
 
-	if (v->dims != 2)
+	if (v.v->dims != 2)
 		mmb_error("?ARRAY");
-	cols = dim_len(v, 0);
-	rows = dim_len(v, 1);
+	cols = dim_len(v.v, 0);
+	rows = dim_len(v.v, 1);
 	df = (cols - 1) * (rows - 1);
 	if (df < 1)
 		mmb_error("?NEEDS 2 ROWS AND COLUMNS");
@@ -498,7 +454,7 @@ static int chi_stats(mmb_var *v, int want_p, double *out)
 	for (i = 0; i < rows; i++)
 		for (j = 0; j < cols; j++)
 		{
-			double x = mat_get(v, j + G.opt.base, i + G.opt.base);
+			double x = mat_get(v.v, j + G.opt.base, i + G.opt.base);
 
 			obs[i * cols + j] = x;
 			total += x;
@@ -546,7 +502,7 @@ static int chi_stats(mmb_var *v, int want_p, double *out)
 
 int mmb_try_math_fn(mmb_val *out)
 {
-	mmb_var *a, *b;
+	mmb_arrview a, b;
 	double x, y, z;
 	int i, n;
 
@@ -595,7 +551,7 @@ int mmb_try_math_fn(mmb_val *out)
 
 		a = parse_array(0);
 		m = array_get(a, 0);
-		for (i = 1; i < a->size; i++)
+		for (i = 1; i < a.count; i++)
 			if (array_get(a, i) > m)
 			{
 				m = array_get(a, i);
@@ -621,7 +577,7 @@ int mmb_try_math_fn(mmb_val *out)
 
 		a = parse_array(0);
 		m = array_get(a, 0);
-		for (i = 1; i < a->size; i++)
+		for (i = 1; i < a.count; i++)
 			if (array_get(a, i) < m)
 			{
 				m = array_get(a, i);
@@ -644,9 +600,9 @@ int mmb_try_math_fn(mmb_val *out)
 		double s = 0;
 
 		a = parse_array(0);
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 			s += array_get(a, i);
-		*out = mmb_num_val(s / (double)a->size);
+		*out = mmb_num_val(s / (double)a.count);
 		goto done;
 	}
 	if (mmb_match("MEDIAN"))
@@ -655,7 +611,7 @@ int mmb_try_math_fn(mmb_val *out)
 		int mid;
 
 		a = parse_array(0);
-		n = a->size;
+		n = a.count;
 		tmp = tmp_alloc((unsigned)n * sizeof(double));
 		for (i = 0; i < n; i++)
 			tmp[i] = array_get(a, i);
@@ -674,7 +630,7 @@ int mmb_try_math_fn(mmb_val *out)
 		double s = 0;
 
 		a = parse_array(0);
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 			s += array_get(a, i);
 		*out = mmb_num_val(s);
 		goto done;
@@ -684,17 +640,17 @@ int mmb_try_math_fn(mmb_val *out)
 		double mean = 0, var = 0;
 
 		a = parse_array(0);
-		if (a->size < 2)
+		if (a.count < 2)
 			mmb_error("?ARRAY SIZE");
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 			mean += array_get(a, i);
-		mean /= (double)a->size;
-		for (i = 0; i < a->size; i++)
+		mean /= (double)a.count;
+		for (i = 0; i < a.count; i++)
 		{
 			double d = array_get(a, i) - mean;
 			var += d * d;
 		}
-		*out = mmb_num_val(sqrt(var / (double)(a->size - 1)));
+		*out = mmb_num_val(sqrt(var / (double)(a.count - 1)));
 		goto done;
 	}
 	if (mmb_match("MAGNITUDE"))
@@ -702,7 +658,7 @@ int mmb_try_math_fn(mmb_val *out)
 		double mag = 0;
 
 		a = parse_array(0);
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 		{
 			x = array_get(a, i);
 			mag += x * x;
@@ -717,9 +673,9 @@ int mmb_try_math_fn(mmb_val *out)
 		a = parse_array(0);
 		expect_comma();
 		b = parse_array(0);
-		if (a->size != b->size)
+		if (a.count != b.count)
 			mmb_error("?SIZE MISMATCH");
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 			s += array_get(a, i) * array_get(b, i);
 		*out = mmb_num_val(s);
 		goto done;
@@ -730,10 +686,10 @@ int mmb_try_math_fn(mmb_val *out)
 		double *m, det;
 
 		a = parse_array(0);
-		if (a->dims != 2)
+		if (a.v->dims != 2)
 			mmb_error("?ARRAY MUST BE SQUARE");
-		cols = dim_len(a, 0);
-		rows = dim_len(a, 1);
+		cols = dim_len(a.v, 0);
+		rows = dim_len(a.v, 1);
 		if (cols != rows)
 			mmb_error("?ARRAY MUST BE SQUARE");
 		m = tmp_alloc((unsigned)rows * (unsigned)cols * sizeof(double));
@@ -741,7 +697,7 @@ int mmb_try_math_fn(mmb_val *out)
 		{
 			int j;
 			for (j = 0; j < cols; j++)
-				m[i * cols + j] = mat_get(a, j + G.opt.base, i + G.opt.base);
+				m[i * cols + j] = mat_get(a.v, j + G.opt.base, i + G.opt.base);
 		}
 		det = gauss_det(m, rows);
 		tmp_free(m);
@@ -767,9 +723,9 @@ int mmb_try_math_fn(mmb_val *out)
 		a = parse_array(0);
 		expect_comma();
 		b = parse_array(0);
-		if (a->size != b->size)
+		if (a.count != b.count)
 			mmb_error("?SIZE MISMATCH");
-		n = a->size;
+		n = a.count;
 		for (i = 0; i < n; i++)
 		{
 			mean1 += array_get(a, i);
@@ -799,7 +755,7 @@ done:
 static void cmd_set(void)
 {
 	mmb_val v;
-	mmb_var *a;
+	mmb_arrview a;
 	int i;
 
 	v = mmb_expr();
@@ -807,23 +763,23 @@ static void cmd_set(void)
 	if (v.type == T_STR)
 	{
 		a = parse_array(1);
-		for (i = 0; i < a->size; i++)
+		for (i = 0; i < a.count; i++)
 		{
-			strncpy(a->data.s[i], v.s, MMB_MAX_STR);
-			a->data.s[i][MMB_MAX_STR] = 0;
+			strncpy(a.v->data.s[i], v.s, MMB_MAX_STR);
+			a.v->data.s[i][MMB_MAX_STR] = 0;
 		}
 		return;
 	}
 	a = parse_array(0);
-	for (i = 0; i < a->size; i++)
+	for (i = 0; i < a.count; i++)
 		array_set(a, i, mmb_as_float(v));
 }
 
 static int peek_empty_array_ref(void)
 {
-	char name[MMB_MAX_NAME];
+	mmb_arrview a;
 	const char *save = G.p;
-	int ok = parse_empty_array_ref(name, sizeof(name));
+	int ok = mmb_try_parse_arrview(&a);
 
 	G.p = save;
 	return ok;
@@ -831,7 +787,7 @@ static int peek_empty_array_ref(void)
 
 static void cmd_scale_add_pow(int mode)
 {
-	mmb_var *src, *dst, *rhs = 0;
+	mmb_arrview src, dst, rhs; rhs.v = 0; rhs.moff = -1;
 	double k = 0.0;
 	int i;
 
@@ -843,12 +799,12 @@ static void cmd_scale_add_pow(int mode)
 		k = mmb_as_float(mmb_expr());
 	expect_comma();
 	dst = parse_array(0);
-	if (src->size != dst->size || (rhs && rhs->size != src->size))
+	if (src.count != dst.count || (rhs.v && rhs.count != src.count))
 		mmb_error("?SIZE MISMATCH");
-	for (i = 0; i < src->size; i++)
+	for (i = 0; i < src.count; i++)
 	{
 		double x = array_get(src, i);
-		double y = rhs ? array_get(rhs, i) : k;
+		double y = rhs.v ? array_get(rhs, i) : k;
 		if (mode == 0)
 			array_set(dst, i, x * y);
 		else if (mode == 1)
@@ -860,7 +816,7 @@ static void cmd_scale_add_pow(int mode)
 
 static void cmd_interpolate(void)
 {
-	mmb_var *a, *b, *c;
+	mmb_arrview a, b, c;
 	double scale;
 	int i;
 
@@ -871,11 +827,11 @@ static void cmd_interpolate(void)
 	scale = mmb_as_float(mmb_expr());
 	expect_comma();
 	c = parse_array(0);
-	if (a->size != b->size || a->size != c->size)
+	if (a.count != b.count || a.count != c.count)
 		mmb_error("?SIZE MISMATCH");
-	if (a == b || a == c || b == c)
+	if (views_same(a, b) || views_same(a, c) || views_same(b, c))
 		mmb_error("?ARRAYS MUST BE DIFFERENT");
-	for (i = 0; i < a->size; i++)
+	for (i = 0; i < a.count; i++)
 	{
 		double t1 = array_get(a, i), t2 = array_get(b, i);
 		array_set(c, i, (t2 - t1) * scale + t1);
@@ -884,15 +840,15 @@ static void cmd_interpolate(void)
 
 static void cmd_slice_insert(int insert)
 {
-	mmb_var *multi, *vec;
+	mmb_arrview multi, vec;
 	int pos[MMB_MAX_DIMS], present[MMB_MAX_DIMS];
 	int i, d, target = -1, nslice;
 	int idx[MMB_MAX_DIMS];
 
 	multi = parse_array(0);
-	if (multi->dims < 2)
+	if (multi.v->dims < 2)
 		mmb_error("?ARRAY");
-	for (d = 0; d < multi->dims; d++)
+	for (d = 0; d < multi.v->dims; d++)
 	{
 		expect_comma();
 		mmb_skip_sp();
@@ -914,38 +870,38 @@ static void cmd_slice_insert(int insert)
 		mmb_error("?ONE INDEX OMITTED");
 	expect_comma();
 	vec = parse_array(0);
-	nslice = dim_len(multi, target);
-	if (vec->size != nslice)
+	nslice = dim_len(multi.v, target);
+	if (vec.count != nslice)
 		mmb_error("?SIZE MISMATCH");
 	for (i = 0; i < nslice; i++)
 	{
-		for (d = 0; d < multi->dims; d++)
+		for (d = 0; d < multi.v->dims; d++)
 			idx[d] = present[d] ? pos[d] : (i + G.opt.base);
 		idx[target] = i + G.opt.base;
 		if (insert)
-			array_set(multi, var_off(multi, idx), array_get(vec, i));
+			array_set(multi, var_off(multi.v, idx), array_get(vec, i));
 		else
-			array_set(vec, i, array_get(multi, var_off(multi, idx)));
+			array_set(vec, i, array_get(multi, var_off(multi.v, idx)));
 	}
 }
 
 static void cmd_m_print(void)
 {
-	mmb_var *a;
+	mmb_arrview a;
 	int r, c, rows, cols;
 
 	a = parse_array(0);
-	if (a->dims != 2)
+	if (a.v->dims != 2)
 		mmb_error("?ARRAY");
-	cols = dim_len(a, 0);
-	rows = dim_len(a, 1);
+	cols = dim_len(a.v, 0);
+	rows = dim_len(a.v, 1);
 	for (r = 0; r < rows; r++)
 	{
 		for (c = 0; c < cols; c++)
 		{
 			if (c)
 				mmb_out(",");
-			mmb_print_val(mmb_num_val(mat_get(a, c + G.opt.base, r + G.opt.base)));
+			mmb_print_val(mmb_num_val(mat_get(a.v, c + G.opt.base, r + G.opt.base)));
 		}
 		mmb_out("\n");
 	}
@@ -953,27 +909,27 @@ static void cmd_m_print(void)
 
 static void cmd_m_transpose(void)
 {
-	mmb_var *a, *b;
+	mmb_arrview a, b;
 	int r, c, rows, cols;
 
 	a = parse_array(0);
 	expect_comma();
 	b = parse_array(0);
-	if (a->dims != 2 || b->dims != 2)
+	if (a.v->dims != 2 || b.v->dims != 2)
 		mmb_error("?ARRAY");
-	cols = dim_len(a, 0);
-	rows = dim_len(a, 1);
-	if (dim_len(b, 0) != rows || dim_len(b, 1) != cols)
+	cols = dim_len(a.v, 0);
+	rows = dim_len(a.v, 1);
+	if (dim_len(b.v, 0) != rows || dim_len(b.v, 1) != cols)
 		mmb_error("?SIZE MISMATCH");
 	for (r = 0; r < rows; r++)
 		for (c = 0; c < cols; c++)
-			mat_set(b, r + G.opt.base, c + G.opt.base,
-				mat_get(a, c + G.opt.base, r + G.opt.base));
+			mat_set(b.v, r + G.opt.base, c + G.opt.base,
+				mat_get(a.v, c + G.opt.base, r + G.opt.base));
 }
 
 static void cmd_m_mult(void)
 {
-	mmb_var *a, *b, *c;
+	mmb_arrview a, b, c;
 	int i, j, k, r1, c1, r2, c2;
 
 	a = parse_array(0);
@@ -981,50 +937,50 @@ static void cmd_m_mult(void)
 	b = parse_array(0);
 	expect_comma();
 	c = parse_array(0);
-	if (a->dims != 2 || b->dims != 2 || c->dims != 2)
+	if (a.v->dims != 2 || b.v->dims != 2 || c.v->dims != 2)
 		mmb_error("?ARRAY");
-	c1 = dim_len(a, 0);
-	r1 = dim_len(a, 1);
-	c2 = dim_len(b, 0);
-	r2 = dim_len(b, 1);
+	c1 = dim_len(a.v, 0);
+	r1 = dim_len(a.v, 1);
+	c2 = dim_len(b.v, 0);
+	r2 = dim_len(b.v, 1);
 	if (r2 != c1)
 		mmb_error("?INPUT ARRAY SIZE MISMATCH");
-	if (dim_len(c, 0) != c2 || dim_len(c, 1) != r1)
+	if (dim_len(c.v, 0) != c2 || dim_len(c.v, 1) != r1)
 		mmb_error("?OUTPUT ARRAY SIZE MISMATCH");
-	if (c == a || c == b)
+	if (views_same(c, a) || views_same(c, b))
 		mmb_error("?DESTINATION ARRAY SAME AS SOURCE");
 	for (i = 0; i < r1; i++)
 		for (j = 0; j < c2; j++)
 		{
 			double s = 0;
 			for (k = 0; k < c1; k++)
-				s += mat_get(a, k + G.opt.base, i + G.opt.base) *
-				     mat_get(b, j + G.opt.base, k + G.opt.base);
-			mat_set(c, j + G.opt.base, i + G.opt.base, s);
+				s += mat_get(a.v, k + G.opt.base, i + G.opt.base) *
+				     mat_get(b.v, j + G.opt.base, k + G.opt.base);
+			mat_set(c.v, j + G.opt.base, i + G.opt.base, s);
 		}
 }
 
 static void cmd_m_inverse(void)
 {
-	mmb_var *a, *b;
+	mmb_arrview a, b;
 	int n, i, j;
 	double *in, *out;
 
 	a = parse_array(0);
 	expect_comma();
 	b = parse_array(0);
-	if (a->dims != 2 || b->dims != 2)
+	if (a.v->dims != 2 || b.v->dims != 2)
 		mmb_error("?ARRAY");
-	n = dim_len(a, 0);
-	if (n != dim_len(a, 1) || dim_len(b, 0) != n || dim_len(b, 1) != n)
+	n = dim_len(a.v, 0);
+	if (n != dim_len(a.v, 1) || dim_len(b.v, 0) != n || dim_len(b.v, 1) != n)
 		mmb_error("?ARRAY MUST BE SQUARE");
-	if (a == b)
+	if (views_same(a, b))
 		mmb_error("?SAME ARRAY");
 	in = tmp_alloc((unsigned)n * (unsigned)n * sizeof(double));
 	out = tmp_alloc((unsigned)n * (unsigned)n * sizeof(double));
 	for (i = 0; i < n; i++)
 		for (j = 0; j < n; j++)
-			in[i * n + j] = mat_get(a, j + G.opt.base, i + G.opt.base);
+			in[i * n + j] = mat_get(a.v, j + G.opt.base, i + G.opt.base);
 	if (!gauss_inv(in, out, n))
 	{
 		tmp_free(in);
@@ -1033,14 +989,14 @@ static void cmd_m_inverse(void)
 	}
 	for (i = 0; i < n; i++)
 		for (j = 0; j < n; j++)
-			mat_set(b, j + G.opt.base, i + G.opt.base, out[i * n + j]);
+			mat_set(b.v, j + G.opt.base, i + G.opt.base, out[i * n + j]);
 	tmp_free(in);
 	tmp_free(out);
 }
 
 static void cmd_v_print(void)
 {
-	mmb_var *a;
+	mmb_arrview a;
 	int i, hex = 0;
 
 	a = parse_array(0);
@@ -1052,10 +1008,10 @@ static void cmd_v_print(void)
 		if (!mmb_match("HEX"))
 			mmb_syntax();
 		hex = 1;
-		if (a->type != T_INT)
+		if (a.mtype != T_INT)
 			mmb_error("?TYPE MISMATCH");
 	}
-	for (i = 0; i < a->size; i++)
+	for (i = 0; i < a.count; i++)
 	{
 		if (i)
 			mmb_out(",");
@@ -1063,7 +1019,7 @@ static void cmd_v_print(void)
 		{
 			char buf[24];
 			int n = 0;
-			uint64_t v = (uint64_t)a->data.i[i];
+			uint64_t v = (uint64_t)a.v->data.i[i];
 			char tmp[20];
 			int t = 0;
 
@@ -1086,16 +1042,16 @@ static void cmd_v_print(void)
 
 static void cmd_v_normalise(void)
 {
-	mmb_var *a, *b;
+	mmb_arrview a, b;
 	double mag = 0;
 	int i;
 
 	a = parse_array(0);
 	expect_comma();
 	b = parse_array(0);
-	if (a->size != b->size)
+	if (a.count != b.count)
 		mmb_error("?SIZE MISMATCH");
-	for (i = 0; i < a->size; i++)
+	for (i = 0; i < a.count; i++)
 	{
 		double x = array_get(a, i);
 		mag += x * x;
@@ -1103,13 +1059,13 @@ static void cmd_v_normalise(void)
 	mag = sqrt(mag);
 	if (mag == 0.0)
 		mmb_error("?DIVIDE BY ZERO");
-	for (i = 0; i < a->size; i++)
+	for (i = 0; i < a.count; i++)
 		array_set(b, i, array_get(a, i) / mag);
 }
 
 static void cmd_v_cross(void)
 {
-	mmb_var *a, *b, *c;
+	mmb_arrview a, b, c;
 	double u[3], v[3];
 	int i;
 
@@ -1118,7 +1074,7 @@ static void cmd_v_cross(void)
 	b = parse_array(0);
 	expect_comma();
 	c = parse_array(0);
-	if (a->size != 3 || b->size != 3 || c->size != 3)
+	if (a.count != 3 || b.count != 3 || c.count != 3)
 		mmb_error("?ARRAY SIZE");
 	for (i = 0; i < 3; i++)
 	{
@@ -1132,7 +1088,7 @@ static void cmd_v_cross(void)
 
 static void cmd_v_mult(void)
 {
-	mmb_var *m, *v, *o;
+	mmb_arrview m, v, o;
 	int rows, cols, i, j;
 
 	m = parse_array(0);
@@ -1140,39 +1096,39 @@ static void cmd_v_mult(void)
 	v = parse_array(0);
 	expect_comma();
 	o = parse_array(0);
-	if (m->dims != 2)
+	if (m.v->dims != 2)
 		mmb_error("?ARRAY");
-	cols = dim_len(m, 0);
-	rows = dim_len(m, 1);
-	if (v->size != cols || o->size != rows)
+	cols = dim_len(m.v, 0);
+	rows = dim_len(m.v, 1);
+	if (v.count != cols || o.count != rows)
 		mmb_error("?SIZE MISMATCH");
-	if (o == m || o == v)
+	if (views_same(o, m) || views_same(o, v))
 		mmb_error("?DESTINATION ARRAY SAME AS SOURCE");
 	for (i = 0; i < rows; i++)
 	{
 		double s = 0;
 		for (j = 0; j < cols; j++)
-			s += mat_get(m, j + G.opt.base, i + G.opt.base) * array_get(v, j);
+			s += mat_get(m.v, j + G.opt.base, i + G.opt.base) * array_get(v, j);
 		array_set(o, i, s);
 	}
 }
 
 static void cmd_q_invert(void)
 {
-	mmb_var *a, *b;
+	mmb_arrview a, b;
 	double q[5], n[5];
 
 	a = parse_array(0);
 	expect_comma();
 	b = parse_array(0);
-	load_quat(a, q);
+	load_quat(a.v, q);
 	q_invert(q, n);
-	store_quat(b, n);
+	store_quat(b.v, n);
 }
 
 static void cmd_q_vector(void)
 {
-	mmb_var *q;
+	mmb_arrview q;
 	double x, y, z, mag, out[5];
 
 	x = mmb_as_float(mmb_expr());
@@ -1190,12 +1146,12 @@ static void cmd_q_vector(void)
 	out[2] = y / mag;
 	out[3] = z / mag;
 	out[4] = mag;
-	store_quat(q, out);
+	store_quat(q.v, out);
 }
 
 static void cmd_q_euler(void)
 {
-	mmb_var *q;
+	mmb_arrview q;
 	double yaw, pitch, roll, s1, c1, s2, c2, s3, c3, out[5];
 
 	yaw = -to_rad(mmb_as_float(mmb_expr()));
@@ -1216,12 +1172,12 @@ static void cmd_q_euler(void)
 	out[3] = c1 * c2 * s3 - s1 * s2 * c3;
 	out[0] = c1 * c2 * c3 + s1 * s2 * s3;
 	out[4] = 1.0;
-	store_quat(q, out);
+	store_quat(q.v, out);
 }
 
 static void cmd_q_create(void)
 {
-	mmb_var *q;
+	mmb_arrview q;
 	double theta, x, y, z, mag, out[5], ht, s;
 
 	theta = mmb_as_float(mmb_expr());
@@ -1245,12 +1201,12 @@ static void cmd_q_create(void)
 	out[2] /= mag;
 	out[3] /= mag;
 	out[4] = 1.0;
-	store_quat(q, out);
+	store_quat(q.v, out);
 }
 
 static void cmd_q_mult(void)
 {
-	mmb_var *a, *b, *c;
+	mmb_arrview a, b, c;
 	double q1[5], q2[5], n[5];
 
 	a = parse_array(0);
@@ -1258,15 +1214,15 @@ static void cmd_q_mult(void)
 	b = parse_array(0);
 	expect_comma();
 	c = parse_array(0);
-	load_quat(a, q1);
-	load_quat(b, q2);
+	load_quat(a.v, q1);
+	load_quat(b.v, q2);
 	q_mult(q1, q2, n);
-	store_quat(c, n);
+	store_quat(c.v, n);
 }
 
 static void cmd_q_rotate(void)
 {
-	mmb_var *a, *b, *c;
+	mmb_arrview a, b, c;
 	double q1[5], v1[5], temp[5], qtemp[5], n[5];
 
 	a = parse_array(0);
@@ -1274,21 +1230,21 @@ static void cmd_q_rotate(void)
 	b = parse_array(0);
 	expect_comma();
 	c = parse_array(0);
-	load_quat(a, q1);
-	load_quat(b, v1);
+	load_quat(a.v, q1);
+	load_quat(b.v, v1);
 	q_mult(q1, v1, temp);
 	q_invert(q1, qtemp);
 	q_mult(temp, qtemp, n);
-	store_quat(c, n);
+	store_quat(c.v, n);
 }
 
-static void fft_load_cplx(mmb_var *src, double *re, double *im, int n)
+static void fft_load_cplx(mmb_arrview src, double *re, double *im, int n)
 {
 	int i;
 
-	if (src->dims == 1)
+	if (src.v->dims == 1)
 	{
-		if (src->size == n)
+		if (src.count == n)
 		{
 			for (i = 0; i < n; i++)
 			{
@@ -1297,7 +1253,7 @@ static void fft_load_cplx(mmb_var *src, double *re, double *im, int n)
 			}
 			return;
 		}
-		if (src->size == n * 2)
+		if (src.count == n * 2)
 		{
 			for (i = 0; i < n; i++)
 			{
@@ -1307,23 +1263,23 @@ static void fft_load_cplx(mmb_var *src, double *re, double *im, int n)
 			return;
 		}
 	}
-	if (src->dims == 2 && dim_len(src, 0) == 2 && dim_len(src, 1) == n)
+	if (src.v->dims == 2 && dim_len(src.v, 0) == 2 && dim_len(src.v, 1) == n)
 	{
 		for (i = 0; i < n; i++)
 		{
-			re[i] = mat_get(src, G.opt.base, i + G.opt.base);
-			im[i] = mat_get(src, G.opt.base + 1, i + G.opt.base);
+			re[i] = mat_get(src.v, G.opt.base, i + G.opt.base);
+			im[i] = mat_get(src.v, G.opt.base + 1, i + G.opt.base);
 		}
 		return;
 	}
 	mmb_error("?ARRAY SIZE");
 }
 
-static void fft_store_cplx(mmb_var *dst, const double *re, const double *im, int n)
+static void fft_store_cplx(mmb_arrview dst, const double *re, const double *im, int n)
 {
 	int i;
 
-	if (dst->dims == 1 && dst->size == n * 2)
+	if (dst.v->dims == 1 && dst.count == n * 2)
 	{
 		for (i = 0; i < n; i++)
 		{
@@ -1332,30 +1288,30 @@ static void fft_store_cplx(mmb_var *dst, const double *re, const double *im, int
 		}
 		return;
 	}
-	if (dst->dims == 2 && dim_len(dst, 0) == 2 && dim_len(dst, 1) == n)
+	if (dst.v->dims == 2 && dim_len(dst.v, 0) == 2 && dim_len(dst.v, 1) == n)
 	{
 		for (i = 0; i < n; i++)
 		{
-			mat_set(dst, G.opt.base, i + G.opt.base, re[i]);
-			mat_set(dst, G.opt.base + 1, i + G.opt.base, im[i]);
+			mat_set(dst.v, G.opt.base, i + G.opt.base, re[i]);
+			mat_set(dst.v, G.opt.base + 1, i + G.opt.base, im[i]);
 		}
 		return;
 	}
 	mmb_error("?ARRAY SIZE");
 }
 
-static int fft_len_from(mmb_var *v)
+static int fft_len_from(mmb_arrview v)
 {
-	if (v->dims == 1)
-		return v->size;
-	if (v->dims == 2 && dim_len(v, 0) == 2)
-		return dim_len(v, 1);
-	return v->size;
+	if (v.v->dims == 1)
+		return v.count;
+	if (v.v->dims == 2 && dim_len(v.v, 0) == 2)
+		return dim_len(v.v, 1);
+	return v.count;
 }
 
 static void cmd_fft(void)
 {
-	mmb_var *src, *dst;
+	mmb_arrview src, dst;
 	double *re, *im;
 	int n, i, mode = 0;
 
@@ -1372,7 +1328,7 @@ static void cmd_fft(void)
 	if (mode == 3)
 		n = fft_len_from(src);
 	else
-		n = src->dims == 1 ? src->size : fft_len_from(src);
+		n = src.v->dims == 1 ? src.count : fft_len_from(src);
 	if (!is_pow2(n))
 		mmb_error("?ARRAY SIZE MUST BE A POWER OF 2");
 	re = tmp_alloc((unsigned)n * sizeof(double));
@@ -1388,7 +1344,7 @@ static void cmd_fft(void)
 			re[i] = re[i] / n;
 			im[i] = -im[i] / n;
 		}
-		if (dst->size != n)
+		if (dst.count != n)
 		{
 			tmp_free(re);
 			tmp_free(im);
@@ -1399,7 +1355,7 @@ static void cmd_fft(void)
 	}
 	else
 	{
-		if (src->size != n)
+		if (src.count != n)
 		{
 			tmp_free(re);
 			tmp_free(im);
@@ -1413,7 +1369,7 @@ static void cmd_fft(void)
 		fft_radix2(re, im, n, 0);
 		if (mode == 1)
 		{
-			if (dst->size != n)
+			if (dst.count != n)
 			{
 				tmp_free(re);
 				tmp_free(im);
@@ -1424,7 +1380,7 @@ static void cmd_fft(void)
 		}
 		else if (mode == 2)
 		{
-			if (dst->size != n)
+			if (dst.count != n)
 			{
 				tmp_free(re);
 				tmp_free(im);

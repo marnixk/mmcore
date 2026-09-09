@@ -54,6 +54,10 @@ def test_help_pixel_array_form(console):
     assert "x()" in out or "XX()" in out
     assert "array" in out.lower()
     assert "smallest" in out.lower()
+    assert "pos().x" in out
+    math = dump_topic(console, "MATH")
+    assert "pts().x" in math or "pos().x" in math
+    assert "arr().member" in math or "TYPE arrays" in math
 
 
 def test_help_basic_lists_constructs(console):
