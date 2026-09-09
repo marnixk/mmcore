@@ -178,6 +178,9 @@ int mmb_try_function(mmb_val *out)
 	static void *fun_tab[512];
 	static int finited;
 
+	if (mmb_try_struct_fun(out))
+		return 1;
+
 	if (!finited)
 	{
 		fun_tab[mmb_kw_id("RGB")] = &&lbl_rgb;
@@ -255,6 +258,18 @@ int mmb_try_function(mmb_val *out)
 		int id = (unsigned char)G.p[1] | ((unsigned char)G.p[2] << 8);
 		if (id > 0 && id < 512 && fun_tab[id])
 		{
+			char kn[MMB_MAX_NAME];
+			const char *sp = G.p;
+			if (mmb_tok_expand(kn, (int)sizeof(kn)))
+			{
+				mmb_skip_sp();
+				if ((*G.p == '.' || *G.p == '(') && mmb_lookup_struct_var(kn))
+				{
+					G.p = sp;
+					return 0;
+				}
+			}
+			G.p = sp;
 			G.p += 3;
 			mmb_skip_sp();
 			goto *fun_tab[id];
@@ -1397,22 +1412,7 @@ static mmb_val expr_primary(void)
 		if (nidx == 0 && mmb_const_lookup(name, t, &cv))
 			return cv;
 		var = mmb_find_var(name, t, 1, nidx, idx);
-		if (nidx)
-		{
-			int i;
-			/* idx overwritten? recompute */
-			off = 0;
-			{
-				int stride = 1;
-				for (i = var->dims - 1; i >= 0; i--)
-				{
-					if (idx[i] < G.opt.base || idx[i] > var->dim[i])
-						mmb_error("?INDEX OUT OF BOUNDS");
-					off += (idx[i] - G.opt.base) * stride;
-					stride *= (var->dim[i] - G.opt.base + 1);
-				}
-			}
-		}
+		off = mmb_elem_off(var, nidx, idx);
 		return mmb_load_var(var, off);
 	}
 }

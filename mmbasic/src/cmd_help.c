@@ -32,7 +32,7 @@ static const char kIndexCommands[] =
 	"\n"
 	"Other\n"
 	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE VSYNC_WAIT CLEAR END\n"
-	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT\n"
+	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT STRUCT\n"
 	"  SETTICK FACTORY_RESET OPTIONS CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
 	"Prompt\n"
@@ -62,9 +62,9 @@ static const char kIndexBasic[] =
 	"  FOR NEXT EXIT FOR   CONTINUE FOR\n"
 	"  WHILE WEND          DO LOOP EXIT DO  CONTINUE DO\n"
 	"  IF THEN ELSE ELSEIF ENDIF\n"
-	"  SELECT CASE         DIM LOCAL STATIC CONST\n"
+	"  SELECT CASE         DIM LOCAL STATIC CONST TYPE END TYPE\n"
 	"  DATA READ RESTORE   SUB FUNCTION CALL EXIT SUB\n"
-	"  GOTO GOSUB RETURN   ON GOTO  ON GOSUB\n"
+	"  LIST TYPE           GOTO GOSUB RETURN   ON GOTO  ON GOSUB\n"
 	"  LET REM END ERROR   labels (name:)\n"
 	"\n"
 	"Type HELP topic for syntax and examples.";
@@ -674,8 +674,13 @@ static const char kHelpNew[] =
 
 static const char kHelpList[] =
 	"LIST\n"
+	"LIST TYPE [name]\n"
 	"\n"
-	"List the program in memory with line numbers.";
+	"LIST prints the program in memory with line numbers.\n"
+	"LIST TYPE shows defined TYPE blocks; LIST TYPE name\n"
+	"shows one type.\n"
+	"\n"
+	"Example:  LIST TYPE Point";
 
 static const char kHelpInput[] =
 	"INPUT [prompt$;|,] var [, var...]\n"
@@ -1292,7 +1297,7 @@ static const char kHelpIf[] =
 
 static const char kHelpDim[] =
 	"DIM [INTEGER|FLOAT|STRING] name[(d1[,d2...])]\n"
-	"    [AS INTEGER|FLOAT|STRING] [, ...]\n"
+	"    [AS INTEGER|FLOAT|STRING|typename] [, ...]\n"
 	"LOCAL ...     (same syntax; use in SUB/FUNCTION)\n"
 	"STATIC ...    (same syntax; value kept between calls)\n"
 	"\n"
@@ -1302,6 +1307,8 @@ static const char kHelpDim[] =
 	"before DIM. OPTION EXPLICIT requires DIM/LOCAL/STATIC.\n"
 	"LENGTH n is accepted (strings still use 255 characters).\n"
 	"DIM INTEGER|FLOAT|STRING applies that type to the list.\n"
+	"AS typename creates a TYPE variable (HELP TYPE).\n"
+	"Initialiser: DIM p AS Point = (10, 20)\n"
 	"\n"
 	"Example:\n"
 	"  DIM A(2)\n"
@@ -1349,6 +1356,7 @@ static const char kHelpSub[] =
 	"Define a subroutine or function. CALL name runs a SUB.\n"
 	"A FUNCTION is used in an expression as name(). Assign to\n"
 	"the function name to set the return value (CMM2).\n"
+	"Parameters and FUNCTION may use AS typename.\n"
 	"\n"
 	"Example:\n"
 	"  10 SUB HI\n"
@@ -1449,6 +1457,7 @@ static const char kHelpFunctions[] =
 	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(n,#fn)\n"
 	"Other: PLAYING() DATE$ TIME$ TIMER POS\n"
 	"  MM.VER MM.DEVICE$ MM.CMDLINE$\n"
+	"  STRUCT() SIZEOF|OFFSET|TYPE|FIND\n"
 	"  DATE$= and TIME$= set the clock strings.\n"
 	"\n"
 	"OPTION ANGLE DEGREES makes SIN/COS/TAN/ATN use degrees.\n"
@@ -1521,6 +1530,54 @@ static const char kHelpSettick[] =
 	"slot is 0 to 3 (default 0). period 0 disables.\n"
 	"\n"
 	"Example:  SETTICK 10, GameTick";
+
+static const char kHelpType[] =
+	"TYPE name\n"
+	"  member AS INTEGER|FLOAT|STRING [LENGTH n]\n"
+	"  member AS othertype\n"
+	"END TYPE\n"
+	"\n"
+	"Define a user type (PicoMite). DIM var AS name,\n"
+	"DIM arr(n) AS name, LOCAL and STATIC. Members:\n"
+	"INTEGER (64-bit), FLOAT, STRING LENGTH n, nested\n"
+	"types. INT means INTEGER inside TYPE. Access with\n"
+	"var.member and arr(i).member. Whole-struct assign\n"
+	"copies the same type only. Period is still a name\n"
+	"character unless the left side is a TYPE variable.\n"
+	"LIST TYPE [name] lists definitions. HELP STRUCT.\n"
+	"\n"
+	"Example:\n"
+	"  TYPE Point\n"
+	"    x AS INTEGER\n"
+	"    y AS INTEGER\n"
+	"  END TYPE\n"
+	"  DIM p AS Point = (10, 20)\n"
+	"  PRINT p.x";
+
+static const char kHelpStruct[] =
+	"STRUCT COPY src TO dst    or src() TO dst()\n"
+	"STRUCT SORT arr().member [, flags]\n"
+	"STRUCT EXTRACT arr().member, dest()\n"
+	"STRUCT INSERT src(), arr().member\n"
+	"STRUCT CLEAR var | arr()\n"
+	"STRUCT SWAP var1, var2\n"
+	"STRUCT PRINT var | arr()\n"
+	"STRUCT SAVE #n, var|arr()|arr(i)\n"
+	"STRUCT LOAD #n, var|arr()|arr(i)\n"
+	"STRUCT(SIZEOF \"T\")\n"
+	"STRUCT(OFFSET \"T\", \"m\")\n"
+	"STRUCT(TYPE \"T\", \"m\")\n"
+	"STRUCT(FIND arr().member, value [, start])\n"
+	"\n"
+	"Operate on TYPE variables. SAVE/LOAD are disk files\n"
+	"only (binary MMBasic layout). SIZEOF is the record\n"
+	"size in bytes. TYPE() returns 1 FLOAT, 2 STRING,\n"
+	"4 INTEGER. FIND returns the index or -1.\n"
+	"HELP TYPE for DIM AS and dots.\n"
+	"\n"
+	"Example:\n"
+	"  STRUCT COPY a TO b\n"
+	"  PRINT STRUCT(SIZEOF \"Point\")";
 
 static const help_topic kTopics[] = {
 	{ "HELP",        HELP_CMD,  kHelpHelp },
@@ -1613,6 +1670,8 @@ static const help_topic kTopics[] = {
 	{ "SELECT CASE", HELP_LANG, kHelpSelect },
 	{ "LET",         HELP_LANG, kHelpLet },
 	{ "REM",         HELP_LANG, kHelpRem },
+	{ "TYPE",        HELP_LANG, kHelpType },
+	{ "STRUCT",      HELP_CMD,  kHelpStruct },
 };
 
 static const struct {
@@ -1729,6 +1788,19 @@ static const struct {
 	{ "END FUNCTION", "SUB" },
 	{ "RETURN",       "GOSUB" },
 	{ "FUNCTIONS",    "FUNCTIONS" },
+	{ "END TYPE",     "TYPE" },
+	{ "LIST TYPE",    "LIST" },
+	{ "STRUCT COPY",  "STRUCT" },
+	{ "STRUCT SORT",  "STRUCT" },
+	{ "STRUCT EXTRACT","STRUCT" },
+	{ "STRUCT INSERT","STRUCT" },
+	{ "STRUCT CLEAR", "STRUCT" },
+	{ "STRUCT SWAP",  "STRUCT" },
+	{ "STRUCT PRINT", "STRUCT" },
+	{ "STRUCT SAVE",  "STRUCT" },
+	{ "STRUCT LOAD",  "STRUCT" },
+	{ "SIZEOF",       "STRUCT" },
+	{ "STRUCT()",     "STRUCT" },
 };
 
 static const char *resolve_alias(const char *q)

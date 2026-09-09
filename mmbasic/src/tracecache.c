@@ -212,7 +212,8 @@ static int tc_compile_primary(tc_ent *e)
 		arr = mmb_find_var(name, 0, 0, 1, 0);
 		idx = mmb_find_var(iname, 0, 0, 0, 0);
 		if (!arr || !idx || arr->dims != 1 || idx->dims != 0 ||
-		    arr->type == T_STR || idx->type == T_STR)
+		    arr->type == T_STR || arr->type == T_STRUCT || G.acc_on ||
+		    idx->type == T_STR || idx->type == T_STRUCT)
 			return 0;
 		ai = tc_add_var(e, arr);
 		ii = tc_add_var(e, idx);
@@ -223,8 +224,11 @@ static int tc_compile_primary(tc_ent *e)
 	{
 		mmb_var *v = mmb_find_var(name, 0, 1, 0, 0);
 		int vi;
-		if (!v || v->dims != 0 || v->type == T_STR)
+		if (!v || v->dims != 0 || v->type == T_STR || v->type == T_STRUCT || G.acc_on)
+		{
+			G.acc_on = 0;
 			return 0;
+		}
 		vi = tc_add_var(e, v);
 		if (vi < 0)
 			return 0;
@@ -333,14 +337,18 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 		dst = mmb_find_var(name, 0, 0, 1, 0);
 		idx = mmb_find_var(iname, 0, 0, 0, 0);
 		if (!dst || !idx || dst->dims != 1 || idx->dims != 0 ||
-		    dst->type == T_STR || idx->type == T_STR)
+		    dst->type == T_STR || dst->type == T_STRUCT || G.acc_on ||
+		    idx->type == T_STR || idx->type == T_STRUCT)
 			return 0;
 	}
 	else
 	{
 		dst = mmb_find_var(name, 0, 1, 0, 0);
-		if (!dst || dst->dims != 0 || dst->type == T_STR)
+		if (!dst || dst->dims != 0 || dst->type == T_STR || dst->type == T_STRUCT || G.acc_on)
+		{
+			G.acc_on = 0;
 			return 0;
+		}
 	}
 	mmb_skip_sp();
 	if (*G.p != '=')

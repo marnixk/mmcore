@@ -366,14 +366,14 @@ mmb_val mmb_str_val(const char *s)
 
 double mmb_as_float(mmb_val v)
 {
-	if (v.type == T_STR)
+	if (v.type == T_STR || v.type == T_STRUCT)
 		mmb_error("?TYPE MISMATCH");
 	return v.type == T_INT ? (double)v.i : v.f;
 }
 
 int64_t mmb_as_int(mmb_val v)
 {
-	if (v.type == T_STR)
+	if (v.type == T_STR || v.type == T_STRUCT)
 		mmb_error("?TYPE MISMATCH");
 	return v.type == T_INT ? v.i : (int64_t)v.f;
 }
@@ -591,6 +591,8 @@ void mmb_print_val(mmb_val v)
 		mmb_out(v.s ? v.s : "");
 	else if (v.type == T_INT)
 		mmb_outf(0, v.i);
+	else if (v.type == T_STRUCT)
+		mmb_out("[STRUCT]");
 	else
 	{
 		char buf[48];

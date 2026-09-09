@@ -43,18 +43,18 @@ static const char *const kws[] = {
 	"RM", "RENAME", "REBOOT", "RESTART", "RESET", "RGB", "RND", "RIGHT$",
 	"RADIANS", "REVERSE", "RAM", "RTC", "REPEAT", "RESOLUTION",
 	"RESIZE_FAST", "RESIZE", "ROTATE_FAST", "ROTATE", "RIGHT",
-	"SUB", "STATIC", "SELECT", "SAVE", "SEEK", "SORT", "SPRITE",
+	"SUB", "STRUCT", "STATIC", "SELECT", "SAVE", "SEEK", "SORT", "SPRITE",
 	"SETTICK", "STRING", "STRING$", "STR$", "SQR", "SQRT", "SIN", "SINH",
-	"SGN", "SPACE$", "STEP", "SCREEN", "SERIAL", "STATUS",
+	"SGN", "SPACE$", "STEP", "SCREEN", "SERIAL", "STATUS", "SWAP",
 	"SLEEP", "SD", "SEARCH", "SMALL", "SUM", "SCALE", "SET",
 	"TO", "THEN", "TERM", "TRIANGLE", "TEXT", "TURTLE", "TIMER", "TIME$",
-	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING",
+	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING", "TYPE",
 	"UNTIL", "UCASE$", "UP", "UPPER", "USBKEYBOARD",
 	"VAL", "VSYNC_WAIT", "WHILE", "WEND", "WORDPAD",
 	"WARP_H", "WARP_V", "WINDOW", "WRITE", "WIFI", "VERY", "XOR",
 	"XOR_PIXELS", "Y_AXIS",
 	"FORMAT$", "CHOICE", "BOUND", "CINT", "EVAL", "KEYDOWN", "ASC",
-	"DEG", "RAD", "POS",
+	"DEG", "RAD", "POS", "EXTRACT", "INSERT",
 	0
 };
 

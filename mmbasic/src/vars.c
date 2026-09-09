@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <string.h>
 
 static int var_tab[MMB_MAX_VARS];
 static int unsuf_tab[MMB_MAX_VARS];
@@ -173,6 +174,8 @@ void mmb_clear_vars(int keep_options)
 				G.plat->free(G.vars[i].data.i);
 			else if (G.vars[i].type == T_NUM && G.vars[i].data.f)
 				G.plat->free(G.vars[i].data.f);
+			else if (G.vars[i].type == T_STRUCT && G.vars[i].data.blob)
+				G.plat->free(G.vars[i].data.blob);
 		}
 		memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	}
@@ -210,16 +213,133 @@ int mmb_var_offset(mmb_var *v, int nidx, const int *idx)
 	return offset_of(v, idx);
 }
 
+int mmb_elem_off(mmb_var *v, int nidx, const int *idx)
+{
+	if (!v)
+		return 0;
+	if (G.acc_on)
+	{
+		if (nidx && v->dims == nidx)
+			return offset_of(v, idx);
+		return 0;
+	}
+	if (nidx)
+		return offset_of(v, idx);
+	return 0;
+}
+
+mmb_var *mmb_lookup_struct_var(const char *name)
+{
+	char nbuf[MMB_MAX_NAME];
+	int i;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	mmb_type_suffix(nbuf);
+	i = hash_lookup(nbuf, T_STRUCT);
+	if (i >= 0)
+		return &G.vars[i];
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
+			return &G.vars[i];
+	return 0;
+}
+
+void mmb_bind_struct_var(const char *name, int sid)
+{
+	char nbuf[MMB_MAX_NAME];
+	int i, slot, sz;
+	mmb_sdef *sd;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	mmb_type_suffix(nbuf);
+	sd = mmb_struct_def(sid);
+	if (!sd)
+		mmb_error("?UNKNOWN TYPE");
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
+		{
+			if (G.vars[i].struct_idx != sid)
+				mmb_error("?TYPE MISMATCH");
+			return;
+		}
+	for (slot = 0; slot < MMB_MAX_VARS; slot++)
+		if (!G.vars[slot].used)
+			break;
+	if (slot >= MMB_MAX_VARS)
+		mmb_error("?OUT OF MEMORY");
+	sz = sd->total;
+	memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
+	strncpy(G.vars[slot].name, nbuf, MMB_MAX_NAME - 1);
+	G.vars[slot].type = T_STRUCT;
+	G.vars[slot].dims = 0;
+	G.vars[slot].size = 1;
+	G.vars[slot].struct_idx = sid;
+	G.vars[slot].used = 1;
+	G.vars[slot].unsuffixed = 1;
+	G.vars[slot].data.blob = G.plat->alloc((unsigned)sz);
+	memset(G.vars[slot].data.blob, 0, (unsigned)sz);
+	G.nvars++;
+	hash_ins(slot);
+}
+
+static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
+{
+	char *dot;
+	char base[MMB_MAX_NAME];
+	int bl;
+	mmb_var *sv;
+	if (G.nstruct <= 0)
+		return 0;
+	dot = strchr(nbuf, '.');
+	if (!dot)
+		return 0;
+	bl = (int)(dot - nbuf);
+	if (bl <= 0 || bl >= MMB_MAX_NAME)
+		return 0;
+	memcpy(base, nbuf, (unsigned)bl);
+	base[bl] = 0;
+	sv = mmb_lookup_struct_var(base);
+	if (!sv)
+		return 0;
+	if (sv->dims == nidx)
+	{
+		if (mmb_struct_resolve(sv, dot + 1, 0, 0))
+		{
+			if (idx && nidx == 0)
+				*idx = 0;
+			return sv;
+		}
+	}
+	if (sv->dims == 0)
+	{
+		if (mmb_struct_resolve(sv, dot + 1, nidx, idx))
+		{
+			if (idx && nidx == 0)
+				*idx = 0;
+			return sv;
+		}
+	}
+	mmb_error("?UNKNOWN");
+	return 0;
+}
+
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
 {
 	int i;
 	char nbuf[MMB_MAX_NAME];
 	int t, typed_lookup;
+	mmb_var *sv;
 	if (G.opt.profiling && G.running)
 		G.prof.find_var++;
+	G.acc_on = 0;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
+	sv = try_struct_path(nbuf, nidx, idx);
+	if (sv)
+		return sv;
 	t = mmb_type_suffix(nbuf);
 	typed_lookup = (type != 0) || t;
 	if (t)
@@ -267,6 +387,8 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 
 	if (!create)
 		return 0;
+	if (type == T_STRUCT)
+		mmb_error("?UNDECLARED");
 	if (G.opt.explicit)
 		mmb_error("?UNDECLARED");
 	if (nidx > 0)
@@ -325,6 +447,7 @@ void mmb_cmd_dim(void)
 		char name[MMB_MAX_NAME];
 		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot, had_suffix;
 		int idxdummy[MMB_MAX_DIMS];
+		int struct_idx = -1;
 		mmb_ident(name, sizeof(name));
 		{
 			int sl = (int)strlen(name);
@@ -355,22 +478,34 @@ void mmb_cmd_dim(void)
 		mmb_skip_sp();
 		if (mmb_match("AS"))
 		{
-			if (mmb_match("INTEGER"))
+			if (mmb_match("INTEGER") || mmb_match("INT"))
 				type = T_INT;
 			else if (mmb_match("STRING"))
 				type = T_STR;
 			else if (mmb_match("FLOAT"))
 				type = T_NUM;
 			else
-				mmb_syntax();
+			{
+				char tn[MMB_MAX_NAME];
+				int sid;
+				mmb_ident(tn, sizeof(tn));
+				mmb_type_suffix(tn);
+				sid = mmb_struct_lookup(tn);
+				if (sid < 0)
+					mmb_error("?UNKNOWN TYPE");
+				type = T_STRUCT;
+				struct_idx = sid;
+			}
 		}
 		if (mmb_match("LENGTH"))
 		{
 			mmb_val lv = mmb_expr();
-			(void)lv; /* accepted; strings stay MMB_MAX_STR */
+			(void)lv;
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
+		if (type == T_STRUCT && struct_idx < 0)
+			mmb_syntax();
 
 		for (i = 0; i < MMB_MAX_VARS; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
@@ -402,6 +537,7 @@ void mmb_cmd_dim(void)
 		G.vars[slot].size = n;
 		G.vars[slot].used = 1;
 		G.vars[slot].unsuffixed = !had_suffix;
+		G.vars[slot].struct_idx = struct_idx;
 		if (type == T_INT)
 		{
 			G.vars[slot].data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
@@ -415,6 +551,12 @@ void mmb_cmd_dim(void)
 				G.vars[slot].data.s[i] = G.plat->alloc(MMB_MAX_STR + 1);
 				G.vars[slot].data.s[i][0] = 0;
 			}
+		}
+		else if (type == T_STRUCT)
+		{
+			int sz = G.sdef[struct_idx].total;
+			G.vars[slot].data.blob = G.plat->alloc((unsigned)n * (unsigned)sz);
+			memset(G.vars[slot].data.blob, 0, (unsigned)n * (unsigned)sz);
 		}
 		else
 		{
@@ -433,7 +575,45 @@ void mmb_cmd_dim(void)
 			int ei = 0;
 			G.p++;
 			mmb_skip_sp();
-			if (*G.p == '(')
+			if (type == T_STRUCT)
+			{
+				mmb_sdef *sd = &G.sdef[G.vars[slot].struct_idx];
+				int m;
+				if (*G.p != '(')
+					mmb_syntax();
+				G.p++;
+				for (m = 0; m < sd->nmem; m++)
+				{
+					mmb_val init;
+					int saved_acc = G.acc_on;
+					mmb_skip_sp();
+					if (*G.p == ')')
+						break;
+					init = mmb_expr();
+					G.acc_on = 1;
+					G.acc_sid = G.vars[slot].struct_idx;
+					G.acc_mtype = sd->mem[m].type;
+					G.acc_moff = sd->mem[m].offset;
+					if (sd->mem[m].type == T_STR)
+						G.acc_msize = sd->mem[m].size;
+					else if (sd->mem[m].type == T_STRUCT)
+					{
+						G.acc_sid = sd->mem[m].size;
+						G.acc_msize = G.sdef[sd->mem[m].size].total;
+					}
+					else
+						G.acc_msize = 8;
+					mmb_struct_store_member(&G.vars[slot], 0, init);
+					G.acc_on = saved_acc;
+					mmb_skip_sp();
+					if (*G.p == ',')
+						G.p++;
+				}
+				mmb_skip_sp();
+				if (*G.p == ')')
+					G.p++;
+			}
+			else if (*G.p == '(')
 			{
 				G.p++;
 				while (ei < G.vars[slot].size)
@@ -494,6 +674,21 @@ void mmb_cmd_dim(void)
 
 static void store(mmb_var *v, int off, mmb_val val)
 {
+	if (G.acc_on)
+	{
+		mmb_struct_store_member(v, off, val);
+		G.acc_on = 0;
+		return;
+	}
+	if (v->type == T_STRUCT)
+	{
+		int sz;
+		if (val.type != T_STRUCT || val.struct_idx != v->struct_idx || !val.blob)
+			mmb_error("?TYPE MISMATCH");
+		sz = G.sdef[v->struct_idx].total;
+		memcpy(mmb_struct_elem(v, off), val.blob, (unsigned)sz);
+		return;
+	}
 	if (v->type == T_STR)
 	{
 		if (val.type != T_STR)
@@ -517,6 +712,21 @@ static void store(mmb_var *v, int off, mmb_val val)
 
 mmb_val mmb_load_var(mmb_var *v, int off)
 {
+	if (G.acc_on)
+	{
+		mmb_val r = mmb_struct_load_member(v, off);
+		G.acc_on = 0;
+		return r;
+	}
+	if (v->type == T_STRUCT)
+	{
+		mmb_val out;
+		memset(&out, 0, sizeof(out));
+		out.type = T_STRUCT;
+		out.struct_idx = v->struct_idx;
+		out.blob = mmb_struct_elem(v, off);
+		return out;
+	}
 	if (v->type == T_STR)
 		return mmb_str_val(v->data.s[off]);
 	if (v->type == T_INT)
@@ -552,6 +762,29 @@ int mmb_parse_var_ref(char *name, int *nidx, int *idx)
 		} while (1);
 		mmb_expect(')');
 	}
+	mmb_skip_sp();
+	if (*G.p == '.')
+	{
+		int nl = (int)strlen(name);
+		while (*G.p == '.')
+		{
+			char part[MMB_MAX_NAME];
+			int pn;
+			if (nl >= MMB_MAX_NAME - 2)
+				mmb_error("?SYNTAX ERROR");
+			name[nl++] = '.';
+			name[nl] = 0;
+			G.p++;
+			mmb_ident(part, sizeof(part));
+			mmb_type_suffix(part);
+			pn = (int)strlen(part);
+			if (nl + pn >= MMB_MAX_NAME)
+				mmb_error("?SYNTAX ERROR");
+			memcpy(name + nl, part, (unsigned)pn + 1);
+			nl += pn;
+			mmb_skip_sp();
+		}
+	}
 	return t;
 }
 
@@ -567,8 +800,7 @@ void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val 
 	for (i = 0; i < nidx; i++)
 		idxcopy[i] = idx[i];
 	v = mmb_find_var(name, type_hint, 1, nidx, idxcopy);
-	if (nidx)
-		off = offset_of(v, idx);
+	off = mmb_elem_off(v, nidx, idx);
 	store(v, off, val);
 }
 
