@@ -2,7 +2,14 @@
 
 from pathlib import Path
 
-from harness import MMBasicConsole, TermReplay, parse_termlog
+from harness import (
+    MMBasicConsole,
+    TermReplay,
+    load_termlog,
+    max_render_lag,
+    parse_termlog,
+    typed_keys,
+)
 from test_term import _plain, _quit
 from test_term_replay import _open_replay
 
@@ -30,8 +37,36 @@ def test_blackflag_log_login_uses_cub_then_echo():
     rx = b"".join(r.data for r in recs if r.kind == "R")
     assert b"login" in rx.lower() or b"LOGIN" in rx
     assert b"\x1b[17D" in rx or b"\x1b[27C" in rx
-    typed = [r for r in recs if r.kind == "T" and r.data[:1] != b"\xff"]
+    typed = typed_keys(recs)
     assert typed, "expected typed keys in capture"
+
+
+def test_blackflag_v2_render_lag_is_transient_burst_not_freeze():
+    """Heavy ANSI art keeps rendered one recv chunk behind, then catches up."""
+    recs = load_termlog(BLACKFLAG.read_text())
+    lag, _at = max_render_lag(recs)
+    assert lag >= 400, "expected large transient lag during animation bursts"
+    assert recs[-1].in_n == recs[-1].rendered, "capture ends fully rendered"
+
+
+def test_blackflag_v2_opening_animation_completes():
+    recs = load_termlog(BLACKFLAG.read_text())
+    rx = b"".join(r.data for r in recs if r.kind == "R")
+    assert b"Mystic BBS" in rx
+    assert b"Under the Black Flag" in rx
+    assert b"Connected to" in rx
+    assert b"BOTCHECK" in rx
+
+
+def test_blackflag_v2_session_flow_after_animation():
+    recs = load_termlog(BLACKFLAG.read_text())
+    rx = b"".join(r.data for r in recs if r.kind == "R")
+    typed = b"".join(t.data for t in typed_keys(recs))
+    assert b"Black Sails ANSi Theme" in rx
+    assert b"login\x1b[0m:" in rx
+    assert b"account name you entered was not located" in rx
+    assert b"Apply for a new account?" in rx
+    assert typed.startswith(b"\x1b\x1b1\nireal\n")
 
 
 def test_term_mystic_login_field_cub_before_echo(kernel_image):
