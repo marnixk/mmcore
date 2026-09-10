@@ -18,9 +18,24 @@ def test_parse_termlog_records():
     assert recs[0].kind == "R"
     assert recs[0].in_n == 5
     assert recs[0].rendered == 0
+    assert recs[0].ms is None
     assert recs[0].data == b"ABC\r\n"
     assert recs[1].kind == "T"
     assert recs[1].rendered == 5
+    assert recs[1].data == b"Z"
+
+
+def test_parse_termlog_v2_timestamps():
+    text = (
+        "# TERMLOG 2\n"
+        "R 100 5 0 4142430D0A\n"
+        "T 250 5 5 5A\n"
+    )
+    recs = parse_termlog(text)
+    assert len(recs) == 2
+    assert recs[0].ms == 100
+    assert recs[0].in_n == 5
+    assert recs[1].ms == 250
     assert recs[1].data == b"Z"
 
 
@@ -55,7 +70,7 @@ def test_option_term_log_on_off_file(console):
     assert "OPTION TERM LOG ON" in listed
     path = "C:/.termlog" if "C:/.termlog" in out else "A:/.termlog"
     body = _read_termlog(console, path)
-    assert "# TERMLOG 1" in body
+    assert "# TERMLOG 2" in body
     off = console.send_line("OPTION TERM LOG OFF")
     assert "in=0" in off
     assert "rendered=0" in off
@@ -85,6 +100,11 @@ def test_term_log_roundtrip_replay(kernel_image):
         assert path, "expected A:/.termlog or C:/.termlog"
         body = _read_termlog(con, path)
         recs = parse_termlog(body)
+        assert all(r.ms is not None for r in recs)
+        assert recs[0].ms == 0 or recs[0].ms >= 0
+        for a, b in zip(recs, recs[1:]):
+            assert b.ms is not None and a.ms is not None
+            assert b.ms >= a.ms
         rx = b"".join(r.data for r in recs if r.kind == "R")
         tx = b"".join(r.data for r in recs if r.kind == "T" and r.data[:1] != b"\xff")
         assert b"HELLO-LOG" in rx
