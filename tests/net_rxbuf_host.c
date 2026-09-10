@@ -62,6 +62,24 @@ int main(void)
 	expect_mem("after wrap", out, wrap + 64, 40);
 	expect_eq("empty again", mmb_net_rxbuf_used(&b), 0);
 
+	{
+		unsigned char iac[1] = { 255 };
+		unsigned char will[1] = { 251 };
+
+		expect_eq("push iac", mmb_net_rxbuf_push(&b, iac, 1), 1);
+		expect_eq("iac at head", mmb_net_rxbuf_at(&b, 0), 255);
+		expect_eq("peek needs 2", mmb_net_rxbuf_peek(&b, 0, out, 2), 1);
+		expect_eq("still unread", mmb_net_rxbuf_used(&b), 1);
+		expect_eq("push will", mmb_net_rxbuf_push(&b, will, 1), 1);
+		expect_eq("peek iac will", mmb_net_rxbuf_peek(&b, 0, out, 2), 2);
+		expect_eq("will at 1", mmb_net_rxbuf_at(&b, 1), 251);
+		mmb_net_rxbuf_drop(&b, 1);
+		expect_eq("consumed iac", mmb_net_rxbuf_used(&b), 1);
+		expect_eq("will now head", mmb_net_rxbuf_at(&b, 0), 251);
+		mmb_net_rxbuf_drop(&b, 1);
+		expect_eq("iac drained", mmb_net_rxbuf_used(&b), 0);
+	}
+
 	mmb_net_rxbuf_reset(&b);
 	expect_eq("cap matches header", MMB_NET_RX_CAP, 512u * 1024u);
 

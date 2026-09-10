@@ -1,5 +1,4 @@
 #include "mmbasic.h"
-#include "net_rxbuf.h"
 
 /*
  * TCP platform layer used by CONNECT and TERM.
@@ -13,10 +12,8 @@
  * timeout. Circle patch circle-wifi-149.patch wakes Connect() on abort.
  *
  * CSocket::Receive copies min(buflen, segment) then frees the rest of that
- * TCP buffer, so dest must be at least FRAME_BUFFER_SIZE (1600). Bytes are
- * pulled into a 512KB circular ring, then handed to TERM in 8KB chunks.
- * ANSI/IAC state lives in TERM, so a CSI or IAC may span recvs; the ring
- * must not drop a frame to make room (stop draining when free < 1600).
+ * TCP buffer, so dest must be at least FRAME_BUFFER_SIZE (1600). This layer
+ * only holds one frame leftover. TERM owns the 512KB interpret ring.
  */
 
 #ifdef MMB_CIRCLE_WLAN
@@ -46,9 +43,9 @@
 #define MMB_NET_GW_PROBE_MS 2000
 
 static CSocket *s_sock;
-static u8 s_rx_store[MMB_NET_RX_CAP];
-static mmb_net_rxbuf s_rx;
-static u8 s_frame[FRAME_BUFFER_SIZE];
+static u8 s_rx[FRAME_BUFFER_SIZE];
+static unsigned s_rxn;
+static unsigned s_rxoff;
 
 static char s_open_host[80];
 static int s_open_port;
@@ -344,9 +341,8 @@ void mmb_net_tcp_close(void)
 	s_pending = 0;
 	s_peer_closed = 0;
 	s_gen++;
-	if (!s_rx.data)
-		mmb_net_rxbuf_init(&s_rx, s_rx_store, MMB_NET_RX_CAP);
-	mmb_net_rxbuf_reset(&s_rx);
+	s_rxn = 0;
+	s_rxoff = 0;
 	abort_inflight();
 	if (s_sock)
 	{
@@ -398,9 +394,8 @@ int mmb_net_tcp_begin(const char *host, int port)
 		delete s_sock;
 		s_sock = 0;
 	}
-	if (!s_rx.data)
-		mmb_net_rxbuf_init(&s_rx, s_rx_store, MMB_NET_RX_CAP);
-	mmb_net_rxbuf_reset(&s_rx);
+	s_rxn = 0;
+	s_rxoff = 0;
 	s_peer_closed = 0;
 
 	n = 0;
@@ -499,63 +494,70 @@ int mmb_net_tcp_send(const void *data, unsigned n)
 	return rc;
 }
 
-static void rx_ensure(void)
-{
-	if (!s_rx.data)
-		mmb_net_rxbuf_init(&s_rx, s_rx_store, MMB_NET_RX_CAP);
-}
-
-static int rx_drain(void)
-{
-	int got = 0;
-
-	rx_ensure();
-	while (s_sock && mmb_net_rxbuf_free(&s_rx) >= FRAME_BUFFER_SIZE)
-	{
-		int n = s_sock->Receive(s_frame, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
-		if (CScheduler::IsActive())
-			CScheduler::Get()->Yield();
-		if (n < 0)
-		{
-			s_peer_closed = 1;
-			return got ? got : n;
-		}
-		if (n == 0)
-			return got;
-		if (mmb_net_rxbuf_push(&s_rx, s_frame, (unsigned)n) != (unsigned)n)
-			return got ? got : -1;
-		got += n;
-	}
-	return got;
-}
-
 int mmb_net_tcp_recv(void *data, unsigned maxn)
 {
-	int drain;
-	unsigned n;
+	unsigned char *dst;
+	unsigned out = 0;
 
 	if (!s_sock)
 		return -1;
 	if (!data || !maxn)
 		return 0;
-	rx_ensure();
-	drain = rx_drain();
-	n = mmb_net_rxbuf_pop(&s_rx, (unsigned char *)data, maxn);
-	if (n)
-		return (int)n;
-	if (drain < 0)
-		return drain;
-	return 0;
+	dst = (unsigned char *)data;
+	for (;;)
+	{
+		if (s_rxoff < s_rxn)
+		{
+			unsigned n = s_rxn - s_rxoff;
+			if (n > maxn - out)
+				n = maxn - out;
+			memcpy(dst + out, s_rx + s_rxoff, n);
+			s_rxoff += n;
+			out += n;
+			if (out == maxn)
+				return (int)out;
+			continue;
+		}
+		s_rxn = 0;
+		s_rxoff = 0;
+		{
+			int n = s_sock->Receive(s_rx, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
+			if (CScheduler::IsActive())
+				CScheduler::Get()->Yield();
+			if (n < 0)
+			{
+				s_peer_closed = 1;
+				return out ? (int)out : n;
+			}
+			if (n == 0)
+				return (int)out;
+			s_rxn = (unsigned)n;
+			s_rxoff = 0;
+		}
+	}
 }
 
 int mmb_net_tcp_rx_avail(void)
 {
 	if (!s_sock || s_peer_closed)
 		return 0;
-	rx_ensure();
-	if (!mmb_net_rxbuf_used(&s_rx))
-		rx_drain();
-	return (int)mmb_net_rxbuf_used(&s_rx);
+	if (s_rxoff < s_rxn)
+		return (int)(s_rxn - s_rxoff);
+	{
+		int n = s_sock->Receive(s_rx, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
+		if (CScheduler::IsActive())
+			CScheduler::Get()->Yield();
+		if (n < 0)
+		{
+			s_peer_closed = 1;
+			return 0;
+		}
+		if (n <= 0)
+			return 0;
+		s_rxn = (unsigned)n;
+		s_rxoff = 0;
+		return n;
+	}
 }
 
 int mmb_net_tcp_peer_closed(void)

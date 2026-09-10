@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "net_rxbuf.h"
 #include <string.h>
 
 #define IAC   255
@@ -115,8 +116,6 @@ typedef struct {
 	int last_eol;
 	int sb_opt;
 	int sb_cmd;
-	unsigned char hold[2];
-	int hold_n;
 	char line[TM_LINE];
 	int linelen;
 	int esc;
@@ -160,6 +159,9 @@ typedef struct {
 } tm_state;
 
 static tm_state T;
+
+static unsigned char term_rx_store[MMB_NET_RX_CAP];
+static mmb_net_rxbuf term_rx;
 
 static struct {
 	unsigned in_n;
@@ -254,6 +256,7 @@ static void term_reset_pen(void);
 static void demo_emit_line(void);
 static void esc_reset(void);
 static int term_width(void);
+static int term_rx_interpret(void);
 static void incoming_feed(const unsigned char *src, int n);
 static void term_open_menu(void);
 static void term_close_menu(void);
@@ -1026,6 +1029,9 @@ static void term_exit(void)
 	else if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
 	mmb_console_reset_prompt();
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
+	mmb_net_rxbuf_reset(&term_rx);
 	memset(&T, 0, sizeof(T));
 }
 
@@ -3078,89 +3084,107 @@ void mmb_term_log_enable(int on)
 	mmb_out(path);
 }
 
-static unsigned char feed_at(const unsigned char *hold, int hold_n,
-			     const unsigned char *src, int i)
+static void term_rx_consume(unsigned n)
 {
-	if (i < hold_n)
+	unsigned char tmp[256];
+	unsigned got;
+
+	while (n > 0)
 	{
-		if (i < 0 || i > 1)
-			return 0;
-		return hold[i];
+		got = n;
+		if (got > sizeof tmp)
+			got = sizeof tmp;
+		got = mmb_net_rxbuf_pop(&term_rx, tmp, got);
+		if (!got)
+			return;
+		term_log_rx(tmp, (int)got);
+		n -= got;
 	}
-	return src[i - hold_n];
 }
 
-static void incoming_feed(const unsigned char *src, int n)
+static int term_rx_interpret(void)
 {
-	unsigned char hold[2];
-	int hold_n, total, i;
+	int got = 0;
 
-	if (n < 0)
-		n = 0;
-	hold_n = T.hold_n;
-	if (hold_n > 0)
-		memcpy(hold, T.hold, (unsigned)hold_n);
-	T.hold_n = 0;
-	if (n > 0)
-		term_log_rx(src, n);
-	total = hold_n + n;
-	i = 0;
-	while (i < total)
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
+	while (mmb_net_rxbuf_used(&term_rx) > 0)
 	{
-		unsigned char b = feed_at(hold, hold_n, src, i);
+		unsigned char b = mmb_net_rxbuf_at(&term_rx, 0);
+		unsigned avail = mmb_net_rxbuf_used(&term_rx);
 
 		sb_watchdog();
 		ansi_watchdog();
 		if (T.sb || T.iac)
 		{
 			incoming_byte(b);
-			i++;
+			term_rx_consume(1);
+			got++;
 			continue;
 		}
 		if (b != IAC)
 		{
 			incoming_byte(b);
-			i++;
+			term_rx_consume(1);
+			got++;
 			continue;
 		}
-		if (i + 1 >= total)
+		if (avail < 2)
+			break;
 		{
-			T.hold[0] = IAC;
-			T.hold_n = 1;
-			return;
-		}
-		{
-			unsigned char b1 = feed_at(hold, hold_n, src, i + 1);
+			unsigned char b1 = mmb_net_rxbuf_at(&term_rx, 1);
 
 			if (b1 == SB)
 			{
-				if (i + 2 >= total)
-				{
-					T.hold[0] = IAC;
-					T.hold[1] = SB;
-					T.hold_n = 2;
-					return;
-				}
-				if (telopt_known(feed_at(hold, hold_n, src, i + 2)))
+				if (avail < 3)
+					break;
+				if (telopt_known(mmb_net_rxbuf_at(&term_rx, 2)))
 				{
 					incoming_byte(IAC);
-					i++;
+					term_rx_consume(1);
+					got++;
 					continue;
 				}
 				pane_put((char)IAC);
-				i++;
+				term_rx_consume(1);
+				got++;
 				continue;
 			}
 			if (iac_cmd_byte(b1))
 			{
 				incoming_byte(IAC);
-				i++;
+				term_rx_consume(1);
+				got++;
 				continue;
 			}
 			pane_put((char)IAC);
-			i++;
+			term_rx_consume(1);
+			got++;
 		}
 	}
+	return got;
+}
+
+static void incoming_feed(const unsigned char *src, int n)
+{
+	if (!src || n <= 0)
+		return;
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
+	while (n > 0)
+	{
+		unsigned w = mmb_net_rxbuf_push(&term_rx, src, (unsigned)n);
+
+		if (!w)
+		{
+			if (!term_rx_interpret())
+				return;
+			continue;
+		}
+		src += w;
+		n -= (int)w;
+	}
+	term_rx_interpret();
 }
 
 static void demo_iac_tick(void)
@@ -3412,6 +3436,9 @@ void mmb_cmd_term(void)
 	}
 
 	memset(&T, 0, sizeof(T));
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
+	mmb_net_rxbuf_reset(&term_rx);
 	if (!no_args)
 	{
 		strncpy(T.host, host.s, sizeof(T.host) - 1);
@@ -3747,6 +3774,7 @@ void mmb_term_poll(void)
 		demo_emit_line();
 	if (T.replay)
 	{
+		term_rx_interpret();
 		if (T.need_draw)
 			term_draw();
 		ansi_watchdog();
@@ -3802,22 +3830,39 @@ void mmb_term_poll(void)
 		return;
 	}
 	got = 0;
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	for (loops = 0; loops < TM_RECV_LOOPS; loops++)
 	{
-		n = mmb_net_tcp_recv(buf, sizeof(buf));
+		unsigned space = mmb_net_rxbuf_free(&term_rx);
+		unsigned want;
+
+		if (!space)
+		{
+			if (!term_rx_interpret())
+				break;
+			continue;
+		}
+		want = sizeof(buf);
+		if (want > space)
+			want = space;
+		n = mmb_net_tcp_recv(buf, want);
 		if (n < 0)
 		{
+			term_rx_interpret();
 			tcp_close_quiet();
 			return;
 		}
 		if (n == 0)
 			break;
-		incoming_feed(buf, n);
+		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
 		got += n;
 		mmb_net_yield();
 		if (!mmb_net_tcp_rx_avail())
 			break;
 	}
+	if (got || mmb_net_rxbuf_used(&term_rx))
+		term_rx_interpret();
 	if (got)
 	{
 		if (got < 80 || !T.dump_at ||

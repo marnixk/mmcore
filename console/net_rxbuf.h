@@ -21,6 +21,9 @@ unsigned mmb_net_rxbuf_used(const mmb_net_rxbuf *b);
 unsigned mmb_net_rxbuf_free(const mmb_net_rxbuf *b);
 unsigned mmb_net_rxbuf_push(mmb_net_rxbuf *b, const unsigned char *src, unsigned n);
 unsigned mmb_net_rxbuf_pop(mmb_net_rxbuf *b, unsigned char *dst, unsigned maxn);
+unsigned mmb_net_rxbuf_peek(const mmb_net_rxbuf *b, unsigned off, unsigned char *dst, unsigned n);
+unsigned char mmb_net_rxbuf_at(const mmb_net_rxbuf *b, unsigned off);
+void mmb_net_rxbuf_drop(mmb_net_rxbuf *b, unsigned n);
 
 #ifdef __cplusplus
 }

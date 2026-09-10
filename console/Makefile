@@ -72,7 +72,7 @@ LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
 	$(LIBS)
 endif
 
-EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party
+EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party -I .
 
 # MMBasic objects live outside console/; drop them on `make clean` so a
 # RASPPI switch (Pi 3 vs Pi 4 / 400) cannot relink stale -mcpu objects.

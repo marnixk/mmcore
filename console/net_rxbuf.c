@@ -72,3 +72,50 @@ unsigned mmb_net_rxbuf_pop(mmb_net_rxbuf *b, unsigned char *dst, unsigned maxn)
 	b->used -= n;
 	return n;
 }
+
+unsigned mmb_net_rxbuf_peek(const mmb_net_rxbuf *b, unsigned off, unsigned char *dst, unsigned n)
+{
+	unsigned i, first, avail;
+
+	if (!b->data || !dst || off >= b->used)
+		return 0;
+	avail = b->used - off;
+	if (n > avail)
+		n = avail;
+	if (!n)
+		return 0;
+	i = b->head + off;
+	if (i >= b->cap)
+		i -= b->cap;
+	first = b->cap - i;
+	if (first > n)
+		first = n;
+	memcpy(dst, b->data + i, first);
+	if (n > first)
+		memcpy(dst + first, b->data, n - first);
+	return n;
+}
+
+unsigned char mmb_net_rxbuf_at(const mmb_net_rxbuf *b, unsigned off)
+{
+	unsigned i;
+
+	if (!b->data || off >= b->used)
+		return 0;
+	i = b->head + off;
+	if (i >= b->cap)
+		i -= b->cap;
+	return b->data[i];
+}
+
+void mmb_net_rxbuf_drop(mmb_net_rxbuf *b, unsigned n)
+{
+	if (!b->data || !n || !b->used)
+		return;
+	if (n > b->used)
+		n = b->used;
+	b->head += n;
+	if (b->head >= b->cap)
+		b->head -= b->cap;
+	b->used -= n;
+}
