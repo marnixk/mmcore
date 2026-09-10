@@ -96,8 +96,8 @@ def test_help_term(console):
     assert "boxed" in low
     assert "full" in low
     assert "bookmark" in low
-	assert "replay" in low
-	assert "log" in low
+    assert "replay" in low
+    assert "log" in low
     assert "255" in low or "iac" in low
     assert "disconnect" in low or "no argument" in low or "[host" in low
     assert "theme" in low or "editor" in low

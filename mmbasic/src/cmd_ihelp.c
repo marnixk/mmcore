@@ -1,7 +1,7 @@
 #include "mmb_priv.h"
 #include "tui.h"
 
-#define IH_MAX_LINES 220
+#define IH_MAX_LINES 280
 #define IH_COLS      96
 #define IH_MAX_LINKS 384
 #define IH_STACK     16

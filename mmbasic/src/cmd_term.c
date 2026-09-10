@@ -3391,6 +3391,11 @@ const char *mmb_term_key(char c)
 		replay_mon();
 		return "";
 	}
+	if ((unsigned char)c != 1)
+	{
+		unsigned char kb = (unsigned char)c;
+		term_log_tx(&kb, 1);
+	}
 	if (T.alt)
 	{
 		T.alt = 0;
