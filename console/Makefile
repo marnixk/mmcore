@@ -11,7 +11,7 @@ ifeq ($(findstring NO_SDHOST,$(DEFINE)),)
 DEFINE += -DMMB_CIRCLE_WLAN
 endif
 
-OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o audio.o \
+OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o net.o net_rxbuf.o audio.o \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/tok.o \
 	  $(MMB)/src/vars.o \
@@ -72,7 +72,7 @@ LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
 	$(LIBS)
 endif
 
-EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party
+EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party -I .
 
 # MMBasic objects live outside console/; drop them on `make clean` so a
 # RASPPI switch (Pi 3 vs Pi 4 / 400) cannot relink stale -mcpu objects.

@@ -10,6 +10,10 @@
  * give up (~90s). That must not run on the interpreter task: TERM/CONNECT
  * would freeze the UI. Open runs on a CTask; the caller polls with a short
  * timeout. Circle patch circle-wifi-149.patch wakes Connect() on abort.
+ *
+ * CSocket::Receive copies min(buflen, segment) then frees the rest of that
+ * TCP buffer, so dest must be at least FRAME_BUFFER_SIZE (1600). This layer
+ * only holds one frame leftover. TERM owns the 512KB interpret ring.
  */
 
 #ifdef MMB_CIRCLE_WLAN
@@ -500,9 +504,6 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 	if (!data || !maxn)
 		return 0;
 	dst = (unsigned char *)data;
-	/* Circle CSocket::Receive copies min(buflen, segment) then frees
-	 * the rest of the TCP buffer, so a small dest would drop bytes.
-	 * Always pull a full FRAME_BUFFER_SIZE and hold leftovers. */
 	for (;;)
 	{
 		if (s_rxoff < s_rxn)

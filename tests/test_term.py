@@ -88,6 +88,7 @@ def test_help_term(console):
     assert "dns" in low or "tcp" in low
     assert "character mode" in low or "sga" in low
     assert "cr only" in low or "enter sends cr" in low
+    assert "512" in low and "ring" in low
     assert "drain" in low or "starve" in low or "pane" in low
     assert "echo" in low
     assert "status" in low

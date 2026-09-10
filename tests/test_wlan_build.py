@@ -46,6 +46,22 @@ def test_net_cpp_uses_hostname_connect_overload():
     assert "Connect(host" in text
 
 
+def test_net_cpp_drains_circle_into_512kb_ring():
+    """Circle leftover is one frame; TERM owns the 512KB interpret ring."""
+    hdr = open(os.path.join(REPO, "console", "net_rxbuf.h"), encoding="utf-8").read()
+    net = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
+    term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()
+    mk = open(os.path.join(REPO, "console", "Makefile"), encoding="utf-8").read()
+    assert "512u * 1024u" in hdr
+    assert "MMB_NET_RX_CAP" in hdr
+    assert "static u8 s_rx[FRAME_BUFFER_SIZE]" in net
+    assert "Receive(s_rx, FRAME_BUFFER_SIZE" in net
+    assert "s_rx_store[MMB_NET_RX_CAP]" not in net
+    assert "term_rx_store[MMB_NET_RX_CAP]" in term
+    assert "term_rx_interpret" in term
+    assert "net_rxbuf.o" in mk
+
+
 def test_qemu_kernel_does_not_link_wlan_driver(kernel_image):
     """raspi3b has no CYW4343x; the QEMU image must keep the stub path."""
     map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")
