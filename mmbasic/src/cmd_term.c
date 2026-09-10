@@ -40,8 +40,10 @@
 #define TM_ESC_IDLE_MS  60
 #define TM_CONNECT_MS   25000
 #define TM_RECV_MS      16
-#define TM_RECV_LOOPS   64
+#define TM_RECV_LOOPS   256
+#define TM_RECV_IDLE    8
 #define TM_RECV_BUF     8192
+#define TM_INTERP_YIELD 256
 #define TM_DUMP_MS      250
 #define TM_SB_MAX       512
 #define TM_SB_MS        2000
@@ -257,6 +259,7 @@ static void demo_emit_line(void);
 static void esc_reset(void);
 static int term_width(void);
 static int term_rx_interpret(void);
+static int term_tcp_drain(int idle_max);
 static void incoming_feed(const unsigned char *src, int n);
 static void term_open_menu(void);
 static void term_close_menu(void);
@@ -869,8 +872,12 @@ static void term_copy_rect(int x, int y, int pw, int ph)
 	if (pw <= 0 || ph <= 0)
 		return;
 	for (row = 0; row < ph; row++)
+	{
 		memcpy(d + (y + row) * w + x, s + (y + row) * w + x,
 		       (unsigned)pw * sizeof(uint32_t));
+		if ((row & 15) == 15)
+			mmb_net_yield();
+	}
 }
 
 static void term_copy_pane(void)
@@ -894,7 +901,11 @@ static void term_copy_pane(void)
 	if (ph > h)
 		ph = h;
 	for (y = 0; y < ph; y++)
+	{
 		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint32_t));
+		if ((y & 15) == 15)
+			mmb_net_yield();
+	}
 }
 
 static void term_copy_rows(int lo, int hi)
@@ -1095,6 +1106,8 @@ static void term_net_send(const void *data, unsigned n)
 			if (rc < 0)
 				return;
 			mmb_net_yield();
+			if (T.tcp && !T.replay)
+				term_tcp_drain(1);
 			if (++idle > 500)
 				return;
 		}
@@ -3102,6 +3115,79 @@ static void term_rx_consume(unsigned n)
 	}
 }
 
+static int term_tcp_drain(int idle_max)
+{
+	static unsigned char buf[TM_RECV_BUF];
+	static int draining;
+	int n, loops, idle, got;
+	unsigned space, want;
+
+	if (!T.tcp || T.replay)
+		return 0;
+	if (idle_max < 1)
+		idle_max = 1;
+	if (!term_rx.data)
+		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
+	if (draining)
+		return 0;
+	draining = 1;
+	idle = 0;
+	got = 0;
+	for (loops = 0; loops < TM_RECV_LOOPS; loops++)
+	{
+		space = mmb_net_rxbuf_free(&term_rx);
+		if (!space)
+			break;
+		want = sizeof(buf);
+		if (want > space)
+			want = space;
+		n = mmb_net_tcp_recv(buf, want);
+		if (n < 0)
+		{
+			draining = 0;
+			tcp_close_quiet();
+			return -1;
+		}
+		if (n == 0)
+		{
+			mmb_net_yield();
+			if (++idle >= idle_max)
+				break;
+			continue;
+		}
+		idle = 0;
+		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
+		got += n;
+		mmb_net_yield();
+	}
+	draining = 0;
+	return got;
+}
+
+static int term_tcp_ingest(int idle_max)
+{
+	int got;
+
+	got = term_tcp_drain(idle_max);
+	if (got < 0)
+		return -1;
+	if (got || mmb_net_rxbuf_used(&term_rx))
+		term_rx_interpret();
+	return got;
+}
+
+static void term_maybe_serial_dump(int got)
+{
+	if (got <= 0)
+		return;
+	if (got < 80 || !T.dump_at ||
+	    mmb_now_ms() - T.dump_at >= TM_DUMP_MS)
+	{
+		term_serial_dump();
+		T.dump_at = mmb_now_ms();
+	}
+}
+
 static int term_rx_interpret(void)
 {
 	int got = 0;
@@ -3120,6 +3206,12 @@ static int term_rx_interpret(void)
 			incoming_byte(b);
 			term_rx_consume(1);
 			got++;
+			if ((got & (TM_INTERP_YIELD - 1)) == 0)
+			{
+				mmb_net_yield();
+				if (T.tcp && !T.replay && term_tcp_drain(1) < 0)
+					return got;
+			}
 			continue;
 		}
 		if (b != IAC)
@@ -3127,6 +3219,12 @@ static int term_rx_interpret(void)
 			incoming_byte(b);
 			term_rx_consume(1);
 			got++;
+			if ((got & (TM_INTERP_YIELD - 1)) == 0)
+			{
+				mmb_net_yield();
+				if (T.tcp && !T.replay && term_tcp_drain(1) < 0)
+					return got;
+			}
 			continue;
 		}
 		if (avail < 2)
@@ -3554,6 +3652,11 @@ const char *mmb_term_key(char c)
 	if ((unsigned char)c != 1)
 	{
 		unsigned char kb = (unsigned char)c;
+		if (!T.alt && !T.esc && !T.dlg && !T.menu &&
+		    (T.tcp || T.demo) && swallow_crlf_pair(c))
+			return "";
+		if (T.tcp && (kb == '\n' || kb == '\r'))
+			kb = '\r';
 		term_log_tx(&kb, 1);
 	}
 	if (T.alt)
@@ -3674,8 +3777,6 @@ const char *mmb_term_key(char c)
 	}
 	if (!T.tcp && !T.demo)
 		return "";
-	if (swallow_crlf_pair(c))
-		return "";
 	if (T.char_mode)
 	{
 		if (c == '\r' || c == '\n')
@@ -3736,8 +3837,7 @@ const char *mmb_term_key(char c)
 
 void mmb_term_poll(void)
 {
-	static unsigned char buf[TM_RECV_BUF];
-	int n, loops, got;
+	int got;
 
 	if (!T.active)
 		return;
@@ -3829,49 +3929,16 @@ void mmb_term_poll(void)
 			term_draw();
 		return;
 	}
-	got = 0;
-	if (!term_rx.data)
-		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
-	for (loops = 0; loops < TM_RECV_LOOPS; loops++)
-	{
-		unsigned space = mmb_net_rxbuf_free(&term_rx);
-		unsigned want;
-
-		if (!space)
-		{
-			if (!term_rx_interpret())
-				break;
-			continue;
-		}
-		want = sizeof(buf);
-		if (want > space)
-			want = space;
-		n = mmb_net_tcp_recv(buf, want);
-		if (n < 0)
-		{
-			term_rx_interpret();
-			tcp_close_quiet();
-			return;
-		}
-		if (n == 0)
-			break;
-		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
-		got += n;
-		mmb_net_yield();
-		if (!mmb_net_tcp_rx_avail())
-			break;
-	}
-	if (got || mmb_net_rxbuf_used(&term_rx))
-		term_rx_interpret();
-	if (got)
-	{
-		if (got < 80 || !T.dump_at ||
-		    mmb_now_ms() - T.dump_at >= TM_DUMP_MS)
-		{
-			term_serial_dump();
-			T.dump_at = mmb_now_ms();
-		}
-	}
+	got = term_tcp_ingest(TM_RECV_IDLE);
+	if (got < 0)
+		return;
+	term_maybe_serial_dump(got);
+	if (T.need_draw)
+		term_draw();
+	got = term_tcp_ingest(TM_RECV_IDLE);
+	if (got < 0)
+		return;
+	term_maybe_serial_dump(got);
 	if (T.need_draw)
 		term_draw();
 	mmb_net_yield();
