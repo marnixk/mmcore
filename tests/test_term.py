@@ -334,18 +334,69 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         time.sleep(0.3)
         closed = con.screen_pixel(8, 4)
         _menu(con)
-        bar = con.screen_pixel(8, 4)
+        title = con.screen_pixel(20, 2)
+        empty = con.screen_pixel(400, 4)
         far = con.screen_pixel(940, 4)
-        assert _luminance(*bar) > _luminance(*closed) + 20, (bar, closed)
-        assert abs(bar[0] - far[0]) < 40 and abs(bar[1] - far[1]) < 40
-        drop = con.screen_pixel(16, 24)
+        assert _luminance(*empty) > _luminance(*closed) + 20, (empty, closed)
+        assert abs(empty[0] - far[0]) < 40
+        assert abs(empty[1] - far[1]) < 40
+        assert abs(empty[2] - far[2]) < 40
+        assert abs(_luminance(*title) - _luminance(*empty)) > 20, (title, empty)
+        drop = con.screen_pixel(24, 24)
         letterbox = con.screen_pixel(8, 200)
         assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)
-        stroke = con.screen_pixel(8, 16 + 7)
-        pad = con.screen_pixel(8, 16 + 2)
+        stroke = con.screen_pixel(16, 16 + 7)
+        pad = con.screen_pixel(16, 16 + 2)
         assert abs(_luminance(*stroke) - _luminance(*pad)) > 30, (stroke, pad)
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
+
+
+def _cell_top(con, col, row):
+    return con.screen_pixel(col * 8 + 4, row * 16 + 1)
+
+
+def _rgb_dist(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
+
+
+def test_term_menu_colours_match_edit(kernel_image):
+    """TERM menus use the same theme slots as EDIT (menu/sel/dlg/hot)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        con.drain(quiet=0.1)
+        con._ser.sendall(b'EDIT "MENU.BAS"\r')
+        _plain(con.drain(quiet=0.8, timeout=10).decode(errors="replace"))
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        ed_bar = _cell_top(con, 40, 0)
+        ed_title = _cell_top(con, 2, 0)
+        ed_sel = _cell_top(con, 2, 2)
+        ed_uns = _cell_top(con, 2, 3)
+        con.capture_png("/opt/cursor/artifacts/edit_file_menu_slate.png")
+        con._ser.sendall(bytes([1]) + b"x")
+        _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert con.send_line("PRINT 1") == "1"
+
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        _menu(con)
+        tm_bar = _cell_top(con, 40, 0)
+        tm_title = _cell_top(con, 2, 0)
+        tm_sel = _cell_top(con, 2, 2)
+        tm_uns = _cell_top(con, 2, 3)
+        con.capture_png("/opt/cursor/artifacts/term_terminal_menu_slate.png")
+        assert _rgb_dist(ed_bar, tm_bar) < 40, (ed_bar, tm_bar)
+        assert _rgb_dist(ed_title, tm_title) < 40, (ed_title, tm_title)
+        assert _rgb_dist(ed_sel, tm_sel) < 40, (ed_sel, tm_sel)
+        assert _rgb_dist(ed_uns, tm_uns) < 40, (ed_uns, tm_uns)
+        assert _rgb_dist(tm_sel, tm_uns) > 80, (tm_sel, tm_uns)
+        assert _rgb_dist(tm_title, tm_bar) > 80, (tm_title, tm_bar)
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
     finally:
         con.stop()
 

@@ -225,7 +225,6 @@ static unsigned term_rgb(unsigned char idx)
 #define TM_DIM     term_rgb(term_th()->cmt_fg)
 #define TM_MENU_BG term_rgb(term_th()->menu_bg)
 #define TM_MENU_FG term_rgb(term_th()->menu_fg)
-#define TM_MENU_HI term_rgb(term_th()->sel_bg)
 #define TM_HOT     term_rgb(term_th()->hot)
 #define TM_SEL_FG  term_rgb(term_th()->sel_fg)
 #define TM_SEL_BG  term_rgb(term_th()->sel_bg)
@@ -673,7 +672,6 @@ static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
 
 static void term_draw_status(void)
 {
-	char left[32];
 	char right[64];
 	int y, n, x0;
 	unsigned bg = TM_MENU_BG;
@@ -684,20 +682,15 @@ static void term_draw_status(void)
 	y = (T.vid_rows - 1) * TM_CH;
 	x0 = 0;
 	mmb_gfx_box(0, y, T.vid_cols * TM_CW, TM_CH, bg, 1, (int)bg);
-	strcpy(left, "Alt-X  Alt-T");
+	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
+	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
+	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
 	if (T.demo)
 	{
-		n = (int)strlen(left);
-		if (n + 4 < (int)sizeof(left))
-		{
-			left[n] = ' ';
-			left[n + 1] = (char)176;
-			left[n + 2] = (char)177;
-			left[n + 3] = (char)178;
-			left[n + 4] = 0;
-		}
+		term_cell(x0 + 13 * TM_CW, y, 176, fg, bg);
+		term_cell(x0 + 14 * TM_CW, y, 177, fg, bg);
+		term_cell(x0 + 15 * TM_CW, y, 178, fg, bg);
 	}
-	term_put_str_bg(x0, y, left, fg, bg);
 	right[0] = 0;
 	if (T.connecting)
 	{
@@ -743,65 +736,70 @@ static void term_draw_status(void)
 
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i, bar_w, drop_h;
+	int x0, y0, w, i, n, L, drop_h, bar_w;
 	const char *items[4];
-	char hots[4];
 	char echo[16];
 	unsigned brd = TM_DLG_FG;
+	unsigned title_fg, title_bg;
 
 	if (!T.menu && !T.alt_pend)
 		return;
-	x0 = 0;
-	y0 = TM_CH;
-	w = 14;
-	bar_w = T.vid_cols * TM_CW;
 	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
 	items[0] = "Bookmarks";
 	items[1] = echo;
 	items[2] = term_width_label();
 	items[3] = "Exit";
-	hots[0] = 'B';
-	hots[1] = 'E';
-	hots[2] = items[2][0];
-	hots[3] = 'X';
+	n = 4;
+	w = 10;
+	for (i = 0; i < n; i++)
+	{
+		L = (int)strlen(items[i]);
+		if (L + 2 > w)
+			w = L + 2;
+	}
+	w += 2;
+	bar_w = T.vid_cols * TM_CW;
 	mmb_gfx_box(0, 0, bar_w, TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_put_hot(TM_CW, 0, "Terminal", 'T', TM_MENU_FG, TM_HOT, TM_MENU_BG);
+	term_cell(0, 0, ' ', TM_MENU_FG, TM_MENU_BG);
+	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
+	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
+	term_put_hot(TM_CW, 0, "Terminal", 'T', title_fg, TM_HOT, title_bg);
+	term_cell(9 * TM_CW, 0, ' ', TM_MENU_FG, TM_MENU_BG);
 	if (!T.menu)
 		return;
-	drop_h = 6;
+	x0 = TM_CW;
+	y0 = TM_CH;
+	drop_h = n + 2;
 	mmb_gfx_box(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG, 1,
 		    (int)TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
-	{
-		int k;
-		for (k = 1; k < w - 1; k++)
-			term_cell(x0 + k * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
-	}
+	for (i = 1; i < w - 1; i++)
+		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
 	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
-	for (i = 0; i < 4; i++)
+	for (i = 0; i < n; i++)
 	{
 		int y = y0 + (1 + i) * TM_CH;
 		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
 		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
+
 		term_cell(x0, y, TM_BOX_V, brd, TM_DLG_BG);
 		term_fill_cells(x0 + TM_CW, y, w - 2, bg);
-		term_put_hot(x0 + TM_CW, y, items[i], hots[i], fg, TM_HOT, bg);
+		term_cell(x0 + TM_CW, y, ' ', fg, bg);
+		term_put_str_bg(x0 + 2 * TM_CW, y, items[i], fg, bg);
+		term_cell(x0 + (w - 2) * TM_CW, y, ' ', fg, bg);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
-		int y = y0 + 5 * TM_CH;
+		int y = y0 + (n + 1) * TM_CH;
 		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
-		{
-			int k;
-			for (k = 1; k < w - 1; k++)
-				term_cell(x0 + k * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
-		}
+		for (i = 1; i < w - 1; i++)
+			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
-	mmb_gfx_box(x0 + w * TM_CW, y0 + TM_CH, 2 * TM_CW,
-		    (drop_h - 1) * TM_CH, TM_SH_BG, 1, (int)TM_SH_BG);
-	mmb_gfx_box(x0 + TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH, TM_SH_BG,
-		    1, (int)TM_SH_BG);
+	mmb_gfx_box(x0 + w * TM_CW, y0, 2 * TM_CW, drop_h * TM_CH, TM_SH_BG, 1,
+		    (int)TM_SH_BG);
+	mmb_gfx_box(x0 + 2 * TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH,
+		    TM_SH_BG, 1, (int)TM_SH_BG);
 }
 
 static void term_draw_row(int r)
