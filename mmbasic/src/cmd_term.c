@@ -904,14 +904,16 @@ static void term_draw(void)
 	term_copy_pane();
 	if (T.menu || T.alt_pend)
 	{
-		term_copy_rect(0, 0, T.vid_cols * TM_CW, TM_CH);
+		int top_h = T.menu ? 8 * TM_CH : TM_CH;
+		term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
 		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
 			    TM_CH);
 	}
 	term_present_pane();
 	if (T.menu || T.alt_pend)
 	{
-		mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, TM_CH);
+		int top_h = T.menu ? 8 * TM_CH : TM_CH;
+		mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, top_h);
 		mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH,
 				    T.vid_cols * TM_CW, TM_CH);
 	}
