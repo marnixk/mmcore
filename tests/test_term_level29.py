@@ -204,6 +204,38 @@ def test_term_log_char_mode_key_logged_once(kernel_image):
         con.stop()
 
 
+def test_term_log_usb_enter_is_cr_not_lf(kernel_image):
+    """USB Enter is LF locally; TCP and the TERM log must record CR only."""
+    from test_term_log import _read_termlog, _termlog_path
+
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        on = con.send_line("OPTION TERM LOG ON")
+        assert ".termlog" in on
+        seen = replay.open_session(connect=False)
+        assert "Connected" in seen
+        replay._to_guest(bytes([255, 251, 3]))
+        replay.send_keys(b"ab\n")
+        replay.wait_serial(lambda s: "ab" in s, timeout=6.0)
+        _quit(con)
+        con.send_line("OPTION TERM LOG OFF")
+        path = _termlog_path(con)
+        assert path, "expected A:/.termlog or C:/.termlog"
+        body = _read_termlog(con, path)
+        recs = parse_termlog(body)
+        typed = b"".join(r.data for r in recs if r.kind == "T")
+        assert b"ab" in typed, typed
+        assert b"\r" in typed, typed
+        assert b"\n" not in typed, typed
+        assert con.send_line("PRINT 2+2") == "4"
+        replay.stop()
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def test_term_level29_mid_username_negotiation(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

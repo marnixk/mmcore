@@ -90,6 +90,7 @@ def test_help_term(console):
     assert "cr only" in low or "enter sends cr" in low
     assert "512" in low and "ring" in low
     assert "drain" in low or "starve" in low or "pane" in low
+    assert "idle" in low
     assert "echo" in low
     assert "status" in low
     assert "menu" in low

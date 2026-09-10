@@ -82,6 +82,24 @@ def test_qemu_kernel_end_fits_configured_max(kernel_image):
     assert end < limit, f"_end 0x{end:x} exceeds 8MB kernel window (0x{limit:x})"
 
 
+def test_term_tcp_drain_retries_empty_recv():
+    """Do not stop the socket drain on the first empty recv or rx_avail==0."""
+    term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()
+    help_t = open(os.path.join(REPO, "mmbasic", "src", "cmd_help.c"), encoding="utf-8").read()
+    assert "TM_RECV_IDLE" in term
+    assert "TM_INTERP_YIELD" in term
+    assert "term_tcp_drain" in term
+    assert "term_tcp_ingest" in term
+    assert term.count("term_tcp_ingest(TM_RECV_IDLE)") >= 2
+    assert "mmb_net_tcp_rx_avail()" not in term
+    assert "if (!T.tcp || T.replay || T.file_replay)" in term
+    assert "if (T.tcp && (kb == '\\n' || kb == '\\r'))" in term
+    assert 'term_net_send("\\r", 1)' in term
+    assert "idle" in help_t.lower()
+    assert "retransmit" in help_t.lower() or "retries" in help_t.lower()
+    assert "cr only" in help_t.lower()
+
+
 def test_qemu_kernel_does_not_link_wlan_driver(kernel_image):
     """raspi3b has no CYW4343x; the QEMU image must keep the stub path."""
     map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")
