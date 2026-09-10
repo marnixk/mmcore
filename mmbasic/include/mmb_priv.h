@@ -158,6 +158,7 @@ typedef struct mmb_options {
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " */
+	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 } mmb_options;
 
 #define MMB_FK_FILE 0
@@ -729,6 +730,7 @@ void mmb_connect_poll(void);
 int mmb_in_term(void);
 const char *mmb_term_key(char c);
 void mmb_term_poll(void);
+void mmb_term_log_enable(int on);
 
 void mmb_cmd_wordpad(void);
 int mmb_in_wordpad(void);

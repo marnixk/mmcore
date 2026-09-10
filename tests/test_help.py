@@ -182,6 +182,7 @@ def test_help_option_wifi(console):
     assert "COUNTRY" in out
     assert "[wifi]" in out
     assert "DEBUG" in out
+    assert ".termlog" in out.lower() or "TERM LOG" in out
     assert "default OFF" in out or "Default OFF" in out
     assert "PROMPT" in out
     assert "CWD" in out

@@ -229,6 +229,8 @@ static void apply_core(const char *k, const char *v)
 		G.opt.audio_on = parse_int(v);
 	else if (mmb_keyword_eq(k, "audio_target"))
 		G.opt.audio_target = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "term_log"))
+		G.opt.term_log = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "fg"))
 		G.gfx.fg = (unsigned)parse_int(v);
 	else if (mmb_keyword_eq(k, "bg"))
@@ -337,6 +339,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
 	kv_int(buf, sizeof(buf), "audio_on", G.opt.audio_on);
 	kv_int(buf, sizeof(buf), "audio_target", G.opt.audio_target);
+	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
 	kv_int(buf, sizeof(buf), "bg", (int64_t)G.gfx.bg);
 	if (G.opt.search_path[0])
@@ -440,6 +443,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
+	G.opt.term_log = 0;
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	mmb_settings_save();

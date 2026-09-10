@@ -173,6 +173,26 @@ def test_option_wifi_debug_default_off(console):
     assert "debug=0" in ini
 
 
+def test_option_term_log_persists(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST")
+    assert "TERM LOG" not in listed
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION TERM LOG OFF" in all_listed
+    on = console.send_line("OPTION TERM LOG ON")
+    assert "TERM log" in on
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION TERM LOG ON" in listed
+    ini = _read_ini(console)
+    assert "term_log=1" in ini
+    off = console.send_line("OPTION TERM LOG OFF")
+    assert "in=" in off
+    listed = console.send_line("OPTION LIST")
+    assert "TERM LOG" not in listed
+    ini = _read_ini(console)
+    assert "term_log=0" in ini
+
+
 def test_option_wifi_debug_on_persists(console):
     assert console.send_line("OPTION WIFI DEBUG ON") == ""
     listed = console.send_line("OPTION LIST")
