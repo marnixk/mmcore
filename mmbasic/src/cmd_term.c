@@ -126,6 +126,7 @@ typedef struct {
 	int replay_st;
 	char replay_hex[TM_REPLAY_HEX + 4];
 	int replay_hex_n;
+	unsigned replay_dump_at;
 	unsigned ansi_at;
 	int mon_ansi;
 	int mon_iac;
@@ -1015,7 +1016,12 @@ static void replay_flush_hex(void)
 		incoming_feed(buf, n);
 		if (T.need_draw)
 			term_draw();
-		term_serial_dump();
+		if (n < 80 || !T.replay_dump_at ||
+		    mmb_now_ms() - T.replay_dump_at >= 250)
+		{
+			term_serial_dump();
+			T.replay_dump_at = mmb_now_ms();
+		}
 	}
 }
 
