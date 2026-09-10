@@ -2615,6 +2615,11 @@ static void ansi_exec_csi(char cmd)
 		T.cur_col -= n;
 		if (T.cur_col < 0)
 			T.cur_col = 0;
+		if (n > 0 && T.cur_row >= 0 && T.cur_row < T.pane_rows)
+		{
+			mark_dirty_row(T.cur_row);
+			T.present_full = 1;
+		}
 	}
 	else if (cmd == 'G')
 		ansi_cup(T.cur_row + 1, ansi_arg(0, 1));
