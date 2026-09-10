@@ -54,6 +54,17 @@ def test_term_replay_missing_file(console):
     assert "?FILE" in out.upper()
 
 
+# Typed T pauses in tests/term/blackflag-log-v2:
+#   1 ESC botcheck, 2 ESC, 3 theme "1", 4 Enter, 5-10 "ireal"+Enter,
+#   11 YES/NO after the post-login ANSI animation.
+_SHOTS = {
+    1: "hdmi_blackflag_botcheck.png",
+    3: "hdmi_blackflag_theme_select.png",
+    5: "hdmi_blackflag_login_screen.png",
+    11: "hdmi_blackflag_after_login_animation.png",
+}
+
+
 @pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
 @pytest.mark.skipif(shutil.which("mcopy") is None, reason="mcopy not installed")
 def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
@@ -74,16 +85,21 @@ def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
         assert "BF.LOG" in listing.upper(), listing
         con.drain(quiet=0.1)
         con._ser.sendall(b'TERM REPLAY "C:/BF.LOG"\r')
-        seen = _wait_serial(con, b"!REPLAY WAIT", timeout=25.0)
-        assert b"!REPLAY START" in seen or b"Replay" in seen or b"!REPLAY WAIT" in seen
-        before = os.path.join(ARTIFACTS, "hdmi_blackflag_before_first_key.png")
-        con.capture_png(before)
-        assert os.path.getsize(before) > 1000
-        con._ser.sendall(b"x")
-        _wait_serial(con, b"!REPLAY WAIT", timeout=15.0)
-        after = os.path.join(ARTIFACTS, "hdmi_blackflag_after_first_key.png")
-        con.capture_png(after)
-        assert os.path.getsize(after) > 1000
+        wait_n = 0
+        target = max(_SHOTS)
+        while wait_n < target:
+            if wait_n == 0:
+                seen = _wait_serial(con, b"!REPLAY WAIT", timeout=25.0)
+                assert b"!REPLAY WAIT" in seen
+            else:
+                con._ser.sendall(b"x")
+                _wait_serial(con, b"!REPLAY WAIT", timeout=25.0)
+            wait_n += 1
+            name = _SHOTS.get(wait_n)
+            if name:
+                path = os.path.join(ARTIFACTS, name)
+                con.capture_png(path)
+                assert os.path.getsize(path) > 1000, path
         w, h = con.screen_size()
         assert w >= 640 and h >= 400
         px = con.screen_pixel(w // 2, h // 2)
