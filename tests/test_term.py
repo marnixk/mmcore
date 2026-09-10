@@ -98,6 +98,7 @@ def test_help_term(console):
     assert "full" in low
     assert "bookmark" in low
     assert "replay" in low
+    assert "term replay" in low or "replay \"file" in low or "c:/.termlog" in low
     assert "log" in low
     assert "255" in low or "iac" in low
     assert "disconnect" in low or "no argument" in low or "[host" in low

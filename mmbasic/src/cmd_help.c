@@ -978,6 +978,9 @@ static const char kHelpTerm[] =
 	"TERM \"demo\", port  runs a local demo (no TCP).\n"
 	"TERM \"replay\", port  talks through the QEMU serial\n"
 	"proxy to a live host (see harness/term_replay.py).\n"
+	"TERM REPLAY \"file$\"  plays a TERM LOG capture from\n"
+	"disk through the same RX ring as live TCP. IAC T\n"
+	"records are skipped; typed T pauses for a keystroke.\n"
 	"QEMU has no network device for Circle TCP.\n"
 	"OPTION TERM LOG ON writes C:/.termlog (A: if no SD)\n"
 	"with incoming (R) and typed (T) hex plus ms since\n"
@@ -986,6 +989,7 @@ static const char kHelpTerm[] =
 	"\n"
 	"Example:  TERM \"demo\", 23\n"
 	"          TERM \"replay\", 23\n"
+	"          TERM REPLAY \"C:/.termlog\"\n"
 	"          TERM \"192.168.1.10\", 23";
 
 static const char kHelpIpconfig[] =
