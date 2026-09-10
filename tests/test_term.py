@@ -340,6 +340,9 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         drop = con.screen_pixel(16, 24)
         letterbox = con.screen_pixel(8, 200)
         assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)
+        stroke = con.screen_pixel(8, 16 + 7)
+        pad = con.screen_pixel(8, 16 + 2)
+        assert abs(_luminance(*stroke) - _luminance(*pad)) > 30, (stroke, pad)
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:

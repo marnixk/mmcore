@@ -726,7 +726,7 @@ static void term_draw_menu(void)
 	const char *items[4];
 	char hots[4];
 	char echo[16];
-	unsigned brd = TM_MENU_FG;
+	unsigned brd = TM_DLG_FG;
 
 	if (!T.menu && !T.alt_pend)
 		return;
@@ -748,12 +748,9 @@ static void term_draw_menu(void)
 	if (!T.menu)
 		return;
 	drop_h = 6;
-	mmb_gfx_box(x0, y0, (w + 2) * TM_CW, drop_h * TM_CH, TM_SH_BG, 1,
-		    (int)TM_SH_BG);
 	mmb_gfx_box(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG, 1,
 		    (int)TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
-	term_fill_cells(x0 + TM_CW, y0, w - 2, TM_DLG_BG);
 	{
 		int k;
 		for (k = 1; k < w - 1; k++)
@@ -765,10 +762,9 @@ static void term_draw_menu(void)
 		int y = y0 + (1 + i) * TM_CH;
 		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
 		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
-		unsigned hot = (i == T.menu_sel) ? TM_HOT : TM_HOT;
 		term_cell(x0, y, TM_BOX_V, brd, TM_DLG_BG);
 		term_fill_cells(x0 + TM_CW, y, w - 2, bg);
-		term_put_hot(x0 + TM_CW, y, items[i], hots[i], fg, hot, bg);
+		term_put_hot(x0 + TM_CW, y, items[i], hots[i], fg, TM_HOT, bg);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
@@ -781,6 +777,10 @@ static void term_draw_menu(void)
 		}
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
+	mmb_gfx_box(x0 + w * TM_CW, y0 + TM_CH, 2 * TM_CW,
+		    (drop_h - 1) * TM_CH, TM_SH_BG, 1, (int)TM_SH_BG);
+	mmb_gfx_box(x0 + TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH, TM_SH_BG,
+		    1, (int)TM_SH_BG);
 }
 
 static void term_draw_row(int r)
