@@ -1058,9 +1058,13 @@ static void replay_tx(const unsigned char *p, unsigned n)
 
 static void term_net_send(const void *data, unsigned n)
 {
+	const unsigned char *pb;
+
 	if (!data || n == 0)
 		return;
-	term_log_tx((const unsigned char *)data, (int)n);
+	pb = (const unsigned char *)data;
+	if (pb[0] == IAC)
+		term_log_tx(pb, (int)n);
 	if (T.replay)
 		replay_tx((const unsigned char *)data, n);
 	else if (T.tcp)
@@ -3038,7 +3042,6 @@ static void term_log_tx(const unsigned char *p, int n)
 		return;
 	L.out_n += (unsigned)n;
 	term_log_line('T', p, n);
-	term_log_flush();
 }
 
 void mmb_term_log_enable(int on)
@@ -3793,8 +3796,6 @@ void mmb_term_poll(void)
 			break;
 		incoming_feed(buf, n);
 		got += n;
-		if (T.need_draw && (loops & 3) == 3)
-			term_draw();
 		mmb_net_yield();
 		if (!mmb_net_tcp_rx_avail())
 			break;
