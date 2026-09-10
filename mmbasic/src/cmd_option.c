@@ -414,6 +414,14 @@ static void option_dispatch(void)
 		G.opt.tab = t;
 		return;
 	}
+	if (mmb_match("TERM"))
+	{
+		if (!mmb_match("LOG"))
+			mmb_syntax();
+		G.opt.term_log = onoff();
+		mmb_term_log_enable(G.opt.term_log);
+		return;
+	}
 	if (mmb_match("BREAK"))
 	{
 		G.opt.break_key = (int)mmb_as_int(mmb_expr());
@@ -1143,6 +1151,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
 	if (all || G.opt.wifi_debug)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
+	if (all || G.opt.term_log)
+		ol_line(&n, G.opt.term_log ? "OPTION TERM LOG ON" : "OPTION TERM LOG OFF");
 	if (all || (G.opt.wifi_country[0] &&
 		    !(G.opt.wifi_country[0] == 'U' && G.opt.wifi_country[1] == 'S' &&
 		      G.opt.wifi_country[2] == 0)))

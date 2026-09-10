@@ -61,6 +61,9 @@
 #define TM_BOX_BR      0xD9u
 #define TM_ANSI_OSC_MS  2000
 #define TM_REPLAY_HEX   512
+#define TM_LOG_BUF      32768
+#define TM_LOG_FLUSH_MS 10000
+#define TM_LOG_WATER    24576
 
 typedef struct {
 	int active;
@@ -154,6 +157,15 @@ typedef struct {
 
 static tm_state T;
 
+static struct {
+	unsigned in_n;
+	unsigned out_n;
+	unsigned rendered;
+	unsigned flush_at;
+	int buf_n;
+	char buf[TM_LOG_BUF];
+} L;
+
 static int host_is_demo(void)
 {
 	return strcasecmp(T.host, "demo") == 0 ||
@@ -243,6 +255,12 @@ static void term_open_menu(void);
 static void term_close_menu(void);
 static void term_dlg_refresh(void);
 static void term_overlay_chrome(void);
+static void term_log_mark(void);
+static void term_log_rx(const unsigned char *p, int n);
+static void term_log_tx(const unsigned char *p, int n);
+static void term_log_flush(void);
+static void term_log_poll(void);
+static void term_log_path(char *dst, unsigned n);
 
 static int term_want_echo(void);
 static void pane_rubout(void);
@@ -560,11 +578,13 @@ static void pane_newline(void)
 	if (T.cur_row >= T.pane_rows - 1)
 	{
 		pane_scroll_smooth();
+		term_log_mark();
 		return;
 	}
 	T.cur_row++;
 	T.cur_col = 0;
 	mark_dirty_row(T.cur_row);
+	term_log_mark();
 }
 
 static void pane_put(char ch)
@@ -580,6 +600,7 @@ static void pane_put(char ch)
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
 		T.cur_col++;
 		mark_dirty_row(T.cur_row);
+		term_log_mark();
 	}
 }
 
@@ -927,6 +948,7 @@ static void term_draw(void)
 
 static void term_exit(void)
 {
+	term_log_flush();
 	mmb_net_tcp_close();
 	T.tcp = 0;
 	T.connecting = 0;
@@ -975,6 +997,7 @@ static void term_net_send(const void *data, unsigned n)
 {
 	if (!data || n == 0)
 		return;
+	term_log_tx((const unsigned char *)data, (int)n);
 	if (T.replay)
 		replay_tx((const unsigned char *)data, n);
 	else if (T.tcp)
@@ -1176,6 +1199,7 @@ static void pane_rubout(void)
 		T.cell_fg[T.cur_row][T.cur_col] = TM_FG;
 		T.cell_bg[T.cur_row][T.cur_col] = TM_BG;
 		mark_dirty_row(T.cur_row);
+		term_log_mark();
 	}
 }
 
@@ -2799,6 +2823,139 @@ static void incoming_byte(unsigned char b)
 		pane_put((char)b);
 }
 
+static void term_log_path(char *dst, unsigned n)
+{
+	if (mmb_fat_ready('C'))
+		strncpy(dst, "C:/.termlog", n - 1);
+	else
+		strncpy(dst, "A:/.termlog", n - 1);
+	dst[n - 1] = 0;
+}
+
+static void term_log_flush(void)
+{
+	char path[24];
+
+	if (L.buf_n <= 0)
+		return;
+	term_log_path(path, sizeof(path));
+	mmb_vfs_write(path, L.buf, (unsigned)L.buf_n, 1);
+	L.buf_n = 0;
+	L.flush_at = mmb_now_ms();
+}
+
+static void term_log_poll(void)
+{
+	if (!G.opt.term_log || L.buf_n <= 0)
+		return;
+	if (mmb_now_ms() - L.flush_at >= TM_LOG_FLUSH_MS)
+		term_log_flush();
+}
+
+static void term_log_putc(char c)
+{
+	if (L.buf_n >= TM_LOG_BUF)
+		term_log_flush();
+	if (L.buf_n < TM_LOG_BUF)
+		L.buf[L.buf_n++] = c;
+}
+
+static void term_log_u(unsigned v)
+{
+	char tmp[12];
+	int i = 0;
+
+	if (v == 0)
+	{
+		term_log_putc('0');
+		return;
+	}
+	while (v && i < 11)
+	{
+		tmp[i++] = (char)('0' + (v % 10));
+		v /= 10;
+	}
+	while (i > 0)
+		term_log_putc(tmp[--i]);
+}
+
+static void term_log_line(char kind, const unsigned char *p, int n)
+{
+	static const char hexdig[] = "0123456789ABCDEF";
+	int i, need;
+
+	if (!G.opt.term_log || n <= 0)
+		return;
+	need = 24 + n * 2;
+	if (need > TM_LOG_BUF)
+		n = (TM_LOG_BUF - 24) / 2;
+	if (L.buf_n + need > TM_LOG_BUF)
+		term_log_flush();
+	term_log_putc(kind);
+	term_log_putc(' ');
+	term_log_u(L.in_n);
+	term_log_putc(' ');
+	term_log_u(L.rendered);
+	term_log_putc(' ');
+	for (i = 0; i < n; i++)
+	{
+		term_log_putc(hexdig[p[i] >> 4]);
+		term_log_putc(hexdig[p[i] & 15]);
+	}
+	term_log_putc('\n');
+	if (L.buf_n >= TM_LOG_WATER)
+		term_log_flush();
+}
+
+static void term_log_mark(void)
+{
+	if (G.opt.term_log)
+		L.rendered = L.in_n;
+}
+
+static void term_log_rx(const unsigned char *p, int n)
+{
+	if (!G.opt.term_log || host_is_demo() || !p || n <= 0)
+		return;
+	L.in_n += (unsigned)n;
+	term_log_line('R', p, n);
+}
+
+static void term_log_tx(const unsigned char *p, int n)
+{
+	if (!G.opt.term_log || host_is_demo() || !p || n <= 0)
+		return;
+	L.out_n += (unsigned)n;
+	term_log_line('T', p, n);
+	term_log_flush();
+}
+
+void mmb_term_log_enable(int on)
+{
+	char path[24];
+
+	if (!on)
+	{
+		term_log_flush();
+		mmb_out("TERM log off in=");
+		mmb_outf(0, (int64_t)L.in_n);
+		mmb_out(" out=");
+		mmb_outf(0, (int64_t)L.out_n);
+		mmb_out(" rendered=");
+		mmb_outf(0, (int64_t)L.rendered);
+		return;
+	}
+	L.in_n = 0;
+	L.out_n = 0;
+	L.rendered = 0;
+	L.buf_n = 0;
+	L.flush_at = mmb_now_ms();
+	term_log_path(path, sizeof(path));
+	mmb_vfs_write(path, "# TERMLOG 1\n", 12, 0);
+	mmb_out("TERM log ");
+	mmb_out(path);
+}
+
 static void incoming_feed(const unsigned char *src, int n)
 {
 	unsigned char buf[514];
@@ -2823,6 +2980,8 @@ static void incoming_feed(const unsigned char *src, int n)
 		p = src;
 		m = n;
 	}
+	if (n > 0)
+		term_log_rx(src, n);
 	i = 0;
 	while (i < m)
 	{
@@ -3418,6 +3577,7 @@ void mmb_term_poll(void)
 
 	if (!T.active)
 		return;
+	term_log_poll();
 	if (T.esc == 1 && T.esc_at &&
 	    mmb_now_ms() - T.esc_at >= TM_ESC_IDLE_MS)
 	{

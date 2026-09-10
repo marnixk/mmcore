@@ -467,6 +467,8 @@ def test_option_hardware_parse(console):
         "OPTION WIFI \"x\",\"y\"",
         "OPTION WIFI DEBUG ON",
         "OPTION WIFI DEBUG OFF",
+        "OPTION TERM LOG ON",
+        "OPTION TERM LOG OFF",
         "OPTION TOUCH DISABLE",
         "OPTION LCDPANEL ILI9341",
         "OPTION CLOCK DS3231",
