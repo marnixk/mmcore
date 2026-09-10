@@ -1070,10 +1070,10 @@ static void term_net_send(const void *data, unsigned n)
 	else if (T.tcp)
 	{
 		const unsigned char *p = (const unsigned char *)data;
-		int left = (int)n, rc, tries;
+		int left = (int)n, rc, idle = 0;
 
 		mmb_net_yield();
-		for (tries = 0; tries < 32 && left > 0; tries++)
+		while (left > 0)
 		{
 			rc = mmb_net_tcp_send(p, (unsigned)left);
 			if (rc == left)
@@ -1082,8 +1082,14 @@ static void term_net_send(const void *data, unsigned n)
 			{
 				p += rc;
 				left -= rc;
+				idle = 0;
+				continue;
 			}
+			if (rc < 0)
+				return;
 			mmb_net_yield();
+			if (++idle > 500)
+				return;
 		}
 	}
 }
@@ -3218,7 +3224,10 @@ static void send_line(void)
 	T.line[T.linelen] = 0;
 	if (T.linelen)
 		term_net_send(T.line, (unsigned)T.linelen);
-	term_net_send("\r\n", 2);
+	if (T.tcp)
+		term_net_send("\r", 1);
+	else
+		term_net_send("\r\n", 2);
 	T.linelen = 0;
 }
 

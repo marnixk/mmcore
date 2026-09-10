@@ -33,6 +33,18 @@ class TermLogRec:
     ms: int | None = None
 
 
+def _looks_like_v2_line(parts: list[str]) -> bool:
+    if len(parts) < 4 or parts[0] not in ("R", "T"):
+        return False
+    try:
+        int(parts[1])
+        int(parts[2])
+        int(parts[3])
+    except ValueError:
+        return False
+    return True
+
+
 def parse_termlog(text: str) -> list[TermLogRec]:
     recs: list[TermLogRec] = []
     version = 1
@@ -49,7 +61,10 @@ def parse_termlog(text: str) -> list[TermLogRec]:
                     except ValueError:
                         version = 1
             continue
-        parts = line.split(" ", 4 if version >= 2 else 3)
+        parts_v2 = line.split(" ", 4)
+        if version < 2 and _looks_like_v2_line(parts_v2):
+            version = 2
+        parts = parts_v2 if version >= 2 else line.split(" ", 3)
         if len(parts) < 3:
             continue
         kind = parts[0]

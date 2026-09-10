@@ -8,6 +8,7 @@ session from the pytest harness without a guest NIC.
 from __future__ import annotations
 
 import re
+import re
 import socket
 import threading
 import time
@@ -96,10 +97,54 @@ class TermReplay:
         assert self.con._ser is not None
         self.con._ser.sendall(data)
 
+    def open_session(self, timeout: float = 8.0, connect: bool = True) -> str:
+        """Open ``TERM "replay", port`` and optionally connect TCP."""
+        self.con.drain(quiet=0.1)
+        self.con._ser.sendall(
+            f'TERM "replay", {self.port}\r'.encode()
+        )
+        deadline = time.time() + timeout
+        acc = b""
+        while time.time() < deadline:
+            acc += self.pump_once(recv_tcp=False)
+            if b"Connected" in acc:
+                break
+            time.sleep(0.02)
+        if connect:
+            self.connect()
+        old_timeout = self.con._ser.gettimeout() if self.con._ser else None
+        if self.con._ser is not None:
+            self.con._ser.settimeout(2.0)
+        for _ in range(40):
+            acc += self.pump_once()
+            time.sleep(0.03)
+        if self.con._ser is not None and old_timeout is not None:
+            self.con._ser.settimeout(old_timeout)
+        text = acc.decode(errors="replace")
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+
     def _to_guest(self, data: bytes) -> None:
         assert self.con._ser is not None
-        hexpart = data.hex()
-        self.con._ser.sendall(bytes([RS]) + b"RX" + hexpart.encode("ascii") + b"\n")
+        old_timeout = self.con._ser.gettimeout()
+        self.con._ser.settimeout(2.0)
+        try:
+            off = 0
+            while off < len(data):
+                piece = data[off : off + 64]
+                off += len(piece)
+                hexpart = piece.hex()
+                frame = bytes([RS]) + b"RX" + hexpart.encode("ascii") + b"\n"
+                for attempt in range(20):
+                    try:
+                        self.con._ser.sendall(frame)
+                        break
+                    except socket.timeout:
+                        self.con._recv(self.con._ser)
+                        time.sleep(0.02)
+                else:
+                    self.con._ser.sendall(frame)
+        finally:
+            self.con._ser.settimeout(old_timeout)
 
     def _consume_tx(self, buf: bytes) -> tuple[bytes, bytes]:
         extra = b""

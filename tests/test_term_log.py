@@ -39,6 +39,14 @@ def test_parse_termlog_v2_timestamps():
     assert recs[1].data == b"Z"
 
 
+def test_parse_termlog_headerless_v2():
+    text = "R 100 5 0 4142430D0A\nT 250 5 5 5A\n"
+    recs = parse_termlog(text)
+    assert len(recs) == 2
+    assert recs[0].ms == 100
+    assert recs[1].ms == 250
+
+
 def _termlog_path(con):
     for path in ("A:/.termlog", "C:/.termlog"):
         out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
