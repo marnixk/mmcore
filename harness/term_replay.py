@@ -74,10 +74,10 @@ class TermReplay:
                 self.log.append(("in", time.time(), data))
                 self._to_guest(data)
         chunk = self.con._recv(self.con._ser)
-        if chunk:
-            with self._lock:
+        with self._lock:
+            if chunk:
                 self.serial_buf += chunk
-                extra, self.serial_buf = self._consume_tx(self.serial_buf)
+            extra, self.serial_buf = self._consume_tx(self.serial_buf)
         return extra
 
     def wait_serial(self, pred: Callable[[str], bool], timeout: float = 8.0) -> str:
@@ -126,23 +126,30 @@ class TermReplay:
     def _to_guest(self, data: bytes) -> None:
         assert self.con._ser is not None
         old_timeout = self.con._ser.gettimeout()
-        self.con._ser.settimeout(2.0)
+        self.con._ser.settimeout(0.4)
         try:
             off = 0
             while off < len(data):
-                piece = data[off : off + 64]
+                piece = data[off : off + 32]
                 off += len(piece)
                 hexpart = piece.hex()
                 frame = bytes([RS]) + b"RX" + hexpart.encode("ascii") + b"\n"
-                for attempt in range(20):
+                for _attempt in range(40):
                     try:
                         self.con._ser.sendall(frame)
                         break
                     except socket.timeout:
-                        self.con._recv(self.con._ser)
-                        time.sleep(0.02)
+                        extra = self.con._recv(self.con._ser)
+                        if extra:
+                            with self._lock:
+                                self.serial_buf += extra
+                        time.sleep(0.01)
                 else:
                     self.con._ser.sendall(frame)
+                extra = self.con._recv(self.con._ser)
+                if extra:
+                    with self._lock:
+                        self.serial_buf += extra
         finally:
             self.con._ser.settimeout(old_timeout)
 
