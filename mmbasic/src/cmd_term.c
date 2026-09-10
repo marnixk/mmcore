@@ -38,7 +38,9 @@
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
 #define TM_CONNECT_MS   25000
-#define TM_RECV_MS      20
+#define TM_RECV_MS      16
+#define TM_RECV_LOOPS   64
+#define TM_DUMP_MS      250
 #define TM_SB_MAX       512
 #define TM_SB_MS        2000
 #define TM_BM_MAX       32
@@ -129,7 +131,8 @@ typedef struct {
 	int replay_st;
 	char replay_hex[TM_REPLAY_HEX + 4];
 	int replay_hex_n;
-	unsigned replay_dump_at;
+	unsigned dump_at;
+	int present_full;
 	unsigned ansi_at;
 	int mon_ansi;
 	int mon_iac;
@@ -400,6 +403,8 @@ static void term_serial_dump(void)
 
 	if (!T.active)
 		return;
+	if (!mmb_opt_console_serial())
+		return;
 	cols = term_width();
 	for (r = 0; r < T.pane_rows; r++)
 	{
@@ -567,6 +572,7 @@ static void pane_scroll_smooth(void)
 		T.dirty_lo = T.pane_rows - 1;
 		T.dirty_hi = T.pane_rows - 1;
 		T.need_draw = 1;
+		T.present_full = 1;
 	}
 	else
 		mark_dirty_full();
@@ -890,6 +896,23 @@ static void term_present_pane(void)
 	mmb_gfx_present_rect(x0, 0, pw, ph);
 }
 
+static void term_present_rows(int lo, int hi)
+{
+	int x0 = T.pane_left * TM_CW;
+	int pw = term_width() * TM_CW;
+	int y, ph;
+
+	if (lo < 0)
+		lo = 0;
+	if (hi >= T.pane_rows)
+		hi = T.pane_rows - 1;
+	if (hi < lo)
+		return;
+	y = lo * TM_CH;
+	ph = (hi - lo + 1) * TM_CH;
+	mmb_gfx_present_rect(x0, y, pw, ph);
+}
+
 static void term_draw(void)
 {
 	int r, saved, lo, hi;
@@ -912,7 +935,11 @@ static void term_draw(void)
 	if (lo >= 0 && hi >= lo)
 	{
 		for (r = lo; r <= hi; r++)
+		{
 			term_draw_row(r);
+			if ((r & 3) == 0)
+				mmb_net_yield();
+		}
 	}
 	if (T.menu || T.alt_pend)
 		term_draw_status();
@@ -929,7 +956,10 @@ static void term_draw(void)
 		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
 			    TM_CH);
 	}
-	term_present_pane();
+	if (T.dirty_full || T.present_full || T.menu || T.alt_pend)
+		term_present_pane();
+	else
+		term_present_rows(lo, hi);
 	if (T.menu || T.alt_pend)
 	{
 		int top_h = T.menu ? 8 * TM_CH : TM_CH;
@@ -940,6 +970,7 @@ static void term_draw(void)
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
 	T.dirty_full = 0;
+	T.present_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
 }
@@ -999,7 +1030,24 @@ static void term_net_send(const void *data, unsigned n)
 	if (T.replay)
 		replay_tx((const unsigned char *)data, n);
 	else if (T.tcp)
-		mmb_net_tcp_send(data, n);
+	{
+		const unsigned char *p = (const unsigned char *)data;
+		int left = (int)n, rc, tries;
+
+		mmb_net_yield();
+		for (tries = 0; tries < 32 && left > 0; tries++)
+		{
+			rc = mmb_net_tcp_send(p, (unsigned)left);
+			if (rc == left)
+				return;
+			if (rc > 0)
+			{
+				p += rc;
+				left -= rc;
+			}
+			mmb_net_yield();
+		}
+	}
 }
 
 static int hexval(char c)
@@ -1037,11 +1085,11 @@ static void replay_flush_hex(void)
 		incoming_feed(buf, n);
 		if (T.need_draw)
 			term_draw();
-		if (n < 80 || !T.replay_dump_at ||
-		    mmb_now_ms() - T.replay_dump_at >= 250)
+		if (n < 80 || !T.dump_at ||
+		    mmb_now_ms() - T.dump_at >= TM_DUMP_MS)
 		{
 			term_serial_dump();
-			T.replay_dump_at = mmb_now_ms();
+			T.dump_at = mmb_now_ms();
 		}
 	}
 }
@@ -2482,10 +2530,10 @@ static void ansi_dsr(void)
 		buf[n++] = (char)('0' + r / 10);
 	buf[n++] = (char)('0' + r % 10);
 	buf[n++] = ';';
-	if (c >= 10)
-		buf[n++] = (char)('0' + (c / 10) % 10);
 	if (c >= 100)
 		buf[n++] = (char)('0' + c / 100);
+	if (c >= 10)
+		buf[n++] = (char)('0' + (c / 10) % 10);
 	buf[n++] = (char)('0' + c % 10);
 	buf[n++] = 'R';
 	buf[n] = 0;
@@ -2567,6 +2615,25 @@ static void ansi_exec_csi(char cmd)
 		T.cur_col -= n;
 		if (T.cur_col < 0)
 			T.cur_col = 0;
+	}
+	else if (cmd == 'G')
+		ansi_cup(T.cur_row + 1, ansi_arg(0, 1));
+	else if (cmd == 'd')
+		ansi_cup(ansi_arg(0, 1), T.cur_col + 1);
+	else if (cmd == 'X')
+	{
+		int c, cnt = n < 1 ? 1 : n;
+		int w = term_width();
+		if (T.cur_row >= 0 && T.cur_row < T.pane_rows)
+		{
+			for (c = T.cur_col; c < T.cur_col + cnt && c < w; c++)
+			{
+				T.cell[T.cur_row][c] = ' ';
+				T.cell_fg[T.cur_row][c] = term_pen();
+				T.cell_bg[T.cur_row][c] = term_paper();
+			}
+			mark_dirty_row(T.cur_row);
+		}
 	}
 	else if (cmd == 'H' || cmd == 'f')
 		ansi_cup(ansi_arg(0, 1), ansi_arg(1, 1));
@@ -2811,6 +2878,11 @@ static void incoming_byte(unsigned char b)
 		return;
 	if (b == 0)
 		return;
+	if (b == 12)
+	{
+		ansi_erase_disp(2);
+		return;
+	}
 	if (b == '\r')
 		T.cur_col = 0;
 	else if (b == '\n')
@@ -3611,10 +3683,10 @@ void mmb_term_poll(void)
 		demo_iac_tick();
 	else if (T.demo && T.demo_line <= 43 && mmb_now_ms() >= T.demo_next)
 		demo_emit_line();
-	if (T.need_draw)
-		term_draw();
 	if (T.replay)
 	{
+		if (T.need_draw)
+			term_draw();
 		ansi_watchdog();
 		sb_watchdog();
 		if (T.need_draw)
@@ -3662,10 +3734,14 @@ void mmb_term_poll(void)
 		}
 	}
 	if (!T.tcp)
+	{
+		if (T.need_draw)
+			term_draw();
 		return;
+	}
 	got = 0;
 	t0 = mmb_now_ms();
-	for (loops = 0; loops < 32; loops++)
+	for (loops = 0; loops < TM_RECV_LOOPS; loops++)
 	{
 		n = mmb_net_tcp_recv(buf, sizeof(buf));
 		if (n < 0)
@@ -3676,12 +3752,20 @@ void mmb_term_poll(void)
 		if (n == 0)
 			break;
 		incoming_feed(buf, n);
-		got = 1;
+		got += n;
+		mmb_net_yield();
 		if (mmb_now_ms() - t0 >= TM_RECV_MS)
 			break;
 	}
 	if (got)
-		term_serial_dump();
+	{
+		if (got < 80 || !T.dump_at ||
+		    mmb_now_ms() - T.dump_at >= TM_DUMP_MS)
+		{
+			term_serial_dump();
+			T.dump_at = mmb_now_ms();
+		}
+	}
 	if (T.need_draw)
 		term_draw();
 	mmb_net_yield();

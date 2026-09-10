@@ -1006,6 +1006,8 @@ TShutdownMode CKernel::Run (void)
 	for (;;)
 	{
 		mmb_poll ();
+		if (mmb_in_term ())
+			mmb_poll ();
 		AttachKeyboard ();
 
 		char Buffer[64];
