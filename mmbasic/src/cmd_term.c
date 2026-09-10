@@ -487,6 +487,11 @@ static void mark_dirty_full(void)
 	T.need_draw = 1;
 }
 
+static int term_full_present(void)
+{
+	return T.tcp && !T.demo;
+}
+
 static void term_draw(void);
 static void term_draw_row(int r);
 
@@ -965,7 +970,8 @@ static void term_draw(void)
 			    TM_BG, 1, (int)TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
-	if (T.dirty_full || T.present_full || T.menu || T.alt_pend)
+	if (term_full_present() || T.dirty_full || T.present_full || T.menu ||
+	    T.alt_pend)
 		term_copy_pane();
 	else if (lo >= 0 && hi >= lo)
 	{
@@ -982,7 +988,8 @@ static void term_draw(void)
 		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
 			    TM_CH);
 	}
-	if (T.dirty_full || T.present_full || T.menu || T.alt_pend)
+	if (term_full_present() || T.dirty_full || T.present_full || T.menu ||
+	    T.alt_pend)
 		term_present_pane();
 	else
 		term_present_rows(lo, hi);
@@ -3782,6 +3789,8 @@ void mmb_term_poll(void)
 			break;
 		incoming_feed(buf, n);
 		got += n;
+		if (T.need_draw && (loops & 3) == 3)
+			term_draw();
 		mmb_net_yield();
 		if (!mmb_net_tcp_rx_avail())
 			break;
