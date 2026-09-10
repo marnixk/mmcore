@@ -40,6 +40,7 @@
 #define TM_CONNECT_MS   25000
 #define TM_RECV_MS      16
 #define TM_RECV_LOOPS   64
+#define TM_RECV_BUF     8192
 #define TM_DUMP_MS      250
 #define TM_SB_MAX       512
 #define TM_SB_MS        2000
@@ -3077,63 +3078,76 @@ void mmb_term_log_enable(int on)
 	mmb_out(path);
 }
 
+static unsigned char feed_at(const unsigned char *hold, int hold_n,
+			     const unsigned char *src, int i)
+{
+	if (i < hold_n)
+		return hold[i];
+	return src[i - hold_n];
+}
+
 static void incoming_feed(const unsigned char *src, int n)
 {
-	unsigned char buf[514];
-	const unsigned char *p;
-	int m, i;
+	unsigned char hold[2];
+	int hold_n, total, i;
 
 	if (n < 0)
-		return;
-	if (T.hold_n > 0)
-	{
-		if (T.hold_n + n > (int)sizeof(buf))
-			n = (int)sizeof(buf) - T.hold_n;
-		memcpy(buf, T.hold, (unsigned)T.hold_n);
-		if (n > 0)
-			memcpy(buf + T.hold_n, src, (unsigned)n);
-		m = T.hold_n + n;
-		p = buf;
-		T.hold_n = 0;
-	}
-	else
-	{
-		p = src;
-		m = n;
-	}
+		n = 0;
+	hold_n = T.hold_n;
+	if (hold_n > 0)
+		memcpy(hold, T.hold, (unsigned)hold_n);
+	T.hold_n = 0;
 	if (n > 0)
 		term_log_rx(src, n);
+	total = hold_n + n;
 	i = 0;
-	while (i < m)
+	while (i < total)
 	{
+		unsigned char b = feed_at(hold, hold_n, src, i);
+
 		sb_watchdog();
-	ansi_watchdog();
+		ansi_watchdog();
 		if (T.sb || T.iac)
 		{
-			incoming_byte(p[i++]);
+			incoming_byte(b);
+			i++;
 			continue;
 		}
-		if (p[i] != IAC)
+		if (b != IAC)
 		{
-			incoming_byte(p[i++]);
+			incoming_byte(b);
+			i++;
 			continue;
 		}
-		if (i + 1 >= m)
+		if (i + 1 >= total)
 		{
 			T.hold[0] = IAC;
 			T.hold_n = 1;
 			return;
 		}
-		if (p[i + 1] == SB)
 		{
-			if (i + 2 >= m)
+			unsigned char b1 = feed_at(hold, hold_n, src, i + 1);
+
+			if (b1 == SB)
 			{
-				T.hold[0] = IAC;
-				T.hold[1] = SB;
-				T.hold_n = 2;
-				return;
+				if (i + 2 >= total)
+				{
+					T.hold[0] = IAC;
+					T.hold[1] = SB;
+					T.hold_n = 2;
+					return;
+				}
+				if (telopt_known(feed_at(hold, hold_n, src, i + 2)))
+				{
+					incoming_byte(IAC);
+					i++;
+					continue;
+				}
+				pane_put((char)IAC);
+				i++;
+				continue;
 			}
-			if (telopt_known(p[i + 2]))
+			if (iac_cmd_byte(b1))
 			{
 				incoming_byte(IAC);
 				i++;
@@ -3141,16 +3155,7 @@ static void incoming_feed(const unsigned char *src, int n)
 			}
 			pane_put((char)IAC);
 			i++;
-			continue;
 		}
-		if (iac_cmd_byte(p[i + 1]))
-		{
-			incoming_byte(IAC);
-			i++;
-			continue;
-		}
-		pane_put((char)IAC);
-		i++;
 	}
 }
 
@@ -3700,7 +3705,7 @@ const char *mmb_term_key(char c)
 
 void mmb_term_poll(void)
 {
-	unsigned char buf[512];
+	static unsigned char buf[TM_RECV_BUF];
 	int n, loops, got;
 
 	if (!T.active)

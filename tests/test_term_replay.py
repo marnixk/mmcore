@@ -103,3 +103,43 @@ def test_term_replay_charset_esc_b_not_printed(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def test_term_replay_csi_split_across_frames(kernel_image):
+    """ESC then CSI payload in the next UART frame must still erase, not print '['."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        seen = _open_replay(con, replay, connect=False)
+        replay._to_guest(b"NOISE")
+        replay._to_guest(b"\x1b")
+        replay._to_guest(b"[2J\x1b[1;1HSPLITOK")
+        more = replay.wait_serial(lambda s: "SPLITOK" in s, timeout=6.0)
+        text = _plain(seen + more)
+        assert "SPLITOK" in text
+        assert "[2J" not in text
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_iac_split_across_frames(kernel_image):
+    """IAC at end of a chunk is held; WILL ECHO in the next chunk is not a glyph."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        seen = _open_replay(con, replay, connect=False)
+        replay._to_guest(bytes([255]))
+        replay._to_guest(bytes([251, 1]) + b"AFTERIAC")
+        more = replay.wait_serial(lambda s: "AFTERIAC" in s, timeout=6.0)
+        text = seen + more
+        assert "AFTERIAC" in text
+        _quit(con)
+        assert con.send_line("PRINT 4+1") == "5"
+    finally:
+        replay.stop()
+        con.stop()
