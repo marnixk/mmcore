@@ -106,6 +106,13 @@ class TermReplay:
         while True:
             m = _TX_RE.search(buf)
             if not m:
+                keep = buf.rfind(b"!TX ")
+                if keep < 0:
+                    extra += buf
+                    buf = b""
+                else:
+                    extra += buf[:keep]
+                    buf = buf[keep:]
                 break
             extra += buf[: m.start()]
             payload = bytes.fromhex(m.group(1).decode("ascii"))

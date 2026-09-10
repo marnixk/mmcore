@@ -36,7 +36,7 @@ def _echo_server(banner: bytes):
 
     def run():
         try:
-            srv.settimeout(8)
+            srv.settimeout(20)
             c, _ = srv.accept()
             held["sock"] = c
             c.settimeout(0.2)

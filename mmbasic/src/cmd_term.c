@@ -419,7 +419,7 @@ static void term_layout(void)
 	T.pane_left = (T.vid_cols - T.pane_cols) / 2;
 	if (T.pane_left < 0)
 		T.pane_left = 0;
-	T.pane_rows = T.vid_rows;
+	T.pane_rows = T.vid_rows - 1;
 	if (T.pane_rows < 1)
 		T.pane_rows = 1;
 	if (T.pane_rows > TM_MAX_ROWS)
@@ -896,17 +896,25 @@ static void term_draw(void)
 	}
 	if (T.menu || T.alt_pend)
 		term_draw_status();
-	else if (T.letterbox)
-	{
+	else
 		mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 			    TM_BG, 1, (int)TM_BG);
-		if (T.pane_rows > 0)
-			term_draw_row(T.pane_rows - 1);
-	}
 	term_draw_menu();
 	term_draw_dlg();
 	term_copy_pane();
+	if (T.menu || T.alt_pend)
+	{
+		term_copy_rect(0, 0, T.vid_cols * TM_CW, TM_CH);
+		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
+			    TM_CH);
+	}
 	term_present_pane();
+	if (T.menu || T.alt_pend)
+	{
+		mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, TM_CH);
+		mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH,
+				    T.vid_cols * TM_CW, TM_CH);
+	}
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
 	T.dirty_full = 0;
@@ -3161,8 +3169,6 @@ void mmb_cmd_term(void)
 	T.dirty_hi = -1;
 	mark_dirty_full();
 
-	if (T.tcp)
-		telnet_announce();
 	if (T.replay)
 	{
 		pane_puts("Connected");
@@ -3196,6 +3202,8 @@ void mmb_cmd_term(void)
 
 	term_draw();
 	term_serial_dump();
+	if (T.tcp)
+		telnet_announce();
 }
 
 int mmb_in_term(void)

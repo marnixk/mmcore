@@ -4,7 +4,7 @@ import os
 import re
 
 from harness import MMBasicConsole
-from test_term import _is_creamish, _is_dark_slate, _luminance, _menu, _open_term, _quit
+from test_term import _is_creamish, _is_dark_slate, _luminance, _menu, _open_term, _quit, _apply_slate_theme
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_C = os.path.join(REPO, "mmbasic", "src", "font_cp437_8x16.c")
@@ -44,6 +44,7 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
+        _apply_slate_theme(con)
         seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         assert "CP437" in seen
         _menu(con)
