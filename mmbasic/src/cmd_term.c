@@ -65,6 +65,8 @@
 #define TM_BOX_BR      0xD9u
 #define TM_ANSI_OSC_MS  2000
 #define TM_REPLAY_HEX   512
+#define TM_FILE_LINE    1280
+#define TM_FILE_PEND    16
 #define TM_LOG_BUF      32768
 #define TM_LOG_FLUSH_MS 10000
 #define TM_LOG_WATER    24576
@@ -131,6 +133,16 @@ typedef struct {
 	int replay_st;
 	char replay_hex[TM_REPLAY_HEX + 4];
 	int replay_hex_n;
+	int file_replay;
+	char file_path[88];
+	int file_sz;
+	unsigned file_pos;
+	char file_line[TM_FILE_LINE];
+	int file_line_n;
+	int file_wait;
+	int file_done;
+	unsigned char file_pend[TM_FILE_PEND];
+	int file_pend_n;
 	unsigned dump_at;
 	int present_full;
 	unsigned ansi_at;
@@ -256,8 +268,9 @@ static void term_reset_pen(void);
 static void demo_emit_line(void);
 static void esc_reset(void);
 static int term_width(void);
-static int term_rx_interpret(void);
 static void incoming_feed(const unsigned char *src, int n);
+static int term_rx_interpret(void);
+static void file_replay_poll(void);
 static void term_open_menu(void);
 static void term_close_menu(void);
 static void term_dlg_refresh(void);
@@ -407,6 +420,8 @@ static void term_serial_dump(void)
 	char line[TM_MAX_COLS + 1];
 
 	if (!T.active)
+		return;
+	if (T.file_replay)
 		return;
 	if (!mmb_opt_console_serial())
 		return;
@@ -1074,7 +1089,7 @@ static void term_net_send(const void *data, unsigned n)
 		term_log_tx(pb, (int)n);
 	if (T.replay)
 		replay_tx((const unsigned char *)data, n);
-	else if (T.tcp)
+	else if (T.tcp && !T.file_replay)
 	{
 		const unsigned char *p = (const unsigned char *)data;
 		int left = (int)n, rc, idle = 0;
@@ -3187,6 +3202,189 @@ static void incoming_feed(const unsigned char *src, int n)
 	term_rx_interpret();
 }
 
+static int file_hex(const char *s, unsigned char *dst, int maxn)
+{
+	int n = 0, hi, lo;
+
+	while (s[0] && s[1] && n < maxn)
+	{
+		if (s[0] == ' ' || s[0] == '\t')
+		{
+			s++;
+			continue;
+		}
+		hi = hexval(s[0]);
+		lo = hexval(s[1]);
+		if (hi < 0 || lo < 0)
+			break;
+		dst[n++] = (unsigned char)((hi << 4) | lo);
+		s += 2;
+	}
+	return n;
+}
+
+static int file_fill(void)
+{
+	unsigned got, room;
+
+	if (T.file_line_n < 0)
+		T.file_line_n = 0;
+	room = (unsigned)(TM_FILE_LINE - 1 - T.file_line_n);
+	if (!room)
+		return 1;
+	if ((int)T.file_pos >= T.file_sz)
+		return T.file_line_n > 0 ? 1 : 0;
+	if (mmb_vfs_read_at(T.file_path, T.file_pos, T.file_line + T.file_line_n,
+			    room, &got) != 0)
+		return -1;
+	if (!got)
+		return T.file_line_n > 0 ? 1 : 0;
+	T.file_pos += got;
+	T.file_line_n += (int)got;
+	T.file_line[T.file_line_n] = 0;
+	return 1;
+}
+
+static int file_next_line(char *dst, int dstsz)
+{
+	char *nl;
+	int n, skip;
+
+	for (;;)
+	{
+		T.file_line[T.file_line_n] = 0;
+		nl = strchr(T.file_line, '\n');
+		if (nl)
+			break;
+		skip = file_fill();
+		if (skip < 0)
+			return -1;
+		if (skip == 0)
+		{
+			if (T.file_line_n <= 0)
+				return 0;
+			n = T.file_line_n;
+			if (n >= dstsz)
+				n = dstsz - 1;
+			memcpy(dst, T.file_line, (unsigned)n);
+			dst[n] = 0;
+			T.file_line_n = 0;
+			return 1;
+		}
+		if (!strchr(T.file_line, '\n') && T.file_line_n >= TM_FILE_LINE - 1)
+		{
+			n = T.file_line_n;
+			if (n >= dstsz)
+				n = dstsz - 1;
+			memcpy(dst, T.file_line, (unsigned)n);
+			dst[n] = 0;
+			T.file_line_n = 0;
+			return 1;
+		}
+	}
+	n = (int)(nl - T.file_line);
+	skip = n;
+	if (n > 0 && T.file_line[n - 1] == '\r')
+		n--;
+	if (n >= dstsz)
+		n = dstsz - 1;
+	memcpy(dst, T.file_line, (unsigned)n);
+	dst[n] = 0;
+	skip++;
+	T.file_line_n -= skip;
+	if (T.file_line_n > 0)
+		memmove(T.file_line, T.file_line + skip, (unsigned)T.file_line_n);
+	T.file_line[T.file_line_n] = 0;
+	return 1;
+}
+
+static const char *file_after_ints(const char *p, int want)
+{
+	int i;
+
+	for (i = 0; i < want; i++)
+	{
+		while (*p == ' ')
+			p++;
+		if (*p < '0' || *p > '9')
+			return 0;
+		while (*p >= '0' && *p <= '9')
+			p++;
+		if (*p && *p != ' ')
+			return 0;
+	}
+	while (*p == ' ')
+		p++;
+	return p;
+}
+
+static void file_replay_poll(void)
+{
+	char line[TM_FILE_LINE];
+	unsigned char buf[512];
+	int loops, rc, n, kind_t;
+	char *p;
+	const char *hex;
+
+	if (T.file_done || T.file_wait)
+		return;
+	for (loops = 0; loops < 128; loops++)
+	{
+		rc = file_next_line(line, (int)sizeof(line));
+		if (rc < 0)
+		{
+			T.file_done = 1;
+			ser("!REPLAY DONE\r\n");
+			return;
+		}
+		if (rc == 0)
+		{
+			T.file_done = 1;
+			term_rx_interpret();
+			if (T.need_draw)
+				term_draw();
+			ser("!REPLAY DONE\r\n");
+			return;
+		}
+		p = line;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (!p[0] || p[0] == '#')
+			continue;
+		if (p[0] != 'R' && p[0] != 'T')
+			continue;
+		kind_t = (p[0] == 'T');
+		p++;
+		hex = file_after_ints(p, 3);
+		if (!hex)
+			hex = file_after_ints(p, 2);
+		if (!hex)
+			continue;
+		n = file_hex(hex, buf, (int)sizeof(buf));
+		if (!kind_t)
+		{
+			if (n > 0)
+				incoming_feed(buf, n);
+			continue;
+		}
+		if (n <= 0 || buf[0] == IAC)
+			continue;
+		if (n > TM_FILE_PEND)
+			n = TM_FILE_PEND;
+		memcpy(T.file_pend, buf, (unsigned)n);
+		T.file_pend_n = n;
+		T.file_wait = 1;
+		term_rx_interpret();
+		if (T.need_draw)
+			term_draw();
+		ser("!REPLAY WAIT\r\n");
+		return;
+	}
+	term_rx_interpret();
+	if (T.need_draw)
+		term_draw();
+}
+
 static void demo_iac_tick(void)
 {
 	static const unsigned char g1[] = {
@@ -3411,12 +3609,31 @@ static void demo_emit_line(void)
 
 void mmb_cmd_term(void)
 {
-	mmb_val host, portv;
-	int port, i, no_args;
+	mmb_val host, portv, pathv;
+	int port, i, no_args, file_mode, file_sz;
+	char file_path[88];
 
 	mmb_skip_sp();
+	file_mode = 0;
+	file_sz = 0;
+	file_path[0] = 0;
+	port = 0;
+	host = mmb_str_val("");
 	no_args = (*G.p == 0 || *G.p == ':' || *G.p == '\'');
-	if (!no_args)
+	if (mmb_match("REPLAY"))
+	{
+		pathv = mmb_expr();
+		if (pathv.type != T_STR)
+			mmb_syntax();
+		if (mmb_vfs_resolve(pathv.s, file_path, (int)sizeof(file_path)) != 0)
+			mmb_error("?FILE");
+		file_sz = mmb_vfs_size(file_path);
+		if (file_sz < 0)
+			mmb_error("?FILE");
+		file_mode = 1;
+		no_args = 0;
+	}
+	else if (!no_args)
 	{
 		host = mmb_expr();
 		if (host.type != T_STR)
@@ -3439,7 +3656,16 @@ void mmb_cmd_term(void)
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
-	if (!no_args)
+	if (file_mode)
+	{
+		strncpy(T.file_path, file_path, sizeof(T.file_path) - 1);
+		T.file_path[sizeof(T.file_path) - 1] = 0;
+		T.file_sz = file_sz;
+		T.file_replay = 1;
+		T.tcp = 1;
+		strncpy(T.host, "file", sizeof(T.host) - 1);
+	}
+	else if (!no_args)
 	{
 		strncpy(T.host, host.s, sizeof(T.host) - 1);
 		T.host[sizeof(T.host) - 1] = 0;
@@ -3450,12 +3676,12 @@ void mmb_cmd_term(void)
 	T.demo = host_is_demo();
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
-	T.replay = host_is_replay();
+	T.replay = !T.file_replay && host_is_replay();
 	T.letterbox = 1;
 	term_reset_pen();
 
 	ser("TERM\r\n");
-	if (!T.demo && !T.replay && mmb_tcp_any_open())
+	if (!T.demo && !T.replay && !T.file_replay && mmb_tcp_any_open())
 		mmb_error("?FILE");
 	if (T.replay)
 	{
@@ -3464,6 +3690,8 @@ void mmb_cmd_term(void)
 		T.mon_iac = -1;
 		T.mon_sb = -1;
 	}
+	else if (T.file_replay)
+		ser("!REPLAY START\r\n");
 	else if (!T.demo && T.host[0])
 	{
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)
@@ -3501,6 +3729,11 @@ void mmb_cmd_term(void)
 		pane_puts("Connected");
 		pane_newline();
 	}
+	else if (T.file_replay)
+	{
+		pane_puts("Replay");
+		pane_newline();
+	}
 	if (T.net_fail && T.net_msg[0])
 	{
 		pane_puts(T.net_msg);
@@ -3528,9 +3761,12 @@ void mmb_cmd_term(void)
 	}
 
 	term_draw();
-	term_serial_dump();
-	if (T.tcp)
+	if (!T.file_replay)
+		term_serial_dump();
+	if (T.tcp && !T.file_replay)
 		telnet_announce();
+	else if (T.file_replay)
+		file_replay_poll();
 }
 
 int mmb_in_term(void)
@@ -3544,6 +3780,15 @@ const char *mmb_term_key(char c)
 
 	if (!T.active)
 		return "";
+	if (T.file_wait && (unsigned char)c != 1)
+	{
+		T.file_pend_n = 0;
+		T.file_wait = 0;
+		file_replay_poll();
+		if (T.need_draw)
+			term_draw();
+		return "";
+	}
 	if (T.replay && replay_key(c))
 	{
 		if (T.need_draw)
@@ -3772,6 +4017,13 @@ void mmb_term_poll(void)
 		demo_iac_tick();
 	else if (T.demo && T.demo_line <= 43 && mmb_now_ms() >= T.demo_next)
 		demo_emit_line();
+	if (T.file_replay)
+	{
+		file_replay_poll();
+		if (T.need_draw)
+			term_draw();
+		return;
+	}
 	if (T.replay)
 	{
 		term_rx_interpret();
