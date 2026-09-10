@@ -887,6 +887,23 @@ static void term_copy_pane(void)
 		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint32_t));
 }
 
+static void term_copy_rows(int lo, int hi)
+{
+	int x0, pw, y, ph;
+
+	if (lo < 0)
+		lo = 0;
+	if (hi >= T.pane_rows)
+		hi = T.pane_rows - 1;
+	if (hi < lo)
+		return;
+	x0 = T.pane_left * TM_CW;
+	pw = term_width() * TM_CW;
+	y = lo * TM_CH;
+	ph = (hi - lo + 1) * TM_CH;
+	term_copy_rect(x0, y, pw, ph);
+}
+
 static void term_present_pane(void)
 {
 	int x0 = T.pane_left * TM_CW;
@@ -948,7 +965,16 @@ static void term_draw(void)
 			    TM_BG, 1, (int)TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
-	term_copy_pane();
+	if (T.dirty_full || T.present_full || T.menu || T.alt_pend)
+		term_copy_pane();
+	else if (lo >= 0 && hi >= lo)
+	{
+		term_copy_rows(lo, hi);
+		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
+			    TM_CH);
+	}
+	else
+		term_copy_pane();
 	if (T.menu || T.alt_pend)
 	{
 		int top_h = T.menu ? 8 * TM_CH : TM_CH;
@@ -2615,6 +2641,11 @@ static void ansi_exec_csi(char cmd)
 		T.cur_col -= n;
 		if (T.cur_col < 0)
 			T.cur_col = 0;
+		if (n > 0 && T.cur_row >= 0 && T.cur_row < T.pane_rows)
+		{
+			mark_dirty_row(T.cur_row);
+			T.present_full = 1;
+		}
 	}
 	else if (cmd == 'G')
 		ansi_cup(T.cur_row + 1, ansi_arg(0, 1));
@@ -3648,7 +3679,6 @@ void mmb_term_poll(void)
 {
 	unsigned char buf[512];
 	int n, loops, got;
-	unsigned t0;
 
 	if (!T.active)
 		return;
@@ -3740,7 +3770,6 @@ void mmb_term_poll(void)
 		return;
 	}
 	got = 0;
-	t0 = mmb_now_ms();
 	for (loops = 0; loops < TM_RECV_LOOPS; loops++)
 	{
 		n = mmb_net_tcp_recv(buf, sizeof(buf));
@@ -3754,7 +3783,7 @@ void mmb_term_poll(void)
 		incoming_feed(buf, n);
 		got += n;
 		mmb_net_yield();
-		if (mmb_now_ms() - t0 >= TM_RECV_MS)
+		if (!mmb_net_tcp_rx_avail())
 			break;
 	}
 	if (got)

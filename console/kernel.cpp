@@ -1040,6 +1040,8 @@ TShutdownMode CKernel::Run (void)
 			continue;
 		}
 
+		if (mmb_in_term () && nBytes > 0)
+			mmb_poll ();
 		m_UsbBurst = 1;
 		for (int i = 0; i < nBytes; i++)
 			ProcessChar (Buffer[i], m_Line, &m_nLen);
