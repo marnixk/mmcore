@@ -3082,7 +3082,11 @@ static unsigned char feed_at(const unsigned char *hold, int hold_n,
 			     const unsigned char *src, int i)
 {
 	if (i < hold_n)
+	{
+		if (i < 0 || i > 1)
+			return 0;
 		return hold[i];
+	}
 	return src[i - hold_n];
 }
 
