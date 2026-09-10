@@ -3780,7 +3780,7 @@ const char *mmb_term_key(char c)
 
 	if (!T.active)
 		return "";
-	if (T.file_wait && (unsigned char)c != 1)
+	if (T.file_wait && (unsigned char)c != 1 && !T.alt)
 	{
 		T.file_pend_n = 0;
 		T.file_wait = 0;

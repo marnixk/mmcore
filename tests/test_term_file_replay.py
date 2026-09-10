@@ -20,7 +20,7 @@ def _fat_with_log():
     fd, img = tempfile.mkstemp(suffix=".img")
     os.close(fd)
     subprocess.run(
-        ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=16"],
+        ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
         check=True,
         capture_output=True,
     )
@@ -66,7 +66,12 @@ def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
     )
     con.start()
     try:
-        assert con.send_line('DIR "C:/"').upper().find("BF.LOG") >= 0
+        drv = con.send_line("DRIVE")
+        assert "C: SD" in drv
+        assert "no media" not in drv.lower(), drv
+        assert con.send_line('CHDIR "C:"') == ""
+        listing = con.send_line("DIR")
+        assert "BF.LOG" in listing.upper(), listing
         con.drain(quiet=0.1)
         con._ser.sendall(b'TERM REPLAY "C:/BF.LOG"\r')
         seen = _wait_serial(con, b"!REPLAY WAIT", timeout=25.0)
