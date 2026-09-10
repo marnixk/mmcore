@@ -6,6 +6,11 @@ Guest format, one record per line::
     R <in_total> <rendered> <hex>   incoming host bytes
     T <in_total> <rendered> <hex>   outbound (typed / telnet)
 
+    # TERMLOG 2
+    R <ms> <in_total> <rendered> <hex>
+    T <ms> <in_total> <rendered> <hex>
+
+``ms`` is milliseconds since OPTION TERM LOG ON (v2 only).
 ``in_total`` is incoming bytes seen after that record's payload.
 ``rendered`` is the last incoming count that drew a pane cell.
 ``T`` lines after a freeze keep ``rendered`` stuck while ``in_n`` grows.
@@ -25,28 +30,48 @@ class TermLogRec:
     in_n: int
     rendered: int
     data: bytes
+    ms: int | None = None
 
 
 def parse_termlog(text: str) -> list[TermLogRec]:
     recs: list[TermLogRec] = []
+    version = 1
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
-        parts = line.split(" ", 3)
+        if line.startswith("#"):
+            if line.startswith("# TERMLOG"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        version = int(parts[2])
+                    except ValueError:
+                        version = 1
+            continue
+        parts = line.split(" ", 4 if version >= 2 else 3)
         if len(parts) < 3:
             continue
         kind = parts[0]
         if kind not in ("R", "T"):
             continue
-        hexpart = parts[3] if len(parts) > 3 else ""
         try:
-            in_n = int(parts[1])
-            rendered = int(parts[2])
+            if version >= 2:
+                if len(parts) < 4:
+                    continue
+                ms = int(parts[1])
+                in_n = int(parts[2])
+                rendered = int(parts[3])
+                hexpart = parts[4] if len(parts) > 4 else ""
+            else:
+                ms = None
+                in_n = int(parts[1])
+                rendered = int(parts[2])
+                hexpart = parts[3] if len(parts) > 3 else ""
             data = bytes.fromhex(hexpart) if hexpart else b""
         except ValueError:
             continue
-        recs.append(TermLogRec(kind, in_n, rendered, data))
+        recs.append(TermLogRec(kind, in_n, rendered, data, ms))
     return recs
 
 

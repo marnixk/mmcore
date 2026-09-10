@@ -165,6 +165,7 @@ static struct {
 	unsigned out_n;
 	unsigned rendered;
 	unsigned flush_at;
+	unsigned start_at;
 	int buf_n;
 	char buf[TM_LOG_BUF];
 } L;
@@ -2994,12 +2995,14 @@ static void term_log_line(char kind, const unsigned char *p, int n)
 
 	if (!G.opt.term_log || n <= 0)
 		return;
-	need = 24 + n * 2;
+	need = 36 + n * 2;
 	if (need > TM_LOG_BUF)
-		n = (TM_LOG_BUF - 24) / 2;
+		n = (TM_LOG_BUF - 36) / 2;
 	if (L.buf_n + need > TM_LOG_BUF)
 		term_log_flush();
 	term_log_putc(kind);
+	term_log_putc(' ');
+	term_log_u(mmb_now_ms() - L.start_at);
 	term_log_putc(' ');
 	term_log_u(L.in_n);
 	term_log_putc(' ');
@@ -3057,9 +3060,10 @@ void mmb_term_log_enable(int on)
 	L.out_n = 0;
 	L.rendered = 0;
 	L.buf_n = 0;
-	L.flush_at = mmb_now_ms();
+	L.start_at = mmb_now_ms();
+	L.flush_at = L.start_at;
 	term_log_path(path, sizeof(path));
-	mmb_vfs_write(path, "# TERMLOG 1\n", 12, 0);
+	mmb_vfs_write(path, "# TERMLOG 2\n", 12, 0);
 	mmb_out("TERM log ");
 	mmb_out(path);
 }
