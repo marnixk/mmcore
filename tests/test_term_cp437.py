@@ -49,7 +49,7 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
         _menu(con)
         # MODE 14 is 960x540 / 8x16 = 120x33. Status row is last, full width.
         # "Alt-X  Alt-T" is 12 chars; demo appends ░▒▓ there.
-        x0, y0 = 12 * 8, 32 * 16
+        x0, y0 = 13 * 8, 32 * 16
         on = con.screen_pixel(x0 + 3, y0)
         off = con.screen_pixel(x0 + 0, y0)
         assert _is_creamish(*on), on

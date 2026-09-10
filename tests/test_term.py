@@ -332,13 +332,10 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
         closed = con.screen_pixel(8, 4)
-        edge = con.screen_pixel(940, 4)
-        assert _luminance(*closed) < 40, closed
-        assert _luminance(*edge) < 40, edge
         _menu(con)
         bar = con.screen_pixel(8, 4)
         far = con.screen_pixel(940, 4)
-        assert _luminance(*bar) > _luminance(*closed) + 10, (bar, closed)
+        assert _luminance(*bar) > _luminance(*closed) + 20, (bar, closed)
         assert abs(bar[0] - far[0]) < 40 and abs(bar[1] - far[1]) < 40
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"

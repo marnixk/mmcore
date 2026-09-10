@@ -27,6 +27,7 @@ class TermReplay:
         self.sock: socket.socket | None = None
         self.log: list[tuple[str, float, bytes]] = []
         self.serial_buf = b""
+        self.pending_out = b""
         self._stop = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -34,6 +35,12 @@ class TermReplay:
     def connect(self, timeout: float = 15.0) -> None:
         self.sock = socket.create_connection((self.host, self.port), timeout=timeout)
         self.sock.settimeout(0.05)
+        if self.pending_out:
+            try:
+                self.sock.sendall(self.pending_out)
+            except OSError:
+                pass
+            self.pending_out = b""
 
     def start_pump(self) -> None:
         self._stop = False
@@ -52,10 +59,10 @@ class TermReplay:
                 pass
             self.sock = None
 
-    def pump_once(self) -> bytes:
+    def pump_once(self, recv_tcp: bool = True) -> bytes:
         """One shuttle step; returns extra serial text (pane dumps, !MON)."""
         extra = b""
-        if self.sock is not None:
+        if recv_tcp and self.sock is not None:
             try:
                 data = self.sock.recv(256)
             except socket.timeout:
@@ -103,11 +110,14 @@ class TermReplay:
             extra += buf[: m.start()]
             payload = bytes.fromhex(m.group(1).decode("ascii"))
             self.log.append(("out", time.time(), payload))
-            if self.sock is not None and payload:
-                try:
-                    self.sock.sendall(payload)
-                except OSError:
-                    pass
+            if payload:
+                if self.sock is not None:
+                    try:
+                        self.sock.sendall(payload)
+                    except OSError:
+                        pass
+                else:
+                    self.pending_out += payload
             buf = buf[m.end() :]
         return extra, buf
 

@@ -419,7 +419,7 @@ static void term_layout(void)
 	T.pane_left = (T.vid_cols - T.pane_cols) / 2;
 	if (T.pane_left < 0)
 		T.pane_left = 0;
-	T.pane_rows = T.vid_rows - 1;
+	T.pane_rows = T.vid_rows;
 	if (T.pane_rows < 1)
 		T.pane_rows = 1;
 	if (T.pane_rows > TM_MAX_ROWS)
@@ -896,9 +896,13 @@ static void term_draw(void)
 	}
 	if (T.menu || T.alt_pend)
 		term_draw_status();
-	else
+	else if (T.letterbox)
+	{
 		mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
 			    TM_BG, 1, (int)TM_BG);
+		if (T.pane_rows > 0)
+			term_draw_row(T.pane_rows - 1);
+	}
 	term_draw_menu();
 	term_draw_dlg();
 	term_copy_pane();
@@ -997,7 +1001,12 @@ static void replay_flush_hex(void)
 	}
 	T.replay_hex_n = 0;
 	if (n > 0)
+	{
 		incoming_feed(buf, n);
+		if (T.need_draw)
+			term_draw();
+		term_serial_dump();
+	}
 }
 
 static int replay_key(char c)
@@ -3154,6 +3163,11 @@ void mmb_cmd_term(void)
 
 	if (T.tcp)
 		telnet_announce();
+	if (T.replay)
+	{
+		pane_puts("Connected");
+		pane_newline();
+	}
 	if (T.net_fail && T.net_msg[0])
 	{
 		pane_puts(T.net_msg);
@@ -3422,6 +3436,10 @@ void mmb_term_poll(void)
 		term_draw();
 	if (T.replay)
 	{
+		ansi_watchdog();
+		sb_watchdog();
+		if (T.need_draw)
+			term_draw();
 		replay_mon();
 		return;
 	}
