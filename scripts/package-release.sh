@@ -37,11 +37,58 @@ clean_build_tree() {
 	make -C "${CONSOLE_DIR}" clean
 }
 
+kernel_elf_for_rasppi() {
+	local rasppi="$1"
+	if [ "${rasppi}" = "4" ]; then
+		printf '%s\n' "${CONSOLE_DIR}/kernel8-rpi4.elf"
+	else
+		printf '%s\n' "${CONSOLE_DIR}/kernel8.elf"
+	fi
+}
+
+# Circle compares _end to MEM_KERNEL_START+KERNEL_MAX_SIZE (not .img size).
+check_kernel_end() {
+	local elf="$1"
+	local max_mb="${KERNEL_MAX_SIZE_MB:-8}"
+	[ -f "${elf}" ] || die "missing ${elf}"
+	PREFIX64="${PREFIX64}" python3 - "${elf}" "${max_mb}" <<'PY'
+import os, subprocess, sys
+
+elf, max_mb = sys.argv[1], int(sys.argv[2])
+prefix = os.environ.get("PREFIX64", "aarch64-none-elf-")
+nm = prefix + "nm"
+out = subprocess.check_output([nm, elf], text=True, errors="replace")
+end = None
+for line in out.splitlines():
+    parts = line.split()
+    if len(parts) >= 3 and parts[-1] == "_end":
+        end = int(parts[0], 16)
+        break
+if end is None:
+    sys.stderr.write("package-release: no _end in %s\n" % elf)
+    sys.exit(1)
+start = 0x80000
+limit = start + max_mb * 0x100000
+used = end - start
+print("kernel _end=0x%x (%d bytes from 0x%x, %.2f MiB) limit=%d MiB" % (
+    end, used, start, used / 1048576.0, max_mb))
+if end >= limit:
+    sys.stderr.write(
+        "package-release: %s _end 0x%x exceeds KERNEL_MAX_SIZE %dMB (limit 0x%x)\n"
+        % (elf, end, max_mb, limit)
+    )
+    sys.exit(1)
+PY
+}
+
 build_hardware() {
 	local rasppi="$1"
+	local elf
 	log "Building hardware kernel (RASPPI=${rasppi}, AArch64, no QEMU extras)"
 	clean_build_tree
 	QEMU=0 RASPPI="${rasppi}" PREFIX64="${PREFIX64}" bash "${REPO_ROOT}/scripts/build.sh"
+	elf="$(kernel_elf_for_rasppi "${rasppi}")"
+	check_kernel_end "${elf}"
 }
 
 firmware_git_rev() {
@@ -271,7 +318,7 @@ package_pi400
 
 log "Restoring default QEMU Raspberry Pi 3 Circle config"
 clean_build_tree
-( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu -f )
+( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu --kernel-max-size 8 -f )
 
 log "Release artifacts"
 ls -la "${DIST}"/mmbasic-console-*-v"${VERSION}".zip

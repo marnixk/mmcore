@@ -22,7 +22,7 @@ def test_build_script_builds_hostap_only_for_hardware():
     assert "${QEMU:-1}" in text
     assert "wpa_supplicant" in text
     assert 'QEMU:-1}" = "0"' in text or '[ "${QEMU:-1}" = "0" ]' in text
-    assert "--kernel-max-size 4" in text
+    assert "--kernel-max-size 8" in text
 
 
 def test_package_and_install_ship_brcmfmac_firmware():
@@ -34,6 +34,8 @@ def test_package_and_install_ship_brcmfmac_firmware():
     assert "copy_wlan_firmware" in pkg
     assert "copy_wlan_firmware_dir" in inst
     assert "copy_wlan_firmware_mtools" in inst
+    assert "--kernel-max-size 8" in pkg
+    assert "check_kernel_end" in pkg
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "package-release.sh")], check=True)
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "install-sdcard.sh")], check=True)
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "build.sh")], check=True)
@@ -60,6 +62,24 @@ def test_net_cpp_drains_circle_into_512kb_ring():
     assert "term_rx_store[MMB_NET_RX_CAP]" in term
     assert "term_rx_interpret" in term
     assert "net_rxbuf.o" in mk
+
+
+def test_qemu_kernel_end_fits_configured_max(kernel_image):
+    """Circle halt()s if _end >= MEM_KERNEL_START + KERNEL_MAX_SIZE (8MB)."""
+    map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")
+    assert os.path.isfile(map_path), map_path
+    end = None
+    for line in open(map_path, encoding="utf-8", errors="replace"):
+        if "_end =" in line:
+            parts = line.split()
+            for p in parts:
+                if p.startswith("0x"):
+                    end = int(p, 16)
+                    break
+    assert end is not None, "_end not found in kernel8.map"
+    start = 0x80000
+    limit = start + 8 * 0x100000
+    assert end < limit, f"_end 0x{end:x} exceeds 8MB kernel window (0x{limit:x})"
 
 
 def test_qemu_kernel_does_not_link_wlan_driver(kernel_image):

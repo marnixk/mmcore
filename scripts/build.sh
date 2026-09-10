@@ -26,9 +26,11 @@ if [ ! -f "${CIRCLE_DIR}/Rules.mk" ]; then
 fi
 
 log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
-# Hardware images grew past Circle's 2MB default (TUI, 2048 program
-# lines, WLAN). Without this, sysinit halt()s before any banner.
-( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} --kernel-max-size 4 -f )
+# Circle sysinit halt()s when _end (text+data+BSS) exceeds KERNEL_MAX_SIZE.
+# The .img file omits BSS, so a ~1.4MB kernel8.img can still sit at ~4MB
+# in RAM (512KB TERM ring, wordpad, util). 4MB left almost no headroom
+# once WLAN is linked; 8MB is the configured cap.
+( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} --kernel-max-size 8 -f )
 
 if grep -q 'mmbasic-issue-149' "${CIRCLE_DIR}/addon/wlan/ether4330.c" 2>/dev/null; then
 	:
