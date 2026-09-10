@@ -942,7 +942,7 @@ static const char kHelpTerm[] =
 	"present is the terminal pane, not unused letterbox.\n"
 	"Drawing uses TEXT on PAGE 1, copied to PAGE 0;\n"
 	"scrolling is a PAGE pixel shift.\n"
-	"ANSI/VT100 (SGR colours, cursor, ED/EL) plus telnet\n"
+	"ANSI/VT100 (SGR colours, cursor, CUB/CUF, ED/EL) plus telnet\n"
 	"TTYPE=ANSI and DA/DSR replies for BBS autodetection.\n"
 	"NAWS reports 80 columns when boxed and the Full MODE\n"
 	"width when full. ESC ( B charset sequences are eaten\n"
