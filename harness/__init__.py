@@ -1,3 +1,4 @@
+from .ansi_pane import AnsiPane
 from .qemu_harness import HarnessError, MMBasicConsole
 from .term_log import TermLogRec, parse_termlog, play_termlog
 from .term_replay import TermReplay
@@ -17,6 +18,7 @@ from .term_server import (
 )
 
 __all__ = [
+    "AnsiPane",
     "HarnessError",
     "MMBasicConsole",
     "TermLogRec",

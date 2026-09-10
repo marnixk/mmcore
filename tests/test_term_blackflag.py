@@ -1,8 +1,10 @@
 """Blackflag termlog: Mystic login field (ESC[17D) and animation frames."""
 
+import time
 from pathlib import Path
 
 from harness import (
+    AnsiPane,
     MMBasicConsole,
     TermReplay,
     load_termlog,
@@ -111,6 +113,102 @@ def test_term_mystic_login_field_echo_overwrites_mask(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def test_blackflag_expected_pane_reaches_flag_after_black():
+    """Wire bytes draw 'Black' first, then 'Flag' from below/right, then HQ text."""
+    recs = load_termlog(BLACKFLAG.read_text())
+    pane = AnsiPane()
+    black_rows = None
+    flag_rows = None
+    hq_rows = None
+    for rec in recs:
+        if rec.kind != "R":
+            continue
+        pane.feed(rec.data)
+        if rec.in_n == 12751:
+            black_rows = sum(
+                1 for r in pane.snapshot()[19:29] for ch in r if ch != " "
+            )
+        elif rec.in_n == 14197:
+            flag_rows = sum(
+                1 for r in pane.snapshot()[23:29] for ch in r if ch != " "
+            )
+        elif rec.in_n == 15952:
+            text = "\n".join(pane.snapshot())
+            hq_rows = "ACiD Telnet HQ" in text or "ungenannt" in text
+    assert black_rows and black_rows > 150
+    assert flag_rows and flag_rows > 100
+    assert hq_rows
+
+
+def _feed_rx_until(replay, recs, target_in_n: int) -> str:
+    acc = ""
+    for rec in recs:
+        if rec.kind != "R":
+            continue
+        replay._to_guest(rec.data)
+        idle = 0
+        for _ in range(8):
+            extra = replay.pump_once(recv_tcp=False)
+            if extra:
+                acc += extra.decode(errors="replace")
+                idle = 0
+            else:
+                idle += 1
+                time.sleep(0.01)
+                if idle >= 2:
+                    break
+        if rec.in_n >= target_in_n:
+            break
+    for _ in range(25):
+        extra = replay.pump_once(recv_tcp=False)
+        if extra:
+            acc += extra.decode(errors="replace")
+        else:
+            time.sleep(0.02)
+    return acc
+
+
+def test_term_blackflag_qemu_past_b_to_flag(kernel_image):
+    """HDMI screenshots: Black letter, then Flag, then HQ footer."""
+    import shutil
+
+    art = Path("/opt/cursor/artifacts")
+    art.mkdir(parents=True, exist_ok=True)
+    recs = load_termlog(BLACKFLAG.read_text())
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        seen = _feed_rx_until(replay, recs, 12751)
+        con.capture_png(str(art / "qemu_black_b_animating.png"))
+        seen += _feed_rx_until(
+            replay, [r for r in recs if (r.in_n or 0) > 12751], 14197
+        )
+        con.capture_png(str(art / "qemu_flag_f_from_right.png"))
+        seen += _feed_rx_until(
+            replay, [r for r in recs if (r.in_n or 0) > 14197], 15952
+        )
+        con.capture_png(str(art / "qemu_black_flag_complete.png"))
+        text = _plain(seen)
+        assert "ACiD" in text or "ungenannt" in text or "blocktronics" in text, text[
+            -800:
+        ]
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        replay.stop()
+        con.stop()
+    for src, dst in (
+        ("expected_b_f_in12751.png", "expected_black_b_animating.png"),
+        ("expected_b_f_in14039.png", "expected_flag_f_from_right.png"),
+        ("expected_b_f_in15952.png", "expected_black_flag_complete.png"),
+    ):
+        s = art / src
+        if s.exists():
+            shutil.copy(s, art / dst)
 
 
 def test_term_animation_frames_without_keys(kernel_image):
