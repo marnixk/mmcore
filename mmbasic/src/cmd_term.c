@@ -476,6 +476,29 @@ static void term_layout(void)
 		T.pane_rows = TM_MAX_ROWS;
 }
 
+static int term_fb_h(void)
+{
+	int h = G.gfx.h;
+	int hh;
+
+	if (h < 1)
+		h = T.vid_rows * TM_CH;
+	if (G.plat && G.plat->hdmi_height)
+	{
+		hh = G.plat->hdmi_height();
+		if (hh > 0 && hh < h)
+			h = hh;
+	}
+	if (h < TM_CH)
+		h = TM_CH;
+	return h;
+}
+
+static int term_status_y(void)
+{
+	return term_fb_h() - TM_CH;
+}
+
 static void pane_clear_row(int row)
 {
 	int c;
@@ -717,7 +740,7 @@ static void term_draw_status(void)
 
 	if (!T.menu && !T.alt_pend)
 		return;
-	y = (T.vid_rows - 1) * TM_CH;
+	y = term_status_y();
 	x0 = 0;
 	mmb_gfx_box(0, y, T.vid_cols * TM_CW, TM_CH, bg, 1, (int)bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
@@ -910,7 +933,7 @@ static void term_copy_pane(void)
 		return;
 	x0 = T.pane_left * TM_CW;
 	pw = term_width() * TM_CW;
-	ph = T.vid_rows * TM_CH;
+	ph = term_fb_h();
 	if (x0 < 0)
 		x0 = 0;
 	if (x0 + pw > w)
@@ -948,7 +971,7 @@ static void term_present_pane(void)
 {
 	int x0 = T.pane_left * TM_CW;
 	int pw = term_width() * TM_CW;
-	int ph = T.vid_rows * TM_CH;
+	int ph = term_fb_h();
 
 	mmb_gfx_present_rect(x0, 0, pw, ph);
 }
@@ -1015,7 +1038,7 @@ static void term_draw(void)
 	if (T.menu || T.alt_pend)
 		term_draw_status();
 	else
-		mmb_gfx_box(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH,
+		mmb_gfx_box(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
 			    TM_BG, 1, (int)TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
@@ -1031,23 +1054,22 @@ static void term_draw(void)
 		{
 			int top_h = T.menu ? 8 * TM_CH : TM_CH;
 			term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
-			term_copy_rect(0, (T.vid_rows - 1) * TM_CH,
-				    T.vid_cols * TM_CW, TM_CH);
+			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
+				    TM_CH);
 		}
 		term_present_pane();
 		if (T.menu || T.alt_pend)
 		{
 			int top_h = T.menu ? 8 * TM_CH : TM_CH;
 			mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, top_h);
-			mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH,
+			mmb_gfx_present_rect(0, term_status_y(),
 					    T.vid_cols * TM_CW, TM_CH);
 		}
 	}
 	else if (lo >= 0 && hi >= lo)
 	{
 		term_copy_rows(lo, hi);
-		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
-			    TM_CH);
+		term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
 		term_present_rows(lo, hi);
 	}
 	else
@@ -1482,20 +1504,15 @@ static void term_apply_session_mode(void)
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
+	if (bits < 16)
+		bits = 16;
 	if (T.letterbox)
-	{
 		mode = 14;
-		if (bits == 12)
-			bits = 16;
-	}
 	else
 	{
 		mode = T.saved_mode;
 		if (mode < 1 || mode > 17)
 			mode = 14;
-		if ((mode == 9 || mode == 11 || mode == 12 || mode == 14) &&
-		    bits == 12)
-			bits = 16;
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
 		mmb_gfx_set_mode(mode, bits);
@@ -1563,9 +1580,8 @@ static void term_overlay_chrome(void)
 	term_draw_menu();
 	term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
 	mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
-	term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW, TM_CH);
-	mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
-			    TM_CH);
+	term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
+	mmb_gfx_present_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
 	G.gfx.write_page = saved;
 	term_serial_dump();
 }
