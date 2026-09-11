@@ -340,11 +340,15 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         title = con.screen_pixel(20, 2)
         empty = con.screen_pixel(400, 4)
         far = con.screen_pixel(940, 4)
+        pad_l = _cell_top(con, 0, 0)
+        pad_r = _cell_top(con, 9, 0)
         assert _luminance(*empty) > _luminance(*closed) + 20, (empty, closed)
         assert abs(empty[0] - far[0]) < 40
         assert abs(empty[1] - far[1]) < 40
         assert abs(empty[2] - far[2]) < 40
         assert abs(_luminance(*title) - _luminance(*empty)) > 20, (title, empty)
+        assert _rgb_dist(pad_l, pad_r) < 40, (pad_l, pad_r)
+        assert _rgb_dist(pad_l, empty) > 40, (pad_l, empty)
         drop = con.screen_pixel(24, 24)
         letterbox = con.screen_pixel(8, 200)
         assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)
@@ -353,6 +357,41 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         assert abs(_luminance(*stroke) - _luminance(*pad)) > 30, (stroke, pad)
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
+
+
+def test_term_menu_clears_letterbox_when_closed(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.3)
+        letterbox = con.screen_pixel(8, 200)
+        closed_bar = con.screen_pixel(940, 4)
+        closed_drop = con.screen_pixel(24, 24)
+        menu = _menu(con)
+        assert "Terminal" in menu
+        assert "Exit" in menu
+        bar = con.screen_pixel(940, 4)
+        drop = con.screen_pixel(24, 24)
+        con.capture_png("/opt/cursor/artifacts/term_menu_letterbox_open.png")
+        assert _luminance(*bar) > _luminance(*closed_bar) + 20, (bar, closed_bar)
+        assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)
+        con._ser.sendall(b"\x1b\x1b")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        after_bar = con.screen_pixel(940, 4)
+        after_drop = con.screen_pixel(24, 24)
+        after_letterbox = con.screen_pixel(8, 200)
+        con.capture_png("/opt/cursor/artifacts/term_menu_letterbox_closed.png")
+        assert _rgb_dist(after_bar, closed_bar) < 40, (after_bar, closed_bar)
+        assert _rgb_dist(after_drop, closed_drop) < 40, (after_drop, closed_drop)
+        assert _rgb_dist(after_letterbox, letterbox) < 40, (after_letterbox, letterbox)
+        assert _luminance(*after_bar) < _luminance(*bar) - 20, (after_bar, bar)
+        assert _luminance(*after_drop) < _luminance(*drop) - 10, (after_drop, drop)
+        _quit(con)
+        assert con.send_line("PRINT 3+5") == "8"
     finally:
         con.stop()
 
@@ -400,6 +439,55 @@ def test_term_menu_colours_match_edit(kernel_image):
         assert _rgb_dist(tm_title, tm_bar) > 80, (tm_title, tm_bar)
         _quit(con)
         assert con.send_line("PRINT 2") == "2"
+    finally:
+        con.stop()
+
+
+def test_term_slate_menu_bar_survives_8bit_mode(kernel_image):
+    """8-bit RGB332 crushes Slate greys to black; TERM must use 16-bit."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        assert con.send_line("MODE 11,8") == ""
+        con.drain(quiet=0.1)
+        con._ser.sendall(b'EDIT "MENU.BAS"\r')
+        _plain(con.drain(quiet=0.8, timeout=10).decode(errors="replace"))
+        con._ser.sendall(bytes([1]) + b"f")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        ed_bar = _cell_top(con, 40, 0)
+        con.capture_png("/opt/cursor/artifacts/edit_slate_menu_8bit.png")
+        con._ser.sendall(bytes([1]) + b"x")
+        _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert con.send_line("PRINT 1") == "1"
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        _menu(con)
+        tm_bar = _cell_top(con, 40, 0)
+        con.capture_png("/opt/cursor/artifacts/term_slate_menu_8bit.png")
+        assert tm_bar[0] + tm_bar[1] + tm_bar[2] > 30, tm_bar
+        assert _rgb_dist(ed_bar, tm_bar) < 50, (ed_bar, tm_bar)
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
+    finally:
+        con.stop()
+
+
+def test_term_status_bar_on_last_scanline(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        menu = _menu(con)
+        assert "Terminal" in menu
+        w, h = con.screen_size()
+        assert (w, h) == (960, 540)
+        bottom = con.screen_pixel(400, h - 2)
+        letterbox = con.screen_pixel(8, 200)
+        con.capture_png("/opt/cursor/artifacts/term_status_last_line.png")
+        assert _luminance(*bottom) > _luminance(*letterbox) + 20, (bottom, letterbox)
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()
 
