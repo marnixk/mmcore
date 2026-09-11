@@ -931,12 +931,18 @@ void mmb_cmd_case(void)
 			G.sel_active = 1;
 		}
 		else
+		{
 			G.sel_skip = 1;
+			while (*G.p)
+				G.p++;
+		}
 		return;
 	}
 	if (G.sel_active)
 	{
 		G.sel_skip = 1;
+		while (*G.p)
+			G.p++;
 		return;
 	}
 	if (case_matches(G.sel_val))

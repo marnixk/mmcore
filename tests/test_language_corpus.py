@@ -338,6 +338,25 @@ def test_list_save_load_run_roundtrip(console):
     assert console.send_line("LIST") == "10 FOR I=1 TO 2\n20 PRINT I\n30 NEXT I"
 
 
+def test_select_case_colon_after_match(console):
+    """Issue #261: CASE value: stmt after a match must not SYNTAX or run."""
+    _write_bas(
+        console,
+        "SELCOL.BAS",
+        [
+            "SELECT CASE 2",
+            '  CASE 1: PRINT "a"',
+            '  CASE 2: PRINT "b"',
+            '  CASE 3: PRINT "c"',
+            '  CASE ELSE: PRINT "d"',
+            "END SELECT",
+        ],
+    )
+    out = console.send_line('RUN "SELCOL.BAS"')
+    assert "?SYNTAX" not in out.upper()
+    assert out.strip() == "b"
+
+
 def test_select_case_nested_sub_keeps_outer(console):
     """Issue #261: a SUB SELECT CASE must not fire the caller's CASE ELSE."""
     _write_bas(
@@ -459,7 +478,8 @@ def test_select_case_on_key_and_settick(console):
     raw = console.drain(quiet=1.2).decode(errors="replace")
     assert "?SYNTAX" not in raw.upper()
     assert "outer" in raw
-    assert "else" not in raw.replace("SELIRQ", "")
     assert "drainelse" not in raw
     assert "tickelse" not in raw
+    lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
+    assert "else" not in lines
     assert "1" in raw
