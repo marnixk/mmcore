@@ -548,6 +548,7 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
     con.start()
     try:
         _apply_slate_theme(con)
+        assert con.send_line("MODE 8,16") == ""
         opened = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.4)
         assert _max_dump_width(opened) == 80

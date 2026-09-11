@@ -48,9 +48,10 @@ def test_term_demo_cp437_shades_on_hdmi(kernel_image):
         seen = _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         assert "CP437" in seen
         _menu(con)
-        # MODE 14 is 960x540 / 8x16 = 120x33. Status row is last, full width.
-        # "Alt-X  Alt-T" is 12 chars; demo appends ░▒▓ there.
-        x0, y0 = 13 * 8, 32 * 16
+        w, h = con.screen_size()
+        assert (w, h) == (960, 540)
+        # Status bar is pinned to the last 16 scanlines (not cell-row 32).
+        x0, y0 = 13 * 8, h - 16
         on = con.screen_pixel(x0 + 3, y0)
         off = con.screen_pixel(x0 + 0, y0)
         assert _is_creamish(*on), on
