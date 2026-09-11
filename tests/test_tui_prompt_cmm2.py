@@ -527,11 +527,28 @@ def test_cmm2_compat_xmas_runs(console):
     assert "FONTS.PNG" in gfx.upper()
     assert "HOME.PNG" in gfx.upper()
     assert "BONK.WAV" in snd.upper()
-    out = _run_until_break(console, "A:/xmas/main.bas", timeout=8.0)
+    console.drain(quiet=0.1, timeout=0.4)
+    console._ser.sendall(b'RUN "A:/xmas/main.bas"\r')
+    time.sleep(12.0)
+    png = console.capture_png("/opt/cursor/artifacts/issue243_xmas_menu.png")
+    console._ser.sendall(b"\x03")
+    deadline = time.time() + 4.0
+    buf = b""
+    while time.time() < deadline:
+        chunk = console._recv(console._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+    out = buf.decode(errors="replace")
     up = out.upper()
-    assert "?SYNTAX" not in up
-    assert "?FILE" not in up
-    assert "?PNG" not in up
+    assert "?SYNTAX" not in up, out
+    assert "?FILE" not in up, out
+    assert "?PNG" not in up, out
+    assert "?UNDECLARED" not in up, out
+    assert "?SUBSCRIPT" not in up, out
+    assert "?NOT AN ARRAY" not in up, out
+    assert os.path.isfile(png)
 
 
 def test_cmm2_compat_xmas_font_blit_png(fresh_console):
