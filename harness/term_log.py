@@ -9,6 +9,7 @@ Guest format, one record per line::
     # TERMLOG 2
     R <ms> <in_total> <rendered> <hex>
     T <ms> <in_total> <rendered> <hex>
+    E <ms> <in_total> <rendered> <hex>   event text, e.g. "Connection closed: ..."
 
 ``ms`` is milliseconds since OPTION TERM LOG ON (v2 only).
 ``in_total`` is incoming bytes seen after that record's payload.
@@ -34,7 +35,7 @@ class TermLogRec:
 
 
 def _looks_like_v2_line(parts: list[str]) -> bool:
-    if len(parts) < 4 or parts[0] not in ("R", "T"):
+    if len(parts) < 4 or parts[0] not in ("R", "T", "E"):
         return False
     try:
         int(parts[1])
@@ -68,7 +69,7 @@ def parse_termlog(text: str) -> list[TermLogRec]:
         if len(parts) < 3:
             continue
         kind = parts[0]
-        if kind not in ("R", "T"):
+        if kind not in ("R", "T", "E"):
             continue
         try:
             if version >= 2:

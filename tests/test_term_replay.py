@@ -1,5 +1,6 @@
 """TERM replay host shuttles a live TCP service through QEMU serial."""
 
+import re
 import socket
 import threading
 import time
@@ -121,6 +122,29 @@ def test_term_replay_csi_split_across_frames(kernel_image):
         assert "[2J" not in text
         _quit(con)
         assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_remote_close_reports_reason(kernel_image):
+    """A hangup renders the pending text, then names the reason on its own line."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        seen = _open_replay(con, replay, connect=False)
+        replay._to_guest(b"Enter your ")
+        replay.wait_serial(lambda s: "Enter your" in s, timeout=6.0)
+        replay.close_from_host("reset by peer")
+        more = replay.wait_serial(
+            lambda s: "\nConnection closed: reset by peer" in _plain(s), timeout=6.0
+        )
+        text = _plain(seen + more)
+        assert "!NET Connection closed: reset by peer" in text
+        assert re.search(r"Enter your +\r?\n\r?Connection closed: reset by peer", text), text
+        _quit(con)
+        assert con.send_line("PRINT 6+1") == "7"
     finally:
         replay.stop()
         con.stop()

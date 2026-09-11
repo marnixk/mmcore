@@ -83,6 +83,7 @@ typedef struct {
 	int connecting;
 	unsigned connect_at;
 	int net_fail;
+	int net_lost;
 	char net_msg[64];
 	char host[80];
 	int port;
@@ -265,6 +266,8 @@ static void pane_clear_row(int row);
 static void pane_puts(const char *s);
 static void pane_newline(void);
 static void tcp_close_quiet(void);
+static void tcp_lost(const char *why);
+static void replay_closed(const char *why);
 static void telnet_announce(void);
 static void term_reset_pen(void);
 static void demo_emit_line(void);
@@ -281,6 +284,7 @@ static void term_overlay_chrome(void);
 static void term_log_mark(void);
 static void term_log_rx(const unsigned char *p, int n);
 static void term_log_tx(const unsigned char *p, int n);
+static void term_log_event(const char *s);
 static void term_log_flush(void);
 static void term_log_poll(void);
 static void term_log_path(char *dst, unsigned n);
@@ -1205,8 +1209,33 @@ static int replay_key(char c)
 			T.replay_hex_n = 0;
 			return 1;
 		}
+		if (c == 'C' || c == 'c')
+		{
+			T.replay_st = 4;
+			T.replay_hex_n = 0;
+			return 1;
+		}
 		T.replay_st = 0;
 		return 0;
+	}
+	if (T.replay_st == 4)
+	{
+		/* RS "RC" [reason] NL: the harness hangs up like a remote host */
+		if (c == '\n' || c == '\r')
+		{
+			int i = 0;
+
+			T.replay_st = 0;
+			while (i < T.replay_hex_n && T.replay_hex[i] == ' ')
+				i++;
+			T.replay_hex[T.replay_hex_n] = 0;
+			replay_closed(T.replay_hex + i);
+			T.replay_hex_n = 0;
+			return 1;
+		}
+		if (c >= ' ' && c < 127 && T.replay_hex_n + 1 < TM_REPLAY_HEX)
+			T.replay_hex[T.replay_hex_n++] = c;
+		return 1;
 	}
 	if (c == '\n' || c == '\r')
 	{
@@ -3085,6 +3114,13 @@ static void term_log_tx(const unsigned char *p, int n)
 	term_log_line('T', p, n);
 }
 
+static void term_log_event(const char *s)
+{
+	if (!G.opt.term_log || !s || !s[0])
+		return;
+	term_log_line('E', (const unsigned char *)s, (int)strlen(s));
+}
+
 void mmb_term_log_enable(int on)
 {
 	char path[24];
@@ -3160,7 +3196,7 @@ static int term_tcp_drain(int idle_max)
 		if (n < 0)
 		{
 			draining = 0;
-			tcp_close_quiet();
+			tcp_lost(mmb_net_tcp_close_reason());
 			return -1;
 		}
 		if (n == 0)
@@ -3527,6 +3563,58 @@ static void tcp_close_quiet(void)
 {
 	mmb_net_tcp_close();
 	T.tcp = 0;
+	T.net_lost = 0;
+}
+
+/* The socket reported an error or EOF: remember why, keep whatever is
+   still in the ring, and let mmb_term_poll() render both. */
+static void tcp_lost(const char *why)
+{
+	unsigned n;
+
+	mmb_net_tcp_close();
+	T.tcp = 0;
+	strncpy(T.net_msg, "Connection closed", sizeof(T.net_msg) - 1);
+	T.net_msg[sizeof(T.net_msg) - 1] = 0;
+	if (why && why[0])
+	{
+		n = (unsigned)strlen(T.net_msg);
+		if (n + 2 < sizeof(T.net_msg))
+		{
+			T.net_msg[n++] = ':';
+			T.net_msg[n++] = ' ';
+			strncpy(T.net_msg + n, why, sizeof(T.net_msg) - 1 - n);
+			T.net_msg[sizeof(T.net_msg) - 1] = 0;
+		}
+	}
+	T.net_lost = 1;
+	term_log_event(T.net_msg);
+	ser("!NET ");
+	ser(T.net_msg);
+	ser("\r\n");
+}
+
+static void term_net_lost_report(void)
+{
+	T.net_lost = 0;
+	if (mmb_net_rxbuf_used(&term_rx))
+		term_rx_interpret();
+	if (T.cur_col != 0)
+		pane_newline();
+	pane_puts(T.net_msg);
+	pane_newline();
+	T.net_fail = 1;
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static void replay_closed(const char *why)
+{
+	if (!T.replay || !T.tcp)
+		return;
+	tcp_lost(why);
+	term_net_lost_report();
 }
 
 static int swallow_crlf_pair(char c)
@@ -4179,6 +4267,8 @@ void mmb_term_poll(void)
 	}
 	if (!T.tcp)
 	{
+		if (T.net_lost)
+			term_net_lost_report();
 		if (T.need_draw)
 			term_draw();
 		return;
