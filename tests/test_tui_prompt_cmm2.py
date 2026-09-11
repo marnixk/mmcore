@@ -630,7 +630,7 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
         c._ser.sendall(b"\r")
         time.sleep(0.3)
     time.sleep(4.0)
-    play_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_play.png")
+    play_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_kids.png")
     c._ser.sendall(b"\x03")
     deadline = time.time() + 4.0
     buf = b""
