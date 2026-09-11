@@ -485,6 +485,38 @@ def test_then_return_from_sub(console):
     assert "42" in out
 
 
+def test_local_string_array_assign_under_explicit(console):
+    """GH-274: Menu.Screen dies on label$ = items$(menu_idx)."""
+    assert console.send_line("NEW") == ""
+    src = [
+        "OPTION EXPLICIT",
+        "OPTION DEFAULT INTEGER",
+        "SUB Menu.Screen()",
+        "  LOCAL pressed$",
+        "  LOCAL last_pressed$",
+        "  LOCAL active_item = 0",
+        "  LOCAL label$",
+        "  LOCAL menu_idx = 0",
+        '  LOCAL items$(3) = ("start kids mode", "start", "instructions", "quit")',
+        "  FOR menu_idx = 0 TO 3",
+        "    label$ = items$(menu_idx)",
+        "    PRINT label$",
+        "  NEXT menu_idx",
+        "END SUB",
+        "Menu.Screen()",
+    ]
+    assert console.send_line('OPEN "MENU.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(console, line)
+    assert console.send_line("CLOSE #1") == ""
+    out = console.send_line('RUN "MENU.BAS"')
+    assert "?UNDECLARED" not in out.upper(), out
+    assert "?SYNTAX" not in out.upper(), out
+    low = out.lower()
+    assert "start kids mode" in low, out
+    assert "quit" in low, out
+
+
 def test_restore_data_after_sub_and_include(console):
     """GH-274: SyntaxShock's words_long.inc pattern — RESTORE label, READ
     into a string array, DATA after the SUB and the LoadWords() call."""
