@@ -12,6 +12,8 @@ persist-across-CALL); LOAD is graphics (`?PNG`), so program reload is
 READ (RESTORE label then the next DATA line).
 """
 
+import time
+
 from harness import MMBasicConsole
 
 
@@ -334,3 +336,130 @@ def test_list_save_load_run_roundtrip(console):
     assert console.send_line("LIST") == ""
     assert console.send_line('RUN "RT.BAS"') == "1\n2"
     assert console.send_line("LIST") == "10 FOR I=1 TO 2\n20 PRINT I\n30 NEXT I"
+
+
+def test_select_case_nested_sub_keeps_outer(console):
+    """Issue #261: a SUB SELECT CASE must not fire the caller's CASE ELSE."""
+    _write_bas(
+        console,
+        "SELSUB.BAS",
+        [
+            "HIT=0",
+            "SUB Inner",
+            "  SELECT CASE 2",
+            "    CASE 1: PRINT \"no\"",
+            "    CASE 2: HIT=HIT+1",
+            "    CASE ELSE: PRINT \"ibad\"",
+            "  END SELECT",
+            "END SUB",
+            "SELECT CASE 5",
+            "  CASE 1",
+            '    PRINT "bad1"',
+            "  CASE 5",
+            "    Inner",
+            '    PRINT "ok"',
+            "  CASE ELSE",
+            '    PRINT "badelse"',
+            "END SELECT",
+            "PRINT HIT",
+        ],
+    )
+    out = console.send_line('RUN "SELSUB.BAS"')
+    assert "?SYNTAX" not in out.upper()
+    assert "ok" in out
+    assert "badelse" not in out
+    assert "bad1" not in out
+    assert "no" not in out
+    assert "ibad" not in out
+    assert "1" in out.splitlines()[-1]
+
+
+def test_select_case_gatherkeyinfo_colon_cases(console):
+    """Issue #261: keyboard.inc CASE SC_V: keyboard(K_V)=1 inside a SUB."""
+    _write_bas(
+        console,
+        "KEYB.BAS",
+        [
+            "CONST True=1, False=0",
+            "CONST SC_V=118, SC_Z=122, SC_Enter=10",
+            "CONST K_Enter=0, K_Z=5, K_V=6",
+            "DIM INTEGER keyboard(9)",
+            "DIM INTEGER codes(4)",
+            "codes(1)=118",
+            "codes(2)=122",
+            "codes(3)=10",
+            "n=3",
+            "SUB Gather",
+            "  LOCAL INTEGER idx",
+            "  FOR idx=0 TO 9",
+            "    keyboard(idx)=False",
+            "  NEXT idx",
+            "  FOR idx=1 TO n",
+            "    SELECT CASE codes(idx)",
+            "      CASE SC_V: keyboard(K_V)=True",
+            "      CASE SC_Z: keyboard(K_Z)=True",
+            "      CASE SC_Enter: keyboard(K_Enter)=True",
+            "    END SELECT",
+            "  NEXT idx",
+            "END SUB",
+            "SELECT CASE 1",
+            "  CASE 1",
+            "    Gather",
+            "    PRINT keyboard(K_V);keyboard(K_Z);keyboard(K_Enter)",
+            "  CASE ELSE",
+            '    PRINT "fail"',
+            "END SELECT",
+        ],
+    )
+    out = console.send_line('RUN "KEYB.BAS"')
+    assert "?SYNTAX" not in out.upper()
+    assert "fail" not in out
+    assert "111" in out
+
+
+def test_select_case_on_key_and_settick(console):
+    """Issue #261: ON KEY / SETTICK SELECT CASE must not take the caller's ELSE."""
+    _write_bas(
+        console,
+        "SELIRQ.BAS",
+        [
+            "K=0",
+            "T=0",
+            "SUB Drain",
+            "  LOCAL C$",
+            "  C$=INKEY$",
+            "  SELECT CASE 1",
+            "    CASE 1: K=1",
+            "    CASE ELSE: PRINT \"drainelse\"",
+            "  END SELECT",
+            "END SUB",
+            "SUB Tick",
+            "  SELECT CASE 1",
+            "    CASE 1: T=1",
+            "    CASE ELSE: PRINT \"tickelse\"",
+            "  END SELECT",
+            "END SUB",
+            "ON KEY Drain",
+            "SETTICK 20, Tick",
+            "SELECT CASE 5",
+            "  CASE 5",
+            "    PAUSE 500",
+            '    PRINT "outer"',
+            "  CASE ELSE",
+            '    PRINT "else"',
+            "END SELECT",
+            "PRINT K;T",
+        ],
+    )
+    assert console.send_line("NEW") == ""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b'RUN "SELIRQ.BAS"\r')
+    time.sleep(0.15)
+    console._ser.sendall(b"x")
+    raw = console.drain(quiet=1.2).decode(errors="replace")
+    assert "?SYNTAX" not in raw.upper()
+    assert "outer" in raw
+    assert "else" not in raw.replace("SELIRQ", "")
+    assert "drainelse" not in raw
+    assert "tickelse" not in raw
+    assert "1" in raw

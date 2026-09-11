@@ -315,6 +315,12 @@ typedef struct mmb {
 	char sel_str[MMB_MAX_STR + 1];
 	char func_ret_s[MMB_MAX_STR + 1];
 	char gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_STR + 1];
+	int gosub_sel_skip[MMB_MAX_GOSUB];
+	int gosub_sel_active[MMB_MAX_GOSUB];
+	int gosub_if_skip[MMB_MAX_GOSUB];
+	int gosub_if_taken[MMB_MAX_GOSUB];
+	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
+	char gosub_sel_str[MMB_MAX_GOSUB][MMB_MAX_STR + 1];
 	int nconst;
 	struct {
 		char name[MMB_MAX_NAME];

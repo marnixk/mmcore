@@ -204,3 +204,63 @@ def test_mode_hides_hdmi_text_cursor(fresh_console):
     c.send_keys(b"\x03", timeout=6.0)
     assert c.send_line("PRINT 3+4") == "7"
     assert c.send_line("CLS") == ""
+
+
+def test_select_case_nested_sub_png(fresh_console):
+    """Issue #261: nested SELECT CASE in a SUB leaves a green OK box, not ELSE."""
+    c = fresh_console
+    src = [
+        "MODE 7,12",
+        "CLS RGB(0,0,0)",
+        "OK=0",
+        "SUB Inner",
+        "  SELECT CASE 2",
+        "    CASE 2: OK=OK+1",
+        "    CASE ELSE: OK=-99",
+        "  END SELECT",
+        "END SUB",
+        "SELECT CASE 5",
+        "  CASE 1",
+        "    OK=-1",
+        "  CASE 5",
+        "    Inner",
+        "    IF OK=1 THEN BOX 40,40,80,80,1,RGB(0,220,0),RGB(0,220,0)",
+        "  CASE ELSE",
+        "    BOX 40,40,80,80,1,RGB(220,0,0),RGB(220,0,0)",
+        "END SELECT",
+        "TEXT 8,8,\"SEL OK\"",
+        "PAUSE 400",
+    ]
+    assert c.send_line("NEW") == ""
+    assert c.send_line('OPEN "SELPNG.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        esc = line.replace('"', '""')
+        assert c.send_line(f'PRINT #1, "{esc}"') == ""
+    assert c.send_line("CLOSE #1") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b'RUN "SELPNG.BAS"\r')
+    time.sleep(0.7)
+    png = c.capture_png("/opt/cursor/artifacts/issue261_select_case_sub.png")
+    c.send_keys(b"\x03", timeout=6.0)
+    pix = int(c.send_line("PRINT PIXEL(50,50)").split()[0])
+    r, g, b = (pix >> 16) & 255, (pix >> 8) & 255, pix & 255
+    assert g > 150 and r < 80 and b < 80, f"expected green OK box, got rgb=({r},{g},{b})"
+    out = subprocess.run(
+        ["convert", png, "-crop", "8x8+50+50", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    green = 0
+    for line in out.splitlines():
+        if "(" not in line:
+            continue
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if rgb[1] > 150 and rgb[0] < 80 and rgb[2] < 80:
+            green += 1
+    assert green > 0, "HDMI snapshot missing green SELECT CASE OK box"
+    assert c.send_line("PRINT 1+1") == "2"

@@ -1548,6 +1548,8 @@ static const char kHelpSelect[] =
 	"\n"
 	"Choose a branch matching expr. relop is =, <>, <, >, <=, >=.\n"
 	"CASE low TO high matches an inclusive range.\n"
+	"SELECT CASE state is saved across SUB, FUNCTION, GOSUB,\n"
+	"ON KEY and SETTICK so a nested CASE cannot clobber the caller.\n"
 	"\n"
 	"Example:\n"
 	"  10 N=2\n"

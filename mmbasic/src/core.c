@@ -599,6 +599,34 @@ static mmb_val read_data_item(void)
 	return mmb_int_val(0);
 }
 
+static void gosub_save_ctrl(int g)
+{
+	G.gosub_sel_skip[g] = G.sel_skip;
+	G.gosub_sel_active[g] = G.sel_active;
+	G.gosub_if_skip[g] = G.if_skip;
+	G.gosub_if_taken[g] = G.if_taken;
+	G.gosub_sel_val[g] = G.sel_val;
+	memcpy(G.gosub_sel_str[g], G.sel_str, sizeof(G.sel_str));
+	if (G.sel_val.type == T_STR)
+		G.gosub_sel_val[g].s = G.gosub_sel_str[g];
+	G.sel_skip = 0;
+	G.sel_active = 0;
+	G.if_skip = 0;
+	G.if_taken = 0;
+}
+
+static void gosub_restore_ctrl(int g)
+{
+	G.sel_skip = G.gosub_sel_skip[g];
+	G.sel_active = G.gosub_sel_active[g];
+	G.if_skip = G.gosub_if_skip[g];
+	G.if_taken = G.gosub_if_taken[g];
+	G.sel_val = G.gosub_sel_val[g];
+	memcpy(G.sel_str, G.gosub_sel_str[g], sizeof(G.sel_str));
+	if (G.sel_val.type == T_STR)
+		G.sel_val.s = G.sel_str;
+}
+
 void mmb_cmd_goto(void)
 {
 	G.branch_pc = parse_target();
@@ -611,6 +639,7 @@ void mmb_cmd_gosub(void)
 	G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
 	G.gosub_event[G.gosub_sp] = 0;
 	G.gosub_nsave[G.gosub_sp] = 0;
+	gosub_save_ctrl(G.gosub_sp);
 	G.gosub_sp++;
 	G.branch_pc = parse_target();
 }
@@ -1404,6 +1433,7 @@ static void gosub_restore_top(void)
 	}
 	G.opt.explicit = ex;
 	G.gosub_nsave[g] = 0;
+	gosub_restore_ctrl(g);
 }
 
 int mmb_call_named_sub(const char *name)
@@ -1523,6 +1553,7 @@ int mmb_call_named_sub(const char *name)
 			mmb_do_assign(nbuf, T_NUM, 0, 0, mmb_num_val(0));
 	}
 	G.opt.explicit = ex;
+	gosub_save_ctrl(g);
 	G.gosub_sp++;
 	G.branch_pc = G.subs[si].line_pc;
 	return 1;
@@ -3419,18 +3450,10 @@ static void exec_line_body(const char *body)
 
 static void run_gosub_body(void)
 {
-	int saved_if_skip = G.if_skip;
-	int saved_if_taken = G.if_taken;
-	int saved_sel_skip = G.sel_skip;
-	int saved_sel_active = G.sel_active;
 	int saved_ctrl = G.ctrl_sp;
 	int saved_for = G.for_sp;
 	int saved_running = G.running;
 
-	G.if_skip = 0;
-	G.if_taken = 0;
-	G.sel_skip = 0;
-	G.sel_active = 0;
 	G.running = 1;
 	if (G.gosub_sp > 0)
 		G.gosub_stack[G.gosub_sp - 1] = -2;
@@ -3465,10 +3488,6 @@ static void run_gosub_body(void)
 			continue;
 		G.run_pc++;
 	}
-	G.if_skip = saved_if_skip;
-	G.if_taken = saved_if_taken;
-	G.sel_skip = saved_sel_skip;
-	G.sel_active = saved_sel_active;
 	G.ctrl_sp = saved_ctrl;
 	G.for_sp = saved_for;
 	G.running = saved_running;
