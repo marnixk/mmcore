@@ -361,26 +361,29 @@ def test_term_menu_clears_letterbox_when_closed(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        _apply_slate_theme(con)
+        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
-        margin = con.screen_pixel(8, 200)
-        assert _is_dark_slate(*margin), margin
-        _menu(con)
+        letterbox = con.screen_pixel(8, 200)
+        closed_bar = con.screen_pixel(940, 4)
+        closed_drop = con.screen_pixel(24, 24)
+        menu = _menu(con)
+        assert "Terminal" in menu
+        assert "Exit" in menu
         bar = con.screen_pixel(940, 4)
         drop = con.screen_pixel(24, 24)
-        assert _luminance(*bar) > _luminance(*margin) + 20, (bar, margin)
-        assert _luminance(*drop) > _luminance(*margin) + 10, (drop, margin)
         con.capture_png("/opt/cursor/artifacts/term_menu_letterbox_open.png")
+        assert _luminance(*bar) > _luminance(*closed_bar) + 20, (bar, closed_bar)
+        assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)
         con._ser.sendall(b"\x1b\x1b")
         _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         after_bar = con.screen_pixel(940, 4)
         after_drop = con.screen_pixel(24, 24)
-        after_margin = con.screen_pixel(8, 200)
+        after_letterbox = con.screen_pixel(8, 200)
         con.capture_png("/opt/cursor/artifacts/term_menu_letterbox_closed.png")
-        assert _is_dark_slate(*after_margin), after_margin
-        assert _is_dark_slate(*after_bar), after_bar
-        assert _is_dark_slate(*after_drop), after_drop
+        assert _rgb_dist(after_bar, closed_bar) < 40, (after_bar, closed_bar)
+        assert _rgb_dist(after_drop, closed_drop) < 40, (after_drop, closed_drop)
+        assert _rgb_dist(after_letterbox, letterbox) < 40, (after_letterbox, letterbox)
         assert _luminance(*after_bar) < _luminance(*bar) - 20, (after_bar, bar)
         assert _luminance(*after_drop) < _luminance(*drop) - 10, (after_drop, drop)
         _quit(con)
