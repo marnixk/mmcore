@@ -1,6 +1,7 @@
 """TUI Alt menus, prompt shortcuts, clock, and CMM2 language parity."""
 
 import os
+import tempfile
 import time
 
 from harness import MMBasicConsole
@@ -322,19 +323,106 @@ def _upload_text_file(con, host_path, dest):
     assert con.send_line("CLOSE #1") == ""
 
 
-def _upload_basic_tree(con, host_dir, dest_prefix):
+def _wait_prompt(con, timeout=20.0) -> str:
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+        else:
+            time.sleep(0.02)
+    return buf.decode(errors="replace")
+
+
+def _ensure_recv_bas(con):
+    if getattr(con, "_mmb_recv_bas", False):
+        return
+    lines = [
+        "OPTION EXPLICIT OFF",
+        "LINE INPUT D$",
+        'OPEN D$ FOR OUTPUT AS #1',
+        "DO",
+        " LINE INPUT H$",
+        ' IF H$="!" THEN EXIT DO',
+        " FOR I=1 TO LEN(H$) STEP 2",
+        "  A=ASC(MID$(H$,I,1))-48",
+        "  B=ASC(MID$(H$,I+1,1))-48",
+        "  IF A>9 THEN A=A-7",
+        "  IF B>9 THEN B=B-7",
+        "  PRINT #1, CHR$(A*16+B);",
+        " NEXT I",
+        "LOOP",
+        "CLOSE #1",
+    ]
+    assert con.send_line('OPEN "RECV.BAS" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        _print_hash1_line(con, line)
+    assert con.send_line("CLOSE #1") == ""
+    con._mmb_recv_bas = True
+
+
+def _upload_binary_file(con, host_path, dest):
+    with open(host_path, "rb") as fh:
+        data = fh.read()
+    _ensure_recv_bas(con)
+    con.drain(quiet=0.05)
+    con._ser.sendall(b'RUN "RECV.BAS"\r')
+    time.sleep(0.08)
+    con._ser.sendall((dest + "\r").encode())
+    hexed = data.hex().upper()
+    step = 200
+    for i in range(0, len(hexed), step):
+        con._ser.sendall((hexed[i : i + step] + "\r").encode())
+    con._ser.sendall(b"!\r")
+    raw = _wait_prompt(con, timeout=45.0)
+    assert "?SYNTAX" not in raw.upper(), raw
+    assert "?ERROR" not in raw.upper(), raw
+
+
+_TEXT_EXT = (".bas", ".inc")
+_ASSET_EXT = (".png", ".jpg", ".jpeg", ".wav", ".mod")
+
+
+def _upload_compat_tree(con, host_dir, dest_prefix):
     _mkdir(con, dest_prefix)
     for dirpath, dirnames, filenames in os.walk(host_dir):
+        dirnames[:] = [d for d in dirnames if d not in (".git",)]
         rel = os.path.relpath(dirpath, host_dir)
         dest = dest_prefix if rel == "." else dest_prefix + "/" + rel.replace("\\", "/")
         if dest != dest_prefix:
             _mkdir(con, dest)
         for name in filenames:
-            if not name.lower().endswith((".bas", ".inc")):
+            lower = name.lower()
+            if lower.endswith(".bak"):
                 continue
-            _upload_text_file(
-                con, os.path.join(dirpath, name), dest + "/" + name
-            )
+            src = os.path.join(dirpath, name)
+            out = dest + "/" + name
+            if lower.endswith(_TEXT_EXT):
+                _upload_text_file(con, src, out)
+            elif lower.endswith(_ASSET_EXT):
+                _upload_binary_file(con, src, out)
+
+
+def _upload_basic_tree(con, host_dir, dest_prefix):
+    _upload_compat_tree(con, host_dir, dest_prefix)
+
+
+def test_upload_binary_includes_nul(console):
+    blob = bytes([0, 1, 255, 65, 0, 10])
+    fd, tmp = tempfile.mkstemp(suffix=".bin")
+    os.close(fd)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(blob)
+        _upload_binary_file(console, tmp, "A:/NUL.BIN")
+    finally:
+        os.unlink(tmp)
+    assert console.send_line('OPEN "A:/NUL.BIN" FOR INPUT AS #1') == ""
+    assert console.send_line("PRINT LOF(#1)") == str(len(blob))
+    assert console.send_line("CLOSE #1") == ""
 
 
 def test_typing_startup_fragment(console):
@@ -435,10 +523,14 @@ def _run_until_break(con, path, timeout=4.0):
 
 def test_cmm2_compat_syntaxshock_runs(console):
     host = os.path.join(REPO, "tests", "cmm2_compat", "syntaxshock")
-    _upload_basic_tree(console, host, "A:/syntaxshock")
+    _upload_compat_tree(console, host, "A:/syntaxshock")
+    listing = console.send_line('DIR "A:/syntaxshock/gfx"')
+    assert "FONTS.PNG" in listing.upper()
     out = _run_until_break(console, "A:/syntaxshock/typing.bas")
     up = out.upper()
     assert "?SYNTAX" not in up
+    assert "?FILE" not in up
+    assert "?PNG" not in up
     assert "?TYPE MISMATCH" not in up
     assert "?UNDECLARED" not in up
     assert "?INVALID" not in up
@@ -449,13 +541,54 @@ def test_cmm2_compat_syntaxshock_runs(console):
 
 def test_cmm2_compat_xmas_runs(console):
     host = os.path.join(REPO, "tests", "cmm2_compat", "xmas")
-    _upload_basic_tree(console, host, "A:/xmas")
-    out = _run_until_break(console, "A:/xmas/main.bas", timeout=14.0)
+    _upload_compat_tree(console, host, "A:/xmas")
+    gfx = console.send_line('DIR "A:/xmas/gfx"')
+    snd = console.send_line('DIR "A:/xmas/sound"')
+    assert "FONTS.PNG" in gfx.upper()
+    assert "HOME.PNG" in gfx.upper()
+    assert "BONK.WAV" in snd.upper()
+    out = _run_until_break(console, "A:/xmas/main.bas", timeout=8.0)
     up = out.upper()
     assert "?SYNTAX" not in up
+    assert "?FILE" not in up
+    assert "?PNG" not in up
     assert "?TYPE MISMATCH" not in up
     assert "?UNDECLARED" not in up
     assert "?INVALID" not in up
     assert "?NOT AN ARRAY" not in up
     assert "?LABEL" not in up
     assert "?GOSUB" not in up
+
+
+def test_cmm2_compat_xmas_font_blit_png(fresh_console):
+    """Issue #263: uploaded fonts.png loads and BLITs without ?PNG/?FILE."""
+    c = fresh_console
+    host = os.path.join(REPO, "tests", "cmm2_compat", "xmas")
+    _mkdir(c, "A:/xmas")
+    _mkdir(c, "A:/xmas/gfx")
+    _upload_binary_file(c, os.path.join(host, "gfx", "fonts.png"), "A:/xmas/gfx/fonts.png")
+    src = [
+        'CHDIR "A:/xmas"',
+        "MODE 7,12",
+        "PAGE WRITE 6",
+        "CLS",
+        'LOAD PNG "gfx/fonts.png"',
+        "PAGE WRITE 0",
+        "CLS RGB(0,0,40)",
+        "BLIT 0,0,16,16,48,48,6,4",
+        "PAUSE 400",
+    ]
+    assert c.send_line("NEW") == ""
+    assert c.send_line('OPEN "FNT.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(c, line)
+    assert c.send_line("CLOSE #1") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b'RUN "FNT.BAS"\r')
+    time.sleep(0.8)
+    png = c.capture_png("/opt/cursor/artifacts/issue263_xmas_fonts.png")
+    c.send_keys(b"\x03", timeout=6.0)
+    pix = int(c.send_line("PRINT PIXEL(24,24,6)").split()[0])
+    assert pix != 0
+    assert os.path.isfile(png)
+    assert c.send_line("PRINT 1+1") == "2"

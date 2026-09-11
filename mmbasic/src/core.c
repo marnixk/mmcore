@@ -1794,7 +1794,6 @@ void mmb_cmd_print(void)
 			if (*G.p == ',')
 				G.p++;
 			{
-				char buf[MMB_OUT_LEN];
 				int save = G.outn;
 				G.outn = 0;
 				G.out[0] = 0;
@@ -1822,8 +1821,12 @@ void mmb_cmd_print(void)
 				}
 				if (!no_nl)
 					mmb_out("\n");
-				strncpy(buf, G.out, sizeof(buf) - 1);
-				mmb_file_write(fn, buf, (unsigned)strlen(buf));
+				{
+					int n = G.outn;
+					if (n < 0)
+						n = 0;
+					mmb_file_write(fn, G.out, (unsigned)n);
+				}
 				G.outn = save;
 				G.out[G.outn] = 0;
 				return;
