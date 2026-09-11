@@ -3629,6 +3629,7 @@ static void run_program(void)
 	mmb_tokenize_program();
 	build_jumps();
 	mmb_clear_vars(1);
+	mmb_clear_consts();
 	mmb_struct_prepare();
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;

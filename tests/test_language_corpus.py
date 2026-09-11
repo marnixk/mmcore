@@ -483,3 +483,34 @@ def test_select_case_on_key_and_settick(console):
     lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
     assert "else" not in lines
     assert "1" in raw
+
+
+def test_explicit_const_false_array_in_sub(console):
+    """Issue #243: LET/IF with CONST True/False under OPTION EXPLICIT (tcache)."""
+    _write_bas(
+        console,
+        "KINIT.BAS",
+        [
+            "OPTION DEFAULT INTEGER",
+            "OPTION EXPLICIT ON",
+            "CONST True = 1",
+            "CONST False = 0",
+            "CONST NumberOfKeys = 9",
+            "DIM INTEGER keyboard(NumberOfKeys)",
+            "DIM INTEGER g_started = False",
+            "SUB keyb.Initialise",
+            "  LOCAL INTEGER idx",
+            "  FOR idx = 0 TO NumberOfKeys",
+            "    keyboard(idx) = False",
+            "  NEXT idx",
+            "END SUB",
+            "keyb.Initialise()",
+            "IF g_started = False THEN g_started = True",
+            "PRINT keyboard(0);keyboard(9);g_started",
+        ],
+    )
+    out = console.send_line('RUN "KINIT.BAS"')
+    assert "?UNDECLARED" not in out.upper(), out
+    assert "?SYNTAX" not in out.upper(), out
+    compact = out.replace(" ", "").replace("\n", "")
+    assert "001" in compact, out

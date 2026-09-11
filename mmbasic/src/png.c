@@ -123,7 +123,17 @@ static int png_unfilter(unsigned char *raw, unsigned w, unsigned h, unsigned bpp
 	return 0;
 }
 
-static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y);
+static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y,
+			    int has_trans, unsigned trans_rgb);
+
+static int png_skip_plot(unsigned rgb, unsigned alpha, int has_trans, unsigned trans_rgb)
+{
+	if (alpha == 0)
+		return 1;
+	if (has_trans && rgb == trans_rgb)
+		return 1;
+	return 0;
+}
 
 int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			uint32_t **out, int *ow, int *oh)
@@ -194,12 +204,13 @@ int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 #endif
 }
 
-int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y)
+int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y,
+		  int has_trans, unsigned trans_rgb)
 {
 	uint32_t *pix = 0;
 	int w = 0, h = 0, i, j, rc;
 
-	rc = png_decode_stored(file, n, x, y);
+	rc = png_decode_stored(file, n, x, y, has_trans, trans_rgb);
 	if (rc == 0)
 		return 0;
 	if (mmb_png_decode_rgba(file, n, &pix, &w, &h) == 0)
@@ -208,9 +219,11 @@ int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y)
 			for (i = 0; i < w; i++)
 			{
 				unsigned c = pix[j * w + i];
-				if ((c & 0xFF000000u) == 0)
+				unsigned rgb = c & 0xFFFFFFu;
+				unsigned a = (c >> 24) & 255u;
+				if (png_skip_plot(rgb, a, has_trans, trans_rgb))
 					continue;
-				mmb_gfx_plot(x + i, y + j, c & 0xFFFFFFu);
+				mmb_gfx_plot(x + i, y + j, rgb);
 			}
 		G.plat->free(pix);
 		return 0;
@@ -218,7 +231,8 @@ int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y)
 	return -1;
 }
 
-static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y)
+static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y,
+			    int has_trans, unsigned trans_rgb)
 {
 	unsigned pos = 0;
 	unsigned w = 0, h = 0, bpp = 0;
@@ -305,7 +319,11 @@ static int png_decode_stored(const unsigned char *file, unsigned n, int x, int y
 		{
 			const unsigned char *p = row + i * bpp;
 			unsigned r = p[0], g = p[1], b = p[2];
-			mmb_gfx_plot(x + (int)i, y + (int)j, mmb_rgb_pack((int)r, (int)g, (int)b));
+			unsigned a = bpp == 4 ? p[3] : 255u;
+			unsigned rgb = mmb_rgb_pack((int)r, (int)g, (int)b);
+			if (png_skip_plot(rgb, a, has_trans, trans_rgb))
+				continue;
+			mmb_gfx_plot(x + (int)i, y + (int)j, rgb);
 		}
 	}
 	rc = 0;

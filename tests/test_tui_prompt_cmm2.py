@@ -527,11 +527,28 @@ def test_cmm2_compat_xmas_runs(console):
     assert "FONTS.PNG" in gfx.upper()
     assert "HOME.PNG" in gfx.upper()
     assert "BONK.WAV" in snd.upper()
-    out = _run_until_break(console, "A:/xmas/main.bas", timeout=8.0)
+    console.drain(quiet=0.1, timeout=0.4)
+    console._ser.sendall(b'RUN "A:/xmas/main.bas"\r')
+    time.sleep(12.0)
+    png = console.capture_png("/opt/cursor/artifacts/issue243_xmas_menu.png")
+    console._ser.sendall(b"\x03")
+    deadline = time.time() + 4.0
+    buf = b""
+    while time.time() < deadline:
+        chunk = console._recv(console._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+    out = buf.decode(errors="replace")
     up = out.upper()
-    assert "?SYNTAX" not in up
-    assert "?FILE" not in up
-    assert "?PNG" not in up
+    assert "?SYNTAX" not in up, out
+    assert "?FILE" not in up, out
+    assert "?PNG" not in up, out
+    assert "?UNDECLARED" not in up, out
+    assert "?SUBSCRIPT" not in up, out
+    assert "?NOT AN ARRAY" not in up, out
+    assert os.path.isfile(png)
 
 
 def test_cmm2_compat_xmas_font_blit_png(fresh_console):
@@ -566,3 +583,36 @@ def test_cmm2_compat_xmas_font_blit_png(fresh_console):
     assert pix != 0
     assert os.path.isfile(png)
     assert c.send_line("PRINT 1+1") == "2"
+
+
+def test_cmm2_load_png_trans_keeps_write_page(fresh_console):
+    """Issue #243: LOAD PNG x,y,colour is CMM2 transparency, not a page."""
+    c = fresh_console
+    host = os.path.join(REPO, "tests", "cmm2_compat", "xmas", "gfx", "fonts.png")
+    _mkdir(c, "A:/xmas")
+    _mkdir(c, "A:/xmas/gfx")
+    _upload_binary_file(c, host, "A:/xmas/gfx/fonts.png")
+    src = [
+        'CHDIR "A:/xmas"',
+        "MODE 7,12",
+        "PAGE WRITE 6",
+        "CLS",
+        'LOAD PNG "gfx/fonts.png", 0, 0, 4',
+        "PAGE WRITE 0",
+        "CLS RGB(0,0,40)",
+        "BLIT 0,0,16,16,64,48,6,4",
+        "PAUSE 1500",
+    ]
+    assert c.send_line("NEW") == ""
+    assert c.send_line('OPEN "FNT4.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(c, line)
+    assert c.send_line("CLOSE #1") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b'RUN "FNT4.BAS"\r')
+    time.sleep(0.6)
+    png = c.capture_png("/opt/cursor/artifacts/issue243_xmas_fonts.png")
+    c.send_keys(b"\x03", timeout=6.0)
+    pix = int(c.send_line("PRINT PIXEL(6,0,6)").split()[0])
+    assert pix != 0
+    assert os.path.isfile(png)

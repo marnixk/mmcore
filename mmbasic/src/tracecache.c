@@ -222,8 +222,17 @@ static int tc_compile_primary(tc_ent *e)
 		return tc_emit2(e, TC_PUSHA, (uint8_t)ai, (uint8_t)ii);
 	}
 	{
-		mmb_var *v = mmb_find_var(name, 0, 1, 0, 0);
+		mmb_val cv;
+		mmb_var *v;
 		int vi;
+		if (mmb_const_lookup(name, 0, &cv))
+		{
+			int ci = tc_add_const(e, mmb_as_float(cv));
+			if (ci < 0)
+				return 0;
+			return tc_emit1(e, TC_PUSHC, (uint8_t)ci);
+		}
+		v = mmb_find_var(name, 0, 0, 0, 0);
 		if (!v || v->dims != 0 || v->type == T_STR || v->type == T_STRUCT || G.acc_on)
 		{
 			G.acc_on = 0;

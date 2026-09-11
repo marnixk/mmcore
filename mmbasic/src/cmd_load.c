@@ -1,7 +1,8 @@
 #include "mmb_priv.h"
 #include "picojpeg.h"
 
-int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y);
+int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y,
+		  int has_trans, unsigned trans_rgb);
 
 int16_t *gCoeffBuf;
 uint8_t *gMCUBufR;
@@ -122,14 +123,14 @@ int mmb_load_jpeg(const char *path, int x, int y)
 	return 0;
 }
 
-int mmb_load_png(const char *path, int x, int y)
+int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb)
 {
 	unsigned char *file = 0;
 	unsigned n = 0;
 	int rc;
 	if (read_file(path, &file, &n) != 0)
 		return -1;
-	rc = mmb_png_decode(file, n, x, y);
+	rc = mmb_png_decode(file, n, x, y, has_trans, trans_rgb);
 	G.plat->free(file);
 	return rc;
 }
@@ -137,7 +138,8 @@ int mmb_load_png(const char *path, int x, int y)
 void mmb_cmd_load(void)
 {
 	char path[128];
-	int x = 0, y = 0, page = -1, saved_page = 0, saved_fb = 0;
+	int x = 0, y = 0, has_trans = 0;
+	unsigned trans_rgb = 0;
 	mmb_val v;
 	int is_jpg = 0, is_png = 0;
 	if (mmb_match("JPG") || mmb_match("JPEG"))
@@ -165,7 +167,8 @@ void mmb_cmd_load(void)
 			if (*G.p == ',')
 			{
 				G.p++;
-				page = (int)mmb_as_int(mmb_expr());
+				has_trans = 1;
+				trans_rgb = mmb_colour_from_int(mmb_as_int(mmb_expr()));
 			}
 		}
 	}
@@ -186,16 +189,6 @@ void mmb_cmd_load(void)
 		else
 			is_png = 1;
 	}
-	if (page >= 0)
-	{
-		saved_page = G.gfx.write_page;
-		saved_fb = G.gfx.write_fb;
-		if (page < G.gfx.pages)
-		{
-			G.gfx.write_fb = 0;
-			G.gfx.write_page = page;
-		}
-	}
 	if (is_jpg)
 	{
 		if (mmb_gfx_writing_fb())
@@ -206,14 +199,9 @@ void mmb_cmd_load(void)
 				mmb_error("?JPEG");
 		}
 	}
-	else if (mmb_load_png(path, x, y) != 0)
+	else if (mmb_load_png(path, x, y, has_trans, trans_rgb) != 0)
 	{
 		if (mmb_vfs_size(path) >= 0)
 			mmb_error("?PNG");
-	}
-	if (page >= 0)
-	{
-		G.gfx.write_page = saved_page;
-		G.gfx.write_fb = saved_fb;
 	}
 }

@@ -60,8 +60,8 @@ static void sprite_loadpng(void)
 	char path[128];
 	unsigned char *file = 0;
 	uint32_t *pix = 0;
-	int id, w = 0, h = 0, sz;
-	unsigned got = 0;
+	int id, w = 0, h = 0, sz, has_trans = 0;
+	unsigned got = 0, trans_rgb = 0;
 
 	id = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
@@ -77,7 +77,8 @@ static void sprite_loadpng(void)
 	if (*G.p == ',')
 	{
 		G.p++;
-		(void)mmb_expr(); /* optional page / transparency slot */
+		has_trans = 1;
+		trans_rgb = mmb_colour_from_int(mmb_as_int(mmb_expr()));
 	}
 	sz = mmb_vfs_size(path);
 	if (sz < 0)
@@ -102,6 +103,15 @@ static void sprite_loadpng(void)
 		mmb_error("?PNG");
 	}
 	G.plat->free(file);
+	if (has_trans && pix)
+	{
+		int i, np = w * h;
+		for (i = 0; i < np; i++)
+		{
+			if ((pix[i] & 0xFFFFFFu) == trans_rgb)
+				pix[i] = 0;
+		}
+	}
 	sprite_store(id, pix, w, h);
 }
 
