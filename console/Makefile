@@ -72,13 +72,27 @@ LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
 	$(LIBS)
 endif
 
-EXTRAINCLUDE = -I $(MMB)/include -I $(MMB)/third_party -I .
+EXTRAINCLUDE = -I . -I $(MMB)/include -I $(MMB)/third_party
+
+MMB_VERSION ?= $(shell git -C $(MMB)/.. describe --tags --always 2>/dev/null)
+ifeq ($(strip $(MMB_VERSION)),)
+MMB_VERSION := dev
+endif
 
 # MMBasic objects live outside console/; drop them on `make clean` so a
 # RASPPI switch (Pi 3 vs Pi 4 / 400) cannot relink stale -mcpu objects.
 EXTRACLEAN = $(MMB)/src/*.o $(MMB)/src/*.d \
-	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d
+	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d \
+	     mmb_version.h
 
 include $(CIRCLEHOME)/Rules.mk
+
+mmb_version.h: FORCE
+	MMB_VERSION="$(MMB_VERSION)" bash $(MMB)/../scripts/gen-mmb-version.sh $(CURDIR)/mmb_version.h
+
+$(MMB)/src/util.o $(MMB)/src/cmd_credits.o: mmb_version.h
+
+.PHONY: FORCE
+FORCE:
 
 -include $(DEPS)

@@ -1,4 +1,9 @@
 #include "mmb_priv.h"
+#include "mmb_version.h"
+
+#ifndef MMB_VERSION
+#define MMB_VERSION "dev"
+#endif
 
 static void credits_line(const char *s)
 {
@@ -62,4 +67,6 @@ void mmb_cmd_credits(void)
 	credits_line("  Copyright (C) R. Stange and contributors");
 	credits_line("");
 	credits_line("Ported and extended for Raspberry PI by Marnix Kok");
+	credits_line("");
+	credits_line("Build " MMB_VERSION);
 }

@@ -1,4 +1,9 @@
 #include "mmb_priv.h"
+#include "mmb_version.h"
+
+#ifndef MMB_VERSION
+#define MMB_VERSION "dev"
+#endif
 
 mmb G;
 
@@ -490,6 +495,9 @@ void mmb_console_reset_prompt(void)
 void mmb_print_startup(void)
 {
 	mmb_console_write("\x1b[37m");
+	mmb_console_write("MMBasic ");
+	mmb_console_write(MMB_VERSION);
+	mmb_console_write("\n");
 	mmb_console_write("Copyright 2011-2026 Geoff Graham\n");
 	mmb_console_write("Copyright 2016-2026 Peter Mather\n");
 	mmb_console_write("Adapted and extended by Marnix Kok\n");
