@@ -20,18 +20,18 @@ from harness.term_server import recs_to_termlog_text
 from test_term import _plain, _quit
 
 REPO = Path(__file__).resolve().parents[1]
-LEVEL29 = REPO / "tests" / "term" / "level29-termlog-v2"
+LEVEL29 = REPO / "tests" / "term" / "level29-termlog-sept11v2.log"
 
 
 def _level29_text() -> str:
     return LEVEL29.read_text()
 
 
-def test_level29_v2_parses_without_header():
+def test_level29_v2_parses_with_header():
     raw = _level29_text()
-    assert not raw.lstrip().startswith("# TERMLOG")
+    assert raw.lstrip().startswith("# TERMLOG 2")
     recs = parse_termlog(raw)
-    assert len(recs) >= 600
+    assert len(recs) >= 700
     assert all(r.ms is not None for r in recs)
 
 
@@ -60,7 +60,7 @@ def test_level29_v2_log_invalid_login_and_truncated_re_prompt():
     assert b"Invalid user or password" in rx
     assert rx.endswith(b"Enter your ")
     typed = typed_keys(recs)
-    assert b"".join(t.data for t in typed) == b"ireal\nds9space\nx"
+    assert b"".join(t.data for t in typed) == b"ireal\rds9space\r!x"
     lag, _at = max_render_lag(recs)
     assert lag <= 40, "rendered should track in_n within one screen row"
     # Eight mask chars + invalid matches wrong 8-byte password on the wire,
@@ -76,7 +76,7 @@ def test_level29_replay_server_login_flow(kernel_image):
     con.start()
     replay = TermReplay(con, "127.0.0.1", 1)
     try:
-        recs = filter_recs(load_termlog(_level29_text()), start_ms=191447, end_ms=203000)
+        recs = filter_recs(load_termlog(_level29_text()), start_ms=16900, end_ms=25300)
         seen = _open_replay(con, replay, connect=False)
         played = play_termlog(replay, recs_to_termlog_text(recs), send_keys=True)
         plain = _plain(seen + played)
@@ -134,8 +134,8 @@ def test_level29_replay_tcp_session_login_flow(kernel_image):
         text, server, _recs = replay_termlog_session(
             replay,
             _level29_text(),
-            start_ms=191447,
-            end_ms=203000,
+            start_ms=16900,
+            end_ms=25300,
         )
         plain = _plain(text)
         assert "Enter your username" in plain or "User:" in plain
@@ -159,8 +159,8 @@ def test_level29_replay_second_prompt_visible_before_x(kernel_image):
         text, server, _recs = replay_termlog_session(
             replay,
             _level29_text(),
-            start_ms=202600,
-            end_ms=214200,
+            start_ms=24800,
+            end_ms=38400,
         )
         plain = _plain(text)
         assert "Enter your" in plain
