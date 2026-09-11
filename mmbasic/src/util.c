@@ -222,6 +222,138 @@ void mmb_out_flush(void)
 	G.out[0] = 0;
 }
 
+#define MMB_PRINT_FW 8
+#define MMB_PRINT_FH 16
+
+int mmb_print_font_w(void)
+{
+	return MMB_PRINT_FW;
+}
+
+int mmb_print_font_h(void)
+{
+	return MMB_PRINT_FH;
+}
+
+static void mmb_print_put_int(char *buf, int *n, int v)
+{
+	char tmp[8];
+	int i = 0;
+	if (v <= 0)
+	{
+		buf[(*n)++] = '0';
+		return;
+	}
+	while (v > 0 && i < 8)
+	{
+		tmp[i++] = (char)('0' + (v % 10));
+		v /= 10;
+	}
+	while (i > 0)
+		buf[(*n)++] = tmp[--i];
+}
+
+static int mmb_print_cursor_seq(char *seq, int seqsz)
+{
+	int col, row, n = 0;
+	if (!seq || seqsz < 12)
+		return 0;
+	col = G.print_x / MMB_PRINT_FW + 1;
+	row = G.print_y / MMB_PRINT_FH + 1;
+	seq[n++] = '\x1b';
+	seq[n++] = '[';
+	mmb_print_put_int(seq, &n, row);
+	seq[n++] = ';';
+	mmb_print_put_int(seq, &n, col);
+	seq[n++] = 'H';
+	return n;
+}
+
+static void mmb_print_emit_cursor(void)
+{
+	char seq[24];
+	int n;
+
+	n = mmb_print_cursor_seq(seq, sizeof(seq));
+	if (n <= 0)
+		return;
+	/* HDMI only — serial tests expect no cursor ANSI (see CLS tests). */
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen(seq, (unsigned)n);
+}
+
+void mmb_print_cursor_goto(int px, int py)
+{
+	if (px < 0)
+		px = 0;
+	if (py < 0)
+		py = 0;
+	G.print_x = px;
+	G.print_y = py;
+}
+
+void mmb_print_locate_pending(void)
+{
+	if (!G.print_locate)
+		return;
+	mmb_print_emit_cursor();
+	G.print_locate = 0;
+}
+
+void mmb_print_track(const char *s, unsigned n)
+{
+	unsigned i;
+	int fw = MMB_PRINT_FW;
+	int fh = MMB_PRINT_FH;
+
+	if (!s)
+		return;
+	for (i = 0; i < n; i++)
+	{
+		char c = s[i];
+		if (c == '\r')
+			G.print_x = 0;
+		else if (c == '\n')
+			G.print_y += fh;
+		else if (c == '\t')
+		{
+			int tab = G.opt.tab > 0 ? G.opt.tab : 8;
+			G.print_x = (G.print_x / (fw * tab) + 1) * (fw * tab);
+		}
+		else
+			G.print_x += fw;
+	}
+}
+
+int mmb_print_try_at(void)
+{
+	mmb_val vx, vy;
+	int mode = 0;
+
+	mmb_skip_sp();
+	if (*G.p != '@')
+		return 0;
+	G.p++;
+	mmb_skip_sp();
+	mmb_expect('(');
+	vx = mmb_expr();
+	mmb_skip_sp();
+	mmb_expect(',');
+	vy = mmb_expr();
+	mmb_skip_sp();
+	if (*G.p == ',')
+	{
+		G.p++;
+		mode = (int)mmb_as_int(mmb_expr());
+	}
+	mmb_skip_sp();
+	mmb_expect(')');
+	mmb_print_cursor_goto((int)mmb_as_int(vx), (int)mmb_as_int(vy));
+	G.print_locate = 1;
+	(void)mode;
+	return 1;
+}
+
 void mmb_outf(const char *unused, int64_t n)
 {
 	char buf[32];

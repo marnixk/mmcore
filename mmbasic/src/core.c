@@ -1694,20 +1694,58 @@ static void store_line(int num, const char *text)
 	G.nprog++;
 }
 
+void mmb_cmd_locate(void)
+{
+	mmb_val a[2];
+	int n;
+
+	mmb_skip_sp();
+	n = 0;
+	if (*G.p)
+	{
+		a[n++] = mmb_expr();
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (*G.p)
+				a[n++] = mmb_expr();
+		}
+	}
+	if (n < 2)
+		mmb_syntax();
+	mmb_print_cursor_goto((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]));
+	G.print_locate = 1;
+}
+
+static void mmb_print_track_new(int from)
+{
+	if (G.outn > from)
+		mmb_print_track(G.out + from, (unsigned)(G.outn - from));
+}
+
 void mmb_cmd_print(void)
 {
 	int first = 1;
 	int no_nl = 0;
 	int start = G.outn;
+	int track_from = G.outn;
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == '\'' || *G.p == ':')
+	{
 		mmb_out("\n");
+		mmb_print_track_new(track_from);
+	}
 	else
 	{
+		mmb_print_locate_pending();
 		while (*G.p && *G.p != ':' && *G.p != '\'')
 		{
 		mmb_val v;
 		mmb_skip_sp();
+		if (mmb_print_try_at())
+			continue;
 		if (*G.p == '#' )
 		{
 			/* PRINT #fn, ... */
@@ -1759,6 +1797,8 @@ void mmb_cmd_print(void)
 		first = 0;
 		v = mmb_expr();
 		mmb_print_val(v);
+		mmb_print_track_new(track_from);
+		track_from = G.outn;
 		mmb_skip_sp();
 		if (*G.p == ';')
 		{
@@ -1769,6 +1809,8 @@ void mmb_cmd_print(void)
 		if (*G.p == ',')
 		{
 			mmb_out(" ");
+			mmb_print_track_new(track_from);
+			track_from = G.outn;
 			G.p++;
 			no_nl = 0;
 			continue;
@@ -1777,14 +1819,20 @@ void mmb_cmd_print(void)
 		break;
 		}
 		if (!no_nl)
+		{
 			mmb_out("\n");
+			mmb_print_track_new(track_from);
+		}
 	}
-	if (G.running && G.outn > start)
+	if (G.outn > start)
 	{
 		G.out[G.outn] = 0;
-		mmb_console_write(G.out + start);
-		G.outn = start;
-		G.out[G.outn] = 0;
+		if (G.running)
+		{
+			mmb_console_write(G.out + start);
+			G.outn = start;
+			G.out[G.outn] = 0;
+		}
 	}
 }
 
@@ -2689,6 +2737,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("FACTORY_RESET")] = mmb_cmd_factory_reset;
 		tab[mmb_kw_id("FACTORY")] = tok_cmd_factory;
 		tab[mmb_kw_id("CLS")] = mmb_cmd_cls;
+		tab[mmb_kw_id("LOCATE")] = mmb_cmd_locate;
 		tab[mmb_kw_id("PIXEL")] = mmb_cmd_pixel;
 		tab[mmb_kw_id("LINE")] = tok_cmd_line;
 		tab[mmb_kw_id("BOX")] = mmb_cmd_box;
@@ -3076,6 +3125,11 @@ static void exec_statement(void)
 	if (mmb_match("CLS"))
 	{
 		mmb_cmd_cls();
+		return;
+	}
+	if (mmb_match("LOCATE"))
+	{
+		mmb_cmd_locate();
 		return;
 	}
 	if (mmb_match("PIXEL"))
