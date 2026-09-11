@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import time
 
 from harness import MMBasicConsole
@@ -176,10 +177,29 @@ def _tnr_advance(ch, scale=4):
 
 def _heading_cursor_width(con, y=20):
     ox = _pane_left_px(con)
+    png = con.capture_png()
+    out = subprocess.run(
+        ["convert", png, "-crop", f"500x1+{ox}+{y}", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     pane = con.screen_pixel(8, y)
+    pane_lum = _lum(pane)
     cols = []
-    for x in range(ox, ox + 500, 2):
-        if _lum(con.screen_pixel(x, y)) > _lum(pane) + 400:
+    for line in out.splitlines():
+        if ":" not in line or "(" not in line:
+            continue
+        coord = line.split(":")[0].strip()
+        if "," not in coord:
+            continue
+        x = int(coord.split(",")[0])
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if _lum(rgb) > pane_lum + 400:
             cols.append(x)
     if not cols:
         return 0
@@ -221,11 +241,28 @@ def test_wordpad_heading_wraps_long_line(kernel_image):
         _open(con)
         seen = _keys(con, b"# " + b"Mellow " * 12, quiet=1.0)
         time.sleep(0.3)
-        con.capture_png("/opt/cursor/artifacts/issue240_heading_wrap.png")
-        ink_rows = []
-        for y in (8, 24, 40, 56, 72, 88):
-            if any(_lum(con.screen_pixel(x, y)) > 400 for x in range(0, 960, 8)):
-                ink_rows.append(y)
+        png = con.capture_png("/opt/cursor/artifacts/issue240_heading_wrap.png")
+        out = subprocess.run(
+            ["convert", png, "-crop", "960x96+0+0", "+repage", "txt:-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        ink_rows = set()
+        for line in out.splitlines():
+            if ":" not in line or "(" not in line:
+                continue
+            coord = line.split(":")[0].strip()
+            if "," not in coord:
+                continue
+            _x, y = (int(p) for p in coord.split(","))
+            inner = line[line.find("(") + 1 : line.find(")")]
+            parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+            if len(parts) < 3:
+                continue
+            rgb = tuple(int(float(p)) for p in parts[:3])
+            if _lum(rgb) > 400:
+                ink_rows.add(y // 16)
         assert len(ink_rows) >= 2, ink_rows
         assert "Mellow" in seen
         _quit(con)
