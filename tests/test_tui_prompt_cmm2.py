@@ -351,14 +351,12 @@ def _wait_prompt(con, timeout=20.0) -> str:
     return buf.decode(errors="replace")
 
 
-def _ensure_recv_bas(con):
-    if getattr(con, "_mmb_recv_bas", False):
-        return
+def _upload_binary_file(con, host_path, dest):
+    with open(host_path, "rb") as fh:
+        data = fh.read()
     lines = [
         "OPTION EXPLICIT OFF",
-        'PRINT "<<DEST>>"',
-        "LINE INPUT D$",
-        'OPEN D$ FOR OUTPUT AS #1',
+        f'OPEN "{dest}" FOR OUTPUT AS #1',
         "HexLoop:",
         'PRINT "<<HEX>>"',
         "LINE INPUT H$",
@@ -378,17 +376,8 @@ def _ensure_recv_bas(con):
     for line in lines:
         _print_hash1_line(con, line)
     assert con.send_line("CLOSE #1") == ""
-    con._mmb_recv_bas = True
-
-
-def _upload_binary_file(con, host_path, dest):
-    with open(host_path, "rb") as fh:
-        data = fh.read()
-    _ensure_recv_bas(con)
     con.drain(quiet=0.05)
     con._ser.sendall(b'RUN "RECV.BAS"\r')
-    _wait_contains(con, b"<<DEST>>")
-    con._ser.sendall((dest + "\r").encode())
     hexed = data.hex().upper()
     pos = 0
     step = 254
