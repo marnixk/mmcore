@@ -118,7 +118,9 @@ def test_turtle_and_bitmap(fresh_console):
     assert c.send_line("TURTLE RESET") == ""
     assert c.send_line("TURTLE HEADING 90") == ""
     assert c.send_line("TURTLE FORWARD 40") == ""
-    assert _rgb_is_white(_pixel(c, 340, 240))
+    w = int(c.send_line("PRINT MM.HRES").split()[0])
+    h = int(c.send_line("PRINT MM.VRES").split()[0])
+    assert _rgb_is_white(_pixel(c, w // 2 + 20, h // 2))
     c.send_line("CLS")
     assert c.send_line("BITMAP 10,10,&HFF,8,1,1,RGB(255,0,0)") == ""
     assert _rgb_is_red(_pixel(c, 10, 10))
