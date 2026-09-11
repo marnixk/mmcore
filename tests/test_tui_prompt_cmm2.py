@@ -615,24 +615,27 @@ def test_unnumbered_file_leading_digit_is_line_number(console):
     assert "after" in lines
 
 
-def test_cmm2_compat_syntaxshock_runs(console):
+def test_cmm2_compat_syntaxshock_runs(fresh_console):
+    c = fresh_console
     host = os.path.join(REPO, "tests", "cmm2_compat", "syntaxshock")
-    _upload_compat_tree(console, host, "A:/syntaxshock")
-    listing = console.send_line('DIR "A:/syntaxshock/gfx"')
+    _upload_compat_tree(c, host, "A:/syntaxshock")
+    listing = c.send_line('DIR "A:/syntaxshock/gfx"')
     assert "FONTS.PNG" in listing.upper()
     os.makedirs("/opt/cursor/artifacts", exist_ok=True)
-    console.drain(quiet=0.1, timeout=0.4)
-    console._ser.sendall(b'RUN "A:/syntaxshock/typing.bas"\r')
+    c.drain(quiet=0.1, timeout=0.4)
+    c._ser.sendall(b'RUN "A:/syntaxshock/typing.bas"\r')
     time.sleep(6.0)
-    menu_png = console.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_menu.png")
-    console._ser.sendall(b"\r")
-    time.sleep(3.0)
-    play_png = console.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_play.png")
-    console._ser.sendall(b"\x03")
+    menu_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_menu.png")
+    for _ in range(3):
+        c._ser.sendall(b"\r")
+        time.sleep(0.3)
+    time.sleep(4.0)
+    play_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_play.png")
+    c._ser.sendall(b"\x03")
     deadline = time.time() + 4.0
     buf = b""
     while time.time() < deadline:
-        chunk = console._recv(console._ser)
+        chunk = c._recv(c._ser)
         if chunk:
             buf += chunk
             if buf.rstrip().endswith(b">"):
@@ -652,12 +655,6 @@ def test_cmm2_compat_syntaxshock_runs(console):
     assert "?LABEL" not in up, out
     assert "?NO DATA" not in up, out
     assert "?OUT OF DATA" not in up, out
-    w0 = console.send_line("PRINT words$(0)")
-    w199 = console.send_line("PRINT words$(199)")
-    with open(log_path, "a") as fh:
-        fh.write("\n--- after break ---\n")
-        fh.write("words$(0)=" + w0 + "\n")
-        fh.write("words$(199)=" + w199 + "\n")
     assert os.path.isfile(menu_png)
     assert os.path.isfile(play_png)
 
