@@ -354,43 +354,17 @@ def _wait_prompt(con, timeout=20.0) -> str:
 def _upload_binary_file(con, host_path, dest):
     with open(host_path, "rb") as fh:
         data = fh.read()
-    lines = [
-        "OPTION EXPLICIT OFF",
-        f'OPEN "{dest}" FOR OUTPUT AS #1',
-        "HexLoop:",
-        'PRINT "<<HEX>>"',
-        "LINE INPUT H$",
-        'IF H$="!" THEN GOTO Done',
-        "FOR I=1 TO LEN(H$) STEP 2",
-        " A=ASC(MID$(H$,I,1))-48",
-        " B=ASC(MID$(H$,I+1,1))-48",
-        " IF A>9 THEN A=A-7",
-        " IF B>9 THEN B=B-7",
-        " PRINT #1, CHR$(A*16+B);",
-        "NEXT I",
-        "GOTO HexLoop",
-        "Done:",
-        "CLOSE #1",
-    ]
-    assert con.send_line('OPEN "RECV.BAS" FOR OUTPUT AS #1') == ""
-    for line in lines:
-        _print_hash1_line(con, line)
-    assert con.send_line("CLOSE #1") == ""
     con.drain(quiet=0.05)
-    con._ser.sendall(b'RUN "RECV.BAS"\r')
-    hexed = data.hex().upper()
-    pos = 0
-    step = 254
-    while True:
-        _wait_contains(con, b"<<HEX>>")
-        if pos >= len(hexed):
-            con._ser.sendall(b"!\r")
-            break
-        con._ser.sendall((hexed[pos : pos + step] + "\r").encode())
-        pos += step
-    raw = _wait_prompt(con, timeout=20.0)
-    assert "?SYNTAX" not in raw.upper(), raw
-    assert "?ERROR" not in raw.upper(), raw
+    con._ser.sendall(f'XFER "{dest}", {len(data)}\r'.encode())
+    _wait_contains(con, b"<<XFER>>")
+    if data:
+        con._ser.sendall(data)
+    raw = _wait_prompt(con, timeout=max(20.0, len(data) / 2000.0 + 10.0))
+    up = raw.upper()
+    assert "?SYNTAX" not in up, raw
+    assert "?FILE" not in up, raw
+    assert "?ERROR" not in up, raw
+    assert "?UNSUPPORTED" not in up, raw
 
 
 _TEXT_EXT = (".bas", ".inc")

@@ -24,7 +24,7 @@ static const char kIndexCommands[] =
 	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"\n"
 	"Files\n"
-	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY RENAME\n"
+	"  DIR FILES OPEN CLOSE CHDIR MKDIR RMDIR COPY XFER RENAME\n"
 	"  KILL RM DEL MV DRIVE PACKAGE LOAD SAVE SEEK\n"
 	"\n"
 	"Program\n"
@@ -1189,7 +1189,7 @@ static const char kHelpCmm2[] =
 	"  POLYGON TEXT FONT COLOUR MODE PAGE BLIT\n"
 	"  IMAGE FRAMEBUFFER TURTLE SPRITE\n"
 	"  DIR LS LIST FILES FILES OPEN CLOSE SEEK\n"
-	"  CHDIR MKDIR RMDIR COPY RENAME MV NAME\n"
+	"  CHDIR MKDIR RMDIR COPY XFER RENAME MV NAME\n"
 	"  KILL RM DEL DRIVE PACKAGE\n"
 	"  LOAD SAVE RUN * NEW LIST EDIT WORDPAD PLAY PAUSE VSYNC_WAIT\n"
 	"  REBOOT OPTION OPTIONS FACTORY_RESET CONNECT TERM IPCONFIG CREDITS HELP\n"
@@ -1244,6 +1244,15 @@ static const char kHelpCopy[] =
 	"Copy a file.\n"
 	"\n"
 	"Example:  COPY \"A.TXT\" TO \"B.TXT\"";
+
+static const char kHelpXfer[] =
+	"XFER path$, nbytes\n"
+	"\n"
+	"Receive nbytes of raw serial data and write them to\n"
+	"path$. Prints <<XFER>> when ready to read. Bytes are\n"
+	"stored as-is, including NUL.\n"
+	"\n"
+	"Example:  XFER \"A:/DATA.BIN\", 16";
 
 static const char kHelpRename[] =
 	"RENAME src$ [AS|TO] dst$\n"
@@ -1794,6 +1803,7 @@ static const help_topic kTopics[] = {
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },
 	{ "RMDIR",       HELP_CMD,  kHelpRmdir },
 	{ "COPY",        HELP_CMD,  kHelpCopy },
+	{ "XFER",        HELP_CMD,  kHelpXfer },
 	{ "RENAME",      HELP_CMD,  kHelpRename },
 	{ "KILL",        HELP_CMD,  kHelpKill },
 	{ "DRIVE",       HELP_CMD,  kHelpDrive },

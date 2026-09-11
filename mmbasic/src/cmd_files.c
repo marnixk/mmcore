@@ -73,6 +73,43 @@ void mmb_cmd_copy(void)
 		mmb_error("?FILE");
 }
 
+void mmb_cmd_xfer(void)
+{
+	char path[128];
+	int n, left;
+	unsigned char chunk[1024];
+	mmb_val v;
+
+	v = mmb_expr();
+	if (v.type != T_STR)
+		mmb_syntax();
+	strncpy(path, v.s, sizeof(path) - 1);
+	path[sizeof(path) - 1] = 0;
+	mmb_skip_sp();
+	if (*G.p == ',')
+		G.p++;
+	n = (int)mmb_as_int(mmb_expr());
+	if (n < 0)
+		mmb_error("?INVALID");
+	if (mmb_vfs_readonly_path(path))
+		mmb_error("?READ ONLY");
+	if (!G.plat || !G.plat->read_raw)
+		mmb_error("?UNSUPPORTED");
+	if (mmb_vfs_write(path, "", 0, 0) != 0)
+		mmb_error("?FILE");
+	mmb_console_write("<<XFER>>\n");
+	left = n;
+	while (left > 0)
+	{
+		int req = left > (int)sizeof(chunk) ? (int)sizeof(chunk) : left;
+		if (G.plat->read_raw(chunk, (unsigned)req) != 0)
+			mmb_error("?FILE");
+		if (mmb_vfs_write(path, chunk, (unsigned)req, 1) != 0)
+			mmb_error("?FILE");
+		left -= req;
+	}
+}
+
 void mmb_cmd_name(void)
 {
 	char src[128], dst[128];

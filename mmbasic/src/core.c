@@ -2807,6 +2807,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("RM")] = mmb_cmd_kill;
 		tab[mmb_kw_id("DEL")] = mmb_cmd_kill;
 		tab[mmb_kw_id("COPY")] = mmb_cmd_copy;
+		tab[mmb_kw_id("XFER")] = mmb_cmd_xfer;
 		tab[mmb_kw_id("RENAME")] = mmb_cmd_name;
 		tab[mmb_kw_id("NAME")] = mmb_cmd_name;
 		tab[mmb_kw_id("MV")] = mmb_cmd_name;
@@ -3306,6 +3307,11 @@ static void exec_statement(void)
 	if (mmb_match("COPY"))
 	{
 		mmb_cmd_copy();
+		return;
+	}
+	if (mmb_match("XFER"))
+	{
+		mmb_cmd_xfer();
 		return;
 	}
 	if (mmb_match("RENAME") || mmb_match("NAME") || mmb_match("MV"))

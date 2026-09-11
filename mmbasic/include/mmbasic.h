@@ -65,6 +65,8 @@ typedef struct mmb_platform {
 	void (*present_rgb)(int x, int y, int w, int h, const unsigned *rgb888, int stride);
 	/* Wait for the next HDMI vblank. Returns 1 if the firmware wait ran. */
 	int (*wait_vsync)(void);
+	/* Read n raw serial bytes (binary, no echo). 0=ok, -1=fail. */
+	int (*read_raw)(unsigned char *buf, unsigned n);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
