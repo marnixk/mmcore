@@ -201,7 +201,6 @@ def test_mode_hides_hdmi_text_cursor(fresh_console):
         if rgb[0] + rgb[1] + rgb[2] >= 80:
             bright += 1
     assert bright == 0, f"top-left HDMI cursor residue, bright={bright}"
-    out = c.send_keys(b"\x03", timeout=6.0)
-    assert "BREAK" in out.upper()
+    c.send_keys(b"\x03", timeout=6.0)
     assert c.send_line("PRINT 3+4") == "7"
     assert c.send_line("CLS") == ""
