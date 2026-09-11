@@ -14,6 +14,8 @@ def test_makefile_gates_wlan_on_qemu_no_sdhost():
     assert "libwpa_supplicant.a" in text
     assert "libsched.a" in text
     assert "libnet.a" in text
+    assert "gen-mmb-version.sh" in text
+    assert "MMB_VERSION" in text
 
 
 def test_build_script_builds_hostap_only_for_hardware():
@@ -23,6 +25,7 @@ def test_build_script_builds_hostap_only_for_hardware():
     assert "wpa_supplicant" in text
     assert 'QEMU:-1}" = "0"' in text or '[ "${QEMU:-1}" = "0" ]' in text
     assert "--kernel-max-size 8" in text
+    assert "MMB_VERSION" in text
 
 
 def test_package_and_install_ship_brcmfmac_firmware():
@@ -36,16 +39,32 @@ def test_package_and_install_ship_brcmfmac_firmware():
     assert "copy_wlan_firmware_mtools" in inst
     assert "--kernel-max-size 8" in pkg
     assert "check_kernel_end" in pkg
+    assert 'MMB_VERSION="v${VERSION}"' in pkg
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "package-release.sh")], check=True)
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "install-sdcard.sh")], check=True)
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "build.sh")], check=True)
 
 
+def test_gen_mmb_version_header():
+    script = os.path.join(REPO, "scripts", "gen-mmb-version.sh")
+    out = os.path.join(REPO, "mmbasic", "include", "mmb_version_test.h")
+    try:
+        env = os.environ.copy()
+        env["MMB_VERSION"] = "v9.8.7"
+        subprocess.run(["bash", script, out], check=True, env=env)
+        text = open(out, encoding="utf-8").read()
+        assert '#define MMB_VERSION "v9.8.7"' in text
+    finally:
+        if os.path.isfile(out):
+            os.remove(out)
+
+
 def test_net_cpp_uses_hostname_connect_overload():
-    """CSocket::Connect(CIPAddress, u16) hides the DNS overload; call it via the base."""
+    """DNS then CSocket::Connect(CIPAddress, u16); do not call the hostname overload."""
     text = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
-    assert "static_cast<CNetSocket *>" in text
-    assert "Connect(host" in text
+    assert "dns.Resolve(s_open_host" in text
+    assert "Connect(ip," in text
+    assert "static_cast<CNetSocket *>" not in text
 
 
 def test_net_cpp_drains_circle_into_512kb_ring():

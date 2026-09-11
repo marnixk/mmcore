@@ -91,7 +91,11 @@ rm -f "${CONSOLE_DIR}/wlan.o" "${CONSOLE_DIR}/wlan.d" \
       "${CONSOLE_DIR}/net.o" "${CONSOLE_DIR}/net.d"
 
 log "Building console kernel image"
-make -C "${CONSOLE_DIR}" -j"$(nproc)"
+if [ -n "${MMB_VERSION:-}" ]; then
+  make -C "${CONSOLE_DIR}" -j"$(nproc)" MMB_VERSION="${MMB_VERSION}"
+else
+  make -C "${CONSOLE_DIR}" -j"$(nproc)"
+fi
 
 KERNEL_NAME="kernel8.img"
 if [ "${RASPPI}" = "4" ]; then

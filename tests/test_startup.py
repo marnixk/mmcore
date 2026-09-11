@@ -1,9 +1,20 @@
-"""Boot banner: PicoMite copyright, HELP in bright white, two blank lines."""
+"""Boot banner: version, PicoMite copyright, HELP in bright white, two blank lines."""
 
+import os
 import subprocess
 import time
 
 from harness import MMBasicConsole
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _mmb_version():
+    return subprocess.check_output(
+        ["git", "describe", "--tags", "--always"],
+        cwd=REPO,
+        text=True,
+    ).strip()
 
 
 def _pixels(png: str):
@@ -34,6 +45,8 @@ def test_startup_copyright_banner(kernel_image):
         raw = con.boot_log
         text = raw.decode(errors="replace")
         low = text.lower()
+        ver = _mmb_version()
+        assert f"mmbasic {ver}".lower() in low
         assert "copyright 2011-2026 geoff graham" in low
         assert "copyright 2016-2026 peter mather" in low
         assert "adapted and extended by marnix kok" in low
@@ -66,9 +79,10 @@ def test_startup_copyright_banner(kernel_image):
         assert type_luma and help_luma, (help_y, type_luma, help_luma)
         assert help_luma > type_luma
 
-        ocr = con.ocr_screen(crop="640x160+0+0").lower()
+        ocr = con.ocr_screen(crop="640x176+0+0").lower()
         assert "geoff" in ocr or "graham" in ocr or "copyright" in ocr
         assert "help" in ocr
+        assert "mmbasic" in ocr or ver.lstrip("v")[:3] in ocr
         assert con.send_line("PRINT 6*7") == "42"
     finally:
         con.stop()

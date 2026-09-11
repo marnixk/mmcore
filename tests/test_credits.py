@@ -1,6 +1,19 @@
 """CREDITS command: MMBasic/PicoMite copyright and Pi port line."""
 
+import os
+import subprocess
+
 from ihelp_util import close_ihelp, dump_topic, open_ihelp, scroll_all
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _mmb_version():
+    return subprocess.check_output(
+        ["git", "describe", "--tags", "--always"],
+        cwd=REPO,
+        text=True,
+    ).strip()
 
 
 def test_credits_shows_holders_and_port(console):
@@ -12,6 +25,7 @@ def test_credits_shows_holders_and_port(console):
     assert "marnix kok" in low
     assert "raspberry" in low
     assert "circle" in low
+    assert f"build {_mmb_version()}".lower() in low
     assert console.send_line("PRINT 2+2") == "4"
 
 
