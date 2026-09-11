@@ -525,6 +525,7 @@ void mmb_cmd_mkdir(void);
 void mmb_cmd_rmdir(void);
 void mmb_cmd_kill(void);
 void mmb_cmd_copy(void);
+void mmb_cmd_xfer(void);
 void mmb_cmd_name(void);
 void mmb_cmd_pause(void);
 void mmb_cmd_vsync_wait(void);

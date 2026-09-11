@@ -995,6 +995,40 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 	}
 }
 
+int CKernel::ReadRaw (unsigned char *buf, unsigned n)
+{
+	unsigned got = 0;
+	unsigned start = CTimer::GetClockTicks ();
+
+	if (n == 0)
+		return 0;
+	if (!buf)
+		return -1;
+	while (got < n)
+	{
+		char tmp[4096];
+		unsigned want = n - got;
+		int nBytes;
+
+		if (want > sizeof tmp)
+			want = sizeof tmp;
+		nBytes = m_Serial.Read (tmp, want);
+		if (nBytes > 0)
+		{
+			memcpy (buf + got, tmp, (size_t) nBytes);
+			got += (unsigned) nBytes;
+			start = CTimer::GetClockTicks ();
+		}
+		else
+		{
+			mmb_poll ();
+			if ((CTimer::GetClockTicks () - start) / 1000u > 120000u)
+				return -1;
+		}
+	}
+	return 0;
+}
+
 TShutdownMode CKernel::Run (void)
 {
 	m_Logger.Write (FromKernel, LogNotice, "console ready");

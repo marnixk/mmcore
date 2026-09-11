@@ -162,6 +162,13 @@ static int plat_read_line(char *buf, unsigned maxn, int hide)
 	return s_kernel->ReadLine(buf, maxn, hide);
 }
 
+static int plat_read_raw(unsigned char *buf, unsigned n)
+{
+	if (!s_kernel)
+		return -1;
+	return s_kernel->ReadRaw(buf, n);
+}
+
 static void plat_poll_input(void)
 {
 	if (!s_kernel || !mmb_is_running())
@@ -665,6 +672,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.free = plat_free;
 	plat.millis = plat_millis;
 	plat.read_line = plat_read_line;
+	plat.read_raw = plat_read_raw;
 	plat.poll_input = plat_poll_input;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;

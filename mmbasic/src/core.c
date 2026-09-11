@@ -1794,7 +1794,6 @@ void mmb_cmd_print(void)
 			if (*G.p == ',')
 				G.p++;
 			{
-				char buf[MMB_OUT_LEN];
 				int save = G.outn;
 				G.outn = 0;
 				G.out[0] = 0;
@@ -1822,8 +1821,12 @@ void mmb_cmd_print(void)
 				}
 				if (!no_nl)
 					mmb_out("\n");
-				strncpy(buf, G.out, sizeof(buf) - 1);
-				mmb_file_write(fn, buf, (unsigned)strlen(buf));
+				{
+					int n = G.outn;
+					if (n < 0)
+						n = 0;
+					mmb_file_write(fn, G.out, (unsigned)n);
+				}
 				G.outn = save;
 				G.out[G.outn] = 0;
 				return;
@@ -2804,6 +2807,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("RM")] = mmb_cmd_kill;
 		tab[mmb_kw_id("DEL")] = mmb_cmd_kill;
 		tab[mmb_kw_id("COPY")] = mmb_cmd_copy;
+		tab[mmb_kw_id("XFER")] = mmb_cmd_xfer;
 		tab[mmb_kw_id("RENAME")] = mmb_cmd_name;
 		tab[mmb_kw_id("NAME")] = mmb_cmd_name;
 		tab[mmb_kw_id("MV")] = mmb_cmd_name;
@@ -3303,6 +3307,11 @@ static void exec_statement(void)
 	if (mmb_match("COPY"))
 	{
 		mmb_cmd_copy();
+		return;
+	}
+	if (mmb_match("XFER"))
+	{
+		mmb_cmd_xfer();
 		return;
 	}
 	if (mmb_match("RENAME") || mmb_match("NAME") || mmb_match("MV"))
