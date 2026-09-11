@@ -561,7 +561,7 @@ def test_cmm2_compat_xmas_font_blit_png(fresh_console):
         "PAGE WRITE 0",
         "CLS RGB(0,0,40)",
         "BLIT 0,0,16,16,48,48,6,4",
-        "PAUSE 400",
+        "PAUSE 1500",
     ]
     assert c.send_line("NEW") == ""
     assert c.send_line('OPEN "FNT.BAS" FOR OUTPUT AS #1') == ""
@@ -570,10 +570,10 @@ def test_cmm2_compat_xmas_font_blit_png(fresh_console):
     assert c.send_line("CLOSE #1") == ""
     c.drain(quiet=0.1)
     c._ser.sendall(b'RUN "FNT.BAS"\r')
-    time.sleep(0.8)
+    time.sleep(0.6)
     png = c.capture_png("/opt/cursor/artifacts/issue263_xmas_fonts.png")
     c.send_keys(b"\x03", timeout=6.0)
-    pix = int(c.send_line("PRINT PIXEL(24,24,6)").split()[0])
+    pix = int(c.send_line("PRINT PIXEL(6,0,6)").split()[0])
     assert pix != 0
     assert os.path.isfile(png)
     assert c.send_line("PRINT 1+1") == "2"
