@@ -39,6 +39,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-wifi-149.patch"
 fi
 
+if grep -q 'mmbasic-tcp-robust' "${CIRCLE_DIR}/lib/net/tcpconnection.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle TCP receive patches (segment trimming, reassembly, close reason)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-robust.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then
