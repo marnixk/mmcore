@@ -121,7 +121,7 @@ Sub Draw_Word()
   page write 1
 
   local char_nr
-1  local char_x, char_y
+  local char_x, char_y
 
   for char_nr = 1 to len(word$)
     char_x = word_x + char_nr * 9

@@ -127,13 +127,13 @@ static int tc_add_const(tc_ent *e, double x)
 	return e->nc++;
 }
 
-static int tc_parse_name(char *name)
+static int tc_parse_name(char *name, int *type)
 {
 	mmb_skip_sp();
 	if (!mmb_is_ident(*G.p) || (*G.p >= '0' && *G.p <= '9'))
 		return 0;
 	mmb_ident(name, MMB_MAX_NAME);
-	mmb_type_suffix(name);
+	*type = mmb_type_suffix(name);
 	if (mmb_keyword_eq(name, "TIMER") || mmb_keyword_eq(name, "DATE") ||
 	    mmb_keyword_eq(name, "TIME"))
 		return 0;
@@ -175,6 +175,7 @@ static int tc_compile_primary(tc_ent *e)
 {
 	char name[MMB_MAX_NAME];
 	double num;
+	int type;
 	mmb_skip_sp();
 	if (*G.p == '(')
 	{
@@ -194,23 +195,25 @@ static int tc_compile_primary(tc_ent *e)
 			return 0;
 		return tc_emit1(e, TC_PUSHC, (uint8_t)ci);
 	}
-	if (!tc_parse_name(name))
+	if (!tc_parse_name(name, &type))
 		return 0;
 	mmb_skip_sp();
 	if (*G.p == '(')
 	{
 		char iname[MMB_MAX_NAME];
 		mmb_var *arr, *idx;
-		int ai, ii;
+		int ai, ii, itype;
 		G.p++;
-		if (!tc_parse_name(iname))
+		if (!tc_parse_name(iname, &itype))
 			return 0;
 		mmb_skip_sp();
 		if (*G.p != ')')
 			return 0;
 		G.p++;
-		arr = mmb_find_var(name, 0, 0, 1, 0);
-		idx = mmb_find_var(iname, 0, 0, 0, 0);
+		if (type == T_STR || type == T_STRUCT)
+			return 0;
+		arr = mmb_find_var(name, type, 0, 1, 0);
+		idx = mmb_find_var(iname, itype, 0, 0, 0);
 		if (!arr || !idx || arr->dims != 1 || idx->dims != 0 ||
 		    arr->type == T_STR || arr->type == T_STRUCT || G.acc_on ||
 		    idx->type == T_STR || idx->type == T_STRUCT)
@@ -225,14 +228,16 @@ static int tc_compile_primary(tc_ent *e)
 		mmb_val cv;
 		mmb_var *v;
 		int vi;
-		if (mmb_const_lookup(name, 0, &cv))
+		if (mmb_const_lookup(name, type, &cv))
 		{
 			int ci = tc_add_const(e, mmb_as_float(cv));
 			if (ci < 0)
 				return 0;
 			return tc_emit1(e, TC_PUSHC, (uint8_t)ci);
 		}
-		v = mmb_find_var(name, 0, 0, 0, 0);
+		if (type == T_STR || type == T_STRUCT)
+			return 0;
+		v = mmb_find_var(name, type, 0, 0, 0);
 		if (!v || v->dims != 0 || v->type == T_STR || v->type == T_STRUCT || G.acc_on)
 		{
 			G.acc_on = 0;
@@ -330,21 +335,25 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 {
 	char name[MMB_MAX_NAME];
 	mmb_var *dst, *idx = 0;
-	if (!tc_parse_name(name))
+	int type;
+	if (!tc_parse_name(name, &type))
 		return 0;
 	mmb_skip_sp();
 	if (*G.p == '(')
 	{
 		char iname[MMB_MAX_NAME];
+		int itype;
 		G.p++;
-		if (!tc_parse_name(iname))
+		if (!tc_parse_name(iname, &itype))
 			return 0;
 		mmb_skip_sp();
 		if (*G.p != ')')
 			return 0;
 		G.p++;
-		dst = mmb_find_var(name, 0, 0, 1, 0);
-		idx = mmb_find_var(iname, 0, 0, 0, 0);
+		if (type == T_STR || type == T_STRUCT)
+			return 0;
+		dst = mmb_find_var(name, type, 0, 1, 0);
+		idx = mmb_find_var(iname, itype, 0, 0, 0);
 		if (!dst || !idx || dst->dims != 1 || idx->dims != 0 ||
 		    dst->type == T_STR || dst->type == T_STRUCT || G.acc_on ||
 		    idx->type == T_STR || idx->type == T_STRUCT)
@@ -352,7 +361,9 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 	}
 	else
 	{
-		dst = mmb_find_var(name, 0, 1, 0, 0);
+		if (type == T_STR || type == T_STRUCT)
+			return 0;
+		dst = mmb_find_var(name, type, G.opt.explicit ? 0 : 1, 0, 0);
 		if (!dst || dst->dims != 0 || dst->type == T_STR || dst->type == T_STRUCT || G.acc_on)
 		{
 			G.acc_on = 0;
