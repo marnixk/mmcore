@@ -332,7 +332,11 @@ int mmb_try_function(mmb_val *out)
 			int r = (int)mmb_as_int(a[0]);
 			int g = (int)mmb_as_int(a[1]);
 			int b = (int)mmb_as_int(a[2]);
-			*out = mmb_int_val((int64_t)mmb_rgb_pack(r, g, b));
+			if (n == 4)
+				*out = mmb_int_val((int64_t)mmb_rgb_pack_a(r, g, b,
+							      (int)mmb_as_int(a[3])));
+			else
+				*out = mmb_int_val((int64_t)mmb_rgb_pack(r, g, b));
 			return 1;
 		}
 		mmb_syntax();

@@ -264,3 +264,71 @@ def test_select_case_nested_sub_png(fresh_console):
             green += 1
     assert green > 0, "HDMI snapshot missing green SELECT CASE OK box"
     assert c.send_line("PRINT 1+1") == "2"
+
+
+def test_page1_alpha_composite_png(fresh_console):
+    """Issue #260: page 1 overlay composites onto page 0 at present."""
+    c = fresh_console
+    src = [
+        "MODE 7,12",
+        "PAGE WRITE 0",
+        "CLS RGB(0,0,200)",
+        "PAGE WRITE 1",
+        "CLS",
+        "BOX 60,40,80,80,1,RGB(220,0,0,15),RGB(220,0,0,15)",
+        "BOX 200,40,80,80,1,RGB(0,0,0,8),RGB(0,0,0,8)",
+        "PAGE WRITE 0",
+        "PAUSE 400",
+    ]
+    assert c.send_line("NEW") == ""
+    assert c.send_line('OPEN "P1.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        esc = line.replace('"', '""')
+        assert c.send_line(f'PRINT #1, "{esc}"') == ""
+    assert c.send_line("CLOSE #1") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b'RUN "P1.BAS"\r')
+    time.sleep(0.7)
+    png = c.capture_png("/opt/cursor/artifacts/issue260_page1_alpha.png")
+    c.send_keys(b"\x03", timeout=6.0)
+    red = int(c.send_line("PRINT PIXEL(80,60)").split()[0])
+    assert ((red >> 16) & 255) < 80
+    over = int(c.send_line("PRINT PIXEL(80,60,1)").split()[0])
+    assert ((over >> 16) & 255) > 150
+    out = subprocess.run(
+        ["convert", png, "-crop", "8x8+80+60", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    redn = 0
+    for line in out.splitlines():
+        if "(" not in line:
+            continue
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if rgb[0] > 150 and rgb[1] < 80 and rgb[2] < 80:
+            redn += 1
+    assert redn > 0, "HDMI snapshot missing opaque red page-1 overlay"
+    dark = subprocess.run(
+        ["convert", png, "-crop", "8x8+220+60", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    found_blend = 0
+    for line in dark.splitlines():
+        if "(" not in line:
+            continue
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if rgb[2] > 40 and rgb[2] < 180 and rgb[0] < 80 and rgb[1] < 80:
+            found_blend += 1
+    assert found_blend > 0, "HDMI snapshot missing half-alpha black over blue"
+    assert c.send_line("PRINT 2+2") == "4"

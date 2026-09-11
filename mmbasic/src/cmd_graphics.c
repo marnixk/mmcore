@@ -2,7 +2,7 @@
 #include <math.h>
 #include <string.h>
 
-extern void mmb_gfx_copy_page(int src, int dst);
+extern void mmb_gfx_copy_page(int src, int dst, int blit);
 
 static int parse_args(mmb_val *a, int maxn)
 {
@@ -553,18 +553,26 @@ void mmb_cmd_page(void)
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
+			int blit = 0;
 			G.p++;
 			mmb_skip_sp();
-			/* CMM2: optional I (wait) or B (blit) flag, not an expression. */
+			/* CMM2: optional I (wait) or B (skip black). */
 			if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z'))
 			{
+				char f = *G.p;
+				if (f == 'b' || f == 'B')
+					blit = 1;
 				while (mmb_is_ident(*G.p))
 					G.p++;
+				if (f == 'i' || f == 'I')
+					mmb_cmd_vsync_wait();
 			}
 			else if (*G.p && *G.p != ':' && *G.p != '\'')
 				(void)mmb_expr();
+			mmb_gfx_copy_page(src, dst, blit);
 		}
-		mmb_gfx_copy_page(src, dst);
+		else
+			mmb_gfx_copy_page(src, dst, 0);
 		mmb_gfx_present_if(dst);
 		return;
 	}
