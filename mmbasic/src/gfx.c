@@ -412,6 +412,7 @@ void mmb_gfx_set_mode(int mode, int bits)
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
 	mmb_console_apply_colour();
+	mmb_hw_cursor(0);
 }
 
 void mmb_gfx_plot(int x, int y, unsigned rgb)

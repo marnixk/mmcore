@@ -8,6 +8,8 @@ individual pixels and compare the whole frame against a golden image.
 """
 
 import os
+import subprocess
+import time
 
 import pytest
 
@@ -167,3 +169,39 @@ def test_scene_matches_golden(fresh_console):
         fresh_console.send_line(cmd)
     ratio = fresh_console.image_diff_ratio(golden)
     assert ratio < 0.02, f"scene differs from golden by {ratio:.4%}"
+
+
+def test_mode_hides_hdmi_text_cursor(fresh_console):
+    """Issue #262: MODE hides the HDMI text cursor; serial CLS stays empty."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 MODE 7,12") == ""
+    assert c.send_line("20 CLS") == ""
+    assert c.send_line("30 PAUSE 2000") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    time.sleep(0.5)
+    png = c.capture_png("/opt/cursor/artifacts/issue262_mode7_no_cursor.png")
+    out = subprocess.run(
+        ["convert", png, "-crop", "16x16+0+0", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    bright = 0
+    for line in out.splitlines():
+        if "(" not in line:
+            continue
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if rgb[0] + rgb[1] + rgb[2] >= 80:
+            bright += 1
+    assert bright == 0, f"top-left HDMI cursor residue, bright={bright}"
+    out = c.send_keys(b"\x03", timeout=6.0)
+    assert "BREAK" in out.upper()
+    assert c.send_line("PRINT 3+4") == "7"
+    assert c.send_line("CLS") == ""
