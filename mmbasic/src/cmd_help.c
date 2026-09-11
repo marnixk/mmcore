@@ -652,9 +652,11 @@ static const char kHelpClose[] =
 	"Example:  CLOSE #1";
 
 static const char kHelpLoad[] =
-	"LOAD [JPG|JPEG|PNG] file$ [, x, y]\n"
+	"LOAD [JPG|JPEG|PNG] file$ [, x, y [, colour]]\n"
 	"\n"
-	"Load an image onto the screen at (x,y) (default 0,0).\n"
+	"Load an image onto the current WRITE page at (x,y)\n"
+	"(default 0,0). colour is treated as transparent\n"
+	"(CMM2). Integer 0-31 maps to the IBM palette.\n"
 	"JPG/JPEG uses the JPEG decoder. PNG (and BMP/GIF/\n"
 	"IMAGE as a keyword) uses the PNG decoder. With no\n"
 	"type keyword, .JPG/.JPEG selects JPEG; otherwise PNG.\n"
@@ -1669,7 +1671,7 @@ static const char kHelpMath[] =
 	"          MATH SCALE pos().x, 2, pos().x";
 
 static const char kHelpSprite[] =
-	"SPRITE LOADPNG n, file$ [, page]\n"
+	"SPRITE LOADPNG n, file$ [, colour]\n"
 	"SPRITE READ n, x, y, w, h [, page]\n"
 	"SPRITE SHOW n, x, y [, layer]\n"
 	"SPRITE HIDE n\n"
@@ -1678,6 +1680,7 @@ static const char kHelpSprite[] =
 	"\n"
 	"CMM2-style sprites composited over PAGE DISPLAY.\n"
 	"LOADPNG accepts a path with or without .PNG.\n"
+	"colour is treated as transparent (CMM2).\n"
 	"Missing image files create an empty placeholder.\n"
 	"\n"
 	"Example:  SPRITE LOADPNG 1, \"SHIP.PNG\"\n"

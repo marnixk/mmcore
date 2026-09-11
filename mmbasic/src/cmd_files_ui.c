@@ -1062,7 +1062,7 @@ static void do_preview(const char *path, const char *name)
 				return;
 			}
 		}
-		else if (mmb_load_png(path, 0, 0) != 0)
+		else if (mmb_load_png(path, 0, 0, 0, 0) != 0)
 		{
 			show_info_for(path, name);
 			return;

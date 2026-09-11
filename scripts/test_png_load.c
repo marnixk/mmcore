@@ -30,7 +30,8 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 		s_fb[y * 8 + x] = rgb;
 }
 
-int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y);
+int mmb_png_decode(const unsigned char *file, unsigned n, int x, int y,
+		  int has_trans, unsigned trans_rgb);
 
 static unsigned char *read_file(const char *path, int *size)
 {
@@ -59,7 +60,7 @@ int main(int argc, char **argv)
 	G.plat = &s_plat;
 	data = read_file(path, &n);
 	if (!data) { fprintf(stderr, "cannot read %s\n", path); return 1; }
-	rc = mmb_png_decode(data, (unsigned)n, 0, 0);
+	rc = mmb_png_decode(data, (unsigned)n, 0, 0, 0, 0);
 	r = (s_fb[0] >> 16) & 0xFF;
 	printf("mmb_png_decode(%s, %d bytes) = %d, pixel(0,0) R=%d\n", path, n, rc, r);
 	free(data);

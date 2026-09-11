@@ -793,7 +793,7 @@ int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
-int mmb_load_png(const char *path, int x, int y);
+int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
 int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			uint32_t **out, int *w, int *h);
 void mmb_clock_init(void);
