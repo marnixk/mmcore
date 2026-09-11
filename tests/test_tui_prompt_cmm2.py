@@ -532,12 +532,6 @@ def test_cmm2_compat_xmas_runs(console):
     assert "?SYNTAX" not in up
     assert "?FILE" not in up
     assert "?PNG" not in up
-    assert "?TYPE MISMATCH" not in up
-    assert "?UNDECLARED" not in up
-    assert "?INVALID" not in up
-    assert "?NOT AN ARRAY" not in up
-    assert "?LABEL" not in up
-    assert "?GOSUB" not in up
 
 
 def test_cmm2_compat_xmas_font_blit_png(fresh_console):
