@@ -98,6 +98,7 @@ def test_help_wordpad(console):
     assert "ctrl+p" in low or "quick-open" in low
     assert "serif" in low or "times" in low or "h1" in low
     assert "native" in low or "32x64" in low or "16x32" in low
+    assert "proportional" in low or "ink" in low or "cursor" in low
 
 
 def test_wordpad_type_save_and_reload(kernel_image):
@@ -158,33 +159,83 @@ def _tnr32_rows(ch):
     return rows
 
 
-def _heading_overlap_ink(left, right, advance=25):
-    a = _tnr32_rows(left)
-    b = _tnr32_rows(right)
-    pts = []
-    for y in range(64):
-        for ax in range(advance, 32):
-            if a[y][ax] and not b[y][ax - advance]:
-                pts.append((ax, y))
-    return pts
+def _tnr_ink_span(ch):
+    rows = _tnr32_rows(ch)
+    xs = [x for row in rows for x, v in enumerate(row) if v]
+    if not xs:
+        return 0, 16
+    return min(xs), max(xs) - min(xs) + 1
 
 
-def test_wordpad_heading_overlap_keeps_ink(kernel_image):
-    """H1 glyphs advance at 0.8 width; later letters must not paint black over earlier ink."""
-    pts = _heading_overlap_ink("M", "M")
-    assert len(pts) >= 20
+def _tnr_advance(ch, scale=4):
+    if ch == " ":
+        return (scale * 8) // 2
+    _left, ink = _tnr_ink_span(ch)
+    return ink + 1 + scale // 2
+
+
+def test_wordpad_heading_cursor_and_spacing(kernel_image):
+    """Issue #240: H1 cursor is a visible block; i is narrower than M."""
+    adv_i = _tnr_advance("i")
+    adv_m = _tnr_advance("M")
+    assert adv_i < adv_m - 8, (adv_i, adv_m)
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open(con)
-        _keys(con, b"# MM\rbody", quiet=0.8)
+        _keys(con, b"# MiMi", quiet=0.8)
         time.sleep(0.3)
-        ink = 0
-        for x, y in pts[:24]:
-            r, g, b = con.screen_pixel(x, y)
+        pane = con.screen_pixel(8, 20)
+        found_cursor = False
+        max_block = 0
+        for x in range(0, 400, 2):
+            pix = con.screen_pixel(x, 20)
+            lum = _lum(pix)
+            if lum > max_block:
+                max_block = lum
+            if lum > _lum(pane) + 200:
+                found_cursor = True
+        con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor.png")
+        assert found_cursor, f"expected a bright H1 cursor block, max_lum={max_block}"
+        _keys(con, b"\x1b[D" * 4, quiet=0.6)
+        time.sleep(0.3)
+        con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor_on_letter.png")
+        ink_cols = []
+        for x in range(0, 360):
+            r, g, b = con.screen_pixel(x, 24)
             if r + g + b >= 80:
-                ink += 1
-        assert ink >= 8, "expected leftover H1 ink in the 0.8-advance overlap"
+                ink_cols.append(x)
+        assert ink_cols, "expected H1 ink"
+        runs = []
+        start = ink_cols[0]
+        prev = ink_cols[0]
+        for x in ink_cols[1:]:
+            if x > prev + 2:
+                runs.append((start, prev))
+                start = x
+            prev = x
+        runs.append((start, prev))
+        widths = [b - a + 1 for a, b in runs]
+        assert max(widths) > min(widths) + 6, widths
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_heading_wraps_long_line(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        seen = _keys(con, b"# " + b"Mellow " * 12, quiet=1.0)
+        time.sleep(0.3)
+        con.capture_png("/opt/cursor/artifacts/issue240_heading_wrap.png")
+        ink_rows = []
+        for y in (8, 24, 40, 56, 72, 88):
+            if any(sum(con.screen_pixel(x, y)) >= 80 for x in range(0, 640, 8)):
+                ink_rows.append(y)
+        assert len(ink_rows) >= 2, ink_rows
+        assert "Mellow" in seen
         _quit(con)
     finally:
         con.stop()

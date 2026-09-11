@@ -427,23 +427,23 @@ static const u8 *tnr_native(int scale, unsigned ch, unsigned *gw, unsigned *gh, 
 static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
 				unsigned bg_rgb, int scale, int ink_only)
 {
-	unsigned x0, y0, x, y, sx, sy, n, gw, gh, rowb;
+	unsigned y0, x, y, sx, sy, n, gw, gh, rowb;
 	const u8 *glyph;
 	TScreenColor fg, bg, c;
 	u8 *dst;
 	u8 bits;
-	int on;
+	int on, x0;
 
 	if (scale < 1)
 		scale = 1;
 	if (scale > 4)
 		scale = 4;
 	n = (unsigned)scale;
-	if (!s_tui_pix || x_px < 0 || y_px < 0)
+	if (!s_tui_pix || y_px < 0)
 		return;
-	x0 = (unsigned)x_px;
+	x0 = x_px;
 	y0 = (unsigned)y_px;
-	if (x0 >= s_tui_w || y0 >= s_tui_h)
+	if (y0 >= s_tui_h)
 		return;
 	fg = (TScreenColor)rgb_to_raw(fg_rgb);
 	bg = (TScreenColor)rgb_to_raw(bg_rgb);
@@ -454,17 +454,21 @@ static void plat_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb
 		{
 			if (y0 + y >= s_tui_h)
 				break;
-			dst = s_tui_pix + (y0 + y) * s_tui_pitch + x0 * (DEPTH / 8);
 			for (x = 0; x < gw; x++)
 			{
-				if (x0 + x >= s_tui_w)
+				int sx = x0 + (int)x;
+				if (sx < 0)
+					continue;
+				if ((unsigned)sx >= s_tui_w)
 					break;
+				dst = s_tui_pix + (y0 + y) * s_tui_pitch +
+				      (unsigned)sx * (DEPTH / 8);
 				bits = glyph[y * rowb + x / 8];
 				on = (bits & (u8)(0x80 >> (x % 8))) != 0;
 				if (ink_only && !on)
 					continue;
 				c = on ? fg : bg;
-				plat_plot_tui(dst, x, c);
+				plat_plot_tui(dst, 0, c);
 			}
 		}
 		return;
@@ -507,6 +511,36 @@ static void plat_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, uns
 	    (unsigned)row * TUI_CH + TUI_CH * (unsigned)scale > s_tui_h)
 		return;
 	plat_tui_glyph_n_px(col * TUI_CW, row * TUI_CH, ch, fg_rgb, bg_rgb, scale, 0);
+}
+
+static void plat_tui_fill_px(int x, int y, int w, int h, unsigned rgb)
+{
+	int bpp;
+	TScreenColor fill;
+
+	if (!s_tui_pix || w < 1 || h < 1)
+		return;
+	if (x < 0)
+	{
+		w += x;
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		y = 0;
+	}
+	if ((unsigned)x >= s_tui_w || (unsigned)y >= s_tui_h)
+		return;
+	if ((unsigned)(x + w) > s_tui_w)
+		w = (int)s_tui_w - x;
+	if ((unsigned)(y + h) > s_tui_h)
+		h = (int)s_tui_h - y;
+	if (w < 1 || h < 1)
+		return;
+	bpp = DEPTH / 8;
+	fill = (TScreenColor)rgb_to_raw(rgb);
+	plat_fill_rows(x, y, y + h, w, bpp, fill);
 }
 
 static void plat_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb)
@@ -651,6 +685,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_glyph2x = plat_tui_glyph2x;
 	plat.tui_glyph_n = plat_tui_glyph_n;
 	plat.tui_glyph_n_px = plat_tui_glyph_n_px;
+	plat.tui_fill_px = plat_tui_fill_px;
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	plat.present_rgb = plat_present_rgb;

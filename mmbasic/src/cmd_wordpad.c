@@ -294,16 +294,78 @@ static int screen_row_of_vrow(int vr)
 	return s;
 }
 
-static int heading_advance_px(int scale)
+static const unsigned char *heading_tnr(int scale, unsigned ch, int *gw, int *gh, int *rowb)
 {
-	if (scale <= 1)
-		return 8;
-	return (scale * 8 * 4) / 5;
+	if (ch < 32 || ch > 126)
+		ch = '?';
+	ch -= 32;
+	if (scale == 2)
+	{
+		*gw = 16;
+		*gh = 32;
+		*rowb = 2;
+		return mmb_tnr_16x32 + ch * 32 * 2;
+	}
+	if (scale == 3)
+	{
+		*gw = 24;
+		*gh = 48;
+		*rowb = 3;
+		return mmb_tnr_24x48 + ch * 48 * 3;
+	}
+	if (scale == 4)
+	{
+		*gw = 32;
+		*gh = 64;
+		*rowb = 4;
+		return mmb_tnr_32x64 + ch * 64 * 4;
+	}
+	return 0;
 }
 
-static int heading_x_px(int col, int scale)
+static int heading_metrics(int scale, unsigned ch, int *left)
 {
-	return W.pane_left * 8 + col * heading_advance_px(scale);
+	const unsigned char *g;
+	int gw, gh, rowb, x, y, L, R, ink, track;
+
+	if (left)
+		*left = 0;
+	if (scale <= 1)
+		return 8;
+	if (ch == ' ' || ch == '\t')
+		return (scale * 8) / 2;
+	g = heading_tnr(scale, ch, &gw, &gh, &rowb);
+	if (!g)
+		return (scale * 8 * 4) / 5;
+	L = gw;
+	R = -1;
+	for (y = 0; y < gh; y++)
+	{
+		for (x = 0; x < gw; x++)
+		{
+			unsigned char bits = g[y * rowb + x / 8];
+			if (bits & (unsigned char)(0x80 >> (x % 8)))
+			{
+				if (x < L)
+					L = x;
+				if (x > R)
+					R = x;
+			}
+		}
+	}
+	if (R < L)
+		return (scale * 8) / 2;
+	if (left)
+		*left = L;
+	ink = R - L + 1;
+	track = 1 + scale / 2;
+	return ink + track;
+}
+
+static void wp_fill_px(int x, int y, int w, int h, unsigned rgb)
+{
+	if (G.plat && G.plat->tui_fill_px)
+		G.plat->tui_fill_px(x, y, w, h, rgb);
 }
 
 static void wp_glyph(int col, int row, unsigned ch, unsigned fg, unsigned bg, int scale)
@@ -657,7 +719,7 @@ static void wp_build_layout(void)
 	W.cx_vcol = 0;
 	while (pos <= W.len && vr < WP_MAX_VR)
 	{
-		int width, scale;
+		int scale, px, max_px, adv;
 		int ls = pos;
 		int le = pos;
 		int style, prefix_len, hide_prefix;
@@ -673,14 +735,12 @@ static void wp_build_layout(void)
 		line_style(ls, le, in_code && !line_is_fence(ls, le), cursor_on,
 			   &style, &prefix_len, &hide_prefix);
 		scale = heading_scale(style);
-		if (scale > 1)
-			width = (W.pane_width * 5) / (scale * 4);
-		else
-			width = W.pane_width / scale;
-		if (width < 1)
-			width = 1;
+		max_px = W.pane_width * 8;
+		if (max_px < 8)
+			max_px = 8;
 		i = ls;
 		col = 0;
+		px = 0;
 		break_at = -1;
 		break_col = 0;
 		W.vrows[vr].off0 = i;
@@ -710,8 +770,11 @@ static void wp_build_layout(void)
 					continue;
 				}
 			}
-			if (col >= width && col > 0)
+			if (col > 0)
 			{
+				adv = heading_metrics(scale, (unsigned char)W.buf[i], 0);
+				if (px + adv > max_px)
+				{
 				if (break_at >= ls)
 				{
 					W.vrows[vr].off1 = break_at + 1;
@@ -719,6 +782,7 @@ static void wp_build_layout(void)
 					vr++;
 					i = break_at + 1;
 					col = 0;
+					px = 0;
 					break_at = -1;
 					break_col = 0;
 					if (vr >= WP_MAX_VR)
@@ -735,6 +799,7 @@ static void wp_build_layout(void)
 				W.vrows[vr].len = col;
 				vr++;
 				col = 0;
+				px = 0;
 				break_at = -1;
 				break_col = 0;
 				if (vr >= WP_MAX_VR)
@@ -746,6 +811,7 @@ static void wp_build_layout(void)
 				W.vrows[vr].hide_prefix = hide_prefix;
 				W.vrows[vr].scale = scale;
 				continue;
+				}
 			}
 			if (W.buf[i] == ' ')
 			{
@@ -758,6 +824,7 @@ static void wp_build_layout(void)
 				W.cx_vcol = col;
 				found_cx = 1;
 			}
+			px += heading_metrics(scale, (unsigned char)W.buf[i], 0);
 			col++;
 			i++;
 		}
@@ -2830,13 +2897,20 @@ static void draw_picker(void)
 	wp_puts(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", WP_DIM, sbg);
 }
 
-static void draw_cursor_cell(int col, int row, unsigned ch, unsigned fg, unsigned bg,
+static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsigned bg,
 			     int scale)
 {
+	int left = 0;
+	int adv;
+
 	if (scale > 1)
-		wp_glyph_px(heading_x_px(col, scale), row * 16, ch, bg, fg, scale);
+	{
+		adv = heading_metrics(scale, ch, &left);
+		wp_fill_px(x_px, y_px, adv, scale * 16, fg);
+		wp_glyph_px(x_px - left, y_px, ch, bg, fg, scale);
+	}
 	else
-		wp_glyph(W.pane_left + col, row, ch, bg, fg, scale);
+		wp_glyph(x_px / 8, y_px / 16, ch, bg, fg, scale);
 }
 
 static void draw_body(void)
@@ -2866,16 +2940,12 @@ static void draw_body(void)
 		int style = W.vrows[vr].style;
 		int hide_prefix = W.vrows[vr].hide_prefix;
 		int prefix_len = W.vrows[vr].prefix_len;
-		int wrap;
 		int screen_row;
 		int le;
+		int x_px;
+		int max_px;
 
-		if (scale > 1)
-			wrap = (W.pane_width * 5) / (scale * 4);
-		else
-			wrap = W.pane_width / scale;
-		if (wrap < 1)
-			wrap = 1;
+		max_px = W.pane_left * 8 + W.pane_width * 8;
 		le = ls;
 		while (le < W.len && W.buf[le] != '\n')
 			le++;
@@ -2886,15 +2956,16 @@ static void draw_body(void)
 		{
 			i = W.vrows[vr].off0;
 			col = 0;
+			x_px = W.pane_left * 8;
 			fg = style_fg(style);
 			bg = style_bg(style);
 			if (vis >= 0)
 			{
-				while (i < W.vrows[vr].off1 && col < wrap)
+				while (i < W.vrows[vr].off1)
 				{
 					unsigned chfg, chbg;
 					char ch;
-					int skip;
+					int skip, left, adv, on_cur;
 
 					if (hide_prefix && i < ls + prefix_len)
 					{
@@ -2913,6 +2984,10 @@ static void draw_body(void)
 						i++;
 						continue;
 					}
+					left = 0;
+					adv = heading_metrics(scale, (unsigned)ch, &left);
+					if (col > 0 && x_px + adv > max_px)
+						break;
 					chfg = fg;
 					chbg = bg;
 					if (emph_at(i, ls, le, style))
@@ -2922,7 +2997,8 @@ static void draw_body(void)
 						chfg = WP_SEL_FG;
 						chbg = WP_SEL_BG;
 					}
-					if (vr == W.cx_vrow && col == W.cx_vcol && !W.dialog)
+					on_cur = (vr == W.cx_vrow && col == W.cx_vcol && !W.dialog);
+					if (on_cur)
 					{
 						chfg = bg;
 						chbg = fg;
@@ -2930,25 +3006,31 @@ static void draw_body(void)
 					if (vis >= 0 && vis < W.text_rows)
 					{
 						if (scale > 1)
-							wp_glyph_px(heading_x_px(col, scale),
-								      screen_row * 16, (unsigned)ch,
-								      chfg, chbg, scale);
+						{
+							if (on_cur)
+								wp_fill_px(x_px, screen_row * 16,
+									   adv, scale * 16, chbg);
+							wp_glyph_px(x_px - left, screen_row * 16,
+								    (unsigned)ch, chfg, chbg,
+								    scale);
+						}
 						else
 							wp_glyph(W.pane_left + col, screen_row,
 								 (unsigned)ch, chfg, chbg, scale);
 					}
 					if (spos < W.pane_width)
 						srow[spos++] = ch;
+					x_px += adv;
 					col++;
 					i++;
 				}
 				if (vr == W.cx_vrow && W.cx_vcol >= col && !W.dialog)
 				{
 					if (vis >= 0 && vis < W.text_rows)
-						draw_cursor_cell(W.cx_vcol, screen_row, ' ',
+						draw_cursor_cell(x_px, screen_row * 16, ' ',
 								 fg, bg, scale);
 				}
-				while (spos < wrap)
+				while (spos < W.pane_width)
 					srow[spos++] = ' ';
 				srow[spos] = 0;
 				serial_row(srow);
@@ -2959,14 +3041,15 @@ static void draw_body(void)
 	if (W.total_vrows == 0 && !W.dialog)
 	{
 		int screen_row = W.text_top;
-		draw_cursor_cell(0, screen_row, ' ', WP_FG, WP_BG, 1);
+		draw_cursor_cell(W.pane_left * 8, screen_row * 16, ' ', WP_FG, WP_BG, 1);
 		serial_row("");
 	}
 	else if (W.cx_vrow >= W.total_vrows && !W.dialog)
 	{
 		int vis2 = screen_row_of_vrow(W.total_vrows) - W.scroll;
 		if (vis2 >= 0 && vis2 < W.text_rows)
-			draw_cursor_cell(0, W.text_top + vis2, ' ', WP_FG, WP_BG, 1);
+			draw_cursor_cell(W.pane_left * 8, (W.text_top + vis2) * 16, ' ',
+					 WP_FG, WP_BG, 1);
 	}
 }
 
