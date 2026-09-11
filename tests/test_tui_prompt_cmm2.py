@@ -356,23 +356,22 @@ def _ensure_recv_bas(con):
         return
     lines = [
         "OPTION EXPLICIT OFF",
-        'PRINT "DEST?"',
+        'PRINT "<<DEST>>"',
         "LINE INPUT D$",
         'OPEN D$ FOR OUTPUT AS #1',
-        "DO",
-        ' PRINT "HEX?"',
-        " LINE INPUT H$",
-        ' IF H$="!" THEN',
-        "  EXIT DO",
-        " ENDIF",
-        " FOR I=1 TO LEN(H$) STEP 2",
-        "  A=ASC(MID$(H$,I,1))-48",
-        "  B=ASC(MID$(H$,I+1,1))-48",
-        "  IF A>9 THEN A=A-7",
-        "  IF B>9 THEN B=B-7",
-        "  PRINT #1, CHR$(A*16+B);",
-        " NEXT I",
-        "LOOP",
+        "HexLoop:",
+        'PRINT "<<HEX>>"',
+        "LINE INPUT H$",
+        'IF H$="!" THEN GOTO Done',
+        "FOR I=1 TO LEN(H$) STEP 2",
+        " A=ASC(MID$(H$,I,1))-48",
+        " B=ASC(MID$(H$,I+1,1))-48",
+        " IF A>9 THEN A=A-7",
+        " IF B>9 THEN B=B-7",
+        " PRINT #1, CHR$(A*16+B);",
+        "NEXT I",
+        "GOTO HexLoop",
+        "Done:",
         "CLOSE #1",
     ]
     assert con.send_line('OPEN "RECV.BAS" FOR OUTPUT AS #1') == ""
@@ -388,13 +387,13 @@ def _upload_binary_file(con, host_path, dest):
     _ensure_recv_bas(con)
     con.drain(quiet=0.05)
     con._ser.sendall(b'RUN "RECV.BAS"\r')
-    _wait_contains(con, b"DEST?")
+    _wait_contains(con, b"<<DEST>>")
     con._ser.sendall((dest + "\r").encode())
     hexed = data.hex().upper()
     pos = 0
     step = 254
     while True:
-        _wait_contains(con, b"HEX?")
+        _wait_contains(con, b"<<HEX>>")
         if pos >= len(hexed):
             con._ser.sendall(b"!\r")
             break
@@ -440,10 +439,10 @@ def test_upload_binary_includes_nul(console):
     try:
         with open(tmp, "wb") as fh:
             fh.write(blob)
-        _upload_binary_file(console, tmp, "A:/NUL.BIN")
+        _upload_binary_file(console, tmp, "A:/X.BIN")
     finally:
         os.unlink(tmp)
-    assert console.send_line('OPEN "A:/NUL.BIN" FOR INPUT AS #1') == ""
+    assert console.send_line('OPEN "A:/X.BIN" FOR INPUT AS #1') == ""
     assert console.send_line("PRINT LOF(#1)") == str(len(blob))
     assert console.send_line("CLOSE #1") == ""
 
