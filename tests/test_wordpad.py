@@ -217,15 +217,15 @@ def test_wordpad_heading_cursor_and_spacing(kernel_image):
         _open(con)
         _keys(con, b"# MiMi", quiet=0.8)
         time.sleep(0.3)
-        end_w = _heading_cursor_width(con)
+        end_w = _heading_cursor_width(con, y=6)
         con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor.png")
         assert end_w >= 8, end_w
         _keys(con, b"\x1b[D", quiet=0.4)
         time.sleep(0.2)
-        i_w = _heading_cursor_width(con)
+        i_w = _heading_cursor_width(con, y=6)
         _keys(con, b"\x1b[D", quiet=0.4)
         time.sleep(0.2)
-        m_w = _heading_cursor_width(con)
+        m_w = _heading_cursor_width(con, y=6)
         con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor_on_letter.png")
         assert i_w >= 6, i_w
         assert m_w > i_w + 6, (m_w, i_w, end_w)
