@@ -118,6 +118,9 @@ void mmb_cmd_cls(void)
 		c = (unsigned)mmb_as_int(a[0]);
 	mmb_gfx_cls(c);
 	G.home_prompt = 1;
+	G.print_x = 0;
+	G.print_y = 0;
+	G.print_locate = 0;
 }
 
 void mmb_cmd_pixel(void)

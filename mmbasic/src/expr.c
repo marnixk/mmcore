@@ -213,6 +213,8 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("RND")] = &&lbl_rnd;
 		fun_tab[mmb_kw_id("MM.HRES")] = &&lbl_mmhres;
 		fun_tab[mmb_kw_id("MM.VRES")] = &&lbl_mmvres;
+		fun_tab[mmb_kw_id("MM.HPOS")] = &&lbl_mmhpos;
+		fun_tab[mmb_kw_id("MM.VPOS")] = &&lbl_mmvpos;
 		fun_tab[mmb_kw_id("MM.INFO$")] = &&lbl_mminfo;
 		fun_tab[mmb_kw_id("MM.INFO")] = &&lbl_mminfo;
 		fun_tab[mmb_kw_id("PLAYING")] = &&lbl_playing;
@@ -717,6 +719,18 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_mmvres:
 		*out = mmb_int_val(G.gfx.h);
+		return 1;
+	}
+	if (mmb_match("MM.HPOS"))
+	{
+	lbl_mmhpos:
+		*out = mmb_int_val(G.print_x);
+		return 1;
+	}
+	if (mmb_match("MM.VPOS"))
+	{
+	lbl_mmvpos:
+		*out = mmb_int_val(G.print_y);
 		return 1;
 	}
 	if (mmb_match("MM.INFO$") || mmb_match("MM.INFO"))
@@ -1235,7 +1249,7 @@ int mmb_try_function(mmb_val *out)
 	lbl_pos:
 		call_args(a, 1, &n);
 		(void)n;
-		*out = mmb_int_val(1);
+		*out = mmb_int_val(G.print_x / mmb_print_font_w() + 1);
 		return 1;
 	}
 	if (match_fun("CHOICE"))

@@ -336,6 +336,9 @@ typedef struct mmb {
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
+	int print_x;           /* PRINT/LOCATE cursor X in pixels */
+	int print_y;           /* PRINT/LOCATE cursor Y in pixels */
+	int print_locate;      /* next PRINT emits cursor positioning first */
 	int64_t timer_base;    /* TIMER = n  →  TIMER reports now-ms minus this */
 	uint32_t rnd_seed;
 	char date_s[16];
@@ -402,6 +405,13 @@ mmb_val mmb_json_stringify(mmb_val v);
 void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
 void mmb_out_flush(void);
+int mmb_print_font_w(void);
+int mmb_print_font_h(void);
+void mmb_print_cursor_goto(int px, int py);
+void mmb_print_locate_pending(void);
+int mmb_print_try_at(void);
+void mmb_print_track(const char *s, unsigned n);
+void mmb_cmd_locate(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);

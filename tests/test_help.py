@@ -8,6 +8,7 @@ def test_help_lists_commands(console):
     seen = scroll_all(console, open_ihelp(console))
     for cmd in (
         "CLS",
+        "LOCATE",
         "PRINT",
         "PIXEL",
         "DIR",
@@ -47,6 +48,18 @@ def test_help_cls(console):
     assert "clear" in out.lower()
     assert "screen" in out.lower()
     assert "[" in out or "colour" in out.lower() or "color" in out.lower()
+
+
+def test_help_locate(console):
+    out = dump_topic(console, "LOCATE")
+    assert out != "?SYNTAX ERROR"
+    assert "LOCATE" in out
+    assert "pixel" in out.lower()
+    assert "MM.HPOS" in out
+    assert "@(x,y)" in out
+    seen = scroll_all(console, open_ihelp(console))
+    assert "<LOCATE>" in seen
+    close_ihelp(console)
 
 
 def test_help_pixel_array_form(console):

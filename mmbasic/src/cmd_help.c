@@ -31,7 +31,7 @@ static const char kIndexCommands[] =
 	"  NEW LIST RUN EDIT WORDPAD MEMORY REBOOT\n"
 	"\n"
 	"Other\n"
-	"  PRINT INPUT LINE INPUT OPTION PLAY PAUSE VSYNC_WAIT CLEAR END\n"
+	"  PRINT LOCATE INPUT LINE INPUT OPTION PLAY PAUSE VSYNC_WAIT CLEAR END\n"
 	"  CALL HELP ERROR RANDOMIZE INC DEC CAT ON SORT STRUCT JSON_PARSE\n"
 	"  SETTICK FACTORY_RESET OPTIONS CONNECT TERM IPCONFIG CREDITS CONTINUE EXIT LS\n"
 	"\n"
@@ -108,7 +108,23 @@ static const char kHelpCls[] =
 	"\n"
 	"Example:  CLS RGB(0,0,0)";
 
+static const char kHelpLocate[] =
+	"LOCATE x, y\n"
+	"\n"
+	"Move the text cursor to pixel coordinates x, y.\n"
+	"The next PRINT places output at that location.\n"
+	"PRINT @(x,y) does the same inline. Query the\n"
+	"cursor with MM.HPOS and MM.VPOS (pixels) or POS()\n"
+	"(column, 1-based).\n"
+	"\n"
+	"Example:  LOCATE 16, 32 : PRINT \"HELLO\"";
+
 static const char kHelpPrint[] =
+	"PRINT [expr] [;|, expr]...\n"
+	"PRINT #fn, expr [;|, expr]...\n"
+	"?  is an alias for PRINT.\n"
+	"\n"
+	"Write values to the console, or to an open file\n"
 	"PRINT [expr] [;|, expr]...\n"
 	"PRINT #fn, expr [;|, expr]...\n"
 	"?  is an alias for PRINT.\n"
@@ -120,6 +136,7 @@ static const char kHelpPrint[] =
 	"prints a blank line. While a program is running,\n"
 	"each PRINT is sent to the console immediately (a\n"
 	"GOTO loop still shows output).\n"
+	"Use PRINT @(x,y) or LOCATE x,y to position text.\n"
 	"#fn may be a disk file or OPEN \"TCP:host:port\".\n"
 	"\n"
 	"Example:  PRINT 6*7\n"
@@ -1567,7 +1584,7 @@ static const char kHelpFunctions[] =
 	"  ATN2 ACOS ASIN RND SGN EXP LOG PI MAX MIN\n"
 	"  DEG RAD CHOICE BOUND EVAL MATH()\n"
 	"Graphics: RGB(r,g,b)|RGB(\"NAME\")  PIXEL(x,y)\n"
-	"  MM.HRES MM.VRES MM.INFO(MODE)\n"
+	"  MM.HRES MM.VRES MM.HPOS MM.VPOS MM.INFO(MODE)\n"
 	"Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)\n"
 	"  Disk: LOC=seek pos  LOF=size  EOF=pos>=size\n"
 	"  TCP:  LOC=RX waiting  LOF=0  EOF=not connected\n"
@@ -1712,6 +1729,7 @@ static const char kHelpStruct[] =
 static const help_topic kTopics[] = {
 	{ "HELP",        HELP_CMD,  kHelpHelp },
 	{ "CLS",         HELP_CMD,  kHelpCls },
+	{ "LOCATE",      HELP_CMD,  kHelpLocate },
 	{ "PRINT",       HELP_CMD,  kHelpPrint },
 	{ "PIXEL",       HELP_CMD,  kHelpPixel },
 	{ "LINE",        HELP_CMD,  kHelpLine },
