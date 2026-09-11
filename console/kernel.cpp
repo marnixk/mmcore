@@ -1006,11 +1006,10 @@ int CKernel::ReadRaw (unsigned char *buf, unsigned n)
 		return -1;
 	while (got < n)
 	{
-		char tmp[64];
+		char tmp[4096];
 		unsigned want = n - got;
 		int nBytes;
 
-		mmb_poll ();
 		if (want > sizeof tmp)
 			want = sizeof tmp;
 		nBytes = m_Serial.Read (tmp, want);
@@ -1020,8 +1019,12 @@ int CKernel::ReadRaw (unsigned char *buf, unsigned n)
 			got += (unsigned) nBytes;
 			start = CTimer::GetClockTicks ();
 		}
-		else if ((CTimer::GetClockTicks () - start) / 1000u > 120000u)
-			return -1;
+		else
+		{
+			mmb_poll ();
+			if ((CTimer::GetClockTicks () - start) / 1000u > 120000u)
+				return -1;
+		}
 	}
 	return 0;
 }

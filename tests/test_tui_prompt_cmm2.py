@@ -315,12 +315,7 @@ def _print_hash1_line(con, line):
 
 
 def _upload_text_file(con, host_path, dest):
-    with open(host_path, "r", encoding="utf-8", errors="replace") as fh:
-        lines = fh.read().splitlines()
-    assert con.send_line(f'OPEN "{dest}" FOR OUTPUT AS #1') == ""
-    for line in lines:
-        _print_hash1_line(con, line)
-    assert con.send_line("CLOSE #1") == ""
+    _upload_binary_file(con, host_path, dest)
 
 
 def _wait_contains(con, token: bytes, timeout: float = 10.0) -> bytes:
@@ -345,10 +340,10 @@ def _wait_prompt(con, timeout=20.0) -> str:
         if chunk:
             buf += chunk
             if buf.rstrip().endswith(b">"):
-                break
+                return buf.decode(errors="replace")
         else:
             time.sleep(0.02)
-    return buf.decode(errors="replace")
+    raise AssertionError(f"timeout waiting for prompt, saw {buf!r}")
 
 
 def _upload_binary_file(con, host_path, dest):

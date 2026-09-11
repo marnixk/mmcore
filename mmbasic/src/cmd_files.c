@@ -76,8 +76,8 @@ void mmb_cmd_copy(void)
 void mmb_cmd_xfer(void)
 {
 	char path[128];
-	int n, left;
-	unsigned char chunk[1024];
+	int n;
+	unsigned char *buf = 0;
 	mmb_val v;
 
 	v = mmb_expr();
@@ -89,25 +89,34 @@ void mmb_cmd_xfer(void)
 	if (*G.p == ',')
 		G.p++;
 	n = (int)mmb_as_int(mmb_expr());
-	if (n < 0)
+	if (n < 0 || n > 8 * 1024 * 1024)
 		mmb_error("?INVALID");
 	if (mmb_vfs_readonly_path(path))
 		mmb_error("?READ ONLY");
 	if (!G.plat || !G.plat->read_raw)
 		mmb_error("?UNSUPPORTED");
-	if (mmb_vfs_write(path, "", 0, 0) != 0)
-		mmb_error("?FILE");
-	mmb_console_write("<<XFER>>\n");
-	left = n;
-	while (left > 0)
+	if (n > 0)
 	{
-		int req = left > (int)sizeof(chunk) ? (int)sizeof(chunk) : left;
-		if (G.plat->read_raw(chunk, (unsigned)req) != 0)
-			mmb_error("?FILE");
-		if (mmb_vfs_write(path, chunk, (unsigned)req, 1) != 0)
-			mmb_error("?FILE");
-		left -= req;
+		if (!G.plat->alloc)
+			mmb_error("?OUT OF MEMORY");
+		buf = G.plat->alloc((unsigned)n);
+		if (!buf)
+			mmb_error("?OUT OF MEMORY");
 	}
+	mmb_console_write("<<XFER>>\n");
+	if (n > 0 && G.plat->read_raw(buf, (unsigned)n) != 0)
+	{
+		G.plat->free(buf);
+		mmb_error("?FILE");
+	}
+	if (mmb_vfs_write(path, buf ? (char *)buf : "", (unsigned)n, 0) != 0)
+	{
+		if (buf)
+			G.plat->free(buf);
+		mmb_error("?FILE");
+	}
+	if (buf)
+		G.plat->free(buf);
 }
 
 void mmb_cmd_name(void)
