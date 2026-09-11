@@ -970,17 +970,31 @@ static void term_present_rows(int lo, int hi)
 	mmb_gfx_present_rect(x0, y, pw, ph);
 }
 
+static void term_copy_screen(void)
+{
+	uint32_t *s, *d;
+	int w, h;
+
+	s = mmb_gfx_buf_for(1, &w, &h);
+	d = mmb_gfx_buf_for(0, &w, &h);
+	if (!s || !d)
+		return;
+	memcpy(d, s, (unsigned)w * (unsigned)h * sizeof(uint32_t));
+}
+
 static void term_draw(void)
 {
-	int r, saved, lo, hi;
+	int r, saved, lo, hi, full_screen;
 
 	if (!T.need_draw)
 		return;
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
+	full_screen = T.dirty_full;
 	if (T.dirty_full)
 	{
+		mmb_gfx_cls(TM_BG);
 		lo = 0;
 		hi = T.pane_rows - 1;
 	}
@@ -1005,35 +1019,41 @@ static void term_draw(void)
 			    TM_BG, 1, (int)TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
-	if (term_full_present() || T.dirty_full || T.present_full || T.menu ||
-	    T.alt_pend)
+	if (full_screen)
+	{
+		term_copy_screen();
+		mmb_gfx_present();
+	}
+	else if (term_full_present() || T.present_full || T.menu || T.alt_pend)
+	{
 		term_copy_pane();
+		if (T.menu || T.alt_pend)
+		{
+			int top_h = T.menu ? 8 * TM_CH : TM_CH;
+			term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
+			term_copy_rect(0, (T.vid_rows - 1) * TM_CH,
+				    T.vid_cols * TM_CW, TM_CH);
+		}
+		term_present_pane();
+		if (T.menu || T.alt_pend)
+		{
+			int top_h = T.menu ? 8 * TM_CH : TM_CH;
+			mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, top_h);
+			mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH,
+					    T.vid_cols * TM_CW, TM_CH);
+		}
+	}
 	else if (lo >= 0 && hi >= lo)
 	{
 		term_copy_rows(lo, hi);
 		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
 			    TM_CH);
-	}
-	else
-		term_copy_pane();
-	if (T.menu || T.alt_pend)
-	{
-		int top_h = T.menu ? 8 * TM_CH : TM_CH;
-		term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
-		term_copy_rect(0, (T.vid_rows - 1) * TM_CH, T.vid_cols * TM_CW,
-			    TM_CH);
-	}
-	if (term_full_present() || T.dirty_full || T.present_full || T.menu ||
-	    T.alt_pend)
-		term_present_pane();
-	else
 		term_present_rows(lo, hi);
-	if (T.menu || T.alt_pend)
+	}
+	else
 	{
-		int top_h = T.menu ? 8 * TM_CH : TM_CH;
-		mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, top_h);
-		mmb_gfx_present_rect(0, (T.vid_rows - 1) * TM_CH,
-				    T.vid_cols * TM_CW, TM_CH);
+		term_copy_pane();
+		term_present_pane();
 	}
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
@@ -4046,11 +4066,8 @@ const char *mmb_term_key(char c)
 			}
 			if (T.menu)
 			{
-				T.menu = 0;
 				esc_reset();
-				mark_dirty_full();
-				term_draw();
-				term_serial_dump();
+				term_close_menu();
 				return "";
 			}
 			if (T.esc_len <= 0)
@@ -4187,11 +4204,8 @@ void mmb_term_poll(void)
 		}
 		else if (T.menu)
 		{
-			T.menu = 0;
 			esc_reset();
-			mark_dirty_full();
-			term_draw();
-			term_serial_dump();
+			term_close_menu();
 		}
 		else
 		{
