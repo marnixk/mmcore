@@ -340,11 +340,15 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
         title = con.screen_pixel(20, 2)
         empty = con.screen_pixel(400, 4)
         far = con.screen_pixel(940, 4)
+        pad_l = _cell_top(con, 0, 0)
+        pad_r = _cell_top(con, 9, 0)
         assert _luminance(*empty) > _luminance(*closed) + 20, (empty, closed)
         assert abs(empty[0] - far[0]) < 40
         assert abs(empty[1] - far[1]) < 40
         assert abs(empty[2] - far[2]) < 40
         assert abs(_luminance(*title) - _luminance(*empty)) > 20, (title, empty)
+        assert _rgb_dist(pad_l, pad_r) < 40, (pad_l, pad_r)
+        assert _rgb_dist(pad_l, empty) > 40, (pad_l, empty)
         drop = con.screen_pixel(24, 24)
         letterbox = con.screen_pixel(8, 200)
         assert _luminance(*drop) > _luminance(*letterbox) + 10, (drop, letterbox)

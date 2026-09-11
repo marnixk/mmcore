@@ -821,11 +821,11 @@ static void term_draw_menu(void)
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
 	mmb_gfx_box(0, 0, bar_w, TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
-	term_cell(0, 0, ' ', TM_MENU_FG, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
+	term_cell(0, 0, ' ', title_fg, title_bg);
 	term_put_hot(TM_CW, 0, "Terminal", 'T', title_fg, TM_HOT, title_bg);
-	term_cell(9 * TM_CW, 0, ' ', TM_MENU_FG, TM_MENU_BG);
+	term_cell(9 * TM_CW, 0, ' ', title_fg, title_bg);
 	if (!T.menu)
 		return;
 	x0 = TM_CW;
