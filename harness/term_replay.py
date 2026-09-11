@@ -1,8 +1,9 @@
 """Live TERM replay: shuttle a real TCP host through QEMU serial.
 
 Guest ``TERM "replay", port`` emits ``!TX <hex>`` for outbound bytes and
-accepts inbound frames ``\\x1eRX<hex>\\n``. This module talks to that
-session from the pytest harness without a guest NIC.
+accepts inbound frames ``\\x1eRX<hex>\\n``; ``\\x1eRC <reason>\\n`` makes
+the guest treat the connection as closed by the remote host. This module
+talks to that session from the pytest harness without a guest NIC.
 """
 
 from __future__ import annotations
@@ -122,6 +123,12 @@ class TermReplay:
             self.con._ser.settimeout(old_timeout)
         text = acc.decode(errors="replace")
         return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+
+    def close_from_host(self, reason: str = "") -> None:
+        """Tell the guest the remote host hung up (``RS RC [reason] NL``)."""
+        assert self.con._ser is not None
+        text = reason.encode("ascii", errors="replace")
+        self.con._ser.sendall(bytes([RS]) + b"RC " + text + b"\n")
 
     def _to_guest(self, data: bytes) -> None:
         assert self.con._ser is not None

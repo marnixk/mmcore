@@ -1,0 +1,302 @@
+diff --git a/include/circle/net/reassemblyqueue.h b/include/circle/net/reassemblyqueue.h
+--- a/include/circle/net/reassemblyqueue.h
++++ b/include/circle/net/reassemblyqueue.h
+@@ -39,14 +39,17 @@
+ 
+ 	void Flush (void);
+ 
++	// mmbasic-tcp-robust: drop the data before nRCV_NXT from a segment which
++	// starts before it (e.g. coalesced retransmission) and move *pSEG_SEQ to
++	// nRCV_NXT. Returns FALSE, if the segment starts at or after nRCV_NXT.
++	static boolean TrimSegment (u32 *pSEG_SEQ, CNetBuffer *pPacket, u32 nRCV_NXT);
++
+ private:
+ 	CNetBufferQueue *m_pRxQueue;
+ 
+ 	size_t m_ulMaxBytes;
+ 	size_t m_ulCurrentBytes;
+ 
+-	boolean m_bEnabled;
+-
+ 	CPtrList m_List;
+ };
+ 
+diff --git a/lib/net/reassemblyqueue.cpp b/lib/net/reassemblyqueue.cpp
+--- a/lib/net/reassemblyqueue.cpp
++++ b/lib/net/reassemblyqueue.cpp
+@@ -18,11 +18,8 @@
+ // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ //
+ #include <circle/net/reassemblyqueue.h>
+-#include <circle/logger.h>
+ #include <assert.h>
+ 
+-LOGMODULE ("tcpraq");
+-
+ // Modulo 32 sequence number arithmetic
+ static inline boolean lt (u32 x, u32 y)
+ {
+@@ -34,11 +31,14 @@
+ 	return static_cast<int> (x - y) <= 0;
+ }
+ 
++// mmbasic-tcp-robust: overlapping and stale segments are trimmed instead of
++// disabling the queue, so a peer which coalesces retransmissions cannot
++// stall the receiver.
++
+ CReassemblyQueue::CReassemblyQueue (CNetBufferQueue *pRxQueue, size_t ulMaxBytes)
+ :	m_pRxQueue (pRxQueue),
+ 	m_ulMaxBytes (ulMaxBytes),
+-	m_ulCurrentBytes (0),
+-	m_bEnabled (TRUE)
++	m_ulCurrentBytes (0)
+ {
+ }
+ 
+@@ -52,71 +52,70 @@
+ 
+ boolean CReassemblyQueue::Enqueue (u32 nSEG_SEQ, CNetBuffer *pPacket)
+ {
+-	if (!m_bEnabled)
+-	{
+-		return FALSE;
+-	}
+-
+ 	assert (pPacket);
+ 	assert (m_ulCurrentBytes <= m_ulMaxBytes);
+ 	size_t ulLength = pPacket->GetLength ();
+-	if (m_ulCurrentBytes + ulLength > m_ulMaxBytes)
++	if (   ulLength == 0
++	    || m_ulCurrentBytes + ulLength > m_ulMaxBytes)
+ 	{
+ 		return FALSE;
+ 	}
+ 
+-	pPacket->SetPrivateData (&nSEG_SEQ, sizeof nSEG_SEQ);
++	u32 nSEG_END = nSEG_SEQ + ulLength;
+ 
+ 	TPtrListElement *pLastElem = nullptr;
+-	for (TPtrListElement *pElem = m_List.GetFirst (); pElem; pElem = m_List.GetNext (pElem))
++	TPtrListElement *pElem = m_List.GetFirst ();
++	while (pElem)
+ 	{
+ 		CNetBuffer *pNetBuffer = static_cast<CNetBuffer *> (CPtrList::GetPtr (pElem));
+ 		assert (pNetBuffer);
+ 		const u32 *pSequenceNumber =
+ 			static_cast<const u32 *> (pNetBuffer->GetPrivateData ());
+ 		assert (pSequenceNumber);
+-		u32 nSequenceNumber= *pSequenceNumber;
++		u32 nSequenceNumber = *pSequenceNumber;
++		u32 nEnd = nSequenceNumber + pNetBuffer->GetLength ();
++		TPtrListElement *pNext = m_List.GetNext (pElem);
+ 
+-		if (nSEG_SEQ == nSequenceNumber)	// segment already queued
++		if (   le (nSequenceNumber, nSEG_SEQ)
++		    && le (nSEG_END, nEnd))
+ 		{
+-			// disable queue, if length differs from previously received segment
+-			if (ulLength != pNetBuffer->GetLength ())
+-			{
+-				m_bEnabled = FALSE;
+-
+-				Flush ();
+-
+-				LOGWARN ("TCP reassembly queue disabled (%u)", 1);
+-			}
+-
+-			return FALSE;
++			return FALSE;		// already covered by a queued segment
+ 		}
+ 
+-		if (lt (nSEG_SEQ, nSequenceNumber))
++		if (   le (nSEG_SEQ, nSequenceNumber)
++		    && le (nEnd, nSEG_END))
+ 		{
+-			// disable queue, if segment overlaps with the following segment
+-			if (!le (nSEG_SEQ + ulLength, nSequenceNumber))
+-			{
+-				m_bEnabled = FALSE;
+-
+-				Flush ();
++			// queued segment is covered by the new one
++			m_ulCurrentBytes -= pNetBuffer->GetLength ();
+ 
+-				LOGWARN ("TCP reassembly queue disabled (%u)", 2);
++			m_List.Remove (pElem);
+ 
+-				return FALSE;
+-			}
++			delete pNetBuffer;
+ 
+-			m_List.InsertBefore (pElem, pPacket);
++			pElem = pNext;
+ 
+-			m_ulCurrentBytes += ulLength;
++			continue;
++		}
+ 
+-			return TRUE;
++		if (lt (nSEG_SEQ, nSequenceNumber))
++		{
++			break;			// partial overlaps are trimmed in Dequeue()
+ 		}
+ 
+ 		pLastElem = pElem;
++		pElem = pNext;
+ 	}
+ 
+-	m_List.InsertAfter (pLastElem, pPacket);
++	pPacket->SetPrivateData (&nSEG_SEQ, sizeof nSEG_SEQ);
++
++	if (pElem)
++	{
++		m_List.InsertBefore (pElem, pPacket);
++	}
++	else
++	{
++		m_List.InsertAfter (pLastElem, pPacket);
++	}
+ 
+ 	m_ulCurrentBytes += ulLength;
+ 
+@@ -125,11 +124,6 @@
+ 
+ u32 CReassemblyQueue::Dequeue (u32 nRCV_NXT)
+ {
+-	if (!m_bEnabled)
+-	{
+-		return nRCV_NXT;
+-	}
+-
+ 	assert (m_pRxQueue);
+ 
+ 	TPtrListElement *pElem;
+@@ -140,24 +134,62 @@
+ 		const u32 *pSequenceNumber =
+ 			static_cast<const u32 *> (pNetBuffer->GetPrivateData ());
+ 		assert (pSequenceNumber);
++		u32 nSequenceNumber = *pSequenceNumber;
+ 
+-		if (nRCV_NXT != *pSequenceNumber)
++		if (lt (nRCV_NXT, nSequenceNumber))
+ 		{
+-			break;
++			break;			// gap in front of this segment
+ 		}
+ 
+-		size_t ulLength = pNetBuffer->GetLength ();
+-		nRCV_NXT += ulLength;
+-		m_ulCurrentBytes -= ulLength;
++		m_ulCurrentBytes -= pNetBuffer->GetLength ();
+ 
+ 		m_List.Remove (pElem);
+ 
++		TrimSegment (&nSequenceNumber, pNetBuffer, nRCV_NXT);
++
++		size_t ulLength = pNetBuffer->GetLength ();
++		if (ulLength == 0)
++		{
++			delete pNetBuffer;	// stale, all data already received
++
++			continue;
++		}
++
++		nRCV_NXT += ulLength;
++
+ 		m_pRxQueue->Enqueue (pNetBuffer);
+ 	}
+ 
+ 	return nRCV_NXT;
+ }
+ 
++boolean CReassemblyQueue::TrimSegment (u32 *pSEG_SEQ, CNetBuffer *pPacket, u32 nRCV_NXT)
++{
++	assert (pSEG_SEQ);
++	assert (pPacket);
++
++	if (!lt (*pSEG_SEQ, nRCV_NXT))
++	{
++		return FALSE;
++	}
++
++	size_t ulLength = pPacket->GetLength ();
++	u32 nSkip = nRCV_NXT - *pSEG_SEQ;
++	if (nSkip > ulLength)
++	{
++		nSkip = ulLength;
++	}
++
++	if (nSkip > 0)
++	{
++		pPacket->RemoveHeader (nSkip);
++	}
++
++	*pSEG_SEQ = nRCV_NXT;
++
++	return TRUE;
++}
++
+ void CReassemblyQueue::Flush (void)
+ {
+ 	TPtrListElement *pElem;
+diff --git a/lib/net/tcpconnection.cpp b/lib/net/tcpconnection.cpp
+--- a/lib/net/tcpconnection.cpp
++++ b/lib/net/tcpconnection.cpp
+@@ -473,14 +473,17 @@
+ 		return -NET_ERROR_INVALID_VALUE;
+ 	}
+ 
+-	if (m_nErrno < 0)
+-	{
+-		return m_nErrno;
+-	}
+-
+ 	assert (ppNetBuffer != 0);
+ 	while ((*ppNetBuffer = m_RxQueue.Dequeue ()) == 0)
+ 	{
++		// mmbasic-tcp-robust: data received before a timeout or FIN is
++		// delivered first; an orderly close reports NOT_CONNECTED, so the
++		// application can tell it from a RESET or TIMED_OUT
++		if (m_nErrno < 0)
++		{
++			return m_nErrno;
++		}
++
+ 		switch (m_State)
+ 		{
+ 		case TCPStateClosed:
+@@ -491,7 +494,7 @@
+ 		case TCPStateClosing:
+ 		case TCPStateLastAck:
+ 		case TCPStateTimeWait:
+-			return -NET_ERROR_CONNECTION_RESET;
++			return -NET_ERROR_NOT_CONNECTED;
+ 
+ 		case TCPStateSynSent:
+ 		case TCPStateSynReceived:
+@@ -1419,6 +1422,25 @@
+ 		case TCPStateEstablished:
+ 		case TCPStateFinWait1:
+ 		case TCPStateFinWait2:
++			// mmbasic-tcp-robust: a segment which starts before RCV.NXT
++			// (coalesced retransmission) still carries the unseen tail
++			if (   nSEG_SEQ != m_nRCV_NXT
++			    && CReassemblyQueue::TrimSegment (&nSEG_SEQ, pPacket, m_nRCV_NXT))
++			{
++				nDataLength = pPacket->GetLength ();
++
++				if (   nDataLength == 0
++				    && !(nFlags & TCP_FLAG_FIN))
++				{
++					// pure duplicate, our previous ACK may have been lost
++					SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
++
++					delete pPacket;
++
++					return 1;
++				}
++			}
++
+ 			if (nSEG_SEQ == m_nRCV_NXT)
+ 			{
+ 				if (nDataLength > 0)

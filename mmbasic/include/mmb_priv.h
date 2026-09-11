@@ -711,6 +711,7 @@ int mmb_net_tcp_begin(const char *host, int port);
 int mmb_net_tcp_status(void);
 int mmb_net_tcp_cancelling(void);
 const char *mmb_net_tcp_errmsg(void);
+const char *mmb_net_tcp_close_reason(void);
 int mmb_net_tcp_send(const void *data, unsigned n);
 int mmb_net_tcp_recv(void *data, unsigned maxn);
 int mmb_net_tcp_rx_avail(void);

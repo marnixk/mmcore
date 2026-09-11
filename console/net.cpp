@@ -59,6 +59,7 @@ static char s_pending_host[80];
 static int s_pending_port;
 static volatile int s_pending;
 static int s_peer_closed;
+static int s_rx_error;
 
 static unsigned s_gw_at;
 static int s_gw_cached;
@@ -83,6 +84,36 @@ static const char *err_text(int err)
 	default:
 		return "Connect failed";
 	}
+}
+
+static const char *close_text(int err)
+{
+	switch (err)
+	{
+	case -NET_ERROR_NOT_CONNECTED:
+		return "closed by remote host";
+	case -NET_ERROR_CONNECTION_RESET:
+		return "reset by peer";
+	case -NET_ERROR_CONNECTION_TIMED_OUT:
+		return "timed out (no ACK from peer)";
+	case -NET_ERROR_CONNECTION_REFUSED:
+		return "refused";
+	case -NET_ERROR_DESTINATION_UNREACHABLE:
+		return "host unreachable";
+	case -NET_ERROR_PROTOCOL_ERROR:
+		return "protocol error";
+	case 0:
+		return "";
+	default:
+		return "network error";
+	}
+}
+
+static void note_rx_error(int n)
+{
+	s_peer_closed = 1;
+	if (!s_rx_error)
+		s_rx_error = n;
 }
 
 static void abort_inflight(void)
@@ -361,6 +392,11 @@ const char *mmb_net_tcp_errmsg(void)
 	return err_text(s_open_error);
 }
 
+const char *mmb_net_tcp_close_reason(void)
+{
+	return close_text(s_rx_error);
+}
+
 int mmb_net_tcp_cancelling(void)
 {
 	return (s_pending && s_task_busy) ? 1 : 0;
@@ -397,6 +433,7 @@ int mmb_net_tcp_begin(const char *host, int port)
 	s_rxn = 0;
 	s_rxoff = 0;
 	s_peer_closed = 0;
+	s_rx_error = 0;
 
 	n = 0;
 	while (host[n] && n + 1 < sizeof s_open_host)
@@ -526,7 +563,7 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 				CScheduler::Get()->Yield();
 			if (n < 0)
 			{
-				s_peer_closed = 1;
+				note_rx_error(n);
 				return out ? (int)out : n;
 			}
 			if (n == 0)
@@ -549,7 +586,7 @@ int mmb_net_tcp_rx_avail(void)
 			CScheduler::Get()->Yield();
 		if (n < 0)
 		{
-			s_peer_closed = 1;
+			note_rx_error(n);
 			return 0;
 		}
 		if (n <= 0)
@@ -591,6 +628,11 @@ int mmb_net_gateway_ok(int force)
 const char *mmb_net_tcp_errmsg(void)
 {
 	return "Network not available";
+}
+
+const char *mmb_net_tcp_close_reason(void)
+{
+	return "";
 }
 
 int mmb_net_tcp_cancelling(void)

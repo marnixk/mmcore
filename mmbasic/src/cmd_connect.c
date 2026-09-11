@@ -544,7 +544,17 @@ void mmb_connect_poll(void)
 		n = mmb_net_tcp_recv(buf, sizeof(buf));
 		if (n < 0)
 		{
-			session_close("\r\nConnection closed\r\n");
+			const char *why = mmb_net_tcp_close_reason();
+			char msg[96];
+
+			strcpy(msg, "\r\nConnection closed");
+			if (why && why[0])
+			{
+				strcat(msg, ": ");
+				strncat(msg, why, sizeof(msg) - strlen(msg) - 3);
+			}
+			strcat(msg, "\r\n");
+			session_close(msg);
 			return;
 		}
 		if (n == 0)
