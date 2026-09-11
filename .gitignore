@@ -24,4 +24,5 @@ console/.circle-build-mode
 dist/
 
 # Generated at build from git describe / MMB_VERSION
+console/mmb_version.h
 mmbasic/include/mmb_version.h

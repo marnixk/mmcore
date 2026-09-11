@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Write mmbasic/include/mmb_version.h from MMB_VERSION or git describe.
+# Write console/mmb_version.h from MMB_VERSION or git describe.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${1:-${REPO_ROOT}/mmbasic/include/mmb_version.h}"
+OUT="${1:-${REPO_ROOT}/console/mmb_version.h}"
 VER="${MMB_VERSION:-}"
 
 if [ -z "${VER}" ]; then

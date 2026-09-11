@@ -16,6 +16,7 @@ def test_makefile_gates_wlan_on_qemu_no_sdhost():
     assert "libnet.a" in text
     assert "gen-mmb-version.sh" in text
     assert "MMB_VERSION" in text
+    assert "mmb_version.h: FORCE" in text
 
 
 def test_build_script_builds_hostap_only_for_hardware():
