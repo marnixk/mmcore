@@ -25,6 +25,28 @@ def _read_ini(con, path=None):
     return con.send_line("RUN", timeout=8)
 
 
+def test_factory_defaults_mode_prompt_slate(fresh_console):
+    """Issue #239: new instance defaults MODE 11, PROMPT CWD, theme Slate."""
+    con = fresh_console
+    assert con.send_line("PRINT MM.HRES") == "1280"
+    assert con.send_line("PRINT MM.VRES") == "720"
+    listed = con.send_line("OPTION LIST")
+    assert "DEFAULT MODE" not in listed
+    assert "PROMPT" not in listed
+    assert "EDIT THEME" not in listed
+    all_listed = con.send_line("OPTION LIST ALL")
+    assert "OPTION DEFAULT MODE 11" in all_listed
+    assert "OPTION PROMPT CWD" in all_listed
+    assert "SLATE" in all_listed.upper()
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert con.send_line("PRINT MM.HRES") == "1280"
+    assert con.send_line("PRINT MM.VRES") == "720"
+    ini = _read_ini(con)
+    assert "default_mode=11" in ini
+    assert "prompt=1" in ini
+    assert "edit_theme=5" in ini
+
+
 def test_eof_hash_file_number(console):
     assert console.send_line('OPEN "A:/EOFTEST.TXT" FOR OUTPUT AS #1') == ""
     assert console.send_line('PRINT #1, "hi"') == ""
@@ -229,12 +251,12 @@ def test_option_wifi_country_persists(console):
     assert "US" in all_listed
 
 
-def test_option_prompt_bare_is_default(console):
+def test_option_prompt_cwd_is_default(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     listed = console.send_line("OPTION LIST")
     assert "PROMPT" not in listed
     all_listed = console.send_line("OPTION LIST ALL")
-    assert "OPTION PROMPT BARE" in all_listed
+    assert "OPTION PROMPT CWD" in all_listed
     help_opt = dump_topic(console, "OPTION")
     assert "PROMPT BARE|CWD" in help_opt or ("PROMPT" in help_opt and "CWD" in help_opt)
     help_prompt = dump_topic(console, "PROMPT")
@@ -246,13 +268,12 @@ def test_option_prompt_bare_is_default(console):
     console.drain(quiet=0.1)
     console._ser.sendall(b"PRINT 1\r")
     raw = console.drain(quiet=0.5).decode(errors="replace")
-    assert raw.rstrip().endswith(">") or "> " in raw
+    assert "A:/>" in raw.replace("\r", "")
 
 
 def test_option_prompt_cwd_shows_path(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
-    assert console.send_line("OPTION PROMPT CWD") == ""
-    listed = console.send_line("OPTION LIST")
+    listed = console.send_line("OPTION LIST ALL")
     assert "OPTION PROMPT CWD" in listed
     assert console.send_line('CHDIR "A:/"') == ""
     console.drain(quiet=0.1)
@@ -267,6 +288,8 @@ def test_option_prompt_cwd_shows_path(console):
     assert "PRDIR>" in raw.replace("\r", "").upper()
     assert console.send_line('CHDIR "A:/"') == ""
     assert console.send_line("OPTION PROMPT BARE") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION PROMPT BARE" in listed
     console.drain(quiet=0.1)
     console._ser.sendall(b"PRINT 9\r")
     raw = console.drain(quiet=0.5).decode(errors="replace")
@@ -275,14 +298,16 @@ def test_option_prompt_cwd_shows_path(console):
 
 def test_option_prompt_cwd_persists(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
-    assert console.send_line("OPTION PROMPT CWD") == ""
     ini = _read_ini(console)
     assert "prompt=1" in ini
-    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
-    listed = console.send_line("OPTION LIST ALL")
-    assert "OPTION PROMPT BARE" in listed
+    assert console.send_line("OPTION PROMPT BARE") == ""
     ini = _read_ini(console)
     assert "prompt=0" in ini
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION PROMPT CWD" in listed
+    ini = _read_ini(console)
+    assert "prompt=1" in ini
 
 
 def test_files_hides_dotfiles(fresh_console):

@@ -838,6 +838,7 @@ static void option_dispatch(void)
 		strncpy(G.opt.wifi_psk, psk, sizeof(G.opt.wifi_psk) - 1);
 		G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
 		G.opt.wifi_enabled = en;
+		mmb_gfx_apply_default_mode();
 		return;
 	}
 	if (mmb_match("LIST"))
@@ -960,7 +961,7 @@ void mmb_option_list(int all)
 		else if (G.opt.default_type == 0)
 			ol_line(&n, "OPTION DEFAULT NONE");
 	}
-	if (all || G.opt.default_mode != 1)
+	if (all || G.opt.default_mode != MMB_OPT_DEFAULT_MODE)
 		ol_line_int(&n, "OPTION DEFAULT MODE ", G.opt.default_mode);
 	if (all || G.gfx.fg != 0x808080u || G.gfx.bg != 0)
 	{
@@ -1048,7 +1049,7 @@ void mmb_option_list(int all)
 	}
 	if (all || G.opt.pin)
 		ol_line_int(&n, "OPTION PIN ", G.opt.pin);
-	if (all || G.opt.prompt)
+	if (all || G.opt.prompt != MMB_OPT_DEFAULT_PROMPT)
 		ol_line(&n, G.opt.prompt ? "OPTION PROMPT CWD" : "OPTION PROMPT BARE");
 	if (all || G.opt.profiling)
 		ol_line(&n, G.opt.profiling ? "OPTION PROFILING ON" : "OPTION PROFILING OFF");
@@ -1133,7 +1134,7 @@ void mmb_option_list(int all)
 		mmb_out(edit_font_name(G.opt.edit_font));
 		n++;
 	}
-	if (all || G.opt.edit_theme != 8)
+	if (all || G.opt.edit_theme != MMB_OPT_DEFAULT_EDIT_THEME)
 	{
 		if (n)
 			mmb_out("\n");

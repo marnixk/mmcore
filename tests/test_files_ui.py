@@ -178,8 +178,8 @@ def test_files_reports_video_cell_size(fresh_console):
     con = fresh_console
     _prep_tree(con)
     seen = _open_files(con)
-    assert "COLS=80" in seen
-    assert "ROWS=30" in seen
+    assert "COLS=160" in seen
+    assert "ROWS=45" in seen
     _keys(con, b"q")
 
 
@@ -195,8 +195,8 @@ def test_files_box_drawing_covers_cell_height(fresh_console):
     # Horizontal ─ on the top pane border, away from the path caption.
     r, g, b = con.screen_pixel(80, 16 + 7)
     assert r > 100 and g > 100 and b > 100, (r, g, b)
-    # Last fkey row covers the bottom of 640x480.
-    br, bg_, bb = con.screen_pixel(24, 464)
+    # Last fkey row covers the bottom of 1280x720.
+    br, bg_, bb = con.screen_pixel(24, 704)
     assert br + bg_ + bb > 40, (br, bg_, bb)
     _keys(con, b"q")
 
@@ -252,7 +252,7 @@ def test_files_f4_shows_editor_immediately(fresh_console):
     assert "File" in opened
     assert "Run" in opened or "Alt+X" in opened
     pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-    assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+    assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
     _keys(con, bytes([1]) + b"x", quiet=0.6)
     _keys(con, b"q")
     assert con.send_line("PRINT 5") == "5"

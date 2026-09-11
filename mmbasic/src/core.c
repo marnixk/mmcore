@@ -1615,14 +1615,14 @@ void mmb_option_reset(void)
 	G.opt.console = MMB_DEFAULT_CONSOLE;
 	G.opt.console_port = 3;
 	G.opt.crlf = 2;
-	G.opt.default_mode = 1;
+	G.opt.default_mode = MMB_OPT_DEFAULT_MODE;
 	G.opt.baudrate = 115200;
 	G.opt.status = 1;
 	G.opt.vcc = 3.3;
 	G.opt.repeat_first = MMB_REPEAT_FIRST_DEFAULT;
 	G.opt.repeat_next = MMB_REPEAT_NEXT_DEFAULT;
 	G.opt.edit_font = 1;
-	G.opt.edit_theme = 8; /* Turbo */
+	G.opt.edit_theme = MMB_OPT_DEFAULT_EDIT_THEME;
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */
@@ -1631,7 +1631,7 @@ void mmb_option_reset(void)
 	G.opt.wifi_country[0] = 'U';
 	G.opt.wifi_country[1] = 'S';
 	G.opt.wifi_country[2] = 0;
-	G.opt.prompt = 0; /* BARE ">" */
+	G.opt.prompt = MMB_OPT_DEFAULT_PROMPT;
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)
@@ -3706,8 +3706,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_gfx_init();
 	mmb_assets_seed();
 	mmb_settings_load();
-	if (G.opt.default_mode != 1)
-		mmb_gfx_apply_default_mode();
+	mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	G.timer_base = 0;

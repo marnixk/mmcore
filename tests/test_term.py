@@ -144,7 +144,7 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
         assert "Alt-X" in seen or "alt-x" in seen.lower()
         _quit(con)
         assert con.send_line("PRINT 6*7") == "42"
-        assert con.screen_size() == (640, 480)
+        assert con.screen_size() == (1280, 720)
     finally:
         con.stop()
 
@@ -308,7 +308,7 @@ def test_term_f1_does_not_exit(kernel_image):
         assert con.screen_size() == (960, 540)
         _quit(con)
         assert con.send_line("PRINT 8+1") == "9"
-        assert con.screen_size() == (640, 480)
+        assert con.screen_size() == (1280, 720)
     finally:
         con.stop()
 

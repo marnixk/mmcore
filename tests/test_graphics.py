@@ -52,7 +52,7 @@ def _is_black(rgb):
 def test_hdmi_follows_mode(fresh_console):
     """MODE must retune the HDMI framebuffer, not only MM.HRES/MM.VRES."""
     c = fresh_console
-    assert c.screen_size() == (640, 480)
+    assert c.screen_size() == (1280, 720)
     assert c.send_line("MODE 7,16") == ""
     assert c.send_line("PRINT MM.HRES") == "320"
     assert c.send_line("PRINT MM.VRES") == "240"

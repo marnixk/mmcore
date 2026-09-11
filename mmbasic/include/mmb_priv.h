@@ -16,13 +16,16 @@
 #define MMB_LINE_LEN      256
 #define MMB_MAX_FILES     10
 #define MMB_MAX_PAGES     8
+#define MMB_OPT_DEFAULT_MODE       11 /* 1280x720 */
+#define MMB_OPT_DEFAULT_PROMPT     1  /* CWD */
+#define MMB_OPT_DEFAULT_EDIT_THEME 5  /* Slate */
 #define MMB_MAX_BLIT      64
 #define MMB_MAX_SPRITE    64
 #define MMB_MAX_SUB_ARGS  16
 #define MMB_MAX_TICK      4
 #define MMB_INKEY         64
-#define MMB_FB_MAX_W      1024
-#define MMB_FB_MAX_H      768
+#define MMB_FB_MAX_W      1920
+#define MMB_FB_MAX_H      1080
 #define MMB_PAGE_CUR      (-1)
 #define MMB_PAGE_FB       (-2)
 #define MMB_TURTLE_MAX    128
@@ -144,7 +147,7 @@ typedef struct mmb_options {
 	int repeat_first;
 	int repeat_next;
 	int edit_font;         /* 0 small .. 4 very large */
-	int edit_theme;        /* editor colour theme, default Turbo */
+	int edit_theme;        /* editor colour theme, default Slate */
 	int escape;
 	char search_path[128];
 	char fkey[12][65];     /* F1..F12 */
@@ -157,7 +160,7 @@ typedef struct mmb_options {
 	char wifi_country[4];  /* ISO 3166-1 alpha-2 Circle accepts; default US */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
-	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " */
+	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " (default CWD) */
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 } mmb_options;
 
