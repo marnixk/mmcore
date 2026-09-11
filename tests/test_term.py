@@ -51,6 +51,10 @@ def _is_dark_slate(r: int, g: int, b: int) -> bool:
     )
 
 
+def _is_black(r: int, g: int, b: int) -> bool:
+    return r < 16 and g < 16 and b < 16
+
+
 def _is_creamish(r: int, g: int, b: int) -> bool:
     return r > 80 and g > 75 and b > 65
 
@@ -104,6 +108,7 @@ def test_help_term(console):
     assert "255" in low or "iac" in low
     assert "disconnect" in low or "no argument" in low or "[host" in low
     assert "theme" in low or "editor" in low
+    assert "black" in low
     assert "restore" in low or "started" in low
     assert "capped" not in low
 
@@ -137,7 +142,7 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
         time.sleep(0.4)
         assert con.screen_size() == (960, 540)
         r, g, b = con.screen_pixel(40, 200)
-        assert _is_dark_slate(r, g, b), (r, g, b)
+        assert _is_black(r, g, b), (r, g, b)
         assert not re.search(r"\.{8,}", seen), seen[:200]
         assert "TERM demo" in seen or "term demo" in seen.lower()
         assert "Luxurious terminal" in seen or "luxurious terminal" in seen.lower()
@@ -157,7 +162,7 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(1.2)
         margin = con.screen_pixel(20, 200)
-        assert _is_dark_slate(*margin), margin
+        assert _is_black(*margin), margin
         found_cream = False
         for x in (164, 168, 172, 180, 188):
             for y in (8, 24, 40, 200, 248):
@@ -169,6 +174,35 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
                 break
         assert found_cream, "expected cream text lighter than left margin inside 80-col pane"
         _quit(con)
+    finally:
+        con.stop()
+
+
+def test_term_pane_background_black_across_themes(kernel_image):
+    """Issue #265: pane and letterbox stay black; menu and status keep the theme."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        shots = (
+            ("Paper", "/opt/cursor/artifacts/issue265_term_black_bg_paper.png"),
+            ("Nord", "/opt/cursor/artifacts/issue265_term_black_bg_nord.png"),
+            ("Slate", "/opt/cursor/artifacts/issue265_term_black_bg_slate.png"),
+        )
+        for theme, snap in shots:
+            assert con.send_line(f'OPTION EDIT THEME "{theme}"') == ""
+            _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+            time.sleep(0.4)
+            pane = con.screen_pixel(20, 200)
+            assert _is_black(*pane), (theme, pane)
+            _menu(con)
+            bar = con.screen_pixel(400, 4)
+            status = con.screen_pixel(400, 538)
+            con.capture_png(snap)
+            assert not _is_black(*bar), (theme, bar)
+            assert not _is_black(*status), (theme, status)
+            assert _luminance(*bar) > _luminance(*pane) + 15, (theme, bar, pane)
+            _quit(con)
+            assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
 
@@ -518,7 +552,7 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
         time.sleep(0.4)
         assert _max_dump_width(opened) == 80
         margin = con.screen_pixel(20, 200)
-        assert _is_dark_slate(*margin), margin
+        assert _is_black(*margin), margin
         menu = _menu(con)
         assert "Boxed" in menu
         con._ser.sendall(b"w")
