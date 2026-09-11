@@ -44,9 +44,8 @@ def test_editor_ocr_file_label(kernel_image):
     con.start()
     try:
         _edit(con, "HI.BAS")
-        # Status bar is the last text row (y 704 on 1280x720 / 8x16).
-        # The editor pane is Slate (near-black).
-        bar = [con.screen_pixel(x, 704) for x in (8, 40, 80, 200)]
+        # Menu bar glyphs are light on Slate; the editor pane is near-black.
+        bar = [con.screen_pixel(x, 8) for x in (8, 16, 24, 32, 40, 48, 56, 80)]
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
         assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
