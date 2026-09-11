@@ -1029,6 +1029,174 @@ int mmb_clock_set_time(const char *s)
 	return 0;
 }
 
+#define MMB_KEY_UP        0x80
+#define MMB_KEY_DOWN      0x81
+#define MMB_KEY_LEFT      0x82
+#define MMB_KEY_RIGHT     0x83
+#define MMB_KEY_INSERT    0x84
+#define MMB_KEY_HOME      0x86
+#define MMB_KEY_END       0x87
+#define MMB_KEY_PGUP      0x88
+#define MMB_KEY_PGDN      0x89
+#define MMB_KEY_F1        0x91
+#define MMB_KEY_SHIFT_TAB 0x9F
+
+static int inkey_at(int i)
+{
+	if (i < 0 || i >= G.inkey_n)
+		return -1;
+	return G.inkey_q[(G.inkey_r + i) % MMB_INKEY];
+}
+
+static void inkey_drop(int n)
+{
+	if (n <= 0)
+		return;
+	if (n > G.inkey_n)
+		n = G.inkey_n;
+	G.inkey_r = (G.inkey_r + n) % MMB_INKEY;
+	G.inkey_n -= n;
+}
+
+static void inkey_poll(void)
+{
+	if (G.plat && G.plat->poll_input)
+		G.plat->poll_input();
+	if (G.running && G.plat && G.plat->take_break && G.plat->take_break())
+	{
+		G.running = 0;
+		mmb_play_stop();
+		mmb_error("?BREAK");
+	}
+}
+
+static int inkey_wait_n(int n, unsigned timeout_ms)
+{
+	unsigned start;
+
+	if (G.inkey_n >= n)
+		return 1;
+	if (!G.plat || !G.plat->millis || !timeout_ms)
+		return G.inkey_n >= n;
+	start = mmb_now_ms();
+	while (G.inkey_n < n)
+	{
+		if ((mmb_now_ms() - start) >= timeout_ms)
+			return 0;
+		inkey_poll();
+	}
+	return 1;
+}
+
+static int inkey_map_arrow(int c)
+{
+	static const int arrows[] = {
+		MMB_KEY_UP, MMB_KEY_DOWN, MMB_KEY_RIGHT, MMB_KEY_LEFT
+	};
+
+	if (c < 'A' || c > 'D')
+		return -1;
+	return arrows[c - 'A'];
+}
+
+static int inkey_map_tilde(int p0)
+{
+	if (p0 == 1 || p0 == 7)
+		return MMB_KEY_HOME;
+	if (p0 == 2)
+		return MMB_KEY_INSERT;
+	if (p0 == 3)
+		return 0x7F;
+	if (p0 == 4 || p0 == 8)
+		return MMB_KEY_END;
+	if (p0 == 5)
+		return MMB_KEY_PGUP;
+	if (p0 == 6)
+		return MMB_KEY_PGDN;
+	if (p0 >= 11 && p0 <= 15)
+		return MMB_KEY_F1 + (p0 - 11);
+	if (p0 >= 17 && p0 <= 19)
+		return MMB_KEY_F1 + 5 + (p0 - 17);
+	if (p0 >= 20 && p0 <= 21)
+		return MMB_KEY_F1 + 8 + (p0 - 20);
+	if (p0 >= 23 && p0 <= 24)
+		return MMB_KEY_F1 + 10 + (p0 - 23);
+	if (p0 >= 25 && p0 <= 26)
+		return (MMB_KEY_F1 + 2) + 0x20 + (p0 - 25);
+	if (p0 >= 28 && p0 <= 29)
+		return (MMB_KEY_F1 + 4) + 0x20 + (p0 - 28);
+	if (p0 >= 31 && p0 <= 34)
+		return (MMB_KEY_F1 + 6) + 0x20 + (p0 - 31);
+	return -1;
+}
+
+static int inkey_csi_param0(int end)
+{
+	int n = 0, i, seen = 0;
+
+	for (i = 2; i < end; i++)
+	{
+		int c = inkey_at(i);
+		if (c == ';')
+			break;
+		if (c >= '0' && c <= '9')
+		{
+			seen = 1;
+			n = n * 10 + (c - '0');
+		}
+	}
+	return seen ? n : 0;
+}
+
+static int inkey_csi_end(void)
+{
+	int i;
+
+	if (G.inkey_n < 3)
+		return -1;
+	if (inkey_at(1) != '[')
+		return -1;
+	if (inkey_at(2) == '[')
+		return G.inkey_n >= 4 ? 3 : -1;
+	for (i = 2; i < G.inkey_n && i < 16; i++)
+	{
+		int c = inkey_at(i);
+		if (c >= 0x40 && c <= 0x7E)
+			return i;
+		if (c < 0x20 || c > 0x3F)
+			return -2;
+	}
+	return -1;
+}
+
+static int inkey_map_csi(int end)
+{
+	int final, p0, mapped;
+
+	if (end < 2)
+		return -1;
+	final = inkey_at(end);
+	if (inkey_at(2) == '[')
+	{
+		if (final >= 'A' && final <= 'E')
+			return MMB_KEY_F1 + (final - 'A');
+		return -1;
+	}
+	mapped = inkey_map_arrow(final);
+	if (mapped >= 0)
+		return mapped;
+	if (final == 'H')
+		return MMB_KEY_HOME;
+	if (final == 'F')
+		return MMB_KEY_END;
+	if (final == 'Z')
+		return MMB_KEY_SHIFT_TAB;
+	if (final != '~')
+		return -1;
+	p0 = inkey_csi_param0(end);
+	return inkey_map_tilde(p0);
+}
+
 void mmb_inkey_push(int c)
 {
 	if (c <= 0 || c > 255)
@@ -1042,13 +1210,83 @@ void mmb_inkey_push(int c)
 
 int mmb_inkey_pop(void)
 {
-	int c;
+	int c, mapped, end;
+
 	if (G.inkey_n <= 0)
 		return -1;
-	c = G.inkey_q[G.inkey_r];
-	G.inkey_r = (G.inkey_r + 1) % MMB_INKEY;
-	G.inkey_n--;
-	return c;
+	c = inkey_at(0);
+	if (c != 0x1b)
+	{
+		inkey_drop(1);
+		return c;
+	}
+
+	if (!inkey_wait_n(2, 30))
+	{
+		inkey_drop(1);
+		return 0x1b;
+	}
+
+	c = inkey_at(1);
+	if (c == 'O')
+	{
+		if (!inkey_wait_n(3, 50))
+		{
+			inkey_drop(1);
+			return 0x1b;
+		}
+		c = inkey_at(2);
+		mapped = inkey_map_arrow(c);
+		if (mapped < 0 && c >= 'P' && c <= 'T')
+			mapped = MMB_KEY_F1 + (c - 'P');
+		if (mapped >= 0)
+		{
+			inkey_drop(3);
+			return mapped;
+		}
+		inkey_drop(1);
+		return 0x1b;
+	}
+	if (c != '[')
+	{
+		inkey_drop(1);
+		return 0x1b;
+	}
+
+	if (!inkey_wait_n(3, 50))
+	{
+		inkey_drop(1);
+		return 0x1b;
+	}
+
+	end = inkey_csi_end();
+	if (end < 0)
+	{
+		unsigned start;
+
+		if (!G.plat || !G.plat->millis)
+		{
+			inkey_drop(1);
+			return 0x1b;
+		}
+		start = mmb_now_ms();
+		while (end == -1 && (mmb_now_ms() - start) < 90)
+		{
+			inkey_poll();
+			end = inkey_csi_end();
+		}
+	}
+	if (end >= 2)
+	{
+		mapped = inkey_map_csi(end);
+		if (mapped >= 0)
+		{
+			inkey_drop(end + 1);
+			return mapped;
+		}
+	}
+	inkey_drop(1);
+	return 0x1b;
 }
 
 void mmb_keydown_set(const int *codes, int n)

@@ -742,6 +742,21 @@ static const char kHelpInput[] =
 	"Example:  INPUT \"Name\"; N$\n"
 	"          PRINT N$";
 
+static const char kHelpInkey[] =
+	"INKEY$\n"
+	"INKEY$()\n"
+	"\n"
+	"Next console key, or \"\" if none. Never blocks,\n"
+	"except a short wait to finish a VT100 sequence.\n"
+	"Arrows and function keys become one CMM2 code:\n"
+	"  Up 128  Down 129  Left 130  Right 131\n"
+	"  Insert 132  Home 134  End 135\n"
+	"  PageUp 136  PageDown 137  Delete 127\n"
+	"  F1-F12  145-156\n"
+	"\n"
+	"Example:\n"
+	"  IF INKEY$ = CHR$(128) THEN y = y - 1";
+
 static const char kHelpInputDollar[] =
 	"INPUT$(nbr, #n)\n"
 	"\n"
@@ -1602,6 +1617,8 @@ static const char kHelpFunctions[] =
 	"Strings: LEN ASC CHR$ STR$ VAL LEFT$ RIGHT$ MID$\n"
 	"  UCASE$ LCASE$ SPACE$ STRING$ INSTR HEX$ OCT$ BIN$\n"
 	"  FORMAT$ INKEY$ KEYDOWN TAB\n"
+	"  INKEY$ maps VT100 arrows/F-keys to CMM2 codes\n"
+	"  (Up=128); HELP INKEY$.\n"
 	"Math: ABS INT FIX CINT SQR/SQRT SIN COS TAN ATN/ATAN\n"
 	"  ATN2 ACOS ASIN RND SGN EXP LOG PI MAX MIN\n"
 	"  DEG RAD CHOICE BOUND EVAL MATH()\n"
@@ -1791,6 +1808,7 @@ static const help_topic kTopics[] = {
 	{ "NEW",         HELP_CMD,  kHelpNew },
 	{ "LIST",        HELP_CMD,  kHelpList },
 	{ "INPUT",       HELP_CMD,  kHelpInput },
+	{ "INKEY$",      HELP_CMD,  kHelpInkey },
 	{ "INPUT$",      HELP_CMD,  kHelpInputDollar },
 	{ "JSON$",       HELP_CMD,  kHelpJson },
 	{ "JSON_PARSE",  HELP_CMD,  kHelpJsonParse },
@@ -1906,7 +1924,7 @@ static const struct {
 	{ "RGB",          "FUNCTIONS" },
 	{ "MAX",          "FUNCTIONS" },
 	{ "MIN",          "FUNCTIONS" },
-	{ "INKEY$",       "FUNCTIONS" },
+	{ "INKEY$",       "INKEY$" },
 	{ "FORMAT$",      "FUNCTIONS" },
 	{ "BOUND",        "FUNCTIONS" },
 	{ "DEG",          "FUNCTIONS" },
