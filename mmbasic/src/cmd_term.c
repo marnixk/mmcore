@@ -242,8 +242,21 @@ static unsigned term_rgb(unsigned char idx)
 	return pal[i] & 0xFFFFFFu;
 }
 
-#define TM_BG      term_rgb(term_th()->edit_bg)
-#define TM_FG      term_rgb(term_th()->edit_fg)
+static unsigned term_default_fg(void)
+{
+	unsigned fg = term_rgb(term_th()->edit_fg);
+	int r = (int)((fg >> 16) & 255);
+	int g = (int)((fg >> 8) & 255);
+	int b = (int)(fg & 255);
+	int lum = (299 * r + 587 * g + 114 * b) / 1000;
+
+	if (lum >= 80)
+		return fg;
+	return term_rgb(7);
+}
+
+#define TM_BG      0x000000u
+#define TM_FG      term_default_fg()
 #define TM_DIM     term_rgb(term_th()->cmt_fg)
 #define TM_MENU_BG term_rgb(term_th()->menu_bg)
 #define TM_MENU_FG term_rgb(term_th()->menu_fg)
