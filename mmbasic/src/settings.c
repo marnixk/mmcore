@@ -370,6 +370,8 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "enabled", G.opt.wifi_enabled);
 	kv_int(buf, sizeof(buf), "debug", G.opt.wifi_debug);
 	kv_str(buf, sizeof(buf), "country", mmb_opt_wifi_country());
+	append(buf, sizeof(buf), "\n[ethernet]\n");
+	kv_int(buf, sizeof(buf), "enabled", G.opt.ethernet_enabled);
 	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
 }
 
@@ -378,7 +380,7 @@ void mmb_settings_load(void)
 	char buf[SETTINGS_MAX];
 	unsigned got = 0;
 	char *p, *nl;
-	int section = 0; /* 1 core 2 wifi */
+	int section = 0; /* 1 core 2 wifi 3 ethernet */
 
 	choose_path();
 	if (!mmb_vfs_exists(settings_path))
@@ -408,6 +410,8 @@ void mmb_settings_load(void)
 				section = 1;
 			else if (mmb_keyword_eq(p, "[wifi]"))
 				section = 2;
+			else if (mmb_keyword_eq(p, "[ethernet]"))
+				section = 3;
 			else
 				section = 0;
 			p = nl;
@@ -426,12 +430,19 @@ void mmb_settings_load(void)
 					apply_core(p, eq);
 				else if (section == 2)
 					apply_wifi(p, eq);
+				else if (section == 3)
+				{
+					if (mmb_keyword_eq(p, "enabled"))
+						G.opt.ethernet_enabled = parse_int(eq);
+				}
 			}
 		}
 		p = nl;
 	}
 	if (G.opt.edit_theme < 0 || G.opt.edit_theme >= 10)
 		G.opt.edit_theme = MMB_OPT_DEFAULT_EDIT_THEME;
+	if (G.opt.ethernet_enabled)
+		G.opt.wifi_enabled = 0;
 }
 
 void mmb_cmd_factory_reset(void)
@@ -443,6 +454,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
+	G.opt.ethernet_enabled = 0;
 	G.opt.term_log = 0;
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();

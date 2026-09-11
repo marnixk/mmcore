@@ -38,6 +38,10 @@ int mmb_keyword_eq(const char *a, const char *b);
 int mmb_net_gateway_ok(int force);
 }
 
+#ifdef MMB_CIRCLE_WLAN
+CNetSubSystem *mmb_circle_net(void);
+#endif
+
 extern "C" {
 
 #ifdef MMB_CIRCLE_WLAN
@@ -171,6 +175,8 @@ static int wlan_ensure(void)
 {
 	if (s_ready)
 		return 1;
+	if (mmb_net_kind() == MMB_NET_ETH)
+		return 0;
 	if (!firmware_present())
 	{
 		static int noted;
@@ -208,17 +214,15 @@ static int wlan_ensure(void)
 		CTimer::SimpleMsDelay(300);
 	if (!apply_radio_country())
 		wlan_log("country apply failed; join needs a Circle-accepted code");
-	s_net = new CNetSubSystem(0, 0, 0, 0, "mmbasic", NetDeviceTypeWLAN);
-	if (!s_net)
-		wlan_log("net stack alloc failed");
-	else if (!s_net->Initialize(FALSE))
-	{
+	if (mmb_net_kind() == MMB_NET_ETH)
+		wlan_log("Ethernet owns the net stack");
+	else if (mmb_net_open(MMB_NET_WIFI) != 0)
 		wlan_log("net stack Initialize() failed");
-		delete s_net;
-		s_net = 0;
-	}
 	else
+	{
+		s_net = mmb_circle_net();
 		wlan_log("net stack ready (DHCP after link)");
+	}
 	s_ready = 1;
 	return 1;
 }
@@ -519,12 +523,12 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 	buf[0] = 0;
 	if (!wlan_ensure() || !s_wlan)
 	{
-		copy_out(buf, bufsize, "Wi-Fi not available");
+		copy_out(buf, bufsize, "Interface: Wi-Fi\nWi-Fi not available");
 		return -1;
 	}
 	if (!s_net)
 	{
-		out = "Not connected";
+		out = "Interface: Wi-Fi\nNot connected";
 		if (s_last_ssid[0])
 		{
 			out.Append("\n  SSID: ");
@@ -536,7 +540,7 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 	cfg = s_net->GetConfig();
 	if (current_ipv4(&ipstr) != 0)
 	{
-		out = "Not connected";
+		out = "Interface: Wi-Fi\nNot connected";
 		if (s_last_ssid[0])
 		{
 			out.Append("\n  SSID: ");
@@ -555,7 +559,7 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 	}
 	if (!mmb_wlan_status() || mmb_net_gateway_ok(1) != 1)
 	{
-		out = "Not connected";
+		out = "Interface: Wi-Fi\nNot connected";
 		if (s_last_ssid[0])
 		{
 			out.Append("\n  SSID: ");
@@ -572,7 +576,7 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 		copy_out(buf, bufsize, (const char *)out);
 		return -1;
 	}
-	out.Format("Connected as %s\n", (const char *)ipstr);
+	out.Format("Interface: Wi-Fi\nConnected as %s\n", (const char *)ipstr);
 	if (s_last_ssid[0])
 	{
 		out.Append("  SSID: ");
@@ -683,7 +687,7 @@ int mmb_wlan_ip(char *buf, int bufsize)
 
 int mmb_wlan_ipconfig(char *buf, int bufsize)
 {
-	const char *msg = "Wi-Fi not available";
+	const char *msg = "Interface: Wi-Fi\nWi-Fi not available";
 	int i = 0;
 
 	if (!buf || bufsize < 1)

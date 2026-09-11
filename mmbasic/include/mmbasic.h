@@ -165,6 +165,13 @@ const char *mmb_prompt(void);
 /* OPTION WIFI COUNTRY "XX" (ISO 3166-1 alpha-2 Circle accepts; default US; UK→GB). */
 const char *mmb_opt_wifi_country(void);
 
+/* Circle net stack: Wi-Fi or Ethernet, one at a time. */
+#define MMB_NET_NONE 0
+#define MMB_NET_WIFI 1
+#define MMB_NET_ETH  2
+int mmb_net_kind(void);
+int mmb_net_open(int kind);
+
 /* Host input: typeahead / INKEY$ FIFO and KEYDOWN() scan codes. */
 void mmb_inkey_push(int c);
 void mmb_keydown_set(const int *codes, int n);

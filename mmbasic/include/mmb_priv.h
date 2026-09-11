@@ -158,6 +158,7 @@ typedef struct mmb_options {
 	int wifi_enabled;
 	int wifi_debug;        /* OPTION WIFI DEBUG ON|OFF (default OFF) */
 	char wifi_country[4];  /* ISO 3166-1 alpha-2 Circle accepts; default US */
+	int ethernet_enabled;  /* OPTION ETHERNET ON|OFF (default OFF) */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " (default CWD) */
@@ -725,6 +726,13 @@ int mmb_wlan_ipconfig(char *buf, int bufsize);
 void mmb_wlan_poll(void);
 void mmb_wlan_apply_country(void);
 int mmb_wifi_country_normalize(const char *s, char out[3]);
+
+int mmb_eth_available(void);
+int mmb_eth_start(void);
+int mmb_eth_status(void);
+int mmb_eth_wait_dhcp(unsigned ms);
+int mmb_eth_ip(char *buf, int bufsize);
+int mmb_eth_ipconfig(char *buf, int bufsize);
 
 int mmb_net_available(void);
 int mmb_net_gateway_ok(int force);

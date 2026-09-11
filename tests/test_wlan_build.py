@@ -84,6 +84,19 @@ def test_net_cpp_drains_circle_into_512kb_ring():
     assert "net_rxbuf.o" in mk
 
 
+def test_eth_cpp_opens_dhcp_ethernet_device():
+    """Hardware Ethernet uses Circle DHCP + NetDeviceTypeEthernet."""
+    eth = open(os.path.join(REPO, "console", "eth.cpp"), encoding="utf-8").read()
+    net = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
+    mk = open(os.path.join(REPO, "console", "Makefile"), encoding="utf-8").read()
+    assert "eth.o" in mk
+    assert "NetDeviceTypeEthernet" in net
+    assert "mmb_net_open" in net
+    assert "MMB_NET_ETH" in net
+    assert "mmb_eth_start" in eth
+    assert "Interface: Ethernet" in eth
+
+
 def test_qemu_kernel_end_fits_configured_max(kernel_image):
     """Circle halt()s if _end >= MEM_KERNEL_START + KERNEL_MAX_SIZE (8MB)."""
     map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")

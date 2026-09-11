@@ -567,9 +567,14 @@ void mmb_connect_poll(void)
 void mmb_cmd_ipconfig(void)
 {
 	char buf[512];
+	int rc;
 
-	if (mmb_wlan_ipconfig(buf, (int)sizeof(buf)) != 0 && !buf[0])
-		mmb_out("Wi-Fi not available");
+	if (G.opt.ethernet_enabled || mmb_net_kind() == MMB_NET_ETH)
+		rc = mmb_eth_ipconfig(buf, (int)sizeof(buf));
+	else
+		rc = mmb_wlan_ipconfig(buf, (int)sizeof(buf));
+	if (rc != 0 && !buf[0])
+		mmb_out("Network not available");
 	else
 		mmb_out(buf);
 }

@@ -40,18 +40,21 @@ static const char kIndexCommands[] =
 	"  HELP PROMPT for details. Persists in .mmbasic.ini.\n"
 	"  Up/Down history; Left/Right move; typing inserts.\n"
 	"\n"
-	"Wi-Fi\n"
+	"Wi-Fi / Ethernet\n"
 	"  OPTION WIFI \"ssid\",\"password\"  store and connect\n"
 	"  OPTION WIFI                    scan and prompt\n"
 	"  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)\n"
 	"  OPTION WIFI COUNTRY \"NZ\"       ISO domain (default US; UK=GB)\n"
 	"  OPTIONS WIFI                   connect with stored credentials\n"
-	"  IPCONFIG                       WLAN IP, SSID, gateway, DHCP\n"
+	"  OPTION ETHERNET ON|OFF         wired DHCP (Pi with RJ45)\n"
+	"  IPCONFIG                       active interface, IP, gateway, DHCP\n"
+	"  One interface at a time. Ethernet ON disables Wi-Fi join.\n"
 	"  Credentials persist in C:/.mmbasic.ini (A: if no SD).\n"
 	"  OPTIONS WIFI joins using stored SSID/PSK.\n"
 	"  ?WIFI not configured if none are stored.\n"
 	"  Scan lists beacon SSIDs. WPA2 join needs C: and\n"
-	"  C:/firmware/. QEMU has no radio. HELP OPTION.\n"
+	"  C:/firmware/. QEMU has no radio or Ethernet.\n"
+	"  HELP OPTION. HELP ETHERNET. HELP IPCONFIG.\n"
 	"\n"
 	"Type HELP BASIC for language, HELP FUNCTIONS for functions.\n"
 	"Type HELP CMM2 for the full CMM2 command inventory.";
@@ -868,6 +871,13 @@ static const char kHelpOption[] =
 	"  WIFI DEBUG ON|OFF\n"
 	"    Print [wifi] progress on HDMI and serial.\n"
 	"    Default OFF. The PSK is never printed.\n"
+	"  ETHERNET ON|OFF\n"
+	"    Use the RJ45 port (Pi 3/3B+/4; USB LAN on Pi 3).\n"
+	"    ON starts DHCP and turns off Wi-Fi auto-join.\n"
+	"    OFF leaves the cable unused (reboot to free the\n"
+	"    stack if Ethernet is already up). Only one of\n"
+	"    Wi-Fi or Ethernet is active. QEMU has no NIC.\n"
+	"    Persists as [ethernet] enabled= in .mmbasic.ini.\n"
 	"  TERM LOG ON|OFF\n"
 	"    C:/.termlog (A: if no SD). RAM buffer, flush\n"
 	"    every 10s. R|T ms in_total rendered hex. Default OFF.\n"
@@ -880,6 +890,7 @@ static const char kHelpOption[] =
 	"          OPTION WIFI \"MyNet\",\"secret\"\n"
 	"          OPTIONS WIFI\n"
 	"          OPTION WIFI DEBUG ON\n"
+	"          OPTION ETHERNET ON\n"
 	"          OPTION TERM LOG ON\n"
 	"          OPTION PROMPT CWD\n"
 	"          OPTION LIST";
@@ -899,6 +910,25 @@ static const char kHelpOptions[] =
 	"Example:  OPTION WIFI \"MyNet\",\"secret\"\n"
 	"          OPTIONS WIFI";
 
+static const char kHelpEthernet[] =
+	"OPTION ETHERNET ON\n"
+	"OPTION ETHERNET OFF\n"
+	"\n"
+	"Use wired Ethernet instead of Wi-Fi. ON starts DHCP\n"
+	"on the onboard RJ45 (Pi 3 / 3B+ USB LAN, Pi 4 GENET)\n"
+	"and turns off Wi-Fi auto-join. Credentials for WIFI\n"
+	"are kept. Only one interface is active: enabling\n"
+	"Ethernet disables Wi-Fi; OPTIONS WIFI / OPTION WIFI\n"
+	"disable Ethernet. Switching after the stack is up\n"
+	"needs REBOOT. If ON is saved, Ethernet initialises\n"
+	"at boot. IPCONFIG shows Interface: Ethernet.\n"
+	"QEMU has no NIC (Ethernet not available).\n"
+	"Persists in C:/.mmbasic.ini [ethernet] enabled=.\n"
+	"\n"
+	"Example:  OPTION ETHERNET ON\n"
+	"          IPCONFIG\n"
+	"          OPTION ETHERNET OFF";
+
 static const char kHelpFactoryReset[] =
 	"FACTORY_RESET\n"
 	"FACTORY RESET     (alias)\n"
@@ -906,7 +936,8 @@ static const char kHelpFactoryReset[] =
 	"Restore firmware OPTION defaults and rewrite the\n"
 	"hidden settings file (.mmbasic.ini): DEFAULT MODE 11,\n"
 	"PROMPT CWD, EDIT THEME Slate. Programs and other\n"
-	"user files are kept. Wi-Fi credentials are cleared.\n"
+	"user files are kept. Wi-Fi credentials and Ethernet\n"
+	"ON are cleared.\n"
 	"\n"
 	"Example:  FACTORY_RESET";
 
@@ -1049,17 +1080,22 @@ static const char kHelpTerm[] =
 static const char kHelpIpconfig[] =
 	"IPCONFIG\n"
 	"\n"
-	"Show WLAN configuration. \"Connected as <ip>\" is\n"
-	"printed only when the link is up and a live gateway\n"
-	"probe succeeds (ARP/ICMP), not merely because DHCP\n"
-	"bound once. If the lease is cached but the gateway\n"
-	"does not answer: Not connected / gateway unreachable.\n"
-	"OPTION WIFI DEBUG ON adds WPA vs DHCP lines.\n"
-	"If the radio is missing (QEMU) the command prints\n"
-	"Wi-Fi not available. If the link is down it prints\n"
-	"Not connected (and the last SSID when known).\n"
+	"Show the active network interface. Only one of\n"
+	"Wi-Fi or Ethernet is up at a time.\n"
+	"  Interface: Ethernet | Wi-Fi\n"
+	"\"Connected as <ip>\" is printed only when the link\n"
+	"is up and a live gateway probe succeeds (ARP/ICMP),\n"
+	"not merely because DHCP bound once. If the lease is\n"
+	"cached but the gateway does not answer: Not connected\n"
+	" / gateway unreachable. Ethernet also shows MAC,\n"
+	"netmask, DNS, DHCP, and link speed when known.\n"
+	"Wi-Fi shows SSID and country. OPTION WIFI DEBUG ON\n"
+	"adds WPA vs DHCP lines for Wi-Fi.\n"
+	"If the radio or NIC is missing (QEMU) the command\n"
+	"prints Wi-Fi not available or Ethernet not available.\n"
+	"If the link is down it prints Not connected.\n"
 	"\n"
-	"Join with OPTIONS WIFI first on hardware.\n"
+	"Join Wi-Fi with OPTIONS WIFI, or OPTION ETHERNET ON.\n"
 	"\n"
 	"Example:  IPCONFIG";
 
@@ -1820,6 +1856,7 @@ static const help_topic kTopics[] = {
 	{ "CONNECT",     HELP_CMD,  kHelpConnect },
 	{ "TERM",        HELP_CMD,  kHelpTerm },
 	{ "IPCONFIG",    HELP_CMD,  kHelpIpconfig },
+	{ "ETHERNET",    HELP_CMD,  kHelpEthernet },
 	{ "CHDIR",       HELP_CMD,  kHelpChdir },
 	{ "MKDIR",       HELP_CMD,  kHelpMkdir },
 	{ "RMDIR",       HELP_CMD,  kHelpRmdir },
@@ -1884,6 +1921,7 @@ static const struct {
 	{ "RM",           "KILL" },
 	{ "DEL",          "KILL" },
 	{ "OPTION PROMPT","PROMPT" },
+	{ "OPTION ETHERNET","ETHERNET" },
 	{ "ERASE",        "CLEAR" },
 	{ "LS",           "DIR" },
 	{ "LIST FILES",   "DIR" },

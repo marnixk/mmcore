@@ -27,6 +27,7 @@ def test_help_lists_commands(console):
         "MATH",
         "STRUCT",
         "JSON_PARSE",
+        "ETHERNET",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):

@@ -93,9 +93,10 @@ if [ "${QEMU:-1}" = "0" ]; then
   make -C "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant" -f Makefile.circle -j"$(nproc)"
 fi
 
-# wlan.o / net.o change with MMB_CIRCLE_WLAN when switching QEMU <-> hardware.
+# wlan.o / net.o / eth.o change with MMB_CIRCLE_WLAN when switching QEMU <-> hardware.
 rm -f "${CONSOLE_DIR}/wlan.o" "${CONSOLE_DIR}/wlan.d" \
-      "${CONSOLE_DIR}/net.o" "${CONSOLE_DIR}/net.d"
+      "${CONSOLE_DIR}/net.o" "${CONSOLE_DIR}/net.d" \
+      "${CONSOLE_DIR}/eth.o" "${CONSOLE_DIR}/eth.d"
 
 log "Building console kernel image"
 if [ -n "${MMB_VERSION:-}" ]; then
