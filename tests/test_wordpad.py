@@ -174,6 +174,18 @@ def _tnr_advance(ch, scale=4):
     return ink + 1 + scale // 2
 
 
+def _heading_cursor_width(con, y=20):
+    ox = _pane_left_px(con)
+    pane = con.screen_pixel(8, y)
+    cols = []
+    for x in range(ox, ox + 500, 2):
+        if _lum(con.screen_pixel(x, y)) > _lum(pane) + 400:
+            cols.append(x)
+    if not cols:
+        return 0
+    return cols[-1] - cols[0] + 1
+
+
 def test_wordpad_heading_cursor_and_spacing(kernel_image):
     """Issue #240: H1 cursor is a visible block; i is narrower than M."""
     adv_i = _tnr_advance("i")
@@ -185,38 +197,18 @@ def test_wordpad_heading_cursor_and_spacing(kernel_image):
         _open(con)
         _keys(con, b"# MiMi", quiet=0.8)
         time.sleep(0.3)
-        pane = con.screen_pixel(8, 20)
-        found_cursor = False
-        max_block = 0
-        for x in range(0, 400, 2):
-            pix = con.screen_pixel(x, 20)
-            lum = _lum(pix)
-            if lum > max_block:
-                max_block = lum
-            if lum > _lum(pane) + 200:
-                found_cursor = True
+        end_w = _heading_cursor_width(con)
         con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor.png")
-        assert found_cursor, f"expected a bright H1 cursor block, max_lum={max_block}"
-        _keys(con, b"\x1b[D" * 4, quiet=0.6)
-        time.sleep(0.3)
+        assert end_w >= 8, end_w
+        _keys(con, b"\x1b[D", quiet=0.4)
+        time.sleep(0.2)
+        i_w = _heading_cursor_width(con)
+        _keys(con, b"\x1b[D", quiet=0.4)
+        time.sleep(0.2)
+        m_w = _heading_cursor_width(con)
         con.capture_png("/opt/cursor/artifacts/issue240_heading_cursor_on_letter.png")
-        ink_cols = []
-        for x in range(0, 360):
-            r, g, b = con.screen_pixel(x, 24)
-            if r + g + b >= 80:
-                ink_cols.append(x)
-        assert ink_cols, "expected H1 ink"
-        runs = []
-        start = ink_cols[0]
-        prev = ink_cols[0]
-        for x in ink_cols[1:]:
-            if x > prev + 2:
-                runs.append((start, prev))
-                start = x
-            prev = x
-        runs.append((start, prev))
-        widths = [b - a + 1 for a, b in runs]
-        assert max(widths) > min(widths) + 6, widths
+        assert i_w >= 6, i_w
+        assert m_w > i_w + 6, (m_w, i_w, end_w)
         _quit(con)
     finally:
         con.stop()
@@ -232,7 +224,7 @@ def test_wordpad_heading_wraps_long_line(kernel_image):
         con.capture_png("/opt/cursor/artifacts/issue240_heading_wrap.png")
         ink_rows = []
         for y in (8, 24, 40, 56, 72, 88):
-            if any(sum(con.screen_pixel(x, y)) >= 80 for x in range(0, 640, 8)):
+            if any(_lum(con.screen_pixel(x, y)) > 400 for x in range(0, 960, 8)):
                 ink_rows.append(y)
         assert len(ink_rows) >= 2, ink_rows
         assert "Mellow" in seen
@@ -328,13 +320,22 @@ def test_wordpad_copy_paste(kernel_image):
         con.stop()
 
 
+def _pane_left_px(con):
+    w, _h = con.screen_size()
+    cols = w // 8
+    wrap = 80
+    if cols <= wrap:
+        return 0
+    return ((cols - wrap) // 2) * 8
+
+
 def _lum(rgb):
     r, g, b = rgb
     return r * 3 + g * 6 + b
 
 
 def _cell_corners(con, col, row):
-    x0, y0 = col * 8, row * 16
+    x0, y0 = _pane_left_px(con) + col * 8, row * 16
     return [
         con.screen_pixel(x0 + 1, y0 + 1),
         con.screen_pixel(x0 + 6, y0 + 1),
@@ -348,7 +349,7 @@ def _is_solid_cursor(con, col, row):
 
 
 def _cell_max_lum(con, col, row):
-    x0, y0 = col * 8, row * 16
+    x0, y0 = _pane_left_px(con) + col * 8, row * 16
     m = 0
     for y in (y0 + 2, y0 + 7, y0 + 11, y0 + 14):
         for x in (x0 + 1, x0 + 3, x0 + 5, x0 + 6):
@@ -363,8 +364,9 @@ def test_wordpad_cursor_visible(kernel_image):
         _open(con)
         _keys(con, b"Hello")
         time.sleep(0.2)
-        cursor = con.screen_pixel(5 * 8 + 4, 8)
-        page = con.screen_pixel(20 * 8 + 4, 8)
+        ox = _pane_left_px(con)
+        cursor = con.screen_pixel(ox + 5 * 8 + 4, 8)
+        page = con.screen_pixel(ox + 20 * 8 + 4, 8)
         assert _lum(cursor) > _lum(page) + 80, (cursor, page)
         _quit(con)
     finally:
@@ -378,8 +380,9 @@ def test_wordpad_h1_is_taller(kernel_image):
         _open(con)
         _keys(con, b"# Title\rbody text", quiet=0.8)
         time.sleep(0.2)
-        heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
-        body = [con.screen_pixel(x, 4 * 16 + 8) for x in (12, 20, 28, 36)]
+        ox = _pane_left_px(con)
+        heading_mid = [con.screen_pixel(ox + x, 20) for x in (12, 20, 28, 36)]
+        body = [con.screen_pixel(ox + x, 4 * 16 + 8) for x in (12, 20, 28, 36)]
         assert any(h != b for h, b in zip(heading_mid, body))
         _quit(con)
     finally:
@@ -393,8 +396,9 @@ def test_wordpad_h3_is_taller_than_body(kernel_image):
         _open(con)
         _keys(con, b"### Head\rbody text", quiet=0.8)
         time.sleep(0.2)
-        heading_mid = [con.screen_pixel(x, 20) for x in (12, 20, 28, 36)]
-        body = [con.screen_pixel(x, 2 * 16 + 8) for x in (12, 20, 28, 36)]
+        ox = _pane_left_px(con)
+        heading_mid = [con.screen_pixel(ox + x, 20) for x in (12, 20, 28, 36)]
+        body = [con.screen_pixel(ox + x, 2 * 16 + 8) for x in (12, 20, 28, 36)]
         assert any(h != b for h, b in zip(heading_mid, body))
         _quit(con)
     finally:
