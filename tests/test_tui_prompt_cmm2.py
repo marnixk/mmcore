@@ -485,20 +485,102 @@ def test_then_return_from_sub(console):
     assert "42" in out
 
 
-def _run_until_break(con, path, timeout=4.0):
-    con.drain(quiet=0.1, timeout=0.4)
-    con._ser.sendall(f'RUN "{path}"\r'.encode())
-    time.sleep(timeout)
-    con._ser.sendall(b"\x03")
-    deadline = time.time() + 3.0
-    buf = b""
-    while time.time() < deadline:
-        chunk = con._recv(con._ser)
-        if chunk:
-            buf += chunk
-            if buf.rstrip().endswith(b">"):
-                break
-    return buf.decode(errors="replace")
+def test_restore_data_after_sub_and_include(console):
+    """GH-274: SyntaxShock's words_long.inc pattern — RESTORE label, READ
+    into a string array, DATA after the SUB and the LoadWords() call."""
+    assert console.send_line("NEW") == ""
+    _mkdir(console, "A:/ss")
+    inc = [
+        "DIM total_words = 3",
+        "DIM words$(total_words - 1)",
+        "SUB LoadWords()",
+        "  LOCAL word_idx",
+        "  RESTORE WordList",
+        "  FOR word_idx = 0 TO total_words - 1",
+        "    READ words$(word_idx)",
+        "  NEXT word_idx",
+        "END SUB",
+        "LoadWords()",
+        "WordList:",
+        'DATA "ant", "bat", "rabbit"',
+    ]
+    assert console.send_line('OPEN "A:/ss/words.inc" FOR OUTPUT AS #1') == ""
+    for line in inc:
+        _print_hash1_line(console, line)
+    assert console.send_line("CLOSE #1") == ""
+    src = [
+        "OPTION EXPLICIT",
+        "OPTION DEFAULT INTEGER",
+        '#include "A:/ss/words.inc"',
+        "PRINT words$(0)",
+        "PRINT words$(2)",
+        "PRINT total_words",
+    ]
+    assert console.send_line('OPEN "A:/ss/dump.bas" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(console, line)
+    assert console.send_line("CLOSE #1") == ""
+    out = console.send_line('RUN "A:/ss/dump.bas"', timeout=10.0)
+    lines = [ln.strip() for ln in out.replace("\r", "").split("\n") if ln.strip()]
+    assert "?NO DATA" not in out.upper(), out
+    assert "?OUT OF DATA" not in out.upper(), out
+    assert "?LABEL" not in out.upper(), out
+    assert "?SYNTAX" not in out.upper(), out
+    assert lines[0] == "ant", out
+    assert lines[1] == "rabbit", out
+    assert lines[2] == "3", out
+
+
+def test_syntaxshock_words_long_inc(console):
+    """GH-274: load the real 200-word DATA list the game includes."""
+    host = os.path.join(REPO, "tests", "cmm2_compat", "syntaxshock")
+    _mkdir(console, "A:/syntaxshock")
+    _mkdir(console, "A:/syntaxshock/libs")
+    _upload_text_file(
+        console,
+        os.path.join(host, "libs", "words_long.inc"),
+        "A:/syntaxshock/libs/words_long.inc",
+    )
+    src = [
+        "OPTION EXPLICIT",
+        "OPTION DEFAULT INTEGER",
+        '#include "libs/words_long.inc"',
+        "PRINT words$(0)",
+        "PRINT words$(199)",
+        "PRINT total_words",
+    ]
+    assert console.send_line('OPEN "A:/syntaxshock/dump.bas" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(console, line)
+    assert console.send_line("CLOSE #1") == ""
+    out = console.send_line('RUN "A:/syntaxshock/dump.bas"', timeout=15.0)
+    lines = [ln.strip() for ln in out.replace("\r", "").split("\n") if ln.strip()]
+    assert "?NO DATA" not in out.upper(), out
+    assert "?OUT OF DATA" not in out.upper(), out
+    assert "?LABEL" not in out.upper(), out
+    assert lines[0] == "ant", out
+    assert lines[1] == "rabbit", out
+    assert lines[2] == "200", out
+
+
+def test_unnumbered_file_leading_digit_is_line_number(console):
+    """typing.bas has `1  local char_x, char_y` inside Draw_Word; a leading
+    digit plus space is stored as that line number, not as body text."""
+    assert console.send_line("NEW") == ""
+    src = [
+        'PRINT "first"',
+        '1 PRINT "line1"',
+        'PRINT "after"',
+    ]
+    assert console.send_line('OPEN "LN.BAS" FOR OUTPUT AS #1') == ""
+    for line in src:
+        _print_hash1_line(console, line)
+    assert console.send_line("CLOSE #1") == ""
+    out = console.send_line('RUN "LN.BAS"')
+    lines = [ln.strip() for ln in out.replace("\r", "").split("\n") if ln.strip()]
+    assert lines[0] == "line1", out
+    assert "first" in lines
+    assert "after" in lines
 
 
 def test_cmm2_compat_syntaxshock_runs(console):
@@ -506,17 +588,46 @@ def test_cmm2_compat_syntaxshock_runs(console):
     _upload_compat_tree(console, host, "A:/syntaxshock")
     listing = console.send_line('DIR "A:/syntaxshock/gfx"')
     assert "FONTS.PNG" in listing.upper()
-    out = _run_until_break(console, "A:/syntaxshock/typing.bas")
+    os.makedirs("/opt/cursor/artifacts", exist_ok=True)
+    console.drain(quiet=0.1, timeout=0.4)
+    console._ser.sendall(b'RUN "A:/syntaxshock/typing.bas"\r')
+    time.sleep(6.0)
+    menu_png = console.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_menu.png")
+    console._ser.sendall(b"\r")
+    time.sleep(3.0)
+    play_png = console.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_play.png")
+    console._ser.sendall(b"\x03")
+    deadline = time.time() + 4.0
+    buf = b""
+    while time.time() < deadline:
+        chunk = console._recv(console._ser)
+        if chunk:
+            buf += chunk
+            if buf.rstrip().endswith(b">"):
+                break
+    out = buf.decode(errors="replace")
+    log_path = "/opt/cursor/artifacts/issue274_syntaxshock_run.log"
+    with open(log_path, "w") as fh:
+        fh.write(out)
     up = out.upper()
-    assert "?SYNTAX" not in up
-    assert "?FILE" not in up
-    assert "?PNG" not in up
-    assert "?TYPE MISMATCH" not in up
-    assert "?UNDECLARED" not in up
-    assert "?INVALID" not in up
-    assert "?NOT AN ARRAY" not in up
-    assert "?LABEL" not in up
-    assert "?NO DATA" not in up
+    assert "?SYNTAX" not in up, out
+    assert "?FILE" not in up, out
+    assert "?PNG" not in up, out
+    assert "?TYPE MISMATCH" not in up, out
+    assert "?UNDECLARED" not in up, out
+    assert "?INVALID" not in up, out
+    assert "?NOT AN ARRAY" not in up, out
+    assert "?LABEL" not in up, out
+    assert "?NO DATA" not in up, out
+    assert "?OUT OF DATA" not in up, out
+    w0 = console.send_line("PRINT words$(0)")
+    w199 = console.send_line("PRINT words$(199)")
+    with open(log_path, "a") as fh:
+        fh.write("\n--- after break ---\n")
+        fh.write("words$(0)=" + w0 + "\n")
+        fh.write("words$(199)=" + w199 + "\n")
+    assert os.path.isfile(menu_png)
+    assert os.path.isfile(play_png)
 
 
 def test_cmm2_compat_xmas_runs(console):
