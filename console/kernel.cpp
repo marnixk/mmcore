@@ -88,6 +88,7 @@ static void emit (CKernel *k, const char *s)
 
 static void emit_prompt (CKernel *k)
 {
+	mmb_hw_cursor (1);
 	emit (k, mmb_prompt ());
 }
 

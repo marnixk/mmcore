@@ -622,6 +622,14 @@ void mmb_console_reset_prompt(void)
 	G.gfx.fg = 0x808080u;
 	G.gfx.bg = 0;
 	mmb_console_apply_colour();
+	mmb_hw_cursor(1);
+}
+
+void mmb_hw_cursor(int show)
+{
+	const char *s = show ? "\x1b[?25h" : "\x1b[?25l";
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen(s, 6);
 }
 
 void mmb_print_startup(void)
