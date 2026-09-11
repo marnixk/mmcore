@@ -89,7 +89,7 @@ def test_blit_read_write_and_copy(fresh_console):
 
 def test_framebuffer_window(fresh_console):
     c = fresh_console
-    assert c.send_line("FRAMEBUFFER CREATE 640,480") == ""
+    assert c.send_line("FRAMEBUFFER CREATE 1280,720") == ""
     assert c.send_line("FRAMEBUFFER WRITE") == ""
     c.send_line("CLS")
     c.send_line("BOX 40,40,20,20,1,RGB(255,0,0),RGB(255,0,0)")

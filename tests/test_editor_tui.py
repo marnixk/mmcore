@@ -44,12 +44,12 @@ def test_editor_ocr_file_label(kernel_image):
     con.start()
     try:
         _edit(con, "HI.BAS")
-        # Status bar is the last text row (~y 464 on 640x480 / 8x16).
-        # The editor pane is deep blue.
-        bar = [con.screen_pixel(x, 464) for x in (8, 40, 80, 200)]
+        # Status bar is the last text row (y 704 on 1280x720 / 8x16).
+        # The editor pane is Slate (near-black).
+        bar = [con.screen_pixel(x, 704) for x in (8, 40, 80, 200)]
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
-        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
         # Full-height box vertical at the left of the text pane (row 3, glyph y=0).
         r, g, b = con.screen_pixel(3, 3 * 16)
         assert r > 100 and g > 100 and b > 100, (r, g, b)
@@ -546,8 +546,8 @@ def test_editor_tab_char_does_not_shift_border(kernel_image):
         assert con.send_line('PRINT #1, "X" + CHR$(9) + "Y"') == ""
         assert con.send_line("CLOSE #1") == ""
         _edit(con, "TABSHOW.BAS")
-        # Right pane border stays in the last character column (79 * 8 + 3).
-        r, g, b = con.screen_pixel(79 * 8 + 3, 3 * 16)
+        # Right pane border stays in the last character column (159 * 8 + 3).
+        r, g, b = con.screen_pixel(159 * 8 + 3, 3 * 16)
         assert r > 100 and g > 100 and b > 100, (r, g, b)
         _quit(con)
     finally:
@@ -564,9 +564,9 @@ def _cell_samples(con, col, row):
     ]
 
 
-def _is_edit_blue(rgb):
+def _is_edit_pane(rgb):
     r, g, b = rgb
-    return b > r + 20 and b > 40 and r < 80
+    return r < 50 and g < 50 and b < 55
 
 
 def _is_sel_light(rgb):
@@ -594,8 +594,8 @@ def test_editor_shift_arrows_highlight_selection(kernel_image):
         marked = _cell_samples(con, 1, 3)
         rest = _cell_samples(con, 5, 3)
         assert any(_is_sel_light(p) for p in marked), marked
-        assert not all(_is_edit_blue(p) for p in marked), marked
-        assert any(_is_edit_blue(p) for p in rest), rest
+        assert not all(_is_edit_pane(p) for p in marked), marked
+        assert any(_is_edit_pane(p) for p in rest), rest
         _quit(con)
     finally:
         con.stop()
@@ -952,10 +952,10 @@ def test_editor_run_restores_mode_and_page(kernel_image):
         back = _keys(con, b" ", quiet=1.0)
         assert "File" in back
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
         _quit(con)
-        assert con.send_line("PRINT MM.HRES") == "640"
-        assert con.send_line("PRINT MM.VRES") == "480"
+        assert con.send_line("PRINT MM.HRES") == "1280"
+        assert con.send_line("PRINT MM.VRES") == "720"
         assert con.send_line("PAGE WRITE 0") == ""
         assert con.send_line("CLS") == ""
         assert con.send_line("PIXEL 12,12,RGB(255,0,0)") == ""
@@ -1040,7 +1040,7 @@ def test_editor_theme_paper_changes_pane_and_persists(kernel_image):
     try:
         _edit(con, "THP.BAS")
         pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
-        assert any(b > r + 20 and b > 40 for r, g, b in pane), pane
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
         _keys(con, bytes([1]) + b"tp", quiet=0.8)
         paper = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
         assert any(r > 140 and g > 140 and b > 140 for r, g, b in paper), paper

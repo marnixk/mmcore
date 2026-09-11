@@ -30,6 +30,7 @@ static int ed_rows(void) { return tui_rows(); }
 #define MENU_COUNT  5
 
 #define ED_THEME_N     10
+#define ED_THEME_SLATE 5
 #define ED_THEME_TURBO 8
 
 static const unsigned pal_paper[16] = {
@@ -170,7 +171,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BRWHITE, TUI_BLACK, TUI_BLACK, TUI_MAGENTA,
 	  TUI_BRWHITE, TUI_BLACK,
 	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA, pal_violet },
-	/* 2 retro — Turbo is the historical default (VGA palette) */
+	/* 2 retro — VGA palette (Turbo was the old default) */
 	{ "Turbo",
 	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
 	  TUI_BLACK, TUI_GREEN,
@@ -197,7 +198,7 @@ static const mmb_ed_theme *th(void)
 {
 	int i = G.opt.edit_theme;
 	if (i < 0 || i >= ED_THEME_N)
-		i = ED_THEME_TURBO;
+		i = ED_THEME_SLATE;
 	return &k_themes[i];
 }
 
@@ -243,7 +244,7 @@ int mmb_editor_theme_count(void)
 const char *mmb_editor_theme_name(int i)
 {
 	if (i < 0 || i >= ED_THEME_N)
-		return k_themes[ED_THEME_TURBO].name;
+		return k_themes[ED_THEME_SLATE].name;
 	return k_themes[i].name;
 }
 

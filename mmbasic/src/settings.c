@@ -431,7 +431,7 @@ void mmb_settings_load(void)
 		p = nl;
 	}
 	if (G.opt.edit_theme < 0 || G.opt.edit_theme >= 10)
-		G.opt.edit_theme = 8;
+		G.opt.edit_theme = MMB_OPT_DEFAULT_EDIT_THEME;
 }
 
 void mmb_cmd_factory_reset(void)
@@ -446,6 +446,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.term_log = 0;
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
+	mmb_gfx_apply_default_mode();
 	mmb_settings_save();
 	mmb_out("Factory defaults restored");
 }

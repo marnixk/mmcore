@@ -335,13 +335,13 @@ def test_ihelp_follows_editor_theme_phosphor(kernel_image):
         con.stop()
 
 
-def test_ihelp_turbo_body_is_blue(kernel_image):
+def test_ihelp_default_body_is_slate(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         open_ihelp(con)
         empty = [con.screen_pixel(x, 80) for x in (480, 520, 560)]
-        assert any(b > r + 40 and b > 80 for r, g, b in empty), empty
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in empty), empty
         close_ihelp(con)
     finally:
         con.stop()
