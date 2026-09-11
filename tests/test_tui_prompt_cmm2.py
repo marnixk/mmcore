@@ -323,6 +323,20 @@ def _upload_text_file(con, host_path, dest):
     assert con.send_line("CLOSE #1") == ""
 
 
+def _wait_contains(con, token: bytes, timeout: float = 10.0) -> bytes:
+    deadline = time.time() + timeout
+    seen = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            seen += chunk
+            if token in seen:
+                return seen
+        else:
+            time.sleep(0.01)
+    raise AssertionError(f"timeout waiting for {token!r}, saw {seen!r}")
+
+
 def _wait_prompt(con, timeout=20.0) -> str:
     deadline = time.time() + timeout
     buf = b""
@@ -342,11 +356,15 @@ def _ensure_recv_bas(con):
         return
     lines = [
         "OPTION EXPLICIT OFF",
+        'PRINT "DEST?"',
         "LINE INPUT D$",
         'OPEN D$ FOR OUTPUT AS #1',
         "DO",
+        ' PRINT "HEX?"',
         " LINE INPUT H$",
-        ' IF H$="!" THEN EXIT DO',
+        ' IF H$="!" THEN',
+        "  EXIT DO",
+        " ENDIF",
         " FOR I=1 TO LEN(H$) STEP 2",
         "  A=ASC(MID$(H$,I,1))-48",
         "  B=ASC(MID$(H$,I+1,1))-48",
@@ -370,14 +388,19 @@ def _upload_binary_file(con, host_path, dest):
     _ensure_recv_bas(con)
     con.drain(quiet=0.05)
     con._ser.sendall(b'RUN "RECV.BAS"\r')
-    time.sleep(0.08)
+    _wait_contains(con, b"DEST?")
     con._ser.sendall((dest + "\r").encode())
     hexed = data.hex().upper()
-    step = 200
-    for i in range(0, len(hexed), step):
-        con._ser.sendall((hexed[i : i + step] + "\r").encode())
-    con._ser.sendall(b"!\r")
-    raw = _wait_prompt(con, timeout=45.0)
+    pos = 0
+    step = 254
+    while True:
+        _wait_contains(con, b"HEX?")
+        if pos >= len(hexed):
+            con._ser.sendall(b"!\r")
+            break
+        con._ser.sendall((hexed[pos : pos + step] + "\r").encode())
+        pos += step
+    raw = _wait_prompt(con, timeout=20.0)
     assert "?SYNTAX" not in raw.upper(), raw
     assert "?ERROR" not in raw.upper(), raw
 
