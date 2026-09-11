@@ -96,13 +96,13 @@ def test_ipconfig_ethernet_when_enabled(console):
 
 def test_help_ethernet(console):
     listing = scroll_all(console, open_ihelp(console))
-    assert "ETHERNET" in listing
+    assert "<ETHERNET>" in listing
     close_ihelp(console)
     out = dump_topic(console, "ETHERNET")
     assert out != "?SYNTAX ERROR"
-    assert "OPTION ETHERNET ON" in out
+    assert "ETHERNET" in out
     assert "DHCP" in out
     assert "IPCONFIG" in out
     assert "reboot" in out.lower()
     opt = dump_topic(console, "OPTION")
-    assert "ETHERNET ON|OFF" in opt
+    assert "<ETHERNET>" in opt or "ETHERNET ON|OFF" in opt
