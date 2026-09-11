@@ -118,7 +118,9 @@ def test_turtle_and_bitmap(fresh_console):
     assert c.send_line("TURTLE RESET") == ""
     assert c.send_line("TURTLE HEADING 90") == ""
     assert c.send_line("TURTLE FORWARD 40") == ""
-    assert _rgb_is_white(_pixel(c, 340, 240))
+    w = int(c.send_line("PRINT MM.HRES").split()[0])
+    h = int(c.send_line("PRINT MM.VRES").split()[0])
+    assert _rgb_is_white(_pixel(c, w // 2 + 20, h // 2))
     c.send_line("CLS")
     assert c.send_line("BITMAP 10,10,&HFF,8,1,1,RGB(255,0,0)") == ""
     assert _rgb_is_red(_pixel(c, 10, 10))
@@ -146,3 +148,26 @@ def test_help_cmm2_gfx_topics(console):
     assert "IMAGE" in cmm2
     assert "FRAMEBUFFER" in cmm2
     assert "TURTLE" in cmm2
+
+
+def test_rgb_alpha_and_page_copy_b(fresh_console):
+    """Issue #260: RGB(...,t) packing and PAGE COPY B skip-black."""
+    c = fresh_console
+    assert c.send_line("PRINT HEX$(RGB(RED))") == "AA0000"
+    packed = int(c.send_line("PRINT RGB(1,2,3,15)"))
+    assert (packed >> 24) & 0xFF == 0x1F
+    assert packed & 0xFFFFFF == 0x010203
+    assert c.send_line("MODE 7,12") == ""
+    assert c.send_line("PAGE WRITE 2") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 40,40,40,40,1,RGB(220,0,0),RGB(220,0,0)") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 10,10,RGB(0,0,0,15)") == ""
+    assert int(c.send_line("PRINT PIXEL(10,10,1)")) != 0
+    assert c.send_line("PAGE COPY 2, 1, B") == ""
+    red = int(c.send_line("PRINT PIXEL(50,50,1)").split()[0])
+    gap = int(c.send_line("PRINT PIXEL(10,40,1)").split()[0])
+    assert ((red >> 16) & 255) > 150
+    assert (gap & 0xFFFFFF) == 0
+    assert c.send_line("PAGE WRITE 0") == ""

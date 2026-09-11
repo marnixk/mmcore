@@ -209,7 +209,8 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	uint32_t *page[MMB_MAX_PAGES]; /* RGB888 */
+	uint32_t *page[MMB_MAX_PAGES]; /* RGB888, optional alpha in high bits */
+	uint32_t *present_scratch;
 } mmb_gfx;
 
 typedef struct mmb_ed_tab {
@@ -623,6 +624,7 @@ void mmb_gfx_bitmap(int x, int y, const unsigned char *bits, int nbytes,
 void mmb_gfx_fill_poly(const int *xs, const int *ys, int n, unsigned rgb);
 void mmb_turtle_init_state(int cls);
 unsigned mmb_rgb_pack(int r, int g, int b);
+unsigned mmb_rgb_pack_a(int r, int g, int b, int a);
 void mmb_rgb_unpack(unsigned c, int *r, int *g, int *b);
 unsigned mmb_quantize(unsigned rgb888);
 unsigned mmb_named_colour(const char *name, int *ok);
