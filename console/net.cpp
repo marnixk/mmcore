@@ -644,6 +644,8 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 			{
 				s_dbg_zero++;
 				s_dbg_last = 0;
+				if (CScheduler::IsActive())
+					CScheduler::Get()->MsSleep(1);
 				return (int)out;
 			}
 			s_dbg_ok++;
@@ -677,6 +679,8 @@ int mmb_net_tcp_rx_avail(void)
 		{
 			s_dbg_zero++;
 			s_dbg_last = 0;
+			if (CScheduler::IsActive())
+				CScheduler::Get()->MsSleep(1);
 			return 0;
 		}
 		s_dbg_ok++;

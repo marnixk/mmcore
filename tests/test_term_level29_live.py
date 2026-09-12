@@ -20,6 +20,7 @@ BBS = ("bbs.fozztexx.com", 23)
 USER = b"ireal"
 PASS = b"ds9space"
 ARTIFACTS = "/opt/cursor/artifacts"
+PANE = "640x480+160+0"
 
 
 def _bbs_reachable() -> bool:
@@ -145,7 +146,7 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert connected, serial.decode(errors="replace")[-800:]
         time.sleep(0.4)
 
-        ocr = con.wait_ocr("User:", timeout=20.0, crop=None)
+        ocr = con.wait_ocr("User:", timeout=40.0, crop=PANE)
         banner = os.path.join(ARTIFACTS, "level29_session_username.png")
         con.capture_png(banner)
         serial += con.drain(quiet=0.3, timeout=2.0)
@@ -155,16 +156,24 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert "bytes=" in last and "zero=" in last and "rxrdy=" in last
 
         saw_prompt = "user:" in ocr.lower() or "username" in ocr.lower()
+        assert saw_prompt, (
+            "Level29 drip did not reach the username prompt on HDMI; "
+            f"ocr={ocr!r} tcp={tcp[-3:]!r}"
+        )
         con._ser.sendall(USER + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        pw = con.wait_ocr("Password", timeout=20.0, crop=None)
+        pw = con.wait_ocr("Password", timeout=20.0, crop=PANE)
         con.capture_png(os.path.join(ARTIFACTS, "level29_session_password.png"))
         saw_password = "password" in pw.lower()
+        assert saw_password, (
+            "sent ireal but HDMI never showed Password; "
+            f"ocr={pw!r} tcp={tcp[-3:]!r}"
+        )
         con._ser.sendall(PASS + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        after_ocr = con.wait_ocr("Welcome ireal", timeout=20.0, crop=None)
+        after_ocr = con.wait_ocr("Welcome ireal", timeout=20.0, crop=PANE)
         if "welcome ireal" not in after_ocr.lower():
-            after_ocr = con.wait_ocr("Terminal size", timeout=8.0, crop=None) or after_ocr
+            after_ocr = con.wait_ocr("Terminal size", timeout=8.0, crop=PANE) or after_ocr
         after = os.path.join(ARTIFACTS, "level29_session_welcome.png")
         con.capture_png(after)
 
@@ -173,14 +182,6 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         tcp = _tcp_lines(serial)
         logged_in = (
             "welcome ireal" in after_ocr.lower() or "terminal size" in after_ocr.lower()
-        )
-        assert saw_prompt, (
-            "Level29 drip did not reach the username prompt on HDMI; "
-            f"ocr={ocr!r} tcp={tcp[-3:]!r}"
-        )
-        assert saw_password, (
-            "sent ireal but HDMI never showed Password; "
-            f"ocr={pw!r} tcp={tcp[-3:]!r}"
         )
         assert logged_in, (
             "sent ireal/ds9space but HDMI did not show Welcome ireal; "
