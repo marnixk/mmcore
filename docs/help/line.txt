@@ -1,0 +1,12 @@
+name: LINE
+kind: command
+
+LINE x1, y1, x2, y2 [, colour] [, linewidth]
+
+Draw a straight line. colour defaults to the
+current foreground. linewidth defaults to 1.
+
+LINE INPUT #fn, var$ reads a file line (see that
+topic).
+
+Example:  LINE 0,0,100,80,RGB(0,255,0)

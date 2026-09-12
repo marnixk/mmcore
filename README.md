@@ -37,6 +37,7 @@ a submodule.
 | `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
+| `docs/` | Roadmap plus `docs/help/` topic files compiled into HELP |
 | `.cursor/` | Cloud Agent environment (toolchains, QEMU, OCR, Python) |
 
 ## Toolchain

@@ -1,0 +1,9 @@
+name: COPY
+kind: command
+
+COPY src$ [TO] dst$
+COPY src$, dst$
+
+Copy a file.
+
+Example:  COPY "A.TXT" TO "B.TXT"

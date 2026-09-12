@@ -1,0 +1,13 @@
+name: RENAME
+kind: command
+alias: NAME, MV
+
+RENAME src$ [AS|TO] dst$
+NAME src$ AS dst$     (alias)
+MV src$ [AS|TO] dst$  (alias)
+
+Rename a file, or move it to another folder on the
+same drive. Destination may be a new name or a path.
+
+Example:  RENAME "B.TXT" AS "C.TXT"
+          MV "C.TXT" TO "DATA/C.TXT"

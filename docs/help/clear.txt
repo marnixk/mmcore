@@ -1,0 +1,8 @@
+name: CLEAR
+kind: command
+alias: ERASE
+
+CLEAR
+ERASE     (alias)
+
+Clear variables. The program text is kept (see NEW).

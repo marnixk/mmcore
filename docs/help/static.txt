@@ -1,0 +1,9 @@
+name: STATIC
+kind: language
+
+STATIC name [(dims)] [AS type] [, ...]
+
+Like LOCAL but the value is kept between calls.
+Same syntax as DIM. Only used in SUB/FUNCTION.
+
+Example:  STATIC N = 0

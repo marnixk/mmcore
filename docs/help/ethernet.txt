@@ -1,0 +1,21 @@
+name: ETHERNET
+kind: command
+alias: OPTION ETHERNET
+
+OPTION ETHERNET ON
+OPTION ETHERNET OFF
+
+Use wired Ethernet instead of Wi-Fi. ON starts DHCP
+on the onboard RJ45 (Pi 3 / 3B+ USB LAN, Pi 4 GENET)
+and turns off Wi-Fi auto-join. Credentials for WIFI
+are kept. Only one interface is active: enabling
+Ethernet disables Wi-Fi; OPTIONS WIFI / OPTION WIFI
+disable Ethernet. Switching after the stack is up
+needs REBOOT. If ON is saved, Ethernet initialises
+at boot. IPCONFIG shows Interface: Ethernet.
+QEMU has no NIC (Ethernet not available).
+Persists in C:/.mmbasic.ini [ethernet] enabled=.
+
+Example:  OPTION ETHERNET ON
+          IPCONFIG
+          OPTION ETHERNET OFF

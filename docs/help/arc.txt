@@ -1,0 +1,12 @@
+name: ARC
+kind: command
+
+ARC x, y, r1, r2, a1, a2 [, colour]
+
+Elliptical arc centred at (x,y). r1 is the X radius,
+r2 the Y radius. a1 and a2 are start and end angles
+(radians, or degrees after OPTION ANGLE DEGREES).
+Drawn as line segments.
+
+Example:  OPTION ANGLE DEGREES
+          ARC 160,120,40,40,0,90,RGB(255,255,0)

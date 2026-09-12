@@ -1,0 +1,12 @@
+name: LIST
+kind: command
+alias: LIST TYPE
+
+LIST
+LIST TYPE [name]
+
+LIST prints the program in memory with line numbers.
+LIST TYPE shows defined TYPE blocks; LIST TYPE name
+shows one type.
+
+Example:  LIST TYPE Point

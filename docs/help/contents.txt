@@ -1,0 +1,62 @@
+name: CONTENTS
+kind: page
+alias: BASIC
+
+MMBasic Interactive Help
+
+Use arrows to move between ~Index~ links. Enter opens a topic.
+
+Commands  (HELP topic for details)
+
+Graphics
+  ~CLS~ ~PIXEL~ ~LINE~ ~BOX~ ~CIRCLE~ ~RBOX~ ~ARC~ ~TRIANGLE~
+  ~POLYGON~ ~TEXT~ ~FONT~ ~COLOUR~ ~MODE~ ~PAGE~ ~BLIT~
+  ~IMAGE~ ~FRAMEBUFFER~ ~TURTLE~ ~SPRITE~
+
+Files
+  ~DIR~ ~FILES~ ~OPEN~ ~CLOSE~ ~CHDIR~ ~MKDIR~ ~RMDIR~ ~COPY~ ~XFER~ ~RENAME~
+  ~KILL~ ~RM~ ~DEL~ ~MV~ ~DRIVE~ ~PACKAGE~ ~LOAD~ ~SAVE~ ~SEEK~
+
+Program
+  ~NEW~ ~LIST~ ~RUN~ ~EDIT~ ~WORDPAD~ ~MEMORY~ ~REBOOT~
+
+Other
+  ~PRINT~ ~LOCATE~ ~INPUT~ ~LINE INPUT~ ~OPTION~ ~PLAY~ ~PAUSE~ ~VSYNC_WAIT~ ~CLEAR~ ~END~
+  ~CALL~ ~HELP~ ~ERROR~ ~RANDOMIZE~ ~INC~ ~DEC~ ~CAT~ ~ON~ ~SORT~ ~STRUCT~ ~JSON_PARSE~
+  ~SETTICK~ ~FACTORY_RESET~ ~OPTIONS~ ~CONNECT~ ~TERM~ ~IPCONFIG~ ~ETHERNET~ ~CREDITS~ ~CONTINUE~ ~EXIT~ ~LS~
+
+Prompt
+  OPTION PROMPT BARE|CWD         "> " or DOS $p$g (A:/>)
+  HELP ~PROMPT~ for details. Persists in .mmbasic.ini.
+  Up/Down history; Left/Right move; typing inserts.
+
+Wi-Fi / Ethernet
+  OPTION WIFI "ssid","password"  store and connect
+  OPTION WIFI                    scan and prompt
+  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)
+  OPTION WIFI COUNTRY "NZ"       ISO domain (default US; UK=GB)
+  OPTIONS WIFI                   connect with stored credentials
+  OPTION ETHERNET ON|OFF         wired DHCP (Pi with RJ45)
+  IPCONFIG                       active interface, IP, gateway, DHCP
+  One interface at a time. Ethernet ON disables Wi-Fi join.
+  Credentials persist in C:/.mmbasic.ini (A: if no SD).
+  OPTIONS WIFI joins using stored SSID/PSK.
+  ?WIFI not configured if none are stored.
+  Scan lists beacon SSIDs. WPA2 join needs C: and
+  C:/firmware/. QEMU has no radio or Ethernet.
+  HELP ~OPTION~. HELP ~ETHERNET~. HELP ~IPCONFIG~.
+
+Type HELP BASIC for language, HELP ~FUNCTIONS~ for functions.
+Type HELP ~CMM2~ for the full CMM2 command inventory.
+
+Language constructs  (HELP BASIC topic or HELP topic)
+
+  ~FOR~ ~NEXT~ ~EXIT FOR~   ~CONTINUE FOR~
+  ~WHILE~ ~WEND~          ~DO~ ~LOOP~ ~EXIT DO~  ~CONTINUE DO~
+  ~IF~ ~THEN~ ~ELSE~ ~ELSEIF~ ~ENDIF~
+  ~SELECT CASE~         ~DIM~ ~LOCAL~ ~STATIC~ ~CONST~ ~TYPE~ ~END TYPE~
+  ~DATA~ ~READ~ ~RESTORE~   ~SUB~ ~FUNCTION~ ~CALL~ ~EXIT SUB~
+  ~LIST TYPE~           ~GOTO~ ~GOSUB~ ~RETURN~   ~ON GOTO~  ~ON GOSUB~
+  ~LET~ ~REM~ ~END~ ~ERROR~   labels (name:)
+
+Type HELP topic for syntax and examples.

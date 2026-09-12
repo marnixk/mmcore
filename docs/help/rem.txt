@@ -1,0 +1,10 @@
+name: REM
+kind: language
+
+REM comment
+' comment
+
+A remark. The rest of the statement is ignored.
+
+Example:  REM this is ignored
+          PRINT 1 ' trailing comment

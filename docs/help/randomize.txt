@@ -1,0 +1,9 @@
+name: RANDOMIZE
+kind: command
+
+RANDOMIZE [n]
+
+Seed RND. With no n, uses the millisecond timer.
+RND(-n) also sets the seed.
+
+Example:  RANDOMIZE 1 : PRINT RND

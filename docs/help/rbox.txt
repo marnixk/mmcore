@@ -1,0 +1,10 @@
+name: RBOX
+kind: command
+
+RBOX x, y, w, h [, radius] [, lw] [, fill] [, colour]
+
+Rounded rectangle. radius defaults to 8.
+If the last numeric argument is above 7 it is treated
+as an RGB colour.
+
+Example:  RBOX 80,20,40,40,6,RGB(0,0,255)

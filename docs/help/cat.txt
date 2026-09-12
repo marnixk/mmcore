@@ -1,0 +1,8 @@
+name: CAT
+kind: command
+
+CAT s$, t$
+
+Append t$ to s$ (same as s$ = s$ + t$).
+
+Example:  A$="MM" : CAT A$,"BASIC" : PRINT A$

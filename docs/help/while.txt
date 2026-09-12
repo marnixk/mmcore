@@ -1,0 +1,17 @@
+name: WHILE
+kind: language
+alias: WEND
+
+WHILE condition
+  statements
+WEND
+
+Repeat while condition is non-zero.
+
+Example:
+  10 I=0
+  20 WHILE I<3
+  30 I=I+1
+  40 PRINT I
+  50 WEND
+  RUN

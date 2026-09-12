@@ -1,0 +1,21 @@
+name: FOR
+kind: language
+alias: NEXT
+
+FOR var = start TO end [STEP step]
+  statements
+NEXT [var]
+
+Count var from start to end. step defaults to 1.
+NEXT without a name uses the innermost FOR.
+Use numbered program lines; RUN executes the loop.
+
+Example:
+  10 FOR I=1 TO 3
+  20 PRINT I
+  30 NEXT I
+  RUN
+
+  10 FOR I=5 TO 1 STEP -2
+  20 PRINT I
+  30 NEXT I

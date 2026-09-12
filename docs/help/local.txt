@@ -1,0 +1,9 @@
+name: LOCAL
+kind: language
+
+LOCAL name [(dims)] [AS type] [, ...]
+
+Same syntax as DIM. Declare a variable inside a
+SUB or FUNCTION. Required when OPTION EXPLICIT is on.
+
+Example:  LOCAL T AS INTEGER

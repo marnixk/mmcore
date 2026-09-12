@@ -1,0 +1,29 @@
+name: IF
+kind: language
+alias: ENDIF, END IF, ELSE, ELSEIF, THEN
+
+IF condition THEN statement [ELSE statement]
+IF condition THEN
+  statements
+ELSEIF condition THEN
+  statements
+ELSE
+  statements
+ENDIF
+
+Single-line IF runs the THEN (or ELSE) statement.
+IF cond THEN linenumber is a GOTO when cond is true.
+A THEN at end of line starts a multiline IF closed
+by ENDIF (or END IF).
+
+Example:
+  10 X=1
+  20 IF X>0 THEN PRINT "YES" ELSE PRINT "NO"
+  RUN
+
+  10 X=0
+  20 IF X>0 THEN
+  30 PRINT "YES"
+  40 ELSE
+  50 PRINT "NO"
+  60 ENDIF

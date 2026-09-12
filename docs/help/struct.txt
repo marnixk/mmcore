@@ -1,0 +1,30 @@
+name: STRUCT
+kind: command
+alias: STRUCT COPY, STRUCT SORT, STRUCT EXTRACT, STRUCT INSERT, STRUCT CLEAR, STRUCT SWAP, STRUCT PRINT, STRUCT SAVE, STRUCT LOAD, SIZEOF, STRUCT()
+
+STRUCT COPY src TO dst    or src, dst
+STRUCT COPY src() TO dst()  (whole arrays)
+STRUCT SORT arr().member [, flags]
+STRUCT EXTRACT arr().member, dest()
+STRUCT INSERT src(), arr().member
+STRUCT CLEAR var | arr()
+STRUCT SWAP var1, var2
+STRUCT PRINT var | arr()
+STRUCT SAVE #n, var|arr()|arr(i)
+STRUCT LOAD #n, var|arr()|arr(i)
+STRUCT(SIZEOF "T")
+STRUCT(OFFSET "T", "m")
+STRUCT(TYPE "T", "m")
+STRUCT(FIND arr().member, value [, start])
+
+Operate on TYPE variables. SAVE/LOAD are disk files
+only (binary MMBasic layout). SIZEOF is the record
+size in bytes. TYPE() returns 1 FLOAT, 2 STRING,
+4 INTEGER. FIND returns the index or -1.
+PIXEL pos().x, pos().y and MATH SCALE arr().x use
+the same empty-index member view (HELP PIXEL / MATH).
+HELP TYPE for DIM AS and dots.
+
+Example:
+  STRUCT COPY a TO b
+  PRINT STRUCT(SIZEOF "Point")

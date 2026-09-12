@@ -1,0 +1,10 @@
+name: DEC
+kind: command
+
+INC var [, amount]
+DEC var [, amount]
+
+Add or subtract amount (default 1) from a numeric
+variable.
+
+Example:  A=10 : INC A,2 : PRINT A

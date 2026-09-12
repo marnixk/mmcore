@@ -6,7 +6,7 @@
 #define IH_MAX_LINKS 384
 #define IH_STACK     16
 #define IH_NAME      40
-#define IH_MATCH     220
+#define IH_MAX_TOPICS 256
 
 #define ATTR_TEXT  0
 #define ATTR_BRACK 1
@@ -17,12 +17,15 @@
 #define TGT_CONTENTS (-1)
 #define TGT_INDEX    (-2)
 #define TGT_BACK     (-3)
+#define TGT_OVERVIEW (-4)
 
 #define PAGE_INDEX    0
 #define PAGE_CONTENTS 1
 #define PAGE_TOPIC    2
+#define PAGE_OVERVIEW 3
 
-#define NAV_N 3
+#define NAV_N 4
+#define HELP_PAGE 3
 #define ESC_IDLE_MS 60
 
 static const mmb_ed_theme *ihth(void)
@@ -59,12 +62,6 @@ typedef struct {
 	int sel;
 } ih_frame;
 
-typedef struct {
-	const char *pat;
-	int plen;
-	int target;
-} ih_match;
-
 static struct {
 	int active;
 	int page;
@@ -86,14 +83,12 @@ static struct {
 	unsigned char attr[IH_MAX_LINES][IH_COLS];
 	ih_link links[IH_MAX_LINKS];
 	ih_frame stack[IH_STACK];
-	ih_match matches[IH_MATCH];
-	int nmatches;
-	int matches_ready;
 } H;
 
 static void ih_draw(void);
 static void load_index(void);
 static void load_contents(void);
+static void load_overview(void);
 static void load_topic(int ti);
 static void ensure_visible(void);
 
@@ -102,25 +97,6 @@ static int to_upper(char c)
 	if (c >= 'a' && c <= 'z')
 		return c - 32;
 	return (unsigned char)c;
-}
-
-static int is_id(char c)
-{
-	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-	       (c >= '0' && c <= '9') || c == '_' || c == '$' || c == '.';
-}
-
-static int ieq_n(const char *a, const char *b, int n)
-{
-	int i;
-	for (i = 0; i < n; i++)
-	{
-		if (!a[i] || !b[i])
-			return 0;
-		if (to_upper(a[i]) != to_upper(b[i]))
-			return 0;
-	}
-	return 1;
 }
 
 static void set_status(const char *s)
@@ -141,64 +117,6 @@ static void set_title(const char *s)
 	i = (int)strlen(H.title);
 	strncpy(H.title + i, s, sizeof(H.title) - 1 - (unsigned)i);
 	H.title[sizeof(H.title) - 1] = 0;
-}
-
-static void add_match(const char *pat, int target)
-{
-	int i, n;
-	if (!pat || !pat[0] || H.nmatches >= IH_MATCH)
-		return;
-	n = (int)strlen(pat);
-	for (i = 0; i < H.nmatches; i++)
-	{
-		if (H.matches[i].plen == n && mmb_keyword_eq(H.matches[i].pat, pat))
-			return;
-	}
-	H.matches[H.nmatches].pat = pat;
-	H.matches[H.nmatches].plen = n;
-	H.matches[H.nmatches].target = target;
-	H.nmatches++;
-}
-
-static void build_matches(void)
-{
-	int i, j, n, a;
-	ih_match tmp;
-	if (H.matches_ready)
-		return;
-	H.nmatches = 0;
-	n = mmb_help_topic_count();
-	for (i = 0; i < n; i++)
-		add_match(mmb_help_topic_name(i), i);
-	for (i = 0; i < H.nmatches; i++)
-	{
-		for (j = i + 1; j < H.nmatches; j++)
-		{
-			if (H.matches[j].plen > H.matches[i].plen)
-			{
-				tmp = H.matches[i];
-				H.matches[i] = H.matches[j];
-				H.matches[j] = tmp;
-			}
-		}
-	}
-	H.matches_ready = 1;
-}
-
-static int match_at(const char *s, int skip_tgt)
-{
-	int i;
-	for (i = 0; i < H.nmatches; i++)
-	{
-		if (H.matches[i].target == skip_tgt)
-			continue;
-		if (!ieq_n(s, H.matches[i].pat, H.matches[i].plen))
-			continue;
-		if (is_id(s[H.matches[i].plen]))
-			continue;
-		return i;
-	}
-	return -1;
 }
 
 static void line_clear(int y)
@@ -291,24 +209,42 @@ static void add_nav(void)
 	H.links[0].line = -1;
 	H.links[0].col = 1;
 	H.links[0].len = 10;
-	H.links[0].target = TGT_CONTENTS;
-	strncpy(H.links[0].label, "Contents", IH_NAME - 1);
+	H.links[0].target = TGT_OVERVIEW;
+	strncpy(H.links[0].label, "Overview", IH_NAME - 1);
 	H.links[1].line = -1;
 	H.links[1].col = 13;
-	H.links[1].len = 7;
-	H.links[1].target = TGT_INDEX;
-	strncpy(H.links[1].label, "Index", IH_NAME - 1);
+	H.links[1].len = 10;
+	H.links[1].target = TGT_CONTENTS;
+	strncpy(H.links[1].label, "Contents", IH_NAME - 1);
 	H.links[2].line = -1;
-	H.links[2].col = 22;
-	H.links[2].len = 6;
-	H.links[2].target = TGT_BACK;
-	strncpy(H.links[2].label, "Back", IH_NAME - 1);
+	H.links[2].col = 25;
+	H.links[2].len = 7;
+	H.links[2].target = TGT_INDEX;
+	strncpy(H.links[2].label, "Index", IH_NAME - 1);
+	H.links[3].line = -1;
+	H.links[3].col = 34;
+	H.links[3].len = 6;
+	H.links[3].target = TGT_BACK;
+	strncpy(H.links[3].label, "Back", IH_NAME - 1);
 	H.nlinks = NAV_N;
+}
+
+static int link_target(const char *label)
+{
+	if (!label || !label[0])
+		return -999;
+	if (mmb_keyword_eq(label, "INDEX"))
+		return TGT_INDEX;
+	if (mmb_keyword_eq(label, "BACK"))
+		return TGT_BACK;
+	return mmb_help_lookup(label);
 }
 
 static void emit_source(const char *src, int skip_tgt)
 {
 	const char *p;
+	char label[IH_NAME];
+	(void)skip_tgt;
 	if (!src)
 		return;
 	p = src;
@@ -322,13 +258,30 @@ static void emit_source(const char *src, int skip_tgt)
 		i = 0;
 		while (i < n)
 		{
-			if (i == 0 || !is_id(p[i - 1]))
+			if (p[i] == '~' && i + 1 < n && p[i + 1] == '~')
 			{
-				int m = match_at(p + i, skip_tgt);
-				if (m >= 0)
+				putc_attr('~', ATTR_TEXT);
+				i += 2;
+				continue;
+			}
+			if (p[i] == '~')
+			{
+				int j = i + 1;
+				int ln = 0;
+				while (j < n && p[j] != '~' && ln < IH_NAME - 1)
 				{
-					add_link(H.matches[m].pat, H.matches[m].target);
-					i += H.matches[m].plen;
+					label[ln++] = p[j];
+					j++;
+				}
+				label[ln] = 0;
+				if (j < n && p[j] == '~' && ln > 0)
+				{
+					int tgt = link_target(label);
+					if (tgt == TGT_INDEX || tgt == TGT_BACK || tgt >= 0)
+						add_link(label, tgt);
+					else
+						puts_attr(label, ATTR_TEXT);
+					i = j + 1;
 					continue;
 				}
 			}
@@ -388,8 +341,8 @@ static int body_y0(void)
 
 static void load_index(void)
 {
-	int ord[128];
-	int n, i, j, colw;
+	int ord[IH_MAX_TOPICS];
+	int n, i, j, colw, nidx;
 	char letter;
 	page_reset();
 	add_nav();
@@ -397,10 +350,16 @@ static void load_index(void)
 	H.topic_i = -1;
 	set_title("Index");
 	n = mmb_help_topic_count();
-	if (n > 128)
-		n = 128;
+	if (n > IH_MAX_TOPICS)
+		n = IH_MAX_TOPICS;
+	nidx = 0;
 	for (i = 0; i < n; i++)
-		ord[i] = i;
+	{
+		if (mmb_help_topic_kind(i) == HELP_PAGE)
+			continue;
+		ord[nidx++] = i;
+	}
+	n = nidx;
 	for (i = 0; i < n; i++)
 	{
 		for (j = i + 1; j < n; j++)
@@ -422,7 +381,7 @@ static void load_index(void)
 	puts_attr("Press Enter to open a topic. Escape goes back.", ATTR_DIM);
 	for (letter = 'A'; letter <= 'Z'; letter++)
 	{
-		int grp[128];
+		int grp[IH_MAX_TOPICS];
 		int ng = 0;
 		for (i = 0; i < n; i++)
 		{
@@ -453,55 +412,30 @@ static void load_index(void)
 	H.scroll = 0;
 }
 
-static void load_contents(void)
+static void load_page(int page, const char *title, const char *lookup)
 {
-	int i, n;
+	int ti;
 	page_reset();
 	add_nav();
-	H.page = PAGE_CONTENTS;
-	H.topic_i = -1;
-	set_title("Contents");
+	H.page = page;
+	ti = mmb_help_lookup(lookup);
+	H.topic_i = ti;
+	set_title(title);
 	newline();
-	puts_attr("MMBasic Interactive Help", ATTR_HEAD);
-	newline();
-	puts_attr("Use arrows to move between ", ATTR_TEXT);
-	add_link("Index", TGT_INDEX);
-	puts_attr(" links. Enter opens a topic.", ATTR_TEXT);
-	newline();
-	newline();
-	emit_source(mmb_help_commands_overview(), -999);
-	newline();
-	emit_source(mmb_help_basic_overview(), -999);
-	newline();
-	puts_attr("Commands", ATTR_HEAD);
-	newline();
-	n = mmb_help_topic_count();
-	for (i = 0; i < n; i++)
-	{
-		if (mmb_help_topic_kind(i) != 1)
-			continue;
-		if (H.cx + 18 > H.wrap_w && H.cx > 0)
-			newline();
-		else if (H.cx > 0)
-			putc_attr(' ', ATTR_TEXT);
-		add_link(mmb_help_topic_name(i), i);
-	}
-	newline();
-	newline();
-	puts_attr("Language", ATTR_HEAD);
-	newline();
-	for (i = 0; i < n; i++)
-	{
-		if (mmb_help_topic_kind(i) != 2)
-			continue;
-		if (H.cx + 18 > H.wrap_w && H.cx > 0)
-			newline();
-		else if (H.cx > 0)
-			putc_attr(' ', ATTR_TEXT);
-		add_link(mmb_help_topic_name(i), i);
-	}
-	H.sel = 0;
+	if (ti >= 0)
+		emit_source(mmb_help_topic_text(ti), ti);
+	H.sel = NAV_N < H.nlinks ? NAV_N : 0;
 	H.scroll = 0;
+}
+
+static void load_overview(void)
+{
+	load_page(PAGE_OVERVIEW, "Overview", "OVERVIEW");
+}
+
+static void load_contents(void)
+{
+	load_page(PAGE_CONTENTS, "Contents", "CONTENTS");
 }
 
 static void load_topic(int ti)
@@ -535,6 +469,8 @@ static void restore_page(int page, int topic_i)
 {
 	if (page == PAGE_CONTENTS)
 		load_contents();
+	else if (page == PAGE_OVERVIEW)
+		load_overview();
 	else if (page == PAGE_TOPIC && topic_i >= 0)
 		load_topic(topic_i);
 	else
@@ -732,6 +668,15 @@ static void jump_letter(char letter)
 	}
 }
 
+static int topic_is_page(int ti, const char *want)
+{
+	if (ti < 0)
+		return 0;
+	if (mmb_help_topic_kind(ti) != HELP_PAGE)
+		return 0;
+	return mmb_keyword_eq(mmb_help_topic_name(ti), want);
+}
+
 static void go_target(int tgt)
 {
 	if (tgt == TGT_BACK)
@@ -747,12 +692,20 @@ static void go_target(int tgt)
 		load_index();
 		return;
 	}
-	if (tgt == TGT_CONTENTS)
+	if (tgt == TGT_CONTENTS || topic_is_page(tgt, "CONTENTS"))
 	{
 		if (H.page == PAGE_CONTENTS)
 			return;
 		push_frame();
 		load_contents();
+		return;
+	}
+	if (tgt == TGT_OVERVIEW || topic_is_page(tgt, "OVERVIEW"))
+	{
+		if (H.page == PAGE_OVERVIEW)
+			return;
+		push_frame();
+		load_overview();
 		return;
 	}
 	if (tgt >= 0)
@@ -908,14 +861,19 @@ static void apply_open(const char *topic)
 	H.esc = 0;
 	H.csi_n = 0;
 	set_status("");
-	if (!topic || !topic[0])
+	if (!topic || !topic[0] || mmb_keyword_eq(topic, "OVERVIEW"))
 	{
-		load_index();
+		load_overview();
 		return;
 	}
-	if (mmb_keyword_eq(topic, "BASIC"))
+	if (mmb_keyword_eq(topic, "BASIC") || mmb_keyword_eq(topic, "CONTENTS"))
 	{
 		load_contents();
+		return;
+	}
+	if (mmb_keyword_eq(topic, "INDEX"))
+	{
+		load_index();
 		return;
 	}
 	ti = mmb_help_lookup(topic);
@@ -943,7 +901,6 @@ void mmb_ihelp_open(const char *topic)
 		H.wrap_w = IH_COLS;
 	if (H.wrap_w < 40)
 		H.wrap_w = 40;
-	build_matches();
 	apply_open(topic);
 	ih_draw();
 }

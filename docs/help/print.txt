@@ -1,0 +1,25 @@
+name: PRINT
+kind: command
+alias: ?
+
+PRINT [expr] [;|, expr]...
+PRINT #fn, expr [;|, expr]...
+?  is an alias for PRINT.
+
+Write values to the console, or to an open file
+PRINT [expr] [;|, expr]...
+PRINT #fn, expr [;|, expr]...
+?  is an alias for PRINT.
+
+Write values to the console, or to an open file
+or TCP stream with PRINT #fn. PRINT always ends
+with a newline unless the statement ends with ; .
+A comma inserts a space between items. Bare PRINT
+prints a blank line. While a program is running,
+each PRINT is sent to the console immediately (a
+GOTO loop still shows output).
+Use PRINT @(x,y) or LOCATE x,y to position text.
+#fn may be a disk file or OPEN "TCP:host:port".
+
+Example:  PRINT 6*7
+          PRINT #1, "HELLO"

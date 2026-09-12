@@ -38,7 +38,7 @@ def test_credits_ascii_homage(console):
 
 
 def test_help_credits(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "CREDITS" in listing
     close_ihelp(console)
     out = dump_topic(console, "CREDITS")

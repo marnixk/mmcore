@@ -1,0 +1,16 @@
+name: CONTINUE
+kind: language
+alias: CONTINUE FOR, CONTINUE DO
+
+CONTINUE FOR
+CONTINUE DO
+
+Skip to the NEXT or LOOP of the current loop, then
+test the loop condition.
+
+Example:
+  10 FOR I=1 TO 3
+  20 IF I=2 THEN CONTINUE FOR
+  30 PRINT I
+  40 NEXT I
+  RUN

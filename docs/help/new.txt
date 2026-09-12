@@ -1,0 +1,7 @@
+name: NEW
+kind: command
+
+NEW
+
+Erase the program in memory and clear variables
+and constants. OPTION settings are kept.

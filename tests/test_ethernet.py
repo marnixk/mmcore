@@ -95,7 +95,7 @@ def test_ipconfig_ethernet_when_enabled(console):
 
 
 def test_help_ethernet(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "<ETHERNET>" in listing
     close_ihelp(console)
     out = dump_topic(console, "ETHERNET")

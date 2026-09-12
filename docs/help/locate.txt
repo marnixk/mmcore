@@ -1,0 +1,12 @@
+name: LOCATE
+kind: command
+
+LOCATE x, y
+
+Move the text cursor to pixel coordinates x, y.
+The next PRINT places output at that location.
+PRINT @(x,y) does the same inline. Query the
+cursor with MM.HPOS and MM.VPOS (pixels) or POS()
+(column, 1-based).
+
+Example:  LOCATE 16, 32 : PRINT "HELLO"

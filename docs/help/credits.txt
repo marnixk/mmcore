@@ -1,0 +1,12 @@
+name: CREDITS
+kind: command
+
+CREDITS
+
+Show MMBasic / PicoMite copyright (Geoff Graham,
+Peter Mather), Circle runtime credit, ASCII homage
+to the Colour Maximite, and the Raspberry Pi port
+line. The MMBasic licence requires the original
+copyright message to remain available.
+
+Example:  CREDITS

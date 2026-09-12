@@ -1,0 +1,24 @@
+name: DIM
+kind: language
+
+DIM [INTEGER|FLOAT|STRING] name[(d1[,d2...])]
+    [AS INTEGER|FLOAT|STRING|typename] [, ...]
+LOCAL ...     (same syntax; use in SUB/FUNCTION)
+STATIC ...    (same syntax; value kept between calls)
+
+Declare a variable or array. Suffixes $ % ! also set
+type. Bounds are inclusive upper bounds. OPTION BASE
+0 (default) or 1 sets the lower bound and must come
+before DIM. OPTION EXPLICIT requires DIM/LOCAL/STATIC.
+LENGTH n is accepted (strings still use 255 characters).
+DIM INTEGER|FLOAT|STRING applies that type to the list.
+AS typename creates a TYPE variable (HELP TYPE).
+Initialiser: DIM p AS Point = (10, 20)
+
+Example:
+  DIM A(2)
+  A(0)=10 : A(1)=20 : A(2)=12
+  PRINT A(0)+A(1)+A(2)
+
+  DIM N AS INTEGER
+  N=6 : PRINT N*7

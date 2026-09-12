@@ -1,0 +1,10 @@
+name: MID$
+kind: command
+
+MID$(s$, start [, length]) = t$
+MID$(s$, start [, length])   (function)
+
+As a statement, overwrite length characters of s$ from
+start (1-based) with t$. As a function, return a slice.
+
+Example:  A$="MMXXXX" : MID$(A$,3,4)="BASIC" : PRINT A$

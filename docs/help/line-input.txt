@@ -1,0 +1,16 @@
+name: LINE INPUT
+kind: command
+alias: LINEINPUT
+
+LINE INPUT #fn, var$
+
+Read one line from an open file or TCP stream
+into a string variable. var$ must be a string.
+#fn may be a disk file or OPEN "TCP:host:port".
+TCP reads are non-blocking: an empty string if
+no complete line is waiting.
+
+Example:
+  OPEN "N.TXT" FOR INPUT AS #1
+  LINE INPUT #1, A$
+  CLOSE #1

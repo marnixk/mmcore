@@ -1,0 +1,13 @@
+name: CALL
+kind: command
+
+CALL name
+
+Call a SUB (or FUNCTION) by name. Arguments are not
+implemented. See HELP SUB.
+
+Example:
+  10 SUB HI
+  20 PRINT 42
+  30 END SUB
+  40 CALL HI

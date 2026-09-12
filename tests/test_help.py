@@ -5,7 +5,7 @@ from ihelp_util import close_ihelp, dump_topic, keys, open_ihelp, scroll_all
 
 
 def test_help_lists_commands(console):
-    seen = scroll_all(console, open_ihelp(console))
+    seen = scroll_all(console, open_ihelp(console, "INDEX"))
     for cmd in (
         "CLS",
         "LOCATE",
@@ -58,7 +58,7 @@ def test_help_locate(console):
     assert "pixel" in out.lower()
     assert "MM.HPOS" in out
     assert "@(x,y)" in out
-    seen = scroll_all(console, open_ihelp(console))
+    seen = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "<LOCATE>" in seen
     close_ihelp(console)
 
@@ -204,7 +204,7 @@ def test_help_option_wifi(console):
 
 
 def test_help_options_wifi(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "<OPTIONS>" in listing
     close_ihelp(console)
     out = dump_topic(console, "OPTIONS")
@@ -221,12 +221,13 @@ def test_ihelp_has_no_menu_bar(console):
     seen = open_ihelp(console)
     assert "File  Edit  View  Search" not in seen
     assert "Debug  Options" not in seen
-    assert "HELP: Index" in seen or "<Contents>" in seen
+    assert "HELP: Overview" in seen or "<Contents>" in seen
     close_ihelp(console)
 
 
 def test_ihelp_enter_opens_link(console):
     seen = open_ihelp(console)
+    assert "<Overview>" in seen
     assert "<Contents>" in seen
     assert "<Index>" in seen
     seen = keys(console, b"\r")
@@ -360,3 +361,32 @@ def test_ihelp_default_body_is_slate(kernel_image):
         close_ihelp(con)
     finally:
         con.stop()
+
+
+def test_help_opens_overview(console):
+    seen = open_ihelp(console)
+    assert "HELP: Overview" in seen
+    assert "<Overview>" in seen
+    assert "<Contents>" in seen
+    assert "for every" in seen
+    assert "<FOR>" in seen
+    close_ihelp(console)
+
+
+def test_help_explicit_for_link_not_the_word_for(console):
+    seen = dump_topic(console, "OVERVIEW")
+    assert "for every" in seen
+    assert "<FOR>" in seen
+    assert seen.lower().count("<for>") == 1
+
+
+def test_help_index_and_contents_pages(console):
+    idx = open_ihelp(console, "INDEX")
+    assert "HELP: Index" in idx
+    close_ihelp(console)
+    contents = dump_topic(console, "CONTENTS")
+    assert "MMBasic Interactive Help" in contents
+    assert "<CLS>" in contents
+    assert "<FOR>" in contents
+    basic = dump_topic(console, "BASIC")
+    assert "Language constructs" in basic

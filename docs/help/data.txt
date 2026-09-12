@@ -1,0 +1,17 @@
+name: DATA
+kind: language
+alias: READ, RESTORE
+
+DATA item [, item...]
+READ var [, var...]
+RESTORE [line]
+
+DATA stores values in the program. READ assigns the
+next items. RESTORE rewinds to the first DATA, or to
+the first DATA at or after line.
+
+Example:
+  10 DATA 10,20,12
+  20 READ A,B,C
+  30 PRINT A+B+C
+  RUN

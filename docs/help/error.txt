@@ -1,0 +1,8 @@
+name: ERROR
+kind: command
+
+ERROR [message$]
+
+Stop with an error. message$ is shown if given.
+
+Example:  IF X=0 THEN ERROR "bad"

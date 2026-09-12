@@ -118,7 +118,7 @@ def test_help_new_topics(console):
 
 
 def test_help_lists_new_commands(console):
-    out = scroll_all(console, open_ihelp(console))
+    out = scroll_all(console, open_ihelp(console, "INDEX"))
     for cmd in ("MEMORY", "INC", "CAT", "ERROR", "CMM2", "SORT"):
         assert cmd in out, cmd
     close_ihelp(console)

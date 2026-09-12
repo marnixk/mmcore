@@ -17,6 +17,8 @@ def test_makefile_gates_wlan_on_qemu_no_sdhost():
     assert "gen-mmb-version.sh" in text
     assert "MMB_VERSION" in text
     assert "mmb_version.h: FORCE" in text
+    assert "gen_help.py" in text
+    assert "help_data.c" in text
 
 
 def test_build_script_builds_hostap_only_for_hardware():
@@ -118,7 +120,7 @@ def test_qemu_kernel_end_fits_configured_max(kernel_image):
 def test_term_tcp_drain_retries_empty_recv():
     """Do not stop the socket drain on the first empty recv or rx_avail==0."""
     term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()
-    help_t = open(os.path.join(REPO, "mmbasic", "src", "cmd_help.c"), encoding="utf-8").read()
+    help_t = open(os.path.join(REPO, "docs", "help", "term.txt"), encoding="utf-8").read()
     assert "TM_RECV_IDLE" in term
     assert "TM_INTERP_YIELD" in term
     assert "term_tcp_drain" in term

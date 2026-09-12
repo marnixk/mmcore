@@ -1,0 +1,21 @@
+name: TURTLE
+kind: command
+
+TURTLE RESET | PEN UP | PEN DOWN
+TURTLE FORWARD n | BACKWARD n
+TURTLE TURN LEFT deg | TURN RIGHT deg
+TURTLE HEADING deg | MOVE x, y | DOT
+TURTLE PEN COLOUR c | FILL COLOUR c
+TURTLE BEGIN FILL | END FILL
+TURTLE DRAW PIXEL x,y | DRAW LINE x1,y1,x2,y2
+TURTLE DRAW CIRCLE x,y,r | DRAW TURTLE
+TURTLE FILL PIXEL x, y
+
+Software turtle. Heading 0 is up, 90 is right.
+RESET clears the screen and homes to the centre.
+Default pen is white, fill is green.
+END FILL fills a polygon of up to 128 sides.
+
+Example:  TURTLE RESET
+          TURTLE HEADING 90
+          TURTLE FORWARD 80

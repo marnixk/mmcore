@@ -6,7 +6,7 @@ from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
 
 
 def test_help_reboot(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "REBOOT" in listing
     close_ihelp(console)
     out = dump_topic(console, "REBOOT")
