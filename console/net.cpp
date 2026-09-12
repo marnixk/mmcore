@@ -110,8 +110,27 @@ static volatile int s_pending;
 static int s_peer_closed;
 static int s_rx_error;
 
+static unsigned s_dbg_bytes;
+static unsigned s_dbg_zero;
+static unsigned s_dbg_err;
+static unsigned s_dbg_ok;
+static unsigned s_dbg_send;
+static int s_dbg_last;
+static unsigned s_dbg_at;
+
 static unsigned s_gw_at;
 static int s_gw_cached;
+
+static void tcp_stats_reset(void)
+{
+	s_dbg_bytes = 0;
+	s_dbg_zero = 0;
+	s_dbg_err = 0;
+	s_dbg_ok = 0;
+	s_dbg_send = 0;
+	s_dbg_last = 0;
+	s_dbg_at = 0;
+}
 
 static void set_error(int err)
 {
@@ -423,6 +442,7 @@ void mmb_net_tcp_close(void)
 	s_gen++;
 	s_rxn = 0;
 	s_rxoff = 0;
+	tcp_stats_reset();
 	abort_inflight();
 	if (s_sock)
 	{
@@ -577,6 +597,8 @@ int mmb_net_tcp_send(const void *data, unsigned n)
 	rc = s_sock->Send(data, n, MSG_DONTWAIT);
 	if (CScheduler::IsActive())
 		CScheduler::Get()->Yield();
+	if (rc > 0)
+		s_dbg_send += (unsigned)rc;
 	return rc;
 }
 
@@ -612,11 +634,23 @@ int mmb_net_tcp_recv(void *data, unsigned maxn)
 				CScheduler::Get()->Yield();
 			if (n < 0)
 			{
+				s_dbg_err++;
+				s_dbg_last = n;
+				s_dbg_at = 0;
 				note_rx_error(n);
 				return out ? (int)out : n;
 			}
 			if (n == 0)
+			{
+				s_dbg_zero++;
+				s_dbg_last = 0;
+				if (CScheduler::IsActive())
+					CScheduler::Get()->MsSleep(1);
 				return (int)out;
+			}
+			s_dbg_ok++;
+			s_dbg_bytes += (unsigned)n;
+			s_dbg_last = n;
 			s_rxn = (unsigned)n;
 			s_rxoff = 0;
 		}
@@ -635,11 +669,23 @@ int mmb_net_tcp_rx_avail(void)
 			CScheduler::Get()->Yield();
 		if (n < 0)
 		{
+			s_dbg_err++;
+			s_dbg_last = n;
+			s_dbg_at = 0;
 			note_rx_error(n);
 			return 0;
 		}
 		if (n <= 0)
+		{
+			s_dbg_zero++;
+			s_dbg_last = 0;
+			if (CScheduler::IsActive())
+				CScheduler::Get()->MsSleep(1);
 			return 0;
+		}
+		s_dbg_ok++;
+		s_dbg_bytes += (unsigned)n;
+		s_dbg_last = n;
 		s_rxn = (unsigned)n;
 		s_rxoff = 0;
 		return n;
@@ -649,6 +695,30 @@ int mmb_net_tcp_rx_avail(void)
 int mmb_net_tcp_peer_closed(void)
 {
 	return s_peer_closed;
+}
+
+void mmb_net_tcp_debug_poll(void)
+{
+	CSocket::TStatus st;
+	CString line;
+	unsigned now, left;
+
+	if (!mmb_opt_wifi_debug() || !mmb_opt_console_serial())
+		return;
+	if (!s_sock)
+		return;
+	now = CTimer::GetClockTicks();
+	if (s_dbg_at != 0 && now - s_dbg_at < 500000u)
+		return;
+	s_dbg_at = now;
+	st = s_sock->GetStatus();
+	left = (s_rxoff < s_rxn) ? (s_rxn - s_rxoff) : 0;
+	line.Format(
+		"!TCP bytes=%u zero=%u err=%u last=%d left=%u ok=%u send=%u conn=%u rxrdy=%u txrdy=%u peer=%u\r\n",
+		s_dbg_bytes, s_dbg_zero, s_dbg_err, s_dbg_last, left, s_dbg_ok,
+		s_dbg_send, st.bConnected ? 1u : 0u, st.bRxReady ? 1u : 0u,
+		st.bTxReady ? 1u : 0u, s_peer_closed ? 1u : 0u);
+	mmb_serial_write((const char *)line);
 }
 
 void mmb_net_yield(void)
@@ -730,6 +800,10 @@ int mmb_net_tcp_rx_avail(void)
 int mmb_net_tcp_peer_closed(void)
 {
 	return 1;
+}
+
+void mmb_net_tcp_debug_poll(void)
+{
 }
 
 void mmb_net_tcp_close(void)

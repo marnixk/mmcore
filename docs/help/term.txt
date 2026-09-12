@@ -82,7 +82,10 @@ dump the pane over serial; HDMI is the screen.
 Serial then prints compact !NET lines: connected,
 fail, hangup, and rx/tx/parsed/ring/parser
 counters. OPTION WIFI DEBUG ON repeats those
-counters while data arrives. OPTION TERM LOG ON
+counters while data arrives and prints serial-only
+!TCP snapshots (Circle Receive bytes/zero/err,
+leftover, conn/rxrdy). HDMI stays the session.
+OPTION TERM LOG ON
 is the wire trace for later TERM REPLAY.
 OPTION TERM LOG ON writes C:/.termlog (A: if no SD)
 with incoming (R) and typed (T) hex plus ms since

@@ -35,8 +35,20 @@ Applied after `circle-wifi-149.patch` (marker `mmbasic-tcp-robust` in
 
 Regenerate by editing the (already patched) submodule tree and diffing
 against a pristine `git archive` copy with `circle-wifi-149.patch`
-applied; `tests/test_circle_patches.py` checks both patches apply cleanly
+applied; `tests/test_circle_patches.py` checks the patches apply cleanly
 in that order and exercises the reassembly queue on the host.
+
+## `circle-tcp-send.patch`
+
+Applied after `circle-tcp-robust.patch` (marker `mmbasic-tcp-send` in
+`lib/net/netdevlayer.cpp`). TCP send path must not open a sequence hole:
+
+- `CNetDeviceLayer::Process()`: if `SendFrame()` fails, `EnqueueFront`
+  the buffer instead of deleting it. A later success must not leave the
+  NIC while an earlier frame was dropped.
+- `CNetBufferQueue::EnqueueFront()` restores that buffer at the head.
+- `CTCPConnection::SendNewSegment()`: if `SendSegment()` returns FALSE,
+  leave `SND.NXT` and the TxQueue peek unchanged.
 
 Do not commit a dirty Circle submodule; the parent tree only vendors the
 patch files.

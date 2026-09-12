@@ -32,16 +32,31 @@ class HarnessError(RuntimeError):
     pass
 
 
-def qemu_usb_net_args(hostfwd: str | None = None) -> list[str]:
+def qemu_usb_net_args(
+    hostfwd: str | None = None,
+    dump: str | None = None,
+    guestfwd: str | None = None,
+) -> list[str]:
     """QEMU flags for Circle USB CDC Ethernet (``-device usb-net``).
 
     ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest).
-    Guest→host uses ``10.0.2.2``. DHCP typically assigns ``10.0.2.15``.
+    ``guestfwd`` is a SLIRP rule such as ``tcp:10.0.2.100:23-tcp:HOST:23``
+    (guest→host/Internet). Guest→host without guestfwd uses ``10.0.2.2``.
+    DHCP typically assigns ``10.0.2.15``.
+    ``dump`` is a pcap path for ``filter-dump`` on that netdev (wire capture).
     """
     netdev = "user,id=net0"
     if hostfwd:
         netdev += f",hostfwd={hostfwd}"
-    return ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
+    if guestfwd:
+        netdev += f",guestfwd={guestfwd}"
+    args = ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
+    if dump:
+        args += [
+            "-object",
+            f"filter-dump,id=fnet0,netdev=net0,file={dump}",
+        ]
+    return args
 
 
 class MMBasicConsole:
@@ -74,6 +89,7 @@ class MMBasicConsole:
         self._proc: subprocess.Popen | None = None
         self._ser: socket.socket | None = None
         self._mon: socket.socket | None = None
+        self._qemu_log_fh = None
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> "MMBasicConsole":
@@ -86,8 +102,10 @@ class MMBasicConsole:
             "-monitor", f"unix:{self._mon_path},server,nowait",
         ]
         cmd.extend(self.extra_qemu)
+        log_path = os.path.join(self._tmp, "qemu.log")
+        self._qemu_log_fh = open(log_path, "wb")
         self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            cmd, stdout=self._qemu_log_fh, stderr=subprocess.STDOUT
         )
         self._ser = self._connect(self._ser_path)
         self._mon = self._connect(self._mon_path)
@@ -147,6 +165,12 @@ class MMBasicConsole:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
             self._proc = None
+        if self._qemu_log_fh is not None:
+            try:
+                self._qemu_log_fh.close()
+            except OSError:
+                pass
+            self._qemu_log_fh = None
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def __enter__(self) -> "MMBasicConsole":
@@ -242,27 +266,48 @@ class MMBasicConsole:
         return False
 
     # -- screen (framebuffer) ---------------------------------------------
-    def _monitor_cmd(self, cmd: str) -> None:
+    def _monitor_drain(self) -> bytes:
         assert self._mon is not None
-        try:
-            self._mon.settimeout(0.3)
-            self._mon.recv(4096)
-        except OSError:
-            pass
+        acc = b""
+        self._mon.settimeout(0.15)
+        while True:
+            try:
+                chunk = self._mon.recv(65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            acc += chunk
+        return acc
+
+    def _monitor_cmd(self, cmd: str) -> None:
+        self._monitor_drain()
+        assert self._mon is not None
         self._mon.sendall(cmd.encode() + b"\n")
         time.sleep(0.5)
 
     def screendump(self, dest_ppm: str | None = None) -> str:
         """Capture the emulated framebuffer to a .ppm file and return its path."""
         if dest_ppm is None:
-            dest_ppm = os.path.join(self._tmp, f"fb-{time.time_ns()}.ppm")
-        self._monitor_cmd(f"screendump {dest_ppm}")
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if os.path.exists(dest_ppm) and os.path.getsize(dest_ppm) > 0:
-                return dest_ppm
-            time.sleep(0.1)
-        raise HarnessError("screendump did not produce a file")
+            dest_ppm = os.path.join(self._tmp, "fb.ppm")
+        last_err = "screendump did not produce a file"
+        for _ in range(4):
+            self.drain(quiet=0.02, timeout=0.2)
+            try:
+                if os.path.exists(dest_ppm):
+                    os.remove(dest_ppm)
+            except OSError:
+                pass
+            self._monitor_cmd(f"screendump {dest_ppm}")
+            self._monitor_drain()
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                if os.path.exists(dest_ppm) and os.path.getsize(dest_ppm) > 0:
+                    return dest_ppm
+                self.drain(quiet=0.02, timeout=0.15)
+                time.sleep(0.1)
+            time.sleep(0.4)
+        raise HarnessError(last_err)
 
     def capture_png(self, dest_png: str | None = None) -> str:
         """Capture the framebuffer to a .png file and return its path."""
@@ -368,6 +413,7 @@ class MMBasicConsole:
         deadline = time.time() + timeout
         last = ""
         while time.time() < deadline:
+            self.drain(quiet=0.02, timeout=0.15)
             last = self.ocr_screen(crop=crop)
             if needle.lower() in last.lower():
                 return last

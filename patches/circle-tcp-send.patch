@@ -1,0 +1,92 @@
+diff --git a/include/circle/net/netbufferqueue.h b/include/circle/net/netbufferqueue.h
+index 1fa0ccb0..04491a37 100644
+--- a/include/circle/net/netbufferqueue.h
++++ b/include/circle/net/netbufferqueue.h
+@@ -37,6 +37,7 @@ public:
+ 	void Flush (size_t ulBytes = -1);	// -1 to flush complete queue
+ 
+ 	void Enqueue (CNetBuffer *pNetBuffer);
++	void EnqueueFront (CNetBuffer *pNetBuffer);
+ 
+ 	// returns nullptr if queue is empty
+ 	CNetBuffer *Dequeue (void);
+diff --git a/lib/net/netbufferqueue.cpp b/lib/net/netbufferqueue.cpp
+index dd770591..b69dbf1a 100644
+--- a/lib/net/netbufferqueue.cpp
++++ b/lib/net/netbufferqueue.cpp
+@@ -143,6 +143,39 @@ void CNetBufferQueue::Enqueue (CNetBuffer *pNetBuffer)
+ 	}
+ }
+ 
++void CNetBufferQueue::EnqueueFront (CNetBuffer *pNetBuffer)
++{
++	assert (pNetBuffer);
++	assert (!pNetBuffer->m_pNext);
++
++	size_t ulLength = pNetBuffer->GetLength ();
++
++	if (m_bProtected)
++	{
++		m_SpinLock.Acquire ();
++	}
++
++	pNetBuffer->m_pNext = m_pFirst;
++	m_pFirst = pNetBuffer;
++	if (!m_pLast)
++	{
++		m_pLast = pNetBuffer;
++	}
++
++	m_nEntries++;
++	m_ulBytes += ulLength;
++
++	if (!m_pPeekHead)
++	{
++		m_pPeekHead = pNetBuffer;
++	}
++
++	if (m_bProtected)
++	{
++		m_SpinLock.Release ();
++	}
++}
++
+ CNetBuffer *CNetBufferQueue::Dequeue (void)
+ {
+ 	CNetBuffer *pEntry = m_pFirst;
+diff --git a/lib/net/netdevlayer.cpp b/lib/net/netdevlayer.cpp
+index b706b83b..ce3aade5 100644
+--- a/lib/net/netdevlayer.cpp
++++ b/lib/net/netdevlayer.cpp
+@@ -142,10 +142,10 @@ void CNetDeviceLayer::Process (void)
+ 
+ 		if (!m_pDevice->SendFrame (pBuffer, nLength))
+ 		{
+-			CLogger::Get ()->Write (FromNetDev, LogWarning, "Frame dropped");
+-
+-			delete pTxBuffer;
+-
++			// mmbasic-tcp-send: a later frame must not leave the NIC
++			// while this one is discarded (TCP send hole).
++			CLogger::Get ()->Write (FromNetDev, LogWarning, "Frame deferred");
++			m_TxQueue.EnqueueFront (pTxBuffer);
+ 			break;
+ 		}
+ 
+diff --git a/lib/net/tcpconnection.cpp b/lib/net/tcpconnection.cpp
+--- a/lib/net/tcpconnection.cpp
++++ b/lib/net/tcpconnection.cpp
+@@ -723,7 +723,12 @@ boolean CTCPConnection::SendNewSegment (u32 nAdditionalCWND)
+ 		CNetBuffer *pNetBuffer2 = new CNetBuffer (*pNetBuffer);
+ 		assert (pNetBuffer2 != 0);
+ 
+-		SendSegment (nFlags, m_nSND_NXT, m_nRCV_NXT, pNetBuffer2);
++		// mmbasic-tcp-send: do not assign SND.NXT to a segment that never
++		// left the stack, or a later success opens a send hole.
++		if (!SendSegment (nFlags, m_nSND_NXT, m_nRCV_NXT, pNetBuffer2))
++		{
++			return FALSE;
++		}
+ 		m_RTOCalculator.SegmentSent (m_nSND_NXT, nLength);
+ 		m_nSND_NXT += nLength;
+ 		StartTimer (TCPTimerRetransmission, m_RTOCalculator.GetRTO ());
