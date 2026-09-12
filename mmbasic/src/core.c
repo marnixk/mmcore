@@ -2537,6 +2537,7 @@ void mmb_check_break(void)
 		G.prof.check_break++;
 	mmb_storage_poll();
 	mmb_wlan_poll();
+	mmb_net_yield();
 	mmb_play_mix();
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
@@ -3818,6 +3819,7 @@ void mmb_poll(void)
 	static int net_boot;
 	mmb_storage_poll();
 	mmb_wlan_poll();
+	mmb_net_yield();
 	if (!net_boot && G.opt.ethernet_enabled)
 	{
 		mmb_eth_start();

@@ -3,12 +3,12 @@
 
 /*
  * Wired Ethernet (DHCP). Shares Circle's singleton CNetSubSystem with Wi-Fi:
- * only one interface is active. Hardware images (MMB_CIRCLE_WLAN) open
- * NetDeviceTypeEthernet: GENET on Pi 4, MACB on Pi 5, USB LAN9514/LAN7800
- * on Pi 3. QEMU raspi3b has no NIC; the stubs report unavailable.
+ * only one interface is active. MMB_CIRCLE_NET opens NetDeviceTypeEthernet:
+ * GENET on Pi 4, MACB on Pi 5, USB LAN9514/LAN7800 on Pi 3, USB CDC
+ * (QEMU -device usb-net) on raspi3b. No gadget/NIC means not available.
  */
 
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 #include <circle/net/netsubsystem.h>
 #include <circle/net/ipaddress.h>
 #include <circle/macaddress.h>
@@ -19,14 +19,14 @@
 #include <circle/stdarg.h>
 #endif
 
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 CNetSubSystem *mmb_circle_net(void);
 #endif
 
 extern "C" {
 int mmb_net_gateway_ok(int force);
 
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 
 static void copy_out(char *buf, int bufsize, const char *s)
 {
@@ -73,7 +73,7 @@ static void append_ip(CString *out, const char *label, const CIPAddress *ip)
 
 int mmb_eth_available(void)
 {
-	return 1;
+	return CNetDevice::GetNetDevice(NetDeviceTypeEthernet) ? 1 : 0;
 }
 
 int mmb_eth_start(void)
@@ -86,6 +86,11 @@ int mmb_eth_start(void)
 	{
 		eth_log("Wi-Fi owns the net stack");
 		return -2;
+	}
+	if (!CNetDevice::GetNetDevice(NetDeviceTypeEthernet))
+	{
+		eth_log("no Ethernet device");
+		return -1;
 	}
 	eth_log("initialising Ethernet (DHCP)");
 	if (mmb_net_open(MMB_NET_ETH) != 0)
@@ -245,7 +250,7 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 	return 0;
 }
 
-#else /* !MMB_CIRCLE_WLAN */
+#else /* !MMB_CIRCLE_NET */
 
 int mmb_eth_available(void)
 {

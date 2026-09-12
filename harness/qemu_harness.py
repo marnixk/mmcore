@@ -11,6 +11,11 @@ The harness boots a Circle-based ``kernel8.img`` under ``qemu-system-aarch64``
 This is the foundation for a large regression suite: once the MMBasic core
 from ``picomite-fork`` is ported onto Circle, each language feature can be
 verified by typing a program and asserting on the console output.
+
+QEMU ``raspi3b`` has no onboard NIC. Optional ``usb-net`` (SLIRP user
+networking) attaches Circle's USB CDC Ethernet driver; see
+``qemu_usb_net_args()``. Default tests omit it so USB enumerate/DHCP does
+not slow the suite.
 """
 
 from __future__ import annotations
@@ -25,6 +30,18 @@ import time
 
 class HarnessError(RuntimeError):
     pass
+
+
+def qemu_usb_net_args(hostfwd: str | None = None) -> list[str]:
+    """QEMU flags for Circle USB CDC Ethernet (``-device usb-net``).
+
+    ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest).
+    Guest→host uses ``10.0.2.2``. DHCP typically assigns ``10.0.2.15``.
+    """
+    netdev = "user,id=net0"
+    if hostfwd:
+        netdev += f",hostfwd={hostfwd}"
+    return ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
 
 
 class MMBasicConsole:

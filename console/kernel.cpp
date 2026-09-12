@@ -11,7 +11,7 @@ static const char FromKernel[] = "console";
 
 CKernel::CKernel (void)
 :	m_Screen (m_Options.GetWidth (), m_Options.GetHeight ()),
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 	m_Serial (&m_Interrupt),
 #endif
 	m_Timer (&m_Interrupt),

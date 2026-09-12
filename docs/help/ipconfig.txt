@@ -14,8 +14,9 @@ cached but the gateway does not answer: Not connected
 netmask, DNS, DHCP, and link speed when known.
 Wi-Fi shows SSID and country. OPTION WIFI DEBUG ON
 adds WPA vs DHCP lines for Wi-Fi.
-If the radio or NIC is missing (QEMU) the command
-prints Wi-Fi not available or Ethernet not available.
+If the radio or NIC is missing the command
+prints Wi-Fi not available or Ethernet not
+available. QEMU Ethernet needs -device usb-net.
 If the link is down it prints Not connected.
 
 Join Wi-Fi with OPTIONS WIFI, or OPTION ETHERNET ON.

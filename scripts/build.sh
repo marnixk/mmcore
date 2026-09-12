@@ -30,7 +30,13 @@ log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 # The .img file omits BSS, so a ~1.4MB kernel8.img can still sit at ~4MB
 # in RAM (512KB TERM ring, wordpad, util). 4MB left almost no headroom
 # once WLAN is linked; 8MB is the configured cap.
-( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} --kernel-max-size 8 -f )
+# QEMU usb-net sits on the DWC2 root port (no hub); Circle's NAK and USB
+# timing fixes keep CDC Ethernet from freezing or starving bulk IN.
+QEMU_USB_DEFS=""
+if [ "${QEMU:-1}" = "1" ]; then
+  QEMU_USB_DEFS="-d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX"
+fi
+( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} ${QEMU_USB_DEFS} --kernel-max-size 8 -f )
 
 if grep -q 'mmbasic-issue-149' "${CIRCLE_DIR}/addon/wlan/ether4330.c" 2>/dev/null; then
 	:
@@ -73,27 +79,27 @@ fi
 log "Building Circle core library"
 make -C "${CIRCLE_DIR}/lib" -j"$(nproc)"
 
-log "Building Circle SD card, FatFs, USB, sound, and filesystem libraries"
+log "Building Circle SD card, FatFs, USB, sound, filesystem, net, and scheduler libraries"
 make -C "${CIRCLE_DIR}/addon/SDCard" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/addon/fatfs" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/fs" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/input" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/usb" -j"$(nproc)"
 make -C "${CIRCLE_DIR}/lib/sound" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/lib/sched" -j"$(nproc)"
+make -C "${CIRCLE_DIR}/lib/net" -j"$(nproc)"
 
 if [ "${QEMU:-1}" = "0" ]; then
   if [ ! -f "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant/Makefile.circle" ]; then
     log "Initialising Circle hostap submodule (WPA2 supplicant)"
     git -C "${CIRCLE_DIR}" submodule update --init addon/wlan/hostap
   fi
-  log "Building Circle WLAN, hostap, net, and scheduler libraries"
-  make -C "${CIRCLE_DIR}/lib/sched" -j"$(nproc)"
-  make -C "${CIRCLE_DIR}/lib/net" -j"$(nproc)"
+  log "Building Circle WLAN and hostap libraries"
   make -C "${CIRCLE_DIR}/addon/wlan" -j"$(nproc)"
   make -C "${CIRCLE_DIR}/addon/wlan/hostap/wpa_supplicant" -f Makefile.circle -j"$(nproc)"
 fi
 
-# wlan.o / net.o / eth.o change with MMB_CIRCLE_WLAN when switching QEMU <-> hardware.
+# wlan.o / net.o / eth.o change with MMB_CIRCLE_NET / MMB_CIRCLE_WLAN.
 rm -f "${CONSOLE_DIR}/wlan.o" "${CONSOLE_DIR}/wlan.d" \
       "${CONSOLE_DIR}/net.o" "${CONSOLE_DIR}/net.d" \
       "${CONSOLE_DIR}/eth.o" "${CONSOLE_DIR}/eth.d"

@@ -43,7 +43,8 @@ Wi-Fi / Ethernet
   OPTIONS WIFI joins using stored SSID/PSK.
   ?WIFI not configured if none are stored.
   Scan lists beacon SSIDs. WPA2 join needs C: and
-  C:/firmware/. QEMU has no radio or Ethernet.
+  C:/firmware/. QEMU has no Wi-Fi radio. Ethernet
+  needs QEMU -device usb-net (else not available).
   HELP ~OPTION~. HELP ~ETHERNET~. HELP ~IPCONFIG~.
 
 Type HELP BASIC for language, HELP ~FUNCTIONS~ for functions.

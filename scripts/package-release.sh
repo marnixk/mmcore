@@ -319,7 +319,7 @@ package_pi400
 
 log "Restoring default QEMU Raspberry Pi 3 Circle config"
 clean_build_tree
-( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu --kernel-max-size 8 -f )
+( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu -d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX --kernel-max-size 8 -f )
 
 log "Release artifacts"
 ls -la "${DIST}"/mmbasic-console-*-v"${VERSION}".zip

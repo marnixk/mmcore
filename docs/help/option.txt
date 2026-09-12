@@ -63,7 +63,9 @@ Interpreter settings. Implemented subcommands:
     ON starts DHCP and turns off Wi-Fi auto-join.
     OFF leaves the cable unused (reboot to free the
     stack if Ethernet is already up). Only one of
-    Wi-Fi or Ethernet is active. QEMU has no NIC.
+    Wi-Fi or Ethernet is active. QEMU has no
+    onboard NIC; -device usb-net provides USB
+    CDC Ethernet.
     Persists as [ethernet] enabled= in .mmbasic.ini.
   TERM LOG ON|OFF
     C:/.termlog (A: if no SD). RAM buffer, flush
