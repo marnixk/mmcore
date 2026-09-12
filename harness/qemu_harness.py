@@ -35,16 +35,21 @@ class HarnessError(RuntimeError):
 def qemu_usb_net_args(
     hostfwd: str | None = None,
     dump: str | None = None,
+    guestfwd: str | None = None,
 ) -> list[str]:
     """QEMU flags for Circle USB CDC Ethernet (``-device usb-net``).
 
     ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest).
-    Guest→host uses ``10.0.2.2``. DHCP typically assigns ``10.0.2.15``.
+    ``guestfwd`` is a SLIRP rule such as ``tcp:10.0.2.100:23-tcp:HOST:23``
+    (guest→host/Internet). Guest→host without guestfwd uses ``10.0.2.2``.
+    DHCP typically assigns ``10.0.2.15``.
     ``dump`` is a pcap path for ``filter-dump`` on that netdev (wire capture).
     """
     netdev = "user,id=net0"
     if hostfwd:
         netdev += f",hostfwd={hostfwd}"
+    if guestfwd:
+        netdev += f",guestfwd={guestfwd}"
     args = ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
     if dump:
         args += [
@@ -293,7 +298,7 @@ class MMBasicConsole:
                     os.remove(dest_ppm)
             except OSError:
                 pass
-            self._monitor_cmd(f'screendump "{dest_ppm}"')
+            self._monitor_cmd(f"screendump {dest_ppm}")
             self._monitor_drain()
             deadline = time.time() + 8
             while time.time() < deadline:
