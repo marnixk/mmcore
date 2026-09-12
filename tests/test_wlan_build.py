@@ -105,6 +105,7 @@ def test_eth_cpp_opens_dhcp_ethernet_device():
     assert "mmb_eth_start" in eth
     assert "GetNetDevice(NetDeviceTypeEthernet)" in eth
     assert "Interface: Ethernet" in eth
+    assert "DHCP IP:" in eth
 
 
 def test_qemu_kernel_end_fits_configured_max(kernel_image):

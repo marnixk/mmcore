@@ -207,6 +207,13 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 		out = "Interface: Ethernet\nNot connected";
 		if (dev && dev->IsLinkUp())
 			out.Append("\n  Link is up; gateway unreachable");
+		if (ip && ip->IsSet() && !ip->IsNull())
+		{
+			ip->Format(&ipstr);
+			out.Append("\n  DHCP IP: ");
+			out.Append((const char *)ipstr);
+			out.Append("\n");
+		}
 		copy_out(buf, bufsize, (const char *)out);
 		return -1;
 	}

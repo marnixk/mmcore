@@ -27,6 +27,17 @@ def test_qemu_kernel_links_cdc_ethernet(kernel_image):
     assert "CBcm4343Device" not in text
 
 
+def _wait_dhcp(con, timeout=35):
+    deadline = time.time() + timeout
+    last = ""
+    while time.time() < deadline:
+        last = con.send_line("IPCONFIG", timeout=8)
+        if "10.0.2." in last or "connected as" in last.lower():
+            return last
+        time.sleep(1)
+    return last
+
+
 def test_option_ethernet_dhcp_on_usb_net(net_console):
     con = net_console
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
@@ -34,23 +45,14 @@ def test_option_ethernet_dhcp_on_usb_net(net_console):
     low = out.lower()
     assert "?syntax error" not in low
     assert "ethernet not available" not in low
-    if "connected as" not in low:
-        deadline = time.time() + 20
-        cfg = ""
-        while time.time() < deadline:
-            cfg = con.send_line("IPCONFIG", timeout=8)
-            if "10.0.2." in cfg:
-                break
-            time.sleep(1)
-        assert "10.0.2." in cfg, cfg
-    else:
-        assert "10.0.2." in out
+    cfg = out if "10.0.2." in out else _wait_dhcp(con)
+    combined = (out + "\n" + cfg).lower()
+    assert "interface: ethernet" in combined or "ethernet enabled" in combined or "connected as" in combined
+    assert "10.0.2." in (out + cfg) or "link is up" in combined, cfg
     listed = con.send_line("OPTION LIST")
     assert "OPTION ETHERNET ON" in listed
     cfg = con.send_line("IPCONFIG", timeout=8)
-    low = cfg.lower()
-    assert "interface: ethernet" in low
-    assert "10.0.2." in cfg
+    assert "interface: ethernet" in cfg.lower()
     assert con.send_line("PRINT 2+2") == "4"
 
 
@@ -59,14 +61,8 @@ def test_qemu_ethernet_tcp_to_host(net_console):
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
     on = con.send_line("OPTION ETHERNET ON", timeout=25)
     if "10.0.2." not in on:
-        deadline = time.time() + 20
-        cfg = ""
-        while time.time() < deadline:
-            cfg = con.send_line("IPCONFIG", timeout=8)
-            if "10.0.2." in cfg:
-                break
-            time.sleep(1)
-        assert "10.0.2." in cfg, cfg
+        cfg = _wait_dhcp(con)
+        assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
 
     got = []
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

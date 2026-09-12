@@ -10,8 +10,9 @@ Wi-Fi or Ethernet is up at a time.
 is up and a live gateway probe succeeds (ARP/ICMP),
 not merely because DHCP bound once. If the lease is
 cached but the gateway does not answer: Not connected
- / gateway unreachable. Ethernet also shows MAC,
-netmask, DNS, DHCP, and link speed when known.
+ / gateway unreachable, plus the DHCP IP. Ethernet
+also shows MAC, netmask, DNS, DHCP, and link speed
+when known.
 Wi-Fi shows SSID and country. OPTION WIFI DEBUG ON
 adds WPA vs DHCP lines for Wi-Fi.
 If the radio or NIC is missing the command

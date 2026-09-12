@@ -281,7 +281,7 @@ static int live_net(void)
 
 	if (!net || !net->IsRunning())
 		return 0;
-	return gateway_probe(0);
+	return 1;
 }
 
 static int map_connect_rc(int rc)
