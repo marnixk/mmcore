@@ -356,3 +356,20 @@ class MMBasicConsole:
             check=True, capture_output=True, text=True,
         )
         return out.stdout
+
+    def wait_ocr(
+        self,
+        needle: str,
+        timeout: float = 20.0,
+        crop: str | None = "640x400+160+0",
+        interval: float = 0.5,
+    ) -> str:
+        """Poll the HDMI framebuffer until OCR contains ``needle`` (case-insensitive)."""
+        deadline = time.time() + timeout
+        last = ""
+        while time.time() < deadline:
+            last = self.ocr_screen(crop=crop)
+            if needle.lower() in last.lower():
+                return last
+            time.sleep(interval)
+        return last

@@ -5,7 +5,12 @@ import socket
 import threading
 import time
 
-from harness import qemu_usb_net_args
+from harness import parse_termlog, qemu_usb_net_args
+from test_term import _quit
+from test_term_log import _read_termlog, _termlog_path
+
+ARTIFACTS = "/opt/cursor/artifacts"
+MARKER = b"ETHHDMI"
 
 
 def test_qemu_usb_net_args():
@@ -103,3 +108,112 @@ def test_qemu_ethernet_tcp_to_host(net_console):
         srv.close()
         con.send_line("CLOSE #1")
         assert con.send_line("PRINT 9") == "9"
+
+
+def _wait_serial(con, needle: bytes, timeout: float) -> bytes:
+    deadline = time.time() + timeout
+    acc = b""
+    while time.time() < deadline:
+        acc += con.drain(quiet=0.05, timeout=0.3)
+        if needle in acc:
+            return acc
+        time.sleep(0.05)
+    return acc
+
+
+def _luminance(r: int, g: int, b: int) -> float:
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def test_qemu_ethernet_term_hdmi_not_serial_pane(net_console):
+    """Live Circle TCP: HDMI shows the session; serial is !NET counters, not pane dumps."""
+    con = net_console
+    os.makedirs(ARTIFACTS, exist_ok=True)
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    on = con.send_line("OPTION ETHERNET ON", timeout=25)
+    if "10.0.2." not in on:
+        cfg = _wait_dhcp(con)
+        assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+    dbg = con.send_line("OPTION WIFI DEBUG ON")
+    assert "?SYNTAX ERROR" not in dbg.upper()
+    log_on = con.send_line("OPTION TERM LOG ON")
+    assert ".termlog" in log_on
+
+    received = []
+    hold = threading.Event()
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.listen(1)
+    srv.settimeout(25)
+
+    def accept():
+        conn = None
+        try:
+            conn, _ = srv.accept()
+            conn.settimeout(8)
+            try:
+                received.append(conn.recv(64))
+            except OSError:
+                received.append(b"")
+            conn.sendall(MARKER + b"\r\nlogin:\r\n")
+            try:
+                conn.settimeout(20)
+                received.append(conn.recv(64))
+            except OSError:
+                received.append(b"")
+            hold.wait(25)
+        except OSError:
+            received.append(b"")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+    th = threading.Thread(target=accept, daemon=True)
+    th.start()
+    try:
+        con.drain(quiet=0.1, timeout=0.4)
+        con._ser.sendall(f'TERM "10.0.2.2", {port}\r'.encode())
+        serial = _wait_serial(con, b"!NET connected", timeout=25.0)
+        serial_text = serial.decode(errors="replace")
+        assert b"!NET connected" in serial, serial_text[-800:]
+        assert MARKER not in serial, serial_text[-800:]
+
+        ocr = con.wait_ocr("ETHHDMI", timeout=18.0)
+        png = con.capture_png(os.path.join(ARTIFACTS, "qemu_ethernet_term_hdmi.png"))
+        serial += con.drain(quiet=0.2, timeout=1.0)
+        serial_text = serial.decode(errors="replace")
+        assert MARKER not in serial, serial_text[-1200:]
+        assert "!NET " in serial_text
+
+        pane = con.screen_pixel(164, 24)
+        cream = _luminance(*pane) > 80
+        ocr_hit = "ethhdmi" in ocr.lower() or "login" in ocr.lower()
+        assert cream or ocr_hit, (
+            f"expected HDMI banner (ocr={ocr!r} pixel={pane} png={png})"
+        )
+        con._ser.sendall(b"guest\r")
+        time.sleep(0.4)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+        off = con.send_line("OPTION TERM LOG OFF")
+        assert "in=" in off
+        path = _termlog_path(con)
+        assert path, "expected A:/.termlog or C:/.termlog"
+        body = _read_termlog(con, path)
+        recs = parse_termlog(body)
+        rx = b"".join(r.data for r in recs if r.kind == "R")
+        assert MARKER in rx, body[-800:]
+        th.join(timeout=5)
+    finally:
+        hold.set()
+        srv.close()
+        try:
+            _quit(con)
+        except Exception:
+            pass
+        con.send_line("PRINT 1")

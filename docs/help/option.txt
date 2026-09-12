@@ -58,6 +58,9 @@ Interpreter settings. Implemented subcommands:
   WIFI DEBUG ON|OFF
     Print [wifi] progress on HDMI and serial.
     Default OFF. The PSK is never printed.
+    On a live TERM TCP session it also prints
+    compact !NET rx/tx/parsed counters; the pane
+    is not copied to serial.
   ETHERNET ON|OFF
     Use the RJ45 port (Pi 3/3B+/4; USB LAN on Pi 3).
     ON starts DHCP and turns off Wi-Fi auto-join.
