@@ -3,8 +3,9 @@
 /*
  * TCP platform layer used by CONNECT and TERM.
  *
- * Hardware images define MMB_CIRCLE_WLAN and already construct CNetSubSystem
- * in wlan.cpp. QEMU raspi3b has no NIC, so the stubs keep CONNECT from hanging.
+ * Hardware images define MMB_CIRCLE_WLAN and construct CNetSubSystem here
+ * (Wi-Fi or Ethernet, one at a time). QEMU raspi3b has no NIC, so the stubs
+ * keep CONNECT from hanging.
  *
  * Circle's CSocket::Connect waits until SYN completes or TCP retransmits
  * give up (~90s). That must not run on the interpreter task: TERM/CONNECT
@@ -41,6 +42,54 @@
 
 #define MMB_NET_CONNECT_MS  25000
 #define MMB_NET_GW_PROBE_MS 2000
+
+static CScheduler *s_net_sched;
+static CNetSubSystem *s_stack;
+static int s_net_kind;
+
+CNetSubSystem *mmb_circle_net(void)
+{
+	return s_stack;
+}
+
+extern "C" int mmb_net_kind(void)
+{
+	return s_net_kind;
+}
+
+extern "C" int mmb_net_open(int kind)
+{
+	TNetDeviceType type;
+
+	if (kind != MMB_NET_WIFI && kind != MMB_NET_ETH)
+		return -1;
+	if (s_stack)
+	{
+		if (s_net_kind == kind)
+			return 0;
+		return -1;
+	}
+	if (!CScheduler::IsActive())
+		s_net_sched = new CScheduler();
+	type = (kind == MMB_NET_ETH) ? NetDeviceTypeEthernet : NetDeviceTypeWLAN;
+	s_stack = new CNetSubSystem(0, 0, 0, 0, "mmbasic", type);
+	if (!s_stack)
+		return -1;
+	if (!s_stack->Initialize(FALSE))
+	{
+		delete s_stack;
+		s_stack = 0;
+		s_net_kind = MMB_NET_NONE;
+		return -1;
+	}
+	s_net_kind = kind;
+	return 0;
+}
+
+static CNetSubSystem *net_sys(void)
+{
+	return s_stack;
+}
 
 static CSocket *s_sock;
 static u8 s_rx[FRAME_BUFFER_SIZE];
@@ -118,7 +167,7 @@ static void note_rx_error(int n)
 
 static void abort_inflight(void)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 
 	if (net && net->GetTransportLayer())
 		net->GetTransportLayer()->AbortConnecting();
@@ -126,7 +175,7 @@ static void abort_inflight(void)
 
 static int wait_net(unsigned ms)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 	unsigned start, limit;
 
 	if (!net)
@@ -149,7 +198,7 @@ static int wait_net(unsigned ms)
 
 static int gateway_probe(int force)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 	CNetConfig *cfg;
 	CNetworkLayer *nl;
 	const CIPAddress *gw;
@@ -228,7 +277,7 @@ static int gateway_probe(int force)
 
 static int live_net(void)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 
 	if (!net || !net->IsRunning())
 		return 0;
@@ -260,7 +309,7 @@ static int map_connect_rc(int rc)
 
 static int tcp_connect_once(CSocket **out_sock)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 	CSocket *sock;
 	CIPAddress ip;
 	int rc;
@@ -359,7 +408,7 @@ extern "C" {
 
 int mmb_net_gateway_ok(int force)
 {
-	CNetSubSystem *net = CNetSubSystem::Get();
+	CNetSubSystem *net = net_sys();
 
 	if (!net || !net->IsRunning())
 		return 0;
@@ -411,7 +460,7 @@ int mmb_net_tcp_begin(const char *host, int port)
 		set_error(5);
 		return -1;
 	}
-	if (!CNetSubSystem::Get())
+	if (!net_sys())
 	{
 		set_error(1);
 		return -1;
@@ -689,6 +738,17 @@ void mmb_net_tcp_close(void)
 
 void mmb_net_yield(void)
 {
+}
+
+int mmb_net_kind(void)
+{
+	return MMB_NET_NONE;
+}
+
+int mmb_net_open(int kind)
+{
+	(void)kind;
+	return -1;
 }
 
 }

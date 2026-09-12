@@ -77,7 +77,12 @@ joins a WPA2 network on a real Pi 3 / 4 / 400 / Zero 2 W (firmware in `C:/firmwa
 `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
 (default off; the password is never printed). Hardware images program a
 firmware keep-alive on CYW43455/43456 (Pi 4 / 400) as well as 4330.
-`IPCONFIG` reports connected only after a live gateway probe. QEMU has no radio.
+`OPTION ETHERNET ON` uses the RJ45 port (DHCP) instead of Wi-Fi on boards that have
+one (Pi 3 / 3B+ USB LAN, Pi 4 Gigabit). Only one interface is active; Ethernet ON
+disables Wi-Fi auto-join, and `OPTIONS WIFI` disables Ethernet. A switch after the
+stack is already up needs `REBOOT`. If Ethernet is ON it initialises at boot.
+`IPCONFIG` reports the active interface (`Interface: Ethernet` or `Interface: Wi-Fi`)
+and prints connected only after a live gateway probe. QEMU has no radio or NIC.
 
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:

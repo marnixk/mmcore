@@ -27,6 +27,7 @@ def test_help_lists_commands(console):
         "MATH",
         "STRUCT",
         "JSON_PARSE",
+        "ETHERNET",
     ):
         assert f"<{cmd}>" in seen, cmd
     for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
@@ -199,6 +200,7 @@ def test_help_option_wifi(console):
     assert "default OFF" in out or "Default OFF" in out
     assert "PROMPT" in out
     assert "CWD" in out
+    assert "<ETHERNET>" in out or "ETHERNET" in out
 
 
 def test_help_options_wifi(console):

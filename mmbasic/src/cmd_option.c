@@ -144,6 +144,7 @@ static void wifi_store(const char *ssid, const char *psk)
 	strncpy(G.opt.wifi_psk, psk ? psk : "", sizeof(G.opt.wifi_psk) - 1);
 	G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
 	G.opt.wifi_enabled = G.opt.wifi_ssid[0] ? 1 : 0;
+	G.opt.ethernet_enabled = 0;
 	mmb_settings_save();
 }
 
@@ -175,6 +176,8 @@ static void wifi_try_connect(const char *ssid, const char *psk, int saved_now)
 		else
 			mmb_out("Wi-Fi connected");
 	}
+	else if (mmb_net_kind() == MMB_NET_ETH)
+		mmb_out("Ethernet is active; reboot to use Wi-Fi");
 	else if (!mmb_wlan_available())
 		mmb_out(saved_now
 			? "Wi-Fi credentials saved (radio not available)"
@@ -187,6 +190,9 @@ static void wifi_connect_stored(void)
 {
 	if (!G.opt.wifi_ssid[0])
 		mmb_error("?WIFI not configured");
+	G.opt.ethernet_enabled = 0;
+	G.opt.wifi_enabled = 1;
+	mmb_settings_save();
 	wifi_try_connect(G.opt.wifi_ssid, G.opt.wifi_psk, 0);
 }
 
@@ -310,6 +316,48 @@ static void parse_wifi(void)
 		wifi_store(ssid.s, psk.s);
 		wifi_try_connect(ssid.s, psk.s, 1);
 	}
+}
+
+static void parse_ethernet(void)
+{
+	int on = onoff();
+	char ip[40];
+
+	G.opt.ethernet_enabled = on;
+	if (on)
+		G.opt.wifi_enabled = 0;
+	mmb_settings_save();
+	if (!on)
+	{
+		mmb_out("Ethernet off");
+		return;
+	}
+	if (mmb_net_kind() == MMB_NET_WIFI)
+	{
+		mmb_out("Wi-Fi is active; Ethernet will start on reboot");
+		return;
+	}
+	if (mmb_eth_start() != 0)
+	{
+		mmb_out("Ethernet not available");
+		return;
+	}
+	if (mmb_eth_wait_dhcp(15000) && mmb_eth_ip(ip, (int)sizeof(ip)) == 0 && ip[0])
+	{
+		char msg[80];
+		int n = 0;
+		const char *a = "Connected as ";
+
+		while (*a && n < (int)sizeof(msg) - 1)
+			msg[n++] = *a++;
+		a = ip;
+		while (*a && n < (int)sizeof(msg) - 1)
+			msg[n++] = *a++;
+		msg[n] = 0;
+		mmb_out(msg);
+	}
+	else
+		mmb_out("Ethernet enabled; waiting for link/DHCP");
 }
 
 static void parse_sdcard(void)
@@ -786,6 +834,11 @@ static void option_dispatch(void)
 		parse_wifi();
 		return;
 	}
+	if (mmb_match("ETHERNET"))
+	{
+		parse_ethernet();
+		return;
+	}
 	if (mmb_match("CPUSPEED"))
 	{
 		mmb_expr();
@@ -828,6 +881,7 @@ static void option_dispatch(void)
 	{
 		char ssid[64], psk[64];
 		int en = G.opt.wifi_enabled;
+		int eth = G.opt.ethernet_enabled;
 		strncpy(ssid, G.opt.wifi_ssid, sizeof(ssid) - 1);
 		ssid[sizeof(ssid) - 1] = 0;
 		strncpy(psk, G.opt.wifi_psk, sizeof(psk) - 1);
@@ -838,6 +892,7 @@ static void option_dispatch(void)
 		strncpy(G.opt.wifi_psk, psk, sizeof(G.opt.wifi_psk) - 1);
 		G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
 		G.opt.wifi_enabled = en;
+		G.opt.ethernet_enabled = eth;
 		mmb_gfx_apply_default_mode();
 		return;
 	}
@@ -1152,6 +1207,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
 	if (all || G.opt.wifi_debug)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
+	if (all || G.opt.ethernet_enabled)
+		ol_line(&n, G.opt.ethernet_enabled ? "OPTION ETHERNET ON" : "OPTION ETHERNET OFF");
 	if (all || G.opt.term_log)
 		ol_line(&n, G.opt.term_log ? "OPTION TERM LOG ON" : "OPTION TERM LOG OFF");
 	if (all || (G.opt.wifi_country[0] &&
