@@ -1,0 +1,26 @@
+name: COLOUR
+kind: command
+alias: COLOR
+
+COLOUR fg [, bg]
+COLOR fg [, bg]     (alias)
+
+Set foreground and optional background colour for
+PRINT / INPUT text and for graphics when a colour
+argument is omitted. HDMI text uses the nearest
+of the 16 ANSI colours (RGB(RED) is red).
+Colours are RGB integers: RGB(r,g,b), RGB(r,g,b,t),
+RGB(RED), or RGB("RED"). t is 0 (clear) to 15 (solid)
+when drawing on page 1, the CMM2 overlay.
+Integers 0 to 31 are the IBM PC
+palette (CGA/VGA): 0-7 normal, 8-15 bright, 16-31
+repeat 0-15. COLOUR 4 is the same as COLOUR RED.
+Named colours: BLACK BLUE GREEN CYAN RED MAGENTA
+BROWN LIGHTGRAY DARKGRAY LIGHTBLUE LIGHTGREEN
+LIGHTCYAN LIGHTRED LIGHTMAGENTA YELLOW WHITE, plus
+ORANGE PINK GOLD SALMON GRAY GREY. LIGHT* names are the
+bright IBM set (LIGHTRED, LIGHTGREEN, ...).
+
+Example:  COLOUR RGB(RED)
+          COLOUR LIGHTRED, BLACK
+          COLOUR 12

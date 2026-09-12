@@ -1,0 +1,20 @@
+name: DO
+kind: language
+alias: LOOP
+
+DO [WHILE condition | UNTIL condition]
+  statements
+  EXIT DO
+LOOP [WHILE condition | UNTIL condition]
+
+Repeat a block. Test on DO and/or LOOP.
+With no test, loops until EXIT DO (or BREAK).
+EXIT DO jumps to the statement after LOOP.
+
+Example:
+  10 I=0
+  20 DO
+  30 I=I+1
+  40 PRINT I
+  50 LOOP UNTIL I=3
+  RUN

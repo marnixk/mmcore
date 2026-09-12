@@ -496,8 +496,6 @@ int mmb_help_lookup(const char *name);
 int mmb_help_alias_count(void);
 const char *mmb_help_alias_name(int i);
 const char *mmb_help_alias_canon(int i);
-const char *mmb_help_commands_overview(void);
-const char *mmb_help_basic_overview(void);
 void mmb_cmd_math(void);
 int mmb_try_math_fn(mmb_val *out);
 void mmb_cmd_graphics(const char *kw);

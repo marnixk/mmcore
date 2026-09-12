@@ -1,0 +1,18 @@
+name: OVERVIEW
+kind: page
+
+MMBasic Help
+
+Bare HELP opens this Overview. ~Contents~ is the command
+and language map. ~Index~ is the A-Z list. ~HELP~ explains
+the viewer (HELP BASIC is Contents).
+
+Links are explicit. A sentence such as "for every loop we
+can use ~FOR~ loops" only highlights the marked FOR, not
+the word "for".
+
+Type HELP topic from the prompt, or Enter on a <link>.
+Escape goes back. Escape on this page returns to the prompt.
+
+Start with ~CLS~, ~PRINT~, ~OPTION~, or ~FUNCTIONS~.
+Unknown topics fall back to the Index.

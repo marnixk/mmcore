@@ -1,0 +1,9 @@
+name: SETTICK
+kind: command
+
+SETTICK period, handler [, slot]
+
+Call SUB handler every period milliseconds.
+slot is 0 to 3 (default 0). period 0 disables.
+
+Example:  SETTICK 10, GameTick

@@ -1,0 +1,9 @@
+name: MEMORY
+kind: command
+
+MEMORY
+
+Show how many program lines, variables, and open
+files the interpreter is using.
+
+Example:  MEMORY

@@ -1,0 +1,64 @@
+name: MODE
+kind: command
+
+MODE n [, bits] [, clscolour]
+
+Set the graphics page size, colour depth, and HDMI
+framebuffer. n is 1 to 17. bits is 8, 12, 16 or 32
+(default 8 if omitted). A third argument then clears
+the page to that colour.
+
+MODE updates MM.HRES and MM.VRES, reallocates
+graphics pages, and retunes HDMI to the same width
+and height. PIXEL, LINE, BOX, TEXT and PAGE use that
+size. MM.INFO(MODE) is n + bits/100 (MODE 8,16 reads
+as 8.16).
+
+HDMI colour depth stays the compile-time screen
+depth (16-bit RGB565 here). bits still quantises the
+logical page (8=RGB332, 12=RGB444, 16=RGB565,
+32=RGB888). If the firmware cannot allocate a size,
+the logical page still changes and HDMI stays at the
+last working resolution.
+
+Pages: 8 (0-7) at every MODE, allocated lazily.
+
+Depths (quantised; stored as 32-bit RGB):
+  8   RGB332
+  12  RGB444 (invalid on modes 9, 11, 12, 14)
+  16  RGB565
+  32  RGB888
+
+Boot HDMI uses DMT 1920x1080 (hdmi_group=2,
+hdmi_mode=82) with disable_overscan=1 so PIXEL 0,0
+is the visible top-left of a 1080p panel. MODE still
+retunes the Circle framebuffer to MM.HRES x MM.VRES.
+
+Boot default if HDMI is 640x480: MODE 8,16
+Otherwise: MODE 1,8
+Tests and examples reset with MODE 8,16.
+
+All supported modes (n, pixels, depths):
+  1   800x600      8,12,16,32
+  2   640x400      8,12,16,32
+  3   320x200      8,12,16,32
+  4   480x432      8,12,16,32
+  5   240x216      8,12,16,32
+  6   256x240      8,12,16,32
+  7   320x240      8,12,16,32
+  8   640x480      8,12,16,32
+  9   1024x768     8,16,32
+ 10   848x480      8,12,16,32
+ 11   1280x720     8,16,32
+ 12   960x540      8,16,32
+ 13   400x300      8,12,16,32
+ 14   960x540      8,16,32
+ 15   1280x1024    8,12,16,32
+ 16   1920x1080    8,12,16,32
+ 17   384x240      8,12,16,32
+
+Unknown n or bits raises ?INVALID MODE.
+
+Example:  MODE 8,16
+          PRINT MM.HRES, MM.VRES
+          MODE 17,8

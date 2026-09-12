@@ -1,0 +1,13 @@
+name: CLS
+kind: command
+
+CLS [colour]
+
+Clear the graphics screen and home the text cursor
+so the next prompt is at the top of HDMI.
+
+With no argument the screen is filled with the
+current background colour (see COLOUR).
+colour is an RGB integer: RGB(r,g,b) or RGB("RED").
+
+Example:  CLS RGB(0,0,0)

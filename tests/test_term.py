@@ -71,7 +71,7 @@ def test_term_requires_host_and_port(console):
 
 
 def test_help_term(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "TERM" in listing
     close_ihelp(console)
     out = dump_topic(console, "TERM")

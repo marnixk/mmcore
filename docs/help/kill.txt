@@ -1,0 +1,13 @@
+name: KILL
+kind: command
+alias: RM, DEL
+
+KILL path$
+RM path$     (alias)
+DEL path$    (alias)
+
+Delete a file. Directories use RMDIR.
+
+Example:  KILL "Z.TXT"
+          RM "Z.TXT"
+          DEL "Z.TXT"

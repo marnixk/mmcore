@@ -1,0 +1,16 @@
+name: ON
+kind: command
+alias: ON GOTO, ON GOSUB
+
+ON n GOTO line [, line]...
+ON n GOSUB line [, line]...
+ON ERROR ...     (accepted, not trapped)
+ON KEY subname   Call subname when a key is waiting.
+
+Jump to the n-th line number (1-based).
+
+Example:
+  10 N=2
+  20 ON N GOTO 30,40,50
+  40 PRINT 42
+  RUN

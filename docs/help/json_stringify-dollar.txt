@@ -1,0 +1,13 @@
+name: JSON_STRINGIFY$
+kind: command
+
+JSON_STRINGIFY$(var)
+
+Turn a TYPE variable into a JSON STRING (255).
+Keys are the member names. Integers have no
+decimal. Longer than 255 characters is an error.
+JSON$ can query the result.
+
+Example:
+  s$ = JSON_STRINGIFY$(w)
+  PRINT JSON$(s$, "temp")

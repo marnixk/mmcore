@@ -40,7 +40,7 @@ def test_connect_numeric_host_still_fails_cleanly(console):
 
 
 def test_help_connect(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "CONNECT" in listing
     close_ihelp(console)
     out = dump_topic(console, "CONNECT")
@@ -65,7 +65,7 @@ def test_ipconfig_without_radio(console):
 
 
 def test_help_ipconfig(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "IPCONFIG" in listing
     close_ihelp(console)
     out = dump_topic(console, "IPCONFIG")

@@ -1,0 +1,9 @@
+name: SAVE
+kind: command
+
+SAVE file$
+
+Save the program in memory. .BAS is appended if
+file$ has no extension.
+
+Example:  SAVE "P.BAS"

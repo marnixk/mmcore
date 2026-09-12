@@ -1,0 +1,23 @@
+name: PAGE
+kind: command
+
+PAGE WRITE n | FRAMEBUFFER
+PAGE DISPLAY n
+PAGE COPY src [TO dst]
+PAGE COPY src, dst [, I|B]
+PAGE SCROLL n, x, y [, fillcolour]
+PAGE AND_PIXELS s1, s2, dest
+PAGE OR_PIXELS  s1, s2, dest
+PAGE XOR_PIXELS s1, s2, dest
+
+Off-screen pages. WRITE selects the draw target
+(a page number or FRAMEBUFFER). DISPLAY shows
+page n. COPY copies src to dst. Flag B skips black
+pixels (CMM2 blit). Page 1 is composited over the
+display page: black is clear, RGB(...,t) blends.
+SCROLL moves the page right by x and up by y.
+Omitted fillcolour wraps; -1 leaves the gap;
+any other colour fills it.
+
+Example:  PAGE COPY 0 TO 1
+          PAGE SCROLL 0, 8, 0

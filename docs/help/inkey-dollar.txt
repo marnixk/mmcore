@@ -1,0 +1,16 @@
+name: INKEY$
+kind: command
+
+INKEY$
+INKEY$()
+
+Next console key, or "" if none. Never blocks,
+except a short wait to finish a VT100 sequence.
+Arrows and function keys become one CMM2 code:
+  Up 128  Down 129  Left 130  Right 131
+  Insert 132  Home 134  End 135
+  PageUp 136  PageDown 137  Delete 127
+  F1-F12  145-156
+
+Example:
+  IF INKEY$ = CHR$(128) THEN y = y - 1

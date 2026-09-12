@@ -1,0 +1,18 @@
+name: INPUT
+kind: command
+
+INPUT [prompt$;|,] var [, var...]
+INPUT #n, var [, var...]
+LINE INPUT [prompt$] var$
+LINE INPUT #fn, var$
+
+Console INPUT prints an optional prompt, then ?
+if the prompt is followed by ; (or if there is no
+prompt). A comma after the prompt skips the ?.
+Type a line; comma-separated fields fill the vars.
+INPUT #n reads those fields from an open file or
+TCP stream. LINE INPUT reads a whole line into a
+string. HELP INPUT$ for INPUT$(nbr, #n).
+
+Example:  INPUT "Name"; N$
+          PRINT N$

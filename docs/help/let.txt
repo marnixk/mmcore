@@ -1,0 +1,13 @@
+name: LET
+kind: language
+
+LET var = expr
+var = expr
+
+Assign to a variable. LET is optional.
+Types: default float, var% integer, var$ string.
+
+Example:
+  LET A=21
+  B%=2
+  PRINT A*B%

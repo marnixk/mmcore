@@ -1,0 +1,10 @@
+name: XFER
+kind: command
+
+XFER path$, nbytes
+
+Receive nbytes of raw serial data and write them to
+path$. Prints <<XFER>> when ready to read. Bytes are
+stored as-is, including NUL.
+
+Example:  XFER "A:/DATA.BIN", 16

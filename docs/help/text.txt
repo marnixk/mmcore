@@ -1,0 +1,9 @@
+name: TEXT
+kind: command
+
+TEXT x, y, string$ [, colour]
+
+Draw string$ at pixel (x,y) in the current font.
+colour defaults to the foreground.
+
+Example:  TEXT 8,8,"HELLO",RGB(255,255,255)

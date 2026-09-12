@@ -1,0 +1,8 @@
+name: SEEK
+kind: command
+
+SEEK #n, pos
+
+Set the read/write position of open file n.
+
+Example:  SEEK #1, 0

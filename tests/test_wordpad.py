@@ -86,7 +86,7 @@ def test_wordpad_exit_cls_and_restores_colour(kernel_image):
 
 
 def test_help_wordpad(console):
-    listing = scroll_all(console, open_ihelp(console))
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "WORDPAD" in listing
     close_ihelp(console)
     out = dump_topic(console, "WORDPAD")

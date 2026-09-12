@@ -1,0 +1,20 @@
+name: OPEN
+kind: command
+
+OPEN file$ [FOR INPUT|OUTPUT|APPEND] AS #n
+OPEN "TCP:host:port" [FOR INPUT|OUTPUT] AS #n
+
+Open a disk file, or a TCP client stream.
+n is 1 to 10. Disk OUTPUT creates/truncates.
+APPEND writes at the end. INPUT reads.
+
+TCP: host is an IP or DNS name; port is
+required. No FOR means both directions.
+One TCP client at a time. CONNECT and TERM
+use the same socket. QEMU has no NIC, so
+OPEN "TCP:..." fails (network not available).
+
+Example:  OPEN "A.TXT" FOR OUTPUT AS #1
+          PRINT #1, "HELLO"
+          CLOSE #1
+          OPEN "TCP:192.168.1.50:80" AS #1

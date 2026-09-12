@@ -1,0 +1,8 @@
+name: CLOSE
+kind: command
+
+CLOSE #n
+
+Close file or TCP stream number n (1 to 10).
+
+Example:  CLOSE #1

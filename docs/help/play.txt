@@ -1,0 +1,29 @@
+name: PLAY
+kind: command
+
+PLAY STOP
+PLAY PAUSE
+PLAY RESUME
+PLAY VOLUME left [, right]
+PLAY TONE left, right [, duration]
+PLAY MP3 file$
+PLAY WAV file$
+PLAY MODFILE file$     (PLAY MOD file$)
+PLAY XM file$          (PLAY XMFILE file$)
+
+Decode and play audio to OPTION AUDIO_TARGET.
+HDMI sends IEC958 stereo on HDMI0. JACK sends PWM
+to the 3.5mm analogue socket (Pi 3 / Pi 4B). Pi 400
+has no analogue jack; use HDMI there.
+TONE frequencies are Hz; duration is milliseconds.
+Omit duration to hold the tone until PLAY STOP.
+PLAYING() is 1 while audio is playing and not paused.
+Hardware keeps ~160ms in the DMA queue so HDMI/PWM
+chunks are not padded with silence on a brief stall.
+QEMU has no sound device; decode and PLAYING() still
+run in real time.
+
+Example:  OPTION AUDIO_TARGET HDMI
+          PLAY WAV "TEST.WAV"
+          PLAY MP3 "TEST.MP3"
+          PRINT PLAYING()

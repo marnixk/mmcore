@@ -1,0 +1,19 @@
+name: BOX
+kind: command
+
+BOX x, y, w, h [, lw] [, colour] [, fill]
+
+Draw a rectangle at (x,y) of size w by h.
+lw is line width (default 1). colour defaults to
+the foreground. fill >= 0 fills the interior
+(use an RGB value such as RGB(0,255,0)).
+
+BOX AND_PIXELS x, y, w, h, colour [, page]
+BOX OR_PIXELS  x, y, w, h, colour [, page]
+BOX XOR_PIXELS x, y, w, h, colour [, page]
+
+AND, OR or XOR colour with every pixel in the
+rectangle. page defaults to the write page.
+
+Example:  BOX 20,20,40,40,1,RGB(0,255,0),1
+          BOX XOR_PIXELS 20,20,40,40,RGB(255,255,255)

@@ -1,0 +1,17 @@
+name: FILES
+kind: command
+
+FILES
+
+Open the dual-pane file manager (not a DIR listing).
+Navigate drives and folders. Enter on a directory
+opens it. Enter on a .BAS file RUNs it. View (v/F3)
+previews PNG/JPG or plays MP3/XM/MOD when supported.
+Tab switches panes. q or Esc leaves FILES.
+Menus: Alt+L Left  Alt+F File  Alt+C Command
+       Alt+O Options  Alt+R Right.
+Colours follow OPTION EDIT THEME (same palettes
+as the editor).
+View (v/F3) also shows .BAS/.INC/.TXT with colour.
+
+Example:  FILES

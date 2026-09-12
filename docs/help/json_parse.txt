@@ -1,0 +1,17 @@
+name: JSON_PARSE
+kind: command
+
+JSON_PARSE json$, var
+
+Fill a TYPE variable from a JSON STRING (255).
+Object keys match member names case-insensitively.
+Missing keys, extra keys and null leave members
+unchanged. JSON bool becomes INTEGER 0 or 1.
+JSON number to INTEGER truncates toward zero;
+overflow is an error. STRING members truncate to
+LENGTH. Nested objects fill nested TYPEs. JSON
+arrays fill array members (extra ignored).
+
+Example:
+  JSON_PARSE js$, w
+  PRINT w.temp

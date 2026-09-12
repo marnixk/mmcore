@@ -1,0 +1,9 @@
+name: FONT
+kind: command
+
+FONT n [, scale]
+
+Select font number n and optional integer scale
+(minimum 1). Used by TEXT.
+
+Example:  FONT 1,2
