@@ -46,11 +46,13 @@ def _wait_serial(con, needle: bytes, timeout: float) -> bytes:
 @pytest.mark.skipif(not _bbs_reachable(), reason="Level29 BBS not reachable")
 def test_level29_live_term_login(kernel_image):
     os.makedirs(ARTIFACTS, exist_ok=True)
+    guest_pcap = os.path.join(ARTIFACTS, "level29_guest_usbnic.pcap")
     bbs_ip = socket.getaddrinfo(BBS[0], BBS[1], socket.AF_INET)[0][4][0]
     con = MMBasicConsole(
         kernel_image,
         extra_qemu=qemu_usb_net_args(
-            guestfwd=f"tcp:{GUEST_BBS}:23-tcp:{bbs_ip}:23"
+            guestfwd=f"tcp:{GUEST_BBS}:23-tcp:{bbs_ip}:23",
+            dump=guest_pcap,
         ),
         boot_timeout=40.0,
     )
