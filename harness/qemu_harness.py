@@ -266,13 +266,21 @@ class MMBasicConsole:
         """Capture the emulated framebuffer to a .ppm file and return its path."""
         if dest_ppm is None:
             dest_ppm = os.path.join(self._tmp, f"fb-{time.time_ns()}.ppm")
-        self._monitor_cmd(f"screendump {dest_ppm}")
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if os.path.exists(dest_ppm) and os.path.getsize(dest_ppm) > 0:
-                return dest_ppm
-            time.sleep(0.1)
-        raise HarnessError("screendump did not produce a file")
+        last_err = "screendump did not produce a file"
+        for _ in range(4):
+            try:
+                if os.path.exists(dest_ppm):
+                    os.remove(dest_ppm)
+            except OSError:
+                pass
+            self._monitor_cmd(f"screendump {dest_ppm}")
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                if os.path.exists(dest_ppm) and os.path.getsize(dest_ppm) > 0:
+                    return dest_ppm
+                time.sleep(0.15)
+            time.sleep(0.4)
+        raise HarnessError(last_err)
 
     def capture_png(self, dest_png: str | None = None) -> str:
         """Capture the framebuffer to a .png file and return its path."""

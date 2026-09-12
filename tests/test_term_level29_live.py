@@ -74,6 +74,7 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         con._ser.sendall(b'TERM "bbs.fozztexx.com", 23\r')
         serial = _wait_serial(con, b"!NET connected", timeout=30.0)
         assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
+        time.sleep(1.5)
 
         ocr = con.wait_ocr("username", timeout=30.0)
         banner = os.path.join(ARTIFACTS, "level29_live_banner.png")
