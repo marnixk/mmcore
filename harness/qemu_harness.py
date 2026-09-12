@@ -84,6 +84,7 @@ class MMBasicConsole:
         self._proc: subprocess.Popen | None = None
         self._ser: socket.socket | None = None
         self._mon: socket.socket | None = None
+        self._qemu_log_fh = None
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> "MMBasicConsole":
@@ -96,8 +97,10 @@ class MMBasicConsole:
             "-monitor", f"unix:{self._mon_path},server,nowait",
         ]
         cmd.extend(self.extra_qemu)
+        log_path = os.path.join(self._tmp, "qemu.log")
+        self._qemu_log_fh = open(log_path, "wb")
         self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            cmd, stdout=self._qemu_log_fh, stderr=subprocess.STDOUT
         )
         self._ser = self._connect(self._ser_path)
         self._mon = self._connect(self._mon_path)
@@ -157,6 +160,12 @@ class MMBasicConsole:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
             self._proc = None
+        if self._qemu_log_fh is not None:
+            try:
+                self._qemu_log_fh.close()
+            except OSError:
+                pass
+            self._qemu_log_fh = None
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def __enter__(self) -> "MMBasicConsole":
