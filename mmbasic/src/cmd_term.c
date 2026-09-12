@@ -215,6 +215,8 @@ typedef struct {
 static term_bm g_bm[TM_BM_MAX];
 static int g_bm_n;
 static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
+static unsigned char s_iac_out[64];
+static int s_iac_n;
 
 static const mmb_ed_theme *term_th(void)
 {
@@ -1254,9 +1256,6 @@ static void term_net_send_raw(const void *data, unsigned n)
 		}
 	}
 }
-
-static unsigned char s_iac_out[64];
-static int s_iac_n;
 
 static void iac_flush(void)
 {
