@@ -171,6 +171,10 @@ typedef struct {
 	int dirty_lo;
 	int dirty_hi;
 	int echo_typed;
+	int live;
+	unsigned rx_n;
+	unsigned tx_n;
+	unsigned parsed_n;
 } tm_state;
 
 static tm_state T;
@@ -301,6 +305,8 @@ static void term_log_event(const char *s);
 static void term_log_flush(void);
 static void term_log_poll(void);
 static void term_log_path(char *dst, unsigned n);
+static void term_mark_live(void);
+static void term_net_stats(const char *ev);
 
 static int term_want_echo(void);
 static void pane_rubout(void);
@@ -434,6 +440,65 @@ static const char *term_width_label(void)
 	return T.letterbox ? "Boxed" : "Full";
 }
 
+static void term_mark_live(void)
+{
+	T.live = 1;
+	T.rx_n = 0;
+	T.tx_n = 0;
+	T.parsed_n = 0;
+}
+
+static void ser_u(unsigned v)
+{
+	char tmp[12];
+	int i;
+
+	if (v == 0)
+	{
+		ser("0");
+		return;
+	}
+	i = (int)sizeof(tmp) - 1;
+	tmp[i] = 0;
+	while (v && i > 0)
+	{
+		tmp[--i] = (char)('0' + (v % 10));
+		v /= 10;
+	}
+	ser(tmp + i);
+}
+
+static void term_net_stats(const char *ev)
+{
+	if (!mmb_opt_console_serial())
+		return;
+	ser("!NET ");
+	if (ev && ev[0])
+	{
+		ser(ev);
+		ser(" ");
+	}
+	ser("rx=");
+	ser_u(T.rx_n);
+	ser(" tx=");
+	ser_u(T.tx_n);
+	ser(" parsed=");
+	ser_u(T.parsed_n);
+	ser(" ring=");
+	ser_u(mmb_net_rxbuf_used(&term_rx));
+	ser(" a=");
+	ser_u((unsigned)T.ansi_st);
+	ser(" i=");
+	ser_u((unsigned)T.iac);
+	ser(" s=");
+	ser_u(T.sb ? 1u : 0u);
+	ser(" e=");
+	ser_u(term_want_echo() ? 1u : 0u);
+	ser(" c=");
+	ser_u(T.char_mode ? 1u : 0u);
+	ser("\r\n");
+}
+
 static void term_serial_dump(void)
 {
 	int r, c, cols;
@@ -441,7 +506,7 @@ static void term_serial_dump(void)
 
 	if (!T.active)
 		return;
-	if (T.file_replay)
+	if (T.file_replay || T.live)
 		return;
 	if (!mmb_opt_console_serial())
 		return;
@@ -1164,6 +1229,7 @@ static void term_net_send(const void *data, unsigned n)
 		const unsigned char *p = (const unsigned char *)data;
 		int left = (int)n, rc, idle = 0;
 
+		T.tx_n += n;
 		mmb_net_yield();
 		while (left > 0)
 		{
@@ -2049,6 +2115,8 @@ static void term_serial_dump_dlg(void)
 	int i;
 	char port[8];
 
+	if (T.live)
+		return;
 	if (T.dlg == TM_DLG_NONE)
 		return;
 	if (T.dlg == TM_DLG_LIST)
@@ -2199,6 +2267,10 @@ static void term_bm_connect(void)
 	T.connecting = 0;
 	T.net_fail = 0;
 	T.net_msg[0] = 0;
+	T.live = 0;
+	T.rx_n = 0;
+	T.tx_n = 0;
+	T.parsed_n = 0;
 	T.char_mode = 0;
 	T.no_echo = 0;
 	T.echo_user = b->echo ? 1 : 2;
@@ -2257,6 +2329,7 @@ static void term_bm_connect(void)
 		}
 		else
 		{
+			term_mark_live();
 			T.connecting = 1;
 			T.connect_at = mmb_now_ms();
 			pane_puts("Connecting...");
@@ -3210,6 +3283,7 @@ static void term_rx_consume(unsigned n)
 		got = mmb_net_rxbuf_pop(&term_rx, tmp, got);
 		if (!got)
 			return;
+		T.parsed_n += got;
 		term_log_rx(tmp, (int)got);
 		n -= got;
 	}
@@ -3257,6 +3331,7 @@ static int term_tcp_drain(int idle_max)
 		}
 		idle = 0;
 		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
+		T.rx_n += (unsigned)n;
 		got += n;
 		mmb_net_yield();
 	}
@@ -3278,6 +3353,17 @@ static int term_tcp_ingest(int idle_max)
 
 static void term_maybe_serial_dump(int got)
 {
+	if (T.live)
+	{
+		if (!mmb_opt_wifi_debug() || got <= 0)
+			return;
+		if (!T.dump_at || mmb_now_ms() - T.dump_at >= TM_DUMP_MS)
+		{
+			term_net_stats(0);
+			T.dump_at = mmb_now_ms();
+		}
+		return;
+	}
 	if (got <= 0)
 		return;
 	if (got < 80 || !T.dump_at ||
@@ -3641,6 +3727,8 @@ static void tcp_lost(const char *why)
 	ser("!NET ");
 	ser(T.net_msg);
 	ser("\r\n");
+	if (T.live)
+		term_net_stats(0);
 }
 
 static void term_net_lost_report(void)
@@ -3938,6 +4026,7 @@ void mmb_cmd_term(void)
 		}
 		else
 		{
+			term_mark_live();
 			T.connecting = 1;
 			T.connect_at = mmb_now_ms();
 		}
@@ -4290,7 +4379,10 @@ void mmb_term_poll(void)
 			pane_puts("Connected");
 			pane_newline();
 			term_draw();
-			term_serial_dump();
+			if (T.live)
+				term_net_stats("connected");
+			else
+				term_serial_dump();
 		}
 		else
 		{
@@ -4304,7 +4396,15 @@ void mmb_term_poll(void)
 			pane_puts(T.net_msg);
 			pane_newline();
 			term_draw();
-			term_serial_dump();
+			if (T.live)
+			{
+				ser("!NET fail ");
+				ser(T.net_msg);
+				ser("\r\n");
+				term_net_stats(0);
+			}
+			else
+				term_serial_dump();
 			return;
 		}
 	}

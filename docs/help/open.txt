@@ -11,8 +11,10 @@ APPEND writes at the end. INPUT reads.
 TCP: host is an IP or DNS name; port is
 required. No FOR means both directions.
 One TCP client at a time. CONNECT and TERM
-use the same socket. QEMU has no NIC, so
-OPEN "TCP:..." fails (network not available).
+use the same socket. QEMU TCP needs
+-device usb-net and OPTION ETHERNET ON;
+otherwise OPEN "TCP:..." fails (network
+not available).
 
 Example:  OPEN "A.TXT" FOR OUTPUT AS #1
           PRINT #1, "HELLO"

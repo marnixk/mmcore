@@ -3,9 +3,9 @@
 /*
  * TCP platform layer used by CONNECT and TERM.
  *
- * Hardware images define MMB_CIRCLE_WLAN and construct CNetSubSystem here
- * (Wi-Fi or Ethernet, one at a time). QEMU raspi3b has no NIC, so the stubs
- * keep CONNECT from hanging.
+ * Every image defines MMB_CIRCLE_NET and constructs CNetSubSystem here
+ * (Wi-Fi or Ethernet, one at a time). QEMU uses USB CDC ethernet
+ * (-device usb-net); without that gadget GetNetDevice() is empty.
  *
  * Circle's CSocket::Connect waits until SYN completes or TCP retransmits
  * give up (~90s). That must not run on the interpreter task: TERM/CONNECT
@@ -17,7 +17,7 @@
  * only holds one frame leftover. TERM owns the 512KB interpret ring.
  */
 
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 #include <circle/net/netsubsystem.h>
 #include <circle/net/socket.h>
 #include <circle/net/in.h>
@@ -38,7 +38,7 @@
 #include <circle/new.h>
 #endif
 
-#ifdef MMB_CIRCLE_WLAN
+#ifdef MMB_CIRCLE_NET
 
 #define MMB_NET_CONNECT_MS  25000
 #define MMB_NET_GW_PROBE_MS 2000
@@ -281,7 +281,7 @@ static int live_net(void)
 
 	if (!net || !net->IsRunning())
 		return 0;
-	return gateway_probe(0);
+	return 1;
 }
 
 static int map_connect_rc(int rc)
@@ -659,7 +659,7 @@ void mmb_net_yield(void)
 
 }
 
-#else /* !MMB_CIRCLE_WLAN */
+#else /* !MMB_CIRCLE_NET */
 
 extern "C" {
 

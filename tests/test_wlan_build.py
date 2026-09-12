@@ -9,6 +9,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def test_makefile_gates_wlan_on_qemu_no_sdhost():
     text = open(os.path.join(REPO, "console", "Makefile"), encoding="utf-8").read()
     assert "NO_SDHOST" in text
+    assert "MMB_CIRCLE_NET" in text
     assert "MMB_CIRCLE_WLAN" in text
     assert "libwlan.a" in text
     assert "libwpa_supplicant.a" in text
@@ -29,6 +30,11 @@ def test_build_script_builds_hostap_only_for_hardware():
     assert 'QEMU:-1}" = "0"' in text or '[ "${QEMU:-1}" = "0" ]' in text
     assert "--kernel-max-size 8" in text
     assert "MMB_VERSION" in text
+    assert "USE_NAK_USB_FIX" in text
+    assert "USE_QEMU_USB_FIX" in text
+    net = text.index('make -C "${CIRCLE_DIR}/lib/net"')
+    wlan = text.index("Building Circle WLAN and hostap")
+    assert net < wlan
 
 
 def test_package_and_install_ship_brcmfmac_firmware():
@@ -87,16 +93,19 @@ def test_net_cpp_drains_circle_into_512kb_ring():
 
 
 def test_eth_cpp_opens_dhcp_ethernet_device():
-    """Hardware Ethernet uses Circle DHCP + NetDeviceTypeEthernet."""
+    """Ethernet uses Circle DHCP + NetDeviceTypeEthernet (QEMU USB CDC too)."""
     eth = open(os.path.join(REPO, "console", "eth.cpp"), encoding="utf-8").read()
     net = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
     mk = open(os.path.join(REPO, "console", "Makefile"), encoding="utf-8").read()
     assert "eth.o" in mk
+    assert "MMB_CIRCLE_NET" in mk
     assert "NetDeviceTypeEthernet" in net
     assert "mmb_net_open" in net
     assert "MMB_NET_ETH" in net
     assert "mmb_eth_start" in eth
+    assert "GetNetDevice(NetDeviceTypeEthernet)" in eth
     assert "Interface: Ethernet" in eth
+    assert "DHCP IP:" in eth
 
 
 def test_qemu_kernel_end_fits_configured_max(kernel_image):

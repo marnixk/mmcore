@@ -19,10 +19,11 @@ briefly to flush a lone Esc.
 Ctrl+], F10, or Alt+X quits. Alt+F opens a File
 menu with Exit.
 
-QEMU has no network device; CONNECT then reports
-Network not available (or DNS/TCP failure on
-hardware) and returns to the prompt. On hardware,
-wait for Wi-Fi/DHCP first (OPTIONS WIFI), then
-CONNECT uses Circle TCP (about 25s for DNS+SYN).
+Without Ethernet or Wi-Fi, CONNECT reports
+Network not available. QEMU Ethernet needs
+-device usb-net then OPTION ETHERNET ON.
+On hardware, wait for DHCP first (OPTIONS WIFI
+or OPTION ETHERNET ON), then CONNECT uses
+Circle TCP (about 25s for DNS+SYN).
 
 Example:  CONNECT "192.168.1.10", 23

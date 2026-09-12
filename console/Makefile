@@ -4,9 +4,11 @@
 CIRCLEHOME = ../circle
 MMB        = ../mmbasic
 
-# Circle --qemu sets NO_SDHOST (no CYW4343x on raspi3b). Hardware images
-# leave SDHOST on so Pi 3 Wi-Fi can share the board with the SD card.
+# TCP/IP (libnet + libsched) is in every image so QEMU can drive Ethernet
+# via usb-net. Circle --qemu sets NO_SDHOST (no CYW4343x on raspi3b);
+# hardware images leave SDHOST on so Pi 3 Wi-Fi can share the SD card.
 -include $(CIRCLEHOME)/Config.mk
+DEFINE += -DMMB_CIRCLE_NET
 ifeq ($(findstring NO_SDHOST,$(DEFINE)),)
 DEFINE += -DMMB_CIRCLE_WLAN
 endif
@@ -57,7 +59,9 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/third_party/upng.o \
 	  $(MMB)/third_party/cJSON.o
 
-LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
+LIBS	= $(CIRCLEHOME)/lib/net/libnet.a \
+	  $(CIRCLEHOME)/lib/sched/libsched.a \
+	  $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
 	  $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
 	  $(CIRCLEHOME)/lib/sound/libsound.a \
 	  $(CIRCLEHOME)/lib/usb/libusb.a \
@@ -68,8 +72,6 @@ LIBS	= $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
 ifeq ($(findstring MMB_CIRCLE_WLAN,$(DEFINE)),MMB_CIRCLE_WLAN)
 LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
 	$(CIRCLEHOME)/addon/wlan/libwlan.a \
-	$(CIRCLEHOME)/lib/net/libnet.a \
-	$(CIRCLEHOME)/lib/sched/libsched.a \
 	$(LIBS)
 endif
 

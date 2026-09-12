@@ -83,7 +83,17 @@ one (Pi 3 / 3B+ USB LAN, Pi 4 Gigabit). Only one interface is active; Ethernet O
 disables Wi-Fi auto-join, and `OPTIONS WIFI` disables Ethernet. A switch after the
 stack is already up needs `REBOOT`. If Ethernet is ON it initialises at boot.
 `IPCONFIG` reports the active interface (`Interface: Ethernet` or `Interface: Wi-Fi`)
-and prints connected only after a live gateway probe. QEMU has no radio or NIC.
+and prints connected only after a live gateway probe. QEMU has no Wi-Fi radio.
+Ethernet under QEMU uses a USB CDC gadget:
+
+```bash
+qemu-system-aarch64 -M raspi3b -kernel console/kernel8.img -serial stdio -display none \
+  -netdev user,id=net0 -device usb-net,netdev=net0
+```
+
+DHCP typically assigns `10.0.2.15` (host is `10.0.2.2`). Without those flags,
+`OPTION ETHERNET ON` reports Ethernet not available. The test harness omits
+`usb-net` unless a test requests `net_console`.
 
 You can also copy a kernel plus Raspberry Pi firmware yourself (see
 `circle/boot/`). Run the Pi 3 image under QEMU with:

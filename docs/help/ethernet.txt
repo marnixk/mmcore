@@ -13,7 +13,10 @@ Ethernet disables Wi-Fi; OPTIONS WIFI / OPTION WIFI
 disable Ethernet. Switching after the stack is up
 needs REBOOT. If ON is saved, Ethernet initialises
 at boot. IPCONFIG shows Interface: Ethernet.
-QEMU has no NIC (Ethernet not available).
+QEMU raspi3b has no onboard RJ45. Launch with
+-device usb-net (SLIRP user net) for USB CDC
+Ethernet and DHCP. Without that gadget, ON
+reports Ethernet not available.
 Persists in C:/.mmbasic.ini [ethernet] enabled=.
 
 Example:  OPTION ETHERNET ON

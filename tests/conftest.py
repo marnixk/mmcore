@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from harness import MMBasicConsole
+from harness import MMBasicConsole, qemu_usb_net_args
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KERNEL = os.path.join(REPO_ROOT, "console", "kernel8.img")
@@ -34,6 +34,19 @@ def console(kernel_image: str):
 def fresh_console(kernel_image: str):
     """A freshly booted console per test (clean screen for graphics tests)."""
     con = MMBasicConsole(kernel_image)
+    con.start()
+    yield con
+    con.stop()
+
+
+@pytest.fixture(scope="module")
+def net_console(kernel_image: str):
+    """Booted QEMU with USB CDC Ethernet (SLIRP user net). Not the default."""
+    con = MMBasicConsole(
+        kernel_image,
+        extra_qemu=qemu_usb_net_args(),
+        boot_timeout=40.0,
+    )
     con.start()
     yield con
     con.stop()

@@ -75,7 +75,15 @@ proxy to a live host (see harness/term_replay.py).
 TERM REPLAY "file$"  plays a TERM LOG capture from
 disk through the same RX ring as live TCP. IAC T
 records are skipped; typed T pauses for a keystroke.
-QEMU has no network device for Circle TCP.
+QEMU Circle TCP needs -device usb-net and
+OPTION ETHERNET ON; otherwise Network not
+available. Live TCP (Ethernet or Wi-Fi) does not
+dump the pane over serial; HDMI is the screen.
+Serial then prints compact !NET lines: connected,
+fail, hangup, and rx/tx/parsed/ring/parser
+counters. OPTION WIFI DEBUG ON repeats those
+counters while data arrives. OPTION TERM LOG ON
+is the wire trace for later TERM REPLAY.
 OPTION TERM LOG ON writes C:/.termlog (A: if no SD)
 with incoming (R) and typed (T) hex plus ms since
 log start, flushed every 10 seconds. T lines include

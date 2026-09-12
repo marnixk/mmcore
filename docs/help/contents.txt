@@ -33,7 +33,7 @@ Prompt
 Wi-Fi / Ethernet
   OPTION WIFI "ssid","password"  store and connect
   OPTION WIFI                    scan and prompt
-  OPTION WIFI DEBUG ON|OFF       [wifi] logs (default OFF)
+  OPTION WIFI DEBUG ON|OFF       [wifi] logs; TERM !NET counters
   OPTION WIFI COUNTRY "NZ"       ISO domain (default US; UK=GB)
   OPTIONS WIFI                   connect with stored credentials
   OPTION ETHERNET ON|OFF         wired DHCP (Pi with RJ45)
@@ -43,7 +43,8 @@ Wi-Fi / Ethernet
   OPTIONS WIFI joins using stored SSID/PSK.
   ?WIFI not configured if none are stored.
   Scan lists beacon SSIDs. WPA2 join needs C: and
-  C:/firmware/. QEMU has no radio or Ethernet.
+  C:/firmware/. QEMU has no Wi-Fi radio. Ethernet
+  needs QEMU -device usb-net (else not available).
   HELP ~OPTION~. HELP ~ETHERNET~. HELP ~IPCONFIG~.
 
 Type HELP BASIC for language, HELP ~FUNCTIONS~ for functions.
