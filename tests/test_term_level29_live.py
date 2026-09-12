@@ -70,8 +70,10 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert "?SYNTAX ERROR" not in con.send_line("OPTION WIFI DEBUG ON").upper()
         assert ".termlog" in con.send_line("OPTION TERM LOG ON")
 
+        # QEMU SLIRP DNS often fails in Circle; the host lookup is the BBS A record.
+        host_ip = socket.getaddrinfo(BBS[0], BBS[1], socket.AF_INET)[0][4][0]
         con.drain(quiet=0.1, timeout=0.4)
-        con._ser.sendall(b'TERM "bbs.fozztexx.com", 23\r')
+        con._ser.sendall(f'TERM "{host_ip}", {BBS[1]}\r'.encode())
         serial = _wait_serial(con, b"!NET connected", timeout=30.0)
         assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
         time.sleep(1.5)
