@@ -64,18 +64,26 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
     try:
         assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
         on = con.send_line("OPTION ETHERNET ON", timeout=25)
-        if "10.0.2." not in on:
-            cfg = _wait_dhcp(con)
-            assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+        cfg = on if "10.0.2." in on else _wait_dhcp(con, timeout=40)
+        assert "10.0.2." in (on + cfg), cfg
+        time.sleep(2.0)
         assert "?SYNTAX ERROR" not in con.send_line("OPTION WIFI DEBUG ON").upper()
         assert ".termlog" in con.send_line("OPTION TERM LOG ON")
 
         # QEMU SLIRP DNS often fails in Circle; the host lookup is the BBS A record.
         host_ip = socket.getaddrinfo(BBS[0], BBS[1], socket.AF_INET)[0][4][0]
-        con.drain(quiet=0.1, timeout=0.4)
-        con._ser.sendall(f'TERM "{host_ip}", {BBS[1]}\r'.encode())
-        serial = _wait_serial(con, b"!NET connected", timeout=30.0)
-        assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
+        serial = b""
+        connected = False
+        for _attempt in range(3):
+            con.drain(quiet=0.1, timeout=0.4)
+            con._ser.sendall(f'TERM "{host_ip}", {BBS[1]}\r'.encode())
+            serial += _wait_serial(con, b"!NET connected", timeout=30.0)
+            if b"!NET connected" in serial:
+                connected = True
+                break
+            _quit(con)
+            time.sleep(1.5)
+        assert connected, serial.decode(errors="replace")[-800:]
         time.sleep(1.5)
 
         ocr = con.wait_ocr("username", timeout=30.0)
