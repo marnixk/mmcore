@@ -745,6 +745,7 @@ int mmb_net_tcp_recv(void *data, unsigned maxn);
 int mmb_net_tcp_rx_avail(void);
 int mmb_net_tcp_peer_closed(void);
 void mmb_net_tcp_close(void);
+void mmb_net_tcp_debug_poll(void);
 void mmb_net_yield(void);
 
 void mmb_cmd_connect(void);

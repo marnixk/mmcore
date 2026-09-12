@@ -61,6 +61,10 @@ Interpreter settings. Implemented subcommands:
     On a live TERM TCP session it also prints
     compact !NET rx/tx/parsed counters; the pane
     is not copied to serial.
+    Live CONNECT/TERM also emit serial-only !TCP
+    snapshots every 0.5s: bytes/zero/err from
+    Circle Receive, leftover frame, and socket
+    GetStatus (conn/rxrdy/txrdy). HDMI is unchanged.
   ETHERNET ON|OFF
     Use the RJ45 port (Pi 3/3B+/4; USB LAN on Pi 3).
     ON starts DHCP and turns off Wi-Fi auto-join.

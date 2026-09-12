@@ -540,6 +540,16 @@ void mmb_console_write(const char *s)
 		G.plat->write_screen(s, n);
 }
 
+void mmb_serial_write(const char *s)
+{
+	unsigned n;
+	if (!s || !G.plat || !G.plat->write_serial)
+		return;
+	n = (unsigned)strlen(s);
+	if (n)
+		G.plat->write_serial(s, n);
+}
+
 static int rgb_dist2(unsigned a, unsigned b)
 {
 	int dr = (int)((a >> 16) & 255) - (int)((b >> 16) & 255);

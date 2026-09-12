@@ -32,16 +32,26 @@ class HarnessError(RuntimeError):
     pass
 
 
-def qemu_usb_net_args(hostfwd: str | None = None) -> list[str]:
+def qemu_usb_net_args(
+    hostfwd: str | None = None,
+    dump: str | None = None,
+) -> list[str]:
     """QEMU flags for Circle USB CDC Ethernet (``-device usb-net``).
 
     ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest).
     Guest→host uses ``10.0.2.2``. DHCP typically assigns ``10.0.2.15``.
+    ``dump`` is a pcap path for ``filter-dump`` on that netdev (wire capture).
     """
     netdev = "user,id=net0"
     if hostfwd:
         netdev += f",hostfwd={hostfwd}"
-    return ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
+    args = ["-netdev", netdev, "-device", "usb-net,netdev=net0"]
+    if dump:
+        args += [
+            "-object",
+            f"filter-dump,id=fnet0,netdev=net0,file={dump}",
+        ]
+    return args
 
 
 class MMBasicConsole:

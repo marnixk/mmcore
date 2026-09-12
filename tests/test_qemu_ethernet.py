@@ -21,6 +21,11 @@ def test_qemu_usb_net_args():
     fwd = qemu_usb_net_args("tcp::8080-:80")
     assert fwd[1] == "user,id=net0,hostfwd=tcp::8080-:80"
     assert fwd[3] == "usb-net,netdev=net0"
+    dumped = qemu_usb_net_args(dump="/tmp/net.pcap")
+    assert dumped[-2:] == [
+        "-object",
+        "filter-dump,id=fnet0,netdev=net0,file=/tmp/net.pcap",
+    ]
 
 
 def test_qemu_kernel_links_cdc_ethernet(kernel_image):

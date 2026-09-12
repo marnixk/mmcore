@@ -134,6 +134,8 @@ int mmb_take_home_prompt(void);
 
 /* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
 void mmb_console_write(const char *s);
+/* Serial only — live TERM/CONNECT must not paint debug on HDMI. */
+void mmb_serial_write(const char *s);
 
 /* PicoMite/MMBasic copyright, build version, and HELP hint. Call once at boot. */
 void mmb_print_startup(void);
