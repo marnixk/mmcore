@@ -75,7 +75,7 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         serial = _wait_serial(con, b"!NET connected", timeout=30.0)
         assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
 
-        ocr = con.wait_ocr("username", timeout=25.0)
+        ocr = con.wait_ocr("username", timeout=30.0)
         banner = os.path.join(ARTIFACTS, "level29_live_banner.png")
         con.capture_png(banner)
         serial += con.drain(quiet=0.3, timeout=2.0)
@@ -85,27 +85,35 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert "bytes=" in last and "zero=" in last and "rxrdy=" in last
 
         saw_prompt = "username" in ocr.lower() or "enter your" in ocr.lower()
-        if saw_prompt:
-            con._ser.sendall(USER + b"\r")
-            time.sleep(1.0)
-            serial += con.drain(quiet=0.2, timeout=2.0)
-            pw = con.wait_ocr("Password", timeout=20.0)
-            con.capture_png(os.path.join(ARTIFACTS, "level29_live_password.png"))
-            if "password" in pw.lower():
-                con._ser.sendall(PASS + b"\r")
-                time.sleep(2.0)
-                serial += _wait_serial(con, b"!TCP ", timeout=12.0)
-                after = os.path.join(ARTIFACTS, "level29_live_after_login.png")
-                con.capture_png(after)
-                con.wait_ocr("Welcome", timeout=8.0)
+        con._ser.sendall(USER + b"\r")
+        serial += _wait_serial(con, b"!TCP ", timeout=8.0)
+        pw = con.wait_ocr("Password", timeout=25.0)
+        con.capture_png(os.path.join(ARTIFACTS, "level29_live_password.png"))
+        saw_password = "password" in pw.lower()
+        con._ser.sendall(PASS + b"\r")
+        serial += _wait_serial(con, b"!TCP ", timeout=8.0)
+        after_ocr = con.wait_ocr("Welcome", timeout=25.0)
+        if "welcome" not in after_ocr.lower():
+            after_ocr = con.wait_ocr("Invalid", timeout=8.0) or after_ocr
+        after = os.path.join(ARTIFACTS, "level29_live_after_login.png")
+        con.capture_png(after)
 
         serial += con.drain(quiet=0.3, timeout=2.0)
         open(serial_log, "w", encoding="utf-8").write(serial.decode(errors="replace"))
         tcp = _tcp_lines(serial)
         assert os.path.isfile(pcap) and os.path.getsize(pcap) > 64, pcap
+        logged_in = "welcome" in after_ocr.lower()
         assert saw_prompt, (
             "Level29 drip did not reach the username prompt on HDMI; "
             f"ocr={ocr!r} tcp={tcp[-3:]!r} pcap={os.path.getsize(pcap)} bytes"
+        )
+        assert saw_password, (
+            "sent ireal but HDMI never showed Password; "
+            f"ocr={pw!r} tcp={tcp[-3:]!r}"
+        )
+        assert logged_in, (
+            "sent ireal/ds9space but HDMI did not show Welcome; "
+            f"ocr={after_ocr!r} tcp={tcp[-4:]!r} pcap={os.path.getsize(pcap)} bytes"
         )
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
