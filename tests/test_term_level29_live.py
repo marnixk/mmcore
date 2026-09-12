@@ -6,7 +6,9 @@ pcap as the wire.
 """
 
 import os
+import select
 import socket
+import threading
 import time
 
 import pytest
@@ -49,6 +51,65 @@ def _tcp_lines(serial: bytes) -> list[str]:
     ]
 
 
+def _proxy_pipe(a: socket.socket, b: socket.socket) -> None:
+    try:
+        while True:
+            ready, _, _ = select.select([a, b], [], [], 45.0)
+            if not ready:
+                continue
+            for src, dst in ((a, b), (b, a)):
+                if src not in ready:
+                    continue
+                data = src.recv(4096)
+                if not data:
+                    return
+                dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        for s in (a, b):
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def _start_bbs_proxy() -> tuple[socket.socket, int]:
+    """Guest SLIRP SYNs to the public BBS often time out; 10.0.2.2 does not.
+
+    Byte-pipe the BBS onto the host so TERM still sees Level29's slow drip.
+    """
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.listen(4)
+    srv.settimeout(90.0)
+
+    def accept_loop() -> None:
+        while True:
+            try:
+                client, _ = srv.accept()
+            except OSError:
+                return
+            try:
+                remote = socket.create_connection(BBS, timeout=15)
+            except OSError:
+                try:
+                    client.close()
+                except OSError:
+                    pass
+                continue
+            client.settimeout(None)
+            remote.settimeout(None)
+            threading.Thread(
+                target=_proxy_pipe, args=(client, remote), daemon=True
+            ).start()
+
+    threading.Thread(target=accept_loop, daemon=True).start()
+    return srv, port
+
+
 @pytest.mark.skipif(not _bbs_reachable(), reason="Level29 BBS not reachable")
 def test_level29_live_term_drip_over_ethernet(kernel_image):
     os.makedirs(ARTIFACTS, exist_ok=True)
@@ -61,7 +122,9 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
     )
     con.start()
     serial = b""
+    proxy = None
     try:
+        proxy, proxy_port = _start_bbs_proxy()
         assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
         on = con.send_line("OPTION ETHERNET ON", timeout=25)
         cfg = on if "10.0.2." in on else _wait_dhcp(con, timeout=40)
@@ -70,14 +133,12 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert "?SYNTAX ERROR" not in con.send_line("OPTION WIFI DEBUG ON").upper()
         assert ".termlog" in con.send_line("OPTION TERM LOG ON")
 
-        # QEMU SLIRP DNS often fails in Circle; the host lookup is the BBS A record.
-        host_ip = socket.getaddrinfo(BBS[0], BBS[1], socket.AF_INET)[0][4][0]
         serial = b""
         connected = False
         for _attempt in range(3):
             con.drain(quiet=0.1, timeout=0.4)
-            con._ser.sendall(f'TERM "{host_ip}", {BBS[1]}\r'.encode())
-            serial += _wait_serial(con, b"!NET connected", timeout=30.0)
+            con._ser.sendall(f'TERM "10.0.2.2", {proxy_port}\r'.encode())
+            serial += _wait_serial(con, b"!NET connected", timeout=25.0)
             if b"!NET connected" in serial:
                 connected = True
                 break
@@ -139,4 +200,9 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
             _quit(con)
         except Exception:
             pass
+        if proxy is not None:
+            try:
+                proxy.close()
+            except OSError:
+                pass
         con.stop()
