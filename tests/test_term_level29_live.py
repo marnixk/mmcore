@@ -1,8 +1,7 @@
 """Live Level29 BBS over QEMU usb-net (slow drip). Skip if the host cannot reach it.
 
 TERMLOG matching HDMI cannot show whether Circle still had data. This session
-keeps HDMI as the screen, serial !TCP as socket Receive/GetStatus, and a SLIRP
-pcap as the wire.
+keeps HDMI as the screen and serial !TCP as socket Receive/GetStatus.
 """
 
 import os
@@ -144,10 +143,10 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
             _quit(con)
             time.sleep(1.5)
         assert connected, serial.decode(errors="replace")[-800:]
-        time.sleep(1.5)
+        time.sleep(0.4)
 
-        ocr = con.wait_ocr("username", timeout=45.0)
-        banner = os.path.join(ARTIFACTS, "level29_login_banner.png")
+        ocr = con.wait_ocr("User:", timeout=20.0, crop=None)
+        banner = os.path.join(ARTIFACTS, "level29_session_username.png")
         con.capture_png(banner)
         serial += con.drain(quiet=0.3, timeout=2.0)
         tcp = _tcp_lines(serial)
@@ -155,24 +154,26 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         last = tcp[-1]
         assert "bytes=" in last and "zero=" in last and "rxrdy=" in last
 
-        saw_prompt = "username" in ocr.lower() or "enter your" in ocr.lower()
+        saw_prompt = "user:" in ocr.lower() or "username" in ocr.lower()
         con._ser.sendall(USER + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        pw = con.wait_ocr("Password", timeout=30.0)
-        con.capture_png(os.path.join(ARTIFACTS, "level29_login_password.png"))
+        pw = con.wait_ocr("Password", timeout=20.0, crop=None)
+        con.capture_png(os.path.join(ARTIFACTS, "level29_session_password.png"))
         saw_password = "password" in pw.lower()
         con._ser.sendall(PASS + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        after_ocr = con.wait_ocr("Welcome", timeout=30.0)
-        if "welcome" not in after_ocr.lower():
-            after_ocr = con.wait_ocr("Invalid", timeout=8.0) or after_ocr
-        after = os.path.join(ARTIFACTS, "level29_login_welcome.png")
+        after_ocr = con.wait_ocr("Welcome ireal", timeout=20.0, crop=None)
+        if "welcome ireal" not in after_ocr.lower():
+            after_ocr = con.wait_ocr("Terminal size", timeout=8.0, crop=None) or after_ocr
+        after = os.path.join(ARTIFACTS, "level29_session_welcome.png")
         con.capture_png(after)
 
         serial += con.drain(quiet=0.3, timeout=2.0)
         open(serial_log, "w", encoding="utf-8").write(serial.decode(errors="replace"))
         tcp = _tcp_lines(serial)
-        logged_in = "welcome" in after_ocr.lower()
+        logged_in = (
+            "welcome ireal" in after_ocr.lower() or "terminal size" in after_ocr.lower()
+        )
         assert saw_prompt, (
             "Level29 drip did not reach the username prompt on HDMI; "
             f"ocr={ocr!r} tcp={tcp[-3:]!r}"
@@ -182,7 +183,7 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
             f"ocr={pw!r} tcp={tcp[-3:]!r}"
         )
         assert logged_in, (
-            "sent ireal/ds9space but HDMI did not show Welcome; "
+            "sent ireal/ds9space but HDMI did not show Welcome ireal; "
             f"ocr={after_ocr!r} tcp={tcp[-4:]!r}"
         )
         _quit(con)
