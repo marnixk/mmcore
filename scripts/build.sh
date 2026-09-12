@@ -52,6 +52,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-robust.patch"
 fi
 
+if grep -q 'mmbasic-tcp-send' "${CIRCLE_DIR}/lib/net/netdevlayer.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle TCP send-hole patches (defer failed frames, no SND.NXT skip)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-send.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

@@ -12,6 +12,7 @@ import time
 import pytest
 
 from harness import MMBasicConsole, parse_termlog, qemu_usb_net_args
+from test_pcap_send_holes import client_seq_holes
 from test_qemu_ethernet import _wait_dhcp
 from test_term import _quit
 from test_term_log import _read_termlog, _termlog_path
@@ -84,6 +85,8 @@ def test_level29_live_term_login(kernel_image):
         body = _read_termlog(con, path)
         rx = b"".join(r.data for r in parse_termlog(body) if r.kind == "R")
         open(os.path.join(ARTIFACTS, "level29_ireal_termlog.txt"), "w").write(body)
+        holes = client_seq_holes(guest_pcap, dport=23)
+        assert holes == [], holes
         assert b"Welcome ireal" in rx or b"Terminal size" in rx, rx[-400:]
         assert con.send_line("PRINT 1+1") == "2"
     finally:

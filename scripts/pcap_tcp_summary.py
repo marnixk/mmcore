@@ -74,6 +74,49 @@ def _ipv4_tcp(linktype: int, frame: bytes):
     return src, sport, dst, dport, seq, ack, flags, win, payload
 
 
+def client_seq_holes(path: str, dport: int = 23):
+    """Return send holes in client-to-dport TCP payload sequence.
+
+    A hole is a jump past the next expected byte. Retransmits (seq <=
+    expected) are not holes. SYN sets the initial expected byte to seq+1.
+    """
+    expected = {}
+    holes = []
+    for linktype, frame in _iter_packets(path):
+        parsed = _ipv4_tcp(linktype, frame)
+        if not parsed:
+            continue
+        src, sport, dst, dstport, seq, ack, flags, win, payload = parsed
+        if dstport != dport:
+            continue
+        key = (src, sport, dst, dstport)
+        if flags & 0x02:
+            expected[key] = seq + 1
+            continue
+        if not payload:
+            continue
+        exp = expected.get(key)
+        if exp is None:
+            expected[key] = seq + len(payload)
+            continue
+        end = seq + len(payload)
+        if seq > exp:
+            holes.append(
+                {
+                    "src": src,
+                    "sport": sport,
+                    "dst": dst,
+                    "dport": dstport,
+                    "missing": exp,
+                    "got": seq,
+                    "len": len(payload),
+                }
+            )
+        if end > expected[key]:
+            expected[key] = end
+    return holes
+
+
 def _flag_str(flags: int) -> str:
     names = []
     if flags & 0x02:

@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <string.h>
 
 #define IAC   255
 #define DONT  254
@@ -57,13 +58,47 @@ static void emit_both(const char *s, unsigned n)
 	emit_ser(s, n);
 }
 
+static unsigned char iac_out[64];
+static int iac_n;
+
+static void iac_flush(void)
+{
+	if (iac_n <= 0)
+		return;
+	mmb_net_tcp_send(iac_out, (unsigned)iac_n);
+	iac_n = 0;
+}
+
+static void iac_append(const unsigned char *p, unsigned n)
+{
+	if (!p || n == 0)
+		return;
+	if (iac_n + (int)n > (int)sizeof(iac_out))
+		iac_flush();
+	if (n > sizeof(iac_out))
+	{
+		iac_flush();
+		mmb_net_tcp_send(p, n);
+		return;
+	}
+	memcpy(iac_out + iac_n, p, n);
+	iac_n += (int)n;
+}
+
+static void tcp_send(const void *p, unsigned n)
+{
+	iac_flush();
+	if (p && n)
+		mmb_net_tcp_send(p, n);
+}
+
 static void send_iac(int cmd, int opt)
 {
 	unsigned char b[3];
 	b[0] = IAC;
 	b[1] = (unsigned char)cmd;
 	b[2] = (unsigned char)opt;
-	mmb_net_tcp_send(b, 3);
+	iac_append(b, 3);
 }
 
 static void send_ttype(void)
@@ -73,7 +108,7 @@ static void send_ttype(void)
 		'A', 'N', 'S', 'I',
 		IAC, SE
 	};
-	mmb_net_tcp_send(ttype, (unsigned)sizeof(ttype));
+	iac_append(ttype, (unsigned)sizeof(ttype));
 }
 
 static void apply_option(int cmd, int opt)
@@ -210,6 +245,7 @@ static void session_close(const char *why)
 	mmb_net_tcp_close();
 	C.active = 0;
 	C.linelen = 0;
+	iac_n = 0;
 	if (why && why[0])
 		emit_both(why, (unsigned)strlen(why));
 	mmb_console_reset_prompt();
@@ -219,8 +255,8 @@ static void send_line(void)
 {
 	C.line[C.linelen] = 0;
 	if (C.linelen)
-		mmb_net_tcp_send(C.line, (unsigned)C.linelen);
-	mmb_net_tcp_send("\r\n", 2);
+		tcp_send(C.line, (unsigned)C.linelen);
+	tcp_send("\r\n", 2);
 	C.linelen = 0;
 }
 
@@ -265,6 +301,7 @@ void mmb_cmd_connect(void)
 	C.alt = 0;
 	C.menu = 0;
 
+	iac_n = 0;
 	if (mmb_tcp_any_open())
 		mmb_error("?FILE");
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
@@ -299,7 +336,7 @@ static int swallow_crlf_pair(char c)
 
 static void send_enter(void)
 {
-	mmb_net_tcp_send("\r", 1);
+	tcp_send("\r", 1);
 	if (!C.no_echo)
 		emit_both("\n", 1);
 }
@@ -308,7 +345,7 @@ static void connect_send_esc(void)
 {
 	unsigned char e = 27;
 	C.char_mode = 1;
-	mmb_net_tcp_send(&e, 1);
+	tcp_send(&e, 1);
 	C.esc = 0;
 	C.csi_n = 0;
 	C.esc_at = 0;
@@ -334,7 +371,7 @@ static int connect_esc_feed(char c)
 			b[0] = 27;
 			b[1] = (unsigned char)c;
 			C.char_mode = 1;
-			mmb_net_tcp_send(b, 2);
+			tcp_send(b, 2);
 		}
 		C.esc = 0;
 		C.esc_at = 0;
@@ -359,7 +396,7 @@ static int connect_esc_feed(char c)
 			b[0] = 27;
 			b[1] = '[';
 			b[2] = (unsigned char)c;
-			mmb_net_tcp_send(b, 3);
+			tcp_send(b, 3);
 			C.esc = 0;
 			return 1;
 		}
@@ -476,7 +513,7 @@ const char *mmb_connect_key(char c)
 			b = 8;
 		if (b == 8)
 		{
-			mmb_net_tcp_send(&b, 1);
+			tcp_send(&b, 1);
 			if (!C.no_echo)
 				emit_both("\b \b", 3);
 			return "";
@@ -484,10 +521,10 @@ const char *mmb_connect_key(char c)
 		if (b == IAC)
 		{
 			unsigned char esc[2] = { IAC, IAC };
-			mmb_net_tcp_send(esc, 2);
+			tcp_send(esc, 2);
 		}
 		else
-			mmb_net_tcp_send(&b, 1);
+			tcp_send(&b, 1);
 		if (!C.no_echo && b >= 32)
 			emit_both(&c, 1);
 		return "";
@@ -561,6 +598,7 @@ void mmb_connect_poll(void)
 			return;
 		for (i = 0; i < n; i++)
 			incoming_byte(buf[i]);
+		iac_flush();
 	}
 }
 

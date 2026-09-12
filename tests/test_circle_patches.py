@@ -12,6 +12,7 @@ CIRCLE = os.path.join(REPO, "circle")
 PATCHES = [
     os.path.join(REPO, "patches", "circle-wifi-149.patch"),
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
+    os.path.join(REPO, "patches", "circle-tcp-send.patch"),
 ]
 
 
@@ -49,25 +50,34 @@ def patched_tree(tmp_path_factory):
     return dest
 
 
-def test_build_script_applies_both_patches_in_order():
+def test_build_script_applies_patches_in_order():
     text = open(os.path.join(REPO, "scripts", "build.sh"), encoding="utf-8").read()
     a = text.index("circle-wifi-149.patch")
     b = text.index("circle-tcp-robust.patch")
-    assert a < b
+    c = text.index("circle-tcp-send.patch")
+    assert a < b < c
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
+    assert "mmbasic-tcp-send" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
     ether = open(os.path.join(patched_tree, "addon/wlan/ether4330.c"), encoding="utf-8").read()
     tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
     raq = open(os.path.join(patched_tree, "lib/net/reassemblyqueue.cpp"), encoding="utf-8").read()
+    netdev = open(os.path.join(patched_tree, "lib/net/netdevlayer.cpp"), encoding="utf-8").read()
+    qh = open(os.path.join(patched_tree, "include/circle/net/netbufferqueue.h"), encoding="utf-8").read()
     assert "mmbasic-issue-149" in ether
     assert "mmbasic-tcp-robust" in tcp
     assert "CReassemblyQueue::TrimSegment" in tcp
     assert "return -NET_ERROR_NOT_CONNECTED;" in tcp
     assert "m_bEnabled" not in raq
     assert "TCP reassembly queue disabled" not in raq
+    assert "mmbasic-tcp-send" in netdev
+    assert "mmbasic-tcp-send" in tcp
+    assert "EnqueueFront" in qh
+    assert "Frame deferred" in netdev
+    assert "Frame dropped" not in netdev
 
 
 def test_receive_drains_rx_queue_before_reporting_errno(patched_tree):
@@ -119,3 +129,26 @@ def test_net_cpp_reports_close_reason():
     assert "tcp_lost(mmb_net_tcp_close_reason())" in term
     assert "Connection closed" in term
     assert "term_net_lost_report" in term
+
+
+def test_send_new_segment_does_not_advance_on_failure(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    body = tcp[tcp.index("boolean CTCPConnection::SendNewSegment") :]
+    body = body[: body.index("int CTCPConnection::PacketReceived")]
+    send = body.index("if (!SendSegment")
+    nxt = body.index("m_nSND_NXT +=")
+    move = body.index("m_TxQueue.MoveOn")
+    assert send < nxt < move
+    assert "return FALSE" in body[send:nxt]
+
+
+def test_term_and_connect_coalesce_iac():
+    term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()
+    conn = open(os.path.join(REPO, "mmbasic", "src", "cmd_connect.c"), encoding="utf-8").read()
+    announce = term[term.index("static void telnet_announce(void)\n{") :]
+    announce = announce[: announce.index("static int term_want_echo")]
+    assert "iac_flush();" in announce
+    assert "term_net_send(" not in announce
+    assert "iac_append" in term
+    assert "iac_flush" in conn
+    assert "tcp_send" in conn

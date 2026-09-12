@@ -1183,6 +1183,7 @@ static void term_exit(void)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
 	memset(&T, 0, sizeof(T));
+	s_iac_n = 0;
 }
 
 static void replay_tx(const unsigned char *p, unsigned n)
@@ -1213,7 +1214,7 @@ static void replay_tx(const unsigned char *p, unsigned n)
 	}
 }
 
-static void term_net_send(const void *data, unsigned n)
+static void term_net_send_raw(const void *data, unsigned n)
 {
 	const unsigned char *pb;
 
@@ -1252,6 +1253,42 @@ static void term_net_send(const void *data, unsigned n)
 				return;
 		}
 	}
+}
+
+static unsigned char s_iac_out[64];
+static int s_iac_n;
+
+static void iac_flush(void)
+{
+	unsigned n;
+
+	if (s_iac_n <= 0)
+		return;
+	n = (unsigned)s_iac_n;
+	s_iac_n = 0;
+	term_net_send_raw(s_iac_out, n);
+}
+
+static void iac_append(const unsigned char *p, unsigned n)
+{
+	if (!p || n == 0)
+		return;
+	if (s_iac_n + (int)n > (int)sizeof(s_iac_out))
+		iac_flush();
+	if (n > sizeof(s_iac_out))
+	{
+		iac_flush();
+		term_net_send_raw(p, n);
+		return;
+	}
+	memcpy(s_iac_out + s_iac_n, p, n);
+	s_iac_n += (int)n;
+}
+
+static void term_net_send(const void *data, unsigned n)
+{
+	iac_flush();
+	term_net_send_raw(data, n);
 }
 
 static int hexval(char c)
@@ -1417,7 +1454,7 @@ static void send_iac(int cmd, int opt)
 	b[0] = IAC;
 	b[1] = (unsigned char)cmd;
 	b[2] = (unsigned char)opt;
-	term_net_send(b, 3);
+	iac_append(b, 3);
 }
 
 static void send_ttype(void)
@@ -1427,7 +1464,7 @@ static void send_ttype(void)
 		'A', 'N', 'S', 'I',
 		IAC, SE
 	};
-	term_net_send(ttype, (unsigned)sizeof(ttype));
+	iac_append(ttype, (unsigned)sizeof(ttype));
 }
 
 static void send_naws(void)
@@ -1444,7 +1481,7 @@ static void send_naws(void)
 	b[6] = (unsigned char)(rows & 255);
 	b[7] = IAC;
 	b[8] = SE;
-	term_net_send(b, 9);
+	iac_append(b, 9);
 }
 
 static void telnet_announce(void)
@@ -1454,6 +1491,7 @@ static void telnet_announce(void)
 	send_iac(WILL, TELOPT_NAWS);
 	send_naws();
 	send_ttype();
+	iac_flush();
 }
 
 static int term_want_echo(void)
@@ -3348,6 +3386,7 @@ static int term_tcp_ingest(int idle_max)
 		return -1;
 	if (got || mmb_net_rxbuf_used(&term_rx))
 		term_rx_interpret();
+	iac_flush();
 	return got;
 }
 
@@ -3696,6 +3735,7 @@ static void demo_iac_tick(void)
 
 static void tcp_close_quiet(void)
 {
+	s_iac_n = 0;
 	mmb_net_tcp_close();
 	T.tcp = 0;
 	T.net_lost = 0;
@@ -3707,6 +3747,7 @@ static void tcp_lost(const char *why)
 {
 	unsigned n;
 
+	s_iac_n = 0;
 	mmb_net_tcp_close();
 	T.tcp = 0;
 	strncpy(T.net_msg, "Connection closed", sizeof(T.net_msg) - 1);
@@ -3978,6 +4019,7 @@ void mmb_cmd_term(void)
 	}
 
 	memset(&T, 0, sizeof(T));
+	s_iac_n = 0;
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
