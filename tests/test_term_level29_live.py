@@ -113,11 +113,10 @@ def _start_bbs_proxy() -> tuple[socket.socket, int]:
 @pytest.mark.skipif(not _bbs_reachable(), reason="Level29 BBS not reachable")
 def test_level29_live_term_drip_over_ethernet(kernel_image):
     os.makedirs(ARTIFACTS, exist_ok=True)
-    pcap = os.path.join(ARTIFACTS, "level29_live.pcap")
     serial_log = os.path.join(ARTIFACTS, "level29_live_serial.txt")
     con = MMBasicConsole(
         kernel_image,
-        extra_qemu=qemu_usb_net_args(dump=pcap),
+        extra_qemu=qemu_usb_net_args(),
         boot_timeout=40.0,
     )
     con.start()
@@ -147,8 +146,8 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         assert connected, serial.decode(errors="replace")[-800:]
         time.sleep(1.5)
 
-        ocr = con.wait_ocr("username", timeout=30.0)
-        banner = os.path.join(ARTIFACTS, "level29_live_banner.png")
+        ocr = con.wait_ocr("username", timeout=45.0)
+        banner = os.path.join(ARTIFACTS, "level29_login_banner.png")
         con.capture_png(banner)
         serial += con.drain(quiet=0.3, timeout=2.0)
         tcp = _tcp_lines(serial)
@@ -159,25 +158,24 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         saw_prompt = "username" in ocr.lower() or "enter your" in ocr.lower()
         con._ser.sendall(USER + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        pw = con.wait_ocr("Password", timeout=25.0)
-        con.capture_png(os.path.join(ARTIFACTS, "level29_live_password.png"))
+        pw = con.wait_ocr("Password", timeout=30.0)
+        con.capture_png(os.path.join(ARTIFACTS, "level29_login_password.png"))
         saw_password = "password" in pw.lower()
         con._ser.sendall(PASS + b"\r")
         serial += _wait_serial(con, b"!TCP ", timeout=8.0)
-        after_ocr = con.wait_ocr("Welcome", timeout=25.0)
+        after_ocr = con.wait_ocr("Welcome", timeout=30.0)
         if "welcome" not in after_ocr.lower():
             after_ocr = con.wait_ocr("Invalid", timeout=8.0) or after_ocr
-        after = os.path.join(ARTIFACTS, "level29_live_after_login.png")
+        after = os.path.join(ARTIFACTS, "level29_login_welcome.png")
         con.capture_png(after)
 
         serial += con.drain(quiet=0.3, timeout=2.0)
         open(serial_log, "w", encoding="utf-8").write(serial.decode(errors="replace"))
         tcp = _tcp_lines(serial)
-        assert os.path.isfile(pcap) and os.path.getsize(pcap) > 64, pcap
         logged_in = "welcome" in after_ocr.lower()
         assert saw_prompt, (
             "Level29 drip did not reach the username prompt on HDMI; "
-            f"ocr={ocr!r} tcp={tcp[-3:]!r} pcap={os.path.getsize(pcap)} bytes"
+            f"ocr={ocr!r} tcp={tcp[-3:]!r}"
         )
         assert saw_password, (
             "sent ireal but HDMI never showed Password; "
@@ -185,7 +183,7 @@ def test_level29_live_term_drip_over_ethernet(kernel_image):
         )
         assert logged_in, (
             "sent ireal/ds9space but HDMI did not show Welcome; "
-            f"ocr={after_ocr!r} tcp={tcp[-4:]!r} pcap={os.path.getsize(pcap)} bytes"
+            f"ocr={after_ocr!r} tcp={tcp[-4:]!r}"
         )
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"

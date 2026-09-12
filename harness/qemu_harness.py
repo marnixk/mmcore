@@ -261,33 +261,46 @@ class MMBasicConsole:
         return False
 
     # -- screen (framebuffer) ---------------------------------------------
-    def _monitor_cmd(self, cmd: str) -> None:
+    def _monitor_drain(self) -> bytes:
         assert self._mon is not None
-        try:
-            self._mon.settimeout(0.3)
-            self._mon.recv(4096)
-        except OSError:
-            pass
+        acc = b""
+        self._mon.settimeout(0.15)
+        while True:
+            try:
+                chunk = self._mon.recv(65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            acc += chunk
+        return acc
+
+    def _monitor_cmd(self, cmd: str) -> None:
+        self._monitor_drain()
+        assert self._mon is not None
         self._mon.sendall(cmd.encode() + b"\n")
         time.sleep(0.5)
 
     def screendump(self, dest_ppm: str | None = None) -> str:
         """Capture the emulated framebuffer to a .ppm file and return its path."""
         if dest_ppm is None:
-            dest_ppm = os.path.join(self._tmp, f"fb-{time.time_ns()}.ppm")
+            dest_ppm = os.path.join(self._tmp, "fb.ppm")
         last_err = "screendump did not produce a file"
         for _ in range(4):
+            self.drain(quiet=0.02, timeout=0.2)
             try:
                 if os.path.exists(dest_ppm):
                     os.remove(dest_ppm)
             except OSError:
                 pass
-            self._monitor_cmd(f"screendump {dest_ppm}")
+            self._monitor_cmd(f'screendump "{dest_ppm}"')
+            self._monitor_drain()
             deadline = time.time() + 8
             while time.time() < deadline:
                 if os.path.exists(dest_ppm) and os.path.getsize(dest_ppm) > 0:
                     return dest_ppm
-                time.sleep(0.15)
+                self.drain(quiet=0.02, timeout=0.15)
+                time.sleep(0.1)
             time.sleep(0.4)
         raise HarnessError(last_err)
 
@@ -395,6 +408,7 @@ class MMBasicConsole:
         deadline = time.time() + timeout
         last = ""
         while time.time() < deadline:
+            self.drain(quiet=0.02, timeout=0.15)
             last = self.ocr_screen(crop=crop)
             if needle.lower() in last.lower():
                 return last
