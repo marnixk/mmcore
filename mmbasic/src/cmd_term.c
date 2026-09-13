@@ -617,11 +617,6 @@ static void mark_dirty_full(void)
 	T.need_draw = 1;
 }
 
-static int term_full_present(void)
-{
-	return T.tcp && !T.demo;
-}
-
 static void term_draw(void);
 static void term_draw_row(int r);
 
@@ -1127,7 +1122,7 @@ static void term_draw(void)
 		term_copy_screen();
 		mmb_gfx_present();
 	}
-	else if (term_full_present() || T.present_full || T.menu || T.alt_pend)
+	else if (T.present_full || T.menu || T.alt_pend)
 	{
 		term_copy_pane();
 		if (T.menu || T.alt_pend)
@@ -2883,10 +2878,7 @@ static void ansi_exec_csi(char cmd)
 		if (T.cur_col < 0)
 			T.cur_col = 0;
 		if (n > 0 && T.cur_row >= 0 && T.cur_row < T.pane_rows)
-		{
 			mark_dirty_row(T.cur_row);
-			T.present_full = 1;
-		}
 	}
 	else if (cmd == 'G')
 		ansi_cup(T.cur_row + 1, ansi_arg(0, 1));
