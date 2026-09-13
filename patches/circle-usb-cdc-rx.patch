@@ -28,7 +28,7 @@ index 00d10e2d..190abd39 100644
  
  #endif
 diff --git a/lib/usb/usbcdcethernet.cpp b/lib/usb/usbcdcethernet.cpp
-index 88b3a352..a613f763 100644
+index 88b3a352..9464d10d 100644
 --- a/lib/usb/usbcdcethernet.cpp
 +++ b/lib/usb/usbcdcethernet.cpp
 @@ -55,8 +55,13 @@ CUSBCDCEthernetDevice::CUSBCDCEthernetDevice (CUSBFunction *pFunction)
@@ -148,13 +148,14 @@ index 88b3a352..a613f763 100644
  	return bResult;
  }
  
-@@ -195,16 +239,28 @@ void CUSBCDCEthernetDevice::CompletionRoutine (CUSBRequest *pURB, void *pParam,
+@@ -195,16 +239,35 @@ void CUSBCDCEthernetDevice::CompletionRoutine (CUSBRequest *pURB, void *pParam,
  
  	assert (pThis->m_pURB == pURB);
  
 +	int nSlot = (int) (uintptr) pParam;
 +	assert (nSlot == 0 || nSlot == 1);
 +
++	unsigned nGot = 0;
  	if (pURB->GetStatus () != 0)
  	{
 -		assert (pThis->m_nRxLength == 0);
@@ -169,6 +170,7 @@ index 88b3a352..a613f763 100644
 +			{
 +				pThis->m_nRxReady = nSlot;
 +			}
++			nGot = nLength;
 +		}
  	}
  
@@ -176,7 +178,12 @@ index 88b3a352..a613f763 100644
  
  	pThis->m_pURB = 0;
 +	pThis->m_nRxSubmit = -1;
-+	pThis->SubmitRx ();
++	// Resubmit only after a real frame. NAK completions must not
++	// re-arm from IRQ or QEMU usb-net livelocks before DHCP.
++	if (nGot > 0)
++	{
++		pThis->SubmitRx ();
++	}
  }
  
  boolean CUSBCDCEthernetDevice::SetMulticastFilter (const u8 Groups[][MAC_ADDRESS_SIZE])
