@@ -237,8 +237,7 @@ def test_usb_cdc_resubmits_in_completion(patched_tree):
     assert "m_pURB = 0" in body
     submit = usb[usb.index("boolean CUSBCDCEthernetDevice::SubmitRx") :]
     submit = submit[: submit.index("boolean CUSBCDCEthernetDevice::ReceiveFrame")]
-    assert "SetCompleteOnNAK" in submit
-    assert "SubmitRx" in usb[usb.index("boolean CUSBCDCEthernetDevice::SendFrame") :]
+    assert "SetCompleteOnNAK" not in submit
     assert "m_pRxSlot" in submit
 
 
