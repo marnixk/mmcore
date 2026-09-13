@@ -291,13 +291,9 @@ def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
         png = con.capture_png(
             os.path.join(ARTIFACTS, "qemu_ethernet_term_hdmi_cub.png")
         )
-        # Mask starts at pane col 36 on the row after Connected + the field's \r\n.
-        hello = con.screen_pixel(448 + 2, 48 + 4)
         low = ocr.lower().replace(" ", "")
         assert "paneok" in low, f"expected live TCP HDMI (ocr={ocr!r} png={png})"
-        assert _luminance(*hello) > 80, (
-            f"expected cream HELLO after CUB (pixel={hello} ocr={ocr!r} png={png})"
-        )
+        assert "login:hello" in low, f"expected CUB overwrite (ocr={ocr!r} png={png})"
         _quit(con)
         assert con.send_line("PRINT 4+1") == "5"
         off = con.send_line("OPTION TERM LOG OFF")
