@@ -102,8 +102,13 @@ def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
                 assert os.path.getsize(path) > 1000, path
         w, h = con.screen_size()
         assert w >= 640 and h >= 400
-        px = con.screen_pixel(w // 2, h // 2)
-        assert px != (0, 0, 0)
+        cyan = False
+        for x, y in ((240, 40), (400, 48), (560, 40), (480, 64), (320, 80), (640, 56)):
+            r, g, b = con.screen_pixel(x, y)
+            if g > 80 and b > 80 and g > r:
+                cyan = True
+                break
+        assert cyan, "expected cyan ANSI sky after Blackflag file replay"
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
