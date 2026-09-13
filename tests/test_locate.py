@@ -24,14 +24,21 @@ def test_locate_80x25_bottom_right(fresh_console):
     assert fresh_console.send_line("PRINT MM.VPOS;") == "384"
 
 
-def test_locate_omitted_args_keep_position(console):
-    console.send_line("LOCATE 3, 5")
-    assert console.send_line("LOCATE , 7") == ""
-    assert console.send_line("PRINT MM.HPOS;") == "56"
-    assert console.send_line("PRINT MM.VPOS;") == "48"
-    assert console.send_line("LOCATE 4") == ""
-    assert console.send_line("PRINT MM.HPOS;") == "56"
-    assert console.send_line("PRINT MM.VPOS;") == "64"
+def test_locate_omitted_args_keep_position(fresh_console):
+    c = fresh_console
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 LOCATE 3, 5") == ""
+    assert c.send_line("20 LOCATE , 7") == ""
+    assert c.send_line("30 A=MM.HPOS:B=MM.VPOS") == ""
+    assert c.send_line("40 LOCATE 4") == ""
+    assert c.send_line("50 C=MM.HPOS:D=MM.VPOS") == ""
+    assert c.send_line("60 PRINT A") == ""
+    assert c.send_line("70 PRINT B") == ""
+    assert c.send_line("80 PRINT C") == ""
+    assert c.send_line("90 PRINT D") == ""
+    out = c.send_line("RUN")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert lines[:4] == ["56", "48", "56", "64"], out
 
 
 def test_locate_cursor_arg_is_optional(console):
