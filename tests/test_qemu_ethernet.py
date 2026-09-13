@@ -224,3 +224,86 @@ def test_qemu_ethernet_term_hdmi_not_serial_pane(net_console):
         except Exception:
             pass
         con.send_line("PRINT 1")
+
+
+# Mystic login mask: 17 grey x's then CUB, then the echoed first character.
+_MYSTIC_MASK = (
+    b"\r\n"
+    b"\x1b[27C"
+    b"\x1b[1m"
+    + bytes([0xB0, 0xB0])
+    + b" login"
+    + b"\x1b[0m:"
+    + b"\x1b[1;30m"
+    + b"x" * 17
+    + b"\x1b[0m"
+)
+
+
+def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
+    """Live TCP CUB must present the dirty row so the echo is not stuck grey."""
+    con = net_console
+    os.makedirs(ARTIFACTS, exist_ok=True)
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    on = con.send_line("OPTION ETHERNET ON", timeout=25)
+    if "10.0.2." not in on:
+        cfg = _wait_dhcp(con)
+        assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+
+    hold = threading.Event()
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.listen(1)
+    srv.settimeout(25)
+
+    def accept():
+        conn = None
+        try:
+            conn, _ = srv.accept()
+            conn.settimeout(8)
+            try:
+                conn.recv(64)
+            except OSError:
+                pass
+            conn.sendall(_MYSTIC_MASK)
+            time.sleep(0.3)
+            conn.sendall(b"\x1b[17D")
+            time.sleep(0.3)
+            conn.sendall(b"HELLO")
+            hold.wait(25)
+        except OSError:
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+    th = threading.Thread(target=accept, daemon=True)
+    th.start()
+    try:
+        con.drain(quiet=0.1, timeout=0.4)
+        con._ser.sendall(f'TERM "10.0.2.2", {port}\r'.encode())
+        serial = _wait_serial(con, b"!NET connected", timeout=25.0)
+        assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
+        ocr = con.wait_ocr("HELLO", timeout=18.0)
+        png = con.capture_png(
+            os.path.join(ARTIFACTS, "qemu_ethernet_term_hdmi_cub.png")
+        )
+        low = ocr.lower().replace(" ", "")
+        assert "hello" in low, f"expected CUB overwrite on HDMI (ocr={ocr!r} png={png})"
+        assert "xxxxxxxxxxxxxxxxxi" not in low
+        _quit(con)
+        assert con.send_line("PRINT 4+1") == "5"
+        th.join(timeout=5)
+    finally:
+        hold.set()
+        srv.close()
+        try:
+            _quit(con)
+        except Exception:
+            pass
+        con.send_line("PRINT 1")
