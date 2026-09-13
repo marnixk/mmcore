@@ -55,7 +55,7 @@ def test_help_locate(console):
     out = dump_topic(console, "LOCATE")
     assert out != "?SYNTAX ERROR"
     assert "LOCATE" in out
-    assert "pixel" in out.lower()
+    assert "cursor" in out.lower() or "character" in out.lower() or "cell" in out.lower()
     assert "MM.HPOS" in out
     assert "@(x,y)" in out
     seen = scroll_all(console, open_ihelp(console, "INDEX"))

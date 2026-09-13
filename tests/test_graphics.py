@@ -171,18 +171,19 @@ def test_scene_matches_golden(fresh_console):
     assert ratio < 0.02, f"scene differs from golden by {ratio:.4%}"
 
 
-def test_mode_hides_hdmi_text_cursor(fresh_console):
-    """Issue #262: MODE hides the HDMI text cursor; serial CLS stays empty."""
+def test_locate_hides_hdmi_text_cursor(fresh_console):
+    """Issue #282: LOCATE ,,0 hides the HDMI text cursor; MODE does not."""
     c = fresh_console
     assert c.send_line("CLS") == ""
     assert c.send_line("NEW") == ""
     assert c.send_line("10 MODE 7,12") == ""
     assert c.send_line("20 CLS") == ""
-    assert c.send_line("30 PAUSE 2000") == ""
+    assert c.send_line("30 LOCATE ,,0") == ""
+    assert c.send_line("40 PAUSE 2000") == ""
     c.drain(quiet=0.1)
     c._ser.sendall(b"RUN\r")
     time.sleep(0.5)
-    png = c.capture_png("/opt/cursor/artifacts/issue262_mode7_no_cursor.png")
+    png = c.capture_png("/opt/cursor/artifacts/issue282_locate_hide_cursor.png")
     out = subprocess.run(
         ["convert", png, "-crop", "16x16+0+0", "+repage", "txt:-"],
         check=True,
