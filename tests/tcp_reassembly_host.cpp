@@ -71,8 +71,11 @@ static void test_out_of_order_basic (void)
 	CReassemblyQueue q (&rx, 65536);
 
 	CHECK (enq (q, 200, 100));
+	CHECK (q.GetBytesQueued () == 100);
 	CHECK (enq (q, 100, 100));
+	CHECK (q.GetBytesQueued () == 200);
 	CHECK (q.Dequeue (100) == 300);
+	CHECK (q.GetBytesQueued () == 0);
 	expect_stream (rx, 100, 300);
 }
 
@@ -209,8 +212,11 @@ static void test_byte_cap (void)
 	CReassemblyQueue q (&rx, 150);
 
 	CHECK (enq (q, 200, 100));
+	CHECK (q.GetBytesQueued () == 100);
 	CHECK (!enq (q, 400, 100));	/* would exceed cap */
+	CHECK (q.GetBytesQueued () == 100);
 	CHECK (enq (q, 400, 50));
+	CHECK (q.GetBytesQueued () == 150);
 	CHECK (!enq (q, 500, 1));
 	CHECK (q.Dequeue (200) == 300);
 	expect_stream (rx, 200, 300);

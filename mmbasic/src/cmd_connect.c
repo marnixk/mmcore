@@ -61,12 +61,45 @@ static void emit_both(const char *s, unsigned n)
 static unsigned char iac_out[64];
 static int iac_n;
 
+static int tcp_send_all(const void *p, unsigned n)
+{
+	const unsigned char *q = (const unsigned char *)p;
+	int left, rc, idle;
+
+	if (!p || !n)
+		return 0;
+	left = (int)n;
+	idle = 0;
+	while (left > 0)
+	{
+		rc = mmb_net_tcp_send(q, (unsigned)left);
+		if (rc == left)
+			return 0;
+		if (rc > 0)
+		{
+			q += rc;
+			left -= rc;
+			idle = 0;
+			continue;
+		}
+		if (rc < 0)
+			return -1;
+		mmb_net_yield();
+		if (++idle > 500)
+			return -1;
+	}
+	return 0;
+}
+
 static void iac_flush(void)
 {
+	unsigned n;
+
 	if (iac_n <= 0)
 		return;
-	mmb_net_tcp_send(iac_out, (unsigned)iac_n);
+	n = (unsigned)iac_n;
 	iac_n = 0;
+	tcp_send_all(iac_out, n);
 }
 
 static void iac_append(const unsigned char *p, unsigned n)
@@ -78,7 +111,7 @@ static void iac_append(const unsigned char *p, unsigned n)
 	if (n > sizeof(iac_out))
 	{
 		iac_flush();
-		mmb_net_tcp_send(p, n);
+		tcp_send_all(p, n);
 		return;
 	}
 	memcpy(iac_out + iac_n, p, n);
@@ -89,7 +122,7 @@ static void tcp_send(const void *p, unsigned n)
 {
 	iac_flush();
 	if (p && n)
-		mmb_net_tcp_send(p, n);
+		tcp_send_all(p, n);
 }
 
 static void send_iac(int cmd, int opt)
