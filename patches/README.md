@@ -71,5 +71,17 @@ Applied after `circle-tcp-send.patch` (marker `mmbasic-tcp-ack` in
   and FIN was actually sent.
 - A 1-byte persist probe is sent when the peer advertises a zero window.
 
+## `circle-usb-cdc-rx.patch`
+
+Applied after `circle-tcp-ack.patch` (marker `mmbasic-usb-cdc-rx` in
+`lib/usb/usbcdcethernet.cpp`). QEMU `-device usb-net` and USB CDC
+Ethernet adapters:
+
+- Two bulk-IN buffers (ping-pong). Completion immediately posts the
+  next URB instead of waiting for `ReceiveFrame`, so a synchronous
+  `SendFrame` cannot open a receive gap.
+- A completed frame is held until `ReceiveFrame` copies it; the other
+  slot stays armed.
+
 Do not commit a dirty Circle submodule; the parent tree only vendors the
 patch files.

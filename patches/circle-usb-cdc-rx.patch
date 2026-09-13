@@ -1,0 +1,182 @@
+diff --git a/include/circle/usb/usbcdcethernet.h b/include/circle/usb/usbcdcethernet.h
+index 00d10e2d..190abd39 100644
+--- a/include/circle/usb/usbcdcethernet.h
++++ b/include/circle/usb/usbcdcethernet.h
+@@ -46,6 +46,7 @@ public:
+ 	boolean SetMulticastFilter (const u8 Groups[][MAC_ADDRESS_SIZE]);
+ 
+ private:
++	boolean SubmitRx (void);
+ 	static void CompletionRoutine (CUSBRequest *pURB, void *pParam, void *pContext);
+ 
+ 	u8 GetMACAddressStringIndex (void);	// returns 0 on error
+@@ -63,8 +64,14 @@ private:
+ 	CMACAddress m_MACAddress;
+ 
+ 	CUSBRequest *volatile m_pURB;
+-	DMA_BUFFER (u8, m_RxBuffer, FRAME_BUFFER_SIZE);
+-	volatile unsigned m_nRxLength;
++	// mmbasic-usb-cdc-rx: ping-pong IN buffers so a frame is not dropped
++	// between URB completion and the next ReceiveFrame / SendFrame.
++	DMA_BUFFER (u8, m_RxBuffer0, FRAME_BUFFER_SIZE);
++	DMA_BUFFER (u8, m_RxBuffer1, FRAME_BUFFER_SIZE);
++	u8 *m_pRxSlot[2];
++	volatile unsigned m_nRxLength[2];
++	volatile int m_nRxReady;
++	volatile int m_nRxSubmit;
+ };
+ 
+ #endif
+diff --git a/lib/usb/usbcdcethernet.cpp b/lib/usb/usbcdcethernet.cpp
+index 88b3a352..a613f763 100644
+--- a/lib/usb/usbcdcethernet.cpp
++++ b/lib/usb/usbcdcethernet.cpp
+@@ -55,8 +55,13 @@ CUSBCDCEthernetDevice::CUSBCDCEthernetDevice (CUSBFunction *pFunction)
+ 	m_pEndpointBulkIn (0),
+ 	m_pEndpointBulkOut (0),
+ 	m_pURB (0),
+-	m_nRxLength (0)
++	m_nRxReady (-1),
++	m_nRxSubmit (-1)
+ {
++	m_pRxSlot[0] = m_RxBuffer0;
++	m_pRxSlot[1] = m_RxBuffer1;
++	m_nRxLength[0] = 0;
++	m_nRxLength[1] = 0;
+ }
+ 
+ CUSBCDCEthernetDevice::~CUSBCDCEthernetDevice (void)
+@@ -138,6 +143,8 @@ boolean CUSBCDCEthernetDevice::Configure (void)
+ 
+ 	AddNetDevice ();
+ 
++	SubmitRx ();
++
+ 	return TRUE;
+ }
+ 
+@@ -154,37 +161,74 @@ boolean CUSBCDCEthernetDevice::SendFrame (const void *pBuffer, unsigned nLength)
+ 	return GetHost ()->Transfer (m_pEndpointBulkOut, (void *) pBuffer, nLength) >= 0;
+ }
+ 
+-boolean CUSBCDCEthernetDevice::ReceiveFrame (void *pBuffer, unsigned *pResultLength)
++boolean CUSBCDCEthernetDevice::SubmitRx (void)
+ {
+-	boolean bResult = FALSE;
++	// mmbasic-usb-cdc-rx: keep an IN URB posted across NAK and TX
++	if (m_pURB != 0)
++	{
++		return TRUE;
++	}
+ 
+-	if (m_nRxLength != 0)
++	int nSlot = -1;
++	for (int i = 0; i < 2; i++)
+ 	{
+-		assert (pBuffer != 0);
+-		assert (m_nRxLength <= FRAME_BUFFER_SIZE);
+-		memcpy (pBuffer, m_RxBuffer, m_nRxLength);
++		if (m_nRxLength[i] == 0)
++		{
++			nSlot = i;
++			break;
++		}
++	}
++	if (nSlot < 0)
++	{
++		return FALSE;
++	}
+ 
+-		assert (pResultLength != 0);
+-		*pResultLength = m_nRxLength;
++	assert (m_pEndpointBulkIn != 0);
++	m_pURB = new CUSBRequest (m_pEndpointBulkIn, m_pRxSlot[nSlot], FRAME_BUFFER_SIZE);
++	assert (m_pURB != 0);
+ 
+-		m_nRxLength = 0;
++	m_nRxSubmit = nSlot;
++	m_pURB->SetCompletionRoutine (CompletionRoutine, (void *) (uintptr) nSlot, this);
++	m_pURB->SetCompleteOnNAK ();
++	GetHost ()->SubmitAsyncRequest (m_pURB);
+ 
+-		bResult = TRUE;
+-	}
++	return TRUE;
++}
++
++boolean CUSBCDCEthernetDevice::ReceiveFrame (void *pBuffer, unsigned *pResultLength)
++{
++	boolean bResult = FALSE;
+ 
+-	if (m_pURB == 0)
++	if (m_nRxReady < 0)
+ 	{
+-		assert (m_pEndpointBulkIn != 0);
+-		m_pURB = new CUSBRequest (m_pEndpointBulkIn, m_RxBuffer, FRAME_BUFFER_SIZE);
+-		assert (m_pURB != 0);
++		for (int i = 0; i < 2; i++)
++		{
++			if (m_nRxLength[i] != 0)
++			{
++				m_nRxReady = i;
++				break;
++			}
++		}
++	}
+ 
+-		m_pURB->SetCompletionRoutine (CompletionRoutine, 0, this);
++	if (m_nRxReady >= 0)
++	{
++		int nSlot = m_nRxReady;
++		unsigned nLength = m_nRxLength[nSlot];
++		assert (pBuffer != 0);
++		assert (nLength <= FRAME_BUFFER_SIZE);
++		memcpy (pBuffer, m_pRxSlot[nSlot], nLength);
+ 
+-		m_pURB->SetCompleteOnNAK ();
++		assert (pResultLength != 0);
++		*pResultLength = nLength;
+ 
+-		GetHost ()->SubmitAsyncRequest (m_pURB);
++		m_nRxLength[nSlot] = 0;
++		m_nRxReady = -1;
++		bResult = TRUE;
+ 	}
+ 
++	SubmitRx ();
++
+ 	return bResult;
+ }
+ 
+@@ -195,16 +239,28 @@ void CUSBCDCEthernetDevice::CompletionRoutine (CUSBRequest *pURB, void *pParam,
+ 
+ 	assert (pThis->m_pURB == pURB);
+ 
++	int nSlot = (int) (uintptr) pParam;
++	assert (nSlot == 0 || nSlot == 1);
++
+ 	if (pURB->GetStatus () != 0)
+ 	{
+-		assert (pThis->m_nRxLength == 0);
+-		pThis->m_nRxLength = pURB->GetResultLength ();
+-		assert (pThis->m_nRxLength <= FRAME_BUFFER_SIZE);
++		unsigned nLength = pURB->GetResultLength ();
++		assert (nLength <= FRAME_BUFFER_SIZE);
++		if (nLength > 0)
++		{
++			pThis->m_nRxLength[nSlot] = nLength;
++			if (pThis->m_nRxReady < 0)
++			{
++				pThis->m_nRxReady = nSlot;
++			}
++		}
+ 	}
+ 
+ 	delete pURB;
+ 
+ 	pThis->m_pURB = 0;
++	pThis->m_nRxSubmit = -1;
++	pThis->SubmitRx ();
+ }
+ 
+ boolean CUSBCDCEthernetDevice::SetMulticastFilter (const u8 Groups[][MAC_ADDRESS_SIZE])
