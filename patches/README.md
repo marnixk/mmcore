@@ -77,9 +77,10 @@ Applied after `circle-tcp-ack.patch` (marker `mmbasic-usb-cdc-rx` in
 `lib/usb/usbcdcethernet.cpp`). QEMU `-device usb-net` and USB CDC
 Ethernet adapters:
 
-- Two bulk-IN buffers (ping-pong). Completion immediately posts the
-  next URB instead of waiting for `ReceiveFrame`, so a synchronous
-  `SendFrame` cannot open a receive gap.
+- Two bulk-IN buffers (ping-pong). The IN URB stays posted until a
+  frame arrives (no `SetCompleteOnNAK` gap). Completion immediately
+  arms the other slot so a blocking `SendFrame` cannot drop the next
+  frame.
 - A completed frame is held until `ReceiveFrame` copies it; the other
   slot stays armed.
 

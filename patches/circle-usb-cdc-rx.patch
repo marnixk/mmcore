@@ -28,7 +28,7 @@ index 00d10e2d..190abd39 100644
  
  #endif
 diff --git a/lib/usb/usbcdcethernet.cpp b/lib/usb/usbcdcethernet.cpp
-index 88b3a352..9464d10d 100644
+index 88b3a352..90554273 100644
 --- a/lib/usb/usbcdcethernet.cpp
 +++ b/lib/usb/usbcdcethernet.cpp
 @@ -55,8 +55,13 @@ CUSBCDCEthernetDevice::CUSBCDCEthernetDevice (CUSBFunction *pFunction)
@@ -55,7 +55,11 @@ index 88b3a352..9464d10d 100644
  	return TRUE;
  }
  
-@@ -154,37 +161,74 @@ boolean CUSBCDCEthernetDevice::SendFrame (const void *pBuffer, unsigned nLength)
+@@ -151,40 +158,77 @@ boolean CUSBCDCEthernetDevice::SendFrame (const void *pBuffer, unsigned nLength)
+ 	assert (m_pEndpointBulkOut != 0);
+ 	assert (pBuffer != 0);
+ 	assert (nLength <= FRAME_BUFFER_SIZE);
++	SubmitRx ();
  	return GetHost ()->Transfer (m_pEndpointBulkOut, (void *) pBuffer, nLength) >= 0;
  }
  
@@ -96,7 +100,6 @@ index 88b3a352..9464d10d 100644
 -		m_nRxLength = 0;
 +	m_nRxSubmit = nSlot;
 +	m_pURB->SetCompletionRoutine (CompletionRoutine, (void *) (uintptr) nSlot, this);
-+	m_pURB->SetCompleteOnNAK ();
 +	GetHost ()->SubmitAsyncRequest (m_pURB);
  
 -		bResult = TRUE;
