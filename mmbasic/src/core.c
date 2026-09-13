@@ -1731,29 +1731,48 @@ static void store_line(int num, const char *text)
 	G.nprog++;
 }
 
+static int locate_opt_int(int *out)
+{
+	mmb_skip_sp();
+	if (!*G.p || *G.p == ',' || *G.p == ':' || *G.p == '\'')
+		return 0;
+	*out = (int)mmb_as_int(mmb_expr());
+	return 1;
+}
+
 void mmb_cmd_locate(void)
 {
-	mmb_val a[2];
-	int n;
+	int y = 0, x = 0, cur = 0;
+	int have_y, have_x = 0, have_cur = 0;
 
+	have_y = locate_opt_int(&y);
 	mmb_skip_sp();
-	n = 0;
-	if (*G.p)
+	if (*G.p == ',')
 	{
-		a[n++] = mmb_expr();
+		G.p++;
+		have_x = locate_opt_int(&x);
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
 			G.p++;
-			mmb_skip_sp();
-			if (*G.p)
-				a[n++] = mmb_expr();
+			have_cur = locate_opt_int(&cur);
 		}
 	}
-	if (n < 2)
-		mmb_syntax();
-	mmb_print_cursor_goto((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]));
-	G.print_locate = 1;
+	if (have_y || have_x)
+	{
+		int px = G.print_x;
+		int py = G.print_y;
+
+		if (have_x)
+			px = x * mmb_print_font_w();
+		if (have_y)
+			py = y * mmb_print_font_h();
+		mmb_print_cursor_goto(px, py);
+		G.print_locate = 1;
+		mmb_print_locate_pending();
+	}
+	if (have_cur)
+		mmb_hw_cursor(cur != 0);
 }
 
 static void mmb_print_track_new(int from)

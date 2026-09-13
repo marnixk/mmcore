@@ -1,12 +1,17 @@
 name: LOCATE
 kind: command
 
-LOCATE x, y
+LOCATE [y] [, x] [, cursor]
 
-Move the text cursor to pixel coordinates x, y.
-The next PRINT places output at that location.
-PRINT @(x,y) does the same inline. Query the
-cursor with MM.HPOS and MM.VPOS (pixels) or POS()
-(column, 1-based).
+Move the text cursor to character cell y, x
+(row, then column; 0-based). On an 80x25 screen,
+LOCATE 24,79 is the bottom-right cell. Omit y or x
+to leave that coordinate unchanged. cursor is 0 to
+hide the hardware cursor or 1 to show it, e.g.
+LOCATE ,,0 and LOCATE ,,1. The next PRINT writes
+at that cell. PRINT @(x,y) still uses pixels.
+Query the cursor with MM.HPOS and MM.VPOS (pixels)
+or POS() (column, 1-based).
 
-Example:  LOCATE 16, 32 : PRINT "HELLO"
+Example:  LOCATE 1, 0 : PRINT "HELLO"
+          LOCATE ,, 0

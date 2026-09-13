@@ -18,7 +18,8 @@ A comma inserts a space between items. Bare PRINT
 prints a blank line. While a program is running,
 each PRINT is sent to the console immediately (a
 GOTO loop still shows output).
-Use PRINT @(x,y) or LOCATE x,y to position text.
+Use PRINT @(x,y) (pixels) or LOCATE y,x (character
+cell, row then column) to position text.
 #fn may be a disk file or OPEN "TCP:host:port".
 
 Example:  PRINT 6*7
