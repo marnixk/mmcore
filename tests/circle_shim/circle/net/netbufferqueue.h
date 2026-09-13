@@ -19,11 +19,21 @@ public:
 	unsigned GetNumEntries (void) const { return m_nEntries; }
 	size_t GetBytesQueued (void) const { return m_ulBytes; }
 
-	void Flush (void)
+	void Flush (size_t ulBytes = (size_t) -1)
 	{
-		CNetBuffer *p;
-		while ((p = Dequeue ()) != nullptr)
+		while (m_pFirst && ulBytes)
+		{
+			size_t ulLength = m_pFirst->GetLength ();
+			if (ulLength > ulBytes)
+			{
+				m_pFirst->RemoveHeader (ulBytes);
+				m_ulBytes -= ulBytes;
+				return;
+			}
+			ulBytes -= ulLength;
+			CNetBuffer *p = Dequeue ();
 			delete p;
+		}
 	}
 
 	void Enqueue (CNetBuffer *pNetBuffer)

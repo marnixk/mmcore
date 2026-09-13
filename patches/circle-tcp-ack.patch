@@ -1,0 +1,185 @@
+diff --git a/lib/net/tcpconnection.cpp b/lib/net/tcpconnection.cpp
+--- a/lib/net/tcpconnection.cpp
++++ b/lib/net/tcpconnection.cpp
+@@ -530,6 +530,16 @@
+ 	size_t nLength = (*ppNetBuffer)->GetLength ();
+ 	assert (nLength <= FRAME_BUFFER_SIZE);
+ 
++	// mmbasic-tcp-ack: reopen the advertised window as the app drains
++	{
++		u32 nOldWnd = m_nRCV_WND;
++		UpdateReceiveWindow ();
++		if (nOldWnd == 0 && m_nRCV_WND > 0)
++		{
++			SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
++		}
++	}
++
+ 	return nLength;
+ }
+ 
+@@ -705,7 +715,20 @@
+ 		u32 nLength = pNetBuffer->GetLength ();
+ 		if (nWindowLeft < (int) nLength)
+ 		{
+-			return FALSE;
++			// mmbasic-tcp-ack: RFC 1122 persist: probe a zero window
++			// with a 1-byte segment (TERM/CONNECT keystrokes).
++			if (   m_nSND_WND == 0
++			    && FLIGHT_SIZE == 0
++			    && nLength == 1
++			    && (m_pTimer->GetTicks () - m_nLastSendTicks)
++			       >= m_RTOCalculator.GetRTO ())
++			{
++				nWindowLeft = 1;
++			}
++			else
++			{
++				return FALSE;
++			}
+ 		}
+ 
+ #ifdef TCP_DEBUG
+@@ -1236,19 +1259,16 @@
+ 					m_nRetransmissionCount = MAX_RETRANSMISSIONS;
+ 				}
+ 
+-				if (   m_State == TCPStateFinWait1
+-				    || m_State == TCPStateClosing)
++				if (   (   m_State == TCPStateFinWait1
++				        || m_State == TCPStateClosing)
++				    && m_bFINSent
++				    && nSEG_ACK == m_nSND_NXT)
+ 				{
+ 					nBytesAck--;		// acknowledged FIN does not count
+ 					m_bFINQueued = FALSE;
+ 				}
+ 
+-				if (   m_State == TCPStateEstablished
+-				    && nBytesAck == 1)
+-				{
+-					nBytesAck--;
+-				}
+-				
++				// mmbasic-tcp-ack: 1-byte ACKs (telnet) must Flush
+ 				if (nBytesAck > 0)
+ 				{
+ 					m_TxQueue.Flush (nBytesAck);
+@@ -1312,8 +1332,16 @@
+ 			}
+ 			else if (le (nSEG_ACK, m_nSND_UNA))	// RFC 1122 section 4.2.2.20 (g)
+ 			{
+-				OnDuplicateAck ();
+-				
++				// mmbasic-tcp-ack: RFC 5681 dupACKs are empty segments
++				// that ACK no new data. Telnet payloads with ACK==UNA
++				// must not trigger fast retransmit / cwnd collapse.
++				if (   nSEG_ACK == m_nSND_UNA
++				    && nDataLength == 0
++				    && !(nFlags & (TCP_FLAG_FIN | TCP_FLAG_SYN)))
++				{
++					OnDuplicateAck ();
++				}
++
+ 				// RFC 1122 section 4.2.2.20 (g)
+ 				if (bwlh (m_nSND_UNA, nSEG_ACK, m_nSND_NXT))
+ 				{
+@@ -1457,28 +1485,25 @@
+ 
+ 					m_nRCV_NXT = m_ReassemblyQueue.Dequeue (m_nRCV_NXT);
+ 
+-					// m_nRCV_WND should be adjusted here (section 3.7)
++					UpdateReceiveWindow ();
+ 
+-					// following ACK could be piggybacked with data
+ 					SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
+ 
+-					if (   (nFlags & TCP_FLAG_PUSH)
+-					    || m_RxQueue.GetBytesQueued () >= TCP_CONFIG_RX_THRESHOLD)
+-					{
+-						m_Event.Set ();
+-					}
++					m_Event.Set ();
+ 				}
+ 			}
+ 			else
+ 			{
+-				SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
+-
+ 				if (   nDataLength > 0
+ 				    && m_ReassemblyQueue.Enqueue (nSEG_SEQ, pPacket))
+ 				{
+ 					pPacket = 0;
+ 				}
+ 
++				UpdateReceiveWindow ();
++
++				SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
++
+ 				delete pPacket;
+ 
+ 				return 1;
+@@ -1658,6 +1683,12 @@
+ 	return Status;
+ }
+ 
++void CTCPConnection::UpdateReceiveWindow (void)
++{
++	size_t nUsed = m_RxQueue.GetBytesQueued () + m_ReassemblyQueue.GetBytesQueued ();
++	m_nRCV_WND = nUsed >= TCP_CONFIG_WINDOW ? 0 : (u32) (TCP_CONFIG_WINDOW - nUsed);
++}
++
+ void CTCPConnection::OnDuplicateAck (void)
+ {
+ 	m_nDupAckCount++;
+@@ -1707,7 +1738,11 @@
+ 	CNetBuffer *pNetBuffer2 = new CNetBuffer (*pNetBuffer);
+ 	assert (pNetBuffer2 != 0);
+ 
+-	SendSegment (nFlags, m_nSND_UNA, m_nRCV_NXT, pNetBuffer2);
++	if (!SendSegment (nFlags, m_nSND_UNA, m_nRCV_NXT, pNetBuffer2))
++	{
++		StartTimer (TCPTimerRetransmission, m_RTOCalculator.GetRTO ());
++		return;
++	}
+ 
+ 	StartTimer (TCPTimerRetransmission, m_RTOCalculator.GetRTO ());
+ 
+diff --git a/include/circle/net/tcpconnection.h b/include/circle/net/tcpconnection.h
+--- a/include/circle/net/tcpconnection.h
++++ b/include/circle/net/tcpconnection.h
+@@ -114,6 +114,7 @@
+ private:
+ 	boolean SendNewSegment (u32 nAdditionalCWND = 0);	// returns if segment has been sent
+ 
++	void UpdateReceiveWindow (void);
+ 	void OnDuplicateAck (void);
+ 	void ResendSegment (void);
+ 
+diff --git a/lib/net/netbufferqueue.cpp b/lib/net/netbufferqueue.cpp
+--- a/lib/net/netbufferqueue.cpp
++++ b/lib/net/netbufferqueue.cpp
+@@ -65,6 +65,11 @@
+ 		size_t ulLength = pEntry->GetLength ();
+ 		if (ulLength > ulBytes)
+ 		{
++			// mmbasic-tcp-ack: a partial ACK must trim the head, or
++			// ResendSegment would replay already-acked bytes at SND.UNA.
++			pEntry->RemoveHeader (ulBytes);
++			assert (m_ulBytes >= ulBytes);
++			m_ulBytes -= ulBytes;
+ 			if (m_bProtected)
+ 			{
+ 				m_SpinLock.Release ();
+diff --git a/include/circle/net/reassemblyqueue.h b/include/circle/net/reassemblyqueue.h
+--- a/include/circle/net/reassemblyqueue.h
++++ b/include/circle/net/reassemblyqueue.h
+@@ -37,6 +37,8 @@
+ 	// returns new RCV.NXT
+ 	u32 Dequeue (u32 nRCV_NXT);
+ 
++	size_t GetBytesQueued (void) const	{ return m_ulCurrentBytes; }
++
+ 	void Flush (void);
+ 
+ 	// mmbasic-tcp-robust: drop the data before nRCV_NXT from a segment which

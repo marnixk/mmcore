@@ -59,6 +59,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-send.patch"
 fi
 
+if grep -q 'mmbasic-tcp-ack' "${CIRCLE_DIR}/lib/net/tcpconnection.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle TCP ACK/window patches (1-byte ACK flush, partial ACK, RCV.WND)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-ack.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

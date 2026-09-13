@@ -13,6 +13,7 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-wifi-149.patch"),
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
     os.path.join(REPO, "patches", "circle-tcp-send.patch"),
+    os.path.join(REPO, "patches", "circle-tcp-ack.patch"),
 ]
 
 
@@ -55,10 +56,12 @@ def test_build_script_applies_patches_in_order():
     a = text.index("circle-wifi-149.patch")
     b = text.index("circle-tcp-robust.patch")
     c = text.index("circle-tcp-send.patch")
-    assert a < b < c
+    d = text.index("circle-tcp-ack.patch")
+    assert a < b < c < d
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
+    assert "mmbasic-tcp-ack" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
@@ -78,6 +81,10 @@ def test_patches_carry_their_markers(patched_tree):
     assert "EnqueueFront" in qh
     assert "Frame deferred" in netdev
     assert "Frame dropped" not in netdev
+    assert "mmbasic-tcp-ack" in tcp
+    qcpp = open(os.path.join(patched_tree, "lib/net/netbufferqueue.cpp"), encoding="utf-8").read()
+    assert "RemoveHeader" in qcpp
+    assert "nBytesAck == 1" not in tcp
 
 
 def test_receive_drains_rx_queue_before_reporting_errno(patched_tree):
@@ -151,4 +158,88 @@ def test_term_and_connect_coalesce_iac():
     assert "term_net_send(" not in announce
     assert "iac_append" in term
     assert "iac_flush" in conn
+    assert "tcp_send_all" in conn
     assert "tcp_send" in conn
+
+
+def test_established_one_byte_ack_flushes_txqueue(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    body = tcp[tcp.index("case TCPStateEstablished:") :]
+    body = body[body.index("unsigned nBytesAck") :]
+    body = body[: body.index("void CTCPConnection::OnDuplicateAck")]
+    assert "nBytesAck == 1" not in body
+    assert "m_TxQueue.Flush (nBytesAck)" in body
+
+
+def test_receive_wakes_on_any_in_order_data(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    step = tcp[tcp.index("// mmbasic-tcp-robust: a segment which starts before RCV.NXT") :]
+    step = step[: step.index("case TCPStateSynReceived:")]
+    assert "TCP_CONFIG_RX_THRESHOLD" not in step
+    assert "m_Event.Set ()" in step
+    assert "UpdateReceiveWindow" in step
+    assert "m_ReassemblyQueue.GetBytesQueued" in tcp[tcp.index("void CTCPConnection::UpdateReceiveWindow") :]
+
+
+def test_ooo_counts_toward_receive_window(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    raq = open(
+        os.path.join(patched_tree, "include/circle/net/reassemblyqueue.h"), encoding="utf-8"
+    ).read()
+    assert "GetBytesQueued" in raq
+    step = tcp[tcp.index("// mmbasic-tcp-robust: a segment which starts before RCV.NXT") :]
+    step = step[: step.index("case TCPStateSynReceived:")]
+    ooo = step[step.index("else\n\t\t\t{") :]
+    assert ooo.index("UpdateReceiveWindow") < ooo.index("SendSegment (TCP_FLAG_ACK")
+
+
+def test_dupack_ignores_data_bearing_segments(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    body = tcp[tcp.index("else if (le (nSEG_ACK, m_nSND_UNA)") :]
+    body = body[: body.index("else if (gt (nSEG_ACK, m_nSND_NXT)")]
+    assert "nDataLength == 0" in body
+    assert "OnDuplicateAck" in body
+    assert body.index("nDataLength == 0") < body.index("OnDuplicateAck")
+
+
+def test_fin_ack_does_not_under_count_data(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    body = tcp[tcp.index("unsigned nBytesAck") :]
+    body = body[: body.index("void CTCPConnection::UpdateReceiveWindow")]
+    assert "m_bFINSent" in body
+    assert "nSEG_ACK == m_nSND_NXT" in body
+
+
+def test_zero_window_persist_probes_one_byte(patched_tree):
+    tcp = open(os.path.join(patched_tree, "lib/net/tcpconnection.cpp"), encoding="utf-8").read()
+    body = tcp[tcp.index("boolean CTCPConnection::SendNewSegment") :]
+    body = body[: body.index("int CTCPConnection::PacketReceived")]
+    assert "m_nSND_WND == 0" in body
+    assert "nLength == 1" in body
+
+
+def test_txqueue_flush_trims_partial_ack(tmp_path):
+    exe = os.path.join(str(tmp_path), "tcp_txqueue_host")
+    src = os.path.join(REPO, "tests", "tcp_txqueue_host.cpp")
+    subprocess.run(
+        [
+            "g++",
+            "-std=c++17",
+            "-O0",
+            "-g",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            "-I",
+            os.path.join(REPO, "tests", "circle_shim"),
+            "-o",
+            exe,
+            src,
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run([exe], capture_output=True, text=True)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "all checks passed" in out.stdout

@@ -50,5 +50,26 @@ Applied after `circle-tcp-robust.patch` (marker `mmbasic-tcp-send` in
 - `CTCPConnection::SendNewSegment()`: if `SendSegment()` returns FALSE,
   leave `SND.NXT` and the TxQueue peek unchanged.
 
+## `circle-tcp-ack.patch`
+
+Applied after `circle-tcp-send.patch` (marker `mmbasic-tcp-ack` in
+`lib/net/tcpconnection.cpp`). Telnet-sized traffic:
+
+- ESTABLISHED 1-byte ACKs flush the matching TxQueue entry (upstream
+  skipped `nBytesAck == 1`, so every keystroke stayed queued and
+  retransmit replayed stale payload at `SND.UNA`).
+- `CNetBufferQueue::Flush()` trims a partial ACK from the head buffer.
+- `RCV.WND` tracks unread `m_RxQueue` **and** reassembly-queue bytes, so
+  out-of-order fill cannot keep advertising a full window while the
+  hole is dropped. A window-update ACK is sent when the app drains a
+  zero window.
+- In-order data always wakes `Receive()` (not only PSH / 64KiB).
+- `ResendSegment()` does not treat a failed `SendSegment()` as sent.
+- DupACKs require an empty segment (`nDataLength == 0`); telnet
+  payloads with `ACK == UNA` no longer trigger fast retransmit.
+- FIN is subtracted from `nBytesAck` only when the ACK covers `SND.NXT`
+  and FIN was actually sent.
+- A 1-byte persist probe is sent when the peer advertises a zero window.
+
 Do not commit a dirty Circle submodule; the parent tree only vendors the
 patch files.
