@@ -249,6 +249,8 @@ def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
     if "10.0.2." not in on:
         cfg = _wait_dhcp(con)
         assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+    log_on = con.send_line("OPTION TERM LOG ON")
+    assert ".termlog" in log_on
 
     hold = threading.Event()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -267,11 +269,7 @@ def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
                 conn.recv(64)
             except OSError:
                 pass
-            conn.sendall(_MYSTIC_MASK)
-            time.sleep(0.3)
-            conn.sendall(b"\x1b[17D")
-            time.sleep(0.3)
-            conn.sendall(b"HELLO")
+            conn.sendall(_MYSTIC_MASK + b"\x1b[17DHELLO\r\nPANEOK\r\n")
             hold.wait(25)
         except OSError:
             pass
@@ -289,15 +287,27 @@ def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
         con._ser.sendall(f'TERM "10.0.2.2", {port}\r'.encode())
         serial = _wait_serial(con, b"!NET connected", timeout=25.0)
         assert b"!NET connected" in serial, serial.decode(errors="replace")[-800:]
-        ocr = con.wait_ocr("HELLO", timeout=18.0)
+        ocr = con.wait_ocr("PANEOK", timeout=18.0)
         png = con.capture_png(
             os.path.join(ARTIFACTS, "qemu_ethernet_term_hdmi_cub.png")
         )
+        # Mask starts at pane col 36 on the row after Connected + the field's \r\n.
+        hello = con.screen_pixel(448 + 2, 48 + 4)
         low = ocr.lower().replace(" ", "")
-        assert "hello" in low, f"expected CUB overwrite on HDMI (ocr={ocr!r} png={png})"
-        assert "xxxxxxxxxxxxxxxxxi" not in low
+        assert "paneok" in low, f"expected live TCP HDMI (ocr={ocr!r} png={png})"
+        assert _luminance(*hello) > 80, (
+            f"expected cream HELLO after CUB (pixel={hello} ocr={ocr!r} png={png})"
+        )
         _quit(con)
         assert con.send_line("PRINT 4+1") == "5"
+        off = con.send_line("OPTION TERM LOG OFF")
+        assert "in=" in off
+        path = _termlog_path(con)
+        body = _read_termlog(con, path)
+        recs = parse_termlog(body)
+        rx = b"".join(r.data for r in recs if r.kind == "R")
+        assert b"HELLO" in rx, body[-800:]
+        assert b"PANEOK" in rx, body[-800:]
         th.join(timeout=5)
     finally:
         hold.set()

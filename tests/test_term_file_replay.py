@@ -102,8 +102,9 @@ def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
                 assert os.path.getsize(path) > 1000, path
         w, h = con.screen_size()
         assert w >= 640 and h >= 400
-        px = con.screen_pixel(w // 2, h // 2)
-        assert px != (0, 0, 0)
+        ocr = con.ocr_screen()
+        low = ocr.lower()
+        assert "apply" in low or "ungenannt" in low or "account" in low, ocr
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
     finally:
