@@ -66,13 +66,6 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-ack.patch"
 fi
 
-if grep -q 'mmbasic-usb-cdc-rx' "${CIRCLE_DIR}/lib/usb/usbcdcethernet.cpp" 2>/dev/null; then
-	:
-else
-	log "Applying Circle USB CDC RX ping-pong (keep IN URB posted)"
-	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-usb-cdc-rx.patch"
-fi
-
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

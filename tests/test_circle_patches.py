@@ -14,7 +14,6 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
     os.path.join(REPO, "patches", "circle-tcp-send.patch"),
     os.path.join(REPO, "patches", "circle-tcp-ack.patch"),
-    os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
 ]
 
 
@@ -58,13 +57,11 @@ def test_build_script_applies_patches_in_order():
     b = text.index("circle-tcp-robust.patch")
     c = text.index("circle-tcp-send.patch")
     d = text.index("circle-tcp-ack.patch")
-    e = text.index("circle-usb-cdc-rx.patch")
-    assert a < b < c < d < e
+    assert a < b < c < d
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
     assert "mmbasic-tcp-ack" in text
-    assert "mmbasic-usb-cdc-rx" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
@@ -85,15 +82,6 @@ def test_patches_carry_their_markers(patched_tree):
     assert "Frame deferred" in netdev
     assert "Frame dropped" not in netdev
     assert "mmbasic-tcp-ack" in tcp
-    usb = open(os.path.join(patched_tree, "lib/usb/usbcdcethernet.cpp"), encoding="utf-8").read()
-    usbh = open(
-        os.path.join(patched_tree, "include/circle/usb/usbcdcethernet.h"), encoding="utf-8"
-    ).read()
-    assert "mmbasic-usb-cdc-rx" in usb
-    assert "mmbasic-usb-cdc-rx" in usbh
-    assert "SubmitRx" in usb
-    assert "m_RxBuffer0" in usbh
-    assert "m_RxBuffer1" in usbh
     qcpp = open(os.path.join(patched_tree, "lib/net/netbufferqueue.cpp"), encoding="utf-8").read()
     assert "RemoveHeader" in qcpp
     assert "nBytesAck == 1" not in tcp
@@ -228,17 +216,6 @@ def test_zero_window_persist_probes_one_byte(patched_tree):
     body = body[: body.index("int CTCPConnection::PacketReceived")]
     assert "m_nSND_WND == 0" in body
     assert "nLength == 1" in body
-
-
-def test_usb_cdc_resubmits_in_completion(patched_tree):
-    usb = open(os.path.join(patched_tree, "lib/usb/usbcdcethernet.cpp"), encoding="utf-8").read()
-    body = usb[usb.index("void CUSBCDCEthernetDevice::CompletionRoutine") :]
-    assert "SubmitRx" in body
-    assert "m_pURB = 0" in body
-    submit = usb[usb.index("boolean CUSBCDCEthernetDevice::SubmitRx") :]
-    submit = submit[: submit.index("boolean CUSBCDCEthernetDevice::ReceiveFrame")]
-    assert "SetCompleteOnNAK" in submit
-    assert "m_pRxSlot" in submit
 
 
 def test_txqueue_flush_trims_partial_ack(tmp_path):
