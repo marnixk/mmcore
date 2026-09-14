@@ -307,11 +307,13 @@ static char killbuf[8192];
 static int killlen;
 static char pick_root[128];
 static char pick_path[ED_PICK_MAX][128];
+static int pick_pos[ED_PICK_MAX];
 static int pick_n;
 static int pick_sel;
 static int pick_row0;
 static int pick_view[ED_PICK_MAX];
 static int pick_vn;
+static int pick_kind; /* 0 files 1 outline */
 static int alt_pend;
 static int confirm_pending;
 static int confirm_btn;
@@ -335,9 +337,10 @@ static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'T', 'H' };
 static int menu_x[MENU_COUNT];
 
 static const char *file_items[] = {
-	"New", "Open...", "Quick open...", "Save", "Save As...", "Close tab", "Next tab", "Quit"
+	"New", "Open...", "Quick open...", "Outline...", "Save", "Save As...",
+	"Close tab", "Next tab", "Quit"
 };
-static const char file_hots[] = { 'n', 'o', 'p', 's', 'a', 'c', 't', 'q' };
+static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
 static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste" };
 static const char edit_hots[] = { 'o', 't', 'c', 'p' };
 static const char *run_items[] = { "Run" };
@@ -354,6 +357,8 @@ static void editor_run(void);
 static void editor_resume(void);
 static void open_dialog(int which);
 static void open_picker(void);
+static void open_outline(void);
+static int is_word_char(char c);
 static void activate_menu(void);
 static int add_or_switch(const char *path);
 static void new_file(void);
@@ -642,6 +647,15 @@ static const char *pick_rel(const char *full)
 	return full[i] ? full + i : full;
 }
 
+static const char *pick_item_label(int i)
+{
+	if (i < 0 || i >= pick_n)
+		return "";
+	if (pick_kind)
+		return pick_path[i];
+	return pick_rel(pick_path[i]);
+}
+
 static void pick_sort(void)
 {
 	int i, j;
@@ -667,7 +681,7 @@ static void pick_rebuild_view(void)
 	pick_vn = 0;
 	for (i = 0; i < pick_n; i++)
 	{
-		if (!ed_contains(pick_rel(pick_path[i]), G.ed.dlg))
+		if (!ed_contains(pick_item_label(i), G.ed.dlg))
 			continue;
 		if (keep == i)
 		{
@@ -854,7 +868,10 @@ static void pick_move(int delta)
 static void draw_picker(void)
 {
 	int w, h, r0, c0, i, vis, y;
-	const char *title = " Quick open ";
+	const char *title = pick_kind ? " Outline " : " Quick open ";
+	const char *sub = pick_kind ? tab_label(G.ed.cur) : pick_root;
+	const char *foot = pick_kind ? "Enter=go  Esc=cancel  Up/Down"
+				     : "Enter=open  Esc=cancel  Up/Down";
 	pick_geom(&w, &h, &r0, &c0);
 	vis = pick_list_h(h);
 	if (pick_sel < pick_row0)
@@ -878,7 +895,7 @@ static void draw_picker(void)
 	}
 	tui_pad(c0 + w, r0 + h - 1, "", 2, C_SH_FG, C_SH_BG);
 	tui_pad(c0 + 2, r0 + h, "", w, C_SH_FG, C_SH_BG);
-	tui_pad(c0 + 2, r0 + 1, pick_root, w - 4, C_DLG_FG, C_DLG_BG);
+	tui_pad(c0 + 2, r0 + 1, sub ? sub : "", w - 4, C_DLG_FG, C_DLG_BG);
 	tui_pad(c0 + 2, r0 + 2, G.ed.dlg[0] ? G.ed.dlg : "(type to filter)", w - 4,
 		G.ed.dlg[0] ? C_SEL_FG : C_DLG_FG,
 		G.ed.dlg[0] ? C_SEL_BG : C_DLG_BG);
@@ -890,7 +907,7 @@ static void draw_picker(void)
 		if (pick_row0 + i < pick_vn)
 		{
 			int idx = pick_view[pick_row0 + i];
-			lab = pick_rel(pick_path[idx]);
+			lab = pick_item_label(idx);
 			if (pick_row0 + i == pick_sel)
 			{
 				fg = C_SEL_FG;
@@ -899,8 +916,96 @@ static void draw_picker(void)
 		}
 		tui_pad(c0 + 2, y, lab, w - 4, fg, bg);
 	}
-	tui_pad(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", w - 4,
-		C_DLG_FG, C_DLG_BG);
+	tui_pad(c0 + 2, r0 + h - 2, foot, w - 4, C_DLG_FG, C_DLG_BG);
+}
+
+static int outline_kw(const char *p, const char *kw)
+{
+	int n = (int)strlen(kw);
+	int i;
+	for (i = 0; i < n; i++)
+	{
+		if (!p[i] || !ed_ch_eq(p[i], kw[i]))
+			return 0;
+	}
+	return !is_word_char(p[n]);
+}
+
+static void outline_scan(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int i = 0;
+
+	pick_n = 0;
+	if (!t)
+		return;
+	while (i <= t->len && pick_n < ED_PICK_MAX)
+	{
+		int line_pos = i;
+		const char *p;
+		const char *kind = 0;
+
+		while (i < t->len && (t->buf[i] == ' ' || t->buf[i] == '\t'))
+			i++;
+		if (i < t->len && t->buf[i] >= '0' && t->buf[i] <= '9')
+		{
+			while (i < t->len && t->buf[i] >= '0' && t->buf[i] <= '9')
+				i++;
+			while (i < t->len && (t->buf[i] == ' ' || t->buf[i] == '\t'))
+				i++;
+		}
+		if (i < t->len && is_word_char(t->buf[i]))
+		{
+			int j = i;
+			while (j < t->len && is_word_char(t->buf[j]))
+				j++;
+			while (j < t->len && (t->buf[j] == ' ' || t->buf[j] == '\t'))
+				j++;
+			if (j < t->len && t->buf[j] == ':')
+			{
+				i = j + 1;
+				while (i < t->len && (t->buf[i] == ' ' || t->buf[i] == '\t'))
+					i++;
+			}
+		}
+		p = t->buf + i;
+		if (i < t->len && (t->buf[i] == '\'' || outline_kw(p, "REM")))
+			goto next_line;
+		if (outline_kw(p, "SUB"))
+			kind = "SUB";
+		else if (outline_kw(p, "FUNCTION"))
+			kind = "FUNCTION";
+		if (kind)
+		{
+			char lab[128];
+			int n = 0, k;
+			p += (int)strlen(kind);
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (is_word_char(*p) && !(*p >= '0' && *p <= '9'))
+			{
+				for (k = 0; kind[k] && n < 40; k++)
+					lab[n++] = kind[k];
+				lab[n++] = ' ';
+				while (is_word_char(*p) && n < (int)sizeof(lab) - 2)
+					lab[n++] = *p++;
+				if ((*p == '$' || *p == '%' || *p == '!') && n < (int)sizeof(lab) - 1)
+					lab[n++] = *p;
+				lab[n] = 0;
+				strncpy(pick_path[pick_n], lab, sizeof(pick_path[0]) - 1);
+				pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
+				pick_pos[pick_n] = line_pos;
+				pick_n++;
+			}
+		}
+	next_line:
+		while (i < t->len && t->buf[i] != '\n')
+			i++;
+		if (i < t->len && t->buf[i] == '\n')
+			i++;
+		else
+			break;
+	}
 }
 
 static void open_picker(void)
@@ -909,6 +1014,7 @@ static void open_picker(void)
 	G.ed.dialog = DLG_PICK;
 	G.ed.dlg[0] = 0;
 	G.ed.dlglen = 0;
+	pick_kind = 0;
 	pick_n = 0;
 	pick_sel = 0;
 	pick_row0 = 0;
@@ -917,6 +1023,20 @@ static void open_picker(void)
 		set_pick_root(mmb_vfs_cwd());
 	pick_walk(pick_root, 0);
 	pick_sort();
+	pick_rebuild_view();
+}
+
+static void open_outline(void)
+{
+	G.ed.menu_open = 0;
+	G.ed.dialog = DLG_PICK;
+	G.ed.dlg[0] = 0;
+	G.ed.dlglen = 0;
+	pick_kind = 1;
+	pick_sel = 0;
+	pick_row0 = 0;
+	pick_vn = 0;
+	outline_scan();
 	pick_rebuild_view();
 }
 
@@ -2587,7 +2707,7 @@ static void draw_dialog(void)
 			"Alt+F N New file    ^W     Close tab",
 			"Untitled close/quit: Save/Discard/Cancel",
 			"Alt+Left/Right tabs (no wrap)",
-			"^O     Save            ^K/^U  Cut line/Paste",
+			"^O     Outline          ^S     Save",
 			"^R/F9  Run; press a key to return",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
@@ -3088,7 +3208,21 @@ static void submit_dialog(void)
 			int idx = pick_view[pick_sel];
 			if (idx >= 0 && idx < pick_n)
 			{
-				if (add_or_switch(pick_path[idx]) < 0)
+				if (pick_kind)
+				{
+					mmb_ed_tab *t = cur_tab();
+					if (t)
+					{
+						t->cx = pick_pos[idx];
+						if (t->cx < 0)
+							t->cx = 0;
+						if (t->cx > t->len)
+							t->cx = t->len;
+						t->sel = 0;
+						ensure_visible();
+					}
+				}
+				else if (add_or_switch(pick_path[idx]) < 0)
 					set_status("Open failed");
 			}
 		}
@@ -3117,14 +3251,16 @@ static void activate_menu(void)
 		else if (item == 2)
 			open_picker();
 		else if (item == 3)
-			save_tab();
+			open_outline();
 		else if (item == 4)
-			open_dialog(DLG_SAVEAS);
+			save_tab();
 		else if (item == 5)
-			close_tab();
+			open_dialog(DLG_SAVEAS);
 		else if (item == 6)
-			next_tab();
+			close_tab();
 		else if (item == 7)
+			next_tab();
+		else if (item == 8)
 			editor_leave();
 	}
 	else if (menu == MENU_EDIT)
@@ -3821,6 +3957,13 @@ const char *mmb_editor_feed(char c)
 			redraw();
 		return G.out;
 	}
+	if (c == 15) /* Ctrl+O outline */
+	{
+		open_outline();
+		if (G.ed.active)
+			redraw();
+		return G.out;
+	}
 	if (G.ed.dialog)
 	{
 		dialog_key(c);
@@ -3862,7 +4005,7 @@ const char *mmb_editor_feed(char c)
 		}
 		return G.out;
 	}
-	if (c == 15) /* Ctrl+O save */
+	if (c == 19) /* Ctrl+S save */
 	{
 		save_tab();
 		redraw();
