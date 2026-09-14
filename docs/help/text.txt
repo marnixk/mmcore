@@ -3,7 +3,10 @@ kind: command
 
 TEXT x, y, string$ [, colour]
 
-Draw string$ at pixel (x,y) in the current font.
-colour defaults to the foreground.
+Draw string$ at pixel (x,y) using the default 8x16
+IBM VGA CP437 face (the same glyphs as TERM and PRINT).
+CHR$(128) to CHR$(255) draw those code-page cells.
+colour defaults to the foreground. Scale follows FONT.
 
 Example:  TEXT 8,8,"HELLO",RGB(255,255,255)
+          TEXT 0,0,CHR$(219)

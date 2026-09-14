@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "mmbasic.h"
+#include <circle/font.h>
 #include <circle/new.h>
 #include <circle/util.h>
 #include <circle/timer.h>
@@ -7,10 +8,22 @@
 
 extern void mmb_platform_bind(CKernel *k);
 
+extern "C" const unsigned char mmb_cp437_8x16[];
+
+static const TFont FontCP437 =
+{
+	8,
+	16,
+	0,
+	0x00,
+	0xFF,
+	mmb_cp437_8x16
+};
+
 static const char FromKernel[] = "console";
 
 CKernel::CKernel (void)
-:	m_Screen (m_Options.GetWidth (), m_Options.GetHeight ()),
+:	m_Screen (m_Options.GetWidth (), m_Options.GetHeight (), FontCP437),
 #ifdef MMB_CIRCLE_NET
 	m_Serial (&m_Interrupt),
 #endif

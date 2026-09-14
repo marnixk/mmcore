@@ -575,9 +575,9 @@ def test_text_draws_pixels(fresh_console):
     c = fresh_console
     c.send_line("CLS")
     assert c.send_line('TEXT 8,8,"A",RGB(255,255,255)') == ""
-    pix = int(c.send_line("PRINT PIXEL(10,8)"))
+    pix = int(c.send_line("PRINT PIXEL(11,10)"))
     if pix == 0:
-        pix = int(c.send_line("PRINT PIXEL(11,8)"))
+        pix = int(c.send_line("PRINT PIXEL(12,11)"))
     assert pix != 0
 
 
