@@ -58,6 +58,15 @@
 #define TM_BTN_DEL      2
 #define TM_BTN_CONN     3
 #define TM_LIST_VIEW    12
+#define TM_ED_NAME      0
+#define TM_ED_HOST      1
+#define TM_ED_PORT      2
+#define TM_ED_ECHO      3
+#define TM_ED_BOX       4
+#define TM_ED_80X25     5
+#define TM_ED_CANCEL    6
+#define TM_ED_SAVE      7
+#define TM_MODE_80X25   2
 #define TM_RS          0x1e
 #define TM_BOX_H       0xC4u
 #define TM_BOX_V       0xB3u
@@ -93,6 +102,7 @@ typedef struct {
 	int pane_rows;
 	int pane_cols;
 	int letterbox;
+	int mode80x25;
 	int vid_rows;
 	int vid_cols;
 	int cur_row;
@@ -163,6 +173,7 @@ typedef struct {
 	int dlg_port;
 	int dlg_echo;
 	int dlg_letterbox;
+	int dlg_mode80x25;
 	int demo_line;
 	unsigned demo_next;
 	int serial_gen;
@@ -210,6 +221,7 @@ typedef struct {
 	int port;
 	int echo;
 	int letterboxed;
+	int mode80x25;
 } term_bm;
 
 static term_bm g_bm[TM_BM_MAX];
@@ -439,6 +451,8 @@ static int term_width(void)
 
 static const char *term_width_label(void)
 {
+	if (T.mode80x25)
+		return "80x25";
 	return T.letterbox ? "Boxed" : "Full";
 }
 
@@ -538,18 +552,33 @@ static void term_layout(void)
 {
 	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
-	if (T.letterbox)
+	if (T.mode80x25)
+	{
 		T.pane_cols = TM_COLS_BOXED;
+		if (T.pane_cols > T.vid_cols)
+			T.pane_cols = T.vid_cols;
+		T.pane_left = 0;
+		T.pane_rows = T.vid_rows;
+	}
 	else
-		T.pane_cols = T.vid_cols;
+	{
+		if (T.letterbox)
+			T.pane_cols = TM_COLS_BOXED;
+		else
+			T.pane_cols = T.vid_cols;
+		if (T.pane_cols > TM_MAX_COLS)
+			T.pane_cols = TM_MAX_COLS;
+		if (T.pane_cols < 1)
+			T.pane_cols = 1;
+		T.pane_left = (T.vid_cols - T.pane_cols) / 2;
+		if (T.pane_left < 0)
+			T.pane_left = 0;
+		T.pane_rows = T.vid_rows - 1;
+	}
 	if (T.pane_cols > TM_MAX_COLS)
 		T.pane_cols = TM_MAX_COLS;
 	if (T.pane_cols < 1)
 		T.pane_cols = 1;
-	T.pane_left = (T.vid_cols - T.pane_cols) / 2;
-	if (T.pane_left < 0)
-		T.pane_left = 0;
-	T.pane_rows = T.vid_rows - 1;
 	if (T.pane_rows < 1)
 		T.pane_rows = 1;
 	if (T.pane_rows > TM_MAX_ROWS)
@@ -1112,6 +1141,11 @@ static void term_draw(void)
 	}
 	if (T.menu || T.alt_pend)
 		term_draw_status();
+	else if (T.mode80x25)
+	{
+		if (T.pane_rows > 0)
+			term_draw_row(T.pane_rows - 1);
+	}
 	else
 		mmb_gfx_box(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
 			    TM_BG, 1, (int)TM_BG);
@@ -1617,7 +1651,9 @@ static void term_apply_session_mode(void)
 		bits = 16;
 	if (bits < 16)
 		bits = 16;
-	if (T.letterbox)
+	if (T.mode80x25)
+		mode = TM_MODE_80X25;
+	else if (T.letterbox)
 		mode = 14;
 	else
 	{
@@ -1634,6 +1670,7 @@ static void term_apply_session_mode(void)
 static void term_toggle_letterbox(void)
 {
 	int old_cols = term_width();
+	T.mode80x25 = 0;
 	T.letterbox = T.letterbox ? 0 : 1;
 	term_apply_session_mode();
 	term_layout();
@@ -1827,6 +1864,8 @@ static void term_bm_save(void)
 		bm_append_int(buf, sizeof(buf), g_bm[i].echo ? 1 : 0);
 		bm_append(buf, sizeof(buf), "\nletterboxed=");
 		bm_append_int(buf, sizeof(buf), g_bm[i].letterboxed ? 1 : 0);
+		bm_append(buf, sizeof(buf), "\nmode80x25=");
+		bm_append_int(buf, sizeof(buf), g_bm[i].mode80x25 ? 1 : 0);
 		bm_append(buf, sizeof(buf), "\n");
 	}
 	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
@@ -1895,6 +1934,7 @@ static void term_bm_load(void)
 					g_bm[cur].port = 23;
 					g_bm[cur].echo = 1;
 					g_bm[cur].letterboxed = 1;
+					g_bm[cur].mode80x25 = 0;
 					g_bm_n++;
 				}
 				else
@@ -1929,6 +1969,8 @@ static void term_bm_load(void)
 					g_bm[cur].echo = bm_parse_int(eq) ? 1 : 0;
 				else if (mmb_keyword_eq(p, "letterboxed"))
 					g_bm[cur].letterboxed = bm_parse_int(eq) ? 1 : 0;
+				else if (mmb_keyword_eq(p, "mode80x25"))
+					g_bm[cur].mode80x25 = bm_parse_int(eq) ? 1 : 0;
 			}
 		}
 		p = nl;
@@ -2097,26 +2139,29 @@ static void term_draw_dlg_edit(void)
 {
 	char port[8];
 	char echo[16];
-	char box[16];
+	char box[24];
+	char m80[24];
 	const char *save;
 
-	term_dlg_frame(48, 14,
+	term_dlg_frame(48, 15,
 		       T.dlg_edit_idx < 0 ? " New bookmark " : " Edit bookmark ");
 	dlg_text_at(2, 2, "Name", 0);
-	dlg_field(8, 2, 36, T.dlg_name, T.dlg_focus == 0);
+	dlg_field(8, 2, 36, T.dlg_name, T.dlg_focus == TM_ED_NAME);
 	dlg_text_at(2, 4, "Host", 0);
-	dlg_field(8, 4, 22, T.dlg_host, T.dlg_focus == 1);
+	dlg_field(8, 4, 22, T.dlg_host, T.dlg_focus == TM_ED_HOST);
 	dlg_text_at(32, 4, "Port", 0);
 	port[0] = 0;
 	bm_append_int(port, sizeof(port), T.dlg_port);
-	dlg_field(38, 4, 6, port[0] ? port : "", T.dlg_focus == 2);
+	dlg_field(38, 4, 6, port[0] ? port : "", T.dlg_focus == TM_ED_PORT);
 	strcpy(echo, T.dlg_echo ? "[X] Echo ON" : "[ ] Echo ON");
 	strcpy(box, T.dlg_letterbox ? "[X] Letterboxed" : "[ ] Letterboxed");
-	dlg_text_at(2, 6, echo, T.dlg_focus == 3);
-	dlg_text_at(2, 7, box, T.dlg_focus == 4);
+	strcpy(m80, T.dlg_mode80x25 ? "[X] Use 80x25 mode" : "[ ] Use 80x25 mode");
+	dlg_text_at(2, 6, echo, T.dlg_focus == TM_ED_ECHO);
+	dlg_text_at(2, 7, box, T.dlg_focus == TM_ED_BOX);
+	dlg_text_at(2, 8, m80, T.dlg_focus == TM_ED_80X25);
 	save = T.dlg_edit_idx < 0 ? "Save" : "Update";
-	dlg_btn(2, 12, "Cancel", T.dlg_focus == 5);
-	dlg_btn(36, 12, save, T.dlg_focus == 6);
+	dlg_btn(2, 13, "Cancel", T.dlg_focus == TM_ED_CANCEL);
+	dlg_btn(36, 13, save, T.dlg_focus == TM_ED_SAVE);
 }
 
 static void term_draw_dlg_del(void)
@@ -2179,6 +2224,7 @@ static void term_serial_dump_dlg(void)
 		ser("\r\n");
 		ser(T.dlg_echo ? "[X] Echo ON\r\n" : "[ ] Echo ON\r\n");
 		ser(T.dlg_letterbox ? "[X] Letterboxed\r\n" : "[ ] Letterboxed\r\n");
+		ser(T.dlg_mode80x25 ? "[X] Use 80x25 mode\r\n" : "[ ] Use 80x25 mode\r\n");
 		ser("Cancel\r\n");
 		ser(T.dlg_edit_idx < 0 ? "Save\r\n" : "Update\r\n");
 		return;
@@ -2221,6 +2267,7 @@ static void term_bm_open_edit(int is_new)
 		T.dlg_port = 23;
 		T.dlg_echo = 1;
 		T.dlg_letterbox = 1;
+		T.dlg_mode80x25 = 0;
 	}
 	else
 	{
@@ -2233,6 +2280,7 @@ static void term_bm_open_edit(int is_new)
 		T.dlg_port = b->port;
 		T.dlg_echo = b->echo ? 1 : 0;
 		T.dlg_letterbox = b->letterboxed ? 1 : 0;
+		T.dlg_mode80x25 = b->mode80x25 ? 1 : 0;
 	}
 	term_ui_refresh();
 }
@@ -2260,6 +2308,7 @@ static void term_bm_save_edit(void)
 	b->port = T.dlg_port;
 	b->echo = T.dlg_echo ? 1 : 0;
 	b->letterboxed = T.dlg_letterbox ? 1 : 0;
+	b->mode80x25 = T.dlg_mode80x25 ? 1 : 0;
 	strncpy(keep, b->name, TM_BM_NAME - 1);
 	keep[TM_BM_NAME - 1] = 0;
 	term_bm_save();
@@ -2325,7 +2374,8 @@ static void term_bm_connect(void)
 	T.demo_burst = (strcasecmp(T.host, "demoburst") == 0);
 	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
 	T.replay = host_is_replay();
-	T.letterbox = b->letterboxed ? 1 : 0;
+	T.mode80x25 = b->mode80x25 ? 1 : 0;
+	T.letterbox = T.mode80x25 ? 0 : (b->letterboxed ? 1 : 0);
 	term_reset_pen();
 	term_apply_session_mode();
 	term_layout();
@@ -2505,19 +2555,25 @@ static int term_dlg_key(char c)
 	{
 		if (c == '\r' || c == '\n')
 		{
-			if (T.dlg_focus == 3)
+			if (T.dlg_focus == TM_ED_ECHO)
 			{
 				T.dlg_echo = !T.dlg_echo;
 				term_dlg_refresh();
 				return 1;
 			}
-			if (T.dlg_focus == 4)
+			if (T.dlg_focus == TM_ED_BOX)
 			{
 				T.dlg_letterbox = !T.dlg_letterbox;
 				term_dlg_refresh();
 				return 1;
 			}
-			if (T.dlg_focus == 5)
+			if (T.dlg_focus == TM_ED_80X25)
+			{
+				T.dlg_mode80x25 = !T.dlg_mode80x25;
+				term_dlg_refresh();
+				return 1;
+			}
+			if (T.dlg_focus == TM_ED_CANCEL)
 			{
 				term_dlg_close();
 				return 1;
@@ -2531,12 +2587,15 @@ static int term_dlg_key(char c)
 			term_dlg_refresh();
 			return 1;
 		}
-		if (c == ' ' && (T.dlg_focus == 3 || T.dlg_focus == 4))
+		if (c == ' ' && (T.dlg_focus == TM_ED_ECHO || T.dlg_focus == TM_ED_BOX ||
+				 T.dlg_focus == TM_ED_80X25))
 		{
-			if (T.dlg_focus == 3)
+			if (T.dlg_focus == TM_ED_ECHO)
 				T.dlg_echo = !T.dlg_echo;
-			else
+			else if (T.dlg_focus == TM_ED_BOX)
 				T.dlg_letterbox = !T.dlg_letterbox;
+			else
+				T.dlg_mode80x25 = !T.dlg_mode80x25;
 			term_dlg_refresh();
 			return 1;
 		}
@@ -2595,24 +2654,24 @@ static void term_dlg_arrow(int c)
 		{
 			T.dlg_focus--;
 			if (T.dlg_focus < 0)
-				T.dlg_focus = 6;
+				T.dlg_focus = TM_ED_SAVE;
 		}
 		else if (c == 'B')
 		{
 			T.dlg_focus++;
-			if (T.dlg_focus > 6)
+			if (T.dlg_focus > TM_ED_SAVE)
 				T.dlg_focus = 0;
 		}
 		else if (c == 'C' || c == 'D')
 		{
-			if (T.dlg_focus == 1)
-				T.dlg_focus = 2;
-			else if (T.dlg_focus == 2)
-				T.dlg_focus = 1;
-			else if (T.dlg_focus == 5)
-				T.dlg_focus = 6;
-			else if (T.dlg_focus == 6)
-				T.dlg_focus = 5;
+			if (T.dlg_focus == TM_ED_HOST)
+				T.dlg_focus = TM_ED_PORT;
+			else if (T.dlg_focus == TM_ED_PORT)
+				T.dlg_focus = TM_ED_HOST;
+			else if (T.dlg_focus == TM_ED_CANCEL)
+				T.dlg_focus = TM_ED_SAVE;
+			else if (T.dlg_focus == TM_ED_SAVE)
+				T.dlg_focus = TM_ED_CANCEL;
 		}
 		term_dlg_refresh();
 	}
@@ -4036,6 +4095,7 @@ void mmb_cmd_term(void)
 	T.demo_iac = (strcasecmp(T.host, "demoiac") == 0);
 	T.replay = !T.file_replay && host_is_replay();
 	T.letterbox = 1;
+	T.mode80x25 = 0;
 	term_reset_pen();
 
 	ser("TERM\r\n");

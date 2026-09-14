@@ -101,6 +101,7 @@ def test_help_term(console):
     assert "backspace" in low
     assert "boxed" in low
     assert "full" in low
+    assert "80x25" in low
     assert "bookmark" in low
     assert "replay" in low
     assert "term replay" in low or "replay \"file" in low or "c:/.termlog" in low
@@ -785,6 +786,57 @@ def test_term_bookmarks_new_persist_delete(kernel_image):
         assert "Beta" in again
         _quit(con)
         assert con.send_line("PRINT 7+8") == "15"
+    finally:
+        con.stop()
+
+
+def test_term_bookmark_80x25_mode(kernel_image):
+    """Issue #287: bookmark 80x25 uses MODE 2 with a full 80x25 pane."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([1]) + b"t")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"k")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"\x1b[D\x1b[D\x1b[D")
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"\r")
+        form = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Use 80x25 mode" in form
+        con._ser.sendall(b"Eighty")
+        con._ser.sendall(b"\x1b[B")
+        _plain(con.drain(quiet=0.25, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"demo")
+        for _ in range(4):
+            con._ser.sendall(b"\x1b[B")
+            _plain(con.drain(quiet=0.15, timeout=3).decode(errors="replace"))
+        con._ser.sendall(b" ")
+        checked = _plain(con.drain(quiet=0.4, timeout=6).decode(errors="replace"))
+        assert "[X] Use 80x25 mode" in checked
+        con._ser.sendall(bytes([1]) + b"s")
+        saved = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Eighty" in saved
+        con._ser.sendall(b"\r")
+        connected = _plain(con.drain(quiet=1.0, timeout=12).decode(errors="replace"))
+        assert con.screen_size() == (640, 400)
+        rows_80 = [
+            ln
+            for ln in connected.replace("\r", "").split("\n")
+            if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        con._ser.sendall(bytes([1]) + b"t")
+        menu = _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        assert "80x25" in menu
+        con.capture_png("/opt/cursor/artifacts/term_80x25_mode.png")
+        _quit(con)
+        path = _termconfig_path(con)
+        assert path
+        ini = _read_termconfig(con, path)
+        assert "mode80x25=1" in ini.replace(" ", "")
+        assert con.send_line("PRINT 2+2") == "4"
     finally:
         con.stop()
 
