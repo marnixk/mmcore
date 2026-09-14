@@ -649,6 +649,67 @@ def test_wordpad_esc_then_letter_inserts_letter(kernel_image):
         con.stop()
 
 
+def test_wordpad_bullet_stays_with_glyph(kernel_image):
+    """Issue #286: leaving a * / - line keeps a CP437 bullet; source stays markdown."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        _open(con, 'WORDPAD "BUL.MD"')
+        focused = _keys(con, b"* hello", quiet=0.7)
+        assert "* hello" in focused
+        assert "\x07" not in focused
+        left = _keys(con, b"\rnext", quiet=0.8)
+        assert "\x07 hello" in left or "\x07hello" in left.replace(" ", "")
+        assert "* hello" not in left.split("next")[0]
+        ox, oy = _pane_left_px(con), 0
+        pane = con.screen_pixel(ox + 1, oy + 1)
+        pane_lum = _lum(pane)
+        ink = _lum(con.screen_pixel(ox + 3, oy + 7))
+        edge = _lum(con.screen_pixel(ox + 1, oy + 7))
+        assert ink > pane_lum + 80, (ink, pane_lum)
+        assert ink > edge + 40, (ink, edge)
+        con.capture_png("/opt/cursor/artifacts/wordpad_bullet_glyph.png")
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        listing = con.send_line("DIR")
+        assert "BUL.MD" in listing
+        body = con.send_line('OPEN "BUL.MD" FOR INPUT AS #1')
+        assert body == ""
+        line = con.send_line("LINE INPUT #1, A$")
+        assert line == ""
+        got = con.send_line("PRINT A$")
+        assert got.strip() == "* hello"
+        assert con.send_line("CLOSE #1") == ""
+        dash = _open(con, 'WORDPAD "DSH.MD"')
+        _keys(con, b"- item\r", quiet=0.7)
+        again = _keys(con, b"x", quiet=0.6)
+        assert "\x07 item" in again or "\x07item" in again.replace(" ", "")
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_heading_prefix_still_hidden(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        seen = _keys(con, b"# Title\rbody", quiet=0.8)
+        titles = [
+            ln.strip()
+            for ln in seen.replace("\r", "\n").split("\n")
+            if "Title" in ln
+        ]
+        assert titles
+        assert not titles[-1].startswith("#")
+        assert "body" in seen
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_cr_is_ignored(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

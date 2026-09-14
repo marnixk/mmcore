@@ -48,6 +48,7 @@
 #define WP_STYLE_BULLET 4
 #define WP_STYLE_QUOTE  5
 #define WP_STYLE_CODE   6
+#define WP_BULLET_CH    0x07u
 
 typedef struct {
 	int off0;
@@ -638,6 +639,22 @@ static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
 		*hide_prefix = 1;
 }
 
+static int vis_ch_at(int style, int hide_prefix, int i, int ls, int prefix_len,
+		     unsigned *ch)
+{
+	unsigned c = (unsigned char)W.buf[i];
+
+	if (hide_prefix && i >= ls && i < ls + prefix_len)
+	{
+		if (style != WP_STYLE_BULLET)
+			return 0;
+		if (i == ls)
+			c = WP_BULLET_CH;
+	}
+	*ch = c;
+	return 1;
+}
+
 static int emph_mark_len(int i, int lim)
 {
 	if (i < 0 || i + 1 >= lim)
@@ -751,7 +768,10 @@ static void wp_build_layout(void)
 		W.vrows[vr].scale = scale;
 		while (i < le)
 		{
-			if (hide_prefix && i < ls + prefix_len)
+			unsigned vis;
+			int skip;
+
+			if (!vis_ch_at(style, hide_prefix, i, ls, prefix_len, &vis))
 			{
 				if (W.cx == i)
 				{
@@ -762,17 +782,15 @@ static void wp_build_layout(void)
 				i++;
 				continue;
 			}
+			skip = skip_emph_mark(i, le, style);
+			if (skip)
 			{
-				int skip = skip_emph_mark(i, le, style);
-				if (skip)
-				{
-					i += skip;
-					continue;
-				}
+				i += skip;
+				continue;
 			}
 			if (col > 0)
 			{
-				adv = heading_metrics(scale, (unsigned char)W.buf[i], 0);
+				adv = heading_metrics(scale, vis, 0);
 				if (px + adv > max_px)
 				{
 				if (break_at >= ls)
@@ -813,7 +831,7 @@ static void wp_build_layout(void)
 				continue;
 				}
 			}
-			if (W.buf[i] == ' ')
+			if (vis == ' ')
 			{
 				break_at = i;
 				break_col = col;
@@ -824,7 +842,7 @@ static void wp_build_layout(void)
 				W.cx_vcol = col;
 				found_cx = 1;
 			}
-			px += heading_metrics(scale, (unsigned char)W.buf[i], 0);
+			px += heading_metrics(scale, vis, 0);
 			col++;
 			i++;
 		}
@@ -873,12 +891,14 @@ static int vrow_col_to_off(int vr, int vc)
 	while (i < W.vrows[vr].off1)
 	{
 		int skip;
+		unsigned vis;
 
-		if (hide_prefix && i < ls + prefix_len)
+		if (!vis_ch_at(W.vrows[vr].style, hide_prefix, i, ls, prefix_len, &vis))
 		{
 			i++;
 			continue;
 		}
+		(void)vis;
 		skip = skip_emph_mark(i, le, W.vrows[vr].style);
 		if (skip)
 		{
@@ -2964,10 +2984,10 @@ static void draw_body(void)
 				while (i < W.vrows[vr].off1)
 				{
 					unsigned chfg, chbg;
-					char ch;
+					unsigned ch;
 					int skip, left, adv, on_cur;
 
-					if (hide_prefix && i < ls + prefix_len)
+					if (!vis_ch_at(style, hide_prefix, i, ls, prefix_len, &ch))
 					{
 						i++;
 						continue;
@@ -2978,14 +2998,13 @@ static void draw_body(void)
 						i += skip;
 						continue;
 					}
-					ch = W.buf[i];
 					if (ch == '\r')
 					{
 						i++;
 						continue;
 					}
 					left = 0;
-					adv = heading_metrics(scale, (unsigned)ch, &left);
+					adv = heading_metrics(scale, ch, &left);
 					if (col > 0 && x_px + adv > max_px)
 						break;
 					chfg = fg;
@@ -3019,7 +3038,7 @@ static void draw_body(void)
 								 (unsigned)ch, chfg, chbg, scale);
 					}
 					if (spos < W.pane_width)
-						srow[spos++] = ch;
+						srow[spos++] = (char)ch;
 					x_px += adv;
 					col++;
 					i++;
