@@ -1361,6 +1361,11 @@ def _seed_outline_bas(con, path="NAV.BAS"):
         "END FUNCTION",
         "SUB Gamma",
         "END SUB",
+        "SUB Draw.Rectangle",
+        "END SUB",
+        "FUNCTION Math.Add",
+        "Math.Add = 1",
+        "END FUNCTION",
     ):
         assert con.send_line(f'PRINT #1, "{line}"') == ""
     assert con.send_line("CLOSE #1") == ""
@@ -1437,6 +1442,27 @@ def test_editor_file_menu_outline(kernel_image):
         assert "Outline" in listed
         assert "SUB Alpha" in listed
         _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_outline_lists_dotted_names(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_outline_bas(con)
+        _edit(con, "NAV.BAS")
+        listed = _keys(con, bytes([15]), quiet=0.8)
+        assert "Outline" in listed
+        assert "SUB Draw.Rectangle" in listed
+        assert "FUNCTION Math.Add" in listed
+        filtered = _keys(con, b"rect", quiet=0.6)
+        assert "SUB Draw.Rectangle" in filtered
+        assert "SUB Alpha" not in filtered
+        jumped = _keys(con, b"\r", quiet=0.8)
+        assert "SUB Draw.Rectangle" in jumped
+        assert "11:1" in jumped
         _quit(con)
     finally:
         con.stop()
