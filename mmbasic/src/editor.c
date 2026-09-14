@@ -1121,7 +1121,7 @@ static int line_start(int pos)
 static int is_word_char(char c)
 {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-	       (c >= '0' && c <= '9') || c == '_';
+	       (c >= '0' && c <= '9') || c == '_' || c == '.';
 }
 
 static int sel_bounds(int *lo, int *hi)
