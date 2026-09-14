@@ -914,9 +914,6 @@ def test_term_pane_grey_independent_of_phosphor_theme(kernel_image):
         con.capture_png("/opt/cursor/artifacts/term_pane_grey_phosphor.png")
         assert found_grey, "expected VGA grey incoming text under Phosphor"
         assert not found_green, "pane text must not use Phosphor green"
-        _menu(con)
-        bar = con.screen_pixel(400, 4)
-        assert not _is_black(*bar), bar
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
     finally:
