@@ -59,6 +59,15 @@ def _is_creamish(r: int, g: int, b: int) -> bool:
     return r > 80 and g > 75 and b > 65
 
 
+def _is_vga_grey(r: int, g: int, b: int) -> bool:
+    return (
+        abs(r - g) <= 24
+        and abs(g - b) <= 24
+        and 140 <= r <= 200
+        and r + g + b < 620
+    )
+
+
 def _line_numbers(text: str) -> list[int]:
     return [int(m) for m in re.findall(r"line\s+(\d+)", text, re.I)]
 
@@ -110,6 +119,7 @@ def test_help_term(console):
     assert "disconnect" in low or "no argument" in low or "[host" in low
     assert "theme" in low or "editor" in low
     assert "black" in low
+    assert "grey" in low or "gray" in low
     assert "restore" in low or "started" in low
     assert "capped" not in low
 
@@ -155,7 +165,7 @@ def test_term_demo_mode14_slate_and_f10(kernel_image):
         con.stop()
 
 
-def test_term_demo_centered_80col_and_cream_text(kernel_image):
+def test_term_demo_centered_80col_and_grey_text(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -164,16 +174,16 @@ def test_term_demo_centered_80col_and_cream_text(kernel_image):
         time.sleep(1.2)
         margin = con.screen_pixel(20, 200)
         assert _is_black(*margin), margin
-        found_cream = False
+        found_grey = False
         for x in (164, 168, 172, 180, 188):
             for y in (8, 24, 40, 200, 248):
                 rgb = con.screen_pixel(x, y)
-                if _luminance(*rgb) > _luminance(*margin) + 30 and _is_creamish(*rgb):
-                    found_cream = True
+                if _luminance(*rgb) > _luminance(*margin) + 30 and _is_vga_grey(*rgb):
+                    found_grey = True
                     break
-            if found_cream:
+            if found_grey:
                 break
-        assert found_cream, "expected cream text lighter than left margin inside 80-col pane"
+        assert found_grey, "expected VGA grey text inside 80-col pane, not theme cream"
         _quit(con)
     finally:
         con.stop()
@@ -282,16 +292,16 @@ def test_term_demoburst_hdmi_keeps_scrolled_text(kernel_image):
         time.sleep(0.5)
         nums = _line_numbers(seen)
         assert nums and max(nums) >= 30, seen[-400:]
-        found_cream = False
+        found_grey = False
         for x in (164, 168, 172, 180, 188):
             for y in (200, 248, 320, 360, 400):
                 rgb = con.screen_pixel(x, y)
-                if _is_creamish(*rgb):
-                    found_cream = True
+                if _is_vga_grey(*rgb):
+                    found_grey = True
                     break
-            if found_cream:
+            if found_grey:
                 break
-        assert found_cream, "expected cream text in the pane after a burst scroll"
+        assert found_grey, "expected grey text in the pane after a burst scroll"
         _quit(con)
         assert con.send_line("PRINT 5+6") == "11"
     finally:
@@ -565,16 +575,16 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
         assert "Full" in full
         assert con.screen_size() == (640, 480)
         assert _max_dump_width(full) == 80
-        found_cream = False
+        found_grey = False
         for x in (4, 8, 12, 16, 24, 32):
             for y in (4, 8, 12, 20, 24, 40):
                 rgb = con.screen_pixel(x, y)
-                if _is_creamish(*rgb):
-                    found_cream = True
+                if _is_vga_grey(*rgb):
+                    found_grey = True
                     break
-            if found_cream:
+            if found_grey:
                 break
-        assert found_cream, "expected cream glyphs at the left edge in full-width mode"
+        assert found_grey, "expected grey glyphs at the left edge in full-width mode"
         con._ser.sendall(b"w")
         boxed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Boxed" in boxed
@@ -868,5 +878,63 @@ def test_term_demoiac_glyphs_and_commands(kernel_image):
         assert b"\x80" in raw
         _quit(con)
         assert con.send_line("PRINT 1+2") == "3"
+    finally:
+        con.stop()
+
+
+def _pane_grey_hits(con, col, row, pane_left=20):
+    hits = 0
+    x0 = (pane_left + col) * 8
+    y0 = row * 16
+    for y in range(2, 15, 2):
+        for x in range(1, 7, 2):
+            if _is_vga_grey(*con.screen_pixel(x0 + x, y0 + y)):
+                hits += 1
+    return hits
+
+
+def test_term_pane_grey_independent_of_phosphor_theme(kernel_image):
+    """Incoming pane text stays VGA grey even when the editor theme is green."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Phosphor"') == ""
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.5)
+        found_grey = False
+        found_green = False
+        for x in (164, 168, 172, 180, 188):
+            for y in (8, 24, 40):
+                rgb = con.screen_pixel(x, y)
+                if _is_vga_grey(*rgb):
+                    found_grey = True
+                r, g, b = rgb
+                if g > r + 40 and g > b + 40 and g > 80:
+                    found_green = True
+        con.capture_png("/opt/cursor/artifacts/term_pane_grey_phosphor.png")
+        assert found_grey, "expected VGA grey incoming text under Phosphor"
+        assert not found_green, "pane text must not use Phosphor green"
+        _menu(con)
+        bar = con.screen_pixel(400, 4)
+        assert not _is_black(*bar), bar
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_term_block_cursor_on_when_disconnected(kernel_image):
+    """Block cursor is on by default (host may later send CSI ?25l)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        seen = _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        assert "Disconnected" in seen
+        hits = _pane_grey_hits(con, 0, 1)
+        con.capture_png("/opt/cursor/artifacts/term_default_cursor_on.png")
+        assert hits >= 12, hits
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
     finally:
         con.stop()

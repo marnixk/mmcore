@@ -107,6 +107,9 @@ typedef struct {
 	int vid_cols;
 	int cur_row;
 	int cur_col;
+	int cur_vis;
+	int cur_shown;
+	int cur_shown_row;
 	char cell[TM_MAX_ROWS][TM_MAX_COLS];
 	unsigned cell_fg[TM_MAX_ROWS][TM_MAX_COLS];
 	unsigned cell_bg[TM_MAX_ROWS][TM_MAX_COLS];
@@ -260,21 +263,8 @@ static unsigned term_rgb(unsigned char idx)
 	return pal[i] & 0xFFFFFFu;
 }
 
-static unsigned term_default_fg(void)
-{
-	unsigned fg = term_rgb(term_th()->edit_fg);
-	int r = (int)((fg >> 16) & 255);
-	int g = (int)((fg >> 8) & 255);
-	int b = (int)(fg & 255);
-	int lum = (299 * r + 587 * g + 114 * b) / 1000;
-
-	if (lum >= 80)
-		return fg;
-	return term_rgb(7);
-}
-
 #define TM_BG      0x000000u
-#define TM_FG      term_default_fg()
+#define TM_FG      0xAAAAAAu
 #define TM_DIM     term_rgb(term_th()->cmt_fg)
 #define TM_MENU_BG term_rgb(term_th()->menu_bg)
 #define TM_MENU_FG term_rgb(term_th()->menu_fg)
@@ -293,6 +283,8 @@ static void term_serial_dump_dlg(void);
 static void mark_dirty_full(void);
 static void term_layout(void);
 static void term_fill_pages(void);
+static int term_paint_cursor = 1;
+
 static void pane_clear_row(int row);
 static void pane_puts(const char *s);
 static void pane_newline(void);
@@ -649,12 +641,41 @@ static void mark_dirty_full(void)
 static void term_draw(void);
 static void term_draw_row(int r);
 
+static void term_set_cursor_vis(int vis)
+{
+	vis = vis ? 1 : 0;
+	if (T.cur_vis == vis)
+		return;
+	T.cur_vis = vis;
+	mark_dirty_row(T.cur_row);
+	if (T.cur_shown)
+		mark_dirty_row(T.cur_shown_row);
+}
+
+static void term_unpaint_cursor(void)
+{
+	int saved;
+
+	if (!T.cur_shown)
+		return;
+	saved = G.gfx.write_page;
+	G.gfx.write_page = 1;
+	term_paint_cursor = 0;
+	term_draw_row(T.cur_shown_row);
+	term_paint_cursor = 1;
+	G.gfx.write_page = saved;
+	T.cur_shown = 0;
+}
+
 static void pane_flush_dirty_pixels(void)
 {
 	int r, saved, lo, hi;
 
 	if (!T.need_draw)
 		return;
+	term_paint_cursor = 0;
+	if (T.cur_shown)
+		mark_dirty_row(T.cur_shown_row);
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	if (T.dirty_full)
@@ -677,6 +698,8 @@ static void pane_flush_dirty_pixels(void)
 	T.dirty_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
+	T.cur_shown = 0;
+	term_paint_cursor = 1;
 }
 
 static void pane_scroll_up(void)
@@ -704,6 +727,7 @@ static void pane_scroll_smooth(void)
 	int x0, y, w, h, pw, ph, saved;
 	unsigned fill = TM_BG;
 
+	term_unpaint_cursor();
 	pane_flush_dirty_pixels();
 	x0 = T.pane_left * TM_CW;
 	pw = term_width() * TM_CW;
@@ -776,7 +800,10 @@ static void pane_puts(const char *s)
 	for (p = s; *p; p++)
 	{
 		if (*p == '\r')
+		{
 			T.cur_col = 0;
+			mark_dirty_row(T.cur_row);
+		}
 		else if (*p == '\n')
 			pane_newline();
 		else if ((unsigned char)*p >= 32)
@@ -986,6 +1013,12 @@ static void term_draw_row(int r)
 		bg = T.cell_bg[r][c];
 		if (!ch)
 			ch = ' ';
+		if (term_paint_cursor && T.cur_vis && r == T.cur_row && c == T.cur_col)
+		{
+			unsigned t = fg;
+			fg = bg;
+			bg = t;
+		}
 		if (bg != TM_BG)
 			mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
 		mmb_gfx_glyph_cp437(x, y, ch, fg);
@@ -1115,6 +1148,10 @@ static void term_draw(void)
 
 	if (!T.need_draw)
 		return;
+	if (T.cur_vis)
+		mark_dirty_row(T.cur_row);
+	if (T.cur_shown)
+		mark_dirty_row(T.cur_shown_row);
 	saved = G.gfx.write_page;
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
@@ -1192,6 +1229,8 @@ static void term_draw(void)
 	T.present_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
+	T.cur_shown = T.cur_vis;
+	T.cur_shown_row = T.cur_row;
 }
 
 static void term_exit(void)
@@ -2365,6 +2404,7 @@ static void term_bm_connect(void)
 	T.dlg = TM_DLG_NONE;
 	T.cur_row = 0;
 	T.cur_col = 0;
+	T.cur_vis = 1;
 	T.demo_line = 0;
 	old_cols = term_width();
 	strncpy(T.host, b->host, sizeof(T.host) - 1);
@@ -2776,6 +2816,8 @@ static void apply_option(int cmd, int opt)
 
 static void ansi_cup(int row, int col)
 {
+	int old_r = T.cur_row;
+
 	if (row < 1)
 		row = 1;
 	if (col < 1)
@@ -2790,6 +2832,8 @@ static void ansi_cup(int row, int col)
 		T.cur_row = 0;
 	if (T.cur_col < 0)
 		T.cur_col = 0;
+	mark_dirty_row(old_r);
+	mark_dirty_row(T.cur_row);
 }
 
 static void ansi_sgr(void)
@@ -2913,31 +2957,36 @@ static void ansi_erase_disp(int mode)
 static void ansi_exec_csi(char cmd)
 {
 	int n = ansi_arg(0, 1);
+	int old_r = T.cur_row;
 	if (cmd == 'A')
 	{
 		T.cur_row -= n;
 		if (T.cur_row < 0)
 			T.cur_row = 0;
+		mark_dirty_row(old_r);
+		mark_dirty_row(T.cur_row);
 	}
 	else if (cmd == 'B')
 	{
 		T.cur_row += n;
 		if (T.cur_row >= T.pane_rows)
 			T.cur_row = T.pane_rows - 1;
+		mark_dirty_row(old_r);
+		mark_dirty_row(T.cur_row);
 	}
 	else if (cmd == 'C')
 	{
 		T.cur_col += n;
 		if (T.cur_col >= term_width())
 			T.cur_col = term_width() - 1;
+		mark_dirty_row(T.cur_row);
 	}
 	else if (cmd == 'D')
 	{
 		T.cur_col -= n;
 		if (T.cur_col < 0)
 			T.cur_col = 0;
-		if (n > 0 && T.cur_row >= 0 && T.cur_row < T.pane_rows)
-			mark_dirty_row(T.cur_row);
+		mark_dirty_row(T.cur_row);
 	}
 	else if (cmd == 'G')
 		ansi_cup(T.cur_row + 1, ansi_arg(0, 1));
@@ -2982,6 +3031,23 @@ static void ansi_exec_csi(char cmd)
 	}
 	else if (cmd == 'c')
 		ansi_reply("\x1b[?1;2c");
+}
+
+static void ansi_exec_priv(char cmd)
+{
+	int i, n, v;
+
+	if (cmd != 'h' && cmd != 'l')
+		return;
+	n = T.ansi_narg > 0 ? T.ansi_narg : 1;
+	if (T.ansi_narg == 0)
+		T.ansi_arg[0] = 0;
+	for (i = 0; i < n; i++)
+	{
+		v = T.ansi_arg[i];
+		if (v == 25)
+			term_set_cursor_vis(cmd == 'h');
+	}
 }
 
 static void ansi_reset_csi(void)
@@ -3034,6 +3100,7 @@ static int ansi_feed(unsigned char b)
 		if (b == 'c')
 		{
 			term_reset_pen();
+			term_set_cursor_vis(1);
 			ansi_erase_disp(2);
 			T.ansi_st = 0;
 			return 1;
@@ -3088,7 +3155,9 @@ static int ansi_feed(unsigned char b)
 	}
 	if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z'))
 	{
-		if (!T.ansi_priv)
+		if (T.ansi_priv)
+			ansi_exec_priv((char)b);
+		else
 			ansi_exec_csi((char)b);
 		T.ansi_st = 0;
 		return 1;
@@ -3207,7 +3276,10 @@ static void incoming_byte(unsigned char b)
 		return;
 	}
 	if (b == '\r')
+	{
 		T.cur_col = 0;
+		mark_dirty_row(T.cur_row);
+	}
 	else if (b == '\n')
 		pane_newline();
 	else if (b == 8 || b == 127)
@@ -4138,6 +4210,7 @@ void mmb_cmd_term(void)
 		pane_clear_row(i);
 	T.cur_row = 0;
 	T.cur_col = 0;
+	T.cur_vis = 1;
 	T.active = 1;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
@@ -4468,6 +4541,7 @@ void mmb_term_poll(void)
 		if (st == 1)
 		{
 			T.tcp = 1;
+			T.cur_vis = 1;
 			telnet_announce();
 			pane_puts("Connected");
 			pane_newline();
