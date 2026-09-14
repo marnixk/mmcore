@@ -49,10 +49,12 @@ def test_text_high_byte_matches_font_bits(fresh_console):
 
 def test_print_chr_219_uses_cp437_on_hdmi(fresh_console):
     c = fresh_console
-    c.send_line("CLS")
-    c.send_line("COLOUR RGB(255,255,255), RGB(0,0,0)")
-    c.send_line("LOCATE 0,0")
-    out = c.send_line("PRINT CHR$(219);")
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 COLOUR RGB(255,255,255), RGB(0,0,0)") == ""
+    assert c.send_line("30 LOCATE 0,0") == ""
+    assert c.send_line("40 PRINT CHR$(219);") == ""
+    out = c.send_line("RUN")
     assert "?SYNTAX" not in out.upper()
     r, g, b = c.screen_pixel(3, 8)
     assert r > 150 and g > 150 and b > 150, (r, g, b)
