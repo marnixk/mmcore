@@ -6,7 +6,10 @@ TERM [host$, port]
 Fullscreen telnet-style terminal. Menu and status
 colours follow the OPTION EDIT THEME palette (same
 as the EDITOR). The terminal pane and letterbox
-background are always black. With no arguments TERM
+background are always black. Incoming text defaults to
+VGA grey, not the editor theme foreground. A block
+cursor is on when a session starts; the host can hide
+or show it with CSI ?25l / ?25h. With no arguments TERM
 starts disconnected; use Alt+T and Bookmarks to
 connect from a saved favourite or add a new one.
 With host$ and port it connects at once.
@@ -34,7 +37,7 @@ the sender retransmits.
 HDMI present is the terminal pane, not unused letterbox.
 Drawing uses TEXT on PAGE 1, copied to PAGE 0;
 scrolling is a PAGE pixel shift.
-ANSI/VT100 (SGR colours, cursor, CUB/CUF, ED/EL) plus telnet
+ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL) plus telnet
 TTYPE=ANSI and DA/DSR replies for BBS autodetection.
 NAWS reports 80 columns when boxed and the Full MODE
 width when full. ESC ( B charset sequences are eaten

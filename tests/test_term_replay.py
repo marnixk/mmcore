@@ -6,7 +6,7 @@ import threading
 import time
 
 from harness import MMBasicConsole, TermReplay
-from test_term import _plain, _quit
+from test_term import _plain, _quit, _pane_grey_hits
 
 
 def _open_replay(con, replay, timeout=8.0, connect=True):
@@ -164,6 +164,37 @@ def test_term_replay_iac_split_across_frames(kernel_image):
         assert "AFTERIAC" in text
         _quit(con)
         assert con.send_line("PRINT 4+1") == "5"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_cursor_on_then_host_hides(kernel_image):
+    """Cursor is on at connect; CSI ?25l from the host turns it off."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        on_hits = _pane_grey_hits(con, 0, 1)
+        con.capture_png("/opt/cursor/artifacts/term_cursor_on_connect.png")
+        assert on_hits >= 12, on_hits
+        replay._to_guest(b"\x1b[?25l")
+        time.sleep(0.25)
+        replay.pump_once(recv_tcp=False)
+        time.sleep(0.15)
+        off_hits = _pane_grey_hits(con, 0, 1)
+        con.capture_png("/opt/cursor/artifacts/term_cursor_hidden_by_host.png")
+        assert off_hits <= 2, off_hits
+        replay._to_guest(b"\x1b[?25h")
+        time.sleep(0.25)
+        replay.pump_once(recv_tcp=False)
+        time.sleep(0.15)
+        shown = _pane_grey_hits(con, 0, 1)
+        con.capture_png("/opt/cursor/artifacts/term_cursor_shown_by_host.png")
+        assert shown >= 12, shown
+        _quit(con)
+        assert con.send_line("PRINT 5") == "5"
     finally:
         replay.stop()
         con.stop()
