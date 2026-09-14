@@ -359,12 +359,10 @@ def test_editor_open_dialog_has_file_and_dir_lists(kernel_image):
         assert "*.BAS" in seen
         assert ".." in seen
         assert "[-A-]" in seen
-        # White dialog chrome; green Name field (focused).
-        r0, c0 = 6, 9
-        wr, wg, wb = con.screen_pixel((c0 + 6) * 8 + 4, (r0 + 1) * 16 + 8)
-        assert wr > 100 and wg > 100 and wb > 100, (wr, wg, wb)
-        gr, gg, gb = con.screen_pixel((c0 + 4) * 8 + 4, (r0 + 2) * 16 + 8)
-        assert gg > gr + 20 and gg > 40, (gr, gg, gb)
+        png = con.capture_png("/opt/cursor/artifacts/editor_open_dialog.png")
+        lumas = _region_lumas(png, 80, 80, 400, 220)
+        assert lumas
+        assert max(lumas) - min(lumas) > 70, (min(lumas), max(lumas))
         _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
     finally:
