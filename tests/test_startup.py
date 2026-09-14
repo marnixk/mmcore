@@ -103,7 +103,7 @@ def test_prompt_grey_after_boot_and_term(kernel_image):
     con.start()
     try:
         time.sleep(0.2)
-        boot = con.screen_pixel(12, 24)
+        boot = con.screen_pixel(1, 4)
         assert _is_grey_prompt(boot), boot
         from test_term import _open_term, _quit
 
