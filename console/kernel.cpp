@@ -72,6 +72,8 @@ boolean CKernel::Initialize (void)
 
 	if (bOK) bOK = m_Interrupt.Initialize ();
 	if (bOK) bOK = m_Screen.Initialize ();
+	if (bOK)
+		m_Screen.SetCursorBlock (TRUE);
 	if (bOK) bOK = m_Serial.Initialize (115200);
 	if (bOK) bOK = m_Timer.Initialize ();
 	if (bOK) bOK = m_Logger.Initialize (&m_Null);

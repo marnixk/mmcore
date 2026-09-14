@@ -472,6 +472,9 @@ def test_term_menu_colours_match_edit(kernel_image):
         assert _rgb_dist(ed_uns, tm_uns) < 40, (ed_uns, tm_uns)
         assert _rgb_dist(tm_sel, tm_uns) > 80, (tm_sel, tm_uns)
         assert _rgb_dist(tm_title, tm_bar) > 80, (tm_title, tm_bar)
+        uns_row = [con.screen_pixel(x, 3 * 16 + 8) for x in range(16, 96, 4)]
+        uns_luma = [_luminance(*p) for p in uns_row]
+        assert max(uns_luma) - min(uns_luma) > 70, (uns_row[:6], uns_luma[:6])
         _quit(con)
         assert con.send_line("PRINT 2") == "2"
     finally:

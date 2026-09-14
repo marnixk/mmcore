@@ -98,6 +98,23 @@ def _is_grey_prompt(rgb):
     )
 
 
+def _cell_is_solid_grey(con, col, row):
+    hits = 0
+    for y in range(16):
+        for x in range(8):
+            if _is_grey_prompt(con.screen_pixel(col * 8 + x, row * 16 + y)):
+                hits += 1
+    return hits >= 90
+
+
+def _find_prompt_cursor(con, max_row=20, max_col=24):
+    for row in range(max_row):
+        for col in range(max_col):
+            if _cell_is_solid_grey(con, col, row):
+                return col, row
+    return None
+
+
 def test_prompt_grey_after_boot_and_term(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -110,5 +127,23 @@ def test_prompt_grey_after_boot_and_term(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        con.stop()
+
+
+def test_prompt_block_cursor_visible(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        time.sleep(0.2)
+        found = _find_prompt_cursor(con)
+        png = con.capture_png("/opt/cursor/artifacts/prompt_block_cursor.png")
+        assert found, "HDMI prompt cursor should be a solid grey 8x16 block"
+        assert os.path.isfile(png)
+        assert con.send_line("MODE 8") == ""
+        time.sleep(0.2)
+        found_mode = _find_prompt_cursor(con)
+        con.capture_png("/opt/cursor/artifacts/prompt_block_cursor_mode8.png")
+        assert found_mode, "prompt cursor must survive MODE resize"
     finally:
         con.stop()

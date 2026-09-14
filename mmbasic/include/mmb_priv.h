@@ -791,6 +791,7 @@ typedef struct mmb_ed_theme {
 } mmb_ed_theme;
 
 const mmb_ed_theme *mmb_editor_theme(void);
+const unsigned *mmb_editor_palette(void);
 void mmb_editor_apply_tui_palette(void);
 
 void mmb_play_stop(void);
