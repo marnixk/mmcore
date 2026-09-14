@@ -1,6 +1,8 @@
 """Turbo-style MMBasic editor TUI: menus, file ops, tabs, quit."""
 
+import os
 import re
+import subprocess
 import time
 
 from harness import MMBasicConsole
@@ -1098,10 +1100,84 @@ def test_editor_slate_palette_and_menu_contrast(kernel_image):
             return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
 
         assert any(dist(s, u) > 80 for s, u in zip(sel, uns)), (sel[:6], uns[:6])
+        uns_luma = [0.299 * r + 0.587 * g + 0.114 * b for r, g, b in uns]
+        assert max(uns_luma) - min(uns_luma) > 70, (uns[:8], uns_luma[:8])
         con.capture_png("/opt/cursor/artifacts/issue71_slate_menu.png")
         _keys(con, b"\x1b", quiet=0.5)
         _quit(con)
         assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    finally:
+        con.stop()
+
+
+def _luma(rgb):
+    r, g, b = rgb
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _region_lumas(png, x, y, w, h):
+    cmd = [
+        "convert",
+        png,
+        "-crop",
+        f"{w}x{h}+{x}+{y}",
+        "+repage",
+        "txt:-",
+    ]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    lumas = []
+    for line in out.splitlines():
+        if line.startswith("#") or "(" not in line:
+            continue
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) >= 3:
+            rgb = tuple(int(float(p)) for p in parts[:3])
+            lumas.append(_luma(rgb))
+    return lumas
+
+
+def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
+    """Unselected File-menu items keep text/surface contrast, including Slate."""
+    themes = (
+        "Paper",
+        "Cloud",
+        "Snow",
+        "Night",
+        "Nord",
+        "Slate",
+        "Forest",
+        "Violet",
+        "Turbo",
+        "Phosphor",
+    )
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        os.makedirs("/opt/cursor/artifacts", exist_ok=True)
+        for theme in themes:
+            assert con.send_line(f'OPTION EDIT THEME "{theme}"') == ""
+            _edit(con, "CONTRAST.BAS")
+            _keys(con, bytes([1]) + b"f", quiet=0.6)
+            png = con.capture_png(
+                f"/opt/cursor/artifacts/theme_{theme.lower()}_unselected_menu.png"
+            )
+            lumas = _region_lumas(png, 16, 3 * 16, 72, 16)
+            assert lumas, theme
+            assert max(lumas) - min(lumas) > 70, (theme, min(lumas), max(lumas))
+            _keys(con, b"\x1b", quiet=0.4)
+            _quit(con)
+            assert con.send_line("PRINT 1") == "1"
+        assert con.send_line("MODE 11,8") == ""
+        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        _edit(con, "SLATE8.BAS")
+        _keys(con, bytes([1]) + b"f", quiet=0.6)
+        png = con.capture_png("/opt/cursor/artifacts/theme_slate_unselected_menu_8bit.png")
+        lumas = _region_lumas(png, 16, 3 * 16, 72, 16)
+        assert lumas
+        assert max(lumas) - min(lumas) > 70, (min(lumas), max(lumas))
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
     finally:
         con.stop()
 

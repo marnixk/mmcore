@@ -252,7 +252,7 @@ static unsigned term_vga_rgb(int idx)
 
 static unsigned term_rgb(unsigned char idx)
 {
-	const unsigned *pal = term_th()->pal;
+	const unsigned *pal = mmb_editor_palette();
 	int i = (int)idx & 15;
 
 	if (!pal)

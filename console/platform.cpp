@@ -133,8 +133,12 @@ static int plat_resize_hdmi(int w, int h)
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */
 	if (sc.Resize((unsigned)w, (unsigned)h))
+	{
+		sc.SetCursorBlock(TRUE);
 		return 1;
+	}
 	sc.Resize(prev_w, prev_h);
+	sc.SetCursorBlock(TRUE);
 	return 0;
 }
 

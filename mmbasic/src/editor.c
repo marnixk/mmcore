@@ -54,7 +54,7 @@ static const unsigned pal_snow[16] = {
 static const unsigned pal_night[16] = {
 	0x0A0A0Cu, 0xC45C5Cu, 0x5A9A6Au, 0xC4A05Au,
 	0x4A6AB0u, 0xA05A9Au, 0x6AB4C8u, 0xC8C8D0u,
-	0x16161Cu, 0xE07070u, 0x70C080u, 0xE8C060u,
+	0x2A2C32u, 0xE07070u, 0x70C080u, 0xE8C060u,
 	0x6080D0u, 0xC070C0u, 0x80D0E0u, 0xECECF0u
 };
 static const unsigned pal_nord[16] = {
@@ -65,26 +65,26 @@ static const unsigned pal_nord[16] = {
 };
 static const unsigned pal_slate[16] = {
 	0x0C0E12u, 0xC45C5Cu, 0x6A9B72u, 0xC4A06Au,
-	0x5A7AB0u, 0xB07AA0u, 0x7EB6C9u, 0xC8CCD4u,
-	0x1A1D24u, 0xE07878u, 0x8FBF8Fu, 0xE8C85Au,
-	0x7A9AD0u, 0xD090C0u, 0x8FCBD8u, 0xE8EAEEu
+	0x5A7AB0u, 0xB07AA0u, 0x7EB6C9u, 0xE6E8EEu,
+	0x2A2C32u, 0xE07878u, 0x8FBF8Fu, 0xE8C85Au,
+	0x7A9AD0u, 0xD090C0u, 0x8FCBD8u, 0xF4F5F8u
 };
 static const unsigned pal_forest[16] = {
 	0x0A140Cu, 0xC45C5Cu, 0x2A5A30u, 0xC4A05Au,
 	0x3A6A90u, 0x8A5A8Au, 0x4A9A8Au, 0xC8D8C8u,
-	0x122018u, 0xE07070u, 0x6ED06Au, 0xE0C060u,
+	0x24362Au, 0xE07070u, 0x6ED06Au, 0xE0C060u,
 	0x5A90C0u, 0xC070C0u, 0x70D0B0u, 0xE8F0E8u
 };
 static const unsigned pal_violet[16] = {
 	0x120A18u, 0xC45C5Cu, 0x5A9A6Au, 0xC4A05Au,
 	0x5A4AB0u, 0x6A3A88u, 0x6A90B0u, 0xD0C8D8u,
-	0x1C1224u, 0xE07070u, 0x70C080u, 0xE8C060u,
+	0x2C2038u, 0xE07070u, 0x70C080u, 0xE8C060u,
 	0x8070D0u, 0xC080E0u, 0x90C0E0u, 0xF0E8F8u
 };
 static const unsigned pal_phosphor[16] = {
 	0x000000u, 0xAA0000u, 0x2A8A2Au, 0x8A8A20u,
 	0x0000AAu, 0xAA00AAu, 0x2A8A8Au, 0x88AA88u,
-	0x0A1A0Au, 0xFF5555u, 0x55FF66u, 0xD4FF4Au,
+	0x143414u, 0xFF5555u, 0x55FF66u, 0xD4FF4Au,
 	0x5555FFu, 0xFF55FFu, 0x55FFCCu, 0xC8FFC8u
 };
 
@@ -149,7 +149,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BRMAGENTA, TUI_BRYELLOW, TUI_CYAN,
 	  TUI_WHITE, TUI_BRBLACK,
 	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_WHITE,
+	  TUI_WHITE, TUI_BRBLACK,
 	  TUI_BLACK, TUI_BLACK, TUI_CYAN, pal_slate },
 	{ "Forest",
 	  TUI_BRGREEN, TUI_BLACK, TUI_BRYELLOW,
@@ -207,9 +207,14 @@ const mmb_ed_theme *mmb_editor_theme(void)
 	return th();
 }
 
+const unsigned *mmb_editor_palette(void)
+{
+	return th()->pal;
+}
+
 void mmb_editor_apply_tui_palette(void)
 {
-	tui_set_palette(th()->pal);
+	tui_set_palette(mmb_editor_palette());
 }
 
 #define C_MENU_FG   ((int)th()->menu_fg)
@@ -2770,7 +2775,7 @@ static void redraw(void)
 	G.out[0] = 0;
 	ensure_visible();
 	tui_begin();
-	tui_set_palette(th()->pal);
+	tui_set_palette(mmb_editor_palette());
 	tui_clear(C_EDIT_FG, C_EDIT_BG);
 	draw_menu_bar();
 	draw_tabs();

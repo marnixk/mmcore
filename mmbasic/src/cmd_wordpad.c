@@ -163,7 +163,7 @@ static unsigned wp_vga_rgb(int idx)
 
 static unsigned wp_rgb(unsigned char idx)
 {
-	const unsigned *pal = wpth()->pal;
+	const unsigned *pal = mmb_editor_palette();
 	int i = (int)idx & 15;
 
 	if (!pal)
