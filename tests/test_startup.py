@@ -98,19 +98,42 @@ def _is_grey_prompt(rgb):
     )
 
 
-def _cell_is_solid_grey(con, col, row):
+def _png_rgb(png, crop=None):
+    cmd = ["convert", png]
+    if crop:
+        cmd += ["-crop", crop, "+repage"]
+    cmd += ["txt:-"]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    pix = {}
+    for line in out.splitlines():
+        if line.startswith("#") or ":" not in line:
+            continue
+        xy, rest = line.split(":", 1)
+        x, y = (int(p) for p in xy.split(","))
+        if "(" not in rest:
+            continue
+        inner = rest[rest.find("(") + 1 : rest.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) >= 3:
+            pix[(x, y)] = tuple(int(float(p)) for p in parts[:3])
+    return pix
+
+
+def _cell_is_solid_grey(pix, col, row):
     hits = 0
     for y in range(16):
         for x in range(8):
-            if _is_grey_prompt(con.screen_pixel(col * 8 + x, row * 16 + y)):
+            rgb = pix.get((col * 8 + x, row * 16 + y))
+            if rgb and _is_grey_prompt(rgb):
                 hits += 1
     return hits >= 90
 
 
-def _find_prompt_cursor(con, max_row=20, max_col=24):
+def _find_prompt_cursor(png, max_row=16, max_col=20):
+    pix = _png_rgb(png, crop=f"{max_col * 8}x{max_row * 16}+0+0")
     for row in range(max_row):
         for col in range(max_col):
-            if _cell_is_solid_grey(con, col, row):
+            if _cell_is_solid_grey(pix, col, row):
                 return col, row
     return None
 
@@ -136,14 +159,14 @@ def test_prompt_block_cursor_visible(kernel_image):
     con.start()
     try:
         time.sleep(0.2)
-        found = _find_prompt_cursor(con)
         png = con.capture_png("/opt/cursor/artifacts/prompt_block_cursor.png")
+        found = _find_prompt_cursor(png)
         assert found, "HDMI prompt cursor should be a solid grey 8x16 block"
         assert os.path.isfile(png)
         assert con.send_line("MODE 8") == ""
         time.sleep(0.2)
-        found_mode = _find_prompt_cursor(con)
-        con.capture_png("/opt/cursor/artifacts/prompt_block_cursor_mode8.png")
+        png8 = con.capture_png("/opt/cursor/artifacts/prompt_block_cursor_mode8.png")
+        found_mode = _find_prompt_cursor(png8)
         assert found_mode, "prompt cursor must survive MODE resize"
     finally:
         con.stop()

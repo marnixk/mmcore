@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import time
 
 from harness import MMBasicConsole
@@ -1114,6 +1115,34 @@ def _luma(rgb):
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 
+def _row_lumas(png, y, x0=16, x1=128, step=4):
+    cmd = [
+        "convert",
+        png,
+        "-crop",
+        f"{x1 - x0}x1+{x0}+{y}",
+        "+repage",
+        "txt:-",
+    ]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    lumas = []
+    for line in out.splitlines():
+        if line.startswith("#") or ":" not in line:
+            continue
+        xy, rest = line.split(":", 1)
+        x = int(xy.split(",")[0])
+        if x % step:
+            continue
+        if "(" not in rest:
+            continue
+        inner = rest[rest.find("(") + 1 : rest.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) >= 3:
+            rgb = tuple(int(float(p)) for p in parts[:3])
+            lumas.append(_luma(rgb))
+    return lumas
+
+
 def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
     """Unselected File-menu items keep text/surface contrast, including Slate."""
     themes = (
@@ -1136,12 +1165,12 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
             assert con.send_line(f'OPTION EDIT THEME "{theme}"') == ""
             _edit(con, "CONTRAST.BAS")
             _keys(con, bytes([1]) + b"f", quiet=0.6)
-            uns = [con.screen_pixel(x, 3 * 16 + 8) for x in range(16, 128, 4)]
-            lumas = [_luma(p) for p in uns]
-            con.capture_png(
+            png = con.capture_png(
                 f"/opt/cursor/artifacts/theme_{theme.lower()}_unselected_menu.png"
             )
-            assert max(lumas) - min(lumas) > 70, (theme, lumas[:12], uns[:6])
+            lumas = _row_lumas(png, 3 * 16 + 8)
+            assert lumas, theme
+            assert max(lumas) - min(lumas) > 70, (theme, lumas[:12])
             _keys(con, b"\x1b", quiet=0.4)
             _quit(con)
             assert con.send_line("PRINT 1") == "1"
@@ -1149,10 +1178,10 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
         assert con.send_line('OPTION EDIT THEME "Slate"') == ""
         _edit(con, "SLATE8.BAS")
         _keys(con, bytes([1]) + b"f", quiet=0.6)
-        uns = [con.screen_pixel(x, 3 * 16 + 8) for x in range(16, 128, 4)]
-        lumas = [_luma(p) for p in uns]
-        con.capture_png("/opt/cursor/artifacts/theme_slate_unselected_menu_8bit.png")
-        assert max(lumas) - min(lumas) > 70, (lumas[:12], uns[:6])
+        png = con.capture_png("/opt/cursor/artifacts/theme_slate_unselected_menu_8bit.png")
+        lumas = _row_lumas(png, 3 * 16 + 8)
+        assert lumas
+        assert max(lumas) - min(lumas) > 70, lumas[:12]
         _keys(con, b"\x1b", quiet=0.4)
         _quit(con)
     finally:
