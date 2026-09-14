@@ -805,8 +805,7 @@ def test_editor_save_keeps_open_directory(kernel_image):
         _quit(con)
         assert _read_bas(con, "A:/SUB296/T297.BAS").startswith("'")
         # Nested path must not exist after save with a relative dir component.
-        err = con.send_line('OPEN "A:/SUB296/SUB296/T297.BAS" FOR INPUT AS #1')
-        assert err != ""
+        assert con.send_line('DIR "A:/SUB296/SUB296"').startswith("?")
     finally:
         con.stop()
 
