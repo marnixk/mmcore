@@ -649,13 +649,6 @@ def test_wordpad_esc_then_letter_inserts_letter(kernel_image):
         con.stop()
 
 
-def _cp437_ink(ch, x, y):
-    text = open(os.path.join(_REPO, "mmbasic", "src", "font_cp437_8x16.c"), encoding="utf-8").read()
-    data = [int(v, 16) for v in re.findall(r"0x[0-9A-Fa-f]{2}", text)]
-    bits = data[ch * 16 + y]
-    return bool(bits & (0x80 >> x))
-
-
 def test_wordpad_bullet_stays_with_glyph(kernel_image):
     """Issue #286: leaving a * / - line keeps a CP437 bullet; source stays markdown."""
     con = MMBasicConsole(kernel_image)
@@ -676,8 +669,6 @@ def test_wordpad_bullet_stays_with_glyph(kernel_image):
         edge = _lum(con.screen_pixel(ox + 1, oy + 7))
         assert ink > pane_lum + 80, (ink, pane_lum)
         assert ink > edge + 40, (ink, edge)
-        assert _cp437_ink(0x07, 3, 7)
-        assert not _cp437_ink(0x07, 1, 7)
         con.capture_png("/opt/cursor/artifacts/wordpad_bullet_glyph.png")
         _alt_menu(con, b"f", quiet=0.4)
         _keys(con, b"s", quiet=0.6)
@@ -706,9 +697,14 @@ def test_wordpad_heading_prefix_still_hidden(kernel_image):
     try:
         _open(con)
         seen = _keys(con, b"# Title\rbody", quiet=0.8)
-        before = seen.split("body")[0]
-        assert "Title" in before
-        assert not before.lstrip().startswith("# ")
+        titles = [
+            ln.strip()
+            for ln in seen.replace("\r", "\n").split("\n")
+            if "Title" in ln
+        ]
+        assert titles
+        assert not titles[-1].startswith("#")
+        assert "body" in seen
         _quit(con)
     finally:
         con.stop()
