@@ -51,7 +51,11 @@ Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full,
 Exit. Bookmarks persist in C:/.termconfig (A: if
 no SD). New/Edit/Delete/Connect; Alt+S saves, Alt+C
 cancels. Connect drops the current session and applies
-the bookmark host, port, echo, and letterbox.
+the bookmark host, port, echo, letterbox, and
+optional 80x25 mode (MODE 2 640x400, full pane,
+no letterbox, NAWS 80x25). The status bar is shown
+only while that menu is open, so 80x25 uses all 25
+rows for the terminal.
 Esc is sent to the host; press Esc twice or wait briefly
 to flush a lone Esc. USB Backspace (DEL) is sent as BS.
 
