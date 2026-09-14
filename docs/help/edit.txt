@@ -21,7 +21,7 @@ colours follow the theme. Non-VGA themes use
 custom palettes. Default is Slate. Saved as
 edit_theme in .mmbasic.ini (or OPTION EDIT THEME name).
 Keys: F1 keyword HELP  F2 save  F3 open  F4 #include
-      F9 run  ^O save  Alt+X quit
+      F9 run  ^S save  Alt+X quit
       ^C copy  ^X cut  ^V paste  ^W close tab
       Alt+Left / Alt+Right switch tabs (no wrap).
       ^R save and run  ^K/^Y cut line  ^U paste
@@ -32,6 +32,7 @@ Keys: F1 keyword HELP  F2 save  F3 open  F4 #include
       indents those lines and Shift+Tab outdents
       Enter copies line indent
       ^P quick open (files under the start folder)
+      ^O outline (SUB/FUNCTION in the current file)
       F1 opens HELP for the word at the cursor
          (Esc returns to the editor)
       F4 opens the #include file on this line

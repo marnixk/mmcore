@@ -142,7 +142,7 @@ The console runs the local interpreter in `mmbasic/`. Immediate mode at the
   (`A:` ramdisk, `C:` SD card, `D:`… USB mass storage; `RUN "name.app"` mounts `B:`)
 - `LOAD PNG` / `LOAD JPG`, `PLAY MP3` / `PLAY MODFILE` / `PLAY XM` / `PLAY TONE`
   (`OPTION AUDIO_TARGET HDMI|JACK`)
-- `EDIT "file.bas"` — nano-like (`Ctrl+O` write, `Ctrl+X` exit, `Ctrl+R` run)
+- `EDIT "file.bas"` — TUI editor (`Ctrl+S` save, `Ctrl+O` outline, `Alt+X` quit, `Ctrl+R` run)
 
 Colours: IBM PC palette 0-31 (`COLOUR 4`, `LIGHTRED`) plus
 `WHITE RED GREEN BLUE YELLOW CYAN MAGENTA BLACK` and `RGB(r,g,b)`.

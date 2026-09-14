@@ -23,6 +23,10 @@ def _keys(con, data: bytes, quiet: float = 0.5) -> str:
     return _plain(con.drain(quiet=quiet).decode(errors="replace"))
 
 
+def _save(con, quiet: float = 0.4) -> str:
+    return _keys(con, bytes([19]), quiet=quiet)
+
+
 def _quit(con) -> str:
     return _keys(con, bytes([1]) + b"x", quiet=0.5)
 
@@ -111,7 +115,7 @@ def test_editor_ctrl_c_x_v_copy_cut_paste(kernel_image):
         _keys(con, bytes([3]))
         _keys(con, b"\x1b[F")
         _keys(con, bytes([22]))
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "CXV.BAS") == "HELLOHELLO"
         _edit(con, "CXV.BAS")
@@ -120,7 +124,7 @@ def test_editor_ctrl_c_x_v_copy_cut_paste(kernel_image):
         _keys(con, bytes([24]))
         _keys(con, b"ZZ")
         _keys(con, bytes([22]))
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "CXV.BAS") == "ZZHELLOHELLO"
     finally:
@@ -136,7 +140,7 @@ def test_editor_esc_then_right_does_not_insert_csi(kernel_image):
         _keys(con, b"HELLO")
         seen = _keys(con, b"\x1b\x1b[C")
         assert "[C" not in seen
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "ESCCSI.BAS") == "HELLO"
     finally:
@@ -151,7 +155,7 @@ def test_editor_esc_then_letter_inserts_letter(kernel_image):
         _edit(con, "ESCA.BAS")
         _keys(con, b"HELLO")
         _keys(con, b"\x1ba")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "ESCA.BAS") == "HELLOa"
     finally:
@@ -208,7 +212,7 @@ def test_editor_new_file_save_asks_for_name(kernel_image):
         untitled = _keys(con, b"n", quiet=0.5)
         assert "UNTITLED" in untitled
         _keys(con, b"PRINT 123")
-        dlg = _keys(con, bytes([15]), quiet=0.6)
+        dlg = _save(con, quiet=0.6)
         assert "Name" in dlg or "Save As" in dlg
         _keys(con, b"BRAND.BAS\r", quiet=0.7)
         _quit(con)
@@ -294,12 +298,12 @@ def test_editor_two_tabs_and_switch(kernel_image):
     try:
         _edit(con, "AAA.BAS")
         _keys(con, b"PRINT 11")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _keys(con, bytes([1]) + b"fo", quiet=0.5)
         seen = _keys(con, b"BBB.BAS\r", quiet=0.6)
         assert "AAA" in seen and "BBB" in seen
         _keys(con, b"PRINT 22")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         back = _keys(con, bytes([1]) + b"1", quiet=0.5)
         assert "AAA" in back
         _quit(con)
@@ -320,7 +324,7 @@ def test_editor_up_from_shorter_line_clamps_column(kernel_image):
         _keys(con, b"HI\rHELLO!!!")
         _keys(con, b"\x1b[A")
         _keys(con, b"X")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert con.send_line('OPEN "CLAMP.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
@@ -422,7 +426,7 @@ def test_editor_enter_autoindents(kernel_image):
     try:
         _edit(con, "IND.BAS")
         _keys(con, b"    PRINT 1\rPRINT 2")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert con.send_line('OPEN "IND.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
@@ -445,7 +449,7 @@ def test_editor_enter_without_indent(kernel_image):
     try:
         _edit(con, "NOIND.BAS")
         _keys(con, b"PRINT 1\rPRINT 2")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert con.send_line('OPEN "NOIND.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
@@ -483,7 +487,7 @@ def test_editor_tab_indents_selection(kernel_image):
         _keys(con, b"\x1b[1;5H")
         _keys(con, b"\x1b[1;2B\x1b[1;2B")
         _keys(con, b"\t")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert con.send_line('OPEN "SELIND.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
@@ -525,7 +529,7 @@ def test_editor_shift_tab_outdents_selection(kernel_image):
         _keys(con, b"\x1b[1;2B\x1b[1;2B")
         _keys(con, b"\t")
         _keys(con, b"\x1b[Z")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert con.send_line('OPEN "SELOUT.BAS" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
@@ -613,7 +617,7 @@ def test_editor_shift_del_cut_and_shift_ins_paste(kernel_image):
         _keys(con, b"\x1b[3;2~")
         _keys(con, b"ZZ")
         _keys(con, b"\x1b[2;2~")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "SELCUT.BAS") == "ZZHELLO"
     finally:
@@ -631,7 +635,7 @@ def test_editor_ctrl_ins_copies_selection(kernel_image):
         _keys(con, b"\x1b[2;5~")
         _keys(con, b"\x1b[F")
         _keys(con, b"\x1b[2;2~")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "SELCP.BAS") == "ABAB"
     finally:
@@ -647,7 +651,7 @@ def test_editor_del_erases_selection_without_clipboard(kernel_image):
         _keys(con, b"\x1b[H")
         _keys(con, b"\x1b[1;2C\x1b[1;2C")
         _keys(con, b"\x1b[3~")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "SELDEL.BAS") == "LLO"
     finally:
@@ -664,7 +668,7 @@ def test_editor_unshifted_arrow_clears_selection(kernel_image):
         _keys(con, b"\x1b[1;2F")
         _keys(con, b"\x1b[D")
         _keys(con, b"\x1b[3~")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         text = _read_bas(con, "SELCLR.BAS")
         assert text == "HELL"
@@ -682,7 +686,7 @@ def test_editor_shift_down_selects_current_line(kernel_image):
         _keys(con, b"\x1b[1;5H")
         _keys(con, b"\x1b[1;2B")
         _keys(con, b"\x1b[3~")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "SELLN.BAS") == "BBB"
     finally:
@@ -698,7 +702,7 @@ def test_editor_typing_replaces_selection(kernel_image):
         _keys(con, b"\x1b[H")
         _keys(con, b"\x1b[1;2C\x1b[1;2C")
         _keys(con, b"X")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "SELTYP.BAS") == "XLLO"
     finally:
@@ -767,7 +771,7 @@ def test_editor_load_starts_at_top(kernel_image):
         assert "AAAA" in seen
         assert "1:1" in seen
         _keys(con, b"X")
-        _keys(con, bytes([15]), quiet=0.5)
+        _save(con, quiet=0.5)
         _quit(con)
         assert _read_bas(con, "TOP.BAS") == "XAAAA"
     finally:
@@ -1296,12 +1300,12 @@ def test_editor_alt_arrows_switch_tabs_no_wrap(kernel_image):
     try:
         _edit(con, "L.BAS")
         _keys(con, b"PRINT 1")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         _keys(con, bytes([1]) + b"fo", quiet=0.5)
         seen = _keys(con, b"R.BAS\r", quiet=0.6)
         assert "L.BAS" in seen and "R.BAS" in seen
         _keys(con, b"PRINT 2")
-        _keys(con, bytes([15]), quiet=0.4)
+        _save(con, quiet=0.4)
         left = _keys(con, b"\x1b[1;3D", quiet=0.5)
         assert "L.BAS" in left
         _keys(con, b"\x1b[1;3D", quiet=0.4)
@@ -1346,7 +1350,102 @@ def test_editor_open_lists_inc_files(kernel_image):
         con.stop()
 
 
+def _seed_outline_bas(con, path="NAV.BAS"):
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in (
+        "PRINT 0",
+        "SUB Alpha",
+        "PRINT 1",
+        "END SUB",
+        "' SUB Hidden",
+        "FUNCTION Beta",
+        "Beta = 2",
+        "END FUNCTION",
+        "SUB Gamma",
+        "END SUB",
+    ):
+        assert con.send_line(f'PRINT #1, "{line}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_editor_ctrl_o_opens_outline_not_save(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_outline_bas(con)
+        _edit(con, "NAV.BAS")
+        _keys(con, bytes([1]) + b"fn", quiet=0.5)
+        _keys(con, b"PRINT 1")
+        seen = _keys(con, bytes([15]), quiet=0.8)
+        assert "Outline" in seen
+        assert "Name" not in seen
+        assert "Save As" not in seen
+        _keys(con, b"\x1b", quiet=0.4)
+        _keys(con, bytes([1]) + b"x", quiet=0.5)
+        _keys(con, b"d", quiet=0.7)
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_s_saves(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SAV.BAS")
+        _keys(con, b"PRINT 7")
+        _save(con, quiet=0.5)
+        _quit(con)
+        assert con.send_line('RUN "SAV.BAS"') == "7"
+    finally:
+        con.stop()
+
+
+def test_editor_outline_jump_and_filter(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_outline_bas(con)
+        seen = _edit(con, "NAV.BAS")
+        assert "1:1" in seen
+        listed = _keys(con, bytes([15]), quiet=0.8)
+        assert "Outline" in listed
+        jumped = _keys(con, b"\x1b[B\x1b[B\r", quiet=0.8)
+        assert "SUB Gamma" in jumped
+        assert "9:1" in jumped
+        _keys(con, bytes([15]), quiet=0.6)
+        filtered = _keys(con, b"beta", quiet=0.6)
+        assert "FUNCTION Beta" in filtered
+        at_beta = _keys(con, b"\r", quiet=0.8)
+        assert "6:1" in at_beta
+        assert "FUNCTION Beta" in at_beta
+        os.makedirs("/opt/cursor/artifacts", exist_ok=True)
+        _keys(con, bytes([15]), quiet=0.6)
+        con.capture_png("/opt/cursor/artifacts/editor_outline_navigator.png")
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_file_menu_outline(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_outline_bas(con)
+        _edit(con, "NAV.BAS")
+        menu = _keys(con, bytes([1]) + b"f", quiet=0.5)
+        assert "Outline" in menu
+        listed = _keys(con, b"l", quiet=0.8)
+        assert "Outline" in listed
+        assert "SUB Alpha" in listed
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_editor_cr_is_ignored_and_run(kernel_image):
+
     con = MMBasicConsole(kernel_image)
     con.start()
     try:

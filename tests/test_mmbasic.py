@@ -644,10 +644,10 @@ def test_editor_write_and_run(kernel_image):
         # enter editor
         con._ser.sendall(b'EDIT "HI.BAS"\r')
         seen = con.drain(quiet=0.8).decode(errors="replace")
-        assert "nano" in seen.lower() or "EDIT" in seen or "^O" in seen or "File:" in seen
+        assert "nano" in seen.lower() or "EDIT" in seen or "^S" in seen or "^O" in seen or "File:" in seen
         # type a one-line program
         con._ser.sendall(b'PRINT 6*7')
-        con._ser.sendall(bytes([15]))  # Ctrl+O write
+        con._ser.sendall(bytes([19]))  # Ctrl+S save
         con.drain(quiet=0.4)
         con._ser.sendall(bytes([1]) + b"x")  # Alt+X exit
         con.drain(quiet=0.4)
