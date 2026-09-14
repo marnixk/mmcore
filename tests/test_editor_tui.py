@@ -1115,27 +1115,21 @@ def _luma(rgb):
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 
-def _row_lumas(png, y, x0=16, x1=128, step=4):
+def _region_lumas(png, x, y, w, h):
     cmd = [
         "convert",
         png,
         "-crop",
-        f"{x1 - x0}x1+{x0}+{y}",
+        f"{w}x{h}+{x}+{y}",
         "+repage",
         "txt:-",
     ]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     lumas = []
     for line in out.splitlines():
-        if line.startswith("#") or ":" not in line:
+        if line.startswith("#") or "(" not in line:
             continue
-        xy, rest = line.split(":", 1)
-        x = int(xy.split(",")[0])
-        if x % step:
-            continue
-        if "(" not in rest:
-            continue
-        inner = rest[rest.find("(") + 1 : rest.find(")")]
+        inner = line[line.find("(") + 1 : line.find(")")]
         parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
         if len(parts) >= 3:
             rgb = tuple(int(float(p)) for p in parts[:3])
@@ -1168,9 +1162,9 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
             png = con.capture_png(
                 f"/opt/cursor/artifacts/theme_{theme.lower()}_unselected_menu.png"
             )
-            lumas = _row_lumas(png, 3 * 16 + 8)
+            lumas = _region_lumas(png, 16, 3 * 16, 72, 16)
             assert lumas, theme
-            assert max(lumas) - min(lumas) > 70, (theme, lumas[:12])
+            assert max(lumas) - min(lumas) > 70, (theme, min(lumas), max(lumas))
             _keys(con, b"\x1b", quiet=0.4)
             _quit(con)
             assert con.send_line("PRINT 1") == "1"
@@ -1179,9 +1173,9 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
         _edit(con, "SLATE8.BAS")
         _keys(con, bytes([1]) + b"f", quiet=0.6)
         png = con.capture_png("/opt/cursor/artifacts/theme_slate_unselected_menu_8bit.png")
-        lumas = _row_lumas(png, 3 * 16 + 8)
+        lumas = _region_lumas(png, 16, 3 * 16, 72, 16)
         assert lumas
-        assert max(lumas) - min(lumas) > 70, lumas[:12]
+        assert max(lumas) - min(lumas) > 70, (min(lumas), max(lumas))
         _keys(con, b"\x1b", quiet=0.4)
         _quit(con)
     finally:

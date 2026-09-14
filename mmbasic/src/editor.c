@@ -207,75 +207,9 @@ const mmb_ed_theme *mmb_editor_theme(void)
 	return th();
 }
 
-static unsigned adj_pal[16];
-
-static unsigned pal_q8(unsigned c)
-{
-	int r = (int)((c >> 16) & 255);
-	int g = (int)((c >> 8) & 255);
-	int b = (int)(c & 255);
-
-	r = (r >> 5) * 255 / 7;
-	g = (g >> 5) * 255 / 7;
-	b = (b >> 6) * 255 / 3;
-	return ((unsigned)r << 16) | ((unsigned)g << 8) | (unsigned)b;
-}
-
-static int pal_luma8(unsigned c)
-{
-	unsigned q = pal_q8(c);
-	int r = (int)((q >> 16) & 255);
-	int g = (int)((q >> 8) & 255);
-	int b = (int)(q & 255);
-
-	return (299 * r + 587 * g + 114 * b) / 1000;
-}
-
-static void pal_ensure_pair(unsigned *pal, int fg, int bg)
-{
-	int i_fg = fg & 15;
-	int i_bg = bg & 15;
-	int la, lb, d;
-
-	if (i_fg == i_bg)
-		return;
-	la = pal_luma8(pal[i_fg]);
-	lb = pal_luma8(pal[i_bg]);
-	d = la > lb ? la - lb : lb - la;
-	if (d >= 70)
-		return;
-	if (lb <= 90)
-	{
-		pal[i_fg] = 0xE8EAEEu;
-	}
-	else
-	{
-		pal[i_fg] = 0x14181Eu;
-	}
-}
-
 const unsigned *mmb_editor_palette(void)
 {
-	const mmb_ed_theme *t = th();
-	int i;
-
-	if (!t->pal)
-		return 0;
-	for (i = 0; i < 16; i++)
-		adj_pal[i] = t->pal[i] & 0xFFFFFFu;
-	pal_ensure_pair(adj_pal, t->menu_fg, t->menu_bg);
-	pal_ensure_pair(adj_pal, t->sel_fg, t->sel_bg);
-	pal_ensure_pair(adj_pal, t->edit_fg, t->edit_bg);
-	pal_ensure_pair(adj_pal, t->dlg_fg, t->dlg_bg);
-	pal_ensure_pair(adj_pal, t->tab_fg, t->tab_bg);
-	pal_ensure_pair(adj_pal, t->tabcur_fg, t->tabcur_bg);
-	pal_ensure_pair(adj_pal, t->brd_fg, t->brd_bg);
-	pal_ensure_pair(adj_pal, t->mark_fg, t->mark_bg);
-	pal_ensure_pair(adj_pal, t->dlg_fg, t->list_bg);
-	pal_ensure_pair(adj_pal, t->str_fg, t->edit_bg);
-	pal_ensure_pair(adj_pal, t->cmt_fg, t->edit_bg);
-	pal_ensure_pair(adj_pal, t->menu_fg, t->list_bg);
-	return adj_pal;
+	return th()->pal;
 }
 
 void mmb_editor_apply_tui_palette(void)
