@@ -532,8 +532,7 @@ static void load_into(int i, const char *path)
 	t->used = 1;
 	if (path && path[0])
 	{
-		ed_copy(t->path, sizeof(t->path), path);
-		ensure_bas(t->path, sizeof(t->path));
+		canon_ed_path(path, t->path, sizeof(t->path));
 		if (mmb_vfs_read(t->path, t->buf, sizeof(t->buf) - 1, &got) == 0)
 			t->len = mmb_normalize_newlines(t->buf, (int)got);
 		t->buf[t->len] = 0;
@@ -548,8 +547,7 @@ static int add_or_switch(const char *path)
 	p[0] = 0;
 	if (path && path[0])
 	{
-		ed_copy(p, sizeof(p), path);
-		ensure_bas(p, sizeof(p));
+		canon_ed_path(path, p, sizeof(p));
 		i = find_tab_path(p);
 		if (i >= 0)
 		{
@@ -2395,8 +2393,7 @@ static void fd_submit_path(const char *path)
 		int p = confirm_pending;
 		if (t && full[0])
 		{
-			strncpy(t->path, full, sizeof(t->path) - 1);
-			ensure_bas(t->path, sizeof(t->path));
+			canon_ed_path(full, t->path, sizeof(t->path));
 			save_tab();
 		}
 		close_ui();

@@ -776,6 +776,40 @@ def test_editor_load_starts_at_top(kernel_image):
         con.stop()
 
 
+def test_editor_save_keeps_open_directory(kernel_image):
+    """#296: Save writes to the directory used when the file was opened."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert con.send_line('MKDIR "SUB296"') == ""
+        assert con.send_line('CHDIR "SUB296"') == ""
+        assert con.send_line('OPEN "T296.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "OLD"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "T296.BAS")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"NEW")
+        _save(con, quiet=0.5)
+        _quit(con)
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert _read_bas(con, "A:/SUB296/T296.BAS") == "NEWOLD"
+        # Relative path with a directory component must not nest after CWD moves into that dir.
+        assert con.send_line('OPEN "A:/SUB296/T297.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 1"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "SUB296/T297.BAS")
+        _keys(con, b"\x1b[H")
+        _keys(con, b"'")
+        _save(con, quiet=0.5)
+        _quit(con)
+        assert _read_bas(con, "A:/SUB296/T297.BAS").startswith("'")
+        # Nested path must not exist after save with a relative dir component.
+        assert con.send_line('DIR "A:/SUB296/SUB296"').startswith("?")
+    finally:
+        con.stop()
+
+
 def test_editor_quick_open_after_moved_file(kernel_image):
     """#130: quick-open must still load a file after the originally edited path is moved."""
     con = MMBasicConsole(kernel_image)
