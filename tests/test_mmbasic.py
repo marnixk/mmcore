@@ -273,6 +273,16 @@ def test_print_newline_unless_semicolon(console):
     assert console.send_line("RUN") == "012"
 
 
+def test_print_semicolon_trailing_spaces(console):
+    assert console.send_line('PRINT "hi";   ') != "?SYNTAX ERROR"
+    assert console.send_line('PRINT "hi";   ') == "hi"
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 PRINT "x";   ') == ""
+    assert console.send_line('20 PRINT "y"') == ""
+    assert console.send_line("RUN") == "xy"
+    assert console.send_line('PRINT "z"   ') == "z"
+
+
 def test_data_read_restore(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 DATA 10,20,12") == ""

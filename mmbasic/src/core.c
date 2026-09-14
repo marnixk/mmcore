@@ -1692,7 +1692,21 @@ static int starts_with_line_number(const char *s, int *num, const char **rest)
 
 static void store_line(int num, const char *text)
 {
-	int i, j;
+	int i, j, n;
+	char buf[MMB_LINE_LEN];
+
+	while (*text == ' ' || *text == '\t')
+		text++;
+	n = 0;
+	while (text[n] && n < MMB_LINE_LEN - 1)
+	{
+		buf[n] = text[n];
+		n++;
+	}
+	buf[n] = 0;
+	while (n > 0 && (buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+		buf[--n] = 0;
+	text = buf;
 	if (text[0] == 0)
 	{
 		for (i = 0; i < G.nprog; i++)
