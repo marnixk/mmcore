@@ -201,6 +201,8 @@ void mmb_tokenize_text(const char *src, char *dst, int dstsz)
 		dst[o++] = *src++;
 	}
 	dst[o] = 0;
+	while (o > 0 && (dst[o - 1] == ' ' || dst[o - 1] == '\t'))
+		dst[--o] = 0;
 }
 
 void mmb_tokenize_program(void)
