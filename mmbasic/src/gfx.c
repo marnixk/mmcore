@@ -744,6 +744,7 @@ void mmb_gfx_set_mode(int mode, int bits)
 		}
 	if (!w)
 		mmb_error("?INVALID MODE");
+	present_wait_dma();
 	if (G.plat && G.plat->resize_hdmi)
 		G.plat->resize_hdmi(w, h);
 	free_pages();
@@ -1214,6 +1215,139 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 	}
 }
 
+void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
+{
+	uint16_t *pg;
+	int tw, th, i, j, by, px;
+	unsigned alpha;
+	uint16_t np;
+
+	if (w < 0)
+	{
+		x += w;
+		w = -w;
+	}
+	if (h < 0)
+	{
+		y += h;
+		h = -h;
+	}
+	if (w < 1 || h < 1)
+		return;
+	tw = tgt_w();
+	th = tgt_h();
+	np = mmb_pix_store(rgb, &alpha);
+	if (mmb_gfx_writing_fb())
+		pg = G.gfx.fb;
+	else
+		pg = page_buf(G.gfx.write_page);
+	if (!pg)
+		return;
+	for (j = 0; j < h; j++)
+	{
+		by = map_y(y + j);
+		if (by < 0 || by >= th)
+			continue;
+		if (x >= 0 && x + w <= tw)
+		{
+			fill_u16(pg + by * tw + x, (unsigned)w, np);
+			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
+			{
+				ensure_page1_alpha();
+				if (G.gfx.page1_alpha)
+					memset(G.gfx.page1_alpha + by * tw + x, (int)alpha,
+					       (unsigned)w);
+				note_page1_pixel(np, alpha);
+			}
+			continue;
+		}
+		for (i = 0; i < w; i++)
+		{
+			px = x + i;
+			if (px < 0 || px >= tw)
+				continue;
+			pg[by * tw + px] = np;
+			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
+			{
+				ensure_page1_alpha();
+				if (G.gfx.page1_alpha)
+					G.gfx.page1_alpha[by * tw + px] = (uint8_t)alpha;
+				note_page1_pixel(np, alpha);
+			}
+		}
+	}
+	if (mmb_gfx_writing_fb())
+		return;
+	if (G.gfx.write_page == G.gfx.display_page)
+		mmb_gfx_dirty_add(x < 0 ? 0 : x, 0, w, th);
+}
+
+void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
+{
+	uint16_t *s, *d;
+	int sw, sh, dw, dh, row;
+	unsigned row_bytes, total;
+
+	s = mmb_gfx_buf_for(srcpage, &sw, &sh);
+	d = mmb_gfx_buf_for(dstpage, &dw, &dh);
+	if (!s || !d || w < 1 || h < 1)
+		return;
+	if (x < 0)
+	{
+		w += x;
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		y = 0;
+	}
+	if (x + w > sw)
+		w = sw - x;
+	if (y + h > sh)
+		h = sh - y;
+	if (x + w > dw)
+		w = dw - x;
+	if (y + h > dh)
+		h = dh - y;
+	if (w < 1 || h < 1)
+		return;
+	row_bytes = (unsigned)w * sizeof(uint16_t);
+	if (x == 0 && w == sw && w == dw)
+	{
+		total = row_bytes * (unsigned)h;
+		s += y * sw;
+		d += y * dw;
+		if (total >= 4096u && G.plat && G.plat->dma_copy &&
+		    G.plat->dma_copy(d, s, total))
+			;
+		else
+			memcpy(d, s, total);
+		return;
+	}
+	for (row = 0; row < h; row++)
+	{
+		memcpy(d + (y + row) * dw + x, s + (y + row) * sw + x, row_bytes);
+		if ((row & 15) == 15)
+			mmb_net_yield();
+	}
+}
+
+void mmb_gfx_clear_overlay(void)
+{
+	unsigned n;
+
+	if (G.gfx.page[1] && G.gfx.w > 0 && G.gfx.h > 0)
+	{
+		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
+		memset(G.gfx.page[1], 0, n * sizeof(uint16_t));
+		if (G.gfx.page1_alpha)
+			memset(G.gfx.page1_alpha, 0, n);
+	}
+	G.gfx.page1_alpha_used = 0;
+	G.gfx.page1_any = 0;
+}
+
 void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
 {
 	unsigned row, col;
@@ -1226,6 +1360,51 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
 		{
 			if (bits & (unsigned char)(0x80u >> col))
 				mmb_gfx_plot(x + (int)col, y + (int)row, rgb);
+		}
+	}
+}
+
+void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+{
+	uint16_t *pg;
+	int tw, th, row, col, by, px;
+	unsigned fa, ba;
+	uint16_t fg_n, bg_n;
+
+	tw = tgt_w();
+	th = tgt_h();
+	fg_n = mmb_pix_store(fg, &fa);
+	bg_n = mmb_pix_store(bg, &ba);
+	if (mmb_gfx_writing_fb())
+		pg = G.gfx.fb;
+	else
+		pg = page_buf(G.gfx.write_page);
+	if (!pg)
+		return;
+	ch &= 0xFFu;
+	for (row = 0; row < 16; row++)
+	{
+		unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
+		by = map_y(y + row);
+		if (by < 0 || by >= th)
+			continue;
+		for (col = 0; col < 8; col++)
+		{
+			uint16_t np;
+
+			px = x + col;
+			if (px < 0 || px >= tw)
+				continue;
+			np = (bits & (unsigned char)(0x80u >> col)) ? fg_n : bg_n;
+			pg[by * tw + px] = np;
+			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
+			{
+				unsigned a = (bits & (unsigned char)(0x80u >> col)) ? fa : ba;
+				ensure_page1_alpha();
+				if (G.gfx.page1_alpha)
+					G.gfx.page1_alpha[by * tw + px] = (uint8_t)a;
+				note_page1_pixel(np, a);
+			}
 		}
 	}
 }

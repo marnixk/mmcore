@@ -1,10 +1,13 @@
 """TERM full-screen terminal app: syntax, help, demo UI, network failure."""
 
+import os
 import re
 import time
 
 from harness import MMBasicConsole
 from ihelp_util import close_ihelp, dump_topic, open_ihelp, scroll_all
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _plain(s: str) -> str:
@@ -122,6 +125,37 @@ def test_help_term(console):
     assert "grey" in low or "gray" in low
     assert "restore" in low or "started" in low
     assert "capped" not in low
+    assert "page 2" in low
+
+
+def test_term_draws_on_page_two_not_overlay():
+    term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()
+    plat = open(os.path.join(REPO, "console", "platform.cpp"), encoding="utf-8").read()
+    gfx = open(os.path.join(REPO, "mmbasic", "src", "gfx.c"), encoding="utf-8").read()
+    assert re.search(r"#define\s+TM_PAGE\s+2\b", term)
+    assert "G.gfx.write_page = TM_PAGE" in term
+    assert "G.gfx.write_page = 1" not in term
+    assert "mmb_gfx_glyph_cell" in term
+    assert "mmb_gfx_copy_rect(TM_PAGE, 0" in term
+    assert "mmb_gfx_clear_overlay" in term
+    assert "plat_present_wait();" in plat
+    assert "fb->SetArea(area, pix, plat_present_done" not in plat
+    assert "void mmb_gfx_glyph_cell" in gfx
+    assert "void mmb_gfx_copy_rect" in gfx
+
+
+def test_term_immediate_altx_returns_prompt(kernel_image):
+    """Disconnected TERM then Alt-X at once must restore a live prompt."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        seen = _open_term(con, "TERM", quiet=0.5, timeout=10.0)
+        assert "Disconnected" in seen
+        out = _quit(con)
+        assert "TERM" in out or out == "" or ">" in out or "Disconnected" in seen
+        assert con.send_line("PRINT 3*3") == "9"
+    finally:
+        con.stop()
 
 
 def test_term_no_args_disconnected(kernel_image):

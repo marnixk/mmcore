@@ -35,7 +35,7 @@ Stopping at the first empty read starves BBS art and
 leaves a prompt such as Enter your password stuck until
 the sender retransmits.
 HDMI present is the terminal pane, not unused letterbox.
-Drawing uses TEXT on PAGE 1, copied to PAGE 0;
+Drawing uses opaque 8x16 cells on PAGE 2, copied to PAGE 0;
 scrolling is a PAGE pixel shift.
 ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL) plus telnet
 TTYPE=ANSI and DA/DSR replies for BBS autodetection.
