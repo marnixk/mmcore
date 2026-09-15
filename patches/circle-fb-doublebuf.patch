@@ -1,0 +1,141 @@
+diff --git a/include/circle/bcmframebuffer.h b/include/circle/bcmframebuffer.h
+index a8bace49..7580bfc9 100644
+--- a/include/circle/bcmframebuffer.h
++++ b/include/circle/bcmframebuffer.h
+@@ -70,6 +70,12 @@ public:
+ 
+ 	boolean SetVirtualOffset (u32 nOffsetX, u32 nOffsetY);
+ 
++	/// \brief Add this Y to SetPixel / SetArea destinations (double-buffer half).
++	/// \note mmbasic-fb-doublebuf: keep in sync with the scanned-out half so
++	///	TUI and immediate presents hit the visible buffer.
++	void SetDrawOffsetY (u32 nOffsetY)	{ m_nDrawOffsetY = nOffsetY; }
++	u32 GetDrawOffsetY (void) const		{ return m_nDrawOffsetY; }
++
+ 	boolean WaitForVerticalSync (void);
+ 
+ 	/// \brief Set screen backlight brightness
+@@ -99,6 +105,7 @@ private:
+ 	u32 m_nBufferPtr;
+ 	u32 m_nBufferSize;
+ 	u32 m_nPitch;
++	u32 m_nDrawOffsetY;	/* mmbasic-fb-doublebuf */
+ 
+ 	TPropertyTagSetPalette *m_pTagSetPalette;	// with Depth <= 8 only (256 entries)
+ 
+diff --git a/lib/bcmframebuffer.cpp b/lib/bcmframebuffer.cpp
+index b032a79f..b2d18d32 100644
+--- a/lib/bcmframebuffer.cpp
++++ b/lib/bcmframebuffer.cpp
+@@ -56,6 +56,7 @@ CBcmFrameBuffer::CBcmFrameBuffer (unsigned nWidth, unsigned nHeight, unsigned nD
+ 	m_nBufferPtr (0),
+ 	m_nBufferSize (0),
+ 	m_nPitch (0),
++	m_nDrawOffsetY (0),	/* mmbasic-fb-doublebuf */
+ 	m_pTagSetPalette (0)
+ #ifdef SCREEN_DMA_BURST_LENGTH
+ 	, m_DMAChannel (DMA_CHANNEL_NORMAL, CInterruptSystem::Get ()),
+@@ -198,6 +199,8 @@ boolean CBcmFrameBuffer::Initialize (void)
+ 
+ void CBcmFrameBuffer::SetPixel (unsigned nPosX, unsigned nPosY, TRawColor nColor)
+ {
++	nPosY += m_nDrawOffsetY;	/* mmbasic-fb-doublebuf */
++
+ 	switch (m_nDepth)
+ 	{
+ 	case 8: {
+@@ -220,16 +223,21 @@ void CBcmFrameBuffer::SetPixel (unsigned nPosX, unsigned nPosY, TRawColor nColor
+ void CBcmFrameBuffer::SetArea (const TArea &rArea, const void *pPixels,
+ 			       TAreaCompletionRoutine *pRoutine, void *pParam)
+ {
++	/* mmbasic-fb-doublebuf: shift into the active (or back) half */
++	TArea Area = rArea;
++	Area.y1 += m_nDrawOffsetY;
++	Area.y2 += m_nDrawOffsetY;
++
+ #ifdef SCREEN_DMA_BURST_LENGTH
+ 	while (AtomicCompareExchange (&m_nDMAInUse, 0, 1))
+ 	{
+ 		// TODO: Yield with NO_BUSY_WAIT, when on core 0 in TASK_LEVEL
+ 	}
+ 
+-	u32 x1 = rArea.x1;
+-	u32 x2 = rArea.x2;
+-	u32 y1 = rArea.y1;
+-	u32 y2 = rArea.y2;
++	u32 x1 = Area.x1;
++	u32 x2 = Area.x2;
++	u32 y1 = Area.y1;
++	u32 y2 = Area.y2;
+ 
+ 	void *pDestination = (void *) (uintptr) (m_nBufferPtr + y1*m_nPitch + x1*m_nDepth/8);
+ 
+@@ -254,16 +262,16 @@ void CBcmFrameBuffer::SetArea (const TArea &rArea, const void *pPixels,
+ 		AtomicSet (&m_nDMAInUse, 0);
+ 	}
+ #else
+-	size_t ulWidth = rArea.x2 - rArea.x1 + 1;
++	size_t ulWidth = Area.x2 - Area.x1 + 1;
+ 	size_t ulBlockLength = ulWidth * m_nDepth/8;
+ 
+ 	switch (m_nDepth)
+ 	{
+ 	case 8: {
+-			auto p = PTR_ADD (u8 *, m_nBufferPtr, rArea.x1, rArea.y1 * m_nPitch);
++			auto p = PTR_ADD (u8 *, m_nBufferPtr, Area.x1, Area.y1 * m_nPitch);
+ 			auto q = static_cast<const u8 *> (pPixels);
+ 
+-			for (unsigned y = rArea.y1; y <= rArea.y2; y++, q += ulWidth)
++			for (unsigned y = Area.y1; y <= Area.y2; y++, q += ulWidth)
+ 			{
+ 				memcpy (p, q, ulBlockLength);
+ 
+@@ -272,10 +280,10 @@ void CBcmFrameBuffer::SetArea (const TArea &rArea, const void *pPixels,
+ 		} break;
+ 
+ 	case 16: {
+-			auto p = PTR_ADD (u16 *, m_nBufferPtr, rArea.x1, rArea.y1 * m_nPitch);
++			auto p = PTR_ADD (u16 *, m_nBufferPtr, Area.x1, Area.y1 * m_nPitch);
+ 			auto q = static_cast<const u16 *> (pPixels);
+ 
+-			for (unsigned y = rArea.y1; y <= rArea.y2; y++, q += ulWidth)
++			for (unsigned y = Area.y1; y <= Area.y2; y++, q += ulWidth)
+ 			{
+ 				memcpy (p, q, ulBlockLength);
+ 
+@@ -284,10 +292,10 @@ void CBcmFrameBuffer::SetArea (const TArea &rArea, const void *pPixels,
+ 		} break;
+ 
+ 	case 32: {
+-			auto p = PTR_ADD (u32 *, m_nBufferPtr, rArea.x1, rArea.y1 * m_nPitch);
++			auto p = PTR_ADD (u32 *, m_nBufferPtr, Area.x1, Area.y1 * m_nPitch);
+ 			auto q = static_cast<const u32 *> (pPixels);
+ 
+-			for (unsigned y = rArea.y1; y <= rArea.y2; y++, q += ulWidth)
++			for (unsigned y = Area.y1; y <= Area.y2; y++, q += ulWidth)
+ 			{
+ 				memcpy (p, q, ulBlockLength);
+ 
+diff --git a/lib/screen.cpp b/lib/screen.cpp
+index 09264960..42035572 100644
+--- a/lib/screen.cpp
++++ b/lib/screen.cpp
+@@ -49,8 +49,17 @@ CScreenDevice::~CScreenDevice (void)
+ 
+ boolean CScreenDevice::Initialize (void)
+ {
++	/* mmbasic-fb-doublebuf: virt height = 2*height for SetVirtualOffset
++	 * PAGE DISPLAY flips (Pi ≤ 4 hardware). QEMU sets
++	 * NO_SCREEN_DMA_BURST_LENGTH and skips double-buffering. Pi 5 has no
++	 * legacy virt-offset path in C2DGraphics either. */
++#if RASPPI <= 4 && defined (SCREEN_DMA_BURST_LENGTH)
++	boolean bDoubleBuffered = TRUE;
++#else
++	boolean bDoubleBuffered = FALSE;
++#endif
+ 	m_pFrameBuffer = new CBcmFrameBuffer (m_nInitWidth, m_nInitHeight, DEPTH,
+-					      0, 0, m_nDisplay);
++					      0, 0, m_nDisplay, bDoubleBuffered);
+ 	if (!m_pFrameBuffer)
+ 	{
+ 		return FALSE;

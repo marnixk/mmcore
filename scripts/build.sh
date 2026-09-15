@@ -69,6 +69,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-tcp-ack.patch"
 fi
 
+if grep -q 'mmbasic-fb-doublebuf' "${CIRCLE_DIR}/lib/screen.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle FB double-buffer / draw-offset patches (PAGE DISPLAY flip)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fb-doublebuf.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

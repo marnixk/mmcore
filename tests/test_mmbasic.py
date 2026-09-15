@@ -556,6 +556,28 @@ def test_page_write_7_in_large_mode(fresh_console):
     assert c.send_line("MODE 8,16") == ""
 
 
+def test_page_display_preserves_pixel_readback(fresh_console):
+    """Issue #305: PAGE WRITE / PAGE DISPLAY / PIXEL stay coherent under present."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 100,80,RGB(0,0,255)") == ""
+    assert ((int(c.send_line("PRINT PIXEL(100,80)")) & 255) > 150)
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+    assert int(c.send_line("PRINT PIXEL(100,80)")) == 0
+    assert c.send_line("PAGE DISPLAY 1") == ""
+    # Soft-page PIXEL reads the write page; switch write to the displayed page.
+    assert c.send_line("PAGE WRITE 1") == ""
+    blue = int(c.send_line("PRINT PIXEL(100,80)"))
+    assert (blue & 255) > 150
+    assert ((blue >> 16) & 255) < 80
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert int(c.send_line("PRINT PIXEL(100,80)")) == 0
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""

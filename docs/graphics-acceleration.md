@@ -68,8 +68,29 @@ asynchronously. A new present waits for any in-flight DMA (`plat_present_wait`)
 before reusing bounce buffers or starting another SetArea. Under QEMU
 (`NO_SCREEN_DMA_BURST_LENGTH`) presents stay synchronous.
 
+## PAGE DISPLAY virtual-offset flip (Pi ≤ 4 hardware)
+
+Soft graphics pages stay heap-allocated. On Pi ≤ 4 hardware builds, Circle’s
+`CScreenDevice` creates a double-buffered HDMI framebuffer (`bDoubleBuffered`,
+virtual height = 2× physical) via `patches/circle-fb-doublebuf.patch`.
+
+`console/platform.cpp` tracks which half is scanned out (`s_fb_front`). A
+`SetDrawOffsetY` on `CBcmFrameBuffer` remaps `SetPixel` / `SetArea` so TUI text,
+dirty-rect presents, and immediate `set_pixel` always write the *visible* half.
+
+Full-frame present (dirty cleared — `PAGE DISPLAY`, MODE, CLS of the display)
+uses the flip path:
+
+1. `SetDrawOffsetY(back * height)` and synchronous `SetArea` into the hidden half
+2. `WaitForVerticalSync`
+3. `SetVirtualOffset(0, back * height)` and swap `s_fb_front`
+
+Under QEMU (`NO_SCREEN_DMA_BURST_LENGTH`) the Screen device stays single-buffered
+and presents stay synchronous without virt-offset (QEMU virt-offset is
+unreliable). On Pi 5 (`RASPPI > 4`) Circle has no legacy virt-offset double-buffer
+path (same limit as `C2DGraphics`); presents use the single-buffer SetArea path.
+
 ## Still software
 
 Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
-RGB888, store native into `present_scratch`) remain CPU work. Follow-up:
-virtual-offset `PAGE DISPLAY`.
+RGB888, store native into `present_scratch`) remain CPU work.
