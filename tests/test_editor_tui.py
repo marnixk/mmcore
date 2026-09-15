@@ -1046,6 +1046,44 @@ def test_editor_run_inkey_loop_break_restores_editor(kernel_image):
         con.stop()
 
 
+def test_editor_run_page_write_break_restores_editor(kernel_image):
+    """Break from a PAGE WRITE/DISPLAY loop must redraw the editor, not a black HDMI plane."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "SNOW.BAS" FOR OUTPUT AS #1') == ""
+        for line in (
+            "MODE 7,8",
+            "PAGE WRITE 1",
+            "PAGE DISPLAY 1",
+            "CLS RGB(0,0,0)",
+            "DO",
+            "PIXEL RND*100,RND*100,RGB(255,255,255)",
+            "PAGE COPY 1,0",
+            "LOOP",
+        ):
+            esc = line.replace('"', '""')
+            assert con.send_line(f'PRINT #1, "{esc}"') == ""
+        assert con.send_line("CLOSE #1") == ""
+
+        _edit(con, "SNOW.BAS")
+        _keys(con, bytes([18]), quiet=0.6)
+        con._ser.sendall(bytes([3]))
+        back = _plain(con.drain(quiet=1.5, timeout=6.0).decode(errors="replace"))
+        assert "File" in back
+        assert "Run" in back
+        bar = [con.screen_pixel(x, 8) for x in (8, 16, 24, 32, 40, 48, 56, 80)]
+        assert any(r > 100 and g > 100 and b > 100 for r, g, b in bar), bar
+        _quit(con)
+        time.sleep(0.4)
+        assert con.send_line("PRINT 1") == "1"
+        assert con.send_line("PAGE WRITE 0") == ""
+        assert con.send_line("CLS") == ""
+        assert int(con.send_line("PRINT PIXEL(12,12)")) == 0
+    finally:
+        con.stop()
+
+
 def test_editor_theme_menu_lists_ten_themes(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

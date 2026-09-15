@@ -609,13 +609,18 @@ static void ansi_put_int(char *seq, int *n, int v)
 
 void mmb_console_apply_colour(void)
 {
-	char seq[24];
+	char seq[32];
 	int n = 0;
 
 	if (!G.plat || !G.plat->write_screen)
 		return;
 	/* Circle only honours SGR when the CSI has a single parameter
-	 * (`ESC[91m`). `ESC[91;40m` is ignored. */
+	 * (`ESC[91m`). `ESC[91;40m` is ignored. Reset first so a leftover
+	 * SGR 44 (blue) cannot stick as the paper colour. */
+	seq[n++] = '\x1b';
+	seq[n++] = '[';
+	seq[n++] = '0';
+	seq[n++] = 'm';
 	seq[n++] = '\x1b';
 	seq[n++] = '[';
 	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.fg, 1));
@@ -629,8 +634,8 @@ void mmb_console_apply_colour(void)
 
 void mmb_console_reset_prompt(void)
 {
-	G.gfx.fg = 0x808080u;
-	G.gfx.bg = 0;
+	G.gfx.fg = MMB_DEFAULT_FG;
+	G.gfx.bg = MMB_DEFAULT_BG;
 	mmb_console_apply_colour();
 	mmb_hw_cursor(1);
 }
@@ -644,6 +649,12 @@ void mmb_hw_cursor(int show)
 
 void mmb_print_startup(void)
 {
+	G.gfx.fg = MMB_DEFAULT_FG;
+	G.gfx.bg = MMB_DEFAULT_BG;
+	mmb_console_apply_colour();
+	if (G.plat && G.plat->fill_screen)
+		G.plat->fill_screen(G.gfx.bg);
+	mmb_console_apply_colour();
 	mmb_console_write("\x1b[37m");
 	mmb_console_write("MMBasic ");
 	mmb_console_write(MMB_VERSION);
@@ -1074,7 +1085,6 @@ static void inkey_poll(void)
 		G.plat->poll_input();
 	if (G.running && G.plat && G.plat->take_break && G.plat->take_break())
 	{
-		G.running = 0;
 		mmb_play_stop();
 		mmb_error("?BREAK");
 	}

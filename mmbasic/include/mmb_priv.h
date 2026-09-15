@@ -19,6 +19,9 @@
 #define MMB_OPT_DEFAULT_MODE       11 /* 1280x720 */
 #define MMB_OPT_DEFAULT_PROMPT     1  /* CWD */
 #define MMB_OPT_DEFAULT_EDIT_THEME 5  /* Slate */
+/* Prompt/console: grey on black (CMM2 is white/black). IBM 15/1 is white/blue. */
+#define MMB_DEFAULT_FG             0x808080u
+#define MMB_DEFAULT_BG             0u
 #define MMB_MAX_BLIT      64
 #define MMB_MAX_SPRITE    64
 #define MMB_MAX_SUB_ARGS  16
@@ -584,6 +587,7 @@ void mmb_cmd_end_function(void);
 void mmb_gfx_init(void);
 void mmb_gfx_apply_default_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
+void mmb_gfx_reset_console(int wipe);
 void mmb_gfx_cls(unsigned rgb);
 void mmb_gfx_plot(int x, int y, unsigned rgb);
 unsigned mmb_gfx_get(int x, int y);

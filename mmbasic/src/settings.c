@@ -448,8 +448,8 @@ void mmb_settings_load(void)
 void mmb_cmd_factory_reset(void)
 {
 	mmb_option_reset();
-	G.gfx.fg = 0x808080u;
-	G.gfx.bg = 0;
+	G.gfx.fg = MMB_DEFAULT_FG;
+	G.gfx.bg = MMB_DEFAULT_BG;
 	G.opt.wifi_ssid[0] = 0;
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
