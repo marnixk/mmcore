@@ -73,6 +73,14 @@ typedef struct mmb_platform {
 	int (*wait_vsync)(void);
 	/* Read n raw serial bytes (binary, no echo). 0=ok, -1=fail. */
 	int (*read_raw)(unsigned char *buf, unsigned n);
+	/* Optional DMA memory copy. Returns 1 if DMA performed the copy,
+	 * 0 if the caller should memcpy (small transfer, QEMU, or failure). */
+	int (*dma_copy)(void *dst, const void *src, unsigned nbytes);
+	/* Optional 2D DMA into a pitched destination (source rows packed).
+	 * block_stride is bytes skipped after each block_len in dst.
+	 * Returns 1 if DMA used, 0 if the caller should memcpy. */
+	int (*dma_copy2d)(void *dst, const void *src, unsigned block_len,
+			  unsigned block_count, unsigned block_stride);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

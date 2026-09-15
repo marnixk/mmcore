@@ -9,6 +9,8 @@
 #include <circle/display.h>
 #include <circle/startup.h>
 #include <circle/synchronize.h>
+#include <circle/dmachannel.h>
+#include <circle/machineinfo.h>
 
 static CKernel *s_kernel;
 
@@ -764,6 +766,79 @@ static int plat_wait_vsync(void)
 #endif
 }
 
+/* Memory DMA for opaque PAGE COPY / BLIT. Disabled under QEMU
+ * (NO_SCREEN_DMA_BURST_LENGTH) — prefer memcpy when screen DMA is off. */
+static CDMAChannel *s_mem_dma;
+
+static CDMAChannel *mem_dma_channel(void)
+{
+	unsigned ch;
+
+	if (s_mem_dma)
+		return s_mem_dma;
+#if RASPPI >= 4
+	ch = DMA_CHANNEL_EXTENDED;
+#else
+	ch = DMA_CHANNEL_NORMAL;
+#endif
+	s_mem_dma = new CDMAChannel(ch);
+	return s_mem_dma;
+}
+
+static int plat_dma_copy(void *dst, const void *src, unsigned nbytes)
+{
+#ifdef NO_SCREEN_DMA_BURST_LENGTH
+	(void)dst;
+	(void)src;
+	(void)nbytes;
+	return 0;
+#else
+	CDMAChannel *dma;
+
+	if (!dst || !src || nbytes == 0)
+		return 0;
+	dma = mem_dma_channel();
+	if (!dma)
+		return 0;
+	dma->SetupMemCopy(dst, src, nbytes, 0, TRUE);
+	dma->Start();
+	return dma->Wait() ? 1 : 0;
+#endif
+}
+
+static int plat_dma_copy2d(void *dst, const void *src, unsigned block_len,
+			   unsigned block_count, unsigned block_stride)
+{
+#ifdef NO_SCREEN_DMA_BURST_LENGTH
+	(void)dst;
+	(void)src;
+	(void)block_len;
+	(void)block_count;
+	(void)block_stride;
+	return 0;
+#else
+	CDMAChannel *dma;
+	unsigned dest_span;
+
+	if (!dst || !src || block_len == 0 || block_count == 0)
+		return 0;
+	dma = mem_dma_channel();
+	if (!dma)
+		return 0;
+	/* SetupMemCopy2D does not maintain the destination cache. */
+	dest_span = block_count * block_len;
+	if (block_count > 1)
+		dest_span += (block_count - 1) * block_stride;
+	CleanAndInvalidateDataCacheRange((uintptr)dst, dest_span);
+	dma->SetupMemCopy2D(dst, src, block_len, block_count, block_stride, 0);
+	dma->Start();
+	if (!dma->Wait())
+		return 0;
+	CleanAndInvalidateDataCacheRange((uintptr)dst, dest_span);
+	return 1;
+#endif
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -809,6 +884,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;
+	plat.dma_copy = plat_dma_copy;
+	plat.dma_copy2d = plat_dma_copy2d;
 	audio_init();
 	mmb_init(&plat);
 }

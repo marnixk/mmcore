@@ -28,9 +28,34 @@ cache maintenance does not touch neighbouring heap metadata. Native present
 uses the page buffer directly when `stride == w`; otherwise it packs rows into
 the bounce buffer.
 
+## Page / blit memory DMA (hardware)
+
+`console/platform.cpp` owns a second `CDMAChannel` (`DMA_CHANNEL_NORMAL`, or
+`DMA_CHANNEL_EXTENDED` when `RASPPI >= 4`) and exposes:
+
+- `plat->dma_copy(dst, src, nbytes)` → `SetupMemCopy` (cached buffers)
+- `plat->dma_copy2d(dst, src, block_len, block_count, block_stride)` →
+  `SetupMemCopy2D` (packed source rows into a pitched destination; destination
+  cache is cleaned/invalidated by the platform wrapper)
+
+Both return `1` if DMA ran, or `0` so the caller falls back to `memcpy`.
+
+Under QEMU (`NO_SCREEN_DMA_BURST_LENGTH`) both hooks always return `0` — memory
+DMA may work in some QEMU builds, but the safe path matches screen DMA and
+keeps the harness on memcpy.
+
+Call sites:
+
+- Opaque `PAGE COPY` (`mmb_gfx_copy_page` without `,B`): if the page is at least
+  4096 bytes, try `dma_copy`, else `memcpy`. Transparent `,B` copies stay CPU.
+- Opaque rectangular `BLIT` (`ori == 0`, no skip-black / flip): native
+  `uint16_t` row or 2D DMA when non-overlapping; transparent / logic / rotated
+  blits stay on the RGB888 snap path.
+
+Page buffers come from the Circle heap (already cache-line aligned).
+
 ## Still software
 
-Page-to-page `PAGE COPY`, transparent blit, logic ops, and page-1 overlay
-composite (expand + blend in RGB888, store native into `present_scratch`) remain
-CPU work. Follow-ups: dedicated DMA for large copies, virtual-offset
-`PAGE DISPLAY`, dirty-rect / async present.
+Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
+RGB888, store native into `present_scratch`) remain CPU work. Follow-ups:
+virtual-offset `PAGE DISPLAY`, dirty-rect / async present.
