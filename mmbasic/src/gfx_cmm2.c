@@ -197,9 +197,99 @@ void mmb_gfx_fb_close(void)
 void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage, int ori)
 {
 	uint32_t *tmp;
-	int i, j;
+	uint16_t *src, *dst;
+	int i, j, sw, sh, dw, dh;
+	unsigned row_bytes, total;
+
 	if (w <= 0 || h <= 0)
 		return;
+
+	/* Opaque, unrotated rect: native DMA / row copy (skip RGB888 snap). */
+	if (ori == 0)
+	{
+		src = mmb_gfx_buf_for(srcpage, &sw, &sh);
+		dst = mmb_gfx_buf_for(MMB_PAGE_CUR, &dw, &dh);
+		if (src && dst &&
+		    x1 >= 0 && y1 >= 0 && x1 + w <= sw && y1 + h <= sh &&
+		    x2 >= 0 && y2 >= 0 && x2 + w <= dw && y2 + h <= dh)
+		{
+			int same = (src == dst);
+			int overlap = same &&
+				!(x2 + w <= x1 || x1 + w <= x2 ||
+				  y2 + h <= y1 || y1 + h <= y2);
+
+			if (!overlap)
+			{
+				row_bytes = (unsigned)w * sizeof(uint16_t);
+				total = row_bytes * (unsigned)h;
+
+				if (w == sw && w == dw)
+				{
+					/* Contiguous slab on both sides. */
+					uint16_t *s = src + y1 * sw + x1;
+					uint16_t *d = dst + y2 * dw + x2;
+					if (total >= 4096u && G.plat && G.plat->dma_copy &&
+					    G.plat->dma_copy(d, s, total))
+						;
+					else
+						memcpy(d, s, total);
+				}
+				else if (w == sw && total >= 4096u && G.plat &&
+					 G.plat->dma_copy2d)
+				{
+					/* Contiguous source → pitched dest. */
+					uint16_t *s = src + y1 * sw + x1;
+					uint16_t *d = dst + y2 * dw + x2;
+					unsigned stride =
+						(unsigned)(dw - w) * sizeof(uint16_t);
+					if (!G.plat->dma_copy2d(d, s, row_bytes,
+								(unsigned)h, stride))
+					{
+						for (j = 0; j < h; j++)
+							memcpy(d + j * dw, s + j * sw,
+							       row_bytes);
+					}
+				}
+				else
+				{
+					for (j = 0; j < h; j++)
+					{
+						uint16_t *s = src + (y1 + j) * sw + x1;
+						uint16_t *d = dst + (y2 + j) * dw + x2;
+						if (row_bytes >= 4096u && G.plat &&
+						    G.plat->dma_copy &&
+						    G.plat->dma_copy(d, s, row_bytes))
+							;
+						else
+							memcpy(d, s, row_bytes);
+					}
+				}
+
+				if (G.gfx.write_page == 1 && !mmb_gfx_writing_fb())
+				{
+					ensure_page1_alpha();
+					if (G.gfx.page1_alpha)
+					{
+						for (j = 0; j < h; j++)
+						{
+							uint16_t *row =
+								dst + (y2 + j) * dw + x2;
+							uint8_t *al =
+								G.gfx.page1_alpha +
+								(y2 + j) * dw + x2;
+							for (i = 0; i < w; i++)
+								al[i] = row[i] ? 255 : 0;
+						}
+					}
+				}
+				if (!mmb_gfx_writing_fb() &&
+				    G.gfx.write_page == G.gfx.display_page)
+					mmb_gfx_present_rect(x2, y2, w, h);
+				return;
+			}
+		}
+	}
+
 	tmp = snap_rect(srcpage, x1, y1, w, h);
 	for (j = 0; j < h; j++)
 	{

@@ -23,7 +23,7 @@ last working resolution.
 
 Pages: 8 (0-7) at every MODE, allocated lazily.
 
-Depths (quantised; stored as 32-bit RGB):
+Depths (quantised; pages store HDMI-native 16-bit):
   8   RGB332
   12  RGB444 (invalid on modes 9, 11, 12, 14)
   16  RGB565

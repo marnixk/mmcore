@@ -305,7 +305,7 @@ static void free_pages(void)
 	}
 }
 
-static void ensure_page1_alpha(void)
+void ensure_page1_alpha(void)
 {
 	unsigned bytes;
 	if (G.gfx.page1_alpha)
@@ -379,16 +379,22 @@ void mmb_gfx_present_if(int page)
 
 void mmb_gfx_copy_page(int src, int dst, int blit)
 {
-	unsigned n, i;
+	unsigned n, i, bytes;
 	uint16_t *s, *d;
 	if (src < 0 || src >= G.gfx.pages || dst < 0 || dst >= G.gfx.pages)
 		mmb_error("?PAGE");
 	s = page_buf(src);
 	d = page_buf(dst);
 	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
+	bytes = n * sizeof(uint16_t);
 	if (!blit)
 	{
-		memcpy(d, s, n * sizeof(uint16_t));
+		/* Opaque full-page copy: DMA when large enough and available. */
+		if (bytes >= 4096u && G.plat && G.plat->dma_copy &&
+		    G.plat->dma_copy(d, s, bytes))
+			;
+		else
+			memcpy(d, s, bytes);
 		if (dst == 1 && src != 1)
 		{
 			ensure_page1_alpha();

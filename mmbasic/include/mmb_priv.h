@@ -605,6 +605,7 @@ unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte);
 uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out);
 int mmb_gfx_map_y(int y, int h);
 int mmb_gfx_writing_fb(void);
+void ensure_page1_alpha(void);
 void mmb_gfx_fb_create(int w, int h);
 void mmb_gfx_fb_write(void);
 void mmb_gfx_fb_backup(void);
