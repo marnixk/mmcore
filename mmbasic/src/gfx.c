@@ -644,6 +644,8 @@ void mmb_gfx_present(void)
 					     pg + y * G.gfx.w + x, G.gfx.w);
 	}
 	mmb_sprite_overlay();
+	if (G.plat && G.plat->present_set_flip)
+		G.plat->present_set_flip(0);
 }
 
 void mmb_gfx_present_rect(int x, int y, int w, int h)

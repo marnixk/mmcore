@@ -68,6 +68,8 @@ typedef struct mmb_platform {
 	void (*present_native)(int x, int y, int w, int h, const void *pix, int stride);
 	/* Wait for an in-flight async present (SetArea DMA) to finish. Optional. */
 	void (*present_wait)(void);
+	/* Next full-frame present may virt-offset flip (PAGE DISPLAY). Optional. */
+	void (*present_set_flip)(int on);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);

@@ -539,6 +539,8 @@ void mmb_cmd_page(void)
 		 * !dirty present path can leave HDMI on a prior live-SetPixel
 		 * frame (TEXT/BOX/PIXEL on the old display page) — #312. */
 		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
+		if (G.plat && G.plat->present_set_flip)
+			G.plat->present_set_flip(1);
 		mmb_gfx_present();
 		return;
 	}
