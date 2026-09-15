@@ -32,6 +32,9 @@ log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 # once WLAN is linked; 8MB is the configured cap.
 # QEMU usb-net sits on the DWC2 root port (no hub); Circle's NAK and USB
 # timing fixes keep CDC Ethernet from freezing or starving bulk IN.
+# configure --qemu also sets NO_SCREEN_DMA_BURST_LENGTH (SetArea falls back
+# to CPU memcpy). Hardware builds omit that flag so CBcmFrameBuffer::SetArea
+# uses CDMAChannel::SetupMemCopy2D for HDMI presents (Pi 2–4 / 400).
 QEMU_USB_DEFS=""
 if [ "${QEMU:-1}" = "1" ]; then
   QEMU_USB_DEFS="-d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX"
