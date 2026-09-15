@@ -3043,21 +3043,10 @@ static void editor_restore_gfx(void)
 {
 	if (G.ed.saved_mode != G.gfx.mode || G.ed.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(G.ed.saved_mode, G.ed.saved_bits);
-	G.gfx.write_fb = 0;
-	if (G.ed.saved_write_fb && G.gfx.fb)
-		G.gfx.write_fb = 1;
-	else
-	{
-		int pg = G.ed.saved_write_page;
-		if (pg < 0 || pg >= G.gfx.pages)
-			pg = 0;
-		G.gfx.write_page = pg;
-	}
-	if (G.ed.saved_display_page >= 0 && G.ed.saved_display_page < G.gfx.pages)
-		G.gfx.display_page = G.ed.saved_display_page;
-	else
-		G.gfx.display_page = 0;
-	mmb_gfx_present();
+	/* PAGE WRITE/DISPLAY, page-1 overlay, and sprites stay as the program
+	 * left them. Presenting that (or flipping to it) leaves a black HDMI
+	 * plane the TUI cannot recover. CMM2 Ctrl-C also homes PAGE WRITE. */
+	mmb_gfx_reset_console(1);
 }
 
 static void editor_run(void)

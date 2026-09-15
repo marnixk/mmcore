@@ -1018,7 +1018,7 @@ void mmb_option_list(int all)
 	}
 	if (all || G.opt.default_mode != MMB_OPT_DEFAULT_MODE)
 		ol_line_int(&n, "OPTION DEFAULT MODE ", G.opt.default_mode);
-	if (all || G.gfx.fg != 0x808080u || G.gfx.bg != 0)
+	if (all || G.gfx.fg != MMB_DEFAULT_FG || G.gfx.bg != MMB_DEFAULT_BG)
 	{
 		if (n)
 			mmb_out("\n");

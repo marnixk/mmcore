@@ -166,12 +166,16 @@ static void plat_write_serial(const char *s, unsigned n)
 		s_kernel->Serial().Write(s, n);
 }
 
+static CBcmFrameBuffer *plat_fb_visible(void);
+
 static void plat_write_screen(const char *s, unsigned n)
 {
 	if (!mmb_opt_console_screen())
 		return;
-	if (s_kernel)
-		s_kernel->Screen().Write(s, n);
+	if (!s_kernel || !s || !n)
+		return;
+	(void)plat_fb_visible();
+	s_kernel->Screen().Write(s, n);
 }
 
 static CBcmFrameBuffer *plat_fb_visible(void)
@@ -782,7 +786,7 @@ static void plat_tui_present(int y0, int y1)
 	area.x2 = s_tui_w - 1;
 	area.y1 = (unsigned)y0;
 	area.y2 = (unsigned)y1;
-	/* Immediate: visible half via SetDrawOffsetY. */
+	plat_present_wait();
 	fb_draw_visible(fb);
 	fb->SetArea(area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
 }

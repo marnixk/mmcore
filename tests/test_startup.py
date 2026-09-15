@@ -154,6 +154,23 @@ def test_prompt_grey_after_boot_and_term(kernel_image):
         con.stop()
 
 
+def test_boot_background_is_black_not_blue(kernel_image):
+    """Console paper is black (CMM2 0), not IBM blue (1)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        time.sleep(0.2)
+        samples = [con.screen_pixel(x, y) for x, y in ((200, 300), (400, 280), (80, 400))]
+        for rgb in samples:
+            r, g, b = rgb
+            assert r < 40 and g < 40 and b < 40, samples
+        png = con.capture_png("/opt/cursor/artifacts/boot_black_background.png")
+        assert os.path.isfile(png)
+        assert con.send_line("PRINT 3") == "3"
+    finally:
+        con.stop()
+
+
 def test_prompt_block_cursor_visible(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

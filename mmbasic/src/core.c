@@ -2577,7 +2577,6 @@ void mmb_check_break(void)
 	mmb_run_events();
 	if (G.plat && G.plat->take_break && G.plat->take_break())
 	{
-		G.running = 0;
 		mmb_play_stop();
 		mmb_error("?BREAK");
 	}
@@ -3701,6 +3700,7 @@ static void run_program(void)
 		mmb_prof_report();
 	G.running = 0;
 	mmb_play_stop();
+	mmb_gfx_reset_console(0);
 }
 
 static void clear_exec_flags(void)
@@ -3723,10 +3723,16 @@ const char *mmb_exec_line(const char *line)
 	mmb_str_reset();
 	if (setjmp(G.errjmp))
 	{
+		int was_running = G.running;
+		int pages_off = G.gfx.write_page || G.gfx.display_page ||
+				G.gfx.write_fb || G.gfx.page1_any ||
+				G.gfx.page1_alpha_used;
 		G.outn = 0;
 		G.out[0] = 0;
 		clear_exec_flags();
 		mmb_pkg_unmount();
+		if (was_running || pages_off)
+			mmb_gfx_reset_console(1);
 		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
 		return G.out;
 	}

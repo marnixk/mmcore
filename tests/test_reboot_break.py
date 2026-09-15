@@ -45,3 +45,22 @@ def test_ctrl_c_stops_play(fresh_console):
     out = c.send_keys(b"\x03", timeout=6.0)
     assert "BREAK" in out.upper()
     assert c.send_line("PRINT PLAYING()") == "0"
+
+
+def test_ctrl_c_page_write_loop_restores_console(fresh_console):
+    c = fresh_console
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 PAGE WRITE 1") == ""
+    assert c.send_line("20 PAGE DISPLAY 1") == ""
+    assert c.send_line("30 CLS") == ""
+    assert c.send_line("40 GOTO 30") == ""
+    c.drain(quiet=0.1)
+    c._ser.sendall(b"RUN\r")
+    time.sleep(0.4)
+    out = c.send_keys(b"\x03", timeout=6.0)
+    assert "BREAK" in out.upper()
+    assert c.send_line("PRINT 9") == "9"
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS RGB(255,0,0)") == ""
+    pix = int(c.send_line("PRINT PIXEL(4,4)"))
+    assert ((pix >> 16) & 255) > 150

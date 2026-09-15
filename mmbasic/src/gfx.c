@@ -694,8 +694,8 @@ void mmb_gfx_init(void)
 	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
-	G.gfx.fg = 0x808080u;
-	G.gfx.bg = 0;
+	G.gfx.fg = MMB_DEFAULT_FG;
+	G.gfx.bg = MMB_DEFAULT_BG;
 	G.gfx.font = 1;
 	G.gfx.font_scale = 1;
 	G.gfx.write_page = 0;
@@ -758,6 +758,36 @@ void mmb_gfx_set_mode(int mode, int bits)
 	page_buf(0);
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
+	mmb_console_apply_colour();
+}
+
+void mmb_gfx_reset_console(int wipe)
+{
+	unsigned n;
+	int i;
+
+	G.gfx.write_fb = 0;
+	G.gfx.write_page = 0;
+	G.gfx.display_page = 0;
+	if (G.gfx.page[1] && G.gfx.w > 0 && G.gfx.h > 0)
+	{
+		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
+		memset(G.gfx.page[1], 0, n * sizeof(uint16_t));
+		if (G.gfx.page1_alpha)
+			memset(G.gfx.page1_alpha, 0, n);
+	}
+	G.gfx.page1_alpha_used = 0;
+	G.gfx.page1_any = 0;
+	for (i = 0; i < MMB_MAX_SPRITE; i++)
+		G.gfx.sprite[i].vis = 0;
+	if (G.plat && G.plat->present_set_flip)
+		G.plat->present_set_flip(0);
+	if (!wipe)
+		return;
+	G.gfx.fg = MMB_DEFAULT_FG;
+	G.gfx.bg = MMB_DEFAULT_BG;
+	if (G.plat && G.plat->fill_screen)
+		G.plat->fill_screen(G.gfx.bg);
 	mmb_console_apply_colour();
 }
 
