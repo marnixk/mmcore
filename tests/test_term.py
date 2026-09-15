@@ -335,6 +335,31 @@ def test_term_alt_x_after_demoburst_returns_prompt(kernel_image):
         con.stop()
 
 
+def test_term_enter_clears_hdmi_without_menu(kernel_image):
+    """Issue #314: leftover console must not remain until Alt+T."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        # Same mode TERM will use, so enter skips set_mode's fill_screen.
+        assert con.send_line("MODE 14,16") == ""
+        assert con.send_line("CLS RGB(180,40,40)") == ""
+        time.sleep(0.2)
+        before = con.screen_pixel(16, 16)
+        assert before[0] > 100, before
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.4)
+        # Letterbox margin stays black; must not keep the red CLS / prompt.
+        margin = con.screen_pixel(8, 200)
+        assert _is_black(*margin), margin
+        corner = con.screen_pixel(16, 16)
+        assert not (corner[0] > 120 and corner[1] < 80 and corner[2] < 80), corner
+        con.capture_png("/opt/cursor/artifacts/issue314_term_enter_clear.png")
+        _quit(con)
+        assert con.send_line("PRINT 2") == "2"
+    finally:
+        con.stop()
+
+
 def test_term_alt_t_terminal_menu_then_x_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

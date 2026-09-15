@@ -4211,6 +4211,12 @@ void mmb_cmd_term(void)
 	}
 
 	term_apply_session_mode();
+	/* Always wipe Circle console + hide cursor. set_mode's fill_screen is
+	 * skipped when mode/bits are unchanged (e.g. already mode 14), which
+	 * left the MMBasic prompt on HDMI until the menu covered it (#314). */
+	mmb_hw_cursor(0);
+	if (G.plat && G.plat->fill_screen)
+		G.plat->fill_screen(0);
 	G.gfx.write_page = 1;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
