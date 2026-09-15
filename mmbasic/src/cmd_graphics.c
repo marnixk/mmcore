@@ -535,6 +535,7 @@ void mmb_cmd_page(void)
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
 		G.gfx.display_page = pg;
+		mmb_gfx_dirty_reset();
 		mmb_gfx_present();
 		return;
 	}

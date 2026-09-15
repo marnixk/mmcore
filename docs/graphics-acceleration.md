@@ -54,8 +54,22 @@ Call sites:
 
 Page buffers come from the Circle heap (already cache-line aligned).
 
+## Dirty rectangles and async present
+
+Drawing that touches the display page (or page-1 overlay) expands a dirty AABB
+(`mmb_gfx_dirty_add`). Opaque `PAGE COPY` / `BLIT` onto the visible page mark
+the copied region dirty. `mmb_gfx_present()` prefers `present_rect` of that AABB
+when dirty is set; otherwise it presents the full frame (MODE / `PAGE DISPLAY` /
+CLS of the display clear dirty first so the present stays full-screen).
+
+On hardware (`SCREEN_DMA_BURST_LENGTH`), `plat_present_native` /
+`plat_present_rgb` pass a SetArea completion routine so the copy can finish
+asynchronously. A new present waits for any in-flight DMA (`plat_present_wait`)
+before reusing bounce buffers or starting another SetArea. Under QEMU
+(`NO_SCREEN_DMA_BURST_LENGTH`) presents stay synchronous.
+
 ## Still software
 
 Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
-RGB888, store native into `present_scratch`) remain CPU work. Follow-ups:
-virtual-offset `PAGE DISPLAY`, dirty-rect / async present.
+RGB888, store native into `present_scratch`) remain CPU work. Follow-up:
+virtual-offset `PAGE DISPLAY`.

@@ -11,6 +11,7 @@
 #include <circle/synchronize.h>
 #include <circle/dmachannel.h>
 #include <circle/machineinfo.h>
+#include <circle/atomic.h>
 
 static CKernel *s_kernel;
 
@@ -22,6 +23,41 @@ static unsigned dma_buf_size(unsigned n)
 {
 	return (unsigned)CACHE_ALIGN_SIZE(u8, n);
 }
+
+#ifndef NO_SCREEN_DMA_BURST_LENGTH
+/* Serialise async present: wait before starting a new SetArea / reusing bounce. */
+static volatile int s_present_busy;
+
+static void plat_present_done(void *param)
+{
+	(void)param;
+	AtomicSet(&s_present_busy, 0);
+}
+
+static void plat_present_wait(void)
+{
+	while (AtomicGet(&s_present_busy))
+		;
+}
+
+static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
+			  const void *pix)
+{
+	plat_present_wait();
+	AtomicSet(&s_present_busy, 1);
+	fb->SetArea(area, pix, plat_present_done, 0);
+}
+#else
+static void plat_present_wait(void)
+{
+}
+
+static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
+			  const void *pix)
+{
+	fb->SetArea(area, pix);
+}
+#endif
 
 static unsigned rgb_to_raw(unsigned rgb)
 {
@@ -694,6 +730,7 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
 	if (!present_bounce(need))
 		return;
+	plat_present_wait();
 	dst = reinterpret_cast<TScreenColor *>(s_present_pix);
 	for (py = 0; py < h; py++)
 	{
@@ -706,7 +743,7 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	area.x2 = (unsigned)(x + w - 1);
 	area.y1 = (unsigned)y;
 	area.y2 = (unsigned)(y + h - 1);
-	fb->SetArea(area, s_present_pix);
+	plat_set_area(fb, area, s_present_pix);
 }
 
 static void plat_present_native(int x, int y, int w, int h,
@@ -736,18 +773,19 @@ static void plat_present_native(int x, int y, int w, int h,
 	/* Tight contiguous rows: SetArea can DMA straight from the page. */
 	if (stride == w)
 	{
-		fb->SetArea(area, src);
+		plat_set_area(fb, area, src);
 		return;
 	}
 	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
 	buf = present_bounce(need);
 	if (!buf)
 		return;
+	plat_present_wait();
 	for (py = 0; py < h; py++)
 		memcpy(static_cast<TScreenColor *>(buf) + py * w,
 		       src + py * stride,
 		       (unsigned)w * bpp);
-	fb->SetArea(area, buf);
+	plat_set_area(fb, area, buf);
 }
 
 static int plat_wait_vsync(void)
@@ -881,6 +919,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.alt_held = plat_alt_held;
 	plat.present_rgb = plat_present_rgb;
 	plat.present_native = plat_present_native;
+	plat.present_wait = plat_present_wait;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;

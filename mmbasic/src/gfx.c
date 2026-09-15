@@ -362,6 +362,60 @@ uint16_t *mmb_gfx_buf_for(int page, int *w, int *h)
 	return page_buf(page);
 }
 
+void mmb_gfx_dirty_reset(void)
+{
+	G.gfx.dirty = 0;
+}
+
+void mmb_gfx_dirty_add(int x, int y, int w, int h)
+{
+	int x1, y1;
+
+	if (w <= 0 || h <= 0)
+		return;
+	x1 = x + w;
+	y1 = y + h;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x1 > G.gfx.w)
+		x1 = G.gfx.w;
+	if (y1 > G.gfx.h)
+		y1 = G.gfx.h;
+	if (x >= x1 || y >= y1)
+		return;
+	if (!G.gfx.dirty)
+	{
+		G.gfx.dirty_x0 = x;
+		G.gfx.dirty_y0 = y;
+		G.gfx.dirty_x1 = x1;
+		G.gfx.dirty_y1 = y1;
+		G.gfx.dirty = 1;
+		return;
+	}
+	if (x < G.gfx.dirty_x0)
+		G.gfx.dirty_x0 = x;
+	if (y < G.gfx.dirty_y0)
+		G.gfx.dirty_y0 = y;
+	if (x1 > G.gfx.dirty_x1)
+		G.gfx.dirty_x1 = x1;
+	if (y1 > G.gfx.dirty_y1)
+		G.gfx.dirty_y1 = y1;
+}
+
+void mmb_gfx_dirty_flush(void)
+{
+	if (G.gfx.dirty)
+		mmb_gfx_present();
+}
+
+static void present_wait_dma(void)
+{
+	if (G.plat && G.plat->present_wait)
+		G.plat->present_wait();
+}
+
 void mmb_gfx_present_if(int page)
 {
 	int p = page;
@@ -374,7 +428,12 @@ void mmb_gfx_present_if(int page)
 		p = G.gfx.write_page;
 	}
 	if (p == G.gfx.display_page || p == 1)
+	{
+		/* Full frame if nothing was tracked; else flush dirty AABB. */
+		if (!G.gfx.dirty)
+			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		mmb_gfx_present();
+	}
 }
 
 void mmb_gfx_copy_page(int src, int dst, int blit)
@@ -404,6 +463,8 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 					G.gfx.page1_alpha[i] = s[i] ? 255 : 0;
 			}
 		}
+		if (dst == G.gfx.display_page || dst == 1)
+			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		return;
 	}
 	for (i = 0; i < n; i++)
@@ -424,6 +485,8 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 			}
 		}
 	}
+	if (dst == G.gfx.display_page || dst == 1)
+		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 }
 
 static uint16_t *composite_display(void)
@@ -503,6 +566,7 @@ void mmb_gfx_present(void)
 		G.prof.gfx_present++;
 	if (!G.plat)
 		return;
+	present_wait_dma();
 	pg = composite_display();
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
 	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
@@ -510,6 +574,23 @@ void mmb_gfx_present(void)
 		hw = G.gfx.w;
 	if (hh > G.gfx.h)
 		hh = G.gfx.h;
+	if (G.gfx.dirty)
+	{
+		int x = G.gfx.dirty_x0;
+		int y = G.gfx.dirty_y0;
+		int x1 = G.gfx.dirty_x1;
+		int y1 = G.gfx.dirty_y1;
+		G.gfx.dirty = 0;
+		if (x1 > hw)
+			x1 = hw;
+		if (y1 > hh)
+			y1 = hh;
+		if (x < x1 && y < y1)
+			present_native_or_rgb(x, y, x1 - x, y1 - y,
+					     pg + y * G.gfx.w + x, G.gfx.w);
+		mmb_sprite_overlay();
+		return;
+	}
 	present_native_or_rgb(0, 0, hw, hh, pg, G.gfx.w);
 	mmb_sprite_overlay();
 }
@@ -520,6 +601,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	uint16_t *pg;
 	if (!G.plat)
 		return;
+	present_wait_dma();
 	pg = composite_display();
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
 	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
@@ -619,6 +701,7 @@ void mmb_gfx_set_mode(int mode, int bits)
 	G.gfx.pages = MMB_MAX_PAGES;
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
+	mmb_gfx_dirty_reset();
 	page_buf(0);
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
@@ -651,6 +734,9 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	}
 	if (mmb_gfx_writing_fb())
 		return;
+	/* Expand dirty AABB when drawing to the visible page or page-1 overlay. */
+	if (G.gfx.write_page == G.gfx.display_page || G.gfx.write_page == 1)
+		mmb_gfx_dirty_add(x, by, 1, 1);
 	rgb = mmb_pix_load(np, alpha);
 	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
 	{
@@ -766,12 +852,27 @@ void mmb_gfx_cls(unsigned rgb)
 	    G.plat && G.plat->fill_screen)
 	{
 		if (G.gfx.display_page != 1 && G.gfx.page[1])
+		{
+			/* Overlay: full present (clear dirty so we do not clip). */
+			mmb_gfx_dirty_reset();
 			mmb_gfx_present();
+		}
 		else
+		{
 			G.plat->fill_screen(mmb_native_to_rgb(np));
+			mmb_gfx_dirty_reset();
+		}
 	}
 	else if (G.gfx.write_page == 1)
+	{
+		mmb_gfx_dirty_reset();
 		mmb_gfx_present();
+	}
+	else if (G.gfx.write_page == G.gfx.display_page)
+	{
+		mmb_gfx_dirty_add(0, 0, tw, th);
+		mmb_gfx_present();
+	}
 }
 
 void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
