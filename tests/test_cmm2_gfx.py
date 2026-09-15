@@ -171,3 +171,29 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert ((red >> 16) & 255) > 150
     assert (gap & 0xFFFFFF) == 0
     assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_page1_overlay_nonzero_blit_without_alpha(fresh_console):
+    """Issue #313: opaque page-1 overlay composites without RGB blend when no AFLAG."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("CLS RGB(0,0,80)") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 100,80,RGB(255,200,0)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    r, g, b = c.screen_pixel(100, 80)
+    assert r > 200 and g > 150 and b < 80, (r, g, b)
+    br, bg, bb = c.screen_pixel(20, 20)
+    assert br < 40 and bg < 40 and bb > 60, (br, bg, bb)
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 50,50,RGB(255,0,0,8)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS RGB(0,0,0)") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    rr, rg, rb = c.screen_pixel(50, 50)
+    assert rr > 80, (rr, rg, rb)

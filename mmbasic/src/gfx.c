@@ -303,6 +303,8 @@ static void free_pages(void)
 		G.plat->free(G.gfx.page1_alpha);
 		G.gfx.page1_alpha = 0;
 	}
+	G.gfx.page1_alpha_used = 0;
+	G.gfx.page1_any = 0;
 	if (G.gfx.present_scratch)
 	{
 		G.plat->free(G.gfx.present_scratch);
@@ -467,6 +469,16 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 				for (i = 0; i < n; i++)
 					G.gfx.page1_alpha[i] = s[i] ? 255 : 0;
 			}
+			G.gfx.page1_alpha_used = 0;
+			G.gfx.page1_any = 0;
+			for (i = 0; i < n; i++)
+			{
+				if (s[i])
+				{
+					G.gfx.page1_any = 1;
+					break;
+				}
+			}
 		}
 		if (dst == G.gfx.display_page || dst == 1)
 			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
@@ -487,11 +499,20 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 					else
 						G.gfx.page1_alpha[i] = 255;
 				}
+				G.gfx.page1_any = 1;
 			}
 		}
 	}
 	if (dst == G.gfx.display_page || dst == 1)
 		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
+}
+
+static void note_page1_pixel(uint16_t np, unsigned alpha)
+{
+	if (np)
+		G.gfx.page1_any = 1;
+	if (alpha >= 1 && alpha <= 15)
+		G.gfx.page1_alpha_used = 1;
 }
 
 static uint16_t *composite_display(void)
@@ -502,6 +523,28 @@ static uint16_t *composite_display(void)
 	base = page_buf(G.gfx.display_page);
 	if (G.gfx.display_page == 1 || !G.gfx.page[1])
 		return base;
+	/* Black-transparent overlay with no AFLAG: skip composite when empty,
+	 * else native non-zero blit (no RGB round-trip) — #313. */
+	if (!G.gfx.page1_alpha_used)
+	{
+		if (!G.gfx.page1_any)
+			return base;
+		over = G.gfx.page[1];
+		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
+		bytes = n * sizeof(uint16_t);
+		if (!G.gfx.present_scratch)
+		{
+			if (!G.plat || !G.plat->alloc)
+				return base;
+			G.gfx.present_scratch = G.plat->alloc(bytes);
+			if (!G.gfx.present_scratch)
+				return base;
+		}
+		out = G.gfx.present_scratch;
+		for (i = 0; i < n; i++)
+			out[i] = over[i] ? over[i] : base[i];
+		return out;
+	}
 	over = G.gfx.page[1];
 	oa = G.gfx.page1_alpha;
 	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
@@ -739,6 +782,7 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 		ensure_page1_alpha();
 		if (G.gfx.page1_alpha)
 			G.gfx.page1_alpha[by * tw + x] = (uint8_t)alpha;
+		note_page1_pixel(np, alpha);
 	}
 	if (mmb_gfx_writing_fb())
 		return;
@@ -853,6 +897,9 @@ void mmb_gfx_cls(unsigned rgb)
 		ensure_page1_alpha();
 		if (G.gfx.page1_alpha)
 			memset(G.gfx.page1_alpha, (int)alpha, (unsigned)tw * (unsigned)th);
+		/* CLS of the overlay resets blend bookkeeping (#313). */
+		G.gfx.page1_alpha_used = (alpha >= 1 && alpha <= 15) ? 1 : 0;
+		G.gfx.page1_any = np ? 1 : 0;
 	}
 	if (mmb_gfx_writing_fb())
 		return;

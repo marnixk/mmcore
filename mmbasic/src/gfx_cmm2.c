@@ -278,7 +278,11 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 								G.gfx.page1_alpha +
 								(y2 + j) * dw + x2;
 							for (i = 0; i < w; i++)
+							{
 								al[i] = row[i] ? 255 : 0;
+								if (row[i])
+									G.gfx.page1_any = 1;
+							}
 						}
 					}
 				}
