@@ -281,9 +281,14 @@ static void free_soft(void)
 	}
 }
 
+static void present_wait_dma(void);
+
 static void free_pages(void)
 {
 	int i;
+
+	/* Async SetArea may still be reading page / present_scratch (#315). */
+	present_wait_dma();
 	free_soft();
 	for (i = 0; i < MMB_MAX_PAGES; i++)
 	{

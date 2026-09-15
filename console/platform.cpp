@@ -218,10 +218,13 @@ static void plat_fill(unsigned rgb)
 	/* HDMI only: home + erase-to-end, then paint pixels so a coloured
 	 * CLS is not undone by the terminal wipe. Never write ANSI to serial
 	 * (tests assert send_line("CLS") == ""). */
-	static const char home[] = "\x1b[H\x1b[J";
-	s_kernel->Screen().Write(home, sizeof(home) - 1);
-
 	CScreenDevice &sc = s_kernel->Screen();
+	/* MODE/TERM exit may skip resize; still drop virt-offset back to half 0
+	 * so the console writes the scanned-out plane (#315). */
+	fb_flip_reset(sc.GetFrameBuffer());
+	static const char home[] = "\x1b[H\x1b[J";
+	sc.Write(home, sizeof(home) - 1);
+
 	TScreenColor c = (TScreenColor)rgb_to_raw(rgb);
 	unsigned w = sc.GetWidth(), h = sc.GetHeight(), x, y;
 	for (y = 0; y < h; y++)
