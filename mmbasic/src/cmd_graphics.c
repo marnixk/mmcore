@@ -535,7 +535,10 @@ void mmb_cmd_page(void)
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
 		G.gfx.display_page = pg;
-		mmb_gfx_dirty_reset();
+		/* Force a full-frame present. Clearing dirty then taking the
+		 * !dirty present path can leave HDMI on a prior live-SetPixel
+		 * frame (TEXT/BOX/PIXEL on the old display page) — #312. */
+		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		mmb_gfx_present();
 		return;
 	}
