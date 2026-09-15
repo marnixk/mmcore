@@ -579,6 +579,12 @@ void mmb_gfx_present(void)
 		hw = G.gfx.w;
 	if (hh > G.gfx.h)
 		hh = G.gfx.h;
+	/* Always present via the dirty AABB path. After live SetPixel drawing
+	 * (TEXT/BOX/PIXEL on the display page), the old !dirty full-frame
+	 * branch could leave QEMU/HDMI on the prior frame while soft pages
+	 * were already updated (#312). */
+	if (!G.gfx.dirty)
+		mmb_gfx_dirty_add(0, 0, hw, hh);
 	if (G.gfx.dirty)
 	{
 		int x = G.gfx.dirty_x0;
@@ -593,10 +599,7 @@ void mmb_gfx_present(void)
 		if (x < x1 && y < y1)
 			present_native_or_rgb(x, y, x1 - x, y1 - y,
 					     pg + y * G.gfx.w + x, G.gfx.w);
-		mmb_sprite_overlay();
-		return;
 	}
-	present_native_or_rgb(0, 0, hw, hh, pg, G.gfx.w);
 	mmb_sprite_overlay();
 }
 

@@ -578,6 +578,25 @@ def test_page_display_preserves_pixel_readback(fresh_console):
     assert int(c.send_line("PRINT PIXEL(100,80)")) == 0
 
 
+def test_page_display_after_text_on_live_page(fresh_console):
+    """Issue #312: TEXT on the live display page must not break later PAGE DISPLAY."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("CLS RGB(16,16,48)") == ""
+    assert c.send_line('TEXT 80,210,"HELLO",RGB(255,255,255)') == ""
+    assert c.send_line("PAGE WRITE 3") == ""
+    assert c.send_line("CLS RGB(40,16,48)") == ""
+    assert c.send_line("CIRCLE 320,140,100,1,RGB(255,140,30),RGB(255,140,30)") == ""
+    soft = int(c.send_line("PRINT PIXEL(320,140)"))
+    assert ((soft >> 16) & 255) > 180
+    assert c.send_line("PAGE DISPLAY 3") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert r > 180 and g > 100 and b < 80, (r, g, b)
+    c.capture_png("/opt/cursor/artifacts/issue312_page_display_after_text.png")
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""
