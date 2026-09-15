@@ -520,6 +520,26 @@ def test_page_copy_and_colour(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
 
 
+def test_page_copy_to_display_pixel_readback(fresh_console):
+    """Issue #306: PAGE COPY onto the visible page stays readable via PIXEL()."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 2") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 80,60,RGB(0,255,0)") == ""
+    assert ((int(c.send_line("PRINT PIXEL(80,60)")) >> 8) & 255) > 150
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+    assert int(c.send_line("PRINT PIXEL(80,60)")) == 0
+    assert c.send_line("PAGE COPY 2 TO 0") == ""
+    green = int(c.send_line("PRINT PIXEL(80,60)"))
+    assert ((green >> 8) & 255) > 150
+    assert ((green >> 16) & 255) < 80
+    assert c.send_line("PIXEL 81,61,RGB(255,0,0)") == ""
+    red = int(c.send_line("PRINT PIXEL(81,61)"))
+    assert ((red >> 16) & 255) > 150
+
+
 def test_page_write_7_in_large_mode(fresh_console):
     c = fresh_console
     assert c.send_line("MODE 11,8") == ""

@@ -215,6 +215,9 @@ typedef struct mmb_gfx {
 	uint16_t *page[MMB_MAX_PAGES];
 	uint8_t *page1_alpha; /* 0=clear, 1..15=blend, 255=opaque (black-transparent if 0 colour) */
 	uint16_t *present_scratch;
+	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
+	int dirty;
+	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
 } mmb_gfx;
 
 typedef struct mmb_ed_tab {
@@ -598,6 +601,9 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_if(int page);
+void mmb_gfx_dirty_reset(void);
+void mmb_gfx_dirty_add(int x, int y, int w, int h);
+void mmb_gfx_dirty_flush(void);
 uint16_t *mmb_gfx_buf_for(int page, int *w, int *h);
 unsigned mmb_rgb_to_native(unsigned rgb888);
 unsigned mmb_native_to_rgb(unsigned native);

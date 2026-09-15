@@ -66,6 +66,8 @@ typedef struct mmb_platform {
 	/* Blit HDMI-native pixels (DEPTH bits each) to the framebuffer.
 	 * stride is pixels per source row. Prefer this when pages are native. */
 	void (*present_native)(int x, int y, int w, int h, const void *pix, int stride);
+	/* Wait for an in-flight async present (SetArea DMA) to finish. Optional. */
+	void (*present_wait)(void);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);

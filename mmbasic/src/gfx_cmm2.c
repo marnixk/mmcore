@@ -284,7 +284,10 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 				}
 				if (!mmb_gfx_writing_fb() &&
 				    G.gfx.write_page == G.gfx.display_page)
-					mmb_gfx_present_rect(x2, y2, w, h);
+				{
+					mmb_gfx_dirty_add(x2, y2, w, h);
+					mmb_gfx_dirty_flush();
+				}
 				return;
 			}
 		}
