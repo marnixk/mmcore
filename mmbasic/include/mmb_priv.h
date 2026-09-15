@@ -193,12 +193,13 @@ typedef struct mmb_gfx {
 	int display_page;
 	int write_fb;          /* drawing goes to framebuffer */
 	int fb_w, fb_h;
-	uint32_t *fb;
-	uint32_t *fb_bak;
+	/* HDMI-native pixels (16-bit COLOR16 when DEPTH=16). */
+	uint16_t *fb;
+	uint16_t *fb_bak;
 	mmb_blit_buf blit[MMB_MAX_BLIT];
 	struct {
 		int used, vis, x, y, layer, w, h;
-		uint32_t *pix;
+		uint32_t *pix; /* sprites stay RGB888 + alpha */
 	} sprite[MMB_MAX_SPRITE];
 	int turtle_on;
 	double turtle_x, turtle_y, turtle_hdg;
@@ -210,8 +211,10 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	uint32_t *page[MMB_MAX_PAGES]; /* RGB888, optional alpha in high bits */
-	uint32_t *present_scratch;
+	/* HDMI-native page buffers. Page 1 alpha lives in page1_alpha. */
+	uint16_t *page[MMB_MAX_PAGES];
+	uint8_t *page1_alpha; /* 0=clear, 1..15=blend, 255=opaque (black-transparent if 0 colour) */
+	uint16_t *present_scratch;
 } mmb_gfx;
 
 typedef struct mmb_ed_tab {
@@ -595,7 +598,11 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_if(int page);
-uint32_t *mmb_gfx_buf_for(int page, int *w, int *h);
+uint16_t *mmb_gfx_buf_for(int page, int *w, int *h);
+unsigned mmb_rgb_to_native(unsigned rgb888);
+unsigned mmb_native_to_rgb(unsigned native);
+unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte);
+uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out);
 int mmb_gfx_map_y(int y, int h);
 int mmb_gfx_writing_fb(void);
 void mmb_gfx_fb_create(int w, int h);

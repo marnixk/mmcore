@@ -118,8 +118,8 @@ static void sprite_loadpng(void)
 static void sprite_read(void)
 {
 	mmb_val a[6];
-	int n = 0, id, x, y, w, h, page, i, j, iw, ih;
-	uint32_t *src, *pix;
+	int n = 0, id, x, y, w, h, page, i, j;
+	uint32_t *pix;
 
 	id = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
@@ -153,19 +153,17 @@ static void sprite_read(void)
 	page = n >= 5 ? (int)mmb_as_int(a[4]) : G.gfx.write_page;
 	if (w <= 0 || h <= 0)
 		mmb_error("?SPRITE");
-	src = mmb_gfx_buf_for(page, &iw, &ih);
 	pix = G.plat->alloc((unsigned)w * (unsigned)h * sizeof(uint32_t));
 	if (!pix)
 		mmb_error("?OUT OF MEMORY");
 	for (j = 0; j < h; j++)
 		for (i = 0; i < w; i++)
 		{
-			int sx = x + i, sy = y + j;
-			unsigned c = 0;
-			if (sx >= 0 && sy >= 0 && sx < iw && sy < ih)
-				c = src[sy * iw + sx] | 0xFF000000u;
+			unsigned c = mmb_gfx_get_page(x + i, y + j, page);
 			if ((c & 0xFFFFFFu) == 0)
 				c = 0;
+			else
+				c |= 0xFF000000u;
 			pix[j * w + i] = c;
 		}
 	sprite_store(id, pix, w, h);

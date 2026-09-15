@@ -1,7 +1,13 @@
 # Graphics acceleration (Circle / Raspberry Pi)
 
-MMBasic pages are software buffers. Visible updates go through
-`plat_present_rgb` → `CBcmFrameBuffer::SetArea`.
+MMBasic graphics pages and the soft framebuffer store **HDMI-native** pixels
+(Circle `COLOR16` / `DEPTH=16`: 5-5-5). RGB888 appears only at the MMBasic API
+boundary (`RGB()`, `PIXEL`, `PSET`, sprites, blit scratch); helpers expand on
+read and quantize/convert on write.
+
+Visible updates prefer `plat_present_native` → `CBcmFrameBuffer::SetArea` with
+no RGB888→native convert loop. `plat_present_rgb` remains for callers that still
+hand RGB888 (and as a fallback).
 
 ## Screen DMA present (hardware)
 
@@ -18,11 +24,13 @@ flags.
 
 Present / TUI bounce buffers in `console/platform.cpp` are heap-allocated
 (cache-line aligned by Circle) with sizes rounded via `CACHE_ALIGN_SIZE` so DMA
-cache maintenance does not touch neighbouring heap metadata.
+cache maintenance does not touch neighbouring heap metadata. Native present
+uses the page buffer directly when `stride == w`; otherwise it packs rows into
+the bounce buffer.
 
 ## Still software
 
-Page-to-page `PAGE COPY`, transparent blit, logic ops, and RGB888→native
-convert before present remain CPU work. See follow-ups: native-depth pages,
-dedicated DMA for large copies, virtual-offset `PAGE DISPLAY`, dirty-rect /
-async present.
+Page-to-page `PAGE COPY`, transparent blit, logic ops, and page-1 overlay
+composite (expand + blend in RGB888, store native into `present_scratch`) remain
+CPU work. Follow-ups: dedicated DMA for large copies, virtual-offset
+`PAGE DISPLAY`, dirty-rect / async present.

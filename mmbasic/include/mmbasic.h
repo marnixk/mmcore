@@ -63,6 +63,12 @@ typedef struct mmb_platform {
 	/* Blit RGB888 pixels to HDMI (native depth + SetArea). stride is
 	 * pixels per source row. NULL falls back to set_pixel. */
 	void (*present_rgb)(int x, int y, int w, int h, const unsigned *rgb888, int stride);
+	/* Blit HDMI-native pixels (DEPTH bits each) to the framebuffer.
+	 * stride is pixels per source row. Prefer this when pages are native. */
+	void (*present_native)(int x, int y, int w, int h, const void *pix, int stride);
+	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
+	unsigned (*rgb_to_native)(unsigned rgb888);
+	unsigned (*native_to_rgb)(unsigned native);
 	/* Wait for the next HDMI vblank. Returns 1 if the firmware wait ran. */
 	int (*wait_vsync)(void);
 	/* Read n raw serial bytes (binary, no echo). 0=ok, -1=fail. */

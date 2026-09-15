@@ -22,6 +22,70 @@ static const struct { int id, w, h; } kModes[] = {
 
 #define MMB_RGB_AFLAG 0x10000000u
 
+/* Software COLOR16 (5-5-5, green at bit 6) when platform hooks are unset. */
+static unsigned soft_rgb_to_native(unsigned rgb888)
+{
+	unsigned r = (rgb888 >> 16) & 255u;
+	unsigned g = (rgb888 >> 8) & 255u;
+	unsigned b = rgb888 & 255u;
+	return ((r >> 3) << 11) | ((g >> 3) << 6) | (b >> 3);
+}
+
+static unsigned soft_native_to_rgb(unsigned native)
+{
+	unsigned r = (native >> 11) & 0x1Fu;
+	unsigned g = (native >> 6) & 0x1Fu;
+	unsigned b = native & 0x1Fu;
+	r = r * 255u / 31u;
+	g = g * 255u / 31u;
+	b = b * 255u / 31u;
+	return (r << 16) | (g << 8) | b;
+}
+
+unsigned mmb_rgb_to_native(unsigned rgb888)
+{
+	if (G.plat && G.plat->rgb_to_native)
+		return G.plat->rgb_to_native(rgb888);
+	return soft_rgb_to_native(rgb888);
+}
+
+unsigned mmb_native_to_rgb(unsigned native)
+{
+	if (G.plat && G.plat->native_to_rgb)
+		return G.plat->native_to_rgb(native);
+	return soft_native_to_rgb(native);
+}
+
+uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out)
+{
+	unsigned q = mmb_quantize(rgb888);
+	unsigned rgb = q & 0xFFFFFFu;
+	unsigned alpha;
+
+	if (q & MMB_RGB_AFLAG)
+	{
+		alpha = (q >> 24) & 15u;
+		if (alpha == 0)
+			alpha = 0;
+	}
+	else if (rgb == 0)
+		alpha = 0;
+	else
+		alpha = 255;
+	if (alpha_out)
+		*alpha_out = alpha;
+	return (uint16_t)mmb_rgb_to_native(rgb);
+}
+
+unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte)
+{
+	unsigned rgb = mmb_native_to_rgb(pix);
+	/* 0..15: CMM2 AFLAG alpha (0 = transparent). 255 = fully opaque. */
+	if (alpha_byte <= 15)
+		return MMB_RGB_AFLAG | (alpha_byte << 24) | rgb;
+	return rgb;
+}
+
 unsigned mmb_rgb_pack(int r, int g, int b)
 {
 	if (r < 0) r = 0; if (r > 255) r = 255;
@@ -229,6 +293,11 @@ static void free_pages(void)
 			G.gfx.page[i] = 0;
 		}
 	}
+	if (G.gfx.page1_alpha)
+	{
+		G.plat->free(G.gfx.page1_alpha);
+		G.gfx.page1_alpha = 0;
+	}
 	if (G.gfx.present_scratch)
 	{
 		G.plat->free(G.gfx.present_scratch);
@@ -236,22 +305,37 @@ static void free_pages(void)
 	}
 }
 
-static uint32_t *page_buf(int n)
+static void ensure_page1_alpha(void)
+{
+	unsigned bytes;
+	if (G.gfx.page1_alpha)
+		return;
+	bytes = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
+	if (!G.plat || !G.plat->alloc)
+		return;
+	G.gfx.page1_alpha = G.plat->alloc(bytes);
+	if (G.gfx.page1_alpha)
+		memset(G.gfx.page1_alpha, 0, bytes);
+}
+
+static uint16_t *page_buf(int n)
 {
 	unsigned bytes;
 	if (n < 0 || n >= G.gfx.pages)
 		mmb_error("?PAGE");
 	if (G.gfx.page[n])
 		return G.gfx.page[n];
-	bytes = (unsigned)G.gfx.w * (unsigned)G.gfx.h * sizeof(uint32_t);
+	bytes = (unsigned)G.gfx.w * (unsigned)G.gfx.h * sizeof(uint16_t);
 	G.gfx.page[n] = G.plat->alloc(bytes);
 	if (!G.gfx.page[n])
 		mmb_error("?OUT OF MEMORY");
 	memset(G.gfx.page[n], 0, bytes);
+	if (n == 1)
+		ensure_page1_alpha();
 	return G.gfx.page[n];
 }
 
-uint32_t *mmb_gfx_buf_for(int page, int *w, int *h)
+uint16_t *mmb_gfx_buf_for(int page, int *w, int *h)
 {
 	if (page == MMB_PAGE_CUR)
 	{
@@ -296,7 +380,7 @@ void mmb_gfx_present_if(int page)
 void mmb_gfx_copy_page(int src, int dst, int blit)
 {
 	unsigned n, i;
-	uint32_t *s, *d;
+	uint16_t *s, *d;
 	if (src < 0 || src >= G.gfx.pages || dst < 0 || dst >= G.gfx.pages)
 		mmb_error("?PAGE");
 	s = page_buf(src);
@@ -304,24 +388,50 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
 	if (!blit)
 	{
-		memcpy(d, s, n * sizeof(uint32_t));
+		memcpy(d, s, n * sizeof(uint16_t));
+		if (dst == 1 && src != 1)
+		{
+			ensure_page1_alpha();
+			if (G.gfx.page1_alpha)
+			{
+				for (i = 0; i < n; i++)
+					G.gfx.page1_alpha[i] = s[i] ? 255 : 0;
+			}
+		}
 		return;
 	}
 	for (i = 0; i < n; i++)
-		if ((s[i] & 0xFFFFFFu) != 0)
+	{
+		if (s[i] != 0)
+		{
 			d[i] = s[i];
+			if (dst == 1)
+			{
+				ensure_page1_alpha();
+				if (G.gfx.page1_alpha)
+				{
+					if (src == 1)
+						; /* same alpha plane */
+					else
+						G.gfx.page1_alpha[i] = 255;
+				}
+			}
+		}
+	}
 }
 
-static uint32_t *composite_display(void)
+static uint16_t *composite_display(void)
 {
-	uint32_t *base, *over, *out;
+	uint16_t *base, *over, *out;
+	uint8_t *oa;
 	unsigned n, i, bytes;
 	base = page_buf(G.gfx.display_page);
 	if (G.gfx.display_page == 1 || !G.gfx.page[1])
 		return base;
 	over = G.gfx.page[1];
+	oa = G.gfx.page1_alpha;
 	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-	bytes = n * sizeof(uint32_t);
+	bytes = n * sizeof(uint16_t);
 	if (!G.gfx.present_scratch)
 	{
 		if (!G.plat || !G.plat->alloc)
@@ -332,16 +442,57 @@ static uint32_t *composite_display(void)
 	}
 	out = G.gfx.present_scratch;
 	for (i = 0; i < n; i++)
-		out[i] = overlay_blend(base[i], over[i]);
+	{
+		unsigned base_rgb = mmb_native_to_rgb(base[i]);
+		unsigned over_a = oa ? oa[i] : (over[i] ? 255u : 0u);
+		unsigned over_rgb = mmb_pix_load(over[i], over_a);
+		unsigned blended = overlay_blend(base_rgb, over_rgb);
+		out[i] = (uint16_t)mmb_rgb_to_native(blended);
+	}
 	return out;
+}
+
+static void present_native_or_rgb(int x, int y, int w, int h,
+				  const uint16_t *pix, int stride)
+{
+	if (G.plat->present_native)
+	{
+		G.plat->present_native(x, y, w, h, pix, stride);
+		return;
+	}
+	if (G.plat->present_rgb)
+	{
+		unsigned *tmp;
+		int i, j;
+		unsigned n = (unsigned)w * (unsigned)h;
+		tmp = G.plat->alloc(n * sizeof(unsigned));
+		if (!tmp)
+			goto pixel_fallback;
+		for (j = 0; j < h; j++)
+			for (i = 0; i < w; i++)
+				tmp[j * w + i] = mmb_native_to_rgb(pix[j * stride + i]);
+		G.plat->present_rgb(x, y, w, h, tmp, w);
+		G.plat->free(tmp);
+		return;
+	}
+pixel_fallback:
+	if (!G.plat->set_pixel)
+		return;
+	{
+		int px, py;
+		for (py = 0; py < h; py++)
+			for (px = 0; px < w; px++)
+				G.plat->set_pixel(x + px, y + py,
+						  mmb_native_to_rgb(pix[py * stride + px]));
+	}
 }
 
 /* CMM2 BLIT lives in gfx_cmm2.c (source page + orientation). */
 
 void mmb_gfx_present(void)
 {
-	int x, y, hw, hh;
-	uint32_t *pg;
+	int hw, hh;
+	uint16_t *pg;
 	if (G.opt.profiling && G.running)
 		G.prof.gfx_present++;
 	if (!G.plat)
@@ -353,21 +504,14 @@ void mmb_gfx_present(void)
 		hw = G.gfx.w;
 	if (hh > G.gfx.h)
 		hh = G.gfx.h;
-	if (G.plat->present_rgb)
-		G.plat->present_rgb(0, 0, hw, hh, pg, G.gfx.w);
-	else if (G.plat->set_pixel)
-	{
-		for (y = 0; y < hh; y++)
-			for (x = 0; x < hw; x++)
-				G.plat->set_pixel(x, y, pg[y * G.gfx.w + x]);
-	}
+	present_native_or_rgb(0, 0, hw, hh, pg, G.gfx.w);
 	mmb_sprite_overlay();
 }
 
 void mmb_gfx_present_rect(int x, int y, int w, int h)
 {
-	int px, py, hw, hh, x1, y1;
-	uint32_t *pg;
+	int hw, hh, x1, y1;
+	uint16_t *pg;
 	if (!G.plat)
 		return;
 	pg = composite_display();
@@ -399,16 +543,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 		y1 = hh;
 	if (x >= x1 || y >= y1)
 		return;
-	if (G.plat->present_rgb)
-	{
-		G.plat->present_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
-		return;
-	}
-	if (!G.plat->set_pixel)
-		return;
-	for (py = y; py < y1; py++)
-		for (px = x; px < x1; px++)
-			G.plat->set_pixel(px, py, pg[py * G.gfx.w + px]);
+	present_native_or_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
 }
 
 void mmb_gfx_init(void)
@@ -486,45 +621,74 @@ void mmb_gfx_set_mode(int mode, int bits)
 
 void mmb_gfx_plot(int x, int y, unsigned rgb)
 {
-	uint32_t *pg;
+	uint16_t *pg;
 	int tw, th, by;
+	unsigned alpha;
+	uint16_t np;
 	tw = tgt_w();
 	th = tgt_h();
 	y = map_y(y);
 	if (x < 0 || y < 0 || x >= tw || y >= th)
 		return;
-	rgb = mmb_quantize(rgb);
+	np = mmb_pix_store(rgb, &alpha);
 	if (mmb_gfx_writing_fb())
 		pg = G.gfx.fb;
 	else
 		pg = page_buf(G.gfx.write_page);
 	by = y;
-	pg[by * tw + x] = rgb;
+	pg[by * tw + x] = np;
+	if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
+	{
+		ensure_page1_alpha();
+		if (G.gfx.page1_alpha)
+			G.gfx.page1_alpha[by * tw + x] = (uint8_t)alpha;
+	}
 	if (mmb_gfx_writing_fb())
 		return;
+	rgb = mmb_pix_load(np, alpha);
 	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
 	{
 		unsigned shown = rgb;
 		if (G.gfx.display_page != 1 && G.gfx.page[1])
-			shown = overlay_blend(rgb, G.gfx.page[1][by * tw + x]);
-		G.plat->set_pixel(x, by, shown);
+		{
+			unsigned oa = G.gfx.page1_alpha
+					     ? G.gfx.page1_alpha[by * tw + x]
+					     : (G.gfx.page[1][by * tw + x] ? 255u : 0u);
+			shown = overlay_blend(rgb, mmb_pix_load(G.gfx.page[1][by * tw + x], oa));
+		}
+		G.plat->set_pixel(x, by, shown & 0xFFFFFFu);
 	}
 	else if (G.gfx.write_page == 1 && G.gfx.display_page != 1 &&
 		 G.plat && G.plat->set_pixel)
 	{
-		uint32_t *base = page_buf(G.gfx.display_page);
-		G.plat->set_pixel(x, by, overlay_blend(base[by * tw + x], rgb));
+		uint16_t *base = page_buf(G.gfx.display_page);
+		G.plat->set_pixel(x, by,
+				  overlay_blend(mmb_native_to_rgb(base[by * tw + x]), rgb) &
+					  0xFFFFFFu);
 	}
 }
 
 unsigned mmb_gfx_get_page(int x, int y, int page)
 {
-	int w, h, by;
-	uint32_t *pg = mmb_gfx_buf_for(page, &w, &h);
+	int w, h, by, resolved;
+	uint16_t *pg;
+	unsigned alpha = 255;
+
+	resolved = page;
+	if (resolved == MMB_PAGE_CUR)
+	{
+		if (mmb_gfx_writing_fb())
+			resolved = MMB_PAGE_FB;
+		else
+			resolved = G.gfx.write_page;
+	}
+	pg = mmb_gfx_buf_for(page, &w, &h);
 	by = mmb_gfx_map_y(y, h);
 	if (x < 0 || by < 0 || x >= w || by >= h)
 		return 0;
-	return pg[by * w + x];
+	if (resolved == 1 && G.gfx.page1_alpha)
+		alpha = G.gfx.page1_alpha[by * w + x];
+	return mmb_pix_load(pg[by * w + x], alpha);
 }
 
 unsigned mmb_gfx_get(int x, int y)
@@ -532,32 +696,36 @@ unsigned mmb_gfx_get(int x, int y)
 	return mmb_gfx_get_page(x, y, MMB_PAGE_CUR);
 }
 
-/* AArch64 has no REP STOSD; STP of a duplicated RGB dword writes four pixels. */
-static void fill_u32(uint32_t *dst, unsigned n, uint32_t v)
+/* AArch64 has no REP STOSD; STP of duplicated halfwords fills eight pixels. */
+static void fill_u16(uint16_t *dst, unsigned n, uint16_t v)
 {
-	uint32_t *end;
+	uint16_t *end;
 
 	if (!n)
 		return;
 	end = dst + n;
 #if defined(__aarch64__)
 	{
-		uint32_t *blk;
-		uint64_t pair;
+		uint16_t *blk;
+		uint64_t quad;
+		uint32_t pair;
 
-		if (((uintptr_t)dst & 4u) && dst < end)
+		if (((uintptr_t)dst & 1u) && dst < end)
+			*dst++ = v;
+		if (((uintptr_t)dst & 2u) && dst < end)
 			*dst++ = v;
 		blk = dst + ((unsigned)(end - dst) & ~3u);
 		if (dst < blk)
 		{
-			pair = ((uint64_t)v << 32) | (uint64_t)v;
+			pair = ((uint32_t)v << 16) | (uint32_t)v;
+			quad = ((uint64_t)pair << 32) | (uint64_t)pair;
 			__asm__ volatile(
 				"1:\n\t"
-				"stp %[pair], %[pair], [%[p]], #16\n\t"
+				"stp %[quad], %[quad], [%[p]], #16\n\t"
 				"cmp %[p], %[blk]\n\t"
 				"b.lo 1b\n"
 				: [p] "+r"(dst)
-				: [blk] "r"(blk), [pair] "r"(pair)
+				: [blk] "r"(blk), [quad] "r"(quad)
 				: "memory", "cc");
 		}
 	}
@@ -569,15 +737,23 @@ static void fill_u32(uint32_t *dst, unsigned n, uint32_t v)
 void mmb_gfx_cls(unsigned rgb)
 {
 	int tw, th;
-	uint32_t *pg;
-	rgb = mmb_quantize(rgb);
+	uint16_t *pg;
+	unsigned alpha;
+	uint16_t np;
+	np = mmb_pix_store(rgb, &alpha);
 	tw = tgt_w();
 	th = tgt_h();
 	if (mmb_gfx_writing_fb())
 		pg = G.gfx.fb;
 	else
 		pg = page_buf(G.gfx.write_page);
-	fill_u32(pg, (unsigned)tw * (unsigned)th, rgb);
+	fill_u16(pg, (unsigned)tw * (unsigned)th, np);
+	if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
+	{
+		ensure_page1_alpha();
+		if (G.gfx.page1_alpha)
+			memset(G.gfx.page1_alpha, (int)alpha, (unsigned)tw * (unsigned)th);
+	}
 	if (mmb_gfx_writing_fb())
 		return;
 	if (G.gfx.write_page == G.gfx.display_page &&
@@ -586,7 +762,7 @@ void mmb_gfx_cls(unsigned rgb)
 		if (G.gfx.display_page != 1 && G.gfx.page[1])
 			mmb_gfx_present();
 		else
-			G.plat->fill_screen(rgb);
+			G.plat->fill_screen(mmb_native_to_rgb(np));
 	}
 	else if (G.gfx.write_page == 1)
 		mmb_gfx_present();

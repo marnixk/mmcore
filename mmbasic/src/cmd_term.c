@@ -723,7 +723,7 @@ static void pane_scroll_up(void)
 
 static void pane_scroll_smooth(void)
 {
-	uint32_t *pg;
+	uint16_t *pg;
 	int x0, y, w, h, pw, ph, saved;
 	unsigned fill = TM_BG;
 
@@ -737,14 +737,27 @@ static void pane_scroll_smooth(void)
 	pg = mmb_gfx_buf_for(1, &w, &h);
 	if (pg && ph > TM_CH)
 	{
+		uint16_t fill_n;
+		unsigned fill_a;
+		uint8_t *al = G.gfx.page1_alpha;
+		fill_n = mmb_pix_store(fill, &fill_a);
 		for (y = 0; y < ph - TM_CH && y + TM_CH < h; y++)
+		{
 			memmove(pg + y * w + x0, pg + (y + TM_CH) * w + x0,
-				(unsigned)pw * sizeof(uint32_t));
+				(unsigned)pw * sizeof(uint16_t));
+			if (al)
+				memmove(al + y * w + x0, al + (y + TM_CH) * w + x0,
+					(unsigned)pw);
+		}
 		for (y = ph - TM_CH; y < ph && y < h; y++)
 		{
 			int x;
 			for (x = 0; x < pw && x0 + x < w; x++)
-				pg[y * w + x0 + x] = fill;
+			{
+				pg[y * w + x0 + x] = fill_n;
+				if (al)
+					al[y * w + x0 + x] = (uint8_t)fill_a;
+			}
 		}
 	}
 	G.gfx.write_page = saved;
@@ -1027,7 +1040,7 @@ static void term_draw_row(int r)
 
 static void term_copy_rect(int x, int y, int pw, int ph)
 {
-	uint32_t *s, *d;
+	uint16_t *s, *d;
 	int w, h, row;
 
 	s = mmb_gfx_buf_for(1, &w, &h);
@@ -1053,7 +1066,7 @@ static void term_copy_rect(int x, int y, int pw, int ph)
 	for (row = 0; row < ph; row++)
 	{
 		memcpy(d + (y + row) * w + x, s + (y + row) * w + x,
-		       (unsigned)pw * sizeof(uint32_t));
+		       (unsigned)pw * sizeof(uint16_t));
 		if ((row & 15) == 15)
 			mmb_net_yield();
 	}
@@ -1061,7 +1074,7 @@ static void term_copy_rect(int x, int y, int pw, int ph)
 
 static void term_copy_pane(void)
 {
-	uint32_t *s, *d;
+	uint16_t *s, *d;
 	int w, h, y, x0, pw, ph;
 
 	s = mmb_gfx_buf_for(1, &w, &h);
@@ -1081,7 +1094,7 @@ static void term_copy_pane(void)
 		ph = h;
 	for (y = 0; y < ph; y++)
 	{
-		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint32_t));
+		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint16_t));
 		if ((y & 15) == 15)
 			mmb_net_yield();
 	}
@@ -1132,14 +1145,14 @@ static void term_present_rows(int lo, int hi)
 
 static void term_copy_screen(void)
 {
-	uint32_t *s, *d;
+	uint16_t *s, *d;
 	int w, h;
 
 	s = mmb_gfx_buf_for(1, &w, &h);
 	d = mmb_gfx_buf_for(0, &w, &h);
 	if (!s || !d)
 		return;
-	memcpy(d, s, (unsigned)w * (unsigned)h * sizeof(uint32_t));
+	memcpy(d, s, (unsigned)w * (unsigned)h * sizeof(uint16_t));
 }
 
 static void term_draw(void)

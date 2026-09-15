@@ -5,14 +5,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static unsigned sample_user(uint32_t *s, int sw, int sh, int x, int y)
-{
-	int by = mmb_gfx_map_y(y, sh);
-	if (x < 0 || by < 0 || x >= sw || by >= sh)
-		return 0;
-	return s[by * sw + x];
-}
-
 static unsigned lerp_rgb(unsigned a, unsigned b, double t)
 {
 	int ar, ag, ab, br, bg, bb;
@@ -29,19 +21,18 @@ static unsigned lerp_rgb(unsigned a, unsigned b, double t)
 
 static uint32_t *snap_rect(int page, int x, int y, int w, int h)
 {
-	int sw, sh, i, j;
-	uint32_t *s, *tmp;
+	int i, j;
+	uint32_t *tmp;
 	unsigned bytes;
 	if (w <= 0 || h <= 0)
 		mmb_error("?SYNTAX ERROR");
-	s = mmb_gfx_buf_for(page, &sw, &sh);
 	bytes = (unsigned)w * (unsigned)h * sizeof(uint32_t);
 	tmp = G.plat->alloc(bytes);
 	if (!tmp)
 		mmb_error("?OUT OF MEMORY");
 	for (j = 0; j < h; j++)
 		for (i = 0; i < w; i++)
-			tmp[j * w + i] = sample_user(s, sw, sh, x + i, y + j);
+			tmp[j * w + i] = mmb_gfx_get_page(x + i, y + j, page);
 	return tmp;
 }
 
@@ -101,7 +92,7 @@ void mmb_gfx_fb_create(int w, int h)
 		mmb_error("?FRAMEBUFFER");
 	if (w < G.gfx.w || h < G.gfx.h || w > MMB_FB_MAX_W || h > MMB_FB_MAX_H)
 		mmb_error("?FRAMEBUFFER");
-	bytes = (unsigned)w * (unsigned)h * sizeof(uint32_t);
+	bytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
 	G.gfx.fb = G.plat->alloc(bytes);
 	if (!G.gfx.fb)
 		mmb_error("?OUT OF MEMORY");
@@ -122,7 +113,7 @@ void mmb_gfx_fb_backup(void)
 	unsigned bytes;
 	if (!G.gfx.fb)
 		mmb_error("?FRAMEBUFFER");
-	bytes = (unsigned)G.gfx.fb_w * (unsigned)G.gfx.fb_h * sizeof(uint32_t);
+	bytes = (unsigned)G.gfx.fb_w * (unsigned)G.gfx.fb_h * sizeof(uint16_t);
 	if (!G.gfx.fb_bak)
 	{
 		G.gfx.fb_bak = G.plat->alloc(bytes);
@@ -140,7 +131,7 @@ void mmb_gfx_fb_restore(int x, int y, int w, int h, int all)
 	if (all)
 	{
 		memcpy(G.gfx.fb, G.gfx.fb_bak,
-		       (unsigned)G.gfx.fb_w * (unsigned)G.gfx.fb_h * sizeof(uint32_t));
+		       (unsigned)G.gfx.fb_w * (unsigned)G.gfx.fb_h * sizeof(uint16_t));
 		return;
 	}
 	if (w < 0) { x += w; w = -w; }
@@ -163,7 +154,7 @@ void mmb_gfx_fb_restore(int x, int y, int w, int h, int all)
 void mmb_gfx_fb_window(int x, int y, int page)
 {
 	int i, j, dw, dh;
-	uint32_t *d;
+	uint16_t *d;
 	if (!G.gfx.fb)
 		mmb_error("?FRAMEBUFFER");
 	if (page == MMB_PAGE_FB)
@@ -175,10 +166,12 @@ void mmb_gfx_fb_window(int x, int y, int page)
 		for (i = 0; i < G.gfx.w && i < dw; i++)
 		{
 			int sx = x + i;
-			unsigned c = 0;
+			uint16_t c = 0;
 			if (sx >= 0 && sy >= 0 && sx < G.gfx.fb_w && sy < G.gfx.fb_h)
 				c = G.gfx.fb[sy * G.gfx.fb_w + sx];
 			d[j * dw + i] = c;
+			if (page == 1 && G.gfx.page1_alpha)
+				G.gfx.page1_alpha[j * dw + i] = c ? 255 : 0;
 		}
 	}
 	mmb_gfx_present_if(page);
@@ -432,16 +425,27 @@ void mmb_gfx_image_warp_v(int x, int y, int w, int h, int x1, int y1, int w1,
 void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
 {
 	int w, h, i, j;
-	uint32_t *pg, *tmp;
-	unsigned bytes, fcol = 0;
+	uint16_t *pg, *tmp;
+	uint8_t *al = 0, *atmp = 0;
+	unsigned bytes, fcol = 0, falpha = 0;
 	pg = mmb_gfx_buf_for(page, &w, &h);
-	bytes = (unsigned)w * (unsigned)h * sizeof(uint32_t);
+	bytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
 	tmp = G.plat->alloc(bytes);
 	if (!tmp)
 		mmb_error("?OUT OF MEMORY");
 	memcpy(tmp, pg, bytes);
+	if (page == 1 && G.gfx.page1_alpha)
+	{
+		al = G.gfx.page1_alpha;
+		atmp = G.plat->alloc((unsigned)w * (unsigned)h);
+		if (atmp)
+			memcpy(atmp, al, (unsigned)w * (unsigned)h);
+	}
 	if (has_fill && fill >= 0)
-		fcol = mmb_quantize((unsigned)fill);
+	{
+		uint16_t np = mmb_pix_store((unsigned)fill, &falpha);
+		fcol = np;
+	}
 	for (j = 0; j < h; j++)
 	{
 		for (i = 0; i < w; i++)
@@ -459,24 +463,36 @@ void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
 				if (sj < 0)
 					sj += h;
 				pg[j * w + i] = tmp[sj * w + si];
+				if (al && atmp)
+					al[j * w + i] = atmp[sj * w + si];
 			}
 			else if (si < 0 || sj < 0 || si >= w || sj >= h)
 			{
 				if (fill != -1)
-					pg[j * w + i] = fcol;
+				{
+					pg[j * w + i] = (uint16_t)fcol;
+					if (al)
+						al[j * w + i] = (uint8_t)falpha;
+				}
 			}
 			else
+			{
 				pg[j * w + i] = tmp[sj * w + si];
+				if (al && atmp)
+					al[j * w + i] = atmp[sj * w + si];
+			}
 		}
 	}
 	G.plat->free(tmp);
+	if (atmp)
+		G.plat->free(atmp);
 	mmb_gfx_present_if(page);
 }
 
 void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 {
 	int w1, h1, w2, h2, wd, hd, w, h, i, j;
-	uint32_t *a, *b, *d;
+	uint16_t *a, *b, *d;
 	a = mmb_gfx_buf_for(p1, &w1, &h1);
 	b = mmb_gfx_buf_for(p2, &w2, &h2);
 	d = mmb_gfx_buf_for(dst, &wd, &hd);
@@ -495,7 +511,7 @@ void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 				r = ca | cb;
 			else
 				r = ca ^ cb;
-			d[j * wd + i] = r;
+			d[j * wd + i] = (uint16_t)r;
 		}
 	}
 	mmb_gfx_present_if(dst);
@@ -504,8 +520,9 @@ void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int page)
 {
 	int sw, sh, i, j;
-	uint32_t *pg;
-	col = mmb_quantize(col);
+	uint16_t *pg;
+	uint16_t cn;
+	cn = (uint16_t)mmb_rgb_to_native(mmb_quantize(col));
 	pg = mmb_gfx_buf_for(page, &sw, &sh);
 	if (w < 0) { x += w; w = -w; }
 	if (h < 0) { y += h; h = -h; }
@@ -517,16 +534,16 @@ void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int pag
 		for (i = 0; i < w; i++)
 		{
 			int xx = x + i;
-			unsigned c;
+			uint16_t c;
 			if (xx < 0 || xx >= sw)
 				continue;
 			c = pg[yy * sw + xx];
 			if (op == '&')
-				c &= col;
+				c &= cn;
 			else if (op == '|')
-				c |= col;
+				c |= cn;
 			else
-				c ^= col;
+				c ^= cn;
 			pg[yy * sw + xx] = c;
 		}
 	}
