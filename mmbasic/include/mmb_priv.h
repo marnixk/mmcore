@@ -214,6 +214,8 @@ typedef struct mmb_gfx {
 	/* HDMI-native page buffers. Page 1 alpha lives in page1_alpha. */
 	uint16_t *page[MMB_MAX_PAGES];
 	uint8_t *page1_alpha; /* 0=clear, 1..15=blend, 255=opaque (black-transparent if 0 colour) */
+	int page1_alpha_used; /* any partial AFLAG (1..15) written since last CLS */
+	int page1_any;        /* any non-zero native pixel on page 1 since last CLS */
 	uint16_t *present_scratch;
 	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
 	int dirty;
