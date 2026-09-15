@@ -1364,12 +1364,42 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
 	}
 }
 
+static void glyph_cell_row_opaque(uint16_t *pg, int tw, int by, int x,
+				  uint16_t fg_n, uint16_t bg_n, unsigned char bits)
+{
+	uint16_t pix[8];
+	int col, px;
+
+	pix[0] = (bits & 0x80u) ? fg_n : bg_n;
+	pix[1] = (bits & 0x40u) ? fg_n : bg_n;
+	pix[2] = (bits & 0x20u) ? fg_n : bg_n;
+	pix[3] = (bits & 0x10u) ? fg_n : bg_n;
+	pix[4] = (bits & 0x08u) ? fg_n : bg_n;
+	pix[5] = (bits & 0x04u) ? fg_n : bg_n;
+	pix[6] = (bits & 0x02u) ? fg_n : bg_n;
+	pix[7] = (bits & 0x01u) ? fg_n : bg_n;
+	if (x >= 0 && (x & 7) == 0 && x + 8 <= tw)
+	{
+		uint64_t *d = (uint64_t *)(pg + by * tw + x);
+		memcpy(d, pix, 16);
+		return;
+	}
+	for (col = 0; col < 8; col++)
+	{
+		px = x + col;
+		if (px < 0 || px >= tw)
+			continue;
+		pg[by * tw + px] = pix[col];
+	}
+}
+
 void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
 	uint16_t *pg;
 	int tw, th, row, col, by, px;
 	unsigned fa, ba;
 	uint16_t fg_n, bg_n;
+	int opaque_fast;
 
 	tw = tgt_w();
 	th = tgt_h();
@@ -1382,6 +1412,20 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 	if (!pg)
 		return;
 	ch &= 0xFFu;
+	opaque_fast = !mmb_gfx_writing_fb() && G.gfx.write_page != 1;
+	if (opaque_fast)
+	{
+		for (row = 0; row < 16; row++)
+		{
+			unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
+
+			by = map_y(y + row);
+			if (by < 0 || by >= th)
+				continue;
+			glyph_cell_row_opaque(pg, tw, by, x, fg_n, bg_n, bits);
+		}
+		return;
+	}
 	for (row = 0; row < 16; row++)
 	{
 		unsigned char bits = mmb_cp437_8x16[ch * 16 + row];

@@ -62,11 +62,14 @@ the copied region dirty. `mmb_gfx_present()` prefers `present_rect` of that AABB
 when dirty is set; otherwise it presents the full frame (MODE / `PAGE DISPLAY` /
 CLS of the display clear dirty first so the present stays full-screen).
 
-On hardware (`SCREEN_DMA_BURST_LENGTH`), `plat_present_native` /
-`plat_present_rgb` pass a SetArea completion routine so the copy can finish
-asynchronously. A new present waits for any in-flight DMA (`plat_present_wait`)
-before reusing bounce buffers or starting another SetArea. Under QEMU
-(`NO_SCREEN_DMA_BURST_LENGTH`) presents stay synchronous.
+On hardware (`SCREEN_DMA_BURST_LENGTH`), BASIC `plat_present_native` /
+`plat_present_rgb` use synchronous `SetArea` (wait for DMA completion before
+return). TERM uses `plat->term_present_async` / `plat->term_present_drain`:
+one async blit in flight, pending damage coalesced into a Y-range (pixel rows;
+`0xffffffff` = empty), double bounce buffers so CPU copies never touch memory
+the in-flight DMA reads, and drain on TERM exit or mode change. Under QEMU
+(`NO_SCREEN_DMA_BURST_LENGTH`) TERM presents are still synchronous; drain is a
+no-op.
 
 ## PAGE DISPLAY virtual-offset flip (Pi ≤ 4 hardware)
 

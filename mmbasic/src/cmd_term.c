@@ -1046,30 +1046,59 @@ static void term_copy_rows(int lo, int hi)
 	term_copy_rect(x0, y, pw, ph);
 }
 
-static void term_present_pane(void)
+static void term_rect_union(int *ax, int *ay, int *aw, int *ah,
+			    int x, int y, int w, int h)
 {
-	int x0 = T.pane_left * TM_CW;
-	int pw = term_width() * TM_CW;
-	int ph = term_fb_h();
+	int x2, y2, nx2, ny2;
 
-	mmb_gfx_present_rect(x0, 0, pw, ph);
+	if (w <= 0 || h <= 0)
+		return;
+	if (*aw <= 0 || *ah <= 0)
+	{
+		*ax = x;
+		*ay = y;
+		*aw = w;
+		*ah = h;
+		return;
+	}
+	x2 = *ax + *aw;
+	y2 = *ay + *ah;
+	nx2 = x + w;
+	ny2 = y + h;
+	if (x < *ax)
+		*ax = x;
+	if (y < *ay)
+		*ay = y;
+	if (nx2 > x2)
+		x2 = nx2;
+	if (ny2 > y2)
+		y2 = ny2;
+	*aw = x2 - *ax;
+	*ah = y2 - *ay;
 }
 
-static void term_present_rows(int lo, int hi)
+static void term_present_async_rect(int x, int y, int w, int h)
 {
-	int x0 = T.pane_left * TM_CW;
-	int pw = term_width() * TM_CW;
-	int y, ph;
+	uint16_t *pg;
+	int bw, bh;
 
-	if (lo < 0)
-		lo = 0;
-	if (hi >= T.pane_rows)
-		hi = T.pane_rows - 1;
-	if (hi < lo)
+	if (w <= 0 || h <= 0 || !G.plat)
 		return;
-	y = lo * TM_CH;
-	ph = (hi - lo + 1) * TM_CH;
-	mmb_gfx_present_rect(x0, y, pw, ph);
+	if (G.plat->term_present_async)
+	{
+		pg = mmb_gfx_buf_for(0, &bw, &bh);
+		if (!pg)
+			return;
+		G.plat->term_present_async(x, y, w, h, pg + y * bw + x, bw);
+		return;
+	}
+	mmb_gfx_present_rect(x, y, w, h);
+}
+
+static void term_present_drain(void)
+{
+	if (G.plat && G.plat->term_present_drain)
+		G.plat->term_present_drain();
 }
 
 static void term_copy_screen(void)
@@ -1129,37 +1158,49 @@ static void term_draw(void)
 	if (full_screen)
 	{
 		term_copy_screen();
+		term_present_drain();
 		mmb_gfx_present();
-	}
-	else if (T.present_full || T.menu || T.alt_pend)
-	{
-		term_copy_pane();
-		if (T.menu || T.alt_pend)
-		{
-			int top_h = T.menu ? 8 * TM_CH : TM_CH;
-			term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
-			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
-				    TM_CH);
-		}
-		term_present_pane();
-		if (T.menu || T.alt_pend)
-		{
-			int top_h = T.menu ? 8 * TM_CH : TM_CH;
-			mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, top_h);
-			mmb_gfx_present_rect(0, term_status_y(),
-					    T.vid_cols * TM_CW, TM_CH);
-		}
-	}
-	else if (lo >= 0 && hi >= lo)
-	{
-		term_copy_rows(lo, hi);
-		term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
-		term_present_rows(lo, hi);
 	}
 	else
 	{
-		term_copy_pane();
-		term_present_pane();
+		int px = 0, py = 0, pw = 0, ph = 0;
+		int x0 = T.pane_left * TM_CW;
+		int pane_w = term_width() * TM_CW;
+		int pane_h = term_fb_h();
+
+		if (T.present_full || T.menu || T.alt_pend)
+		{
+			term_copy_pane();
+			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
+			if (T.menu || T.alt_pend)
+			{
+				int top_h = T.menu ? 8 * TM_CH : TM_CH;
+
+				term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
+				term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
+						TM_CH);
+				term_rect_union(&px, &py, &pw, &ph, 0, 0,
+						T.vid_cols * TM_CW, top_h);
+				term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+						T.vid_cols * TM_CW, TM_CH);
+			}
+		}
+		else if (lo >= 0 && hi >= lo)
+		{
+			int y = lo * TM_CH;
+			int rh = (hi - lo + 1) * TM_CH;
+
+			term_copy_rows(lo, hi);
+			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
+			term_rect_union(&px, &py, &pw, &ph, x0, y, pane_w, rh);
+		}
+		else
+		{
+			term_copy_pane();
+			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
+		}
+		if (pw > 0 && ph > 0)
+			term_present_async_rect(px, py, pw, ph);
 	}
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
@@ -1179,6 +1220,7 @@ static void term_exit(void)
 	mmb_net_tcp_close();
 	T.tcp = 0;
 	T.connecting = 0;
+	term_present_drain();
 	if (G.plat && G.plat->present_wait)
 		G.plat->present_wait();
 	G.gfx.write_page = 0;
@@ -1647,7 +1689,10 @@ static void term_apply_session_mode(void)
 			mode = 14;
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
+	{
+		term_present_drain();
 		mmb_gfx_set_mode(mode, bits);
+	}
 	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 }
@@ -1666,6 +1711,7 @@ static void term_toggle_letterbox(void)
 		send_naws();
 	mark_dirty_full();
 	term_draw();
+	term_present_drain();
 	mmb_gfx_present();
 	term_serial_dump();
 }
@@ -1688,7 +1734,7 @@ static void term_present_overlay(int extra_w, int extra_h)
 	pw = (dlg_cw + extra_w) * TM_CW;
 	ph = (dlg_ch + extra_h) * TM_CH;
 	term_copy_rect(x, y, pw, ph);
-	mmb_gfx_present_rect(x, y, pw, ph);
+	term_present_async_rect(x, y, pw, ph);
 }
 
 static void term_dlg_refresh(void)
@@ -1711,10 +1757,17 @@ static void term_overlay_chrome(void)
 	G.gfx.write_page = TM_PAGE;
 	term_draw_status();
 	term_draw_menu();
-	term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
-	mmb_gfx_present_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
-	term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
-	mmb_gfx_present_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
+	{
+		int px = 0, py = 0, pw = 0, ph = 0;
+
+		term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+		term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
+		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+				T.vid_cols * TM_CW, TM_CH);
+		if (pw > 0 && ph > 0)
+			term_present_async_rect(px, py, pw, ph);
+	}
 	G.gfx.write_page = saved;
 	term_serial_dump();
 }

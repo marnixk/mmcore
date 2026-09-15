@@ -314,6 +314,8 @@ static int plat_h(void)
 	return s_kernel ? (int)s_kernel->Screen().GetHeight() : 480;
 }
 
+static void plat_term_present_drain(void);
+
 static int plat_resize_hdmi(int w, int h)
 {
 	unsigned prev_w, prev_h;
@@ -326,6 +328,8 @@ static int plat_resize_hdmi(int w, int h)
 	prev_h = sc.GetHeight();
 	if (prev_w == (unsigned)w && prev_h == (unsigned)h)
 		return 1;
+
+	plat_term_present_drain();
 
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */
@@ -903,6 +907,281 @@ static void plat_present_rgb(int x, int y, int w, int h,
 		plat_set_area(fb, area, s_present_pix);
 }
 
+#define TERM_PRESENT_EMPTY 0xffffffffu
+
+static u8 *s_term_bounce[2];
+static unsigned s_term_bounce_cap;
+#ifndef NO_SCREEN_DMA_BURST_LENGTH
+static volatile int s_term_in_flight;
+static volatile unsigned s_term_up_lo = TERM_PRESENT_EMPTY;
+static volatile unsigned s_term_up_hi = TERM_PRESENT_EMPTY;
+static int s_term_pending;
+static int s_term_px, s_term_py, s_term_pw, s_term_ph;
+static int s_term_flight_idx;
+static int s_term_standby_idx;
+#endif
+
+static unsigned term_bounce_need(int w, int h)
+{
+	return dma_buf_size((unsigned)w * (unsigned)h * (unsigned)(DEPTH / 8));
+}
+
+static int term_bounce_ensure(unsigned need)
+{
+	int i;
+
+	if (s_term_bounce_cap >= need)
+		return 1;
+	for (i = 0; i < 2; i++)
+	{
+		u8 *p = static_cast<u8 *>(malloc(need));
+		if (!p)
+			return 0;
+		if (s_term_bounce[i])
+			free(s_term_bounce[i]);
+		s_term_bounce[i] = p;
+	}
+	s_term_bounce_cap = need;
+	return 1;
+}
+
+static void term_copy_to_bounce(void *dst, const void *src, int w, int h,
+				int stride, unsigned bpp)
+{
+	int py;
+	unsigned row = (unsigned)w * bpp;
+
+	for (py = 0; py < h; py++)
+		memcpy(static_cast<u8 *>(dst) + py * row,
+		       static_cast<const u8 *>(src) + (unsigned)py * (unsigned)stride * bpp,
+		       row);
+}
+
+#ifndef NO_SCREEN_DMA_BURST_LENGTH
+static void term_present_kick(CBcmFrameBuffer *fb, int x, int y, int w, int h,
+			      const void *pix);
+
+static void term_present_done(void *param)
+{
+	int pending, x, y, w, h, idx;
+	void *pix;
+	CBcmFrameBuffer *fb;
+
+	(void)param;
+	AtomicSet(&s_term_in_flight, 0);
+	pending = 0;
+	DisableInterrupts();
+	if (s_term_pending)
+	{
+		pending = 1;
+		s_term_pending = 0;
+		x = s_term_px;
+		y = s_term_py;
+		w = s_term_pw;
+		h = s_term_ph;
+		idx = s_term_standby_idx;
+	}
+	EnableInterrupts();
+	if (!pending || !s_kernel)
+		return;
+	pix = s_term_bounce[idx];
+	if (!pix)
+		return;
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (!fb)
+		return;
+	s_term_flight_idx = idx;
+	term_present_kick(fb, x, y, w, h, pix);
+}
+
+static void term_present_kick(CBcmFrameBuffer *fb, int x, int y, int w, int h,
+			      const void *pix)
+{
+	CDisplay::TArea area;
+
+	area.x1 = (unsigned)x;
+	area.x2 = (unsigned)(x + w - 1);
+	area.y1 = (unsigned)y;
+	area.y2 = (unsigned)(y + h - 1);
+	fb_draw_visible(fb);
+	AtomicSet(&s_term_in_flight, 1);
+	fb->SetArea(area, pix, term_present_done, nullptr);
+}
+static void term_merge_pending(int x, int y, int w, int h)
+{
+	int x2, nx2;
+
+	if (!s_term_pending)
+	{
+		s_term_px = x;
+		s_term_py = y;
+		s_term_pw = w;
+		s_term_ph = h;
+		s_term_up_lo = (unsigned)y;
+		s_term_up_hi = (unsigned)(y + h - 1);
+		return;
+	}
+	x2 = s_term_px + s_term_pw;
+	nx2 = x + w;
+	if (x < s_term_px)
+		s_term_px = x;
+	if (nx2 > x2)
+		x2 = nx2;
+	s_term_pw = x2 - s_term_px;
+	if ((unsigned)y < s_term_up_lo)
+		s_term_up_lo = (unsigned)y;
+	if ((unsigned)(y + h - 1) > s_term_up_hi)
+		s_term_up_hi = (unsigned)(y + h - 1);
+	s_term_py = (int)s_term_up_lo;
+	s_term_ph = (int)(s_term_up_hi - s_term_up_lo + 1);
+}
+#endif
+
+static void plat_term_present_async(int x, int y, int w, int h,
+				    const void *pix, int stride)
+{
+	CBcmFrameBuffer *fb;
+	CScreenDevice *sc;
+	const TScreenColor *src;
+	unsigned need, bpp;
+	void *bounce;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	sc = &s_kernel->Screen();
+	fb = sc->GetFrameBuffer();
+	if (!fb)
+		return;
+	bpp = (unsigned)(DEPTH / 8);
+	if (!present_clip(sc, &x, &y, &w, &h, stride, &pix, bpp))
+		return;
+	src = static_cast<const TScreenColor *>(pix);
+#ifdef NO_SCREEN_DMA_BURST_LENGTH
+	need = term_bounce_need(w, h);
+	if (stride == w)
+		bounce = const_cast<void *>(pix);
+	else
+	{
+		if (!term_bounce_ensure(need))
+			return;
+		bounce = s_term_bounce[0];
+		term_copy_to_bounce(bounce, src, w, h, stride, bpp);
+	}
+	fb_draw_visible(fb);
+	{
+		CDisplay::TArea area;
+		area.x1 = (unsigned)x;
+		area.x2 = (unsigned)(x + w - 1);
+		area.y1 = (unsigned)y;
+		area.y2 = (unsigned)(y + h - 1);
+		fb->SetArea(area, bounce);
+	}
+	return;
+#else
+	{
+	const TScreenColor *page = src - y * stride - x;
+	int standby, merged_w, merged_h;
+
+	merged_w = w;
+	merged_h = h;
+	if (AtomicGet(&s_term_in_flight))
+	{
+		DisableInterrupts();
+		term_merge_pending(x, y, w, h);
+		merged_w = s_term_pw;
+		merged_h = s_term_ph;
+		x = s_term_px;
+		y = s_term_py;
+		standby = 1 - s_term_flight_idx;
+		s_term_standby_idx = standby;
+		EnableInterrupts();
+		need = term_bounce_need(merged_w, merged_h);
+		if (!term_bounce_ensure(need))
+		{
+			DisableInterrupts();
+			s_term_pending = 0;
+			s_term_up_lo = TERM_PRESENT_EMPTY;
+			s_term_up_hi = TERM_PRESENT_EMPTY;
+			EnableInterrupts();
+			return;
+		}
+		bounce = s_term_bounce[standby];
+		term_copy_to_bounce(bounce, page + y * stride + x, merged_w, merged_h,
+				    stride, bpp);
+		DisableInterrupts();
+		s_term_pending = 1;
+		/* DMA may have finished during the copy; kick ourselves. */
+		if (!AtomicGet(&s_term_in_flight))
+		{
+			s_term_pending = 0;
+			s_term_up_lo = TERM_PRESENT_EMPTY;
+			s_term_up_hi = TERM_PRESENT_EMPTY;
+			s_term_flight_idx = standby;
+			EnableInterrupts();
+			term_present_kick(fb, x, y, merged_w, merged_h, bounce);
+			return;
+		}
+		EnableInterrupts();
+		return;
+	}
+	need = term_bounce_need(w, h);
+	if (!term_bounce_ensure(need))
+		return;
+	s_term_flight_idx = 0;
+	bounce = s_term_bounce[0];
+	term_copy_to_bounce(bounce, src, w, h, stride, bpp);
+	s_term_up_lo = TERM_PRESENT_EMPTY;
+	s_term_up_hi = TERM_PRESENT_EMPTY;
+	s_term_pending = 0;
+	term_present_kick(fb, x, y, w, h, bounce);
+	}
+#endif
+}
+
+static void plat_term_present_drain(void)
+{
+#ifdef NO_SCREEN_DMA_BURST_LENGTH
+	return;
+#else
+	int pending, x, y, w, h, idx;
+	void *pix;
+	CBcmFrameBuffer *fb;
+
+	for (;;)
+	{
+		while (AtomicGet(&s_term_in_flight))
+			;
+		pending = 0;
+		DisableInterrupts();
+		if (s_term_pending)
+		{
+			pending = 1;
+			s_term_pending = 0;
+			x = s_term_px;
+			y = s_term_py;
+			w = s_term_pw;
+			h = s_term_ph;
+			idx = s_term_standby_idx;
+			s_term_up_lo = TERM_PRESENT_EMPTY;
+			s_term_up_hi = TERM_PRESENT_EMPTY;
+		}
+		EnableInterrupts();
+		if (!pending)
+			return;
+		if (!s_kernel)
+			return;
+		pix = s_term_bounce[idx];
+		if (!pix)
+			return;
+		fb = s_kernel->Screen().GetFrameBuffer();
+		if (!fb)
+			return;
+		s_term_flight_idx = idx;
+		term_present_kick(fb, x, y, w, h, pix);
+	}
+#endif
+}
+
 static void plat_present_native(int x, int y, int w, int h,
 				const void *pix, int stride)
 {
@@ -1085,6 +1364,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.present_rgb = plat_present_rgb;
 	plat.present_native = plat_present_native;
 	plat.present_wait = plat_present_wait;
+	plat.term_present_async = plat_term_present_async;
+	plat.term_present_drain = plat_term_present_drain;
 	plat.present_set_flip = plat_present_set_flip;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
