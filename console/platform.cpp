@@ -62,14 +62,8 @@ static void fb_draw_visible(CBcmFrameBuffer *fb)
 }
 
 #ifndef NO_SCREEN_DMA_BURST_LENGTH
-/* Serialise async present: wait before starting a new SetArea / reusing bounce. */
+/* Serialise presents against any leftover async SetArea from older kernels. */
 static volatile int s_present_busy;
-
-static void plat_present_done(void *param)
-{
-	(void)param;
-	AtomicSet(&s_present_busy, 0);
-}
 
 static void plat_present_wait(void)
 {
@@ -82,8 +76,9 @@ static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
 {
 	plat_present_wait();
 	fb_draw_visible(fb);
-	AtomicSet(&s_present_busy, 1);
-	fb->SetArea(area, pix, plat_present_done, 0);
+	/* Synchronous DMA Wait() — IRQ completion can leave s_present_busy /
+	 * m_nDMAInUse stuck, which hangs TERM Alt-X in plat_fill / free_pages. */
+	fb->SetArea(area, pix);
 }
 
 /* Synchronous SetArea into the back half, then virt-offset flip (tear-free). */
@@ -286,6 +281,7 @@ static void plat_fill(unsigned rgb)
 	 * CLS is not undone by the terminal wipe. Never write ANSI to serial
 	 * (tests assert send_line("CLS") == ""). */
 	CScreenDevice &sc = s_kernel->Screen();
+	plat_present_wait();
 	/* MODE/TERM exit may skip resize; still drop virt-offset back to half 0
 	 * so the console writes the scanned-out plane (#315). */
 	fb_flip_reset(sc.GetFrameBuffer());

@@ -29,6 +29,7 @@
 #define TM_MAX_COLS   256
 #define TM_CH         16
 #define TM_CW         8
+#define TM_PAGE       2
 #define TM_MAX_ROWS   80
 #define TM_LINE     256
 #define TM_ESC_BUF  16
@@ -659,7 +660,7 @@ static void term_unpaint_cursor(void)
 	if (!T.cur_shown)
 		return;
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	term_paint_cursor = 0;
 	term_draw_row(T.cur_shown_row);
 	term_paint_cursor = 1;
@@ -677,7 +678,7 @@ static void pane_flush_dirty_pixels(void)
 	if (T.cur_shown)
 		mark_dirty_row(T.cur_shown_row);
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	if (T.dirty_full)
 	{
 		lo = 0;
@@ -733,31 +734,24 @@ static void pane_scroll_smooth(void)
 	pw = term_width() * TM_CW;
 	ph = T.pane_rows * TM_CH;
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
-	pg = mmb_gfx_buf_for(1, &w, &h);
+	G.gfx.write_page = TM_PAGE;
+	pg = mmb_gfx_buf_for(TM_PAGE, &w, &h);
 	if (pg && ph > TM_CH)
 	{
 		uint16_t fill_n;
 		unsigned fill_a;
-		uint8_t *al = G.gfx.page1_alpha;
 		fill_n = mmb_pix_store(fill, &fill_a);
+		(void)fill_a;
 		for (y = 0; y < ph - TM_CH && y + TM_CH < h; y++)
 		{
 			memmove(pg + y * w + x0, pg + (y + TM_CH) * w + x0,
 				(unsigned)pw * sizeof(uint16_t));
-			if (al)
-				memmove(al + y * w + x0, al + (y + TM_CH) * w + x0,
-					(unsigned)pw);
 		}
 		for (y = ph - TM_CH; y < ph && y < h; y++)
 		{
 			int x;
 			for (x = 0; x < pw && x0 + x < w; x++)
-			{
 				pg[y * w + x0 + x] = fill_n;
-				if (al)
-					al[y * w + x0 + x] = (uint8_t)fill_a;
-			}
 		}
 	}
 	G.gfx.write_page = saved;
@@ -824,19 +818,9 @@ static void pane_puts(const char *s)
 	}
 }
 
-static void term_put_str(int x, int y, const char *s, unsigned fg)
-{
-	int i;
-	if (!s)
-		return;
-	for (i = 0; s[i]; i++)
-		mmb_gfx_glyph_cp437(x + i * TM_CW, y, (unsigned char)s[i], fg);
-}
-
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
-	mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
-	mmb_gfx_glyph_cp437(x, y, ch, fg);
+	mmb_gfx_glyph_cell(x, y, ch, fg, bg);
 }
 
 static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
@@ -851,7 +835,7 @@ static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned b
 static void term_fill_cells(int x, int y, int n, unsigned bg)
 {
 	if (n > 0)
-		mmb_gfx_box(x, y, n * TM_CW, TM_CH, bg, 1, (int)bg);
+		mmb_gfx_fill_rect(x, y, n * TM_CW, TM_CH, bg);
 }
 
 static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
@@ -886,7 +870,7 @@ static void term_draw_status(void)
 		return;
 	y = term_status_y();
 	x0 = 0;
-	mmb_gfx_box(0, y, T.vid_cols * TM_CW, TM_CH, bg, 1, (int)bg);
+	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
 	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
@@ -964,7 +948,7 @@ static void term_draw_menu(void)
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
-	mmb_gfx_box(0, 0, bar_w, TM_CH, TM_MENU_BG, 1, (int)TM_MENU_BG);
+	mmb_gfx_fill_rect(0, 0, bar_w, TM_CH, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
 	term_cell(0, 0, ' ', title_fg, title_bg);
@@ -975,8 +959,7 @@ static void term_draw_menu(void)
 	x0 = TM_CW;
 	y0 = TM_CH;
 	drop_h = n + 2;
-	mmb_gfx_box(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG, 1,
-		    (int)TM_DLG_BG);
+	mmb_gfx_fill_rect(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
@@ -1001,23 +984,19 @@ static void term_draw_menu(void)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
-	mmb_gfx_box(x0 + w * TM_CW, y0, 2 * TM_CW, drop_h * TM_CH, TM_SH_BG, 1,
-		    (int)TM_SH_BG);
-	mmb_gfx_box(x0 + 2 * TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH,
-		    TM_SH_BG, 1, (int)TM_SH_BG);
+	mmb_gfx_fill_rect(x0 + w * TM_CW, y0, 2 * TM_CW, drop_h * TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect(x0 + 2 * TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH,
+		    TM_SH_BG);
 }
 
 static void term_draw_row(int r)
 {
-	int c, x, y, wpx;
+	int c, x, y;
 	unsigned ch, fg, bg;
 
 	if (r < 0 || r >= T.pane_rows)
 		return;
 	y = r * TM_CH;
-	x = T.pane_left * TM_CW;
-	wpx = term_width() * TM_CW;
-	mmb_gfx_box(x, y, wpx, TM_CH, TM_BG, 1, (int)TM_BG);
 	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
@@ -1032,72 +1011,22 @@ static void term_draw_row(int r)
 			fg = bg;
 			bg = t;
 		}
-		if (bg != TM_BG)
-			mmb_gfx_box(x, y, TM_CW, TM_CH, bg, 1, (int)bg);
-		mmb_gfx_glyph_cp437(x, y, ch, fg);
+		mmb_gfx_glyph_cell(x, y, ch, fg, bg);
 	}
 }
 
 static void term_copy_rect(int x, int y, int pw, int ph)
 {
-	uint16_t *s, *d;
-	int w, h, row;
-
-	s = mmb_gfx_buf_for(1, &w, &h);
-	d = mmb_gfx_buf_for(0, &w, &h);
-	if (!s || !d || pw <= 0 || ph <= 0)
-		return;
-	if (x < 0)
-	{
-		pw += x;
-		x = 0;
-	}
-	if (y < 0)
-	{
-		ph += y;
-		y = 0;
-	}
-	if (x + pw > w)
-		pw = w - x;
-	if (y + ph > h)
-		ph = h - y;
-	if (pw <= 0 || ph <= 0)
-		return;
-	for (row = 0; row < ph; row++)
-	{
-		memcpy(d + (y + row) * w + x, s + (y + row) * w + x,
-		       (unsigned)pw * sizeof(uint16_t));
-		if ((row & 15) == 15)
-			mmb_net_yield();
-	}
+	mmb_gfx_copy_rect(TM_PAGE, 0, x, y, pw, ph);
 }
 
 static void term_copy_pane(void)
 {
-	uint16_t *s, *d;
-	int w, h, y, x0, pw, ph;
+	int x0 = T.pane_left * TM_CW;
+	int pw = term_width() * TM_CW;
+	int ph = term_fb_h();
 
-	s = mmb_gfx_buf_for(1, &w, &h);
-	d = mmb_gfx_buf_for(0, &w, &h);
-	if (!s || !d)
-		return;
-	x0 = T.pane_left * TM_CW;
-	pw = term_width() * TM_CW;
-	ph = term_fb_h();
-	if (x0 < 0)
-		x0 = 0;
-	if (x0 + pw > w)
-		pw = w - x0;
-	if (pw <= 0)
-		return;
-	if (ph > h)
-		ph = h;
-	for (y = 0; y < ph; y++)
-	{
-		memcpy(d + y * w + x0, s + y * w + x0, (unsigned)pw * sizeof(uint16_t));
-		if ((y & 15) == 15)
-			mmb_net_yield();
-	}
+	mmb_gfx_copy_rect(TM_PAGE, 0, x0, 0, pw, ph);
 }
 
 static void term_copy_rows(int lo, int hi)
@@ -1145,14 +1074,10 @@ static void term_present_rows(int lo, int hi)
 
 static void term_copy_screen(void)
 {
-	uint16_t *s, *d;
 	int w, h;
 
-	s = mmb_gfx_buf_for(1, &w, &h);
-	d = mmb_gfx_buf_for(0, &w, &h);
-	if (!s || !d)
-		return;
-	memcpy(d, s, (unsigned)w * (unsigned)h * sizeof(uint16_t));
+	(void)mmb_gfx_buf_for(0, &w, &h);
+	mmb_gfx_copy_rect(TM_PAGE, 0, 0, 0, w, h);
 }
 
 static void term_draw(void)
@@ -1166,7 +1091,7 @@ static void term_draw(void)
 	if (T.cur_shown)
 		mark_dirty_row(T.cur_shown_row);
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 	full_screen = T.dirty_full;
 	if (T.dirty_full)
@@ -1197,8 +1122,8 @@ static void term_draw(void)
 			term_draw_row(T.pane_rows - 1);
 	}
 	else
-		mmb_gfx_box(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
-			    TM_BG, 1, (int)TM_BG);
+		mmb_gfx_fill_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
+			    TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	if (full_screen)
@@ -1248,17 +1173,23 @@ static void term_draw(void)
 
 static void term_exit(void)
 {
+	int bits;
+
 	term_log_flush();
 	mmb_net_tcp_close();
 	T.tcp = 0;
 	T.connecting = 0;
-	if (T.saved_mode)
-	{
-		int bits = T.saved_bits;
-		if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
-			bits = 16;
+	if (G.plat && G.plat->present_wait)
+		G.plat->present_wait();
+	G.gfx.write_page = 0;
+	G.gfx.display_page = 0;
+	mmb_gfx_clear_overlay();
+	bits = T.saved_bits;
+	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
+		bits = 16;
+	if (T.saved_mode &&
+	    (G.gfx.mode != T.saved_mode || G.gfx.bits != bits))
 		mmb_gfx_set_mode(T.saved_mode, bits);
-	}
 	else if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
 	mmb_console_reset_prompt();
@@ -1656,7 +1587,9 @@ static void term_toggle_echo(void)
 static void term_fill_pages(void)
 {
 	int saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+
+	mmb_gfx_clear_overlay();
+	G.gfx.write_page = TM_PAGE;
 	mmb_gfx_cls(TM_BG);
 	G.gfx.write_page = 0;
 	mmb_gfx_cls(TM_BG);
@@ -1715,7 +1648,7 @@ static void term_apply_session_mode(void)
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
 		mmb_gfx_set_mode(mode, bits);
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 }
 
@@ -1763,7 +1696,7 @@ static void term_dlg_refresh(void)
 	int saved;
 
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	term_draw_dlg();
 	term_present_overlay(2, 1);
 	G.gfx.write_page = saved;
@@ -1775,7 +1708,7 @@ static void term_overlay_chrome(void)
 	int saved;
 
 	saved = G.gfx.write_page;
-	G.gfx.write_page = 1;
+	G.gfx.write_page = TM_PAGE;
 	term_draw_status();
 	term_draw_menu();
 	term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
@@ -2074,7 +2007,7 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 	y0 = dlg_r0 * TM_CH;
 	w = cw * TM_CW;
 	h = ch * TM_CH;
-	mmb_gfx_box(x0, y0, w, h, TM_DLG_BG, 1, (int)TM_DLG_BG);
+	mmb_gfx_fill_rect(x0, y0, w, h, TM_DLG_BG);
 	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
 	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
 			 TM_BOX_BR);
@@ -2085,9 +2018,8 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
 			  TM_DLG_BG);
 	}
-	mmb_gfx_box(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG, 1,
-		    (int)TM_SH_BG);
-	mmb_gfx_box(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG, 1, (int)TM_SH_BG);
+	mmb_gfx_fill_rect(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
@@ -4217,12 +4149,12 @@ void mmb_cmd_term(void)
 	mmb_hw_cursor(0);
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	G.gfx.write_page = 1;
+	mmb_gfx_clear_overlay();
+	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
-	G.gfx.write_page = 0;
+	G.gfx.write_page = TM_PAGE;
 	mmb_gfx_cls(TM_BG);
-	G.gfx.write_page = 1;
 
 	term_layout();
 	for (i = 0; i < T.pane_rows; i++)
