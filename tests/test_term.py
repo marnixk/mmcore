@@ -144,6 +144,27 @@ def test_term_draws_on_page_two_not_overlay():
     assert "void mmb_gfx_copy_rect" in gfx
 
 
+def test_term_page2_cells_not_overlay_after_mode14(kernel_image):
+    """MODE 14 TERM skips set_mode on exit, so PAGE 2 still holds opaque cells."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 14,16") == ""
+        seen = _open_term(con, "TERM", quiet=0.5, timeout=10.0)
+        assert "Disconnected" in seen
+        con.capture_png("/opt/cursor/artifacts/term_page2_opaque_cells.png")
+        _quit(con)
+        assert con.send_line("PRINT 3*3") == "9"
+        # Boxed MODE 14: 80-col pane starts at column 20. 'D' of Disconnected
+        # is at (160,0); row 2 of the glyph is 0xF8 (ink in the first five dots).
+        ink = int(con.send_line("PRINT PIXEL(160,2,2)").split()[0]) & 0xFFFFFF
+        overlay = int(con.send_line("PRINT PIXEL(160,2,1)").split()[0]) & 0xFFFFFF
+        assert ((ink >> 16) & 255) > 100 and ((ink >> 8) & 255) > 100
+        assert overlay == 0
+    finally:
+        con.stop()
+
+
 def test_term_immediate_altx_returns_prompt(kernel_image):
     """Disconnected TERM then Alt-X at once must restore a live prompt."""
     con = MMBasicConsole(kernel_image)
