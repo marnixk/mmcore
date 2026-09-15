@@ -8,8 +8,18 @@
 #include <circle/bcmframebuffer.h>
 #include <circle/display.h>
 #include <circle/startup.h>
+#include <circle/synchronize.h>
 
 static CKernel *s_kernel;
+
+/* SetArea may DMA from these bounce buffers on hardware (SCREEN_DMA_BURST_LENGTH).
+ * Circle heap pointers are already cache-line aligned; sizes must be too so
+ * CleanAndInvalidateDataCacheRange does not touch neighbouring heap metadata.
+ * QEMU builds define NO_SCREEN_DMA_BURST_LENGTH via configure --qemu. */
+static unsigned dma_buf_size(unsigned n)
+{
+	return (unsigned)CACHE_ALIGN_SIZE(u8, n);
+}
 
 static unsigned rgb_to_raw(unsigned rgb)
 {
@@ -280,7 +290,7 @@ static void plat_tui_prepare(void)
 	unsigned w = s_kernel ? s_kernel->Screen().GetWidth() : 640;
 	unsigned h = s_kernel ? s_kernel->Screen().GetHeight() : 480;
 	unsigned pitch = w * (DEPTH / 8);
-	unsigned need = pitch * h;
+	unsigned need = dma_buf_size(pitch * h);
 	if (!s_tui_pix || s_tui_cap < need)
 	{
 		if (s_tui_pix)
@@ -619,7 +629,7 @@ static void plat_present_rgb(int x, int y, int w, int h,
 		h = (int)sc->GetHeight() - y;
 	if (w < 1 || h < 1)
 		return;
-	need = (unsigned)w * (unsigned)h * bpp;
+	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
 	if (!s_present_pix || s_present_cap < need)
 	{
 		if (s_present_pix)
