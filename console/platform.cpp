@@ -595,6 +595,80 @@ static void plat_tui_present(int y0, int y1)
 		area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
 }
 
+static unsigned plat_rgb_to_native(unsigned rgb888)
+{
+	return rgb_to_raw(rgb888);
+}
+
+static unsigned plat_native_to_rgb(unsigned native)
+{
+#if DEPTH == 32
+	{
+		unsigned b = native & 0xFF;
+		unsigned g = (native >> 8) & 0xFF;
+		unsigned r = (native >> 16) & 0xFF;
+		return (r << 16) | (g << 8) | b;
+	}
+#elif DEPTH == 16
+	{
+		unsigned r = (native >> 11) & 0x1F;
+		unsigned g = (native >> 6) & 0x1F;
+		unsigned b = native & 0x1F;
+		r = r * 255 / 31;
+		g = g * 255 / 31;
+		b = b * 255 / 31;
+		return (r << 16) | (g << 8) | b;
+	}
+#else
+	{
+		unsigned v = native;
+		unsigned r = v & 0xE0;
+		unsigned g = (v << 3) & 0xE0;
+		unsigned b = (v << 6) & 0xC0;
+		return (r << 16) | (g << 8) | b;
+	}
+#endif
+}
+
+static int present_clip(CScreenDevice *sc, int *x, int *y, int *w, int *h,
+			int stride, const void **pix, unsigned bpp)
+{
+	const u8 *p = static_cast<const u8 *>(*pix);
+
+	if (*x < 0)
+	{
+		*w += *x;
+		p += (unsigned)(-*x) * bpp;
+		*x = 0;
+	}
+	if (*y < 0)
+	{
+		*h += *y;
+		p += (unsigned)(-*y) * (unsigned)stride * bpp;
+		*y = 0;
+	}
+	if (*x + *w > (int)sc->GetWidth())
+		*w = (int)sc->GetWidth() - *x;
+	if (*y + *h > (int)sc->GetHeight())
+		*h = (int)sc->GetHeight() - *y;
+	if (*w < 1 || *h < 1)
+		return 0;
+	*pix = p;
+	return 1;
+}
+
+static u8 *present_bounce(unsigned need)
+{
+	if (!s_present_pix || s_present_cap < need)
+	{
+		if (s_present_pix)
+			free(s_present_pix);
+		s_present_pix = static_cast<u8 *>(malloc(need));
+		s_present_cap = s_present_pix ? need : 0;
+	}
+	return s_present_pix;
+}
+
 static void plat_present_rgb(int x, int y, int w, int h,
 			    const unsigned *rgb888, int stride)
 {
@@ -604,6 +678,7 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	int px, py;
 	unsigned need, bpp = (unsigned)(DEPTH / 8);
 	TScreenColor *dst;
+	const void *pix = rgb888;
 
 	if (!s_kernel || !rgb888 || w < 1 || h < 1 || stride < w)
 		return;
@@ -611,33 +686,11 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	fb = sc->GetFrameBuffer();
 	if (!fb)
 		return;
-	if (x < 0)
-	{
-		w += x;
-		rgb888 -= x;
-		x = 0;
-	}
-	if (y < 0)
-	{
-		h += y;
-		rgb888 += (unsigned)(-y) * (unsigned)stride;
-		y = 0;
-	}
-	if (x + w > (int)sc->GetWidth())
-		w = (int)sc->GetWidth() - x;
-	if (y + h > (int)sc->GetHeight())
-		h = (int)sc->GetHeight() - y;
-	if (w < 1 || h < 1)
+	if (!present_clip(sc, &x, &y, &w, &h, stride, &pix, sizeof(unsigned)))
 		return;
+	rgb888 = static_cast<const unsigned *>(pix);
 	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
-	if (!s_present_pix || s_present_cap < need)
-	{
-		if (s_present_pix)
-			free(s_present_pix);
-		s_present_pix = static_cast<u8 *>(malloc(need));
-		s_present_cap = s_present_pix ? need : 0;
-	}
-	if (!s_present_pix)
+	if (!present_bounce(need))
 		return;
 	dst = reinterpret_cast<TScreenColor *>(s_present_pix);
 	for (py = 0; py < h; py++)
@@ -652,6 +705,47 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	area.y1 = (unsigned)y;
 	area.y2 = (unsigned)(y + h - 1);
 	fb->SetArea(area, s_present_pix);
+}
+
+static void plat_present_native(int x, int y, int w, int h,
+				const void *pix, int stride)
+{
+	CDisplay::TArea area;
+	CBcmFrameBuffer *fb;
+	CScreenDevice *sc;
+	int py;
+	unsigned need, bpp = (unsigned)(DEPTH / 8);
+	const TScreenColor *src;
+	void *buf;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	sc = &s_kernel->Screen();
+	fb = sc->GetFrameBuffer();
+	if (!fb)
+		return;
+	if (!present_clip(sc, &x, &y, &w, &h, stride, &pix, bpp))
+		return;
+	src = static_cast<const TScreenColor *>(pix);
+	area.x1 = (unsigned)x;
+	area.x2 = (unsigned)(x + w - 1);
+	area.y1 = (unsigned)y;
+	area.y2 = (unsigned)(y + h - 1);
+	/* Tight contiguous rows: SetArea can DMA straight from the page. */
+	if (stride == w)
+	{
+		fb->SetArea(area, src);
+		return;
+	}
+	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
+	buf = present_bounce(need);
+	if (!buf)
+		return;
+	for (py = 0; py < h; py++)
+		memcpy(static_cast<TScreenColor *>(buf) + py * w,
+		       src + py * stride,
+		       (unsigned)w * bpp);
+	fb->SetArea(area, buf);
 }
 
 static int plat_wait_vsync(void)
@@ -711,6 +805,9 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	plat.present_rgb = plat_present_rgb;
+	plat.present_native = plat_present_native;
+	plat.rgb_to_native = plat_rgb_to_native;
+	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;
 	audio_init();
 	mmb_init(&plat);
