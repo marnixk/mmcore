@@ -269,21 +269,16 @@ static unsigned plat_get_pixel(int x, int y)
 #endif
 }
 
-static u8 *present_bounce(unsigned need);
-
 static void plat_fill(unsigned rgb)
 {
-	CDisplay::TArea area;
 	CBcmFrameBuffer *fb;
-	unsigned w, h, i, n, need, bpp = (unsigned)(DEPTH / 8);
-	TScreenColor c;
-	TScreenColor *dst;
-	u8 *pix;
+	CDisplay::TRawColor c;
+	unsigned w, h, x, y;
 
 	if (!s_kernel)
 		return;
-	/* HDMI only: home + erase-to-end, then paint so a coloured CLS is not
-	 * undone by the terminal wipe. Never write ANSI to serial
+	/* HDMI only: home + erase-to-end, then paint pixels so a coloured
+	 * CLS is not undone by the terminal wipe. Never write ANSI to serial
 	 * (tests assert send_line("CLS") == ""). */
 	CScreenDevice &sc = s_kernel->Screen();
 	plat_present_wait();
@@ -293,25 +288,20 @@ static void plat_fill(unsigned rgb)
 	static const char home[] = "\x1b[H\x1b[J";
 	sc.Write(home, sizeof(home) - 1);
 
-	c = (TScreenColor)rgb_to_raw(rgb);
+	c = (CDisplay::TRawColor)rgb_to_raw(rgb);
 	w = sc.GetWidth();
 	h = sc.GetHeight();
 	fb = plat_fb_visible();
-	if (!fb || w < 1 || h < 1)
+	if (s_fb_flip_ok && fb)
+	{
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++)
+				fb->SetPixel(x, y, c);
 		return;
-	n = w * h;
-	need = dma_buf_size(n * bpp);
-	pix = present_bounce(need);
-	if (!pix)
-		return;
-	dst = reinterpret_cast<TScreenColor *>(pix);
-	for (i = 0; i < n; i++)
-		dst[i] = c;
-	area.x1 = 0;
-	area.x2 = w - 1;
-	area.y1 = 0;
-	area.y2 = h - 1;
-	plat_set_area(fb, area, pix);
+	}
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+			sc.SetPixel(x, y, (TScreenColor)c);
 }
 
 static int plat_w(void)

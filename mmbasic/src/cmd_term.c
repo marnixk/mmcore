@@ -818,15 +818,6 @@ static void pane_puts(const char *s)
 	}
 }
 
-static void term_put_str(int x, int y, const char *s, unsigned fg)
-{
-	int i;
-	if (!s)
-		return;
-	for (i = 0; s[i]; i++)
-		mmb_gfx_glyph_cell(x + i * TM_CW, y, (unsigned char)s[i], fg, TM_BG);
-}
-
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
 	mmb_gfx_glyph_cell(x, y, ch, fg, bg);
