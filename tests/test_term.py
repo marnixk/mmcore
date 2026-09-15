@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import time
 
 from harness import MMBasicConsole
@@ -145,21 +146,33 @@ def test_term_draws_on_page_two_not_overlay():
 
 
 def test_term_page2_cells_not_overlay_after_mode14(kernel_image):
-    """MODE 14 TERM skips set_mode on exit, so PAGE 2 still holds opaque cells."""
+    """Opaque PAGE 2 cells blit to HDMI; PAGE 1 overlay stays unused."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         assert con.send_line("MODE 14,16") == ""
         seen = _open_term(con, "TERM", quiet=0.5, timeout=10.0)
         assert "Disconnected" in seen
-        con.capture_png("/opt/cursor/artifacts/term_page2_opaque_cells.png")
+        png = con.capture_png("/opt/cursor/artifacts/term_disconnected_opaque_page2.png")
+        # Boxed MODE 14: pane column 20. 'D' of Disconnected, row 2 is 0xF8.
+        out = subprocess.run(
+            ["convert", png, "-crop", "1x1+160+2", "+repage", "txt:-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        bright = False
+        for line in out.splitlines():
+            if "#" not in line or ":" not in line:
+                continue
+            if "#000000" not in line:
+                bright = True
+                break
+        assert bright, f"HDMI missing opaque Disconnected glyph: {out}"
         _quit(con)
+        con.capture_png("/opt/cursor/artifacts/term_altx_restores_prompt.png")
         assert con.send_line("PRINT 3*3") == "9"
-        # Boxed MODE 14: 80-col pane starts at column 20. 'D' of Disconnected
-        # is at (160,0); row 2 of the glyph is 0xF8 (ink in the first five dots).
-        ink = int(con.send_line("PRINT PIXEL(160,2,2)").split()[0]) & 0xFFFFFF
         overlay = int(con.send_line("PRINT PIXEL(160,2,1)").split()[0]) & 0xFFFFFF
-        assert ((ink >> 16) & 255) > 100 and ((ink >> 8) & 255) > 100
         assert overlay == 0
     finally:
         con.stop()
