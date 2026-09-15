@@ -320,6 +320,21 @@ def test_term_alt_x_exits(kernel_image):
         con.stop()
 
 
+def test_term_alt_x_after_demoburst_returns_prompt(kernel_image):
+    """Issue #315: exit must wait out any in-flight present before freeing pages."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for _ in range(3):
+            _open_term(con, 'TERM "demoburst", 23', quiet=0.4, timeout=8.0)
+            time.sleep(0.15)
+            con._ser.sendall(bytes([1]) + b"x")
+            _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+            assert con.send_line("PRINT 9") == "9"
+    finally:
+        con.stop()
+
+
 def test_term_alt_t_terminal_menu_then_x_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
