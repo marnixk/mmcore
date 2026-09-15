@@ -27,17 +27,20 @@ static unsigned dma_buf_size(unsigned n)
 /*
  * Virtual-offset double-buffer (Pi ≤ 4 hardware). Soft pages stay on the heap;
  * HDMI FB is 2× tall. Immediate presents / TUI / SetPixel use SetDrawOffsetY so
- * they hit the scanned-out half. Full-frame present (PAGE DISPLAY) writes the
- * hidden half, waits for VSync, then SetVirtualOffset. Disabled under QEMU
- * (NO_SCREEN_DMA_BURST_LENGTH) and on Pi 5 (RASPPI > 4) — see Circle patch.
+ * they hit the scanned-out half. PAGE DISPLAY writes the hidden half, waits
+ * for VSync, then SetVirtualOffset. Other full-frame presents stay on the
+ * visible half. Disabled under QEMU (NO_SCREEN_DMA_BURST_LENGTH) and on
+ * Pi 5 (RASPPI > 4) — see Circle patch.
  */
 static unsigned s_fb_front; /* 0 or 1: half currently scanned out */
 static int s_fb_flip_ok;    /* virt height >= 2 * height */
+static int s_want_page_flip; /* consumed by the next full-frame present */
 
 static void fb_flip_reset(CBcmFrameBuffer *fb)
 {
 	s_fb_front = 0;
 	s_fb_flip_ok = 0;
+	s_want_page_flip = 0;
 	if (!fb)
 		return;
 #if RASPPI <= 4 && !defined(NO_SCREEN_DMA_BURST_LENGTH)
@@ -125,12 +128,20 @@ static void plat_set_area_flip(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
 }
 #endif
 
+static void plat_present_set_flip(int on)
+{
+	s_want_page_flip = on ? 1 : 0;
+}
+
 static int present_wants_flip(CScreenDevice *sc, int x, int y, int w, int h)
 {
-	if (!s_fb_flip_ok || !sc)
+	if (!s_fb_flip_ok || !sc || !s_want_page_flip)
 		return 0;
-	return x == 0 && y == 0 &&
-	       w == (int)sc->GetWidth() && h == (int)sc->GetHeight();
+	if (x != 0 || y != 0 ||
+	    w != (int)sc->GetWidth() || h != (int)sc->GetHeight())
+		return 0;
+	s_want_page_flip = 0;
+	return 1;
 }
 
 static unsigned rgb_to_raw(unsigned rgb)
@@ -163,26 +174,74 @@ static void plat_write_screen(const char *s, unsigned n)
 		s_kernel->Screen().Write(s, n);
 }
 
+static CBcmFrameBuffer *plat_fb_visible(void)
+{
+	CBcmFrameBuffer *fb;
+
+	if (!s_kernel)
+		return 0;
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (!fb)
+		return 0;
+	plat_present_wait();
+	fb_draw_visible(fb);
+	return fb;
+}
+
 static void plat_set_pixel(int x, int y, unsigned rgb)
 {
+	CBcmFrameBuffer *fb;
+	CScreenDevice *sc;
+	CDisplay::TRawColor c;
+
 	if (!s_kernel)
 		return;
-	CScreenDevice &sc = s_kernel->Screen();
-	if (x < 0 || y < 0 || (unsigned)x >= sc.GetWidth() || (unsigned)y >= sc.GetHeight())
+	sc = &s_kernel->Screen();
+	if (x < 0 || y < 0 || (unsigned)x >= sc->GetWidth() ||
+	    (unsigned)y >= sc->GetHeight())
 		return;
-	sc.SetPixel((unsigned)x, (unsigned)y, (TScreenColor)rgb_to_raw(rgb));
+	c = (CDisplay::TRawColor)rgb_to_raw(rgb);
+	fb = plat_fb_visible();
+	if (s_fb_flip_ok && fb)
+	{
+		fb->SetPixel((unsigned)x, (unsigned)y, c);
+	}
+	else
+	{
+		sc->SetPixel((unsigned)x, (unsigned)y, (TScreenColor)c);
+	}
 }
 
 static unsigned plat_get_pixel(int x, int y)
 {
-	TScreenColor raw;
+	CBcmFrameBuffer *fb;
+	CScreenDevice *sc;
+	CDisplay::TRawColor raw;
 
 	if (!s_kernel)
 		return 0;
-	CScreenDevice &sc = s_kernel->Screen();
-	if (x < 0 || y < 0 || (unsigned)x >= sc.GetWidth() || (unsigned)y >= sc.GetHeight())
+	sc = &s_kernel->Screen();
+	if (x < 0 || y < 0 || (unsigned)x >= sc->GetWidth() ||
+	    (unsigned)y >= sc->GetHeight())
 		return 0;
-	raw = sc.GetPixel((unsigned)x, (unsigned)y);
+	fb = plat_fb_visible();
+	if (s_fb_flip_ok && fb)
+	{
+		u8 *base = (u8 *)(uintptr)fb->GetBuffer();
+		unsigned pitch = fb->GetPitch();
+		unsigned oy = fb->GetDrawOffsetY();
+#if DEPTH == 32
+		raw = *(u32 *)(base + ((unsigned)y + oy) * pitch + (unsigned)x * 4);
+#elif DEPTH == 16
+		raw = *(u16 *)(base + ((unsigned)y + oy) * pitch + (unsigned)x * 2);
+#else
+		raw = base[((unsigned)y + oy) * pitch + (unsigned)x];
+#endif
+	}
+	else
+	{
+		raw = sc->GetPixel((unsigned)x, (unsigned)y);
+	}
 #if DEPTH == 32
 	{
 		unsigned b = (unsigned)raw & 0xFF;
@@ -213,6 +272,10 @@ static unsigned plat_get_pixel(int x, int y)
 
 static void plat_fill(unsigned rgb)
 {
+	CBcmFrameBuffer *fb;
+	CDisplay::TRawColor c;
+	unsigned w, h, x, y;
+
 	if (!s_kernel)
 		return;
 	/* HDMI only: home + erase-to-end, then paint pixels so a coloured
@@ -225,11 +288,20 @@ static void plat_fill(unsigned rgb)
 	static const char home[] = "\x1b[H\x1b[J";
 	sc.Write(home, sizeof(home) - 1);
 
-	TScreenColor c = (TScreenColor)rgb_to_raw(rgb);
-	unsigned w = sc.GetWidth(), h = sc.GetHeight(), x, y;
+	c = (CDisplay::TRawColor)rgb_to_raw(rgb);
+	w = sc.GetWidth();
+	h = sc.GetHeight();
+	fb = plat_fb_visible();
+	if (s_fb_flip_ok && fb)
+	{
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++)
+				fb->SetPixel(x, y, c);
+		return;
+	}
 	for (y = 0; y < h; y++)
 		for (x = 0; x < w; x++)
-			sc.SetPixel(x, y, c);
+			sc.SetPixel(x, y, (TScreenColor)c);
 }
 
 static int plat_w(void)
@@ -1013,6 +1085,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.present_rgb = plat_present_rgb;
 	plat.present_native = plat_present_native;
 	plat.present_wait = plat_present_wait;
+	plat.present_set_flip = plat_present_set_flip;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;

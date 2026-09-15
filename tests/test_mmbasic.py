@@ -597,6 +597,37 @@ def test_page_display_after_text_on_live_page(fresh_console):
     c.capture_png("/opt/cursor/artifacts/issue312_page_display_after_text.png")
 
 
+def test_live_pixel_after_page_display_roundtrip(fresh_console):
+    """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("CLS RGB(0,0,0)") == ""
+    assert c.send_line("PIXEL 320,140,RGB(0,255,0)") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert g > 180 and r < 80 and b < 80, (r, g, b)
+    soft = int(c.send_line("PRINT PIXEL(320,140)"))
+    assert ((soft >> 8) & 255) > 180
+    assert c.send_line("PAGE WRITE 3") == ""
+    assert c.send_line("CLS RGB(255,0,0)") == ""
+    assert c.send_line("PAGE DISPLAY 3") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+    assert c.send_line("PAGE WRITE 3") == ""
+    red = int(c.send_line("PRINT PIXEL(320,140)"))
+    assert ((red >> 16) & 255) > 180
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert g > 180 and r < 80 and b < 80, (r, g, b)
+    assert c.send_line("PAGE DISPLAY 3") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""
