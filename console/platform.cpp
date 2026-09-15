@@ -192,6 +192,7 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 {
 	CBcmFrameBuffer *fb;
 	CScreenDevice *sc;
+	CDisplay::TRawColor c;
 
 	if (!s_kernel)
 		return;
@@ -199,10 +200,16 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 	if (x < 0 || y < 0 || (unsigned)x >= sc->GetWidth() ||
 	    (unsigned)y >= sc->GetHeight())
 		return;
+	c = (CDisplay::TRawColor)rgb_to_raw(rgb);
 	fb = plat_fb_visible();
-	if (!fb)
-		return;
-	fb->SetPixel((unsigned)x, (unsigned)y, (CDisplay::TRawColor)rgb_to_raw(rgb));
+	if (s_fb_flip_ok && fb)
+	{
+		fb->SetPixel((unsigned)x, (unsigned)y, c);
+	}
+	else
+	{
+		sc->SetPixel((unsigned)x, (unsigned)y, (TScreenColor)c);
+	}
 }
 
 static unsigned plat_get_pixel(int x, int y)
@@ -218,7 +225,7 @@ static unsigned plat_get_pixel(int x, int y)
 	    (unsigned)y >= sc->GetHeight())
 		return 0;
 	fb = plat_fb_visible();
-	if (fb)
+	if (s_fb_flip_ok && fb)
 	{
 		u8 *base = (u8 *)(uintptr)fb->GetBuffer();
 		unsigned pitch = fb->GetPitch();
@@ -285,11 +292,16 @@ static void plat_fill(unsigned rgb)
 	w = sc.GetWidth();
 	h = sc.GetHeight();
 	fb = plat_fb_visible();
-	if (!fb)
+	if (s_fb_flip_ok && fb)
+	{
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++)
+				fb->SetPixel(x, y, c);
 		return;
+	}
 	for (y = 0; y < h; y++)
 		for (x = 0; x < w; x++)
-			fb->SetPixel(x, y, c);
+			sc.SetPixel(x, y, (TScreenColor)c);
 }
 
 static int plat_w(void)

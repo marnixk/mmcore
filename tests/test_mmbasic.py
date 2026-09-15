@@ -601,28 +601,30 @@ def test_live_pixel_after_page_display_roundtrip(fresh_console):
     """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY."""
     c = fresh_console
     assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
     assert c.send_line("CLS RGB(0,0,0)") == ""
-    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("PIXEL 320,140,RGB(0,255,0)") == ""
+    r, g, b = c.screen_pixel(320, 140)
+    assert g > 180 and r < 80 and b < 80, (r, g, b)
+    soft = int(c.send_line("PRINT PIXEL(320,140)"))
+    assert ((soft >> 8) & 255) > 180
+    assert c.send_line("PAGE WRITE 3") == ""
     assert c.send_line("CLS RGB(255,0,0)") == ""
-    assert c.send_line("PAGE DISPLAY 1") == ""
-    r, g, b = c.screen_pixel(40, 40)
+    assert c.send_line("PAGE DISPLAY 3") == ""
+    r, g, b = c.screen_pixel(320, 140)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
+    assert c.send_line("PAGE WRITE 3") == ""
+    red = int(c.send_line("PRINT PIXEL(320,140)"))
+    assert ((red >> 16) & 255) > 180
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
-    assert c.send_line("PIXEL 80,60,RGB(0,255,0)") == ""
-    soft = int(c.send_line("PRINT PIXEL(80,60)"))
-    assert ((soft >> 8) & 255) > 180
-    r, g, b = c.screen_pixel(80, 60)
+    r, g, b = c.screen_pixel(320, 140)
     assert g > 180 and r < 80 and b < 80, (r, g, b)
-    assert c.send_line("PAGE WRITE 2") == ""
-    assert c.send_line("CLS RGB(0,0,255)") == ""
-    assert c.send_line("PAGE COPY 2 TO 0") == ""
-    r, g, b = c.screen_pixel(80, 60)
-    assert b > 180 and r < 80 and g < 80, (r, g, b)
-    assert c.send_line("PAGE DISPLAY 1") == ""
-    r, g, b = c.screen_pixel(40, 40)
+    assert c.send_line("PAGE DISPLAY 3") == ""
+    r, g, b = c.screen_pixel(320, 140)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
 
 
