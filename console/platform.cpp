@@ -24,6 +24,40 @@ static unsigned dma_buf_size(unsigned n)
 	return (unsigned)CACHE_ALIGN_SIZE(u8, n);
 }
 
+/*
+ * Virtual-offset double-buffer (Pi ≤ 4 hardware). Soft pages stay on the heap;
+ * HDMI FB is 2× tall. Immediate presents / TUI / SetPixel use SetDrawOffsetY so
+ * they hit the scanned-out half. Full-frame present (PAGE DISPLAY) writes the
+ * hidden half, waits for VSync, then SetVirtualOffset. Disabled under QEMU
+ * (NO_SCREEN_DMA_BURST_LENGTH) and on Pi 5 (RASPPI > 4) — see Circle patch.
+ */
+static unsigned s_fb_front; /* 0 or 1: half currently scanned out */
+static int s_fb_flip_ok;    /* virt height >= 2 * height */
+
+static void fb_flip_reset(CBcmFrameBuffer *fb)
+{
+	s_fb_front = 0;
+	s_fb_flip_ok = 0;
+	if (!fb)
+		return;
+#if RASPPI <= 4 && !defined(NO_SCREEN_DMA_BURST_LENGTH)
+	if (fb->GetVirtHeight() >= fb->GetHeight() * 2)
+	{
+		s_fb_flip_ok = 1;
+		fb->SetDrawOffsetY(0);
+		fb->SetVirtualOffset(0, 0);
+	}
+#else
+	fb->SetDrawOffsetY(0);
+#endif
+}
+
+static void fb_draw_visible(CBcmFrameBuffer *fb)
+{
+	if (fb && s_fb_flip_ok)
+		fb->SetDrawOffsetY(s_fb_front * fb->GetHeight());
+}
+
 #ifndef NO_SCREEN_DMA_BURST_LENGTH
 /* Serialise async present: wait before starting a new SetArea / reusing bounce. */
 static volatile int s_present_busy;
@@ -44,8 +78,33 @@ static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
 			  const void *pix)
 {
 	plat_present_wait();
+	fb_draw_visible(fb);
 	AtomicSet(&s_present_busy, 1);
 	fb->SetArea(area, pix, plat_present_done, 0);
+}
+
+/* Synchronous SetArea into the back half, then virt-offset flip (tear-free). */
+static void plat_set_area_flip(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
+			       const void *pix)
+{
+	unsigned back;
+	unsigned height;
+
+	if (!fb || !s_fb_flip_ok)
+	{
+		plat_set_area(fb, area, pix);
+		return;
+	}
+	plat_present_wait();
+	height = fb->GetHeight();
+	back = 1u - s_fb_front;
+	fb->SetDrawOffsetY(back * height);
+	/* Sync copy: must finish before SetVirtualOffset. */
+	fb->SetArea(area, pix);
+	fb->WaitForVerticalSync();
+	fb->SetVirtualOffset(0, back * height);
+	s_fb_front = back;
+	/* Draw offset already targets the new visible half. */
 }
 #else
 static void plat_present_wait(void)
@@ -57,7 +116,22 @@ static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
 {
 	fb->SetArea(area, pix);
 }
+
+static void plat_set_area_flip(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
+			       const void *pix)
+{
+	/* QEMU: no virt-offset flip; sync present into the single buffer. */
+	plat_set_area(fb, area, pix);
+}
 #endif
+
+static int present_wants_flip(CScreenDevice *sc, int x, int y, int w, int h)
+{
+	if (!s_fb_flip_ok || !sc)
+		return 0;
+	return x == 0 && y == 0 &&
+	       w == (int)sc->GetWidth() && h == (int)sc->GetHeight();
+}
 
 static unsigned rgb_to_raw(unsigned rgb)
 {
@@ -183,10 +257,12 @@ static int plat_resize_hdmi(int w, int h)
 	if (sc.Resize((unsigned)w, (unsigned)h))
 	{
 		sc.SetCursorBlock(TRUE);
+		fb_flip_reset(sc.GetFrameBuffer());
 		return 1;
 	}
 	sc.Resize(prev_w, prev_h);
 	sc.SetCursorBlock(TRUE);
+	fb_flip_reset(sc.GetFrameBuffer());
 	return 0;
 }
 
@@ -615,9 +691,11 @@ static int plat_alt_held(void)
 static void plat_tui_present(int y0, int y1)
 {
 	CDisplay::TArea area;
+	CBcmFrameBuffer *fb;
 	if (!s_kernel || !s_tui_pix || y0 > y1)
 		return;
-	if (!s_kernel->Screen().GetFrameBuffer())
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (!fb)
 		return;
 	if (y0 < 0)
 		y0 = 0;
@@ -629,8 +707,9 @@ static void plat_tui_present(int y0, int y1)
 	area.x2 = s_tui_w - 1;
 	area.y1 = (unsigned)y0;
 	area.y2 = (unsigned)y1;
-	s_kernel->Screen().GetFrameBuffer()->SetArea(
-		area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
+	/* Immediate: visible half via SetDrawOffsetY. */
+	fb_draw_visible(fb);
+	fb->SetArea(area, s_tui_pix + (unsigned)y0 * s_tui_pitch);
 }
 
 static unsigned plat_rgb_to_native(unsigned rgb888)
@@ -743,7 +822,10 @@ static void plat_present_rgb(int x, int y, int w, int h,
 	area.x2 = (unsigned)(x + w - 1);
 	area.y1 = (unsigned)y;
 	area.y2 = (unsigned)(y + h - 1);
-	plat_set_area(fb, area, s_present_pix);
+	if (present_wants_flip(sc, x, y, w, h))
+		plat_set_area_flip(fb, area, s_present_pix);
+	else
+		plat_set_area(fb, area, s_present_pix);
 }
 
 static void plat_present_native(int x, int y, int w, int h,
@@ -773,7 +855,10 @@ static void plat_present_native(int x, int y, int w, int h,
 	/* Tight contiguous rows: SetArea can DMA straight from the page. */
 	if (stride == w)
 	{
-		plat_set_area(fb, area, src);
+		if (present_wants_flip(sc, x, y, w, h))
+			plat_set_area_flip(fb, area, src);
+		else
+			plat_set_area(fb, area, src);
 		return;
 	}
 	need = dma_buf_size((unsigned)w * (unsigned)h * bpp);
@@ -785,7 +870,10 @@ static void plat_present_native(int x, int y, int w, int h,
 		memcpy(static_cast<TScreenColor *>(buf) + py * w,
 		       src + py * stride,
 		       (unsigned)w * bpp);
-	plat_set_area(fb, area, buf);
+	if (present_wants_flip(sc, x, y, w, h))
+		plat_set_area_flip(fb, area, buf);
+	else
+		plat_set_area(fb, area, buf);
 }
 
 static int plat_wait_vsync(void)
@@ -881,6 +969,8 @@ void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
 	s_kernel = k;
+	if (k && k->Screen().GetFrameBuffer())
+		fb_flip_reset(k->Screen().GetFrameBuffer());
 	plat.write_serial = plat_write_serial;
 	plat.write_screen = plat_write_screen;
 	plat.set_pixel = plat_set_pixel;
