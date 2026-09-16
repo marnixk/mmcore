@@ -198,3 +198,39 @@ def test_term_replay_cursor_on_then_host_hides(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def _is_vga_cyan(r: int, g: int, b: int) -> bool:
+    return g > 80 and b > 80 and g > r + 20 and b > r + 20
+
+
+def test_term_replay_newline_burst_paints_latest_line(kernel_image):
+    """A burst of newlines must redraw from cells, keeping the last line on HDMI."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        burst = b"\x1b[?25l"
+        for i in range(80):
+            burst += f"FILL{i:03d}\r\n".encode()
+        burst += b"\x1b[1;36mCYANMARK"
+        replay._to_guest(burst)
+        more = replay.wait_serial(lambda s: "CYANMARK" in s, timeout=10.0)
+        assert "CYANMARK" in more
+        time.sleep(0.3)
+        found_cyan = False
+        for x in (164, 172, 180, 188, 196, 204):
+            for y in range(400, 520, 8):
+                if _is_vga_cyan(*con.screen_pixel(x, y)):
+                    found_cyan = True
+                    break
+            if found_cyan:
+                break
+        con.capture_png("/opt/cursor/artifacts/term_newline_burst_cyanmark.png")
+        assert found_cyan, "expected cyan last line after a newline burst"
+        _quit(con)
+        assert con.send_line("PRINT 8") == "8"
+    finally:
+        replay.stop()
+        con.stop()

@@ -143,6 +143,8 @@ def test_term_draws_on_page_two_not_overlay():
     assert "fb->SetArea(area, pix, plat_present_done" not in plat
     assert "void mmb_gfx_glyph_cell" in gfx
     assert "void mmb_gfx_copy_rect" in gfx
+    assert "pane_scroll_smooth" not in term
+    assert "present_full" not in term
 
 
 def test_term_page2_cells_not_overlay_after_mode14(kernel_image):
@@ -352,7 +354,7 @@ def test_term_wrong_port_does_not_hang(kernel_image):
 
 
 def test_term_demoburst_hdmi_keeps_scrolled_text(kernel_image):
-    """A burst of newlines must paint glyphs before pixel-scroll (issue #190)."""
+    """A burst of newlines must still show glyphs after cell-buffer scroll."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
