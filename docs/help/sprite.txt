@@ -1,6 +1,9 @@
 name: SPRITE
 kind: command
 
+CMM2-style sprites composited over PAGE DISPLAY. Missing image files create an
+empty placeholder.
+
 SPRITE LOADPNG n, file$ [, colour]
 SPRITE READ n, x, y, w, h [, page]
 SPRITE SHOW n, x, y [, layer]
@@ -8,10 +11,14 @@ SPRITE HIDE n
 SPRITE MOVE n, x, y
 SPRITE CLOSE n | CLOSE ALL
 
-CMM2-style sprites composited over PAGE DISPLAY.
-LOADPNG accepts a path with or without .PNG.
-colour is treated as transparent (CMM2).
-Missing image files create an empty placeholder.
+  n - sprite number
+  file$ - PNG path (with or without .PNG)
+  colour - treated as transparent (CMM2)
+  x, y, w, h - position or READ rectangle
+  page - source page for READ
+  layer - display layer for SHOW
 
-Example:  SPRITE LOADPNG 1, "SHIP.PNG"
-          SPRITE SHOW 1, 40, 40, 1
+Example:
+
+    SPRITE LOADPNG 1, "SHIP.PNG"
+    SPRITE SHOW 1, 40, 40, 1

@@ -1,0 +1,51 @@
+name: ME
+kind: page
+
+Welcome to mmCore
+
+mmCore is the operating system around MMBasic on Raspberry Pi hardware (and
+QEMU). It gives you drives, fullscreen tools, networking, and the MMBasic
+language.
+
+Drives
+
+  A:  RAM disk (always present; cleared on reboot)
+  C:  SD card (programs and settings live here when present; otherwise A:)
+  D:  and later are USB volumes when attached
+  B:  internal package mount (not listed by DRIVE)
+
+Type ~DRIVE~ with no argument to list mounts. Type ~DIR~ or ~FILES~ to browse
+the current folder.
+
+Builtin tools
+
+  ~FILES~    dual-pane file manager
+  ~WORDPAD~  simple text document editor
+  ~EDIT~     fullscreen program editor
+  ~TERM~     serial / TCP terminal
+
+Getting online
+
+  Wi-Fi (store and join):
+      OPTION WIFI "ssid","password"
+  Wi-Fi (scan and prompt):
+      OPTION WIFI
+  Join with stored credentials:
+      OPTIONS WIFI
+  Set country (default US; UK is GB):
+      OPTION WIFI COUNTRY "NZ"
+  Wired Ethernet DHCP (Pi with RJ45):
+      OPTION ETHERNET ON
+  Show active interface and addresses:
+      ~IPCONFIG~
+
+One interface at a time. Ethernet ON turns off Wi-Fi auto-join. Credentials are
+saved in C:/.mmbasic.ini (or A: if there is no SD card).
+
+Next steps
+
+  ~USING HELP~           how this help viewer works
+  ~SYNTAX CONVENTIONS~   how syntax is written here
+  ~CONTENTS~             command and language map
+  ~INDEX~                A-Z topic list
+  ~OPTION~               full option reference

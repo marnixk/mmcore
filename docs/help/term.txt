@@ -1,107 +1,96 @@
 name: TERM
 kind: command
 
+Fullscreen telnet-style terminal. Menu and status colours follow the OPTION
+EDIT THEME palette (same as the EDITOR). The terminal pane and letterbox
+background are always black. Incoming text defaults to VGA grey, not the
+editor theme foreground. A block cursor is on when a session starts; the host
+can hide or show it with CSI ?25l / ?25h.
+
 TERM [host$, port]
+TERM REPLAY "file$"
 
-Fullscreen telnet-style terminal. Menu and status
-colours follow the OPTION EDIT THEME palette (same
-as the EDITOR). The terminal pane and letterbox
-background are always black. Incoming text defaults to
-VGA grey, not the editor theme foreground. A block
-cursor is on when a session starts; the host can hide
-or show it with CSI ?25l / ?25h. With no arguments TERM
-starts disconnected; use Alt+T and Bookmarks to
-connect from a saved favourite or add a new one.
-With host$ and port it connects at once.
-Default is an 80-column pane centred on a black
-background (boxed, MODE 14 960x540). Terminal-menu
-Boxed/Full: Boxed stays on MODE 14 with an 80-column
-letterbox. Full restores the MODE that was active
-when TERM started and uses that framebuffer width
-with no letterbox. The choice is for this TERM
-session only.
-Connects to host:port as soon as TERM starts when
-both are given (up to about 25s for DNS+TCP).
-Failures say Network not
+  host$ - IP/DNS, or "demo" / "replay" for local/QEMU helpers
+  port - TCP port
+  file$ - TERM LOG capture path for REPLAY
+
+With no arguments TERM starts disconnected; use Alt+T and Bookmarks to
+connect from a saved favourite or add a new one. With host$ and port it
+connects at once (up to about 25s for DNS+TCP). Failures say Network not
 available, DNS failed, TCP timeout, or TCP refused.
-Incoming TCP (and TERM replay) writes a 512KB ring, then
-the ANSI parser reads that ring. CSI/IAC state spans bytes;
-an IAC at the read cursor waits until the next byte arrives.
-Each poll drains the socket into the ring; an empty recv
-yields and retries so a short idle gap does not stop a burst.
-The parser yields while reading so TCP ACKs keep the
-window open, and TERM drains again after the HDMI blit.
-Stopping at the first empty read starves BBS art and
-leaves a prompt such as Enter your password stuck until
-the sender retransmits.
-HDMI present is the terminal pane, not unused letterbox.
-Drawing uses opaque 8x16 cells on PAGE 2, copied to PAGE 0.
-A line scroll updates the cell buffer and redraws the pane
-so a burst of BBS ANSI newlines is one present, not a pixel
-shift per line.
-ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL) plus telnet
-TTYPE=ANSI and DA/DSR replies for BBS autodetection.
-NAWS reports 80 columns when boxed and the Full MODE
-width when full. ESC ( B charset sequences are eaten
-so they do not print a stray B. OSC strings time out.
-Glyphs are IBM VGA 8x16 (CP437), so box drawing and
-shade characters 176-178 match a DOS VGA terminal.
-Alt+X exits and restores the previous MODE. F10 or
-Alt+T opens the Terminal menu (WORDPAD-style: the top
-bar is a full-width menu colour only while Alt/menu is
-active). The status bar (Alt-X, Echo, host) is shown
-only while that menu is open. Echo ON backspace only
-erases characters typed since the last newline.
-Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full,
-Exit. Bookmarks persist in C:/.termconfig (A: if
-no SD). New/Edit/Delete/Connect; Alt+S saves, Alt+C
-cancels. Connect drops the current session and applies
-the bookmark host, port, echo, letterbox, and
-optional 80x25 mode (MODE 2 640x400, full pane,
-no letterbox, NAWS 80x25). The status bar is shown
-only while that menu is open, so 80x25 uses all 25
-rows for the terminal.
-Esc is sent to the host; press Esc twice or wait briefly
-to flush a lone Esc. USB Backspace (DEL) is sent as BS.
 
-Telnet IAC (255) is recognised only when the next
-byte is a real command (WILL/WONT/DO/DONT, a known
-SB option, NOP-GA, or another 255). Other 0xFF bytes
-are CP437 glyphs so BBS art does not freeze the pane.
-A subnegotiation that never sees IAC SE is dropped
-after a short cap.
-Line mode with local echo until the server sends
-IAC WILL ECHO. Hosts that never negotiate (many MUDs)
-keep local echo so typed text is visible. Toggle Echo
-from the Terminal menu when a host echoes anyway or
-hides input. In character mode (SGA) Enter sends CR only
-(not CR LF). USB Enter (LF) is sent and logged as CR so a
-serial CR LF pair is not a second key on the wire.
+Default is an 80-column pane centred on a black background (boxed, MODE 14
+960x540). Terminal-menu Boxed/Full: Boxed stays on MODE 14 with an 80-column
+letterbox. Full restores the MODE that was active when TERM started and uses
+that framebuffer width with no letterbox. The choice is for this TERM session
+only.
 
-TERM "demo", port  runs a local demo (no TCP).
-TERM "replay", port  talks through the QEMU serial
-proxy to a live host (see harness/term_replay.py).
-TERM REPLAY "file$"  plays a TERM LOG capture from
-disk through the same RX ring as live TCP. IAC T
-records are skipped; typed T pauses for a keystroke.
-QEMU Circle TCP needs -device usb-net and
-OPTION ETHERNET ON; otherwise Network not
-available. Live TCP (Ethernet or Wi-Fi) does not
-dump the pane over serial; HDMI is the screen.
-Serial then prints compact !NET lines: connected,
-fail, hangup, and rx/tx/parsed/ring/parser
-counters. OPTION WIFI DEBUG ON repeats those
-counters while data arrives and prints serial-only
-!TCP snapshots (Circle Receive bytes/zero/err,
-leftover, conn/rxrdy). HDMI stays the session.
-OPTION TERM LOG ON
-is the wire trace for later TERM REPLAY.
-OPTION TERM LOG ON writes C:/.termlog (A: if no SD)
-with incoming (R) and typed (T) hex plus ms since
-log start, flushed every 10 seconds. T lines include
-byte count so a session can be replayed later.
+Incoming TCP (and TERM replay) writes a 512KB ring, then the ANSI parser reads
+that ring. CSI/IAC state spans bytes; an IAC at the read cursor waits until the
+next byte arrives. Each poll drains the socket into the ring; an empty recv
+yields and retries so a short idle gap does not stop a burst. The parser yields
+while reading so TCP ACKs keep the window open, and TERM drains again after the
+HDMI blit. Stopping at the first empty read starves BBS art and leaves a prompt
+such as Enter your password stuck until the sender retransmits.
 
-Example:  TERM "demo", 23
-          TERM "replay", 23
-          TERM REPLAY "C:/.termlog"
-          TERM "192.168.1.10", 23
+HDMI present is the terminal pane, not unused letterbox. Drawing uses opaque
+8x16 cells on PAGE 2, copied to PAGE 0. A line scroll updates the cell buffer
+and redraws the pane so a burst of BBS ANSI newlines is one present, not a
+pixel shift per line.
+
+ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL) plus telnet TTYPE=ANSI
+and DA/DSR replies for BBS autodetection. NAWS reports 80 columns when boxed
+and the Full MODE width when full. ESC ( B charset sequences are eaten so they
+do not print a stray B. OSC strings time out. Glyphs are IBM VGA 8x16 (CP437),
+so box drawing and shade characters 176-178 match a DOS VGA terminal.
+
+Alt+X exits and restores the previous MODE. F10 or Alt+T opens the Terminal
+menu (WORDPAD-style: the top bar is a full-width menu colour only while
+Alt/menu is active). The status bar (Alt-X, Echo, host) is shown only while
+that menu is open. Echo ON backspace only erases characters typed since the
+last newline.
+
+Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Exit. Bookmarks persist in
+C:/.termconfig (A: if no SD). New/Edit/Delete/Connect; Alt+S saves, Alt+C
+cancels. Connect drops the current session and applies the bookmark host, port,
+echo, letterbox, and optional 80x25 mode (MODE 2 640x400, full pane, no
+letterbox, NAWS 80x25). The status bar is shown only while that menu is open,
+so 80x25 uses all 25 rows for the terminal.
+
+Esc is sent to the host; press Esc twice or wait briefly to flush a lone Esc.
+USB Backspace (DEL) is sent as BS.
+
+Telnet IAC (255) is recognised only when the next byte is a real command
+(WILL/WONT/DO/DONT, a known SB option, NOP-GA, or another 255). Other 0xFF
+bytes are CP437 glyphs so BBS art does not freeze the pane. A subnegotiation
+that never sees IAC SE is dropped after a short cap.
+
+Line mode with local echo until the server sends IAC WILL ECHO. Hosts that
+never negotiate (many MUDs) keep local echo so typed text is visible. Toggle
+Echo from the Terminal menu when a host echoes anyway or hides input. In
+character mode (SGA) Enter sends CR only (not CR LF). USB Enter (LF) is sent
+and logged as CR so a serial CR LF pair is not a second key on the wire.
+
+TERM "demo", port runs a local demo (no TCP). TERM "replay", port talks
+through the QEMU serial proxy to a live host (see harness/term_replay.py).
+TERM REPLAY "file$" plays a TERM LOG capture from disk through the same RX
+ring as live TCP. IAC T records are skipped; typed T pauses for a keystroke.
+
+QEMU Circle TCP needs -device usb-net and OPTION ETHERNET ON; otherwise
+Network not available. Live TCP (Ethernet or Wi-Fi) does not dump the pane
+over serial; HDMI is the screen. Serial then prints compact !NET lines:
+connected, fail, hangup, and rx/tx/parsed/ring/parser counters. OPTION WIFI
+DEBUG ON repeats those counters while data arrives and prints serial-only
+!TCP snapshots (Circle Receive bytes/zero/err, leftover, conn/rxrdy). HDMI
+stays the session.
+
+OPTION TERM LOG ON writes C:/.termlog (A: if no SD) with incoming (R) and
+typed (T) hex plus ms since log start, flushed every 10 seconds. T lines
+include byte count so a session can be replayed later.
+
+Example:
+
+    TERM "demo", 23
+    TERM "replay", 23
+    TERM REPLAY "C:/.termlog"
+    TERM "192.168.1.10", 23

@@ -1,9 +1,13 @@
 name: SAVE
 kind: command
 
+Save the program in memory to disk. .BAS is appended if file$ has no
+extension.
+
 SAVE file$
 
-Save the program in memory. .BAS is appended if
-file$ has no extension.
+  file$ - destination path
 
-Example:  SAVE "P.BAS"
+Example:
+
+    SAVE "P.BAS"

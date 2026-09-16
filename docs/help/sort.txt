@@ -1,12 +1,15 @@
 name: SORT
 kind: command
 
-SORT array()
-
 Sort a one-dimensional array in place (numeric or string).
 
+SORT array()
+
+  array() - one-dimensional array
+
 Example:
-  DIM A(2)
-  A(0)=3 : A(1)=1 : A(2)=2
-  SORT A()
-  PRINT A(0);A(1);A(2)
+
+    DIM A(2)
+    A(0) = 3 : A(1) = 1 : A(2) = 2
+    SORT A()
+    PRINT A(0); A(1); A(2)

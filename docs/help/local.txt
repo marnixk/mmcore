@@ -1,9 +1,15 @@
 name: LOCAL
 kind: language
 
+Declare a variable inside a SUB or FUNCTION. Same syntax as ~DIM~. Required
+when OPTION EXPLICIT is on.
+
 LOCAL name [(dims)] [AS type] [, ...]
 
-Same syntax as DIM. Declare a variable inside a
-SUB or FUNCTION. Required when OPTION EXPLICIT is on.
+  name - variable or array
+  dims - array bounds
+  type - INTEGER, FLOAT, STRING, or a TYPE name
 
-Example:  LOCAL T AS INTEGER
+Example:
+
+    LOCAL T AS INTEGER

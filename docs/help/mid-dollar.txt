@@ -1,10 +1,18 @@
 name: MID$
 kind: command
 
+As a statement, overwrite characters in a string. As a function, return a
+slice. Positions are 1-based.
+
 MID$(s$, start [, length]) = t$
-MID$(s$, start [, length])   (function)
+MID$(s$, start [, length])
 
-As a statement, overwrite length characters of s$ from
-start (1-based) with t$. As a function, return a slice.
+  s$ - string variable (statement) or string (function)
+  start - first character position (1-based)
+  length - number of characters (optional)
+  t$ - replacement text (statement)
 
-Example:  A$="MMXXXX" : MID$(A$,3,4)="BASIC" : PRINT A$
+Example:
+
+    A$ = "MMXXXX" : MID$(A$, 3, 4) = "BASIC" : PRINT A$
+    PRINT MID$("MMBASIC", 3, 4)

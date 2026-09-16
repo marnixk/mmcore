@@ -2,16 +2,20 @@ name: DATA
 kind: language
 alias: READ, RESTORE
 
+Store literal values in the program for READ. RESTORE rewinds the DATA pointer.
+
 DATA item [, item...]
 READ var [, var...]
 RESTORE [line]
 
-DATA stores values in the program. READ assigns the
-next items. RESTORE rewinds to the first DATA, or to
-the first DATA at or after line.
+  item - numeric or string literal
+  var - variable to receive the next DATA value
+  line - optional line number; RESTORE without it rewinds to the first DATA,
+         or with it to the first DATA at or after that line
 
 Example:
-  10 DATA 10,20,12
-  20 READ A,B,C
-  30 PRINT A+B+C
-  RUN
+
+    10 DATA 10, 20, 12
+    20 READ A, B, C
+    30 PRINT A + B + C
+    RUN

@@ -2,12 +2,16 @@ name: KILL
 kind: command
 alias: RM, DEL
 
+Delete a file. Directories use ~RMDIR~. RM and DEL are aliases.
+
 KILL path$
-RM path$     (alias)
-DEL path$    (alias)
+RM path$
+DEL path$
 
-Delete a file. Directories use RMDIR.
+  path$ - file to delete
 
-Example:  KILL "Z.TXT"
-          RM "Z.TXT"
-          DEL "Z.TXT"
+Example:
+
+    KILL "Z.TXT"
+    RM "Z.TXT"
+    DEL "Z.TXT"

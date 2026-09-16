@@ -1,12 +1,15 @@
 name: INPUT$
 kind: command
 
+Read up to nbr characters from an open file or TCP handle. Count comes first,
+then the handle. Disk advances the file position. TCP is non-blocking and
+returns "" if nothing is waiting. LOC(#n) is the number of RX bytes for TCP.
+
 INPUT$(nbr, #n)
 
-Read up to nbr characters from file or TCP
-handle #n. Count comes first, then the handle.
-Disk: advances the file position.
-TCP: non-blocking; returns "" if nothing is
-waiting. LOC(#n) is the number of RX bytes.
+  nbr - maximum characters to read
+  #n - open file or TCP stream
 
-Example:  A$ = INPUT$(LOC(#1), #1)
+Example:
+
+    A$ = INPUT$(LOC(#1), #1)

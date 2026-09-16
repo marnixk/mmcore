@@ -1,18 +1,22 @@
 name: INPUT
 kind: command
 
+Read values from the console or from an open file/TCP stream. LINE INPUT reads
+a whole line into a string. See ~INPUT$~ for INPUT$(nbr, #n).
+
 INPUT [prompt$;|,] var [, var...]
 INPUT #n, var [, var...]
 LINE INPUT [prompt$] var$
 LINE INPUT #fn, var$
 
-Console INPUT prints an optional prompt, then ?
-if the prompt is followed by ; (or if there is no
-prompt). A comma after the prompt skips the ?.
-Type a line; comma-separated fields fill the vars.
-INPUT #n reads those fields from an open file or
-TCP stream. LINE INPUT reads a whole line into a
-string. HELP INPUT$ for INPUT$(nbr, #n).
+  prompt$ - optional prompt; ; after it prints ?, comma skips the ?
+  var - variable(s) to fill from comma-separated fields
+  #n / #fn - open file or TCP stream
 
-Example:  INPUT "Name"; N$
-          PRINT N$
+Console INPUT prints an optional prompt, then ? if the prompt is followed by ;
+(or if there is no prompt). Type a line; comma-separated fields fill the vars.
+
+Example:
+
+    INPUT "Name"; N$
+    PRINT N$

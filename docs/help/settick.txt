@@ -1,9 +1,14 @@
 name: SETTICK
 kind: command
 
+Call a SUB every period milliseconds. period 0 disables the tick.
+
 SETTICK period, handler [, slot]
 
-Call SUB handler every period milliseconds.
-slot is 0 to 3 (default 0). period 0 disables.
+  period - interval in milliseconds (0 disables)
+  handler - SUB name
+  slot - 0 to 3 (default 0)
 
-Example:  SETTICK 10, GameTick
+Example:
+
+    SETTICK 10, GameTick

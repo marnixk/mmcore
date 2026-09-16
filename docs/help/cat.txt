@@ -1,8 +1,13 @@
 name: CAT
 kind: command
 
+Append one string onto another in place (same as s$ = s$ + t$).
+
 CAT s$, t$
 
-Append t$ to s$ (same as s$ = s$ + t$).
+  s$ - destination string variable
+  t$ - text to append
 
-Example:  A$="MM" : CAT A$,"BASIC" : PRINT A$
+Example:
+
+    A$ = "MM" : CAT A$, "BASIC" : PRINT A$

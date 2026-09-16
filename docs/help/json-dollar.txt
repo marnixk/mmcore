@@ -2,15 +2,17 @@ name: JSON$
 kind: command
 alias: JSON
 
+Query a JSON object stored in a STRING (255). Missing keys, null, objects and
+arrays return "". Invalid JSON is an error. ~JSON_PARSE~ and ~JSON_STRINGIFY$~
+map a TYPE.
+
 JSON$(json$, path$)
 
-Query a JSON object stored in a STRING (255).
-path$ uses dotted keys and [n] array indexes:
-  main.temp   weather[0].description
-Missing keys, null, objects and arrays return "".
-Invalid JSON is an error.
-HELP JSON_PARSE and JSON_STRINGIFY$ map a TYPE.
+  json$ - JSON text in a string
+  path$ - dotted keys and [n] array indexes, e.g. main.temp or
+          weather[0].description
 
 Example:
-  PRINT VAL(JSON$(js$, "main.temp"))
-  PRINT JSON$(js$, "name")
+
+    PRINT VAL(JSON$(js$, "main.temp"))
+    PRINT JSON$(js$, "name")

@@ -1,14 +1,18 @@
 name: LOAD
 kind: command
 
+Load an image onto the current WRITE page.
+
 LOAD [JPG|JPEG|PNG] file$ [, x, y [, colour]]
 
-Load an image onto the current WRITE page at (x,y)
-(default 0,0). colour is treated as transparent
-(CMM2). Integer 0-31 maps to the IBM palette.
-JPG/JPEG uses the JPEG decoder. PNG (and BMP/GIF/
-IMAGE as a keyword) uses the PNG decoder. With no
-type keyword, .JPG/.JPEG selects JPEG; otherwise PNG.
+  file$ - image path
+  x, y - top-left destination (default 0, 0)
+  colour - treated as transparent (CMM2); integer 0-31 maps to the IBM palette
 
-Example:  LOAD PNG "TEST.PNG"
-          LOAD JPG "TEST.JPG",0,0
+JPG/JPEG uses the JPEG decoder. PNG (and BMP/GIF/IMAGE as a keyword) uses the
+PNG decoder. With no type keyword, .JPG/.JPEG selects JPEG; otherwise PNG.
+
+Example:
+
+    LOAD PNG "TEST.PNG"
+    LOAD JPG "TEST.JPG", 0, 0

@@ -2,16 +2,20 @@ name: GOSUB
 kind: language
 alias: RETURN
 
+Call a numbered subroutine. RETURN continues after the GOSUB. Nested GOSUB is
+limited to 16 levels.
+
 GOSUB line
 GOSUB label
 RETURN
 
-Call a numbered subroutine. RETURN continues after
-the GOSUB. Nested GOSUB is limited to 16 levels.
+  line - subroutine line number
+  label - subroutine label
 
 Example:
-  10 GOSUB 50
-  20 END
-  50 PRINT 6*7
-  60 RETURN
-  RUN
+
+    10 GOSUB 50
+    20 END
+    50 PRINT 6 * 7
+    60 RETURN
+    RUN

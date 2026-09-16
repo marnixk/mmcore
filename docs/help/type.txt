@@ -2,28 +2,31 @@ name: TYPE
 kind: language
 alias: END TYPE
 
+Define a user type. DIM var AS name, DIM arr(n) AS name, LOCAL and STATIC.
+SUB/FUNCTION parameters and FUNCTION return use AS name too. PIXEL and MATH
+accept arr().member as a view of that field across the array. See ~STRUCT~.
+LIST TYPE [name] lists definitions.
+
 TYPE name
   member AS INTEGER|FLOAT|STRING [LENGTH n]
   member AS othertype
 END TYPE
 
-Define a user type (PicoMite). DIM var AS name,
-DIM arr(n) AS name, LOCAL and STATIC. SUB/FUNCTION
-parameters and FUNCTION return use AS name too.
-Members:
-INTEGER (64-bit), FLOAT, STRING LENGTH n, nested
-types. INT means INTEGER inside TYPE. Access with
-var.member and arr(i).member. Whole-struct assign
-copies the same type only. Period is still a name
-character unless the left side is a TYPE variable.
-PIXEL and MATH accept arr().member as a view of
-that field across the array. HELP STRUCT.
-LIST TYPE [name] lists definitions.
+  name - type name
+  member - field name
+  LENGTH n - string capacity for STRING members
+  othertype - nested TYPE name
+
+Members: INTEGER (64-bit), FLOAT, STRING LENGTH n, nested types. INT means
+INTEGER inside TYPE. Access with var.member and arr(i).member. Whole-struct
+assign copies the same type only. Period is still a name character unless the
+left side is a TYPE variable.
 
 Example:
-  TYPE Point
-    x AS INTEGER
-    y AS INTEGER
-  END TYPE
-  DIM p AS Point = (10, 20)
-  PRINT p.x
+
+    TYPE Point
+      x AS INTEGER
+      y AS INTEGER
+    END TYPE
+    DIM p AS Point = (10, 20)
+    PRINT p.x

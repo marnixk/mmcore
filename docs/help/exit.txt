@@ -2,16 +2,17 @@ name: EXIT
 kind: language
 alias: EXIT DO, EXIT FOR, EXIT SUB, EXIT FUNCTION
 
+Leave the current DO, FOR, SUB, or FUNCTION immediately.
+
 EXIT DO
 EXIT FOR
 EXIT SUB
 EXIT FUNCTION
 
-Leave the current DO, FOR, SUB or FUNCTION.
-
 Example:
-  10 FOR I=1 TO 10
-  20 IF I=3 THEN EXIT FOR
-  30 PRINT I
-  40 NEXT I
-  RUN
+
+    10 FOR I = 1 TO 10
+    20 IF I = 3 THEN EXIT FOR
+    30 PRINT I
+    40 NEXT I
+    RUN

@@ -1,12 +1,19 @@
 name: ARC
 kind: command
 
+Draw an elliptical arc centred at (x, y). The arc is stroked as connected line
+segments; it does not fill the pie wedge.
+
 ARC x, y, r1, r2, a1, a2 [, colour]
 
-Elliptical arc centred at (x,y). r1 is the X radius,
-r2 the Y radius. a1 and a2 are start and end angles
-(radians, or degrees after OPTION ANGLE DEGREES).
-Drawn as line segments.
+  x, y - centre of the ellipse
+  r1 - radius along X
+  r2 - radius along Y
+  a1 - start angle (radians, or degrees after OPTION ANGLE DEGREES)
+  a2 - end angle (same units as a1)
+  colour - stroke colour (optional; default is the current foreground)
 
-Example:  OPTION ANGLE DEGREES
-          ARC 160,120,40,40,0,90,RGB(255,255,0)
+Example:
+
+    OPTION ANGLE DEGREES
+    ARC 160, 120, 40, 40, 0, 90, RGB(255, 255, 0)

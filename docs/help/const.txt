@@ -1,10 +1,14 @@
 name: CONST
 kind: language
 
+Define a named constant. Suffixes $ % ! set the type.
+
 CONST name = expr
 
-Define a constant. Suffixes $ % ! set the type.
+  name - constant name
+  expr - value expression
 
 Example:
-  CONST MAX=21
-  PRINT MAX*2
+
+    CONST MAX = 21
+    PRINT MAX * 2

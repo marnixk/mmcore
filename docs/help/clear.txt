@@ -2,7 +2,12 @@ name: CLEAR
 kind: command
 alias: ERASE
 
-CLEAR
-ERASE     (alias)
+Clear all variables. The program text in memory is kept (use ~NEW~ to erase the
+program). ERASE is an alias.
 
-Clear variables. The program text is kept (see NEW).
+CLEAR
+ERASE
+
+Example:
+
+    CLEAR

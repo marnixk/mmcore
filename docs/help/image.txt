@@ -1,20 +1,24 @@
 name: IMAGE
 kind: command
 
-IMAGE RESIZE x,y,w,h,nx,ny,nw,nh [,page]
-IMAGE RESIZE_FAST ... [,page] [,flag]
-IMAGE ROTATE x,y,w,h,nx,ny,angle [,page]
-IMAGE ROTATE_FAST ... [,page] [,flag]
-IMAGE WARP_H x,y,w,h,x1,y1,h1,x2,y2,h2 [,page] [,flag]
-IMAGE WARP_V x,y,w,h,x1,y1,w1,x2,y2,w2 [,page] [,flag]
+Software scale, rotate, and warp of a rectangle on a page. BITMAP (or GUI
+BITMAP) plots a 1-bit image; type HELP BITMAP.
 
-Software scale, rotate and warp. RESIZE uses
-bilinear sampling; RESIZE_FAST is nearest
-neighbour. ROTATE is clockwise in degrees about
-the source centre and cropped to w by h.
-page is the source (write page or FRAMEBUFFER).
-flag=1 skips black pixels.
-BITMAP (or GUI BITMAP) plots a 1-bit image;
-type HELP BITMAP.
+IMAGE RESIZE x, y, w, h, nx, ny, nw, nh [, page]
+IMAGE RESIZE_FAST ... [, page] [, flag]
+IMAGE ROTATE x, y, w, h, nx, ny, angle [, page]
+IMAGE ROTATE_FAST ... [, page] [, flag]
+IMAGE WARP_H x, y, w, h, x1, y1, h1, x2, y2, h2 [, page] [, flag]
+IMAGE WARP_V x, y, w, h, x1, y1, w1, x2, y2, w2 [, page] [, flag]
 
-Example:  IMAGE RESIZE_FAST 0,0,10,10,100,80,40,40
+  x, y, w, h - source rectangle
+  nx, ny, nw, nh - destination rectangle (RESIZE)
+  angle - clockwise degrees about the source centre (ROTATE; cropped to w by h)
+  page - source page (write page or FRAMEBUFFER)
+  flag - 1 skips black pixels
+
+RESIZE uses bilinear sampling; RESIZE_FAST is nearest neighbour.
+
+Example:
+
+    IMAGE RESIZE_FAST 0, 0, 10, 10, 100, 80, 40, 40

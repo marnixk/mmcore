@@ -5,6 +5,11 @@ edit these by hand in C: `scripts/gen_help.py` compiles every `*.txt` file
 here into `mmbasic/src/help_data.c` at build time. Adding a file is enough;
 nothing in the command table or Makefile lists individual topics.
 
+`GAP_ANALYSIS_*.md` files may live in this directory for convenience. They
+are Markdown only and are **not** loaded by `gen_help.py` (which reads
+`*.txt` exclusively), so they never enter the firmware HELP image. Refresh
+them with `scripts/gap_analysis.py` or the `/update-help` skill.
+
 ## File format
 
 ```

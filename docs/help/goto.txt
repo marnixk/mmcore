@@ -1,19 +1,23 @@
 name: GOTO
 kind: language
 
+Jump to a numbered program line or a label. A label is an identifier at the
+start of a line, ended with a colon.
+
 GOTO line
 GOTO label
 
-Jump to a numbered program line or a label. A label is an
-identifier at the start of a line, ended with a colon.
+  line - program line number
+  label - label name (without the colon)
 
 Example:
-  10 GOTO 30
-  20 PRINT "NO"
-  30 PRINT 42
-  RUN
 
-  10 GOTO DONE
-  20 PRINT "NO"
-  30 DONE: PRINT 42
-  RUN
+    10 GOTO 30
+    20 PRINT "NO"
+    30 PRINT 42
+    RUN
+
+    10 GOTO DONE
+    20 PRINT "NO"
+    30 DONE: PRINT 42
+    RUN

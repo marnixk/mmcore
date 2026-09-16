@@ -2,11 +2,14 @@ name: LIST
 kind: command
 alias: LIST TYPE
 
+Print the program in memory with line numbers, or list defined TYPE blocks.
+
 LIST
 LIST TYPE [name]
 
-LIST prints the program in memory with line numbers.
-LIST TYPE shows defined TYPE blocks; LIST TYPE name
-shows one type.
+  name - optional TYPE name to show one definition
 
-Example:  LIST TYPE Point
+Example:
+
+    LIST
+    LIST TYPE Point

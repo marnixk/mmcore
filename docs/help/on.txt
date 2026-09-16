@@ -2,15 +2,21 @@ name: ON
 kind: command
 alias: ON GOTO, ON GOSUB
 
+Jump to the n-th line number (1-based), or call a SUB when a key is waiting.
+ON ERROR is accepted but not trapped.
+
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
-ON ERROR ...     (accepted, not trapped)
-ON KEY subname   Call subname when a key is waiting.
+ON ERROR ...
+ON KEY subname
 
-Jump to the n-th line number (1-based).
+  n - 1-based index into the line list
+  line - destination line numbers
+  subname - SUB called when a key is waiting
 
 Example:
-  10 N=2
-  20 ON N GOTO 30,40,50
-  40 PRINT 42
-  RUN
+
+    10 N = 2
+    20 ON N GOTO 30, 40, 50
+    40 PRINT 42
+    RUN

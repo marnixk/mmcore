@@ -2,12 +2,19 @@ name: BITMAP
 kind: command
 alias: GUI BITMAP
 
+Plot a 1-bit bitmap at a pixel location. Bits are drawn MSB-first in each byte,
+top line first. GUI BITMAP is the same command (CMM2 name).
+
 BITMAP x, y, bits [, w] [, h] [, scale] [, c] [, bc]
-GUI BITMAP ...     (CMM2 name)
+GUI BITMAP ...
 
-Plot a 1-bit bitmap. bits is an integer or a
-string (MSB of each byte first, top line first).
-Default size is 8x8. scale defaults to FONT.
-c and bc default to the current colours.
+  x, y - top-left pixel
+  bits - integer mask or string of bytes
+  w, h - width and height in pixels (default 8x8)
+  scale - integer scale (default follows FONT)
+  c - foreground colour (optional)
+  bc - background colour (optional)
 
-Example:  BITMAP 20,20,&HFF000000000000FF,8,8,2,RGB(255,255,255)
+Example:
+
+    BITMAP 20, 20, &HFF000000000000FF, 8, 8, 2, RGB(255, 255, 255)

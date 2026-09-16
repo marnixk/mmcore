@@ -1,8 +1,12 @@
 name: RMDIR
 kind: command
 
-RMDIR path$
-
 Remove an empty directory.
 
-Example:  RMDIR "DATA"
+RMDIR path$
+
+  path$ - empty directory to remove
+
+Example:
+
+    RMDIR "DATA"

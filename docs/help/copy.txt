@@ -1,9 +1,14 @@
 name: COPY
 kind: command
 
+Copy a file to a new path or name.
+
 COPY src$ [TO] dst$
 COPY src$, dst$
 
-Copy a file.
+  src$ - source path
+  dst$ - destination path
 
-Example:  COPY "A.TXT" TO "B.TXT"
+Example:
+
+    COPY "A.TXT" TO "B.TXT"

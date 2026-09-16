@@ -1,0 +1,25 @@
+name: SYNTAX CONVENTIONS
+kind: page
+alias: Syntax Conventions
+
+Syntax Conventions
+
+Help topics show command forms like this:
+
+  COMMAND name, [optional], {choice1 | choice2}
+
+  name       - a required argument you supply
+  [optional] - may be omitted
+  {a | b}    - choose one of the listed forms
+  ...        - the previous item may repeat
+
+String arguments are usually written with a $ suffix in the description
+(file$, path$) even when you pass a quoted literal: "HELLO.BAS".
+
+Examples under each topic are indented. Type them at the prompt, or put
+numbered lines in a program and ~RUN~.
+
+Keywords are not case-sensitive: print, PRINT, and Print are the same. Spaces
+around commas are optional.
+
+See also ~USING HELP~, ~ME~.

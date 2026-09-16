@@ -1,18 +1,170 @@
 name: OVERVIEW
 kind: page
 
-MMBasic Help
+mmCore Help
 
-Bare HELP opens this Overview. ~Contents~ is the command
-and language map. ~Index~ is the A-Z list. ~HELP~ explains
-the viewer (HELP BASIC is Contents).
+Type ~ME~ for a short introduction. Bare HELP opens this Overview. Escape
+returns to the prompt.
+
+  +Orientation-------------------------+ +Quick Reference-----------------+
+  | ~USING HELP~                       | | ~ASCII CHARACTER CODES~         |
+  | ~SYNTAX CONVENTIONS~               | | ~KEYBOARD SCAN CODES~           |
+  +------------------------------------+ +--------------------------------+
+
+Also: ~CONTENTS~ (command map)  ~INDEX~ (A-Z)  ~HELP~ (viewer)
+      ~FUNCTIONS~ (math and strings)
+
+Control Flow
+
+    ~FOR~ - counted loop with optional STEP
+    ~DO~ - general loop with WHILE/UNTIL
+    ~WHILE~ - loop while a condition is true
+    ~IF~ - conditional branch
+    ~SELECT CASE~ - multi-way branch
+    ~GOTO~ - jump to a line label
+    ~GOSUB~ - call a line subroutine
+    ~ON~ - computed GOTO/GOSUB and ON KEY
+    ~EXIT~ - leave a loop or routine early
+    ~CONTINUE~ - skip to the next iteration
+    ~END~ - end the program
+    ~REM~ - comment to end of line
+
+Variables and Types
+
+    ~DIM~ - declare variables and arrays
+    ~LOCAL~ - declare local variables
+    ~STATIC~ - declare static locals
+    ~CONST~ - declare named constants
+    ~TYPE~ - define a structured type
+    ~LET~ - assign a value
+    ~DATA~ - embedded program data
+    ~CLEAR~ - clear variables
+    ~INC~ - increment a variable
+    ~DEC~ - decrement a variable
+
+Procedures
+
+    ~SUB~ - define a subroutine
+    ~FUNCTION~ - define a function
+    ~CALL~ - call a SUB by name
+    ~RUN~ - run the program
+
+Console and Text I/O
+
+    ~PRINT~ - write text to the console
+    ~INPUT~ - read values from the console
+    ~LINE INPUT~ - read a whole line
+    ~LOCATE~ - position the text cursor
+    ~CLS~ - clear the screen
+    ~INKEY$~ - read a key without waiting
+    ~PAUSE~ - wait for a timed delay
+    ~VSYNC_WAIT~ - wait for vertical sync
+
+String Operations
+
+    ~MID$~ - extract or assign a substring
+    ~CAT~ - append text to a string variable
+    ~SORT~ - sort an array
+    ~FUNCTIONS~ - LEN LEFT$ RIGHT$ and more
+
+Math Functions
+
+    ~MATH~ - array and matrix math
+    ~RANDOMIZE~ - seed the random generator
+    ~FUNCTIONS~ - ABS SIN COS SQR and more
+
+File System
+
+    ~DRIVE~ - list or select a drive
+    ~DIR~ - list directory contents
+    ~FILES~ - fullscreen file manager
+    ~CHDIR~ - change directory
+    ~MKDIR~ - create a directory
+    ~RMDIR~ - remove a directory
+    ~KILL~ - delete a file
+    ~RENAME~ - rename or move a file
+    ~COPY~ - copy a file
+    ~XFER~ - transfer a file
+    ~PACKAGE~ - install packages
+
+File I/O
+
+    ~OPEN~ - open a file or TCP stream
+    ~CLOSE~ - close a file number
+    ~SEEK~ - seek in an open file
+    ~LOAD~ - load a program
+    ~SAVE~ - save a program
+    ~INPUT$~ - read characters from a file
+
+Time and Events
+
+    ~SETTICK~ - periodic tick interrupt
+    ~FUNCTIONS~ - DATE$ TIME$ TIMER
+
+System and Options
+
+    ~NEW~ - clear the program
+    ~LIST~ - list program lines
+    ~EDIT~ - fullscreen program editor
+    ~WORDPAD~ - simple text editor
+    ~MEMORY~ - show memory use
+    ~HELP~ - this help system
+    ~ME~ - short mmCore introduction
+    ~CREDITS~ - copyright notices
+    ~OPTION~ - set options
+    ~OPTIONS~ - OPTIONS WIFI join
+    ~FACTORY_RESET~ - restore defaults
+    ~REBOOT~ - reboot the machine
+    ~PROMPT~ - prompt format option
+    ~ETHERNET~ - Ethernet option
+    ~AUDIO_TARGET~ - audio output target
+
+Network and Terminal
+
+    ~CONNECT~ - network connect helper
+    ~TERM~ - serial or TCP terminal
+    ~IPCONFIG~ - show network addresses
+
+Sound and Play
+
+    ~PLAY~ - play tones or media
+
+Graphics
+
+    ~PIXEL~ - set or read a pixel
+    ~LINE~ - draw a line
+    ~BOX~ - draw a box
+    ~CIRCLE~ - draw a circle
+    ~RBOX~ - draw a rounded box
+    ~ARC~ - draw an arc
+    ~TRIANGLE~ - draw a triangle
+    ~POLYGON~ - draw a polygon
+    ~TEXT~ - draw graphics text
+    ~FONT~ - select a font
+    ~COLOUR~ - set drawing colours
+    ~MODE~ - select video mode
+    ~PAGE~ - select drawing page
+    ~FRAMEBUFFER~ - framebuffer pages
+    ~IMAGE~ - image load and transform
+    ~TURTLE~ - turtle graphics
+    ~BITMAP~ - plot a bitmap pattern
+
+Sprites and Blit
+
+    ~SPRITE~ - load show and move sprites
+    ~BLIT~ - copy rectangular image blocks
+
+JSON and Structures
+
+    ~STRUCT~ - structured array operations
+    ~JSON_PARSE~ - parse JSON text
+    ~JSON$~ - read a JSON path
+    ~JSON_STRINGIFY$~ - serialize to JSON
+
+Environment
+
+    ~FUNCTIONS~ - MM.HRES MM.VRES MM.INFO and more
 
 Links are explicit. A sentence such as "for every loop we
 can use ~FOR~ loops" only highlights the marked FOR, not
 the word "for".
-
-Type HELP topic from the prompt, or Enter on a <link>.
-Escape goes back. Escape on this page returns to the prompt.
-
-Start with ~CLS~, ~PRINT~, ~OPTION~, or ~FUNCTIONS~.
-Unknown topics fall back to the Index.

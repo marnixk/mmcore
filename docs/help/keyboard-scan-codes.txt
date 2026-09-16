@@ -1,0 +1,46 @@
+name: KEYBOARD SCAN CODES
+kind: page
+alias: Keyboard Scan Codes, SCAN CODES
+
+Keyboard Scan Codes
+
+PC/AT set-1 make codes (decimal). Useful with
+~INKEY$~ extended keys and KEYDOWN.
+
+  Esc 1          A 30           Caps Lock 58
+  1 ! 2          S 31           F1 59
+  2 @ 3          D 32           F2 60
+  3 # 4          F 33           F3 61
+  4 $ 5          G 34           F4 62
+  5 % 6          H 35           F5 63
+  6 ^ 7          J 36           F6 64
+  7 & 8          K 37           F7 65
+  8 * 9          L 38           F8 66
+  9 ( 10         ; : 39         F9 67
+  0 ) 11         ' " 40         F10 68
+  - _ 12         ` ~~ 41         F11 133
+  = + 13         Left Shift 42  F12 134
+  Bksp 14        \ | 43         Num Lock 69
+  Tab 15         Z 44           Scroll Lock 70
+  Q 16           X 45           Home / 7 71
+  W 17           C 46           Up / 8 72
+  E 18           V 47           PgUp / 9 73
+  R 19           B 48           Gray - 74
+  T 20           N 49           Left / 4 75
+  Y 21           M 50           Center / 5 76
+  U 22           , < 51         Right / 6 77
+  I 23           . > 52         Gray + 78
+  O 24           / ? 53         End / 1 79
+  P 25           Right Shift 54 Down / 2 80
+  [ { 26         PrtSc / * 55   PgDn / 3 81
+  ] } 27         Alt 56         Ins / 0 82
+  Enter 28       Space 57       Del / . 83
+  Ctrl 29
+
+On this console, ~INKEY$~ maps VT100 arrows and
+function keys to Colour Maximite 2 codes (Up=128).
+See ~INKEY$~ for the mapped values.
+
+Example:
+
+    PRINT ASC(INKEY$)

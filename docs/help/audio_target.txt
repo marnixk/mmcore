@@ -2,16 +2,18 @@ name: AUDIO_TARGET
 kind: command
 alias: AUDIO
 
+Select where PLAY sends PCM. Setting is stored in .mmbasic.ini.
+PRINT MM.INFO$("AUDIO") returns HDMI or JACK.
+
 OPTION AUDIO_TARGET HDMI|JACK
 OPTION AUDIO TARGET HDMI|JACK
 OPTION AUDIO ON|OFF
 
-Select where PLAY sends PCM. HDMI is HDMI0 audio
-(default). JACK is the 3.5mm PWM analogue output
-on Pi 3 and Pi 4B. Pi 400 has no analogue jack.
-AUDIO OFF mutes the device; PLAYING() still tracks
-decode. Setting is stored in .mmbasic.ini.
-PRINT MM.INFO$("AUDIO") returns HDMI or JACK.
+  HDMI - HDMI0 audio (default)
+  JACK - 3.5mm PWM analogue output on Pi 3 and Pi 4B (Pi 400 has no jack)
+  AUDIO OFF - mutes the device; PLAYING() still tracks decode
 
-Example:  OPTION AUDIO_TARGET JACK
-          PLAY TONE 440, 440, 500
+Example:
+
+    OPTION AUDIO_TARGET JACK
+    PLAY TONE 440, 440, 500

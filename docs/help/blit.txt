@@ -1,17 +1,25 @@
 name: BLIT
 kind: command
 
+Copy a rectangle of pixels, or save and restore rectangles in named blit
+buffers. Buffers are numbered 1 to 16.
+
 BLIT x1, y1, x2, y2, w, h [, page] [, ori]
 BLIT READ [#]n, x, y, w, h [, page]
 BLIT WRITE [#]n, x, y [, ori]
 BLIT CLOSE [#]n
 
-Copy a w by h rectangle from (x1,y1) to (x2,y2).
-page is the source (write page if omitted, or
-FRAMEBUFFER). ori bits: 1 mirror L/R, 2 mirror
-T/B, 4 skip black. WRITE defaults ori to 4.
-READ/WRITE/CLOSE use buffers 1 to 16.
+  x1, y1 - source top-left
+  x2, y2 - destination top-left
+  w, h - rectangle size
+  page - source page (optional; write page if omitted, or FRAMEBUFFER)
+  ori - orientation bits: 1 mirror L/R, 2 mirror T/B, 4 skip black
+  n - blit buffer number (1 to 16)
 
-Example:  BLIT 0,0,100,80,32,32
-          BLIT READ #1,0,0,32,32
-          BLIT WRITE #1,200,80
+WRITE defaults ori to 4 (skip black).
+
+Example:
+
+    BLIT 0, 0, 100, 80, 32, 32
+    BLIT READ #1, 0, 0, 32, 32
+    BLIT WRITE #1, 200, 80
