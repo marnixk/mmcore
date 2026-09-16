@@ -2,48 +2,49 @@ name: MATH
 kind: command
 alias: CINT, EVAL, SINH, COSH, TANH, LOG10, ATAN3
 
+Math helpers and array operators. CINT rounds to nearest (.5 away from zero;
+unlike INT=floor and FIX=truncate). EVAL evaluates a string as an expression.
+MATH() uses a space after the name, not extra parentheses: MATH(ATAN3 x, y)
+not MATH(ATAN3(x,y)). TYPE arrays use arr().member the same way as plain a()
+(PIXEL too; see ~TYPE~). OPTION ANGLE DEGREES applies to ATAN3 and Q_*.
+
 CINT(n)
 EVAL(expr$)
 MATH(fn args)
-MATH command  SET|SCALE|ADD|MUL|POWER|INTERPOLATE|
-  SLICE|INSERT|M_*|V_*|Q_*|FFT
+MATH command SET|SCALE|ADD|MUL|POWER|INTERPOLATE|SLICE|INSERT|M_*|V_*|Q_*|FFT
 
-CINT rounds to nearest; .5 goes away from zero
-(unlike INT=floor and FIX=truncate).
-EVAL evaluates a string as an expression.
-MATH() uses a space after the name, not extra
-parentheses: MATH(ATAN3 x, y) not MATH(ATAN3(x,y)).
+  n - value for CINT
+  expr$ - expression string for EVAL
+  a(), b(), c() - numeric arrays; TYPE views use pts().x style
 
-MATH(ATAN3 x, y)  angle of vector (x,y) in 0..2*PI
-MATH(SINH a) MATH(COSH a) MATH(TANH a)
-MATH(LOG10 a)
-MATH(MAX a()) MATH(MIN a()) MATH(MEAN a())
-MATH(MEDIAN a()) MATH(SUM a()) MATH(SD a())
-MATH(MAGNITUDE v()) MATH(DOTPRODUCT a(), b())
-MATH(M_DETERMINANT a())
-MATH(CHI a()) MATH(CHI_P a()) MATH(CORREL a(), b())
+Functions:
+  MATH(ATAN3 x, y)  angle of vector (x,y) in 0..2*PI
+  MATH(SINH a) MATH(COSH a) MATH(TANH a) MATH(LOG10 a)
+  MATH(MAX a()) MATH(MIN a()) MATH(MEAN a()) MATH(MEDIAN a())
+  MATH(SUM a()) MATH(SD a())   (SD is sample stdev, n-1)
+  MATH(MAGNITUDE v()) MATH(DOTPRODUCT a(), b())
+  MATH(M_DETERMINANT a()) MATH(CHI a()) MATH(CHI_P a())
+  MATH(CORREL a(), b())
 
-MATH SET n, a()     fill every element
-MATH SCALE a(), k, b()   or a(), b(), c()
-MATH SCALE pts().x, k, pts().x
-MATH ADD a(), k, b()     or a(), b(), c()
-MATH MUL a(), b(), c()   element-wise (SCALE too)
-MATH INTERPOLATE a(), b(), t, c()
-MATH SLICE a(), i, , b()   (omit one index)
-MATH INSERT a(), i, , b()
-MATH M_INVERSE a(), b()    MATH M_TRANSPOSE a(), b()
-MATH M_MULT a(), b(), c()  MATH M_PRINT a()
-MATH V_PRINT a()  MATH V_NORMALISE a(), b()
-MATH V_MULT m(), v(), o()  MATH V_CROSS a(), b(), c()
-MATH Q_INVERT|Q_VECTOR|Q_EULER|Q_CREATE|Q_MULT|Q_ROTATE
-MATH FFT a(), b()  (also INVERSE|MAGNITUDE|PHASE)
+Commands:
+  MATH SET n, a()
+  MATH SCALE a(), k, b()   or a(), b(), c()
+  MATH SCALE pts().x, k, pts().x
+  MATH ADD a(), k, b()     or a(), b(), c()
+  MATH MUL a(), b(), c()   element-wise
+  MATH INTERPOLATE a(), b(), t, c()
+  MATH SLICE a(), i, , b()   (omit one index)
+  MATH INSERT a(), i, , b()
+  MATH M_INVERSE a(), b()    MATH M_TRANSPOSE a(), b()
+  MATH M_MULT a(), b(), c()  MATH M_PRINT a()
+  MATH V_PRINT a()  MATH V_NORMALISE a(), b()
+  MATH V_MULT m(), v(), o()  MATH V_CROSS a(), b(), c()
+  MATH Q_INVERT|Q_VECTOR|Q_EULER|Q_CREATE|Q_MULT|Q_ROTATE
+  MATH FFT a(), b()  (also INVERSE|MAGNITUDE|PHASE)
 
-SD is sample stdev (n-1). Arrays are numeric.
-TYPE arrays use arr().member the same way as
-plain a() (PIXEL too; see TYPE).
-OPTION ANGLE DEGREES applies to ATAN3 and Q_*.
+Example:
 
-Example:  PRINT CINT(45.57)
-          PRINT EVAL("1+2*3")
-          PRINT MATH(SUM A())
-          MATH SCALE pos().x, 2, pos().x
+    PRINT CINT(45.57)
+    PRINT EVAL("1+2*3")
+    PRINT MATH(SUM A())
+    MATH SCALE pos().x, 2, pos().x

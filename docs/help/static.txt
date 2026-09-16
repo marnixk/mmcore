@@ -1,9 +1,15 @@
 name: STATIC
 kind: language
 
+Like LOCAL but the value is kept between calls. Same syntax as ~DIM~. Only used
+in SUB/FUNCTION.
+
 STATIC name [(dims)] [AS type] [, ...]
 
-Like LOCAL but the value is kept between calls.
-Same syntax as DIM. Only used in SUB/FUNCTION.
+  name - variable or array
+  dims - array bounds
+  type - INTEGER, FLOAT, STRING, or a TYPE name
 
-Example:  STATIC N = 0
+Example:
+
+    STATIC N = 0

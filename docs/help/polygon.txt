@@ -1,10 +1,15 @@
 name: POLYGON
 kind: command
 
-POLYGON x1,y1, x2,y2, x3,y3... [, colour] [, fill]
+Draw a closed polygon (at least 3 vertices). Filled polygons are triangulated
+from the first vertex.
 
-Draw a closed polygon (at least 3 vertices).
-Optional colour and fill are the last arguments.
-Filled polygons are triangulated from the first vertex.
+POLYGON x1, y1, x2, y2, x3, y3... [, colour] [, fill]
 
-Example:  POLYGON 10,10,40,10,25,30,RGB(255,0,0)
+  x, y - vertex coordinates (at least three pairs)
+  colour - outline colour (optional)
+  fill - fill colour (optional; last arguments)
+
+Example:
+
+    POLYGON 10, 10, 40, 10, 25, 30, RGB(255, 0, 0)

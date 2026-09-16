@@ -1,8 +1,12 @@
 name: PAUSE
 kind: command
 
-PAUSE milliseconds
-
 Wait for the given number of milliseconds.
 
-Example:  PAUSE 100
+PAUSE milliseconds
+
+  milliseconds - delay length
+
+Example:
+
+    PAUSE 100

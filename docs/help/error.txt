@@ -1,8 +1,12 @@
 name: ERROR
 kind: command
 
+Stop with an error. An optional message is shown.
+
 ERROR [message$]
 
-Stop with an error. message$ is shown if given.
+  message$ - text to display (optional)
 
-Example:  IF X=0 THEN ERROR "bad"
+Example:
+
+    IF X = 0 THEN ERROR "bad"

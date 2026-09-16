@@ -1,13 +1,16 @@
 name: CLS
 kind: command
 
+Clear the graphics screen and home the text cursor so the next prompt is at the
+top of HDMI.
+
 CLS [colour]
 
-Clear the graphics screen and home the text cursor
-so the next prompt is at the top of HDMI.
+  colour - RGB fill colour (optional). With no argument the screen is filled
+           with the current background colour (see ~COLOUR~). Use RGB(r,g,b) or
+           RGB("RED").
 
-With no argument the screen is filled with the
-current background colour (see COLOUR).
-colour is an RGB integer: RGB(r,g,b) or RGB("RED").
+Example:
 
-Example:  CLS RGB(0,0,0)
+    CLS RGB(0, 0, 0)
+    CLS

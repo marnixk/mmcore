@@ -1,8 +1,13 @@
 name: SEEK
 kind: command
 
+Set the read/write position of an open disk file.
+
 SEEK #n, pos
 
-Set the read/write position of open file n.
+  #n - open file number
+  pos - byte position
 
-Example:  SEEK #1, 0
+Example:
+
+    SEEK #1, 0

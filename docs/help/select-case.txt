@@ -2,22 +2,26 @@ name: SELECT CASE
 kind: language
 alias: SELECT, CASE, END SELECT
 
+Choose a branch matching an expression. SELECT CASE state is saved across SUB,
+FUNCTION, GOSUB, ON KEY and SETTICK so a nested CASE cannot clobber the
+caller.
+
 SELECT CASE expr
 CASE value [, value...]
 CASE IS relop expr
 CASE ELSE
 END SELECT
 
-Choose a branch matching expr. relop is =, <>, <, >, <=, >=.
-CASE low TO high matches an inclusive range.
-SELECT CASE state is saved across SUB, FUNCTION, GOSUB,
-ON KEY and SETTICK so a nested CASE cannot clobber the caller.
+  expr - value to match
+  value - literal or range low TO high (inclusive)
+  relop - =, <>, <, >, <=, >=
 
 Example:
-  10 N=2
-  20 SELECT CASE N
-  30 CASE 1 : PRINT "ONE"
-  40 CASE 2 TO 4 : PRINT "TWO"
-  50 CASE ELSE : PRINT "OTHER"
-  60 END SELECT
-  RUN
+
+    10 N = 2
+    20 SELECT CASE N
+    30 CASE 1 : PRINT "ONE"
+    40 CASE 2 TO 4 : PRINT "TWO"
+    50 CASE ELSE : PRINT "OTHER"
+    60 END SELECT
+    RUN

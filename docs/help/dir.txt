@@ -2,12 +2,18 @@ name: DIR
 kind: command
 alias: LS, LIST FILES
 
+List files in the current directory, or matching an optional path/wildcard.
+LS and LIST FILES are the same listing (CMM2 names). This is not the dual-pane
+file manager; use ~FILES~ for that.
+
 DIR [spec$]
+LS
+LIST FILES
 
-List files in the current directory, or matching
-optional spec$ (a path or wildcard). LS and LIST FILES
-do the same listing (CMM2 names).
+  spec$ - path or wildcard (optional)
 
-Example:  DIR
-          DIR "A:/*.PNG"
-          LS
+Example:
+
+    DIR
+    DIR "A:/*.PNG"
+    LS

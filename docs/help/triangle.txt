@@ -1,8 +1,14 @@
 name: TRIANGLE
 kind: command
 
-TRIANGLE x1,y1, x2,y2, x3,y3 [, colour] [, fill]
+Draw a triangle, optionally filled.
 
-Draw a triangle. fill >= 0 fills the interior.
+TRIANGLE x1, y1, x2, y2, x3, y3 [, colour] [, fill]
 
-Example:  TRIANGLE 10,80,40,80,25,50,RGB(255,255,0)
+  x1, y1, x2, y2, x3, y3 - three vertices
+  colour - outline colour (optional)
+  fill - fill colour if >= 0 (optional)
+
+Example:
+
+    TRIANGLE 10, 80, 40, 80, 25, 50, RGB(255, 255, 0)

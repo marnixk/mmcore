@@ -2,24 +2,22 @@ name: PROMPT
 kind: command
 alias: OPTION PROMPT
 
+Choose the immediate-mode prompt. FACTORY_RESET restores CWD.
+
 OPTION PROMPT BARE
 OPTION PROMPT CWD
 
-Choose the immediate-mode prompt.
-  BARE             "> "
-  CWD   (default)  DOS $p$g: current drive and
-                   directory, then >, e.g. A:/>
-                   or A:/PRDIR>
+  BARE - "> "
+  CWD - (default) DOS $p$g: current drive and directory, then >, e.g. A:/> or
+        A:/PRDIR>
 
-CWD is stored as prompt=1 in .mmbasic.ini (A: if
-no SD). OPTION LIST shows BARE when it is selected;
-OPTION LIST ALL always prints the mode.
-FACTORY_RESET restores CWD.
+CWD is stored as prompt=1 in .mmbasic.ini (A: if no SD). OPTION LIST shows
+BARE when it is selected; OPTION LIST ALL always prints the mode.
 
-At the prompt, Up and Down step through
-previous lines. Left and Right move the
-cursor. New characters insert at the
-cursor; Backspace deletes before it.
+At the prompt, Up and Down step through previous lines. Left and Right move
+the cursor. New characters insert at the cursor; Backspace deletes before it.
 
-Example:  OPTION PROMPT CWD
-          OPTION PROMPT BARE
+Example:
+
+    OPTION PROMPT CWD
+    OPTION PROMPT BARE

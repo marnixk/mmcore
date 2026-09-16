@@ -1,12 +1,17 @@
 name: TEXT
 kind: command
 
+Draw a string at a pixel location using the default 8x16 IBM VGA CP437 face
+(the same glyphs as TERM and PRINT). CHR$(128) to CHR$(255) draw those
+code-page cells. Scale follows FONT.
+
 TEXT x, y, string$ [, colour]
 
-Draw string$ at pixel (x,y) using the default 8x16
-IBM VGA CP437 face (the same glyphs as TERM and PRINT).
-CHR$(128) to CHR$(255) draw those code-page cells.
-colour defaults to the foreground. Scale follows FONT.
+  x, y - pixel position
+  string$ - text to draw
+  colour - RGB colour (default foreground)
 
-Example:  TEXT 8,8,"HELLO",RGB(255,255,255)
-          TEXT 0,0,CHR$(219)
+Example:
+
+    TEXT 8, 8, "HELLO", RGB(255, 255, 255)
+    TEXT 0, 0, CHR$(219)

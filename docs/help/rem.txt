@@ -1,10 +1,13 @@
 name: REM
 kind: language
 
+A remark. The rest of the statement is ignored. A leading apostrophe also
+starts a comment.
+
 REM comment
 ' comment
 
-A remark. The rest of the statement is ignored.
+Example:
 
-Example:  REM this is ignored
-          PRINT 1 ' trailing comment
+    REM this is ignored
+    PRINT 1 ' trailing comment

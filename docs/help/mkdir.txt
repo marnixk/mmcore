@@ -1,8 +1,12 @@
 name: MKDIR
 kind: command
 
-MKDIR path$
-
 Create a directory.
 
-Example:  MKDIR "DATA"
+MKDIR path$
+
+  path$ - directory to create
+
+Example:
+
+    MKDIR "DATA"

@@ -1,7 +1,11 @@
 name: NEW
 kind: command
 
+Erase the program in memory and clear variables and constants. OPTION settings
+are kept.
+
 NEW
 
-Erase the program in memory and clear variables
-and constants. OPTION settings are kept.
+Example:
+
+    NEW

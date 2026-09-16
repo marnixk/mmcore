@@ -1,11 +1,14 @@
 name: CHDIR
 kind: command
 
+Change the current directory. A drive letter such as "C:" or "A:/DATA" also
+selects that drive. CWD$ returns the current path.
+
 CHDIR path$
 
-Change the current directory. A drive letter such as
-"C:" or "A:/DATA" selects that drive.
-CWD$ returns the current path.
+  path$ - directory or drive path
 
-Example:  CHDIR "A:"
-          PRINT CWD$
+Example:
+
+    CHDIR "A:"
+    PRINT CWD$

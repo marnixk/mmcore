@@ -1,21 +1,23 @@
 name: RUN
 kind: command
 
+Run the program in memory, or load a file first then run it.
+
 RUN [file$]
 
-Run the program. With file$, load that program
-from disk first (.BAS appended if needed) then
-run. RUN "name.app" mounts the package read-only
-as B:, CHDIRs into it, and runs MAIN.BAS. When that
-run ends, B: is unmounted. Bare RUN does the same
-for the current file (from RUN file$, SAVE, or the
-editor), except a previous package is not remounted
-- the program stays in memory. With no associated
-file, RUN uses the program in memory.
-Stop a running program with Print Screen (PrtScr)
-or the OPTION BREAK key (Ctrl-C by default).
-That prints ?BREAK and returns to the prompt.
+  file$ - optional .BAS path (.BAS appended if needed), or a .app package
 
-Example:  RUN
-          RUN "HI.BAS"
-          RUN "GAME.APP"
+RUN "name.app" mounts the package read-only as B:, CHDIRs into it, and runs
+MAIN.BAS. When that run ends, B: is unmounted. Bare RUN does the same for the
+current file (from RUN file$, SAVE, or the editor), except a previous package
+is not remounted — the program stays in memory. With no associated file, RUN
+uses the program in memory.
+
+Stop a running program with Print Screen (PrtScr) or the OPTION BREAK key
+(Ctrl-C by default). That prints ?BREAK and returns to the prompt.
+
+Example:
+
+    RUN
+    RUN "HI.BAS"
+    RUN "GAME.APP"

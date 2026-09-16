@@ -1,48 +1,45 @@
 name: EDIT
 kind: command
 
+Open the colour TUI editor (menu bar, tabs, status). With no file, uses the
+current program name if set.
+
 EDIT [file$]
 
-Open the colour TUI editor (menu bar, tabs, status).
-With no file, uses the current program name if set.
+  file$ - path to edit (optional)
 
-Menus: Alt+F File  Alt+E Edit  Alt+R Run
-       Alt+T Theme  Alt+H Help  F10 File
-Help: Keys... (shortcut list) and Manual (opens
-interactive HELP; Esc/Ctrl+C returns to the editor).
-File: New, Open, Save, Save As, Quit. Run saves and RUN.
-New opens an unnamed buffer; Save asks for a name.
-Quit or Close tab on a dirty untitled buffer asks
-Save, Discard, or Cancel (does not force Save As).
-After Run, press any key to return to the editor.
-MODE is restored. PAGE WRITE and PAGE DISPLAY return to 0
-(BREAK / Ctrl-C does the same so the editor is not left on
-a black off-screen page).
-Theme menu (Alt+T): 10 colour schemes. Syntax
-colours follow the theme. Non-VGA themes use
-custom palettes. Default is Slate. Saved as
-edit_theme in .mmbasic.ini (or OPTION EDIT THEME name).
-Keys: F1 keyword HELP  F2 save  F3 open  F4 #include
-      F9 run  ^S save  Alt+X quit
-      ^C copy  ^X cut  ^V paste  ^W close tab
-      Alt+Left / Alt+Right switch tabs (no wrap).
+Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+T Theme  Alt+H Help  F10 File.
+Help: Keys... (shortcut list) and Manual (opens interactive HELP; Esc/Ctrl+C
+returns to the editor). File: New, Open, Save, Save As, Quit. Run saves and
+RUN. New opens an unnamed buffer; Save asks for a name. Quit or Close tab on a
+dirty untitled buffer asks Save, Discard, or Cancel. After Run, press any key
+to return to the editor. MODE is restored. PAGE WRITE and PAGE DISPLAY return
+to 0 (BREAK / Ctrl-C does the same so the editor is not left on a black
+off-screen page).
+
+Theme menu (Alt+T): 10 colour schemes. Syntax colours follow the theme.
+Non-VGA themes use custom palettes. Default is Slate. Saved as edit_theme in
+.mmbasic.ini (or OPTION EDIT THEME name).
+
+Keys: F1 keyword HELP  F2 save  F3 open  F4 #include  F9 run  ^S save
+      Alt+X quit  ^C copy  ^X cut  ^V paste  ^W close tab
+      Alt+Left / Alt+Right switch tabs (no wrap)
       ^R save and run  ^K/^Y cut line  ^U paste
       Shift+Arrows select text (QBasic-style)
       ^Ins copy  Shift+Del cut  Shift+Ins paste
       Del erases the selection (no clipboard)
-      Tab inserts 4 spaces; with a selection, Tab
-      indents those lines and Shift+Tab outdents
+      Tab inserts 4 spaces; with a selection, Tab indents and Shift+Tab outdents
       Enter copies line indent
       ^P quick open (files under the start folder)
       ^O outline (SUB/FUNCTION in the current file)
-      F1 opens HELP for the word at the cursor
-         (Esc returns to the editor)
-      F4 opens the #include file on this line
-         (or switches to its tab if already open)
+      F1 opens HELP for the word at the cursor (Esc returns)
+      F4 opens the #include file on this line (or switches to its tab)
       Alt+1..9 switch tabs
-Open/Save As: Name field plus Files and
-Directories (.BAS and .INC). Tab cycles. Enter
-opens a file or enters a folder. Esc cancels.
-CR in a file is ignored (not drawn as a CP437 glyph).
 
-Example:  EDIT "HI.BAS"
+Open/Save As: Name field plus Files and Directories (.BAS and .INC). Tab
+cycles. Enter opens a file or enters a folder. Esc cancels. CR in a file is
+ignored (not drawn as a CP437 glyph).
+
+Example:
+
+    EDIT "HI.BAS"

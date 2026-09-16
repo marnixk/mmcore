@@ -2,16 +2,19 @@ name: WHILE
 kind: language
 alias: WEND
 
+Repeat while condition is non-zero.
+
 WHILE condition
   statements
 WEND
 
-Repeat while condition is non-zero.
+  condition - expression; loop continues while non-zero
 
 Example:
-  10 I=0
-  20 WHILE I<3
-  30 I=I+1
-  40 PRINT I
-  50 WEND
-  RUN
+
+    10 I = 0
+    20 WHILE I < 3
+    30 I = I + 1
+    40 PRINT I
+    50 WEND
+    RUN

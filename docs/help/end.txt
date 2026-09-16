@@ -1,13 +1,18 @@
 name: END
 kind: command
 
+Stop a running program, or close a multiline block (IF, SELECT, SUB, FUNCTION).
+
 END
 END IF / ENDIF
 END SELECT
 END SUB
 END FUNCTION
 
-END stops a running program.
-END IF closes a multiline IF (see HELP IF).
-END SELECT closes SELECT CASE.
-END SUB / END FUNCTION close a SUB or FUNCTION.
+END alone stops the program. END IF closes a multiline IF (see ~IF~). END
+SELECT closes SELECT CASE. END SUB / END FUNCTION close a SUB or FUNCTION.
+
+Example:
+
+    10 PRINT 42
+    20 END

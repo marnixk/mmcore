@@ -1,19 +1,22 @@
 name: BOX
 kind: command
 
+Draw a rectangle, optionally filled, or combine a colour with every pixel in a
+rectangle using AND, OR, or XOR.
+
 BOX x, y, w, h [, lw] [, colour] [, fill]
-
-Draw a rectangle at (x,y) of size w by h.
-lw is line width (default 1). colour defaults to
-the foreground. fill >= 0 fills the interior
-(use an RGB value such as RGB(0,255,0)).
-
 BOX AND_PIXELS x, y, w, h, colour [, page]
 BOX OR_PIXELS  x, y, w, h, colour [, page]
 BOX XOR_PIXELS x, y, w, h, colour [, page]
 
-AND, OR or XOR colour with every pixel in the
-rectangle. page defaults to the write page.
+  x, y - top-left corner
+  w, h - width and height
+  lw - line width (default 1)
+  colour - outline colour (default foreground)
+  fill - fill colour if >= 0 (use RGB(...)); omit for outline only
+  page - page for AND/OR/XOR (default write page)
 
-Example:  BOX 20,20,40,40,1,RGB(0,255,0),1
-          BOX XOR_PIXELS 20,20,40,40,RGB(255,255,255)
+Example:
+
+    BOX 20, 20, 40, 40, 1, RGB(0, 255, 0), 1
+    BOX XOR_PIXELS 20, 20, 40, 40, RGB(255, 255, 255)

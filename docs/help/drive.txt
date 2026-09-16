@@ -1,13 +1,16 @@
 name: DRIVE
 kind: command
 
+List available drives, or select the current drive by letter.
+
 DRIVE [letter$]
 
-With no argument, list available drives.
-With a letter such as "A:" or "C:", make that the
-current drive. A: is the RAM disk. C: is the SD card
-slot. D: and later are USB volumes when present.
-B: is an internal package mount and is never listed.
+  letter$ - drive such as "A:" or "C:" (optional; omit to list drives)
 
-Example:  DRIVE
-          DRIVE "A:"
+A: is the RAM disk. C: is the SD card slot. D: and later are USB volumes when
+present. B: is an internal package mount and is never listed.
+
+Example:
+
+    DRIVE
+    DRIVE "A:"

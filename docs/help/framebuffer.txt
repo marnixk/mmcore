@@ -1,6 +1,9 @@
 name: FRAMEBUFFER
 kind: command
 
+Create and use an off-screen drawing buffer. MODE frees it. LOAD JPG cannot
+target the framebuffer.
+
 FRAMEBUFFER CREATE w, h
 FRAMEBUFFER WRITE
 FRAMEBUFFER BACKUP
@@ -8,13 +11,16 @@ FRAMEBUFFER RESTORE [x, y, w, h]
 FRAMEBUFFER WINDOW x, y, page
 FRAMEBUFFER CLOSE
 
-Off-screen buffer. w,h must be at least MM.HRES
-by MM.VRES and at most 1024x768. WRITE sends
-drawing to the buffer. WINDOW copies MM.HRES by
-MM.VRES from (x,y) onto a page. MODE frees it.
-LOAD JPG cannot target the framebuffer.
+  w, h - size; at least MM.HRES by MM.VRES and at most 1024x768
+  x, y, w, h - restore region (optional)
+  page - destination page for WINDOW
 
-Example:  FRAMEBUFFER CREATE 640,480
-          FRAMEBUFFER WRITE
-          BOX 10,10,40,40,1,RGB(255,0,0),RGB(255,0,0)
-          FRAMEBUFFER WINDOW 0,0,0
+WRITE sends drawing to the buffer. WINDOW copies MM.HRES by MM.VRES from
+(x, y) onto a page.
+
+Example:
+
+    FRAMEBUFFER CREATE 640, 480
+    FRAMEBUFFER WRITE
+    BOX 10, 10, 40, 40, 1, RGB(255, 0, 0), RGB(255, 0, 0)
+    FRAMEBUFFER WINDOW 0, 0, 0

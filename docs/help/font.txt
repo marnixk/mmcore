@@ -1,10 +1,14 @@
 name: FONT
 kind: command
 
+Select the font number and optional integer scale used by TEXT. The default
+HDMI face is 8x16 IBM VGA CP437 (the same glyphs as TERM).
+
 FONT n [, scale]
 
-Select font number n and optional integer scale
-(minimum 1). Used by TEXT. The default HDMI face is
-8x16 IBM VGA CP437 (the same glyphs as TERM).
+  n - font number
+  scale - integer scale (minimum 1; optional)
 
-Example:  FONT 1,2
+Example:
+
+    FONT 1, 2

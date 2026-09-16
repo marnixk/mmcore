@@ -2,19 +2,29 @@ name: DO
 kind: language
 alias: LOOP
 
+Repeat a block of statements. The condition may be tested on DO and/or on LOOP.
+With no test, the loop runs until EXIT DO (or BREAK). EXIT DO jumps to the
+statement after LOOP.
+
 DO [WHILE condition | UNTIL condition]
   statements
   EXIT DO
 LOOP [WHILE condition | UNTIL condition]
 
-Repeat a block. Test on DO and/or LOOP.
-With no test, loops until EXIT DO (or BREAK).
-EXIT DO jumps to the statement after LOOP.
+  condition - expression; WHILE continues while non-zero, UNTIL until non-zero
 
 Example:
-  10 I=0
-  20 DO
-  30 I=I+1
-  40 PRINT I
-  50 LOOP UNTIL I=3
-  RUN
+
+    10 I = 0
+    20 DO
+    30 I = I + 1
+    40 PRINT I
+    50 LOOP UNTIL I = 3
+    RUN
+
+    10 I = 0
+    20 DO WHILE I < 3
+    30 I = I + 1
+    40 PRINT I
+    50 LOOP
+    RUN

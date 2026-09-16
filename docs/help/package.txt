@@ -1,18 +1,21 @@
 name: PACKAGE
 kind: command
 
+Zip the contents of a folder into a package file (ZIP store). Paths inside the
+archive are relative to that folder. folder$ must contain MAIN.BAS.
+
 PACKAGE pkg$, folder$
 
-Zip the contents of folder$ into pkg$ (ZIP store).
-Paths inside the archive are relative to that folder.
-folder$ must contain MAIN.BAS. If pkg$ exists at the
-prompt: File exists, overwrite? [Y/n]
-Empty or Y overwrites; N leaves the file. From a
-running program a collision is ?FILE EXISTS.
-RUN "name.app" mounts the zip read-only as B: and
-runs MAIN.BAS. B: is not listed by DRIVE and cannot
-be selected in FILES or CHDIR at the prompt.
+  pkg$ - output package path (e.g. GAME.APP)
+  folder$ - folder to zip (must contain MAIN.BAS)
+
+If pkg$ exists at the prompt: File exists, overwrite? [Y/n]. Empty or Y
+overwrites; N leaves the file. From a running program a collision is ?FILE
+EXISTS. RUN "name.app" mounts the zip read-only as B: and runs MAIN.BAS. B: is
+not listed by DRIVE and cannot be selected in FILES or CHDIR at the prompt.
 After RUN, EDIT does not open the zip file.
 
-Example:  PACKAGE "GAME.APP", "GAME/"
-          RUN "GAME.APP"
+Example:
+
+    PACKAGE "GAME.APP", "GAME/"
+    RUN "GAME.APP"
