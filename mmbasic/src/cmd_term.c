@@ -35,7 +35,6 @@
 #define TM_ESC_BUF  16
 #define TM_ANSI_ARGS 8
 
-#define TM_SCROLL_MS    100
 #define TM_DEMO_MIN_MS  120
 #define TM_DEMO_MAX_MS  200
 #define TM_ESC_IDLE_MS  60
@@ -161,7 +160,6 @@ typedef struct {
 	unsigned char file_pend[TM_FILE_PEND];
 	int file_pend_n;
 	unsigned dump_at;
-	int present_full;
 	unsigned ansi_at;
 	int mon_ansi;
 	int mon_iac;
@@ -653,56 +651,6 @@ static void term_set_cursor_vis(int vis)
 		mark_dirty_row(T.cur_shown_row);
 }
 
-static void term_unpaint_cursor(void)
-{
-	int saved;
-
-	if (!T.cur_shown)
-		return;
-	saved = G.gfx.write_page;
-	G.gfx.write_page = TM_PAGE;
-	term_paint_cursor = 0;
-	term_draw_row(T.cur_shown_row);
-	term_paint_cursor = 1;
-	G.gfx.write_page = saved;
-	T.cur_shown = 0;
-}
-
-static void pane_flush_dirty_pixels(void)
-{
-	int r, saved, lo, hi;
-
-	if (!T.need_draw)
-		return;
-	term_paint_cursor = 0;
-	if (T.cur_shown)
-		mark_dirty_row(T.cur_shown_row);
-	saved = G.gfx.write_page;
-	G.gfx.write_page = TM_PAGE;
-	if (T.dirty_full)
-	{
-		lo = 0;
-		hi = T.pane_rows - 1;
-	}
-	else
-	{
-		lo = T.dirty_lo;
-		hi = T.dirty_hi;
-	}
-	if (lo >= 0 && hi >= lo)
-	{
-		for (r = lo; r <= hi; r++)
-			term_draw_row(r);
-	}
-	G.gfx.write_page = saved;
-	T.need_draw = 0;
-	T.dirty_full = 0;
-	T.dirty_lo = -1;
-	T.dirty_hi = -1;
-	T.cur_shown = 0;
-	term_paint_cursor = 1;
-}
-
 static void pane_scroll_up(void)
 {
 	int r, c;
@@ -720,59 +668,19 @@ static void pane_scroll_up(void)
 	pane_clear_row(T.pane_rows - 1);
 	T.cur_row = T.pane_rows - 1;
 	T.cur_col = 0;
-}
-
-static void pane_scroll_smooth(void)
-{
-	uint16_t *pg;
-	int x0, y, w, h, pw, ph, saved;
-	unsigned fill = TM_BG;
-
-	term_unpaint_cursor();
-	pane_flush_dirty_pixels();
-	x0 = T.pane_left * TM_CW;
-	pw = term_width() * TM_CW;
-	ph = T.pane_rows * TM_CH;
-	saved = G.gfx.write_page;
-	G.gfx.write_page = TM_PAGE;
-	pg = mmb_gfx_buf_for(TM_PAGE, &w, &h);
-	if (pg && ph > TM_CH)
+	T.need_draw = 1;
+	if (!T.dirty_full)
 	{
-		uint16_t fill_n;
-		unsigned fill_a;
-		fill_n = mmb_pix_store(fill, &fill_a);
-		(void)fill_a;
-		for (y = 0; y < ph - TM_CH && y + TM_CH < h; y++)
-		{
-			memmove(pg + y * w + x0, pg + (y + TM_CH) * w + x0,
-				(unsigned)pw * sizeof(uint16_t));
-		}
-		for (y = ph - TM_CH; y < ph && y < h; y++)
-		{
-			int x;
-			for (x = 0; x < pw && x0 + x < w; x++)
-				pg[y * w + x0 + x] = fill_n;
-		}
-	}
-	G.gfx.write_page = saved;
-	pane_scroll_up();
-	if (pg && ph > TM_CH)
-	{
-		T.dirty_full = 0;
-		T.dirty_lo = T.pane_rows - 1;
+		T.dirty_lo = 0;
 		T.dirty_hi = T.pane_rows - 1;
-		T.need_draw = 1;
-		T.present_full = 1;
 	}
-	else
-		mark_dirty_full();
 }
 
 static void pane_newline(void)
 {
 	if (T.cur_row >= T.pane_rows - 1)
 	{
-		pane_scroll_smooth();
+		pane_scroll_up();
 		term_log_mark();
 		return;
 	}
@@ -1168,22 +1076,19 @@ static void term_draw(void)
 		int pane_w = term_width() * TM_CW;
 		int pane_h = term_fb_h();
 
-		if (T.present_full || T.menu || T.alt_pend)
+		if (T.menu || T.alt_pend)
 		{
+			int top_h = T.menu ? 8 * TM_CH : TM_CH;
+
 			term_copy_pane();
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
-			if (T.menu || T.alt_pend)
-			{
-				int top_h = T.menu ? 8 * TM_CH : TM_CH;
-
-				term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
-				term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
-						TM_CH);
-				term_rect_union(&px, &py, &pw, &ph, 0, 0,
-						T.vid_cols * TM_CW, top_h);
-				term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-						T.vid_cols * TM_CW, TM_CH);
-			}
+			term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
+			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
+					TM_CH);
+			term_rect_union(&px, &py, &pw, &ph, 0, 0,
+					T.vid_cols * TM_CW, top_h);
+			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+					T.vid_cols * TM_CW, TM_CH);
 		}
 		else if (lo >= 0 && hi >= lo)
 		{
@@ -1205,7 +1110,6 @@ static void term_draw(void)
 	G.gfx.write_page = saved;
 	T.need_draw = 0;
 	T.dirty_full = 0;
-	T.present_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
 	T.cur_shown = T.cur_vis;
