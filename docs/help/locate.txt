@@ -1,20 +1,17 @@
 name: LOCATE
 kind: command
 
-Move the text cursor to a character cell.
+Move the text cursor to a character cell. The next PRINT writes at that cell.
+PRINT @(x, y) still uses pixels. Query the cursor with MM.HPOS and MM.VPOS
+(pixels) or POS() (column, 1-based).
 
 LOCATE [y] [, x] [, cursor]
 
   y - row (0-based; omit to leave unchanged)
   x - column (0-based; omit to leave unchanged)
-  cursor - 0 hide hardware cursor, 1 show it
-           (e.g. LOCATE ,,0 and LOCATE ,,1)
+  cursor - 0 hide hardware cursor, 1 show it (e.g. LOCATE ,,0 and LOCATE ,,1)
 
-On an 80x25 screen, LOCATE 24,79 is the bottom-right
-cell. The next ~PRINT~ writes at that cell.
-PRINT @(x,y) still uses pixels. Query the cursor
-with MM.HPOS and MM.VPOS (pixels) or POS() (column,
-1-based).
+On an 80x25 screen, LOCATE 24, 79 is the bottom-right cell.
 
 Example:
 

@@ -2,8 +2,8 @@ name: INKEY$
 kind: command
 
 Return the next console key as a one-character string, or "" if none. Never
-blocks, except a short wait to finish a VT100 sequence. Arrows and function keys
-become one CMM2 code.
+blocks, except a short wait to finish a VT100 sequence. Arrows and function
+keys become one CMM2 code.
 
 INKEY$
 INKEY$()

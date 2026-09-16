@@ -1,7 +1,8 @@
 name: MEMORY
 kind: command
 
-Show how many program lines, variables, and open files the interpreter is using.
+Show how many program lines, variables, and open files the interpreter is
+using.
 
 MEMORY
 

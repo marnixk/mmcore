@@ -1,7 +1,8 @@
 name: SAVE
 kind: command
 
-Save the program in memory to disk. .BAS is appended if file$ has no extension.
+Save the program in memory to disk. .BAS is appended if file$ has no
+extension.
 
 SAVE file$
 

@@ -13,14 +13,14 @@ CONNECT host$, port
 Telnet IAC WILL ECHO turns local echo off; IAC SGA switches to character mode.
 Enter then sends CR only (not CR LF) so BBS hosts do not treat LF as a second
 key. Line mode still sends CR LF. USB Backspace (DEL) is sent as BS; local echo
-of backspace erases instead of inserting a glyph. Esc is sent to the host; press
-Esc twice or wait briefly to flush a lone Esc. Ctrl+], F10, or Alt+X quits.
-Alt+F opens a File menu with Exit.
+of backspace erases instead of inserting a glyph. Esc is sent to the host;
+press Esc twice or wait briefly to flush a lone Esc. Ctrl+], F10, or Alt+X
+quits. Alt+F opens a File menu with Exit.
 
-Without Ethernet or Wi-Fi, CONNECT reports Network not available. QEMU Ethernet
-needs -device usb-net then OPTION ETHERNET ON. On hardware, wait for DHCP
-first (~OPTIONS~ WIFI or OPTION ETHERNET ON), then CONNECT uses Circle TCP
-(about 25s for DNS+SYN).
+Without Ethernet or Wi-Fi, CONNECT reports Network not available. QEMU
+Ethernet needs -device usb-net then OPTION ETHERNET ON. On hardware, wait for
+DHCP first (~OPTIONS~ WIFI or OPTION ETHERNET ON), then CONNECT uses Circle
+TCP (about 25s for DNS+SYN).
 
 Example:
 

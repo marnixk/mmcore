@@ -1,8 +1,8 @@
 name: RANDOMIZE
 kind: command
 
-Seed the RND generator. With no n, uses the millisecond timer. RND(-n) also sets
-the seed.
+Seed the RND generator. With no n, uses the millisecond timer. RND(-n) also
+sets the seed.
 
 RANDOMIZE [n]
 

@@ -3,9 +3,9 @@ kind: command
 alias: RESTART
 
 Hardware-reset the Raspberry Pi (PM watchdog full reset). Stops audio, writes
-.mmbasic.ini, and unmounts SD/USB volumes first. Ctrl+Alt+Del on a USB keyboard
-does the same. The machine restarts from firmware; this does not return to
-MMBasic. RESTART is an alias.
+.mmbasic.ini, and unmounts SD/USB volumes first. Ctrl+Alt+Del on a USB
+keyboard does the same. The machine restarts from firmware; this does not
+return to MMBasic. RESTART is an alias.
 
 REBOOT
 RESTART

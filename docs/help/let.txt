@@ -1,8 +1,8 @@
 name: LET
 kind: language
 
-Assign an expression to a variable. LET is optional. Default type is float; var%
-is integer, var$ is string.
+Assign an expression to a variable. LET is optional. Default type is float;
+var% is integer, var$ is string.
 
 LET var = expr
 var = expr
