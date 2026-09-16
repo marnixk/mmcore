@@ -3,8 +3,8 @@ kind: command
 
 Decode and play audio to OPTION AUDIO_TARGET. HDMI sends IEC958 stereo on
 HDMI0. JACK sends PWM to the 3.5mm analogue socket (Pi 3 / Pi 4B). Pi 400 has
-no analogue jack; use HDMI there. PLAYING() is 1 while audio is playing and
-not paused.
+no analogue jack; use HDMI there. PLAYING() is 1 while audio is playing and not
+paused.
 
 PLAY STOP
 PLAY PAUSE

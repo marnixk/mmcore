@@ -17,8 +17,8 @@ Escape then quits back to the prompt. From the Overview, Escape quits. After
 following a <link>, Escape goes back. HELP BASIC opens ~Contents~. HELP INDEX
 opens the A-Z ~Index~.
 
-Mark a topic with tildes in the docs to make a link, for example ~CLS~.
-Unmarked words are not links even when they match a command name.
+Mark a topic with tildes in the docs to make a link, for example ~CLS~. Unmarked
+words are not links even when they match a command name.
 
 Move with arrows, Page Up, and Page Down. Enter follows a <link>. A single
 Escape goes back or quits from the Overview. Colours follow OPTION EDIT THEME

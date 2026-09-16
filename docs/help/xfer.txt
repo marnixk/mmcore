@@ -1,8 +1,8 @@
 name: XFER
 kind: command
 
-Receive nbytes of raw serial data and write them to a file. Prints <<XFER>>
-when ready to read. Bytes are stored as-is, including NUL.
+Receive nbytes of raw serial data and write them to a file. Prints <<XFER>> when
+ready to read. Bytes are stored as-is, including NUL.
 
 XFER path$, nbytes
 

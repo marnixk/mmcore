@@ -1,8 +1,8 @@
 name: RBOX
 kind: command
 
-Draw a rounded rectangle. If the last numeric argument is above 7 it is
-treated as an RGB colour.
+Draw a rounded rectangle. If the last numeric argument is above 7 it is treated
+as an RGB colour.
 
 RBOX x, y, w, h [, radius] [, lw] [, fill] [, colour]
 

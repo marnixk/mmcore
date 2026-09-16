@@ -2,30 +2,29 @@ name: WORDPAD
 kind: command
 
 Typora-style markdown editor with a centred text column. Menus and the status
-line appear only while Alt is held (or a menu/dialog is open). With no
-argument opens an empty untitled document.
+line appear only while Alt is held (or a menu/dialog is open). With no argument
+opens an empty untitled document.
 
 WORDPAD [file$]
 
   file$ - optional path; loads via the filesystem when present, otherwise an
           empty buffer is used with that path (.MD default)
 
-Menus: Alt+F File  Alt+E Edit  Alt+S Settings  F10 File menu.
-File: New, Open..., Save, Save As..., Quit.
-Edit: Copy, Cut, Paste (^C /^K /^U like EDIT).
-Settings: Wide view toggles wrap 80/120 columns.
-Colours follow OPTION EDIT THEME (same as EDITOR).
+Menus: Alt+F File Alt+E Edit Alt+S Settings F10 File menu. File: New, Open...,
+Save, Save As..., Quit. Edit: Copy, Cut, Paste (^C /^K /^U like EDIT). Settings:
+Wide view toggles wrap 80/120 columns. Colours follow OPTION EDIT THEME (same as
+EDITOR).
 
 Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style
 serif at 32x64 / 24x48 / 16x32 (shared baseline, not a scaled-up 8x16 face).
 Each heading letter advances by its own ink width so spacing is proportional,
-wrap still follows the column width, and the cursor block fits the glyph.
--/* bullets, > quotes, ``` fenced code, **bold**. Word wrap at the column
-width; Enter inserts a real newline. Shift+Arrows select text.
+wrap still follows the column width, and the cursor block fits the glyph. -/*
+bullets, > quotes, ``` fenced code, **bold**. Word wrap at the column width;
+Enter inserts a real newline. Shift+Arrows select text.
 
 Ctrl+P quick-open (recursive file picker). Named buffers auto-save when
-switching files. F2 save  F3 open  Ctrl+X or Quit leaves WORDPAD (CLS and
-restores the console colour). Open/Save As use a file picker (*.MD).
+switching files. F2 save F3 open Ctrl+X or Quit leaves WORDPAD (CLS and restores
+the console colour). Open/Save As use a file picker (*.MD).
 
 Example:
 

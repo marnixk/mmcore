@@ -2,8 +2,8 @@ name: SUB
 kind: language
 alias: FUNCTION, END SUB, END FUNCTION
 
-Define a subroutine or function. CALL name runs a SUB. A FUNCTION is used in
-an expression as name(). Assign to the function name to set the return value
+Define a subroutine or function. CALL name runs a SUB. A FUNCTION is used in an
+expression as name(). Assign to the function name to set the return value
 (CMM2).
 
 SUB name
@@ -17,8 +17,8 @@ END FUNCTION
 CALL name
 
 Parameters and FUNCTION may use AS typename for a TYPE (see ~TYPE~). The
-function name is a local of that type; assign members, copy a whole struct
-into it, or STRUCT COPY src TO name. Callers assign the result:
+function name is a local of that type; assign members, copy a whole struct into
+it, or STRUCT COPY src TO name. Callers assign the result:
 
     DIM m AS Message
     m = WaitMsg()

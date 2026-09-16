@@ -1,8 +1,8 @@
 name: LINE
 kind: command
 
-Draw a straight line between two pixels. LINE INPUT #fn, var$ reads a file
-line (see ~LINE INPUT~).
+Draw a straight line between two pixels. LINE INPUT #fn, var$ reads a file line
+(see ~LINE INPUT~).
 
 LINE x1, y1, x2, y2 [, colour] [, linewidth]
 

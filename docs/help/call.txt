@@ -1,8 +1,8 @@
 name: CALL
 kind: command
 
-Call a SUB (or FUNCTION) by name. Arguments are not implemented; use a bare
-CALL name. See ~SUB~.
+Call a SUB (or FUNCTION) by name. Arguments are not implemented; use a bare CALL
+name. See ~SUB~.
 
 CALL name
 

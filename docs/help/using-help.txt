@@ -1,0 +1,25 @@
+name: USING HELP
+kind: page
+alias: Using Help
+
+Using Help
+
+Type HELP to open this viewer. Type HELP topic to open a topic directly, for
+example HELP CLS or HELP ME.
+
+  Arrows / PgUp / PgDn   scroll the page
+  Tab / letter           move between <links>
+  Enter                  open the highlighted link
+  Esc                    go back, or quit from Overview
+  Ctrl+C                 quit help to the prompt
+
+Links are shown in angle brackets, such as <CLS>. In the source text they are
+written with tildes: ~CLS~. Only marked names are links.
+
+HELP BASIC opens ~CONTENTS~. HELP INDEX opens the A-Z ~Index~. Bare HELP opens
+~OVERVIEW~.
+
+From the program editor, F1 opens help for the word at the cursor. Esc returns
+to the editor.
+
+See also ~SYNTAX CONVENTIONS~, ~ME~, ~HELP~.

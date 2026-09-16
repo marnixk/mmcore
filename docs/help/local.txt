@@ -1,8 +1,8 @@
 name: LOCAL
 kind: language
 
-Declare a variable inside a SUB or FUNCTION. Same syntax as ~DIM~. Required
-when OPTION EXPLICIT is on.
+Declare a variable inside a SUB or FUNCTION. Same syntax as ~DIM~. Required when
+OPTION EXPLICIT is on.
 
 LOCAL name [(dims)] [AS type] [, ...]
 

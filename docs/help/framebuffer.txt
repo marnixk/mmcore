@@ -15,8 +15,8 @@ FRAMEBUFFER CLOSE
   x, y, w, h - restore region (optional)
   page - destination page for WINDOW
 
-WRITE sends drawing to the buffer. WINDOW copies MM.HRES by MM.VRES from
-(x, y) onto a page.
+WRITE sends drawing to the buffer. WINDOW copies MM.HRES by MM.VRES from (x, y)
+onto a page.
 
 Example:
 
