@@ -14,8 +14,8 @@ OPTION PROMPT CWD
 CWD is stored as prompt=1 in .mmbasic.ini (A: if no SD). OPTION LIST shows
 BARE when it is selected; OPTION LIST ALL always prints the mode.
 
-At the prompt, Up and Down step through previous lines. Left and Right move the
-cursor. New characters insert at the cursor; Backspace deletes before it.
+At the prompt, Up and Down step through previous lines. Left and Right move
+the cursor. New characters insert at the cursor; Backspace deletes before it.
 
 Example:
 

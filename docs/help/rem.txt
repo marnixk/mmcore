@@ -1,8 +1,8 @@
 name: REM
 kind: language
 
-A remark. The rest of the statement is ignored. A leading apostrophe also starts
-a comment.
+A remark. The rest of the statement is ignored. A leading apostrophe also
+starts a comment.
 
 REM comment
 ' comment

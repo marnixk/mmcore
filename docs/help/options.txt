@@ -1,18 +1,17 @@
 name: OPTIONS
 kind: command
 
-Join Wi-Fi using credentials already stored by
-OPTION WIFI. This is not an alias of ~OPTION~.
+Join Wi-Fi using SSID and password already stored by OPTION WIFI. This is not
+an alias of OPTION.
 
 OPTIONS WIFI
 
-?WIFI not configured if no credentials are stored.
-On hardware with C:/firmware/ this starts WPA2 and
-prints Connected to '<SSID>' as <ip> when DHCP binds.
-QEMU has no radio and reports Wi-Fi not available.
-The PSK is never printed.
+?WIFI not configured if no credentials are stored. On hardware with
+C:/firmware/ this starts WPA2 and prints Connected to '<SSID>' as <ip> when
+DHCP binds. QEMU has no radio and reports Wi-Fi not available. The PSK is
+never printed.
 
 Example:
 
-    OPTION WIFI "MyNet","secret"
+    OPTION WIFI "MyNet", "secret"
     OPTIONS WIFI

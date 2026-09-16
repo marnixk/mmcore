@@ -11,8 +11,8 @@ OPTION ETHERNET OFF
 ON starts DHCP on the onboard RJ45 (Pi 3 / 3B+ USB LAN, Pi 4 GENET) and turns
 off Wi-Fi auto-join. Credentials for WIFI are kept. Only one interface is
 active: enabling Ethernet disables Wi-Fi; OPTIONS WIFI / OPTION WIFI disable
-Ethernet. Switching after the stack is up needs REBOOT. If ON is saved, Ethernet
-initialises at boot. IPCONFIG shows Interface: Ethernet.
+Ethernet. Switching after the stack is up needs REBOOT. If ON is saved,
+Ethernet initialises at boot. IPCONFIG shows Interface: Ethernet.
 
 QEMU raspi3b has no onboard RJ45. Launch with -device usb-net (SLIRP user net)
 for USB CDC Ethernet and DHCP. Without that gadget, ON reports Ethernet not

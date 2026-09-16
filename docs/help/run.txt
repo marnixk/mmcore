@@ -9,9 +9,9 @@ RUN [file$]
 
 RUN "name.app" mounts the package read-only as B:, CHDIRs into it, and runs
 MAIN.BAS. When that run ends, B: is unmounted. Bare RUN does the same for the
-current file (from RUN file$, SAVE, or the editor), except a previous package is
-not remounted — the program stays in memory. With no associated file, RUN uses
-the program in memory.
+current file (from RUN file$, SAVE, or the editor), except a previous package
+is not remounted — the program stays in memory. With no associated file, RUN
+uses the program in memory.
 
 Stop a running program with Print Screen (PrtScr) or the OPTION BREAK key
 (Ctrl-C by default). That prints ?BREAK and returns to the prompt.

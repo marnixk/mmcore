@@ -1,8 +1,8 @@
 name: MID$
 kind: command
 
-As a statement, overwrite characters in a string. As a function, return a slice.
-Positions are 1-based.
+As a statement, overwrite characters in a string. As a function, return a
+slice. Positions are 1-based.
 
 MID$(s$, start [, length]) = t$
 MID$(s$, start [, length])

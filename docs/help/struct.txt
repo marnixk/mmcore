@@ -4,7 +4,8 @@ alias: STRUCT COPY, STRUCT SORT, STRUCT EXTRACT, STRUCT INSERT, STRUCT CLEAR, ST
 
 Operate on TYPE variables and arrays. SAVE/LOAD are disk files only (binary
 MMBasic layout). PIXEL pos().x, pos().y and MATH SCALE arr().x use the same
-empty-index member view (see ~PIXEL~ / ~MATH~). See ~TYPE~ for DIM AS and dots.
+empty-index member view (see ~PIXEL~ / ~MATH~). See ~TYPE~ for DIM AS and
+dots.
 
 STRUCT COPY src TO dst    or src, dst
 STRUCT COPY src() TO dst()  (whole arrays)

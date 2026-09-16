@@ -1,9 +1,9 @@
 name: TURTLE
 kind: command
 
-Software turtle graphics. Heading 0 is up, 90 is right. RESET clears the screen
-and homes to the centre. Default pen is white, fill is green. END FILL fills a
-polygon of up to 128 sides.
+Software turtle graphics. Heading 0 is up, 90 is right. RESET clears the
+screen and homes to the centre. Default pen is white, fill is green. END FILL
+fills a polygon of up to 128 sides.
 
 TURTLE RESET | PEN UP | PEN DOWN
 TURTLE FORWARD n | BACKWARD n

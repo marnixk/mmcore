@@ -20,8 +20,8 @@ PAGE XOR_PIXELS s1, s2, dest
   fillcolour - omitted wraps; -1 leaves the gap; any other colour fills it
 
 WRITE selects the draw target (a page number or FRAMEBUFFER). DISPLAY shows
-page n. Page 1 is composited over the display page: black is clear, RGB(...,t)
-blends.
+page n. Page 1 is composited over the display page: black is clear,
+RGB(...,t) blends.
 
 Example:
 
