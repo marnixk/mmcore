@@ -112,6 +112,7 @@ Rules:
 - Multi-subcommand families (`ON`, `SPRITE`, `MATH`, `OPTION`, `PLAY`,
   `STRUCT`, …): **one** topic covering all forms.
 - Links: `~TOPIC~` only for real topics/aliases.
+- Soft-wrap body prose at **80 columns** (do not wrap early at ~60–72).
 - After edits: `scripts/gen_help.py` (also via `scripts/build.sh`).
 
 ### 4. Orientation pages and Overview (phase 2)

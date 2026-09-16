@@ -75,7 +75,7 @@ def test_screen_shows_typed_text(kernel_image):
         con.send_line('PRINT "SCREENCHECK"')
         text = con.ocr_screen()
         assert "SCREENCHECK" in text
-        assert "HELP" in text or "get started" in text.lower()
+        assert "HELP" in text or "introduction" in text.lower() or "get started" in text.lower()
     finally:
         con.stop()
 

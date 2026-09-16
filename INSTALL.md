@@ -2,7 +2,7 @@
 
 This image is a **bare-metal** MMBasic console. There is no Linux on the card.
 The Pi boots firmware from the FAT partition, loads the kernel, and shows a
-short copyright notice, then `Type HELP to get started` and the `>` prompt.
+short copyright notice, then `Type HELP ME for a short introduction` and the `>` prompt.
 
 Releases ship **four zips** — pick the one that matches your board. Do not mix
 files from different zips on the same card.
@@ -331,7 +331,7 @@ Copyright 2011-2026 Geoff Graham
 Copyright 2016-2026 Peter Mather
 Adapted and extended by Marnix Kok
 
-Type HELP to get started.
+Type HELP ME for a short introduction.
 
 
 >

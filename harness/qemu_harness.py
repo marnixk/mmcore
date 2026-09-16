@@ -68,7 +68,7 @@ class MMBasicConsole:
         machine: str = "raspi3b",
         qemu: str = "qemu-system-aarch64",
         boot_timeout: float = 25.0,
-        ready_marker: bytes = b"get started",
+        ready_marker: bytes = b"HELP ME",
         prompt: bytes = b"> ",
         extra_qemu: list[str] | None = None,
     ) -> None:

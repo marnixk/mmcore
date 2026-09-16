@@ -51,11 +51,12 @@ def test_startup_copyright_banner(kernel_image):
         assert "copyright 2016-2026 peter mather" in low
         assert "adapted and extended by marnix kok" in low
         assert "type " in low
-        assert "get started" in low
-        assert b"\x1b[97mHELP\x1b[37m" in raw
-        idx = raw.find(b"get started.")
+        assert "help me" in low
+        assert "short introduction" in low
+        assert b"\x1b[97mHELP ME\x1b[37m" in raw
+        idx = raw.find(b"short introduction.")
         assert idx >= 0
-        after = raw[idx + len(b"get started.") :]
+        after = raw[idx + len(b"short introduction.") :]
         prompt_at = after.find(b">")
         assert prompt_at >= 0
         gap = after[:prompt_at].replace(b"\r", b"")
