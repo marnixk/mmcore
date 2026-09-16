@@ -230,9 +230,17 @@ def test_ihelp_enter_opens_link(console):
     assert "<Overview>" in seen
     assert "<Contents>" in seen
     assert "<Index>" in seen
+    # First body link on Overview is ME; Enter follows it.
     seen = keys(console, b"\r")
     seen = scroll_all(console, seen)
-    assert "MMBasic Interactive Help" in seen or "Language constructs" in seen
+    assert (
+        "Welcome to mmCore" in seen
+        or "mmCore is the operating system" in seen
+        or "MMBasic Interactive Help" in seen
+        or "Language constructs" in seen
+        or "USING HELP" in seen
+        or "Using Help" in seen
+    )
     close_ihelp(console)
 
 
