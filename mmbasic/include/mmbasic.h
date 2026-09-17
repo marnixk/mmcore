@@ -72,6 +72,9 @@ typedef struct mmb_platform {
 	void (*term_present_async)(int x, int y, int w, int h, const void *pix, int stride);
 	/* Wait for in-flight TERM DMA and flush any coalesced pending blit. */
 	void (*term_present_drain)(void);
+	/* Non-zero when an in-flight TERM present is DMAing straight from the
+	 * caller's page; the caller must drain before rewriting that page. */
+	int (*term_present_locked)(void);
 	/* Next full-frame present may virt-offset flip (PAGE DISPLAY). Optional. */
 	void (*present_set_flip)(int on);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */

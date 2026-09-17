@@ -71,6 +71,22 @@ the in-flight DMA reads, and drain on TERM exit or mode change. Under QEMU
 (`NO_SCREEN_DMA_BURST_LENGTH`) TERM presents are still synchronous; drain is a
 no-op.
 
+TERM full-screen (`dirty_full`) redraws use the same async coalesce path as
+dirty bands; only teardown / MODE / letterbox drains synchronously.
+
+When the source rows are contiguous (`stride == w`, e.g. a full-width full-mode
+frame) and no DMA is in flight, `plat_term_present_async` kicks `SetArea`
+straight from the caller's page instead of first copying the rectangle into a
+bounce buffer. `plat_term_present_locked` reports that direct flight so TERM can
+`term_present_drain()` before it rewrites PAGE 0; the in-flight source therefore
+stays immutable until completion. Letterboxed panes (`stride != w`) and
+collisions with an in-flight blit still coalesce through the bounce buffers.
+
+TERM also keeps a per-cell ch/fg/bg shadow of what is already in PAGE 2.
+`term_draw_row` skips `mmb_gfx_glyph_cell` for cells that did not change (vim /
+full-screen clears repaint only the real damage). A `dirty_full` clear resets
+the shadow to the CLS fill so blank cells are skipped too.
+
 ## PAGE DISPLAY virtual-offset flip (Pi ≤ 4 hardware)
 
 Soft graphics pages stay heap-allocated. On Pi ≤ 4 hardware builds, Circle’s

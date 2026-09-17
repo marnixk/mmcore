@@ -913,6 +913,8 @@ static u8 *s_term_bounce[2];
 static unsigned s_term_bounce_cap;
 #ifndef NO_SCREEN_DMA_BURST_LENGTH
 static volatile int s_term_in_flight;
+/* Set when the in-flight DMA reads the caller's page rather than a bounce. */
+static volatile int s_term_direct;
 static volatile unsigned s_term_up_lo = TERM_PRESENT_EMPTY;
 static volatile unsigned s_term_up_hi = TERM_PRESENT_EMPTY;
 static int s_term_pending;
@@ -991,6 +993,7 @@ static void term_present_done(void *param)
 	if (!fb)
 		return;
 	s_term_flight_idx = idx;
+	s_term_direct = 0;
 	term_present_kick(fb, x, y, w, h, pix);
 }
 
@@ -1117,6 +1120,7 @@ static void plat_term_present_async(int x, int y, int w, int h,
 			s_term_up_lo = TERM_PRESENT_EMPTY;
 			s_term_up_hi = TERM_PRESENT_EMPTY;
 			s_term_flight_idx = standby;
+			s_term_direct = 0;
 			EnableInterrupts();
 			term_present_kick(fb, x, y, merged_w, merged_h, bounce);
 			return;
@@ -1124,10 +1128,23 @@ static void plat_term_present_async(int x, int y, int w, int h,
 		EnableInterrupts();
 		return;
 	}
+	/* No DMA in flight: a contiguous source can be DMAed straight from the
+	 * caller's page, so full-width TERM frames skip the bounce copy (#330). */
+	if (stride == w)
+	{
+		s_term_flight_idx = 0;
+		s_term_direct = 1;
+		s_term_up_lo = TERM_PRESENT_EMPTY;
+		s_term_up_hi = TERM_PRESENT_EMPTY;
+		s_term_pending = 0;
+		term_present_kick(fb, x, y, w, h, src);
+		return;
+	}
 	need = term_bounce_need(w, h);
 	if (!term_bounce_ensure(need))
 		return;
 	s_term_flight_idx = 0;
+	s_term_direct = 0;
 	bounce = s_term_bounce[0];
 	term_copy_to_bounce(bounce, src, w, h, stride, bpp);
 	s_term_up_lo = TERM_PRESENT_EMPTY;
@@ -1177,8 +1194,18 @@ static void plat_term_present_drain(void)
 		if (!fb)
 			return;
 		s_term_flight_idx = idx;
+		s_term_direct = 0;
 		term_present_kick(fb, x, y, w, h, pix);
 	}
+#endif
+}
+
+static int plat_term_present_locked(void)
+{
+#ifdef NO_SCREEN_DMA_BURST_LENGTH
+	return 0;
+#else
+	return AtomicGet(&s_term_in_flight) && s_term_direct;
 #endif
 }
 
@@ -1366,6 +1393,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.present_wait = plat_present_wait;
 	plat.term_present_async = plat_term_present_async;
 	plat.term_present_drain = plat_term_present_drain;
+	plat.term_present_locked = plat_term_present_locked;
 	plat.present_set_flip = plat_present_set_flip;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;

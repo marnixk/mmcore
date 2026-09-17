@@ -1035,6 +1035,15 @@ static void term_present_drain(void)
 		G.plat->term_present_drain();
 }
 
+/* A direct (unbounced) present DMAs straight out of PAGE 0, which TERM uses
+ * as its present buffer.  Drain before rewriting it so the in-flight source
+ * stays immutable until completion (#330). */
+static void term_guard_present(void)
+{
+	if (G.plat && G.plat->term_present_locked && G.plat->term_present_locked())
+		term_present_drain();
+}
+
 static void term_copy_screen(void)
 {
 	int w, h;
@@ -1090,6 +1099,7 @@ static void term_draw(void)
 			    TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
+	term_guard_present();
 	if (full_screen)
 	{
 		int fw, fh;
@@ -1565,6 +1575,7 @@ static void term_fill_pages(void)
 {
 	int saved = G.gfx.write_page;
 
+	term_guard_present();
 	mmb_gfx_clear_overlay();
 	G.gfx.write_page = TM_PAGE;
 	mmb_gfx_cls(TM_BG);
@@ -1668,6 +1679,7 @@ static void term_present_overlay(int extra_w, int extra_h)
 	y = dlg_r0 * TM_CH;
 	pw = (dlg_cw + extra_w) * TM_CW;
 	ph = (dlg_ch + extra_h) * TM_CH;
+	term_guard_present();
 	term_copy_rect(x, y, pw, ph);
 	term_present_async_rect(x, y, pw, ph);
 }
@@ -1695,6 +1707,7 @@ static void term_overlay_chrome(void)
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
+		term_guard_present();
 		term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
 		term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
 		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
