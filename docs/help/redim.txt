@@ -1,0 +1,23 @@
+name: REDIM
+kind: command
+
+Re-dimension an array, or create it if it does not exist. Unlike ~DIM~,
+REDIM may be used on an array that is already declared.
+
+REDIM [SHARED] [PRESERVE] name(d1[,d2...]) [AS type] [, ...]
+
+  SHARED   - accepted for QuickBasic compatibility; variables are global
+  PRESERVE - keep existing elements; only the last dimension may change
+  d1, d2   - inclusive upper bounds (OPTION BASE applies)
+  AS type  - INTEGER, FLOAT, STRING, or a TYPE name
+
+Without PRESERVE the old contents are discarded. With PRESERVE, elements whose
+indices still exist are copied into the new array; the last dimension may grow
+or shrink. Numeric, string, and ~TYPE~ arrays are supported.
+
+Example:
+
+    DIM A(2)
+    A(0) = 1 : A(1) = 2 : A(2) = 3
+    REDIM PRESERVE A(4)
+    PRINT A(0); A(1); A(2); A(3); A(4)
