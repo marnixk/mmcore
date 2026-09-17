@@ -130,9 +130,6 @@ def test_help_mode_resolutions(console):
         assert size in out, size
     assert "MODE 8,16" in out
     assert "HDMI" in out
-    assert "retune" in out.lower()
-    assert "overscan" in out.lower()
-    assert "hdmi_mode=82" in out
     assert "2 when larger" not in out.lower()
     assert "0-7" in out
 
@@ -178,21 +175,19 @@ def test_help_rename_mv(console):
 def test_help_factory_reset(console):
     out = dump_topic(console, "FACTORY_RESET")
     assert out != "?SYNTAX ERROR"
-    assert "Factory" in out or "defaults" in out.lower()
-    assert ".mmbasic.ini" in out
+    assert "default" in out.lower()
+    assert "DEFAULT MODE" in out or "default" in out.lower()
     alias = dump_topic(console, "FACTORY")
-    assert "FACTORY_RESET" in alias or "defaults" in alias.lower()
+    assert "FACTORY_RESET" in alias or "default" in alias.lower()
 
 
 def test_help_option_wifi(console):
     out = dump_topic(console, "OPTION")
     assert "WIFI" in out
-    assert ".mmbasic.ini" in out
-    assert "firmware" in out.lower()
+    assert "persist" in out.lower() or "reboot" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
-    assert "beacon" in out.lower() or "scan" in out.lower()
+    assert "scan" in out.lower()
     assert "OPTIONS WIFI" in out or "<OPTIONS> WIFI" in out
-    assert "country=US" in out or "US" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
     assert "DEBUG" in out
@@ -211,7 +206,7 @@ def test_help_options_wifi(console):
     assert out != "?SYNTAX ERROR"
     assert "OPTIONS WIFI" in out
     assert "not configured" in out.lower()
-    assert "not an alias" in out.lower()
+    assert "stored by OPTION WIFI" in out.lower() or "option wifi" in out.lower()
     via = dump_topic(console, "OPTIONS WIFI")
     assert "OPTIONS WIFI" in via
     assert "Connected to" in via

@@ -1,8 +1,8 @@
 name: POLYGON
 kind: command
 
-Draw a closed polygon (at least 3 vertices). Filled polygons are triangulated
-from the first vertex.
+Draw a closed polygon (at least 3 vertices). An optional fill colour paints
+the interior.
 
 POLYGON x1, y1, x2, y2, x3, y3... [, colour] [, fill]
 

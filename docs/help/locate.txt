@@ -2,8 +2,8 @@ name: LOCATE
 kind: command
 
 Move the text cursor to a character cell. The next PRINT writes at that cell.
-PRINT @(x,y) still uses pixels. Query the cursor with MM.HPOS and MM.VPOS
-(pixels) or POS() (column, 1-based).
+PRINT @(x,y) positions text in pixels; LOCATE uses character rows and columns.
+Query the cursor with MM.HPOS and MM.VPOS (pixels) or POS() (column, 1-based).
 
 LOCATE [y] [, x] [, cursor]
 

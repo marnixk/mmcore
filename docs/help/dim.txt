@@ -13,7 +13,8 @@ STATIC ...
   d1, d2 - inclusive upper bounds
   AS INTEGER|FLOAT|STRING|typename - type; AS typename creates a TYPE variable
                                      (see ~TYPE~)
-  LENGTH n - accepted (strings still use 255 characters)
+  LENGTH n - allowed in TYPE definitions; program STRING variables hold up to
+             255 characters
 
 DIM INTEGER|FLOAT|STRING applies that type to the list. Initialiser:
 DIM p AS Point = (10, 20)

@@ -3,7 +3,7 @@ kind: command
 alias: GUI, GUI BITMAP
 
 Plot a 1-bit bitmap at a pixel location. Bits are drawn MSB-first in each byte,
-top line first. GUI BITMAP is the same command (CMM2 name).
+top line first.
 
 BITMAP x, y, bits [, w] [, h] [, scale] [, c] [, bc]
 GUI BITMAP ...

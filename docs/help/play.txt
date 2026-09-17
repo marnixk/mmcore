@@ -20,9 +20,8 @@ PLAY XM file$          (PLAY XMFILE file$)
   duration - TONE length in milliseconds; omit to hold until PLAY STOP
   file$ - audio file path
 
-Hardware keeps ~160ms in the DMA queue so HDMI/PWM chunks are not padded with
-silence on a brief stall. QEMU has no sound device; decode and PLAYING() still
-run in real time.
+On systems without audio output, files decode but no sound is heard; PLAYING()
+reflects playback state.
 
 Example:
 

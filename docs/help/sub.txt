@@ -3,8 +3,7 @@ kind: language
 alias: FUNCTION, END SUB, END FUNCTION
 
 Define a subroutine or function. CALL name runs a SUB. A FUNCTION is used in
-an expression as name(). Assign to the function name to set the return value
-(CMM2).
+an expression as name(). Assign to the function name to return a value.
 
 SUB name
   statements

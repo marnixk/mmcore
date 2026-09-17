@@ -3,7 +3,7 @@ kind: command
 alias: NAME, MV
 
 Rename a file, or move it to another folder on the same drive. Destination may
-be a new name or a path. NAME and MV are aliases.
+be a new name or a path.
 
 RENAME src$ [AS|TO] dst$
 NAME src$ AS dst$

@@ -12,12 +12,8 @@ MODE n [, bits] [, clscolour]
   bits - 8, 12, 16 or 32 (default 8 if omitted)
   clscolour - if given, clear the page to that colour
 
-HDMI colour depth stays the compile-time screen depth (16-bit RGB565 here).
-bits still quantises the logical page (8=RGB332, 12=RGB444, 16=RGB565,
-32=RGB888). If the firmware cannot allocate a size, the logical page still
-changes and HDMI stays at the last working resolution.
-
-Pages: 8 (0-7) at every MODE, allocated lazily.
+bits selects how colours are stored on each page (8=RGB332, 12=RGB444,
+16=RGB565, 32=RGB888). Eight drawing pages (0-7) are available.
 
 Depths (quantised; pages store HDMI-native 16-bit):
   8   RGB332
@@ -25,13 +21,8 @@ Depths (quantised; pages store HDMI-native 16-bit):
   16  RGB565
   32  RGB888
 
-Boot HDMI uses DMT 1920x1080 (hdmi_group=2, hdmi_mode=82) with
-disable_overscan=1 so PIXEL 0,0 is the visible top-left of a 1080p panel.
-MODE still retunes the Circle framebuffer to MM.HRES x MM.VRES.
-
 Boot default if HDMI is 640x480: MODE 8,16
 Otherwise: MODE 1,8
-Tests and examples reset with MODE 8,16.
 
 All supported modes (n, pixels, depths):
   1   800x600      8,12,16,32

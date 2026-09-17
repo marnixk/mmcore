@@ -19,8 +19,8 @@ END TYPE
 
 Members: INTEGER (64-bit), FLOAT, STRING LENGTH n, nested types. INT means
 INTEGER inside TYPE. Access with var.member and arr(i).member. Whole-struct
-assign copies the same type only. Period is still a name character unless the
-left side is a TYPE variable.
+assign copies the same type only. A period can appear in a variable name unless
+the left side is a TYPE variable.
 
 Example:
 

@@ -2,9 +2,7 @@ name: SELECT CASE
 kind: language
 alias: SELECT, CASE, CASE ELSE, END SELECT
 
-Choose a branch matching an expression. SELECT CASE state is saved across SUB,
-FUNCTION, GOSUB, ON KEY and SETTICK so a nested CASE cannot clobber the
-caller.
+Choose a branch matching an expression.
 
 SELECT CASE expr
 CASE value [, value...]

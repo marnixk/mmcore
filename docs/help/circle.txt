@@ -1,8 +1,7 @@
 name: CIRCLE
 kind: command
 
-Draw a circle centred at (x, y). Optional fill uses a midpoint disk (horizontal
-spans), not stacked outlines.
+Draw a circle centred at (x, y). An optional fill colour paints the interior.
 
 CIRCLE x, y, r [, lw] [, colour] [, fill]
 

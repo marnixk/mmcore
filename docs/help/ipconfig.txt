@@ -14,8 +14,8 @@ netmask, DNS, DHCP, and link speed when known. Wi-Fi shows SSID and country.
 OPTION WIFI DEBUG ON adds WPA vs DHCP lines for Wi-Fi.
 
 If the radio or NIC is missing: Wi-Fi not available or Ethernet not available.
-QEMU Ethernet needs -device usb-net. If the link is down: Not connected.
-Join Wi-Fi with OPTIONS WIFI, or OPTION ETHERNET ON.
+If the link is down: Not connected. Join Wi-Fi with OPTIONS WIFI, or OPTION
+ETHERNET ON.
 
 Example:
 

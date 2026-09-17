@@ -3,7 +3,7 @@ kind: command
 alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
 Jump to the n-th line number (1-based), or call a SUB when a key is waiting.
-ON ERROR is accepted but not trapped.
+ON ERROR is recognised but does not catch runtime errors.
 
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
