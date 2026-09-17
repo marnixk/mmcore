@@ -1,6 +1,6 @@
 name: IF
 kind: language
-alias: ENDIF, END IF, ELSE, ELSEIF, THEN
+alias: ENDIF, END IF, ELSE, ELSEIF, ELSE IF, THEN
 
 Run statements when a condition is true. Single-line and multiline forms are
 supported. IF cond THEN linenumber is a GOTO when cond is true. A THEN at end
@@ -20,14 +20,19 @@ ENDIF
 
 Example:
 
-    10 X = 1
-    20 IF X > 0 THEN PRINT "YES" ELSE PRINT "NO"
-    RUN
+    X = 1
+    IF X > 0 THEN PRINT "YES" ELSE PRINT "NO"
 
-    10 X = 0
-    20 IF X > 0 THEN
-    30 PRINT "YES"
-    40 ELSE
-    50 PRINT "NO"
-    60 ENDIF
-    RUN
+    X = 0
+    IF X > 0 THEN
+      PRINT "YES"
+    ELSEIF X = 0 THEN
+      PRINT "ZERO"
+    ELSE
+      PRINT "NO"
+    END IF
+
+    IF X > 0 THEN Target
+    PRINT "skipped when X > 0"
+Target:
+    PRINT "here"

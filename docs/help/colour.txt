@@ -4,7 +4,7 @@ alias: COLOR
 
 Set foreground and optional background colour for PRINT / INPUT text and for
 graphics when a colour argument is omitted. HDMI text uses the nearest of the
-16 ANSI colours (RGB(RED) is red). COLOR is an alias.
+16 ANSI colours (RGB(RED) is red).
 
 COLOUR fg [, bg]
 COLOR fg [, bg]
@@ -13,7 +13,7 @@ COLOR fg [, bg]
   bg - background (optional)
 
 Colours are RGB integers: RGB(r,g,b), RGB(r,g,b,t), RGB(RED), or RGB("RED").
-t is 0 (clear) to 15 (solid) when drawing on page 1, the CMM2 overlay.
+t is 0 (clear) to 15 (solid) when drawing on page 1 (the graphics overlay).
 Integers 0 to 31 are the IBM PC palette (CGA/VGA): 0-7 normal, 8-15 bright,
 16-31 repeat 0-15. COLOUR 4 is the same as COLOUR RED.
 
@@ -24,5 +24,5 @@ ORANGE PINK GOLD SALMON GRAY GREY. LIGHT* names are the bright IBM set.
 Example:
 
     COLOUR RGB(RED)
-    COLOUR LIGHTRED, BLACK
+    COLOR LIGHTRED, BLACK
     COLOUR 12

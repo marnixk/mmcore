@@ -2,9 +2,9 @@ name: FACTORY_RESET
 kind: command
 alias: FACTORY RESET, FACTORY
 
-Restore firmware OPTION defaults and rewrite the hidden settings file
-(.mmbasic.ini): DEFAULT MODE 11, PROMPT CWD, EDIT THEME Slate. Programs and
-other user files are kept. Wi-Fi credentials and Ethernet ON are cleared.
+Restore default OPTION settings (DEFAULT MODE 11, PROMPT CWD, EDIT THEME Slate).
+Programs and other user files are kept. Wi-Fi credentials and Ethernet ON are
+cleared.
 
 FACTORY_RESET
 FACTORY RESET
@@ -12,3 +12,4 @@ FACTORY RESET
 Example:
 
     FACTORY_RESET
+    FACTORY RESET

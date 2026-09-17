@@ -1,14 +1,14 @@
 name: OPTION
 kind: command
 
-Change interpreter settings. Settings persist in C:/.mmbasic.ini (A: if no SD).
-FACTORY_RESET restores defaults and rewrites the INI.
+Change interpreter settings. Settings persist across reboots. FACTORY_RESET
+restores defaults.
 
 OPTION setting ...
 OPTION LIST [ALL]
 OPTION RESET
 
-Implemented subcommands:
+Settings:
   BASE 0|1          EXPLICIT [ON|OFF]
   DEFAULT INTEGER|FLOAT|STRING|NONE
   DEFAULT MODE n    DEFAULT COLOURS fg [, bg]
@@ -21,11 +21,11 @@ Implemented subcommands:
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE
   LEGACY ON|OFF     MILLISECONDS ON|OFF
   MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF
-  TRACECACHE ON|OFF     pin vars in hot numeric LET/IF
+  TRACECACHE ON|OFF
   PROMPT BARE|CWD   immediate prompt (see ~PROMPT~)
     CWD (default) is DOS $p$g: drive and path then >, e.g. A:/> or A:/PRDIR>.
-    BARE is "> ". Stored as prompt=0|1 in .mmbasic.ini. OPTION LIST shows BARE
-    when selected; LIST ALL always shows the mode.
+    BARE is "> ". OPTION LIST shows BARE when selected; LIST ALL always shows
+    the mode.
   RAM   FLASH [page]     STATUS ON|OFF
   VCC n    SLEEP n    SD TIMING FAST|NORMAL
   SERIAL PULLUP ENABLE|DISABLE
@@ -40,34 +40,24 @@ Implemented subcommands:
   AUDIO_TARGET HDMI|JACK   (HDMI0 or 3.5mm PWM jack)
   AUDIO TARGET HDMI|JACK   (same)
   DISPLAY/LCDPANEL/TOUCH/SDCARD/RESOLUTION/CLOCK/
-  CPUSPEED/HEARTBEAT (other hardware lines are parsed)
+  CPUSPEED/HEARTBEAT
   WIFI [ssid$ [, password$]]
-    No args: scan beacons and prompt (needs radio). Lists printable SSIDs from
-    the CYW4343x escan result, not random bytes in the scan blob. With args:
-    store credentials in .mmbasic.ini and join with WPA2. Circle needs a
-    2-letter ISO country it will associate (default US; use GB not UK).
-    OPTION WIFI COUNTRY "NZ" persists in the INI and wpa_supplicant.conf.
-    Hardware images ship C:/firmware/. QEMU has no Wi-Fi radio. Use OPTIONS
-    WIFI to join stored credentials.
+    No args: scan for networks and prompt (needs radio). With args: store
+    credentials and join with WPA2. Use OPTIONS WIFI to connect with stored
+    credentials.
   WIFI COUNTRY "XX"
-    Regulatory domain Circle accepts. Default US. UK is stored as GB. Unknown
-    codes are rejected.
+    Set the Wi-Fi regulatory domain (default US; use GB for United Kingdom).
+    Unknown codes are rejected.
   WIFI DEBUG ON|OFF
-    Print [wifi] progress on HDMI and serial. Default OFF. The PSK is never
-    printed. On a live TERM TCP session it also prints compact !NET
-    rx/tx/parsed counters; the pane is not copied to serial. Live CONNECT/TERM
-    also emit serial-only !TCP snapshots every 0.5s: bytes/zero/err from Circle
-    Receive, leftover frame, and socket GetStatus (conn/rxrdy/txrdy). HDMI is
-    unchanged.
+    Print [wifi] progress on HDMI and serial. Default OFF. The password is
+    never printed.
   ETHERNET ON|OFF
-    Use the RJ45 port (Pi 3/3B+/4; USB LAN on Pi 3). ON starts DHCP and turns
-    off Wi-Fi auto-join. OFF leaves the cable unused (reboot to free the stack
-    if Ethernet is already up). Only one of Wi-Fi or Ethernet is active. QEMU
-    has no onboard NIC; -device usb-net provides USB CDC Ethernet. Persists as
-    [ethernet] enabled= in .mmbasic.ini.
+    Use the Ethernet port. ON starts DHCP and turns off Wi-Fi auto-join. OFF
+    leaves the cable unused (reboot to free the stack if Ethernet is already
+    up). Only one of Wi-Fi or Ethernet is active. The setting is saved across
+    reboots.
   TERM LOG ON|OFF
-    C:/.termlog (A: if no SD). RAM buffer, flush every 10s. R|T ms in_total
-    rendered hex. Default OFF.
+    Write session traffic to C:/.termlog (A: if no SD). Default OFF.
 
 Example:
 

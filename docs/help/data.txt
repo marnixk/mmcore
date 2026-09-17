@@ -15,7 +15,10 @@ RESTORE [line]
 
 Example:
 
-    10 DATA 10, 20, 12
-    20 READ A, B, C
-    30 PRINT A + B + C
-    RUN
+    DATA 10, 20, 12
+    READ A, B, C
+    PRINT A + B + C
+
+    RESTORE
+    READ A
+    PRINT A

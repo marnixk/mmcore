@@ -3,8 +3,7 @@ kind: language
 alias: FUNCTION, END SUB, END FUNCTION
 
 Define a subroutine or function. CALL name runs a SUB. A FUNCTION is used in
-an expression as name(). Assign to the function name to set the return value
-(CMM2).
+an expression as name(). Assign to the function name to return a value.
 
 SUB name
   statements
@@ -27,13 +26,25 @@ SUBs take TYPE args the same way: SUB Hi(m AS Message).
 
 Example:
 
-    10 SUB HI
-    20 PRINT 6 * 7
-    30 END SUB
-    40 CALL HI
-    RUN
+    SUB HI
+      PRINT 6 * 7
+    END SUB
+    CALL HI
 
     FUNCTION RandByte()
       RandByte = INT(RND * 256)
     END FUNCTION
     PRINT RandByte()
+
+    TYPE Point
+      X AS INTEGER
+      Y AS INTEGER
+    END TYPE
+
+    SUB Show(p AS Point)
+      PRINT p.X, p.Y
+    END SUB
+
+    DIM pt AS Point
+    pt.X = 10 : pt.Y = 20
+    CALL Show(pt)

@@ -2,8 +2,8 @@ name: HELP
 kind: command
 alias: IHELP
 
-Open interactive help (QuickBASIC-style). HELP and IHELP are the same command.
-Keywords are case-insensitive (help, HELP, Help CLS, ihelp).
+Open interactive help (QuickBASIC-style). Keywords are case-insensitive (help,
+HELP, Help CLS, ihelp).
 
 HELP
 IHELP
@@ -28,5 +28,7 @@ raise ?SYNTAX ERROR.
 Example:
 
     HELP
+    IHELP
     HELP CLS
+    IHELP CLS
     HELP BASIC

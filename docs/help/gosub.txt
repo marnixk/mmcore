@@ -14,8 +14,14 @@ RETURN
 
 Example:
 
-    10 GOSUB 50
-    20 END
-    50 PRINT 6 * 7
-    60 RETURN
-    RUN
+    GOSUB Show
+    END
+Show:
+    PRINT 6 * 7
+    RETURN
+
+    GOSUB Helper
+    END
+Helper:
+    PRINT 42
+    RETURN

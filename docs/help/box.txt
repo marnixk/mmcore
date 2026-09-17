@@ -18,5 +18,7 @@ BOX XOR_PIXELS x, y, w, h, colour [, page]
 
 Example:
 
-    BOX 20, 20, 40, 40, 1, RGB(0, 255, 0), 1
+    BOX 20, 20, 40, 40, 1, RGB(0, 255, 0), RGB(0, 128, 0)
+    BOX AND_PIXELS 20, 20, 40, 40, RGB(255, 255, 255)
+    BOX OR_PIXELS 20, 20, 40, 40, RGB(255, 0, 0)
     BOX XOR_PIXELS 20, 20, 40, 40, RGB(255, 255, 255)

@@ -2,8 +2,7 @@ name: PRINT
 kind: command
 alias: ?
 
-Write values to the console, or to an open file or TCP stream. ? is an alias
-for PRINT.
+Write values to the console, or to an open file or TCP stream.
 
 PRINT [expr] [;|, expr]...
 PRINT #fn, expr [;|, expr]...
@@ -14,12 +13,13 @@ PRINT #fn, expr [;|, expr]...
   ; - suppress the trailing newline when last
   , - insert a space between items
 
-Bare PRINT prints a blank line. While a program is running, each PRINT is sent
-to the console immediately (a GOTO loop still shows output). Use PRINT @(x,y)
-(pixels) or LOCATE y,x (character cell, row then column) to position text.
+Bare PRINT prints a blank line. Each PRINT appears on the console as it runs.
+Position text with PRINT @(x,y) (pixels) or LOCATE row, col (character cells).
 
 Example:
 
     PRINT 6 * 7
+    ? 6 * 7
+    PRINT
     PRINT #1, "HELLO"
     PRINT @(8, 8); "HI"

@@ -12,3 +12,4 @@ COPY src$, dst$
 Example:
 
     COPY "A.TXT" TO "B.TXT"
+    COPY "A.TXT", "B.TXT"

@@ -15,16 +15,23 @@ LOOP [WHILE condition | UNTIL condition]
 
 Example:
 
-    10 I = 0
-    20 DO
-    30 I = I + 1
-    40 PRINT I
-    50 LOOP UNTIL I = 3
-    RUN
+    I = 0
+    DO
+      I = I + 1
+      PRINT I
+    LOOP UNTIL I = 3
 
-    10 I = 0
-    20 DO WHILE I < 3
-    30 I = I + 1
-    40 PRINT I
-    50 LOOP
-    RUN
+    I = 0
+    DO WHILE I < 3
+      I = I + 1
+      PRINT I
+    LOOP
+
+    DO
+      IF INKEY$() <> "" THEN EXIT DO
+    LOOP
+
+    I = 0
+    DO
+      I = I + 1
+    LOOP WHILE I < 3

@@ -15,7 +15,7 @@ PAGE XOR_PIXELS s1, s2, dest
 
   n - page number
   src, dst - source and destination pages
-  B - skip black pixels (CMM2 blit)
+  B - skip black pixels when copying
   x, y - SCROLL moves the page right by x and up by y
   fillcolour - omitted wraps; -1 leaves the gap; any other colour fills it
 

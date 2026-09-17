@@ -3,7 +3,7 @@ kind: command
 alias: ERASE
 
 Clear all variables. The program text in memory is kept (use ~NEW~ to erase the
-program). ERASE is an alias.
+program).
 
 CLEAR
 ERASE
@@ -11,3 +11,4 @@ ERASE
 Example:
 
     CLEAR
+    ERASE

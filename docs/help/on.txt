@@ -1,9 +1,9 @@
 name: ON
 kind: command
-alias: ON GOTO, ON GOSUB
+alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
 Jump to the n-th line number (1-based), or call a SUB when a key is waiting.
-ON ERROR is accepted but not trapped.
+ON ERROR is recognised but does not catch runtime errors.
 
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
@@ -16,7 +16,23 @@ ON KEY subname
 
 Example:
 
-    10 N = 2
-    20 ON N GOTO 30, 40, 50
-    40 PRINT 42
-    RUN
+    N = 2
+    ON N GOTO First, Second, Third
+    END
+First:
+    PRINT 1
+Second:
+    PRINT 42
+Third:
+    PRINT 3
+
+    ON 1 GOSUB A, B
+    END
+A:
+    PRINT "A"
+    RETURN
+B:
+    PRINT "B"
+    RETURN
+
+    ON KEY KeyHandler

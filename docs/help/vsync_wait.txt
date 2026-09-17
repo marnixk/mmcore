@@ -1,16 +1,15 @@
 name: VSYNC_WAIT
 kind: command
 
-Wait until the next display refresh (60 Hz). Use at the end of a game or
-animation loop to cap the frame rate to the monitor. On hardware this waits for
-HDMI vblank; on QEMU it waits 16 ms per call. Ctrl+C / BREAK still aborts a
-running program.
+Wait until the next display refresh (about 16 ms at 60 Hz). Use at the end of
+a game or animation loop to cap the frame rate. Ctrl+C / BREAK aborts a running
+program.
 
 VSYNC_WAIT
 
 Example:
 
-    10 DO
-    20   PAGE COPY 1 TO 0
-    30   VSYNC_WAIT
-    40 LOOP
+    DO
+      PAGE COPY 1 TO 0
+      VSYNC_WAIT
+    LOOP

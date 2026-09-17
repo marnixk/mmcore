@@ -18,8 +18,8 @@ Colours follow OPTION EDIT THEME (same as EDITOR).
 
 Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style
 serif at 32x64 / 24x48 / 16x32 (shared baseline, not a scaled-up 8x16 face).
-Each heading letter advances by its own ink width so spacing is proportional,
-wrap still follows the column width, and the cursor block fits the glyph.
+Each heading letter advances by its own ink width so spacing is proportional;
+wrap follows the column width, and the cursor block fits the glyph.
 -/* bullets, > quotes, ``` fenced code, **bold**. Word wrap at the column
 width; Enter inserts a real newline. Shift+Arrows select text.
 

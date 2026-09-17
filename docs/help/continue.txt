@@ -9,8 +9,14 @@ CONTINUE DO
 
 Example:
 
-    10 FOR I = 1 TO 3
-    20 IF I = 2 THEN CONTINUE FOR
-    30 PRINT I
-    40 NEXT I
-    RUN
+    FOR I = 1 TO 3
+      IF I = 2 THEN CONTINUE FOR
+      PRINT I
+    NEXT I
+
+    I = 0
+    DO
+      I = I + 1
+      IF I = 2 THEN CONTINUE DO
+      PRINT I
+    LOOP UNTIL I = 3

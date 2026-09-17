@@ -3,8 +3,7 @@ kind: command
 alias: LS, LIST FILES
 
 List files in the current directory, or matching an optional path/wildcard.
-LS and LIST FILES are the same listing (CMM2 names). This is not the dual-pane
-file manager; use ~FILES~ for that.
+For the dual-pane file manager, use ~FILES~.
 
 DIR [spec$]
 LS
@@ -17,3 +16,4 @@ Example:
     DIR
     DIR "A:/*.PNG"
     LS
+    LIST FILES

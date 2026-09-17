@@ -2,21 +2,17 @@ name: ETHERNET
 kind: command
 alias: OPTION ETHERNET
 
-Use wired Ethernet instead of Wi-Fi. This is the OPTION ETHERNET setting
-(documented here under its own topic).
+Turn wired Ethernet on or off.
 
 OPTION ETHERNET ON
 OPTION ETHERNET OFF
 
-ON starts DHCP on the onboard RJ45 (Pi 3 / 3B+ USB LAN, Pi 4 GENET) and turns
-off Wi-Fi auto-join. Credentials for WIFI are kept. Only one interface is
-active: enabling Ethernet disables Wi-Fi; OPTIONS WIFI / OPTION WIFI disable
-Ethernet. Switching after the stack is up needs REBOOT. If ON is saved,
-Ethernet initialises at boot. IPCONFIG shows Interface: Ethernet.
-
-QEMU raspi3b has no onboard RJ45. Launch with -device usb-net (SLIRP user net)
-for USB CDC Ethernet and DHCP. Without that gadget, ON reports Ethernet not
-available. Persists in C:/.mmbasic.ini [ethernet] enabled=.
+ON starts DHCP on the Ethernet port and turns off Wi-Fi auto-join. Credentials
+for WIFI are kept. Only one interface is active: enabling Ethernet disables
+Wi-Fi; OPTIONS WIFI / OPTION WIFI disable Ethernet. Switching after the stack
+is up needs REBOOT. If ON is saved, Ethernet initialises at boot. IPCONFIG
+shows Interface: Ethernet. If Ethernet is not available, ON reports Ethernet
+not available. The setting is saved across reboots.
 
 Example:
 

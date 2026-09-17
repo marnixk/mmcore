@@ -19,14 +19,14 @@ Control Flow
     ~FOR~ - counted loop with optional STEP
     ~DO~ - general loop with WHILE/UNTIL
     ~WHILE~ - loop while a condition is true
-    ~IF~ - conditional branch
-    ~SELECT CASE~ - multi-way branch
+    ~IF~ - conditional branch (ELSEIF/ELSE IF)
+    ~SELECT CASE~ - multi-way branch (CASE ELSE)
     ~GOTO~ - jump to a line label
     ~GOSUB~ - call a line subroutine
-    ~ON~ - computed GOTO/GOSUB and ON KEY
+    ~ON~ - ON GOTO/GOSUB/KEY/COM/TIMER/PLAY/PEN/STRIG/ERROR
     ~EXIT~ - leave a loop or routine early
     ~CONTINUE~ - skip to the next iteration
-    ~END~ - end the program
+    ~END~ - end program or close IF/SELECT/SUB/FUNCTION
     ~REM~ - comment to end of line
 
 Variables and Types
@@ -99,6 +99,7 @@ File I/O
 Time and Events
 
     ~SETTICK~ - periodic tick interrupt
+    ~ERROR~ - stop with an error message
     ~FUNCTIONS~ - DATE$ TIME$ TIMER
 
 System and Options
@@ -147,12 +148,12 @@ Graphics
     ~FRAMEBUFFER~ - framebuffer pages
     ~IMAGE~ - image load and transform
     ~TURTLE~ - turtle graphics
-    ~BITMAP~ - plot a bitmap pattern
+    ~BITMAP~ - plot a bitmap (GUI/GUI BITMAP)
 
 Sprites and Blit
 
     ~SPRITE~ - load show and move sprites
-    ~BLIT~ - copy rectangular image blocks
+    ~BLIT~ - copy pixels (BLIT MEMORY buffers)
 
 JSON and Structures
 
@@ -163,7 +164,7 @@ JSON and Structures
 
 Environment
 
-    ~FUNCTIONS~ - MM.HRES MM.VRES MM.INFO and more
+    ~FUNCTIONS~ - MM.HRES MM.VRES MM.INFO MM.INFO$ and more
 
 Links are explicit. A sentence such as "for every loop we
 can use ~FOR~ loops" only highlights the marked FOR, not
