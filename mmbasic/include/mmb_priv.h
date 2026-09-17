@@ -500,6 +500,7 @@ void mmb_cmd_rset(void);
 void mmb_cmd_bit(void);
 void mmb_cmd_byte(void);
 void mmb_cmd_execute(void);
+void mmb_cmd_array(void);
 void mmb_cmd_sort(void);
 void mmb_cmd_clear(void);
 void mmb_cmd_new(void);

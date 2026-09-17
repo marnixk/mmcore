@@ -1,0 +1,37 @@
+name: ARRAY
+kind: command
+
+Bulk operations on whole arrays. Arrays are named with empty parentheses,
+for example A() or M$(). Cardinality (total element count) must match where
+noted.
+
+ARRAY SET value, dst()
+ARRAY ADD src(), value, dst()
+ARRAY INSERT dst(), idx[, idx...], src()
+ARRAY SLICE src(), idx[, idx...], dst()
+
+  SET     fills every element of dst() with value
+  ADD     sets dst(i) = src(i) + value element by element; for string arrays
+          value is appended. When value is 0 the source is copied.
+  INSERT  copies the 1D src() into dst() (2D or higher) along the dimension
+          whose index was omitted
+  SLICE   copies a row/slice of src() (2D or higher) into the 1D dst()
+
+For INSERT and SLICE, supply one index per dimension and leave exactly one
+blank. The blank selects the dimension to read or write. OPTION BASE applies to
+the indices. The 1D array length must equal the selected dimension's length.
+Numeric and string arrays are supported; string values are truncated to 255
+characters.
+
+Example:
+
+    DIM A(2), B(2)
+    A(0)=1 : A(1)=2 : A(2)=3
+    ARRAY SET 9, B()
+    ARRAY ADD A(), 10, B()
+    PRINT B(0); B(1); B(2)
+
+    DIM M(1,2), R(2)
+    M(0,0)=1 : M(0,1)=2 : M(0,2)=3
+    ARRAY SLICE M(), 0, , R()
+    PRINT R(0); R(1); R(2)
