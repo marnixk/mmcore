@@ -195,8 +195,11 @@ PY
 }
 
 assert_zip_has_installer() {
-	local zip="$1"
-	unzip -l "${zip}" | grep -Eq '(^|[[:space:]])install-sdcard\.sh$' \
+	local zip="$1" listing
+	# Capture first: a `unzip | grep -q` pipeline can SIGPIPE unzip under
+	# `set -o pipefail` and fail the assertion for a zip that is fine.
+	listing="$(unzip -Z1 "${zip}")" || die "${zip} is not readable"
+	grep -Fxq 'install-sdcard.sh' <<<"${listing}" \
 		|| die "${zip} is missing install-sdcard.sh"
 }
 
