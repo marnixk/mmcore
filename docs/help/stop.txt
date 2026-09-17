@@ -1,0 +1,14 @@
+name: STOP
+kind: command
+
+Halt the running program. STOP is accepted as a top-level statement for
+QuickBasic compatibility and behaves like ~END~. Inside a ~PLAY~ statement,
+STOP is the PLAY STOP subcommand.
+
+STOP
+
+Example:
+
+    10 PRINT "A"
+    20 STOP
+    30 PRINT "B"

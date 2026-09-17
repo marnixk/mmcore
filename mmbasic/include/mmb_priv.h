@@ -318,6 +318,10 @@ typedef struct mmb {
 	mmb_val func_ret;
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
 	int run_pc;            /* current program line index */
+	int on_error_pc;       /* ON ERROR GOTO target, -1 when inactive */
+	int error_active;      /* handling a trapped runtime error */
+	int err_resume_pc;     /* line that raised the trapped error */
+	jmp_buf run_errjmp;    /* setjmp target while a handler is active */
 	int ctrl_sp;
 	struct {
 		int type;          /* 1=while 2=do 3=if 4=select */
@@ -502,6 +506,9 @@ void mmb_cmd_new(void);
 void mmb_cmd_list(void);
 void mmb_cmd_run(void);
 void mmb_cmd_end(void);
+void mmb_cmd_chain(void);
+void mmb_cmd_resume(void);
+int mmb_parse_target(void);
 void mmb_cmd_if(void);
 void mmb_cmd_for(void);
 void mmb_cmd_next(void);

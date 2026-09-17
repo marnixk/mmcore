@@ -1,0 +1,24 @@
+name: RESUME
+kind: command
+
+Continue after a runtime error trapped by ~ON~ ERROR GOTO.
+
+RESUME
+RESUME NEXT
+RESUME line
+
+  line - a line number or label to continue at
+
+RESUME returns to the line that raised the error, RESUME NEXT continues at the
+following line, and RESUME line jumps to the given line. RESUME clears the
+"handling" state so a later error is trapped again. Calling RESUME when no error
+is active is an error.
+
+Example:
+
+    10 ON ERROR GOTO 100
+    20 A = 1 / 0
+    30 PRINT "continued"
+    40 END
+    100 PRINT "error trapped"
+    110 RESUME NEXT

@@ -138,8 +138,20 @@ void mmb_cmd_on(void)
 	mmb_skip_sp();
 	if (mmb_match("ERROR"))
 	{
-		while (*G.p && *G.p != ':' && *G.p != '\'')
-			G.p++;
+		G.error_active = 0;
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'' || *G.p == ',')
+		{
+			G.on_error_pc = -1;
+			return;
+		}
+		if (mmb_match("GOTO") || mmb_match("THEN"))
+		{
+			mmb_skip_sp();
+			G.on_error_pc = mmb_parse_target();
+			return;
+		}
+		G.on_error_pc = -1;
 		return;
 	}
 	if (mmb_match("KEY"))
@@ -463,4 +475,23 @@ void mmb_cmd_settick(void)
 	strncpy(G.tick[slot].sub, name, MMB_MAX_NAME - 1);
 	G.tick[slot].sub[MMB_MAX_NAME - 1] = 0;
 	G.tick[slot].last = mmb_now_ms();
+}
+
+void mmb_cmd_resume(void)
+{
+	int target;
+	if (!G.error_active)
+	{
+		G.error_active = 1; /* stop mmb_error trapping this one */
+		mmb_error("?RESUME");
+	}
+	mmb_skip_sp();
+	if (mmb_match("NEXT"))
+		target = G.err_resume_pc + 1;
+	else if (*G.p && *G.p != ':' && *G.p != '\'')
+		target = mmb_parse_target();
+	else
+		target = G.err_resume_pc;
+	G.error_active = 0;
+	G.branch_pc = target;
 }

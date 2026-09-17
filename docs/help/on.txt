@@ -3,16 +3,22 @@ kind: command
 alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
 Jump to the n-th line number (1-based), or call a SUB when a key is waiting.
-ON ERROR is recognised but does not catch runtime errors.
+ON ERROR GOTO installs a runtime error handler; use ~RESUME~ to continue.
 
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
-ON ERROR ...
+ON ERROR GOTO line
+ON ERROR
 ON KEY subname
 
   n - 1-based index into the line list
-  line - destination line numbers
+  line - destination line numbers, or the error handler
   subname - SUB called when a key is waiting
+
+ON ERROR GOTO jumps to the handler when a runtime error occurs during RUN.
+RESUME continues at the failing line, RESUME NEXT at the following line, and
+RESUME line at a chosen line. Without RESUME a second error aborts the program.
+ON ERROR with no target clears the handler.
 
 Example:
 

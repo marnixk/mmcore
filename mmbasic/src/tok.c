@@ -61,6 +61,7 @@ static const char *const kws[] = {
 	"DATETIME$", "DAY$", "DIR$",
 	"SHARED", "PRESERVE", "COMMON", "REDIM",
 	"BIT", "BYTE", "EPOCH", "EXECUTE",
+	"STOP", "RESUME", "CHAIN",
 	0
 };
 

@@ -196,6 +196,12 @@ void mmb_error(const char *msg)
 			G.err[i++] = *p++;
 	}
 	G.err[i] = 0;
+	if (G.running && !G.error_active && G.on_error_pc >= 0)
+	{
+		G.error_active = 1;
+		G.err_resume_pc = G.run_pc;
+		longjmp(G.run_errjmp, 1);
+	}
 	if (G.running)
 		mmb_play_stop();
 	longjmp(G.errjmp, 1);
