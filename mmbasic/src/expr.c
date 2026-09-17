@@ -169,6 +169,185 @@ static unsigned named_or_fail(const char *n, int *ok)
 	return mmb_named_colour(n, ok);
 }
 
+static void fmt2d(char *p, int v)
+{
+	p[0] = (char)('0' + (v / 10) % 10);
+	p[1] = (char)('0' + v % 10);
+}
+
+static int64_t parse_epoch_arg(void)
+{
+	mmb_skip_sp();
+	if (*G.p == '(')
+	{
+		mmb_val v;
+		G.p++;
+		mmb_skip_sp();
+		if (mmb_match("NOW"))
+			v = mmb_int_val(mmb_epoch_now());
+		else
+			v = mmb_expr();
+		mmb_skip_sp();
+		mmb_expect(')');
+		return mmb_as_int(v);
+	}
+	if (mmb_match("NOW"))
+		return mmb_epoch_now();
+	return mmb_as_int(mmb_expr());
+}
+
+static int parse_date_fields(const char *s, int *py, int *pmo, int *pd)
+{
+	int vals[3], nv = 0, i;
+	const char *p = s;
+	for (i = 0; i < 3; i++)
+	{
+		int v = 0, got = 0;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		while (*p >= '0' && *p <= '9')
+		{
+			v = v * 10 + (*p - '0');
+			p++;
+			got = 1;
+		}
+		if (!got)
+			break;
+		vals[nv++] = v;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '-' || *p == '/')
+			p++;
+		else if (i < 2)
+			break;
+	}
+	if (nv < 3)
+		return 0;
+	{
+		int d = vals[0], mo = vals[1], y = vals[2];
+		if (d > 1000)
+		{
+			int t = d;
+			d = y;
+			y = t;
+		}
+		if (y >= 0 && y < 100)
+			y += 2000;
+		if (d < 1 || d > 31 || mo < 1 || mo > 12 || y < 1902 || y > 2999)
+			return 0;
+		*py = y;
+		*pmo = mo;
+		*pd = d;
+	}
+	return 1;
+}
+
+static void datetime_str(char *out, int outsz, int64_t e)
+{
+	int y, mo, d, h, mi, s;
+	char *p = out;
+	(void)outsz;
+	mmb_epoch_break(e, &y, &mo, &d, &h, &mi, &s);
+	fmt2d(p, d); p[2] = '-';
+	fmt2d(p + 3, mo); p[5] = '-';
+	/* year is always 4 digits in this range */
+	p[6] = (char)('0' + (y / 1000) % 10);
+	p[7] = (char)('0' + (y / 100) % 10);
+	p[8] = (char)('0' + (y / 10) % 10);
+	p[9] = (char)('0' + y % 10);
+	p[10] = ' ';
+	fmt2d(p + 11, h); p[13] = ':';
+	fmt2d(p + 14, mi); p[16] = ':';
+	fmt2d(p + 17, s);
+	p[19] = 0;
+}
+
+static int in_charset(const char *set, char c)
+{
+	for (; *set; set++)
+		if (*set == c)
+			return 1;
+	return 0;
+}
+
+static void trim_str(char *dst, const char *src, const char *mask, int left, int right)
+{
+	int s = 0, e = (int)strlen(src) - 1;
+	if (left)
+		while (s <= e && in_charset(mask, src[s]))
+			s++;
+	if (right)
+		while (e >= s && in_charset(mask, src[e]))
+			e--;
+	if (e < s)
+	{
+		dst[0] = 0;
+		return;
+	}
+	memcpy(dst, src + s, (size_t)(e - s + 1));
+	dst[e - s + 1] = 0;
+}
+
+static int field_scan(const char *s, int start, const char *delims, const char *quotes)
+{
+	int i = start;
+	while (s[i] && !in_charset(delims, s[i]))
+	{
+		if (in_charset(quotes, s[i]))
+		{
+			char q = s[i++];
+			while (s[i] && s[i] != q)
+				i++;
+		}
+		if (s[i])
+			i++;
+	}
+	return i;
+}
+
+#define MMB_DIR_BUF 4096
+static char s_dir_list[MMB_DIR_BUF];
+static int s_dir_len;
+static int s_dir_pos;
+static char s_dir_filter[8] = "ALL";
+
+static int dir_next(const char *filter, char *out, int outsz)
+{
+	while (s_dir_pos < s_dir_len)
+	{
+		int start = s_dir_pos, end, len, isdir, take = 1;
+		if (s_dir_list[s_dir_pos] == '\n')
+		{
+			s_dir_pos++;
+			continue;
+		}
+		while (s_dir_pos < s_dir_len && s_dir_list[s_dir_pos] != '\n')
+			s_dir_pos++;
+		end = s_dir_pos;
+		len = end - start;
+		isdir = len > 0 && s_dir_list[end - 1] == '/';
+		if (filter && filter[0])
+		{
+			if (mmb_keyword_eq(filter, "DIR") && !isdir)
+				take = 0;
+			else if (mmb_keyword_eq(filter, "FILE") && isdir)
+				take = 0;
+		}
+		if (take)
+		{
+			int c;
+			if (isdir)
+				len--;
+			c = len < outsz - 1 ? len : outsz - 1;
+			memcpy(out, s_dir_list + start, (unsigned)c);
+			out[c] = 0;
+			return 1;
+		}
+	}
+	out[0] = 0;
+	return 0;
+}
+
 int mmb_try_function(mmb_val *out)
 {
 	mmb_val a[8];
@@ -196,6 +375,14 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("UCASE$")] = &&lbl_ucase;
 		fun_tab[mmb_kw_id("LCASE$")] = &&lbl_lcase;
 		fun_tab[mmb_kw_id("SPACE$")] = &&lbl_space;
+		fun_tab[mmb_kw_id("LTRIM$")] = &&lbl_ltrim;
+		fun_tab[mmb_kw_id("RTRIM$")] = &&lbl_rtrim;
+		fun_tab[mmb_kw_id("TRIM$")] = &&lbl_trim;
+		fun_tab[mmb_kw_id("BASE$")] = &&lbl_base;
+		fun_tab[mmb_kw_id("FIELD$")] = &&lbl_field;
+		fun_tab[mmb_kw_id("DATETIME$")] = &&lbl_datetime;
+		fun_tab[mmb_kw_id("DAY$")] = &&lbl_day;
+		fun_tab[mmb_kw_id("DIR$")] = &&lbl_dir;
 		fun_tab[mmb_kw_id("ABS")] = &&lbl_abs;
 		fun_tab[mmb_kw_id("INT")] = &&lbl_int;
 		fun_tab[mmb_kw_id("FIX")] = &&lbl_fix;
@@ -962,6 +1149,216 @@ int mmb_try_function(mmb_val *out)
 			b[nb - 1 - i] = t;
 		}
 		b[nb] = 0;
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("LTRIM$"))
+	{
+	lbl_ltrim:
+		char b[MMB_MAX_STR + 1];
+		call_args(a, 1, &n);
+		if (n != 1 || a[0].type != T_STR)
+			mmb_syntax();
+		trim_str(b, a[0].s ? a[0].s : "", " ", 1, 0);
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("RTRIM$"))
+	{
+	lbl_rtrim:
+		char b[MMB_MAX_STR + 1];
+		call_args(a, 1, &n);
+		if (n != 1 || a[0].type != T_STR)
+			mmb_syntax();
+		trim_str(b, a[0].s ? a[0].s : "", " ", 0, 1);
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("TRIM$"))
+	{
+	lbl_trim:
+		char b[MMB_MAX_STR + 1];
+		const char *mask = " ";
+		char where = 'B';
+		call_args(a, 3, &n);
+		if (n < 1 || a[0].type != T_STR)
+			mmb_syntax();
+		if (n >= 2 && a[1].type == T_STR && a[1].s[0])
+			mask = a[1].s;
+		if (n >= 3 && a[2].type == T_STR && a[2].s[0])
+			where = a[2].s[0];
+		if (where >= 'a' && where <= 'z')
+			where = (char)(where - 32);
+		if (where != 'L' && where != 'R' && where != 'B')
+			mmb_error("?INVALID TRIM");
+		trim_str(b, a[0].s ? a[0].s : "", mask, where != 'R', where != 'L');
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("BASE$"))
+	{
+	lbl_base:
+		char b[72];
+		int base, width = 0, k = 0, i;
+		uint64_t v;
+		call_args(a, 3, &n);
+		if (n < 2)
+			mmb_syntax();
+		base = (int)mmb_as_int(a[0]);
+		if (base < 2 || base > 36)
+			mmb_error("?INVALID BASE");
+		v = (uint64_t)mmb_as_int(a[1]);
+		if (n >= 3)
+		{
+			width = (int)mmb_as_int(a[2]);
+			if (width < 0)
+				width = 0;
+			if (width > (int)sizeof(b) - 1)
+				width = (int)sizeof(b) - 1;
+		}
+		if (v == 0)
+			b[k++] = '0';
+		while (v)
+		{
+			int d = (int)(v % (unsigned)base);
+			b[k++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
+			v /= (unsigned)base;
+		}
+		while (k < width)
+			b[k++] = '0';
+		for (i = 0; i < k / 2; i++)
+		{
+			char t = b[i];
+			b[i] = b[k - 1 - i];
+			b[k - 1 - i] = t;
+		}
+		b[k] = 0;
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("FIELD$"))
+	{
+	lbl_field:
+		char b[MMB_MAX_STR + 1];
+		const char *str, *delims = ",", *quotes = "";
+		int field, i = 0, j, k = 0;
+		call_args(a, 4, &n);
+		if (n < 2 || a[0].type != T_STR)
+			mmb_syntax();
+		str = a[0].s ? a[0].s : "";
+		field = (int)mmb_as_int(a[1]);
+		if (n >= 3 && a[2].type == T_STR)
+			delims = a[2].s;
+		if (n >= 4 && a[3].type == T_STR)
+			quotes = a[3].s;
+		while (--field > 0)
+		{
+			i = field_scan(str, i, delims, quotes);
+			if (!str[i])
+				break;
+			i++;
+		}
+		while (str[i] == ' ')
+			i++;
+		j = field_scan(str, i, delims, quotes);
+		while (j > i && str[j - 1] == ' ')
+			j--;
+		if (j - i > MMB_MAX_STR)
+			j = i + MMB_MAX_STR;
+		for (; i < j; i++)
+			b[k++] = str[i];
+		b[k] = 0;
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("DATETIME$"))
+	{
+	lbl_datetime:
+		char b[24];
+		int64_t e = parse_epoch_arg();
+		datetime_str(b, sizeof(b), e);
+		*out = mmb_str_val(b);
+		return 1;
+	}
+	if (mmb_match("DAY$"))
+	{
+	lbl_day:
+		static const char *const days[8] = {
+			"", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+		int64_t e;
+		int y, mo, d, wd;
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (mmb_match("NOW"))
+				e = mmb_epoch_now();
+			else if (*G.p == '"')
+			{
+				mmb_val sv = mmb_expr();
+				if (!parse_date_fields(sv.s ? sv.s : "", &y, &mo, &d))
+					mmb_error("?INVALID DATE");
+				e = mmb_epoch_make(y, mo, d, 0, 0, 0);
+			}
+			else
+				e = mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			mmb_expect(')');
+		}
+		else if (mmb_match("NOW"))
+			e = mmb_epoch_now();
+		else if (*G.p == '"')
+		{
+			mmb_val sv = mmb_expr();
+			if (!parse_date_fields(sv.s ? sv.s : "", &y, &mo, &d))
+				mmb_error("?INVALID DATE");
+			e = mmb_epoch_make(y, mo, d, 0, 0, 0);
+		}
+		else
+			mmb_error("?INVALID DATE");
+		wd = (int)(((e / 86400) % 7 + 4 + 7) % 7);
+		*out = mmb_str_val(days[wd == 0 ? 7 : wd]);
+		return 1;
+	}
+	if (mmb_match("DIR$"))
+	{
+	lbl_dir:
+		char b[MMB_MAX_STR + 1];
+		const char *spec = 0, *filter = 0;
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (*G.p != ')' && *G.p != ',')
+			{
+				mmb_val sv = mmb_expr();
+				if (sv.type == T_STR)
+					spec = sv.s;
+			}
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				mmb_val fv;
+				G.p++;
+				fv = mmb_expr();
+				if (fv.type == T_STR)
+					filter = fv.s;
+			}
+			mmb_skip_sp();
+			mmb_expect(')');
+		}
+		if (spec && spec[0])
+		{
+			if (mmb_vfs_list(spec, s_dir_list, (int)sizeof(s_dir_list)) != 0)
+				s_dir_list[0] = 0;
+			s_dir_len = (int)strlen(s_dir_list);
+			s_dir_pos = 0;
+			strncpy(s_dir_filter, filter && filter[0] ? filter : "ALL", sizeof(s_dir_filter) - 1);
+			s_dir_filter[sizeof(s_dir_filter) - 1] = 0;
+		}
+		dir_next(s_dir_filter, b, (int)sizeof(b));
 		*out = mmb_str_val(b);
 		return 1;
 	}

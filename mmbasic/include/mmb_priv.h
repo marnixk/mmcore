@@ -94,6 +94,7 @@ typedef struct mmb_var {
 	} data;
 	int used;
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
+	int fixlen;     /* DIM ... LENGTH n: fixed string width (0 = dynamic) */
 } mmb_var;
 
 typedef struct mmb_arrview {
@@ -487,6 +488,8 @@ void mmb_cmd_on(void);
 void mmb_cmd_continue(void);
 void mmb_cmd_exit(void);
 void mmb_cmd_mid(void);
+void mmb_cmd_lset(void);
+void mmb_cmd_rset(void);
 void mmb_cmd_sort(void);
 void mmb_cmd_clear(void);
 void mmb_cmd_new(void);
@@ -845,6 +848,9 @@ void mmb_clock_init(void);
 void mmb_clock_refresh(void);
 int mmb_clock_set_date(const char *s);
 int mmb_clock_set_time(const char *s);
+int64_t mmb_epoch_make(int y, int mo, int d, int h, int mi, int s);
+void mmb_epoch_break(int64_t e, int *py, int *pmo, int *pd, int *ph, int *pmi, int *ps);
+int64_t mmb_epoch_now(void);
 int mmb_inkey_pop(void);
 int mmb_keydown_get(int n);
 void mmb_run_events(void);
