@@ -88,6 +88,23 @@ def test_play_mod_xm_tone(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_beep_defaults_and_args(console):
+    assert console.send_line("BEEP") == ""
+    assert console.send_line("BEEP 440") == ""
+    assert console.send_line("BEEP 440, 4000") == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PAUSE 50")
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_help_beep_alias(console):
+    out = dump_topic(console, "BEEP")
+    assert "BEEP" in out
+    assert "frequency" in out or "Hz" in out
+
+
 def test_play_pause_resume_volume(console):
     assert console.send_line("PLAY TONE 440, 440") == ""
     assert console.send_line("PRINT PLAYING()") == "1"

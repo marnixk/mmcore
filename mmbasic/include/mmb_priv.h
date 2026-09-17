@@ -524,6 +524,7 @@ const char *mmb_files_resume(void);
 const char *mmb_files_on_editor_exit(void);
 void mmb_files_close(void);
 void mmb_cmd_play(void);
+void mmb_cmd_beep(void);
 void mmb_cmd_load(void);
 void mmb_cmd_edit(void);
 void mmb_cmd_open(void);

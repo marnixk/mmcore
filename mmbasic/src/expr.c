@@ -247,6 +247,7 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("DEG")] = &&lbl_deg;
 		fun_tab[mmb_kw_id("RAD")] = &&lbl_rad;
 		fun_tab[mmb_kw_id("POS")] = &&lbl_pos;
+		fun_tab[mmb_kw_id("CSRLIN")] = &&lbl_csrlin;
 		fun_tab[mmb_kw_id("CHOICE")] = &&lbl_choice;
 		fun_tab[mmb_kw_id("FORMAT$")] = &&lbl_format;
 		fun_tab[mmb_kw_id("BOUND")] = &&lbl_bound;
@@ -1255,6 +1256,20 @@ int mmb_try_function(mmb_val *out)
 		call_args(a, 1, &n);
 		(void)n;
 		*out = mmb_int_val(G.print_x / mmb_print_font_w() + 1);
+		return 1;
+	}
+	if (match_fun("CSRLIN"))
+	{
+	lbl_csrlin:
+		int fh = mmb_print_font_h();
+		mmb_skip_sp();
+		if (*G.p == '(') /* CSRLIN() is accepted as well as bare CSRLIN */
+		{
+			G.p++;
+			mmb_skip_sp();
+			mmb_expect(')');
+		}
+		*out = mmb_int_val(fh > 0 ? G.print_y / fh + 1 : 1);
 		return 1;
 	}
 	if (match_fun("CHOICE"))
