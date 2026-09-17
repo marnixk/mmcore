@@ -132,6 +132,8 @@ def test_const_max_not_function(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("CONST MAX=21") == ""
     assert console.send_line("PRINT MAX*2") == "42"
+    # The parenthesised call still reaches the built-in MAX.
+    assert console.send_line("PRINT MAX(3, 7)") == "7"
 
 
 def test_case_to_and_label(console):
