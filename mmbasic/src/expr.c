@@ -499,6 +499,18 @@ int mmb_try_function(mmb_val *out)
 					G.p = sp;
 					return 0;
 				}
+				/* A CONST may shadow a built-in name: CONST MAX=21
+				 * then PRINT MAX*2. Only the bare form is shadowed;
+				 * MAX(...) still calls the function. */
+				if (*G.p != '(')
+				{
+					mmb_val cv;
+					if (mmb_const_lookup(kn, 0, &cv))
+					{
+						G.p = sp;
+						return 0;
+					}
+				}
 			}
 			G.p = sp;
 			G.p += 3;
@@ -529,6 +541,15 @@ int mmb_try_function(mmb_val *out)
 			if (aid > 0 && aid < 512 && fun_tab[aid])
 			{
 				mmb_skip_sp();
+				if (*G.p != '(')
+				{
+					mmb_val cv;
+					if (mmb_const_lookup(name, 0, &cv))
+					{
+						G.p = s2;
+						return 0;
+					}
+				}
 				goto *fun_tab[aid];
 			}
 			G.p = s2;
