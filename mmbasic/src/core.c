@@ -2767,6 +2767,9 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("REDIM")] = mmb_cmd_redim;
 		tab[mmb_kw_id("COMMON")] = mmb_cmd_common;
 		tab[mmb_kw_id("SWAP")] = mmb_cmd_swap;
+		tab[mmb_kw_id("BIT")] = mmb_cmd_bit;
+		tab[mmb_kw_id("BYTE")] = mmb_cmd_byte;
+		tab[mmb_kw_id("EXECUTE")] = mmb_cmd_execute;
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
@@ -2965,6 +2968,21 @@ static void exec_statement(void)
 	if (mmb_match("SWAP"))
 	{
 		mmb_cmd_swap();
+		return;
+	}
+	if (mmb_match("BIT"))
+	{
+		mmb_cmd_bit();
+		return;
+	}
+	if (mmb_match("BYTE"))
+	{
+		mmb_cmd_byte();
+		return;
+	}
+	if (mmb_match("EXECUTE"))
+	{
+		mmb_cmd_execute();
 		return;
 	}
 	if (mmb_match("TYPE"))
@@ -3530,6 +3548,19 @@ static void exec_line_body(const char *body)
 			mmb_syntax();
 		break;
 	}
+}
+
+void mmb_cmd_execute(void)
+{
+	mmb_val v = mmb_expr();
+	char body[MMB_LINE_LEN];
+	const char *save;
+	if (v.type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	save = G.p;
+	mmb_tokenize_text(v.s ? v.s : "", body, (int)sizeof(body));
+	exec_line_body(body);
+	G.p = save;
 }
 
 static void run_gosub_body(void)

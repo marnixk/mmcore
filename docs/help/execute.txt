@@ -1,0 +1,21 @@
+name: EXECUTE
+kind: command
+
+Run the text of a string as if it had been typed as a program line. The string
+is tokenised and executed immediately.
+
+EXECUTE string$
+
+  string$ - command or statement text, up to 255 characters
+
+Variables are shared with the running program. Control flow inside the executed
+text applies to the current program, so a GOTO/GOSUB may branch away. EXECUTE
+does not accept multi-line block structures.
+
+Example:
+
+    X = 0
+    EXECUTE "X = X + 5"
+    PRINT X
+
+    EXECUTE "PRINT 6 * 7"
