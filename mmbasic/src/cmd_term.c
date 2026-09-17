@@ -284,6 +284,17 @@ static void term_layout(void);
 static void term_fill_pages(void);
 static int term_paint_cursor = 1;
 
+/* Last glyph parameters painted into TM_PAGE for each pane cell (#331).
+ * A dirty row only repaints cells whose packed ch/fg/bg key changed.  Keys
+ * are never zero (ch is at least ' '), so a zeroed array forces a full row. */
+static uint64_t term_cell_sh[TM_MAX_ROWS][TM_MAX_COLS];
+
+static uint64_t term_shadow_key(unsigned ch, unsigned fg, unsigned bg)
+{
+	return (uint64_t)ch | ((uint64_t)(fg & 0xFFFFFFu) << 8) |
+	       ((uint64_t)(bg & 0xFFFFFFu) << 32);
+}
+
 static void pane_clear_row(int row);
 static void pane_puts(const char *s);
 static void pane_newline(void);
@@ -897,10 +908,21 @@ static void term_draw_menu(void)
 		    TM_SH_BG);
 }
 
+static void term_shadow_blank(void)
+{
+	uint64_t blank = term_shadow_key(' ', TM_FG, TM_BG);
+	int r, c, cols = term_width();
+
+	for (r = 0; r < T.pane_rows && r < TM_MAX_ROWS; r++)
+		for (c = 0; c < cols; c++)
+			term_cell_sh[r][c] = blank;
+}
+
 static void term_draw_row(int r)
 {
 	int c, x, y;
 	unsigned ch, fg, bg;
+	uint64_t key;
 
 	if (r < 0 || r >= T.pane_rows)
 		return;
@@ -919,6 +941,10 @@ static void term_draw_row(int r)
 			fg = bg;
 			bg = t;
 		}
+		key = term_shadow_key(ch, fg, bg);
+		if (key == term_cell_sh[r][c])
+			continue;
+		term_cell_sh[r][c] = key;
 		mmb_gfx_glyph_cell(x, y, ch, fg, bg);
 	}
 }
@@ -1034,6 +1060,7 @@ static void term_draw(void)
 	if (T.dirty_full)
 	{
 		mmb_gfx_cls(TM_BG);
+		term_shadow_blank();
 		lo = 0;
 		hi = T.pane_rows - 1;
 	}
