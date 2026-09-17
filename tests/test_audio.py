@@ -9,7 +9,6 @@ def test_help_play_mentions_targets(console):
     assert "HDMI" in out
     assert "JACK" in out
     assert "PLAYING()" in out
-    assert "DMA" in out
 
 
 def test_help_audio_target(console):

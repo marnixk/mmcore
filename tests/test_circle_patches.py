@@ -2,6 +2,7 @@
 reassembly queue behaves on the host (tests/tcp_reassembly_host.cpp)."""
 
 import os
+import platform
 import re
 import subprocess
 
@@ -9,6 +10,17 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CIRCLE = os.path.join(REPO, "circle")
+
+
+def _sanitizer_flags() -> list[str]:
+    # Apple clang's AddressSanitizer runtime deadlocks during initialization on
+    # recent macOS releases and Homebrew's GCC ships no libasan, so only UBSan
+    # is usable there. Linux keeps the full address+undefined pair.
+    if platform.system() == "Darwin":
+        return ["-fsanitize=undefined"]
+    return ["-fsanitize=address,undefined"]
+
+
 PATCHES = [
     os.path.join(REPO, "patches", "circle-wifi-149.patch"),
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
@@ -108,7 +120,7 @@ def test_reassembly_queue_host_behaviour(patched_tree, tmp_path):
             "-Wall",
             "-Wextra",
             "-Werror",
-            "-fsanitize=address,undefined",
+            *_sanitizer_flags(),
             "-I",
             os.path.join(REPO, "tests", "circle_shim"),
             "-I",
@@ -230,7 +242,7 @@ def test_txqueue_flush_trims_partial_ack(tmp_path):
             "-Wall",
             "-Wextra",
             "-Werror",
-            "-fsanitize=address,undefined",
+            *_sanitizer_flags(),
             "-I",
             os.path.join(REPO, "tests", "circle_shim"),
             "-o",
