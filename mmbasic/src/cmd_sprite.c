@@ -1,9 +1,15 @@
 #include "mmb_priv.h"
 
-static unsigned char LIFO[MMB_MAX_SPRITE];
-static unsigned char zeroLIFO[MMB_MAX_SPRITE];
-static int LIFOn;
-static int zeroLIFOn;
+/* Visible sprites in draw order, bottom (index 0) to top. Kept sorted by
+   (layer, show sequence) whenever SPRITE SHOW changes the list; rendering
+   just walks it. */
+static int ORDER[MMB_MAX_SPRITE];
+static int ORDERN;
+static int s_seq;
+
+static void order_remove(int ix);
+static void hide_all_keep_pos(void);
+static void show_all_from_order(void);
 
 typedef struct {
 	int x, y, w, h;
@@ -45,7 +51,9 @@ static void sprite_free_ix(int ix)
 	G.gfx.sprite[ix].vis = 0;
 	G.gfx.sprite[ix].w = 0;
 	G.gfx.sprite[ix].h = 0;
+	G.gfx.sprite[ix].seq = 0;
 	G.gfx.sprite[ix].has_next = 0;
+	order_remove(ix);
 }
 
 void mmb_sprite_reset(void)
@@ -53,8 +61,8 @@ void mmb_sprite_reset(void)
 	int i;
 	for (i = 0; i < MMB_MAX_SPRITE; i++)
 		sprite_free_ix(i);
-	LIFOn = 0;
-	zeroLIFOn = 0;
+	ORDERN = 0;
+	s_seq = 0;
 	s_nrect = 0;
 }
 
@@ -98,6 +106,7 @@ static void sprite_store(int n, uint32_t *pix, int w, int h)
 	G.gfx.sprite[ix].x = 0;
 	G.gfx.sprite[ix].y = 0;
 	G.gfx.sprite[ix].layer = 1;
+	G.gfx.sprite[ix].seq = 0;
 	G.gfx.sprite[ix].has_next = 0;
 	if (pix)
 		sprite_rebuild_npix(ix);
@@ -126,41 +135,47 @@ static void ensure_store(int ix)
 	}
 }
 
-static void lifo_add(unsigned char *q, int *n, int v)
+static int order_pos(int ix)
+{
+	int i;
+	for (i = 0; i < ORDERN; i++)
+		if (ORDER[i] == ix)
+			return i;
+	return -1;
+}
+
+static void order_remove(int ix)
 {
 	int i, j = 0;
-	for (i = 0; i < *n; i++)
+	for (i = 0; i < ORDERN; i++)
+		if (ORDER[i] != ix)
+			ORDER[j++] = ORDER[i];
+	ORDERN = j;
+}
+
+/* Insert ix at its sorted position: ascending layer, then show sequence. */
+static void order_insert_sorted(int ix)
+{
+	int layer = G.gfx.sprite[ix].layer;
+	int seq = G.gfx.sprite[ix].seq;
+	int i, p;
+
+	order_remove(ix);
+	p = ORDERN;
+	for (i = 0; i < ORDERN; i++)
 	{
-		if (q[i] != (unsigned char)v)
-			q[j++] = q[i];
+		int other = ORDER[i];
+		if (G.gfx.sprite[other].layer > layer ||
+		    (G.gfx.sprite[other].layer == layer && G.gfx.sprite[other].seq > seq))
+		{
+			p = i;
+			break;
+		}
 	}
-	q[j] = (unsigned char)v;
-	*n = j + 1;
-}
-
-static void lifo_remove(unsigned char *q, int *n, int v)
-{
-	int i, j = 0;
-	for (i = 0; i < *n; i++)
-	{
-		if (q[i] != (unsigned char)v)
-			q[j++] = q[i];
-	}
-	*n = j;
-}
-
-static void sprite_lifo_add(int ix)
-{
-	if (G.gfx.sprite[ix].layer == 0)
-		lifo_add(zeroLIFO, &zeroLIFOn, ix);
-	else
-		lifo_add(LIFO, &LIFOn, ix);
-}
-
-static void sprite_lifo_remove(int ix)
-{
-	lifo_remove(LIFO, &LIFOn, ix);
-	lifo_remove(zeroLIFO, &zeroLIFOn, ix);
+	for (i = ORDERN; i > p; i--)
+		ORDER[i] = ORDER[i - 1];
+	ORDER[p] = ix;
+	ORDERN++;
 }
 
 static uint16_t *sprite_buf(int *pw, int *ph)
@@ -343,126 +358,98 @@ static void blit_show(int ix, int x, int y)
 	rect_push(x, y, G.gfx.sprite[ix].w, G.gfx.sprite[ix].h);
 }
 
-static void hide_down_to(int ix, int *found, int *zerolifo)
+/* Restore the scene from the top of the draw list down to position pos. */
+static void restore_from_top_to(int pos)
 {
 	int i;
-
-	*found = -1;
-	*zerolifo = 0;
-	for (i = LIFOn - 1; i >= 0; i--)
-	{
-		blit_restore(LIFO[i]);
-		if (LIFO[i] == (unsigned char)ix)
-		{
-			*found = i;
-			return;
-		}
-	}
-	for (i = zeroLIFOn - 1; i >= 0; i--)
-	{
-		blit_restore(zeroLIFO[i]);
-		if (zeroLIFO[i] == (unsigned char)ix)
-		{
-			*found = i;
-			*zerolifo = 1;
-			return;
-		}
-	}
+	for (i = ORDERN - 1; i >= pos; i--)
+		blit_restore(ORDER[i]);
 }
 
-static void reshow_from(int found, int zerolifo)
+static void show_one(int ix)
+{
+	if (G.gfx.sprite[ix].has_next)
+	{
+		G.gfx.sprite[ix].x = G.gfx.sprite[ix].next_x;
+		G.gfx.sprite[ix].y = G.gfx.sprite[ix].next_y;
+		G.gfx.sprite[ix].has_next = 0;
+	}
+	blit_show(ix, G.gfx.sprite[ix].x, G.gfx.sprite[ix].y);
+}
+
+/* Redraw from position pos upward, in draw order. */
+static void show_from(int pos)
 {
 	int i;
-
-	if (found < 0)
-		return;
-	if (zerolifo)
-	{
-		for (i = found; i < zeroLIFOn; i++)
-			blit_show(zeroLIFO[i], G.gfx.sprite[zeroLIFO[i]].x,
-				  G.gfx.sprite[zeroLIFO[i]].y);
-		for (i = 0; i < LIFOn; i++)
-			blit_show(LIFO[i], G.gfx.sprite[LIFO[i]].x,
-				  G.gfx.sprite[LIFO[i]].y);
-	}
-	else
-	{
-		for (i = found; i < LIFOn; i++)
-			blit_show(LIFO[i], G.gfx.sprite[LIFO[i]].x,
-				  G.gfx.sprite[LIFO[i]].y);
-	}
+	for (i = pos; i < ORDERN; i++)
+		show_one(ORDER[i]);
 }
 
 static void sprite_show_at(int ix, int x, int y, int layer)
 {
-	int found, zerolifo, was;
+	int was, layer_changed, p;
 
 	if (!G.gfx.sprite[ix].used)
 		return;
+	if (layer < 0)
+		layer = 0;
+	if (layer > 8)
+		layer = 8;
 	was = G.gfx.sprite[ix].vis;
-	if (was)
+	layer_changed = was && G.gfx.sprite[ix].layer != layer;
+	if (layer_changed)
 	{
-		hide_down_to(ix, &found, &zerolifo);
-		if (G.gfx.sprite[ix].layer != layer)
+		/* The whole stack can shift; restore everything and redraw in order. */
+		hide_all_keep_pos();
+		G.gfx.sprite[ix].x = x;
+		G.gfx.sprite[ix].y = y;
+		G.gfx.sprite[ix].layer = layer;
+		order_insert_sorted(ix);
+		show_all_from_order();
+		rect_flush();
+		return;
+	}
+	if (!was)
+	{
+		G.gfx.sprite[ix].seq = ++s_seq;
+		G.gfx.sprite[ix].x = x;
+		G.gfx.sprite[ix].y = y;
+		G.gfx.sprite[ix].layer = layer;
+		order_insert_sorted(ix);
+		p = order_pos(ix);
+		if (p == ORDERN - 1)
 		{
-			sprite_lifo_remove(ix);
-			G.gfx.sprite[ix].layer = layer;
-			sprite_lifo_add(ix);
-			blit_show(ix, x, y);
-			reshow_from(found, zerolifo);
+			show_one(ix); /* topmost: no need to disturb the rest */
 		}
 		else
 		{
-			G.gfx.sprite[ix].layer = layer;
-			blit_show(ix, x, y);
-			if (found >= 0)
-				reshow_from(found + 1, zerolifo);
+			hide_all_keep_pos();
+			show_all_from_order();
 		}
+		rect_flush();
+		return;
 	}
-	else
-	{
-		G.gfx.sprite[ix].layer = layer;
-		sprite_lifo_add(ix);
-		blit_show(ix, x, y);
-	}
+	/* Already visible at the same layer: move within the existing order. */
+	p = order_pos(ix);
+	restore_from_top_to(p);
+	G.gfx.sprite[ix].x = x;
+	G.gfx.sprite[ix].y = y;
+	G.gfx.sprite[ix].layer = layer;
+	show_one(ix);
+	show_from(p + 1);
 	rect_flush();
 }
 
 static void hide_all_keep_pos(void)
 {
 	int i;
-	for (i = LIFOn - 1; i >= 0; i--)
-		blit_restore(LIFO[i]);
-	for (i = zeroLIFOn - 1; i >= 0; i--)
-		blit_restore(zeroLIFO[i]);
+	for (i = ORDERN - 1; i >= 0; i--)
+		blit_restore(ORDER[i]);
 }
 
-static void show_all_from_lifo(void)
+static void show_all_from_order(void)
 {
-	int i, ix;
-
-	for (i = 0; i < zeroLIFOn; i++)
-	{
-		ix = zeroLIFO[i];
-		if (G.gfx.sprite[ix].has_next)
-		{
-			G.gfx.sprite[ix].x = G.gfx.sprite[ix].next_x;
-			G.gfx.sprite[ix].y = G.gfx.sprite[ix].next_y;
-			G.gfx.sprite[ix].has_next = 0;
-		}
-		blit_show(ix, G.gfx.sprite[ix].x, G.gfx.sprite[ix].y);
-	}
-	for (i = 0; i < LIFOn; i++)
-	{
-		ix = LIFO[i];
-		if (G.gfx.sprite[ix].has_next)
-		{
-			G.gfx.sprite[ix].x = G.gfx.sprite[ix].next_x;
-			G.gfx.sprite[ix].y = G.gfx.sprite[ix].next_y;
-			G.gfx.sprite[ix].has_next = 0;
-		}
-		blit_show(ix, G.gfx.sprite[ix].x, G.gfx.sprite[ix].y);
-	}
+	show_from(0);
 }
 
 static void add_png_ext(char *path, int pathsz)
@@ -620,13 +607,16 @@ static void sprite_show(void)
 static void sprite_hide(void)
 {
 	int ix = sprite_ix((int)mmb_as_int(mmb_expr()));
-	int found, zerolifo;
+	int p;
 
 	if (!G.gfx.sprite[ix].vis)
 		return;
-	hide_down_to(ix, &found, &zerolifo);
-	sprite_lifo_remove(ix);
-	reshow_from(found, zerolifo);
+	p = order_pos(ix);
+	if (p < 0)
+		return;
+	restore_from_top_to(p);
+	order_remove(ix);
+	show_from(p);
 	rect_flush();
 }
 
@@ -654,7 +644,7 @@ static void sprite_move(void)
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
 		hide_all_keep_pos();
-		show_all_from_lifo();
+		show_all_from_order();
 		rect_flush();
 		return;
 	}
@@ -669,7 +659,17 @@ static void sprite_move(void)
 	y = (int)mmb_as_int(mmb_expr());
 	ix = sprite_ix(id);
 	if (G.gfx.sprite[ix].vis)
-		sprite_show_at(ix, x, y, G.gfx.sprite[ix].layer);
+	{
+		int p = order_pos(ix);
+		if (p < 0)
+			return;
+		restore_from_top_to(p);
+		G.gfx.sprite[ix].x = x;
+		G.gfx.sprite[ix].y = y;
+		show_one(ix);
+		show_from(p + 1);
+		rect_flush();
+	}
 	else
 	{
 		G.gfx.sprite[ix].x = x;
@@ -724,8 +724,13 @@ void mmb_cmd_sprite(void)
 			ix = sprite_ix((int)mmb_as_int(mmb_expr()));
 			if (G.gfx.sprite[ix].vis)
 			{
-				blit_restore(ix);
-				sprite_lifo_remove(ix);
+				int p = order_pos(ix);
+				if (p >= 0)
+				{
+					restore_from_top_to(p);
+					order_remove(ix);
+					show_from(p);
+				}
 				rect_flush();
 			}
 			sprite_free_ix(ix);

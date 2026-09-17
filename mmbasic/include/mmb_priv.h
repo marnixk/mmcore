@@ -203,6 +203,7 @@ typedef struct mmb_gfx {
 	mmb_blit_buf blit[MMB_MAX_BLIT];
 	struct {
 		int used, vis, x, y, layer, w, h;
+		int seq; /* SPRITE SHOW sequence, for stable equal-layer ordering */
 		int next_x, next_y, has_next;
 		uint32_t *pix; /* RGB888 + alpha source */
 		uint16_t *npix; /* HDMI-native; 0 = transparent */

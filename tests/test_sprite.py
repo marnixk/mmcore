@@ -127,6 +127,73 @@ def test_two_sprites_independent_move(fresh_console):
     assert _is_blue(c.screen_pixel(222, 18))
 
 
+def _read_red_blue_sprites(c):
+    c.send_line("CLS")
+    c.send_line("BOX 0,0,80,80,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("BOX 0,0,12,12,1,RGB(255,0,0),RGB(255,0,0)")
+    c.send_line("SPRITE READ 1,0,0,12,12")
+    c.send_line("BOX 0,0,12,12,1,RGB(0,0,255),RGB(0,0,255)")
+    c.send_line("SPRITE READ 2,0,0,12,12")
+    c.send_line("BOX 0,0,80,80,1,RGB(0,255,0),RGB(0,255,0)")
+
+
+def test_sprite_layer_beats_show_order(fresh_console):
+    c = fresh_console
+    _read_red_blue_sprites(c)
+    c.send_line("SPRITE SHOW 1,20,20,8")
+    c.send_line("SPRITE SHOW 2,24,24,1")
+    assert _rgb_is_red(_pixel(c, 26, 26))
+    assert _rgb_is_blue(_pixel(c, 33, 33))
+
+
+def test_sprite_lower_layer_behind_higher(fresh_console):
+    c = fresh_console
+    _read_red_blue_sprites(c)
+    c.send_line("SPRITE SHOW 1,20,20,0")
+    c.send_line("SPRITE SHOW 2,24,24,1")
+    assert _rgb_is_blue(_pixel(c, 26, 26))
+    assert _rgb_is_red(_pixel(c, 21, 21))
+
+
+def test_sprite_equal_layer_is_stable_by_show_order(fresh_console):
+    c = fresh_console
+    _read_red_blue_sprites(c)
+    c.send_line("SPRITE SHOW 1,20,20,1")
+    c.send_line("SPRITE SHOW 2,24,24,1")
+    assert _rgb_is_blue(_pixel(c, 26, 26))
+    # Re-showing the first sprite must not reorder equal layers.
+    c.send_line("SPRITE SHOW 1,20,20,1")
+    assert _rgb_is_blue(_pixel(c, 26, 26))
+    assert _rgb_is_red(_pixel(c, 21, 21))
+
+
+def test_sprite_layer_change_redraws_without_stale(fresh_console):
+    c = fresh_console
+    _read_red_blue_sprites(c)
+    c.send_line("SPRITE SHOW 1,20,20,8")
+    c.send_line("SPRITE SHOW 2,24,24,1")
+    assert _rgb_is_red(_pixel(c, 26, 26))
+    c.send_line("SPRITE SHOW 1,20,20,0")
+    assert _rgb_is_blue(_pixel(c, 26, 26))
+    assert _rgb_is_red(_pixel(c, 21, 21))
+    assert _rgb_is_green(_pixel(c, 40, 40))
+    assert _rgb_is_blue(_pixel(c, 31, 31))
+
+
+def test_sprite_hide_and_close_keep_order_consistent(fresh_console):
+    c = fresh_console
+    _read_red_blue_sprites(c)
+    c.send_line("SPRITE SHOW 1,20,20,2")
+    c.send_line("SPRITE SHOW 2,24,24,1")
+    assert _rgb_is_red(_pixel(c, 26, 26))
+    c.send_line("SPRITE HIDE 1")
+    assert _rgb_is_blue(_pixel(c, 26, 26))
+    assert _rgb_is_green(_pixel(c, 21, 21))
+    c.send_line("SPRITE CLOSE 2")
+    assert _rgb_is_green(_pixel(c, 26, 26))
+    assert _rgb_is_green(_pixel(c, 30, 30))
+
+
 def test_sprite_transparent_pixels_keep_background(fresh_console):
     c = fresh_console
     c.send_line("CLS")

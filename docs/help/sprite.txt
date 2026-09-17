@@ -20,7 +20,13 @@ SPRITE CLOSE n | CLOSE ALL
   colour - key colour treated as transparent
   x, y, w, h - position or READ rectangle
   page - source page for READ
-  layer - display layer for SHOW (0 is behind 1-8)
+  layer - display layer for SHOW, 0..8; higher numbers draw on top
+
+Visible sprites composite in ascending numeric layer order, so layer 8 is on
+top of layer 1 and layer 0 is behind everything. Sprites on the same layer keep
+the order they were first shown; re-showing one does not move it above or below
+its equals. The ordered draw list is maintained when SPRITE SHOW runs - nothing
+is sorted while the page is being drawn.
 
 SPRITE NEXT queues a position; SPRITE MOVE with no arguments restores every
 visible sprite then redraws them (applying NEXT). Prefer that when two or
