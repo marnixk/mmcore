@@ -31,6 +31,25 @@ def test_math_hyperbolic_log10_atan3(console):
     assert console.send_line("PRINT CINT(MATH(ATAN3 1, 0))") == "0"
 
 
+def test_atan2_alias_and_quadrants(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("OPTION ANGLE RADIANS") == ""
+    assert console.send_line("PRINT CINT(ATAN2(1, 0) * 100)") == "157"
+    assert console.send_line("PRINT CINT(ATAN2(0, 1) * 100)") == "0"
+    assert console.send_line("PRINT CINT(ATAN2(-1, 0) * 100)") == "-157"
+    assert console.send_line("PRINT CINT(ATAN2(0, -1) * 100)") == "314"
+    assert console.send_line("PRINT CINT(ATN2(1, 0) * 100)") == "157"
+    assert console.send_line("OPTION ANGLE DEGREES") == ""
+    assert console.send_line("PRINT CINT(ATAN2(1, 0))") == "90"
+    assert console.send_line("PRINT CINT(ATAN2(1, 1))") == "45"
+    assert console.send_line("PRINT CINT(ATAN2(1, -1))") == "135"
+
+
+def test_help_atan2(console):
+    out = dump_topic(console, "ATAN2")
+    assert "ATAN2" in out
+
+
 def test_math_stats_and_vector(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("DIM A(2)") == ""

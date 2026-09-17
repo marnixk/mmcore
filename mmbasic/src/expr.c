@@ -210,6 +210,7 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("ATN")] = &&lbl_atn;
 		fun_tab[mmb_kw_id("ATN2")] = &&lbl_atn;
 		fun_tab[mmb_kw_id("ATAN")] = &&lbl_atn;
+		fun_tab[mmb_kw_id("ATAN2")] = &&lbl_atn;
 		fun_tab[mmb_kw_id("RND")] = &&lbl_rnd;
 		fun_tab[mmb_kw_id("MM.HRES")] = &&lbl_mmhres;
 		fun_tab[mmb_kw_id("MM.VRES")] = &&lbl_mmvres;
@@ -679,7 +680,7 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_num_val(tan(x));
 		return 1;
 	}
-	if (mmb_match("ATN") || mmb_match("ATN2") || mmb_match("ATAN"))
+	if (mmb_match("ATN") || mmb_match("ATN2") || mmb_match("ATAN") || mmb_match("ATAN2"))
 	{
 	lbl_atn:
 		double x;

@@ -4,7 +4,7 @@
 #define TK_LEN 3
 
 static const char *const kws[] = {
-	"AND_PIXELS", "ATN2", "ATN", "ATAN", "ACOS", "ACS", "ASIN", "ASN",
+	"AND_PIXELS", "ATN2", "ATN", "ATAN", "ATAN2", "ACOS", "ACS", "ASIN", "ASN",
 	"AND", "AS", "ABS", "ARC", "APPEND", "AUDIO",
 	"BITMAP", "BLIT", "BOX", "BIN$", "BREAK", "BACKUP", "BACKWARD",
 	"BEGIN", "BOTH", "BARE", "BASE", "BAUDRATE",
