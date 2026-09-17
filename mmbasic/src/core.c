@@ -2764,6 +2764,9 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("HELP")] = tok_cmd_help;
 		tab[mmb_kw_id("PRINT")] = mmb_cmd_print;
 		tab[mmb_kw_id("DIM")] = mmb_cmd_dim;
+		tab[mmb_kw_id("REDIM")] = mmb_cmd_redim;
+		tab[mmb_kw_id("COMMON")] = mmb_cmd_common;
+		tab[mmb_kw_id("SWAP")] = mmb_cmd_swap;
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
@@ -2947,6 +2950,21 @@ static void exec_statement(void)
 	if (mmb_match("DIM"))
 	{
 		mmb_cmd_dim();
+		return;
+	}
+	if (mmb_match("REDIM"))
+	{
+		mmb_cmd_redim();
+		return;
+	}
+	if (mmb_match("COMMON"))
+	{
+		mmb_cmd_common();
+		return;
+	}
+	if (mmb_match("SWAP"))
+	{
+		mmb_cmd_swap();
 		return;
 	}
 	if (mmb_match("TYPE"))

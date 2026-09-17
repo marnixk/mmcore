@@ -59,6 +59,7 @@ static const char *const kws[] = {
 	"DEG", "RAD", "POS", "EXTRACT", "INSERT",
 	"LSET", "RSET", "LTRIM$", "RTRIM$", "TRIM$", "BASE$", "FIELD$",
 	"DATETIME$", "DAY$", "DIR$",
+	"SHARED", "PRESERVE", "COMMON", "REDIM",
 	0
 };
 

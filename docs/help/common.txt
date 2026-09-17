@@ -1,0 +1,16 @@
+name: COMMON
+kind: command
+
+Declare variables as shared between chained programs. MMBasic variables are
+already global, so COMMON is accepted as a QuickBasic compatibility form: it
+ensures each listed name exists.
+
+COMMON [SHARED] var[, var...]
+
+  SHARED - accepted and ignored; all MMBasic variables are global
+
+Example:
+
+    COMMON SCORE, LIVES
+    SCORE = 10
+    PRINT SCORE
