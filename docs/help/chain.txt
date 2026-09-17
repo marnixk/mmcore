@@ -1,0 +1,23 @@
+name: CHAIN
+kind: command
+
+Load and run another program in place of the current one. Unlike ~RUN~, CHAIN
+keeps all variables and arrays, so the chained program can continue from the
+current state.
+
+CHAIN file$
+
+  file$ - program file to load
+
+The chained program starts fresh (its own line numbers and labels). Control does
+not return to the caller; when the chained program ends, the program stops.
+~COMMON~ is accepted as a compatibility declaration before CHAIN.
+
+Example:
+
+    A = 41
+    CHAIN "PART2.BAS"
+
+PART2.BAS:
+
+    PRINT A + 1

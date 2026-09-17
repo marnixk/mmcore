@@ -26,6 +26,7 @@ static int jmp_else[MMB_MAX_LINES];
 static int jmp_endif[MMB_MAX_LINES];
 static int jmp_endsel[MMB_MAX_LINES];
 static int jmp_ready;
+static int run_preserve_vars;
 static int at_end_of_statement(void);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
@@ -2176,6 +2177,51 @@ void mmb_cmd_run(void)
 	}
 }
 
+int mmb_parse_target(void)
+{
+	return parse_target();
+}
+
+void mmb_cmd_chain(void)
+{
+	char fname[128];
+	int mounted_pkg = 0;
+	mmb_skip_sp();
+	if (*G.p == '"')
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(fname, v.s, sizeof(fname) - 1);
+		fname[sizeof(fname) - 1] = 0;
+	}
+	else if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		int n = 0;
+		while (*G.p && *G.p != ' ' && n < 126)
+			fname[n++] = *G.p++;
+		fname[n] = 0;
+	}
+	else
+		mmb_syntax();
+	mmb_pkg_unmount();
+	if (mmb_pkg_is_name(fname))
+	{
+		mmb_pkg_mount(fname);
+		load_prog_from_disk("B:/MAIN.BAS");
+		mounted_pkg = 1;
+	}
+	else
+		load_prog_from_disk(fname);
+	run_preserve_vars = 1;
+	run_program();
+	if (mounted_pkg)
+	{
+		mmb_pkg_unmount();
+		G.current_prog[0] = 0;
+	}
+}
+
 static int if_tok_id(const char *p)
 {
 	if ((unsigned char)*p != 0x80)
@@ -2770,6 +2816,9 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("BIT")] = mmb_cmd_bit;
 		tab[mmb_kw_id("BYTE")] = mmb_cmd_byte;
 		tab[mmb_kw_id("EXECUTE")] = mmb_cmd_execute;
+		tab[mmb_kw_id("CHAIN")] = mmb_cmd_chain;
+		tab[mmb_kw_id("RESUME")] = mmb_cmd_resume;
+		tab[mmb_kw_id("STOP")] = mmb_cmd_end;
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
@@ -2983,6 +3032,21 @@ static void exec_statement(void)
 	if (mmb_match("EXECUTE"))
 	{
 		mmb_cmd_execute();
+		return;
+	}
+	if (mmb_match("CHAIN"))
+	{
+		mmb_cmd_chain();
+		return;
+	}
+	if (mmb_match("RESUME"))
+	{
+		mmb_cmd_resume();
+		return;
+	}
+	if (mmb_match("STOP"))
+	{
+		mmb_cmd_end();
 		return;
 	}
 	if (mmb_match("TYPE"))
@@ -3728,9 +3792,15 @@ static void run_program(void)
 	scan_labels();
 	mmb_tokenize_program();
 	build_jumps();
-	mmb_clear_vars(1);
-	mmb_clear_consts();
+	if (!run_preserve_vars)
+	{
+		mmb_clear_vars(1);
+		mmb_clear_consts();
+	}
+	run_preserve_vars = 0;
 	mmb_struct_prepare();
+	G.on_error_pc = -1;
+	G.error_active = 0;
 	G.opt.explicit = 0;
 	G.opt.default_type = T_NUM;
 	G.opt.base = 0;
@@ -3740,12 +3810,21 @@ static void run_program(void)
 	while (pc < G.nprog && G.running)
 	{
 		int loop;
+		int trapped = 0;
 		mmb_check_break();
 		do
 		{
 			loop = 0;
 			G.run_pc = pc;
 			G.branch_pc = -1;
+			if (G.on_error_pc >= 0)
+			{
+				if (setjmp(G.run_errjmp))
+				{
+					trapped = 1;
+					break;
+				}
+			}
 			exec_line_body(mmb_tok_line(pc));
 			if (G.branch_pc >= 0)
 			{
@@ -3759,6 +3838,11 @@ static void run_program(void)
 				loop = 1;
 			}
 		} while (loop && G.running);
+		if (trapped)
+		{
+			pc = G.on_error_pc;
+			continue;
+		}
 		if (G.branch_pc >= 0)
 			continue;
 		pc++;
