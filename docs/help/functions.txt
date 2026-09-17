@@ -1,6 +1,6 @@
 name: FUNCTIONS
 kind: command
-alias: ABS, SIN, COS, TAN, ATN, ACOS, ACS, ASIN, ASN, RND, LEN, LEFT$, RIGHT$, INSTR, VAL, STR$, CHR$, ASC, EOF, LOF, LOC, TIMER, RGB, MAX, MIN, FORMAT$, BOUND, DEG, RAD, POS, CHOICE, TAB, SGN, EXP, LOG, PI, DATE$, TIME$, CWD$, UCASE$, LCASE$, HEX$, OCT$, BIN$, SPACE$, STRING$, FIX, SQR, SQRT, ATAN, ATN2, ATAN2, INT, PLAYING, MM.HRES, MM.VRES, MM.INFO, MM.INFO$, MM.VER, MM.DEVICE$, MM.CMDLINE$, MM.HPOS, MM.VPOS, KEYDOWN, CINT, EVAL
+alias: ABS, SIN, COS, TAN, ATN, ACOS, ACS, ASIN, ASN, RND, LEN, LEFT$, RIGHT$, INSTR, VAL, STR$, CHR$, ASC, EOF, LOF, LOC, TIMER, RGB, MAX, MIN, FORMAT$, BOUND, DEG, RAD, POS, CHOICE, TAB, SGN, EXP, LOG, PI, DATE$, TIME$, CWD$, UCASE$, LCASE$, HEX$, OCT$, BIN$, SPACE$, STRING$, FIX, SQR, SQRT, ATAN, ATN2, ATAN2, INT, PLAYING, MM.HRES, MM.VRES, MM.INFO, MM.INFO$, MM.VER, MM.DEVICE$, MM.CMDLINE$, MM.HPOS, MM.VPOS, KEYDOWN, CINT, EVAL, CSRLIN
 
 Catalogue of functions for use in expressions. Type HELP FUNCTIONS, or HELP
 and the function name when it is listed as an alias of this topic.
@@ -24,7 +24,8 @@ Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)
   TCP:  LOC=RX waiting  LOF=0  EOF=not connected
   INPUT$(nbr,#n) count first; TCP non-blocking
 
-Other: PLAYING() DATE$ TIME$ TIMER POS
+Other: PLAYING() DATE$ TIME$ TIMER POS CSRLIN
+  POS is the 1-based console column, CSRLIN the 1-based console row.
   MM.VER MM.DEVICE$ MM.CMDLINE$
   STRUCT() SIZEOF|OFFSET|TYPE|FIND
   JSON$(json$, path$)

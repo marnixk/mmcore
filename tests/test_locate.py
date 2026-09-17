@@ -41,6 +41,15 @@ def test_locate_omitted_args_keep_position(fresh_console):
     assert lines[:4] == ["56", "48", "56", "64"], out
 
 
+def test_csrlin_tracks_cursor_row(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("LOCATE 0, 0") == ""
+    assert console.send_line("PRINT CSRLIN;") == "1"
+    assert console.send_line("LOCATE 2, 2") == ""
+    assert console.send_line("PRINT CSRLIN;") == "3"
+    assert console.send_line("PRINT CSRLIN();") == "3"
+
+
 def test_locate_cursor_arg_is_optional(console):
     assert console.send_line("LOCATE , , 0") == ""
     assert console.send_line("LOCATE , , 1") == ""

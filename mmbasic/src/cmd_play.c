@@ -681,6 +681,35 @@ void mmb_cmd_play(void)
 	mmb_syntax();
 }
 
+void mmb_cmd_beep(void)
+{
+	/* QuickBasic BEEP. Optional frequency (Hz) and duration (ms). */
+	double hz = 800.0;
+	unsigned dur = 120;
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		hz = mmb_as_float(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			dur = (unsigned)mmb_as_int(mmb_expr());
+		}
+	}
+	if (hz <= 0)
+		hz = 800.0;
+	if (dur == 0)
+		dur = 120;
+	mmb_play_stop();
+	s_tone_hz_l = s_tone_hz_r = hz;
+	s_tone_ph_l = s_tone_ph_r = 0;
+	s_tone_left = (unsigned)((unsigned long)dur * MIX_RATE / 1000u);
+	if (s_tone_left == 0)
+		s_tone_left = 1;
+	play_begin(4, "BEEP");
+}
+
 #include <stdio.h>
 FILE *fopen(const char *p, const char *m)
 {

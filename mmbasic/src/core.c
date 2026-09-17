@@ -2852,6 +2852,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("OPEN")] = mmb_cmd_open;
 		tab[mmb_kw_id("CLOSE")] = mmb_cmd_close;
 		tab[mmb_kw_id("PLAY")] = mmb_cmd_play;
+		tab[mmb_kw_id("BEEP")] = mmb_cmd_beep;
 		tab[mmb_kw_id("LOAD")] = mmb_cmd_load;
 		tab[mmb_kw_id("EDIT")] = mmb_cmd_edit;
 		tab[mmb_kw_id("WORDPAD")] = mmb_cmd_wordpad;
@@ -3390,6 +3391,11 @@ static void exec_statement(void)
 	if (mmb_match("PLAY"))
 	{
 		mmb_cmd_play();
+		return;
+	}
+	if (mmb_match("BEEP"))
+	{
+		mmb_cmd_beep();
 		return;
 	}
 	if (mmb_match("LOAD"))

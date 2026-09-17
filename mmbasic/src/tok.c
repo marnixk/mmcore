@@ -6,9 +6,9 @@
 static const char *const kws[] = {
 	"AND_PIXELS", "ATN2", "ATN", "ATAN", "ATAN2", "ACOS", "ACS", "ASIN", "ASN",
 	"AND", "AS", "ABS", "ARC", "APPEND", "AUDIO",
-	"BITMAP", "BLIT", "BOX", "BIN$", "BREAK", "BACKUP", "BACKWARD",
+	"BITMAP", "BLIT", "BOX", "BIN$", "BREAK", "BACKUP", "BACKWARD", "BEEP",
 	"BEGIN", "BOTH", "BARE", "BASE", "BAUDRATE",
-	"CONTINUE", "CONST", "CONNECT", "COPY", "CLOSE", "CLS", "CIRCLE",
+	"CONTINUE", "CONST", "CONNECT", "COPY", "CLOSE", "CLS", "CSRLIN", "CIRCLE",
 	"CREDITS", "CAT", "CASE", "CALL", "CHDIR", "CHR$", "COS", "COSH",
 	"COLOR", "COLOUR", "COLOURS", "COLORS", "COLOURCODE", "COLORCODE",
 	"CONSOLE", "CRLF", "CR", "CLEAR", "CHI_P", "CHI", "CORREL", "CWD$",

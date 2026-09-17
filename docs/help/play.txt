@@ -1,5 +1,6 @@
 name: PLAY
 kind: command
+alias: BEEP
 
 Decode and play audio to OPTION AUDIO_TARGET. HDMI sends IEC958 stereo on
 HDMI0. JACK sends PWM to the 3.5mm analogue socket (Pi 3 / Pi 4B). Pi 400 has
@@ -16,8 +17,12 @@ PLAY WAV file$
 PLAY MODFILE file$     (PLAY MOD file$)
 PLAY XM file$          (PLAY XMFILE file$)
 
+BEEP [frequency [, duration]]
+
   left, right - TONE frequencies in Hz, or VOLUME levels
-  duration - TONE length in milliseconds; omit to hold until PLAY STOP
+  frequency - BEEP pitch in Hz (default 800)
+  duration - TONE / BEEP length in milliseconds; for TONE omit to hold
+             until PLAY STOP (BEEP defaults to 120)
   file$ - audio file path
 
 On systems without audio output, files decode but no sound is heard; PLAYING()
