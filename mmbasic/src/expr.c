@@ -242,6 +242,41 @@ static int parse_date_fields(const char *s, int *py, int *pmo, int *pd)
 	return 1;
 }
 
+static int parse_time_fields(const char *s, int *ph, int *pmi, int *ps)
+{
+	int vals[3], nv = 0, i;
+	const char *p = s;
+	for (i = 0; i < 3; i++)
+	{
+		int v = 0, got = 0;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		while (*p >= '0' && *p <= '9')
+		{
+			v = v * 10 + (*p - '0');
+			p++;
+			got = 1;
+		}
+		if (!got)
+			break;
+		vals[nv++] = v;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == ':')
+			p++;
+		else
+			break;
+	}
+	if (nv < 1)
+		return 0;
+	*ph = vals[0];
+	*pmi = nv > 1 ? vals[1] : 0;
+	*ps = nv > 2 ? vals[2] : 0;
+	if (*ph < 0 || *ph > 23 || *pmi < 0 || *pmi > 59 || *ps < 0 || *ps > 59)
+		return 0;
+	return 1;
+}
+
 static void datetime_str(char *out, int outsz, int64_t e)
 {
 	int y, mo, d, h, mi, s;
@@ -435,6 +470,9 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("RAD")] = &&lbl_rad;
 		fun_tab[mmb_kw_id("POS")] = &&lbl_pos;
 		fun_tab[mmb_kw_id("CSRLIN")] = &&lbl_csrlin;
+		fun_tab[mmb_kw_id("BIT")] = &&lbl_bit;
+		fun_tab[mmb_kw_id("BYTE")] = &&lbl_byte;
+		fun_tab[mmb_kw_id("EPOCH")] = &&lbl_epoch;
 		fun_tab[mmb_kw_id("CHOICE")] = &&lbl_choice;
 		fun_tab[mmb_kw_id("FORMAT$")] = &&lbl_format;
 		fun_tab[mmb_kw_id("BOUND")] = &&lbl_bound;
@@ -1667,6 +1705,82 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_int_val(fh > 0 ? G.print_y / fh + 1 : 1);
+		return 1;
+	}
+	if (match_fun("BIT"))
+	{
+	lbl_bit:
+		call_args(a, 2, &n);
+		if (n != 2)
+			mmb_syntax();
+		{
+			int bit = (int)mmb_as_int(a[1]);
+			if (bit < 0 || bit > 63)
+				mmb_error("?BIT");
+			*out = mmb_int_val((mmb_as_int(a[0]) >> bit) & 1);
+		}
+		return 1;
+	}
+	if (match_fun("BYTE"))
+	{
+	lbl_byte:
+		int pos;
+		char b[2];
+		call_args(a, 2, &n);
+		if (n != 2 || a[0].type != T_STR)
+			mmb_syntax();
+		pos = (int)mmb_as_int(a[1]);
+		if (pos < 1 || !a[0].s || pos > (int)strlen(a[0].s))
+			*out = mmb_int_val(0);
+		else
+		{
+			b[0] = a[0].s[pos - 1];
+			b[1] = 0;
+			*out = mmb_int_val((unsigned char)b[0]);
+		}
+		return 1;
+	}
+	if (mmb_match("EPOCH"))
+	{
+	lbl_epoch:
+		int64_t e = 0;
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (mmb_match("NOW"))
+				e = mmb_epoch_now();
+			else
+			{
+				mmb_val d = mmb_expr();
+				if (d.type != T_STR)
+					e = mmb_as_int(d);
+				else
+				{
+					int y, mo, dd, h = 0, mi = 0, s = 0;
+					if (!parse_date_fields(d.s ? d.s : "", &y, &mo, &dd))
+						mmb_error("?INVALID DATE");
+					mmb_skip_sp();
+					if (*G.p == ',')
+					{
+						mmb_val t;
+						G.p++;
+						t = mmb_expr();
+						if (t.type != T_STR || !parse_time_fields(t.s ? t.s : "", &h, &mi, &s))
+							mmb_error("?INVALID TIME");
+					}
+					e = mmb_epoch_make(y, mo, dd, h, mi, s);
+				}
+			}
+			mmb_skip_sp();
+			mmb_expect(')');
+		}
+		else if (mmb_match("NOW"))
+			e = mmb_epoch_now();
+		else
+			mmb_syntax();
+		*out = mmb_int_val(e);
 		return 1;
 	}
 	if (match_fun("CHOICE"))

@@ -1,0 +1,25 @@
+name: BIT
+kind: command
+
+Read or write one bit of an integer variable. Bits are numbered 0 (least
+significant) to 63.
+
+value = BIT(intvar, bit)
+BIT(intvar, bit) = 0|1
+
+  intvar - an integer variable or array element
+  bit    - bit index 0..63 using 64-bit two's complement
+
+The read form returns 0 or 1 and also accepts a value instead of a variable.
+The assignment form sets or clears the bit in place; the variable must be an
+integer.
+
+Example:
+
+    DIM A AS INTEGER
+    A = 0
+    BIT(A, 3) = 1
+    PRINT A
+    PRINT BIT(A, 3)
+    BIT(A, 3) = 0
+    PRINT A

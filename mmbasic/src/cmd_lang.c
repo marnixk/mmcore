@@ -301,6 +301,75 @@ void mmb_cmd_rset(void)
 	do_lset_rset(1);
 }
 
+void mmb_cmd_bit(void)
+{
+	char name[MMB_MAX_NAME];
+	int nidx = 0, idx[MMB_MAX_DIMS], t, bit, off;
+	mmb_val bv, val;
+	mmb_var *v;
+	int64_t x;
+	mmb_skip_sp();
+	mmb_expect('(');
+	t = mmb_parse_var_ref(name, &nidx, idx);
+	mmb_skip_sp();
+	mmb_expect(',');
+	bv = mmb_expr();
+	bit = (int)mmb_as_int(bv);
+	mmb_skip_sp();
+	mmb_expect(')');
+	mmb_skip_sp();
+	mmb_expect('=');
+	val = mmb_expr();
+	if (bit < 0 || bit > 63)
+		mmb_error("?BIT");
+	v = mmb_find_var(name, t ? t : T_INT, 0, nidx, idx);
+	if (!v || v->type != T_INT)
+		mmb_error("?TYPE MISMATCH");
+	off = mmb_elem_off(v, nidx, idx);
+	x = v->data.i[off];
+	if (mmb_as_int(val))
+		x |= ((int64_t)1 << bit);
+	else
+		x &= ~((int64_t)1 << bit);
+	v->data.i[off] = x;
+}
+
+void mmb_cmd_byte(void)
+{
+	char name[MMB_MAX_NAME];
+	int nidx = 0, idx[MMB_MAX_DIMS], t, pos, off, len, k;
+	mmb_val pv, val;
+	mmb_var *v;
+	char *s;
+	mmb_skip_sp();
+	mmb_expect('(');
+	t = mmb_parse_var_ref(name, &nidx, idx);
+	mmb_skip_sp();
+	mmb_expect(',');
+	pv = mmb_expr();
+	pos = (int)mmb_as_int(pv);
+	mmb_skip_sp();
+	mmb_expect(')');
+	mmb_skip_sp();
+	mmb_expect('=');
+	val = mmb_expr();
+	if (pos < 1 || pos > MMB_MAX_STR)
+		mmb_error("?BYTE");
+	v = mmb_find_var(name, t ? t : T_STR, 0, nidx, idx);
+	if (!v || v->type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	off = mmb_elem_off(v, nidx, idx);
+	s = v->data.s[off];
+	len = (int)strlen(s);
+	if (pos - 1 >= len)
+	{
+		for (k = len; k < pos - 1 && k < MMB_MAX_STR; k++)
+			s[k] = ' ';
+		s[pos] = 0;
+	}
+	s[pos - 1] = (char)(mmb_as_int(val) & 0xff);
+}
+
 void mmb_cmd_sort(void)
 {
 	char name[MMB_MAX_NAME];

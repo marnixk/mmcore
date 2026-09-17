@@ -1,0 +1,21 @@
+name: EPOCH
+kind: command
+
+Convert a date (and optional time), or the current clock, to Unix epoch
+seconds. The result is UTC; it does not apply a local timezone.
+
+epoch = EPOCH(date$ [, time$])
+epoch = EPOCH(NOW)
+
+  date$ - "dd-mm-yyyy", "dd/mm/yyyy" or "yyyy-mm-dd"
+  time$ - "hh:mm[:ss]" (optional)
+  NOW   - use the current RTC / system clock
+
+When the argument is already a number it is returned unchanged. See also
+~DATETIME$~ and ~DAY$~.
+
+Example:
+
+    PRINT EPOCH("01-01-1970")
+    PRINT EPOCH("01-01-1970", "01:00:00")
+    PRINT DATETIME$(EPOCH(NOW))

@@ -1,0 +1,23 @@
+name: BYTE
+kind: command
+
+Read or write one byte of a string variable. Positions are 1-based; position 1
+is the first character.
+
+value = BYTE(strvar, pos)
+BYTE(strvar, pos) = value
+
+  strvar - a string variable or array element
+  pos    - byte position 1..255
+  value  - replacement byte 0..255
+
+The read form returns the character code, or 0 when the position is past the
+end of the string. The assignment form writes the byte; when pos is beyond the
+current end the string is padded with spaces first.
+
+Example:
+
+    S$ = "ABC"
+    PRINT BYTE(S$, 1)
+    BYTE(S$, 2) = 90
+    PRINT S$
