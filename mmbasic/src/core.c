@@ -2819,6 +2819,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("CHAIN")] = mmb_cmd_chain;
 		tab[mmb_kw_id("RESUME")] = mmb_cmd_resume;
 		tab[mmb_kw_id("STOP")] = mmb_cmd_end;
+		tab[mmb_kw_id("ARRAY")] = mmb_cmd_array;
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
@@ -3047,6 +3048,11 @@ static void exec_statement(void)
 	if (mmb_match("STOP"))
 	{
 		mmb_cmd_end();
+		return;
+	}
+	if (mmb_match("ARRAY"))
+	{
+		mmb_cmd_array();
 		return;
 	}
 	if (mmb_match("TYPE"))
