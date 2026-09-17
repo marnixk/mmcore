@@ -18,3 +18,4 @@ Returns:
 Example:
 
     IF INKEY$ = CHR$(128) THEN y = y - 1
+    IF INKEY$() <> "" THEN PRINT INKEY$()

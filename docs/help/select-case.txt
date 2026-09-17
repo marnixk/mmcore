@@ -1,6 +1,6 @@
 name: SELECT CASE
 kind: language
-alias: SELECT, CASE, END SELECT
+alias: SELECT, CASE, CASE ELSE, END SELECT
 
 Choose a branch matching an expression. SELECT CASE state is saved across SUB,
 FUNCTION, GOSUB, ON KEY and SETTICK so a nested CASE cannot clobber the
@@ -18,10 +18,14 @@ END SELECT
 
 Example:
 
-    10 N = 2
-    20 SELECT CASE N
-    30 CASE 1 : PRINT "ONE"
-    40 CASE 2 TO 4 : PRINT "TWO"
-    50 CASE ELSE : PRINT "OTHER"
-    60 END SELECT
-    RUN
+    N = 2
+    SELECT CASE N
+    CASE 1
+      PRINT "ONE"
+    CASE 2 TO 4
+      PRINT "TWO"
+    CASE IS > 10
+      PRINT "BIG"
+    CASE ELSE
+      PRINT "OTHER"
+    END SELECT

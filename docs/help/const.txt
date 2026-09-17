@@ -11,4 +11,6 @@ CONST name = expr
 Example:
 
     CONST MAX = 21
-    PRINT MAX * 2
+    CONST TITLE$ = "HELLO"
+    CONST FLAG% = 1
+    PRINT MAX * 2, TITLE$, FLAG%

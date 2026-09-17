@@ -28,5 +28,7 @@ raise ?SYNTAX ERROR.
 Example:
 
     HELP
+    IHELP
     HELP CLS
+    IHELP CLS
     HELP BASIC

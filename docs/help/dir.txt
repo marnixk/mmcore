@@ -17,3 +17,4 @@ Example:
     DIR
     DIR "A:/*.PNG"
     LS
+    LIST FILES

@@ -11,3 +11,4 @@ ERASE
 Example:
 
     CLEAR
+    ERASE

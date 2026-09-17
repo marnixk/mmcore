@@ -12,9 +12,8 @@ WEND
 
 Example:
 
-    10 I = 0
-    20 WHILE I < 3
-    30 I = I + 1
-    40 PRINT I
-    50 WEND
-    RUN
+    I = 0
+    WHILE I < 3
+      I = I + 1
+      PRINT I
+    WEND

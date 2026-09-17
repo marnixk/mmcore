@@ -1,5 +1,6 @@
 name: END
 kind: command
+alias: END IF, ENDIF, END SELECT, END SUB, END FUNCTION, END CSUB, END DEFINEFONT
 
 Stop a running program, or close a multiline block (IF, SELECT, SUB, FUNCTION).
 
@@ -14,5 +15,21 @@ SELECT closes SELECT CASE. END SUB / END FUNCTION close a SUB or FUNCTION.
 
 Example:
 
-    10 PRINT 42
-    20 END
+    PRINT 42
+    END
+
+    IF X > 0 THEN
+      PRINT "YES"
+    END IF
+
+    SELECT CASE N
+    CASE 1 : PRINT "ONE"
+    END SELECT
+
+    SUB Hi
+      PRINT 1
+    END SUB
+
+    FUNCTION Twice(N)
+      Twice = N * 2
+    END FUNCTION

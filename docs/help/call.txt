@@ -10,7 +10,7 @@ CALL name
 
 Example:
 
-    10 SUB HI
-    20 PRINT 42
-    30 END SUB
-    40 CALL HI
+    SUB HI
+      PRINT 42
+    END SUB
+    CALL HI

@@ -1,5 +1,6 @@
 name: BLIT
 kind: command
+alias: BLIT MEMORY
 
 Copy a rectangle of pixels, or save and restore rectangles in named blit
 buffers. Buffers are numbered 1 to 16.
@@ -23,3 +24,4 @@ Example:
     BLIT 0, 0, 100, 80, 32, 32
     BLIT READ #1, 0, 0, 32, 32
     BLIT WRITE #1, 200, 80
+    BLIT CLOSE #1

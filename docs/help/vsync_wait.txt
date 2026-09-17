@@ -10,7 +10,7 @@ VSYNC_WAIT
 
 Example:
 
-    10 DO
-    20   PAGE COPY 1 TO 0
-    30   VSYNC_WAIT
-    40 LOOP
+    DO
+      PAGE COPY 1 TO 0
+      VSYNC_WAIT
+    LOOP

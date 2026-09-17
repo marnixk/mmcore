@@ -13,3 +13,4 @@ POLYGON x1, y1, x2, y2, x3, y3... [, colour] [, fill]
 Example:
 
     POLYGON 10, 10, 40, 10, 25, 30, RGB(255, 0, 0)
+    POLYGON 10, 10, 40, 10, 25, 30, RGB(255, 0, 0), RGB(128, 0, 0)

@@ -1,8 +1,8 @@
 name: OPTIONS
 kind: command
 
-Join Wi-Fi using SSID and password already stored by OPTION WIFI. This is not
-an alias of OPTION.
+Join Wi-Fi using SSID and password already stored by OPTION WIFI. OPTIONS is
+not an alias of OPTION.
 
 OPTIONS WIFI
 

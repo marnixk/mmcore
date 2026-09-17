@@ -13,3 +13,4 @@ RESTART
 Example:
 
     REBOOT
+    RESTART

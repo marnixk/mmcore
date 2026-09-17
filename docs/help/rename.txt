@@ -15,4 +15,5 @@ MV src$ [AS|TO] dst$
 Example:
 
     RENAME "B.TXT" AS "C.TXT"
+    NAME "B.TXT" AS "C.TXT"
     MV "C.TXT" TO "DATA/C.TXT"

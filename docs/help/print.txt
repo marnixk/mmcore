@@ -21,5 +21,7 @@ to the console immediately (a GOTO loop still shows output). Use PRINT @(x,y)
 Example:
 
     PRINT 6 * 7
+    ? 6 * 7
+    PRINT
     PRINT #1, "HELLO"
     PRINT @(8, 8); "HI"

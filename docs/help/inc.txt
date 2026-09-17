@@ -11,4 +11,7 @@ DEC var [, amount]
 
 Example:
 
-    A = 10 : INC A, 2 : PRINT A
+    A = 10
+    INC A
+    INC A, 2
+    PRINT A
