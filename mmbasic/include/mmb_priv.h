@@ -202,7 +202,11 @@ typedef struct mmb_gfx {
 	mmb_blit_buf blit[MMB_MAX_BLIT];
 	struct {
 		int used, vis, x, y, layer, w, h;
-		uint32_t *pix; /* sprites stay RGB888 + alpha */
+		int next_x, next_y, has_next;
+		uint32_t *pix; /* RGB888 + alpha source */
+		uint16_t *npix; /* HDMI-native; 0 = transparent */
+		uint16_t *store; /* saved background, native */
+		uint8_t *astore; /* page-1 alpha snapshot, or NULL */
 	} sprite[MMB_MAX_SPRITE];
 	int turtle_on;
 	double turtle_x, turtle_y, turtle_hdg;
@@ -628,6 +632,14 @@ void mmb_gfx_fb_backup(void);
 void mmb_gfx_fb_restore(int x, int y, int w, int h, int all);
 void mmb_gfx_fb_window(int x, int y, int page);
 void mmb_gfx_fb_close(void);
+void mmb_blit_copy_u16(uint16_t *dst, const uint16_t *src, unsigned n);
+void mmb_blit_copy_rect16(uint16_t *dst, int dst_stride,
+			 const uint16_t *src, int src_stride,
+			 int w, int h);
+void mmb_blit_sprite_row16(uint16_t *dst, const uint16_t *src, unsigned n);
+void mmb_blit_sprite_trans16(uint16_t *dst, int dst_stride,
+			     const uint16_t *src, int src_stride,
+			     int w, int h);
 void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage, int ori);
 void mmb_gfx_blit_read(int n, int x, int y, int w, int h, int srcpage);
 void mmb_gfx_blit_write(int n, int x, int y, int ori);

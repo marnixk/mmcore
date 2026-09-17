@@ -643,7 +643,8 @@ void mmb_gfx_present(void)
 			present_native_or_rgb(x, y, x1 - x, y1 - y,
 					     pg + y * G.gfx.w + x, G.gfx.w);
 	}
-	mmb_sprite_overlay();
+	/* Sprites live in the write page via blitstore restore; they are
+	 * already in pg for any dirty rect that covers them. */
 	if (G.plat && G.plat->present_set_flip)
 		G.plat->present_set_flip(0);
 }
