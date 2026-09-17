@@ -310,10 +310,25 @@ class MMBasicConsole:
         raise HarnessError(last_err)
 
     def capture_png(self, dest_png: str | None = None) -> str:
-        """Capture the framebuffer to a .png file and return its path."""
+        """Capture the framebuffer to a .png file and return its path.
+
+        Callers often pass a fixed artifact path (for example under
+        ``/opt/cursor/artifacts``) that may not exist or be writable outside
+        the editor host.  Fall back to the temp directory next to the
+        screendump so the capture still succeeds.
+        """
         ppm = self.screendump()
         png = dest_png or ppm.replace(".ppm", ".png")
-        subprocess.run(["convert", ppm, png], check=True, capture_output=True)
+        result = subprocess.run(
+            ["convert", ppm, png], check=False, capture_output=True
+        )
+        if result.returncode != 0 and dest_png:
+            png = ppm.replace(".ppm", ".png")
+            subprocess.run(["convert", ppm, png], check=True, capture_output=True)
+        elif result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, result.args, result.stdout, result.stderr
+            )
         return png
 
     def screen_size(self) -> tuple[int, int]:
