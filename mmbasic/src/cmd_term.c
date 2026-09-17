@@ -949,37 +949,6 @@ static void term_draw_row(int r)
 	}
 }
 
-static void term_copy_rect(int x, int y, int pw, int ph)
-{
-	mmb_gfx_copy_rect(TM_PAGE, 0, x, y, pw, ph);
-}
-
-static void term_copy_pane(void)
-{
-	int x0 = T.pane_left * TM_CW;
-	int pw = term_width() * TM_CW;
-	int ph = term_fb_h();
-
-	mmb_gfx_copy_rect(TM_PAGE, 0, x0, 0, pw, ph);
-}
-
-static void term_copy_rows(int lo, int hi)
-{
-	int x0, pw, y, ph;
-
-	if (lo < 0)
-		lo = 0;
-	if (hi >= T.pane_rows)
-		hi = T.pane_rows - 1;
-	if (hi < lo)
-		return;
-	x0 = T.pane_left * TM_CW;
-	pw = term_width() * TM_CW;
-	y = lo * TM_CH;
-	ph = (hi - lo + 1) * TM_CH;
-	term_copy_rect(x0, y, pw, ph);
-}
-
 static void term_rect_union(int *ax, int *ay, int *aw, int *ah,
 			    int x, int y, int w, int h)
 {
@@ -1020,7 +989,7 @@ static void term_present_async_rect(int x, int y, int w, int h)
 		return;
 	if (G.plat->term_present_async)
 	{
-		pg = mmb_gfx_buf_for(0, &bw, &bh);
+		pg = mmb_gfx_buf_for(TM_PAGE, &bw, &bh);
 		if (!pg)
 			return;
 		G.plat->term_present_async(x, y, w, h, pg + y * bw + x, bw);
@@ -1035,21 +1004,13 @@ static void term_present_drain(void)
 		G.plat->term_present_drain();
 }
 
-/* A direct (unbounced) present DMAs straight out of PAGE 0, which TERM uses
- * as its present buffer.  Drain before rewriting it so the in-flight source
- * stays immutable until completion (#330). */
+/* A direct (unbounced) present DMAs straight out of PAGE 2, which TERM paints
+ * into.  Drain before rewriting it so the in-flight source stays immutable
+ * until completion (#330, #340). */
 static void term_guard_present(void)
 {
 	if (G.plat && G.plat->term_present_locked && G.plat->term_present_locked())
 		term_present_drain();
-}
-
-static void term_copy_screen(void)
-{
-	int w, h;
-
-	(void)mmb_gfx_buf_for(0, &w, &h);
-	mmb_gfx_copy_rect(TM_PAGE, 0, 0, 0, w, h);
 }
 
 static void term_draw(void)
@@ -1065,6 +1026,9 @@ static void term_draw(void)
 	saved = G.gfx.write_page;
 	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
+	/* Present sources PAGE 2 directly, so a prior frame's DMA must finish
+	 * before this repaint overwrites it (#340). */
+	term_guard_present();
 	full_screen = T.dirty_full;
 	if (T.dirty_full)
 	{
@@ -1099,15 +1063,13 @@ static void term_draw(void)
 			    TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
-	term_guard_present();
 	if (full_screen)
 	{
 		int fw, fh;
 
-		/* Async coalesced present, same as dirty bands (#329): no
-		 * drain + synchronous SetArea on the live redraw path. */
-		term_copy_screen();
-		(void)mmb_gfx_buf_for(0, &fw, &fh);
+		/* Async coalesced present, same as dirty bands (#329), straight
+		 * from the PAGE 2 paint buffer (#340). */
+		(void)mmb_gfx_buf_for(TM_PAGE, &fw, &fh);
 		term_present_async_rect(0, 0, fw, fh);
 	}
 	else
@@ -1121,11 +1083,7 @@ static void term_draw(void)
 		{
 			int top_h = T.menu ? 8 * TM_CH : TM_CH;
 
-			term_copy_pane();
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
-			term_copy_rect(0, 0, T.vid_cols * TM_CW, top_h);
-			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW,
-					TM_CH);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, top_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
@@ -1136,15 +1094,12 @@ static void term_draw(void)
 			int y = lo * TM_CH;
 			int rh = (hi - lo + 1) * TM_CH;
 
-			term_copy_rows(lo, hi);
-			term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
 			term_rect_union(&px, &py, &pw, &ph, x0, y, pane_w, rh);
+			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+					T.vid_cols * TM_CW, TM_CH);
 		}
 		else
-		{
-			term_copy_pane();
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
-		}
 		if (pw > 0 && ph > 0)
 			term_present_async_rect(px, py, pw, ph);
 	}
@@ -1658,7 +1613,6 @@ static void term_toggle_letterbox(void)
 	mark_dirty_full();
 	term_draw();
 	term_present_drain();
-	mmb_gfx_present();
 	term_serial_dump();
 }
 
@@ -1679,8 +1633,6 @@ static void term_present_overlay(int extra_w, int extra_h)
 	y = dlg_r0 * TM_CH;
 	pw = (dlg_cw + extra_w) * TM_CW;
 	ph = (dlg_ch + extra_h) * TM_CH;
-	term_guard_present();
-	term_copy_rect(x, y, pw, ph);
 	term_present_async_rect(x, y, pw, ph);
 }
 
@@ -1690,6 +1642,7 @@ static void term_dlg_refresh(void)
 
 	saved = G.gfx.write_page;
 	G.gfx.write_page = TM_PAGE;
+	term_guard_present();
 	term_draw_dlg();
 	term_present_overlay(2, 1);
 	G.gfx.write_page = saved;
@@ -1702,14 +1655,12 @@ static void term_overlay_chrome(void)
 
 	saved = G.gfx.write_page;
 	G.gfx.write_page = TM_PAGE;
+	term_guard_present();
 	term_draw_status();
 	term_draw_menu();
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
-		term_guard_present();
-		term_copy_rect(0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
-		term_copy_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH);
 		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 				T.vid_cols * TM_CW, TM_CH);
