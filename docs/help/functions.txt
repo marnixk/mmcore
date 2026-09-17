@@ -1,6 +1,6 @@
 name: FUNCTIONS
 kind: command
-alias: ABS, SIN, COS, TAN, ATN, ACOS, ACS, ASIN, ASN, RND, LEN, LEFT$, RIGHT$, INSTR, VAL, STR$, CHR$, ASC, EOF, LOF, LOC, TIMER, RGB, MAX, MIN, FORMAT$, BOUND, DEG, RAD, POS, CHOICE, TAB, SGN, EXP, LOG, PI, DATE$, TIME$, CWD$, UCASE$, LCASE$, HEX$, OCT$, BIN$, SPACE$, STRING$, FIX, SQR, SQRT, ATAN, ATN2, ATAN2, INT, PLAYING, MM.HRES, MM.VRES, MM.INFO, MM.INFO$, MM.VER, MM.DEVICE$, MM.CMDLINE$, MM.HPOS, MM.VPOS, KEYDOWN, CINT, EVAL, CSRLIN
+alias: ABS, SIN, COS, TAN, ATN, ACOS, ACS, ASIN, ASN, RND, LEN, LEFT$, RIGHT$, INSTR, VAL, STR$, CHR$, ASC, EOF, LOF, LOC, TIMER, RGB, MAX, MIN, FORMAT$, BOUND, DEG, RAD, POS, CHOICE, TAB, SGN, EXP, LOG, PI, DATE$, TIME$, CWD$, UCASE$, LCASE$, HEX$, OCT$, BIN$, SPACE$, STRING$, FIX, SQR, SQRT, ATAN, ATN2, ATAN2, INT, PLAYING, MM.HRES, MM.VRES, MM.INFO, MM.INFO$, MM.VER, MM.DEVICE$, MM.CMDLINE$, MM.HPOS, MM.VPOS, KEYDOWN, CINT, EVAL, CSRLIN, LTRIM$, RTRIM$, TRIM$, BASE$, FIELD$, DATETIME$, DAY$, DIR$
 
 Catalogue of functions for use in expressions. Type HELP FUNCTIONS, or HELP
 and the function name when it is listed as an alias of this topic.
@@ -11,6 +11,17 @@ Strings: LEN ASC CHR$ STR$ VAL LEFT$ RIGHT$ MID$ UCASE$ LCASE$ SPACE$ STRING$
   INSTR HEX$ OCT$ BIN$ FORMAT$ INKEY$ KEYDOWN TAB
   INKEY$ returns Up=128, Down=129, Left=130, Right=131, and F1-F12 as 145-156;
   see ~INKEY$~.
+  LTRIM$(s$) / RTRIM$(s$) strip leading/trailing spaces.
+  TRIM$(s$ [, mask$ [, where$]]) strips mask$ (default space) from L, R or B
+  (both, default).
+  BASE$(base, number [, length]) formats number in base 2..36, zero-padded to
+  length.
+  FIELD$(s$, n [, delim$ [, quote$]]) returns 1-based field n, splitting on any
+  character in delim$ (default comma); quoted runs ignore delimiters.
+  DATETIME$(epoch | NOW) is "dd-mm-yyyy hh:mm:ss" (UTC).
+  DAY$(date$ | NOW) is the weekday name, date$ is "dd-mm-yyyy".
+  DIR$(spec$ [, filter$]) returns the next matching entry, or "" at the end.
+  Call DIR$("") to continue the current listing; filter$ is DIR, FILE or ALL.
 
 Math: ABS INT FIX CINT SQR/SQRT SIN COS TAN ATN/ATAN ATN2/ATAN2 ACOS ASIN RND SGN
   EXP LOG PI MAX MIN DEG RAD CHOICE BOUND EVAL MATH()

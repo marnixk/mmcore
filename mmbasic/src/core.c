@@ -2758,6 +2758,8 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("ELSE")] = tok_cmd_else;
 		tab[mmb_kw_id("ENDIF")] = tok_cmd_endif;
 		tab[mmb_kw_id("MID$")] = mmb_cmd_mid;
+		tab[mmb_kw_id("LSET")] = mmb_cmd_lset;
+		tab[mmb_kw_id("RSET")] = mmb_cmd_rset;
 		tab[mmb_kw_id("IHELP")] = tok_cmd_help;
 		tab[mmb_kw_id("HELP")] = tok_cmd_help;
 		tab[mmb_kw_id("PRINT")] = mmb_cmd_print;
@@ -2915,6 +2917,16 @@ static void exec_statement(void)
 	if (mmb_match("MID$"))
 	{
 		mmb_cmd_mid();
+		return;
+	}
+	if (mmb_match("LSET"))
+	{
+		mmb_cmd_lset();
+		return;
+	}
+	if (mmb_match("RSET"))
+	{
+		mmb_cmd_rset();
 		return;
 	}
 	if (is_assign_start())

@@ -942,6 +942,65 @@ static void clock_norm(void)
 	}
 }
 
+/* Civil calendar <-> days since 1970-01-01 (Howard Hinnant's algorithms). */
+static int64_t days_from_civil(int y, int m, int d)
+{
+	int64_t era, doe, yoe, doy;
+	y -= (m <= 2);
+	era = (y >= 0 ? y : y - 399) / 400;
+	yoe = (int64_t)(y - era * 400);
+	doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + doe - 719468;
+}
+
+static void civil_from_days(int64_t z, int *py, int *pm, int *pd)
+{
+	int64_t era, doe, yoe, doy, mp;
+	int y;
+	unsigned d, m;
+	z += 719468;
+	era = (z >= 0 ? z : z - 146096) / 146097;
+	doe = z - era * 146097;
+	yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	y = (int)(yoe + era * 400);
+	doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	mp = (5 * doy + 2) / 153;
+	d = (unsigned)(doy - (153 * mp + 2) / 5 + 1);
+	m = (unsigned)(mp + (mp < 10 ? 3 : -9));
+	y += (m <= 2);
+	*py = y;
+	*pm = (int)m;
+	*pd = (int)d;
+}
+
+int64_t mmb_epoch_make(int y, int mo, int d, int h, int mi, int s)
+{
+	return days_from_civil(y, mo, d) * 86400 + (int64_t)h * 3600 + (int64_t)mi * 60 + s;
+}
+
+void mmb_epoch_break(int64_t e, int *py, int *pmo, int *pd, int *ph, int *pmi, int *ps)
+{
+	int64_t days = e / 86400;
+	int64_t rem = e % 86400;
+	if (rem < 0)
+	{
+		rem += 86400;
+		days--;
+	}
+	civil_from_days(days, py, pmo, pd);
+	*ph = (int)(rem / 3600);
+	rem %= 3600;
+	*pmi = (int)(rem / 60);
+	*ps = (int)(rem % 60);
+}
+
+int64_t mmb_epoch_now(void)
+{
+	mmb_clock_refresh();
+	return mmb_epoch_make(2000 + G.clk_y, G.clk_mo, G.clk_d, G.clk_h, G.clk_mi, G.clk_s);
+}
+
 static void fmt2(char *p, int n)
 {
 	p[0] = (char)('0' + (n / 10) % 10);

@@ -448,6 +448,7 @@ void mmb_cmd_dim(void)
 		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot, had_suffix;
 		int idxdummy[MMB_MAX_DIMS];
 		int struct_idx = -1;
+		int fixlen = 0;
 		mmb_ident(name, sizeof(name));
 		{
 			int sl = (int)strlen(name);
@@ -500,7 +501,11 @@ void mmb_cmd_dim(void)
 		if (mmb_match("LENGTH"))
 		{
 			mmb_val lv = mmb_expr();
-			(void)lv;
+			fixlen = (int)mmb_as_int(lv);
+			if (fixlen < 0)
+				fixlen = 0;
+			if (fixlen > MMB_MAX_STR)
+				fixlen = MMB_MAX_STR;
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
@@ -569,6 +574,7 @@ void mmb_cmd_dim(void)
 			G.dim_used = 1;
 		(void)idxdummy;
 	dim_init:
+		G.vars[slot].fixlen = (type == T_STR) ? fixlen : 0;
 		mmb_skip_sp();
 		if (*G.p == '=')
 		{

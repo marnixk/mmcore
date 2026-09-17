@@ -252,6 +252,55 @@ void mmb_cmd_mid(void)
 	mmb_do_assign(name, T_STR, nidx, idx, cur);
 }
 
+static void do_lset_rset(int right)
+{
+	char name[MMB_MAX_NAME];
+	int nidx = 0, idx[MMB_MAX_DIMS], t, width, slen, i, off = 0;
+	mmb_val v;
+	mmb_var *var;
+	char buf[MMB_MAX_STR + 1];
+	t = mmb_parse_var_ref(name, &nidx, idx);
+	mmb_skip_sp();
+	mmb_expect('=');
+	v = mmb_expr();
+	if (v.type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	var = mmb_find_var(name, t ? t : T_STR, 1, nidx, idx);
+	if (!var || var->type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	off = mmb_elem_off(var, nidx, idx);
+	width = var->fixlen;
+	if (width <= 0)
+	{
+		int cur = (int)strlen(var->data.s[off]);
+		int vlen = (int)strlen(v.s);
+		width = cur > vlen ? cur : vlen;
+	}
+	if (width > MMB_MAX_STR)
+		width = MMB_MAX_STR;
+	for (i = 0; i < width; i++)
+		buf[i] = ' ';
+	buf[width] = 0;
+	slen = (int)strlen(v.s);
+	if (slen > width)
+		slen = width;
+	if (right)
+		memcpy(buf + (width - slen), v.s, (size_t)slen);
+	else
+		memcpy(buf, v.s, (size_t)slen);
+	mmb_do_assign(name, T_STR, nidx, idx, mmb_str_val(buf));
+}
+
+void mmb_cmd_lset(void)
+{
+	do_lset_rset(0);
+}
+
+void mmb_cmd_rset(void)
+{
+	do_lset_rset(1);
+}
+
 void mmb_cmd_sort(void)
 {
 	char name[MMB_MAX_NAME];

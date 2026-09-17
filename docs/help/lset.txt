@@ -1,0 +1,23 @@
+name: LSET
+kind: command
+alias: RSET
+
+Assign a string into a fixed-width field. LSET left-justifies the value and
+RSET right-justifies it, padding with spaces on the other side.
+
+LSET stringvar = expression$
+RSET stringvar = expression$
+
+  stringvar  - a string variable or element
+
+The field width is the width declared with ~DIM~ ... LENGTH n. For an
+undeclared width, the field keeps the longer of the current value and the new
+value, so repeated LSET/RSET calls do not shorten the string.
+
+Example:
+
+    DIM S AS STRING LENGTH 8
+    LSET S = "AB"
+    PRINT "["; S; "]"
+    RSET S = "XY"
+    PRINT "["; S; "]"

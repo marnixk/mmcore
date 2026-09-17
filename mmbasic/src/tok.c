@@ -57,6 +57,8 @@ static const char *const kws[] = {
 	"XOR_PIXELS", "Y_AXIS",
 	"FORMAT$", "CHOICE", "BOUND", "CINT", "EVAL", "KEYDOWN", "ASC",
 	"DEG", "RAD", "POS", "EXTRACT", "INSERT",
+	"LSET", "RSET", "LTRIM$", "RTRIM$", "TRIM$", "BASE$", "FIELD$",
+	"DATETIME$", "DAY$", "DIR$",
 	0
 };
 
