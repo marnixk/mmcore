@@ -1092,9 +1092,13 @@ static void term_draw(void)
 	term_draw_dlg();
 	if (full_screen)
 	{
+		int fw, fh;
+
+		/* Async coalesced present, same as dirty bands (#329): no
+		 * drain + synchronous SetArea on the live redraw path. */
 		term_copy_screen();
-		term_present_drain();
-		mmb_gfx_present();
+		(void)mmb_gfx_buf_for(0, &fw, &fh);
+		term_present_async_rect(0, 0, fw, fh);
 	}
 	else
 	{
