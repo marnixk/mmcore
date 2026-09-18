@@ -747,8 +747,7 @@ int mmb_vfs_size(const char *path);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 void mmb_vfs_drives(char *out, int outsz);
 const char *mmb_vfs_cwd(void);
-void mmb_vfs_seed_file(const char *path, const void *data, unsigned n);
-int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n);
+void mmb_vfs_seed_file(const char *path, const void *data, unsigned n);int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n);
 void mmb_cmd_drive(void);
 
 /* Physical volumes C: (SD) and D+ (USB). Implemented in console/storage.cpp. */
@@ -897,6 +896,14 @@ const unsigned *mmb_editor_palette(void);
 void mmb_editor_apply_tui_palette(void);
 int mmb_editor_theme_field(const char *name, unsigned char *idx);
 int mmb_editor_theme_rgb(const char *name, unsigned *rgb);
+
+typedef struct mmb_ramdisk_entry {
+	const char *path;
+	const unsigned char *data;
+	unsigned len;
+} mmb_ramdisk_entry;
+
+void mmb_ramdisk_seed(void);
 
 void mmb_play_stop(void);
 void mmb_play_mix(void);
