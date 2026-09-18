@@ -1,0 +1,23 @@
+name: AFK
+kind: command
+
+Show a Win31 "Mystify"-style screensaver: two polygons of points bounce around
+the screen, leaving fading trails of connecting lines. It takes no arguments
+and runs until you exit. Colours follow OPTION EDIT THEME (set A is the menu
+hot colour, set B the string colour).
+
+AFK
+
+  (no arguments)
+
+AFK switches to MODE 11 and restores the previous mode, bits, pages and
+framebuffer when it exits.
+
+Controls:
+
+    Enter   exit and return to the prompt
+    Ctrl+C  exit (the break key)
+
+Example:
+
+    AFK
