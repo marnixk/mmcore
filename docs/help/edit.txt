@@ -24,7 +24,8 @@ THEME and restored next time you open EDIT.
 Keys: F1 keyword HELP  F2 save  F3 open  F4 #include  F9 run  ^S save
       Alt+X quit  ^C copy  ^X cut  ^V paste  ^W close tab
       Alt+Left / Alt+Right switch tabs (no wrap)
-      ^R save and run  ^K/^Y cut line  ^U paste
+      ^R save and run  ^K cut line  ^U paste
+      ^Z undo  ^Y redo (per tab; typing groups into one step)
       Shift+Arrows select text (QBasic-style)
       ^Ins copy  Shift+Del cut  Shift+Ins paste
       Del erases the selection (no clipboard)

@@ -366,8 +366,8 @@ static const char *file_items[] = {
 	"Close tab", "Next tab", "Quit"
 };
 static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
-static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace..." };
-static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r' };
+static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace...", "Undo", "Redo" };
+static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r', 'u', 'e' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
@@ -393,6 +393,11 @@ static void close_tab_now(void);
 static void close_ui(void);
 static void finish_pending(void);
 static void find_abort(void);
+static void hist_reset(mmb_ed_tab *t);
+static void hist_record(int kind, int pos, const char *data, int len, int coalesce);
+static void hist_begin(void);
+static void hist_end(void);
+static void hist_break(void);
 
 static char *put_uint(char *p, int n)
 {
@@ -555,6 +560,7 @@ static void load_into(int i, const char *path)
 	unsigned got = 0;
 	mmb_ed_tab *t = &G.ed.tab[i];
 	memset(t, 0, sizeof(*t));
+	hist_reset(t);
 	t->used = 1;
 	if (path && path[0])
 	{
@@ -1230,11 +1236,11 @@ static int delete_range(int lo, int hi, int to_clip)
 	n = hi - lo;
 	if (to_clip)
 		clip_store(t->buf + lo, n);
+	hist_record(1, lo, t->buf + lo, n, 0);
 	memmove(t->buf + lo, t->buf + hi, (unsigned)(t->len - hi + 1));
 	t->len -= n;
 	t->cx = lo;
 	t->sel = 0;
-	t->dirty = 1;
 	return 1;
 }
 
@@ -1323,6 +1329,247 @@ static void ensure_visible(void)
 		t->col0 = 0;
 }
 
+/* ---- undo / redo history ---- */
+
+static int h_txn_active;
+static int h_txn_id;
+
+static void hist_dirty(mmb_ed_tab *t)
+{
+	t->dirty = (t->hist.saved < 0 || t->hist.cur != t->hist.saved);
+}
+
+static void hist_reset(mmb_ed_tab *t)
+{
+	t->hist.n = 0;
+	t->hist.cur = 0;
+	t->hist.pool_n = 0;
+	t->hist.saved = 0;
+	t->hist.txn = 1;
+	t->hist.typing = 0;
+	t->hist.typing_txn = 0;
+	t->hist.typing_at = 0;
+	t->dirty = 0;
+}
+
+static void hist_break(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (t)
+		t->hist.typing = 0;
+}
+
+static void hist_drop_front(mmb_ed_tab *t, int drop)
+{
+	int i, bytes = 0, c, s;
+	if (drop <= 0 || t->hist.n <= 0)
+		return;
+	if (drop > t->hist.n)
+		drop = t->hist.n;
+	for (i = 0; i < drop; i++)
+		bytes += t->hist.ops[i].len;
+	c = t->hist.cur;
+	s = t->hist.saved;
+	memmove(t->hist.ops, t->hist.ops + drop,
+		(unsigned)(t->hist.n - drop) * sizeof(t->hist.ops[0]));
+	t->hist.n -= drop;
+	t->hist.cur = c > drop ? c - drop : 0;
+	if (s == 0)
+		t->hist.saved = 0;
+	else if (s > drop)
+		t->hist.saved = s - drop;
+	else if (s == drop)
+		t->hist.saved = 0;
+	else
+		t->hist.saved = -1;
+	memmove(t->hist.pool, t->hist.pool + bytes,
+		(unsigned)(t->hist.pool_n - bytes));
+	t->hist.pool_n -= bytes;
+	for (i = 0; i < t->hist.n; i++)
+		t->hist.ops[i].off -= bytes;
+}
+
+static void hist_push(mmb_ed_tab *t, int kind, int pos, const char *data, int len, int txn)
+{
+	if (t->hist.cur < t->hist.n)
+	{
+		t->hist.pool_n = t->hist.ops[t->hist.cur].off;
+		t->hist.n = t->hist.cur;
+		if (t->hist.saved > t->hist.cur)
+			t->hist.saved = -1;
+	}
+	while ((t->hist.n >= 128 || t->hist.pool_n + len > 65536) &&
+	       t->hist.n > 0)
+		hist_drop_front(t, 1);
+	if (len > 65536)
+		len = 65536;
+	t->hist.ops[t->hist.n].kind = kind;
+	t->hist.ops[t->hist.n].pos = pos;
+	t->hist.ops[t->hist.n].len = len;
+	t->hist.ops[t->hist.n].off = t->hist.pool_n;
+	t->hist.ops[t->hist.n].txn = txn;
+	if (len > 0)
+		memcpy(t->hist.pool + t->hist.pool_n, data, (unsigned)len);
+	t->hist.pool_n += len;
+	t->hist.n++;
+	t->hist.cur = t->hist.n;
+	hist_dirty(t);
+}
+
+static void hist_record(int kind, int pos, const char *data, int len, int coalesce)
+{
+	mmb_ed_tab *t = cur_tab();
+	int txn;
+	if (!t || len < 0)
+		return;
+	if (h_txn_active)
+		txn = h_txn_id;
+	else if (coalesce && t->hist.typing && t->hist.cur == t->hist.n &&
+		 mmb_now_ms() - t->hist.typing_at < 1000)
+		txn = t->hist.typing_txn;
+	else
+	{
+		t->hist.typing_txn = t->hist.txn++;
+		txn = t->hist.typing_txn;
+	}
+	if (!h_txn_active && coalesce && t->hist.cur == t->hist.n && t->hist.n > 0)
+	{
+		mmb_ed_hop *op = 0;
+		(void)op;
+		if (t->hist.ops[t->hist.n - 1].kind == 0 &&
+		    t->hist.ops[t->hist.n - 1].txn == txn &&
+		    t->hist.ops[t->hist.n - 1].pos + t->hist.ops[t->hist.n - 1].len == pos &&
+		    t->hist.pool_n + len <= 65536)
+		{
+			if (len > 0)
+				memcpy(t->hist.pool + t->hist.pool_n, data, (unsigned)len);
+			t->hist.pool_n += len;
+			t->hist.ops[t->hist.n - 1].len += len;
+			t->hist.cur = t->hist.n;
+			t->hist.typing = 1;
+			t->hist.typing_at = mmb_now_ms();
+			hist_dirty(t);
+			return;
+		}
+	}
+	t->hist.typing = coalesce;
+	t->hist.typing_at = mmb_now_ms();
+	t->hist.typing_txn = txn;
+	hist_push(t, kind, pos, data, len, txn);
+}
+
+static void hist_begin(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!t)
+		return;
+	if (!h_txn_active)
+	{
+		h_txn_active = 1;
+		h_txn_id = t->hist.txn++;
+	}
+	hist_break();
+}
+
+static void hist_end(void)
+{
+	h_txn_active = 0;
+	hist_break();
+}
+
+static void hist_raw_insert(mmb_ed_tab *t, int pos, const char *s, int n)
+{
+	if (pos < 0)
+		pos = 0;
+	if (pos > t->len)
+		pos = t->len;
+	if (t->len + n >= (int)sizeof(t->buf) - 1)
+		n = (int)sizeof(t->buf) - 1 - t->len;
+	if (n <= 0)
+		return;
+	if (pos < t->len)
+		memmove(t->buf + pos + n, t->buf + pos, (unsigned)(t->len - pos));
+	memcpy(t->buf + pos, s, (unsigned)n);
+	t->len += n;
+	t->buf[t->len] = 0;
+}
+
+static void hist_raw_delete(mmb_ed_tab *t, int pos, int n)
+{
+	if (pos < 0)
+		pos = 0;
+	if (pos > t->len)
+		return;
+	if (pos + n > t->len)
+		n = t->len - pos;
+	if (n <= 0)
+		return;
+	memmove(t->buf + pos, t->buf + pos + n, (unsigned)(t->len - pos - n));
+	t->len -= n;
+	t->buf[t->len] = 0;
+}
+
+static void hist_undo(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int g;
+	if (!t)
+		return;
+	if (t->hist.cur <= 0)
+	{
+		set_status("Nothing to undo");
+		return;
+	}
+	g = t->hist.ops[t->hist.cur - 1].txn;
+	while (t->hist.cur > 0 && t->hist.ops[t->hist.cur - 1].txn == g)
+	{
+		mmb_ed_hop *op = &t->hist.ops[t->hist.cur - 1];
+		if (op->kind == 0)
+			hist_raw_delete(t, op->pos, op->len);
+		else
+			hist_raw_insert(t, op->pos, t->hist.pool + op->off, op->len);
+		t->cx = op->pos;
+		t->sel = 0;
+		t->hist.cur--;
+	}
+	ensure_visible();
+	hist_dirty(t);
+	set_status(0);
+}
+
+static void hist_redo(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int g;
+	if (!t)
+		return;
+	if (t->hist.cur >= t->hist.n)
+	{
+		set_status("Nothing to redo");
+		return;
+	}
+	g = t->hist.ops[t->hist.cur].txn;
+	while (t->hist.cur < t->hist.n && t->hist.ops[t->hist.cur].txn == g)
+	{
+		mmb_ed_hop *op = &t->hist.ops[t->hist.cur];
+		if (op->kind == 0)
+		{
+			hist_raw_insert(t, op->pos, t->hist.pool + op->off, op->len);
+			t->cx = op->pos + op->len;
+		}
+		else
+		{
+			hist_raw_delete(t, op->pos, op->len);
+			t->cx = op->pos;
+		}
+		t->sel = 0;
+		t->hist.cur++;
+	}
+	ensure_visible();
+	hist_dirty(t);
+	set_status(0);
+}
+
 static void insert_char(char c)
 {
 	mmb_ed_tab *t = cur_tab();
@@ -1333,12 +1580,12 @@ static void insert_char(char c)
 	delete_selection(0);
 	if (t->len >= (int)sizeof(t->buf) - 1)
 		return;
+	hist_record(0, t->cx, &c, 1, 1);
 	if (t->cx < t->len)
 		memmove(t->buf + t->cx + 1, t->buf + t->cx, (unsigned)(t->len - t->cx));
 	t->buf[t->cx++] = c;
 	t->len++;
 	t->buf[t->len] = 0;
-	t->dirty = 1;
 }
 
 static int insert_at(int pos, const char *s, int n)
@@ -1360,10 +1607,16 @@ static int insert_at(int pos, const char *s, int n)
 	memcpy(t->buf + pos, s, (unsigned)n);
 	t->len += n;
 	t->buf[t->len] = 0;
-	t->len = mmb_normalize_newlines(t->buf, t->len);
+	{
+		int i, actual = 0;
+		for (i = 0; i < n; i++)
+			if (s[i] != '\r')
+				actual++;
+		t->len = mmb_normalize_newlines(t->buf, t->len);
+		hist_record(0, pos, t->buf + pos, actual, 0);
+	}
 	if (t->cx > t->len)
 		t->cx = t->len;
-	t->dirty = 1;
 	return n;
 }
 
@@ -1396,6 +1649,7 @@ static void indent_lines(int outdent)
 
 	if (!t)
 		return;
+	hist_begin();
 	if (sel_bounds(&lo, &hi))
 	{
 		if (hi > lo && t->buf[hi - 1] == '\n')
@@ -1432,6 +1686,7 @@ static void indent_lines(int outdent)
 				k = 1;
 			if (k)
 			{
+				hist_record(1, p, t->buf + p, k, 0);
 				memmove(t->buf + p, t->buf + p + k,
 					(unsigned)(t->len - p - k + 1));
 				t->len -= k;
@@ -1448,6 +1703,7 @@ static void indent_lines(int outdent)
 				shift_off(&t->sel_anchor, p, k);
 		}
 	}
+	hist_end();
 }
 
 static void insert_newline_indent(void)
@@ -1459,6 +1715,7 @@ static void insert_newline_indent(void)
 
 	if (!t)
 		return;
+	hist_begin();
 	delete_selection(0);
 	i = t->cx;
 	while (i > 0 && t->buf[i - 1] != '\n')
@@ -1469,6 +1726,7 @@ static void insert_newline_indent(void)
 	insert_char('\n');
 	for (i = 0; i < n; i++)
 		insert_char(indent[i]);
+	hist_end();
 }
 
 static void backspace(void)
@@ -1480,10 +1738,10 @@ static void backspace(void)
 		return;
 	if (t->cx <= 0)
 		return;
+	hist_record(1, t->cx - 1, t->buf + t->cx - 1, 1, 0);
 	memmove(t->buf + t->cx - 1, t->buf + t->cx, (unsigned)(t->len - t->cx + 1));
 	t->cx--;
 	t->len--;
-	t->dirty = 1;
 }
 
 static void delete_char(void)
@@ -1495,9 +1753,9 @@ static void delete_char(void)
 		return;
 	if (t->cx >= t->len)
 		return;
+	hist_record(1, t->cx, t->buf + t->cx, 1, 0);
 	memmove(t->buf + t->cx, t->buf + t->cx + 1, (unsigned)(t->len - t->cx));
 	t->len--;
-	t->dirty = 1;
 }
 
 static void move_left(void)
@@ -1588,10 +1846,12 @@ static void cut_line(void)
 	killlen = 0;
 	if (end > t->cx)
 	{
+		hist_begin();
 		clip_store(t->buf + t->cx, end - t->cx);
+		hist_record(1, t->cx, t->buf + t->cx, end - t->cx, 0);
 		memmove(t->buf + t->cx, t->buf + end, (unsigned)(t->len - end + 1));
 		t->len -= (end - t->cx);
-		t->dirty = 1;
+		hist_end();
 	}
 }
 
@@ -1601,19 +1861,24 @@ static void paste_kill(void)
 	int n;
 	if (!t || killlen <= 0)
 		return;
+	hist_begin();
 	delete_selection(0);
 	n = killlen;
 	if (t->len + n >= (int)sizeof(t->buf) - 1)
 		n = (int)sizeof(t->buf) - 1 - t->len;
 	if (n <= 0)
+	{
+		hist_end();
 		return;
+	}
+	hist_record(0, t->cx, killbuf, n, 0);
 	if (t->cx < t->len)
 		memmove(t->buf + t->cx + n, t->buf + t->cx, (unsigned)(t->len - t->cx + 1));
 	memcpy(t->buf + t->cx, killbuf, (unsigned)n);
 	t->cx += n;
 	t->len += n;
 	t->buf[t->len] = 0;
-	t->dirty = 1;
+	hist_end();
 }
 
 /* ---- inline find / replace bar (Ctrl+F, Ctrl+H) ---- */
@@ -1812,13 +2077,16 @@ static int find_replace_all_apply(void)
 			find_scratch[o++] = t->buf[i++];
 	}
 	find_scratch[o] = 0;
+	hist_begin();
+	hist_record(1, 0, t->buf, t->len, 0);
 	memcpy(t->buf, find_scratch, (unsigned)o + 1);
 	t->len = o;
 	if (t->cx > t->len)
 		t->cx = t->len;
 	t->sel = 0;
 	find_have_match = 0;
-	t->dirty = 1;
+	hist_record(0, 0, t->buf, t->len, 0);
+	hist_end();
 	return n;
 }
 
@@ -1849,16 +2117,18 @@ static void find_replace_one(void)
 		find_next();
 		return;
 	}
+	hist_begin();
+	hist_record(1, lo, t->buf + lo, hi - lo, 0);
 	memmove(t->buf + lo, t->buf + hi, (unsigned)(t->len - hi + 1));
 	t->len -= (hi - lo);
 	t->sel = 0;
-	t->dirty = 1;
 	find_have_match = 0;
 	if (find_repllen > 0)
 		insert_at(lo, find_repl, find_repllen);
 	t->cx = lo + find_repllen;
 	if (t->cx > t->len)
 		t->cx = t->len;
+	hist_end();
 	find_next();
 }
 
@@ -3243,6 +3513,7 @@ static void draw_dialog(void)
 			"Alt+Left/Right tabs (no wrap)",
 			"^F     Find             ^H     Replace",
 			"^O     Outline          ^S     Save",
+			"^Z     Undo             ^Y     Redo",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
@@ -3489,6 +3760,7 @@ static int save_tab(void)
 		return 0;
 	}
 	t->dirty = 0;
+	t->hist.saved = t->hist.cur;
 	strncpy(G.current_prog, t->path, sizeof(G.current_prog) - 1);
 	set_status("Saved");
 	return 1;
@@ -3621,6 +3893,7 @@ static void editor_run(void)
 	if (!t || !save_tab())
 		return;
 	errbar_dismiss();
+	hist_break();
 	G.ed.saved_mode = G.gfx.mode;
 	G.ed.saved_bits = G.gfx.bits;
 	G.ed.saved_write_page = G.gfx.write_page;
@@ -3664,6 +3937,7 @@ static void open_menu(int which)
 {
 	int n;
 	find_abort();
+	hist_break();
 	G.ed.dialog = DLG_NONE;
 	G.ed.menu_open = 1;
 	G.ed.menu = which;
@@ -3690,6 +3964,7 @@ static void close_ui(void)
 static void open_dialog(int which)
 {
 	find_abort();
+	hist_break();
 	G.ed.menu_open = 0;
 	G.ed.dialog = which;
 	G.ed.dlg[0] = 0;
@@ -3719,6 +3994,7 @@ static void next_tab(void)
 	if (G.ed.ntabs <= 1)
 		return;
 	find_abort();
+	hist_break();
 	G.ed.cur = (G.ed.cur + 1) % G.ed.ntabs;
 	set_status(0);
 }
@@ -3728,6 +4004,7 @@ static void tab_right(void)
 	if (G.ed.cur + 1 < G.ed.ntabs)
 	{
 		find_abort();
+		hist_break();
 		G.ed.cur++;
 		set_status(0);
 	}
@@ -3738,6 +4015,7 @@ static void tab_left(void)
 	if (G.ed.cur > 0)
 	{
 		find_abort();
+		hist_break();
 		G.ed.cur--;
 		set_status(0);
 	}
@@ -3831,6 +4109,10 @@ static void activate_menu(void)
 			find_open(0);
 		else if (item == 5)
 			find_open(1);
+		else if (item == 6)
+			hist_undo();
+		else if (item == 7)
+			hist_redo();
 		else
 			paste_kill();
 	}
@@ -4083,6 +4365,7 @@ static int handle_arrow_or_special(int kind, int mod)
 	}
 	if (errbar_active)
 		errbar_dismiss();
+	hist_break();
 	if (G.ed.dialog == DLG_HELP)
 	{
 		if (kind == 0)
@@ -4673,15 +4956,21 @@ const char *mmb_editor_feed(char c)
 		editor_run();
 		return G.out;
 	}
-	if (c == 11) /* Ctrl+K cut */
+	if (c == 11) /* Ctrl+K cut line */
 	{
 		cut_line();
 		redraw();
 		return G.out;
 	}
-	if (c == 25) /* Ctrl+Y cut line (QBasic) */
+	if (c == 26) /* Ctrl+Z undo */
 	{
-		cut_line();
+		hist_undo();
+		redraw();
+		return G.out;
+	}
+	if (c == 25) /* Ctrl+Y redo */
+	{
+		hist_redo();
 		redraw();
 		return G.out;
 	}

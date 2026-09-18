@@ -1849,3 +1849,127 @@ def test_editor_ctrl_h_no_match_replace(kernel_image):
     finally:
         con.stop()
 
+
+def test_editor_ctrl_z_undo_and_ctrl_y_redo(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "UNDO.BAS")
+        _keys(con, b"HELLO")
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "UNDO.BAS") == "HELLO"
+
+        _edit(con, "UNDO.BAS")
+        _keys(con, b"XY")
+        undone = _keys(con, bytes([26]), quiet=0.4)
+        assert "Nothing to undo" not in undone
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "UNDO.BAS") == "HELLO"
+
+        _edit(con, "UNDO.BAS")
+        _keys(con, b"XY")
+        _keys(con, bytes([26]), quiet=0.4)
+        _keys(con, bytes([25]), quiet=0.4)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "UNDO.BAS") == "XYHELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_y_redo_does_not_cut_line(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "REDO.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H", quiet=0.3)
+        done = _keys(con, bytes([25]), quiet=0.4)
+        assert "Nothing to redo" in done
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "REDO.BAS") == "HELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_k_cut_line_undo(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "CUTU.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[H", quiet=0.3)
+        _keys(con, bytes([11]), quiet=0.4)
+        _keys(con, bytes([26]), quiet=0.4)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "CUTU.BAS") == "HELLO"
+    finally:
+        con.stop()
+
+
+def test_editor_undo_newline_is_atomic(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "NLU.BAS")
+        _keys(con, b"X\r")
+        _keys(con, b"Y")
+        _keys(con, bytes([26]), quiet=0.4)  # undo typing Y
+        _keys(con, bytes([26]), quiet=0.4)  # undo newline step
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "NLU.BAS") == "X"
+    finally:
+        con.stop()
+
+
+def test_editor_undo_replace_all_is_atomic(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "RAU.BAS")
+        _keys(con, b"aaa aaa aaa")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, bytes([8]), quiet=0.5)
+        _keys(con, b"aaa", quiet=0.3)
+        _keys(con, b"\t", quiet=0.3)
+        _keys(con, b"b", quiet=0.3)
+        _keys(con, b"\x1b[29~", quiet=0.4)
+        done = _keys(con, b"y", quiet=0.4)
+        assert "Replaced 3" in done
+        _keys(con, b"\x1b", quiet=0.6)
+        _keys(con, bytes([26]), quiet=0.4)  # one undo reverts all
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "RAU.BAS") == "aaa aaa aaa"
+    finally:
+        con.stop()
+
+
+def test_editor_undo_is_per_tab(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_switcher_tree(con)
+        _edit(con, "MAIN.BAS")
+        _keys(con, b"X", quiet=0.3)
+        _keys(con, bytes([16]), quiet=0.5)  # quick open
+        _keys(con, b"child", quiet=0.4)
+        _keys(con, b"\r", quiet=0.6)  # switch to CHILD
+        _keys(con, b"Y", quiet=0.3)
+        _keys(con, bytes([26]), quiet=0.4)  # undo Y in CHILD
+        _keys(con, bytes([16]), quiet=0.5)
+        _keys(con, b"main", quiet=0.4)
+        _keys(con, b"\r", quiet=0.6)  # back to MAIN
+        _keys(con, bytes([26]), quiet=0.4)  # undo X in MAIN
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "A:/SWP/MAIN.BAS") == "PRINT 11"
+    finally:
+        con.stop()
+
+
