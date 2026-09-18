@@ -26,6 +26,7 @@ skill (`scripts/test-watch.py start` / `status` / `wait`).
 Linux SD-card install: `scripts/install-sdcard.sh --help`. Publishing a
 GitHub Release: run the `github-release` skill (it looks up the last `vX.Y.Z`
 and asks before building; default is a **minor** bump). Draining the GitHub
-issue tracker: run the `issue-loop` skill (one issue, merge to `master`, minor
-release, repeat; skip issues marked **not ready** in the title, a label, or
-the description).
+issue tracker: run the `issue-loop` skill (implement ready issues one at a
+time, scoped tests, merge each to `master`, then one minor release at the end;
+skip issues marked **not ready** in the title, a label, or the description, and
+file out-of-scope bugs as `follow-up` tickets instead of fixing them).
