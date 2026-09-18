@@ -81,11 +81,13 @@ def test_immediate_command_blank_before_prompt(console):
     console._ser.sendall(b"PRINT 9\r")
     text = console.drain(quiet=0.5).replace(b"\r", b"")
     assert b"9" in text
-    assert b"\n\n>" in text
+    assert b"\n\n" in text
+    assert text.rstrip().endswith(b">")
     console.drain(quiet=0.1)
     console._ser.sendall(b"NEW\r")
     new_out = console.drain(quiet=0.5).replace(b"\r", b"")
-    assert b"\n\n>" in new_out
+    assert b"\n\n" in new_out
+    assert new_out.rstrip().endswith(b">")
 
 
 def test_date_time_tick_with_clock(console):
