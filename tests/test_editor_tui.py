@@ -1676,11 +1676,11 @@ def test_editor_ctrl_f_finds_selects_and_f3_advances(kernel_image):
         assert any(_is_sel_light(p) for p in second), second
         restored = _cell_samples(con, 1, 3)
         assert not all(_is_sel_light(p) for p in restored), restored
-        _keys(con, b"\x1b", quiet=0.6)  # Esc closes, cursor back to 0
+        _keys(con, b"\x1b", quiet=0.6)  # Esc closes, cursor at found match
         _keys(con, b"Z", quiet=0.3)
         _save(con, quiet=0.4)
         _quit(con)
-        assert _read_bas(con, "FIND.BAS") == "ZABCabc"
+        assert _read_bas(con, "FIND.BAS") == "ABCZabc"
     finally:
         con.stop()
 
