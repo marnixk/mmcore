@@ -3,6 +3,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-watch.log
+.pytest-watch.pid
+.pytest-watch.started
+.pytest-build.lock
 
 # Console build artifacts
 console/*.o
