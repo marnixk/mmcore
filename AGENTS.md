@@ -30,3 +30,11 @@ issue tracker: run the `issue-loop` skill (implement ready issues one at a
 time, scoped tests, merge each to `master`, then one minor release at the end;
 skip issues marked **not ready** in the title, a label, or the description, and
 file out-of-scope bugs as `follow-up` tickets instead of fixing them).
+
+## Decisions
+
+- **Percentage test-run feedback** — every test-suite run (full or scoped)
+  must show progress as a percentage while it runs: `n/N (pct%)` plus running
+  pass/fail/skip counts. Use `scripts/test-watch.py start` / `status` / `wait`
+  (or an equivalent progress reporter) rather than a bare `pytest -q`, so a
+  long run can be polled and its progress reported.
