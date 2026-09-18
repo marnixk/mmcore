@@ -1687,10 +1687,101 @@ def test_editor_edit_menu_find_item(kernel_image):
         _edit(con, "FMENU.BAS")
         menu = _keys(con, bytes([1]) + b"e", quiet=0.5)
         assert "Find..." in menu
+        assert "Replace..." in menu
         opened = _keys(con, b"f", quiet=0.5)
         assert "Find:" in opened
         _keys(con, b"\x1b", quiet=0.6)
+        _keys(con, bytes([1]) + b"e", quiet=0.5)
+        replaced = _keys(con, b"r", quiet=0.5)
+        assert "Replace:" in replaced
+        _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_h_replace_one(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "REP.BAS")
+        _keys(con, b"foo foo")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        opened = _keys(con, bytes([8]), quiet=0.5)
+        assert "Replace:" in opened
+        _keys(con, b"foo", quiet=0.3)
+        _keys(con, b"\t", quiet=0.3)
+        _keys(con, b"bar", quiet=0.3)
+        _keys(con, b"\r", quiet=0.4)  # find first, no replace yet
+        _keys(con, b"\r", quiet=0.4)  # replace first
+        _keys(con, b"\r", quiet=0.4)  # replace second
+        _keys(con, b"\x1b", quiet=0.6)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "REP.BAS") == "bar bar"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_h_replace_all_confirms(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "REPALL.BAS")
+        _keys(con, b"aaa aaa aaa")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, bytes([8]), quiet=0.5)
+        _keys(con, b"aaa", quiet=0.3)
+        _keys(con, b"\t", quiet=0.3)
+        _keys(con, b"b", quiet=0.3)
+        asked = _keys(con, b"\x1b[29~", quiet=0.4)  # Ctrl+Enter (injected)
+        assert "Replace all 3 occurrences? (Y/N)" in asked
+        done = _keys(con, b"y", quiet=0.4)
+        assert "Replaced 3" in done
+        _keys(con, b"\x1b", quiet=0.6)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "REPALL.BAS") == "b b b"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_h_does_not_backspace_text(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "BS.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x7f", quiet=0.3)
+        opened = _keys(con, bytes([8]), quiet=0.5)
+        assert "Replace:" in opened
+        _keys(con, b"\x1b", quiet=0.6)
+        _keys(con, b"X", quiet=0.3)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "BS.BAS") == "HELLX"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_h_no_match_replace(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "NOMATCH.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, bytes([8]), quiet=0.5)
+        _keys(con, b"zz", quiet=0.3)
+        _keys(con, b"\t", quiet=0.3)
+        _keys(con, b"q", quiet=0.3)
+        miss = _keys(con, b"\r", quiet=0.4)
+        assert "Not found" in miss
+        _keys(con, b"\x1b", quiet=0.6)
+        _keys(con, b"Z", quiet=0.3)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "NOMATCH.BAS") == "ZHELLO"
     finally:
         con.stop()
 
