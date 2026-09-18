@@ -2929,6 +2929,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("EDIT")] = mmb_cmd_edit;
 		tab[mmb_kw_id("WORDPAD")] = mmb_cmd_wordpad;
 		tab[mmb_kw_id("CREDITS")] = mmb_cmd_credits;
+		tab[mmb_kw_id("AFK")] = mmb_cmd_afk;
 		tab[mmb_kw_id("PAUSE")] = mmb_cmd_pause;
 		tab[mmb_kw_id("VSYNC_WAIT")] = mmb_cmd_vsync_wait;
 		tab[mmb_kw_id("REBOOT")] = mmb_cmd_reboot;
@@ -3550,6 +3551,11 @@ static void exec_statement(void)
 		mmb_cmd_credits();
 		return;
 	}
+	if (mmb_match("AFK"))
+	{
+		mmb_cmd_afk();
+		return;
+	}
 	if (mmb_match("PAUSE"))
 	{
 		mmb_cmd_pause();
@@ -4051,4 +4057,5 @@ void mmb_poll(void)
 	mmb_ihelp_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
+	mmb_afk_poll();
 }

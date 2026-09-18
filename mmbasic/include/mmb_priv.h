@@ -866,6 +866,10 @@ int mmb_in_wordpad(void);
 const char *mmb_wordpad_key(char c);
 void mmb_wordpad_poll(void);
 void mmb_cmd_credits(void);
+void mmb_cmd_afk(void);
+int mmb_in_afk(void);
+void mmb_afk_key(char c);
+void mmb_afk_poll(void);
 
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);

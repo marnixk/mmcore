@@ -147,6 +147,12 @@ int mmb_in_wordpad(void);
 /* Feed a keystroke to WORDPAD. Returns text to emit (may be empty). */
 const char *mmb_wordpad_key(char c);
 
+/* True while AFK screensaver owns the screen/keyboard. */
+int mmb_in_afk(void);
+
+/* Feed a keystroke to AFK (Enter or Ctrl+C exits). */
+void mmb_afk_key(char c);
+
 /* Background work (audio decode/mix). */
 void mmb_poll(void);
 

@@ -833,6 +833,14 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		return;
 	}
 
+	if (mmb_in_afk ())
+	{
+		mmb_afk_key (c);
+		if (!mmb_in_afk ())
+			emit_prompt (this);
+		return;
+	}
+
 	if (mmb_in_connect ())
 	{
 		const char *out = mmb_connect_key (c);
@@ -939,6 +947,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		{
 			if (Result && Result[0])
 				emit (this, Result);
+		}
+		else if (mmb_in_afk ())
+		{
+			/* AFK owns the screen; no prompt. */
 		}
 		else if (!Result || !Result[0])
 		{
