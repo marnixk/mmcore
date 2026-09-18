@@ -327,7 +327,8 @@ def test_wordpad_follows_edit_theme_phosphor(kernel_image):
         _open(con)
         _keys(con, b"hello", quiet=0.5)
         time.sleep(0.3)
-        coords = [(x, y) for x in range(0, 160, 4) for y in range(8, 40, 4)]
+        ox = _pane_left_px(con)
+        coords = [(ox + x, y) for x in range(0, 160, 4) for y in range(0, 40, 4)]
         found_green = any(
             g > r + 40 and g > b + 40 for r, g, b in con.screen_pixels(coords)
         )
@@ -442,11 +443,13 @@ def test_wordpad_dialog_surface_stands_out(kernel_image):
     con.start()
     try:
         _open(con)
-        margin = con.screen_pixel(8, 80)
+        ox = _pane_left_px(con)
+        margin = con.screen_pixel(ox + 8, 80)
         _alt_menu(con, b"f", quiet=0.4)
         _keys(con, b"o", quiet=0.8)
         time.sleep(0.2)
-        dlg = con.screen_pixel(320, 240)
+        # The Open dialog is centred in the (possibly letterboxed) pane.
+        dlg = con.screen_pixel(ox + 320, 360)
         assert _lum(dlg) > _lum(margin) + 30, (dlg, margin)
         _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
