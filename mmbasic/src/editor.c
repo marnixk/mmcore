@@ -212,6 +212,87 @@ const unsigned *mmb_editor_palette(void)
 	return th()->pal;
 }
 
+static const unsigned ed_vga_pal[16] = {
+	0x000000u, 0xAA0000u, 0x00AA00u, 0xAA5500u,
+	0x0000AAu, 0xAA00AAu, 0x00AAAAu, 0xAAAAAAu,
+	0x555555u, 0xFF5555u, 0x55FF55u, 0xFFFF55u,
+	0x5555FFu, 0xFF55FFu, 0x55FFFFu, 0xFFFFFFu
+};
+
+typedef struct {
+	const char *name;
+	int off;
+} ed_theme_role;
+
+static const ed_theme_role k_theme_roles[] = {
+	{ "MENU_FG", offsetof(mmb_ed_theme, menu_fg) },
+	{ "MENU_BG", offsetof(mmb_ed_theme, menu_bg) },
+	{ "MENU_HOT", offsetof(mmb_ed_theme, hot) },
+	{ "SELECT_FG", offsetof(mmb_ed_theme, sel_fg) },
+	{ "SELECT_BG", offsetof(mmb_ed_theme, sel_bg) },
+	{ "TEXT_FG", offsetof(mmb_ed_theme, edit_fg) },
+	{ "TEXT_BG", offsetof(mmb_ed_theme, edit_bg) },
+	{ "MARK_FG", offsetof(mmb_ed_theme, mark_fg) },
+	{ "MARK_BG", offsetof(mmb_ed_theme, mark_bg) },
+	{ "STRING_FG", offsetof(mmb_ed_theme, str_fg) },
+	{ "NUMBER_FG", offsetof(mmb_ed_theme, num_fg) },
+	{ "COMMENT_FG", offsetof(mmb_ed_theme, cmt_fg) },
+	{ "BORDER_FG", offsetof(mmb_ed_theme, brd_fg) },
+	{ "BORDER_BG", offsetof(mmb_ed_theme, brd_bg) },
+	{ "TAB_FG", offsetof(mmb_ed_theme, tab_fg) },
+	{ "TAB_BG", offsetof(mmb_ed_theme, tab_bg) },
+	{ "TAB_ACTIVE_FG", offsetof(mmb_ed_theme, tabcur_fg) },
+	{ "TAB_ACTIVE_BG", offsetof(mmb_ed_theme, tabcur_bg) },
+	{ "DIALOG_FG", offsetof(mmb_ed_theme, dlg_fg) },
+	{ "DIALOG_BG", offsetof(mmb_ed_theme, dlg_bg) },
+	{ "SHADOW_FG", offsetof(mmb_ed_theme, sh_fg) },
+	{ "SHADOW_BG", offsetof(mmb_ed_theme, sh_bg) },
+	{ "LIST_BG", offsetof(mmb_ed_theme, list_bg) },
+	{ "ERROR_FG", offsetof(mmb_ed_theme, err_fg) },
+	{ "ERROR_BG", offsetof(mmb_ed_theme, err_bg) },
+	{ "FIELD_FG", offsetof(mmb_ed_theme, field_fg) },
+	{ "FIELD_BG", offsetof(mmb_ed_theme, field_bg) },
+};
+
+int mmb_editor_theme_field(const char *name, unsigned char *idx)
+{
+	char up[32];
+	int i, n;
+	const mmb_ed_theme *t = th();
+
+	if (!name || !idx || !name[0])
+		return 0;
+	n = (int)strlen(name);
+	if (n >= (int)sizeof(up))
+		n = (int)sizeof(up) - 1;
+	memcpy(up, name, (unsigned)n);
+	up[n] = 0;
+	mmb_upper(up);
+	for (i = 0; i < (int)(sizeof(k_theme_roles) / sizeof(k_theme_roles[0])); i++)
+	{
+		if (mmb_keyword_eq(up, k_theme_roles[i].name))
+		{
+			*idx = *((const unsigned char *)t + k_theme_roles[i].off);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int mmb_editor_theme_rgb(const char *name, unsigned *rgb)
+{
+	unsigned char idx;
+	const unsigned *pal;
+
+	if (!rgb || !mmb_editor_theme_field(name, &idx))
+		return 0;
+	pal = mmb_editor_palette();
+	if (!pal)
+		pal = ed_vga_pal;
+	*rgb = pal[idx & 15] & 0xFFFFFFu;
+	return 1;
+}
+
 void mmb_editor_apply_tui_palette(void)
 {
 	tui_set_palette(mmb_editor_palette());

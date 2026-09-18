@@ -10,7 +10,7 @@ Commands  (HELP topic for details)
 
 Graphics
   ~CLS~ ~PIXEL~ ~LINE~ ~BOX~ ~CIRCLE~ ~RBOX~ ~ARC~ ~TRIANGLE~
-  ~POLYGON~ ~TEXT~ ~FONT~ ~COLOUR~ ~MODE~ ~PAGE~ ~BLIT~
+  ~POLYGON~ ~TEXT~ ~FONT~ ~COLOUR~ ~THEME~ ~MODE~ ~PAGE~ ~BLIT~
   ~IMAGE~ ~FRAMEBUFFER~ ~TURTLE~ ~SPRITE~
 
 Files
