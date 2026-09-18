@@ -1,0 +1,8 @@
+name: ATAN2
+kind: command
+
+Return the angle of the vector (x, y) with quadrant.
+
+angle = ATAN2(y, x)
+
+Same as ~ATN2~.

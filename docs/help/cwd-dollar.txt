@@ -1,0 +1,12 @@
+name: CWD$
+kind: command
+
+Return the current working directory.
+
+path$ = CWD$
+
+See also ~CHDIR~, ~DRIVE~.
+
+Example:
+
+    PRINT CWD$

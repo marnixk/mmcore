@@ -1,0 +1,12 @@
+name: MM.DEVICE$
+kind: command
+
+Return the device name this build reports.
+
+name$ = MM.DEVICE$
+
+See also ~MM.VER~.
+
+Example:
+
+    PRINT MM.DEVICE$

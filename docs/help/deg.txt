@@ -1,0 +1,12 @@
+name: DEG
+kind: command
+
+Convert an angle in radians to degrees.
+
+degrees = DEG(radians)
+
+See also ~RAD~, ~PI~.
+
+Example:
+
+    PRINT DEG(PI)       ' 180

@@ -130,9 +130,9 @@ def test_turtle_and_bitmap(fresh_console):
 
 def test_help_cmm2_gfx_topics(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
-    for name in ("IMAGE", "FRAMEBUFFER", "TURTLE"):
+    for name in ("IMAGE", "FRAMEBUFFER", "TURTLE", "GUI"):
         assert name in listing, name
-    assert "GUI" not in listing
+    assert "CAMERA" not in listing
     close_ihelp(console)
     img = dump_topic(console, "IMAGE")
     assert "RESIZE_FAST" in img

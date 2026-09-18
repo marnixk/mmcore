@@ -1,0 +1,14 @@
+name: EVAL
+kind: command
+
+Evaluate a string as an expression and return its value.
+
+value = EVAL(expr$)
+
+  expr$ - expression text
+
+See also ~EXECUTE~, ~MATH~.
+
+Example:
+
+    PRINT EVAL("1+2*3")     ' 7

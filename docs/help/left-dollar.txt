@@ -1,0 +1,14 @@
+name: LEFT$
+kind: command
+
+Return the leftmost n characters of a string.
+
+string$ = LEFT$(string$, n)
+
+  n - number of characters; 0 for none, clamped to the string length
+
+See also ~RIGHT$~, ~MID$~.
+
+Example:
+
+    PRINT LEFT$("MMBASIC", 2)   ' MM

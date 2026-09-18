@@ -1,0 +1,14 @@
+name: CHOICE
+kind: command
+
+Select one of two values by a condition.
+
+value = CHOICE(condition, when_true, when_false)
+
+  condition - non-zero selects when_true, zero selects when_false
+
+See also ~IF~.
+
+Example:
+
+    PRINT CHOICE(1 > 0, "yes", "no")

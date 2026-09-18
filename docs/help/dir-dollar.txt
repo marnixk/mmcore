@@ -1,0 +1,21 @@
+name: DIR$
+kind: command
+
+Iterate over directory entries.
+
+entry$ = DIR$(spec$ [, filter$])
+entry$ = DIR$("")
+
+  spec$   - path or wildcard; starts a new listing
+  filter$ - "DIR", "FILE" or "ALL" (default)
+  DIR$("")- returns the next entry of the current listing, or "" at the end
+
+See also ~DIR~.
+
+Example:
+
+    DO
+      f$ = DIR$("A:/*.BAS")
+      IF f$ = "" THEN EXIT DO
+      PRINT f$
+    LOOP

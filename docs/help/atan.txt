@@ -1,0 +1,12 @@
+name: ATAN
+kind: command
+
+Return the arctangent of a number in radians.
+
+value = ATAN(number)
+
+Same as ~ATN~.
+
+Example:
+
+    PRINT ATAN(1)

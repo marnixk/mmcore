@@ -1,0 +1,13 @@
+name: ASIN
+kind: command
+
+Return the arcsine of a number in radians (-PI/2..PI/2).
+
+value = ASIN(number)
+
+ASN is a synonym. OPTION ANGLE DEGREES makes the result degrees. See also
+~ACOS~, ~ATN~.
+
+Example:
+
+    PRINT ASIN(1)       ' PI/2

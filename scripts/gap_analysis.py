@@ -506,100 +506,71 @@ def mark(flag: bool) -> str:
     return "x" if flag else ""
 
 
-def load_help_names() -> set[str]:
+CATCH_ALL = {"FUNCTIONS", "MATH"}
+COVERAGE = os.path.join(REPO, "scripts", "data", "help_coverage.tsv")
+
+
+def load_coverage(path: str = COVERAGE) -> dict[str, tuple[str, str, str]]:
+    """Read the checked-in symbol -> topic-or-alias coverage list."""
+    cov: dict[str, tuple[str, str, str]] = {}
+    with open(path, encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 4:
+                raise SystemExit(f"{path}:{lineno}: expected 4 tab fields: {line!r}")
+            sym, target, kind, note = (p.strip() for p in parts[:4])
+            if not sym:
+                continue
+            key = sym.upper()
+            if key in cov:
+                raise SystemExit(f"{path}:{lineno}: duplicate symbol {sym}")
+            if kind not in ("topic", "alias"):
+                raise SystemExit(f"{path}:{lineno}: kind must be topic or alias")
+            cov[key] = (target.upper(), kind, note)
+    return cov
+
+
+def audit_help(mm_cmds: set[str], mm_funs: set[str]) -> int:
+    """Fail when an implemented symbol has no HELP topic and no justified alias.
+
+    Every symbol must appear in scripts/data/help_coverage.tsv. A symbol marked
+    ``alias`` may not be covered only by a catch-all catalogue page such as
+    FUNCTIONS or MATH: it needs a topic, or an alias to a real command page.
+    """
     sys.path.insert(0, os.path.join(REPO, "scripts"))
     import gen_help  # noqa: WPS433
 
     topics = gen_help.load_topics(HELP_DIR)
-    aliases = gen_help.collect_aliases(topics)
     names = {t["name"].upper() for t in topics}
-    names.update(a.upper() for a, _ in aliases)
-    return names
-
-
-# Parent topic for multi-subcommand / alias families (audit)
-HELP_PARENT = {
-    "IHELP": "HELP",
-    "COLOR": "COLOUR",
-    "ERASE": "CLEAR",
-    "RESTART": "REBOOT",
-    "RM": "KILL",
-    "DEL": "KILL",
-    "MV": "RENAME",
-    "NAME": "RENAME",
-    "LS": "DIR",
-    "FACTORY": "FACTORY_RESET",
-    "SQRT": "SQR",
-    "ATAN": "ATN",
-    "ATN2": "ATN",
-    "ACS": "ACOS",
-    "ASN": "ASIN",
-    "MM.INFO$": "MM.INFO",
-    "JSON_STRINGIFY$": "JSON_STRINGIFY$",
-    "AUDIO": "AUDIO_TARGET",
-    "GUI": "BITMAP",
-    "GUI BITMAP": "BITMAP",
-}
-
-
-def audit_help(mm_cmds: set[str], mm_funs: set[str]) -> int:
-    help_names = load_help_names()
-    missing = []
-    # Top-level symbols that should have a topic (skip pure END/ELSE pieces listed under parents)
-    skip = {
-        "ELSE",
-        "ELSEIF",
-        "ENDIF",
-        "THEN",
-        "CASE",
-        "LOOP",
-        "NEXT",
-        "WEND",
-        "RETURN",
-        "TO",
-        "STEP",
-        "AS",
-        "?",
-    }
+    cov = load_coverage()
+    problems = []
     for name in sorted(mm_cmds | mm_funs):
-        if name in skip:
+        entry = cov.get(name)
+        if entry is None:
+            problems.append(f"{name}: no entry in help_coverage.tsv")
             continue
-        parent = HELP_PARENT.get(name, name.split()[0] if " " in name else name)
-        # compound forms covered by parent topic
-        if name.startswith(("END ", "EXIT ", "CONTINUE ", "ON ", "LIST ", "FACTORY ", "GUI ", "SELECT ")):
-            parent = {
-                "END IF": "IF",
-                "END SELECT": "SELECT CASE",
-                "END SUB": "SUB",
-                "END FUNCTION": "FUNCTION",
-                "END TYPE": "TYPE",
-                "EXIT FOR": "EXIT",
-                "EXIT DO": "EXIT",
-                "EXIT SUB": "EXIT",
-                "EXIT FUNCTION": "EXIT",
-                "CONTINUE FOR": "CONTINUE",
-                "CONTINUE DO": "CONTINUE",
-                "ON GOTO": "ON",
-                "ON GOSUB": "ON",
-                "ON KEY": "ON",
-                "ON ERROR": "ON",
-                "LIST FILES": "LIST",
-                "LIST TYPE": "LIST",
-                "FACTORY RESET": "FACTORY_RESET",
-                "GUI BITMAP": "BITMAP",
-                "SELECT CASE": "SELECT CASE",
-                "LINE INPUT": "LINE INPUT",
-            }.get(name, parent)
-        candidates = {name, parent, name.replace(".", ""), parent.replace(" ", "")}
-        if not (candidates & help_names):
-            # also try without $
-            if name.endswith("$") and name[:-1] in help_names:
-                continue
-            missing.append(name)
-    print(f"mmCore symbols missing HELP topic: {len(missing)}")
-    for n in missing:
-        print(f"  {n}")
-    return 0 if not missing else 1
+        target, kind, note = entry
+        if target not in names:
+            problems.append(f"{name}: target {target} is not a help topic")
+            continue
+        if kind == "topic" and target != name:
+            problems.append(f"{name}: marked topic but targets {target}")
+        if kind == "alias" and target in CATCH_ALL and "catch-all" not in note.lower():
+            problems.append(
+                f"{name}: alias-only to catch-all {target} (needs its own topic)"
+            )
+    stale = sorted(s for s in cov if s not in (mm_cmds | mm_funs))
+    print(f"mmCore symbols missing/incorrect HELP coverage: {len(problems)}")
+    for p in problems:
+        print(f"  {p}")
+    if stale:
+        print(f"note: {len(stale)} stale coverage entries (no longer implemented):")
+        for s in stale:
+            print(f"  {s}")
+    return 0 if not problems else 1
 
 
 def write_report(

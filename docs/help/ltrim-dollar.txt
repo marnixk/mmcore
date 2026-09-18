@@ -1,0 +1,14 @@
+name: LTRIM$
+kind: command
+
+Strip characters from the left of a string.
+
+string$ = LTRIM$(string$ [, mask$])
+
+  mask$ - characters to remove (default a space)
+
+See also ~RTRIM$~, ~TRIM$~.
+
+Example:
+
+    PRINT "[" + LTRIM$("   hi") + "]"

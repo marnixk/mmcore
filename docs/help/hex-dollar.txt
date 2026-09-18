@@ -1,0 +1,14 @@
+name: HEX$
+kind: command
+
+Return the hexadecimal digits of an integer, unsigned.
+
+string$ = HEX$(number)
+
+  number - integer value
+
+See also ~BIN$~, ~OCT$~, ~BASE$~.
+
+Example:
+
+    PRINT HEX$(255)     ' FF

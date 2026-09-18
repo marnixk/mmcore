@@ -1,0 +1,15 @@
+name: DAY$
+kind: command
+
+Return the weekday name for a date.
+
+string$ = DAY$(date$)
+string$ = DAY$(NOW)
+
+  date$ - "dd-mm-yyyy"
+
+See also ~DATETIME$~, ~EPOCH~.
+
+Example:
+
+    PRINT DAY$("01-01-1970")

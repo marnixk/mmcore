@@ -1,0 +1,12 @@
+name: MM.VER
+kind: command
+
+Return the MMBasic compatibility version string.
+
+version$ = MM.VER
+
+See also ~MM.DEVICE$~, ~CMM2~.
+
+Example:
+
+    PRINT MM.VER

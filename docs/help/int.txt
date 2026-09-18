@@ -1,0 +1,13 @@
+name: INT
+kind: command
+
+Round a number down towards minus infinity (floor).
+
+value = INT(number)
+
+INT(-1.5) is -2; use ~FIX~ to truncate towards zero and ~CINT~ to round.
+
+Example:
+
+    PRINT INT(1.9)      ' 1
+    PRINT INT(-1.5)     ' -2

@@ -1,0 +1,14 @@
+name: SPACE$
+kind: command
+
+Return a string of n spaces.
+
+string$ = SPACE$(n)
+
+  n - count; negative counts return ""
+
+See also ~STRING$~.
+
+Example:
+
+    PRINT "[" + SPACE$(3) + "]"

@@ -1,0 +1,16 @@
+name: BOUND
+kind: command
+
+Return the declared length of an array dimension.
+
+n = BOUND(array(), dim)
+
+  array() - array name with empty parentheses
+  dim     - 1-based dimension; 0 when the dimension is out of range
+
+See also ~DIM~, ~ARRAY~.
+
+Example:
+
+    DIM A(10)
+    PRINT BOUND(A(), 1)     ' 11

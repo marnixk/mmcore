@@ -58,6 +58,30 @@ def test_unknown_link_fails_generate(tmp_path):
         gen_help.validate_links([topic], [])
 
 
+def test_help_audit_has_no_alias_only_catchalls():
+    """Every implemented symbol has a topic or justified alias (see #395)."""
+    import gap_analysis  # noqa: E402
+
+    coverage = os.path.join(REPO, "scripts", "data", "help_coverage.tsv")
+    assert os.path.isfile(coverage)
+    cmds = gap_analysis.extract_mmcore_commands()
+    funs = gap_analysis.extract_mmcore_functions()
+    assert gap_analysis.audit_help(cmds, funs) == 0
+
+
+def test_help_audit_fails_on_missing_and_catchall(monkeypatch, capsys):
+    import gap_analysis  # noqa: E402
+
+    cmds = gap_analysis.extract_mmcore_commands()
+    funs = gap_analysis.extract_mmcore_functions()
+    monkeypatch.setattr(gap_analysis, "load_coverage", lambda path=None: {})
+    assert gap_analysis.audit_help(cmds, funs) == 1
+    catch = {s: ("FUNCTIONS", "alias", "alias") for s in (cmds | funs)}
+    monkeypatch.setattr(gap_analysis, "load_coverage", lambda path=None: catch)
+    assert gap_analysis.audit_help(cmds, funs) == 1
+    capsys.readouterr()
+
+
 def test_new_txt_files_are_topics(tmp_path, monkeypatch):
     src = os.path.join(REPO, "docs", "help")
     sample = open(os.path.join(src, "cls.txt"), encoding="utf-8").read()

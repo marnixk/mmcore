@@ -1,0 +1,16 @@
+name: FORMAT$
+kind: command
+
+Format a number as a decimal string.
+
+string$ = FORMAT$(number)
+string$ = FORMAT$(format$, number)
+
+  format$ - accepted for CMM2 compatibility; the value is formatted as an
+            integer
+
+See also ~STR$~, ~BASE$~.
+
+Example:
+
+    PRINT FORMAT$(255)

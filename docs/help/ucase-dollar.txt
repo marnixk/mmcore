@@ -1,0 +1,12 @@
+name: UCASE$
+kind: command
+
+Return a string with all letters converted to upper case.
+
+string$ = UCASE$(string$)
+
+See also ~LCASE$~.
+
+Example:
+
+    PRINT UCASE$("MmBasic")

@@ -1,0 +1,12 @@
+name: FIX
+kind: command
+
+Truncate a number towards zero, discarding the fraction.
+
+value = FIX(number)
+
+See also ~INT~, ~CINT~.
+
+Example:
+
+    PRINT FIX(-1.5)     ' -1

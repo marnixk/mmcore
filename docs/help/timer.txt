@@ -1,0 +1,15 @@
+name: TIMER
+kind: command
+
+Return milliseconds since the program or console started.
+
+ms = TIMER
+
+The value wraps with the system clock; use differences for timing. See also
+~PAUSE~, ~SETTICK~.
+
+Example:
+
+    t = TIMER
+    PAUSE 100
+    PRINT TIMER - t

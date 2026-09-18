@@ -1,0 +1,12 @@
+name: EXP
+kind: command
+
+Return e raised to a power.
+
+value = EXP(number)
+
+See also ~LOG~.
+
+Example:
+
+    PRINT EXP(0)        ' 1

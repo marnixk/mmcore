@@ -1,0 +1,15 @@
+name: VAL
+kind: command
+
+Parse the leading number in a string. Stops at the first invalid
+character; returns 0 when the string does not start with a number.
+
+number = VAL(string$)
+
+  string$ - leading spaces are skipped; an optional leading '-' is honoured
+
+See also ~STR$~.
+
+Example:
+
+    PRINT VAL("  -12.5abc")     ' -12.5

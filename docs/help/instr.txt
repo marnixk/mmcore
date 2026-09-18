@@ -1,0 +1,16 @@
+name: INSTR
+kind: command
+
+Find a substring. Returns its 1-based position, or 0 when absent.
+
+pos = INSTR([start,] haystack$, needle$)
+
+  start    - 1-based position to begin the search (default 1)
+  haystack$ - string to search
+  needle$  - substring to find; "" returns start
+
+See also ~LEFT$~, ~MID$~, ~FIELD$~.
+
+Example:
+
+    PRINT INSTR("MMBASIC", "BAS")   ' 3

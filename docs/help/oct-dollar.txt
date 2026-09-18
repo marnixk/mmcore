@@ -1,0 +1,12 @@
+name: OCT$
+kind: command
+
+Return the octal digits of an integer, unsigned.
+
+string$ = OCT$(number)
+
+See also ~HEX$~, ~BIN$~, ~BASE$~.
+
+Example:
+
+    PRINT OCT$(8)       ' 10

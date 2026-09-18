@@ -1,0 +1,12 @@
+name: DATE$
+kind: command
+
+Return the current date as a string.
+
+date$ = DATE$
+
+Assign to DATE$ to set it. See also ~TIME$~, ~DATETIME$~, ~EPOCH~.
+
+Example:
+
+    PRINT DATE$

@@ -1,0 +1,17 @@
+name: BASE$
+kind: command
+
+Format an integer in any base from 2 to 36, zero-padded.
+
+string$ = BASE$(base, number [, length])
+
+  base   - 2..36; digits above 9 use A-Z
+  number - integer value
+  length - optional minimum width, padded with leading zeros
+
+See also ~HEX$~, ~OCT$~, ~BIN$~.
+
+Example:
+
+    PRINT BASE$(2, 5)       ' 101
+    PRINT BASE$(36, 35)     ' Z

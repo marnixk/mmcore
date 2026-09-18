@@ -72,6 +72,6 @@ def test_theme_help_topic_exists_and_is_linked():
     assert "~THEME~" in colour
     functions = (ROOT / "docs" / "help" / "functions.txt").read_text()
     assert "THEME(name$)" in functions
-    # THEME must keep its own page, not be folded into FUNCTIONS aliases.
-    alias_line = [l for l in functions.splitlines() if l.startswith("alias:")][0]
-    assert "THEME" not in alias_line
+    # THEME keeps its own page: FUNCTIONS must not alias it (nor anything now
+    # that every listed function has a topic; see #395).
+    assert not any(l.startswith("alias:") for l in functions.splitlines())

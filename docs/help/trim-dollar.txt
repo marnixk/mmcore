@@ -1,0 +1,15 @@
+name: TRIM$
+kind: command
+
+Strip characters from the left, right or both ends of a string.
+
+string$ = TRIM$(string$ [, mask$ [, where$]])
+
+  mask$  - characters to remove (default a space)
+  where$ - "L", "R" or "B" for left, right or both (default "B")
+
+See also ~LTRIM$~, ~RTRIM$~.
+
+Example:
+
+    PRINT "[" + TRIM$("  hi  ") + "]"

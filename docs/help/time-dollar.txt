@@ -1,0 +1,12 @@
+name: TIME$
+kind: command
+
+Return the current time as a string.
+
+time$ = TIME$
+
+Assign to TIME$ to set it. See also ~DATE$~, ~TIMER~.
+
+Example:
+
+    PRINT TIME$

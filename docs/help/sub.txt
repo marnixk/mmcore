@@ -1,28 +1,19 @@
 name: SUB
 kind: language
-alias: FUNCTION, END SUB, END FUNCTION
+alias: END SUB
 
-Define a subroutine or function. CALL name runs a SUB. A FUNCTION is used in
-an expression as name(). Assign to the function name to return a value.
+Define a subroutine. CALL name runs it.
 
-SUB name
+SUB name [([arg [AS type] [, ...])]]
   statements
+  EXIT SUB
 END SUB
 
-FUNCTION name
-  statements
-END FUNCTION
+CALL name [arg [, arg...]]
 
-CALL name
-
-Parameters and FUNCTION may use AS typename for a TYPE (see ~TYPE~). The
-function name is a local of that type; assign members, copy a whole struct
-into it, or STRUCT COPY src TO name. Callers assign the result:
-
-    DIM m AS Message
-    m = WaitMsg()
-
-SUBs take TYPE args the same way: SUB Hi(m AS Message).
+Parameters may use AS typename for a TYPE (see ~TYPE~). SUBs take TYPE args the
+same way: SUB Hi(m AS Message). For a routine that returns a value see
+~FUNCTION~.
 
 Example:
 
@@ -30,11 +21,6 @@ Example:
       PRINT 6 * 7
     END SUB
     CALL HI
-
-    FUNCTION RandByte()
-      RandByte = INT(RND * 256)
-    END FUNCTION
-    PRINT RandByte()
 
     TYPE Point
       X AS INTEGER

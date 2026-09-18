@@ -1,0 +1,12 @@
+name: SQR
+kind: command
+
+Return the square root of a non-negative number.
+
+value = SQR(number)
+
+SQRT is a synonym. See also ~MATH~.
+
+Example:
+
+    PRINT SQR(9)        ' 3

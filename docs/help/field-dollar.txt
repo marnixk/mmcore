@@ -1,0 +1,16 @@
+name: FIELD$
+kind: command
+
+Return one field from a delimited string.
+
+string$ = FIELD$(string$, n [, delim$ [, quote$]])
+
+  n      - 1-based field number
+  delim$ - any of these characters separates fields (default comma)
+  quote$ - delimiters inside a quoted run are ignored
+
+See also ~INSTR~.
+
+Example:
+
+    PRINT FIELD$("a,b,c", 2)        ' b

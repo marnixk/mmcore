@@ -1,0 +1,12 @@
+name: SIN
+kind: command
+
+Return the sine of an angle in radians.
+
+value = SIN(angle)
+
+OPTION ANGLE DEGREES makes the argument degrees. See also ~COS~, ~TAN~, ~RAD~.
+
+Example:
+
+    PRINT SIN(PI / 2)   ' 1

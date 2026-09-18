@@ -1,0 +1,14 @@
+name: LOC
+kind: command
+
+Return the current position of an open file.
+
+pos = LOC(#n)
+
+  n - open file number; for TCP, bytes waiting to be read
+
+See also ~EOF~, ~LOF~, ~SEEK~.
+
+Example:
+
+    PRINT LOC(#1)

@@ -1,0 +1,12 @@
+name: BIN$
+kind: command
+
+Return the binary digits of an integer, unsigned.
+
+string$ = BIN$(number)
+
+See also ~HEX$~, ~OCT$~, ~BASE$~.
+
+Example:
+
+    PRINT BIN$(5)       ' 101

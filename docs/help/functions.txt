@@ -1,9 +1,8 @@
 name: FUNCTIONS
 kind: command
-alias: ABS, SIN, COS, TAN, ATN, ACOS, ACS, ASIN, ASN, RND, LEN, LEFT$, RIGHT$, INSTR, VAL, STR$, CHR$, ASC, EOF, LOF, LOC, TIMER, RGB, MAX, MIN, FORMAT$, BOUND, DEG, RAD, POS, CHOICE, TAB, SGN, EXP, LOG, PI, DATE$, TIME$, CWD$, UCASE$, LCASE$, HEX$, OCT$, BIN$, SPACE$, STRING$, FIX, SQR, SQRT, ATAN, ATN2, ATAN2, INT, PLAYING, MM.HRES, MM.VRES, MM.INFO, MM.INFO$, MM.VER, MM.DEVICE$, MM.CMDLINE$, MM.HPOS, MM.VPOS, KEYDOWN, CINT, EVAL, CSRLIN, LTRIM$, RTRIM$, TRIM$, BASE$, FIELD$, DATETIME$, DAY$, DIR$
 
-Catalogue of functions for use in expressions. Type HELP FUNCTIONS, or HELP
-and the function name when it is listed as an alias of this topic.
+Catalogue of functions for use in expressions. Every function listed here has
+its own topic: type HELP and the function name, or browse the Index.
 
 FUNCTIONS
 

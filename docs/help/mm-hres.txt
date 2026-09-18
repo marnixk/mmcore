@@ -1,0 +1,12 @@
+name: MM.HRES
+kind: command
+
+Return the width of the current graphics mode in pixels.
+
+width = MM.HRES
+
+See also ~MM.VRES~, ~MODE~.
+
+Example:
+
+    PRINT MM.HRES

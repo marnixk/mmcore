@@ -1,0 +1,13 @@
+name: PI
+kind: command
+
+Return the constant pi (3.141592653589793).
+
+value = PI
+
+Note: PI has no parentheses. See also ~DEG~, ~RAD~.
+
+Example:
+
+    PRINT PI
+    PRINT 2 * PI * 5        ' circumference
