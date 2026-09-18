@@ -1,6 +1,9 @@
 #include "mmb_priv.h"
 
-#define VFS_MAX 128
+/* Ramdisk node budget shared by the A: ramdisk and the build-time ramdisk/
+ * seeding (scripts/gen_ramdisk.py reads this define). Each seeded file and
+ * each directory it needs counts as one node. */
+#define VFS_MAX 256
 #define PKG_MAX 96
 #define MMB_DRIVE_LO  'A'
 #define MMB_DRIVE_HI  'H'
@@ -85,7 +88,7 @@ static int ram_walk(vfs_node *ns, int max, const char *path, int create_file, in
 			if (ch < 0)
 			{
 				int i, last = !*p;
-				if (!(create_dir || (create_file && last)))
+				if (!(create_dir || create_file))
 					return -1;
 				for (i = 0; i < max; i++)
 					if (!ns[i].used)

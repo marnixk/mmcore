@@ -30,6 +30,7 @@ a submodule.
 | `circle/` | Circle bare-metal runtime (git submodule) |
 | `picomite-fork/` | Upstream MMBasic reference submodule (not compiled) |
 | `mmbasic/` | Local MMBasic interpreter, commands, and vendored codecs |
+| `ramdisk/` | Versioned A: ramdisk seed tree, embedded at build time (see `ramdisk/README.md`) |
 | `console/` | Bare-metal console app (Circle kernel) hosting the interpreter |
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
@@ -55,6 +56,9 @@ scripts/build.sh                         # console/kernel8.img (RPi3, QEMU)
 QEMU=0 RASPPI=4 scripts/build.sh         # console/kernel8-rpi4.img (Pi 400)
 scripts/package-release.sh               # hardware zips in dist/
 ```
+
+`ramdisk/` is embedded and seeded into A: at boot. `RAMDISK_EXCLUDE=tests`
+omits a top-level folder (release builds drop the test fixtures).
 
 Run it on real hardware: see [`INSTALL.md`](INSTALL.md). GitHub **Releases**
 ship FAT32 SD-card zips for Pi 3 / 3B+ / 3A+, Pi Zero 2, Pi Zero 2 W, and

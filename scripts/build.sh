@@ -129,10 +129,11 @@ rm -f "${CONSOLE_DIR}/wlan.o" "${CONSOLE_DIR}/wlan.d" \
       "${CONSOLE_DIR}/eth.o" "${CONSOLE_DIR}/eth.d"
 
 log "Building console kernel image"
+RAMDISK_EXCLUDE="${RAMDISK_EXCLUDE:-}"
 if [ -n "${MMB_VERSION:-}" ]; then
-  make -C "${CONSOLE_DIR}" -j"$(nproc)" MMB_VERSION="${MMB_VERSION}"
+  make -C "${CONSOLE_DIR}" -j"$(nproc)" MMB_VERSION="${MMB_VERSION}" RAMDISK_EXCLUDE="${RAMDISK_EXCLUDE}"
 else
-  make -C "${CONSOLE_DIR}" -j"$(nproc)"
+  make -C "${CONSOLE_DIR}" -j"$(nproc)" RAMDISK_EXCLUDE="${RAMDISK_EXCLUDE}"
 fi
 
 KERNEL_NAME="kernel8.img"

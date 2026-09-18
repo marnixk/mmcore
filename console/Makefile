@@ -56,6 +56,8 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/editor.o \
 	  $(MMB)/src/assets.o \
+	  $(MMB)/src/ramdisk.o \
+	  $(MMB)/src/ramdisk_data.o \
 	  $(MMB)/src/libc_shims.o \
 	  $(MMB)/third_party/picojpeg.o \
 	  $(MMB)/third_party/hxcmod.o \
@@ -89,8 +91,16 @@ endif
 # RASPPI switch (Pi 3 vs Pi 4 / 400) cannot relink stale -mcpu objects.
 HELP_DOCS = $(wildcard $(MMB)/../docs/help/*.txt)
 
+# Versioned ramdisk/ tree embedded into the kernel. RAMDISK_EXCLUDE is a
+# comma-separated list of top-level folders to omit (release builds drop
+# `tests`). The mode stamp forces a regenerate when the option changes.
+RAMDISK_EXCLUDE ?=
+RAMDISK_FILES = $(shell find $(MMB)/../ramdisk -type f 2>/dev/null)
+RAMDISK_STAMP = $(MMB)/src/ramdisk_data.stamp
+
 EXTRACLEAN = $(MMB)/src/*.o $(MMB)/src/*.d \
 	     $(MMB)/src/help_data.c \
+	     $(MMB)/src/ramdisk_data.c $(MMB)/src/ramdisk_data.stamp \
 	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d \
 	     mmb_version.h
 
@@ -101,6 +111,12 @@ mmb_version.h: FORCE
 
 $(MMB)/src/help_data.c: $(MMB)/../scripts/gen_help.py $(HELP_DOCS)
 	python3 $(MMB)/../scripts/gen_help.py $(MMB)/src/help_data.c
+
+$(RAMDISK_STAMP): FORCE
+	@printf '%s' "$(RAMDISK_EXCLUDE)" | cmp -s - $@ || printf '%s' "$(RAMDISK_EXCLUDE)" > $@
+
+$(MMB)/src/ramdisk_data.c: $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
+	python3 $(MMB)/../scripts/gen_ramdisk.py --out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
 $(MMB)/src/util.o $(MMB)/src/cmd_credits.o: mmb_version.h
 
