@@ -33,8 +33,8 @@ Keys: F1 keyword HELP  F2 save  F3 open  F4 #include  F9 run  ^S save
       Enter copies line indent
       ^P quick open (files under the start folder)
       ^O outline (SUB/FUNCTION/TYPE in the current file)
-      ^F find in file (Enter/F3 next match, Esc closes)
-      ^H find and replace (Tab switches fields, Enter replaces, ^Enter all)
+      ^F find in file (Enter/F3 next match; Esc leaves cursor at the match)
+      ^H find and replace (Tab switches fields, Enter replaces, ^Enter all; Esc leaves cursor at the match)
       F1 opens HELP for the word at the cursor (Esc returns)
       F4 opens the #include file on this line (or switches to its tab)
       Alt+1..9 switch tabs

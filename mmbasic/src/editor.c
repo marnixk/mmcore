@@ -2022,15 +2022,27 @@ static void find_close(int restore)
 		return;
 	find_active = 0;
 	find_confirm = 0;
-	find_have_match = 0;
 	if (restore && t)
 	{
-		t->cx = find_cx;
-		t->row0 = find_row0;
-		t->col0 = find_col0;
-		t->sel = find_sel;
-		t->sel_anchor = find_anchor;
+		if (find_have_match)
+		{
+			/* Leave the cursor at the start of the found match so the
+			 * user can act on it, keeping the view scrolled to it. */
+			t->cx = find_lo;
+			t->sel_anchor = find_lo;
+			t->sel = 0;
+			ensure_visible();
+		}
+		else
+		{
+			t->cx = find_cx;
+			t->row0 = find_row0;
+			t->col0 = find_col0;
+			t->sel = find_sel;
+			t->sel_anchor = find_anchor;
+		}
 	}
+	find_have_match = 0;
 }
 
 static int find_match_at(mmb_ed_tab *t, int off, int qn)
