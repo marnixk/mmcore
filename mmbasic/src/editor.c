@@ -994,6 +994,8 @@ static void outline_scan(void)
 			kind = "SUB";
 		else if (outline_kw(p, "FUNCTION"))
 			kind = "FUNCTION";
+		else if (outline_kw(p, "TYPE"))
+			kind = "TYPE";
 		if (kind)
 		{
 			char lab[128];

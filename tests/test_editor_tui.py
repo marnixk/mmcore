@@ -1478,6 +1478,13 @@ def _seed_outline_bas(con, path="NAV.BAS"):
         "FUNCTION Math.Add",
         "Math.Add = 1",
         "END FUNCTION",
+        "TYPE Point",
+        "x AS INTEGER",
+        "y AS INTEGER",
+        "END TYPE",
+        "' TYPE Hidden",
+        "REM TYPE Hidden2",
+        "type Lower.Case",
     ):
         assert con.send_line(f'PRINT #1, "{line}"') == ""
     assert con.send_line("CLOSE #1") == ""
@@ -1575,6 +1582,38 @@ def test_editor_outline_lists_dotted_names(kernel_image):
         jumped = _keys(con, b"\r", quiet=0.8)
         assert "SUB Draw.Rectangle" in jumped
         assert "11:1" in jumped
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_outline_lists_type_definitions(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_outline_bas(con)
+        _edit(con, "NAV.BAS")
+        listed = _keys(con, bytes([15]), quiet=0.8)
+        assert "Outline" in listed
+        filtered = _keys(con, b"point", quiet=0.6)
+        assert "TYPE Point" in filtered
+        assert "SUB Alpha" not in filtered
+        jumped = _keys(con, b"\r", quiet=0.8)
+        assert "TYPE Point" in jumped
+        assert "16:1" in jumped
+        _keys(con, bytes([15]), quiet=0.6)
+        lower = _keys(con, b"lower", quiet=0.6)
+        assert "TYPE Lower.Case" in lower
+        at_lower = _keys(con, b"\r", quiet=0.8)
+        assert "22:1" in at_lower
+        # Commented and REM'd TYPE lines must not be listed: filtering for
+        # them yields no match, so Enter leaves the cursor at the top.
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, bytes([15]), quiet=0.6)
+        _keys(con, b"hidden", quiet=0.6)
+        still = _keys(con, b"\r", quiet=0.8)
+        assert "1:1" in still
+        _keys(con, b"\x1b", quiet=0.4)
         _quit(con)
     finally:
         con.stop()
