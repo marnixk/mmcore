@@ -115,7 +115,11 @@ def _png_rgb(png, crop=None):
             continue
         inner = rest[rest.find("(") + 1 : rest.find(")")]
         parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
-        if len(parts) >= 3:
+        if len(parts) == 1:
+            # Grayscale screendump (for example after MODE 8): gray(v).
+            v = int(float(parts[0]))
+            pix[(x, y)] = (v, v, v)
+        elif len(parts) >= 3:
             pix[(x, y)] = tuple(int(float(p)) for p in parts[:3])
     return pix
 

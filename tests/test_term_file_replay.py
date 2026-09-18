@@ -13,7 +13,7 @@ from test_term import _plain, _quit
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BLACKFLAG = os.path.join(REPO, "tests", "term", "blackflag-log-v2")
-ARTIFACTS = "/opt/cursor/artifacts"
+from artifacts_util import ARTIFACTS
 
 
 def _fat_with_log():
@@ -69,7 +69,6 @@ _SHOTS = {
 @pytest.mark.skipif(shutil.which("mcopy") is None, reason="mcopy not installed")
 def test_blackflag_file_replay_hdmi_past_animation(kernel_image):
     img = _fat_with_log()
-    os.makedirs(ARTIFACTS, exist_ok=True)
     con = MMBasicConsole(
         kernel_image,
         extra_qemu=["-drive", f"file={img},if=sd,format=raw"],

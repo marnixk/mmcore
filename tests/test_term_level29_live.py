@@ -21,7 +21,7 @@ BBS = ("bbs.fozztexx.com", 23)
 GUEST_BBS = "10.0.2.100"
 USER = b"ireal"
 PASS = b"ds9space"
-ARTIFACTS = "/opt/cursor/artifacts"
+from artifacts_util import ARTIFACTS
 
 
 def _bbs_reachable() -> bool:
@@ -46,7 +46,6 @@ def _wait_serial(con, needle: bytes, timeout: float) -> bytes:
 
 @pytest.mark.skipif(not _bbs_reachable(), reason="Level29 BBS not reachable")
 def test_level29_live_term_login(kernel_image):
-    os.makedirs(ARTIFACTS, exist_ok=True)
     guest_pcap = os.path.join(ARTIFACTS, "level29_guest_usbnic.pcap")
     bbs_ip = socket.getaddrinfo(BBS[0], BBS[1], socket.AF_INET)[0][4][0]
     con = MMBasicConsole(

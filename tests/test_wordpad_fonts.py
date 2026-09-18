@@ -37,7 +37,9 @@ def test_heading_advance_uses_eighty_percent_ratio():
     scale = 4
     advance = (scale * 8 * 4) // 5
     assert advance == 25
-    assert advance * 5 == scale * 8 * 4
+    # The formula floors 80% of the scaled cell width for every heading scale.
+    assert (3 * 8 * 4) // 5 == 19
+    assert (2 * 8 * 4) // 5 == 12
 
 
 def test_tnr_heading_fonts_are_not_nearest_neighbour():

@@ -627,7 +627,6 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
     _upload_compat_tree(c, host, "A:/syntaxshock")
     listing = c.send_line('DIR "A:/syntaxshock/gfx"')
     assert "FONTS.PNG" in listing.upper()
-    os.makedirs("/opt/cursor/artifacts", exist_ok=True)
     c.drain(quiet=0.1, timeout=0.4)
     c._ser.sendall(b'RUN "A:/syntaxshock/typing.bas"\r')
     time.sleep(6.0)
