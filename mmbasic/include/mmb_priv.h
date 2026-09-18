@@ -739,6 +739,7 @@ int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
 int mmb_vfs_list(const char *spec, char *out, int outsz);
+int mmb_glob_match(const char *name, const char *pat);
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append);
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n);
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);

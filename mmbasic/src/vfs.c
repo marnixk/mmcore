@@ -128,7 +128,7 @@ static void ram_path_from_node(vfs_node *ns, int node, char *out, int outsz)
 	}
 }
 
-static int glob_match(const char *name, const char *pat)
+int mmb_glob_match(const char *name, const char *pat)
 {
 	const char *n, *p, *star, *match;
 	if (!pat || !pat[0] || (pat[0] == '*' && pat[1] == 0))
@@ -183,7 +183,7 @@ static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, cha
 			continue;
 		if (mmb_vfs_hidden_name(ns[i].name))
 			continue;
-		if (pat && pat[0] && !glob_match(ns[i].name, pat))
+		if (pat && pat[0] && !mmb_glob_match(ns[i].name, pat))
 			continue;
 		len = (int)strlen(out);
 		if (len + 90 >= outsz)
@@ -764,6 +764,87 @@ int mmb_vfs_hidden_name(const char *name)
 	return name && name[0] == '.';
 }
 
+#define VFS_LIST_MAX 512
+
+static int list_cmp_names(const char *a, const char *b)
+{
+	size_t la = strlen(a), lb = strlen(b);
+	int ad = la > 0 && a[la - 1] == '/';
+	int bd = lb > 0 && b[lb - 1] == '/';
+	int i;
+	if (ad != bd)
+		return bd - ad; /* folders first */
+	for (i = 0; a[i] && b[i]; i++)
+	{
+		int ca = (unsigned char)a[i], cb = (unsigned char)b[i];
+		if (ca >= 'a' && ca <= 'z')
+			ca -= 32;
+		if (cb >= 'a' && cb <= 'z')
+			cb -= 32;
+		if (ca != cb)
+			return ca - cb;
+	}
+	{
+		int ca = (unsigned char)a[i], cb = (unsigned char)b[i];
+		if (ca >= 'a' && ca <= 'z')
+			ca -= 32;
+		if (cb >= 'a' && cb <= 'z')
+			cb -= 32;
+		return ca - cb;
+	}
+}
+
+/* Sort a newline-separated listing in place: folders A-Z first, then files
+ * A-Z, case-insensitively. */
+static void sort_dir_list(char *out, int outsz)
+{
+	char *ptrs[VFS_LIST_MAX];
+	char *tmp;
+	int n = 0, i, j, len = 0;
+	char *p = out;
+	while (*p && n < VFS_LIST_MAX)
+	{
+		ptrs[n++] = p;
+		while (*p && *p != '\n')
+			p++;
+		if (*p == '\n')
+			*p++ = 0;
+	}
+	if (n < 2)
+		return;
+	for (i = 1; i < n; i++)
+	{
+		char *key = ptrs[i];
+		j = i - 1;
+		while (j >= 0 && list_cmp_names(ptrs[j], key) > 0)
+		{
+			ptrs[j + 1] = ptrs[j];
+			j--;
+		}
+		ptrs[j + 1] = key;
+	}
+	tmp = G.plat ? G.plat->alloc((unsigned)outsz) : 0;
+	if (!tmp)
+	{
+		for (i = 0; i + 1 < n; i++)
+			ptrs[i][strlen(ptrs[i])] = '\n';
+		return;
+	}
+	for (i = 0; i < n; i++)
+	{
+		int l = (int)strlen(ptrs[i]);
+		if (len + l + 2 > outsz)
+			break;
+		memcpy(tmp + len, ptrs[i], (unsigned)l);
+		len += l;
+		if (i + 1 < n)
+			tmp[len++] = '\n';
+	}
+	tmp[len] = 0;
+	memcpy(out, tmp, (unsigned)len + 1);
+	G.plat->free(tmp);
+}
+
 int mmb_vfs_list(const char *spec, char *out, int outsz)
 {
 	mmb_xpath x;
@@ -778,11 +859,15 @@ int mmb_vfs_list(const char *spec, char *out, int outsz)
 		vfs_node *ns = vol_nodes(x.letter, &max, 0);
 		if (ram_list(ns, max, dir, glob, out, outsz) != 0)
 			return -1;
+		sort_dir_list(out, outsz);
 		return 0;
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	return mmb_fat_list(x.letter, dir, glob, out, outsz);
+	if (mmb_fat_list(x.letter, dir, glob, out, outsz) != 0)
+		return -1;
+	sort_dir_list(out, outsz);
+	return 0;
 }
 
 void mmb_vfs_seed_file(const char *path, const void *data, unsigned n)

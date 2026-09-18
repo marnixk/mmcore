@@ -5,15 +5,23 @@ alias: LS, LIST FILES
 List files in the current directory, or matching an optional path/wildcard.
 For the dual-pane file manager, use ~FILES~.
 
-DIR [spec$]
+DIR [spec$] [/W] [/S]
 LS
 LIST FILES
 
   spec$ - path or wildcard (optional)
+  /W    - wide listing (names only, packed into columns)
+  /S    - search spec$ and every subdirectory below it
+
+Folders are listed before files, each sorted A-Z. /W and /S may be combined
+(for example /WS) and may appear before or after spec$. /S prints each hit as a
+path relative to the search folder.
 
 Example:
 
     DIR
     DIR "A:/*.PNG"
+    DIR /W
+    DIR /S "*.BAS"
     LS
     LIST FILES

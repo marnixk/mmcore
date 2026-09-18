@@ -41,6 +41,66 @@ def test_dir_a_glob(console):
     assert "TEST.PNG" in listing.upper()
 
 
+def _write_text(con, path, text="X"):
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    assert con.send_line(f'PRINT #1, "{text}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def _lines(text):
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def test_dir_sorts_folders_then_files(console):
+    assert console.send_line('CHDIR "A:"') == ""
+    assert console.send_line('MKDIR "SORT391"') == ""
+    assert console.send_line('MKDIR "A:/SORT391/SUB"') == ""
+    _write_text(console, "A:/SORT391/ZETA.TXT")
+    _write_text(console, "A:/SORT391/alpha.txt")
+    assert _lines(console.send_line('DIR "A:/SORT391"')) == [
+        "SUB/",
+        "alpha.txt",
+        "ZETA.TXT",
+    ]
+
+
+def test_dir_wide_packs_columns(console):
+    assert console.send_line('MKDIR "WIDE391"') == ""
+    _write_text(console, "A:/WIDE391/AAA.TXT")
+    _write_text(console, "A:/WIDE391/BBB.TXT")
+    _write_text(console, "A:/WIDE391/CCC.TXT")
+    lines = _lines(console.send_line('DIR "A:/WIDE391" /W'))
+    assert len(lines) == 1
+    for name in ("AAA.TXT", "BBB.TXT", "CCC.TXT"):
+        assert name in lines[0]
+
+
+def test_dir_search_recurses_with_paths(console):
+    assert console.send_line('MKDIR "SRCH391"') == ""
+    assert console.send_line('MKDIR "A:/SRCH391/SUB"') == ""
+    _write_text(console, "A:/SRCH391/TOP.BAS")
+    _write_text(console, "A:/SRCH391/alpha.txt")
+    _write_text(console, "A:/SRCH391/SUB/DEEP.BAS")
+    assert _lines(console.send_line('DIR /S "A:/SRCH391"')) == [
+        "SUB/",
+        "SUB/DEEP.BAS",
+        "alpha.txt",
+        "TOP.BAS",
+    ]
+
+
+def test_dir_search_glob_matches_full_path(console):
+    assert console.send_line('MKDIR "GLOB391"') == ""
+    assert console.send_line('MKDIR "A:/GLOB391/SUB"') == ""
+    _write_text(console, "A:/GLOB391/TOP.BAS")
+    _write_text(console, "A:/GLOB391/SUB/DEEP.BAS")
+    _write_text(console, "A:/GLOB391/NOTE.TXT")
+    assert _lines(console.send_line('DIR "A:/GLOB391/*.BAS" /S')) == [
+        "SUB/DEEP.BAS",
+        "TOP.BAS",
+    ]
+
+
 def test_chdir_c_without_media(console):
     out = console.send_line('CHDIR "C:"')
     assert out.startswith("?")
