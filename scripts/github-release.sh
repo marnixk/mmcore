@@ -50,6 +50,25 @@ die() {
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
+# Push a tag to origin, falling back to the repo's HTTPS URL when the
+# configured remote is an SSH alias the environment cannot resolve (for
+# example `marnixk.github.com`). gh is already required by publish.
+push_tag() {
+	local tag="$1" url
+	if git push origin "${tag}"; then
+		return 0
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		die "git push origin ${tag} failed and gh is unavailable for a fallback"
+	fi
+	url="$(gh repo view --json url -q .url 2>/dev/null || true)"
+	[ -n "${url}" ] || die "git push origin ${tag} failed and the repository URL is unknown"
+	log "git push origin failed; retrying ${tag} via ${url}.git"
+	if ! git push "${url}.git" "refs/tags/${tag}"; then
+		die "could not push ${tag} to origin or ${url}.git"
+	fi
+}
+
 normalize_version() {
 	local raw="${1:-}"
 	raw="${raw#v}"
@@ -240,7 +259,7 @@ publish() {
 	log "Creating annotated tag ${tag}"
 	git tag -a "${tag}" -m "MMBasic console ${tag}"
 	log "Pushing ${tag}"
-	git push origin "${tag}"
+	push_tag "${tag}"
 
 	log "Creating GitHub release ${tag}"
 	gh release create "${tag}" \
