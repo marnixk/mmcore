@@ -9,7 +9,11 @@
 #define AFK_SETS 2
 #define AFK_MAXV 6
 #define AFK_HIST 24
-#define AFK_FRAME_MS 33
+#define AFK_FRAME_MS 16
+#define AFK_MODE 12
+/* Soft pages 0 and 2 are the front/back buffers; page 1 is the CMM2 overlay. */
+#define AFK_PAGE_A 0
+#define AFK_PAGE_B 2
 
 typedef struct {
 	int x, y, dx, dy;
@@ -25,6 +29,7 @@ static struct {
 	afk_vert v[AFK_SETS][AFK_MAXV];
 	unsigned rgb[AFK_SETS];
 	int w, h;
+	int front;
 	unsigned last_ms;
 	unsigned rng;
 } A;
@@ -150,7 +155,12 @@ static void afk_step(void)
 
 static void afk_frame(void)
 {
-	int s, i, a;
+	int s, i, a, back;
+
+	/* Render the next frame into the hidden soft page, then flip. */
+	back = (A.front == AFK_PAGE_A) ? AFK_PAGE_B : AFK_PAGE_A;
+	G.gfx.write_page = back;
+	G.gfx.write_fb = 0;
 	mmb_gfx_cls(0);
 	for (s = 0; s < AFK_SETS; s++)
 	{
@@ -167,7 +177,12 @@ static void afk_frame(void)
 			}
 		}
 	}
+	G.gfx.display_page = back;
+	mmb_gfx_dirty_add(0, 0, A.w, A.h);
+	if (G.plat && G.plat->present_set_flip)
+		G.plat->present_set_flip(1);
 	mmb_gfx_present();
+	A.front = back;
 }
 
 static void afk_leave(void)
@@ -191,9 +206,9 @@ void mmb_cmd_afk(void)
 	A.saved_write_page = G.gfx.write_page;
 	A.saved_display_page = G.gfx.display_page;
 	A.saved_write_fb = G.gfx.write_fb;
-	mmb_gfx_set_mode(11, 8);
-	A.w = G.gfx.w > 0 ? G.gfx.w : 1280;
-	A.h = G.gfx.h > 0 ? G.gfx.h : 720;
+	mmb_gfx_set_mode(AFK_MODE, 8);
+	A.w = G.gfx.w > 0 ? G.gfx.w : 960;
+	A.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	A.rng = (unsigned)(mmb_now_ms() * 2654435761u) + 0x9E3779B9u;
 	if (!A.rng)
 		A.rng = 0x12345678u;
@@ -202,10 +217,9 @@ void mmb_cmd_afk(void)
 	for (s = 0; s < AFK_SETS; s++)
 		afk_init_set(s);
 	A.last_ms = mmb_now_ms();
+	A.front = AFK_PAGE_A;
 	A.active = 1;
 	afk_frame();
-	if (G.plat && G.plat->wait_vsync)
-		G.plat->wait_vsync();
 }
 
 int mmb_in_afk(void)
@@ -232,6 +246,4 @@ void mmb_afk_poll(void)
 	A.last_ms = now;
 	afk_step();
 	afk_frame();
-	if (G.plat && G.plat->wait_vsync)
-		G.plat->wait_vsync();
 }
