@@ -383,6 +383,18 @@ static int dir_next(const char *filter, char *out, int outsz)
 	return 0;
 }
 
+static void theme_name_copy(char *dst, int n, const char *src)
+{
+	int i;
+	if (!dst || n < 1)
+		return;
+	if (!src)
+		src = "";
+	for (i = 0; src[i] && i < n - 1; i++)
+		dst[i] = src[i];
+	dst[i] = 0;
+}
+
 int mmb_try_function(mmb_val *out)
 {
 	mmb_val a[8];
@@ -398,6 +410,7 @@ int mmb_try_function(mmb_val *out)
 	if (!finited)
 	{
 		fun_tab[mmb_kw_id("RGB")] = &&lbl_rgb;
+		fun_tab[mmb_kw_id("THEME")] = &&lbl_theme;
 		fun_tab[mmb_kw_id("PIXEL")] = &&lbl_pixel;
 		fun_tab[mmb_kw_id("LEN")] = &&lbl_len;
 		fun_tab[mmb_kw_id("ASC")] = &&lbl_asc;
@@ -588,6 +601,53 @@ int mmb_try_function(mmb_val *out)
 			return 1;
 		}
 		mmb_syntax();
+	}
+	if (mmb_match("THEME"))
+	{
+	lbl_theme:
+		char nm[40];
+		int nn = 0;
+		unsigned rgb;
+		unsigned char fidx;
+		mmb_skip_sp();
+		if (*G.p != '(')
+		{
+			G.p = save;
+			return 0;
+		}
+		G.p++;
+		mmb_skip_sp();
+		if (*G.p == '"')
+		{
+			mmb_val v = mmb_expr();
+			if (v.type != T_STR)
+				mmb_syntax();
+			theme_name_copy(nm, sizeof(nm), v.s);
+		}
+		else
+		{
+			const char *sp = G.p;
+			while ((mmb_is_ident(*G.p) || *G.p == '$' || *G.p == '%' ||
+				*G.p == '!') && nn < (int)sizeof(nm) - 1)
+				nm[nn++] = *G.p++;
+			nm[nn] = 0;
+			mmb_skip_sp();
+			if (!(*G.p == ')' && nn > 0 && mmb_editor_theme_field(nm, &fidx)))
+			{
+				mmb_val v;
+				G.p = sp;
+				v = mmb_expr();
+				if (v.type != T_STR)
+					mmb_syntax();
+				theme_name_copy(nm, sizeof(nm), v.s);
+			}
+		}
+		mmb_skip_sp();
+		mmb_expect(')');
+		if (!mmb_editor_theme_rgb(nm, &rgb))
+			mmb_syntax();
+		*out = mmb_int_val((int64_t)rgb);
+		return 1;
 	}
 	if (mmb_match("PIXEL"))
 	{

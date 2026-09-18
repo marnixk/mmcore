@@ -27,8 +27,9 @@ Math: ABS INT FIX CINT SQR/SQRT SIN COS TAN ATN/ATAN ATN2/ATAN2 ACOS ASIN RND SG
   EXP LOG PI MAX MIN DEG RAD CHOICE BOUND EVAL MATH()
   ATN2(y,x) / ATAN2(y,x) return the angle of (x,y) with quadrant.
 
-Graphics: RGB(r,g,b)|RGB("NAME")  PIXEL(x,y)
+Graphics: RGB(r,g,b)|RGB("NAME")  PIXEL(x,y)  THEME(name$)
   MM.HRES MM.VRES MM.HPOS MM.VPOS MM.INFO(MODE)
+  THEME(name$) returns an active editor theme colour; see ~THEME~.
 
 Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)
   Disk: LOC=seek pos  LOF=size  EOF=pos>=size
@@ -52,3 +53,4 @@ Example:
     PRINT MM.HRES, MM.VRES, MM.HPOS, MM.VPOS
     PRINT MM.CMDLINE$
     PRINT KEYDOWN(1)
+    PRINT THEME("TEXT_BG")

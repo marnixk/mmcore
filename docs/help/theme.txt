@@ -1,0 +1,46 @@
+name: THEME
+kind: command
+
+Return the active editor theme colour as an RGB integer (0xRRGGBB), the same
+value form as RGB(). Use it to match your program's colours to the user's
+OPTION EDIT THEME palette instead of hard-coding colours.
+
+THEME(name$)
+THEME(NAME)
+
+  name - theme element name: a string, a bare identifier, or a string
+         expression/variable
+
+The value is resolved through the active theme's palette (Turbo uses the VGA
+palette), so it is exactly what the editor draws. The active theme is the
+current OPTION EDIT THEME selection and is shared by EDIT, FILES, TERM,
+WORDPAD and HELP, whether or not an EDIT screen is open. An unknown name
+raises ?SYNTAX ERROR.
+
+Identifiers (name, mmb_ed_theme field):
+
+    MENU_FG        menu_fg         MENU_BG        menu_bg
+    MENU_HOT       hot
+    SELECT_FG      sel_fg          SELECT_BG      sel_bg
+    TEXT_FG        edit_fg         TEXT_BG        edit_bg
+    MARK_FG        mark_fg         MARK_BG        mark_bg
+    STRING_FG      str_fg
+    NUMBER_FG      num_fg
+    COMMENT_FG     cmt_fg
+    BORDER_FG      brd_fg          BORDER_BG      brd_bg
+    TAB_FG         tab_fg          TAB_BG         tab_bg
+    TAB_ACTIVE_FG  tabcur_fg       TAB_ACTIVE_BG  tabcur_bg
+    DIALOG_FG      dlg_fg          DIALOG_BG      dlg_bg
+    SHADOW_FG      sh_fg           SHADOW_BG      sh_bg
+    LIST_BG        list_bg
+    ERROR_FG       err_fg          ERROR_BG       err_bg
+    FIELD_FG       field_fg        FIELD_BG       field_bg
+
+Every future colour added to the editor theme is also surfaced here.
+
+Example:
+
+    COLOUR THEME("MENU_FG"), THEME("MENU_BG")
+    BOX 40, 40, 120, 80, 1, THEME("BORDER_FG")
+    PRINT THEME(NUMBER_FG)          ' bare identifier
+    c$ = "STRING_FG" : PRINT THEME(c$)
