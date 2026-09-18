@@ -355,6 +355,24 @@ void CKernel::PollUsbEditorNav (void)
 	shift = (mods & (LSHIFT | RSHIFT)) != 0;
 	ctrl = (mods & (LCTRL | RCTRL)) != 0;
 
+	/* Ctrl+Enter is a cooked Return that the keymap cannot modify.
+	 * Inject CSI 29~ as the Replace All chord. */
+	if (ctrl && (hid == 0x28 || hid == 0x58) && mmb_in_editor ())
+	{
+		seq[0] = 0x1b;
+		seq[1] = '[';
+		seq[2] = '2';
+		seq[3] = '9';
+		seq[4] = '~';
+		n = 5;
+		m_NavHidSent = hid;
+		m_UsbBurst = 1;
+		for (i = 0; i < n; i++)
+			ProcessChar (seq[i], m_Line, &m_nLen);
+		m_UsbBurst = 0;
+		return;
+	}
+
 	/* Circle maps Shift+Tab to Tab. Inject CSI Z (backtab) so the
 	 * editor outdents instead of indenting. */
 	if (hid == 0x2B && shift && mmb_in_editor ())
@@ -762,6 +780,10 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		/* USB Shift+Tab arrives as Tab from Circle; PollUsbEditorNav
 		 * already injected CSI Z. Drop the cooked Tab. */
 		if (c == '\t' && (m_LastMods & (LSHIFT | RSHIFT)) != 0)
+			return;
+		/* USB Ctrl+Enter arrives as a plain Return; PollUsbEditorNav
+		 * injected a Replace All sequence. Drop the cooked Return. */
+		if ((c == '\n' || c == '\r') && (m_LastMods & (LCTRL | RCTRL)) != 0)
 			return;
 		const char *out = mmb_editor_key (c);
 		emit (this, out);

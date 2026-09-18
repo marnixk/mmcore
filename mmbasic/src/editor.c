@@ -308,11 +308,22 @@ static int killlen;
 
 #define FIND_QMAX 96
 static int find_active;
+static int find_replace;   /* replace bar shows the Replace field */
+static int find_field;     /* 0 find field, 1 replace field */
 static char find_q[FIND_QMAX];
 static int find_qlen;
+static char find_repl[FIND_QMAX];
+static int find_repllen;
 static char find_last[FIND_QMAX];
+static char repl_last[FIND_QMAX];
 static int find_notfound;
+static char find_msg[48];
+static int find_have_match;
+static int find_lo, find_hi;
+static int find_confirm;
+static int find_confirm_n;
 static int find_cx, find_row0, find_col0, find_sel, find_anchor;
+static char find_scratch[MMB_ED_BUF];
 static char pick_root[128];
 static char pick_path[ED_PICK_MAX][128];
 static int pick_pos[ED_PICK_MAX];
@@ -349,8 +360,8 @@ static const char *file_items[] = {
 	"Close tab", "Next tab", "Quit"
 };
 static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
-static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find..." };
-static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f' };
+static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace..." };
+static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
@@ -1597,23 +1608,39 @@ static void paste_kill(void)
 	t->dirty = 1;
 }
 
-/* ---- inline find bar (Ctrl+F) ---- */
+/* ---- inline find / replace bar (Ctrl+F, Ctrl+H) ---- */
+
+#define FIND_DISP      28
+#define FIND_REPL_X    40
+#define FIND_REPL_TX   49
 
 static void find_abort(void)
 {
 	find_active = 0;
+	find_confirm = 0;
+	find_have_match = 0;
 }
 
-static void find_open(void)
+static void find_open(int replace)
 {
 	mmb_ed_tab *t = cur_tab();
 	int lo, hi;
 	if (!t)
 		return;
 	if (find_active)
+	{
+		find_replace = replace;
+		find_field = 0;
+		find_confirm = 0;
 		return; /* refocus, keep the query */
+	}
 	find_active = 1;
+	find_replace = replace;
+	find_field = 0;
 	find_notfound = 0;
+	find_msg[0] = 0;
+	find_have_match = 0;
+	find_confirm = 0;
 	find_cx = t->cx;
 	find_row0 = t->row0;
 	find_col0 = t->col0;
@@ -1630,6 +1657,8 @@ static void find_open(void)
 		ed_copy(find_q, sizeof(find_q), find_last);
 		find_qlen = (int)strlen(find_q);
 	}
+	ed_copy(find_repl, sizeof(find_repl), repl_last);
+	find_repllen = (int)strlen(find_repl);
 }
 
 static void find_close(int restore)
@@ -1638,6 +1667,8 @@ static void find_close(int restore)
 	if (!find_active)
 		return;
 	find_active = 0;
+	find_confirm = 0;
+	find_have_match = 0;
 	if (restore && t)
 	{
 		t->cx = find_cx;
@@ -1668,6 +1699,8 @@ static void find_next(void)
 	ed_copy(find_last, sizeof(find_last), find_q);
 	qn = find_qlen;
 	find_notfound = 0;
+	find_msg[0] = 0;
+	find_have_match = 0;
 	if (qn <= 0)
 	{
 		find_notfound = 1;
@@ -1705,43 +1738,252 @@ static void find_next(void)
 	t->sel_anchor = m;
 	t->cx = m + qn;
 	t->sel = 1;
+	find_lo = m;
+	find_hi = m + qn;
+	find_have_match = 1;
 	ensure_visible();
 }
 
-static void find_key(char c)
+static int find_count_matches(void)
 {
-	if (c == 8 || c == 127)
+	mmb_ed_tab *t = cur_tab();
+	int i, n = 0;
+	if (!t || find_qlen <= 0)
+		return 0;
+	for (i = 0; i + find_qlen <= t->len;)
 	{
-		if (find_qlen > 0)
-			find_q[--find_qlen] = 0;
-		find_notfound = 0;
+		if (find_match_at(t, i, find_qlen))
+		{
+			n++;
+			i += find_qlen;
+		}
+		else
+			i++;
+	}
+	return n;
+}
+
+static void find_replace_all_prompt(void)
+{
+	if (find_qlen <= 0)
+	{
+		find_notfound = 1;
 		return;
 	}
-	if (c == '\r' || c == '\n')
+	find_confirm_n = find_count_matches();
+	if (find_confirm_n <= 0)
+	{
+		find_notfound = 1;
+		find_confirm = 0;
+	}
+	else
+	{
+		find_confirm = 1;
+		find_notfound = 0;
+		find_msg[0] = 0;
+	}
+}
+
+static int find_replace_all_apply(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int i = 0, o = 0, n = 0;
+	if (!t || find_qlen <= 0)
+		return 0;
+	while (i < t->len && o < MMB_ED_BUF - 1)
+	{
+		if (find_match_at(t, i, find_qlen))
+		{
+			int j;
+			for (j = 0; j < find_repllen && o < MMB_ED_BUF - 1; j++)
+				find_scratch[o++] = find_repl[j];
+			i += find_qlen;
+			n++;
+		}
+		else
+			find_scratch[o++] = t->buf[i++];
+	}
+	find_scratch[o] = 0;
+	memcpy(t->buf, find_scratch, (unsigned)o + 1);
+	t->len = o;
+	if (t->cx > t->len)
+		t->cx = t->len;
+	t->sel = 0;
+	find_have_match = 0;
+	t->dirty = 1;
+	return n;
+}
+
+static void find_replace_one(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int lo, hi;
+	ed_copy(repl_last, sizeof(repl_last), find_repl);
+	find_notfound = 0;
+	find_msg[0] = 0;
+	if (!t)
+		return;
+	if (find_qlen <= 0)
+	{
+		find_notfound = 1;
+		return;
+	}
+	if (!find_have_match)
 	{
 		find_next();
 		return;
 	}
-	if (c >= 32 && c < 127 && find_qlen < FIND_QMAX - 1)
+	lo = find_lo;
+	hi = find_hi;
+	if (lo < 0 || hi > t->len || hi <= lo)
 	{
-		find_q[find_qlen++] = c;
-		find_q[find_qlen] = 0;
+		find_have_match = 0;
+		find_next();
+		return;
+	}
+	memmove(t->buf + lo, t->buf + hi, (unsigned)(t->len - hi + 1));
+	t->len -= (hi - lo);
+	t->sel = 0;
+	t->dirty = 1;
+	find_have_match = 0;
+	if (find_repllen > 0)
+		insert_at(lo, find_repl, find_repllen);
+	t->cx = lo + find_repllen;
+	if (t->cx > t->len)
+		t->cx = t->len;
+	find_next();
+}
+
+static void find_show_field(int x, const char *s, int n)
+{
+	char tmp[FIND_QMAX];
+	int off = 0;
+	if (n > FIND_DISP)
+	{
+		off = n - FIND_DISP;
+		n = FIND_DISP;
+	}
+	if (n > 0)
+		memcpy(tmp, s + off, (unsigned)n);
+	tmp[n] = 0;
+	tui_puts(x, ROW_STAT, tmp, C_MENU_FG, C_MENU_BG);
+}
+
+static void find_key(char c)
+{
+	if (find_confirm)
+	{
+		if (c == 'y' || c == 'Y')
+		{
+			int n = find_replace_all_apply();
+			char *p;
+			find_confirm = 0;
+			find_notfound = 0;
+			ed_copy(find_msg, sizeof(find_msg), "Replaced ");
+			p = find_msg + (int)strlen(find_msg);
+			p = put_uint(p, n);
+			*p = 0;
+		}
+		else
+			find_confirm = 0;
+		return;
+	}
+	if (c == '\t')
+	{
+		if (find_replace)
+			find_field = find_field ? 0 : 1;
+		return;
+	}
+	if (c == 127)
+	{
+		if (find_field == 0)
+		{
+			if (find_qlen > 0)
+				find_q[--find_qlen] = 0;
+		}
+		else if (find_repllen > 0)
+			find_repl[--find_repllen] = 0;
 		find_notfound = 0;
+		find_msg[0] = 0;
+		find_have_match = 0;
+		return;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		if (find_replace && find_field == 1)
+			find_replace_one();
+		else
+			find_next();
+		return;
+	}
+	if (c >= 32 && c < 127)
+	{
+		if (find_field == 0)
+		{
+			if (find_qlen < FIND_QMAX - 1)
+			{
+				find_q[find_qlen++] = c;
+				find_q[find_qlen] = 0;
+			}
+		}
+		else if (find_repllen < FIND_QMAX - 1)
+		{
+			find_repl[find_repllen++] = c;
+			find_repl[find_repllen] = 0;
+		}
+		find_notfound = 0;
+		find_msg[0] = 0;
+		find_have_match = 0;
 	}
 }
 
 static void find_draw_status(void)
 {
-	int x;
+	int x, shown_q, shown_r;
 	tui_pad(0, ROW_STAT, "", COLS, C_MENU_FG, C_MENU_BG);
+	if (find_confirm)
+	{
+		char msg[64];
+		char *p = msg;
+		ed_copy(p, (int)sizeof(msg), "Replace all ");
+		p += (int)strlen(p);
+		p = put_uint(p, find_confirm_n);
+		ed_copy(p, (int)(sizeof(msg) - (p - msg)), " occurrences? (Y/N)");
+		tui_puts(0, ROW_STAT, msg, C_HOT, C_MENU_BG);
+		return;
+	}
 	tui_puts(0, ROW_STAT, "Find: ", C_MENU_FG, C_MENU_BG);
-	x = 6;
-	tui_puts(x, ROW_STAT, find_q, C_MENU_FG, C_MENU_BG);
-	x += find_qlen;
-	if (find_notfound)
-		tui_puts(x, ROW_STAT, "   Not found", C_HOT, C_MENU_BG);
-	else
-		tui_puts(x, ROW_STAT, "   Enter=Next  Esc=Close", C_MENU_FG, C_MENU_BG);
+	find_show_field(6, find_q, find_qlen);
+	shown_q = find_qlen > FIND_DISP ? FIND_DISP : find_qlen;
+	x = 6 + shown_q;
+	if (find_replace && COLS > FIND_REPL_TX + 2)
+	{
+		tui_puts(FIND_REPL_X, ROW_STAT, "Replace: ", C_MENU_FG, C_MENU_BG);
+		find_show_field(FIND_REPL_TX, find_repl, find_repllen);
+		shown_r = find_repllen > FIND_DISP ? FIND_DISP : find_repllen;
+		x = FIND_REPL_TX + shown_r;
+	}
+	x += 2;
+	if (x < COLS)
+	{
+		if (find_msg[0])
+			tui_puts(x, ROW_STAT, find_msg, C_HOT, C_MENU_BG);
+		else if (find_notfound)
+			tui_puts(x, ROW_STAT, "Not found", C_HOT, C_MENU_BG);
+		else if (!find_replace)
+			tui_puts(x, ROW_STAT, "Enter=Next Esc=Close", C_MENU_FG, C_MENU_BG);
+		else if (find_field == 0)
+			tui_puts(x, ROW_STAT, "Tab=Replace Esc=Close", C_MENU_FG, C_MENU_BG);
+		else
+			tui_puts(x, ROW_STAT, "Enter=Replace ^Enter=All", C_MENU_FG, C_MENU_BG);
+	}
+}
+
+/* Move the replace-bar focus backwards (Shift+Tab). */
+static void find_focus_back(void)
+{
+	if (find_replace)
+		find_field = find_field ? 0 : 1;
 }
 
 static const char **menu_items(int menu, int *n)
@@ -2807,7 +3049,7 @@ static void draw_dialog(void)
 	if (G.ed.dialog == DLG_HELP)
 	{
 		w = 48;
-		h = 22;
+		h = 23;
 		title = " Help ";
 	}
 	else if (G.ed.dialog == DLG_OPEN)
@@ -2861,8 +3103,8 @@ static void draw_dialog(void)
 			"Alt+F N New file    ^W     Close tab",
 			"Untitled close/quit: Save/Discard/Cancel",
 			"Alt+Left/Right tabs (no wrap)",
-			"^F     Find             ^O     Outline",
-			"^S     Save             ^R/F9  Run",
+			"^F     Find             ^H     Replace",
+			"^O     Outline          ^S     Save",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
@@ -3001,7 +3243,16 @@ static void place_cursor(void)
 {
 	if (find_active)
 	{
-		int col = 6 + find_qlen;
+		int col;
+		if (find_confirm)
+		{
+			tui_cursor(-1, -1, 0);
+			return;
+		}
+		if (find_replace && find_field == 1 && COLS > FIND_REPL_TX + 2)
+			col = FIND_REPL_TX + (find_repllen > FIND_DISP ? FIND_DISP : find_repllen);
+		else
+			col = 6 + (find_qlen > FIND_DISP ? FIND_DISP : find_qlen);
 		if (col > COLS - 1)
 			col = COLS - 1;
 		tui_cursor(col, ROW_STAT, 1);
@@ -3433,7 +3684,9 @@ static void activate_menu(void)
 		else if (item == 2)
 			cut_line();
 		else if (item == 4)
-			find_open();
+			find_open(0);
+		else if (item == 5)
+			find_open(1);
 		else
 			paste_kill();
 	}
@@ -3924,9 +4177,16 @@ static int handle_escape(char c)
 					do_fkey(n - 10);
 				else if (n >= 17 && n <= 21)
 					do_fkey(n - 11);
+				else if (n == 29 && find_active)
+					find_replace_all_prompt();
 			}
 			else if (c == 'Z')
-				indent_lines(1);
+			{
+				if (find_active)
+					find_focus_back();
+				else
+					indent_lines(1);
+			}
 		}
 		if (G.ed.active && !mmb_in_ihelp())
 			redraw();
@@ -4128,9 +4388,16 @@ const char *mmb_editor_feed(char c)
 		esc_at = mmb_now_ms();
 		return G.out;
 	}
-	if (c == 6) /* Ctrl+F find */
+	if (c == 6 && !G.ed.dialog && !G.ed.menu_open) /* Ctrl+F find */
 	{
-		find_open();
+		find_open(0);
+		if (G.ed.active)
+			redraw();
+		return G.out;
+	}
+	if (c == 8 && !G.ed.dialog && !G.ed.menu_open) /* Ctrl+H replace */
+	{
+		find_open(1);
 		if (G.ed.active)
 			redraw();
 		return G.out;
@@ -4267,7 +4534,7 @@ const char *mmb_editor_feed(char c)
 		redraw();
 		return G.out;
 	}
-	if (c == 8 || c == 127)
+	if (c == 127)
 	{
 		backspace();
 		redraw();
