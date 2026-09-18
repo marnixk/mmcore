@@ -4005,7 +4005,6 @@ void mmb_init(const mmb_platform *plat)
 	mmb_option_reset();
 	mmb_vfs_init();
 	mmb_gfx_init();
-	mmb_assets_seed();
 	mmb_ramdisk_seed();
 	mmb_settings_load();
 	mmb_gfx_apply_default_mode();

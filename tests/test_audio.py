@@ -45,9 +45,9 @@ def test_audio_target_jack_and_hdmi(console):
 
 
 def test_play_wav_mixes_and_stops(console):
-    listing = console.send_line("DIR")
+    listing = console.send_line('DIR "A:/tests"')
     assert "TEST.WAV" in listing.upper()
-    assert console.send_line('PLAY WAV "TEST.WAV"') == ""
+    assert console.send_line('PLAY WAV "tests/TEST.WAV"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
     assert console.send_line("PRINT PLAYING()") == "0"
@@ -60,7 +60,7 @@ def test_help_play_mentions_wav(console):
 
 
 def test_play_mp3_mixes_and_stops(console):
-    assert console.send_line('PLAY MP3 "TEST.MP3"') == ""
+    assert console.send_line('PLAY MP3 "tests/TEST.MP3"') == ""
     # Seeded MP3 is short; real-time mix may already have finished.
     playing = console.send_line("PRINT PLAYING()")
     assert playing in ("0", "1")
@@ -69,10 +69,10 @@ def test_play_mp3_mixes_and_stops(console):
 
 
 def test_play_mod_xm_tone(console):
-    assert console.send_line('PLAY MODFILE "TEST.MOD"') == ""
+    assert console.send_line('PLAY MODFILE "tests/TEST.MOD"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
-    assert console.send_line('PLAY XM "TEST.XM"') == ""
+    assert console.send_line('PLAY XM "tests/TEST.XM"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
     assert console.send_line("PLAY TONE 440, 880") == ""

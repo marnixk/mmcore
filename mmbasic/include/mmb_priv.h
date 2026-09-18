@@ -934,7 +934,6 @@ int mmb_try_user_function(mmb_val *out);
 int mmb_play_wav(const char *path);
 void mmb_play_tts(void);
 
-void mmb_assets_seed(void);
 
 int mmb_keyword_eq(const char *a, const char *b);
 void mmb_upper(char *s);

@@ -18,6 +18,17 @@ def _keys(con: MMBasicConsole, data: bytes, quiet: float = 0.45) -> str:
     return con.drain(quiet=quiet).decode(errors="replace")
 
 
+def _down_to(con: MMBasicConsole, needle: str, maxn: int = 16) -> str:
+    """Move the file-list selection down until the status shows `needle`."""
+    seen = ""
+    for _ in range(maxn):
+        if needle in seen:
+            return seen
+        seen = _keys(con, b"\x1b[B", quiet=0.25)
+    assert needle in seen, (needle, seen)
+    return seen
+
+
 def _prep_tree(con: MMBasicConsole) -> None:
     assert con.send_line('CHDIR "A:/"') == ""
     assert con.send_line('MKDIR "DEMO"') == ""
@@ -65,7 +76,8 @@ def test_files_right_menu_drive_updates_right_pane(fresh_console):
     con = fresh_console
     _prep_tree(con)
     _open_files(con)
-    seen = _keys(con, b"\x1b[B\r")
+    _down_to(con, "SEL=DEMO/")
+    seen = _keys(con, b"\r")
     assert "L=A:/DEMO" in seen.upper() or "PATH=A:/DEMO" in seen.upper()
     assert "P=L" in seen
     # Alt+R, then Drive A: (hotkey a). Left stays in DEMO; right is A:/.
@@ -81,8 +93,9 @@ def test_files_enter_subdir_and_parent(fresh_console):
     con = fresh_console
     _prep_tree(con)
     _open_files(con)
-    # listing is sorted: .., DEMO/, then files. One down + Enter opens DEMO.
-    seen = _keys(con, b"\x1b[B\r")
+    # listing is sorted; seeded dirs (apps, lib, tests) may precede DEMO.
+    _down_to(con, "SEL=DEMO/")
+    seen = _keys(con, b"\r")
     assert "DEMO" in seen.upper()
     assert "PATH=A:/DEMO" in seen.upper() or "A:/DEMO" in seen.upper()
     seen = _keys(con, b"\x7f")
@@ -96,8 +109,9 @@ def test_files_run_bas(fresh_console):
     con = fresh_console
     _prep_tree(con)
     _open_files(con)
-    # .., DEMO/, HELLO.BAS — two downs then Enter runs PRINT 42.
-    seen = _keys(con, b"\x1b[B\x1b[B\r", quiet=1.0)
+    # Navigate to HELLO.BAS regardless of the seeded directories above it.
+    _down_to(con, "SEL=HELLO.BAS")
+    seen = _keys(con, b"\r", quiet=1.0)
     assert "42" in seen
     # back at the prompt
     assert con.send_line("PRINT 1+1") == "2"
@@ -157,6 +171,7 @@ def test_files_view_unsupported_is_info(fresh_console):
 def test_files_view_seeded_png_smoke(fresh_console):
     con = fresh_console
     _prep_tree(con)
+    assert con.send_line('CHDIR "A:/tests"') == ""
     seen = _open_files(con)
     for _ in range(16):
         if "SEL=TEST.PNG" in seen:
@@ -170,7 +185,7 @@ def test_files_view_seeded_png_smoke(fresh_console):
 
 
 def test_dir_still_lists(console):
-    listing = console.send_line('DIR "A:/"')
+    listing = console.send_line('DIR "A:/tests"')
     assert "TEST.PNG" in listing.upper()
 
 

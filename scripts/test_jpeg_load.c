@@ -39,7 +39,7 @@ static unsigned char jpeg_need_bytes(unsigned char *buf, unsigned char max,
 
 int main(int argc, char **argv)
 {
-	const char *path = argc > 1 ? argv[1] : "mmbasic/assets/test.jpg";
+	const char *path = argc > 1 ? argv[1] : "ramdisk/tests/TEST.JPG";
 	FILE *f = fopen(path, "rb");
 	unsigned char *data;
 	long n;

@@ -37,7 +37,7 @@ def test_open_on_a_drive(console):
 
 
 def test_dir_a_glob(console):
-    listing = console.send_line('DIR "A:/*.PNG"')
+    listing = console.send_line('DIR "A:/tests/*.PNG"')
     assert "TEST.PNG" in listing.upper()
 
 

@@ -31,6 +31,6 @@ reflects playback state.
 Example:
 
     OPTION AUDIO_TARGET HDMI
-    PLAY WAV "TEST.WAV"
-    PLAY MP3 "TEST.MP3"
+    PLAY WAV "tests/TEST.WAV"
+    PLAY MP3 "tests/TEST.MP3"
     PRINT PLAYING()

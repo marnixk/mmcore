@@ -55,7 +55,6 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/cmd_sprite.o \
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/editor.o \
-	  $(MMB)/src/assets.o \
 	  $(MMB)/src/ramdisk.o \
 	  $(MMB)/src/ramdisk_data.o \
 	  $(MMB)/src/libc_shims.o \

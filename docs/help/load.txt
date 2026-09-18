@@ -14,5 +14,5 @@ PNG decoder. With no type keyword, .JPG/.JPEG selects JPEG; otherwise PNG.
 
 Example:
 
-    LOAD PNG "TEST.PNG"
-    LOAD JPG "TEST.JPG", 0, 0
+    LOAD PNG "tests/TEST.PNG"
+    LOAD JPG "tests/TEST.JPG", 0, 0

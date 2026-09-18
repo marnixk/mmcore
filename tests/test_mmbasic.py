@@ -205,7 +205,7 @@ def test_files_mkdir_copy_rename(console):
 
 def test_load_png(fresh_console):
     assert fresh_console.send_line("CLS") == ""
-    assert fresh_console.send_line('LOAD PNG "TEST.PNG"') == ""
+    assert fresh_console.send_line('LOAD PNG "tests/TEST.PNG"') == ""
     pix = int(fresh_console.send_line("PRINT PIXEL(0,0)"))
     r = (pix >> 16) & 255
     assert r > 150
@@ -215,7 +215,7 @@ def test_load_image_deflate_png_returns_prompt(fresh_console):
     """Compressed PNGs go through uPNG; freeing a from_bytes source used to hang after blit."""
     c = fresh_console
     assert c.send_line("CLS") == ""
-    assert c.send_line('LOAD IMAGE "TESTZ.PNG"') == ""
+    assert c.send_line('LOAD IMAGE "tests/TESTZ.PNG"') == ""
     pix = int(c.send_line("PRINT PIXEL(0,0)"))
     g = (pix >> 8) & 255
     assert g > 150
@@ -224,14 +224,14 @@ def test_load_image_deflate_png_returns_prompt(fresh_console):
 
 def test_load_jpeg(fresh_console):
     assert fresh_console.send_line("CLS") == ""
-    assert fresh_console.send_line('LOAD JPG "TEST.JPG"') == ""
+    assert fresh_console.send_line('LOAD JPG "tests/TEST.JPG"') == ""
     pix = int(fresh_console.send_line("PRINT PIXEL(1,1)"))
     r = (pix >> 16) & 255
     assert r > 80
 
 
 def test_play_mp3(console):
-    assert console.send_line('PLAY MP3 "TEST.MP3"') == ""
+    assert console.send_line('PLAY MP3 "tests/TEST.MP3"') == ""
     playing = console.send_line("PRINT PLAYING()")
     assert playing in ("0", "1")
     console.send_line("PLAY STOP")
@@ -239,13 +239,13 @@ def test_play_mp3(console):
 
 
 def test_play_mod(console):
-    assert console.send_line('PLAY MODFILE "TEST.MOD"') == ""
+    assert console.send_line('PLAY MODFILE "tests/TEST.MOD"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
 
 
 def test_play_xm(console):
-    assert console.send_line('PLAY XM "TEST.XM"') == ""
+    assert console.send_line('PLAY XM "tests/TEST.XM"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
     assert console.send_line("PRINT PLAYING()") == "0"
