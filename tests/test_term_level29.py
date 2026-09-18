@@ -78,7 +78,9 @@ def test_level29_replay_server_login_flow(kernel_image):
     try:
         recs = filter_recs(load_termlog(_level29_text()), start_ms=16900, end_ms=25300)
         seen = _open_replay(con, replay, connect=False)
-        played = play_termlog(replay, recs_to_termlog_text(recs), send_keys=True)
+        # Pure display replay: the capture's R stream already contains the
+        # remote echo, so re-sending the T keystrokes just scrambles the pane.
+        played = play_termlog(replay, recs_to_termlog_text(recs), send_keys=False)
         plain = _plain(seen + played)
         assert "Enter your username" in plain or "User:" in plain
         assert "ireal" in plain
@@ -139,7 +141,11 @@ def test_level29_replay_tcp_session_login_flow(kernel_image):
         )
         plain = _plain(text)
         assert "Enter your username" in plain or "User:" in plain
-        assert "ireal" in plain
+        # This test adds the live TCP path over the serial replay: the client's
+        # typed login reached the local server, and the later scripted prompts
+        # rendered. (The echoed "ireal" display is covered by the pure-replay
+        # test; over TCP the client echoes its own input instead.)
+        assert b"ireal\rds9space\r" in server.received, server.received
         assert "Invalid user or password" in plain
         _quit(con)
         assert con.send_line("PRINT 1+1") == "2"
@@ -225,7 +231,10 @@ def test_term_log_usb_enter_is_cr_not_lf(kernel_image):
         assert path, "expected A:/.termlog or C:/.termlog"
         body = _read_termlog(con, path)
         recs = parse_termlog(body)
-        typed = b"".join(r.data for r in recs if r.kind == "T")
+        # T record data is "typed / telnet"; skip outbound negotiation records.
+        typed = b"".join(
+            r.data for r in recs if r.kind == "T" and not r.data.startswith(b"\xff")
+        )
         assert b"ab" in typed, typed
         assert b"\r" in typed, typed
         assert b"\n" not in typed, typed

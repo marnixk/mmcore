@@ -94,24 +94,42 @@ def parse_termlog(text: str) -> list[TermLogRec]:
 def play_termlog(replay: TermReplay, text: str, *, send_keys: bool = True) -> str:
     """Feed a capture into an open ``TERM "replay"`` session."""
     acc = ""
+    pending = b""
+
+    def pump() -> None:
+        nonlocal acc
+        # Wait for a real quiet gap: the guest streams a full pane dump per
+        # flush and the tail can arrive tens of ms after the input frame.
+        last = time.time()
+        while time.time() - last < 0.30:
+            extra = replay.pump_once(recv_tcp=False)
+            if extra:
+                acc += extra.decode(errors="replace")
+                last = time.time()
+            else:
+                time.sleep(0.01)
+
+    def flush_rx() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        # Batch consecutive host bytes into one replay frame: per-byte frames
+        # flood the guest and its pane dumps arrive out of order/starved.
+        replay._to_guest(pending)
+        pending = b""
+        pump()
+
     for rec in parse_termlog(text):
         if rec.kind == "R":
-            replay._to_guest(rec.data)
-        elif rec.kind == "T" and send_keys:
+            pending += rec.data
+            continue
+        flush_rx()
+        if rec.kind == "T" and send_keys:
             if rec.data[:1] == b"\xff":
                 continue
             replay.send_keys(rec.data)
         else:
             continue
-        idle = 0
-        for _ in range(12):
-            extra = replay.pump_once(recv_tcp=False)
-            if extra:
-                acc += extra.decode(errors="replace")
-                idle = 0
-            else:
-                idle += 1
-                time.sleep(0.01)
-                if idle >= 3:
-                    break
+        pump()
+    flush_rx()
     return acc
