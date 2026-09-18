@@ -99,7 +99,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLACK, TUI_WHITE,
 	  TUI_BLACK, TUI_BRWHITE, TUI_WHITE, TUI_BLUE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, pal_paper },
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, TUI_BRWHITE, TUI_RED, pal_paper },
 	{ "Cloud",
 	  TUI_BLACK, TUI_BRCYAN, TUI_RED,
 	  TUI_WHITE, TUI_BLUE,
@@ -109,7 +109,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLUE, TUI_BRCYAN,
 	  TUI_BLACK, TUI_CYAN, TUI_WHITE, TUI_BLUE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN, pal_cloud },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, TUI_BRWHITE, TUI_RED, pal_cloud },
 	{ "Snow",
 	  TUI_BLACK, TUI_BRWHITE, TUI_BRRED,
 	  TUI_WHITE, TUI_CYAN,
@@ -119,7 +119,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BLACK, TUI_BRWHITE,
 	  TUI_BLACK, TUI_WHITE, TUI_WHITE, TUI_CYAN,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, pal_snow },
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_CYAN, TUI_BRWHITE, TUI_RED, pal_snow },
 	/* 5 modern dark */
 	{ "Night",
 	  TUI_BRWHITE, TUI_BRBLACK, TUI_BRCYAN,
@@ -130,7 +130,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_WHITE, TUI_BLACK,
 	  TUI_WHITE, TUI_BRBLACK, TUI_BLACK, TUI_CYAN,
 	  TUI_BRWHITE, TUI_BRBLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_BLUE, pal_night },
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE, TUI_BRWHITE, TUI_RED, pal_night },
 	{ "Nord",
 	  TUI_BRWHITE, TUI_BLUE, TUI_BRCYAN,
 	  TUI_BLACK, TUI_CYAN,
@@ -140,7 +140,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_CYAN, TUI_BLACK,
 	  TUI_BRWHITE, TUI_BLUE, TUI_BLACK, TUI_CYAN,
 	  TUI_BRWHITE, TUI_BLUE,
-	  TUI_BLACK, TUI_BLACK, TUI_BLUE, pal_nord },
+	  TUI_BLACK, TUI_BLACK, TUI_BLUE, TUI_BRWHITE, TUI_RED, pal_nord },
 	{ "Slate",
 	  TUI_WHITE, TUI_BRBLACK, TUI_BRYELLOW,
 	  TUI_BLACK, TUI_CYAN,
@@ -150,7 +150,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_WHITE, TUI_BRBLACK,
 	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
 	  TUI_WHITE, TUI_BRBLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN, pal_slate },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, TUI_BRWHITE, TUI_RED, pal_slate },
 	{ "Forest",
 	  TUI_BRGREEN, TUI_BLACK, TUI_BRYELLOW,
 	  TUI_BLACK, TUI_GREEN,
@@ -160,7 +160,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK,
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_GREEN, pal_forest },
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN, TUI_BRWHITE, TUI_RED, pal_forest },
 	{ "Violet",
 	  TUI_BRWHITE, TUI_BLACK, TUI_BRMAGENTA,
 	  TUI_BLACK, TUI_MAGENTA,
@@ -170,7 +170,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_MAGENTA, TUI_BLACK,
 	  TUI_BRWHITE, TUI_BLACK, TUI_BLACK, TUI_MAGENTA,
 	  TUI_BRWHITE, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA, pal_violet },
+	  TUI_BLACK, TUI_BLACK, TUI_MAGENTA, TUI_BRWHITE, TUI_RED, pal_violet },
 	/* 2 retro — VGA palette (Turbo was the old default) */
 	{ "Turbo",
 	  TUI_BLACK, TUI_WHITE, TUI_BRRED,
@@ -181,7 +181,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_WHITE, TUI_BLUE,
 	  TUI_WHITE, TUI_BLUE, TUI_BLACK, TUI_WHITE,
 	  TUI_BLACK, TUI_WHITE,
-	  TUI_BLACK, TUI_BLACK, TUI_CYAN, 0 },
+	  TUI_BLACK, TUI_BLACK, TUI_CYAN, TUI_BRWHITE, TUI_RED, 0 },
 	{ "Phosphor",
 	  TUI_GREEN, TUI_BLACK, TUI_BRYELLOW,
 	  TUI_BLACK, TUI_GREEN,
@@ -191,7 +191,7 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK,
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
-	  TUI_BLACK, TUI_BLACK, TUI_GREEN, pal_phosphor },
+	  TUI_BLACK, TUI_BLACK, TUI_GREEN, TUI_BRWHITE, TUI_RED, pal_phosphor },
 };
 
 static const mmb_ed_theme *th(void)
@@ -240,6 +240,8 @@ void mmb_editor_apply_tui_palette(void)
 #define C_SH_FG     ((int)th()->sh_fg)
 #define C_SH_BG     ((int)th()->sh_bg)
 #define C_LIST_BG   ((int)th()->list_bg)
+#define C_ERR_FG    ((int)th()->err_fg)
+#define C_ERR_BG    ((int)th()->err_bg)
 
 int mmb_editor_theme_count(void)
 {
@@ -324,6 +326,10 @@ static int find_confirm;
 static int find_confirm_n;
 static int find_cx, find_row0, find_col0, find_sel, find_anchor;
 static char find_scratch[MMB_ED_BUF];
+
+#define ERRBAR_MAX 160
+static int errbar_active;
+static char errbar_msg[ERRBAR_MAX];
 static char pick_root[128];
 static char pick_path[ED_PICK_MAX][128];
 static int pick_pos[ED_PICK_MAX];
@@ -1988,6 +1994,136 @@ static void find_focus_back(void)
 		find_field = find_field ? 0 : 1;
 }
 
+/* ---- full-width run-error bar ---- */
+
+static void errbar_dismiss(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!errbar_active)
+		return;
+	errbar_active = 0;
+	if (t)
+		t->sel = 0;
+}
+
+static int errline_eq(const char *buf, int n, const char *src)
+{
+	int i;
+	for (i = 0; i < n; i++)
+	{
+		if (!src[i] || !ed_ch_eq(buf[i], src[i]))
+			return 0;
+	}
+	return src[n] == 0;
+}
+
+static void errbar_locate(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	const char *p = strstr(errbar_msg, " @");
+	const char *src;
+	long num = 0;
+	int i, found = -1, after = -1;
+	int want_after;
+
+	if (!t || !p)
+		return;
+	p += 2;
+	while (*p >= '0' && *p <= '9')
+	{
+		num = num * 10 + (*p - '0');
+		p++;
+	}
+	if (*p != ':')
+		return;
+	src = p + 1;
+	if (num > 0)
+	{
+		i = 0;
+		while (i <= t->len)
+		{
+			int s = i, e, k = i;
+			long ln = 0;
+			while (k < t->len && (t->buf[k] == ' ' || t->buf[k] == '\t'))
+				k++;
+			while (k < t->len && t->buf[k] >= '0' && t->buf[k] <= '9')
+			{
+				ln = ln * 10 + (t->buf[k] - '0');
+				k++;
+			}
+			if (ln == num)
+			{
+				found = s;
+				break;
+			}
+			e = line_end(s);
+			if (e < t->len && t->buf[e] == '\n')
+				i = e + 1;
+			else
+				break;
+		}
+	}
+	if (found < 0)
+	{
+		/* Match the trimmed (line-number-stripped) source text. */
+		int best = -1;
+		want_after = t->cx;
+		i = 0;
+		while (i <= t->len)
+		{
+			int s = i, e = line_end(s), a, b;
+			a = s;
+			b = e;
+			while (a < b && (t->buf[a] == ' ' || t->buf[a] == '\t'))
+				a++;
+			while (a < b && t->buf[a] >= '0' && t->buf[a] <= '9')
+				a++;
+			while (a < b && (t->buf[a] == ' ' || t->buf[a] == '\t'))
+				a++;
+			while (b > a && (t->buf[b - 1] == ' ' || t->buf[b - 1] == '\t'))
+				b--;
+			if (errline_eq(t->buf + a, b - a, src))
+			{
+				if (s >= want_after)
+				{
+					after = s;
+					break;
+				}
+				if (best < 0)
+					best = s;
+			}
+			if (e < t->len && t->buf[e] == '\n')
+				i = e + 1;
+			else
+				break;
+		}
+		found = after >= 0 ? after : best;
+	}
+	if (found < 0)
+		return;
+	t->sel_anchor = found;
+	t->cx = line_end(found);
+	t->sel = 1;
+	ensure_visible();
+}
+
+static void errbar_set(const char *msg)
+{
+	ed_copy(errbar_msg, sizeof(errbar_msg), msg ? msg : "");
+	errbar_active = 1;
+	errbar_locate();
+}
+
+static void errbar_draw(void)
+{
+	int hint = 4;
+	int n = (int)strlen(errbar_msg);
+	tui_pad(0, ROW_STAT, "", COLS, C_ERR_FG, C_ERR_BG);
+	tui_puts(0, ROW_STAT, errbar_msg, C_ERR_FG, C_ERR_BG);
+	if (n + hint + 1 < COLS)
+		tui_puts(COLS - hint, ROW_STAT, " Esc", C_ERR_FG, C_ERR_BG);
+}
+
 static const char **menu_items(int menu, int *n)
 {
 	switch (menu)
@@ -3199,6 +3335,11 @@ static void draw_status(void)
 		find_draw_status();
 		return;
 	}
+	if (errbar_active)
+	{
+		errbar_draw();
+		return;
+	}
 	draw_fkey(&x, ROW_STAT, "F1", " Help ");
 	draw_fkey(&x, ROW_STAT, "F2", " Save ");
 	draw_fkey(&x, ROW_STAT, "F3", " Open ");
@@ -3479,6 +3620,7 @@ static void editor_run(void)
 
 	if (!t || !save_tab())
 		return;
+	errbar_dismiss();
 	G.ed.saved_mode = G.gfx.mode;
 	G.ed.saved_bits = G.gfx.bits;
 	G.ed.saved_write_page = G.gfx.write_page;
@@ -3496,7 +3638,7 @@ static void editor_run(void)
 	mmb_exec_line(cmd);
 	if (G.err[0])
 	{
-		set_status(G.err);
+		errbar_set(G.err);
 		editor_resume();
 		return;
 	}
@@ -3908,6 +4050,8 @@ static void help_at_cursor(void)
 
 static void do_fkey(int n)
 {
+	if (errbar_active)
+		errbar_dismiss();
 	if (find_active && n == 3)
 	{
 		find_next();
@@ -3937,6 +4081,8 @@ static int handle_arrow_or_special(int kind, int mod)
 		alt = ((mod - 1) & 2) != 0;
 		ctrl = ((mod - 1) & 4) != 0;
 	}
+	if (errbar_active)
+		errbar_dismiss();
 	if (G.ed.dialog == DLG_HELP)
 	{
 		if (kind == 0)
@@ -4100,6 +4246,13 @@ static int handle_escape(char c)
 			return 1;
 		}
 		esc_state = ESC_NONE;
+		if (errbar_active)
+		{
+			errbar_dismiss();
+			if (G.ed.active)
+				redraw();
+			return 1;
+		}
 		if (find_active)
 		{
 			find_close(1);
@@ -4324,6 +4477,7 @@ void mmb_editor_open(const char *path)
 {
 	memset(&G.ed, 0, sizeof(G.ed));
 	find_abort();
+	errbar_active = 0;
 	esc_state = 0;
 	confirm_pending = PEND_NONE;
 	confirm_btn = 0;
@@ -4368,7 +4522,7 @@ const char *mmb_editor_feed(char c)
 		{
 			/* USB/serial arrows are CSI (\x1b[C). A lone Esc left pending
 			 * must not steal that introducer (that left "[C" in the buffer). */
-			if (!G.ed.menu_open && !G.ed.dialog && !find_active)
+			if (!G.ed.menu_open && !G.ed.dialog && !find_active && !errbar_active)
 			{
 				esc_at = mmb_now_ms();
 				return G.out;
@@ -4376,6 +4530,8 @@ const char *mmb_editor_feed(char c)
 			esc_state = ESC_NONE;
 			if (find_active)
 				find_close(1);
+			if (errbar_active)
+				errbar_dismiss();
 			close_ui();
 			if (G.ed.active)
 				redraw();
@@ -4389,6 +4545,18 @@ const char *mmb_editor_feed(char c)
 		esc_state = ESC_GOT;
 		esc_at = mmb_now_ms();
 		return G.out;
+	}
+	if (errbar_active)
+	{
+		int consume = (c >= 32 && c < 127) || c == '\r' || c == '\n' ||
+			      c == '\t' || c == 127;
+		errbar_dismiss();
+		if (consume)
+		{
+			if (G.ed.active)
+				redraw();
+			return G.out;
+		}
 	}
 	if (c == 6 && !G.ed.dialog && !G.ed.menu_open) /* Ctrl+F find */
 	{
@@ -4583,7 +4751,12 @@ void mmb_editor_poll(void)
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
 		return;
 	esc_state = ESC_NONE;
-	if (find_active)
+	if (errbar_active)
+	{
+		errbar_dismiss();
+		redraw();
+	}
+	else if (find_active)
 	{
 		find_close(1);
 		redraw();
