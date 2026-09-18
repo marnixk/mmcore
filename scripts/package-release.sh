@@ -87,7 +87,8 @@ build_hardware() {
 	log "Building hardware kernel (RASPPI=${rasppi}, AArch64, no QEMU extras)"
 	clean_build_tree
 	QEMU=0 RASPPI="${rasppi}" PREFIX64="${PREFIX64}" \
-		MMB_VERSION="v${VERSION}" bash "${REPO_ROOT}/scripts/build.sh"
+		MMB_VERSION="v${VERSION}" RAMDISK_EXCLUDE="tests" \
+		bash "${REPO_ROOT}/scripts/build.sh"
 	elf="$(kernel_elf_for_rasppi "${rasppi}")"
 	check_kernel_end "${elf}"
 }

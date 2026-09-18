@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""Generate tiny PNG/JPEG/MOD/XM/MP3 test assets as C arrays."""
-import os, struct, zlib, textwrap
+"""Generate the tiny binary test fixtures under ``ramdisk/tests/``.
 
-OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "mmbasic", "assets")
-SRC_OUT = os.path.join(os.path.dirname(__file__), "..", "mmbasic", "src", "assets.c")
+Outputs uppercase fixtures (TEST.PNG, TESTZ.PNG, TEST.JPG, TEST.MOD, TEST.XM,
+TEST.MP3, TEST.WAV) that the QEMU tests consume as ``A:/tests/...``. No C
+source is produced; the ramdisk build embeds them from ``ramdisk/tests/``.
+"""
+import os
+import struct
+import zlib
+
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+OUT_DIR = os.path.join(BASE, "ramdisk", "tests")
 os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def out(name):
+    return os.path.join(OUT_DIR, name)
 
 
 def chunk(tag, data):
@@ -57,7 +68,6 @@ def make_jpeg(path):
 def make_mod(path):
     title = b"TESTMOD" + b"\0" * (20 - 7)
     samples = bytearray(31 * 30)
-    # Sample 0: length in 16-bit words (big-endian), volume 64
     length_words = 256  # 512 bytes of sample data
     samples[0:22] = b"SAMP0".ljust(22, b"\0")
     samples[22:24] = struct.pack(">H", length_words)
@@ -68,7 +78,6 @@ def make_mod(path):
     header_tail = bytes([1, 127]) + bytes(128) + b"M.K."
 
     pattern = bytearray(64 * 4 * 4)
-    # Row 0, channel 0: sample 1, period 428 (C-3)
     pattern[0] = 0x11  # sample 1 in high nibble, period high 0x1
     pattern[1] = 0xAC  # period low (428)
     pattern[2] = 0
@@ -84,7 +93,6 @@ def make_mod(path):
 
 
 def make_xm(path):
-    # FastTracker II XM 1.04: 1 channel, 1 pattern, 1 instrument with 1 sample
     name = b"TESTXM".ljust(20, b" ")
     hdr = bytearray()
     hdr += b"Extended Module: "
@@ -110,7 +118,6 @@ def make_xm(path):
     hdr += order[:256]
     assert len(hdr) == 60 + 276
 
-    # Pattern 0: one uncompressed note on row 0 channel 0
     pat_data = bytes([
         49,  # note (C-4)
         1,   # instrument
@@ -119,7 +126,6 @@ def make_xm(path):
     ])
     pat = struct.pack("<IBHH", 9, 0, 64, len(pat_data)) + pat_data
 
-    # Instrument 1 with one 8-bit mono sample
     sample_len = 512
     inst_hdr_size = 263
     inst = bytearray()
@@ -159,9 +165,8 @@ def make_xm(path):
 
 
 def make_mp3(path):
-    # Try ffmpeg; otherwise a silent MPEG-1 Layer III frame (not always decoded).
-    import subprocess, tempfile, shutil
-    wav = os.path.join(OUT_DIR, "_tone.wav")
+    import subprocess
+    wav = out("_tone.wav")
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
@@ -175,62 +180,38 @@ def make_mp3(path):
         os.remove(wav)
         return open(path, "rb").read()
     except Exception:
-        # MPEG1 L3 32kbps 44100Hz mono empty-ish frame header + padding
-        # 0xFFFB is MPEG1 Layer3, 32kbps, 44.1kHz
         frame = bytes([0xFF, 0xFB, 0x10, 0xC4]) + bytes(104)
         data = frame * 20
         open(path, "wb").write(data)
         return data
 
 
-def c_array(name, data):
-    hexb = ", ".join("0x%02x" % b for b in data)
-    wrapped = "\n    ".join(textwrap.wrap(hexb, 80))
-    return f"const unsigned char {name}[{len(data)}] = {{\n    {wrapped}\n}};\nconst unsigned {name}_len = {len(data)};\n"
+def make_wav(path):
+    """Write a small 8-bit mono square-wave WAV (no C output)."""
+    rate = 8000
+    n = 24000
+    body = bytearray()
+    for i in range(n):
+        body.append(200 if (i // 9) & 1 else 56)
+    data_len = len(body)
+    hdr = bytearray()
+    hdr += b"RIFF" + struct.pack("<I", 36 + data_len) + b"WAVE"
+    hdr += b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate, 1, 8)
+    hdr += b"data" + struct.pack("<I", data_len)
+    open(path, "wb").write(bytes(hdr) + bytes(body))
+    return bytes(hdr) + bytes(body)
 
 
 def main():
-    png = make_png(os.path.join(OUT_DIR, "test.png"), 8, 8, (255, 0, 0), 0)
-    pngz = make_png(os.path.join(OUT_DIR, "testz.png"), 8, 8, (0, 255, 0), 9)
-    jpg = make_jpeg(os.path.join(OUT_DIR, "test.jpg"))
-    mod = make_mod(os.path.join(OUT_DIR, "test.mod"))
-    xm = make_xm(os.path.join(OUT_DIR, "test.xm"))
-    mp3 = make_mp3(os.path.join(OUT_DIR, "test.mp3"))
-    src = """#include "mmb_priv.h"
-
-"""
-    src += c_array("asset_png", png) + "\n"
-    src += c_array("asset_pngz", pngz) + "\n"
-    src += c_array("asset_jpg", jpg) + "\n"
-    src += c_array("asset_mod", mod) + "\n"
-    src += c_array("asset_xm", xm) + "\n"
-    src += c_array("asset_mp3", mp3) + "\n"
-    src += """
-extern const unsigned char asset_png[];
-extern const unsigned asset_png_len;
-extern const unsigned char asset_pngz[];
-extern const unsigned asset_pngz_len;
-extern const unsigned char asset_jpg[];
-extern const unsigned asset_jpg_len;
-extern const unsigned char asset_mod[];
-extern const unsigned asset_mod_len;
-extern const unsigned char asset_xm[];
-extern const unsigned asset_xm_len;
-extern const unsigned char asset_mp3[];
-extern const unsigned asset_mp3_len;
-
-void mmb_assets_seed(void)
-{
-    mmb_vfs_seed_file("TEST.PNG", asset_png, asset_png_len);
-    mmb_vfs_seed_file("TESTZ.PNG", asset_pngz, asset_pngz_len);
-    mmb_vfs_seed_file("TEST.JPG", asset_jpg, asset_jpg_len);
-    mmb_vfs_seed_file("TEST.MOD", asset_mod, asset_mod_len);
-    mmb_vfs_seed_file("TEST.XM", asset_xm, asset_xm_len);
-    mmb_vfs_seed_file("TEST.MP3", asset_mp3, asset_mp3_len);
-}
-"""
-    open(SRC_OUT, "w").write(src)
-    print("wrote", SRC_OUT, "png", len(png), "jpg", len(jpg), "mod", len(mod), "xm", len(xm), "mp3", len(mp3))
+    make_png(out("TEST.PNG"), 8, 8, (255, 0, 0), 0)
+    make_png(out("TESTZ.PNG"), 8, 8, (0, 255, 0), 9)
+    make_jpeg(out("TEST.JPG"))
+    make_mod(out("TEST.MOD"))
+    make_xm(out("TEST.XM"))
+    make_mp3(out("TEST.MP3"))
+    make_wav(out("TEST.WAV"))
+    names = sorted(os.listdir(OUT_DIR))
+    print("wrote", OUT_DIR, names)
 
 
 if __name__ == "__main__":

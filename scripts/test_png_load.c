@@ -53,7 +53,7 @@ static unsigned char *read_file(const char *path, int *size)
 
 int main(int argc, char **argv)
 {
-	const char *path = argc > 1 ? argv[1] : "mmbasic/assets/test.png";
+	const char *path = argc > 1 ? argv[1] : "ramdisk/tests/TEST.PNG";
 	unsigned char *data;
 	int n, rc, r;
 

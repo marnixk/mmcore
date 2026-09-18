@@ -81,7 +81,7 @@ def test_day_function(console):
 
 def test_dir_function(console):
     assert console.send_line("NEW") == ""
-    assert console.send_line('D$ = DIR$("*.*")') == ""
+    assert console.send_line('D$ = DIR$("tests/*.*")') == ""
     found = []
     for _ in range(64):
         name = console.send_line("PRINT D$")

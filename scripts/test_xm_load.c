@@ -35,7 +35,7 @@ static char *read_file(const char *path, size_t *size)
 
 int main(int argc, char **argv)
 {
-	const char *path = argc > 1 ? argv[1] : "mmbasic/assets/test.xm";
+	const char *path = argc > 1 ? argv[1] : "ramdisk/tests/TEST.XM";
 	jar_xm_context_t *ctx = NULL;
 	char *data;
 	size_t n;
