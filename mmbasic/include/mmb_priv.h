@@ -243,6 +243,27 @@ typedef struct mmb_gfx {
 	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
 } mmb_gfx;
 
+typedef struct mmb_ed_hop {
+	int kind; /* 0 insert, 1 delete */
+	int pos;
+	int len;
+	int off;
+	int txn;
+} mmb_ed_hop;
+
+typedef struct mmb_ed_hist {
+	mmb_ed_hop ops[128];
+	int n;          /* ops stored (applied + redo tail) */
+	int cur;        /* applied op count */
+	int pool_n;
+	int saved;      /* cur at last save; -1 = dirty */
+	int txn;        /* next txn id */
+	int typing;     /* last recorded op was a typing run */
+	int typing_txn;
+	unsigned typing_at;
+	char pool[65536];
+} mmb_ed_hist;
+
 typedef struct mmb_ed_tab {
 	int used;
 	char path[128];
@@ -252,6 +273,7 @@ typedef struct mmb_ed_tab {
 	int dirty;
 	int sel;
 	int sel_anchor;
+	mmb_ed_hist hist;
 } mmb_ed_tab;
 
 typedef struct mmb_editor {
