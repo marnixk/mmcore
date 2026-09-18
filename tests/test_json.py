@@ -158,7 +158,7 @@ def test_help_json_parse_stringify(console):
     s = dump_topic(console, "JSON_STRINGIFY$")
     assert s != "?SYNTAX ERROR"
     assert "JSON_STRINGIFY$" in s
-    assert "255" in s
+    assert "OVERFLOW" in s.upper() or "GROW" in s.upper()
     cmds = dump_topic(console, None)
     assert "JSON_PARSE" in cmds
     fns = dump_topic(console, "FUNCTIONS")

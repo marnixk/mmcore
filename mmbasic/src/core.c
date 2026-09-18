@@ -607,9 +607,11 @@ static void gosub_save_ctrl(int g)
 	G.gosub_if_skip[g] = G.if_skip;
 	G.gosub_if_taken[g] = G.if_taken;
 	G.gosub_sel_val[g] = G.sel_val;
-	memcpy(G.gosub_sel_str[g], G.sel_str, sizeof(G.sel_str));
 	if (G.sel_val.type == T_STR)
+	{
+		mmb_str_set(&G.gosub_sel_str[g], G.sel_val.s, -1, 0, "SELECT");
 		G.gosub_sel_val[g].s = G.gosub_sel_str[g];
+	}
 	G.sel_skip = 0;
 	G.sel_active = 0;
 	G.if_skip = 0;
@@ -623,9 +625,13 @@ static void gosub_restore_ctrl(int g)
 	G.if_skip = G.gosub_if_skip[g];
 	G.if_taken = G.gosub_if_taken[g];
 	G.sel_val = G.gosub_sel_val[g];
-	memcpy(G.sel_str, G.gosub_sel_str[g], sizeof(G.sel_str));
 	if (G.sel_val.type == T_STR)
-		G.sel_val.s = G.sel_str;
+	{
+		mmb_str_free(G.sel_str);
+		G.sel_str = G.gosub_sel_str[g];
+		G.gosub_sel_str[g] = 0;
+		G.sel_val.s = G.sel_str ? G.sel_str : mmb_str_empty();
+	}
 }
 
 void mmb_cmd_goto(void)
@@ -829,7 +835,7 @@ void mmb_cmd_select(void)
 	if (!mmb_match("CASE"))
 		mmb_syntax();
 	G.sel_val = mmb_expr();
-	mmb_val_own(&G.sel_val, G.sel_str, (int)sizeof(G.sel_str));
+	mmb_val_own(&G.sel_val, &G.sel_str, 0, "SELECT");
 	G.sel_active = 0;
 	G.sel_skip = 1;
 }
@@ -1136,9 +1142,10 @@ static void input_to_var(int fn)
 {
 	char name[MMB_MAX_NAME];
 	int nidx, idx[MMB_MAX_DIMS], t;
-	char buf[MMB_MAX_STR + 1];
-	int n = 0, c;
+	char *buf;
+	int cap = 256, n = 0, c;
 	mmb_val v;
+	buf = mmb_tmp_alloc(cap);
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	if (t == T_STR || name[strlen(name) - 1] == '$')
 	{
@@ -1147,8 +1154,14 @@ static void input_to_var(int fn)
 			c = file_getc(fn);
 			if (c < 0 || c == '\n' || c == '\r' || c == ',')
 				break;
-			if (n < MMB_MAX_STR)
-				buf[n++] = (char)c;
+			if (n + 1 >= cap)
+			{
+				char *nb = mmb_tmp_alloc(cap * 2);
+				memcpy(nb, buf, (size_t)n);
+				buf = nb;
+				cap *= 2;
+			}
+			buf[n++] = (char)c;
 		}
 		if (c == '\r')
 		{
@@ -1201,7 +1214,7 @@ static void input_assign_mem(const char **ps)
 {
 	char name[MMB_MAX_NAME];
 	int nidx, idx[MMB_MAX_DIMS], t;
-	char buf[MMB_MAX_STR + 1];
+	char *buf;
 	int n = 0;
 	const char *p = *ps;
 	mmb_val v;
@@ -1211,28 +1224,32 @@ static void input_assign_mem(const char **ps)
 		p++;
 	if (*p == '"')
 	{
+		const char *start;
 		p++;
+		start = p;
 		while (*p && *p != '"')
-		{
-			if (n < MMB_MAX_STR)
-				buf[n++] = *p;
 			p++;
-		}
+		n = (int)(p - start);
+		buf = mmb_tmp_alloc(n + 1);
+		if (n)
+			memcpy(buf, start, (size_t)n);
+		buf[n] = 0;
 		if (*p == '"')
 			p++;
 	}
 	else
 	{
+		const char *start = p;
 		while (*p && *p != ',')
-		{
-			if (n < MMB_MAX_STR)
-				buf[n++] = *p;
 			p++;
-		}
-		while (n > 0 && (buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+		n = (int)(p - start);
+		while (n > 0 && (start[n - 1] == ' ' || start[n - 1] == '\t'))
 			n--;
+		buf = mmb_tmp_alloc(n + 1);
+		if (n)
+			memcpy(buf, start, (size_t)n);
+		buf[n] = 0;
 	}
-	buf[n] = 0;
 	if (*p == ',')
 		p++;
 	*ps = p;
@@ -1270,7 +1287,7 @@ void mmb_cmd_input(void)
 {
 	int fn = 0;
 	char extra[3];
-	char line[MMB_MAX_STR + 1];
+	char *line;
 	const char *sp;
 
 	mmb_skip_sp();
@@ -1325,15 +1342,7 @@ void mmb_cmd_input(void)
 	if (extra[0])
 		mmb_console_write(extra);
 
-	line[0] = 0;
-	if (G.plat && G.plat->read_line)
-	{
-		int rc = G.plat->read_line(line, sizeof(line), 0);
-		if (rc == -2)
-			mmb_error("?BREAK");
-		if (rc != 0)
-			line[0] = 0;
-	}
+	line = mmb_read_line(0);
 	sp = line;
 	for (;;)
 	{
@@ -1356,12 +1365,13 @@ void mmb_cmd_line_input(void)
 	int fn;
 	char name[MMB_MAX_NAME];
 	int nidx, idx[MMB_MAX_DIMS], t;
-	char buf[MMB_MAX_STR + 1];
-	int n = 0, c;
+	char *buf;
+	int cap = 256, n = 0, c;
 	mmb_val v;
 	mmb_skip_sp();
 	if (*G.p != '#')
 	{
+		char *line;
 		mmb_out_flush();
 		if (*G.p == '"')
 		{
@@ -1375,13 +1385,8 @@ void mmb_cmd_line_input(void)
 		t = mmb_parse_var_ref(name, &nidx, idx);
 		if (t != T_STR && name[strlen(name) - 1] != '$')
 			mmb_error("?TYPE MISMATCH");
-		buf[0] = 0;
-		if (G.plat && G.plat->read_line)
-		{
-			if (G.plat->read_line(buf, sizeof(buf), 0) == -2)
-				mmb_error("?BREAK");
-		}
-		v = mmb_str_val(buf);
+		line = mmb_read_line(0);
+		v = mmb_str_val(line);
 		mmb_do_assign(name, t ? t : T_STR, nidx, idx, v);
 		return;
 	}
@@ -1393,13 +1398,20 @@ void mmb_cmd_line_input(void)
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	if (t != T_STR && name[strlen(name) - 1] != '$')
 		mmb_error("?TYPE MISMATCH");
+	buf = mmb_tmp_alloc(cap);
 	for (;;)
 	{
 		c = file_getc(fn);
 		if (c < 0 || c == '\n' || c == '\r')
 			break;
-		if (n < MMB_MAX_STR)
-			buf[n++] = (char)c;
+		if (n + 1 >= cap)
+		{
+			char *nb = mmb_tmp_alloc(cap * 2);
+			memcpy(nb, buf, (size_t)n);
+			buf = nb;
+			cap *= 2;
+		}
+		buf[n++] = (char)c;
 	}
 	if (c == '\r')
 	{
@@ -1523,7 +1535,8 @@ int mmb_call_named_sub(const char *name)
 		if (v)
 		{
 			G.gosub_savev[g][i] = mmb_load_var(v, 0);
-			mmb_val_own(&G.gosub_savev[g][i], G.gosub_ss[g][i], MMB_MAX_STR + 1);
+			mmb_val_own(&G.gosub_savev[g][i], &G.gosub_ss[g][i], 0,
+				    G.gosub_saven[g][i]);
 		}
 		else
 			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
@@ -1547,7 +1560,8 @@ int mmb_call_named_sub(const char *name)
 		if (v)
 		{
 			G.gosub_savev[g][slot] = mmb_load_var(v, 0);
-			mmb_val_own(&G.gosub_savev[g][slot], G.gosub_ss[g][slot], MMB_MAX_STR + 1);
+			mmb_val_own(&G.gosub_savev[g][slot], &G.gosub_ss[g][slot], 0,
+				    G.gosub_saven[g][slot]);
 		}
 		else
 			memset(&G.gosub_savev[g][slot], 0, sizeof(G.gosub_savev[g][slot]));
@@ -1629,7 +1643,7 @@ void mmb_cmd_end_function(void)
 					G.func_ret.blob = G.func_ret_blob;
 				}
 				else
-					mmb_val_own(&G.func_ret, G.func_ret_s, (int)sizeof(G.func_ret_s));
+					mmb_val_own(&G.func_ret, &G.func_ret_s, 0, fname);
 			}
 			else
 			{
@@ -3821,6 +3835,7 @@ static void run_program(void)
 		do
 		{
 			loop = 0;
+			mmb_str_reset();
 			G.run_pc = pc;
 			G.branch_pc = -1;
 			if (G.on_error_pc >= 0)

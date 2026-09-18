@@ -132,9 +132,16 @@ static void cons_write(const char *s)
 
 static int read_console_line(char *buf, unsigned maxn, int hide)
 {
-	if (G.plat && G.plat->read_line)
-		return G.plat->read_line(buf, maxn, hide);
-	return -1;
+	char *line;
+	if (!G.plat || !G.plat->read_line)
+		return -1;
+	line = mmb_read_line(hide);
+	if (buf && maxn)
+	{
+		strncpy(buf, line, maxn - 1);
+		buf[maxn - 1] = 0;
+	}
+	return 0;
 }
 
 static void wifi_store(const char *ssid, const char *psk)

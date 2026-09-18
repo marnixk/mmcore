@@ -102,7 +102,14 @@ void mmb_clear_consts(void)
 {
 	int i;
 	for (i = 0; i < MMB_MAX_CONST; i++)
+	{
+		if (G.consts[i].used && G.consts[i].val.type == T_STR)
+		{
+			mmb_str_free(G.consts[i].s);
+			G.consts[i].s = 0;
+		}
 		G.consts[i].used = 0;
+	}
 	G.nconst = 0;
 }
 
@@ -129,7 +136,7 @@ void mmb_const_define(const char *name, int type, mmb_val val)
 	G.consts[slot].type = type;
 	G.consts[slot].val = val;
 	if (val.type == T_STR)
-		mmb_val_own(&G.consts[slot].val, G.consts[slot].s, (int)sizeof(G.consts[slot].s));
+		mmb_val_own(&G.consts[slot].val, &G.consts[slot].s, 0, nbuf);
 	G.consts[slot].used = 1;
 	G.nconst++;
 }
@@ -169,7 +176,7 @@ void mmb_clear_vars(int keep_options)
 			if (G.vars[i].type == T_STR && G.vars[i].data.s)
 			{
 				for (d = 0; d < G.vars[i].size; d++)
-					G.plat->free(G.vars[i].data.s[d]);
+					mmb_str_free(G.vars[i].data.s[d]);
 				G.plat->free(G.vars[i].data.s);
 			}
 			else if (G.vars[i].type == T_INT && G.vars[i].data.i)
@@ -417,8 +424,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	else if (type == T_STR)
 	{
 		G.vars[i].data.s = G.plat->alloc(sizeof(char *));
-		G.vars[i].data.s[0] = G.plat->alloc(MMB_MAX_STR + 1);
-		G.vars[i].data.s[0][0] = 0;
+		G.vars[i].data.s[0] = mmb_str_empty();
 	}
 	else
 	{
@@ -452,7 +458,7 @@ void mmb_cmd_dim(void)
 		int type, dims = 0, dim[MMB_MAX_DIMS], i, n, slot, had_suffix;
 		int idxdummy[MMB_MAX_DIMS];
 		int struct_idx = -1;
-		int fixlen = 0;
+		int maxlen = 0;
 		mmb_ident(name, sizeof(name));
 		{
 			int sl = (int)strlen(name);
@@ -505,11 +511,9 @@ void mmb_cmd_dim(void)
 		if (mmb_match("LENGTH"))
 		{
 			mmb_val lv = mmb_expr();
-			fixlen = (int)mmb_as_int(lv);
-			if (fixlen < 0)
-				fixlen = 0;
-			if (fixlen > MMB_MAX_STR)
-				fixlen = MMB_MAX_STR;
+			maxlen = (int)mmb_as_int(lv);
+			if (maxlen < 0)
+				maxlen = 0;
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
@@ -556,10 +560,7 @@ void mmb_cmd_dim(void)
 		{
 			G.vars[slot].data.s = G.plat->alloc((unsigned)n * sizeof(char *));
 			for (i = 0; i < n; i++)
-			{
-				G.vars[slot].data.s[i] = G.plat->alloc(MMB_MAX_STR + 1);
-				G.vars[slot].data.s[i][0] = 0;
-			}
+				G.vars[slot].data.s[i] = mmb_str_empty();
 		}
 		else if (type == T_STRUCT)
 		{
@@ -578,7 +579,7 @@ void mmb_cmd_dim(void)
 			G.dim_used = 1;
 		(void)idxdummy;
 	dim_init:
-		G.vars[slot].fixlen = (type == T_STR) ? fixlen : 0;
+		G.vars[slot].maxlen = (type == T_STR) ? maxlen : 0;
 		mmb_skip_sp();
 		if (*G.p == '=')
 		{
@@ -637,7 +638,9 @@ void mmb_cmd_dim(void)
 					{
 						if (init.type != T_STR)
 							mmb_error("?TYPE MISMATCH");
-						strncpy(G.vars[slot].data.s[ei], init.s, MMB_MAX_STR);
+						mmb_str_set(&G.vars[slot].data.s[ei],
+							   init.s, -1, G.vars[slot].maxlen,
+							   G.vars[slot].name);
 					}
 					else if (type == T_INT)
 						G.vars[slot].data.i[ei] = mmb_as_int(init);
@@ -664,7 +667,9 @@ void mmb_cmd_dim(void)
 				{
 					if (init.type != T_STR)
 						mmb_error("?TYPE MISMATCH");
-					strncpy(G.vars[slot].data.s[0], init.s, MMB_MAX_STR);
+					mmb_str_set(&G.vars[slot].data.s[0],
+						   init.s, -1, G.vars[slot].maxlen,
+						   G.vars[slot].name);
 				}
 				else if (type == T_INT)
 					G.vars[slot].data.i[0] = mmb_as_int(init);
@@ -689,7 +694,7 @@ static void free_var_storage(mmb_var *v)
 	{
 		for (d = 0; d < v->size; d++)
 			if (v->data.s[d])
-				G.plat->free(v->data.s[d]);
+				mmb_str_free(v->data.s[d]);
 		G.plat->free(v->data.s);
 		v->data.s = 0;
 	}
@@ -722,10 +727,7 @@ static void alloc_var_storage(mmb_var *v, int n)
 	{
 		v->data.s = G.plat->alloc((unsigned)n * sizeof(char *));
 		for (i = 0; i < n; i++)
-		{
-			v->data.s[i] = G.plat->alloc(MMB_MAX_STR + 1);
-			v->data.s[i][0] = 0;
-		}
+			v->data.s[i] = mmb_str_empty();
 	}
 	else if (v->type == T_STRUCT)
 	{
@@ -865,7 +867,7 @@ void mmb_cmd_redim(void)
 		for (i = 0; i < dims; i++)
 			v->dim[i] = dim[i];
 		v->size = n;
-		v->fixlen = 0;
+		v->maxlen = 0;
 		if (type == T_STRUCT && v->struct_idx < 0)
 			mmb_error("?UNKNOWN TYPE");
 		v->data.s = 0;
@@ -895,8 +897,8 @@ void mmb_cmd_redim(void)
 				}
 				if (type == T_STR)
 				{
-					strncpy(v->data.s[noff], os[oi_index], MMB_MAX_STR);
-					v->data.s[noff][MMB_MAX_STR] = 0;
+					mmb_str_set(&v->data.s[noff], os[oi_index], -1,
+						   v->maxlen, v->name);
 				}
 				else if (type == T_INT)
 					v->data.i[noff] = oi[oi_index];
@@ -911,7 +913,7 @@ void mmb_cmd_redim(void)
 		{
 			for (i = 0; i < old_size; i++)
 				if (os[i])
-					G.plat->free(os[i]);
+					mmb_str_free(os[i]);
 			G.plat->free(os);
 		}
 		else if (type == T_INT && oi)
@@ -1008,8 +1010,8 @@ static void store(mmb_var *v, int off, mmb_val val)
 	{
 		if (val.type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		strncpy(v->data.s[off], val.s ? val.s : "", MMB_MAX_STR);
-		v->data.s[off][MMB_MAX_STR] = 0;
+		mmb_str_set(&v->data.s[off], val.s ? val.s : "", -1,
+			   v->maxlen, v->name);
 	}
 	else if (v->type == T_INT)
 	{

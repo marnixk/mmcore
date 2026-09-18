@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "mmbasic.h"
+#include <circle/alloc.h>
 #include <circle/font.h>
 #include <circle/new.h>
 #include <circle/util.h>
@@ -952,10 +953,15 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 }
 
 
-int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
+int CKernel::ReadLine (char **out, int hide)
 {
-	unsigned n = 0;
-	if (!buf || maxn == 0)
+	unsigned cap = 128, n = 0;
+	char *buf;
+	if (out == 0)
+		return -1;
+	*out = 0;
+	buf = (char *) malloc (cap);
+	if (buf == 0)
 		return -1;
 	buf[0] = 0;
 	for (;;)
@@ -976,7 +982,10 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 				nBytes += nKbd;
 		}
 		if (TakeBreak ())
+		{
+			free (buf);
 			return -2;
+		}
 		if (nBytes <= 0)
 			continue;
 		for (i = 0; i < nBytes; i++)
@@ -984,11 +993,15 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 			char c = tmp[i];
 			int bk = mmb_break_key ();
 			if ((bk && (unsigned char) c == (unsigned char) bk) || TakeBreak ())
+			{
+				free (buf);
 				return -2;
+			}
 			if (c == '\r' || c == '\n')
 			{
 				buf[n] = 0;
 				emit_n (this, "\r\n", 2);
+				*out = buf;
 				return 0;
 			}
 			if (c == 8 || c == 127)
@@ -1000,7 +1013,18 @@ int CKernel::ReadLine (char *buf, unsigned maxn, int hide)
 				}
 				continue;
 			}
-			if (n + 1 < maxn)
+			if (n + 2 >= cap)
+			{
+				unsigned ncap = cap * 2;
+				char *nb = (char *) realloc (buf, ncap);
+				if (nb == 0)
+				{
+					free (buf);
+					return -1;
+				}
+				buf = nb;
+				cap = ncap;
+			}
 			{
 				char e = hide ? '*' : c;
 				buf[n++] = c;

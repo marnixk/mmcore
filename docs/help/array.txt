@@ -20,8 +20,9 @@ ARRAY SLICE src(), idx[, idx...], dst()
 For INSERT and SLICE, supply one index per dimension and leave exactly one
 blank. The blank selects the dimension to read or write. OPTION BASE applies to
 the indices. The 1D array length must equal the selected dimension's length.
-Numeric and string arrays are supported; string values are truncated to 255
-characters.
+Numeric and string arrays are supported. A destination string element with a
+~DIM~ LENGTH cap raises ?OVERFLOW if the result is longer; otherwise string
+values grow on demand.
 
 Example:
 

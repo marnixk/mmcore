@@ -362,11 +362,11 @@ static unsigned plat_millis(void)
 }
 
 
-static int plat_read_line(char *buf, unsigned maxn, int hide)
+static int plat_read_line(char **out, int hide)
 {
 	if (!s_kernel)
 		return -1;
-	return s_kernel->ReadLine(buf, maxn, hide);
+	return s_kernel->ReadLine(out, hide);
 }
 
 static int plat_read_raw(unsigned char *buf, unsigned n)

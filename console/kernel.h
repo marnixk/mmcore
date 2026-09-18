@@ -34,7 +34,7 @@ public:
 
 	CScreenDevice &Screen (void) { return m_Screen; }
 	CSerialDevice &Serial (void) { return m_Serial; }
-	int ReadLine (char *buf, unsigned maxn, int hide);
+	int ReadLine (char **out, int hide);
 	int ReadRaw (unsigned char *buf, unsigned n);
 	void PollInputChars (int breakKey);
 	int TakeBreak (void);

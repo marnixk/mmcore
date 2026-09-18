@@ -34,13 +34,12 @@ static void join_rel(char *out, int outsz, const char *dir, const char *name)
 
 static int confirm_overwrite(void)
 {
-	char line[40];
+	char *line;
 	char *p;
 	mmb_console_write("File exists, overwrite? [Y/n] ");
 	if (!G.plat || !G.plat->read_line)
 		return 0;
-	if (G.plat->read_line(line, sizeof(line), 0) != 0)
-		return 0;
+	line = mmb_read_line(0);
 	p = line;
 	while (*p == ' ' || *p == '\t')
 		p++;

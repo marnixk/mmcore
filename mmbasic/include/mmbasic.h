@@ -24,8 +24,10 @@ typedef struct mmb_platform {
 	void *(*alloc)(unsigned n);
 	void (*free)(void *p);
 	unsigned (*millis)(void);
-	/* Optional blocking console line. hide!=0 echoes '*'. 0=ok, -1=none. */
-	int (*read_line)(char *buf, unsigned maxn, int hide);
+	/* Optional blocking console line. hide!=0 echoes '*'. On success sets
+	 * *out to a malloc'd NUL-terminated line (caller frees via free) and
+	 * returns 0; -1 no console; -2 break. */
+	int (*read_line)(char **out, int hide);
 	/* Drain serial/USB while a program is running (sets break on PrtScr / BREAK key). */
 	void (*poll_input)(void);
 	/* 1 if a break was requested since the last call (clears the flag). */

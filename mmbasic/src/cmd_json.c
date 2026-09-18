@@ -97,19 +97,22 @@ static const cJSON *json_walk(const cJSON *cur, const char *path)
 	return cur;
 }
 
-static void json_item_text(const cJSON *item, char *out, int outsz)
+static int json_item_text(const cJSON *item, char *out, int outsz)
 {
+	int need = 0;
 	out[0] = 0;
 	if (!item || outsz < 2)
-		return;
+		return 0;
 	if (cJSON_IsNull(item) || cJSON_IsObject(item) || cJSON_IsArray(item) ||
 	    cJSON_IsInvalid(item))
-		return;
+		return 0;
 	if (cJSON_IsBool(item))
 	{
-		strncpy(out, cJSON_IsTrue(item) ? "true" : "false", (unsigned)outsz - 1);
+		const char *s = cJSON_IsTrue(item) ? "true" : "false";
+		need = (int)strlen(s);
+		strncpy(out, s, (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
-		return;
+		return need;
 	}
 	if (cJSON_IsNumber(item))
 	{
@@ -125,25 +128,29 @@ static void json_item_text(const cJSON *item, char *out, int outsz)
 		mmb_print_val(v);
 		strncpy(out, G.out, (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
+		need = G.outn;
 		G.outn = save;
 		G.out[G.outn] = 0;
-		return;
+		return need;
 	}
 	if (cJSON_IsString(item) && item->valuestring)
 	{
+		need = (int)strlen(item->valuestring);
 		strncpy(out, item->valuestring, (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
+		return need;
 	}
+	return 0;
 }
 
 mmb_val mmb_json_query(const char *js, const char *path)
 {
 	cJSON *parse;
 	const cJSON *item;
-	char buf[MMB_MAX_STR + 1];
+	int cap = 256;
+	char *buf;
 
 	json_hooks();
-	buf[0] = 0;
 	if (!js)
 		js = "";
 	if (!path)
@@ -152,7 +159,15 @@ mmb_val mmb_json_query(const char *js, const char *path)
 	if (!parse)
 		mmb_error("?JSON");
 	item = json_walk(parse, path);
-	json_item_text(item, buf, sizeof(buf));
+	for (;;)
+	{
+		int need;
+		buf = mmb_tmp_alloc(cap);
+		need = json_item_text(item, buf, cap);
+		if (need < cap)
+			break;
+		cap = need + 1;
+	}
 	cJSON_Delete(parse);
 	return mmb_str_val(buf);
 }
@@ -162,7 +177,7 @@ static int mem_esz(const mmb_smem *m)
 	if (m->type == T_INT || m->type == T_NUM)
 		return 8;
 	if (m->type == T_STR)
-		return m->size + 1;
+		return m->size + MMB_STRUCT_STRLEN;
 	if (m->type == T_STRUCT && m->size >= 0 && m->size < G.nstruct)
 		return G.sdef[m->size].total;
 	return 0;
@@ -176,23 +191,25 @@ static void json_pack_str(unsigned char *p, int max, const char *s)
 		s = "";
 	while (s[n] && n < max)
 		n++;
-	p[0] = (unsigned char)n;
+	MMB_STRUCT_STRLEN_PUT(p, n);
 	if (n)
-		memcpy(p + 1, s, (unsigned)n);
+		memcpy(p + MMB_STRUCT_STRLEN, s, (unsigned)n);
 	if (n < max)
-		memset(p + 1 + n, 0, (unsigned)(max - n));
+		memset(p + MMB_STRUCT_STRLEN + n, 0, (unsigned)(max - n));
 }
 
 static void json_unpack_str(const unsigned char *p, int max, char *out, int outsz)
 {
-	int n = p[0];
+	int n = MMB_STRUCT_STRLEN_GET(p);
 
+	if (n < 0)
+		n = 0;
 	if (n > max)
 		n = max;
 	if (n > outsz - 1)
 		n = outsz - 1;
 	if (n)
-		memcpy(out, p + 1, (unsigned)n);
+		memcpy(out, p + MMB_STRUCT_STRLEN, (unsigned)n);
 	out[n] = 0;
 }
 
@@ -241,7 +258,17 @@ static void json_fill_value(unsigned char *p, const mmb_smem *m, const cJSON *it
 	if (m->type == T_STR)
 	{
 		if (cJSON_IsString(item) && item->valuestring)
+		{
+			int slen = (int)strlen(item->valuestring);
+			if (slen > m->size)
+			{
+				char msg[160];
+				sprintf(msg, "?OVERFLOW: %s needs %d, LENGTH %d",
+					m->name, slen, m->size);
+				mmb_error(msg);
+			}
 			json_pack_str(p, m->size, item->valuestring);
+		}
 		return;
 	}
 	if (m->type == T_STRUCT && cJSON_IsObject(item))
@@ -447,8 +474,8 @@ static int emit_value(char *dst, int cap, int n, const unsigned char *p, const m
 	}
 	if (m->type == T_STR)
 	{
-		char tmp[MMB_MAX_STR + 1];
-		json_unpack_str(p, m->size, tmp, sizeof(tmp));
+		char *tmp = mmb_tmp_alloc(m->size + 1);
+		json_unpack_str(p, m->size, tmp, m->size + 1);
 		return emit_quoted(dst, cap, n, tmp);
 	}
 	if (m->type == T_STRUCT)
@@ -517,14 +544,22 @@ static int emit_struct(char *dst, int cap, int n, const unsigned char *rec, int 
 
 mmb_val mmb_json_stringify(mmb_val v)
 {
-	char buf[MMB_MAX_STR + 2];
+	int cap = 256;
+	char *buf;
 	int n;
 
 	if (v.type != T_STRUCT || !v.blob)
 		mmb_error("?TYPE MISMATCH");
-	n = emit_struct(buf, MMB_MAX_STR + 1, 0, v.blob, v.struct_idx);
-	if (n < 0)
-		mmb_error("?OVERFLOW");
+	for (;;)
+	{
+		buf = mmb_tmp_alloc(cap);
+		n = emit_struct(buf, cap, 0, v.blob, v.struct_idx);
+		if (n >= 0)
+			break;
+		if (cap > (1 << 24))
+			mmb_error("?OVERFLOW");
+		cap *= 2;
+	}
 	buf[n] = 0;
-	return mmb_str_val(buf);
+	return mmb_arena_val(buf);
 }

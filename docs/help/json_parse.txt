@@ -1,7 +1,7 @@
 name: JSON_PARSE
 kind: command
 
-Fill a TYPE variable from a JSON STRING (255). Object keys match member names
+Fill a TYPE variable from a JSON string. Object keys match member names
 case-insensitively. Missing keys, extra keys and null leave members unchanged.
 
 JSON_PARSE json$, var
@@ -10,8 +10,8 @@ JSON_PARSE json$, var
   var - TYPE variable to fill
 
 JSON bool becomes INTEGER 0 or 1. JSON number to INTEGER truncates toward zero;
-overflow is an error. STRING members truncate to LENGTH. Nested objects fill
-nested TYPEs. JSON arrays fill array members (extra ignored).
+overflow is an error. A string longer than a member's LENGTH is an error. Nested
+objects fill nested TYPEs. JSON arrays fill array members (extra ignored).
 
 Example:
 

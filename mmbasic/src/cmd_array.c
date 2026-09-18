@@ -16,8 +16,7 @@ static mmb_arrview parse_whole_array(void)
 
 static void store_str(mmb_arrview a, int i, const char *s)
 {
-	strncpy(a.v->data.s[i], s ? s : "", MMB_MAX_STR);
-	a.v->data.s[i][MMB_MAX_STR] = 0;
+	mmb_str_set(&a.v->data.s[i], s ? s : "", -1, a.v->maxlen, a.v->name);
 }
 
 static void array_set(void)
@@ -60,19 +59,19 @@ static void array_add(void)
 		mmb_error("?SIZE MISMATCH");
 	if (src.v->type == T_STR || dst.v->type == T_STR)
 	{
-		char buf[MMB_MAX_STR + 1];
 		if (src.v->type != T_STR || dst.v->type != T_STR || val.type != T_STR)
 			mmb_error("?TYPE MISMATCH");
 		for (i = 0; i < src.count; i++)
 		{
-			strncpy(buf, src.v->data.s[i], MMB_MAX_STR);
-			buf[MMB_MAX_STR] = 0;
-			{
-				int n = (int)strlen(buf), k;
-				for (k = 0; val.s[k] && n < MMB_MAX_STR; k++)
-					buf[n++] = val.s[k];
-				buf[n] = 0;
-			}
+			const char *a0 = src.v->data.s[i];
+			int la = a0 ? (int)strlen(a0) : 0;
+			int lb = val.s ? (int)strlen(val.s) : 0;
+			char *buf = mmb_tmp_alloc(la + lb + 1);
+			if (la)
+				memcpy(buf, a0, (size_t)la);
+			if (lb)
+				memcpy(buf + la, val.s, (size_t)lb);
+			buf[la + lb] = 0;
 			store_str(dst, i, buf);
 		}
 	}

@@ -105,9 +105,8 @@ void mmb_cmd_cat(void)
 {
 	char name[MMB_MAX_NAME];
 	int nidx, idx[MMB_MAX_DIMS], t;
-	mmb_val add, cur;
+	mmb_val add;
 	mmb_var *v;
-	char buf[MMB_MAX_STR + 1];
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
 	if (*G.p == ',')
@@ -118,17 +117,29 @@ void mmb_cmd_cat(void)
 	v = mmb_find_var(name, t ? t : T_STR, 1, nidx, idx);
 	if (!v || v->type != T_STR)
 		mmb_error("?TYPE MISMATCH");
-	strncpy(buf, v->data.s && v->data.s[0] ? v->data.s[0] : "", sizeof(buf) - 1);
-	buf[sizeof(buf) - 1] = 0;
+	if (G.acc_on)
 	{
-		int n = (int)strlen(buf);
-		int i;
-		for (i = 0; add.s[i] && n + 1 < (int)sizeof(buf); i++)
-			buf[n++] = add.s[i];
-		buf[n] = 0;
+		const char *cs;
+		int lc, la;
+		char *buf;
+		mmb_val cur;
+		cs = (v->data.s && v->data.s[0]) ? v->data.s[0] : "";
+		lc = (int)strlen(cs);
+		la = add.s ? (int)strlen(add.s) : 0;
+		buf = mmb_tmp_alloc(lc + la + 1);
+		if (lc)
+			memcpy(buf, cs, (size_t)lc);
+		if (la)
+			memcpy(buf + lc, add.s, (size_t)la);
+		buf[lc + la] = 0;
+		cur = mmb_arena_val(buf);
+		mmb_do_assign(name, T_STR, nidx, idx, cur);
 	}
-	cur = mmb_str_val(buf);
-	mmb_do_assign(name, T_STR, nidx, idx, cur);
+	else
+	{
+		int off = mmb_elem_off(v, nidx, idx);
+		mmb_str_append(&v->data.s[off], add.s, -1, v->maxlen, v->name);
+	}
 }
 
 void mmb_cmd_on(void)
@@ -208,10 +219,12 @@ void mmb_cmd_on(void)
 void mmb_cmd_mid(void)
 {
 	char name[MMB_MAX_NAME];
-	int nidx, idx[MMB_MAX_DIMS], t, start, ncopy, i, slen, rlen;
+	int nidx, idx[MMB_MAX_DIMS], t, start, ncopy, i, slen, rlen, off, needed;
 	mmb_val cur, repl, sv, lv;
 	mmb_var *v;
-	char buf[MMB_MAX_STR + 1];
+	char *buf;
+	const char *cs;
+	int have_n = 0;
 	mmb_skip_sp();
 	mmb_expect('(');
 	t = mmb_parse_var_ref(name, &nidx, idx);
@@ -219,13 +232,14 @@ void mmb_cmd_mid(void)
 	mmb_expect(',');
 	sv = mmb_expr();
 	start = (int)mmb_as_int(sv);
-	ncopy = MMB_MAX_STR;
+	ncopy = 0;
 	mmb_skip_sp();
 	if (*G.p == ',')
 	{
 		G.p++;
 		lv = mmb_expr();
 		ncopy = (int)mmb_as_int(lv);
+		have_n = 1;
 	}
 	mmb_expect(')');
 	mmb_skip_sp();
@@ -236,17 +250,25 @@ void mmb_cmd_mid(void)
 	v = mmb_find_var(name, t ? t : T_STR, 1, nidx, idx);
 	if (!v || v->type != T_STR)
 		mmb_error("?TYPE MISMATCH");
-	strncpy(buf, v->data.s && v->data.s[0] ? v->data.s[0] : "", sizeof(buf) - 1);
-	buf[sizeof(buf) - 1] = 0;
-	slen = (int)strlen(buf);
+	off = mmb_elem_off(v, nidx, idx);
+	cs = v->data.s && v->data.s[off] ? v->data.s[off] : "";
+	slen = (int)strlen(cs);
 	if (start < 1)
 		start = 1;
 	if (ncopy < 0)
 		ncopy = 0;
 	rlen = (int)strlen(repl.s);
+	if (!have_n)
+		ncopy = rlen;
 	if (rlen < ncopy)
 		ncopy = rlen;
-	for (i = 0; i < ncopy && start - 1 + i < MMB_MAX_STR; i++)
+	needed = slen;
+	if (start - 1 + ncopy > needed)
+		needed = start - 1 + ncopy;
+	buf = mmb_tmp_alloc(needed + 1);
+	if (slen)
+		memcpy(buf, cs, (size_t)slen);
+	for (i = 0; i < ncopy; i++)
 	{
 		int dest = start - 1 + i;
 		if (dest >= slen)
@@ -255,12 +277,12 @@ void mmb_cmd_mid(void)
 				buf[slen++] = ' ';
 			buf[dest] = repl.s[i];
 			slen = dest + 1;
-			buf[slen] = 0;
 		}
 		else
 			buf[dest] = repl.s[i];
 	}
-	cur = mmb_str_val(buf);
+	buf[slen] = 0;
+	cur = mmb_arena_val(buf);
 	mmb_do_assign(name, T_STR, nidx, idx, cur);
 }
 
@@ -270,7 +292,7 @@ static void do_lset_rset(int right)
 	int nidx = 0, idx[MMB_MAX_DIMS], t, width, slen, i, off = 0;
 	mmb_val v;
 	mmb_var *var;
-	char buf[MMB_MAX_STR + 1];
+	char *buf;
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
 	mmb_expect('=');
@@ -281,15 +303,14 @@ static void do_lset_rset(int right)
 	if (!var || var->type != T_STR)
 		mmb_error("?TYPE MISMATCH");
 	off = mmb_elem_off(var, nidx, idx);
-	width = var->fixlen;
+	width = var->maxlen;
 	if (width <= 0)
 	{
 		int cur = (int)strlen(var->data.s[off]);
 		int vlen = (int)strlen(v.s);
 		width = cur > vlen ? cur : vlen;
 	}
-	if (width > MMB_MAX_STR)
-		width = MMB_MAX_STR;
+	buf = mmb_tmp_alloc(width + 1);
 	for (i = 0; i < width; i++)
 		buf[i] = ' ';
 	buf[width] = 0;
@@ -349,10 +370,11 @@ void mmb_cmd_bit(void)
 void mmb_cmd_byte(void)
 {
 	char name[MMB_MAX_NAME];
-	int nidx = 0, idx[MMB_MAX_DIMS], t, pos, off, len, k;
+	int nidx = 0, idx[MMB_MAX_DIMS], t, pos, off, len, k, final;
 	mmb_val pv, val;
 	mmb_var *v;
-	char *s;
+	const char *s;
+	char *nb;
 	mmb_skip_sp();
 	mmb_expect('(');
 	t = mmb_parse_var_ref(name, &nidx, idx);
@@ -365,21 +387,23 @@ void mmb_cmd_byte(void)
 	mmb_skip_sp();
 	mmb_expect('=');
 	val = mmb_expr();
-	if (pos < 1 || pos > MMB_MAX_STR)
+	if (pos < 1)
 		mmb_error("?BYTE");
 	v = mmb_find_var(name, t ? t : T_STR, 0, nidx, idx);
 	if (!v || v->type != T_STR)
 		mmb_error("?TYPE MISMATCH");
 	off = mmb_elem_off(v, nidx, idx);
-	s = v->data.s[off];
+	s = v->data.s[off] ? v->data.s[off] : "";
 	len = (int)strlen(s);
-	if (pos - 1 >= len)
-	{
-		for (k = len; k < pos - 1 && k < MMB_MAX_STR; k++)
-			s[k] = ' ';
-		s[pos] = 0;
-	}
-	s[pos - 1] = (char)(mmb_as_int(val) & 0xff);
+	final = len > pos ? len : pos;
+	nb = mmb_tmp_alloc(final + 1);
+	if (len)
+		memcpy(nb, s, (size_t)len);
+	for (k = len; k < pos - 1; k++)
+		nb[k] = ' ';
+	nb[pos - 1] = (char)(mmb_as_int(val) & 0xff);
+	nb[final] = 0;
+	mmb_str_set(&v->data.s[off], nb, final, v->maxlen, v->name);
 }
 
 void mmb_cmd_sort(void)

@@ -764,10 +764,7 @@ static void cmd_set(void)
 	{
 		a = parse_array(1);
 		for (i = 0; i < a.count; i++)
-		{
-			strncpy(a.v->data.s[i], v.s, MMB_MAX_STR);
-			a.v->data.s[i][MMB_MAX_STR] = 0;
-		}
+			mmb_str_set(&a.v->data.s[i], v.s, -1, a.v->maxlen, a.v->name);
 		return;
 	}
 	a = parse_array(0);
