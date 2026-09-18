@@ -157,6 +157,14 @@ static void afk_frame(void)
 {
 	int s, i, a, back;
 
+	/* Pace the loop to the vertical blank before rendering the next frame.
+	 * The page-flip present waits for VSync again before SetVirtualOffset,
+	 * so the swap lands in blanking; on platforms without the flip path the
+	 * wait still starts the blit at the top of a frame. wait_vsync is a
+	 * no-op under QEMU, so simulated runs are unaffected. */
+	if (G.plat && G.plat->wait_vsync)
+		G.plat->wait_vsync();
+
 	/* Render the next frame into the hidden soft page, then flip. */
 	back = (A.front == AFK_PAGE_A) ? AFK_PAGE_B : AFK_PAGE_A;
 	G.gfx.write_page = back;

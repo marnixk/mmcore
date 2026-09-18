@@ -968,8 +968,39 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 {
 	int dx, dy, sx, sy, err, i;
 	int adx, ady, horiz;
+	int simple = 0, tw = 0, th = 0;
+	uint16_t *pg = 0;
+	uint16_t np = 0;
+	unsigned alpha = 0;
+
 	if (lw < 1)
 		lw = 1;
+	/* Fast path for straight 1px lines with no per-pixel side effects:
+	 * a hidden soft page (or the raw framebuffer) has no dirty tracking,
+	 * overlay alpha and no direct HDMI pixel update. Resolve the target and
+	 * colour once, then write the Bresenham span directly. This is the
+	 * screensaver/graphics-heavy case (for example AFK) where one
+	 * mmb_gfx_plot() call per pixel dominated long lines. */
+	if (lw <= 1)
+	{
+		int fb = mmb_gfx_writing_fb();
+		if (fb || (G.gfx.write_page != G.gfx.display_page &&
+			   G.gfx.write_page != 1))
+		{
+			simple = 1;
+			tw = fb ? G.gfx.fb_w : G.gfx.w;
+			th = fb ? G.gfx.fb_h : G.gfx.h;
+			pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
+			np = mmb_pix_store(rgb, &alpha);
+			/* Reflecting both endpoints equals mapping every plotted
+			 * pixel (the Bresenham steps are symmetric in y). */
+			if (G.opt.y_axis_up)
+			{
+				y0 = th - 1 - y0;
+				y1 = th - 1 - y1;
+			}
+		}
+	}
 	dx = x1 - x0;
 	dy = y1 - y0;
 	adx = dx; if (adx < 0) adx = -adx;
@@ -982,7 +1013,12 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 	err = dx - dy;
 	for (;;)
 	{
-		if (lw <= 1)
+		if (simple)
+		{
+			if (x0 >= 0 && y0 >= 0 && x0 < tw && y0 < th)
+				pg[y0 * tw + x0] = np;
+		}
+		else if (lw <= 1)
 			mmb_gfx_plot(x0, y0, rgb);
 		else
 			for (i = -(lw / 2); i <= lw / 2; i++)
