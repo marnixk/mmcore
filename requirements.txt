@@ -2,3 +2,5 @@
 # The harness itself uses only the standard library plus the system tools
 # qemu-system-aarch64, ImageMagick (convert) and tesseract-ocr.
 pytest>=8.0
+pytest-xdist>=3.0
+pytest-timeout>=2.3

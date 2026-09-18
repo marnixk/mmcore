@@ -223,7 +223,7 @@ class MMBasicConsole:
                 ):
                     break
             else:
-                if buf and self.prompt in buf:
+                if buf.rstrip().endswith(self.prompt.rstrip()):
                     break
         return self._extract_response(buf, text)
 
@@ -244,7 +244,7 @@ class MMBasicConsole:
                 ):
                     break
             else:
-                if buf and self.prompt in buf:
+                if buf.rstrip().endswith(self.prompt.rstrip()):
                     break
         return self._extract_response(buf, "")
 
@@ -340,13 +340,8 @@ class MMBasicConsole:
         ).stdout.split()
         return int(out[0]), int(out[1])
 
-    def screen_pixel(self, x: int, y: int) -> tuple[int, int, int]:
-        """Return the (r, g, b) colour of the framebuffer pixel at (x, y)."""
-        png = self.capture_png()
-        out = subprocess.run(
-            ["convert", png, "-format", f"%[pixel:p{{{x},{y}}}]", "info:"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+    @staticmethod
+    def _parse_pixel_colour(out: str) -> tuple[int, int, int]:
         low = out.lower()
         if "(" in out and ")" in out:
             inner = out[out.find("(") + 1 : out.find(")")]
@@ -369,6 +364,33 @@ class MMBasicConsole:
         if key in named:
             return named[key]
         raise HarnessError(f"unparsed pixel colour: {out!r}")
+
+    def screen_pixels(self, coords) -> list[tuple[int, int, int]]:
+        """Return (r, g, b) for each (x, y) in coords, capturing once.
+
+        One screendump and one ImageMagick invocation replace a capture per
+        pixel, which is the difference between seconds and minutes for tests
+        that scan a region.
+        """
+        coords = list(coords)
+        if not coords:
+            return []
+        png = self.capture_png()
+        fmt = "\n".join(f"%[pixel:p{{{x},{y}}}]" for x, y in coords)
+        out = subprocess.run(
+            ["convert", png, "-format", fmt, "info:"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        values = [ln for ln in out.splitlines() if ln.strip()]
+        if len(values) != len(coords):
+            raise HarnessError(
+                f"expected {len(coords)} pixels, got {len(values)}"
+            )
+        return [self._parse_pixel_colour(v) for v in values]
+
+    def screen_pixel(self, x: int, y: int) -> tuple[int, int, int]:
+        """Return the (r, g, b) colour of the framebuffer pixel at (x, y)."""
+        return self.screen_pixels([(x, y)])[0]
 
     def image_diff_ratio(self, golden_png: str, fuzz: str = "12%") -> float:
         """Fraction of pixels that differ between the current screen and a

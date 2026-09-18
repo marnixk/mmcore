@@ -14,10 +14,14 @@ submodule.
 
 ```bash
 scripts/build.sh
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest                           # full suite (slow)
+.venv/bin/python -m pytest -n 6 --dist loadscope     # parallel
+.venv/bin/python -m pytest tests/test_strings.py     # a subset
 ```
 
-The QEMU harness in `harness/` drives `console/kernel8.img`.
+The QEMU harness in `harness/` drives `console/kernel8.img`. To run the suite
+with visible progress and poll it while it runs, use the `test-suite-progress`
+skill (`scripts/test-watch.py start` / `status` / `wait`).
 
 Linux SD-card install: `scripts/install-sdcard.sh --help`. Publishing a
 GitHub Release: run the `github-release` skill (it looks up the last `vX.Y.Z`

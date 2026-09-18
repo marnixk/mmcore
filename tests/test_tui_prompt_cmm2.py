@@ -352,8 +352,14 @@ def _upload_binary_file(con, host_path, dest):
     con.drain(quiet=0.05)
     con._ser.sendall(f'XFER "{dest}", {len(data)}\r'.encode())
     _wait_contains(con, b"<<XFER>>")
+    # Give the interpreter time to enter read_raw before blasting bytes, then
+    # feed in chunks; a single large burst can outrun the UART FIFO and leave
+    # read_raw waiting for bytes that were dropped.
+    time.sleep(0.2)
     if data:
-        con._ser.sendall(data)
+        for i in range(0, len(data), 1024):
+            con._ser.sendall(data[i : i + 1024])
+            time.sleep(0.005)
     raw = _wait_prompt(con, timeout=max(20.0, len(data) / 2000.0 + 10.0))
     up = raw.upper()
     assert "?SYNTAX" not in up, raw

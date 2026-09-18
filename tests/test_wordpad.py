@@ -327,15 +327,10 @@ def test_wordpad_follows_edit_theme_phosphor(kernel_image):
         _open(con)
         _keys(con, b"hello", quiet=0.5)
         time.sleep(0.3)
-        found_green = False
-        for x in range(0, 160, 4):
-            for y in range(8, 40, 4):
-                r, g, b = con.screen_pixel(x, y)
-                if g > r + 40 and g > b + 40:
-                    found_green = True
-                    break
-            if found_green:
-                break
+        coords = [(x, y) for x in range(0, 160, 4) for y in range(8, 40, 4)]
+        found_green = any(
+            g > r + 40 and g > b + 40 for r, g, b in con.screen_pixels(coords)
+        )
         assert found_green, "expected Phosphor edit-theme colours in WORDPAD"
         _quit(con)
     finally:
