@@ -888,6 +888,7 @@ typedef struct mmb_ed_theme {
 	unsigned char sh_fg, sh_bg;
 	unsigned char list_bg;
 	unsigned char err_fg, err_bg;
+	unsigned char field_fg, field_bg;
 	const unsigned *pal;
 } mmb_ed_theme;
 

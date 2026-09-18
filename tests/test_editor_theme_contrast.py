@@ -42,7 +42,8 @@ FIELDS = [
     "menu_fg", "menu_bg", "hot", "sel_fg", "sel_bg", "edit_fg", "edit_bg",
     "mark_fg", "mark_bg", "str_fg", "num_fg", "cmt_fg", "brd_fg", "brd_bg",
     "tab_fg", "tab_bg", "tabcur_fg", "tabcur_bg", "dlg_fg", "dlg_bg",
-    "sh_fg", "sh_bg", "list_bg", "err_fg", "err_bg", "pal",
+    "sh_fg", "sh_bg", "list_bg", "err_fg", "err_bg", "field_fg", "field_bg",
+    "pal",
 ]
 
 TEXT_PAIRS = [
@@ -59,6 +60,7 @@ TEXT_PAIRS = [
     ("dlg_fg", "dlg_bg"),
     ("dlg_fg", "list_bg"),
     ("err_fg", "err_bg"),
+    ("field_fg", "field_bg"),
 ]
 
 DECOR_PAIRS = [
