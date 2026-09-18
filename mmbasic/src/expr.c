@@ -108,7 +108,7 @@ static mmb_val parse_number(void)
 
 static mmb_val parse_string(void)
 {
-	char buf[MMB_MAX_STR + 1];
+	char buf[MMB_LINE_LEN];
 	int n = 0;
 	G.p++; /* quote */
 	while (*G.p)
@@ -117,14 +117,14 @@ static mmb_val parse_string(void)
 		{
 			if (G.p[1] == '"')
 			{
-				if (n < MMB_MAX_STR)
+				if (n < MMB_LINE_LEN - 1)
 					buf[n++] = '"';
 				G.p += 2;
 				continue;
 			}
 			break;
 		}
-		if (n < MMB_MAX_STR)
+		if (n < MMB_LINE_LEN - 1)
 			buf[n++] = *G.p;
 		G.p++;
 	}
@@ -707,25 +707,29 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("LEFT$"))
 	{
 	lbl_left:
-		int k, i;
-		char b[MMB_MAX_STR + 1];
+		int k, i, len;
+		char *b;
 		call_args(a, 2, &n);
 		if (n != 2 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
 		k = (int)mmb_as_int(a[1]);
 		if (k < 0)
 			k = 0;
-		for (i = 0; i < k && a[0].s[i]; i++)
+		len = (int)strlen(a[0].s);
+		if (k > len)
+			k = len;
+		b = mmb_tmp_alloc(k + 1);
+		for (i = 0; i < k; i++)
 			b[i] = a[0].s[i];
-		b[i] = 0;
-		*out = mmb_str_val(b);
+		b[k] = 0;
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("RIGHT$"))
 	{
 	lbl_right:
 		int k, i, len;
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		call_args(a, 2, &n);
 		if (n != 2 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
@@ -735,17 +739,18 @@ int mmb_try_function(mmb_val *out)
 			k = len;
 		if (k < 0)
 			k = 0;
+		b = mmb_tmp_alloc(k + 1);
 		for (i = 0; i < k; i++)
 			b[i] = a[0].s[len - k + i];
 		b[k] = 0;
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("MID$"))
 	{
 	lbl_mid:
 		int start, num, i, len;
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		call_args(a, 3, &n);
 		if ((n != 2 && n != 3) || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
@@ -756,58 +761,65 @@ int mmb_try_function(mmb_val *out)
 			start = 1;
 		if (num < 0)
 			num = 0;
-		for (i = 0; i < num && start - 1 + i < len; i++)
+		if (num > len - (start - 1))
+			num = len - (start - 1);
+		if (num < 0)
+			num = 0;
+		b = mmb_tmp_alloc(num + 1);
+		for (i = 0; i < num; i++)
 			b[i] = a[0].s[start - 1 + i];
-		b[i] = 0;
-		*out = mmb_str_val(b);
+		b[num] = 0;
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("UCASE$"))
 	{
 	lbl_ucase:
-		char b[MMB_MAX_STR + 1];
+		int len;
+		char *b;
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		strncpy(b, a[0].s, MMB_MAX_STR);
-		b[MMB_MAX_STR] = 0;
+		len = (int)strlen(a[0].s);
+		b = mmb_tmp_alloc(len + 1);
+		memcpy(b, a[0].s, (size_t)len + 1);
 		mmb_upper(b);
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("LCASE$"))
 	{
 	lbl_lcase:
-		int i;
-		char b[MMB_MAX_STR + 1];
+		int i, len;
+		char *b;
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		strncpy(b, a[0].s, MMB_MAX_STR);
-		b[MMB_MAX_STR] = 0;
+		len = (int)strlen(a[0].s);
+		b = mmb_tmp_alloc(len + 1);
+		memcpy(b, a[0].s, (size_t)len + 1);
 		for (i = 0; b[i]; i++)
 			if (b[i] >= 'A' && b[i] <= 'Z')
 				b[i] = (char)(b[i] + 32);
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("SPACE$"))
 	{
 	lbl_space:
 		int k, i;
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
 		k = (int)mmb_as_int(a[0]);
 		if (k < 0)
 			k = 0;
-		if (k > MMB_MAX_STR)
-			k = MMB_MAX_STR;
+		b = mmb_tmp_alloc(k + 1);
 		for (i = 0; i < k; i++)
 			b[i] = ' ';
 		b[k] = 0;
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("ABS"))
@@ -855,14 +867,14 @@ int mmb_try_function(mmb_val *out)
 	if (match_fun("EVAL"))
 	{
 	lbl_eval:
-		char buf[MMB_MAX_STR + 1];
+		char buf[MMB_LINE_LEN];
 		const char *savep;
 
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		strncpy(buf, a[0].s, MMB_MAX_STR);
-		buf[MMB_MAX_STR] = 0;
+		strncpy(buf, a[0].s, MMB_LINE_LEN - 1);
+		buf[MMB_LINE_LEN - 1] = 0;
 		savep = G.p;
 		{
 			char tbuf[MMB_LINE_LEN];
@@ -1105,7 +1117,7 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_string:
 		int k, i;
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		char ch = ' ';
 		call_args(a, 2, &n);
 		if (n != 2)
@@ -1117,12 +1129,11 @@ int mmb_try_function(mmb_val *out)
 			ch = (char)mmb_as_int(a[1]);
 		if (k < 0)
 			k = 0;
-		if (k > MMB_MAX_STR)
-			k = MMB_MAX_STR;
+		b = mmb_tmp_alloc(k + 1);
 		for (i = 0; i < k; i++)
 			b[i] = ch;
 		b[k] = 0;
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("HEX$"))
@@ -1214,29 +1225,36 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("LTRIM$"))
 	{
 	lbl_ltrim:
-		char b[MMB_MAX_STR + 1];
+		int len;
+		char *b;
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_syntax();
+		len = (int)strlen(a[0].s ? a[0].s : "");
+		b = mmb_tmp_alloc(len + 1);
 		trim_str(b, a[0].s ? a[0].s : "", " ", 1, 0);
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("RTRIM$"))
 	{
 	lbl_rtrim:
-		char b[MMB_MAX_STR + 1];
+		int len;
+		char *b;
 		call_args(a, 1, &n);
 		if (n != 1 || a[0].type != T_STR)
 			mmb_syntax();
+		len = (int)strlen(a[0].s ? a[0].s : "");
+		b = mmb_tmp_alloc(len + 1);
 		trim_str(b, a[0].s ? a[0].s : "", " ", 0, 1);
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("TRIM$"))
 	{
 	lbl_trim:
-		char b[MMB_MAX_STR + 1];
+		int len;
+		char *b;
 		const char *mask = " ";
 		char where = 'B';
 		call_args(a, 3, &n);
@@ -1250,8 +1268,10 @@ int mmb_try_function(mmb_val *out)
 			where = (char)(where - 32);
 		if (where != 'L' && where != 'R' && where != 'B')
 			mmb_error("?INVALID TRIM");
+		len = (int)strlen(a[0].s ? a[0].s : "");
+		b = mmb_tmp_alloc(len + 1);
 		trim_str(b, a[0].s ? a[0].s : "", mask, where != 'R', where != 'L');
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("BASE$"))
@@ -1298,7 +1318,7 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("FIELD$"))
 	{
 	lbl_field:
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		const char *str, *delims = ",", *quotes = "";
 		int field, i = 0, j, k = 0;
 		call_args(a, 4, &n);
@@ -1322,12 +1342,11 @@ int mmb_try_function(mmb_val *out)
 		j = field_scan(str, i, delims, quotes);
 		while (j > i && str[j - 1] == ' ')
 			j--;
-		if (j - i > MMB_MAX_STR)
-			j = i + MMB_MAX_STR;
+		b = mmb_tmp_alloc(j - i + 1);
 		for (; i < j; i++)
 			b[k++] = str[i];
 		b[k] = 0;
-		*out = mmb_str_val(b);
+		*out = mmb_arena_val(b);
 		return 1;
 	}
 	if (mmb_match("DATETIME$"))
@@ -1383,7 +1402,7 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("DIR$"))
 	{
 	lbl_dir:
-		char b[MMB_MAX_STR + 1];
+		char b[512];
 		const char *spec = 0, *filter = 0;
 		mmb_skip_sp();
 		if (*G.p == '(')
@@ -1518,7 +1537,7 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_input:
 		int fn, nch = 0;
-		char b[MMB_MAX_STR + 1];
+		char *b;
 		call_args(a, 2, &n);
 		if (n != 2 || a[0].type != T_INT && a[0].type != T_NUM)
 			mmb_syntax();
@@ -1532,13 +1551,12 @@ int mmb_try_function(mmb_val *out)
 			int got;
 			if (nch < 0)
 				nch = 0;
-			if (nch > MMB_MAX_STR)
-				nch = MMB_MAX_STR;
+			b = mmb_tmp_alloc(nch + 1);
 			got = mmb_file_read(fn, b, nch);
 			if (got < 0)
 				got = 0;
 			b[got] = 0;
-			*out = mmb_str_val(b);
+			*out = mmb_arena_val(b);
 		}
 		return 1;
 	}
@@ -1901,16 +1919,15 @@ int mmb_try_function(mmb_val *out)
 			mmb_syntax();
 		{
 			int sp = (int)mmb_as_int(a[0]);
-			char buf[MMB_MAX_STR + 1];
+			char *buf;
 			int i;
 			if (sp < 0)
 				sp = 0;
-			if (sp > MMB_MAX_STR)
-				sp = MMB_MAX_STR;
+			buf = mmb_tmp_alloc(sp + 1);
 			for (i = 0; i < sp; i++)
 				buf[i] = ' ';
 			buf[sp] = 0;
-			*out = mmb_str_val(buf);
+			*out = mmb_arena_val(buf);
 		}
 		return 1;
 	}
@@ -2132,13 +2149,19 @@ static mmb_val expr_add(void)
 				mmb_val b = expr_mul();
 				if (a.type == T_STR || b.type == T_STR)
 				{
-					char buf[MMB_MAX_STR + 1];
+					int la, lb;
+					char *buf;
 					if (a.type != T_STR || b.type != T_STR)
 						mmb_error("?TYPE MISMATCH");
-					strncpy(buf, a.s ? a.s : "", MMB_MAX_STR);
-					buf[MMB_MAX_STR] = 0;
-					strncat(buf, b.s, MMB_MAX_STR - strlen(buf));
-					a = mmb_str_val(buf);
+					la = a.s ? (int)strlen(a.s) : 0;
+					lb = b.s ? (int)strlen(b.s) : 0;
+					buf = mmb_tmp_alloc(la + lb + 1);
+					if (la)
+						memcpy(buf, a.s, (size_t)la);
+					if (lb)
+						memcpy(buf + la, b.s, (size_t)lb);
+					buf[la + lb] = 0;
+					a = mmb_arena_val(buf);
 				}
 				else if (a.type == T_INT && b.type == T_INT)
 					a = mmb_int_val(a.i + b.i);

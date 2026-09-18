@@ -451,60 +451,381 @@ mmb_val mmb_int_val(int64_t i)
 	return v;
 }
 
-#define MMB_STR_POOL (64 * 1024)
-static char str_pool[MMB_STR_POOL];
-static int str_off;
+/* ------------------------------------------------------------------ *
+ * Strings.
+ *
+ * Persistent string values live in single-owner blocks carved from a
+ * size-class pool (no compaction, no GC: a block is freed exactly when
+ * its slot is overwritten or cleared).  Expression temporaries live in
+ * a chunked bump arena that is reclaimed wholesale at statement and run
+ * boundaries.  Both are unbounded apart from available memory.
+ * ------------------------------------------------------------------ */
 
-void mmb_str_reset(void)
+#define MMB_STR_HDR     8
+#define MMB_STR_MIN_CLS 4                  /* 16-byte smallest slab class  */
+#define MMB_STR_MAX_CLS 16                 /* 64 KiB largest slab class    */
+#define MMB_SLAB_SIZE   (64 * 1024)
+#define MMB_ARENA_CHUNK (64 * 1024)
+
+typedef struct mmb_freeblk { struct mmb_freeblk *next; } mmb_freeblk;
+typedef struct mmb_slab { struct mmb_slab *next; } mmb_slab;
+typedef struct mmb_achunk {
+	struct mmb_achunk *next;
+	unsigned used, size;
+} mmb_achunk;
+
+static mmb_freeblk *s_free[MMB_STR_MAX_CLS + 1];
+static mmb_slab *s_slabs;
+static char *s_slab;
+static unsigned s_slab_left;
+
+static mmb_achunk *s_arena;
+static mmb_achunk *s_arena_cur;
+
+static char s_empty[1] = { 0 };
+#define MMB_EMPTY ((char *)s_empty)
+
+static int log2_ceil(unsigned v)
 {
-	str_off = 0;
+	int c = 0;
+	unsigned x = 1;
+	while (x < v)
+	{
+		x <<= 1;
+		c++;
+	}
+	return c;
 }
 
-static char *str_bump(const char *s)
+static unsigned blk_total(const char *data)
 {
-	int n = 0;
+	unsigned t;
+	memcpy(&t, data - MMB_STR_HDR, sizeof(t));
+	return t;
+}
+
+static unsigned blk_cap(const char *data)
+{
+	return blk_total(data) - MMB_STR_HDR - 1;
+}
+
+static char *pool_alloc_raw(int need)
+{
+	unsigned total;
+	if (need < 1)
+		need = 1;
+	total = (unsigned)need + MMB_STR_HDR;
+	if (total <= (1u << MMB_STR_MAX_CLS))
+	{
+		int cls = log2_ceil(total);
+		unsigned bsz;
+		char *raw;
+		if (cls < MMB_STR_MIN_CLS)
+			cls = MMB_STR_MIN_CLS;
+		bsz = 1u << cls;
+		if (s_free[cls])
+		{
+			mmb_freeblk *f = s_free[cls];
+			s_free[cls] = f->next;
+			raw = (char *)f;
+		}
+		else
+		{
+			if (s_slab_left < bsz)
+			{
+				char *ns = (char *)G.plat->alloc(MMB_SLAB_SIZE);
+				if (!ns)
+					return 0;
+				((mmb_slab *)ns)->next = s_slabs;
+				s_slabs = (mmb_slab *)ns;
+				s_slab = ns + sizeof(mmb_slab);
+				s_slab_left = MMB_SLAB_SIZE - (unsigned)sizeof(mmb_slab);
+			}
+			raw = s_slab;
+			s_slab += bsz;
+			s_slab_left -= bsz;
+		}
+		memcpy(raw, &bsz, sizeof(bsz));
+		return raw + MMB_STR_HDR;
+	}
+	{
+		char *raw = (char *)G.plat->alloc(total);
+		if (!raw)
+			return 0;
+		memcpy(raw, &total, sizeof(total));
+		return raw + MMB_STR_HDR;
+	}
+}
+
+static void pool_free_raw(char *data)
+{
+	unsigned total;
+	if (!data || data == MMB_EMPTY)
+		return;
+	total = blk_total(data);
+	if (total <= (1u << MMB_STR_MAX_CLS))
+	{
+		int cls = log2_ceil(total);
+		mmb_freeblk *f = (mmb_freeblk *)(data - MMB_STR_HDR);
+		if (cls < MMB_STR_MIN_CLS)
+			cls = MMB_STR_MIN_CLS;
+		f->next = s_free[cls];
+		s_free[cls] = f;
+	}
+	else
+		G.plat->free(data - MMB_STR_HDR);
+}
+
+void mmb_strpool_reset(void)
+{
+	int i;
+	for (i = 0; i <= MMB_STR_MAX_CLS; i++)
+		s_free[i] = 0;
+	while (s_slabs)
+	{
+		mmb_slab *n = s_slabs->next;
+		G.plat->free(s_slabs);
+		s_slabs = n;
+	}
+	s_slab = 0;
+	s_slab_left = 0;
+}
+
+static void str_overflow(const char *what, int need, int max)
+{
+	char msg[160];
+	sprintf(msg, "?OVERFLOW: %s needs %d, LENGTH %d",
+		what && what[0] ? what : "string", need, max);
+	mmb_error(msg);
+}
+
+char *mmb_str_alloc(int n)
+{
 	char *p;
-	if (!s)
-		s = "";
-	while (s[n] && n < MMB_MAX_STR)
-		n++;
-	if (str_off + n + 1 > MMB_STR_POOL)
-		str_off = 0;
-	if (str_off + n + 1 > MMB_STR_POOL)
+	if (n < 0)
+		n = 0;
+	p = pool_alloc_raw(n + 1);
+	if (!p)
 		mmb_error("?OUT OF MEMORY");
-	p = str_pool + str_off;
-	memcpy(p, s, (unsigned)n);
 	p[n] = 0;
-	str_off += n + 1;
 	return p;
 }
 
-void mmb_val_own(mmb_val *v, char *buf, int bufsz)
+void mmb_str_free(char *p)
 {
-	int n = 0;
-	if (!v || v->type != T_STR)
-		return;
-	if (!buf || bufsz < 2)
-		return;
-	if (v->s)
-	{
-		while (v->s[n] && n < bufsz - 1 && n < MMB_MAX_STR)
-		{
-			buf[n] = v->s[n];
-			n++;
-		}
-	}
-	buf[n] = 0;
-	v->s = buf;
+	pool_free_raw(p);
 }
 
-mmb_val mmb_str_val(const char *s)
+char *mmb_str_empty(void)
+{
+	return MMB_EMPTY;
+}
+
+char *mmb_read_line(int hide)
+{
+	char *line = 0;
+	int rc;
+	char *empty;
+	if (!G.plat || !G.plat->read_line)
+	{
+		empty = mmb_tmp_alloc(1);
+		empty[0] = 0;
+		return empty;
+	}
+	rc = G.plat->read_line(&line, hide);
+	if (rc == -2)
+	{
+		if (line)
+			G.plat->free(line);
+		mmb_error("?BREAK");
+	}
+	if (rc != 0 || !line)
+	{
+		if (line)
+			G.plat->free(line);
+		empty = mmb_tmp_alloc(1);
+		empty[0] = 0;
+		return empty;
+	}
+	{
+		int n = (int)strlen(line);
+		char *copy = mmb_tmp_alloc(n + 1);
+		memcpy(copy, line, (size_t)n + 1);
+		G.plat->free(line);
+		return copy;
+	}
+}
+
+/* Copy s[0..len) into *slot, growing (with over-allocation) as needed.
+ * Enforces a positive maxlen cap with a diagnostic overflow error. */
+char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *what)
+{
+	char *cur;
+	if (!slot)
+		return 0;
+	if (len < 0)
+		len = s ? (int)strlen(s) : 0;
+	if (maxlen > 0 && len > maxlen)
+		str_overflow(what, len, maxlen);
+	cur = *slot;
+	if (cur == MMB_EMPTY)
+		cur = 0;
+	if (cur && (int)blk_cap(cur) >= len)
+	{
+		if (s && s != cur && len)
+			memmove(cur, s, (size_t)len);
+		cur[len] = 0;
+		*slot = cur;
+		return cur;
+	}
+	{
+		char *nb = pool_alloc_raw(len + 1);
+		if (!nb)
+			mmb_error("?OUT OF MEMORY");
+		if (s && len)
+			memcpy(nb, s, (size_t)len);
+		nb[len] = 0;
+		pool_free_raw(cur);
+		*slot = nb;
+		return nb;
+	}
+}
+
+/* Append s[0..len) to *slot, doubling capacity while it grows. */
+char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char *what)
+{
+	char *cur;
+	int clen;
+	if (!slot)
+		return 0;
+	cur = *slot;
+	if (cur == MMB_EMPTY)
+		cur = 0;
+	clen = cur ? (int)strlen(cur) : 0;
+	if (len < 0)
+		len = s ? (int)strlen(s) : 0;
+	if (maxlen > 0 && clen + len > maxlen)
+		str_overflow(what, clen + len, maxlen);
+	if (!cur || (int)blk_cap(cur) < clen + len)
+	{
+		int need = clen + len + 1;
+		int cap = cur ? (int)blk_cap(cur) : 0;
+		char *nb;
+		if (cap && cap * 2 > need)
+			need = cap * 2;
+		nb = pool_alloc_raw(need);
+		if (!nb)
+			mmb_error("?OUT OF MEMORY");
+		if (clen)
+			memcpy(nb, cur, (size_t)clen);
+		nb[clen] = 0;
+		if (cur)
+			pool_free_raw(cur);
+		cur = nb;
+	}
+	if (len)
+		memcpy(cur + clen, s, (size_t)len);
+	cur[clen + len] = 0;
+	*slot = cur;
+	return cur;
+}
+
+/* Temporary arena: bump-allocate, never free individually. */
+char *mmb_tmp_alloc(int n)
+{
+	unsigned aligned;
+	if (n < 1)
+		n = 1;
+	aligned = ((unsigned)n + 15u) & ~15u;
+	for (;;)
+	{
+		mmb_achunk *c = s_arena_cur;
+		if (!c || c->size - c->used < aligned)
+		{
+			if (c && c->next)
+			{
+				s_arena_cur = c->next;
+				continue;
+			}
+			{
+				unsigned csz = MMB_ARENA_CHUNK;
+				mmb_achunk *nc;
+				if (aligned + (unsigned)sizeof(mmb_achunk) > csz)
+					csz = aligned + (unsigned)sizeof(mmb_achunk);
+				nc = (mmb_achunk *)G.plat->alloc(csz);
+				if (!nc)
+					mmb_error("?OUT OF MEMORY");
+				nc->next = 0;
+				nc->used = 0;
+				nc->size = csz - (unsigned)sizeof(mmb_achunk);
+				if (!s_arena)
+					s_arena = nc;
+				else
+				{
+					mmb_achunk *t = s_arena;
+					while (t->next)
+						t = t->next;
+					t->next = nc;
+				}
+				s_arena_cur = nc;
+				continue;
+			}
+		}
+		{
+			char *p = (char *)c + sizeof(mmb_achunk) + c->used;
+			c->used += aligned;
+			return p;
+		}
+	}
+}
+
+void mmb_str_reset(void)
+{
+	mmb_achunk *c;
+	for (c = s_arena; c; c = c->next)
+		c->used = 0;
+	s_arena_cur = s_arena;
+}
+
+mmb_val mmb_arena_val(char *p)
 {
 	mmb_val v;
 	memset(&v, 0, sizeof(v));
 	v.type = T_STR;
-	v.s = str_bump(s);
+	v.s = p ? p : MMB_EMPTY;
 	return v;
+}
+
+mmb_val mmb_str_valn(const char *s, int n)
+{
+	char *p;
+	if (!s)
+	{
+		s = "";
+		n = 0;
+	}
+	if (n < 0)
+		n = (int)strlen(s);
+	p = mmb_tmp_alloc(n + 1);
+	if (n)
+		memcpy(p, s, (size_t)n);
+	p[n] = 0;
+	return mmb_arena_val(p);
+}
+
+mmb_val mmb_str_val(const char *s)
+{
+	return mmb_str_valn(s, s ? (int)strlen(s) : 0);
+}
+
+/* Copy a transient value into a persistent pool slot (function returns,
+ * SELECT values, GOSUB-saved variables, constants). */
+void mmb_val_own(mmb_val *v, char **slot, int maxlen, const char *what)
+{
+	if (!v || v->type != T_STR || !slot)
+		return;
+	mmb_str_set(slot, v->s, v->s ? (int)strlen(v->s) : 0, maxlen, what);
+	v->s = *slot;
 }
 
 double mmb_as_float(mmb_val v)

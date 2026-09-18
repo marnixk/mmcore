@@ -9,7 +9,6 @@
 #include <stddef.h>
 
 #define MMB_MAX_NAME      40
-#define MMB_MAX_STR       255
 #define MMB_MAX_VARS      256
 #define MMB_MAX_DIMS      4
 #define MMB_MAX_LINES     2048
@@ -50,7 +49,20 @@
 #define MMB_MAX_STRUCT_TYPES    32
 #define MMB_MAX_STRUCT_MEMBERS  16
 #define MMB_MAX_STRUCT_NEST     8
-#define MMB_STRUCT_RET_MAX      8192
+#define MMB_STRUCT_STR_DEFAULT  1024
+#define MMB_STRUCT_STRLEN       4
+#define MMB_STRUCT_RET_MAX      65536
+
+/* Struct STRING members carry a 32-bit length followed by the characters. */
+#define MMB_STRUCT_STRLEN_PUT(p, n) \
+	do { \
+		(p)[0] = (unsigned char)(n); \
+		(p)[1] = (unsigned char)((n) >> 8); \
+		(p)[2] = (unsigned char)((n) >> 16); \
+		(p)[3] = (unsigned char)((n) >> 24); \
+	} while (0)
+#define MMB_STRUCT_STRLEN_GET(p) \
+	((int)((p)[0] | ((p)[1] << 8) | ((p)[2] << 16) | ((unsigned)(p)[3] << 24)))
 
 typedef struct mmb_val {
 	int type;          /* T_NUM, T_INT, T_STR, T_STRUCT */
@@ -94,7 +106,7 @@ typedef struct mmb_var {
 	} data;
 	int used;
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
-	int fixlen;     /* DIM ... LENGTH n: fixed string width (0 = dynamic) */
+	int maxlen;     /* DIM ... LENGTH n: hard string cap (0 = unbounded) */
 } mmb_var;
 
 typedef struct mmb_arrview {
@@ -335,21 +347,21 @@ typedef struct mmb {
 	int sel_active;
 	int sel_skip;
 	mmb_val sel_val;
-	char sel_str[MMB_MAX_STR + 1];
-	char func_ret_s[MMB_MAX_STR + 1];
-	char gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_STR + 1];
+	char *sel_str;
+	char *func_ret_s;
+	char *gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
 	int gosub_sel_skip[MMB_MAX_GOSUB];
 	int gosub_sel_active[MMB_MAX_GOSUB];
 	int gosub_if_skip[MMB_MAX_GOSUB];
 	int gosub_if_taken[MMB_MAX_GOSUB];
 	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
-	char gosub_sel_str[MMB_MAX_GOSUB][MMB_MAX_STR + 1];
+	char *gosub_sel_str[MMB_MAX_GOSUB];
 	int nconst;
 	struct {
 		char name[MMB_MAX_NAME];
 		int type;
 		mmb_val val;
-		char s[MMB_MAX_STR + 1];
+		char *s;
 		int used;
 	} consts[MMB_MAX_CONST];
 	int nsubs;
@@ -419,12 +431,23 @@ int mmb_is_ident(char c);
 int mmb_is_digit(char c);
 void mmb_ident(char *dst, int dstsz);
 int mmb_type_suffix(char *name); /* strips $ % ! and returns type, 0 if none */
+int sprintf(char *str, const char *fmt, ...);
 mmb_val mmb_expr(void);
 mmb_val mmb_num_val(double f);
 mmb_val mmb_int_val(int64_t i);
 mmb_val mmb_str_val(const char *s);
+mmb_val mmb_str_valn(const char *s, int n);
+mmb_val mmb_arena_val(char *p);
 void mmb_str_reset(void);
-void mmb_val_own(mmb_val *v, char *buf, int bufsz);
+void mmb_strpool_reset(void);
+char *mmb_tmp_alloc(int n);
+char *mmb_str_alloc(int n);
+void mmb_str_free(char *p);
+char *mmb_str_empty(void);
+char *mmb_read_line(int hide);
+char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *what);
+char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char *what);
+void mmb_val_own(mmb_val *v, char **slot, int maxlen, const char *what);
 double mmb_as_float(mmb_val v);
 int64_t mmb_as_int(mmb_val v);
 void mmb_need_num(mmb_val v);

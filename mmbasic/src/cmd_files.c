@@ -196,8 +196,6 @@ int mmb_file_read(int fn, char *buf, int nch)
 		mmb_error("?FILE");
 	if (nch < 0)
 		nch = 0;
-	if (nch > MMB_MAX_STR)
-		nch = MMB_MAX_STR;
 	if (G.files[fn].kind == MMB_FK_TCP)
 	{
 		int n = 0;

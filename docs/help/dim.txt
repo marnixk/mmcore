@@ -14,8 +14,9 @@ STATIC ...
   d1, d2 - inclusive upper bounds
   AS INTEGER|FLOAT|STRING|typename - type; AS typename creates a TYPE variable
                                      (see ~TYPE~)
-  LENGTH n - fixed width for a STRING variable (used by ~LSET~/~RSET~); program
-             STRING variables otherwise hold up to 255 characters
+  LENGTH n - hard cap for a STRING variable: assigning more than n characters
+             raises ?OVERFLOW. Also used by ~LSET~/~RSET~ as the field width.
+             Without LENGTH a program STRING grows on demand.
 
 REDIM re-dimensions an existing array; see ~REDIM~.
 

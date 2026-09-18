@@ -1,9 +1,9 @@
 name: JSON_STRINGIFY$
 kind: command
 
-Turn a TYPE variable into a JSON STRING (255). Keys are the member names.
-Integers have no decimal. Longer than 255 characters is an error. JSON$ can
-query the result.
+Turn a TYPE variable into a JSON string. Keys are the member names.
+Integers have no decimal. The result grows as needed (a hard internal cap
+raises ?OVERFLOW). JSON$ can query the result.
 
 JSON_STRINGIFY$(var)
 

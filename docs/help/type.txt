@@ -14,7 +14,8 @@ END TYPE
 
   name - type name
   member - field name
-  LENGTH n - string capacity for STRING members
+  LENGTH n - string capacity for STRING members (default 1024); assigning
+             more than n characters raises ?OVERFLOW
   othertype - nested TYPE name
 
 Members: INTEGER (64-bit), FLOAT, STRING LENGTH n, nested types. INT means

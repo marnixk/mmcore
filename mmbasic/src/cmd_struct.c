@@ -21,7 +21,7 @@ static int mem_elem_size(const mmb_smem *m)
 	if (m->type == T_INT || m->type == T_NUM)
 		return 8;
 	if (m->type == T_STR)
-		return m->size + 1;
+		return m->size + MMB_STRUCT_STRLEN;
 	if (m->type == T_STRUCT && m->size >= 0 && m->size < G.nstruct)
 		return G.sdef[m->size].total;
 	return 0;
@@ -77,7 +77,7 @@ static int parse_member_type(int *type, int *size)
 	if (mmb_match("STRING"))
 	{
 		*type = T_STR;
-		*size = MMB_MAX_STR;
+		*size = MMB_STRUCT_STR_DEFAULT;
 		mmb_skip_sp();
 		if (mmb_match("LENGTH"))
 		{
@@ -85,8 +85,6 @@ static int parse_member_type(int *type, int *size)
 			*size = (int)mmb_as_int(v);
 			if (*size < 0)
 				*size = 0;
-			if (*size > MMB_MAX_STR)
-				*size = MMB_MAX_STR;
 		}
 		return 1;
 	}
@@ -153,7 +151,7 @@ static int parse_one_member(mmb_sdef *d)
 	if (type == T_INT || type == T_NUM)
 		esz = 8;
 	else if (type == T_STR)
-		esz = size + 1;
+		esz = size + MMB_STRUCT_STRLEN;
 	else if (type == T_STRUCT)
 		esz = G.sdef[size].total;
 	m = &d->mem[d->nmem];
@@ -391,25 +389,21 @@ static void pack_str(unsigned char *p, int max, const char *s)
 		s = "";
 	while (s[n] && n < max)
 		n++;
-	p[0] = (unsigned char)n;
+	MMB_STRUCT_STRLEN_PUT(p, n);
 	if (n)
-		memcpy(p + 1, s, (unsigned)n);
+		memcpy(p + MMB_STRUCT_STRLEN, s, (unsigned)n);
 	if (n < max)
-		memset(p + 1 + n, 0, (unsigned)(max - n));
+		memset(p + MMB_STRUCT_STRLEN + n, 0, (unsigned)(max - n));
 }
 
 static mmb_val unpack_str(const unsigned char *p, int max)
 {
-	int n = p[0];
-	char tmp[MMB_MAX_STR + 1];
+	int n = MMB_STRUCT_STRLEN_GET(p);
 	if (n > max)
 		n = max;
-	if (n > MMB_MAX_STR)
-		n = MMB_MAX_STR;
-	if (n)
-		memcpy(tmp, p + 1, (unsigned)n);
-	tmp[n] = 0;
-	return mmb_str_val(tmp);
+	if (n < 0)
+		n = 0;
+	return mmb_str_valn((const char *)(p + MMB_STRUCT_STRLEN), n);
 }
 
 void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val)
@@ -430,8 +424,17 @@ void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val)
 	}
 	else if (G.acc_mtype == T_STR)
 	{
+		int slen;
 		if (val.type != T_STR)
 			mmb_error("?TYPE MISMATCH");
+		slen = val.s ? (int)strlen(val.s) : 0;
+		if (slen > G.acc_msize)
+		{
+			char msg[160];
+			sprintf(msg, "?OVERFLOW: member needs %d, LENGTH %d",
+				slen, G.acc_msize);
+			mmb_error(msg);
+		}
 		pack_str(base, G.acc_msize, val.s);
 	}
 	else if (G.acc_mtype == T_STRUCT)
@@ -762,7 +765,7 @@ static void cmd_extract(void)
 		else if (m->type == T_STR)
 		{
 			mmb_val s = unpack_str(p, m->size);
-			strncpy(d->data.s[i], s.s, MMB_MAX_STR);
+			mmb_str_set(&d->data.s[i], s.s, -1, d->maxlen, d->name);
 		}
 	}
 }
@@ -1131,7 +1134,7 @@ void mmb_cmd_list_type(void)
 			else if (m->type == T_STR)
 			{
 				mmb_out("STRING");
-				if (m->size != MMB_MAX_STR)
+				if (m->size != MMB_STRUCT_STR_DEFAULT)
 				{
 					mmb_out(" LENGTH ");
 					mmb_outf(0, m->size);
