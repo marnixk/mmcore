@@ -865,6 +865,7 @@ typedef struct mmb_ed_theme {
 	unsigned char dlg_fg, dlg_bg;
 	unsigned char sh_fg, sh_bg;
 	unsigned char list_bg;
+	unsigned char err_fg, err_bg;
 	const unsigned *pal;
 } mmb_ed_theme;
 

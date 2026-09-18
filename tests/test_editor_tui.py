@@ -977,6 +977,31 @@ def test_editor_f9_run_press_key_returns(kernel_image):
         con.stop()
 
 
+def test_editor_run_error_bar_full_and_locates_line(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "ERRBAR.BAS")
+        _keys(con, b"PRINT LOG10(0)")
+        err = _keys(con, bytes([18]), quiet=1.5)
+        assert "UNDECLARED" in err
+        assert "LOG10(0)" in err
+        # The offending line (row 3 of the pane) is selected.
+        marked = _cell_samples(con, 1, 3)
+        assert any(_is_sel_light(p) for p in marked), marked
+        # Error bar background uses the theme error colours (Slate red).
+        r, g, b = con.screen_pixel(1100, 720 - 8)
+        assert r > g and r > b, (r, g, b)
+        # A key dismisses the bar and is consumed (not inserted).
+        gone = _keys(con, b"X", quiet=0.5)
+        assert "UNDECLARED" not in gone
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "ERRBAR.BAS") == "PRINT LOG10(0)"
+    finally:
+        con.stop()
+
+
 def test_editor_run_restores_mode_and_page(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
