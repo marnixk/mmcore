@@ -5,11 +5,14 @@ import socket
 import threading
 import time
 
+import pytest
+
 from harness import parse_termlog, qemu_usb_net_args
 from test_term import _quit
 from test_term_log import _read_termlog, _termlog_path
 
 from artifacts_util import ARTIFACTS
+from net_util import require_host_tcp
 MARKER = b"ETHHDMI"
 
 
@@ -75,6 +78,7 @@ def test_qemu_ethernet_tcp_to_host(net_console):
     if "10.0.2." not in on:
         cfg = _wait_dhcp(con)
         assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+    require_host_tcp(con)
 
     got = []
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -142,6 +146,7 @@ def test_qemu_ethernet_term_hdmi_not_serial_pane(net_console):
         assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
     dbg = con.send_line("OPTION WIFI DEBUG ON")
     assert "?SYNTAX ERROR" not in dbg.upper()
+    require_host_tcp(con)
     log_on = con.send_line("OPTION TERM LOG ON")
     assert ".termlog" in log_on
 
@@ -247,6 +252,7 @@ def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
     if "10.0.2." not in on:
         cfg = _wait_dhcp(con)
         assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+    require_host_tcp(con)
     log_on = con.send_line("OPTION TERM LOG ON")
     assert ".termlog" in log_on
 

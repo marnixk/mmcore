@@ -85,17 +85,14 @@ def iter_replay_steps(recs: list[TermLogRec]):
 def _drain_replay(replay: TermReplay, *, recv_tcp: bool) -> str:
     """Pump the replay session like play_termlog."""
     acc = ""
-    idle = 0
-    for _ in range(12):
+    last = time.time()
+    while time.time() - last < 0.30:
         extra = replay.pump_once(recv_tcp=recv_tcp)
         if extra:
             acc += extra.decode(errors="replace")
-            idle = 0
+            last = time.time()
         else:
-            idle += 1
             time.sleep(0.01)
-            if idle >= 3:
-                break
     return acc
 
 

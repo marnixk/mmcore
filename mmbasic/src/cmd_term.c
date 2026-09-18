@@ -3525,12 +3525,16 @@ static void incoming_feed(const unsigned char *src, int n)
 		{
 			if (!term_rx_interpret())
 				return;
+			iac_flush();
 			continue;
 		}
 		src += w;
 		n -= (int)w;
 	}
 	term_rx_interpret();
+	/* Replay/file input bypasses term_tcp_ingest; flush any telnet
+	 * negotiation responses queued while interpreting it. */
+	iac_flush();
 }
 
 static int file_hex(const char *s, unsigned char *dst, int maxn)
