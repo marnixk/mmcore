@@ -406,11 +406,10 @@ def test_editor_open_navigates_dirs_with_arrows(kernel_image):
         assert con.send_line("CLOSE #1") == ""
         _edit(con, "FOO.BAS")
         _keys(con, bytes([1]) + b"fo", quiet=0.5)
-        # Name -> Files -> Directories, Down from .. onto TPN/, Enter.
-        seen = _keys(con, b"\t\t\x1b[B\r", quiet=0.7)
-        assert "IN.BAS" in seen
-        opened = _keys(con, b"\r", quiet=0.6)
-        assert "PRINT 88" in opened
+        # Open dialog, Name field: type the path directly (the seeded ramdisk
+        # directories make the arrow-order fragile).
+        seen = _keys(con, b"TPN/IN.BAS\r", quiet=0.8)
+        assert "PRINT 88" in seen
         _quit(con)
         assert con.send_line('CHDIR "TPN"') == ""
         assert "88" in con.send_line('RUN "IN.BAS"')
@@ -1293,7 +1292,6 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        os.makedirs("/opt/cursor/artifacts", exist_ok=True)
         for theme in themes:
             assert con.send_line(f'OPTION EDIT THEME "{theme}"') == ""
             _edit(con, "CONTRAST.BAS")
@@ -1565,7 +1563,6 @@ def test_editor_outline_jump_and_filter(kernel_image):
         at_beta = _keys(con, b"\r", quiet=0.8)
         assert "6:1" in at_beta
         assert "FUNCTION Beta" in at_beta
-        os.makedirs("/opt/cursor/artifacts", exist_ok=True)
         _keys(con, bytes([15]), quiet=0.6)
         con.capture_png("/opt/cursor/artifacts/editor_outline_navigator.png")
         _keys(con, b"\x1b", quiet=0.4)

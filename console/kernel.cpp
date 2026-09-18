@@ -88,10 +88,29 @@ boolean CKernel::Initialize (void)
 
 static void emit_n (CKernel *k, const void *p, unsigned n)
 {
+	const unsigned char *c = (const unsigned char *) p;
+	unsigned left = n;
 	if (!k || !p || !n)
 		return;
 	if (mmb_opt_console_serial ())
-		k->Serial ().Write (p, n);
+	{
+		/* Circle's buffered serial Write drops the tail when its TX ring
+		 * fills, so retry until everything has been queued (bounded so a
+		 * stalled reader cannot hang the kernel forever). */
+		unsigned spins = 0;
+		while (left && spins < 100000)
+		{
+			int w = k->Serial ().Write (c, left);
+			if (w <= 0)
+			{
+				CTimer::SimpleusDelay (200);
+				spins++;
+				continue;
+			}
+			c += (unsigned) w;
+			left -= (unsigned) w;
+		}
+	}
 	if (mmb_opt_console_screen ())
 		k->Screen ().Write (p, n);
 }

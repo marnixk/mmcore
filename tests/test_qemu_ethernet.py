@@ -9,7 +9,7 @@ from harness import parse_termlog, qemu_usb_net_args
 from test_term import _quit
 from test_term_log import _read_termlog, _termlog_path
 
-ARTIFACTS = "/opt/cursor/artifacts"
+from artifacts_util import ARTIFACTS
 MARKER = b"ETHHDMI"
 
 
@@ -135,7 +135,6 @@ def _luminance(r: int, g: int, b: int) -> float:
 def test_qemu_ethernet_term_hdmi_not_serial_pane(net_console):
     """Live Circle TCP: HDMI shows the session; serial is !NET counters, not pane dumps."""
     con = net_console
-    os.makedirs(ARTIFACTS, exist_ok=True)
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
     on = con.send_line("OPTION ETHERNET ON", timeout=25)
     if "10.0.2." not in on:
@@ -243,7 +242,6 @@ _MYSTIC_MASK = (
 def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
     """Live TCP CUB must present the dirty row so the echo is not stuck grey."""
     con = net_console
-    os.makedirs(ARTIFACTS, exist_ok=True)
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
     on = con.send_line("OPTION ETHERNET ON", timeout=25)
     if "10.0.2." not in on:

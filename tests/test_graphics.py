@@ -8,6 +8,7 @@ individual pixels and compare the whole frame against a golden image.
 """
 
 import os
+import re
 import subprocess
 import time
 
@@ -278,8 +279,10 @@ def test_page1_alpha_composite_png(fresh_console):
         "CLS",
         "BOX 60,40,80,80,1,RGB(220,0,0,15),RGB(220,0,0,15)",
         "BOX 200,40,80,80,1,RGB(0,0,0,8),RGB(0,0,0,8)",
+        "PRINT PIXEL(80,60,0)",
+        "PRINT PIXEL(80,60,1)",
         "PAGE WRITE 0",
-        "PAUSE 400",
+        "PAUSE 2500",
     ]
     assert c.send_line("NEW") == ""
     assert c.send_line('OPEN "P1.BAS" FOR OUTPUT AS #1') == ""
@@ -289,12 +292,29 @@ def test_page1_alpha_composite_png(fresh_console):
     assert c.send_line("CLOSE #1") == ""
     c.drain(quiet=0.1)
     c._ser.sendall(b'RUN "P1.BAS"\r')
-    time.sleep(0.7)
+    # Collect the program's PIXEL output before screenshotting: a screendump
+    # drains and discards pending serial. Page 1 is cleared when RUN ends, so
+    # the values must come from the program itself.
+    buf = b""
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not any(
+        int(t) > 1000000 for t in re.findall(rb"\d+", buf)
+    ):
+        try:
+            chunk = c._recv(c._ser)
+        except Exception:
+            chunk = b""
+        if chunk:
+            buf += chunk
+        else:
+            time.sleep(0.05)
     png = c.capture_png("/opt/cursor/artifacts/issue260_page1_alpha.png")
-    c.send_keys(b"\x03", timeout=6.0)
-    red = int(c.send_line("PRINT PIXEL(80,60)").split()[0])
+    vals = [int(t) for t in re.findall(rb"\d+", buf)]
+    big = [i for i, v in enumerate(vals) if v > 1000000]
+    assert big, buf[-200:]
+    over = vals[big[-1]]
+    red = vals[big[-1] - 1]
     assert ((red >> 16) & 255) < 80
-    over = int(c.send_line("PRINT PIXEL(80,60,1)").split()[0])
     assert ((over >> 16) & 255) > 150
     out = subprocess.run(
         ["convert", png, "-crop", "8x8+80+60", "+repage", "txt:-"],
@@ -332,4 +352,5 @@ def test_page1_alpha_composite_png(fresh_console):
         if rgb[2] > 40 and rgb[2] < 180 and rgb[0] < 80 and rgb[1] < 80:
             found_blend += 1
     assert found_blend > 0, "HDMI snapshot missing half-alpha black over blue"
-    assert c.send_line("PRINT 2+2") == "4"
+    time.sleep(2.6)  # let the program's PAUSE finish
+    assert c.send_line("PRINT 2+2", timeout=10) == "4"

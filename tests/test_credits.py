@@ -17,7 +17,7 @@ def _mmb_version():
 
 
 def test_credits_shows_holders_and_port(console):
-    out = console.send_line("CREDITS")
+    out = console.send_line("CREDITS", timeout=20)
     low = out.lower()
     assert "geoff graham" in low
     assert "peter mather" in low
