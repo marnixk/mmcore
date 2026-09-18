@@ -274,6 +274,8 @@ static unsigned term_rgb(unsigned char idx)
 #define TM_DLG_BG  term_rgb(term_th()->dlg_bg)
 #define TM_SH_FG   term_rgb(term_th()->sh_fg)
 #define TM_SH_BG   term_rgb(term_th()->sh_bg)
+#define TM_FIELD_FG term_rgb(term_th()->field_fg)
+#define TM_FIELD_BG term_rgb(term_th()->field_bg)
 
 static void term_draw(void);
 static void term_draw_dlg(void);
@@ -2005,8 +2007,8 @@ static void dlg_field(int dcol, int drow, int width, const char *s, int hi)
 
 	x = (dlg_c0 + dcol) * TM_CW;
 	y = (dlg_r0 + drow) * TM_CH;
-	fg = hi ? TM_SEL_FG : TM_DLG_FG;
-	bg = hi ? TM_SEL_BG : TM_SH_BG;
+	fg = hi ? TM_SEL_FG : TM_FIELD_FG;
+	bg = hi ? TM_SEL_BG : TM_FIELD_BG;
 	if (width < 1)
 		width = 1;
 	term_fill_cells(x, y, width, bg);
