@@ -1,0 +1,17 @@
+name: MM.INFO
+kind: command
+
+Return information about the current graphics mode.
+
+value = MM.INFO
+value = MM.INFO(key)
+
+  key - "MODE" (default returns mode + bits/100), "HRES", or "AUDIO"
+        ("HDMI" or "JACK")
+
+See also ~MM.INFO$~, ~MODE~, ~AUDIO_TARGET~.
+
+Example:
+
+    PRINT MM.INFO(MODE)
+    PRINT MM.INFO("HRES")

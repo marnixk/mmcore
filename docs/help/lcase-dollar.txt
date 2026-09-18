@@ -1,0 +1,12 @@
+name: LCASE$
+kind: command
+
+Return a string with all letters converted to lower case.
+
+string$ = LCASE$(string$)
+
+See also ~UCASE$~.
+
+Example:
+
+    PRINT LCASE$("MmBasic")

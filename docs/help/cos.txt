@@ -1,0 +1,12 @@
+name: COS
+kind: command
+
+Return the cosine of an angle in radians.
+
+value = COS(angle)
+
+OPTION ANGLE DEGREES makes the argument degrees. See also ~SIN~, ~TAN~.
+
+Example:
+
+    PRINT COS(0)        ' 1

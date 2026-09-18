@@ -1,0 +1,14 @@
+name: RTRIM$
+kind: command
+
+Strip characters from the right of a string.
+
+string$ = RTRIM$(string$ [, mask$])
+
+  mask$ - characters to remove (default a space)
+
+See also ~LTRIM$~, ~TRIM$~.
+
+Example:
+
+    PRINT "[" + RTRIM$("hi   ") + "]"

@@ -1,0 +1,12 @@
+name: ABS
+kind: command
+
+Return the absolute (unsigned) magnitude of a number.
+
+value = ABS(number)
+
+See also ~SGN~.
+
+Example:
+
+    PRINT ABS(-3.5)     ' 3.5

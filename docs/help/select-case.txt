@@ -1,10 +1,11 @@
-name: SELECT CASE
+name: SELECT
 kind: language
-alias: SELECT, CASE, CASE ELSE, END SELECT
+alias: SELECT CASE, CASE, CASE ELSE, END SELECT
 
 Choose a branch matching an expression.
 
 SELECT CASE expr
+SELECT expr
 CASE value [, value...]
 CASE IS relop expr
 CASE ELSE
@@ -13,6 +14,8 @@ END SELECT
   expr - value to match
   value - literal or range low TO high (inclusive)
   relop - =, <>, <, >, <=, >=
+
+SELECT CASE is the usual spelling; SELECT expr is accepted too. See also ~IF~.
 
 Example:
 

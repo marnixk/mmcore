@@ -1,0 +1,12 @@
+name: MM.HPOS
+kind: command
+
+Return the current text cursor column in pixels.
+
+x = MM.HPOS
+
+See also ~MM.VPOS~, ~POS~, ~LOCATE~.
+
+Example:
+
+    PRINT MM.HPOS

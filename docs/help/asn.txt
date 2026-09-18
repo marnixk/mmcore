@@ -1,0 +1,8 @@
+name: ASN
+kind: command
+
+Return the arcsine of a number in radians.
+
+value = ASN(number)
+
+Same as ~ASIN~.

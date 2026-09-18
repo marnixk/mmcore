@@ -1,0 +1,12 @@
+name: LOG
+kind: command
+
+Return the natural logarithm (base e) of a number.
+
+value = LOG(number)
+
+number must be greater than 0. See also ~EXP~, ~MATH~.
+
+Example:
+
+    PRINT LOG(EXP(1))   ' 1

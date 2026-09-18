@@ -1,0 +1,12 @@
+name: SQRT
+kind: command
+
+Return the square root of a non-negative number.
+
+value = SQRT(number)
+
+Same as ~SQR~.
+
+Example:
+
+    PRINT SQRT(2)

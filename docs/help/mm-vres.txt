@@ -1,0 +1,12 @@
+name: MM.VRES
+kind: command
+
+Return the height of the current graphics mode in pixels.
+
+height = MM.VRES
+
+See also ~MM.HRES~, ~MODE~.
+
+Example:
+
+    PRINT MM.VRES

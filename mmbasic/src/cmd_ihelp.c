@@ -6,7 +6,6 @@
 #define IH_MAX_LINKS 384
 #define IH_STACK     16
 #define IH_NAME      40
-#define IH_MAX_TOPICS 256
 
 #define ATTR_TEXT  0
 #define ATTR_BRACK 1
@@ -313,10 +312,17 @@ static void add_letter_header(char letter)
 	puts_attr(box, ATTR_HEAD);
 }
 
-static int name_cmp(int a, int b)
+#define IH_MAX_INDEX 384
+
+typedef struct {
+	char name[IH_NAME];
+	int target;
+} ih_index_ent;
+
+static int idx_name_cmp(const ih_index_ent *a, const ih_index_ent *b)
 {
-	const char *na = mmb_help_topic_name(a);
-	const char *nb = mmb_help_topic_name(b);
+	const char *na = a->name;
+	const char *nb = b->name;
 	while (*na && *nb)
 	{
 		int ca = to_upper(*na), cb = to_upper(*nb);
@@ -326,6 +332,26 @@ static int name_cmp(int a, int b)
 		nb++;
 	}
 	return to_upper(*na) - to_upper(*nb);
+}
+
+/* Add an index entry unless the name is already listed (a topic wins over an
+ * alias of the same name). */
+static void idx_add(ih_index_ent *ent, int *n, const char *name, int target)
+{
+	int i, k = 0;
+	if (!name || !name[0] || *n >= IH_MAX_INDEX)
+		return;
+	for (i = 0; i < *n; i++)
+		if (mmb_keyword_eq(ent[i].name, name))
+			return;
+	while (name[k] && k < IH_NAME - 1)
+	{
+		ent[*n].name[k] = name[k];
+		k++;
+	}
+	ent[*n].name[k] = 0;
+	ent[*n].target = target;
+	(*n)++;
 }
 
 static int body_h(void)
@@ -341,36 +367,38 @@ static int body_y0(void)
 
 static void load_index(void)
 {
-	int ord[IH_MAX_TOPICS];
-	int n, i, j, colw, nidx;
+	static ih_index_ent ent[IH_MAX_INDEX];
+	int n = 0, i, j, colw;
 	char letter;
 	page_reset();
 	add_nav();
 	H.page = PAGE_INDEX;
 	H.topic_i = -1;
 	set_title("Index");
-	n = mmb_help_topic_count();
-	if (n > IH_MAX_TOPICS)
-		n = IH_MAX_TOPICS;
-	nidx = 0;
-	for (i = 0; i < n; i++)
+	/* Every non-page topic, then every alias pointing at its topic, so
+	 * synonym commands (COLOR, LS, END IF, ...) are discoverable here. */
+	for (i = 0; i < mmb_help_topic_count(); i++)
 	{
 		if (mmb_help_topic_kind(i) == HELP_PAGE)
 			continue;
-		ord[nidx++] = i;
+		idx_add(ent, &n, mmb_help_topic_name(i), i);
 	}
-	n = nidx;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < mmb_help_alias_count(); i++)
 	{
-		for (j = i + 1; j < n; j++)
+		int tgt = mmb_help_lookup(mmb_help_alias_canon(i));
+		if (tgt >= 0)
+			idx_add(ent, &n, mmb_help_alias_name(i), tgt);
+	}
+	for (i = 1; i < n; i++)
+	{
+		ih_index_ent key = ent[i];
+		j = i - 1;
+		while (j >= 0 && idx_name_cmp(&ent[j], &key) > 0)
 		{
-			if (name_cmp(ord[j], ord[i]) < 0)
-			{
-				int t = ord[i];
-				ord[i] = ord[j];
-				ord[j] = t;
-			}
+			ent[j + 1] = ent[j];
+			j--;
 		}
+		ent[j + 1] = key;
 	}
 	colw = H.wrap_w / 2;
 	if (colw < 18)
@@ -381,26 +409,20 @@ static void load_index(void)
 	puts_attr("Press Enter to open a topic. Escape goes back.", ATTR_DIM);
 	for (letter = 'A'; letter <= 'Z'; letter++)
 	{
-		int grp[IH_MAX_TOPICS];
-		int ng = 0;
+		int col = 0;
 		for (i = 0; i < n; i++)
 		{
-			const char *nm = mmb_help_topic_name(ord[i]);
-			if (nm[0] && to_upper(nm[0]) == letter)
-				grp[ng++] = ord[i];
-		}
-		if (!ng)
-			continue;
-		add_letter_header(letter);
-		for (i = 0; i < ng; i += 2)
-		{
-			newline();
-			add_link(mmb_help_topic_name(grp[i]), grp[i]);
-			if (i + 1 < ng)
-			{
+			const char *nm = ent[i].name;
+			if (!(nm[0] && to_upper(nm[0]) == letter))
+				continue;
+			if (col == 0)
+				add_letter_header(letter);
+			else if (col % 2 == 0)
+				newline();
+			else
 				H.cx = colw;
-				add_link(mmb_help_topic_name(grp[i + 1]), grp[i + 1]);
-			}
+			add_link(ent[i].name, ent[i].target);
+			col++;
 		}
 	}
 	newline();

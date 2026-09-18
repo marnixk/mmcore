@@ -1,0 +1,13 @@
+name: ACOS
+kind: command
+
+Return the arccosine of a number in radians (0..PI).
+
+value = ACOS(number)
+
+ACS is a synonym. OPTION ANGLE DEGREES makes the result degrees. See also
+~ASIN~, ~ATN~.
+
+Example:
+
+    PRINT ACOS(0)       ' PI/2

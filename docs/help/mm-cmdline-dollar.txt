@@ -1,0 +1,13 @@
+name: MM.CMDLINE$
+kind: command
+
+Return the name of the program currently being run.
+
+line$ = MM.CMDLINE$
+
+Empty at the prompt, or the RUN/LOAD path while a program runs. See also
+~RUN~, ~LOAD~.
+
+Example:
+
+    PRINT MM.CMDLINE$

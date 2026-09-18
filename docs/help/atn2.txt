@@ -1,0 +1,14 @@
+name: ATN2
+kind: command
+
+Return the angle of the vector (x, y) with quadrant.
+
+angle = ATN2(y, x)
+
+  y, x - vector components; ranges -PI..PI with x = 0 handled
+
+ATAN2 is a synonym. See also ~ATN~.
+
+Example:
+
+    PRINT ATN2(1, 1)    ' PI/4

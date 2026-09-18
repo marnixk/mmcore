@@ -1,0 +1,14 @@
+name: TAB
+kind: command
+
+Return a string of n spaces (the column-tab used by PRINT).
+
+string$ = TAB(n)
+
+  n - number of spaces; negative counts produce ""
+
+See also ~SPACE$~, ~PRINT~.
+
+Example:
+
+    PRINT "A" + TAB(4) + "B"

@@ -1,0 +1,12 @@
+name: TAN
+kind: command
+
+Return the tangent of an angle in radians.
+
+value = TAN(angle)
+
+OPTION ANGLE DEGREES makes the argument degrees. See also ~SIN~, ~COS~, ~ATN~.
+
+Example:
+
+    PRINT TAN(PI / 4)   ' 1

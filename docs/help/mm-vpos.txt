@@ -1,0 +1,12 @@
+name: MM.VPOS
+kind: command
+
+Return the current text cursor row in pixels.
+
+y = MM.VPOS
+
+See also ~MM.HPOS~, ~CSRLIN~, ~LOCATE~.
+
+Example:
+
+    PRINT MM.VPOS

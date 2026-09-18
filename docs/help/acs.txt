@@ -1,0 +1,8 @@
+name: ACS
+kind: command
+
+Return the arccosine of a number in radians.
+
+value = ACS(number)
+
+Same as ~ACOS~.

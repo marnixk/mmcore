@@ -1,0 +1,13 @@
+name: ATN
+kind: command
+
+Return the arctangent of a number in radians (-PI/2..PI/2).
+
+value = ATN(number)
+
+ATAN is a synonym; ATN2/ATAN2 give the angle with quadrant. OPTION ANGLE
+DEGREES makes the result degrees.
+
+Example:
+
+    PRINT ATN(1) * 4    ' PI

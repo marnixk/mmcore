@@ -1,0 +1,12 @@
+name: CSRLIN
+kind: command
+
+Return the current console cursor row, 1-based.
+
+row = CSRLIN
+
+See also ~POS~, ~LOCATE~, ~MM.VPOS~.
+
+Example:
+
+    PRINT CSRLIN

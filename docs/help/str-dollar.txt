@@ -1,0 +1,14 @@
+name: STR$
+kind: command
+
+Convert a number to the string a PRINT of it would show.
+
+string$ = STR$(number)
+
+  number - numeric expression
+
+See also ~VAL~.
+
+Example:
+
+    PRINT STR$(42) + "!"

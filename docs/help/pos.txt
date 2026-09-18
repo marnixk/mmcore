@@ -1,0 +1,12 @@
+name: POS
+kind: command
+
+Return the current console cursor column, 1-based.
+
+col = POS
+
+See also ~CSRLIN~, ~LOCATE~, ~MM.HPOS~.
+
+Example:
+
+    PRINT POS

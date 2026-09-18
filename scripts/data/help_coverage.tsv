@@ -1,0 +1,234 @@
+# symbol	target	kind	note
+# Coverage of every mmbasic/src/core.c (try_tok_cmd) and expr.c
+# (mmb_try_function) symbol. kind is 'topic' (dedicated docs/help
+# page) or 'alias' (its spelling opens the target topic).
+# scripts/gap_analysis.py --audit-help fails on a missing entry or an
+# alias-only entry whose target is a catch-all catalogue.
+ABS	ABS	topic	dedicated topic
+ACOS	ACOS	topic	dedicated topic
+ACS	ACS	topic	dedicated topic
+AFK	AFK	topic	dedicated topic
+ARC	ARC	topic	dedicated topic
+ARRAY	ARRAY	topic	dedicated topic
+ASC	ASC	topic	dedicated topic
+ASIN	ASIN	topic	dedicated topic
+ASN	ASN	topic	dedicated topic
+ATAN	ATAN	topic	dedicated topic
+ATAN2	ATAN2	topic	dedicated topic
+ATN	ATN	topic	dedicated topic
+ATN2	ATN2	topic	dedicated topic
+BASE$	BASE$	topic	dedicated topic
+BEEP	PLAY	alias	alias of PLAY
+BIN$	BIN$	topic	dedicated topic
+BIT	BIT	topic	dedicated topic
+BITMAP	BITMAP	topic	dedicated topic
+BLIT	BLIT	topic	dedicated topic
+BOUND	BOUND	topic	dedicated topic
+BOX	BOX	topic	dedicated topic
+BYTE	BYTE	topic	dedicated topic
+CALL	CALL	topic	dedicated topic
+CASE	SELECT	alias	alias of SELECT
+CAT	CAT	topic	dedicated topic
+CHAIN	CHAIN	topic	dedicated topic
+CHDIR	CHDIR	topic	dedicated topic
+CHOICE	CHOICE	topic	dedicated topic
+CHR$	CHR$	topic	dedicated topic
+CINT	CINT	topic	dedicated topic
+CIRCLE	CIRCLE	topic	dedicated topic
+CLEAR	CLEAR	topic	dedicated topic
+CLOSE	CLOSE	topic	dedicated topic
+CLS	CLS	topic	dedicated topic
+COLOR	COLOUR	alias	alias of COLOUR
+COLOUR	COLOUR	topic	dedicated topic
+COMMON	COMMON	topic	dedicated topic
+CONNECT	CONNECT	topic	dedicated topic
+CONST	CONST	topic	dedicated topic
+CONTINUE	CONTINUE	topic	dedicated topic
+CONTINUE DO	CONTINUE	alias	alias of CONTINUE
+CONTINUE FOR	CONTINUE	alias	alias of CONTINUE
+COPY	COPY	topic	dedicated topic
+COS	COS	topic	dedicated topic
+CREDITS	CREDITS	topic	dedicated topic
+CSRLIN	CSRLIN	topic	dedicated topic
+CWD$	CWD$	topic	dedicated topic
+DATA	DATA	topic	dedicated topic
+DATE$	DATE$	topic	dedicated topic
+DATETIME$	DATETIME$	topic	dedicated topic
+DAY$	DAY$	topic	dedicated topic
+DEC	DEC	topic	dedicated topic
+DEG	DEG	topic	dedicated topic
+DEL	KILL	alias	alias of KILL
+DIM	DIM	topic	dedicated topic
+DIR	DIR	topic	dedicated topic
+DIR$	DIR$	topic	dedicated topic
+DO	DO	topic	dedicated topic
+DRIVE	DRIVE	topic	dedicated topic
+EDIT	EDIT	topic	dedicated topic
+ELSE	IF	alias	alias of IF
+ELSEIF	IF	alias	alias of IF
+END	END	topic	dedicated topic
+END FUNCTION	FUNCTION	alias	alias of FUNCTION
+END IF	IF	alias	alias of IF
+END SELECT	SELECT	alias	alias of SELECT
+END SUB	SUB	alias	alias of SUB
+END TYPE	TYPE	alias	alias of TYPE
+ENDIF	IF	alias	alias of IF
+EOF	EOF	topic	dedicated topic
+EPOCH	EPOCH	topic	dedicated topic
+ERASE	CLEAR	alias	alias of CLEAR
+ERROR	ERROR	topic	dedicated topic
+EVAL	EVAL	topic	dedicated topic
+EXECUTE	EXECUTE	topic	dedicated topic
+EXIT	EXIT	topic	dedicated topic
+EXIT DO	EXIT	alias	alias of EXIT
+EXIT FOR	EXIT	alias	alias of EXIT
+EXIT FUNCTION	EXIT	alias	alias of EXIT
+EXIT SUB	EXIT	alias	alias of EXIT
+EXP	EXP	topic	dedicated topic
+FACTORY	FACTORY RESET	alias	alias of FACTORY RESET
+FACTORY RESET	FACTORY RESET	topic	dedicated topic
+FACTORY_RESET	FACTORY RESET	alias	alias of FACTORY RESET
+FIELD$	FIELD$	topic	dedicated topic
+FILES	FILES	topic	dedicated topic
+FIX	FIX	topic	dedicated topic
+FONT	FONT	topic	dedicated topic
+FOR	FOR	topic	dedicated topic
+FORMAT$	FORMAT$	topic	dedicated topic
+FRAMEBUFFER	FRAMEBUFFER	topic	dedicated topic
+FUNCTION	FUNCTION	topic	dedicated topic
+GOSUB	GOSUB	topic	dedicated topic
+GOTO	GOTO	topic	dedicated topic
+GUI	BITMAP	alias	alias of BITMAP
+GUI BITMAP	BITMAP	alias	alias of BITMAP
+HELP	HELP	topic	dedicated topic
+HEX$	HEX$	topic	dedicated topic
+IF	IF	topic	dedicated topic
+IHELP	HELP	alias	alias of HELP
+IMAGE	IMAGE	topic	dedicated topic
+INC	INC	topic	dedicated topic
+INKEY$	INKEY$	topic	dedicated topic
+INPUT	INPUT	topic	dedicated topic
+INPUT$	INPUT$	topic	dedicated topic
+INSTR	INSTR	topic	dedicated topic
+INT	INT	topic	dedicated topic
+IPCONFIG	IPCONFIG	topic	dedicated topic
+JSON$	JSON$	topic	dedicated topic
+JSON_PARSE	JSON_PARSE	topic	dedicated topic
+JSON_STRINGIFY$	JSON_STRINGIFY$	topic	dedicated topic
+KEYDOWN	KEYDOWN	topic	dedicated topic
+KILL	KILL	topic	dedicated topic
+LCASE$	LCASE$	topic	dedicated topic
+LEFT$	LEFT$	topic	dedicated topic
+LEN	LEN	topic	dedicated topic
+LET	LET	topic	dedicated topic
+LINE	LINE	topic	dedicated topic
+LINE INPUT	LINE INPUT	topic	dedicated topic
+LIST	LIST	topic	dedicated topic
+LIST FILES	DIR	alias	alias of DIR
+LIST TYPE	LIST	alias	alias of LIST
+LOAD	LOAD	topic	dedicated topic
+LOC	LOC	topic	dedicated topic
+LOCAL	LOCAL	topic	dedicated topic
+LOCATE	LOCATE	topic	dedicated topic
+LOF	LOF	topic	dedicated topic
+LOG	LOG	topic	dedicated topic
+LOOP	DO	alias	alias of DO
+LS	DIR	alias	alias of DIR
+LSET	LSET	topic	dedicated topic
+LTRIM$	LTRIM$	topic	dedicated topic
+MATH	MATH	topic	dedicated topic
+MAX	MAX	topic	dedicated topic
+MEMORY	MEMORY	topic	dedicated topic
+MID$	MID$	topic	dedicated topic
+MIN	MIN	topic	dedicated topic
+MKDIR	MKDIR	topic	dedicated topic
+MM.CMDLINE$	MM.CMDLINE$	topic	dedicated topic
+MM.DEVICE$	MM.DEVICE$	topic	dedicated topic
+MM.HPOS	MM.HPOS	topic	dedicated topic
+MM.HRES	MM.HRES	topic	dedicated topic
+MM.INFO	MM.INFO	topic	dedicated topic
+MM.INFO$	MM.INFO$	topic	dedicated topic
+MM.VER	MM.VER	topic	dedicated topic
+MM.VPOS	MM.VPOS	topic	dedicated topic
+MM.VRES	MM.VRES	topic	dedicated topic
+MODE	MODE	topic	dedicated topic
+MV	RENAME	alias	alias of RENAME
+NAME	RENAME	alias	alias of RENAME
+NEW	NEW	topic	dedicated topic
+NEXT	FOR	alias	alias of FOR
+OCT$	OCT$	topic	dedicated topic
+ON	ON	topic	dedicated topic
+ON ERROR	ON	alias	alias of ON
+ON GOSUB	ON	alias	alias of ON
+ON GOTO	ON	alias	alias of ON
+ON KEY	ON	alias	alias of ON
+OPEN	OPEN	topic	dedicated topic
+OPTION	OPTION	topic	dedicated topic
+OPTIONS	OPTIONS	topic	dedicated topic
+PACKAGE	PACKAGE	topic	dedicated topic
+PAGE	PAGE	topic	dedicated topic
+PAUSE	PAUSE	topic	dedicated topic
+PI	PI	topic	dedicated topic
+PIXEL	PIXEL	topic	dedicated topic
+PLAY	PLAY	topic	dedicated topic
+PLAYING	PLAYING	topic	dedicated topic
+POLYGON	POLYGON	topic	dedicated topic
+POS	POS	topic	dedicated topic
+PRINT	PRINT	topic	dedicated topic
+RAD	RAD	topic	dedicated topic
+RANDOMIZE	RANDOMIZE	topic	dedicated topic
+RBOX	RBOX	topic	dedicated topic
+READ	DATA	alias	alias of DATA
+REBOOT	REBOOT	topic	dedicated topic
+REDIM	REDIM	topic	dedicated topic
+REM	REM	topic	dedicated topic
+RENAME	RENAME	topic	dedicated topic
+RESTART	REBOOT	alias	alias of REBOOT
+RESTORE	DATA	alias	alias of DATA
+RESUME	RESUME	topic	dedicated topic
+RETURN	GOSUB	alias	alias of GOSUB
+RGB	RGB	topic	dedicated topic
+RIGHT$	RIGHT$	topic	dedicated topic
+RM	KILL	alias	alias of KILL
+RMDIR	RMDIR	topic	dedicated topic
+RND	RND	topic	dedicated topic
+RSET	LSET	alias	alias of LSET
+RTRIM$	RTRIM$	topic	dedicated topic
+RUN	RUN	topic	dedicated topic
+SAVE	SAVE	topic	dedicated topic
+SEEK	SEEK	topic	dedicated topic
+SELECT	SELECT	topic	dedicated topic
+SELECT CASE	SELECT	alias	alias of SELECT
+SETTICK	SETTICK	topic	dedicated topic
+SGN	SGN	topic	dedicated topic
+SIN	SIN	topic	dedicated topic
+SORT	SORT	topic	dedicated topic
+SPACE$	SPACE$	topic	dedicated topic
+SPRITE	SPRITE	topic	dedicated topic
+SQR	SQR	topic	dedicated topic
+SQRT	SQRT	topic	dedicated topic
+STATIC	STATIC	topic	dedicated topic
+STOP	STOP	topic	dedicated topic
+STR$	STR$	topic	dedicated topic
+STRING$	STRING$	topic	dedicated topic
+STRUCT	STRUCT	topic	dedicated topic
+SUB	SUB	topic	dedicated topic
+SWAP	SWAP	topic	dedicated topic
+TAB	TAB	topic	dedicated topic
+TAN	TAN	topic	dedicated topic
+TERM	TERM	topic	dedicated topic
+TEXT	TEXT	topic	dedicated topic
+THEME	THEME	topic	dedicated topic
+TIME$	TIME$	topic	dedicated topic
+TIMER	TIMER	topic	dedicated topic
+TRIANGLE	TRIANGLE	topic	dedicated topic
+TRIM$	TRIM$	topic	dedicated topic
+TURTLE	TURTLE	topic	dedicated topic
+TYPE	TYPE	topic	dedicated topic
+UCASE$	UCASE$	topic	dedicated topic
+VAL	VAL	topic	dedicated topic
+VSYNC_WAIT	VSYNC_WAIT	topic	dedicated topic
+WEND	WHILE	alias	alias of WHILE
+WHILE	WHILE	topic	dedicated topic
+WORDPAD	WORDPAD	topic	dedicated topic
+XFER	XFER	topic	dedicated topic

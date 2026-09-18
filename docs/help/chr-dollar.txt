@@ -1,0 +1,14 @@
+name: CHR$
+kind: command
+
+Return a one-character string for a character code.
+
+string$ = CHR$(code)
+
+  code - 0..255; values above 255 are taken modulo 256
+
+See also ~ASC~.
+
+Example:
+
+    PRINT CHR$(65)      ' A

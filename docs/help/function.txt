@@ -1,0 +1,33 @@
+name: FUNCTION
+kind: language
+alias: END FUNCTION
+
+Define a user function that returns a value. Call it in an expression as
+name(). Assign to the function name to set the result.
+
+FUNCTION name [([arg [AS type] [, ...])]]
+  statements
+  name = value
+  EXIT FUNCTION
+END FUNCTION
+
+Parameters and the function name may use AS typename for a TYPE (see ~TYPE~).
+The function name is a local of that type; assign members, copy a whole struct
+into it, or STRUCT COPY src TO name. Callers assign the result:
+
+    DIM m AS Message
+    m = WaitMsg()
+
+For a routine with no return value see ~SUB~.
+
+Example:
+
+    FUNCTION RandByte()
+      RandByte = INT(RND * 256)
+    END FUNCTION
+    PRINT RandByte()
+
+    FUNCTION Twice(N)
+      Twice = N * 2
+    END FUNCTION
+    PRINT Twice(21)

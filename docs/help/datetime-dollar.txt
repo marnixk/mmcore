@@ -1,0 +1,13 @@
+name: DATETIME$
+kind: command
+
+Format an epoch value as "dd-mm-yyyy hh:mm:ss" (UTC).
+
+string$ = DATETIME$(epoch)
+string$ = DATETIME$(NOW)
+
+See also ~DAY$~, ~EPOCH~.
+
+Example:
+
+    PRINT DATETIME$(EPOCH(NOW))

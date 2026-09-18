@@ -1,0 +1,12 @@
+name: RAD
+kind: command
+
+Convert an angle in degrees to radians.
+
+radians = RAD(degrees)
+
+See also ~DEG~, ~PI~.
+
+Example:
+
+    PRINT RAD(180)      ' PI

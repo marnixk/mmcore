@@ -1,0 +1,13 @@
+name: MM.INFO$
+kind: command
+
+Return information about the system as a string.
+
+value$ = MM.INFO$
+value$ = MM.INFO$(key)
+
+  key - as for ~MM.INFO~; returns text for string keys such as "AUDIO"
+
+Example:
+
+    PRINT MM.INFO$("AUDIO")

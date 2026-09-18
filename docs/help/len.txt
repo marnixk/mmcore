@@ -1,0 +1,12 @@
+name: LEN
+kind: command
+
+Return the number of characters in a string.
+
+n = LEN(string$)
+
+  string$ - string expression
+
+Example:
+
+    PRINT LEN("MMBASIC")        ' 7

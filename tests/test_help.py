@@ -30,8 +30,11 @@ def test_help_lists_commands(console):
         "ETHERNET",
     ):
         assert f"<{cmd}>" in seen, cmd
-    for junk in ("DELETE", "GUI", "CAMERA", "MAP", "TILE"):
+    for junk in ("DELETE", "CAMERA", "MAP", "TILE"):
         assert f"<{junk}>" not in seen, junk
+    # Aliases are listed in the index and open their canonical topic.
+    for alias in ("COLOR", "LS", "GUI", "END IF", "RM", "DEL"):
+        assert f"<{alias}>" in seen, alias
     assert "<SPRITE>" in seen
     assert "HELP BASIC" in seen
     close_ihelp(console)
@@ -396,3 +399,29 @@ def test_help_index_and_contents_pages(console):
     assert "<FOR>" in contents
     basic = dump_topic(console, "BASIC")
     assert "Language constructs" in basic
+
+
+def test_help_functions_have_own_topics(console):
+    """Table 1 functions open a dedicated page, not the FUNCTIONS catalogue."""
+    for name, needle in (
+        ("ABS", "absolute"),
+        ("LEFT$", "leftmost"),
+        ("RND", "random"),
+        ("EOF", "end"),
+        ("CINT", "round"),
+    ):
+        out = dump_topic(console, name)
+        assert out != "?SYNTAX ERROR", name
+        assert name in out, name
+        assert needle in out.lower(), name
+        assert "Catalogue of functions" not in out, name
+
+
+def test_help_mm_hres_vres_topics(console):
+    hres = dump_topic(console, "MM.HRES")
+    assert "MM.HRES" in hres
+    assert "width" in hres.lower()
+    vres = dump_topic(console, "MM.VRES")
+    assert "MM.VRES" in vres
+    assert "height" in vres.lower()
+

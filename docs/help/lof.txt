@@ -1,0 +1,14 @@
+name: LOF
+kind: command
+
+Return the length of an open file.
+
+size = LOF(#n)
+
+  n - open file number; 0 for a TCP file
+
+See also ~EOF~, ~LOC~, ~SEEK~.
+
+Example:
+
+    PRINT LOF(#1)

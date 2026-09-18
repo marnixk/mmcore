@@ -1,0 +1,14 @@
+name: MAX
+kind: command
+
+Return the largest of its arguments.
+
+value = MAX(a, b [, c, ...])
+
+  up to eight numeric arguments
+
+See also ~MIN~.
+
+Example:
+
+    PRINT MAX(3, 8, 5)      ' 8

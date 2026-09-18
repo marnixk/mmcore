@@ -1,9 +1,10 @@
 name: MATH
 kind: command
-alias: CINT, EVAL, SINH, COSH, TANH, LOG10, ATAN3
+alias: SINH, COSH, TANH, LOG10, ATAN3
 
-Math helpers and array operators. CINT rounds to nearest (.5 away from zero;
-unlike INT=floor and FIX=truncate). EVAL evaluates a string as an expression.
+Math helpers and array operators. See ~CINT~ for rounding (nearest, .5 away
+from zero), ~INT~ for floor and ~FIX~ for truncation. EVAL evaluates a string
+as an expression (~EVAL~).
 MATH() uses a space after the name, not extra parentheses: MATH(ATAN3 x, y)
 not MATH(ATAN3(x,y)). TYPE arrays use arr().member the same way as plain a()
 (PIXEL too; see ~TYPE~). OPTION ANGLE DEGREES applies to ATAN3 and Q_*.

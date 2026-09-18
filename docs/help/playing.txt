@@ -1,0 +1,13 @@
+name: PLAYING
+kind: command
+
+Return 1 while a sound is playing, otherwise 0.
+
+flag = PLAYING
+
+See also ~PLAY~, ~AUDIO_TARGET~.
+
+Example:
+
+    DO WHILE PLAYING
+    LOOP

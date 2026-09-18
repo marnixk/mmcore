@@ -1,0 +1,12 @@
+name: CINT
+kind: command
+
+Round a number to the nearest integer (.5 away from zero).
+
+value = CINT(number)
+
+See also ~INT~, ~FIX~.
+
+Example:
+
+    PRINT CINT(45.57)   ' 46

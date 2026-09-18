@@ -1,0 +1,14 @@
+name: ASC
+kind: command
+
+Return the character code (0-255) of the first character of a string.
+
+code = ASC(string$)
+
+  string$ - string expression; ASC("") returns 0
+
+See also ~CHR$~.
+
+Example:
+
+    PRINT ASC("A")      ' 65

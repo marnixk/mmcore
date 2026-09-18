@@ -1,0 +1,20 @@
+name: EOF
+kind: command
+
+Test whether a file is positioned at the end.
+
+flag = EOF(#n)
+
+  n - open file number
+
+For a disk file EOF is position >= size; for a TCP file it is not connected.
+See also ~LOF~, ~LOC~, ~OPEN~.
+
+Example:
+
+    OPEN "A:/DATA.TXT" FOR INPUT AS #1
+    DO UNTIL EOF(#1)
+      LINE INPUT #1, l$
+      PRINT l$
+    LOOP
+    CLOSE #1

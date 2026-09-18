@@ -1,0 +1,14 @@
+name: MIN
+kind: command
+
+Return the smallest of its arguments.
+
+value = MIN(a, b [, c, ...])
+
+  up to eight numeric arguments
+
+See also ~MAX~.
+
+Example:
+
+    PRINT MIN(3, 8, 5)      ' 3

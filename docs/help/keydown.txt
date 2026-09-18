@@ -1,0 +1,16 @@
+name: KEYDOWN
+kind: command
+
+Return non-zero while a keyboard key is held down.
+
+flag = KEYDOWN(scan)
+
+  scan - keyboard scan code (see ~KEYBOARD SCAN CODES~)
+
+See also ~INKEY$~.
+
+Example:
+
+    DO
+      IF KEYDOWN(1) THEN PRINT "ESC held"
+    LOOP

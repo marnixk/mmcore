@@ -1,0 +1,14 @@
+name: RIGHT$
+kind: command
+
+Return the rightmost n characters of a string.
+
+string$ = RIGHT$(string$, n)
+
+  n - number of characters; 0 for none, clamped to the string length
+
+See also ~LEFT$~, ~MID$~.
+
+Example:
+
+    PRINT RIGHT$("MMBASIC", 3)  ' SIC

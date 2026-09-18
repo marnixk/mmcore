@@ -1,15 +1,15 @@
-name: FACTORY_RESET
+name: FACTORY RESET
 kind: command
-alias: FACTORY RESET, FACTORY
+alias: FACTORY_RESET, FACTORY
 
 Restore default OPTION settings (DEFAULT MODE 11, PROMPT CWD, EDIT THEME Slate).
 Programs and other user files are kept. Wi-Fi credentials and Ethernet ON are
 cleared.
 
-FACTORY_RESET
 FACTORY RESET
+FACTORY_RESET
 
 Example:
 
-    FACTORY_RESET
     FACTORY RESET
+    FACTORY_RESET
