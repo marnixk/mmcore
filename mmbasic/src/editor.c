@@ -305,6 +305,14 @@ int mmb_editor_theme_lookup(const char *s)
 
 static char killbuf[8192];
 static int killlen;
+
+#define FIND_QMAX 96
+static int find_active;
+static char find_q[FIND_QMAX];
+static int find_qlen;
+static char find_last[FIND_QMAX];
+static int find_notfound;
+static int find_cx, find_row0, find_col0, find_sel, find_anchor;
 static char pick_root[128];
 static char pick_path[ED_PICK_MAX][128];
 static int pick_pos[ED_PICK_MAX];
@@ -341,8 +349,8 @@ static const char *file_items[] = {
 	"Close tab", "Next tab", "Quit"
 };
 static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
-static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste" };
-static const char edit_hots[] = { 'o', 't', 'c', 'p' };
+static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find..." };
+static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f' };
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
@@ -367,6 +375,7 @@ static void close_tab(void);
 static void close_tab_now(void);
 static void close_ui(void);
 static void finish_pending(void);
+static void find_abort(void);
 
 static char *put_uint(char *p, int n)
 {
@@ -544,6 +553,7 @@ static int add_or_switch(const char *path)
 {
 	char p[128];
 	int i;
+	find_abort();
 	p[0] = 0;
 	if (path && path[0])
 	{
@@ -1585,6 +1595,153 @@ static void paste_kill(void)
 	t->len += n;
 	t->buf[t->len] = 0;
 	t->dirty = 1;
+}
+
+/* ---- inline find bar (Ctrl+F) ---- */
+
+static void find_abort(void)
+{
+	find_active = 0;
+}
+
+static void find_open(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int lo, hi;
+	if (!t)
+		return;
+	if (find_active)
+		return; /* refocus, keep the query */
+	find_active = 1;
+	find_notfound = 0;
+	find_cx = t->cx;
+	find_row0 = t->row0;
+	find_col0 = t->col0;
+	find_sel = t->sel;
+	find_anchor = t->sel_anchor;
+	if (sel_bounds(&lo, &hi) && hi - lo < FIND_QMAX)
+	{
+		memcpy(find_q, t->buf + lo, (unsigned)(hi - lo));
+		find_q[hi - lo] = 0;
+		find_qlen = hi - lo;
+	}
+	else
+	{
+		ed_copy(find_q, sizeof(find_q), find_last);
+		find_qlen = (int)strlen(find_q);
+	}
+}
+
+static void find_close(int restore)
+{
+	mmb_ed_tab *t = cur_tab();
+	if (!find_active)
+		return;
+	find_active = 0;
+	if (restore && t)
+	{
+		t->cx = find_cx;
+		t->row0 = find_row0;
+		t->col0 = find_col0;
+		t->sel = find_sel;
+		t->sel_anchor = find_anchor;
+	}
+}
+
+static int find_match_at(mmb_ed_tab *t, int off, int qn)
+{
+	int j;
+	if (!t || off < 0 || qn <= 0 || off + qn > t->len)
+		return 0;
+	for (j = 0; j < qn; j++)
+		if (!ed_ch_eq(t->buf[off + j], find_q[j]))
+			return 0;
+	return 1;
+}
+
+static void find_next(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int qn, i, m = -1, start;
+	if (!t)
+		return;
+	ed_copy(find_last, sizeof(find_last), find_q);
+	qn = find_qlen;
+	find_notfound = 0;
+	if (qn <= 0)
+	{
+		find_notfound = 1;
+		return;
+	}
+	start = t->cx;
+	if (start < 0)
+		start = 0;
+	if (start > t->len)
+		start = t->len;
+	for (i = start; i + qn <= t->len; i++)
+	{
+		if (find_match_at(t, i, qn))
+		{
+			m = i;
+			break;
+		}
+	}
+	if (m < 0)
+	{
+		for (i = 0; i + qn <= start && i + qn <= t->len; i++)
+		{
+			if (find_match_at(t, i, qn))
+			{
+				m = i;
+				break;
+			}
+		}
+	}
+	if (m < 0)
+	{
+		find_notfound = 1;
+		return;
+	}
+	t->sel_anchor = m;
+	t->cx = m + qn;
+	t->sel = 1;
+	ensure_visible();
+}
+
+static void find_key(char c)
+{
+	if (c == 8 || c == 127)
+	{
+		if (find_qlen > 0)
+			find_q[--find_qlen] = 0;
+		find_notfound = 0;
+		return;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		find_next();
+		return;
+	}
+	if (c >= 32 && c < 127 && find_qlen < FIND_QMAX - 1)
+	{
+		find_q[find_qlen++] = c;
+		find_q[find_qlen] = 0;
+		find_notfound = 0;
+	}
+}
+
+static void find_draw_status(void)
+{
+	int x;
+	tui_pad(0, ROW_STAT, "", COLS, C_MENU_FG, C_MENU_BG);
+	tui_puts(0, ROW_STAT, "Find: ", C_MENU_FG, C_MENU_BG);
+	x = 6;
+	tui_puts(x, ROW_STAT, find_q, C_MENU_FG, C_MENU_BG);
+	x += find_qlen;
+	if (find_notfound)
+		tui_puts(x, ROW_STAT, "   Not found", C_HOT, C_MENU_BG);
+	else
+		tui_puts(x, ROW_STAT, "   Enter=Next  Esc=Close", C_MENU_FG, C_MENU_BG);
 }
 
 static const char **menu_items(int menu, int *n)
@@ -2650,7 +2807,7 @@ static void draw_dialog(void)
 	if (G.ed.dialog == DLG_HELP)
 	{
 		w = 48;
-		h = 21;
+		h = 22;
 		title = " Help ";
 	}
 	else if (G.ed.dialog == DLG_OPEN)
@@ -2704,15 +2861,15 @@ static void draw_dialog(void)
 			"Alt+F N New file    ^W     Close tab",
 			"Untitled close/quit: Save/Discard/Cancel",
 			"Alt+Left/Right tabs (no wrap)",
-			"^O     Outline          ^S     Save",
-			"^R/F9  Run; press a key to return",
+			"^F     Find             ^O     Outline",
+			"^S     Save             ^R/F9  Run",
 			"Shift+Arrows select  Del    erase sel",
 			"^Ins copy  Shift+Del cut  Shift+Ins paste",
 			"Tab    4 spaces      Alt+1..9 file tab",
 			"Arrows move          Enter  activate",
 			"Open/Save: Name, Files, Directories",
 			"        Tab cycles  Enter file/folder",
-			"",
+			"^R/F9  Run; press a key to return",
 			"     Enter or Esc closes this box",
 		};
 		int L = (int)(sizeof(lines) / sizeof(lines[0]));
@@ -2793,6 +2950,11 @@ static void draw_status(void)
 	char *p;
 	int rightn;
 	mmb_ed_tab *t = cur_tab();
+	if (find_active)
+	{
+		find_draw_status();
+		return;
+	}
 	draw_fkey(&x, ROW_STAT, "F1", " Help ");
 	draw_fkey(&x, ROW_STAT, "F2", " Save ");
 	draw_fkey(&x, ROW_STAT, "F3", " Open ");
@@ -2837,6 +2999,14 @@ static void draw_status(void)
 
 static void place_cursor(void)
 {
+	if (find_active)
+	{
+		int col = 6 + find_qlen;
+		if (col > COLS - 1)
+			col = COLS - 1;
+		tui_cursor(col, ROW_STAT, 1);
+		return;
+	}
 	if (G.ed.dialog == DLG_PICK)
 	{
 		int w, h, r0, c0;
@@ -3098,6 +3268,7 @@ static void editor_resume(void)
 static void open_menu(int which)
 {
 	int n;
+	find_abort();
 	G.ed.dialog = DLG_NONE;
 	G.ed.menu_open = 1;
 	G.ed.menu = which;
@@ -3123,6 +3294,7 @@ static void close_ui(void)
 
 static void open_dialog(int which)
 {
+	find_abort();
 	G.ed.menu_open = 0;
 	G.ed.dialog = which;
 	G.ed.dlg[0] = 0;
@@ -3151,6 +3323,7 @@ static void next_tab(void)
 {
 	if (G.ed.ntabs <= 1)
 		return;
+	find_abort();
 	G.ed.cur = (G.ed.cur + 1) % G.ed.ntabs;
 	set_status(0);
 }
@@ -3159,6 +3332,7 @@ static void tab_right(void)
 {
 	if (G.ed.cur + 1 < G.ed.ntabs)
 	{
+		find_abort();
 		G.ed.cur++;
 		set_status(0);
 	}
@@ -3168,6 +3342,7 @@ static void tab_left(void)
 {
 	if (G.ed.cur > 0)
 	{
+		find_abort();
 		G.ed.cur--;
 		set_status(0);
 	}
@@ -3257,6 +3432,8 @@ static void activate_menu(void)
 			cut_selection();
 		else if (item == 2)
 			cut_line();
+		else if (item == 4)
+			find_open();
 		else
 			paste_kill();
 	}
@@ -3476,6 +3653,11 @@ static void help_at_cursor(void)
 
 static void do_fkey(int n)
 {
+	if (find_active && n == 3)
+	{
+		find_next();
+		return;
+	}
 	if (n == 1)
 		help_at_cursor();
 	else if (n == 2)
@@ -3663,6 +3845,13 @@ static int handle_escape(char c)
 			return 1;
 		}
 		esc_state = ESC_NONE;
+		if (find_active)
+		{
+			find_close(1);
+			if (G.ed.active)
+				redraw();
+			return 1;
+		}
 		if (G.ed.menu_open || G.ed.dialog)
 		{
 			close_ui();
@@ -3872,6 +4061,7 @@ static int dialog_key(char c)
 void mmb_editor_open(const char *path)
 {
 	memset(&G.ed, 0, sizeof(G.ed));
+	find_abort();
 	esc_state = 0;
 	confirm_pending = PEND_NONE;
 	confirm_btn = 0;
@@ -3916,12 +4106,14 @@ const char *mmb_editor_feed(char c)
 		{
 			/* USB/serial arrows are CSI (\x1b[C). A lone Esc left pending
 			 * must not steal that introducer (that left "[C" in the buffer). */
-			if (!G.ed.menu_open && !G.ed.dialog)
+			if (!G.ed.menu_open && !G.ed.dialog && !find_active)
 			{
 				esc_at = mmb_now_ms();
 				return G.out;
 			}
 			esc_state = ESC_NONE;
+			if (find_active)
+				find_close(1);
 			close_ui();
 			if (G.ed.active)
 				redraw();
@@ -3934,6 +4126,20 @@ const char *mmb_editor_feed(char c)
 	{
 		esc_state = ESC_GOT;
 		esc_at = mmb_now_ms();
+		return G.out;
+	}
+	if (c == 6) /* Ctrl+F find */
+	{
+		find_open();
+		if (G.ed.active)
+			redraw();
+		return G.out;
+	}
+	if (find_active)
+	{
+		find_key(c);
+		if (G.ed.active)
+			redraw();
 		return G.out;
 	}
 	if (c == 16) /* Ctrl+P quick open */
@@ -4108,7 +4314,12 @@ void mmb_editor_poll(void)
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
 		return;
 	esc_state = ESC_NONE;
-	if (G.ed.menu_open || G.ed.dialog)
+	if (find_active)
+	{
+		find_close(1);
+		redraw();
+	}
+	else if (G.ed.menu_open || G.ed.dialog)
 	{
 		close_ui();
 		redraw();

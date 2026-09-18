@@ -1595,3 +1595,102 @@ def test_editor_cr_is_ignored_and_run(kernel_image):
         assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
+
+
+def test_editor_ctrl_f_finds_selects_and_f3_advances(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "FIND.BAS")
+        _keys(con, b"ABCabc")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)  # Ctrl+Home
+        opened = _keys(con, bytes([6]), quiet=0.5)
+        assert "Find:" in opened
+        _keys(con, b"abc", quiet=0.3)
+        _keys(con, b"\r", quiet=0.4)
+        first = _cell_samples(con, 1, 3)
+        assert any(_is_sel_light(p) for p in first), first
+        _keys(con, b"\x1b[13~", quiet=0.4)  # F3 next match
+        second = _cell_samples(con, 4, 3)
+        assert any(_is_sel_light(p) for p in second), second
+        restored = _cell_samples(con, 1, 3)
+        assert not all(_is_sel_light(p) for p in restored), restored
+        _keys(con, b"\x1b", quiet=0.6)  # Esc closes, cursor back to 0
+        _keys(con, b"Z", quiet=0.3)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "FIND.BAS") == "ZABCabc"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_f_not_found_and_esc_restores(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "NF.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, b"\x1b[C\x1b[C", quiet=0.3)  # cursor to offset 2
+        _keys(con, bytes([6]), quiet=0.4)
+        _keys(con, b"zz", quiet=0.3)
+        miss = _keys(con, b"\r", quiet=0.4)
+        assert "Not found" in miss
+        _keys(con, b"\x1b", quiet=0.6)
+        _keys(con, b"Q", quiet=0.3)
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert _read_bas(con, "NF.BAS") == "HEQLLO"
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_f_prefills_selection_and_last_term(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "PREF.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, b"\x1b[1;2C\x1b[1;2C", quiet=0.3)  # select "HE"
+        seen = _keys(con, bytes([6]), quiet=0.5)
+        assert "Find: HE" in seen
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_ctrl_f_reuses_last_term(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "LAST.BAS")
+        _keys(con, b"HELLO")
+        _keys(con, b"\x1b[1;5H", quiet=0.3)
+        _keys(con, bytes([6]), quiet=0.4)
+        _keys(con, b"LO", quiet=0.3)
+        _keys(con, b"\r", quiet=0.4)
+        _keys(con, b"\x1b", quiet=0.6)
+        reopened = _keys(con, bytes([6]), quiet=0.5)
+        assert "Find: LO" in reopened
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_edit_menu_find_item(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "FMENU.BAS")
+        menu = _keys(con, bytes([1]) + b"e", quiet=0.5)
+        assert "Find..." in menu
+        opened = _keys(con, b"f", quiet=0.5)
+        assert "Find:" in opened
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
