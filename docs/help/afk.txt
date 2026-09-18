@@ -10,7 +10,8 @@ AFK
 
   (no arguments)
 
-AFK switches to MODE 11 and restores the previous mode, bits, pages and
+AFK switches to MODE 12, renders each frame into a hidden page and flips it
+into view (no tearing), and restores the previous mode, bits, pages and
 framebuffer when it exits.
 
 Controls:
