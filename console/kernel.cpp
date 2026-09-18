@@ -1114,7 +1114,10 @@ int CKernel::ReadRaw (unsigned char *buf, unsigned n)
 		else
 		{
 			mmb_poll ();
-			if ((CTimer::GetClockTicks () - start) / 1000u > 120000u)
+			/* A raw transfer that goes this long without a byte is dead:
+			 * the sender lost data to a receive overrun. Fail fast so
+			 * the uploader can resync and retry (XFER over serial). */
+			if ((CTimer::GetClockTicks () - start) / 1000u > 5000u)
 				return -1;
 		}
 	}

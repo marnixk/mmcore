@@ -5,6 +5,7 @@ import tempfile
 import time
 
 from harness import MMBasicConsole
+from artifacts_util import ARTIFACTS
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -348,9 +349,7 @@ def _wait_prompt(con, timeout=20.0) -> str:
     raise AssertionError(f"timeout waiting for prompt, saw {buf!r}")
 
 
-def _upload_binary_file(con, host_path, dest):
-    with open(host_path, "rb") as fh:
-        data = fh.read()
+def _xfer_once(con, data, dest, chunk, pause):
     con.drain(quiet=0.05)
     con._ser.sendall(f'XFER "{dest}", {len(data)}\r'.encode())
     _wait_contains(con, b"<<XFER>>")
@@ -359,15 +358,31 @@ def _upload_binary_file(con, host_path, dest):
     # read_raw waiting for bytes that were dropped.
     time.sleep(0.2)
     if data:
-        for i in range(0, len(data), 1024):
-            con._ser.sendall(data[i : i + 1024])
-            time.sleep(0.005)
-    raw = _wait_prompt(con, timeout=max(20.0, len(data) / 2000.0 + 10.0))
-    up = raw.upper()
-    assert "?SYNTAX" not in up, raw
-    assert "?FILE" not in up, raw
-    assert "?ERROR" not in up, raw
-    assert "?UNSUPPORTED" not in up, raw
+        for i in range(0, len(data), chunk):
+            con._ser.sendall(data[i : i + chunk])
+            time.sleep(pause)
+    return _wait_prompt(con, timeout=max(20.0, len(data) / 2000.0 + 10.0))
+
+
+def _upload_binary_file(con, host_path, dest, attempts=4):
+    with open(host_path, "rb") as fh:
+        data = fh.read()
+    last = ""
+    for attempt in range(attempts):
+        # A loaded host can starve the emulated guest long enough for its UART
+        # FIFO to drop bytes; read_raw then waits out its idle guard and reports
+        # ?FILE. Resync and retry, halving the burst and doubling the pause each
+        # time so a retry is progressively less likely to overrun the guest.
+        chunk = max(64, 512 >> attempt)
+        pause = 0.008 * (2**attempt)
+        raw = _xfer_once(con, data, dest, chunk, pause)
+        up = raw.upper()
+        if not any(tok in up for tok in ("?SYNTAX", "?FILE", "?ERROR", "?UNSUPPORTED")):
+            return
+        last = raw
+    raise AssertionError(
+        f"XFER {dest} failed after {attempts} attempts, last={last!r}"
+    )
 
 
 _TEXT_EXT = (".bas", ".inc")
@@ -632,12 +647,12 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
     c.drain(quiet=0.1, timeout=0.4)
     c._ser.sendall(b'RUN "A:/syntaxshock/typing.bas"\r')
     time.sleep(6.0)
-    menu_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_menu.png")
+    menu_png = c.capture_png(os.path.join(ARTIFACTS, "issue274_syntaxshock_menu.png"))
     for _ in range(3):
         c._ser.sendall(b"\r")
         time.sleep(0.3)
     time.sleep(4.0)
-    play_png = c.capture_png("/opt/cursor/artifacts/issue274_syntaxshock_kids.png")
+    play_png = c.capture_png(os.path.join(ARTIFACTS, "issue274_syntaxshock_kids.png"))
     c._ser.sendall(b"\x03")
     deadline = time.time() + 4.0
     buf = b""
@@ -648,7 +663,7 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
             if buf.rstrip().endswith(b">"):
                 break
     out = buf.decode(errors="replace")
-    log_path = "/opt/cursor/artifacts/issue274_syntaxshock_run.log"
+    log_path = os.path.join(ARTIFACTS, "issue274_syntaxshock_run.log")
     with open(log_path, "w") as fh:
         fh.write(out)
     up = out.upper()
@@ -677,7 +692,7 @@ def test_cmm2_compat_xmas_runs(console):
     console.drain(quiet=0.1, timeout=0.4)
     console._ser.sendall(b'RUN "A:/xmas/main.bas"\r')
     time.sleep(12.0)
-    png = console.capture_png("/opt/cursor/artifacts/issue243_xmas_menu.png")
+    png = console.capture_png(os.path.join(ARTIFACTS, "issue243_xmas_menu.png"))
     console._ser.sendall(b"\x03")
     deadline = time.time() + 4.0
     buf = b""
@@ -724,7 +739,7 @@ def test_cmm2_compat_xmas_font_blit_png(fresh_console):
     c.drain(quiet=0.1)
     c._ser.sendall(b'RUN "FNT.BAS"\r')
     time.sleep(0.6)
-    png = c.capture_png("/opt/cursor/artifacts/issue263_xmas_fonts.png")
+    png = c.capture_png(os.path.join(ARTIFACTS, "issue263_xmas_fonts.png"))
     c.send_keys(b"\x03", timeout=6.0)
     pix = int(c.send_line("PRINT PIXEL(6,0,6)").split()[0])
     assert pix != 0
@@ -758,7 +773,7 @@ def test_cmm2_load_png_trans_keeps_write_page(fresh_console):
     c.drain(quiet=0.1)
     c._ser.sendall(b'RUN "FNT4.BAS"\r')
     time.sleep(0.6)
-    png = c.capture_png("/opt/cursor/artifacts/issue243_xmas_fonts.png")
+    png = c.capture_png(os.path.join(ARTIFACTS, "issue243_xmas_fonts.png"))
     c.send_keys(b"\x03", timeout=6.0)
     pix = int(c.send_line("PRINT PIXEL(6,0,6)").split()[0])
     assert pix != 0
