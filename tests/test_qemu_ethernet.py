@@ -12,8 +12,15 @@ from test_term import _quit
 from test_term_log import _read_termlog, _termlog_path
 
 from artifacts_util import ARTIFACTS
-from net_util import require_host_tcp
+from net_util import live_net_enabled, require_host_tcp
 MARKER = b"ETHHDMI"
+
+# Live guest->host TCP is intermittent under the parallel suite (#389); opt in
+# with MMCORE_LIVE_NET=1 to run these.
+LIVE_NET = pytest.mark.skipif(
+    not live_net_enabled(),
+    reason="set MMCORE_LIVE_NET=1 to run live guest<->host TCP tests",
+)
 
 
 def test_qemu_usb_net_args():
@@ -71,6 +78,7 @@ def test_option_ethernet_dhcp_on_usb_net(net_console):
     assert con.send_line("PRINT 2+2") == "4"
 
 
+@LIVE_NET
 def test_qemu_ethernet_tcp_to_host(net_console):
     con = net_console
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
@@ -136,6 +144,7 @@ def _luminance(r: int, g: int, b: int) -> float:
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 
+@LIVE_NET
 def test_qemu_ethernet_term_hdmi_not_serial_pane(net_console):
     """Live Circle TCP: HDMI shows the session; serial is !NET counters, not pane dumps."""
     con = net_console
@@ -244,6 +253,7 @@ _MYSTIC_MASK = (
 )
 
 
+@LIVE_NET
 def test_qemu_ethernet_term_hdmi_cub_overwrites_mask(net_console):
     """Live TCP CUB must present the dirty row so the echo is not stuck grey."""
     con = net_console
