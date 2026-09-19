@@ -1345,6 +1345,22 @@ static int line_start(int pos)
 	return pos;
 }
 
+/* First non-blank character on the line, or the line start when the line is
+ * blank or whitespace-only. */
+static int line_first_nonblank(int pos)
+{
+	mmb_ed_tab *t = cur_tab();
+	int p;
+	if (!t)
+		return 0;
+	p = line_start(pos);
+	while (p < t->len && (t->buf[p] == ' ' || t->buf[p] == '\t'))
+		p++;
+	if (p >= t->len || t->buf[p] == '\n')
+		return line_start(pos);
+	return p;
+}
+
 static int is_word_char(char c)
 {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -1990,11 +2006,15 @@ static void move_down(void)
 static void move_home(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	int row, col;
+	int first;
 	if (!t)
 		return;
-	pos_to_rowcol(t->cx, &row, &col);
-	t->cx = rowcol_to_pos(row, 0);
+	first = line_first_nonblank(t->cx);
+	/* Already on the first non-blank character: toggle to column 0. */
+	if (t->cx == first && first > line_start(t->cx))
+		t->cx = line_start(t->cx);
+	else
+		t->cx = first;
 }
 
 static void move_end(void)
@@ -4741,7 +4761,18 @@ static int handle_arrow_or_special(int kind, int mod)
 	else if (kind == 4)
 		move_left();
 	else if (kind == 5)
-		move_home();
+	{
+		/* Plain Home is smart (first non-blank, then column 0);
+		 * Shift+Home keeps selecting back to column 0. */
+		if (shift)
+		{
+			mmb_ed_tab *t = cur_tab();
+			if (t)
+				t->cx = line_start(t->cx);
+		}
+		else
+			move_home();
+	}
 	else if (kind == 6)
 		move_end();
 	else if (kind == 9)
