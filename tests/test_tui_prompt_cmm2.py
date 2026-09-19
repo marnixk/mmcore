@@ -4,10 +4,23 @@ import os
 import tempfile
 import time
 
+import pytest
+
 from harness import MMBasicConsole
 from artifacts_util import ARTIFACTS
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+@pytest.fixture(autouse=True)
+def _drain_between_tests(console):
+    """Discard late serial output before the next shared-console test (#389).
+
+    A previous test's program output can still be arriving when the next test
+    sends its first command, contaminating an expected-empty response.
+    """
+    yield
+    console.drain(quiet=0.5, timeout=3.0)
 
 
 def test_prompt_up_recalls_last(console):
