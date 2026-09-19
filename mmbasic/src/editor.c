@@ -872,6 +872,20 @@ static int pick_skip_name(const char *name)
 	return 0;
 }
 
+/* Quick open lists MMBasic sources only: .BAS programs and .INC includes. */
+static int pick_ext_ok(const char *name)
+{
+	const char *dot = 0, *p;
+	if (!name || !name[0])
+		return 0;
+	for (p = name; *p; p++)
+		if (*p == '.')
+			dot = p;
+	if (!dot || dot == name)
+		return 0;
+	return ed_str_icmp(dot, ".bas") == 0 || ed_str_icmp(dot, ".inc") == 0;
+}
+
 static int path_is_dir(const char *path)
 {
 	return path && path[0] && mmb_vfs_exists(path) && mmb_vfs_size(path) < 0;
@@ -912,7 +926,7 @@ static void pick_walk(const char *dir, int depth)
 				continue;
 			if (is_dir)
 				pick_walk(full, depth + 1);
-			else
+			else if (!pick_kind && pick_ext_ok(name))
 			{
 				strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
 				pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;

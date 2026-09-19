@@ -796,6 +796,42 @@ def test_editor_ctrl_p_lists_recursive_files(kernel_image):
         con.stop()
 
 
+def test_editor_ctrl_p_lists_only_bas_and_inc(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('MKDIR "QOF"') == ""
+        assert con.send_line('CHDIR "QOF"') == ""
+        assert con.send_line('MKDIR "SUB"') == ""
+        for path in (
+            "AB.BAS",
+            "CD.inc",
+            "EF.TXT",
+            "NOEXT",
+            ".HID.BAS",
+            "SUB/DEEP.BAS",
+            "SUB/NOTE.TXT",
+        ):
+            assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "PRINT 1"') == ""
+            assert con.send_line("CLOSE #1") == ""
+        _edit(con, "AB.BAS")
+        seen = _keys(con, bytes([16]))
+        up = seen.upper()
+        assert "Quick open" in seen
+        assert "AB.BAS" in up
+        assert "CD.INC" in up
+        assert "DEEP.BAS" in up or "SUB/DEEP" in up
+        assert "EF.TXT" not in up
+        assert "NOEXT" not in up
+        assert "HID.BAS" not in up
+        assert "NOTE.TXT" not in up
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
