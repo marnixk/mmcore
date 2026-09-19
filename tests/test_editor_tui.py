@@ -458,6 +458,68 @@ def test_editor_enter_without_indent(kernel_image):
         con.stop()
 
 
+def test_editor_smart_home_skips_indent_then_column_zero(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SMART.BAS")
+        _keys(con, b"    ABC")
+        _keys(con, b"\x1b[H")  # -> first non-blank (col 4)
+        _keys(con, b"Z")
+        _keys(con, b"\x1b[H")  # -> first non-blank again (col 4)
+        _keys(con, b"\x1b[H")  # -> column 0
+        _keys(con, b"Y")
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "SMART.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT A$") == "Y    ZABC"
+        assert con.send_line("PRINT LEN(A$)") == "9"
+        assert con.send_line("PRINT ASC(A$)") == "89"
+        assert con.send_line("PRINT MID$(A$,6,1)") == "Z"
+    finally:
+        con.stop()
+
+
+def test_editor_smart_home_on_blank_line_goes_column_zero(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SMARTBLANK.BAS")
+        _keys(con, b"AB\r")
+        _keys(con, b"\x1b[H")  # blank line: Home stays at column 0
+        _keys(con, b"Q")
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "SMARTBLANK.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("LINE INPUT #1, B$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT A$") == "AB"
+        assert con.send_line("PRINT B$") == "Q"
+    finally:
+        con.stop()
+
+
+def test_editor_shift_home_selects_to_column_zero(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "SHIFTHOME.BAS")
+        _keys(con, b"    ABC")
+        _keys(con, b"\x1b[1;2H")  # Shift+Home selects back to column 0
+        _keys(con, b"Q")
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "SHIFTHOME.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT A$") == "Q"
+    finally:
+        con.stop()
+
+
 def test_editor_tab_inserts_four_spaces(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
