@@ -50,14 +50,34 @@ def c_ident(name: str) -> str:
     return ident
 
 
+# The console TUI renders the IBM PC CP437 font. Help bodies are authored as
+# UTF-8, so map any CP437 glyph written as its Unicode character back to the
+# matching single byte and emit it as an octal escape. Anything else outside
+# ASCII falls through as UTF-8 bytes (the previous behaviour).
+CP437_BY_CHAR = {bytes([i]).decode("cp437"): i for i in range(256)}
+
+
 def c_escape(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\r", "")
-        .replace("\n", "\\n")
-        .replace("\t", "\\t")
-    )
+    out = []
+    for ch in text:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\r":
+            continue
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 128:
+            out.append(ch)
+        elif ch in CP437_BY_CHAR:
+            out.append("\\%03o" % CP437_BY_CHAR[ch])
+        else:
+            for byte in ch.encode("utf-8"):
+                out.append("\\%03o" % byte)
+    return "".join(out)
 
 
 def parse_file(path: str) -> dict:

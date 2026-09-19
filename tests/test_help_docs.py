@@ -43,6 +43,22 @@ def test_contents_does_not_auto_link_prose():
     assert "~FOR~" in body
 
 
+def test_ascii_page_lists_extended_codes():
+    topics = gen_help.load_topics()
+    body = next(t for t in topics if t["name"].upper() == "ASCII CHARACTER CODES")["text"]
+    assert "Extended characters (codes 128-255" in body
+    for code in ("176", "219", "255"):
+        assert code in body
+    assert "\u2591" in body  # CP437 shade light glyph
+
+
+def test_cp437_glyphs_escape_to_single_bytes():
+    assert gen_help.c_escape("A") == "A"
+    assert gen_help.c_escape("\u2591") == "\\260"  # U+2591 -> 0xB0
+    assert gen_help.c_escape("\u2588") == "\\333"  # U+2588 -> 0xDB
+    assert gen_help.c_escape("\u00e9") == "\\202"  # U+00E9 -> 0x82
+
+
 def test_wrap_names_longest_match():
     names = ["LINE INPUT", "LINE", "INPUT", "FOR"]
     text = "LINE INPUT then LINE and for every FOR"
