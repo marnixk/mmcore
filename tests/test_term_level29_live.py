@@ -12,6 +12,7 @@ import time
 import pytest
 
 from harness import MMBasicConsole, parse_termlog, qemu_usb_net_args
+from net_util import live_net_enabled
 from test_pcap_send_holes import client_seq_holes
 from test_qemu_ethernet import _wait_dhcp
 from test_term import _quit
@@ -22,6 +23,13 @@ GUEST_BBS = "10.0.2.100"
 USER = b"ireal"
 PASS = b"ds9space"
 from artifacts_util import ARTIFACTS
+
+# Live external BBS login is opt-in: the emulated guest path is only
+# transiently usable and fixed sleeps flake under load (#389).
+pytestmark = pytest.mark.skipif(
+    not live_net_enabled(),
+    reason="live Level29 BBS test is opt-in; set MMCORE_LIVE_NET=1",
+)
 
 
 def _bbs_reachable() -> bool:
@@ -76,11 +84,13 @@ def test_level29_live_term_login(kernel_image):
                 + serial.decode(errors="replace")[-200:]
             )
 
-        time.sleep(8.0)
+        # Poll for the prompts instead of fixed sleeps: under parallel load
+        # the banner can take far longer than 8s to arrive (#389).
+        con.wait_ocr("login", timeout=30.0)
         con._ser.sendall(USER + b"\r")
-        time.sleep(3.0)
+        con.wait_ocr("password", timeout=20.0)
         con._ser.sendall(PASS + b"\r")
-        time.sleep(5.0)
+        con.wait_ocr("welcome", timeout=15.0)
         con.capture_png(os.path.join(ARTIFACTS, "level29_ireal_logged_in.png"))
 
         _quit(con)

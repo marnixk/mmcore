@@ -23,6 +23,10 @@ The QEMU harness in `harness/` drives `console/kernel8.img`. To run the suite
 with visible progress and poll it while it runs, use the `test-suite-progress`
 skill (`scripts/test-watch.py start` / `status` / `wait`).
 
+Live guest->host / external-network tests are opt-in: set `MMCORE_LIVE_NET=1`
+to run them. QEMU SLIRP guest->host TCP is only transiently usable in CI, so
+they are skipped by default to keep the parallel suite green (#389).
+
 Linux SD-card install: `scripts/install-sdcard.sh --help`. Publishing a
 GitHub Release: run the `github-release` skill (it looks up the last `vX.Y.Z`
 and asks before building; default is a **minor** bump). Draining the GitHub

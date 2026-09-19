@@ -11,13 +11,41 @@ of the handshake while the guest's ``OPEN`` never becomes usable (the next
 actually write to the socket.
 """
 
+import os
 import socket
 import threading
 
 import pytest
 
 
+def live_net_enabled() -> bool:
+    """True when live guest<->host / external-network tests are opted in.
+
+    QEMU SLIRP guest->host TCP is only transiently usable in sandboxed CI
+    environments, so the live tests are flaky under the parallel suite (see
+    #389). Set ``MMCORE_LIVE_NET=1`` to run them.
+    """
+    return os.environ.get("MMCORE_LIVE_NET", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def host_tcp_available(con, host: str = "10.0.2.2", timeout: float = 10.0) -> bool:
+    """Probe guest -> host TCP, retrying because SLIRP is intermittent."""
+    for _ in range(3):
+        if _host_tcp_probe_once(con, host, timeout):
+            return True
+        try:
+            con.send_line("CLOSE #9")
+        except Exception:
+            pass
+    return False
+
+
+def _host_tcp_probe_once(con, host: str, timeout: float) -> bool:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 0))
@@ -59,3 +87,4 @@ def host_tcp_available(con, host: str = "10.0.2.2", timeout: float = 10.0) -> bo
 def require_host_tcp(con, host: str = "10.0.2.2", timeout: float = 10.0) -> None:
     if not host_tcp_available(con, host, timeout):
         pytest.skip("QEMU SLIRP guest->host TCP unavailable in this environment")
+

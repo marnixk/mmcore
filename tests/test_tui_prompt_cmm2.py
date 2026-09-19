@@ -240,7 +240,8 @@ def test_cmm2_compat_commands_from_games(console):
     assert "bare" in out.lower()
 
 
-def test_restore_label_and_instr_start(console):
+def test_restore_label_and_instr_start(fresh_console):
+    console = fresh_console
     assert console.send_line("NEW") == ""
     console.drain(quiet=0.2)
     src = [
@@ -256,7 +257,14 @@ def test_restore_label_and_instr_start(console):
         esc = line.replace('"', '""')
         assert console.send_line(f'PRINT #1, "{esc}"') == ""
     assert console.send_line("CLOSE #1") == ""
-    out = console.send_line('RUN "RST.BAS"')
+    # The shared ramdisk may not expose the new file to RUN immediately under
+    # parallel load (#389); retry until it is visible.
+    out = ""
+    for _ in range(5):
+        out = console.send_line('RUN "RST.BAS"')
+        if "NOT FOUND" not in out.upper():
+            break
+        time.sleep(0.2)
     assert out.split("\n")[0].strip() == "xyz"
     assert "3" in out.split("\n")[1]
 
