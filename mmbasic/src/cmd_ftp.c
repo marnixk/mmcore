@@ -633,6 +633,9 @@ static void ftp_cmd_retr(const char *arg)
 	if (ftp_xfer_begin(XF_RETR, canon, sz) != 0)
 		return;
 	set_status("Sending file");
+	ftp_ser("[FTP] RETR ");
+	ftp_ser(base_name(canon));
+	ftp_ser("\r\n");
 }
 
 static void ftp_cmd_stor(const char *arg, int append)
@@ -656,6 +659,9 @@ static void ftp_cmd_stor(const char *arg, int append)
 	if (ftp_xfer_begin(XF_STOR, canon, 0) != 0)
 		return;
 	set_status("Receiving file");
+	ftp_ser("[FTP] STOR ");
+	ftp_ser(base_name(canon));
+	ftp_ser("\r\n");
 }
 
 static void ftp_cmd_size(const char *arg)

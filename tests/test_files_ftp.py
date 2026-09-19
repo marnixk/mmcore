@@ -149,6 +149,10 @@ def test_files_ftp_roundtrip(ftp_console):
     assert "UPLOAD.TXT" in [n.upper() for n in ftp.nlst()]
     ftp.quit()
 
+    transfers = _wait_serial(con, "[FTP] STOR", timeout=5)
+    assert "[FTP] RETR HELLO.TXT" in transfers, transfers[-400:]
+    assert "[FTP] STOR UPLOAD.TXT" in transfers, transfers[-400:]
+
     con._ser.sendall(b"\x1b")
     stopped = _wait_serial(con, "[FTP] STOP")
     assert "[FTP] STOP" in stopped, stopped[-400:]
