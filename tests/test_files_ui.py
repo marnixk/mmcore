@@ -178,10 +178,15 @@ def test_files_view_seeded_png_smoke(fresh_console):
             break
         seen = _keys(con, b"\x1b[B", quiet=0.25)
     assert "SEL=TEST.PNG" in seen
-    seen = _keys(con, b"v", quiet=0.8)
-    assert "PREVIEW" in seen or "TEST.PNG" in seen
-    _keys(con, b"x")  # leave preview
+    seen = _keys(con, b"v", quiet=1.2)
+    assert "PREVIEW TEST.PNG 8x8 MODE 5" in seen
+    # Only Enter/Esc leave preview; other keys are ignored.
+    _keys(con, b"x", quiet=0.4)
+    seen = _keys(con, b"\r", quiet=0.8)
+    assert "SEL=" in seen
     _keys(con, b"q")
+    assert con.send_line("PRINT MM.HRES") == "1280"
+    assert con.send_line("PRINT MM.VRES") == "720"
 
 
 def test_dir_still_lists(console):

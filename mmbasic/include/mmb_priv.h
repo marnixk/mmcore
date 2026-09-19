@@ -655,6 +655,7 @@ void mmb_cmd_end_function(void);
 void mmb_gfx_init(void);
 void mmb_gfx_apply_default_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
+int mmb_gfx_mode_for_size(int w, int h);
 void mmb_gfx_reset_console(int wipe);
 void mmb_gfx_cls(unsigned rgb);
 void mmb_gfx_plot(int x, int y, unsigned rgb);
@@ -921,6 +922,7 @@ int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
+int mmb_img_probe(const char *path, int *w, int *h);
 int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			uint32_t **out, int *w, int *h);
 void mmb_clock_init(void);
