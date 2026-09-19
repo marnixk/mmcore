@@ -57,6 +57,9 @@ typedef struct {
 	char view_buf[4096];
 	int view_len;
 	int view_top;
+	int pv_saved;
+	int pv_mode;
+	int pv_bits;
 } fu_state;
 
 static fu_state F;
@@ -962,8 +965,12 @@ static void set_hint(const char *s)
 
 static int s_files_prompted;
 
+static void preview_restore(void);
+
 static void files_close_tui(int restore_prompt)
 {
+	if (F.pv_saved)
+		preview_restore();
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
@@ -1046,35 +1053,66 @@ static void show_info_for(const char *path, const char *name)
 	set_hint("File info");
 }
 
+static void preview_restore(void)
+{
+	if (!F.pv_saved)
+		return;
+	F.pv_saved = 0;
+	if (G.gfx.mode != F.pv_mode || G.gfx.bits != F.pv_bits)
+		mmb_gfx_set_mode(F.pv_mode, F.pv_bits);
+	mmb_gfx_reset_console(1);
+}
+
 static void do_preview(const char *path, const char *name)
 {
-	ser("[FILES] PREVIEW ");
-	ser(name);
-	ser("\r\n");
-	mmb_gfx_cls(0);
-	if (is_img(name))
+	int w = 0, h = 0, mode, x, y;
+	char line[128];
+
+	if (!is_img(name) || mmb_img_probe(path, &w, &h) != 0)
 	{
-		if (mmb_keyword_eq(ext_of(name), ".JPG") || mmb_keyword_eq(ext_of(name), ".JPEG"))
+		show_info_for(path, name);
+		return;
+	}
+	mode = mmb_gfx_mode_for_size(w, h);
+	F.pv_saved = 1;
+	F.pv_mode = G.gfx.mode;
+	F.pv_bits = G.gfx.bits;
+	if (G.gfx.mode != mode || G.gfx.bits != 32)
+		mmb_gfx_set_mode(mode, 32);
+	mmb_gfx_cls(0);
+	x = (G.gfx.w - w) / 2;
+	y = (G.gfx.h - h) / 2;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (mmb_keyword_eq(ext_of(name), ".JPG") || mmb_keyword_eq(ext_of(name), ".JPEG"))
+	{
+		if (mmb_load_jpeg(path, x, y) != 0)
 		{
-			if (mmb_load_jpeg(path, 0, 0) != 0)
-			{
-				show_info_for(path, name);
-				return;
-			}
-		}
-		else if (mmb_load_png(path, 0, 0, 0, 0) != 0)
-		{
+			preview_restore();
 			show_info_for(path, name);
 			return;
 		}
-		F.mode = FU_PREVIEW;
-		set_hint("Image preview  any key returns");
-		ser("[FILES] PREVIEW ");
-		ser(name);
-		ser("\r\n");
+	}
+	else if (mmb_load_png(path, x, y, 0, 0) != 0)
+	{
+		preview_restore();
+		show_info_for(path, name);
 		return;
 	}
-	show_info_for(path, name);
+	F.mode = FU_PREVIEW;
+	set_hint("Image preview  Enter/Esc returns");
+	strcpy(line, "[FILES] PREVIEW ");
+	strncat(line, name, 40);
+	strcat(line, " ");
+	fmt_uint(line + strlen(line), (unsigned)w);
+	strcat(line, "x");
+	fmt_uint(line + strlen(line), (unsigned)h);
+	strcat(line, " MODE ");
+	fmt_uint(line + strlen(line), (unsigned)mode);
+	strcat(line, "\r\n");
+	ser(line);
 }
 
 static void do_play(const char *path, const char *name)
@@ -1338,7 +1376,7 @@ static void close_overlay(void)
 	if (F.mode == FU_PLAY)
 		mmb_play_stop();
 	if (F.mode == FU_PREVIEW)
-		mmb_gfx_cls(0x000028);
+		preview_restore();
 	F.mode = FU_BROWSE;
 	F.drop = -1;
 	set_hint("");
@@ -1548,8 +1586,9 @@ static void handle_arrow(int which)
 		}
 		return;
 	}
-	if (F.mode == FU_PREVIEW || F.mode == FU_INFO || F.mode == FU_HELP ||
-	    F.mode == FU_PLAY)
+	if (F.mode == FU_PREVIEW)
+		return;
+	if (F.mode == FU_INFO || F.mode == FU_HELP || F.mode == FU_PLAY)
 	{
 		if (F.mode != FU_PLAY || which == 0)
 			close_overlay();
@@ -1939,8 +1978,11 @@ const char *mmb_files_key(char c)
 	}
 	if (F.mode == FU_PREVIEW)
 	{
-		close_overlay();
-		files_draw_if_idle();
+		if (c == '\r' || c == '\n')
+		{
+			close_overlay();
+			files_draw_if_idle();
+		}
 		return G.out;
 	}
 	if (F.mode == FU_PROMPT)

@@ -69,6 +69,57 @@ static unsigned char jpeg_need_bytes(unsigned char *buf, unsigned char max,
 	return 0;
 }
 
+static unsigned load_be32(const unsigned char *p)
+{
+	return ((unsigned)p[0] << 24) | ((unsigned)p[1] << 16) |
+	       ((unsigned)p[2] << 8) | (unsigned)p[3];
+}
+
+int mmb_img_probe(const char *path, int *w, int *h)
+{
+	unsigned char sig[8], ihdr[24];
+	unsigned got = 0;
+
+	if (!path || !w || !h)
+		return -1;
+	if (mmb_vfs_read_at(path, 0, sig, sizeof(sig), &got) != 0 || got < sizeof(sig))
+		return -1;
+	if (memcmp(sig, "\x89PNG\r\n\x1a\n", 8) == 0)
+	{
+		if (mmb_vfs_read_at(path, 0, ihdr, sizeof(ihdr), &got) != 0 ||
+		    got < sizeof(ihdr))
+			return -1;
+		if (memcmp(ihdr + 12, "IHDR", 4) != 0)
+			return -1;
+		*w = (int)load_be32(ihdr + 16);
+		*h = (int)load_be32(ihdr + 20);
+		return (*w > 0 && *h > 0) ? 0 : -1;
+	}
+	if (sig[0] == 0xFF && sig[1] == 0xD8)
+	{
+		unsigned char *file = 0;
+		unsigned n = 0;
+		pjpeg_image_info_t info;
+		jctx ctx;
+		unsigned char status;
+
+		if (read_file(path, &file, &n) != 0)
+			return -1;
+		ctx.p = file;
+		ctx.n = n;
+		ctx.off = 0;
+		jpeg_bind_bufs();
+		status = pjpeg_decode_init(&info, jpeg_need_bytes, &ctx, 0);
+		G.plat->free(file);
+		if (status)
+			return -1;
+		*w = (int)info.m_width;
+		*h = (int)info.m_height;
+		return (*w > 0 && *h > 0) ? 0 : -1;
+	}
+	return -1;
+}
+
 int mmb_load_jpeg(const char *path, int x, int y)
 {
 	unsigned char *file = 0;

@@ -728,6 +728,32 @@ void mmb_gfx_apply_default_mode(void)
 	mmb_gfx_set_mode(mode, bits);
 }
 
+int mmb_gfx_mode_for_size(int w, int h)
+{
+	unsigned i;
+	int best = 0, best_area = 0;
+	int big = kModes[0].id, big_area = kModes[0].w * kModes[0].h;
+
+	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
+	{
+		int area = kModes[i].w * kModes[i].h;
+		if (area > big_area)
+		{
+			big_area = area;
+			big = kModes[i].id;
+		}
+		if (kModes[i].w >= w && kModes[i].h >= h)
+		{
+			if (!best || area < best_area)
+			{
+				best = kModes[i].id;
+				best_area = area;
+			}
+		}
+	}
+	return best ? best : big;
+}
+
 void mmb_gfx_set_mode(int mode, int bits)
 {
 	unsigned i;
