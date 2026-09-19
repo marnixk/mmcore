@@ -1074,6 +1074,96 @@ def test_editor_f9_run_press_key_returns(kernel_image):
         con.stop()
 
 
+def test_editor_run_prefers_main_bas_tab(kernel_image):
+    """Run resolves a MAIN.BAS tab even when another tab is focused (#410)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "MAIN.BAS")
+        _keys(con, b"PRINT 111")
+        _save(con, quiet=0.4)
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        _keys(con, b"OTHER.BAS\r", quiet=0.6)
+        _keys(con, b"PRINT 222")
+        ran = _keys(con, bytes([18]), quiet=1.5)
+        assert "111" in ran
+        assert "222" not in ran
+        assert "Press any key to continue" in ran
+        _keys(con, b" ", quiet=0.8)
+        _quit(con)
+        # The dirty non-entry tab is saved before the run.
+        assert _read_bas(con, "OTHER.BAS") == "PRINT 222"
+        assert _read_bas(con, "MAIN.BAS") == "PRINT 111"
+    finally:
+        con.stop()
+
+
+def test_editor_run_main_tab_case_insensitive(kernel_image):
+    """A tab named main.bas resolves as the entry point."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "main.bas")
+        _keys(con, b"PRINT 111")
+        _save(con, quiet=0.4)
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        _keys(con, b"OTHER.BAS\r", quiet=0.6)
+        _keys(con, b"PRINT 222")
+        ran = _keys(con, bytes([18]), quiet=1.5)
+        assert "111" in ran
+        assert "222" not in ran
+        _keys(con, b" ", quiet=0.8)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_run_uses_cwd_main_bas(kernel_image):
+    """Run uses a MAIN.BAS in the current directory when no tab matches (#410)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert con.send_line('OPEN "MAIN.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 111"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "OTHER.BAS")
+        _keys(con, b"PRINT 333")
+        ran = _keys(con, bytes([18]), quiet=1.5)
+        assert "111" in ran
+        assert "333" not in ran
+        assert "Press any key to continue" in ran
+        _keys(con, b" ", quiet=0.8)
+        _quit(con)
+        assert _read_bas(con, "OTHER.BAS") == "PRINT 333"
+    finally:
+        con.stop()
+
+
+def test_editor_run_skips_dirty_untitled_tabs(kernel_image):
+    """A dirty untitled tab is skipped, not prompted, when cwd MAIN.BAS runs."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "MAIN.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 111"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "KEEP.BAS")
+        _keys(con, bytes([1]) + b"fn", quiet=0.5)
+        _keys(con, b"PRINT 999")
+        ran = _keys(con, bytes([18]), quiet=1.5)
+        assert "111" in ran
+        assert "Press any key to continue" in ran
+        _keys(con, b" ", quiet=0.8)
+        dlg = _keys(con, bytes([1]) + b"x", quiet=0.6)
+        assert "Save changes" in dlg or "Discard" in dlg
+        _keys(con, b"d", quiet=0.7)
+        assert con.send_line("PRINT 7") == "7"
+        assert "999" not in con.send_line("DIR")
+    finally:
+        con.stop()
+
+
 def test_editor_run_error_bar_full_and_locates_line(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

@@ -612,18 +612,22 @@ static void fit_name(char *dst, int maxn, const char *name)
 	dst[maxn] = 0;
 }
 
+static const char *path_basename(const char *p)
+{
+	const char *s = p ? p : "";
+	const char *q = s;
+	while (*q)
+	{
+		if (*q == '/' || *q == ':')
+			s = q + 1;
+		q++;
+	}
+	return s;
+}
+
 static const char *tab_label(int i)
 {
-	const char *p = G.ed.tab[i].path;
-	const char *s = p;
-	if (!p[0])
-		return "UNTITLED";
-	while (*p)
-	{
-		if (*p == '/' || *p == ':')
-			s = p + 1;
-		p++;
-	}
+	const char *s = path_basename(G.ed.tab[i].path);
 	return s[0] ? s : "UNTITLED";
 }
 
@@ -641,6 +645,21 @@ static mmb_ed_tab *cur_tab(void)
 	if (G.ed.ntabs <= 0 || G.ed.cur < 0 || G.ed.cur >= G.ed.ntabs)
 		return 0;
 	return &G.ed.tab[G.ed.cur];
+}
+
+static int tab_is_main(const mmb_ed_tab *t)
+{
+	return t->used && t->path[0] &&
+	       mmb_keyword_eq(path_basename(t->path), "MAIN.BAS");
+}
+
+static mmb_ed_tab *find_main_tab(void)
+{
+	int i;
+	for (i = 0; i < G.ed.ntabs; i++)
+		if (tab_is_main(&G.ed.tab[i]))
+			return &G.ed.tab[i];
+	return 0;
 }
 
 static void set_status(const char *s)
@@ -3994,6 +4013,21 @@ static void redraw(void)
 }
 
 
+static int save_tab_at(mmb_ed_tab *t)
+{
+	if (!t || !t->path[0])
+		return 0;
+	if (mmb_vfs_write(t->path, t->buf, (unsigned)t->len, 0) != 0)
+	{
+		set_status("Save failed");
+		return 0;
+	}
+	t->dirty = 0;
+	t->hist.saved = t->hist.cur;
+	strncpy(G.current_prog, t->path, sizeof(G.current_prog) - 1);
+	return 1;
+}
+
 static int save_tab(void)
 {
 	mmb_ed_tab *t = cur_tab();
@@ -4004,14 +4038,8 @@ static int save_tab(void)
 		open_dialog(DLG_SAVEAS);
 		return 0;
 	}
-	if (mmb_vfs_write(t->path, t->buf, (unsigned)t->len, 0) != 0)
-	{
-		set_status("Save failed");
+	if (!save_tab_at(t))
 		return 0;
-	}
-	t->dirty = 0;
-	t->hist.saved = t->hist.cur;
-	strncpy(G.current_prog, t->path, sizeof(G.current_prog) - 1);
 	set_status("Saved");
 	return 1;
 }
@@ -4137,11 +4165,51 @@ static void editor_restore_gfx(void)
 
 static void editor_run(void)
 {
-	mmb_ed_tab *t = cur_tab();
-	char cmd[160];
+	mmb_ed_tab *entry = find_main_tab();
+	char entry_path[160];
+	char cmd[176];
+	int i;
 
-	if (!t || !save_tab())
+	if (entry)
+	{
+		strncpy(entry_path, entry->path, sizeof(entry_path) - 1);
+		entry_path[sizeof(entry_path) - 1] = 0;
+	}
+	else
+	{
+		char cwd_main[160];
+		if (mmb_vfs_resolve("MAIN.BAS", cwd_main, sizeof(cwd_main)) == 0 &&
+		    mmb_vfs_exists(cwd_main))
+		{
+			strncpy(entry_path, cwd_main, sizeof(entry_path) - 1);
+			entry_path[sizeof(entry_path) - 1] = 0;
+		}
+		else
+		{
+			entry = cur_tab();
+			if (!entry)
+				return;
+			if (!entry->path[0])
+			{
+				save_tab();
+				return;
+			}
+			strncpy(entry_path, entry->path, sizeof(entry_path) - 1);
+			entry_path[sizeof(entry_path) - 1] = 0;
+		}
+	}
+	/* Persist dirty files so Run uses the current content. Untitled
+	 * buffers have no path and are skipped rather than prompting. */
+	if (entry && entry->dirty && !save_tab_at(entry))
 		return;
+	for (i = 0; i < G.ed.ntabs; i++)
+	{
+		mmb_ed_tab *tab = &G.ed.tab[i];
+		if (!tab->used || tab == entry || !tab->dirty || !tab->path[0])
+			continue;
+		if (!save_tab_at(tab))
+			return;
+	}
 	errbar_dismiss();
 	hist_break();
 	G.ed.saved_mode = G.gfx.mode;
@@ -4153,10 +4221,8 @@ static void editor_run(void)
 	G.ed.dialog = 0;
 	tui_end();
 	G.ed.active = 0;
-	if (!t)
-		return;
 	strcpy(cmd, "RUN \"");
-	strncat(cmd, t->path, sizeof(cmd) - 8);
+	strncat(cmd, entry_path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	mmb_exec_line(cmd);
 	if (G.err[0])
