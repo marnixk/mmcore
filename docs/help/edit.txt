@@ -10,8 +10,10 @@ EDIT [file$]
 
 Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+T Theme  Alt+H Help  F10 File.
 Help: Keys... (shortcut list) and Manual (opens interactive HELP; Esc/Ctrl+C
-returns to the editor). File: New, Open, Save, Save As, Quit. Run saves and
-RUN. New opens an unnamed buffer; Save asks for a name. Quit or Close tab on a
+returns to the editor). File: New, Open, Save, Save As, Quit. Run saves dirty
+files and RUNs the entry point: a MAIN.BAS tab, else MAIN.BAS in the current
+directory, else the focused tab. Dirty untitled buffers are skipped.
+New opens an unnamed buffer; Save asks for a name. Quit or Close tab on a
 dirty untitled buffer asks Save, Discard, or Cancel. After Run, press any key
 to return to the editor. MODE is restored. PAGE WRITE and PAGE DISPLAY return
 to 0 (BREAK / Ctrl-C does the same so the editor is not left on a black
