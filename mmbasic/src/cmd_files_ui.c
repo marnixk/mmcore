@@ -14,6 +14,7 @@
 #define FU_PREVIEW  6
 #define FU_PLAY     7
 #define FU_VIEW     8
+#define FU_FTP      9
 
 #define FU_PR_COPY  1
 #define FU_PR_MOVE  2
@@ -60,6 +61,9 @@ typedef struct {
 	int pv_saved;
 	int pv_mode;
 	int pv_bits;
+	char ftp_root[FU_PATH];
+	char ftp_addr[64];
+	char ftp_last[96];
 } fu_state;
 
 static fu_state F;
@@ -500,8 +504,8 @@ static const char **drop_items(int menu, int *n, const char **hots)
 	static const char left_h[] = { 'a', 'c', 'd' };
 	static const char *file[] = { "View", "Edit", "Copy", "Move", "Delete" };
 	static const char file_h[] = { 'v', 'e', 'c', 'm', 'd' };
-	static const char *cmd[] = { "MkDir", "Help", "Quit" };
-	static const char cmd_h[] = { 'k', 'h', 'q' };
+	static const char *cmd[] = { "MkDir", "FTP server", "Help", "Quit" };
+	static const char cmd_h[] = { 'k', 's', 'h', 'q' };
 	static const char *opt[] = { "Help" };
 	static const char opt_h[] = { 'h' };
 	static const char *right[] = { "Focus right", "Drive A:", "Drive C:", "Drive D:" };
@@ -510,7 +514,7 @@ static const char **drop_items(int menu, int *n, const char **hots)
 	{
 	case 0: *n = 3; *hots = left_h; return left;
 	case 1: *n = 5; *hots = file_h; return file;
-	case 2: *n = 3; *hots = cmd_h; return cmd;
+	case 2: *n = 4; *hots = cmd_h; return cmd;
 	case 3: *n = 1; *hots = opt_h; return opt;
 	default: *n = 4; *hots = right_h; return right;
 	}
@@ -859,10 +863,11 @@ static void draw_help(void)
 		"v/F3 view   e/F4 edit   c/F5 copy   m/F6 move",
 		"k/F7 mkdir  d/F8 delete  F9 menu   q/Esc quit",
 		"Alt+L/F/C/O/R menus  Alt+L/R panels  F9 command menu",
+		"Command menu > FTP server serves this folder over FTP",
 		"Type A: or C: to change the active panel drive",
 		"Any key closes this help",
 	};
-	draw_overlay_box(" FILES  (Midnight Commander style) ", lines, 7);
+	draw_overlay_box(" FILES  (Midnight Commander style) ", lines, 8);
 }
 
 static void draw_menu(void)
@@ -871,7 +876,7 @@ static void draw_menu(void)
 		"1  Drive A:     3  Drive C:     4  Drive D:",
 		"v  View         e  Edit         c  Copy",
 		"m  Move         k  MkDir        d  Delete",
-		"h  Help         q  Quit         Esc close",
+		"s  FTP server   h  Help         q  Quit",
 	};
 	draw_overlay_box(" Menu ", lines, 4);
 }
@@ -904,6 +909,25 @@ static void draw_play(void)
 	lines[1] = "Enter or Esc stops playback";
 	lines[2] = "";
 	draw_overlay_box(" PLAY ", lines, 3);
+}
+
+static void draw_ftp(void)
+{
+	char l1[80], l2[80];
+	const char *lines[4];
+	strncpy(l1, "Root: ", sizeof(l1) - 1);
+	strncat(l1, F.ftp_root, sizeof(l1) - strlen(l1) - 1);
+	lines[0] = l1;
+	strncpy(l2, "Address: ", sizeof(l2) - 1);
+	l2[sizeof(l2) - 1] = 0;
+	if (F.ftp_addr[0])
+		strncat(l2, F.ftp_addr, sizeof(l2) - strlen(l2) - 1);
+	else
+		strncat(l2, "waiting for network", sizeof(l2) - strlen(l2) - 1);
+	lines[1] = l2;
+	lines[2] = mmb_ftp_status();
+	lines[3] = "Esc stops the server";
+	draw_overlay_box(" FTP SERVER ", lines, 4);
 }
 
 static void files_draw(void)
@@ -944,6 +968,8 @@ static void files_draw(void)
 		draw_info();
 	else if (F.mode == FU_PLAY)
 		draw_play();
+	else if (F.mode == FU_FTP)
+		draw_ftp();
 	else if (F.mode == FU_VIEW)
 		draw_text_view();
 	if (F.drop >= 0)
@@ -971,6 +997,8 @@ static void files_close_tui(int restore_prompt)
 {
 	if (F.pv_saved)
 		preview_restore();
+	if (mmb_ftp_running())
+		mmb_ftp_stop();
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
@@ -1140,6 +1168,37 @@ static void do_play(const char *path, const char *name)
 	ser("[FILES] PLAY ");
 	ser(name);
 	ser("\r\n");
+}
+
+static void do_ftp_start(void)
+{
+	char root[FU_PATH];
+	char ip[32];
+	char num[8];
+
+	strncpy(root, curpan()->path, sizeof(root) - 1);
+	root[sizeof(root) - 1] = 0;
+	if (mmb_ftp_start(root, 21) != 0)
+	{
+		set_hint("FTP server: network unavailable");
+		return;
+	}
+	strncpy(F.ftp_root, root, sizeof(F.ftp_root) - 1);
+	F.ftp_root[sizeof(F.ftp_root) - 1] = 0;
+	F.ftp_addr[0] = 0;
+	if (mmb_net_srv_ip(ip, sizeof(ip)) == 0)
+	{
+		strncpy(F.ftp_addr, ip, sizeof(F.ftp_addr) - 1);
+		strncat(F.ftp_addr, ":", sizeof(F.ftp_addr) - strlen(F.ftp_addr) - 1);
+		fmt_uint(num, 21);
+		strncat(F.ftp_addr, num, sizeof(F.ftp_addr) - strlen(F.ftp_addr) - 1);
+	}
+	F.ftp_last[0] = 0;
+	F.mode = FU_FTP;
+	set_hint("FTP server running  Esc stops");
+	ser("[FILES] FTP ROOT ");
+	ser(root);
+	ser(" PORT 21\r\n");
 }
 
 static void do_run(const char *path)
@@ -1375,6 +1434,8 @@ static void close_overlay(void)
 {
 	if (F.mode == FU_PLAY)
 		mmb_play_stop();
+	if (F.mode == FU_FTP)
+		mmb_ftp_stop();
 	if (F.mode == FU_PREVIEW)
 		preview_restore();
 	F.mode = FU_BROWSE;
@@ -1493,6 +1554,8 @@ static void activate_drop(void)
 		if (item == 0)
 			start_mkdir();
 		else if (item == 1)
+			do_ftp_start();
+		else if (item == 2)
 			F.mode = FU_HELP;
 		else
 			files_close_tui(1);
@@ -1789,6 +1852,11 @@ static void handle_letter(char c)
 			F.mode = FU_BROWSE;
 			start_mkdir();
 		}
+		else if (lc == 's')
+		{
+			F.mode = FU_BROWSE;
+			do_ftp_start();
+		}
 		else if (lc == 'd')
 		{
 			F.mode = FU_BROWSE;
@@ -1950,6 +2018,16 @@ const char *mmb_files_key(char c)
 	if (!F.active)
 		return G.out;
 	was_active = 1;
+	if (F.mode == FU_FTP)
+	{
+		/* Modal: only a lone Esc stops the server. */
+		if (c == 27)
+		{
+			F.esc = 1;
+			F.esc_at = mmb_now_ms();
+		}
+		return G.out;
+	}
 	if (F.alt)
 	{
 		F.alt = 0;
@@ -2081,12 +2159,25 @@ const char *mmb_files_key(char c)
 
 void mmb_files_poll(void)
 {
-	if (!F.active || F.esc != 1)
+	if (!F.active)
 		return;
-	if (mmb_now_ms() - F.esc_at < 60)
-		return;
-	F.esc = 0;
-	files_lone_esc();
-	if (F.active && F.mode != FU_PREVIEW)
-		files_draw_if_idle();
+	if (F.esc == 1 && mmb_now_ms() - F.esc_at >= 60)
+	{
+		F.esc = 0;
+		files_lone_esc();
+		if (F.active && F.mode != FU_PREVIEW)
+			files_draw_if_idle();
+	}
+	if (F.active && F.mode == FU_FTP)
+	{
+		const char *st;
+		mmb_ftp_poll();
+		st = mmb_ftp_status();
+		if (strcmp(st, F.ftp_last) != 0)
+		{
+			strncpy(F.ftp_last, st, sizeof(F.ftp_last) - 1);
+			F.ftp_last[sizeof(F.ftp_last) - 1] = 0;
+			files_draw_if_idle();
+		}
+	}
 }
