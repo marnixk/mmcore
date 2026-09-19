@@ -179,6 +179,32 @@ def test_package_default_extension_is_app(console):
     assert "EXTGAME.APP" in listing.upper()
 
 
+def test_package_archive_over_512k(console):
+    """#405: bundles over the old 512 KiB cap package and mount again."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "BIGPKG"') == ""
+    _write_lines(console, "BIGPKG/MAIN.BAS", ['PRINT "OK"'])
+    # 3000 * 200 bytes is ~600 KiB, above the old 512 KiB ceiling.
+    chunk = "X" * 200
+    _write_lines(
+        console,
+        "GEN.BAS",
+        [
+            'OPEN "A:/BIGPKG/BIG.DAT" FOR OUTPUT AS #1',
+            "FOR I = 1 TO 3000",
+            f'PRINT #1, "{chunk}"',
+            "NEXT",
+            "CLOSE #1",
+        ],
+    )
+    console.send_line('RUN "GEN.BAS"')
+    out = console.send_line('PACKAGE "BIG.APP", "BIGPKG/"')
+    assert "?PACKAGE" not in out.upper()
+    run = console.send_line('RUN "BIG.APP"')
+    assert "?PACKAGE" not in run.upper()
+    assert "OK" in run
+
+
 def test_package_edit_after_run_is_untitled(kernel_image):
     import re
 

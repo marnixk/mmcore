@@ -1,7 +1,5 @@
 #include "mmb_priv.h"
 
-#define MMB_ZIP_MAX_BYTES (512u * 1024u)
-
 static unsigned u16le(const unsigned char *p)
 {
 	return (unsigned)p[0] | ((unsigned)p[1] << 8);
