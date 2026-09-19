@@ -54,6 +54,13 @@ def test_help_cls(console):
     assert "[" in out or "colour" in out.lower() or "color" in out.lower()
 
 
+def test_help_ascii_lists_extended_codes(console):
+    out = dump_topic(console, "ASCII")
+    assert "Extended characters (codes 128-255" in out
+    for code in ("176", "219", "255"):
+        assert code in out, code
+
+
 def test_help_locate(console):
     out = dump_topic(console, "LOCATE")
     assert out != "?SYNTAX ERROR"

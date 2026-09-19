@@ -372,6 +372,7 @@ int mmb_editor_theme_lookup(const char *s)
 #define DLG_HELP    3
 #define DLG_PICK    4
 #define DLG_CONFIRM 5
+#define DLG_CHARS   6
 
 #define PEND_NONE   0
 #define PEND_CLOSE  1
@@ -429,6 +430,49 @@ static int csi_n;
 static int csi_arg;
 static int csi_semi;
 
+#define CHARS_CODE0  128
+#define CHARS_N      128
+#define CHARS_COLS   16
+#define CHARS_ROWS   (CHARS_N / CHARS_COLS)
+#define CHARS_HOLD_MS 1500
+
+static int chars_sel;
+static int chars_armed;
+static int chars_opened;
+static unsigned chars_held_at;
+
+static const char *k_chars_name[CHARS_N] = {
+	"C cedilla", "u umlaut", "e acute", "a circumflex", "a umlaut", "a grave",
+	"a ring", "c cedilla", "e circumflex", "e umlaut", "e grave", "i umlaut",
+	"i circumflex", "i grave", "A umlaut", "A ring", "E acute", "ae", "AE",
+	"o circumflex", "o umlaut", "o grave", "u circumflex", "u grave", "y umlaut",
+	"O umlaut", "U umlaut", "cent", "pound", "yen", "peseta", "florin",
+	"a acute", "i acute", "o acute", "u acute", "n tilde", "N tilde", "ordinal a",
+	"ordinal o", "inverted ?", "reversed not", "not", "one half", "one quarter",
+	"inverted !", "left guillemet", "right guillemet", "shade light",
+	"shade medium", "shade dark", "box vertical", "box up-left", "box double up-left",
+	"box double up-left fill", "box double down-left", "box double down-left fill",
+	"box double vertical-left", "box double vertical", "box double down-left corner",
+	"box double up-left corner", "box double up-right corner",
+	"box double down-right corner", "box single down-right", "box single up-right",
+	"box single up-horizontal", "box single down-horizontal",
+	"box single vertical-right", "box single horizontal", "box single cross",
+	"box double vertical-right", "box double vertical-left", "box double up-right",
+	"box double down-right", "box double up-horizontal", "box double down-horizontal",
+	"box double vertical-right", "box double horizontal", "box double cross",
+	"box double up-right", "box double up-left", "box double down-horizontal",
+	"box double up-horizontal", "box double up-right corner",
+	"box double down-right corner", "box double down-horizontal",
+	"box double down-horizontal", "box double vertical", "box double horizontal",
+	"box single down-left", "box single down-right", "block full", "block lower half",
+	"block left half", "block right half", "block upper half", "alpha", "sharp s",
+	"Gamma", "pi", "Sigma", "sigma", "micro", "tau", "Phi", "Theta", "Omega",
+	"delta", "infinity", "phi", "epsilon", "intersection", "identical",
+	"plus-minus", "greater-equal", "less-equal", "top bracket", "bottom bracket",
+	"divide", "approx", "degree", "bullet", "middle dot", "square root",
+	"superscript n", "superscript 2", "black square", "no-break space"
+};
+
 static char fd_dir[128];
 static char fd_mask[32];
 static char fd_files[FD_MAX][FD_NAME];
@@ -464,6 +508,9 @@ static void editor_resume(void);
 static void open_dialog(int which);
 static void open_picker(void);
 static void open_outline(void);
+static void open_char_picker(void);
+static void draw_char_picker(void);
+static void char_picker_poll(void);
 static int is_word_char(char c);
 static void activate_menu(void);
 static int add_or_switch(const char *path);
@@ -1031,6 +1078,64 @@ static void draw_picker(void)
 	tui_pad(c0 + 2, r0 + h - 2, foot, w - 4, C_DLG_FG, C_DLG_BG);
 }
 
+static void draw_char_picker(void)
+{
+	int w, h, r0, c0, i, x0, cw;
+	char info[72];
+	char *p;
+	pick_geom(&w, &h, &r0, &c0);
+	tui_frame(c0, r0, w, h, C_DLG_FG, C_DLG_BG);
+	{
+		const char *title = " Special characters ";
+		int left = (w - 2 - (int)strlen(title)) / 2;
+		if (left < 1)
+			left = 1;
+		tui_puts(c0 + 1 + left, r0, title, C_DLG_FG, C_DLG_BG);
+	}
+	tui_pad(c0 + w, r0, "", 2, C_SH_FG, C_SH_BG);
+	for (i = 1; i < h - 1; i++)
+	{
+		tui_pad(c0 + 1, r0 + i, "", w - 2, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + w, r0 + i, "", 2, C_SH_FG, C_SH_BG);
+	}
+	tui_pad(c0 + w, r0 + h - 1, "", 2, C_SH_FG, C_SH_BG);
+	tui_pad(c0 + 2, r0 + h, "", w, C_SH_FG, C_SH_BG);
+	tui_pad(c0 + 2, r0 + 1, "Extended CP437 characters (codes 128-255)",
+		w - 4, C_DLG_FG, C_DLG_BG);
+	cw = (w - 4 >= CHARS_COLS * 3) ? 3 : 1;
+	x0 = c0 + (w - CHARS_COLS * cw) / 2;
+	if (x0 < c0 + 2)
+		x0 = c0 + 2;
+	for (i = 0; i < CHARS_N; i++)
+	{
+		int row = i / CHARS_COLS;
+		int col = i % CHARS_COLS;
+		int code = CHARS_CODE0 + i;
+		int fg = (i == chars_sel) ? C_SEL_FG : C_DLG_FG;
+		int bg = (i == chars_sel) ? C_SEL_BG : C_DLG_BG;
+		int x = x0 + col * cw;
+		int y = r0 + 2 + row;
+		if (cw >= 3)
+		{
+			tui_put(x, y, ' ', fg, bg);
+			tui_put(x + 1, y, code, fg, bg);
+			tui_put(x + 2, y, ' ', fg, bg);
+		}
+		else
+			tui_put(x, y, code, fg, bg);
+	}
+	p = info;
+	memcpy(p, "Code ", 5);
+	p += 5;
+	p = put_uint(p, CHARS_CODE0 + chars_sel);
+	*p++ = ' ';
+	*p++ = ' ';
+	strcpy(p, k_chars_name[chars_sel]);
+	tui_pad(c0 + 2, r0 + 11, info, w - 4, C_DLG_FG, C_DLG_BG);
+	tui_pad(c0 + 2, r0 + h - 2, "Arrows move  Enter insert  Release Ctrl+Alt",
+		w - 4, C_DLG_FG, C_DLG_BG);
+}
+
 static int outline_kw(const char *p, const char *kw)
 {
 	int n = (int)strlen(kw);
@@ -1138,6 +1243,14 @@ static void open_picker(void)
 	pick_walk(pick_root, 0);
 	pick_sort();
 	pick_rebuild_view();
+}
+
+static void open_char_picker(void)
+{
+	G.ed.menu_open = 0;
+	G.ed.dialog = DLG_CHARS;
+	if (chars_sel < 0 || chars_sel >= CHARS_N)
+		chars_sel = 0;
 }
 
 static void open_outline(void)
@@ -3492,6 +3605,11 @@ static void draw_dialog(void)
 		draw_picker();
 		return;
 	}
+	if (G.ed.dialog == DLG_CHARS)
+	{
+		draw_char_picker();
+		return;
+	}
 	if (G.ed.dialog == DLG_CONFIRM)
 	{
 		static const char *btns[3] = { " Save ", " Discard ", " Cancel " };
@@ -3773,6 +3891,11 @@ static void place_cursor(void)
 		if (col > w - 4)
 			col = w - 4;
 		tui_cursor(c0 + 2 + col, r0 + 2, 1);
+		return;
+	}
+	if (G.ed.dialog == DLG_CHARS)
+	{
+		tui_cursor(-1, -1, 0);
 		return;
 	}
 	if (fd_on())
@@ -4492,6 +4615,30 @@ static int handle_arrow_or_special(int kind, int mod)
 			pick_move(vis);
 		return 1;
 	}
+	if (G.ed.dialog == DLG_CHARS)
+	{
+		if (kind == 1)
+			chars_sel -= CHARS_COLS;
+		else if (kind == 2)
+			chars_sel += CHARS_COLS;
+		else if (kind == 3)
+			chars_sel++;
+		else if (kind == 4)
+			chars_sel--;
+		else if (kind == 5)
+			chars_sel = (chars_sel / CHARS_COLS) * CHARS_COLS;
+		else if (kind == 6)
+			chars_sel = (chars_sel / CHARS_COLS) * CHARS_COLS + CHARS_COLS - 1;
+		else if (kind == 9)
+			chars_sel -= CHARS_COLS * CHARS_ROWS;
+		else if (kind == 10)
+			chars_sel += CHARS_COLS * CHARS_ROWS;
+		if (chars_sel < 0)
+			chars_sel = 0;
+		if (chars_sel >= CHARS_N)
+			chars_sel = CHARS_N - 1;
+		return 1;
+	}
 	if (fd_on())
 	{
 		fd_arrow(kind);
@@ -4810,6 +4957,15 @@ static int dialog_key(char c)
 		}
 		return 1;
 	}
+	if (G.ed.dialog == DLG_CHARS)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			insert_char((char)(CHARS_CODE0 + chars_sel));
+			redraw();
+		}
+		return 1;
+	}
 	if (c == '\r' || c == '\n')
 	{
 		submit_dialog();
@@ -4857,6 +5013,8 @@ void mmb_editor_open(const char *path)
 	esc_state = 0;
 	confirm_pending = PEND_NONE;
 	confirm_btn = 0;
+	chars_armed = 0;
+	chars_opened = 0;
 	G.ed.active = 1;
 	set_pick_root(path && path[0] ? path : mmb_vfs_cwd());
 	add_or_switch(path && path[0] ? path : "");
@@ -5126,9 +5284,49 @@ void mmb_cmd_edit(void)
 	mmb_editor_open(path);
 }
 
+static void char_picker_poll(void)
+{
+	int held = (G.plat && G.plat->ctrl_alt_held) ? G.plat->ctrl_alt_held() : 0;
+	if (held)
+	{
+		if (!chars_armed)
+		{
+			chars_armed = 1;
+			chars_opened = 0;
+			chars_held_at = mmb_now_ms();
+		}
+		if (!chars_opened && G.ed.dialog == DLG_NONE && !G.ed.menu_open &&
+		    !find_active && !errbar_active &&
+		    (mmb_now_ms() - chars_held_at) >= CHARS_HOLD_MS)
+		{
+			open_char_picker();
+			chars_opened = 1;
+			redraw();
+		}
+	}
+	else
+	{
+		chars_armed = 0;
+		chars_opened = 0;
+		if (G.ed.dialog == DLG_CHARS)
+		{
+			G.ed.dialog = DLG_NONE;
+			redraw();
+		}
+	}
+}
+
+int mmb_editor_char_picker_active(void)
+{
+	return G.ed.active && G.ed.dialog == DLG_CHARS;
+}
+
 void mmb_editor_poll(void)
 {
-	if (!G.ed.active || mmb_in_ihelp() || esc_state != ESC_GOT)
+	if (!G.ed.active || mmb_in_ihelp())
+		return;
+	char_picker_poll();
+	if (esc_state != ESC_GOT)
 		return;
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)
 		return;

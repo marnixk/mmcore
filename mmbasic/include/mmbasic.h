@@ -62,6 +62,8 @@ typedef struct mmb_platform {
 	void (*tui_fill_px)(int x_px, int y_px, int w, int h, unsigned rgb);
 	void (*tui_set_font)(const unsigned char *font256x16);
 	int (*alt_held)(void);
+	/* 1 while both Ctrl and Alt are held (USB modifiers). */
+	int (*ctrl_alt_held)(void);
 	/* Blit RGB888 pixels to HDMI (native depth + SetArea). stride is
 	 * pixels per source row. NULL falls back to set_pixel. */
 	void (*present_rgb)(int x, int y, int w, int h, const unsigned *rgb888, int stride);
@@ -109,6 +111,9 @@ int mmb_in_editor(void);
 
 /* Feed a keystroke to the editor. Returns text to emit (may be empty). */
 const char *mmb_editor_key(char c);
+
+/* True while the editor's special-character picker is open. */
+int mmb_editor_char_picker_active(void);
 
 /* True while the FILES dual-pane TUI owns the keyboard. */
 int mmb_in_files(void);

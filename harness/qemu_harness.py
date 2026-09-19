@@ -20,6 +20,7 @@ not slow the suite.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -86,9 +87,11 @@ class MMBasicConsole:
         self._tmp = tempfile.mkdtemp(prefix="mmb-harness-")
         self._ser_path = os.path.join(self._tmp, "serial.sock")
         self._mon_path = os.path.join(self._tmp, "monitor.sock")
+        self._qmp_path = os.path.join(self._tmp, "qmp.sock")
         self._proc: subprocess.Popen | None = None
         self._ser: socket.socket | None = None
         self._mon: socket.socket | None = None
+        self._qmp: socket.socket | None = None
         self._qemu_log_fh = None
 
     # -- lifecycle ---------------------------------------------------------
@@ -100,6 +103,7 @@ class MMBasicConsole:
             "-display", "none",
             "-serial", f"unix:{self._ser_path},server,nowait",
             "-monitor", f"unix:{self._mon_path},server,nowait",
+            "-qmp", f"unix:{self._qmp_path},server,nowait",
         ]
         cmd.extend(self.extra_qemu)
         log_path = os.path.join(self._tmp, "qemu.log")
@@ -110,6 +114,7 @@ class MMBasicConsole:
         self._ser = self._connect(self._ser_path)
         self._mon = self._connect(self._mon_path)
         self._ser.settimeout(0.4)
+        self._qmp_connect()
 
         # wait for the firmware to announce it is ready, then the prompt
         deadline = time.time() + self.boot_timeout
@@ -146,6 +151,9 @@ class MMBasicConsole:
         raise HarnessError(f"timed out connecting to {path}")
 
     def stop(self) -> None:
+        if self._qmp is not None:
+            self._qmp.close()
+            self._qmp = None
         try:
             if self._mon is not None:
                 try:
@@ -288,6 +296,86 @@ class MMBasicConsole:
         assert self._mon is not None
         self._mon.sendall(cmd.encode() + b"\n")
         time.sleep(0.5)
+
+    # -- QMP keyboard (press/release independent of each other) ------------
+    def _qmp_connect(self) -> None:
+        self._qmp = self._connect(self._qmp_path)
+        self._qmp.settimeout(0.1)
+        self._qmp_read()
+        self._qmp_cmd({"execute": "qmp_capabilities"})
+
+    def _qmp_read(self, timeout: float = 2.0) -> list:
+        """Read QMP JSON messages until one line is available or timeout."""
+        assert self._qmp is not None
+        buf = b""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                chunk = self._qmp.recv(65536)
+            except OSError:
+                if buf:
+                    break
+                continue
+            if not chunk:
+                break
+            buf += chunk
+            if b"\r\n" in buf:
+                break
+        out = []
+        for line in buf.split(b"\r\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+        return out
+
+    def _qmp_cmd(self, obj: dict, timeout: float = 2.0) -> dict | None:
+        assert self._qmp is not None
+        self._qmp.sendall(json.dumps(obj).encode() + b"\n")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for msg in self._qmp_read():
+                if "return" in msg or "error" in msg:
+                    return msg
+        return None
+
+    def key_event(self, qcode: str, down: bool) -> None:
+        """Press or release one key through QEMU's input layer.
+
+        qcode uses QEMU key names: ``ctrl``, ``alt``, ``shift``, ``up``,
+        ``down``, ``left``, ``right``, ``ret``, ``home``, ``end`` as well as
+        single characters. Unlike the monitor ``sendkey`` command this keeps
+        other held keys down, so Ctrl+Alt can be held while tapping arrows.
+        """
+        self._qmp_cmd(
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {
+                            "type": "key",
+                            "data": {
+                                "down": down,
+                                "key": {"type": "qcode", "data": qcode},
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+
+    def key_down(self, qcode: str) -> None:
+        self.key_event(qcode, True)
+
+    def key_up(self, qcode: str) -> None:
+        self.key_event(qcode, False)
+
+    def key_tap(self, qcode: str) -> None:
+        self.key_event(qcode, True)
+        self.key_event(qcode, False)
 
     def screendump(self, dest_ppm: str | None = None) -> str:
         """Capture the emulated framebuffer to a .ppm file and return its path."""

@@ -767,6 +767,11 @@ static int plat_alt_held(void)
 	return s_kernel ? s_kernel->AltHeld() : 0;
 }
 
+static int plat_ctrl_alt_held(void)
+{
+	return s_kernel ? s_kernel->CtrlAltHeld() : 0;
+}
+
 static void plat_tui_present(int y0, int y1)
 {
 	CDisplay::TArea area;
@@ -1388,6 +1393,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_fill_px = plat_tui_fill_px;
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
+	plat.ctrl_alt_held = plat_ctrl_alt_held;
 	plat.present_rgb = plat_present_rgb;
 	plat.present_native = plat_present_native;
 	plat.present_wait = plat_present_wait;

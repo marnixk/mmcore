@@ -54,6 +54,7 @@ CKernel::CKernel (void)
 	m_LastMods = 0;
 	m_AltHidSent = 0;
 	m_NavHidSent = 0;
+	m_CharHidSent = 0;
 	m_FkeyHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
@@ -270,7 +271,12 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 		pThis->m_DidRepeat = 0;
 		pThis->m_LastRepeatMs = pThis->m_HoldMs;
 		if (!held)
+		{
 			pThis->m_RepeatLen = 0;
+			/* Release arrived between polls: allow the same key again. */
+			pThis->m_NavHidSent = 0;
+			pThis->m_CharHidSent = 0;
+		}
 	}
 	pThis->ApplyRawKeys ();
 }
@@ -278,6 +284,11 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 int CKernel::AltHeld (void) const
 {
 	return (m_LastMods & ALT) != 0;
+}
+
+int CKernel::CtrlAltHeld (void) const
+{
+	return (m_LastMods & ALT) != 0 && (m_LastMods & (LCTRL | RCTRL)) != 0;
 }
 
 void CKernel::PollUsbAlt (void)
@@ -333,7 +344,12 @@ void CKernel::PollUsbEditorNav (void)
 	{
 		int alt_left, alt_right;
 		if ((m_LastMods & (LCTRL | RCTRL)) != 0)
+		{
+			/* Ctrl+Alt is the character-picker chord: arrows navigate
+			 * while the picker is open, other keys stay cooked. */
+			PollUsbCharNav ();
 			return;
+		}
 		hid = m_HeldHid;
 		if (hid == 0)
 		{
@@ -458,6 +474,63 @@ void CKernel::PollUsbEditorNav (void)
 		memcpy (m_RepeatSeq, seq, n);
 		m_RepeatLen = n;
 	}
+	m_UsbBurst = 1;
+	for (i = 0; i < n; i++)
+		ProcessChar (seq[i], m_Line, &m_nLen);
+	m_UsbBurst = 0;
+}
+
+/*
+ * While the editor's Ctrl+Alt character picker is open, Circle's cooked keymap
+ * yields nothing for Ctrl+Alt+arrows, so inject plain cursor sequences and let
+ * the editor move the picker selection. Circle yields nothing cooked for
+ * Ctrl+Alt+Enter either, so inject a Return to insert the selection.
+ */
+void CKernel::PollUsbCharNav (void)
+{
+	unsigned char hid;
+	char seq[4];
+	unsigned n = 0, i;
+	char final = 0;
+	int enter = 0;
+
+	if (!mmb_in_editor () || !mmb_editor_char_picker_active ())
+	{
+		m_CharHidSent = 0;
+		return;
+	}
+	hid = m_HeldHid;
+	if (hid == 0)
+	{
+		m_CharHidSent = 0;
+		return;
+	}
+	if (hid == m_CharHidSent)
+		return;
+	switch (hid)
+	{
+	case 0x52: final = 'A'; break; /* Up */
+	case 0x51: final = 'B'; break; /* Down */
+	case 0x4F: final = 'C'; break; /* Right */
+	case 0x50: final = 'D'; break; /* Left */
+	case 0x4A: final = 'H'; break; /* Home */
+	case 0x4D: final = 'F'; break; /* End */
+	case 0x28: /* Return */
+	case 0x58: /* Keypad Enter */
+		enter = 1;
+		break;
+	default:
+		return;
+	}
+	if (enter)
+		seq[n++] = '\r';
+	else
+	{
+		seq[n++] = 0x1b;
+		seq[n++] = '[';
+		seq[n++] = final;
+	}
+	m_CharHidSent = hid;
 	m_UsbBurst = 1;
 	for (i = 0; i < n; i++)
 		ProcessChar (seq[i], m_Line, &m_nLen);
@@ -590,6 +663,7 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_LastMods = 0;
 	pThis->m_AltHidSent = 0;
 	pThis->m_NavHidSent = 0;
+	pThis->m_CharHidSent = 0;
 	pThis->m_FkeyHidSent = 0;
 }
 
@@ -801,8 +875,11 @@ void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
 		if (c == '\t' && (m_LastMods & (LSHIFT | RSHIFT)) != 0)
 			return;
 		/* USB Ctrl+Enter arrives as a plain Return; PollUsbEditorNav
-		 * injected a Replace All sequence. Drop the cooked Return. */
-		if ((c == '\n' || c == '\r') && (m_LastMods & (LCTRL | RCTRL)) != 0)
+		 * injected a Replace All sequence. Drop the cooked Return, except
+		 * in the character picker where the injected Return is the insert
+		 * key (PollUsbCharNav). */
+		if ((c == '\n' || c == '\r') && (m_LastMods & (LCTRL | RCTRL)) != 0 &&
+		    !mmb_editor_char_picker_active ())
 			return;
 		const char *out = mmb_editor_key (c);
 		emit (this, out);

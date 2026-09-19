@@ -39,6 +39,7 @@ public:
 	void PollInputChars (int breakKey);
 	int TakeBreak (void);
 	int AltHeld (void) const;
+	int CtrlAltHeld (void) const;
 
 private:
 	void AttachKeyboard (void);
@@ -46,6 +47,7 @@ private:
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
 	void PollUsbEditorNav (void);
+	void PollUsbCharNav (void);
 	void PollUsbFKeys (void);
 	void PollCadReboot (void);
 	void ApplyRawKeys (void);
@@ -105,6 +107,7 @@ private:
 	unsigned char		m_LastMods;
 	unsigned char		m_AltHidSent;
 	unsigned char		m_NavHidSent;
+	unsigned char		m_CharHidSent;
 	unsigned char		m_FkeyHidSent;
 	int			m_UsbBurst;
 };
