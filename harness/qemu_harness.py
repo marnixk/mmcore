@@ -34,13 +34,15 @@ class HarnessError(RuntimeError):
 
 
 def qemu_usb_net_args(
-    hostfwd: str | None = None,
+    hostfwd: str | list[str] | None = None,
     dump: str | None = None,
     guestfwd: str | None = None,
 ) -> list[str]:
     """QEMU flags for Circle USB CDC Ethernet (``-device usb-net``).
 
-    ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest).
+    ``hostfwd`` is a SLIRP rule such as ``tcp::8080-:80`` (host→guest), or a
+    list of rules (QEMU needs a repeated ``hostfwd=`` key for each one, not a
+    comma-joined list).
     ``guestfwd`` is a SLIRP rule such as ``tcp:10.0.2.100:23-tcp:HOST:23``
     (guest→host/Internet). Guest→host without guestfwd uses ``10.0.2.2``.
     DHCP typically assigns ``10.0.2.15``.
@@ -48,7 +50,9 @@ def qemu_usb_net_args(
     """
     netdev = "user,id=net0"
     if hostfwd:
-        netdev += f",hostfwd={hostfwd}"
+        rules = hostfwd if isinstance(hostfwd, (list, tuple)) else [hostfwd]
+        for rule in rules:
+            netdev += f",hostfwd={rule}"
     if guestfwd:
         netdev += f",guestfwd={guestfwd}"
     args = ["-netdev", netdev, "-device", "usb-net,netdev=net0"]

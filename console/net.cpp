@@ -727,6 +727,298 @@ void mmb_net_yield(void)
 		CScheduler::Get()->Yield();
 }
 
+/*
+ * Server-side sockets (FTP). Circle's CSocket::Accept blocks in
+ * m_Event.Wait() while the connection is only listening, and Close() does
+ * not wake it, so a listener task cannot be stopped cleanly. This layer
+ * therefore drives CTransportLayer directly: it polls IsConnected() first
+ * and only calls Accept() once a peer has completed the handshake, which
+ * never blocks. Accepted connections are referenced by small integer ids.
+ */
+
+#define SRV_MAX_LISTEN 2
+#define SRV_MAX_CONN   4
+
+struct srv_listen
+{
+	int used;
+	int h;			/* CTransportLayer listen handle */
+	unsigned short port;
+};
+
+struct srv_conn
+{
+	int used;
+	int h;			/* CTransportLayer connection handle */
+	int closed;
+	unsigned char rx[FRAME_BUFFER_SIZE];
+	unsigned rxn;
+	unsigned rxoff;
+};
+
+static struct srv_listen s_srv_lsn[SRV_MAX_LISTEN];
+static struct srv_conn s_srv_con[SRV_MAX_CONN];
+
+static CTransportLayer *srv_tl(void)
+{
+	CNetSubSystem *net = net_sys();
+
+	if (!net)
+		return 0;
+	return net->GetTransportLayer();
+}
+
+int mmb_net_srv_listen(int port)
+{
+	CTransportLayer *tl;
+	int i, h;
+
+	if (port < 1 || port > 65535)
+		return -1;
+	tl = srv_tl();
+	if (!tl || !live_net())
+		return -1;
+	for (i = 0; i < SRV_MAX_LISTEN; i++)
+		if (!s_srv_lsn[i].used)
+			break;
+	if (i == SRV_MAX_LISTEN)
+		return -1;
+	h = tl->Listen((u16)port, IPPROTO_TCP);
+	if (h < 0)
+		return -1;
+	s_srv_lsn[i].used = 1;
+	s_srv_lsn[i].h = h;
+	s_srv_lsn[i].port = (unsigned short)port;
+	return i;
+}
+
+int mmb_net_srv_port(int lsn)
+{
+	if (lsn < 0 || lsn >= SRV_MAX_LISTEN || !s_srv_lsn[lsn].used)
+		return 0;
+	return (int)s_srv_lsn[lsn].port;
+}
+
+void mmb_net_srv_listen_close(int lsn)
+{
+	CTransportLayer *tl = srv_tl();
+
+	if (lsn < 0 || lsn >= SRV_MAX_LISTEN || !s_srv_lsn[lsn].used)
+		return;
+	if (tl && s_srv_lsn[lsn].h >= 0)
+		tl->Disconnect(s_srv_lsn[lsn].h);
+	s_srv_lsn[lsn].used = 0;
+	s_srv_lsn[lsn].h = -1;
+}
+
+static int srv_alloc_conn(int h)
+{
+	int i;
+
+	for (i = 0; i < SRV_MAX_CONN; i++)
+	{
+		if (!s_srv_con[i].used)
+		{
+			s_srv_con[i].used = 1;
+			s_srv_con[i].h = h;
+			s_srv_con[i].closed = 0;
+			s_srv_con[i].rxn = 0;
+			s_srv_con[i].rxoff = 0;
+			return i;
+		}
+	}
+	return -1;
+}
+
+int mmb_net_srv_accept(int lsn)
+{
+	CTransportLayer *tl = srv_tl();
+	int h, nh, c;
+	CIPAddress foreign;
+	u16 foreign_port;
+
+	if (!tl || lsn < 0 || lsn >= SRV_MAX_LISTEN || !s_srv_lsn[lsn].used)
+		return -1;
+	h = s_srv_lsn[lsn].h;
+	if (h < 0 || !tl->IsConnected(h))
+		return -1;
+	if (tl->Accept(&foreign, &foreign_port, h) < 0)
+	{
+		tl->Disconnect(h);
+		s_srv_lsn[lsn].h = tl->Listen(s_srv_lsn[lsn].port, IPPROTO_TCP);
+		if (s_srv_lsn[lsn].h < 0)
+			s_srv_lsn[lsn].used = 0;
+		return -1;
+	}
+	nh = tl->Listen(s_srv_lsn[lsn].port, IPPROTO_TCP);
+	if (nh < 0)
+	{
+		tl->Disconnect(h);
+		s_srv_lsn[lsn].used = 0;
+		return -1;
+	}
+	s_srv_lsn[lsn].h = nh;
+	c = srv_alloc_conn(h);
+	if (c < 0)
+		tl->Disconnect(h);
+	return c;
+}
+
+int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
+{
+	struct srv_conn *c;
+	CTransportLayer *tl = srv_tl();
+	unsigned char *dst = (unsigned char *)data;
+	unsigned out = 0;
+
+	if (!tl || conn < 0 || conn >= SRV_MAX_CONN || !s_srv_con[conn].used)
+		return -1;
+	c = &s_srv_con[conn];
+	if (!data || !maxn)
+		return 0;
+	if (c->rxoff < c->rxn)
+	{
+		unsigned n = c->rxn - c->rxoff;
+		if (n > maxn)
+			n = maxn;
+		memcpy(dst, c->rx + c->rxoff, n);
+		c->rxoff += n;
+		return (int)n;
+	}
+	c->rxn = 0;
+	c->rxoff = 0;
+	{
+		CNetBuffer *pb = 0;
+		int n = tl->Receive(&pb, MSG_DONTWAIT, c->h);
+
+		if (n < 0)
+		{
+			delete pb;
+			c->closed = 1;
+			return n;
+		}
+		if (n == 0)
+		{
+			delete pb;
+			return 0;
+		}
+		{
+			unsigned total = (unsigned)n;
+			unsigned copy = total > maxn ? maxn : total;
+
+			memcpy(dst, pb->GetPtr(), copy);
+			if (copy < total)
+			{
+				unsigned rest = total - copy;
+				if (rest > sizeof c->rx)
+					rest = sizeof c->rx;
+				memcpy(c->rx, (const unsigned char *)pb->GetPtr() + copy, rest);
+				c->rxn = rest;
+				c->rxoff = 0;
+			}
+			out = copy;
+		}
+		delete pb;
+	}
+	return (int)out;
+}
+
+int mmb_net_srv_send(int conn, const void *data, unsigned n)
+{
+	struct srv_conn *c;
+	CTransportLayer *tl = srv_tl();
+	u16 mss;
+	unsigned chunk;
+	int flags, rc;
+	CNetBuffer *pb;
+
+	if (!tl || conn < 0 || conn >= SRV_MAX_CONN || !s_srv_con[conn].used)
+		return -1;
+	c = &s_srv_con[conn];
+	if (c->closed)
+		return -1;
+	if (!data || !n)
+		return 0;
+	mss = tl->GetMSS(c->h);
+	if (mss == 0)
+		mss = 536;
+	chunk = n > mss ? mss : n;
+	flags = MSG_DONTWAIT;
+	if (chunk < n)
+		flags |= MSG_MORE;
+	pb = new CNetBuffer(CNetBuffer::TCPSend, chunk, data);
+	if (!pb)
+		return -1;
+	rc = tl->Send(pb, flags, c->h);
+	delete pb;
+	if (rc < 0)
+	{
+		c->closed = 1;
+		return rc;
+	}
+	return (int)chunk;
+}
+
+int mmb_net_srv_closed(int conn)
+{
+	if (conn < 0 || conn >= SRV_MAX_CONN || !s_srv_con[conn].used)
+		return 1;
+	return s_srv_con[conn].closed;
+}
+
+void mmb_net_srv_close(int conn)
+{
+	CTransportLayer *tl = srv_tl();
+
+	if (conn < 0 || conn >= SRV_MAX_CONN || !s_srv_con[conn].used)
+		return;
+	if (tl && s_srv_con[conn].h >= 0)
+		tl->Disconnect(s_srv_con[conn].h);
+	s_srv_con[conn].used = 0;
+	s_srv_con[conn].h = -1;
+	s_srv_con[conn].closed = 0;
+}
+
+int mmb_net_srv_ip(char *buf, int bufsize)
+{
+	CNetSubSystem *net = net_sys();
+	CNetConfig *cfg;
+	const CIPAddress *ip;
+	const u8 *b;
+	int i, p = 0;
+
+	if (!buf || bufsize < 16)
+		return -1;
+	buf[0] = 0;
+	if (!net)
+		return -1;
+	cfg = net->GetConfig();
+	ip = cfg ? cfg->GetIPAddress() : 0;
+	if (!ip || !ip->IsSet() || ip->IsNull())
+		return -1;
+	b = ip->Get();
+	for (i = 0; i < 4; i++)
+	{
+		unsigned v = b[i];
+		char t[4];
+		int k = 0;
+
+		if (v >= 100)
+			t[k++] = (char)('0' + v / 100);
+		if (v >= 10)
+			t[k++] = (char)('0' + (v / 10) % 10);
+		t[k++] = (char)('0' + v % 10);
+		if (p + k + (i < 3 ? 1 : 0) >= bufsize)
+			return -1;
+		memcpy(buf + p, t, (unsigned)k);
+		p += k;
+		if (i < 3)
+			buf[p++] = '.';
+	}
+	buf[p] = 0;
+	return 0;
+}
+
 }
 
 #else /* !MMB_CIRCLE_NET */
@@ -822,6 +1114,63 @@ int mmb_net_kind(void)
 int mmb_net_open(int kind)
 {
 	(void)kind;
+	return -1;
+}
+
+int mmb_net_srv_listen(int port)
+{
+	(void)port;
+	return -1;
+}
+
+int mmb_net_srv_port(int lsn)
+{
+	(void)lsn;
+	return 0;
+}
+
+void mmb_net_srv_listen_close(int lsn)
+{
+	(void)lsn;
+}
+
+int mmb_net_srv_accept(int lsn)
+{
+	(void)lsn;
+	return -1;
+}
+
+int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
+{
+	(void)conn;
+	(void)data;
+	(void)maxn;
+	return -1;
+}
+
+int mmb_net_srv_send(int conn, const void *data, unsigned n)
+{
+	(void)conn;
+	(void)data;
+	(void)n;
+	return -1;
+}
+
+int mmb_net_srv_closed(int conn)
+{
+	(void)conn;
+	return 1;
+}
+
+void mmb_net_srv_close(int conn)
+{
+	(void)conn;
+}
+
+int mmb_net_srv_ip(char *buf, int bufsize)
+{
+	(void)buf;
+	(void)bufsize;
 	return -1;
 }
 

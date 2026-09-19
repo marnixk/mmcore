@@ -15,6 +15,13 @@ FILES
 Menus: Alt+L Left  Alt+F File  Alt+C Command  Alt+O Options  Alt+R Right.
 Colours follow OPTION EDIT THEME (same palettes as the editor).
 
+The Command menu (or s in the F9 menu) has "FTP server". It serves the active
+pane's folder over FTP on port 21 (passive data on port 1021), using the
+current address from IPCONFIG, so a desktop FTP client can copy files to and
+from the device. A modal dialog shows the root and address; all other keys are
+ignored until Esc stops the server. A: (ramdisk), B: and the FAT drives all
+work; requests cannot escape the chosen folder.
+
 Example:
 
     FILES

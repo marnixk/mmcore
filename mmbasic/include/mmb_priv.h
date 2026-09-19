@@ -852,6 +852,23 @@ void mmb_net_tcp_close(void);
 void mmb_net_tcp_debug_poll(void);
 void mmb_net_yield(void);
 
+int mmb_net_srv_listen(int port);
+int mmb_net_srv_port(int lsn);
+void mmb_net_srv_listen_close(int lsn);
+int mmb_net_srv_accept(int lsn);
+int mmb_net_srv_recv(int conn, void *data, unsigned maxn);
+int mmb_net_srv_send(int conn, const void *data, unsigned n);
+int mmb_net_srv_closed(int conn);
+void mmb_net_srv_close(int conn);
+int mmb_net_srv_ip(char *buf, int bufsize);
+
+int mmb_ftp_start(const char *root, int port);
+void mmb_ftp_stop(void);
+void mmb_ftp_poll(void);
+int mmb_ftp_running(void);
+int mmb_ftp_port(void);
+const char *mmb_ftp_status(void);
+
 void mmb_cmd_connect(void);
 void mmb_cmd_term(void);
 void mmb_cmd_ipconfig(void);
