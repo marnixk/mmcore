@@ -786,6 +786,9 @@ int mmb_vfs_isdir(const char *path);
 int mmb_vfs_readonly_path(const char *path);
 
 #define MMB_ZIP_MAX_FILES 64
+/* Store-mode archive ceiling for PACKAGE / RUN name.app. 16 MiB leaves room
+ * for program bundles with assets; packaging and mounting share this. */
+#define MMB_ZIP_MAX_BYTES (16u * 1024u * 1024u)
 
 typedef struct mmb_zip_w {
 	unsigned char *buf;

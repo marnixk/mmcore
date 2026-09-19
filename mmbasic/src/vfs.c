@@ -1041,7 +1041,7 @@ int mmb_pkg_mount(const char *path)
 	sz = mmb_vfs_size(path);
 	if (sz < 0)
 		mmb_error("?FILE NOT FOUND");
-	if (sz > 512 * 1024)
+	if ((unsigned)sz > MMB_ZIP_MAX_BYTES)
 		mmb_error("?PACKAGE");
 	buf = G.plat->alloc((unsigned)sz + 1);
 	if (!buf)
