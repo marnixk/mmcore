@@ -939,9 +939,21 @@ int mmb_net_srv_send(int conn, const void *data, unsigned n)
 		return -1;
 	if (!data || !n)
 		return 0;
+	/* MSG_DONTWAIT bypasses CTCPConnection's own TX threshold, so apply the
+	 * backpressure here: report "no progress" instead of queueing without
+	 * bound when the peer is not reading. */
+	if (!tl->GetStatus(c->h).bTxReady)
+		return 0;
 	mss = tl->GetMSS(c->h);
 	if (mss == 0)
 		mss = 536;
+	/*
+	 * CNetBuffer::TCPSend reserves the link/IP/TCP headers in a fixed
+	 * FRAME_BUFFER_SIZE frame, so never ask it for more than it can hold even
+	 * if a peer advertises an oversized MSS.
+	 */
+	if (mss > FRAME_BUFFER_SIZE - 128)
+		mss = FRAME_BUFFER_SIZE - 128;
 	chunk = n > mss ? mss : n;
 	flags = MSG_DONTWAIT;
 	if (chunk < n)
@@ -949,10 +961,16 @@ int mmb_net_srv_send(int conn, const void *data, unsigned n)
 	pb = new CNetBuffer(CNetBuffer::TCPSend, chunk, data);
 	if (!pb)
 		return -1;
+	/*
+	 * CTCPConnection::Send() takes ownership of the buffer by queueing it for
+	 * transmission (same contract as CSocket::Send). Only free it ourselves
+	 * when Send() rejects it; freeing a queued buffer is a double free that
+	 * corrupts the TX queue and halts the kernel.
+	 */
 	rc = tl->Send(pb, flags, c->h);
-	delete pb;
 	if (rc < 0)
 	{
+		delete pb;
 		c->closed = 1;
 		return rc;
 	}
