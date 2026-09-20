@@ -323,6 +323,8 @@ typedef struct mmb {
 	int acc_moff;
 	int acc_msize;
 	int acc_sid;
+	int acc_base_nidx;
+	int acc_base_idx[MMB_MAX_DIMS];
 	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
 	char prog[MMB_MAX_LINES][MMB_LINE_LEN];
 	int prog_num[MMB_MAX_LINES];
@@ -527,6 +529,7 @@ double mmb_arrview_get(mmb_arrview a, int i);
 void mmb_arrview_set(mmb_arrview a, int i, double x);
 int mmb_arrview_int(mmb_arrview a, int i);
 int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx);
+int mmb_decode_part(const char *s, int len, char *name, int *nidx, int *idx);
 void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val);
 mmb_val mmb_struct_load_member(mmb_var *v, int eoff);
 void mmb_cmd_local(void);
