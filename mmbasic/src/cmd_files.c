@@ -299,6 +299,80 @@ static void dir_join(char *dst, int dstsz, const char *a, const char *sep, const
 	dst[n] = 0;
 }
 
+/* Long listing: one entry per line, name padded to a common column with a
+ * right-aligned size after it. Folders show <DIR>. Sizes are looked up by
+ * joining base to the entry so /S lists resolve their full paths. */
+static void dir_long(char *list, const char *base)
+{
+	char *ptrs[DIR_ENT_MAX];
+	int n = 0, i, namecol = 4;
+	const int sizecol = 10;
+	char *p = list;
+	if (!list[0])
+	{
+		dir_put("(empty)");
+		return;
+	}
+	while (*p && n < DIR_ENT_MAX)
+	{
+		int l;
+		ptrs[n++] = p;
+		while (*p && *p != '\n')
+			p++;
+		if (*p == '\n')
+			*p++ = 0;
+		l = (int)strlen(ptrs[n - 1]);
+		if (l > namecol)
+			namecol = l;
+	}
+	if (n == 0)
+	{
+		dir_put("(empty)");
+		return;
+	}
+	if (namecol > 60)
+		namecol = 60;
+	for (i = 0; i < n; i++)
+	{
+		char name[DIR_PATH_MAX];
+		char full[DIR_PATH_MAX];
+		char line[DIR_PATH_MAX + 32];
+		char szs[16];
+		int l = (int)strlen(ptrs[i]);
+		int is_dir, sz, pos = 0, pad;
+		strncpy(name, ptrs[i], sizeof(name) - 1);
+		name[sizeof(name) - 1] = 0;
+		is_dir = l > 0 && name[l - 1] == '/';
+		if (is_dir)
+			strcpy(szs, "<DIR>");
+		else
+		{
+			if (base && base[0])
+				dir_join(full, sizeof(full), base, "/", name);
+			else
+				dir_join(full, sizeof(full), name, 0, 0);
+			sz = mmb_vfs_size(full);
+			if (sz < 0)
+				sz = 0;
+			sprintf(szs, "%u", (unsigned)sz);
+		}
+		memcpy(line, name, (unsigned)l);
+		pos = l;
+		for (pad = namecol - l; pad > 0 && pos < (int)sizeof(line) - 1; pad--)
+			line[pos++] = ' ';
+		line[pos++] = ' ';
+		for (pad = sizecol - (int)strlen(szs); pad > 0 && pos < (int)sizeof(line) - 1; pad--)
+			line[pos++] = ' ';
+		{
+			const char *s = szs;
+			while (*s && pos < (int)sizeof(line) - 1)
+				line[pos++] = *s++;
+		}
+		line[pos] = 0;
+		dir_put(line);
+	}
+}
+
 /* Recursive search (DIR /S): every matching entry under dirspec, with a path
  * prefix relative to the search root. */
 static void dir_search(const char *dirspec, const char *prefix, const char *glob,
@@ -428,18 +502,20 @@ void mmb_cmd_files(const char *kw)
 		if (wide)
 			dir_wide(result);
 		else
-			mmb_out(result[0] ? result : "(empty)");
+			dir_long(result, dir);
 		return;
 	}
 	{
 		char buf[DIR_LIST_MAX];
+		char dir[128], glob[128];
 		buf[0] = 0;
 		if (mmb_vfs_list(spec[0] ? spec : 0, buf, sizeof(buf)) != 0)
 			mmb_error("?DRIVE");
+		dir_split_spec(spec[0] ? spec : 0, dir, sizeof(dir), glob, sizeof(glob));
 		if (wide)
 			dir_wide(buf);
 		else
-			mmb_out(buf[0] ? buf : "(empty)");
+			dir_long(buf, dir);
 	}
 }
 
