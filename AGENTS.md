@@ -42,3 +42,14 @@ file out-of-scope bugs as `follow-up` tickets instead of fixing them).
   pass/fail/skip counts. Use `scripts/test-watch.py start` / `status` / `wait`
   (or an equivalent progress reporter) rather than a bare `pytest -q`, so a
   long run can be polled and its progress reported.
+
+- **Never move a branch another worktree has checked out** — all worktrees
+  share one ref store, so `git update-ref refs/heads/<b>`, `git branch -f <b>`,
+  or `git push <remote> <b>:<b>` advances the ref without touching the other
+  worktree's HEAD, index, or files. Its `git status` then shows a phantom diff
+  (the whole commit gap as staged adds/deletes) and `git diff --cached` against
+  the old commit comes back empty — the tell that the ref moved underneath a
+  clean checkout. Sync locally with `git fetch origin` (updates `origin/*`
+  only) or run the update in that worktree; recover elsewhere with
+  `git reset --hard` there once you have confirmed there are no real local
+  edits.
