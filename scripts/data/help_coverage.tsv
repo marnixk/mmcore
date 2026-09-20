@@ -226,6 +226,7 @@ TRIM$	TRIM$	topic	dedicated topic
 TURTLE	TURTLE	topic	dedicated topic
 TYPE	TYPE	topic	dedicated topic
 UCASE$	UCASE$	topic	dedicated topic
+UNPACK	UNPACK	topic	dedicated topic
 VAL	VAL	topic	dedicated topic
 VSYNC_WAIT	VSYNC_WAIT	topic	dedicated topic
 WEND	WHILE	alias	alias of WHILE

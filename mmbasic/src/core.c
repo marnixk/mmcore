@@ -2905,6 +2905,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("BITMAP")] = mmb_cmd_bitmap;
 		tab[mmb_kw_id("GUI")] = tok_cmd_gui;
 		tab[mmb_kw_id("PACKAGE")] = mmb_cmd_package;
+		tab[mmb_kw_id("UNPACK")] = mmb_cmd_unpack;
 		tab[mmb_kw_id("CHDIR")] = mmb_cmd_chdir;
 		tab[mmb_kw_id("DRIVE")] = mmb_cmd_drive;
 		tab[mmb_kw_id("MKDIR")] = mmb_cmd_mkdir;
@@ -3445,6 +3446,11 @@ static void exec_statement(void)
 	if (mmb_match("PACKAGE"))
 	{
 		mmb_cmd_package();
+		return;
+	}
+	if (mmb_match("UNPACK"))
+	{
+		mmb_cmd_unpack();
 		return;
 	}
 	if (mmb_match("CHDIR"))

@@ -136,6 +136,112 @@ static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 	return 0;
 }
 
+typedef struct mmb_unpack_ctx {
+	int err; /* 0 none, 1 generic, 2 file exists */
+} mmb_unpack_ctx;
+
+static int unpack_mkdirs(const char *rel)
+{
+	char buf[160];
+	char *p;
+	strncpy(buf, rel, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = 0;
+	p = buf;
+	while (*p)
+	{
+		if (*p == '/')
+		{
+			*p = 0;
+			if (buf[0] && !mmb_vfs_isdir(buf) && mmb_vfs_mkdir(buf) != 0)
+			{
+				*p = '/';
+				return -1;
+			}
+			*p = '/';
+		}
+		p++;
+	}
+	return 0;
+}
+
+static int unpack_add_file(const char *path, const void *data, unsigned n, void *ctx)
+{
+	mmb_unpack_ctx *u = (mmb_unpack_ctx *)ctx;
+	char rel[160];
+
+	strncpy(rel, path, sizeof(rel) - 1);
+	rel[sizeof(rel) - 1] = 0;
+	if (!mmb_zip_path_ok(rel) || unpack_mkdirs(rel) != 0)
+	{
+		u->err = 1;
+		return -1;
+	}
+	if (n == 0 && !data)
+	{
+		if (!mmb_vfs_isdir(rel) && mmb_vfs_mkdir(rel) != 0)
+		{
+			u->err = 1;
+			return -1;
+		}
+		return 0;
+	}
+	if (mmb_vfs_exists(rel) && !mmb_vfs_isdir(rel))
+	{
+		if (G.running)
+		{
+			u->err = 2;
+			return -1;
+		}
+		if (!confirm_overwrite())
+			return 0;
+	}
+	if (mmb_vfs_write(rel, data, n, 0) != 0)
+	{
+		u->err = 1;
+		return -1;
+	}
+	return 0;
+}
+
+void mmb_cmd_unpack(void)
+{
+	char arc[128];
+	unsigned char *zip;
+	unsigned got = 0;
+	int sz;
+	mmb_unpack_ctx ctx;
+	mmb_val v;
+
+	v = mmb_expr();
+	if (v.type != T_STR)
+		mmb_syntax();
+	strncpy(arc, v.s, sizeof(arc) - 1);
+	arc[sizeof(arc) - 1] = 0;
+	if (!arc[0])
+		mmb_error("?FILE NOT FOUND");
+	sz = mmb_vfs_size(arc);
+	if (sz < 0)
+		mmb_error("?FILE NOT FOUND");
+	if ((unsigned)sz > MMB_ZIP_MAX_BYTES)
+		mmb_error("?UNPACK");
+	zip = G.plat->alloc((unsigned)sz + 1);
+	if (!zip)
+		mmb_error("?OUT OF MEMORY");
+	if (mmb_vfs_read(arc, zip, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(zip);
+		mmb_error("?FILE NOT FOUND");
+	}
+	ctx.err = 0;
+	if (mmb_zip_foreach(zip, got, unpack_add_file, &ctx) != 0)
+	{
+		int e = ctx.err;
+		G.plat->free(zip);
+		mmb_error(e == 2 ? "?FILE EXISTS" : "?UNPACK");
+	}
+	G.plat->free(zip);
+}
+
 void mmb_cmd_package(void)
 {
 	char pkg[128], folder[128], dest_full[128];
