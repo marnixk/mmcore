@@ -313,11 +313,43 @@ static int member_index_off(const mmb_smem *m, int nidx, const int *idx)
 	return off * esz;
 }
 
+int mmb_decode_part(const char *s, int len, char *name, int *nidx, int *idx)
+{
+	int i = 0, n = 0;
+	*nidx = 0;
+	while (i < len && s[i] && s[i] != '(')
+		name[n++] = s[i++];
+	name[n] = 0;
+	if (i >= len || s[i] != '(')
+		return 0;
+	i++;
+	while (i < len && s[i] && s[i] != ')')
+	{
+		int sign = 1, v = 0;
+		while (i < len && s[i] == ' ')
+			i++;
+		if (i < len && s[i] == '-')
+		{
+			sign = -1;
+			i++;
+		}
+		while (i < len && s[i] >= '0' && s[i] <= '9')
+			v = v * 10 + (s[i++] - '0');
+		if (*nidx < MMB_MAX_DIMS)
+			idx[(*nidx)++] = sign * v;
+		while (i < len && s[i] == ' ')
+			i++;
+		if (i < len && s[i] == ',')
+			i++;
+	}
+	return 1;
+}
+
 int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx)
 {
-	char buf[MMB_MAX_NAME], part[MMB_MAX_NAME];
+	char buf[MMB_MAX_NAME], part[MMB_MAX_NAME], mname[MMB_MAX_NAME];
 	const char *p;
-	int sid, nest = 0, n, mi, moff;
+	int sid, nest = 0, mi, moff;
 	const mmb_sdef *d;
 	const mmb_smem *m;
 	if (!v || v->type != T_STRUCT)
@@ -340,34 +372,49 @@ int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx)
 	}
 	while (*p)
 	{
-		n = 0;
-		while (*p && *p != '.' && n < MMB_MAX_NAME - 1)
-			part[n++] = *p++;
-		part[n] = 0;
+		int plen = 0, mnidx = 0, midx[MMB_MAX_DIMS], last;
+		while (*p && *p != '.' && plen < MMB_MAX_NAME - 1)
+			part[plen++] = *p++;
+		part[plen] = 0;
 		if (*p == '.')
 			p++;
+		last = (*p == 0);
+		mmb_decode_part(part, plen, mname, &mnidx, midx);
 		if (sid < 0 || sid >= G.nstruct)
 			return 0;
 		d = &G.sdef[sid];
-		mi = find_member(d, part);
+		mi = find_member(d, mname);
 		if (mi < 0)
 			return 0;
 		m = &d->mem[mi];
 		moff += m->offset;
-		if (*p)
+		if (!last)
 		{
 			if (m->type != T_STRUCT)
 				return 0;
 			if (++nest > MMB_MAX_STRUCT_NEST)
 				mmb_error("?NESTING");
 			if (m->dims)
-				moff += member_index_off(m, 0, 0);
+			{
+				if (!mnidx)
+					mmb_error("?ARRAY");
+				moff += member_index_off(m, mnidx, midx);
+			}
+			else if (mnidx)
+				mmb_error("?NOT AN ARRAY");
 			sid = m->size;
 			continue;
 		}
 		if (m->dims)
-			moff += member_index_off(m, nidx, idx);
-		else if (nidx)
+		{
+			if (nidx)
+				moff += member_index_off(m, nidx, idx);
+			else if (mnidx)
+				moff += member_index_off(m, mnidx, midx);
+			else
+				mmb_error("?ARRAY");
+		}
+		else if (nidx || mnidx)
 			mmb_error("?NOT AN ARRAY");
 		G.acc_on = 1;
 		G.acc_sid = v->struct_idx;

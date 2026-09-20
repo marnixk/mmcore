@@ -292,6 +292,65 @@ def test_cmm2_dotted_name_without_type(console):
     assert console.send_line("PRINT glove.pos.x(0)") == "130"
 
 
+def test_nested_type_array_member_subscript(console):
+    _prog(
+        console,
+        [
+            "TYPE Row",
+            "vals(3) AS INTEGER",
+            "END TYPE",
+            "TYPE Game",
+            "rows(2) AS Row",
+            "END TYPE",
+            "DIM state AS Game",
+            "state.rows(1).vals(2) = 42",
+            "PRINT state.rows(1).vals(2)",
+        ],
+    )
+    assert console.send_line("RUN") == "42"
+
+
+def test_nested_type_struct_array_member_field(console):
+    _prog(
+        console,
+        [
+            "TYPE Row",
+            "n AS INTEGER",
+            "END TYPE",
+            "TYPE Board",
+            "rows(2) AS Row",
+            "grid(2,3) AS Row",
+            "END TYPE",
+            "DIM b AS Board",
+            "b.rows(1).n = 66",
+            "b.grid(2,3).n = 55",
+            "PRINT b.rows(1).n; b.grid(2,3).n",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "66" in out
+    assert "55" in out
+
+
+def test_nested_type_two_level_array(console):
+    _prog(
+        console,
+        [
+            "TYPE Cell",
+            "cols(3) AS INTEGER",
+            "END TYPE",
+            "TYPE Grid",
+            "rows(2) AS Cell",
+            "END TYPE",
+            "DIM g(3) AS Grid",
+            "g(2).rows(1).cols(3) = 7",
+            "PRINT g(2).rows(1).cols(3)",
+        ],
+    )
+    assert console.send_line("RUN") == "7"
+
+
+
 def test_list_type_after_run(console):
     _prog(
         console,

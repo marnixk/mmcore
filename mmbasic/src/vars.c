@@ -228,8 +228,8 @@ int mmb_elem_off(mmb_var *v, int nidx, const int *idx)
 		return 0;
 	if (G.acc_on)
 	{
-		if (nidx && v->dims == nidx)
-			return offset_of(v, idx);
+		if (G.acc_base_nidx && v->dims == G.acc_base_nidx)
+			return offset_of(v, G.acc_base_idx);
 		return 0;
 	}
 	if (nidx)
@@ -296,8 +296,8 @@ void mmb_bind_struct_var(const char *name, int sid)
 static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
 {
 	char *dot;
-	char base[MMB_MAX_NAME];
-	int bl;
+	char base[MMB_MAX_NAME], bname[MMB_MAX_NAME];
+	int bl, bnidx = 0, bidx[MMB_MAX_DIMS], i, embedded, ok;
 	mmb_var *sv;
 	if (G.nstruct <= 0)
 		return 0;
@@ -309,26 +309,39 @@ static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
 		return 0;
 	memcpy(base, nbuf, (unsigned)bl);
 	base[bl] = 0;
-	sv = mmb_lookup_struct_var(base);
+	embedded = mmb_decode_part(base, bl, bname, &bnidx, bidx);
+	sv = mmb_lookup_struct_var(bname);
 	if (!sv)
 		return 0;
-	if (sv->dims == nidx)
+	G.acc_base_nidx = 0;
+	ok = 0;
+	if (embedded)
 	{
-		if (mmb_struct_resolve(sv, dot + 1, 0, 0))
-		{
-			if (idx && nidx == 0)
-				*idx = 0;
-			return sv;
-		}
+		if (sv->dims == 0)
+			mmb_error("?NOT AN ARRAY");
+		if (sv->dims != bnidx)
+			mmb_error("?SUBSCRIPT");
+		G.acc_base_nidx = bnidx;
+		for (i = 0; i < bnidx; i++)
+			G.acc_base_idx[i] = bidx[i];
+		ok = mmb_struct_resolve(sv, dot + 1, nidx, idx);
 	}
-	if (sv->dims == 0)
+	else if (sv->dims == nidx)
 	{
-		if (mmb_struct_resolve(sv, dot + 1, nidx, idx))
-		{
-			if (idx && nidx == 0)
-				*idx = 0;
-			return sv;
-		}
+		G.acc_base_nidx = nidx;
+		for (i = 0; i < nidx; i++)
+			G.acc_base_idx[i] = idx ? idx[i] : 0;
+		ok = mmb_struct_resolve(sv, dot + 1, 0, 0);
+	}
+	else if (sv->dims == 0)
+	{
+		ok = mmb_struct_resolve(sv, dot + 1, nidx, idx);
+	}
+	if (ok)
+	{
+		if (idx && nidx == 0)
+			*idx = 0;
+		return sv;
 	}
 	mmb_error("?UNKNOWN");
 	return 0;
@@ -349,6 +362,8 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	sv = try_struct_path(nbuf, nidx, idx);
 	if (sv)
 		return sv;
+	if (strchr(nbuf, '('))
+		mmb_error("?UNKNOWN");
 	t = mmb_type_suffix(nbuf);
 	typed_lookup = (type != 0) || t;
 	if (t)
@@ -1053,54 +1068,134 @@ mmb_val mmb_load_var(mmb_var *v, int off)
 
 void mmb_assign_from_parse(void); /* defined in expr.c via parse of LET / implied LET */
 
-int mmb_parse_var_ref(char *name, int *nidx, int *idx)
+static int ref_name_char(char c)
 {
-	int t;
-	mmb_ident(name, MMB_MAX_NAME);
-	t = mmb_type_suffix(name);
-	*nidx = 0;
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+	       (c >= '0' && c <= '9') || c == '_';
+}
+
+static int parse_ref_seg(char *out, int outsz)
+{
+	int n = 0;
 	mmb_skip_sp();
-	if (*G.p == '(')
+	if (mmb_tok_expand(out, outsz))
 	{
-		G.p++;
+		n = (int)strlen(out);
+		if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+			out[n++] = *G.p++;
+		out[n] = 0;
+		return 1;
+	}
+	if (!((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') ||
+	      *G.p == '_'))
+		return 0;
+	while (ref_name_char(*G.p) && n < outsz - 2)
+	{
+		char c = *G.p++;
+		if (c >= 'a' && c <= 'z')
+			c = (char)(c - 32);
+		out[n++] = c;
+	}
+	if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+		out[n++] = *G.p++;
+	out[n] = 0;
+	return 1;
+}
+
+static void parse_ref_indices(int *nidx, int *idx)
+{
+	G.p++;
+	do
+	{
+		mmb_val v;
+		if (*nidx >= MMB_MAX_DIMS)
+			mmb_syntax();
+		v = mmb_expr();
+		idx[*nidx] = (int)mmb_as_int(v);
+		(*nidx)++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		else
+			break;
+	} while (1);
+	mmb_expect(')');
+}
+
+static void ref_append(char *name, int *nl, const char *s)
+{
+	int n = (int)strlen(s);
+	if (*nl + n >= MMB_MAX_NAME)
+		mmb_error("?SYNTAX ERROR");
+	memcpy(name + *nl, s, (unsigned)n);
+	*nl += n;
+	name[*nl] = 0;
+}
+
+static void ref_append_idx(char *name, int *nl, const int *idx, int nidx)
+{
+	char part[MMB_MAX_DIMS * 13 + 4];
+	int k = 0, i;
+	part[k++] = '(';
+	for (i = 0; i < nidx; i++)
+	{
+		char tmp[16];
+		int m = 0, neg = 0;
+		int v = idx[i];
+		if (v < 0)
+		{
+			neg = 1;
+			v = -v;
+		}
 		do
 		{
-			mmb_val v;
-			if (*nidx >= MMB_MAX_DIMS)
-				mmb_syntax();
-			v = mmb_expr();
-			idx[*nidx] = (int)mmb_as_int(v);
-			(*nidx)++;
-			mmb_skip_sp();
-			if (*G.p == ',')
-				G.p++;
-			else
-				break;
-		} while (1);
-		mmb_expect(')');
+			tmp[m++] = (char)('0' + v % 10);
+			v /= 10;
+		} while (v);
+		if (neg)
+			part[k++] = '-';
+		while (m)
+			part[k++] = tmp[--m];
+		if (i + 1 < nidx)
+			part[k++] = ',';
 	}
-	mmb_skip_sp();
-	if (*G.p == '.')
+	part[k++] = ')';
+	part[k] = 0;
+	ref_append(name, nl, part);
+}
+
+int mmb_parse_var_ref(char *name, int *nidx, int *idx)
+{
+	int t = 0, nl = 0;
+	name[0] = 0;
+	*nidx = 0;
+	for (;;)
 	{
-		int nl = (int)strlen(name);
-		while (*G.p == '.')
+		char seg[MMB_MAX_NAME];
+		int snidx = 0, sidx[MMB_MAX_DIMS], i;
+		if (!parse_ref_seg(seg, sizeof(seg)))
+			mmb_syntax();
+		t = mmb_type_suffix(seg);
+		mmb_skip_sp();
+		while (*G.p == '(')
 		{
-			char part[MMB_MAX_NAME];
-			int pn;
-			if (nl >= MMB_MAX_NAME - 2)
-				mmb_error("?SYNTAX ERROR");
-			name[nl++] = '.';
-			name[nl] = 0;
-			G.p++;
-			mmb_ident(part, sizeof(part));
-			mmb_type_suffix(part);
-			pn = (int)strlen(part);
-			if (nl + pn >= MMB_MAX_NAME)
-				mmb_error("?SYNTAX ERROR");
-			memcpy(name + nl, part, (unsigned)pn + 1);
-			nl += pn;
+			parse_ref_indices(&snidx, sidx);
 			mmb_skip_sp();
 		}
+		if (*G.p == '.')
+		{
+			ref_append(name, &nl, seg);
+			if (snidx)
+				ref_append_idx(name, &nl, sidx, snidx);
+			ref_append(name, &nl, ".");
+			G.p++;
+			continue;
+		}
+		ref_append(name, &nl, seg);
+		*nidx = snidx;
+		for (i = 0; i < snidx; i++)
+			idx[i] = sidx[i];
+		break;
 	}
 	return t;
 }
