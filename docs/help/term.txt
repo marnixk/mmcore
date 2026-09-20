@@ -50,12 +50,23 @@ Alt/menu is active). The status bar (Alt-X, Echo, host) is shown only while
 that menu is open. Echo ON backspace only erases characters typed since the
 last newline.
 
-Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Exit. Bookmarks persist in
-C:/.termconfig (A: if no SD). New/Edit/Delete/Connect; Alt+S saves, Alt+C
-cancels. Connect drops the current session and applies the bookmark host, port,
-echo, letterbox, and optional 80x25 mode (MODE 2 640x400, full pane, no
-letterbox, NAWS 80x25). The status bar is shown only while that menu is open,
-so 80x25 uses all 25 rows for the terminal.
+Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Download folder, Exit.
+Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
+Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
+bookmark host, port, echo, letterbox, and optional 80x25 mode (MODE 2 640x400,
+full pane, no letterbox, NAWS 80x25). The status bar is shown only while that
+menu is open, so 80x25 uses all 25 rows for the terminal.
+
+ZMODEM downloads are automatic: when a BBS starts a ZMODEM send, TERM sees the
+ZRQINIT header (ZPAD ZPAD ZDLE) and receives the file into the download folder.
+The folder defaults to the current drive/folder; Download folder opens a
+directory browser (Use/Up/Cancel) and stores the choice as download_dir in
+C:/.termconfig. Received names are stripped to a basename and a collision is
+saved as NAME-1.EXT rather than overwriting. CRC-16 and CRC-32, ZDLE escaping,
+ZCRCW/ZCRCQ/ZCRCG/ZCRCE subpackets, ZNAK/ZRPOS retries, and ZFIN cleanup are
+handled; a failed or cancelled transfer deletes its partial file. A progress
+line shows on the status row while a file is arriving. Press Esc to abort a
+transfer, or Alt-X to abort and leave TERM. Uploads are not implemented.
 
 Esc is sent to the host; press Esc twice or wait briefly to flush a lone Esc.
 USB Backspace (DEL) is sent as BS.

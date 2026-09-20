@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "mmb_zmodem.h"
 #include "net_rxbuf.h"
 #include <string.h>
 
@@ -53,6 +54,14 @@
 #define TM_DLG_LIST     1
 #define TM_DLG_EDIT     2
 #define TM_DLG_DEL      3
+#define TM_DLG_DL       4
+#define TM_DL_VIEW      11
+#define TM_DL_USE       0
+#define TM_DL_UP        1
+#define TM_DL_CANCEL    2
+#define TM_DL_LIST      3
+#define TM_DL_DIRS      48
+#define TM_MENU_ITEMS   5
 #define TM_BTN_NEW      0
 #define TM_BTN_EDIT     1
 #define TM_BTN_DEL      2
@@ -231,6 +240,28 @@ static int g_bm_n;
 static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
 static unsigned char s_iac_out[64];
 static int s_iac_n;
+
+/* ZMODEM downloads.  g_dl_dir persists in C:/.termconfig. */
+static mmb_zm_rx ZM;
+static int zm_ready;
+static unsigned zm_shift;
+static char zm_shown[80];
+static char g_dl_dir[96];
+static char g_dl_last_name[MMB_ZM_MAX_NAME];
+static int g_dl_last_files;
+static char g_dl_cur[128];
+static char g_dl_names[TM_DL_DIRS][64];
+static int g_dl_n;
+static int g_dl_sel;
+static int g_dl_top;
+static int g_dl_focus;
+
+static void term_dl_open(void);
+static void term_dl_draw(void);
+static void term_dl_serial(void);
+static int term_dl_key(char c);
+static void term_dl_arrow(int c);
+static void zmodem_draw_status(void);
 
 static const mmb_ed_theme *term_th(void)
 {
@@ -847,7 +878,7 @@ static void term_draw_status(void)
 static void term_draw_menu(void)
 {
 	int x0, y0, w, i, n, L, drop_h, bar_w;
-	const char *items[4];
+	const char *items[TM_MENU_ITEMS];
 	char echo[16];
 	unsigned brd = TM_DLG_FG;
 	unsigned title_fg, title_bg;
@@ -858,8 +889,9 @@ static void term_draw_menu(void)
 	items[0] = "Bookmarks";
 	items[1] = echo;
 	items[2] = term_width_label();
-	items[3] = "Exit";
-	n = 4;
+	items[3] = "Download folder";
+	items[4] = "Exit";
+	n = TM_MENU_ITEMS;
 	w = 10;
 	for (i = 0; i < n; i++)
 	{
@@ -1118,6 +1150,10 @@ static void term_exit(void)
 {
 	int bits;
 
+	if (mmb_zm_active(&ZM))
+		mmb_zm_cancel(&ZM);
+	mmb_zm_forget(&ZM);
+	zm_shift = 0;
 	term_log_flush();
 	mmb_net_tcp_close();
 	T.tcp = 0;
@@ -1506,8 +1542,8 @@ static void term_menu_move(int dir)
 {
 	T.menu_sel += dir;
 	if (T.menu_sel < 0)
-		T.menu_sel = 3;
-	if (T.menu_sel > 3)
+		T.menu_sel = TM_MENU_ITEMS - 1;
+	if (T.menu_sel > TM_MENU_ITEMS - 1)
 		T.menu_sel = 0;
 	term_overlay_chrome();
 }
@@ -1807,6 +1843,12 @@ static void term_bm_save(void)
 		bm_append_int(buf, sizeof(buf), g_bm[i].mode80x25 ? 1 : 0);
 		bm_append(buf, sizeof(buf), "\n");
 	}
+	if (g_dl_dir[0])
+	{
+		bm_append(buf, sizeof(buf), "\ndownload_dir=");
+		bm_append(buf, sizeof(buf), g_dl_dir);
+		bm_append(buf, sizeof(buf), "\n");
+	}
 	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
 }
 
@@ -1881,6 +1923,25 @@ static void term_bm_load(void)
 			}
 			else
 				cur = -1;
+			p = nl;
+			continue;
+		}
+		if (cur < 0)
+		{
+			char *eq = p;
+			while (*eq && *eq != '=')
+				eq++;
+			if (*eq == '=')
+			{
+				*eq++ = 0;
+				bm_trim(p);
+				bm_trim(eq);
+				if (mmb_keyword_eq(p, "download_dir"))
+				{
+					strncpy(g_dl_dir, eq, sizeof(g_dl_dir) - 1);
+					g_dl_dir[sizeof(g_dl_dir) - 1] = 0;
+				}
+			}
 			p = nl;
 			continue;
 		}
@@ -2123,6 +2184,8 @@ static void term_draw_dlg(void)
 		term_draw_dlg_edit();
 	else if (T.dlg == TM_DLG_DEL)
 		term_draw_dlg_del();
+	else if (T.dlg == TM_DLG_DL)
+		term_dl_draw();
 }
 
 static void term_serial_dump_dlg(void)
@@ -2177,7 +2240,10 @@ static void term_serial_dump_dlg(void)
 		}
 		ser("Yes\r\n");
 		ser("No\r\n");
+		return;
 	}
+	if (T.dlg == TM_DLG_DL)
+		term_dl_serial();
 }
 
 static void term_bm_open_list(void)
@@ -2458,6 +2524,8 @@ static void term_dlg_list_activate(void)
 
 static int term_dlg_key(char c)
 {
+	if (T.dlg == TM_DLG_DL)
+		return term_dl_key(c);
 	if (T.dlg == TM_DLG_LIST)
 	{
 		if (c == '\r' || c == '\n')
@@ -2551,6 +2619,11 @@ static int term_dlg_key(char c)
 
 static void term_dlg_arrow(int c)
 {
+	if (T.dlg == TM_DLG_DL)
+	{
+		term_dl_arrow(c);
+		return;
+	}
 	if (T.dlg == TM_DLG_LIST)
 	{
 		if (c == 'A' && g_bm_n > 0)
@@ -2631,6 +2704,11 @@ static void term_menu_activate(void)
 	if (T.menu_sel == 2)
 	{
 		term_toggle_letterbox();
+		return;
+	}
+	if (T.menu_sel == 3)
+	{
+		term_dl_open();
 		return;
 	}
 	term_exit();
@@ -3348,6 +3426,547 @@ static void term_rx_consume(unsigned n)
 	}
 }
 
+/*
+ * ZMODEM downloads: auto-detected receive-only transfers.
+ *
+ * The engine (mmbasic/src/zmodem.c) is transport agnostic; this glue stores
+ * files in the configured download folder, auto-renaming collisions, and
+ * reports progress on the status row and over serial.
+ */
+static char zm_cur_path[128];
+
+static void zm_join(const char *dir, const char *base, char *out, unsigned outsz)
+{
+	unsigned i = 0, j;
+	unsigned n = (unsigned)strlen(dir);
+
+	for (j = 0; j < n && i + 1 < outsz; j++)
+		out[i++] = dir[j];
+	if (n > 0 && dir[n - 1] != '/' && i + 1 < outsz)
+		out[i++] = '/';
+	for (j = 0; base[j] && i + 1 < outsz; j++)
+		out[i++] = base[j];
+	out[i] = 0;
+}
+
+static void zm_base(const char *name, char *out, unsigned outsz)
+{
+	const char *base = name ? name : "";
+	unsigned i, n = 0;
+
+	for (i = 0; base[i]; i++)
+		if (base[i] == '/' || base[i] == '\\')
+			base = base + i + 1;
+	for (i = 0; base[i] && n + 1 < outsz; i++)
+	{
+		unsigned char c = (unsigned char)base[i];
+		if (c < 32 || c == 0x7F)
+			continue;
+		if (strchr("*?\"<>|:", (int)c))
+			continue;
+		out[n++] = (char)c;
+	}
+	out[n] = 0;
+	if (!n)
+	{
+		strncpy(out, "DOWNLOAD.BIN", outsz - 1);
+		out[outsz - 1] = 0;
+	}
+}
+
+static void zm_pick_name(const char *base, char *out, unsigned outsz)
+{
+	const char *dir = g_dl_dir[0] ? g_dl_dir : mmb_vfs_cwd();
+	char cand[160];
+	const char *dot = 0;
+	int i, j;
+
+	zm_join(dir, base, cand, sizeof(cand));
+	if (!mmb_vfs_exists(cand))
+	{
+		strncpy(out, cand, outsz - 1);
+		out[outsz - 1] = 0;
+		return;
+	}
+	for (i = 0; base[i]; i++)
+		if (base[i] == '.')
+			dot = base + i;
+	for (j = 1; j < 100; j++)
+	{
+		char nb[160];
+
+		nb[0] = 0;
+		if (dot && dot != base)
+		{
+			unsigned k, n = (unsigned)(dot - base);
+			if (n > sizeof(nb) - 20)
+				n = sizeof(nb) - 20;
+			for (k = 0; k < n; k++)
+				nb[k] = base[k];
+			nb[n] = 0;
+			bm_append(nb, sizeof(nb), "-");
+			bm_append_int(nb, sizeof(nb), j);
+			bm_append(nb, sizeof(nb), dot);
+		}
+		else
+		{
+			bm_append(nb, sizeof(nb), base);
+			bm_append(nb, sizeof(nb), "-");
+			bm_append_int(nb, sizeof(nb), j);
+		}
+		zm_join(dir, nb, cand, sizeof(cand));
+		if (!mmb_vfs_exists(cand))
+			break;
+	}
+	strncpy(out, cand, outsz - 1);
+	out[outsz - 1] = 0;
+}
+
+static int zm_open_cb(void *ctx, const char *name, unsigned size)
+{
+	char base[80], path[160];
+
+	(void)ctx;
+	(void)size;
+	zm_base(name, base, sizeof(base));
+	zm_pick_name(base, path, sizeof(path));
+	if (mmb_vfs_write(path, "", 0, 0) != 0)
+		return -1;
+	strncpy(zm_cur_path, path, sizeof(zm_cur_path) - 1);
+	zm_cur_path[sizeof(zm_cur_path) - 1] = 0;
+	return 0;
+}
+
+static int zm_write_cb(void *ctx, const unsigned char *data, unsigned n)
+{
+	(void)ctx;
+	if (!zm_cur_path[0])
+		return -1;
+	return mmb_vfs_write(zm_cur_path, data, n, 1) == 0 ? 0 : -1;
+}
+
+static void zm_close_cb(void *ctx, int ok)
+{
+	(void)ctx;
+	if (!ok && zm_cur_path[0])
+		mmb_vfs_kill(zm_cur_path);
+	zm_cur_path[0] = 0;
+}
+
+static int zm_send_cb(void *ctx, const unsigned char *data, unsigned n)
+{
+	(void)ctx;
+	term_log_tx(data, (int)n);
+	term_net_send_raw(data, n);
+	return 0;
+}
+
+static mmb_zm_ops zm_ops;
+
+static void zm_setup(void)
+{
+	if (zm_ready)
+		return;
+	zm_ops.ctx = 0;
+	zm_ops.open = zm_open_cb;
+	zm_ops.write = zm_write_cb;
+	zm_ops.close = zm_close_cb;
+	zm_ops.send = zm_send_cb;
+	mmb_zm_init(&ZM, &zm_ops);
+	zm_ready = 1;
+}
+
+/* Rolling `ZPAD ZPAD ZDLE` detector: false positives are cheap because a
+ * session without a valid ZRQINIT fails on the first bad header. */
+static int zmodem_scan(unsigned char b)
+{
+	zm_shift = (zm_shift << 8) | b;
+	return (zm_shift & 0xFFFFFFu) == 0x2A2A18u;
+}
+
+static void zmodem_draw_status(void)
+{
+	char line[80];
+	char pct[16];
+	const char *nm = mmb_zm_name(&ZM);
+	unsigned total = 0, got = 0;
+	int y = term_status_y(), n, x;
+	unsigned fg = TM_MENU_FG, bg = TM_MENU_BG;
+
+	line[0] = 0;
+	if (ZM.state == MMB_ZM_ACTIVE)
+	{
+		got = mmb_zm_progress(&ZM, &total);
+		bm_append(line, sizeof(line), "ZMODEM ");
+		bm_append(line, sizeof(line), (nm && nm[0]) ? nm : "waiting");
+		if (total > 0)
+		{
+			pct[0] = 0;
+			bm_append(pct, sizeof(pct), " ");
+			bm_append_int(pct, sizeof(pct),
+				      (int)((unsigned long)got * 100u / total));
+			bm_append(pct, sizeof(pct), "%");
+			bm_append(line, sizeof(line), pct);
+		}
+	}
+	else
+	{
+		strncpy(line, mmb_zm_status(&ZM), sizeof(line) - 1);
+		line[sizeof(line) - 1] = 0;
+	}
+	if (strcmp(line, zm_shown) == 0)
+		return;
+	strncpy(zm_shown, line, sizeof(zm_shown) - 1);
+	zm_shown[sizeof(zm_shown) - 1] = 0;
+	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	n = (int)strlen(line);
+	if (n > T.vid_cols)
+		n = T.vid_cols;
+	x = (T.vid_cols - n) * TM_CW;
+	term_put_str_bg(x, y, line, fg, bg);
+	term_present_async_rect(0, y, T.vid_cols * TM_CW, TM_CH);
+}
+
+static void zmodem_start(void)
+{
+	zm_setup();
+	mmb_zm_begin(&ZM);
+	g_dl_last_name[0] = 0;
+	g_dl_last_files = 0;
+	zm_cur_path[0] = 0;
+	zm_shown[0] = 0;
+	/* The detector already consumed ZPAD ZPAD ZDLE; hand them back so the
+	 * engine sees a complete frame prefix. */
+	{
+		static const unsigned char pre[3] = { 0x2A, 0x2A, 0x18 };
+		mmb_zm_feed(&ZM, pre, 3, mmb_now_ms());
+	}
+}
+
+static void zmodem_pump(void)
+{
+	unsigned char buf[256];
+	unsigned n, now;
+
+	if (!mmb_zm_active(&ZM))
+		return;
+	now = mmb_now_ms();
+	while (mmb_net_rxbuf_used(&term_rx) > 0)
+	{
+		n = mmb_net_rxbuf_pop(&term_rx, buf, sizeof(buf));
+		if (!n)
+			break;
+		T.parsed_n += n;
+		term_log_rx(buf, (int)n);
+		mmb_zm_feed(&ZM, buf, n, now);
+		if (!mmb_zm_active(&ZM))
+			break;
+		mmb_net_yield();
+	}
+	mmb_zm_tick(&ZM, now);
+}
+
+static void zmodem_finished(void)
+{
+	int st = ZM.state;
+	const char *nm = mmb_zm_name(&ZM);
+	char line[128];
+
+	line[0] = 0;
+	if (st == MMB_ZM_DONE)
+	{
+		bm_append(line, sizeof(line), "ZMODEM complete: ");
+		bm_append(line, sizeof(line), nm);
+		ser("!ZMODEM done\r\n");
+	}
+	else if (st == MMB_ZM_CANCELLED)
+	{
+		strncpy(line, "ZMODEM cancelled", sizeof(line) - 1);
+		ser("!ZMODEM cancelled\r\n");
+	}
+	else
+	{
+		strncpy(line, "ZMODEM failed", sizeof(line) - 1);
+		ser("!ZMODEM failed\r\n");
+	}
+	term_log_event(line);
+	pane_puts(line);
+	pane_newline();
+	mmb_zm_forget(&ZM);
+	zm_shift = 0;
+	mark_dirty_full();
+	term_draw();
+	term_serial_dump();
+}
+
+static void zmodem_poll(void)
+{
+	int got;
+
+	if (T.tcp && !T.replay && !T.file_replay)
+	{
+		got = term_tcp_drain(TM_RECV_IDLE);
+		if (got < 0)
+			return;
+	}
+	zmodem_pump();
+	if (!mmb_zm_active(&ZM))
+	{
+		zmodem_finished();
+		return;
+	}
+	zmodem_draw_status();
+	mmb_net_yield();
+}
+
+/* ---- download folder browser dialog ---------------------------------- */
+
+static int term_dl_root(const char *dir)
+{
+	int n = (int)strlen(dir);
+	return n >= 2 && n <= 3 && dir[1] == ':';
+}
+
+static void term_dl_scan(void)
+{
+	char list[2048];
+	char *p;
+
+	g_dl_n = 0;
+	if (!g_dl_cur[0])
+	{
+		strncpy(g_dl_cur, mmb_vfs_cwd(), sizeof(g_dl_cur) - 1);
+		g_dl_cur[sizeof(g_dl_cur) - 1] = 0;
+	}
+	if (!term_dl_root(g_dl_cur))
+	{
+		strncpy(g_dl_names[g_dl_n], "..", sizeof(g_dl_names[0]) - 1);
+		g_dl_n++;
+	}
+	list[0] = 0;
+	if (mmb_vfs_list(g_dl_cur, list, sizeof(list)) == 0)
+	{
+		p = list;
+		while (*p && g_dl_n < TM_DL_DIRS)
+		{
+			char name[64];
+			int m = 0;
+			while (*p && *p != '\n' && *p != '\r' &&
+			       m < (int)sizeof(name) - 1)
+				name[m++] = *p++;
+			name[m] = 0;
+			while (*p == '\r' || *p == '\n')
+				p++;
+			if (m > 0 && name[m - 1] == '/' && name[0] &&
+			    name[0] != '.')
+			{
+				name[m - 1] = 0;
+				strncpy(g_dl_names[g_dl_n], name,
+					sizeof(g_dl_names[0]) - 1);
+				g_dl_names[g_dl_n][sizeof(g_dl_names[0]) - 1] = 0;
+				g_dl_n++;
+			}
+		}
+	}
+	if (g_dl_sel >= g_dl_n && g_dl_n > 0)
+		g_dl_sel = g_dl_n - 1;
+	if (g_dl_sel < 0)
+		g_dl_sel = 0;
+	g_dl_top = 0;
+}
+
+static void term_dl_use(void)
+{
+	char full[128];
+
+	full[0] = 0;
+	if (mmb_vfs_resolve(g_dl_cur, full, sizeof(full)) != 0)
+	{
+		strncpy(full, g_dl_cur, sizeof(full) - 1);
+		full[sizeof(full) - 1] = 0;
+	}
+	if (!mmb_vfs_isdir(full))
+		return;
+	strncpy(g_dl_dir, full, sizeof(g_dl_dir) - 1);
+	g_dl_dir[sizeof(g_dl_dir) - 1] = 0;
+	term_bm_save();
+	T.dlg = TM_DLG_NONE;
+	term_ui_refresh();
+}
+
+static void term_dl_up(void)
+{
+	int n = (int)strlen(g_dl_cur);
+	int i, slash = -1;
+
+	for (i = 0; i < n; i++)
+		if (g_dl_cur[i] == '/')
+			slash = i;
+	if (slash > 2)
+		g_dl_cur[slash] = 0;
+	if (g_dl_cur[0] && g_dl_cur[1] == ':' && g_dl_cur[2] == 0)
+	{
+		g_dl_cur[2] = '/';
+		g_dl_cur[3] = 0;
+	}
+	g_dl_sel = 0;
+	term_dl_scan();
+	term_dlg_refresh();
+}
+
+static void term_dl_enter(void)
+{
+	if (g_dl_focus == TM_DL_USE)
+	{
+		term_dl_use();
+		return;
+	}
+	if (g_dl_focus == TM_DL_UP)
+	{
+		term_dl_up();
+		return;
+	}
+	if (g_dl_focus == TM_DL_CANCEL)
+	{
+		T.dlg = TM_DLG_NONE;
+		term_ui_refresh();
+		return;
+	}
+	if (g_dl_n <= 0)
+		return;
+	if (strcmp(g_dl_names[g_dl_sel], "..") == 0)
+	{
+		term_dl_up();
+		return;
+	}
+	{
+		char next[128], full[128];
+
+		zm_join(g_dl_cur, g_dl_names[g_dl_sel], next, sizeof(next));
+		full[0] = 0;
+		if (mmb_vfs_resolve(next, full, sizeof(full)) != 0 ||
+		    !mmb_vfs_isdir(full))
+		{
+			strncpy(full, next, sizeof(full) - 1);
+			full[sizeof(full) - 1] = 0;
+		}
+		strncpy(g_dl_cur, full, sizeof(g_dl_cur) - 1);
+		g_dl_cur[sizeof(g_dl_cur) - 1] = 0;
+	}
+	g_dl_sel = 0;
+	term_dl_scan();
+	term_dlg_refresh();
+}
+
+static void term_dl_draw(void)
+{
+	int i, ch = 18;
+
+	term_dlg_frame(60, ch, " Download folder ");
+	dlg_text_at(2, 2, g_dl_cur, 0);
+	if (g_dl_sel < g_dl_top)
+		g_dl_top = g_dl_sel;
+	if (g_dl_sel >= g_dl_top + TM_DL_VIEW)
+		g_dl_top = g_dl_sel - TM_DL_VIEW + 1;
+	if (g_dl_top < 0)
+		g_dl_top = 0;
+	for (i = 0; i < TM_DL_VIEW; i++)
+	{
+		int idx = g_dl_top + i;
+		if (idx >= g_dl_n)
+			break;
+		dlg_field(2, 4 + i, 56, g_dl_names[idx],
+			  g_dl_focus == TM_DL_LIST && idx == g_dl_sel);
+	}
+	dlg_btn(2, ch - 2, "Use", g_dl_focus == TM_DL_USE);
+	dlg_btn(10, ch - 2, "Up", g_dl_focus == TM_DL_UP);
+	dlg_btn(18, ch - 2, "Cancel", g_dl_focus == TM_DL_CANCEL);
+}
+
+static void term_dl_serial(void)
+{
+	int i;
+
+	ser("Download folder\r\n");
+	ser(g_dl_cur);
+	ser("\r\n");
+	for (i = 0; i < g_dl_n && i < 8; i++)
+	{
+		ser(g_dl_names[i]);
+		ser("\r\n");
+	}
+	ser("Use\r\nUp\r\nCancel\r\n");
+}
+
+static int term_dl_key(char c)
+{
+	if (c == '\r' || c == '\n')
+	{
+		term_dl_enter();
+		return 1;
+	}
+	if (c == '\t')
+	{
+		g_dl_focus = (g_dl_focus + 1) % 4;
+		term_dlg_refresh();
+		return 1;
+	}
+	return 1;
+}
+
+static void term_dl_arrow(int c)
+{
+	if (g_dl_focus == TM_DL_LIST)
+	{
+		if (c == 'A' && g_dl_n > 0)
+		{
+			g_dl_sel--;
+			if (g_dl_sel < 0)
+				g_dl_sel = g_dl_n - 1;
+		}
+		else if (c == 'B' && g_dl_n > 0)
+		{
+			g_dl_sel++;
+			if (g_dl_sel >= g_dl_n)
+				g_dl_sel = 0;
+		}
+		else if (c == 'C')
+			g_dl_focus = TM_DL_USE;
+		else if (c == 'D')
+			g_dl_focus = TM_DL_CANCEL;
+	}
+	else
+	{
+		if (c == 'A' || c == 'D')
+			g_dl_focus = (g_dl_focus + 3) % 4;
+		else if (c == 'B' || c == 'C')
+			g_dl_focus = (g_dl_focus + 1) % 4;
+	}
+	term_dlg_refresh();
+}
+
+static void term_dl_open(void)
+{
+	term_bm_load();
+	if (!g_dl_dir[0])
+	{
+		strncpy(g_dl_dir, mmb_vfs_cwd(), sizeof(g_dl_dir) - 1);
+		g_dl_dir[sizeof(g_dl_dir) - 1] = 0;
+	}
+	g_dl_cur[0] = 0;
+	if (mmb_vfs_resolve(g_dl_dir, g_dl_cur, sizeof(g_dl_cur)) != 0)
+	{
+		strncpy(g_dl_cur, mmb_vfs_cwd(), sizeof(g_dl_cur) - 1);
+		g_dl_cur[sizeof(g_dl_cur) - 1] = 0;
+	}
+	T.menu = 0;
+	T.dlg = TM_DLG_DL;
+	g_dl_sel = 0;
+	g_dl_focus = TM_DL_LIST;
+	term_dl_scan();
+	term_ui_refresh();
+}
+
 static int term_tcp_drain(int idle_max)
 {
 	static unsigned char buf[TM_RECV_BUF];
@@ -3405,8 +4024,15 @@ static int term_tcp_ingest(int idle_max)
 	got = term_tcp_drain(idle_max);
 	if (got < 0)
 		return -1;
+	if (mmb_zm_active(&ZM))
+	{
+		zmodem_pump();
+		return got;
+	}
 	if (got || mmb_net_rxbuf_used(&term_rx))
 		term_rx_interpret();
+	if (mmb_zm_active(&ZM))
+		zmodem_pump();
 	iac_flush();
 	return got;
 }
@@ -3438,6 +4064,11 @@ static int term_rx_interpret(void)
 {
 	int got = 0;
 
+	if (mmb_zm_active(&ZM))
+	{
+		zmodem_pump();
+		return 0;
+	}
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	while (mmb_net_rxbuf_used(&term_rx) > 0)
@@ -3445,6 +4076,13 @@ static int term_rx_interpret(void)
 		unsigned char b = mmb_net_rxbuf_at(&term_rx, 0);
 		unsigned avail = mmb_net_rxbuf_used(&term_rx);
 
+		if (zmodem_scan(b))
+		{
+			term_rx_consume(1);
+			zmodem_start();
+			zmodem_pump();
+			return got;
+		}
 		sb_watchdog();
 		ansi_watchdog();
 		if (T.sb || T.iac)
@@ -3513,8 +4151,19 @@ static int term_rx_interpret(void)
 
 static void incoming_feed(const unsigned char *src, int n)
 {
+	unsigned now;
+
 	if (!src || n <= 0)
 		return;
+	if (mmb_zm_active(&ZM))
+	{
+		now = mmb_now_ms();
+		T.parsed_n += (unsigned)n;
+		term_log_rx(src, n);
+		mmb_zm_feed(&ZM, src, (unsigned)n, now);
+		mmb_zm_tick(&ZM, now);
+		return;
+	}
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	while (n > 0)
@@ -4045,6 +4694,10 @@ void mmb_cmd_term(void)
 
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
+	zm_setup();
+	mmb_zm_forget(&ZM);
+	zm_shift = 0;
+	term_bm_load();
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
@@ -4195,6 +4848,31 @@ const char *mmb_term_key(char c)
 		if (T.need_draw)
 			term_draw();
 		replay_mon();
+		return "";
+	}
+	if (mmb_zm_active(&ZM))
+	{
+		/* A transfer owns the connection: keystrokes are not forwarded.
+		 * Esc aborts the download, Alt-X aborts and exits. */
+		if ((unsigned char)c == 1)
+		{
+			T.alt = 1;
+			T.alt_pend = 1;
+			return "";
+		}
+		if (T.alt)
+		{
+			T.alt = 0;
+			T.alt_pend = 0;
+			if (c >= 'A' && c <= 'Z')
+				c = (char)(c - 'A' + 'a');
+			mmb_zm_cancel(&ZM);
+			if (c == 'x')
+				term_exit();
+			return "";
+		}
+		if (c == 27 || c == 'x' || c == 'X')
+			mmb_zm_cancel(&ZM);
 		return "";
 	}
 	if ((unsigned char)c != 1)
@@ -4387,6 +5065,16 @@ void mmb_term_poll(void)
 	if (!T.active)
 		return;
 	term_log_poll();
+	if (mmb_zm_active(&ZM))
+	{
+		zmodem_poll();
+		return;
+	}
+	if (ZM.state != MMB_ZM_IDLE)
+	{
+		zmodem_finished();
+		return;
+	}
 	if (T.esc == 1 && T.esc_at &&
 	    mmb_now_ms() - T.esc_at >= TM_ESC_IDLE_MS)
 	{
