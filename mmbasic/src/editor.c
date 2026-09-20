@@ -434,7 +434,7 @@ static int csi_semi;
 #define CHARS_N      128
 #define CHARS_COLS   16
 #define CHARS_ROWS   (CHARS_N / CHARS_COLS)
-#define CHARS_HOLD_MS 1500
+#define CHARS_HOLD_MS 750
 
 static int chars_sel;
 static int chars_armed;
