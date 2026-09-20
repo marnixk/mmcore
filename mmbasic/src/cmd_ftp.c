@@ -665,6 +665,30 @@ static void ftp_cmd_retr(const char *arg)
 	ftp_ser("\r\n");
 }
 
+/* STOR/APPE clients commonly send a full local path (tnftp uses it verbatim
+ * when no remote name is given), and MMBasic's VFS does not create parent
+ * folders on write. Create any missing folders so the upload lands at the
+ * path the client asked for instead of failing with a misleading 552. */
+static int ftp_make_parent(const char *canon)
+{
+	char dir[FTP_PATH_MAX];
+	const char *s, *slash = 0;
+	int n;
+	for (s = canon; *s; s++)
+		if (*s == '/')
+			slash = s;
+	if (!slash)
+		return 0;
+	n = (int)(slash - canon);
+	if (n <= 0 || (n == 2 && canon[1] == ':'))
+		return 0;	/* volume root: nothing to create */
+	memcpy(dir, canon, (unsigned)n);
+	dir[n] = 0;
+	if (mmb_vfs_isdir(dir))
+		return 0;
+	return mmb_vfs_mkdir(dir);
+}
+
 static void ftp_cmd_stor(const char *arg, int append)
 {
 	char canon[FTP_PATH_MAX];
@@ -676,6 +700,11 @@ static void ftp_cmd_stor(const char *arg, int append)
 	if (ftp_resolve(arg, canon, sizeof(canon)) != 0 || mmb_vfs_isdir(canon))
 	{
 		ftp_put_num(550, "Invalid path");
+		return;
+	}
+	if (ftp_make_parent(canon) != 0)
+	{
+		ftp_put_num(550, "Cannot create directory");
 		return;
 	}
 	if (!append && mmb_vfs_write(canon, "", 0, 0) != 0)

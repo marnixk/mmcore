@@ -147,11 +147,19 @@ def test_files_ftp_roundtrip(ftp_console):
 
     ftp.storbinary("STOR UPLOAD.TXT", io.BytesIO(b"uploaded!"))
     assert "UPLOAD.TXT" in [n.upper() for n in ftp.nlst()]
+
+    # Clients such as tnftp send the full local path as the remote name, so a
+    # STOR can carry folders that do not exist yet. The server must create them
+    # rather than fail with 552 (#ftp-stor-parents).
+    ftp.storbinary("STOR sub/dir/NESTED.TXT", io.BytesIO(b"nested!"))
+    nested = [n.upper() for n in ftp.nlst("sub/dir")]
+    assert any("NESTED.TXT" in n for n in nested), nested
     ftp.quit()
 
     transfers = _wait_serial(con, "[FTP] STOR", timeout=5)
     assert "[FTP] RETR HELLO.TXT" in transfers, transfers[-400:]
     assert "[FTP] STOR UPLOAD.TXT" in transfers, transfers[-400:]
+    assert "[FTP] STOR NESTED.TXT" in transfers, transfers[-400:]
 
     con._ser.sendall(b"\x1b")
     stopped = _wait_serial(con, "[FTP] STOP")
