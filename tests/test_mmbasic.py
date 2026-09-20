@@ -184,6 +184,30 @@ def test_box_fill_and_rbox(fresh_console):
     assert fresh_console.send_line("TRIANGLE 10,80,40,80,25,50,RGB(255,255,0)") == ""
 
 
+def _rgb_components(c, cmd):
+    v = int(c.send_line(cmd))
+    return (v >> 16) & 255, (v >> 8) & 255, v & 255
+
+
+def test_rbox_colour_fill_uses_fill_not_line_width(fresh_console):
+    """RBOX x,y,w,h,r,colour,fill must not read the fill colour as lw.
+
+    The fill is RGB(0,255,0) (>7) so a regression would set lw to 16777215
+    and spin in LINE for billions of iterations (an unbreakable hang)."""
+    c = fresh_console
+    c.send_line("CLS")
+    assert c.send_line("RBOX 80,20,40,40,6,RGB(255,0,0),RGB(0,255,0)", timeout=5.0) == ""
+    r, g, b = _rgb_components(c, "PRINT PIXEL(100,40)")
+    assert g > 150 and r < 130 and b < 130, (r, g, b)
+    r, g, b = _rgb_components(c, "PRINT PIXEL(80,40)")
+    assert r > 150 and g < 130 and b < 130, (r, g, b)
+    assert c.send_line("RBOX 200,20,40,40,6,1,RGB(0,255,0),RGB(255,0,0)") == ""
+    r, g, b = _rgb_components(c, "PRINT PIXEL(220,40)")
+    assert g > 150 and r < 130 and b < 130, (r, g, b)
+    r, g, b = _rgb_components(c, "PRINT PIXEL(200,40)")
+    assert r > 150 and g < 130 and b < 130, (r, g, b)
+
+
 def test_files_mkdir_copy_rename(console):
     assert console.send_line('MKDIR "DATA"') == ""
     assert console.send_line('CHDIR "DATA"') == ""
