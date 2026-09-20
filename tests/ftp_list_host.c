@@ -72,6 +72,28 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 	return 0;
 }
 
+/* LIST/NLST/RETR never open a streaming writer. */
+int mmb_vfs_wopen(const char *path, int append)
+{
+	(void)path;
+	(void)append;
+	return -1;
+}
+
+int mmb_vfs_wwrite(int handle, const void *data, unsigned n)
+{
+	(void)handle;
+	(void)data;
+	(void)n;
+	return -1;
+}
+
+int mmb_vfs_wclose(int handle)
+{
+	(void)handle;
+	return -1;
+}
+
 int mmb_vfs_kill(const char *path)
 {
 	(void)path;
