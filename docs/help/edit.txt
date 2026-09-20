@@ -23,6 +23,10 @@ Theme menu (Alt+T): 10 colour schemes. Syntax colours follow the theme.
 Non-VGA themes use custom palettes. Default is Slate. Saved with OPTION EDIT
 THEME and restored next time you open EDIT.
 
+Edit menu (Alt+E): Jump to break controls whether a run BREAK or error moves
+the cursor to the offending line. It is off by default, so the cursor stays
+where it was; the error bar still shows the message. The setting persists.
+
 Keys: F1 keyword HELP  F2 save  F3 open  F4 #include  F9 run  ^S save
       Alt+X quit  ^C copy  ^X cut  ^V paste  ^W close tab
       Alt+Left / Alt+Right switch tabs (no wrap)
@@ -34,8 +38,9 @@ Keys: F1 keyword HELP  F2 save  F3 open  F4 #include  F9 run  ^S save
       Tab inserts 4 spaces; with a selection, Tab indents and Shift+Tab outdents
       Enter copies line indent
       ^P quick open (files under the start folder)
-      ^O outline (SUB/FUNCTION/TYPE in the current file)
-      ^F find in file (Enter/F3 next match; Esc leaves cursor at the match)
+      ^O outline (SUB/FUNCTION/TYPE in the current file; target line is centred)
+      ^F find in file (Enter/F3 next match; opens empty unless text is selected,
+         Esc leaves cursor at the match)
       ^H find and replace (Tab switches fields, Enter replaces, ^Enter all; Esc leaves cursor at the match)
       F1 opens HELP for the word at the cursor (Esc returns)
       F4 opens the #include file on this line (or switches to its tab)

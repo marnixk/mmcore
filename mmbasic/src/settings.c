@@ -219,6 +219,8 @@ static void apply_core(const char *k, const char *v)
 		G.opt.edit_font = parse_int(v);
 	else if (mmb_keyword_eq(k, "edit_theme"))
 		G.opt.edit_theme = parse_int(v);
+	else if (mmb_keyword_eq(k, "edit_jump_break"))
+		G.opt.edit_jump_break = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "y_axis_up"))
 		G.opt.y_axis_up = parse_int(v);
 	else if (mmb_keyword_eq(k, "angle_degrees"))
@@ -334,6 +336,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "baseline", G.opt.baseline);
 	kv_int(buf, sizeof(buf), "edit_font", G.opt.edit_font);
 	kv_int(buf, sizeof(buf), "edit_theme", G.opt.edit_theme);
+	kv_int(buf, sizeof(buf), "edit_jump_break", G.opt.edit_jump_break);
 	kv_int(buf, sizeof(buf), "y_axis_up", G.opt.y_axis_up);
 	kv_int(buf, sizeof(buf), "angle_degrees", G.opt.angle_degrees);
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
