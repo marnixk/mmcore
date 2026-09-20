@@ -189,6 +189,41 @@ def test_files_view_seeded_png_smoke(fresh_console):
     assert con.send_line("PRINT MM.VRES") == "720"
 
 
+def test_files_preview_shows_name_size_and_arrows(fresh_console):
+    """Preview captions the file and Left/Right walk the folder's images."""
+    con = fresh_console
+    _prep_tree(con)
+    assert con.send_line('CHDIR "A:/tests"') == ""
+    seen = _open_files(con)
+    for _ in range(16):
+        if "SEL=TEST.PNG" in seen:
+            break
+        seen = _keys(con, b"\x1b[B", quiet=0.25)
+    assert "SEL=TEST.PNG" in seen
+    seen = _keys(con, b"v", quiet=1.2)
+    assert "PREVIEW TEST.PNG 8x8 MODE 5" in seen
+    # The caption is drawn over the image at the top of the 240x216 preview.
+    assert con.screen_size() == (240, 216)
+    band = [
+        con.screen_pixel(x, y)
+        for x in range(4, 112, 4)
+        for y in range(4, 20, 4)
+    ]
+    assert any(r > 150 and g > 150 and b > 150 for r, g, b in band), band
+    # Right -> next image, Left -> previous. Order is TEST.JPG, TEST.PNG, TESTZ.PNG.
+    seen = _keys(con, b"\x1b[C", quiet=0.9)
+    assert "PREVIEW TESTZ.PNG 8x8 MODE 5" in seen
+    seen = _keys(con, b"\x1b[D", quiet=0.9)
+    assert "PREVIEW TEST.PNG 8x8 MODE 5" in seen
+    seen = _keys(con, b"\x1b[D", quiet=0.9)
+    assert "PREVIEW TEST.JPG 8x8 MODE 5" in seen
+    # Enter returns with the browsed file selected.
+    seen = _keys(con, b"\r", quiet=0.8)
+    assert "SEL=TEST.JPG" in seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT MM.HRES") == "1280"
+
+
 def test_dir_still_lists(console):
     listing = console.send_line('DIR "A:/tests"')
     assert "TEST.PNG" in listing.upper()

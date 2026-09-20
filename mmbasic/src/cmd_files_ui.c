@@ -1091,20 +1091,37 @@ static void preview_restore(void)
 	mmb_gfx_reset_console(1);
 }
 
-static void do_preview(const char *path, const char *name)
+static void preview_banner(const char *name, int w, int h)
+{
+	char line[FU_NAME + 24];
+	char num[12];
+	int scale = G.gfx.font_scale;
+	int bar = 16 + 8;
+
+	if (scale < 1)
+		scale = 1;
+	G.gfx.font_scale = 1; /* captions stay compact whatever FONT set */
+	strncpy(line, name, sizeof(line) - 1);
+	line[sizeof(line) - 1] = 0;
+	strncat(line, "  ", sizeof(line) - strlen(line) - 1);
+	fmt_uint(num, (unsigned)w);
+	strncat(line, num, sizeof(line) - strlen(line) - 1);
+	strncat(line, "x", sizeof(line) - strlen(line) - 1);
+	fmt_uint(num, (unsigned)h);
+	strncat(line, num, sizeof(line) - strlen(line) - 1);
+	mmb_gfx_fill_rect(0, 0, G.gfx.w, bar, 0);
+	mmb_gfx_text(4, 4, line, 0xFFFFFFu);
+	G.gfx.font_scale = scale;
+}
+
+static int preview_show(const char *path, const char *name)
 {
 	int w = 0, h = 0, mode, x, y;
 	char line[128];
 
 	if (!is_img(name) || mmb_img_probe(path, &w, &h) != 0)
-	{
-		show_info_for(path, name);
-		return;
-	}
+		return -1;
 	mode = mmb_gfx_mode_for_size(w, h);
-	F.pv_saved = 1;
-	F.pv_mode = G.gfx.mode;
-	F.pv_bits = G.gfx.bits;
 	if (G.gfx.mode != mode || G.gfx.bits != 32)
 		mmb_gfx_set_mode(mode, 32);
 	mmb_gfx_cls(0);
@@ -1117,20 +1134,15 @@ static void do_preview(const char *path, const char *name)
 	if (mmb_keyword_eq(ext_of(name), ".JPG") || mmb_keyword_eq(ext_of(name), ".JPEG"))
 	{
 		if (mmb_load_jpeg(path, x, y) != 0)
-		{
-			preview_restore();
-			show_info_for(path, name);
-			return;
-		}
+			return -1;
 	}
 	else if (mmb_load_png(path, x, y, 0, 0) != 0)
-	{
-		preview_restore();
-		show_info_for(path, name);
-		return;
-	}
+		return -1;
+	preview_banner(name, w, h);
+	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
+	strncpy(F.info_path, path, sizeof(F.info_path) - 1);
 	F.mode = FU_PREVIEW;
-	set_hint("Image preview  Enter/Esc returns");
+	set_hint("Image preview  arrows browse  Enter/Esc returns");
 	strcpy(line, "[FILES] PREVIEW ");
 	strncat(line, name, 40);
 	strcat(line, " ");
@@ -1141,6 +1153,58 @@ static void do_preview(const char *path, const char *name)
 	fmt_uint(line + strlen(line), (unsigned)mode);
 	strcat(line, "\r\n");
 	ser(line);
+	return 0;
+}
+
+static int img_step(int dir)
+{
+	fu_panel *p = curpan();
+	int i;
+
+	if (p->n <= 0)
+		return -1;
+	for (i = 1; i <= p->n; i++)
+	{
+		int k = p->sel + dir * i;
+		while (k < 0)
+			k += p->n;
+		k %= p->n;
+		if (!p->ent[k].is_dir && !is_dotdot(&p->ent[k]) && is_img(p->ent[k].name))
+			return k;
+	}
+	return -1;
+}
+
+static void preview_step(int dir)
+{
+	int k = img_step(dir);
+	char path[FU_PATH];
+
+	if (k < 0)
+	{
+		set_hint("No other images");
+		return;
+	}
+	curpan()->sel = k;
+	clamp_sel(curpan());
+	sel_path(path, sizeof(path));
+	if (preview_show(path, curpan()->ent[k].name) != 0)
+	{
+		preview_restore();
+		show_info_for(path, curpan()->ent[k].name);
+	}
+}
+
+static void do_preview(const char *path, const char *name)
+{
+	F.pv_mode = G.gfx.mode;
+	F.pv_bits = G.gfx.bits;
+	F.pv_saved = 1;
+	if (preview_show(path, name) != 0)
+	{
+		preview_restore();
+		show_info_for(path, name);
+	}
 }
 
 static void do_play(const char *path, const char *name)
@@ -1650,7 +1714,13 @@ static void handle_arrow(int which)
 		return;
 	}
 	if (F.mode == FU_PREVIEW)
+	{
+		if (which == 2)
+			preview_step(1);
+		else if (which == 3)
+			preview_step(-1);
 		return;
+	}
 	if (F.mode == FU_INFO || F.mode == FU_HELP || F.mode == FU_PLAY)
 	{
 		if (F.mode != FU_PLAY || which == 0)

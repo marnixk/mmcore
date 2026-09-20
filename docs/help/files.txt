@@ -7,8 +7,10 @@ folders. Enter on a directory opens it. Enter on a .BAS file RUNs it. View
 .BAS/.INC/.TXT with colour. Tab switches panes. q or Esc leaves FILES.
 
 An image preview reads the picture size, switches to the smallest graphics
-MODE that fits it, and draws it centred. Press Enter or Esc to return to the
-file manager; the previous MODE is restored.
+MODE that fits it, and draws it centred with the file name and its dimensions
+shown along the top. Left/Right arrows step through the other images in the
+folder. Press Enter or Esc to return to the file manager; the previous MODE is
+restored.
 
 FILES
 
