@@ -16,12 +16,13 @@
 #define ZBIN32 'C'
 #define ZCRCE 'h'
 #define ZCRCG 'i'
+#define ZCRCQ 'j'
 #define ZCRCW 'k'
 #define ZRUB0 'l'
 #define ZRUB1 'm'
 
 enum {
-	ZRQINIT = 0, ZRINIT = 1, ZFILE = 4, ZSKIP = 5, ZNAK = 6,
+	ZRQINIT = 0, ZRINIT = 1, ZACK = 3, ZFILE = 4, ZSKIP = 5, ZNAK = 6,
 	ZFIN = 8, ZRPOS = 9, ZDATA = 10, ZEOF = 11
 };
 
@@ -241,9 +242,13 @@ static int name_subpacket(unsigned char *hdr, const char *name, int len)
 	return hn + ln;
 }
 
-static void send_session(sink *s, mmb_zm_rx *z, const char *name,
-			 const unsigned char *data, int len, int use32,
-			 int corrupt_first)
+/* `mid_end` is the frame-end type for every chunk but the last (which is
+ * ZCRCE): ZCRCG/ZCRCQ keep one frame open, ZCRCW ends the frame so the sender
+ * must emit a fresh ZDATA header for the next one (what Synchronet/lrzsz do
+ * for a full block when the receiver advertises a buffer size). */
+static void send_session2(sink *s, mmb_zm_rx *z, const char *name,
+			  const unsigned char *data, int len, int use32,
+			  int corrupt_first, int mid_end)
 {
 	unsigned char buf[8192];
 	unsigned char hdr[512];
@@ -267,7 +272,7 @@ static void send_session(sink *s, mmb_zm_rx *z, const char *name,
 		chunk = len - off;
 		if (chunk > 256)
 			chunk = 256;
-		end = (off + chunk >= len) ? ZCRCE : ZCRCG;
+		end = (off + chunk >= len) ? ZCRCE : mid_end;
 		if (corrupt_first && first)
 		{
 			unsigned char bad[2048];
@@ -291,7 +296,7 @@ static void send_session(sink *s, mmb_zm_rx *z, const char *name,
 		}
 		else
 		{
-			if (off == 0)
+			if (off == 0 || mid_end == ZCRCW)
 				n += snd_header(buf + n, ZDATA, (unsigned)off,
 						use32);
 			n += snd_data(buf + n, data + off, chunk, end, use32);
@@ -301,6 +306,13 @@ static void send_session(sink *s, mmb_zm_rx *z, const char *name,
 	n += snd_header(buf + n, ZEOF, (unsigned)len, use32);
 	n += snd_header(buf + n, ZFIN, 0, use32);
 	feed(z, buf, n);
+}
+
+static void send_session(sink *s, mmb_zm_rx *z, const char *name,
+			 const unsigned char *data, int len, int use32,
+			 int corrupt_first)
+{
+	send_session2(s, z, name, data, len, use32, corrupt_first, ZCRCG);
 }
 
 static void init_sink(sink *s, mmb_zm_ops *ops, mmb_zm_rx *z)
@@ -398,6 +410,32 @@ int main(void)
 	CHECK(z.state == MMB_ZM_DONE);
 	CHECK(s.close_calls == 0);
 	CHECK(count_type(&s, ZSKIP) >= 1);
+
+	/* 6. multi-frame session where each full block is a ZCRCW frame, the
+	 * way Synchronet/lrzsz send once the receiver advertises a buffer size.
+	 * A ZCRCW ends the frame, so the sender must reopen with a ZDATA header;
+	 * the receiver must ZACK and return to header parsing. */
+	init_sink(&s, &ops, &z);
+	send_session2(&s, &z, "FRAMES.BIN", binary, (int)sizeof(binary), 1, 0,
+		      ZCRCW);
+	CHECK(z.state == MMB_ZM_DONE);
+	CHECK(s.file_n == sizeof(binary));
+	CHECK(memcmp(s.file, binary, sizeof(binary)) == 0);
+	CHECK(z.files == 1);
+	CHECK(count_type(&s, ZACK) >= 2);
+	CHECK(count_type(&s, ZNAK) == 0);
+
+	/* 7. same shape with ZCRCQ, which does continue the frame (ZACK, no
+	 * new ZDATA header). */
+	init_sink(&s, &ops, &z);
+	send_session2(&s, &z, "QCRCQ.BIN", binary, (int)sizeof(binary), 1, 0,
+		      ZCRCQ);
+	CHECK(z.state == MMB_ZM_DONE);
+	CHECK(s.file_n == sizeof(binary));
+	CHECK(memcmp(s.file, binary, sizeof(binary)) == 0);
+	CHECK(z.files == 1);
+	CHECK(count_type(&s, ZACK) >= 1);
+	CHECK(count_type(&s, ZNAK) == 0);
 
 	if (failures == 0)
 		printf("all checks passed\n");

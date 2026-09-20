@@ -462,10 +462,17 @@ static void accept_sub(mmb_zm_rx *z)
 		}
 		if (end == ZCRCG)
 			z->ps = PS_SUB;
-		else if (end == ZCRCQ || end == ZCRCW)
+		else if (end == ZCRCQ)
 		{
+			/* Frame continues; ZACK the offset and stay in the frame. */
 			reply_pos(z, ZACK, z->got);
 			z->ps = PS_SUB;
+		}
+		else if (end == ZCRCW)
+		{
+			/* Frame ends; ZACK it and return to header parsing. */
+			reply_pos(z, ZACK, z->got);
+			z->ps = PS_HDR;
 		}
 		else /* ZCRCE ends the frame; ZEOF follows */
 			z->ps = PS_HDR;
