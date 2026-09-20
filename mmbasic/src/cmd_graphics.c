@@ -309,29 +309,51 @@ void mmb_cmd_circle(void)
 void mmb_cmd_rbox(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8), used = 0, r = 8, lw = 1, fill = -1;
-	unsigned c;
+	int n = parse_args(a, 8), r = 8, lw = 1, fill = -1;
+	unsigned c = G.gfx.fg;
 	if (n < 4)
 		mmb_syntax();
-	c = colour_from(a, n, &used, G.gfx.fg);
-	if (used)
-		n--;
-	if (n >= 5 && a[4].type)
+	if (n == 5 && is_colour_val(a[4]))
+		c = (unsigned)mmb_as_int(a[4]);
+	else if (n >= 5 && a[4].type)
 		r = (int)mmb_as_int(a[4]);
-	if (n >= 7 && is_colour_val(a[5]) && is_colour_val(a[6]))
+	if (n >= 8)
 	{
-		/* rbox x,y,w,h,r,colour,fill  (linewidth omitted) */
-		c = (unsigned)mmb_as_int(a[5]);
-		fill = (int)mmb_as_int(a[6]);
-		lw = 1;
-	}
-	else
-	{
-		if (n >= 6 && a[5].type)
+		/* RBOX x,y,w,h,r,lw,fill,colour */
+		if (a[5].type)
 			lw = (int)mmb_as_int(a[5]);
-		if (n >= 7 && a[6].type)
+		if (a[6].type)
 			fill = (int)mmb_as_int(a[6]);
+		if (a[7].type)
+			c = (unsigned)mmb_as_int(a[7]);
 	}
+	else if (n == 7)
+	{
+		/* RBOX x,y,w,h,r,colour,fill (CMM2, linewidth omitted)
+		 * or RBOX x,y,w,h,r,lw,fill. */
+		if (is_colour_val(a[5]))
+		{
+			c = (unsigned)mmb_as_int(a[5]);
+			if (a[6].type)
+				fill = (int)mmb_as_int(a[6]);
+		}
+		else
+		{
+			if (a[5].type)
+				lw = (int)mmb_as_int(a[5]);
+			if (a[6].type)
+				fill = (int)mmb_as_int(a[6]);
+		}
+	}
+	else if (n == 6)
+	{
+		if (is_colour_val(a[5]))
+			c = (unsigned)mmb_as_int(a[5]);
+		else if (a[5].type)
+			lw = (int)mmb_as_int(a[5]);
+	}
+	if (lw < 1)
+		lw = 1;
 	mmb_gfx_rbox((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
 		     (int)mmb_as_int(a[2]), (int)mmb_as_int(a[3]), r, c, lw, fill);
 }

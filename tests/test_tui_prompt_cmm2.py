@@ -687,6 +687,7 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
     log_path = os.path.join(ARTIFACTS, "issue274_syntaxshock_run.log")
     with open(log_path, "w") as fh:
         fh.write(out)
+    assert out.rstrip().endswith(">"), out
     up = out.upper()
     assert "?SYNTAX" not in up, out
     assert "?FILE" not in up, out
