@@ -1173,15 +1173,25 @@ def test_editor_run_error_bar_full_and_locates_line(kernel_image):
         err = _keys(con, bytes([18]), quiet=1.5)
         assert "UNDECLARED" in err
         assert "LOG10(0)" in err
-        # The offending line (row 3 of the pane) is selected.
-        marked = _cell_samples(con, 1, 3)
-        assert any(_is_sel_light(p) for p in marked), marked
+        # Jump to break defaults off: the offending line is not selected.
+        quiet = _cell_samples(con, 1, 3)
+        assert not any(_is_sel_light(p) for p in quiet), quiet
         # Error bar background uses the theme error colours (Slate red).
         r, g, b = con.screen_pixel(1100, 720 - 8)
         assert r > g and r > b, (r, g, b)
         # A key dismisses the bar and is consumed (not inserted).
         gone = _keys(con, b"X", quiet=0.5)
         assert "UNDECLARED" not in gone
+        # Enable "Jump to break" in the Edit menu, then re-run: the line is
+        # selected.
+        _keys(con, bytes([1]) + b"e", quiet=0.5)
+        toggled = _keys(con, b"j", quiet=0.5)
+        assert "Jump to break on" in toggled
+        err2 = _keys(con, bytes([18]), quiet=1.5)
+        assert "UNDECLARED" in err2
+        marked = _cell_samples(con, 1, 3)
+        assert any(_is_sel_light(p) for p in marked), marked
+        _keys(con, b"X", quiet=0.5)
         _save(con, quiet=0.4)
         _quit(con)
         assert _read_bas(con, "ERRBAR.BAS") == "PRINT LOG10(0)"
@@ -1829,6 +1839,31 @@ def test_editor_outline_lists_type_definitions(kernel_image):
         con.stop()
 
 
+def test_editor_outline_jump_centers_target(kernel_image):
+    """Ctrl+O targets the middle of the pane, not the last visible row."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "CENT.BAS" FOR OUTPUT AS #1') == ""
+        for i in range(1, 61):
+            body = "SUB Centre" if i == 59 else "REM filler"
+            assert con.send_line(f'PRINT #1, "{body}"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "CENT.BAS")
+        _keys(con, bytes([15]), quiet=0.8)
+        _keys(con, b"centre", quiet=0.6)
+        jumped = _keys(con, b"\r", quiet=0.8)
+        assert "SUB Centre" in jumped
+        assert "59:1" in jumped
+        # Centered: the 40-row pane ends with blank rows past line 60.  The
+        # previous minimal scroll left the pane bottom filled with source.
+        bottom = con.screen_pixels([(c * 8 + 4, 42 * 16 + 8) for c in range(1, 8)])
+        assert all(_is_edit_pane(p) for p in bottom), bottom
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_editor_cr_is_ignored_and_run(kernel_image):
 
     con = MMBasicConsole(kernel_image)
@@ -1910,7 +1945,7 @@ def test_editor_ctrl_f_prefills_selection_and_last_term(kernel_image):
         con.stop()
 
 
-def test_editor_ctrl_f_reuses_last_term(kernel_image):
+def test_editor_ctrl_f_reopens_empty(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -1922,7 +1957,8 @@ def test_editor_ctrl_f_reuses_last_term(kernel_image):
         _keys(con, b"\r", quiet=0.4)
         _keys(con, b"\x1b", quiet=0.6)
         reopened = _keys(con, bytes([6]), quiet=0.5)
-        assert "Find: LO" in reopened
+        assert "Find:" in reopened
+        assert "Find: LO" not in reopened
         _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
     finally:
@@ -1937,6 +1973,7 @@ def test_editor_edit_menu_find_item(kernel_image):
         menu = _keys(con, bytes([1]) + b"e", quiet=0.5)
         assert "Find..." in menu
         assert "Replace..." in menu
+        assert "Jump to break" in menu
         opened = _keys(con, b"f", quiet=0.5)
         assert "Find:" in opened
         _keys(con, b"\x1b", quiet=0.6)

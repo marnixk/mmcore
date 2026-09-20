@@ -164,6 +164,7 @@ typedef struct mmb_options {
 	int repeat_next;
 	int edit_font;         /* 0 small .. 4 very large */
 	int edit_theme;        /* editor colour theme, default Slate */
+	int edit_jump_break;   /* jump to the line on a run break/error */
 	int escape;
 	char search_path[128];
 	char fkey[12][65];     /* F1..F12 */

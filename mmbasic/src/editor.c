@@ -398,7 +398,6 @@ static char find_q[FIND_QMAX];
 static int find_qlen;
 static char find_repl[FIND_QMAX];
 static int find_repllen;
-static char find_last[FIND_QMAX];
 static char repl_last[FIND_QMAX];
 static int find_notfound;
 static char find_msg[48];
@@ -491,8 +490,9 @@ static const char *file_items[] = {
 	"Close tab", "Next tab", "Quit"
 };
 static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
-static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace...", "Undo", "Redo" };
-static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r', 'u', 'e' };
+static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace...", "Undo", "Redo", "Jump to break" };
+static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r', 'u', 'e', 'j' };
+static char edit_jump_label[32];
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
@@ -1572,6 +1572,25 @@ static void ensure_visible(void)
 		t->col0 = 0;
 }
 
+/* Scroll so the cursor line sits near the middle of the text pane. */
+static void center_visible(void)
+{
+	mmb_ed_tab *t = cur_tab();
+	int row, col;
+	if (!t)
+		return;
+	pos_to_rowcol(t->cx, &row, &col);
+	t->row0 = row - TEXT_ROWS / 2;
+	if (t->row0 < 0)
+		t->row0 = 0;
+	if (col < t->col0)
+		t->col0 = col;
+	if (col >= t->col0 + TEXT_COLS)
+		t->col0 = col - TEXT_COLS + 1;
+	if (t->col0 < 0)
+		t->col0 = 0;
+}
+
 /* ---- undo / redo history ---- */
 
 static int h_txn_active;
@@ -2174,8 +2193,9 @@ static void find_open(int replace)
 	}
 	else
 	{
-		ed_copy(find_q, sizeof(find_q), find_last);
-		find_qlen = (int)strlen(find_q);
+		/* Start empty rather than recalling the previous search term. */
+		find_q[0] = 0;
+		find_qlen = 0;
 	}
 	ed_copy(find_repl, sizeof(find_repl), repl_last);
 	find_repllen = (int)strlen(find_repl);
@@ -2228,7 +2248,6 @@ static void find_next(void)
 	int qn, i, m = -1, start;
 	if (!t)
 		return;
-	ed_copy(find_last, sizeof(find_last), find_q);
 	qn = find_qlen;
 	find_notfound = 0;
 	find_msg[0] = 0;
@@ -2555,6 +2574,8 @@ static void errbar_locate(void)
 	int i, found = -1, after = -1;
 	int want_after;
 
+	if (!G.opt.edit_jump_break)
+		return;
 	if (!t || !p)
 		return;
 	p += 2;
@@ -2661,6 +2682,8 @@ static const char **menu_items(int menu, int *n)
 		*n = (int)(sizeof(file_items) / sizeof(file_items[0]));
 		return file_items;
 	case MENU_EDIT:
+		sprintf(edit_jump_label, "Jump to break [%c]", G.opt.edit_jump_break ? 'x' : ' ');
+		edit_items[8] = edit_jump_label;
 		*n = (int)(sizeof(edit_items) / sizeof(edit_items[0]));
 		return edit_items;
 	case MENU_RUN:
@@ -4369,7 +4392,7 @@ static void submit_dialog(void)
 						if (t->cx > t->len)
 							t->cx = t->len;
 						t->sel = 0;
-						ensure_visible();
+						center_visible();
 					}
 				}
 				else if (add_or_switch(pick_path[idx]) < 0)
@@ -4421,6 +4444,8 @@ static void activate_menu(void)
 			cut_selection();
 		else if (item == 2)
 			cut_line();
+		else if (item == 3)
+			paste_kill();
 		else if (item == 4)
 			find_open(0);
 		else if (item == 5)
@@ -4429,8 +4454,12 @@ static void activate_menu(void)
 			hist_undo();
 		else if (item == 7)
 			hist_redo();
-		else
-			paste_kill();
+		else if (item == 8)
+		{
+			G.opt.edit_jump_break = !G.opt.edit_jump_break;
+			mmb_settings_save();
+			set_status(G.opt.edit_jump_break ? "Jump to break on" : "Jump to break off");
+		}
 	}
 	else if (menu == MENU_RUN)
 		editor_run();
