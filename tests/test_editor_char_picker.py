@@ -1,6 +1,6 @@
 """EDIT Ctrl+Alt special-character picker (issue #402).
 
-The picker opens after Ctrl+Alt are held for 1.5s, navigates with the arrow
+The picker opens after Ctrl+Alt are held for 0.75s, navigates with the arrow
 keys, inserts the selected character with Enter, and closes when Ctrl+Alt are
 released. Drive the real USB keyboard (``-device usb-kbd``) through QEMU's QMP
 input layer so modifiers can be held while arrows and Enter are tapped.
