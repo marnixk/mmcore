@@ -58,9 +58,9 @@ def test_dir_sorts_folders_then_files(console):
     _write_text(console, "A:/SORT391/ZETA.TXT")
     _write_text(console, "A:/SORT391/alpha.txt")
     assert _lines(console.send_line('DIR "A:/SORT391"')) == [
-        "SUB/",
-        "alpha.txt",
-        "ZETA.TXT",
+        "SUB/           <DIR>",
+        "alpha.txt          2",
+        "ZETA.TXT           2",
     ]
 
 
@@ -82,10 +82,10 @@ def test_dir_search_recurses_with_paths(console):
     _write_text(console, "A:/SRCH391/alpha.txt")
     _write_text(console, "A:/SRCH391/SUB/DEEP.BAS")
     assert _lines(console.send_line('DIR /S "A:/SRCH391"')) == [
-        "SUB/",
-        "SUB/DEEP.BAS",
-        "alpha.txt",
-        "TOP.BAS",
+        "SUB/              <DIR>",
+        "SUB/DEEP.BAS          2",
+        "alpha.txt             2",
+        "TOP.BAS               2",
     ]
 
 
@@ -96,8 +96,8 @@ def test_dir_search_glob_matches_full_path(console):
     _write_text(console, "A:/GLOB391/SUB/DEEP.BAS")
     _write_text(console, "A:/GLOB391/NOTE.TXT")
     assert _lines(console.send_line('DIR "A:/GLOB391/*.BAS" /S')) == [
-        "SUB/DEEP.BAS",
-        "TOP.BAS",
+        "SUB/DEEP.BAS          2",
+        "TOP.BAS               2",
     ]
 
 

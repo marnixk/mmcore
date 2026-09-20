@@ -3,7 +3,8 @@ kind: command
 alias: LS, LIST FILES
 
 List files in the current directory, or matching an optional path/wildcard.
-For the dual-pane file manager, use ~FILES~.
+Each entry is shown with its size in bytes; folders show <DIR>. For the
+dual-pane file manager, use ~FILES~.
 
 DIR [spec$] [/W] [/S]
 LS
