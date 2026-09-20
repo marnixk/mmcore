@@ -7,6 +7,8 @@ import subprocess
 import threading
 import time
 
+import pytest
+
 from harness import MMBasicConsole, TermReplay
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,6 +67,15 @@ def _crc16(data: bytes) -> int:
     return crc
 
 
+def _crc32(data: bytes) -> int:
+    crc = 0xFFFFFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc >> 1) ^ 0xEDB88320) & 0xFFFFFFFF if (crc & 1) else crc >> 1
+    return crc ^ 0xFFFFFFFF
+
+
 def _hex_header(htype: int, pos: int = 0) -> bytes:
     body = bytes(
         [htype, pos & 0xFF, (pos >> 8) & 0xFF, (pos >> 16) & 0xFF, (pos >> 24) & 0xFF]
@@ -72,6 +83,24 @@ def _hex_header(htype: int, pos: int = 0) -> bytes:
     crc = _crc16(body)
     body += bytes([crc >> 8, crc & 0xFF])
     return b"\x2a\x2a\x18B" + body.hex().encode("ascii") + b"\r\n\x11"
+
+
+def _bin_header(htype: int, pos: int = 0, use32: bool = True) -> bytes:
+    """A ZBIN/ZBIN32 binary header, the way lrzsz ``zsbhdr`` frames it.
+
+    The 32-bit FCS is transmitted least significant byte first (lrzsz
+    ``zsbh32``) which is what tripped up the receiver's byte-order compare.
+    """
+    body = bytes(
+        [htype, pos & 0xFF, (pos >> 8) & 0xFF, (pos >> 16) & 0xFF, (pos >> 24) & 0xFF]
+    )
+    if use32:
+        crc = _crc32(body)
+        body += bytes([crc & 0xFF, (crc >> 8) & 0xFF, (crc >> 16) & 0xFF, crc >> 24])
+        return b"\x2a\x18C" + _escape(body)
+    crc = _crc16(body)
+    body += bytes([crc >> 8, crc & 0xFF])
+    return b"\x2a\x18A" + _escape(body)
 
 
 def _escape(data: bytes) -> bytes:
@@ -90,9 +119,15 @@ def _escape(data: bytes) -> bytes:
     return bytes(out)
 
 
-def _data_subpacket(data: bytes, end: int) -> bytes:
-    crc = _crc16(bytes(data) + bytes([end]))
-    return _escape(data) + bytes([ZDLE, end]) + _escape(bytes([crc >> 8, crc & 0xFF]))
+def _data_subpacket(data: bytes, end: int, use32: bool = False) -> bytes:
+    if use32:
+        crc = _crc32(bytes(data) + bytes([end]))
+        # lrzsz zsda32 writes the FCS least significant byte first.
+        tail = bytes([crc & 0xFF, (crc >> 8) & 0xFF, (crc >> 16) & 0xFF, crc >> 24])
+    else:
+        crc = _crc16(bytes(data) + bytes([end]))
+        tail = bytes([crc >> 8, crc & 0xFF])
+    return _escape(data) + bytes([ZDLE, end]) + _escape(tail)
 
 
 class _HeaderReader:
@@ -140,10 +175,23 @@ class _HeaderReader:
         return None
 
 
-def _zmodem_send(sock: socket.socket, name: str, data: bytes) -> bool:
-    """Minimal ZMODEM sender: hex headers plus CRC-16 data subpackets."""
+def _zmodem_send(sock: socket.socket, name: str, data: bytes,
+                 use32: bool = False) -> bool:
+    """Minimal ZMODEM sender.
+
+    ``use32`` mimics lrzsz once the receiver advertises CANFC32: ZBIN32 binary
+    headers and 32-bit FCS data subpackets, both with the FCS low byte first.
+    """
     reader = _HeaderReader(sock)
     sock.settimeout(0.2)
+
+    def header(htype: int, pos: int = 0) -> bytes:
+        if use32 and htype != ZFIN:
+            return _bin_header(htype, pos, use32=True)
+        return _hex_header(htype, pos)
+
+    def subpacket(payload: bytes, end: int) -> bytes:
+        return _data_subpacket(payload, end, use32=use32)
 
     def send_zrqinit():
         sock.sendall(b"rz\r" + _hex_header(ZRQINIT))
@@ -155,7 +203,7 @@ def _zmodem_send(sock: socket.socket, name: str, data: bytes) -> bool:
     payload = name.encode() + b"\x00" + str(len(data)).encode()
 
     def send_zfile():
-        sock.sendall(_hex_header(ZFILE) + _data_subpacket(payload, ZCRCW))
+        sock.sendall(header(ZFILE) + subpacket(payload, ZCRCW))
 
     send_zfile()
     h = reader.header(timeout=12.0, types={ZRPOS, ZSKIP, ZNAK}, resend=send_zfile)
@@ -164,18 +212,18 @@ def _zmodem_send(sock: socket.socket, name: str, data: bytes) -> bool:
     assert h is not None and h[0] == ZRPOS, f"no ZRPOS: {h}"
     assert h[1] == 0, h
 
-    sock.sendall(_hex_header(ZDATA, 0))
+    sock.sendall(header(ZDATA, 0))
     chunk = 1024
     i = 0
     while i < len(data):
         piece = data[i : i + chunk]
         end = ZCRCE if i + len(piece) >= len(data) else ZCRCG
-        sock.sendall(_data_subpacket(piece, end))
+        sock.sendall(subpacket(piece, end))
         i += len(piece)
     if not data:
-        sock.sendall(_data_subpacket(b"", ZCRCE))
+        sock.sendall(subpacket(b"", ZCRCE))
 
-    sock.sendall(_hex_header(ZEOF, len(data)))
+    sock.sendall(header(ZEOF, len(data)))
     h = reader.header(timeout=12.0, types={ZRINIT, ZRPOS})
     assert h is not None and h[0] == ZRINIT, f"no ZRINIT after ZEOF: {h}"
 
@@ -205,7 +253,8 @@ def _wait_prompt(con: MMBasicConsole, timeout: float = 20.0) -> None:
     return
 
 
-def test_term_zmodem_download(kernel_image):
+@pytest.mark.parametrize("use32", [False, True], ids=["crc16", "crc32"])
+def test_term_zmodem_download(kernel_image, use32):
     """A live ZMODEM sender drives a download through TERM "replay"."""
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -233,7 +282,8 @@ def test_term_zmodem_download(kernel_image):
         pump = threading.Thread(target=pump_loop, daemon=True)
         pump.start()
         conn, _ = srv.accept()
-        assert _zmodem_send(conn, "E2E.TXT", b"zmodem e2e payload\n") is True
+        assert _zmodem_send(conn, "E2E.TXT", b"zmodem e2e payload\n",
+                            use32=use32) is True
         assert _wait_extra(extras, b"!ZMODEM done", timeout=10.0), b"".join(extras)
         stop[0] = True
         pump.join(timeout=2)
