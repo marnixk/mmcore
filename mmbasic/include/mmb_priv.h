@@ -764,6 +764,7 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, in
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
 int mmb_fat_size(int letter, const char *path);
 int mmb_fat_exists(int letter, const char *path);
+int mmb_fat_isdir(int letter, const char *path);
 const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
 void mmb_storage_poll(void);

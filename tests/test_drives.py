@@ -140,12 +140,21 @@ def test_sd_card_is_always_c(kernel_image):
             assert con.send_line('CHDIR "C:"') == ""
             assert con.send_line("PRINT CWD$").upper().startswith("C:")
             assert con.send_line('MKDIR "SUB"') == ""
+            assert con.send_line('OPEN "ROOT.TXT" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "root"') == ""
+            assert con.send_line("CLOSE #1") == ""
             assert con.send_line('CHDIR "SUB"') == ""
             assert con.send_line('OPEN "N.TXT" FOR OUTPUT AS #1') == ""
             assert con.send_line('PRINT #1, "42"') == ""
             assert con.send_line("CLOSE #1") == ""
             listing = con.send_line("DIR")
             assert "N.TXT" in listing
+            # A FAT volume root must count as a directory even though FatFs
+            # f_stat() rejects the root path; recursive DIR from a subfolder
+            # must search the root, not the current folder (#ftp-cwd-root).
+            recursive = con.send_line('DIR /S "C:/"')
+            assert "ROOT.TXT" in recursive.upper()
+            assert "SUB/N.TXT" in recursive.upper()
             assert con.send_line('CHDIR "A:"') == ""
             assert con.send_line("PRINT CWD$").upper().startswith("A:")
         finally:

@@ -302,6 +302,20 @@ int mmb_fat_size(int letter, const char *path)
 	return (int)inf.fsize;
 }
 
+int mmb_fat_isdir(int letter, const char *path)
+{
+	FILINFO inf;
+	char full[160];
+	if (!mmb_fat_ready(letter))
+		return 0;
+	/* FatFs f_stat() rejects the volume root (NS_NONAME -> FR_INVALID_NAME),
+	 * but the root of a mounted volume is always a directory. */
+	if (!path || !path[0] || (path[0] == '/' && path[1] == 0))
+		return 1;
+	make_full(letter, path, full, sizeof full);
+	return f_stat(full, &inf) == FR_OK && (inf.fattrib & AM_DIR);
+}
+
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append)
 {
 	FIL fp;

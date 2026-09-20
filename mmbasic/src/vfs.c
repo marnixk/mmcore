@@ -909,7 +909,7 @@ int mmb_vfs_isdir(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return 0;
-	return mmb_fat_exists(x.letter, x.path) && mmb_fat_size(x.letter, x.path) < 0;
+	return mmb_fat_isdir(x.letter, x.path);
 }
 
 int mmb_vfs_readonly_path(const char *path)
