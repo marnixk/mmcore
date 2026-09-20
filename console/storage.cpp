@@ -1,5 +1,6 @@
 #include "storage.h"
 #include <circle/util.h>
+#include <stdlib.h>
 
 /*
  * FatFs volumes (circle/addon/fatfs):
@@ -337,6 +338,52 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, in
 	}
 	f_close(&fp);
 	return 0;
+}
+
+void *mmb_fat_wopen(int letter, const char *path, int append)
+{
+	FIL *fp;
+	char full[160];
+	BYTE mode;
+	if (!mmb_fat_ready(letter))
+		return 0;
+	fp = (FIL *) malloc(sizeof(FIL));
+	if (!fp)
+		return 0;
+	make_full(letter, path, full, sizeof full);
+	mode = append ? (BYTE)(FA_OPEN_ALWAYS | FA_WRITE) : (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
+	if (f_open(fp, full, mode) != FR_OK)
+	{
+		free(fp);
+		return 0;
+	}
+	if (append)
+		f_lseek(fp, f_size(fp));
+	return fp;
+}
+
+int mmb_fat_wwrite(void *handle, const void *data, unsigned n)
+{
+	FIL *fp = (FIL *)handle;
+	UINT bw = 0;
+	if (!fp)
+		return -1;
+	if (n && f_write(fp, data, n, &bw) != FR_OK)
+		return -1;
+	if (bw != n)
+		return -1;		/* short write (e.g. volume full) */
+	return 0;
+}
+
+int mmb_fat_wclose(void *handle)
+{
+	FIL *fp = (FIL *)handle;
+	FRESULT r;
+	if (!fp)
+		return -1;
+	r = f_close(fp);
+	free(fp);
+	return r == FR_OK ? 0 : -1;
 }
 
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)

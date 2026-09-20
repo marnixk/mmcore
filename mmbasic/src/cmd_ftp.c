@@ -20,6 +20,7 @@
 #define FTP_RECV_CAP  2048
 #define FTP_WAIT_MS   10000
 #define FTP_IDLE_MS   30000
+#define FTP_RX_LOG    8192	/* STOR progress marker interval (bytes) */
 
 #define XF_NONE 0
 #define XF_RETR 1
@@ -54,6 +55,8 @@ typedef struct {
 	char xpath[FTP_PATH_MAX];
 	int xsize;
 	unsigned xoff;
+	unsigned rx_log;           /* last [FTP] RX progress marker */
+	int writer;                /* streaming STOR handle, -1 when unused */
 	char list_buf[FTP_LIST_MAX];
 	int list_len;
 
@@ -308,17 +311,33 @@ static int ftp_open_data(void)
 
 static void ftp_xfer_clear(void)
 {
+	if (FT.writer >= 0)
+	{
+		mmb_vfs_wclose(FT.writer);
+		FT.writer = -1;
+	}
 	FT.xfer = XF_NONE;
 	FT.list_len = 0;
 	FT.xsize = 0;
 	FT.xoff = 0;
+	FT.rx_log = 0;
 	FT.xpath[0] = 0;
 }
 
 static void ftp_xfer_finish(void)
 {
+	int was_stor = FT.xfer == XF_STOR;
+	unsigned done = FT.xoff;
 	ftp_close_data();
 	ftp_put_num(226, "Transfer complete");
+	if (was_stor)
+	{
+		char num[16];
+		fmt_uint(num, done);
+		ftp_ser("[FTP] STOR DONE ");
+		ftp_ser(num);
+		ftp_ser("\r\n");
+	}
 	ftp_xfer_clear();
 	set_status("Client connected");
 }
@@ -344,6 +363,7 @@ static int ftp_xfer_begin(int kind, const char *canon, int size)
 	FT.xpath[sizeof(FT.xpath) - 1] = 0;
 	FT.xsize = size;
 	FT.xoff = 0;
+	FT.rx_log = 0;
 	ftp_put_num(150, "Opening data connection");
 	return 0;
 }
@@ -436,7 +456,8 @@ static void ftp_xfer_poll(void)
 				}
 				break;
 			}
-			if (mmb_vfs_write(FT.xpath, FT.list_buf, (unsigned)n, 1) != 0)
+			if (FT.writer < 0 ||
+			    mmb_vfs_wwrite(FT.writer, FT.list_buf, (unsigned)n) != 0)
 			{
 				ftp_xfer_fail("552 Write failed");
 				return;
@@ -444,6 +465,15 @@ static void ftp_xfer_poll(void)
 			FT.xoff += (unsigned)n;
 			sent += (unsigned)n;
 			FT.xfer_at = mmb_now_ms();
+			if (FT.xoff - FT.rx_log >= FTP_RX_LOG)
+			{
+				char num[16];
+				FT.rx_log = FT.xoff;
+				fmt_uint(num, FT.xoff);
+				ftp_ser("[FTP] RX ");
+				ftp_ser(num);
+				ftp_ser("\r\n");
+			}
 		}
 		if (FT.xfer != XF_NONE)
 			set_status("Receiving file");
@@ -707,13 +737,17 @@ static void ftp_cmd_stor(const char *arg, int append)
 		ftp_put_num(550, "Cannot create directory");
 		return;
 	}
-	if (!append && mmb_vfs_write(canon, "", 0, 0) != 0)
+	FT.writer = mmb_vfs_wopen(canon, append);
+	if (FT.writer < 0)
 	{
 		ftp_put_num(552, "Write failed");
 		return;
 	}
 	if (ftp_xfer_begin(XF_STOR, canon, 0) != 0)
+	{
+		ftp_xfer_clear();	/* closes FT.writer */
 		return;
+	}
 	set_status("Receiving file");
 	ftp_ser("[FTP] STOR ");
 	ftp_ser(base_name(canon));
@@ -1075,6 +1109,7 @@ int mmb_ftp_start(const char *root, int port)
 	FT.data = -1;
 	FT.ctl_lsn = -1;
 	FT.data_lsn = -1;
+	FT.writer = -1;
 	strncpy(FT.root, canon, sizeof(FT.root) - 1);
 	FT.root[sizeof(FT.root) - 1] = 0;
 	if (FT.root[0] && FT.root[strlen(FT.root) - 1] != '/')
@@ -1090,6 +1125,7 @@ int mmb_ftp_start(const char *root, int port)
 	{
 		memset(&FT, 0, sizeof(FT));
 		FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
+		FT.writer = -1;
 		return -1;
 	}
 	FT.running = 1;
@@ -1130,6 +1166,7 @@ void mmb_ftp_stop(void)
 {
 	if (!FT.running)
 		return;
+	ftp_xfer_clear();	/* closes an in-flight STOR writer */
 	ftp_close_data();
 	if (FT.ctl >= 0)
 		mmb_net_srv_close(FT.ctl);
@@ -1137,6 +1174,7 @@ void mmb_ftp_stop(void)
 		mmb_net_srv_listen_close(FT.ctl_lsn);
 	memset(&FT, 0, sizeof(FT));
 	FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
+	FT.writer = -1;
 	FT.running = 0;
 	ftp_ser("[FTP] STOP\r\n");
 }

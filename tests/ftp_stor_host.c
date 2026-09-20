@@ -116,6 +116,60 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 	return 0;
 }
 
+/* Streaming API used by FTP STOR (open once, append chunks, close). */
+static int g_writer_open;
+
+int mmb_vfs_wopen(const char *path, int append)
+{
+	const char *s, *slash = 0;
+	char parent[160];
+	/* Model FatFs: opening a file whose parent folder is missing fails. */
+	for (s = path; *s; s++)
+		if (*s == '/')
+			slash = s;
+	if (slash)
+	{
+		int plen = (int)(slash - path);
+		if (plen == 0)
+			plen = 1;
+		memcpy(parent, path, (unsigned)plen);
+		parent[plen] = 0;
+		if (strcmp(parent, "A:") != 0 && !mmb_vfs_isdir(parent))
+			return -1;
+	}
+	if (!append || g_written_len == 0)
+	{
+		strncpy(g_wpath, path, sizeof(g_wpath) - 1);
+		g_wpath[sizeof(g_wpath) - 1] = 0;
+		if (!append)
+			g_written_len = 0;
+	}
+	g_writer_open = 1;
+	return 0;
+}
+
+int mmb_vfs_wwrite(int handle, const void *data, unsigned n)
+{
+	if (handle < 0 || !g_writer_open)
+		return -1;
+	if (n)
+	{
+		if (g_written_len + (int)n > (int)sizeof(g_written))
+			return -1;
+		memcpy(g_written + g_written_len, data, n);
+		g_written_len += (int)n;
+	}
+	return 0;
+}
+
+int mmb_vfs_wclose(int handle)
+{
+	if (handle < 0 || !g_writer_open)
+		return -1;
+	g_writer_open = 0;
+	return 0;
+}
+
 int mmb_vfs_kill(const char *path)
 {
 	(void)path;
@@ -335,6 +389,21 @@ static int out_has(const char *needle)
 	return strstr(g_out, needle) != 0;
 }
 
+/* Capture the server's serial status markers ([FTP] STOR/RX). */
+static char g_ser[4096];
+static int g_ser_len;
+
+static void test_write_serial(const char *s, unsigned n)
+{
+	if (g_ser_len + (int)n >= (int)sizeof(g_ser))
+		return;
+	memcpy(g_ser + g_ser_len, s, n);
+	g_ser_len += (int)n;
+	g_ser[g_ser_len] = 0;
+}
+
+static mmb_test_plat g_plat = { test_write_serial };
+
 static void reset(void)
 {
 	mmb_ftp_stop();
@@ -350,6 +419,9 @@ static void reset(void)
 	strcpy(g_dirs[0], "A:/");
 	g_written_len = 0;
 	g_wpath[0] = 0;
+	g_ser_len = 0;
+	g_ser[0] = 0;
+	g_writer_open = 0;
 	g_now = 0;
 	g_next_lsn = 0;
 }
@@ -392,6 +464,10 @@ static void run_stor(const char *stor_arg, const char *expect_path,
 	if (g_written_len == payload_len)
 		check(memcmp(g_written, payload, (size_t)payload_len) == 0,
 		      "payload bytes preserved (binary safe)");
+	check(strstr(g_ser, "[FTP] STOR ") != 0, "STOR marker emitted");
+	check(strstr(g_ser, "[FTP] STOR DONE ") != 0, "STOR completion marker emitted");
+	if (payload_len >= 8192)
+		check(strstr(g_ser, "[FTP] RX ") != 0, "STOR progress marker emitted");
 
 	if (expect_parent)
 	{
@@ -408,6 +484,7 @@ static void run_stor(const char *stor_arg, const char *expect_path,
 	{
 		printf("  stor arg : %s\n", stor_arg);
 		printf("  replies  : %s\n", g_out);
+		printf("  serial   : %s\n", g_ser);
 		printf("  wpath    : %s\n", g_wpath);
 		printf("  mkdirs   : %d\n", g_nmkdirs);
 		for (i = 0; i < g_nmkdirs; i++)
@@ -420,6 +497,7 @@ int main(void)
 {
 	static unsigned char payload[13312];
 	int i;
+	G.plat = &g_plat;
 	for (i = 0; i < (int)sizeof(payload); i++)
 		payload[i] = (unsigned char)((i * 37 + 11) & 0xFF);
 	/* Make sure NUL/CR/LF bytes are present, to prove binary safety. */

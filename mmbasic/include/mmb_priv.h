@@ -746,6 +746,12 @@ int mmb_vfs_rename(const char *src, const char *dst);
 int mmb_vfs_list(const char *spec, char *out, int outsz);
 int mmb_glob_match(const char *name, const char *pat);
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append);
+/* Streaming writes: open the target once, append chunks, then close. Avoids a
+ * realloc (A:) or open/seek/write/close cycle (FAT) per received chunk.
+ * Returns a handle >= 0, or -1. Handles are closed on error/abort. */
+int mmb_vfs_wopen(const char *path, int append);
+int mmb_vfs_wwrite(int handle, const void *data, unsigned n);
+int mmb_vfs_wclose(int handle);
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n);
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
 int mmb_vfs_exists(const char *path);
@@ -765,6 +771,10 @@ int mmb_fat_unlink(int letter, const char *path);
 int mmb_fat_rename(int letter, const char *from, const char *to);
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append);
+/* Streaming FAT writes; handle is an opaque open file (see mmb_vfs_wopen). */
+void *mmb_fat_wopen(int letter, const char *path, int append);
+int mmb_fat_wwrite(void *handle, const void *data, unsigned n);
+int mmb_fat_wclose(void *handle);
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
 int mmb_fat_size(int letter, const char *path);
 int mmb_fat_exists(int letter, const char *path);

@@ -627,6 +627,115 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 	return mmb_fat_write(x.letter, x.path, data, n, append);
 }
 
+/* ---- streaming writes ------------------------------------------------- */
+
+typedef struct {
+	int used;
+	int is_ram;
+	int letter;
+	int node;		/* ramdisk node id */
+	void *fat;		/* open FIL (console/storage.cpp) */
+} vfs_writer;
+
+#define VFS_MAX_WRITERS 2
+static vfs_writer writers[VFS_MAX_WRITERS];
+
+/* Like ram_write(), but grows the backing buffer geometrically instead of by
+ * ~one chunk per call, so a many-chunk upload is O(n) rather than O(n^2). */
+static int ram_stream_write(vfs_node *ns, int node, const void *data, unsigned n)
+{
+	unsigned need = ns[node].size + n;
+	if (need + 1 > ns[node].cap)
+	{
+		unsigned cap = ns[node].cap ? ns[node].cap : 64;
+		unsigned char *p;
+		while (cap < need + 1)
+			cap *= 2;
+		p = G.plat->alloc(cap);
+		if (!p)
+			return -1;
+		if (ns[node].size && ns[node].data)
+			memcpy(p, ns[node].data, ns[node].size);
+		if (ns[node].data)
+			G.plat->free(ns[node].data);
+		ns[node].data = p;
+		ns[node].cap = cap;
+	}
+	if (n)
+		memcpy(ns[node].data + ns[node].size, data, n);
+	ns[node].size += n;
+	ns[node].data[ns[node].size] = 0;
+	return 0;
+}
+
+int mmb_vfs_wopen(const char *path, int append)
+{
+	mmb_xpath x;
+	int i;
+	if (split_path(path, &x) != 0)
+		return -1;
+	if (x.letter == 'B')
+		return -1;
+	for (i = 0; i < VFS_MAX_WRITERS; i++)
+		if (!writers[i].used)
+			break;
+	if (i >= VFS_MAX_WRITERS)
+		return -1;
+	memset(&writers[i], 0, sizeof(writers[i]));
+	if (x.letter == 'A')
+	{
+		int node = ram_walk(nodes, VFS_MAX, x.path, 1, 0);
+		if (node < 0 || nodes[node].is_dir)
+			return -1;
+		if (!append)
+		{
+			nodes[node].size = 0;
+			if (nodes[node].data)
+				nodes[node].data[0] = 0;
+		}
+		writers[i].is_ram = 1;
+		writers[i].node = node;
+	}
+	else
+	{
+		void *fp;
+		if (require_drive(x.letter) != 0)
+			return -1;
+		fp = mmb_fat_wopen(x.letter, x.path, append);
+		if (!fp)
+			return -1;
+		writers[i].fat = fp;
+	}
+	writers[i].letter = x.letter;
+	writers[i].used = 1;
+	return i;
+}
+
+int mmb_vfs_wwrite(int handle, const void *data, unsigned n)
+{
+	if (handle < 0 || handle >= VFS_MAX_WRITERS || !writers[handle].used)
+		return -1;
+	if (!n)
+		return 0;
+	if (writers[handle].is_ram)
+		return ram_stream_write(nodes, writers[handle].node, data, n);
+	return mmb_fat_wwrite(writers[handle].fat, data, n);
+}
+
+int mmb_vfs_wclose(int handle)
+{
+	int rc = 0;
+	if (handle < 0 || handle >= VFS_MAX_WRITERS || !writers[handle].used)
+		return -1;
+	writers[handle].used = 0;
+	if (!writers[handle].is_ram)
+	{
+		rc = mmb_fat_wclose(writers[handle].fat);
+		writers[handle].fat = 0;
+	}
+	return rc;
+}
+
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
 	mmb_xpath x;
