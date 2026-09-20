@@ -138,6 +138,32 @@ def test_reassembly_queue_host_behaviour(patched_tree, tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_srv_send_only_frees_rejected_buffer():
+    """CTCPConnection::Send() owns the CNetBuffer once it queues it.
+
+    Freeing it on the success path double-frees the TX queue and halts the
+    kernel (the FTP server 220-then-crash bug). Only the rejected path may
+    delete it.
+    """
+    net = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
+    body = net[net.index("int mmb_net_srv_send(int conn") :]
+    body = body[: body.index("\n}\n")]
+    send = body.index("rc = tl->Send(pb, flags, c->h);")
+    assert "delete pb" not in body[:send]
+    after = body[send:]
+    assert after.index("if (rc < 0)") < after.index("delete pb")
+    assert after.index("delete pb") < after.index("return (int)chunk;")
+    # DONTWAIT skips CTCPConnection's TX threshold, so send must apply its own.
+    assert "bTxReady" in body
+
+
+def test_ftp_xfer_treats_zero_send_as_backpressure():
+    ftp = open(os.path.join(REPO, "mmbasic", "src", "cmd_ftp.c"), encoding="utf-8").read()
+    assert "if (rc == 0)" in ftp
+    assert "peer window full" in ftp
+    assert "FTP_IDLE_MS" in ftp
+
+
 def test_net_cpp_reports_close_reason():
     net = open(os.path.join(REPO, "console", "net.cpp"), encoding="utf-8").read()
     term = open(os.path.join(REPO, "mmbasic", "src", "cmd_term.c"), encoding="utf-8").read()

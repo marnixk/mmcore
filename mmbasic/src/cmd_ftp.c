@@ -19,6 +19,7 @@
 #define FTP_SEND_CAP  2048
 #define FTP_RECV_CAP  2048
 #define FTP_WAIT_MS   10000
+#define FTP_IDLE_MS   30000
 
 #define XF_NONE 0
 #define XF_RETR 1
@@ -160,6 +161,16 @@ static void out_raw(const char *s, int n)
 		return;
 	if (FT.out_n + n > FTP_OUT_MAX)
 		ftp_flush();
+	/* A slow client can leave a partially-sent reply at the front. Compact
+	 * it rather than dropping the new reply on the floor. */
+	if (FT.out_n + n > FTP_OUT_MAX && FT.out_off > 0)
+	{
+		int left = FT.out_n - FT.out_off;
+		if (left > 0)
+			memmove(FT.out, FT.out + FT.out_off, (unsigned)left);
+		FT.out_n = left;
+		FT.out_off = 0;
+	}
 	if (FT.out_n + n > FTP_OUT_MAX)
 		return;
 	memcpy(FT.out + FT.out_n, s, (unsigned)n);
@@ -386,13 +397,16 @@ static void ftp_xfer_poll(void)
 				return;
 			}
 			rc = mmb_net_srv_send(FT.data, FT.list_buf, got);
-			if (rc <= 0)
+			if (rc < 0)
 			{
 				ftp_xfer_fail("426 Connection closed");
 				return;
 			}
+			if (rc == 0)
+				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
+			FT.xfer_at = mmb_now_ms();
 			if ((unsigned)rc < got)
 				return;
 		}
@@ -415,6 +429,11 @@ static void ftp_xfer_poll(void)
 					ftp_xfer_finish();
 					return;
 				}
+				if (mmb_now_ms() - FT.xfer_at > FTP_IDLE_MS)
+				{
+					ftp_xfer_fail("426 Data connection timed out");
+					return;
+				}
 				break;
 			}
 			if (mmb_vfs_write(FT.xpath, FT.list_buf, (unsigned)n, 1) != 0)
@@ -424,6 +443,7 @@ static void ftp_xfer_poll(void)
 			}
 			FT.xoff += (unsigned)n;
 			sent += (unsigned)n;
+			FT.xfer_at = mmb_now_ms();
 		}
 		if (FT.xfer != XF_NONE)
 			set_status("Receiving file");
@@ -438,13 +458,16 @@ static void ftp_xfer_poll(void)
 			if (want > FTP_CHUNK)
 				want = FTP_CHUNK;
 			rc = mmb_net_srv_send(FT.data, FT.list_buf + FT.xoff, want);
-			if (rc <= 0)
+			if (rc < 0)
 			{
 				ftp_xfer_fail("426 Connection closed");
 				return;
 			}
+			if (rc == 0)
+				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
+			FT.xfer_at = mmb_now_ms();
 		}
 		if (FT.xoff >= (unsigned)FT.list_len)
 		{
