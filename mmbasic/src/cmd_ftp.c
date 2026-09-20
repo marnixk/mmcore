@@ -565,15 +565,23 @@ static int ftp_start_list(const char *arg, int names_only)
 		while (*s)
 		{
 			int d = 0, n;
+			char *next;
 			nl = s;
 			while (*nl && *nl != '\n' && *nl != '\r')
 				nl++;
 			n = (int)(nl - s);
+			next = nl;
+			if (*next == '\r')
+				next++;
+			if (*next == '\n')
+				next++;
 			if (n > 0 && s[n - 1] == '/')
 			{
 				s[n - 1] = 0;
 				d = 1;
 			}
+			else if (*nl)
+				*nl = 0;	/* terminate the name at the separator */
 			if (s[0] && !(s[0] == '.' && s[1] == 0))
 			{
 				if (names_only)
@@ -593,11 +601,7 @@ static int ftp_start_list(const char *arg, int names_only)
 					list_line(0, (unsigned)(sz < 0 ? 0 : sz), s);
 				}
 			}
-			s = nl;
-			if (*s == '\r')
-				s++;
-			if (*s == '\n')
-				s++;
+			s = next;
 		}
 	}
 	if (ftp_xfer_begin(names_only ? XF_NLST : XF_LIST, canon, FT.list_len) != 0)
