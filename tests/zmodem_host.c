@@ -159,10 +159,11 @@ static int snd_header(unsigned char *out, int type, unsigned pos, int use32)
 	crc = crc_bytes(body, 5, use32);
 	if (use32)
 	{
-		body[5] = (unsigned char)(crc >> 24);
-		body[6] = (unsigned char)(crc >> 16);
-		body[7] = (unsigned char)(crc >> 8);
-		body[8] = (unsigned char)crc;
+		/* lrzsz zsbh32 sends the 32-bit FCS least significant byte first. */
+		body[5] = (unsigned char)crc;
+		body[6] = (unsigned char)(crc >> 8);
+		body[7] = (unsigned char)(crc >> 16);
+		body[8] = (unsigned char)(crc >> 24);
 	}
 	else
 	{
@@ -210,10 +211,11 @@ static int snd_data(unsigned char *out, const unsigned char *data, int len,
 	out[n++] = (unsigned char)end;
 	if (use32)
 	{
-		n = esc(out, n, (unsigned char)(crc >> 24));
-		n = esc(out, n, (unsigned char)(crc >> 16));
-		n = esc(out, n, (unsigned char)(crc >> 8));
+		/* lrzsz zsda32 sends the 32-bit FCS least significant byte first. */
 		n = esc(out, n, (unsigned char)crc);
+		n = esc(out, n, (unsigned char)(crc >> 8));
+		n = esc(out, n, (unsigned char)(crc >> 16));
+		n = esc(out, n, (unsigned char)(crc >> 24));
 	}
 	else
 	{
@@ -435,6 +437,44 @@ int main(void)
 	CHECK(memcmp(s.file, binary, sizeof(binary)) == 0);
 	CHECK(z.files == 1);
 	CHECK(count_type(&s, ZACK) >= 1);
+	CHECK(count_type(&s, ZNAK) == 0);
+
+	/* 8. byte-for-byte lrzsz capture: ZBIN32 ZFILE whose 32-bit FCS is
+	 * sent least significant byte first, with 0x93 escaped to 18 D3. The
+	 * header data bytes are raw (lrzsz does not escape control bytes
+	 * unless the receiver requests ESCCTL). Regression for the hang where
+	 * the receiver NAKed every ZFILE because it compared the FCS high
+	 * byte first. */
+	init_sink(&s, &ops, &z);
+	{
+		static const unsigned char lrzsz_zfile[] = {
+			0x2A, 0x2A, 0x18, 0x43, 0x04, 0x00, 0x00, 0x02,
+			0x01, 0xC9, 0x03, 0x18, 0xD3, 0x76, 0x61, 0x72,
+			0x61, 0x6B, 0x2D, 0x61, 0x72, 0x74, 0x2E, 0x7A,
+			0x69, 0x70, 0x00, 0x31, 0x38, 0x38, 0x33, 0x37,
+			0x20, 0x31, 0x33, 0x35, 0x37, 0x34, 0x37, 0x33,
+			0x34, 0x37, 0x31, 0x37, 0x20, 0x30, 0x20, 0x30,
+			0x20, 0x31, 0x20, 0x31, 0x38, 0x38, 0x33, 0x37,
+			0x20, 0x30, 0x00, 0x18, 0x6B, 0x2F, 0xC2, 0xE5,
+			0x17, 0x11
+		};
+		mmb_zm_begin(&z);
+		{
+			static const unsigned char zrqinit[] = {
+				0x2A, 0x2A, 0x18, 0x42,
+				'0', '0', '0', '0', '0', '0', '0',
+				'0', '0', '0', '0', '0', '0', '0',
+				'\r', '\n'
+			};
+			feed(&z, zrqinit, (int)sizeof(zrqinit));
+		}
+		feed(&z, lrzsz_zfile, (int)sizeof(lrzsz_zfile));
+	}
+	CHECK(z.state == MMB_ZM_ACTIVE);
+	CHECK(s.open_calls == 1);
+	CHECK(strcmp(s.fname, "arak-art.zip") == 0);
+	CHECK(s.fsize == 18837);
+	CHECK(count_type(&s, ZRPOS) >= 1);
 	CHECK(count_type(&s, ZNAK) == 0);
 
 	if (failures == 0)

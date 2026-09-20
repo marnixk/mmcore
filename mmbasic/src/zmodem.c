@@ -406,10 +406,12 @@ static int sub_crc_ok(mmb_zm_rx *z)
 		memcpy(tmp, z->sub, (unsigned)z->sub_n);
 		tmp[z->sub_n] = (unsigned char)z->sub_end;
 		exp = crc32_bytes(tmp, (unsigned)z->sub_n + 1);
-		return z->crcbuf[0] == (unsigned char)(exp >> 24) &&
-		       z->crcbuf[1] == (unsigned char)(exp >> 16) &&
-		       z->crcbuf[2] == (unsigned char)(exp >> 8) &&
-		       z->crcbuf[3] == (unsigned char)exp;
+		/* The 32-bit FCS goes out least significant byte first (lrzsz
+		 * zsda32); a big-endian compare rejects every real sender. */
+		return z->crcbuf[0] == (unsigned char)exp &&
+		       z->crcbuf[1] == (unsigned char)(exp >> 8) &&
+		       z->crcbuf[2] == (unsigned char)(exp >> 16) &&
+		       z->crcbuf[3] == (unsigned char)(exp >> 24);
 	}
 	exp = crc16_update(crc16_bytes(z->sub, (unsigned)z->sub_n), z->sub_end);
 	return z->crcbuf[0] == (unsigned char)(exp >> 8) &&
@@ -611,11 +613,13 @@ static void parse_byte(mmb_zm_rx *z, int b)
 			{
 				int ok;
 				if (z->hdr32)
+					/* 32-bit FCS is transmitted low byte
+					 * first (lrzsz zsbh32). */
 					ok = crc32_bytes(z->hbody, 5) ==
-					     ((unsigned)z->hbody[5] << 24 |
-					      (unsigned)z->hbody[6] << 16 |
-					      (unsigned)z->hbody[7] << 8 |
-					      z->hbody[8]);
+					     ((unsigned)z->hbody[5] |
+					      (unsigned)z->hbody[6] << 8 |
+					      (unsigned)z->hbody[7] << 16 |
+					      (unsigned)z->hbody[8] << 24);
 				else
 					ok = crc16_bytes(z->hbody, 5) ==
 					     ((unsigned)z->hbody[5] << 8 |
