@@ -1,0 +1,28 @@
+name: UNPACK
+kind: command
+
+Extract every file from a ZIP archive into the current folder. Both ordinary
+.zip files and the .app packages made by ~PACKAGE~ are supported, with stored
+or deflated entries.
+
+UNPACK filename$
+
+  filename$ - archive to extract (e.g. "GAME.ZIP")
+
+Paths inside the archive are applied relative to the current folder, so an
+archive holding only top-level files unpacks those files into the folder you
+are already in; a "GFX/PIC.BMP" entry creates GFX and writes PIC.BMP inside
+it. If a target file already exists at the prompt, File exists, overwrite?
+[Y/n] asks first; from a running program a collision stops with ?FILE EXISTS.
+The archive is read in full before anything is written.
+
+Errors: ?FILE NOT FOUND if filename$ is missing, ?UNPACK if the archive is
+corrupt or uses an unsupported compression method.
+
+Example:
+
+    CHDIR "A:/"
+    MKDIR "SRC"
+    CHDIR "SRC"
+    UNPACK "A:/GAME.ZIP"
+    DIR

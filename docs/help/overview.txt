@@ -86,6 +86,7 @@ File System
     ~COPY~ - copy a file
     ~XFER~ - transfer a file
     ~PACKAGE~ - install packages
+    ~UNPACK~ - extract a ZIP or .app archive
 
 File I/O
 

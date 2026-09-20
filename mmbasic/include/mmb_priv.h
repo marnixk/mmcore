@@ -815,12 +815,15 @@ void mmb_zip_abort(mmb_zip_w *z);
 int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, void *ctx);
 int mmb_zip_path_ok(const char *name);
 unsigned mmb_crc32(const void *data, unsigned n);
+int mmb_inflate(const unsigned char *in, unsigned in_len,
+		unsigned char *out, unsigned out_cap, unsigned *out_len);
 
 int mmb_pkg_mounted(void);
 void mmb_pkg_unmount(void);
 int mmb_pkg_mount(const char *path);
 int mmb_pkg_is_name(const char *path);
 void mmb_cmd_package(void);
+void mmb_cmd_unpack(void);
 
 int mmb_wlan_available(void);
 int mmb_wlan_radio_pending(void);

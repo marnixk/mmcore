@@ -252,23 +252,20 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 	pos = cd_off;
 	for (i = 0; i < nent; i++)
 	{
-		unsigned method, flags, nlen, elen, clen, csz, usz, local, data_off;
+		unsigned method, nlen, elen, clen, csz, usz, crc, local, data_off;
 		char name[128];
-		const unsigned char *data;
 		if (pos + 46 > n)
 			return -1;
 		if (u32le(zip + pos) != 0x02014b50u)
 			return -1;
-		flags = u16le(zip + pos + 8);
 		method = u16le(zip + pos + 10);
+		crc = u32le(zip + pos + 16);
 		csz = u32le(zip + pos + 20);
 		usz = u32le(zip + pos + 24);
 		nlen = u16le(zip + pos + 28);
 		elen = u16le(zip + pos + 30);
 		clen = u16le(zip + pos + 32);
 		local = u32le(zip + pos + 42);
-		if (flags & 8)
-			return -1;
 		if (pos + 46 + nlen + elen + clen > n || nlen >= sizeof(name))
 			return -1;
 		memcpy(name, zip + pos + 46, nlen);
@@ -285,8 +282,6 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 		}
 		if (!mmb_zip_path_ok(name))
 			return -1;
-		if (method != 0)
-			return -1;
 		if (local + 30 > n)
 			return -1;
 		if (u32le(zip + local) != 0x04034b50u)
@@ -296,14 +291,49 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 			unsigned lx = u16le(zip + local + 28);
 			data_off = local + 30 + ln + lx;
 		}
-		if (data_off + csz > n || csz != usz)
+		if (data_off + csz > n)
 			return -1;
 		if (total + usz > MMB_ZIP_MAX_BYTES)
 			return -1;
-		total += usz;
-		data = zip + data_off;
-		if (fn(name, data, usz, ctx) != 0)
+		if (method == 0)
+		{
+			if (csz != usz || mmb_crc32(zip + data_off, usz) != crc)
+				return -1;
+			total += usz;
+			if (fn(name, zip + data_off, usz, ctx) != 0)
+				return -1;
+		}
+		else if (method == 8)
+		{
+			unsigned char *out;
+			unsigned outn = 0;
+			int r;
+			if (usz == 0)
+			{
+				total += 0;
+				if (fn(name, zip + data_off, 0, ctx) != 0)
+					return -1;
+				continue;
+			}
+			out = G.plat->alloc(usz);
+			if (!out)
+				return -1;
+			if (mmb_inflate(zip + data_off, csz, out, usz, &outn) != 0 ||
+			    outn != usz || mmb_crc32(out, outn) != crc)
+			{
+				G.plat->free(out);
+				return -1;
+			}
+			total += outn;
+			r = fn(name, out, outn, ctx);
+			G.plat->free(out);
+			if (r != 0)
+				return -1;
+		}
+		else
+		{
 			return -1;
+		}
 	}
 	return 0;
 }
