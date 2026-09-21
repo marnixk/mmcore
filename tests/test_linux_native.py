@@ -177,6 +177,46 @@ def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
     assert _pixel_at(data, w, 225, 225) == (0, 0, 0)
 
 
+def test_tcp_client_loopback(mmb_linux, tmp_path):
+    """LN-18 (#470): TCP client connect/send/recv over POSIX sockets."""
+    import socket
+    import threading
+    import time
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    got = {}
+
+    def serve():
+        conn, _ = srv.accept()
+        got["req"] = conn.recv(64)
+        conn.sendall(b"PONG\n")
+        time.sleep(0.2)
+        conn.close()
+        srv.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    program = (
+        'OPEN "TCP:127.0.0.1:%d" AS #1\n'
+        "PAUSE 200\n"
+        'PRINT #1,"PING"\n'
+        "PAUSE 200\n"
+        "LINE INPUT #1, A$\n"
+        "PRINT A$\n"
+        "CLOSE #1\n" % port
+    )
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
+    out = _run_env(mmb_linux, program, env)
+    thread.join(timeout=5)
+    assert got.get("req") == b"PING\n"
+    assert "PONG" in out
+
+
 @pytest.mark.parametrize("command", ["FILES", "WORDPAD", "HELP", "AFK"])
 def test_tui_apps_render(mmb_linux, tmp_path, command):
     """The fullscreen apps take over the framebuffer through the TUI hooks."""
