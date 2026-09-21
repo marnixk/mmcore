@@ -1001,6 +1001,8 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 
 	if (lw < 1)
 		lw = 1;
+	if (lw > 1024)
+		lw = 1024; /* a colour parsed as a width must not hang the loop */
 	/* Fast path for straight 1px lines with no per-pixel side effects:
 	 * a hidden soft page (or the raw framebuffer) has no dirty tracking,
 	 * overlay alpha and no direct HDMI pixel update. Resolve the target and
@@ -1047,7 +1049,7 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 		else if (lw <= 1)
 			mmb_gfx_plot(x0, y0, rgb);
 		else
-			for (i = -(lw / 2); i <= lw / 2; i++)
+			for (i = -((lw - 1) / 2); i <= lw / 2; i++)
 				if (horiz)
 					mmb_gfx_plot(x0, y0 + i, rgb);
 				else
@@ -1077,6 +1079,8 @@ void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill)
 	}
 	if (lw < 1)
 		lw = 1;
+	if (lw > 1024)
+		lw = 1024;
 	for (i = 0; i < lw; i++)
 	{
 		mmb_gfx_line(x + i, y + i, x + w - 1 - i, y + i, rgb, 1);
@@ -1211,6 +1215,8 @@ void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill)
 		return;
 	if (lw < 1)
 		lw = 1;
+	if (lw > 1024)
+		lw = 1024;
 	if (fill >= 0 && lw > 1)
 	{
 		int inner = r - lw;
@@ -1231,6 +1237,10 @@ void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int f
 {
 	if (r < 0)
 		r = 0;
+	if (lw < 1)
+		lw = 1;
+	if (lw > 1024)
+		lw = 1024;
 	if (fill >= 0)
 	{
 		mmb_gfx_box(x + r, y, w - 2 * r, h, rgb, 1, fill);
@@ -1251,15 +1261,63 @@ void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int f
 	mmb_gfx_circle(x + w - 1 - r, y + h - 1 - r, r, rgb, lw, -1);
 }
 
+/* Even-odd scanline fill for a closed polygon; fills but does not draw the
+ * outline, so a caller can draw the border afterwards in its own colour
+ * (CMM2 fills shapes then borders them). */
+void mmb_gfx_fill_polygon(const int *xs, const int *ys, int n, unsigned rgb)
+{
+	int miny, maxy, y, i, j;
+	unsigned fcol;
+
+	if (n < 3)
+		return;
+	miny = maxy = ys[0];
+	for (i = 1; i < n; i++)
+	{
+		if (ys[i] < miny)
+			miny = ys[i];
+		if (ys[i] > maxy)
+			maxy = ys[i];
+	}
+	fcol = mmb_quantize(rgb);
+	for (y = miny; y <= maxy; y++)
+	{
+		int xcross[32];
+		int nx = 0;
+
+		for (i = 0, j = n - 1; i < n; j = i++)
+		{
+			int yi = ys[i], yj = ys[j];
+
+			if ((yi <= y && yj > y) || (yj <= y && yi > y))
+			{
+				int64_t num = (int64_t)(y - yi) * (xs[j] - xs[i]);
+
+				if (nx < (int)(sizeof xcross / sizeof xcross[0]))
+					xcross[nx++] = xs[i] + (int)(num / (yj - yi));
+			}
+		}
+		for (i = 0; i < nx; i++)
+			for (j = i + 1; j < nx; j++)
+				if (xcross[j] < xcross[i])
+				{
+					int t = xcross[i];
+
+					xcross[i] = xcross[j];
+					xcross[j] = t;
+				}
+		for (i = 0; i + 1 < nx; i += 2)
+			hspan(xcross[i], xcross[i + 1], y, fcol);
+	}
+}
+
 void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned rgb, int fill)
 {
-	mmb_gfx_line(x1, y1, x2, y2, rgb, 1);
-	mmb_gfx_line(x2, y2, x3, y3, rgb, 1);
-	mmb_gfx_line(x3, y3, x1, y1, rgb, 1);
 	if (fill >= 0)
 	{
 		int minx = x1, maxx = x1, miny = y1, maxy = y1, x, y;
 		unsigned fcol = mmb_quantize((unsigned)fill);
+
 		if (x2 < minx) minx = x2; if (x3 < minx) minx = x3;
 		if (x2 > maxx) maxx = x2; if (x3 > maxx) maxx = x3;
 		if (y2 < miny) miny = y2; if (y3 < miny) miny = y3;
@@ -1276,6 +1334,10 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 					mmb_gfx_plot(x, y, fcol);
 			}
 	}
+	/* Border last so the fill cannot overwrite the requested edge colour. */
+	mmb_gfx_line(x1, y1, x2, y2, rgb, 1);
+	mmb_gfx_line(x2, y2, x3, y3, rgb, 1);
+	mmb_gfx_line(x3, y3, x1, y1, rgb, 1);
 }
 
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)

@@ -681,6 +681,7 @@ void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill);
 void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_rbox(int x, int y, int w, int h, int r, unsigned rgb, int lw, int fill);
 void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned rgb, int fill);
+void mmb_gfx_fill_polygon(const int *xs, const int *ys, int n, unsigned rgb);
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
 extern const unsigned char mmb_cp437_8x16[256 * 16];
 extern const unsigned char mmb_tnr_8x16[256 * 16];

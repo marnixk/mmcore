@@ -8,7 +8,7 @@ RBOX x, y, w, h [, radius] [, lw] [, fill] [, colour]
 
   x, y - top-left
   w, h - size
-  radius - corner radius (default 8)
+  radius - corner radius (default 10)
   lw - line width
   fill - fill colour
   colour - outline colour

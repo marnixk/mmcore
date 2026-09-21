@@ -52,6 +52,15 @@ def _is_black(rgb):
     return all(c < 40 for c in rgb)
 
 
+def _rgb888(v):
+    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+
+
+def _px(console, x, y):
+    """Read the display page pixel through the PIXEL() function."""
+    return int(console.send_line(f"PRINT PIXEL({x},{y})").split()[0])
+
+
 def test_hdmi_follows_mode(fresh_console):
     """MODE must retune the HDMI framebuffer, not only MM.HRES/MM.VRES."""
     c = fresh_console
@@ -142,6 +151,46 @@ def test_filled_box_interior(fresh_console):
     fresh_console.send_line("CLS")
     fresh_console.send_line("BOX 80,80,40,40,1,RGB(0,255,0),RGB(0,255,0)")
     assert _is_green(fresh_console.screen_pixel(100, 100))
+
+
+def test_line_even_width_exact_thickness(fresh_console):
+    """#487: an even line width is exactly that many pixels, not width+1."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("LINE 100,100,200,100,2,RED") == ""
+    assert _is_red(_rgb888(_px(c, 150, 100)))
+    assert _is_red(_rgb888(_px(c, 150, 101)))
+    assert _is_black(_rgb888(_px(c, 150, 99)))
+    assert _is_black(_rgb888(_px(c, 150, 102)))
+
+
+def test_triangle_fill_keeps_border_colour(fresh_console):
+    """#487: the fill must not overwrite the requested outline colour."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("TRIANGLE 100,100,140,100,120,140,RED,BLUE") == ""
+    assert _is_red(_rgb888(_px(c, 120, 100)))  # top edge midpoint
+    assert _is_blue(_rgb888(_px(c, 120, 120)))  # interior
+    assert _is_red(_rgb888(_px(c, 100, 100)))  # left vertex
+
+
+def test_polygon_fill_has_no_fan_edges(fresh_console):
+    """#487: a filled POLYGON must not paint its triangulation diagonals."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("POLYGON 100,100,180,100,180,180,100,180,RED,BLUE") == ""
+    assert _is_blue(_rgb888(_px(c, 140, 140)))  # centre is fill, not a fan edge
+    assert _is_red(_rgb888(_px(c, 140, 100)))  # border stays the outline colour
+
+
+def test_rbox_default_radius_is_ten(fresh_console):
+    """#487: RBOX's default corner radius is CMM2's 10, not 8."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("RBOX 100,100,60,60,RED") == ""
+    assert _is_red(_rgb888(_px(c, 115, 100)))  # straight top edge
+    # x=109 falls in the radius-10 corner gap; a radius-8 arc/edge covered it.
+    assert _is_black(_rgb888(_px(c, 109, 100)))
 
 
 def test_cls_repeats_rgb_dword(fresh_console):
