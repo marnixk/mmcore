@@ -1,0 +1,83 @@
+name: Linux AppImage
+
+# Builds the native SDL2 backend and packages it as an AppImage.
+#
+#  - on a version release: attached to that GitHub release (so every release
+#    ships the AppImage alongside the SD-card zips);
+#  - on push to ports/linux / master: attached to the rolling 'linux-native'
+#    pre-release for quick testing.
+on:
+  push:
+    branches: [ports/linux, master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appimage:
+    # 22.04 keeps the glibc baseline low enough for most current distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libsdl2-dev python3 curl file
+
+      - name: Build AppImage
+        run: scripts/package-linux-appimage.sh
+
+      - name: Smoke-test the AppImage
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export SDL_VIDEODRIVER=dummy
+          out=$(printf 'PRINT "SMOKE_OK 42"\n' | ./dist/MMBasic-*.AppImage 2>&1 || true)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "SMOKE_OK 42"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMBasic-AppImage
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.AppImage --clobber
+            echo "Attached AppImage to release ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          tag="linux-native"
+          notes="Automated AppImage built from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
+
+          Run it from a terminal (the built-in window shows output; type at the prompt):
+
+          \`\`\`
+          chmod +x MMBasic-x86_64.AppImage
+          ./MMBasic-x86_64.AppImage
+          \`\`\`"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Linux native (rolling)" \
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
+          fi
+          gh release upload "$tag" dist/*.AppImage --clobber

@@ -133,7 +133,8 @@ static const char *edit_items[] = { "Copy", "Cut", "Paste" };
 static const char *settings_items[] = { "Wide view" };
 
 static char fd_dir[128];
-static char fd_mask[32];
+/* Not "fd_mask": glibc declares that as a typedef via <sys/select.h>. */
+static char wp_fd_mask[32];
 static char fd_files[WP_FD_MAX][WP_FD_NAME];
 static char fd_dirs[WP_FD_MAX][WP_FD_NAME];
 static int fd_nfile, fd_ndir;
@@ -1975,7 +1976,7 @@ static void fd_scan(void)
 		{
 			if (is_dir)
 				fd_add(fd_dirs, &fd_ndir, name);
-			else if (fd_match(name, fd_mask))
+			else if (fd_match(name, wp_fd_mask))
 				fd_add(fd_files, &fd_nfile, name);
 		}
 		s = nl;
@@ -2203,7 +2204,7 @@ static void fd_apply_glob(const char *spec)
 			fd_set_dir(dirpart);
 		else
 			fd_scan();
-		fd_copy(fd_mask, sizeof(fd_mask), slash + 1);
+		fd_copy(wp_fd_mask, sizeof(wp_fd_mask), slash + 1);
 		fd_scan();
 		fd_clamp();
 		return;
@@ -2215,12 +2216,12 @@ static void fd_apply_glob(const char *spec)
 		dirpart[2] = '/';
 		dirpart[3] = 0;
 		fd_set_dir(dirpart);
-		fd_copy(fd_mask, sizeof(fd_mask), spec + 2);
+		fd_copy(wp_fd_mask, sizeof(wp_fd_mask), spec + 2);
 		fd_scan();
 		fd_clamp();
 		return;
 	}
-	fd_copy(fd_mask, sizeof(fd_mask), spec);
+	fd_copy(wp_fd_mask, sizeof(wp_fd_mask), spec);
 	fd_scan();
 	fd_clamp();
 }
@@ -2353,7 +2354,7 @@ static void open_dialog(int which)
 	if (which == WP_DLG_OPEN || which == WP_DLG_SAVEAS)
 	{
 		fd_focus = WP_FD_FOCUS_NAME;
-		fd_copy(fd_mask, sizeof(fd_mask), "*.MD");
+		fd_copy(wp_fd_mask, sizeof(wp_fd_mask), "*.MD");
 		fd_copy(fd_dir, sizeof(fd_dir), mmb_vfs_cwd());
 		if (which == WP_DLG_SAVEAS && W.path[0])
 		{
@@ -2861,7 +2862,7 @@ static void draw_file_dialog(void)
 	st[0] = 0;
 	strncat(st, fd_dir, sizeof(st) - 1);
 	strncat(st, "  ", sizeof(st) - strlen(st) - 1);
-	strncat(st, fd_mask, sizeof(st) - strlen(st) - 1);
+	strncat(st, wp_fd_mask, sizeof(st) - strlen(st) - 1);
 	wp_puts(c0 + 2, r0 + h - 3, st, WP_DIM, sbg);
 	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", WP_DIM, sbg);
 }

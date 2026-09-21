@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "mmbasic.h"
+#include "frontend.h"
 #include <circle/alloc.h>
 #include <circle/font.h>
 #include <circle/new.h>
@@ -34,17 +35,8 @@ CKernel::CKernel (void)
 	m_pKeyboard (0),
 	m_pKbdBuf (0),
 	m_nBreak (0),
-	m_nCad (0),
-	m_nLen (0),
-	m_nPos (0),
-	m_nEsc (0),
-	m_nCsiArg (0),
-	m_nHist (0),
-	m_nHistIdx (-1)
+	m_nCad (0)
 {
-	m_Line[0] = '\0';
-	m_Draft[0] = '\0';
-	memset (m_Hist, 0, sizeof m_Hist);
 	m_RepeatSeq[0] = '\0';
 	m_RepeatLen = 0;
 	m_HoldMs = 0;
@@ -116,31 +108,10 @@ static void emit_n (CKernel *k, const void *p, unsigned n)
 		k->Screen ().Write (p, n);
 }
 
-static void emit (CKernel *k, const char *s)
+/* Output sink for the portable front end (mmb_front_*). */
+static void front_emit (void *ctx, const char *s, unsigned n)
 {
-	if (s)
-		emit_n (k, s, (unsigned) strlen (s));
-}
-
-static void emit_prompt (CKernel *k)
-{
-	mmb_hw_cursor (1);
-	emit (k, mmb_prompt ());
-}
-
-static void emit_nl_prompt (CKernel *k)
-{
-	emit (k, "\r\n");
-	emit_prompt (k);
-}
-
-static int line_is_numbered (const char *s)
-{
-	if (!s)
-		return 0;
-	while (*s == ' ' || *s == '\t')
-		s++;
-	return *s >= '0' && *s <= '9';
+	emit_n ((CKernel *) ctx, s, n);
 }
 
 void CKernel::AttachKeyboard (void)
@@ -315,8 +286,8 @@ void CKernel::PollUsbAlt (void)
 	}
 	m_AltHidSent = hid;
 	m_UsbBurst = 1;
-	ProcessChar (1, m_Line, &m_nLen);
-	ProcessChar ((char) ch, m_Line, &m_nLen);
+	ProcessChar (1);
+	ProcessChar ((char) ch);
 	m_UsbBurst = 0;
 }
 
@@ -372,7 +343,7 @@ void CKernel::PollUsbEditorNav (void)
 		m_NavHidSent = hid;
 		m_UsbBurst = 1;
 		for (i = 0; i < n; i++)
-			ProcessChar (seq[i], m_Line, &m_nLen);
+			ProcessChar (seq[i]);
 		m_UsbBurst = 0;
 		return;
 	}
@@ -403,7 +374,7 @@ void CKernel::PollUsbEditorNav (void)
 		m_NavHidSent = hid;
 		m_UsbBurst = 1;
 		for (i = 0; i < n; i++)
-			ProcessChar (seq[i], m_Line, &m_nLen);
+			ProcessChar (seq[i]);
 		m_UsbBurst = 0;
 		return;
 	}
@@ -424,7 +395,7 @@ void CKernel::PollUsbEditorNav (void)
 		}
 		m_UsbBurst = 1;
 		for (i = 0; i < n; i++)
-			ProcessChar (seq[i], m_Line, &m_nLen);
+			ProcessChar (seq[i]);
 		m_UsbBurst = 0;
 		return;
 	}
@@ -476,7 +447,7 @@ void CKernel::PollUsbEditorNav (void)
 	}
 	m_UsbBurst = 1;
 	for (i = 0; i < n; i++)
-		ProcessChar (seq[i], m_Line, &m_nLen);
+		ProcessChar (seq[i]);
 	m_UsbBurst = 0;
 }
 
@@ -533,7 +504,7 @@ void CKernel::PollUsbCharNav (void)
 	m_CharHidSent = hid;
 	m_UsbBurst = 1;
 	for (i = 0; i < n; i++)
-		ProcessChar (seq[i], m_Line, &m_nLen);
+		ProcessChar (seq[i]);
 	m_UsbBurst = 0;
 }
 
@@ -568,7 +539,7 @@ void CKernel::PollUsbFKeys (void)
 	m_FkeyHidSent = hid;
 	m_UsbBurst = 1;
 	for (i = 0; i < n; i++)
-		ProcessChar (seq[i], m_Line, &m_nLen);
+		ProcessChar (seq[i]);
 	m_UsbBurst = 0;
 }
 
@@ -603,7 +574,7 @@ void CKernel::PollUsbRepeat (void)
 		m_LastRepeatMs = now;
 	m_UsbBurst = 1;
 	for (i = 0; i < m_RepeatLen; i++)
-		ProcessChar (m_RepeatSeq[i], m_Line, &m_nLen);
+		ProcessChar (m_RepeatSeq[i]);
 	m_UsbBurst = 0;
 }
 
@@ -667,421 +638,25 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_FkeyHidSent = 0;
 }
 
-void CKernel::LineGoEnd (char *Line, unsigned *pLen)
-{
-	while (m_nPos < *pLen)
-	{
-		emit_n (this, &Line[m_nPos], 1);
-		m_nPos++;
-	}
-}
+/* The interactive line editor, history and ESC/CSI decoding live in
+   mmbasic/src/frontend.c (mmb_front_*); this backend only turns raw
+   keyboard bytes into the feed and filters Circle's cooked-key duplicates. */
 
-void CKernel::LineClearVis (char *Line, unsigned *pLen)
+void CKernel::ProcessChar (char c)
 {
-	LineGoEnd (Line, pLen);
-	while (*pLen > 0)
-	{
-		(*pLen)--;
-		emit (this, "\b \b");
-	}
-	m_nPos = 0;
-	Line[0] = '\0';
-}
-
-void CKernel::LineReplace (char *Line, unsigned *pLen, const char *s)
-{
-	unsigned i;
-	LineClearVis (Line, pLen);
-	if (!s)
-		s = "";
-	for (i = 0; s[i] && *pLen < sizeof (m_Line) - 1; i++)
-	{
-		Line[(*pLen)++] = s[i];
-		emit_n (this, &s[i], 1);
-	}
-	Line[*pLen] = '\0';
-	m_nPos = *pLen;
-}
-
-void CKernel::LineLeft (void)
-{
-	if (m_nPos == 0)
-		return;
-	m_nPos--;
-	emit (this, "\b");
-}
-
-void CKernel::LineRight (char *Line, unsigned *pLen)
-{
-	if (m_nPos >= *pLen)
-		return;
-	emit_n (this, &Line[m_nPos], 1);
-	m_nPos++;
-}
-
-void CKernel::LineHome (void)
-{
-	while (m_nPos > 0)
-	{
-		m_nPos--;
-		emit (this, "\b");
-	}
-}
-
-void CKernel::LineInsert (char c, char *Line, unsigned *pLen)
-{
-	unsigned i, rest;
-	if (*pLen >= sizeof (m_Line) - 1)
-		return;
-	if (m_nPos > *pLen)
-		m_nPos = *pLen;
-	rest = *pLen - m_nPos;
-	if (rest)
-		memmove (Line + m_nPos + 1, Line + m_nPos, rest);
-	Line[m_nPos] = c;
-	(*pLen)++;
-	Line[*pLen] = '\0';
-	for (i = m_nPos; i < *pLen; i++)
-		emit_n (this, &Line[i], 1);
-	for (i = 0; i < rest; i++)
-		emit (this, "\b");
-	m_nPos++;
-}
-
-void CKernel::LineBackspace (char *Line, unsigned *pLen)
-{
-	unsigned i, rest;
-	if (m_nPos == 0)
-		return;
-	m_nPos--;
-	rest = *pLen - m_nPos - 1;
-	if (rest)
-		memmove (Line + m_nPos, Line + m_nPos + 1, rest);
-	(*pLen)--;
-	Line[*pLen] = '\0';
-	emit (this, "\b");
-	for (i = 0; i < rest; i++)
-		emit_n (this, &Line[m_nPos + i], 1);
-	emit (this, " ");
-	for (i = 0; i < rest + 1; i++)
-		emit (this, "\b");
-}
-
-void CKernel::LineDelete (char *Line, unsigned *pLen)
-{
-	unsigned i, rest;
-	if (m_nPos >= *pLen)
-		return;
-	rest = *pLen - m_nPos - 1;
-	if (rest)
-		memmove (Line + m_nPos, Line + m_nPos + 1, rest);
-	(*pLen)--;
-	Line[*pLen] = '\0';
-	for (i = 0; i < rest; i++)
-		emit_n (this, &Line[m_nPos + i], 1);
-	emit (this, " ");
-	for (i = 0; i < rest + 1; i++)
-		emit (this, "\b");
-}
-
-void CKernel::HistAdd (const char *s)
-{
-	if (!s || !s[0])
-		return;
-	if (m_nHist > 0 && strcmp (m_Hist[m_nHist - 1], s) == 0)
-		return;
-	if (m_nHist >= (unsigned) HistMax)
-	{
-		memmove (m_Hist[0], m_Hist[1],
-			 (HistMax - 1) * sizeof m_Hist[0]);
-		m_nHist = (unsigned) HistMax - 1;
-	}
-	strncpy (m_Hist[m_nHist], s, sizeof m_Hist[0] - 1);
-	m_Hist[m_nHist][sizeof m_Hist[0] - 1] = '\0';
-	m_nHist++;
-	m_nHistIdx = -1;
-}
-
-void CKernel::HistUp (char *Line, unsigned *pLen)
-{
-	if (m_nHist == 0)
-		return;
-	if (m_nHistIdx < 0)
-	{
-		unsigned n = *pLen;
-		if (n >= sizeof m_Draft)
-			n = sizeof m_Draft - 1;
-		memcpy (m_Draft, Line, n);
-		m_Draft[n] = '\0';
-		m_nHistIdx = (int) m_nHist - 1;
-	}
-	else if (m_nHistIdx > 0)
-		m_nHistIdx--;
-	LineReplace (Line, pLen, m_Hist[m_nHistIdx]);
-}
-
-void CKernel::HistDown (char *Line, unsigned *pLen)
-{
-	if (m_nHistIdx < 0)
-		return;
-	if (m_nHistIdx >= (int) m_nHist - 1)
-	{
-		m_nHistIdx = -1;
-		LineReplace (Line, pLen, m_Draft);
-		return;
-	}
-	m_nHistIdx++;
-	LineReplace (Line, pLen, m_Hist[m_nHistIdx]);
-}
-
-void CKernel::HandleCsi (char final, char *Line, unsigned *pLen)
-{
-	if (final == 'A')
-		HistUp (Line, pLen);
-	else if (final == 'B')
-		HistDown (Line, pLen);
-	else if (final == 'C')
-		LineRight (Line, pLen);
-	else if (final == 'D')
-		LineLeft ();
-	else if (final == 'H')
-		LineHome ();
-	else if (final == 'F')
-		LineGoEnd (Line, pLen);
-	else if (final == '~')
-	{
-		if (m_nCsiArg == 3)
-			LineDelete (Line, pLen);
-		else if (m_nCsiArg == 1 || m_nCsiArg == 7)
-			LineHome ();
-		else if (m_nCsiArg == 4 || m_nCsiArg == 8)
-			LineGoEnd (Line, pLen);
-	}
-}
-
-void CKernel::ProcessChar (char c, char *Line, unsigned *pLen)
-{
-	if (mmb_in_ihelp ())
-	{
-		const char *out = mmb_ihelp_key (c);
-		emit (this, out);
-		return;
-	}
-
+	/* Circle's cooked keyboard map turns USB Shift+Tab into Tab and
+	 * Ctrl+Enter into Return; PollUsbEditorNav already injected the real
+	 * sequences, so drop the duplicates the editor would otherwise see. */
 	if (mmb_in_editor ())
 	{
-		/* USB Shift+Tab arrives as Tab from Circle; PollUsbEditorNav
-		 * already injected CSI Z. Drop the cooked Tab. */
 		if (c == '\t' && (m_LastMods & (LSHIFT | RSHIFT)) != 0)
 			return;
-		/* USB Ctrl+Enter arrives as a plain Return; PollUsbEditorNav
-		 * injected a Replace All sequence. Drop the cooked Return, except
-		 * in the character picker where the injected Return is the insert
-		 * key (PollUsbCharNav). */
 		if ((c == '\n' || c == '\r') && (m_LastMods & (LCTRL | RCTRL)) != 0 &&
 		    !mmb_editor_char_picker_active ())
 			return;
-		const char *out = mmb_editor_key (c);
-		emit (this, out);
-		if (!mmb_in_editor ())
-		{
-			if (mmb_in_files ())
-			{
-				emit (this, mmb_files_on_editor_exit ());
-				if (!mmb_in_files ())
-					emit_prompt (this);
-			}
-			else
-				emit_prompt (this);
-		}
-		return;
 	}
-
-	if (mmb_in_files ())
-	{
-		const char *out = mmb_files_key (c);
-		emit (this, out);
-		if (!mmb_in_files () && !mmb_in_editor ())
-		{
-			if (!mmb_files_take_prompt ())
-				emit_prompt (this);
-		}
-		return;
-	}
-
-	if (mmb_in_term ())
-	{
-		const char *out = mmb_term_key (c);
-		if (out && out[0])
-			emit (this, out);
-		if (!mmb_in_term ())
-			emit_prompt (this);
-		return;
-	}
-
-	if (mmb_in_wordpad ())
-	{
-		const char *out = mmb_wordpad_key (c);
-		if (out && out[0])
-			emit (this, out);
-		if (!mmb_in_wordpad ())
-			emit_prompt (this);
-		return;
-	}
-
-	if (mmb_in_afk ())
-	{
-		mmb_afk_key (c);
-		if (!mmb_in_afk ())
-			emit_prompt (this);
-		return;
-	}
-
-	if (mmb_in_connect ())
-	{
-		const char *out = mmb_connect_key (c);
-		if (out && out[0])
-			emit (this, out);
-		if (!mmb_in_connect ())
-			emit_prompt (this);
-		return;
-	}
-
-	/* ESC / CSI from Circle keymap (arrows, Home/End/Delete, F-keys). */
-	if (m_nEsc == 1)
-	{
-		if (c == '[')
-		{
-			m_nEsc = 2;
-			m_nCsiArg = 0;
-			return;
-		}
-		if (c == 'O')
-		{
-			m_nEsc = 3;
-			return;
-		}
-		m_nEsc = 0;
-		if (c == 0x1b)
-		{
-			m_nEsc = 1;
-			return;
-		}
-		/* ESC+letter is Alt (serial stand-in / USB Meta). Ignore at prompt. */
-		return;
-	}
-	if (m_nEsc == 2)
-	{
-		if (c >= '0' && c <= '9')
-		{
-			m_nCsiArg = m_nCsiArg * 10 + (c - '0');
-			return;
-		}
-		if (c == ';')
-		{
-			m_nCsiArg = 0;
-			return;
-		}
-		m_nEsc = 0;
-		HandleCsi (c, Line, pLen);
-		return;
-	}
-	if (m_nEsc == 3)
-	{
-		m_nEsc = 0;
-		HandleCsi (c, Line, pLen);
-		return;
-	}
-	if (c == 0x1b)
-	{
-		m_nEsc = 1;
-		return;
-	}
-
-	if (c == '\r' || c == '\n')
-	{
-		/* USB Enter is '\n'; serial is usually '\r'. Echo CR so HDMI wraps. */
-		char echo = '\r';
-		emit_n (this, &echo, 1);
-
-		Line[*pLen] = '\0';
-		HistAdd (Line);
-		m_nPos = 0;
-		m_nHistIdx = -1;
-		const char *Result = mmb_exec_line (Line);
-		int numbered = line_is_numbered (Line);
-		if (mmb_in_editor ())
-		{
-			/* Editor streams a full frame via write_screen/write_serial. */
-			if (Result && Result[0])
-				emit (this, Result);
-		}
-		else if (mmb_take_home_prompt ())
-		{
-			emit (this, Result);
-			emit_prompt (this);
-		}
-		else if (mmb_in_files ())
-		{
-			/* Dual-pane TUI already streamed to HDMI/serial. */
-		}
-		else if (mmb_in_ihelp ())
-		{
-			/* Interactive HELP TUI already streamed to HDMI/serial. */
-		}
-		else if (mmb_in_term ())
-		{
-			if (Result && Result[0])
-				emit (this, Result);
-		}
-		else if (mmb_in_wordpad ())
-		{
-			if (Result && Result[0])
-				emit (this, Result);
-		}
-		else if (mmb_in_connect ())
-		{
-			if (Result && Result[0])
-				emit (this, Result);
-		}
-		else if (mmb_in_afk ())
-		{
-			/* AFK owns the screen; no prompt. */
-		}
-		else if (!Result || !Result[0])
-		{
-			if (!numbered)
-				emit (this, "\r\n");
-			emit_nl_prompt (this);
-		}
-		else
-		{
-			emit (this, "\r\n");
-			emit (this, Result);
-			if (!numbered)
-				emit (this, "\r\n");
-			emit_nl_prompt (this);
-		}
-		*pLen = 0;
-		m_nPos = 0;
-	}
-	else if (c == 8 || c == 127)
-		LineBackspace (Line, pLen);
-	else if (c == 3)
-	{
-		*pLen = 0;
-		m_nPos = 0;
-		m_nHistIdx = -1;
-		emit_nl_prompt (this);
-	}
-	else if (c == '\t' || (unsigned char) c < 32)
-	{
-		/* Tab and other controls must not enter Line[]. */
-	}
-	else
-		LineInsert (c, Line, pLen);
+	mmb_front_feed_byte (c);
 }
-
 
 int CKernel::ReadLine (char **out, int hide)
 {
@@ -1206,7 +781,8 @@ TShutdownMode CKernel::Run (void)
 	m_Logger.Write (FromKernel, LogNotice, "console ready");
 
 	mmb_print_startup ();
-	emit_prompt (this);
+	mmb_front_init (front_emit, this);
+	mmb_front_prompt ();
 
 	AttachKeyboard ();
 
@@ -1247,7 +823,7 @@ TShutdownMode CKernel::Run (void)
 
 		m_UsbBurst = 1;
 		for (int i = 0; i < nBytes; i++)
-			ProcessChar (Buffer[i], m_Line, &m_nLen);
+			ProcessChar (Buffer[i]);
 		m_UsbBurst = 0;
 	}
 
