@@ -81,7 +81,7 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
 
 
 def test_drive_cli_mount(mmb_linux, tmp_path):
-    """--drive D:/path points the D: drive at a host directory."""
+    """--drive DIR binds that host directory to the D: drive."""
     mount = tmp_path / "usb"
     mount.mkdir()
     env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
@@ -92,7 +92,7 @@ def test_drive_cli_mount(mmb_linux, tmp_path):
         'DIR "D:/"\n'
     )
     proc = subprocess.run(
-        [mmb_linux, "--drive", "D:%s" % mount],
+        [mmb_linux, "--drive", str(mount)],
         input=program,
         text=True,
         capture_output=True,
