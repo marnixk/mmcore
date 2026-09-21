@@ -78,6 +78,25 @@ def test_option_ethernet_dhcp_on_usb_net(net_console):
     assert con.send_line("PRINT 2+2") == "4"
 
 
+def test_qemu_ethernet_gateway_probe_soak(net_console):
+    """Unicast RX must not be lossy: the gateway probe succeeds every time (#431).
+
+    QEMU usb-net drops a frame whenever its single input buffer is still full,
+    so a lossy unicast RX path made ``IPCONFIG``'s ARP/ICMP probe intermittent.
+    """
+    con = net_console
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    on = con.send_line("OPTION ETHERNET ON", timeout=25)
+    if "10.0.2." not in on:
+        cfg = _wait_dhcp(con)
+        assert "10.0.2." in (on + cfg) or "link is up" in cfg.lower(), cfg
+
+    for i in range(20):
+        cfg = con.send_line("IPCONFIG", timeout=8)
+        low = cfg.lower()
+        assert "connected as" in low and "10.0.2." in cfg, f"probe {i + 1}/20: {cfg!r}"
+
+
 @LIVE_NET
 def test_qemu_ethernet_tcp_to_host(net_console):
     con = net_console

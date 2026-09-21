@@ -1,0 +1,95 @@
+diff --git a/include/circle/usb/usbcdcethernet.h b/include/circle/usb/usbcdcethernet.h
+index 00d10e2d..157c0895 100644
+--- a/include/circle/usb/usbcdcethernet.h
++++ b/include/circle/usb/usbcdcethernet.h
+@@ -65,6 +65,10 @@ private:
+ 	CUSBRequest *volatile m_pURB;
+ 	DMA_BUFFER (u8, m_RxBuffer, FRAME_BUFFER_SIZE);
+ 	volatile unsigned m_nRxLength;
++
++	// mmbasic-usb-cdc-rx: scratch for the trailing padding byte which is
++	// needed when a frame is an exact multiple of the packet size.
++	DMA_BUFFER (u8, m_TxBuffer, FRAME_BUFFER_SIZE + 1);
+ };
+ 
+ #endif
+diff --git a/lib/usb/dwhcixferstagedata.cpp b/lib/usb/dwhcixferstagedata.cpp
+index d5d2544c..ea807711 100644
+--- a/lib/usb/dwhcixferstagedata.cpp
++++ b/lib/usb/dwhcixferstagedata.cpp
+@@ -209,22 +209,28 @@ void CDWHCITransferStageData::TransactionComplete (u32 nStatus, u32 nPacketsLeft
+ 	       | DWHCI_HOST_CHAN_INT_NAK
+ 	       | DWHCI_HOST_CHAN_INT_NYET))
+ 	{
+-		if (   (nStatus & DWHCI_HOST_CHAN_INT_NAK)
+-		    && m_pURB->IsCompleteOnNAK ())
++		// mmbasic-usb-cdc-rx: the controller does not clear a NAK interrupt
++		// status bit once a later packet in the same transfer succeeds, so a
++		// completion which also reports XFER_COMPLETE did transfer data.
++		if (!(nStatus & DWHCI_HOST_CHAN_INT_XFER_COMPLETE))
+ 		{
+-			assert (m_bIn);
++			if (   (nStatus & DWHCI_HOST_CHAN_INT_NAK)
++			    && m_pURB->IsCompleteOnNAK ())
++			{
++				assert (m_bIn);
+ 
+-			m_nPackets = 0;		// no data is available, complete transfer
++				m_nPackets = 0;		// no data is available, complete transfer
+ 
+-			return;
+-		}
++				return;
++			}
+ 
+-		// bulk transfers with xact error will be retried, return otherwise
+-		if (   !(nStatus & DWHCI_HOST_CHAN_INT_XACT_ERROR)
+-		    || m_pEndpoint->GetType () != EndpointTypeBulk
+-		    || ++m_nErrorCount > MAX_BULK_TRIES)
+-		{
+-			return;
++			// bulk transfers with xact error will be retried, return otherwise
++			if (   !(nStatus & DWHCI_HOST_CHAN_INT_XACT_ERROR)
++			    || m_pEndpoint->GetType () != EndpointTypeBulk
++			    || ++m_nErrorCount > MAX_BULK_TRIES)
++			{
++				return;
++			}
+ 		}
+ 	}
+ 
+diff --git a/lib/usb/usbcdcethernet.cpp b/lib/usb/usbcdcethernet.cpp
+index 88b3a352..0e420d89 100644
+--- a/lib/usb/usbcdcethernet.cpp
++++ b/lib/usb/usbcdcethernet.cpp
+@@ -151,6 +151,21 @@ boolean CUSBCDCEthernetDevice::SendFrame (const void *pBuffer, unsigned nLength)
+ 	assert (m_pEndpointBulkOut != 0);
+ 	assert (pBuffer != 0);
+ 	assert (nLength <= FRAME_BUFFER_SIZE);
++
++	// mmbasic-usb-cdc-rx: a bulk OUT transfer whose size is an exact multiple
++	// of the endpoint packet size carries no terminating short packet, so
++	// QEMU's usb-net (and some CDC peers) hold the frame until the next
++	// transfer arrives and the sender stalls. Append one padding byte, which
++	// Ethernet receivers ignore, so every transfer ends in a short packet.
++	unsigned nMaxPacketSize = m_pEndpointBulkOut->GetMaxPacketSize ();
++	if (nMaxPacketSize != 0 && (nLength % nMaxPacketSize) == 0)
++	{
++		memcpy (m_TxBuffer, pBuffer, nLength);
++		m_TxBuffer[nLength] = 0;
++
++		return GetHost ()->Transfer (m_pEndpointBulkOut, m_TxBuffer, nLength + 1) >= 0;
++	}
++
+ 	return GetHost ()->Transfer (m_pEndpointBulkOut, (void *) pBuffer, nLength) >= 0;
+ }
+ 
+@@ -180,8 +195,6 @@ boolean CUSBCDCEthernetDevice::ReceiveFrame (void *pBuffer, unsigned *pResultLen
+ 
+ 		m_pURB->SetCompletionRoutine (CompletionRoutine, 0, this);
+ 
+-		m_pURB->SetCompleteOnNAK ();
+-
+ 		GetHost ()->SubmitAsyncRequest (m_pURB);
+ 	}
+ 
