@@ -143,6 +143,24 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 	}
 }
 
+static void sdl_present_wait(void)
+{
+	/* Presents are synchronous copies into the framebuffer. */
+}
+
+static void sdl_present_set_flip(int on)
+{
+	/* The software framebuffer is single-buffered; SDL presents the whole
+	 * frame. PAGE DISPLAY works without a hardware flip. */
+	(void)on;
+}
+
+static int sdl_wait_vsync(void)
+{
+	/* SDL_RENDERER_PRESENTVSYNC already paces; no separate wait. */
+	return 0;
+}
+
 static int sdl_read_line(char **out, int hide)
 {
 	char buf[512];
@@ -193,6 +211,9 @@ static const mmb_platform sdl_plat = {
 	.reboot = sdl_reboot,
 	.present_rgb = sdl_present_rgb,
 	.present_native = sdl_present_native,
+	.present_wait = sdl_present_wait,
+	.present_set_flip = sdl_present_set_flip,
+	.wait_vsync = sdl_wait_vsync,
 	.rgb_to_native = sdl_rgb_to_native,
 	.native_to_rgb = sdl_native_to_rgb,
 };

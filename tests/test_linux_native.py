@@ -143,6 +143,27 @@ def test_ansi_console_colour(mmb_linux, tmp_path):
     assert green > 50, "expected green glyph pixels for COLOUR 10"
 
 
+def _pixel_at(data, w, x, y):
+    i = (y * w + x) * 3
+    return data[i], data[i + 1], data[i + 2]
+
+
+def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
+    """LN-07 (#459): MODE/PIXEL/BOX paint the framebuffer and PIXEL() reads."""
+    program = (
+        "MODE 8,16\n"
+        "CLS RGB(0,0,0)\n"
+        "PIXEL 10,10,RGB(255,0,0)\n"
+        "BOX 20,20,50,50,1,RGB(0,255,0)\n"
+        "PRINT PIXEL(10,10)\n"
+    )
+    w, h, data = _run_sdl_dump(mmb_linux, program, tmp_path, "shapes")
+    assert _pixel_at(data, w, 10, 10) == (255, 0, 0)
+    assert _pixel_at(data, w, 20, 20) == (0, 255, 0)
+    assert _pixel_at(data, w, 69, 69) == (0, 255, 0)
+    assert _pixel_at(data, w, 0, 0) == (0, 0, 0)
+
+
 def test_sdl_backend_headless(mmb_linux):
     """LN-03 (#455): SDL2 core opens a window and runs the interpreter.
 
