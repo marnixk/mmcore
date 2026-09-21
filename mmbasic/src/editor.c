@@ -473,7 +473,8 @@ static const char *k_chars_name[CHARS_N] = {
 };
 
 static char fd_dir[128];
-static char fd_mask[32];
+/* Not "ed_fd_mask": glibc declares that as a typedef via <sys/select.h>. */
+static char ed_fd_mask[32];
 static char fd_files[FD_MAX][FD_NAME];
 static char fd_dirs[FD_MAX][FD_NAME];
 static int fd_nfile, fd_ndir;
@@ -3280,8 +3281,8 @@ static void fd_scan(void)
 		{
 			if (is_dir)
 				fd_add(fd_dirs, &fd_ndir, name);
-			else if (fd_match(name, fd_mask) ||
-				 (mmb_keyword_eq(fd_mask, "*.BAS") && fd_match(name, "*.INC")))
+			else if (fd_match(name, ed_fd_mask) ||
+				 (mmb_keyword_eq(ed_fd_mask, "*.BAS") && fd_match(name, "*.INC")))
 				fd_add(fd_files, &fd_nfile, name);
 		}
 		s = nl;
@@ -3514,7 +3515,7 @@ static void fd_apply_glob(const char *spec)
 			fd_set_dir(dirpart);
 		else
 			fd_scan();
-		fd_copy(fd_mask, sizeof(fd_mask), slash + 1);
+		fd_copy(ed_fd_mask, sizeof(ed_fd_mask), slash + 1);
 		fd_scan();
 		fd_clamp();
 		return;
@@ -3526,12 +3527,12 @@ static void fd_apply_glob(const char *spec)
 		dirpart[2] = '/';
 		dirpart[3] = 0;
 		fd_set_dir(dirpart);
-		fd_copy(fd_mask, sizeof(fd_mask), spec + 2);
+		fd_copy(ed_fd_mask, sizeof(ed_fd_mask), spec + 2);
 		fd_scan();
 		fd_clamp();
 		return;
 	}
-	fd_copy(fd_mask, sizeof(fd_mask), spec);
+	fd_copy(ed_fd_mask, sizeof(ed_fd_mask), spec);
 	fd_scan();
 	fd_clamp();
 }
@@ -3667,7 +3668,7 @@ static void fd_status_line(char *out, int n)
 	last = out[0] ? (int)(unsigned char)out[strlen(out) - 1] : 0;
 	if (last && last != '/')
 		strncat(out, "/", (unsigned)n - strlen(out) - 1);
-	strncat(out, fd_mask, (unsigned)n - strlen(out) - 1);
+	strncat(out, ed_fd_mask, (unsigned)n - strlen(out) - 1);
 }
 
 static void draw_dialog(void)
@@ -4311,7 +4312,7 @@ static void open_dialog(int which)
 	if (which == DLG_OPEN || which == DLG_SAVEAS)
 	{
 		fd_focus = FD_FOCUS_NAME;
-		fd_copy(fd_mask, sizeof(fd_mask), "*.BAS");
+		fd_copy(ed_fd_mask, sizeof(ed_fd_mask), "*.BAS");
 		fd_copy(fd_dir, sizeof(fd_dir), mmb_vfs_cwd());
 		if (which == DLG_SAVEAS && cur_tab() && cur_tab()->path[0])
 		{
