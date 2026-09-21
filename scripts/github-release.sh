@@ -167,10 +167,10 @@ release_notes() {
 	python3 - "${version}" "${last}" "${tag_range}" <<'PY'
 import subprocess, sys
 version, last, tag_range = sys.argv[1:4]
-print(f"MMBasic console v{version}")
+print(f"mmcore v{version}")
 print()
-print("Bare-metal MMBasic for Raspberry Pi. Each zip is a FAT-ready SD-card image")
-print("plus `install-sdcard.sh` for Linux.")
+print("Bare-metal mmcore for Raspberry Pi. Each zip is a FAT-ready SD-card image")
+print("plus `install-sdcard.sh` for Linux, and a native Linux AppImage is attached.")
 print()
 print("## Install")
 print()
@@ -190,6 +190,15 @@ print("```")
 print()
 print("`--update` refreshes kernel and firmware without wiping BASIC files on C:.")
 print()
+print("## Linux native (AppImage)")
+print()
+print("Run the desktop build on a Linux x86_64 host (SDL2 window; type at the prompt):")
+print()
+print("```bash")
+print("chmod +x mmcore-x86_64.AppImage")
+print("./mmcore-x86_64.AppImage")
+print("```")
+print()
 print("## Artifacts")
 print()
 print(f"- `mmbasic-console-rpi3-v{version}.zip` — Raspberry Pi 3 / 3B+ / 3A+")
@@ -197,6 +206,7 @@ print(f"- `mmbasic-console-pizero2-v{version}.zip` — Raspberry Pi Zero 2 (no o
 print(f"- `mmbasic-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CYW43436)")
 print(f"- `mmbasic-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
+print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
 print()
 if tag_range:
     print(f"## Changes since v{last}")
@@ -257,13 +267,13 @@ publish() {
 
 	notes="$(release_notes "${version}")"
 	log "Creating annotated tag ${tag}"
-	git tag -a "${tag}" -m "MMBasic console ${tag}"
+	git tag -a "${tag}" -m "mmcore ${tag}"
 	log "Pushing ${tag}"
 	push_tag "${tag}"
 
 	log "Creating GitHub release ${tag}"
 	gh release create "${tag}" \
-		--title "MMBasic console ${tag}" \
+		--title "mmcore ${tag}" \
 		--notes "${notes}" \
 		"${rpi3}" \
 		"${pizero2}" \
