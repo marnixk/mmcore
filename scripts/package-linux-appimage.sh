@@ -44,7 +44,7 @@ Comment=Colour Maximite 2 compatible BASIC interpreter
 Exec=mmbasic-sdl
 Icon=mmcore
 Categories=Development;Education;
-Terminal=true
+Terminal=false
 EOF
 cp "${APPDIR}/usr/share/applications/mmcore.desktop" "${APPDIR}/mmcore.desktop"
 

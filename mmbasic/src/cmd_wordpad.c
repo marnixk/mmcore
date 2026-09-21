@@ -3344,6 +3344,9 @@ void mmb_cmd_wordpad(void)
 	}
 	ser("[WORDPAD]\r\n");
 	mmb_editor_apply_tui_palette();
+	mmb_hw_cursor(0);
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen("\x1b[H\x1b[J", 7);
 	if (G.plat && G.plat->tui_prepare)
 		G.plat->tui_prepare();
 	wp_layout_geom();

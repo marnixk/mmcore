@@ -12,6 +12,12 @@ static uint16_t *s_fb;     /* RGB555 (green bit 6) */
 static uint16_t *s_stage;  /* RGB565 for SDL */
 static int s_w, s_h;
 static int s_quit;
+static int s_dirty = 1;
+
+void sdl_video_mark_dirty(void)
+{
+	s_dirty = 1;
+}
 
 unsigned sdl_rgb_to_native(unsigned rgb888)
 {
@@ -100,6 +106,7 @@ int sdl_video_resize(int w, int h)
 
 	s_w = w;
 	s_h = h;
+	s_dirty = 1;
 	if (s_win)
 		SDL_SetWindowSize(s_win, w, h);
 	return 1;
@@ -124,6 +131,8 @@ void sdl_video_present(void)
 {
 	size_t n, i;
 
+	if (!s_dirty)
+		return;
 	if (!s_tex || !s_fb || !s_stage)
 		return;
 
@@ -142,6 +151,7 @@ void sdl_video_present(void)
 	SDL_RenderClear(s_ren);
 	SDL_RenderCopy(s_ren, s_tex, 0, 0);
 	SDL_RenderPresent(s_ren);
+	s_dirty = 0;
 }
 
 void sdl_video_request_quit(void)

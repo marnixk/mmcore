@@ -133,6 +133,8 @@ void tui_begin(void)
 	if (G.plat && G.plat->tui_prepare)
 		G.plat->tui_prepare();
 	hide_hw_cursor(1);
+	if (G.plat && G.plat->write_screen)
+		G.plat->write_screen("\x1b[H\x1b[J", 7);
 }
 
 void tui_invalidate(void)

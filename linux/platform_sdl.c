@@ -18,9 +18,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static void sdl_serial(const char *s, unsigned n)
 {
+	/* The SDL window is the display. Mirror the serial stream to stdout for
+	 * headless/automation runs (pipes, MMB_SDL_DUMP) but keep an interactive
+	 * terminal quiet, otherwise every REPL line is printed twice. */
+	static int checked, mirror;
+
+	if (!checked)
+	{
+		checked = 1;
+		mirror = !isatty(STDOUT_FILENO) || getenv("MMB_SDL_SERIAL") != 0;
+	}
+	if (!mirror)
+		return;
 	fwrite(s, 1, n, stdout);
 	fflush(stdout);
 }
@@ -62,6 +75,7 @@ static void sdl_set_pixel(int x, int y, unsigned rgb)
 	    y >= sdl_video_height())
 		return;
 	fb[y * sdl_video_width() + x] = (uint16_t)sdl_rgb_to_native(rgb);
+	sdl_video_mark_dirty();
 }
 
 static unsigned sdl_get_pixel(int x, int y)
@@ -117,6 +131,7 @@ static void sdl_present_native(int x, int y, int w, int h, const void *pix,
 			fb[dy * sw + dx] = src[row * stride + col];
 		}
 	}
+	sdl_video_mark_dirty();
 }
 
 static void sdl_present_rgb(int x, int y, int w, int h,
@@ -144,6 +159,7 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 				(uint16_t)sdl_rgb_to_native(rgb888[row * stride + col]);
 		}
 	}
+	sdl_video_mark_dirty();
 }
 
 /* Called from mmb_check_break while a program runs: pump SDL input and

@@ -172,6 +172,64 @@ def _pixel_at(data, w, x, y):
     return data[i], data[i + 1], data[i + 2]
 
 
+def _is_prompt_grey(rgb):
+    r, g, b = rgb
+    return (
+        abs(r - g) <= 20
+        and abs(g - b) <= 20
+        and 120 <= r <= 200
+        and r + g + b < 620
+    )
+
+
+def _solid_grey_cell(data, w, col, row):
+    hits = 0
+    for y in range(16):
+        for x in range(8):
+            i = ((row * 16 + y) * w + col * 8 + x) * 3
+            if _is_prompt_grey((data[i], data[i + 1], data[i + 2])):
+                hits += 1
+    return hits >= 90
+
+
+def test_prompt_block_cursor_visible(mmb_linux, tmp_path):
+    """The SDL prompt must show a solid block cursor like the Pi (issue: no
+    active cursor in the AppImage window)."""
+    w, h, data = _run_sdl_dump(mmb_linux, "PRINT 1+1\n", tmp_path, "cursor")
+    found = [
+        (col, row)
+        for row in range(20)
+        for col in range(24)
+        if _solid_grey_cell(data, w, col, row)
+    ]
+    assert found, "no solid prompt cursor in the SDL framebuffer"
+
+
+def test_prompt_cursor_survives_mode(mmb_linux, tmp_path):
+    """MODE repaints the screen; the prompt cursor must come back."""
+    w, h, data = _run_sdl_dump(mmb_linux, "MODE 8\n", tmp_path, "cursor_mode")
+    found = [
+        (col, row)
+        for row in range(20)
+        for col in range(30)
+        if _solid_grey_cell(data, w, col, row)
+    ]
+    assert found, "prompt cursor missing after MODE"
+
+
+@pytest.mark.parametrize("command", ["HELP", "WORDPAD"])
+def test_fullscreen_apps_hide_prompt_cursor(mmb_linux, tmp_path, command):
+    """The REPL cursor/prompt must not survive into a full-screen TUI app."""
+    w, h, data = _run_sdl_dump(mmb_linux, command + "\n", tmp_path, command.lower())
+    found = [
+        (col, row)
+        for row in range(4)
+        for col in range(12)
+        if _solid_grey_cell(data, w, col, row)
+    ]
+    assert not found, f"{command} shows a stale prompt cursor at {found}"
+
+
 def test_console_lf_returns_carriage(mmb_linux, tmp_path):
     """LF must behave as CR+LF, else lines staircase to the right."""
     program = 'CLS\nPRINT "AA"\nPRINT "BB"\n'
