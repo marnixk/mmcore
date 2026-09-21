@@ -80,6 +80,30 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
     assert (root / "C" / "A" / "B.TXT").read_text().strip() == "HELLO STORAGE"
 
 
+def test_drive_cli_mount(mmb_linux, tmp_path):
+    """--drive D:/path points the D: drive at a host directory."""
+    mount = tmp_path / "usb"
+    mount.mkdir()
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
+    program = (
+        'OPEN "D:/F.TXT" FOR OUTPUT AS #1\n'
+        'PRINT #1,"ON D"\n'
+        'CLOSE #1\n'
+        'DIR "D:/"\n'
+    )
+    proc = subprocess.run(
+        [mmb_linux, "--drive", "D:%s" % mount],
+        input=program,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert "F.TXT" in out
+    assert (mount / "F.TXT").read_text().strip() == "ON D"
+
+
 def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
     """LN-08 (#460): DIR glob matching is case-insensitive."""
     root = tmp_path / "drives"

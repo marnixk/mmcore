@@ -10,6 +10,7 @@
  * scanning the parent directory (case-insensitively) before use.
  */
 #include "mmb_priv.h"
+#include "storage_posix.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -28,6 +29,20 @@
 
 static char s_cwd[26][128]; /* indexed by letter - 'A' */
 static int s_init;
+static char s_override[26][P_BUF];
+static int s_has_override[26];
+
+static int drive_of(int letter);
+static void drive_dir_raw(int letter, char *out, int outsz);
+
+int storage_posix_mount(int letter, const char *path)
+{
+	if (!drive_of(letter) || !path || !path[0] || strlen(path) >= P_BUF)
+		return -1;
+	snprintf(s_override[letter - 'A'], sizeof s_override[0], "%s", path);
+	s_has_override[letter - 'A'] = 1;
+	return 0;
+}
 
 static const char *root_dir(void)
 {
@@ -61,7 +76,7 @@ static void ensure_root(void)
 	{
 		char db[P_BUF];
 
-		snprintf(db, sizeof db, "%s/%c", root, letter);
+		drive_dir_raw(letter, db, sizeof db);
 		mkdir(db, 0777);
 		s_cwd[letter - 'A'][0] = '/';
 		s_cwd[letter - 'A'][1] = 0;
@@ -70,6 +85,12 @@ static void ensure_root(void)
 
 static void drive_dir_raw(int letter, char *out, int outsz)
 {
+	if (s_has_override[letter - 'A'])
+	{
+		snprintf(out, (size_t)outsz, "%s",
+			 s_override[letter - 'A']);
+		return;
+	}
 	snprintf(out, (size_t)outsz, "%s/%c", root_dir(), (char)letter);
 }
 

@@ -1,11 +1,16 @@
 name: Linux AppImage
 
-# Builds the native SDL2 backend and packages it as an AppImage, then attaches
-# the result to a rolling pre-release so it can be downloaded and tested on a
-# Linux machine without building anything.
+# Builds the native SDL2 backend and packages it as an AppImage.
+#
+#  - on a version release: attached to that GitHub release (so every release
+#    ships the AppImage alongside the SD-card zips);
+#  - on push to ports/linux / master: attached to the rolling 'linux-native'
+#    pre-release for quick testing.
 on:
   push:
-    branches: [ports/linux]
+    branches: [ports/linux, master]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -48,14 +53,18 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
 
-      - name: Publish rolling pre-release
+      - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="linux-native"
-          notes="Automated AppImage built from the \`ports/linux\` branch at ${GITHUB_SHA:0:7}."
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.AppImage --clobber
+            echo "Attached AppImage to release ${GITHUB_REF_NAME}"
+            exit 0
+          fi
 
-          notes="$notes
+          tag="linux-native"
+          notes="Automated AppImage built from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
 
           Run it from a terminal (the built-in window shows output; type at the prompt):
 
@@ -63,7 +72,6 @@ jobs:
           chmod +x MMBasic-x86_64.AppImage
           ./MMBasic-x86_64.AppImage
           \`\`\`"
-
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --prerelease \

@@ -9,6 +9,7 @@
  */
 #include "mmb_priv.h"
 #include "frontend.h"
+#include "cli.h"
 #include "sdl_video.h"
 #include "sdl_input.h"
 
@@ -66,10 +67,12 @@ static int read_stdin_line(char *line, int cap)
 	return 1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	char line[MMB_LINE_LEN];
 	int stdin_open = 1;
+
+	mmb_cli_parse(argc, argv);
 
 	if (!sdl_video_open(640, 480))
 	{

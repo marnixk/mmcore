@@ -7,6 +7,7 @@
  *   mmbasic "RUN \"...\""   execute one line and exit
  */
 #include "mmb_priv.h"
+#include "cli.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,13 +26,15 @@ static void run_line(const char *line)
 int main(int argc, char **argv)
 {
 	char line[MMB_LINE_LEN];
+	const char *one_line;
 
+	one_line = mmb_cli_parse(argc, argv);
 	mmb_platform_bind_stdio();
 	mmb_print_startup();
 
-	if (argc > 1)
+	if (one_line)
 	{
-		run_line(argv[1]);
+		run_line(one_line);
 		return 0;
 	}
 

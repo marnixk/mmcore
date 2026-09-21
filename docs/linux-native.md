@@ -47,8 +47,16 @@ Physical drives map to host directories under `MMB_DRIVE_ROOT` (default
 the in-RAM ramdisk seeded from `ramdisk/` at boot. Settings live in
 `C:/.mmbasic.ini` (falling back to `A:`).
 
-Path lookups are case-insensitive to match FatFs, even though the host
-filesystem may not be.
+Any drive can be pointed at a specific host directory at startup:
+
+```bash
+./linux/mmbasic-sdl --drive D:/media/usb
+./linux/mmbasic --drive D:/media/usb 'DIR "D:/"'
+```
+
+`--drive-root DIR` sets the base for the drives that were not overridden. Run
+`--help` for the full usage. Path lookups are case-insensitive to match FatFs,
+even though the host filesystem may not be.
 
 ## Network
 

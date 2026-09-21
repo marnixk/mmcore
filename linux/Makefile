@@ -35,7 +35,7 @@ MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
 	    $(MMB)/third_party/picojpeg.c $(MMB)/third_party/upng.c
 COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
-	       storage_posix.c net_posix.c
+	       storage_posix.c net_posix.c cli.c
 STDIO_SRCS := platform_stdio.c main.c
 SDL_SRCS   := platform_sdl.c sdl_video.c sdl_console.c sdl_tui.c sdl_input.c \
 	      sdl_audio.c main_sdl.c
