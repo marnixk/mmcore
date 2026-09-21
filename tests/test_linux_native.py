@@ -6,6 +6,7 @@ behaviour: startup banner, immediate-mode PRINT, and RUN of a ramdisk .BAS.
 import os
 import shutil
 import subprocess
+import zipfile
 
 import pytest
 
@@ -393,7 +394,7 @@ def test_audio_backend_runs(mmb_linux, tmp_path):
     assert "AUDIO_OK" in (proc.stdout + proc.stderr)
 
 
-def _run_sdl_timed(tmp_path, first_line, quit_line, wait, extra_env=None):
+def _run_sdl_timed(tmp_path, first_line, quit_line, wait, extra_env=None, args=None):
     if not os.path.isfile(SDL_BIN):
         pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
     import time as _time
@@ -402,7 +403,7 @@ def _run_sdl_timed(tmp_path, first_line, quit_line, wait, extra_env=None):
     if extra_env:
         env.update(extra_env)
     p = subprocess.Popen(
-        [SDL_BIN],
+        [SDL_BIN] + list(args or []),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -529,3 +530,97 @@ def test_sdl_backend_headless(mmb_linux):
     assert "MMBasic" in out
     assert "5" in out
     assert "HELLO" in out
+
+
+def _make_app(path):
+    """A minimal packaged app: a zip with MAIN.BAS at the root."""
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("MAIN.BAS", 'PRINT "APP MARKER"\n')
+    return path
+
+
+def _app_env(tmp_path):
+    return dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
+
+
+def test_cli_app_runs_package_headless(mmb_linux, tmp_path):
+    """#490: a positional .app runs as an app VM and the process exits."""
+    app = _make_app(tmp_path / "HELLO.APP")
+    proc = subprocess.run(
+        [mmb_linux, str(app)],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=_app_env(tmp_path),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "APP MARKER" in out
+    assert "> " not in out, "app VM must not drop to a REPL prompt"
+
+
+def test_cli_app_repl_flag_stays(mmb_linux, tmp_path):
+    """#490: --repl returns to the REPL after the package ends."""
+    app = _make_app(tmp_path / "STAY.APP")
+    proc = subprocess.run(
+        [mmb_linux, "--repl", str(app)],
+        input="PRINT 2+3\n",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=_app_env(tmp_path),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "APP MARKER" in out
+    assert "> 5" in out, "--repl should leave a working prompt"
+
+
+def test_cli_app_sdl_sealed_no_repl(mmb_linux, tmp_path):
+    """#490: the SDL build runs an .app and exits with no REPL."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    app = _make_app(tmp_path / "SDLAPP.APP")
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root"))
+    proc = subprocess.run(
+        [SDL_BIN, str(app)],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "APP MARKER" in out
+    assert "> " not in out
+
+
+def test_cli_term_sealed_exits(mmb_linux, tmp_path):
+    """#491: --term runs a sealed TERM session; Ctrl+C cannot reach a prompt."""
+    out, rc = _run_sdl_timed(
+        tmp_path,
+        "",
+        "\x03\x01x\n",  # Ctrl+C then Alt+X (quit)
+        1.2,
+        args=["--term", "demo"],
+    )
+    assert rc == 0
+    assert ("Echo ON" in out) or ("Bookmarks" in out) or ("Boxed" in out)
+    assert "> " not in out, "sealed TERM must not drop to a REPL prompt"
+
+
+def test_cli_term_host_parser(mmb_linux, tmp_path):
+    """#491: --term accepts host:port; a failed connect exits, no REPL."""
+    proc = subprocess.run(
+        [mmb_linux, "--term", "127.0.0.1:1"],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=_app_env(tmp_path),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "> " not in out

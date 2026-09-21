@@ -6,6 +6,11 @@
  * Alt+Enter at the prompt toggles fullscreen on the primary display.
  * stdin is still accepted (one line at a time) so the binary is testable
  * headlessly; EOF on a non-tty exits.
+ *
+ * App-VM modes (issue #490/#491): a positional `path.app` runs the package as
+ * a self-contained app, and `--term [host[:port]]` starts a sealed TERM
+ * session. Both exit the process when they end unless `--repl`/`--stay`;
+ * while sealed they never paint the REPL prompt and swallow BREAK.
  */
 #include "mmb_priv.h"
 #include "frontend.h"
@@ -15,6 +20,7 @@
 
 #include <SDL.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +39,14 @@ static void front_emit(void *ctx, const char *s, unsigned n)
 		G.plat->write_serial(s, n);
 	if (G.plat->write_screen)
 		G.plat->write_screen(s, n);
+}
+
+static void run_line(const char *line)
+{
+	const char *result = mmb_exec_line(line);
+
+	if (result && result[0])
+		front_emit(0, result, (unsigned)strlen(result));
 }
 
 static int stdin_line_ready(void)
@@ -88,9 +102,14 @@ static int read_stdin_line(char *line, int cap)
 int main(int argc, char **argv)
 {
 	char line[MMB_LINE_LEN];
-	int stdin_open = stdin_usable();
+	const struct mmb_cli_opts *cli;
+	int stdin_open, sealed, app_mode, term_mode;
 
-	mmb_cli_parse(argc, argv);
+	cli = mmb_cli_parse(argc, argv);
+	app_mode = cli->mode == MMB_CLI_APP;
+	term_mode = cli->mode == MMB_CLI_TERM;
+	sealed = (app_mode || term_mode) && !cli->stay;
+	stdin_open = stdin_usable();
 
 	if (!sdl_video_open(640, 480))
 	{
@@ -102,14 +121,61 @@ int main(int argc, char **argv)
 	mmb_platform_bind_sdl();
 	SDL_StartTextInput();
 	mmb_front_init(front_emit, 0);
+	if (sealed)
+	{
+		mmb_front_set_sealed(1);
+		/* BREAK (terminal Ctrl+C) must not interrupt a sealed session. */
+		signal(SIGINT, SIG_IGN);
+	}
 	mmb_print_startup();
-	mmb_front_prompt();
+
+	if (app_mode)
+	{
+		const char *cmd = mmb_cli_app_run_line();
+
+		if (!cmd)
+		{
+			fprintf(stderr, "mmbasic: cannot run '%s'\n",
+				cli->app_path ? cli->app_path : "?");
+			sdl_video_close();
+			return 2;
+		}
+		run_line(cmd);
+		if (!cli->stay)
+		{
+			sdl_video_present();
+			sdl_video_close();
+			return 0;
+		}
+	}
+	else if (term_mode)
+	{
+		run_line(mmb_cli_term_run_line());
+		if (!cli->stay && !mmb_in_term())
+		{
+			sdl_video_close();
+			return 0; /* TERM never started */
+		}
+	}
+	else if (cli->mode == MMB_CLI_LINE && cli->line)
+	{
+		run_line(cli->line);
+		sdl_video_close();
+		return 0;
+	}
+	else
+	{
+		mmb_front_prompt();
+	}
 	sdl_video_present();
 
 	while (!sdl_video_should_quit())
 	{
 		sdl_input_pump();
 		mmb_poll(); /* CONNECT/TERM/FTP, audio mix, ON TICK at the prompt */
+
+		if (term_mode && !mmb_in_term())
+			break; /* sealed TERM session ended */
 
 		if (stdin_open && stdin_line_ready())
 		{

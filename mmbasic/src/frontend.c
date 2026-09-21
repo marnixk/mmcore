@@ -17,6 +17,7 @@ static int s_hist_idx;
 static char s_draft[FE_LINE_MAX];
 static int s_esc;    /* 0 idle, 1 ESC, 2 CSI, 3 SS3 */
 static int s_csi_arg;
+static int s_sealed;
 
 static void fe_emit(const char *s, unsigned n)
 {
@@ -471,9 +472,14 @@ void mmb_front_prompt(void)
 {
 	/* A full-screen app owns the display: never paint the REPL prompt over
 	 * it (stray emissions used to leave the prompt at the top-left of HELP
-	 * and WORDPAD). */
-	if (mmb_front_in_app())
+	 * and WORDPAD). A sealed CLI session never returns to the REPL at all. */
+	if (s_sealed || mmb_front_in_app())
 		return;
 	mmb_hw_cursor(1);
 	fe_puts(mmb_prompt());
+}
+
+void mmb_front_set_sealed(int on)
+{
+	s_sealed = on ? 1 : 0;
 }

@@ -44,6 +44,25 @@ interactive terminal is not spammed with a second copy.
 Headless smoke test helpers: `MMB_SDL_DUMP=out.ppm` writes the framebuffer on
 exit; `SDL_VIDEODRIVER=dummy` runs without a display.
 
+### App-VM launch
+
+The native binaries also act as a simple VM for packaged `.APP` files and for
+TERM sessions, so the AppImage is a portable app runner:
+
+```bash
+./linux/mmbasic-sdl /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
+./linux/mmbasic-sdl --term bbs.example.net    # sealed TERM session
+```
+
+A positional argument that names an existing `.app` file mounts its host
+directory on a physical drive, runs the package with the same B: read-only
+semantics as REPL `RUN "name.app"`, and then exits. `--term [host[:port]]`
+starts TERM (default port 23; no host opens the disconnected menu) and exits
+when the session ends. Both modes are *sealed*: they never drop to the `> `
+prompt and swallow BREAK / Ctrl+C. Pass `--repl` (or `--stay`) to return to the
+interactive REPL instead, and a bare launch still opens the normal REPL. The
+headless `linux/mmbasic` accepts the same arguments.
+
 ## Storage
 
 Physical drives map to host directories under `MMB_DRIVE_ROOT` (default
