@@ -41,9 +41,10 @@ cat > "${APPDIR}/usr/share/applications/mmcore.desktop" <<'EOF'
 Type=Application
 Name=mmcore
 Comment=Colour Maximite 2 compatible BASIC interpreter
-Exec=mmbasic-sdl
+Exec=mmbasic-sdl %f
 Icon=mmcore
 Categories=Development;Education;
+MimeType=application/x-mmcore-app;
 Terminal=false
 EOF
 cp "${APPDIR}/usr/share/applications/mmcore.desktop" "${APPDIR}/mmcore.desktop"

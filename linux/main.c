@@ -5,12 +5,17 @@
  * Usage:
  *   mmbasic                 interactive REPL on stdin/stdout
  *   mmbasic "RUN \"...\""   execute one line and exit
+ *   mmbasic path/to/x.app   run a packaged .APP (app VM), then exit
+ *   mmbasic --term HOST:23  run a sealed TERM session, then exit
  */
 #include "mmb_priv.h"
 #include "cli.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/select.h>
+#include <unistd.h>
 
 void mmb_platform_bind_stdio(void);
 
@@ -23,18 +28,76 @@ static void run_line(const char *line)
 	fflush(stdout);
 }
 
+/* Sealed TERM session for the headless build: forward stdin bytes to TERM and
+ * poll the network until the session ends, then return so main() can exit. */
+static void run_term_sealed(void)
+{
+	run_line(mmb_cli_term_run_line());
+	while (mmb_in_term())
+	{
+		fd_set rfds;
+		struct timeval tv;
+		int c;
+
+		FD_ZERO(&rfds);
+		FD_SET(0, &rfds);
+		tv.tv_sec = 0;
+		tv.tv_usec = 50000;
+		if (select(1, &rfds, 0, 0, &tv) > 0)
+		{
+			c = fgetc(stdin);
+			if (c == EOF)
+				break;
+			else
+			{
+				const char *out = mmb_term_key((char)c);
+
+				if (out && out[0])
+				{
+					fputs(out, stdout);
+					fflush(stdout);
+				}
+			}
+		}
+		mmb_poll();
+	}
+}
+
 int main(int argc, char **argv)
 {
 	char line[MMB_LINE_LEN];
-	const char *one_line;
+	const struct mmb_cli_opts *cli;
 
-	one_line = mmb_cli_parse(argc, argv);
+	cli = mmb_cli_parse(argc, argv);
 	mmb_platform_bind_stdio();
 	mmb_print_startup();
 
-	if (one_line)
+	if ((cli->mode == MMB_CLI_APP || cli->mode == MMB_CLI_TERM) && !cli->stay)
+		signal(SIGINT, SIG_IGN);
+
+	if (cli->mode == MMB_CLI_APP)
 	{
-		run_line(one_line);
+		const char *cmd = mmb_cli_app_run_line();
+
+		if (!cmd)
+		{
+			fprintf(stderr, "mmbasic: cannot run '%s'\n",
+				cli->app_path ? cli->app_path : "?");
+			return 2;
+		}
+		run_line(cmd);
+		if (!cli->stay)
+			return 0;
+	}
+	else if (cli->mode == MMB_CLI_TERM)
+	{
+		run_term_sealed();
+		if (!cli->stay)
+			return 0;
+	}
+	else if (cli->mode == MMB_CLI_LINE && cli->line)
+	{
+		run_line(cli->line);
 		return 0;
 	}
 

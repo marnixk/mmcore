@@ -28,6 +28,10 @@ int mmb_front_in_app(void);
 /* Emit a fresh prompt (shows the hardware cursor). */
 void mmb_front_prompt(void);
 
+/* Sealed app sessions (CLI app-VM / TERM) never paint a REPL prompt: when the
+ * app or session ends the process exits instead of dropping to `> `. */
+void mmb_front_set_sealed(int on);
+
 #ifdef __cplusplus
 }
 #endif
