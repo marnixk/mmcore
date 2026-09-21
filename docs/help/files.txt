@@ -15,7 +15,8 @@ restored.
 
 An ANSI preview interprets the file as a VT100/ANSI terminal would (SGR
 colours, cursor movement, erase, save/restore) using IBM VGA CP437 glyphs and
-the standard 16-colour palette on a black screen in the current MODE. Up/Down
+the standard 16-colour palette on a black screen in the current MODE. Lines
+auto-wrap at 80 columns like a real ANSI terminal, whatever the MODE. Up/Down
 scroll through art taller than the screen; content is kept, so earlier rows
 remain reachable. Press F to toggle the authentic 80x25 view (MODE 2 640x400,
 the full-screen TERM pane), and F again to return to the MODE the preview
