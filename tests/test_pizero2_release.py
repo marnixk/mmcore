@@ -46,16 +46,16 @@ def test_package_and_release_scripts_name_zero2_zips():
     assert "package_pizero2w" in pkg
     assert "brcmfmac43436-sdio.bin" in pkg
     assert "bcm2710-rpi-zero-2-w.dtb" in pkg
-    assert "mmbasic-console-pizero2-v" in rel
-    assert "mmbasic-console-pizero2w-v" in rel
+    assert "mmcore-console-pizero2-v" in rel
+    assert "mmcore-console-pizero2w-v" in rel
     assert "pizero2w|zero2w" in inst
     assert pkg.find("package_pizero2") < pkg.find("build_hardware 4")
 
 
 def test_release_notes_list_zero2_artifacts():
     notes = _run([os.path.join(SCRIPTS, "github-release.sh"), "release-notes", "9.9.9"]).stdout
-    assert "mmbasic-console-pizero2-v9.9.9.zip" in notes
-    assert "mmbasic-console-pizero2w-v9.9.9.zip" in notes
+    assert "mmcore-console-pizero2-v9.9.9.zip" in notes
+    assert "mmcore-console-pizero2w-v9.9.9.zip" in notes
     assert "--model pizero2" in notes
     assert "--model pizero2w" in notes
 
@@ -107,10 +107,10 @@ def test_pack_only_builds_four_zips(tmp_path):
     _run(["bash", os.path.join(SCRIPTS, "package-release.sh")], env=env)
 
     zips = {
-        "rpi3": dist / "mmbasic-console-rpi3-v9.9.9.zip",
-        "pizero2": dist / "mmbasic-console-pizero2-v9.9.9.zip",
-        "pizero2w": dist / "mmbasic-console-pizero2w-v9.9.9.zip",
-        "pi400": dist / "mmbasic-console-pi400-v9.9.9.zip",
+        "rpi3": dist / "mmcore-console-rpi3-v9.9.9.zip",
+        "pizero2": dist / "mmcore-console-pizero2-v9.9.9.zip",
+        "pizero2w": dist / "mmcore-console-pizero2w-v9.9.9.zip",
+        "pi400": dist / "mmcore-console-pi400-v9.9.9.zip",
     }
     for path in zips.values():
         assert path.is_file(), path

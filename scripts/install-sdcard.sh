@@ -41,7 +41,7 @@ Options:
                       Aliases: pi3, 3, zero2, zero2w, rpi4, pi4, 400
   --from PATH         Directory or zip of boot files. Defaults to this script's
                       directory when it already contains the kernel, otherwise a
-                      matching mmbasic-console-<model>-v*.zip next to the script,
+                      matching mmcore-console-<model>-v*.zip next to the script,
                       in the current directory, or in <repo>/dist.
   --yes               Do not prompt for confirmation (unsafe devices are still
                       refused)
@@ -59,7 +59,7 @@ Examples:
   sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdb
   sudo ./install-sdcard.sh --update --model pi400 /dev/mmcblk0
   sudo ./install-sdcard.sh --bootstrap --model pi400 \
-      --from mmbasic-console-pi400-v0.2.0.zip --yes /dev/sdb
+      --from mmcore-console-pi400-v0.2.0.zip --yes /dev/sdb
 EOF
 }
 
@@ -167,10 +167,10 @@ kernel_name_for_model() {
 
 zip_glob_for_model() {
 	case "$1" in
-		rpi3) printf 'mmbasic-console-rpi3-v*.zip\n' ;;
-		pizero2) printf 'mmbasic-console-pizero2-v*.zip\n' ;;
-		pizero2w) printf 'mmbasic-console-pizero2w-v*.zip\n' ;;
-		pi400) printf 'mmbasic-console-pi400-v*.zip\n' ;;
+		rpi3) printf 'mmcore-console-rpi3-v*.zip\n' ;;
+		pizero2) printf 'mmcore-console-pizero2-v*.zip\n' ;;
+		pizero2w) printf 'mmcore-console-pizero2w-v*.zip\n' ;;
+		pi400) printf 'mmcore-console-pi400-v*.zip\n' ;;
 	esac
 }
 

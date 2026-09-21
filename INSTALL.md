@@ -9,10 +9,10 @@ files from different zips on the same card.
 
 | Zip | Boards |
 | --- | --- |
-| `mmbasic-console-rpi3-v*.zip` | Raspberry Pi **3**, **3B+**, **3A+** |
-| `mmbasic-console-pizero2-v*.zip` | Raspberry Pi **Zero 2** (no onboard Wi-Fi) |
-| `mmbasic-console-pizero2w-v*.zip` | Raspberry Pi **Zero 2 W** (onboard Wi-Fi) |
-| `mmbasic-console-pi400-v*.zip` | Raspberry Pi **400** (also Pi **4B** / **CM4**) |
+| `mmcore-console-rpi3-v*.zip` | Raspberry Pi **3**, **3B+**, **3A+** |
+| `mmcore-console-pizero2-v*.zip` | Raspberry Pi **Zero 2** (no onboard Wi-Fi) |
+| `mmcore-console-pizero2w-v*.zip` | Raspberry Pi **Zero 2 W** (onboard Wi-Fi) |
+| `mmcore-console-pi400-v*.zip` | Raspberry Pi **400** (also Pi **4B** / **CM4**) |
 
 The Zero 2 and Zero 2 W zips reuse the same 64-bit BCM2710 kernel as the Pi 3
 zip (`kernel8.img`). Zero 2 W includes CYW43436 blobs under `firmware/`; the
@@ -61,10 +61,10 @@ serial; the default is off.
 
 From the repository’s **Releases** page, download **one** zip:
 
-- Pi 3 family: `mmbasic-console-rpi3-v0.1.1.zip`
-- Pi Zero 2: `mmbasic-console-pizero2-v0.1.1.zip`
-- Pi Zero 2 W: `mmbasic-console-pizero2w-v0.1.1.zip`
-- Pi 400 / Pi 4: `mmbasic-console-pi400-v0.1.1.zip`
+- Pi 3 family: `mmcore-console-rpi3-v0.1.1.zip`
+- Pi Zero 2: `mmcore-console-pizero2-v0.1.1.zip`
+- Pi Zero 2 W: `mmcore-console-pizero2w-v0.1.1.zip`
+- Pi 400 / Pi 4: `mmcore-console-pi400-v0.1.1.zip`
 
 Unzip it.
 
@@ -145,7 +145,7 @@ kernel, firmware, and `config.txt` only, so BASIC files already on `C:` stay.
 
 ```bash
 # Replace sdX with your card (check with lsblk).
-unzip mmbasic-console-rpi3-v*.zip        # or pizero2 / pizero2w / pi400
+unzip mmcore-console-rpi3-v*.zip        # or pizero2 / pizero2w / pi400
 sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 # sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX
 # sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX
@@ -379,10 +379,10 @@ scripts/package-release.sh
 
 That writes:
 
-- `dist/mmbasic-console-rpi3-v0.1.1.zip`
-- `dist/mmbasic-console-pizero2-v0.1.1.zip`
-- `dist/mmbasic-console-pizero2w-v0.1.1.zip`
-- `dist/mmbasic-console-pi400-v0.1.1.zip`
+- `dist/mmcore-console-rpi3-v0.1.1.zip`
+- `dist/mmcore-console-pizero2-v0.1.1.zip`
+- `dist/mmcore-console-pizero2w-v0.1.1.zip`
+- `dist/mmcore-console-pi400-v0.1.1.zip`
 
 Zero 2 / Zero 2 W packaging reuses the Pi 3 hardware kernel (no third Circle
 rebuild). Each zip includes `install-sdcard.sh`. Override the version with
