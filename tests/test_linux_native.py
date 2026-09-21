@@ -177,6 +177,16 @@ def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
     assert _pixel_at(data, w, 225, 225) == (0, 0, 0)
 
 
+@pytest.mark.parametrize("command", ["FILES", "WORDPAD", "HELP", "AFK"])
+def test_tui_apps_render(mmb_linux, tmp_path, command):
+    """The fullscreen apps take over the framebuffer through the TUI hooks."""
+    w, h, data = _run_sdl_dump(mmb_linux, command + "\n", tmp_path, command)
+    nonblack = sum(
+        1 for i in range(0, len(data), 3) if data[i] or data[i + 1] or data[i + 2]
+    )
+    assert nonblack > 500, "app painted nothing"
+
+
 def test_sdl_backend_headless(mmb_linux):
     """LN-03 (#455): SDL2 core opens a window and runs the interpreter.
 
