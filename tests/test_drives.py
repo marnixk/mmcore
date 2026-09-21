@@ -112,6 +112,29 @@ def test_drive_select_a(console):
     assert cwd.upper().startswith("A:")
 
 
+def test_cat_prompt_prints_file(console):
+    assert console.send_line('OPEN "A:/CAT391.TXT" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "HELLO"') == ""
+    assert console.send_line('PRINT #1, "WORLD"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert console.send_line('cat "A:/CAT391.TXT"') == "HELLO\nWORLD"
+
+
+def test_cat_prompt_accepts_bare_path(console):
+    _write_text(console, "A:/CATBARE.TXT", "BARE")
+    assert console.send_line("cat A:/CATBARE.TXT") == "BARE"
+
+
+def test_cat_prompt_missing_file(console):
+    assert console.send_line("cat A:/NOPE391.TXT").startswith("?")
+
+
+def test_cat_prompt_keeps_string_concat(console):
+    assert console.send_line('A$="MM"') == ""
+    assert console.send_line('CAT A$,"BASIC"') == ""
+    assert console.send_line("PRINT A$") == "MMBASIC"
+
+
 @pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
 def test_sd_card_is_always_c(kernel_image):
     fd, img = tempfile.mkstemp(suffix=".img")

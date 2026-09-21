@@ -3888,6 +3888,39 @@ static void run_program(void)
 	mmb_gfx_reset_console(0);
 }
 
+/* True when s contains a comma outside a quoted string. The language CAT
+ * statement always has one (CAT dest$, text), so its absence marks the
+ * prompt-only "cat file" shortcut. */
+static int has_unquoted_comma(const char *s)
+{
+	while (*s)
+	{
+		if (*s == '"')
+		{
+			s++;
+			while (*s)
+			{
+				if (*s == '"')
+				{
+					if (s[1] == '"')
+					{
+						s += 2;
+						continue;
+					}
+					s++;
+					break;
+				}
+				s++;
+			}
+			continue;
+		}
+		if (*s == ',')
+			return 1;
+		s++;
+	}
+	return 0;
+}
+
 static void clear_exec_flags(void)
 {
 	G.running = 0;
@@ -3977,6 +4010,18 @@ const char *mmb_exec_line(const char *line)
 			G.p = cmd;
 			mmb_cmd_chdir();
 			return G.out;
+		}
+		if ((line[0] == 'c' || line[0] == 'C') && (line[1] == 'a' || line[1] == 'A') &&
+		    (line[2] == 't' || line[2] == 'T') && (line[3] == ' ' || line[3] == '\t'))
+		{
+			const char *arg = line + 3;
+			while (*arg == ' ' || *arg == '\t')
+				arg++;
+			if (!has_unquoted_comma(arg))
+			{
+				mmb_cmd_cat_file(arg);
+				return G.out;
+			}
 		}
 	}
 	if (starts_with_line_number(line, &num, &rest))

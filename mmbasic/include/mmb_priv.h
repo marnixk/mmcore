@@ -619,6 +619,7 @@ void mmb_cmd_kill(void);
 void mmb_cmd_copy(void);
 void mmb_cmd_xfer(void);
 void mmb_cmd_name(void);
+void mmb_cmd_cat_file(const char *arg);
 void mmb_cmd_pause(void);
 void mmb_cmd_vsync_wait(void);
 void mmb_cmd_cls(void);
