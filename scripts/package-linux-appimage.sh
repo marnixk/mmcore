@@ -13,10 +13,12 @@ APPDIR="${DIST}/MMBasic.AppDir"
 TOOLS="${DIST}/.appimage-tools"
 ARCH="${APPIMAGE_ARCH:-$(uname -m)}"
 VERSION="$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo dev)"
-OUT="${DIST}/MMBasic-${VERSION}-${ARCH}.AppImage"
+# Stable asset name so the rolling download URL never changes.
+OUT="${DIST}/MMBasic-${ARCH}.AppImage"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
+log "Version ${VERSION}"
 log "Building native SDL binary"
 "${REPO_ROOT}/scripts/build-linux.sh"
 BIN="${REPO_ROOT}/linux/mmbasic-sdl"

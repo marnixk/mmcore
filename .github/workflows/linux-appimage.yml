@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -30,6 +32,14 @@ jobs:
 
       - name: Build AppImage
         run: scripts/package-linux-appimage.sh
+
+      - name: Smoke-test the AppImage
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export SDL_VIDEODRIVER=dummy
+          out=$(printf 'PRINT "SMOKE_OK 42"\n' | ./dist/MMBasic-*.AppImage 2>&1 || true)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "SMOKE_OK 42"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -43,16 +53,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="linux-native"
+          notes="Automated AppImage built from the \`ports/linux\` branch at ${GITHUB_SHA:0:7}."
+
+          notes="$notes
+
+          Run it from a terminal (the built-in window shows output; type at the prompt):
+
+          \`\`\`
+          chmod +x MMBasic-x86_64.AppImage
+          ./MMBasic-x86_64.AppImage
+          \`\`\`"
+
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --prerelease \
               --title "Linux native (rolling)" \
-              --notes "Automated AppImage built from the \`ports/linux\` branch.
-
-          Run it from a terminal (the built-in window shows output; type at the prompt):
-          \`\`\`
-          chmod +x MMBasic-*.AppImage
-          ./MMBasic-*.AppImage
-          \`\`\`"
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
           fi
           gh release upload "$tag" dist/*.AppImage --clobber
