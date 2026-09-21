@@ -1,5 +1,7 @@
 # Roadmap — bare-metal MMBasic for Raspberry Pi
 
+_Last reviewed: 2026-09-22._
+
 ## Goal & compatibility target
 
 Deliver an MMBasic interpreter that boots directly on the Raspberry Pi (no
@@ -12,74 +14,108 @@ The behavioural target is the **Colour Maximite 2 (CMM2)**. Reference manuals:
 - [Programming with the Colour Maximite 2](https://geoffg.net/Downloads/Maximite/Programming_with_the_Colour_Maximite_2.pdf)
 - [Colour Maximite 2 User Manual](https://geoffg.net/Downloads/Maximite/Colour_Maximite_2_User_Manual.pdf)
 
-## Priorities
+## Status at a glance
 
-1. **Graphics library equivalence (primary).** Match the CMM2 drawing commands
+The core port is **shipped**: the interpreter, CMM2 graphics/screen model,
+files, audio, networking, full-screen TUIs, and a native Linux backend are all
+in the tree and covered by the test suite (releases through **v0.187.0**).
+Remaining work is long-tail parity and polish, tracked as open issues, not
+greenfield.
+
+| Area | State |
+| --- | --- |
+| MMBasic core on Circle | done |
+| Console I/O (USB keyboard, HDMI, serial) | done |
+| CMM2 graphics (MODE / PAGE / COLOUR / RGB / drawing / blit / sprites) | done; edge parity open (#487, #489) |
+| Fonts / `TEXT` / `FONT` and TUIs (EDIT, FILES, WORDPAD, HELP, AFK) | done |
+| Filesystem (`A:` ramdisk, `C:` SD, USB drives), `PACKAGE` / `.APP` | done |
+| Audio (`PLAY MP3/MOD/XM/TONE`) | done |
+| Networking (Wi-Fi, Ethernet, TCP, `TERM`, `CONNECT`, FTP server) | done |
+| Native Linux backend (`linux/mmbasic`, `mmbasic-sdl`, AppImage) | done; hardening open (#486) |
+| AppImage/CLI app-VM launch of `.APP` and `TERM` | open (#490, #491) |
+
+Priorities:
+
+1. **Graphics-library equivalence (primary).** Match the CMM2 drawing commands
    and screen model as closely as practical.
-2. Core language + console I/O (keyboard in, screen/serial out).
+2. Core language + console I/O.
 3. File system / storage.
 
 Explicitly **optional / deferred** (per project owner): external integrations
-such as serial-comms peripherals and Wii / Nunchuck controllers. Missing these
-is acceptable.
+such as serial-comms peripherals and Wii / Nunchuck controllers, and
+PicoMite-only peripherals (I2C/SPI device ports, camera). Missing these is
+acceptable.
 
 ## Screen model
 
 CMM2 uses `MODE`-selectable resolutions (default 800×600) with multiple
-framebuffer `PAGE`s and a `COLOUR`/`RGB()` model. Circle provides an equivalent
-foundation: a `CBcmFrameBuffer`-backed display, `CScreenDevice::SetPixel`, and
-the double-buffered `C2DGraphics` software library (lines, rectangles, circles,
-images, text, VSync). Reaching CMM2 parity means implementing `MODE`,
-multi-page framebuffers (`PAGE`), and the `RGB()` colour space on top of these.
+framebuffer `PAGE`s and a `COLOUR`/`RGB()` colour model. mmcore implements this
+on Circle's `CBcmFrameBuffer` + software rasterisers, with HDMI-native pixels
+(`COLOR16`, 5-5-5) and RGB888 only at the API boundary.
+
+`MODE r, bits` (modes 1–17, bitdepths 8/12/16/32), multi-page framebuffers,
+page-1 transparency/overlay compositing, and `RGB()`/`COLOUR` are all
+implemented. See [`graphics-acceleration.md`](graphics-acceleration.md) for the
+present/DMA/double-buffer paths and the CPU-only leftovers.
 
 ## CMM2 graphics command mapping
 
-Status legend: **done** = working in the demonstrator console today,
-**planned** = to implement during the port.
+Status legend: **done** = implemented and tested; **partial** = implemented with
+a known parity gap; **planned/deferred** = not implemented (follow the linked
+issue).
 
-| CMM2 command | Syntax (from the manual) | Circle primitive | Status |
-| --- | --- | --- | --- |
-| `CLS` | `CLS [colour]` | fill framebuffer | done |
-| `PIXEL` | `PIXEL x, y, colour` | `SetPixel` / `C2DGraphics::DrawPixel` | done |
-| `LINE` | `LINE x1,y1,x2,y2, lw, c` | `C2DGraphics::DrawLine` (Bresenham) | done (no line-width) |
-| `BOX` | `BOX x,y,w,h, lw, c [,fill]` | `DrawRectOutline` / `DrawRect` | done (outline only) |
-| `CIRCLE` | `CIRCLE x,y,r, lw, a, c, fill` | `DrawCircleOutline` / `DrawCircle` | done (outline only) |
-| `COLOUR` | `COLOUR fg, bg` | screen colour state | planned |
-| `RGB()` | `RGB(r,g,b)` / `RGB(named)` | `DISPLAY_COLOR(r,g,b)` | planned |
-| `TEXT` | `TEXT x,y,string, align, font, scale, c, bg` | `C2DGraphics::DrawText` | planned |
-| `FONT` | `FONT n, scale` | Circle fonts (`CFont`) | planned |
-| `RBOX` | rounded box | compose primitives | planned |
-| `ARC` / `TRIANGLE` / `POLYGON` | filled/outline shapes | `C2DGraphics` + custom | planned |
-| `MODE` | `MODE r, bits, bg, int` | framebuffer reconfigure | planned |
-| `PAGE` | `PAGE WRITE/COPY n [TO m]` | multiple framebuffers / blit | planned |
-| `BLIT` | `BLIT x,y,...` | `DrawImageRect` / buffer copy | planned |
-| `IMAGE` / `SPRITE` | image + sprite ops | `DrawImage*` | planned |
+| CMM2 command | Syntax (from the manual) | Status |
+| --- | --- | --- |
+| `CLS` | `CLS [colour]` | done |
+| `PIXEL` | `PIXEL x, y, colour` | done |
+| `LINE` | `LINE x1,y1,x2,y2[,lw[,c]]` | partial (even-width, `lw>7` — #487) |
+| `BOX` | `BOX x,y,w,h[,lw][,c][,fill]` + logic ops | partial (#487) |
+| `RBOX` | `RBOX x,y,w,h[,r][,c][,fill]` | partial (default radius — #487) |
+| `CIRCLE` | `CIRCLE x,y,r[,lw][,a][,c][,fill]` | partial (aspect ratio — #487) |
+| `ARC` | `ARC x,y,r1,r2,a1,a2,c` | done (tessellated) |
+| `TRIANGLE` | `TRIANGLE x1,y1,x2,y2,x3,y3[,c[,fill]]` | partial (fill order — #487) |
+| `POLYGON` | `POLYGON n, xarray%(), yarray%()…` | partial (inline form; array syntax — #487) |
+| `COLOUR` | `COLOUR fg, bg` | done |
+| `RGB()` | `RGB(r,g,b)` / `RGB(named)` | done |
+| `TEXT` | `TEXT x,y,string, align, font, scale, c, bg` | done |
+| `FONT` | `FONT n, scale` | done |
+| `MODE` | `MODE r, bits, bg, int` | done |
+| `PAGE` | `PAGE WRITE/COPY/DISPLAY/SCROLL/…` | partial (`,B`/`,t` semantics — #487) |
+| `BLIT` | `BLIT x,y,w,h[,page][,orientation]`, READ/WRITE/CLOSE | done (transparent/logic CPU — #487) |
+| `IMAGE` / `SPRITE` | load/blit + sprite ops | partial (sprite command surface — #487) |
 
-The demonstrator today implements `CLS`, `PIXEL`, `LINE`, `BOX`, `CIRCLE` (see
-[`console/kernel.cpp`](../console/kernel.cpp)) purely to exercise the graphics
-verification path; the real commands come with the MMBasic port.
+`docs/help/*.txt` is the authoritative per-command reference (198 topics,
+compiled into HELP).
 
 ## Verification strategy
 
-The [QEMU harness](../harness/qemu_harness.py) already supports everything the
-graphics work needs:
+The [QEMU harness](../harness/qemu_harness.py) boots the kernel under
+`qemu-system-aarch64` and drives it like a user:
 
-- inject keystrokes and read exact serial output;
-- read individual framebuffer pixels (`screen_pixel`) to assert shape/colour;
-- compare a whole frame against a golden image (`image_diff_ratio`);
-- OCR the text console (`ocr_screen`).
+- inject keystrokes over the emulated PL011 serial console;
+- read serial output back for exact, deterministic assertions;
+- read the emulated HDMI screen (monitor framebuffer capture) and OCR it.
 
-Each CMM2 graphics command gets tests that draw a known figure and assert on
-pixels and/or a golden frame, growing into the "large number of tests" that
-demonstrate CMM2 equivalence.
+Each CMM2 graphics command has tests that draw a known figure and assert on
+pixels and/or a golden frame. The suite in `tests/` also covers the language
+surface, files, audio codecs, networking, TUIs, and the native Linux backend
+(`tests/test_linux_native.py`). Run it with `.venv/bin/python -m pytest` (see
+[`linux-native.md`](linux-native.md) for the host-native fast loop).
 
 ## Milestones
 
-1. **Environment + harness** — done (this PR): toolchains, Circle build, QEMU
-   harness (serial + screen + graphics), demonstrator console, test suite.
-2. **MMBasic core on Circle** — compile the PicoMite-fork interpreter core as a
-   Circle app; wire the console (USB keyboard + screen) to MMBasic I/O.
-3. **Graphics commands** — implement the CMM2 drawing commands against
-   `C2DGraphics`, with per-command tests.
-4. **Screen modes & pages** — `MODE`, `PAGE`, `RGB()`/`COLOUR`, fonts/`TEXT`.
-5. **Files & remaining language surface**; external integrations last / optional.
+1. **Environment + harness** — done: toolchains, Circle build, QEMU harness,
+   test suite.
+2. **MMBasic core on Circle** — done: interpreter runs on the console with USB
+   keyboard + HDMI/serial I/O.
+3. **Graphics commands** — done: CMM2 drawing commands against the shared
+   rasterisers, with per-command tests.
+4. **Screen modes & pages** — done: `MODE`, `PAGE`, `RGB()`/`COLOUR`,
+   fonts/`TEXT`.
+5. **Files, network, audio, TUIs, Linux native** — done.
+6. **Remaining parity & polish** — open: drawing edges (#487), Xmas page-1
+   overlay performance (#489), Linux-native fast loop (#486), AppImage/CLI
+   app-VM launch (#490, #491).
+
+Circle upstream tickets for the vendored pre-build patches are tracked in
+#285 (not ready).
