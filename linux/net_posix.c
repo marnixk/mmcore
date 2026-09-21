@@ -422,14 +422,14 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 		else if (r == 0)
 		{
 			c->closed = 1;
-			return -1;
+			return -1; /* orderly FIN */
 		}
 		else if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return 0;
 		else
 		{
 			c->closed = 1;
-			return -1;
+			return -2; /* reset / hard error */
 		}
 	}
 	n = (unsigned)avail;
@@ -440,6 +440,21 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	if (c->rx_pos >= c->rx_len)
 		c->rx_len = c->rx_pos = 0;
 	return (int)n;
+}
+
+/* Orderly FIN (mmb_net_srv_recv -1) vs reset/hard error (-2). */
+int mmb_net_srv_eof(int err)
+{
+	return err == -1;
+}
+
+const char *mmb_net_srv_reason(int err)
+{
+	if (err == -1)
+		return "Connection closed";
+	if (err == -2)
+		return "Connection reset";
+	return "Connection lost";
 }
 
 int mmb_net_srv_send(int conn, const void *data, unsigned n)
