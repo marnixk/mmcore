@@ -469,6 +469,11 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx)
 
 void mmb_front_prompt(void)
 {
+	/* A full-screen app owns the display: never paint the REPL prompt over
+	 * it (stray emissions used to leave the prompt at the top-left of HELP
+	 * and WORDPAD). */
+	if (mmb_front_in_app())
+		return;
 	mmb_hw_cursor(1);
 	fe_puts(mmb_prompt());
 }

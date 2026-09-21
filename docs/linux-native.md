@@ -30,12 +30,16 @@ Build with `CC`/`CFLAGS` overrides if needed:
 ```
 
 A window opens; the interpreter REPL is shown in it. Type at the terminal (the
-REPL reads stdin) — or with SDL keyboard input once focused. Output appears in
-the window and on stdout (the serial mirror).
+REPL reads stdin) — or with SDL keyboard input once focused. Output is rendered
+in the window; the serial stream is only mirrored to stdout when it is not a
+TTY (pipes, automation, `MMB_SDL_DUMP`) or when `MMB_SDL_SERIAL=1` is set, so an
+interactive terminal is not spammed with a second copy.
 
 - `Alt+Enter` at the prompt toggles fullscreen on the primary display.
 - `EDIT`, `FILES`, `WORDPAD`, `HELP`, `AFK`, and (with a network) `TERM` /
   `CONNECT` take over the screen; the REPL returns on exit.
+- Launched from a desktop entry (`Terminal=false`), stdin is `/dev/null`, which
+  is ignored rather than treated as end-of-input.
 
 Headless smoke test helpers: `MMB_SDL_DUMP=out.ppm` writes the framebuffer on
 exit; `SDL_VIDEODRIVER=dummy` runs without a display.

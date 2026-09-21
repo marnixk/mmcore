@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 void mmb_platform_bind_sdl(void);
 
@@ -43,6 +45,22 @@ static int stdin_line_ready(void)
 	tv.tv_sec = 0;
 	tv.tv_usec = 0;
 	return select(1, &rfds, 0, 0, &tv) > 0;
+}
+
+/* A GUI launch (desktop entry / file manager) gives the process /dev/null or
+ * a closed stdin. That is an immediate EOF, which must not quit the app; only
+ * a real tty or pipe should drive the REPL. */
+static int stdin_usable(void)
+{
+	struct stat st, nul;
+
+	if (fstat(0, &st) != 0)
+		return 0;
+	if (!S_ISCHR(st.st_mode))
+		return 1; /* tty, pipe, or regular file */
+	if (stat("/dev/null", &nul) == 0 && st.st_rdev == nul.st_rdev)
+		return 0; /* /dev/null */
+	return 1; /* a tty */
 }
 
 static int read_stdin_line(char *line, int cap)
@@ -70,7 +88,7 @@ static int read_stdin_line(char *line, int cap)
 int main(int argc, char **argv)
 {
 	char line[MMB_LINE_LEN];
-	int stdin_open = 1;
+	int stdin_open = stdin_usable();
 
 	mmb_cli_parse(argc, argv);
 

@@ -25,11 +25,19 @@ static int s_cx, s_cy;
 static unsigned s_fg, s_bg;
 static int s_bold;
 
+/* Block cursor (like Circle's SetCursorBlock): a solid cell in the current
+ * foreground colour, shown at the prompt / hidden for full-screen apps. */
+static int s_cur_vis = 1;
+static int s_cur_drawn;
+static uint16_t s_cur_save[CELL_W * CELL_H];
+static int s_cur_px, s_cur_py;
+
 /* Escape state machine (persists across write_screen calls). */
 static int s_esc; /* 0 none, 1 ESC, 2 CSI, 3 CSI '?', 4 SS3 */
 static int s_par[MAX_PARAM];
 static int s_npar;
 static int s_have_par;
+static int s_csi_priv; /* CSI began with '?' (DEC private mode) */
 
 static void init_pal(void)
 {
@@ -64,6 +72,66 @@ static void draw_cell(int col, int row, unsigned ch)
 		for (c = 0; c < CELL_W; c++)
 			dst[c] = (bits & (0x80u >> c)) ? fg : bg;
 	}
+}
+
+static int cursor_cell_ok(void)
+{
+	uint16_t *fb = sdl_video_fb();
+
+	if (!fb || !s_cur_vis)
+		return 0;
+	if (s_cx < 0 || s_cy < 0 || s_cx >= s_cols || s_cy >= s_rows)
+		return 0;
+	return 1;
+}
+
+static void cursor_erase(void)
+{
+	uint16_t *fb;
+	int sw, r;
+
+	if (!s_cur_drawn)
+		return;
+	s_cur_drawn = 0;
+	fb = sdl_video_fb();
+	if (!fb)
+		return;
+	sw = sdl_video_width();
+	if (s_cur_px < 0 || s_cur_py < 0 || s_cur_px + CELL_W > sw ||
+	    s_cur_py + CELL_H > sdl_video_height())
+		return;
+	for (r = 0; r < CELL_H; r++)
+		memcpy(fb + (size_t)(s_cur_py + r) * sw + s_cur_px,
+		       s_cur_save + r * CELL_W, CELL_W * sizeof(uint16_t));
+}
+
+static void cursor_draw(void)
+{
+	uint16_t *fb, v;
+	int sw, sh, r, c;
+
+	if (!cursor_cell_ok())
+		return;
+	fb = sdl_video_fb();
+	sw = sdl_video_width();
+	sh = sdl_video_height();
+	s_cur_px = s_cx * CELL_W;
+	s_cur_py = s_cy * CELL_H;
+	if (s_cur_px + CELL_W > sw || s_cur_py + CELL_H > sh)
+		return;
+	for (r = 0; r < CELL_H; r++)
+		memcpy(s_cur_save + r * CELL_W,
+		       fb + (size_t)(s_cur_py + r) * sw + s_cur_px,
+		       CELL_W * sizeof(uint16_t));
+	v = s_pal[s_fg & 15];
+	for (r = 0; r < CELL_H; r++)
+	{
+		uint16_t *dst = fb + (size_t)(s_cur_py + r) * sw + s_cur_px;
+
+		for (c = 0; c < CELL_W; c++)
+			dst[c] = v;
+	}
+	s_cur_drawn = 1;
 }
 
 static void clear_cells(int x0, int y0, int x1, int y1, unsigned bg)
@@ -280,8 +348,18 @@ static void csi_execute(int final)
 	case 'K':
 		erase_line(n);
 		break;
+	case 'h':
+	case 'l':
+		/* DEC private modes: only cursor visibility (?25) is meaningful. */
+		if (s_csi_priv && n == 25)
+		{
+			s_cur_vis = (final == 'h');
+			if (!s_cur_vis)
+				cursor_erase();
+		}
+		break;
 	default:
-		break; /* cursor visibility (?25h/l) and others ignored */
+		break; /* other cursor sequences ignored */
 	}
 }
 
@@ -323,6 +401,7 @@ static void esc_byte(unsigned char b)
 			s_esc = 2;
 			s_npar = 0;
 			s_have_par = 0;
+			s_csi_priv = 0;
 			s_par[0] = 0;
 		}
 		else if (b == 'O')
@@ -337,6 +416,7 @@ static void esc_byte(unsigned char b)
 		if (b == '?' && s_npar == 0 && !s_have_par)
 		{
 			s_esc = 3;
+			s_csi_priv = 1;
 			break;
 		}
 		/* fall through */
@@ -362,6 +442,7 @@ static void esc_byte(unsigned char b)
 		{
 			csi_execute(b);
 			s_esc = 0;
+			s_csi_priv = 0;
 		}
 		else
 			s_esc = 0;
@@ -392,12 +473,16 @@ void sdl_console_reset(void)
 	s_bg = 0;
 	s_bold = 0;
 	s_esc = 0;
+	s_csi_priv = 0;
+	s_cur_drawn = 0;
+	s_cur_vis = 1;
 	if (fb)
 	{
 		n = (size_t)w * (size_t)h;
 		for (i = 0; i < n; i++)
 			fb[i] = s_pal[0];
 	}
+	sdl_video_mark_dirty();
 }
 
 void sdl_console_resize(void)
@@ -409,8 +494,11 @@ void sdl_console_write(const char *s, unsigned n)
 {
 	unsigned i;
 
+	cursor_erase();
 	for (i = 0; i < n; i++)
 		esc_byte((unsigned char)s[i]);
+	cursor_draw();
+	sdl_video_mark_dirty();
 	sdl_video_present();
 }
 
@@ -422,6 +510,7 @@ void sdl_console_fill(unsigned rgb888)
 	int h = sdl_video_height();
 	size_t n, i;
 
+	cursor_erase();
 	if (fb)
 	{
 		n = (size_t)w * (size_t)h;
@@ -430,5 +519,7 @@ void sdl_console_fill(unsigned rgb888)
 	}
 	s_cx = 0;
 	s_cy = 0;
+	cursor_draw();
+	sdl_video_mark_dirty();
 	sdl_video_present();
 }

@@ -27,7 +27,10 @@ static void plot(int x, int y, uint16_t v)
 		return;
 	fb = sdl_video_fb();
 	if (fb)
+	{
 		fb[(size_t)y * w + x] = v;
+		sdl_video_mark_dirty();
+	}
 }
 
 static unsigned char glyph_row(unsigned ch, unsigned y)
@@ -60,6 +63,7 @@ void sdl_tui_prepare(void)
 		return;
 	n = (size_t)sdl_video_width() * (size_t)sdl_video_height();
 	memset(fb, 0, n * sizeof(uint16_t));
+	sdl_video_mark_dirty();
 }
 
 void sdl_tui_set_font(const unsigned char *font)
@@ -145,6 +149,7 @@ void sdl_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
 				fb[(size_t)row * sw + px] = fill;
 		}
 	}
+	sdl_video_mark_dirty();
 	sdl_tui_present(y, y + h - 1);
 }
 

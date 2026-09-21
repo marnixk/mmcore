@@ -192,3 +192,21 @@ def test_prompt_block_cursor_visible(kernel_image):
         assert found_mode, "prompt cursor must survive MODE resize"
     finally:
         con.stop()
+
+
+def test_help_hides_prompt_at_top_left(kernel_image):
+    """Starting HELP must not leave the REPL prompt on the title bar."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        time.sleep(0.3)
+        con._ser.sendall(b"HELP\r")
+        con.drain(quiet=0.8)
+        png = con.capture_png("/opt/cursor/artifacts/help_no_stale_prompt.png")
+        # The title bar is empty left of the centred title: any prompt-grey
+        # pixel here is the leaked "A:/>" prompt.
+        pix = _png_rgb(png, crop="48x16+0+0")
+        leaked = sum(1 for rgb in pix.values() if _is_grey_prompt(rgb))
+        assert leaked == 0, f"prompt leaked over HELP ({leaked} grey pixels)"
+    finally:
+        con.stop()
