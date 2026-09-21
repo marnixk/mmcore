@@ -7,6 +7,15 @@
 # with APPIMAGE_EXTRACT_AND_RUN so no FUSE is needed).
 set -euo pipefail
 
+case "$(uname -s)" in
+	Linux) ;;
+	*)
+		printf 'package-linux-appimage: AppImage packaging is Linux-only (found %s)\n' \
+			"$(uname -s)" >&2
+		exit 1
+		;;
+esac
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${REPO_ROOT}/dist"
 APPDIR="${DIST}/mmcore.AppDir"

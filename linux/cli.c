@@ -76,6 +76,7 @@ static void help(const char *prog)
 	printf("Usage: %s [options] [file.app | \"line to run\"]\n\n", prog);
 	printf("  --drive DIR       bind the host directory DIR to the D: drive\n");
 	printf("  --drive-root DIR  base directory for the other drives (default ~/.mmbasic)\n");
+	printf("                    (--drive=DIR and --drive-root=DIR are also accepted)\n");
 	printf("  --term [HOST[:PORT]]  run TERM as a sealed session (exit when it ends)\n");
 	printf("  --repl, --stay    return to the REPL when an .app or TERM session ends\n");
 	printf("  --help, -h        show this help\n");
@@ -83,6 +84,11 @@ static void help(const char *prog)
 	       "A positional argument that names an existing .app file runs it as a\n"
 	       "self-contained app: the package mounts read-only as B: and MAIN.BAS\n"
 	       "runs, then the process exits (use --repl to stay).\n");
+	printf("\nEnvironment:\n");
+	printf("  MMB_DRIVE_ROOT DIR     base directory for the C:-H: drives (default ~/.mmbasic)\n");
+	printf("  MMB_SDL_DUMP FILE      write the framebuffer to FILE as PPM on exit (SDL build)\n");
+	printf("  MMB_SDL_SERIAL=1       mirror the serial stream to stdout even on a TTY\n");
+	printf("  SDL_VIDEODRIVER=dummy  run the SDL build without a display\n");
 	printf("\nExamples:\n");
 	printf("  %s --drive /media/usb\n", prog);
 	printf("  %s --drive /media/usb \"DIR \\\"D:/\\\"\"\n", prog);
