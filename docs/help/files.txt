@@ -3,14 +3,23 @@ kind: command
 
 Open the dual-pane file manager (not a DIR listing). Navigate drives and
 folders. Enter on a directory opens it. Enter on a .BAS file RUNs it. View
-(v/F3) previews PNG/JPG or plays MP3/XM/MOD when supported, and also shows
-.BAS/.INC/.TXT with colour. Tab switches panes. q or Esc leaves FILES.
+(v/F3) previews PNG/JPG, plays MP3/XM/MOD when supported, opens .ANS/.ASC/.DIZ
+through an ANSI viewer, and also shows .BAS/.INC/.TXT with colour. Tab switches
+panes. q or Esc leaves FILES.
 
 An image preview reads the picture size, switches to the smallest graphics
 MODE that fits it, and draws it centred with the file name and its dimensions
 shown along the top. Left/Right arrows step through the other images in the
 folder. Press Enter or Esc to return to the file manager; the previous MODE is
 restored.
+
+An ANSI preview interprets the file as a VT100/ANSI terminal would (SGR
+colours, cursor movement, erase, save/restore) using IBM VGA CP437 glyphs and
+the standard 16-colour palette on a black screen in the current MODE. Up/Down
+scroll through art taller than the screen; content is kept, so earlier rows
+remain reachable. Press F to toggle the authentic 80x25 view (MODE 2 640x400,
+the full-screen TERM pane), and F again to return to the MODE the preview
+opened in. Enter or Esc returns to the file manager.
 
 FILES
 

@@ -15,6 +15,11 @@
 #define FU_PLAY     7
 #define FU_VIEW     8
 #define FU_FTP      9
+#define FU_ANSI     10
+
+#define AN_MAX_COLS TUI_MAX_COLS
+#define AN_MAX_ROWS 512
+#define AN_MAX_BYTES (1024u * 1024u)
 
 #define FU_PR_COPY  1
 #define FU_PR_MOVE  2
@@ -64,9 +69,28 @@ typedef struct {
 	char ftp_root[FU_PATH];
 	char ftp_addr[64];
 	char ftp_last[96];
+	int an_top;
+	int an_rows;
+	int an_mode80;
+	int an_saved_mode;
+	int an_saved_bits;
 } fu_state;
 
 static fu_state F;
+
+typedef struct {
+	unsigned char ch;
+	unsigned char fg;
+	unsigned char bg;
+} an_cell;
+
+static an_cell an_scr[AN_MAX_ROWS][AN_MAX_COLS];
+static int an_p_cols;
+static int an_p_row, an_p_col;
+static int an_p_fg, an_p_bg, an_p_bold, an_p_inv;
+static int an_p_sav_row, an_p_sav_col;
+static int an_p_st;
+static int an_p_args[8], an_p_narg, an_p_priv;
 
 #define FU_MENU_FG ((int)mmb_editor_theme()->menu_fg)
 #define FU_MENU_BG ((int)mmb_editor_theme()->menu_bg)
@@ -198,6 +222,13 @@ static int is_aud(const char *n)
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".MP3") || mmb_keyword_eq(e, ".XM") ||
 	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".WAV");
+}
+
+static int is_ansi(const char *n)
+{
+	const char *e = ext_of(n);
+	return mmb_keyword_eq(e, ".ANS") || mmb_keyword_eq(e, ".ASC") ||
+	       mmb_keyword_eq(e, ".DIZ");
 }
 
 static int is_text(const char *n)
@@ -859,7 +890,7 @@ static void draw_help(void)
 {
 	const char *lines[] = {
 		"Arrows move   Tab switch panel   BS parent",
-		"Enter dir=open  .BAS=RUN  image=view  audio=play",
+		"Enter dir=open  .BAS=RUN  image/ANSI=view  audio=play",
 		"v/F3 view   e/F4 edit   c/F5 copy   m/F6 move",
 		"k/F7 mkdir  d/F8 delete  F9 menu   q/Esc quit",
 		"Alt+L/F/C/O/R menus  Alt+L/R panels  F9 command menu",
@@ -980,7 +1011,7 @@ static void files_draw(void)
 
 static void files_draw_if_idle(void)
 {
-	if (F.active && F.mode != FU_PREVIEW && !mmb_in_editor())
+	if (F.active && F.mode != FU_PREVIEW && F.mode != FU_ANSI && !mmb_in_editor())
 		files_draw();
 }
 
@@ -1205,6 +1236,578 @@ static void do_preview(const char *path, const char *name)
 		preview_restore();
 		show_info_for(path, name);
 	}
+}
+
+/* ---- ANSI art viewer ----------------------------------------------------
+ * Renders a .ANS/.ASC/.DIZ through a small standalone ANSI/VT100 parser into
+ * an offscreen cell grid, then paints the visible window with TUI cells on a
+ * black background using the standard VGA 16-colour palette.  The grid keeps
+ * all rows (no terminal scroll-back loss) so Up/Down can page through art
+ * taller than the screen.  F toggles the authentic 80x25 (MODE 2 640x400)
+ * view; Esc leaves. */
+
+static void an_touch(int row)
+{
+	if (row + 1 > F.an_rows)
+		F.an_rows = row + 1;
+}
+
+static void an_clear_cells(int r0, int c0, int r1, int c1)
+{
+	int r, c;
+	if (r0 < 0)
+		r0 = 0;
+	if (c0 < 0)
+		c0 = 0;
+	if (r1 > AN_MAX_ROWS)
+		r1 = AN_MAX_ROWS;
+	if (c1 > an_p_cols)
+		c1 = an_p_cols;
+	for (r = r0; r < r1; r++)
+		for (c = c0; c < c1; c++)
+		{
+			an_scr[r][c].ch = ' ';
+			an_scr[r][c].fg = (unsigned char)(an_p_inv ? an_p_bg : an_p_fg);
+			an_scr[r][c].bg = (unsigned char)(an_p_inv ? an_p_fg : an_p_bg);
+		}
+}
+
+static int an_nearest16(int r, int g, int b)
+{
+	static const int vga[16][3] = {
+		{ 0, 0, 0 }, { 170, 0, 0 }, { 0, 170, 0 }, { 170, 85, 0 },
+		{ 0, 0, 170 }, { 170, 0, 170 }, { 0, 170, 170 }, { 170, 170, 170 },
+		{ 85, 85, 85 }, { 255, 85, 85 }, { 85, 255, 85 }, { 255, 255, 85 },
+		{ 85, 85, 255 }, { 255, 85, 255 }, { 85, 255, 255 }, { 255, 255, 255 }
+	};
+	int i, best = 0;
+	long best_d = -1;
+	for (i = 0; i < 16; i++)
+	{
+		long dr = r - vga[i][0], dg = g - vga[i][1], db = b - vga[i][2];
+		long d = dr * dr + dg * dg + db * db;
+		if (best_d < 0 || d < best_d)
+		{
+			best_d = d;
+			best = i;
+		}
+	}
+	return best;
+}
+
+static int an_256(int n)
+{
+	int r, g, b, v;
+	if (n < 0)
+		n = 0;
+	if (n < 16)
+		return n;
+	if (n < 232)
+	{
+		n -= 16;
+		b = n % 6;
+		g = (n / 6) % 6;
+		r = n / 36;
+		r = r ? r * 40 + 55 : 0;
+		g = g ? g * 40 + 55 : 0;
+		b = b ? b * 40 + 55 : 0;
+		return an_nearest16(r, g, b);
+	}
+	v = 8 + (n - 232) * 10;
+	if (v > 255)
+		v = 255;
+	return an_nearest16(v, v, v);
+}
+
+static void an_cup(int row, int col)
+{
+	if (row < 1)
+		row = 1;
+	if (col < 1)
+		col = 1;
+	an_p_row = row - 1;
+	an_p_col = col - 1;
+	if (an_p_row >= AN_MAX_ROWS)
+		an_p_row = AN_MAX_ROWS - 1;
+	if (an_p_col >= an_p_cols)
+		an_p_col = an_p_cols - 1;
+	if (an_p_row < 0)
+		an_p_row = 0;
+	if (an_p_col < 0)
+		an_p_col = 0;
+}
+
+static void an_newline(void)
+{
+	an_p_col = 0;
+	if (an_p_row < AN_MAX_ROWS)
+		an_p_row++;
+}
+
+static void an_put(unsigned char ch)
+{
+	int fg, bg;
+	if (an_p_row < 0 || an_p_row >= AN_MAX_ROWS)
+		return;
+	if (an_p_col >= an_p_cols)
+		an_newline();
+	if (an_p_row < 0 || an_p_row >= AN_MAX_ROWS)
+		return;
+	if (an_p_col < 0)
+		an_p_col = 0;
+	if (an_p_col >= an_p_cols)
+		return;
+	fg = an_p_fg;
+	if (an_p_bold && fg < 8)
+		fg += 8;
+	bg = an_p_bg;
+	if (an_p_inv)
+	{
+		int t = fg;
+		fg = bg;
+		bg = t;
+	}
+	an_scr[an_p_row][an_p_col].ch = ch;
+	an_scr[an_p_row][an_p_col].fg = (unsigned char)(fg & 15);
+	an_scr[an_p_row][an_p_col].bg = (unsigned char)(bg & 15);
+	an_p_col++;
+	an_touch(an_p_row);
+}
+
+static void an_sgr(void)
+{
+	int i, n = an_p_narg > 0 ? an_p_narg : 1;
+	if (an_p_narg == 0)
+		an_p_args[0] = 0;
+	for (i = 0; i < n; i++)
+	{
+		int v = an_p_args[i];
+		if (v == 0)
+		{
+			an_p_fg = 7;
+			an_p_bg = 0;
+			an_p_bold = 0;
+			an_p_inv = 0;
+		}
+		else if (v == 1)
+			an_p_bold = 1;
+		else if (v == 22)
+			an_p_bold = 0;
+		else if (v == 7)
+			an_p_inv = 1;
+		else if (v == 27)
+			an_p_inv = 0;
+		else if (v >= 30 && v <= 37)
+			an_p_fg = v - 30;
+		else if (v >= 90 && v <= 97)
+			an_p_fg = v - 90 + 8;
+		else if (v >= 40 && v <= 47)
+			an_p_bg = v - 40;
+		else if (v >= 100 && v <= 107)
+			an_p_bg = v - 100 + 8;
+		else if (v == 39)
+			an_p_fg = 7;
+		else if (v == 49)
+			an_p_bg = 0;
+		else if ((v == 38 || v == 48) && i + 2 < n && an_p_args[i + 1] == 5)
+		{
+			int c = an_256(an_p_args[i + 2]);
+			if (v == 38)
+				an_p_fg = c;
+			else
+				an_p_bg = c;
+			i += 2;
+		}
+	}
+}
+
+static int an_arg(int i, int dflt)
+{
+	if (i < an_p_narg && an_p_args[i] > 0)
+		return an_p_args[i];
+	return dflt;
+}
+
+static void an_erase_line(int mode)
+{
+	int a = 0, b = an_p_cols;
+	if (an_p_row < 0 || an_p_row >= AN_MAX_ROWS)
+		return;
+	if (mode == 0)
+		a = an_p_col;
+	else if (mode == 1)
+		b = an_p_col + 1;
+	an_clear_cells(an_p_row, a, an_p_row + 1, b);
+}
+
+static void an_erase_disp(int mode)
+{
+	int r0 = 0, r1 = AN_MAX_ROWS;
+	if (mode == 0)
+		r0 = an_p_row;
+	else if (mode == 1)
+		r1 = an_p_row + 1;
+	an_clear_cells(r0, 0, r1, an_p_cols);
+	if (mode == 2 || mode == 3)
+	{
+		an_p_row = 0;
+		an_p_col = 0;
+	}
+}
+
+static void an_exec_csi(char cmd)
+{
+	int n = an_arg(0, 1);
+	if (cmd == 'A')
+	{
+		an_p_row -= n;
+		if (an_p_row < 0)
+			an_p_row = 0;
+	}
+	else if (cmd == 'B')
+	{
+		an_p_row += n;
+		if (an_p_row >= AN_MAX_ROWS)
+			an_p_row = AN_MAX_ROWS - 1;
+	}
+	else if (cmd == 'C')
+	{
+		an_p_col += n;
+		if (an_p_col >= an_p_cols)
+			an_p_col = an_p_cols - 1;
+	}
+	else if (cmd == 'D')
+	{
+		an_p_col -= n;
+		if (an_p_col < 0)
+			an_p_col = 0;
+	}
+	else if (cmd == 'G')
+		an_cup(an_p_row + 1, an_arg(0, 1));
+	else if (cmd == 'd')
+		an_cup(an_arg(0, 1), an_p_col + 1);
+	else if (cmd == 'H' || cmd == 'f')
+		an_cup(an_arg(0, 1), an_arg(1, 1));
+	else if (cmd == 'J')
+		an_erase_disp(an_p_narg ? an_p_args[0] : 0);
+	else if (cmd == 'K')
+		an_erase_line(an_p_narg ? an_p_args[0] : 0);
+	else if (cmd == 'X')
+	{
+		int cnt = n < 1 ? 1 : n;
+		if (an_p_row >= 0 && an_p_row < AN_MAX_ROWS)
+			an_clear_cells(an_p_row, an_p_col, an_p_row + 1, an_p_col + cnt);
+	}
+	else if (cmd == 'm')
+		an_sgr();
+	else if (cmd == 's')
+	{
+		an_p_sav_row = an_p_row;
+		an_p_sav_col = an_p_col;
+	}
+	else if (cmd == 'u')
+		an_cup(an_p_sav_row + 1, an_p_sav_col + 1);
+}
+
+static void an_feed(unsigned char b)
+{
+	if (an_p_st == 0)
+	{
+		if (b == 27)
+		{
+			an_p_st = 1;
+			return;
+		}
+		if (b == 12)
+		{
+			an_erase_disp(2);
+			return;
+		}
+		if (b == '\r')
+		{
+			an_p_col = 0;
+			return;
+		}
+		if (b == '\n' || b == 11)
+		{
+			an_newline();
+			return;
+		}
+		if (b == 8 || b == 127)
+		{
+			if (an_p_col > 0)
+				an_p_col--;
+			return;
+		}
+		if (b == 9)
+		{
+			int nx = (an_p_col / 8 + 1) * 8;
+			if (nx >= an_p_cols)
+				an_newline();
+			else
+				an_p_col = nx;
+			return;
+		}
+		if (b == 7 || b < 32)
+			return;
+		an_put(b);
+		return;
+	}
+	if (an_p_st == 1)
+	{
+		if (b == '[')
+		{
+			int i;
+			an_p_st = 2;
+			an_p_narg = 0;
+			an_p_priv = 0;
+			for (i = 0; i < 8; i++)
+				an_p_args[i] = 0;
+			return;
+		}
+		if (b == ']')
+		{
+			an_p_st = 5;
+			return;
+		}
+		if (b == '7')
+		{
+			an_p_sav_row = an_p_row;
+			an_p_sav_col = an_p_col;
+			an_p_st = 0;
+			return;
+		}
+		if (b == '8')
+		{
+			an_cup(an_p_sav_row + 1, an_p_sav_col + 1);
+			an_p_st = 0;
+			return;
+		}
+		if (b == 'c')
+		{
+			an_erase_disp(2);
+			an_p_fg = 7;
+			an_p_bg = 0;
+			an_p_bold = 0;
+			an_p_inv = 0;
+			an_p_st = 0;
+			return;
+		}
+		if (b == '(' || b == ')' || b == '*' || b == '+' || b == '-' || b == '#')
+		{
+			an_p_st = 6;
+			return;
+		}
+		an_p_st = 0;
+		return;
+	}
+	if (an_p_st == 6)
+	{
+		an_p_st = 0;
+		return;
+	}
+	if (an_p_st == 5)
+	{
+		if (b == 7)
+			an_p_st = 0;
+		else if (b == 27)
+			an_p_st = 7;
+		return;
+	}
+	if (an_p_st == 7)
+	{
+		an_p_st = 0;
+		return;
+	}
+	if (b == '?')
+	{
+		an_p_priv = 1;
+		return;
+	}
+	if (b >= '0' && b <= '9')
+	{
+		if (an_p_narg == 0)
+			an_p_narg = 1;
+		an_p_args[an_p_narg - 1] = an_p_args[an_p_narg - 1] * 10 + (b - '0');
+		return;
+	}
+	if (b == ';')
+	{
+		if (an_p_narg < 8)
+			an_p_narg++;
+		return;
+	}
+	if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z'))
+	{
+		if (!an_p_priv)
+			an_exec_csi((char)b);
+		/* private modes (cursor/alt-screen) have no visual effect */
+		an_p_st = 0;
+		return;
+	}
+	an_p_st = 0;
+}
+
+static void an_reset(int cols)
+{
+	int i;
+	an_p_cols = cols < 1 ? 1 : (cols > AN_MAX_COLS ? AN_MAX_COLS : cols);
+	an_p_row = an_p_col = 0;
+	an_p_fg = 7;
+	an_p_bg = 0;
+	an_p_bold = 0;
+	an_p_inv = 0;
+	an_p_sav_row = an_p_sav_col = 0;
+	an_p_st = 0;
+	an_p_narg = 0;
+	an_p_priv = 0;
+	for (i = 0; i < 8; i++)
+		an_p_args[i] = 0;
+	memset(an_scr, 0, sizeof(an_scr));
+	F.an_rows = 0;
+	F.an_top = 0;
+}
+
+static void an_parse(int cols)
+{
+	static unsigned char buf[4096];
+	int sz = mmb_vfs_size(F.view_path);
+	unsigned pos = 0, got = 0;
+
+	an_reset(cols);
+	if (sz <= 0)
+		return;
+	while (pos < (unsigned)sz && pos < AN_MAX_BYTES)
+	{
+		unsigned want = (unsigned)sizeof(buf);
+		unsigned i;
+		if ((unsigned)sz - pos < want)
+			want = (unsigned)sz - pos;
+		if (mmb_vfs_read_at(F.view_path, pos, buf, want, &got) != 0 || got == 0)
+			break;
+		for (i = 0; i < got; i++)
+			an_feed(buf[i]);
+		pos += got;
+	}
+}
+
+static void an_render(void)
+{
+	int r, c, rows = tui_rows(), cols = tui_cols();
+	int max_top = F.an_rows - rows;
+
+	if (max_top < 0)
+		max_top = 0;
+	if (F.an_top > max_top)
+		F.an_top = max_top;
+	if (F.an_top < 0)
+		F.an_top = 0;
+	tui_set_palette(0);
+	tui_clear(7, 0);
+	for (r = 0; r < rows; r++)
+	{
+		int src = F.an_top + r;
+		if (src < 0 || src >= F.an_rows || src >= AN_MAX_ROWS)
+			continue;
+		for (c = 0; c < cols && c < AN_MAX_COLS; c++)
+		{
+			an_cell *cell = &an_scr[src][c];
+			if (!cell->ch)
+				continue;
+			tui_put(c, r, cell->ch, cell->fg, cell->bg);
+		}
+	}
+	tui_cursor(0, 0, 0);
+	tui_flush();
+}
+
+static void an_apply_mode(void)
+{
+	int mode, bits;
+
+	bits = F.an_saved_bits;
+	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
+		bits = 16;
+	mode = F.an_mode80 ? 2 : F.an_saved_mode;
+	if (mode < 1 || mode > 17)
+		mode = 14;
+	if (G.gfx.mode != mode || G.gfx.bits != bits)
+		mmb_gfx_set_mode(mode, bits);
+	tui_begin();
+	tui_invalidate();
+	tui_set_palette(0);
+}
+
+static void an_scroll(int dir)
+{
+	int max_top = F.an_rows - tui_rows();
+
+	if (max_top < 0)
+		max_top = 0;
+	if (dir < 0)
+	{
+		if (F.an_top > 0)
+			F.an_top--;
+	}
+	else if (F.an_top < max_top)
+		F.an_top++;
+	an_render();
+}
+
+static void an_toggle_80(void)
+{
+	F.an_mode80 = !F.an_mode80;
+	an_apply_mode();
+	an_parse(tui_cols());
+	an_render();
+	set_hint(F.an_mode80 ? "ANSI 80x25  f restores  Esc exits"
+			     : "ANSI preview  up/down scroll  f 80x25  Esc exits");
+	ser(F.an_mode80 ? "[FILES] ANSI 80x25 ON\r\n" : "[FILES] ANSI 80x25 OFF\r\n");
+}
+
+static void an_close(void)
+{
+	if (!F.an_mode80)
+		return;
+	F.an_mode80 = 0;
+	mmb_gfx_set_mode(F.an_saved_mode, F.an_saved_bits);
+	mmb_gfx_reset_console(1);
+	tui_begin();
+	tui_invalidate();
+}
+
+static int an_open(const char *path, const char *name)
+{
+	char line[96];
+
+	if (mmb_vfs_size(path) <= 0)
+		return -1;
+	strncpy(F.view_path, path, sizeof(F.view_path) - 1);
+	F.view_path[sizeof(F.view_path) - 1] = 0;
+	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
+	F.info_name[sizeof(F.info_name) - 1] = 0;
+	F.an_saved_mode = G.gfx.mode;
+	F.an_saved_bits = G.gfx.bits;
+	F.an_mode80 = 0;
+	an_parse(tui_cols());
+	F.mode = FU_ANSI;
+	an_render();
+	set_hint("ANSI preview  up/down scroll  f 80x25  Esc exits");
+	strcpy(line, "[FILES] ANSI ");
+	strncat(line, name, 32);
+	strcat(line, " ");
+	fmt_uint(line + strlen(line), (unsigned)tui_cols());
+	strcat(line, "x");
+	fmt_uint(line + strlen(line), (unsigned)F.an_rows);
+	strcat(line, "\r\n");
+	ser(line);
+	return 0;
+}
+
+static void do_ansi_view(const char *path, const char *name)
+{
+	if (an_open(path, name) != 0)
+		show_info_for(path, name);
 }
 
 static void do_play(const char *path, const char *name)
@@ -1435,6 +2038,11 @@ static void activate_enter(void)
 		do_preview(path, e->name);
 		return;
 	}
+	if (is_ansi(e->name))
+	{
+		do_ansi_view(path, e->name);
+		return;
+	}
 	if (is_aud(e->name))
 	{
 		do_play(path, e->name);
@@ -1457,6 +2065,8 @@ static void do_view(void)
 	}
 	if (is_img(e->name))
 		do_preview(path, e->name);
+	else if (is_ansi(e->name))
+		do_ansi_view(path, e->name);
 	else if (is_aud(e->name))
 		do_play(path, e->name);
 	else if (is_text(e->name))
@@ -1502,6 +2112,8 @@ static void close_overlay(void)
 		mmb_ftp_stop();
 	if (F.mode == FU_PREVIEW)
 		preview_restore();
+	if (F.mode == FU_ANSI)
+		an_close();
 	F.mode = FU_BROWSE;
 	F.drop = -1;
 	set_hint("");
@@ -1683,6 +2295,14 @@ static int files_alt(char c)
 static void handle_arrow(int which)
 {
 	fu_panel *p = curpan();
+	if (F.mode == FU_ANSI)
+	{
+		if (which == 0)
+			an_scroll(-1);
+		else if (which == 1)
+			an_scroll(1);
+		return;
+	}
 	if (F.mode == FU_VIEW)
 	{
 		if (which == 0 && F.view_top > 0)
@@ -1852,6 +2472,12 @@ static void handle_letter(char c)
 	char lc = c;
 	if (lc >= 'A' && lc <= 'Z')
 		lc = (char)(lc + 32);
+	if (F.mode == FU_ANSI)
+	{
+		if (lc == 'f')
+			an_toggle_80();
+		return;
+	}
 	if (F.drop >= 0)
 	{
 		int n, i;
@@ -2131,6 +2757,18 @@ const char *mmb_files_key(char c)
 			close_overlay();
 			files_draw_if_idle();
 		}
+		return G.out;
+	}
+	if (F.mode == FU_ANSI)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			close_overlay();
+			files_draw_if_idle();
+			return G.out;
+		}
+		if (c >= 32 && c < 127)
+			handle_letter(c);
 		return G.out;
 	}
 	if (F.mode == FU_PROMPT)

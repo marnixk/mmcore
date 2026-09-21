@@ -15,6 +15,7 @@ BUILD_INPUT_DIRS = (
     "console",
     "scripts",
     "patches",
+    "ramdisk",
 )
 
 
