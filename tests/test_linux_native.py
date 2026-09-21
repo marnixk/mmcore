@@ -311,6 +311,69 @@ def test_audio_backend_runs(mmb_linux, tmp_path):
     assert "AUDIO_OK" in (proc.stdout + proc.stderr)
 
 
+def _run_sdl_timed(tmp_path, first_line, quit_line, wait, extra_env=None):
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    import time as _time
+
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root"))
+    if extra_env:
+        env.update(extra_env)
+    p = subprocess.Popen(
+        [SDL_BIN],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
+    p.stdin.write(first_line)
+    p.stdin.flush()
+    _time.sleep(wait)
+    p.stdin.write(quit_line)
+    p.stdin.flush()
+    _time.sleep(0.2)
+    p.stdin.close()
+    out = p.stdout.read()
+    p.wait(timeout=20)
+    return out, p.returncode
+
+
+def test_term_demo_session(mmb_linux, tmp_path):
+    """LN-15 (#467): TERM's local demo host renders and the menu appears."""
+    out, rc = _run_sdl_timed(tmp_path, 'TERM "demo",23\n', "\x01x\n", 1.2)
+    assert rc == 0
+    assert "SYNTAX ERROR" not in out
+    assert ("Echo ON" in out) or ("Bookmarks" in out) or ("Boxed" in out)
+
+
+def test_connect_loopback_session(mmb_linux, tmp_path):
+    """LN-17 (#469) / LN-20 (#472): CONNECT displays data from a TCP server."""
+    import socket
+    import threading
+    import time
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.sendall(b"HELLO TELNET\r\n")
+        time.sleep(1.5)
+        conn.close()
+        srv.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    out, rc = _run_sdl_timed(
+        tmp_path, 'CONNECT "127.0.0.1",%d\n' % port, "\x01x\n", 1.0
+    )
+    assert rc == 0
+    assert "HELLO TELNET" in out
+
+
 def test_tcp_client_loopback(mmb_linux, tmp_path):
     """LN-18 (#470): TCP client connect/send/recv over POSIX sockets."""
     import socket

@@ -43,6 +43,7 @@ int main(int argc, char **argv)
 
 		while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
 			line[--n] = '\0';
+		mmb_poll();
 		run_line(line);
 		fputc('\n', stdout);
 		fputs("> ", stdout);

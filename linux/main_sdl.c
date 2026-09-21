@@ -88,6 +88,7 @@ int main(void)
 	while (!sdl_video_should_quit())
 	{
 		sdl_input_pump();
+		mmb_poll(); /* CONNECT/TERM/FTP, audio mix, ON TICK at the prompt */
 
 		if (stdin_open && stdin_line_ready())
 		{
