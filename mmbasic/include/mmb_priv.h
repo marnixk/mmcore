@@ -875,6 +875,8 @@ int mmb_net_srv_port(int lsn);
 void mmb_net_srv_listen_close(int lsn);
 int mmb_net_srv_accept(int lsn);
 int mmb_net_srv_recv(int conn, void *data, unsigned maxn);
+int mmb_net_srv_eof(int err);
+const char *mmb_net_srv_reason(int err);
 int mmb_net_srv_send(int conn, const void *data, unsigned n);
 int mmb_net_srv_closed(int conn);
 void mmb_net_srv_close(int conn);

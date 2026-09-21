@@ -208,6 +208,18 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	return n;
 }
 
+int mmb_net_srv_eof(int err)
+{
+	(void)err;
+	return 0;
+}
+
+const char *mmb_net_srv_reason(int err)
+{
+	(void)err;
+	return "test error";
+}
+
 int mmb_net_srv_send(int conn, const void *data, unsigned n)
 {
 	if (conn == CONN_DATA)
