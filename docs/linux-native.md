@@ -74,7 +74,7 @@ scope on Linux; those options report unavailable.
 attaches it to the rolling `linux-native` pre-release:
 
 ```
-https://github.com/marnixk/mmcore/releases/download/linux-native/MMBasic-x86_64.AppImage
+https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage
 ```
 
 Build it locally on Linux with `scripts/package-linux-appimage.sh` (result in

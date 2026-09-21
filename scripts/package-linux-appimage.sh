@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the native Linux SDL binary and package it as an AppImage.
 #
-# Output: dist/MMBasic-<version>-<arch>.AppImage
+# Output: dist/mmcore-<arch>.AppImage
 # Requires: a C toolchain, pkg-config, libsdl2-dev, python3, curl/wget.
 # linuxdeploy + appimagetool are downloaded into dist/.appimage-tools (and run
 # with APPIMAGE_EXTRACT_AND_RUN so no FUSE is needed).
@@ -9,12 +9,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${REPO_ROOT}/dist"
-APPDIR="${DIST}/MMBasic.AppDir"
+APPDIR="${DIST}/mmcore.AppDir"
 TOOLS="${DIST}/.appimage-tools"
 ARCH="${APPIMAGE_ARCH:-$(uname -m)}"
 VERSION="$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo dev)"
 # Stable asset name so the rolling download URL never changes.
-OUT="${DIST}/MMBasic-${ARCH}.AppImage"
+OUT="${DIST}/mmcore-${ARCH}.AppImage"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
@@ -32,21 +32,21 @@ mkdir -p "${APPDIR}/usr/bin" \
 cp "${BIN}" "${APPDIR}/usr/bin/mmbasic-sdl"
 
 python3 "${REPO_ROOT}/scripts/gen-appicon.py" \
-	"${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmbasic.png"
-cp "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmbasic.png" \
-	"${APPDIR}/mmbasic.png"
+	"${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png"
+cp "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png" \
+	"${APPDIR}/mmcore.png"
 
-cat > "${APPDIR}/usr/share/applications/mmbasic.desktop" <<'EOF'
+cat > "${APPDIR}/usr/share/applications/mmcore.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=MMBasic
+Name=mmcore
 Comment=Colour Maximite 2 compatible BASIC interpreter
 Exec=mmbasic-sdl
-Icon=mmbasic
+Icon=mmcore
 Categories=Development;Education;
 Terminal=true
 EOF
-cp "${APPDIR}/usr/share/applications/mmbasic.desktop" "${APPDIR}/mmbasic.desktop"
+cp "${APPDIR}/usr/share/applications/mmcore.desktop" "${APPDIR}/mmcore.desktop"
 
 mkdir -p "${TOOLS}"
 fetch() {
@@ -69,8 +69,8 @@ export ARCH
 log "Bundling libraries (linuxdeploy)"
 "${LINUXDEPLOY}" --appdir "${APPDIR}" \
 	--executable "${APPDIR}/usr/bin/mmbasic-sdl" \
-	--desktop-file "${APPDIR}/usr/share/applications/mmbasic.desktop" \
-	--icon-file "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmbasic.png"
+	--desktop-file "${APPDIR}/usr/share/applications/mmcore.desktop" \
+	--icon-file "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png"
 
 log "Packing AppImage"
 "${APPIMAGETOOL}" "${APPDIR}" "${OUT}"

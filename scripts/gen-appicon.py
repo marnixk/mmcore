@@ -72,7 +72,7 @@ png = (
     + chunk(b"IEND", b"")
 )
 
-out = sys.argv[1] if len(sys.argv) > 1 else "mmbasic.png"
+out = sys.argv[1] if len(sys.argv) > 1 else "mmcore.png"
 with open(out, "wb") as f:
     f.write(png)
 print("wrote %s (%d bytes)" % (out, len(png)))
