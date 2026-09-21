@@ -34,6 +34,7 @@ mmbasic/include/mmb_version.h
 # Native (Linux/macOS) host build
 linux/build/
 linux/mmbasic
+linux/mmbasic-sdl
 linux/mmb_version.h
 
 # Generated at build from docs/help/
