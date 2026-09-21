@@ -297,6 +297,7 @@ static void submit(void)
 		fe_puts(result);
 		if (!numbered)
 			fe_puts("\r\n");
+		fe_puts("\r\n"); /* the old emit_nl_prompt newline */
 		mmb_front_prompt();
 	}
 	s_len = 0;
