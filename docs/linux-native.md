@@ -90,11 +90,51 @@ with the same non-blocking contracts as the Circle transport, so `OPEN
 reports the active interface via `getifaddrs`. Wi-Fi radio scan/join is out of
 scope on Linux; those options report unavailable.
 
+## AppImage / Linux vs Pi
+
+| Area | Linux native / AppImage | Pi (Circle) |
+| --- | --- | --- |
+| Graphics | same language + software rasterisers; RGB555 stored, RGB565 SDL present | RGB555 HDMI-native; `SetArea` DMA present and double-buffered VSync flip on Pi ≤ 4 |
+| Audio | SDL2 (`PLAY TONE`/`MP3`/`MOD`/`XM`) | Circle HDMI / PWM audio |
+| Filesystems | `A:` ramdisk; `C:`–`H:` host directories under `MMB_DRIVE_ROOT`; `--drive` binds `D:` | `A:` ramdisk; `C:` SD card; `D:`– USB mass storage |
+| TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
+| Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
+| Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
+| vsync / page flip | software (single framebuffer, SDL vsync pacing) | hardware DMA, VSync flip |
+| App-VM CLI | `.app` and `--term` sealed launches (#490/#491) | n/a (boots to the REPL) |
+
+Native pixels are RGB555 (green at bit 6) exactly like Circle's `COLOR16`, so
+the colour model matches; only the SDL present converts to RGB565. The Circle
+`kernel.cpp` front end is not yet rewired onto the shared
+`mmbasic/src/frontend.c` REPL.
+
+## Development loop
+
+Use Linux native as the quick edit → build → test loop; escalate to QEMU only
+when the change touches bare-metal specifics (Circle drivers, HDMI/DMA, WLAN,
+SD-card FAT).
+
+```bash
+scripts/build-linux.sh                                    # build both native binaries
+.venv/bin/python -m pytest tests/test_linux_native.py     # REPL, storage, SDL, TUI, TCP
+.venv/bin/python -m pytest tests/test_linux_net_srv.py    # POSIX TCP server (host loopback)
+scripts/linux-native-perf-check.sh                        # Pi-zero-overhead guard for the hot paths
+```
+
+`tests/test_linux_native.py` builds `linux/mmbasic` itself and needs only a host
+`cc`/`make`; SDL tests skip when `linux/mmbasic-sdl` was not built (no SDL2 dev
+headers), and golden-image tests skip without ImageMagick. Escalate with
+`scripts/build.sh` (needs the `aarch64-none-elf` cross-toolchain) followed by a
+full `.venv/bin/python -m pytest`; the QEMU suite has no toolchain guard, so it
+hard-fails rather than skips when the cross compiler or `qemu-system-aarch64` is
+missing.
+
 ## AppImage
 
 `.github/workflows/linux-appimage.yml` builds `linux/mmbasic-sdl` on
 `ubuntu-22.04` and packages it with `linuxdeploy` + `appimagetool`, then
-attaches it to the rolling `linux-native` pre-release:
+attaches it to the rolling `linux-native` pre-release. The AppImage is **Linux
+x86_64 only**; `scripts/build-linux.sh` itself also builds on macOS.
 
 ```
 https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage
@@ -102,12 +142,3 @@ https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.A
 
 Build it locally on Linux with `scripts/package-linux-appimage.sh` (result in
 `dist/`).
-
-## Differences from the Pi build
-
-- No Wi-Fi radio management (TCP over the host's existing connection only).
-- Native pixels are RGB555 (green at bit 6) exactly like Circle's `COLOR16`;
-  SDL presents through an RGB565 conversion.
-- `wait_vsync`/page-flip are software (single framebuffer, SDL vsync pacing).
-- The Circle `kernel.cpp` front end is not yet rewired onto the shared
-  `mmbasic/src/frontend.c` REPL.

@@ -22,6 +22,13 @@ Type at the HDMI prompt with a USB keyboard (the Pi 400’s built-in keyboard
 counts). Serial UART at 115200 8N1 on GPIO 14/15 still works as a second
 console. Video goes to HDMI.
 
+Not installing to a Pi? The same interpreter also builds natively for Linux and
+macOS (`scripts/build-linux.sh`). A Linux x86_64 SDL AppImage is attached to the
+rolling `linux-native` pre-release:
+<https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage>.
+That build runs `.app` packages and sealed TERM sessions from the command line;
+see [`docs/linux-native.md`](docs/linux-native.md).
+
 DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
 slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
 `DRIVE` lists them; `CHDIR "C:"` selects the SD card. File commands without a
