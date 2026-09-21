@@ -710,6 +710,9 @@ void mmb_cmd_beep(void)
 	play_begin(4, "BEEP");
 }
 
+#if !defined(MMB_PLATFORM_POSIX)
+/* jar_xm's stdio API is unused (we call jar_xm_create_context_safe), but its
+ * strong definitions would interpose on libc in a native build. */
 #include <stdio.h>
 FILE *fopen(const char *p, const char *m)
 {
@@ -748,3 +751,4 @@ int fprintf(FILE *f, const char *fmt, ...)
 	(void)fmt;
 	return 0;
 }
+#endif /* !MMB_PLATFORM_POSIX */

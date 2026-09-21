@@ -1,6 +1,9 @@
 #include "mmb_priv.h"
 
-#if !defined(__aarch64__)
+/* The AArch64 asm path is linked on the Circle/Pi build. Native builds use
+ * the C fallback (macOS arm64 also defines __aarch64__ but cannot assemble
+ * the GNU-syntax blit_a64.S, so MMB_PLATFORM_POSIX forces C here). */
+#if !defined(__aarch64__) || defined(MMB_PLATFORM_POSIX)
 void mmb_blit_copy_u16(uint16_t *dst, const uint16_t *src, unsigned n)
 {
 	if (n)

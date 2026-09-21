@@ -2,9 +2,19 @@
 #define MMB_PRIV_H
 
 #include "mmbasic.h"
+#if defined(MMB_PLATFORM_POSIX)
+/* Native (Linux/macOS) build: use libc for setjmp/alloc/strings. This is a
+ * compile-time-only substitution so the Circle build keeps its own headers
+ * and codegen unchanged. */
+#include <setjmp.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#else
 #include <circle/setjmp.h>
 #include <circle/alloc.h>
 #include <circle/util.h>
+#endif
 #include <stdint.h>
 #include <stddef.h>
 

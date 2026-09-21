@@ -1,3 +1,7 @@
+#if defined(MMB_PLATFORM_POSIX)
+/* Native builds get all of these from libc; the bare-metal shims below would
+ * conflict (and <reent.h> does not exist). */
+#else
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -213,3 +217,4 @@ int sprintf(char *str, const char *fmt, ...)
 
 struct _reent impure_data;
 struct _reent *_impure_ptr = &impure_data;
+#endif /* !MMB_PLATFORM_POSIX */

@@ -31,6 +31,11 @@ dist/
 console/mmb_version.h
 mmbasic/include/mmb_version.h
 
+# Native (Linux/macOS) host build
+linux/build/
+linux/mmbasic
+linux/mmb_version.h
+
 # Generated at build from docs/help/
 mmbasic/src/help_data.c
 
