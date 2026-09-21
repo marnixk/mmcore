@@ -177,6 +177,118 @@ def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
     assert _pixel_at(data, w, 225, 225) == (0, 0, 0)
 
 
+SCENE = [
+    "CLS",
+    "BOX 60,120,200,150,GREEN",
+    "LINE 60,120,260,270,RED",
+    "CIRCLE 440,200,90,CYAN",
+    "LINE 340,120,540,120,YELLOW",
+    "PIXEL 500,300,MAGENTA",
+]
+
+
+def _is_red(p):
+    r, g, b = p
+    return r > 150 and g < 130 and b < 130
+
+
+def _is_green(p):
+    r, g, b = p
+    return g > 150 and r < 130 and b < 130
+
+
+def _is_blue(p):
+    r, g, b = p
+    return b > 150 and r < 130 and g < 130
+
+
+def _is_yellow(p):
+    r, g, b = p
+    return r > 150 and g > 150 and b < 130
+
+
+def _is_black(p):
+    return all(c < 40 for c in p)
+
+
+def _magick(*args):
+    for tool in ("magick", "convert"):
+        try:
+            r = subprocess.run([tool, *args], capture_output=True)
+            if r.returncode == 0 and r.stdout:
+                return r.stdout
+        except FileNotFoundError:
+            pass
+    return None
+
+
+def _shape_pixels(mmb_linux, tmp_path, name, commands):
+    w, h, data = _run_sdl_dump(mmb_linux, commands, tmp_path, name)
+    return lambda x, y: _pixel_at(data, w, x, y)
+
+
+def test_graphics_pixel_and_shapes(mmb_linux, tmp_path):
+    """LN-21 (#473): exact per-pixel checks matching the Pi graphics tests."""
+    p = _shape_pixels(
+        mmb_linux, tmp_path, "pixel", "CLS\nPIXEL 300,300,RED\n"
+    )
+    assert _is_red(p(300, 300))
+    assert _is_black(p(300, 340))
+
+    p = _shape_pixels(
+        mmb_linux, tmp_path, "line", "CLS\nLINE 50,200,300,200,GREEN\n"
+    )
+    assert _is_green(p(175, 200))
+    assert _is_black(p(175, 260))
+
+    p = _shape_pixels(
+        mmb_linux, tmp_path, "box", "CLS\nBOX 100,120,200,150,BLUE\n"
+    )
+    assert _is_blue(p(200, 120))
+    assert _is_blue(p(100, 195))
+    assert _is_black(p(200, 195))
+
+    p = _shape_pixels(
+        mmb_linux, tmp_path, "circle", "CLS\nCIRCLE 320,240,100,YELLOW\n"
+    )
+    assert _is_yellow(p(420, 240))
+    assert _is_black(p(320, 240))
+
+    p = _shape_pixels(
+        mmb_linux,
+        tmp_path,
+        "circle_fill",
+        "CLS\nCIRCLE 200,180,60,1,RGB(255,0,0),RGB(0,255,0)\n",
+    )
+    assert _is_green(p(200, 180))
+    assert _is_red(p(260, 180))
+    assert _is_black(p(270, 180))
+
+
+def test_scene_matches_pi_golden(mmb_linux, tmp_path):
+    """LN-21 (#473): the CMM2 scene matches the Pi golden within 2%."""
+    golden = os.path.join(REPO, "tests", "golden", "scene.png")
+    if not os.path.isfile(golden):
+        pytest.skip("no golden scene")
+    w, h, data = _run_sdl_dump(mmb_linux, "\n".join(SCENE) + "\n", tmp_path, "scene")
+    assert (w, h) == (1280, 720)
+    ref = _magick(golden, "-depth", "8", "rgb:-")
+    if ref is None:
+        pytest.skip("ImageMagick not available")
+    n = min(len(ref), len(data))
+    diff = 0
+    for i in range(0, n, 3):
+        d = max(
+            abs(data[i] - ref[i]),
+            abs(data[i + 1] - ref[i + 1]),
+            abs(data[i + 2] - ref[i + 2]),
+        )
+        if d > 5:
+            diff += 1
+    ratio = diff / (n / 3)
+    assert ratio < 0.02, "scene differs from Pi golden by %.4f%%" % (ratio * 100)
+
+
 def test_audio_backend_runs(mmb_linux, tmp_path):
     """LN-10 (#462): PLAY TONE drives the SDL audio hooks without crashing."""
     if not os.path.isfile(SDL_BIN):
