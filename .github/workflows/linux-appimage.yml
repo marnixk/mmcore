@@ -1,0 +1,58 @@
+name: Linux AppImage
+
+# Builds the native SDL2 backend and packages it as an AppImage, then attaches
+# the result to a rolling pre-release so it can be downloaded and tested on a
+# Linux machine without building anything.
+on:
+  push:
+    branches: [ports/linux]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appimage:
+    # 22.04 keeps the glibc baseline low enough for most current distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libsdl2-dev python3 curl file
+
+      - name: Build AppImage
+        run: scripts/package-linux-appimage.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMBasic-AppImage
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Publish rolling pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="linux-native"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Linux native (rolling)" \
+              --notes "Automated AppImage built from the \`ports/linux\` branch.
+
+          Run it from a terminal (the built-in window shows output; type at the prompt):
+          \`\`\`
+          chmod +x MMBasic-*.AppImage
+          ./MMBasic-*.AppImage
+          \`\`\`"
+          fi
+          gh release upload "$tag" dist/*.AppImage --clobber
