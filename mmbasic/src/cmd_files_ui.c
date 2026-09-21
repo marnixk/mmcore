@@ -20,6 +20,7 @@
 #define AN_MAX_COLS TUI_MAX_COLS
 #define AN_MAX_ROWS 512
 #define AN_MAX_BYTES (1024u * 1024u)
+#define AN_COLS 80
 
 #define FU_PR_COPY  1
 #define FU_PR_MOVE  2
@@ -1758,7 +1759,6 @@ static void an_toggle_80(void)
 {
 	F.an_mode80 = !F.an_mode80;
 	an_apply_mode();
-	an_parse(tui_cols());
 	an_render();
 	set_hint(F.an_mode80 ? "ANSI 80x25  f restores  Esc exits"
 			     : "ANSI preview  up/down scroll  f 80x25  Esc exits");
@@ -1789,14 +1789,14 @@ static int an_open(const char *path, const char *name)
 	F.an_saved_mode = G.gfx.mode;
 	F.an_saved_bits = G.gfx.bits;
 	F.an_mode80 = 0;
-	an_parse(tui_cols());
+	an_parse(AN_COLS);
 	F.mode = FU_ANSI;
 	an_render();
 	set_hint("ANSI preview  up/down scroll  f 80x25  Esc exits");
 	strcpy(line, "[FILES] ANSI ");
 	strncat(line, name, 32);
 	strcat(line, " ");
-	fmt_uint(line + strlen(line), (unsigned)tui_cols());
+	fmt_uint(line + strlen(line), (unsigned)AN_COLS);
 	strcat(line, "x");
 	fmt_uint(line + strlen(line), (unsigned)F.an_rows);
 	strcat(line, "\r\n");

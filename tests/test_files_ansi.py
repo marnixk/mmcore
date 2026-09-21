@@ -21,16 +21,16 @@ def _keys(con: MMBasicConsole, data: bytes, quiet: float = 0.45) -> str:
     return con.drain(quiet=quiet).decode(errors="replace")
 
 
-def _open_ansi(con: MMBasicConsole) -> str:
+def _open_ansi(con: MMBasicConsole, name: str = "TEST.ANS") -> str:
     assert con.send_line('CHDIR "A:/tests"') == ""
     seen = _open_files(con)
     for _ in range(16):
-        if "SEL=TEST.ANS" in seen:
+        if f"SEL={name}" in seen:
             break
         seen = _keys(con, b"\x1b[B", quiet=0.25)
-    assert "SEL=TEST.ANS" in seen
+    assert f"SEL={name}" in seen
     seen = _keys(con, b"\r", quiet=1.0)
-    assert "[FILES] ANSI TEST.ANS" in seen, seen
+    assert f"[FILES] ANSI {name}" in seen, seen
     return seen
 
 
@@ -87,5 +87,19 @@ def test_files_ansi_scroll_in_80x25(fresh_console):
         _keys(con, b"\x1b[B", quiet=0.2)
     assert _is_colour(con.screen_pixel(20, 388), (0, 170, 0)), con.screen_pixel(20, 388)
     assert _is_colour(con.screen_pixel(20, 356), (170, 0, 170)), con.screen_pixel(20, 356)
+    _keys(con, b"\x1b", quiet=0.8)
+    _keys(con, b"q")
+
+
+def test_files_ansi_wraps_at_80_columns(fresh_console):
+    """A long line with no newline must autowrap at 80 cols, not the MODE width."""
+    con = fresh_console
+    _open_ansi(con, "WRAP.ANS")
+    # Cyan run. Row 0 starts cyan and row 1 also starts cyan because the
+    # 81st-85th cells wrapped down to the next row.
+    assert _is_colour(con.screen_pixel(20, 4), (0, 170, 170)), con.screen_pixel(20, 4)
+    assert _is_colour(con.screen_pixel(20, 20), (0, 170, 170)), con.screen_pixel(20, 20)
+    # Past the 80-column edge on row 0 is blank, even at 1280x720 (160 cols).
+    assert max(con.screen_pixel(660, 4)) < 40, con.screen_pixel(660, 4)
     _keys(con, b"\x1b", quiet=0.8)
     _keys(con, b"q")
