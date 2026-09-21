@@ -9,40 +9,17 @@
 #include "mmbasic.h"
 #include "mmb_priv.h"
 #include "sdl_video.h"
+#include "sdl_console.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-static unsigned sdl_to_native(unsigned rgb888)
-{
-	unsigned r = (rgb888 >> 16) & 255u;
-	unsigned g = (rgb888 >> 8) & 255u;
-	unsigned b = rgb888 & 255u;
-	return ((r >> 3) << 11) | ((g >> 3) << 6) | (b >> 3);
-}
-
-static unsigned sdl_from_native(unsigned native)
-{
-	unsigned r = (native >> 11) & 0x1Fu;
-	unsigned g = (native >> 6) & 0x1Fu;
-	unsigned b = native & 0x1Fu;
-	return ((r * 255u / 31u) << 16) | ((g * 255u / 31u) << 8) |
-	       (b * 255u / 31u);
-}
-
 static void sdl_serial(const char *s, unsigned n)
 {
 	fwrite(s, 1, n, stdout);
 	fflush(stdout);
-}
-
-static void sdl_screen(const char *s, unsigned n)
-{
-	/* ANSI text rendering arrives with LN-05. */
-	(void)s;
-	(void)n;
 }
 
 static void *sdl_alloc(unsigned n)
@@ -81,7 +58,7 @@ static void sdl_set_pixel(int x, int y, unsigned rgb)
 	if (!fb || x < 0 || y < 0 || x >= sdl_video_width() ||
 	    y >= sdl_video_height())
 		return;
-	fb[y * sdl_video_width() + x] = (uint16_t)sdl_to_native(rgb);
+	fb[y * sdl_video_width() + x] = (uint16_t)sdl_rgb_to_native(rgb);
 }
 
 static unsigned sdl_get_pixel(int x, int y)
@@ -91,26 +68,25 @@ static unsigned sdl_get_pixel(int x, int y)
 	if (!fb || x < 0 || y < 0 || x >= sdl_video_width() ||
 	    y >= sdl_video_height())
 		return 0;
-	return sdl_from_native(fb[y * sdl_video_width() + x]);
+	return sdl_native_to_rgb(fb[y * sdl_video_width() + x]);
+}
+
+static void sdl_screen(const char *s, unsigned n)
+{
+	sdl_console_write(s, n);
 }
 
 static void sdl_fill(unsigned rgb)
 {
-	uint16_t *fb = sdl_video_fb();
-	size_t n, i;
-	uint16_t v;
-
-	if (!fb)
-		return;
-	v = (uint16_t)sdl_to_native(rgb);
-	n = (size_t)sdl_video_width() * (size_t)sdl_video_height();
-	for (i = 0; i < n; i++)
-		fb[i] = v;
+	sdl_console_fill(rgb);
 }
 
 static int sdl_resize(int w, int h)
 {
-	return sdl_video_resize(w, h);
+	if (!sdl_video_resize(w, h))
+		return 0;
+	sdl_console_resize();
+	return 1;
 }
 
 static void sdl_present_native(int x, int y, int w, int h, const void *pix,
@@ -162,7 +138,7 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 			if (dx < 0 || dx >= sw)
 				continue;
 			fb[dy * sw + dx] =
-				(uint16_t)sdl_to_native(rgb888[row * stride + col]);
+				(uint16_t)sdl_rgb_to_native(rgb888[row * stride + col]);
 		}
 	}
 }
@@ -217,11 +193,12 @@ static const mmb_platform sdl_plat = {
 	.reboot = sdl_reboot,
 	.present_rgb = sdl_present_rgb,
 	.present_native = sdl_present_native,
-	.rgb_to_native = sdl_to_native,
-	.native_to_rgb = sdl_from_native,
+	.rgb_to_native = sdl_rgb_to_native,
+	.native_to_rgb = sdl_native_to_rgb,
 };
 
 void mmb_platform_bind_sdl(void)
 {
+	sdl_console_reset();
 	mmb_init(&sdl_plat);
 }

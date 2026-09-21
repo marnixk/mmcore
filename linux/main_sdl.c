@@ -12,17 +12,25 @@
 #include <SDL.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 
 void mmb_platform_bind_sdl(void);
+
+static void emit(const char *s)
+{
+	/* Both serial (stdout) and the SDL console. */
+	mmb_console_write(s);
+}
 
 static void run_line(const char *line)
 {
 	const char *result = mmb_exec_line(line);
 
 	if (result && *result)
-		fputs(result, stdout);
+		emit(result);
+	emit("\n");
 	fflush(stdout);
 }
 
@@ -74,6 +82,7 @@ int main(void)
 
 	mmb_platform_bind_sdl();
 	mmb_print_startup();
+	emit(mmb_prompt());
 	sdl_video_present();
 
 	while (!sdl_video_should_quit())
@@ -86,6 +95,7 @@ int main(void)
 			if (!read_stdin_line(line, (int)sizeof line))
 				break; /* stdin closed (headless/pipe): exit */
 			run_line(line);
+			emit(mmb_prompt());
 			sdl_video_present();
 		}
 		else
@@ -93,6 +103,9 @@ int main(void)
 			SDL_Delay(5);
 		}
 	}
+
+	if (getenv("MMB_SDL_DUMP"))
+		sdl_video_dump_ppm(getenv("MMB_SDL_DUMP"));
 
 	sdl_video_close();
 	return 0;

@@ -52,6 +52,54 @@ def test_run_ramdisk_program(mmb_linux):
 SDL_BIN = os.path.join(REPO, "linux", "mmbasic-sdl")
 
 
+def _ppm_pixels(path):
+    with open(path, "rb") as f:
+        assert f.readline().strip() == b"P6"
+        w, h = map(int, f.readline().split())
+        f.readline()
+        data = f.read()
+    return w, h, data
+
+
+def _run_sdl_dump(mmb_linux, program, tmp_path, name):
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    ppm = os.path.join(str(tmp_path), name + ".ppm")
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", MMB_SDL_DUMP=ppm)
+    subprocess.run(
+        [SDL_BIN],
+        input=program,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    assert os.path.isfile(ppm), "expected a framebuffer dump"
+    return _ppm_pixels(ppm)
+
+
+def test_ansi_console_renders_text(mmb_linux, tmp_path):
+    """LN-05 (#457): the ANSI console paints text into the framebuffer."""
+    w, h, data = _run_sdl_dump(mmb_linux, 'PRINT "RENDER ME"\n', tmp_path, "text")
+    nonblack = sum(
+        1 for i in range(0, len(data), 3) if data[i] or data[i + 1] or data[i + 2]
+    )
+    assert nonblack > 100, "no text pixels rendered"
+
+
+def test_ansi_console_colour(mmb_linux, tmp_path):
+    """LN-05 (#457): SGR colour from COLOUR reaches the framebuffer."""
+    w, h, data = _run_sdl_dump(
+        mmb_linux, 'COLOUR 10\nPRINT "GREENPIX"\n', tmp_path, "green"
+    )
+    green = 0
+    for i in range(0, len(data), 3):
+        r, g, b = data[i], data[i + 1], data[i + 2]
+        if g > r + 40 and g > b + 40:
+            green += 1
+    assert green > 50, "expected green glyph pixels for COLOUR 10"
+
+
 def test_sdl_backend_headless(mmb_linux):
     """LN-03 (#455): SDL2 core opens a window and runs the interpreter.
 

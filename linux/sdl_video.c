@@ -1,6 +1,7 @@
 #include "sdl_video.h"
 
 #include <SDL.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,6 +12,23 @@ static uint16_t *s_fb;     /* RGB555 (green bit 6) */
 static uint16_t *s_stage;  /* RGB565 for SDL */
 static int s_w, s_h;
 static int s_quit;
+
+unsigned sdl_rgb_to_native(unsigned rgb888)
+{
+	unsigned r = (rgb888 >> 16) & 255u;
+	unsigned g = (rgb888 >> 8) & 255u;
+	unsigned b = rgb888 & 255u;
+	return ((r >> 3) << 11) | ((g >> 3) << 6) | (b >> 3);
+}
+
+unsigned sdl_native_to_rgb(unsigned native)
+{
+	unsigned r = (native >> 11) & 0x1Fu;
+	unsigned g = (native >> 6) & 0x1Fu;
+	unsigned b = native & 0x1Fu;
+	return ((r * 255u / 31u) << 16) | ((g * 255u / 31u) << 8) |
+	       (b * 255u / 31u);
+}
 
 static void free_buffers(void)
 {
@@ -143,4 +161,33 @@ int sdl_video_pump(void)
 int sdl_video_should_quit(void)
 {
 	return s_quit;
+}
+
+int sdl_video_dump_ppm(const char *path)
+{
+	FILE *f;
+	int x, y;
+
+	if (!s_fb || !path)
+		return 0;
+	f = fopen(path, "wb");
+	if (!f)
+		return 0;
+	fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
+	for (y = 0; y < s_h; y++)
+	{
+		for (x = 0; x < s_w; x++)
+		{
+			unsigned rgb = sdl_native_to_rgb(s_fb[y * s_w + x]);
+			unsigned char px[3] = {
+				(unsigned char)((rgb >> 16) & 255u),
+				(unsigned char)((rgb >> 8) & 255u),
+				(unsigned char)(rgb & 255u)
+			};
+
+			fwrite(px, 1, 3, f);
+		}
+	}
+	fclose(f);
+	return 1;
 }

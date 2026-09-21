@@ -19,8 +19,15 @@ uint16_t *sdl_video_fb(void);
 int sdl_video_width(void);
 int sdl_video_height(void);
 
+/* RGB888 <-> native (RGB555, green at bit 6) matching Circle's COLOR16. */
+unsigned sdl_rgb_to_native(unsigned rgb888);
+unsigned sdl_native_to_rgb(unsigned native);
+
 void sdl_video_present(void);
 int sdl_video_pump(void);
 int sdl_video_should_quit(void);
+
+/* Write the software framebuffer as a binary PPM (headless test/debug aid). */
+int sdl_video_dump_ppm(const char *path);
 
 #endif
