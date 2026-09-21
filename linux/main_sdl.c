@@ -1,13 +1,16 @@
 /*
- * SDL2 entry point (LN-03). Opens the window and runs a minimal loop so the
- * backend can be exercised; the full front-end/event routing arrives in LN-09.
+ * SDL2 entry point (LN-09). Drives the portable front end (mmb_front_*) from
+ * SDL keyboard input and the terminal, renders through the SDL platform, and
+ * keeps the window alive while a program runs (via platform poll_input).
  *
- * Input is read from stdin without blocking the window. The process exits on
- * window close (SDL_QUIT) or stdin EOF, which makes it testable headlessly
- * with SDL_VIDEODRIVER=dummy.
+ * Alt+Enter at the prompt toggles fullscreen on the primary display.
+ * stdin is still accepted (one line at a time) so the binary is testable
+ * headlessly; EOF on a non-tty exits.
  */
 #include "mmb_priv.h"
+#include "frontend.h"
 #include "sdl_video.h"
+#include "sdl_input.h"
 
 #include <SDL.h>
 
@@ -18,20 +21,15 @@
 
 void mmb_platform_bind_sdl(void);
 
-static void emit(const char *s)
+static void front_emit(void *ctx, const char *s, unsigned n)
 {
-	/* Both serial (stdout) and the SDL console. */
-	mmb_console_write(s);
-}
-
-static void run_line(const char *line)
-{
-	const char *result = mmb_exec_line(line);
-
-	if (result && *result)
-		emit(result);
-	emit("\n");
-	fflush(stdout);
+	(void)ctx;
+	if (!G.plat)
+		return;
+	if (G.plat->write_serial)
+		G.plat->write_serial(s, n);
+	if (G.plat->write_screen)
+		G.plat->write_screen(s, n);
 }
 
 static int stdin_line_ready(void)
@@ -81,27 +79,28 @@ int main(void)
 	}
 
 	mmb_platform_bind_sdl();
+	SDL_StartTextInput();
+	mmb_front_init(front_emit, 0);
 	mmb_print_startup();
-	emit(mmb_prompt());
+	mmb_front_prompt();
 	sdl_video_present();
 
 	while (!sdl_video_should_quit())
 	{
-		if (sdl_video_pump() < 0)
-			break;
+		sdl_input_pump();
 
 		if (stdin_open && stdin_line_ready())
 		{
 			if (!read_stdin_line(line, (int)sizeof line))
 				break; /* stdin closed (headless/pipe): exit */
-			run_line(line);
-			emit(mmb_prompt());
-			sdl_video_present();
+			mmb_front_feed(line, (unsigned)strlen(line));
+			mmb_front_feed_byte('\n');
 		}
 		else
 		{
 			SDL_Delay(5);
 		}
+		sdl_video_present();
 	}
 
 	if (getenv("MMB_SDL_DUMP"))

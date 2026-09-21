@@ -143,19 +143,29 @@ void sdl_video_present(void)
 	SDL_RenderPresent(s_ren);
 }
 
-int sdl_video_pump(void)
+void sdl_video_request_quit(void)
 {
-	SDL_Event e;
+	s_quit = 1;
+}
 
-	while (SDL_PollEvent(&e))
+void sdl_video_toggle_fullscreen(void)
+{
+	Uint32 flags;
+
+	if (!s_win)
+		return;
+	flags = SDL_GetWindowFlags(s_win);
+	if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
 	{
-		if (e.type == SDL_QUIT)
-			s_quit = 1;
-		else if (e.type == SDL_WINDOWEVENT &&
-			 e.window.event == SDL_WINDOWEVENT_CLOSE)
-			s_quit = 1;
+		SDL_SetWindowFullscreen(s_win, 0);
 	}
-	return s_quit ? -1 : 0;
+	else
+	{
+		/* Pin to the primary display before going borderless-fullscreen. */
+		SDL_SetWindowPosition(s_win, SDL_WINDOWPOS_CENTERED_DISPLAY(0),
+				      SDL_WINDOWPOS_CENTERED_DISPLAY(0));
+		SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+	}
 }
 
 int sdl_video_should_quit(void)

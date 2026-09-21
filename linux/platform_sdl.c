@@ -10,6 +10,8 @@
 #include "mmb_priv.h"
 #include "sdl_video.h"
 #include "sdl_console.h"
+#include "sdl_tui.h"
+#include "sdl_input.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,6 +145,16 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 	}
 }
 
+/* Called from mmb_check_break while a program runs: pump SDL input and
+ * repaint so the window stays alive during long RUNs. */
+static void sdl_poll_input(void)
+{
+	if (!mmb_is_running())
+		return;
+	sdl_input_pump();
+	sdl_video_present();
+}
+
 static void sdl_present_wait(void)
 {
 	/* Presents are synchronous copies into the framebuffer. */
@@ -208,7 +220,10 @@ static const mmb_platform sdl_plat = {
 	.free = sdl_free,
 	.millis = sdl_millis,
 	.read_line = sdl_read_line,
+	.poll_input = sdl_poll_input,
 	.reboot = sdl_reboot,
+	.alt_held = sdl_input_alt_held,
+	.ctrl_alt_held = sdl_input_ctrl_alt_held,
 	.present_rgb = sdl_present_rgb,
 	.present_native = sdl_present_native,
 	.present_wait = sdl_present_wait,
@@ -216,6 +231,17 @@ static const mmb_platform sdl_plat = {
 	.wait_vsync = sdl_wait_vsync,
 	.rgb_to_native = sdl_rgb_to_native,
 	.native_to_rgb = sdl_native_to_rgb,
+	.video_cols = sdl_tui_cols,
+	.video_rows = sdl_tui_rows,
+	.tui_prepare = sdl_tui_prepare,
+	.tui_glyph = sdl_tui_glyph,
+	.tui_present = sdl_tui_present,
+	.tui_scroll = sdl_tui_scroll,
+	.tui_glyph2x = sdl_tui_glyph2x,
+	.tui_glyph_n = sdl_tui_glyph_n,
+	.tui_glyph_n_px = sdl_tui_glyph_n_px,
+	.tui_fill_px = sdl_tui_fill_px,
+	.tui_set_font = sdl_tui_set_font,
 };
 
 void mmb_platform_bind_sdl(void)

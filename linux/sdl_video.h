@@ -24,8 +24,9 @@ unsigned sdl_rgb_to_native(unsigned rgb888);
 unsigned sdl_native_to_rgb(unsigned native);
 
 void sdl_video_present(void);
-int sdl_video_pump(void);
 int sdl_video_should_quit(void);
+void sdl_video_request_quit(void);
+void sdl_video_toggle_fullscreen(void);
 
 /* Write the software framebuffer as a binary PPM (headless test/debug aid). */
 int sdl_video_dump_ppm(const char *path);

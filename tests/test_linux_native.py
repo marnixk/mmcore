@@ -166,14 +166,15 @@ def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
         "MODE 8,16\n"
         "CLS RGB(0,0,0)\n"
         "PIXEL 10,10,RGB(255,0,0)\n"
-        "BOX 20,20,50,50,1,RGB(0,255,0)\n"
+        "BOX 200,200,50,50,1,RGB(0,255,0)\n"
         "PRINT PIXEL(10,10)\n"
     )
     w, h, data = _run_sdl_dump(mmb_linux, program, tmp_path, "shapes")
     assert _pixel_at(data, w, 10, 10) == (255, 0, 0)
-    assert _pixel_at(data, w, 20, 20) == (0, 255, 0)
-    assert _pixel_at(data, w, 69, 69) == (0, 255, 0)
-    assert _pixel_at(data, w, 0, 0) == (0, 0, 0)
+    # Box sits below the echoed command rows (y > 80).
+    assert _pixel_at(data, w, 200, 200) == (0, 255, 0)
+    assert _pixel_at(data, w, 249, 249) == (0, 255, 0)
+    assert _pixel_at(data, w, 225, 225) == (0, 0, 0)
 
 
 def test_sdl_backend_headless(mmb_linux):
