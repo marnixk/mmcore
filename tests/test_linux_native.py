@@ -47,3 +47,31 @@ def test_banner_and_immediate_print(mmb_linux):
 def test_run_ramdisk_program(mmb_linux):
     out = _run(mmb_linux, 'RUN "A:/apps/HELLO.BAS"\n')
     assert "Hello from A:/apps/HELLO.BAS" in out
+
+
+SDL_BIN = os.path.join(REPO, "linux", "mmbasic-sdl")
+
+
+def test_sdl_backend_headless(mmb_linux):
+    """LN-03 (#455): SDL2 core opens a window and runs the interpreter.
+
+    Uses the dummy video driver so the check is headless; the process exits on
+    stdin EOF.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+    proc = subprocess.run(
+        [SDL_BIN],
+        input='PRINT 2+3\nPRINT "HELLO"\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "MMBasic" in out
+    assert "5" in out
+    assert "HELLO" in out

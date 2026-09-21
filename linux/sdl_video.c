@@ -1,0 +1,146 @@
+#include "sdl_video.h"
+
+#include <SDL.h>
+#include <stdlib.h>
+#include <string.h>
+
+static SDL_Window *s_win;
+static SDL_Renderer *s_ren;
+static SDL_Texture *s_tex;
+static uint16_t *s_fb;     /* RGB555 (green bit 6) */
+static uint16_t *s_stage;  /* RGB565 for SDL */
+static int s_w, s_h;
+static int s_quit;
+
+static void free_buffers(void)
+{
+	free(s_fb);
+	free(s_stage);
+	s_fb = 0;
+	s_stage = 0;
+}
+
+int sdl_video_open(int w, int h)
+{
+	if (SDL_Init(SDL_INIT_VIDEO) != 0)
+		return 0;
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+
+	s_win = SDL_CreateWindow("MMBasic", SDL_WINDOWPOS_CENTERED,
+				 SDL_WINDOWPOS_CENTERED, w, h,
+				 SDL_WINDOW_RESIZABLE);
+	if (!s_win)
+		return 0;
+
+	s_ren = SDL_CreateRenderer(s_win, -1,
+				   SDL_RENDERER_ACCELERATED |
+				   SDL_RENDERER_PRESENTVSYNC);
+	if (!s_ren)
+		s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
+	if (!s_ren)
+		return 0;
+
+	return sdl_video_resize(w, h);
+}
+
+void sdl_video_close(void)
+{
+	free_buffers();
+	if (s_tex)
+		SDL_DestroyTexture(s_tex);
+	if (s_ren)
+		SDL_DestroyRenderer(s_ren);
+	if (s_win)
+		SDL_DestroyWindow(s_win);
+	s_tex = 0;
+	s_ren = 0;
+	s_win = 0;
+	SDL_Quit();
+}
+
+int sdl_video_resize(int w, int h)
+{
+	if (w <= 0 || h <= 0)
+		return 0;
+
+	free_buffers();
+	s_fb = calloc((size_t)w * (size_t)h, sizeof(uint16_t));
+	s_stage = malloc((size_t)w * (size_t)h * sizeof(uint16_t));
+	if (!s_fb || !s_stage)
+	{
+		free_buffers();
+		return 0;
+	}
+
+	if (s_tex)
+		SDL_DestroyTexture(s_tex);
+	s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_RGB565,
+				  SDL_TEXTUREACCESS_STREAMING, w, h);
+	if (!s_tex)
+		return 0;
+
+	s_w = w;
+	s_h = h;
+	if (s_win)
+		SDL_SetWindowSize(s_win, w, h);
+	return 1;
+}
+
+uint16_t *sdl_video_fb(void)
+{
+	return s_fb;
+}
+
+int sdl_video_width(void)
+{
+	return s_w;
+}
+
+int sdl_video_height(void)
+{
+	return s_h;
+}
+
+void sdl_video_present(void)
+{
+	size_t n, i;
+
+	if (!s_tex || !s_fb || !s_stage)
+		return;
+
+	n = (size_t)s_w * (size_t)s_h;
+	for (i = 0; i < n; i++)
+	{
+		uint16_t v = s_fb[i];
+		unsigned r = (v >> 11) & 0x1Fu;
+		unsigned g = (v >> 6) & 0x1Fu;
+		unsigned b = v & 0x1Fu;
+		unsigned g6 = (g << 1) | (g >> 4);
+		s_stage[i] = (uint16_t)((r << 11) | (g6 << 5) | b);
+	}
+
+	SDL_UpdateTexture(s_tex, 0, s_stage, s_w * (int)sizeof(uint16_t));
+	SDL_RenderClear(s_ren);
+	SDL_RenderCopy(s_ren, s_tex, 0, 0);
+	SDL_RenderPresent(s_ren);
+}
+
+int sdl_video_pump(void)
+{
+	SDL_Event e;
+
+	while (SDL_PollEvent(&e))
+	{
+		if (e.type == SDL_QUIT)
+			s_quit = 1;
+		else if (e.type == SDL_WINDOWEVENT &&
+			 e.window.event == SDL_WINDOWEVENT_CLOSE)
+			s_quit = 1;
+	}
+	return s_quit ? -1 : 0;
+}
+
+int sdl_video_should_quit(void)
+{
+	return s_quit;
+}
