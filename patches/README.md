@@ -71,5 +71,26 @@ Applied after `circle-tcp-send.patch` (marker `mmbasic-tcp-ack` in
   and FIN was actually sent.
 - A 1-byte persist probe is sent when the peer advertises a zero window.
 
+## `circle-usb-cdc-rx.patch`
+
+Applied last (marker `mmbasic-usb-cdc-rx` in `lib/usb/usbcdcethernet.cpp`).
+Fixes QEMU `usb-net` (CDC) transport, where unicast RX was lossy and
+host-initiated TCP (the FTP server) never connected (#431):
+
+- `CDWHCITransferStageData::TransactionComplete()`: the DWC2 leaves a stale
+  `NAK` interrupt status bit set when a later packet in the same transfer
+  succeeds. A completion that also reports `XFER_COMPLETE` now accumulates
+  its data instead of being mistaken for an empty NAK.
+- `CUSBCDCEthernetDevice::ReceiveFrame()` no longer requests
+  `SetCompleteOnNAK()`. NAK completions raced the controller's multi-packet
+  continuation, so a 64-byte frame could be completed before its terminating
+  zero-length packet, leaving QEMU's single input buffer full and dropping
+  every following frame.
+- `CUSBCDCEthernetDevice::SendFrame()` appends one padding byte when the
+  frame length is an exact multiple of the endpoint packet size. Without a
+  terminating short packet QEMU's `usb-net` holds the transfer until the
+  next frame, which stalls RETR-sized TCP segments (an Ethernet frame whose
+  total length is 64 bytes). Ethernet receivers ignore the trailing byte.
+
 Do not commit a dirty Circle submodule; the parent tree only vendors the
 patch files.

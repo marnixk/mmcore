@@ -136,7 +136,10 @@ def test_files_ftp_roundtrip(ftp_console):
     ctrl = con.ctrl_host_port
     ftp = ftplib.FTP()
     ftp.connect("127.0.0.1", ctrl, timeout=20)
-    ftp.trust_server_pasv_ipv4_address = True
+    # The guest advertises its SLIRP address (10.0.2.15) in PASV, which the
+    # host cannot route. The control hostfwd is the reachable path, so use the
+    # control connection's peer IP for the data connection instead.
+    ftp.trust_server_pasv_ipv4_address = False
     ftp.login("anonymous", "x")
     names = ftp.nlst()
     assert any("HELLO.TXT" in n.upper() for n in names), names

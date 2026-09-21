@@ -26,6 +26,7 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
     os.path.join(REPO, "patches", "circle-tcp-send.patch"),
     os.path.join(REPO, "patches", "circle-tcp-ack.patch"),
+    os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
 ]
 
 
@@ -69,11 +70,13 @@ def test_build_script_applies_patches_in_order():
     b = text.index("circle-tcp-robust.patch")
     c = text.index("circle-tcp-send.patch")
     d = text.index("circle-tcp-ack.patch")
-    assert a < b < c < d
+    e = text.index("circle-usb-cdc-rx.patch")
+    assert a < b < c < d < e
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
     assert "mmbasic-tcp-ack" in text
+    assert "mmbasic-usb-cdc-rx" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
@@ -97,6 +100,28 @@ def test_patches_carry_their_markers(patched_tree):
     qcpp = open(os.path.join(patched_tree, "lib/net/netbufferqueue.cpp"), encoding="utf-8").read()
     assert "RemoveHeader" in qcpp
     assert "nBytesAck == 1" not in tcp
+
+
+def test_usb_cdc_rx_patch_applies(patched_tree):
+    cdc = open(
+        os.path.join(patched_tree, "lib/usb/usbcdcethernet.cpp"), encoding="utf-8"
+    ).read()
+    cdc_h = open(
+        os.path.join(patched_tree, "include/circle/usb/usbcdcethernet.h"),
+        encoding="utf-8",
+    ).read()
+    stage = open(
+        os.path.join(patched_tree, "lib/usb/dwhcixferstagedata.cpp"),
+        encoding="utf-8",
+    ).read()
+    assert "mmbasic-usb-cdc-rx" in cdc
+    assert "SetCompleteOnNAK ()" not in cdc
+    assert "nMaxPacketSize" in cdc
+    assert "m_TxBuffer" in cdc_h
+    assert "DWHCI_HOST_CHAN_INT_XFER_COMPLETE" in stage
+    body = stage[stage.index("void CDWHCITransferStageData::TransactionComplete") :]
+    body = body[: body.index("void CDWHCITransferStageData::SetSplitComplete")]
+    assert body.index("DWHCI_HOST_CHAN_INT_XFER_COMPLETE") < body.index("m_nPackets = 0;")
 
 
 def test_receive_drains_rx_queue_before_reporting_errno(patched_tree):
