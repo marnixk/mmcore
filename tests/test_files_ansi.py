@@ -91,6 +91,21 @@ def test_files_ansi_scroll_in_80x25(fresh_console):
     _keys(con, b"q")
 
 
+def test_files_ansi_page_scroll(fresh_console):
+    """PgDn/PgUp jump a page rather than a single row."""
+    con = fresh_console
+    _open_ansi(con)
+    _keys(con, b"f", quiet=1.0)
+    assert con.screen_size() == (640, 400)
+    assert not _is_colour(con.screen_pixel(20, 388), (0, 170, 0))
+    _keys(con, b"\x1b[6~", quiet=0.4)  # PageDown clamps to the last page.
+    assert _is_colour(con.screen_pixel(20, 388), (0, 170, 0)), con.screen_pixel(20, 388)
+    _keys(con, b"\x1b[5~", quiet=0.4)  # PageUp back to the top.
+    assert not _is_colour(con.screen_pixel(20, 388), (0, 170, 0)), con.screen_pixel(20, 388)
+    _keys(con, b"\x1b", quiet=0.8)
+    _keys(con, b"q")
+
+
 def test_files_ansi_wraps_at_80_columns(fresh_console):
     """A long line with no newline must autowrap at 80 cols, not the MODE width."""
     con = fresh_console

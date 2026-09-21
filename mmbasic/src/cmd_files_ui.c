@@ -1755,13 +1755,29 @@ static void an_scroll(int dir)
 	an_render();
 }
 
+static void an_page(int dir)
+{
+	int rows = tui_rows();
+	int page = rows > 1 ? rows - 1 : 1;
+	int max_top = F.an_rows - rows;
+
+	if (max_top < 0)
+		max_top = 0;
+	F.an_top += dir < 0 ? -page : page;
+	if (F.an_top < 0)
+		F.an_top = 0;
+	if (F.an_top > max_top)
+		F.an_top = max_top;
+	an_render();
+}
+
 static void an_toggle_80(void)
 {
 	F.an_mode80 = !F.an_mode80;
 	an_apply_mode();
 	an_render();
-	set_hint(F.an_mode80 ? "ANSI 80x25  f restores  Esc exits"
-			     : "ANSI preview  up/down scroll  f 80x25  Esc exits");
+	set_hint(F.an_mode80 ? "ANSI 80x25  up/down/PgUp/PgDn  f restores  Esc exits"
+			     : "ANSI preview  up/down/PgUp/PgDn  f 80x25  Esc exits");
 	ser(F.an_mode80 ? "[FILES] ANSI 80x25 ON\r\n" : "[FILES] ANSI 80x25 OFF\r\n");
 }
 
@@ -1792,7 +1808,7 @@ static int an_open(const char *path, const char *name)
 	an_parse(AN_COLS);
 	F.mode = FU_ANSI;
 	an_render();
-	set_hint("ANSI preview  up/down scroll  f 80x25  Esc exits");
+	set_hint("ANSI preview  up/down/PgUp/PgDn  f 80x25  Esc exits");
 	strcpy(line, "[FILES] ANSI ");
 	strncat(line, name, 32);
 	strcat(line, " ");
@@ -2452,6 +2468,10 @@ static int handle_esc_char(char c)
 				handle_fkey(9);
 			else if (F.csi_n == 21)
 				handle_fkey(10);
+			else if (F.mode == FU_ANSI && F.csi_n == 5)
+				an_page(-1);
+			else if (F.mode == FU_ANSI && F.csi_n == 6)
+				an_page(1);
 		}
 		return 1;
 	}
