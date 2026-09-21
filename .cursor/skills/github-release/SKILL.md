@@ -65,10 +65,10 @@ scripts/github-release.sh publish VERSION
 That script:
 
 1. Builds hardware kernels (`RASPPI=3` and `RASPPI=4`, `QEMU=0`) and packs:
-   - `dist/mmbasic-console-rpi3-vVERSION.zip`
-   - `dist/mmbasic-console-pizero2-vVERSION.zip`
-   - `dist/mmbasic-console-pizero2w-vVERSION.zip`
-   - `dist/mmbasic-console-pi400-vVERSION.zip`
+   - `dist/mmcore-console-rpi3-vVERSION.zip`
+   - `dist/mmcore-console-pizero2-vVERSION.zip`
+   - `dist/mmcore-console-pizero2w-vVERSION.zip`
+   - `dist/mmcore-console-pi400-vVERSION.zip`
    Zero 2 / Zero 2 W reuse the Pi 3 kernel. Each zip includes `install-sdcard.sh`.
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
 3. Creates annotated tag `vVERSION` and pushes it to `origin`.
@@ -87,7 +87,7 @@ Do not force-push tags. If `vVERSION` already exists, stop.
 ## Consumer install (for release notes)
 
 ```bash
-unzip mmbasic-console-rpi3-vVERSION.zip
+unzip mmcore-console-rpi3-vVERSION.zip
 sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 ```
 

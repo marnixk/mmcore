@@ -19,21 +19,21 @@ Commands:
                    Print the GitHub release notes for VERSION (no build)
 
 publish builds board images with scripts/package-release.sh, then uploads:
-  dist/mmbasic-console-rpi3-vVERSION.zip
-  dist/mmbasic-console-pizero2-vVERSION.zip
-  dist/mmbasic-console-pizero2w-vVERSION.zip
-  dist/mmbasic-console-pi400-vVERSION.zip
+  dist/mmcore-console-rpi3-vVERSION.zip
+  dist/mmcore-console-pizero2-vVERSION.zip
+  dist/mmcore-console-pizero2w-vVERSION.zip
+  dist/mmcore-console-pi400-vVERSION.zip
   scripts/install-sdcard.sh
 
 Each zip also contains install-sdcard.sh so a consumer can:
 
-  unzip mmbasic-console-rpi3-vVERSION.zip
+  unzip mmcore-console-rpi3-vVERSION.zip
   sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 
-  unzip mmbasic-console-pizero2-vVERSION.zip
+  unzip mmcore-console-pizero2-vVERSION.zip
   sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX
 
-  unzip mmbasic-console-pizero2w-vVERSION.zip
+  unzip mmcore-console-pizero2w-vVERSION.zip
   sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX
 
 Examples:
@@ -175,16 +175,16 @@ print()
 print("## Install")
 print()
 print("```bash")
-print(f"unzip mmbasic-console-rpi3-v{version}.zip")
+print(f"unzip mmcore-console-rpi3-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX   # Pi 3 / 3B+ / 3A+")
 print()
-print(f"unzip mmbasic-console-pizero2-v{version}.zip")
+print(f"unzip mmcore-console-pizero2-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model pizero2 /dev/sdX  # Pi Zero 2")
 print()
-print(f"unzip mmbasic-console-pizero2w-v{version}.zip")
+print(f"unzip mmcore-console-pizero2w-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model pizero2w /dev/sdX # Pi Zero 2 W")
 print()
-print(f"unzip mmbasic-console-pi400-v{version}.zip")
+print(f"unzip mmcore-console-pi400-v{version}.zip")
 print("sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX  # Pi 400 / 4B / CM4")
 print("```")
 print()
@@ -201,10 +201,10 @@ print("```")
 print()
 print("## Artifacts")
 print()
-print(f"- `mmbasic-console-rpi3-v{version}.zip` — Raspberry Pi 3 / 3B+ / 3A+")
-print(f"- `mmbasic-console-pizero2-v{version}.zip` — Raspberry Pi Zero 2 (no onboard WLAN)")
-print(f"- `mmbasic-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CYW43436)")
-print(f"- `mmbasic-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
+print(f"- `mmcore-console-rpi3-v{version}.zip` — Raspberry Pi 3 / 3B+ / 3A+")
+print(f"- `mmcore-console-pizero2-v{version}.zip` — Raspberry Pi Zero 2 (no onboard WLAN)")
+print(f"- `mmcore-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CYW43436)")
+print(f"- `mmcore-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
 print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
 print()
@@ -237,10 +237,10 @@ publish() {
 	local tag rpi3 pizero2 pizero2w pi400 installer notes
 	version="$(normalize_version "${version}")"
 	tag="v${version}"
-	rpi3="${DIST}/mmbasic-console-rpi3-v${version}.zip"
-	pizero2="${DIST}/mmbasic-console-pizero2-v${version}.zip"
-	pizero2w="${DIST}/mmbasic-console-pizero2w-v${version}.zip"
-	pi400="${DIST}/mmbasic-console-pi400-v${version}.zip"
+	rpi3="${DIST}/mmcore-console-rpi3-v${version}.zip"
+	pizero2="${DIST}/mmcore-console-pizero2-v${version}.zip"
+	pizero2w="${DIST}/mmcore-console-pizero2w-v${version}.zip"
+	pi400="${DIST}/mmcore-console-pi400-v${version}.zip"
 	installer="${REPO_ROOT}/scripts/install-sdcard.sh"
 
 	[ -x "${installer}" ] || die "missing ${installer}"

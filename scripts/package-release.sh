@@ -218,7 +218,7 @@ package_kernel8_board() {
 	local with_wlan="$4"
 	local with_zero2_dtb="$5"
 	local stage="${DIST}/sdcard-${slug}"
-	local zip_name="mmbasic-console-${slug}-v${VERSION}.zip"
+	local zip_name="mmcore-console-${slug}-v${VERSION}.zip"
 	local kernel="kernel8.img"
 	rm -rf "${stage}"
 	mkdir -p "${stage}"
@@ -270,7 +270,7 @@ package_pizero2w() {
 
 package_pi400() {
 	local stage="${DIST}/sdcard-pi400"
-	local zip_name="mmbasic-console-pi400-v${VERSION}.zip"
+	local zip_name="mmcore-console-pi400-v${VERSION}.zip"
 	local kernel="kernel8-rpi4.img"
 	rm -rf "${stage}"
 	mkdir -p "${stage}"
@@ -305,7 +305,7 @@ if [ "${PACK_ONLY:-0}" = "1" ]; then
 	[ -f "${CONSOLE_DIR}/kernel8-rpi4.img" ] || die "PACK_ONLY needs ${CONSOLE_DIR}/kernel8-rpi4.img"
 	pack_all
 	log "PACK_ONLY artifacts"
-	ls -la "${DIST}"/mmbasic-console-*-v"${VERSION}".zip
+	ls -la "${DIST}"/mmcore-console-*-v"${VERSION}".zip
 	exit 0
 fi
 
@@ -323,4 +323,4 @@ clean_build_tree
 ( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu -d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX --kernel-max-size 8 -f )
 
 log "Release artifacts"
-ls -la "${DIST}"/mmbasic-console-*-v"${VERSION}".zip
+ls -la "${DIST}"/mmcore-console-*-v"${VERSION}".zip
