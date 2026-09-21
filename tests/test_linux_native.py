@@ -177,6 +177,28 @@ def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
     assert _pixel_at(data, w, 225, 225) == (0, 0, 0)
 
 
+def test_audio_backend_runs(mmb_linux, tmp_path):
+    """LN-10 (#462): PLAY TONE drives the SDL audio hooks without crashing."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    env = dict(
+        os.environ,
+        SDL_VIDEODRIVER="dummy",
+        SDL_AUDIODRIVER="dummy",
+        MMB_DRIVE_ROOT=str(tmp_path / "root"),
+    )
+    proc = subprocess.run(
+        [SDL_BIN],
+        input='PLAY TONE 440,50\nPAUSE 200\nPRINT "AUDIO_OK"\n',
+        text=True,
+        capture_output=True,
+        timeout=60,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert "AUDIO_OK" in (proc.stdout + proc.stderr)
+
+
 def test_tcp_client_loopback(mmb_linux, tmp_path):
     """LN-18 (#470): TCP client connect/send/recv over POSIX sockets."""
     import socket

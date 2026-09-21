@@ -42,6 +42,7 @@ int sdl_video_open(int w, int h)
 {
 	if (SDL_Init(SDL_INIT_VIDEO) != 0)
 		return 0;
+	SDL_InitSubSystem(SDL_INIT_AUDIO); /* non-fatal if unavailable */
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
 	s_win = SDL_CreateWindow("MMBasic", SDL_WINDOWPOS_CENTERED,

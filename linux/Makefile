@@ -37,12 +37,13 @@ TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
 COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c net_posix.c
 STDIO_SRCS := platform_stdio.c main.c
-SDL_SRCS   := platform_sdl.c sdl_video.c sdl_console.c sdl_tui.c sdl_input.c main_sdl.c
+SDL_SRCS   := platform_sdl.c sdl_video.c sdl_console.c sdl_tui.c sdl_input.c \
+	      sdl_audio.c main_sdl.c
 
 COMMON_OBJS := $(addprefix $(BUILD)/,$(notdir $(patsubst %.c,%.o,$(COMMON_SRCS))))
 STDIO_OBJS  := $(COMMON_OBJS) $(BUILD)/platform_stdio.o $(BUILD)/main.o
-SDL_OBJS    := $(COMMON_OBJS) $(BUILD)/platform_sdl.o $(BUILD)/sdl_video.o \
-	       $(BUILD)/sdl_console.o $(BUILD)/sdl_tui.o $(BUILD)/sdl_input.o $(BUILD)/main_sdl.o
+SDL_ONLY_OBJS := $(addprefix $(BUILD)/,$(notdir $(patsubst %.c,%.o,$(SDL_SRCS))))
+SDL_OBJS    := $(COMMON_OBJS) $(SDL_ONLY_OBJS)
 
 VPATH := $(MMB)/src:$(MMB)/third_party:$(CONSOLE):$(CURDIR)
 
@@ -53,11 +54,11 @@ sdl: $(OUT_SDL)
 ifeq ($(HAVE_SDL),)
 $(OUT_SDL):
 	@echo "SDL2 not found (pkg-config sdl2); skipping $@"
-$(BUILD)/platform_sdl.o $(BUILD)/sdl_video.o $(BUILD)/sdl_console.o $(BUILD)/sdl_tui.o $(BUILD)/sdl_input.o $(BUILD)/main_sdl.o: ;
+$(SDL_ONLY_OBJS): ;
 else
 $(OUT_SDL): $(SDL_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SDL_OBJS) $(LDLIBS) $(SDL_LIBS)
-$(BUILD)/platform_sdl.o $(BUILD)/sdl_video.o $(BUILD)/sdl_console.o $(BUILD)/sdl_tui.o $(BUILD)/sdl_input.o $(BUILD)/main_sdl.o: CFLAGS += $(SDL_CFLAGS)
+$(SDL_ONLY_OBJS): CFLAGS += $(SDL_CFLAGS)
 endif
 
 $(OUT_STDIO): $(STDIO_OBJS)
@@ -84,8 +85,7 @@ $(VERSION_H):
 		bash $(REPO)/scripts/gen-mmb-version.sh $@
 
 -include $(COMMON_OBJS:.o=.d) $(BUILD)/platform_stdio.d $(BUILD)/main.d \
-	 $(BUILD)/platform_sdl.d $(BUILD)/sdl_video.d $(BUILD)/sdl_console.d $(BUILD)/sdl_tui.d $(BUILD)/sdl_input.d \
-	 $(BUILD)/main_sdl.d
+	 $(SDL_ONLY_OBJS:.o=.d)
 
 clean:
 	rm -rf $(BUILD) $(OUT_STDIO) $(OUT_SDL)

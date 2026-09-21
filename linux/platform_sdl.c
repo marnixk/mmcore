@@ -12,6 +12,7 @@
 #include "sdl_console.h"
 #include "sdl_tui.h"
 #include "sdl_input.h"
+#include "sdl_audio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -224,6 +225,14 @@ static const mmb_platform sdl_plat = {
 	.reboot = sdl_reboot,
 	.alt_held = sdl_input_alt_held,
 	.ctrl_alt_held = sdl_input_ctrl_alt_held,
+	.audio_set_target = sdl_audio_set_target,
+	.audio_enable = sdl_audio_enable,
+	.audio_write = sdl_audio_write,
+	.audio_free_frames = sdl_audio_free_frames,
+	.audio_queued_frames = sdl_audio_queued_frames,
+	.audio_have_device = sdl_audio_have_device,
+	.audio_kick = sdl_audio_kick,
+	.audio_flush = sdl_audio_flush,
 	.present_rgb = sdl_present_rgb,
 	.present_native = sdl_present_native,
 	.present_wait = sdl_present_wait,
