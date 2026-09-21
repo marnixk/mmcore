@@ -148,6 +148,18 @@ def _pixel_at(data, w, x, y):
     return data[i], data[i + 1], data[i + 2]
 
 
+def test_console_lf_returns_carriage(mmb_linux, tmp_path):
+    """LF must behave as CR+LF, else lines staircase to the right."""
+    program = 'CLS\nPRINT "AA"\nPRINT "BB"\n'
+    w, h, data = _run_sdl_dump(mmb_linux, program, tmp_path, "crlf")
+    rows_left = 0
+    for y in range(h):
+        base = y * w * 3
+        if any(data[base + x * 3 + c] for x in range(8) for c in range(3)):
+            rows_left += 1
+    assert rows_left >= 2, "lines did not return to column 0"
+
+
 def test_graphics_shapes_and_readback(mmb_linux, tmp_path):
     """LN-07 (#459): MODE/PIXEL/BOX paint the framebuffer and PIXEL() reads."""
     program = (

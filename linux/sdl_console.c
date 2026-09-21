@@ -306,7 +306,12 @@ static void esc_byte(unsigned char b)
 				s_cx = s_cols - 1;
 		}
 		else if (b == 0x0A)
+		{
+			/* Embedded consoles treat LF as CR+LF; MMBasic emits bare
+			 * "\n" and relies on that (otherwise text staircases). */
+			s_cx = 0;
 			newline();
+		}
 		else if (b == 0x0D)
 			s_cx = 0;
 		else
