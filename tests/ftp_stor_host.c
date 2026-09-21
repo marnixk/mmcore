@@ -249,6 +249,13 @@ static unsigned char g_data_in[16384];
 static int g_data_in_len;
 static int g_data_in_off;
 
+/* Fault injection for the STOR failure paths. g_data_error_at >= 0 makes the
+ * next recv return g_data_error_code once that many bytes are consumed;
+ * g_data_eof_code replaces the drained-queue 0 (an orderly FIN is negative). */
+static int g_data_error_at = -1;
+static int g_data_error_code;
+static int g_data_eof_code;
+
 static int g_data_accepted;
 static int g_lsn_port[4];
 static int g_next_lsn;
@@ -304,9 +311,12 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	int left, n;
 	if (conn == CONN_DATA)
 	{
+		if (g_data_error_code && g_data_error_at >= 0 &&
+		    g_data_in_off >= g_data_error_at)
+			return g_data_error_code;
 		left = g_data_in_len - g_data_in_off;
 		if (left <= 0)
-			return 0;
+			return g_data_eof_code;
 		n = left;
 		if ((unsigned)n > maxn)
 			n = (int)maxn;
@@ -325,6 +335,27 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	memcpy(data, g_ctl_in + g_ctl_in_off, (size_t)n);
 	g_ctl_in_off += n;
 	return n;
+}
+
+/* Circle's -NET_ERROR_NOT_CONNECTED / -NET_ERROR_CONNECTION_RESET. */
+int mmb_net_srv_eof(int err)
+{
+	return err == -56;
+}
+
+const char *mmb_net_srv_reason(int err)
+{
+	switch (err)
+	{
+	case -54:
+		return "reset by peer";
+	case -56:
+		return "closed by remote host";
+	case -57:
+		return "timed out (no ACK from peer)";
+	default:
+		return "network error";
+	}
 }
 
 int mmb_net_srv_send(int conn, const void *data, unsigned n)
@@ -413,6 +444,9 @@ static void reset(void)
 	g_out_len = 0;
 	g_out[0] = 0;
 	g_data_in_len = g_data_in_off = 0;
+	g_data_error_at = -1;
+	g_data_error_code = 0;
+	g_data_eof_code = 0;
 	g_data_accepted = 0;
 	g_nmkdirs = 0;
 	g_ndirs = 1;
@@ -493,6 +527,92 @@ static void run_stor(const char *stor_arg, const char *expect_path,
 	mmb_ftp_stop();
 }
 
+/* Inject a mid-transfer data-connection failure: the server must tell the
+ * client (426) and log the byte count and Circle error, not send a 226. */
+static void run_stor_fail(const unsigned char *payload, int payload_len,
+			  int error_at, int error_code, const char *expect_ser)
+{
+	int i;
+	char ctl[128];
+
+	reset();
+	check(mmb_ftp_start("A:/", 21) == 0, "start");
+	g_data_in_len = payload_len;
+	if (payload_len > 0)
+		memcpy(g_data_in, payload, (size_t)payload_len);
+	g_data_error_at = error_at;
+	g_data_error_code = error_code;
+
+	strcpy(ctl, "USER anonymous\r\nPASS x\r\nEPSV\r\nSTOR DROP.BIN\r\n");
+	strcpy(g_ctl_in, ctl);
+	g_ctl_in_len = (int)strlen(g_ctl_in);
+
+	for (i = 0; i < 2000 && !out_has("226 ") && !out_has("426 "); i++)
+	{
+		mmb_ftp_poll();
+		if (g_ctl_out_len)
+		{
+			feed(g_ctl_out);
+			g_ctl_out_len = 0;
+		}
+	}
+
+	check(out_has("426 "), "dropped connection reports 426");
+	check(!out_has("226 "), "no 226 for a dropped connection");
+	check(strstr(g_ser, "[FTP] STOR FAIL ") != 0, "STOR FAIL marker emitted");
+	check(strstr(g_ser, "[FTP] STOR DONE ") == 0, "no STOR DONE marker");
+	if (expect_ser)
+		check(strstr(g_ser, expect_ser) != 0, "STOR FAIL names bytes and code");
+
+	if (g_failures)
+	{
+		printf("  replies  : %s\n", g_out);
+		printf("  serial   : %s\n", g_ser);
+	}
+	mmb_ftp_stop();
+}
+
+/* A peer FIN is reported as -NET_ERROR_NOT_CONNECTED, which still means the
+ * STOR completed normally. */
+static void run_stor_eof(const unsigned char *payload, int payload_len)
+{
+	int i;
+	char ctl[128];
+
+	reset();
+	check(mmb_ftp_start("A:/", 21) == 0, "start");
+	g_data_in_len = payload_len;
+	if (payload_len > 0)
+		memcpy(g_data_in, payload, (size_t)payload_len);
+	g_data_eof_code = -56;
+
+	strcpy(ctl, "USER anonymous\r\nPASS x\r\nEPSV\r\nSTOR EOF.BIN\r\n");
+	strcpy(g_ctl_in, ctl);
+	g_ctl_in_len = (int)strlen(g_ctl_in);
+
+	for (i = 0; i < 2000 && !out_has("226 ") && !out_has("426 "); i++)
+	{
+		mmb_ftp_poll();
+		if (g_ctl_out_len)
+		{
+			feed(g_ctl_out);
+			g_ctl_out_len = 0;
+		}
+	}
+
+	check(out_has("226 "), "orderly FIN completes with 226");
+	check(!out_has("426 "), "orderly FIN is not an error");
+	check(strstr(g_ser, "[FTP] STOR DONE ") != 0, "STOR DONE marker emitted");
+	check(strstr(g_ser, "[FTP] STOR FAIL ") == 0, "no STOR FAIL marker");
+
+	if (g_failures)
+	{
+		printf("  replies  : %s\n", g_out);
+		printf("  serial   : %s\n", g_ser);
+	}
+	mmb_ftp_stop();
+}
+
 int main(void)
 {
 	static unsigned char payload[13312];
@@ -512,6 +632,13 @@ int main(void)
 
 	/* A bare file name must not create any folder. */
 	run_stor("PLAIN.PNG", "A:/PLAIN.PNG", payload, 100, 0);
+
+	/* A reset mid-stream is an error, not a completed transfer. */
+	run_stor_fail(payload, (int)sizeof(payload), 2048, -54,
+		      "STOR FAIL 2048 code=-54 reset by peer");
+
+	/* An orderly FIN is negative too, but completes the STOR. */
+	run_stor_eof(payload, 1024);
 
 	if (g_failures)
 	{

@@ -350,6 +350,34 @@ static void ftp_xfer_fail(const char *msg)
 	set_status("Client connected");
 }
 
+/* Abort an in-flight STOR, naming the byte count and the cause. A negative
+ * code is a Circle network error (its text comes from mmb_net_srv_reason);
+ * code 0 covers a VFS write failure or an idle timeout. The client must see a
+ * 4xx/5xx reply, never the 226 that used to be sent for a dropped connection. */
+static void ftp_stor_fail(unsigned done, const char *reply, int code, const char *why)
+{
+	char num[16];
+	ftp_close_data();
+	ftp_put(reply);
+	fmt_uint(num, done);
+	ftp_ser("[FTP] STOR FAIL ");
+	ftp_ser(num);
+	if (code != 0)
+	{
+		unsigned mag = code < 0 ? (unsigned)(-code) : (unsigned)code;
+		ftp_ser(" code=");
+		if (code < 0)
+			ftp_ser("-");
+		fmt_uint(num, mag);
+		ftp_ser(num);
+	}
+	ftp_ser(" ");
+	ftp_ser(why && why[0] ? why : "unknown");
+	ftp_ser("\r\n");
+	ftp_xfer_clear();
+	set_status("Client connected");
+}
+
 static int ftp_xfer_begin(int kind, const char *canon, int size)
 {
 	if (FT.data_lsn < 0 && FT.data < 0)
@@ -439,7 +467,15 @@ static void ftp_xfer_poll(void)
 			int n = mmb_net_srv_recv(FT.data, FT.list_buf, FTP_CHUNK);
 			if (n < 0)
 			{
-				ftp_xfer_finish();
+				/* A peer FIN after the payload is how FTP ends a
+				 * STOR; a reset or timeout is a failed transfer. */
+				if (mmb_net_srv_eof(n))
+				{
+					ftp_xfer_finish();
+					return;
+				}
+				ftp_stor_fail(FT.xoff, "426 Connection lost", n,
+					      mmb_net_srv_reason(n));
 				return;
 			}
 			if (n == 0)
@@ -451,7 +487,9 @@ static void ftp_xfer_poll(void)
 				}
 				if (mmb_now_ms() - FT.xfer_at > FTP_IDLE_MS)
 				{
-					ftp_xfer_fail("426 Data connection timed out");
+					ftp_stor_fail(FT.xoff,
+						      "426 Data connection timed out",
+						      0, "idle timeout");
 					return;
 				}
 				break;
@@ -459,7 +497,8 @@ static void ftp_xfer_poll(void)
 			if (FT.writer < 0 ||
 			    mmb_vfs_wwrite(FT.writer, FT.list_buf, (unsigned)n) != 0)
 			{
-				ftp_xfer_fail("552 Write failed");
+				ftp_stor_fail(FT.xoff, "552 Write failed", 0,
+					      "vfs write failed");
 				return;
 			}
 			FT.xoff += (unsigned)n;

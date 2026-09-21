@@ -923,6 +923,18 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	return (int)out;
 }
 
+/* True when a negative mmb_net_srv_recv() result is an orderly peer FIN (the
+ * normal end of an FTP STOR), not a reset or timeout. */
+int mmb_net_srv_eof(int err)
+{
+	return err == -NET_ERROR_NOT_CONNECTED;
+}
+
+const char *mmb_net_srv_reason(int err)
+{
+	return close_text(err);
+}
+
 int mmb_net_srv_send(int conn, const void *data, unsigned n)
 {
 	struct srv_conn *c;
@@ -1164,6 +1176,18 @@ int mmb_net_srv_recv(int conn, void *data, unsigned maxn)
 	(void)data;
 	(void)maxn;
 	return -1;
+}
+
+int mmb_net_srv_eof(int err)
+{
+	(void)err;
+	return 0;
+}
+
+const char *mmb_net_srv_reason(int err)
+{
+	(void)err;
+	return "Network not available";
 }
 
 int mmb_net_srv_send(int conn, const void *data, unsigned n)
