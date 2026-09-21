@@ -113,3 +113,22 @@ path (same limit as `C2DGraphics`); presents use the single-buffer SetArea path.
 
 Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
 RGB888, store native into `present_scratch`) remain CPU work.
+
+## CMM2 drawing deviations still open
+
+Closed and pixel-tested (#487): even `LINE` widths draw exactly that many
+pixels (a packed colour supplied as a width is clamped so it cannot hang the
+renderer), `RBOX`'s default corner radius is CMM2's 10, a filled `TRIANGLE`
+keeps its outline colour, and a filled `POLYGON` no longer paints the internal
+edges of a triangle fan (it uses an even-odd scanline fill).
+
+Deferred (they need parser/API work rather than a small fix):
+
+- `CIRCLE`'s aspect-ratio argument `a` (currently consumed as the colour).
+- `POLYGON n, xarray%(), yarray%()` array syntax; mmcore uses an inline vertex
+  list, and only `PIXEL` accepts array parameters.
+- The wider sprite surface (`SPRITE SHOW` orientation, `SPRITE WRITE`, PNG
+  alpha cut-off, collision, `.spr`).
+- `PAGE COPY`'s `,t` skip-black and `,D` background copy; mmcore currently
+  uses `,B` for skip-black where CMM2 uses it for blanking wait.
+- Ambiguous `lw`/colour overloads where a small value could be either.

@@ -309,7 +309,7 @@ void mmb_cmd_circle(void)
 void mmb_cmd_rbox(void)
 {
 	mmb_val a[8];
-	int n = parse_args(a, 8), r = 8, lw = 1, fill = -1;
+	int n = parse_args(a, 8), r = 10, lw = 1, fill = -1;
 	unsigned c = G.gfx.fg;
 	if (n < 4)
 		mmb_syntax();
@@ -435,11 +435,14 @@ void mmb_cmd_polygon(void)
 	np = n / 2;
 	if (fill >= 0)
 	{
-		for (i = 1; i + 1 < np; i++)
-			mmb_gfx_triangle((int)mmb_as_int(a[0]), (int)mmb_as_int(a[1]),
-					 (int)mmb_as_int(a[i * 2]), (int)mmb_as_int(a[i * 2 + 1]),
-					 (int)mmb_as_int(a[i * 2 + 2]), (int)mmb_as_int(a[i * 2 + 3]),
-					 c, fill);
+		int xs[32], ys[32];
+
+		for (i = 0; i < np; i++)
+		{
+			xs[i] = (int)mmb_as_int(a[i * 2]);
+			ys[i] = (int)mmb_as_int(a[i * 2 + 1]);
+		}
+		mmb_gfx_fill_polygon(xs, ys, np, (unsigned)fill);
 	}
 	for (i = 0; i + 3 < n; i += 2)
 		mmb_gfx_line((int)mmb_as_int(a[i]), (int)mmb_as_int(a[i + 1]),

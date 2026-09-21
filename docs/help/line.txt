@@ -4,13 +4,14 @@ kind: command
 Draw a straight line between two pixels. LINE INPUT #fn, var$ reads a file
 line (see ~LINE INPUT~).
 
-LINE x1, y1, x2, y2 [, colour] [, linewidth]
+LINE x1, y1, x2, y2 [, linewidth] [, colour]
 
   x1, y1 - start pixel
   x2, y2 - end pixel
-  colour - stroke colour (default foreground)
   linewidth - thickness (default 1)
+  colour - stroke colour (default foreground)
 
 Example:
 
     LINE 0, 0, 100, 80, RGB(0, 255, 0)
+    LINE 0, 0, 100, 0, 4, RGB(0, 255, 0)
