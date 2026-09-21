@@ -114,6 +114,22 @@ path (same limit as `C2DGraphics`); presents use the single-buffer SetArea path.
 Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
 RGB888, store native into `present_scratch`) remain CPU work.
 
+## Page-1 transparency overlay cost
+
+`composite_display()` blends page 1 over the display page at present time. The
+slow path used to run an RGB888 expand + blend + quantize for **every** pixel as
+soon as any partial AFLAG alpha existed (Xmas sets this via `fades.inc`), even
+though almost all overlay pixels are fully transparent (alpha 0) or fully
+opaque (255, e.g. from `PAGE COPY ...,B`).
+
+The composite now handles those two cases natively — it copies the base or the
+overlay pixel directly — and only pays the expand/blend/quantize cost for the
+1..14 fade band. On an Xmas-shaped microbench (MODE 7 with a partial-alpha band,
+30× `PAGE COPY 2,1,B`) this cut the measured frame cost from ~340 ms to
+~120 ms in QEMU (`tests/test_profiling.py`, run with `MMCORE_PERF=1`), without
+changing the result. Page-1 overlay correctness stays covered by
+`tests/test_cmm2_gfx.py` and `tests/test_graphics.py`.
+
 ## CMM2 drawing deviations still open
 
 Closed and pixel-tested (#487): even `LINE` widths draw exactly that many

@@ -560,11 +560,25 @@ static uint16_t *composite_display(void)
 	out = G.gfx.present_scratch;
 	for (i = 0; i < n; i++)
 	{
-		unsigned base_rgb = mmb_native_to_rgb(base[i]);
-		unsigned over_a = oa ? oa[i] : (over[i] ? 255u : 0u);
-		unsigned over_rgb = mmb_pix_load(over[i], over_a);
-		unsigned blended = overlay_blend(base_rgb, over_rgb);
-		out[i] = (uint16_t)mmb_rgb_to_native(blended);
+		/* Fast paths first: a fully transparent or fully opaque overlay
+		 * pixel needs no RGB round-trip. Xmas-style page-1 overlays are
+		 * almost entirely 0/255, so only the fade band below pays the
+		 * expand/blend/quantize cost (#489). */
+		unsigned raw = over[i];
+		unsigned a = oa ? oa[i] : (raw ? 255u : 0u);
+
+		if (a == 0)
+			out[i] = base[i];
+		else if (a >= 15)
+			out[i] = raw ? (uint16_t)raw : base[i];
+		else
+		{
+			unsigned base_rgb = mmb_native_to_rgb(base[i]);
+			unsigned over_rgb = mmb_pix_load(raw, a);
+			unsigned blended = overlay_blend(base_rgb, over_rgb);
+
+			out[i] = (uint16_t)mmb_rgb_to_native(blended);
+		}
 	}
 	return out;
 }

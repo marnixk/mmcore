@@ -5,9 +5,20 @@ present and parseable. Immediate-mode lines are not included in the RUN
 report (counters reset at the start of RUN).
 """
 
+import os
 import re
 
+import pytest
+
 from harness import MMBasicConsole
+
+# Timing guards are opt-in: QEMU timing under parallel load is noisy.
+PERF_ENABLED = os.environ.get("MMCORE_PERF", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 PERF_RE = re.compile(
     r"\[PERF\] elapsed=(\d+) ms  statements=(\d+)  match=(\d+)  "
@@ -191,3 +202,35 @@ def test_profiling_page_copy_mode17_bulk(console):
     )
     assert p["present"] == 21  # 20 PAGE COPY presents plus the page-1 CLS present
     assert p["elapsed"] < 300  # generous: QEMU under parallel load is slow
+
+
+@pytest.mark.skipif(
+    not PERF_ENABLED, reason="set MMCORE_PERF=1 to run timing guards"
+)
+def test_profiling_page1_overlay_alpha_bulk(console):
+    """#489: the page-1 alpha composite must not fall back to a per-pixel
+    RGB round-trip for opaque/transparent pixels (the Xmas hot path)."""
+    p = _run_kernel(
+        console,
+        "PALPHA.BAS",
+        [
+            "MODE 7,12",
+            "PAGE WRITE 2",
+            "CLS RGB(0,0,200)",
+            "PAGE WRITE 1",
+            "CLS",
+            # A partial-alpha band forces the blend path (fades.inc does this).
+            "FOR X=0 TO 100",
+            "LINE X,0,X,50,RGB(255,0,0,1+(X MOD 14))",
+            "NEXT X",
+            "FOR I=1 TO 30",
+            "PAGE COPY 2,1,B",
+            "NEXT I",
+        ],
+        timeout=25.0,
+    )
+    assert p["present"] >= 30
+    # Calibrated on QEMU: ~120 ms optimised vs ~340 ms with the old
+    # per-pixel RGB round-trip. 250 catches a return to the slow path
+    # while leaving headroom for parallel-load jitter.
+    assert p["elapsed"] < 250
