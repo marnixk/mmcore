@@ -6,18 +6,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int parse_drive(const char *spec)
+/* --drive DIR binds the host directory DIR to the D: drive. */
+static int parse_drive(const char *dir)
 {
-	int letter;
-	const char *path;
-
-	if (!spec || spec[0] == 0 || spec[1] != ':')
+	if (!dir || !dir[0])
 		return -1;
-	letter = (unsigned char)spec[0];
-	if (letter >= 'a' && letter <= 'z')
-		letter -= 32;
-	path = spec + 2;
-	return storage_posix_mount(letter, path);
+	return storage_posix_mount('D', dir);
 }
 
 const char *mmb_cli_parse(int argc, char **argv)
@@ -32,11 +26,11 @@ const char *mmb_cli_parse(int argc, char **argv)
 		if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0)
 		{
 			printf("Usage: %s [options] [\"line to run\"]\n\n", argv[0]);
-			printf("  --drive L:/path   mount physical drive L: (C-H) at a host directory\n");
-			printf("  --drive-root DIR  base directory for other drives (default ~/.mmbasic)\n");
+			printf("  --drive DIR       bind the host directory DIR to the D: drive\n");
+			printf("  --drive-root DIR  base directory for the other drives (default ~/.mmbasic)\n");
 			printf("\nExamples:\n");
-			printf("  %s --drive D:/media/usb\n", argv[0]);
-			printf("  %s --drive D:/media/usb \"DIR \\\"D:/\\\"\"\n", argv[0]);
+			printf("  %s --drive /media/usb\n", argv[0]);
+			printf("  %s --drive /media/usb \"DIR \\\"D:/\\\"\"\n", argv[0]);
 			exit(0);
 		}
 		if (strcmp(a, "--drive") == 0 && i + 1 < argc)
