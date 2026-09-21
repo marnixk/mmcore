@@ -49,6 +49,49 @@ def test_run_ramdisk_program(mmb_linux):
     assert "Hello from A:/apps/HELLO.BAS" in out
 
 
+def _run_env(binary, text, env):
+    proc = subprocess.run(
+        [binary], input=text, text=True, capture_output=True, timeout=120, env=env
+    )
+    return proc.stdout + proc.stderr
+
+
+def test_posix_storage_roundtrip(mmb_linux, tmp_path):
+    """LN-08 (#460): physical drive write/list/read over a host directory.
+
+    The lowercase ``c:/a/b.txt`` read also exercises the case-insensitive
+    component resolver (the host filesystem is case-sensitive).
+    """
+    root = tmp_path / "drives"
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    program = (
+        'OPEN "C:/A/B.TXT" FOR OUTPUT AS #1\n'
+        'PRINT #1,"HELLO STORAGE"\n'
+        'CLOSE #1\n'
+        'OPEN "c:/a/b.txt" FOR INPUT AS #1\n'
+        'LINE INPUT #1, A$\n'
+        'PRINT A$\n'
+        'CLOSE #1\n'
+        'DIR "C:/A"\n'
+    )
+    out = _run_env(mmb_linux, program, env)
+    assert "HELLO STORAGE" in out
+    assert "B.TXT" in out
+    assert (root / "C" / "A" / "B.TXT").read_text().strip() == "HELLO STORAGE"
+
+
+def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
+    """LN-08 (#460): DIR glob matching is case-insensitive."""
+    root = tmp_path / "drives"
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    subprocess.run([mmb_linux], input="", text=True, capture_output=True, env=env)
+    target = root / "C" / "Mixed.TXT"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x")
+    out = _run_env(mmb_linux, 'DIR "C:/mixed.*"\n', env)
+    assert "Mixed.TXT" in out
+
+
 SDL_BIN = os.path.join(REPO, "linux", "mmbasic-sdl")
 
 
