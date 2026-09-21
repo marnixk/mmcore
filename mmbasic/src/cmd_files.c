@@ -136,6 +136,56 @@ void mmb_cmd_name(void)
 		mmb_error("?FILE");
 }
 
+/* Prompt-only CAT: write the raw contents of a file to the console. The
+ * argument is a quoted or bare path; no switches are understood. */
+void mmb_cmd_cat_file(const char *arg)
+{
+	char path[128];
+	char buf[512];
+	const char *p = arg;
+	int n = 0, sz;
+	unsigned pos = 0;
+
+	if (*p == '"')
+	{
+		p++;
+		while (*p && *p != '"' && n < (int)sizeof(path) - 1)
+			path[n++] = *p++;
+	}
+	else
+	{
+		while (*p && *p != ' ' && *p != '\t' && n < (int)sizeof(path) - 1)
+			path[n++] = *p++;
+	}
+	path[n] = 0;
+	if (!n)
+		mmb_error("?FILE NOT FOUND");
+
+	sz = mmb_vfs_size(path);
+	if (sz < 0)
+		mmb_error("?FILE NOT FOUND");
+
+	while (pos < (unsigned)sz)
+	{
+		unsigned want = (unsigned)sizeof(buf) - 1;
+		unsigned got = 0, i;
+		if (want > (unsigned)sz - pos)
+			want = (unsigned)sz - pos;
+		if (mmb_vfs_read_at(path, pos, buf, want, &got) != 0)
+			mmb_error("?FILE");
+		if (!got)
+			break;
+		pos += got;
+		for (i = 0; i < got; i++)
+		{
+			if (G.outn >= MMB_OUT_LEN - 1)
+				mmb_out_flush();
+			G.out[G.outn++] = buf[i];
+		}
+		G.out[G.outn] = 0;
+	}
+}
+
 #define DIR_LIST_MAX 4096
 #define DIR_SEARCH_LIST 1024
 #define DIR_PATH_MAX 160

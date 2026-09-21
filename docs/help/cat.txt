@@ -11,3 +11,10 @@ CAT s$, t$
 Example:
 
     A$ = "MM" : CAT A$, "BASIC" : PRINT A$
+
+At the prompt only (not inside a running program), CAT with no comma prints a
+whole file to the screen, like the Linux command:
+
+    CAT "notes.txt"
+
+The path may be quoted or bare; no switches are used.
