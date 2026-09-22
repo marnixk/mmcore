@@ -432,6 +432,33 @@ def test_term_demo_session(mmb_linux, tmp_path):
     assert ("Echo ON" in out) or ("Bookmarks" in out) or ("Boxed" in out)
 
 
+def test_term_native_presents_session(mmb_linux, tmp_path):
+    """TERM must present its session page on the native framebuffer.
+
+    Regression for the black window on `--term host:port`: with no async DMA
+    hook the present fell back to the generic path, which sources
+    ``display_page`` (the console page) while TERM paints PAGE 2, so the
+    session was never shown.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    ppm = os.path.join(str(tmp_path), "term.ppm")
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", MMB_SDL_DUMP=ppm)
+    subprocess.run(
+        [SDL_BIN, "--term", "demo"],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=60,
+        env=env,
+    )
+    w, h, data = _ppm_pixels(ppm)
+    nonblack = sum(
+        1 for i in range(0, len(data), 3) if data[i] or data[i + 1] or data[i + 2]
+    )
+    assert nonblack > 200, "TERM painted nothing to the native framebuffer"
+
+
 def test_connect_loopback_session(mmb_linux, tmp_path):
     """LN-17 (#469) / LN-20 (#472): CONNECT displays data from a TCP server."""
     import socket
