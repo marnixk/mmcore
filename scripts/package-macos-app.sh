@@ -16,7 +16,13 @@
 #   NOTARY_PROFILE      `notarytool` keychain profile (see
 #                       `xcrun notarytool store-credentials`). When set, the
 #                       bundle is notarized and stapled; requires a Developer ID
-#                       identity.
+#                       identity. Defaults to "mmcore-notary" for release
+#                       builds (MMCORE_REQUIRE_NOTARY=1).
+#   MMCORE_REQUIRE_NOTARY=1
+#                       Release build: notarization is mandatory. The bundle is
+#                       notarized and stapled, and the script fails if either
+#                       step (or validation) does not succeed, so an
+#                       unnotarized asset cannot ship unnoticed.
 #   MMCORE_SKIP_SIGN=1  build an unsigned bundle (local smoke tests only).
 #   VERSION             override the bundle version (default: git describe).
 #
@@ -47,6 +53,14 @@ die() {
 	printf 'package-macos-app: %s\n' "$*" >&2
 	exit 1
 }
+
+# A release build must ship a notarized bundle; validate its requirements before
+# spending time on the build so the failure is immediate and obvious.
+if [ "${MMCORE_REQUIRE_NOTARY:-}" = "1" ]; then
+	[ "${MMCORE_SKIP_SIGN:-}" != "1" ] \
+		|| die "MMCORE_REQUIRE_NOTARY=1 conflicts with MMCORE_SKIP_SIGN=1: cannot notarize an unsigned bundle"
+	NOTARY_PROFILE="${NOTARY_PROFILE:-mmcore-notary}"
+fi
 
 RAW_VERSION="${VERSION:-$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo 0.0.0)}"
 RAW_VERSION="${RAW_VERSION#v}"
@@ -163,6 +177,8 @@ detect_identity() {
 	printf '%s\n' "${id}"
 }
 
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+want_notary=0
 if [ "${MMCORE_SKIP_SIGN:-}" = "1" ]; then
 	log "Skipping codesign (MMCORE_SKIP_SIGN=1)"
 else
@@ -182,15 +198,32 @@ else
 		${OPTIONS[@]+"${OPTIONS[@]}"} --sign "${IDENTITY}" "${APP}"
 	codesign --verify --deep --strict --verbose=2 "${APP}"
 
-	if [ -n "${NOTARY_PROFILE:-}" ]; then
-		log "Notarizing with profile ${NOTARY_PROFILE}"
-		local_zip="${DIST}/.${APP_NAME}-notarize.zip"
-		ditto -c -k --keepParent "${APP}" "${local_zip}"
-		xcrun notarytool submit "${local_zip}" \
-			--keychain-profile "${NOTARY_PROFILE}" --wait
-		rm -f "${local_zip}"
-		xcrun stapler staple "${APP}"
+	if [ "${MMCORE_REQUIRE_NOTARY:-}" = "1" ]; then
+		[ "${IDENTITY}" != "-" ] \
+			|| die "release builds need a Developer ID identity to notarize; none found (set SIGN_IDENTITY)"
+		want_notary=1
+	elif [ -n "${NOTARY_PROFILE}" ]; then
+		want_notary=1
 	fi
+fi
+
+if [ "${want_notary}" = "1" ]; then
+	log "Notarizing with profile ${NOTARY_PROFILE}"
+	local_zip="${DIST}/.${APP_NAME}-notarize.zip"
+	ditto -c -k --keepParent "${APP}" "${local_zip}"
+	notary_json="$(xcrun notarytool submit "${local_zip}" \
+		--keychain-profile "${NOTARY_PROFILE}" --wait --output-format json)" || {
+		rm -f "${local_zip}"
+		die "notarization failed with profile ${NOTARY_PROFILE}"
+	}
+	rm -f "${local_zip}"
+	notary_status="$(printf '%s' "${notary_json}" |
+		python3 -c 'import json, sys; print(json.load(sys.stdin).get("status", ""))')"
+	[ "${notary_status}" = "Accepted" ] \
+		|| die "notarization with profile ${NOTARY_PROFILE} was not accepted (status: ${notary_status:-unknown})"
+	xcrun stapler staple "${APP}"
+	xcrun stapler validate "${APP}"
+	log "Notarized and stapled ${APP}"
 fi
 
 log "Packing ${OUT}"
