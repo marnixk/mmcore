@@ -153,6 +153,7 @@ int main(int argc, char **argv)
 		run_line(mmb_cli_term_run_line());
 		if (!cli->stay && !mmb_in_term())
 		{
+			sdl_video_present();
 			sdl_video_close();
 			return 0; /* TERM never started */
 		}
@@ -160,6 +161,7 @@ int main(int argc, char **argv)
 	else if (cli->mode == MMB_CLI_LINE && cli->line)
 	{
 		run_line(cli->line);
+		sdl_video_present();
 		sdl_video_close();
 		return 0;
 	}

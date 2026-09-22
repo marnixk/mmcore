@@ -498,8 +498,12 @@ void sdl_console_write(const char *s, unsigned n)
 	for (i = 0; i < n; i++)
 		esc_byte((unsigned char)s[i]);
 	cursor_draw();
+	/* Only mark dirty here. The front end writes one character at a time
+	 * while it edits a line, and presenting each one paces them across vsync
+	 * frames, which animates the cursor cell by cell. Circle's scanout
+	 * coalesces those writes instead, so the cursor jumps; let the event
+	 * loop / RUN poll present once after a burst. */
 	sdl_video_mark_dirty();
-	sdl_video_present();
 }
 
 void sdl_console_fill(unsigned rgb888)
@@ -520,6 +524,6 @@ void sdl_console_fill(unsigned rgb888)
 	s_cx = 0;
 	s_cy = 0;
 	cursor_draw();
+	/* Present is deferred to the caller, like the per-character writes. */
 	sdl_video_mark_dirty();
-	sdl_video_present();
 }

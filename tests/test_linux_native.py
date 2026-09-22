@@ -132,6 +132,41 @@ def test_sdl_input_line_capture(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_sdl_console_writes_do_not_present_per_char(tmp_path):
+    """Console writes must only mark dirty, not present each character.
+
+    Regression: sdl_console_write presented at the end of every call, so the
+    line editor's one-character-per-write redraws ran one vsync frame apart and
+    the prompt cursor slid across the line instead of jumping like the Pi.
+    """
+    exe = os.path.join(str(tmp_path), "sdl_console_present_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-I",
+            os.path.join(REPO, "linux"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_console_present_host.c"),
+            os.path.join(REPO, "linux", "sdl_console.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run([exe], check=True, capture_output=True, text=True)
+    assert "all checks passed" in out.stdout
+
+
 def _run_env(binary, text, env):
     proc = subprocess.run(
         [binary], input=text, text=True, capture_output=True, timeout=120, env=env
