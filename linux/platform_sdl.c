@@ -67,6 +67,31 @@ static int sdl_height(void)
 	return sdl_video_height() > 0 ? sdl_video_height() : 480;
 }
 
+static int sdl_host_width(void)
+{
+	int w = 0, h = 0;
+
+	sdl_video_host_size(&w, &h);
+	return w > 0 ? w : sdl_width();
+}
+
+static int sdl_host_height(void)
+{
+	int w = 0, h = 0;
+
+	sdl_video_host_size(&w, &h);
+	return h > 0 ? h : sdl_height();
+}
+
+static const char *sdl_runtime(void)
+{
+#ifdef __APPLE__
+	return "mac";
+#else
+	return "linux";
+#endif
+}
+
 static void sdl_set_pixel(int x, int y, unsigned rgb)
 {
 	uint16_t *fb = sdl_video_fb();
@@ -233,6 +258,9 @@ static const mmb_platform sdl_plat = {
 	.hdmi_width = sdl_width,
 	.hdmi_height = sdl_height,
 	.resize_hdmi = sdl_resize,
+	.host_width = sdl_host_width,
+	.host_height = sdl_host_height,
+	.runtime = sdl_runtime,
 	.alloc = sdl_alloc,
 	.free = sdl_free,
 	.millis = sdl_millis,

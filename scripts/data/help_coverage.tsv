@@ -151,6 +151,10 @@ MM.INFO$	MM.INFO$	topic	dedicated topic
 MM.VER	MM.VER	topic	dedicated topic
 MM.VPOS	MM.VPOS	topic	dedicated topic
 MM.VRES	MM.VRES	topic	dedicated topic
+MM.HOST.HRES	MM.HOST.HRES	topic	dedicated topic
+MM.HOST.VRES	MM.HOST.VRES	topic	dedicated topic
+MM.RUNTIME	MM.RUNTIME$	alias	alias of MM.RUNTIME$
+MM.RUNTIME$	MM.RUNTIME$	topic	dedicated topic
 MODE	MODE	topic	dedicated topic
 MV	RENAME	alias	alias of RENAME
 NAME	RENAME	alias	alias of RENAME

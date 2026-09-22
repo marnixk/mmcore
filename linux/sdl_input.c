@@ -216,6 +216,12 @@ static void handle_event(const SDL_Event *e)
 	case SDL_WINDOWEVENT:
 		if (e->window.event == SDL_WINDOWEVENT_CLOSE)
 			sdl_video_request_quit();
+		else if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+			 e->window.event == SDL_WINDOWEVENT_RESIZED ||
+			 e->window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+			 e->window.event == SDL_WINDOWEVENT_RESTORED ||
+			 e->window.event == SDL_WINDOWEVENT_EXPOSED)
+			sdl_video_mark_dirty();
 		break;
 	case SDL_KEYDOWN:
 		if (e->key.repeat && e->key.keysym.sym >= SDLK_F1 &&

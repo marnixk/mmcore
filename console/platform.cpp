@@ -314,6 +314,11 @@ static int plat_h(void)
 	return s_kernel ? (int)s_kernel->Screen().GetHeight() : 480;
 }
 
+static const char *plat_runtime(void)
+{
+	return "pi";
+}
+
 static void plat_term_present_drain(void);
 
 static int plat_resize_hdmi(int w, int h)
@@ -1365,6 +1370,9 @@ void mmb_platform_bind(CKernel *k)
 	plat.hdmi_width = plat_w;
 	plat.hdmi_height = plat_h;
 	plat.resize_hdmi = plat_resize_hdmi;
+	plat.host_width = plat_w;
+	plat.host_height = plat_h;
+	plat.runtime = plat_runtime;
 	plat.alloc = plat_alloc;
 	plat.free = plat_free;
 	plat.millis = plat_millis;

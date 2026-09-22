@@ -54,6 +54,25 @@ static int stdio_height(void)
 	return 480;
 }
 
+static int stdio_host_width(void)
+{
+	return 640;
+}
+
+static int stdio_host_height(void)
+{
+	return 480;
+}
+
+static const char *stdio_runtime(void)
+{
+#ifdef __APPLE__
+	return "mac";
+#else
+	return "linux";
+#endif
+}
+
 static void stdio_fill(unsigned rgb)
 {
 	(void)rgb;
@@ -73,6 +92,9 @@ static const mmb_platform stdio_plat = {
 	.fill_screen = stdio_fill,
 	.hdmi_width = stdio_width,
 	.hdmi_height = stdio_height,
+	.host_width = stdio_host_width,
+	.host_height = stdio_host_height,
+	.runtime = stdio_runtime,
 	.alloc = stdio_alloc,
 	.free = stdio_free,
 	.millis = stdio_millis,

@@ -449,10 +449,14 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("RND")] = &&lbl_rnd;
 		fun_tab[mmb_kw_id("MM.HRES")] = &&lbl_mmhres;
 		fun_tab[mmb_kw_id("MM.VRES")] = &&lbl_mmvres;
+		fun_tab[mmb_kw_id("MM.HOST.HRES")] = &&lbl_mmhosthres;
+		fun_tab[mmb_kw_id("MM.HOST.VRES")] = &&lbl_mmhostvres;
 		fun_tab[mmb_kw_id("MM.HPOS")] = &&lbl_mmhpos;
 		fun_tab[mmb_kw_id("MM.VPOS")] = &&lbl_mmvpos;
 		fun_tab[mmb_kw_id("MM.INFO$")] = &&lbl_mminfo;
 		fun_tab[mmb_kw_id("MM.INFO")] = &&lbl_mminfo;
+		fun_tab[mmb_kw_id("MM.RUNTIME")] = &&lbl_mmruntime;
+		fun_tab[mmb_kw_id("MM.RUNTIME$")] = &&lbl_mmruntime;
 		fun_tab[mmb_kw_id("PLAYING")] = &&lbl_playing;
 		fun_tab[mmb_kw_id("EOF")] = &&lbl_eof;
 		fun_tab[mmb_kw_id("INSTR")] = &&lbl_instr;
@@ -1043,6 +1047,20 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_mmvres:
 		*out = mmb_int_val(G.gfx.h);
+		return 1;
+	}
+	if (mmb_match("MM.HOST.HRES"))
+	{
+	lbl_mmhosthres:
+		*out = mmb_int_val(G.plat && G.plat->host_width ? G.plat->host_width()
+							       : G.gfx.w);
+		return 1;
+	}
+	if (mmb_match("MM.HOST.VRES"))
+	{
+	lbl_mmhostvres:
+		*out = mmb_int_val(G.plat && G.plat->host_height ? G.plat->host_height()
+								 : G.gfx.h);
 		return 1;
 	}
 	if (mmb_match("MM.HPOS"))
@@ -2001,6 +2019,19 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_str_val("1.8");
+		return 1;
+	}
+	if (mmb_match("MM.RUNTIME") || mmb_match("MM.RUNTIME$"))
+	{
+	lbl_mmruntime:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+		*out = mmb_str_val(G.plat && G.plat->runtime ? G.plat->runtime()
+							     : "pi");
 		return 1;
 	}
 	if (mmb_match("MM.DEVICE$"))

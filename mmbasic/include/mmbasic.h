@@ -21,6 +21,13 @@ typedef struct mmb_platform {
 	int (*hdmi_height)(void);
 	/* Retune the HDMI framebuffer. Returns 1 on success, 0 on failure. */
 	int (*resize_hdmi)(int w, int h);
+	/* Resolution of the host display the graphics mode is shown on. On a
+	 * bare Pi this tracks the HDMI framebuffer; on a native host it can be
+	 * larger than the mode, which is integer-scaled into it (letterboxed). */
+	int (*host_width)(void);
+	int (*host_height)(void);
+	/* Build target for MM.RUNTIME: "pi", "linux", or "mac". */
+	const char *(*runtime)(void);
 	void *(*alloc)(unsigned n);
 	void (*free)(void *p);
 	unsigned (*millis)(void);

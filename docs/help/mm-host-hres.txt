@@ -1,0 +1,22 @@
+name: MM.HOST.HRES
+kind: command
+
+Return the width of the host display that the current graphics mode is shown
+on, in pixels.
+
+width = MM.HOST.HRES
+
+On a Raspberry Pi this is the HDMI resolution, which ~MODE~ changes. On the
+Linux/macOS native build it is the window (windowed) or the full display
+(fullscreen), which can be larger than the mode; the mode is then integer-scaled
+into it and centred, with black borders filling the rest.
+
+Use it to pick a ~MODE~ that suits the screen. A mode that divides the host
+resolution by a whole number scales up crisply.
+
+See also ~MM.HOST.VRES~, ~MM.HRES~, ~MODE~.
+
+Example:
+
+    PRINT MM.HOST.HRES, MM.HOST.VRES
+    IF MM.HOST.HRES >= 1024 THEN MODE 9

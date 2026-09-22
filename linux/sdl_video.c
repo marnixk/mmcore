@@ -1,4 +1,5 @@
 #include "sdl_video.h"
+#include "sdl_scale.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -127,9 +128,30 @@ int sdl_video_height(void)
 	return s_h;
 }
 
+void sdl_video_host_size(int *w, int *h)
+{
+	int ow = 0, oh = 0;
+
+	if (s_ren)
+		SDL_GetRendererOutputSize(s_ren, &ow, &oh);
+	if ((ow <= 0 || oh <= 0) && s_win)
+		SDL_GetWindowSize(s_win, &ow, &oh);
+	if (ow <= 0 || oh <= 0)
+	{
+		ow = s_w;
+		oh = s_h;
+	}
+	if (w)
+		*w = ow;
+	if (h)
+		*h = oh;
+}
+
 void sdl_video_present(void)
 {
 	size_t n, i;
+	int ow = 0, oh = 0, dx, dy, dw, dh;
+	SDL_Rect dst;
 
 	if (!s_dirty)
 		return;
@@ -148,8 +170,18 @@ void sdl_video_present(void)
 	}
 
 	SDL_UpdateTexture(s_tex, 0, s_stage, s_w * (int)sizeof(uint16_t));
+
+	/* Integer scale into the drawable, centred with black bars. */
+	sdl_video_host_size(&ow, &oh);
+	sdl_scale_viewport(ow, oh, s_w, s_h, &dx, &dy, &dw, &dh);
+	dst.x = dx;
+	dst.y = dy;
+	dst.w = dw;
+	dst.h = dh;
+
+	SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
 	SDL_RenderClear(s_ren);
-	SDL_RenderCopy(s_ren, s_tex, 0, 0);
+	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
 	SDL_RenderPresent(s_ren);
 	s_dirty = 0;
 }
@@ -177,6 +209,8 @@ void sdl_video_toggle_fullscreen(void)
 				      SDL_WINDOWPOS_CENTERED_DISPLAY(0));
 		SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
 	}
+	/* The drawable changed: force a full repaint (and a fresh letterbox). */
+	sdl_video_mark_dirty();
 }
 
 int sdl_video_should_quit(void)
