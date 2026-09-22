@@ -54,6 +54,9 @@ jobs:
         run: |
           export SDL_VIDEODRIVER=dummy
           export MMB_SDL_SERIAL=1
+          # Drop /mingw64/bin so the run only finds the DLLs we ship, not the
+          # toolchain copies (which would mask a missing runtime DLL).
+          export PATH="/usr/bin"
           out=$(printf 'PRINT "SMOKE_OK 42"\n' | timeout 60 ./dist/mmcore-windows-x86_64/mmbasic-sdl.exe 2>&1 || true)
           printf '%s\n' "$out"
           printf '%s' "$out" | grep -q "SMOKE_OK 42"

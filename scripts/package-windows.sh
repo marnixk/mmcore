@@ -51,9 +51,30 @@ mkdir -p "${STAGE}"
 cp "${EXE}" "${STAGE}/mmbasic-sdl.exe"
 
 # Copy every MinGW runtime DLL the executable and its DLLs depend on. System
-# DLLs (kernel32, user32, ...) are not on the compiler's program path, so they
-# are naturally skipped; SDL2.dll is supplied from the SDL2 install.
+# DLLs (kernel32, user32, ...) are not found on disk, so they are skipped;
+# SDL2.dll is supplied from the SDL2 install.
 OBJDUMP="${OBJDUMP:-$(command -v "${CC%-gcc}-objdump" || command -v objdump || true)}"
+
+# Locate a runtime DLL. GCC's -print-prog-name works for a Homebrew cross
+# toolchain, but MSYS2 returns the bare name, so also look beside the compiler
+# and under the MINGW prefix.
+find_dll() {
+	local name="$1" p
+	for p in \
+		"$("${CC}" -print-prog-name="${name}" 2>/dev/null || true)" \
+		"$(dirname "$(command -v "${CC}" 2>/dev/null || true)")/${name}" \
+		"${MINGW_PREFIX:-}/bin/${name}" \
+		"/mingw64/bin/${name}" \
+		"/clang64/bin/${name}" \
+		"$(command -v "${name}" 2>/dev/null || true)"; do
+		[ -n "${p}" ] && [ -f "${p}" ] && {
+			printf '%s\n' "${p}"
+			return 0
+		}
+	done
+	return 1
+}
+
 STAGED_DLLS=""
 stage_dll() {
 	local name="$1" path dep
@@ -65,7 +86,7 @@ stage_dll() {
 	if [ "${name}" = "SDL2.dll" ]; then
 		path="${SDL2_DLL}"
 	else
-		path="$("${CC}" -print-prog-name="${name}" 2>/dev/null || true)"
+		path="$(find_dll "${name}" || true)"
 	fi
 	[ -n "${path}" ] && [ -f "${path}" ] || return 0
 	cp "${path}" "${STAGE}/${name}"
@@ -76,15 +97,32 @@ stage_dll() {
 	fi
 }
 
+# Fail if the executable imports a MinGW DLL we could locate but did not stage:
+# shipping without it would fail on a clean Windows machine.
+verify_dlls_staged() {
+	local pe="$1" dep p
+
+	[ -n "${OBJDUMP}" ] || return 0
+	while IFS= read -r dep; do
+		[ -n "${dep}" ] || continue
+		case " ${STAGED_DLLS} " in *" ${dep} "*) continue ;; esac
+		if p="$(find_dll "${dep}")"; then
+			die "unstaged runtime DLL ${dep} needed by $(basename "${pe}") (found ${p})"
+		fi
+	done < <("${OBJDUMP}" -p "${pe}" | sed -n 's/.*DLL Name: //p')
+}
+
 if [ -n "${OBJDUMP}" ]; then
 	while IFS= read -r dep; do
 		[ -n "${dep}" ] && stage_dll "${dep}"
 	done < <("${OBJDUMP}" -p "${EXE}" | sed -n 's/.*DLL Name: //p')
 else
-	log "objdump not found; staging SDL2 and libwinpthread only"
+	log "objdump not found; staging SDL2 and libwinpthread"
 	stage_dll SDL2.dll
 	stage_dll libwinpthread-1.dll
 fi
+verify_dlls_staged "${EXE}"
+[ -f "${STAGE}/SDL2.dll" ] && verify_dlls_staged "${STAGE}/SDL2.dll"
 
 cat > "${STAGE}/README.txt" <<'EOF'
 mmcore for Windows (x86_64)
