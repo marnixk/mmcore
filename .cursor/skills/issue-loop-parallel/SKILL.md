@@ -116,20 +116,23 @@ node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs threads
 node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs rm-thread <threadId>
 ```
 
-`spawn` sends a single `thread.turn.start` with `bootstrap.createThread` +
-`bootstrap.prepareWorktree`; the server then creates the thread, runs
-`git worktree add` for `task/<slug>-0ccd` (base `--base`, default `master`,
-fetched from `origin`), and starts the worker's first turn. The thread shows up
-in the T3 UI so the user can watch it. `--project <name>` picks the project
-when there are several (default: the only one, `mmcore`); `--prompt` takes
-literal text or `@/path/file`; `--model`/`--instance` override the default
-model selection.
+`spawn` creates the branch/worktree itself
+(`git worktree add -b task/<slug>-0ccd <t3-worktrees>/<repo>/task-<slug>-0ccd origin/<base>`),
+then dispatches `thread.create` and `thread.turn.start`. The new thread shows up
+in the T3 UI so the user can watch it. `--project <name>` picks the project when
+there are several (default: the only one, `mmcore`); `--prompt` takes literal
+text or `@/path/file`; `--model`/`--instance` override the default model
+selection.
 
 Mechanics (so this does not need re-investigating):
 
 - Endpoint `POST /api/orchestration/dispatch` on the server from
   `~/.t3/userdata/server-runtime.json` (default `http://127.0.0.1:3773`).
   `GET /api/orchestration/shell` lists projects/threads.
+- The HTTP endpoint calls `orchestrationEngine.dispatch` (the decider) directly,
+  so it does **not** process `bootstrap.createThread`/`bootstrap.prepareWorktree`
+  — those are handled only on the WebSocket RPC path the desktop uses. Over HTTP
+  the thread and worktree must exist first, hence the two-step `spawn`.
 - Auth is **environment-auth**: `Authorization: Bearer <session JWT>` with
   scope `orchestration:operate`. A session token is
   `base64url(JSON(claims)) + "." + base64url(HMAC-SHA256(payload, key))`,
@@ -141,7 +144,8 @@ Mechanics (so this does not need re-investigating):
 - `spawn`/`snapshot`/`threads`/`rm-thread` **mint a 5-minute session per
   invocation and revoke it in a `finally`**, so no credential is left behind.
   Do not hand-mint a long-lived token. A spawned thread does not depend on the
-  minting session, so revoking immediately after the dispatch is safe. Sanity
+  minting session, so revoking immediately after the dispatch is safe. The DB
+  is shared with the live server, so writes use a busy timeout + retry. Sanity
   check: `sqlite3 ~/.t3/userdata/state.sqlite "select count(*) from
   auth_sessions where subject='t3-orchestrate-script';"` → `0`.
 - `dispatch <file|->` sends a raw `ClientOrchestrationCommand`

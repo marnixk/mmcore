@@ -10,6 +10,10 @@
 //   node t3-orchestrate.mjs projects                 # project ids/paths only
 //   node t3-orchestrate.mjs threads                  # id/status/title of threads
 //   node t3-orchestrate.mjs spawn --slug <slug> --title <title> --prompt <text|@file>
+//       -> creates the task/<slug>-0ccd worktree, then dispatches
+//          thread.create + thread.turn.start. (The HTTP dispatch endpoint runs
+//          the engine decider directly and ignores `bootstrap`; that is only
+//          handled on the WS RPC path used by the desktop client.)
 //   node t3-orchestrate.mjs dispatch <command.json|->  # raw ClientOrchestrationCommand
 //   node t3-orchestrate.mjs rm-thread <threadId>
 //
@@ -17,9 +21,9 @@
 
 import { execFileSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const T3_HOME = join(homedir(), ".t3", "userdata");
 const DB_PATH = join(T3_HOME, "state.sqlite");
@@ -48,7 +52,24 @@ function serverBase() {
 }
 
 function sqlite(sql) {
-  return execFileSync("sqlite3", [DB_PATH], { input: sql, encoding: "utf8" });
+  // The live server holds the same SQLite DB; wait out writer locks.
+  return execFileSync("sqlite3", ["-cmd", ".timeout 15000", DB_PATH], { input: sql, encoding: "utf8" });
+}
+
+function withRetry(fn, attempts = 4) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn();
+    } catch (err) {
+      lastError = err;
+      const until = Date.now() + 250 * (i + 1);
+      while (Date.now() < until) {
+        /* brief backoff */
+      }
+    }
+  }
+  throw lastError;
 }
 
 function mintSession() {
@@ -69,19 +90,23 @@ function mintSession() {
   const signature = createHmac("sha256", secret).update(payload).digest("base64url");
   const sc = JSON.stringify(SCOPES).replace(/'/g, "''");
   const iso = (ms) => new Date(ms).toISOString();
-  sqlite(
-    `INSERT INTO auth_sessions ` +
-      `(session_id,subject,scopes,method,client_label,client_device_type,issued_at,expires_at,revoked_at) VALUES (` +
-      `'${sessionId}','t3-orchestrate-script','${sc}','bearer-access-token','t3-orchestrate script','unknown',` +
-      `'${iso(now)}','${iso(now + 5 * 60 * 1000)}',NULL);`,
+  withRetry(() =>
+    sqlite(
+      `INSERT INTO auth_sessions ` +
+        `(session_id,subject,scopes,method,client_label,client_device_type,issued_at,expires_at,revoked_at) VALUES (` +
+        `'${sessionId}','t3-orchestrate-script','${sc}','bearer-access-token','t3-orchestrate script','unknown',` +
+        `'${iso(now)}','${iso(now + 5 * 60 * 1000)}',NULL);`,
+    ),
   );
   return { token: `${payload}.${signature}`, sessionId };
 }
 
 function revokeSession(sessionId) {
-  sqlite(
-    `UPDATE auth_sessions SET revoked_at='${new Date().toISOString()}' WHERE session_id='${sessionId}';` +
-      `DELETE FROM auth_sessions WHERE session_id='${sessionId}';`,
+  withRetry(() =>
+    sqlite(
+      `UPDATE auth_sessions SET revoked_at='${new Date().toISOString()}' WHERE session_id='${sessionId}';` +
+        `DELETE FROM auth_sessions WHERE session_id='${sessionId}';`,
+    ),
   );
 }
 
@@ -201,37 +226,60 @@ const commands = {
       const snap = await api(token, "/api/orchestration/shell");
       const project = findProject(snap, flags.project);
       const projectCwd = project.repositoryIdentity?.rootPath ?? project.workspaceRoot;
+      const repoName = project.repositoryIdentity?.name ?? project.title;
       const branch = `task/${slug}-0ccd`;
+      const worktreePath = flags.worktree ?? join(homedir(), ".t3", "worktrees", repoName, branch.replace(/\//g, "-"));
       const threadId = randomUUID();
-      const createdAt = isoNow();
-      const cmd = command("thread.turn.start", {
-        threadId,
-        message: { messageId: randomUUID(), role: "user", text: prompt, attachments: [] },
-        modelSelection,
-        titleSeed: title,
-        runtimeMode,
-        interactionMode,
-        bootstrap: {
-          createThread: {
+
+      // The HTTP dispatch endpoint runs the engine decider directly, which does
+      // not process `bootstrap`; the WS RPC path does. So create the worktree
+      // ourselves, then dispatch thread.create + thread.turn.start.
+      const createdWorktree = !existsSync(worktreePath);
+      if (createdWorktree) {
+        mkdirSync(dirname(worktreePath), { recursive: true });
+        execFileSync("git", ["-C", projectCwd, "fetch", "origin", baseBranch], { stdio: "inherit" });
+        execFileSync("git", ["-C", projectCwd, "worktree", "add", "-b", branch, worktreePath, `origin/${baseBranch}`], { stdio: "inherit" });
+      }
+      try {
+        await api(
+          token,
+          "/api/orchestration/dispatch",
+          command("thread.create", {
+            threadId,
             projectId: project.id,
             title,
             modelSelection,
             runtimeMode,
             interactionMode,
             branch,
-            worktreePath: null,
-            createdAt,
-          },
-          prepareWorktree: {
-            projectCwd,
-            baseBranch,
-            branch,
-            startFromOrigin: true,
-          },
-        },
-      });
-      const result = await api(token, "/api/orchestration/dispatch", cmd);
-      console.log(JSON.stringify({ threadId, branch, projectId: project.id, projectCwd, ...result }));
+            worktreePath,
+            createdAt: isoNow(),
+          }),
+        );
+        const result = await api(
+          token,
+          "/api/orchestration/dispatch",
+          command("thread.turn.start", {
+            threadId,
+            message: { messageId: randomUUID(), role: "user", text: prompt, attachments: [] },
+            modelSelection,
+            titleSeed: title,
+            runtimeMode,
+            interactionMode,
+          }),
+        );
+        console.log(JSON.stringify({ threadId, branch, worktreePath, projectId: project.id, projectCwd, ...result }));
+      } catch (err) {
+        if (createdWorktree) {
+          try {
+            execFileSync("git", ["-C", projectCwd, "worktree", "remove", "--force", worktreePath]);
+            execFileSync("git", ["-C", projectCwd, "branch", "-D", branch]);
+          } catch (cleanupErr) {
+            process.stderr.write(`warn: failed to roll back worktree ${worktreePath}: ${cleanupErr}\n`);
+          }
+        }
+        throw err;
+      }
     });
   },
 };
