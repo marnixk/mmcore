@@ -966,6 +966,38 @@ def test_term_bookmark_80x25_mode(kernel_image):
         con.stop()
 
 
+def test_term_bookmark_host_field_scrolls(kernel_image):
+    """A Host longer than its field scrolls so the tail stays visible."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        _menu(con)
+        con._ser.sendall(b"k")
+        _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+        con._ser.sendall(b"\x1b[D\x1b[D\x1b[D")
+        _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"\r")
+        form = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Host" in form
+        con._ser.sendall(b"Url")
+        _plain(con.drain(quiet=0.2, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"\x1b[B")
+        _plain(con.drain(quiet=0.2, timeout=4).decode(errors="replace"))
+        con._ser.sendall(b"bbs.bottomlessabyss.net")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        text = con.ocr_screen(
+            crop="200x24+330+205", scale=500, threshold=50
+        ).lower()
+        assert "bottomlessabyss" in text, text
+        assert "net" in text, text
+        assert "bbs" not in text, text
+        _quit(con)
+        assert con.send_line("PRINT 6+1") == "7"
+    finally:
+        con.stop()
+
+
 def test_term_demoiac_glyphs_and_commands(kernel_image):
     """0xFF is IAC only after a command peek; CP437 0xFF must not freeze the pane."""
     con = MMBasicConsole(kernel_image)
