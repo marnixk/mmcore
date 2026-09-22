@@ -69,6 +69,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The MSYS2 shell does not inherit the runner's PATH, so add the
+          # preinstalled GitHub CLI explicitly.
+          export PATH="/c/Program Files/GitHub CLI:$PATH"
           if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
             gh release upload "${GITHUB_REF_NAME}" dist/mmcore-windows-x86_64.zip --clobber
             echo "Attached Windows zip to release ${GITHUB_REF_NAME}"
