@@ -142,3 +142,36 @@ https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.A
 
 Build it locally on Linux with `scripts/package-linux-appimage.sh` (result in
 `dist/`).
+
+## macOS app bundle
+
+On an Apple Silicon Mac, `scripts/package-macos-app.sh` builds the same SDL2
+binary and packages it as a self-contained `mmcore.app`:
+
+```bash
+brew install sdl2
+scripts/package-macos-app.sh          # dist/mmcore.app + dist/mmcore-macos-arm64.zip
+open dist/mmcore.app
+```
+
+SDL2 is the only non-system dependency; it is copied into
+`Contents/Frameworks/` and the executable's install names are rewritten to load
+it from `@rpath`, so the bundle runs on Macs without Homebrew.
+
+The bundle is signed automatically: a keychain `Developer ID Application`
+certificate is preferred, then `Apple Development` (fine on the build Mac), then
+ad-hoc. Override with `SIGN_IDENTITY`, or `MMCORE_SKIP_SIGN=1` to leave it
+unsigned (arm64 will refuse to launch an unsigned/modified binary). To ship to
+other people without Gatekeeper warnings you need a Developer ID certificate
+plus notarization:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: ..." \
+  NOTARY_PROFILE=mmcore-notary scripts/package-macos-app.sh
+```
+
+`NOTARY_PROFILE` is a `notarytool` keychain profile created with
+`xcrun notarytool store-credentials`; when set, the bundle is notarized and
+stapled. `scripts/github-release.sh publish` builds and attaches the zip on
+macOS automatically (skip with `MMCORE_SKIP_MACOS=1`).
+

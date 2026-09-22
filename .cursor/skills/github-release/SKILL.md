@@ -1,6 +1,6 @@
 ---
 name: github-release
-description: Build hardware MMBasic images and publish a semantic GitHub Release that includes the compiled kernels, firmware, and install-sdcard.sh. Use when the user asks to release, ship, publish, tag, cut a version, or run the github-release skill.
+description: Build hardware MMBasic images and publish a semantic GitHub Release that includes the compiled kernels, firmware, install-sdcard.sh, and (when run on macOS) a signed arm64 app bundle. Use when the user asks to release, ship, publish, tag, cut a version, or run the github-release skill.
 ---
 
 # GitHub semantic release
@@ -71,9 +71,18 @@ That script:
    - `dist/mmcore-console-pi400-vVERSION.zip`
    Zero 2 / Zero 2 W reuse the Pi 3 kernel. Each zip includes `install-sdcard.sh`.
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
-3. Creates annotated tag `vVERSION` and pushes it to `origin`.
-4. Creates the GitHub release with those zips **and** a top-level
-   `install-sdcard.sh` asset.
+3. On macOS, runs `scripts/package-macos-app.sh` and packages the native SDL2
+   binary as a signed `mmcore.app`, attached as `dist/mmcore-macos-arm64.zip`.
+   Set `MMCORE_SKIP_MACOS=1` to skip it. Signing uses a Developer ID certificate
+   when one is in the keychain (else Apple Development, else ad-hoc); set
+   `NOTARY_PROFILE` to notarize + staple.
+4. Creates annotated tag `vVERSION` and pushes it to `origin`.
+5. Creates the GitHub release with the zips, the macOS app (when built), **and**
+   a top-level `install-sdcard.sh` asset.
+
+The release notes include an "Install" section, the Linux AppImage, and a
+"macOS native (Apple Silicon)" section whenever `dist/mmcore-macos-arm64.zip`
+exists at publish time.
 
 Do not force-push tags. If `vVERSION` already exists, stop.
 
@@ -94,3 +103,13 @@ sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 `--model pi400` selects the Pi 400 / Pi 4 zip. `--model pizero2` and
 `--model pizero2w` select the Zero 2 zips (same `kernel8.img` as Pi 3).
 `--update` refreshes kernel and firmware without wiping user files on `C:`.
+
+## macOS app (Apple Silicon)
+
+```bash
+unzip mmcore-macos-arm64.zip
+open mmcore.app
+```
+
+Build it standalone with `scripts/package-macos-app.sh` (needs Homebrew SDL2);
+see [`docs/linux-native.md`](../../../docs/linux-native.md#macos-app-bundle).
