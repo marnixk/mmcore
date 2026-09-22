@@ -17,8 +17,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <SDL.h>
 
 static void sdl_serial(const char *s, unsigned n)
 {
@@ -215,32 +218,135 @@ static int sdl_wait_vsync(void)
 	return 0;
 }
 
-static int sdl_read_line(char **out, int hide)
+/* Poll piped stdin (headless/automation). Returns 1 with a byte in *c, 0 when
+ * nothing is ready, -1 once stdin is closed. */
+static int sdl_stdin_byte(int *c)
 {
-	char buf[512];
-	size_t n = 0;
+	fd_set rfds;
+	struct timeval tv;
+
+	FD_ZERO(&rfds);
+	FD_SET(STDIN_FILENO, &rfds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	if (select(STDIN_FILENO + 1, &rfds, 0, 0, &tv) <= 0)
+		return 0;
+	*c = fgetc(stdin);
+	if (*c == EOF)
+		return -1;
+	return 1;
+}
+
+/* One byte for the blocking line prompt. The window is the primary source;
+ * piped stdin keeps the headless tests working. */
+static int sdl_line_byte(void)
+{
 	int c;
 
-	(void)hide;
+	if (sdl_video_should_quit())
+		return -2;
+	sdl_input_pump();
+	if (sdl_video_should_quit())
+		return -2;
+	c = mmb_inkey_pop();
+	if (c >= 0)
+		return c;
+	switch (sdl_stdin_byte(&c))
+	{
+	case 1:
+		return c;
+	case -1:
+		return -3; /* stdin closed: finish the line */
+	default:
+		return -1;
+	}
+}
+
+static int sdl_read_line(char **out, int hide)
+{
+	unsigned cap = 128, n = 0;
+	char *buf;
+
 	if (!out)
 		return -1;
-	while ((c = fgetc(stdin)) != EOF)
+	*out = 0;
+	buf = malloc(cap);
+	if (!buf)
+		return -1;
+	buf[0] = 0;
+	sdl_input_begin_line();
+	for (;;)
 	{
-		if (c == '\n')
-			break;
-		if (c == '\r')
+		int c = sdl_line_byte();
+
+		if (c == -2)
+		{
+			free(buf);
+			sdl_input_end_line();
+			return -2;
+		}
+		if (c == -3)
+		{
+			buf[n] = 0;
+			*out = buf;
+			sdl_input_end_line();
+			return 0;
+		}
+		if (c < 0)
+		{
+			mmb_poll();
+			SDL_Delay(5);
+			sdl_video_present();
 			continue;
-		if (n + 1 < sizeof buf)
+		}
+		if (c == '\r' || c == '\n')
+		{
+			buf[n] = 0;
+			mmb_console_write("\r\n");
+			*out = buf;
+			sdl_input_end_line();
+			return 0;
+		}
+		if (c == 8 || c == 127)
+		{
+			if (n > 0)
+			{
+				n--;
+				mmb_console_write("\b \b");
+			}
+			continue;
+		}
+		if (c == mmb_break_key())
+		{
+			free(buf);
+			sdl_input_end_line();
+			return -2;
+		}
+		if (c < 32 || c >= 0x80)
+			continue; /* ignore control and mapped navigation keys */
+		if (n + 2 >= cap)
+		{
+			unsigned ncap = cap * 2;
+			char *nb = realloc(buf, ncap);
+
+			if (!nb)
+			{
+				free(buf);
+				sdl_input_end_line();
+				return -1;
+			}
+			buf = nb;
+			cap = ncap;
+		}
+		{
+			char echo[2];
+
 			buf[n++] = (char)c;
+			echo[0] = hide ? '*' : (char)c;
+			echo[1] = 0;
+			mmb_console_write(echo);
+		}
 	}
-	if (c == EOF && n == 0)
-		return -1;
-	buf[n] = 0;
-	*out = malloc(n + 1);
-	if (!*out)
-		return -1;
-	memcpy(*out, buf, n + 1);
-	return 0;
 }
 
 static void sdl_reboot(void)

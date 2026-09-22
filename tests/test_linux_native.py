@@ -87,6 +87,51 @@ def test_sdl_integer_scale_viewport(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_sdl_input_line_capture(tmp_path):
+    """A blocking INPUT prompt must keep routing window keys to the program.
+
+    Regression: sdl_read_line blocked on fgetc(stdin) without pumping SDL, so
+    typing at an INPUT prompt in the window froze the app.
+    """
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), "sdl_input_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-I",
+            os.path.join(REPO, "linux"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_input_host.c"),
+            os.path.join(REPO, "linux", "sdl_input.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+    out = subprocess.run(
+        [exe], check=True, capture_output=True, text=True, env=env
+    )
+    assert "all checks passed" in out.stdout
+
+
 def _run_env(binary, text, env):
     proc = subprocess.run(
         [binary], input=text, text=True, capture_output=True, timeout=120, env=env

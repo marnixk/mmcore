@@ -10,11 +10,23 @@
 
 static int s_alt, s_ctrl, s_shift;
 static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
+static int s_line_input;   /* a blocking line prompt owns the keyboard */
 
 void sdl_input_init(void)
 {
 	s_alt = s_ctrl = s_shift = 0;
 	s_swallow_text = 0;
+	s_line_input = 0;
+}
+
+void sdl_input_begin_line(void)
+{
+	s_line_input = 1;
+}
+
+void sdl_input_end_line(void)
+{
+	s_line_input = 0;
 }
 
 int sdl_input_alt_held(void)
@@ -32,7 +44,7 @@ static void deliver(const char *b, unsigned n)
 {
 	unsigned i;
 
-	if (mmb_is_running())
+	if (s_line_input || mmb_is_running())
 	{
 		for (i = 0; i < n; i++)
 			mmb_inkey_push((unsigned char)b[i]);
@@ -90,7 +102,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	{
 		char c = (char)('a' + (k - SDLK_a));
 
-		if (!mmb_is_running())
+		if (!mmb_is_running() && !s_line_input)
 		{
 			deliver_ch(0x01);
 			deliver_ch(c);
