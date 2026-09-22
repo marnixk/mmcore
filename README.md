@@ -38,6 +38,7 @@ a submodule.
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
 | `scripts/build-linux.sh` | Build the host-native (Linux/macOS) backend binaries |
 | `scripts/package-linux-appimage.sh` | Package `linux/mmbasic-sdl` as a Linux AppImage |
+| `scripts/package-macos-app.sh` | Package `linux/mmbasic-sdl` as a signed macOS `.app` (arm64) |
 | `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
@@ -89,6 +90,8 @@ scripts/build-linux.sh                                    # linux/mmbasic + linu
 
 A prebuilt Linux x86_64 SDL AppImage is attached to the rolling `linux-native`
 pre-release: <https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage>.
+On Apple Silicon, `scripts/package-macos-app.sh` builds a signed `mmcore.app`
+bundle (`dist/mmcore-macos-arm64.zip`), also attached to normal releases.
 See [`docs/linux-native.md`](docs/linux-native.md) for the app-VM CLI (`.app`,
 `--term`), the Pi-vs-Linux matrix, and where to escalate to QEMU.
 

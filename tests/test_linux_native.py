@@ -4,8 +4,10 @@ Builds ``linux/mmbasic`` (headless stdio platform) and checks the acceptance
 behaviour: startup banner, immediate-mode PRINT, and RUN of a ramdisk .BAS.
 """
 import os
+import plistlib
 import shutil
 import subprocess
+import sys
 import zipfile
 
 import pytest
@@ -624,3 +626,64 @@ def test_cli_term_host_parser(mmb_linux, tmp_path):
     out = proc.stdout + proc.stderr
     assert proc.returncode == 0
     assert "> " not in out
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("iconutil") is None,
+    reason="macOS app packaging needs darwin + iconutil",
+)
+def test_macos_app_bundle(mmb_linux, tmp_path):
+    """Package the SDL build into a self-contained mmcore.app + zip."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    dist = tmp_path / "dist"
+    env = dict(os.environ, DIST=str(dist), MMCORE_SKIP_SIGN="1", VERSION="9.9.9")
+    subprocess.run(
+        ["bash", os.path.join(REPO, "scripts", "package-macos-app.sh")],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    app = dist / "mmcore.app"
+    contents = app / "Contents"
+    exe = contents / "MacOS" / "mmbasic-sdl"
+    fw = contents / "Frameworks" / "libSDL2-2.0.0.dylib"
+    assert exe.is_file()
+    assert fw.is_file(), "SDL2 must be bundled into the app"
+    assert (contents / "Resources" / "AppIcon.icns").is_file()
+
+    with open(contents / "Info.plist", "rb") as f:
+        plist = plistlib.load(f)
+    assert plist["CFBundleIdentifier"] == "com.marnixk.mmcore"
+    assert plist["CFBundleExecutable"] == "mmbasic-sdl"
+    assert plist["CFBundleShortVersionString"] == "9.9.9"
+
+    deps = subprocess.run(
+        ["otool", "-L", str(exe)], check=True, capture_output=True, text=True
+    ).stdout
+    assert "@rpath/libSDL2-2.0.0.dylib" in deps, "install name must be rewritten"
+
+    with zipfile.ZipFile(dist / "mmcore-macos-arm64.zip") as z:
+        names = z.namelist()
+    assert any(n.startswith("mmcore.app/Contents/MacOS/mmbasic-sdl") for n in names)
+
+    # arm64 refuses to launch a modified, unsigned binary, so ad-hoc sign the
+    # bundled dylib and app before the headless smoke test.
+    for target in (fw, app):
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(target)],
+            check=True,
+            capture_output=True,
+        )
+    proc = subprocess.run(
+        [str(exe)],
+        input='PRINT "MACOS_BUNDLE_OK"\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "MACOS_BUNDLE_OK" in (proc.stdout + proc.stderr)

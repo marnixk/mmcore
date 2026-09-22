@@ -25,6 +25,14 @@ publish builds board images with scripts/package-release.sh, then uploads:
   dist/mmcore-console-pi400-vVERSION.zip
   scripts/install-sdcard.sh
 
+On macOS it also builds and attaches the arm64 app bundle:
+  dist/mmcore-macos-arm64.zip   (scripts/package-macos-app.sh)
+
+Environment:
+  MMCORE_SKIP_MACOS=1   publish without building the macOS app
+  SIGN_IDENTITY=...     codesign identity for the app bundle
+  NOTARY_PROFILE=...    notarytool profile to notarize the app bundle
+
 Each zip also contains install-sdcard.sh so a consumer can:
 
   unzip mmcore-console-rpi3-vVERSION.zip
@@ -157,6 +165,7 @@ last_version() {
 
 release_notes() {
 	local version="$1"
+	local macos_asset="${2:-}"
 	local last tag_range
 	last="$(last_version)"
 	if [ "${last}" = "0.0.0" ]; then
@@ -164,13 +173,16 @@ release_notes() {
 	else
 		tag_range="v${last}..HEAD"
 	fi
-	python3 - "${version}" "${last}" "${tag_range}" <<'PY'
-import subprocess, sys
-version, last, tag_range = sys.argv[1:4]
+	python3 - "${version}" "${last}" "${tag_range}" "${macos_asset}" <<'PY'
+import os, subprocess, sys
+version, last, tag_range, macos_asset = sys.argv[1:5]
+macos_name = os.path.basename(macos_asset) if macos_asset else ""
 print(f"mmcore v{version}")
 print()
 print("Bare-metal mmcore for Raspberry Pi. Each zip is a FAT-ready SD-card image")
-print("plus `install-sdcard.sh` for Linux, and a native Linux AppImage is attached.")
+print("plus `install-sdcard.sh` for Linux, and native desktop builds are attached:")
+print("a Linux AppImage and an Apple Silicon macOS app." if macos_name else
+      "a Linux AppImage.")
 print()
 print("## Install")
 print()
@@ -199,6 +211,17 @@ print("chmod +x mmcore-x86_64.AppImage")
 print("./mmcore-x86_64.AppImage")
 print("```")
 print()
+if macos_name:
+    print("## macOS native (Apple Silicon)")
+    print()
+    print("Unzip and drag `mmcore.app` to Applications, then launch it from Finder")
+    print("(the SDL2 window shows the prompt and keyboard input):")
+    print()
+    print("```bash")
+    print(f"unzip {macos_name}")
+    print("open mmcore.app")
+    print("```")
+    print()
 print("## Artifacts")
 print()
 print(f"- `mmcore-console-rpi3-v{version}.zip` — Raspberry Pi 3 / 3B+ / 3A+")
@@ -207,6 +230,8 @@ print(f"- `mmcore-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CY
 print(f"- `mmcore-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
 print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
+if macos_name:
+    print(f"- `{macos_name}` — macOS arm64 app bundle (mmcore.app)")
 print()
 if tag_range:
     print(f"## Changes since v{last}")
@@ -234,7 +259,8 @@ assert_zip_has_installer() {
 
 publish() {
 	local version="$1"
-	local tag rpi3 pizero2 pizero2w pi400 installer notes
+	local tag rpi3 pizero2 pizero2w pi400 installer notes macos
+	local macos_arg=()
 	version="$(normalize_version "${version}")"
 	tag="v${version}"
 	rpi3="${DIST}/mmcore-console-rpi3-v${version}.zip"
@@ -242,6 +268,7 @@ publish() {
 	pizero2w="${DIST}/mmcore-console-pizero2w-v${version}.zip"
 	pi400="${DIST}/mmcore-console-pi400-v${version}.zip"
 	installer="${REPO_ROOT}/scripts/install-sdcard.sh"
+	macos="${DIST}/mmcore-macos-arm64.zip"
 
 	[ -x "${installer}" ] || die "missing ${installer}"
 	command -v gh >/dev/null 2>&1 || die "gh is not on PATH"
@@ -265,7 +292,17 @@ publish() {
 	assert_zip_has_installer "${pizero2w}"
 	assert_zip_has_installer "${pi400}"
 
-	notes="$(release_notes "${version}")"
+	if [ "$(uname -s)" = "Darwin" ] && [ "${MMCORE_SKIP_MACOS:-}" != "1" ]; then
+		log "Building macOS app bundle for ${tag}"
+		VERSION="${version}" bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+	fi
+	if [ -f "${macos}" ]; then
+		macos_arg=("${macos}")
+	else
+		log "No ${macos} — publishing without the macOS app"
+	fi
+
+	notes="$(release_notes "${version}" ${macos_arg[@]+"${macos_arg[@]}"})"
 	log "Creating annotated tag ${tag}"
 	git tag -a "${tag}" -m "mmcore ${tag}"
 	log "Pushing ${tag}"
@@ -279,7 +316,8 @@ publish() {
 		"${pizero2}" \
 		"${pizero2w}" \
 		"${pi400}" \
-		"${installer}"
+		"${installer}" \
+		${macos_arg[@]+"${macos_arg[@]}"}
 
 	log "Published ${tag}"
 	gh release view "${tag}"
@@ -313,7 +351,11 @@ case "${cmd}" in
 		;;
 	release-notes)
 		[ $# -eq 2 ] || die "release-notes needs VERSION (see --help)"
-		release_notes "$(normalize_version "$2")"
+		if [ -f "${DIST}/mmcore-macos-arm64.zip" ]; then
+			release_notes "$(normalize_version "$2")" "${DIST}/mmcore-macos-arm64.zip"
+		else
+			release_notes "$(normalize_version "$2")"
+		fi
 		;;
 	*)
 		die "unknown command: ${cmd} (see --help)"

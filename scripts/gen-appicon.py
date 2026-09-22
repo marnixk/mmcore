@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Generate a simple 256x256 PNG icon for the Linux AppImage.
+"""Generate the mmcore PNG icon.
 
 Stdlib only (zlib + struct) so CI needs no image tooling. Draws a dark blue
 tile with a white border and a white "M".
+
+Usage: gen-appicon.py OUT.png [SIZE]
+
+The artwork is designed on a 256x256 grid and scaled to SIZE (default 256), so
+macOS `.icns` sizes from 16 to 1024 render crisply without any image tooling.
 """
 import struct
 import sys
 import zlib
 
-W = H = 256
+DESIGN = 256
 BG = (30, 58, 138)
 FG = (255, 255, 255)
 
+W = H = int(sys.argv[2]) if len(sys.argv) > 2 else DESIGN
+S = W / DESIGN
+
 canvas = [[BG for _ in range(W)] for _ in range(H)]
+
+
+def sx(v):
+    return int(round(v * S))
 
 
 def put(x, y, color=FG):
@@ -21,12 +33,14 @@ def put(x, y, color=FG):
 
 
 def rect(x0, y0, x1, y1, color=BG):
+    x0, y0, x1, y1 = sx(x0), sx(y0), sx(x1), sx(y1)
     for y in range(max(0, y0), min(H, y1 + 1)):
         for x in range(max(0, x0), min(W, x1 + 1)):
             canvas[y][x] = color
 
 
 def thick_line(x0, y0, x1, y1, t, color=FG):
+    x0, y0, x1, y1, t = sx(x0), sx(y0), sx(x1), sx(y1), max(1, sx(t))
     steps = max(abs(x1 - x0), abs(y1 - y0), 1)
     for i in range(steps + 1):
         x = x0 + (x1 - x0) * i // steps
@@ -36,9 +50,9 @@ def thick_line(x0, y0, x1, y1, t, color=FG):
                 put(x + dx, y + dy, color)
 
 
-# White border.
-rect(0, 0, W - 1, H - 1, FG)
-rect(8, 8, W - 9, H - 9, BG)
+# White border (design coordinates; scaled by S).
+rect(0, 0, DESIGN - 1, DESIGN - 1, FG)
+rect(8, 8, DESIGN - 9, DESIGN - 9, BG)
 
 # "M": two verticals plus the middle V.
 thick_line(70, 196, 70, 76, 7)
