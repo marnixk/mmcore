@@ -190,6 +190,8 @@ int main(int argc, char **argv)
 		{
 			SDL_Delay(5);
 		}
+		if (mmb_take_quit())
+			break; /* QUIT: end the application */
 		sdl_video_present();
 	}
 

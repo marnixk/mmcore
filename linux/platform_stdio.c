@@ -98,6 +98,7 @@ static const mmb_platform stdio_plat = {
 	.alloc = stdio_alloc,
 	.free = stdio_free,
 	.millis = stdio_millis,
+	.can_quit = 1,
 };
 
 void mmb_platform_bind_stdio(void)

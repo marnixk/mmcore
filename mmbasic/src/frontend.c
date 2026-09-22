@@ -262,6 +262,14 @@ static void submit(void)
 	result = mmb_exec_line(s_line);
 	numbered = line_is_numbered(s_line);
 
+	if (mmb_quit_requested())
+	{
+		/* QUIT: the host loop is about to end; no prompt. */
+		s_len = 0;
+		s_pos = 0;
+		return;
+	}
+
 	if (mmb_in_editor())
 	{
 		if (result && result[0])

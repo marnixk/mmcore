@@ -47,6 +47,34 @@ def test_banner_and_immediate_print(mmb_linux):
     assert "> HELLO" in out
 
 
+def test_quit_ends_headless_repl(mmb_linux):
+    """QUIT at the prompt ends the headless app and drops later input."""
+    proc = subprocess.run(
+        [mmb_linux],
+        input='PRINT "BEFORE"\nQUIT\nPRINT "AFTER"\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "BEFORE" in out
+    assert "AFTER" not in out, "QUIT must not run the next line"
+
+
+def test_quit_stops_running_program(mmb_linux):
+    """QUIT inside RUN stops the program and ends the app."""
+    program = '10 PRINT "ONE"\n20 QUIT\n30 PRINT "TWO"\nRUN\n'
+    proc = subprocess.run(
+        [mmb_linux], input=program, text=True, capture_output=True, timeout=120
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "ONE" in out
+    assert "TWO" not in out
+
+
+
 def test_run_ramdisk_program(mmb_linux):
     out = _run(mmb_linux, 'RUN "A:/apps/HELLO.BAS"\n')
     assert "Hello from A:/apps/HELLO.BAS" in out
@@ -698,6 +726,25 @@ def test_sdl_backend_headless(mmb_linux):
     assert "MMBasic" in out
     assert "5" in out
     assert "HELLO" in out
+
+
+def test_quit_ends_sdl_app(mmb_linux):
+    """QUIT at the prompt closes the SDL app instead of returning a prompt."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+    proc = subprocess.run(
+        [SDL_BIN],
+        input='PRINT "BEFORE"\nQUIT\nPRINT "AFTER"\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "BEFORE" in out
+    assert "AFTER" not in out, "QUIT must end the SDL app"
 
 
 def _make_app(path):

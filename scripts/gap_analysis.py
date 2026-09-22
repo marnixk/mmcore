@@ -238,6 +238,7 @@ def _load_meta() -> None:
     _m("System and Options", "Sets persistent interpreter option values", "OPTION", "OPTIONS")
     _m("System and Options", "Restores factory default option values", "FACTORY_RESET", "FACTORY RESET", "FACTORY")
     _m("System and Options", "Reboots the host hardware machine", "REBOOT", "RESTART", "CPU")
+    _m("System and Options", "Closes the host MMBasic application", "QUIT")
     _m("System and Options", "Selects HDMI or jack audio", "AUDIO_TARGET", "AUDIO")
     _m("System and Options", "Configures immediate mode prompt format", "PROMPT")
     _m("System and Options", "Enables or disables Ethernet networking", "ETHERNET")
