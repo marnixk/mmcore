@@ -18,4 +18,10 @@ void sdl_input_pump(void);
 int sdl_input_alt_held(void);
 int sdl_input_ctrl_alt_held(void);
 
+/* Line-input capture: while an INPUT/OPTION prompt is blocked, route
+ * keystrokes to the raw inkey queue instead of the REPL line editor, which
+ * would otherwise swallow them. */
+void sdl_input_begin_line(void);
+void sdl_input_end_line(void);
+
 #endif
