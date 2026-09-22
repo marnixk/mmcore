@@ -1,3 +1,5 @@
+#include "win_compat.h"
+
 #include "cli.h"
 
 #include "storage_posix.h"

@@ -29,6 +29,10 @@ On macOS it also builds and attaches the arm64 app bundle:
   dist/mmcore-macos-arm64.zip   (scripts/package-macos-app.sh)
 The bundle is notarized + stapled; a failed notarization aborts the release.
 
+The Windows zip is built by CI (.github/workflows/windows.yml) when the release
+is published and attached as:
+  dist/mmcore-windows-x86_64.zip
+
 Environment:
   MMCORE_SKIP_MACOS=1   publish without building the macOS app
   SIGN_IDENTITY=...     codesign identity for the app bundle
@@ -185,8 +189,9 @@ print(f"mmcore v{version}")
 print()
 print("Bare-metal mmcore for Raspberry Pi. Each zip is a FAT-ready SD-card image")
 print("plus `install-sdcard.sh` for Linux, and native desktop builds are attached:")
-print("a Linux AppImage and an Apple Silicon macOS app." if macos_name else
-      "a Linux AppImage.")
+print("a Linux AppImage, a Windows x86_64 zip, and an Apple Silicon macOS app."
+      if macos_name else
+      "a Linux AppImage and a Windows x86_64 zip.")
 print()
 print("## Install")
 print()
@@ -215,6 +220,17 @@ print("chmod +x mmcore-x86_64.AppImage")
 print("./mmcore-x86_64.AppImage")
 print("```")
 print()
+print("## Windows native (x86_64)")
+print()
+print("Unzip and run `mmbasic-sdl.exe` from Explorer or a terminal; keep the")
+print("bundled `SDL2.dll` next to it (the SDL2 window shows output and keyboard")
+print("input):")
+print()
+print("```powershell")
+print("Expand-Archive mmcore-windows-x86_64.zip .")
+print(".\\mmcore-windows-x86_64\\mmbasic-sdl.exe")
+print("```")
+print()
 if macos_name:
     print("## macOS native (Apple Silicon)")
     print()
@@ -234,6 +250,7 @@ print(f"- `mmcore-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CY
 print(f"- `mmcore-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
 print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
+print("- `mmcore-windows-x86_64.zip` — Windows x86_64 native SDL2 build")
 if macos_name:
     print(f"- `{macos_name}` — macOS arm64 app bundle (mmcore.app)")
 print()

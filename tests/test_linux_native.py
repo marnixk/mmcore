@@ -1,6 +1,6 @@
 """LN-01 (#453): native host build boots and runs the interpreter.
 
-Builds ``linux/mmbasic`` (headless stdio platform) and checks the acceptance
+Builds ``native/mmbasic`` (headless stdio platform) and checks the acceptance
 behaviour: startup banner, immediate-mode PRINT, and RUN of a ramdisk .BAS.
 """
 import os
@@ -13,7 +13,7 @@ import zipfile
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(REPO, "linux", "mmbasic")
+BIN = os.path.join(REPO, "native", "mmbasic")
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cc") is None or shutil.which("make") is None,
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def mmb_linux():
     subprocess.run(
-        ["bash", os.path.join(REPO, "scripts", "build-linux.sh")],
+        ["bash", os.path.join(REPO, "scripts", "build-native.sh")],
         cwd=REPO,
         check=True,
         capture_output=True,
@@ -93,7 +93,7 @@ def test_runtime_and_host_resolution(mmb_linux):
 def test_sdl_integer_scale_viewport(tmp_path):
     """#498: the SDL viewport integer-scales, centres and letterboxes."""
     src = os.path.join(REPO, "tests", "sdl_scale_host.c")
-    impl = os.path.join(REPO, "linux", "sdl_scale.c")
+    impl = os.path.join(REPO, "native", "sdl_scale.c")
     exe = os.path.join(str(tmp_path), "sdl_scale_host")
     subprocess.run(
         [
@@ -102,7 +102,7 @@ def test_sdl_integer_scale_viewport(tmp_path):
             "-Wall",
             "-Werror",
             "-I",
-            os.path.join(REPO, "linux"),
+            os.path.join(REPO, "native"),
             "-o",
             exe,
             src,
@@ -137,7 +137,7 @@ def test_sdl_input_line_capture(tmp_path):
             "-Werror",
             "-DMMB_PLATFORM_POSIX",
             "-I",
-            os.path.join(REPO, "linux"),
+            os.path.join(REPO, "native"),
             "-I",
             os.path.join(REPO, "mmbasic", "include"),
             "-I",
@@ -148,7 +148,7 @@ def test_sdl_input_line_capture(tmp_path):
             "-o",
             exe,
             os.path.join(REPO, "tests", "sdl_input_host.c"),
-            os.path.join(REPO, "linux", "sdl_input.c"),
+            os.path.join(REPO, "native", "sdl_input.c"),
         ],
         check=True,
         cwd=REPO,
@@ -176,7 +176,7 @@ def test_sdl_console_writes_do_not_present_per_char(tmp_path):
             "-Werror",
             "-DMMB_PLATFORM_POSIX",
             "-I",
-            os.path.join(REPO, "linux"),
+            os.path.join(REPO, "native"),
             "-I",
             os.path.join(REPO, "mmbasic", "include"),
             "-I",
@@ -186,7 +186,7 @@ def test_sdl_console_writes_do_not_present_per_char(tmp_path):
             "-o",
             exe,
             os.path.join(REPO, "tests", "sdl_console_present_host.c"),
-            os.path.join(REPO, "linux", "sdl_console.c"),
+            os.path.join(REPO, "native", "sdl_console.c"),
         ],
         check=True,
         cwd=REPO,
@@ -286,7 +286,7 @@ def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
     assert "Mixed.TXT" in out
 
 
-SDL_BIN = os.path.join(REPO, "linux", "mmbasic-sdl")
+SDL_BIN = os.path.join(REPO, "native", "mmbasic-sdl")
 
 
 def _ppm_pixels(path):

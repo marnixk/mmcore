@@ -32,13 +32,15 @@ a submodule.
 | `mmbasic/` | Local MMBasic interpreter, commands, and vendored codecs |
 | `ramdisk/` | Versioned A: ramdisk seed tree, embedded at build time (see `ramdisk/README.md`) |
 | `console/` | Bare-metal console app (Circle kernel) hosting the interpreter |
-| `linux/` | Native Linux/macOS SDL2 backend (`mmbasic`, `mmbasic-sdl`) — see `docs/linux-native.md` |
+| `native/` | Native Linux/macOS/Windows SDL2 backend (`mmbasic`, `mmbasic-sdl`) — see `docs/native-desktop.md` |
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
-| `scripts/build-linux.sh` | Build the host-native (Linux/macOS) backend binaries |
-| `scripts/package-linux-appimage.sh` | Package `linux/mmbasic-sdl` as a Linux AppImage |
-| `scripts/package-macos-app.sh` | Package `linux/mmbasic-sdl` as a signed macOS `.app` (arm64) |
+| `scripts/build-native.sh` | Build the host-native (Linux/macOS) backend binaries |
+| `scripts/build-windows.sh` | Build the native Windows (MinGW-w64) backend binaries |
+| `scripts/package-linux-appimage.sh` | Package `native/mmbasic-sdl` as a Linux AppImage |
+| `scripts/package-macos-app.sh` | Package `native/mmbasic-sdl` as a signed macOS `.app` (arm64) |
+| `scripts/package-windows.sh` | Package `native/mmbasic-sdl.exe` and its DLLs as a Windows zip |
 | `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
@@ -78,13 +80,13 @@ sudo ./install-sdcard.sh --bootstrap --model pi400 /dev/sdX
 Type at HDMI with a USB keyboard (Pi 400: the built-in keyboard). Serial on
 GPIO 14/15 is optional.
 
-### Native Linux fast loop
+### Native desktop fast loop
 
-For day-to-day editing without QEMU, build the host-native binaries (Linux or
-macOS) and run the scoped tests:
+For day-to-day editing without QEMU, build the host-native binaries (Linux,
+macOS, or Windows) and run the scoped tests:
 
 ```bash
-scripts/build-linux.sh                                    # linux/mmbasic + linux/mmbasic-sdl
+scripts/build-native.sh                                    # native/mmbasic + native/mmbasic-sdl
 .venv/bin/python -m pytest tests/test_linux_native.py     # REPL, storage, SDL, TUIs, TCP
 ```
 
@@ -92,8 +94,11 @@ A prebuilt Linux x86_64 SDL AppImage is attached to the rolling `linux-native`
 pre-release: <https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage>.
 On Apple Silicon, `scripts/package-macos-app.sh` builds a signed `mmcore.app`
 bundle (`dist/mmcore-macos-arm64.zip`), also attached to normal releases.
-See [`docs/linux-native.md`](docs/linux-native.md) for the app-VM CLI (`.app`,
-`--term`), the Pi-vs-Linux matrix, and where to escalate to QEMU.
+`scripts/build-windows.sh` / `scripts/package-windows.sh` build a native
+Windows x86_64 zip (`dist/mmcore-windows-x86_64.zip`); CI attaches it to every
+release and to the rolling `windows-native` pre-release.
+See [`docs/native-desktop.md`](docs/native-desktop.md) for the app-VM CLI (`.app`,
+`--term`), the Pi-vs-native matrix, and where to escalate to QEMU.
 
 Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
 `C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores

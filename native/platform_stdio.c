@@ -68,6 +68,8 @@ static const char *stdio_runtime(void)
 {
 #ifdef __APPLE__
 	return "mac";
+#elif defined(_WIN32)
+	return "windows";
 #else
 	return "linux";
 #endif

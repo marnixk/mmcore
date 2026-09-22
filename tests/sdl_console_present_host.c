@@ -1,5 +1,5 @@
 /*
- * Host test for linux/sdl_console.c presentation.
+ * Host test for native/sdl_console.c presentation.
  *
  * Regression: the console used to call sdl_video_present() at the end of every
  * write. The front end edits a line one character at a time, so under

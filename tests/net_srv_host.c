@@ -1,4 +1,4 @@
-/* Host test for the POSIX TCP server contract (linux/net_posix.c).
+/* Host test for the POSIX TCP server contract (native/net_posix.c).
  *
  * Single process: listen, connect a client to it, accept, exchange bytes, and
  * check the non-blocking send/recv semantics the FTP server relies on.

@@ -1,5 +1,5 @@
 /*
- * Host test for linux/sdl_input.c keyboard routing.
+ * Host test for native/sdl_input.c keyboard routing.
  *
  * Regression: at a blocking INPUT prompt the window must keep receiving
  * keystrokes (they go to the raw inkey queue), instead of the front end

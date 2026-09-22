@@ -1,9 +1,9 @@
-# Linux native (SDL2) backend
+# Native desktop (SDL2) backend
 
 A native build of the same MMBasic interpreter that runs on the Raspberry Pi,
-using SDL2 for the window, keyboard, and audio. It is a second backend behind
-the existing `mmb_platform` contract, not a fork: language, graphics, commands,
-and tests live in `mmbasic/`.
+for Linux, macOS, and Windows, using SDL2 for the window, keyboard, and audio.
+It is a second backend behind the existing `mmb_platform` contract, not a fork:
+language, graphics, commands, and tests live in `mmbasic/`.
 
 ## Build
 
@@ -12,21 +12,49 @@ Requirements: a C toolchain, `make`, `pkg-config`, and SDL2 development files
 for the generated ramdisk/help/version sources.
 
 ```bash
-scripts/build-linux.sh
+scripts/build-native.sh
 ```
 
 Produces:
 
-- `linux/mmbasic` — headless stdio build (no SDL), useful for tests/automation.
-- `linux/mmbasic-sdl` — SDL2 windowed build.
+- `native/mmbasic` — headless stdio build (no SDL), useful for tests/automation.
+- `native/mmbasic-sdl` — SDL2 windowed build.
 
 Build with `CC`/`CFLAGS` overrides if needed:
-`scripts/build-linux.sh CC=gcc CFLAGS="-O0 -g"`.
+`scripts/build-native.sh CC=gcc CFLAGS="-O0 -g"`.
+
+## Windows
+
+The same native backend builds for Windows x86_64 with MinGW-w64. In the MSYS2
+MINGW64 shell:
+
+```bash
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 make zip
+scripts/build-windows.sh
+```
+
+That produces `native/mmbasic.exe` (headless) and `native/mmbasic-sdl.exe`
+(windowed, the one shipped in releases). A cross compiler works too:
+`SDL2_ROOT=/path/to/SDL2-devel-*-mingw/x86_64-w64-mingw32 scripts/build-windows.sh`.
+Winsock replaces the POSIX sockets backend and Wi-Fi radio features report
+unavailable, as on Linux.
+
+Package a distributable zip (the executable plus the `SDL2.dll` and
+`libwinpthread-1.dll` it loads) with:
+
+```bash
+scripts/package-windows.sh
+# -> dist/mmcore-windows-x86_64.zip
+```
+
+The `Windows build` GitHub Actions workflow runs this on `windows-latest` and
+attaches `mmcore-windows-x86_64.zip` to every published GitHub release. The
+persistent `C:` drive is `%USERPROFILE%\.mmbasic\C`.
 
 ## Run
 
 ```bash
-./linux/mmbasic-sdl
+./native/mmbasic-sdl
 ```
 
 A window opens; the interpreter REPL is shown in it. Type at the terminal (the
@@ -38,7 +66,7 @@ interactive terminal is not spammed with a second copy.
 - `Alt+Enter` at the prompt toggles fullscreen on the primary display. The
   graphics mode is integer-scaled and centred into the window/display, so the
   picture stays crisp with black bars filling any leftover area.
-- `MM.RUNTIME$` is `linux` or `mac`; on the Pi build it is `pi`.
+- `MM.RUNTIME$` is `linux`, `mac`, or `windows`; on the Pi build it is `pi`.
   `MM.HOST.HRES` / `MM.HOST.VRES` report the host window/display size, which
   can be larger than the mode the program selected.
 - `EDIT`, `FILES`, `WORDPAD`, `HELP`, `AFK`, and (with a network) `TERM` /
@@ -55,8 +83,8 @@ The native binaries also act as a simple VM for packaged `.APP` files and for
 TERM sessions, so the AppImage is a portable app runner:
 
 ```bash
-./linux/mmbasic-sdl /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
-./linux/mmbasic-sdl --term bbs.example.net    # sealed TERM session
+./native/mmbasic-sdl /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
+./native/mmbasic-sdl --term bbs.example.net    # sealed TERM session
 ```
 
 A positional argument that names an existing `.app` file mounts its host
@@ -66,7 +94,7 @@ starts TERM (default port 23; no host opens the disconnected menu) and exits
 when the session ends. Both modes are *sealed*: they never drop to the `> `
 prompt and swallow BREAK / Ctrl+C. Pass `--repl` (or `--stay`) to return to the
 interactive REPL instead, and a bare launch still opens the normal REPL. The
-headless `linux/mmbasic` accepts the same arguments.
+headless `native/mmbasic` accepts the same arguments.
 
 ## Storage
 
@@ -77,8 +105,8 @@ persistent drive: it always maps to `$MMB_DRIVE_ROOT/C` (default
 `--drive DIR`:
 
 ```bash
-./linux/mmbasic-sdl --drive /media/usb
-./linux/mmbasic --drive /media/usb 'DIR "D:/"'
+./native/mmbasic-sdl --drive /media/usb
+./native/mmbasic --drive /media/usb 'DIR "D:/"'
 ```
 
 The path is used as-is (absolute or relative), so the D: drive in MMBasic is
@@ -89,15 +117,15 @@ though the host filesystem may not be.
 
 ## Network
 
-TCP client and server are implemented over BSD sockets (`linux/net_posix.c`)
+TCP client and server are implemented over BSD sockets (`native/net_posix.c`)
 with the same non-blocking contracts as the Circle transport, so `OPEN
 "TCP:host:port"`, `CONNECT`, `TERM`, and the FTP server work. `IPCONFIG`
 reports the active interface via `getifaddrs`. Wi-Fi radio scan/join is out of
 scope on Linux; those options report unavailable.
 
-## AppImage / Linux vs Pi
+## Native desktop vs Pi
 
-| Area | Linux native / AppImage | Pi (Circle) |
+| Area | Native (Linux/AppImage) | Pi (Circle) |
 | --- | --- | --- |
 | Graphics | same language + software rasterisers; RGB555 stored, RGB565 SDL present | RGB555 HDMI-native; `SetArea` DMA present and double-buffered VSync flip on Pi ≤ 4 |
 | Audio | SDL2 (`PLAY TONE`/`MP3`/`MOD`/`XM`) | Circle HDMI / PWM audio |
@@ -115,19 +143,19 @@ the colour model matches; only the SDL present converts to RGB565. The Circle
 
 ## Development loop
 
-Use Linux native as the quick edit → build → test loop; escalate to QEMU only
-when the change touches bare-metal specifics (Circle drivers, HDMI/DMA, WLAN,
-SD-card FAT).
+Use the native build as the quick edit → build → test loop; escalate to QEMU
+only when the change touches bare-metal specifics (Circle drivers, HDMI/DMA,
+WLAN, SD-card FAT).
 
 ```bash
-scripts/build-linux.sh                                    # build both native binaries
+scripts/build-native.sh                                    # build both native binaries
 .venv/bin/python -m pytest tests/test_linux_native.py     # REPL, storage, SDL, TUI, TCP
 .venv/bin/python -m pytest tests/test_linux_net_srv.py    # POSIX TCP server (host loopback)
-scripts/linux-native-perf-check.sh                        # Pi-zero-overhead guard for the hot paths
+scripts/native-perf-check.sh                        # Pi-zero-overhead guard for the hot paths
 ```
 
-`tests/test_linux_native.py` builds `linux/mmbasic` itself and needs only a host
-`cc`/`make`; SDL tests skip when `linux/mmbasic-sdl` was not built (no SDL2 dev
+`tests/test_linux_native.py` builds `native/mmbasic` itself and needs only a host
+`cc`/`make`; SDL tests skip when `native/mmbasic-sdl` was not built (no SDL2 dev
 headers), and golden-image tests skip without ImageMagick. Escalate with
 `scripts/build.sh` (needs the `aarch64-none-elf` cross-toolchain) followed by a
 full `.venv/bin/python -m pytest`; the QEMU suite has no toolchain guard, so it
@@ -136,10 +164,10 @@ missing.
 
 ## AppImage
 
-`.github/workflows/linux-appimage.yml` builds `linux/mmbasic-sdl` on
+`.github/workflows/linux-appimage.yml` builds `native/mmbasic-sdl` on
 `ubuntu-22.04` and packages it with `linuxdeploy` + `appimagetool`, then
 attaches it to the rolling `linux-native` pre-release. The AppImage is **Linux
-x86_64 only**; `scripts/build-linux.sh` itself also builds on macOS.
+x86_64 only**; `scripts/build-native.sh` itself also builds on macOS.
 
 ```
 https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage

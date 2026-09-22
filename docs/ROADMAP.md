@@ -31,7 +31,7 @@ greenfield.
 | Filesystem (`A:` ramdisk, `C:` SD, USB drives), `PACKAGE` / `.APP` | done |
 | Audio (`PLAY MP3/MOD/XM/TONE`) | done |
 | Networking (Wi-Fi, Ethernet, TCP, `TERM`, `CONNECT`, FTP server) | done |
-| Native Linux backend (`linux/mmbasic`, `mmbasic-sdl`, AppImage) | done; hardening open (#486) |
+| Native desktop backend (`native/mmbasic`, `mmbasic-sdl`, AppImage/Windows zip) | done; hardening open (#486) |
 | AppImage/CLI app-VM launch of `.APP` and `TERM` | open (#490, #491) |
 
 Priorities:
@@ -98,9 +98,9 @@ The [QEMU harness](../harness/qemu_harness.py) boots the kernel under
 
 Each CMM2 graphics command has tests that draw a known figure and assert on
 pixels and/or a golden frame. The suite in `tests/` also covers the language
-surface, files, audio codecs, networking, TUIs, and the native Linux backend
+surface, files, audio codecs, networking, TUIs, and the native backend
 (`tests/test_linux_native.py`). Run it with `.venv/bin/python -m pytest` (see
-[`linux-native.md`](linux-native.md) for the host-native fast loop).
+[`native-desktop.md`](native-desktop.md) for the host-native fast loop).
 
 ## Milestones
 

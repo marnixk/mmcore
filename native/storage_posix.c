@@ -12,6 +12,8 @@
  * filesystem is case-sensitive, so every lookup resolves path components by
  * scanning the parent directory (case-insensitively) before use.
  */
+#include "win_compat.h"
+
 #include "mmb_priv.h"
 #include "storage_posix.h"
 

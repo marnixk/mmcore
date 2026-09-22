@@ -29,8 +29,8 @@ log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
 log "Version ${VERSION}"
 log "Building native SDL binary"
-"${REPO_ROOT}/scripts/build-linux.sh"
-BIN="${REPO_ROOT}/linux/mmbasic-sdl"
+"${REPO_ROOT}/scripts/build-native.sh"
+BIN="${REPO_ROOT}/native/mmbasic-sdl"
 [ -x "${BIN}" ] || { echo "error: ${BIN} not built (SDL2 dev headers missing?)" >&2; exit 1; }
 
 log "Staging AppDir"
