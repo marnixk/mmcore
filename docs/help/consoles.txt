@@ -1,0 +1,40 @@
+name: CONSOLES
+kind: page
+
+Virtual consoles let one Raspberry Pi host several independent MMBasic
+sessions. Switch with Ctrl+Alt+F1 through Ctrl+Alt+F4; the active console is
+the one whose screen is shown.
+
+Each console keeps its own interpreter state, so programs and variables do not
+leak between them. A console also keeps its own input line and command history,
+and its own screen: what you drew or printed on one console is still there when
+you come back.
+
+Opening a console
+  Ctrl+Alt+F1   first console (the one shown at boot)
+  Ctrl+Alt+F2   second console
+  Ctrl+Alt+F3   third console
+  Ctrl+Alt+F4   fourth console
+
+A console that has not been used yet starts with the MMBasic banner and a
+prompt, just like a fresh boot.
+
+Running programs
+  A program started with ~RUN~ keeps running while its console is shown.
+  Switching away stops it at the next statement boundary and saves it. Switch
+  back and it continues from where it stopped instead of restarting from the
+  top.
+
+Full-screen apps
+  The ~EDIT~ editor, ~FILES~, ~WORDPAD~ and ~TERM~ belong to the console that
+  started them, and their screen and state survive a switch. You can leave the
+  editor open on one console, connect with TERM on another, and keep a
+  calculator session on a third.
+
+Notes
+  Only one instance of each full-screen app can be open at a time, and there
+  is one network connection, so keep a single TERM session open and use the
+  other consoles for editing and the prompt. ~FILES~ and ~WORDPAD~ views are
+  per console but their working files are shared on the disk.
+
+See ~RUN~, ~EDIT~, ~FILES~, ~WORDPAD~ and ~TERM~.

@@ -411,6 +411,8 @@ static const mmb_platform sdl_plat = {
 	.tui_glyph_n_px = sdl_tui_glyph_n_px,
 	.tui_fill_px = sdl_tui_fill_px,
 	.tui_set_font = sdl_tui_set_font,
+	.console_save = sdl_console_save,
+	.console_restore = sdl_console_restore,
 };
 
 void mmb_platform_bind_sdl(void)

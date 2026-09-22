@@ -113,7 +113,8 @@ typedef struct {
 	wp_vrow vrows[WP_MAX_VR];
 } wp_state;
 
-static wp_state W;
+static wp_state W_s[MMB_MAX_CONSOLES];
+#define W (W_s[g_console])
 static wp_doc docs[WP_DOCS];
 static char pick_path[WP_PICK_MAX][128];
 static char pick_root[128];

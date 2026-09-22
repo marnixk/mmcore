@@ -342,6 +342,7 @@ typedef struct mmb {
 	int nprog;
 	char current_prog[MMB_PROG_NAME];
 	int running;
+	int run_suspended;      /* virtual-console switch suspended RUN */
 	int for_sp;
 	struct {
 		char var[MMB_MAX_NAME];
@@ -452,9 +453,32 @@ typedef struct mmb {
 		unsigned tcache_comp;
 		unsigned tcache_bad;
 	} prof;
+	/* Per-console interpreter run state (formerly file statics in core.c)
+	 * so multiple interpreter contexts can suspend and resume. */
+	int jmp_wend[MMB_MAX_LINES];
+	int jmp_loop[MMB_MAX_LINES];
+	int jmp_next[MMB_MAX_LINES];
+	int jmp_endsub[MMB_MAX_LINES];
+	int jmp_else[MMB_MAX_LINES];
+	int jmp_endif[MMB_MAX_LINES];
+	int jmp_endsel[MMB_MAX_LINES];
+	int jmp_ready;
+	int run_preserve_vars;
 } mmb;
 
-extern mmb G;
+/* Virtual consoles: one interpreter context per console. The active context
+ * is selected by the session manager, so all existing interpreter code keeps
+ * using G unchanged. Contexts are heap-allocated (each is ~2 MB) to stay
+ * inside Circle's kernel BSS budget. MMB_MAX_CONSOLES lives in mmbasic.h. */
+extern mmb *g_mmb[MMB_MAX_CONSOLES];
+extern mmb *g_cur;
+extern int g_console;
+#define G (*g_cur)
+
+/* Virtual-console suspension handshake (session.c / core.c). */
+int mmb_console_switch_pending(void);
+int mmb_program_suspended(void);
+void mmb_resume_program(void);
 
 void mmb_error(const char *msg);
 void mmb_syntax(void);

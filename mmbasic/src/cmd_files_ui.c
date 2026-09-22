@@ -77,7 +77,8 @@ typedef struct {
 	int an_saved_bits;
 } fu_state;
 
-static fu_state F;
+static fu_state F_s[MMB_MAX_CONSOLES];
+#define F (F_s[g_console])
 
 typedef struct {
 	unsigned char ch;

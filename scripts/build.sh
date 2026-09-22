@@ -83,6 +83,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-usb-cdc-rx.patch"
 fi
 
+if grep -q 'mmbasic-console-state' "${CIRCLE_DIR}/include/circle/terminal.h" 2>/dev/null; then
+	:
+else
+	log "Applying Circle text-console snapshot/restore patches (virtual consoles)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-console-state.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

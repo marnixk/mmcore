@@ -38,7 +38,8 @@ typedef struct {
 	int menu;
 } cn_state;
 
-static cn_state C;
+static cn_state C_s[MMB_MAX_CONSOLES];
+#define C (C_s[g_console])
 
 static void emit_scr(const char *s, unsigned n)
 {

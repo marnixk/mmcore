@@ -16,6 +16,7 @@
 
 #include "mmb_priv.h"
 #include "frontend.h"
+#include "session.h"
 #include "cli.h"
 #include "sdl_video.h"
 #include "sdl_input.h"
@@ -127,6 +128,7 @@ int main(int argc, char **argv)
 	mmb_platform_bind_sdl();
 	SDL_StartTextInput();
 	mmb_front_init(front_emit, 0);
+	mmb_console_init();
 	if (sealed)
 	{
 		mmb_front_set_sealed(1);
@@ -181,6 +183,7 @@ int main(int argc, char **argv)
 	{
 		sdl_input_pump();
 		mmb_poll(); /* CONNECT/TERM/FTP, audio mix, ON TICK at the prompt */
+		mmb_console_poll();
 
 		if (term_mode && !mmb_in_term())
 			break; /* sealed TERM session ended */

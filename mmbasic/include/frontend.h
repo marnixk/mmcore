@@ -18,6 +18,9 @@ typedef void (*mmb_front_emit_fn)(void *ctx, const char *s, unsigned n);
 /* Bind the output sink (serial + screen, as the backend defines it). */
 void mmb_front_init(mmb_front_emit_fn emit, void *ctx);
 
+/* Point the line editor at another virtual console's state (0-based). */
+void mmb_front_select(int idx);
+
 /* Feed console bytes (ESC sequences and 0x01-prefixed Alt in included). */
 void mmb_front_feed(const char *s, unsigned n);
 void mmb_front_feed_byte(char c);

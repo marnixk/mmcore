@@ -5,7 +5,8 @@
 #define MMB_VERSION "dev"
 #endif
 
-mmb G;
+mmb *g_mmb[MMB_MAX_CONSOLES];
+mmb *g_cur;
 
 void mmb_skip_sp(void)
 {

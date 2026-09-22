@@ -1356,6 +1356,124 @@ static int plat_dma_copy2d(void *dst, const void *src, unsigned block_len,
 #endif
 }
 
+/* ---- virtual console screen snapshots (mmbasic-console-state) ---------- */
+
+static u8 *s_console_buf[MMB_MAX_CONSOLES];
+static unsigned s_console_size[MMB_MAX_CONSOLES];
+static unsigned s_console_cx[MMB_MAX_CONSOLES];
+static unsigned s_console_cy[MMB_MAX_CONSOLES];
+static int s_console_saved[MMB_MAX_CONSOLES];
+
+/* Visible-framebuffer snapshot: covers TUI and graphics output too. */
+static u8 *s_console_fb[MMB_MAX_CONSOLES];
+static unsigned s_console_fb_size[MMB_MAX_CONSOLES];
+static unsigned s_console_fb_pitch[MMB_MAX_CONSOLES];
+static unsigned s_console_fb_rows[MMB_MAX_CONSOLES];
+
+/* TUI offscreen snapshot (only for a console hosting a full-screen app). */
+static u8 *s_console_tui[MMB_MAX_CONSOLES];
+static unsigned s_console_tui_size[MMB_MAX_CONSOLES];
+
+static u8 *console_alloc(u8 **slot, unsigned *cap, unsigned need)
+{
+	if (*slot && *cap >= need)
+		return *slot;
+	if (*slot)
+		free(*slot);
+	*slot = (u8 *)malloc(need);
+	*cap = *slot ? need : 0;
+	return *slot;
+}
+
+static int plat_console_save(int slot, int tui)
+{
+	CTerminalDevice *term;
+	CBcmFrameBuffer *fb;
+	unsigned need, pitch, rows, off;
+
+	if (!s_kernel || slot < 0 || slot >= MMB_MAX_CONSOLES)
+		return 0;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return 0;
+	need = term->GetConsoleBufferSize();
+	if (need == 0)
+		return 0;
+	if (!console_alloc(&s_console_buf[slot], &s_console_size[slot], need))
+		return 0;
+	if (s_console_size[slot] < need)
+		return 0;
+	term->SaveConsole(s_console_buf[slot], &s_console_cx[slot],
+			  &s_console_cy[slot]);
+	s_console_saved[slot] = 1;
+
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (fb)
+	{
+		pitch = fb->GetPitch();
+		rows = fb->GetHeight();
+		off = fb->GetDrawOffsetY();
+		need = pitch * rows;
+		if (off + rows > fb->GetVirtHeight())
+			need = 0;
+		if (need && console_alloc(&s_console_fb[slot],
+					  &s_console_fb_size[slot], need))
+		{
+			memcpy(s_console_fb[slot],
+			       (u8 *)(uintptr)fb->GetBuffer() + (size_t)off * pitch,
+			       need);
+			s_console_fb_pitch[slot] = pitch;
+			s_console_fb_rows[slot] = rows;
+		}
+	}
+
+	if (tui && s_tui_pix)
+	{
+		need = s_tui_h * s_tui_pitch;
+		if (need && console_alloc(&s_console_tui[slot],
+					  &s_console_tui_size[slot], need))
+			memcpy(s_console_tui[slot], s_tui_pix, need);
+	}
+	return 1;
+}
+
+static int plat_console_restore(int slot, int tui)
+{
+	CTerminalDevice *term;
+	CBcmFrameBuffer *fb;
+
+	if (!s_kernel || slot < 0 || slot >= MMB_MAX_CONSOLES)
+		return 0;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return 0;
+
+	if (!s_console_saved[slot] || !s_console_buf[slot] ||
+	    s_console_size[slot] != term->GetConsoleBufferSize())
+	{
+		term->Write("\x1b[H\x1b[2J", 7);
+		return 1;
+	}
+
+	term->RestoreConsole(s_console_buf[slot], s_console_cx[slot],
+			     s_console_cy[slot]);
+
+	if (tui && s_tui_pix && s_console_tui[slot] &&
+	    s_console_tui_size[slot] == s_tui_h * s_tui_pitch)
+		memcpy(s_tui_pix, s_console_tui[slot], s_console_tui_size[slot]);
+
+	fb = s_kernel->Screen().GetFrameBuffer();
+	if (fb && s_console_fb[slot] &&
+	    s_console_fb_pitch[slot] == fb->GetPitch() &&
+	    s_console_fb_rows[slot] == fb->GetHeight())
+	{
+		unsigned off = fb->GetDrawOffsetY();
+		memcpy((u8 *)(uintptr)fb->GetBuffer() + (size_t)off * fb->GetPitch(),
+		       s_console_fb[slot], s_console_fb_size[slot]);
+	}
+	return 1;
+}
+
 void mmb_platform_bind(CKernel *k)
 {
 	static mmb_platform plat;
@@ -1414,6 +1532,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.wait_vsync = plat_wait_vsync;
 	plat.dma_copy = plat_dma_copy;
 	plat.dma_copy2d = plat_dma_copy2d;
+	plat.console_save = plat_console_save;
+	plat.console_restore = plat_console_restore;
 	audio_init();
 	mmb_init(&plat);
 }

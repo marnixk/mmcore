@@ -32,7 +32,8 @@ static struct {
 	int front;
 	unsigned last_ms;
 	unsigned rng;
-} A;
+} A_s[MMB_MAX_CONSOLES];
+#define A (A_s[g_console])
 
 static unsigned afk_rand(void)
 {

@@ -9,15 +9,33 @@
 static mmb_front_emit_fn s_emit;
 static void *s_ctx;
 
-static char s_line[FE_LINE_MAX];
-static unsigned s_len, s_pos;
-static char s_hist[FE_HIST_MAX][FE_LINE_MAX];
-static unsigned s_hist_n;
-static int s_hist_idx;
-static char s_draft[FE_LINE_MAX];
-static int s_esc;    /* 0 idle, 1 ESC, 2 CSI, 3 SS3 */
-static int s_csi_arg;
-static int s_sealed;
+/* Line editor state is per console so each virtual console keeps its own
+ * input line, cursor, and history. */
+typedef struct fe_state {
+	char line[FE_LINE_MAX];
+	unsigned len, pos;
+	char hist[FE_HIST_MAX][FE_LINE_MAX];
+	unsigned hist_n;
+	int hist_idx;
+	char draft[FE_LINE_MAX];
+	int esc;    /* 0 idle, 1 ESC, 2 CSI, 3 SS3 */
+	int csi_arg;
+	int sealed;
+} fe_state;
+
+static fe_state s_fe[MMB_MAX_CONSOLES];
+static int s_active;
+
+#define s_line    (s_fe[s_active].line)
+#define s_len     (s_fe[s_active].len)
+#define s_pos     (s_fe[s_active].pos)
+#define s_hist    (s_fe[s_active].hist)
+#define s_hist_n  (s_fe[s_active].hist_n)
+#define s_hist_idx (s_fe[s_active].hist_idx)
+#define s_draft   (s_fe[s_active].draft)
+#define s_esc     (s_fe[s_active].esc)
+#define s_csi_arg (s_fe[s_active].csi_arg)
+#define s_sealed  (s_fe[s_active].sealed)
 
 static void fe_emit(const char *s, unsigned n)
 {
@@ -270,6 +288,15 @@ static void submit(void)
 		return;
 	}
 
+	if (mmb_program_suspended())
+	{
+		/* A virtual-console switch stopped RUN at a line boundary; the host
+		 * loop performs the switch, so do not paint a prompt here. */
+		s_len = 0;
+		s_pos = 0;
+		return;
+	}
+
 	if (mmb_in_editor())
 	{
 		if (result && result[0])
@@ -467,13 +494,20 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx)
 {
 	s_emit = emit;
 	s_ctx = ctx;
-	s_len = 0;
-	s_pos = 0;
-	s_hist_n = 0;
-	s_hist_idx = -1;
-	s_esc = 0;
-	s_csi_arg = 0;
-	s_line[0] = '\0';
+	memset(s_fe, 0, sizeof(s_fe));
+	s_active = 0;
+	s_fe[0].hist_idx = -1;
+	s_fe[0].line[0] = '\0';
+}
+
+/* Select which console's line editor receives keystrokes. */
+void mmb_front_select(int idx)
+{
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	s_active = idx;
+	if (s_fe[idx].hist_idx < -1 || s_fe[idx].hist_idx >= (int)s_fe[idx].hist_n)
+		s_fe[idx].hist_idx = -1;
 }
 
 void mmb_front_prompt(void)
