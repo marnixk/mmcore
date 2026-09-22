@@ -27,11 +27,15 @@ publish builds board images with scripts/package-release.sh, then uploads:
 
 On macOS it also builds and attaches the arm64 app bundle:
   dist/mmcore-macos-arm64.zip   (scripts/package-macos-app.sh)
+The bundle is notarized + stapled; a failed notarization aborts the release.
 
 Environment:
   MMCORE_SKIP_MACOS=1   publish without building the macOS app
   SIGN_IDENTITY=...     codesign identity for the app bundle
   NOTARY_PROFILE=...    notarytool profile to notarize the app bundle
+                        (default: mmcore-notary). The macOS asset is always
+                        notarized + stapled and the release fails if that does
+                        not succeed, so an unnotarized app cannot ship.
 
 Each zip also contains install-sdcard.sh so a consumer can:
 
@@ -294,7 +298,8 @@ publish() {
 
 	if [ "$(uname -s)" = "Darwin" ] && [ "${MMCORE_SKIP_MACOS:-}" != "1" ]; then
 		log "Building macOS app bundle for ${tag}"
-		VERSION="${version}" bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
+			bash "${REPO_ROOT}/scripts/package-macos-app.sh"
 	fi
 	if [ -f "${macos}" ]; then
 		macos_arg=("${macos}")

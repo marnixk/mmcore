@@ -52,6 +52,11 @@ def test_package_and_release_scripts_name_zero2_zips():
     assert pkg.find("package_pizero2") < pkg.find("build_hardware 4")
 
 
+def test_release_build_requires_notarized_macos_app():
+    rel = open(os.path.join(SCRIPTS, "github-release.sh"), encoding="utf-8").read()
+    assert "MMCORE_REQUIRE_NOTARY=1" in rel
+
+
 def test_release_notes_list_zero2_artifacts():
     notes = _run([os.path.join(SCRIPTS, "github-release.sh"), "release-notes", "9.9.9"]).stdout
     assert "mmcore-console-pizero2-v9.9.9.zip" in notes

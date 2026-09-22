@@ -73,9 +73,11 @@ That script:
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
 3. On macOS, runs `scripts/package-macos-app.sh` and packages the native SDL2
    binary as a signed `mmcore.app`, attached as `dist/mmcore-macos-arm64.zip`.
-   Set `MMCORE_SKIP_MACOS=1` to skip it. Signing uses a Developer ID certificate
-   when one is in the keychain (else Apple Development, else ad-hoc); set
-   `NOTARY_PROFILE` to notarize + staple.
+   Set `MMCORE_SKIP_MACOS=1` to skip it. The build sets
+   `MMCORE_REQUIRE_NOTARY=1`: the bundle **must** be notarized + stapled, using
+   the `mmcore-notary` keychain profile by default (override with
+   `NOTARY_PROFILE`). If notarization or stapling fails the release aborts, so
+   an unnotarized app cannot ship unnoticed.
 4. Creates annotated tag `vVERSION` and pushes it to `origin`.
 5. Creates the GitHub release with the zips, the macOS app (when built), **and**
    a top-level `install-sdcard.sh` asset.

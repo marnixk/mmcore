@@ -176,7 +176,12 @@ SIGN_IDENTITY="Developer ID Application: ..." \
 ```
 
 `NOTARY_PROFILE` is a `notarytool` keychain profile created with
-`xcrun notarytool store-credentials`; when set, the bundle is notarized and
-stapled. `scripts/github-release.sh publish` builds and attaches the zip on
-macOS automatically (skip with `MMCORE_SKIP_MACOS=1`).
+`xcrun notarytool store-credentials`. Passing it notarizes and staples the
+bundle; `scripts/github-release.sh publish` sets `MMCORE_REQUIRE_NOTARY=1`, which
+makes notarization mandatory and defaults the profile to `mmcore-notary`, so a
+release aborts if notarization or stapling fails. An unnotarized app therefore
+cannot ship unnoticed. For a local build without a Developer ID, sign ad-hoc
+(the default) and leave `NOTARY_PROFILE` unset; the mandatory default only
+applies to release builds. `scripts/github-release.sh publish` builds and
+attaches the zip on macOS automatically (skip with `MMCORE_SKIP_MACOS=1`).
 

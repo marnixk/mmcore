@@ -900,3 +900,27 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
         env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
     )
     assert "MACOS_BUNDLE_OK" in (proc.stdout + proc.stderr)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="macOS app packaging needs darwin",
+)
+def test_macos_release_requires_notarization(tmp_path):
+    """A release build must refuse to produce an unnotarized bundle."""
+    env = dict(
+        os.environ,
+        DIST=str(tmp_path / "dist"),
+        MMCORE_REQUIRE_NOTARY="1",
+        MMCORE_SKIP_SIGN="1",
+        VERSION="9.9.9",
+    )
+    proc = subprocess.run(
+        ["bash", os.path.join(REPO, "scripts", "package-macos-app.sh")],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "NOTARY" in (proc.stdout + proc.stderr).upper()
