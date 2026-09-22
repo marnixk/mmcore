@@ -57,7 +57,9 @@ OBJDUMP="${OBJDUMP:-$(command -v "${CC%-gcc}-objdump" || command -v objdump || t
 
 # Locate a runtime DLL. GCC's -print-prog-name works for a Homebrew cross
 # toolchain, but MSYS2 returns the bare name, so also look beside the compiler
-# and under the MINGW prefix.
+# and under the MINGW prefix. Only toolchain directories are searched: a PATH
+# lookup would match the Windows system DLLs (kernel32, ntdll, ...) and copy
+# them into the zip.
 find_dll() {
 	local name="$1" p
 	for p in \
@@ -65,12 +67,14 @@ find_dll() {
 		"$(dirname "$(command -v "${CC}" 2>/dev/null || true)")/${name}" \
 		"${MINGW_PREFIX:-}/bin/${name}" \
 		"/mingw64/bin/${name}" \
-		"/clang64/bin/${name}" \
-		"$(command -v "${name}" 2>/dev/null || true)"; do
-		[ -n "${p}" ] && [ -f "${p}" ] && {
-			printf '%s\n' "${p}"
-			return 0
-		}
+		"/clang64/bin/${name}"; do
+		[ -n "${p}" ] && [ -f "${p}" ] || continue
+		case "$(printf '%s' "${p}" | tr 'A-Z' 'a-z')" in
+		*/windows/system32/* | */windows/syswow64/* | */windows/winsxs/*)
+			continue ;; # never ship an OS DLL
+		esac
+		printf '%s\n' "${p}"
+		return 0
 	done
 	return 1
 }
