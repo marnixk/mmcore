@@ -1029,7 +1029,17 @@ static void term_present_async_rect(int x, int y, int w, int h)
 		G.plat->term_present_async(x, y, w, h, pg + y * bw + x, bw);
 		return;
 	}
-	mmb_gfx_present_rect(x, y, w, h);
+	/* Platforms without async DMA present through the generic path, which
+	 * sources G.gfx.display_page. TERM paints into TM_PAGE but leaves
+	 * display_page on the console page, so switch it for the present or the
+	 * window shows the stale console page instead of the session. */
+	{
+		int saved_display = G.gfx.display_page;
+
+		G.gfx.display_page = TM_PAGE;
+		mmb_gfx_present_rect(x, y, w, h);
+		G.gfx.display_page = saved_display;
+	}
 }
 
 static void term_present_drain(void)
