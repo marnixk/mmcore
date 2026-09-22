@@ -33,9 +33,14 @@ and asks before building; default is a **minor** bump). Draining the GitHub
 issue tracker: run the `issue-loop` skill (implement ready issues one at a
 time, scoped tests, merge each to `master`, then one minor release at the end;
 skip issues marked **not ready** in the title, a label, or the description, and
-file out-of-scope bugs as `follow-up` tickets instead of fixing them). Wrapping
-up a single finished branch: run the `issue-done` skill (commit outstanding
-changes, open and merge a PR into `master`, then cut one minor release).
+file out-of-scope bugs as `follow-up` tickets instead of fixing them). To drain
+the tracker in parallel, run the `issue-loop-parallel` skill instead: bundle
+issues that share a test area, fan out one worker thread/worktree per bundle to
+implement and open PRs, and keep merges plus the single minor release serial in
+one coordinator thread (the full suite runs only once, before the release).
+Wrapping up a single finished branch: run the `issue-done` skill (commit
+outstanding changes, open and merge a PR into `master`, then cut one minor
+release).
 
 ## Decisions
 
