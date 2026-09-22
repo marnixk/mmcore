@@ -475,6 +475,18 @@ def test_string_functions(console):
     assert console.send_line("PRINT MM.DEVICE$") == "Colour Maximite 2"
 
 
+def test_runtime_and_host_resolution(console):
+    """#498: MM.RUNTIME names the build; MM.HOST.* mirror the HDMI size."""
+    assert console.send_line("PRINT MM.RUNTIME$") == "pi"
+    assert console.send_line("PRINT MM.RUNTIME") == "pi"
+    assert console.send_line("PRINT MM.HOST.HRES") == console.send_line(
+        "PRINT MM.HRES"
+    )
+    assert console.send_line("PRINT MM.HOST.VRES") == console.send_line(
+        "PRINT MM.VRES"
+    )
+
+
 def test_option_list_shows_settings(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("OPTION RESET") == ""

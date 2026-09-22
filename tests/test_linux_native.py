@@ -52,6 +52,41 @@ def test_run_ramdisk_program(mmb_linux):
     assert "Hello from A:/apps/HELLO.BAS" in out
 
 
+def test_runtime_and_host_resolution(mmb_linux):
+    """#498: MM.RUNTIME names the native host; MM.HOST.* are its drawable."""
+    native = "mac" if sys.platform == "darwin" else "linux"
+    out = _run(mmb_linux, "PRINT MM.RUNTIME$\nPRINT MM.RUNTIME\n")
+    assert out.count(native) >= 2, out
+    assert "?SYNTAX" not in out and "ERROR" not in out.upper()
+    out = _run(mmb_linux, "PRINT MM.HOST.HRES, MM.HOST.VRES\n")
+    assert "640" in out and "480" in out, out
+
+
+def test_sdl_integer_scale_viewport(tmp_path):
+    """#498: the SDL viewport integer-scales, centres and letterboxes."""
+    src = os.path.join(REPO, "tests", "sdl_scale_host.c")
+    impl = os.path.join(REPO, "linux", "sdl_scale.c")
+    exe = os.path.join(str(tmp_path), "sdl_scale_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "linux"),
+            "-o",
+            exe,
+            src,
+            impl,
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run([exe], check=True, capture_output=True, text=True)
+    assert "all checks passed" in out.stdout
+
+
 def _run_env(binary, text, env):
     proc = subprocess.run(
         [binary], input=text, text=True, capture_output=True, timeout=120, env=env

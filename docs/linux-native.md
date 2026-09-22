@@ -35,7 +35,12 @@ in the window; the serial stream is only mirrored to stdout when it is not a
 TTY (pipes, automation, `MMB_SDL_DUMP`) or when `MMB_SDL_SERIAL=1` is set, so an
 interactive terminal is not spammed with a second copy.
 
-- `Alt+Enter` at the prompt toggles fullscreen on the primary display.
+- `Alt+Enter` at the prompt toggles fullscreen on the primary display. The
+  graphics mode is integer-scaled and centred into the window/display, so the
+  picture stays crisp with black bars filling any leftover area.
+- `MM.RUNTIME$` is `linux` or `mac`; on the Pi build it is `pi`.
+  `MM.HOST.HRES` / `MM.HOST.VRES` report the host window/display size, which
+  can be larger than the mode the program selected.
 - `EDIT`, `FILES`, `WORDPAD`, `HELP`, `AFK`, and (with a network) `TERM` /
   `CONNECT` take over the screen; the REPL returns on exit.
 - Launched from a desktop entry (`Terminal=false`), stdin is `/dev/null`, which

@@ -432,3 +432,12 @@ def test_help_mm_hres_vres_topics(console):
     assert "MM.VRES" in vres
     assert "height" in vres.lower()
 
+
+def test_help_mm_host_and_runtime_topics(console):
+    host = dump_topic(console, "MM.HOST.HRES")
+    assert "MM.HOST.HRES" in host
+    assert "host" in host.lower()
+    runtime = dump_topic(console, "MM.RUNTIME")
+    assert "MM.RUNTIME" in runtime
+    assert "pi" in runtime and "linux" in runtime and "mac" in runtime
+

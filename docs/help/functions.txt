@@ -27,7 +27,7 @@ Math: ABS INT FIX CINT SQR/SQRT SIN COS TAN ATN/ATAN ATN2/ATAN2 ACOS ASIN RND SG
   ATN2(y,x) / ATAN2(y,x) return the angle of (x,y) with quadrant.
 
 Graphics: RGB(r,g,b)|RGB("NAME")  PIXEL(x,y)  THEME(name$)
-  MM.HRES MM.VRES MM.HPOS MM.VPOS MM.INFO(MODE)
+  MM.HRES MM.VRES MM.HOST.HRES MM.HOST.VRES MM.HPOS MM.VPOS MM.INFO(MODE)
   THEME(name$) returns an active editor theme colour; see ~THEME~.
 
 Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)
@@ -37,7 +37,7 @@ Files: EOF(#n) LOF(#n) LOC(#n) CWD$ INPUT$(nbr,#n)
 
 Other: PLAYING() DATE$ TIME$ TIMER POS CSRLIN
   POS is the 1-based console column, CSRLIN the 1-based console row.
-  MM.VER MM.DEVICE$ MM.CMDLINE$
+  MM.VER MM.DEVICE$ MM.CMDLINE$ MM.RUNTIME$
   STRUCT() SIZEOF|OFFSET|TYPE|FIND
   JSON$(json$, path$)
   JSON_STRINGIFY$(var)

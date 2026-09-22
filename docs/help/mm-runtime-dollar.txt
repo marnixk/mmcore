@@ -1,0 +1,25 @@
+name: MM.RUNTIME$
+kind: command
+alias: MM.RUNTIME
+
+Return the name of the runtime the program is running on, so a program can
+behave differently where needed.
+
+name$ = MM.RUNTIME$
+name$ = MM.RUNTIME
+
+  "pi"    - bare-metal Raspberry Pi build (Circle)
+  "linux" - Linux native and AppImage build
+  "mac"   - macOS app bundle
+
+MM.RUNTIME (without the $) is accepted as an alias.
+
+See also ~MM.DEVICE$~, ~MM.VER~.
+
+Example:
+
+    IF MM.RUNTIME$ = "pi" THEN
+        PRINT "Running on the Pi"
+    ELSE
+        PRINT "Running on " + MM.RUNTIME$
+    ENDIF

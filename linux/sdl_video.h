@@ -19,6 +19,11 @@ uint16_t *sdl_video_fb(void);
 int sdl_video_width(void);
 int sdl_video_height(void);
 
+/* Pixel size of the host drawable the framebuffer is presented into. This is
+ * the window in windowed mode and the display in fullscreen: what MM.HOST.HRES
+ * and MM.HOST.VRES report. */
+void sdl_video_host_size(int *w, int *h);
+
 /* RGB888 <-> native (RGB555, green at bit 6) matching Circle's COLOR16. */
 unsigned sdl_rgb_to_native(unsigned rgb888);
 unsigned sdl_native_to_rgb(unsigned native);
