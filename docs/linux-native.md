@@ -70,12 +70,11 @@ headless `linux/mmbasic` accepts the same arguments.
 
 ## Storage
 
-Physical drives map to host directories under `MMB_DRIVE_ROOT` (default
-`~/.mmbasic`): `C:` → `$MMB_DRIVE_ROOT/C`, `D:` → `.../D`, up to `H:`. `A:` is
-the in-RAM ramdisk seeded from `ramdisk/` at boot. Settings live in
-`C:/.mmbasic.ini` (falling back to `A:`).
-
-Bind a host directory to `D:` at startup with `--drive DIR`:
+`A:` is the in-RAM ramdisk seeded from `ramdisk/` at boot. `C:` is the
+persistent drive: it always maps to `$MMB_DRIVE_ROOT/C` (default
+`~/.mmbasic/C`) and holds settings in `C:/.mmbasic.ini` (falling back to `A:`).
+`D:` is not created by default; mount a host directory on it at startup with
+`--drive DIR`:
 
 ```bash
 ./linux/mmbasic-sdl --drive /media/usb
@@ -83,9 +82,10 @@ Bind a host directory to `D:` at startup with `--drive DIR`:
 ```
 
 The path is used as-is (absolute or relative), so the D: drive in MMBasic is
-that folder. `--drive-root DIR` sets the base for the other drives. Run
-`--help` for the full usage. Path lookups are case-insensitive to match FatFs,
-even though the host filesystem may not be.
+that folder. `--drive-root DIR` sets the base for `C:`. `E:`–`H:` are reserved
+but never auto-created and are not exposed on the command line. Run `--help`
+for the full usage. Path lookups are case-insensitive to match FatFs, even
+though the host filesystem may not be.
 
 ## Network
 
@@ -101,7 +101,7 @@ scope on Linux; those options report unavailable.
 | --- | --- | --- |
 | Graphics | same language + software rasterisers; RGB555 stored, RGB565 SDL present | RGB555 HDMI-native; `SetArea` DMA present and double-buffered VSync flip on Pi ≤ 4 |
 | Audio | SDL2 (`PLAY TONE`/`MP3`/`MOD`/`XM`) | Circle HDMI / PWM audio |
-| Filesystems | `A:` ramdisk; `C:`–`H:` host directories under `MMB_DRIVE_ROOT`; `--drive` binds `D:` | `A:` ramdisk; `C:` SD card; `D:`– USB mass storage |
+| Filesystems | `A:` ramdisk; `C:` persistent host directory under `MMB_DRIVE_ROOT`; `--drive` mounts `D:` | `A:` ramdisk; `C:` SD card; `D:`– USB mass storage |
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
 | Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |

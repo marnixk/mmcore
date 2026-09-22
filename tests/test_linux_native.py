@@ -163,6 +163,30 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
     assert (root / "C" / "A" / "B.TXT").read_text().strip() == "HELLO STORAGE"
 
 
+def test_default_drive_root_creates_only_c(mmb_linux, tmp_path):
+    """Default root is $HOME/.mmbasic; only the persistent C: drive is created."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, HOME=str(home))
+    env.pop("MMB_DRIVE_ROOT", None)
+    _run_env(mmb_linux, "", env)
+    assert (home / ".mmbasic" / "C").is_dir()
+    for letter in "DEFGH":
+        assert not (home / ".mmbasic" / letter).exists()
+    for letter in "CDEFGH":
+        assert not (home / letter).exists()
+
+
+def test_unmounted_d_drive_is_absent(mmb_linux, tmp_path):
+    """D: is not created unless --drive mounts it."""
+    root = tmp_path / "root"
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR "D:/"\n', env)
+    assert (root / "C").is_dir()
+    assert not (root / "D").exists()
+    assert "?DRIVE" in out.upper()
+
+
 def test_drive_cli_mount(mmb_linux, tmp_path):
     """--drive DIR binds that host directory to the D: drive."""
     mount = tmp_path / "usb"
