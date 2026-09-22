@@ -181,6 +181,8 @@ typedef struct {
 	int dlg_edit_idx;
 	char dlg_name[40];
 	char dlg_host[80];
+	int dlg_caret;
+	int dlg_off;
 	int dlg_port;
 	int dlg_echo;
 	int dlg_letterbox;
@@ -2071,9 +2073,39 @@ static void dlg_text_at(int dcol, int drow, const char *s, int hi)
 		term_put_str_bg(x, y, s, fg, bg);
 }
 
-static void dlg_field(int dcol, int drow, int width, const char *s, int hi)
+static char *dlg_focus_text(int *cap)
 {
-	int x, y, i, n;
+	if (T.dlg_focus == TM_ED_NAME)
+	{
+		if (cap)
+			*cap = (int)sizeof(T.dlg_name);
+		return T.dlg_name;
+	}
+	if (T.dlg_focus == TM_ED_HOST)
+	{
+		if (cap)
+			*cap = (int)sizeof(T.dlg_host);
+		return T.dlg_host;
+	}
+	if (cap)
+		*cap = 0;
+	return 0;
+}
+
+static void dlg_caret_home(void)
+{
+	int cap;
+	char *s = dlg_focus_text(&cap);
+
+	(void)cap;
+	T.dlg_caret = s ? (int)strlen(s) : 0;
+	T.dlg_off = 0;
+}
+
+static void dlg_field_scroll(int dcol, int drow, int width, const char *s, int hi,
+			     int caret, int *off)
+{
+	int x, y, i, n, o;
 	unsigned fg, bg;
 
 	x = (dlg_c0 + dcol) * TM_CW;
@@ -2085,10 +2117,46 @@ static void dlg_field(int dcol, int drow, int width, const char *s, int hi)
 	term_fill_cells(x, y, width, bg);
 	s = s ? s : "";
 	n = (int)strlen(s);
-	if (n > width)
-		n = width;
-	for (i = 0; i < n; i++)
-		term_cell(x + i * TM_CW, y, (unsigned char)s[i], fg, bg);
+	o = off ? *off : 0;
+	if (o < 0)
+		o = 0;
+	if (o > n)
+		o = n;
+	if (caret >= 0)
+	{
+		if (caret > n)
+			caret = n;
+		if (caret < o)
+			o = caret;
+		if (caret - o >= width)
+			o = caret - width + 1;
+	}
+	if (o > n)
+		o = n;
+	if (o + width > n && o > 0)
+	{
+		o = n - width + 1;
+		if (o < 0)
+			o = 0;
+	}
+	if (off)
+		*off = o;
+	for (i = 0; i < width; i++)
+	{
+		int idx = o + i;
+		if (caret == idx && hi && caret <= n)
+			term_cell(x + i * TM_CW, y,
+				  idx < n ? (unsigned char)s[idx] : ' ', bg, fg);
+		else if (idx >= 0 && idx < n)
+			term_cell(x + i * TM_CW, y, (unsigned char)s[idx], fg, bg);
+	}
+}
+
+static void dlg_field(int dcol, int drow, int width, const char *s, int hi)
+{
+	int off = 0;
+
+	dlg_field_scroll(dcol, drow, width, s, hi, -1, &off);
 }
 
 static void dlg_btn(int dcol, int drow, const char *s, int hi)
@@ -2155,9 +2223,13 @@ static void term_draw_dlg_edit(void)
 	term_dlg_frame(48, 15,
 		       T.dlg_edit_idx < 0 ? " New bookmark " : " Edit bookmark ");
 	dlg_text_at(2, 2, "Name", 0);
-	dlg_field(8, 2, 36, T.dlg_name, T.dlg_focus == TM_ED_NAME);
+	dlg_field_scroll(8, 2, 36, T.dlg_name, T.dlg_focus == TM_ED_NAME,
+			 T.dlg_focus == TM_ED_NAME ? T.dlg_caret : -1,
+			 T.dlg_focus == TM_ED_NAME ? &T.dlg_off : 0);
 	dlg_text_at(2, 4, "Host", 0);
-	dlg_field(8, 4, 22, T.dlg_host, T.dlg_focus == TM_ED_HOST);
+	dlg_field_scroll(8, 4, 22, T.dlg_host, T.dlg_focus == TM_ED_HOST,
+			 T.dlg_focus == TM_ED_HOST ? T.dlg_caret : -1,
+			 T.dlg_focus == TM_ED_HOST ? &T.dlg_off : 0);
 	dlg_text_at(32, 4, "Port", 0);
 	port[0] = 0;
 	bm_append_int(port, sizeof(port), T.dlg_port);
@@ -2296,6 +2368,8 @@ static void term_bm_open_edit(int is_new)
 		T.dlg_letterbox = b->letterboxed ? 1 : 0;
 		T.dlg_mode80x25 = b->mode80x25 ? 1 : 0;
 	}
+	T.dlg_focus = TM_ED_NAME;
+	dlg_caret_home();
 	term_ui_refresh();
 }
 
@@ -2466,52 +2540,60 @@ static void term_dlg_close(void)
 
 static void term_edit_add_char(char c)
 {
-	int n;
-	if (T.dlg_focus == 0)
+	int cap, n;
+	char *s;
+
+	if (T.dlg_focus == TM_ED_PORT)
 	{
-		n = (int)strlen(T.dlg_name);
-		if (n + 1 < (int)sizeof(T.dlg_name) && c >= 32 && c < 127)
+		if (c >= '0' && c <= '9')
 		{
-			T.dlg_name[n] = c;
-			T.dlg_name[n + 1] = 0;
+			int v = T.dlg_port * 10 + (c - '0');
+			if (T.dlg_port == 0 && c == '0')
+				v = 0;
+			if (v <= 65535)
+				T.dlg_port = v;
 		}
+		return;
 	}
-	else if (T.dlg_focus == 1)
-	{
-		n = (int)strlen(T.dlg_host);
-		if (n + 1 < (int)sizeof(T.dlg_host) && c >= 32 && c < 127)
-		{
-			T.dlg_host[n] = c;
-			T.dlg_host[n + 1] = 0;
-		}
-	}
-	else if (T.dlg_focus == 2 && c >= '0' && c <= '9')
-	{
-		int v = T.dlg_port * 10 + (c - '0');
-		if (T.dlg_port == 0 && c == '0')
-			v = 0;
-		if (v <= 65535)
-			T.dlg_port = v;
-	}
+	s = dlg_focus_text(&cap);
+	if (!s || c < 32 || c >= 127)
+		return;
+	n = (int)strlen(s);
+	if (n + 1 >= cap)
+		return;
+	if (T.dlg_caret < 0)
+		T.dlg_caret = 0;
+	if (T.dlg_caret > n)
+		T.dlg_caret = n;
+	memmove(s + T.dlg_caret + 1, s + T.dlg_caret,
+		(size_t)(n - T.dlg_caret + 1));
+	s[T.dlg_caret] = c;
+	T.dlg_caret++;
 }
 
 static void term_edit_backspace(void)
 {
-	int n;
-	if (T.dlg_focus == 0)
+	int cap, n;
+	char *s;
+
+	if (T.dlg_focus == TM_ED_PORT)
 	{
-		n = (int)strlen(T.dlg_name);
-		if (n > 0)
-			T.dlg_name[n - 1] = 0;
-	}
-	else if (T.dlg_focus == 1)
-	{
-		n = (int)strlen(T.dlg_host);
-		if (n > 0)
-			T.dlg_host[n - 1] = 0;
-	}
-	else if (T.dlg_focus == 2)
 		T.dlg_port /= 10;
+		return;
+	}
+	s = dlg_focus_text(&cap);
+	if (!s)
+		return;
+	(void)cap;
+	n = (int)strlen(s);
+	if (T.dlg_caret > n)
+		T.dlg_caret = n;
+	if (T.dlg_caret > 0)
+	{
+		memmove(s + T.dlg_caret - 1, s + T.dlg_caret,
+			(size_t)(n - T.dlg_caret + 1));
+		T.dlg_caret--;
+	}
 }
 
 static void term_dlg_list_activate(void)
@@ -2677,19 +2759,40 @@ static void term_dlg_arrow(int c)
 			T.dlg_focus--;
 			if (T.dlg_focus < 0)
 				T.dlg_focus = TM_ED_SAVE;
+			dlg_caret_home();
 		}
 		else if (c == 'B')
 		{
 			T.dlg_focus++;
 			if (T.dlg_focus > TM_ED_SAVE)
 				T.dlg_focus = 0;
+			dlg_caret_home();
 		}
 		else if (c == 'C' || c == 'D')
 		{
-			if (T.dlg_focus == TM_ED_HOST)
-				T.dlg_focus = TM_ED_PORT;
+			if (T.dlg_focus == TM_ED_NAME || T.dlg_focus == TM_ED_HOST)
+			{
+				int cap, n;
+				char *s = dlg_focus_text(&cap);
+				(void)cap;
+				n = (int)strlen(s);
+				if (T.dlg_caret > n)
+					T.dlg_caret = n;
+				if (c == 'D' && T.dlg_caret > 0)
+					T.dlg_caret--;
+				else if (c == 'C' && T.dlg_caret < n)
+					T.dlg_caret++;
+				else if (T.dlg_focus == TM_ED_HOST)
+				{
+					T.dlg_focus = TM_ED_PORT;
+					dlg_caret_home();
+				}
+			}
 			else if (T.dlg_focus == TM_ED_PORT)
+			{
 				T.dlg_focus = TM_ED_HOST;
+				dlg_caret_home();
+			}
 			else if (T.dlg_focus == TM_ED_CANCEL)
 				T.dlg_focus = TM_ED_SAVE;
 			else if (T.dlg_focus == TM_ED_SAVE)
