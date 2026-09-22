@@ -41,7 +41,7 @@ esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${DIST:-${REPO_ROOT}/dist}"
-BIN="${REPO_ROOT}/linux/mmbasic-sdl"
+BIN="${REPO_ROOT}/native/mmbasic-sdl"
 APP_NAME="mmcore"
 APP="${DIST}/${APP_NAME}.app"
 EXE_NAME="mmbasic-sdl"
@@ -69,7 +69,7 @@ SHORT_VERSION="$(printf '%s' "${RAW_VERSION}" | sed -n 's/^\([0-9][0-9]*\(\.[0-9
 
 log "Version ${RAW_VERSION} (bundle ${SHORT_VERSION})"
 log "Building native SDL binary"
-"${REPO_ROOT}/scripts/build-linux.sh"
+"${REPO_ROOT}/scripts/build-native.sh"
 [ -x "${BIN}" ] || die "${BIN} not built (SDL2 dev headers missing?)"
 
 log "Staging ${APP}"

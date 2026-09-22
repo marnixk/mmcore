@@ -82,9 +82,15 @@ That script:
 5. Creates the GitHub release with the zips, the macOS app (when built), **and**
    a top-level `install-sdcard.sh` asset.
 
-The release notes include an "Install" section, the Linux AppImage, and a
-"macOS native (Apple Silicon)" section whenever `dist/mmcore-macos-arm64.zip`
-exists at publish time.
+The release notes include an "Install" section, the Linux AppImage, a "Windows
+native (x86_64)" section, and a "macOS native (Apple Silicon)" section whenever
+`dist/mmcore-macos-arm64.zip` exists at publish time.
+
+A Windows zip is not built locally. The `.github/workflows/windows.yml`
+workflow runs on `windows-latest` (MSYS2/MinGW) when the release is published
+and attaches `mmcore-windows-x86_64.zip` to it (the release notes name the
+asset regardless). Check the workflow run if the asset is missing:
+`gh run list --workflow=windows.yml`.
 
 Do not force-push tags. If `vVERSION` already exists, stop.
 
@@ -114,4 +120,4 @@ open mmcore.app
 ```
 
 Build it standalone with `scripts/package-macos-app.sh` (needs Homebrew SDL2);
-see [`docs/linux-native.md`](../../../docs/linux-native.md#macos-app-bundle).
+see [`docs/native-desktop.md`](../../../docs/native-desktop.md#macos-app-bundle).

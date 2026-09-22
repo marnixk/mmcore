@@ -1,6 +1,6 @@
 """LN-20 (#472): the POSIX TCP server contract (used by the FTP server).
 
-Compiles linux/net_posix.c with the host test and checks listen/accept/recv/
+Compiles native/net_posix.c with the host test and checks listen/accept/recv/
 send with the same non-blocking semantics cmd_ftp.c expects.
 """
 import os
@@ -32,7 +32,7 @@ def test_posix_tcp_server_round_trip(tmp_path):
             "-o",
             exe,
             os.path.join(REPO, "tests", "net_srv_host.c"),
-            os.path.join(REPO, "linux", "net_posix.c"),
+            os.path.join(REPO, "native", "net_posix.c"),
         ],
         check=True,
         cwd=REPO,

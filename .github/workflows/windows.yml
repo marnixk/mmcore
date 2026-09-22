@@ -1,0 +1,95 @@
+name: Windows build
+
+# Builds the native SDL2 backend with MinGW-w64 and packages a Windows zip.
+#
+#  - on a version release: attached to that GitHub release (so every release
+#    ships the Windows build alongside the SD-card zips);
+#  - on push to ports/windows / master: attached to the rolling
+#    'windows-native' pre-release for quick testing.
+on:
+  push:
+    branches: [ports/windows, master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            python
+            zip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-SDL2
+
+      - name: Build Windows zip
+        env:
+          # MSYS2 installs SDL2 headers/libs/DLL under the MINGW64 prefix.
+          SDL2_ROOT: /mingw64
+        run: scripts/package-windows.sh
+
+      - name: Smoke-test the binary
+        run: |
+          export SDL_VIDEODRIVER=dummy
+          export MMB_SDL_SERIAL=1
+          out=$(printf 'PRINT "SMOKE_OK 42"\n' | timeout 60 ./dist/mmcore-windows-x86_64/mmbasic-sdl.exe 2>&1 || true)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "SMOKE_OK 42"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmcore-Windows
+          path: dist/mmcore-windows-x86_64.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            gh release upload "${GITHUB_REF_NAME}" dist/mmcore-windows-x86_64.zip --clobber
+            echo "Attached Windows zip to release ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          tag="windows-native"
+          notes="Automated Windows build from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
+
+          Unzip and run \`mmbasic-sdl.exe\`; keep the bundled DLLs next to it.
+
+          \`\`\`
+          unzip mmcore-windows-x86_64.zip
+          ./mmbasic-sdl.exe
+          \`\`\`"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Windows native (rolling)" \
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
+          fi
+          gh release upload "$tag" dist/mmcore-windows-x86_64.zip --clobber

@@ -26,7 +26,7 @@ typedef struct mmb_platform {
 	 * larger than the mode, which is integer-scaled into it (letterboxed). */
 	int (*host_width)(void);
 	int (*host_height)(void);
-	/* Build target for MM.RUNTIME: "pi", "linux", or "mac". */
+	/* Build target for MM.RUNTIME: "pi", "linux", "mac", or "windows". */
 	const char *(*runtime)(void);
 	void *(*alloc)(unsigned n);
 	void (*free)(void *p);

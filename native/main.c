@@ -8,6 +8,8 @@
  *   mmbasic path/to/x.app   run a packaged .APP (app VM), then exit
  *   mmbasic --term HOST:23  run a sealed TERM session, then exit
  */
+#include "win_compat.h"
+
 #include "mmb_priv.h"
 #include "cli.h"
 
@@ -35,15 +37,20 @@ static void run_term_sealed(void)
 	run_line(mmb_cli_term_run_line());
 	while (mmb_in_term())
 	{
+		int c;
+
+#ifdef _WIN32
+		if (mmb_stdin_ready())
+#else
 		fd_set rfds;
 		struct timeval tv;
-		int c;
 
 		FD_ZERO(&rfds);
 		FD_SET(0, &rfds);
 		tv.tv_sec = 0;
 		tv.tv_usec = 50000;
 		if (select(1, &rfds, 0, 0, &tv) > 0)
+#endif
 		{
 			c = fgetc(stdin);
 			if (c == EOF)

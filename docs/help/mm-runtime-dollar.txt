@@ -8,9 +8,10 @@ behave differently where needed.
 name$ = MM.RUNTIME$
 name$ = MM.RUNTIME
 
-  "pi"    - bare-metal Raspberry Pi build (Circle)
-  "linux" - Linux native and AppImage build
-  "mac"   - macOS app bundle
+  "pi"      - bare-metal Raspberry Pi build (Circle)
+  "linux"   - Linux native and AppImage build
+  "mac"     - macOS app bundle
+  "windows" - Windows native build
 
 MM.RUNTIME (without the $) is accepted as an alias.
 

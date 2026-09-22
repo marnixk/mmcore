@@ -12,6 +12,8 @@
  * session. Both exit the process when they end unless `--repl`/`--stay`;
  * while sealed they never paint the REPL prompt and swallow BREAK.
  */
+#include "win_compat.h"
+
 #include "mmb_priv.h"
 #include "frontend.h"
 #include "cli.h"
@@ -51,6 +53,9 @@ static void run_line(const char *line)
 
 static int stdin_line_ready(void)
 {
+#ifdef _WIN32
+	return mmb_stdin_ready();
+#else
 	fd_set rfds;
 	struct timeval tv;
 
@@ -59,6 +64,7 @@ static int stdin_line_ready(void)
 	tv.tv_sec = 0;
 	tv.tv_usec = 0;
 	return select(1, &rfds, 0, 0, &tv) > 0;
+#endif
 }
 
 /* A GUI launch (desktop entry / file manager) gives the process /dev/null or

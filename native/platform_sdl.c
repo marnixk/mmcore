@@ -6,6 +6,8 @@
  * interpreter's colour model and page storage match the Pi exactly; only the
  * final SDL present converts to RGB565.
  */
+#include "win_compat.h"
+
 #include "mmbasic.h"
 #include "mmb_priv.h"
 #include "sdl_video.h"
@@ -90,6 +92,8 @@ static const char *sdl_runtime(void)
 {
 #ifdef __APPLE__
 	return "mac";
+#elif defined(_WIN32)
+	return "windows";
 #else
 	return "linux";
 #endif
@@ -222,6 +226,10 @@ static int sdl_wait_vsync(void)
  * nothing is ready, -1 once stdin is closed. */
 static int sdl_stdin_byte(int *c)
 {
+#ifdef _WIN32
+	if (!mmb_stdin_ready())
+		return 0;
+#else
 	fd_set rfds;
 	struct timeval tv;
 
@@ -231,6 +239,7 @@ static int sdl_stdin_byte(int *c)
 	tv.tv_usec = 0;
 	if (select(STDIN_FILENO + 1, &rfds, 0, 0, &tv) <= 0)
 		return 0;
+#endif
 	*c = fgetc(stdin);
 	if (*c == EOF)
 		return -1;

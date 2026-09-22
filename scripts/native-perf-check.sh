@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${REPO_ROOT}/dist/linux-native-perf.txt"
+OUT="${REPO_ROOT}/dist/native-perf.txt"
 MMB="${REPO_ROOT}/mmbasic"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
