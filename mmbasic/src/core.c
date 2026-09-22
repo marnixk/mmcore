@@ -2613,6 +2613,30 @@ void mmb_cmd_reboot(void)
 	mmb_reboot();
 }
 
+/* QUIT: ask the host application to end. At the prompt this leaves the
+ * interpreter; inside a program it also stops RUN. A platform with no host
+ * loop to end (a bare Pi) just stops the program, like END. */
+void mmb_cmd_quit(void)
+{
+	G.running = 0;
+	mmb_play_stop();
+	if (G.plat && G.plat->can_quit)
+		G.quit_requested = 1;
+}
+
+int mmb_quit_requested(void)
+{
+	return G.quit_requested;
+}
+
+int mmb_take_quit(void)
+{
+	int v = G.quit_requested;
+
+	G.quit_requested = 0;
+	return v;
+}
+
 int mmb_is_running(void)
 {
 	return G.running;
@@ -2936,6 +2960,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("VSYNC_WAIT")] = mmb_cmd_vsync_wait;
 		tab[mmb_kw_id("REBOOT")] = mmb_cmd_reboot;
 		tab[mmb_kw_id("RESTART")] = mmb_cmd_reboot;
+		tab[mmb_kw_id("QUIT")] = mmb_cmd_quit;
 		tab[mmb_kw_id("ERASE")] = mmb_cmd_clear;
 		tab[mmb_kw_id("MATH")] = mmb_cmd_math;
 		tab[mmb_kw_id("SPRITE")] = mmb_cmd_sprite;

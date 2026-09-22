@@ -373,6 +373,7 @@ static const mmb_platform sdl_plat = {
 	.read_line = sdl_read_line,
 	.poll_input = sdl_poll_input,
 	.reboot = sdl_reboot,
+	.can_quit = 1,
 	.alt_held = sdl_input_alt_held,
 	.ctrl_alt_held = sdl_input_ctrl_alt_held,
 	.audio_set_target = sdl_audio_set_target,

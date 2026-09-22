@@ -41,6 +41,9 @@ typedef struct mmb_platform {
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */
 	void (*reboot)(void);
+	/* Non-zero when QUIT should end the host application (native builds).
+	 * A bare Pi has no application to close, so QUIT only stops the program. */
+	int can_quit;
 	/* 0 = analogue jack (PWM), 1 = HDMI. */
 	void (*audio_set_target)(int target);
 	void (*audio_enable)(int on);
@@ -176,6 +179,12 @@ int mmb_break_key(void);
 
 /* True once after CLS: caller should emit the prompt without leading newlines. */
 int mmb_take_home_prompt(void);
+
+/* 1 after QUIT: the host app should end. Does not clear the flag. */
+int mmb_quit_requested(void);
+
+/* 1 after QUIT, clearing the flag so the app ends once. */
+int mmb_take_quit(void);
 
 /* Immediate HDMI+serial write (Wi-Fi diagnostics, etc.). */
 void mmb_console_write(const char *s);

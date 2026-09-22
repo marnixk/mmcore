@@ -412,6 +412,7 @@ typedef struct mmb {
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
+	int quit_requested;    /* QUIT: host app should exit its main loop */
 	int print_x;           /* PRINT/LOCATE cursor X in pixels */
 	int print_y;           /* PRINT/LOCATE cursor Y in pixels */
 	int print_locate;      /* next PRINT emits cursor positioning first */
@@ -905,6 +906,7 @@ void mmb_cmd_connect(void);
 void mmb_cmd_term(void);
 void mmb_cmd_ipconfig(void);
 void mmb_cmd_reboot(void);
+void mmb_cmd_quit(void);
 void mmb_check_break(void);
 int mmb_in_connect(void);
 const char *mmb_connect_key(char c);

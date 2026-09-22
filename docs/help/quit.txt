@@ -1,0 +1,14 @@
+name: QUIT
+kind: command
+
+End the host application and return to the operating system. On the Linux and
+macOS builds QUIT typed at the immediate prompt closes the window and exits.
+Used inside a running program it stops the program first, then exits. On a
+bare Raspberry Pi there is no host application to close, so QUIT only stops
+the program.
+
+QUIT
+
+Example:
+
+    QUIT

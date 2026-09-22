@@ -111,6 +111,8 @@ int main(int argc, char **argv)
 			line[--n] = '\0';
 		mmb_poll();
 		run_line(line);
+		if (mmb_take_quit())
+			return 0;
 		fputc('\n', stdout);
 		fputs("> ", stdout);
 		fflush(stdout);
