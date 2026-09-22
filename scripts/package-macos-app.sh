@@ -18,6 +18,12 @@
 #                       bundle is notarized and stapled; requires a Developer ID
 #                       identity. Defaults to "mmcore-notary" for release
 #                       builds (MMCORE_REQUIRE_NOTARY=1).
+#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD
+#                       Notarize with App Store Connect credentials directly
+#                       instead of a keychain profile. Useful in non-interactive
+#                       sessions where notarytool cannot read the keychain
+#                       ("User interaction is not allowed"). When all three are
+#                       set they take precedence over NOTARY_PROFILE.
 #   MMCORE_REQUIRE_NOTARY=1
 #                       Release build: notarization is mandatory. The bundle is
 #                       notarized and stapled, and the script fails if either
@@ -54,12 +60,23 @@ die() {
 	exit 1
 }
 
+# Notarization credentials: direct App Store Connect credentials win over a
+# stored keychain profile so a non-interactive session can still notarize.
+if [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ] \
+	&& [ -n "${NOTARY_PASSWORD:-}" ]; then
+	NOTARY_MODE="direct"
+else
+	NOTARY_MODE="profile"
+fi
+
 # A release build must ship a notarized bundle; validate its requirements before
 # spending time on the build so the failure is immediate and obvious.
 if [ "${MMCORE_REQUIRE_NOTARY:-}" = "1" ]; then
 	[ "${MMCORE_SKIP_SIGN:-}" != "1" ] \
 		|| die "MMCORE_REQUIRE_NOTARY=1 conflicts with MMCORE_SKIP_SIGN=1: cannot notarize an unsigned bundle"
-	NOTARY_PROFILE="${NOTARY_PROFILE:-mmcore-notary}"
+	if [ "${NOTARY_MODE}" = "profile" ]; then
+		NOTARY_PROFILE="${NOTARY_PROFILE:-mmcore-notary}"
+	fi
 fi
 
 RAW_VERSION="${VERSION:-$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo 0.0.0)}"
@@ -202,25 +219,33 @@ else
 		[ "${IDENTITY}" != "-" ] \
 			|| die "release builds need a Developer ID identity to notarize; none found (set SIGN_IDENTITY)"
 		want_notary=1
-	elif [ -n "${NOTARY_PROFILE}" ]; then
+	elif [ "${NOTARY_MODE}" = "direct" ] || [ -n "${NOTARY_PROFILE}" ]; then
 		want_notary=1
 	fi
 fi
 
 if [ "${want_notary}" = "1" ]; then
-	log "Notarizing with profile ${NOTARY_PROFILE}"
+	if [ "${NOTARY_MODE}" = "direct" ]; then
+		notary_desc="direct credentials for ${NOTARY_APPLE_ID}"
+		notary_args=(--apple-id "${NOTARY_APPLE_ID}" \
+			--team-id "${NOTARY_TEAM_ID}" --password "${NOTARY_PASSWORD}")
+	else
+		notary_desc="profile ${NOTARY_PROFILE}"
+		notary_args=(--keychain-profile "${NOTARY_PROFILE}")
+	fi
+	log "Notarizing with ${notary_desc}"
 	local_zip="${DIST}/.${APP_NAME}-notarize.zip"
 	ditto -c -k --keepParent "${APP}" "${local_zip}"
 	notary_json="$(xcrun notarytool submit "${local_zip}" \
-		--keychain-profile "${NOTARY_PROFILE}" --wait --output-format json)" || {
+		${notary_args[@]+"${notary_args[@]}"} --wait --output-format json)" || {
 		rm -f "${local_zip}"
-		die "notarization failed with profile ${NOTARY_PROFILE}"
+		die "notarization failed with ${notary_desc}"
 	}
 	rm -f "${local_zip}"
 	notary_status="$(printf '%s' "${notary_json}" |
 		python3 -c 'import json, sys; print(json.load(sys.stdin).get("status", ""))')"
 	[ "${notary_status}" = "Accepted" ] \
-		|| die "notarization with profile ${NOTARY_PROFILE} was not accepted (status: ${notary_status:-unknown})"
+		|| die "notarization with ${notary_desc} was not accepted (status: ${notary_status:-unknown})"
 	xcrun stapler staple "${APP}"
 	xcrun stapler validate "${APP}"
 	log "Notarized and stapled ${APP}"
