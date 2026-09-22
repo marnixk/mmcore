@@ -1,9 +1,12 @@
 /*
  * POSIX storage backend for the native build (LN-08).
  *
- * Physical drives C:-H: map to directories under a configurable root
- * (MMB_DRIVE_ROOT, default $HOME/.mmbasic) as <root>/C, <root>/D, ... A:/B:
- * are the in-RAM volumes in mmbasic/src/vfs.c and never reach this file.
+ * Physical drive C: always maps to <root>/C under a configurable root
+ * (MMB_DRIVE_ROOT, default $HOME/.mmbasic) and is the persistent home for
+ * settings and user files. D: (and E:-H:) map to <root>/<letter> too, but are
+ * only created when explicitly mounted (--drive, app mode), so an unused drive
+ * never litters the host directory. A:/B: are the in-RAM volumes in
+ * mmbasic/src/vfs.c and never reach this file.
  *
  * MMBasic/FatFs is case-insensitive and treats '/' as the separator; the host
  * filesystem is case-sensitive, so every lookup resolves path components by
@@ -46,6 +49,7 @@ int storage_posix_mount(int letter, const char *path)
 
 static const char *root_dir(void)
 {
+	static char home_root[P_BUF];
 	const char *env = getenv("MMB_DRIVE_ROOT");
 	const char *home;
 
@@ -53,8 +57,11 @@ static const char *root_dir(void)
 		return env;
 	home = getenv("HOME");
 	if (home && *home)
-		return home;
-	return ".";
+	{
+		snprintf(home_root, sizeof home_root, "%s/.mmbasic", home);
+		return home_root;
+	}
+	return ".mmbasic";
 }
 
 static int drive_of(int letter)
@@ -65,22 +72,19 @@ static int drive_of(int letter)
 static void ensure_root(void)
 {
 	const char *root = root_dir();
-	char letter;
+	char db[P_BUF];
 
 	if (s_init)
 		return;
 	s_init = 1;
 	mkdir(root, 0777);
-	/* Every drive directory is created up front; empty drives still show. */
-	for (letter = DRIVE_LO; letter <= DRIVE_HI; letter++)
-	{
-		char db[P_BUF];
-
-		drive_dir_raw(letter, db, sizeof db);
-		mkdir(db, 0777);
-		s_cwd[letter - 'A'][0] = '/';
-		s_cwd[letter - 'A'][1] = 0;
-	}
+	/* C: is the persistent drive (settings, user files) and always exists.
+	 * D:-H: are created lazily, only when explicitly mounted, so an unused
+	 * drive never leaves an empty directory behind. */
+	drive_dir_raw('C', db, sizeof db);
+	mkdir(db, 0777);
+	s_cwd['C' - 'A'][0] = '/';
+	s_cwd['C' - 'A'][1] = 0;
 }
 
 static void drive_dir_raw(int letter, char *out, int outsz)
