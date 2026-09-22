@@ -82,7 +82,8 @@ static struct {
 	unsigned char attr[IH_MAX_LINES][IH_COLS];
 	ih_link links[IH_MAX_LINKS];
 	ih_frame stack[IH_STACK];
-} H;
+} H_s[MMB_MAX_CONSOLES];
+#define H (H_s[g_console])
 
 static void ih_draw(void);
 static void load_index(void);

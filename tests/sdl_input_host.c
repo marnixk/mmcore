@@ -31,6 +31,8 @@ void mmb_front_feed(const char *s, unsigned n)
 
 int mmb_front_in_app(void) { return 0; }
 
+int mmb_console_switch(int idx) { (void)idx; return 0; }
+
 void mmb_inkey_push(int c)
 {
 	if (g_inkey_n < (int)sizeof g_inkey)

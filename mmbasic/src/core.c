@@ -18,15 +18,17 @@ static int find_end_sub_pc(int from);
 static int find_next_pc(int from);
 static void build_jumps(void);
 
-static int jmp_wend[MMB_MAX_LINES];
-static int jmp_loop[MMB_MAX_LINES];
-static int jmp_next[MMB_MAX_LINES];
-static int jmp_endsub[MMB_MAX_LINES];
-static int jmp_else[MMB_MAX_LINES];
-static int jmp_endif[MMB_MAX_LINES];
-static int jmp_endsel[MMB_MAX_LINES];
-static int jmp_ready;
-static int run_preserve_vars;
+/* Jump tables and run flags are per-console interpreter state now that more
+ * than one context exists; map the old names onto the active context. */
+#define jmp_wend          (G.jmp_wend)
+#define jmp_loop          (G.jmp_loop)
+#define jmp_next          (G.jmp_next)
+#define jmp_endsub        (G.jmp_endsub)
+#define jmp_else          (G.jmp_else)
+#define jmp_endif         (G.jmp_endif)
+#define jmp_endsel        (G.jmp_endsel)
+#define jmp_ready         (G.jmp_ready)
+#define run_preserve_vars (G.run_preserve_vars)
 static int at_end_of_statement(void);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
@@ -2642,6 +2644,18 @@ int mmb_is_running(void)
 	return G.running;
 }
 
+int mmb_program_suspended(void)
+{
+	return G.run_suspended;
+}
+
+/* Continue a program suspended by a virtual-console switch. */
+void mmb_resume_program(void)
+{
+	if (G.run_suspended)
+		run_program();
+}
+
 int mmb_break_key(void)
 {
 	return G.opt.break_key;
@@ -3826,50 +3840,68 @@ void mmb_run_events(void)
 static void run_program(void)
 {
 	int pc = 0;
+	int resume = G.run_suspended;
+
 	G.running = 1;
-	if (G.opt.profiling)
-		mmb_prof_reset();
-	mmb_str_reset();
-	G.for_sp = 0;
-	G.gosub_sp = 0;
-	G.ctrl_sp = 0;
-	G.branch_pc = -1;
-	G.if_skip = 0;
-	G.if_taken = 0;
-	G.sel_active = 0;
-	G.sel_skip = 0;
-	G.in_sub = 0;
-	G.data_line = 0;
-	G.data_pos = 0;
-	memset(G.subs, 0, sizeof(G.subs));
-	G.nsubs = 0;
-	memset(G.tick, 0, sizeof(G.tick));
-	G.on_key[0] = 0;
-	G.tick_busy = 0;
-	G.inkey_n = G.inkey_r = G.inkey_w = 0;
-	scan_labels();
-	mmb_tokenize_program();
-	build_jumps();
-	if (!run_preserve_vars)
+	G.run_suspended = 0;
+	if (!resume)
 	{
-		mmb_clear_vars(1);
-		mmb_clear_consts();
+		if (G.opt.profiling)
+			mmb_prof_reset();
+		mmb_str_reset();
+		G.for_sp = 0;
+		G.gosub_sp = 0;
+		G.ctrl_sp = 0;
+		G.branch_pc = -1;
+		G.if_skip = 0;
+		G.if_taken = 0;
+		G.sel_active = 0;
+		G.sel_skip = 0;
+		G.in_sub = 0;
+		G.data_line = 0;
+		G.data_pos = 0;
+		memset(G.subs, 0, sizeof(G.subs));
+		G.nsubs = 0;
+		memset(G.tick, 0, sizeof(G.tick));
+		G.on_key[0] = 0;
+		G.tick_busy = 0;
+		G.inkey_n = G.inkey_r = G.inkey_w = 0;
+		scan_labels();
+		mmb_tokenize_program();
+		build_jumps();
+		if (!run_preserve_vars)
+		{
+			mmb_clear_vars(1);
+			mmb_clear_consts();
+		}
+		run_preserve_vars = 0;
+		mmb_struct_prepare();
+		G.on_error_pc = -1;
+		G.error_active = 0;
+		G.opt.explicit = 0;
+		G.opt.default_type = T_NUM;
+		G.opt.base = 0;
+		G.opt.angle_degrees = 0;
+		if (G.plat && G.plat->take_break)
+			G.plat->take_break();
 	}
-	run_preserve_vars = 0;
-	mmb_struct_prepare();
-	G.on_error_pc = -1;
-	G.error_active = 0;
-	G.opt.explicit = 0;
-	G.opt.default_type = T_NUM;
-	G.opt.base = 0;
-	G.opt.angle_degrees = 0;
-	if (G.plat && G.plat->take_break)
-		G.plat->take_break();
+	else
+		pc = G.run_pc;
 	while (pc < G.nprog && G.running)
 	{
 		int loop;
 		int trapped = 0;
 		mmb_check_break();
+		if (mmb_console_switch_pending())
+		{
+			/* A virtual-console switch asked us to stop at a line
+			 * boundary. Keep the context runnable and return to the
+			 * host loop, which performs the switch. */
+			G.run_pc = pc;
+			G.run_suspended = 1;
+			G.running = 0;
+			return;
+		}
 		do
 		{
 			loop = 0;
@@ -4083,6 +4115,11 @@ const char *mmb_editor_key(char c)
 
 void mmb_init(const mmb_platform *plat)
 {
+	if (!g_mmb[0] && plat && plat->alloc)
+		g_mmb[0] = (mmb *)plat->alloc(sizeof(mmb));
+	g_cur = g_mmb[0];
+	if (!g_cur)
+		return;
 	memset(&G, 0, sizeof(G));
 	G.plat = plat;
 	mmb_option_reset();

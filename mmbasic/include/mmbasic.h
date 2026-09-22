@@ -11,6 +11,9 @@
 extern "C" {
 #endif
 
+/* Number of virtual consoles (Ctrl+Alt+F1..F4 style sessions). */
+#define MMB_MAX_CONSOLES 4
+
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);
@@ -106,6 +109,15 @@ typedef struct mmb_platform {
 	 * Returns 1 if DMA used, 0 if the caller should memcpy. */
 	int (*dma_copy2d)(void *dst, const void *src, unsigned block_len,
 			  unsigned block_count, unsigned block_stride);
+	/* Virtual consoles: snapshot/restore one console's screen (0-based
+	 * slot). console_save captures the currently displayed screen into the
+	 * slot; console_restore paints the slot, clearing it when the slot has
+	 * never been saved. tui != 0 when the console is hosting a full-screen
+	 * character-cell TUI (its pixels live in a separate offscreen buffer).
+	 * Return 1 when handled. Optional (NULL = no screen state, e.g. the
+	 * headless backend). */
+	int (*console_save)(int slot, int tui);
+	int (*console_restore)(int slot, int tui);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

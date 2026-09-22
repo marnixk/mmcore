@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "mmbasic.h"
 #include "frontend.h"
+#include "session.h"
 #include <circle/alloc.h>
 #include <circle/font.h>
 #include <circle/new.h>
@@ -48,6 +49,7 @@ CKernel::CKernel (void)
 	m_NavHidSent = 0;
 	m_CharHidSent = 0;
 	m_FkeyHidSent = 0;
+	m_ConsoleHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -543,6 +545,38 @@ void CKernel::PollUsbFKeys (void)
 	m_UsbBurst = 0;
 }
 
+/*
+ * Ctrl+Alt+F1..F4 switch virtual consoles, Linux-style. Circle's cooked
+ * keymap yields nothing usable for the chord, so read the raw HID state and
+ * translate the function-key codes ourselves. No-op unless Ctrl and Alt are
+ * both held.
+ */
+void CKernel::PollUsbConsole (void)
+{
+	unsigned char hid;
+	int idx = -1;
+
+	if ((m_LastMods & ALT) == 0 || (m_LastMods & (LCTRL | RCTRL)) == 0)
+	{
+		m_ConsoleHidSent = 0;
+		return;
+	}
+	hid = m_HeldHid;
+	if (hid == 0 || hid == m_ConsoleHidSent)
+		return;
+	switch (hid)
+	{
+	case 0x3A: idx = 0; break; /* F1 */
+	case 0x3B: idx = 1; break; /* F2 */
+	case 0x3C: idx = 2; break; /* F3 */
+	case 0x3D: idx = 3; break; /* F4 */
+	default:
+		return;
+	}
+	m_ConsoleHidSent = hid;
+	mmb_console_switch(idx);
+}
+
 void CKernel::PollUsbRepeat (void)
 {
 	unsigned now, first, next;
@@ -585,6 +619,7 @@ void CKernel::PollInputChars (int breakKey)
 
 	AttachKeyboard ();
 	ApplyRawKeys ();
+	PollUsbConsole ();
 	PollCadReboot ();
 	nBytes = m_Serial.Read (tmp, sizeof tmp);
 	if (nBytes < 0)
@@ -780,8 +815,9 @@ TShutdownMode CKernel::Run (void)
 {
 	m_Logger.Write (FromKernel, LogNotice, "console ready");
 
-	mmb_print_startup ();
 	mmb_front_init (front_emit, this);
+	mmb_console_init ();
+	mmb_print_startup ();
 	mmb_front_prompt ();
 
 	AttachKeyboard ();
@@ -789,6 +825,7 @@ TShutdownMode CKernel::Run (void)
 	for (;;)
 	{
 		mmb_poll ();
+		mmb_console_poll ();
 		AttachKeyboard ();
 
 		char Buffer[64];
@@ -814,6 +851,7 @@ TShutdownMode CKernel::Run (void)
 		PollUsbAlt ();
 		PollUsbEditorNav ();
 		PollUsbFKeys ();
+		PollUsbConsole ();
 		PollCadReboot ();
 		if (nBytes <= 0)
 		{

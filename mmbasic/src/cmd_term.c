@@ -201,7 +201,8 @@ typedef struct {
 	unsigned parsed_n;
 } tm_state;
 
-static tm_state T;
+static tm_state T_s[MMB_MAX_CONSOLES];
+#define T (T_s[g_console])
 
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;

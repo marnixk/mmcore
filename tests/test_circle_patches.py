@@ -27,6 +27,7 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-tcp-send.patch"),
     os.path.join(REPO, "patches", "circle-tcp-ack.patch"),
     os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
+    os.path.join(REPO, "patches", "circle-console-state.patch"),
 ]
 
 
@@ -71,12 +72,14 @@ def test_build_script_applies_patches_in_order():
     c = text.index("circle-tcp-send.patch")
     d = text.index("circle-tcp-ack.patch")
     e = text.index("circle-usb-cdc-rx.patch")
-    assert a < b < c < d < e
+    f = text.index("circle-console-state.patch")
+    assert a < b < c < d < e < f
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
     assert "mmbasic-tcp-ack" in text
     assert "mmbasic-usb-cdc-rx" in text
+    assert "mmbasic-console-state" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
@@ -122,6 +125,23 @@ def test_usb_cdc_rx_patch_applies(patched_tree):
     body = stage[stage.index("void CDWHCITransferStageData::TransactionComplete") :]
     body = body[: body.index("void CDWHCITransferStageData::SetSplitComplete")]
     assert body.index("DWHCI_HOST_CHAN_INT_XFER_COMPLETE") < body.index("m_nPackets = 0;")
+
+
+def test_console_state_patch_applies(patched_tree):
+    term_h = open(
+        os.path.join(patched_tree, "include/circle/terminal.h"), encoding="utf-8"
+    ).read()
+    term = open(os.path.join(patched_tree, "lib/terminal.cpp"), encoding="utf-8").read()
+    scr_h = open(
+        os.path.join(patched_tree, "include/circle/screen.h"), encoding="utf-8"
+    ).read()
+    assert "mmbasic-console-state" in term_h
+    assert "GetConsoleBufferSize" in term_h
+    assert "SaveConsole" in term_h
+    assert "RestoreConsole" in term
+    assert "memcpy (m_pBuffer8, pBuffer, m_nSize)" in term
+    assert "mmbasic-console-state" in scr_h
+    assert "GetTerminal" in scr_h
 
 
 def test_receive_drains_rx_queue_before_reporting_errno(patched_tree):

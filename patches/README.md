@@ -94,3 +94,16 @@ host-initiated TCP (the FTP server) never connected (#431):
 
 Do not commit a dirty Circle submodule; the parent tree only vendors the
 patch files.
+
+## `circle-console-state.patch`
+
+Applied last (marker `mmbasic-console-state` in `include/circle/terminal.h`).
+Virtual consoles need to snapshot and restore one text console at a time:
+
+- `CTerminalDevice::GetConsoleBufferSize()`, `SaveConsole()` and
+  `RestoreConsole()` expose the text pixel buffer and cursor. `SaveConsole()`
+  erases the cursor block before copying so a snapshot never bakes it in;
+  `RestoreConsole()` re-draws the cursor and repaints the whole text area.
+- `CScreenDevice::GetTerminal()` exposes the private terminal so the console
+  platform backend can drive those calls.
+

@@ -1,0 +1,105 @@
+diff --git a/include/circle/screen.h b/include/circle/screen.h
+index 9530546e..03b1c935 100644
+--- a/include/circle/screen.h
++++ b/include/circle/screen.h
+@@ -166,6 +166,10 @@ public:
+ #ifndef SCREEN_HEADLESS
+ 	/// \return Pointer to frame buffer object
+ 	CBcmFrameBuffer *GetFrameBuffer (void);
++
++	/// \brief Access the text terminal (virtual-console snapshot/restore)
++	/// \note mmbasic-console-state
++	CTerminalDevice *GetTerminal (void) { return m_pTerminal; }
+ #endif
+ 
+ 	/// \brief Write characters to screen
+diff --git a/include/circle/terminal.h b/include/circle/terminal.h
+index 714e7975..8e767363 100644
+--- a/include/circle/terminal.h
++++ b/include/circle/terminal.h
+@@ -92,6 +92,17 @@ public:
+ 	///	  when this method is called and only in the given time interval.
+ 	void Update (unsigned nMillis = 0);
+ 
++	/// \brief Virtual-console support (mmbasic-console-state)
++	/// \return Size in bytes of the text pixel buffer
++	unsigned GetConsoleBufferSize (void) const;
++	/// \brief Snapshot the text pixel buffer (cursor erased) and cursor
++	/// \param pBuffer Caller buffer of at least GetConsoleBufferSize() bytes
++	/// \param pCursorX Receives the text cursor X position (may be nullptr)
++	/// \param pCursorY Receives the text cursor Y position (may be nullptr)
++	void SaveConsole (void *pBuffer, unsigned *pCursorX, unsigned *pCursorY);
++	/// \brief Restore a text pixel buffer and cursor and repaint the screen
++	void RestoreConsole (const void *pBuffer, unsigned nCursorX, unsigned nCursorY);
++
+ public:
+ 	/// \brief Set a pixel to a specific raw color
+ 	/// \param nPosX X-Position of the pixel (based on 0)
+diff --git a/lib/terminal.cpp b/lib/terminal.cpp
+index c92f0c61..e754bec5 100644
+--- a/lib/terminal.cpp
++++ b/lib/terminal.cpp
+@@ -154,6 +154,63 @@ CDisplay *CTerminalDevice::GetDisplay (void)
+ 	return m_pDisplay;
+ }
+ 
++// mmbasic-console-state: virtual console snapshot/restore of the text buffer.
++unsigned CTerminalDevice::GetConsoleBufferSize (void) const
++{
++	return m_nSize;
++}
++
++void CTerminalDevice::SaveConsole (void *pBuffer, unsigned *pCursorX, unsigned *pCursorY)
++{
++	if (m_bCursorVisible)
++	{
++		InvertCursor ();	// erase the cursor from the buffer
++	}
++
++	if (pBuffer)
++	{
++		memcpy (pBuffer, m_pBuffer8, m_nSize);
++	}
++
++	if (pCursorX)
++	{
++		*pCursorX = m_nCursorX;
++	}
++
++	if (pCursorY)
++	{
++		*pCursorY = m_nCursorY;
++	}
++}
++
++void CTerminalDevice::RestoreConsole (const void *pBuffer, unsigned nCursorX, unsigned nCursorY)
++{
++	if (m_bCursorVisible)
++	{
++		InvertCursor ();	// erase the cursor currently in the buffer
++	}
++
++	if (pBuffer)
++	{
++		memcpy (m_pBuffer8, pBuffer, m_nSize);
++	}
++
++	m_nCursorX = nCursorX;
++	m_nCursorY = nCursorY;
++
++	InvertCursor ();	// draw the cursor at the restored position
++
++	// Repaint the whole text area.
++	m_UpdateArea.x1 = 0;
++	m_UpdateArea.x2 = m_nWidth-1;
++	m_UpdateArea.y1 = 0;
++	m_UpdateArea.y2 = m_nHeight-1;
++	m_pDisplay->SetArea (m_UpdateArea, m_pBuffer8);
++
++	m_UpdateArea.y1 = m_nHeight;
++	m_UpdateArea.y2 = 0;
++}
++
+ int CTerminalDevice::Write (const void *pBuffer, size_t nCount)
+ {
+ #ifdef REALTIME

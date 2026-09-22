@@ -14,4 +14,8 @@ void sdl_console_resize(void);
 void sdl_console_write(const char *s, unsigned n);
 void sdl_console_fill(unsigned rgb888);
 
+/* Virtual-console screen snapshot/restore (returns 1 when handled). */
+int sdl_console_save(int slot, int tui);
+int sdl_console_restore(int slot, int tui);
+
 #endif

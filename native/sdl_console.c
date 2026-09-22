@@ -4,6 +4,7 @@
 #include "mmb_priv.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CELL_W 8
@@ -526,4 +527,97 @@ void sdl_console_fill(unsigned rgb888)
 	cursor_draw();
 	/* Present is deferred to the caller, like the per-character writes. */
 	sdl_video_mark_dirty();
+}
+
+/* Virtual-console screen snapshot (mmbasic-console.host protocol). The whole
+ * software framebuffer is saved, which also covers SDL TUI apps (they render
+ * straight into it) and graphics pages. */
+static struct {
+	uint16_t *fb;
+	unsigned cap;
+	int w, h;
+	int cols, rows;
+	int cx, cy, fg, bg, bold, cur_vis;
+	int esc, npar, have_par, csi_priv;
+	int par[MAX_PARAM];
+} s_cons[MMB_MAX_CONSOLES];
+
+int sdl_console_save(int slot, int tui)
+{
+	uint16_t *fb = sdl_video_fb();
+	unsigned need;
+	(void)tui;
+
+	if (slot < 0 || slot >= MMB_MAX_CONSOLES || !fb)
+		return 0;
+	need = (unsigned)sdl_video_width() * (unsigned)sdl_video_height() *
+	       (unsigned)sizeof(uint16_t);
+	if (!s_cons[slot].fb || s_cons[slot].cap < need)
+	{
+		free(s_cons[slot].fb);
+		s_cons[slot].fb = (uint16_t *)malloc(need);
+		s_cons[slot].cap = s_cons[slot].fb ? need : 0;
+	}
+	if (!s_cons[slot].fb)
+		return 0;
+	cursor_erase();
+	memcpy(s_cons[slot].fb, fb, need);
+	s_cons[slot].w = sdl_video_width();
+	s_cons[slot].h = sdl_video_height();
+	s_cons[slot].cols = s_cols;
+	s_cons[slot].rows = s_rows;
+	s_cons[slot].cx = s_cx;
+	s_cons[slot].cy = s_cy;
+	s_cons[slot].fg = (int)s_fg;
+	s_cons[slot].bg = (int)s_bg;
+	s_cons[slot].bold = s_bold;
+	s_cons[slot].cur_vis = s_cur_vis;
+	s_cons[slot].esc = s_esc;
+	s_cons[slot].npar = s_npar;
+	s_cons[slot].have_par = s_have_par;
+	s_cons[slot].csi_priv = s_csi_priv;
+	memcpy(s_cons[slot].par, s_par, sizeof(s_par));
+	return 1;
+}
+
+int sdl_console_restore(int slot, int tui)
+{
+	uint16_t *fb;
+	unsigned need;
+	(void)tui;
+
+	if (slot < 0 || slot >= MMB_MAX_CONSOLES)
+		return 0;
+	fb = sdl_video_fb();
+	if (!s_cons[slot].fb || !fb)
+	{
+		sdl_console_reset();
+		return 1;
+	}
+	if (s_cons[slot].w != sdl_video_width() ||
+	    s_cons[slot].h != sdl_video_height())
+	{
+		sdl_console_reset();
+		return 1;
+	}
+	need = (unsigned)s_cons[slot].w * (unsigned)s_cons[slot].h *
+	       (unsigned)sizeof(uint16_t);
+	memcpy(fb, s_cons[slot].fb, need);
+	s_cols = s_cons[slot].cols;
+	s_rows = s_cons[slot].rows;
+	s_cx = s_cons[slot].cx;
+	s_cy = s_cons[slot].cy;
+	s_fg = (unsigned)s_cons[slot].fg;
+	s_bg = (unsigned)s_cons[slot].bg;
+	s_bold = s_cons[slot].bold;
+	s_cur_vis = s_cons[slot].cur_vis;
+	s_esc = s_cons[slot].esc;
+	s_npar = s_cons[slot].npar;
+	s_have_par = s_cons[slot].have_par;
+	s_csi_priv = s_cons[slot].csi_priv;
+	memcpy(s_par, s_cons[slot].par, sizeof(s_par));
+	s_cur_drawn = 0;
+	cursor_draw();
+	sdl_video_mark_dirty();
+	return 1;
 }

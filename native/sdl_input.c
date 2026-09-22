@@ -2,6 +2,7 @@
 
 #include "frontend.h"
 #include "mmb_priv.h"
+#include "session.h"
 #include "sdl_video.h"
 
 #include <SDL.h>
@@ -88,6 +89,13 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	int ctrl = (ke->keysym.mod & KMOD_CTRL) != 0;
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
+
+	/* Ctrl+Alt+F1..F4 switch virtual consoles (Linux-style). */
+	if (ctrl && alt && k >= SDLK_F1 && k <= SDLK_F4)
+	{
+		mmb_console_switch((int)(k - SDLK_F1));
+		return;
+	}
 
 	/* Alt+Enter toggles fullscreen at the prompt. */
 	if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && alt &&

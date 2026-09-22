@@ -7,13 +7,36 @@ typedef struct {
 	unsigned char bg;
 } tui_cell;
 
-static tui_cell front[TUI_MAX_ROWS][TUI_MAX_COLS];
-static tui_cell shown[TUI_MAX_ROWS][TUI_MAX_COLS];
-static unsigned char row_dirty[TUI_MAX_ROWS];
-static int cols, rows;
-static int inited;
-static int cur_x = -1, cur_y = -1, cur_vis;
-static int prev_cx = -1, prev_cy = -1;
+/* TUI composition state is per console: each virtual console can host a
+ * different full-screen app, and switching restores both the app state and
+ * its pixel buffer. */
+typedef struct {
+	tui_cell front[TUI_MAX_ROWS][TUI_MAX_COLS];
+	tui_cell shown[TUI_MAX_ROWS][TUI_MAX_COLS];
+	unsigned char row_dirty[TUI_MAX_ROWS];
+	int cols, rows;
+	int inited;
+	int cur_x, cur_y, cur_vis;
+	int prev_cx, prev_cy;
+	int pal_init;
+	unsigned palette[16];
+} tui_state;
+
+static tui_state s_tui[MMB_MAX_CONSOLES];
+#define TS        (s_tui[g_console])
+#define front     (TS.front)
+#define shown     (TS.shown)
+#define row_dirty (TS.row_dirty)
+#define cols      (TS.cols)
+#define rows      (TS.rows)
+#define inited    (TS.inited)
+#define cur_x     (TS.cur_x)
+#define cur_y     (TS.cur_y)
+#define cur_vis   (TS.cur_vis)
+#define prev_cx   (TS.prev_cx)
+#define prev_cy   (TS.prev_cy)
+#define pal_init  (TS.pal_init)
+#define palette   (TS.palette)
 
 #define TUI_VGA_PALETTE \
 	0x000000, 0xAA0000, 0x00AA00, 0xAA5500, \
@@ -22,7 +45,6 @@ static int prev_cx = -1, prev_cy = -1;
 	0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF
 
 static const unsigned k_vga[16] = { TUI_VGA_PALETTE };
-static unsigned palette[16] = { TUI_VGA_PALETTE };
 
 static int clampi(int v, int lo, int hi)
 {
@@ -110,6 +132,12 @@ void tui_begin(void)
 	int y, x;
 	int c = query_cols();
 	int r = query_rows();
+	if (!pal_init)
+	{
+		for (y = 0; y < 16; y++)
+			palette[y] = k_vga[y];
+		pal_init = 1;
+	}
 	if (inited && c == cols && r == rows)
 		return;
 	cols = c;

@@ -49,6 +49,7 @@ private:
 	void PollUsbEditorNav (void);
 	void PollUsbCharNav (void);
 	void PollUsbFKeys (void);
+	void PollUsbConsole (void);
 	void PollCadReboot (void);
 	void ApplyRawKeys (void);
 
@@ -86,6 +87,7 @@ private:
 	unsigned char		m_NavHidSent;
 	unsigned char		m_CharHidSent;
 	unsigned char		m_FkeyHidSent;
+	unsigned char		m_ConsoleHidSent;
 	int			m_UsbBurst;
 };
 
