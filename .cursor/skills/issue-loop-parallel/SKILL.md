@@ -98,20 +98,58 @@ Do **not** merge or release. Stop at “PR ready”.
 
 ## Spawning workers
 
-**Manual (works today):** open N new threads in T3 Code; each auto-creates a
-worktree. Paste the worker prompt below with the bundle filled in.
+**Scripted (works today) — preferred.** Drive the local T3 host API with the
+bundled driver, `.cursor/skills/issue-loop-parallel/t3-orchestrate.mjs`:
 
-**Scripted (T3 host API):** the local server exposes
-`POST /api/orchestration/dispatch` (environment-auth required):
+```bash
+# projects (id, title, repo root)
+node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs projects
 
-- `thread.create` →
-  `{ threadId, projectId, title, modelSelection, runtimeMode, branch, worktreePath, createdAt }`
-- `thread.turn.start` →
-  `{ threadId, message: { messageId, role: "user", text, attachments }, runtimeMode, interactionMode, createdAt }`
+# one worker per bundle; the server creates BOTH the thread and the
+# git worktree/branch (from origin/master) and starts the first turn
+node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs spawn \
+  --slug term --title "#528/#529 TERM scrollback + replay" \
+  --prompt @/tmp/worker-term.txt
 
-Create the branch + worktree first (the API does not), then dispatch
-`thread.create` followed by `thread.turn.start` with the worker prompt. Only
-worth wiring at scale; the manual path needs no plumbing.
+# watch / clean up
+node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs threads
+node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs rm-thread <threadId>
+```
+
+`spawn` sends a single `thread.turn.start` with `bootstrap.createThread` +
+`bootstrap.prepareWorktree`; the server then creates the thread, runs
+`git worktree add` for `task/<slug>-0ccd` (base `--base`, default `master`,
+fetched from `origin`), and starts the worker's first turn. The thread shows up
+in the T3 UI so the user can watch it. `--project <name>` picks the project
+when there are several (default: the only one, `mmcore`); `--prompt` takes
+literal text or `@/path/file`; `--model`/`--instance` override the default
+model selection.
+
+Mechanics (so this does not need re-investigating):
+
+- Endpoint `POST /api/orchestration/dispatch` on the server from
+  `~/.t3/userdata/server-runtime.json` (default `http://127.0.0.1:3773`).
+  `GET /api/orchestration/shell` lists projects/threads.
+- Auth is **environment-auth**: `Authorization: Bearer <session JWT>` with
+  scope `orchestration:operate`. A session token is
+  `base64url(JSON(claims)) + "." + base64url(HMAC-SHA256(payload, key))`,
+  verified against the `auth_sessions` row in `~/.t3/userdata/state.sqlite`;
+  the HMAC key is `~/.t3/userdata/secrets/server-signing-key.bin`. There is no
+  unauthenticated mint path (`/oauth/token` and `/api/auth/browser-session`
+  need a bootstrap/pairing credential, and the desktop's token is not stored in
+  plaintext).
+- `spawn`/`snapshot`/`threads`/`rm-thread` **mint a 5-minute session per
+  invocation and revoke it in a `finally`**, so no credential is left behind.
+  Do not hand-mint a long-lived token. A spawned thread does not depend on the
+  minting session, so revoking immediately after the dispatch is safe. Sanity
+  check: `sqlite3 ~/.t3/userdata/state.sqlite "select count(*) from
+  auth_sessions where subject='t3-orchestrate-script';"` → `0`.
+- `dispatch <file|->` sends a raw `ClientOrchestrationCommand`
+  (`thread.create`, `thread.turn.start`, `thread.delete`, …) when you need
+  something the wrapper does not cover.
+
+**Manual fallback:** open N new threads in T3 Code; each auto-creates a
+worktree. Paste the worker prompt below.
 
 **In-thread subagents (`task` tool):** read-only recon only. They share this
 worktree, so they must not commit, branch, or push.
@@ -124,7 +162,8 @@ Run the issue-loop-parallel skill in WORKER mode for bundle: #<N>, #<M> (<slug>)
 Scope: implement only these issues, in this worktree. Do NOT merge, do NOT cut
 a release. Stop when the PR is ready.
 
-- Branch task/<slug>-0ccd from current origin/master.
+- You are on branch task/<slug>-0ccd in your own worktree (scripted spawn
+  creates both); if not, branch from current origin/master.
 - Implement per the skill; run only the bundle's scoped tests (test-suite-progress),
   not the full suite.
 - Open a PR against master with `Fixes #<N>` for every issue in the bundle;
