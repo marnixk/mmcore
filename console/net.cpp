@@ -456,6 +456,65 @@ int mmb_net_available(void)
 	return live_net() ? 1 : 0;
 }
 
+/* One UDP request/response round trip (NTP). A fresh datagram socket per
+ * call keeps this independent of the TCP client state. */
+int mmb_net_udp_roundtrip(const char *host, int port,
+			  const void *tx, unsigned txlen,
+			  void *rx, unsigned rxcap, int timeout_ms)
+{
+	CNetSubSystem *net = net_sys();
+	CIPAddress ip;
+	CIPAddress from;
+	CSocket *sock;
+	u16 fport = 0;
+	unsigned start;
+	int rc;
+
+	if (!host || !host[0] || port < 1 || port > 65535 || !tx || !rx ||
+	    !txlen || !rxcap)
+		return -2;
+	if (!net || !live_net())
+		return -1;
+	{
+		CDNSClient dns(net);
+		if (!dns.Resolve(host, &ip))
+			return -2;
+	}
+	sock = new CSocket(net, IPPROTO_UDP);
+	if (!sock)
+		return -2;
+	sock->Bind(0);
+	rc = sock->SendTo(tx, txlen, MSG_DONTWAIT, ip, (u16)port);
+	if (rc < 0)
+	{
+		delete sock;
+		return -2;
+	}
+	start = CTimer::GetClockTicks();
+	for (;;)
+	{
+		rc = sock->ReceiveFrom(rx, rxcap, MSG_DONTWAIT, &from, &fport);
+		if (rc > 0)
+			break;
+		if (rc < 0)
+		{
+			rc = -2;
+			break;
+		}
+		if (CTimer::GetClockTicks() - start >= (unsigned)timeout_ms * 1000u)
+		{
+			rc = 0;
+			break;
+		}
+		if (CScheduler::IsActive())
+			CScheduler::Get()->MsSleep(20);
+		else
+			CTimer::SimpleMsDelay(20);
+	}
+	delete sock;
+	return rc;
+}
+
 const char *mmb_net_tcp_errmsg(void)
 {
 	return err_text(s_open_error);
@@ -1134,6 +1193,20 @@ void mmb_net_tcp_close(void)
 
 void mmb_net_yield(void)
 {
+}
+
+int mmb_net_udp_roundtrip(const char *host, int port,
+			  const void *tx, unsigned txlen,
+			  void *rx, unsigned rxcap, int timeout_ms)
+{
+	(void)host;
+	(void)port;
+	(void)tx;
+	(void)txlen;
+	(void)rx;
+	(void)rxcap;
+	(void)timeout_ms;
+	return -1;
 }
 
 int mmb_net_kind(void)

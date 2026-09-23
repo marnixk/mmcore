@@ -192,7 +192,14 @@ typedef struct mmb_options {
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
 	int term_autolog;      /* OPTION TERM AUTOLOG ON|OFF (default OFF) */
+	char ntp_server[64];   /* OPTION NTP SERVER "host[:port]" (#524) */
+	int ntp_enabled;       /* OPTION NTP ON|OFF (default OFF) */
+	char timezone[64];     /* OPTION TIMEZONE name/offset (default UTC) */
+	int tz_offset_min;     /* derived minutes east of UTC */
 } mmb_options;
+
+#define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
+#define MMB_NTP_DEFAULT_PORT   123
 
 #define MMB_FK_FILE 0
 #define MMB_FK_TCP  1
@@ -928,6 +935,13 @@ void mmb_net_tcp_close(void);
 void mmb_net_tcp_debug_poll(void);
 void mmb_net_yield(void);
 
+/* One UDP request/response round trip (NTP). Sends tx to host:port and waits
+ * up to timeout_ms for a datagram. Returns bytes received, 0 on timeout,
+ * <0 on DNS/socket error. */
+int mmb_net_udp_roundtrip(const char *host, int port,
+			  const void *tx, unsigned txlen,
+			  void *rx, unsigned rxcap, int timeout_ms);
+
 int mmb_net_srv_listen(int port);
 int mmb_net_srv_port(int lsn);
 void mmb_net_srv_listen_close(int lsn);
@@ -1028,9 +1042,19 @@ void mmb_clock_init(void);
 void mmb_clock_refresh(void);
 int mmb_clock_set_date(const char *s);
 int mmb_clock_set_time(const char *s);
+int mmb_clock_set_epoch(int64_t utc_epoch);
+int mmb_tz_offset_min(void);
+int mmb_timezone_normalize(const char *s, int *offset_min, char *out, int outcap);
 int64_t mmb_epoch_make(int y, int mo, int d, int h, int mi, int s);
 void mmb_epoch_break(int64_t e, int *py, int *pmo, int *pd, int *ph, int *pmi, int *ps);
 int64_t mmb_epoch_now(void);
+
+/* ---- NTP clock sync (#524) -------------------------------------------- */
+int mmb_ntp_parse_server(const char *spec, char *host, int hostcap, int *port);
+int mmb_ntp_sync(const char *server, int64_t *out_epoch);
+const char *mmb_ntp_errmsg(int rc);
+void mmb_ntp_poll(void);
+void mmb_cmd_ntp(void);
 int mmb_inkey_pop(void);
 int mmb_keydown_get(int n);
 void mmb_run_events(void);

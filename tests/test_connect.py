@@ -57,6 +57,21 @@ def test_help_connect(console):
     assert "drain" in out.lower() or "truncated" in out.lower()
 
 
+def test_ntp_rejects_arguments(console):
+    assert "?SYNTAX ERROR" in console.send_line("NTP EXTRA").upper()
+    assert "?SYNTAX ERROR" in console.send_line("NTP 5").upper()
+
+
+def test_ntp_fails_cleanly_without_network(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    out = console.send_line("NTP")
+    assert "?SYNTAX ERROR" not in out.upper()
+    low = out.lower()
+    assert "ntp failed" in low
+    assert "network not available" in low or "no reply" in low or "not reachable" in low
+    assert console.send_line("PRINT 6*7") == "42"
+
+
 def test_ipconfig_without_radio(console):
     out = console.send_line("IPCONFIG")
     assert "?SYNTAX ERROR" not in out.upper()

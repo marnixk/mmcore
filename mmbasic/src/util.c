@@ -1288,6 +1288,192 @@ int mmb_wifi_country_normalize(const char *s, char out[3])
 	return 0;
 }
 
+/* ---- timezone names (#524) -------------------------------------------- */
+
+int mmb_tz_offset_min(void)
+{
+	return G.opt.tz_offset_min;
+}
+
+/* A pragmatic fixed-offset table: standard time, no DST rules. Covers the
+ * zones a Pi owner is likely to name; anything else can use UTC+HH:MM. */
+typedef struct {
+	const char *name;
+	int offset_min;
+} tz_entry;
+
+static const tz_entry k_timezones[] = {
+	{ "UTC", 0 }, { "GMT", 0 }, { "Zulu", 0 },
+	{ "Atlantic/Reykjavik", 0 }, { "Europe/London", 0 }, { "Europe/Dublin", 0 },
+	{ "Europe/Lisbon", 0 },
+	{ "Europe/Amsterdam", 60 }, { "Europe/Paris", 60 }, { "Europe/Berlin", 60 },
+	{ "Europe/Madrid", 60 }, { "Europe/Rome", 60 }, { "Europe/Brussels", 60 },
+	{ "Europe/Vienna", 60 }, { "Europe/Stockholm", 60 }, { "Europe/Oslo", 60 },
+	{ "Europe/Copenhagen", 60 }, { "Europe/Prague", 60 }, { "Europe/Warsaw", 60 },
+	{ "Europe/Zurich", 60 }, { "Europe/Budapest", 60 }, { "Europe/Belgrade", 60 },
+	{ "Africa/Casablanca", 60 }, { "Africa/Lagos", 60 },
+	{ "Europe/Athens", 120 }, { "Europe/Helsinki", 120 }, { "Europe/Kyiv", 120 },
+	{ "Europe/Bucharest", 120 }, { "Europe/Riga", 120 }, { "Europe/Sofia", 120 },
+	{ "Europe/Tallinn", 120 }, { "Europe/Vilnius", 120 },
+	{ "Africa/Johannesburg", 120 }, { "Africa/Cairo", 120 }, { "Asia/Jerusalem", 120 },
+	{ "Europe/Moscow", 180 }, { "Europe/Istanbul", 180 }, { "Africa/Nairobi", 180 },
+	{ "Asia/Riyadh", 180 },
+	{ "Asia/Tehran", 210 },
+	{ "Asia/Dubai", 240 }, { "Indian/Mauritius", 240 },
+	{ "Asia/Kabul", 270 },
+	{ "Asia/Karachi", 300 }, { "Asia/Tashkent", 300 },
+	{ "Asia/Kolkata", 330 }, { "Asia/Calcutta", 330 },
+	{ "Asia/Kathmandu", 345 },
+	{ "Asia/Dhaka", 360 }, { "Asia/Almaty", 360 },
+	{ "Asia/Bangkok", 420 }, { "Asia/Jakarta", 420 }, { "Asia/Ho_Chi_Minh", 420 },
+	{ "Asia/Shanghai", 480 }, { "Asia/Hong_Kong", 480 }, { "Asia/Singapore", 480 },
+	{ "Asia/Manila", 480 }, { "Asia/Taipei", 480 }, { "Asia/Kuala_Lumpur", 480 },
+	{ "Australia/Perth", 480 },
+	{ "Asia/Tokyo", 540 }, { "Asia/Seoul", 540 },
+	{ "Australia/Adelaide", 570 },
+	{ "Australia/Brisbane", 600 }, { "Australia/Sydney", 600 },
+	{ "Australia/Melbourne", 600 }, { "Australia/Hobart", 600 },
+	{ "Pacific/Guam", 600 },
+	{ "Pacific/Auckland", 720 }, { "Pacific/Fiji", 720 },
+	{ "Pacific/Honolulu", -600 },
+	{ "America/Anchorage", -540 },
+	{ "America/Los_Angeles", -480 }, { "America/Vancouver", -480 },
+	{ "America/Denver", -420 }, { "America/Phoenix", -420 },
+	{ "America/Chicago", -360 }, { "America/Winnipeg", -360 },
+	{ "America/Mexico_City", -360 },
+	{ "America/New_York", -300 }, { "America/Toronto", -300 },
+	{ "America/Detroit", -300 }, { "America/Bogota", -300 },
+	{ "America/Lima", -300 }, { "America/Panama", -300 },
+	{ "America/Caracas", -240 },
+	{ "America/Sao_Paulo", -180 }, { "America/Buenos_Aires", -180 },
+	{ "America/Argentina/Buenos_Aires", -180 },
+};
+
+static int tz_name_match(const char *a, const char *b)
+{
+	char ca, cb;
+
+	while (*a && *b)
+	{
+		ca = *a;
+		cb = *b;
+		if (ca >= 'a' && ca <= 'z')
+			ca = (char)(ca - 32);
+		if (cb >= 'a' && cb <= 'z')
+			cb = (char)(cb - 32);
+		if (ca != cb)
+			return 0;
+		a++;
+		b++;
+	}
+	return *a == 0 && *b == 0;
+}
+
+static void tz_copy(char *out, int outcap, const char *s)
+{
+	int i = 0;
+
+	if (!out || outcap <= 0)
+		return;
+	while (s[i] && i + 1 < outcap)
+	{
+		out[i] = s[i];
+		i++;
+	}
+	out[i] = 0;
+}
+
+/* Parse "UTC", "GMT", "UTC+2", "GMT-5:30", "Europe/Amsterdam", a bare
+ * "+HH:MM" / "-HH", or a built-in IANA name. Writes the canonical name and
+ * the minutes east of UTC. Returns 1 on success, 0 on failure. */
+int mmb_timezone_normalize(const char *s, int *offset_min, char *out, int outcap)
+{
+	const char *p;
+	int sign = 1, hh = 0, mm = 0, have = 0;
+	unsigned i;
+
+	if (!s || !out || outcap <= 0)
+		return 0;
+	while (*s == ' ' || *s == '\t')
+		s++;
+	for (i = 0; i < sizeof k_timezones / sizeof k_timezones[0]; i++)
+	{
+		if (tz_name_match(s, k_timezones[i].name))
+		{
+			if (offset_min)
+				*offset_min = k_timezones[i].offset_min;
+			tz_copy(out, outcap, k_timezones[i].name);
+			return 1;
+		}
+	}
+	p = s;
+	if ((p[0] == 'U' || p[0] == 'u') && (p[1] == 'T' || p[1] == 't') &&
+	    (p[2] == 'C' || p[2] == 'c'))
+		p += 3;
+	else if ((p[0] == 'G' || p[0] == 'g') && (p[1] == 'M' || p[1] == 'm') &&
+		 (p[2] == 'T' || p[2] == 't'))
+		p += 3;
+	if (*p == '+' || *p == '-')
+		sign = (*p == '-') ? -1 : 1;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '+')
+		p++;
+	else if (*p == '-')
+		sign = -1, p++;
+	if (*p < '0' || *p > '9')
+		return 0;
+	while (*p >= '0' && *p <= '9')
+	{
+		hh = hh * 10 + (*p - '0');
+		p++;
+		have = 1;
+	}
+	if (*p == ':')
+	{
+		p++;
+		if (*p < '0' || *p > '9')
+			return 0;
+		while (*p >= '0' && *p <= '9')
+		{
+			mm = mm * 10 + (*p - '0');
+			p++;
+		}
+	}
+	while (*p == ' ')
+		p++;
+	if (!have || *p != 0 || hh > 14 || mm > 59)
+		return 0;
+	if (hh == 14 && mm != 0)
+		return 0;
+	if (offset_min)
+		*offset_min = sign * (hh * 60 + mm);
+	if (outcap > 0)
+	{
+		char tmp[24];
+		int n = 0;
+		const char *u = "UTC";
+
+		while (*u && n < (int)sizeof(tmp) - 8)
+			tmp[n++] = *u++;
+		if (sign * (hh * 60 + mm) != 0)
+		{
+			tmp[n++] = sign < 0 ? '-' : '+';
+			tmp[n++] = (char)('0' + hh / 10);
+			tmp[n++] = (char)('0' + hh % 10);
+			if (mm)
+			{
+				tmp[n++] = ':';
+				tmp[n++] = (char)('0' + mm / 10);
+				tmp[n++] = (char)('0' + mm % 10);
+			}
+		}
+		tmp[n] = 0;
+		tz_copy(out, outcap, tmp);
+	}
+	return 1;
+}
+
 static const int k_mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 static int parse_int_part(const char **ps)
@@ -1420,29 +1606,40 @@ static void fmt2(char *p, int n)
 	p[1] = (char)('0' + n % 10);
 }
 
+/* G.clk_* holds UTC. G.date_s/G.time_s are the local (timezone-adjusted)
+ * strings shown by DATE$/TIME$. */
 void mmb_clock_refresh(void)
 {
 	char *p;
-	int n;
+	int n, y, mo, d, h, mi, sec;
+
 	clock_norm();
+	{
+		int64_t utc = mmb_epoch_make(2000 + G.clk_y, G.clk_mo, G.clk_d,
+					     G.clk_h, G.clk_mi, G.clk_s);
+		mmb_epoch_break(utc + (int64_t)mmb_tz_offset_min() * 60,
+				&y, &mo, &d, &h, &mi, &sec);
+	}
 	p = G.date_s;
-	n = G.clk_d;
+	n = d;
 	if (n >= 10)
 		*p++ = (char)('0' + n / 10);
 	*p++ = (char)('0' + n % 10);
 	*p++ = '-';
-	n = G.clk_mo;
+	n = mo;
 	if (n >= 10)
 		*p++ = (char)('0' + n / 10);
 	*p++ = (char)('0' + n % 10);
 	*p++ = '-';
-	fmt2(p, G.clk_y);
+	if (y >= 2000)
+		y -= 2000;
+	fmt2(p, y);
 	p[2] = 0;
-	fmt2(G.time_s, G.clk_h);
+	fmt2(G.time_s, h);
 	G.time_s[2] = ':';
-	fmt2(G.time_s + 3, G.clk_mi);
+	fmt2(G.time_s + 3, mi);
 	G.time_s[5] = ':';
-	fmt2(G.time_s + 6, G.clk_s);
+	fmt2(G.time_s + 6, sec);
 	G.time_s[8] = 0;
 }
 
@@ -1458,10 +1655,36 @@ void mmb_clock_init(void)
 	mmb_clock_refresh();
 }
 
+/* Set the clock from a UTC Unix epoch (NTP). Also stamps the hardware wall
+ * clock so FAT file timestamps track it, when the platform supports it. */
+int mmb_clock_set_epoch(int64_t utc_epoch)
+{
+	int y, mo, d, h, mi, sec;
+
+	if (utc_epoch < 0)
+		return -1;
+	mmb_epoch_break(utc_epoch, &y, &mo, &d, &h, &mi, &sec);
+	if (y < 2000 || y > 2099)
+		return -1;
+	G.clk_y = y - 2000;
+	G.clk_mo = mo;
+	G.clk_d = d;
+	G.clk_h = h;
+	G.clk_mi = mi;
+	G.clk_s = sec;
+	G.clk_ms = mmb_now_ms();
+	mmb_clock_refresh();
+	if (G.plat && G.plat->set_wall_clock)
+		G.plat->set_wall_clock((long long)utc_epoch, mmb_tz_offset_min());
+	return 0;
+}
+
 int mmb_clock_set_date(const char *s)
 {
 	const char *p = s;
-	int d, m, y;
+	int d, m, y, h, mi, sec;
+	int yy, mo, dd, hh, mm2, ss;
+	int64_t local, utc;
 	if (!s)
 		return -1;
 	d = parse_int_part(&p);
@@ -1479,12 +1702,23 @@ int mmb_clock_set_date(const char *s)
 	y = parse_int_part(&p);
 	if (d < 1 || d > 31 || m < 1 || m > 12 || y < 0)
 		return -1;
-	if (y >= 100)
-		y %= 100;
+	if (y < 100)
+		y += 2000;
 	clock_norm();
-	G.clk_d = d;
-	G.clk_mo = m;
-	G.clk_y = y;
+	/* keep the current local time-of-day, replace the date */
+	local = mmb_epoch_make(2000 + G.clk_y, G.clk_mo, G.clk_d,
+			       G.clk_h, G.clk_mi, G.clk_s) +
+		(int64_t)mmb_tz_offset_min() * 60;
+	mmb_epoch_break(local, &yy, &mo, &dd, &h, &mi, &sec);
+	local = mmb_epoch_make(y, m, d, h, mi, sec);
+	utc = local - (int64_t)mmb_tz_offset_min() * 60;
+	mmb_epoch_break(utc, &yy, &mo, &dd, &hh, &mm2, &ss);
+	G.clk_y = (yy - 2000) % 100;
+	G.clk_mo = mo;
+	G.clk_d = dd;
+	G.clk_h = hh;
+	G.clk_mi = mm2;
+	G.clk_s = ss;
 	G.clk_ms = mmb_now_ms();
 	mmb_clock_refresh();
 	return 0;
@@ -1493,7 +1727,8 @@ int mmb_clock_set_date(const char *s)
 int mmb_clock_set_time(const char *s)
 {
 	const char *p = s;
-	int h, mi, sec;
+	int h, mi, sec, y, mo, d, hh, mm2, ss;
+	int64_t utc, local;
 	if (!s)
 		return -1;
 	h = parse_int_part(&p);
@@ -1514,9 +1749,19 @@ int mmb_clock_set_time(const char *s)
 	if (h < 0 || h > 23 || mi < 0 || mi > 59 || sec < 0 || sec > 59)
 		return -1;
 	clock_norm();
-	G.clk_h = h;
-	G.clk_mi = mi;
-	G.clk_s = sec;
+	utc = mmb_epoch_make(2000 + G.clk_y, G.clk_mo, G.clk_d,
+			     G.clk_h, G.clk_mi, G.clk_s);
+	local = utc + (int64_t)mmb_tz_offset_min() * 60;
+	mmb_epoch_break(local, &y, &mo, &d, &hh, &mm2, &ss);
+	local = mmb_epoch_make(y, mo, d, h, mi, sec);
+	utc = local - (int64_t)mmb_tz_offset_min() * 60;
+	mmb_epoch_break(utc, &y, &mo, &d, &hh, &mm2, &ss);
+	G.clk_y = (y - 2000) % 100;
+	G.clk_mo = mo;
+	G.clk_d = d;
+	G.clk_h = hh;
+	G.clk_mi = mm2;
+	G.clk_s = ss;
 	G.clk_ms = mmb_now_ms();
 	mmb_clock_refresh();
 	return 0;

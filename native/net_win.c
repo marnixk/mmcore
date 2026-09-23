@@ -559,6 +559,63 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 	return 0;
 }
 
+/* One UDP request/response round trip (used by NTP). */
+int mmb_net_udp_roundtrip(const char *host, int port,
+			  const void *tx, unsigned txlen,
+			  void *rx, unsigned rxcap, int timeout_ms)
+{
+	struct addrinfo hints, *res = 0, *ai;
+	char ps[16];
+	SOCKET fd = INVALID_SOCKET;
+	int rc;
+	fd_set rfds;
+	struct timeval tv;
+
+	if (!host || !host[0] || port < 1 || port > 65535 || !tx || !rx ||
+	    !txlen || !rxcap)
+		return -2;
+	if (mmb_win_wsa_start() != 0)
+		return -1;
+	snprintf(ps, sizeof ps, "%d", port);
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (getaddrinfo(host, ps, &hints, &res) != 0 || !res)
+		return -2;
+	for (ai = res; ai; ai = ai->ai_next)
+	{
+		fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (fd == INVALID_SOCKET)
+			continue;
+		if (connect(fd, ai->ai_addr, (int)ai->ai_addrlen) == 0)
+			break;
+		sock_close(fd);
+		fd = INVALID_SOCKET;
+	}
+	freeaddrinfo(res);
+	if (fd == INVALID_SOCKET)
+		return -2;
+	set_nonblock(fd);
+	if (send(fd, (const char *)tx, (int)txlen, 0) < 0)
+	{
+		sock_close(fd);
+		return -2;
+	}
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	tv.tv_sec = timeout_ms / 1000;
+	tv.tv_usec = (timeout_ms % 1000) * 1000;
+	rc = select(0, &rfds, 0, 0, &tv);
+	if (rc <= 0)
+	{
+		sock_close(fd);
+		return 0;
+	}
+	rc = recv(fd, (char *)rx, (int)rxcap, 0);
+	sock_close(fd);
+	return rc > 0 ? rc : -2;
+}
+
 /* ---- Wi-Fi radio: out of scope ------------------------------------ */
 int mmb_wlan_available(void) { return 0; }
 int mmb_wlan_radio_pending(void) { return 0; }

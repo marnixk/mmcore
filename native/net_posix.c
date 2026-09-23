@@ -305,6 +305,65 @@ int mmb_net_tcp_cancelling(void) { return s_state == C_CONNECTING; }
 void mmb_net_tcp_close(void) { client_reset(); }
 void mmb_net_tcp_debug_poll(void) {}
 
+/* One UDP request/response round trip (used by NTP). A connected datagram
+ * socket filters out replies from other peers. */
+int mmb_net_udp_roundtrip(const char *host, int port,
+			  const void *tx, unsigned txlen,
+			  void *rx, unsigned rxcap, int timeout_ms)
+{
+	struct addrinfo hints, *res = 0, *ai;
+	char ps[16];
+	int fd = -1, rc;
+	struct pollfd p;
+	ssize_t n;
+
+	if (!host || !host[0] || port < 1 || port > 65535 || !tx || !rx ||
+	    !txlen || !rxcap)
+		return -2;
+	if (!mmb_net_available())
+		return -1;
+	ignore_sigpipe();
+	snprintf(ps, sizeof ps, "%d", port);
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (getaddrinfo(host, ps, &hints, &res) != 0 || !res)
+		return -2;
+	for (ai = res; ai; ai = ai->ai_next)
+	{
+		fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (fd < 0)
+			continue;
+		if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0)
+			break;
+		close(fd);
+		fd = -1;
+	}
+	freeaddrinfo(res);
+	if (fd < 0)
+		return -2;
+	set_nonblock(fd);
+	if (send(fd, tx, txlen, MSG_NOSIGNAL) < 0)
+	{
+		close(fd);
+		return -2;
+	}
+	p.fd = fd;
+	p.events = POLLIN;
+	p.revents = 0;
+	rc = poll(&p, 1, timeout_ms);
+	if (rc <= 0)
+	{
+		close(fd);
+		return 0;
+	}
+	n = recv(fd, rx, rxcap, MSG_NOSIGNAL);
+	close(fd);
+	if (n <= 0)
+		return -2;
+	return (int)n;
+}
+
 /* ---- server (FTP PASV) -------------------------------------------- */
 
 typedef struct {

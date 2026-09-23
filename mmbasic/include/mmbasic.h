@@ -118,6 +118,10 @@ typedef struct mmb_platform {
 	 * headless backend). */
 	int (*console_save)(int slot, int tui);
 	int (*console_restore)(int slot, int tui);
+	/* Optional: stamp the hardware wall clock after an NTP sync so FAT
+	 * file timestamps track it. utc_seconds is Unix epoch seconds and
+	 * tz_offset_min is minutes east of UTC. NULL when unsupported. */
+	void (*set_wall_clock)(long long utc_seconds, int tz_offset_min);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);

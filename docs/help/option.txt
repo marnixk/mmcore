@@ -56,6 +56,13 @@ Settings:
     leaves the cable unused (reboot to free the stack if Ethernet is already
     up). Only one of Wi-Fi or Ethernet is active. The setting is saved across
     reboots.
+  NTP ON|OFF
+    Sync the clock from the network at boot (best-effort). Default OFF.
+  NTP SERVER "host[:port]"
+    Server for ~NTP~ (default pool.ntp.org, port 123).
+  TIMEZONE "name"
+    Local zone for DATE$/TIME$/DATETIME$ (default UTC; no daylight saving).
+    See ~TIMEZONE~.
   TERM LOG ON|OFF
     Write session traffic to C:/.termlog (A: if no SD). Default OFF.
   TERM AUTOLOG ON|OFF

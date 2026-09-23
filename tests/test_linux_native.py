@@ -6,8 +6,11 @@ behaviour: startup banner, immediate-mode PRINT, and RUN of a ramdisk .BAS.
 import os
 import plistlib
 import shutil
+import socket
+import struct
 import subprocess
 import sys
+import threading
 import zipfile
 
 import pytest
@@ -1001,3 +1004,59 @@ def test_native_packaging_derives_icons_from_branding():
     assert "assets" in gen and "mmcore-app-icon.png" in gen
     assert "gen-appicon.py" in mac and "--iconset" in mac
     assert "gen-appicon.py" in lin and "mmcore.png" in lin
+
+
+NTP_UNIX_DELTA = 2208988800
+NTP_TARGET = 1790157296  # 2026-09-23 09:54:56 UTC
+
+
+def _ntp_server(srv, target, got):
+    srv.settimeout(20)
+    try:
+        data, addr = srv.recvfrom(512)
+    except OSError:
+        return
+    got.append(data)
+    resp = bytearray(48)
+    resp[0] = (4 << 3) | 4  # LI 0, VN 4, mode 4 (server)
+    resp[24:32] = data[40:48]  # originate echoes our transmit nonce
+    resp[40:44] = struct.pack("!I", target + NTP_UNIX_DELTA)
+    srv.sendto(bytes(resp), addr)
+
+
+def test_ntp_sync_from_loopback_server(mmb_linux):
+    """The native UDP transport really speaks NTP and applies the timezone."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    got = []
+    th = threading.Thread(
+        target=_ntp_server, args=(srv, NTP_TARGET, got), daemon=True
+    )
+    th.start()
+    cmds = [
+        f'OPTION NTP SERVER "127.0.0.1:{port}"',
+        'OPTION TIMEZONE "Europe/Amsterdam"',
+        "NTP",
+        "PRINT DATETIME$(EPOCH(NOW))",
+        "PRINT TIME$",
+        "QUIT",
+    ]
+    try:
+        proc = subprocess.Popen(
+            [mmb_linux],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        out, _ = proc.communicate("\n".join(cmds) + "\n", timeout=90)
+    finally:
+        srv.close()
+    th.join(timeout=5)
+    assert got, "NTP server saw no request"
+    assert "Time synced:" in out, out
+    # Amsterdam standard time is UTC+1: 09:54:56 UTC -> 10:54:56 local.
+    assert "23-09-2026 10:54:5" in out, out
+    assert "10:54:5" in out, out
+    assert "?SYNTAX ERROR" not in out.upper(), out

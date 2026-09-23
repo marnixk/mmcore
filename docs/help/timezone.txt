@@ -1,0 +1,21 @@
+name: TIMEZONE
+kind: command
+alias: OPTION TIMEZONE
+
+Select the local timezone offset applied to ~DATE$~, ~TIME$~ and ~DATETIME$~.
+The stored clock and ~EPOCH~ stay UTC; only the displayed clock is shifted.
+The offset is also handed to the hardware clock so FAT file timestamps are
+local.
+
+OPTION TIMEZONE "name"
+
+name is a built-in fixed-offset zone without daylight saving, e.g. UTC (the
+default), Europe/Amsterdam, America/New_York, Asia/Tokyo or Pacific/Auckland,
+or a numeric offset such as UTC+2, UTC-5:30 or GMT+5.
+
+Use ~NTP~ to synchronise the clock. See also ~DATETIME$~ and ~EPOCH~.
+
+Example:
+
+    OPTION TIMEZONE "Europe/Amsterdam"
+    PRINT DATETIME$(NOW)
