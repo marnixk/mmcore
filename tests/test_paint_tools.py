@@ -130,6 +130,13 @@ void pt_request_redraw(void) { PT.dirty = 1; }
 
 void pt_undo_push(void) {}
 
+/* paint_text.c (#642) is not linked in this shim; the tool only forwards the
+ * caret click to it. */
+void pt_text_begin(int cx, int cy, int button)
+{
+	(void)cx; (void)cy; (void)button;
+}
+
 int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy)
 {
 	(void)sx; (void)sy; (void)cx; (void)cy;
