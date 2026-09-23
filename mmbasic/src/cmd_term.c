@@ -90,6 +90,9 @@
 #define TM_LOG_BUF      32768
 #define TM_LOG_FLUSH_MS 10000
 #define TM_LOG_WATER    24576
+#define TM_SB_MAX       256
+#define TM_SB_COLS      TM_MAX_COLS
+#define TM_SB_QUERY     64
 
 typedef struct {
 	int active;
@@ -168,6 +171,20 @@ typedef struct {
 	int file_done;
 	unsigned char file_pend[TM_FILE_PEND];
 	int file_pend_n;
+	int file_pct;          /* replay speed, percent (0 = instant) */
+	int file_paused;
+	int file_have_ms;
+	unsigned file_last_ms;
+	unsigned file_last_at;
+	char file_rec[TM_FILE_LINE];
+	int file_have_rec;
+	int file_rec_timed;
+	unsigned file_rec_ms;
+	int sb_view;           /* lines scrolled back; 0 = live */
+	int sb_search;         /* 1 while typing a search query */
+	int sb_qn;
+	char sb_query[TM_SB_QUERY];
+	int sb_hl;             /* highlighted logical line, -1 none */
 	unsigned dump_at;
 	unsigned ansi_at;
 	int mon_ansi;
@@ -216,6 +233,19 @@ static struct {
 	int buf_n;
 	char buf[TM_LOG_BUF];
 } L;
+
+/* Scrollback: complete lines that have scrolled off the top of the pane.
+ * A ring, so the newest TM_SB_MAX lines are always available.  Widths are
+ * per line because Boxed/Full can change mid-session. */
+static struct {
+	int cap;          /* configured line count; 0 disables scrollback */
+	int n;            /* stored lines (<= cap) */
+	int head;         /* next write slot */
+	unsigned short w[TM_SB_MAX];
+	unsigned char ch[TM_SB_MAX][TM_SB_COLS];
+	unsigned fg[TM_SB_MAX][TM_SB_COLS];
+	unsigned bg[TM_SB_MAX][TM_SB_COLS];
+} H;
 
 static int host_is_demo(void)
 {
@@ -364,6 +394,349 @@ static int term_want_echo(void);
 static void pane_rubout(void);
 static void term_echo_byte(unsigned char b);
 static void send_naws(void);
+static int term_status_y(void);
+static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg);
+static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg);
+
+/* ---- scrollback ------------------------------------------------------ */
+
+static int sb_total(void)
+{
+	return H.n + T.cur_row + 1;
+}
+
+static int sb_max_view(void)
+{
+	int m = sb_total() - T.pane_rows;
+
+	return m > 0 ? m : 0;
+}
+
+static void sb_slot_line(int line, int c, unsigned *ch, unsigned *fg, unsigned *bg)
+{
+	int slot;
+
+	if (line < 0 || line >= H.n)
+	{
+		*ch = ' ';
+		*fg = TM_FG;
+		*bg = TM_BG;
+		return;
+	}
+	slot = (H.head - H.n + line) % H.cap;
+	if (slot < 0)
+		slot += H.cap;
+	if (c < 0 || c >= (int)H.w[slot])
+	{
+		*ch = ' ';
+		*fg = TM_FG;
+		*bg = TM_BG;
+		return;
+	}
+	*ch = H.ch[slot][c];
+	*fg = H.fg[slot][c];
+	*bg = H.bg[slot][c];
+}
+
+static void term_view_cell(int r, int c, unsigned *ch, unsigned *fg, unsigned *bg)
+{
+	int line, top;
+
+	if (T.sb_view <= 0)
+	{
+		*ch = (unsigned char)T.cell[r][c];
+		*fg = T.cell_fg[r][c];
+		*bg = T.cell_bg[r][c];
+		return;
+	}
+	top = sb_total() - T.pane_rows - T.sb_view;
+	line = top + r;
+	if (line < 0)
+	{
+		*ch = ' ';
+		*fg = TM_FG;
+		*bg = TM_BG;
+		return;
+	}
+	if (line < H.n)
+		sb_slot_line(line, c, ch, fg, bg);
+	else
+	{
+		int lr = line - H.n;
+
+		if (lr >= 0 && lr < T.pane_rows)
+		{
+			*ch = (unsigned char)T.cell[lr][c];
+			*fg = T.cell_fg[lr][c];
+			*bg = T.cell_bg[lr][c];
+		}
+		else
+		{
+			*ch = ' ';
+			*fg = TM_FG;
+			*bg = TM_BG;
+		}
+	}
+	if (line == T.sb_hl)
+	{
+		unsigned t = *fg;
+
+		*fg = *bg;
+		*bg = t;
+	}
+}
+
+static void sb_push(const unsigned char *ch, const unsigned *fg, const unsigned *bg,
+		    int w)
+{
+	int slot, c, grew;
+
+	if (H.cap <= 0)
+		return;
+	if (w < 0)
+		w = 0;
+	if (w > TM_SB_COLS)
+		w = TM_SB_COLS;
+	slot = H.head;
+	for (c = 0; c < w; c++)
+	{
+		H.ch[slot][c] = ch[c];
+		H.fg[slot][c] = fg[c];
+		H.bg[slot][c] = bg[c];
+	}
+	H.w[slot] = (unsigned short)w;
+	H.head = (H.head + 1) % H.cap;
+	grew = H.n < H.cap;
+	if (grew)
+		H.n++;
+	/* Pin the viewed text while new output arrives. */
+	if (T.sb_view > 0 && grew && T.sb_view < sb_max_view())
+		T.sb_view++;
+}
+
+static int sb_line_text(int line, char *out, int maxn)
+{
+	int c, w;
+
+	if (line < 0)
+		return 0;
+	if (line < H.n)
+	{
+		int slot = (H.head - H.n + line) % H.cap;
+
+		if (slot < 0)
+			slot += H.cap;
+		w = (int)H.w[slot];
+		if (w > maxn - 1)
+			w = maxn - 1;
+		for (c = 0; c < w; c++)
+			out[c] = (char)H.ch[slot][c];
+	}
+	else
+	{
+		int lr = line - H.n;
+
+		if (lr < 0 || lr >= T.pane_rows)
+			return 0;
+		w = term_width();
+		if (w > maxn - 1)
+			w = maxn - 1;
+		for (c = 0; c < w; c++)
+			out[c] = T.cell[lr][c] ? T.cell[lr][c] : ' ';
+	}
+	out[w] = 0;
+	while (w > 0 && out[w - 1] == ' ')
+		out[--w] = 0;
+	return 1;
+}
+
+static int sb_ci_contains(const char *h, const char *n)
+{
+	int i, j;
+
+	if (!n[0])
+		return 0;
+	for (i = 0; h[i]; i++)
+	{
+		for (j = 0; n[j]; j++)
+		{
+			char a = h[i + j], b = n[j];
+
+			if (a >= 'A' && a <= 'Z')
+				a = (char)(a - 'A' + 'a');
+			if (b >= 'A' && b <= 'Z')
+				b = (char)(b - 'A' + 'a');
+			if (a != b)
+				break;
+		}
+		if (!n[j])
+			return 1;
+	}
+	return 0;
+}
+
+static int sb_find(int from, int dir)
+{
+	int line, total = sb_total();
+	char txt[TM_SB_COLS + 1];
+
+	for (line = from; line >= 0 && line < total; line += dir)
+		if (sb_line_text(line, txt, (int)sizeof(txt)) &&
+		    sb_ci_contains(txt, T.sb_query))
+			return line;
+	return -1;
+}
+
+static void sb_focus_line(int line)
+{
+	int total = sb_total();
+	int view = total - 1 - (line + T.pane_rows - 1);
+
+	if (view < 0)
+		view = 0;
+	if (view > sb_max_view())
+		view = sb_max_view();
+	T.sb_view = view;
+	T.sb_hl = line;
+}
+
+static void sb_refresh(void)
+{
+	mark_dirty_full();
+	if (T.need_draw)
+		term_draw();
+	term_serial_dump();
+}
+
+static void sb_scroll_by(int delta)
+{
+	int max = sb_max_view();
+
+	T.sb_view += delta;
+	if (T.sb_view < 0)
+		T.sb_view = 0;
+	if (T.sb_view > max)
+		T.sb_view = max;
+	T.sb_hl = -1;
+	sb_refresh();
+}
+
+static void sb_to_live(void)
+{
+	T.sb_view = 0;
+	T.sb_hl = -1;
+	T.sb_search = 0;
+	sb_refresh();
+}
+
+static void sb_search_begin(void)
+{
+	T.sb_search = 1;
+	T.sb_qn = 0;
+	T.sb_query[0] = 0;
+	sb_refresh();
+}
+
+static void sb_search_run(void)
+{
+	int line, bottom = sb_total() - 1 - (T.sb_view > 0 ? T.sb_view : 0);
+
+	T.sb_search = 0;
+	if (!T.sb_query[0])
+	{
+		sb_refresh();
+		return;
+	}
+	line = sb_find(bottom, -1);
+	if (line < 0)
+		line = sb_find(sb_total() - 1, -1);
+	if (line >= 0)
+		sb_focus_line(line);
+	sb_refresh();
+}
+
+static void sb_search_step(int dir)
+{
+	int line;
+
+	if (!T.sb_query[0])
+		return;
+	line = (T.sb_hl >= 0) ? sb_find(T.sb_hl + dir, dir)
+			      : sb_find(sb_total() - 1, -1);
+	if (line >= 0)
+		sb_focus_line(line);
+	sb_refresh();
+}
+
+static void sb_status_number(char *dst, unsigned n)
+{
+	char tmp[12];
+	int i = 0;
+
+	if (n == 0)
+		tmp[i++] = '0';
+	while (n && i < 11)
+	{
+		tmp[i++] = (char)('0' + (n % 10));
+		n /= 10;
+	}
+	while (i > 0)
+	{
+		int len = (int)strlen(dst);
+
+		if (len + 2 >= 48)
+			break;
+		dst[len] = tmp[--i];
+		dst[len + 1] = 0;
+	}
+}
+
+static void term_draw_sb_status(void)
+{
+	char text[96];
+	unsigned bg = TM_MENU_BG, fg = TM_MENU_FG;
+	int y = term_status_y();
+
+	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	if (T.sb_search)
+	{
+		strcpy(text, "Search: ");
+		strncat(text, T.sb_query, 40);
+		term_put_str_bg(0, y, text, fg, bg);
+		term_cell((int)strlen(text) * TM_CW, y, '_', TM_HOT, bg);
+		return;
+	}
+	text[0] = 0;
+	if (T.sb_view > 0)
+	{
+		strcpy(text, "SCROLL -");
+		sb_status_number(text, (unsigned)T.sb_view);
+		strncat(text, " ", sizeof(text) - 1 - strlen(text));
+	}
+	if (T.sb_query[0] && T.sb_hl >= 0)
+		strncat(text, "n older  N newer  / search  q live",
+			sizeof(text) - 1 - strlen(text));
+	else
+		strncat(text, "PgUp/PgDn  / search  q live",
+			sizeof(text) - 1 - strlen(text));
+	term_put_str_bg(0, y, text, fg, bg);
+}
+
+void mmb_term_scrollback_set(int lines)
+{
+	if (lines < 0)
+		lines = 0;
+	if (lines > TM_SB_MAX)
+		lines = TM_SB_MAX;
+	H.cap = lines;
+	if (H.n > H.cap)
+	{
+		H.n = 0;
+		H.head = 0;
+	}
+	if (T.sb_view > sb_max_view())
+		T.sb_view = 0;
+}
 
 static unsigned ansi_pal(int n)
 {
@@ -568,9 +941,35 @@ static void term_serial_dump(void)
 	for (r = 0; r < T.pane_rows; r++)
 	{
 		for (c = 0; c < cols; c++)
-			line[c] = T.cell[r][c] ? T.cell[r][c] : ' ';
+		{
+			unsigned ch, fg, bg;
+
+			term_view_cell(r, c, &ch, &fg, &bg);
+			line[c] = ch ? (char)ch : ' ';
+		}
 		line[cols] = 0;
 		ser(line);
+		ser("\r\n");
+	}
+	if (T.sb_search)
+	{
+		ser("Search: ");
+		ser(T.sb_query);
+		ser("\r\n");
+	}
+	else if (T.sb_view > 0)
+	{
+		char sbuf[32];
+
+		strcpy(sbuf, "SCROLL -");
+		sb_status_number(sbuf, (unsigned)T.sb_view);
+		ser(sbuf);
+		ser("\r\n");
+	}
+	if (T.sb_hl >= 0 && T.sb_query[0])
+	{
+		ser("MATCH ");
+		ser(T.sb_query);
 		ser("\r\n");
 	}
 	if (T.menu || T.alt_pend)
@@ -703,6 +1102,8 @@ static void pane_scroll_up(void)
 	int r, c;
 	if (T.pane_rows <= 1)
 		return;
+	sb_push((const unsigned char *)T.cell[0], T.cell_fg[0], T.cell_bg[0],
+		term_width());
 	for (r = 0; r < T.pane_rows - 1; r++)
 	{
 		for (c = 0; c < term_width(); c++)
@@ -967,12 +1368,11 @@ static void term_draw_row(int r)
 	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
-		ch = (unsigned char)T.cell[r][c];
-		fg = T.cell_fg[r][c];
-		bg = T.cell_bg[r][c];
+		term_view_cell(r, c, &ch, &fg, &bg);
 		if (!ch)
 			ch = ' ';
-		if (term_paint_cursor && T.cur_vis && r == T.cur_row && c == T.cur_col)
+		if (T.sb_view <= 0 && term_paint_cursor && T.cur_vis &&
+		    r == T.cur_row && c == T.cur_col)
 		{
 			unsigned t = fg;
 			fg = bg;
@@ -1100,6 +1500,8 @@ static void term_draw(void)
 	}
 	if (T.menu || T.alt_pend)
 		term_draw_status();
+	else if (T.sb_view > 0 || T.sb_search)
+		term_draw_sb_status();
 	else if (T.mode80x25)
 	{
 		if (T.pane_rows > 0)
@@ -1133,6 +1535,13 @@ static void term_draw(void)
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, top_h);
+			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+					T.vid_cols * TM_CW, TM_CH);
+		}
+		else if (T.sb_view > 0 || T.sb_search)
+		{
+			term_rect_union(&px, &py, &pw, &ph, 0, 0,
+					T.vid_cols * TM_CW, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 					T.vid_cols * TM_CW, TM_CH);
 		}
@@ -4416,6 +4825,20 @@ static const char *file_after_ints(const char *p, int want)
 	return p;
 }
 
+static const char *file_int1(const char *p, unsigned *out)
+{
+	unsigned v = 0;
+
+	while (*p == ' ')
+		p++;
+	if (*p < '0' || *p > '9')
+		return 0;
+	while (*p >= '0' && *p <= '9')
+		v = v * 10 + (unsigned)(*p++ - '0');
+	*out = v;
+	return p;
+}
+
 static void file_replay_poll(void)
 {
 	char line[TM_FILE_LINE];
@@ -4424,33 +4847,82 @@ static void file_replay_poll(void)
 	char *p;
 	const char *hex;
 
-	if (T.file_done || T.file_wait)
+	if (T.file_done || T.file_wait || T.file_paused)
 		return;
-	for (loops = 0; loops < 128; loops++)
+	for (loops = 0; loops < 256; loops++)
 	{
-		rc = file_next_line(line, (int)sizeof(line));
-		if (rc < 0)
+		if (!T.file_have_rec)
 		{
-			T.file_done = 1;
-			ser("!REPLAY DONE\r\n");
-			return;
+			rc = file_next_line(line, (int)sizeof(line));
+			if (rc < 0)
+			{
+				T.file_done = 1;
+				ser("!REPLAY DONE\r\n");
+				return;
+			}
+			if (rc == 0)
+			{
+				T.file_done = 1;
+				term_rx_interpret();
+				if (T.need_draw)
+					term_draw();
+				ser("!REPLAY DONE\r\n");
+				return;
+			}
+			p = line;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (!p[0] || p[0] == '#')
+				continue;
+			if (p[0] != 'R' && p[0] != 'T')
+				continue;
+			strncpy(T.file_rec, p, sizeof(T.file_rec) - 1);
+			T.file_rec[sizeof(T.file_rec) - 1] = 0;
+			T.file_have_rec = 1;
+			T.file_rec_timed = 0;
+			T.file_rec_ms = 0;
+			if (file_after_ints(p + 1, 3))
+			{
+				unsigned v;
+
+				if (file_int1(p + 1, &v))
+				{
+					T.file_rec_ms = v;
+					T.file_rec_timed = 1;
+				}
+			}
 		}
-		if (rc == 0)
+		/* Readable timing: pace records against the log's own ms clock.
+		 * file_pct is the speed as a percentage (100 = real time). */
+		if (T.file_pct > 0 && T.file_rec_timed)
 		{
-			T.file_done = 1;
-			term_rx_interpret();
-			if (T.need_draw)
-				term_draw();
-			ser("!REPLAY DONE\r\n");
-			return;
+			unsigned now = mmb_now_ms();
+
+			if (!T.file_have_ms)
+			{
+				T.file_have_ms = 1;
+				T.file_last_ms = T.file_rec_ms;
+				T.file_last_at = now;
+			}
+			else
+			{
+				unsigned delta =
+					T.file_rec_ms > T.file_last_ms
+						? T.file_rec_ms - T.file_last_ms
+						: 0;
+				unsigned target =
+					T.file_last_at +
+					(unsigned)((double)delta * 100.0 /
+						   (double)T.file_pct);
+
+				if (now < target)
+					return;
+				T.file_last_at = target;
+				T.file_last_ms = T.file_rec_ms;
+			}
 		}
-		p = line;
-		while (*p == ' ' || *p == '\t')
-			p++;
-		if (!p[0] || p[0] == '#')
-			continue;
-		if (p[0] != 'R' && p[0] != 'T')
-			continue;
+		p = T.file_rec;
+		T.file_have_rec = 0;
 		kind_t = (p[0] == 'T');
 		p++;
 		hex = file_after_ints(p, 3);
@@ -4481,6 +4953,15 @@ static void file_replay_poll(void)
 	term_rx_interpret();
 	if (T.need_draw)
 		term_draw();
+}
+
+static void term_replay_speed_msg(void)
+{
+	ser("!REPLAY SPEED ");
+	ser_u((unsigned)T.file_pct);
+	if (T.file_paused)
+		ser(" PAUSED");
+	ser("\r\n");
 }
 
 static void demo_iac_tick(void)
@@ -4667,7 +5148,23 @@ static int esc_feed(char c)
 				esc_reset();
 				return 1;
 			}
+			if ((c == 'A' && (T.sb_view > 0 || H.n > 0)) ||
+			    (c == 'B' && T.sb_view > 0))
+			{
+				sb_scroll_by(c == 'A' ? 1 : -1);
+				esc_reset();
+				return 1;
+			}
 			esc_send();
+			return 1;
+		}
+		if ((c == 'H' || c == 'F') && !T.dlg && !T.menu && T.sb_view > 0)
+		{
+			if (c == 'H')
+				sb_scroll_by(sb_max_view());
+			else
+				sb_to_live();
+			esc_reset();
 			return 1;
 		}
 		if (c >= '0' && c <= '9')
@@ -4693,6 +5190,8 @@ static int esc_feed(char c)
 		}
 		if (c == '~')
 		{
+			int page = T.pane_rows > 2 ? T.pane_rows - 2 : 1;
+
 			if (T.csi_n == 21)
 			{
 				esc_reset();
@@ -4701,6 +5200,30 @@ static int esc_feed(char c)
 			}
 			if (T.dlg || T.menu)
 			{
+				esc_reset();
+				return 1;
+			}
+			if (T.csi_n == 5 && (T.sb_view > 0 || H.n > 0))
+			{
+				sb_scroll_by(page);
+				esc_reset();
+				return 1;
+			}
+			if (T.csi_n == 6 && T.sb_view > 0)
+			{
+				sb_scroll_by(-page);
+				esc_reset();
+				return 1;
+			}
+			if (T.csi_n == 1 && T.sb_view > 0)
+			{
+				sb_scroll_by(sb_max_view());
+				esc_reset();
+				return 1;
+			}
+			if (T.csi_n == 4 && T.sb_view > 0)
+			{
+				sb_to_live();
 				esc_reset();
 				return 1;
 			}
@@ -4761,24 +5284,138 @@ static void demo_emit_line(void)
 		(mmb_now_ms() % (TM_DEMO_MAX_MS - TM_DEMO_MIN_MS + 1));
 }
 
+static int term_log_name(const char *name)
+{
+	int n = (int)strlen(name);
+	const char *sufs[2];
+	int i;
+
+	sufs[0] = ".termlog";
+	sufs[1] = ".log";
+	for (i = 0; i < 2; i++)
+	{
+		int m = (int)strlen(sufs[i]);
+
+		if (n >= m && strcasecmp(name + n - m, sufs[i]) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int term_sessions_dir(const char *dir)
+{
+	char list[2048];
+	char *p;
+	int found = 0;
+
+	list[0] = 0;
+	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
+		return 0;
+	p = list;
+	while (*p)
+	{
+		char name[96];
+		int m = 0;
+
+		while (*p && *p != '\n' && *p != '\r' && m < (int)sizeof(name) - 1)
+			name[m++] = *p++;
+		name[m] = 0;
+		while (*p == '\r' || *p == '\n')
+			p++;
+		if (m <= 0 || name[m - 1] == '/' || !term_log_name(name))
+			continue;
+		{
+			char full[160];
+			unsigned fl = 0;
+			const char *src = dir;
+			const char *nm = name;
+
+			while (*src && fl + 1 < sizeof(full))
+				full[fl++] = *src++;
+			if (fl > 0 && full[fl - 1] != '/' && fl + 1 < sizeof(full))
+				full[fl++] = '/';
+			while (*nm && fl + 1 < sizeof(full))
+				full[fl++] = *nm++;
+			full[fl] = 0;
+			mmb_out(full);
+			mmb_out(" ");
+			mmb_outf(0, (int64_t)mmb_vfs_size(full));
+			mmb_out("\n");
+			found++;
+		}
+	}
+	return found;
+}
+
+static void term_sessions_list(void)
+{
+	char root[4];
+	char def[24];
+	int found = 0, sz;
+
+	found += term_sessions_dir(mmb_vfs_cwd());
+	root[0] = mmb_fat_ready('C') ? 'C' : 'A';
+	root[1] = ':';
+	root[2] = '/';
+	root[3] = 0;
+	found += term_sessions_dir(root);
+	/* The default capture path is a dotfile, so directory listings hide it;
+	 * surface it explicitly. */
+	term_log_path(def, sizeof(def));
+	sz = mmb_vfs_size(def);
+	if (sz >= 0)
+	{
+		mmb_out(def);
+		mmb_out(" ");
+		mmb_outf(0, (int64_t)sz);
+		mmb_out("\n");
+		found++;
+	}
+	if (!found)
+		mmb_out("No saved TERM sessions");
+	mmb_out("\n");
+}
+
 void mmb_cmd_term(void)
 {
 	mmb_val host, portv, pathv;
-	int port, i, no_args, file_mode, file_sz;
+	int port, i, no_args, file_mode, file_sz, file_pct;
 	char file_path[88];
 
 	mmb_skip_sp();
 	file_mode = 0;
 	file_sz = 0;
+	file_pct = 0;
 	file_path[0] = 0;
 	port = 0;
 	host = mmb_str_val("");
 	no_args = (*G.p == 0 || *G.p == ':' || *G.p == '\'');
+	if (mmb_match("SESSIONS"))
+	{
+		term_sessions_list();
+		return;
+	}
 	if (mmb_match("REPLAY"))
 	{
 		pathv = mmb_expr();
 		if (pathv.type != T_STR)
 			mmb_syntax();
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			mmb_val sv;
+
+			G.p++;
+			mmb_skip_sp();
+			sv = mmb_expr();
+			if (sv.type != T_INT && sv.type != T_NUM)
+				mmb_syntax();
+			file_pct = (int)mmb_as_int(sv) * 100;
+			if (file_pct < 0)
+				file_pct = 0;
+			if (file_pct > 6400)
+				file_pct = 6400;
+		}
 		if (mmb_vfs_resolve(pathv.s, file_path, (int)sizeof(file_path)) != 0)
 			mmb_error("?FILE");
 		file_sz = mmb_vfs_size(file_path);
@@ -4807,6 +5444,9 @@ void mmb_cmd_term(void)
 	}
 
 	memset(&T, 0, sizeof(T));
+	H.n = 0;
+	H.head = 0;
+	mmb_term_scrollback_set(G.opt.term_scrollback);
 	s_iac_n = 0;
 	zm_setup();
 	mmb_zm_forget(&ZM);
@@ -4821,6 +5461,7 @@ void mmb_cmd_term(void)
 		T.file_path[sizeof(T.file_path) - 1] = 0;
 		T.file_sz = file_sz;
 		T.file_replay = 1;
+		T.file_pct = file_pct;
 		T.tcp = 1;
 		strncpy(T.host, "file", sizeof(T.host) - 1);
 	}
@@ -4851,7 +5492,11 @@ void mmb_cmd_term(void)
 		T.mon_sb = -1;
 	}
 	else if (T.file_replay)
+	{
 		ser("!REPLAY START\r\n");
+		if (T.file_pct > 0)
+			term_replay_speed_msg();
+	}
 	else if (!T.demo && T.host[0])
 	{
 		if (mmb_net_tcp_begin(T.host, T.port) != 0)
@@ -4865,6 +5510,12 @@ void mmb_cmd_term(void)
 			T.connecting = 1;
 			T.connect_at = mmb_now_ms();
 		}
+	}
+
+	if (G.opt.term_autolog && !T.file_replay && !G.opt.term_log)
+	{
+		G.opt.term_log = 1;
+		mmb_term_log_enable(1);
 	}
 
 	term_apply_session_mode();
@@ -4957,6 +5608,29 @@ const char *mmb_term_key(char c)
 			term_draw();
 		return "";
 	}
+	if (T.file_replay && !T.alt)
+	{
+		if (c == '+' || c == '=')
+		{
+			T.file_pct = T.file_pct > 0 ? T.file_pct * 2 : 100;
+			if (T.file_pct > 6400)
+				T.file_pct = 6400;
+			term_replay_speed_msg();
+			return "";
+		}
+		if (c == '-' || c == '_')
+		{
+			T.file_pct = T.file_pct > 100 ? T.file_pct / 2 : (T.file_pct > 0 ? 50 : 100);
+			term_replay_speed_msg();
+			return "";
+		}
+		if (c == ' ')
+		{
+			T.file_paused = !T.file_paused;
+			term_replay_speed_msg();
+			return "";
+		}
+	}
 	if (T.replay && replay_key(c))
 	{
 		if (T.need_draw)
@@ -4988,6 +5662,56 @@ const char *mmb_term_key(char c)
 		if (c == 27 || c == 'x' || c == 'X')
 			mmb_zm_cancel(&ZM);
 		return "";
+	}
+	if (T.sb_search)
+	{
+		if (c == 27)
+		{
+			T.sb_search = 0;
+			sb_refresh();
+			return "";
+		}
+		if (c == '\r' || c == '\n')
+		{
+			sb_search_run();
+			return "";
+		}
+		if (c == 8 || c == 127)
+		{
+			if (T.sb_qn > 0)
+				T.sb_qn--;
+			T.sb_query[T.sb_qn] = 0;
+			sb_refresh();
+			return "";
+		}
+		if ((unsigned char)c >= 32 && (unsigned char)c < 127 &&
+		    T.sb_qn + 1 < TM_SB_QUERY)
+		{
+			T.sb_query[T.sb_qn++] = c;
+			T.sb_query[T.sb_qn] = 0;
+			sb_refresh();
+		}
+		return "";
+	}
+	if (T.sb_view > 0 && !T.alt && !T.dlg && !T.menu && !T.esc && c != 27)
+	{
+		if (c == 'q' || c == 'Q')
+		{
+			sb_to_live();
+			return "";
+		}
+		if (c == '/')
+		{
+			sb_search_begin();
+			return "";
+		}
+		if ((c == 'n' || c == 'N') && T.sb_query[0])
+		{
+			sb_search_step(c == 'n' ? -1 : 1);
+			return "";
+		}
+		/* Any other key jumps back to the live view first. */
+		sb_to_live();
 	}
 	if ((unsigned char)c != 1)
 	{

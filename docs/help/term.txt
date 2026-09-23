@@ -8,11 +8,15 @@ editor theme foreground. A block cursor is on when a session starts; the host
 can hide or show it with CSI ?25l / ?25h.
 
 TERM [host$, port]
-TERM REPLAY "file$"
+TERM REPLAY "file$" [, speed]
+TERM SESSIONS
 
   host$ - IP/DNS, or "demo" / "replay" for local/QEMU helpers
   port - TCP port
   file$ - TERM LOG capture path for REPLAY
+  speed - optional replay rate: 0 (default) as fast as possible, 1 real
+          time from the log's ms stamps, 2 double speed
+  TERM SESSIONS lists saved logs (see below)
 
 With no arguments TERM starts disconnected; use Alt+T and Bookmarks to
 connect from a saved favourite or add a new one. With host$ and port it
@@ -50,6 +54,15 @@ Alt/menu is active). The status bar (Alt-X, Echo, host) is shown only while
 that menu is open. Echo ON backspace only erases characters typed since the
 last newline.
 
+Scrollback keeps the last OPTION TERM SCROLLBACK lines (default 200) above the
+pane. Once lines have scrolled off, Page Up / Page Down page through history,
+Up/Down move a line at a time, Home/End jump to the oldest line or back to
+live, and q returns to the live pane. Press / to search back for text (case
+insensitive), Enter jumps to the newest match, then n and N step to older and
+newer matches. The status row shows SCROLL -n while you are back in history;
+typing any other key returns to the live pane first. Set OPTION TERM
+SCROLLBACK 0 to disable history.
+
 Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Download folder, Exit.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
 Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
@@ -86,6 +99,10 @@ TERM "demo", port runs a local demo (no TCP). TERM "replay", port talks
 through the QEMU serial proxy to a live host (see harness/term_replay.py).
 TERM REPLAY "file$" plays a TERM LOG capture from disk through the same RX
 ring as live TCP. IAC T records are skipped; typed T pauses for a keystroke.
+With a speed, records are paced from the log's own ms clock so a saved session
+replays at a readable rate; while replaying, + and - halve or double the rate
+and space pauses. TERM SESSIONS lists saved logs (files ending .termlog or
+.log) in the current folder and on the root of C: (A: if no SD).
 
 QEMU Circle TCP needs -device usb-net and OPTION ETHERNET ON; otherwise
 Network not available. Live TCP (Ethernet or Wi-Fi) does not dump the pane
@@ -97,11 +114,15 @@ stays the session.
 
 OPTION TERM LOG ON writes C:/.termlog (A: if no SD) with incoming (R) and
 typed (T) hex plus ms since log start, flushed every 10 seconds. T lines
-include byte count so a session can be replayed later.
+include byte count so a session can be replayed later. OPTION TERM AUTOLOG ON
+starts a fresh log for each new TERM session. OPTION TERM SCROLLBACK n sets
+how many lines of history are kept (default 200, 0 disables).
 
 Example:
 
     TERM "demo", 23
     TERM "replay", 23
     TERM REPLAY "C:/.termlog"
+    TERM REPLAY "C:/.termlog", 1
+    TERM SESSIONS
     TERM "192.168.1.10", 23
