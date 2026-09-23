@@ -378,6 +378,7 @@ static const mmb_ed_theme *pwth(void)
 #define PW_DIM      ((int)pwth()->cmt_fg)
 #define PW_STR      ((int)pwth()->str_fg)
 #define PW_BRD      ((int)pwth()->brd_fg)
+#define PW_BRD_BG   ((int)pwth()->brd_bg)
 #define PW_ERR_FG   ((int)pwth()->err_fg)
 #define PW_ERR_BG   ((int)pwth()->err_bg)
 #define PW_FIELD_FG ((int)pwth()->field_fg)
@@ -749,31 +750,37 @@ void mmb_package_wiz_open(void)
 	pw_draw();
 }
 
-static void pw_title_bar(const char *title)
+/* Modal dialog chrome (#590): backdrop + centred framed panel. Returns the
+ * panel rect; content goes at (x+2, y+2), the status hint sits on y+h-2. */
+static void pw_panel(const char *title, int want_w, int want_h,
+		     int *x, int *y, int *w, int *h)
 {
-	int w = tui_cols();
-	int n = (int)strlen(title);
-	int x = (w - n) / 2;
-	if (x < 1)
-		x = 1;
-	tui_fill(0, 0, w, 1, ' ', PW_TITLE_FG, PW_TITLE_BG);
-	tui_puts(x, 0, title, PW_TITLE_FG, PW_TITLE_BG);
+	tui_clear(PW_TITLE_FG, PW_TITLE_BG);
+	tui_dialog_geom(want_w, want_h, x, y, w, h);
+	tui_dialog_panel(*x, *y, *w, *h, title, PW_FG, PW_BG,
+			 PW_BRD, PW_BRD_BG, PW_TITLE_FG, PW_TITLE_BG);
 }
 
-static void pw_status_bar(const char *hint)
+static void pw_status_bar(int x, int row, int width, const char *hint)
 {
-	tui_status_hint(tui_rows() - 1, hint, PW_HOT, PW_DIM, PW_BG);
+	tui_status_hint_at(x, row, width, hint, PW_HOT, PW_DIM, PW_BG);
 }
 
 static void pw_draw_folder(void)
 {
-	int w = tui_cols();
-	int h = tui_rows();
-	int listy = 4;
-	int listh = h - 8;
-	int i;
+	int x, y, w, h;
+	int listy, listh, i;
 	char line[PW_PATH + 32];
 
+	pw_panel("PACKAGE WIZARD", 72, 17, &x, &y, &w, &h);
+	tui_puts(x + 2, y + 2, "Step 1/3  Choose the folder to package", PW_STR, PW_BG);
+	line[0] = 0;
+	pw_append(line, sizeof(line), "Folder: ");
+	pw_append(line, sizeof(line), PW.cwd);
+	tui_puts(x + 2, y + 3, line, PW_DIM, PW_BG);
+
+	listy = y + 5;
+	listh = (y + h - 3) - listy;
 	if (listh < 3)
 		listh = 3;
 	if (PW.sel < PW.top)
@@ -783,23 +790,15 @@ static void pw_draw_folder(void)
 	if (PW.top < 0)
 		PW.top = 0;
 
-	tui_clear(PW_FG, PW_BG);
-	pw_title_bar("PACKAGE WIZARD");
-	tui_puts(2, 2, "Step 1/3  Choose the folder to package", PW_STR, PW_BG);
-	line[0] = 0;
-	pw_append(line, sizeof(line), "Folder: ");
-	pw_append(line, sizeof(line), PW.cwd);
-	tui_puts(2, 3, line, PW_DIM, PW_BG);
-
 	for (i = 0; i < listh; i++)
 	{
 		int idx = PW.top + i;
-		int y = listy + i;
+		int ry = listy + i;
 		char row[PW_NAME + 24];
 		int fg = PW_FG, bg = PW_BG;
 		if (idx >= PW.nent)
 		{
-			tui_fill(1, y, w - 2, 1, ' ', PW_FG, PW_BG);
+			tui_fill(x + 1, ry, w - 2, 1, ' ', PW_FG, PW_BG);
 			continue;
 		}
 		row[0] = 0;
@@ -817,80 +816,80 @@ static void pw_draw_folder(void)
 		}
 		else if (!pw_has_main(idx))
 			fg = PW_ERR_FG;
-		tui_fill(1, y, w - 2, 1, ' ', fg, bg);
-		tui_puts(2, y, row, fg, bg);
+		tui_fill(x + 1, ry, w - 2, 1, ' ', fg, bg);
+		tui_puts(x + 2, ry, row, fg, bg);
 	}
 
 	if (PW.status[0])
-		tui_fill(1, h - 3, w - 2, 1, ' ', PW_ERR_FG, PW_ERR_BG);
+		tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_ERR_FG, PW_ERR_BG);
 	else
-		tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
-	tui_puts(2, h - 3, PW.status[0] ? PW.status :
+		tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	tui_puts(x + 2, y + h - 3, PW.status[0] ? PW.status :
 		 "Pick a folder that contains MAIN.BAS.", PW_ERR_FG, PW_ERR_BG);
-	pw_status_bar("<Up/Down> Move  <Enter> Choose  <Esc> Cancel");
+	pw_status_bar(x + 1, y + h - 2, w - 2,
+		      "<Up/Down> Move  <Enter> Choose  <Esc> Cancel");
 }
 
-static void pw_draw_field(int y, const char *label, const char *value, int selected)
+static void pw_draw_field(int x, int y, int w, const char *label,
+			  const char *value, int selected)
 {
-	int w = tui_cols();
 	int fg = selected ? PW_SEL_FG : PW_FIELD_FG;
 	int bg = selected ? PW_SEL_BG : PW_FIELD_BG;
 	char row[PW_NAME + 32];
 	row[0] = 0;
 	pw_append(row, sizeof(row), label);
 	pw_append(row, sizeof(row), value);
-	tui_fill(2, y, w - 4, 1, ' ', fg, bg);
-	tui_puts(2, y, row, fg, bg);
+	tui_fill(x + 1, y, w - 2, 1, ' ', fg, bg);
+	tui_puts(x + 2, y, row, fg, bg);
 	if (selected)
-		tui_put(2 + (int)strlen(row), y, ' ', PW_SEL_FG, PW_SEL_BG);
+		tui_put(x + 2 + (int)strlen(row), y, ' ', PW_SEL_FG, PW_SEL_BG);
 }
 
 static void pw_draw_form(void)
 {
-	int w = tui_cols();
-	int h = tui_rows();
+	int x, y, w, h;
 	char line[PW_PATH + 32];
 
-	tui_clear(PW_FG, PW_BG);
-	pw_title_bar("PACKAGE WIZARD");
-	tui_puts(2, 2, "Step 2/3  Name and optional metadata", PW_STR, PW_BG);
+	pw_panel("PACKAGE WIZARD", 72, 14, &x, &y, &w, &h);
+	tui_puts(x + 2, y + 2, "Step 2/3  Name and optional metadata", PW_STR, PW_BG);
 	line[0] = 0;
 	pw_append(line, sizeof(line), "Folder: ");
 	pw_append(line, sizeof(line), PW.folder);
 	pw_append(line, sizeof(line), "  (MAIN.BAS ok)");
-	tui_puts(2, 3, line, PW_DIM, PW_BG);
+	tui_puts(x + 2, y + 3, line, PW_DIM, PW_BG);
 
-	pw_draw_field(5, "Package : ", PW.pkg, PW.field == 0);
-	pw_draw_field(6, "Title   : ", PW.title, PW.field == 1);
-	pw_draw_field(7, "Author  : ", PW.author, PW.field == 2);
+	pw_draw_field(x, y + 5, w, "Package : ", PW.pkg, PW.field == 0);
+	pw_draw_field(x, y + 6, w, "Title   : ", PW.title, PW.field == 1);
+	pw_draw_field(x, y + 7, w, "Author  : ", PW.author, PW.field == 2);
 
-	tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
 	if (PW.status[0])
-		tui_puts(2, h - 3, PW.status, PW_ERR_FG, PW_ERR_BG);
+		tui_puts(x + 2, y + h - 3, PW.status, PW_ERR_FG, PW_ERR_BG);
 	else
-		tui_puts(2, h - 3, "Enter advances; on the last field it creates the .APP.",
-			  PW_DIM, PW_BG);
-	pw_status_bar("<Tab/Up/Down> Field  <Enter> Next/Create  <Esc> Back");
+		tui_puts(x + 2, y + h - 3,
+			 "Enter advances; on the last field it creates the .APP.",
+			 PW_DIM, PW_BG);
+	pw_status_bar(x + 1, y + h - 2, w - 2,
+		      "<Tab/Up/Down> Field  <Enter> Next/Create  <Esc> Back");
 }
 
 static void pw_draw_done(void)
 {
-	int w = tui_cols();
-	int h = tui_rows();
+	int x, y, w, h;
 	char line[PW_PATH + 64];
 
-	tui_clear(PW_FG, PW_BG);
-	pw_title_bar("PACKAGE WIZARD");
-	tui_puts(2, 2, "Step 3/3  Package created", PW_STR, PW_BG);
+	pw_panel("PACKAGE WIZARD", 72, 13, &x, &y, &w, &h);
+	tui_puts(x + 2, y + 2, "Step 3/3  Package created", PW_STR, PW_BG);
 	line[0] = 0;
 	pw_append(line, sizeof(line), "Wrote ");
 	pw_append(line, sizeof(line), PW.pkg);
 	pw_append(line, sizeof(line), " from ");
 	pw_append(line, sizeof(line), PW.folder);
-	tui_puts(2, 4, line, PW_FG, PW_BG);
-	tui_puts(2, 6, "RUN \"<name>.APP\" mounts it read-only as B:.", PW_DIM, PW_BG);
-	tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
-	pw_status_bar("<Any key> Close");
+	tui_puts(x + 2, y + 4, line, PW_FG, PW_BG);
+	tui_puts(x + 2, y + 6, "RUN \"<name>.APP\" mounts it read-only as B:.",
+		 PW_DIM, PW_BG);
+	tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	pw_status_bar(x + 1, y + h - 2, w - 2, "<Any key> Close");
 }
 
 static void pw_draw(void)
