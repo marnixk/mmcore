@@ -137,7 +137,15 @@ Do **not** merge or release. Stop at “PR ready”.
 7. Report to the coordinator: issue numbers, branch, PR URL, test status,
    blockers, and the files/areas touched (`git diff --name-only
    origin/master...HEAD`). The file list is what lets the coordinator place new
-   issues at a check-in without creating conflicts. Then stop.
+   issues at a check-in without creating conflicts.
+8. **Findings (required).** Before stopping, list every unexpected thing you hit
+   — a latent bug, a wrong assumption in the ticket, a surprising host/linker
+   behaviour, a stale code comment, a documented limitation, etc. File the
+   out-of-scope defects as `gh issue create --label bug --label follow-up`
+   (never fix them in-loop) and give the issue number; for anything you judged
+   not worth a ticket, say what and why. Report **all** of them, ticketed or
+   not, however minor — the coordinator relays them to the user for triage.
+   Write `none` if you genuinely hit nothing. Then stop.
 
 ## Spawning workers
 
@@ -216,7 +224,10 @@ a release. Stop when the PR is ready.
 - Open a PR against master with `Fixes #<N>` for every issue in the bundle;
   use ManagePullRequest or gh; mark ready when tests pass.
 - Register the PR with link_pull_request.
-- Report: issues, branch, PR URL, test status, blockers. Then stop.
+- Report: issues, branch, PR URL, test status, blockers, and all **Findings**
+  (latent bugs, stale ticket assumptions, host/linker surprises, documented
+  limits — ticketed as `bug`+`follow-up` where out of scope, or listed with a
+  reason). Write `none` if there were none. Then stop.
 ```
 
 ## Hazards / do not
