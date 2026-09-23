@@ -1,0 +1,24 @@
+name: PATH
+kind: command
+
+Directories searched for `.APP` packages, set with `OPTION PATH`.
+
+OPTION PATH "dir$[;dir$...]"
+
+The value is one directory or a semicolon-separated list. The default is
+`A:/APPS/`, so first-party apps shipped on the ramdisk are found without any
+setup. An empty string clears the path.
+
+The path is used by ~APPS~, the Ctrl+Space picker, a bare app name typed at
+the prompt, and `OPTION BOOT` into an app. Search stops at the first
+`NAME.APP` found; directories are tried left to right. Names match
+case-insensitively, like the rest of the filesystem.
+
+Example:
+
+    OPTION PATH "A:/APPS/"
+    OPTION PATH "A:/APPS/;C:/APPS/"
+    OPTION PATH ""
+
+`OPTION LIST` shows the path when it differs from the default; `OPTION LIST
+ALL` always shows it.

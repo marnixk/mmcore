@@ -252,6 +252,22 @@ static void apply_core(const char *k, const char *v)
 		strncpy(G.opt.search_path, v, sizeof(G.opt.search_path) - 1);
 		G.opt.search_path[sizeof(G.opt.search_path) - 1] = 0;
 	}
+	else if (mmb_keyword_eq(k, "app_path"))
+	{
+		strncpy(G.opt.app_path, v, sizeof(G.opt.app_path) - 1);
+		G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "boot_mode"))
+	{
+		G.opt.boot_mode = parse_int(v);
+		if (G.opt.boot_mode < 0 || G.opt.boot_mode > 2)
+			G.opt.boot_mode = 0;
+	}
+	else if (mmb_keyword_eq(k, "boot_app"))
+	{
+		strncpy(G.opt.boot_app, v, sizeof(G.opt.boot_app) - 1);
+		G.opt.boot_app[sizeof(G.opt.boot_app) - 1] = 0;
+	}
 	else if (k[0] == 'f' && k[1] >= '1' && k[1] <= '9' && !k[2])
 	{
 		i = k[1] - '1';
@@ -359,6 +375,11 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "bg", (int64_t)G.gfx.bg);
 	if (G.opt.search_path[0])
 		kv_str(buf, sizeof(buf), "search_path", G.opt.search_path);
+	kv_str(buf, sizeof(buf), "app_path",
+	       G.opt.app_path[0] ? G.opt.app_path : MMB_APP_PATH_DEFAULT);
+	kv_int(buf, sizeof(buf), "boot_mode", G.opt.boot_mode);
+	if (G.opt.boot_app[0])
+		kv_str(buf, sizeof(buf), "boot_app", G.opt.boot_app);
 	for (i = 0; i < 12; i++)
 	{
 		if (G.opt.fkey[i][0])

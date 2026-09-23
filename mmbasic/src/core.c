@@ -1689,6 +1689,10 @@ void mmb_option_reset(void)
 	G.opt.wifi_country[1] = 'S';
 	G.opt.wifi_country[2] = 0;
 	G.opt.prompt = MMB_OPT_DEFAULT_PROMPT;
+	strncpy(G.opt.app_path, MMB_APP_PATH_DEFAULT, sizeof(G.opt.app_path) - 1);
+	G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
+	G.opt.boot_mode = 0;
+	G.opt.boot_app[0] = 0;
 	G.opt.ntp_enabled = 0;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
 	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
@@ -2953,6 +2957,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("GUI")] = tok_cmd_gui;
 		tab[mmb_kw_id("PACKAGE")] = mmb_cmd_package;
 		tab[mmb_kw_id("UNPACK")] = mmb_cmd_unpack;
+		tab[mmb_kw_id("APPS")] = mmb_cmd_apps;
 		tab[mmb_kw_id("CHDIR")] = mmb_cmd_chdir;
 		tab[mmb_kw_id("DRIVE")] = mmb_cmd_drive;
 		tab[mmb_kw_id("EJECT")] = mmb_cmd_eject;
@@ -3688,6 +3693,37 @@ static void exec_statement(void)
 			G.p = save;
 		}
 	}
+	/* Bare token at the prompt: run a PATH .APP if one matches (#520).
+	 * Builtins and user SUBs/functions have already won above, and this
+	 * only applies to the interactive prompt (never inside RUN). */
+	if (!G.running)
+	{
+		const char *save = G.p;
+		char name[MMB_MAX_NAME], app[200];
+		if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
+		{
+			mmb_ident(name, sizeof(name));
+			mmb_type_suffix(name);
+			mmb_skip_sp();
+			if (*G.p == 0 || *G.p == '\'')
+			{
+				if (mmb_app_resolve(name, app, sizeof(app)))
+				{
+					char cmd[220];
+					int n = 0, i = 0;
+					cmd[n++] = '"';
+					while (app[i] && n < (int)sizeof(cmd) - 3)
+						cmd[n++] = app[i++];
+					cmd[n++] = '"';
+					cmd[n] = 0;
+					G.p = cmd;
+					mmb_cmd_run();
+					return;
+				}
+			}
+			G.p = save;
+		}
+	}
 	mmb_syntax();
 }
 
@@ -4200,6 +4236,7 @@ void mmb_poll(void)
 	mmb_editor_poll();
 	mmb_ihelp_poll();
 	mmb_package_poll();
+	mmb_apptui_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
 	mmb_paint_poll();

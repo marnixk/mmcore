@@ -310,6 +310,28 @@ def test_option_prompt_cwd_persists(console):
     assert "prompt=1" in ini
 
 
+def test_option_path_and_boot_persist(console):
+    """#515/#520: app PATH and boot destination live in the settings INI."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    ini = _read_ini(console)
+    assert "app_path=A:/APPS/" in ini
+    assert "boot_mode=0" in ini
+    assert console.send_line('OPTION PATH "A:/APPS2/"') == ""
+    assert console.send_line("OPTION BOOT LAUNCHER") == ""
+    ini = _read_ini(console)
+    assert "app_path=A:/APPS2/" in ini
+    assert "boot_mode=1" in ini
+    assert console.send_line('OPTION BOOT "GAME"') == ""
+    ini = _read_ini(console)
+    assert "boot_mode=2" in ini
+    assert "boot_app=GAME" in ini
+    assert console.send_line("OPTION BOOT REPL") == ""
+    ini = _read_ini(console)
+    assert "boot_mode=0" in ini
+    assert "boot_app=GAME" not in ini
+    assert console.send_line('OPTION PATH "A:/APPS/"') == ""
+
+
 def test_files_hides_dotfiles(fresh_console):
     con = fresh_console
     assert con.send_line('CHDIR "A:/"') == ""

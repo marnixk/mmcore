@@ -360,6 +360,31 @@ BOX 60,120,200,150,GREEN
 CIRCLE 440,200,90,CYAN
 ```
 
+## 6. Running apps
+
+Packaged `.APP` files can be run by name. `OPTION PATH` lists the folders to
+search for them (default `A:/APPS/`); a bare name at the prompt finds and runs
+`NAME.APP`:
+
+```
+PACKAGE "MYGAME.APP", "MYGAME/"
+OPTION PATH "A:/APPS/;C:/APPS/"
+MYGAME
+```
+
+Ctrl+Space opens a quick picker of every `.APP` on the PATH, and the `APPS`
+command opens the same list as a home launcher. To start into an app or the
+launcher instead of the REPL, use `OPTION BOOT`:
+
+```
+OPTION BOOT LAUNCHER       REM power on straight into the app list
+OPTION BOOT "MYGAME"       REM power on into MYGAME.APP
+OPTION BOOT REPL           REM back to the default prompt
+```
+
+The boot setting is stored in `.mmbasic.ini` on the SD card, so it survives a
+power cycle. Press Esc in the launcher to reach the REPL.
+
 ## Troubleshooting
 
 | Symptom | What to check |

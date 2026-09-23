@@ -232,6 +232,11 @@ void mmb_serial_write(const char *s);
 /* PicoMite/MMBasic copyright, build version, and HELP hint. Call once at boot. */
 void mmb_print_startup(void);
 
+/* Apply the boot destination (OPTION BOOT REPL|LAUNCHER|"app") and paint the
+ * REPL prompt unless the launcher owns the screen (#515). Call after
+ * mmb_print_startup(). */
+void mmb_boot_start(void);
+
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
 

@@ -922,7 +922,7 @@ TShutdownMode CKernel::Run (void)
 	mmb_front_init (front_emit, this);
 	mmb_console_init ();
 	mmb_print_startup ();
-	mmb_front_prompt ();
+	mmb_boot_start ();
 
 	AttachKeyboard ();
 	AttachMouse ();

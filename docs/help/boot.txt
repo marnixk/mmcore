@@ -1,0 +1,25 @@
+name: BOOT
+kind: command
+
+Choose what the machine does after power-on or REBOOT, set with `OPTION BOOT`.
+
+OPTION BOOT REPL
+OPTION BOOT LAUNCHER
+OPTION BOOT "app$"
+
+  REPL - start at the interactive prompt (default).
+  LAUNCHER - start in the ~APPS~ home launcher, listing every `.APP` on the
+    ~PATH~. Esc returns to the REPL.
+  "app$" - start straight into an app. A bare name is resolved on the ~PATH~
+    (`MYGAME` finds `MYGAME.APP`); otherwise the value is used as a `RUN`
+    target, so a full `A:/APPS/GAME.APP` or `A:/apps/HELLO.BAS` works too.
+    If the app cannot be found, the REPL is shown.
+
+The setting is stored in the settings file and survives a reboot.
+
+Example:
+
+    OPTION BOOT LAUNCHER
+    OPTION BOOT "MYGAME"
+    OPTION BOOT REPL
+    REBOOT

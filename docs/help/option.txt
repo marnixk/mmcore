@@ -36,6 +36,11 @@ Settings:
   EDIT FONT SMALL|NORMAL|MEDIUM|LARGE|VERY LARGE
   EDIT THEME name|n   (10 editor colour themes; default Slate)
   ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT
+  PATH "dir$[;dir$...]"
+    Directories searched for .APP packages (default A:/APPS/). See ~PATH~,
+    ~APPS~ and the Ctrl+Space picker.
+  BOOT REPL|LAUNCHER|"app$"
+    What to do at power-on (default REPL). See ~BOOT~.
   F1..F12 string$    AUDIO ON|OFF
   AUDIO_TARGET HDMI|JACK   (HDMI0 or 3.5mm PWM jack)
   AUDIO TARGET HDMI|JACK   (same)
@@ -81,4 +86,6 @@ Example:
     OPTION TERM LOG ON
     OPTION TERM SCROLLBACK 400
     OPTION PROMPT CWD
+    OPTION PATH "A:/APPS/"
+    OPTION BOOT REPL
     OPTION LIST
