@@ -90,6 +90,8 @@ static void help(const char *prog)
 	printf("\nEnvironment:\n");
 	printf("  MMB_DRIVE_ROOT DIR     base directory for the C: drive (default ~/.mmbasic)\n");
 	printf("  MMB_SDL_DUMP FILE      write the framebuffer to FILE as PPM on exit (SDL build)\n");
+	printf("  MMB_SDL_HARNESS FILE   run a scripted synthetic input session from FILE (SDL build)\n");
+	printf("  MMB_PAINT_FORCE_MOUSE=1  report a mouse as present so PAINT starts headless\n");
 	printf("  MMB_SDL_SERIAL=1       mirror the serial stream to stdout even on a TTY\n");
 	printf("  MMB_CLIPBOARD TEXT     seed the host clipboard at startup (SDL build)\n");
 	printf("  SDL_VIDEODRIVER=dummy  run the SDL build without a display\n");
