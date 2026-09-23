@@ -7,6 +7,7 @@
 
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int s_alt, s_ctrl, s_shift;
@@ -74,6 +75,44 @@ static void deliver_csi(const char *body)
 	deliver_str(buf);
 }
 
+/* Ctrl+Shift+V: feed the host OS clipboard into the active input path (the
+ * REPL line editor, a blocking INPUT, or a full-screen app such as EDIT,
+ * WORDPAD, TERM, or CONNECT). CR/LF collapse to a single CR and non-ASCII
+ * bytes are dropped: MMBasic's input model is CP437/ASCII, so raw UTF-8 would
+ * corrupt a line. No host clipboard exists on the bare-metal Pi, and the
+ * native headless build keeps an in-process one. */
+static void paste_host_clipboard(void)
+{
+	char *t = mmb_clipboard_get();
+	size_t i;
+	int last_cr = 0;
+
+	if (!t)
+		return;
+	for (i = 0; t[i]; i++)
+	{
+		unsigned char c = (unsigned char)t[i];
+
+		if (c == '\r' || c == '\n')
+		{
+			if (!last_cr)
+				deliver_ch('\r');
+			last_cr = 1;
+			continue;
+		}
+		last_cr = 0;
+		if (c == '\t')
+		{
+			deliver_ch('\t');
+			continue;
+		}
+		if (c < 0x20 || c >= 0x80)
+			continue;
+		deliver_ch((char)c);
+	}
+	free(t);
+}
+
 static int ctrl_code(SDL_Keycode k)
 {
 	if (k >= SDLK_a && k <= SDLK_z)
@@ -94,6 +133,13 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	if (ctrl && alt && k >= SDLK_F1 && k <= SDLK_F4)
 	{
 		mmb_console_switch((int)(k - SDLK_F1));
+		return;
+	}
+
+	/* Ctrl+Shift+V pastes the host clipboard (native desktop only). */
+	if (ctrl && shift && k == SDLK_v)
+	{
+		paste_host_clipboard();
 		return;
 	}
 

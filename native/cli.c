@@ -90,7 +90,11 @@ static void help(const char *prog)
 	printf("  MMB_DRIVE_ROOT DIR     base directory for the C: drive (default ~/.mmbasic)\n");
 	printf("  MMB_SDL_DUMP FILE      write the framebuffer to FILE as PPM on exit (SDL build)\n");
 	printf("  MMB_SDL_SERIAL=1       mirror the serial stream to stdout even on a TTY\n");
+	printf("  MMB_CLIPBOARD TEXT     seed the host clipboard at startup (SDL build)\n");
 	printf("  SDL_VIDEODRIVER=dummy  run the SDL build without a display\n");
+	printf("\n"
+	       "Native SDL build only: EDIT/WORDPAD copy to the host OS clipboard, and\n"
+	       "Ctrl+Shift+V pastes the host clipboard into the active input.\n");
 	printf("\nExamples:\n");
 	printf("  %s --drive /media/usb\n", prog);
 	printf("  %s --drive /media/usb \"DIR \\\"D:/\\\"\"\n", prog);

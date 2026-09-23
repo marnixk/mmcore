@@ -1055,6 +1055,17 @@ int mmb_ntp_sync(const char *server, int64_t *out_epoch);
 const char *mmb_ntp_errmsg(int rc);
 void mmb_ntp_poll(void);
 void mmb_cmd_ntp(void);
+/* ---- Host OS clipboard bridge (#525) ---------------------------------- */
+/* 1 when the active platform exposes a host text clipboard (native SDL
+ * builds); 0 on the bare-metal Pi, where the bridge is a no-op. */
+int mmb_clipboard_available(void);
+/* Host clipboard text as a malloc'd UTF-8 string (caller frees), or NULL. */
+char *mmb_clipboard_get(void);
+/* Store UTF-8 text on the host clipboard. Returns 0 on success, -1 when the
+ * platform has no clipboard (Pi). */
+int mmb_clipboard_set(const char *utf8);
+int mmb_clipboard_setn(const char *s, unsigned n);
+
 int mmb_inkey_pop(void);
 int mmb_keydown_get(int n);
 void mmb_run_events(void);

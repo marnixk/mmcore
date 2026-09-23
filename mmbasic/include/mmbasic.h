@@ -122,6 +122,13 @@ typedef struct mmb_platform {
 	 * file timestamps track it. utc_seconds is Unix epoch seconds and
 	 * tz_offset_min is minutes east of UTC. NULL when unsupported. */
 	void (*set_wall_clock)(long long utc_seconds, int tz_offset_min);
+	/* Host OS clipboard bridge (#525). Only the native desktop build has a
+	 * host clipboard; both are NULL on the bare-metal Pi, where a copy just
+	 * stays in MMBasic's own buffer. clipboard_get returns a malloc'd UTF-8
+	 * string the caller frees via free(), or NULL when empty/unavailable.
+	 * clipboard_set stores a UTF-8 copy and returns 0 on success. */
+	char *(*clipboard_get)(void);
+	int (*clipboard_set)(const char *utf8);
 } mmb_platform;
 
 void mmb_init(const mmb_platform *plat);
