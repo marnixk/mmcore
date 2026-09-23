@@ -39,7 +39,7 @@ static const char *const kws[] = {
 	"NEXT", "NEW", "NOT", "NAME", "NONE", "NOLED", "NORMAL", "NTP",
 	"OPEN", "OPTION", "OPTIONS", "OR", "OR_PIXELS", "ON", "OFF", "OUTPUT",
 	"OCT$",
-	"PRINT", "PIXEL", "PAGE", "PLAY", "PAUSE", "PACKAGE", "QUIT",
+	"PRINT", "PIXEL", "PAGE", "PLAY", "PAUSE", "PACKAGE", "PAINT", "QUIT",
 	"POLYGON", "PLAYING", "PI", "PIN", "PROMPT", "PROFILING", "PNG",
 	"PWM", "PHASE", "PEN",
 	"RETURN", "RUN", "READ", "RESTORE", "RANDOMIZE", "RBOX", "RMDIR",

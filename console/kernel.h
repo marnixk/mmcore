@@ -13,6 +13,7 @@
 #include <circle/nulldevice.h>
 #include <circle/usb/usbkeyboard.h>
 #include <circle/input/keyboardbuffer.h>
+#include <circle/input/mouse.h>
 #include <circle/types.h>
 #include "storage.h"
 
@@ -40,9 +41,12 @@ public:
 	int TakeBreak (void);
 	int AltHeld (void) const;
 	int CtrlAltHeld (void) const;
+	/* Latest USB mouse state; *present is 0 when no mouse is attached. */
+	void MouseState (int *present, int *x, int *y, int *buttons, int *wheel);
 
 private:
 	void AttachKeyboard (void);
+	void AttachMouse (void);
 	void ProcessChar (char c);
 	void PollUsbRepeat (void);
 	void PollUsbAlt (void);
@@ -57,6 +61,9 @@ private:
 	static void KeyboardRemovedHandler (CDevice *pDevice, void *pContext);
 	static void KeyStatusHandlerRaw (unsigned char ucModifiers,
 					 const unsigned char RawKeys[6], void *pArg);
+	static void MouseStatusHandler (unsigned nButtons, int nDisplacementX,
+					int nDisplacementY, int nWheelMove,
+					void *pArg);
 
 private:
 	// do not change this order (Interrupt must exist before Serial)
@@ -74,6 +81,12 @@ private:
 
 	CUSBKeyboardDevice	* volatile m_pKeyboard;
 	CKeyboardBuffer		*m_pKbdBuf;
+	CMouseDevice		* volatile m_pMouse;
+	volatile int		m_MousePresent;
+	volatile int		m_MouseX;
+	volatile int		m_MouseY;
+	volatile int		m_MouseButtons;
+	volatile int		m_MouseWheel;
 	volatile int		m_nBreak;
 	volatile int		m_nCad;
 	char			m_RepeatSeq[16];

@@ -35,6 +35,12 @@ CKernel::CKernel (void)
 	m_Storage (&m_Interrupt, &m_Timer, &m_ActLED),
 	m_pKeyboard (0),
 	m_pKbdBuf (0),
+	m_pMouse (0),
+	m_MousePresent (0),
+	m_MouseX (0),
+	m_MouseY (0),
+	m_MouseButtons (0),
+	m_MouseWheel (0),
 	m_nBreak (0),
 	m_nCad (0)
 {
@@ -61,6 +67,9 @@ CKernel::~CKernel (void)
 	delete m_pKbdBuf;
 	m_pKbdBuf = 0;
 	m_pKeyboard = 0;
+	/* CUSBMouseDevice owns the CMouseDevice; just drop our pointer. */
+	m_pMouse = 0;
+	m_MousePresent = 0;
 }
 
 boolean CKernel::Initialize (void)
@@ -131,6 +140,60 @@ void CKernel::AttachKeyboard (void)
 	m_pKbdBuf = new CKeyboardBuffer (m_pKeyboard);
 	/* Mixed mode: cooked keys still fill the buffer; raw sees PrtScr (HID 0x46). */
 	m_pKeyboard->RegisterKeyStatusHandlerRaw (KeyStatusHandlerRaw, TRUE, this);
+}
+
+/* Attach the first USB HID mouse as a raw pointer source (no Circle cursor).
+ * The status handler runs in USB interrupt context and only updates the
+ * accumulated position/buttons; the paint app reads them at task level. */
+void CKernel::AttachMouse (void)
+{
+	if (m_pMouse != 0)
+		return;
+	m_pMouse = (CMouseDevice *) m_DeviceNameService.GetDevice ("mouse1", FALSE);
+	if (m_pMouse == 0)
+		return;
+	m_pMouse->RegisterStatusHandler (MouseStatusHandler, this);
+	m_MouseX = (int) (m_Screen.GetWidth () / 2);
+	m_MouseY = (int) (m_Screen.GetHeight () / 2);
+	m_MousePresent = 1;
+}
+
+void CKernel::MouseStatusHandler (unsigned nButtons, int nDisplacementX,
+				  int nDisplacementY, int nWheelMove, void *pArg)
+{
+	CKernel *pThis = (CKernel *) pArg;
+	int x, y;
+
+	if (pThis == 0)
+		return;
+	x = pThis->m_MouseX + nDisplacementX;
+	y = pThis->m_MouseY + nDisplacementY;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x >= (int) pThis->m_Screen.GetWidth ())
+		x = (int) pThis->m_Screen.GetWidth () - 1;
+	if (y >= (int) pThis->m_Screen.GetHeight ())
+		y = (int) pThis->m_Screen.GetHeight () - 1;
+	pThis->m_MouseX = x;
+	pThis->m_MouseY = y;
+	pThis->m_MouseButtons = (int) nButtons;
+	pThis->m_MouseWheel += nWheelMove;
+}
+
+void CKernel::MouseState (int *present, int *x, int *y, int *buttons, int *wheel)
+{
+	if (present != 0)
+		*present = m_pMouse != 0 && m_MousePresent;
+	if (x != 0)
+		*x = m_MouseX;
+	if (y != 0)
+		*y = m_MouseY;
+	if (buttons != 0)
+		*buttons = m_MouseButtons;
+	if (wheel != 0)
+		*wheel = m_MouseWheel;
 }
 
 static unsigned now_ms (void)
@@ -656,6 +719,7 @@ void CKernel::PollInputChars (int breakKey)
 	int nBytes, i;
 
 	AttachKeyboard ();
+	AttachMouse ();
 	ApplyRawKeys ();
 	PollUsbConsole ();
 	PollCadReboot ();
@@ -749,6 +813,7 @@ int CKernel::ReadLine (char **out, int hide)
 		int nBytes, i;
 		mmb_poll ();
 		AttachKeyboard ();
+		AttachMouse ();
 		PollCadReboot ();
 		nBytes = m_Serial.Read (tmp, sizeof tmp);
 		if (nBytes < 0)
@@ -860,12 +925,14 @@ TShutdownMode CKernel::Run (void)
 	mmb_front_prompt ();
 
 	AttachKeyboard ();
+	AttachMouse ();
 
 	for (;;)
 	{
 		mmb_poll ();
 		mmb_console_poll ();
 		AttachKeyboard ();
+		AttachMouse ();
 
 		char Buffer[64];
 		int nBytes = m_Serial.Read (Buffer, sizeof (Buffer));

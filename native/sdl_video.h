@@ -24,6 +24,10 @@ int sdl_video_height(void);
  * and MM.HOST.VRES report. */
 void sdl_video_host_size(int *w, int *h);
 
+/* Map a host window/drawable point to software-framebuffer pixels, undoing the
+ * integer-scale letterbox viewport. Returns 0 when there is no framebuffer. */
+int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy);
+
 /* RGB888 <-> native (RGB555, green at bit 6) matching Circle's COLOR16. */
 unsigned sdl_rgb_to_native(unsigned rgb888);
 unsigned sdl_native_to_rgb(unsigned native);

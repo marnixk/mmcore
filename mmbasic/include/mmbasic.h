@@ -14,6 +14,17 @@ extern "C" {
 /* Number of virtual consoles (Ctrl+Alt+F1..F4 style sessions). */
 #define MMB_MAX_CONSOLES 4
 
+/* Pointer state for the full-screen apps (currently PAINT). Coordinates are
+ * in screen pixels with (0,0) at the top-left, matching hdmi_width()/
+ * hdmi_height(); buttons is a bitmask (1 left, 2 right, 4 middle) and wheel
+ * is the accumulated wheel ticks since the last read. */
+typedef struct mmb_mouse_state {
+	int present; /* non-zero when a pointer device is attached */
+	int x, y;
+	int buttons;
+	int wheel;
+} mmb_mouse_state;
+
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);
@@ -40,6 +51,10 @@ typedef struct mmb_platform {
 	int (*read_line)(char **out, int hide);
 	/* Drain serial/USB while a program is running (sets break on PrtScr / BREAK key). */
 	void (*poll_input)(void);
+	/* Read the current pointer position/buttons. Returns 1 and fills *out
+	 * when a device is attached, 0 when no pointer is available (a bare
+	 * Pi with no mouse, or a backend without one). Optional; may be NULL. */
+	int (*mouse_state)(mmb_mouse_state *out);
 	/* 1 if a break was requested since the last call (clears the flag). */
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */

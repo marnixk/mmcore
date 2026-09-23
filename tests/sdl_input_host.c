@@ -57,6 +57,16 @@ void sdl_video_mark_dirty(void) {}
 void sdl_video_request_quit(void) {}
 void sdl_video_toggle_fullscreen(void) {}
 
+/* Identity viewport for the host test: window pixels == framebuffer pixels. */
+int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
+{
+	if (fx)
+		*fx = wx;
+	if (fy)
+		*fy = wy;
+	return 1;
+}
+
 static int fails;
 
 static void push_text(const char *s)
@@ -80,6 +90,41 @@ static void push_key(SDL_Keycode sym, Uint16 mod)
 	SDL_PushEvent(&e);
 }
 
+static void push_motion(int x, int y)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_MOUSEMOTION;
+	e.motion.x = x;
+	e.motion.y = y;
+	SDL_PushEvent(&e);
+}
+
+static void push_button(int button, int down)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+	e.button.button = (Uint8)button;
+	SDL_PushEvent(&e);
+}
+
+static void expect_mouse(const char *name, int x, int y, int buttons)
+{
+	int present = 0, mx = 0, my = 0, mb = 0, wheel = 0;
+
+	sdl_input_mouse_state(&present, &mx, &my, &mb, &wheel);
+	if (!present || mx != x || my != y || mb != buttons)
+	{
+		fprintf(stderr,
+			"FAIL %s: present=%d pos=(%d,%d) want (%d,%d) "
+			"buttons=%d want %d\n",
+			name, present, mx, my, x, y, mb, buttons);
+		fails++;
+	}
+}
 static void expect_queue(const char *name, const char *want)
 {
 	int want_n = (int)strlen(want);
@@ -179,6 +224,21 @@ int main(void)
 	push_key(SDLK_v, KMOD_CTRL);
 	sdl_input_pump();
 	expect_queue("ctrl-v control", "\x16");
+
+	/* A pointer is reported in framebuffer pixels with a button bitmask. */
+	reset();
+	push_motion(120, 64);
+	push_button(SDL_BUTTON_LEFT, 1);
+	sdl_input_pump();
+	expect_mouse("mouse move+left", 120, 64, 1);
+	push_button(SDL_BUTTON_LEFT, 0);
+	push_button(SDL_BUTTON_RIGHT, 1);
+	sdl_input_pump();
+	expect_mouse("mouse right", 120, 64, 2);
+	push_button(SDL_BUTTON_RIGHT, 0);
+	push_motion(200, 96);
+	sdl_input_pump();
+	expect_mouse("mouse release+move", 200, 96, 0);
 
 	SDL_Quit();
 	if (fails)
