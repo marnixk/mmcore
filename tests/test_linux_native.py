@@ -352,7 +352,7 @@ def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
     assert "Mixed.TXT" in out
 
 
-SDL_BIN = os.path.join(REPO, "native", "mmbasic-sdl")
+SDL_BIN = os.path.join(REPO, "native", "mmcore")
 
 
 def _ppm_pixels(path):
@@ -928,7 +928,7 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
 
     app = dist / "mmcore.app"
     contents = app / "Contents"
-    exe = contents / "MacOS" / "mmbasic-sdl"
+    exe = contents / "MacOS" / "mmcore"
     fw = contents / "Frameworks" / "libSDL2-2.0.0.dylib"
     assert exe.is_file()
     assert fw.is_file(), "SDL2 must be bundled into the app"
@@ -937,7 +937,7 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
     with open(contents / "Info.plist", "rb") as f:
         plist = plistlib.load(f)
     assert plist["CFBundleIdentifier"] == "com.marnixk.mmcore"
-    assert plist["CFBundleExecutable"] == "mmbasic-sdl"
+    assert plist["CFBundleExecutable"] == "mmcore"
     assert plist["CFBundleShortVersionString"] == "9.9.9"
 
     deps = subprocess.run(
@@ -947,7 +947,7 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
 
     with zipfile.ZipFile(dist / "mmcore-macos-arm64.zip") as z:
         names = z.namelist()
-    assert any(n.startswith("mmcore.app/Contents/MacOS/mmbasic-sdl") for n in names)
+    assert any(n.startswith("mmcore.app/Contents/MacOS/mmcore") for n in names)
 
     # arm64 refuses to launch a modified, unsigned binary, so ad-hoc sign the
     # bundled dylib and app before the headless smoke test.

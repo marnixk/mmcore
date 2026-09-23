@@ -31,7 +31,7 @@ greenfield.
 | Filesystem (`A:` ramdisk, `C:` SD, USB drives), `PACKAGE` / `.APP` | done |
 | Audio (`PLAY MP3/MOD/XM/TONE`) | done |
 | Networking (Wi-Fi, Ethernet, TCP, `TERM`, `CONNECT`, FTP server) | done |
-| Native desktop backend (`native/mmbasic`, `mmbasic-sdl`, AppImage/Windows zip) | done; hardening open (#486) |
+| Native desktop backend (`native/mmbasic`, `mmcore`, AppImage/Windows zip) | done; hardening open (#486) |
 | AppImage/CLI app-VM launch of `.APP` and `TERM` | open (#490, #491) |
 
 Priorities:

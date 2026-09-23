@@ -48,6 +48,15 @@ jobs:
         env:
           # MSYS2 installs SDL2 headers/libs/DLL under the MINGW64 prefix.
           SDL2_ROOT: /mingw64
+          # Release builds must ship an Authenticode-signed mmcore.exe; the
+          # rolling pre-release / branch builds stay unsigned when no cert is
+          # configured (MMCORE_REQUIRE_WIN_SIGN is empty).
+          MMCORE_REQUIRE_WIN_SIGN: ${{ github.event_name == 'release' && '1' || '' }}
+          WIN_SIGN_PFX_BASE64: ${{ secrets.WIN_SIGN_PFX_BASE64 }}
+          WIN_SIGN_PASSWORD: ${{ secrets.WIN_SIGN_PASSWORD }}
+          WIN_SIGN_THUMBPRINT: ${{ secrets.WIN_SIGN_THUMBPRINT }}
+          WIN_SIGN_SUBJECT: ${{ secrets.WIN_SIGN_SUBJECT }}
+          WIN_SIGN_COMMAND: ${{ secrets.WIN_SIGN_COMMAND }}
         run: scripts/package-windows.sh
 
       - name: Smoke-test the binary
@@ -57,7 +66,7 @@ jobs:
           # Drop /mingw64/bin so the run only finds the DLLs we ship, not the
           # toolchain copies (which would mask a missing runtime DLL).
           export PATH="/usr/bin"
-          out=$(printf 'PRINT "SMOKE_OK 42"\n' | timeout 60 ./dist/mmcore-windows-x86_64/mmbasic-sdl.exe 2>&1 || true)
+          out=$(printf 'PRINT "SMOKE_OK 42"\n' | timeout 60 ./dist/mmcore-windows-x86_64/mmcore.exe 2>&1 || true)
           printf '%s\n' "$out"
           printf '%s' "$out" | grep -q "SMOKE_OK 42"
 
@@ -84,11 +93,12 @@ jobs:
           tag="windows-native"
           notes="Automated Windows build from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
 
-          Unzip and run \`mmbasic-sdl.exe\`; keep the bundled DLLs next to it.
+          Unzip and run \`mmcore.exe\`; keep the bundled DLLs next to it. Release
+          builds are Authenticode-signed; the rolling pre-release may be unsigned.
 
           \`\`\`
           unzip mmcore-windows-x86_64.zip
-          ./mmbasic-sdl.exe
+          ./mmcore.exe
           \`\`\`"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \

@@ -2,7 +2,7 @@
 # Package the native Windows build into a release zip.
 #
 # Output: dist/mmcore-windows-x86_64.zip
-# Contains mmbasic-sdl.exe plus the SDL2 and MinGW runtime DLLs it needs, and a
+# Contains mmcore.exe plus the SDL2 and MinGW runtime DLLs it needs, and a
 # short README. Run scripts/build-windows.sh first (or let this call it).
 #
 # Environment:
@@ -10,6 +10,12 @@
 #   SDL2_ROOT   SDL2 mingw install (include/, lib/, bin/); skips pkg-config
 #   PKG_CONFIG  pkg-config command (default pkg-config)
 #   SKIP_BUILD=1  do not (re)build the binary first
+#
+# Authenticode signing (see scripts/sign-windows-exe.sh for the full list):
+#   MMCORE_REQUIRE_WIN_SIGN=1  release gate: fail if the staged exe is unsigned
+#   MMCORE_SKIP_WIN_SIGN=1     local escape: ship unsigned (smoke tests only)
+#   WIN_SIGN_PFX / WIN_SIGN_PASSWORD / WIN_SIGN_THUMBPRINT / WIN_SIGN_SUBJECT
+#                              certificate selection for signtool/osslsigncode
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,13 +25,20 @@ PKG_CONFIG="${PKG_CONFIG:-pkg-config}"
 NAME="mmcore-windows-x86_64"
 STAGE="${DIST}/${NAME}"
 OUT="${DIST}/${NAME}.zip"
-EXE="${REPO_ROOT}/native/mmbasic-sdl.exe"
+EXE="${REPO_ROOT}/native/mmcore.exe"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
 	printf 'package-windows: %s\n' "$*" >&2
 	exit 1
 }
+
+# A release build must ship a signed executable. Validate the flags before
+# spending time on the build so the failure is immediate and obvious.
+if [ "${MMCORE_REQUIRE_WIN_SIGN:-}" = "1" ] \
+	&& [ "${MMCORE_SKIP_WIN_SIGN:-}" = "1" ]; then
+	die "MMCORE_REQUIRE_WIN_SIGN=1 conflicts with MMCORE_SKIP_WIN_SIGN=1: cannot ship an unsigned Windows build"
+fi
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
 	log "Building Windows binary"
@@ -48,7 +61,13 @@ fi
 log "Staging ${STAGE}"
 rm -rf "${STAGE}" "${OUT}"
 mkdir -p "${STAGE}"
-cp "${EXE}" "${STAGE}/mmbasic-sdl.exe"
+cp "${EXE}" "${STAGE}/mmcore.exe"
+
+# Authenticode-sign the shipped executable so SmartScreen can build
+# reputation. The helper is a no-op unless a certificate is configured, and
+# MMCORE_REQUIRE_WIN_SIGN=1 makes a missing signature fatal for releases.
+log "Signing ${STAGE}/mmcore.exe"
+bash "${REPO_ROOT}/scripts/sign-windows-exe.sh" "${STAGE}/mmcore.exe"
 
 log "Generating Windows app icon"
 python3 "${REPO_ROOT}/scripts/gen-appicon.py" --ico "${STAGE}/mmcore.ico"
@@ -135,22 +154,27 @@ cat > "${STAGE}/README.txt" <<'EOF'
 mmcore for Windows (x86_64)
 ===========================
 
-Colour Maximite 2 compatible BASIC interpreter. Run mmbasic-sdl.exe: a window
+Colour Maximite 2 compatible BASIC interpreter. Run mmcore.exe: a window
 opens with the BASIC prompt. Type in the SDL window once it is focused.
 Redirected stdin (pipes/files) is also read, for scripting.
 
-Keep mmbasic-sdl.exe, SDL2.dll, and libwinpthread-1.dll in the same folder.
+Keep mmcore.exe, SDL2.dll, and libwinpthread-1.dll in the same folder.
 mmcore.ico is the application icon (the .exe also carries it as a resource).
 
 Usage
-  mmbasic-sdl.exe                  interactive prompt
-  mmbasic-sdl.exe "PRINT 6*7"      run one line and exit
-  mmbasic-sdl.exe --drive DIR      mount the host directory DIR as D:
-  mmbasic-sdl.exe game.app         run a packaged .app, then exit
-  mmbasic-sdl.exe --help           full usage
+  mmcore.exe                  interactive prompt
+  mmcore.exe "PRINT 6*7"      run one line and exit
+  mmcore.exe --drive DIR      mount the host directory DIR as D:
+  mmcore.exe game.app         run a packaged .app, then exit
+  mmcore.exe --help           full usage
 
 The persistent C: drive lives under %USERPROFILE%\.mmbasic\C. Override the base
 with the MMB_DRIVE_ROOT environment variable.
+
+The executable is Authenticode-signed when the release pipeline has a
+code-signing certificate. Confirm the signature in PowerShell with:
+
+  Get-AuthenticodeSignature .\mmcore.exe | Format-List Status, SignerCertificate
 EOF
 
 log "Packing ${OUT}"

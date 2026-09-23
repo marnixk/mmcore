@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the native Windows (x86_64) MMBasic binary with MinGW-w64.
 #
-# Produces native/mmbasic.exe (headless stdio) and native/mmbasic-sdl.exe.
+# Produces native/mmbasic.exe (headless stdio) and native/mmcore.exe (windowed).
 # Run from MSYS2's MINGW64 shell on Windows, or with a MinGW cross compiler on
 # macOS/Linux. SDL2 is found via pkg-config, or point SDL2_ROOT at an unpacked
 # SDL2-devel-*-mingw tree.
@@ -50,7 +50,7 @@ fi
 make -C "${REPO_ROOT}/native" all TARGET_WINDOWS=1 CC="${CC}" \
 	SDL_CFLAGS="${SDL_CFLAGS}" SDL_LIBS="${SDL_LIBS}" "$@"
 
-for bin in mmbasic mmbasic-sdl; do
+for bin in mmbasic mmcore; do
 	if [ -f "${REPO_ROOT}/native/${bin}.exe" ]; then
 		printf '\n\033[1;34m==>\033[0m Native build: %s\n' \
 			"${REPO_ROOT}/native/${bin}.exe"

@@ -32,15 +32,16 @@ a submodule.
 | `mmbasic/` | Local MMBasic interpreter, commands, and vendored codecs |
 | `ramdisk/` | Versioned A: ramdisk seed tree, embedded at build time (see `ramdisk/README.md`) |
 | `console/` | Bare-metal console app (Circle kernel) hosting the interpreter |
-| `native/` | Native Linux/macOS/Windows SDL2 backend (`mmbasic`, `mmbasic-sdl`) — see `docs/native-desktop.md` |
+| `native/` | Native Linux/macOS/Windows SDL2 backend (`mmbasic`, `mmcore`) — see `docs/native-desktop.md` |
 | `harness/` | Python QEMU test harness (keystroke injection, serial + screen reads) |
 | `tests/` | Pytest regression suite driving the console under QEMU |
 | `scripts/build.sh` | Idempotent build of the Circle core lib + console image |
 | `scripts/build-native.sh` | Build the host-native (Linux/macOS) backend binaries |
 | `scripts/build-windows.sh` | Build the native Windows (MinGW-w64) backend binaries |
-| `scripts/package-linux-appimage.sh` | Package `native/mmbasic-sdl` as a Linux AppImage |
-| `scripts/package-macos-app.sh` | Package `native/mmbasic-sdl` as a signed macOS `.app` (arm64) |
-| `scripts/package-windows.sh` | Package `native/mmbasic-sdl.exe` and its DLLs as a Windows zip |
+| `scripts/package-linux-appimage.sh` | Package `native/mmcore` as a Linux AppImage |
+| `scripts/package-macos-app.sh` | Package `native/mmcore` as a signed macOS `.app` (arm64) |
+| `scripts/package-windows.sh` | Package `native/mmcore.exe` and its DLLs as a signed Windows zip |
+| `scripts/sign-windows-exe.sh` | Authenticode-sign a Windows executable (signtool/osslsigncode) |
 | `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
 | `scripts/install-sdcard.sh` | Linux `--bootstrap` / `--update` writer for a real SD device |
 | `scripts/github-release.sh` | Semantic GitHub release helper (used by the `github-release` skill) |
@@ -86,7 +87,7 @@ For day-to-day editing without QEMU, build the host-native binaries (Linux,
 macOS, or Windows) and run the scoped tests:
 
 ```bash
-scripts/build-native.sh                                    # native/mmbasic + native/mmbasic-sdl
+scripts/build-native.sh                                    # native/mmbasic + native/mmcore
 .venv/bin/python -m pytest tests/test_linux_native.py     # REPL, storage, SDL, TUIs, TCP
 ```
 
