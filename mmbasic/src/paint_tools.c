@@ -34,6 +34,9 @@
  * stamping the existing one. */
 #define PT_DRAG_MIN 2
 
+/* The text tool lives in paint_text.c (#642); a canvas click opens its caret. */
+void pt_text_begin(int cx, int cy, int button);
+
 /* ---- module state ------------------------------------------------------ */
 
 static int s_shift;		/* Shift held (pt_tool_modifiers) */
@@ -728,8 +731,11 @@ void pt_tool_begin(int cx, int cy, int button)
 		pt_undo_push();
 		spray_dab(cx, cy, c);
 		break;
+	case PT_TOOL_TEXT:
+		pt_text_begin(cx, cy, button);
+		break;
 	default:
-		break;		/* text: #642 */
+		break;
 	}
 }
 
