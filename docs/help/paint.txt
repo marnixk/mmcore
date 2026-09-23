@@ -1,35 +1,41 @@
 name: PAINT
 kind: command
 
-Dr. Genie / Paintbrush-style pixel paint app. PAINT opens a full-screen
-canvas; every canvas pixel is one character cell drawn in a fixed 16-colour
-palette. A USB mouse drives the same tools (click to draw, drag to paint,
-right-click to pick a colour); without a mouse the keyboard works on its
-own.
+Paintbrush / Deluxe Paint-style pixel paint app. PAINT opens a full-screen
+canvas that is a true bitmap framebuffer: one canvas pixel is one screen pixel
+(1:1), not a character cell. Colours are indices into the classic 256-colour
+MCGA palette; a 16x16 swatch panel on the right shows every index and clicking
+a swatch selects it. A USB mouse drives the tools (click to draw, drag to
+paint, right-click to pick a colour); without a mouse the keyboard works on
+its own. Open, Save and Save As use text dialogs along the bottom of the
+screen.
 
 PAINT [file$] [, width [, height]]
 
   file$  - PNG path (with or without .PNG). Default A:/PAINT.PNG. An existing
            file is loaded; its size becomes the canvas when no size is given.
-  width  - optional canvas width in pixels, 1..96
-  height - optional canvas height in pixels, 1..48
+  width  - optional canvas width in pixels
+  height - optional canvas height in pixels
 
 Tools select with a single key:
 
   p  pencil       e  eraser       l  line        r  rectangle
-  o  circle       f  flood fill   i  colour picker
-  u, Ctrl+Z undo  x  clear canvas s  save
+  c  circle       f  flood fill   i  colour picker
+  u, Ctrl+Z undo  x  clear canvas
+  o  Open...      s  Save         a  Save As...   n  new canvas
+  k  type a colour index 0..255
 
-  Arrows      move the cursor
+  Arrows      move the cursor one pixel
   Space/Enter apply the tool. For line/rectangle/circle the first press sets
               the anchor and the second draws from the anchor to the cursor.
   0-9         pick colour 0..9
-  [ ]         cycle through the 16 colours
+  [ ]         cycle through all 256 MCGA colours
   Alt+X, Esc  leave PAINT and return to the prompt
 
-A loaded image is quantised to the nearest of the 16 palette colours. Saving
-writes a plain RGB PNG the same size as the canvas, so a sketch reloads
-exactly where it was left.
+Open/Save As prompt for a path; Enter confirms and Esc cancels. A loaded image
+is quantised to the nearest of the 256 palette colours. Saving writes a plain
+RGB PNG the same size as the canvas, so a sketch round-trips through
+Open/Save.
 
 Example:
 
