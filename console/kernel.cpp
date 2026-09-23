@@ -42,7 +42,8 @@ CKernel::CKernel (void)
 	m_MouseButtons (0),
 	m_MouseWheel (0),
 	m_nBreak (0),
-	m_nCad (0)
+	m_nCad (0),
+	m_CadLatched (0)
 {
 	m_RepeatSeq[0] = '\0';
 	m_RepeatLen = 0;
@@ -300,7 +301,16 @@ void CKernel::KeyStatusHandlerRaw (unsigned char ucModifiers,
 	if (have_del &&
 	    (ucModifiers & (LCTRL | RCTRL)) != 0 &&
 	    (ucModifiers & (ALT | ALTGR)) != 0)
-		pThis->m_nCad = 1;
+	{
+		/* Latch so holding the chord down triggers exactly one reset. */
+		if (!pThis->m_CadLatched)
+		{
+			pThis->m_nCad = 1;
+			pThis->m_CadLatched = 1;
+		}
+	}
+	else
+		pThis->m_CadLatched = 0;
 	if (held != pThis->m_HeldHid)
 	{
 		pThis->m_HeldHid = held;
@@ -757,7 +767,10 @@ void CKernel::PollCadReboot (void)
 	if (!m_nCad)
 		return;
 	m_nCad = 0;
-	mmb_reboot ();
+	/* Warm reset: re-init the interpreter and return to a ready prompt.
+	 * A hardware reset can leave the Pi's USB controller dead, so the prompt
+	 * never came back (#577). */
+	mmb_warm_reset ();
 }
 
 void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)

@@ -726,6 +726,7 @@ void mmb_cmd_end_function(void);
 
 void mmb_gfx_init(void);
 void mmb_gfx_apply_default_mode(void);
+void mmb_gfx_reapply_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
 int mmb_gfx_mode_for_size(int w, int h);
 void mmb_gfx_reset_console(int wipe);

@@ -4,8 +4,9 @@ alias: RESTART
 
 Restart the Raspberry Pi. Saves settings, stops audio, and unmounts drives
 first, then performs a hardware reset; Control does not return to the prompt.
-Ctrl+Alt+Del on a USB keyboard does the same. If the reset never completes the
-watchdog will reboot the board.
+Ctrl+Alt+Del is a warm restart instead: MMBasic is re-initialised in place and
+a ready prompt returns, so it also works as a soft reset. If a hardware reset
+never completes the watchdog will reboot the board.
 
 REBOOT
 RESTART

@@ -619,6 +619,20 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx)
 	s_fe[0].line[0] = '\0';
 }
 
+/* Drop every console's line editor and history state. Used by a warm reset so
+ * no partially typed line or app session survives. */
+void mmb_front_reset(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		memset(&s_fe[i], 0, sizeof(s_fe[i]));
+		s_fe[i].hist_idx = -1;
+	}
+	s_active = 0;
+}
+
 /* Select which console's line editor receives keystrokes. */
 void mmb_front_select(int idx)
 {
