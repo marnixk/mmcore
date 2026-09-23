@@ -57,6 +57,7 @@ CKernel::CKernel (void)
 	m_FkeyHidSent = 0;
 	m_ConsoleHidSent = 0;
 	m_ShotHidSent = 0;
+	m_PickerHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -713,6 +714,39 @@ void CKernel::PollUsbRepeat (void)
 	m_UsbBurst = 0;
 }
 
+/*
+ * Ctrl+Space opens the app picker at the REPL prompt (#589). Circle's cooked
+ * keymap yields KeyNone for the chord, so inject the front end's NUL code
+ * from the raw HID state. Ignored while a program or a full-screen app owns
+ * the keyboard; m_PickerHidSent makes a held chord fire once.
+ */
+void CKernel::PollUsbAppPicker (void)
+{
+	unsigned char hid;
+
+	if ((m_LastMods & (LCTRL | RCTRL)) == 0 ||
+	    (m_LastMods & (ALT | ALTGR)) != 0)
+	{
+		m_PickerHidSent = 0;
+		return;
+	}
+	hid = m_HeldHid;
+	if (hid == 0 || hid == m_PickerHidSent)
+	{
+		if (hid == 0)
+			m_PickerHidSent = 0;
+		return;
+	}
+	if (hid != 0x2C) /* Space */
+		return;
+	m_PickerHidSent = hid;
+	if (mmb_front_in_app () || mmb_is_running ())
+		return;
+	m_UsbBurst = 1;
+	ProcessChar (0);
+	m_UsbBurst = 0;
+}
+
 void CKernel::PollInputChars (int breakKey)
 {
 	char tmp[32];
@@ -774,6 +808,7 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_CharHidSent = 0;
 	pThis->m_FkeyHidSent = 0;
 	pThis->m_ShotHidSent = 0;
+	pThis->m_PickerHidSent = 0;
 }
 
 /* The interactive line editor, history and ESC/CSI decoding live in
@@ -959,6 +994,7 @@ TShutdownMode CKernel::Run (void)
 		PollUsbFKeys ();
 		PollUsbConsole ();
 		PollUsbScreenshot ();
+		PollUsbAppPicker ();
 		PollCadReboot ();
 		if (nBytes <= 0)
 		{

@@ -21,7 +21,9 @@ language.
 Ctrl+Space
 
 At the prompt, Ctrl+Space opens a quick picker of the same apps. Enter runs
-the highlighted app; Esc cancels and leaves the line unchanged.
+the highlighted app; Esc cancels and leaves the line unchanged. When the PATH
+is empty (or lists no `.APP` packages) the picker still opens and shows that
+no apps were found.
 
 Boot
 

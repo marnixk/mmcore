@@ -245,6 +245,12 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 				deliver_ch((char)code);
 			return;
 		}
+		/* Ctrl+Space opens the app picker at the prompt (NUL). */
+		if (k == SDLK_SPACE)
+		{
+			deliver_ch(0);
+			return;
+		}
 	}
 
 	switch (k)

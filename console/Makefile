@@ -63,7 +63,6 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/blit16.o \
 	  $(MMB)/src/blit_a64.o \
 	  $(MMB)/src/cmd_sprite.o \
-	  $(MMB)/src/cmd_ansi.o \
 	  $(MMB)/src/cmd_paint.o \
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/cmd_juke.o \

@@ -55,6 +55,7 @@ private:
 	void PollUsbFKeys (void);
 	void PollUsbConsole (void);
 	void PollUsbScreenshot (void);
+	void PollUsbAppPicker (void);
 	void PollCadReboot (void);
 	void ApplyRawKeys (void);
 
@@ -103,6 +104,7 @@ private:
 	unsigned char		m_FkeyHidSent;
 	unsigned char		m_ConsoleHidSent;
 	unsigned char		m_ShotHidSent;
+	unsigned char		m_PickerHidSent;
 	int			m_UsbBurst;
 };
 
