@@ -983,7 +983,7 @@ static void sm_save(void)
 		}
 	}
 	SM.dirty = 0;
-	sprintf(SM.status, "Saved %s", SM.path);
+	sprintf(SM.status, "Saved %.88s", SM.path);
 }
 
 static void sm_load(void)
@@ -1071,6 +1071,24 @@ static void sm_load(void)
 	G.plat->free(pix);
 }
 
+/* Load the fixed IBM palette into the TUI so the grid, swatches and saved PNG
+   all show the same 16 colours. The editor stores IBM indices, so rendering
+   them through the editor theme palette would show (and save) different
+   colours. Same approach as PAINT. */
+static void sm_apply_palette(void)
+{
+	static unsigned pal[16];
+	static int ready;
+	int i;
+	if (!ready)
+	{
+		for (i = 0; i < 16; i++)
+			pal[i] = mmb_ibm_colour(i);
+		ready = 1;
+	}
+	tui_set_palette(pal);
+}
+
 static void sm_redraw(void)
 {
 	int cols, rows, cx, cy, i, x, y;
@@ -1081,10 +1099,10 @@ static void sm_redraw(void)
 	cols = tui_cols();
 	rows = tui_rows();
 	tui_begin();
-	mmb_editor_apply_tui_palette();
+	sm_apply_palette();
 	tui_clear(TUI_BRWHITE, TUI_BRBLACK);
 
-	sprintf(line, "SPRITE %s  %s  %dx%d%s",
+	sprintf(line, "SPRITE %s  %.80s  %dx%d%s",
 		SM.mode == SM_FONT ? "FONT"
 				   : (SM.mode == SM_SHEET ? "SHEET" : "EDIT"),
 		SM.label[0] ? SM.label : "untitled", SM.cell, SM.cell,
@@ -1531,6 +1549,13 @@ void mmb_cmd_sprite(void)
 	if (mmb_match("CLOSE") || mmb_match("RESTORE"))
 	{
 		int ix;
+		if (mmb_match("ALL"))
+		{
+			hide_all_keep_pos();
+			rect_flush();
+			mmb_sprite_reset();
+			return;
+		}
 		mmb_skip_sp();
 		if (*G.p && *G.p != ':' && *G.p != '\'')
 		{
@@ -1549,7 +1574,11 @@ void mmb_cmd_sprite(void)
 			sprite_free_ix(ix);
 		}
 		else
+		{
+			hide_all_keep_pos();
+			rect_flush();
 			mmb_sprite_reset();
+		}
 		return;
 	}
 	mmb_syntax();
