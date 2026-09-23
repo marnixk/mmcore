@@ -434,3 +434,83 @@ def test_settings_appearance_theme_applies_and_persists(console):
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
 
     con.drain(quiet=0.3)
+
+
+# --- #611: SETTINGS legibility across every shipped theme -----------------
+
+SHIPPED_THEMES = [
+    "Paper", "Cloud", "Snow", "Night", "Nord",
+    "Slate", "Forest", "Violet", "Turbo", "Phosphor",
+]
+
+
+def _srgb_channel(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _contrast(fg, bg):
+    def luma(p):
+        return (
+            0.2126 * _srgb_channel(p[0])
+            + 0.7152 * _srgb_channel(p[1])
+            + 0.0722 * _srgb_channel(p[2])
+        )
+
+    a, b = luma(fg), luma(bg)
+    if a < b:
+        a, b = b, a
+    return (a + 0.05) / (b + 0.05)
+
+
+def _cell(col, row):
+    """A pixel at the vertical middle of a text cell."""
+    return (col * 8 + 2, row * 16 + 8)
+
+
+def _hub_rect(con):
+    """Mirror tui_dialog_geom for the 68x13 SETTINGS hub, in text cells."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    pw = min(68, cols - 2)
+    ph = min(13, rows - 2)
+    px = max(1, (cols - pw) // 2)
+    py = max(1, (rows - ph) // 2)
+    return px, py, pw, ph
+
+
+def test_settings_legible_in_every_theme(console):
+    """#611: the hub's body text, focus and hints stay legible in every theme.
+
+    Turbo previously drew the list with edit_fg (near-white) on dlg_bg (grey)
+    and the hint keys in hot (blue) on edit_bg (blue), so the dialog washed out
+    and the <key> tags vanished. Walk every shipped theme with the hub open and
+    check the rendered pixels instead of trusting the role names.
+    """
+    con = console
+    x, y, w, h = _hub_rect(con)
+    row = y + 5          # Network, the second hub row
+    hint_row = y + h - 2  # last interior row holds the hints
+    body_at = _cell(x + w - 5, row)
+    focus_at = _cell(x + w - 5, row - 1)
+    name_at = [_cell(x + 5 + i, row) for i in range(8)]
+    hint_bg_at = _cell(x + w - 4, hint_row)
+    hint_at = [_cell(x + 2 + i, hint_row) for i in range(w - 5)]
+    samples = [body_at, focus_at] + name_at + [hint_bg_at] + hint_at
+    try:
+        for theme in SHIPPED_THEMES:
+            assert con.send_line(f"OPTION THEME {theme}") == ""
+            _settings_open(con)
+            # One screendump serves the whole theme.
+            vals = con.screen_pixels(samples)
+            body, focus = vals[0], vals[1]
+            name = max(_contrast(p, body) for p in vals[2:10])
+            hint_bg = vals[10]
+            hint = max(_contrast(p, hint_bg) for p in vals[11:])
+            assert name >= 4.5, (theme, "body text", name)
+            assert focus != body, (theme, "selection")
+            assert hint >= 4.5, (theme, "hints", hint)
+            _settings_keys(con, b"\x1b")
+            assert con.send_line("PRINT 0") == "0"
+    finally:
+        assert con.send_line("OPTION THEME SLATE") == ""

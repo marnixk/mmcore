@@ -51,26 +51,43 @@ static const mmb_ed_theme *stth(void)
 	return mmb_editor_theme();
 }
 
+/*
+ * SETTINGS role map (#611). Every pair below is asserted legible by the
+ * static audit in tests/test_settings_theme_contrast.py and by the QEMU
+ * matrix in tests/test_settings.py, so a new surface cannot reintroduce the
+ * Turbo wash-out (body text drawn edit_fg-on-dlg_bg, hot keys on edit_bg):
+ *
+ *   title   menu_fg / menu_bg   dialog title bar and backdrop
+ *   body    dlg_fg  / dlg_bg    dialog body text, labels, values and rows
+ *   select  sel_fg  / sel_bg    focused row
+ *   hot     hot     / dlg_bg    section headings and <key> hints
+ *   error   err_fg  / err_bg    error chip / down link
+ *   border  brd_fg  / brd_bg    panel frame
+ *
+ * The editor-syntax roles (edit/str/num/cmt) are reserved for the live
+ * PREVIEW swatch, which deliberately shows the editor's own surfaces.
+ */
 #define ST_TITLE_FG ((int)stth()->menu_fg)
 #define ST_TITLE_BG ((int)stth()->menu_bg)
-#define ST_FG       ((int)stth()->edit_fg)
-#define ST_BG       ((int)stth()->edit_bg)
+#define ST_FG       ((int)stth()->dlg_fg)
+#define ST_BG       ((int)stth()->dlg_bg)
 #define ST_SEL_FG   ((int)stth()->sel_fg)
 #define ST_SEL_BG   ((int)stth()->sel_bg)
 #define ST_HOT      ((int)stth()->hot)
-#define ST_DIM      ((int)stth()->cmt_fg)
-#define ST_STR      ((int)stth()->str_fg)
-#define ST_NUM      ((int)stth()->num_fg)
 #define ST_BRD_FG   ((int)stth()->brd_fg)
 #define ST_BRD_BG   ((int)stth()->brd_bg)
-#define ST_DLG_FG   ((int)stth()->dlg_fg)
-#define ST_DLG_BG   ((int)stth()->dlg_bg)
 #define ST_ERR_FG   ((int)stth()->err_fg)
 #define ST_ERR_BG   ((int)stth()->err_bg)
+/* Editor roles: only the PREVIEW swatch uses these. */
+#define ST_EDIT_FG  ((int)stth()->edit_fg)
+#define ST_EDIT_BG  ((int)stth()->edit_bg)
+#define ST_STR      ((int)stth()->str_fg)
+#define ST_NUM      ((int)stth()->num_fg)
+#define ST_CMT      ((int)stth()->cmt_fg)
 
 static void st_hint(int x, int row, int width, const char *hint)
 {
-	tui_status_hint_at(x, row, width, hint, ST_HOT, ST_DIM, ST_BG);
+	tui_status_hint_at(x, row, width, hint, ST_HOT, ST_FG, ST_BG);
 }
 
 /* Draw the modal panel backdrop and frame; returns the panel rect. */
@@ -79,7 +96,7 @@ static void st_panel(const char *title, int want_w, int want_h,
 {
 	tui_clear(ST_TITLE_FG, ST_TITLE_BG);
 	tui_dialog_geom(want_w, want_h, px, py, pw, ph);
-	tui_dialog_panel(*px, *py, *pw, *ph, title, ST_FG, ST_DLG_BG,
+	tui_dialog_panel(*px, *py, *pw, *ph, title, ST_FG, ST_BG,
 			 ST_BRD_FG, ST_BRD_BG, ST_TITLE_FG, ST_TITLE_BG);
 }
 
@@ -92,15 +109,15 @@ static void st_preview(int x, int y, int w, int h)
 	tui_frame(x, y, w, h, ST_BRD_FG, ST_BRD_BG);
 	tui_puts(x + 2, y, " PREVIEW ", ST_TITLE_FG, ST_TITLE_BG);
 	tui_pad(x + 2, row++, "Menu", w - 4, ST_TITLE_FG, ST_TITLE_BG);
-	tui_puts(x + 2, row, "Text", ST_FG, ST_BG);
-	tui_puts(x + 8, row++, "String", ST_STR, ST_BG);
-	tui_puts(x + 2, row, "Number", ST_NUM, ST_BG);
-	tui_puts(x + 11, row++, "'comment'", ST_DIM, ST_BG);
+	tui_puts(x + 2, row, "Text", ST_EDIT_FG, ST_EDIT_BG);
+	tui_puts(x + 8, row++, "String", ST_STR, ST_EDIT_BG);
+	tui_puts(x + 2, row, "Number", ST_NUM, ST_EDIT_BG);
+	tui_puts(x + 11, row++, "'comment'", ST_CMT, ST_EDIT_BG);
 	tui_pad(x + 2, row++, "Selected line", w - 4, ST_SEL_FG, ST_SEL_BG);
 	tui_put(x + 2, row, '!', ST_ERR_FG, ST_ERR_BG);
 	tui_puts(x + 4, row++, "error", ST_ERR_FG, ST_ERR_BG);
 	if (row < y + h - 1)
-		tui_puts(x + 2, row, "1 2 ... 10", ST_DLG_FG, ST_DLG_BG);
+		tui_puts(x + 2, row, "1 2 ... 10", ST_FG, ST_BG);
 }
 
 static void st_draw_hub(void)
@@ -108,7 +125,7 @@ static void st_draw_hub(void)
 	int x, y, w, h, listy, listh, i;
 
 	st_panel("SETTINGS", 68, 13, &x, &y, &w, &h);
-	tui_puts(x + 2, y + 2, "Settings hub - choose a category.", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, y + 2, "Settings hub - choose a category.", ST_HOT, ST_BG);
 
 	listy = y + 4;
 	listh = (y + h - 2) - listy;
@@ -125,10 +142,10 @@ static void st_draw_hub(void)
 	{
 		int idx = S.hub_top + i;
 		int ry = listy + i;
-		int fg = ST_FG, bg = ST_DLG_BG;
+		int fg = ST_FG, bg = ST_BG;
 		if (idx >= ST_SEC_COUNT)
 		{
-			tui_fill(x + 1, ry, w - 2, 1, ' ', ST_FG, ST_DLG_BG);
+			tui_fill(x + 1, ry, w - 2, 1, ' ', ST_FG, ST_BG);
 			continue;
 		}
 		if (idx == S.hub_sel)
@@ -139,8 +156,7 @@ static void st_draw_hub(void)
 		tui_fill(x + 1, ry, w - 2, 1, ' ', fg, bg);
 		tui_puts(x + 3, ry, idx == S.hub_sel ? ">" : " ", fg, bg);
 		tui_puts(x + 5, ry, st_sec_name[idx], fg, bg);
-		tui_puts(x + 22, ry, st_sec_desc[idx],
-			 idx == S.hub_sel ? fg : ST_DIM, bg);
+		tui_puts(x + 22, ry, st_sec_desc[idx], fg, bg);
 	}
 	st_hint(x + 1, y + h - 2, w - 2,
 		"<Up/Down> Move  <Enter> Open  <Esc> Close");
@@ -164,16 +180,16 @@ static void st_draw_theme(int x, int y, int w, int h)
 	if (S.top < 0)
 		S.top = 0;
 
-	tui_puts(x + 2, y + 2, "Appearance - theme", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, y + 2, "Appearance - theme", ST_HOT, ST_BG);
 
 	for (i = 0; i < listh; i++)
 	{
 		int idx = S.top + i;
 		int ry = listy + i;
-		int fg = ST_FG, bg = ST_DLG_BG;
+		int fg = ST_FG, bg = ST_BG;
 		if (idx >= n)
 		{
-			tui_fill(x + 1, ry, listw + 2, 1, ' ', ST_FG, ST_DLG_BG);
+			tui_fill(x + 1, ry, listw + 2, 1, ' ', ST_FG, ST_BG);
 			continue;
 		}
 		if (idx == S.sel)
@@ -199,23 +215,24 @@ static void st_draw_network(int x, int y, int w, int h)
 	const char *ssid = G.opt.wifi_ssid[0] ? G.opt.wifi_ssid : "(none)";
 
 	(void)w;
-	tui_puts(x + 2, r++, "Network", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, r++, "Network", ST_HOT, ST_BG);
 	tui_puts(x + 2, r++, mmb_net_available() ? "Link: up" : "Link: none",
-		 mmb_net_available() ? ST_FG : ST_ERR_FG, ST_DLG_BG);
+		 mmb_net_available() ? ST_FG : ST_ERR_FG,
+		 mmb_net_available() ? ST_BG : ST_ERR_BG);
 	r++;
-	tui_puts(x + 2, r, "Wi-Fi    :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 13, r++, ssid, ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "Ethernet :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 13, r++, G.opt.ethernet_enabled ? "ON" : "OFF", ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "NTP      :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 2, r, "Wi-Fi    :", ST_FG, ST_BG);
+	tui_puts(x + 13, r++, ssid, ST_FG, ST_BG);
+	tui_puts(x + 2, r, "Ethernet :", ST_FG, ST_BG);
+	tui_puts(x + 13, r++, G.opt.ethernet_enabled ? "ON" : "OFF", ST_FG, ST_BG);
+	tui_puts(x + 2, r, "NTP      :", ST_FG, ST_BG);
 	line[0] = 0;
 	strncat(line, G.opt.ntp_enabled ? "ON  " : "OFF ", sizeof(line) - 1);
 	strncat(line, G.opt.ntp_server[0] ? G.opt.ntp_server : MMB_NTP_DEFAULT_SERVER,
 		sizeof(line) - strlen(line) - 1);
-	tui_puts(x + 13, r++, line, ST_FG, ST_DLG_BG);
+	tui_puts(x + 13, r++, line, ST_FG, ST_BG);
 	r++;
 	tui_puts(x + 2, r++, "Use OPTIONS WIFI / CONNECT / OPTION NTP at the prompt.",
-		 ST_DIM, ST_DLG_BG);
+		 ST_FG, ST_BG);
 	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
 }
 
@@ -229,20 +246,20 @@ static void st_draw_system(int x, int y, int w, int h)
 		boot = "Launcher";
 	else if (G.opt.boot_mode == 2)
 		boot = "App";
-	tui_puts(x + 2, r++, "System", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, r++, "System", ST_HOT, ST_BG);
 	r++;
-	tui_puts(x + 2, r, "Boot      :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 14, r++, boot, ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "App path  :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 14, r++, G.opt.app_path, ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "Prompt    :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 14, r++, G.opt.prompt ? "CWD" : "BARE", ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "Theme     :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 2, r, "Boot      :", ST_FG, ST_BG);
+	tui_puts(x + 14, r++, boot, ST_FG, ST_BG);
+	tui_puts(x + 2, r, "App path  :", ST_FG, ST_BG);
+	tui_puts(x + 14, r++, G.opt.app_path, ST_FG, ST_BG);
+	tui_puts(x + 2, r, "Prompt    :", ST_FG, ST_BG);
+	tui_puts(x + 14, r++, G.opt.prompt ? "CWD" : "BARE", ST_FG, ST_BG);
+	tui_puts(x + 2, r, "Theme     :", ST_FG, ST_BG);
 	tui_puts(x + 14, r++, mmb_editor_theme_name(G.opt.edit_theme), ST_FG,
-		 ST_DLG_BG);
+		 ST_BG);
 	r++;
 	tui_puts(x + 2, r++, "Change these with OPTION at the prompt.",
-		 ST_DIM, ST_DLG_BG);
+		 ST_FG, ST_BG);
 	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
 }
 
@@ -251,15 +268,15 @@ static void st_draw_sound(int x, int y, int w, int h)
 	int r = y + 2;
 
 	(void)w;
-	tui_puts(x + 2, r++, "Sound", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, r++, "Sound", ST_HOT, ST_BG);
 	r++;
-	tui_puts(x + 2, r, "Audio     :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 14, r++, G.opt.audio_on ? "ON" : "OFF", ST_FG, ST_DLG_BG);
-	tui_puts(x + 2, r, "Output    :", ST_DIM, ST_DLG_BG);
-	tui_puts(x + 14, r++, G.opt.audio_target ? "HDMI" : "JACK", ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "Audio     :", ST_FG, ST_BG);
+	tui_puts(x + 14, r++, G.opt.audio_on ? "ON" : "OFF", ST_FG, ST_BG);
+	tui_puts(x + 2, r, "Output    :", ST_FG, ST_BG);
+	tui_puts(x + 14, r++, G.opt.audio_target ? "HDMI" : "JACK", ST_FG, ST_BG);
 	r++;
 	tui_puts(x + 2, r++, "Use OPTION AUDIO / AUDIO OUTPUT at the prompt.",
-		 ST_DIM, ST_DLG_BG);
+		 ST_FG, ST_BG);
 	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
 }
 
