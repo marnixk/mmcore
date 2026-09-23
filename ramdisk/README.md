@@ -21,3 +21,13 @@ becomes `A:/lib/x.inc`, and so on.
 
 Starter content lives in `lib/` and `apps/`; the real catalogue is follow-up
 work.
+
+## Fonts
+
+- **`fonts/`** — bitmap font JSON descriptors (see `fonts/fonts.inc` and
+  `A:/fonts/<name>.json`).
+- **`fonts/tdf/`** — curated TheDraw `.TDF` fonts from the [Roy/SAC TheDraw TDF
+  collection](https://www.roysac.com/images/galleries/ZIP/ROYS-THEDRAW_TDF_FONTS_COLLECTION.ZIP)
+  (30 files, ~153 KiB). This is a shortlist for ramdisk seeding, not the full
+  zip; provenance and file list are in `fonts/tdf/README.md`. Runtime loading is
+  tracked under issue #511; assets ship under #554.
