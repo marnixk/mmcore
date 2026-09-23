@@ -36,6 +36,9 @@ static char s_cwd[26][128]; /* indexed by letter - 'A' */
 static int s_init;
 static char s_override[26][P_BUF];
 static int s_has_override[26];
+static int s_ejected[26];
+static int s_present[26];
+static int s_notify_ready;
 
 static int drive_of(int letter);
 static void drive_dir_raw(int letter, char *out, int outsz);
@@ -267,7 +270,7 @@ int mmb_fat_ready(int letter)
 	char db[P_BUF];
 
 	ensure_root();
-	if (!drive_of(letter))
+	if (!drive_of(letter) || s_ejected[letter - 'A'])
 		return 0;
 	drive_dir_raw(letter, db, sizeof db);
 	return is_dir(db);
@@ -510,33 +513,135 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	return 0;
 }
 
+static const char *drive_kind(int letter)
+{
+	if (letter == 'C')
+		return "SD";
+	if (letter == 'H')
+		return "NVME";
+	return "USB";
+}
+
+/* Friendly volume name: the basename of an explicitly mounted (--drive)
+ * directory, so a USB mount shows its folder name instead of a bare letter.
+ * The always-present default C: directory stays label-less. */
+int mmb_fat_label(int letter, char *out, int outsz)
+{
+	char db[P_BUF];
+	const char *p, *base = 0;
+
+	if (out && outsz > 0)
+		out[0] = 0;
+	ensure_root();
+	if (!drive_of(letter) || !out || outsz <= 0)
+		return -1;
+	drive_dir_raw(letter, db, sizeof db);
+	if (!is_dir(db))
+		return -1;
+	if (s_has_override[letter - 'A'])
+	{
+		for (p = s_override[letter - 'A']; *p; p++)
+			if (*p == '/')
+				base = p + 1;
+		if (!base)
+			base = s_override[letter - 'A'];
+		if (base[0])
+		{
+			snprintf(out, (size_t)outsz, "%s", base);
+			return 0;
+		}
+	}
+	return 0;
+}
+
+int mmb_fat_eject(int letter)
+{
+	char db[P_BUF];
+	char msg[48];
+
+	if (!drive_of(letter) || letter == 'C')
+		return -1;
+	ensure_root();
+	drive_dir_raw(letter, db, sizeof db);
+	if (!is_dir(db) || s_ejected[letter - 'A'])
+		return -1;
+	s_ejected[letter - 'A'] = 1;
+	/* Host writes are synchronous, so there is nothing to flush. */
+	snprintf(msg, sizeof msg, "%c: %s ejected", (char)letter,
+		 drive_kind(letter));
+	if (s_notify_ready)
+		mmb_storage_notice(msg);
+	return 0;
+}
+
 void mmb_fat_drive_line(int letter, char *out, int outsz)
 {
 	char db[P_BUF];
-	const char *kind = "USB";
+	char lab[P_BUF];
+	const char *kind;
 
 	if (out && outsz > 0)
 		out[0] = 0;
 	if (!drive_of(letter))
 		return;
-	if (letter == 'C')
-		kind = "SD";
-	else if (letter == 'H')
-		kind = "NVME";
+	kind = drive_kind(letter);
 	ensure_root();
 	drive_dir_raw(letter, db, sizeof db);
-	if (is_dir(db))
+	lab[0] = 0;
+	if (is_dir(db) && mmb_fat_label(letter, lab, sizeof lab) == 0 && lab[0])
+		snprintf(out, (size_t)outsz, "%c: %s \"%s\"", (char)letter, kind,
+			 lab);
+	else if (is_dir(db))
 		snprintf(out, (size_t)outsz, "%c: %s", (char)letter, kind);
 	else if (letter == 'C')
-		snprintf(out, (size_t)outsz, "%c: %s (no media)", (char)letter, kind);
+		snprintf(out, (size_t)outsz, "%c: %s (no media)", (char)letter,
+			 kind);
 }
 
+/* Watch the host drive directories so a mounted/unmounted (or ejected)
+ * volume reports itself the way a physical USB stick would. */
 void mmb_storage_poll(void)
 {
+	int letter;
+
 	ensure_root();
+	for (letter = DRIVE_LO; letter <= DRIVE_HI; letter++)
+	{
+		char db[P_BUF];
+		int idx = letter - 'A';
+		int present;
+
+		drive_dir_raw(letter, db, sizeof db);
+		present = is_dir(db);
+		if (present == s_present[idx])
+			continue;
+		s_present[idx] = present;
+		/* A (re)insert clears any prior eject. */
+		s_ejected[idx] = 0;
+		if (!s_notify_ready || letter == 'C')
+			continue;
+		if (present)
+		{
+			char msg[48];
+			snprintf(msg, sizeof msg, "%c: %s mounted",
+				 (char)letter, drive_kind(letter));
+			mmb_storage_notice(msg);
+		}
+		else
+		{
+			char msg[48];
+			snprintf(msg, sizeof msg, "%c: %s removed",
+				 (char)letter, drive_kind(letter));
+			mmb_storage_notice(msg);
+		}
+	}
+	s_notify_ready = 1;
 }
 
 void mmb_storage_unmount(void)
 {
 	/* Nothing to flush: writes are synchronous. */
+	memset(s_ejected, 0, sizeof s_ejected);
+	memset(s_present, 0, sizeof s_present);
+	s_notify_ready = 0;
 }

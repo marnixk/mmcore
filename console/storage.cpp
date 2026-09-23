@@ -1,30 +1,36 @@
 #include "storage.h"
 #include <circle/util.h>
+#include <fatfs/diskio.h>
 #include <stdlib.h>
 
 /*
  * FatFs volumes (circle/addon/fatfs):
  *   0 SD:    emmc1  → C:  (SD card slot, always this letter)
- *   1 SD2:   emmc2
  *   2 USB:   umsd1  → D:
  *   3 USB2:  umsd2  → E:
  *   4 USB3:  umsd3  → F:
  *   5 FD:    ufd1   → G:
  *   6 NVME:  nvme1  → H:
+ *
+ * pd is the FatFs physical drive (LD2PD(vol) == vol); SD2: is skipped, so the
+ * USB/NVME letters map one higher than their kMap index.
  */
+
+extern "C" void mmb_storage_notice (const char *msg);
 
 static const struct {
 	char letter;
 	const char *vol;	/* "SD:" */
 	const char *kind;	/* shown by DRIVE */
 	int always;		/* list even if empty (SD slot) */
+	int pd;			/* FatFs physical drive number */
 } kMap[] = {
-	{ 'C', "SD:",   "SD",   1 },
-	{ 'D', "USB:",  "USB",  0 },
-	{ 'E', "USB2:", "USB",  0 },
-	{ 'F', "USB3:", "USB",  0 },
-	{ 'G', "FD:",   "USB",  0 },
-	{ 'H', "NVME:", "NVME", 0 },
+	{ 'C', "SD:",   "SD",   1, 0 },
+	{ 'D', "USB:",  "USB",  0, 2 },
+	{ 'E', "USB2:", "USB",  0, 3 },
+	{ 'F', "USB3:", "USB",  0, 4 },
+	{ 'G', "FD:",   "USB",  0, 5 },
+	{ 'H', "NVME:", "NVME", 0, 6 },
 };
 
 static const int kNMap = (int)(sizeof kMap / sizeof kMap[0]);
@@ -32,6 +38,9 @@ static const int kNMap = (int)(sizeof kMap / sizeof kMap[0]);
 static CStorage *s_st;
 static char s_cwd[8][128];
 static int s_ready[8];
+static int s_ejected[8];	/* user ejected; wait for a physical re-insert */
+static int s_present[8];	/* underlying disk reported the device present */
+static int s_notify_ready;	/* suppress notices during initial probe */
 
 static int map_index(int letter)
 {
@@ -46,6 +55,36 @@ static int slot_of(int letter)
 {
 	int i = map_index(letter);
 	return i < 0 ? -1 : i;
+}
+
+/* USB sticks and other removable media get hotplug notices. */
+static int is_removable(int idx)
+{
+	return kMap[idx].kind[0] == 'U';
+}
+
+static void notice_mount(int idx, const char *verb)
+{
+	char msg[48];
+	unsigned n = 0;
+	if (!s_notify_ready || !is_removable(idx))
+		return;
+	msg[n++] = kMap[idx].letter;
+	msg[n++] = ':';
+	msg[n++] = ' ';
+	{
+		const char *k = kMap[idx].kind;
+		while (*k && n < sizeof(msg) - 16)
+			msg[n++] = *k++;
+	}
+	msg[n++] = ' ';
+	{
+		const char *v = verb;
+		while (*v && n < sizeof(msg) - 1)
+			msg[n++] = *v++;
+	}
+	msg[n] = 0;
+	mmb_storage_notice(msg);
 }
 
 static void make_full(int letter, const char *path, char *out, unsigned outsz)
@@ -69,15 +108,17 @@ static void try_mount(int idx)
 {
 	if (idx < 0 || idx >= kNMap)
 		return;
-	if (s_ready[idx])
+	if (s_ready[idx] || s_ejected[idx])
 		return;
 	if (!s_st)
 		return;
 	if (f_mount(&s_st->m_fs[idx], kMap[idx].vol, 1) == FR_OK)
 	{
 		s_ready[idx] = 1;
+		s_present[idx] = 1;
 		if (!s_cwd[idx][0])
 			strcpy(s_cwd[idx], "/");
+		notice_mount(idx, "mounted");
 	}
 }
 
@@ -97,6 +138,9 @@ boolean CStorage::Initialize (void)
 	s_st = this;
 	memset(s_cwd, 0, sizeof s_cwd);
 	memset(s_ready, 0, sizeof s_ready);
+	memset(s_ejected, 0, sizeof s_ejected);
+	memset(s_present, 0, sizeof s_present);
+	s_notify_ready = 0;
 	for (i = 0; i < kNMap; i++)
 		strcpy(s_cwd[i], "/");
 
@@ -110,12 +154,37 @@ boolean CStorage::Initialize (void)
 	try_mount(map_index('F'));
 	try_mount(map_index('G'));
 	try_mount(map_index('H'));
+	s_notify_ready = 1;
 	return TRUE;
 }
 
 void CStorage::Poll (void)
 {
+	int i;
 	m_USBHCI.UpdatePlugAndPlay ();
+	for (i = 0; i < kNMap; i++)
+	{
+		int present = disk_status((BYTE)kMap[i].pd) == 0;
+		if (s_ready[i] && !present)
+		{
+			/* Stick pulled without ejecting: drop the stale mount. */
+			f_mount(0, kMap[i].vol, 0);
+			s_ready[i] = 0;
+			s_cwd[i][0] = '/';
+			s_cwd[i][1] = 0;
+			s_ejected[i] = 0;
+			s_present[i] = 0;
+			notice_mount(i, "removed");
+		}
+		else if (!present)
+		{
+			s_present[i] = 0;
+			/* Gone: clear a stale eject so the next insert mounts. */
+			s_ejected[i] = 0;
+		}
+		else
+			s_present[i] = 1;
+	}
 	try_mount(map_index('C'));
 	try_mount(map_index('D'));
 	try_mount(map_index('E'));
@@ -149,12 +218,106 @@ void mmb_storage_unmount (void)
 		f_mount (0, kMap[i].vol, 0);
 		s_ready[i] = 0;
 	}
+	memset(s_ejected, 0, sizeof s_ejected);
+	memset(s_present, 0, sizeof s_present);
+	s_notify_ready = 0;
 }
 
 int mmb_fat_ready(int letter)
 {
 	int i = slot_of(letter);
 	return i >= 0 && s_ready[i];
+}
+
+/* Read the FAT volume label from the boot sector. A superfloppy has the VBR
+ * in sector 0; a partitioned stick has an MBR first, so follow the first FAT
+ * partition. Returns 0 (with out[] empty) when there is no usable label. */
+static int read_volume_label(int idx, char *out, int outsz)
+{
+	BYTE sec[512];
+	BYTE vbr[512];
+	BYTE pdrv = (BYTE)kMap[idx].pd;
+	int off, i, n = 0;
+	out[0] = 0;
+	if (disk_read(pdrv, sec, 0, 1) != RES_OK)
+		return -1;
+	if (!(sec[0] == 0xEB || sec[0] == 0xE9))
+	{
+		int j, found = 0;
+		UINT lba = 0;
+		for (j = 0; j < 4; j++)
+		{
+			BYTE *e = sec + 0x1BE + j * 16;
+			BYTE type = e[4];
+			if (type == 0x01 || type == 0x04 || type == 0x06 ||
+			    type == 0x0B || type == 0x0C || type == 0x0E)
+			{
+				lba = (UINT)e[8] | ((UINT)e[9] << 8) |
+				      ((UINT)e[10] << 16) | ((UINT)e[11] << 24);
+				found = 1;
+				break;
+			}
+		}
+		if (!found || disk_read(pdrv, vbr, lba, 1) != RES_OK)
+			return -1;
+	}
+	else
+		memcpy(vbr, sec, sizeof vbr);
+	if (vbr[510] != 0x55 || vbr[511] != 0xAA)
+		return -1;
+	off = (vbr[0x52] == 'F' && vbr[0x53] == 'A' && vbr[0x54] == 'T' &&
+	       vbr[0x55] == '3' && vbr[0x56] == '2') ? 0x47 : 0x2B;
+	for (i = 0; i < 11 && n < outsz - 1; i++)
+		out[n++] = (char)vbr[off + i];
+	out[n] = 0;
+	while (n > 0 && out[n - 1] == ' ')
+		out[--n] = 0;
+	if (n == 0 || strcmp(out, "NO NAME") == 0)
+		out[0] = 0;
+	return 0;
+}
+
+int mmb_fat_label(int letter, char *out, int outsz)
+{
+	int i = slot_of(letter);
+	if (out && outsz > 0)
+		out[0] = 0;
+	if (i < 0 || !s_ready[i] || !out || outsz <= 0)
+		return -1;
+	return read_volume_label(i, out, outsz);
+}
+
+/* Flush and unmount a removable volume so it can be pulled safely. */
+int mmb_fat_eject(int letter)
+{
+	int i = slot_of(letter);
+	char msg[48];
+	unsigned n = 0;
+	if (i < 0 || letter == 'C' || !s_ready[i])
+		return -1;
+	disk_ioctl((BYTE)kMap[i].pd, CTRL_SYNC, 0);
+	f_mount (0, kMap[i].vol, 0);
+	s_ready[i] = 0;
+	s_ejected[i] = 1;
+	s_cwd[i][0] = '/';
+	s_cwd[i][1] = 0;
+	msg[n++] = kMap[i].letter;
+	msg[n++] = ':';
+	msg[n++] = ' ';
+	{
+		const char *k = kMap[i].kind;
+		while (*k && n < sizeof(msg) - 10)
+			msg[n++] = *k++;
+	}
+	{
+		const char *v = " ejected";
+		while (*v && n < sizeof(msg) - 1)
+			msg[n++] = *v++;
+	}
+	msg[n] = 0;
+	if (s_notify_ready)
+		mmb_storage_notice(msg);
+	return 0;
 }
 
 const char *mmb_fat_cwd(int letter)
@@ -173,9 +336,9 @@ void mmb_fat_drive_line(int letter, char *out, int outsz)
 		return;
 	if (!kMap[i].always && !s_ready[i])
 		return;
-	/* "C: SD" or "C: SD (no media)" */
+	/* "C: SD" / "C: SD \"MMBASIC\"" / "C: SD (no media)" */
 	{
-		char buf[40];
+		char buf[64];
 		unsigned n = 0;
 		buf[n++] = kMap[i].letter;
 		buf[n++] = ':';
@@ -190,6 +353,23 @@ void mmb_fat_drive_line(int letter, char *out, int outsz)
 			const char *k = " (no media)";
 			while (*k && n < sizeof(buf) - 1)
 				buf[n++] = *k++;
+		}
+		else
+		{
+			char lab[16];
+			if (mmb_fat_label(letter, lab, sizeof lab) == 0 && lab[0])
+			{
+				const char *p = lab;
+				if (n < sizeof(buf) - 3)
+				{
+					buf[n++] = ' ';
+					buf[n++] = '"';
+				}
+				while (*p && n < sizeof(buf) - 2)
+					buf[n++] = *p++;
+				if (n < sizeof(buf) - 1)
+					buf[n++] = '"';
+			}
 		}
 		buf[n] = 0;
 		strncpy(out, buf, (unsigned)outsz - 1);

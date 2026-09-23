@@ -247,12 +247,31 @@ def test_files_box_drawing_covers_cell_height(fresh_console):
     # ASCII '|' is empty, so a lit pixel here is the full-height box line.
     r, g, b = con.screen_pixel(3, 2 * 16)
     assert r > 100 and g > 100 and b > 100, (r, g, b)
-    # Horizontal ─ on the top pane border, away from the path caption.
-    r, g, b = con.screen_pixel(80, 16 + 7)
+    # Horizontal ─ on the top pane border, away from the volume caption.
+    r, g, b = con.screen_pixel(200, 16 + 7)
     assert r > 100 and g > 100 and b > 100, (r, g, b)
     # Last fkey row covers the bottom of 1280x720.
     br, bg_, bb = con.screen_pixel(24, 704)
     assert br + bg_ + bb > 40, (br, bg_, bb)
+    _keys(con, b"q")
+
+
+def test_files_volume_caption_has_friendly_name(fresh_console):
+    """The pane caption shows a friendly volume name, not just the letter."""
+    con = fresh_console
+    _prep_tree(con)
+    seen = _open_files(con)
+    assert "VOL=A: RAM" in seen.upper(), seen
+    _keys(con, b"q")
+
+
+def test_files_command_menu_has_eject(fresh_console):
+    """Command > Eject is available and reports when nothing is removable."""
+    con = fresh_console
+    _prep_tree(con)
+    _open_files(con)
+    seen = _keys(con, bytes([1]) + b"ce", quiet=0.6)
+    assert "HINT=No removable drive" in seen, seen
     _keys(con, b"q")
 
 

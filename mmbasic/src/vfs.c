@@ -1213,3 +1213,53 @@ void mmb_cmd_drive(void)
 		mmb_out(buf);
 	}
 }
+
+/* EJECT ["D:"] — flush and unmount a removable volume so the stick can be
+ * pulled without corrupting its FAT. Defaults to the current drive. The
+ * system SD/ramdisk are never ejectable. */
+void mmb_cmd_eject(void)
+{
+	int letter;
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR || !v.s[0])
+			mmb_syntax();
+		letter = (unsigned char)v.s[0];
+		if (letter >= 'a' && letter <= 'z')
+			letter = letter - 32;
+	}
+	else
+		letter = G.drive;
+	if (letter == 'A' || letter == 'B')
+		mmb_error("?EJECT");
+	if (mmb_fat_eject(letter) != 0)
+		mmb_error("?EJECT");
+	if (G.drive == letter)
+	{
+		G.drive = 'A';
+		refresh_public_cwd();
+	}
+}
+
+/* Storage hotplug notices. A full-screen app can claim the message (FILES
+ * puts it in the hint line); otherwise print it between prompt lines. */
+void mmb_storage_notice(const char *msg)
+{
+	char line[160];
+	const char *p;
+	int n = 0;
+	if (!msg || !msg[0])
+		return;
+	if (mmb_files_notice(msg))
+		return;
+	line[n++] = '\r';
+	line[n++] = '\n';
+	for (p = msg; *p && n < (int)sizeof(line) - 3; p++)
+		line[n++] = *p;
+	line[n++] = '\r';
+	line[n++] = '\n';
+	line[n] = 0;
+	mmb_console_write(line);
+}

@@ -798,6 +798,7 @@ void mmb_vfs_drives(char *out, int outsz);
 const char *mmb_vfs_cwd(void);
 void mmb_vfs_seed_file(const char *path, const void *data, unsigned n);int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n);
 void mmb_cmd_drive(void);
+void mmb_cmd_eject(void);
 
 /* Physical volumes C: (SD) and D+ (USB). Implemented in console/storage.cpp. */
 int mmb_fat_ready(int letter);
@@ -818,9 +819,18 @@ int mmb_fat_exists(int letter, const char *path);
 int mmb_fat_isdir(int letter, const char *path);
 const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
+/* Friendly volume label (FAT name or host mount name); "" when none. */
+int mmb_fat_label(int letter, char *out, int outsz);
+/* Safe eject/unmount of a removable volume; 0 on success. */
+int mmb_fat_eject(int letter);
 void mmb_storage_poll(void);
 
 void mmb_storage_unmount(void);
+
+/* Hotplug/idle notices from the storage layer (USB mount/unmount, eject).
+ * Printed at the prompt unless a full-screen app claims them (FILES hint). */
+void mmb_storage_notice(const char *msg);
+int mmb_files_notice(const char *msg);
 
 int mmb_find_line_pc(int num);
 int mmb_const_lookup(const char *name, int type, mmb_val *out);
