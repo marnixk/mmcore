@@ -440,6 +440,13 @@ static void front_feed_dispatch(char c)
 			mmb_front_prompt();
 		return;
 	}
+	if (mmb_settings_active())
+	{
+		fe_puts(mmb_settings_key(c));
+		if (!mmb_settings_active())
+			mmb_front_prompt();
+		return;
+	}
 	if (mmb_in_editor())
 	{
 		fe_puts(mmb_editor_key(c));

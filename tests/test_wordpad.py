@@ -756,6 +756,23 @@ def _read_lines(con, path, n):
     return lines
 
 
+def test_wordpad_ctrl_z_undo(kernel_image):
+    """#532: Ctrl+Z undoes the last WORDPAD edit."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "UNDO.MD"')
+        _keys(con, b"AB", quiet=0.6)
+        _keys(con, bytes([26]), quiet=0.5)  # Ctrl+Z removes the "B"
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "UNDO.MD", 1)
+        assert lines[0] == "[A]", lines
+    finally:
+        con.stop()
+
+
 def test_wordpad_numbered_list_auto_increments(kernel_image):
     """Issue #514: Enter on `1. ` continues at 2., 3. ..."""
     con = MMBasicConsole(kernel_image)

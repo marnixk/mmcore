@@ -144,6 +144,84 @@ static int wp_save(void);
 static void wp_autosave(void);
 static void wp_stash(void);
 
+/* Ctrl+Z undo (#532). WORDPAD's buffer is a flat string, so undo keeps a
+ * compact pool of pre-edit copies (buffer + length), truncated to the shared
+ * MMB_UNDO_DEPTH steps. The pool is shared across documents: only one WORDPAD
+ * is active at a time. */
+#define WP_UNDO_POOL 196608
+static unsigned char wp_undo_pool[WP_UNDO_POOL];
+static int wp_undo_off[MMB_UNDO_DEPTH];
+static int wp_undo_len[MMB_UNDO_DEPTH];
+static int wp_undo_n, wp_undo_bytes;
+static int wp_hist_active, wp_hist_taken;
+
+static void wp_undo_reset(void)
+{
+	wp_undo_n = 0;
+	wp_undo_bytes = 0;
+}
+
+static void wp_undo_push(void)
+{
+	int len = W.len;
+	if (len < 0)
+		len = 0;
+	if (len > WP_BUF)
+		len = WP_BUF;
+	if (len > WP_UNDO_POOL)
+		return;
+	while (wp_undo_n >= MMB_UNDO_DEPTH || wp_undo_bytes + len > WP_UNDO_POOL)
+	{
+		int drop, i;
+		if (wp_undo_n <= 0)
+			return;
+		drop = wp_undo_len[0];
+		memmove(wp_undo_pool, wp_undo_pool + drop,
+			(unsigned)(wp_undo_bytes - drop));
+		for (i = 1; i < wp_undo_n; i++)
+		{
+			wp_undo_off[i - 1] = wp_undo_off[i] - drop;
+			wp_undo_len[i - 1] = wp_undo_len[i];
+		}
+		wp_undo_bytes -= drop;
+		wp_undo_n--;
+	}
+	memcpy(wp_undo_pool + wp_undo_bytes, W.buf, (unsigned)len);
+	wp_undo_off[wp_undo_n] = wp_undo_bytes;
+	wp_undo_len[wp_undo_n] = len;
+	wp_undo_bytes += len;
+	wp_undo_n++;
+}
+
+/* One snapshot per top-level keystroke, no matter how many primitives it
+ * calls. Programmatic loads/recovery reset the history instead. */
+static void wp_note_edit(void)
+{
+	if (!wp_hist_active || wp_hist_taken)
+		return;
+	wp_undo_push();
+	wp_hist_taken = 1;
+}
+
+static void wp_undo(void)
+{
+	int off, len;
+	if (wp_undo_n <= 0)
+		return;
+	wp_undo_n--;
+	off = wp_undo_off[wp_undo_n];
+	len = wp_undo_len[wp_undo_n];
+	memcpy(W.buf, wp_undo_pool + off, (unsigned)len);
+	W.len = len;
+	wp_undo_bytes = off;
+	if (W.cx > W.len)
+		W.cx = W.len;
+	if (W.sel_anchor > W.len)
+		W.sel_anchor = W.len;
+	W.sel = 0;
+	W.dirty = 1;
+}
+
 static const char *menu_names[] = { "File", "Edit", "Settings" };
 static const char menu_hots[] = { 'F', 'E', 'S' };
 static int menu_x[WP_MENU_COUNT];
@@ -1170,6 +1248,7 @@ static int delete_range(int lo, int hi, int to_clip)
 
 	if (hi <= lo)
 		return 0;
+	wp_note_edit();
 	n = hi - lo;
 	if (to_clip)
 		clip_store(W.buf + lo, n);
@@ -1226,6 +1305,7 @@ static void paste_clip(void)
 
 	if (W.cliplen <= 0)
 		return;
+	wp_note_edit();
 	delete_selection(0);
 	n = W.cliplen;
 	if (W.len + n >= WP_BUF - 1)
@@ -1270,6 +1350,7 @@ static void indent_line(int dir)
 	{
 		if (W.len + WP_INDENT_UNIT >= WP_BUF - 1)
 			return;
+		wp_note_edit();
 		memmove(W.buf + ls + WP_INDENT_UNIT, W.buf + ls,
 			(unsigned)(W.len - ls + 1));
 		for (i = 0; i < WP_INDENT_UNIT; i++)
@@ -1285,6 +1366,7 @@ static void indent_line(int dir)
 		n++;
 	if (n == 0)
 		return;
+	wp_note_edit();
 	memmove(W.buf + ls, W.buf + ls + n, (unsigned)(W.len - (ls + n) + 1));
 	W.len -= n;
 	if (W.cx > ls + n)
@@ -1365,6 +1447,7 @@ static void insert_char(char c)
 		return;
 	if (W.len >= WP_BUF - 1)
 		return;
+	wp_note_edit();
 	delete_selection(0);
 	if (W.len >= WP_BUF - 1)
 		return;
@@ -1382,6 +1465,7 @@ static void backspace(void)
 		return;
 	if (W.cx <= 0)
 		return;
+	wp_note_edit();
 	memmove(W.buf + W.cx - 1, W.buf + W.cx, (unsigned)(W.len - W.cx + 1));
 	W.cx--;
 	W.len--;
@@ -1394,6 +1478,7 @@ static void delete_char(void)
 		return;
 	if (W.cx >= W.len)
 		return;
+	wp_note_edit();
 	memmove(W.buf + W.cx, W.buf + W.cx + 1, (unsigned)(W.len - W.cx));
 	W.len--;
 	W.dirty = 1;
@@ -1482,6 +1567,7 @@ static void wp_load_file(const char *path)
 	unsigned got;
 
 	canon_path(path, canon, sizeof(canon));
+	wp_undo_reset();
 	W.buf[0] = 0;
 	W.len = 0;
 	if (mmb_vfs_read(canon, W.buf, sizeof(W.buf) - 1, &got) == 0)
@@ -1569,6 +1655,7 @@ static void wp_recovery_apply(void)
 	if (W.path[0] &&
 	    mmb_vfs_read(wp_rec_sidecar, W.buf, sizeof(W.buf) - 1, &got) == 0)
 	{
+		wp_undo_reset();
 		W.len = mmb_normalize_newlines(W.buf, (int)got);
 		W.buf[W.len] = 0;
 		W.cx = 0;
@@ -3625,7 +3712,7 @@ static int menu_key(char c)
 	return 1;
 }
 
-static const char *wp_feed(char c)
+static const char *wp_feed_inner(char c)
 {
 	G.outn = 0;
 	G.out[0] = 0;
@@ -3678,6 +3765,13 @@ static const char *wp_feed(char c)
 	{
 		open_picker();
 		wp_redraw();
+		return G.out;
+	}
+	if (c == 26) /* Ctrl+Z: shared undo chord (#532) */
+	{
+		wp_undo();
+		if (W.active)
+			wp_redraw();
 		return G.out;
 	}
 	if (c == 24)
@@ -3737,6 +3831,16 @@ static const char *wp_feed(char c)
 	return G.out;
 }
 
+static const char *wp_feed(char c)
+{
+	const char *r;
+	wp_hist_active = 1;
+	wp_hist_taken = 0;
+	r = wp_feed_inner(c);
+	wp_hist_active = 0;
+	return r;
+}
+
 void mmb_cmd_wordpad(void)
 {
 	char path[128];
@@ -3752,6 +3856,7 @@ void mmb_cmd_wordpad(void)
 	}
 	memset(&W, 0, sizeof(W));
 	memset(docs, 0, sizeof(docs));
+	wp_undo_reset();
 	W.active = 1;
 	W.wide = 0;
 	W.ndoc = 1;

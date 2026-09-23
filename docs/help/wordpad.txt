@@ -34,8 +34,9 @@ overwrites the real file when you save. A clean save removes the sidecar.
 
 Ctrl+P quick-open (recursive *.MD picker; typing filters on the document
 name first, then the path). Named buffers auto-save when
-switching files. F2 save  F3 open  Ctrl+X or Quit leaves WORDPAD (CLS and
-restores the console colour). Open/Save As use a file picker (*.MD).
+switching files. F2 save  F3 open  Ctrl+Z undo  Ctrl+X or Quit leaves
+WORDPAD (CLS and restores the console colour). Open/Save As use a file
+picker (*.MD).
 
 Example:
 

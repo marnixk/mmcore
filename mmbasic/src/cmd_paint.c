@@ -15,7 +15,7 @@
 
 #define PT_MAX_W 96
 #define PT_MAX_H 48
-#define PT_UNDO  6
+#define PT_UNDO  MMB_UNDO_DEPTH
 
 #define PT_OX 2 /* canvas left column */
 #define PT_OY 4 /* canvas top row */
@@ -511,9 +511,9 @@ static void pt_redraw(void)
 				"pencil/eraser  line  rect  circle  fill  pick  undo");
 			tui_puts(PT_OX, hy, line, TUI_BRCYAN, TUI_BRBLACK);
 			if (hy + 1 < rows - 1)
-				tui_puts(PT_OX, hy + 1,
-					 "arrows move  space draw  s save  x clear  Alt+X quit",
-					 TUI_WHITE, TUI_BRBLACK);
+			tui_puts(PT_OX, hy + 1,
+				 "arrows move  space draw  Ctrl+Z undo  s save  Alt+X quit",
+				 TUI_WHITE, TUI_BRBLACK);
 		}
 	}
 	tui_flush();
@@ -723,6 +723,13 @@ const char *mmb_paint_key(char c)
 	if (c == 24) /* Ctrl+X */
 	{
 		pt_leave();
+		return G.out;
+	}
+	if (c == 26) /* Ctrl+Z: shared undo chord (#532) */
+	{
+		pt_undo();
+		if (PT.active)
+			pt_redraw();
 		return G.out;
 	}
 	pt_handle_key(c);

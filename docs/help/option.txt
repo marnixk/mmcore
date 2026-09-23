@@ -34,7 +34,8 @@ Settings:
   KEYBOARD REPEAT first [, next]
     Default 300,75 ms (first delay, then repeat).
   EDIT FONT SMALL|NORMAL|MEDIUM|LARGE|VERY LARGE
-  EDIT THEME name|n   (10 editor colour themes; default Slate)
+  EDIT THEME name|n   (10 system-wide colour themes; default Slate)
+  THEME name|n        (same setting; see ~SETTINGS~ and ~THEME~)
   ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT
   PATH "dir$[;dir$...]"
     Directories searched for .APP packages (default A:/APPS/). See ~PATH~,

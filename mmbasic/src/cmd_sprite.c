@@ -727,9 +727,34 @@ typedef struct {
 	unsigned char pix[SM_MAX_CELLS][SM_MAX_CELL * SM_MAX_CELL];
 	char status[96];
 	int esc_state, esc_at, alt_pend;
+	unsigned char undo[MMB_UNDO_DEPTH][SM_MAX_CELLS][SM_MAX_CELL * SM_MAX_CELL];
+	int undo_n, undo_pos;
 } sm_state;
 
 static sm_state SM;
+
+/* Ctrl+Z undo (#532): snapshot every cell before a mutation. */
+static void sm_undo_push(void)
+{
+	memcpy(SM.undo[SM.undo_pos], SM.pix, sizeof(SM.pix));
+	SM.undo_pos = (SM.undo_pos + 1) % MMB_UNDO_DEPTH;
+	if (SM.undo_n < MMB_UNDO_DEPTH)
+		SM.undo_n++;
+}
+
+static void sm_undo(void)
+{
+	if (SM.undo_n <= 0)
+	{
+		strncpy(SM.status, "Nothing to undo", sizeof(SM.status) - 1);
+		return;
+	}
+	SM.undo_pos = (SM.undo_pos - 1 + MMB_UNDO_DEPTH) % MMB_UNDO_DEPTH;
+	memcpy(SM.pix, SM.undo[SM.undo_pos], sizeof(SM.pix));
+	SM.undo_n--;
+	SM.dirty = 1;
+	strncpy(SM.status, "Undo", sizeof(SM.status) - 1);
+}
 
 static const char *sm_base(const char *p)
 {
@@ -968,6 +993,8 @@ static void sm_load(void)
 	unsigned char *file;
 	uint32_t *pix = 0;
 
+	SM.undo_n = 0;
+	SM.undo_pos = 0;
 	sz = mmb_vfs_size(SM.path);
 	if (sz <= 0)
 		return;
@@ -1161,6 +1188,7 @@ static void sm_move(int dx, int dy)
 static void sm_toggle(void)
 {
 	unsigned char *p = &SM.pix[SM.frame][SM.cy * SM.cell + SM.cx];
+	sm_undo_push();
 	*p = (*p == SM.colour) ? SM_TRANS : (unsigned char)SM.colour;
 	SM.dirty = 1;
 }
@@ -1182,6 +1210,7 @@ static void sm_flip(int horiz)
 {
 	int x, y, a, b;
 	unsigned char tmp;
+	sm_undo_push();
 	for (y = 0; y < SM.cell; y++)
 		for (x = 0; x < SM.cell; x++)
 		{
@@ -1200,12 +1229,14 @@ static void sm_flip(int horiz)
 
 static void sm_clear(void)
 {
+	sm_undo_push();
 	memset(SM.pix[SM.frame], SM_TRANS, (unsigned)(SM.cell * SM.cell));
 	SM.dirty = 1;
 }
 
 static void sm_fill(void)
 {
+	sm_undo_push();
 	memset(SM.pix[SM.frame], SM.colour, (unsigned)(SM.cell * SM.cell));
 	SM.dirty = 1;
 }
@@ -1322,6 +1353,13 @@ const char *mmb_sprite_edit_key(char c)
 	if (c == 24)
 	{
 		sm_leave();
+		return G.out;
+	}
+	if (c == 26) /* Ctrl+Z: shared undo chord (#532) */
+	{
+		sm_undo();
+		if (SM.active)
+			sm_redraw();
 		return G.out;
 	}
 	sm_handle(c);

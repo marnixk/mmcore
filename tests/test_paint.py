@@ -157,6 +157,28 @@ def test_paint_undo_restores_previous_pixels(fresh_console):
     c.send_line("SPRITE CLOSE 1")
 
 
+def test_paint_ctrl_z_undoes_last_pixel(fresh_console):
+    """#532: the shared Ctrl+Z chord undoes the last PAINT change."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PT5.PNG", 16, 16')
+    _keys(c, b"5")          # magenta at (0,0)
+    _keys(c, b" ")
+    _keys(c, b"\x1b[C")     # move right -> (1,0)
+    _keys(c, b"2")          # green at (1,0)
+    _keys(c, b" ")
+    _keys(c, b"\x1a")       # Ctrl+Z undoes the green
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PT5.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    v0 = _pixel(c, 0, 0)
+    assert (v0 >> 16) & 255 > 130 and (v0 >> 8) & 255 < 120  # magenta remains
+    v1 = _pixel(c, 1, 0)
+    assert not ((v1 >> 8) & 255 > 130 and (v1 >> 16) & 255 < 120)  # green undone
+    c.send_line("SPRITE CLOSE 1")
+
+
 def test_help_paint_topic(console):
     out = dump_topic(console, "PAINT")
     assert "not implemented" not in out.lower()
