@@ -471,11 +471,29 @@ static void option_dispatch(void)
 	}
 	if (mmb_match("TERM"))
 	{
-		if (!mmb_match("LOG"))
-			mmb_syntax();
-		G.opt.term_log = onoff();
-		mmb_term_log_enable(G.opt.term_log);
-		return;
+		if (mmb_match("LOG"))
+		{
+			G.opt.term_log = onoff();
+			mmb_term_log_enable(G.opt.term_log);
+			return;
+		}
+		if (mmb_match("AUTOLOG"))
+		{
+			G.opt.term_autolog = onoff();
+			return;
+		}
+		if (mmb_match("SCROLLBACK"))
+		{
+			int n = (int)mmb_as_int(mmb_expr());
+			if (n < 0)
+				n = 0;
+			if (n > 256)
+				n = 256;
+			G.opt.term_scrollback = n;
+			mmb_term_scrollback_set(n);
+			return;
+		}
+		mmb_syntax();
 	}
 	if (mmb_match("BREAK"))
 	{
@@ -1218,6 +1236,10 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.ethernet_enabled ? "OPTION ETHERNET ON" : "OPTION ETHERNET OFF");
 	if (all || G.opt.term_log)
 		ol_line(&n, G.opt.term_log ? "OPTION TERM LOG ON" : "OPTION TERM LOG OFF");
+	if (all || G.opt.term_autolog)
+		ol_line(&n, G.opt.term_autolog ? "OPTION TERM AUTOLOG ON" : "OPTION TERM AUTOLOG OFF");
+	if (all || G.opt.term_scrollback != 200)
+		ol_line_int(&n, "OPTION TERM SCROLLBACK ", G.opt.term_scrollback);
 	if (all || (G.opt.wifi_country[0] &&
 		    !(G.opt.wifi_country[0] == 'U' && G.opt.wifi_country[1] == 'S' &&
 		      G.opt.wifi_country[2] == 0)))

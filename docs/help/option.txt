@@ -58,6 +58,10 @@ Settings:
     reboots.
   TERM LOG ON|OFF
     Write session traffic to C:/.termlog (A: if no SD). Default OFF.
+  TERM AUTOLOG ON|OFF
+    Start a fresh TERM log automatically for each new session. Default OFF.
+  TERM SCROLLBACK n
+    Lines of TERM history kept for Page Up / search. Default 200, 0 off.
 
 Example:
 
@@ -68,5 +72,6 @@ Example:
     OPTION WIFI DEBUG ON
     OPTION ETHERNET ON
     OPTION TERM LOG ON
+    OPTION TERM SCROLLBACK 400
     OPTION PROMPT CWD
     OPTION LIST
