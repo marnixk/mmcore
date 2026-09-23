@@ -14,7 +14,8 @@
  *   launcher is the same widget: Enter runs, Esc/back reaches the REPL.
  */
 
-#define APP_MAX_ENT  128
+#define APP_MAX_ENT  160
+#define APP_LABEL    48
 #define APP_NAME     80
 #define APP_PATH     160
 #define APP_LISTING  4096
@@ -22,6 +23,37 @@
 
 #define APPTUI_PICK     0
 #define APPTUI_LAUNCH   1
+
+/* Built-in full-screen apps offered beside user .APP packages. Labels are the
+ * human-readable names shown in the launcher (#624). */
+typedef struct builtin_app {
+	const char *cmd;
+	const char *label;
+} builtin_app;
+
+static const builtin_app at_builtins[] = {
+	{ "EDIT", "Editor" },
+	{ "FILES", "File manager" },
+	{ "WORDPAD", "Word processor" },
+	{ "PAINT", "Paint" },
+	{ "JUKE", "Jukebox" },
+	{ "HELP", "Help" },
+	{ "SETTINGS", "Settings" },
+	{ "PACKAGE", "Package" },
+	{ "CONNECT", "Connect" },
+	{ "TERM", "Terminal" },
+};
+#define AT_BUILTIN_COUNT ((int)(sizeof(at_builtins) / sizeof(at_builtins[0])))
+
+#define AT_KIND_PKG 0
+#define AT_KIND_CMD 1
+
+typedef struct app_entry {
+	int kind;              /* AT_KIND_PKG or AT_KIND_CMD */
+	char label[APP_LABEL]; /* human-readable name */
+	char path[APP_PATH];   /* resolved .APP path (kind PKG) */
+	char cmd[APP_LABEL];   /* builtin command to run (kind CMD) */
+} app_entry;
 
 static const mmb_ed_theme *atth(void)
 {
@@ -44,8 +76,7 @@ typedef struct app_tui_state {
 	int active;
 	int mode;   /* APPTUI_PICK or APPTUI_LAUNCH */
 	int nent, sel, top;
-	char name[APP_MAX_ENT][APP_NAME];
-	char path[APP_MAX_ENT][APP_PATH];
+	app_entry ent[APP_MAX_ENT];
 	int esc;
 	unsigned esc_at;
 	char status[96];
@@ -158,18 +189,27 @@ int mmb_app_resolve(const char *name, char *out, int outsz)
 	return 0;
 }
 
-static int at_already(const char *name)
+static int at_seen_label(const char *label)
 {
 	int i;
 	for (i = 0; i < AT.nent; i++)
-		if (mmb_keyword_eq(AT.name[i], name))
+		if (mmb_keyword_eq(AT.ent[i].label, label))
+			return 1;
+	return 0;
+}
+
+static int at_is_builtin_cmd(const char *name)
+{
+	int i;
+	for (i = 0; i < AT_BUILTIN_COUNT; i++)
+		if (mmb_keyword_eq(at_builtins[i].cmd, name))
 			return 1;
 	return 0;
 }
 
 static void at_add(const char *dir, const char *fname)
 {
-	char stem[APP_NAME], full[APP_PATH + APP_NAME];
+	char stem[APP_LABEL], full[APP_PATH + APP_NAME];
 	int n;
 
 	if (AT.nent >= APP_MAX_ENT)
@@ -181,14 +221,15 @@ static void at_add(const char *dir, const char *fname)
 	stem[sizeof(stem) - 1] = 0;
 	if (n - 4 < (int)sizeof(stem))
 		stem[n - 4] = 0;
-	if (!stem[0] || at_already(stem))
+	if (!stem[0] || at_seen_label(stem) || at_is_builtin_cmd(stem))
 		return;
 	if (at_join(full, sizeof(full), dir, fname) != 0)
 		return;
-	strncpy(AT.name[AT.nent], stem, APP_NAME - 1);
-	AT.name[AT.nent][APP_NAME - 1] = 0;
-	strncpy(AT.path[AT.nent], full, APP_PATH - 1);
-	AT.path[AT.nent][APP_PATH - 1] = 0;
+	AT.ent[AT.nent].kind = AT_KIND_PKG;
+	strncpy(AT.ent[AT.nent].label, stem, APP_LABEL - 1);
+	AT.ent[AT.nent].label[APP_LABEL - 1] = 0;
+	strncpy(AT.ent[AT.nent].path, full, APP_PATH - 1);
+	AT.ent[AT.nent].path[APP_PATH - 1] = 0;
 	AT.nent++;
 }
 
@@ -196,10 +237,13 @@ static void at_scan(void)
 {
 	char listing[APP_LISTING];
 	const char *p = G.opt.app_path;
+	int i;
 
 	AT.nent = 0;
 	AT.sel = 0;
 	AT.top = 0;
+	/* User packages first (so a boot launcher defaults to them), then the
+	 * built-in apps under their human labels (#624). */
 	while (p && *p)
 	{
 		const char *e = p;
@@ -235,6 +279,16 @@ static void at_scan(void)
 			at_add(dir, line);
 		}
 	}
+	for (i = 0; i < AT_BUILTIN_COUNT && AT.nent < APP_MAX_ENT; i++)
+	{
+		AT.ent[AT.nent].kind = AT_KIND_CMD;
+		strncpy(AT.ent[AT.nent].label, at_builtins[i].label,
+			APP_LABEL - 1);
+		AT.ent[AT.nent].label[APP_LABEL - 1] = 0;
+		strncpy(AT.ent[AT.nent].cmd, at_builtins[i].cmd, APP_LABEL - 1);
+		AT.ent[AT.nent].cmd[APP_LABEL - 1] = 0;
+		AT.nent++;
+	}
 }
 
 static void at_close(void)
@@ -242,21 +296,30 @@ static void at_close(void)
 	AT.active = 0;
 	AT.esc = 0;
 	tui_end();
-	mmb_console_write("\r\n");
+	/* Overlay (#624): paint the REPL screen back instead of a blank one. */
+	if (!tui_overlay_end())
+		mmb_console_write("\r\n");
 }
 
 static void at_run_selected(void)
 {
-	char path[APP_PATH], cmd[APP_PATH + 16];
+	char cmd[APP_PATH + 16];
 
 	if (AT.sel < 0 || AT.sel >= AT.nent)
 		return;
-	strncpy(path, AT.path[AT.sel], sizeof(path) - 1);
-	path[sizeof(path) - 1] = 0;
-	at_close();
+	if (AT.ent[AT.sel].kind == AT_KIND_CMD)
+	{
+		strncpy(cmd, AT.ent[AT.sel].cmd, sizeof(cmd) - 1);
+		cmd[sizeof(cmd) - 1] = 0;
+		at_close();
+		if (cmd[0])
+			mmb_exec_line(cmd);
+		return;
+	}
 	strcpy(cmd, "RUN \"");
-	strncat(cmd, path, sizeof(cmd) - 8);
+	strncat(cmd, AT.ent[AT.sel].path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
+	at_close();
 	mmb_exec_line(cmd);
 }
 
@@ -276,94 +339,71 @@ static void at_move(int dir)
 		AT.sel++;
 }
 
-static void at_title_bar(const char *title)
-{
-	int w = tui_cols();
-	int n = (int)strlen(title);
-	int x = (w - n) / 2;
-	if (x < 1)
-		x = 1;
-	tui_fill(0, 0, w, 1, ' ', AT_TITLE_FG, AT_TITLE_BG);
-	tui_puts(x, 0, title, AT_TITLE_FG, AT_TITLE_BG);
-}
-
-static void at_status_bar(const char *hint)
-{
-	tui_status_hint(tui_rows() - 1, hint, AT_HOT, AT_DIM, AT_BG);
-}
-
 static void at_draw(void)
 {
-	int w = tui_cols();
-	int h = tui_rows();
-	int i;
-	int listy = 3;
+	int x, y, w, h;
+	int i, listy, listh;
+	const char *title = AT.mode == APPTUI_LAUNCH ? " HOME " : " APPS ";
 
 	if (!AT.active)
 		return;
 	tui_begin();
 	mmb_editor_apply_tui_palette();
-	tui_clear(AT_FG, AT_BG);
-	if (AT.mode == APPTUI_LAUNCH)
-		at_title_bar("HOME");
-	else
-		at_title_bar("APPS");
+	/* A small centred overlay dialog (#624), like the editor quick open. */
+	tui_dialog_geom(52, 16, &x, &y, &w, &h);
+	tui_dialog_panel(x, y, w, h, title, AT_FG, AT_BG,
+			 AT_TITLE_FG, AT_TITLE_BG, AT_TITLE_FG, AT_TITLE_BG);
 
 	if (AT.mode == APPTUI_LAUNCH)
-		tui_puts(2, 1, "Choose an app. Esc returns to the REPL.", AT_STR, AT_BG);
+		tui_puts(x + 2, y + 2, "Choose an app. Esc returns to the REPL.",
+			 AT_STR, AT_BG);
 	else
-		tui_puts(2, 1, "Choose an app to run.", AT_STR, AT_BG);
+		tui_puts(x + 2, y + 2, "Choose an app to run.", AT_STR, AT_BG);
 
-	if (AT.nent == 0)
+	listy = y + 3;
+	listh = (y + h - 2) - listy;
+	if (listh < 1)
+		listh = 1;
+	if (AT.sel < AT.top)
+		AT.top = AT.sel;
+	if (AT.sel >= AT.top + listh)
+		AT.top = AT.sel - listh + 1;
+	if (AT.top < 0)
+		AT.top = 0;
+
+	for (i = 0; i < listh; i++)
 	{
-		char line[APP_PATH + 32];
-		line[0] = 0;
-		at_append(line, sizeof(line), "No .APP packages on ");
-		at_append(line, sizeof(line), G.opt.app_path[0] ? G.opt.app_path : "(empty PATH)");
-		tui_puts(2, 3, line, AT_ERR_FG, AT_BG);
-	}
-	else
-	{
-		int listh = h - listy - 2;
-		if (listh < 1)
-			listh = 1;
-		if (AT.sel < AT.top)
-			AT.top = AT.sel;
-		if (AT.sel >= AT.top + listh)
-			AT.top = AT.sel - listh + 1;
-		if (AT.top < 0)
-			AT.top = 0;
-		for (i = 0; i < listh; i++)
+		int idx = AT.top + i;
+		int ry = listy + i;
+		int fg = AT_FG, bg = AT_BG;
+		char row[APP_LABEL + 4];
+		if (idx >= AT.nent)
 		{
-			int idx = AT.top + i;
-			int y = listy + i;
-			int fg = AT_FG, bg = AT_BG;
-			char row[APP_NAME + 8];
-			if (idx >= AT.nent)
-			{
-				tui_fill(1, y, w - 2, 1, ' ', AT_FG, AT_BG);
-				continue;
-			}
-			row[0] = 0;
-			at_append(row, sizeof(row), "[");
-			at_append(row, sizeof(row), AT.name[idx]);
-			at_append(row, sizeof(row), "]");
-			if (idx == AT.sel)
-			{
-				fg = AT_SEL_FG;
-				bg = AT_SEL_BG;
-			}
-			tui_fill(1, y, w - 2, 1, ' ', fg, bg);
-			tui_puts(2, y, row, fg, bg);
+			tui_fill(x + 1, ry, w - 2, 1, ' ', AT_FG, AT_BG);
+			continue;
 		}
+		row[0] = 0;
+		at_append(row, sizeof(row), idx == AT.sel ? "> " : "  ");
+		at_append(row, sizeof(row), AT.ent[idx].label);
+		if (idx == AT.sel)
+		{
+			fg = AT_SEL_FG;
+			bg = AT_SEL_BG;
+		}
+		tui_fill(x + 1, ry, w - 2, 1, ' ', fg, bg);
+		tui_pad(x + 2, ry, row, w - 4, fg, bg);
 	}
 
 	if (AT.status[0])
-		tui_puts(2, h - 2, AT.status, AT_ERR_FG, AT_ERR_BG);
+		tui_puts(x + 2, y + h - 3, AT.status, AT_ERR_FG, AT_ERR_BG);
 	if (AT.mode == APPTUI_LAUNCH)
-		at_status_bar("<Up/Down> Move  <Enter> Run  <Esc> REPL");
+		tui_status_hint_at(x + 1, y + h - 2, w - 2,
+			"<Up/Down> Move  <Enter> Run  <Esc> REPL",
+			AT_HOT, AT_DIM, AT_BG);
 	else
-		at_status_bar("<Up/Down> Move  <Enter> Run  <Esc> Cancel");
+		tui_status_hint_at(x + 1, y + h - 2, w - 2,
+			"<Up/Down> Move  <Enter> Run  <Esc> Cancel",
+			AT_HOT, AT_DIM, AT_BG);
 	tui_cursor(0, 0, 0);
 	tui_flush();
 }
@@ -372,6 +412,7 @@ void mmb_apptui_open(int launcher)
 {
 	if (AT.active)
 		return;
+	tui_overlay_begin();
 	memset(&AT, 0, sizeof(AT));
 	AT.active = 1;
 	AT.mode = launcher ? APPTUI_LAUNCH : APPTUI_PICK;

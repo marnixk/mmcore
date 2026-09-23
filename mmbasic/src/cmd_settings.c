@@ -100,23 +100,44 @@ static void st_panel(const char *title, int want_w, int want_h,
 			 ST_BRD_FG, ST_BRD_BG, ST_TITLE_FG, ST_TITLE_BG);
 }
 
-/* A compact preview of the active theme's roles. */
+/* Natural size of the live PREVIEW swatch: 6 content rows plus a border. */
+#define ST_PREV_W      28
+#define ST_PREV_ROWS   6
+/* Below these the swatch is dropped rather than drawn clipped/overlapping. */
+#define ST_PREV_MIN_W  22
+#define ST_PREV_MIN_H  6
+
+/* A compact preview of the active theme's roles. The rect is pre-clamped by
+ * the caller; every line is guarded so nothing is written below the frame. */
 static void st_preview(int x, int y, int w, int h)
 {
 	int row = y + 1;
-	if (w < 12 || h < 6)
+	int last = y + h - 1; /* first row past the bottom border */
+
+	if (w < ST_PREV_MIN_W || h < ST_PREV_MIN_H)
 		return;
 	tui_frame(x, y, w, h, ST_BRD_FG, ST_BRD_BG);
 	tui_puts(x + 2, y, " PREVIEW ", ST_TITLE_FG, ST_TITLE_BG);
-	tui_pad(x + 2, row++, "Menu", w - 4, ST_TITLE_FG, ST_TITLE_BG);
-	tui_puts(x + 2, row, "Text", ST_EDIT_FG, ST_EDIT_BG);
-	tui_puts(x + 8, row++, "String", ST_STR, ST_EDIT_BG);
-	tui_puts(x + 2, row, "Number", ST_NUM, ST_EDIT_BG);
-	tui_puts(x + 11, row++, "'comment'", ST_CMT, ST_EDIT_BG);
-	tui_pad(x + 2, row++, "Selected line", w - 4, ST_SEL_FG, ST_SEL_BG);
-	tui_put(x + 2, row, '!', ST_ERR_FG, ST_ERR_BG);
-	tui_puts(x + 4, row++, "error", ST_ERR_FG, ST_ERR_BG);
-	if (row < y + h - 1)
+	if (row < last)
+		tui_pad(x + 2, row++, "Menu", w - 4, ST_TITLE_FG, ST_TITLE_BG);
+	if (row < last)
+	{
+		tui_puts(x + 2, row, "Text", ST_EDIT_FG, ST_EDIT_BG);
+		tui_puts(x + 8, row++, "String", ST_STR, ST_EDIT_BG);
+	}
+	if (row < last)
+	{
+		tui_puts(x + 2, row, "Number", ST_NUM, ST_EDIT_BG);
+		tui_puts(x + 11, row++, "'comment'", ST_CMT, ST_EDIT_BG);
+	}
+	if (row < last)
+		tui_pad(x + 2, row++, "Selected line", w - 4, ST_SEL_FG, ST_SEL_BG);
+	if (row < last)
+	{
+		tui_put(x + 2, row, '!', ST_ERR_FG, ST_ERR_BG);
+		tui_puts(x + 4, row++, "error", ST_ERR_FG, ST_ERR_BG);
+	}
+	if (row < last)
 		tui_puts(x + 2, row, "1 2 ... 10", ST_FG, ST_BG);
 }
 
@@ -166,10 +187,12 @@ static void st_draw_theme(int x, int y, int w, int h)
 {
 	int n = mmb_editor_theme_count();
 	int listy = y + 4;
-	int listh = (y + h - 2) - listy;
+	int hint_row = y + h - 2;
+	int listh = hint_row - listy;
 	int listw = 20;
-	int preview_x = listw + 2;
-	int i;
+	int lw;
+	int preview_x = listw + 4; /* one blank column after the list */
+	int avail_w, avail_h, pw, ph, i;
 
 	if (listh < 1)
 		listh = 1;
@@ -180,6 +203,12 @@ static void st_draw_theme(int x, int y, int w, int h)
 	if (S.top < 0)
 		S.top = 0;
 
+	lw = listw + 2;
+	if (lw > w - 2)
+		lw = w - 2;
+	if (lw < 1)
+		lw = 1;
+
 	tui_puts(x + 2, y + 2, "Appearance - theme", ST_HOT, ST_BG);
 
 	for (i = 0; i < listh; i++)
@@ -189,7 +218,7 @@ static void st_draw_theme(int x, int y, int w, int h)
 		int fg = ST_FG, bg = ST_BG;
 		if (idx >= n)
 		{
-			tui_fill(x + 1, ry, listw + 2, 1, ' ', ST_FG, ST_BG);
+			tui_fill(x + 1, ry, lw, 1, ' ', ST_FG, ST_BG);
 			continue;
 		}
 		if (idx == S.sel)
@@ -197,14 +226,29 @@ static void st_draw_theme(int x, int y, int w, int h)
 			fg = ST_SEL_FG;
 			bg = ST_SEL_BG;
 		}
-		tui_fill(x + 1, ry, listw + 2, 1, ' ', fg, bg);
+		tui_fill(x + 1, ry, lw, 1, ' ', fg, bg);
 		tui_puts(x + 3, ry, idx == S.sel ? ">" : " ", fg, bg);
-		tui_puts(x + 5, ry, mmb_editor_theme_name(idx), fg, bg);
+		if (lw > 6)
+			tui_pad(x + 5, ry, mmb_editor_theme_name(idx), lw - 4,
+				fg, bg);
 	}
 
-	if (preview_x + 28 <= w - 2)
-		st_preview(x + preview_x, y + 4, 28, listh + 1);
-	st_hint(x + 1, y + h - 2, w - 2,
+	/* Size the swatch from the panel interior, not a fixed guess. The
+	 * preview may never share the bottom hint row or spill past the frame. */
+	avail_w = (x + w - 2) - (x + preview_x);
+	avail_h = (hint_row - 1) - (y + 4) + 1;
+	pw = ST_PREV_W;
+	if (pw > avail_w)
+		pw = avail_w;
+	ph = ST_PREV_ROWS + 2;
+	if (ph > avail_h)
+		ph = avail_h;
+	if (pw >= ST_PREV_MIN_W && ph >= ST_PREV_MIN_H)
+	{
+		int cx = x + preview_x + (avail_w - pw) / 2;
+		st_preview(cx, y + 4, pw, ph);
+	}
+	st_hint(x + 1, hint_row, w - 2,
 		"<Up/Down> Preview  <Enter> Apply  <Esc> Back");
 }
 
@@ -289,7 +333,7 @@ static void st_draw_section(void)
 	strncat(title, "SETTINGS - ", sizeof(title) - 1);
 	strncat(title, st_sec_name[S.sec], sizeof(title) - strlen(title) - 1);
 	if (S.sec == ST_SEC_APPEARANCE)
-		st_panel(title, 68, 16, &x, &y, &w, &h);
+		st_panel(title, 72, 17, &x, &y, &w, &h);
 	else
 		st_panel(title, 68, 13, &x, &y, &w, &h);
 
@@ -345,7 +389,10 @@ static void st_close(int commit)
 	{
 		G.opt.edit_theme = S.orig;
 	}
-	mmb_console_write("\r\n");
+	/* Put the REPL screen/scrollback back (overlay, #623); only add a line
+	 * break when the platform has no snapshot to restore. */
+	if (!tui_overlay_end())
+		mmb_console_write("\r\n");
 }
 
 static void st_escape(void)
@@ -423,6 +470,7 @@ void mmb_settings_open(void)
 	S.sel = G.opt.edit_theme;
 	if (S.sel < 0 || S.sel >= n)
 		S.sel = 0;
+	tui_overlay_begin();
 	tui_begin();
 	mmb_editor_apply_tui_palette();
 	tui_invalidate();

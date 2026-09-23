@@ -69,4 +69,13 @@ void tui_dialog_panel(int x, int y, int w, int h, const char *title,
 		      int body_fg, int body_bg, int brd_fg, int brd_bg,
 		      int title_fg, int title_bg);
 
+/* ---- overlay dialogs (#623, #624) ---------------------------------------
+ * A prompt-level dialog (SETTINGS, the app launcher) draws over the REPL.
+ * ``tui_overlay_begin`` snapshots the visible screen before the TUI clears
+ * it; ``tui_overlay_end`` repaints the snapshot after the dialog closes so
+ * the prompt/scrollback return instead of a blank window. Both are no-ops
+ * (end returns 0) when the platform has no console snapshot support. */
+void tui_overlay_begin(void);
+int tui_overlay_end(void);
+
 #endif
