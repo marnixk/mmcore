@@ -49,6 +49,7 @@ void tui_clear(int fg, int bg);
 void tui_put(int x, int y, int ch, int fg, int bg);
 void tui_puts(int x, int y, const char *s, int fg, int bg);
 void tui_pad(int x, int y, const char *s, int width, int fg, int bg);
+void tui_status_hint(int row, const char *hint, int hot_fg, int fg, int bg);
 void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg);
 void tui_hline(int x, int y, int w, int left, int mid, int right, int fg, int bg);
 void tui_vline(int x, int y, int h, int ch, int fg, int bg);

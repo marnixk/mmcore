@@ -923,6 +923,7 @@ static void pick_walk(const char *dir, int depth)
 {
 	char list[2048];
 	char *s;
+	int pass;
 	if (!dir || !dir[0] || depth > ED_PICK_DEPTH || pick_n >= ED_PICK_MAX)
 		return;
 	if (!path_is_dir(dir))
@@ -930,35 +931,44 @@ static void pick_walk(const char *dir, int depth)
 	list[0] = 0;
 	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
 		return;
-	s = list;
-	while (*s && pick_n < ED_PICK_MAX)
+	/* Two passes: add this directory's own .BAS/.INC files first, then
+	 * descend into its subdirectories.  mmb_vfs_list returns folders before
+	 * files, so walking it once would let a big subdirectory exhaust the cap
+	 * before the current directory's sources are collected (issue #571). */
+	for (pass = 0; pass < 2; pass++)
 	{
-		char name[128];
-		int n = 0, is_dir = 0;
-		while (*s && *s != '\n' && *s != '\r' && n < (int)sizeof(name) - 1)
-			name[n++] = *s++;
-		name[n] = 0;
-		while (*s == '\r' || *s == '\n')
-			s++;
-		if (n > 0 && name[n - 1] == '/')
+		s = list;
+		while (*s && pick_n < ED_PICK_MAX)
 		{
-			name[n - 1] = 0;
-			is_dir = 1;
-		}
-		if (pick_skip_name(name))
-			continue;
-		{
-			char full[128];
-			ed_join(full, sizeof(full), dir, name);
-			if (!full[0] || mmb_keyword_eq(full, dir))
-				continue;
-			if (is_dir)
-				pick_walk(full, depth + 1);
-			else if (!pick_kind && pick_ext_ok(name))
+			char name[128];
+			int n = 0, is_dir = 0;
+			while (*s && *s != '\n' && *s != '\r' && n < (int)sizeof(name) - 1)
+				name[n++] = *s++;
+			name[n] = 0;
+			while (*s == '\r' || *s == '\n')
+				s++;
+			if (n > 0 && name[n - 1] == '/')
 			{
-				strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
-				pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
-				pick_n++;
+				name[n - 1] = 0;
+				is_dir = 1;
+			}
+			if (pick_skip_name(name))
+				continue;
+			if ((is_dir != 0) != (pass != 0))
+				continue;
+			{
+				char full[128];
+				ed_join(full, sizeof(full), dir, name);
+				if (!full[0] || mmb_keyword_eq(full, dir))
+					continue;
+				if (is_dir)
+					pick_walk(full, depth + 1);
+				else if (!pick_kind && pick_ext_ok(name))
+				{
+					strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
+					pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
+					pick_n++;
+				}
 			}
 		}
 	}

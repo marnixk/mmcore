@@ -80,6 +80,8 @@ def test_ctrl_space_picker_runs_and_cancels(console):
     seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace")
     assert "PICKME" in seen.upper()
     assert "APPS" in seen.upper()
+    assert "Move" in seen  # #569: hotkey tags render once, not "<Move>>"
+    assert ">>" not in seen
     con._ser.sendall(b"\r")
     out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
     assert "PICKED" in out

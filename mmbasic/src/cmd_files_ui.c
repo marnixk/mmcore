@@ -811,7 +811,7 @@ static void draw_hint(void)
 {
 	const char *h = F.hint[0] ? F.hint
 				  : "Tab panels  Enter open/run  q quit  v view  e edit  h help";
-	tui_pad(0, fu_rows() - 3, h, fu_cols(), FU_ST_FG, FU_ST_BG);
+	tui_status_hint(fu_rows() - 3, h, FU_HOT, FU_ST_FG, FU_ST_BG);
 }
 
 static void draw_prompt_row(void)

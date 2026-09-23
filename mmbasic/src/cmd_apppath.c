@@ -289,27 +289,7 @@ static void at_title_bar(const char *title)
 
 static void at_status_bar(const char *hint)
 {
-	int w = tui_cols();
-	int h = tui_rows();
-	int i, p;
-	tui_fill(0, h - 1, w, 1, ' ', AT_DIM, AT_BG);
-	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
-	{
-		if (hint[i] == '<')
-		{
-			tui_put(p++, h - 1, '<', AT_HOT, AT_BG);
-			i++;
-			while (hint[i] && hint[i] != '>' && p < w - 1)
-			{
-				tui_put(p++, h - 1, (unsigned char)hint[i], AT_HOT, AT_BG);
-				i++;
-			}
-			if (hint[i] == '>' && p < w - 1)
-				tui_put(p++, h - 1, '>', AT_HOT, AT_BG);
-		}
-		else if (p < w - 1)
-			tui_put(p++, h - 1, (unsigned char)hint[i], AT_DIM, AT_BG);
-	}
+	tui_status_hint(tui_rows() - 1, hint, AT_HOT, AT_DIM, AT_BG);
 }
 
 static void at_draw(void)
