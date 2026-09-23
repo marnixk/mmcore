@@ -217,6 +217,21 @@ def test_package_wizard_creates_app(console):
     assert cwd.upper().startswith("A:")
 
 
+def test_package_wizard_status_hint_no_doubled_gt(console):
+    """#569: a `<hotkey>` tag renders one closing '>', not two."""
+    con = console
+    _wiz_root(con, "WIZH")
+    assert con.send_line('MKDIR "GAMEH"') == ""
+    _write_lines(con, "GAMEH/MAIN.BAS", ['PRINT "OK"'])
+    seen = _wiz_open(con)
+    assert "Move" in seen
+    assert "Cancel" in seen
+    assert "<Up/Down>" in seen
+    assert ">>" not in seen
+    _wiz_keys(con, b"\x1b")  # Esc cancels
+    assert con.send_line("PRINT 1+1") == "2"
+
+
 def test_package_wizard_requires_main(console):
     con = console
     _wiz_root(con, "WIZB")

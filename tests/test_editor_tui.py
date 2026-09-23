@@ -832,6 +832,54 @@ def test_editor_ctrl_p_lists_only_bas_and_inc(kernel_image):
         con.stop()
 
 
+def _write_lines(con, path, lines):
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        escaped = line.replace('"', '""')
+        assert con.send_line(f'PRINT #1, "{escaped}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_editor_ctrl_p_keeps_cwd_files_past_cap(kernel_image):
+    """#571: a big subdirectory must not exhaust the pick cap before the cwd's
+    own .BAS/.INC sources are collected."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('MKDIR "QP571"') == ""
+        assert con.send_line('CHDIR "QP571"') == ""
+        assert con.send_line('MKDIR "BIG"') == ""
+        _write_lines(con, "A.BAS", ["PRINT 1"])
+        _write_lines(con, "B.INC", ["PRINT 2"])
+        # 90 sources exceed ED_PICK_MAX (80).  mmb_vfs_list returns folders
+        # first, so a single-pass walk fills the cap inside BIG and never
+        # reaches the current directory's own files.
+        _write_lines(
+            con,
+            "GEN.BAS",
+            [
+                "FOR I = 1 TO 90",
+                "N$ = LTRIM$(STR$(I))",
+                'IF LEN(N$) = 1 THEN N$ = "0" + N$',
+                'OPEN "BIG/F" + N$ + ".BAS" FOR OUTPUT AS #2',
+                'PRINT #2, "PRINT 1"',
+                "CLOSE #2",
+                "NEXT",
+            ],
+        )
+        con.send_line('RUN "GEN.BAS"')
+        _edit(con, "A.BAS")
+        seen = _keys(con, bytes([16]))
+        up = seen.upper()
+        assert "Quick open" in seen
+        assert "A.BAS" in up
+        assert "B.INC" in up
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_editor_ctrl_p_enter_opens_nested_file(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

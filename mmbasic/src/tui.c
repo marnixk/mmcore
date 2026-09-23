@@ -272,6 +272,37 @@ void tui_pad(int x, int y, const char *s, int width, int fg, int bg)
 		tui_put(x + i, y, ' ', fg, bg);
 }
 
+/* Render a status-bar hint line.  ``<...>`` spans are drawn in ``hot_fg`` so
+ * they read as key hints; everything else uses ``fg``.  Shared by the
+ * PACKAGE, FILES and app-PATH status bars so the tag loop lives in one
+ * place (issue #569). */
+void tui_status_hint(int row, const char *hint, int hot_fg, int fg, int bg)
+{
+	int w = tui_cols();
+	int i, p;
+
+	tui_fill(0, row, w, 1, ' ', fg, bg);
+	if (!hint)
+		return;
+	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
+	{
+		if (hint[i] == '<')
+		{
+			tui_put(p++, row, '<', hot_fg, bg);
+			i++;
+			while (hint[i] && hint[i] != '>' && p < w - 1)
+			{
+				tui_put(p++, row, (unsigned char)hint[i], hot_fg, bg);
+				i++;
+			}
+			if (hint[i] == '>' && p < w - 1)
+				tui_put(p++, row, '>', hot_fg, bg);
+		}
+		else if (p < w - 1)
+			tui_put(p++, row, (unsigned char)hint[i], fg, bg);
+	}
+}
+
 void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg)
 {
 	int i, j;

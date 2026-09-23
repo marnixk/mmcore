@@ -762,28 +762,7 @@ static void pw_title_bar(const char *title)
 
 static void pw_status_bar(const char *hint)
 {
-	int w = tui_cols();
-	int h = tui_rows();
-	int i, p;
-	tui_fill(0, h - 1, w, 1, ' ', PW_DIM, PW_BG);
-	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
-	{
-		if (hint[i] == '<')
-		{
-			tui_put(p++, h - 1, '<', PW_HOT, PW_BG);
-			while (hint[i + 1] && hint[i] != '>')
-			{
-				i++;
-				if (p >= w - 1)
-					break;
-				tui_put(p++, h - 1, (unsigned char)hint[i], PW_HOT, PW_BG);
-			}
-			if (hint[i] == '>' && p < w - 1)
-				tui_put(p++, h - 1, '>', PW_HOT, PW_BG);
-		}
-		else if (p < w - 1)
-			tui_put(p++, h - 1, (unsigned char)hint[i], PW_DIM, PW_BG);
-	}
+	tui_status_hint(tui_rows() - 1, hint, PW_HOT, PW_DIM, PW_BG);
 }
 
 static void pw_draw_folder(void)

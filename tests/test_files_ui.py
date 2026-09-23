@@ -56,6 +56,7 @@ def test_files_opens_dual_pane(fresh_console):
     assert "HELLO.BAS" in seen.upper()
     assert ".." in seen or "/" in seen
     assert "DEMO" in seen.upper()
+    assert "Tab panels" in seen
     _keys(con, b"q")
 
 
