@@ -407,6 +407,21 @@ static int plat_take_break(void)
 	return s_kernel ? s_kernel->TakeBreak() : 0;
 }
 
+static int plat_mouse_state(mmb_mouse_state *out)
+{
+	int present = 0, x = 0, y = 0, buttons = 0, wheel = 0;
+
+	if (!s_kernel || !out)
+		return 0;
+	s_kernel->MouseState(&present, &x, &y, &buttons, &wheel);
+	out->present = present;
+	out->x = x;
+	out->y = y;
+	out->buttons = buttons;
+	out->wheel = wheel;
+	return present;
+}
+
 static void plat_reboot(void)
 {
 	reboot();
@@ -1512,6 +1527,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.read_line = plat_read_line;
 	plat.read_raw = plat_read_raw;
 	plat.poll_input = plat_poll_input;
+	plat.mouse_state = plat_mouse_state;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;
 	plat.audio_set_target = plat_audio_set_target;

@@ -14,11 +14,76 @@ static int s_alt, s_ctrl, s_shift;
 static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
 
+/* Pointer state, reported in software-framebuffer pixels so the full-screen
+ * apps see the same coordinate space as the framebuffer. */
+static int s_mouse_present;
+static int s_mouse_x, s_mouse_y;
+static int s_mouse_buttons;
+static int s_mouse_wheel;
+
 void sdl_input_init(void)
 {
 	s_alt = s_ctrl = s_shift = 0;
 	s_swallow_text = 0;
 	s_line_input = 0;
+	s_mouse_present = 1;
+	s_mouse_x = s_mouse_y = 0;
+	s_mouse_buttons = 0;
+	s_mouse_wheel = 0;
+}
+
+void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
+			   int *wheel)
+{
+	if (present)
+		*present = s_mouse_present;
+	if (x)
+		*x = s_mouse_x;
+	if (y)
+		*y = s_mouse_y;
+	if (buttons)
+		*buttons = s_mouse_buttons;
+	if (wheel)
+		*wheel = s_mouse_wheel;
+}
+
+/* SDL button numbers are 1=left, 2=middle, 3=right. */
+static int sdl_button_mask(unsigned char button)
+{
+	switch (button)
+	{
+	case SDL_BUTTON_LEFT:
+		return 1;
+	case SDL_BUTTON_RIGHT:
+		return 2;
+	case SDL_BUTTON_MIDDLE:
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+static void handle_mouse_motion(const SDL_MouseMotionEvent *me)
+{
+	int fx, fy;
+
+	if (sdl_video_window_to_fb(me->x, me->y, &fx, &fy))
+	{
+		s_mouse_x = fx;
+		s_mouse_y = fy;
+	}
+}
+
+static void handle_mouse_button(const SDL_MouseButtonEvent *be)
+{
+	int mask = sdl_button_mask(be->button);
+
+	if (!mask)
+		return;
+	if (be->type == SDL_MOUSEBUTTONDOWN)
+		s_mouse_buttons |= mask;
+	else if (be->type == SDL_MOUSEBUTTONUP)
+		s_mouse_buttons &= ~mask;
 }
 
 void sdl_input_begin_line(void)
@@ -305,6 +370,16 @@ static void handle_event(const SDL_Event *e)
 		break;
 	case SDL_TEXTINPUT:
 		handle_text(&e->text);
+		break;
+	case SDL_MOUSEMOTION:
+		handle_mouse_motion(&e->motion);
+		break;
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+		handle_mouse_button(&e->button);
+		break;
+	case SDL_MOUSEWHEEL:
+		s_mouse_wheel += e->wheel.y;
 		break;
 	default:
 		break;

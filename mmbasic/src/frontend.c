@@ -264,7 +264,7 @@ int mmb_front_in_app(void)
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
 	       mmb_in_afk() || mmb_in_juke() || mmb_in_sprite_edit() ||
-	       mmb_in_ansi_edit() || mmb_in_package();
+	       mmb_in_ansi_edit() || mmb_in_paint() || mmb_in_package();
 }
 
 static void submit(void)
@@ -313,7 +313,7 @@ static void submit(void)
 		/* TUI already streamed to the screen. */
 	}
 	else if (mmb_in_term() || mmb_in_wordpad() || mmb_in_connect() ||
-		 mmb_in_sprite_edit() || mmb_in_ansi_edit())
+		 mmb_in_sprite_edit() || mmb_in_ansi_edit() || mmb_in_paint())
 	{
 		if (result && result[0])
 			fe_puts(result);
@@ -478,6 +478,12 @@ static void front_feed_dispatch(char c)
 			mmb_front_prompt();
 		return;
 	}
+	if (mmb_in_paint())
+	{
+		/* PAINT paints its own prompt on exit (like the sprite editor). */
+		fe_puts(mmb_paint_key(c));
+		return;
+	}
 	if (mmb_in_afk())
 	{
 		mmb_afk_key(c);
@@ -615,4 +621,20 @@ void mmb_front_prompt(void)
 void mmb_front_set_sealed(int on)
 {
 	s_sealed = on ? 1 : 0;
+}
+
+/* Portable pointer accessor: the platform backend owns the device. A backend
+ * without a mouse (or a bare Pi with none attached) reports absence. */
+int mmb_mouse_read(mmb_mouse_state *out)
+{
+	if (out)
+	{
+		out->present = 0;
+		out->x = out->y = 0;
+		out->buttons = 0;
+		out->wheel = 0;
+	}
+	if (!out || !G.plat || !G.plat->mouse_state)
+		return 0;
+	return G.plat->mouse_state(out);
 }

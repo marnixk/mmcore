@@ -18,6 +18,12 @@ void sdl_input_pump(void);
 int sdl_input_alt_held(void);
 int sdl_input_ctrl_alt_held(void);
 
+/* Latest pointer state, in software-framebuffer pixels (see
+ * sdl_video_window_to_fb). Buttons is a bitmask: 1 left, 2 right, 4 middle.
+ * present is non-zero whenever the SDL video backend is running. */
+void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
+			   int *wheel);
+
 /* Line-input capture: while an INPUT/OPTION prompt is blocked, route
  * keystrokes to the raw inkey queue instead of the REPL line editor, which
  * would otherwise swallow them. */

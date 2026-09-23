@@ -205,6 +205,21 @@ static void sdl_poll_input(void)
 	sdl_video_present();
 }
 
+static int sdl_mouse_state(mmb_mouse_state *out)
+{
+	int present = 0, x = 0, y = 0, buttons = 0, wheel = 0;
+
+	if (!out)
+		return 0;
+	sdl_input_mouse_state(&present, &x, &y, &buttons, &wheel);
+	out->present = present;
+	out->x = x;
+	out->y = y;
+	out->buttons = buttons;
+	out->wheel = wheel;
+	return present;
+}
+
 static void sdl_present_wait(void)
 {
 	/* Presents are synchronous copies into the framebuffer. */
@@ -382,6 +397,7 @@ static const mmb_platform sdl_plat = {
 	.millis = sdl_millis,
 	.read_line = sdl_read_line,
 	.poll_input = sdl_poll_input,
+	.mouse_state = sdl_mouse_state,
 	.reboot = sdl_reboot,
 	.can_quit = 1,
 	.alt_held = sdl_input_alt_held,

@@ -2980,6 +2980,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("LOAD")] = mmb_cmd_load;
 		tab[mmb_kw_id("EDIT")] = mmb_cmd_edit;
 		tab[mmb_kw_id("WORDPAD")] = mmb_cmd_wordpad;
+		tab[mmb_kw_id("PAINT")] = mmb_cmd_paint;
 		tab[mmb_kw_id("CREDITS")] = mmb_cmd_credits;
 		tab[mmb_kw_id("AFK")] = mmb_cmd_afk;
 		tab[mmb_kw_id("PAUSE")] = mmb_cmd_pause;
@@ -4201,6 +4202,7 @@ void mmb_poll(void)
 	mmb_package_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
+	mmb_paint_poll();
 	mmb_sprite_edit_poll();
 	mmb_ansi_edit_poll();
 	mmb_afk_poll();

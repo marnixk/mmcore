@@ -147,6 +147,23 @@ void sdl_video_host_size(int *w, int *h)
 		*h = oh;
 }
 
+int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
+{
+	int ow = 0, oh = 0, dx, dy, dw, dh;
+
+	if (s_w <= 0 || s_h <= 0)
+		return 0;
+	sdl_video_host_size(&ow, &oh);
+	sdl_scale_viewport(ow, oh, s_w, s_h, &dx, &dy, &dw, &dh);
+	if (dw <= 0 || dh <= 0)
+		return 0;
+	if (fx)
+		*fx = (wx - dx) * s_w / dw;
+	if (fy)
+		*fy = (wy - dy) * s_h / dh;
+	return 1;
+}
+
 void sdl_video_present(void)
 {
 	size_t n, i;
