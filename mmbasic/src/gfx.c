@@ -18,6 +18,7 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 15, 1280, 1024 },
 	{ 16, 1920, 1080 },
 	{ 17, 384, 240 },
+	{ 18, 640, 360 },
 };
 
 #define MMB_RGB_AFLAG 0x10000000u

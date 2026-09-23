@@ -1,76 +1,51 @@
 name: PAINT
 kind: command
 
-Paintbrush / Deluxe Paint-style pixel paint app. PAINT opens a full-screen
-canvas that is a true bitmap framebuffer: one canvas pixel is one screen pixel
-(1:1), not a character cell. Colours are indices into the classic 256-colour
-MCGA palette.
+Paint is a full-screen, mouse-driven pixel paint application in the spirit of
+Dr. Halo / Dr. Genius. It runs at 640x360: one canvas pixel is exactly one
+screen pixel, and colours are indices into the fixed default VGA 256 palette.
 
-The chrome follows Deluxe Paint: the canvas fills the left of the screen and a
-narrow tool column runs down the right edge - brush shapes on top, the painting
-tools below them, then the FG/BG colour indicator and the 16x16 MCGA paint set.
-F9 hides the menu/title bars and F10 hides the tool column so the canvas can be
-painted full-screen; the same keys bring them back.
+PAINT [file$]
 
-PAINT [file$] [, width [, height]]
+  file$ - optional file name (PCX). Default A:/PAINT.PCX.
 
-  file$  - PNG path (with or without .PNG). Default A:/PAINT.PNG. An existing
-           file is loaded; its size becomes the canvas when no size is given.
-  width  - optional canvas width in pixels
-  height - optional canvas height in pixels
+Layout. A text menu bar runs across row 0 (File, Edit and Help). The tool
+column runs down the left edge. The 256-colour palette is a strip of 4 rows x
+64 swatches across the bottom, with the foreground/background indicator at its
+left end. The canvas is the remaining area and starts black (palette index 0).
 
-Two colours are always active, like Deluxe Paint. The colour indicator is the
-nested rectangle above the palette: the inner square is the foreground (FG)
-and the outer square is the background (BG). On a mouse:
+PAINT needs a mouse. If no pointer is detected it prints a clear message and
+returns to the prompt without disturbing the screen.
 
-  left click palette      select FG
-  right click palette     select BG
-  left drag canvas        paint with FG
-  right drag canvas       paint with BG (erase onto the page)
-  click the indicator     swap FG and BG
+Colour. Two colours are always active. The indicator at the left end of the
+palette shows the background as an outer square and the foreground as an inner
+square. On a mouse:
 
-Tools select with a single key:
+  left click swatch     select the foreground (FG)
+  right click swatch    select the background (BG)
+  click the indicator   swap FG and BG
+  left drag canvas      draw with FG
+  right drag canvas     draw with BG
 
-  p  pencil       e  eraser       l  line        r  rectangle
-  c  circle       f  flood fill   i  colour picker  g  grab brush
-  u, Ctrl+Z undo  x  clear canvas
-  o  Open...      s  Save         a  Save As...   n  new canvas
-  k  type a FG colour index 0..255
-  b  type a BG colour index 0..255
+Tools. Choose a tool by clicking its icon in the left column. Line, rectangle,
+ellipse and circle show a live rubber-band preview and commit on release;
+hold Shift to constrain to square, circle or 45 degrees. Flood fill matches the
+exact colour. The eyedropper samples the canvas into FG.
 
-  Arrows      move the cursor one pixel
-  Space/Enter apply the tool. For line/rectangle/circle the first press sets
-              the anchor and the second draws from the anchor to the cursor.
-  0-9         pick FG colour 0..9
-  [ ]         cycle through all 256 MCGA colours
-  ,           eyedropper: sample the canvas under the cursor into FG
-  Tab         keyboard fallback: draw with BG until pressed again
-  Alt+X, Esc  leave PAINT and return to the prompt
+Menus. Click a menu to open it, hover to switch, and click away or press Esc to
+close. Keyboard navigation is supported:
 
-Brushes. The brush shapes (round, square and a grabbed custom brush)
-sit at the top of the tool column and can also be chosen with `.`. Sizing:
+  File   New canvas, Open, Save, Save as, Quit
+  Edit   Undo, Redo, Clear
+  Help   Keys
 
-  = -         grow / shrink the brush by one pixel
-  H h         double / halve the brush size
+Open, Save and Save as use an EDIT-style file dialog that can browse any
+location (A:, C:, USB). PAINT reads and writes 8-bit indexed PCX files, so a
+sketch keeps its palette when it round-trips. Undo keeps eight steps.
 
-The pencil, eraser and line tools stamp the current brush; rectangle and
-circle draw one-pixel outlines. To make a custom brush, choose the grab tool
-(g), press Space/Enter to set one corner, move, then press again (or drag a
-rectangle with the mouse) - that region of the canvas becomes the current
-brush. The BG index is transparent when the brush is stamped.
-
-Magnify. Press m or click the magnify button to zoom in; `<` and `>`
-zoom out and in, and the arrow keys pan the magnified view. The cursor still
-moves one canvas pixel at a time, so pixels can be edited at high zoom. The
-title bar shows the live X,Y position (t toggles the readout).
-
-Open/Save As prompt for a path; Enter confirms and Esc cancels. A loaded image
-is quantised to the nearest of the 256 palette colours. Saving writes a plain
-RGB PNG the same size as the canvas, so a sketch round-trips through
-Open/Save.
+  Esc, Alt+X   leave PAINT and return to the prompt
 
 Example:
 
     PAINT
-    PAINT "A:/SKETCH.PNG"
-    PAINT "A:/ICON.PNG", 32, 32
+    PAINT "A:/SKETCH.PCX"
