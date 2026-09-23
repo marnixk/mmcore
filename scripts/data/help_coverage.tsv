@@ -160,6 +160,7 @@ MV	RENAME	alias	alias of RENAME
 NAME	RENAME	alias	alias of RENAME
 NEW	NEW	topic	dedicated topic
 NEXT	FOR	alias	alias of FOR
+NTP	NTP	topic	dedicated topic
 OCT$	OCT$	topic	dedicated topic
 ON	ON	topic	dedicated topic
 ON ERROR	ON	alias	alias of ON

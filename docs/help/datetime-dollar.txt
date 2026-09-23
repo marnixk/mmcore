@@ -1,7 +1,8 @@
 name: DATETIME$
 kind: command
 
-Format an epoch value as "dd-mm-yyyy hh:mm:ss" (UTC).
+Format an epoch value as "dd-mm-yyyy hh:mm:ss" in the local timezone (see
+~TIMEZONE~; UTC by default).
 
 string$ = DATETIME$(epoch)
 string$ = DATETIME$(NOW)

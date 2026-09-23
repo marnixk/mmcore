@@ -282,7 +282,7 @@ static void datetime_str(char *out, int outsz, int64_t e)
 	int y, mo, d, h, mi, s;
 	char *p = out;
 	(void)outsz;
-	mmb_epoch_break(e, &y, &mo, &d, &h, &mi, &s);
+	mmb_epoch_break(e + (int64_t)mmb_tz_offset_min() * 60, &y, &mo, &d, &h, &mi, &s);
 	fmt2d(p, d); p[2] = '-';
 	fmt2d(p + 3, mo); p[5] = '-';
 	/* year is always 4 digits in this range */

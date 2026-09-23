@@ -1689,6 +1689,12 @@ void mmb_option_reset(void)
 	G.opt.wifi_country[1] = 'S';
 	G.opt.wifi_country[2] = 0;
 	G.opt.prompt = MMB_OPT_DEFAULT_PROMPT;
+	G.opt.ntp_enabled = 0;
+	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
+	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
+	strncpy(G.opt.timezone, "UTC", sizeof(G.opt.timezone) - 1);
+	G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
+	G.opt.tz_offset_min = 0;
 }
 
 static int starts_with_line_number(const char *s, int *num, const char **rest)
@@ -2965,6 +2971,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("CONNECT")] = mmb_cmd_connect;
 		tab[mmb_kw_id("TERM")] = mmb_cmd_term;
 		tab[mmb_kw_id("IPCONFIG")] = mmb_cmd_ipconfig;
+		tab[mmb_kw_id("NTP")] = mmb_cmd_ntp;
 		tab[mmb_kw_id("OPEN")] = mmb_cmd_open;
 		tab[mmb_kw_id("CLOSE")] = mmb_cmd_close;
 		tab[mmb_kw_id("PLAY")] = mmb_cmd_play;
@@ -3564,6 +3571,11 @@ static void exec_statement(void)
 	if (mmb_match("IPCONFIG"))
 	{
 		mmb_cmd_ipconfig();
+		return;
+	}
+	if (mmb_match("NTP"))
+	{
+		mmb_cmd_ntp();
 		return;
 	}
 	if (mmb_match("OPEN"))
@@ -4172,6 +4184,7 @@ void mmb_poll(void)
 		else if (!mmb_wlan_radio_pending())
 			net_boot = 1;
 	}
+	mmb_ntp_poll();
 	mmb_connect_poll();
 	mmb_term_poll();
 	mmb_net_tcp_debug_poll();

@@ -94,6 +94,70 @@ def test_ipconfig_ethernet_when_enabled(console):
     assert console.send_line("PRINT 8") == "8"
 
 
+def test_option_ntp_and_timezone_persist(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line("OPTION NTP ON") == ""
+    out = console.send_line('OPTION TIMEZONE "Europe/Amsterdam"')
+    assert "?SYNTAX ERROR" not in out.upper()
+    out = console.send_line('OPTION NTP SERVER "time.example.org:1234"')
+    assert "?SYNTAX ERROR" not in out.upper()
+    ini = _read_ini(console)
+    ntp = _section(ini, "ntp")
+    assert "enabled=1" in ntp
+    assert "server=time.example.org:1234" in ntp
+    assert "timezone=Europe/Amsterdam" in ntp
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION NTP ON" in listed
+    assert "OPTION TIMEZONE \"Europe/Amsterdam\"" in listed
+    assert "OPTION NTP SERVER \"time.example.org:1234\"" in listed
+    assert console.send_line("OPTION NTP OFF") == ""
+    ini = _read_ini(console)
+    assert "enabled=0" in _section(ini, "ntp")
+
+
+def test_option_timezone_accepts_utc_offsets(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line('OPTION TIMEZONE "UTC+2"') == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION TIMEZONE \"UTC+02\"" in listed
+    assert console.send_line('OPTION TIMEZONE "UTC-5:30"') == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION TIMEZONE \"UTC-05:30\"" in listed
+
+
+def test_option_timezone_rejects_unknown(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    out = console.send_line('OPTION TIMEZONE "Mars/Olympus"')
+    assert "?SYNTAX ERROR" in out.upper()
+    assert "OPTION TIMEZONE" not in console.send_line("OPTION LIST")
+    assert console.send_line("PRINT 5+5") == "10"
+
+
+def test_timezone_shifts_clock_display_but_not_epoch(console):
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line('DATE$="01-01-2026"') == ""
+    assert console.send_line('TIME$="12:00:00"') == ""
+    utc = int(console.send_line("PRINT EPOCH(NOW)"))
+    assert console.send_line('OPTION TIMEZONE "UTC+2"') == ""
+    assert console.send_line("PRINT TIME$").startswith("14:00:0")
+    assert abs(int(console.send_line("PRINT EPOCH(NOW)")) - utc) < 120
+
+
+def test_help_ntp(console):
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
+    assert "NTP" in listing
+    close_ihelp(console)
+    out = dump_topic(console, "NTP")
+    assert out != "?SYNTAX ERROR"
+    assert "pool.ntp.org" in out
+    tz = dump_topic(console, "TIMEZONE")
+    assert tz != "?SYNTAX ERROR"
+    assert "Europe/Amsterdam" in tz
+    opt = dump_topic(console, "OPTION")
+    assert "NTP ON|OFF" in opt
+    assert "TIMEZONE" in opt
+
+
 def test_help_ethernet(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "<ETHERNET>" in listing

@@ -367,6 +367,43 @@ static void parse_ethernet(void)
 		mmb_out("Ethernet enabled; waiting for link/DHCP");
 }
 
+static void parse_ntp(void)
+{
+	mmb_skip_sp();
+	if (mmb_match("SERVER"))
+	{
+		mmb_val v = mmb_expr();
+		char host[64];
+		int port;
+
+		if (v.type != T_STR ||
+		    !mmb_ntp_parse_server(v.s, host, (int)sizeof(host), &port))
+			mmb_error("?SYNTAX ERROR");
+		strncpy(G.opt.ntp_server, v.s, sizeof(G.opt.ntp_server) - 1);
+		G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
+		mmb_settings_save();
+		return;
+	}
+	G.opt.ntp_enabled = onoff();
+	mmb_settings_save();
+}
+
+static void parse_timezone(void)
+{
+	mmb_val v;
+	int off = 0;
+	char canon[64];
+
+	v = mmb_expr();
+	if (v.type != T_STR ||
+	    !mmb_timezone_normalize(v.s, &off, canon, (int)sizeof(canon)))
+		mmb_error("?SYNTAX ERROR");
+	strncpy(G.opt.timezone, canon, sizeof(G.opt.timezone) - 1);
+	G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
+	G.opt.tz_offset_min = off;
+	mmb_settings_save();
+}
+
 static void parse_sdcard(void)
 {
 	skip_hw_rest();
@@ -864,6 +901,16 @@ static void option_dispatch(void)
 		parse_ethernet();
 		return;
 	}
+	if (mmb_match("NTP"))
+	{
+		parse_ntp();
+		return;
+	}
+	if (mmb_match("TIMEZONE"))
+	{
+		parse_timezone();
+		return;
+	}
 	if (mmb_match("CPUSPEED"))
 	{
 		mmb_expr();
@@ -904,13 +951,19 @@ static void option_dispatch(void)
 	if (mmb_match("F12")) { set_fkey(12); return; }
 	if (mmb_match("RESET"))
 	{
-		char ssid[64], psk[64];
+		char ssid[64], psk[64], ntp_server[64], timezone[64];
 		int en = G.opt.wifi_enabled;
 		int eth = G.opt.ethernet_enabled;
+		int ntp_en = G.opt.ntp_enabled;
+		int tzoff = G.opt.tz_offset_min;
 		strncpy(ssid, G.opt.wifi_ssid, sizeof(ssid) - 1);
 		ssid[sizeof(ssid) - 1] = 0;
 		strncpy(psk, G.opt.wifi_psk, sizeof(psk) - 1);
 		psk[sizeof(psk) - 1] = 0;
+		strncpy(ntp_server, G.opt.ntp_server, sizeof(ntp_server) - 1);
+		ntp_server[sizeof(ntp_server) - 1] = 0;
+		strncpy(timezone, G.opt.timezone, sizeof(timezone) - 1);
+		timezone[sizeof(timezone) - 1] = 0;
 		mmb_option_reset();
 		strncpy(G.opt.wifi_ssid, ssid, sizeof(G.opt.wifi_ssid) - 1);
 		G.opt.wifi_ssid[sizeof(G.opt.wifi_ssid) - 1] = 0;
@@ -918,6 +971,12 @@ static void option_dispatch(void)
 		G.opt.wifi_psk[sizeof(G.opt.wifi_psk) - 1] = 0;
 		G.opt.wifi_enabled = en;
 		G.opt.ethernet_enabled = eth;
+		strncpy(G.opt.ntp_server, ntp_server, sizeof(G.opt.ntp_server) - 1);
+		G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
+		strncpy(G.opt.timezone, timezone, sizeof(G.opt.timezone) - 1);
+		G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
+		G.opt.ntp_enabled = ntp_en;
+		G.opt.tz_offset_min = tzoff;
 		mmb_gfx_apply_default_mode();
 		return;
 	}
@@ -1234,6 +1293,27 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
 	if (all || G.opt.ethernet_enabled)
 		ol_line(&n, G.opt.ethernet_enabled ? "OPTION ETHERNET ON" : "OPTION ETHERNET OFF");
+	if (all || G.opt.ntp_enabled)
+		ol_line(&n, G.opt.ntp_enabled ? "OPTION NTP ON" : "OPTION NTP OFF");
+	if (all || (G.opt.ntp_server[0] &&
+		    !mmb_keyword_eq(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER)))
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION NTP SERVER \"");
+		mmb_out(G.opt.ntp_server);
+		mmb_out("\"");
+		n++;
+	}
+	if (all || (G.opt.timezone[0] && !mmb_keyword_eq(G.opt.timezone, "UTC")))
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION TIMEZONE \"");
+		mmb_out(G.opt.timezone);
+		mmb_out("\"");
+		n++;
+	}
 	if (all || G.opt.term_log)
 		ol_line(&n, G.opt.term_log ? "OPTION TERM LOG ON" : "OPTION TERM LOG OFF");
 	if (all || G.opt.term_autolog)

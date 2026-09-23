@@ -387,6 +387,10 @@ void mmb_settings_save(void)
 	kv_str(buf, sizeof(buf), "country", mmb_opt_wifi_country());
 	append(buf, sizeof(buf), "\n[ethernet]\n");
 	kv_int(buf, sizeof(buf), "enabled", G.opt.ethernet_enabled);
+	append(buf, sizeof(buf), "\n[ntp]\n");
+	kv_int(buf, sizeof(buf), "enabled", G.opt.ntp_enabled);
+	kv_str(buf, sizeof(buf), "server", G.opt.ntp_server);
+	kv_str(buf, sizeof(buf), "timezone", G.opt.timezone);
 	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
 }
 
@@ -395,7 +399,7 @@ void mmb_settings_load(void)
 	char buf[SETTINGS_MAX];
 	unsigned got = 0;
 	char *p, *nl;
-	int section = 0; /* 1 core 2 wifi 3 ethernet */
+	int section = 0; /* 1 core 2 wifi 3 ethernet 4 ntp */
 
 	choose_path();
 	if (!mmb_vfs_exists(settings_path))
@@ -427,6 +431,8 @@ void mmb_settings_load(void)
 				section = 2;
 			else if (mmb_keyword_eq(p, "[ethernet]"))
 				section = 3;
+			else if (mmb_keyword_eq(p, "[ntp]"))
+				section = 4;
 			else
 				section = 0;
 			p = nl;
@@ -450,6 +456,31 @@ void mmb_settings_load(void)
 					if (mmb_keyword_eq(p, "enabled"))
 						G.opt.ethernet_enabled = parse_int(eq);
 				}
+				else if (section == 4)
+				{
+					if (mmb_keyword_eq(p, "enabled"))
+						G.opt.ntp_enabled = parse_int(eq);
+					else if (mmb_keyword_eq(p, "server") && eq[0])
+					{
+						strncpy(G.opt.ntp_server, eq,
+							sizeof(G.opt.ntp_server) - 1);
+						G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
+					}
+					else if (mmb_keyword_eq(p, "timezone"))
+					{
+						int off = 0;
+						char canon[64];
+
+						if (mmb_timezone_normalize(eq, &off, canon,
+									   (int)sizeof(canon)))
+						{
+							strncpy(G.opt.timezone, canon,
+								sizeof(G.opt.timezone) - 1);
+							G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
+							G.opt.tz_offset_min = off;
+						}
+					}
+				}
 			}
 		}
 		p = nl;
@@ -470,6 +501,12 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
 	G.opt.ethernet_enabled = 0;
+	G.opt.ntp_enabled = 0;
+	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
+	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
+	strncpy(G.opt.timezone, "UTC", sizeof(G.opt.timezone) - 1);
+	G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
+	G.opt.tz_offset_min = 0;
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;

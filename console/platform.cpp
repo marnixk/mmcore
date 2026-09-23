@@ -366,6 +366,20 @@ static unsigned plat_millis(void)
 	return CTimer::GetClockTicks() / 1000;
 }
 
+/* NTP sync: Circle's clock feeds FatFs get_fattime(), so file timestamps
+ * track the synced time. SetTime() takes local time when bLocal is TRUE and
+ * UTC otherwise; the timezone is stored separately for display. */
+static void plat_set_wall_clock(long long utc_seconds, int tz_offset_min)
+{
+	CTimer *t = CTimer::Get();
+
+	if (!t)
+		return;
+	t->SetTimeZone(tz_offset_min);
+	if (utc_seconds >= 0)
+		t->SetTime((unsigned)utc_seconds, FALSE);
+}
+
 
 static int plat_read_line(char **out, int hide)
 {
@@ -1494,6 +1508,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.alloc = plat_alloc;
 	plat.free = plat_free;
 	plat.millis = plat_millis;
+	plat.set_wall_clock = plat_set_wall_clock;
 	plat.read_line = plat_read_line;
 	plat.read_raw = plat_read_raw;
 	plat.poll_input = plat_poll_input;
