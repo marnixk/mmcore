@@ -36,6 +36,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/zip.o \
 	  $(MMB)/src/inflate.o \
 	  $(MMB)/src/cmd_package.o \
+	  $(MMB)/src/cmd_apppath.o \
 	  $(MMB)/src/cmd_files.o \
 	  $(MMB)/src/cmd_files_ui.o \
 	  $(MMB)/src/cmd_ftp.o \

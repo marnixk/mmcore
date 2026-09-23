@@ -177,6 +177,9 @@ typedef struct mmb_options {
 	int edit_jump_break;   /* jump to the line on a run break/error */
 	int escape;
 	char search_path[128];
+	char app_path[128];    /* OPTION PATH: .APP dirs, ';' separated (#520) */
+	int boot_mode;         /* OPTION BOOT: 0 REPL, 1 launcher, 2 app (#515) */
+	char boot_app[80];     /* OPTION BOOT "name": app to run at power-on */
 	char fkey[12][65];     /* F1..F12 */
 	int list_changed_only;
 	int error_continue;    /* 0 ABORT (default) 1 CONTINUE */
@@ -200,6 +203,9 @@ typedef struct mmb_options {
 
 #define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
 #define MMB_NTP_DEFAULT_PORT   123
+
+/* Default OPTION PATH: first-party .APP packages ship on the ramdisk (#520). */
+#define MMB_APP_PATH_DEFAULT "A:/APPS/"
 
 #define MMB_FK_FILE 0
 #define MMB_FK_TCP  1
@@ -903,6 +909,17 @@ int mmb_pkg_mount(const char *path);
 int mmb_pkg_is_name(const char *path);
 void mmb_cmd_package(void);
 void mmb_cmd_unpack(void);
+
+/* App PATH, bare-token runner, Ctrl+Space picker, and boot launcher
+ * (#515 boot-to-app / home, #520 PATH + picker). */
+int mmb_app_resolve(const char *name, char *out, int outsz);
+int mmb_apptui_active(void);
+int mmb_apptui_launcher(void);
+const char *mmb_apptui_key(char c);
+void mmb_apptui_open(int launcher);
+void mmb_apptui_poll(void);
+void mmb_cmd_apps(void);
+void mmb_boot_start(void);
 
 int mmb_wlan_available(void);
 int mmb_wlan_radio_pending(void);

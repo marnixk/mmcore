@@ -856,6 +856,42 @@ static void option_dispatch(void)
 		}
 		return;
 	}
+	if (mmb_match("PATH"))
+	{
+		/* .APP search path: one directory, or ';'-separated directories
+		 * (default A:/APPS/). Empty string clears it. (#520) */
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(G.opt.app_path, v.s, sizeof(G.opt.app_path) - 1);
+		G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
+		return;
+	}
+	if (mmb_match("BOOT"))
+	{
+		/* Power-on destination: REPL (default), the launcher, or a
+		 * specific .APP. (#515) */
+		if (mmb_match("REPL"))
+		{
+			G.opt.boot_mode = 0;
+			G.opt.boot_app[0] = 0;
+		}
+		else if (mmb_match("LAUNCHER"))
+		{
+			G.opt.boot_mode = 1;
+			G.opt.boot_app[0] = 0;
+		}
+		else
+		{
+			mmb_val v = mmb_expr();
+			if (v.type != T_STR)
+				mmb_syntax();
+			strncpy(G.opt.boot_app, v.s, sizeof(G.opt.boot_app) - 1);
+			G.opt.boot_app[sizeof(G.opt.boot_app) - 1] = 0;
+			G.opt.boot_mode = 2;
+		}
+		return;
+	}
 	if (mmb_match("ERROR"))
 	{
 		if (mmb_match("CONTINUE"))
@@ -1339,6 +1375,32 @@ void mmb_option_list(int all)
 		mmb_out(G.opt.search_path);
 		mmb_out("\"");
 		n++;
+	}
+	if (all || (G.opt.app_path[0] &&
+		    !mmb_keyword_eq(G.opt.app_path, MMB_APP_PATH_DEFAULT)))
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION PATH \"");
+		mmb_out(G.opt.app_path);
+		mmb_out("\"");
+		n++;
+	}
+	if (all || G.opt.boot_mode)
+	{
+		if (G.opt.boot_mode == 1)
+			ol_line(&n, "OPTION BOOT LAUNCHER");
+		else if (G.opt.boot_mode == 2)
+		{
+			if (n)
+				mmb_out("\n");
+			mmb_out("OPTION BOOT \"");
+			mmb_out(G.opt.boot_app);
+			mmb_out("\"");
+			n++;
+		}
+		else
+			ol_line(&n, "OPTION BOOT REPL");
 	}
 	for (i = 0; i < 12; i++)
 	{

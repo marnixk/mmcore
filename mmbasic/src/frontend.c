@@ -264,7 +264,8 @@ int mmb_front_in_app(void)
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
 	       mmb_in_afk() || mmb_in_juke() || mmb_in_sprite_edit() ||
-	       mmb_in_ansi_edit() || mmb_in_paint() || mmb_in_package();
+	       mmb_in_ansi_edit() || mmb_in_paint() || mmb_in_package() ||
+	       mmb_apptui_active();
 }
 
 static void submit(void)
@@ -432,6 +433,13 @@ static void front_feed_dispatch(char c)
 		fe_puts(mmb_package_key(c));
 		return;
 	}
+	if (mmb_apptui_active())
+	{
+		fe_puts(mmb_apptui_key(c));
+		if (!mmb_apptui_active())
+			mmb_front_prompt();
+		return;
+	}
 	if (mmb_in_editor())
 	{
 		fe_puts(mmb_editor_key(c));
@@ -506,6 +514,13 @@ static void front_feed_dispatch(char c)
 			fe_puts(out);
 		if (!mmb_in_connect())
 			mmb_front_prompt();
+		return;
+	}
+
+	/* Ctrl+Space: quick .APP picker at the REPL prompt (#520). */
+	if (c == 0)
+	{
+		mmb_apptui_open(0);
 		return;
 	}
 

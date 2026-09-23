@@ -1,0 +1,36 @@
+name: APPS
+kind: command
+
+List and run packaged `.APP` applications found on the app path.
+
+APPS
+
+Opens the home launcher: a list of every `.APP` on the ~PATH~ (default
+`A:/APPS/`; see ~OPTION~ PATH). Pick one with Up/Down and press Enter to run
+it with the same rules as `RUN "name.app"` (mounted read-only as B:, MAIN.BAS
+starts). Esc leaves the launcher and returns to the REPL.
+
+A bare app name typed at the prompt also runs it, for example:
+
+    MYGAME
+
+runs the first `MYGAME.APP` found on the PATH. Built-in commands and user
+SUB/FUNCTION names always take precedence, so adding apps never shadows the
+language.
+
+Ctrl+Space
+
+At the prompt, Ctrl+Space opens a quick picker of the same apps. Enter runs
+the highlighted app; Esc cancels and leaves the line unchanged.
+
+Boot
+
+`OPTION BOOT LAUNCHER` starts the launcher at power-on instead of the REPL.
+`OPTION BOOT "MYGAME"` starts straight into an app. `OPTION BOOT REPL`
+(the default) starts at the REPL. See ~BOOT~.
+
+Example:
+
+    OPTION PATH "A:/APPS/;C:/APPS/"
+    OPTION BOOT LAUNCHER
+    APPS
