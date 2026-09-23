@@ -48,10 +48,11 @@ jobs:
         env:
           # MSYS2 installs SDL2 headers/libs/DLL under the MINGW64 prefix.
           SDL2_ROOT: /mingw64
-          # Release builds must ship an Authenticode-signed mmcore.exe; the
-          # rolling pre-release / branch builds stay unsigned when no cert is
-          # configured (MMCORE_REQUIRE_WIN_SIGN is empty).
-          MMCORE_REQUIRE_WIN_SIGN: ${{ github.event_name == 'release' && '1' || '' }}
+          # Release builds ship an Authenticode-signed mmcore.exe once a signing
+          # certificate is configured (any WIN_SIGN_* secret present); until
+          # then the release build stays unsigned instead of failing. The
+          # rolling pre-release / branch builds stay unsigned.
+          MMCORE_REQUIRE_WIN_SIGN: ${{ github.event_name == 'release' && (secrets.WIN_SIGN_PFX_BASE64 != '' || secrets.WIN_SIGN_THUMBPRINT != '' || secrets.WIN_SIGN_SUBJECT != '' || secrets.WIN_SIGN_COMMAND != '') && '1' || '' }}
           WIN_SIGN_PFX_BASE64: ${{ secrets.WIN_SIGN_PFX_BASE64 }}
           WIN_SIGN_PASSWORD: ${{ secrets.WIN_SIGN_PASSWORD }}
           WIN_SIGN_THUMBPRINT: ${{ secrets.WIN_SIGN_THUMBPRINT }}
