@@ -259,6 +259,11 @@ static void handle_csi(char final)
 
 /* ---- app routing / execution -------------------------------------- */
 
+int mmb_front_line_empty(void)
+{
+	return s_len == 0;
+}
+
 int mmb_front_in_app(void)
 {
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||

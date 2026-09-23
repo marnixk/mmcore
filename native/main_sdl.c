@@ -125,6 +125,10 @@ int main(int argc, char **argv)
 			SDL_GetError());
 		return 1;
 	}
+	/* --fullscreen: enter fullscreen before the first frame so the boot
+	 * banner is already fullscreen. Alt+Enter still toggles. */
+	if (cli->fullscreen)
+		sdl_video_set_fullscreen(1);
 
 	mmb_platform_bind_sdl();
 	sdl_clipboard_init();

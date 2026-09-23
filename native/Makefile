@@ -109,6 +109,21 @@ $(OUT_SDL):
 	@echo "SDL2 not found (pkg-config sdl2); skipping $@"
 $(SDL_ONLY_OBJS): ;
 else
+# Runtime window icon: embed the branding art as RGBA bytes so the M avatar
+# shows without linking SDL_image (see sdl_video.c set_window_icon()).
+ICON_SIZE := 64
+ICON_C    := $(BUILD)/mmcore_icon.c
+ICON_OBJ  := $(BUILD)/mmcore_icon.o
+SDL_OBJS  += $(ICON_OBJ)
+
+$(ICON_C): $(REPO)/scripts/gen-appicon.py \
+	   $(REPO)/assets/branding/mmcore-app-icon.png | $(BUILD)
+	python3 $(REPO)/scripts/gen-appicon.py --carray mmcore_icon \
+		$(ICON_SIZE) $@
+
+$(ICON_OBJ): $(ICON_C)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) -c $< -o $@
+
 $(OUT_SDL): $(SDL_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SDL_OBJS) $(LDLIBS) $(SDL_LIBS)
 $(SDL_ONLY_OBJS): CFLAGS += $(SDL_CFLAGS)

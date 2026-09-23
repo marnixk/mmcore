@@ -1076,6 +1076,23 @@ def test_native_packaging_derives_icons_from_branding():
     assert "gen-appicon.py" in lin and "mmcore.png" in lin
 
 
+def test_window_identity_and_taskbar_icon():
+    """#630: window title `mmcore`, SDL app identity, runtime icon, StartupWMClass."""
+    video = open(os.path.join(REPO, "native", "sdl_video.c"), encoding="utf-8").read()
+    gen = open(os.path.join(REPO, "scripts", "gen-appicon.py"), encoding="utf-8").read()
+    lin = open(
+        os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
+    ).read()
+    make = open(os.path.join(REPO, "native", "Makefile"), encoding="utf-8").read()
+    assert 'SDL_CreateWindow("mmcore"' in video
+    assert "SDL_HINT_APP_ID" in video
+    assert "SDL_HINT_VIDEO_X11_WMCLASS" in video
+    assert "SDL_SetWindowIcon" in video
+    assert "--carray" in gen and "mmcore_icon" in make
+    assert "gen-appicon.py --carray" in make
+    assert "StartupWMClass=mmcore" in lin
+
+
 NTP_UNIX_DELTA = 2208988800
 NTP_TARGET = 1790157296  # 2026-09-23 09:54:56 UTC
 
@@ -1130,3 +1147,84 @@ def test_ntp_sync_from_loopback_server(mmb_linux):
     assert "23-09-2026 10:54:5" in out, out
     assert "10:54:5" in out, out
     assert "?SYNTAX ERROR" not in out.upper(), out
+
+
+def test_fullscreen_flag_help_and_headless_noop(mmb_linux, tmp_path):
+    """#617: the shared CLI lists --fullscreen; the headless build ignores it."""
+    proc = subprocess.run(
+        [mmb_linux, "--help"], capture_output=True, text=True, timeout=60
+    )
+    assert "--fullscreen" in (proc.stdout + proc.stderr)
+    proc = subprocess.run(
+        [mmb_linux, "--fullscreen"],
+        input='PRINT 2+3\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=_app_env(tmp_path),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "> 5" in out
+
+
+def test_sdl_fullscreen_flag_headless(mmb_linux, tmp_path):
+    """#617: native/mmcore accepts --fullscreen and runs under the dummy driver."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    env = dict(
+        os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root")
+    )
+    proc = subprocess.run(
+        [SDL_BIN, "--fullscreen"],
+        input='PRINT "FS_OK"\nQUIT\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "FS_OK" in out
+
+
+def test_sdl_video_window_setup(tmp_path):
+    """#617/#630: window title `mmcore` and idempotent fullscreen bookkeeping.
+
+    Runs under SDL_VIDEODRIVER=dummy; the dummy driver still reports the
+    desktop-fullscreen flag, so the set/toggle transitions are exercised.
+    """
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), "sdl_video_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "native"),
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_video_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run(
+        [exe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout

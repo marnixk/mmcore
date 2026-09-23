@@ -81,6 +81,7 @@ static void help(const char *prog)
 	printf("                    (--drive=DIR and --drive-root=DIR are also accepted)\n");
 	printf("  --term [HOST[:PORT]]  run TERM as a sealed session (exit when it ends)\n");
 	printf("  --repl, --stay    return to the REPL when an .app or TERM session ends\n");
+	printf("  --fullscreen      start the SDL window in fullscreen (desktop clients)\n");
 	printf("  --help, -h        show this help\n");
 	printf("\n"
 	       "A positional argument that names an existing .app file runs it as a\n"
@@ -155,6 +156,11 @@ const struct mmb_cli_opts *mmb_cli_parse(int argc, char **argv)
 		else if (strcmp(a, "--repl") == 0 || strcmp(a, "--stay") == 0)
 		{
 			s_opts.stay = 1;
+		}
+		else if (strcmp(a, "--fullscreen") == 0)
+		{
+			/* SDL build opens the window fullscreen; a no-op headless. */
+			s_opts.fullscreen = 1;
 		}
 		else if (a[0] != '-')
 		{

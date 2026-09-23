@@ -222,6 +222,18 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		return;
 	}
 
+	/* Ctrl+D at an empty prompt quits, like a Unix shell (#646). Only the
+	 * native SDL input path is involved, and only the REPL line editor: a
+	 * running program, a blocking INPUT, or a full-screen app keeps the
+	 * existing control-byte handling, so the shared Circle path is
+	 * unchanged. A non-empty line leaves Ctrl+D as-is. */
+	if (ctrl && !alt && k == SDLK_d && !mmb_is_running() &&
+	    !s_line_input && !mmb_front_in_app() && mmb_front_line_empty())
+	{
+		mmb_exec_line("QUIT");
+		return;
+	}
+
 	/* Alt+Enter toggles fullscreen at the prompt. */
 	if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && alt &&
 	    !mmb_is_running() && !mmb_front_in_app())
