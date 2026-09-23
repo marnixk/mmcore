@@ -721,3 +721,158 @@ def test_wordpad_cr_is_ignored(kernel_image):
         _quit(con)
     finally:
         con.stop()
+
+
+def _read_lines(con, path, n):
+    """Read n lines, bracketed so leading indent survives send_line stripping."""
+    assert con.send_line(f'OPEN "{path}" FOR INPUT AS #1') == ""
+    lines = []
+    for _ in range(n):
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        lines.append(con.send_line('PRINT "["; A$; "]"'))
+    assert con.send_line("CLOSE #1") == ""
+    return lines
+
+
+def test_wordpad_numbered_list_auto_increments(kernel_image):
+    """Issue #514: Enter on `1. ` continues at 2., 3. ..."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "NUM.MD"')
+        seen = _keys(con, b"1. one\rtwo\r", quiet=0.9)
+        assert "2." in seen
+        assert "3." in seen
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "NUM.MD", 3)
+        assert lines[0] == "[1. one]", lines
+        assert lines[1] == "[2. two]", lines
+        assert lines[2] == "[3. ]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_nested_bullets_indent_and_outdent(kernel_image):
+    """Issue #514: Tab nests a list item; Shift+Tab brings it back out."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "NEST.MD"')
+        _keys(con, b"* top\r", quiet=0.6)
+        _keys(con, b"\t", quiet=0.5)
+        _keys(con, b"sub\r", quiet=0.7)
+        _keys(con, b"\x1b[Z", quiet=0.5)  # Shift+Tab outdents the new item
+        _keys(con, b"back\r", quiet=0.7)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "NEST.MD", 4)
+        assert lines[0] == "[* top]", lines
+        assert lines[1] == "[  * sub]", lines
+        assert lines[2] == "[* back]", lines
+        assert lines[3] == "[* ]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_enter_empty_nested_item_outdents(kernel_image):
+    """Issue #514: Enter on an empty nested item drops one level."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "OUTD.MD"')
+        _keys(con, b"* a\r", quiet=0.6)
+        _keys(con, b"\t", quiet=0.5)
+        _keys(con, b"\r", quiet=0.6)  # empty nested item drops one level
+        _keys(con, b"z", quiet=0.4)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "OUTD.MD", 2)
+        assert lines[0] == "[* a]", lines
+        assert lines[1] == "[* z]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_enter_empty_top_item_terminates(kernel_image):
+    """Issue #514: Enter on an empty top-level item clears the marker."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "TERM.MD"')
+        _keys(con, b"- x\r", quiet=0.7)
+        _keys(con, b"\r", quiet=0.6)  # empty top-level item clears the marker
+        _keys(con, b"end", quiet=0.4)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "TERM.MD", 2)
+        assert lines[0] == "[- x]", lines
+        assert lines[1] == "[end]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_periodic_autosave_writes_sidecar(kernel_image):
+    """Issue #516/#521: a dirty buffer is checkpointed to <path>.rec."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "AUTO.MD"')
+        _keys(con, b"draft text", quiet=0.5)
+        time.sleep(2.2)
+        _quit(con)
+        assert con.send_line('OPEN "AUTO.MD.REC" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        got = con.send_line("PRINT A$")
+        assert con.send_line("CLOSE #1") == ""
+        assert "draft text" in got
+    finally:
+        con.stop()
+
+
+def test_wordpad_recover_prompt_restores_sidecar(kernel_image):
+    """Issue #516/#521: a newer sidecar offers restore without clobbering."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "REC.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "ORIGINAL"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('OPEN "REC.MD.REC" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "RECOVERED"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _open(con, 'WORDPAD "REC.MD"', quiet=1.0)
+        assert "recover" in seen.lower()
+        restored = _keys(con, b"y", quiet=0.8)
+        assert "RECOVERED" in restored
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_recover_decline_keeps_file(kernel_image):
+    """Issue #516/#521: declining recovery leaves the real file untouched."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "DEC.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "ORIGINAL"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('OPEN "DEC.MD.REC" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "RECOVERED"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        seen = _open(con, 'WORDPAD "DEC.MD"', quiet=1.0)
+        assert "recover" in seen.lower()
+        declined = _keys(con, b"n", quiet=0.8)
+        assert "RECOVERED" not in declined
+        _quit(con)
+        assert con.send_line('OPEN "DEC.MD" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "ORIGINAL"
+        assert con.send_line("CLOSE #1") == ""
+    finally:
+        con.stop()

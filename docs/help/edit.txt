@@ -19,6 +19,12 @@ to return to the editor. MODE is restored. PAGE WRITE and PAGE DISPLAY return
 to 0 (BREAK / Ctrl-C does the same so the editor is not left on a black
 off-screen page).
 
+Crash resume: while a named buffer is dirty it is checkpointed every couple of
+seconds to a sidecar <file>.rec. If a sidecar is newer than the saved file when
+EDIT opens it, a Recover/Discard/Cancel prompt appears. Recover loads the
+sidecar into the buffer (the real file is overwritten only when you save).
+Discard removes the sidecar. A clean save removes it too.
+
 Theme menu (Alt+T): 10 colour schemes. Syntax colours follow the theme.
 Non-VGA themes use custom palettes. Default is Slate. Saved with OPTION EDIT
 THEME and restored next time you open EDIT.
