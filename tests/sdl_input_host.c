@@ -4,6 +4,10 @@
  * Regression: at a blocking INPUT prompt the window must keep receiving
  * keystrokes (they go to the raw inkey queue), instead of the front end
  * REPL editor swallowing them or the loop blocking on fgetc(stdin).
+ *
+ * Also covers the #525 host clipboard paste hotkey (Ctrl+Shift+V): the host
+ * clipboard bytes are delivered, CR/LF collapse to one CR, and an empty
+ * clipboard delivers nothing.
  */
 #include "frontend.h"
 #include "mmb_priv.h"
@@ -12,6 +16,7 @@
 
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---- minimal interpreter/backend surface used by sdl_input.c ---- */
@@ -19,8 +24,17 @@ static int g_running;
 static int g_front_feeds;
 static unsigned char g_inkey[MMB_INKEY];
 static int g_inkey_n;
+static char g_clip[256];
+static int g_clip_set;
 
 int mmb_is_running(void) { return g_running; }
+
+char *mmb_clipboard_get(void)
+{
+	if (!g_clip_set)
+		return 0;
+	return strdup(g_clip);
+}
 
 void mmb_front_feed(const char *s, unsigned n)
 {
@@ -52,6 +66,17 @@ static void push_text(const char *s)
 	SDL_zero(e);
 	e.type = SDL_TEXTINPUT;
 	snprintf(e.text.text, sizeof e.text.text, "%s", s);
+	SDL_PushEvent(&e);
+}
+
+static void push_key(SDL_Keycode sym, Uint16 mod)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_KEYDOWN;
+	e.key.keysym.sym = sym;
+	e.key.keysym.mod = mod;
 	SDL_PushEvent(&e);
 }
 
@@ -129,6 +154,31 @@ int main(void)
 			g_front_feeds, g_inkey_n);
 		fails++;
 	}
+
+	/* Ctrl+Shift+V pastes the host clipboard into the raw inkey queue while a
+	 * program runs: CR/LF collapse to a single CR and are not swallowed. */
+	reset();
+	g_running = 1;
+	snprintf(g_clip, sizeof g_clip, "P1\r\nP2\nP3");
+	g_clip_set = 1;
+	push_key(SDLK_v, KMOD_CTRL | KMOD_SHIFT);
+	sdl_input_pump();
+	expect_queue("clipboard paste", "P1\rP2\rP3");
+
+	/* An empty host clipboard pastes nothing (and no raw Ctrl+V control). */
+	reset();
+	g_running = 1;
+	g_clip_set = 0;
+	push_key(SDLK_v, KMOD_CTRL | KMOD_SHIFT);
+	sdl_input_pump();
+	expect_queue("empty clipboard", "");
+
+	/* Ctrl+V without Shift keeps its old meaning: the 0x16 control byte. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_v, KMOD_CTRL);
+	sdl_input_pump();
+	expect_queue("ctrl-v control", "\x16");
 
 	SDL_Quit();
 	if (fails)

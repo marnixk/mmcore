@@ -163,6 +163,49 @@ def test_sdl_input_line_capture(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_sdl_clipboard_fallback(tmp_path):
+    """#525: the SDL host clipboard falls back to an in-process buffer.
+
+    The dummy video driver has no OS clipboard, so copy/paste must still
+    round-trip within the session. Linux-native only: the bare-metal Pi
+    leaves both platform clipboard hooks NULL.
+    """
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), "sdl_clipboard_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-I",
+            os.path.join(REPO, "native"),
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_clipboard_host.c"),
+            os.path.join(REPO, "native", "sdl_clipboard.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run(
+        [exe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout
+
+
 def test_sdl_console_writes_do_not_present_per_char(tmp_path):
     """Console writes must only mark dirty, not present each character.
 

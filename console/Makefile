@@ -42,6 +42,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/tui.o \
 	  $(MMB)/src/cmd_connect.o \
 	  $(MMB)/src/ntp.o \
+	  $(MMB)/src/clipboard.o \
 	  $(MMB)/src/cmd_term.o \
 	  $(MMB)/src/zmodem.o \
 	  $(MMB)/src/cmd_wordpad.o \

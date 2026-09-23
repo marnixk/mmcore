@@ -66,6 +66,14 @@ interactive terminal is not spammed with a second copy.
 - `Alt+Enter` at the prompt toggles fullscreen on the primary display. The
   graphics mode is integer-scaled and centred into the window/display, so the
   picture stays crisp with black bars filling any leftover area.
+- `Ctrl+Shift+V` pastes the host OS clipboard into the active input path (the
+  REPL, a blocking `INPUT`, or a full-screen app such as `EDIT`, `WORDPAD`,
+  `TERM`, or `CONNECT`). `EDIT`/`WORDPAD` copy/cut selections to the host
+  clipboard. Clipboard text is passed as CP437/ASCII: CR/LF collapse to one CR
+  and non-ASCII bytes are dropped, so pasted UTF-8 does not corrupt a line.
+  This is **Linux/macOS/Windows native only**; the bare-metal Pi has no host
+  clipboard and keeps its own in-memory buffer (`mmbasic/src/clipboard.c`).
+  `MMB_CLIPBOARD=TEXT` seeds the clipboard at startup (used by automation).
 - `MM.RUNTIME$` is `linux`, `mac`, or `windows`; on the Pi build it is `pi`.
   `MM.HOST.HRES` / `MM.HOST.VRES` report the host window/display size, which
   can be larger than the mode the program selected.
@@ -133,6 +141,7 @@ scope on Linux; those options report unavailable.
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
 | Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
+| Clipboard | `EDIT`/`WORDPAD` copy to the host OS clipboard; `Ctrl+Shift+V` pastes it (#525) | in-memory buffer only (no host clipboard) |
 | vsync / page flip | software (single framebuffer, SDL vsync pacing) | hardware DMA, VSync flip |
 | App-VM CLI | `.app` and `--term` sealed launches (#490/#491) | n/a (boots to the REPL) |
 

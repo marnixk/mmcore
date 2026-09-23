@@ -15,6 +15,7 @@
 #include "sdl_tui.h"
 #include "sdl_input.h"
 #include "sdl_audio.h"
+#include "sdl_clipboard.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -413,6 +414,8 @@ static const mmb_platform sdl_plat = {
 	.tui_set_font = sdl_tui_set_font,
 	.console_save = sdl_console_save,
 	.console_restore = sdl_console_restore,
+	.clipboard_get = sdl_clipboard_get,
+	.clipboard_set = sdl_clipboard_set,
 };
 
 void mmb_platform_bind_sdl(void)

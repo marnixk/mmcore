@@ -1477,6 +1477,9 @@ static void clip_store(const char *s, int n)
 	memcpy(killbuf, s, (unsigned)n);
 	killlen = n;
 	killbuf[killlen] = 0;
+	/* Mirror the copy to the host clipboard when one exists (#525). */
+	if (killlen > 0)
+		mmb_clipboard_setn(killbuf, (unsigned)killlen);
 }
 
 static int delete_range(int lo, int hi, int to_clip)

@@ -20,6 +20,7 @@
 #include "cli.h"
 #include "sdl_video.h"
 #include "sdl_input.h"
+#include "sdl_clipboard.h"
 
 #include <SDL.h>
 
@@ -126,6 +127,7 @@ int main(int argc, char **argv)
 	}
 
 	mmb_platform_bind_sdl();
+	sdl_clipboard_init();
 	SDL_StartTextInput();
 	mmb_front_init(front_emit, 0);
 	mmb_console_init();
