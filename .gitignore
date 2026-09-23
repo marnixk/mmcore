@@ -38,6 +38,9 @@ native/mmbasic-sdl
 native/mmbasic.exe
 native/mmbasic-sdl.exe
 native/mmb_version.h
+# Generated from assets/branding/ during the Windows build
+native/mmcore.ico
+native/mmcore.rc
 
 # Generated at build from docs/help/
 mmbasic/src/help_data.c

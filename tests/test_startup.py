@@ -1,4 +1,5 @@
-"""Boot banner: version, PicoMite copyright, HELP in bright white, two blank lines."""
+"""Boot banner: mmcore wordmark, version, PicoMite copyright, HELP in bright
+white, two blank lines."""
 
 import os
 import subprocess
@@ -15,27 +16,6 @@ def _mmb_version():
         cwd=REPO,
         text=True,
     ).strip()
-
-
-def _pixels(png: str):
-    out = subprocess.run(
-        ["convert", png, "txt:-"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    grey = []
-    bright = []
-    for line in out.splitlines():
-        if line.startswith("#") or "#000000" in line:
-            continue
-        xy = line.split(":", 1)[0]
-        x, y = (int(p) for p in xy.split(","))
-        if "#F8FCF8" in line or "#FFFFFF" in line:
-            bright.append((x, y))
-        elif "#A8A8A8" in line or "#AAAAAA" in line:
-            grey.append((x, y))
-    return grey, bright
 
 
 def test_startup_copyright_banner(kernel_image):
@@ -63,24 +43,26 @@ def test_startup_copyright_banner(kernel_image):
         assert gap.count(b"\n") >= 3
 
         png = con.capture_png("/opt/cursor/artifacts/issue67_startup_banner.png")
-        grey, bright = _pixels(png)
-        assert grey, "copyright text should be dim white"
-        assert bright, "HELP should be bright white"
-        help_y = min(y for _, y in bright)
-        type_luma = 0
-        help_luma = 0
-        for x, y in grey:
-            if help_y <= y <= help_y + 16 and x < 40:
-                type_luma = 168 * 3
-                break
-        for x, y in bright:
-            if help_y <= y <= help_y + 16 and 40 <= x < 72:
-                help_luma = 248 * 3
-                break
-        assert type_luma and help_luma, (help_y, type_luma, help_luma)
-        assert help_luma > type_luma
+        pix = _png_rgb(png, crop="1280x256+0+0")
+        bright = [(x, y) for (x, y), c in pix.items() if min(c) >= 200]
+        dim = [
+            (x, y)
+            for (x, y), c in pix.items()
+            if abs(c[0] - c[1]) <= 20
+            and abs(c[1] - c[2]) <= 20
+            and 120 <= c[0] <= 210
+        ]
+        assert dim, "copyright text should be dim white"
+        # The chrome wordmark is centred in the top band of the 1280-wide HDMI.
+        logo_bright = [(x, y) for x, y in bright if y < 64]
+        assert logo_bright, "boot logo should paint bright pixels in the top band"
+        xs = [x for x, _ in logo_bright]
+        assert 300 < min(xs) and max(xs) < 980, (min(xs), max(xs))
+        assert abs((min(xs) + max(xs)) / 2 - 640) < 40, (min(xs), max(xs))
+        assert [p for p in dim if p[1] >= 64], "banner text should sit below the logo"
 
-        ocr = con.ocr_screen(crop="640x176+0+0").lower()
+        ocr = con.ocr_screen(crop="1280x256+0+0").lower()
+        assert "mmcore" in ocr
         assert "geoff" in ocr or "graham" in ocr or "copyright" in ocr
         assert "help" in ocr
         assert "mmbasic" in ocr or ver.lstrip("v")[:3] in ocr
@@ -148,8 +130,8 @@ def test_prompt_grey_after_boot_and_term(kernel_image):
     con.start()
     try:
         time.sleep(0.2)
-        boot = con.screen_pixel(1, 4)
-        assert _is_grey_prompt(boot), boot
+        png = con.capture_png("/opt/cursor/artifacts/prompt_after_boot.png")
+        assert _find_prompt_cursor(png), "boot prompt should be a solid grey block"
         from test_term import _open_term, _quit
 
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)

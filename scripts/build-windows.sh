@@ -38,6 +38,15 @@ else
 	fi
 fi
 
+# Branding: derive the application icon from assets/branding/ and compile it
+# into the SDL executable as a Windows resource (native/Makefile links it when
+# windres is available).
+if [ -f "${REPO_ROOT}/assets/branding/mmcore-app-icon.png" ]; then
+	python3 "${REPO_ROOT}/scripts/gen-appicon.py" \
+		--ico "${REPO_ROOT}/native/mmcore.ico"
+	printf '1 ICON "mmcore.ico"\n' > "${REPO_ROOT}/native/mmcore.rc"
+fi
+
 make -C "${REPO_ROOT}/native" all TARGET_WINDOWS=1 CC="${CC}" \
 	SDL_CFLAGS="${SDL_CFLAGS}" SDL_LIBS="${SDL_LIBS}" "$@"
 

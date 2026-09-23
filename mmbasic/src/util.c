@@ -975,6 +975,86 @@ void mmb_hw_cursor(int show)
 		G.plat->write_screen(s, 6);
 }
 
+/* Number of character cells across the boot console. */
+static int startup_columns(void)
+{
+	int cols = 80;
+
+	if (G.plat && G.plat->video_cols)
+	{
+		int v = G.plat->video_cols();
+		if (v > 0)
+			cols = v;
+	}
+	return cols;
+}
+
+/* Visible width of a string, ignoring ANSI SGR escape sequences. */
+static int startup_visible_len(const char *s)
+{
+	int len = 0;
+
+	while (*s)
+	{
+		if (s[0] == '\x1b' && s[1] == '[')
+		{
+			s += 2;
+			while (*s && !(*s >= '@' && *s <= '~'))
+				s++;
+			if (*s)
+				s++;
+			continue;
+		}
+		len++;
+		s++;
+	}
+	return len;
+}
+
+/* Emit a line centred across the boot console. */
+static void startup_centred(const char *s)
+{
+	int pad = (startup_columns() - startup_visible_len(s)) / 2;
+	if (pad < 0)
+		pad = 0;
+	while (pad-- > 0)
+		mmb_console_write(" ");
+	mmb_console_write(s);
+	mmb_console_write("\n");
+}
+
+/* Draw the A:/mmcore.png wordmark centred near the top of the screen. */
+static void startup_logo(void)
+{
+	const unsigned char *file = 0;
+	unsigned n = 0;
+	uint32_t *pix = 0;
+	int w = 0, h = 0, i, j, x0, y0, hw;
+
+	if (!G.plat || !G.plat->set_pixel)
+		return;
+	if (mmb_vfs_read_ptr("A:/mmcore.png", &file, &n) != 0 || !file || !n)
+		return;
+	if (mmb_png_decode_rgba(file, n, &pix, &w, &h) != 0 || !pix)
+		return;
+	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : w;
+	x0 = (hw - w) / 2;
+	if (x0 < 0)
+		x0 = 0;
+	y0 = 8;
+	for (j = 0; j < h; j++)
+	{
+		for (i = 0; i < w; i++)
+		{
+			uint32_t c = pix[j * w + i];
+			if (!(c >> 24))
+				continue;
+			G.plat->set_pixel(x0 + i, y0 + j, c & 0xFFFFFFu);
+		}
+	}
+	G.plat->free(pix);
+}
+
 void mmb_print_startup(void)
 {
 	G.gfx.fg = MMB_DEFAULT_FG;
@@ -983,15 +1063,20 @@ void mmb_print_startup(void)
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(G.gfx.bg);
 	mmb_console_apply_colour();
+
+	startup_logo();
+
+	/* Leave the top rows clear for the logo. */
+	mmb_console_write("\n\n\n\n");
 	mmb_console_write("\x1b[37m");
-	mmb_console_write("MMBasic ");
-	mmb_console_write(MMB_VERSION);
+	startup_centred("mmcore operating system - 2026 (c) Marnix Kok");
 	mmb_console_write("\n");
-	mmb_console_write("Copyright 2011-2026 Geoff Graham\n");
-	mmb_console_write("Copyright 2016-2026 Peter Mather\n");
-	mmb_console_write("Adapted and extended by Marnix Kok\n");
+	startup_centred("MMBasic " MMB_VERSION);
+	startup_centred("Copyright 2011-2026 Geoff Graham");
+	startup_centred("Copyright 2016-2026 Peter Mather");
+	startup_centred("Adapted and extended by Marnix Kok");
 	mmb_console_write("\n");
-	mmb_console_write("Type \x1b[97mHELP ME\x1b[37m for a short introduction.\n");
+	startup_centred("Type \x1b[97mHELP ME\x1b[37m for a short introduction.");
 	mmb_console_write("\n\n");
 	mmb_console_write("\x1b[0m");
 	mmb_console_apply_colour();
