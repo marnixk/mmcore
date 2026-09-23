@@ -14,6 +14,9 @@ SPRITE NEXT n, x, y
 SPRITE MOVE
 SPRITE MOVE n, x, y
 SPRITE CLOSE n | CLOSE ALL
+SPRITE EDIT file$ [, cell]
+SPRITE SHEET file$ [, cell [, cols [, rows]]]
+SPRITE FONT name$ [, cell]
 
   n - sprite number
   file$ - PNG path (with or without .PNG)
@@ -21,6 +24,9 @@ SPRITE CLOSE n | CLOSE ALL
   x, y, w, h - position or READ rectangle
   page - source page for READ
   layer - display layer for SHOW, 0..8; higher numbers draw on top
+  cell - square cell size in pixels, 1..16 (default 8)
+  cols, rows - sheet cells across and down (default 4 and 4)
+  name$ - bitmap font name for the font editor
 
 Visible sprites composite in ascending numeric layer order, so layer 8 is on
 top of layer 1 and layer 0 is behind everything. Sprites on the same layer keep
@@ -38,3 +44,36 @@ Example:
     SPRITE SHOW 1, 40, 40, 1
     SPRITE NEXT 1, 48, 40
     SPRITE MOVE
+
+SPRITE EDIT, SPRITE SHEET and SPRITE FONT open a grid-constrained pixel
+editor for sprites and bitmap fonts. Editing starts from the existing file
+when it is present, otherwise from a blank grid. The current cell is drawn one
+character per pixel; a Transparent pixel shows as a dot. The swatch row shows
+the 16 IBM colours plus transparent.
+
+    Arrows       move the pixel cursor
+    Space/Enter  set the pixel to the current colour (or erase it)
+    0-9          pick colour 0..9
+    c, [ ]       cycle the colour, including Transparent
+    t            pick Transparent (the erase colour)
+    BS           pick Transparent
+    f, v         flip the current cell horizontally or vertically
+    b, x         clear or fill the current cell
+    n, p         move to the next or previous cell
+    s            save the sheet (and font JSON)
+    Esc, Alt+X   quit
+
+SPRITE EDIT writes a single-cell file$ PNG. SPRITE SHEET tiles cols x rows
+cells of cell x cell pixels into file$ and scrubs between them with n/p.
+SPRITE FONT edits the 59-glyph ASCII set used by the bundled 8x8 fonts and
+writes name$.png plus name$.json under A:/fonts/ so fontLoad(name$) reads it
+back; elsewhere in a path, both files are written beside each other. A saved
+font JSON has the usual source, charset, offsetX, offsetY, charWidth,
+charHeight, charsPerRow and bgColour fields.
+
+Example:
+
+    SPRITE EDIT "SHIP.PNG"          ' one 8x8 sprite
+    SPRITE SHEET "TILES.PNG", 16, 4, 4
+    SPRITE FONT "MYFONT", 8        ' A:/fonts/MYFONT.png + .json
+    SPRITE LOADPNG 1, "SHIP.PNG"

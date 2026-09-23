@@ -1,5 +1,29 @@
 """CMM2-style sprite blitstore: restore saved background, dirty only the sprite rect."""
 
+import re
+
+
+def _plain(s):
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
+
+
+def _open_editor(con, command):
+    """Launch the sprite editor over raw serial (send_line hangs in full-screen apps)."""
+    assert con._ser is not None
+    con.drain(quiet=0.15)
+    con._ser.sendall(command.encode() + b"\r")
+    return _plain(con.drain(quiet=0.8).decode(errors="replace"))
+
+
+def _keys(con, data, quiet=0.4):
+    assert con._ser is not None
+    con._ser.sendall(data)
+    return _plain(con.drain(quiet=quiet).decode(errors="replace"))
+
+
+def _quit_editor(con):
+    return _keys(con, bytes([1]) + b"x", quiet=0.5)
+
 
 def _pixel(console, x, y):
     out = console.send_line(f"PRINT PIXEL({x},{y})")
@@ -207,3 +231,82 @@ def test_sprite_transparent_pixels_keep_background(fresh_console):
     assert _is_green(c.screen_pixel(16, 16))
     assert _rgb_is_red(_pixel(c, 17, 16))
     assert _is_red(c.screen_pixel(17, 16))
+
+
+def test_sprite_editor_draws_and_saves_png(fresh_console):
+    c = fresh_console
+    seen = _open_editor(c, 'SPRITE EDIT "ED1.PNG"')
+    assert "SPRITE EDIT" in seen.upper()
+    assert "ED1.PNG" in seen.upper()
+    # Colour 4 (red) then set the pixel under the cursor (top-left).
+    _keys(c, b"4 ")
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+    assert c.send_line('SPRITE LOADPNG 1, "ED1.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _rgb_is_red(_pixel(c, 0, 0))
+    assert _is_red(c.screen_pixel(0, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_sprite_editor_flip_horizontal(fresh_console):
+    c = fresh_console
+    _open_editor(c, 'SPRITE EDIT "ED2.PNG"')
+    _keys(c, b"4 ")
+    _keys(c, b"f")
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+    assert c.send_line('SPRITE LOADPNG 1, "ED2.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _rgb_is_black(_pixel(c, 0, 0))
+    assert _rgb_is_red(_pixel(c, 7, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_sprite_sheet_scrubs_frames(fresh_console):
+    c = fresh_console
+    _open_editor(c, 'SPRITE SHEET "ED3.PNG", 8, 4, 4')
+    _keys(c, b"n")  # scrub to frame 1 -> sheet offset (8,0)
+    _keys(c, b"4 ")
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+    assert c.send_line('SPRITE LOADPNG 1, "ED3.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _rgb_is_black(_pixel(c, 0, 0))
+    assert _rgb_is_red(_pixel(c, 8, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def _write_bas(console, path, lines):
+    assert console.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        esc = line.replace('"', '""')
+        assert console.send_line(f'PRINT #1, "{esc}"') == ""
+    assert console.send_line("CLOSE #1") == ""
+
+
+def test_sprite_font_editor_saves_loadable_json(fresh_console):
+    c = fresh_console
+    seen = _open_editor(c, 'SPRITE FONT "SPRFONT"')
+    assert "SPRITE FONT" in seen.upper()
+    _keys(c, b"4 ")
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+    _write_bas(
+        c,
+        "FONTEDIT.BAS",
+        [
+            '#INCLUDE "A:/fonts/fonts.inc"',
+            "DIM f AS FontDescription",
+            'f = fontLoad("SPRFONT")',
+            "PRINT f.source",
+            "PRINT f.charWidth",
+            "PRINT f.charHeight",
+            "PRINT f.charsPerRow",
+            "PRINT LEN(f.charset)",
+        ],
+    )
+    out = c.send_line('RUN "FONTEDIT.BAS"')
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["SPRFONT.png", "8", "8", "40", "59"], out
+
