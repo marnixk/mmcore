@@ -191,21 +191,77 @@ void mmb_cmd_ntp(void)
 	mmb_out(msg);
 }
 
-/* Boot-time best-effort sync. Runs at most a few times and only once the
- * network is up; a failure leaves the clock as-is. */
+/* Boot-time best-effort sync (#524/#581). Runs while the clock has not been
+ * synced yet, but only once the network is up, and retries with a short
+ * backoff when connectivity appears after boot. It never prints on failure so
+ * an offline machine stays quiet. */
+static int ntp_net_ready(void)
+{
+#if defined(MMB_PLATFORM_POSIX)
+	/* The host build reports the network as always available; auto-syncing
+	 * there would reach the developer's real network from the test harness,
+	 * so only an explicit NTP command talks to the network on that target. */
+	return 0;
+#else
+	return mmb_net_available();
+#endif
+}
+
 void mmb_ntp_poll(void)
 {
-	static int attempts;
+	static int done;       /* synced since the option last changed */
+	static int was_ready;  /* network was ready on the previous poll */
+	static int fails;      /* attempts used since connectivity appeared */
+	static int last_mode;  /* ntp_enabled value seen on the previous poll */
+	static unsigned next_ms;
 	int64_t epoch = 0;
 
-	if (!G.opt.ntp_enabled || attempts >= MMB_NTP_AUTOSYNC_TRIES)
+	if (G.opt.ntp_enabled != last_mode)
+	{
+		last_mode = G.opt.ntp_enabled;
+		done = 0;
+		fails = 0;
+		next_ms = 0;
+	}
+	if (done || G.opt.ntp_enabled == 0 || !G.opt.ntp_server[0])
 		return;
-	if (!mmb_net_available())
+	/* Never stall a running program with a network round trip; the prompt
+	 * poll loop picks it up between runs. */
+	if (G.running)
 		return;
-	attempts++;
+
+	if (!ntp_net_ready())
+	{
+		/* Offline: stay quiet and forget the failed run so a later
+		 * connection gets a fresh set of attempts. */
+		was_ready = 0;
+		fails = 0;
+		next_ms = 0;
+		return;
+	}
+	if (!was_ready)
+	{
+		/* Connectivity just appeared: try immediately. */
+		was_ready = 1;
+		fails = 0;
+		next_ms = 0;
+	}
+	if (fails >= MMB_NTP_AUTOSYNC_TRIES)
+		return;
+	if (next_ms && (int32_t)(mmb_now_ms() - next_ms) < 0)
+		return;
+
 	if (mmb_ntp_sync(G.opt.ntp_server, &epoch) == 0)
 	{
 		mmb_clock_set_epoch(epoch);
-		attempts = MMB_NTP_AUTOSYNC_TRIES;
+		done = 1;
+		return;
+	}
+	fails++;
+	{
+		unsigned backoff = 1000u << (fails < 6 ? fails : 6);
+		if (backoff > 60000u)
+			backoff = 60000u;
+		next_ms = mmb_now_ms() + backoff;
 	}
 }

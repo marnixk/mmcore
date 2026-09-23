@@ -384,7 +384,10 @@ static void parse_ntp(void)
 		mmb_settings_save();
 		return;
 	}
-	G.opt.ntp_enabled = onoff();
+	if (mmb_match("AUTO"))
+		G.opt.ntp_enabled = MMB_NTP_AUTO;
+	else
+		G.opt.ntp_enabled = onoff();
 	mmb_settings_save();
 }
 
@@ -1341,8 +1344,13 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
 	if (all || G.opt.ethernet_enabled)
 		ol_line(&n, G.opt.ethernet_enabled ? "OPTION ETHERNET ON" : "OPTION ETHERNET OFF");
-	if (all || G.opt.ntp_enabled)
-		ol_line(&n, G.opt.ntp_enabled ? "OPTION NTP ON" : "OPTION NTP OFF");
+	if (all || G.opt.ntp_enabled != MMB_NTP_AUTO)
+	{
+		if (G.opt.ntp_enabled == MMB_NTP_AUTO)
+			ol_line(&n, "OPTION NTP AUTO");
+		else
+			ol_line(&n, G.opt.ntp_enabled ? "OPTION NTP ON" : "OPTION NTP OFF");
+	}
 	if (all || (G.opt.ntp_server[0] &&
 		    !mmb_keyword_eq(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER)))
 	{

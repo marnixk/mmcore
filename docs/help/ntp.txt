@@ -6,14 +6,19 @@ or Wi-Fi (see ~ETHERNET~ / ~OPTIONS~ WIFI) and runs best-effort: when the
 network is down the clock is left unchanged and an error is reported.
 
 NTP
-OPTION NTP ON|OFF
+OPTION NTP AUTO|ON|OFF
 OPTION NTP SERVER "host[:port]"
 OPTION TIMEZONE "name"
 
 The NTP command performs a one-shot sync from OPTION NTP SERVER (default
 pool.ntp.org, port 123) and prints the resulting local time.
 
-OPTION NTP ON enables a best-effort sync at boot once the network is up.
+At boot NTP is on by default (OPTION NTP AUTO): once Ethernet or Wi-Fi comes
+up, the clock is synced best-effort without an explicit enable step. An
+offline machine stays quiet and retries when connectivity appears. Use
+OPTION NTP OFF to disable this; OPTION NTP ON forces it on and OPTION NTP AUTO
+restores the default. The setting is saved across reboots.
+
 OPTION TIMEZONE selects the zone used by ~DATE$~, ~TIME$~ and ~DATETIME$~;
 ~EPOCH~ and the stored clock stay UTC. Timezone names come from a built-in
 fixed-offset table without daylight saving, for example UTC (the default),
