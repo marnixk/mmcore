@@ -8,9 +8,12 @@ DRIVE [letter$]
   letter$ - drive such as "A:" or "C:" (optional; omit to list drives)
 
 A: is the RAM disk. C: is the SD card slot. D: and later are USB volumes when
-present. B: is an internal package mount and is never listed.
+present. B: is an internal package mount and is never listed. A FAT volume's
+label is shown in quotes, e.g. `D: USB "MYSTICK"`, and in the FILES pane
+captions. Use EJECT to unmount a stick safely before pulling it.
 
 Example:
 
     DRIVE
     DRIVE "A:"
+    EJECT "D:"

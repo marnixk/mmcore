@@ -1,0 +1,19 @@
+name: EJECT
+kind: command
+
+Safely unmount a USB volume before removing it.
+
+EJECT [letter$]
+
+  letter$ - drive such as "D:" (optional; defaults to the current drive)
+
+Flushes any pending writes and unmounts the FAT volume so the stick can be
+pulled without corrupting it. After an eject the drive disappears from DRIVE
+until the stick is removed and re-inserted. The SD card (C:) and the ramdisk
+(A:) cannot be ejected.
+
+In FILES, use Command -> Eject to unmount the drive shown in the active pane.
+
+Example:
+
+    EJECT "D:"

@@ -274,6 +274,69 @@ def test_drive_cli_mount(mmb_linux, tmp_path):
     assert (mount / "F.TXT").read_text().strip() == "ON D"
 
 
+def test_posix_drive_label_and_eject(mmb_linux, tmp_path):
+    """#518/#523: a mounted drive shows a friendly name and can be ejected."""
+    mount = tmp_path / "usb"
+    mount.mkdir()
+    (mount / "F.TXT").write_text("hi")
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
+    program = (
+        'DRIVE "D:"\n'
+        "DRIVE\n"
+        'EJECT "D:"\n'
+        'DIR "D:/"\n'
+    )
+    proc = subprocess.run(
+        [mmb_linux, "--drive", str(mount)],
+        input=program,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert 'D: USB "usb"' in out, out
+    assert "D: USB ejected" in out, out
+    # Once ejected the volume is gone until it is re-inserted.
+    assert "?DRIVE" in out.upper(), out
+
+
+def test_posix_hotplug_notice(mmb_linux, tmp_path):
+    """#518/#523: a volume appearing/disappearing raises a notice."""
+    import time
+
+    root = tmp_path / "root"
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    p = subprocess.Popen(
+        [mmb_linux],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    def send(line):
+        p.stdin.write(line + "\n")
+        p.stdin.flush()
+        time.sleep(0.4)
+
+    try:
+        send("PRINT 1")
+        (root / "D").mkdir(parents=True, exist_ok=True)
+        send("PRINT 2")
+        (root / "D").rmdir()
+        send("PRINT 3")
+        send("QUIT")
+        out = p.communicate(timeout=10)[0]
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert "D: USB mounted" in out, out
+    assert "D: USB removed" in out, out
+
+
 def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
     """LN-08 (#460): DIR glob matching is case-insensitive."""
     root = tmp_path / "drives"

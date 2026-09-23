@@ -462,6 +462,8 @@ static void clamp_sel(fu_panel *p)
 		p->top = 0;
 }
 
+static void fu_caption(const char *path, char *out, int outsz);
+
 static void emit_status(void)
 {
 	char nbuf[16];
@@ -488,6 +490,14 @@ static void emit_status(void)
 	ser(" ROWS=");
 	fmt_uint(nbuf, (unsigned)fu_rows());
 	ser(nbuf);
+	ser(" VOL=");
+	{
+		char cap[96];
+		fu_caption(curpan()->path, cap, sizeof cap);
+		ser(cap);
+	}
+	ser(" HINT=");
+	ser(F.hint);
 	ser("\r\n[FILES-LIST]");
 	{
 		int i;
@@ -537,8 +547,8 @@ static const char **drop_items(int menu, int *n, const char **hots)
 	static const char left_h[] = { 'a', 'c', 'd' };
 	static const char *file[] = { "View", "Edit", "Copy", "Move", "Delete" };
 	static const char file_h[] = { 'v', 'e', 'c', 'm', 'd' };
-	static const char *cmd[] = { "MkDir", "FTP server", "Help", "Quit" };
-	static const char cmd_h[] = { 'k', 's', 'h', 'q' };
+	static const char *cmd[] = { "MkDir", "Eject", "FTP server", "Help", "Quit" };
+	static const char cmd_h[] = { 'k', 'e', 's', 'h', 'q' };
 	static const char *opt[] = { "Help" };
 	static const char opt_h[] = { 'h' };
 	static const char *right[] = { "Focus right", "Drive A:", "Drive C:", "Drive D:" };
@@ -547,7 +557,7 @@ static const char **drop_items(int menu, int *n, const char **hots)
 	{
 	case 0: *n = 3; *hots = left_h; return left;
 	case 1: *n = 5; *hots = file_h; return file;
-	case 2: *n = 4; *hots = cmd_h; return cmd;
+	case 2: *n = 5; *hots = cmd_h; return cmd;
 	case 3: *n = 1; *hots = opt_h; return opt;
 	default: *n = 4; *hots = right_h; return right;
 	}
@@ -963,17 +973,75 @@ static void draw_ftp(void)
 	draw_overlay_box(" FTP SERVER ", lines, 4);
 }
 
+static void fu_caption(const char *path, char *out, int outsz)
+{
+	char drv = path[0];
+	const char *kind = 0;
+	unsigned n = 0;
+	if (drv >= 'a' && drv <= 'z')
+		drv = (char)(drv - 32);
+	if (drv == 'A')
+		kind = "RAM";
+	else if (drv == 'B')
+		kind = "PKG";
+	else if (drv == 'C')
+		kind = "SD";
+	else if (drv == 'H')
+		kind = "NVME";
+	else if (drv >= 'D' && drv <= 'G')
+		kind = "USB";
+	if (!kind)
+	{
+		strncpy(out, path, (unsigned)outsz - 1);
+		out[outsz - 1] = 0;
+		return;
+	}
+	out[n++] = drv;
+	out[n++] = ':';
+	out[n++] = ' ';
+	{
+		const char *k = kind;
+		while (*k && n < (unsigned)outsz - 4)
+			out[n++] = *k++;
+	}
+	if (drv >= 'C')
+	{
+		char lab[16];
+		if (mmb_fat_label(drv, lab, sizeof lab) == 0 && lab[0])
+		{
+			const char *p = lab;
+			out[n++] = ' ';
+			out[n++] = '"';
+			while (*p && n < (unsigned)outsz - 3)
+				out[n++] = *p++;
+			out[n++] = '"';
+		}
+	}
+	/* Keep the panel's path tail so the caption still locates the folder. */
+	{
+		const char *rest = path;
+		if (path[0] && path[1] == ':')
+			rest = path + 2;
+		while (*rest && n < (unsigned)outsz - 1)
+			out[n++] = *rest++;
+	}
+	out[n] = 0;
+}
+
 static void files_draw(void)
 {
 	int i;
 	fu_ent *e;
 	char footL[80], footR[80];
+	char capL[96], capR[96];
 	int namew;
 	tui_begin();
 	mmb_editor_apply_tui_palette();
 	tui_clear(FU_PAN_FG, FU_PAN_BG);
 	draw_top_menu();
-	draw_border_row(1, 1, F.pan[0].path, F.pan[1].path);
+	fu_caption(F.pan[0].path, capL, sizeof capL);
+	fu_caption(F.pan[1].path, capR, sizeof capR);
+	draw_border_row(1, 1, capL, capR);
 	draw_header_cols();
 	for (i = 0; i < fu_list(); i++)
 	{
@@ -1020,6 +1088,17 @@ static void files_draw_if_idle(void)
 static void set_hint(const char *s)
 {
 	strncpy(F.hint, s ? s : "", sizeof(F.hint) - 1);
+}
+
+/* Storage hotplug notices land in the FILES hint line rather than being
+ * printed over the full-screen UI. Returns 1 when the message was claimed. */
+int mmb_files_notice(const char *msg)
+{
+	if (!F.active || F.mode != FU_BROWSE || G.running)
+		return 0;
+	set_hint(msg);
+	files_draw_if_idle();
+	return 1;
 }
 
 static int s_files_prompted;
@@ -2206,6 +2285,27 @@ static void handle_fkey(int n)
 		files_close_tui(1);
 }
 
+static void do_eject(void)
+{
+	char drv = curpan()->path[0];
+	if (drv >= 'a' && drv <= 'z')
+		drv = (char)(drv - 32);
+	if (mmb_fat_eject(drv) != 0)
+	{
+		set_hint("No removable drive to eject");
+		return;
+	}
+	curpan()->path[0] = 'A';
+	curpan()->path[1] = ':';
+	curpan()->path[2] = '/';
+	curpan()->path[3] = 0;
+	curpan()->sel = 0;
+	curpan()->top = 0;
+	panel_reload(curpan());
+	chdir_panel(curpan());
+	set_hint("Ejected - drive removed safely");
+}
+
 static void activate_drop(void)
 {
 	int menu = F.drop;
@@ -2247,8 +2347,10 @@ static void activate_drop(void)
 		if (item == 0)
 			start_mkdir();
 		else if (item == 1)
-			do_ftp_start();
+			do_eject();
 		else if (item == 2)
+			do_ftp_start();
+		else if (item == 3)
 			F.mode = FU_HELP;
 		else
 			files_close_tui(1);

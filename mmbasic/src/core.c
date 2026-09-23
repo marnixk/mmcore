@@ -2946,6 +2946,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("UNPACK")] = mmb_cmd_unpack;
 		tab[mmb_kw_id("CHDIR")] = mmb_cmd_chdir;
 		tab[mmb_kw_id("DRIVE")] = mmb_cmd_drive;
+		tab[mmb_kw_id("EJECT")] = mmb_cmd_eject;
 		tab[mmb_kw_id("MKDIR")] = mmb_cmd_mkdir;
 		tab[mmb_kw_id("RMDIR")] = mmb_cmd_rmdir;
 		tab[mmb_kw_id("KILL")] = mmb_cmd_kill;

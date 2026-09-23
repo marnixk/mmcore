@@ -106,6 +106,23 @@ def test_chdir_c_without_media(console):
     assert out.startswith("?")
 
 
+def test_eject_missing_drive_errors(console):
+    """EJECT on a volume that is not present must fail, not crash."""
+    assert console.send_line('EJECT "D:"').startswith("?")
+    assert console.send_line('EJECT "G:"').startswith("?")
+
+
+def test_eject_ramdisk_and_unknown_letter_error(console):
+    assert console.send_line('EJECT "A:"').startswith("?")
+    assert console.send_line('EJECT "Z:"').startswith("?")
+
+
+def test_drive_never_labels_ramdisk(console):
+    out = console.send_line("DRIVE")
+    assert "A: RAM" in out
+    assert 'A: RAM "' not in out
+
+
 def test_drive_select_a(console):
     assert console.send_line('DRIVE "A:"') == ""
     cwd = console.send_line("PRINT CWD$")
@@ -133,6 +150,39 @@ def test_cat_prompt_keeps_string_concat(console):
     assert console.send_line('A$="MM"') == ""
     assert console.send_line('CAT A$,"BASIC"') == ""
     assert console.send_line("PRINT A$") == "MMBASIC"
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_sd_volume_label_shown(kernel_image):
+    """A mounted FAT volume reports its label in DRIVE (#518/#523)."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBTEST", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            drv = con.send_line("DRIVE")
+            assert 'C: SD "MMBTEST"' in drv.upper(), drv
+            # The SD slot is the system drive and must never be ejectable.
+            assert con.send_line('EJECT "C:"').startswith("?")
+            assert con.send_line('CHDIR "C:"') == ""
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
 
 
 @pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
