@@ -1030,8 +1030,15 @@ static void startup_logo(void)
 	unsigned n = 0;
 	uint32_t *pix = 0;
 	int w = 0, h = 0, i, j, x0, y0, hw;
+	void (*pixel)(int, int, unsigned);
 
-	if (!G.plat || !G.plat->set_pixel)
+	if (!G.plat)
+		return;
+	/* Prefer the console's own pixel buffer so the banner newlines that
+	 * follow cannot repaint the logo off the screen; fall back to the raw
+	 * framebuffer (native hosts share one surface). */
+	pixel = G.plat->console_pixel ? G.plat->console_pixel : G.plat->set_pixel;
+	if (!pixel)
 		return;
 	if (mmb_vfs_read_ptr("A:/mmcore.png", &file, &n) != 0 || !file || !n)
 		return;
@@ -1049,7 +1056,7 @@ static void startup_logo(void)
 			uint32_t c = pix[j * w + i];
 			if (!(c >> 24))
 				continue;
-			G.plat->set_pixel(x0 + i, y0 + j, c & 0xFFFFFFu);
+			pixel(x0 + i, y0 + j, c & 0xFFFFFFu);
 		}
 	}
 	G.plat->free(pix);

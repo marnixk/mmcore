@@ -29,6 +29,12 @@ typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);
 	void (*set_pixel)(int x, int y, unsigned rgb888);
+	/* Draw a pixel that must survive console text flushes (boot-splash
+	 * logo). A bare-metal console keeps its own pixel buffer and repaints
+	 * changed rows over the framebuffer, which erases pixels written with
+	 * set_pixel alone. Optional; falls back to set_pixel when NULL (native
+	 * hosts share one surface for text and graphics). */
+	void (*console_pixel)(int x, int y, unsigned rgb888);
 	unsigned (*get_pixel)(int x, int y);
 	void (*fill_screen)(unsigned rgb888);
 	int (*hdmi_width)(void);
