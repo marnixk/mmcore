@@ -19,16 +19,26 @@ Supported formats:
     XM      FastTracker II modules
     WAV     PCM audio
 
-The visualiser is theme-aware: it follows OPTION EDIT THEME. Audio output
-follows OPTION AUDIO_TARGET and is controlled by ~PLAY~.
+JUKE has its own fixed dark cyberpunk palette: it does not follow OPTION
+EDIT THEME, so it looks the same under every system theme. Leaving JUKE
+restores your console theme untouched. The spectrum bars use a cool-to-hot
+vertical gradient and the transport runs along the footer.
 
 Controls:
 
-    SPACE   pause or resume
-    <  >    previous / next track
+    SPACE   play or pause
+    P       previous track
+    N       next track
+    R       shuffle on or off (SHUF lights up)
+    -  +    volume down / up (VOL bar shows the level)
+    M       mute or unmute
     S       stop the queue and silence audio
     ESC     quit JUKE (music keeps playing)
     Q       quit JUKE (music keeps playing)
+
+Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
+order, and the currently playing track stays put. Volume is the player gain
+that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
 
 Enter also quits; the music is not stopped, so you can keep listening from
 the console or join another screen. The queue keeps advancing in the
