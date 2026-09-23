@@ -11,7 +11,7 @@ environment).
 
 ## Boot & sessions
 - [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - 2026 (c) Marnix Kok`, then the MMBasic/copyright lines. (#536)
-- [ ] Virtual consoles: `Ctrl+Alt+F1`…`F4` give independent interpreter, screen, input line and history; switching back preserves the previous screen. (#510)
+- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. `Ctrl+Alt+F1`…`F4` no longer switches. (#510, #603)
 
 ## Clock / network
 - [ ] `OPTION NTP ON`, `OPTION NTP SERVER "host[:port]"`, `NTP` one-shot, `OPTION TIMEZONE "Europe/Amsterdam"` (also `UTC+2`, `UTC-5:30`). Confirm `DATE$`/`TIME$`/`DATETIME$` shift and FAT timestamps use local time. (#524)

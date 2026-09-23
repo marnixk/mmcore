@@ -1,4 +1,4 @@
-"""Virtual consoles (#510): Ctrl+Alt+F1..F4 switch between independent
+"""Virtual consoles (#510): Ctrl+Alt+1..4 switch between independent
 interpreter sessions with their own screen and state.
 
 The chord is driven through the real USB keyboard (``-device usb-kbd``) so
@@ -16,19 +16,19 @@ def _usb_console(kernel_image) -> MMBasicConsole:
 
 def test_help_documents_consoles(console):
     out = dump_topic(console, "CONSOLES")
-    assert "Ctrl+Alt+F" in out
+    assert "Ctrl+Alt+1" in out
     assert "RUN" in out
 
 
 def _switch(con, n: int) -> None:
-    # Hold the F-key long enough for the guest's USB poll to see it; a fast
+    # Hold the digit long enough for the guest's USB poll to see it; a fast
     # tap can fall between polls and be missed.
     con.key_down("ctrl")
     con.key_down("alt")
     time.sleep(0.15)
-    con.key_down(f"f{n}")
+    con.key_down(str(n))
     time.sleep(0.25)
-    con.key_up(f"f{n}")
+    con.key_up(str(n))
     time.sleep(0.15)
     con.key_up("alt")
     con.key_up("ctrl")
