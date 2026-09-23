@@ -7,8 +7,9 @@ through the pt_tool_* hooks and inspected on PT.canvas directly.
 
 Covered: pencil / line / rectangle / ellipse / circle / flood fill / eraser /
 colour pick / grab with left=BG right=FG, exact-match fill bounds, the
-rubber-band preview (committed on release, dropped on cancel) and the Shift
-square / circle / 45-degree constraints. No QEMU required.
+rubber-band preview (committed on release, dropped on cancel), the Shift
+square / circle / 45-degree constraints, and the bonus airbrush / spray /
+magnify tools (#641). No QEMU required.
 """
 import ctypes
 import os
@@ -31,6 +32,11 @@ PT_TOOL_COUNT = 13
 
 # enum pt_tool.
 PENCIL, LINE, RECT, ELLIPSE, CIRCLE, FILL, ERASER, PICK, GRAB, MAGNIFY = range(10)
+AIRBRUSH, SPRAY, TEXT = 10, 11, 12
+
+# Bonus-tool radii from mmbasic/src/paint_tools.c.
+AIR_R = 6
+SPRAY_R = 8
 
 LEFT, RIGHT = 1, 2
 
@@ -97,10 +103,13 @@ void tst_colors(int fg, int bg) { PT.fg = fg; PT.bg = bg; }
 int tst_fg(void) { return PT.fg; }
 int tst_bg(void) { return PT.bg; }
 int tst_zoom(void) { return PT.zoom; }
+int tst_view_x(void) { return PT.view_x; }
+int tst_view_y(void) { return PT.view_y; }
 
 void tst_tool_set(int t) { pt_tool_select(t); }
 int tst_hit(int sx, int sy, int *tool) { return pt_tools_hit(sx, sy, tool); }
 void tst_shift(int on) { pt_tool_modifiers((int)on); }
+void tst_draw(void) { pt_tools_draw(); }
 
 void tst_begin(int x, int y, int b) { pt_tool_begin(x, y, b); }
 void tst_motion(int x, int y, int b) { pt_tool_motion(x, y, b); }
@@ -188,6 +197,8 @@ class Pad:
         lib.tst_fg.restype = ctypes.c_int
         lib.tst_bg.restype = ctypes.c_int
         lib.tst_zoom.restype = ctypes.c_int
+        lib.tst_view_x.restype = ctypes.c_int
+        lib.tst_view_y.restype = ctypes.c_int
         lib.tst_tool_set.argtypes = [ctypes.c_int]
         lib.tst_hit.argtypes = [ctypes.c_int, ctypes.c_int,
                                 ctypes.POINTER(ctypes.c_int)]
@@ -220,11 +231,17 @@ class Pad:
     def zoom(self):
         return self.lib.tst_zoom()
 
+    def view(self):
+        return self.lib.tst_view_x(), self.lib.tst_view_y()
+
     def tool(self, t):
         self.lib.tst_tool_set(t)
 
     def shift(self, on):
         self.lib.tst_shift(1 if on else 0)
+
+    def draw(self):
+        self.lib.tst_draw()
 
     def hit(self, sx, sy):
         got = ctypes.c_int(-1)
@@ -526,18 +543,136 @@ def test_shift_makes_ellipses_circular(pt):
     assert pt.px(15, 25) == 4
 
 
+# ---- airbrush / spray (#641) ----------------------------------------------
+
+
+def _painted(pt, want, cx, cy, r):
+    """Pixels equal to ``want`` inside the disk of radius ``r`` about centre."""
+    hits = []
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            if dx * dx + dy * dy > r * r:
+                continue
+            if pt.px(cx + dx, cy + dy) == want:
+                hits.append((dx, dy))
+    return hits
+
+
+def test_airbrush_dwells_and_stays_inside_its_radius(pt):
+    pt.colors(5, 0)
+    pt.tool(AIRBRUSH)
+    pt.begin(24, 16, LEFT)
+    pt.end(24, 16, LEFT)
+    assert pt.px(24, 16) == 5  # the soft centre always takes ink
+    assert _painted(pt, 5, 24, 16, AIR_R)  # at least one sample landed
+
+    # Nothing escapes the brush radius (soft falloff only thins the edge).
+    for y in range(16 - AIR_R - 1, 16 + AIR_R + 2):
+        for x in range(24 - AIR_R - 1, 24 + AIR_R + 2):
+            if (x - 24) ** 2 + (y - 16) ** 2 > AIR_R * AIR_R:
+                assert pt.px(x, y) == 0
+
+    # Dwelling multiplies the deposit: more stay events, more coverage.
+    pt.reset()
+    pt.colors(5, 0)
+    pt.tool(AIRBRUSH)
+    pt.begin(24, 16, LEFT)
+    first = len(_painted(pt, 5, 24, 16, AIR_R))
+    for _ in range(40):
+        pt.motion(24, 16, LEFT)
+    pt.end(24, 16, LEFT)
+    assert len(_painted(pt, 5, 24, 16, AIR_R)) > first
+
+
+def test_airbrush_right_button_uses_the_background(pt):
+    pt.colors(5, 9)
+    pt.tool(AIRBRUSH)
+    pt.begin(24, 16, RIGHT)
+    pt.end(24, 16, RIGHT)
+    assert pt.px(24, 16) == 9
+    assert not _painted(pt, 5, 24, 16, AIR_R)
+
+
+def test_spray_scatters_dots_within_radius_both_buttons(pt):
+    pt.colors(6, 0)
+    pt.tool(SPRAY)
+    pt.begin(24, 16, LEFT)
+    for _ in range(40):
+        pt.motion(24, 16, LEFT)
+    pt.end(24, 16, LEFT)
+    dots = _painted(pt, 6, 24, 16, SPRAY_R)
+    assert dots
+    # Scatter stays inside the spray radius.
+    for y in range(16 - SPRAY_R - 1, 16 + SPRAY_R + 2):
+        for x in range(24 - SPRAY_R - 1, 24 + SPRAY_R + 2):
+            if (x - 24) ** 2 + (y - 16) ** 2 > SPRAY_R * SPRAY_R:
+                assert pt.px(x, y) == 0
+
+    pt.reset()
+    pt.colors(6, 9)
+    pt.tool(SPRAY)
+    pt.begin(24, 16, RIGHT)
+    for _ in range(40):
+        pt.motion(24, 16, RIGHT)
+    pt.end(24, 16, RIGHT)
+    assert _painted(pt, 9, 24, 16, SPRAY_R)
+
+
+def test_spray_covers_more_ground_than_a_single_airbrush_dab(pt):
+    # The spray disk is wider than the airbrush disk by construction.
+    assert SPRAY_R > AIR_R
+
+
 # ---- magnify / tool column ------------------------------------------------
 
 
-def test_magnify_toggles_zoom(pt):
+def test_magnify_zooms_in_steps_and_returns_cleanly(pt):
+    pt.colors(4, 0)
+    pt.set(10, 10, 4)
     pt.tool(MAGNIFY)
     assert pt.zoom() == 1
-    pt.begin(10, 10, LEFT)
-    pt.end(10, 10, LEFT)
+
+    pt.begin(24, 16, LEFT)
+    pt.end(24, 16, LEFT)
     assert pt.zoom() == 2
-    pt.begin(10, 10, LEFT)
-    pt.end(10, 10, LEFT)
+    assert pt.view() == (12, 8)  # window centred on the click
+
+    pt.begin(24, 16, LEFT)
+    pt.end(24, 16, LEFT)
+    assert pt.zoom() == 4
+
+    # Right button steps back out, and 1:1 restores the view origin.
+    pt.begin(24, 16, RIGHT)
+    pt.end(24, 16, RIGHT)
+    assert pt.zoom() == 2
+    pt.begin(24, 16, RIGHT)
+    pt.end(24, 16, RIGHT)
     assert pt.zoom() == 1
+    assert pt.view() == (0, 0)
+
+    assert pt.px(10, 10) == 4  # zooming never touched the canvas
+
+
+def test_magnify_view_is_clamped_to_the_canvas(pt):
+    pt.tool(MAGNIFY)
+    pt.begin(pt.w - 1, pt.h - 1, LEFT)
+    pt.end(pt.w - 1, pt.h - 1, LEFT)
+    assert pt.zoom() == 2
+    vx, vy = pt.view()
+    assert 0 <= vx <= pt.w - pt.w // 2
+    assert 0 <= vy <= pt.h - pt.h // 2
+    assert vx + pt.w // 2 <= pt.w
+    assert vy + pt.h // 2 <= pt.h
+
+
+def test_magnify_wraps_to_one_at_the_top(pt):
+    pt.tool(MAGNIFY)
+    steps = []
+    for _ in range(4):
+        pt.begin(24, 16, LEFT)
+        pt.end(24, 16, LEFT)
+        steps.append(pt.zoom())
+    assert steps == [2, 4, 8, 1]
 
 
 def test_tool_column_hit_maps_every_cell(pt):
@@ -550,3 +685,12 @@ def test_tool_column_hit_maps_every_cell(pt):
     assert pt.hit(PT_TOOL_W // 2, PT_CANVAS_Y - 1)[0] == 0
     assert pt.hit(PT_TOOL_W // 2, PT_PAL_Y)[0] == 0
     assert pt.hit(PT_TOOL_W, PT_CANVAS_Y + cell // 2)[0] == 0
+
+
+def test_tool_column_draws_every_icon_including_the_bonus_tools(pt):
+    # Exercises draw_tool_icon for all 13 tools (airbrush / spray / magnify
+    # art is registered here, from #632).
+    for tool in (AIRBRUSH, SPRAY, MAGNIFY):
+        pt.tool(tool)
+        pt.draw()
+    pt.draw()

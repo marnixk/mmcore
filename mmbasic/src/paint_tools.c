@@ -18,8 +18,10 @@
  * module exposes pt_tool_modifiers() which the native tests (and a later
  * scaffold hook) drive.
  *
- * The bonus tools (airbrush, spray, text) land in #641 / #642 and register
- * here; they are inert for now.
+ * Bonus tools (#641): airbrush is a dwell-based soft brush (samples pile up
+ * while the pointer stays put), spray scatters uniform dots over a wider disk,
+ * and magnify steps the zoom factor with the view recentred on the click. The
+ * text tool lands in #642 and registers here; it is inert for now.
  */
 #include "paint.h"
 
@@ -376,6 +378,132 @@ static void grab_stamp(int x, int y)
 		}
 }
 
+/* ---- bonus tools: airbrush / spray / magnify (#641) -------------------- */
+
+/* Airbrush lays down a handful of samples across a small disk, denser at the
+ * centre, on every event, so dwelling darkens the spot. Spray scatters a few
+ * uniform dots over a wider disk. Both draw from a tiny LCG seeded by
+ * pt_tools_init(), which makes a stroke reproducible for the host tests. */
+#define PT_AIR_R      6
+#define PT_AIR_RATE   16
+#define PT_SPRAY_R    8
+#define PT_SPRAY_RATE 7
+
+/* Magnify steps through powers of two; clicking again at the top returns to
+ * 1:1. */
+#define PT_ZOOM_MAX   8
+
+static unsigned s_noise;
+
+static unsigned noise_next(void)
+{
+	s_noise = s_noise * 1664525u + 1013904223u;
+	return s_noise >> 8;
+}
+
+static void air_dab(int x, int y, int c)
+{
+	int i, r2 = PT_AIR_R * PT_AIR_R;
+
+	pt_canvas_set(x, y, c);
+	for (i = 0; i < PT_AIR_RATE; i++)
+	{
+		int dx = (int)(noise_next() % (2 * PT_AIR_R + 1)) - PT_AIR_R;
+		int dy = (int)(noise_next() % (2 * PT_AIR_R + 1)) - PT_AIR_R;
+		int d2 = dx * dx + dy * dy;
+
+		if (d2 > r2)
+			continue;
+		/* Soft falloff: keep with probability 1 - d^2/r^2. */
+		if ((int)(noise_next() % (unsigned)r2) >= r2 - d2)
+			continue;
+		pt_canvas_set(x + dx, y + dy, c);
+	}
+}
+
+static void spray_dab(int x, int y, int c)
+{
+	int i, r2 = PT_SPRAY_R * PT_SPRAY_R;
+
+	for (i = 0; i < PT_SPRAY_RATE; i++)
+	{
+		int dx = (int)(noise_next() % (2 * PT_SPRAY_R + 1)) - PT_SPRAY_R;
+		int dy = (int)(noise_next() % (2 * PT_SPRAY_R + 1)) - PT_SPRAY_R;
+
+		if (dx * dx + dy * dy > r2)
+			continue;
+		pt_canvas_set(x + dx, y + dy, c);
+	}
+}
+
+typedef void (*pt_dab_fn)(int x, int y, int c);
+
+/* Walk the segment so a fast drag stays connected; every stepped pixel gets a
+ * dab, so dwelling in one place piles samples up. */
+static void dab_line(pt_dab_fn dab, int x0, int y0, int x1, int y1, int c)
+{
+	int dx = iabs(x1 - x0);
+	int sx = x0 < x1 ? 1 : -1;
+	int dy = -iabs(y1 - y0);
+	int sy = y0 < y1 ? 1 : -1;
+	int err = dx + dy;
+
+	for (;;)
+	{
+		int e2;
+
+		dab(x0, y0, c);
+		if (x0 == x1 && y0 == y1)
+			break;
+		e2 = 2 * err;
+		if (e2 >= dy)
+		{
+			err += dy;
+			x0 += sx;
+		}
+		if (e2 <= dx)
+		{
+			err += dx;
+			y0 += sy;
+		}
+	}
+}
+
+/* Set the zoom factor and park the view window on the clicked canvas pixel,
+ * clamped so the window never leaves the canvas. Level 1 restores 1:1. */
+static void magnify_zoom(int level, int cx, int cy)
+{
+	int vw, vh;
+
+	if (level < 1)
+		level = 1;
+	if (level > PT_ZOOM_MAX)
+		level = PT_ZOOM_MAX;
+	PT.zoom = level;
+	if (level == 1)
+	{
+		PT.view_x = 0;
+		PT.view_y = 0;
+		return;
+	}
+	vw = PT.width / level;
+	vh = PT.height / level;
+	if (vw < 1)
+		vw = 1;
+	if (vh < 1)
+		vh = 1;
+	PT.view_x = cx - vw / 2;
+	PT.view_y = cy - vh / 2;
+	if (PT.view_x < 0)
+		PT.view_x = 0;
+	if (PT.view_y < 0)
+		PT.view_y = 0;
+	if (PT.view_x > PT.width - vw)
+		PT.view_x = PT.width - vw;
+	if (PT.view_y > PT.height - vh)
+		PT.view_y = PT.height - vh;
+}
+
 /* ---- tool column ------------------------------------------------------- */
 
 static int s_ico_x, s_ico_y;
@@ -489,6 +617,7 @@ void pt_tools_init(void)
 	s_brush_w = 0;
 	s_brush_h = 0;
 	s_brush_bg = PT.bg;
+	s_noise = 0x13579BDFu;
 }
 
 void pt_tools_draw(void)
@@ -585,17 +714,22 @@ void pt_tool_begin(int cx, int cy, int button)
 	case PT_TOOL_GRAB:
 		break;
 	case PT_TOOL_MAGNIFY:
-		if (PT.zoom > 1)
-			PT.zoom = 1;
+		if (button == PT_BTN_RIGHT)
+			magnify_zoom(PT.zoom / 2, cx, cy);
 		else
-		{
-			PT.zoom = 2;
-			PT.view_x = cx;
-			PT.view_y = cy;
-		}
+			magnify_zoom(PT.zoom < PT_ZOOM_MAX ? PT.zoom * 2 : 1,
+				     cx, cy);
+		break;
+	case PT_TOOL_AIRBRUSH:
+		pt_undo_push();
+		air_dab(cx, cy, c);
+		break;
+	case PT_TOOL_SPRAY:
+		pt_undo_push();
+		spray_dab(cx, cy, c);
 		break;
 	default:
-		break;		/* airbrush / spray / text: #641, #642 */
+		break;		/* text: #642 */
 	}
 }
 
@@ -654,6 +788,12 @@ void pt_tool_motion(int cx, int cy, int button)
 			preview_restore();
 			canvas_rect(PT.anchor_x, PT.anchor_y, cx, cy, c);
 		}
+		break;
+	case PT_TOOL_AIRBRUSH:
+		dab_line(air_dab, PT.last_cx, PT.last_cy, cx, cy, c);
+		break;
+	case PT_TOOL_SPRAY:
+		dab_line(spray_dab, PT.last_cx, PT.last_cy, cx, cy, c);
 		break;
 	default:
 		break;
