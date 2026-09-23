@@ -41,4 +41,7 @@ A missing file, a bad header, or an unknown font name stops the program with a
 TDF error. Font rows are read to the NUL terminator, so descender lines are
 kept even when the Max Height header under-counts them.
 
+In ~FILES~, Enter or View on a .TDF file draws a specimen of the font using the
+same decoder, without leaving the current MODE.
+
 See also ~TEXT~, ~LOCATE~, ~COLOUR~ and ~FUNCTIONS~.

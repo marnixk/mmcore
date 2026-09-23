@@ -1,5 +1,6 @@
 """FILES dual-pane TUI: navigate, run .BAS, view unknown types, quit."""
 
+import subprocess
 import time
 
 from harness import MMBasicConsole
@@ -331,3 +332,66 @@ def test_files_f4_shows_editor_immediately(fresh_console):
     _keys(con, bytes([1]) + b"x", quiet=0.6)
     _keys(con, b"q")
     assert con.send_line("PRINT 5") == "5"
+
+
+def _select(con: MMBasicConsole, name: str, maxn: int = 40) -> str:
+    seen = _open_files(con)
+    for _ in range(maxn):
+        if f"SEL={name}" in seen:
+            return seen
+        seen = _keys(con, b"\x1b[B", quiet=0.2)
+    assert f"SEL={name}" in seen, (name, seen)
+    return seen
+
+
+def _preview_ink(con: MMBasicConsole, tries: int = 12) -> float:
+    """Lit fraction of the specimen band, retrying while QEMU repaints."""
+    png = con.capture_png()
+    out = subprocess.run(
+        [
+            "convert", png, "-crop", "660x200+0+16", "+repage",
+            "-colorspace", "gray", "-threshold", "50%",
+            "-format", "%[fx:mean]", "info:",
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return float(out)
+
+
+def test_files_tdf_preview_and_mode_restore(fresh_console):
+    """#586: Enter on a .TDF draws a specimen and Esc restores the console."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/fonts/tdf"') == ""
+    _select(con, "STANDARD.TDF")
+    seen = _keys(con, b"\r", quiet=1.0)
+    assert "[FILES] TDF STANDARD.TDF Standard" in seen, seen
+    # The specimen draws bright CP437 glyphs on black; QEMU repaints slowly.
+    ink = 0.0
+    for _ in range(12):
+        ink = max(ink, _preview_ink(con))
+        if ink > 0.001:
+            break
+        time.sleep(0.3)
+    assert ink > 0.001, ink
+    seen = _keys(con, b"\x1b", quiet=0.8)
+    assert "SEL=" in seen
+    _keys(con, b"q")
+    # No MODE switch: the console is back at its original resolution.
+    assert con.send_line("PRINT MM.HRES") == "1280"
+    assert con.send_line("PRINT MM.VRES") == "720"
+
+
+def test_files_tdf_bad_font_fails_soft(fresh_console):
+    """#586: a non-TDF file falls back to the info overlay, not a crash."""
+    con = fresh_console
+    assert con.send_line('OPEN "A:/BADFONT.TDF" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, STRING$(240, "X")') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('CHDIR "A:/"') == ""
+    _select(con, "BADFONT.TDF", maxn=40)
+    seen = _keys(con, b"\r", quiet=0.8)
+    assert "Cannot preview this .TDF" in seen or "File info" in seen, seen
+    seen = _keys(con, b"\x1b", quiet=0.6)
+    assert "SEL=" in seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT 6") == "6"

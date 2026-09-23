@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "mmb_tdf.h"
 #include "tui.h"
 
 #define FU_MAX_ENT  96
@@ -16,6 +17,7 @@
 #define FU_VIEW     8
 #define FU_FTP      9
 #define FU_ANSI     10
+#define FU_TDF      11
 
 #define AN_MAX_COLS TUI_MAX_COLS
 #define AN_MAX_ROWS 512
@@ -75,6 +77,8 @@ typedef struct {
 	int an_mode80;
 	int an_saved_mode;
 	int an_saved_bits;
+	unsigned char *tdf_buf;
+	mmb_tdf tdf;
 } fu_state;
 
 static fu_state F_s[MMB_MAX_CONSOLES];
@@ -231,6 +235,11 @@ static int is_ansi(const char *n)
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".ANS") || mmb_keyword_eq(e, ".ASC") ||
 	       mmb_keyword_eq(e, ".DIZ");
+}
+
+static int is_tdf(const char *n)
+{
+	return mmb_keyword_eq(ext_of(n), ".TDF");
 }
 
 static int is_text(const char *n)
@@ -1081,7 +1090,8 @@ static void files_draw(void)
 
 static void files_draw_if_idle(void)
 {
-	if (F.active && F.mode != FU_PREVIEW && F.mode != FU_ANSI && !mmb_in_editor())
+	if (F.active && F.mode != FU_PREVIEW && F.mode != FU_ANSI &&
+	    F.mode != FU_TDF && !mmb_in_editor())
 		files_draw();
 }
 
@@ -1104,11 +1114,13 @@ int mmb_files_notice(const char *msg)
 static int s_files_prompted;
 
 static void preview_restore(void);
+static void tdf_release(void);
 
 static void files_close_tui(int restore_prompt)
 {
 	if (F.pv_saved)
 		preview_restore();
+	tdf_release();
 	if (mmb_ftp_running())
 		mmb_ftp_stop();
 	F.active = 0;
@@ -1906,6 +1918,119 @@ static void do_ansi_view(const char *path, const char *name)
 		show_info_for(path, name);
 }
 
+/* ---- TheDraw (.TDF) font preview ---------------------------------------
+ * Decodes a .TDF with the shared mmb_tdf decoder and renders a sample of its
+ * glyphs into the same CP437 cell grid the ANSI viewer uses, so the preview
+ * runs in the current MODE and the console is left as it was. Enter/Esc
+ * returns; Up/Down scroll a specimen taller than the screen. A bad or
+ * unsupported file falls back to the file-info overlay. */
+
+static void tdf_cell(void *ctx, int x, int y, int ch, int fg, int bg)
+{
+	(void)ctx;
+	if (x < 0 || x >= AN_MAX_COLS || y < 0 || y >= AN_MAX_ROWS)
+		return;
+	an_scr[y][x].ch = (unsigned char)ch;
+	an_scr[y][x].fg = (unsigned char)fg;
+	an_scr[y][x].bg = (unsigned char)bg;
+}
+
+static void tdf_release(void)
+{
+	if (F.tdf_buf)
+	{
+		if (G.plat && G.plat->free)
+			G.plat->free(F.tdf_buf);
+		F.tdf_buf = 0;
+	}
+	memset(&F.tdf, 0, sizeof(F.tdf));
+}
+
+static void tdf_render_sample(const char *name)
+{
+	const char *label = F.tdf.name[0] ? F.tdf.name : name;
+	int lh = F.tdf.max_height > 0 ? F.tdf.max_height : 1;
+	int c, x, y;
+
+	an_reset(AN_COLS);
+	y = 1;
+	x = 1;
+	for (; *label; label++)
+		x += mmb_tdf_stamp(&F.tdf, (unsigned char)*label, x, y, 15, 0,
+				   tdf_cell, 0);
+	y += lh + 1;
+
+	/* Printable ASCII, wrapped to the 80-column grid. */
+	x = 1;
+	for (c = 33; c <= 126 && y < AN_MAX_ROWS - 1; c++)
+	{
+		x += mmb_tdf_stamp(&F.tdf, c, x, y, 15, 0, tdf_cell, 0);
+		if (x >= AN_COLS - 1)
+		{
+			x = 1;
+			y += lh + 1;
+		}
+	}
+	y += lh;
+	if (y < 1)
+		y = 1;
+	if (y > AN_MAX_ROWS)
+		y = AN_MAX_ROWS;
+	F.an_rows = y;
+}
+
+static int tdf_open(const char *path, const char *name)
+{
+	unsigned char *buf;
+	unsigned got = 0;
+	int sz;
+	char line[96];
+
+	sz = mmb_vfs_size(path);
+	if (sz < 233)
+		return -1;
+	buf = G.plat->alloc((unsigned)sz + 1);
+	if (!buf)
+		return -1;
+	if (mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	tdf_release();
+	if (mmb_tdf_parse(buf, got, 0, &F.tdf) != 0)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	F.tdf_buf = buf;
+	strncpy(F.view_path, path, sizeof(F.view_path) - 1);
+	F.view_path[sizeof(F.view_path) - 1] = 0;
+	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
+	F.info_name[sizeof(F.info_name) - 1] = 0;
+	F.an_top = 0;
+	tdf_render_sample(name);
+	F.mode = FU_TDF;
+	an_render();
+	set_hint("TDF preview  up/down scroll  Enter/Esc returns");
+	strcpy(line, "[FILES] TDF ");
+	strncat(line, name, 32);
+	strcat(line, " ");
+	strncat(line, F.tdf.name, 20);
+	strcat(line, "\r\n");
+	ser(line);
+	return 0;
+}
+
+static void do_tdf_view(const char *path, const char *name)
+{
+	if (tdf_open(path, name) != 0)
+	{
+		show_info_for(path, name);
+		set_hint("Cannot preview this .TDF");
+	}
+}
+
 static void do_play(const char *path, const char *name)
 {
 	int rc = -1;
@@ -2139,6 +2264,11 @@ static void activate_enter(void)
 		do_ansi_view(path, e->name);
 		return;
 	}
+	if (is_tdf(e->name))
+	{
+		do_tdf_view(path, e->name);
+		return;
+	}
 	if (is_aud(e->name))
 	{
 		do_play(path, e->name);
@@ -2163,6 +2293,8 @@ static void do_view(void)
 		do_preview(path, e->name);
 	else if (is_ansi(e->name))
 		do_ansi_view(path, e->name);
+	else if (is_tdf(e->name))
+		do_tdf_view(path, e->name);
 	else if (is_aud(e->name))
 		do_play(path, e->name);
 	else if (is_text(e->name))
@@ -2210,6 +2342,8 @@ static void close_overlay(void)
 		preview_restore();
 	if (F.mode == FU_ANSI)
 		an_close();
+	if (F.mode == FU_TDF)
+		tdf_release();
 	F.mode = FU_BROWSE;
 	F.drop = -1;
 	set_hint("");
@@ -2247,7 +2381,8 @@ static void files_open(const char *start)
 
 static void handle_fkey(int n)
 {
-	if (F.mode == FU_PREVIEW || F.mode == FU_INFO || F.mode == FU_HELP)
+	if (F.mode == FU_PREVIEW || F.mode == FU_INFO || F.mode == FU_HELP ||
+	    F.mode == FU_TDF)
 	{
 		close_overlay();
 		return;
@@ -2414,7 +2549,7 @@ static int files_alt(char c)
 static void handle_arrow(int which)
 {
 	fu_panel *p = curpan();
-	if (F.mode == FU_ANSI)
+	if (F.mode == FU_ANSI || F.mode == FU_TDF)
 	{
 		if (which == 0)
 			an_scroll(-1);
@@ -2601,6 +2736,8 @@ static void handle_letter(char c)
 			an_toggle_80();
 		return;
 	}
+	if (F.mode == FU_TDF)
+		return;
 	if (F.drop >= 0)
 	{
 		int n, i;
@@ -2882,7 +3019,7 @@ const char *mmb_files_key(char c)
 		}
 		return G.out;
 	}
-	if (F.mode == FU_ANSI)
+	if (F.mode == FU_ANSI || F.mode == FU_TDF)
 	{
 		if (c == '\r' || c == '\n')
 		{
@@ -2890,7 +3027,7 @@ const char *mmb_files_key(char c)
 			files_draw_if_idle();
 			return G.out;
 		}
-		if (c >= 32 && c < 127)
+		if (F.mode == FU_ANSI && c >= 32 && c < 127)
 			handle_letter(c);
 		return G.out;
 	}
@@ -2943,7 +3080,8 @@ const char *mmb_files_key(char c)
 			}
 		}
 		else if (F.mode == FU_CONFIRM || F.mode == FU_MENU || F.mode == FU_HELP ||
-			 F.mode == FU_INFO || F.mode == FU_PLAY || F.mode == FU_VIEW)
+			 F.mode == FU_INFO || F.mode == FU_PLAY || F.mode == FU_VIEW ||
+			 F.mode == FU_TDF)
 			close_overlay();
 		if (F.active)
 			files_draw_if_idle();
@@ -2956,7 +3094,7 @@ const char *mmb_files_key(char c)
 		else if (F.mode == FU_PLAY)
 			close_overlay();
 		else if (F.mode == FU_HELP || F.mode == FU_INFO || F.mode == FU_MENU ||
-			 F.mode == FU_VIEW)
+			 F.mode == FU_VIEW || F.mode == FU_TDF)
 			close_overlay();
 		else if (F.mode == FU_CONFIRM)
 			apply_delete();
