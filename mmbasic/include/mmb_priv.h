@@ -640,6 +640,10 @@ const char *mmb_package_key(char c);
 void mmb_package_poll(void);
 void mmb_cmd_play(void);
 void mmb_cmd_beep(void);
+void mmb_cmd_juke(void);
+int mmb_in_juke(void);
+const char *mmb_juke_key(char c);
+void mmb_juke_poll(void);
 void mmb_cmd_load(void);
 void mmb_cmd_edit(void);
 void mmb_cmd_open(void);
@@ -1027,6 +1031,13 @@ void mmb_ramdisk_seed(void);
 
 void mmb_play_stop(void);
 void mmb_play_mix(void);
+void mmb_play_pause(int on);
+int mmb_play_take_ended(void);
+/* Read-only analyser feed for the JUKE visualiser. */
+#define MMB_AUDIO_BANDS 24
+#define MMB_AUDIO_SCOPE 256
+void mmb_audio_spectrum(float *bands, int nbands);
+int mmb_audio_scope(short *out, int n);
 void mmb_audio_apply_options(void);
 int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);

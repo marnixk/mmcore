@@ -25,7 +25,7 @@ static const char *const kws[] = {
 	"HELP", "HEX$", "HEADING", "HDMI", "HDMI0", "HEARTBEAT",
 	"IHELP", "IF", "INC", "INPUT", "INPUT$", "INT", "INTEGER", "IMAGE",
 	"INSTR", "IPCONFIG", "INKEY$", "IS",
-	"JSON_STRINGIFY$", "JSON_PARSE", "JSON$", "JSON",
+	"JSON_STRINGIFY$", "JSON_PARSE", "JSON$", "JSON", "JUKE",
 	"KILL",
 	"LOCAL", "LOCATE", "LOOP", "LIST", "LS", "LINE", "LEN", "LEFT$",
 	"LCASE$", "LOAD", "LOG", "LOG10", "LOF", "LOC", "LEGACY", "LARGE",

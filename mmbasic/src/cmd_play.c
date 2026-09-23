@@ -42,6 +42,72 @@ static unsigned s_pause_at;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
+/* ---- Visualiser tap (JUKE) -------------------------------------------- *
+ * A cheap filter-bank: a chain of one-pole low-passes with increasing cutoff.
+ * The difference between adjacent stages isolates a frequency band. This
+ * avoids an FFT while still giving a lively spectrum for the player. The
+ * scope ring holds the most recent downsampled waveform. */
+#define VIZ_BANDS MMB_AUDIO_BANDS
+#define VIZ_SCOPE MMB_AUDIO_SCOPE
+static int s_ended_natural;
+static float s_viz_lp[VIZ_BANDS + 1];
+static float s_viz_alpha[VIZ_BANDS + 1];
+static float s_viz_band[VIZ_BANDS];
+static int s_viz_ready;
+static short s_scope[VIZ_SCOPE];
+static unsigned s_scope_w;
+
+static void viz_init(void)
+{
+	int b;
+	double nyq = (double)MIX_RATE * 0.45;
+	for (b = 0; b <= VIZ_BANDS; b++)
+	{
+		double fc = 60.0 * pow(2.0, (double)b * 7.0 / (double)VIZ_BANDS);
+		if (fc > nyq)
+			fc = nyq;
+		s_viz_alpha[b] =
+			(float)(1.0 - exp(-2.0 * M_PI * fc / (double)MIX_RATE));
+	}
+	s_viz_ready = 1;
+}
+
+static void viz_tap(const short *pcm, unsigned nframes)
+{
+	unsigned i;
+
+	if (!s_viz_ready)
+		viz_init();
+	for (i = 0; i < nframes; i++)
+	{
+		float x = (float)((int)pcm[i * 2] + (int)pcm[i * 2 + 1]) *
+			  (1.0f / 131072.0f);
+		int b;
+		for (b = 0; b <= VIZ_BANDS; b++)
+			s_viz_lp[b] += s_viz_alpha[b] * (x - s_viz_lp[b]);
+		for (b = 0; b < VIZ_BANDS; b++)
+		{
+			float mag = s_viz_lp[b] - s_viz_lp[b + 1];
+			if (mag < 0.0f)
+				mag = -mag;
+			if (mag > s_viz_band[b])
+				s_viz_band[b] += (mag - s_viz_band[b]) * 0.5f;
+			else
+				s_viz_band[b] += (mag - s_viz_band[b]) * 0.08f;
+		}
+	}
+	for (i = 0; i + 8 <= nframes; i += 8)
+	{
+		int m = ((int)pcm[i * 2] + (int)pcm[i * 2 + 1]) / 2;
+		if (m > 32767)
+			m = 32767;
+		if (m < -32768)
+			m = -32768;
+		s_scope[s_scope_w & (VIZ_SCOPE - 1)] = (short)m;
+		s_scope_w++;
+	}
+}
+
 static void apply_vol(short *pcm, unsigned nframes)
 {
 	int i, n = (int)(nframes * 2);
@@ -103,6 +169,7 @@ static unsigned emit_pcm(short *pcm, unsigned nframes)
 
 	if (!nframes)
 		return 0;
+	viz_tap(pcm, nframes);
 	apply_vol(pcm, nframes);
 	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
 	{
@@ -170,6 +237,7 @@ static void play_teardown(void)
 
 void mmb_play_stop(void)
 {
+	s_ended_natural = 0;
 	if (G.plat && G.plat->audio_flush)
 		G.plat->audio_flush();
 	play_teardown();
@@ -529,8 +597,74 @@ void mmb_play_mix(void)
 		(void)flush_pending();
 		if (G.plat && G.plat->audio_kick)
 			G.plat->audio_kick();
+		s_ended_natural = 1;
 		play_teardown();
 	}
+}
+
+void mmb_play_pause(int on)
+{
+	if (!G.audio.playing)
+		return;
+	if (on && !G.audio.paused)
+	{
+		G.audio.paused = 1;
+		s_pause_at = mmb_now_ms();
+	}
+	else if (!on && G.audio.paused)
+	{
+		G.audio.paused = 0;
+		s_mix_origin += mmb_now_ms() - s_pause_at;
+	}
+}
+
+/* 1 once after the current track reached its end by itself (not PLAY STOP). */
+int mmb_play_take_ended(void)
+{
+	int e = s_ended_natural;
+	s_ended_natural = 0;
+	return e;
+}
+
+void mmb_audio_spectrum(float *bands, int nbands)
+{
+	int i;
+
+	if (!bands || nbands <= 0)
+		return;
+	if (!G.audio.playing || G.audio.paused)
+	{
+		for (i = 0; i < VIZ_BANDS; i++)
+			s_viz_band[i] *= 0.6f;
+	}
+	for (i = 0; i < nbands; i++)
+	{
+		float v = 0.0f;
+		if (i < VIZ_BANDS)
+		{
+			v = sqrtf(s_viz_band[i] * 12.0f);
+			if (v > 1.0f)
+				v = 1.0f;
+		}
+		bands[i] = v;
+	}
+}
+
+int mmb_audio_scope(short *out, int n)
+{
+	int i;
+
+	if (!out || n <= 0)
+		return 0;
+	if (n > VIZ_SCOPE)
+		n = VIZ_SCOPE;
+	for (i = 0; i < n; i++)
+	{
+		unsigned idx = (s_scope_w - (unsigned)n + (unsigned)i) &
+			       (unsigned)(VIZ_SCOPE - 1);
+		out[i] = s_scope[idx];
+	}
+	return n;
 }
 
 void mmb_cmd_play(void)

@@ -1,0 +1,43 @@
+name: JUKE
+kind: command
+
+JUKE is a first-party retro music player with a spectrum/VU visualiser. It
+plays one file or a whole folder as a queue, and keeps playing when you leave
+for another screen. It is a player only: there is no pattern or sample
+editing.
+
+JUKE [path$]
+
+  path$ - a file to play, or a folder to queue. Omit it to queue the
+          current directory. A single file plays once; a folder queue
+          continues through every supported file and then wraps around.
+
+Supported formats:
+
+    MP3     MPEG audio
+    MOD     ProTracker / ScreamTracker modules
+    XM      FastTracker II modules
+    WAV     PCM audio
+
+The visualiser is theme-aware: it follows OPTION EDIT THEME. Audio output
+follows OPTION AUDIO_TARGET and is controlled by ~PLAY~.
+
+Controls:
+
+    SPACE   pause or resume
+    <  >    previous / next track
+    S       stop the queue and silence audio
+    ESC     quit JUKE (music keeps playing)
+    Q       quit JUKE (music keeps playing)
+
+Enter also quits; the music is not stopped, so you can keep listening from
+the console or join another screen. The queue keeps advancing in the
+background until it reaches the end of a single file or you use PLAY STOP.
+
+Example:
+
+    JUKE "tests/TEST.MOD"
+    JUKE "music"
+    JUKE
+
+See ~PLAY~ for PLAY STOP, PLAY PAUSE and PLAY VOLUME.

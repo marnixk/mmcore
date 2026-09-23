@@ -2975,6 +2975,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("OPEN")] = mmb_cmd_open;
 		tab[mmb_kw_id("CLOSE")] = mmb_cmd_close;
 		tab[mmb_kw_id("PLAY")] = mmb_cmd_play;
+		tab[mmb_kw_id("JUKE")] = mmb_cmd_juke;
 		tab[mmb_kw_id("BEEP")] = mmb_cmd_beep;
 		tab[mmb_kw_id("LOAD")] = mmb_cmd_load;
 		tab[mmb_kw_id("EDIT")] = mmb_cmd_edit;
@@ -4196,5 +4197,6 @@ void mmb_poll(void)
 	mmb_wordpad_poll();
 	mmb_sprite_edit_poll();
 	mmb_afk_poll();
+	mmb_juke_poll();
 	mmb_front_poll();
 }
