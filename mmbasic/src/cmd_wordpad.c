@@ -23,7 +23,10 @@
 #define WP_DLG_RECOVER 4
 
 #define WP_DOCS       8
-#define WP_PICK_MAX   80
+/* Backing-store size for the recursive quick-open walk.  The ramdisk alone
+ * carries well over 100 files, so a small cap would hide documents before the
+ * sort even runs (issue #539). */
+#define WP_PICK_MAX   160
 #define WP_PICK_DEPTH 5
 
 #define WP_BOX_V  0xB3
@@ -1740,6 +1743,38 @@ static int wp_contains(const char *s, const char *sub)
 	return 0;
 }
 
+/* Filename part of a quick-open label, so a typed query can prefer a match on
+ * the document name over one that only occurs in a parent directory. */
+static const char *pick_base(const char *rel)
+{
+	const char *b = rel ? rel : "";
+
+	while (rel && *rel)
+	{
+		if (*rel == '/' || *rel == ':')
+			b = rel + 1;
+		rel++;
+	}
+	return b;
+}
+
+/* Quick open lists what WORDPAD edits: Markdown documents (its Open/Save As
+ * picker defaults to *.MD).  Restricting the walk keeps unrelated files from
+ * filling the quick-open cap (issue #539). */
+static int pick_ext_ok(const char *name)
+{
+	const char *dot = 0, *p;
+
+	if (!name || !name[0])
+		return 0;
+	for (p = name; *p; p++)
+		if (*p == '.')
+			dot = p;
+	if (!dot || dot == name)
+		return 0;
+	return wp_ch_eq(dot[1], 'M') && wp_ch_eq(dot[2], 'D') && dot[3] == 0;
+}
+
 static void wp_join(char *dst, int dstsz, const char *dir, const char *name)
 {
 	int n;
@@ -1792,41 +1827,52 @@ static void pick_walk(const char *dir, int depth)
 {
 	char list[2048];
 	char *s;
+	int pass;
 
 	if (!dir || !dir[0] || depth > WP_PICK_DEPTH || pick_n >= WP_PICK_MAX)
 		return;
 	list[0] = 0;
 	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
 		return;
-	s = list;
-	while (*s && pick_n < WP_PICK_MAX)
+	/* Two passes: add this directory's own Markdown files first, then
+	 * descend into its subdirectories.  mmb_vfs_list returns folders before
+	 * files, so walking it once would let a big subdirectory exhaust the cap
+	 * before the current directory's documents are collected. */
+	for (pass = 0; pass < 2; pass++)
 	{
-		char name[128];
-		int n = 0, is_dir = 0;
-
-		while (*s && *s != '\n' && *s != '\r' && n < (int)sizeof(name) - 1)
-			name[n++] = *s++;
-		name[n] = 0;
-		while (*s == '\r' || *s == '\n')
-			s++;
-		if (n > 0 && name[n - 1] == '/')
+		s = list;
+		while (*s && pick_n < WP_PICK_MAX)
 		{
-			name[n - 1] = 0;
-			is_dir = 1;
-		}
-		if (!name[0] || (name[0] == '.' && (!name[1] || (name[1] == '.' && !name[2]))))
-			continue;
-		{
-			char full[128];
+			char name[128];
+			int n = 0, is_dir = 0;
 
-			wp_join(full, sizeof(full), dir, name);
-			if (is_dir)
-				pick_walk(full, depth + 1);
-			else
+			while (*s && *s != '\n' && *s != '\r' && n < (int)sizeof(name) - 1)
+				name[n++] = *s++;
+			name[n] = 0;
+			while (*s == '\r' || *s == '\n')
+				s++;
+			if (n > 0 && name[n - 1] == '/')
 			{
-				strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
-				pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
-				pick_n++;
+				name[n - 1] = 0;
+				is_dir = 1;
+			}
+			if (!name[0] || (name[0] == '.' && (!name[1] ||
+			    (name[1] == '.' && !name[2]))))
+				continue;
+			if ((is_dir != 0) != (pass != 0))
+				continue;
+			{
+				char full[128];
+
+				wp_join(full, sizeof(full), dir, name);
+				if (is_dir)
+					pick_walk(full, depth + 1);
+				else if (pick_ext_ok(name))
+				{
+					strncpy(pick_path[pick_n], full, sizeof(pick_path[0]) - 1);
+					pick_path[pick_n][sizeof(pick_path[0]) - 1] = 0;
+					pick_n++;
+				}
 			}
 		}
 	}
@@ -1888,14 +1934,28 @@ static void pick_sort(void)
 
 static void pick_rebuild_view(void)
 {
-	int i;
+	int i, pass;
 
 	pick_vn = 0;
-	for (i = 0; i < pick_n; i++)
+	/* Two passes so a query that names a document ("b") selects it ahead of
+	 * entries that merely live under a matching directory ("lib/"). */
+	for (pass = 0; pass < 2; pass++)
 	{
-		if (!wp_contains(pick_rel(pick_path[i]), W.dlg))
-			continue;
-		pick_view[pick_vn++] = i;
+		for (i = 0; i < pick_n; i++)
+		{
+			const char *rel = pick_rel(pick_path[i]);
+			const char *base = pick_base(rel);
+			int hit;
+
+			if (pass == 0)
+				hit = wp_contains(base, W.dlg);
+			else
+				hit = wp_contains(rel, W.dlg) &&
+				      !wp_contains(base, W.dlg);
+			if (!hit)
+				continue;
+			pick_view[pick_vn++] = i;
+		}
 	}
 	if (pick_sel >= pick_vn)
 		pick_sel = pick_vn > 0 ? pick_vn - 1 : 0;
