@@ -130,6 +130,7 @@ Network and Terminal
 Sound and Play
 
     ~PLAY~ - play tones or media
+    ~JUKE~ - retro music player with a visualiser
 
 Graphics
 

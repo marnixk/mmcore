@@ -263,7 +263,7 @@ int mmb_front_in_app(void)
 {
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
-	       mmb_in_afk() || mmb_in_sprite_edit() ||
+	       mmb_in_afk() || mmb_in_juke() || mmb_in_sprite_edit() ||
 	       mmb_in_package();
 }
 
@@ -477,6 +477,13 @@ static void front_feed_dispatch(char c)
 	{
 		mmb_afk_key(c);
 		if (!mmb_in_afk())
+			mmb_front_prompt();
+		return;
+	}
+	if (mmb_in_juke())
+	{
+		fe_puts(mmb_juke_key(c));
+		if (!mmb_in_juke())
 			mmb_front_prompt();
 		return;
 	}
