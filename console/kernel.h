@@ -90,6 +90,7 @@ private:
 	volatile int		m_MouseWheel;
 	volatile int		m_nBreak;
 	volatile int		m_nCad;
+	volatile int		m_CadLatched;
 	char			m_RepeatSeq[16];
 	unsigned		m_RepeatLen;
 	unsigned		m_HoldMs;

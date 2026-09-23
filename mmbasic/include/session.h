@@ -33,6 +33,15 @@ int mmb_console_switch(int idx);
  * running. Returns 1 when a switch happened. */
 int mmb_console_poll(void);
 
+/* Tear down every session context and make console 0 active again. Frees the
+ * other interpreters; console 0 is reset so it can be re-initialised. */
+void mmb_console_reset(void);
+
+/* In-place warm reset (Ctrl+Alt+Del): re-initialise the interpreter on console
+ * 0 and land at a ready prompt, without resetting the SoC. The hardware reset
+ * can leave the USB controller dead on a Pi, which is why CAD does not use it. */
+void mmb_warm_reset(void);
+
 #ifdef __cplusplus
 }
 #endif
