@@ -56,12 +56,12 @@ last newline.
 
 Scrollback keeps the last OPTION TERM SCROLLBACK lines (default 200) above the
 pane. Once lines have scrolled off, Page Up / Page Down page through history,
-Up/Down move a line at a time, Home/End jump to the oldest line or back to
-live, and q returns to the live pane. Press / to search back for text (case
-insensitive), Enter jumps to the newest match, then n and N step to older and
-newer matches. The status row shows SCROLL -n while you are back in history;
-typing any other key returns to the live pane first. Set OPTION TERM
-SCROLLBACK 0 to disable history.
+Home/End jump to the oldest line or back to live, and q returns to the live
+pane. Up/Down are sent to the session as normal cursor keys. Press / to search
+back for text (case insensitive), Enter jumps to the newest match, then n and
+N step to older and newer matches. The status row shows SCROLL -n while you
+are back in history; typing any other key returns to the live pane first. Set
+OPTION TERM SCROLLBACK 0 to disable history.
 
 Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Download folder, Exit.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;

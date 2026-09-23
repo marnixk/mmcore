@@ -5148,13 +5148,9 @@ static int esc_feed(char c)
 				esc_reset();
 				return 1;
 			}
-			if ((c == 'A' && (T.sb_view > 0 || H.n > 0)) ||
-			    (c == 'B' && T.sb_view > 0))
-			{
-				sb_scroll_by(c == 'A' ? 1 : -1);
-				esc_reset();
-				return 1;
-			}
+			/* Up/Down are normal cursor keys: always forwarded to the
+			 * session. Only Page Up/Page Down move the scrollback
+			 * viewport (#592). */
 			esc_send();
 			return 1;
 		}
