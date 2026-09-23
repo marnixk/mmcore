@@ -15,6 +15,8 @@ import zipfile
 
 import pytest
 
+from native_harness import build_native
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "native", "mmbasic")
 
@@ -26,12 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def mmb_linux():
-    subprocess.run(
-        ["bash", os.path.join(REPO, "scripts", "build-native.sh")],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-    )
+    build_native()
     assert os.path.isfile(BIN), "native build produced no binary"
     return BIN
 
