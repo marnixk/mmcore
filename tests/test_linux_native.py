@@ -118,6 +118,33 @@ def test_sdl_integer_scale_viewport(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_libc_sprintf_shim_formats_width_and_precision(tmp_path):
+    """#549: the bare-metal sprintf must honour width, zero-pad and precision.
+
+    Native builds use libc's sprintf, so compile libc_shims.c with
+    MMB_PLATFORM_POSIX to exercise the shared formatter the Circle shim wraps.
+    """
+    exe = os.path.join(str(tmp_path), "libc_sprintf_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "libc_sprintf_host.c"),
+            os.path.join(REPO, "mmbasic", "src", "libc_shims.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run([exe], check=True, capture_output=True, text=True)
+    assert "all checks passed" in out.stdout, out.stdout + out.stderr
+
+
 def test_sdl_input_line_capture(tmp_path):
     """A blocking INPUT prompt must keep routing window keys to the program.
 
