@@ -31,6 +31,9 @@ void mmb_front_feed_byte(char c);
 /* True while a full-screen app owns the keyboard. */
 int mmb_front_in_app(void);
 
+/* True when the active console's REPL line editor holds no text. */
+int mmb_front_line_empty(void);
+
 /* Emit a fresh prompt (shows the hardware cursor). */
 void mmb_front_prompt(void);
 

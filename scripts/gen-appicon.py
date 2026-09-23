@@ -8,6 +8,7 @@ from it by box-filtered resizing:
     gen-appicon.py OUT.png [SIZE]   one PNG (default 256)
     gen-appicon.py --iconset DIR    the ten macOS .iconset PNGs
     gen-appicon.py --ico OUT.ico    a multi-size Windows .ico
+    gen-appicon.py --carray NAME SIZE OUT.c   a C RGBA byte array
 
 Stdlib only (zlib + struct), so CI needs no image tooling.
 """
@@ -223,6 +224,33 @@ def main(argv) -> int:
         ]
         write_ico(argv[1], images)
         print("wrote %s (%d sizes)" % (argv[1], len(images)))
+        return 0
+
+    if argv[0] == "--carray":
+        if len(argv) < 4:
+            raise SystemExit(
+                "gen-appicon: --carray needs NAME SIZE OUT.c"
+            )
+        name = argv[1]
+        size = int(argv[2])
+        if not name.isidentifier():
+            raise SystemExit("gen-appicon: bad C array name %r" % name)
+        w, h, bpp, src = load_branding()
+        rgba = resize(src, w, h, bpp, size, size)
+        lines = [
+            "/* Generated from assets/branding/mmcore-app-icon.png;"
+            " do not edit. */",
+            "const unsigned char %s[%d] = {" % (name, len(rgba)),
+        ]
+        for i in range(0, len(rgba), 16):
+            lines.append(
+                "\t" + ",".join(str(b) for b in rgba[i : i + 16]) + ","
+            )
+        lines.append("};")
+        lines.append("const unsigned int %s_w = %d;" % (name, size))
+        lines.append("const unsigned int %s_h = %d;" % (name, size))
+        Path(argv[3]).write_text("\n".join(lines) + "\n")
+        print("wrote %s (%dx%d)" % (argv[3], size, size))
         return 0
 
     out = argv[0]

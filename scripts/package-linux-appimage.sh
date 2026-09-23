@@ -52,6 +52,7 @@ Name=mmcore
 Comment=Colour Maximite 2 compatible BASIC interpreter
 Exec=mmcore %f
 Icon=mmcore
+StartupWMClass=mmcore
 Categories=Development;Education;
 MimeType=application/x-mmcore-app;
 Terminal=false

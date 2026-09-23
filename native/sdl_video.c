@@ -6,6 +6,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Older SDL2 headers predate these hints; the strings are still accepted by
+ * SDL_SetHint on every version (an unknown hint is simply ignored). */
+#ifndef SDL_HINT_APP_ID
+#define SDL_HINT_APP_ID "SDL_APP_ID"
+#endif
+#ifndef SDL_HINT_VIDEO_X11_WMCLASS
+#define SDL_HINT_VIDEO_X11_WMCLASS "SDL_VIDEO_X11_WMCLASS"
+#endif
+
+/* Runtime window icon, generated from assets/branding/mmcore-app-icon.png by
+ * scripts/gen-appicon.py --carray and compiled into the SDL build. */
+extern const unsigned char mmcore_icon[];
+extern const unsigned int mmcore_icon_w;
+extern const unsigned int mmcore_icon_h;
+
 static SDL_Window *s_win;
 static SDL_Renderer *s_ren;
 static SDL_Texture *s_tex;
@@ -45,18 +60,47 @@ static void free_buffers(void)
 	s_stage = 0;
 }
 
+/* Give the window a stable identity before the video subsystem starts, so the
+ * shell can associate it with the installed .desktop entry (and its icon). */
+static void set_app_identity(void)
+{
+	SDL_SetHint(SDL_HINT_APP_NAME, "mmcore");
+	SDL_SetHint(SDL_HINT_APP_ID, "com.marnixk.mmcore"); /* Wayland app-id */
+	SDL_SetHint(SDL_HINT_VIDEO_X11_WMCLASS, "mmcore");  /* X11 WM_CLASS */
+}
+
+/* Show the M avatar in the taskbar/dock even when launched outside a package
+ * (no .desktop entry to resolve). SDL_SetWindowIcon copies the surface. */
+static void set_window_icon(void)
+{
+	SDL_Surface *icon;
+
+	if (!s_win || !mmcore_icon_w || !mmcore_icon_h)
+		return;
+	icon = SDL_CreateRGBSurfaceWithFormatFrom(
+		(void *)mmcore_icon, (int)mmcore_icon_w,
+		(int)mmcore_icon_h, 32, (int)(mmcore_icon_w * 4),
+		SDL_PIXELFORMAT_RGBA32);
+	if (!icon)
+		return;
+	SDL_SetWindowIcon(s_win, icon);
+	SDL_FreeSurface(icon);
+}
+
 int sdl_video_open(int w, int h)
 {
+	set_app_identity();
 	if (SDL_Init(SDL_INIT_VIDEO) != 0)
 		return 0;
 	SDL_InitSubSystem(SDL_INIT_AUDIO); /* non-fatal if unavailable */
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
-	s_win = SDL_CreateWindow("MMBasic", SDL_WINDOWPOS_CENTERED,
+	s_win = SDL_CreateWindow("mmcore", SDL_WINDOWPOS_CENTERED,
 				 SDL_WINDOWPOS_CENTERED, w, h,
 				 SDL_WINDOW_RESIZABLE);
 	if (!s_win)
 		return 0;
+	set_window_icon();
 
 	s_ren = SDL_CreateRenderer(s_win, -1,
 				   SDL_RENDERER_ACCELERATED |
@@ -208,26 +252,49 @@ void sdl_video_request_quit(void)
 	s_quit = 1;
 }
 
-void sdl_video_toggle_fullscreen(void)
+void sdl_video_set_fullscreen(int on)
 {
 	Uint32 flags;
 
 	if (!s_win)
 		return;
 	flags = SDL_GetWindowFlags(s_win);
-	if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
+	if (on)
 	{
-		SDL_SetWindowFullscreen(s_win, 0);
-	}
-	else
-	{
+		if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
+			return;
 		/* Pin to the primary display before going borderless-fullscreen. */
 		SDL_SetWindowPosition(s_win, SDL_WINDOWPOS_CENTERED_DISPLAY(0),
 				      SDL_WINDOWPOS_CENTERED_DISPLAY(0));
 		SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
 	}
+	else
+	{
+		if (!(flags & SDL_WINDOW_FULLSCREEN_DESKTOP))
+			return;
+		SDL_SetWindowFullscreen(s_win, 0);
+	}
 	/* The drawable changed: force a full repaint (and a fresh letterbox). */
 	sdl_video_mark_dirty();
+}
+
+void sdl_video_toggle_fullscreen(void)
+{
+	if (!s_win)
+		return;
+	sdl_video_set_fullscreen(sdl_video_is_fullscreen() ? 0 : 1);
+}
+
+int sdl_video_is_fullscreen(void)
+{
+	if (!s_win)
+		return 0;
+	return (SDL_GetWindowFlags(s_win) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+}
+
+const char *sdl_video_window_title(void)
+{
+	return s_win ? SDL_GetWindowTitle(s_win) : "";
 }
 
 int sdl_video_should_quit(void)

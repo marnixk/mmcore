@@ -86,17 +86,28 @@ Users can confirm the signature with
 
 ```bash
 ./native/mmcore
+./native/mmcore --fullscreen   # open directly in desktop-fullscreen
 ```
 
-A window opens; the interpreter REPL is shown in it. Type at the terminal (the
-REPL reads stdin) — or with SDL keyboard input once focused. Output is rendered
-in the window; the serial stream is only mirrored to stdout when it is not a
-TTY (pipes, automation, `MMB_SDL_DUMP`) or when `MMB_SDL_SERIAL=1` is set, so an
-interactive terminal is not spammed with a second copy.
+A window opens; the interpreter REPL is shown in it. The window is titled
+`mmcore`. Type at the terminal (the REPL reads stdin) — or with SDL keyboard
+input once focused. Output is rendered in the window; the serial stream is only
+mirrored to stdout when it is not a TTY (pipes, automation, `MMB_SDL_DUMP`) or
+when `MMB_SDL_SERIAL=1` is set, so an interactive terminal is not spammed with a
+second copy.
 
+- `--fullscreen` opens the window directly in desktop-fullscreen on the primary
+  display, before the first frame (the boot banner is already fullscreen). It
+  can be combined with the other modes, e.g. `--fullscreen --term host` or
+  `--fullscreen /path/app.app`. The headless `native/mmbasic` accepts the flag
+  for CLI compatibility and ignores it.
 - `Alt+Enter` at the prompt toggles fullscreen on the primary display. The
   graphics mode is integer-scaled and centred into the window/display, so the
   picture stays crisp with black bars filling any leftover area.
+- `Ctrl+D` at an empty prompt runs `QUIT` (like a Unix shell), for both
+  `native/mmcore` and the headless `native/mmbasic`. With text on the line it
+  keeps its existing editing meaning. This is **native only**; the bare-metal Pi
+  is unchanged.
 - `Ctrl+Shift+V` pastes the host OS clipboard into the active input path (the
   REPL, a blocking `INPUT`, or a full-screen app such as `EDIT`, `WORDPAD`,
   `TERM`, or `CONNECT`). `EDIT`/`WORDPAD` copy/cut selections to the host
@@ -124,6 +135,7 @@ TERM sessions, so the AppImage is a portable app runner:
 ```bash
 ./native/mmcore /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
 ./native/mmcore --term bbs.example.net    # sealed TERM session
+./native/mmcore --fullscreen /path/app.app  # kiosk: fullscreen from the first frame
 ```
 
 A positional argument that names an existing `.app` file mounts its host
@@ -172,6 +184,7 @@ scope on Linux; those options report unavailable.
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
 | Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
+| Window / fullscreen | SDL2 window titled `mmcore`; `--fullscreen` at launch, `Alt+Enter` toggles on the primary display | HDMI fullscreen only |
 | Clipboard | `EDIT`/`WORDPAD` copy to the host OS clipboard; `Ctrl+Shift+V` pastes it (#525) | in-memory buffer only (no host clipboard) |
 | vsync / page flip | software (single framebuffer, SDL vsync pacing) | hardware DMA, VSync flip |
 | App-VM CLI | `.app` and `--term` sealed launches (#490/#491) | n/a (boots to the REPL) |
