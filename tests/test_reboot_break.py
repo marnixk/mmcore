@@ -2,7 +2,12 @@
 
 import time
 
+from harness import MMBasicConsole
 from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
+
+
+def _usb_console(kernel_image) -> MMBasicConsole:
+    return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
 
 
 def test_help_reboot(console):
@@ -64,3 +69,41 @@ def test_ctrl_c_page_write_loop_restores_console(fresh_console):
     assert c.send_line("CLS RGB(255,0,0)") == ""
     pix = int(c.send_line("PRINT PIXEL(4,4)"))
     assert ((pix >> 16) & 255) > 150
+
+
+def _ctrl_alt_del(con: MMBasicConsole) -> None:
+    con.key_down("ctrl")
+    con.key_down("alt")
+    time.sleep(0.15)
+    con.key_down("delete")
+    time.sleep(0.3)
+    con.key_up("delete")
+    time.sleep(0.15)
+    con.key_up("alt")
+    con.key_up("ctrl")
+
+
+def test_ctrl_alt_del_returns_to_prompt(kernel_image):
+    """#577: Ctrl+Alt+Del is a warm reset. It must land at a ready prompt with
+    the interpreter state cleared, not leave the session without a REPL."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("A = 1234") == ""
+        assert con.send_line("PRINT A") == "1234"
+
+        con.drain(quiet=0.2)
+        _ctrl_alt_del(con)
+        seen = ""
+        deadline = time.time() + 12.0
+        while time.time() < deadline:
+            seen += con.drain(quiet=0.3).decode(errors="ignore")
+            if "MMBasic" in seen:
+                break
+        assert "MMBasic" in seen
+
+        # Fresh session: variables and the program are gone.
+        assert con.send_line("PRINT A") == "0"
+        assert con.send_line("PRINT 6 * 7") == "42"
+    finally:
+        con.stop()

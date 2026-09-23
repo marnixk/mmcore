@@ -67,6 +67,18 @@ def test_startup_copyright_banner(kernel_image):
         assert "help" in ocr
         assert "mmbasic" in ocr or ver.lstrip("v")[:3] in ocr
         assert con.send_line("PRINT 6*7") == "42"
+
+        # Console output must not repaint the splash logo off the top band
+        # (#578/#579). The logo is stored in the console's own pixel buffer,
+        # so newlines after it cannot erase it.
+        con._ser.sendall(b"\r\n\r\n")
+        con.drain(quiet=0.2)
+        after = con.capture_png(
+            "/opt/cursor/artifacts/issue578_logo_after_console_output.png"
+        )
+        after_pix = _png_rgb(after, crop="1280x64+0+0")
+        after_logo = [p for p, c in after_pix.items() if min(c) >= 200]
+        assert after_logo, "splash logo must survive console newlines"
     finally:
         con.stop()
 

@@ -1,8 +1,11 @@
-"""PAINT app (#512) and its pointer path (#513).
+"""PAINT app (#512, #513) and its pixel-canvas rewrite (#584).
 
 Keyboard-only coverage runs against QEMU (no mouse attached, so the app must
 degrade to the keyboard). The native SDL pointer path is compiled and run as a
 host test so mouse motion/buttons reach the app without real hardware.
+
+#584 makes the canvas a true 1:1 pixel bitmap: one canvas pixel maps to one
+screen pixel, so screen coordinates are the framebuffer's, not cell centres.
 """
 import os
 import re
@@ -16,9 +19,8 @@ from ihelp_util import dump_topic
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Layout constants from mmbasic/src/cmd_paint.c.
-PT_OX, PT_OY = 2, 4
-CELL_W, CELL_H = 8, 16
+# Layout constants from mmbasic/src/cmd_paint.c (#584 pixel canvas).
+PT_PX0, PT_PY0 = 8, 48
 
 
 def _plain(s):
@@ -68,11 +70,9 @@ def _pack(rgb):
     return (r << 16) | (g << 8) | b
 
 
-def _cell_pixel(console, cx, cy):
-    """Packed RGB of the canvas pixel at (cx, cy) as rendered on the TUI."""
-    x = (PT_OX + cx) * CELL_W + CELL_W // 2
-    y = (PT_OY + cy) * CELL_H + CELL_H // 2
-    return _pack(console.screen_pixel(x, y))
+def _canvas_pixel(console, cx, cy):
+    """Packed RGB of canvas pixel (cx, cy), drawn 1:1 at screen +PX0/+PY0."""
+    return _pack(console.screen_pixel(PT_PX0 + cx, PT_PY0 + cy))
 
 
 def test_paint_opens_and_shows_chrome(fresh_console):
@@ -81,6 +81,7 @@ def test_paint_opens_and_shows_chrome(fresh_console):
     assert "PAINT" in seen.upper()
     assert "PT0.PNG" in seen.upper()
     assert "16X16" in seen.upper() or "16x16" in seen.lower()
+    assert "256" in seen  # MCGA 256 palette
     _quit(c)
     # Back at the prompt the console is usable again (no-mouse degrade).
     assert c.send_line("PRINT 2+3") == "5"
@@ -89,7 +90,7 @@ def test_paint_opens_and_shows_chrome(fresh_console):
 def test_paint_draws_and_saves_loadable_png(fresh_console):
     c = fresh_console
     _open(c, 'PAINT "A:/PT1.PNG", 16, 16')
-    _keys(c, b"4")          # colour 4 = red in the IBM palette
+    _keys(c, b"4")          # colour 4 = red in the MCGA/IBM palette
     _keys(c, b" ")          # pencil at (0,0)
     _keys(c, b"\x1b[C\x1b[C")  # right, right -> (2,0)
     _keys(c, b" ")          # pencil at (2,0)
@@ -115,10 +116,11 @@ def test_paint_reloads_sketch_on_canvas(fresh_console):
     # No explicit size: the loaded image defines the canvas.
     seen = _open(c, 'PAINT "A:/PT2.PNG"')
     assert "16X16" in seen.upper() or "16x16" in seen.lower()
-    _keys(c, b"\x1b[B")  # move the cursor off the checked cells
-    assert _is_red(_cell_pixel(c, 0, 0))
-    assert _is_red(_cell_pixel(c, 3, 0))
-    assert _is_white(_cell_pixel(c, 1, 0))
+    # Move the crosshair well clear of row 0 before sampling it.
+    _keys(c, b"\x1b[B" * 8)
+    assert _is_red(_canvas_pixel(c, 0, 0))
+    assert _is_red(_canvas_pixel(c, 3, 0))
+    assert _is_white(_canvas_pixel(c, 1, 0))
     _quit(c)
 
 
@@ -177,6 +179,42 @@ def test_paint_ctrl_z_undoes_last_pixel(fresh_console):
     v1 = _pixel(c, 1, 0)
     assert not ((v1 >> 8) & 255 > 130 and (v1 >> 16) & 255 < 120)  # green undone
     c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_mcga_palette_index(fresh_console):
+    """#584: colours come from the 256-entry MCGA palette, not just 16."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PT256.PNG", 16, 16')
+    _keys(c, b"k")          # type a colour index
+    seen = _keys(c, b"254\r")  # 254 is pure blue in the MCGA table
+    assert "254" in seen
+    _keys(c, b" ")
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PT256.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_blue(_pixel(c, 0, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_open_dialog_round_trips(fresh_console):
+    """#584: Open loads a sketch through the text dialog."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTOPEN.PNG", 16, 16')
+    _keys(c, b"1")          # blue
+    _keys(c, b" ")          # draw at (0,0)
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    # A fresh session opens the default (empty) file, then Open the sketch.
+    _open(c, 'PAINT "A:/PTEMPTY.PNG", 16, 16')
+    _keys(c, b"o")
+    seen = _keys(c, b"A:/PTOPEN.PNG\r", quiet=0.7)
+    assert "PTOPEN" in seen.upper()
+    _keys(c, b"\x1b[B" * 8)
+    assert _is_blue(_canvas_pixel(c, 0, 0))
+    _quit(c)
 
 
 def test_help_paint_topic(console):
@@ -253,12 +291,12 @@ def test_paint_mouse_draws_on_canvas(mouse_console):
     time.sleep(2.0)  # let the USB mouse enumerate and attach
     _open(c, 'PAINT "A:/PTM.PNG", 16, 16')
 
-    # Slam the pointer to the top-left, then place it over canvas (0,0), which
-    # is screen pixel (PT_OX*8+4, PT_OY*16+8) = (20, 72).
+    # Slam the pointer to the top-left, then place it over canvas pixel (4,4),
+    # which is screen pixel (PT_PX0+4, PT_PY0+4) = (12, 52).
     for _ in range(6):
         _mouse_move(c, -127, -127)
     time.sleep(0.5)
-    _mouse_move(c, 20, 72)
+    _mouse_move(c, PT_PX0 + 4, PT_PY0 + 4)
     time.sleep(0.4)
     _mouse_left(c, True)
     time.sleep(0.6)
@@ -270,7 +308,7 @@ def test_paint_mouse_draws_on_canvas(mouse_console):
 
     assert c.send_line('SPRITE LOADPNG 1, "PTM.PNG"') == ""
     assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _is_red(_pixel(c, 0, 0))
+    assert _is_red(_pixel(c, 4, 4))
     c.send_line("SPRITE CLOSE 1")
 
 

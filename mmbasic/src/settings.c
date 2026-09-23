@@ -522,7 +522,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
 	G.opt.ethernet_enabled = 0;
-	G.opt.ntp_enabled = 0;
+	G.opt.ntp_enabled = MMB_NTP_AUTO;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
 	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
 	strncpy(G.opt.timezone, "UTC", sizeof(G.opt.timezone) - 1);

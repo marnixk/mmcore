@@ -22,6 +22,8 @@
 /* ---- minimal interpreter/backend surface used by sdl_input.c ---- */
 static int g_running;
 static int g_front_feeds;
+static unsigned char g_feed[256];
+static int g_feed_n;
 static unsigned char g_inkey[MMB_INKEY];
 static int g_inkey_n;
 static char g_clip[256];
@@ -38,9 +40,11 @@ char *mmb_clipboard_get(void)
 
 void mmb_front_feed(const char *s, unsigned n)
 {
-	(void)s;
-	(void)n;
+	unsigned i;
+
 	g_front_feeds++;
+	for (i = 0; i < n && g_feed_n < (int)sizeof g_feed; i++)
+		g_feed[g_feed_n++] = (unsigned char)s[i];
 }
 
 int mmb_front_in_app(void) { return 0; }
@@ -141,6 +145,7 @@ static void reset(void)
 {
 	g_inkey_n = 0;
 	g_front_feeds = 0;
+	g_feed_n = 0;
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
 }
@@ -197,6 +202,21 @@ int main(void)
 	{
 		fprintf(stderr, "FAIL restored: feeds=%d queue=%d\n",
 			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
+	 * single NUL byte (#589). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_SPACE, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_front_feeds != 1 || g_feed_n != 1 || g_feed[0] != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-space: feeds=%d n=%d first=%d queue=%d\n",
+			g_front_feeds, g_feed_n,
+			g_feed_n ? g_feed[0] : -1, g_inkey_n);
 		fails++;
 	}
 

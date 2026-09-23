@@ -200,13 +200,16 @@ typedef struct mmb_options {
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
 	int term_autolog;      /* OPTION TERM AUTOLOG ON|OFF (default OFF) */
 	char ntp_server[64];   /* OPTION NTP SERVER "host[:port]" (#524) */
-	int ntp_enabled;       /* OPTION NTP ON|OFF (default OFF) */
+	int ntp_enabled;       /* OPTION NTP: MMB_NTP_AUTO/0 OFF/1 ON (#581) */
 	char timezone[64];     /* OPTION TIMEZONE name/offset (default UTC) */
 	int tz_offset_min;     /* derived minutes east of UTC */
 } mmb_options;
 
 #define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
 #define MMB_NTP_DEFAULT_PORT   123
+/* Default policy: sync at boot once the network is up, unless explicitly
+ * disabled with OPTION NTP OFF. */
+#define MMB_NTP_AUTO           (-1)
 
 /* Default OPTION PATH: first-party .APP packages ship on the ramdisk (#520). */
 #define MMB_APP_PATH_DEFAULT "A:/APPS/"
@@ -726,6 +729,7 @@ void mmb_cmd_end_function(void);
 
 void mmb_gfx_init(void);
 void mmb_gfx_apply_default_mode(void);
+void mmb_gfx_reapply_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
 int mmb_gfx_mode_for_size(int w, int h);
 void mmb_gfx_reset_console(int wipe);
@@ -1120,10 +1124,6 @@ void mmb_sprite_overlay(void);
 int mmb_in_sprite_edit(void);
 const char *mmb_sprite_edit_key(char c);
 void mmb_sprite_edit_poll(void);
-void mmb_cmd_ansi(void);
-int mmb_in_ansi_edit(void);
-const char *mmb_ansi_edit_key(char c);
-void mmb_ansi_edit_poll(void);
 int mmb_call_named_sub(const char *name);
 int mmb_try_user_function(mmb_val *out);
 int mmb_play_wav(const char *path);

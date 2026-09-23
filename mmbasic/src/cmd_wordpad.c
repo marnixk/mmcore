@@ -123,6 +123,10 @@ typedef struct {
 	int last_scroll;
 	unsigned rec_at;
 	unsigned rec_sig;
+	/* Graphics mode captured on entry so a later WORDPAD session starts
+	 * from a fully torn-down screen (issue #583). */
+	int saved_mode;
+	int saved_bits;
 	wp_vrow vrows[WP_MAX_VR];
 } wp_state;
 
@@ -691,6 +695,32 @@ static int line_is_fence(int ls, int le)
 	       W.buf[ls + 2] == '`';
 }
 
+/* True when the line starting at target sits inside a ``` fence and is not a
+ * fence line itself.  Scans from the top so the key handler does not depend on
+ * the last-drawn layout. */
+static int line_in_code(int target)
+{
+	int pos = 0, in_code = 0;
+
+	while (pos <= W.len)
+	{
+		int ls = pos, le = pos;
+
+		while (le < W.len && W.buf[le] != '\n')
+			le++;
+		if (ls == target)
+			return in_code && !line_is_fence(ls, le);
+		if (line_is_fence(ls, le))
+			in_code = !in_code;
+		pos = le;
+		if (pos < W.len && W.buf[pos] == '\n')
+			pos++;
+		else
+			break;
+	}
+	return 0;
+}
+
 /* Recognise a list marker after optional leading spaces.  Returns 0 (none),
  * 1 (bullet) or 2 (ordered), and fills the indent width, marker width and
  * ordered number.  A bullet keeps its GFM family; an ordered marker is
@@ -1169,13 +1199,46 @@ static void wp_serial_dump(void)
 {
 }
 
+/* Drop every module buffer that outlives a single WORDPAD session.  Called on
+ * entry and exit so leaving and reopening with a file argument starts from the
+ * same clean state as a first launch (issue #583). */
+static void wp_reset_globals(void)
+{
+	memset(docs, 0, sizeof(docs));
+	memset(pick_path, 0, sizeof(pick_path));
+	pick_root[0] = 0;
+	memset(pick_view, 0, sizeof(pick_view));
+	pick_n = pick_sel = pick_row0 = pick_vn = 0;
+	fd_dir[0] = 0;
+	memset(wp_fd_mask, 0, sizeof(wp_fd_mask));
+	memset(fd_files, 0, sizeof(fd_files));
+	memset(fd_dirs, 0, sizeof(fd_dirs));
+	fd_nfile = fd_ndir = fd_fsel = fd_dsel = 0;
+	fd_ftop = fd_dtop = fd_focus = 0;
+	memset(menu_x, 0, sizeof(menu_x));
+	wp_rec_sidecar[0] = 0;
+	wp_undo_reset();
+}
+
+/* Restore the graphics mode the caller was in before WORDPAD took over and
+ * clear page-1 overlay / sprite state an earlier program may have left armed,
+ * then repaint the console (mirrors the AFK/EDITOR teardown, issue #583). */
+static void wp_restore_gfx(void)
+{
+	if (W.saved_mode != G.gfx.mode || W.saved_bits != G.gfx.bits)
+		mmb_gfx_set_mode(W.saved_mode, W.saved_bits);
+	mmb_gfx_reset_console(0);
+	mmb_gfx_cls(G.gfx.bg);
+}
+
 static void wp_leave(void)
 {
 	wp_autosave();
 	tui_end();
-	mmb_gfx_cls(G.gfx.bg);
+	wp_restore_gfx();
 	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
+	wp_reset_globals();
 }
 
 static void sel_clear(void)
@@ -1376,6 +1439,26 @@ static void indent_line(int dir)
 	W.dirty = 1;
 }
 
+/* Enter inside a fenced code block: carry the current line's leading
+ * whitespace onto the new line (typical editor auto-indent, issue #582). */
+static void insert_newline_code(void)
+{
+	int ls = line_start(W.cx);
+	int le = line_end(W.cx);
+	char ind[WP_INDENT_MAX + 1];
+	int n = 0, i;
+
+	for (i = ls; i < le && n < WP_INDENT_MAX; i++)
+	{
+		if (W.buf[i] != ' ' && W.buf[i] != '\t')
+			break;
+		ind[n++] = W.buf[i];
+	}
+	insert_char('\n');
+	for (i = 0; i < n; i++)
+		insert_char(ind[i]);
+}
+
 /* Enter inside a list: continue the marker on the new line, or terminate /
  * outdent when the current item is empty. */
 static void insert_newline_list(void)
@@ -1385,6 +1468,13 @@ static void insert_newline_list(void)
 	int ind, mlen, num, kind;
 	int content, i, empty;
 
+	/* Code content is literal: never treat it as a list, and keep its
+	 * indentation on the next line. */
+	if (line_in_code(ls))
+	{
+		insert_newline_code();
+		return;
+	}
 	kind = list_marker(ls, le, &ind, &mlen, &num);
 	if (!kind)
 	{
@@ -3480,6 +3570,12 @@ static void draw_body(void)
 			x_px = W.pane_left * 8;
 			fg = style_fg(style);
 			bg = style_bg(style);
+			/* A fenced code block paints a full-width band, not just the
+			 * text run, so short lines and blank lines stay inside the
+			 * block chrome (issue #582). */
+			if (bg != WP_BG && vis >= 0 && vis < W.text_rows)
+				wp_fill_px(W.pane_left * 8, screen_row * 16,
+					   W.pane_width * 8, vh * 16, bg);
 			if (vis >= 0)
 			{
 				while (i < W.vrows[vr].off1)
@@ -3846,7 +3942,7 @@ void mmb_cmd_wordpad(void)
 	char path[128];
 	char canon[128];
 
-	path[0] = 0;
+	memset(path, 0, sizeof(path));
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
@@ -3855,8 +3951,7 @@ void mmb_cmd_wordpad(void)
 			strncpy(path, v.s, sizeof(path) - 1);
 	}
 	memset(&W, 0, sizeof(W));
-	memset(docs, 0, sizeof(docs));
-	wp_undo_reset();
+	wp_reset_globals();
 	W.active = 1;
 	W.wide = 0;
 	W.ndoc = 1;
@@ -3864,6 +3959,8 @@ void mmb_cmd_wordpad(void)
 	W.last_scroll = -1;
 	W.rec_at = mmb_now_ms();
 	W.rec_sig = 0;
+	W.saved_mode = G.gfx.mode;
+	W.saved_bits = G.gfx.bits;
 	if (path[0])
 	{
 		canon_path(path, canon, sizeof(canon));

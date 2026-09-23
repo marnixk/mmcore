@@ -21,6 +21,9 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx);
 /* Point the line editor at another virtual console's state (0-based). */
 void mmb_front_select(int idx);
 
+/* Clear every console's line editor/history (warm reset). */
+void mmb_front_reset(void);
+
 /* Feed console bytes (ESC sequences and 0x01-prefixed Alt in included). */
 void mmb_front_feed(const char *s, unsigned n);
 void mmb_front_feed_byte(char c);

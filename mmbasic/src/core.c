@@ -1693,7 +1693,7 @@ void mmb_option_reset(void)
 	G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
 	G.opt.boot_mode = 0;
 	G.opt.boot_app[0] = 0;
-	G.opt.ntp_enabled = 0;
+	G.opt.ntp_enabled = MMB_NTP_AUTO;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
 	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
 	strncpy(G.opt.timezone, "UTC", sizeof(G.opt.timezone) - 1);
@@ -2996,7 +2996,6 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("ERASE")] = mmb_cmd_clear;
 		tab[mmb_kw_id("MATH")] = mmb_cmd_math;
 		tab[mmb_kw_id("SPRITE")] = mmb_cmd_sprite;
-		tab[mmb_kw_id("ANSI")] = mmb_cmd_ansi;
 		tab[mmb_kw_id("SETTINGS")] = mmb_cmd_settings;
 		tab[mmb_kw_id("SETTICK")] = mmb_cmd_settick;
 		inited = 1;
@@ -3662,11 +3661,6 @@ static void exec_statement(void)
 		mmb_cmd_sprite();
 		return;
 	}
-	if (mmb_match("ANSI"))
-	{
-		mmb_cmd_ansi();
-		return;
-	}
 	if (mmb_match("SETTICK"))
 	{
 		mmb_cmd_settick();
@@ -4243,7 +4237,6 @@ void mmb_poll(void)
 	mmb_wordpad_poll();
 	mmb_paint_poll();
 	mmb_sprite_edit_poll();
-	mmb_ansi_edit_poll();
 	mmb_afk_poll();
 	mmb_juke_poll();
 	mmb_front_poll();

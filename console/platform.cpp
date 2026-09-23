@@ -211,6 +211,25 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 	}
 }
 
+/* Boot-splash pixel: write through the terminal's own pixel buffer so a
+ * later console text flush (newlines/scroll) cannot erase it. Writing the
+ * framebuffer directly works on QEMU (NO_SCREEN_DMA_BURST_LENGTH, single
+ * buffer) but on Pi hardware the console repaints its buffer over the logo
+ * on the first write, so the logo vanishes after one frame. */
+static void plat_console_pixel(int x, int y, unsigned rgb)
+{
+	CScreenDevice *sc;
+
+	if (!s_kernel)
+		return;
+	sc = &s_kernel->Screen();
+	if (x < 0 || y < 0 || (unsigned)x >= sc->GetWidth() ||
+	    (unsigned)y >= sc->GetHeight())
+		return;
+	(void)plat_fb_visible();
+	sc->SetPixel((unsigned)x, (unsigned)y, (TScreenColor)rgb_to_raw(rgb));
+}
+
 static unsigned plat_get_pixel(int x, int y)
 {
 	CBcmFrameBuffer *fb;
@@ -1512,6 +1531,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.write_serial = plat_write_serial;
 	plat.write_screen = plat_write_screen;
 	plat.set_pixel = plat_set_pixel;
+	plat.console_pixel = plat_console_pixel;
 	plat.get_pixel = plat_get_pixel;
 	plat.fill_screen = plat_fill;
 	plat.hdmi_width = plat_w;

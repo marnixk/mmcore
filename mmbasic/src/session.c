@@ -36,6 +36,74 @@ int mmb_console_active(void)
 	return g_console;
 }
 
+/* Release the interpreter-owned allocations (vars, graphics pages, sprites)
+ * of one context. mmb_reset() operates on g_cur. */
+static void console_free_context(mmb *m)
+{
+	mmb *save = g_cur;
+
+	if (!m)
+		return;
+	g_cur = m;
+	mmb_reset();
+	g_cur = save;
+}
+
+void mmb_console_reset(void)
+{
+	const mmb_platform *plat = G.plat;
+	int i;
+
+	for (i = 1; i < MMB_MAX_CONSOLES; i++)
+	{
+		if (!g_mmb[i])
+			continue;
+		console_free_context(g_mmb[i]);
+		if (plat && plat->free)
+			plat->free(g_mmb[i]);
+		g_mmb[i] = 0;
+	}
+	if (g_mmb[0])
+	{
+		console_free_context(g_mmb[0]);
+		memset(g_mmb[0], 0, sizeof(mmb));
+		g_mmb[0]->plat = plat;
+		/* A fresh session starts at the ramdisk root, like boot. */
+		g_mmb[0]->drive = 'A';
+		strcpy(g_mmb[0]->cwd, "A:/");
+	}
+	memset(s_initialized, 0, sizeof(s_initialized));
+	memset(s_shown, 0, sizeof(s_shown));
+	s_pending = -1;
+	g_console = 0;
+	g_cur = g_mmb[0];
+	s_initialized[0] = 1;
+	s_shown[0] = 1; /* the warm reset paints the banner and prompt itself */
+	mmb_front_reset();
+}
+
+/* Ctrl+Alt+Del: re-initialise the interpreter in place. A hardware reset
+ * restarts the whole SoC but can leave the USB controller unusable on a Pi,
+ * so the prompt never returns (#577). A warm reset keeps the display and
+ * keyboard attached and always lands at a ready prompt. */
+void mmb_warm_reset(void)
+{
+	G.running = 0;
+	mmb_play_stop();
+	mmb_close_tcp_files();
+	mmb_settings_save();
+
+	mmb_console_reset();
+	mmb_gfx_init();
+	mmb_settings_load();
+	mmb_gfx_apply_default_mode();
+	mmb_audio_apply_options();
+	mmb_console_apply_colour();
+
+	mmb_print_startup();
+	mmb_boot_start();
+}
+
 /* Bring up a fresh interpreter context for a console that has not run yet.
  * Options mirror the console we switched from so PROMPT/MODE/etc. match. */
 static void console_bring_up(int idx, const mmb *from)
@@ -87,6 +155,16 @@ static int console_do_switch(int idx)
 	g_console = idx;
 	g_cur = g_mmb[idx];
 	mmb_front_select(idx);
+
+	/* Retune the display to this console's MODE before repainting it: the
+	 * hardware is still sized for the console we are leaving (#580). */
+	mmb_gfx_reapply_mode();
+
+	/* The saved screen does not carry the terminal pen: re-apply this
+	 * console's COLOUR so the next characters use its foreground/background
+	 * (#580). Do it before the restore so a terminal repaint cannot cover a
+	 * TUI console's restored framebuffer. */
+	mmb_console_apply_colour();
 
 	if (plat && plat->console_restore)
 		plat->console_restore(idx, mmb_front_in_app());
