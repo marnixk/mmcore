@@ -93,6 +93,16 @@ def test_tdf_lib_declares_api():
         assert needle in src, needle
 
 
+def test_tdf_lib_guards_glyph_index():
+    """#588: TDF.def% must not be indexed before idx% is range-checked.
+
+    MMBasic AND is not short-circuit, so ``idx% >= 0 AND TDF.def%(idx%)``
+    still evaluates TDF.def%(-1) for a space and faults.
+    """
+    src = LIB.read_text(encoding="utf-8")
+    assert "AND TDF.def%(" not in src
+
+
 def test_tdf_demo_includes_library():
     src = DEMO.read_text(encoding="utf-8")
     assert '#INCLUDE "A:/lib/TDF.BAS"' in src
@@ -328,6 +338,30 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
     blank = c.screen_pixels(paper[:40])
     assert all(r > 150 and g > 150 and b > 150 for r, g, b in ink), ink
     assert all(r < 40 and g < 40 and b < 40 for r, g, b in blank), blank
+
+
+def test_tdf_print_spaces_advance_safely(fresh_console):
+    """#588: leading, trailing and repeated spaces must advance, not fault."""
+    c = fresh_console
+    text = " A  B "
+    out = _run(
+        c,
+        "TDFSP.BAS",
+        [
+            '#INCLUDE "A:/lib/TDF.BAS"',
+            "CLS",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF.Load "A:/fonts/tdf/STANDARD.TDF"',
+            'TDF.Print 2, 3, "' + text + '"',
+            "H% = MM.HPOS : V% = MM.VPOS",
+            'W% = TDF.Width("' + text + '")',
+            "LOCATE 20, 0",
+            'PRINT H%; ","; V%; ","; W%',
+            "TDF.Close",
+        ],
+    )
+    exp = expected_width(TDF_DIR / "STANDARD.TDF", text)
+    assert _lines(out)[-1].endswith(f"{(2 + exp) * 8},48,{exp}"), out
 
 
 def test_tdf_demo_runs(console):

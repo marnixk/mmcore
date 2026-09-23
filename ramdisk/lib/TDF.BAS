@@ -248,8 +248,13 @@ SUB TDF.DrawGlyph(x%, y%, idx%)
 END SUB
 
 ' Draw s$ at character cell (x% = column, y% = row).
+'
+' MMBasic AND does not short-circuit, and nested IF/ELSE blocks do not nest
+' reliably, so the glyph table is only indexed after a single-line guard has
+' established idx% is in range. A space (ASCII 32), and any undefined or
+' out-of-range glyph, advances by TDF.Gap() without touching TDF.def%.
 SUB TDF.Print(x%, y%, s$)
-  LOCAL i%, c%, idx%, cx%
+  LOCAL i%, c%, idx%, cx%, has%
   IF TDF.open% = 0 THEN ERROR "TDF: no font loaded"
   cx% = x%
   FOR i% = 1 TO LEN(s$)
@@ -259,7 +264,9 @@ SUB TDF.Print(x%, y%, s$)
     ELSE
       idx% = -1
     END IF
-    IF idx% >= 0 AND TDF.def%(idx%) = 1 THEN
+    has% = 0
+    IF idx% >= 0 THEN has% = TDF.def%(idx%)
+    IF has% = 1 THEN
       CALL TDF.DrawGlyph(cx%, y%, idx%)
       cx% = cx% + TDF.wid%(idx%) + TDF.spacing%
     ELSE
@@ -271,7 +278,7 @@ END SUB
 
 ' Columns that TDF.Print would advance for s$, without drawing.
 FUNCTION TDF.Width(s$)
-  LOCAL i%, c%, idx%, w%
+  LOCAL i%, c%, idx%, w%, has%
   w% = 0
   FOR i% = 1 TO LEN(s$)
     c% = ASC(MID$(s$, i%, 1))
@@ -280,7 +287,9 @@ FUNCTION TDF.Width(s$)
     ELSE
       idx% = -1
     END IF
-    IF idx% >= 0 AND TDF.def%(idx%) = 1 THEN
+    has% = 0
+    IF idx% >= 0 THEN has% = TDF.def%(idx%)
+    IF has% = 1 THEN
       w% = w% + TDF.wid%(idx%) + TDF.spacing%
     ELSE
       w% = w% + TDF.Gap()
