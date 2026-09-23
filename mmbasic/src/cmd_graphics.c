@@ -1030,6 +1030,185 @@ void mmb_cmd_bitmap(void)
 		       bits, nbytes, w, h, scale, fg, bg, fill_bg);
 }
 
+/* ---- SCREENSHOT (issue #517/#522) ---------------------------------- */
+
+/* The bare-metal sprintf shim ignores width/zero padding, so format the
+ * timestamp fields by hand. */
+static void shot_pad(char **o, int v, int digits)
+{
+	char tmp[16];
+	int n = 0, i;
+	if (v < 0)
+		v = 0;
+	do
+	{
+		tmp[n++] = (char)('0' + (v % 10));
+		v /= 10;
+	} while (v && n < 15);
+	while (n < digits && n < 15)
+		tmp[n++] = '0';
+	for (i = n - 1; i >= 0; i--)
+		*(*o)++ = tmp[i];
+}
+
+static void shot_build(const char *folder, int seq, char *out)
+{
+	char name[48];
+	char *o = name;
+	int flen;
+
+	*o++ = 'S';
+	*o++ = 'H';
+	*o++ = 'O';
+	*o++ = 'T';
+	*o++ = '_';
+	shot_pad(&o, 2000 + G.clk_y, 4);
+	shot_pad(&o, G.clk_mo, 2);
+	shot_pad(&o, G.clk_d, 2);
+	*o++ = '_';
+	shot_pad(&o, G.clk_h, 2);
+	shot_pad(&o, G.clk_mi, 2);
+	shot_pad(&o, G.clk_s, 2);
+	if (seq > 0)
+	{
+		*o++ = '_';
+		shot_pad(&o, seq, 1);
+	}
+	*o = 0;
+
+	flen = folder ? (int)strlen(folder) : 0;
+	if (flen && (folder[flen - 1] == '/' || folder[flen - 1] == '\\'))
+		sprintf(out, "%s%s.PNG", folder, name);
+	else if (flen)
+		sprintf(out, "%s/%s.PNG", folder, name);
+	else
+		sprintf(out, "%s.PNG", name);
+}
+
+/* Timestamped path in the default A: capture folder, uniquified within a
+ * second so rapid captures never overwrite each other. */
+void mmb_screenshot_default_path(char *out, int outsz)
+{
+	int seq;
+
+	(void)outsz;
+	for (seq = 0; seq < 1000; seq++)
+	{
+		shot_build("A:/", seq, out);
+		if (!mmb_vfs_exists(out))
+			return;
+	}
+	shot_build("A:/", 999, out);
+}
+
+/* Capture the displayed HDMI framebuffer as a PNG on `path`. Returns 0 on
+ * success, -1 when no framebuffer is available or the write fails. Never
+ * longjmps, so the hotkey path can call it from outside a program. */
+int mmb_screenshot_capture(const char *path)
+{
+	int w, h, x, y, rc = -1;
+	unsigned char *rgb = 0, *png = 0;
+	unsigned n = 0;
+
+	if (!path || !path[0] || !G.plat || !G.plat->get_pixel)
+		return -1;
+	w = G.plat->hdmi_width ? G.plat->hdmi_width() : 0;
+	h = G.plat->hdmi_height ? G.plat->hdmi_height() : 0;
+	if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
+		return -1;
+	if (G.plat->present_wait)
+		G.plat->present_wait();
+	rgb = G.plat->alloc((unsigned)w * (unsigned)h * 3u);
+	if (!rgb)
+		return -1;
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+		{
+			unsigned c = G.plat->get_pixel(x, y);
+			unsigned char *p = rgb +
+				((unsigned)y * (unsigned)w + (unsigned)x) * 3u;
+			p[0] = (unsigned char)((c >> 16) & 0xFF);
+			p[1] = (unsigned char)((c >> 8) & 0xFF);
+			p[2] = (unsigned char)(c & 0xFF);
+		}
+	if (mmb_png_encode_rgb(rgb, w, h, &png, &n) == 0)
+		rc = mmb_vfs_write(path, png, n, 0);
+	G.plat->free(rgb);
+	G.plat->free(png);
+	return rc;
+}
+
+/* F12 global hotkey: write the default capture, returning a short error line
+ * (and -1) when it fails. On success the message is empty (a full-screen TUI
+ * must not have text painted over it). */
+int mmb_screenshot_hotkey(char *msg, int msgsz)
+{
+	char path[256];
+
+	mmb_screenshot_default_path(path, (int)sizeof(path));
+	if (mmb_screenshot_capture(path) != 0)
+	{
+		if (msg && msgsz > 0)
+		{
+			const char *e = "?SCREENSHOT\r\n";
+			int i = 0;
+			while (e[i] && i < msgsz - 1)
+			{
+				msg[i] = e[i];
+				i++;
+			}
+			msg[i] = 0;
+		}
+		return -1;
+	}
+	if (msg && msgsz > 0)
+		msg[0] = 0;
+	return 0;
+}
+
+void mmb_cmd_screenshot(void)
+{
+	char path[256];
+	char folder[160];
+	mmb_val v;
+
+	mmb_skip_sp();
+	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+	{
+		mmb_screenshot_default_path(path, (int)sizeof(path));
+	}
+	else
+	{
+		v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(folder, v.s, sizeof(folder) - 1);
+		folder[sizeof(folder) - 1] = 0;
+		if (folder[0] && (folder[strlen(folder) - 1] == '/' ||
+				  folder[strlen(folder) - 1] == '\\' ||
+				  mmb_vfs_isdir(folder)))
+		{
+			int seq;
+			for (seq = 0; seq < 1000; seq++)
+			{
+				shot_build(folder, seq, path);
+				if (!mmb_vfs_exists(path))
+					break;
+			}
+			if (seq >= 1000)
+				shot_build(folder, 999, path);
+		}
+		else
+		{
+			strncpy(path, folder, sizeof(path) - 1);
+			path[sizeof(path) - 1] = 0;
+		}
+	}
+	if (mmb_screenshot_capture(path) != 0)
+		mmb_error("?SCREENSHOT");
+	mmb_out(path);
+}
+
 void mmb_cmd_graphics(const char *kw)
 {
 	(void)kw;

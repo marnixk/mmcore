@@ -201,6 +201,7 @@ RSET	LSET	alias	alias of LSET
 RTRIM$	RTRIM$	topic	dedicated topic
 RUN	RUN	topic	dedicated topic
 SAVE	SAVE	topic	dedicated topic
+SCREENSHOT	SCREENSHOT	topic	dedicated topic
 SEEK	SEEK	topic	dedicated topic
 SELECT	SELECT	topic	dedicated topic
 SELECT CASE	SELECT	alias	alias of SELECT
