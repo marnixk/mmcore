@@ -154,7 +154,7 @@ def test_help_ntp(console):
     assert tz != "?SYNTAX ERROR"
     assert "Europe/Amsterdam" in tz
     opt = dump_topic(console, "OPTION")
-    assert "NTP ON|OFF" in opt
+    assert "NTP AUTO|ON|OFF" in opt
     assert "TIMEZONE" in opt
 
 

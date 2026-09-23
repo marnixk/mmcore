@@ -1693,7 +1693,7 @@ void mmb_option_reset(void)
 	G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
 	G.opt.boot_mode = 0;
 	G.opt.boot_app[0] = 0;
-	G.opt.ntp_enabled = 0;
+	G.opt.ntp_enabled = MMB_NTP_AUTO;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
 	G.opt.ntp_server[sizeof(G.opt.ntp_server) - 1] = 0;
 	strncpy(G.opt.timezone, "UTC", sizeof(G.opt.timezone) - 1);

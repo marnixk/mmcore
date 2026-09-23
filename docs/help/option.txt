@@ -62,8 +62,10 @@ Settings:
     leaves the cable unused (reboot to free the stack if Ethernet is already
     up). Only one of Wi-Fi or Ethernet is active. The setting is saved across
     reboots.
-  NTP ON|OFF
-    Sync the clock from the network at boot (best-effort). Default OFF.
+  NTP AUTO|ON|OFF
+    Sync the clock from the network at boot (best-effort). AUTO (the default)
+    turns NTP on whenever Ethernet or Wi-Fi is up, staying quiet and retrying
+    while offline. OFF disables it; ON forces it on.
   NTP SERVER "host[:port]"
     Server for ~NTP~ (default pool.ntp.org, port 123).
   TIMEZONE "name"
