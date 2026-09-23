@@ -666,6 +666,11 @@ void mmb_cmd_image(void);
 void mmb_cmd_framebuffer(void);
 void mmb_cmd_turtle(void);
 void mmb_cmd_bitmap(void);
+void mmb_cmd_screenshot(void);
+int mmb_screenshot_capture(const char *path);
+void mmb_screenshot_default_path(char *out, int outsz);
+int mmb_screenshot_hotkey(char *msg, int msgsz);
+void mmb_front_poll(void);
 void mmb_cmd_save(void);
 void mmb_cmd_input(void);
 void mmb_cmd_line_input(void);
@@ -1010,6 +1015,8 @@ int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_r
 int mmb_img_probe(const char *path, int *w, int *h);
 int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			uint32_t **out, int *w, int *h);
+int mmb_png_encode_rgb(const unsigned char *rgb, int w, int h,
+		       unsigned char **out, unsigned *out_len);
 void mmb_clock_init(void);
 void mmb_clock_refresh(void);
 int mmb_clock_set_date(const char *s);

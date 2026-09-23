@@ -50,6 +50,7 @@ CKernel::CKernel (void)
 	m_CharHidSent = 0;
 	m_FkeyHidSent = 0;
 	m_ConsoleHidSent = 0;
+	m_ShotHidSent = 0;
 	m_UsbBurst = 0;
 	memset (m_RawKeys, 0, sizeof m_RawKeys);
 	m_ActLED.Blink (2);
@@ -577,6 +578,43 @@ void CKernel::PollUsbConsole (void)
 	mmb_console_switch(idx);
 }
 
+/*
+ * F12 captures a screenshot from anywhere. Circle's cooked keymap yields
+ * nothing for F10..F12, so inject the front end's F12 sequence (ESC [ 2 4 ~)
+ * from the raw HID state. Plain F12 only; Alt/Ctrl chords are left alone.
+ */
+void CKernel::PollUsbScreenshot (void)
+{
+	unsigned char hid;
+	char seq[8];
+	unsigned n = 0, i;
+
+	if ((m_LastMods & ALT) != 0)
+	{
+		m_ShotHidSent = 0;
+		return;
+	}
+	hid = m_HeldHid;
+	if (hid == 0 || hid == m_ShotHidSent)
+	{
+		if (hid == 0)
+			m_ShotHidSent = 0;
+		return;
+	}
+	if (hid != 0x45) /* F12 */
+		return;
+	seq[n++] = 0x1b;
+	seq[n++] = '[';
+	seq[n++] = '2';
+	seq[n++] = '4';
+	seq[n++] = '~';
+	m_ShotHidSent = hid;
+	m_UsbBurst = 1;
+	for (i = 0; i < n; i++)
+		ProcessChar (seq[i]);
+	m_UsbBurst = 0;
+}
+
 void CKernel::PollUsbRepeat (void)
 {
 	unsigned now, first, next;
@@ -671,6 +709,7 @@ void CKernel::KeyboardRemovedHandler (CDevice *pDevice, void *pContext)
 	pThis->m_NavHidSent = 0;
 	pThis->m_CharHidSent = 0;
 	pThis->m_FkeyHidSent = 0;
+	pThis->m_ShotHidSent = 0;
 }
 
 /* The interactive line editor, history and ESC/CSI decoding live in
@@ -852,6 +891,7 @@ TShutdownMode CKernel::Run (void)
 		PollUsbEditorNav ();
 		PollUsbFKeys ();
 		PollUsbConsole ();
+		PollUsbScreenshot ();
 		PollCadReboot ();
 		if (nBytes <= 0)
 		{

@@ -341,7 +341,74 @@ static void submit(void)
 	s_pos = 0;
 }
 
+/* Global screenshot hotkey: F12 (ESC [ 2 4 ~). Consumed before any app or the
+ * REPL sees it, so it works everywhere. The escape is buffered only while the
+ * bytes still match the sequence; a mismatch replays the buffered prefix so
+ * ordinary Alt/CSI input is byte-for-byte unchanged. A lone Esc is flushed by
+ * mmb_front_poll() so app Esc timeouts still fire. */
+#define FRONT_SHOT_SEQ "\x1b[24~"
+#define FRONT_ESC_TIMEOUT_MS 40
+
+static int s_shot_state;
+static unsigned s_shot_at;
+
+static void front_feed_dispatch(char c);
+
+/* Flush a buffered but incomplete Esc sequence (host loop, from mmb_poll). */
+void mmb_front_poll(void)
+{
+	char seq[sizeof FRONT_SHOT_SEQ];
+	int i, n;
+
+	if (s_shot_state <= 0)
+		return;
+	if (mmb_now_ms() - s_shot_at < FRONT_ESC_TIMEOUT_MS)
+		return;
+	memcpy(seq, FRONT_SHOT_SEQ, sizeof(FRONT_SHOT_SEQ));
+	n = s_shot_state;
+	s_shot_state = 0;
+	for (i = 0; i < n; i++)
+		front_feed_dispatch(seq[i]);
+}
+
 void mmb_front_feed_byte(char c)
+{
+	const char *seq = FRONT_SHOT_SEQ;
+
+	if (s_shot_state > 0)
+	{
+		if (c == seq[s_shot_state])
+		{
+			s_shot_state++;
+			if (!seq[s_shot_state])
+			{
+				char msg[24];
+				s_shot_state = 0;
+				if (mmb_screenshot_hotkey(msg, (int)sizeof(msg)) != 0)
+					fe_puts(msg);
+				return;
+			}
+			return;
+		}
+		{
+			int i, n = s_shot_state;
+			s_shot_state = 0;
+			for (i = 0; i < n; i++)
+				front_feed_dispatch(seq[i]);
+		}
+		front_feed_dispatch(c);
+		return;
+	}
+	if (c == 0x1b)
+	{
+		s_shot_state = 1;
+		s_shot_at = mmb_now_ms();
+		return;
+	}
+	front_feed_dispatch(c);
+}
+
+static void front_feed_dispatch(char c)
 {
 	/* Full-screen apps own the keyboard. */
 	if (mmb_in_ihelp())

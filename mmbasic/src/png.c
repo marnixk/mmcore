@@ -333,3 +333,154 @@ done:
 	G.plat->free(inflated);
 	return rc;
 }
+
+/* ---- PNG encoder (zlib stored blocks, RGB8) ------------------------ */
+
+static unsigned png_crc_table[256];
+static int png_crc_ready;
+
+static void png_crc_build(void)
+{
+	unsigned c, i, k;
+	if (png_crc_ready)
+		return;
+	for (i = 0; i < 256; i++)
+	{
+		c = i;
+		for (k = 0; k < 8; k++)
+			c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+		png_crc_table[i] = c;
+	}
+	png_crc_ready = 1;
+}
+
+static unsigned png_crc(const unsigned char *p, unsigned n)
+{
+	unsigned c = 0xFFFFFFFFu, i;
+	png_crc_build();
+	for (i = 0; i < n; i++)
+		c = png_crc_table[(c ^ p[i]) & 0xFFu] ^ (c >> 8);
+	return c ^ 0xFFFFFFFFu;
+}
+
+static void png_put32(unsigned char *p, unsigned v)
+{
+	p[0] = (unsigned char)(v >> 24);
+	p[1] = (unsigned char)(v >> 16);
+	p[2] = (unsigned char)(v >> 8);
+	p[3] = (unsigned char)v;
+}
+
+/* Encode packed RGB888 scanlines (w*3 bytes per row, no padding) as an 8-bit
+ * truecolour PNG. Uses uncompressed zlib blocks so the decoder's stored-block
+ * fast path (see png_decode_stored) handles it without an inflater. On success
+ * *out points at a G.plat->alloc'd buffer holding the whole file; the caller
+ * frees it with G.plat->free. */
+int mmb_png_encode_rgb(const unsigned char *rgb, int w, int h,
+		       unsigned char **out, unsigned *out_len)
+{
+	unsigned rowbytes, raw_len, nblocks, idat_len, total, o, pos;
+	unsigned char *raw, *png;
+	unsigned adler = 1, a = 1, b = 0;
+	unsigned type_ofs, i, y;
+
+	if (out)
+		*out = 0;
+	if (out_len)
+		*out_len = 0;
+	if (!rgb || !out || !out_len || w <= 0 || h <= 0)
+		return -1;
+	rowbytes = 1u + (unsigned)w * 3u;
+	raw_len = rowbytes * (unsigned)h;
+	nblocks = raw_len ? (raw_len + 65534u) / 65535u : 1u;
+	idat_len = 2u + raw_len + 5u * nblocks + 4u;
+	total = 8u + 25u + 12u + idat_len + 12u;
+
+	raw = G.plat->alloc(raw_len ? raw_len : 1u);
+	png = G.plat->alloc(total);
+	if (!raw || !png)
+	{
+		G.plat->free(raw);
+		G.plat->free(png);
+		return -1;
+	}
+	for (y = 0; y < (unsigned)h; y++)
+	{
+		unsigned char *dst = raw + y * rowbytes;
+		dst[0] = 0; /* filter: None */
+		memcpy(dst + 1, rgb + (unsigned long)y * (unsigned)w * 3u,
+		       (unsigned)w * 3u);
+	}
+	for (i = 0; i < raw_len; i++)
+	{
+		a = (a + raw[i]) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	adler = (b << 16) | a;
+
+	o = 0;
+	memcpy(png + o, "\x89PNG\r\n\x1a\n", PNG_SIG_LEN);
+	o += PNG_SIG_LEN;
+
+	png_put32(png + o, 13);
+	o += 4;
+	type_ofs = o;
+	memcpy(png + o, "IHDR", 4);
+	o += 4;
+	png_put32(png + o, (unsigned)w);
+	o += 4;
+	png_put32(png + o, (unsigned)h);
+	o += 4;
+	png[o++] = 8; /* bit depth */
+	png[o++] = 2; /* colour type: truecolour */
+	png[o++] = 0;
+	png[o++] = 0;
+	png[o++] = 0;
+	png_put32(png + o, png_crc(png + type_ofs, 4 + 13));
+	o += 4;
+
+	png_put32(png + o, idat_len);
+	o += 4;
+	type_ofs = o;
+	memcpy(png + o, "IDAT", 4);
+	o += 4;
+	png[o++] = 0x78;
+	png[o++] = 0x01;
+	pos = 0;
+	do
+	{
+		unsigned chunk = raw_len - pos;
+		int last;
+		if (chunk > 65535u)
+			chunk = 65535u;
+		last = (pos + chunk) >= raw_len;
+		png[o++] = (unsigned char)(last ? 1 : 0);
+		png[o++] = (unsigned char)(chunk & 0xFFu);
+		png[o++] = (unsigned char)((chunk >> 8) & 0xFFu);
+		png[o++] = (unsigned char)((~chunk) & 0xFFu);
+		png[o++] = (unsigned char)(((~chunk) >> 8) & 0xFFu);
+		if (chunk)
+		{
+			memcpy(png + o, raw + pos, chunk);
+			o += chunk;
+		}
+		pos += chunk;
+	} while (pos < raw_len);
+	png_put32(png + o, adler);
+	o += 4;
+	png_put32(png + o, png_crc(png + type_ofs, 4 + idat_len));
+	o += 4;
+
+	png_put32(png + o, 0);
+	o += 4;
+	type_ofs = o;
+	memcpy(png + o, "IEND", 4);
+	o += 4;
+	png_put32(png + o, png_crc(png + type_ofs, 4));
+	o += 4;
+
+	G.plat->free(raw);
+	*out = png;
+	*out_len = o;
+	return 0;
+}

@@ -1,0 +1,22 @@
+name: SCREENSHOT
+kind: command
+
+Capture the current screen to a PNG image on a writable drive. Works in both
+graphics modes and full-screen text apps (EDIT, FILES, TERM, WORDPAD...).
+
+SCREENSHOT [path$]
+
+  path$ - image path, or a folder to write into (optional). With no argument
+          the image is written to A:/ as SHOT_YYYYMMDD_HHMMSS.PNG.
+
+The global hotkey is F12: it captures to A:/ from anywhere, including inside a
+full-screen app. The filename is timestamped and uniquified, so repeated
+captures never overwrite each other.
+
+A missing drive, an unwritable folder, or a full disk reports ?SCREENSHOT.
+
+Examples:
+
+    SCREENSHOT
+    SCREENSHOT "A:/PICS/CAP.PNG"
+    SCREENSHOT "C:/SHOTS/"

@@ -2941,6 +2941,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("FRAMEBUFFER")] = mmb_cmd_framebuffer;
 		tab[mmb_kw_id("TURTLE")] = mmb_cmd_turtle;
 		tab[mmb_kw_id("BITMAP")] = mmb_cmd_bitmap;
+		tab[mmb_kw_id("SCREENSHOT")] = mmb_cmd_screenshot;
 		tab[mmb_kw_id("GUI")] = tok_cmd_gui;
 		tab[mmb_kw_id("PACKAGE")] = mmb_cmd_package;
 		tab[mmb_kw_id("UNPACK")] = mmb_cmd_unpack;
@@ -3473,6 +3474,11 @@ static void exec_statement(void)
 	if (mmb_match("BITMAP"))
 	{
 		mmb_cmd_bitmap();
+		return;
+	}
+	if (mmb_match("SCREENSHOT"))
+	{
+		mmb_cmd_screenshot();
 		return;
 	}
 	if (mmb_match("GUI"))
@@ -4174,4 +4180,5 @@ void mmb_poll(void)
 	mmb_wordpad_poll();
 	mmb_sprite_edit_poll();
 	mmb_afk_poll();
+	mmb_front_poll();
 }
