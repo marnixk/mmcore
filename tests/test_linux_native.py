@@ -924,3 +924,17 @@ def test_macos_release_requires_notarization(tmp_path):
     )
     assert proc.returncode != 0
     assert "NOTARY" in (proc.stdout + proc.stderr).upper()
+
+
+def test_native_packaging_derives_icons_from_branding():
+    """#537: AppImage and .app icons derive from the shared branding art."""
+    gen = open(os.path.join(REPO, "scripts", "gen-appicon.py"), encoding="utf-8").read()
+    mac = open(
+        os.path.join(REPO, "scripts", "package-macos-app.sh"), encoding="utf-8"
+    ).read()
+    lin = open(
+        os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
+    ).read()
+    assert "assets" in gen and "mmcore-app-icon.png" in gen
+    assert "gen-appicon.py" in mac and "--iconset" in mac
+    assert "gen-appicon.py" in lin and "mmcore.png" in lin

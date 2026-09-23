@@ -99,17 +99,7 @@ chmod u+w "${APP}/Contents/MacOS/${EXE_NAME}"
 log "Generating app icon"
 ICONSET="${DIST}/${APP_NAME}.iconset"
 rm -rf "${ICONSET}"
-mkdir -p "${ICONSET}"
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_16x16.png" 16
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_16x16@2x.png" 32
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_32x32.png" 32
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_32x32@2x.png" 64
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_128x128.png" 128
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_128x128@2x.png" 256
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_256x256.png" 256
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_256x256@2x.png" 512
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_512x512.png" 512
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" "${ICONSET}/icon_512x512@2x.png" 1024
+python3 "${REPO_ROOT}/scripts/gen-appicon.py" --iconset "${ICONSET}"
 iconutil -c icns "${ICONSET}" -o "${APP}/Contents/Resources/AppIcon.icns"
 rm -rf "${ICONSET}"
 

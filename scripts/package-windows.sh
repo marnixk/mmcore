@@ -50,6 +50,9 @@ rm -rf "${STAGE}" "${OUT}"
 mkdir -p "${STAGE}"
 cp "${EXE}" "${STAGE}/mmbasic-sdl.exe"
 
+log "Generating Windows app icon"
+python3 "${REPO_ROOT}/scripts/gen-appicon.py" --ico "${STAGE}/mmcore.ico"
+
 # Copy every MinGW runtime DLL the executable and its DLLs depend on. System
 # DLLs (kernel32, user32, ...) are not found on disk, so they are skipped;
 # SDL2.dll is supplied from the SDL2 install.
@@ -137,6 +140,7 @@ opens with the BASIC prompt. Type in the SDL window once it is focused.
 Redirected stdin (pipes/files) is also read, for scripting.
 
 Keep mmbasic-sdl.exe, SDL2.dll, and libwinpthread-1.dll in the same folder.
+mmcore.ico is the application icon (the .exe also carries it as a resource).
 
 Usage
   mmbasic-sdl.exe                  interactive prompt
