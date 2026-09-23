@@ -83,6 +83,16 @@ def _ctrl_alt_del(con: MMBasicConsole) -> None:
     con.key_up("ctrl")
 
 
+def _wait_for_mmbasic(con: MMBasicConsole, timeout: float = 12.0) -> str:
+    seen = ""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        seen += con.drain(quiet=0.3).decode(errors="ignore")
+        if "MMBasic" in seen:
+            break
+    return seen
+
+
 def test_ctrl_alt_del_returns_to_prompt(kernel_image):
     """#577: Ctrl+Alt+Del is a warm reset. It must land at a ready prompt with
     the interpreter state cleared, not leave the session without a REPL."""
@@ -94,16 +104,47 @@ def test_ctrl_alt_del_returns_to_prompt(kernel_image):
 
         con.drain(quiet=0.2)
         _ctrl_alt_del(con)
-        seen = ""
-        deadline = time.time() + 12.0
-        while time.time() < deadline:
-            seen += con.drain(quiet=0.3).decode(errors="ignore")
-            if "MMBasic" in seen:
-                break
-        assert "MMBasic" in seen
+        assert "MMBasic" in _wait_for_mmbasic(con)
 
         # Fresh session: variables and the program are gone.
         assert con.send_line("PRINT A") == "0"
+        assert con.send_line("PRINT 6 * 7") == "42"
+    finally:
+        con.stop()
+
+
+def _open_app(con: MMBasicConsole, command: str) -> bytes:
+    con.drain(quiet=0.2)
+    con._ser.sendall(command.encode() + b"\r")
+    return con.drain(quiet=0.8)
+
+
+def test_ctrl_alt_del_closes_fullscreen_app(kernel_image):
+    """#606: The warm reset keeps the interpreter object in place, so a
+    full-screen app that owns the keyboard must be closed too, or the REPL
+    never becomes responsive again."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        _open_app(con, "FILES")
+
+        _ctrl_alt_del(con)
+        assert "MMBasic" in _wait_for_mmbasic(con)
+        assert con.send_line("PRINT 6 * 7") == "42"
+    finally:
+        con.stop()
+
+
+def test_ctrl_alt_del_closes_settings_app(kernel_image):
+    """#606: SETTINGS is a modal TUI that blocks the REPL (the same class of
+    full-screen app as FILES)."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        _open_app(con, "SETTINGS")
+
+        _ctrl_alt_del(con)
+        assert "MMBasic" in _wait_for_mmbasic(con)
         assert con.send_line("PRINT 6 * 7") == "42"
     finally:
         con.stop()
