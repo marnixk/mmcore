@@ -4178,6 +4178,7 @@ void mmb_poll(void)
 	mmb_play_mix();
 	mmb_editor_poll();
 	mmb_ihelp_poll();
+	mmb_package_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
 	mmb_sprite_edit_poll();
