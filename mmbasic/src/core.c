@@ -4171,5 +4171,6 @@ void mmb_poll(void)
 	mmb_ihelp_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
+	mmb_sprite_edit_poll();
 	mmb_afk_poll();
 }
