@@ -265,7 +265,7 @@ int mmb_front_in_app(void)
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
 	       mmb_in_afk() || mmb_in_juke() || mmb_in_sprite_edit() ||
 	       mmb_in_ansi_edit() || mmb_in_paint() || mmb_in_package() ||
-	       mmb_apptui_active();
+	       mmb_settings_active() || mmb_apptui_active();
 }
 
 static void submit(void)
@@ -309,7 +309,8 @@ static void submit(void)
 		fe_puts(result);
 		mmb_front_prompt();
 	}
-	else if (mmb_in_files() || mmb_in_ihelp() || mmb_in_package())
+	else if (mmb_in_files() || mmb_in_ihelp() || mmb_in_package() ||
+		 mmb_settings_active())
 	{
 		/* TUI already streamed to the screen. */
 	}

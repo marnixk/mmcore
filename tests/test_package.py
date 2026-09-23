@@ -232,6 +232,23 @@ def test_package_wizard_status_hint_no_doubled_gt(console):
     assert con.send_line("PRINT 1+1") == "2"
 
 
+def test_package_wizard_opens_as_inset_dialog(console):
+    """#590: the wizard is a centred framed dialog, not a full-screen app."""
+    con = console
+    _wiz_root(con, "WIZD")
+    assert con.send_line('MKDIR "GAME"') == ""
+    _write_lines(con, "GAME/MAIN.BAS", ['PRINT "OK"'])
+    seen = _wiz_open(con)
+    assert "PACKAGE WIZARD" in seen.upper()
+    rows = [ln.rstrip() for ln in seen.replace("\r", "\n").split("\n")]
+    border = [ln for ln in rows if "+" in ln and "-" in ln]
+    assert border, seen
+    top = border[0]
+    assert top.startswith(" ") and top.index("+") > 0, repr(top)
+    _wiz_keys(con, b"\x1b")  # Esc cancels back to the prompt
+    assert con.send_line("PRINT 1+1") == "2"
+
+
 def test_package_wizard_requires_main(console):
     con = console
     _wiz_root(con, "WIZB")

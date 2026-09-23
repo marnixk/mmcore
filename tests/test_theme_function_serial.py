@@ -37,10 +37,12 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
     try:
         assert con.send_line("OPTION THEME SLATE") == ""
 
-        # Open the picker on Slate (index 5); the title bar shows the active
-        # theme's menu_bg.
+        # Open the hub on Appearance (index 5); Enter enters the theme
+        # picker, whose title bar shows the active theme's menu_bg.
         con._ser.sendall(b"SETTINGS\r")
         time.sleep(0.8)
+        con._ser.sendall(b"\r")
+        time.sleep(0.4)
         slate_bar = con.screen_pixel(4, 4)
         assert _near(slate_bar, (42, 44, 50)), slate_bar
 
@@ -66,14 +68,23 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
             "PRINT RGB(18,10,24)"
         )
 
-        # Esc cancels and restores the theme active on entry.
+        # Esc cancels: the section backs to the hub (restoring the entry
+        # theme) and a second Esc closes back to the prompt. Drain the live
+        # preview redraw before each Esc so the UART is not mid-flush.
         assert con.send_line("OPTION THEME SLATE") == ""
         con._ser.sendall(b"SETTINGS\r")
         time.sleep(0.8)
+        con._ser.sendall(b"\r")
+        time.sleep(0.4)
         con._ser.sendall(b"\x1b[B")
         time.sleep(0.3)
+        con.drain(quiet=0.3, timeout=1.5)
         con._ser.sendall(b"\x1b")
-        time.sleep(0.5)
+        time.sleep(0.4)
+        con.drain(quiet=0.3, timeout=1.5)
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.4)
+        con.drain(quiet=0.3, timeout=1.5)
         assert con.send_line('PRINT THEME("TEXT_BG")') == con.send_line(
             "PRINT RGB(42,44,50)"
         )

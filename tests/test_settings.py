@@ -3,6 +3,33 @@
 from ihelp_util import dump_topic
 
 
+def _settings_open(con):
+    """Open SETTINGS as a dialog and return the raw serial frame text."""
+    assert con._ser is not None
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"SETTINGS\r")
+    return con.drain(quiet=0.9).decode(errors="replace")
+
+
+def _settings_keys(con, data, quiet=0.4):
+    assert con._ser is not None
+    con._ser.sendall(data)
+    return con.drain(quiet=quiet).decode(errors="replace")
+
+
+def _frame_rows(text):
+    return [ln.rstrip() for ln in text.replace("\r", "\n").split("\n")]
+
+
+def _has_inset_border(text):
+    rows = _frame_rows(text)
+    border = [ln for ln in rows if "+" in ln and "-" in ln]
+    if not border:
+        return False
+    top = border[0]
+    return top.startswith(" ") and top.index("+") > 0
+
+
 def _ini_path(con):
     for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
         out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
@@ -353,4 +380,57 @@ def test_files_hides_dotfiles(fresh_console):
     assert ".SECRET" not in seen
     assert ".MMBASIC" not in seen
     con._ser.sendall(b"q")
+
+
+# --- #590/#591: SETTINGS dialog + hub ------------------------------------
+
+
+def test_settings_dialog_is_inset_not_fullscreen(console):
+    """#590: SETTINGS opens a framed inset panel, not a full-screen takeover."""
+    con = console
+    seen = _settings_open(con)
+    assert "SETTINGS" in seen.upper()
+    assert _has_inset_border(seen), seen
+    _settings_keys(con, b"\x1b")
+    assert con.send_line("PRINT 6*7") == "42"
+
+
+def test_settings_hub_lists_categories(console):
+    """#591: the hub has peer category slots, Appearance first."""
+    con = console
+    seen = _settings_open(con).upper()
+    for name in ("APPEARANCE", "NETWORK", "SYSTEM", "SOUND"):
+        assert name in seen, seen
+    assert "THEME" in seen, seen
+    _settings_keys(con, b"\x1b")
+    assert con.send_line("PRINT 1+1") == "2"
+
+
+def test_settings_network_section_shows_status(console):
+    """#591: Network is a real peer section wired to existing status/config."""
+    con = console
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    _settings_open(con)
+    _settings_keys(con, b"\x1b[B")  # Appearance -> Network
+    seen = _settings_keys(con, b"\r", quiet=0.6).upper()
+    assert "NETWORK" in seen, seen
+    assert "WI-FI" in seen, seen
+    assert "NTP" in seen, seen
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 2+2") == "4"
+
+
+def test_settings_appearance_theme_applies_and_persists(console):
+    """#509 moves under Appearance: pick a theme, Enter saves it."""
+    con = console
+    assert con.send_line("OPTION THEME SLATE") == ""
+    _settings_open(con)
+    _settings_keys(con, b"\r")       # open Appearance
+    _settings_keys(con, b"\x1b[B")   # Slate -> Forest (live preview)
+    _settings_keys(con, b"\r")       # apply and close
+    listed = con.send_line("OPTION LIST ALL").upper()
+    assert "FOREST" in listed, listed
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+
     con.drain(quiet=0.3)

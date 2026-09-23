@@ -3,20 +3,40 @@
 #include "tui.h"
 
 /*
- * SETTINGS — system-wide appearance settings (#509).
+ * SETTINGS — system-wide settings hub (#509, #590, #591).
  *
- * A theme picker that lists every built-in TUI theme with a live preview.
- * Moving the selection re-applies the candidate palette immediately, Enter
- * persists it (mmb_settings_save), and Esc restores the theme that was active
- * on entry. The choice is the same G.opt.edit_theme that EDIT, FILES,
- * WORDPAD, TERM, HELP and the other themed apps read, so it takes effect
- * everywhere the moment the picker closes.
+ * A small modal dialog (see tui_dialog_panel) rather than a full-screen
+ * takeover. The hub lists categories; Appearance hosts the theme picker from
+ * #509 (live preview, Enter persists via mmb_settings_save, Esc restores the
+ * theme active on entry). Network, System and Sound are peer slots so the
+ * product can grow without another one-off UI. Esc backs a section to the hub
+ * and closes from the hub, returning to the prompt.
  */
 
 #define SET_ESC_IDLE_MS 60
 
+#define ST_SEC_APPEARANCE 0
+#define ST_SEC_NETWORK    1
+#define ST_SEC_SYSTEM     2
+#define ST_SEC_SOUND      3
+#define ST_SEC_COUNT      4
+
+static const char *const st_sec_name[ST_SEC_COUNT] = {
+	"Appearance", "Network", "System", "Sound"
+};
+
+static const char *const st_sec_desc[ST_SEC_COUNT] = {
+	"Theme and interface colours",
+	"Wi-Fi, Ethernet and NTP",
+	"Boot destination and REPL options",
+	"Audio output and mute"
+};
+
 typedef struct settings_state {
 	int active;
+	int level; /* 0 hub, 1 section body */
+	int sec;   /* section shown while level == 1 */
+	int hub_sel, hub_top;
 	int sel, top;
 	int orig;
 	int esc;
@@ -48,44 +68,22 @@ static const mmb_ed_theme *stth(void)
 #define ST_ERR_FG   ((int)stth()->err_fg)
 #define ST_ERR_BG   ((int)stth()->err_bg)
 
-static void st_center(int y, const char *s, int fg, int bg)
+static void st_hint(int x, int row, int width, const char *hint)
 {
-	int w = tui_cols();
-	int n = (int)strlen(s);
-	int x = (w - n) / 2;
-	if (x < 1)
-		x = 1;
-	tui_fill(0, y, w, 1, ' ', fg, bg);
-	tui_puts(x, y, s, fg, bg);
+	tui_status_hint_at(x, row, width, hint, ST_HOT, ST_DIM, ST_BG);
 }
 
-static void st_status_bar(const char *hint)
+/* Draw the modal panel backdrop and frame; returns the panel rect. */
+static void st_panel(const char *title, int want_w, int want_h,
+		     int *px, int *py, int *pw, int *ph)
 {
-	int w = tui_cols();
-	int h = tui_rows();
-	int i, p;
-	tui_fill(0, h - 1, w, 1, ' ', ST_DIM, ST_BG);
-	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
-	{
-		if (hint[i] == '<')
-		{
-			tui_put(p++, h - 1, '<', ST_HOT, ST_BG);
-			i++;
-			while (hint[i] && hint[i] != '>' && p < w - 1)
-			{
-				tui_put(p++, h - 1, (unsigned char)hint[i], ST_HOT, ST_BG);
-				i++;
-			}
-			if (hint[i] == '>' && p < w - 1)
-				tui_put(p++, h - 1, '>', ST_HOT, ST_BG);
-		}
-		else if (p < w - 1)
-			tui_put(p++, h - 1, (unsigned char)hint[i], ST_DIM, ST_BG);
-	}
+	tui_clear(ST_TITLE_FG, ST_TITLE_BG);
+	tui_dialog_geom(want_w, want_h, px, py, pw, ph);
+	tui_dialog_panel(*px, *py, *pw, *ph, title, ST_FG, ST_DLG_BG,
+			 ST_BRD_FG, ST_BRD_BG, ST_TITLE_FG, ST_TITLE_BG);
 }
 
-/* A compact preview of the active theme's roles. Drawn to the right of the
- * list when there is room. */
+/* A compact preview of the active theme's roles. */
 static void st_preview(int x, int y, int w, int h)
 {
 	int row = y + 1;
@@ -105,28 +103,58 @@ static void st_preview(int x, int y, int w, int h)
 		tui_puts(x + 2, row, "1 2 ... 10", ST_DLG_FG, ST_DLG_BG);
 }
 
-static void st_draw(void)
+static void st_draw_hub(void)
 {
-	int w = tui_cols();
-	int h = tui_rows();
+	int x, y, w, h, listy, listh, i;
+
+	st_panel("SETTINGS", 68, 13, &x, &y, &w, &h);
+	tui_puts(x + 2, y + 2, "Settings hub - choose a category.", ST_STR, ST_DLG_BG);
+
+	listy = y + 4;
+	listh = (y + h - 2) - listy;
+	if (listh < 1)
+		listh = 1;
+	if (S.hub_sel < S.hub_top)
+		S.hub_top = S.hub_sel;
+	if (S.hub_sel >= S.hub_top + listh)
+		S.hub_top = S.hub_sel - listh + 1;
+	if (S.hub_top < 0)
+		S.hub_top = 0;
+
+	for (i = 0; i < listh; i++)
+	{
+		int idx = S.hub_top + i;
+		int ry = listy + i;
+		int fg = ST_FG, bg = ST_DLG_BG;
+		if (idx >= ST_SEC_COUNT)
+		{
+			tui_fill(x + 1, ry, w - 2, 1, ' ', ST_FG, ST_DLG_BG);
+			continue;
+		}
+		if (idx == S.hub_sel)
+		{
+			fg = ST_SEL_FG;
+			bg = ST_SEL_BG;
+		}
+		tui_fill(x + 1, ry, w - 2, 1, ' ', fg, bg);
+		tui_puts(x + 3, ry, idx == S.hub_sel ? ">" : " ", fg, bg);
+		tui_puts(x + 5, ry, st_sec_name[idx], fg, bg);
+		tui_puts(x + 22, ry, st_sec_desc[idx],
+			 idx == S.hub_sel ? fg : ST_DIM, bg);
+	}
+	st_hint(x + 1, y + h - 2, w - 2,
+		"<Up/Down> Move  <Enter> Open  <Esc> Close");
+}
+
+static void st_draw_theme(int x, int y, int w, int h)
+{
 	int n = mmb_editor_theme_count();
-	int listy = 3;
-	int listw, listh, preview_x, i;
+	int listy = y + 4;
+	int listh = (y + h - 2) - listy;
+	int listw = 20;
+	int preview_x = listw + 2;
+	int i;
 
-	if (!S.active)
-		return;
-	tui_begin();
-	mmb_editor_apply_tui_palette();
-	tui_clear(ST_FG, ST_BG);
-	st_center(0, "SETTINGS", ST_TITLE_FG, ST_TITLE_BG);
-	tui_puts(2, 1, "Theme (applies to EDIT, FILES, WORDPAD, TERM, HELP)", ST_STR, ST_BG);
-
-	listw = 18;
-	preview_x = listw + 4;
-	if (preview_x + 26 > w)
-		preview_x = -1; /* too narrow: list only */
-
-	listh = h - listy - 2;
 	if (listh < 1)
 		listh = 1;
 	if (S.sel < S.top)
@@ -136,14 +164,16 @@ static void st_draw(void)
 	if (S.top < 0)
 		S.top = 0;
 
+	tui_puts(x + 2, y + 2, "Appearance - theme", ST_STR, ST_DLG_BG);
+
 	for (i = 0; i < listh; i++)
 	{
 		int idx = S.top + i;
-		int y = listy + i;
-		int fg = ST_FG, bg = ST_BG;
+		int ry = listy + i;
+		int fg = ST_FG, bg = ST_DLG_BG;
 		if (idx >= n)
 		{
-			tui_fill(1, y, w - 2, 1, ' ', ST_FG, ST_BG);
+			tui_fill(x + 1, ry, listw + 2, 1, ' ', ST_FG, ST_DLG_BG);
 			continue;
 		}
 		if (idx == S.sel)
@@ -151,15 +181,128 @@ static void st_draw(void)
 			fg = ST_SEL_FG;
 			bg = ST_SEL_BG;
 		}
-		tui_fill(1, y, listw + 2, 1, ' ', fg, bg);
-		tui_puts(2, y, idx == S.sel ? ">" : " ", fg, bg);
-		tui_puts(4, y, mmb_editor_theme_name(idx), fg, bg);
+		tui_fill(x + 1, ry, listw + 2, 1, ' ', fg, bg);
+		tui_puts(x + 3, ry, idx == S.sel ? ">" : " ", fg, bg);
+		tui_puts(x + 5, ry, mmb_editor_theme_name(idx), fg, bg);
 	}
 
-	if (preview_x >= 0)
-		st_preview(preview_x, listy, w - preview_x - 2, h - listy - 2);
+	if (preview_x + 28 <= w - 2)
+		st_preview(x + preview_x, y + 4, 28, listh + 1);
+	st_hint(x + 1, y + h - 2, w - 2,
+		"<Up/Down> Preview  <Enter> Apply  <Esc> Back");
+}
 
-	st_status_bar("<Up/Down> Preview  <Enter> Apply  <Esc> Cancel");
+static void st_draw_network(int x, int y, int w, int h)
+{
+	char line[160];
+	int r = y + 2;
+	const char *ssid = G.opt.wifi_ssid[0] ? G.opt.wifi_ssid : "(none)";
+
+	(void)w;
+	tui_puts(x + 2, r++, "Network", ST_STR, ST_DLG_BG);
+	tui_puts(x + 2, r++, mmb_net_available() ? "Link: up" : "Link: none",
+		 mmb_net_available() ? ST_FG : ST_ERR_FG, ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r, "Wi-Fi    :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 13, r++, ssid, ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "Ethernet :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 13, r++, G.opt.ethernet_enabled ? "ON" : "OFF", ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "NTP      :", ST_DIM, ST_DLG_BG);
+	line[0] = 0;
+	strncat(line, G.opt.ntp_enabled ? "ON  " : "OFF ", sizeof(line) - 1);
+	strncat(line, G.opt.ntp_server[0] ? G.opt.ntp_server : MMB_NTP_DEFAULT_SERVER,
+		sizeof(line) - strlen(line) - 1);
+	tui_puts(x + 13, r++, line, ST_FG, ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r++, "Use OPTIONS WIFI / CONNECT / OPTION NTP at the prompt.",
+		 ST_DIM, ST_DLG_BG);
+	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
+}
+
+static void st_draw_system(int x, int y, int w, int h)
+{
+	int r = y + 2;
+	const char *boot = "REPL";
+
+	(void)w;
+	if (G.opt.boot_mode == 1)
+		boot = "Launcher";
+	else if (G.opt.boot_mode == 2)
+		boot = "App";
+	tui_puts(x + 2, r++, "System", ST_STR, ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r, "Boot      :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, boot, ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "App path  :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, G.opt.app_path, ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "Prompt    :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, G.opt.prompt ? "CWD" : "BARE", ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "Theme     :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, mmb_editor_theme_name(G.opt.edit_theme), ST_FG,
+		 ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r++, "Change these with OPTION at the prompt.",
+		 ST_DIM, ST_DLG_BG);
+	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
+}
+
+static void st_draw_sound(int x, int y, int w, int h)
+{
+	int r = y + 2;
+
+	(void)w;
+	tui_puts(x + 2, r++, "Sound", ST_STR, ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r, "Audio     :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, G.opt.audio_on ? "ON" : "OFF", ST_FG, ST_DLG_BG);
+	tui_puts(x + 2, r, "Output    :", ST_DIM, ST_DLG_BG);
+	tui_puts(x + 14, r++, G.opt.audio_target ? "HDMI" : "JACK", ST_FG, ST_DLG_BG);
+	r++;
+	tui_puts(x + 2, r++, "Use OPTION AUDIO / AUDIO OUTPUT at the prompt.",
+		 ST_DIM, ST_DLG_BG);
+	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
+}
+
+static void st_draw_section(void)
+{
+	int x, y, w, h;
+	char title[48];
+
+	title[0] = 0;
+	strncat(title, "SETTINGS - ", sizeof(title) - 1);
+	strncat(title, st_sec_name[S.sec], sizeof(title) - strlen(title) - 1);
+	if (S.sec == ST_SEC_APPEARANCE)
+		st_panel(title, 68, 16, &x, &y, &w, &h);
+	else
+		st_panel(title, 68, 13, &x, &y, &w, &h);
+
+	switch (S.sec)
+	{
+	case ST_SEC_APPEARANCE:
+		st_draw_theme(x, y, w, h);
+		break;
+	case ST_SEC_NETWORK:
+		st_draw_network(x, y, w, h);
+		break;
+	case ST_SEC_SYSTEM:
+		st_draw_system(x, y, w, h);
+		break;
+	default:
+		st_draw_sound(x, y, w, h);
+		break;
+	}
+}
+
+static void st_draw(void)
+{
+	if (!S.active)
+		return;
+	tui_begin();
+	mmb_editor_apply_tui_palette();
+	if (S.level == 0)
+		st_draw_hub();
+	else
+		st_draw_section();
 	tui_cursor(0, 0, 0);
 	tui_flush();
 }
@@ -177,6 +320,7 @@ static void st_close(int commit)
 {
 	S.active = 0;
 	S.esc = 0;
+	S.level = 0;
 	tui_end();
 	if (commit)
 		mmb_settings_save();
@@ -187,15 +331,58 @@ static void st_close(int commit)
 	mmb_console_write("\r\n");
 }
 
+static void st_escape(void)
+{
+	if (S.level == 1)
+	{
+		if (S.sec == ST_SEC_APPEARANCE && G.opt.edit_theme != S.orig)
+		{
+			G.opt.edit_theme = S.orig;
+			mmb_editor_apply_tui_palette();
+			tui_invalidate();
+		}
+		S.level = 0;
+		return;
+	}
+	st_close(0);
+}
+
+static void st_open_section(int sec)
+{
+	if (sec < 0 || sec >= ST_SEC_COUNT)
+		return;
+	S.sec = sec;
+	S.level = 1;
+	if (sec == ST_SEC_APPEARANCE)
+	{
+		S.sel = G.opt.edit_theme;
+		S.top = 0;
+		if (S.sel < 0 || S.sel >= mmb_editor_theme_count())
+			S.sel = 0;
+	}
+}
+
 static void st_move(int dir)
 {
-	int n = mmb_editor_theme_count();
+	if (S.level == 0)
+	{
+		if (dir < 0)
+		{
+			if (S.hub_sel > 0)
+				S.hub_sel--;
+		}
+		else if (S.hub_sel + 1 < ST_SEC_COUNT)
+			S.hub_sel++;
+		return;
+	}
+	if (S.sec != ST_SEC_APPEARANCE)
+		return;
 	if (dir < 0)
 	{
 		if (S.sel > 0)
 			S.sel--;
 	}
-	else if (S.sel + 1 < n)
+	else if (S.sel + 1 < mmb_editor_theme_count())
 		S.sel++;
 	st_apply(S.sel);
 }
@@ -212,6 +399,9 @@ void mmb_settings_open(void)
 		return;
 	memset(&S, 0, sizeof(S));
 	S.active = 1;
+	S.level = 0;
+	S.hub_sel = ST_SEC_APPEARANCE;
+	S.sec = ST_SEC_APPEARANCE;
 	S.orig = G.opt.edit_theme;
 	S.sel = G.opt.edit_theme;
 	if (S.sel < 0 || S.sel >= n)
@@ -238,7 +428,9 @@ const char *mmb_settings_key(char c)
 				return G.out;
 			}
 			S.esc = 0;
-			st_close(0);
+			st_escape();
+			if (S.active)
+				st_draw();
 			return G.out;
 		}
 		S.esc = 0;
@@ -257,14 +449,21 @@ const char *mmb_settings_key(char c)
 		return G.out;
 	}
 	if (c == '\r' || c == '\n')
-		st_close(1);
+	{
+		if (S.level == 0)
+			st_open_section(S.hub_sel);
+		else if (S.sec == ST_SEC_APPEARANCE)
+			st_close(1);
+		else
+			S.level = 0;
+	}
 	else if (c == 'k' || c == 'K')
 		st_move(-1);
 	else if (c == 'j' || c == 'J')
 		st_move(1);
-	else if (c >= '1' && c <= '9')
+	else if (S.level == 1 && S.sec == ST_SEC_APPEARANCE && c >= '1' && c <= '9')
 		st_apply(c - '1');
-	else if (c == '0')
+	else if (S.level == 1 && S.sec == ST_SEC_APPEARANCE && c == '0')
 		st_apply(9);
 	if (S.active)
 		st_draw();
@@ -278,8 +477,10 @@ void mmb_settings_poll(void)
 	if (mmb_now_ms() - S.esc_at < SET_ESC_IDLE_MS)
 		return;
 	S.esc = 0;
-	st_close(0);
-	if (!S.active)
+	st_escape();
+	if (S.active)
+		st_draw();
+	else
 		mmb_front_prompt();
 }
 

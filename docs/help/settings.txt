@@ -1,25 +1,42 @@
 name: SETTINGS
 kind: command
 
-Open the system-wide appearance picker. It lists every built-in TUI theme and
-previews the highlighted one live: the current screen recolours as you move,
-and the choice is kept when you press Enter.
+Open the system-wide settings hub as a modal dialog. The hub lists categories
+and each category holds its own controls; Esc backs out of a category to the
+hub and closes from the hub, returning to the prompt.
 
 SETTINGS
 SETTINGS THEME name|n
 
   name - a theme name (bare or quoted) or its index
 
-The selection is the same one OPTION EDIT THEME sets, so it applies everywhere
-the theme is used: EDIT, FILES, WORDPAD, TERM, HELP, SPRITE, PACKAGE, APPS
-and the rest of the themed chrome. It is saved to C:/.mmbasic.ini (A: if there
-is no SD card) and survives a reboot.
+Categories:
 
-Keys in the picker:
+  Appearance - the TUI theme picker (below)
+  Network    - Wi-Fi / Ethernet / NTP status and pointers to the commands
+  System     - boot destination, app PATH, prompt and theme summary
+  Sound      - audio output and mute
+
+Theme (Appearance)
+
+The theme picker lists every built-in TUI theme and previews the highlighted
+one live: the screen recolours as you move, and the choice is kept when you
+press Enter. The selection is the same one OPTION EDIT THEME sets, so it
+applies everywhere the theme is used: EDIT, FILES, WORDPAD, TERM, HELP,
+SPRITE, PACKAGE, APPS and the rest of the themed chrome. It is saved to
+C:/.mmbasic.ini (A: if there is no SD card) and survives a reboot.
+
+Keys in the hub:
+
+  Up / Down   move the category selection
+  Enter       open the category
+  Esc         close the hub
+
+Keys in Appearance (Theme):
 
   Up / Down   move the selection (live preview)
   Enter       apply and save
-  Esc         cancel, restoring the previous theme
+  Esc         back to the hub, restoring the entry theme
   0-9         jump to a theme by index
 
 Built-in themes, in order:
