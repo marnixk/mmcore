@@ -1,0 +1,44 @@
+name: TDF
+kind: page
+
+TheDraw fonts
+
+A:/lib/TDF.BAS loads the TheDraw (.TDF) fonts seeded in A:/fonts/tdf/ and
+draws banner text from a BASIC program using the normal text console
+(~LOCATE~, ~COLOUR~, ~PRINT~). Include it, load a font, then print:
+
+    #INCLUDE "A:/lib/TDF.BAS"
+    TDF.Load "A:/fonts/tdf/STANDARD.TDF"
+    TDF.Print 0, 3, "HELLO"
+    TDF.Close
+
+TDF.Print x, y, s$ draws at character cell x (column, 0-based) and y (row,
+0-based) and leaves the cursor after the last glyph. Glyphs are ASCII 33 to
+126; a space advances by the font's letter spacing.
+
+API
+
+  TDF.Load path$               load the first font in a .TDF file
+  TDF.LoadNamed path$, name$   load a font by name from a collection
+  TDF.Print x, y, s$           draw a string at a character cell
+  TDF.Width(s$)                columns TDF.Print would advance
+  TDF.Close                    release the file stream (uses #10)
+
+After a load, TDF.Name$ is the font name and TDF.Type% is the type: 0 Outline,
+1 Block, 2 Color. TDF.Spacing% and TDF.Height report the letter spacing and
+line height. A space or an undefined glyph advances by the spacing.
+
+Font types
+
+Block glyphs hold CP437 characters. Color glyphs store a (character,
+attribute) pair per cell; the attribute nibbles select the background and
+foreground, and an attribute of 00 is a legal colour, so only a NUL character
+ends the glyph. Outline glyphs store letters A-O plus @ and & that are remapped
+to CP437 box-drawing cells (the Roy/SAC mapping); @ is a leading-space filler
+and & marks a descender line.
+
+A missing file, a bad header, or an unknown font name stops the program with a
+TDF error. Font rows are read to the NUL terminator, so descender lines are
+kept even when the Max Height header under-counts them.
+
+See also ~TEXT~, ~LOCATE~, ~COLOUR~ and ~FUNCTIONS~.
