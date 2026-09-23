@@ -88,6 +88,9 @@ void mmb_error(const char *msg) { (void)msg; }
 void mmb_skip_sp(void) {}
 void mmb_syntax(void) {}
 void mmb_out(const char *s) { (void)s; }
+void mmb_console_write(const char *s) { (void)s; }
+int mmb_fat_eject(int letter) { (void)letter; return 0; }
+int mmb_files_notice(const char *msg) { (void)msg; return 0; }
 mmb_val mmb_expr(void) { mmb_val v; memset(&v, 0, sizeof v); return v; }
 int mmb_zip_foreach(const void *buf, unsigned n,
 		    int (*cb)(const char *path, const void *data, unsigned len, void *ctx),

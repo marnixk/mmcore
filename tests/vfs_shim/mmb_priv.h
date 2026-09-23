@@ -52,6 +52,7 @@ void mmb_error(const char *msg);
 void mmb_skip_sp(void);
 void mmb_syntax(void);
 void mmb_out(const char *s);
+void mmb_console_write(const char *s);
 mmb_val mmb_expr(void);
 int mmb_zip_foreach(const void *buf, unsigned n,
 		    int (*cb)(const char *path, const void *data, unsigned len, void *ctx),
@@ -79,6 +80,8 @@ int mmb_fat_exists(int letter, const char *path);
 int mmb_fat_isdir(int letter, const char *path);
 const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
+int mmb_fat_eject(int letter);
+int mmb_files_notice(const char *msg);
 
 /* vfs.c public API under test. */
 void mmb_vfs_init(void);

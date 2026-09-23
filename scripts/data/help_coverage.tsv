@@ -64,6 +64,7 @@ DIR$	DIR$	topic	dedicated topic
 DO	DO	topic	dedicated topic
 DRIVE	DRIVE	topic	dedicated topic
 EDIT	EDIT	topic	dedicated topic
+EJECT	EJECT	topic	dedicated topic
 ELSE	IF	alias	alias of IF
 ELSEIF	IF	alias	alias of IF
 END	END	topic	dedicated topic
