@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -65,6 +66,11 @@ def _is_white(v):
     return r > 200 and g > 200 and b > 200
 
 
+def _is_magenta(v):
+    r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
+    return r > 130 and b > 130 and g < 120
+
+
 def _pack(rgb):
     r, g, b = rgb
     return (r << 16) | (g << 8) | b
@@ -73,6 +79,21 @@ def _pack(rgb):
 def _canvas_pixel(console, cx, cy):
     """Packed RGB of canvas pixel (cx, cy), drawn 1:1 at screen +PX0/+PY0."""
     return _pack(console.screen_pixel(PT_PX0 + cx, PT_PY0 + cy))
+
+
+def _chrome_geom(console):
+    """Screen geometry of the PAINT chrome (#607) at the live HDMI mode.
+
+    Mirrors the constants in mmbasic/src/cmd_paint.c: a 128px palette in a
+    right-hand column held 8px off the right edge, sitting above the two
+    status rows, with the nested FG/BG indicator just above it.
+    """
+    w = int(console.send_line("PRINT MM.HRES").split()[0])
+    h = int(console.send_line("PRINT MM.VRES").split()[0])
+    col_x = w - 128 - 8
+    pal_y = h - 32 - 8 - 128
+    ind_y = pal_y - 30 - 14
+    return w, h, col_x, pal_y, ind_y
 
 
 def test_paint_opens_and_shows_chrome(fresh_console):
@@ -222,6 +243,11 @@ def test_help_paint_topic(console):
     assert "not implemented" not in out.lower()
     assert "pencil" in out.lower()
     assert "PAINT" in out
+    low = out.lower()
+    assert "brush" in low          # #610
+    assert "magnify" in low        # #609
+    assert "foreground" in low     # #608
+    assert "right" in low          # LMB/RMB rule
 
 
 def _sdl_flags():
@@ -269,6 +295,28 @@ def _mouse_left(con, down):
         con,
         [{"type": "btn", "data": {"down": down, "button": "left"}}],
     )
+
+
+def _mouse_right(con, down):
+    _pointer_event(
+        con,
+        [{"type": "btn", "data": {"down": down, "button": "right"}}],
+    )
+
+
+def _mouse_to(con, x, y):
+    """Slam the relative pointer to (0,0) then step it to (x,y)."""
+    for _ in range(16):  # 16 * 127 > any supported HDMI coordinate
+        _mouse_move(con, -127, -127)
+    time.sleep(0.3)
+    while x or y:
+        dx = max(-100, min(100, x))
+        dy = max(-100, min(100, y))
+        _mouse_move(con, dx, dy)
+        x -= dx
+        y -= dy
+        time.sleep(0.12)
+    time.sleep(0.25)
 
 
 @pytest.fixture
@@ -347,3 +395,191 @@ def test_native_pointer_path_reaches_apps(tmp_path):
     env = dict(os.environ, SDL_VIDEODRIVER="dummy")
     out = subprocess.run([exe], check=True, capture_output=True, text=True, env=env)
     assert "all checks passed" in out.stdout
+
+
+# ---- DPaint chrome / FG+BG / magnify / brushes (#607-#610) ---------------
+
+
+def test_paint_dpaint_chrome_layout(fresh_console):
+    """#607: right tool column, palette strip and nested FG/BG indicator."""
+    c = fresh_console
+    w, h, col_x, pal_y, ind_y = _chrome_geom(c)
+    _open(c, 'PAINT "A:/PTDP.PNG", 16, 16')
+    # Palette swatch 4 is red (IBM 4) and lives in the right column.
+    assert _is_red(_pack(c.screen_pixel(col_x + 4 * 8 + 4, pal_y + 4)))
+    # Nested colour indicator: outer square BG (white), inner square FG (red).
+    assert _is_white(_pack(c.screen_pixel(col_x + 6, ind_y + 6)))
+    assert _is_red(_pack(c.screen_pixel(col_x + 4 + 15, ind_y + 4 + 15)))
+    # The tool column sits to the right of the canvas (canvas is 16px wide).
+    assert c.screen_pixel(col_x + 2, PT_PY0)[2] != 255
+    _quit(c)
+
+
+def test_paint_hide_chrome_keys(fresh_console):
+    """#609: F10 clears the tool column, F9 the menu bars; keys restore."""
+    c = fresh_console
+    w, h, col_x, pal_y, ind_y = _chrome_geom(c)
+    _open(c, 'PAINT "A:/PTHIDE.PNG", 16, 16')
+    assert _is_red(_pack(c.screen_pixel(col_x + 4 * 8 + 4, pal_y + 4)))
+    assert _pack(c.screen_pixel(w - 10, 4)) != 0x000000
+
+    _keys(c, b"\x1b[21~", quiet=0.4)  # F10: hide toolbox/palette
+    assert _pack(c.screen_pixel(col_x + 4 * 8 + 4, pal_y + 4)) == 0x000000
+
+    _keys(c, b"\x1b[20~", quiet=0.4)  # F9: hide the title/menu bars
+    assert _pack(c.screen_pixel(w - 10, 4)) == 0x000000
+
+    _keys(c, b"\x1b[20~", quiet=0.4)  # show menu again
+    _keys(c, b"\x1b[21~", quiet=0.4)  # show tools again
+    assert _is_red(_pack(c.screen_pixel(col_x + 4 * 8 + 4, pal_y + 4)))
+    _quit(c)
+
+
+def test_paint_fg_bg_keyboard(fresh_console):
+    """#608: keyboard fallback can select and draw with BG and FG."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTFB.PNG", 16, 16')
+    _keys(c, b"b")
+    _keys(c, b"1\r")          # BG = IBM 1 (blue)
+    _keys(c, b"\t")           # draw with BG
+    _keys(c, b" ")            # blue at (0,0)
+    _keys(c, b"\t")           # draw with FG again (red default)
+    _keys(c, b"\x1b[C")       # move to (1,0)
+    _keys(c, b" ")            # red at (1,0)
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PTFB.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_blue(_pixel(c, 0, 0))
+    assert _is_red(_pixel(c, 1, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_eyedropper_comma(fresh_console):
+    """#608: `,` samples the canvas under the cursor into FG."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTEYE.PNG", 16, 16')
+    _keys(c, b"4 ")                # red at (0,0)
+    _keys(c, b"\x1b[C\x1b[C")      # (2,0)
+    _keys(c, b"1 ")                # blue at (2,0)
+    _keys(c, b"\x1b[D\x1b[D")      # (0,0)
+    _keys(c, b",")                 # eyedropper: FG = red
+    _keys(c, b"\x1b[C")            # (1,0)
+    _keys(c, b" ")                 # red at (1,0)
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PTEYE.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_red(_pixel(c, 1, 0))
+    assert _is_blue(_pixel(c, 2, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_magnify_zoom(fresh_console):
+    """#609: m magnifies and `>` zooms into canvas pixels."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTMAG.PNG", 16, 16')
+    _keys(c, b"4 ")             # red at (0,0)
+    _keys(c, b"\x1b[C" * 4)     # move the cursor clear of (0,0)
+    _keys(c, b"m")              # magnify 2x
+    assert _is_red(_pack(c.screen_pixel(PT_PX0, PT_PY0)))
+    assert _is_red(_pack(c.screen_pixel(PT_PX0 + 1, PT_PY0)))
+    assert _is_white(_pack(c.screen_pixel(PT_PX0 + 2, PT_PY0)))
+    _keys(c, b">")              # 4x
+    assert _is_red(_pack(c.screen_pixel(PT_PX0, PT_PY0)))
+    assert _is_red(_pack(c.screen_pixel(PT_PX0 + 3, PT_PY0)))
+    _quit(c)
+
+
+def test_paint_brush_size_square(fresh_console):
+    """#610: H doubles the brush and `.` picks the square shape."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTBR.PNG", 16, 16')
+    _keys(c, b"H")          # size 1 -> 2
+    _keys(c, b".")          # round -> square
+    _keys(c, b"1")          # blue
+    _keys(c, b" ")          # stamp a 2x2 block at (0,0)
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PTBR.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_blue(_pixel(c, 0, 0))
+    assert _is_blue(_pixel(c, 1, 0))
+    assert _is_blue(_pixel(c, 0, 1))
+    assert _is_blue(_pixel(c, 1, 1))
+    assert _is_white(_pixel(c, 2, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_grab_brush_stamps(fresh_console):
+    """#610: the grab tool turns a canvas region into a reusable brush."""
+    c = fresh_console
+    _open(c, 'PAINT "A:/PTGR.PNG", 16, 16')
+    _keys(c, b"4")              # red
+    _keys(c, b" ")              # (0,0)
+    _keys(c, b"\x1b[C")         # (1,0)
+    _keys(c, b" ")              # (1,0)
+    _keys(c, b"g")              # grab tool
+    _keys(c, b"\x1b[D")         # (0,0)
+    _keys(c, b" ")              # anchor
+    _keys(c, b"\x1b[C")         # (1,0)
+    _keys(c, b" ")              # grab the 2x1 region
+    _keys(c, b"\x1b[C" * 7)     # (8,0)
+    _keys(c, b" ")              # stamp the custom brush
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PTGR.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_red(_pixel(c, 7, 0))
+    assert _is_red(_pixel(c, 8, 0))
+    assert _is_white(_pixel(c, 6, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_paint_mouse_fg_bg_rules(mouse_console):
+    """#608: LMB palette = FG, RMB palette = BG, RMB canvas paints BG."""
+    c = mouse_console
+    time.sleep(2.0)
+    w, h, col_x, pal_y, ind_y = _chrome_geom(c)
+    _open(c, 'PAINT "A:/PTMB.PNG", 16, 16')
+
+    # Left-click palette swatch 1 (blue) -> FG blue.
+    _mouse_to(c, col_x + 1 * 8 + 4, pal_y + 4)
+    _mouse_left(c, True)
+    time.sleep(0.3)
+    _mouse_left(c, False)
+    time.sleep(0.3)
+
+    # Right-click palette swatch 5 (magenta) -> BG magenta.
+    _mouse_to(c, col_x + 5 * 8 + 4, pal_y + 4)
+    _mouse_right(c, True)
+    time.sleep(0.3)
+    _mouse_right(c, False)
+    time.sleep(0.3)
+
+    # Right-click canvas (4,4): paints BG (magenta).
+    _mouse_to(c, PT_PX0 + 4, PT_PY0 + 4)
+    _mouse_right(c, True)
+    time.sleep(0.3)
+    _mouse_right(c, False)
+    time.sleep(0.3)
+
+    # Left-click canvas (6,6): paints FG (blue).
+    _mouse_to(c, PT_PX0 + 6, PT_PY0 + 6)
+    _mouse_left(c, True)
+    time.sleep(0.3)
+    _mouse_left(c, False)
+    time.sleep(0.3)
+
+    _keys(c, b"s", quiet=0.6)
+    _quit(c)
+
+    assert c.send_line('SPRITE LOADPNG 1, "PTMB.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _is_magenta(_pixel(c, 4, 4))
+    assert _is_blue(_pixel(c, 6, 6))
+    c.send_line("SPRITE CLOSE 1")

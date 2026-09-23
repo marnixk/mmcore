@@ -4,11 +4,13 @@ kind: command
 Paintbrush / Deluxe Paint-style pixel paint app. PAINT opens a full-screen
 canvas that is a true bitmap framebuffer: one canvas pixel is one screen pixel
 (1:1), not a character cell. Colours are indices into the classic 256-colour
-MCGA palette; a 16x16 swatch panel on the right shows every index and clicking
-a swatch selects it. A USB mouse drives the tools (click to draw, drag to
-paint, right-click to pick a colour); without a mouse the keyboard works on
-its own. Open, Save and Save As use text dialogs along the bottom of the
-screen.
+MCGA palette.
+
+The chrome follows Deluxe Paint: the canvas fills the left of the screen and a
+narrow tool column runs down the right edge - brush shapes on top, the painting
+tools below them, then the FG/BG colour indicator and the 16x16 MCGA paint set.
+F9 hides the menu/title bars and F10 hides the tool column so the canvas can be
+painted full-screen; the same keys bring them back.
 
 PAINT [file$] [, width [, height]]
 
@@ -17,20 +19,50 @@ PAINT [file$] [, width [, height]]
   width  - optional canvas width in pixels
   height - optional canvas height in pixels
 
+Two colours are always active, like Deluxe Paint. The colour indicator is the
+nested rectangle above the palette: the inner square is the foreground (FG)
+and the outer square is the background (BG). On a mouse:
+
+  left click palette      select FG
+  right click palette     select BG
+  left drag canvas        paint with FG
+  right drag canvas       paint with BG (erase onto the page)
+  click the indicator     swap FG and BG
+
 Tools select with a single key:
 
   p  pencil       e  eraser       l  line        r  rectangle
-  c  circle       f  flood fill   i  colour picker
+  c  circle       f  flood fill   i  colour picker  g  grab brush
   u, Ctrl+Z undo  x  clear canvas
   o  Open...      s  Save         a  Save As...   n  new canvas
-  k  type a colour index 0..255
+  k  type a FG colour index 0..255
+  b  type a BG colour index 0..255
 
   Arrows      move the cursor one pixel
   Space/Enter apply the tool. For line/rectangle/circle the first press sets
               the anchor and the second draws from the anchor to the cursor.
-  0-9         pick colour 0..9
+  0-9         pick FG colour 0..9
   [ ]         cycle through all 256 MCGA colours
+  ,           eyedropper: sample the canvas under the cursor into FG
+  Tab         keyboard fallback: draw with BG until pressed again
   Alt+X, Esc  leave PAINT and return to the prompt
+
+Brushes. The brush shapes (round, square and a grabbed custom brush)
+sit at the top of the tool column and can also be chosen with `.`. Sizing:
+
+  = -         grow / shrink the brush by one pixel
+  H h         double / halve the brush size
+
+The pencil, eraser and line tools stamp the current brush; rectangle and
+circle draw one-pixel outlines. To make a custom brush, choose the grab tool
+(g), press Space/Enter to set one corner, move, then press again (or drag a
+rectangle with the mouse) - that region of the canvas becomes the current
+brush. The BG index is transparent when the brush is stamped.
+
+Magnify. Press m or click the magnify button to zoom in; `<` and `>`
+zoom out and in, and the arrow keys pan the magnified view. The cursor still
+moves one canvas pixel at a time, so pixels can be edited at high zoom. The
+title bar shows the live X,Y position (t toggles the readout).
 
 Open/Save As prompt for a path; Enter confirms and Esc cancels. A loaded image
 is quantised to the nearest of the 256 palette colours. Saving writes a plain

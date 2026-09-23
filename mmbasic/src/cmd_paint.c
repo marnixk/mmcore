@@ -1,16 +1,27 @@
 /*
- * PAINT - a paint app (Paintbrush / Deluxe Paint / MCGA era).
+ * PAINT - a Deluxe Paint-style pixel paint app (Paintbrush / DPaint / MCGA).
  *
  * The canvas is a true bitmap framebuffer: one canvas pixel is one screen
- * pixel, drawn straight onto the HDMI framebuffer (1:1), not one TUI
- * character cell. Colours are byte indices into a 256-entry MCGA/VGA palette;
- * indices 0..15 are the classic IBM 16 so sketches read the same as before.
+ * pixel, drawn straight onto the HDMI framebuffer, not one TUI character
+ * cell. Colours are byte indices into a 256-entry MCGA/VGA palette; indices
+ * 0..15 are the classic IBM 16 so sketches read the same as before.
  *
- * Text chrome (title, toolbar, status) and the Open/Save/Save As/colour
- * dialogs stay character-cell TUI, while the canvas and the 16x16 palette
- * swatch panel are painted as pixels. Tools: pencil, eraser, line, rectangle,
- * circle, flood fill, colour picker and undo. A USB mouse drives the same
- * tools when present (see #513); the keyboard remains fully usable without one.
+ * Chrome follows Deluxe Paint: the canvas fills the left of the screen while
+ * a narrow tool column runs down the right edge - brush shapes on top, the
+ * painting tools below, then the nested FG/BG colour indicator and the
+ * MCGA paint set. F9 hides the menu/title bars and F10 the tool column so
+ * the canvas can be painted full-screen; the same keys bring them back.
+ *
+ * Mouse rules match DPaint: left button picks/uses the foreground colour,
+ * right button the background. On the canvas left drag paints FG (the
+ * brush), right drag paints BG (erase onto the page). `,` is the eyedropper
+ * and samples the canvas into FG. Without a mouse the keyboard works on its
+ * own (Tab swaps the active drawing colour). "+" in the header means FG,
+ * "TAB" means the keyboard paints BG.
+ *
+ * Brushes: ten built-in shapes are implied by round/square plus size, and any
+ * rectangle of the canvas can be grabbed with the scissor tool (`g`) to become
+ * a custom brush; the BG index is transparent when it is stamped.
  *
  * Saving writes a plain RGB PNG the same size as the canvas (the same bitmap
  * format SPRITE uses) so sketches round-trip.
@@ -22,14 +33,18 @@
 #define PT_MAX_H 480
 #define PT_UNDO  MMB_UNDO_DEPTH
 
-/* Pixel layout: canvas origin in screen pixels, palette panel on the right. */
-#define PT_PX0     8 /* canvas left, screen pixels */
-#define PT_PY0     48
-#define PT_PAL_Y   48
+/* Screen-pixel layout. The canvas keeps its top-left origin so the pixel
+ * coordinate math is stable; chrome is drawn around it. */
+#define PT_MARGIN   8
+#define PT_PX0      8	/* canvas left, screen pixels */
+#define PT_PY0      48	/* canvas top, screen pixels (below the title bars) */
+#define PT_STATUS_H 32	/* two text rows reserved at the bottom */
 #define PT_PAL_COLS 16
 #define PT_PAL_ROWS 16
-#define PT_PAL_SW  8
-#define PT_PAL_W   (PT_PAL_COLS * PT_PAL_SW) /* 128 */
+#define PT_PAL_SW   8
+#define PT_PAL_W    (PT_PAL_COLS * PT_PAL_SW) /* 128 */
+#define PT_CELL     30	/* tool/brush icon cell, screen pixels */
+#define PT_GAP      2
 
 #define PT_PENCIL 0
 #define PT_LINE   1
@@ -38,6 +53,26 @@
 #define PT_FILL   4
 #define PT_ERASER 5
 #define PT_PICK   6
+#define PT_GRAB   7
+#define PT_TOOL_MAX 8
+
+#define PT_BR_ROUND  0
+#define PT_BR_SQUARE 1
+#define PT_BR_CUSTOM 2
+
+/* Icon kinds for the right-hand tool column. */
+#define PT_IC_PENCIL 0
+#define PT_IC_LINE   1
+#define PT_IC_RECT   2
+#define PT_IC_CIRCLE 3
+#define PT_IC_FILL   4
+#define PT_IC_ERASER 5
+#define PT_IC_PICK   6
+#define PT_IC_GRAB   7
+#define PT_IC_MAG    8
+#define PT_IC_ROUND  9
+#define PT_IC_SQUARE 10
+#define PT_IC_CUSTOM 11
 
 #define PT_ESC_NONE 0
 #define PT_ESC_GOT  1
@@ -50,23 +85,38 @@
 #define PT_DLG_SAVEAS 2
 #define PT_DLG_COLOUR 3
 
+#define PT_BG_PANEL 0x00202020u
+#define PT_BG_DARK  0x00000000u
+#define PT_INK      0x00DDDDDDu
+
 typedef struct {
 	int active;
 	char path[160];
 	char label[96];
 	int w, h;
-	int colour;
+	int colour;	/* foreground index */
+	int bg;		/* background index */
+	int paint_bg;	/* keyboard draws with BG when set */
 	int tool;
+	int brush;	/* PT_BR_* */
+	int brush_size;
 	int cx, cy;
 	int dirty;
-	int esc_state, esc_at, alt_pend;
+	int esc_state, esc_at, esc_num, esc_has, alt_pend;
 	int have_mouse;
 	int mouse_down;
+	int mouse_btn;	/* 1 left, 2 right */
+	int stroke_col;
 	int last_px, last_py;
 	int have_anchor;
 	int anchor_px, anchor_py;
+	int zoom;
+	int magnify;
+	int view_x, view_y;
+	int hide_menu, hide_tools, show_xy;
 	char status[96];
 	int dialog;
+	int dlg_target;	/* 0 = FG, 1 = BG */
 	char dlg[160];
 	int dlglen;
 	unsigned char *pix;
@@ -75,6 +125,9 @@ typedef struct {
 	int *stack;
 	int undo_n, undo_pos;
 	int have_base;
+	unsigned char *brush_pix;
+	int brush_w, brush_h, brush_bg;
+	int have_custom;
 } pt_state;
 
 static pt_state PT;
@@ -85,10 +138,13 @@ static int pt_pal_ready;
 static void pt_make_path(char *dst, int dstsz, const char *in);
 static void pt_open(const char *name, int have_w, int want_w, int have_h,
 		    int want_h);
+static void pt_set_tool(int tool);
 
 static const char *const PT_TOOL_NAME[] = {
-	"PENCIL", "LINE", "RECT", "CIRCLE", "FILL", "ERASER", "PICK"
+	"PENCIL", "LINE", "RECT", "CIRCLE", "FILL", "ERASER", "PICK", "GRAB"
 };
+
+static const char *const PT_BRUSH_NAME[] = { "ROUND", "SQUARE", "CUSTOM" };
 
 static int pt_abs(int v)
 {
@@ -198,10 +254,13 @@ static void pt_free_buffers(void)
 		G.plat->free(PT.undo);
 	if (PT.stack)
 		G.plat->free(PT.stack);
+	if (PT.brush_pix)
+		G.plat->free(PT.brush_pix);
 	PT.pix = 0;
 	PT.base = 0;
 	PT.undo = 0;
 	PT.stack = 0;
+	PT.brush_pix = 0;
 }
 
 static int pt_alloc_buffers(int w, int h)
@@ -242,32 +301,6 @@ static void pt_hline(int x0, int x1, int y, int col)
 	}
 	for (x = x0; x <= x1; x++)
 		pt_put(x, y, col);
-}
-
-static void pt_line(int x0, int y0, int x1, int y1, int col)
-{
-	int dx = pt_abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-	int dy = -pt_abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-	int err = dx + dy;
-	for (;;)
-	{
-		pt_put(x0, y0, col);
-		if (x0 == x1 && y0 == y1)
-			break;
-		{
-			int e2 = 2 * err;
-			if (e2 >= dy)
-			{
-				err += dy;
-				x0 += sx;
-			}
-			if (e2 <= dx)
-			{
-				err += dx;
-				y0 += sy;
-			}
-		}
-	}
 }
 
 static void pt_rect(int x0, int y0, int x1, int y1, int col, int fill)
@@ -395,6 +428,122 @@ static void pt_flood(int sx, int sy, int col)
 	}
 }
 
+/* ---- brushes --------------------------------------------------------- */
+
+/* Stamp the round brush of size n centred on (x,y). */
+static void pt_stamp_round(int x, int y, int n, int col)
+{
+	int dx, dy, r = n / 2;
+	for (dy = -r; dy <= r; dy++)
+		for (dx = -r; dx <= r; dx++)
+			if (dx * dx + dy * dy <= (n * n) / 4)
+				pt_put(x + dx, y + dy, col);
+}
+
+/* Paste a grabbed custom brush centred on (x,y); its BG index is transparent. */
+static void pt_stamp_custom(int x, int y)
+{
+	int i, j, ox, oy;
+	if (!PT.have_custom || !PT.brush_pix)
+		return;
+	ox = PT.brush_w / 2;
+	oy = PT.brush_h / 2;
+	for (j = 0; j < PT.brush_h; j++)
+		for (i = 0; i < PT.brush_w; i++)
+		{
+			int v = PT.brush_pix[j * PT.brush_w + i];
+			if (v == PT.brush_bg)
+				continue;
+			pt_put(x - ox + i, y - oy + j, v);
+		}
+}
+
+static void pt_stamp(int x, int y, int col)
+{
+	if (PT.brush == PT_BR_CUSTOM && PT.have_custom)
+	{
+		pt_stamp_custom(x, y);
+		return;
+	}
+	if (PT.brush == PT_BR_SQUARE)
+	{
+		int h = (PT.brush_size - 1) / 2;
+		pt_rect(x - h, y - h, x - h + PT.brush_size - 1,
+			y - h + PT.brush_size - 1, col, 1);
+		return;
+	}
+	pt_stamp_round(x, y, PT.brush_size, col);
+}
+
+static void pt_stamp_line(int x0, int y0, int x1, int y1, int col)
+{
+	int dx = pt_abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+	int dy = -pt_abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+	int err = dx + dy;
+	for (;;)
+	{
+		pt_stamp(x0, y0, col);
+		if (x0 == x1 && y0 == y1)
+			break;
+		{
+			int e2 = 2 * err;
+			if (e2 >= dy)
+			{
+				err += dy;
+				x0 += sx;
+			}
+			if (e2 <= dx)
+			{
+				err += dx;
+				y0 += sy;
+			}
+		}
+	}
+}
+
+/* Capture the rectangle [x0,y0]-[x1,y1] as the current brush (#610). */
+static void pt_grab_brush(int x0, int y0, int x1, int y1)
+{
+	int t, bw, bh, i;
+	if (x0 > x1)
+	{
+		t = x0;
+		x0 = x1;
+		x1 = t;
+	}
+	if (y0 > y1)
+	{
+		t = y0;
+		y0 = y1;
+		y1 = t;
+	}
+	bw = x1 - x0 + 1;
+	bh = y1 - y0 + 1;
+	if (bw < 1 || bh < 1)
+		return;
+	if (PT.brush_pix)
+	{
+		G.plat->free(PT.brush_pix);
+		PT.brush_pix = 0;
+	}
+	PT.brush_pix = G.plat->alloc((unsigned)bw * (unsigned)bh);
+	if (!PT.brush_pix)
+	{
+		strncpy(PT.status, "No room for brush", sizeof(PT.status) - 1);
+		return;
+	}
+	for (i = 0; i < bh; i++)
+		memcpy(PT.brush_pix + i * bw, PT.pix + (y0 + i) * PT.w + x0,
+		       (unsigned)bw);
+	PT.brush_w = bw;
+	PT.brush_h = bh;
+	PT.brush_bg = PT.bg;
+	PT.have_custom = 1;
+	PT.brush = PT_BR_CUSTOM;
+	pt_set_tool(PT_PENCIL);
+	sprintf(PT.status, "Brush %dx%d", bw, bh);
+}
+
 /* ---- undo / shape preview ------------------------------------------- */
 
 static void pt_undo_push(void)
@@ -437,21 +586,21 @@ static void pt_restore_base(void)
 		memcpy(PT.pix, PT.base, n);
 }
 
-static void pt_draw_shape(int x0, int y0, int x1, int y1)
+static void pt_draw_shape(int x0, int y0, int x1, int y1, int col)
 {
 	switch (PT.tool)
 	{
 	case PT_LINE:
-		pt_line(x0, y0, x1, y1, PT.colour);
+		pt_stamp_line(x0, y0, x1, y1, col);
 		break;
 	case PT_RECT:
-		pt_rect(x0, y0, x1, y1, PT.colour, 0);
+		pt_rect(x0, y0, x1, y1, col, 0);
 		break;
 	case PT_CIRCLE:
 	{
 		int dx = x1 - x0, dy = y1 - y0;
 		int r = (pt_abs(dx) + pt_abs(dy)) / 2;
-		pt_circle(x0, y0, r, PT.colour, 0);
+		pt_circle(x0, y0, r, col, 0);
 		break;
 	}
 	default:
@@ -546,14 +695,50 @@ static int pt_scr_h(void)
 	return tui_rows() * 16;
 }
 
-static int pt_pal_x(void)
+/* Left edge of the right-hand tool column. */
+static int pt_col_x(void)
 {
-	return pt_scr_w() - PT_PAL_W - 8;
+	return pt_scr_w() - PT_PAL_W - PT_MARGIN;
+}
+
+/* Top of the palette, anchored above the status rows. */
+static int pt_pal_y(void)
+{
+	int y = pt_scr_h() - PT_STATUS_H - PT_MARGIN - PT_PAL_W;
+	if (y < PT_PY0 + 8)
+		y = PT_PY0 + 8;
+	return y;
+}
+
+static int pt_brush_base(void)
+{
+	return PT_PY0;
+}
+
+static int pt_tools_base(void)
+{
+	return PT_PY0 + PT_CELL + 4;
+}
+
+/* Cell rectangle for tool/brush button index (4 per row). */
+static void pt_cell_rect(int base, int index, int *x, int *y)
+{
+	int col = index % 4, row = index / 4;
+	*x = pt_col_x() + col * (PT_CELL + PT_GAP);
+	*y = base + row * (PT_CELL + PT_GAP);
+}
+
+static int pt_indicator_y(void)
+{
+	int y = pt_pal_y() - PT_CELL - 14;
+	if (y < pt_tools_base() + 3 * (PT_CELL + PT_GAP))
+		y = pt_tools_base() + 3 * (PT_CELL + PT_GAP);
+	return y;
 }
 
 static int pt_max_w(void)
 {
-	int w = pt_pal_x() - PT_PX0 - 8;
+	int w = pt_col_x() - PT_PX0 - PT_MARGIN;
 	if (w > PT_MAX_W)
 		w = PT_MAX_W;
 	if (w < 8)
@@ -563,11 +748,30 @@ static int pt_max_w(void)
 
 static int pt_max_h(void)
 {
-	int h = pt_scr_h() - PT_PY0 - 32;
+	int h = pt_scr_h() - PT_PY0 - PT_STATUS_H;
 	if (h > PT_MAX_H)
 		h = PT_MAX_H;
 	if (h < 8)
 		h = 8;
+	return h;
+}
+
+/* Pixel area the canvas may use, accounting for hidden chrome. */
+static int pt_avail_w(void)
+{
+	int x1 = PT.hide_tools ? pt_scr_w() : pt_col_x() - PT_MARGIN;
+	int w = x1 - PT_PX0;
+	if (w < 1)
+		w = 1;
+	return w;
+}
+
+static int pt_avail_h(void)
+{
+	int y1 = PT.hide_menu ? pt_scr_h() : pt_scr_h() - PT_STATUS_H;
+	int h = y1 - PT_PY0;
+	if (h < 1)
+		h = 1;
 	return h;
 }
 
@@ -603,10 +807,229 @@ static void pt_frame_px(int x, int y, int w, int h, unsigned rgb)
 	pt_fill(x + w - 1, y, 1, h, rgb);
 }
 
-/* Blit the canvas 1:1, batching horizontal runs of one colour. */
+/* Screen-space primitives used by the tool-column icons. */
+static void pt_spx(int x, int y, unsigned c)
+{
+	pt_fill(x, y, 1, 1, c);
+}
+
+static void pt_sline(int x0, int y0, int x1, int y1, unsigned c)
+{
+	int dx = pt_abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+	int dy = -pt_abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+	int err = dx + dy;
+	for (;;)
+	{
+		pt_spx(x0, y0, c);
+		if (x0 == x1 && y0 == y1)
+			break;
+		{
+			int e2 = 2 * err;
+			if (e2 >= dy)
+			{
+				err += dy;
+				x0 += sx;
+			}
+			if (e2 <= dx)
+			{
+				err += dx;
+				y0 += sy;
+			}
+		}
+	}
+}
+
+static void pt_srect(int x, int y, int w, int h, unsigned c, int fill)
+{
+	int i, j;
+	if (w < 1 || h < 1)
+		return;
+	if (fill)
+	{
+		pt_fill(x, y, w, h, c);
+		return;
+	}
+	for (i = 0; i < w; i++)
+	{
+		pt_spx(x + i, y, c);
+		pt_spx(x + i, y + h - 1, c);
+	}
+	for (j = 0; j < h; j++)
+	{
+		pt_spx(x, y + j, c);
+		pt_spx(x + w - 1, y + j, c);
+	}
+}
+
+static void pt_scircle(int cx, int cy, int r, unsigned c, int fill)
+{
+	int x = 0, y = r, d = 1 - r, i;
+	if (r < 1)
+	{
+		pt_spx(cx, cy, c);
+		return;
+	}
+	if (fill)
+	{
+		for (i = -r; i <= r; i++)
+		{
+			pt_spx(cx + i, cy, c);
+		}
+		while (x <= y)
+		{
+			for (i = -x; i <= x; i++)
+			{
+				pt_spx(cx + i, cy + y, c);
+				pt_spx(cx + i, cy - y, c);
+			}
+			for (i = -y; i <= y; i++)
+			{
+				pt_spx(cx + i, cy + x, c);
+				pt_spx(cx + i, cy - x, c);
+			}
+			if (d < 0)
+				d += 2 * x + 3;
+			else
+			{
+				d += 2 * (x - y) + 5;
+				y--;
+			}
+			x++;
+		}
+		return;
+	}
+	while (x <= y)
+	{
+		pt_spx(cx + x, cy + y, c);
+		pt_spx(cx - x, cy + y, c);
+		pt_spx(cx + x, cy - y, c);
+		pt_spx(cx - x, cy - y, c);
+		pt_spx(cx + y, cy + x, c);
+		pt_spx(cx - y, cy + x, c);
+		pt_spx(cx + y, cy - x, c);
+		pt_spx(cx - y, cy - x, c);
+		if (d < 0)
+			d += 2 * x + 3;
+		else
+		{
+			d += 2 * (x - y) + 5;
+			y--;
+		}
+		x++;
+	}
+}
+
+/* Blit one colour-swatch button glyph. */
+static void pt_icon(int x, int y, int sz, int kind, unsigned fg, unsigned bg)
+{
+	int x0 = x + 3, y0 = y + 3, x1 = x + sz - 4, y1 = y + sz - 4;
+	pt_srect(x, y, sz, sz, bg, 1);
+	switch (kind)
+	{
+	case PT_IC_PENCIL:
+		pt_sline(x1, y0, x0 + 3, y1 - 3, fg);
+		pt_sline(x1, y0 + 1, x0 + 3, y1 - 2, fg);
+		pt_sline(x0, y1, x0, y1 - 3, fg);
+		pt_sline(x0, y1, x0 + 3, y1 - 3, fg);
+		break;
+	case PT_IC_LINE:
+		pt_sline(x0, y1, x1, y0, fg);
+		pt_sline(x0, y1 - 1, x1 - 1, y0, fg);
+		break;
+	case PT_IC_RECT:
+		pt_srect(x0, y0, x1 - x0 + 1, y1 - y0 + 1, fg, 0);
+		break;
+	case PT_IC_CIRCLE:
+		pt_scircle((x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, fg, 0);
+		break;
+	case PT_IC_FILL:
+		pt_srect(x0 + 3, y1 - 3, x1 - x0 - 6, 4, fg, 1);
+		pt_srect(x0 + 5, y1 - 7, x1 - x0 - 10, 4, fg, 1);
+		pt_sline(x1 - 1, y0, x1 - 1, y0 + 4, fg);
+		pt_sline(x1 - 2, y0, x1 - 2, y0 + 4, fg);
+		break;
+	case PT_IC_ERASER:
+		pt_srect(x0 + 2, y1 - 5, x1 - x0 - 4, 5, fg, 1);
+		pt_sline(x0 + 4, y0 + 4, x1 - 2, y0 + 4, fg);
+		break;
+	case PT_IC_PICK:
+		pt_sline(x0, y1, x1 - 2, y0 + 2, fg);
+		pt_sline(x0 + 1, y1, x1 - 1, y0 + 3, fg);
+		pt_srect(x0, y1 - 3, 4, 4, fg, 1);
+		break;
+	case PT_IC_GRAB:
+		pt_srect(x0, y0, x1 - x0 + 1, y1 - y0 + 1, fg, 0);
+		pt_sline(x0 + 3, y0, x0 + 3, y0 + 3, fg);
+		pt_sline(x1 - 3, y0, x1 - 3, y0 + 3, fg);
+		pt_sline(x0 + 3, y1, x0 + 3, y1 - 3, fg);
+		pt_sline(x1 - 3, y1, x1 - 3, y1 - 3, fg);
+		break;
+	case PT_IC_MAG:
+		pt_scircle(x0 + 5, y0 + 5, 5, fg, 0);
+		pt_sline(x0 + 9, y0 + 9, x1, y1, fg);
+		pt_sline(x0 + 10, y0 + 9, x1, y1 - 1, fg);
+		break;
+	case PT_IC_ROUND:
+		pt_scircle((x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2 - 1,
+			   fg, 1);
+		break;
+	case PT_IC_SQUARE:
+		pt_srect(x0 + 2, y0 + 2, x1 - x0 - 3, y1 - y0 - 3, fg, 1);
+		break;
+	case PT_IC_CUSTOM:
+		pt_srect(x0 + 1, y0 + 1, 5, 5, fg, 1);
+		pt_srect(x1 - 5, y1 - 5, 5, 5, fg, 1);
+		pt_srect(x1 - 5, y0 + 1, 5, 5, fg, 0);
+		pt_srect(x0 + 1, y1 - 5, 5, 5, fg, 0);
+		break;
+	default:
+		break;
+	}
+}
+
+/* ---- chrome rendering ----------------------------------------------- */
+
+/* Blit the canvas at 1:1, batching horizontal runs of one colour. */
 static void pt_draw_canvas(void)
 {
 	int x, y;
+	pt_fill(PT_PX0, PT_PY0, pt_avail_w(), pt_avail_h(), PT_BG_DARK);
+	if (PT.magnify && PT.zoom > 1)
+	{
+		int vw = pt_avail_w() / PT.zoom, vh = pt_avail_h() / PT.zoom;
+		int vx, vy;
+		for (vy = 0; vy < vh; vy++)
+		{
+			int cy = PT.view_y + vy;
+			const unsigned char *row;
+			if (cy < 0 || cy >= PT.h)
+				continue;
+			row = PT.pix + cy * PT.w;
+			vx = 0;
+			while (vx < vw)
+			{
+				int cx = PT.view_x + vx;
+				unsigned char c;
+				int run;
+				if (cx < 0 || cx >= PT.w)
+				{
+					vx++;
+					continue;
+				}
+				c = row[cx];
+				run = 1;
+				while (vx + run < vw &&
+				       PT.view_x + vx + run < PT.w &&
+				       row[PT.view_x + vx + run] == c)
+					run++;
+				pt_fill(PT_PX0 + vx * PT.zoom,
+					PT_PY0 + vy * PT.zoom,
+					run * PT.zoom, PT.zoom, pt_pal[c]);
+				vx += run;
+			}
+		}
+		return;
+	}
 	for (y = 0; y < PT.h; y++)
 	{
 		const unsigned char *row = PT.pix + y * PT.w;
@@ -625,10 +1048,9 @@ static void pt_draw_canvas(void)
 
 static void pt_draw_palette(void)
 {
-	int px = pt_pal_x(), py = PT_PAL_Y, r, c;
-	int sel = PT.colour;
-	int sx, sy;
-	unsigned border = 0x00AAAAAAu, mark;
+	int px = pt_col_x(), py = pt_pal_y(), r, c;
+	int bgx, bgy, fgx, fgy;
+	unsigned border = 0x00AAAAAAu;
 
 	pt_frame_px(px - 2, py - 2, PT_PAL_W + 4, PT_PAL_W + 4, border);
 	for (r = 0; r < PT_PAL_ROWS; r++)
@@ -638,18 +1060,67 @@ static void pt_draw_palette(void)
 			pt_fill(px + c * PT_PAL_SW, py + r * PT_PAL_SW,
 				PT_PAL_SW, PT_PAL_SW, pt_pal[idx]);
 		}
-	sx = px + (sel % PT_PAL_COLS) * PT_PAL_SW;
-	sy = py + (sel / PT_PAL_COLS) * PT_PAL_SW;
-	mark = (pt_pal[sel] & 0x808080u) == 0x808080u ? 0x000000u : 0xFFFFFFu;
-	pt_frame_px(sx - 1, sy - 1, PT_PAL_SW + 2, PT_PAL_SW + 2, mark);
-	pt_frame_px(sx, sy, PT_PAL_SW, PT_PAL_SW, 0xFFFFFFu);
+	bgx = px + (PT.bg % PT_PAL_COLS) * PT_PAL_SW;
+	bgy = py + (PT.bg / PT_PAL_COLS) * PT_PAL_SW;
+	pt_frame_px(bgx - 1, bgy - 1, PT_PAL_SW + 2, PT_PAL_SW + 2,
+		    0x00FFFF00u);
+	fgx = px + (PT.colour % PT_PAL_COLS) * PT_PAL_SW;
+	fgy = py + (PT.colour / PT_PAL_COLS) * PT_PAL_SW;
+	pt_frame_px(fgx - 2, fgy - 2, PT_PAL_SW + 4, PT_PAL_SW + 4,
+		    0x00FFFFFFu);
 }
 
-static void pt_draw_swatch(void)
+/* Nested rectangles: outer = BG, inner = FG (DPaint colour indicator). */
+static void pt_draw_indicator(void)
 {
-	int px = pt_pal_x() - 26;
-	pt_frame_px(px, PT_PAL_Y, 18, 18, 0x00FFFFFFu);
-	pt_fill(px + 2, PT_PAL_Y + 2, 14, 14, pt_pal[PT.colour]);
+	int x = pt_col_x(), y = pt_indicator_y();
+	int bx = x + 4, by = y + 4;
+
+	pt_fill(x, y, PT_PAL_W, PT_CELL + 8, PT_BG_PANEL);
+	pt_frame_px(bx - 2, by - 2, PT_CELL + 6, PT_CELL + 6, PT_INK);
+	pt_fill(bx, by, PT_CELL, PT_CELL, pt_pal[PT.bg]);
+	pt_frame_px(bx + 6, by + 6, 18, 18, 0x00FFFFFFu);
+	pt_fill(bx + 8, by + 8, 14, 14, pt_pal[PT.colour]);
+}
+
+static void pt_draw_tools(void)
+{
+	int bx, by, i, sx, sy;
+	static const int tool_icons[9] = {
+		PT_IC_PENCIL, PT_IC_LINE, PT_IC_RECT, PT_IC_CIRCLE, PT_IC_FILL,
+		PT_IC_ERASER, PT_IC_PICK, PT_IC_GRAB, PT_IC_MAG
+	};
+
+	/* Brush shapes (#610), a single row above the tools. */
+	for (i = 0; i < 3; i++)
+	{
+		int kind = (i == PT_BR_ROUND) ? PT_IC_ROUND :
+			   (i == PT_BR_SQUARE) ? PT_IC_SQUARE : PT_IC_CUSTOM;
+		unsigned fg = PT_INK;
+		pt_cell_rect(pt_brush_base(), i, &bx, &by);
+		if (i == PT_BR_CUSTOM && !PT.have_custom)
+			fg = 0x00707070u;
+		pt_icon(bx, by, PT_CELL, kind, fg, PT_BG_PANEL);
+		if (PT.brush == i)
+			pt_frame_px(bx - 1, by - 1, PT_CELL + 2, PT_CELL + 2,
+				    0x00FFFFFFu);
+	}
+
+	/* Painting tools, four per row. */
+	for (i = 0; i < 9; i++)
+	{
+		unsigned fg = PT_INK;
+		pt_cell_rect(pt_tools_base(), i, &sx, &sy);
+		if (i == PT_IC_MAG && !PT.magnify)
+			fg = PT_INK;
+		pt_icon(sx, sy, PT_CELL, tool_icons[i], fg, PT_BG_PANEL);
+		if (i < PT_TOOL_MAX && PT.tool == i)
+			pt_frame_px(sx - 1, sy - 1, PT_CELL + 2, PT_CELL + 2,
+				    0x00FFFFFFu);
+		else if (i == PT_IC_MAG && PT.magnify)
+			pt_frame_px(sx - 1, sy - 1, PT_CELL + 2, PT_CELL + 2,
+				    0x00FFFFFFu);
+	}
 }
 
 static void pt_draw_cursor(void)
@@ -660,10 +1131,22 @@ static void pt_draw_cursor(void)
 	unsigned ink;
 	if (PT.cx < 0 || PT.cy < 0 || PT.cx >= PT.w || PT.cy >= PT.h)
 		return;
+	if (PT.magnify && PT.zoom > 1)
+	{
+		x = PT_PX0 + (PT.cx - PT.view_x) * PT.zoom;
+		y = PT_PY0 + (PT.cy - PT.view_y) * PT.zoom;
+		c = pt_pal[PT.pix[PT.cy * PT.w + PT.cx]];
+		lum = (int)((c >> 16) & 255) + (int)((c >> 8) & 255) +
+		      (int)(c & 255);
+		ink = lum > 384 ? 0x000000u : 0xFFFFFFu;
+		pt_frame_px(x, y, PT.zoom + 1, PT.zoom + 1, ink);
+		return;
+	}
 	x = PT_PX0 + PT.cx;
 	y = PT_PY0 + PT.cy;
 	c = pt_pal[PT.pix[PT.cy * PT.w + PT.cx]];
-	lum = (int)((c >> 16) & 255) + (int)((c >> 8) & 255) + (int)(c & 255);
+	lum = (int)((c >> 16) & 255) + (int)((c >> 8) & 255) +
+	      (int)(c & 255);
 	ink = lum > 384 ? 0x000000u : 0xFFFFFFu;
 	pt_fill(x - 1, y - 1, 3, 1, ink);
 	pt_fill(x - 1, y + 1, 3, 1, ink);
@@ -673,22 +1156,17 @@ static void pt_draw_cursor(void)
 
 static void pt_present_pixels(void)
 {
-	int y1 = PT_PY0 + PT.h;
 	int sh = pt_scr_h();
-	if (y1 < PT_PAL_Y + PT_PAL_W)
-		y1 = PT_PAL_Y + PT_PAL_W;
-	if (y1 > sh)
-		y1 = sh;
-	if (y1 <= PT_PY0)
+	if (sh <= PT_PY0)
 		return;
 	if (G.plat && G.plat->tui_present)
-		G.plat->tui_present(PT_PY0, y1 - 1);
+		G.plat->tui_present(PT_PY0, sh - 1);
 }
 
 static void pt_redraw(void)
 {
 	int cols, rows;
-	char line[160];
+	char line[192];
 
 	if (!PT.active || !G.plat || !G.plat->tui_glyph || !PT.pix)
 		return;
@@ -697,39 +1175,62 @@ static void pt_redraw(void)
 	tui_begin();
 	tui_clear(TUI_BRWHITE, TUI_BLACK);
 
-	sprintf(line, "PAINT  %s  %dx%d  %s", PT.label, PT.w, PT.h,
-		PT.dirty ? "*" : " ");
-	tui_pad(0, 0, line, cols, TUI_BRWHITE, TUI_BRBLUE);
+	if (!PT.hide_menu)
+	{
+		sprintf(line, "PAINT  %s  %dx%d  MCGA 256  %s", PT.label,
+			PT.w, PT.h, PT.dirty ? "*" : " ");
+		tui_pad(0, 0, line, cols, TUI_BRWHITE, TUI_BRBLUE);
 
-	sprintf(line, " %s  COLOUR %d (MCGA 256)  ", PT_TOOL_NAME[PT.tool],
-		PT.colour);
-	tui_pad(0, 1, line, cols, TUI_BRYELLOW, TUI_BRBLACK);
+		sprintf(line, " %s  FG %d  BG %d  %s %d  ZOOM %dx%s",
+			PT_TOOL_NAME[PT.tool], PT.colour, PT.bg,
+			PT_BRUSH_NAME[PT.brush], PT.brush_size, PT.zoom,
+			PT.magnify ? "*" : "");
+		if (PT.show_xy)
+		{
+			char xy[32];
+			sprintf(xy, "  X %d Y %d", PT.cx, PT.cy);
+			strncat(line, xy, sizeof(line) - strlen(line) - 1);
+		}
+		tui_pad(0, 1, line, cols, TUI_BRYELLOW, TUI_BRBLACK);
+	}
 
 	if (PT.dialog)
 	{
 		const char *prompt = "Open: ";
 		if (PT.dialog == PT_DLG_SAVEAS)
 			prompt = "Save as: ";
+		else if (PT.dialog == PT_DLG_COLOUR &&
+			 PT.dlg_target == 1)
+			prompt = "BG colour 0-255: ";
 		else if (PT.dialog == PT_DLG_COLOUR)
 			prompt = "Colour 0-255: ";
 		sprintf(line, "%s%s_", prompt, PT.dlg);
 		tui_pad(0, rows - 2, line, cols, TUI_BLACK, TUI_BRCYAN);
 	}
-	else
+	else if (!PT.hide_menu)
 		tui_pad(0, rows - 2,
-			"o open  s save  a save as  (c circle)  k colour index  i pick",
+			"p pencil e eraser l line r rect c circle f fill i pick g grab",
 			cols, TUI_BRCYAN, TUI_BLACK);
 
-	tui_pad(0, rows - 1,
-		PT.status[0] ? PT.status
-			     : "pencil e eraser l line r rect c circle f fill i pick u undo x clear",
-		cols, TUI_BRBLACK, TUI_BRYELLOW);
+	if (!PT.hide_menu)
+		tui_pad(0, rows - 1,
+			PT.status[0] ? PT.status
+				     : "u undo x clear  k FG b BG  , pick  Tab draw  m magnify  < > zoom  = - size  F9/F10 hide",
+			cols, TUI_BRBLACK, TUI_BRYELLOW);
 
 	tui_flush();
 
+	if (PT.hide_tools)
+		pt_fill(pt_col_x() - PT_MARGIN, 0,
+			pt_scr_w() - (pt_col_x() - PT_MARGIN), pt_scr_h(),
+			PT_BG_DARK);
 	pt_draw_canvas();
-	pt_draw_palette();
-	pt_draw_swatch();
+	if (!PT.hide_tools)
+	{
+		pt_draw_tools();
+		pt_draw_indicator();
+		pt_draw_palette();
+	}
 	pt_draw_cursor();
 	pt_present_pixels();
 }
@@ -755,15 +1256,67 @@ static void pt_set_tool(int tool)
 	strncpy(PT.status, PT_TOOL_NAME[tool], sizeof(PT.status) - 1);
 }
 
+static int pt_mag_view_w(void)
+{
+	int vw = pt_avail_w() / PT.zoom;
+	return vw < 1 ? 1 : vw;
+}
+
+static int pt_mag_view_h(void)
+{
+	int vh = pt_avail_h() / PT.zoom;
+	return vh < 1 ? 1 : vh;
+}
+
+static void pt_clamp_view(void)
+{
+	int maxx = PT.w - pt_mag_view_w();
+	int maxy = PT.h - pt_mag_view_h();
+	if (maxx < 0)
+		maxx = 0;
+	if (maxy < 0)
+		maxy = 0;
+	PT.view_x = pt_clamp(PT.view_x, 0, maxx);
+	PT.view_y = pt_clamp(PT.view_y, 0, maxy);
+}
+
 static void pt_move(int dx, int dy)
 {
 	PT.cx = pt_clamp(PT.cx + dx, 0, PT.w - 1);
 	PT.cy = pt_clamp(PT.cy + dy, 0, PT.h - 1);
+	if (PT.magnify && PT.zoom > 1)
+	{
+		int vw = pt_mag_view_w(), vh = pt_mag_view_h();
+		if (PT.cx < PT.view_x)
+			PT.view_x = PT.cx;
+		if (PT.cx >= PT.view_x + vw)
+			PT.view_x = PT.cx - vw + 1;
+		if (PT.cy < PT.view_y)
+			PT.view_y = PT.cy;
+		if (PT.cy >= PT.view_y + vh)
+			PT.view_y = PT.cy - vh + 1;
+		pt_clamp_view();
+	}
+}
+
+/* Keyboard drawing colour: FG unless the user toggled to BG. */
+static int pt_kb_colour(void)
+{
+	return PT.paint_bg ? PT.bg : PT.colour;
+}
+
+static void pt_pick_cursor(void)
+{
+	if (PT.cx < 0 || PT.cy < 0 || PT.cx >= PT.w || PT.cy >= PT.h)
+		return;
+	PT.colour = PT.pix[PT.cy * PT.w + PT.cx];
+	sprintf(PT.status, "FG %d", PT.colour);
 }
 
 /* Apply the current tool at the cursor (keyboard Space/Enter). */
 static void pt_apply(void)
 {
+	int col = pt_kb_colour();
 	if (PT.cx < 0 || PT.cy < 0 || PT.cx >= PT.w || PT.cy >= PT.h)
 		return;
 	switch (PT.tool)
@@ -771,18 +1324,36 @@ static void pt_apply(void)
 	case PT_PENCIL:
 	case PT_ERASER:
 		pt_undo_push();
-		pt_put(PT.cx, PT.cy,
-		       PT.tool == PT_ERASER ? 15 : PT.colour);
+		pt_stamp(PT.cx, PT.cy, PT.tool == PT_ERASER ? PT.bg : col);
 		PT.dirty = 1;
 		break;
 	case PT_FILL:
 		pt_undo_push();
-		pt_flood(PT.cx, PT.cy, PT.colour);
+		pt_flood(PT.cx, PT.cy, col);
 		PT.dirty = 1;
 		break;
 	case PT_PICK:
-		PT.colour = PT.pix[PT.cy * PT.w + PT.cx];
+		pt_pick_cursor();
 		pt_set_tool(PT_PENCIL);
+		break;
+	case PT_GRAB:
+		if (!PT.have_anchor)
+		{
+			PT.anchor_px = PT.cx;
+			PT.anchor_py = PT.cy;
+			PT.have_anchor = 1;
+			pt_snapshot_base();
+			strncpy(PT.status, "Move, then Space/Enter",
+				sizeof(PT.status) - 1);
+		}
+		else
+		{
+			pt_restore_base();
+			pt_grab_brush(PT.anchor_px, PT.anchor_py, PT.cx,
+				      PT.cy);
+			PT.have_anchor = 0;
+			PT.have_base = 0;
+		}
 		break;
 	default:
 		if (!PT.have_anchor)
@@ -799,7 +1370,7 @@ static void pt_apply(void)
 			pt_restore_base();
 			pt_undo_push();
 			pt_draw_shape(PT.anchor_px, PT.anchor_py, PT.cx,
-				      PT.cy);
+				      PT.cy, col);
 			PT.dirty = 1;
 			PT.have_anchor = 0;
 			PT.have_base = 0;
@@ -828,9 +1399,66 @@ static void pt_cycle_colour(int d)
 	PT.have_anchor = 0;
 }
 
-static void pt_dialog_begin(int kind)
+static void pt_brush_size_set(int n)
+{
+	PT.brush_size = pt_clamp(n, 1, 64);
+	sprintf(PT.status, "Brush %d", PT.brush_size);
+}
+
+static void pt_cycle_brush(void)
+{
+	if (PT.brush == PT_BR_ROUND)
+		PT.brush = PT_BR_SQUARE;
+	else if (PT.brush == PT_BR_SQUARE)
+		PT.brush = PT.have_custom ? PT_BR_CUSTOM : PT_BR_ROUND;
+	else
+		PT.brush = PT_BR_ROUND;
+	sprintf(PT.status, "Brush %s", PT_BRUSH_NAME[PT.brush]);
+}
+
+static void pt_zoom_center(void)
+{
+	int vw = pt_mag_view_w(), vh = pt_mag_view_h();
+	PT.view_x = PT.cx - vw / 2;
+	PT.view_y = PT.cy - vh / 2;
+	pt_clamp_view();
+}
+
+static void pt_zoom_set(int z)
+{
+	PT.zoom = pt_clamp(z, 1, 16);
+	if (PT.zoom > 1)
+	{
+		if (!PT.magnify)
+			PT.magnify = 1;
+		pt_zoom_center();
+	}
+	else
+		PT.magnify = 0;
+	sprintf(PT.status, "Zoom %dx", PT.zoom);
+}
+
+static void pt_toggle_magnify(void)
+{
+	if (PT.magnify)
+	{
+		PT.magnify = 0;
+		strncpy(PT.status, "Magnify off", sizeof(PT.status) - 1);
+	}
+	else
+	{
+		if (PT.zoom < 2)
+			PT.zoom = 2;
+		PT.magnify = 1;
+		pt_zoom_center();
+		sprintf(PT.status, "Magnify %dx", PT.zoom);
+	}
+}
+
+static void pt_dialog_begin(int kind, int target)
 {
 	PT.dialog = kind;
+	PT.dlg_target = target;
 	PT.dlglen = 0;
 	PT.dlg[0] = 0;
 	if (kind == PT_DLG_SAVEAS)
@@ -845,6 +1473,7 @@ static void pt_dialog_begin(int kind)
 static void pt_dialog_accept(void)
 {
 	int kind = PT.dialog;
+	int target = PT.dlg_target;
 	char text[160];
 	PT.dialog = 0;
 	strncpy(text, PT.dlg, sizeof(text) - 1);
@@ -880,7 +1509,10 @@ static void pt_dialog_accept(void)
 		for (i = 0; text[i]; i++)
 			if (text[i] >= '0' && text[i] <= '9')
 				v = v * 10 + (text[i] - '0');
-		PT.colour = pt_clamp(v, 0, 255);
+		if (target == 1)
+			PT.bg = pt_clamp(v, 0, 255);
+		else
+			PT.colour = pt_clamp(v, 0, 255);
 	}
 }
 
@@ -920,7 +1552,7 @@ static void pt_file_key(char c)
 	}
 	if (c == 'o' || c == 'O')
 	{
-		pt_dialog_begin(PT_DLG_OPEN);
+		pt_dialog_begin(PT_DLG_OPEN, 0);
 		strncpy(PT.status, "Open", sizeof(PT.status) - 1);
 	}
 	else if (c == 's' || c == 'S')
@@ -929,7 +1561,7 @@ static void pt_file_key(char c)
 	}
 	else if (c == 'a' || c == 'A')
 	{
-		pt_dialog_begin(PT_DLG_SAVEAS);
+		pt_dialog_begin(PT_DLG_SAVEAS, 0);
 		strncpy(PT.status, "Save as", sizeof(PT.status) - 1);
 	}
 	else if (c == 'n' || c == 'N')
@@ -948,6 +1580,8 @@ static int pt_escape(char c)
 		if (c == '[')
 		{
 			PT.esc_state = PT_ESC_CSI;
+			PT.esc_num = 0;
+			PT.esc_has = 0;
 			return 1;
 		}
 		if (c == 'O')
@@ -965,7 +1599,34 @@ static int pt_escape(char c)
 	}
 	if (PT.esc_state == PT_ESC_CSI)
 	{
+		if (c >= '0' && c <= '9')
+		{
+			PT.esc_num = PT.esc_num * 10 + (c - '0');
+			PT.esc_has = 1;
+			return 1;
+		}
 		PT.esc_state = PT_ESC_NONE;
+		if (c == '~')
+		{
+			/* F9 hides the menu bars, F10 the tool column (#609). */
+			if (PT.esc_has && PT.esc_num == 20)
+			{
+				PT.hide_menu = !PT.hide_menu;
+				strncpy(PT.status,
+					PT.hide_menu ? "Menu hidden"
+						     : "Menu shown",
+					sizeof(PT.status) - 1);
+			}
+			else if (PT.esc_has && PT.esc_num == 21)
+			{
+				PT.hide_tools = !PT.hide_tools;
+				strncpy(PT.status,
+					PT.hide_tools ? "Tools hidden"
+						      : "Tools shown",
+					sizeof(PT.status) - 1);
+			}
+			return 1;
+		}
 		if (c == 'A')
 			pt_move(0, -1);
 		else if (c == 'B')
@@ -997,12 +1658,45 @@ static void pt_handle_key(char c)
 		pt_set_tool(PT_FILL);
 	else if (c == 'i' || c == 'I')
 		pt_set_tool(PT_PICK);
+	else if (c == 'g' || c == 'G')
+		pt_set_tool(PT_GRAB);
+	else if (c == 'm' || c == 'M')
+		pt_toggle_magnify();
+	else if (c == ',')
+		pt_pick_cursor();
+	else if (c == '.')
+		pt_cycle_brush();
+	else if (c == '>')
+		pt_zoom_set(PT.zoom < 2 ? 2 : PT.zoom * 2);
+	else if (c == '<')
+		pt_zoom_set(PT.zoom <= 2 ? 1 : PT.zoom / 2);
+	else if (c == '=')
+		pt_brush_size_set(PT.brush_size + 1);
+	else if (c == '-')
+		pt_brush_size_set(PT.brush_size - 1);
+	else if (c == 'h')
+		pt_brush_size_set(PT.brush_size / 2);
+	else if (c == 'H')
+		pt_brush_size_set(PT.brush_size * 2);
+	else if (c == 'b' || c == 'B')
+	{
+		pt_dialog_begin(PT_DLG_COLOUR, 1);
+		strncpy(PT.status, "BG colour", sizeof(PT.status) - 1);
+	}
+	else if (c == 't' || c == 'T')
+	{
+		PT.show_xy = !PT.show_xy;
+		sprintf(PT.status, "Coords %s", PT.show_xy ? "on" : "off");
+	}
 	else if (c == 'u' || c == 'U')
 		pt_undo();
 	else if (c == 'x' || c == 'X')
 		pt_clear();
 	else if (c == 'k' || c == 'K')
-		pt_dialog_begin(PT_DLG_COLOUR);
+	{
+		pt_dialog_begin(PT_DLG_COLOUR, 0);
+		strncpy(PT.status, "FG colour", sizeof(PT.status) - 1);
+	}
 	else if (c == ']')
 		pt_cycle_colour(1);
 	else if (c == '[')
@@ -1091,6 +1785,15 @@ const char *mmb_paint_key(char c)
 			pt_redraw();
 		return G.out;
 	}
+	if (c == 9) /* Tab: keyboard FG/BG drawing toggle (#608) */
+	{
+		PT.paint_bg = !PT.paint_bg;
+		sprintf(PT.status, "Drawing with %s",
+			PT.paint_bg ? "BG" : "FG");
+		if (PT.active)
+			pt_redraw();
+		return G.out;
+	}
 	if (c == 'o' || c == 'O' || c == 's' || c == 'S' || c == 'a' ||
 	    c == 'A' || c == 'n' || c == 'N')
 		pt_file_key(c);
@@ -1101,9 +1804,11 @@ const char *mmb_paint_key(char c)
 	return G.out;
 }
 
+/* ---- chrome hit testing --------------------------------------------- */
+
 static int pt_pal_hit(int mx, int my, int *idx)
 {
-	int px = pt_pal_x(), py = PT_PAL_Y;
+	int px = pt_col_x(), py = pt_pal_y();
 	int c, r;
 	if (mx < px || my < py || mx >= px + PT_PAL_W || my >= py + PT_PAL_W)
 		return 0;
@@ -1113,10 +1818,173 @@ static int pt_pal_hit(int mx, int my, int *idx)
 	return 1;
 }
 
+/* Returns 1 and fills type/index for brush buttons (0), tool buttons (1)
+ * and the FG/BG indicator (2). */
+static int pt_chrome_hit(int mx, int my, int *type, int *idx)
+{
+	int i, x, y;
+	for (i = 0; i < 3; i++)
+	{
+		pt_cell_rect(pt_brush_base(), i, &x, &y);
+		if (mx >= x && my >= y && mx < x + PT_CELL && my < y + PT_CELL)
+		{
+			*type = 0;
+			*idx = i;
+			return 1;
+		}
+	}
+	for (i = 0; i < 9; i++)
+	{
+		pt_cell_rect(pt_tools_base(), i, &x, &y);
+		if (mx >= x && my >= y && mx < x + PT_CELL && my < y + PT_CELL)
+		{
+			*type = 1;
+			*idx = i;
+			return 1;
+		}
+	}
+	x = pt_col_x();
+	y = pt_indicator_y();
+	if (mx >= x && my >= y && mx < x + PT_PAL_W && my < y + PT_CELL + 8)
+	{
+		*type = 2;
+		*idx = 0;
+		return 1;
+	}
+	return 0;
+}
+
+/* ---- mouse canvas mapping ------------------------------------------- */
+
+static int pt_canvas_at(int mx, int my, int *px, int *py)
+{
+	int x, y;
+	if (PT.magnify && PT.zoom > 1)
+	{
+		if (mx < PT_PX0 || my < PT_PY0 ||
+		    mx >= PT_PX0 + pt_mag_view_w() * PT.zoom ||
+		    my >= PT_PY0 + pt_mag_view_h() * PT.zoom)
+			return 0;
+		x = PT.view_x + (mx - PT_PX0) / PT.zoom;
+		y = PT.view_y + (my - PT_PY0) / PT.zoom;
+	}
+	else
+	{
+		x = mx - PT_PX0;
+		y = my - PT_PY0;
+	}
+	if (x < 0 || y < 0 || x >= PT.w || y >= PT.h)
+		return 0;
+	*px = x;
+	*py = y;
+	return 1;
+}
+
+/* ---- mouse handling -------------------------------------------------- */
+
+static void pt_mouse_press(int px, int py, int col, int btn)
+{
+	PT.mouse_down = 1;
+	PT.mouse_btn = btn;
+	PT.stroke_col = col;
+	PT.last_px = px;
+	PT.last_py = py;
+	PT.cx = px;
+	PT.cy = py;
+	switch (PT.tool)
+	{
+	case PT_FILL:
+		pt_undo_push();
+		pt_flood(px, py, col);
+		PT.dirty = 1;
+		break;
+	case PT_PICK:
+		PT.colour = PT.pix[py * PT.w + px];
+		break;
+	case PT_PENCIL:
+	case PT_ERASER:
+		pt_undo_push();
+		pt_stamp(px, py, PT.tool == PT_ERASER ? PT.bg : col);
+		PT.dirty = 1;
+		break;
+	case PT_GRAB:
+		PT.anchor_px = px;
+		PT.anchor_py = py;
+		PT.have_anchor = 1;
+		pt_snapshot_base();
+		break;
+	default:
+		PT.anchor_px = px;
+		PT.anchor_py = py;
+		PT.have_anchor = 1;
+		pt_snapshot_base();
+		pt_draw_shape(px, py, px, py, col);
+		break;
+	}
+}
+
+static void pt_mouse_drag(int px, int py)
+{
+	if (PT.tool == PT_PENCIL || PT.tool == PT_ERASER)
+	{
+		if (px != PT.last_px || py != PT.last_py)
+			pt_stamp_line(PT.last_px, PT.last_py, px, py,
+				      PT.tool == PT_ERASER ? PT.bg
+							   : PT.stroke_col);
+	}
+	else if (PT.tool == PT_GRAB)
+	{
+		if (PT.have_anchor)
+		{
+			pt_restore_base();
+			pt_rect(PT.anchor_px, PT.anchor_py, px, py,
+				pt_kb_colour(), 0);
+		}
+	}
+	else if (PT.have_anchor)
+	{
+		pt_restore_base();
+		pt_draw_shape(PT.anchor_px, PT.anchor_py, px, py,
+			      PT.stroke_col);
+	}
+	PT.last_px = px;
+	PT.last_py = py;
+	PT.cx = px;
+	PT.cy = py;
+}
+
+static void pt_mouse_release(int px, int py)
+{
+	PT.mouse_down = 0;
+	if (PT.tool == PT_GRAB)
+	{
+		pt_restore_base();
+		if (PT.have_anchor)
+			pt_grab_brush(PT.anchor_px, PT.anchor_py, px, py);
+		PT.have_anchor = 0;
+		PT.have_base = 0;
+		return;
+	}
+	if (PT.have_anchor)
+	{
+		pt_restore_base();
+		if (px >= 0 && py >= 0 && px < PT.w && py < PT.h)
+		{
+			pt_undo_push();
+			pt_draw_shape(PT.anchor_px, PT.anchor_py, px, py,
+				      PT.stroke_col);
+		}
+		PT.dirty = 1;
+		PT.have_anchor = 0;
+		PT.have_base = 0;
+	}
+}
+
 void mmb_paint_poll(void)
 {
 	mmb_mouse_state m;
 	int have, mx, my, px, py, left, right, changed = 0, hidx;
+	int type, idx;
 
 	if (!PT.active)
 		return;
@@ -1148,104 +2016,78 @@ void mmb_paint_poll(void)
 
 	mx = m.x;
 	my = m.y;
-	px = mx - PT_PX0;
-	py = my - PT_PY0;
 	left = (m.buttons & 1) != 0;
 	right = (m.buttons & 2) != 0;
 
-	if (left && !PT.mouse_down && pt_pal_hit(mx, my, &hidx))
+	if (!PT.mouse_down)
 	{
-		PT.colour = hidx;
-		changed = 1;
-	}
-	else if (right && !PT.mouse_down && px >= 0 && py >= 0 &&
-		 px < PT.w && py < PT.h)
-	{
-		PT.colour = PT.pix[py * PT.w + px];
-		changed = 1;
-	}
-
-	if (left && !PT.mouse_down && px >= 0 && py >= 0 && px < PT.w &&
-	    py < PT.h)
-	{
-		PT.mouse_down = 1;
-		PT.last_px = px;
-		PT.last_py = py;
-		PT.cx = px;
-		PT.cy = py;
-		if (PT.tool == PT_FILL)
+		if (left || right)
 		{
-			pt_undo_push();
-			pt_flood(px, py, PT.colour);
-			PT.dirty = 1;
-		}
-		else if (PT.tool == PT_PICK)
-		{
-			PT.colour = PT.pix[py * PT.w + px];
-			pt_set_tool(PT_PENCIL);
-		}
-		else if (PT.tool == PT_PENCIL || PT.tool == PT_ERASER)
-		{
-			pt_undo_push();
-			pt_put(px, py, PT.tool == PT_ERASER ? 15 : PT.colour);
-			PT.dirty = 1;
-		}
-		else
-		{
-			PT.anchor_px = px;
-			PT.anchor_py = py;
-			PT.have_anchor = 1;
-			pt_snapshot_base();
-			pt_draw_shape(px, py, px, py);
-		}
-		changed = 1;
-	}
-	else if (left && PT.mouse_down)
-	{
-		if (px >= 0 && py >= 0 && px < PT.w && py < PT.h)
-		{
-			if (PT.tool == PT_PENCIL || PT.tool == PT_ERASER)
+			if (pt_pal_hit(mx, my, &hidx))
 			{
-				if (px != PT.last_px || py != PT.last_py)
-					pt_line(PT.last_px, PT.last_py, px, py,
-						PT.tool == PT_ERASER ? 15
-								     : PT.colour);
+				if (left)
+					PT.colour = hidx;
+				else
+					PT.bg = hidx;
+				changed = 1;
 			}
-			else if (PT.have_anchor)
+			else if (pt_chrome_hit(mx, my, &type, &idx))
 			{
-				pt_restore_base();
-				pt_draw_shape(PT.anchor_px, PT.anchor_py, px, py);
+				if (type == 2)
+				{
+					int t = PT.colour;
+					PT.colour = PT.bg;
+					PT.bg = t;
+					strncpy(PT.status, "FG/BG swapped",
+						sizeof(PT.status) - 1);
+				}
+				else if (type == 0)
+				{
+					if (idx != PT_BR_CUSTOM ||
+					    PT.have_custom)
+						PT.brush = idx;
+				}
+				else if (idx < PT_TOOL_MAX)
+					pt_set_tool(idx);
+				else
+					pt_toggle_magnify();
+				changed = 1;
 			}
-			PT.last_px = px;
-			PT.last_py = py;
-			PT.cx = px;
-			PT.cy = py;
+			else if (pt_canvas_at(mx, my, &px, &py))
+			{
+				int col = right ? PT.bg : PT.colour;
+				pt_mouse_press(px, py, col, left ? 1 : 2);
+				changed = 1;
+			}
+		}
+		else if (pt_canvas_at(mx, my, &px, &py))
+		{
+			if (px != PT.cx || py != PT.cy)
+			{
+				PT.cx = px;
+				PT.cy = py;
+				changed = 1;
+			}
+		}
+	}
+	else
+	{
+		int held = (PT.mouse_btn == 1) ? left : right;
+		if (held && pt_canvas_at(mx, my, &px, &py))
+		{
+			pt_mouse_drag(px, py);
 			changed = 1;
 		}
-	}
-	else if (!left && PT.mouse_down)
-	{
-		PT.mouse_down = 0;
-		if (PT.have_anchor)
+		else if (!held)
 		{
-			pt_restore_base();
-			if (px >= 0 && py >= 0 && px < PT.w && py < PT.h)
+			if (!pt_canvas_at(mx, my, &px, &py))
 			{
-				pt_undo_push();
-				pt_draw_shape(PT.anchor_px, PT.anchor_py, px, py);
+				px = PT.cx;
+				py = PT.cy;
 			}
-			PT.dirty = 1;
-			PT.have_anchor = 0;
-			PT.have_base = 0;
+			pt_mouse_release(px, py);
+			changed = 1;
 		}
-		changed = 1;
-	}
-	else if (!left && !right && px >= 0 && py >= 0 && px < PT.w &&
-		 py < PT.h && (px != PT.cx || py != PT.cy))
-	{
-		PT.cx = px;
-		PT.cy = py;
-		changed = 1;
 	}
 
 	if (changed && PT.active)
@@ -1290,7 +2132,12 @@ static void pt_open(const char *name, int have_w, int want_w, int have_h,
 	memset(&PT, 0, sizeof(PT));
 	pt_pal_init();
 	PT.colour = 4; /* red, as in the sprite editor */
+	PT.bg = 15;    /* white page colour, so RMB erases onto paper */
 	PT.tool = PT_PENCIL;
+	PT.brush = PT_BR_ROUND;
+	PT.brush_size = 1;
+	PT.zoom = 1;
+	PT.show_xy = 1;
 	pt_make_path(PT.path, sizeof(PT.path), name);
 	strncpy(PT.label, pt_base(PT.path), sizeof(PT.label) - 1);
 	PT.active = 1;
