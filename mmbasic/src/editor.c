@@ -423,6 +423,14 @@ static int pick_kind; /* 0 files 1 outline */
 static int alt_pend;
 static int confirm_pending;
 static int confirm_btn;
+/* Crash-resume: when set the confirm dialog offers to restore a recovery
+ * sidecar instead of prompting to save an untitled buffer. */
+static int confirm_recover;
+static int recover_tab;
+static char recover_sidecar[160];
+static unsigned ed_rec_at;
+static unsigned ed_rec_sig;
+static int ed_rec_tab = -1;
 static int esc_state;
 static unsigned esc_at;
 static int csi_n;
@@ -3689,9 +3697,13 @@ static void draw_dialog(void)
 	}
 	if (G.ed.dialog == DLG_CONFIRM)
 	{
-		static const char *btns[3] = { " Save ", " Discard ", " Cancel " };
+		static const char *save_btns[3] = { " Save ", " Discard ", " Cancel " };
+		static const char *rec_btns[3] = { " Recover ", " Discard ", " Cancel " };
+		const char **btns = confirm_recover ? rec_btns : save_btns;
 		int bw[3], x, msgx;
-		const char *msg = "Save changes to untitled file?";
+		const char *msg = confirm_recover
+			? "Recover unsaved changes?"
+			: "Save changes to untitled file?";
 		w = 46;
 		h = 8;
 		if (w > COLS - 2)
@@ -3704,7 +3716,7 @@ static void draw_dialog(void)
 			r0 = 2;
 		if (c0 < 0)
 			c0 = 0;
-		title = " Save changes ";
+		title = confirm_recover ? " Recover " : " Save changes ";
 		tui_frame(c0, r0, w, h, C_DLG_FG, C_DLG_BG);
 		{
 			int left = (w - 2 - (int)strlen(title)) / 2;
@@ -3738,8 +3750,10 @@ static void draw_dialog(void)
 			tui_puts(x, r0 + 4, btns[i], fg, bg);
 			x += bw[i] + 2;
 		}
-		tui_pad(c0 + 2, r0 + h - 2, "S Save  D Discard  C Cancel  Esc", w - 4,
-			C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + 2, r0 + h - 2,
+			confirm_recover ? "R Recover  D Discard  C Cancel  Esc"
+					: "S Save  D Discard  C Cancel  Esc",
+			w - 4, C_DLG_FG, C_DLG_BG);
 		return;
 	}
 	if (G.ed.dialog == DLG_HELP)
@@ -4037,6 +4051,54 @@ static void redraw(void)
 }
 
 
+/* Crash-resume sidecar: <path>.rec next to the file.  It is refreshed while
+ * the buffer is dirty and removed on an explicit save; a surviving sidecar
+ * that differs from the file triggers the recover prompt on next launch. */
+#define ED_REC_SUFFIX ".rec"
+#define ED_AUTOSAVE_MS 1500
+
+static void ed_rec_path(const char *path, char *out, int outsz)
+{
+	int n;
+	out[0] = 0;
+	if (!path || !path[0] || outsz < 2)
+		return;
+	strncpy(out, path, (unsigned)outsz - 1);
+	out[outsz - 1] = 0;
+	n = (int)strlen(out);
+	strncat(out, ED_REC_SUFFIX, (unsigned)outsz - (unsigned)n - 1);
+}
+
+static void ed_rec_kill(const char *path)
+{
+	char rec[160];
+	ed_rec_path(path, rec, sizeof(rec));
+	if (rec[0])
+		mmb_vfs_kill(rec);
+}
+
+static unsigned ed_sig(const mmb_ed_tab *t)
+{
+	unsigned h = 2166136261u;
+	int i;
+	for (i = 0; i < t->len; i++)
+	{
+		h ^= (unsigned char)t->buf[i];
+		h *= 16777619u;
+	}
+	h ^= (unsigned)t->len;
+	return h;
+}
+
+static void ed_rec_write(const mmb_ed_tab *t)
+{
+	char rec[160];
+	if (!t || !t->used || !t->path[0] || !t->dirty)
+		return;
+	ed_rec_path(t->path, rec, sizeof(rec));
+	mmb_vfs_write(rec, t->buf, (unsigned)t->len, 0);
+}
+
 static int save_tab_at(mmb_ed_tab *t)
 {
 	if (!t || !t->path[0])
@@ -4064,6 +4126,7 @@ static int save_tab(void)
 	}
 	if (!save_tab_at(t))
 		return 0;
+	ed_rec_kill(t->path);
 	set_status("Saved");
 	return 1;
 }
@@ -4167,8 +4230,92 @@ static void confirm_cancel(void)
 	G.ed.dialog = DLG_NONE;
 }
 
+/* Load a surviving recovery sidecar into its tab (does not touch the real
+ * file: the user still has to save). */
+static void recover_apply(void)
+{
+	mmb_ed_tab *t = (recover_tab >= 0 && recover_tab < G.ed.ntabs)
+				? &G.ed.tab[recover_tab] : cur_tab();
+	unsigned got = 0;
+	if (t && recover_sidecar[0] &&
+	    mmb_vfs_read(recover_sidecar, t->buf, sizeof(t->buf) - 1, &got) == 0)
+	{
+		hist_reset(t);
+		t->len = mmb_normalize_newlines(t->buf, (int)got);
+		t->buf[t->len] = 0;
+		t->cx = 0;
+		t->cy = 0;
+		t->row0 = 0;
+		t->col0 = 0;
+		t->hist.saved = -1;
+		t->dirty = 1;
+		set_status("Recovered");
+	}
+	confirm_recover = 0;
+	G.ed.dialog = DLG_NONE;
+}
+
+static void recover_discard(void)
+{
+	if (recover_sidecar[0])
+		mmb_vfs_kill(recover_sidecar);
+	confirm_recover = 0;
+	G.ed.dialog = DLG_NONE;
+}
+
+static void recover_cancel(void)
+{
+	confirm_recover = 0;
+	G.ed.dialog = DLG_NONE;
+}
+
+/* Called after a tab is loaded: if a recovery sidecar survives and differs
+ * from the file, ask before replacing the buffer. */
+static void ed_recovery_check(int idx)
+{
+	char rec[160];
+	mmb_ed_tab *t;
+	static char tmp[MMB_ED_BUF];
+	unsigned got = 0;
+
+	if (idx < 0 || idx >= G.ed.ntabs)
+		return;
+	t = &G.ed.tab[idx];
+	if (!t->used || !t->path[0])
+		return;
+	ed_rec_path(t->path, rec, sizeof(rec));
+	if (!mmb_vfs_exists(rec))
+		return;
+	if (mmb_vfs_read(rec, tmp, sizeof(tmp) - 1, &got) == 0)
+	{
+		if ((int)got == t->len && memcmp(tmp, t->buf, (unsigned)t->len) == 0)
+		{
+			mmb_vfs_kill(rec);
+			return;
+		}
+	}
+	confirm_recover = 1;
+	recover_tab = idx;
+	strncpy(recover_sidecar, rec, sizeof(recover_sidecar) - 1);
+	recover_sidecar[sizeof(recover_sidecar) - 1] = 0;
+	G.ed.menu_open = 0;
+	confirm_pending = PEND_NONE;
+	confirm_btn = 0;
+	G.ed.dialog = DLG_CONFIRM;
+}
+
 static void confirm_activate(void)
 {
+	if (confirm_recover)
+	{
+		if (confirm_btn == 0)
+			recover_apply();
+		else if (confirm_btn == 1)
+			recover_discard();
+		else
+			recover_cancel();
+		return;
+	}
 	if (confirm_btn == 0)
 		confirm_save();
 	else if (confirm_btn == 1)
@@ -4299,6 +4446,7 @@ static void close_ui(void)
 	G.ed.dlglen = 0;
 	G.ed.dlg[0] = 0;
 	confirm_pending = PEND_NONE;
+	confirm_recover = 0;
 }
 
 static void open_dialog(int which)
@@ -5041,7 +5189,7 @@ static int dialog_key(char c)
 		}
 		if (u >= 'A' && u <= 'Z')
 			u = (char)(u - 'A' + 'a');
-		if (u == 's')
+		if ((u == 's' && !confirm_recover) || (u == 'r' && confirm_recover))
 		{
 			confirm_btn = 0;
 			confirm_activate();
@@ -5154,13 +5302,18 @@ void mmb_editor_open(const char *path)
 	esc_state = 0;
 	confirm_pending = PEND_NONE;
 	confirm_btn = 0;
+	confirm_recover = 0;
 	chars_armed = 0;
 	chars_opened = 0;
+	ed_rec_at = mmb_now_ms();
+	ed_rec_sig = 0;
+	ed_rec_tab = -1;
 	G.ed.active = 1;
 	set_pick_root(path && path[0] ? path : mmb_vfs_cwd());
 	add_or_switch(path && path[0] ? path : "");
 	if (G.ed.ntabs <= 0)
 		add_or_switch("");
+	ed_recovery_check(G.ed.cur);
 	tui_begin();
 	tui_invalidate();
 	redraw();
@@ -5467,6 +5620,23 @@ void mmb_editor_poll(void)
 	if (!G.ed.active || mmb_in_ihelp())
 		return;
 	char_picker_poll();
+	if (!G.ed.dialog && !G.ed.menu_open && !find_active && !errbar_active)
+	{
+		mmb_ed_tab *t = cur_tab();
+		unsigned now = mmb_now_ms();
+		if (t && t->used && t->path[0] && t->dirty &&
+		    now - ed_rec_at >= ED_AUTOSAVE_MS)
+		{
+			unsigned s = ed_sig(t);
+			ed_rec_at = now;
+			if (G.ed.cur != ed_rec_tab || s != ed_rec_sig)
+			{
+				ed_rec_write(t);
+				ed_rec_sig = s;
+				ed_rec_tab = G.ed.cur;
+			}
+		}
+	}
 	if (esc_state != ESC_GOT)
 		return;
 	if (mmb_now_ms() - esc_at < ESC_IDLE_MS)

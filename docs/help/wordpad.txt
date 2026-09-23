@@ -20,8 +20,17 @@ Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style
 serif at 32x64 / 24x48 / 16x32 (shared baseline, not a scaled-up 8x16 face).
 Each heading letter advances by its own ink width so spacing is proportional;
 wrap follows the column width, and the cursor block fits the glyph.
--/* bullets, > quotes, ``` fenced code, **bold**. Word wrap at the column
-width; Enter inserts a real newline. Shift+Arrows select text.
+-/+/* bullets, 1. numbered lists, > quotes, ``` fenced code, **bold**. Word
+wrap at the column width; Enter inserts a real newline. Shift+Arrows select
+text. Tab indents the line (nests a list item) and Shift+Tab outdents it.
+Enter on a list item continues the marker: a numbered item increments (1. 2.
+3.) and a bullet repeats. Enter on an empty item outdents a nested item one
+level, and on an empty top-level item clears the marker to end the list.
+
+Crash resume: while a named document is dirty it is checkpointed every couple
+of seconds to a sidecar <file>.rec. Reopening a document whose sidecar is newer
+offers Recover (Y) or Discard (N); Recover loads it into the buffer and only
+overwrites the real file when you save. A clean save removes the sidecar.
 
 Ctrl+P quick-open (recursive file picker). Named buffers auto-save when
 switching files. F2 save  F3 open  Ctrl+X or Quit leaves WORDPAD (CLS and

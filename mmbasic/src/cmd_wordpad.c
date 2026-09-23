@@ -16,10 +16,11 @@
 #define WP_ESC_SS3  3
 #define WP_ESC_IDLE_MS 60
 
-#define WP_DLG_NONE   0
-#define WP_DLG_OPEN   1
-#define WP_DLG_SAVEAS 2
-#define WP_DLG_PICK   3
+#define WP_DLG_NONE    0
+#define WP_DLG_OPEN    1
+#define WP_DLG_SAVEAS  2
+#define WP_DLG_PICK    3
+#define WP_DLG_RECOVER 4
 
 #define WP_DOCS       8
 #define WP_PICK_MAX   80
@@ -41,14 +42,20 @@
 #define WP_FD_FOCUS_FILE 1
 #define WP_FD_FOCUS_DIR  2
 
-#define WP_STYLE_NORM   0
-#define WP_STYLE_H1     1
-#define WP_STYLE_H2     2
-#define WP_STYLE_H3     3
-#define WP_STYLE_BULLET 4
-#define WP_STYLE_QUOTE  5
-#define WP_STYLE_CODE   6
-#define WP_BULLET_CH    0x07u
+#define WP_STYLE_NORM    0
+#define WP_STYLE_H1      1
+#define WP_STYLE_H2      2
+#define WP_STYLE_H3      3
+#define WP_STYLE_BULLET  4
+#define WP_STYLE_QUOTE   5
+#define WP_STYLE_CODE    6
+#define WP_STYLE_ORDERED 7
+#define WP_BULLET_CH     0x07u
+
+/* Leading spaces per list nesting level, and the cap used when recognising a
+ * list marker so a run of spaces cannot exhaust the buffer walk. */
+#define WP_INDENT_UNIT   2
+#define WP_INDENT_MAX    16
 
 typedef struct {
 	int off0;
@@ -57,6 +64,7 @@ typedef struct {
 	int style;
 	int line_start;
 	int prefix_len;
+	int indent_len;
 	int hide_prefix;
 	int scale;
 } wp_vrow;
@@ -110,6 +118,8 @@ typedef struct {
 	int cur;
 	int chrome_shown;
 	int last_scroll;
+	unsigned rec_at;
+	unsigned rec_sig;
 	wp_vrow vrows[WP_MAX_VR];
 } wp_state;
 
@@ -120,6 +130,12 @@ static char pick_path[WP_PICK_MAX][128];
 static char pick_root[128];
 static int pick_n, pick_sel, pick_row0, pick_vn;
 static int pick_view[WP_PICK_MAX];
+
+/* Crash-resume sidecar <path>.rec and its pending-prompt path. */
+#define WP_REC_SUFFIX  ".rec"
+#define WP_AUTOSAVE_MS 1500
+static char wp_rec_sidecar[160];
+static char wp_rec_tmp[WP_BUF];
 
 static int wp_save(void);
 static void wp_autosave(void);
@@ -594,10 +610,56 @@ static int line_is_fence(int ls, int le)
 	       W.buf[ls + 2] == '`';
 }
 
-static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
-		       int *prefix_len, int *hide_prefix)
+/* Recognise a list marker after optional leading spaces.  Returns 0 (none),
+ * 1 (bullet) or 2 (ordered), and fills the indent width, marker width and
+ * ordered number.  A bullet keeps its GFM family; an ordered marker is
+ * "<digits>. ". */
+static int list_marker(int ls, int le, int *indent, int *mlen, int *num)
 {
+	int i = ls, ind = 0;
+	int d, v;
+
+	*indent = 0;
+	*mlen = 0;
+	if (num)
+		*num = 0;
+	while (i < le && W.buf[i] == ' ' && ind < WP_INDENT_MAX)
+	{
+		i++;
+		ind++;
+	}
+	if (i + 1 < le && (W.buf[i] == '-' || W.buf[i] == '*' ||
+			   W.buf[i] == '+') && W.buf[i + 1] == ' ')
+	{
+		*indent = ind;
+		*mlen = 2;
+		return 1;
+	}
+	d = i;
+	v = 0;
+	while (d < le && W.buf[d] >= '0' && W.buf[d] <= '9' && d - i < 4)
+	{
+		v = v * 10 + (W.buf[d] - '0');
+		d++;
+	}
+	if (d > i && d + 1 < le && W.buf[d] == '.' && W.buf[d + 1] == ' ')
+	{
+		*indent = ind;
+		*mlen = (d - i) + 2;
+		if (num)
+			*num = v;
+		return 2;
+	}
+	return 0;
+}
+
+static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
+		       int *indent_len, int *prefix_len, int *hide_prefix)
+{
+	int ind, mlen, num, kind;
+
 	*style = WP_STYLE_NORM;
+	*indent_len = 0;
 	*prefix_len = 0;
 	*hide_prefix = 0;
 	if (in_code)
@@ -605,8 +667,21 @@ static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
 		*style = WP_STYLE_CODE;
 		return;
 	}
-	if (le > ls + 3 && W.buf[ls] == '#' && W.buf[ls + 1] == '#' &&
-	    W.buf[ls + 2] == '#' && W.buf[ls + 3] == ' ')
+	kind = list_marker(ls, le, &ind, &mlen, &num);
+	if (kind == 1)
+	{
+		*style = WP_STYLE_BULLET;
+		*indent_len = ind;
+		*prefix_len = ind + mlen;
+	}
+	else if (kind == 2)
+	{
+		*style = WP_STYLE_ORDERED;
+		*indent_len = ind;
+		*prefix_len = ind + mlen;
+	}
+	else if (le > ls + 3 && W.buf[ls] == '#' && W.buf[ls + 1] == '#' &&
+		 W.buf[ls + 2] == '#' && W.buf[ls + 3] == ' ')
 	{
 		*style = WP_STYLE_H3;
 		*prefix_len = 4;
@@ -622,36 +697,33 @@ static void line_style(int ls, int le, int in_code, int cursor_on, int *style,
 		*style = WP_STYLE_H1;
 		*prefix_len = 2;
 	}
-	else if (le > ls + 1 && W.buf[ls] == '-' && W.buf[ls + 1] == ' ')
-	{
-		*style = WP_STYLE_BULLET;
-		*prefix_len = 2;
-	}
-	else if (le > ls + 1 && W.buf[ls] == '*' && W.buf[ls + 1] == ' ')
-	{
-		*style = WP_STYLE_BULLET;
-		*prefix_len = 2;
-	}
 	else if (le > ls + 1 && W.buf[ls] == '>' && W.buf[ls + 1] == ' ')
 	{
 		*style = WP_STYLE_QUOTE;
 		*prefix_len = 2;
 	}
-	if (*prefix_len > 0 && !cursor_on)
+	/* Ordered markers stay visible (their number is the point); bullet and
+	 * heading markers collapse to a bullet glyph / nothing when the caret is
+	 * elsewhere.  Indentation always stays visible. */
+	if (*prefix_len > 0 && !cursor_on && *style != WP_STYLE_ORDERED)
 		*hide_prefix = 1;
 }
 
-static int vis_ch_at(int style, int hide_prefix, int i, int ls, int prefix_len,
-		     unsigned *ch)
+static int vis_ch_at(int style, int hide_prefix, int i, int ls, int indent_len,
+		     int prefix_len, unsigned *ch)
 {
 	unsigned c = (unsigned char)W.buf[i];
 
-	if (hide_prefix && i >= ls && i < ls + prefix_len)
+	if (hide_prefix && i >= ls + indent_len && i < ls + prefix_len)
 	{
-		if (style != WP_STYLE_BULLET)
+		if (style == WP_STYLE_BULLET)
+		{
+			if (i == ls + indent_len)
+				c = WP_BULLET_CH;
+			/* the marker's trailing space stays visible */
+		}
+		else
 			return 0;
-		if (i == ls)
-			c = WP_BULLET_CH;
 	}
 	*ch = c;
 	return 1;
@@ -741,7 +813,7 @@ static void wp_build_layout(void)
 		int scale, px, max_px, adv;
 		int ls = pos;
 		int le = pos;
-		int style, prefix_len, hide_prefix;
+		int style, prefix_len, indent_len, hide_prefix;
 		int cursor_on;
 		int i, col;
 		int break_at, break_col;
@@ -752,7 +824,7 @@ static void wp_build_layout(void)
 			in_code = !in_code;
 		cursor_on = (W.cx >= ls && W.cx <= le);
 		line_style(ls, le, in_code && !line_is_fence(ls, le), cursor_on,
-			   &style, &prefix_len, &hide_prefix);
+			   &style, &indent_len, &prefix_len, &hide_prefix);
 		scale = heading_scale(style);
 		max_px = W.pane_width * 8;
 		if (max_px < 8)
@@ -766,6 +838,7 @@ static void wp_build_layout(void)
 		W.vrows[vr].style = style;
 		W.vrows[vr].line_start = ls;
 		W.vrows[vr].prefix_len = prefix_len;
+		W.vrows[vr].indent_len = indent_len;
 		W.vrows[vr].hide_prefix = hide_prefix;
 		W.vrows[vr].scale = scale;
 		while (i < le)
@@ -773,7 +846,8 @@ static void wp_build_layout(void)
 			unsigned vis;
 			int skip;
 
-			if (!vis_ch_at(style, hide_prefix, i, ls, prefix_len, &vis))
+			if (!vis_ch_at(style, hide_prefix, i, ls, indent_len,
+				       prefix_len, &vis))
 			{
 				if (W.cx == i)
 				{
@@ -811,6 +885,7 @@ static void wp_build_layout(void)
 					W.vrows[vr].style = style;
 					W.vrows[vr].line_start = ls;
 					W.vrows[vr].prefix_len = prefix_len;
+					W.vrows[vr].indent_len = indent_len;
 					W.vrows[vr].hide_prefix = hide_prefix;
 					W.vrows[vr].scale = scale;
 					continue;
@@ -828,6 +903,7 @@ static void wp_build_layout(void)
 				W.vrows[vr].style = style;
 				W.vrows[vr].line_start = ls;
 				W.vrows[vr].prefix_len = prefix_len;
+				W.vrows[vr].indent_len = indent_len;
 				W.vrows[vr].hide_prefix = hide_prefix;
 				W.vrows[vr].scale = scale;
 				continue;
@@ -878,12 +954,13 @@ static void wp_build_layout(void)
 static int vrow_col_to_off(int vr, int vc)
 {
 	int ls, i, col, le;
-	int prefix_len, hide_prefix;
+	int prefix_len, indent_len, hide_prefix;
 
 	if (vr < 0 || vr >= W.total_vrows)
 		return W.len;
 	ls = W.vrows[vr].line_start;
 	prefix_len = W.vrows[vr].prefix_len;
+	indent_len = W.vrows[vr].indent_len;
 	hide_prefix = W.vrows[vr].hide_prefix;
 	le = ls;
 	while (le < W.len && W.buf[le] != '\n')
@@ -895,7 +972,8 @@ static int vrow_col_to_off(int vr, int vc)
 		int skip;
 		unsigned vis;
 
-		if (!vis_ch_at(W.vrows[vr].style, hide_prefix, i, ls, prefix_len, &vis))
+		if (!vis_ch_at(W.vrows[vr].style, hide_prefix, i, ls, indent_len,
+			       prefix_len, &vis))
 		{
 			i++;
 			continue;
@@ -945,6 +1023,7 @@ static unsigned style_fg(int style)
 	case WP_STYLE_H2:
 	case WP_STYLE_H3:
 	case WP_STYLE_BULLET:
+	case WP_STYLE_ORDERED:
 		return WP_HEAD;
 	case WP_STYLE_QUOTE:
 		return WP_DIM;
@@ -1066,6 +1145,7 @@ static void sel_prepare(int shift)
 
 static int line_start(int off);
 static int line_end(int off);
+static void insert_char(char c);
 
 static void clip_store(const char *s, int n)
 {
@@ -1170,6 +1250,107 @@ static int line_end(int off)
 	while (off < W.len && W.buf[off] != '\n')
 		off++;
 	return off;
+}
+
+/* Shift the caret's line one nesting level right (dir > 0) or left.  On a
+ * list line this changes its depth; on a plain line it is a plain indent. */
+static void indent_line(int dir)
+{
+	int ls = line_start(W.cx);
+	int le = line_end(W.cx);
+	int n, i;
+
+	if (dir > 0)
+	{
+		if (W.len + WP_INDENT_UNIT >= WP_BUF - 1)
+			return;
+		memmove(W.buf + ls + WP_INDENT_UNIT, W.buf + ls,
+			(unsigned)(W.len - ls + 1));
+		for (i = 0; i < WP_INDENT_UNIT; i++)
+			W.buf[ls + i] = ' ';
+		W.len += WP_INDENT_UNIT;
+		if (W.cx >= ls)
+			W.cx += WP_INDENT_UNIT;
+		W.dirty = 1;
+		return;
+	}
+	n = 0;
+	while (n < WP_INDENT_UNIT && ls + n < le && W.buf[ls + n] == ' ')
+		n++;
+	if (n == 0)
+		return;
+	memmove(W.buf + ls, W.buf + ls + n, (unsigned)(W.len - (ls + n) + 1));
+	W.len -= n;
+	if (W.cx > ls + n)
+		W.cx -= n;
+	else if (W.cx > ls)
+		W.cx = ls;
+	W.dirty = 1;
+}
+
+/* Enter inside a list: continue the marker on the new line, or terminate /
+ * outdent when the current item is empty. */
+static void insert_newline_list(void)
+{
+	int ls = line_start(W.cx);
+	int le = line_end(W.cx);
+	int ind, mlen, num, kind;
+	int content, i, empty;
+
+	kind = list_marker(ls, le, &ind, &mlen, &num);
+	if (!kind)
+	{
+		insert_char('\n');
+		return;
+	}
+	content = ls + ind + mlen;
+	if (W.cx < content)
+	{
+		insert_char('\n');
+		return;
+	}
+	empty = 1;
+	for (i = content; i < le; i++)
+	{
+		if (W.buf[i] != ' ' && W.buf[i] != '\t')
+		{
+			empty = 0;
+			break;
+		}
+	}
+	if (empty)
+	{
+		if (ind > 0)
+			indent_line(-1);
+		else
+			delete_range(ls, content, 0);
+		return;
+	}
+	insert_char('\n');
+	for (i = 0; i < ind; i++)
+		insert_char(' ');
+	if (kind == 1)
+	{
+		insert_char(W.buf[ls + ind]);
+		insert_char(' ');
+		return;
+	}
+	{
+		char dig[12];
+		int n = num + 1, d = 0;
+
+		if (n < 1)
+			n = 1;
+		while (n > 0 && d < 11)
+		{
+			dig[d++] = (char)('0' + (n % 10));
+			n /= 10;
+		}
+		while (d--)
+			insert_char(dig[d]);
+		insert_char('.');
+		insert_char(' ');
+	}
 }
 
 static void insert_char(char c)
@@ -1310,7 +1491,43 @@ static void wp_load_file(const char *path)
 	sel_clear();
 }
 
-static int wp_save(void)
+static void wp_rec_path(const char *path, char *out, int outsz)
+{
+	int n;
+
+	out[0] = 0;
+	if (!path || !path[0] || outsz < 2)
+		return;
+	strncpy(out, path, (unsigned)outsz - 1);
+	out[outsz - 1] = 0;
+	n = (int)strlen(out);
+	strncat(out, WP_REC_SUFFIX, (unsigned)outsz - (unsigned)n - 1);
+}
+
+static void wp_rec_kill(const char *path)
+{
+	char rec[160];
+
+	wp_rec_path(path, rec, sizeof(rec));
+	if (rec[0])
+		mmb_vfs_kill(rec);
+}
+
+static unsigned wp_sig(void)
+{
+	unsigned h = 2166136261u;
+	int i;
+
+	for (i = 0; i < W.len; i++)
+	{
+		h ^= (unsigned char)W.buf[i];
+		h *= 16777619u;
+	}
+	h ^= (unsigned)W.len;
+	return h;
+}
+
+static int wp_write_file(void)
 {
 	if (!W.path[0])
 		return 0;
@@ -1320,10 +1537,83 @@ static int wp_save(void)
 	return 1;
 }
 
+/* Explicit save also drops the recovery sidecar: the file is now current. */
+static int wp_save(void)
+{
+	int r = wp_write_file();
+
+	if (r == 1)
+		wp_rec_kill(W.path);
+	return r;
+}
+
+/* Leave-time autosave writes the real file but leaves the sidecar for a
+ * possible recovery prompt; it is dropped on the next launch once the file
+ * and sidecar agree. */
 static void wp_autosave(void)
 {
 	if (W.path[0] && W.dirty)
-		wp_save();
+		wp_write_file();
+}
+
+static void wp_recovery_apply(void)
+{
+	unsigned got = 0;
+
+	if (W.path[0] &&
+	    mmb_vfs_read(wp_rec_sidecar, W.buf, sizeof(W.buf) - 1, &got) == 0)
+	{
+		W.len = mmb_normalize_newlines(W.buf, (int)got);
+		W.buf[W.len] = 0;
+		W.cx = 0;
+		W.scroll = 0;
+		W.dirty = 1;
+		sel_clear();
+	}
+}
+
+static void wp_recovery_discard(void)
+{
+	if (wp_rec_sidecar[0])
+		mmb_vfs_kill(wp_rec_sidecar);
+	wp_rec_sidecar[0] = 0;
+}
+
+/* After loading a named file, offer to restore a surviving, different sidecar
+ * rather than silently replacing the buffer (or the file). */
+static void wp_recovery_check(void)
+{
+	char rec[160];
+	unsigned got = 0;
+
+	wp_rec_sidecar[0] = 0;
+	if (!W.path[0])
+		return;
+	wp_rec_path(W.path, rec, sizeof(rec));
+	if (!mmb_vfs_exists(rec))
+		return;
+	if (mmb_vfs_read(rec, wp_rec_tmp, sizeof(wp_rec_tmp) - 1, &got) == 0)
+	{
+		if ((int)got == W.len && memcmp(wp_rec_tmp, W.buf, (unsigned)W.len) == 0)
+		{
+			mmb_vfs_kill(rec);
+			return;
+		}
+	}
+	strncpy(wp_rec_sidecar, rec, sizeof(wp_rec_sidecar) - 1);
+	wp_rec_sidecar[sizeof(wp_rec_sidecar) - 1] = 0;
+	W.dialog = WP_DLG_RECOVER;
+	W.rec_at = mmb_now_ms();
+}
+
+static void wp_rec_write(void)
+{
+	char rec[160];
+
+	if (!W.path[0] || !W.dirty)
+		return;
+	wp_rec_path(W.path, rec, sizeof(rec));
+	mmb_vfs_write(rec, W.buf, (unsigned)W.len, 0);
 }
 
 static int wp_open_path(const char *path)
@@ -1410,6 +1700,7 @@ static void close_ui(void)
 	W.dialog = WP_DLG_NONE;
 	W.dlglen = 0;
 	W.dlg[0] = 0;
+	wp_rec_sidecar[0] = 0;
 }
 
 static int fd_on(void)
@@ -2648,6 +2939,8 @@ static int handle_escape(char c)
 				handle_arrow_or_special(5, mod);
 			else if (c == 'F')
 				handle_arrow_or_special(6, mod);
+			else if (c == 'Z')
+				indent_line(-1);
 			else if (c == '~')
 			{
 				int n = W.csi_semi ? W.csi_n : W.csi_arg;
@@ -2682,6 +2975,20 @@ static int dialog_key(char c)
 	{
 		W.esc_state = WP_ESC_GOT;
 		W.esc_at = mmb_now_ms();
+		return 1;
+	}
+	if (W.dialog == WP_DLG_RECOVER)
+	{
+		char u = c;
+		if (u >= 'A' && u <= 'Z')
+			u = (char)(u - 'A' + 'a');
+		if (u == 'y' || c == '\r' || c == '\n')
+			wp_recovery_apply();
+		else if (u == 'n')
+			wp_recovery_discard();
+		else
+			return 1;
+		close_ui();
 		return 1;
 	}
 	if (c == '\r' || c == '\n')
@@ -2868,6 +3175,47 @@ static void draw_file_dialog(void)
 	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", WP_DIM, sbg);
 }
 
+static void draw_recover_dialog(void)
+{
+	unsigned sbg = dlg_bg();
+	int w = 44, h = 7, c0, r0, i, c, msgx;
+	const char *title = " Recover ";
+	const char *msg = "Recover unsaved changes?";
+	const char *msg2 = "Y Yes   N No   Esc later";
+
+	if (w > W.vid_cols - 2)
+		w = W.vid_cols - 2;
+	if (h > W.vid_rows - 2)
+		h = W.vid_rows - 2;
+	if (w < 20)
+		w = 20;
+	c0 = (W.vid_cols - w) / 2;
+	if (c0 < 0)
+		c0 = 0;
+	r0 = (W.vid_rows - h) / 2;
+	if (r0 < 1)
+		r0 = 1;
+	for (i = 0; i < h; i++)
+		for (c = 0; c < w; c++)
+			G.plat->tui_glyph(c0 + c, r0 + i, ' ', WP_FG, sbg);
+	wp_box(c0, r0, w, h, WP_HEAD, sbg);
+	{
+		int left = (w - 2 - (int)strlen(title)) / 2;
+		if (left < 1)
+			left = 1;
+		wp_puts(c0 + 1 + left, r0, title, WP_HEAD, sbg);
+	}
+	msgx = (w - 2 - (int)strlen(msg)) / 2;
+	if (msgx < 1)
+		msgx = 1;
+	wp_puts(c0 + 1 + msgx, r0 + 2, msg, WP_FG, sbg);
+	msgx = (w - 2 - (int)strlen(msg2)) / 2;
+	if (msgx < 1)
+		msgx = 1;
+	wp_puts(c0 + 1 + msgx, r0 + 4, msg2, WP_DIM, sbg);
+	serial_row("Recover unsaved changes? Y/N");
+}
+
 static void draw_picker(void)
 {
 	unsigned sbg = dlg_bg();
@@ -2962,6 +3310,7 @@ static void draw_body(void)
 		int style = W.vrows[vr].style;
 		int hide_prefix = W.vrows[vr].hide_prefix;
 		int prefix_len = W.vrows[vr].prefix_len;
+		int indent_len = W.vrows[vr].indent_len;
 		int screen_row;
 		int le;
 		int x_px;
@@ -2989,7 +3338,8 @@ static void draw_body(void)
 					unsigned ch;
 					int skip, left, adv, on_cur;
 
-					if (!vis_ch_at(style, hide_prefix, i, ls, prefix_len, &ch))
+					if (!vis_ch_at(style, hide_prefix, i, ls, indent_len,
+						       prefix_len, &ch))
 					{
 						i++;
 						continue;
@@ -3156,6 +3506,8 @@ static void wp_redraw(void)
 		draw_dropdown();
 	if (W.dialog == WP_DLG_PICK)
 		draw_picker();
+	else if (W.dialog == WP_DLG_RECOVER)
+		draw_recover_dialog();
 	else if (W.dialog)
 		draw_file_dialog();
 	if (chrome)
@@ -3291,9 +3643,16 @@ static const char *wp_feed(char c)
 			wp_redraw();
 		return G.out;
 	}
+	if (c == '\t')
+	{
+		indent_line(1);
+		if (W.active)
+			wp_redraw();
+		return G.out;
+	}
 	if (c == '\r' || c == '\n')
 	{
-		insert_char('\n');
+		insert_newline_list();
 		if (W.active)
 			wp_redraw();
 		return G.out;
@@ -3335,6 +3694,8 @@ void mmb_cmd_wordpad(void)
 	W.ndoc = 1;
 	W.cur = 0;
 	W.last_scroll = -1;
+	W.rec_at = mmb_now_ms();
+	W.rec_sig = 0;
 	if (path[0])
 	{
 		canon_path(path, canon, sizeof(canon));
@@ -3342,6 +3703,7 @@ void mmb_cmd_wordpad(void)
 		W.path[sizeof(W.path) - 1] = 0;
 		wp_load_file(W.path);
 		wp_stash();
+		wp_recovery_check();
 	}
 	ser("[WORDPAD]\r\n");
 	mmb_editor_apply_tui_palette();
@@ -3379,6 +3741,18 @@ void mmb_wordpad_poll(void)
 			close_ui();
 			wp_redraw();
 			return;
+		}
+	}
+	if (!W.dialog && W.path[0] && W.dirty &&
+	    mmb_now_ms() - W.rec_at >= WP_AUTOSAVE_MS)
+	{
+		unsigned s = wp_sig();
+
+		W.rec_at = mmb_now_ms();
+		if (s != W.rec_sig)
+		{
+			wp_rec_write();
+			W.rec_sig = s;
 		}
 	}
 	chrome = wp_chrome();

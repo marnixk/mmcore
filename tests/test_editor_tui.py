@@ -2195,3 +2195,78 @@ def test_editor_undo_is_per_tab(kernel_image):
         con.stop()
 
 
+def _seed_recovery(con, path, original, recovered):
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    assert con.send_line(f'PRINT #1, "{original}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line(f'OPEN "{path}.rec" FOR OUTPUT AS #1') == ""
+    assert con.send_line(f'PRINT #1, "{recovered}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def _switch(con, n: int) -> None:
+    con.key_down("ctrl")
+    con.key_down("alt")
+    time.sleep(0.15)
+    con.key_down(f"f{n}")
+    time.sleep(0.25)
+    con.key_up(f"f{n}")
+    time.sleep(0.15)
+    con.key_up("alt")
+    con.key_up("ctrl")
+    time.sleep(0.5)
+
+
+def test_editor_periodic_autosave_writes_sidecar(kernel_image):
+    """Issue #516/#521: a dirty tab is checkpointed to <path>.rec."""
+    con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+    con.start()
+    try:
+        _edit(con, "AUTOS.BAS")
+        _keys(con, b"10 PRINT 1", quiet=0.4)
+        time.sleep(2.2)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "AUTOS.BAS.rec" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        got = con.send_line("PRINT A$")
+        assert con.send_line("CLOSE #1") == ""
+        assert "PRINT 1" in got
+        _switch(con, 1)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_recover_prompt_restores_sidecar(kernel_image):
+    """Issue #516/#521: recovery sidecar is offered on the next launch."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_recovery(con, "REC.BAS", "ORIGINAL", "RECOVERED")
+        seen = _edit(con, "REC.BAS")
+        assert "recover" in seen.lower()
+        restored = _keys(con, b"r", quiet=0.7)
+        assert "RECOVERED" in restored
+        _quit(con)
+        assert _read_bas(con, "REC.BAS") == "RECOVERED"
+    finally:
+        con.stop()
+
+
+def test_editor_recover_decline_keeps_file(kernel_image):
+    """Issue #516/#521: declining recovery keeps the on-disk file."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_recovery(con, "DEC.BAS", "ORIGINAL", "RECOVERED")
+        seen = _edit(con, "DEC.BAS")
+        assert "recover" in seen.lower()
+        declined = _keys(con, b"n", quiet=0.7)
+        assert "RECOVERED" not in declined
+        _quit(con)
+        assert _read_bas(con, "DEC.BAS") == "ORIGINAL"
+    finally:
+        con.stop()
+
+
