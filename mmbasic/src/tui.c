@@ -514,3 +514,31 @@ void tui_dialog_panel(int x, int y, int w, int h, const char *title,
 		tx = x + 1;
 	tui_puts(tx, y + 1, title, title_fg, title_bg);
 }
+
+/* ---- overlay dialogs (#623, #624) ------------------------------------ */
+
+static int s_overlay_active[MMB_MAX_CONSOLES];
+static int s_overlay_saved[MMB_MAX_CONSOLES];
+
+void tui_overlay_begin(void)
+{
+	if (g_console < 0 || g_console >= MMB_MAX_CONSOLES)
+		return;
+	s_overlay_active[g_console] = 1;
+	s_overlay_saved[g_console] = 0;
+	if (G.plat && G.plat->console_save)
+		s_overlay_saved[g_console] = G.plat->console_save(g_console, 0);
+}
+
+int tui_overlay_end(void)
+{
+	int restored = 0;
+	if (g_console < 0 || g_console >= MMB_MAX_CONSOLES)
+		return 0;
+	if (s_overlay_active[g_console] && s_overlay_saved[g_console] &&
+	    G.plat && G.plat->console_restore)
+		restored = G.plat->console_restore(g_console, 0);
+	s_overlay_active[g_console] = 0;
+	s_overlay_saved[g_console] = 0;
+	return restored ? 1 : 0;
+}

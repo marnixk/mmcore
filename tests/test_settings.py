@@ -514,3 +514,51 @@ def test_settings_legible_in_every_theme(console):
             assert con.send_line("PRINT 0") == "0"
     finally:
         assert con.send_line("OPTION THEME SLATE") == ""
+
+
+# --- #623: Appearance preview fits the panel and clears the hint row -------
+
+
+def test_settings_appearance_preview_fits_above_hint(console):
+    """The live PREVIEW swatch must sit inside the panel with its bottom
+    border above the hint row, not overlapping it (#623)."""
+    import re
+
+    con = console
+    _settings_open(con)
+    frame = _settings_keys(con, b"\r", quiet=0.6)
+    rows = _frame_rows(frame)
+
+    title = next(i for i, ln in enumerate(rows) if "Appearance - theme" in ln)
+    prev = next(i for i, ln in enumerate(rows) if "PREVIEW" in ln)
+    hint = next(i for i, ln in enumerate(rows) if "<Up/Down> Preview" in ln)
+
+    # Panel top border: the last border-only line before the section title
+    # (the hub's own border precedes it in the same frame).
+    top = None
+    for i in range(title - 1, -1, -1):
+        stripped = rows[i].strip()
+        if stripped and set(stripped) <= {"+", "-"} and "+-" in stripped:
+            top = i
+            break
+    assert top is not None, rows
+    panel_right = rows[top].rindex("+")
+
+    # Preview bottom border: first horizontal run after the title that sits
+    # clear of the theme list.
+    bottom = None
+    for i in range(prev + 1, hint):
+        m = re.search(r"\+-{10,}\+", rows[i])
+        if m and m.start() >= 22:
+            bottom = i
+            break
+    assert bottom is not None, rows
+    assert bottom < hint, ("preview overlaps hint row", rows)
+    assert rows[bottom].rindex("+") < panel_right, rows
+    # Nothing of the swatch is drawn on the hint row.
+    assert not re.search(r"\+-{2,}", rows[hint][22:]), rows
+
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 6*7") == "42"
+
