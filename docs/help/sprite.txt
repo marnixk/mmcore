@@ -61,6 +61,7 @@ the 16 IBM colours plus transparent.
     b, x         clear or fill the current cell
     n, p         move to the next or previous cell
     s            save the sheet (and font JSON)
+    Ctrl+Z       undo the last change
     Esc, Alt+X   quit
 
 SPRITE EDIT writes a single-cell file$ PNG. SPRITE SHEET tiles cols x rows

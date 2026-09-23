@@ -18,7 +18,7 @@ Tools select with a single key:
 
   p  pencil       e  eraser       l  line        r  rectangle
   o  circle       f  flood fill   i  colour picker
-  u  undo         x  clear canvas s  save
+  u, Ctrl+Z undo  x  clear canvas s  save
 
   Arrows      move the cursor
   Space/Enter apply the tool. For line/rectangle/circle the first press sets

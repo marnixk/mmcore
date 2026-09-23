@@ -2997,6 +2997,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("MATH")] = mmb_cmd_math;
 		tab[mmb_kw_id("SPRITE")] = mmb_cmd_sprite;
 		tab[mmb_kw_id("ANSI")] = mmb_cmd_ansi;
+		tab[mmb_kw_id("SETTINGS")] = mmb_cmd_settings;
 		tab[mmb_kw_id("SETTICK")] = mmb_cmd_settick;
 		inited = 1;
 	}
@@ -4237,6 +4238,7 @@ void mmb_poll(void)
 	mmb_ihelp_poll();
 	mmb_package_poll();
 	mmb_apptui_poll();
+	mmb_settings_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
 	mmb_paint_poll();

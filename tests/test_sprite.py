@@ -263,6 +263,20 @@ def test_sprite_editor_flip_horizontal(fresh_console):
     c.send_line("SPRITE CLOSE 1")
 
 
+def test_sprite_editor_ctrl_z_undo(fresh_console):
+    """#532: Ctrl+Z undoes the last SPRITE EDIT pixel change."""
+    c = fresh_console
+    _open_editor(c, 'SPRITE EDIT "ED_UNDO.PNG"')
+    _keys(c, b"4 ")          # red at the cursor (top-left)
+    _keys(c, b"\x1a")        # Ctrl+Z restores transparent
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+    assert c.send_line('SPRITE LOADPNG 1, "ED_UNDO.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _rgb_is_black(_pixel(c, 0, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
 def test_sprite_sheet_scrubs_frames(fresh_console):
     c = fresh_console
     _open_editor(c, 'SPRITE SHEET "ED3.PNG", 8, 4, 4')

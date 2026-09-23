@@ -419,6 +419,38 @@ static void parse_clock(void)
 	skip_hw_rest();
 }
 
+/* OPTION (EDIT) THEME name|pattern|n — the system-wide theme selection. */
+static void option_set_theme(void)
+{
+	int id = -1;
+
+	mmb_skip_sp();
+	if (*G.p == '"')
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		id = mmb_editor_theme_lookup(v.s);
+	}
+	else
+	{
+		int i, n = mmb_editor_theme_count();
+		for (i = 0; i < n; i++)
+		{
+			if (mmb_match(mmb_editor_theme_name(i)))
+			{
+				id = i;
+				break;
+			}
+		}
+		if (id < 0)
+			id = (int)mmb_as_int(mmb_expr());
+	}
+	if (id < 0 || id >= mmb_editor_theme_count())
+		mmb_error("?THEME");
+	G.opt.edit_theme = id;
+}
+
 static void option_dispatch(void)
 {
 	if (mmb_match("BASE"))
@@ -787,36 +819,16 @@ static void option_dispatch(void)
 			return;
 		}
 	}
+	if (mmb_match("THEME"))
+	{
+		option_set_theme();
+		return;
+	}
 	if (mmb_match("EDIT"))
 	{
 		if (mmb_match("THEME"))
 		{
-			int id = -1;
-			mmb_skip_sp();
-			if (*G.p == '"')
-			{
-				mmb_val v = mmb_expr();
-				if (v.type != T_STR)
-					mmb_syntax();
-				id = mmb_editor_theme_lookup(v.s);
-			}
-			else
-			{
-				int i, n = mmb_editor_theme_count();
-				for (i = 0; i < n; i++)
-				{
-					if (mmb_match(mmb_editor_theme_name(i)))
-					{
-						id = i;
-						break;
-					}
-				}
-				if (id < 0)
-					id = (int)mmb_as_int(mmb_expr());
-			}
-			if (id < 0 || id >= mmb_editor_theme_count())
-				mmb_error("?THEME");
-			G.opt.edit_theme = id;
+			option_set_theme();
 			return;
 		}
 		if (!mmb_match("FONT"))

@@ -32,6 +32,7 @@ already exists. A .TDF font given as font$ is loaded for text stamping.
     Alt+L         toggle line mode: cursor moves draw a line
     Alt+F         flood-fill the matching region
     Alt+S         save file$ as ANSI
+    Ctrl+Z        undo the last change
     Esc, Alt+X    quit
 
 In text mode each typed character is rendered from the loaded .TDF font and

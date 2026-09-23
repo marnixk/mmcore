@@ -1,0 +1,39 @@
+name: SETTINGS
+kind: command
+
+Open the system-wide appearance picker. It lists every built-in TUI theme and
+previews the highlighted one live: the current screen recolours as you move,
+and the choice is kept when you press Enter.
+
+SETTINGS
+SETTINGS THEME name|n
+
+  name - a theme name (bare or quoted) or its index
+
+The selection is the same one OPTION EDIT THEME sets, so it applies everywhere
+the theme is used: EDIT, FILES, WORDPAD, TERM, HELP, SPRITE, PACKAGE, APPS
+and the rest of the themed chrome. It is saved to C:/.mmbasic.ini (A: if there
+is no SD card) and survives a reboot.
+
+Keys in the picker:
+
+  Up / Down   move the selection (live preview)
+  Enter       apply and save
+  Esc         cancel, restoring the previous theme
+  0-9         jump to a theme by index
+
+Built-in themes, in order:
+
+  0 Paper   1 Cloud   2 Snow   3 Night   4 Nord
+  5 Slate   6 Forest  7 Violet 8 Turbo  9 Phosphor
+
+Default is Slate. Turbo is the retro VGA palette; Phosphor is a green CRT.
+Themes can also be chosen from a program with OPTION THEME name.
+
+Example:
+
+    SETTINGS
+    SETTINGS THEME Nord
+    SETTINGS THEME "Violet"
+    OPTION THEME 8              ' same selection, no UI
+    COLOUR THEME("TEXT_FG"), THEME("TEXT_BG")

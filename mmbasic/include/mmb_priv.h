@@ -44,6 +44,10 @@
 #define MMB_OUT_LEN       4096
 #define MMB_ED_TABS       6
 #define MMB_ED_BUF        16384
+/* Shared undo policy for the creative/writing apps (#532): Ctrl+Z is the
+ * documented chord and snapshot-based apps keep this many steps. EDIT uses a
+ * deeper op-journal; matching UX matters more than identical engines. */
+#define MMB_UNDO_DEPTH    8
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
@@ -920,6 +924,13 @@ void mmb_apptui_open(int launcher);
 void mmb_apptui_poll(void);
 void mmb_cmd_apps(void);
 void mmb_boot_start(void);
+
+/* System-wide appearance settings: the SETTINGS theme picker (#509). */
+void mmb_cmd_settings(void);
+int mmb_settings_active(void);
+const char *mmb_settings_key(char c);
+void mmb_settings_open(void);
+void mmb_settings_poll(void);
 
 int mmb_wlan_available(void);
 int mmb_wlan_radio_pending(void);

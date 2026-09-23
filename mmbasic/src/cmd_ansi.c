@@ -61,10 +61,35 @@ typedef struct {
 	int have_font;
 	an_tdf tdf;
 	unsigned char *font_buf;
+	an_cell undo[MMB_UNDO_DEPTH][AN_ROWS][AN_COLS];
+	int undo_n, undo_pos;
 } an_state;
 
 static an_cell AN[AN_ROWS][AN_COLS];
 static an_state A;
+
+/* Ctrl+Z undo (#532): snapshot the whole grid before a mutation. */
+static void an_undo_push(void)
+{
+	memcpy(A.undo[A.undo_pos], AN, sizeof(AN));
+	A.undo_pos = (A.undo_pos + 1) % MMB_UNDO_DEPTH;
+	if (A.undo_n < MMB_UNDO_DEPTH)
+		A.undo_n++;
+}
+
+static void an_undo(void)
+{
+	if (A.undo_n <= 0)
+	{
+		strncpy(A.status, "Nothing to undo", sizeof(A.status) - 1);
+		return;
+	}
+	A.undo_pos = (A.undo_pos - 1 + MMB_UNDO_DEPTH) % MMB_UNDO_DEPTH;
+	memcpy(AN, A.undo[A.undo_pos], sizeof(AN));
+	A.undo_n--;
+	A.dirty = 1;
+	strncpy(A.status, "Undo", sizeof(A.status) - 1);
+}
 
 static const unsigned char AN_PAINT[] = {
 	0xDB, 0xB2, 0xB1, 0xB0, 0x20, 0xDC, 0xDF, 0xFE, 0x0F, 0x04, 0x03
@@ -364,6 +389,7 @@ static void an_line(an_state *st, int x0, int y0, int x1, int y1)
 	int err = dx + dy;
 	int ch = st->text_mode ? ' ' : AN_PAINT[st->paint];
 
+	an_undo_push();
 	for (;;)
 	{
 		an_put(x0, y0, ch, st->fg, st->bg);
@@ -401,6 +427,7 @@ static void an_flood(an_state *st, int x, int y)
 	if (tch == (unsigned char)want && tfg == (unsigned char)st->fg &&
 	    tbg == (unsigned char)st->bg)
 		return;
+	an_undo_push();
 	stack[sp++] = y * AN_COLS + x;
 	while (sp > 0)
 	{
@@ -769,6 +796,8 @@ static int an_load(const char *path)
 	an_parser p;
 
 	an_clear_canvas();
+	A.undo_n = 0;
+	A.undo_pos = 0;
 	sz = mmb_vfs_size(path);
 	if (sz <= 0)
 		return -1;
@@ -949,6 +978,7 @@ static void an_redraw(void)
 		tui_puts(px, py++, "a+l line", TUI_WHITE, TUI_BRBLACK);
 		tui_puts(px, py++, "f flood fill", TUI_WHITE, TUI_BRBLACK);
 		tui_puts(px, py++, "a+s save", TUI_WHITE, TUI_BRBLACK);
+		tui_puts(px, py++, "Ctl+Z undo", TUI_WHITE, TUI_BRBLACK);
 		tui_puts(px, py++, "Esc quit", TUI_WHITE, TUI_BRBLACK);
 	}
 	tui_pad(0, rows - 1, A.status, cols, TUI_BRYELLOW, TUI_BRBLACK);
@@ -1006,14 +1036,16 @@ static void an_type_char(int c)
 	{
 		if (A.have_font)
 		{
-			int adv = an_tdf_stamp(&A.tdf, c, A.cx, A.cy, A.fg, A.bg);
-			int i;
+			int adv, i;
+			an_undo_push();
+			adv = an_tdf_stamp(&A.tdf, c, A.cx, A.cy, A.fg, A.bg);
 			for (i = 0; i < adv; i++)
 				an_advance();
 			A.dirty = 1;
 		}
 		return;
 	}
+	an_undo_push();
 	an_put(A.cx, A.cy, c, A.fg, A.bg);
 	A.dirty = 1;
 	an_advance();
@@ -1023,6 +1055,7 @@ static void an_stamp_brush(void)
 {
 	if (A.text_mode)
 		return;
+	an_undo_push();
 	an_put(A.cx, A.cy, AN_PAINT[A.paint], A.fg, A.bg);
 	A.dirty = 1;
 	an_advance();
@@ -1138,6 +1171,7 @@ static void an_handle(int c)
 	}
 	if (c == 127)
 	{
+		an_undo_push();
 		an_put(A.cx, A.cy, 0, A.fg, A.bg);
 		A.dirty = 1;
 		return;
@@ -1185,6 +1219,13 @@ const char *mmb_ansi_edit_key(char c)
 	{
 		A.esc_state = AN_ESC_GOT;
 		A.esc_at = mmb_now_ms();
+		return G.out;
+	}
+	if (c == 26) /* Ctrl+Z: shared undo chord (#532) */
+	{
+		an_undo();
+		if (A.active)
+			an_redraw();
 		return G.out;
 	}
 	an_handle(c);
