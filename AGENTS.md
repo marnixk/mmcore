@@ -48,7 +48,10 @@ release).
   must show progress as a percentage while it runs: `n/N (pct%)` plus running
   pass/fail/skip counts. Use `scripts/test-watch.py start` / `status` / `wait`
   (or an equivalent progress reporter) rather than a bare `pytest -q`, so a
-  long run can be polled and its progress reported.
+  long run can be polled and its progress reported. **Report that progress to
+  the user in the conversation, not just to the log**: poll `status --sleep 60`
+  in a loop and post an update each interval (never a single silent blocking
+  `wait` that surfaces only at the end). See the `test-suite-progress` skill.
 
 - **Never move a branch another worktree has checked out** — all worktrees
   share one ref store, so `git update-ref refs/heads/<b>`, `git branch -f <b>`,

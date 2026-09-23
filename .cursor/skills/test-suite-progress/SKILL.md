@@ -9,6 +9,22 @@ The suite boots QEMU per test module (and per `fresh_console` test), so a full
 run takes tens of minutes. Run it detached with `scripts/test-watch.py` and
 poll `status` so long runs show visible activity instead of looking stuck.
 
+## Reporting progress (required)
+
+A detached run is **not** a progress update. You must surface progress to the
+user in the conversation while the run continues:
+
+- Do **not** call `wait` (or any single blocking command) and stay silent until
+  it finishes. `wait` hides the run behind one long tool call.
+- Instead, loop: `test-watch.py status --sleep 60` (or `--sleep 90`), then post a
+  one-line update in your message — `n/N (pct%) · pass X fail Y skip Z · last
+  <test>` — and call `status` again. Keep going until the run finishes, then
+  post the summary and any failures.
+- Example cadence: `status --sleep 60` → reply with the numbers → `status
+  --sleep 60` → reply → … Each status call is cheap and safe.
+- The same rule applies to scoped runs and to every wave/coordinator update: the
+  user should never have to ask "how's the suite going?".
+
 ## Quick start
 
 ```bash
