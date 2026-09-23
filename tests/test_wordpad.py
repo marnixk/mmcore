@@ -510,6 +510,28 @@ def test_wordpad_ctrl_p_quick_open(kernel_image):
         con.stop()
 
 
+def test_wordpad_ctrl_p_lists_markdown_only(kernel_image):
+    """#539: quick-open keeps cwd docs and ignores unrelated ramdisk files."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_wp_files(con)
+        assert con.send_line('OPEN "NOTES.TXT" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "plain"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _open(con, 'WORDPAD "A.MD"')
+        seen = _keys(con, bytes([16]), quiet=0.8)
+        up = seen.upper()
+        assert "Quick open" in seen
+        assert "B.MD" in up
+        assert "HELLO.BAS" not in up
+        assert "NOTES.TXT" not in up
+        _keys(con, b"\x1b", quiet=0.6)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_autosave_on_switch(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
