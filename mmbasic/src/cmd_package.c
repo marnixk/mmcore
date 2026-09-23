@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "tui.h"
 
 static void strip_slash(char *s)
 {
@@ -242,14 +243,76 @@ void mmb_cmd_unpack(void)
 	G.plat->free(zip);
 }
 
-void mmb_cmd_package(void)
+/* Zip folder$ into pkg$ (a ZIP store). When meta$ is non-empty it is added
+ * as PACKAGE.INF at the archive root. Returns 0 on success, otherwise:
+ * 1 ?NO MAIN.BAS, 2 ?DIRECTORY, 3 ?PACKAGE, 4 ?FILE. */
+static int package_build(const char *pkg, const char *folder_in, const char *meta)
 {
-	char pkg[128], folder[128], dest_full[128];
+	char folder[128], dest_full[128];
 	mmb_zip_w z;
 	unsigned char *out = 0;
 	unsigned n = 0;
+
+	strncpy(folder, folder_in, sizeof(folder) - 1);
+	folder[sizeof(folder) - 1] = 0;
+	strip_slash(folder);
+	if (!folder[0] || !mmb_vfs_isdir(folder))
+		return 2;
+	if (!folder_has_main(folder))
+		return 1;
+	dest_full[0] = 0;
+	mmb_vfs_resolve(pkg, dest_full, sizeof(dest_full));
+	if (mmb_zip_begin(&z) != 0)
+		return 3;
+	if (pack_walk(&z, folder, "", dest_full, 0) != 0)
+	{
+		mmb_zip_abort(&z);
+		return 3;
+	}
+	if (meta && meta[0] &&
+	    mmb_zip_add(&z, "PACKAGE.INF", meta, (unsigned)strlen(meta)) != 0)
+	{
+		mmb_zip_abort(&z);
+		return 3;
+	}
+	if (mmb_zip_finish(&z, &out, &n) != 0)
+	{
+		mmb_zip_abort(&z);
+		return 3;
+	}
+	if (mmb_vfs_write(pkg, out, n, 0) != 0)
+	{
+		G.plat->free(out);
+		return 4;
+	}
+	G.plat->free(out);
+	return 0;
+}
+
+static void package_error(int rc)
+{
+	if (rc == 1)
+		mmb_error("?NO MAIN.BAS");
+	if (rc == 2)
+		mmb_error("?DIRECTORY");
+	if (rc == 4)
+		mmb_error("?FILE");
+	mmb_error("?PACKAGE");
+}
+
+void mmb_cmd_package(void)
+{
+	char pkg[128], folder[128];
 	mmb_val v;
 
+	/* Bare PACKAGE at the prompt is the authoring wizard; scripts keep the
+	 * two-argument form (and a bare PACKAGE there stays a syntax error). */
+	mmb_skip_sp();
+	if (!G.running && (*G.p == 0 || *G.p == ':' || *G.p == '\''))
+	{
+		mmb_package_wiz_open();
+		return;
+	}
 	v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
@@ -278,24 +341,591 @@ void mmb_cmd_package(void)
 		if (!confirm_overwrite())
 			return;
 	}
-	dest_full[0] = 0;
-	mmb_vfs_resolve(pkg, dest_full, sizeof(dest_full));
-	if (mmb_zip_begin(&z) != 0)
-		mmb_error("?PACKAGE");
-	if (pack_walk(&z, folder, "", dest_full, 0) != 0)
 	{
-		mmb_zip_abort(&z);
-		mmb_error("?PACKAGE");
+		int rc = package_build(pkg, folder, 0);
+		if (rc)
+			package_error(rc);
 	}
-	if (mmb_zip_finish(&z, &out, &n) != 0)
+}
+
+/* ------------------------------------------------------------------ */
+/* PACKAGE authoring wizard: folder -> .APP                            */
+/* ------------------------------------------------------------------ */
+
+#define PW_MAX_ENT 128
+#define PW_NAME    80
+#define PW_PATH    160
+#define PW_LIST    4096
+
+#define PW_FOLDER 0
+#define PW_FORM   1
+#define PW_DONE   2
+
+#define PW_ESC_IDLE_MS 60
+
+static const mmb_ed_theme *pwth(void)
+{
+	return mmb_editor_theme();
+}
+
+#define PW_FG       ((int)pwth()->edit_fg)
+#define PW_BG       ((int)pwth()->edit_bg)
+#define PW_TITLE_FG ((int)pwth()->menu_fg)
+#define PW_TITLE_BG ((int)pwth()->menu_bg)
+#define PW_SEL_FG   ((int)pwth()->sel_fg)
+#define PW_SEL_BG   ((int)pwth()->sel_bg)
+#define PW_HOT      ((int)pwth()->hot)
+#define PW_DIM      ((int)pwth()->cmt_fg)
+#define PW_STR      ((int)pwth()->str_fg)
+#define PW_BRD      ((int)pwth()->brd_fg)
+#define PW_ERR_FG   ((int)pwth()->err_fg)
+#define PW_ERR_BG   ((int)pwth()->err_bg)
+#define PW_FIELD_FG ((int)pwth()->field_fg)
+#define PW_FIELD_BG ((int)pwth()->field_bg)
+
+typedef struct {
+	int active;
+	int phase;
+	int nent, sel, top;
+	char cwd[128];
+	char name[PW_MAX_ENT][PW_NAME];
+	char path[PW_MAX_ENT][PW_PATH];
+	char folder[PW_PATH];
+	char pkg[PW_NAME];
+	char title[PW_NAME];
+	char author[PW_NAME];
+	int field;
+	int overwrite;
+	int esc;
+	unsigned esc_at;
+	char status[96];
+} pw_state;
+
+static pw_state PW_s[MMB_MAX_CONSOLES];
+#define PW (PW_s[g_console])
+
+static void pw_draw(void);
+static void pw_scan(void);
+
+static void pw_set_status(const char *s)
+{
+	strncpy(PW.status, s ? s : "", sizeof(PW.status) - 1);
+	PW.status[sizeof(PW.status) - 1] = 0;
+}
+
+static void pw_append(char *dst, int sz, const char *s)
+{
+	int n = (int)strlen(dst);
+	if (n >= sz - 1 || !s)
+		return;
+	strncat(dst, s, (unsigned)(sz - n - 1));
+}
+
+static int pw_has_main(int i)
+{
+	return folder_has_main(PW.path[i]);
+}
+
+static void pw_scan(void)
+{
+	char listing[PW_LIST];
+	char *line, *next;
+	int n = 1;
+
+	PW.sel = 0;
+	PW.top = 0;
+	PW.nent = 0;
+	strncpy(PW.cwd, mmb_vfs_cwd(), sizeof(PW.cwd) - 1);
+	PW.cwd[sizeof(PW.cwd) - 1] = 0;
+	strcpy(PW.name[0], ".");
+	strncpy(PW.path[0], PW.cwd, sizeof(PW.path[0]) - 1);
+	PW.path[0][sizeof(PW.path[0]) - 1] = 0;
+	if (mmb_vfs_list(PW.cwd, listing, sizeof(listing)) != 0)
+		listing[0] = 0;
+	for (line = listing; line && *line && n < PW_MAX_ENT; line = next)
 	{
-		mmb_zip_abort(&z);
-		mmb_error("?PACKAGE");
+		int len;
+		next = strchr(line, '\n');
+		if (next)
+			*next++ = 0;
+		len = (int)strlen(line);
+		if (len < 2 || line[len - 1] != '/')
+			continue; /* files are not package roots */
+		line[len - 1] = 0;
+		if (!line[0] || mmb_vfs_hidden_name(line))
+			continue;
+		strncpy(PW.name[n], line, PW_NAME - 1);
+		PW.name[n][PW_NAME - 1] = 0;
+		join_rel(PW.path[n], (int)sizeof(PW.path[n]), PW.cwd, line);
+		n++;
 	}
-	if (mmb_vfs_write(pkg, out, n, 0) != 0)
+	PW.nent = n;
+}
+
+static void pw_default_name(void)
+{
+	const char *base = PW.name[PW.sel];
+	PW.pkg[0] = 0;
+	if (!base[0] || !strcmp(base, "."))
+		base = "PACKAGE";
+	strncpy(PW.pkg, base, sizeof(PW.pkg) - 6);
+	PW.pkg[sizeof(PW.pkg) - 6] = 0;
+	strcat(PW.pkg, ".APP");
+}
+
+static void pw_close(void)
+{
+	PW.active = 0;
+	PW.esc = 0;
+	tui_end();
+	mmb_console_write("\r\n");
+	mmb_console_write(mmb_prompt());
+}
+
+static void pw_escape(void)
+{
+	if (PW.phase == PW_FORM)
 	{
-		G.plat->free(out);
-		mmb_error("?FILE");
+		PW.phase = PW_FOLDER;
+		PW.overwrite = 0;
+		pw_set_status("");
+		return;
 	}
-	G.plat->free(out);
+	pw_close();
+}
+
+static void pw_choose_folder(void)
+{
+	int i = PW.sel;
+	if (i < 0 || i >= PW.nent)
+		return;
+	if (!pw_has_main(i))
+	{
+		char msg[96];
+		strncpy(msg, "No MAIN.BAS in ", sizeof(msg) - 1);
+		msg[sizeof(msg) - 1] = 0;
+		pw_append(msg, sizeof(msg), PW.name[i]);
+		pw_set_status(msg);
+		return;
+	}
+	strncpy(PW.folder, PW.path[i], sizeof(PW.folder) - 1);
+	PW.folder[sizeof(PW.folder) - 1] = 0;
+	pw_default_name();
+	PW.title[0] = 0;
+	PW.author[0] = 0;
+	PW.field = 0;
+	PW.overwrite = 0;
+	PW.phase = PW_FORM;
+	pw_set_status("");
+}
+
+static void pw_build_meta(char *dst, int sz)
+{
+	dst[0] = 0;
+	pw_append(dst, sz, "name=");
+	pw_append(dst, sz, PW.pkg);
+	pw_append(dst, sz, "\nmain=MAIN.BAS\n");
+	if (PW.title[0])
+	{
+		pw_append(dst, sz, "title=");
+		pw_append(dst, sz, PW.title);
+		pw_append(dst, sz, "\n");
+	}
+	if (PW.author[0])
+	{
+		pw_append(dst, sz, "author=");
+		pw_append(dst, sz, PW.author);
+		pw_append(dst, sz, "\n");
+	}
+}
+
+static void pw_create(void)
+{
+	char meta[512];
+	int rc;
+
+	if (!PW.pkg[0])
+	{
+		pw_set_status("Package name required");
+		return;
+	}
+	if (!strchr(PW.pkg, '.'))
+		strncat(PW.pkg, ".APP", sizeof(PW.pkg) - strlen(PW.pkg) - 1);
+	if (mmb_vfs_exists(PW.pkg) && !mmb_vfs_isdir(PW.pkg) && !PW.overwrite)
+	{
+		PW.overwrite = 1;
+		pw_set_status("File exists: Enter overwrites, Esc goes back");
+		return;
+	}
+	pw_build_meta(meta, sizeof(meta));
+	rc = package_build(PW.pkg, PW.folder, meta);
+	if (rc != 0)
+	{
+		if (rc == 1)
+			pw_set_status("?NO MAIN.BAS");
+		else if (rc == 2)
+			pw_set_status("?DIRECTORY");
+		else if (rc == 4)
+			pw_set_status("?FILE");
+		else
+			pw_set_status("?PACKAGE");
+		return;
+	}
+	PW.phase = PW_DONE;
+	pw_set_status("");
+}
+
+static void pw_move(int dir)
+{
+	if (PW.phase == PW_FOLDER)
+	{
+		if (dir < 0)
+		{
+			if (PW.sel > 0)
+				PW.sel--;
+		}
+		else if (PW.sel + 1 < PW.nent)
+			PW.sel++;
+	}
+	else if (PW.phase == PW_FORM)
+	{
+		if (dir < 0)
+		{
+			if (PW.field > 0)
+				PW.field--;
+		}
+		else if (PW.field < 2)
+			PW.field++;
+	}
+}
+
+static void pw_key_folder(char c)
+{
+	if (c == '\r' || c == '\n')
+	{
+		pw_choose_folder();
+		return;
+	}
+}
+
+static void pw_field_edit(char c)
+{
+	char *buf;
+	int cap;
+	if (PW.field == 0)
+	{
+		buf = PW.pkg;
+		cap = (int)sizeof(PW.pkg);
+	}
+	else if (PW.field == 1)
+	{
+		buf = PW.title;
+		cap = (int)sizeof(PW.title);
+	}
+	else
+	{
+		buf = PW.author;
+		cap = (int)sizeof(PW.author);
+	}
+	if (c == 8 || c == 127)
+	{
+		int n = (int)strlen(buf);
+		if (n > 0)
+			buf[n - 1] = 0;
+		return;
+	}
+	if (c >= 32 && c < 127)
+	{
+		int n = (int)strlen(buf);
+		if (n + 1 < cap)
+		{
+			buf[n] = c;
+			buf[n + 1] = 0;
+		}
+	}
+}
+
+static void pw_key_form(char c)
+{
+	if (c == '\t')
+	{
+		if (PW.field < 2)
+			PW.field++;
+		else
+			PW.field = 0;
+		return;
+	}
+	if (c == '\r' || c == '\n')
+	{
+		if (PW.field < 2)
+			PW.field++;
+		else
+			pw_create();
+		return;
+	}
+	pw_field_edit(c);
+}
+
+static void pw_key_done(void)
+{
+	if (!PW.active)
+		return;
+	pw_close();
+}
+
+const char *mmb_package_key(char c)
+{
+	G.outn = 0;
+	G.out[0] = 0;
+	if (!PW.active)
+		return G.out;
+	if (PW.esc)
+	{
+		if (PW.esc == 1)
+		{
+			if (c == '[' || c == 'O')
+			{
+				PW.esc = 2;
+				return G.out;
+			}
+			PW.esc = 0;
+			pw_escape();
+			if (PW.active)
+				pw_draw();
+			return G.out;
+		}
+		PW.esc = 0;
+		if (c == 'A')
+			pw_move(-1);
+		else if (c == 'B')
+			pw_move(1);
+		if (PW.active)
+			pw_draw();
+		return G.out;
+	}
+	if (c == 27)
+	{
+		PW.esc = 1;
+		PW.esc_at = mmb_now_ms();
+		return G.out;
+	}
+	if (PW.phase == PW_FOLDER)
+		pw_key_folder(c);
+	else if (PW.phase == PW_FORM)
+		pw_key_form(c);
+	else
+		pw_key_done();
+	if (PW.active)
+		pw_draw();
+	return G.out;
+}
+
+void mmb_package_poll(void)
+{
+	if (!PW.active || PW.esc != 1)
+		return;
+	if (mmb_now_ms() - PW.esc_at < PW_ESC_IDLE_MS)
+		return;
+	PW.esc = 0;
+	pw_escape();
+	if (PW.active)
+		pw_draw();
+}
+
+int mmb_in_package(void)
+{
+	return PW.active;
+}
+
+void mmb_package_wiz_open(void)
+{
+	memset(&PW, 0, sizeof(PW));
+	PW.active = 1;
+	PW.phase = PW_FOLDER;
+	tui_begin();
+	mmb_editor_apply_tui_palette();
+	tui_invalidate();
+	pw_scan();
+	pw_draw();
+}
+
+static void pw_title_bar(const char *title)
+{
+	int w = tui_cols();
+	int n = (int)strlen(title);
+	int x = (w - n) / 2;
+	if (x < 1)
+		x = 1;
+	tui_fill(0, 0, w, 1, ' ', PW_TITLE_FG, PW_TITLE_BG);
+	tui_puts(x, 0, title, PW_TITLE_FG, PW_TITLE_BG);
+}
+
+static void pw_status_bar(const char *hint)
+{
+	int w = tui_cols();
+	int h = tui_rows();
+	int i, p;
+	tui_fill(0, h - 1, w, 1, ' ', PW_DIM, PW_BG);
+	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
+	{
+		if (hint[i] == '<')
+		{
+			tui_put(p++, h - 1, '<', PW_HOT, PW_BG);
+			while (hint[i + 1] && hint[i] != '>')
+			{
+				i++;
+				if (p >= w - 1)
+					break;
+				tui_put(p++, h - 1, (unsigned char)hint[i], PW_HOT, PW_BG);
+			}
+			if (hint[i] == '>' && p < w - 1)
+				tui_put(p++, h - 1, '>', PW_HOT, PW_BG);
+		}
+		else if (p < w - 1)
+			tui_put(p++, h - 1, (unsigned char)hint[i], PW_DIM, PW_BG);
+	}
+}
+
+static void pw_draw_folder(void)
+{
+	int w = tui_cols();
+	int h = tui_rows();
+	int listy = 4;
+	int listh = h - 8;
+	int i;
+	char line[PW_PATH + 32];
+
+	if (listh < 3)
+		listh = 3;
+	if (PW.sel < PW.top)
+		PW.top = PW.sel;
+	if (PW.sel >= PW.top + listh)
+		PW.top = PW.sel - listh + 1;
+	if (PW.top < 0)
+		PW.top = 0;
+
+	tui_clear(PW_FG, PW_BG);
+	pw_title_bar("PACKAGE WIZARD");
+	tui_puts(2, 2, "Step 1/3  Choose the folder to package", PW_STR, PW_BG);
+	line[0] = 0;
+	pw_append(line, sizeof(line), "Folder: ");
+	pw_append(line, sizeof(line), PW.cwd);
+	tui_puts(2, 3, line, PW_DIM, PW_BG);
+
+	for (i = 0; i < listh; i++)
+	{
+		int idx = PW.top + i;
+		int y = listy + i;
+		char row[PW_NAME + 24];
+		int fg = PW_FG, bg = PW_BG;
+		if (idx >= PW.nent)
+		{
+			tui_fill(1, y, w - 2, 1, ' ', PW_FG, PW_BG);
+			continue;
+		}
+		row[0] = 0;
+		pw_append(row, sizeof(row), "[");
+		pw_append(row, sizeof(row), PW.name[idx]);
+		pw_append(row, sizeof(row), "]");
+		if (!pw_has_main(idx))
+			pw_append(row, sizeof(row), "  (no MAIN.BAS)");
+		else
+			pw_append(row, sizeof(row), "  MAIN.BAS ok");
+		if (idx == PW.sel)
+		{
+			fg = PW_SEL_FG;
+			bg = PW_SEL_BG;
+		}
+		else if (!pw_has_main(idx))
+			fg = PW_ERR_FG;
+		tui_fill(1, y, w - 2, 1, ' ', fg, bg);
+		tui_puts(2, y, row, fg, bg);
+	}
+
+	if (PW.status[0])
+		tui_fill(1, h - 3, w - 2, 1, ' ', PW_ERR_FG, PW_ERR_BG);
+	else
+		tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	tui_puts(2, h - 3, PW.status[0] ? PW.status :
+		 "Pick a folder that contains MAIN.BAS.", PW_ERR_FG, PW_ERR_BG);
+	pw_status_bar("<Up/Down> Move  <Enter> Choose  <Esc> Cancel");
+}
+
+static void pw_draw_field(int y, const char *label, const char *value, int selected)
+{
+	int w = tui_cols();
+	int fg = selected ? PW_SEL_FG : PW_FIELD_FG;
+	int bg = selected ? PW_SEL_BG : PW_FIELD_BG;
+	char row[PW_NAME + 32];
+	row[0] = 0;
+	pw_append(row, sizeof(row), label);
+	pw_append(row, sizeof(row), value);
+	tui_fill(2, y, w - 4, 1, ' ', fg, bg);
+	tui_puts(2, y, row, fg, bg);
+	if (selected)
+		tui_put(2 + (int)strlen(row), y, ' ', PW_SEL_FG, PW_SEL_BG);
+}
+
+static void pw_draw_form(void)
+{
+	int w = tui_cols();
+	int h = tui_rows();
+	char line[PW_PATH + 32];
+
+	tui_clear(PW_FG, PW_BG);
+	pw_title_bar("PACKAGE WIZARD");
+	tui_puts(2, 2, "Step 2/3  Name and optional metadata", PW_STR, PW_BG);
+	line[0] = 0;
+	pw_append(line, sizeof(line), "Folder: ");
+	pw_append(line, sizeof(line), PW.folder);
+	pw_append(line, sizeof(line), "  (MAIN.BAS ok)");
+	tui_puts(2, 3, line, PW_DIM, PW_BG);
+
+	pw_draw_field(5, "Package : ", PW.pkg, PW.field == 0);
+	pw_draw_field(6, "Title   : ", PW.title, PW.field == 1);
+	pw_draw_field(7, "Author  : ", PW.author, PW.field == 2);
+
+	tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	if (PW.status[0])
+		tui_puts(2, h - 3, PW.status, PW_ERR_FG, PW_ERR_BG);
+	else
+		tui_puts(2, h - 3, "Enter advances; on the last field it creates the .APP.",
+			  PW_DIM, PW_BG);
+	pw_status_bar("<Tab/Up/Down> Field  <Enter> Next/Create  <Esc> Back");
+}
+
+static void pw_draw_done(void)
+{
+	int w = tui_cols();
+	int h = tui_rows();
+	char line[PW_PATH + 64];
+
+	tui_clear(PW_FG, PW_BG);
+	pw_title_bar("PACKAGE WIZARD");
+	tui_puts(2, 2, "Step 3/3  Package created", PW_STR, PW_BG);
+	line[0] = 0;
+	pw_append(line, sizeof(line), "Wrote ");
+	pw_append(line, sizeof(line), PW.pkg);
+	pw_append(line, sizeof(line), " from ");
+	pw_append(line, sizeof(line), PW.folder);
+	tui_puts(2, 4, line, PW_FG, PW_BG);
+	tui_puts(2, 6, "RUN \"<name>.APP\" mounts it read-only as B:.", PW_DIM, PW_BG);
+	tui_fill(1, h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	pw_status_bar("<Any key> Close");
+}
+
+static void pw_draw(void)
+{
+	if (!PW.active)
+		return;
+	tui_begin();
+	mmb_editor_apply_tui_palette();
+	if (PW.phase == PW_FOLDER)
+		pw_draw_folder();
+	else if (PW.phase == PW_FORM)
+		pw_draw_form();
+	else
+		pw_draw_done();
+	tui_cursor(0, 0, 0);
+	tui_flush();
 }

@@ -263,7 +263,8 @@ int mmb_front_in_app(void)
 {
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
-	       mmb_in_afk() || mmb_in_sprite_edit();
+	       mmb_in_afk() || mmb_in_sprite_edit() ||
+	       mmb_in_package();
 }
 
 static void submit(void)
@@ -307,7 +308,7 @@ static void submit(void)
 		fe_puts(result);
 		mmb_front_prompt();
 	}
-	else if (mmb_in_files() || mmb_in_ihelp())
+	else if (mmb_in_files() || mmb_in_ihelp() || mmb_in_package())
 	{
 		/* TUI already streamed to the screen. */
 	}
@@ -419,6 +420,11 @@ static void front_feed_dispatch(char c)
 	if (mmb_in_sprite_edit())
 	{
 		fe_puts(mmb_sprite_edit_key(c));
+		return;
+	}
+	if (mmb_in_package())
+	{
+		fe_puts(mmb_package_key(c));
 		return;
 	}
 	if (mmb_in_editor())

@@ -163,6 +163,103 @@ def test_help_package(console):
     assert "RUN" in out.upper()
     assert ".APP" in out.upper()
     assert ".PKG" not in out.upper()
+    assert "WIZARD" in out.upper()
+
+
+def _wiz_open(con):
+    assert con._ser is not None
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"PACKAGE\r")
+    return con.drain(quiet=0.9).decode(errors="replace")
+
+
+def _wiz_keys(con, data, quiet=0.45):
+    assert con._ser is not None
+    con._ser.sendall(data)
+    return con.drain(quiet=quiet).decode(errors="replace")
+
+
+def _wiz_root(con, root):
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line(f'MKDIR "{root}"') == ""
+    assert con.send_line(f'CHDIR "A:/{root}"') == ""
+
+
+def test_package_wizard_creates_app(console):
+    con = console
+    _wiz_root(con, "WIZA")
+    assert con.send_line('MKDIR "GAME"') == ""
+    _write_lines(con, "GAME/MAIN.BAS", ['PRINT "WIZOK"'])
+    assert con.send_line('MKDIR "GAME/GFX"') == ""
+    _write_lines(con, "GAME/GFX/DATA.TXT", ["WIZDATA"])
+
+    seen = _wiz_open(con)
+    upper = seen.upper()
+    assert "PACKAGE WIZARD" in upper
+    assert "GAME" in upper
+    assert "MAIN.BAS" in upper
+
+    seen = _wiz_keys(con, b"\x1b[B")  # highlight GAME
+    assert "GAME" in seen.upper()
+    seen = _wiz_keys(con, b"\r")  # choose folder -> name form
+    assert "GAME.APP" in seen.upper()
+    _wiz_keys(con, b"\r")  # -> title
+    _wiz_keys(con, b"\r")  # -> author
+    seen = _wiz_keys(con, b"\r")  # create
+    assert "WROTE" in seen.upper()
+    _wiz_keys(con, b" ")  # any key closes
+
+    listing = con.send_line('DIR "A:/WIZA"')
+    assert "GAME.APP" in listing.upper()
+    out = con.send_line('RUN "A:/WIZA/GAME.APP"')
+    assert "WIZOK" in out
+    cwd = con.send_line("PRINT CWD$")
+    assert cwd.upper().startswith("A:")
+
+
+def test_package_wizard_requires_main(console):
+    con = console
+    _wiz_root(con, "WIZB")
+    assert con.send_line('MKDIR "NOMAIN"') == ""
+    _write_lines(con, "NOMAIN/X.TXT", ["x"])
+
+    seen = _wiz_open(con)
+    assert "NOMAIN" in seen.upper()
+    _wiz_keys(con, b"\x1b[B")  # highlight NOMAIN
+    seen = _wiz_keys(con, b"\r")  # refuse: no MAIN.BAS
+    upper = seen.upper()
+    assert "NO MAIN.BAS" in upper
+    assert "PACKAGE :" not in upper  # never reached the name form
+
+    _wiz_keys(con, b"\x1b")  # Esc cancels
+    assert con.send_line("PRINT 1+1") == "2"
+
+
+def test_package_wizard_metadata(console):
+    con = console
+    _wiz_root(con, "WIZC")
+    assert con.send_line('MKDIR "META"') == ""
+    _write_lines(con, "META/MAIN.BAS", ['PRINT "METAOK"'])
+
+    _wiz_open(con)
+    _wiz_keys(con, b"\x1b[B")  # highlight META
+    seen = _wiz_keys(con, b"\r")  # choose -> package name defaults
+    assert "META.APP" in seen.upper()
+    _wiz_keys(con, b"\r")  # package -> title
+    seen = _wiz_keys(con, b"My Game")  # title text
+    assert "MY GAME" in seen.upper()
+    _wiz_keys(con, b"\r")  # title -> author
+    _wiz_keys(con, b"Me")  # author text
+    seen = _wiz_keys(con, b"\r")  # create
+    assert "WROTE" in seen.upper()
+    _wiz_keys(con, b" ")  # close
+
+    assert "META.APP" in con.send_line('DIR "A:/WIZC"').upper()
+    assert "METAOK" in con.send_line('RUN "A:/WIZC/META.APP"')
+    assert con.send_line('UNPACK "META.APP"') == ""
+    meta = con.send_line('CAT "PACKAGE.INF"')
+    assert "TITLE=MY GAME" in meta.upper()
+    assert "AUTHOR=ME" in meta.upper()
 
 
 def test_load_app_is_rejected(console):

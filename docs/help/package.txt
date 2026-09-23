@@ -15,6 +15,24 @@ EXISTS. RUN "name.app" mounts the zip read-only as B: and runs MAIN.BAS. B: is
 not listed by DRIVE and cannot be selected in FILES or CHDIR at the prompt.
 After RUN, EDIT does not open the zip file.
 
+Wizard
+
+Type PACKAGE with no arguments at the prompt to open the authoring wizard.
+It walks through the same rules as the command form so you do not have to
+remember the syntax:
+
+  1. Choose folder - lists subfolders of the current folder, and "."
+     for the current folder. Entries without MAIN.BAS are flagged and
+     cannot be packaged.
+  2. Name and optional metadata - the package name defaults to
+     <folder>.APP. Title and author are optional and are stored in a
+     PACKAGE.INF file inside the archive.
+  3. Confirm - writes the .APP in the current folder.
+
+Keys: Up/Down move, Enter selects or advances, Tab moves between fields
+in step 2, Esc goes back (or cancels from step 1). Use CHDIR first to reach
+another folder or drive. PACKAGE with arguments still works from a program.
+
 Example:
 
     PACKAGE "GAME.APP", "GAME/"
