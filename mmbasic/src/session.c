@@ -82,6 +82,68 @@ void mmb_console_reset(void)
 	mmb_front_reset();
 }
 
+/* A full-screen app owns the keyboard until it closes itself. The warm reset
+ * reuses the interpreter in place, so without this the app stays active and the
+ * REPL never gets the keyboard back (#606). Ask each app to leave through its
+ * own key handler rather than reaching into its private state. */
+static void warm_reset_close_apps(void)
+{
+	int guard;
+
+	for (guard = 0; guard < 16; guard++)
+	{
+		if (mmb_in_ihelp())
+			mmb_ihelp_key(27);          /* Esc */
+		else if (mmb_in_package())
+			mmb_package_key(27);
+		else if (mmb_apptui_active())
+			mmb_apptui_key(27);
+		else if (mmb_settings_active())
+			mmb_settings_key(27);
+		/* These own the screen and leave on Alt+X. A modal does not eat the
+		 * chord because the Alt prefix is decoded before the dialog. */
+		else if (mmb_in_editor() || mmb_in_term() || mmb_in_wordpad() ||
+			 mmb_in_sprite_edit() || mmb_in_connect())
+		{
+			if (mmb_in_editor())
+			{
+				mmb_editor_key(1);
+				mmb_editor_key('x');
+			}
+			else if (mmb_in_term())
+			{
+				mmb_term_key(1);
+				mmb_term_key('x');
+			}
+			else if (mmb_in_wordpad())
+			{
+				mmb_wordpad_key(1);
+				mmb_wordpad_key('x');
+			}
+			else if (mmb_in_sprite_edit())
+			{
+				mmb_sprite_edit_key(1);
+				mmb_sprite_edit_key('x');
+			}
+			else
+			{
+				mmb_connect_key(1);
+				mmb_connect_key('x');
+			}
+		}
+		else if (mmb_in_files())
+			mmb_files_key(27);
+		else if (mmb_in_paint())
+			mmb_paint_key(27);
+		else if (mmb_in_afk())
+			mmb_afk_key(27);
+		else if (mmb_in_juke())
+			mmb_juke_key(27);
+		else
+			break;
+	}
+}
+
 /* Ctrl+Alt+Del: re-initialise the interpreter in place. A hardware reset
  * restarts the whole SoC but can leave the USB controller unusable on a Pi,
  * so the prompt never returns (#577). A warm reset keeps the display and
@@ -92,6 +154,9 @@ void mmb_warm_reset(void)
 	mmb_play_stop();
 	mmb_close_tcp_files();
 	mmb_settings_save();
+
+	/* Hand the keyboard back before the interpreter state is replaced. */
+	warm_reset_close_apps();
 
 	mmb_console_reset();
 	mmb_gfx_init();
