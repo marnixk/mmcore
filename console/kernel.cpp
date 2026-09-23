@@ -621,10 +621,10 @@ void CKernel::PollUsbFKeys (void)
 }
 
 /*
- * Ctrl+Alt+F1..F4 switch virtual consoles, Linux-style. Circle's cooked
- * keymap yields nothing usable for the chord, so read the raw HID state and
- * translate the function-key codes ourselves. No-op unless Ctrl and Alt are
- * both held.
+ * Ctrl+Alt+1..4 switch virtual consoles on every platform (#603). Circle's
+ * cooked keymap yields KeyNone for the chord, so read the raw HID state and
+ * translate the digit ourselves. Both the top-row digits and the numeric
+ * keypad are accepted. No-op unless Ctrl and Alt are both held.
  */
 void CKernel::PollUsbConsole (void)
 {
@@ -641,10 +641,14 @@ void CKernel::PollUsbConsole (void)
 		return;
 	switch (hid)
 	{
-	case 0x3A: idx = 0; break; /* F1 */
-	case 0x3B: idx = 1; break; /* F2 */
-	case 0x3C: idx = 2; break; /* F3 */
-	case 0x3D: idx = 3; break; /* F4 */
+	case 0x1E: idx = 0; break; /* 1 */
+	case 0x1F: idx = 1; break; /* 2 */
+	case 0x20: idx = 2; break; /* 3 */
+	case 0x21: idx = 3; break; /* 4 */
+	case 0x59: idx = 0; break; /* keypad 1 */
+	case 0x5A: idx = 1; break; /* keypad 2 */
+	case 0x5B: idx = 2; break; /* keypad 3 */
+	case 0x5C: idx = 3; break; /* keypad 4 */
 	default:
 		return;
 	}

@@ -1,8 +1,8 @@
 /*
- * Virtual consoles (Ctrl+Alt+F1..F4 style). Each console owns a complete
- * interpreter context (g_mmb[i]) plus its own front-end line editor state and
- * screen snapshot. The host loop runs the interpreter against the active
- * console; switching suspends one and resumes the other.
+ * Virtual consoles (Ctrl+Alt+1..4 on every platform). Each console owns a
+ * complete interpreter context (g_mmb[i]) plus its own front-end line editor
+ * state and screen snapshot. The host loop runs the interpreter against the
+ * active console; switching suspends one and resumes the other.
  */
 #ifndef MMB_SESSION_H
 #define MMB_SESSION_H

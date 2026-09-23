@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-/* Number of virtual consoles (Ctrl+Alt+F1..F4 style sessions). */
+/* Number of virtual consoles (Ctrl+Alt+1..4 sessions on every platform). */
 #define MMB_MAX_CONSOLES 4
 
 /* Pointer state for the full-screen apps (currently PAINT). Coordinates are

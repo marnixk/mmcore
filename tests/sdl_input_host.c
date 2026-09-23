@@ -28,6 +28,8 @@ static unsigned char g_inkey[MMB_INKEY];
 static int g_inkey_n;
 static char g_clip[256];
 static int g_clip_set;
+static int g_console_switches;
+static int g_console_last;
 
 int mmb_is_running(void) { return g_running; }
 
@@ -49,7 +51,12 @@ void mmb_front_feed(const char *s, unsigned n)
 
 int mmb_front_in_app(void) { return 0; }
 
-int mmb_console_switch(int idx) { (void)idx; return 0; }
+int mmb_console_switch(int idx)
+{
+	g_console_switches++;
+	g_console_last = idx;
+	return 1;
+}
 
 void mmb_inkey_push(int c)
 {
@@ -217,6 +224,50 @@ int main(void)
 			"FAIL ctrl-space: feeds=%d n=%d first=%d queue=%d\n",
 			g_front_feeds, g_feed_n,
 			g_feed_n ? g_feed[0] : -1, g_inkey_n);
+		fails++;
+	}
+
+	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603); the
+	 * numeric keypad works too. */
+	reset();
+	g_running = 0;
+	g_console_switches = 0;
+	g_console_last = -1;
+	push_key(SDLK_1, KMOD_CTRL | KMOD_ALT);
+	push_key(SDLK_KP_4, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	if (g_console_switches != 2 || g_console_last != 3)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-alt-digit: switches=%d last=%d\n",
+			g_console_switches, g_console_last);
+		fails++;
+	}
+
+	/* A digit chord without both modifiers is not a console switch. */
+	reset();
+	g_running = 0;
+	g_console_switches = 0;
+	push_key(SDLK_2, KMOD_ALT);
+	push_key(SDLK_3, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_console_switches != 0)
+	{
+		fprintf(stderr, "FAIL partial chord: switches=%d\n",
+			g_console_switches);
+		fails++;
+	}
+
+	/* Ctrl+Alt+F1..F4 is retired: it must not switch consoles. */
+	reset();
+	g_running = 1;
+	g_console_switches = 0;
+	push_key(SDLK_F2, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	if (g_console_switches != 0)
+	{
+		fprintf(stderr, "FAIL retired fkey: switches=%d\n",
+			g_console_switches);
 		fails++;
 	}
 

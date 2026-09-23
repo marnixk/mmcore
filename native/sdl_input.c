@@ -194,11 +194,25 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
 
-	/* Ctrl+Alt+F1..F4 switch virtual consoles (Linux-style). */
-	if (ctrl && alt && k >= SDLK_F1 && k <= SDLK_F4)
+	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603).
+	 * Both the top-row digits and the numeric keypad are accepted. The old
+	 * Ctrl+Alt+F1..F4 chord is retired: the host owns those for real TTYs,
+	 * so it never reaches the window. Handled here, in-window, before the
+	 * desktop environment can steal the chord. */
+	if (ctrl && alt)
 	{
-		mmb_console_switch((int)(k - SDLK_F1));
-		return;
+		int idx = -1;
+
+		if (k >= SDLK_1 && k <= SDLK_4)
+			idx = (int)(k - SDLK_1);
+		else if (k >= SDLK_KP_1 && k <= SDLK_KP_4)
+			idx = (int)(k - SDLK_KP_1);
+		if (idx >= 0)
+		{
+			mmb_console_switch(idx);
+			s_swallow_text = 1;
+			return;
+		}
 	}
 
 	/* Ctrl+Shift+V pastes the host clipboard (native desktop only). */
