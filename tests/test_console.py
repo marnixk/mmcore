@@ -106,14 +106,14 @@ def test_cls_homes_prompt_after_printed_lines(fresh_console):
     fresh_console.send_line('PRINT "LINEONE"')
     fresh_console.send_line('PRINT "LINETWO"')
     fresh_console.send_line('PRINT "LINETHREE"')
-    before = fresh_console.ocr_screen(crop="640x300+0+0")
+    before = fresh_console.ocr_screen(crop=None)
     assert "LINEONE" in before
     assert "LINETWO" in before
     assert "LINETHREE" in before
 
     assert fresh_console.send_line("CLS") == ""
 
-    after_cls = fresh_console.ocr_screen(crop="640x300+0+0")
+    after_cls = fresh_console.ocr_screen(crop=None)
     assert "LINEONE" not in after_cls
     assert "LINETWO" not in after_cls
     assert "LINETHREE" not in after_cls
