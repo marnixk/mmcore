@@ -47,10 +47,10 @@ esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${DIST:-${REPO_ROOT}/dist}"
-BIN="${REPO_ROOT}/native/mmbasic-sdl"
+BIN="${REPO_ROOT}/native/mmcore"
 APP_NAME="mmcore"
 APP="${DIST}/${APP_NAME}.app"
-EXE_NAME="mmbasic-sdl"
+EXE_NAME="mmcore"
 BUNDLE_ID="com.marnixk.mmcore"
 OUT="${DIST}/${APP_NAME}-macos-arm64.zip"
 

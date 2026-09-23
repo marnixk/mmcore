@@ -32,6 +32,9 @@ The bundle is notarized + stapled; a failed notarization aborts the release.
 The Windows zip is built by CI (.github/workflows/windows.yml) when the release
 is published and attached as:
   dist/mmcore-windows-x86_64.zip
+Release-event builds require an Authenticode signature: the workflow sets
+MMCORE_REQUIRE_WIN_SIGN=1 and supplies the WIN_SIGN_* signing secrets, so an
+unsigned Windows zip cannot ship unnoticed.
 
 Environment:
   MMCORE_SKIP_MACOS=1   publish without building the macOS app
@@ -40,6 +43,8 @@ Environment:
                         (default: mmcore-notary). The macOS asset is always
                         notarized + stapled and the release fails if that does
                         not succeed, so an unnotarized app cannot ship.
+  MMCORE_SKIP_WIN_SIGN=1  local smoke tests: ship an unsigned Windows build
+                          (never set this on a release)
 
 Each zip also contains install-sdcard.sh so a consumer can:
 
@@ -222,13 +227,13 @@ print("```")
 print()
 print("## Windows native (x86_64)")
 print()
-print("Unzip and run `mmbasic-sdl.exe` from Explorer or a terminal; keep the")
+print("Unzip and run `mmcore.exe` from Explorer or a terminal; keep the")
 print("bundled `SDL2.dll` next to it (the SDL2 window shows output and keyboard")
-print("input):")
+print("input). The executable is Authenticode-signed for release builds.")
 print()
 print("```powershell")
 print("Expand-Archive mmcore-windows-x86_64.zip .")
-print(".\\mmcore-windows-x86_64\\mmbasic-sdl.exe")
+print(".\\mmcore-windows-x86_64\\mmcore.exe")
 print("```")
 print()
 if macos_name:

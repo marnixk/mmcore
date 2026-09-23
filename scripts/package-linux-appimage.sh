@@ -30,7 +30,7 @@ log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 log "Version ${VERSION}"
 log "Building native SDL binary"
 "${REPO_ROOT}/scripts/build-native.sh"
-BIN="${REPO_ROOT}/native/mmbasic-sdl"
+BIN="${REPO_ROOT}/native/mmcore"
 [ -x "${BIN}" ] || { echo "error: ${BIN} not built (SDL2 dev headers missing?)" >&2; exit 1; }
 
 log "Staging AppDir"
@@ -38,7 +38,7 @@ rm -rf "${APPDIR}"
 mkdir -p "${APPDIR}/usr/bin" \
 	 "${APPDIR}/usr/share/applications" \
 	 "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
-cp "${BIN}" "${APPDIR}/usr/bin/mmbasic-sdl"
+cp "${BIN}" "${APPDIR}/usr/bin/mmcore"
 
 python3 "${REPO_ROOT}/scripts/gen-appicon.py" \
 	"${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png"
@@ -50,7 +50,7 @@ cat > "${APPDIR}/usr/share/applications/mmcore.desktop" <<'EOF'
 Type=Application
 Name=mmcore
 Comment=Colour Maximite 2 compatible BASIC interpreter
-Exec=mmbasic-sdl %f
+Exec=mmcore %f
 Icon=mmcore
 Categories=Development;Education;
 MimeType=application/x-mmcore-app;
@@ -78,7 +78,7 @@ export ARCH
 
 log "Bundling libraries (linuxdeploy)"
 "${LINUXDEPLOY}" --appdir "${APPDIR}" \
-	--executable "${APPDIR}/usr/bin/mmbasic-sdl" \
+	--executable "${APPDIR}/usr/bin/mmcore" \
 	--desktop-file "${APPDIR}/usr/share/applications/mmcore.desktop" \
 	--icon-file "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png"
 

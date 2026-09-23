@@ -34,9 +34,9 @@ mmbasic/include/mmb_version.h
 # Native (Linux/macOS) host build
 native/build/
 native/mmbasic
-native/mmbasic-sdl
+native/mmcore
 native/mmbasic.exe
-native/mmbasic-sdl.exe
+native/mmcore.exe
 native/mmb_version.h
 # Generated from assets/branding/ during the Windows build
 native/mmcore.ico

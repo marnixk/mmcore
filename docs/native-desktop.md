@@ -18,7 +18,7 @@ scripts/build-native.sh
 Produces:
 
 - `native/mmbasic` — headless stdio build (no SDL), useful for tests/automation.
-- `native/mmbasic-sdl` — SDL2 windowed build.
+- `native/mmcore` — SDL2 windowed build (the one shipped in desktop downloads).
 
 Build with `CC`/`CFLAGS` overrides if needed:
 `scripts/build-native.sh CC=gcc CFLAGS="-O0 -g"`.
@@ -33,7 +33,7 @@ pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 make zip
 scripts/build-windows.sh
 ```
 
-That produces `native/mmbasic.exe` (headless) and `native/mmbasic-sdl.exe`
+That produces `native/mmbasic.exe` (headless) and `native/mmcore.exe`
 (windowed, the one shipped in releases). A cross compiler works too:
 `SDL2_ROOT=/path/to/SDL2-devel-*-mingw/x86_64-w64-mingw32 scripts/build-windows.sh`.
 Winsock replaces the POSIX sockets backend and Wi-Fi radio features report
@@ -51,10 +51,41 @@ The `Windows build` GitHub Actions workflow runs this on `windows-latest` and
 attaches `mmcore-windows-x86_64.zip` to every published GitHub release. The
 persistent `C:` drive is `%USERPROFILE%\.mmbasic\C`.
 
+### Windows Authenticode signing
+
+Release Windows builds are **Authenticode-signed** so SmartScreen can build a
+reputation for the publisher; locally they are unsigned by default. Signing is
+performed by `scripts/sign-windows-exe.sh`, which `scripts/package-windows.sh`
+calls right after staging `mmcore.exe`:
+
+- `MMCORE_REQUIRE_WIN_SIGN=1` — release gate. A missing signing tool, missing
+  certificate, or failed `signtool verify /pa` is fatal, so an unsigned zip
+  cannot ship unnoticed (mirrors macOS `MMCORE_REQUIRE_NOTARY`). The
+  `.github/workflows/windows.yml` release path sets this automatically.
+- `MMCORE_SKIP_WIN_SIGN=1` — local escape hatch; ships unsigned. Conflicts with
+  the release gate.
+- Certificate selection: `WIN_SIGN_PFX`/`WIN_SIGN_PASSWORD` (a PKCS#12 file),
+  `WIN_SIGN_PFX_BASE64` (the same file base64-encoded, for CI secrets),
+  `WIN_SIGN_THUMBPRINT`, or `WIN_SIGN_SUBJECT` (Windows certificate store).
+  `WIN_SIGN_COMMAND` runs a custom signer (DigiCert KeyLocker, Azure Trusted
+  Signing) with the file as `$1`.
+- Tool: `signtool` (Windows SDK) is preferred, with `osslsigncode` as the
+  cross-platform fallback; override with `SIGNTOOL`/`WIN_SIGN_TOOL`.
+- Every signature is timestamped (`WIN_SIGN_TIMESTAMP`, default
+  `http://timestamp.digicert.com`) so it stays valid after the certificate
+  expires.
+
+In CI, store the certificate as GitHub Actions secrets: `WIN_SIGN_PFX_BASE64`,
+`WIN_SIGN_PASSWORD`, and optionally `WIN_SIGN_TIMESTAMP` or `WIN_SIGN_COMMAND`.
+Opening a signed but brand-new release can still show a SmartScreen prompt until
+reputation accumulates; a certificate removes the “unknown publisher” path.
+Users can confirm the signature with
+`Get-AuthenticodeSignature .\mmcore.exe`.
+
 ## Run
 
 ```bash
-./native/mmbasic-sdl
+./native/mmcore
 ```
 
 A window opens; the interpreter REPL is shown in it. Type at the terminal (the
@@ -83,8 +114,8 @@ The native binaries also act as a simple VM for packaged `.APP` files and for
 TERM sessions, so the AppImage is a portable app runner:
 
 ```bash
-./native/mmbasic-sdl /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
-./native/mmbasic-sdl --term bbs.example.net    # sealed TERM session
+./native/mmcore /path/to/SantaCatch.app   # mount read-only as B:, run MAIN.BAS, then exit
+./native/mmcore --term bbs.example.net    # sealed TERM session
 ```
 
 A positional argument that names an existing `.app` file mounts its host
@@ -105,7 +136,7 @@ persistent drive: it always maps to `$MMB_DRIVE_ROOT/C` (default
 `--drive DIR`:
 
 ```bash
-./native/mmbasic-sdl --drive /media/usb
+./native/mmcore --drive /media/usb
 ./native/mmbasic --drive /media/usb 'DIR "D:/"'
 ```
 
@@ -155,7 +186,7 @@ scripts/native-perf-check.sh                        # Pi-zero-overhead guard for
 ```
 
 `tests/test_linux_native.py` builds `native/mmbasic` itself and needs only a host
-`cc`/`make`; SDL tests skip when `native/mmbasic-sdl` was not built (no SDL2 dev
+`cc`/`make`; SDL tests skip when `native/mmcore` was not built (no SDL2 dev
 headers), and golden-image tests skip without ImageMagick. Escalate with
 `scripts/build.sh` (needs the `aarch64-none-elf` cross-toolchain) followed by a
 full `.venv/bin/python -m pytest`; the QEMU suite has no toolchain guard, so it
@@ -164,7 +195,7 @@ missing.
 
 ## AppImage
 
-`.github/workflows/linux-appimage.yml` builds `native/mmbasic-sdl` on
+`.github/workflows/linux-appimage.yml` builds `native/mmcore` on
 `ubuntu-22.04` and packages it with `linuxdeploy` + `appimagetool`, then
 attaches it to the rolling `linux-native` pre-release. The AppImage is **Linux
 x86_64 only**; `scripts/build-native.sh` itself also builds on macOS.

@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 make -C "${REPO_ROOT}/native" "$@"
 
-for bin in mmbasic mmbasic-sdl; do
+for bin in mmbasic mmcore; do
 	if [ -x "${REPO_ROOT}/native/${bin}" ]; then
 		printf '\n\033[1;34m==>\033[0m Native build: %s\n' "${REPO_ROOT}/native/${bin}"
 	fi

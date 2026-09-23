@@ -1,7 +1,7 @@
 # Native (Linux/macOS/Windows) host build of the MMBasic interpreter.
 #
 #   native/mmbasic      headless stdio platform (LN-01)
-#   native/mmbasic-sdl  SDL2 backend           (LN-03+)
+#   native/mmcore       SDL2 backend           (LN-03+)
 #
 # Object files live under native/build/ (Windows objects under
 # native/build/win) so the shared mmbasic/ tree is not polluted with host
@@ -48,7 +48,7 @@ LDLIBS += -lws2_32 -lwinmm -limm32 -lole32 -loleaut32 -luuid -lversion \
 endif
 
 OUT_STDIO := $(CURDIR)/mmbasic$(EXE)
-OUT_SDL   := $(CURDIR)/mmbasic-sdl$(EXE)
+OUT_SDL   := $(CURDIR)/mmcore$(EXE)
 
 CFLAGS += -DMMB_PLATFORM_POSIX \
 	  -I$(CURDIR) -I$(MMB)/include -I$(MMB)/third_party -I$(CONSOLE) \
@@ -143,7 +143,7 @@ $(VERSION_H):
 clean:
 	rm -rf $(CURDIR)/build
 	rm -f $(CURDIR)/mmbasic $(CURDIR)/mmbasic.exe \
-	      $(CURDIR)/mmbasic-sdl $(CURDIR)/mmbasic-sdl.exe \
+	      $(CURDIR)/mmcore $(CURDIR)/mmcore.exe \
 	      $(CURDIR)/mmcore.ico $(CURDIR)/mmcore.rc
 
 .PHONY: all stdio sdl clean
