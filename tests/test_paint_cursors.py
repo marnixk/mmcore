@@ -247,6 +247,38 @@ static int check_shape(int tool, int active)
 	return 1;
 }
 
+/* Over the non-canvas chrome the cursor is the plain arrow, not the tool. */
+static int check_ui_arrow(void)
+{
+	int sx = 10, sy = 8;	/* menu bar: not over the canvas */
+	const pca_sprite_t *sp = &pca_sprites[PCA_TOOL_ARROW];
+	const uint8_t *art = sp->idle;
+	int hx = sp->idle_hotspot_x, hy = sp->idle_hotspot_y;
+	int ox = sx - hx, oy = sy - hy, x, y;
+
+	fill_bg();
+	pt_cursor_init();
+	pt_cursor_draw(sx, sy, 0, 0);	/* pencil selected, but over the UI */
+
+	for (y = 0; y < PT_H; y++) {
+		for (x = 0; x < PT_W; x++) {
+			int in = x >= ox && x < ox + PCA_CURSOR_W &&
+				 y >= oy && y < oy + PCA_CURSOR_H;
+			unsigned want = BG;
+
+			if (in) {
+				uint8_t c = art[(y - oy) * PCA_CURSOR_W + (x - ox)];
+				if (c != PCA_CURSOR_TRANSPARENT)
+					want = pt_palette_rgb(c);
+			}
+			if (fb[y * PT_W + x] != want)
+				return 0;
+		}
+	}
+	pt_cursor_restore();
+	return all_bg();
+}
+
 static unsigned signature(int tool, int active)
 {
 	int idx = art_index(tool);
@@ -284,6 +316,8 @@ int main(void)
 
 	g_plat.get_pixel = drv_get_pixel;
 	G.plat = &g_plat;
+	PT.width = PT_CANVAS_W;
+	PT.height = PT_CANVAS_H;
 
 	/* 1. Draw changes pixels; restore puts them back exactly. */
 	fill_bg();
@@ -342,7 +376,15 @@ int main(void)
 		}
 	}
 
-	/* 5. Shape signatures: per-tool distinct and idle != active. */
+	/* 5. Over the chrome the cursor is the arrow, not the selected tool. */
+	if (check_ui_arrow())
+		printf("OK ui_arrow\n");
+	else {
+		printf("FAIL ui_arrow\n");
+		fails++;
+	}
+
+	/* 6. Shape signatures: per-tool distinct and idle != active. */
 	for (t = 0; t < (int)PT_TOOL_COUNT; t++)
 		printf("SIG %d %u %u\n", t, signature(t, 0), signature(t, 1));
 	printf("SIGARROW %u %u\n", signature(PT_TOOL_COUNT, 0),
@@ -437,6 +479,11 @@ def test_restore_is_exact_and_moves_leave_no_trail(run):
 
 def test_every_tool_shape_drawn_from_art(run):
     assert "OK all_shapes" in run.stdout
+
+
+def test_arrow_over_chrome_and_tool_over_canvas(run):
+    """Hovering non-canvas UI shows the arrow, even with a tool selected."""
+    assert "OK ui_arrow" in run.stdout, run.stdout
 
 
 def test_shapes_follow_tool_and_idle_active_differ(run):
@@ -537,6 +584,12 @@ void pt_fill_rect(int x, int y, int w, int h, unsigned rgb)
 			pt_plot(x + i, y + j, rgb);
 }
 unsigned pt_palette_rgb(int idx) { return 0x100u + (unsigned)idx; }
+
+int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy)
+{
+	(void)sx; (void)sy; (void)cx; (void)cy;
+	return 0;
+}
 
 int main(void)
 {

@@ -63,6 +63,12 @@ static void tst_free(void *p) { free(p); }
 static mmb_platform g_plat;
 static int g_bound;
 
+/* Frame damage (#700): the tool preview marks the rectangle it reverts. The
+ * tests also model the screen: tst_present() blits the damaged box from the
+ * canvas into s_screen, exactly like cmd_paint.c's banded present. */
+static unsigned char s_screen[PT_MAX_W * PT_MAX_H];
+static int s_dv, s_dx0, s_dy0, s_dx1, s_dy1;
+
 static void bind_plat(void)
 {
 	if (g_bound)
@@ -92,6 +98,8 @@ void tst_reset(int w, int h)
 	PT.scratch = (unsigned char *)tst_alloc((unsigned)w * (unsigned)h);
 	memset(PT.canvas, 0, (unsigned)w * (unsigned)h);
 	memset(PT.scratch, 0, (unsigned)w * (unsigned)h);
+	memset(s_screen, 0, sizeof s_screen);
+	s_dv = 0;
 	pt_tools_init();
 }
 
@@ -135,10 +143,42 @@ unsigned pt_palette_rgb(int idx) { (void)idx; return 0; }
 
 void pt_request_redraw(void) { PT.dirty = 1; }
 
-/* Frame damage (#700): the tool preview marks the rectangle it reverts. */
 void pt_damage_canvas(int x, int y, int w, int h)
 {
-	(void)x; (void)y; (void)w; (void)h;
+	int x1 = x + w - 1, y1 = y + h - 1;
+
+	if (w < 1 || h < 1)
+		return;
+	if (!s_dv) { s_dx0 = x; s_dy0 = y; s_dx1 = x1; s_dy1 = y1; s_dv = 1; }
+	else {
+		if (x < s_dx0) s_dx0 = x;
+		if (y < s_dy0) s_dy0 = y;
+		if (x1 > s_dx1) s_dx1 = x1;
+		if (y1 > s_dy1) s_dy1 = y1;
+	}
+}
+
+void tst_present(void)
+{
+	int x, y;
+
+	if (!s_dv)
+		return;
+	if (s_dx0 < 0) s_dx0 = 0;
+	if (s_dy0 < 0) s_dy0 = 0;
+	if (s_dx1 > PT.width - 1) s_dx1 = PT.width - 1;
+	if (s_dy1 > PT.height - 1) s_dy1 = PT.height - 1;
+	for (y = s_dy0; y <= s_dy1; y++)
+		for (x = s_dx0; x <= s_dx1; x++)
+			s_screen[(size_t)y * PT.width + x] =
+				PT.canvas[(size_t)y * PT.width + x];
+	s_dv = 0;
+}
+
+int tst_screen_matches(void)
+{
+	return PT.canvas &&
+	       memcmp(s_screen, PT.canvas, (size_t)PT.width * PT.height) == 0;
 }
 
 void pt_undo_push(void) {}
@@ -168,6 +208,7 @@ void pt_canvas_set(int cx, int cy, int idx)
 	if (!PT.canvas || cx < 0 || cy < 0 || cx >= PT.width || cy >= PT.height)
 		return;
 	PT.canvas[(size_t)cy * PT.width + cx] = (unsigned char)(idx & 255);
+	pt_damage_canvas(cx, cy, 1, 1);
 }
 """
 
@@ -294,6 +335,13 @@ class Pad:
 
     def cancel(self):
         self.lib.tst_cancel()
+
+    def present(self):
+        self.lib.tst_present()
+
+    def screen_matches(self):
+        self.lib.tst_screen_matches.restype = ctypes.c_int
+        return bool(self.lib.tst_screen_matches())
 
 
 @pytest.fixture
@@ -777,6 +825,71 @@ def test_filled_ellipse_and_circle_are_solid(pt):
     pt.end(31, 16, LEFT)
     assert pt.px(24, 16) == 15
     assert pt.px(24, 20) == 15       # inside the disc
+
+
+def test_filled_ellipse_is_solid_on_every_scanline(pt):
+    """A wide ellipse fills as spans, not concentric outlines (no dotted gaps)."""
+    pt.colors(15, 0)
+    pt.tool(ELLIPSE_FILLED)
+    pt.begin(4, 8, LEFT)
+    pt.motion(60, 28, LEFT)
+    pt.end(60, 28, LEFT)
+
+    rows = 0
+    for y in range(pt.h):
+        xs = [x for x in range(pt.w) if pt.px(x, y) == 15]
+        if not xs:
+            continue
+        rows += 1
+        assert xs == list(range(xs[0], xs[-1] + 1)), (y, xs)
+    assert rows > 4
+
+
+def test_filled_circle_is_solid_on_every_scanline(pt):
+    pt.colors(15, 0)
+    pt.tool(CIRCLE_FILLED)
+    pt.begin(24, 16, LEFT)
+    pt.motion(31, 16, LEFT)     # r = 7
+    pt.end(31, 16, LEFT)
+    for y in range(pt.h):
+        xs = [x for x in range(pt.w) if pt.px(x, y) == 15]
+        if xs:
+            assert xs == list(range(xs[0], xs[-1] + 1)), (y, xs)
+
+
+def _shrink_keeps_screen_in_sync(pt, tool, a, b, c):
+    """Rubber-band a shape at a thick pen, then shrink it.
+
+    The tool preview reverts from PT.scratch and marks only the box it thinks
+    it covered. The pen overhangs that box, so without padding the present
+    leaves the old, larger outline on screen: PT.canvas (correct) and the
+    simulated screen diverge.
+    """
+    pt.reset(200, 120)
+    pt.colors(15, 0)
+    pt.tool(tool)
+    pt.width(4)                 # 6 px pen
+    pt.begin(*a, LEFT)
+    pt.present()
+    pt.motion(*b, LEFT)
+    pt.present()
+    pt.motion(*c, LEFT)         # shrink the rubber band
+    pt.present()
+    pt.end(*c, LEFT)
+    pt.present()
+    assert pt.screen_matches()
+
+
+def test_shrinking_a_thick_rectangle_represents_the_old_overhang(pt):
+    _shrink_keeps_screen_in_sync(pt, RECT, (20, 20), (180, 100), (60, 50))
+
+
+def test_shrinking_a_thick_line_represents_the_old_overhang(pt):
+    _shrink_keeps_screen_in_sync(pt, LINE, (20, 20), (180, 100), (60, 50))
+
+
+def test_shrinking_a_thick_ellipse_represents_the_old_overhang(pt):
+    _shrink_keeps_screen_in_sync(pt, ELLIPSE, (20, 20), (180, 100), (60, 50))
 
 
 def test_pen_width_thickens_a_dot(pt):
