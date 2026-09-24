@@ -327,6 +327,48 @@ def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
     assert out.count("... more") == 2, out
 
 
+def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
+    """#674: DIR /S scans each folder with the entries API, not a 1 KB buffer.
+
+    The recursive walk used to read every directory into a fixed 1024-byte
+    newline buffer, so a folder with a few hundred entries was silently cut
+    before matching. Every seeded file must come back now.
+    """
+    root = tmp_path / "drives"
+    folder = root / "C" / "RDEEP" / "SUB"
+    folder.mkdir(parents=True)
+    for i in range(300):
+        (folder / f"file{i:03d}.bas").write_text("x")
+
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR /S "C:/RDEEP"\n', env)
+    assert "SUB/" in out, out
+    missing = [i for i in range(300) if f"file{i:03d}.bas" not in out]
+    assert not missing, f"recursive listing dropped {len(missing)} files: {missing[:5]}"
+
+
+def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
+    """#674: DIR /S notes a tree past the accumulated cap with ``... more``.
+
+    Results accumulate as structured entries up to DIR_RESULT_MAX; a larger
+    tree is reported instead of silently dropping entries the way the old
+    4096-byte result buffer did.
+    """
+    root = tmp_path / "drives"
+    top = root / "C" / "RTREE"
+    top.mkdir(parents=True)
+    for d in range(10):
+        sub = top / f"D{d}"
+        sub.mkdir()
+        for i in range(420):
+            (sub / f"f{i:04d}.txt").write_text("x")
+
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR /S "C:/RTREE"\n', env)
+    assert out.count("... more") == 1, out
+    assert "D0/" in out, out
+
+
 def test_default_drive_root_creates_only_c(mmb_linux, tmp_path):
     """Default root is $HOME/.mmbasic; only the persistent C: drive is created."""
     home = tmp_path / "home"
