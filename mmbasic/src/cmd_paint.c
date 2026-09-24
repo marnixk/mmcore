@@ -328,6 +328,11 @@ void pt_redraw(void)
 	 * overlay rectangle and marks its damage in the event handlers. */
 	pt_menus_draw();
 
+	/* The file picker is a modal overlay too (paint_file.c owns its cell
+	 * bookkeeping). Composed here so it survives the frame instead of being
+	 * painted once and wiped. */
+	pt_file_draw();
+
 	/* Write changed text cells into the composition buffer without presenting:
 	 * the single damage-band present below carries them too. */
 	tui_flush_no_present();
@@ -567,6 +572,17 @@ void mmb_paint_poll(void)
 	{
 		PT.cursor_x = cx;
 		PT.cursor_y = cy;
+	}
+
+	/* The file picker is keyboard-only and draws over the canvas: swallow
+	 * pointer input so a click cannot paint behind it. */
+	if (pt_file_dialog_active())
+	{
+		if (changed)
+			PT.dirty = 1;
+		if (PT.dirty)
+			pt_redraw();
+		return;
 	}
 
 	if (!PT.mouse_down)
@@ -1001,6 +1017,10 @@ PT_WEAK void pt_file_save_as(void)
 PT_WEAK int pt_file_dialog_active(void)
 {
 	return 0;
+}
+
+PT_WEAK void pt_file_draw(void)
+{
 }
 
 PT_WEAK int pt_file_key(int key)

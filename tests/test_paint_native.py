@@ -226,6 +226,37 @@ def test_switching_menus_clears_the_old_dropdown(native_mmcore, tmp_path):
             assert is_black(img.pixel(x, y)), (x, y, img.pixel(x, y))
 
 
+def test_open_picker_is_visible_and_closes(native_mmcore, tmp_path):
+    """#722: File > Open must leave the picker on screen, not flash and vanish.
+
+    The picker used to be drawn once by the picker module and then wiped by
+    pt_redraw()'s canvas pass. It is now composed as part of the frame.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(12, 8)
+    s.click("l")           # File
+    s.move(12, 40)
+    s.click("l")           # Open
+    opened = s.shot("opened.ppm")
+    s.key("esc")
+    s.key("enter")         # resolves the pending Esc as a cancel
+    closed = s.shot("closed.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+    assert "OPEN ST=ACTIVE" in out, out
+
+    def _panel_lit(path):
+        img = Ppm(path)
+        return sum(1 for y in range(34, 318, 4) for x in range(66, 574, 4)
+                   if sum(img.pixel(x, y)) > 200)
+
+    # The cursor stays on the tool column (x < 64), outside the sampled panel.
+    assert _panel_lit(opened) > 500, "picker panel was not drawn"
+    assert _panel_lit(closed) == 0, "picker panel did not clear"
+
+
 def test_edit_clear_wipes_canvas(native_mmcore, tmp_path):
     """#669: Edit > Clear wipes the canvas, not just the undo history."""
     s = NativeSession(tmp_path)
