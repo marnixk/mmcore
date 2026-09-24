@@ -5,7 +5,7 @@ around the amazing **MMBasic** compiler. It will turn your Raspberry Pi into a
 machine that boots you into the prompt in just a few seconds; but it also runs
 on Linux, macOS and Windows.
 
-![mmcore icon](assets/branding/mmcore-app-icon.png)
+![mmcore](ramdisk/mmcore.png)
 
 ## Built-in apps
 
