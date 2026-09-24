@@ -678,10 +678,6 @@ static void sprite_move(void)
 	}
 }
 
-void mmb_sprite_overlay(void)
-{
-}
-
 void mmb_cmd_sprite(void)
 {
 	if (mmb_match("LOADPNG") || mmb_match("LOAD"))

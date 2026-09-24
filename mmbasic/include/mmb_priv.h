@@ -1175,7 +1175,6 @@ void mmb_run_events(void);
 void mmb_cmd_settick(void);
 void mmb_cmd_sprite(void);
 void mmb_sprite_reset(void);
-void mmb_sprite_overlay(void);
 int mmb_call_named_sub(const char *name);
 int mmb_try_user_function(mmb_val *out);
 int mmb_play_wav(const char *path);
