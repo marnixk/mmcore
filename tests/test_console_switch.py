@@ -5,6 +5,7 @@ The chord is driven through the real USB keyboard (``-device usb-kbd``) so
 modifiers can be held, matching how it is pressed on hardware."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,10 @@ from ihelp_util import dump_topic
 
 def _usb_console(kernel_image) -> MMBasicConsole:
     return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+
+
+def _plain(s: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
 
 
 def test_help_documents_consoles(console):
@@ -338,4 +343,139 @@ def test_switch_keeps_per_console_fat_cwd(kernel_image):
         os.unlink(img)
 
 
+def _edit(con, path: str) -> str:
+    con.drain(quiet=0.1)
+    con._ser.sendall(f'EDIT "{path}"\r'.encode())
+    return _plain(con.drain(quiet=0.8).decode(errors="replace"))
+
+
+def _term_download_dialog(con) -> str:
+    """Open the TERM download-folder browser and return its serial dump."""
+    con._ser.sendall(b'TERM "demo", 23\r')
+    con.drain(quiet=0.6, timeout=12.0)
+    con._ser.sendall(bytes([1]) + b"t")
+    con.drain(quiet=0.4, timeout=8.0)
+    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+
+
+def test_switch_keeps_per_console_term_download_dir(kernel_image):
+    """#670: the ZMODEM download directory and folder-browser cursor are
+    per-console. Browsing on one console must not move another console."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        seen = _term_download_dialog(con)
+        assert "Download folder" in seen, seen
+        assert "A:/TESTS" in seen.upper(), seen
+
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=5.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.8, timeout=15.0)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        seen2 = _term_download_dialog(con)
+        assert "Download folder" in seen2, seen2
+        # Starts in this console's own cwd, not the folder console 1 browsed.
+        assert "A:/LIB" in seen2.upper(), seen2
+        assert "A:/TESTS" not in seen2.upper(), seen2
+
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=5.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.8, timeout=15.0)
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_edit_pick_root(kernel_image):
+    """#670: the EDIT file-picker root is per-console. Ctrl+P on a console
+    whose editor is already open must use its own root, not the one another
+    console's editor last set."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _edit(con, "X.BAS")
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        _edit(con, "Y.BAS")
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([16]))  # Ctrl+P quick open
+        seen = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+        assert "Quick open" in seen, seen
+        assert "A:/TESTS" in seen.upper(), seen
+        assert "A:/LIB" not in seen.upper(), seen
+
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=4.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
+    """#670: the WORDPAD file-picker root is per-console. Ctrl+P on a console
+    whose WORDPAD is already open must list its own directory, not another
+    console's.
+
+    The picker's root line is screen-only, so observe the root through the
+    files it walks: each console's cwd holds a distinct .MD marker."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/tests/ALPHA.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/lib/BETA.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([16]))  # sets the shared root to A:/lib
+        setroot = _plain(con.drain(quiet=0.7, timeout=8.0).decode(errors="replace"))
+        assert "BETA.MD" in setroot.upper(), setroot
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=4.0)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([16]))
+        seen = _plain(con.drain(quiet=0.7, timeout=8.0).decode(errors="replace"))
+        up = seen.upper()
+        assert "QUICK OPEN" in up, seen
+        assert "ALPHA.MD" in up, seen
+        assert "BETA.MD" not in up, seen
+
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=4.0)
+        con._ser.sendall(bytes([24]))  # Ctrl+X quits WORDPAD
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([24]))
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
 

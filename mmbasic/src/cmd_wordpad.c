@@ -134,7 +134,10 @@ static wp_state W_s[MMB_MAX_CONSOLES];
 #define W (W_s[g_console])
 static wp_doc docs[WP_DOCS];
 static char pick_path[WP_PICK_MAX][128];
-static char pick_root[128];
+/* The file-picker root is per-console session state (#670): opening the
+ * picker on one console must not reuse the root chosen on another. */
+static char pick_root_s[MMB_MAX_CONSOLES][128];
+#define pick_root (pick_root_s[g_console])
 static int pick_n, pick_sel, pick_row0, pick_vn;
 static int pick_view[WP_PICK_MAX];
 
