@@ -1,10 +1,11 @@
 ' TDF.BAS - TheDraw (.TDF) font loader and banner printer for MMBasic.
 '
-' TheDraw fonts are seeded at A:/fonts/tdf/ (see issue #554). Include this
-' library, load a font, then draw strings in TEXT mode:
+' TheDraw fonts are seeded at A:/fonts/tdf/ (see issue #554), grouped into
+' mono/, color/ and deco/ categories. Include this library, load a font, then
+' draw strings in TEXT mode:
 '
 '   #INCLUDE "A:/lib/TDF.BAS"
-'   TDF.Load "A:/fonts/tdf/STANDARD.TDF"
+'   TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"
 '   TDF.Print 0, 3, "HELLO"
 '   TDF.Close
 '
@@ -16,57 +17,66 @@
 ' without drawing. TDF.Print x, y, s$ draws at character cell x (column) /
 ' y (row) and leaves the cursor after the last glyph.
 '
+' The whole file is read into a byte buffer once at load, so parsing and
+' drawing never touch the file again. MMBasic strings are NUL-terminated and
+' this format is full of 0x00 bytes, so the buffer is a numeric array rather
+' than a string; the file is closed as soon as it is buffered.
+'
+' A .TDF may pack several variations of one font (same glyphs, different colour
+' palettes). TDF.Variants% is the count, TDF.VariantName$(n%) names the n%th
+' (0-based) record, TDF.LoadVariant path$, n% loads it, and TDF.variant% is the
+' index currently loaded. TDF.Load loads variant 0.
+'
 ' Glyph rows are read until the NUL terminator, so descender ('&') lines are
 ' kept even when the Max Height header under-counts them. Color fonts use a
 ' (character, attribute) byte pair; attribute 00 is a legal colour, only a NUL
 ' character ends the glyph. Outline fonts are remapped from A-O / @ / & to the
 ' CP437 box-drawing cells documented by Roy/SAC:
 '   https://www.roysac.com/blog/2014/04/thedraw-fonts-file-tdf-specifications/
-'
-' While a font is loaded this library owns file stream #10; call TDF.Close to
-' release it.
 
 CONST TDF_FIRST% = 33
 CONST TDF_LAST% = 126
 CONST TDF_GLYPHS% = 94
 CONST TDF_RECORD% = 213
 CONST TDF_UNDEF% = 65535
+CONST TDF_CHUNK% = 256
+CONST TDF_MAX_VARIANTS% = 64
 
 DIM TDF.path$
 DIM TDF.name$
+DIM TDF.buf%(0)
+DIM TDF.size%
 DIM TDF.type%
 DIM TDF.spacing%
 DIM TDF.height
 DIM TDF.data%
 DIM TDF.open%
-DIM TDF.fn%
+DIM TDF.variants%
+DIM TDF.variant%
+DIM TDF.rec%(TDF_MAX_VARIANTS% - 1)
+DIM TDF.VariantName$(TDF_MAX_VARIANTS% - 1)
 DIM TDF.off%(93)
 DIM TDF.wid%(93)
 DIM TDF.hgt%(93)
 DIM TDF.def%(93)
 
 TDF.open% = 0
-TDF.fn% = 10
+TDF.size% = 0
+TDF.variants% = 0
+TDF.variant% = 0
 TDF.name$ = ""
 TDF.path$ = ""
 TDF.spacing% = 1
 TDF.height = 0
 
-' Read one byte at the current file position. A NUL byte and EOF both read as
-' an empty string, so both come back as 0; glyph parsing stops at NUL anyway.
-FUNCTION TDF.NextByte()
-  LOCAL c$
-  c$ = INPUT$(1, TDF.fn%)
-  IF LEN(c$) = 0 THEN
-    TDF.NextByte = 0
-  ELSE
-    TDF.NextByte = ASC(c$)
-  END IF
-END FUNCTION
-
+' Read one byte from the in-memory buffer. A NUL byte and an out-of-range
+' position both read as 0.
 FUNCTION TDF.AtByte(pos%)
-  SEEK #TDF.fn%, pos%
-  TDF.AtByte = TDF.NextByte()
+  IF pos% < 0 OR pos% >= TDF.size% THEN
+    TDF.AtByte = 0
+  ELSE
+    TDF.AtByte = TDF.buf%(pos%)
+  END IF
 END FUNCTION
 
 ' Outline glyph letters to CP437 cells (see the Roy/SAC TDF spec table).
@@ -93,114 +103,166 @@ FUNCTION TDF.OutlineCode(c%)
 END FUNCTION
 
 SUB TDF.Close
-  IF TDF.open% THEN
-    CLOSE #TDF.fn%
-  END IF
   TDF.open% = 0
+  TDF.size% = 0
+  TDF.variants% = 0
+  TDF.variant% = 0
+  TDF.name$ = ""
 END SUB
 
-' Open path$ and check the TheDraw file header before any font parsing.
+' Walk the font records from the buffer, index each in TDF.rec%() and record its
+' name in TDF.VariantName$(). A truncated or garbage tail simply ends the walk,
+' so the good leading records remain usable.
+' (LOCAL names are global in this MMBasic, so use cr* prefixes to avoid
+' clobbering a caller's variables.)
+SUB TDF.CountRecords
+  LOCAL crbase%, crbs%, crnxt%, crb0%, crb1%, crb2%, crb3%
+  LOCAL cri%, crc%, crnl%, crnm$
+  TDF.variants% = 0
+  crbase% = 20
+  DO WHILE TDF.variants% < TDF_MAX_VARIANTS%
+    IF crbase% + TDF_RECORD% > TDF.size% THEN EXIT DO
+    crb0% = TDF.AtByte(crbase%)
+    crb1% = TDF.AtByte(crbase% + 1)
+    crb2% = TDF.AtByte(crbase% + 2)
+    crb3% = TDF.AtByte(crbase% + 3)
+    IF crb0% <> 85 THEN EXIT DO
+    IF crb1% <> 170 THEN EXIT DO
+    IF crb2% <> 0 THEN EXIT DO
+    IF crb3% <> 255 THEN EXIT DO
+    TDF.rec%(TDF.variants%) = crbase%
+    crnm$ = ""
+    crnl% = TDF.AtByte(crbase% + 4)
+    FOR cri% = 0 TO crnl% - 1
+      crc% = TDF.AtByte(crbase% + 5 + cri%)
+      IF crc% = 0 THEN EXIT FOR
+      crnm$ = crnm$ + CHR$(crc%)
+    NEXT cri%
+    TDF.VariantName$(TDF.variants%) = crnm$
+    TDF.variants% = TDF.variants% + 1
+    crbs% = TDF.AtByte(crbase% + 23) + 256 * TDF.AtByte(crbase% + 24)
+    crnxt% = crbase% + TDF_RECORD% + crbs%
+    IF crnxt% + 4 <= TDF.size% THEN
+      crb0% = TDF.AtByte(crnxt%)
+      IF crb0% <> 85 THEN crnxt% = crnxt% + 1
+    END IF
+    crbase% = crnxt%
+  LOOP
+  IF TDF.variants% = 0 THEN ERROR "TDF: no font records"
+END SUB
+
+' Open path$, read the whole file into TDF.buf%, close it, and check the
+' TheDraw header. File stream #10 is only held while buffering.
+' (LOCAL names are global here, so use of* to avoid clobbering callers such as
+' TDF.LoadVariant's n% argument.)
 SUB TDF.OpenFile(path$)
-  LOCAL magic$, sz%
+  LOCAL offn%, ofsz%, ofbase%, ofn%, ofchunk$, ofm%, ofi%, ofbufp%, ofc%
   IF TDF.open% THEN CALL TDF.Close
-  OPEN path$ FOR INPUT AS #TDF.fn%
-  TDF.open% = 1
-  sz% = LOF(#TDF.fn%)
-  IF sz% < TDF_RECORD% THEN
-    CALL TDF.Close
+  offn% = 10
+  OPEN path$ FOR INPUT AS #offn%
+  ofsz% = LOF(#offn%)
+  IF ofsz% < TDF_RECORD% THEN
+    CLOSE #offn%
     ERROR "TDF: file not found or too small"
   END IF
-  SEEK #TDF.fn%, 0
-  magic$ = INPUT$(20, TDF.fn%)
-  IF LEN(magic$) <> 20 THEN
-    CALL TDF.Close
-    ERROR "TDF: not a TheDraw font"
-  END IF
-  IF ASC(MID$(magic$, 1, 1)) <> 19 THEN
-    CALL TDF.Close
-    ERROR "TDF: not a TheDraw font"
-  END IF
-  IF MID$(magic$, 20, 1) <> CHR$(26) THEN
-    CALL TDF.Close
-    ERROR "TDF: not a TheDraw font"
-  END IF
-  IF INSTR(magic$, "TheDraw FONTS file") <> 2 THEN
-    CALL TDF.Close
-    ERROR "TDF: not a TheDraw font"
-  END IF
-  IF TDF.AtByte(20) <> 85 OR TDF.AtByte(21) <> 170 THEN
-    CALL TDF.Close
-    ERROR "TDF: not a TheDraw font"
-  END IF
+  REDIM TDF.buf%(ofsz% - 1)
+  ofbase% = 0
+  ofbufp% = 0
+  DO WHILE ofbase% < ofsz%
+    SEEK #offn%, ofbase%
+    ofn% = TDF_CHUNK%
+    IF ofbase% + ofn% > ofsz% THEN ofn% = ofsz% - ofbase%
+    ofchunk$ = INPUT$(ofn%, offn%)
+    ofm% = LEN(ofchunk$)
+    IF ofm% > 0 THEN
+      FOR ofi% = 1 TO ofm%
+        TDF.buf%(ofbufp%) = ASC(MID$(ofchunk$, ofi%, 1))
+        ofbufp% = ofbufp% + 1
+      NEXT ofi%
+    END IF
+    IF ofm% < ofn% THEN
+      TDF.buf%(ofbufp%) = 0
+      ofbufp% = ofbufp% + 1
+      ofbase% = ofbase% + ofm% + 1
+    ELSE
+      ofbase% = ofbase% + ofn%
+    END IF
+  LOOP
+  CLOSE #offn%
+  TDF.size% = ofsz%
+  TDF.open% = 1
+  IF TDF.AtByte(0) <> 19 THEN ERROR "TDF: not a TheDraw font"
+  IF TDF.AtByte(19) <> 26 THEN ERROR "TDF: not a TheDraw font"
+  IF TDF.AtByte(20) <> 85 THEN ERROR "TDF: not a TheDraw font"
+  IF TDF.AtByte(21) <> 170 THEN ERROR "TDF: not a TheDraw font"
+  FOR ofi% = 0 TO 17
+    ofc% = ASC(MID$("TheDraw FONTS file", ofi% + 1, 1))
+    IF TDF.AtByte(1 + ofi%) <> ofc% THEN ERROR "TDF: not a TheDraw font"
+  NEXT ofi%
+  CALL TDF.CountRecords
 END SUB
 
-' Parse the font record that starts at absolute offset base%.
+' Parse the font record that starts at absolute offset base% (name excluded;
+' the caller sets TDF.name$ from TDF.VariantName$()).
+' (LOCAL names are global here, so use rr* to avoid clobbering callers.)
 SUB TDF.ReadRecord(base%)
-  LOCAL i%, c%, lo%, hi%, o%, nl%
-  TDF.name$ = ""
-  nl% = TDF.AtByte(base% + 4)
-  FOR i% = 0 TO nl% - 1
-    c% = TDF.AtByte(base% + 5 + i%)
-    IF c% = 0 THEN EXIT FOR
-    TDF.name$ = TDF.name$ + CHR$(c%)
-  NEXT i%
+  LOCAL rri%, rrlo%, rrhi%, rro%
   TDF.type% = TDF.AtByte(base% + 21)
   TDF.spacing% = TDF.AtByte(base% + 22)
   TDF.data% = base% + TDF_RECORD%
   TDF.height = 0
-  FOR i% = 0 TO TDF_GLYPHS% - 1
-    lo% = TDF.AtByte(base% + 25 + 2 * i%)
-    hi% = TDF.AtByte(base% + 26 + 2 * i%)
-    o% = lo% + 256 * hi%
-    TDF.off%(i%) = o%
-    IF o% = TDF_UNDEF% THEN
-      TDF.def%(i%) = 0
-      TDF.wid%(i%) = 0
-      TDF.hgt%(i%) = 0
+  FOR rri% = 0 TO TDF_GLYPHS% - 1
+    rrlo% = TDF.AtByte(base% + 25 + 2 * rri%)
+    rrhi% = TDF.AtByte(base% + 26 + 2 * rri%)
+    rro% = rrlo% + 256 * rrhi%
+    TDF.off%(rri%) = rro%
+    IF rro% = TDF_UNDEF% THEN
+      TDF.def%(rri%) = 0
+      TDF.wid%(rri%) = 0
+      TDF.hgt%(rri%) = 0
     ELSE
-      TDF.def%(i%) = 1
-      TDF.wid%(i%) = TDF.AtByte(TDF.data% + o%)
-      TDF.hgt%(i%) = TDF.AtByte(TDF.data% + o% + 1)
-      IF TDF.hgt%(i%) > TDF.height THEN TDF.height = TDF.hgt%(i%)
+      TDF.def%(rri%) = 1
+      TDF.wid%(rri%) = TDF.AtByte(TDF.data% + rro%)
+      TDF.hgt%(rri%) = TDF.AtByte(TDF.data% + rro% + 1)
+      IF TDF.hgt%(rri%) > TDF.height THEN TDF.height = TDF.hgt%(rri%)
     END IF
-  NEXT i%
+  NEXT rri%
+END SUB
+
+' Load variation n% (0-based) from path$.
+SUB TDF.LoadVariant(path$, n%)
+  IF n% < 0 THEN ERROR "TDF: bad variant"
+  CALL TDF.OpenFile(path$)
+  IF n% >= TDF.variants% THEN
+    CALL TDF.Close
+    ERROR "TDF: no such variant"
+  END IF
+  CALL TDF.ReadRecord(TDF.rec%(n%))
+  TDF.name$ = TDF.VariantName$(n%)
+  TDF.variant% = n%
+  TDF.path$ = path$
 END SUB
 
 ' Load the first font in path$.
 SUB TDF.Load(path$)
-  CALL TDF.OpenFile(path$)
-  CALL TDF.ReadRecord(20)
-  TDF.path$ = path$
+  CALL TDF.LoadVariant(path$, 0)
 END SUB
 
 ' Load the first font in path$ whose name matches font$ (case-insensitive).
 SUB TDF.LoadNamed(path$, font$)
-  LOCAL base%, blk%, last%, found%, i%, c%, nl%, nm$
+  LOCAL lni%
   CALL TDF.OpenFile(path$)
-  base% = 20
-  last% = LOF(#TDF.fn%)
-  found% = 0
-  DO WHILE base% + TDF_RECORD% <= last%
-    nm$ = ""
-    nl% = TDF.AtByte(base% + 4)
-    FOR i% = 0 TO nl% - 1
-      c% = TDF.AtByte(base% + 5 + i%)
-      IF c% = 0 THEN EXIT FOR
-      nm$ = nm$ + CHR$(c%)
-    NEXT i%
-    IF UCASE$(nm$) = UCASE$(font$) THEN
-      found% = 1
-      EXIT DO
+  FOR lni% = 0 TO TDF.variants% - 1
+    IF UCASE$(TDF.VariantName$(lni%)) = UCASE$(font$) THEN
+      CALL TDF.ReadRecord(TDF.rec%(lni%))
+      TDF.name$ = TDF.VariantName$(lni%)
+      TDF.variant% = lni%
+      TDF.path$ = path$
+      EXIT SUB
     END IF
-    blk% = TDF.AtByte(base% + 23) + 256 * TDF.AtByte(base% + 24)
-    base% = base% + TDF_RECORD% + blk% + 1
-  LOOP
-  IF found% = 0 THEN
-    CALL TDF.Close
-    ERROR "TDF: font not found: " + font$
-  END IF
-  CALL TDF.ReadRecord(base%)
-  TDF.path$ = path$
+  NEXT lni%
+  CALL TDF.Close
+  ERROR "TDF: font not found: " + font$
 END SUB
 
 ' Advance for a space or an undefined glyph. TheDraw has no space glyph, so a
@@ -215,20 +277,20 @@ END FUNCTION
 
 ' Draw glyph idx% (0-based, ASCII 33..126) with its top-left cell at x%, y%.
 SUB TDF.DrawGlyph(x%, y%, idx%)
-  LOCAL r%, col%, code%, attr%, ch%
+  LOCAL r%, col%, code%, attr%, ch%, p%
   r% = 0
-  SEEK #TDF.fn%, TDF.data% + TDF.off%(idx%) + 2
+  p% = TDF.data% + TDF.off%(idx%) + 2
   DO
     col% = 0
     ch% = -1
     DO
       IF TDF.type% = 2 THEN
-        ch% = TDF.NextByte()
+        ch% = TDF.AtByte(p%) : p% = p% + 1
         IF ch% = 0 THEN EXIT DO
         IF ch% = 13 THEN EXIT DO
-        attr% = TDF.NextByte()
+        attr% = TDF.AtByte(p%) : p% = p% + 1
       ELSE
-        ch% = TDF.NextByte()
+        ch% = TDF.AtByte(p%) : p% = p% + 1
         IF ch% = 0 THEN EXIT DO
         IF ch% = 13 THEN EXIT DO
         attr% = 0

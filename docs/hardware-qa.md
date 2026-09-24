@@ -34,7 +34,7 @@ environment).
 - [ ] PAINT: `PAINT [file$]`; keyboard tools and USB mouse (click/drag paint, right-click pick colour); save/reload PNG. (#512, #513)
 - [ ] SPRITE editor: grid-constrained sprite/font editing. (#527)
 - [ ] JUKE: `JUKE [path$]`, folder queue, visualiser, keeps playing off-screen; audio output correct. (#519)
-- [ ] TDF.BAS: `#INCLUDE "A:/lib/TDF.BAS"`, then `TDF.Load` / `TDF.Print` / `TDF.Close`; fonts load from `A:/fonts/tdf/`. (#557)
+- [ ] TDF.BAS: `#INCLUDE "A:/lib/TDF.BAS"`, then `TDF.Load` / `TDF.Print` / `TDF.Close`; fonts load from `A:/fonts/tdf/` (`mono/`/`color/`/`deco/`), multi-variation files expose `TDF.Variants%` / `TDF.LoadVariant`. (#557)
 
 ## Apps / prompt
 - [ ] App PATH: `OPTION PATH` (default `A:/APPS/`), type an app name at the prompt to run it, `APPS` launcher, `Ctrl+Space` picker, boot-to-app setting. (#515, #520)

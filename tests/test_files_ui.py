@@ -361,7 +361,7 @@ def _preview_ink(con: MMBasicConsole, tries: int = 12) -> float:
 def test_files_tdf_preview_and_mode_restore(fresh_console):
     """#586: Enter on a .TDF draws a specimen and Esc restores the console."""
     con = fresh_console
-    assert con.send_line('CHDIR "A:/fonts/tdf"') == ""
+    assert con.send_line('CHDIR "A:/fonts/tdf/mono"') == ""
     _select(con, "STANDARD.TDF")
     seen = _keys(con, b"\r", quiet=1.0)
     assert "[FILES] TDF STANDARD.TDF Standard" in seen, seen
@@ -395,3 +395,26 @@ def test_files_tdf_bad_font_fails_soft(fresh_console):
     assert "SEL=" in seen
     _keys(con, b"q")
     assert con.send_line("PRINT 6") == "6"
+
+
+def test_files_tdf_multi_variant_preview(fresh_console):
+    """#629: a multi-record .TDF renders every variation and reports the count."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/fonts/tdf/color"') == ""
+    _select(con, "ACIDSC2X.TDF")
+    seen = _keys(con, b"\r", quiet=1.0)
+    assert "[FILES] TDF ACIDSC2X.TDF" in seen, seen
+    assert "6 variants" in seen, seen
+    ink = 0.0
+    for _ in range(12):
+        ink = max(ink, _preview_ink(con))
+        if ink > 0.001:
+            break
+        time.sleep(0.3)
+    assert ink > 0.001, ink
+    # PgDn scrolls the stacked variation blocks (and is accepted in FU_TDF).
+    _keys(con, b"\x1b[6~", quiet=0.5)
+    seen = _keys(con, b"\x1b", quiet=0.8)
+    assert "SEL=" in seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT MM.HRES") == "1280"

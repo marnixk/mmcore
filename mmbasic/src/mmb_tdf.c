@@ -80,6 +80,41 @@ int mmb_tdf_parse(const unsigned char *buf, unsigned n, int index, mmb_tdf *f)
 	}
 }
 
+/* Count the font records in buf/n, i.e. how many variations mmb_tdf_parse()
+ * can address. The walk stops at the first record that fails, so a file with
+ * a truncated or garbage tail still reports its good leading variations.
+ */
+int mmb_tdf_count(const unsigned char *buf, unsigned n)
+{
+	unsigned pos = 20;
+	int i;
+
+	if (n < 233 || buf[0] != 0x13)
+		return 0;
+	if (memcmp(buf + 1, "TheDraw FONTS file", 18) != 0 || buf[19] != 0x1A)
+		return 0;
+
+	for (i = 0;; i++)
+	{
+		unsigned bs, ds;
+		if (pos + 45 > n)
+			return i;
+		if (memcmp(buf + pos, "\x55\xaa\x00\xff", 4) != 0)
+			return i;
+		bs = (unsigned)buf[pos + 23] | ((unsigned)buf[pos + 24] << 8);
+		ds = (i == 0) ? 233u : pos + 213u;
+		if (ds + bs > n)
+			bs = (ds < n) ? n - ds : 0;
+
+		if (i == 0)
+			pos = 233 + bs;
+		else
+			pos = ds + bs;
+		if (pos + 4 <= n && memcmp(buf + pos, "\x55\xaa\x00\xff", 4) != 0)
+			pos++;
+	}
+}
+
 /* Map an Outline-font letter to its CP437 box-drawing code. */
 static int mmb_outline_map(int c)
 {

@@ -78,6 +78,8 @@ typedef struct {
 	int an_saved_mode;
 	int an_saved_bits;
 	unsigned char *tdf_buf;
+	unsigned tdf_size;
+	int tdf_variants;
 	mmb_tdf tdf;
 } fu_state;
 
@@ -1943,28 +1945,42 @@ static void tdf_release(void)
 			G.plat->free(F.tdf_buf);
 		F.tdf_buf = 0;
 	}
+	F.tdf_size = 0;
+	F.tdf_variants = 0;
 	memset(&F.tdf, 0, sizeof(F.tdf));
 }
 
-static void tdf_render_sample(const char *name)
+/* Stamp plain console-font text into the CP437 grid (for variation captions). */
+static void tdf_text(int x, int y, const char *s, int fg, int bg)
 {
-	const char *label = F.tdf.name[0] ? F.tdf.name : name;
-	int lh = F.tdf.max_height > 0 ? F.tdf.max_height : 1;
-	int c, x, y;
+	for (; *s; s++, x++)
+	{
+		if (x < 1 || x >= AN_MAX_COLS || y < 1 || y >= AN_MAX_ROWS)
+			continue;
+		an_scr[y][x].ch = (unsigned char)*s;
+		an_scr[y][x].fg = (unsigned char)fg;
+		an_scr[y][x].bg = (unsigned char)bg;
+	}
+}
 
-	an_reset(AN_COLS);
-	y = 1;
+/* Render one font: its name then printable ASCII, wrapped to the 80-column
+ * grid. Advances *yp past the block. */
+static void tdf_render_font(const mmb_tdf *f, const char *fallback, int *yp)
+{
+	const char *label = f->name[0] ? f->name : fallback;
+	int lh = f->max_height > 0 ? f->max_height : 1;
+	int c, x, y = *yp;
+
 	x = 1;
 	for (; *label; label++)
-		x += mmb_tdf_stamp(&F.tdf, (unsigned char)*label, x, y, 15, 0,
+		x += mmb_tdf_stamp(f, (unsigned char)*label, x, y, 15, 0,
 				   tdf_cell, 0);
 	y += lh + 1;
 
-	/* Printable ASCII, wrapped to the 80-column grid. */
 	x = 1;
 	for (c = 33; c <= 126 && y < AN_MAX_ROWS - 1; c++)
 	{
-		x += mmb_tdf_stamp(&F.tdf, c, x, y, 15, 0, tdf_cell, 0);
+		x += mmb_tdf_stamp(f, c, x, y, 15, 0, tdf_cell, 0);
 		if (x >= AN_COLS - 1)
 		{
 			x = 1;
@@ -1972,6 +1988,51 @@ static void tdf_render_sample(const char *name)
 		}
 	}
 	y += lh;
+	*yp = y;
+}
+
+static void tdf_render_sample(const char *name)
+{
+	int nvar = F.tdf_variants > 1 ? F.tdf_variants : 1;
+	int v, y;
+
+	an_reset(AN_COLS);
+	y = 1;
+	if (nvar == 1)
+	{
+		/* Single-font files look exactly as they always did. */
+		tdf_render_font(&F.tdf, name, &y);
+	}
+	else
+	{
+		for (v = 0; v < nvar; v++)
+		{
+			mmb_tdf f;
+			char cap[80];
+			char num[12];
+
+			if (mmb_tdf_parse(F.tdf_buf, F.tdf_size, v, &f) != 0)
+				break;
+			strcpy(cap, "#");
+			fmt_uint(num, (unsigned)(v + 1));
+			strcat(cap, num);
+			strcat(cap, " ");
+			strncat(cap, f.name[0] ? f.name : name, 20);
+			strcat(cap, " (");
+			fmt_uint(num, (unsigned)(v + 1));
+			strcat(cap, num);
+			strcat(cap, "/");
+			fmt_uint(num, (unsigned)nvar);
+			strcat(cap, num);
+			strcat(cap, ")");
+			tdf_text(1, y, cap, 14, 0);
+			y += 2;
+			tdf_render_font(&f, name, &y);
+			y += 1;
+			if (y >= AN_MAX_ROWS - 1)
+				break;
+		}
+	}
 	if (y < 1)
 		y = 1;
 	if (y > AN_MAX_ROWS)
@@ -2004,6 +2065,10 @@ static int tdf_open(const char *path, const char *name)
 		return -1;
 	}
 	F.tdf_buf = buf;
+	F.tdf_size = got;
+	F.tdf_variants = mmb_tdf_count(buf, got);
+	if (F.tdf_variants < 1)
+		F.tdf_variants = 1;
 	strncpy(F.view_path, path, sizeof(F.view_path) - 1);
 	F.view_path[sizeof(F.view_path) - 1] = 0;
 	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
@@ -2012,11 +2077,19 @@ static int tdf_open(const char *path, const char *name)
 	tdf_render_sample(name);
 	F.mode = FU_TDF;
 	an_render();
-	set_hint("TDF preview  up/down scroll  Enter/Esc returns");
+	set_hint(F.tdf_variants > 1
+			 ? "TDF preview  up/down/PgUp/PgDn scroll  Enter/Esc returns"
+			 : "TDF preview  up/down scroll  Enter/Esc returns");
 	strcpy(line, "[FILES] TDF ");
 	strncat(line, name, 32);
 	strcat(line, " ");
 	strncat(line, F.tdf.name, 20);
+	if (F.tdf_variants > 1)
+	{
+		strcat(line, " ");
+		fmt_uint(line + strlen(line), (unsigned)F.tdf_variants);
+		strcat(line, " variants");
+	}
 	strcat(line, "\r\n");
 	ser(line);
 	return 0;
@@ -2706,9 +2779,9 @@ static int handle_esc_char(char c)
 				handle_fkey(9);
 			else if (F.csi_n == 21)
 				handle_fkey(10);
-			else if (F.mode == FU_ANSI && F.csi_n == 5)
+			else if ((F.mode == FU_ANSI || F.mode == FU_TDF) && F.csi_n == 5)
 				an_page(-1);
-			else if (F.mode == FU_ANSI && F.csi_n == 6)
+			else if ((F.mode == FU_ANSI || F.mode == FU_TDF) && F.csi_n == 6)
 				an_page(1);
 		}
 		return 1;

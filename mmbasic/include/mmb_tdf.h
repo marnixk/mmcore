@@ -6,7 +6,9 @@
  * Used by the FILES .TDF preview; the format is the one documented for the
  * ramdisk fonts (A:/fonts/tdf/) and ramdisk/lib/TDF.BAS. The decoder is pure
  * C: the caller owns the file buffer and keeps it alive for as long as the
- * parsed font is used (the font points into it).
+ * parsed font is used (the font points into it). A file may hold several
+ * variations of one font; `index` selects one and mmb_tdf_count() reports how
+ * many are available.
  */
 
 #define MMB_TDF_OUTLINE 0
@@ -28,6 +30,11 @@ typedef struct {
 /* Parse font `index` out of the whole file in buf/n. Returns 0 on success,
  * -1 when the header magic is wrong or the index is past the last font. */
 int mmb_tdf_parse(const unsigned char *buf, unsigned n, int index, mmb_tdf *f);
+
+/* Count the font records (variations) in the whole file in buf/n. Returns 0
+ * for a file that is not a valid TheDraw font. The walk stops at the first
+ * record that fails, so a truncated/garbage tail still yields its prefix. */
+int mmb_tdf_count(const unsigned char *buf, unsigned n);
 
 /* Write one CP437 cell. x/y are screen cells; implementations clip. */
 typedef void (*mmb_tdf_cell_fn)(void *ctx, int x, int y, int ch, int fg, int bg);

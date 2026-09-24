@@ -707,7 +707,7 @@ void mmb_sprite_overlay(void)
 
 #define SM_TRANS 16
 
-/* Same 59-glyph ASCII set as ramdisk/fonts/08X08-F1.json. */
+/* Same 59-glyph ASCII set as ramdisk/fonts/gfx/08X08-F1.json. */
 static const char SM_CHARSET[] =
 	" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -1408,7 +1408,7 @@ static void sm_make_path(char *dst, int dstsz, const char *in, int font)
 	char tmp[160];
 
 	if (font && !strchr(in, ':') && !strchr(in, '/'))
-		sprintf(tmp, "A:/fonts/%s", in);
+		sprintf(tmp, "A:/fonts/gfx/%s", in);
 	else
 	{
 		strncpy(tmp, in, sizeof(tmp) - 1);

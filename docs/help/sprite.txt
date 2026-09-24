@@ -67,7 +67,7 @@ the 16 IBM colours plus transparent.
 SPRITE EDIT writes a single-cell file$ PNG. SPRITE SHEET tiles cols x rows
 cells of cell x cell pixels into file$ and scrubs between them with n/p.
 SPRITE FONT edits the 59-glyph ASCII set used by the bundled 8x8 fonts and
-writes name$.png plus name$.json under A:/fonts/ so fontLoad(name$) reads it
+writes name$.png plus name$.json under A:/fonts/gfx/ so fontLoad(name$) reads it
 back; elsewhere in a path, both files are written beside each other. A saved
 font JSON has the usual source, charset, offsetX, offsetY, charWidth,
 charHeight, charsPerRow and bgColour fields.
@@ -76,5 +76,5 @@ Example:
 
     SPRITE EDIT "SHIP.PNG"          ' one 8x8 sprite
     SPRITE SHEET "TILES.PNG", 16, 4, 4
-    SPRITE FONT "MYFONT", 8        ' A:/fonts/MYFONT.png + .json
+    SPRITE FONT "MYFONT", 8        ' A:/fonts/gfx/MYFONT.png + .json
     SPRITE LOADPNG 1, "SHIP.PNG"

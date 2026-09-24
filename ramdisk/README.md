@@ -24,10 +24,11 @@ work.
 
 ## Fonts
 
-- **`fonts/`** — bitmap font JSON descriptors (see `fonts/fonts.inc` and
-  `A:/fonts/<name>.json`).
+- **`fonts/gfx/`** — bitmap font PNG sheets plus their JSON descriptors and the
+  `fonts.inc` loader (`A:/fonts/gfx/<name>.json`, `A:/fonts/gfx/fonts.inc`).
 - **`fonts/tdf/`** — curated TheDraw `.TDF` fonts from the [Roy/SAC TheDraw TDF
-  collection](https://www.roysac.com/images/galleries/ZIP/ROYS-THEDRAW_TDF_FONTS_COLLECTION.ZIP)
-  (30 files, ~153 KiB). This is a shortlist for ramdisk seeding, not the full
-  zip; provenance and file list are in `fonts/tdf/README.md`. Runtime loading is
-  tracked under issue #511; assets ship under #554.
+  collection](https://www.roysac.com/images/galleries/ZIP/ROYS-THEDRAW_TDF_FONTS_COLLECTION.ZIP),
+  split into `mono/`, `color/` and `deco/` categories (41 files, ~397 KiB).
+  This is a shortlist for ramdisk seeding, not the full zip; provenance and file
+  list are in `fonts/tdf/README.md`. Runtime loading is tracked under issue
+  #511; assets ship under #554.

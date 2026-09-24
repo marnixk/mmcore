@@ -9,6 +9,9 @@ REPO = Path(__file__).resolve().parents[1]
 LIB = REPO / "ramdisk" / "lib" / "TDF.BAS"
 DEMO = REPO / "ramdisk" / "apps" / "TDFDEMO.BAS"
 TDF_DIR = REPO / "ramdisk" / "fonts" / "tdf"
+MONO_DIR = TDF_DIR / "mono"
+COLOR_DIR = TDF_DIR / "color"
+DECO_DIR = TDF_DIR / "deco"
 
 TYPE_BLOCK = 1
 TYPE_OUTLINE = 0
@@ -73,6 +76,31 @@ def expected_width(path, s):
     return total
 
 
+def tdf_records(path):
+    """Walk every font record in a .TDF (mirrors mmb_tdf_count)."""
+    b = Path(path).read_bytes()
+    recs = []
+    pos = 20
+    i = 0
+    while True:
+        if pos + 45 > len(b) or b[pos : pos + 4] != b"\x55\xaa\x00\xff":
+            break
+        nl = b[pos + 4]
+        if nl > 12:
+            nl = 12
+        name = b[pos + 5 : pos + 5 + nl].split(b"\x00")[0].decode("latin1")
+        bs = b[pos + 23] | (b[pos + 24] << 8)
+        ds = 233 if i == 0 else pos + 213
+        if ds + bs > len(b):
+            bs = len(b) - ds if ds < len(b) else 0
+        recs.append({"pos": pos, "name": name, "type": b[pos + 21]})
+        pos = (233 + bs) if i == 0 else (ds + bs)
+        if pos + 4 <= len(b) and b[pos : pos + 4] != b"\x55\xaa\x00\xff":
+            pos += 1
+        i += 1
+    return recs
+
+
 # --- host checks -----------------------------------------------------------
 
 def test_tdf_lib_declares_api():
@@ -80,14 +108,17 @@ def test_tdf_lib_declares_api():
     for needle in (
         "SUB TDF.Load",
         "SUB TDF.LoadNamed",
+        "SUB TDF.LoadVariant",
         "SUB TDF.Print",
         "SUB TDF.Close",
         "FUNCTION TDF.Width",
         "FUNCTION TDF.OutlineCode",
+        "TDF.VariantName$",
         "TDF.Name$",
         "TDF.Type%",
         "TDF.Spacing%",
         "TDF.Height",
+        "TDF.Variants%",
         "A:/fonts",
     ):
         assert needle in src, needle
@@ -141,7 +172,7 @@ def test_tdf_block_font_metadata_and_width(console):
         "TDFBLK.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/STANDARD.TDF"',
+            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
             "PRINT TDF.Name$",
             "PRINT TDF.Type%",
             "PRINT TDF.Spacing%",
@@ -150,14 +181,14 @@ def test_tdf_block_font_metadata_and_width(console):
             "TDF.Close",
         ],
     )
-    info = parse_tdf(TDF_DIR / "STANDARD.TDF")
+    info = parse_tdf(MONO_DIR / "STANDARD.TDF")
     assert info["type"] == TYPE_BLOCK
     assert _lines(out) == [
         info["name"],
         str(info["type"]),
         str(info["spacing"]),
         str(info["height"]),
-        str(expected_width(TDF_DIR / "STANDARD.TDF", "HELLO")),
+        str(expected_width(MONO_DIR / "STANDARD.TDF", "HELLO")),
     ], out
 
 
@@ -167,19 +198,19 @@ def test_tdf_outline_font_metadata_and_width(console):
         "TDFOUT.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/BIGOUT.TDF"',
+            'TDF.Load "A:/fonts/tdf/deco/BIGOUT.TDF"',
             "PRINT TDF.Name$",
             "PRINT TDF.Type%",
             'PRINT TDF.Width("HI")',
             "TDF.Close",
         ],
     )
-    info = parse_tdf(TDF_DIR / "BIGOUT.TDF")
+    info = parse_tdf(DECO_DIR / "BIGOUT.TDF")
     assert info["type"] == TYPE_OUTLINE
     assert _lines(out) == [
         info["name"],
         str(info["type"]),
-        str(expected_width(TDF_DIR / "BIGOUT.TDF", "HI")),
+        str(expected_width(DECO_DIR / "BIGOUT.TDF", "HI")),
     ], out
 
 
@@ -189,19 +220,72 @@ def test_tdf_color_font_metadata_and_width(console):
         "TDFCOL.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/BLOCK.TDF"',
+            'TDF.Load "A:/fonts/tdf/color/BLOCK.TDF"',
             "PRINT TDF.Name$",
             "PRINT TDF.Type%",
             'PRINT TDF.Width("HELLO")',
             "TDF.Close",
         ],
     )
-    info = parse_tdf(TDF_DIR / "BLOCK.TDF")
+    info = parse_tdf(COLOR_DIR / "BLOCK.TDF")
     assert info["type"] == TYPE_COLOR
     assert _lines(out) == [
         info["name"],
         str(info["type"]),
-        str(expected_width(TDF_DIR / "BLOCK.TDF", "HELLO")),
+        str(expected_width(COLOR_DIR / "BLOCK.TDF", "HELLO")),
+    ], out
+
+
+def test_tdf_reload_after_close(console):
+    """#627: the whole file is buffered and closed; a second load starts clean."""
+    out = _run(
+        console,
+        "TDFRELOAD.BAS",
+        [
+            '#INCLUDE "A:/lib/TDF.BAS"',
+            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PRINT TDF.Name$",
+            "TDF.Close",
+            'TDF.Load "A:/fonts/tdf/color/BLOCK.TDF"',
+            "PRINT TDF.Name$",
+            "PRINT TDF.Type%",
+            "TDF.Close",
+        ],
+    )
+    assert _lines(out) == ["Standard", "Block", str(TYPE_COLOR)], out
+
+
+def test_tdf_variants_exposed(console):
+    """#629: every record is addressable by index and by name."""
+    path = COLOR_DIR / "ACIDSC2X.TDF"
+    recs = tdf_records(path)
+    assert len(recs) > 1
+    names = [r["name"] for r in recs]
+    out = _run(
+        console,
+        "TDFVAR.BAS",
+        [
+            '#INCLUDE "A:/lib/TDF.BAS"',
+            'TDF.Load "A:/fonts/tdf/color/ACIDSC2X.TDF"',
+            "PRINT TDF.Variants%",
+            "PRINT TDF.variant%",
+            "PRINT TDF.Name$",
+            "PRINT TDF.VariantName$(0)",
+            "PRINT TDF.VariantName$(1)",
+            'TDF.LoadVariant "A:/fonts/tdf/color/ACIDSC2X.TDF", 2',
+            "PRINT TDF.variant%",
+            "PRINT TDF.Name$",
+            "TDF.Close",
+        ],
+    )
+    assert _lines(out) == [
+        str(len(recs)),
+        "0",
+        names[0],
+        names[0],
+        names[1],
+        "2",
+        names[2],
     ], out
 
 
@@ -211,7 +295,7 @@ def test_tdf_load_by_name(console):
         "TDFNAME.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.LoadNamed "A:/fonts/tdf/STANDARD.TDF", "Standard"',
+            'TDF.LoadNamed "A:/fonts/tdf/mono/STANDARD.TDF", "Standard"',
             "PRINT TDF.Name$",
             "TDF.Close",
         ],
@@ -225,7 +309,7 @@ def test_tdf_unknown_name_fails(console):
         "TDFBAD.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.LoadNamed "A:/fonts/tdf/STANDARD.TDF", "NoSuchFont"',
+            'TDF.LoadNamed "A:/fonts/tdf/mono/STANDARD.TDF", "NoSuchFont"',
             "PRINT 1",
         ],
     )
@@ -239,7 +323,7 @@ def test_tdf_missing_file_fails(console):
         "TDFMISS.BAS",
         [
             '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/NOPE.TDF"',
+            'TDF.Load "A:/fonts/tdf/mono/NOPE.TDF"',
             "PRINT 1",
         ],
     )
@@ -306,7 +390,7 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
             '#INCLUDE "A:/lib/TDF.BAS"',
             "CLS RGB(0,0,0)",
             "COLOUR RGB(255,255,255), RGB(0,0,0)",
-            'TDF.Load "A:/fonts/tdf/STANDARD.TDF"',
+            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
             'TDF.Print 2, 3, "I"',
             "H% = MM.HPOS : V% = MM.VPOS",
             "LOCATE 20, 0",
@@ -320,7 +404,7 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
     # The 8x16 CP437 face should light exactly the glyph's ink pixels in cells
     # starting at column 2, row 3.
     font = load_cp437_font()
-    _, rows = glyph_rows(TDF_DIR / "STANDARD.TDF", "I")
+    _, rows = glyph_rows(MONO_DIR / "STANDARD.TDF", "I")
     base_x, base_y = 2 * 8, 3 * 16
     lit, paper = [], []
     for r, row in enumerate(rows):
@@ -351,7 +435,7 @@ def test_tdf_print_spaces_advance_safely(fresh_console):
             '#INCLUDE "A:/lib/TDF.BAS"',
             "CLS",
             "COLOUR RGB(255,255,255), RGB(0,0,0)",
-            'TDF.Load "A:/fonts/tdf/STANDARD.TDF"',
+            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
             'TDF.Print 2, 3, "' + text + '"',
             "H% = MM.HPOS : V% = MM.VPOS",
             'W% = TDF.Width("' + text + '")',
@@ -360,7 +444,7 @@ def test_tdf_print_spaces_advance_safely(fresh_console):
             "TDF.Close",
         ],
     )
-    exp = expected_width(TDF_DIR / "STANDARD.TDF", text)
+    exp = expected_width(MONO_DIR / "STANDARD.TDF", text)
     assert _lines(out)[-1].endswith(f"{(2 + exp) * 8},48,{exp}"), out
 
 
