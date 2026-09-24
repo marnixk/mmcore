@@ -1826,7 +1826,8 @@ void mmb_option_reset(void)
 	G.opt.repeat_first = MMB_REPEAT_FIRST_DEFAULT;
 	G.opt.repeat_next = MMB_REPEAT_NEXT_DEFAULT;
 	G.opt.edit_font = 1;
-	G.opt.edit_theme = MMB_OPT_DEFAULT_EDIT_THEME;
+	G.opt.theme = MMB_OPT_DEFAULT_THEME;
+	G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
 	G.opt.edit_jump_break = 0;
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;

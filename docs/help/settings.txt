@@ -21,10 +21,12 @@ Theme (Appearance)
 
 The theme picker lists every built-in TUI theme and previews the highlighted
 one live: the screen recolours as you move, and the choice is kept when you
-press Enter. The selection is the same one OPTION EDIT THEME sets, so it
-applies everywhere the theme is used: EDIT, FILES, WORDPAD, TERM, HELP,
-SPRITE, PACKAGE, APPS and the rest of the themed chrome. It is saved to
-C:/.mmbasic.ini (A: if there is no SD card) and survives a reboot.
+press Enter. It sets the system-wide theme, the same one OPTION THEME sets, so
+it applies everywhere the theme is used: FILES, WORDPAD, TERM, HELP, SPRITE,
+PACKAGE, APPS and the rest of the themed chrome. The editor follows this theme
+too unless a different editor-only theme is picked from EDIT's Theme menu (or
+with OPTION EDIT THEME). It is saved to C:/.mmbasic.ini (A: if there is no SD
+card) and survives a reboot.
 
 Keys in the hub:
 
@@ -45,7 +47,9 @@ Built-in themes, in order:
   5 Slate   6 Forest  7 Violet 8 Turbo  9 Phosphor
 
 Default is Slate. Turbo is the retro VGA palette; Phosphor is a green CRT.
-Themes can also be chosen from a program with OPTION THEME name.
+Themes can also be chosen from a program with OPTION THEME name. To give the
+editor its own look, pick from EDIT's Theme menu or use OPTION EDIT THEME;
+SYSTEM there follows this system theme.
 
 Example:
 
@@ -53,4 +57,5 @@ Example:
     SETTINGS THEME Nord
     SETTINGS THEME "Violet"
     OPTION THEME 8              ' same selection, no UI
+    OPTION EDIT THEME TURBO     ' editor-only override
     COLOUR THEME("TEXT_FG"), THEME("TEXT_BG")

@@ -354,12 +354,12 @@ def test_ihelp_follows_editor_theme_phosphor(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
+        assert con.send_line("OPTION THEME PHOSPHOR") == ""
         open_ihelp(con)
         empty = [con.screen_pixel(x, 80) for x in (480, 520, 560)]
         assert all(r + g + b < 50 for r, g, b in empty), empty
         close_ihelp(con)
-        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+        assert con.send_line("OPTION THEME TURBO") == ""
     finally:
         con.stop()
 

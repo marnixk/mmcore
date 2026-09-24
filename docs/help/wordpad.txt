@@ -14,7 +14,7 @@ Menus: Alt+F File  Alt+E Edit  Alt+S Settings  F10 File menu.
 File: New, Open..., Save, Save As..., Quit.
 Edit: Copy, Cut, Paste (^C /^K /^U like EDIT).
 Settings: Wide view toggles wrap 80/120 columns.
-Colours follow OPTION EDIT THEME (same as EDITOR).
+Colours follow OPTION THEME (same as the other themed apps).
 
 Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style
 serif at 32x64 / 24x48 / 16x32 (shared baseline, not a scaled-up 8x16 face).

@@ -71,14 +71,14 @@ def test_afk_follows_turbo_theme(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+        assert con.send_line("OPTION THEME TURBO") == ""
         con.drain(quiet=0.2)
         con._ser.sendall(b"AFK\r")
         con.drain(quiet=0.8, timeout=8)
         assert _peak_lit(con) > 0.0005
         con._ser.sendall(b"\r")
         con.drain(quiet=0.6, timeout=8)
-        assert con.send_line("OPTION EDIT THEME SLATE") == ""
+        assert con.send_line("OPTION THEME SLATE") == ""
     finally:
         con.stop()
 

@@ -9,8 +9,8 @@ def _near(rgb, want, tol=20):
     return all(abs(a - b) <= tol for a, b in zip(rgb, want))
 
 
-def test_option_theme_alias_sets_system_theme(kernel_image):
-    """#509: OPTION THEME is a system-wide alias for OPTION EDIT THEME."""
+def test_option_theme_sets_system_theme(kernel_image):
+    """#509: OPTION THEME selects the system-wide theme."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -95,7 +95,7 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        assert con.send_line('OPTION THEME "Slate"') == ""
         expected = con.send_line("PRINT RGB(42,44,50)")  # Slate TEXT_BG
         quoted = con.send_line('PRINT THEME("TEXT_BG")')
         bare = con.send_line("PRINT THEME(TEXT_BG)")
@@ -106,13 +106,13 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
         assert con.send_line('COLOUR THEME("MENU_FG"), THEME("MENU_BG")') == ""
         assert con.send_line("PRINT THEME(ERROR_FG)") == con.send_line("PRINT RGB(244,245,248)")
 
-        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+        assert con.send_line("OPTION THEME TURBO") == ""
         assert con.send_line('PRINT THEME("TEXT_BG")') == con.send_line("PRINT RGB(0,0,170)")
         assert con.send_line('PRINT THEME("NUMBER_FG")') == con.send_line("PRINT RGB(85,255,255)")
         assert con.send_line('PRINT THEME(FIELD_FG)') == con.send_line("PRINT RGB(0,0,0)")
 
         bad = con.send_line('PRINT THEME("NOPE")').upper()
         assert "SYNTAX ERROR" in bad, bad
-        assert con.send_line("OPTION EDIT THEME SLATE") == ""
+        assert con.send_line("OPTION THEME SLATE") == ""
     finally:
         con.stop()

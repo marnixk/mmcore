@@ -3,7 +3,7 @@ kind: command
 
 Show a Win31 "Mystify"-style screensaver: two polygons of points bounce around
 the screen, leaving fading trails of connecting lines. It takes no arguments
-and runs until you exit. Colours follow OPTION EDIT THEME (set A is the menu
+and runs until you exit. Colours follow OPTION THEME (set A is the menu
 hot colour, set B the string colour).
 
 AFK

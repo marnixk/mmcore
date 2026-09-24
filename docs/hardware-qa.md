@@ -41,7 +41,7 @@ environment).
 - [ ] PACKAGE wizard: guided folder → `.APP`. (#526)
 
 ## UI consistency
-- [ ] Theme picker: `SETTINGS` UI, `SETTINGS THEME name|n`, `OPTION THEME name`, `THEME("name")` function; applies to EDIT/FILES/WORDPAD/TERM/HELP/SPRITE/PACKAGE/APPS and persists in `C:/.mmbasic.ini`. (#509)
+- [ ] Theme picker: `SETTINGS` UI, `SETTINGS THEME name|n`, `OPTION THEME name`, `THEME("name")` function; sets the system theme for FILES/WORDPAD/TERM/HELP/SPRITE/PACKAGE/APPS and persists in `C:/.mmbasic.ini`. `OPTION EDIT THEME name|n|SYSTEM` overrides EDIT only (EDIT Theme menu has a System entry); editor follows the system theme by default. (#509)
 - [ ] Status-bar hotkey hints render a single `>`, e.g. `<Up/Down> Move`. (#569)
 
 ## Desktop-only (skip on Pi)

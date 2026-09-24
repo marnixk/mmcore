@@ -71,7 +71,8 @@ def test_factory_defaults_mode_prompt_slate(fresh_console):
     ini = _read_ini(con)
     assert "default_mode=11" in ini
     assert "prompt=1" in ini
-    assert "edit_theme=5" in ini
+    assert "theme=5" in ini
+    assert "edit_theme=-1" in ini
 
 
 def test_eof_hash_file_number(console):

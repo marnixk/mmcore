@@ -27,7 +27,8 @@
 #define MMB_MAX_PAGES     8
 #define MMB_OPT_DEFAULT_MODE       11 /* 1280x720 */
 #define MMB_OPT_DEFAULT_PROMPT     1  /* CWD */
-#define MMB_OPT_DEFAULT_EDIT_THEME 5  /* Slate */
+#define MMB_OPT_DEFAULT_THEME      5  /* Slate */
+#define MMB_OPT_EDIT_THEME_SYSTEM  (-1) /* editor follows the system theme */
 /* Prompt/console: grey on black (CMM2 is white/black). IBM 15/1 is white/blue. */
 #define MMB_DEFAULT_FG             0x808080u
 #define MMB_DEFAULT_BG             0u
@@ -194,7 +195,8 @@ typedef struct mmb_options {
 	int repeat_first;
 	int repeat_next;
 	int edit_font;         /* 0 small .. 4 very large */
-	int edit_theme;        /* editor colour theme, default Slate */
+	int theme;             /* system-wide colour theme, default Slate */
+	int edit_theme;        /* editor colour theme, -1 = follow system */
 	int edit_jump_break;   /* jump to the line on a run break/error */
 	int escape;
 	char search_path[128];
