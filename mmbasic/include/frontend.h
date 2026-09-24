@@ -21,12 +21,18 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx);
 /* Point the line editor at another virtual console's state (0-based). */
 void mmb_front_select(int idx);
 
+/* Clear every console's line editor/history (warm reset). */
+void mmb_front_reset(void);
+
 /* Feed console bytes (ESC sequences and 0x01-prefixed Alt in included). */
 void mmb_front_feed(const char *s, unsigned n);
 void mmb_front_feed_byte(char c);
 
 /* True while a full-screen app owns the keyboard. */
 int mmb_front_in_app(void);
+
+/* True when the active console's REPL line editor holds no text. */
+int mmb_front_line_empty(void);
 
 /* Emit a fresh prompt (shows the hardware cursor). */
 void mmb_front_prompt(void);

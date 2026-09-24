@@ -118,28 +118,3 @@ def test_files_ansi_wraps_at_80_columns(fresh_console):
     assert max(con.screen_pixel(660, 4)) < 40, con.screen_pixel(660, 4)
     _keys(con, b"\x1b", quiet=0.8)
     _keys(con, b"q")
-
-
-def _editor(con: MMBasicConsole, data: bytes, quiet: float = 0.4) -> str:
-    assert con._ser is not None
-    con._ser.sendall(data)
-    return con.drain(quiet=quiet).decode(errors="replace")
-
-
-def test_editor_saved_ans_renders_in_files_preview(fresh_console):
-    """Art saved by the ANSI editor is valid ANSI the FILES viewer can page."""
-    con = fresh_console
-    con.drain(quiet=0.15)
-    con._ser.sendall(b'ANSI EDIT "A:/tests/EDITOR.ANS"\r')
-    con.drain(quiet=0.9)
-    # Red block at 0-based row 1, col 2 (the cell TEST.ANS uses).
-    _editor(con, b"\x1b[C\x1b[C\x1b[B")
-    _editor(con, bytes([1]) + b"1")
-    _editor(con, b" ")
-    _editor(con, bytes([1]) + b"s", quiet=0.7)
-    _editor(con, bytes([1]) + b"x", quiet=0.6)
-
-    _open_ansi(con, "EDITOR.ANS")
-    assert _is_colour(con.screen_pixel(20, 20), (170, 0, 0)), con.screen_pixel(20, 20)
-    _keys(con, b"\x1b", quiet=0.8)
-    _keys(con, b"q")

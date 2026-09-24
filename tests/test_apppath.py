@@ -147,6 +147,49 @@ def test_help_apps_path_boot(console):
     assert "BOOT" in opt.upper()
 
 
+# --- #624: launcher overlay dialog with built-in app labels ---------------
+
+
+def test_apps_launcher_lists_builtins_with_labels(console):
+    """The launcher is a small dialog listing built-in apps by label."""
+    con = console
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    for label in (
+        "EDITOR",
+        "FILE MANAGER",
+        "WORD PROCESSOR",
+        "PAINT",
+        "JUKEBOX",
+        "HELP",
+        "SETTINGS",
+        "PACKAGE",
+    ):
+        assert label in seen, (label, seen)
+    # The overlay frame, not a full-width HOME/APPS title bar. ``APPS``
+    # opens the boot-style launcher (title HOME); Ctrl+Space uses APPS.
+    assert "HOME" in seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 11") == "11"
+
+
+def test_apps_launcher_restores_screen_on_close(fresh_console):
+    """Esc from the launcher restores the REPL screen behind the overlay."""
+    con = fresh_console
+    con.send_line('PRINT "OVERLAYMARK"')
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    con.drain(quiet=0.9, timeout=3.0)
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    text = "".join(con.ocr_screen(crop="640x400+0+0").split())
+    assert "OVERLAYMARK" in text
+    assert con.send_line("PRINT 3") == "3"
+
+
+
 # ---- boot destination from a FAT SD image --------------------------------
 
 SD_ARGS = None

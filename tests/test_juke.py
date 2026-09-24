@@ -134,3 +134,112 @@ def test_juke_not_available_in_run(fresh_console):
     assert con.send_line("CLOSE #1") == ""
     out = con.send_line('RUN "J.BAS"').upper()
     assert "NOT AVAILABLE IN RUN" in out, out
+
+
+def _footer_row_y(con: MMBasicConsole, dy: int) -> int:
+    _w, h = con.screen_size()
+    return h - 48 + dy
+
+
+def _shuffle_lit(con: MMBasicConsole) -> tuple[int, int, int]:
+    """Colour of the shuffle chip swatch (left of the SHUF label)."""
+    return con.screen_pixel(21, _footer_row_y(con, 34))
+
+
+def _volume_lit(con: MMBasicConsole) -> int:
+    """How many pixels of the volume bar are filled."""
+    y = _footer_row_y(con, 34)
+    row = con.screen_pixels([(x, y) for x in range(148, 364, 2)])
+    return sum(1 for r, g, b in row if r + g + b > 150)
+
+
+def test_juke_has_fixed_cyberpunk_palette(fresh_console):
+    """JUKE must not follow the system theme, and must leave it alone."""
+    con = fresh_console
+    assert con.send_line('OPTION EDIT THEME "Snow"') == ""
+    before = con.send_line('PRINT THEME("TEXT_BG")')
+    _open_juke(con, "tests/TEST.MOD")
+    # Header/backing panels stay near-black even under a light system theme.
+    dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
+            con.screen_pixel(480, 44), con.screen_pixel(2, 494)]
+    assert all(r + g + b < 140 for r, g, b in dark), dark
+
+    # The header rule is a neon magenta accent, not a theme colour.
+    r, g, b = con.screen_pixel(480, 46)
+    assert r > 120 and b > 100 and g < 120, (r, g, b)
+
+    _quit_juke(con)
+    assert con.send_line('PRINT THEME("TEXT_BG")') == before
+
+
+def test_juke_visualiser_has_vertical_gradient(fresh_console):
+    con = fresh_console
+    # TEST.WAV is a three-second tone, so the bars stay tall long enough to
+    # sample the gradient (the MOD fixture is only a brief blip).
+    _open_juke(con, "tests/TEST.WAV")
+    _w, h = con.screen_size()
+    base = h - 66
+    xs = [14 + i * 38 + 17 for i in range(24)]
+    coords = [(x, y) for x in xs for y in range(base - 2, base - 150, -2)]
+    cool = hot = False
+    for _ in range(8):
+        for r, g, b in con.screen_pixels(coords):
+            if b > 180 and g > 170 and r < 90:
+                cool = True  # electric cyan base
+            if r > 180 and b > 180 and g < 120:
+                hot = True  # neon magenta tip
+        if cool and hot:
+            break
+        time.sleep(0.2)
+    _quit_juke(con)
+    assert cool, "expected a cool gradient base in the spectrum bars"
+    assert hot, "expected a hot gradient tip in the spectrum bars"
+
+
+def test_juke_shuffle_toggle_lights_chip(fresh_console):
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JS/A.MOD"),
+                      ("tests/TEST.MP3", "JS/B.MP3")])
+    _open_juke(con, "JS")
+    off = _shuffle_lit(con)
+    assert sum(off) < 200, off
+    con._ser.sendall(b"r")
+    con.drain(quiet=0.4)
+    on = _shuffle_lit(con)
+    assert sum(on) > sum(off) + 120, (off, on)
+    con._ser.sendall(b"r")
+    con.drain(quiet=0.4)
+    back = _shuffle_lit(con)
+    assert sum(back) < 200, back
+    _quit_juke(con)
+
+
+def test_juke_volume_keys_change_level(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    full = _volume_lit(con)
+    assert full > 60, full  # defaults to an audible 100%
+    for _ in range(4):
+        con._ser.sendall(b"-")
+    con.drain(quiet=0.5)
+    lower = _volume_lit(con)
+    assert lower < full, (full, lower)
+    for _ in range(4):
+        con._ser.sendall(b"+")
+    con.drain(quiet=0.5)
+    raised = _volume_lit(con)
+    assert raised > lower, (lower, raised)
+    _quit_juke(con)
+
+
+def test_help_juke_documents_shuffle_volume_transport(console):
+    out = dump_topic(console, "JUKE")
+    low = out.lower()
+    assert "shuffle" in low
+    assert "volume" in low
+    assert "prev" in low and "next" in low
+    assert "cyberpunk" in low
+    # The old bare < / > transport notation must be gone.
+    assert "<  >" not in out
+    assert "  <\n" not in out and "  >\n" not in out
+

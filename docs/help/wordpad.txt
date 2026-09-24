@@ -26,6 +26,8 @@ text. Tab indents the line (nests a list item) and Shift+Tab outdents it.
 Enter on a list item continues the marker: a numbered item increments (1. 2.
 3.) and a bullet repeats. Enter on an empty item outdents a nested item one
 level, and on an empty top-level item clears the marker to end the list.
+Fenced code blocks paint a full-width background band, and Enter inside one
+carries the previous line's leading whitespace onto the new line.
 
 Crash resume: while a named document is dirty it is checkpointed every couple
 of seconds to a sidecar <file>.rec. Reopening a document whose sidecar is newer

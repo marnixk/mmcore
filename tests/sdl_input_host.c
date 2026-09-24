@@ -22,12 +22,29 @@
 /* ---- minimal interpreter/backend surface used by sdl_input.c ---- */
 static int g_running;
 static int g_front_feeds;
+static unsigned char g_feed[256];
+static int g_feed_n;
 static unsigned char g_inkey[MMB_INKEY];
 static int g_inkey_n;
 static char g_clip[256];
 static int g_clip_set;
+static int g_console_switches;
+static int g_console_last;
+static int g_line_empty = 1;
+static int g_in_app;
+static char g_exec[64];
+static int g_exec_n;
 
 int mmb_is_running(void) { return g_running; }
+
+int mmb_front_line_empty(void) { return g_line_empty; }
+
+const char *mmb_exec_line(const char *line)
+{
+	g_exec_n++;
+	snprintf(g_exec, sizeof g_exec, "%s", line);
+	return "";
+}
 
 char *mmb_clipboard_get(void)
 {
@@ -38,14 +55,21 @@ char *mmb_clipboard_get(void)
 
 void mmb_front_feed(const char *s, unsigned n)
 {
-	(void)s;
-	(void)n;
+	unsigned i;
+
 	g_front_feeds++;
+	for (i = 0; i < n && g_feed_n < (int)sizeof g_feed; i++)
+		g_feed[g_feed_n++] = (unsigned char)s[i];
 }
 
-int mmb_front_in_app(void) { return 0; }
+int mmb_front_in_app(void) { return g_in_app; }
 
-int mmb_console_switch(int idx) { (void)idx; return 0; }
+int mmb_console_switch(int idx)
+{
+	g_console_switches++;
+	g_console_last = idx;
+	return 1;
+}
 
 void mmb_inkey_push(int c)
 {
@@ -141,6 +165,11 @@ static void reset(void)
 {
 	g_inkey_n = 0;
 	g_front_feeds = 0;
+	g_feed_n = 0;
+	g_line_empty = 1;
+	g_in_app = 0;
+	g_exec_n = 0;
+	g_exec[0] = '\0';
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
 }
@@ -197,6 +226,139 @@ int main(void)
 	{
 		fprintf(stderr, "FAIL restored: feeds=%d queue=%d\n",
 			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
+	 * single NUL byte (#589). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_SPACE, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_front_feeds != 1 || g_feed_n != 1 || g_feed[0] != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-space: feeds=%d n=%d first=%d queue=%d\n",
+			g_front_feeds, g_feed_n,
+			g_feed_n ? g_feed[0] : -1, g_inkey_n);
+		fails++;
+	}
+
+	/* Ctrl+D at an empty prompt runs QUIT (#646). */
+	reset();
+	g_running = 0;
+	g_line_empty = 1;
+	push_key(SDLK_d, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_exec_n != 1 || strcmp(g_exec, "QUIT") != 0 ||
+	    g_front_feeds != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-d empty: exec=%d '%s' feeds=%d queue=%d\n",
+			g_exec_n, g_exec, g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* Ctrl+D on a non-empty line keeps its old meaning: the 0x04 control
+	 * byte is delivered and QUIT is not run. */
+	reset();
+	g_running = 0;
+	g_line_empty = 0;
+	push_key(SDLK_d, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_exec_n != 0 || g_front_feeds != 1 || g_feed_n != 1 ||
+	    g_feed[0] != 4)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-d non-empty: exec=%d feeds=%d first=%d\n",
+			g_exec_n, g_front_feeds, g_feed_n ? g_feed[0] : -1);
+		fails++;
+	}
+
+	/* Ctrl+D while a full-screen app owns the keyboard is not a quit. */
+	reset();
+	g_running = 0;
+	g_line_empty = 1;
+	g_in_app = 1;
+	push_key(SDLK_d, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_exec_n != 0 || g_front_feeds != 1 || g_feed_n != 1 ||
+	    g_feed[0] != 4)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-d in-app: exec=%d feeds=%d first=%d\n",
+			g_exec_n, g_front_feeds, g_feed_n ? g_feed[0] : -1);
+		fails++;
+	}
+
+	/* Ctrl+D while a blocking INPUT owns the keyboard goes to the program. */
+	reset();
+	g_running = 0;
+	sdl_input_begin_line();
+	push_key(SDLK_d, KMOD_CTRL);
+	sdl_input_pump();
+	expect_queue("ctrl-d line prompt", "\x04");
+	if (g_exec_n != 0 || g_front_feeds != 0)
+	{
+		fprintf(stderr, "FAIL ctrl-d line prompt: exec=%d feeds=%d\n",
+			g_exec_n, g_front_feeds);
+		fails++;
+	}
+	sdl_input_end_line();
+
+	/* Ctrl+D while a program runs is still its usual control byte. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_d, KMOD_CTRL);
+	sdl_input_pump();
+	expect_queue("ctrl-d running", "\x04");
+	if (g_exec_n != 0)
+	{
+		fprintf(stderr, "FAIL ctrl-d running: exec=%d\n", g_exec_n);
+		fails++;
+	}
+
+	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603); the
+	 * numeric keypad works too. */
+	reset();
+	g_running = 0;
+	g_console_switches = 0;
+	g_console_last = -1;
+	push_key(SDLK_1, KMOD_CTRL | KMOD_ALT);
+	push_key(SDLK_KP_4, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	if (g_console_switches != 2 || g_console_last != 3)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-alt-digit: switches=%d last=%d\n",
+			g_console_switches, g_console_last);
+		fails++;
+	}
+
+	/* A digit chord without both modifiers is not a console switch. */
+	reset();
+	g_running = 0;
+	g_console_switches = 0;
+	push_key(SDLK_2, KMOD_ALT);
+	push_key(SDLK_3, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_console_switches != 0)
+	{
+		fprintf(stderr, "FAIL partial chord: switches=%d\n",
+			g_console_switches);
+		fails++;
+	}
+
+	/* Ctrl+Alt+F1..F4 is retired: it must not switch consoles. */
+	reset();
+	g_running = 1;
+	g_console_switches = 0;
+	push_key(SDLK_F2, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	if (g_console_switches != 0)
+	{
+		fprintf(stderr, "FAIL retired fkey: switches=%d\n",
+			g_console_switches);
 		fails++;
 	}
 

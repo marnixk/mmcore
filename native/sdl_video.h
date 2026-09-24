@@ -38,6 +38,17 @@ int sdl_video_should_quit(void);
 void sdl_video_request_quit(void);
 void sdl_video_toggle_fullscreen(void);
 
+/* Request desktop-fullscreen (1) or a window (0). Only acts when the current
+ * state differs, so a startup --fullscreen and the Alt+Enter toggle behave
+ * identically. */
+void sdl_video_set_fullscreen(int on);
+
+/* Whether the window is in desktop-fullscreen (drawable is the display). */
+int sdl_video_is_fullscreen(void);
+
+/* Current window title (empty when no window is open); for tests/debug. */
+const char *sdl_video_window_title(void);
+
 /* Write the software framebuffer as a binary PPM (headless test/debug aid). */
 int sdl_video_dump_ppm(const char *path);
 

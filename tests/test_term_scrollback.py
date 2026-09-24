@@ -52,21 +52,43 @@ def test_term_scrollback_pages_history(kernel_image):
         con.stop()
 
 
-def test_term_scrollback_line_and_home(kernel_image):
+def test_term_scrollback_arrows_do_not_scroll(kernel_image):
+    """#592: Up/Down are cursor keys, not scrollback controls."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         assert "line 40" in _open_demo(con)
         con.drain(quiet=0.3, timeout=3)
-        one = _key(con, b"\x1b[A")
-        assert "SCROLL -1" in one
+        up = _key(con, b"\x1b[A")
+        assert "SCROLL -" not in up
+        con.drain(quiet=0.3, timeout=3)
+        pgup = _key(con, b"\x1b[5~")
+        assert "SCROLL -" in pgup
+        scrolled = _key(con, b"\x1b[B")
+        assert "SCROLL -" not in scrolled
+        still = _key(con, b"\x1b[A")
+        assert "SCROLL -" not in still
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        con.stop()
+
+
+def test_term_scrollback_page_and_home(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert "line 40" in _open_demo(con)
+        con.drain(quiet=0.3, timeout=3)
+        pgup = _key(con, b"\x1b[5~")
+        assert "SCROLL -" in pgup
         home = _key(con, b"\x1b[1~")
         assert "SCROLL -" in home
         assert "TERM demo" in home
         live = _key(con, b"q")
         assert "SCROLL -" not in live
         _quit(con)
-        assert con.send_line("PRINT 3+3") == "6"
+        assert con.send_line("PRINT 5+5") == "10"
     finally:
         con.stop()
 

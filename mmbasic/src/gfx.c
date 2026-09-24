@@ -18,6 +18,7 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 15, 1280, 1024 },
 	{ 16, 1920, 1080 },
 	{ 17, 384, 240 },
+	{ 18, 640, 360 },
 };
 
 #define MMB_RGB_AFLAG 0x10000000u
@@ -766,6 +767,17 @@ int mmb_gfx_mode_for_size(int w, int h)
 		}
 	}
 	return best ? best : big;
+}
+
+/* Retune the display to the active console's mode without disturbing its
+ * graphics pages. Virtual-console switching calls this so each console gets
+ * its own MODE back (#580). */
+void mmb_gfx_reapply_mode(void)
+{
+	if (!G.plat || !G.plat->resize_hdmi)
+		return;
+	if (G.gfx.w > 0 && G.gfx.h > 0)
+		G.plat->resize_hdmi(G.gfx.w, G.gfx.h);
 }
 
 void mmb_gfx_set_mode(int mode, int bits)

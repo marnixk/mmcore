@@ -3,6 +3,33 @@
 from ihelp_util import dump_topic
 
 
+def _settings_open(con):
+    """Open SETTINGS as a dialog and return the raw serial frame text."""
+    assert con._ser is not None
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"SETTINGS\r")
+    return con.drain(quiet=0.9).decode(errors="replace")
+
+
+def _settings_keys(con, data, quiet=0.4):
+    assert con._ser is not None
+    con._ser.sendall(data)
+    return con.drain(quiet=quiet).decode(errors="replace")
+
+
+def _frame_rows(text):
+    return [ln.rstrip() for ln in text.replace("\r", "\n").split("\n")]
+
+
+def _has_inset_border(text):
+    rows = _frame_rows(text)
+    border = [ln for ln in rows if "+" in ln and "-" in ln]
+    if not border:
+        return False
+    top = border[0]
+    return top.startswith(" ") and top.index("+") > 0
+
+
 def _ini_path(con):
     for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
         out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
@@ -353,4 +380,185 @@ def test_files_hides_dotfiles(fresh_console):
     assert ".SECRET" not in seen
     assert ".MMBASIC" not in seen
     con._ser.sendall(b"q")
+
+
+# --- #590/#591: SETTINGS dialog + hub ------------------------------------
+
+
+def test_settings_dialog_is_inset_not_fullscreen(console):
+    """#590: SETTINGS opens a framed inset panel, not a full-screen takeover."""
+    con = console
+    seen = _settings_open(con)
+    assert "SETTINGS" in seen.upper()
+    assert _has_inset_border(seen), seen
+    _settings_keys(con, b"\x1b")
+    assert con.send_line("PRINT 6*7") == "42"
+
+
+def test_settings_hub_lists_categories(console):
+    """#591: the hub has peer category slots, Appearance first."""
+    con = console
+    seen = _settings_open(con).upper()
+    for name in ("APPEARANCE", "NETWORK", "SYSTEM", "SOUND"):
+        assert name in seen, seen
+    assert "THEME" in seen, seen
+    _settings_keys(con, b"\x1b")
+    assert con.send_line("PRINT 1+1") == "2"
+
+
+def test_settings_network_section_shows_status(console):
+    """#591: Network is a real peer section wired to existing status/config."""
+    con = console
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+    _settings_open(con)
+    _settings_keys(con, b"\x1b[B")  # Appearance -> Network
+    seen = _settings_keys(con, b"\r", quiet=0.6).upper()
+    assert "NETWORK" in seen, seen
+    assert "WI-FI" in seen, seen
+    assert "NTP" in seen, seen
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 2+2") == "4"
+
+
+def test_settings_appearance_theme_applies_and_persists(console):
+    """#509 moves under Appearance: pick a theme, Enter saves it."""
+    con = console
+    assert con.send_line("OPTION THEME SLATE") == ""
+    _settings_open(con)
+    _settings_keys(con, b"\r")       # open Appearance
+    _settings_keys(con, b"\x1b[B")   # Slate -> Forest (live preview)
+    _settings_keys(con, b"\r")       # apply and close
+    listed = con.send_line("OPTION LIST ALL").upper()
+    assert "FOREST" in listed, listed
+    assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+
     con.drain(quiet=0.3)
+
+
+# --- #611: SETTINGS legibility across every shipped theme -----------------
+
+SHIPPED_THEMES = [
+    "Paper", "Cloud", "Snow", "Night", "Nord",
+    "Slate", "Forest", "Violet", "Turbo", "Phosphor",
+]
+
+
+def _srgb_channel(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _contrast(fg, bg):
+    def luma(p):
+        return (
+            0.2126 * _srgb_channel(p[0])
+            + 0.7152 * _srgb_channel(p[1])
+            + 0.0722 * _srgb_channel(p[2])
+        )
+
+    a, b = luma(fg), luma(bg)
+    if a < b:
+        a, b = b, a
+    return (a + 0.05) / (b + 0.05)
+
+
+def _cell(col, row):
+    """A pixel at the vertical middle of a text cell."""
+    return (col * 8 + 2, row * 16 + 8)
+
+
+def _hub_rect(con):
+    """Mirror tui_dialog_geom for the 68x13 SETTINGS hub, in text cells."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    pw = min(68, cols - 2)
+    ph = min(13, rows - 2)
+    px = max(1, (cols - pw) // 2)
+    py = max(1, (rows - ph) // 2)
+    return px, py, pw, ph
+
+
+def test_settings_legible_in_every_theme(console):
+    """#611: the hub's body text, focus and hints stay legible in every theme.
+
+    Turbo previously drew the list with edit_fg (near-white) on dlg_bg (grey)
+    and the hint keys in hot (blue) on edit_bg (blue), so the dialog washed out
+    and the <key> tags vanished. Walk every shipped theme with the hub open and
+    check the rendered pixels instead of trusting the role names.
+    """
+    con = console
+    x, y, w, h = _hub_rect(con)
+    row = y + 5          # Network, the second hub row
+    hint_row = y + h - 2  # last interior row holds the hints
+    body_at = _cell(x + w - 5, row)
+    focus_at = _cell(x + w - 5, row - 1)
+    name_at = [_cell(x + 5 + i, row) for i in range(8)]
+    hint_bg_at = _cell(x + w - 4, hint_row)
+    hint_at = [_cell(x + 2 + i, hint_row) for i in range(w - 5)]
+    samples = [body_at, focus_at] + name_at + [hint_bg_at] + hint_at
+    try:
+        for theme in SHIPPED_THEMES:
+            assert con.send_line(f"OPTION THEME {theme}") == ""
+            _settings_open(con)
+            # One screendump serves the whole theme.
+            vals = con.screen_pixels(samples)
+            body, focus = vals[0], vals[1]
+            name = max(_contrast(p, body) for p in vals[2:10])
+            hint_bg = vals[10]
+            hint = max(_contrast(p, hint_bg) for p in vals[11:])
+            assert name >= 4.5, (theme, "body text", name)
+            assert focus != body, (theme, "selection")
+            assert hint >= 4.5, (theme, "hints", hint)
+            _settings_keys(con, b"\x1b")
+            assert con.send_line("PRINT 0") == "0"
+    finally:
+        assert con.send_line("OPTION THEME SLATE") == ""
+
+
+# --- #623: Appearance preview fits the panel and clears the hint row -------
+
+
+def test_settings_appearance_preview_fits_above_hint(console):
+    """The live PREVIEW swatch must sit inside the panel with its bottom
+    border above the hint row, not overlapping it (#623)."""
+    import re
+
+    con = console
+    _settings_open(con)
+    frame = _settings_keys(con, b"\r", quiet=0.6)
+    rows = _frame_rows(frame)
+
+    title = next(i for i, ln in enumerate(rows) if "Appearance - theme" in ln)
+    prev = next(i for i, ln in enumerate(rows) if "PREVIEW" in ln)
+    hint = next(i for i, ln in enumerate(rows) if "<Up/Down> Preview" in ln)
+
+    # Panel top border: the last border-only line before the section title
+    # (the hub's own border precedes it in the same frame).
+    top = None
+    for i in range(title - 1, -1, -1):
+        stripped = rows[i].strip()
+        if stripped and set(stripped) <= {"+", "-"} and "+-" in stripped:
+            top = i
+            break
+    assert top is not None, rows
+    panel_right = rows[top].rindex("+")
+
+    # Preview bottom border: first horizontal run after the title that sits
+    # clear of the theme list.
+    bottom = None
+    for i in range(prev + 1, hint):
+        m = re.search(r"\+-{10,}\+", rows[i])
+        if m and m.start() >= 22:
+            bottom = i
+            break
+    assert bottom is not None, rows
+    assert bottom < hint, ("preview overlaps hint row", rows)
+    assert rows[bottom].rindex("+") < panel_right, rows
+    # Nothing of the swatch is drawn on the hint row.
+    assert not re.search(r"\+-{2,}", rows[hint][22:]), rows
+
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 6*7") == "42"
+

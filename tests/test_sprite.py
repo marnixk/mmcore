@@ -30,6 +30,19 @@ def _pixel(console, x, y):
     return int(out.split()[0])
 
 
+# Editor layout from mmbasic/src/cmd_sprite.c: the cell grid starts at the TUI
+# character cell (2, 2) and each sprite pixel is one character cell.
+SM_OX, SM_OY = 2, 2
+CELL_W, CELL_H = 8, 16
+
+
+def _grid_pixel(console, x, y):
+    """RGB of editor sprite pixel (x, y) as rendered on the TUI."""
+    px = (SM_OX + x) * CELL_W + CELL_W // 2
+    py = (SM_OY + y) * CELL_H + CELL_H // 2
+    return console.screen_pixel(px, py)
+
+
 def _rgb_is_red(v):
     r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
     return r > 150 and g < 130 and b < 130
@@ -218,6 +231,39 @@ def test_sprite_hide_and_close_keep_order_consistent(fresh_console):
     assert _rgb_is_green(_pixel(c, 30, 30))
 
 
+def _read_shown_red_pair(c):
+    c.send_line("CLS")
+    c.send_line("BOX 0,0,80,80,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("BOX 0,0,8,8,1,RGB(255,0,0),RGB(255,0,0)")
+    c.send_line("SPRITE READ 1,0,0,8,8")
+    c.send_line("SPRITE READ 2,0,0,8,8")
+    c.send_line("BOX 0,0,8,8,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("SPRITE SHOW 1,16,16,1")
+    c.send_line("SPRITE SHOW 2,40,40,1")
+    assert _rgb_is_red(_pixel(c, 18, 18))
+    assert _rgb_is_red(_pixel(c, 42, 42))
+
+
+def test_sprite_close_all_restores_every_sprite(fresh_console):
+    """#587: the documented `SPRITE CLOSE ALL` frees every sprite and restores
+    their backgrounds; it must also not treat ALL as a sprite number."""
+    c = fresh_console
+    _read_shown_red_pair(c)
+    assert c.send_line("SPRITE CLOSE ALL") == ""
+    assert _rgb_is_green(_pixel(c, 18, 18))
+    assert _rgb_is_green(_pixel(c, 42, 42))
+    assert c.send_line("PRINT 6*7") == "42"
+
+
+def test_sprite_close_bare_restores_background(fresh_console):
+    """A bare `SPRITE CLOSE` (reset all) restores before freeing."""
+    c = fresh_console
+    _read_shown_red_pair(c)
+    assert c.send_line("SPRITE CLOSE") == ""
+    assert _rgb_is_green(_pixel(c, 18, 18))
+    assert _rgb_is_green(_pixel(c, 42, 42))
+
+
 def test_sprite_transparent_pixels_keep_background(fresh_console):
     c = fresh_console
     c.send_line("CLS")
@@ -246,6 +292,33 @@ def test_sprite_editor_draws_and_saves_png(fresh_console):
     assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
     assert _rgb_is_red(_pixel(c, 0, 0))
     assert _is_red(c.screen_pixel(0, 0))
+    c.send_line("SPRITE CLOSE 1")
+
+
+def test_sprite_editor_grid_matches_saved_colours(fresh_console):
+    """#587: the grid shows the IBM palette the PNG stores (1 = blue, 4 = red).
+
+    Rendering the grid through the editor theme palette made colour 4 appear
+    blue on screen while the saved PNG contained red.
+    """
+    c = fresh_console
+    _open_editor(c, 'SPRITE EDIT "ED_PAL.PNG"')
+    _keys(c, b"4 ")          # red at (0,0)
+    _keys(c, b"\x1b[C")      # -> (1,0)
+    _keys(c, b"1 ")          # blue at (1,0)
+    _keys(c, b"\x1b[C")      # -> (2,0): cursor off the drawn pixels
+    on_red = _grid_pixel(c, 0, 0)
+    on_blue = _grid_pixel(c, 1, 0)
+    _keys(c, b"s", quiet=0.5)
+    _quit_editor(c)
+
+    assert _is_red(on_red), on_red
+    assert _is_blue(on_blue), on_blue
+
+    assert c.send_line('SPRITE LOADPNG 1, "ED_PAL.PNG"') == ""
+    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
+    assert _rgb_is_red(_pixel(c, 0, 0))
+    assert _rgb_is_blue(_pixel(c, 1, 0))
     c.send_line("SPRITE CLOSE 1")
 
 

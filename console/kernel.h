@@ -55,6 +55,7 @@ private:
 	void PollUsbFKeys (void);
 	void PollUsbConsole (void);
 	void PollUsbScreenshot (void);
+	void PollUsbAppPicker (void);
 	void PollCadReboot (void);
 	void ApplyRawKeys (void);
 
@@ -89,6 +90,7 @@ private:
 	volatile int		m_MouseWheel;
 	volatile int		m_nBreak;
 	volatile int		m_nCad;
+	volatile int		m_CadLatched;
 	char			m_RepeatSeq[16];
 	unsigned		m_RepeatLen;
 	unsigned		m_HoldMs;
@@ -103,6 +105,7 @@ private:
 	unsigned char		m_FkeyHidSent;
 	unsigned char		m_ConsoleHidSent;
 	unsigned char		m_ShotHidSent;
+	unsigned char		m_PickerHidSent;
 	int			m_UsbBurst;
 };
 

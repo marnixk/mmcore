@@ -2,8 +2,10 @@ name: CONSOLES
 kind: page
 
 Virtual consoles let one Raspberry Pi host several independent MMBasic
-sessions. Switch with Ctrl+Alt+F1 through Ctrl+Alt+F4; the active console is
-the one whose screen is shown.
+sessions. Switch with Ctrl+Alt+1 through Ctrl+Alt+4; the active console is
+the one whose screen is shown. The same chord works on the Linux/SDL build,
+where the desktop claims Ctrl+Alt+F1..F4 for its own virtual terminals, so
+those function-key chords are retired.
 
 Each console keeps its own interpreter state, so programs and variables do not
 leak between them. A console also keeps its own input line and command history,
@@ -11,10 +13,13 @@ and its own screen: what you drew or printed on one console is still there when
 you come back.
 
 Opening a console
-  Ctrl+Alt+F1   first console (the one shown at boot)
-  Ctrl+Alt+F2   second console
-  Ctrl+Alt+F3   third console
-  Ctrl+Alt+F4   fourth console
+  Ctrl+Alt+1   first console (the one shown at boot)
+  Ctrl+Alt+2   second console
+  Ctrl+Alt+3   third console
+  Ctrl+Alt+4   fourth console
+
+The numeric keypad works as well: Ctrl+Alt+keypad 1..4 selects the same
+console as the top-row digit (NumLock is ignored for the chord).
 
 A console that has not been used yet starts with the MMBasic banner and a
 prompt, just like a fresh boot.

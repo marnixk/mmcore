@@ -16,6 +16,7 @@ struct mmb_cli_opts {
 	const char *term_host; /* MMB_CLI_TERM: host, or NULL for the menu */
 	int term_port;         /* MMB_CLI_TERM: TCP port (default 23) */
 	int stay;              /* --repl/--stay: fall back to the REPL after */
+	int fullscreen;        /* --fullscreen: SDL window opens fullscreen */
 };
 
 /* Parse startup options (--drive, --drive-root, --term, --repl, and a

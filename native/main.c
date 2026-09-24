@@ -124,5 +124,8 @@ int main(int argc, char **argv)
 		fputs("> ", stdout);
 		fflush(stdout);
 	}
+	/* EOF at the empty prompt is Ctrl+D: run QUIT for a clean shutdown,
+	 * matching the SDL window path (#646). */
+	run_line("QUIT");
 	return 0;
 }

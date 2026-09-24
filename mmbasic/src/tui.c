@@ -272,35 +272,44 @@ void tui_pad(int x, int y, const char *s, int width, int fg, int bg)
 		tui_put(x + i, y, ' ', fg, bg);
 }
 
-/* Render a status-bar hint line.  ``<...>`` spans are drawn in ``hot_fg`` so
- * they read as key hints; everything else uses ``fg``.  Shared by the
- * PACKAGE, FILES and app-PATH status bars so the tag loop lives in one
- * place (issue #569). */
-void tui_status_hint(int row, const char *hint, int hot_fg, int fg, int bg)
+/* Render a status-bar hint line clipped to [x, x+width).  ``<...>`` spans are
+ * drawn in ``hot_fg`` so they read as key hints; everything else uses ``fg``.
+ * Shared by the PACKAGE, FILES and app-PATH status bars, and by the modal
+ * dialog shell, so the tag loop lives in one place (issue #569). */
+void tui_status_hint_at(int x, int row, int width, const char *hint, int hot_fg,
+			int fg, int bg)
 {
-	int w = tui_cols();
+	int end;
 	int i, p;
 
-	tui_fill(0, row, w, 1, ' ', fg, bg);
+	if (width < 1)
+		return;
+	end = x + width;
+	tui_fill(x, row, width, 1, ' ', fg, bg);
 	if (!hint)
 		return;
-	for (i = 0, p = 1; hint[i] && p < w - 1; i++)
+	for (i = 0, p = x + 1; hint[i] && p < end - 1; i++)
 	{
 		if (hint[i] == '<')
 		{
 			tui_put(p++, row, '<', hot_fg, bg);
 			i++;
-			while (hint[i] && hint[i] != '>' && p < w - 1)
+			while (hint[i] && hint[i] != '>' && p < end - 1)
 			{
 				tui_put(p++, row, (unsigned char)hint[i], hot_fg, bg);
 				i++;
 			}
-			if (hint[i] == '>' && p < w - 1)
+			if (hint[i] == '>' && p < end - 1)
 				tui_put(p++, row, '>', hot_fg, bg);
 		}
-		else if (p < w - 1)
+		else if (p < end - 1)
 			tui_put(p++, row, (unsigned char)hint[i], fg, bg);
 	}
+}
+
+void tui_status_hint(int row, const char *hint, int hot_fg, int fg, int bg)
+{
+	tui_status_hint_at(0, row, tui_cols(), hint, hot_fg, fg, bg);
 }
 
 void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg)
@@ -440,4 +449,96 @@ void tui_flush(void)
 			if (row_dirty[y])
 				ser_row(y);
 	}
+}
+
+/* ---- modal dialog shell (#590) -------------------------------------- */
+
+/* Centre a panel of want_w x want_h cells, leaving a one-cell margin on every
+ * side. Zero or negative requests fill the available screen minus the margin.
+ * The result is clamped so the panel always fits the current text grid. */
+void tui_dialog_geom(int want_w, int want_h, int *x, int *y, int *w, int *h)
+{
+	int c = tui_cols();
+	int r = tui_rows();
+	int ww = want_w > 0 ? want_w : c - 4;
+	int hh = want_h > 0 ? want_h : r - 2;
+
+	if (ww > c - 2)
+		ww = c - 2;
+	if (hh > r - 2)
+		hh = r - 2;
+	if (ww < 6)
+		ww = c < 6 ? c : 6;
+	if (hh < 3)
+		hh = r < 3 ? r : 3;
+	*x = (c - ww) / 2;
+	*y = (r - hh) / 2;
+	if (*x < 1)
+		*x = 1;
+	if (*y < 1)
+		*y = 1;
+	if (*x + ww > c)
+		ww = c - *x;
+	if (*y + hh > r)
+		hh = r - *y;
+	if (ww < 0)
+		ww = 0;
+	if (hh < 0)
+		hh = 0;
+	*w = ww;
+	*h = hh;
+}
+
+/* Draw a framed dialog panel with a title bar on its first interior row. The
+ * interior below the title is cleared to body_bg; the caller composes content
+ * at (x+2, y+2) and flushes with tui_flush(). */
+void tui_dialog_panel(int x, int y, int w, int h, const char *title,
+		      int body_fg, int body_bg, int brd_fg, int brd_bg,
+		      int title_fg, int title_bg)
+{
+	int n, tx;
+	if (w < 4 || h < 3)
+		return;
+	tui_fill(x + 1, y + 1, w - 2, h - 2, ' ', body_fg, body_bg);
+	tui_fill(x + 1, y + 1, w - 2, 1, ' ', title_fg, title_bg);
+	tui_frame(x, y, w, h, brd_fg, brd_bg);
+	if (!title || !title[0])
+		return;
+	n = (int)strlen(title);
+	tx = x + (w - n) / 2;
+	if (tx < x + 2)
+		tx = x + 2;
+	if (tx + n > x + w - 1)
+		tx = x + w - 1 - n;
+	if (tx < x + 1)
+		tx = x + 1;
+	tui_puts(tx, y + 1, title, title_fg, title_bg);
+}
+
+/* ---- overlay dialogs (#623, #624) ------------------------------------ */
+
+static int s_overlay_active[MMB_MAX_CONSOLES];
+static int s_overlay_saved[MMB_MAX_CONSOLES];
+
+void tui_overlay_begin(void)
+{
+	if (g_console < 0 || g_console >= MMB_MAX_CONSOLES)
+		return;
+	s_overlay_active[g_console] = 1;
+	s_overlay_saved[g_console] = 0;
+	if (G.plat && G.plat->console_save)
+		s_overlay_saved[g_console] = G.plat->console_save(g_console, 0);
+}
+
+int tui_overlay_end(void)
+{
+	int restored = 0;
+	if (g_console < 0 || g_console >= MMB_MAX_CONSOLES)
+		return 0;
+	if (s_overlay_active[g_console] && s_overlay_saved[g_console] &&
+	    G.plat && G.plat->console_restore)
+		restored = G.plat->console_restore(g_console, 0);
+	s_overlay_active[g_console] = 0;
+	s_overlay_saved[g_console] = 0;
+	return restored ? 1 : 0;
 }

@@ -81,6 +81,7 @@ static void help(const char *prog)
 	printf("                    (--drive=DIR and --drive-root=DIR are also accepted)\n");
 	printf("  --term [HOST[:PORT]]  run TERM as a sealed session (exit when it ends)\n");
 	printf("  --repl, --stay    return to the REPL when an .app or TERM session ends\n");
+	printf("  --fullscreen      start the SDL window in fullscreen (desktop clients)\n");
 	printf("  --help, -h        show this help\n");
 	printf("\n"
 	       "A positional argument that names an existing .app file runs it as a\n"
@@ -89,6 +90,8 @@ static void help(const char *prog)
 	printf("\nEnvironment:\n");
 	printf("  MMB_DRIVE_ROOT DIR     base directory for the C: drive (default ~/.mmbasic)\n");
 	printf("  MMB_SDL_DUMP FILE      write the framebuffer to FILE as PPM on exit (SDL build)\n");
+	printf("  MMB_SDL_HARNESS FILE   run a scripted synthetic input session from FILE (SDL build)\n");
+	printf("  MMB_PAINT_FORCE_MOUSE=1  report a mouse as present so PAINT starts headless\n");
 	printf("  MMB_SDL_SERIAL=1       mirror the serial stream to stdout even on a TTY\n");
 	printf("  MMB_CLIPBOARD TEXT     seed the host clipboard at startup (SDL build)\n");
 	printf("  SDL_VIDEODRIVER=dummy  run the SDL build without a display\n");
@@ -155,6 +158,11 @@ const struct mmb_cli_opts *mmb_cli_parse(int argc, char **argv)
 		else if (strcmp(a, "--repl") == 0 || strcmp(a, "--stay") == 0)
 		{
 			s_opts.stay = 1;
+		}
+		else if (strcmp(a, "--fullscreen") == 0)
+		{
+			/* SDL build opens the window fullscreen; a no-op headless. */
+			s_opts.fullscreen = 1;
 		}
 		else if (a[0] != '-')
 		{

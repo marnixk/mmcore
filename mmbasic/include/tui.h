@@ -50,11 +50,32 @@ void tui_put(int x, int y, int ch, int fg, int bg);
 void tui_puts(int x, int y, const char *s, int fg, int bg);
 void tui_pad(int x, int y, const char *s, int width, int fg, int bg);
 void tui_status_hint(int row, const char *hint, int hot_fg, int fg, int bg);
+void tui_status_hint_at(int x, int row, int width, const char *hint, int hot_fg,
+			int fg, int bg);
 void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg);
 void tui_hline(int x, int y, int w, int left, int mid, int right, int fg, int bg);
 void tui_vline(int x, int y, int h, int ch, int fg, int bg);
 void tui_frame(int x, int y, int w, int h, int fg, int bg);
 void tui_cursor(int x, int y, int vis);
 void tui_flush(void);
+
+/* ---- modal dialog shell (#590) ------------------------------------------
+ * A dialog is a framed, centred inset panel drawn over the composed screen
+ * instead of a full-screen takeover. Callers fill the backdrop (for example
+ * with tui_clear) and then compose the panel interior with the normal tui_*
+ * helpers; the title sits on its own bar under the top border. */
+void tui_dialog_geom(int want_w, int want_h, int *x, int *y, int *w, int *h);
+void tui_dialog_panel(int x, int y, int w, int h, const char *title,
+		      int body_fg, int body_bg, int brd_fg, int brd_bg,
+		      int title_fg, int title_bg);
+
+/* ---- overlay dialogs (#623, #624) ---------------------------------------
+ * A prompt-level dialog (SETTINGS, the app launcher) draws over the REPL.
+ * ``tui_overlay_begin`` snapshots the visible screen before the TUI clears
+ * it; ``tui_overlay_end`` repaints the snapshot after the dialog closes so
+ * the prompt/scrollback return instead of a blank window. Both are no-ops
+ * (end returns 0) when the platform has no console snapshot support. */
+void tui_overlay_begin(void);
+int tui_overlay_end(void);
 
 #endif

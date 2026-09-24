@@ -21,6 +21,8 @@
 #include "sdl_video.h"
 #include "sdl_input.h"
 #include "sdl_clipboard.h"
+#include "sdl_harness.h"
+#include "paint.h"
 
 #include <SDL.h>
 
@@ -125,8 +127,21 @@ int main(int argc, char **argv)
 			SDL_GetError());
 		return 1;
 	}
+	/* --fullscreen: enter fullscreen before the first frame so the boot
+	 * banner is already fullscreen. Alt+Enter still toggles. */
+	if (cli->fullscreen)
+		sdl_video_set_fullscreen(1);
 
 	mmb_platform_bind_sdl();
+	/* Test-only override (#633): pretend a mouse is attached so headless
+	 * harnesses can enter PAINT. Unset on real targets: default unchanged. */
+	{
+		const char *force = getenv("MMB_PAINT_FORCE_MOUSE");
+
+		if (force && force[0] && strcmp(force, "0") != 0)
+			pt_force_mouse(1);
+	}
+	sdl_harness_init();
 	sdl_clipboard_init();
 	SDL_StartTextInput();
 	mmb_front_init(front_emit, 0);
@@ -183,6 +198,7 @@ int main(int argc, char **argv)
 
 	while (!sdl_video_should_quit())
 	{
+		sdl_harness_poll(); /* test-only: one scripted step per frame */
 		sdl_input_pump();
 		mmb_poll(); /* CONNECT/TERM/FTP, audio mix, ON TICK at the prompt */
 		mmb_console_poll();

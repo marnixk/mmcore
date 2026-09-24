@@ -76,6 +76,47 @@ Each bundle gets a short lowercase slug used for its branch and thread title.
    concurrently.
 5. Re-list issues and repeat until the `issue-loop` completion audit holds.
 
+### Periodic check-in (every ~30 min)
+
+A batch can take a while and the tracker can grow while it runs. Re-check the
+tracker at least every ~30 minutes and again whenever a batch finishes, so a
+newly filed **ready** issue joins this run instead of waiting for the next one.
+
+At each check-in:
+
+1. List and diff:
+
+   ```bash
+   gh issue list --state open --limit 100 --json number,title,body,labels
+   ```
+
+   Ignore numbers already bundled, queued, merged, or skipped in this run.
+2. Apply the `issue-loop` **not ready** skip rule (title/label/body `not ready`,
+   or the `follow-up` label) to each new issue; skip and note those.
+3. Place each new ready issue by how it interacts with in-flight work:
+   - **File-disjoint** from every in-flight worker → start it now. Prefer
+     attaching it to a running worker that already owns the same test module
+     and has not opened its PR yet; otherwise spawn a new worker
+     (`t3-orchestrate.mjs spawn --slug <slug> …`) with the bundle prompt.
+   - **Overlaps an in-flight worker's files** → queue it for the next batch
+     after those PRs merge, so two workers never edit the same files. Record it
+     in the bundle map as `queued (after <slug>)`.
+     Decide overlap from the files each worker reported, or check directly with
+     `git -C <worktree> fetch origin master && git -C <worktree> diff
+     --name-only origin/master...HEAD`.
+   - **Unknown blast radius** → its own bundle, or leave it to the coordinator.
+4. Update the T3 task list and the bundle → issue map, then log
+   `[checkin] +<slug> #N,#M`, `[checkin] queued #N after <slug>`, or
+   `[checkin] skipped #N (<reason>)`.
+
+A check-in with nothing new logs `[checkin] no changes` and the coordinator
+keeps watching the current workers.
+
+**Release cutoff.** The single minor release still closes the run, so do not
+start new workers once the batch's full-suite step has begun. A worker started
+at the last check-in must have its PR merged before that step, or it is deferred
+to the next run and listed under “queued” in the final summary.
+
 ## Worker (one thread per bundle)
 
 Do **not** merge or release. Stop at “PR ready”.
@@ -94,7 +135,17 @@ Do **not** merge or release. Stop at “PR ready”.
    issue in the bundle. Mark ready when tests pass.
 6. Register the PR with T3: `link_pull_request` (required for every PR).
 7. Report to the coordinator: issue numbers, branch, PR URL, test status,
-   blockers. Then stop.
+   blockers, and the files/areas touched (`git diff --name-only
+   origin/master...HEAD`). The file list is what lets the coordinator place new
+   issues at a check-in without creating conflicts.
+8. **Findings (required).** Before stopping, list every unexpected thing you hit
+   — a latent bug, a wrong assumption in the ticket, a surprising host/linker
+   behaviour, a stale code comment, a documented limitation, etc. File the
+   out-of-scope defects as `gh issue create --label bug --label follow-up`
+   (never fix them in-loop) and give the issue number; for anything you judged
+   not worth a ticket, say what and why. Report **all** of them, ticketed or
+   not, however minor — the coordinator relays them to the user for triage.
+   Write `none` if you genuinely hit nothing. Then stop.
 
 ## Spawning workers
 
@@ -173,7 +224,10 @@ a release. Stop when the PR is ready.
 - Open a PR against master with `Fixes #<N>` for every issue in the bundle;
   use ManagePullRequest or gh; mark ready when tests pass.
 - Register the PR with link_pull_request.
-- Report: issues, branch, PR URL, test status, blockers. Then stop.
+- Report: issues, branch, PR URL, test status, blockers, and all **Findings**
+  (latent bugs, stale ticket assumptions, host/linker surprises, documented
+  limits — ticketed as `bug`+`follow-up` where out of scope, or listed with a
+  reason). Write `none` if there were none. Then stop.
 ```
 
 ## Hazards / do not
@@ -189,3 +243,7 @@ a release. Stop when the PR is ready.
 - Keep the *different bundles* file-disjoint. Issues that touch the same files
   belong in one bundle; split across bundles, they will conflict at merge and
   must be serialized by the coordinator.
+- Do not start a worker for an issue that touches files an in-flight worker is
+  editing; queue it for the next batch (see the periodic check-in rules).
+- Do not extend the run indefinitely for issues that arrive mid-flight; respect
+  the release cutoff and leave later arrivals for the next run.

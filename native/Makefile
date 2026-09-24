@@ -51,7 +51,8 @@ OUT_STDIO := $(CURDIR)/mmbasic$(EXE)
 OUT_SDL   := $(CURDIR)/mmcore$(EXE)
 
 CFLAGS += -DMMB_PLATFORM_POSIX \
-	  -I$(CURDIR) -I$(MMB)/include -I$(MMB)/third_party -I$(CONSOLE) \
+	  -I$(CURDIR) -I$(MMB)/include -I$(MMB)/src -I$(MMB)/third_party \
+	  -I$(CONSOLE) \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function
 LDLIBS += -lm
 
@@ -73,7 +74,7 @@ COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c $(NET_SRC) cli.c
 STDIO_SRCS := platform_stdio.c main.c
 SDL_SRCS   := platform_sdl.c sdl_video.c sdl_scale.c sdl_console.c sdl_tui.c \
-	      sdl_input.c sdl_audio.c sdl_clipboard.c main_sdl.c
+	      sdl_input.c sdl_audio.c sdl_clipboard.c sdl_harness.c main_sdl.c
 
 COMMON_OBJS := $(addprefix $(BUILD)/,$(notdir $(patsubst %.c,%.o,$(COMMON_SRCS))))
 STDIO_OBJS  := $(COMMON_OBJS) $(BUILD)/platform_stdio.o $(BUILD)/main.o
@@ -109,6 +110,21 @@ $(OUT_SDL):
 	@echo "SDL2 not found (pkg-config sdl2); skipping $@"
 $(SDL_ONLY_OBJS): ;
 else
+# Runtime window icon: embed the branding art as RGBA bytes so the M avatar
+# shows without linking SDL_image (see sdl_video.c set_window_icon()).
+ICON_SIZE := 64
+ICON_C    := $(BUILD)/mmcore_icon.c
+ICON_OBJ  := $(BUILD)/mmcore_icon.o
+SDL_OBJS  += $(ICON_OBJ)
+
+$(ICON_C): $(REPO)/scripts/gen-appicon.py \
+	   $(REPO)/assets/branding/mmcore-app-icon.png | $(BUILD)
+	python3 $(REPO)/scripts/gen-appicon.py --carray mmcore_icon \
+		$(ICON_SIZE) $@
+
+$(ICON_OBJ): $(ICON_C)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) -c $< -o $@
+
 $(OUT_SDL): $(SDL_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SDL_OBJS) $(LDLIBS) $(SDL_LIBS)
 $(SDL_ONLY_OBJS): CFLAGS += $(SDL_CFLAGS)

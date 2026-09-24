@@ -31,6 +31,8 @@ typedef struct {
 	int saved_font_scale;
 	int w, h;
 	int front;
+	int muted;
+	int vol_saved;
 	unsigned last_ms;
 	float peak[MMB_AUDIO_BANDS];
 	unsigned col_bg, col_panel, col_panel2, col_hot, col_text, col_dim;
@@ -41,6 +43,8 @@ typedef struct {
 	int active;
 	int n;
 	int cur;
+	int shuffle;
+	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
 	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
 } juke_queue;
@@ -48,36 +52,80 @@ typedef struct {
 static juke_ui s_ui[MMB_MAX_CONSOLES];
 #define U (s_ui[g_console])
 static juke_queue s_q;
+static unsigned s_rand = 0x9E3779B9u;
 
-/* ---- colour helpers --------------------------------------------------- */
-
-static unsigned juke_theme(const char *name, unsigned fallback)
+/* Small xorshift PRNG; no libc rand() on bare metal. */
+static unsigned juke_rand(void)
 {
-	unsigned rgb = 0;
-	if (mmb_editor_theme_rgb(name, &rgb))
-		return rgb & 0xFFFFFFu;
-	return fallback & 0xFFFFFFu;
+	s_rand ^= s_rand << 13;
+	s_rand ^= s_rand >> 17;
+	s_rand ^= s_rand << 5;
+	return s_rand;
 }
 
-/* Lift a colour until it is clearly readable on a dark background. */
-static unsigned juke_lift(unsigned c)
+/* Track name at play-order position pos ("" when out of range). */
+static const char *juke_track(int pos)
 {
-	int r = (int)((c >> 16) & 255);
-	int g = (int)((c >> 8) & 255);
-	int b = (int)(c & 255);
-	int lum = (r * 299 + g * 587 + b * 114) / 1000;
-	int min = 110, den;
-	if (lum >= min)
-		return c;
-	den = 255 - lum + 1;
-	r += (255 - r) * (min - lum) / den;
-	g += (255 - g) * (min - lum) / den;
-	b += (255 - b) * (min - lum) / den;
-	if (r > 255) r = 255;
-	if (g > 255) g = 255;
-	if (b > 255) b = 255;
-	return (unsigned)((r << 16) | (g << 8) | b);
+	int idx;
+	if (pos < 0 || pos >= s_q.n)
+		return "";
+	idx = s_q.order[pos];
+	if (idx < 0 || idx >= s_q.n)
+		return "";
+	return s_q.item[idx];
 }
+
+/* Toggle shuffle. The currently playing track stays put; the rest is
+ * reordered so NEXT/PREV follow the shuffled order. */
+static void juke_set_shuffle(int on)
+{
+	int i, j;
+	on = on ? 1 : 0;
+	if (on == s_q.shuffle || s_q.n <= 1)
+	{
+		s_q.shuffle = on && s_q.n > 1;
+		return;
+	}
+	j = s_q.cur >= 0 && s_q.cur < s_q.n ? s_q.order[s_q.cur] : -1;
+	if (on)
+	{
+		for (i = 0; i < s_q.n; i++)
+			s_q.order[i] = i;
+		for (i = s_q.n - 1; i > 0; i--)
+		{
+			int k = (int)(juke_rand() % (unsigned)(i + 1));
+			int t = s_q.order[i];
+			s_q.order[i] = s_q.order[k];
+			s_q.order[k] = t;
+		}
+		if (j >= 0)
+		{
+			for (i = 0; i < s_q.n; i++)
+			{
+				if (s_q.order[i] == j)
+				{
+					s_q.order[i] = s_q.order[s_q.cur];
+					s_q.order[s_q.cur] = j;
+					break;
+				}
+			}
+		}
+	}
+	else
+	{
+		for (i = 0; i < s_q.n; i++)
+			s_q.order[i] = i;
+		if (j >= 0)
+			s_q.cur = j;
+	}
+	s_q.shuffle = on;
+}
+
+/* ---- colour helpers --------------------------------------------------- *
+ * JUKE owns a fixed dark cyberpunk palette. It deliberately ignores
+ * OPTION EDIT THEME so the player looks the same under every system theme;
+ * because nothing here touches the TUI palette, leaving JUKE restores the
+ * user's theme untouched. */
 
 static unsigned juke_dim(unsigned c)
 {
@@ -87,18 +135,47 @@ static unsigned juke_dim(unsigned c)
 	return (unsigned)((r << 16) | (g << 8) | b);
 }
 
+/* Component-wise blend of a and b by t in [0,1]. */
+static unsigned juke_mix(unsigned a, unsigned b, float t)
+{
+	int ar = (int)((a >> 16) & 255), ag = (int)((a >> 8) & 255), ab = (int)(a & 255);
+	int br = (int)((b >> 16) & 255), bg = (int)((b >> 8) & 255), bb = (int)(b & 255);
+	int r = ar + (int)((float)(br - ar) * t);
+	int g = ag + (int)((float)(bg - ag) * t);
+	int bl = ab + (int)((float)(bb - ab) * t);
+	if (r < 0) r = 0;
+	if (r > 255) r = 255;
+	if (g < 0) g = 0;
+	if (g > 255) g = 255;
+	if (bl < 0) bl = 0;
+	if (bl > 255) bl = 255;
+	return (unsigned)((r << 16) | (g << 8) | bl);
+}
+
+/* Cool base -> electric purple -> hot tip, for the per-bar gradient. */
+static unsigned juke_grad(float t)
+{
+	if (t < 0.0f)
+		t = 0.0f;
+	if (t > 1.0f)
+		t = 1.0f;
+	if (t < 0.5f)
+		return juke_mix(U.col_bar_lo, U.col_bar_mid, t * 2.0f);
+	return juke_mix(U.col_bar_mid, U.col_bar_hi, (t - 0.5f) * 2.0f);
+}
+
 static void juke_load_colours(void)
 {
-	U.col_bg = juke_theme("TEXT_BG", 0x0A0A12u);
-	U.col_panel = juke_theme("BORDER_BG", 0x14142Au);
-	U.col_panel2 = juke_theme("MENU_BG", 0x22224Cu);
-	U.col_hot = juke_lift(juke_theme("MENU_HOT", 0xFFFF55u));
-	U.col_text = juke_lift(juke_theme("TEXT_FG", 0xDDDDDDu));
-	U.col_dim = juke_lift(juke_theme("COMMENT_FG", 0x8A8AA0u));
-	U.col_bar_lo = juke_lift(juke_theme("STRING_FG", 0x33CC55u));
-	U.col_bar_mid = juke_lift(juke_theme("MENU_HOT", 0xFFFF55u));
-	U.col_bar_hi = juke_lift(juke_theme("NUMBER_FG", 0xFF5533u));
-	U.col_scan = juke_lift(juke_theme("SELECT_FG", 0x66DDFFu));
+	U.col_bg = 0x05060Fu;      /* near-black indigo   */
+	U.col_panel = 0x0C101Fu;   /* dark panel          */
+	U.col_panel2 = 0x1B1440u;  /* deep purple line    */
+	U.col_hot = 0xFF2BD6u;     /* neon magenta        */
+	U.col_text = 0xE6F5FFu;    /* icy white           */
+	U.col_dim = 0x7C89B8u;     /* muted periwinkle    */
+	U.col_bar_lo = 0x00E0FFu;  /* electric cyan       */
+	U.col_bar_mid = 0x9A4DFFu; /* electric purple     */
+	U.col_bar_hi = 0xFF2BD6u;  /* neon magenta        */
+	U.col_scan = 0x39FFEAu;    /* aqua trace          */
 }
 
 /* ---- paths / queue ---------------------------------------------------- */
@@ -156,6 +233,7 @@ static int juke_build_queue(const char *spec)
 
 	s_q.n = 0;
 	s_q.cur = -1;
+	s_q.shuffle = 0;
 	s_q.dir[0] = 0;
 	if (mmb_vfs_isdir(spec))
 	{
@@ -191,6 +269,12 @@ static int juke_build_queue(const char *spec)
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
 		s_q.n = 1;
 	}
+	{
+		int i;
+		s_rand = (unsigned)mmb_now_ms() * 2654435761u + 1u;
+		for (i = 0; i < s_q.n; i++)
+			s_q.order[i] = i;
+	}
 	return s_q.n > 0 ? 0 : -1;
 }
 
@@ -209,14 +293,26 @@ static int juke_play_path(const char *p)
 
 static int juke_start(int idx)
 {
+	const char *p;
+	int vl, vr;
+
 	if (s_q.n <= 0)
 		return -1;
 	if (idx < 0)
 		idx = s_q.n - 1;
 	if (idx >= s_q.n)
 		idx = 0;
-	if (juke_play_path(s_q.item[idx]) != 0)
+	p = juke_track(idx);
+	if (!p || !p[0])
 		return -1;
+	/* play_begin resets the gain to 100; keep JUKE's own volume across
+	 * track changes (shuffle/next must not blast the mixer). */
+	vl = G.audio.vol_l;
+	vr = G.audio.vol_r;
+	if (juke_play_path(p) != 0)
+		return -1;
+	G.audio.vol_l = vl;
+	G.audio.vol_r = vr;
 	s_q.cur = idx;
 	s_q.active = 1;
 	return 0;
@@ -246,7 +342,7 @@ static void juke_manage(void)
 	if (G.audio.playing)
 	{
 		if (s_q.cur >= 0 &&
-		    !mmb_keyword_eq(G.audio.name, s_q.item[s_q.cur]))
+		    !mmb_keyword_eq(G.audio.name, juke_track(s_q.cur)))
 			s_q.active = 0; /* some other PLAY took the engine */
 		return;
 	}
@@ -283,7 +379,7 @@ static void juke_paint(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
 	short scope[64];
-	int i, n, x0, x1, bw, gap, base, maxh, mid;
+	int i, n, x0, x1, bw, gap, base, maxh, mid, fy, vol;
 	const char *title;
 	char buf[128];
 
@@ -297,14 +393,15 @@ static void juke_paint(int w, int h)
 	mmb_gfx_fill_rect(0, 46, w, 2, U.col_hot);
 	juke_text(14, 8, "JUKE", U.col_hot, 2);
 	{
-		const char *fmt = s_q.cur >= 0 ? juke_ext(s_q.item[s_q.cur]) : "";
-		sprintf(buf, "%s  %s  %d/%d", juke_state_str(), fmt,
-			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n);
+		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
+		sprintf(buf, "%s  %s  %d/%d%s", juke_state_str(), fmt,
+			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
+			s_q.shuffle ? "  SHUF" : "");
 		juke_text(w - 14 - (int)strlen(buf) * 8, 17, buf, U.col_dim, 1);
 	}
 
 	/* Now-playing line. */
-	title = s_q.cur >= 0 ? juke_basename(s_q.item[s_q.cur]) : "(no track)";
+	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
 	juke_text(14, 54, title, U.col_text, 1);
 	if (s_q.dir[0])
 		juke_text(14, 72, s_q.dir, U.col_dim, 1);
@@ -335,20 +432,15 @@ static void juke_paint(int w, int h)
 
 		if (bh < 2)
 			bh = 2;
+		/* Vertical per-bar gradient: cool base -> hot tip. */
 		for (y = 0; y < bh; y += 4)
 		{
-			float frac = (float)y / (float)maxh;
-			unsigned c;
+			float frac = (float)y / (float)bh;
 			int seg_h = 4;
-			if (frac > 0.72f)
-				c = U.col_bar_hi;
-			else if (frac > 0.45f)
-				c = U.col_bar_mid;
-			else
-				c = U.col_bar_lo;
 			if (y + seg_h > bh)
 				seg_h = bh - y;
-			mmb_gfx_fill_rect(bx, base - y - seg_h, bw, seg_h, c);
+			mmb_gfx_fill_rect(bx, base - y - seg_h, bw, seg_h,
+					  juke_grad(frac));
 		}
 
 		/* Reflection. */
@@ -395,11 +487,32 @@ static void juke_paint(int w, int h)
 		}
 	}
 
-	/* Footer. */
-	mmb_gfx_fill_rect(0, h - 30, w, 30, U.col_panel);
-	juke_text(14, h - 22,
-		  "SPACE pause   </> track   S stop   ESC quit (keeps playing)",
+	/* Footer: transport legend, then shuffle / volume indicators. */
+	fy = h - 48;
+	mmb_gfx_fill_rect(0, fy, w, 48, U.col_panel);
+	mmb_gfx_fill_rect(0, fy, w, 1, U.col_panel2);
+	juke_text(14, fy + 6,
+		  "SPACE play/pause   P prev   N next   R shuf   -/+ vol   M mute   S stop   ESC quit",
 		  U.col_dim, 1);
+
+	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
+	mmb_gfx_fill_rect(14, fy + 27, 14, 14,
+			  s_q.shuffle ? U.col_hot : U.col_panel2);
+	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_hot : U.col_dim, 1);
+
+	/* Volume level bar. */
+	vol = G.audio.vol_l;
+	if (vol < 0)
+		vol = 0;
+	if (vol > 100)
+		vol = 100;
+	juke_text(110, fy + 28, "VOL", U.col_dim, 1);
+	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_panel2);
+	if (vol > 0)
+		mmb_gfx_fill_rect(146, fy + 27, vol * 220 / 100, 14,
+				  juke_grad((float)vol / 100.0f));
+	sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
+	juke_text(380, fy + 28, buf, U.col_text, 1);
 }
 
 static void juke_frame(void)
@@ -454,6 +567,12 @@ void mmb_cmd_juke(void)
 		have = 1;
 	}
 
+	/* G.audio volumes default to 0 until the first track starts. JUKE keeps
+	 * one player volume across tracks, so seed an audible level if none is
+	 * set yet, then juke_start() saves/restores it around play_begin(). */
+	if (G.audio.vol_l <= 0)
+		G.audio.vol_l = G.audio.vol_r = 100;
+
 	if (have)
 	{
 		if (juke_build_queue(path) != 0)
@@ -491,6 +610,19 @@ int mmb_in_juke(void)
 	return U.active;
 }
 
+/* In-JUKE player gain: the same app gain PLAY VOLUME drives. */
+static void juke_volume(int delta)
+{
+	int v = G.audio.vol_l + delta;
+	if (v < 0)
+		v = 0;
+	if (v > 100)
+		v = 100;
+	G.audio.vol_l = v;
+	G.audio.vol_r = v;
+	U.muted = 0;
+}
+
 const char *mmb_juke_key(char c)
 {
 	if (!U.active)
@@ -505,16 +637,47 @@ const char *mmb_juke_key(char c)
 		mmb_play_pause(!G.audio.paused);
 		return "";
 	}
-	if (c == 'n' || c == 'N' || c == '>' || c == '.')
+	if (c == 'n' || c == 'N' || c == '.')
 	{
 		if (s_q.n > 0)
 			(void)juke_start(s_q.cur + 1);
 		return "";
 	}
-	if (c == 'p' || c == 'P' || c == '<' || c == ',')
+	if (c == 'p' || c == 'P' || c == ',')
 	{
 		if (s_q.n > 0)
 			(void)juke_start(s_q.cur - 1);
+		return "";
+	}
+	if (c == 'r' || c == 'R')
+	{
+		juke_set_shuffle(!s_q.shuffle);
+		return "";
+	}
+	if (c == '+' || c == '=')
+	{
+		juke_volume(5);
+		return "";
+	}
+	if (c == '-' || c == '_')
+	{
+		juke_volume(-5);
+		return "";
+	}
+	if (c == 'm' || c == 'M')
+	{
+		if (!U.muted)
+		{
+			U.vol_saved = G.audio.vol_l;
+			G.audio.vol_l = G.audio.vol_r = 0;
+			U.muted = 1;
+		}
+		else
+		{
+			int v = U.vol_saved > 0 ? U.vol_saved : 70;
+			G.audio.vol_l = G.audio.vol_r = v;
+			U.muted = 0;
+		}
 		return "";
 	}
 	if (c == 's' || c == 'S')

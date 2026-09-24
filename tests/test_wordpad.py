@@ -915,3 +915,84 @@ def test_wordpad_recover_decline_keeps_file(kernel_image):
         assert con.send_line("CLOSE #1") == ""
     finally:
         con.stop()
+
+
+def test_wordpad_code_block_full_width_background(kernel_image):
+    """Issue #582: fenced code paints a full-width band, not just the text."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        _open(con, 'WORDPAD "CODEBG.MD"')
+        # fence / x / blank / y / fence
+        _keys(con, b"```\r", quiet=0.6)
+        _keys(con, b"x\r", quiet=0.6)
+        _keys(con, b"\r", quiet=0.4)
+        _keys(con, b"y\r", quiet=0.6)
+        _keys(con, b"```", quiet=0.5)
+        time.sleep(0.3)
+        ox = _pane_left_px(con)
+        x = ox + 70 * 8 + 4
+        fence = con.screen_pixel(x, 0 * 16 + 8)
+        code = con.screen_pixel(x, 1 * 16 + 8)
+        blank = con.screen_pixel(x, 2 * 16 + 8)
+        assert code != fence, (code, fence)
+        assert blank != fence, (blank, fence)
+        # code_bg is a shade of the editor background, so it is darker.
+        assert _lum(code) < _lum(fence), (code, fence)
+        assert _lum(blank) < _lum(fence), (blank, fence)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_code_block_enter_auto_indents(kernel_image):
+    """Issue #582: Enter inside a fence carries the previous line's indent."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CODEIND.MD"')
+        _keys(con, b"```\r", quiet=0.6)
+        _keys(con, b"    deref()\r", quiet=0.6)
+        _keys(con, b"x", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        lines = _read_lines(con, "CODEIND.MD", 3)
+        assert lines[0] == "[```]", lines
+        assert lines[1] == "[    deref()]", lines
+        assert lines[2] == "[    x]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_exit_reopen_with_file_cycles(kernel_image):
+    """Issue #583: exiting then reopening with a file$ argument must be clean."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+
+        assert "[WORDPAD]" in _open(con, 'WORDPAD "CYCLE.MD"', quiet=1.0)
+        _keys(con, b"one", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+
+        reopened = _open(con, 'WORDPAD "CYCLE.MD"', quiet=1.0)
+        assert "[WORDPAD]" in reopened
+        assert "one" in reopened
+        _keys(con, b" two", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+
+        assert "[WORDPAD]" in _open(con, quiet=0.8)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()

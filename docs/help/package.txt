@@ -17,9 +17,9 @@ After RUN, EDIT does not open the zip file.
 
 Wizard
 
-Type PACKAGE with no arguments at the prompt to open the authoring wizard.
-It walks through the same rules as the command form so you do not have to
-remember the syntax:
+Type PACKAGE with no arguments at the prompt to open the authoring wizard as a
+modal dialog over the prompt. It walks through the same rules as the command
+form so you do not have to remember the syntax:
 
   1. Choose folder - lists subfolders of the current folder, and "."
      for the current folder. Entries without MAIN.BAS are flagged and
@@ -30,8 +30,9 @@ remember the syntax:
   3. Confirm - writes the .APP in the current folder.
 
 Keys: Up/Down move, Enter selects or advances, Tab moves between fields
-in step 2, Esc goes back (or cancels from step 1). Use CHDIR first to reach
-another folder or drive. PACKAGE with arguments still works from a program.
+in step 2, Esc goes back (or cancels from step 1). Esc from the first step
+closes the dialog and restores the prompt. Use CHDIR first to reach another
+folder or drive. PACKAGE with arguments still works from a program.
 
 Example:
 

@@ -259,13 +259,18 @@ static void handle_csi(char final)
 
 /* ---- app routing / execution -------------------------------------- */
 
+int mmb_front_line_empty(void)
+{
+	return s_len == 0;
+}
+
 int mmb_front_in_app(void)
 {
 	return mmb_in_editor() || mmb_in_files() || mmb_in_wordpad() ||
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
 	       mmb_in_afk() || mmb_in_juke() || mmb_in_sprite_edit() ||
-	       mmb_in_ansi_edit() || mmb_in_paint() || mmb_in_package() ||
-	       mmb_apptui_active();
+	       mmb_in_paint() || mmb_in_package() ||
+	       mmb_settings_active() || mmb_apptui_active();
 }
 
 static void submit(void)
@@ -309,12 +314,13 @@ static void submit(void)
 		fe_puts(result);
 		mmb_front_prompt();
 	}
-	else if (mmb_in_files() || mmb_in_ihelp() || mmb_in_package())
+	else if (mmb_in_files() || mmb_in_ihelp() || mmb_in_package() ||
+		 mmb_settings_active())
 	{
 		/* TUI already streamed to the screen. */
 	}
 	else if (mmb_in_term() || mmb_in_wordpad() || mmb_in_connect() ||
-		 mmb_in_sprite_edit() || mmb_in_ansi_edit() || mmb_in_paint())
+		 mmb_in_sprite_edit() || mmb_in_paint())
 	{
 		if (result && result[0])
 			fe_puts(result);
@@ -421,11 +427,6 @@ static void front_feed_dispatch(char c)
 	if (mmb_in_sprite_edit())
 	{
 		fe_puts(mmb_sprite_edit_key(c));
-		return;
-	}
-	if (mmb_in_ansi_edit())
-	{
-		fe_puts(mmb_ansi_edit_key(c));
 		return;
 	}
 	if (mmb_in_package())
@@ -617,6 +618,20 @@ void mmb_front_init(mmb_front_emit_fn emit, void *ctx)
 	s_active = 0;
 	s_fe[0].hist_idx = -1;
 	s_fe[0].line[0] = '\0';
+}
+
+/* Drop every console's line editor and history state. Used by a warm reset so
+ * no partially typed line or app session survives. */
+void mmb_front_reset(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		memset(&s_fe[i], 0, sizeof(s_fe[i]));
+		s_fe[i].hist_idx = -1;
+	}
+	s_active = 0;
 }
 
 /* Select which console's line editor receives keystrokes. */

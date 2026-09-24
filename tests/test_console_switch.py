@@ -1,4 +1,4 @@
-"""Virtual consoles (#510): Ctrl+Alt+F1..F4 switch between independent
+"""Virtual consoles (#510): Ctrl+Alt+1..4 switch between independent
 interpreter sessions with their own screen and state.
 
 The chord is driven through the real USB keyboard (``-device usb-kbd``) so
@@ -16,19 +16,19 @@ def _usb_console(kernel_image) -> MMBasicConsole:
 
 def test_help_documents_consoles(console):
     out = dump_topic(console, "CONSOLES")
-    assert "Ctrl+Alt+F" in out
+    assert "Ctrl+Alt+1" in out
     assert "RUN" in out
 
 
 def _switch(con, n: int) -> None:
-    # Hold the F-key long enough for the guest's USB poll to see it; a fast
+    # Hold the digit long enough for the guest's USB poll to see it; a fast
     # tap can fall between polls and be missed.
     con.key_down("ctrl")
     con.key_down("alt")
     time.sleep(0.15)
-    con.key_down(f"f{n}")
+    con.key_down(str(n))
     time.sleep(0.25)
-    con.key_up(f"f{n}")
+    con.key_up(str(n))
     time.sleep(0.15)
     con.key_up("alt")
     con.key_up("ctrl")
@@ -117,6 +117,73 @@ def test_editor_survives_switch(kernel_image):
         time.sleep(0.6)
         con.drain(quiet=0.3)
         assert con.send_line("PRINT 100+1") == "101"
+    finally:
+        con.stop()
+
+
+def _count_colour(con: MMBasicConsole, name: str, step: int = 8) -> int:
+    """Count framebuffer pixels that match a primary colour."""
+    w, h = con.screen_size()
+    coords = [(x, y) for y in range(0, h, step) for x in range(0, w, step)]
+    preds = {
+        "red": lambda p: p[0] > 130 and p[1] < 80 and p[2] < 80,
+        "green": lambda p: p[1] > 130 and p[0] < 80 and p[2] < 80,
+    }
+    pred = preds[name]
+    return sum(1 for p in con.screen_pixels(coords) if pred(p))
+
+
+def test_switch_restores_console_mode(kernel_image):
+    """#580: each console keeps its own MODE. Returning to a console must retune
+    the HDMI framebuffer, not just its MM.INFO bookkeeping."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 7,16") == ""
+        assert con.screen_size() == (320, 240)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("MODE 8,16") == ""
+        assert con.screen_size() == (640, 480)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT MM.INFO(MODE)") == "7.16"
+        assert con.screen_size() == (320, 240)
+    finally:
+        con.stop()
+
+
+def test_switch_restores_cursor_colour(kernel_image):
+    """#580: the terminal pen travels with the console. After switching back the
+    next characters must be drawn in that console's COLOUR."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 8,16") == ""
+        assert con.send_line("COLOUR RGB(255,0,0), RGB(0,0,0)") == ""
+        con._ser.sendall(b'PRINT "HHHHHHHHHHHHHHHHHHHH"\r')
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("MODE 8,16") == ""
+        assert con.send_line("COLOUR RGB(0,255,0), RGB(0,0,0)") == ""
+        con._ser.sendall(b'PRINT "HHHHHHHHHHHHHHHHHHHH"\r')
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # Re-draw enough text to dominate the screen: it must be red, not the
+        # green pen the other console left behind.
+        for _ in range(14):
+            con._ser.sendall(b'PRINT "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"\r')
+        time.sleep(0.8)
+        con.drain(quiet=0.4)
+        assert _count_colour(con, "red") > _count_colour(con, "green")
     finally:
         con.stop()
 

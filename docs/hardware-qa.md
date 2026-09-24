@@ -11,7 +11,7 @@ environment).
 
 ## Boot & sessions
 - [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - 2026 (c) Marnix Kok`, then the MMBasic/copyright lines. (#536)
-- [ ] Virtual consoles: `Ctrl+Alt+F1`…`F4` give independent interpreter, screen, input line and history; switching back preserves the previous screen. (#510)
+- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. `Ctrl+Alt+F1`…`F4` no longer switches. (#510, #603)
 
 ## Clock / network
 - [ ] `OPTION NTP ON`, `OPTION NTP SERVER "host[:port]"`, `NTP` one-shot, `OPTION TIMEZONE "Europe/Amsterdam"` (also `UTC+2`, `UTC-5:30`). Confirm `DATE$`/`TIME$`/`DATETIME$` shift and FAT timestamps use local time. (#524)
@@ -28,11 +28,10 @@ environment).
 - [ ] WORDPAD lists: `Tab`/`Shift+Tab` nest/outdent, `Enter` auto-increments numbered lists, bullets work; `Ctrl+P` quick-open lists cwd `.MD`. (#514, #539, #556)
 - [ ] Autosave / crash resume: mid-edit, kill power; relaunch EDIT or WORDPAD and take the recover prompt; Discard must not touch the real file. (#516, #521)
 - [ ] EDITOR quick-open `Ctrl+P` finds cwd `.BAS`/`.INC` past the cap. (#571)
-- [ ] `Ctrl+Z` undo is consistent in EDITOR, WORDPAD, PAINT, ANSI and SPRITE. (#532)
+- [ ] `Ctrl+Z` undo is consistent in EDITOR, WORDPAD, PAINT and SPRITE. (#532)
 
 ## Creative apps
 - [ ] PAINT: `PAINT [file$]`; keyboard tools and USB mouse (click/drag paint, right-click pick colour); save/reload PNG. (#512, #513)
-- [ ] ANSI: `ANSI EDIT file.ANS [,font.TDF]`, `ANSI LOAD/FONT/SAUCE`; `Alt+C`/`Alt+B` colours, `Alt+P` glyph, `Alt+T` TDF stamping, `Alt+L` line, `Alt+F` fill, `Alt+S` save, `Ctrl+Z` undo. (#511)
 - [ ] SPRITE editor: grid-constrained sprite/font editing. (#527)
 - [ ] JUKE: `JUKE [path$]`, folder queue, visualiser, keeps playing off-screen; audio output correct. (#519)
 - [ ] TDF.BAS: `#INCLUDE "A:/lib/TDF.BAS"`, then `TDF.Load` / `TDF.Print` / `TDF.Close`; fonts load from `A:/fonts/tdf/` (`mono/`/`color/`/`deco/`), multi-variation files expose `TDF.Variants%` / `TDF.LoadVariant`. (#557)
