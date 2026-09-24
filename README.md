@@ -12,16 +12,6 @@ on Linux, macOS and Windows.
 mmcore ships a set of full-screen tools you can reach from the prompt. Type the
 command, or open the `APPS` launcher (`Ctrl+Space`) to pick from the list.
 
-| App | Command | What it does |
-| --- | --- | --- |
-| Editor | `EDIT` | Colour TUI code editor with tabs, menus and syntax highlighting. |
-| Terminal | `TERM` | Fullscreen telnet terminal with scrollback, search and session replay. |
-| File manager | `FILES` | Dual-pane file browser that previews images, audio, fonts and text. |
-| Word processor | `WORDPAD` | Typora-style markdown editor with a centred text column. |
-| Paint | `PAINT` | Full-screen, mouse-driven pixel paint app in Dr. Halo style. |
-| Jukebox | `JUKE` | Retro music player with a spectrum/VU visualiser and folder queues. |
-| Package | `PACKAGE` | Guided wizard that zips a folder into a runnable `.APP`. |
-| Help | `HELP` | Interactive QuickBASIC-style manual and keyword reference. |
 
 <table>
   <tr>
@@ -53,6 +43,18 @@ command, or open the `APPS` launcher (`Ctrl+Space`) to pick from the list.
     </td>
   </tr>
 </table>
+
+
+| App | Command | What it does |
+| --- | --- | --- |
+| Editor | `EDIT` | Colour TUI code editor with tabs, menus and syntax highlighting. |
+| Terminal | `TERM` | Fullscreen telnet terminal with scrollback, search and session replay. |
+| File manager | `FILES` | Dual-pane file browser that previews images, audio, fonts and text. |
+| Word processor | `WORDPAD` | Typora-style markdown editor with a centred text column. |
+| Paint | `PAINT` | Full-screen, mouse-driven pixel paint app in Dr. Halo style. |
+| Jukebox | `JUKE` | Retro music player with a spectrum/VU visualiser and folder queues. |
+| Package | `PACKAGE` | Guided wizard that zips a folder into a runnable `.APP`. |
+| Help | `HELP` | Interactive QuickBASIC-style manual and keyword reference. |
 
 
 ## Install on a Raspberry Pi
