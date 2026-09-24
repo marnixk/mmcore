@@ -274,15 +274,20 @@ static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
 static unsigned char s_iac_out[64];
 static int s_iac_n;
 
-/* ZMODEM downloads.  g_dl_dir persists in C:/.termconfig. */
+/* ZMODEM downloads.  g_dl_dir persists in C:/.termconfig. The download
+ * directory and the folder-browser cursor are per-console session state
+ * (#670): switching consoles must not move the folder another console is
+ * browsing. */
 static mmb_zm_rx ZM;
 static int zm_ready;
 static unsigned zm_shift;
 static char zm_shown[80];
-static char g_dl_dir[96];
+static char g_dl_dir_s[MMB_MAX_CONSOLES][96];
+static char g_dl_cur_s[MMB_MAX_CONSOLES][128];
+#define g_dl_dir (g_dl_dir_s[g_console])
+#define g_dl_cur (g_dl_cur_s[g_console])
 static char g_dl_last_name[MMB_ZM_MAX_NAME];
 static int g_dl_last_files;
-static char g_dl_cur[128];
 static char g_dl_names[TM_DL_DIRS][64];
 static int g_dl_n;
 static int g_dl_sel;

@@ -411,7 +411,10 @@ static char find_scratch[MMB_ED_BUF];
 #define ERRBAR_MAX 160
 static int errbar_active;
 static char errbar_msg[ERRBAR_MAX];
-static char pick_root[128];
+/* The file-picker root is per-console session state (#670): opening the
+ * picker on one console must not reuse the root chosen on another. */
+static char pick_root_s[MMB_MAX_CONSOLES][128];
+#define pick_root (pick_root_s[g_console])
 static char pick_path[ED_PICK_MAX][128];
 static int pick_pos[ED_PICK_MAX];
 static int pick_n;
