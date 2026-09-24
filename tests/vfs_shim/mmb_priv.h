@@ -23,6 +23,10 @@ typedef struct mmb_dirent {
 	int size;
 } mmb_dirent;
 
+/* Bounded sorted listing helpers (#676); mirrors mmbasic.h. */
+int mmb_dirent_cmp(const mmb_dirent *a, const mmb_dirent *b);
+void mmb_dirent_offer(mmb_dirent *heap, int *n, int max, const mmb_dirent *e);
+
 typedef struct mmb_val {
 	int type;
 	double f;
@@ -109,5 +113,7 @@ int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsi
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 int mmb_vfs_exists(const char *path);
 const char *mmb_vfs_cwd(void);
+int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
+			 int *truncated);
 
 #endif

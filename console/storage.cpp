@@ -642,14 +642,17 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 }
 
 /* Structured listing (#621): f_readdir already reports the directory bit and
- * the file size, so the FILES size column costs no extra f_stat over USB. */
+ * the file size, so the FILES size column costs no extra f_stat over USB. The
+ * scan keeps the sorted-first `max` entries under mmb_dirent_cmp rather than
+ * an arbitrary first-max cut, so the surviving set does not depend on FatFs
+ * enumeration order (#676). */
 int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 			 mmb_dirent *out, int max, int *truncated)
 {
 	DIR dp;
 	FILINFO inf;
 	char full[160];
-	int n = 0;
+	int n = 0, total = 0;
 	if (truncated)
 		*truncated = 0;
 	if (!out || max <= 0 || !mmb_fat_ready(letter))
@@ -659,25 +662,24 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 		return -1;
 	for (;;)
 	{
+		mmb_dirent ent;
+
 		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
 			break;
 		if (inf.fname[0] == '.')
 			continue;
 		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
 			continue;
-		if (n >= max)
-		{
-			if (truncated)
-				*truncated = 1;
-			break;
-		}
-		memset(&out[n], 0, sizeof(out[n]));
-		strncpy(out[n].name, inf.fname, sizeof(out[n].name) - 1);
-		out[n].is_dir = (inf.fattrib & AM_DIR) ? 1 : 0;
-		out[n].size = out[n].is_dir ? -1 : (int)inf.fsize;
-		n++;
+		memset(&ent, 0, sizeof(ent));
+		strncpy(ent.name, inf.fname, sizeof(ent.name) - 1);
+		ent.is_dir = (inf.fattrib & AM_DIR) ? 1 : 0;
+		ent.size = ent.is_dir ? -1 : (int)inf.fsize;
+		total++;
+		mmb_dirent_offer(out, &n, max, &ent);
 	}
 	f_closedir(&dp);
+	if (truncated)
+		*truncated = total > max;
 	return n;
 }
 

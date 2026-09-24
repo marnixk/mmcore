@@ -431,7 +431,7 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	char sub[P_BUF];
 	DIR *d;
 	struct dirent *e;
-	int n = 0;
+	int n = 0, total = 0;
 
 	ensure_root();
 	if (truncated)
@@ -450,33 +450,32 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	while ((e = readdir(d)))
 	{
 		int isd;
+		mmb_dirent ent;
 
 		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
 			continue;
 		if (!glob_ci(pat, e->d_name))
 			continue;
-		if (n >= max)
-		{
-			if (truncated)
-				*truncated = 1;
-			break;
-		}
 		isd = dirent_is_dir(full, e);
-		memset(&out[n], 0, sizeof(out[n]));
-		snprintf(out[n].name, sizeof(out[n].name), "%s", e->d_name);
-		out[n].is_dir = isd;
-		out[n].size = -1;
+		memset(&ent, 0, sizeof(ent));
+		snprintf(ent.name, sizeof(ent.name), "%s", e->d_name);
+		ent.is_dir = isd;
+		ent.size = -1;
 		if (!isd)
 		{
 			struct stat st;
 
 			snprintf(sub, sizeof sub, "%s/%s", full, e->d_name);
 			if (stat(sub, &st) == 0)
-				out[n].size = (int)st.st_size;
+				ent.size = (int)st.st_size;
 		}
-		n++;
+		total++;
+		/* Keep the sorted-first `max` regardless of readdir order (#676). */
+		mmb_dirent_offer(out, &n, max, &ent);
 	}
 	closedir(d);
+	if (truncated)
+		*truncated = total > max;
 	return n;
 }
 
