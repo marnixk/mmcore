@@ -329,6 +329,37 @@ static void run_session(const char *names, const char *expected)
 	reset_session();
 }
 
+/* #705: when a directory holds more entries than the 8 KB FTP data buffer,
+ * list_append() drops the overflow. The session must report that cut instead
+ * of presenting the listing as complete. The shim never sets the VFS
+ * `truncated` flag, so a "(truncated)" status can only come from list_buf. */
+static void run_overflow_session(void)
+{
+	static char big[4096];
+	int i, off = 0, saw_listing = 0, saw_trunc = 0;
+
+	reset_session();
+	for (i = 0; i < 300; i++)
+		off += sprintf(big + off, "entry%03d\n", i);
+	g_listing = big;
+	check(mmb_ftp_start("A:/", 21) == 0, "start (overflow)");
+	strcpy(g_ctl_in, "USER anonymous\r\nPASS x\r\nEPSV\r\nLIST\r\n");
+	g_ctl_in_len = (int)strlen(g_ctl_in);
+	for (i = 0; i < 400; i++)
+	{
+		mmb_ftp_poll();
+		if (strstr(mmb_ftp_status(), "Listing"))
+			saw_listing = 1;
+		if (strstr(mmb_ftp_status(), "(truncated)"))
+			saw_trunc = 1;
+		if (g_data_out_len)
+			break;
+	}
+	check(saw_listing, "STATUS reports a listing was built");
+	check(saw_trunc, "list_buf overflow is reported as (truncated)");
+	reset_session();
+}
+
 int main(void)
 {
 	run_session(
@@ -340,6 +371,8 @@ int main(void)
 	    "subdir/\nhello.bas",
 	    "drwxr-xr-x   1 ftp      ftp         0 Jan 01 00:00 subdir\r\n"
 	    "-rw-r--r--   1 ftp      ftp         0 Jan 01 00:00 hello.bas\r\n");
+
+	run_overflow_session();
 
 	if (g_failures)
 	{

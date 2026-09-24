@@ -334,6 +334,51 @@ def test_package_archive_over_512k(console):
     assert "OK" in run
 
 
+def test_package_folder_listing_over_2k(fresh_console):
+    """#706: a folder whose name listing exceeds the old 2 KB buffer packs.
+
+    Before the fix pack_walk() read the folder into a fixed char[2048] and
+    refused to pack once the newline listing overflowed it. The structured,
+    heap-allocated walk keeps every entry, so a large folder now packages.
+
+    60 names of ~41 chars is a >2.4 KB newline listing, and stays within the
+    zip writer's 64-file archive cap. A fresh console avoids filling the
+    RAM disk (256 nodes, 138 seeded files) with the module's earlier fixtures.
+    """
+    prefix = "PADDINGPADDINGPADDINGPADDINGPADDING"  # 35 chars
+    console = fresh_console
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "BIGLST"') == ""
+    _write_lines(
+        console,
+        "BIGLST/MAIN.BAS",
+        [
+            f'OPEN "{prefix}60.TXT" FOR INPUT AS #1',
+            "LINE INPUT #1, A$",
+            "PRINT A$",
+            "CLOSE #1",
+        ],
+    )
+    _write_lines(
+        console,
+        "BIGGEN.BAS",
+        [
+            "FOR I = 1 TO 60",
+            f'OPEN "A:/BIGLST/{prefix}"+LTRIM$(STR$(I))+".TXT" FOR OUTPUT AS #1',
+            'PRINT #1, "M"+LTRIM$(STR$(I))',
+            "CLOSE #1",
+            "NEXT I",
+            'PRINT "SEEDED"',
+        ],
+    )
+    assert "SEEDED" in console.send_line('RUN "BIGGEN.BAS"')
+    out = console.send_line('PACKAGE "BIGLST.APP", "BIGLST/"')
+    assert "?PACKAGE" not in out.upper(), out
+    run = console.send_line('RUN "BIGLST.APP"')
+    assert "?PACKAGE" not in run.upper(), run
+    assert "M60" in run, run
+
+
 def test_package_edit_after_run_is_untitled(kernel_image):
     import re
 
