@@ -94,17 +94,19 @@ def _run_with_dump(binary, tmp_path, name, program, extra_env=None):
     return proc.stdout + proc.stderr, img
 
 
-def test_paint_reports_missing_mouse_by_default(native_mmcore, tmp_path):
-    """No pointer and no override: PAINT declines and stays off the screen.
+def test_paint_starts_with_pointer_by_default(native_mmcore, tmp_path):
+    """No override: the SDL backend always reports a pointer, so PAINT starts.
 
-    This is the real-target behaviour (the SDL build wires no pointer), and it
-    is exactly what would break headless CI without the test override.
+    Regression: sdl_input_init() used to run only from the test harness, so a
+    normal native launch left s_mouse_present at 0 and PAINT wrongly declined
+    with "needs a mouse" (sdl_input.h: present is non-zero whenever the SDL
+    video backend runs).
     """
-    out, img = _run_with_dump(native_mmcore, tmp_path, "nomouse", "PAINT\n")
-    assert "needs a mouse" in out.lower(), out
+    out, img = _run_with_dump(native_mmcore, tmp_path, "defmouse", "PAINT\n")
+    assert "needs a mouse" not in out.lower(), out
     assert img is not None, "expected the framebuffer dump"
-    # PAINT never retuned the display to its 640x360 screen.
-    assert (img.width, img.height) != (PT_W, PT_H)
+    # PAINT retuned the display to its 640x360 screen.
+    assert (img.width, img.height) == (PT_W, PT_H)
 
 
 def test_force_mouse_override_enters_paint(native_mmcore, tmp_path):

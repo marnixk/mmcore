@@ -438,5 +438,8 @@ static const mmb_platform sdl_plat = {
 void mmb_platform_bind_sdl(void)
 {
 	sdl_console_reset();
+	/* The SDL window always has a pointer (sdl_input.h): initialise input so
+	 * present is set before any app (e.g. PAINT) queries it. */
+	sdl_input_init();
 	mmb_init(&sdl_plat);
 }
