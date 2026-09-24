@@ -133,13 +133,21 @@ typedef struct {
 static wp_state W_s[MMB_MAX_CONSOLES];
 #define W (W_s[g_console])
 static wp_doc docs[WP_DOCS];
-static char pick_path[WP_PICK_MAX][128];
-/* The file-picker root is per-console session state (#670): opening the
- * picker on one console must not reuse the root chosen on another. */
+/* The file-picker root and its transient list/selection state are per-console
+ * session state (#670, #680): opening the picker on one console must not reuse
+ * or rebuild the root/list another console's picker is using. */
+static char pick_path_s[MMB_MAX_CONSOLES][WP_PICK_MAX][128];
 static char pick_root_s[MMB_MAX_CONSOLES][128];
 #define pick_root (pick_root_s[g_console])
-static int pick_n, pick_sel, pick_row0, pick_vn;
-static int pick_view[WP_PICK_MAX];
+static int pick_n_s[MMB_MAX_CONSOLES], pick_sel_s[MMB_MAX_CONSOLES],
+	pick_row0_s[MMB_MAX_CONSOLES], pick_vn_s[MMB_MAX_CONSOLES];
+static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
+#define pick_path (pick_path_s[g_console])
+#define pick_n (pick_n_s[g_console])
+#define pick_sel (pick_sel_s[g_console])
+#define pick_row0 (pick_row0_s[g_console])
+#define pick_vn (pick_vn_s[g_console])
+#define pick_view (pick_view_s[g_console])
 
 /* Crash-resume sidecar <path>.rec and its pending-prompt path. */
 #define WP_REC_SUFFIX  ".rec"

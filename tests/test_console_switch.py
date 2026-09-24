@@ -479,3 +479,184 @@ def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
     finally:
         con.stop()
 
+
+def _open_term_download(con) -> str:
+    """Open the TERM download-folder browser and leave it open."""
+    con._ser.sendall(b'TERM "demo", 23\r')
+    con.drain(quiet=0.6, timeout=12.0)
+    con._ser.sendall(bytes([1]) + b"t")
+    con.drain(quiet=0.4, timeout=8.0)
+    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+
+
+def _quit_term(con) -> None:
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.4, timeout=5.0)
+    con._ser.sendall(bytes([1]) + b"x")
+    con.drain(quiet=0.8, timeout=15.0)
+
+
+def test_switch_term_download_default_is_per_console(kernel_image):
+    """#679: Use on one console persists only that console's download default,
+    so another console is not seeded with it and the shared default is not
+    overwritten for every future boot."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        seen = _open_term_download(con)
+        assert "A:/TESTS" in seen.upper(), seen
+        con._ser.sendall(b"\t\r")  # focus Use, persist A:/tests
+        con.drain(quiet=0.6, timeout=8.0)
+        _quit_term(con)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        seen2 = _open_term_download(con)
+        # Not seeded by console 1's Use; starts at this console's own cwd.
+        assert "A:/LIB" in seen2.upper(), seen2
+        assert "A:/TESTS" not in seen2.upper(), seen2
+        con._ser.sendall(b"\t\r")  # persist A:/lib for this console
+        con.drain(quiet=0.6, timeout=8.0)
+        _quit_term(con)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        seen3 = _open_term_download(con)
+        # Console 2's later Use must not clobber console 1's default.
+        assert "A:/TESTS" in seen3.upper(), seen3
+        assert "A:/LIB" not in seen3.upper(), seen3
+        _quit_term(con)
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_term_download_list(kernel_image):
+    """#680: the download browser's list/selection state is per-console.
+    Rescanning on a second console must not replace the entries the first is
+    showing when it redraws."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        assert con.send_line('MKDIR "CONONE"') == ""
+        seen = _open_term_download(con)
+        assert "CONONE" in seen.upper(), seen
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        assert con.send_line('MKDIR "CONTWO"') == ""
+        seen2 = _open_term_download(con)
+        assert "CONTWO" in seen2.upper(), seen2
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b[B")  # redraw this console's browser
+        redraw = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+        assert "CONONE" in redraw.upper(), redraw
+        assert "CONTWO" not in redraw.upper(), redraw
+
+        _quit_term(con)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _quit_term(con)
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_edit_pick_list(kernel_image):
+    """#680: EDIT's quick-open list/selection state is per-console. After a
+    rescan on another console, Enter here must still open this console's own
+    selected entry, not one from the other console's list."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/tests/ZLONE.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _edit(con, "X.BAS")
+        con._ser.sendall(bytes([16]))  # Ctrl+P quick open
+        seen = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+        assert "ZLONE.BAS" in seen.upper(), seen
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/lib/ZLTWO.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        _edit(con, "Y.BAS")
+        con._ser.sendall(bytes([16]))
+        seen2 = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
+        assert "ZLTWO.BAS" in seen2.upper(), seen2
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\r")  # open the still-selected entry
+        opened = _plain(con.drain(quiet=0.8, timeout=8.0).decode(errors="replace"))
+        # The status bar names the file this console actually opened.
+        assert "ZLONE.BAS" in opened.upper(), opened
+        assert "EXAMPLE.INC" not in opened.upper(), opened
+        assert "TDF.BAS" not in opened.upper(), opened
+
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_wordpad_pick_list(kernel_image):
+    """#680: WORDPAD's quick-open list/selection state is per-console. A rescan
+    on another console must not replace this console's entries on redraw."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/tests/ALPHA.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([16]))  # Ctrl+P quick open
+        seen = _plain(con.drain(quiet=0.7, timeout=8.0).decode(errors="replace"))
+        assert "ALPHA.MD" in seen.upper(), seen
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('OPEN "A:/lib/BETA.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+        con._ser.sendall(bytes([16]))
+        seen2 = _plain(con.drain(quiet=0.7, timeout=8.0).decode(errors="replace"))
+        assert "BETA.MD" in seen2.upper(), seen2
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b[B")  # redraw the still-open picker
+        redraw = _plain(con.drain(quiet=0.7, timeout=8.0).decode(errors="replace"))
+        assert "ALPHA.MD" in redraw.upper(), redraw
+        assert "BETA.MD" not in redraw.upper(), redraw
+
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=4.0)
+        con._ser.sendall(bytes([24]))  # Ctrl+X quits WORDPAD
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([24]))
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
+

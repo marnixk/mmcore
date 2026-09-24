@@ -274,10 +274,13 @@ static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
 static unsigned char s_iac_out[64];
 static int s_iac_n;
 
-/* ZMODEM downloads.  g_dl_dir persists in C:/.termconfig. The download
- * directory and the folder-browser cursor are per-console session state
- * (#670): switching consoles must not move the folder another console is
- * browsing. */
+/* ZMODEM downloads. The download directory and the folder-browser cursor are
+ * per-console session state (#670): switching consoles must not move the
+ * folder another console is browsing. The persisted default is per-console
+ * too (#679), so Use on one console no longer seeds every other console or
+ * future boot. The transient browser list/selection state is per-console as
+ * well (#680): opening the dialog on a second console must not rebuild the
+ * arrays the first is drawing. */
 static mmb_zm_rx ZM;
 static int zm_ready;
 static unsigned zm_shift;
@@ -288,11 +291,16 @@ static char g_dl_cur_s[MMB_MAX_CONSOLES][128];
 #define g_dl_cur (g_dl_cur_s[g_console])
 static char g_dl_last_name[MMB_ZM_MAX_NAME];
 static int g_dl_last_files;
-static char g_dl_names[TM_DL_DIRS][64];
-static int g_dl_n;
-static int g_dl_sel;
-static int g_dl_top;
-static int g_dl_focus;
+static char g_dl_names_s[MMB_MAX_CONSOLES][TM_DL_DIRS][64];
+static int g_dl_n_s[MMB_MAX_CONSOLES];
+static int g_dl_sel_s[MMB_MAX_CONSOLES];
+static int g_dl_top_s[MMB_MAX_CONSOLES];
+static int g_dl_focus_s[MMB_MAX_CONSOLES];
+#define g_dl_names (g_dl_names_s[g_console])
+#define g_dl_n (g_dl_n_s[g_console])
+#define g_dl_sel (g_dl_sel_s[g_console])
+#define g_dl_top (g_dl_top_s[g_console])
+#define g_dl_focus (g_dl_focus_s[g_console])
 
 static void term_dl_open(void);
 static void term_dl_draw(void);
@@ -2242,12 +2250,18 @@ static void bm_append_int(char *buf, int sz, int v)
 	}
 }
 
+static void term_dl_dirs_load(int keep_active);
+
 static void term_bm_save(void)
 {
 	char path[24];
 	char buf[4096];
 	int i;
 
+	/* The active console's dir is authoritative while saving; other
+	 * consoles' persisted values are refreshed from the file first so a
+	 * Use on this console cannot drop them (#679). */
+	term_dl_dirs_load(1);
 	bm_sort();
 	bm_path(path, sizeof(path));
 	buf[0] = 0;
@@ -2270,10 +2284,14 @@ static void term_bm_save(void)
 		bm_append_int(buf, sizeof(buf), g_bm[i].mode80x25 ? 1 : 0);
 		bm_append(buf, sizeof(buf), "\n");
 	}
-	if (g_dl_dir[0])
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
 	{
-		bm_append(buf, sizeof(buf), "\ndownload_dir=");
-		bm_append(buf, sizeof(buf), g_dl_dir);
+		if (!g_dl_dir_s[i][0])
+			continue;
+		bm_append(buf, sizeof(buf), "\ndownload_dir");
+		bm_append_int(buf, sizeof(buf), i);
+		bm_append(buf, sizeof(buf), "=");
+		bm_append(buf, sizeof(buf), g_dl_dir_s[i]);
 		bm_append(buf, sizeof(buf), "\n");
 	}
 	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
@@ -2299,6 +2317,96 @@ static int bm_parse_int(const char *s)
 	return n;
 }
 
+static void term_dl_store(char *dst, unsigned cap, const char *src)
+{
+	if (cap == 0)
+		return;
+	strncpy(dst, src, cap - 1);
+	dst[cap - 1] = 0;
+}
+
+/* Restore the persisted per-console download defaults (#679). "download_dirN"
+ * sets console N and a legacy bare "download_dir" seeds any console that has
+ * no per-console value yet. keep_active keeps this console's in-memory value
+ * (used when saving) instead of letting the file overwrite it. */
+static void term_dl_dirs_load(int keep_active)
+{
+	char path[24];
+	char buf[4096];
+	unsigned got = 0;
+	char *p, *nl;
+
+	bm_path(path, sizeof(path));
+	if (!mmb_vfs_exists(path))
+		return;
+	if (mmb_vfs_read(path, buf, sizeof(buf) - 1, &got) != 0)
+		return;
+	buf[got] = 0;
+	p = buf;
+	while (*p)
+	{
+		char *eq;
+		int i, idx = -1, legacy = 0;
+
+		nl = p;
+		while (*nl && *nl != '\n')
+			nl++;
+		if (*nl)
+			*nl++ = 0;
+		if (p[0] && p[strlen(p) - 1] == '\r')
+			p[strlen(p) - 1] = 0;
+		bm_trim(p);
+		eq = p;
+		while (*eq && *eq != '=')
+			eq++;
+		if (*eq == '=')
+		{
+			char *key = p;
+			char *val = eq + 1;
+
+			*eq = 0;
+			bm_trim(key);
+			bm_trim(val);
+			if (mmb_keyword_eq(key, "download_dir"))
+				legacy = 1;
+			else
+			{
+				for (i = 0; i < MMB_MAX_CONSOLES; i++)
+				{
+					char want[16];
+
+					strcpy(want, "download_dir");
+					want[12] = (char)('0' + i);
+					want[13] = 0;
+					if (mmb_keyword_eq(key, want))
+					{
+						idx = i;
+						break;
+					}
+				}
+			}
+			if (legacy)
+			{
+				for (i = 0; i < MMB_MAX_CONSOLES; i++)
+				{
+					if (keep_active && i == g_console)
+						continue;
+					if (!g_dl_dir_s[i][0])
+						term_dl_store(g_dl_dir_s[i],
+							sizeof(g_dl_dir_s[i]), val);
+				}
+			}
+			else if (idx >= 0)
+			{
+				if (!(keep_active && idx == g_console))
+					term_dl_store(g_dl_dir_s[idx],
+						sizeof(g_dl_dir_s[idx]), val);
+			}
+		}
+		p = nl;
+	}
+}
+
 static void term_bm_load(void)
 {
 	char path[24];
@@ -2309,6 +2417,7 @@ static void term_bm_load(void)
 
 	g_bm_n = 0;
 	memset(g_bm, 0, sizeof(g_bm));
+	term_dl_dirs_load(0);
 	bm_path(path, sizeof(path));
 	if (!mmb_vfs_exists(path))
 		return;
@@ -2363,11 +2472,6 @@ static void term_bm_load(void)
 				*eq++ = 0;
 				bm_trim(p);
 				bm_trim(eq);
-				if (mmb_keyword_eq(p, "download_dir"))
-				{
-					strncpy(g_dl_dir, eq, sizeof(g_dl_dir) - 1);
-					g_dl_dir[sizeof(g_dl_dir) - 1] = 0;
-				}
 			}
 			p = nl;
 			continue;
