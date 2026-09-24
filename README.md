@@ -26,29 +26,29 @@ command, or open the `APPS` launcher (`Ctrl+Space`) to pick from the list.
 <table>
   <tr>
     <td align="center" width="33%">
-      <a href="docs/showcase/basic-prompt.mp4"><img src="docs/showcase/basic-prompt.gif" alt="Basic prompt demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/basic-prompt.mp4"><img src="docs/showcase/basic-prompt.gif" alt="Basic prompt demo" width="100%"></a>
       <br><strong>Basic prompt</strong>
     </td>
     <td align="center" width="33%">
-      <a href="docs/showcase/editor.mp4"><img src="docs/showcase/editor.gif" alt="Editor demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/editor.mp4"><img src="docs/showcase/editor.gif" alt="Editor demo" width="100%"></a>
       <br><strong>Editor</strong>
     </td>
     <td align="center" width="33%">
-      <a href="docs/showcase/files.mp4"><img src="docs/showcase/files.gif" alt="File manager demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/files.mp4"><img src="docs/showcase/files.gif" alt="File manager demo" width="100%"></a>
       <br><strong>Files</strong>
     </td>
   </tr>
   <tr>
     <td align="center" width="33%">
-      <a href="docs/showcase/help.mp4"><img src="docs/showcase/help.gif" alt="Help demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/help.mp4"><img src="docs/showcase/help.gif" alt="Help demo" width="100%"></a>
       <br><strong>Help</strong>
     </td>
     <td align="center" width="33%">
-      <a href="docs/showcase/juke.mp4"><img src="docs/showcase/juke.gif" alt="Jukebox demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/juke.mp4"><img src="docs/showcase/juke.gif" alt="Jukebox demo" width="100%"></a>
       <br><strong>Juke</strong>
     </td>
     <td align="center" width="33%">
-      <a href="docs/showcase/wordpad.mp4"><img src="docs/showcase/wordpad.gif" alt="WordPad demo" width="100%"></a>
+      <a href="https://cdn.jsdelivr.net/gh/marnixk/mmcore@master/docs/showcase/wordpad.mp4"><img src="docs/showcase/wordpad.gif" alt="WordPad demo" width="100%"></a>
       <br><strong>WordPad</strong>
     </td>
   </tr>
