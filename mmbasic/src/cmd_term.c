@@ -296,11 +296,13 @@ static int g_dl_n_s[MMB_MAX_CONSOLES];
 static int g_dl_sel_s[MMB_MAX_CONSOLES];
 static int g_dl_top_s[MMB_MAX_CONSOLES];
 static int g_dl_focus_s[MMB_MAX_CONSOLES];
+static int g_dl_trunc_s[MMB_MAX_CONSOLES];
 #define g_dl_names (g_dl_names_s[g_console])
 #define g_dl_n (g_dl_n_s[g_console])
 #define g_dl_sel (g_dl_sel_s[g_console])
 #define g_dl_top (g_dl_top_s[g_console])
 #define g_dl_focus (g_dl_focus_s[g_console])
+#define g_dl_trunc (g_dl_trunc_s[g_console])
 
 static void term_dl_open(void);
 static void term_dl_draw(void);
@@ -4376,7 +4378,7 @@ static void term_dl_scan(void)
 		g_dl_n++;
 	}
 	list[0] = 0;
-	if (mmb_vfs_list(g_dl_cur, list, sizeof(list)) == 0)
+	if (mmb_vfs_list(g_dl_cur, list, sizeof(list), &g_dl_trunc) == 0)
 	{
 		p = list;
 		while (*p && g_dl_n < TM_DL_DIRS)
@@ -4494,7 +4496,8 @@ static void term_dl_draw(void)
 {
 	int i, ch = 18;
 
-	term_dlg_frame(60, ch, " Download folder ");
+	term_dlg_frame(60, ch, g_dl_trunc ? " Download folder (more) "
+					  : " Download folder ");
 	dlg_text_at(2, 2, g_dl_cur, 0);
 	if (g_dl_sel < g_dl_top)
 		g_dl_top = g_dl_sel;
@@ -5407,14 +5410,16 @@ static int term_log_name(const char *name)
 	return 0;
 }
 
-static int term_sessions_dir(const char *dir)
+static int term_sessions_dir(const char *dir, int *truncated)
 {
 	char list[2048];
 	char *p;
 	int found = 0;
 
+	if (truncated)
+		*truncated = 0;
 	list[0] = 0;
-	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
+	if (mmb_vfs_list(dir, list, sizeof(list), truncated) != 0)
 		return 0;
 	p = list;
 	while (*p)
@@ -5456,14 +5461,14 @@ static void term_sessions_list(void)
 {
 	char root[4];
 	char def[24];
-	int found = 0, sz;
+	int found = 0, sz, trunc1 = 0, trunc2 = 0;
 
-	found += term_sessions_dir(mmb_vfs_cwd());
+	found += term_sessions_dir(mmb_vfs_cwd(), &trunc1);
 	root[0] = mmb_fat_ready('C') ? 'C' : 'A';
 	root[1] = ':';
 	root[2] = '/';
 	root[3] = 0;
-	found += term_sessions_dir(root);
+	found += term_sessions_dir(root, &trunc2);
 	/* The default capture path is a dotfile, so directory listings hide it;
 	 * surface it explicitly. */
 	term_log_path(def, sizeof(def));
@@ -5476,6 +5481,8 @@ static void term_sessions_list(void)
 		mmb_out("\n");
 		found++;
 	}
+	if (trunc1 || trunc2)
+		mmb_out("... more\n");
 	if (!found)
 		mmb_out("No saved TERM sessions");
 	mmb_out("\n");

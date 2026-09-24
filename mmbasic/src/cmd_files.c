@@ -406,7 +406,8 @@ static void dir_list_free(dir_list *lst)
  * Circle) is needed. A folder with more entries than the caller's cap sets
  * `truncated`, which gets a trailing note instead of the silent cut the old
  * newline listing had. */
-static void dir_long_entries(const mmb_dirent *ents, int n, int truncated)
+static void dir_long_entries(const mmb_dirent *ents, int n, int truncated,
+			     const char *more)
 {
 	int i, namecol = 4;
 	const int sizecol = 10;
@@ -456,13 +457,14 @@ static void dir_long_entries(const mmb_dirent *ents, int n, int truncated)
 		dir_put(line);
 	}
 	if (truncated)
-		dir_put("... more");
+		dir_put(more ? more : "... more");
 }
 
 /* Wide listing from structured entries: rebuild the newline list on the heap so
  * a folder is not silently cut at DIR_LIST_MAX. Truncation is reported by the
  * caller from the entries count. */
-static void dir_wide_entries(const mmb_dirent *ents, int n, int truncated)
+static void dir_wide_entries(const mmb_dirent *ents, int n, int truncated,
+			     const char *more)
 {
 	char *list, *w;
 	unsigned need = 1;
@@ -478,7 +480,7 @@ static void dir_wide_entries(const mmb_dirent *ents, int n, int truncated)
 	list = G.plat && G.plat->alloc ? (char *)G.plat->alloc(need) : 0;
 	if (!list)
 	{
-		dir_long_entries(ents, n, truncated);
+		dir_long_entries(ents, n, truncated, more);
 		return;
 	}
 	w = list;
@@ -494,7 +496,7 @@ static void dir_wide_entries(const mmb_dirent *ents, int n, int truncated)
 	dir_wide(list);
 	G.plat->free(list);
 	if (truncated)
-		dir_put("... more");
+		dir_put(more ? more : "... more");
 }
 
 /* Recursive search (DIR /S): every matching entry under dirspec, with a path
@@ -632,9 +634,11 @@ void mmb_cmd_files(const char *kw)
 		dir_split_spec(spec[0] ? spec : 0, dir, sizeof(dir), glob, sizeof(glob));
 		dir_search(dir, "", glob, 0, &res);
 		if (wide)
-			dir_wide_entries(res.ents, res.n, res.truncated);
+			dir_wide_entries(res.ents, res.n, res.truncated,
+					 "... more (4096 max)");
 		else
-			dir_long_entries(res.ents, res.n, res.truncated);
+			dir_long_entries(res.ents, res.n, res.truncated,
+					 "... more (4096 max)");
 		dir_list_free(&res);
 		return;
 	}
@@ -657,9 +661,9 @@ void mmb_cmd_files(const char *kw)
 			mmb_error("?DRIVE");
 		}
 		if (wide)
-			dir_wide_entries(ents, n, truncated);
+			dir_wide_entries(ents, n, truncated, 0);
 		else
-			dir_long_entries(ents, n, truncated);
+			dir_long_entries(ents, n, truncated, 0);
 		G.plat->free(ents);
 	}
 }

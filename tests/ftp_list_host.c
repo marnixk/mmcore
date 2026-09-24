@@ -119,9 +119,11 @@ int mmb_vfs_rename(const char *src, const char *dst)
 	return 0;
 }
 
-int mmb_vfs_list(const char *spec, char *out, int outsz)
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 {
 	(void)spec;
+	if (truncated)
+		*truncated = 0;
 	strncpy(out, g_listing, (size_t)outsz - 1);
 	out[outsz - 1] = 0;
 	return 0;

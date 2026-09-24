@@ -194,10 +194,12 @@ int mmb_glob_match(const char *name, const char *pat)
 	return *p == 0;
 }
 
-static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, char *out, int outsz)
+static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, char *out, int outsz, int *truncated)
 {
 	int parent = ram_walk(ns, max, dir, 0, 0), i, n = 0;
 	out[0] = 0;
+	if (truncated)
+		*truncated = 0;
 	if (parent < 0 || !ns[parent].is_dir)
 		return -1;
 	for (i = 0; i < max; i++)
@@ -211,7 +213,11 @@ static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, cha
 			continue;
 		len = (int)strlen(out);
 		if (len + 90 >= outsz)
+		{
+			if (truncated)
+				*truncated = 1;
 			break;
+		}
 		if (n++)
 			strcat(out, "\n");
 		strcat(out, ns[i].name);
@@ -1100,11 +1106,13 @@ static void sort_dir_entries(mmb_dirent *e, int n)
 		}
 }
 
-int mmb_vfs_list(const char *spec, char *out, int outsz)
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 {
 	mmb_xpath x;
 	char dir[128], glob[128];
 	out[0] = 0;
+	if (truncated)
+		*truncated = 0;
 	if (split_path(spec ? spec : "", &x) != 0)
 		return -1;
 	split_dir_glob(x.path, dir, glob);
@@ -1112,14 +1120,14 @@ int mmb_vfs_list(const char *spec, char *out, int outsz)
 	{
 		int max;
 		vfs_node *ns = vol_nodes(x.letter, &max);
-		if (ram_list(ns, max, dir, glob, out, outsz) != 0)
+		if (ram_list(ns, max, dir, glob, out, outsz, truncated) != 0)
 			return -1;
 		sort_dir_list(out, outsz);
 		return 0;
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	if (mmb_fat_list(x.letter, dir, glob, out, outsz) != 0)
+	if (mmb_fat_list(x.letter, dir, glob, out, outsz, truncated) != 0)
 		return -1;
 	sort_dir_list(out, outsz);
 	return 0;

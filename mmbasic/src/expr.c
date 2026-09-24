@@ -1507,7 +1507,9 @@ int mmb_try_function(mmb_val *out)
 		}
 		if (spec && spec[0])
 		{
-			if (mmb_vfs_list(spec, s_dir_list, (int)sizeof(s_dir_list)) != 0)
+			/* DIR$() keeps its own 4 KB listing buffer; truncation is not
+			 * surfaced here (out of scope for #693). */
+			if (mmb_vfs_list(spec, s_dir_list, (int)sizeof(s_dir_list), 0) != 0)
 				s_dir_list[0] = 0;
 			s_dir_len = (int)strlen(s_dir_list);
 			s_dir_pos = 0;

@@ -383,7 +383,7 @@ int mmb_fat_isdir(int letter, const char *path)
 }
 
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
-		 int outsz)
+		 int outsz, int *truncated)
 {
 	char full[P_BUF];
 	DIR *d;
@@ -392,6 +392,8 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 	ensure_root();
 	if (out && outsz > 0)
 		out[0] = 0;
+	if (truncated)
+		*truncated = 0;
 	if (!dir || !dir[0] || strcmp(dir, "/") == 0)
 		drive_dir_raw(letter, full, sizeof full);
 	else if (!build_path(letter, dir, full, sizeof full, 1))
@@ -419,6 +421,12 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 				strcat(out, "/");
 			strcat(out, "\n");
 		}
+		else
+		{
+			if (truncated)
+				*truncated = 1;
+			break;
+		}
 	}
 	closedir(d);
 	return 0;
@@ -431,7 +439,8 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	char sub[P_BUF];
 	DIR *d;
 	struct dirent *e;
-	int n = 0, total = 0;
+	int n = 0, total = 0, i;
+	struct stat st;
 
 	ensure_root();
 	if (truncated)
@@ -460,20 +469,23 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 		memset(&ent, 0, sizeof(ent));
 		snprintf(ent.name, sizeof(ent.name), "%s", e->d_name);
 		ent.is_dir = isd;
-		ent.size = -1;
-		if (!isd)
-		{
-			struct stat st;
-
-			snprintf(sub, sizeof sub, "%s/%s", full, e->d_name);
-			if (stat(sub, &st) == 0)
-				ent.size = (int)st.st_size;
-		}
+		ent.size = -1; /* stat()ed lazily below, only for the kept entries */
 		total++;
 		/* Keep the sorted-first `max` regardless of readdir order (#676). */
 		mmb_dirent_offer(out, &n, max, &ent);
 	}
 	closedir(d);
+	/* #694: fill sizes without stat()ing every name the filesystem enumerated.
+	 * The d_type fast path in dirent_is_dir already gives the directory bit, so
+	 * only the regular files that survived the cap need a size lookup. */
+	for (i = 0; i < n; i++)
+	{
+		if (out[i].is_dir)
+			continue;
+		snprintf(sub, sizeof sub, "%s/%s", full, out[i].name);
+		if (stat(sub, &st) == 0)
+			out[i].size = (int)st.st_size;
+	}
 	if (truncated)
 		*truncated = total > max;
 	return n;

@@ -86,7 +86,8 @@ int mmb_fat_mkdir(int letter, const char *path);
 int mmb_fat_rmdir(int letter, const char *path);
 int mmb_fat_unlink(int letter, const char *path);
 int mmb_fat_rename(int letter, const char *from, const char *to);
-int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
+int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz,
+		 int *truncated);
 int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 			 mmb_dirent *out, int max, int *truncated);
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append);
@@ -115,5 +116,6 @@ int mmb_vfs_exists(const char *path);
 const char *mmb_vfs_cwd(void);
 int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 			 int *truncated);
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated);
 
 #endif

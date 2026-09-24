@@ -61,9 +61,14 @@ static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 {
 	char listing[2048];
 	char *line, *next;
+	int truncated = 0;
 	if (depth > 8)
 		return -1;
-	if (mmb_vfs_list(absdir, listing, sizeof(listing)) != 0)
+	if (mmb_vfs_list(absdir, listing, sizeof(listing), &truncated) != 0)
+		return -1;
+	/* A cut folder listing would silently omit files from the archive; fail
+	 * the pack rather than write an incomplete package (#693). */
+	if (truncated)
 		return -1;
 	if (!listing[0])
 	{
@@ -431,7 +436,7 @@ static void pw_scan(void)
 {
 	char listing[PW_LIST];
 	char *line, *next;
-	int n = 1;
+	int n = 1, truncated = 0;
 
 	PW.sel = 0;
 	PW.top = 0;
@@ -441,8 +446,10 @@ static void pw_scan(void)
 	strcpy(PW.name[0], ".");
 	strncpy(PW.path[0], PW.cwd, sizeof(PW.path[0]) - 1);
 	PW.path[0][sizeof(PW.path[0]) - 1] = 0;
-	if (mmb_vfs_list(PW.cwd, listing, sizeof(listing)) != 0)
+	if (mmb_vfs_list(PW.cwd, listing, sizeof(listing), &truncated) != 0)
 		listing[0] = 0;
+	if (truncated)
+		pw_set_status("... more: folder listing was cut");
 	for (line = listing; line && *line && n < PW_MAX_ENT; line = next)
 	{
 		int len;

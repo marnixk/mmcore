@@ -262,8 +262,18 @@ static void at_scan(void)
 		p = *e ? e + 1 : e;
 		if (!dir[0])
 			continue;
-		if (mmb_vfs_list(dir, listing, sizeof(listing)) != 0)
-			continue;
+		{
+			int truncated = 0;
+
+			if (mmb_vfs_list(dir, listing, sizeof(listing), &truncated) != 0)
+				continue;
+			if (truncated)
+			{
+				strncpy(AT.status, "... more: app folder was cut",
+					sizeof(AT.status) - 1);
+				AT.status[sizeof(AT.status) - 1] = 0;
+			}
+		}
 		for (line = listing; line && *line && AT.nent < APP_MAX_ENT; line = next)
 		{
 			int len;

@@ -847,7 +847,11 @@ int mmb_vfs_rmdir(const char *path);
 int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
-int mmb_vfs_list(const char *spec, char *out, int outsz);
+/* Newline listing. Fills `out` with matching names, folders first, sorted;
+ * *truncated is set (when non-NULL) if the folder held more names than fit in
+ * `outsz` so the caller can report the cut instead of silently dropping the
+ * tail (#693). */
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated);
 /* Structured listing (#621): one pass yields name, type and size so callers
  * that draw a size column (FILES) do not stat every file again. Entries come
  * back folders-first, then case-insensitively by name. Returns the count, or
@@ -884,7 +888,8 @@ int mmb_fat_mkdir(int letter, const char *path);
 int mmb_fat_rmdir(int letter, const char *path);
 int mmb_fat_unlink(int letter, const char *path);
 int mmb_fat_rename(int letter, const char *from, const char *to);
-int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
+int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
+		 int outsz, int *truncated);
 /* Structured variant of mmb_fat_list (#621): fills `out` with up to `max`
  * entries in one directory scan, using the backend's own type/size metadata
  * (FatFs FILINFO / POSIX dirent + one stat per file) so callers do not repeat

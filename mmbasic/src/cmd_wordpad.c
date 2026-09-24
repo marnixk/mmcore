@@ -140,7 +140,8 @@ static char pick_path_s[MMB_MAX_CONSOLES][WP_PICK_MAX][128];
 static char pick_root_s[MMB_MAX_CONSOLES][128];
 #define pick_root (pick_root_s[g_console])
 static int pick_n_s[MMB_MAX_CONSOLES], pick_sel_s[MMB_MAX_CONSOLES],
-	pick_row0_s[MMB_MAX_CONSOLES], pick_vn_s[MMB_MAX_CONSOLES];
+	pick_row0_s[MMB_MAX_CONSOLES], pick_vn_s[MMB_MAX_CONSOLES],
+	pick_trunc_s[MMB_MAX_CONSOLES];
 static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 #define pick_path (pick_path_s[g_console])
 #define pick_n (pick_n_s[g_console])
@@ -148,6 +149,7 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 #define pick_row0 (pick_row0_s[g_console])
 #define pick_vn (pick_vn_s[g_console])
 #define pick_view (pick_view_s[g_console])
+#define pick_trunc (pick_trunc_s[g_console])
 
 /* Crash-resume sidecar <path>.rec and its pending-prompt path. */
 #define WP_REC_SUFFIX  ".rec"
@@ -254,6 +256,7 @@ static int fd_nfile, fd_ndir;
 static int fd_fsel, fd_dsel;
 static int fd_ftop, fd_dtop;
 static int fd_focus;
+static int fd_truncated; /* current folder listing was cut (#693) */
 
 static const mmb_ed_theme *wpth(void)
 {
@@ -2018,13 +2021,15 @@ static void pick_walk(const char *dir, int depth)
 {
 	char list[2048];
 	char *s;
-	int pass;
+	int pass, truncated = 0;
 
 	if (!dir || !dir[0] || depth > WP_PICK_DEPTH || pick_n >= WP_PICK_MAX)
 		return;
 	list[0] = 0;
-	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
+	if (mmb_vfs_list(dir, list, sizeof(list), &truncated) != 0)
 		return;
+	if (truncated)
+		pick_trunc = 1;
 	/* Two passes: add this directory's own Markdown files first, then
 	 * descend into its subdirectories.  mmb_vfs_list returns folders before
 	 * files, so walking it once would let a big subdirectory exhaust the cap
@@ -2215,6 +2220,7 @@ static void open_picker(void)
 	W.dialog = WP_DLG_PICK;
 	W.dlg[0] = 0;
 	W.dlglen = 0;
+	pick_trunc = 0;
 	pick_n = 0;
 	pick_sel = 0;
 	pick_row0 = 0;
@@ -2493,9 +2499,10 @@ static void fd_scan(void)
 
 	fd_nfile = 0;
 	fd_ndir = 0;
+	fd_truncated = 0;
 	fd_add(fd_dirs, &fd_ndir, "..");
 	list[0] = 0;
-	if (mmb_vfs_list(fd_dir, list, sizeof(list)) != 0)
+	if (mmb_vfs_list(fd_dir, list, sizeof(list), &fd_truncated) != 0)
 		list[0] = 0;
 	s = list;
 	while (*s)
@@ -3422,6 +3429,8 @@ static void draw_file_dialog(void)
 	strncat(st, fd_dir, sizeof(st) - 1);
 	strncat(st, "  ", sizeof(st) - strlen(st) - 1);
 	strncat(st, wp_fd_mask, sizeof(st) - strlen(st) - 1);
+	if (fd_truncated)
+		strncat(st, "  ... more", sizeof(st) - strlen(st) - 1);
 	wp_puts(c0 + 2, r0 + h - 3, st, WP_DIM, sbg);
 	wp_puts(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", WP_DIM, sbg);
 }
@@ -3516,6 +3525,8 @@ static void draw_picker(void)
 		wp_puts(c0 + 2, y, lab, fg, bg);
 	}
 	wp_puts(c0 + 2, r0 + h - 2, "Enter=open  Esc=cancel  Up/Down", WP_DIM, sbg);
+	if (pick_trunc)
+		wp_puts(c0 + 2, r0 + h - 3, "... more", WP_DIM, sbg);
 }
 
 static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsigned bg,
