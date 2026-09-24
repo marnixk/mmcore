@@ -104,6 +104,85 @@ def test_common_declares_variables(console):
     assert console.send_line("PRINT BAZ") == "3"
 
 
+def test_local_is_scoped_to_sub(console):
+    """#658: a callee's LOCAL must not clobber the caller's same-named local."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB INNER") == ""
+    assert console.send_line("20 LOCAL X") == ""
+    assert console.send_line("30 X=99") == ""
+    assert console.send_line("40 END SUB") == ""
+    assert console.send_line("50 SUB OUTER") == ""
+    assert console.send_line("60 LOCAL X") == ""
+    assert console.send_line("70 X=1") == ""
+    assert console.send_line("80 INNER") == ""
+    assert console.send_line("90 PRINT X") == ""
+    assert console.send_line("100 END SUB") == ""
+    assert console.send_line("110 OUTER") == ""
+    assert console.send_line("RUN") == "1"
+
+
+def test_local_does_not_clobber_argument(console):
+    """#658: a callee's LOCAL must not overwrite the caller's argument slot."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB INNER(P$)") == ""
+    assert console.send_line("20 LOCAL N%") == ""
+    assert console.send_line("30 N%=14") == ""
+    assert console.send_line("40 END SUB") == ""
+    assert console.send_line("50 SUB OUTER(P$, N%)") == ""
+    assert console.send_line("60 INNER(P$)") == ""
+    assert console.send_line("70 PRINT N%") == ""
+    assert console.send_line("80 END SUB") == ""
+    assert console.send_line('90 OUTER "x", 7') == ""
+    assert console.send_line("RUN") == "7"
+
+
+def test_local_string_scoped_to_sub(console):
+    """#658: string locals are restored too."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB INNER") == ""
+    assert console.send_line("20 LOCAL S$") == ""
+    assert console.send_line('30 S$="inner"') == ""
+    assert console.send_line("40 END SUB") == ""
+    assert console.send_line("50 SUB OUTER") == ""
+    assert console.send_line("60 LOCAL S$") == ""
+    assert console.send_line('70 S$="outer"') == ""
+    assert console.send_line("80 INNER") == ""
+    assert console.send_line("90 PRINT S$") == ""
+    assert console.send_line("100 END SUB") == ""
+    assert console.send_line("110 OUTER") == ""
+    assert console.send_line("RUN") == "outer"
+
+
+def test_local_array_scoped_to_sub(console):
+    """#658: a LOCAL array gets its own dimensions and is restored on return."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 DIM A(2)") == ""
+    assert console.send_line("20 A(0)=5") == ""
+    assert console.send_line("30 SUB INNER") == ""
+    assert console.send_line("40 LOCAL A(3)") == ""
+    assert console.send_line("50 A(0)=11") == ""
+    assert console.send_line("60 END SUB") == ""
+    assert console.send_line("70 INNER") == ""
+    assert console.send_line("80 PRINT A(0)") == ""
+    assert console.send_line("RUN") == "5"
+
+
+def test_local_in_loop_resets_between_calls(console):
+    """#658: a LOCAL re-declared in a frame keeps its value within the call,
+    but starts fresh on the next call."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB COUNT") == ""
+    assert console.send_line("20 FOR I=1 TO 3") == ""
+    assert console.send_line("30 LOCAL T") == ""
+    assert console.send_line("40 T=T+1") == ""
+    assert console.send_line("50 NEXT I") == ""
+    assert console.send_line("60 PRINT T") == ""
+    assert console.send_line("70 END SUB") == ""
+    assert console.send_line("80 COUNT") == ""
+    assert console.send_line("90 COUNT") == ""
+    assert console.send_line("RUN") == "3\n3"
+
+
 def test_help_variable_gaps(console):
     out = dump_topic(console, "REDIM")
     assert "PRESERVE" in out
