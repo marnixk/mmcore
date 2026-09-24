@@ -13,6 +13,11 @@ int sdl_tui_rows(void);
 void sdl_tui_prepare(void);
 void sdl_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
 void sdl_tui_present(int y0, int y1);
+
+/* Read a pixel from the TUI composition surface as RGB888. On SDL the
+ * framebuffer is shared, so this matches get_pixel; it exists so PAINT's
+ * cursor reads the same buffer everywhere. */
+unsigned sdl_tui_get_px(int x, int y);
 void sdl_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb);
 void sdl_tui_glyph2x(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb);
 void sdl_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_rgb,

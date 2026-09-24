@@ -42,6 +42,11 @@ void pt_text_begin(int cx, int cy, int button);
 static int s_shift;		/* Shift held (pt_tool_modifiers) */
 static int s_moved;		/* grab: the press turned into a drag */
 
+/* Bounding box of the live shape preview currently on the canvas, so the next
+ * preview_restore() can damage the pixels it is about to revert (#700). */
+static int s_pv_valid;
+static int s_pv_x0, s_pv_y0, s_pv_x1, s_pv_y1;
+
 static unsigned char *s_brush;	/* custom brush, PT_MAX_W * PT_MAX_H */
 static int s_brush_w, s_brush_h;
 static int s_brush_bg;		/* index treated as transparent when stamped */
@@ -281,10 +286,56 @@ static void preview_begin(void)
 	}
 }
 
+/* Remember the canvas rectangle the live preview now covers. */
+static void preview_note(int x0, int y0, int x1, int y1)
+{
+	if (x0 > x1)
+	{
+		int t = x0;
+
+		x0 = x1;
+		x1 = t;
+	}
+	if (y0 > y1)
+	{
+		int t = y0;
+
+		y0 = y1;
+		y1 = t;
+	}
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > PT.width - 1)
+		x1 = PT.width - 1;
+	if (y1 > PT.height - 1)
+		y1 = PT.height - 1;
+	if (x1 < x0 || y1 < y0)
+	{
+		s_pv_valid = 0;
+		return;
+	}
+	s_pv_x0 = x0;
+	s_pv_y0 = y0;
+	s_pv_x1 = x1;
+	s_pv_y1 = y1;
+	s_pv_valid = 1;
+}
+
 static void preview_restore(void)
 {
 	if (PT.scratch && PT.canvas && PT.scratch_valid)
+	{
+		/* The revert erases the previous preview, which the per-pixel
+		 * pt_canvas_set() damage does not cover. */
+		if (s_pv_valid)
+			pt_damage_canvas(s_pv_x0, s_pv_y0,
+					 s_pv_x1 - s_pv_x0 + 1,
+					 s_pv_y1 - s_pv_y0 + 1);
 		memcpy(PT.canvas, PT.scratch, (size_t)PT.width * PT.height);
+	}
+	s_pv_valid = 0;
 }
 
 /* ---- Shift constraints ------------------------------------------------- */
@@ -686,6 +737,7 @@ void pt_tool_begin(int cx, int cy, int button)
 	PT.last_cx = cx;
 	PT.last_cy = cy;
 	s_moved = 0;
+	s_pv_valid = 0;
 
 	switch (PT.tool)
 	{
@@ -757,18 +809,21 @@ void pt_tool_motion(int cx, int cy, int button)
 			constrain_line(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_line(PT.anchor_x, PT.anchor_y, x, y, c);
+		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_RECT:
 		if (s_shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_rect(PT.anchor_x, PT.anchor_y, x, y, c);
+		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_ELLIPSE:
 		if (s_shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_box(PT.anchor_x, PT.anchor_y, x, y, c);
+		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_CIRCLE:
 	{
@@ -779,6 +834,8 @@ void pt_tool_motion(int cx, int cy, int button)
 			r = ry;
 		preview_restore();
 		canvas_circle(PT.anchor_x, PT.anchor_y, r, c);
+		preview_note(PT.anchor_x - r, PT.anchor_y - r,
+			     PT.anchor_x + r, PT.anchor_y + r);
 		break;
 	}
 	case PT_TOOL_GRAB:
@@ -793,6 +850,7 @@ void pt_tool_motion(int cx, int cy, int button)
 		{
 			preview_restore();
 			canvas_rect(PT.anchor_x, PT.anchor_y, cx, cy, c);
+			preview_note(PT.anchor_x, PT.anchor_y, cx, cy);
 		}
 		break;
 	case PT_TOOL_AIRBRUSH:

@@ -77,6 +77,18 @@ static unsigned drv_get_pixel(int x, int y)
 	return fb[y * PT_W + x];
 }
 
+/* The cursor now reads the TUI composition buffer through tui_get_px (#701);
+ * here that is the same in-memory screen the module draws into. */
+unsigned tui_get_px(int x, int y)
+{
+	return drv_get_pixel(x, y);
+}
+
+void pt_damage_present(int x, int y, int w, int h)
+{
+	(void)x; (void)y; (void)w; (void)h;
+}
+
 void pt_plot(int x, int y, unsigned rgb)
 {
 	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
@@ -390,6 +402,7 @@ def run(tmp_path_factory):
         [
             "cc", "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
             "-I", str(tmp), "-I", SRC,
+            "-I", os.path.join(REPO, "mmbasic", "include"),
             "-o", str(exe),
             str(tmp / "driver.c"), CURSORS_C, ART_C,
         ],
@@ -449,3 +462,132 @@ def test_tool_id_mapping_covers_art():
     """The PT enum maps onto the 14 baked sprites; each name appears once."""
     assert set(TOOL_IDS.values()) == set(range(len(TOOLS) - 1))
     assert len(TOOL_IDS) == len(TOOLS) - 1
+
+
+# ---- #701 ghost regression -------------------------------------------------
+#
+# On a real Pi the HDMI surface read by get_pixel() still shows the previous
+# frame (with the old cursor in it) while PAINT composes into the TUI buffer.
+# The module must read the composition buffer via tui_get_px(). This driver
+# models two surfaces: `fb` (composition, read by tui_get_px) and `presented`
+# (stale HDMI, read by get_pixel, with a fake old cursor already stamped in).
+# If the module ever reads the presented surface, restore leaves a ghost.
+
+GHOST_DRIVER = r"""
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "paint.h"
+#include "paint_cursor_art.h"
+
+#define NPX (PT_W * PT_H)
+static unsigned fb[NPX];
+static unsigned presented[NPX];
+
+mmb_global_shim G;
+static mmb_platform_shim g_plat;
+
+static unsigned pat(int x, int y)
+{
+	return 0x01000000u | (((unsigned)x * 7u + (unsigned)y * 13u) & 0xFFFFu);
+}
+
+static unsigned drv_get_pixel(int x, int y)	/* stale HDMI surface */
+{
+	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
+		return 0;
+	return presented[y * PT_W + x];
+}
+
+unsigned tui_get_px(int x, int y)		/* live composition buffer */
+{
+	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
+		return 0;
+	return fb[y * PT_W + x];
+}
+
+void pt_damage_present(int x, int y, int w, int h)
+{
+	(void)x; (void)y; (void)w; (void)h;
+}
+void pt_plot(int x, int y, unsigned rgb)
+{
+	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
+		return;
+	fb[y * PT_W + x] = rgb;
+}
+void pt_fill_rect(int x, int y, int w, int h, unsigned rgb)
+{
+	int i, j;
+
+	for (j = 0; j < h; j++)
+		for (i = 0; i < w; i++)
+			pt_plot(x + i, y + j, rgb);
+}
+unsigned pt_palette_rgb(int idx) { return 0x100u + (unsigned)idx; }
+
+int main(void)
+{
+	int x, y;
+
+	for (y = 0; y < PT_H; y++)
+		for (x = 0; x < PT_W; x++)
+			fb[y * PT_W + x] = pat(x, y);
+	memcpy(presented, fb, sizeof fb);
+	g_plat.get_pixel = drv_get_pixel;
+	G.plat = &g_plat;
+
+	/* The previous presented frame already contains the old cursor. */
+	for (y = -3; y <= 3; y++)
+		for (x = -3; x <= 3; x++)
+			if (100 + x >= 0 && 100 + y >= 0 &&
+			    100 + x < PT_W && 100 + y < PT_H)
+				presented[(100 + y) * PT_W + (100 + x)] =
+					0x00FF00FFu;
+
+	pt_cursor_init();
+	pt_cursor_draw(100, 100, 0, 0);
+	pt_cursor_draw(140, 120, 0, 0);
+	pt_cursor_restore();
+
+	for (y = 0; y < PT_H; y++)
+		for (x = 0; x < PT_W; x++)
+			if (fb[y * PT_W + x] != pat(x, y))
+			{
+				printf("FAIL ghost at %d,%d\n", x, y);
+				return 1;
+			}
+	printf("OK no_ghost\n");
+	return 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def ghost_run(tmp_path_factory):
+    if shutil.which("cc") is None:
+        pytest.skip("needs a host C toolchain (cc)")
+    tmp = tmp_path_factory.mktemp("paint_cursor_ghost")
+    (tmp / "mmb_priv.h").write_text(SHIM_H)
+    (tmp / "driver.c").write_text(GHOST_DRIVER)
+    exe = tmp / "driver"
+    subprocess.run(
+        [
+            "cc", "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+            "-I", str(tmp), "-I", SRC,
+            "-I", os.path.join(REPO, "mmbasic", "include"),
+            "-o", str(exe),
+            str(tmp / "driver.c"), CURSORS_C, ART_C,
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return subprocess.run([str(exe)], check=False, capture_output=True, text=True)
+
+
+def test_cursor_reads_composition_buffer_no_ghost(ghost_run):
+    out = ghost_run.stdout + ghost_run.stderr
+    assert ghost_run.returncode == 0, out
+    assert "OK no_ghost" in out, out

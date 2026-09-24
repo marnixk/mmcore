@@ -884,6 +884,28 @@ static unsigned plat_native_to_rgb(unsigned native)
 #endif
 }
 
+/* Read the pixel the app composes into (the TUI offscreen buffer), not the
+ * HDMI framebuffer the previous frame was presented to. */
+static unsigned plat_tui_get_px(int x, int y)
+{
+	unsigned bpp, native = 0;
+	const u8 *p;
+
+	if (!s_tui_pix || x < 0 || y < 0 ||
+	    (unsigned)x >= s_tui_w || (unsigned)y >= s_tui_h)
+		return 0;
+	bpp = DEPTH / 8;
+	p = s_tui_pix + (unsigned)y * s_tui_pitch + (unsigned)x * bpp;
+#if DEPTH == 32
+	native = *(const u32 *)p;
+#elif DEPTH == 16
+	native = *(const u16 *)p;
+#else
+	native = *p;
+#endif
+	return plat_native_to_rgb(native);
+}
+
 static int present_clip(CScreenDevice *sc, int *x, int *y, int *w, int *h,
 			int stride, const void **pix, unsigned bpp)
 {
@@ -1568,6 +1590,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.tui_glyph_n = plat_tui_glyph_n;
 	plat.tui_glyph_n_px = plat_tui_glyph_n_px;
 	plat.tui_fill_px = plat_tui_fill_px;
+	plat.tui_get_px = plat_tui_get_px;
 	plat.tui_set_font = plat_tui_set_font;
 	plat.alt_held = plat_alt_held;
 	plat.ctrl_alt_held = plat_ctrl_alt_held;

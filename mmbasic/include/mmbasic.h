@@ -123,6 +123,11 @@ typedef struct mmb_platform {
 	void (*tui_glyph_n_px)(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
 			       unsigned bg_rgb, int scale, int ink_only);
 	void (*tui_fill_px)(int x_px, int y_px, int w, int h, unsigned rgb);
+	/* Read a pixel from the TUI composition buffer the tui_* helpers and the
+	 * pixel helpers draw into (RGB888). Distinct from get_pixel, which reads
+	 * the presented surface: on a bare Pi the composition buffer is s_tui_pix
+	 * while HDMI shows the previous frame. Optional. */
+	unsigned (*tui_get_px)(int x, int y);
 	void (*tui_set_font)(const unsigned char *font256x16);
 	int (*alt_held)(void);
 	/* 1 while both Ctrl and Alt are held (USB modifiers). */

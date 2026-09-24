@@ -115,6 +115,12 @@ unsigned pt_palette_rgb(int idx) { (void)idx; return 0; }
 
 void pt_request_redraw(void) { PT.dirty = 1; }
 
+/* paint_tools.c links here too; its preview marks the reverted rectangle. */
+void pt_damage_canvas(int x, int y, int w, int h)
+{
+	(void)x; (void)y; (void)w; (void)h;
+}
+
 int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy)
 {
 	(void)sx; (void)sy; (void)cx; (void)cy;
