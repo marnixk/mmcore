@@ -605,6 +605,35 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 	G.nsubs++;
 }
 
+/* Pre-register every SUB/FUNCTION definition before RUN starts executing
+ * (#698). Upstream MMBasic scans the whole program up front, so a call may
+ * appear before the textual definition; without this the bare name is not
+ * yet in G.subs[] and resolves to ?SYNTAX ERROR. sub_register() is
+ * idempotent, so reaching the definition line during execution is harmless. */
+static void scan_subs(void)
+{
+	int i;
+	for (i = 0; i < G.nprog; i++)
+	{
+		const char *save = G.p;
+		char name[MMB_MAX_NAME];
+		int is_func;
+		G.p = after_label(mmb_tok_line(i));
+		if (mmb_match("SUB"))
+			is_func = 0;
+		else if (mmb_match("FUNCTION"))
+			is_func = 1;
+		else
+		{
+			G.p = save;
+			continue;
+		}
+		mmb_ident(name, sizeof(name));
+		sub_register(name, i + 1, is_func, mmb_type_suffix(name));
+		G.p = save;
+	}
+}
+
 static int file_getc(int fn)
 {
 	unsigned char c;
@@ -4065,6 +4094,7 @@ static void run_program(void)
 		mmb_struct_prepare();
 		G.on_error_pc = -1;
 		G.error_active = 0;
+		scan_subs();
 		G.opt.explicit = 0;
 		G.opt.default_type = T_NUM;
 		G.opt.base = 0;

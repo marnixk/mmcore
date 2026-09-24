@@ -217,6 +217,40 @@ def test_sub_local_and_caller(console):
     assert console.send_line("RUN") == "15\n1"
 
 
+def test_sub_defined_after_call(console):
+    """#698: a SUB may be called before its textual definition."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 PRINT "top"') == ""
+    assert console.send_line("20 LEAF") == ""
+    assert console.send_line("30 END") == ""
+    assert console.send_line("100 SUB LEAF") == ""
+    assert console.send_line('110 PRINT "in sub"') == ""
+    assert console.send_line("120 END SUB") == ""
+    assert console.send_line("RUN") == "top\nin sub"
+
+
+def test_function_used_before_definition(console):
+    """#698: a FUNCTION may be evaluated before its textual definition."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 PRINT TWICE(21)") == ""
+    assert console.send_line("20 END") == ""
+    assert console.send_line("100 FUNCTION TWICE(N)") == ""
+    assert console.send_line("110 TWICE = N * 2") == ""
+    assert console.send_line("120 END FUNCTION") == ""
+    assert console.send_line("RUN") == "42"
+
+
+def test_sub_with_args_defined_after_call(console):
+    """#698: pre-registration keeps the argument signature of a forward SUB."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 ADD 2, 3") == ""
+    assert console.send_line("20 END") == ""
+    assert console.send_line("100 SUB ADD(A, B)") == ""
+    assert console.send_line('110 PRINT A + B') == ""
+    assert console.send_line("120 END SUB") == ""
+    assert console.send_line("RUN") == "5"
+
+
 def test_static_is_dim_today(console):
     """STATIC currently aliases DIM. CMM2 persist-across-CALL is not implemented."""
     assert console.send_line("NEW") == ""
