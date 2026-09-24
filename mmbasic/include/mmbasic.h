@@ -41,6 +41,19 @@ typedef struct mmb_dirent {
 	int size;
 } mmb_dirent;
 
+/* Ordering for a structured listing: folders first, then case-insensitively by
+ * name. Shared by the interpreter and every storage backend so a bounded scan
+ * keeps exactly the entries a full listing would show first (#676). */
+int mmb_dirent_cmp(const mmb_dirent *a, const mmb_dirent *b);
+/* Bounded selection for a structured listing (#676): offer each matching entry
+ * as the backend enumerates it and `heap`/`*n` (capacity `max`) retains the
+ * `max` smallest under mmb_dirent_cmp. This makes the kept set independent of
+ * the backend's raw scan order (readdir/FatFs/node order) instead of an
+ * arbitrary first-N cut. `*n` grows to at most `max`; the caller sorts the
+ * result and compares the number of candidates seen against `max` to decide
+ * whether it was cut. */
+void mmb_dirent_offer(mmb_dirent *heap, int *n, int max, const mmb_dirent *e);
+
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);

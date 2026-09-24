@@ -116,6 +116,34 @@ static mmb_test_plat g_plat = { talloc, tfree };
 #define CHUNK  1024
 #define CHUNKS 300
 
+/* #676: a listing capped below the folder size must keep the sorted-first
+ * `max` entries, not an arbitrary first-N slice in raw node order. Seed the
+ * names in descending order so node order is the reverse of sorted order, and
+ * cap well below the count: the old code kept CAP39..CAP30, the fix keeps
+ * CAP00..CAP09. */
+static void test_bounded_listing(void)
+{
+	enum { N = 40, CAP = 10 };
+	mmb_dirent ents[CAP];
+	char path[32];
+	int i, n, truncated = 0;
+
+	for (i = N - 1; i >= 0; i--)
+	{
+		snprintf(path, sizeof path, "A:/CAP%02d.TXT", i);
+		check(mmb_vfs_write(path, "x", 1, 0) == 0, "seed capped file");
+	}
+	n = mmb_vfs_list_entries("A:/*.TXT", ents, CAP, &truncated);
+	check(n == CAP, "capped listing count");
+	check(truncated == 1, "capped listing truncated");
+	for (i = 0; i < CAP; i++)
+	{
+		char want[32];
+		snprintf(want, sizeof want, "CAP%02d.TXT", i);
+		check(strcmp(ents[i].name, want) == 0, "capped listing sorted-first");
+	}
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -126,6 +154,8 @@ int main(void)
 
 	G.plat = &g_plat;
 	mmb_vfs_init();
+
+	test_bounded_listing();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);

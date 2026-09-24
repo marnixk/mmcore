@@ -226,29 +226,28 @@ static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, cha
 static int ram_list_entries(vfs_node *ns, int vmax, const char *dir,
 			    const char *pat, mmb_dirent *out, int max, int *truncated)
 {
-	int parent = ram_walk(ns, vmax, dir, 0, 0), i, n = 0;
+	int parent = ram_walk(ns, vmax, dir, 0, 0), i, n = 0, total = 0;
 	if (parent < 0 || !ns[parent].is_dir)
 		return -1;
 	for (i = 0; i < vmax; i++)
 	{
+		mmb_dirent ent;
+
 		if (!ns[i].used || ns[i].parent != parent)
 			continue;
 		if (mmb_vfs_hidden_name(ns[i].name))
 			continue;
 		if (pat && pat[0] && !mmb_glob_match(ns[i].name, pat))
 			continue;
-		if (n >= max)
-		{
-			if (truncated)
-				*truncated = 1;
-			break;
-		}
-		memset(&out[n], 0, sizeof(out[n]));
-		strncpy(out[n].name, ns[i].name, sizeof(out[n].name) - 1);
-		out[n].is_dir = ns[i].is_dir;
-		out[n].size = ns[i].is_dir ? -1 : (int)ns[i].size;
-		n++;
+		total++;
+		memset(&ent, 0, sizeof(ent));
+		strncpy(ent.name, ns[i].name, sizeof(ent.name) - 1);
+		ent.is_dir = ns[i].is_dir;
+		ent.size = ns[i].is_dir ? -1 : (int)ns[i].size;
+		mmb_dirent_offer(out, &n, max, &ent);
 	}
+	if (truncated)
+		*truncated = total > max;
 	return n;
 }
 
@@ -1025,12 +1024,63 @@ static void sort_dir_list(char *out, int outsz)
 
 /* Comparator for the structured listing: folders first, then case-insensitive
  * by name. Names carry no trailing slash there, so list_cmp_names' folder test
- * is a no-op and only its ordering matters. */
-static int dirent_cmp(const mmb_dirent *a, const mmb_dirent *b)
+ * is a no-op and only its ordering matters. Shared with the storage backends
+ * (mmbasic.h) so a bounded scan keeps the same sorted-first entries (#676). */
+int mmb_dirent_cmp(const mmb_dirent *a, const mmb_dirent *b)
 {
 	if (a->is_dir != b->is_dir)
 		return a->is_dir ? -1 : 1;
 	return list_cmp_names(a->name, b->name);
+}
+
+/* Restore the max-heap property at `i` for `dirent_cmp`'s ordering. The root is
+ * the largest entry currently kept, which is the one a smaller candidate
+ * evicts. */
+static void dirent_sift_down(mmb_dirent *h, int n, int i)
+{
+	for (;;)
+	{
+		int l = 2 * i + 1, r = l + 1, big = i;
+		mmb_dirent t;
+		if (l < n && mmb_dirent_cmp(&h[l], &h[big]) > 0)
+			big = l;
+		if (r < n && mmb_dirent_cmp(&h[r], &h[big]) > 0)
+			big = r;
+		if (big == i)
+			break;
+		t = h[i];
+		h[i] = h[big];
+		h[big] = t;
+		i = big;
+	}
+}
+
+void mmb_dirent_offer(mmb_dirent *heap, int *n, int max, const mmb_dirent *e)
+{
+	int i;
+	if (*n < max)
+	{
+		/* Grow the heap: append, then sift the new entry up. */
+		i = (*n)++;
+		heap[i] = *e;
+		while (i > 0)
+		{
+			int p = (i - 1) / 2;
+			mmb_dirent t;
+			if (mmb_dirent_cmp(&heap[i], &heap[p]) <= 0)
+				break;
+			t = heap[i];
+			heap[i] = heap[p];
+			heap[p] = t;
+			i = p;
+		}
+	}
+	else if (mmb_dirent_cmp(e, &heap[0]) < 0)
+	{
+		/* Full, and this entry sorts before the largest kept: evict it. */
+		heap[0] = *e;
+		dirent_sift_down(heap, max, 0);
+	}
 }
 
 static void sort_dir_entries(mmb_dirent *e, int n)
@@ -1041,7 +1091,7 @@ static void sort_dir_entries(mmb_dirent *e, int n)
 		{
 			mmb_dirent key = e[i];
 			int j = i;
-			while (j >= gap && dirent_cmp(&e[j - gap], &key) > 0)
+			while (j >= gap && mmb_dirent_cmp(&e[j - gap], &key) > 0)
 			{
 				e[j] = e[j - gap];
 				j -= gap;

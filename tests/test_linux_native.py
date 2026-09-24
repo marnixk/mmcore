@@ -327,6 +327,29 @@ def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
     assert out.count("... more") == 2, out
 
 
+def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
+    """#676: a folder past DIR_ENT_MAX keeps the sorted-first 512 entries.
+
+    The POSIX backend used to stop readdir() at the cap and only then sort, so
+    the survivors were whichever names the filesystem enumerated first. The cap
+    must keep exactly the names a sorted full listing would show first.
+    """
+    root = tmp_path / "drives"
+    many_dir = root / "C" / "CAP676"
+    many_dir.mkdir(parents=True)
+    for i in range(520):
+        (many_dir / f"F{i:03d}.TXT").write_text("x")
+
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR "C:/CAP676"\n', env)
+    assert out.count("... more") == 1, out
+    # Sorted-first 512 of 520 = F000..F511; the tail F512..F519 is dropped.
+    missing = [i for i in range(512) if f"F{i:03d}.TXT" not in out]
+    assert not missing, f"sorted-first entries dropped: {missing[:5]}"
+    leaked = [i for i in range(512, 520) if f"F{i:03d}.TXT" in out]
+    assert not leaked, f"unsorted tail survived the cap: {leaked}"
+
+
 def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
     """#674: DIR /S scans each folder with the entries API, not a 1 KB buffer.
 
