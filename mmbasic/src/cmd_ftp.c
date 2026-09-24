@@ -604,6 +604,7 @@ static int ftp_start_list(const char *arg, int names_only)
 	char canon[FTP_PATH_MAX];
 	char names[2048];
 	char *s, *nl;
+	int truncated = 0;
 
 	if (arg[0] == 0)
 		arg = FT.cwd;
@@ -628,7 +629,7 @@ static int ftp_start_list(const char *arg, int names_only)
 	else
 	{
 		names[0] = 0;
-		if (mmb_vfs_list(canon, names, sizeof(names)) != 0)
+		if (mmb_vfs_list(canon, names, sizeof(names), &truncated) != 0)
 			names[0] = 0;
 		s = names;
 		while (*s)
@@ -675,7 +676,9 @@ static int ftp_start_list(const char *arg, int names_only)
 	}
 	if (ftp_xfer_begin(names_only ? XF_NLST : XF_LIST, canon, FT.list_len) != 0)
 		return -1;
-	set_status(names_only ? "Listing names" : "Listing");
+	set_status(truncated ? (names_only ? "Listing names (truncated)"
+					     : "Listing (truncated)")
+			     : (names_only ? "Listing names" : "Listing"));
 	return 0;
 }
 

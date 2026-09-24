@@ -48,11 +48,14 @@ int mmb_fat_mkdir(int letter, const char *path) { (void)letter; (void)path; retu
 int mmb_fat_rmdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_unlink(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_rename(int letter, const char *a, const char *b) { (void)letter; (void)a; (void)b; return -1; }
-int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz)
+int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz,
+		 int *truncated)
 {
 	(void)letter; (void)dir; (void)pat;
 	if (outsz > 0)
 		out[0] = 0;
+	if (truncated)
+		*truncated = 0;
 	return -1;
 }
 int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
@@ -144,6 +147,33 @@ static void test_bounded_listing(void)
 	}
 }
 
+/* #693: mmb_vfs_list must flag a listing the caller's buffer cut, so a
+ * consumer can report it instead of silently dropping names. */
+static void test_list_truncation(void)
+{
+	enum { N = 12 };
+	char path[32];
+	char small[96];
+	char big[4096];
+	int i, truncated;
+
+	for (i = 0; i < N; i++)
+	{
+		snprintf(path, sizeof path, "A:/TRUNC%02d.TXT", i);
+		check(mmb_vfs_write(path, "x", 1, 0) == 0, "seed trunc file");
+	}
+	truncated = 0;
+	check(mmb_vfs_list("A:/TRUNC*.TXT", small, (int)sizeof small, &truncated) == 0,
+	      "small listing rc");
+	check(truncated == 1, "small listing flagged truncated");
+	check(small[0] != 0, "small listing kept some names");
+
+	truncated = 1;
+	check(mmb_vfs_list("A:/TRUNC*.TXT", big, (int)sizeof big, &truncated) == 0,
+	      "roomy listing rc");
+	check(truncated == 0, "roomy listing not truncated");
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -156,6 +186,7 @@ int main(void)
 	mmb_vfs_init();
 
 	test_bounded_listing();
+	test_list_truncation();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);

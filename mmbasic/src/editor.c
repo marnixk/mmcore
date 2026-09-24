@@ -424,6 +424,7 @@ static int pick_row0_s[MMB_MAX_CONSOLES];
 static int pick_view_s[MMB_MAX_CONSOLES][ED_PICK_MAX];
 static int pick_vn_s[MMB_MAX_CONSOLES];
 static int pick_kind_s[MMB_MAX_CONSOLES]; /* 0 files 1 outline */
+static int pick_trunc_s[MMB_MAX_CONSOLES];
 #define pick_path (pick_path_s[g_console])
 #define pick_pos (pick_pos_s[g_console])
 #define pick_n (pick_n_s[g_console])
@@ -432,6 +433,7 @@ static int pick_kind_s[MMB_MAX_CONSOLES]; /* 0 files 1 outline */
 #define pick_view (pick_view_s[g_console])
 #define pick_vn (pick_vn_s[g_console])
 #define pick_kind (pick_kind_s[g_console])
+#define pick_trunc (pick_trunc_s[g_console])
 static int alt_pend;
 static int confirm_pending;
 static int confirm_btn;
@@ -501,6 +503,7 @@ static int fd_nfile, fd_ndir;
 static int fd_fsel, fd_dsel;
 static int fd_ftop, fd_dtop;
 static int fd_focus;
+static int fd_truncated; /* current folder listing was cut (#693) */
 
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Theme", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'T', 'H' };
@@ -935,14 +938,16 @@ static void pick_walk(const char *dir, int depth)
 {
 	char list[2048];
 	char *s;
-	int pass;
+	int pass, truncated = 0;
 	if (!dir || !dir[0] || depth > ED_PICK_DEPTH || pick_n >= ED_PICK_MAX)
 		return;
 	if (!path_is_dir(dir))
 		return;
 	list[0] = 0;
-	if (mmb_vfs_list(dir, list, sizeof(list)) != 0)
+	if (mmb_vfs_list(dir, list, sizeof(list), &truncated) != 0)
 		return;
+	if (truncated)
+		pick_trunc = 1;
 	/* Two passes: add this directory's own .BAS/.INC files first, then
 	 * descend into its subdirectories.  mmb_vfs_list returns folders before
 	 * files, so walking it once would let a big subdirectory exhaust the cap
@@ -1140,6 +1145,8 @@ static void draw_picker(void)
 		tui_pad(c0 + 2, y, lab, w - 4, fg, bg);
 	}
 	tui_pad(c0 + 2, r0 + h - 2, foot, w - 4, C_DLG_FG, C_DLG_BG);
+	if (!pick_kind && pick_trunc)
+		tui_pad(c0 + 2, r0 + h - 3, "... more", w - 4, C_DLG_FG, C_DLG_BG);
 }
 
 static void draw_char_picker(void)
@@ -1298,6 +1305,7 @@ static void open_picker(void)
 	G.ed.dlg[0] = 0;
 	G.ed.dlglen = 0;
 	pick_kind = 0;
+	pick_trunc = 0;
 	pick_n = 0;
 	pick_sel = 0;
 	pick_row0 = 0;
@@ -1324,6 +1332,7 @@ static void open_outline(void)
 	G.ed.dlg[0] = 0;
 	G.ed.dlglen = 0;
 	pick_kind = 1;
+	pick_trunc = 0;
 	pick_sel = 0;
 	pick_row0 = 0;
 	pick_vn = 0;
@@ -3289,9 +3298,10 @@ static void fd_scan(void)
 	char *s, *nl;
 	fd_nfile = 0;
 	fd_ndir = 0;
+	fd_truncated = 0;
 	fd_add(fd_dirs, &fd_ndir, "..");
 	list[0] = 0;
-	if (mmb_vfs_list(fd_dir, list, sizeof(list)) != 0)
+	if (mmb_vfs_list(fd_dir, list, sizeof(list), &fd_truncated) != 0)
 		list[0] = 0;
 	s = list;
 	while (*s)
@@ -3908,6 +3918,8 @@ static void draw_dialog(void)
 			tui_pad(dx, ly + i, fn, dw, sfg, sbg);
 		}
 		fd_status_line(st, sizeof(st));
+		if (fd_truncated)
+			strncat(st, "  ... more", sizeof(st) - strlen(st) - 1);
 		tui_pad(c0 + 2, r0 + h - 3, st, w - 4, C_DLG_FG, C_DLG_BG);
 		tui_pad(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
 	}

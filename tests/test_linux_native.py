@@ -5,6 +5,7 @@ behaviour: startup banner, immediate-mode PRINT, and RUN of a ramdisk .BAS.
 """
 import os
 import plistlib
+import re
 import shutil
 import socket
 import struct
@@ -350,6 +351,26 @@ def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
     assert not leaked, f"unsorted tail survived the cap: {leaked}"
 
 
+def test_posix_list_entries_lazy_size(mmb_linux, tmp_path):
+    """#694: the POSIX backend keeps sizes without stat()ing the dropped tail.
+
+    The scan now fills sizes only for the entries that survive the cap, so a
+    large host folder still reports the right size for a kept file.
+    """
+    root = tmp_path / "drives"
+    many = root / "C" / "SIZE694"
+    many.mkdir(parents=True)
+    (many / "F000.TXT").write_text("1234567")  # size 7
+    for i in range(1, 520):
+        (many / f"F{i:03d}.TXT").write_text("x")  # size 1
+
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR "C:/SIZE694"\n', env)
+    assert re.search(r"F000\.TXT\s+7\b", out), out
+    # The cap still drops the tail and says so.
+    assert out.count("... more") == 1, out
+
+
 def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
     """#674: DIR /S scans each folder with the entries API, not a 1 KB buffer.
 
@@ -389,6 +410,8 @@ def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR /S "C:/RTREE"\n', env)
     assert out.count("... more") == 1, out
+    # #693: the recursive listing states the cap it was cut at.
+    assert "... more (4096 max)" in out, out
     assert "D0/" in out, out
 
 

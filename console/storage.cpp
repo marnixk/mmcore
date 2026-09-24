@@ -605,13 +605,16 @@ static int fat_pat_match(const char *name, const char *pat)
 	return *pat == 0;
 }
 
-int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz)
+int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz,
+		 int *truncated)
 {
 	DIR dp;
 	FILINFO inf;
 	char full[160];
 	int nent = 0;
 	out[0] = 0;
+	if (truncated)
+		*truncated = 0;
 	if (!mmb_fat_ready(letter))
 		return -1;
 	make_full(letter, dir, full, sizeof full);
@@ -629,7 +632,11 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 			int len = (int)strlen(out);
 			int need = (int)strlen(inf.fname) + 2;
 			if (len + need >= outsz)
+			{
+				if (truncated)
+					*truncated = 1;
 				break;
+			}
 			if (nent++)
 				strcat(out, "\n");
 			strcat(out, inf.fname);

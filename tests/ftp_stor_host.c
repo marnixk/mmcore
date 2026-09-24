@@ -225,9 +225,11 @@ int mmb_vfs_rename(const char *src, const char *dst)
 	return 0;
 }
 
-int mmb_vfs_list(const char *spec, char *out, int outsz)
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 {
 	(void)spec;
+	if (truncated)
+		*truncated = 0;
 	if (outsz > 0)
 		out[0] = 0;
 	return 0;

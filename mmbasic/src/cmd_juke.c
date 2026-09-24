@@ -44,6 +44,7 @@ typedef struct {
 	int n;
 	int cur;
 	int shuffle;
+	int truncated; /* the folder scan hit the newline buffer or the queue cap */
 	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
 	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
@@ -230,14 +231,16 @@ static int juke_build_queue(const char *spec)
 {
 	char list[JUKE_LIST_MAX];
 	const char *p;
+	int truncated = 0;
 
 	s_q.n = 0;
 	s_q.cur = -1;
 	s_q.shuffle = 0;
+	s_q.truncated = 0;
 	s_q.dir[0] = 0;
 	if (mmb_vfs_isdir(spec))
 	{
-		if (mmb_vfs_list(spec, list, sizeof(list)) != 0)
+		if (mmb_vfs_list(spec, list, sizeof(list), &truncated) != 0)
 			return -1;
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
@@ -258,6 +261,10 @@ static int juke_build_queue(const char *spec)
 			juke_join(s_q.item[s_q.n], JUKE_PATH_MAX, spec, name);
 			s_q.n++;
 		}
+		/* Either the folder listing was cut, or the queue itself filled
+		 * before the listing ran out (#693). */
+		if (truncated || s_q.n >= JUKE_MAX_QUEUE)
+			s_q.truncated = 1;
 	}
 	else
 	{
@@ -394,9 +401,10 @@ static void juke_paint(int w, int h)
 	juke_text(14, 8, "JUKE", U.col_hot, 2);
 	{
 		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
-		sprintf(buf, "%s  %s  %d/%d%s", juke_state_str(), fmt,
+		sprintf(buf, "%s  %s  %d/%d%s%s", juke_state_str(), fmt,
 			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
-			s_q.shuffle ? "  SHUF" : "");
+			s_q.shuffle ? "  SHUF" : "",
+			s_q.truncated ? "  more" : "");
 		juke_text(w - 14 - (int)strlen(buf) * 8, 17, buf, U.col_dim, 1);
 	}
 

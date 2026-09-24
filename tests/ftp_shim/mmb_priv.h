@@ -31,7 +31,7 @@ int mmb_vfs_kill(const char *path);
 int mmb_vfs_mkdir(const char *path);
 int mmb_vfs_rmdir(const char *path);
 int mmb_vfs_rename(const char *src, const char *dst);
-int mmb_vfs_list(const char *spec, char *out, int outsz);
+int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated);
 
 int mmb_eth_start(void);
 int mmb_net_available(void);
