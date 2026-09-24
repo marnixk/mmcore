@@ -1081,7 +1081,6 @@ void mmb_print_startup(void)
 	startup_centred("MMBasic");
 	startup_centred("Copyright 2011-2026 Geoff Graham");
 	startup_centred("Copyright 2016-2026 Peter Mather");
-	startup_centred("Adapted and extended by Marnix Kok");
 	mmb_console_write("\n");
 	startup_centred("Type \x1b[97mHELP ME\x1b[37m for a short introduction.");
 	mmb_console_write("\n\n");

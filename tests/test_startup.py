@@ -32,7 +32,7 @@ def test_startup_banner(kernel_image):
         assert "mmbasic" in low
         assert "copyright 2011-2026 geoff graham" in low
         assert "copyright 2016-2026 peter mather" in low
-        assert "adapted and extended by marnix kok" in low
+        assert "adapted and extended" not in low
         assert "type " in low
         assert "help me" in low
         assert "short introduction" in low
