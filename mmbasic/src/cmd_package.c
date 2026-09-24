@@ -56,21 +56,68 @@ static int folder_has_main(const char *folder)
 	return mmb_vfs_exists(p) && !mmb_vfs_isdir(p);
 }
 
+#define PKG_DIR_ENT_INIT 64
+/* Safety cap on a single folder scan (entries, not bytes). The listing is
+ * heap-allocated and grows on demand, so this only bounds a pathological
+ * folder; reaching it fails the pack rather than omitting files. */
+#define PKG_DIR_ENT_MAX 16384
+
+/* Read one folder into a heap mmb_dirent array (#706). The structured listing
+ * is a bounded smallest-N selection, so a truncated scan means "retry with
+ * room for more", not "the folder is too big": grow until the whole folder
+ * fits. Returns the entry count (>=0), storing the array in *out (0 when the
+ * folder is empty), or -1 on failure. *out_trunc is set only when even
+ * PKG_DIR_ENT_MAX could not hold the folder. */
+static int pkg_list_dir(const char *absdir, mmb_dirent **out, int *out_trunc)
+{
+	int cap = PKG_DIR_ENT_INIT;
+	*out = 0;
+	*out_trunc = 0;
+	for (;;)
+	{
+		mmb_dirent *ents = (mmb_dirent *)G.plat->alloc(
+			(unsigned)cap * sizeof(mmb_dirent));
+		int n, truncated = 0;
+		if (!ents)
+			return -1;
+		n = mmb_vfs_list_entries(absdir, ents, cap, &truncated);
+		if (n < 0)
+		{
+			G.plat->free(ents);
+			return -1;
+		}
+		if (!truncated)
+		{
+			*out = ents;
+			return n;
+		}
+		G.plat->free(ents);
+		if (cap >= PKG_DIR_ENT_MAX)
+		{
+			*out_trunc = 1;
+			return 0;
+		}
+		cap *= 2;
+		if (cap > PKG_DIR_ENT_MAX)
+			cap = PKG_DIR_ENT_MAX;
+	}
+}
+
 static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 		     const char *dest_full, int depth)
 {
-	char listing[2048];
-	char *line, *next;
-	int truncated = 0;
+	mmb_dirent *ents = 0;
+	int rc = 0, n, i, truncated = 0;
 	if (depth > 8)
 		return -1;
-	if (mmb_vfs_list(absdir, listing, sizeof(listing), &truncated) != 0)
+	n = pkg_list_dir(absdir, &ents, &truncated);
+	if (n < 0)
 		return -1;
 	/* A cut folder listing would silently omit files from the archive; fail
 	 * the pack rather than write an incomplete package (#693). */
 	if (truncated)
 		return -1;
-	if (!listing[0])
+	if (n == 0)
 	{
 		if (rel[0])
 		{
@@ -79,26 +126,18 @@ static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 			d[sizeof(d) - 2] = 0;
 			if (d[strlen(d) - 1] != '/')
 				strcat(d, "/");
-			return mmb_zip_add(z, d, 0, 0);
+			rc = mmb_zip_add(z, d, 0, 0);
 		}
-		return 0;
+		G.plat->free(ents);
+		return rc;
 	}
-	for (line = listing; line && *line; line = next)
+	for (i = 0; i < n && rc == 0; i++)
 	{
-		char name[80], child_abs[160], child_rel[128], resolved[128];
-		int is_dir = 0, n;
-		next = strchr(line, '\n');
-		if (next)
-			*next++ = 0;
-		n = (int)strlen(line);
-		if (n && line[n - 1] == '/')
-		{
-			is_dir = 1;
-			line[n - 1] = 0;
-		}
-		if (!line[0] || mmb_vfs_hidden_name(line))
+		char name[MMB_DIRENT_NAME], child_abs[160], child_rel[128], resolved[128];
+		int is_dir = ents[i].is_dir;
+		if (!ents[i].name[0] || mmb_vfs_hidden_name(ents[i].name))
 			continue;
-		strncpy(name, line, sizeof(name) - 1);
+		strncpy(name, ents[i].name, sizeof(name) - 1);
 		name[sizeof(name) - 1] = 0;
 		join_rel(child_abs, sizeof(child_abs), absdir, name);
 		if (rel[0])
@@ -113,33 +152,41 @@ static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 			continue;
 		if (is_dir)
 		{
-			if (pack_walk(z, child_abs, child_rel, dest_full, depth + 1) != 0)
-				return -1;
+			rc = pack_walk(z, child_abs, child_rel, dest_full, depth + 1);
 			continue;
 		}
 		{
-			int sz = mmb_vfs_size(child_abs);
+			int sz = ents[i].size;
 			unsigned got = 0;
 			unsigned char *buf;
 			if (sz < 0)
-				return -1;
+			{
+				rc = -1;
+				break;
+			}
 			buf = G.plat->alloc((unsigned)sz + 1);
 			if (!buf)
-				return -1;
+			{
+				rc = -1;
+				break;
+			}
 			if (mmb_vfs_read(child_abs, buf, (unsigned)sz, &got) != 0)
 			{
 				G.plat->free(buf);
-				return -1;
+				rc = -1;
+				break;
 			}
 			if (mmb_zip_add(z, child_rel, buf, got) != 0)
 			{
 				G.plat->free(buf);
-				return -1;
+				rc = -1;
+				break;
 			}
 			G.plat->free(buf);
 		}
 	}
-	return 0;
+	G.plat->free(ents);
+	return rc;
 }
 
 typedef struct mmb_unpack_ctx {

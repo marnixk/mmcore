@@ -59,6 +59,7 @@ typedef struct {
 	int writer;                /* streaming STOR handle, -1 when unused */
 	char list_buf[FTP_LIST_MAX];
 	int list_len;
+	int list_truncated;        /* list_buf overflowed before the VFS cut */
 
 	char rnfr[FTP_PATH_MAX];
 	int has_rnfr;
@@ -318,6 +319,7 @@ static void ftp_xfer_clear(void)
 	}
 	FT.xfer = XF_NONE;
 	FT.list_len = 0;
+	FT.list_truncated = 0;
 	FT.xsize = 0;
 	FT.xoff = 0;
 	FT.rx_log = 0;
@@ -558,7 +560,13 @@ static void list_append(const char *s)
 {
 	int n = (int)strlen(s);
 	if (FT.list_len + n + 2 > FTP_LIST_MAX)
+	{
+		/* The VFS already cut the name listing to its caller buffer; this
+		 * is the second, larger buffer the FTP data transfer dribbles from.
+		 * Report the overflow too so LIST/NLST is not shown as complete. */
+		FT.list_truncated = 1;
 		return;
+	}
 	memcpy(FT.list_buf + FT.list_len, s, (unsigned)n);
 	FT.list_len += n;
 	FT.list_buf[FT.list_len++] = '\r';
@@ -615,6 +623,7 @@ static int ftp_start_list(const char *arg, int names_only)
 		return -1;
 	}
 	FT.list_len = 0;
+	FT.list_truncated = 0;
 	if (!mmb_vfs_isdir(canon))
 	{
 		const char *name = base_name(canon);
@@ -676,9 +685,11 @@ static int ftp_start_list(const char *arg, int names_only)
 	}
 	if (ftp_xfer_begin(names_only ? XF_NLST : XF_LIST, canon, FT.list_len) != 0)
 		return -1;
-	set_status(truncated ? (names_only ? "Listing names (truncated)"
-					     : "Listing (truncated)")
-			     : (names_only ? "Listing names" : "Listing"));
+	if (truncated || FT.list_truncated)
+		set_status(names_only ? "Listing names (truncated)"
+				      : "Listing (truncated)");
+	else
+		set_status(names_only ? "Listing names" : "Listing");
 	return 0;
 }
 
