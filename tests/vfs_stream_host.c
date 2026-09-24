@@ -54,6 +54,14 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 		out[0] = 0;
 	return -1;
 }
+int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
+			 mmb_dirent *out, int max, int *truncated)
+{
+	(void)letter; (void)dir; (void)pat; (void)out; (void)max;
+	if (truncated)
+		*truncated = 0;
+	return -1;
+}
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append)
 {
 	(void)letter; (void)path; (void)data; (void)n; (void)append;

@@ -1,4 +1,5 @@
 #include "storage.h"
+#include "mmbasic.h"
 #include <circle/util.h>
 #include <fatfs/diskio.h>
 #include <stdlib.h>
@@ -589,6 +590,42 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsi
 	return 0;
 }
 
+/* Case-insensitive glob used by the FAT directory listings: `*` and `?`,
+ * matching MMBasic's own mmb_glob_match. */
+static int fat_pat_match(const char *name, const char *pat)
+{
+	const char *star = 0, *match = 0;
+	while (*name)
+	{
+		char cn = *name, cp = *pat;
+		if (cp == '*')
+		{
+			star = pat++;
+			match = name;
+			continue;
+		}
+		if (cn >= 'a' && cn <= 'z') cn = (char)(cn - 32);
+		if (cp >= 'a' && cp <= 'z') cp = (char)(cp - 32);
+		if (cp == '?' || cn == cp)
+		{
+			name++;
+			pat++;
+			continue;
+		}
+		if (star)
+		{
+			pat = star + 1;
+			match++;
+			name = match;
+			continue;
+		}
+		return 0;
+	}
+	while (*pat == '*')
+		pat++;
+	return *pat == 0;
+}
+
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz)
 {
 	DIR dp;
@@ -607,38 +644,8 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 			break;
 		if (inf.fname[0] == '.')
 			continue;
-		if (pat && pat[0] && pat[0] != '*')
-		{
-			/* simple: let FatFs-style match fall back to listing all when pat is "*" */
-		}
-		if (pat && pat[0])
-		{
-			/* reuse MMBasic glob via case-insensitive compare in vfs — duplicate tiny match */
-			const char *name = inf.fname;
-			const char *p = pat;
-			const char *star = 0, *match = 0;
-			int ok = 1;
-			if (!(p[0] == '*' && p[1] == 0))
-			{
-				while (*name)
-				{
-					char cn = *name, cp = *p;
-					if (cn >= 'a' && cn <= 'z') cn = (char)(cn - 32);
-					if (cp >= 'a' && cp <= 'z') cp = (char)(cp - 32);
-					if (cp == '*') { star = p++; match = name; continue; }
-					if (cp == '?' || cn == cp) { name++; p++; continue; }
-					if (star) { p = star + 1; match++; name = match; continue; }
-					ok = 0; break;
-				}
-				if (ok)
-				{
-					while (*p == '*') p++;
-					if (*p) ok = 0;
-				}
-			}
-			if (!ok)
-				continue;
-		}
+		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
+			continue;
 		{
 			int len = (int)strlen(out);
 			int need = (int)strlen(inf.fname) + 2;
@@ -653,6 +660,46 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 	}
 	f_closedir(&dp);
 	return 0;
+}
+
+/* Structured listing (#621): f_readdir already reports the directory bit and
+ * the file size, so the FILES size column costs no extra f_stat over USB. */
+int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
+			 mmb_dirent *out, int max, int *truncated)
+{
+	DIR dp;
+	FILINFO inf;
+	char full[160];
+	int n = 0;
+	if (truncated)
+		*truncated = 0;
+	if (!out || max <= 0 || !mmb_fat_ready(letter))
+		return -1;
+	make_full(letter, dir, full, sizeof full);
+	if (f_opendir(&dp, full) != FR_OK)
+		return -1;
+	for (;;)
+	{
+		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
+			break;
+		if (inf.fname[0] == '.')
+			continue;
+		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
+			continue;
+		if (n >= max)
+		{
+			if (truncated)
+				*truncated = 1;
+			break;
+		}
+		memset(&out[n], 0, sizeof(out[n]));
+		strncpy(out[n].name, inf.fname, sizeof(out[n].name) - 1);
+		out[n].is_dir = (inf.fattrib & AM_DIR) ? 1 : 0;
+		out[n].size = out[n].is_dir ? -1 : (int)inf.fsize;
+		n++;
+	}
+	f_closedir(&dp);
+	return n;
 }
 
 }

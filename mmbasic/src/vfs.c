@@ -197,6 +197,37 @@ static int ram_list(vfs_node *ns, int max, const char *dir, const char *pat, cha
 	return 0;
 }
 
+/* Structured ramdisk listing (#621): the node already carries is_dir and the
+ * byte size, so no extra lookup is needed. */
+static int ram_list_entries(vfs_node *ns, int vmax, const char *dir,
+			    const char *pat, mmb_dirent *out, int max, int *truncated)
+{
+	int parent = ram_walk(ns, vmax, dir, 0, 0), i, n = 0;
+	if (parent < 0 || !ns[parent].is_dir)
+		return -1;
+	for (i = 0; i < vmax; i++)
+	{
+		if (!ns[i].used || ns[i].parent != parent)
+			continue;
+		if (mmb_vfs_hidden_name(ns[i].name))
+			continue;
+		if (pat && pat[0] && !mmb_glob_match(ns[i].name, pat))
+			continue;
+		if (n >= max)
+		{
+			if (truncated)
+				*truncated = 1;
+			break;
+		}
+		memset(&out[n], 0, sizeof(out[n]));
+		strncpy(out[n].name, ns[i].name, sizeof(out[n].name) - 1);
+		out[n].is_dir = ns[i].is_dir;
+		out[n].size = ns[i].is_dir ? -1 : (int)ns[i].size;
+		n++;
+	}
+	return n;
+}
+
 static int ram_write(vfs_node *ns, int max, const char *path, const void *data, unsigned n, int append)
 {
 	int id = ram_walk(ns, max, path, 1, 0);
@@ -904,12 +935,13 @@ static int list_cmp_names(const char *a, const char *b)
 }
 
 /* Sort a newline-separated listing in place: folders A-Z first, then files
- * A-Z, case-insensitively. */
+ * A-Z, case-insensitively. Shell sort keeps this O(n log n)-ish for the large
+ * folders that used to bog down in the old insertion sort (#621). */
 static void sort_dir_list(char *out, int outsz)
 {
 	char *ptrs[VFS_LIST_MAX];
 	char *tmp;
-	int n = 0, i, j, len = 0;
+	int n = 0, i, gap, len = 0;
 	char *p = out;
 	while (*p && n < VFS_LIST_MAX)
 	{
@@ -921,17 +953,18 @@ static void sort_dir_list(char *out, int outsz)
 	}
 	if (n < 2)
 		return;
-	for (i = 1; i < n; i++)
-	{
-		char *key = ptrs[i];
-		j = i - 1;
-		while (j >= 0 && list_cmp_names(ptrs[j], key) > 0)
+	for (gap = n / 2; gap > 0; gap /= 2)
+		for (i = gap; i < n; i++)
 		{
-			ptrs[j + 1] = ptrs[j];
-			j--;
+			char *key = ptrs[i];
+			int j = i;
+			while (j >= gap && list_cmp_names(ptrs[j - gap], key) > 0)
+			{
+				ptrs[j] = ptrs[j - gap];
+				j -= gap;
+			}
+			ptrs[j] = key;
 		}
-		ptrs[j + 1] = key;
-	}
 	tmp = G.plat ? G.plat->alloc((unsigned)outsz) : 0;
 	if (!tmp)
 	{
@@ -952,6 +985,33 @@ static void sort_dir_list(char *out, int outsz)
 	tmp[len] = 0;
 	memcpy(out, tmp, (unsigned)len + 1);
 	G.plat->free(tmp);
+}
+
+/* Comparator for the structured listing: folders first, then case-insensitive
+ * by name. Names carry no trailing slash there, so list_cmp_names' folder test
+ * is a no-op and only its ordering matters. */
+static int dirent_cmp(const mmb_dirent *a, const mmb_dirent *b)
+{
+	if (a->is_dir != b->is_dir)
+		return a->is_dir ? -1 : 1;
+	return list_cmp_names(a->name, b->name);
+}
+
+static void sort_dir_entries(mmb_dirent *e, int n)
+{
+	int i, gap;
+	for (gap = n / 2; gap > 0; gap /= 2)
+		for (i = gap; i < n; i++)
+		{
+			mmb_dirent key = e[i];
+			int j = i;
+			while (j >= gap && dirent_cmp(&e[j - gap], &key) > 0)
+			{
+				e[j] = e[j - gap];
+				j -= gap;
+			}
+			e[j] = key;
+		}
 }
 
 int mmb_vfs_list(const char *spec, char *out, int outsz)
@@ -977,6 +1037,38 @@ int mmb_vfs_list(const char *spec, char *out, int outsz)
 		return -1;
 	sort_dir_list(out, outsz);
 	return 0;
+}
+
+int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
+			 int *truncated)
+{
+	mmb_xpath x;
+	char dir[128], glob[128];
+	int n;
+
+	if (truncated)
+		*truncated = 0;
+	if (!out || max <= 0)
+		return -1;
+	if (split_path(spec ? spec : "", &x) != 0)
+		return -1;
+	split_dir_glob(x.path, dir, glob);
+	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
+	{
+		int vmax;
+		vfs_node *ns = vol_nodes(x.letter, &vmax, 0);
+		n = ram_list_entries(ns, vmax, dir, glob, out, max, truncated);
+	}
+	else
+	{
+		if (require_drive(x.letter) != 0)
+			return -1;
+		n = mmb_fat_list_entries(x.letter, dir, glob, out, max, truncated);
+	}
+	if (n < 0)
+		return -1;
+	sort_dir_entries(out, n);
+	return n;
 }
 
 void mmb_vfs_seed_file(const char *path, const void *data, unsigned n)

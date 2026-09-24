@@ -419,6 +419,30 @@ def test_posix_storage_case_insensitive_listing(mmb_linux, tmp_path):
     assert "Mixed.TXT" in out
 
 
+def test_posix_dir_large_listing(mmb_linux, tmp_path):
+    """#621: a large host directory lists in one scan, folders first.
+
+    Exercises the POSIX backend's dirent fast path and the O(n log n) listing
+    sort; every seeded name must come back, with the folder ahead of the files.
+    """
+    root = tmp_path / "root"
+    many = root / "C" / "MANY"
+    many.mkdir(parents=True)
+    (many / "SUB").mkdir()
+    for i in range(300):
+        (many / f"file{i:03d}.txt").write_text("x")
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    out = _run_env(mmb_linux, 'DIR "C:/MANY"\n', env)
+    assert "SUB/" in out, out
+    assert "file000.txt" in out, out
+    assert "file299.txt" in out, out
+    # Sorted folders-first: SUB precedes the files.
+    assert out.index("SUB/") < out.index("file000.txt")
+    # Case-insensitive glob still resolves the mixed-case directory.
+    out2 = _run_env(mmb_linux, 'DIR "c:/many/sub"\n', env)
+    assert "?DIRECTORY" not in out2.upper(), out2
+
+
 SDL_BIN = os.path.join(REPO, "native", "mmcore")
 
 

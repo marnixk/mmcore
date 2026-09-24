@@ -39,6 +39,7 @@ typedef struct {
 	char path[FU_PATH];
 	fu_ent ent[FU_MAX_ENT];
 	int n, sel, top;
+	int truncated; /* directory had more entries than FU_MAX_ENT (#621) */
 } fu_panel;
 
 typedef struct {
@@ -222,7 +223,7 @@ static int is_img(const char *n)
 {
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".PNG") || mmb_keyword_eq(e, ".JPG") ||
-	       mmb_keyword_eq(e, ".JPEG");
+	       mmb_keyword_eq(e, ".JPEG") || mmb_keyword_eq(e, ".PCX");
 }
 
 static int is_aud(const char *n)
@@ -376,55 +377,30 @@ static void panel_add(fu_panel *p, const char *name, int is_dir, int size)
 
 static void panel_reload(fu_panel *p)
 {
-	char list[2048];
+	static mmb_dirent ents[FU_MAX_ENT];
 	char keep[FU_NAME];
-	char *s, *nl;
 	int oldsel = p->sel;
+	int n = 0, i, truncated = 0;
 	keep[0] = 0;
 	if (oldsel >= 0 && oldsel < p->n)
 		strncpy(keep, p->ent[oldsel].name, FU_NAME - 1);
 	p->n = 0;
 	panel_add(p, "..", 1, 0);
-	list[0] = 0;
-	if (mmb_vfs_list(p->path, list, sizeof(list)) != 0)
-		list[0] = 0;
-	s = list;
-	while (*s)
+	/* One structured scan gives name, type and size, so the panel no longer
+	 * stats every file just to fill the size column (#621). */
+	n = mmb_vfs_list_entries(p->path, ents, FU_MAX_ENT, &truncated);
+	if (n < 0)
+		n = 0;
+	for (i = 0; i < n; i++)
 	{
-		char name[FU_NAME];
-		int is_dir = 0, sz = 0, n = 0;
-		nl = s;
-		while (*nl && *nl != '\n' && *nl != '\r')
-			nl++;
-		n = (int)(nl - s);
-		if (n >= FU_NAME)
-			n = FU_NAME - 1;
-		memcpy(name, s, (unsigned)n);
-		name[n] = 0;
-		if (n > 0 && name[n - 1] == '/')
-		{
-			name[n - 1] = 0;
-			is_dir = 1;
-		}
-		if (name[0] && !(name[0] == '.' && name[1] == 0) &&
-		    !(name[0] == '.' && name[1] == '.' && name[2] == 0))
-		{
-			if (!is_dir)
-			{
-				char full[FU_PATH];
-				join_path(full, sizeof(full), p->path, name);
-				sz = mmb_vfs_size(full);
-				if (sz < 0)
-					sz = 0;
-			}
-			panel_add(p, name, is_dir, sz);
-		}
-		s = nl;
-		if (*s == '\r')
-			s++;
-		if (*s == '\n')
-			s++;
+		int sz = ents[i].size < 0 ? 0 : ents[i].size;
+		if (ents[i].name[0] == '.' &&
+		    (ents[i].name[1] == 0 ||
+		     (ents[i].name[1] == '.' && ents[i].name[2] == 0)))
+			continue;
+		panel_add(p, ents[i].name, ents[i].is_dir, sz);
 	}
+	p->truncated = truncated;
 	panel_sort(p);
 	p->sel = 0;
 	if (keep[0])
@@ -495,6 +471,8 @@ static void emit_status(void)
 	ser(" N=");
 	fmt_uint(nbuf, (unsigned)curpan()->n);
 	ser(nbuf);
+	if (curpan()->truncated)
+		ser(" MORE=1"); /* listing was cut at FU_MAX_ENT (#621) */
 	ser(" COLS=");
 	fmt_uint(nbuf, (unsigned)fu_cols());
 	ser(nbuf);
@@ -1240,12 +1218,47 @@ static void preview_banner(const char *name, int w, int h)
 	G.gfx.font_scale = scale;
 }
 
+static int files_read_all(const char *path, unsigned char **buf, unsigned *n)
+{
+	unsigned got = 0;
+	int sz = mmb_vfs_size(path);
+	if (sz < 0)
+		return -1;
+	*buf = G.plat->alloc((unsigned)sz + 1);
+	if (!*buf)
+		return -1;
+	if (mmb_vfs_read(path, *buf, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(*buf);
+		*buf = 0;
+		return -1;
+	}
+	*n = got;
+	return 0;
+}
+
 static int preview_show(const char *path, const char *name)
 {
 	int w = 0, h = 0, mode, x, y;
 	char line[128];
+	int is_pcx = mmb_keyword_eq(ext_of(name), ".PCX");
+	unsigned char *pfile = 0;
+	unsigned pn = 0;
+	uint32_t *pcx = 0;
 
-	if (!is_img(name) || mmb_img_probe(path, &w, &h) != 0)
+	if (is_pcx)
+	{
+		if (files_read_all(path, &pfile, &pn) != 0)
+			return -1;
+		if (mmb_pcx_decode_rgba(pfile, pn, &pcx, &w, &h) != 0)
+		{
+			G.plat->free(pfile);
+			return -1;
+		}
+		G.plat->free(pfile);
+		pfile = 0;
+	}
+	else if (!is_img(name) || mmb_img_probe(path, &w, &h) != 0)
 		return -1;
 	mode = mmb_gfx_mode_for_size(w, h);
 	if (G.gfx.mode != mode || G.gfx.bits != 32)
@@ -1257,7 +1270,18 @@ static int preview_show(const char *path, const char *name)
 		x = 0;
 	if (y < 0)
 		y = 0;
-	if (mmb_keyword_eq(ext_of(name), ".JPG") || mmb_keyword_eq(ext_of(name), ".JPEG"))
+	if (is_pcx)
+	{
+		int i, j;
+		for (j = 0; j < h; j++)
+			for (i = 0; i < w; i++)
+				mmb_gfx_plot(x + i, y + j,
+					     pcx[(unsigned)j * (unsigned)w + (unsigned)i] &
+						     0xFFFFFFu);
+		G.plat->free(pcx);
+		pcx = 0;
+	}
+	else if (mmb_keyword_eq(ext_of(name), ".JPG") || mmb_keyword_eq(ext_of(name), ".JPEG"))
 	{
 		if (mmb_load_jpeg(path, x, y) != 0)
 			return -1;
@@ -2079,7 +2103,7 @@ static int tdf_open(const char *path, const char *name)
 	an_render();
 	set_hint(F.tdf_variants > 1
 			 ? "TDF preview  up/down/PgUp/PgDn scroll  Enter/Esc returns"
-			 : "TDF preview  up/down scroll  Enter/Esc returns");
+			 : "TDF preview  up/down/PgUp/PgDn  Enter/Esc returns");
 	strcpy(line, "[FILES] TDF ");
 	strncat(line, name, 32);
 	strcat(line, " ");
