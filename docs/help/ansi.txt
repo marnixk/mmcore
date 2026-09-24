@@ -53,8 +53,8 @@ EOF so the file also carries metadata.
 
 Example:
 
-    ANSI EDIT "A:/art/TITLE.ANS", "A:/fonts/tdf/STANDARD.TDF"
-    ANSI FONT "A:/fonts/tdf/BLOCK.TDF"
+    ANSI EDIT "A:/art/TITLE.ANS", "A:/fonts/tdf/mono/STANDARD.TDF"
+    ANSI FONT "A:/fonts/tdf/color/BLOCK.TDF"
     PRINT "saved to A:/art/TITLE.ANS"
 
 The seeded fonts live under A:/fonts/tdf/ (see ~FILES~); ~SPRITE~ EDIT and

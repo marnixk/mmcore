@@ -310,7 +310,7 @@ def test_sprite_font_editor_saves_loadable_json(fresh_console):
         c,
         "FONTEDIT.BAS",
         [
-            '#INCLUDE "A:/fonts/fonts.inc"',
+            '#INCLUDE "A:/fonts/gfx/fonts.inc"',
             "DIM f AS FontDescription",
             'f = fontLoad("SPRFONT")',
             "PRINT f.source",

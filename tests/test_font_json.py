@@ -1,11 +1,11 @@
-"""Bitmap font descriptions under ramdisk/fonts (FontDescription JSON)."""
+"""Bitmap font descriptions under ramdisk/fonts/gfx (FontDescription JSON)."""
 
 import json
 import struct
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-FONTS = REPO / "ramdisk" / "fonts"
+FONTS = REPO / "ramdisk" / "fonts" / "gfx"
 
 KEYS = {
     "source",
@@ -63,7 +63,7 @@ def test_fonts_include_declares_type_and_loader():
     assert "source AS STRING" in inc
     assert "bgColour AS INTEGER" in inc
     assert "JSON_PARSE" in inc
-    assert 'A:/fonts/' in inc
+    assert 'A:/fonts/gfx/' in inc
 
 
 def _write_bas(console, path, lines):
@@ -79,7 +79,7 @@ def test_font_load_reads_json_into_type(console):
         console,
         "FONT.BAS",
         [
-            '#INCLUDE "A:/fonts/fonts.inc"',
+            '#INCLUDE "A:/fonts/gfx/fonts.inc"',
             "DIM f AS FontDescription",
             'f = fontLoad("08X08-F1")',
             "PRINT f.source",

@@ -5,7 +5,7 @@
 CLS RGB(0, 0, 0)
 COLOUR RGB(255, 255, 255), RGB(0, 0, 0)
 
-TDF.Load "A:/fonts/tdf/STANDARD.TDF"
+TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"
 PRINT "Font: "; TDF.Name$; "  type "; TDF.Type%
 TDF.Print 0, 3, "MMBASIC"
 TDF.Close

@@ -171,6 +171,19 @@ static int tc_parse_number(double *out)
 
 static int tc_compile_expr(tc_ent *e);
 
+/* name(variable) is array access only when `name` is not a user FUNCTION.
+ * A function's scalar return variable would otherwise be mistaken for an
+ * array and mmb_find_var() would fault with "?NOT AN ARRAY". */
+static int tc_is_user_func(const char *name)
+{
+	int i;
+	for (i = 0; i < MMB_MAX_SUBS; i++)
+		if (G.subs[i].used && G.subs[i].is_func &&
+		    mmb_keyword_eq(G.subs[i].name, name))
+			return 1;
+	return 0;
+}
+
 static int tc_compile_primary(tc_ent *e)
 {
 	char name[MMB_MAX_NAME];
@@ -203,6 +216,8 @@ static int tc_compile_primary(tc_ent *e)
 		char iname[MMB_MAX_NAME];
 		mmb_var *arr, *idx;
 		int ai, ii, itype;
+		if (tc_is_user_func(name))
+			return 0;
 		G.p++;
 		if (!tc_parse_name(iname, &itype))
 			return 0;
