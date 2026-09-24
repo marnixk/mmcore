@@ -16,7 +16,7 @@ def _plain(s: str) -> str:
 
 
 def _apply_slate_theme(con):
-    assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+    assert con.send_line('OPTION THEME "Slate"') == ""
 
 
 def _open(con, cmd: str = "WORDPAD", quiet: float = 0.8) -> str:
@@ -323,7 +323,7 @@ def test_wordpad_follows_edit_theme_phosphor(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Phosphor"') == ""
+        assert con.send_line('OPTION THEME "Phosphor"') == ""
         _open(con)
         _keys(con, b"hello", quiet=0.5)
         time.sleep(0.3)
@@ -461,7 +461,7 @@ def test_wordpad_edit_theme_persists(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        assert con.send_line('OPTION THEME "Nord"') == ""
         _open(con)
         _quit(con)
         assert con.send_line("NEW") == ""
@@ -472,7 +472,7 @@ def test_wordpad_edit_theme_persists(kernel_image):
         assert con.send_line("50 GOTO 20") == ""
         assert con.send_line("70 CLOSE #1") == ""
         ini = con.send_line("RUN", timeout=8)
-        assert "edit_theme=4" in ini
+        assert "theme=4" in ini
         _open(con, quiet=1.0)
         time.sleep(0.3)
         r, g, b = con.screen_pixel(40, 80)

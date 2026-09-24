@@ -16,7 +16,7 @@ def _plain(s: str) -> str:
 
 
 def _apply_slate_theme(con):
-    assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+    assert con.send_line('OPTION THEME "Slate"') == ""
 
 
 def _open_term(con, cmd: str, quiet=0.6, timeout=12.0):
@@ -272,7 +272,7 @@ def test_term_pane_background_black_across_themes(kernel_image):
             ("Slate", "/opt/cursor/artifacts/issue265_term_black_bg_slate.png"),
         )
         for theme, snap in shots:
-            assert con.send_line(f'OPTION EDIT THEME "{theme}"') == ""
+            assert con.send_line(f'OPTION THEME "{theme}"') == ""
             _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
             time.sleep(0.4)
             pane = con.screen_pixel(20, 200)
@@ -489,7 +489,7 @@ def test_term_menu_bar_full_width_when_open(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        assert con.send_line('OPTION THEME "Nord"') == ""
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
         closed = con.screen_pixel(8, 4)
@@ -522,7 +522,7 @@ def test_term_menu_clears_letterbox_when_closed(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        assert con.send_line('OPTION THEME "Nord"') == ""
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.3)
         letterbox = con.screen_pixel(8, 200)
@@ -566,7 +566,7 @@ def test_term_menu_colours_match_edit(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        assert con.send_line('OPTION THEME "Slate"') == ""
         con.drain(quiet=0.1)
         con._ser.sendall(b'EDIT "MENU.BAS"\r')
         _plain(con.drain(quiet=0.8, timeout=10).decode(errors="replace"))
@@ -608,7 +608,7 @@ def test_term_slate_menu_bar_survives_8bit_mode(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Slate"') == ""
+        assert con.send_line('OPTION THEME "Slate"') == ""
         assert con.send_line("MODE 11,8") == ""
         con.drain(quiet=0.1)
         con._ser.sendall(b'EDIT "MENU.BAS"\r')
@@ -636,7 +636,7 @@ def test_term_status_bar_on_last_scanline(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Nord"') == ""
+        assert con.send_line('OPTION THEME "Nord"') == ""
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         menu = _menu(con)
         assert "Terminal" in menu
@@ -1042,7 +1042,7 @@ def test_term_pane_grey_independent_of_phosphor_theme(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
-        assert con.send_line('OPTION EDIT THEME "Phosphor"') == ""
+        assert con.send_line('OPTION THEME "Phosphor"') == ""
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         time.sleep(0.5)
         found_grey = False

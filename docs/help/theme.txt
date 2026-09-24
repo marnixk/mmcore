@@ -1,9 +1,9 @@
 name: THEME
 kind: command
 
-Return the active editor theme colour as an RGB integer (0xRRGGBB), the same
+Return the active system theme colour as an RGB integer (0xRRGGBB), the same
 value form as RGB(). Use it to match your program's colours to the user's
-OPTION EDIT THEME palette instead of hard-coding colours.
+OPTION THEME palette instead of hard-coding colours.
 
 THEME(name$)
 THEME(NAME)
@@ -11,12 +11,12 @@ THEME(NAME)
   name - theme element name: a string, a bare identifier, or a string
          expression/variable
 
-The value is resolved through the active theme's palette (Turbo uses the VGA
-palette), so it is exactly what the editor draws. The active theme is the
-current OPTION EDIT THEME (or OPTION THEME) selection and is shared by EDIT,
-FILES, TERM, WORDPAD, HELP and the other themed apps, whether or not an EDIT
-screen is open. Pick and preview one interactively with the ~SETTINGS~
-command. An unknown name raises ?SYNTAX ERROR.
+The value is resolved through the system theme's palette (Turbo uses the VGA
+palette). The system theme is the current OPTION THEME (or SETTINGS) selection
+and is shared by FILES, TERM, WORDPAD, HELP and the other themed apps. EDIT
+follows it too unless the user picked an editor-only theme with
+OPTION EDIT THEME, which THEME() ignores. Pick and preview the system theme
+interactively with the ~SETTINGS~ command. An unknown name raises ?SYNTAX ERROR.
 
 Identifiers (name, mmb_ed_theme field):
 

@@ -156,7 +156,7 @@ def _volume_lit(con: MMBasicConsole) -> int:
 def test_juke_has_fixed_cyberpunk_palette(fresh_console):
     """JUKE must not follow the system theme, and must leave it alone."""
     con = fresh_console
-    assert con.send_line('OPTION EDIT THEME "Snow"') == ""
+    assert con.send_line('OPTION THEME "Snow"') == ""
     before = con.send_line('PRINT THEME("TEXT_BG")')
     _open_juke(con, "tests/TEST.MOD")
     # Header/backing panels stay near-black even under a light system theme.

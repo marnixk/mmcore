@@ -317,7 +317,7 @@ def test_files_tracks_mode_resolution(fresh_console):
 
 def test_files_follows_editor_theme_phosphor(fresh_console):
     con = fresh_console
-    assert con.send_line("OPTION EDIT THEME PHOSPHOR") == ""
+    assert con.send_line("OPTION THEME PHOSPHOR") == ""
     _prep_tree(con)
     _open_files(con)
     empty = [con.screen_pixel(x, 176) for x in (40, 80, 360, 400)]
@@ -325,18 +325,18 @@ def test_files_follows_editor_theme_phosphor(fresh_console):
     r, g, b = con.screen_pixel(3, 2 * 16)
     assert g > r + 20 and g > 40, (r, g, b)
     _keys(con, b"q")
-    assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    assert con.send_line("OPTION THEME TURBO") == ""
 
 
 def test_files_follows_editor_theme_paper(fresh_console):
     con = fresh_console
-    assert con.send_line("OPTION EDIT THEME PAPER") == ""
+    assert con.send_line("OPTION THEME PAPER") == ""
     _prep_tree(con)
     _open_files(con)
     empty = [con.screen_pixel(x, 176) for x in (40, 80, 360, 400)]
     assert any(r > 140 and g > 130 and b > 120 for r, g, b in empty), empty
     _keys(con, b"q")
-    assert con.send_line("OPTION EDIT THEME TURBO") == ""
+    assert con.send_line("OPTION THEME TURBO") == ""
 
 
 def test_files_f4_shows_editor_immediately(fresh_console):

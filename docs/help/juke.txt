@@ -20,7 +20,7 @@ Supported formats:
     WAV     PCM audio
 
 JUKE has its own fixed dark cyberpunk palette: it does not follow OPTION
-EDIT THEME, so it looks the same under every system theme. Leaving JUKE
+THEME, so it looks the same under every system theme. Leaving JUKE
 restores your console theme untouched. The spectrum bars use a cool-to-hot
 vertical gradient and the transport runs along the footer.
 

@@ -2,7 +2,8 @@ name: FACTORY RESET
 kind: command
 alias: FACTORY_RESET, FACTORY
 
-Restore default OPTION settings (DEFAULT MODE 11, PROMPT CWD, EDIT THEME Slate).
+Restore default OPTION settings (DEFAULT MODE 11, PROMPT CWD, THEME Slate,
+EDIT THEME SYSTEM).
 Programs and other user files are kept. Wi-Fi credentials and Ethernet ON are
 cleared.
 

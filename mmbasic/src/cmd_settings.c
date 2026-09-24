@@ -299,7 +299,7 @@ static void st_draw_system(int x, int y, int w, int h)
 	tui_puts(x + 2, r, "Prompt    :", ST_FG, ST_BG);
 	tui_puts(x + 14, r++, G.opt.prompt ? "CWD" : "BARE", ST_FG, ST_BG);
 	tui_puts(x + 2, r, "Theme     :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, mmb_editor_theme_name(G.opt.edit_theme), ST_FG,
+	tui_puts(x + 14, r++, mmb_editor_theme_name(G.opt.theme), ST_FG,
 		 ST_BG);
 	r++;
 	tui_puts(x + 2, r++, "Change these with OPTION at the prompt.",
@@ -372,7 +372,7 @@ static void st_apply(int idx)
 {
 	if (idx < 0 || idx >= mmb_editor_theme_count())
 		return;
-	G.opt.edit_theme = idx;
+	G.opt.theme = idx;
 	mmb_editor_apply_tui_palette();
 	tui_invalidate();
 }
@@ -385,9 +385,9 @@ static void st_close(int commit)
 	tui_end();
 	if (commit)
 		mmb_settings_save();
-	else if (G.opt.edit_theme != S.orig)
+	else if (G.opt.theme != S.orig)
 	{
-		G.opt.edit_theme = S.orig;
+		G.opt.theme = S.orig;
 	}
 	/* Put the REPL screen/scrollback back (overlay, #623); only add a line
 	 * break when the platform has no snapshot to restore. */
@@ -399,9 +399,9 @@ static void st_escape(void)
 {
 	if (S.level == 1)
 	{
-		if (S.sec == ST_SEC_APPEARANCE && G.opt.edit_theme != S.orig)
+		if (S.sec == ST_SEC_APPEARANCE && G.opt.theme != S.orig)
 		{
-			G.opt.edit_theme = S.orig;
+			G.opt.theme = S.orig;
 			mmb_editor_apply_tui_palette();
 			tui_invalidate();
 		}
@@ -419,7 +419,7 @@ static void st_open_section(int sec)
 	S.level = 1;
 	if (sec == ST_SEC_APPEARANCE)
 	{
-		S.sel = G.opt.edit_theme;
+		S.sel = G.opt.theme;
 		S.top = 0;
 		if (S.sel < 0 || S.sel >= mmb_editor_theme_count())
 			S.sel = 0;
@@ -466,8 +466,8 @@ void mmb_settings_open(void)
 	S.level = 0;
 	S.hub_sel = ST_SEC_APPEARANCE;
 	S.sec = ST_SEC_APPEARANCE;
-	S.orig = G.opt.edit_theme;
-	S.sel = G.opt.edit_theme;
+	S.orig = G.opt.theme;
+	S.sel = G.opt.theme;
 	if (S.sel < 0 || S.sel >= n)
 		S.sel = 0;
 	tui_overlay_begin();
@@ -566,7 +566,7 @@ void mmb_cmd_settings(void)
 			id = mmb_editor_theme_lookup(v.s);
 			if (id < 0)
 				mmb_error("?THEME");
-			G.opt.edit_theme = id;
+			G.opt.theme = id;
 		}
 		else
 		{
@@ -583,7 +583,7 @@ void mmb_cmd_settings(void)
 				id = (int)mmb_as_int(mmb_expr());
 			if (id < 0 || id >= n)
 				mmb_error("?THEME");
-			G.opt.edit_theme = id;
+			G.opt.theme = id;
 		}
 		mmb_settings_save();
 		return;

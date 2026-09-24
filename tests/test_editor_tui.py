@@ -1394,13 +1394,14 @@ def test_editor_run_snow_overlay_break_restores_editor(kernel_image):
         con.stop()
 
 
-def test_editor_theme_menu_lists_ten_themes(kernel_image):
+def test_editor_theme_menu_lists_system_plus_ten_themes(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _edit(con, "TH.BAS")
         seen = _keys(con, bytes([1]) + b"t")
         for name in (
+            "System",
             "Paper",
             "Cloud",
             "Snow",
@@ -1461,6 +1462,34 @@ def test_option_edit_theme_phosphor(kernel_image):
         assert con.send_line("OPTION EDIT THEME 8") == ""
         listed = con.send_line("OPTION LIST ALL")
         assert "TURBO" in listed.upper()
+    finally:
+        con.stop()
+
+
+def test_editor_theme_overrides_system_theme(kernel_image):
+    """The editor theme is editor-only and SYSTEM follows OPTION THEME."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        # Slate system + Turbo editor: the editor uses Turbo, but the
+        # system palette (and THEME()) stays Slate.
+        assert con.send_line("OPTION THEME SLATE") == ""
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
+        _edit(con, "SPLIT.BAS")
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert all(b > r + 60 and b > 100 for r, g, b in pane), pane
+        _quit(con)
+        assert con.send_line('PRINT THEME("TEXT_BG")') == con.send_line(
+            "PRINT RGB(42,44,50)"
+        )
+
+        # SYSTEM: the editor follows the system theme again.
+        assert con.send_line("OPTION EDIT THEME SYSTEM") == ""
+        _edit(con, "SPLIT.BAS")
+        pane = [con.screen_pixel(x, 80) for x in (40, 80, 160, 320)]
+        assert all(r < 50 and g < 50 and b < 55 for r, g, b in pane), pane
+        _quit(con)
+        assert con.send_line("OPTION EDIT THEME TURBO") == ""
     finally:
         con.stop()
 

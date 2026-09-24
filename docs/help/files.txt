@@ -32,7 +32,7 @@ failing.
 FILES
 
 Menus: Alt+L Left  Alt+F File  Alt+C Command  Alt+O Options  Alt+R Right.
-Colours follow OPTION EDIT THEME (same palettes as the editor).
+Colours follow OPTION THEME (same palettes as the other themed apps).
 
 The Command menu (or s in the F9 menu) has "FTP server". It serves the active
 pane's folder over FTP on port 21 (passive data on port 1021), using the

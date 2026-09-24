@@ -2,9 +2,9 @@ name: TERM
 kind: command
 
 Fullscreen telnet-style terminal. Menu and status colours follow the OPTION
-EDIT THEME palette (same as the EDITOR). The terminal pane and letterbox
+THEME palette (same as the other themed apps). The terminal pane and letterbox
 background are always black. Incoming text defaults to VGA grey, not the
-editor theme foreground. A block cursor is on when a session starts; the host
+theme foreground. A block cursor is on when a session starts; the host
 can hide or show it with CSI ?25l / ?25h.
 
 TERM [host$, port]

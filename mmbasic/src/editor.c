@@ -194,22 +194,33 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_BRBLACK, TUI_BRBLACK, TUI_BRBLACK, TUI_BRWHITE, TUI_RED, TUI_BRGREEN, TUI_BRBLACK, pal_phosphor },
 };
 
+static int theme_index_at(int i)
+{
+	if (i < 0 || i >= ED_THEME_N)
+		i = ED_THEME_SLATE;
+	return i;
+}
+
+/* The editor's own theme: OPTION EDIT THEME, or the system theme while the
+ * editor is following it (the default). */
 static const mmb_ed_theme *th(void)
 {
 	int i = G.opt.edit_theme;
-	if (i < 0 || i >= ED_THEME_N)
-		i = ED_THEME_SLATE;
-	return &k_themes[i];
+	if (i < 0)
+		i = G.opt.theme;
+	return &k_themes[theme_index_at(i)];
 }
 
+/* The system-wide theme shared by FILES, TERM, WORDPAD, HELP, SETTINGS and
+ * the rest of the themed chrome. */
 const mmb_ed_theme *mmb_editor_theme(void)
 {
-	return th();
+	return &k_themes[theme_index_at(G.opt.theme)];
 }
 
 const unsigned *mmb_editor_palette(void)
 {
-	return th()->pal;
+	return mmb_editor_theme()->pal;
 }
 
 static const unsigned ed_vga_pal[16] = {
@@ -258,7 +269,7 @@ int mmb_editor_theme_field(const char *name, unsigned char *idx)
 {
 	char up[32];
 	int i, n;
-	const mmb_ed_theme *t = th();
+	const mmb_ed_theme *t = mmb_editor_theme();
 
 	if (!name || !idx || !name[0])
 		return 0;
@@ -521,7 +532,7 @@ static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
 static const char help_hots[] = { 'k', 'm' };
-static const char theme_hots[] = { 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
+static const char theme_hots[] = { 'y', 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
 
 static void redraw(void);
 static int save_tab(void);
@@ -2734,16 +2745,17 @@ static const char **menu_items(int menu, int *n)
 		return run_items;
 	case MENU_THEME:
 	{
-		static const char *names[ED_THEME_N];
+		static const char *names[ED_THEME_N + 1];
 		static int ready;
 		int i;
 		if (!ready)
 		{
+			names[0] = "System";
 			for (i = 0; i < ED_THEME_N; i++)
-				names[i] = k_themes[i].name;
+				names[i + 1] = k_themes[i].name;
 			ready = 1;
 		}
-		*n = ED_THEME_N;
+		*n = ED_THEME_N + 1;
 		return names;
 	}
 	default:
@@ -4071,7 +4083,7 @@ static void redraw(void)
 	G.out[0] = 0;
 	ensure_visible();
 	tui_begin();
-	tui_set_palette(mmb_editor_palette());
+	tui_set_palette(th()->pal);
 	tui_clear(C_EDIT_FG, C_EDIT_BG);
 	draw_menu_bar();
 	draw_tabs();
@@ -4469,8 +4481,7 @@ static void open_menu(int which)
 	if (which == MENU_THEME)
 	{
 		int cur = G.opt.edit_theme;
-		if (cur >= 0 && cur < ED_THEME_N)
-			G.ed.menu_item = cur;
+		G.ed.menu_item = (cur < 0 || cur >= ED_THEME_N) ? 0 : cur + 1;
 	}
 	menu_items(which, &n);
 	(void)n;
@@ -4651,11 +4662,17 @@ static void activate_menu(void)
 		editor_run();
 	else if (menu == MENU_THEME)
 	{
-		if (item >= 0 && item < ED_THEME_N)
+		if (item == 0)
 		{
-			G.opt.edit_theme = item;
+			G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
 			mmb_settings_save();
-			set_status(k_themes[item].name);
+			set_status("System theme");
+		}
+		else if (item >= 1 && item <= ED_THEME_N)
+		{
+			G.opt.edit_theme = item - 1;
+			mmb_settings_save();
+			set_status(k_themes[item - 1].name);
 		}
 	}
 	else if (menu == MENU_HELP)

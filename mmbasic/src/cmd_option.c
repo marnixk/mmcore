@@ -422,8 +422,9 @@ static void parse_clock(void)
 	skip_hw_rest();
 }
 
-/* OPTION (EDIT) THEME name|pattern|n — the system-wide theme selection. */
-static void option_set_theme(void)
+/* Parse a theme name, quoted name or index. When allow_system is set,
+ * SYSTEM/DEFAULT resolve to the "follow the system theme" sentinel. */
+static int option_parse_theme(int allow_system)
 {
 	int id = -1;
 
@@ -433,11 +434,16 @@ static void option_set_theme(void)
 		mmb_val v = mmb_expr();
 		if (v.type != T_STR)
 			mmb_syntax();
+		if (allow_system &&
+		    (mmb_keyword_eq(v.s, "SYSTEM") || mmb_keyword_eq(v.s, "DEFAULT")))
+			return MMB_OPT_EDIT_THEME_SYSTEM;
 		id = mmb_editor_theme_lookup(v.s);
 	}
 	else
 	{
 		int i, n = mmb_editor_theme_count();
+		if (allow_system && (mmb_match("SYSTEM") || mmb_match("DEFAULT")))
+			return MMB_OPT_EDIT_THEME_SYSTEM;
 		for (i = 0; i < n; i++)
 		{
 			if (mmb_match(mmb_editor_theme_name(i)))
@@ -451,6 +457,22 @@ static void option_set_theme(void)
 	}
 	if (id < 0 || id >= mmb_editor_theme_count())
 		mmb_error("?THEME");
+	return id;
+}
+
+/* OPTION THEME name|pattern|n — the system-wide theme selection. */
+static void option_set_theme(void)
+{
+	int id = option_parse_theme(0);
+
+	G.opt.theme = id;
+}
+
+/* OPTION EDIT THEME name|pattern|n|SYSTEM — the editor-only theme override. */
+static void option_set_edit_theme(void)
+{
+	int id = option_parse_theme(1);
+
 	G.opt.edit_theme = id;
 }
 
@@ -831,7 +853,7 @@ static void option_dispatch(void)
 	{
 		if (mmb_match("THEME"))
 		{
-			option_set_theme();
+			option_set_edit_theme();
 			return;
 		}
 		if (!mmb_match("FONT"))
@@ -1324,12 +1346,23 @@ void mmb_option_list(int all)
 		mmb_out(edit_font_name(G.opt.edit_font));
 		n++;
 	}
-	if (all || G.opt.edit_theme != MMB_OPT_DEFAULT_EDIT_THEME)
+	if (all || G.opt.theme != MMB_OPT_DEFAULT_THEME)
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION THEME ");
+		mmb_out(mmb_editor_theme_name(G.opt.theme));
+		n++;
+	}
+	if (all || G.opt.edit_theme != MMB_OPT_EDIT_THEME_SYSTEM)
 	{
 		if (n)
 			mmb_out("\n");
 		mmb_out("OPTION EDIT THEME ");
-		mmb_out(mmb_editor_theme_name(G.opt.edit_theme));
+		if (G.opt.edit_theme < 0)
+			mmb_out("SYSTEM");
+		else
+			mmb_out(mmb_editor_theme_name(G.opt.edit_theme));
 		n++;
 	}
 	if (all || G.opt.escape)
