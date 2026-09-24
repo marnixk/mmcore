@@ -36,7 +36,8 @@ typedef enum {
 /* One tool's idle and active art. Each bitmap is PCA_CURSOR_PIXELS bytes of
  * row-major default-VGA palette indices; PCA_CURSOR_TRANSPARENT marks a pixel
  * the sprite-restore runtime leaves untouched. The hotspot coordinates are in
- * sprite space (0..31) and are carried per state. */
+ * sprite space (0..31), are carried per state, and always name a
+ * non-transparent art pixel (#690). */
 typedef struct {
 	const char *name;
 	const uint8_t *idle;
