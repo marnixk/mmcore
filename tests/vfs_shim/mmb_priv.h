@@ -16,8 +16,9 @@
 #define T_STR             3
 
 /* Structured directory entry (#621); mirrors mmbasic.h. */
+#define MMB_DIRENT_NAME 256
 typedef struct mmb_dirent {
-	char name[80];
+	char name[MMB_DIRENT_NAME];
 	int is_dir;
 	int size;
 } mmb_dirent;
