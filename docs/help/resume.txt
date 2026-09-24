@@ -14,6 +14,14 @@ following line, and RESUME line jumps to the given line. RESUME clears the
 "handling" state so a later error is trapped again. Calling RESUME when no error
 is active is an error.
 
+If the error was raised inside a SUB or FUNCTION, entering the handler unwinds
+the call stack first, so the handler sees the enclosing scope rather than the
+routine's LOCAL variables. RESUME line then continues at that named line at the
+outer level. RESUME NEXT and bare RESUME also continue at the outer level: the
+remainder of the routine runs without its frame and reaching its END SUB / END
+FUNCTION ends the program instead of returning to the caller. When the failing
+line belongs to a routine, prefer RESUME line.
+
 Example:
 
     10 ON ERROR GOTO 100
