@@ -562,14 +562,22 @@ void mmb_paint_poll(void)
 
 	if (!PT.mouse_down)
 	{
-		if (left || right)
+		int button = left ? PT_BTN_LEFT :
+			     (right ? PT_BTN_RIGHT : 0);
+		int down = (left || right) ? 1 : 0;
+
+		/* The menu module sees every pointer poll: a press opens,
+		 * switches or chooses; a release clears its held state; and
+		 * motion with no button drives the hover highlight (#708). It
+		 * returns non-zero only when a menu or dialog consumed the
+		 * event, so a plain move never steals canvas input. */
+		if (pt_menus_mouse(sx, sy, button, down))
+			changed = 1;
+		else if (down)
 		{
-			int button = left ? PT_BTN_LEFT : PT_BTN_RIGHT;
 			int idx, tool;
 
-			if (pt_menus_mouse(sx, sy, button, 1))
-				;
-			else if (pt_palette_indicator_hit(sx, sy))
+			if (pt_palette_indicator_hit(sx, sy))
 				pt_palette_swap();
 			else if (pt_palette_hit(sx, sy, &idx))
 				pt_palette_select(idx, button);

@@ -57,7 +57,6 @@ static int s_dlg_yes;
 static int s_alt;
 static int s_hover;
 static int s_btn;
-static int s_last_sx = -1, s_last_sy = -1;
 
 /* ---- geometry ---------------------------------------------------------- */
 
@@ -504,7 +503,6 @@ void pt_menus_init(void)
 	s_alt = 0;
 	s_hover = -1;
 	s_btn = 0;
-	s_last_sx = s_last_sy = -1;
 	s_drawn_menu = PT_MENU_NONE;
 	s_drawn_hover = -1;
 	s_drawn_dlg = DLG_NONE;
@@ -631,6 +629,47 @@ int pt_menus_key(int key)
 
 /* ---- mouse ------------------------------------------------------------- */
 
+/* Move the dropdown highlight onto the row under the pointer, damaging the
+ * row that loses it and the row that gains it. `dropdown_cells()` yields the
+ * first dropdown row in cells (cell row 1) and item i is drawn at `1 + i`, so
+ * the damage row is `y + i`. No full frame, no canvas touch (#702/#708). */
+static void hover_item(int sx, int sy)
+{
+	int it, x, y, w, h;
+
+	if (PT.menu == PT_MENU_NONE)
+		return;
+	it = item_at(PT.menu, sx, sy);
+	if (it == s_hover)
+		return;
+	dropdown_cells(PT.menu, &x, &y, &w, &h);
+	if (s_hover >= 0)
+		dmg_cells(x, y + s_hover, w, 1);
+	if (it >= 0)
+		dmg_cells(x, y + it, w, 1);
+	s_hover = it;
+}
+
+/* Pointer motion with no fresh press: follow the pointer. Hovering a title
+ * switches menus; hovering an item moves the highlight; a modal ignores
+ * motion. Returns 1 when a menu/dialog is open (the event is consumed). */
+static int pointer_motion(int sx, int sy)
+{
+	if (s_dlg != DLG_NONE)
+		return 1;
+	if (PT.menu != PT_MENU_NONE)
+	{
+		int t = title_at(sx, sy);
+
+		if (t >= 0 && t != PT.menu)
+			open_menu(t);
+		else
+			hover_item(sx, sy);
+		return 1;
+	}
+	return 0;
+}
+
 int pt_menus_mouse(int sx, int sy, int button, int down)
 {
 	int fresh;
@@ -638,19 +677,25 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 	(void)button;
 	if (!PT.active)
 		return 0;
+
 	if (!down)
 	{
-		s_btn = 0;
-		s_last_sx = s_last_sy = -1;
-		return pt_menus_active();
+		/* A button-up ends a press; once the button is up an event is
+		 * pure motion and drives the hover highlight (#708). The
+		 * release edge itself is also forwarded - even after the menu
+		 * closed on the press - so `s_btn` cannot stay stuck set. */
+		if (s_btn)
+		{
+			s_btn = 0;
+			return pt_menus_active();
+		}
+		return pointer_motion(sx, sy);
 	}
 
-	/* A press is "fresh" at a new position even without a release event: the
-	 * frozen loop only forwards button-down events. */
-	fresh = !s_btn || sx != s_last_sx || sy != s_last_sy;
+	/* `fresh` is a genuine new press: the loop now forwards the button-up
+	 * too, so held motion is distinguished from a press. */
+	fresh = !s_btn;
 	s_btn = 1;
-	s_last_sx = sx;
-	s_last_sy = sy;
 
 	if (s_dlg == DLG_CONFIRM)
 	{
@@ -678,7 +723,16 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 	{
 		int t = title_at(sx, sy);
 
-		if (fresh)
+		if (!fresh)
+		{
+			/* Held: hovering a title switches, hovering an item
+			 * highlights; a drag never activates an item. */
+			if (t >= 0 && t != PT.menu)
+				open_menu(t);
+			else
+				hover_item(sx, sy);
+			return 1;
+		}
 		{
 			int it = item_at(PT.menu, sx, sy);
 
@@ -695,27 +749,6 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 			close_menu();
 			return 1;
 		}
-		/* Held: hovering a title switches, hovering an item highlights. */
-		if (t >= 0 && t != PT.menu)
-		{
-			open_menu(t);
-			return 1;
-		}
-		{
-			int it = item_at(PT.menu, sx, sy);
-
-			if (it >= 0 && it != s_hover)
-			{
-				int x, y, w, h;
-
-				dropdown_cells(PT.menu, &x, &y, &w, &h);
-				if (s_hover >= 0)
-					dmg_cells(x, y + 1 + s_hover, w, 1);
-				dmg_cells(x, y + 1 + it, w, 1);
-				s_hover = it;
-			}
-		}
-		return 1;
 	}
 
 	if (fresh)

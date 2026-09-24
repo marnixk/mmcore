@@ -229,6 +229,15 @@ static void click(int x, int y)
 	press(x, y);
 	release(x, y);
 }
+/* #708: motion with no button, and a held-button move. */
+static void move_to(int x, int y)
+{
+	pt_menus_mouse(x, y, 0, 0);
+}
+static void drag_to(int x, int y)
+{
+	pt_menus_mouse(x, y, PT_BTN_LEFT, 1);
+}
 
 int main(void)
 {
@@ -434,6 +443,48 @@ int main(void)
 	      "close_damage_bounded");
 	release(300, 200);
 
+	/* ---- #708: hover with no button follows the pointer ---- */
+	/* Open File, then move (no press) onto "New" (item 0): the highlight
+	 * moves and only that dropdown row is damaged - never the canvas and
+	 * never a full-frame redraw. */
+	click(kFile, 8);
+	f_new = 0;
+	dmg_reset();
+	redraws = 0;
+	move_to(kFile, 20);
+	check(dmg_valid && dmg_y0 == 16 && dmg_y1 == 31, "hover_row_damage");
+	check(redraws == 0, "hover_no_full_redraw");
+	check(f_new == 0 && PT.menu == PT_MENU_FILE, "hover_no_activate");
+
+	/* Moving to the second row (Open) damages the old and new rows. */
+	dmg_reset();
+	move_to(kFile, 36);
+	check(dmg_valid && dmg_y0 == 16 && dmg_y1 == 47, "hover_move_damage");
+
+	/* Leaving the dropdown for the bar clears the highlight (row 2 only). */
+	dmg_reset();
+	move_to(kFile, 8);
+	check(dmg_valid && dmg_y0 == 32 && dmg_y1 == 47, "hover_clear_damage");
+
+	/* Hovering another title with no button switches menus. */
+	move_to(kEdit, 8);
+	check(PT.menu == PT_MENU_EDIT, "hover_switch_no_button");
+	pt_menus_key(27);
+	check(PT.menu == PT_MENU_NONE, "hover_cleanup");
+
+	/* A held move highlights but never activates; after the button-up a
+	 * later no-button move still drives the hover (the press state is not
+	 * stuck). */
+	f_open = 0;
+	press(kFile, 8);
+	drag_to(kFile, 36);
+	check(PT.menu == PT_MENU_FILE && f_open == 0, "held_move_no_activate");
+	release(kFile, 8);
+	dmg_reset();
+	move_to(kFile, 52);
+	check(dmg_valid && dmg_y0 == 32, "up_then_hover_damage");
+	pt_menus_key(27);
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -528,6 +579,23 @@ def test_menu_damage_is_bounded(checks):
         "menu_nav_no_full_redraw",
         "switch_damage_bounded",
         "close_damage_bounded",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_hover_follows_pointer(checks):
+    """#708: motion with no button moves the dropdown highlight; damage stays
+    on the affected rows; a held drag never activates; button-up is handled."""
+    for name in (
+        "hover_row_damage",
+        "hover_no_full_redraw",
+        "hover_no_activate",
+        "hover_move_damage",
+        "hover_clear_damage",
+        "hover_switch_no_button",
+        "hover_cleanup",
+        "held_move_no_activate",
+        "up_then_hover_damage",
     ):
         assert checks.get(name) is True, name
 
