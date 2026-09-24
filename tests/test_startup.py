@@ -63,7 +63,8 @@ def test_startup_banner(kernel_image):
 
         ocr = con.ocr_screen(crop="1280x256+0+0").lower()
         assert "mmcore" in ocr
-        assert "mmbasic" in ocr
+        # OCR can split the short MMBasic line ("mmbas ic"); ignore spaces.
+        assert "mmbasic" in ocr.replace(" ", "")
         assert "help" in ocr
         assert con.send_line("PRINT 6*7") == "42"
 
