@@ -20,20 +20,26 @@ CURSORS_C = os.path.join(SRC, "paint_cursors.c")
 ART_C = os.path.join(SRC, "paint_cursor_art.c")
 
 PT_W, PT_H = 640, 360
-PT_CANVAS_W, PT_CANVAS_H = 608, 312
-PT_CANVAS_X, PT_CANVAS_Y = 32, 16
+PT_CANVAS_W, PT_CANVAS_H = 576, 312
+PT_CANVAS_X, PT_CANVAS_Y = 64, 16
 
+# The 14 baked sprites (arrow + 13 raster tools).
 TOOLS = [
     "arrow", "pencil", "line", "rectangle", "ellipse", "circle", "fill",
     "eraser", "pick", "grab", "magnify", "airbrush", "spray", "text",
 ]
 
-# app tool id -> expected baked art index (paint.h enum -> paint_cursor_art.h)
+# app tool id -> baked sprite name. The three filled variants (#719) reuse
+# their outline sibling's cursor art.
 TOOL_IDS = {
-    "pencil": 0, "line": 1, "rectangle": 2, "ellipse": 3, "circle": 4,
-    "fill": 5, "eraser": 6, "pick": 7, "grab": 8, "magnify": 9,
-    "airbrush": 10, "spray": 11, "text": 12,
+    "pencil": "pencil", "eraser": "eraser", "line": "line", "text": "text",
+    "rectangle": "rectangle", "rectangle_filled": "rectangle",
+    "ellipse": "ellipse", "ellipse_filled": "ellipse",
+    "circle": "circle", "circle_filled": "circle", "fill": "fill",
+    "pick": "pick", "airbrush": "airbrush", "spray": "spray",
+    "grab": "grab", "magnify": "magnify",
 }
+PT_TOOL_COUNT = 16
 
 SHIM_H = r"""
 #ifndef MMB_PRIV_H
@@ -154,18 +160,21 @@ static int art_index(int tool)
 {
 	switch (tool) {
 	case 0: return PCA_TOOL_PENCIL;
-	case 1: return PCA_TOOL_LINE;
-	case 2: return PCA_TOOL_RECTANGLE;
-	case 3: return PCA_TOOL_ELLIPSE;
-	case 4: return PCA_TOOL_CIRCLE;
-	case 5: return PCA_TOOL_FILL;
-	case 6: return PCA_TOOL_ERASER;
-	case 7: return PCA_TOOL_PICK;
-	case 8: return PCA_TOOL_GRAB;
-	case 9: return PCA_TOOL_MAGNIFY;
-	case 10: return PCA_TOOL_AIRBRUSH;
-	case 11: return PCA_TOOL_SPRAY;
-	case 12: return PCA_TOOL_TEXT;
+	case 1: return PCA_TOOL_ERASER;
+	case 2: return PCA_TOOL_LINE;
+	case 3: return PCA_TOOL_TEXT;
+	case 4: return PCA_TOOL_RECTANGLE;
+	case 5: return PCA_TOOL_RECTANGLE;
+	case 6: return PCA_TOOL_ELLIPSE;
+	case 7: return PCA_TOOL_ELLIPSE;
+	case 8: return PCA_TOOL_CIRCLE;
+	case 9: return PCA_TOOL_CIRCLE;
+	case 10: return PCA_TOOL_FILL;
+	case 11: return PCA_TOOL_PICK;
+	case 12: return PCA_TOOL_AIRBRUSH;
+	case 13: return PCA_TOOL_SPRAY;
+	case 14: return PCA_TOOL_GRAB;
+	case 15: return PCA_TOOL_MAGNIFY;
 	default: return PCA_TOOL_ARROW;
 	}
 }
@@ -440,8 +449,9 @@ def test_shapes_follow_tool_and_idle_active_differ(run):
             sigs[parts[1]] = (parts[2], parts[3])
         elif parts[0] == "SIGARROW":
             sigs["arrow"] = (parts[1], parts[2])
-    assert len(sigs) == len(TOOLS)
-    # One signature per sprite, so each tool's art is distinct.
+    assert len(sigs) == PT_TOOL_COUNT + 1
+    # Every tool maps to a baked sprite; the filled variants share their
+    # outline sibling, so the 16 tools collapse onto the 14 sprites.
     assert len({v[0] for v in sigs.values()}) == len(TOOLS)
     assert len({v[1] for v in sigs.values()}) == len(TOOLS)
     # Idle and active art differ for every tool.
@@ -459,9 +469,9 @@ def test_edges_restore_and_canvas_stays_clean(run):
 
 
 def test_tool_id_mapping_covers_art():
-    """The PT enum maps onto the 14 baked sprites; each name appears once."""
-    assert set(TOOL_IDS.values()) == set(range(len(TOOLS) - 1))
-    assert len(TOOL_IDS) == len(TOOLS) - 1
+    """Every PT tool id maps onto a baked sprite; filled variants share."""
+    assert len(TOOL_IDS) == PT_TOOL_COUNT
+    assert set(TOOL_IDS.values()) == set(TOOLS) - {"arrow"}
 
 
 # ---- #701 ghost regression -------------------------------------------------

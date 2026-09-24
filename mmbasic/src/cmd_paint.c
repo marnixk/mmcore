@@ -315,6 +315,7 @@ void pt_redraw(void)
 	{
 		pt_tools_draw();
 		pt_palette_draw();
+		pt_width_draw();
 	}
 	else if (s_dmg_valid && s_dmg_x0 < PT_TOOL_W &&
 		 s_dmg_y1 >= PT_CANVAS_Y && s_dmg_y0 < PT_PAL_Y)
@@ -583,10 +584,12 @@ void mmb_paint_poll(void)
 			changed = 1;
 		else if (down)
 		{
-			int idx, tool;
+			int idx, tool, widx;
 
 			if (pt_palette_indicator_hit(sx, sy))
 				pt_palette_swap();
+			else if (pt_width_hit(sx, sy, &widx))
+				pt_width_select(widx);
 			else if (pt_palette_hit(sx, sy, &idx))
 				pt_palette_select(idx, button);
 			else if (pt_tools_hit(sx, sy, &tool))
@@ -786,6 +789,30 @@ PT_WEAK void pt_palette_swap(void)
 	PT.bg = t;
 }
 
+/* ---- line-width selector (#718) ---------------------------------------- */
+
+PT_WEAK void pt_width_draw(void)
+{
+}
+
+PT_WEAK int pt_width_hit(int sx, int sy, int *idx)
+{
+	(void)sx;
+	(void)sy;
+	(void)idx;
+	return 0;
+}
+
+PT_WEAK void pt_width_select(int idx)
+{
+	(void)idx;
+}
+
+PT_WEAK int pt_pen_width(void)
+{
+	return 1;
+}
+
 /* ---- tools (#636, #641, #642) ------------------------------------------ */
 
 PT_WEAK void pt_tools_init(void)
@@ -800,27 +827,35 @@ PT_WEAK void pt_tools_draw(void)
 		     0x202020u);
 	for (i = 0; i < PT_TOOL_COUNT; i++)
 	{
-		int y = PT_CANVAS_Y + i * PT_TOOL_W;
+		int col = i % PT_TOOL_COLS;
+		int row = i / PT_TOOL_COLS;
+		int x = col * PT_CELL_W;
+		int y = PT_CANVAS_Y + row * PT_CELL_H;
 		unsigned c = (i == PT.tool) ? 0xFFFFFFu : 0x808080u;
-		if (y + PT_TOOL_W > PT_PAL_Y)
+
+		if (y + PT_CELL_H > PT_PAL_Y)
 			break;
-		pt_fill_rect(1, y + 1, PT_TOOL_W - 2, PT_TOOL_W - 2,
+		pt_fill_rect(x + 1, y + 1, PT_CELL_W - 2, PT_CELL_H - 2,
 			     (i == PT.tool) ? 0x404040u : 0x101010u);
-		pt_fill_rect(4, y + 4, PT_TOOL_W - 8, PT_TOOL_W - 8, c);
+		pt_fill_rect(x + 4, y + 4, PT_CELL_W - 8, PT_CELL_H - 8, c);
 	}
 }
 
 PT_WEAK int pt_tools_hit(int sx, int sy, int *tool)
 {
-	int row;
+	int col, row, t;
 
 	if (sx < 0 || sx >= PT_TOOL_W || sy < PT_CANVAS_Y || sy >= PT_PAL_Y)
 		return 0;
-	row = (sy - PT_CANVAS_Y) / PT_TOOL_W;
-	if (row < 0 || row >= PT_TOOL_COUNT)
+	col = sx / PT_CELL_W;
+	row = (sy - PT_CANVAS_Y) / PT_CELL_H;
+	if (col < 0 || col >= PT_TOOL_COLS || row < 0 || row >= PT_TOOL_ROWS)
+		return 0;
+	t = row * PT_TOOL_COLS + col;
+	if (t < 0 || t >= PT_TOOL_COUNT)
 		return 0;
 	if (tool)
-		*tool = row;
+		*tool = t;
 	return 1;
 }
 

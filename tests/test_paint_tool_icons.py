@@ -33,7 +33,7 @@ def test_generator_matches_committed_output():
 def test_all_tools_have_a_16x16_glyph():
     mod = _load_gen()
     arts = mod.build()
-    assert len(arts) == len(mod.TOOLS) == 13
+    assert len(arts) == len(mod.TOOLS) == 16
     for name, art in zip(mod.TOOLS, arts):
         assert len(art) == 16, name
         assert all(len(row) == 16 for row in art), name

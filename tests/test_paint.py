@@ -24,12 +24,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Layout constants from mmbasic/src/paint.h (#634).
 PT_W, PT_H = 640, 360
 PT_MENU_H = 16
-PT_TOOL_W = 32
-PT_PAL_X = 32
+PT_CELL_W = 32
+PT_TOOL_W = 64
+PT_PAL_X = 92
 PT_PAL_Y = 328
 PT_PAL_SW = 8
 PT_PAL_COLS = 64
-PT_CANVAS_X = 32
+PT_CANVAS_X = 64
 PT_CANVAS_Y = 16
 PT_PAL_MID = 16  # middle of a 32px-tall indicator band
 
@@ -137,11 +138,11 @@ def test_paint_layout_640x360(mouse_console):
     assert swatch(0) != swatch(15)
 
     # FG/BG indicator at the left end of the strip: inner square is FG (white).
-    assert _lum(_rgb(c, PT_TOOL_W // 2, PT_PAL_Y + PT_PAL_MID)) > 600
+    assert _lum(_rgb(c, 22, PT_PAL_Y + PT_PAL_MID)) > 600
 
     # Menu-bar row 0 is painted (not black) and the tool column is drawn.
     assert _lum(_rgb(c, 400, PT_MENU_H // 2)) > 60
-    assert _lum(_rgb(c, PT_TOOL_W // 2, PT_CANVAS_Y + 16)) > 60
+    assert _lum(_rgb(c, PT_CELL_W // 2, PT_CANVAS_Y + 16)) > 60
 
     _quit(c)
 

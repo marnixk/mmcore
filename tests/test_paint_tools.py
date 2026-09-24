@@ -25,14 +25,17 @@ SRC = os.path.join(REPO, "mmbasic", "src")
 # Layout from mmbasic/src/paint.h.
 PT_W, PT_H = 640, 360
 PT_MENU_H = 16
-PT_TOOL_W = 32
+PT_CELL_W = 32
+PT_TOOL_W = 64
+PT_CELL_H = (328 - 16) // 8
 PT_PAL_Y = 328
 PT_CANVAS_Y = 16
-PT_TOOL_COUNT = 13
+PT_TOOL_COUNT = 16
 
-# enum pt_tool.
-PENCIL, LINE, RECT, ELLIPSE, CIRCLE, FILL, ERASER, PICK, GRAB, MAGNIFY = range(10)
-AIRBRUSH, SPRAY, TEXT = 10, 11, 12
+# enum pt_tool (#719 two-column order).
+(PENCIL, ERASER, LINE, TEXT, RECT, RECT_FILLED, ELLIPSE, ELLIPSE_FILLED,
+ CIRCLE, CIRCLE_FILLED, FILL, PICK, AIRBRUSH, SPRAY, GRAB,
+ MAGNIFY) = range(PT_TOOL_COUNT)
 
 # Bonus-tool radii from mmbasic/src/paint_tools.c.
 AIR_R = 6
@@ -110,6 +113,10 @@ void tst_tool_set(int t) { pt_tool_select(t); }
 int tst_hit(int sx, int sy, int *tool) { return pt_tools_hit(sx, sy, tool); }
 void tst_shift(int on) { pt_tool_modifiers((int)on); }
 void tst_draw(void) { pt_tools_draw(); }
+
+void tst_width_set(int i) { PT.width_idx = i; }
+int tst_width_hit(int sx, int sy, int *idx) { return pt_width_hit(sx, sy, idx); }
+int tst_pen_width(void) { return pt_pen_width(); }
 
 void tst_begin(int x, int y, int b) { pt_tool_begin(x, y, b); }
 void tst_motion(int x, int y, int b) { pt_tool_motion(x, y, b); }
@@ -216,6 +223,9 @@ class Pad:
         lib.tst_hit.argtypes = [ctypes.c_int, ctypes.c_int,
                                 ctypes.POINTER(ctypes.c_int)]
         lib.tst_shift.argtypes = [ctypes.c_int]
+        lib.tst_width_set.argtypes = [ctypes.c_int]
+        lib.tst_width_hit.argtypes = [ctypes.c_int, ctypes.c_int,
+                                      ctypes.POINTER(ctypes.c_int)]
         for fn in ("tst_begin", "tst_motion", "tst_end"):
             getattr(lib, fn).argtypes = [ctypes.c_int, ctypes.c_int,
                                          ctypes.c_int]
@@ -252,6 +262,18 @@ class Pad:
 
     def shift(self, on):
         self.lib.tst_shift(1 if on else 0)
+
+    def width(self, i):
+        self.lib.tst_width_set(i)
+
+    def pen_width(self):
+        self.lib.tst_pen_width.restype = ctypes.c_int
+        return self.lib.tst_pen_width()
+
+    def width_hit(self, sx, sy):
+        idx = ctypes.c_int(-1)
+        ok = self.lib.tst_width_hit(sx, sy, ctypes.byref(idx))
+        return ok, idx.value
 
     def draw(self):
         self.lib.tst_draw()
@@ -689,21 +711,95 @@ def test_magnify_wraps_to_one_at_the_top(pt):
 
 
 def test_tool_column_hit_maps_every_cell(pt):
-    cell = (PT_PAL_Y - PT_CANVAS_Y) // PT_TOOL_COUNT
     for i in range(PT_TOOL_COUNT):
-        sy = PT_CANVAS_Y + i * cell + cell // 2
-        ok, tool = pt.hit(PT_TOOL_W // 2, sy)
+        col = i % 2
+        row = i // 2
+        sx = col * PT_CELL_W + PT_CELL_W // 2
+        sy = PT_CANVAS_Y + row * PT_CELL_H + PT_CELL_H // 2
+        ok, tool = pt.hit(sx, sy)
         assert ok == 1 and tool == i
     # The palette strip and the menu bar are not tool hits.
-    assert pt.hit(PT_TOOL_W // 2, PT_CANVAS_Y - 1)[0] == 0
-    assert pt.hit(PT_TOOL_W // 2, PT_PAL_Y)[0] == 0
-    assert pt.hit(PT_TOOL_W, PT_CANVAS_Y + cell // 2)[0] == 0
+    assert pt.hit(PT_CELL_W // 2, PT_CANVAS_Y - 1)[0] == 0
+    assert pt.hit(PT_CELL_W // 2, PT_PAL_Y)[0] == 0
+    assert pt.hit(PT_TOOL_W, PT_CANVAS_Y + PT_CELL_H // 2)[0] == 0
 
 
 def test_tool_column_draws_every_icon_including_the_bonus_tools(pt):
-    # Exercises draw_tool_icon for all 13 tools (airbrush / spray / magnify
-    # art is registered here, from #632).
-    for tool in (AIRBRUSH, SPRAY, MAGNIFY):
+    # Exercises draw_tool_icon for all 16 tools (the filled shape variants and
+    # the bonus airbrush / spray / magnify art included).
+    for tool in (RECT_FILLED, ELLIPSE_FILLED, CIRCLE_FILLED, AIRBRUSH, SPRAY,
+                 MAGNIFY):
         pt.tool(tool)
         pt.draw()
     pt.draw()
+
+
+def _lit_count(pt):
+    return sum(pt.px(x, y) == 15
+               for x in range(pt.w) for y in range(pt.h))
+
+
+def test_filled_rectangle_fills_but_the_outline_is_hollow(pt):
+    pt.tool(RECT)
+    pt.begin(6, 5, LEFT)
+    pt.motion(26, 21, LEFT)
+    pt.end(26, 21, LEFT)
+    assert pt.px(16, 13) == 0        # outline leaves the centre empty
+    assert pt.px(6, 13) == 15        # left edge drawn
+
+    pt.reset()
+    pt.tool(RECT_FILLED)
+    pt.begin(6, 5, LEFT)
+    pt.motion(26, 21, LEFT)
+    pt.end(26, 21, LEFT)
+    assert pt.px(16, 13) == 15       # interior filled
+    assert pt.px(6, 5) == 15
+
+
+def test_filled_ellipse_and_circle_are_solid(pt):
+    pt.tool(ELLIPSE_FILLED)
+    pt.begin(6, 6, LEFT)
+    pt.motion(26, 20, LEFT)
+    pt.end(26, 20, LEFT)
+    assert pt.px(16, 13) == 15       # ellipse centre filled
+
+    pt.reset()
+    pt.tool(ELLIPSE)
+    pt.begin(6, 6, LEFT)
+    pt.motion(26, 20, LEFT)
+    pt.end(26, 20, LEFT)
+    assert pt.px(16, 13) == 0        # the outline sibling is hollow
+
+    pt.reset()
+    pt.tool(CIRCLE_FILLED)
+    pt.begin(24, 16, LEFT)           # circle centre
+    pt.motion(31, 16, LEFT)          # r = 7
+    pt.end(31, 16, LEFT)
+    assert pt.px(24, 16) == 15
+    assert pt.px(24, 20) == 15       # inside the disc
+
+
+def test_pen_width_thickens_a_dot(pt):
+    assert pt.pen_width() == 1
+    pt.tool(PENCIL)
+    pt.begin(10, 10, LEFT)
+    pt.end(10, 10, LEFT)
+    assert _lit_count(pt) == 1       # 1x1 dot
+
+    pt.reset()
+    pt.tool(PENCIL)
+    pt.width(4)                      # 6 px
+    assert pt.pen_width() == 6
+    pt.begin(10, 10, LEFT)
+    pt.end(10, 10, LEFT)
+    assert _lit_count(pt) == 36      # 6x6 dot
+
+
+def test_width_selector_maps_five_cells(pt):
+    # PT_WB_X=32, PT_WB_W=60, five 12px cells in the bottom bar.
+    for i in range(5):
+        ok, idx = pt.width_hit(32 + i * 12 + 6, 328 + 16)
+        assert ok == 1 and idx == i
+    assert pt.width_hit(31, 344)[0] == 0
+    assert pt.width_hit(92, 344)[0] == 0
+    assert pt.width_hit(50, 327)[0] == 0
