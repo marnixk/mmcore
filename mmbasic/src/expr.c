@@ -1117,7 +1117,7 @@ int mmb_try_function(mmb_val *out)
 			G.p++;
 			mmb_expect(')');
 		}
-		*out = mmb_int_val(G.audio.playing && !G.audio.paused ? 1 : 0);
+		*out = mmb_int_val(g_audio.playing && !g_audio.paused ? 1 : 0);
 		return 1;
 	}
 	if (mmb_match("EOF"))

@@ -32,7 +32,6 @@
 #define DRIVE_N (DRIVE_HI - DRIVE_LO + 1)
 #define P_BUF 1024
 
-static char s_cwd[26][128]; /* indexed by letter - 'A' */
 static int s_init;
 static char s_override[26][P_BUF];
 static int s_has_override[26];
@@ -88,8 +87,6 @@ static void ensure_root(void)
 	 * drive never leaves an empty directory behind. */
 	drive_dir_raw('C', db, sizeof db);
 	mkdir(db, 0777);
-	s_cwd['C' - 'A'][0] = '/';
-	s_cwd['C' - 'A'][1] = 0;
 }
 
 static void drive_dir_raw(int letter, char *out, int outsz)
@@ -101,18 +98,6 @@ static void drive_dir_raw(int letter, char *out, int outsz)
 		return;
 	}
 	snprintf(out, (size_t)outsz, "%s/%c", root_dir(), (char)letter);
-}
-
-static void init_cwd(void)
-{
-	int i;
-
-	for (i = 0; i < 26; i++)
-		if (!s_cwd[i][0])
-		{
-			s_cwd[i][0] = '/';
-			s_cwd[i][1] = 0;
-		}
 }
 
 static int is_dir(const char *path)
@@ -296,32 +281,25 @@ int mmb_fat_ready(int letter)
 	return is_dir(db);
 }
 
+/* Validate that a directory-absolute path names a directory. The current
+ * directory is session state and lives in the per-console mmb; only the drive
+ * mount table is global. */
 int mmb_fat_chdir(int letter, const char *path)
 {
 	char full[P_BUF];
 
 	ensure_root();
+	if (!path || !path[0] || strcmp(path, "/") == 0)
+	{
+		char db[P_BUF];
+		if (!drive_of(letter))
+			return -1;
+		drive_dir_raw(letter, db, sizeof db);
+		return is_dir(db) ? 0 : -1;
+	}
 	if (!build_path(letter, path, full, sizeof full, 1) || !is_dir(full))
 		return -1;
-	if (!path || !path[0] || strcmp(path, "/") == 0)
-		snprintf(s_cwd[letter - 'A'], sizeof s_cwd[0], "/");
-	else
-		snprintf(s_cwd[letter - 'A'], sizeof s_cwd[0], "%s", path);
 	return 0;
-}
-
-const char *mmb_fat_cwd(int letter)
-{
-	char db[P_BUF];
-
-	ensure_root();
-	init_cwd();
-	if (!drive_of(letter))
-		return "/";
-	drive_dir_raw(letter, db, sizeof db);
-	if (!is_dir(db))
-		return "/";
-	return s_cwd[letter - 'A'][0] ? s_cwd[letter - 'A'] : "/";
 }
 
 int mmb_fat_mkdir(int letter, const char *path)

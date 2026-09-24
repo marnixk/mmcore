@@ -10,6 +10,8 @@
 #include <stdint.h>
 
 #define MMB_MAX_FILES     10
+#define MMB_MAX_CONSOLES  4
+#define MMB_MAX_DRIVES    8
 #define MMB_ZIP_MAX_BYTES (16u * 1024u * 1024u)
 #define T_STR             3
 
@@ -45,12 +47,15 @@ typedef struct mmb_test_globals {
 	mmb_test_plat *plat;
 	int drive;
 	char cwd[128];
+	int cwd_node[2];
+	char cwd_path[MMB_MAX_DRIVES][128];
 	mmb_file files[MMB_MAX_FILES + 1];
 	const char *p;
 	int running;
 } mmb_test_globals;
 
 extern mmb_test_globals G;
+extern mmb_test_globals *g_mmb[MMB_MAX_CONSOLES];
 
 int mmb_keyword_eq(const char *a, const char *b);
 

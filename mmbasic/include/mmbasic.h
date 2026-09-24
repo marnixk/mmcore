@@ -14,6 +14,9 @@ extern "C" {
 /* Number of virtual consoles (Ctrl+Alt+1..4 sessions on every platform). */
 #define MMB_MAX_CONSOLES 4
 
+/* Drive letters A..H (see the VFS). Physical drives are C..H. */
+#define MMB_MAX_DRIVES 8
+
 /* Pointer state for the full-screen apps (currently PAINT). Coordinates are
  * in screen pixels with (0,0) at the top-left, matching hdmi_width()/
  * hdmi_height(); buttons is a bitmask (1 left, 2 right, 4 middle) and wheel

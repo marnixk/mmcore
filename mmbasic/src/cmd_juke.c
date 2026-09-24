@@ -307,12 +307,12 @@ static int juke_start(int idx)
 		return -1;
 	/* play_begin resets the gain to 100; keep JUKE's own volume across
 	 * track changes (shuffle/next must not blast the mixer). */
-	vl = G.audio.vol_l;
-	vr = G.audio.vol_r;
+	vl = g_audio.vol_l;
+	vr = g_audio.vol_r;
 	if (juke_play_path(p) != 0)
 		return -1;
-	G.audio.vol_l = vl;
-	G.audio.vol_r = vr;
+	g_audio.vol_l = vl;
+	g_audio.vol_r = vr;
 	s_q.cur = idx;
 	s_q.active = 1;
 	return 0;
@@ -339,14 +339,14 @@ static void juke_manage(void)
 {
 	if (!s_q.active)
 		return;
-	if (G.audio.playing)
+	if (g_audio.playing)
 	{
 		if (s_q.cur >= 0 &&
-		    !mmb_keyword_eq(G.audio.name, juke_track(s_q.cur)))
+		    !mmb_keyword_eq(g_audio.name, juke_track(s_q.cur)))
 			s_q.active = 0; /* some other PLAY took the engine */
 		return;
 	}
-	if (G.audio.paused)
+	if (g_audio.paused)
 		return;
 	if (mmb_play_take_ended())
 		juke_advance();
@@ -366,9 +366,9 @@ static void juke_text(int x, int y, const char *s, unsigned col, int scale)
 
 static const char *juke_state_str(void)
 {
-	if (G.audio.playing && G.audio.paused)
+	if (g_audio.playing && g_audio.paused)
 		return "PAUSED";
-	if (G.audio.playing)
+	if (g_audio.playing)
 		return "PLAY";
 	if (s_q.active)
 		return "READY";
@@ -501,7 +501,7 @@ static void juke_paint(int w, int h)
 	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_hot : U.col_dim, 1);
 
 	/* Volume level bar. */
-	vol = G.audio.vol_l;
+	vol = g_audio.vol_l;
 	if (vol < 0)
 		vol = 0;
 	if (vol > 100)
@@ -567,11 +567,11 @@ void mmb_cmd_juke(void)
 		have = 1;
 	}
 
-	/* G.audio volumes default to 0 until the first track starts. JUKE keeps
+	/* g_audio volumes default to 0 until the first track starts. JUKE keeps
 	 * one player volume across tracks, so seed an audible level if none is
 	 * set yet, then juke_start() saves/restores it around play_begin(). */
-	if (G.audio.vol_l <= 0)
-		G.audio.vol_l = G.audio.vol_r = 100;
+	if (g_audio.vol_l <= 0)
+		g_audio.vol_l = g_audio.vol_r = 100;
 
 	if (have)
 	{
@@ -613,13 +613,13 @@ int mmb_in_juke(void)
 /* In-JUKE player gain: the same app gain PLAY VOLUME drives. */
 static void juke_volume(int delta)
 {
-	int v = G.audio.vol_l + delta;
+	int v = g_audio.vol_l + delta;
 	if (v < 0)
 		v = 0;
 	if (v > 100)
 		v = 100;
-	G.audio.vol_l = v;
-	G.audio.vol_r = v;
+	g_audio.vol_l = v;
+	g_audio.vol_r = v;
 	U.muted = 0;
 }
 
@@ -634,7 +634,7 @@ const char *mmb_juke_key(char c)
 	}
 	if (c == ' ')
 	{
-		mmb_play_pause(!G.audio.paused);
+		mmb_play_pause(!g_audio.paused);
 		return "";
 	}
 	if (c == 'n' || c == 'N' || c == '.')
@@ -668,14 +668,14 @@ const char *mmb_juke_key(char c)
 	{
 		if (!U.muted)
 		{
-			U.vol_saved = G.audio.vol_l;
-			G.audio.vol_l = G.audio.vol_r = 0;
+			U.vol_saved = g_audio.vol_l;
+			g_audio.vol_l = g_audio.vol_r = 0;
 			U.muted = 1;
 		}
 		else
 		{
 			int v = U.vol_saved > 0 ? U.vol_saved : 70;
-			G.audio.vol_l = G.audio.vol_r = v;
+			g_audio.vol_l = g_audio.vol_r = v;
 			U.muted = 0;
 		}
 		return "";

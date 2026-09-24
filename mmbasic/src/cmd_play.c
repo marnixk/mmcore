@@ -23,6 +23,10 @@
 #define MIX_TARGET   ((MIX_RATE * 160) / 1000)
 #define MIX_FILL_MAX 24
 
+/* One audio engine, one status: shared by every virtual console so playback
+ * (and the mixer pump) survives a console switch. See mmb_priv.h. */
+mmb_audio g_audio;
+
 static drmp3 s_mp3;
 static int s_mp3_on;
 static modcontext s_mod;
@@ -111,7 +115,7 @@ static void viz_tap(const short *pcm, unsigned nframes)
 static void apply_vol(short *pcm, unsigned nframes)
 {
 	int i, n = (int)(nframes * 2);
-	int vl = G.audio.vol_l, vr = G.audio.vol_r;
+	int vl = g_audio.vol_l, vr = g_audio.vol_r;
 	if (vl < 0) vl = 0;
 	if (vl > 100) vl = 100;
 	if (vr < 0) vr = 0;
@@ -139,7 +143,7 @@ static int flush_pending(void)
 		return 1;
 	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
 	{
-		G.audio.samples_decoded += s_pending_n;
+		g_audio.samples_decoded += s_pending_n;
 		s_pending_n = 0;
 		return 1;
 	}
@@ -148,7 +152,7 @@ static int flush_pending(void)
 		w = 0;
 	if ((unsigned)w >= s_pending_n)
 	{
-		G.audio.samples_decoded += s_pending_n;
+		g_audio.samples_decoded += s_pending_n;
 		s_pending_n = 0;
 		return 1;
 	}
@@ -158,7 +162,7 @@ static int flush_pending(void)
 		memmove(s_pending, s_pending + (unsigned)w * 2,
 			left * 2 * sizeof(short));
 		s_pending_n = left;
-		G.audio.samples_decoded += (unsigned)w;
+		g_audio.samples_decoded += (unsigned)w;
 	}
 	return 0;
 }
@@ -173,7 +177,7 @@ static unsigned emit_pcm(short *pcm, unsigned nframes)
 	apply_vol(pcm, nframes);
 	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
 	{
-		G.audio.samples_decoded += nframes;
+		g_audio.samples_decoded += nframes;
 		return nframes;
 	}
 	w = G.plat->audio_write(pcm, nframes);
@@ -187,7 +191,7 @@ static unsigned emit_pcm(short *pcm, unsigned nframes)
 		memcpy(s_pending, pcm + (unsigned)w * 2, left * 2 * sizeof(short));
 		s_pending_n = left;
 	}
-	G.audio.samples_decoded += (unsigned)w;
+	g_audio.samples_decoded += (unsigned)w;
 	return (unsigned)w;
 }
 
@@ -225,10 +229,10 @@ static void play_teardown(void)
 	}
 	s_wav_n = s_wav_off = 0;
 	s_tts_cb[0] = 0;
-	G.audio.playing = 0;
-	G.audio.paused = 0;
-	G.audio.samples_decoded = 0;
-	G.audio.name[0] = 0;
+	g_audio.playing = 0;
+	g_audio.paused = 0;
+	g_audio.samples_decoded = 0;
+	g_audio.name[0] = 0;
 	s_tone_left = 0;
 	s_tone_hz_l = s_tone_hz_r = 0;
 	s_tone_ph_l = s_tone_ph_r = 0;
@@ -274,13 +278,13 @@ static int load_bytes(const char *path, unsigned char **out, unsigned *n)
 
 static void play_begin(int kind, const char *path)
 {
-	G.audio.playing = kind;
-	G.audio.paused = 0;
-	G.audio.vol_l = G.audio.vol_r = 100;
-	G.audio.samples_decoded = 0;
-	G.audio.name[0] = 0;
+	g_audio.playing = kind;
+	g_audio.paused = 0;
+	g_audio.vol_l = g_audio.vol_r = 100;
+	g_audio.samples_decoded = 0;
+	g_audio.name[0] = 0;
 	if (path)
-		strncpy(G.audio.name, path, sizeof(G.audio.name) - 1);
+		strncpy(g_audio.name, path, sizeof(g_audio.name) - 1);
 	s_mix_origin = mmb_now_ms();
 	s_pause_at = 0;
 	mmb_audio_apply_options();
@@ -421,9 +425,9 @@ static unsigned due_frames(void)
 		unsigned elapsed = mmb_now_ms() - s_mix_origin;
 		unsigned due = MIX_PREROLL +
 			(unsigned)((unsigned long)elapsed * MIX_RATE / 1000u);
-		if (due < G.audio.samples_decoded)
+		if (due < g_audio.samples_decoded)
 			return 0;
-		due -= G.audio.samples_decoded;
+		due -= g_audio.samples_decoded;
 		if (due > MIX_CHUNK)
 			due = MIX_CHUNK;
 		if (free_n < due)
@@ -566,7 +570,7 @@ void mmb_play_mix(void)
 	int keep = 1;
 	int loops;
 
-	if (!G.audio.playing || G.audio.paused)
+	if (!g_audio.playing || g_audio.paused)
 		return;
 	if (!flush_pending())
 		return;
@@ -575,15 +579,15 @@ void mmb_play_mix(void)
 		n = due_frames();
 		if (n == 0)
 			break;
-		if (G.audio.playing == 1 && s_mp3_on)
+		if (g_audio.playing == 1 && s_mp3_on)
 			keep = mix_mp3(n);
-		else if (G.audio.playing == 2 && s_mod_on)
+		else if (g_audio.playing == 2 && s_mod_on)
 			keep = mix_mod(n);
-		else if (G.audio.playing == 3 && s_xm)
+		else if (g_audio.playing == 3 && s_xm)
 			keep = mix_xm(n);
-		else if (G.audio.playing == 4)
+		else if (g_audio.playing == 4)
 			keep = mix_tone(n);
-		else if (G.audio.playing == 5)
+		else if (g_audio.playing == 5)
 			keep = mix_wav(n);
 		else
 			keep = 0;
@@ -604,16 +608,16 @@ void mmb_play_mix(void)
 
 void mmb_play_pause(int on)
 {
-	if (!G.audio.playing)
+	if (!g_audio.playing)
 		return;
-	if (on && !G.audio.paused)
+	if (on && !g_audio.paused)
 	{
-		G.audio.paused = 1;
+		g_audio.paused = 1;
 		s_pause_at = mmb_now_ms();
 	}
-	else if (!on && G.audio.paused)
+	else if (!on && g_audio.paused)
 	{
-		G.audio.paused = 0;
+		g_audio.paused = 0;
 		s_mix_origin += mmb_now_ms() - s_pause_at;
 	}
 }
@@ -632,7 +636,7 @@ void mmb_audio_spectrum(float *bands, int nbands)
 
 	if (!bands || nbands <= 0)
 		return;
-	if (!G.audio.playing || G.audio.paused)
+	if (!g_audio.playing || g_audio.paused)
 	{
 		for (i = 0; i < VIZ_BANDS; i++)
 			s_viz_band[i] *= 0.6f;
@@ -676,33 +680,33 @@ void mmb_cmd_play(void)
 	}
 	if (mmb_match("PAUSE"))
 	{
-		if (G.audio.playing && !G.audio.paused)
+		if (g_audio.playing && !g_audio.paused)
 		{
-			G.audio.paused = 1;
+			g_audio.paused = 1;
 			s_pause_at = mmb_now_ms();
 		}
 		return;
 	}
 	if (mmb_match("RESUME"))
 	{
-		if (G.audio.playing && G.audio.paused)
+		if (g_audio.playing && g_audio.paused)
 		{
-			G.audio.paused = 0;
+			g_audio.paused = 0;
 			s_mix_origin += mmb_now_ms() - s_pause_at;
 		}
 		return;
 	}
 	if (mmb_match("VOLUME"))
 	{
-		G.audio.vol_l = (int)mmb_as_int(mmb_expr());
+		g_audio.vol_l = (int)mmb_as_int(mmb_expr());
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
 			G.p++;
-			G.audio.vol_r = (int)mmb_as_int(mmb_expr());
+			g_audio.vol_r = (int)mmb_as_int(mmb_expr());
 		}
 		else
-			G.audio.vol_r = G.audio.vol_l;
+			g_audio.vol_r = g_audio.vol_l;
 		return;
 	}
 	if (mmb_match("TONE"))
