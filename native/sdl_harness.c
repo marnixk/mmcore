@@ -285,13 +285,11 @@ static void hs_exec(const hs_step *st)
 	switch (st->kind)
 	{
 	case HS_MOUSE:
-		memset(&e, 0, sizeof e);
-		e.type = SDL_MOUSEMOTION;
-		e.motion.x = st->x;
-		e.motion.y = st->y;
-		e.motion.xrel = st->x;
-		e.motion.yrel = st->y;
-		hs_push_event(&e);
+		/* The script speaks framebuffer pixels, so bypass the real
+		 * window->framebuffer viewport transform: a synthetic move must
+		 * land on exactly the requested pixel regardless of where the
+		 * host window sits or how it is scaled (#675). */
+		sdl_input_mouse_move(st->x, st->y);
 		break;
 	case HS_BUTTON:
 		memset(&e, 0, sizeof e);

@@ -10,7 +10,8 @@
  *
  * Commands (one per line, '#' starts a comment):
  *   feed TEXT         type TEXT plus Enter into the REPL / running program
- *   mouse X Y         move the pointer to framebuffer pixel (X, Y)
+ *   mouse X Y         move the pointer to framebuffer pixel (X, Y) exactly,
+ *                     independent of the host window position and scale
  *   down [l|r|m]      press a mouse button (default left)
  *   up [l|r|m]        release a mouse button (default left)
  *   click [l|r|m]     press then release across two frames

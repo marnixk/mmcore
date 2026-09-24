@@ -24,6 +24,12 @@ int sdl_input_ctrl_alt_held(void);
 void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
 			   int *wheel);
 
+/* Test-only: place the pointer at software-framebuffer pixel (x, y) without
+ * the window->framebuffer viewport transform. The scripted harness (#633)
+ * speaks in framebuffer pixels, so a synthetic move must land on exactly the
+ * requested pixel no matter where the host window sits or how it scales. */
+void sdl_input_mouse_move(int x, int y);
+
 /* Line-input capture: while an INPUT/OPTION prompt is blocked, route
  * keystrokes to the raw inkey queue instead of the REPL line editor, which
  * would otherwise swallow them. */
