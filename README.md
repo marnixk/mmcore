@@ -23,6 +23,38 @@ command, or open the `APPS` launcher (`Ctrl+Space`) to pick from the list.
 | Package | `PACKAGE` | Guided wizard that zips a folder into a runnable `.APP`. |
 | Help | `HELP` | Interactive QuickBASIC-style manual and keyword reference. |
 
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <video src="docs/showcase/basic-prompt.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>Basic prompt</strong>
+    </td>
+    <td align="center" width="33%">
+      <video src="docs/showcase/editor.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>Editor</strong>
+    </td>
+    <td align="center" width="33%">
+      <video src="docs/showcase/files.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>Files</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <video src="docs/showcase/help.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>Help</strong>
+    </td>
+    <td align="center" width="33%">
+      <video src="docs/showcase/juke.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>Juke</strong>
+    </td>
+    <td align="center" width="33%">
+      <video src="docs/showcase/wordpad.mp4" autoplay loop muted playsinline width="100%"></video>
+      <br><strong>WordPad</strong>
+    </td>
+  </tr>
+</table>
+
+
 ## Install on a Raspberry Pi
 
 1. Download the release zip for your board from the
