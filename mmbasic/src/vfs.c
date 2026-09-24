@@ -1260,13 +1260,22 @@ static int pkg_ensure(int need)
 static void pkg_free_nodes(void)
 {
 	int i;
+	if (pkg_nodes)
+		for (i = 0; i < pkg_cap; i++)
+			if (pkg_nodes[i].data)
+				G.plat->free(pkg_nodes[i].data);
+	/* Release a table grown for a large package back to the initial size so
+	 * an unmounted B: does not hold its high-water allocation forever. */
+	if (pkg_nodes && pkg_cap > PKG_INIT)
+	{
+		G.plat->free(pkg_nodes);
+		pkg_nodes = 0;
+		pkg_cap = 0;
+	}
 	if (!pkg_nodes)
 		(void)pkg_ensure(PKG_INIT);
 	if (!pkg_nodes)
 		return;
-	for (i = 0; i < pkg_cap; i++)
-		if (pkg_nodes[i].data)
-			G.plat->free(pkg_nodes[i].data);
 	memset(pkg_nodes, 0, (unsigned)pkg_cap * sizeof(*pkg_nodes));
 	strcpy(pkg_nodes[0].name, "/");
 	pkg_nodes[0].is_dir = 1;
