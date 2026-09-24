@@ -935,19 +935,26 @@ int mmb_vfs_hidden_name(const char *name);
 int mmb_vfs_isdir(const char *path);
 int mmb_vfs_readonly_path(const char *path);
 
-#define MMB_ZIP_MAX_FILES 64
+/* ZIP stores the entry count in the 16-bit end-of-central-directory field, so
+ * that is the format ceiling. The writer's entry table is heap-allocated and
+ * grows on demand (#712); the old fixed 64-entry array capped PACKAGE well
+ * below what the format allows. */
+#define MMB_ZIP_MAX_FILES 65535
 /* Store-mode archive ceiling for PACKAGE / RUN name.app. 16 MiB leaves room
  * for program bundles with assets; packaging and mounting share this. */
 #define MMB_ZIP_MAX_BYTES (16u * 1024u * 1024u)
 
+typedef struct mmb_zip_ent {
+	char name[128];
+	unsigned local_off, size, crc, nlen;
+} mmb_zip_ent;
+
 typedef struct mmb_zip_w {
 	unsigned char *buf;
 	unsigned cap, len;
-	struct {
-		char name[128];
-		unsigned local_off, size, crc, nlen;
-	} ent[MMB_ZIP_MAX_FILES];
+	mmb_zip_ent *ent; /* heap-allocated, grows with nent (#712) */
 	int nent;
+	int ent_cap;
 } mmb_zip_w;
 
 typedef int (*mmb_zip_file_fn)(const char *path, const void *data, unsigned n, void *ctx);
