@@ -350,7 +350,7 @@ void CKernel::PollUsbAlt (void)
 		return;
 	}
 	if (!mmb_in_editor () && !mmb_in_files () && !mmb_in_wordpad () &&
-	    !mmb_in_term () && !mmb_in_connect ())
+	    !mmb_in_term () && !mmb_in_connect () && !mmb_in_paint ())
 		return;
 	hid = m_HeldHid;
 	if (hid == 0 || hid == m_AltHidSent)

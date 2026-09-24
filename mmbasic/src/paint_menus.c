@@ -248,6 +248,10 @@ static void confirm_text(int act, const char **title, const char **msg)
 		*title = "New canvas";
 		*msg = "Discard unsaved changes?";
 		break;
+	case PTA_FILE_OPEN:
+		*title = "Open image";
+		*msg = "Discard unsaved changes?";
+		break;
 	case PTA_FILE_QUIT:
 		*title = "Quit PAINT";
 		*msg = "Quit without saving?";
@@ -356,6 +360,21 @@ static int unsaved(void)
 	return PT.undo_depth > 0 || PT.redo_depth > 0;
 }
 
+static void open_confirm(int act);
+
+/* Quit entry point for the lifecycle's keyboard quit paths (Esc, Alt+X,
+ * Ctrl+X). Dirty canvas: open the discard confirmation and say so; clean:
+ * let the caller tear down. */
+int pt_menus_confirm_quit(void)
+{
+	if (!PT.active)
+		return 0;
+	if (!unsaved())
+		return 0;
+	open_confirm(PTA_FILE_QUIT);
+	return 1;
+}
+
 /* Edit > Clear wipes the canvas to palette index 0 (black) through the frozen
  * canvas accessor, then drops the undo/redo history so the cleared image is
  * the new baseline. */
@@ -387,8 +406,8 @@ static void run_action(int act)
 		pt_file_save_as();
 		break;
 	case PTA_FILE_QUIT:
-		/* Reuse the lifecycle's Ctrl+X path so cmd_paint.c tears down. */
-		mmb_paint_key(24);
+		/* The lifecycle owns teardown; the confirm gate already ran. */
+		pt_paint_leave();
 		return;
 	case PTA_EDIT_UNDO:
 		pt_undo();
@@ -483,7 +502,8 @@ static void activate(int m, int i)
 		dmg_overlay();
 		return;
 	}
-	if (act == PTA_FILE_NEW || act == PTA_FILE_QUIT)
+	if (act == PTA_FILE_NEW || act == PTA_FILE_QUIT ||
+	    act == PTA_FILE_OPEN)
 	{
 		if (unsaved())
 		{

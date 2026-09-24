@@ -84,7 +84,9 @@ void mmb_console_reset(void)
 /* A full-screen app owns the keyboard until it closes itself. The warm reset
  * reuses the interpreter in place, so without this the app stays active and the
  * REPL never gets the keyboard back (#606). Ask each app to leave through its
- * own key handler rather than reaching into its private state. */
+ * own key handler rather than reaching into its private state; PAINT buffers
+ * Esc to tell an arrow key from the quit chord (#726), so it exposes a
+ * force-leave lifecycle call instead. */
 static void warm_reset_close_apps(void)
 {
 	int guard;
@@ -128,7 +130,7 @@ static void warm_reset_close_apps(void)
 		else if (mmb_in_files())
 			mmb_files_key(27);
 		else if (mmb_in_paint())
-			mmb_paint_key(27);
+			pt_paint_leave();
 		else if (mmb_in_afk())
 			mmb_afk_key(27);
 		else if (mmb_in_juke())

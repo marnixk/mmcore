@@ -76,6 +76,8 @@ int mmb_vfs_resolve(const char *p, char *o, int n) { (void)p; (void)o; (void)n; 
 void mmb_console_write(const char *s) { (void)s; }
 void mmb_hw_cursor(int s) { (void)s; }
 const char *mmb_prompt(void) { return ""; }
+unsigned mmb_now_ms(void) { return 0; }
+int pt_menus_confirm_quit(void) { return 0; }
 
 /* ---- scripted pointer + menu poll forwarding (#708) ---- */
 static mmb_mouse_state s_mouse;

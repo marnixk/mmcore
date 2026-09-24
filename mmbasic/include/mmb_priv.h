@@ -1081,6 +1081,7 @@ void mmb_cmd_paint(void);
 int mmb_in_paint(void);
 const char *mmb_paint_key(char c);
 void mmb_paint_poll(void);
+void pt_paint_leave(void);
 int mmb_mouse_read(mmb_mouse_state *out);
 void mmb_cmd_credits(void);
 void mmb_cmd_afk(void);
