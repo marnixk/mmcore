@@ -24,6 +24,7 @@
  * text tool lands in #642 and registers here; it is inert for now.
  */
 #include "paint.h"
+#include "paint_tool_icons.h"
 
 /* Tool column: PT_TOOL_COUNT cells share the strip under the menu bar. The
  * width stays the frozen PT_TOOL_W; the height is split evenly so all tools
@@ -560,105 +561,28 @@ static void magnify_zoom(int level, int cx, int cy)
 
 /* ---- tool column ------------------------------------------------------- */
 
-static int s_ico_x, s_ico_y;
-
-static void idot(int x, int y)
+/* The 16x16 glyphs are baked pixel art (paint_tool_icons.h). Tone 1 is the
+ * icon colour and tone 2 the cell background, so internal detail reads on both
+ * the selected and unselected highlight. */
+static void draw_tool_icon(int tool, int ox, int oy, unsigned fg, unsigned bg)
 {
-	splot(s_ico_x + x, s_ico_y + y);
-}
+	const uint8_t *art;
+	int x, y;
 
-static void iline(int x0, int y0, int x1, int y1)
-{
-	line_plot(s_ico_x + x0, s_ico_y + y0, s_ico_x + x1, s_ico_y + y1,
-		  splot);
-}
-
-static void iellipse(int x0, int y0, int x1, int y1)
-{
-	ellipse_plot(s_ico_x + x0, s_ico_y + y0, s_ico_x + x1, s_ico_y + y1,
-		     splot);
-}
-
-static void irect(int x0, int y0, int x1, int y1)
-{
-	iline(x0, y0, x1, y0);
-	iline(x1, y0, x1, y1);
-	iline(x1, y1, x0, y1);
-	iline(x0, y1, x0, y0);
-}
-
-static void draw_tool_icon(int tool, int ox, int oy, unsigned rgb)
-{
-	int k;
-
-	s_sink = rgb;
-	s_ico_x = ox;
-	s_ico_y = oy;
-
-	switch (tool)
+	if (tool < 0 || tool >= PTI_TOOL_COUNT)
+		return;
+	art = pti_icons[tool];
+	for (y = 0; y < PTI_ICON_H; y++)
 	{
-	case PT_TOOL_PENCIL:
-		iline(2, 13, 11, 4);
-		idot(12, 3);
-		idot(13, 3);
-		break;
-	case PT_TOOL_LINE:
-		iline(2, 13, 13, 2);
-		idot(2, 13);
-		idot(13, 2);
-		break;
-	case PT_TOOL_RECT:
-		irect(2, 3, 13, 13);
-		break;
-	case PT_TOOL_ELLIPSE:
-		iellipse(1, 3, 14, 13);
-		break;
-	case PT_TOOL_CIRCLE:
-		iellipse(2, 1, 13, 12);
-		break;
-	case PT_TOOL_FILL:
-		for (k = 0; k < 11; k++)
-			iline(2 + k, 3 + k, 13 - k, 3 + k);
-		break;
-	case PT_TOOL_ERASER:
-		for (k = 0; k < 9; k++)
-			iline(3, 4 + k, 12, 4 + k);
-		break;
-	case PT_TOOL_PICK:
-		iline(3, 12, 10, 5);
-		idot(11, 4);
-		idot(12, 3);
-		idot(11, 3);
-		idot(12, 4);
-		break;
-	case PT_TOOL_GRAB:
-		irect(2, 3, 13, 13);
-		iline(4, 5, 4, 11);
-		iline(11, 5, 11, 11);
-		break;
-	case PT_TOOL_MAGNIFY:
-		iellipse(1, 1, 10, 10);
-		iline(9, 9, 13, 13);
-		break;
-	case PT_TOOL_AIRBRUSH:
-		for (k = 0; k < 12; k++)
-			idot(3 + (k * 5) % 10, 3 + (k * 3) % 10);
-		break;
-	case PT_TOOL_SPRAY:
-		idot(2, 2);
-		idot(7, 5);
-		idot(12, 3);
-		idot(4, 9);
-		idot(10, 11);
-		idot(13, 8);
-		break;
-	case PT_TOOL_TEXT:
-		iline(3, 3, 12, 3);
-		iline(7, 3, 7, 13);
-		iline(4, 13, 10, 13);
-		break;
-	default:
-		break;
+		for (x = 0; x < PTI_ICON_W; x++)
+		{
+			uint8_t v = art[y * PTI_ICON_W + x];
+
+			if (v == PTI_ICON_TRANSPARENT)
+				continue;
+			s_sink = (v == PTI_ICON_CUT) ? bg : fg;
+			splot(ox + x, oy + y);
+		}
 	}
 }
 
@@ -690,8 +614,9 @@ void pt_tools_draw(void)
 		pt_fill_rect(0, y0, PT_TOOL_W, PT_CELL_H,
 			     sel ? 0x505050u : 0x181818u);
 		pt_fill_rect(0, y0 + PT_CELL_H - 1, PT_TOOL_W, 1, 0x303030u);
-		draw_tool_icon(i, 8, y0 + (PT_CELL_H - 16) / 2,
-			       sel ? 0xFFFFFFu : 0xC0C0C0u);
+		draw_tool_icon(i, 8, y0 + (PT_CELL_H - PTI_ICON_H) / 2,
+			       sel ? 0xFFFFFFu : 0xC0C0C0u,
+			       sel ? 0x505050u : 0x181818u);
 	}
 }
 
