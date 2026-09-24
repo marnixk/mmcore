@@ -34,6 +34,7 @@
 #define MMB_MAX_BLIT      64
 #define MMB_MAX_SPRITE    64
 #define MMB_MAX_SUB_ARGS  16
+#define MMB_MAX_LOCALS    64
 #define MMB_MAX_TICK      4
 #define MMB_INKEY         64
 #define MMB_FB_MAX_W      1920
@@ -122,6 +123,22 @@ typedef struct mmb_var {
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
 	int maxlen;     /* DIM ... LENGTH n: hard string cap (0 = unbounded) */
 } mmb_var;
+
+/* One LOCAL declaration in the current SUB/FUNCTION frame: the binding that
+ * was in place before the LOCAL shadowed it, so it can be restored on return.
+ * `existed == 0` means the variable did not exist before and is removed. */
+typedef struct mmb_localsave {
+	int slot;
+	int existed;
+	int type;
+	int dims;
+	int dim[MMB_MAX_DIMS];
+	int size;
+	int struct_idx;
+	int unsuffixed;
+	int maxlen;
+	void *data;
+} mmb_localsave;
 
 typedef struct mmb_arrview {
 	mmb_var *v;
@@ -412,6 +429,8 @@ typedef struct mmb {
 	char *sel_str;
 	char *func_ret_s;
 	char *gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
+	int gosub_nlocal[MMB_MAX_GOSUB];
+	mmb_localsave gosub_local[MMB_MAX_GOSUB][MMB_MAX_LOCALS];
 	int gosub_sel_skip[MMB_MAX_GOSUB];
 	int gosub_sel_active[MMB_MAX_GOSUB];
 	int gosub_if_skip[MMB_MAX_GOSUB];
@@ -434,6 +453,7 @@ typedef struct mmb {
 		int used;
 		int nargs;
 		int ret_sid;
+		int ret_type; /* T_NUM/T_INT/T_STR return type for functions */
 		int arg_sid[MMB_MAX_SUB_ARGS];
 		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
@@ -565,6 +585,8 @@ void mmb_tokenize_text(const char *src, char *dst, int dstsz);
 int mmb_match_token(const char *kw);
 int mmb_tok_expand(char *dst, int dstsz);
 void mmb_clear_vars(int keep_options);
+void mmb_local_restore(int g);
+void mmb_vars_rehash(void);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
 int mmb_elem_off(mmb_var *v, int nidx, const int *idx);

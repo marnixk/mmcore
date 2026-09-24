@@ -458,6 +458,36 @@ def test_while_many_iterations(console):
     assert console.send_line("RUN") == "50"
 
 
+def test_cmm2_string_function(console):
+    """#659: FUNCTION NAME$(...) must return a string, not a number."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FUNCTION MYFN$(X)") == ""
+    assert console.send_line('20 MYFN$ = "hi" + STR$(X)') == ""
+    assert console.send_line("30 END FUNCTION") == ""
+    assert console.send_line("40 PRINT MYFN$(3)") == ""
+    assert console.send_line("RUN") == "hi3"
+
+
+def test_cmm2_string_function_assignment(console):
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FUNCTION MYFN$(X)") == ""
+    assert console.send_line('20 MYFN$ = "v" + STR$(X)') == ""
+    assert console.send_line("30 END FUNCTION") == ""
+    assert console.send_line("40 S$ = MYFN$(4)") == ""
+    assert console.send_line("50 PRINT S$") == ""
+    assert console.send_line("RUN") == "v4"
+
+
+def test_cmm2_string_function_as_string(console):
+    """#659: AS STRING on an unsuffixed FUNCTION name also returns a string."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FUNCTION MYFN2(X) AS STRING") == ""
+    assert console.send_line('20 MYFN2 = "w" + STR$(X)') == ""
+    assert console.send_line("30 END FUNCTION") == ""
+    assert console.send_line("40 PRINT MYFN2(5)") == ""
+    assert console.send_line("RUN") == "w5"
+
+
 def test_const_and_dim_as(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("CONST MAX=21") == ""

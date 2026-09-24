@@ -32,7 +32,7 @@ static void build_jumps(void);
 static int at_end_of_statement(void);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
-static void sub_register(const char *name, int pc, int is_func);
+static void sub_register(const char *name, int pc, int is_func, int ret_type);
 static mmb_val read_data_item(void);
 static int file_getc(int fn);
 static void file_ungetc(int fn, int c);
@@ -473,7 +473,7 @@ static int parse_as_sid(void)
 	}
 }
 
-static void sub_register(const char *name, int pc, int is_func)
+static void sub_register(const char *name, int pc, int is_func, int ret_type)
 {
 	int i, slot = -1;
 	char nbuf[MMB_MAX_NAME];
@@ -495,6 +495,7 @@ static void sub_register(const char *name, int pc, int is_func)
 	G.subs[slot].used = 1;
 	G.subs[slot].nargs = 0;
 	G.subs[slot].ret_sid = -1;
+	G.subs[slot].ret_type = ret_type;
 	for (i = 0; i < MMB_MAX_SUB_ARGS; i++)
 		G.subs[slot].arg_sid[i] = -1;
 	mmb_skip_sp();
@@ -527,9 +528,29 @@ static void sub_register(const char *name, int pc, int is_func)
 		G.p++;
 	if (is_func)
 	{
-		int sid = parse_as_sid();
-		if (sid >= 0)
-			G.subs[slot].ret_sid = sid;
+		if (!G.subs[slot].ret_type)
+			G.subs[slot].ret_type = T_NUM;
+		if (mmb_match("AS"))
+		{
+			if (mmb_match("STRING"))
+				G.subs[slot].ret_type = T_STR;
+			else if (mmb_match("INTEGER") || mmb_match("INT"))
+				G.subs[slot].ret_type = T_INT;
+			else if (mmb_match("FLOAT"))
+				G.subs[slot].ret_type = T_NUM;
+			else
+			{
+				char tn[MMB_MAX_NAME];
+				int sid;
+				mmb_ident(tn, sizeof(tn));
+				mmb_type_suffix(tn);
+				sid = mmb_struct_lookup(tn);
+				if (sid < 0)
+					mmb_error("?UNKNOWN TYPE");
+				G.subs[slot].ret_sid = sid;
+				G.subs[slot].ret_type = T_STRUCT;
+			}
+		}
 	}
 	G.nsubs++;
 }
@@ -648,6 +669,7 @@ void mmb_cmd_gosub(void)
 	G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
 	G.gosub_event[G.gosub_sp] = 0;
 	G.gosub_nsave[G.gosub_sp] = 0;
+	G.gosub_nlocal[G.gosub_sp] = 0;
 	gosub_save_ctrl(G.gosub_sp);
 	G.gosub_sp++;
 	G.branch_pc = parse_target();
@@ -1430,7 +1452,6 @@ void mmb_cmd_call(void)
 {
 	char name[MMB_MAX_NAME];
 	mmb_ident(name, sizeof(name));
-	mmb_type_suffix(name);
 	if (!mmb_call_named_sub(name))
 		mmb_error("?SUB NOT FOUND");
 }
@@ -1443,6 +1464,10 @@ static void gosub_restore_top(void)
 	g = G.gosub_sp;
 	ex = G.opt.explicit;
 	G.opt.explicit = 0;
+	/* LOCAL bindings must come back before the argument values: a local may
+	 * shadow an argument name, and its saved binding holds the argument's
+	 * value, which the argument restore below then overwrites. */
+	mmb_local_restore(g);
 	for (i = 0; i < G.gosub_nsave[g]; i++)
 	{
 		if (!G.gosub_saven[g][i][0])
@@ -1462,10 +1487,16 @@ int mmb_call_named_sub(const char *name)
 	int si, i, narg = 0, ex, g;
 	mmb_val args[MMB_MAX_SUB_ARGS];
 	char nbuf[MMB_MAX_NAME];
+	char base[MMB_MAX_NAME];
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
-	si = sub_find(nbuf);
+	/* The name may carry a $/%/! suffix; sub_register() stores the base
+	 * name, but a FUNCTION's return variable must keep the suffix. */
+	strncpy(base, nbuf, MMB_MAX_NAME - 1);
+	base[MMB_MAX_NAME - 1] = 0;
+	mmb_type_suffix(base);
+	si = sub_find(base);
 	if (si < 0)
 		return 0;
 	mmb_skip_sp();
@@ -1525,6 +1556,7 @@ int mmb_call_named_sub(const char *name)
 	G.gosub_stack[g] = G.run_pc + 1;
 	G.gosub_event[g] = 0;
 	G.gosub_nsave[g] = G.subs[si].nargs;
+	G.gosub_nlocal[g] = 0;
 	ex = G.opt.explicit;
 	G.opt.explicit = 0;
 	for (i = 0; i < G.subs[si].nargs; i++)
@@ -1570,10 +1602,30 @@ int mmb_call_named_sub(const char *name)
 		G.gosub_nsave[g] = slot + 1;
 		if (G.subs[si].ret_sid >= 0)
 			mmb_bind_struct_var(nbuf, G.subs[si].ret_sid);
-		else if (nbuf[0] && nbuf[strlen(nbuf) - 1] == '$')
-			mmb_do_assign(nbuf, T_STR, 0, 0, mmb_str_val(""));
 		else
-			mmb_do_assign(nbuf, T_NUM, 0, 0, mmb_num_val(0));
+		{
+			int rtype = G.subs[si].ret_type ? G.subs[si].ret_type : T_NUM;
+			char last = nbuf[0] ? nbuf[strlen(nbuf) - 1] : 0;
+			int suffixed = (last == '$' || last == '%' || last == '!');
+			mmb_var *rv = mmb_find_var(nbuf, rtype, 1, 0, &idx);
+			if (rv)
+			{
+				/* An explicit return type on an unsuffixed name (e.g.
+				 * ``AS STRING``) still has to be reachable by the bare
+				 * ``F = ...`` assignment. Plain numeric functions keep
+				 * the historical unsuffixed=0 binding. */
+				int unsuf = !suffixed && rtype != (G.opt.default_type ? G.opt.default_type : T_NUM);
+				if (rv->unsuffixed != unsuf)
+				{
+					rv->unsuffixed = unsuf;
+					mmb_vars_rehash();
+				}
+				if (rtype == T_STR)
+					mmb_do_assign(nbuf, T_STR, 0, 0, mmb_str_val(""));
+				else
+					mmb_do_assign(nbuf, rtype, 0, 0, mmb_num_val(0));
+			}
+		}
 	}
 	G.opt.explicit = ex;
 	gosub_save_ctrl(g);
@@ -1588,7 +1640,7 @@ void mmb_cmd_sub(void)
 	int end_pc;
 	mmb_ident(name, sizeof(name));
 	mmb_type_suffix(name);
-	sub_register(name, G.run_pc + 1, 0);
+	sub_register(name, G.run_pc + 1, 0, 0);
 	end_pc = find_end_sub_pc(G.run_pc);
 	G.in_sub = 1;
 	G.branch_pc = end_pc + 1;
@@ -1597,10 +1649,10 @@ void mmb_cmd_sub(void)
 void mmb_cmd_function(void)
 {
 	char name[MMB_MAX_NAME];
-	int end_pc;
+	int end_pc, ret_type;
 	mmb_ident(name, sizeof(name));
-	mmb_type_suffix(name);
-	sub_register(name, G.run_pc + 1, 1);
+	ret_type = mmb_type_suffix(name);
+	sub_register(name, G.run_pc + 1, 1, ret_type);
 	end_pc = find_end_sub_pc(G.run_pc);
 	G.in_sub = 1;
 	G.branch_pc = end_pc + 1;
@@ -3675,13 +3727,16 @@ static void exec_statement(void)
 	{
 		const char *save = G.p;
 		char name[MMB_MAX_NAME];
+		char raw[MMB_MAX_NAME];
 		if ((G.p[0] >= 'A' && G.p[0] <= 'Z') || (G.p[0] >= 'a' && G.p[0] <= 'z') || G.p[0] == '_')
 		{
 			mmb_ident(name, sizeof(name));
+			strncpy(raw, name, MMB_MAX_NAME - 1);
+			raw[MMB_MAX_NAME - 1] = 0;
 			mmb_type_suffix(name);
 			if (sub_find(name) >= 0)
 			{
-				if (!mmb_call_named_sub(name))
+				if (!mmb_call_named_sub(raw))
 					mmb_syntax();
 				return;
 			}
@@ -3808,6 +3863,7 @@ int mmb_try_user_function(mmb_val *out)
 {
 	const char *save = G.p;
 	char name[MMB_MAX_NAME];
+	char raw[MMB_MAX_NAME];
 	int saved_pc, saved_sp, saved_branch;
 	const char *saved_p;
 	int si;
@@ -3816,6 +3872,8 @@ int mmb_try_user_function(mmb_val *out)
 	if (!mmb_is_ident(*G.p))
 		return 0;
 	mmb_ident(name, sizeof(name));
+	strncpy(raw, name, MMB_MAX_NAME - 1);
+	raw[MMB_MAX_NAME - 1] = 0;
 	mmb_type_suffix(name);
 	si = sub_find(name);
 	if (si < 0 || !G.subs[si].is_func)
@@ -3833,8 +3891,8 @@ int mmb_try_user_function(mmb_val *out)
 	saved_branch = G.branch_pc;
 	saved_sp = G.gosub_sp;
 	memset(&G.func_ret, 0, sizeof(G.func_ret));
-	G.func_ret.type = T_NUM;
-	if (!mmb_call_named_sub(name))
+	G.func_ret.type = G.subs[si].ret_type ? G.subs[si].ret_type : T_NUM;
+	if (!mmb_call_named_sub(raw))
 	{
 		G.p = save;
 		return 0;

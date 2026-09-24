@@ -3,6 +3,12 @@
 
 extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val);
 
+static void free_var_storage(mmb_var *v);
+static void alloc_var_storage(mmb_var *v, int n);
+static void hash_ins(int vi);
+static void hash_rebuild(void);
+static int mmb_local_save(int slot, int existed);
+
 static int var_tab[MMB_MAX_VARS];
 static int unsuf_tab[MMB_MAX_VARS];
 
@@ -31,6 +37,15 @@ static void hash_clear(void)
 		var_tab[i] = -1;
 		unsuf_tab[i] = -1;
 	}
+}
+
+static void hash_rebuild(void)
+{
+	int i;
+	hash_clear();
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used)
+			hash_ins(i);
 }
 
 static void hash_ins(int vi)
@@ -540,8 +555,13 @@ void mmb_cmd_dim(void)
 			{
 				if (G.dim_local)
 				{
+					int r = mmb_local_save(i, 1);
+					if (r < 0)
+						mmb_error("?OUT OF MEMORY");
 					slot = i;
-					goto dim_init;
+					if (r == 0)
+						goto dim_init; /* already local here, or no frame */
+					goto dim_reinit;
 				}
 				mmb_error("?ALREADY DECLARED");
 			}
@@ -550,6 +570,8 @@ void mmb_cmd_dim(void)
 			if (!G.vars[slot].used)
 				break;
 		if (slot >= MMB_MAX_VARS)
+			mmb_error("?OUT OF MEMORY");
+		if (G.dim_local && mmb_local_save(slot, 0) < 0)
 			mmb_error("?OUT OF MEMORY");
 
 		memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
@@ -566,33 +588,36 @@ void mmb_cmd_dim(void)
 		G.vars[slot].used = 1;
 		G.vars[slot].unsuffixed = !had_suffix;
 		G.vars[slot].struct_idx = struct_idx;
-		if (type == T_INT)
-		{
-			G.vars[slot].data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
-			memset(G.vars[slot].data.i, 0, (unsigned)n * sizeof(int64_t));
-		}
-		else if (type == T_STR)
-		{
-			G.vars[slot].data.s = G.plat->alloc((unsigned)n * sizeof(char *));
-			for (i = 0; i < n; i++)
-				G.vars[slot].data.s[i] = mmb_str_empty();
-		}
-		else if (type == T_STRUCT)
-		{
-			int sz = G.sdef[struct_idx].total;
-			G.vars[slot].data.blob = G.plat->alloc((unsigned)n * (unsigned)sz);
-			memset(G.vars[slot].data.blob, 0, (unsigned)n * (unsigned)sz);
-		}
-		else
-		{
-			G.vars[slot].data.f = G.plat->alloc((unsigned)n * sizeof(double));
-			memset(G.vars[slot].data.f, 0, (unsigned)n * sizeof(double));
-		}
+		alloc_var_storage(&G.vars[slot], n);
 		G.nvars++;
 		hash_ins(slot);
 		if (dims)
 			G.dim_used = 1;
 		(void)idxdummy;
+		goto dim_init;
+	dim_reinit:
+		/* A scoped LOCAL shadows an existing binding whose storage was
+		 * detached into this frame's save record, so rebind it fresh. */
+		{
+			int oldunsuf = G.vars[slot].unsuffixed;
+			G.vars[slot].type = type;
+			G.vars[slot].dims = dims;
+			for (i = 0; i < dims; i++)
+				G.vars[slot].dim[i] = dim[i];
+			n = dims ? elem_count(dim, dims) : 1;
+			if (n <= 0)
+				mmb_error("?INVALID DIMENSION");
+			G.vars[slot].size = n;
+			G.vars[slot].used = 1;
+			G.vars[slot].unsuffixed = !had_suffix;
+			G.vars[slot].struct_idx = struct_idx;
+			alloc_var_storage(&G.vars[slot], n);
+			if (oldunsuf != G.vars[slot].unsuffixed)
+				hash_rebuild();
+			if (dims)
+				G.dim_used = 1;
+			(void)idxdummy;
+		}
 	dim_init:
 		G.vars[slot].maxlen = (type == T_STR) ? maxlen : 0;
 		mmb_skip_sp();
@@ -755,6 +780,86 @@ static void alloc_var_storage(mmb_var *v, int n)
 		v->data.f = G.plat->alloc((unsigned)n * sizeof(double));
 		memset(v->data.f, 0, (unsigned)n * sizeof(double));
 	}
+}
+
+/* Record the binding of `slot` for the current SUB/FUNCTION frame so it can be
+ * restored when the frame returns.  Returns 1 when the caller should rebind the
+ * slot as a fresh scoped variable, 0 when nothing needs saving (no active frame,
+ * or the name is already a local of this frame), and -1 when the frame's local
+ * table is full.  `existed` says whether the slot held a real binding. */
+static int mmb_local_save(int slot, int existed)
+{
+	int g, k, i;
+	mmb_localsave *ls;
+	mmb_var *v;
+	if (G.gosub_sp <= 0)
+		return 0;
+	g = G.gosub_sp - 1;
+	for (k = 0; k < G.gosub_nlocal[g]; k++)
+		if (G.gosub_local[g][k].slot == slot)
+			return 0;
+	if (G.gosub_nlocal[g] >= MMB_MAX_LOCALS)
+		return -1;
+	ls = &G.gosub_local[g][G.gosub_nlocal[g]++];
+	ls->slot = slot;
+	ls->existed = existed;
+	if (!existed)
+		return 1;
+	v = &G.vars[slot];
+	ls->type = v->type;
+	ls->dims = v->dims;
+	for (i = 0; i < MMB_MAX_DIMS; i++)
+		ls->dim[i] = v->dim[i];
+	ls->size = v->size;
+	ls->struct_idx = v->struct_idx;
+	ls->unsuffixed = v->unsuffixed;
+	ls->maxlen = v->maxlen;
+	ls->data = v->data.f;
+	return 1;
+}
+
+void mmb_vars_rehash(void)
+{
+	hash_rebuild();
+}
+
+void mmb_local_restore(int g)
+{
+	int k, i, rebuild = 0;
+	if (G.gosub_nlocal[g] <= 0)
+		return;
+	for (k = G.gosub_nlocal[g] - 1; k >= 0; k--)
+	{
+		mmb_localsave *ls = &G.gosub_local[g][k];
+		mmb_var *v;
+		if (ls->slot < 0 || ls->slot >= MMB_MAX_VARS)
+			continue;
+		v = &G.vars[ls->slot];
+		free_var_storage(v);
+		if (ls->existed)
+		{
+			v->type = ls->type;
+			v->dims = ls->dims;
+			for (i = 0; i < MMB_MAX_DIMS; i++)
+				v->dim[i] = ls->dim[i];
+			v->size = ls->size;
+			v->struct_idx = ls->struct_idx;
+			v->unsuffixed = ls->unsuffixed;
+			v->maxlen = ls->maxlen;
+			v->data.f = ls->data;
+			v->used = 1;
+		}
+		else
+		{
+			memset(v, 0, sizeof(*v));
+			G.nvars--;
+			rebuild = 1;
+		}
+	}
+	G.gosub_nlocal[g] = 0;
+	if (rebuild)
+		hash_rebuild();
+	mmb_tcache_invalidate();
 }
 
 void mmb_cmd_redim(void)
