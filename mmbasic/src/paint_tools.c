@@ -252,10 +252,38 @@ static void canvas_rect_fill(int x0, int y0, int x1, int y1, int c)
 			pt_canvas_set(x, y, c);
 }
 
-/* Concentric outlines tile the interior, so the union is a filled ellipse. */
+/* Integer floor square root, no libm (the tool tests link without -lm). */
+static long isqrt_l(long long v)
+{
+	long long bit = 1LL << 62;
+	long long r = 0;
+
+	if (v <= 0)
+		return 0;
+	while (bit > v)
+		bit >>= 2;
+	while (bit)
+	{
+		if (v >= r + bit)
+		{
+			v -= r + bit;
+			r = (r >> 1) + bit;
+		}
+		else
+			r >>= 1;
+		bit >>= 2;
+	}
+	return (long)r;
+}
+
+/* Filled ellipse as one horizontal span per scanline, from the exact region
+ * inequality ((2x-cx)/A)^2 + ((2y-cy)/B)^2 <= 1. Unlike the old concentric
+ * outlines this leaves no dotted gaps on a wide (non-circular) ellipse, so the
+ * filled circle / ellipse tools use the same solid-fill mechanic as CIRCLE. */
 static void canvas_ellipse_fill(int x0, int y0, int x1, int y1, int c)
 {
-	int t;
+	long aa, bb, cx2, cy2;
+	int t, y;
 
 	if (x0 > x1)
 	{
@@ -269,9 +297,25 @@ static void canvas_ellipse_fill(int x0, int y0, int x1, int y1, int c)
 		y0 = y1;
 		y1 = t;
 	}
-	s_cink = c;
-	for (t = 0; 2 * t <= x1 - x0 && 2 * t <= y1 - y0; t++)
-		ellipse_plot(x0 + t, y0 + t, x1 - t, y1 - t, cplot);
+
+	cx2 = (long)x0 + x1;
+	cy2 = (long)y0 + y1;
+	aa = (long)(x1 - x0) * (x1 - x0);	/* (2a)^2 */
+	bb = (long)(y1 - y0) * (y1 - y0);	/* (2b)^2 */
+	if (bb == 0)				/* degenerate: one scanline */
+		bb = 1;
+
+	for (y = y0; y <= y1; y++)
+	{
+		long dy2 = 2L * y - cy2;
+		long dx2 = isqrt_l(aa * (bb - dy2 * dy2) / bb);
+		long xl = (cx2 - dx2 + 1) >> 1;	/* ceil((cx2-dx2)/2) */
+		long xr = (cx2 + dx2) >> 1;	/* floor((cx2+dx2)/2) */
+		int x;
+
+		for (x = (int)xl; x <= (int)xr; x++)
+			pt_canvas_set(x, y, c);
+	}
 }
 
 static void canvas_circle_fill(int cx, int cy, int r, int c)
@@ -359,19 +403,31 @@ static void preview_begin(void)
 	}
 }
 
-/* Remember the canvas rectangle the live preview now covers. */
+/* Remember the canvas rectangle the live preview now covers. The pen is a
+ * square centred on the path, so the drawn extent overhangs the nominal shape
+ * box by up to (pen width - 1) pixels; pad the box so the next revert damages
+ * (and so re-presents) the overhang too. Without this, shrinking a thick
+ * outline left its outer edge on screen. */
 static void preview_note(int x0, int y0, int x1, int y1)
 {
+	int t;
+	int pad = pt_pen_width();
+
+	x0 -= pad;
+	y0 -= pad;
+	x1 += pad;
+	y1 += pad;
+
 	if (x0 > x1)
 	{
-		int t = x0;
+		t = x0;
 
 		x0 = x1;
 		x1 = t;
 	}
 	if (y0 > y1)
 	{
-		int t = y0;
+		t = y0;
 
 		y0 = y1;
 		y1 = t;

@@ -82,13 +82,22 @@ void pt_cursor_restore(void)
 void pt_cursor_draw(int sx, int sy, int tool, int active)
 {
 	int idx, hx, hy, ox, oy, x0, y0, x1, y1, x, y;
+	int pcx, pcy, on_canvas;
 	const pca_sprite_t *sp;
 	const uint8_t *art;
 
 	/* Lift the sprite from the previous position before scanning afresh. */
 	pt_cursor_restore();
 
-	idx = pt_cursor_art(tool);
+	/* No selected tool: no canvas cursor is active at all. */
+	if (tool < 0)
+		return;
+
+	/* The tool sprite only reads over the canvas; over the menu bar, tool
+	 * column, palette and line-width bar the plain arrow is the right
+	 * pointer. */
+	on_canvas = pt_screen_to_canvas(sx, sy, &pcx, &pcy);
+	idx = on_canvas ? pt_cursor_art(tool) : PCA_TOOL_ARROW;
 	sp = &pca_sprites[idx];
 	if (active)
 	{

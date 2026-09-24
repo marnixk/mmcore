@@ -460,8 +460,11 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	pt_text_init();
 
 	PT.cursor_x = PT.cursor_y = 0;
-	PT.cursor_sx = PT_CANVAS_X;
-	PT.cursor_sy = PT_CANVAS_Y;
+	/* Start well inside the canvas: the tool-sprite hotspots sit low/right
+	 * in their 32x32 art, so the old top-left corner left the first frame's
+	 * cursor clipped off-screen (#PAINT no-cursor-on-entry). */
+	PT.cursor_sx = PT_CANVAS_X + 32;
+	PT.cursor_sy = PT_CANVAS_Y + 32;
 	PT.active = 1;
 	mmb_hw_cursor(0);
 	PT.full_redraw = 1;
