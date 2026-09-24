@@ -145,6 +145,62 @@ def test_mouse_move_and_click_change_pixels(native_mmcore, tmp_path):
     assert lum(img2.pixel(IND_X, IND_Y)) < 30
 
 
+def test_open_dropdown_is_not_overpainted(native_mmcore, tmp_path):
+    """#661: an open dropdown draws over the canvas and closes cleanly.
+
+    The menu bar lives in text row 0; the dropdown hangs below it over the
+    canvas. Before the redraw-order fix the canvas/tools/palette passes
+    overpainted the overlay. The right padding cell of the first File row is a
+    solid fill, so it reads light grey while the menu is open and black again
+    once the canvas is redrawn.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    base = s.shot("base.ppm")
+    s.move(12, 8)          # File title on the menu bar
+    s.click("l")
+    opened = s.shot("opened.ppm")
+    s.move(300, 300)       # click the canvas: closes the menu
+    s.click("l")
+    closed = s.shot("closed.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    # Right padding of the first File dropdown row, below the menu bar.
+    px, py = 76, 24
+    img0, img1, img2 = Ppm(base), Ppm(opened), Ppm(closed)
+    assert is_black(img0.pixel(px, py))
+    assert lum(img1.pixel(px, py)) > 300       # dropdown on top of the canvas
+    assert is_black(img2.pixel(px, py))        # closed: canvas restored
+
+
+def test_edit_clear_wipes_canvas(native_mmcore, tmp_path):
+    """#669: Edit > Clear wipes the canvas, not just the undo history."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(100, 100)
+    s.down("l")
+    s.move(150, 100)
+    s.move(200, 100)
+    s.up("l")
+    drawn = s.shot("drawn.ppm")
+    s.move(60, 8)          # Edit title
+    s.click("l")
+    s.move(70, 56)         # Clear (third dropdown row)
+    s.click("l")
+    s.text("y")            # confirm the dialog
+    cleared = s.shot("cleared.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    img0, img1 = Ppm(drawn), Ppm(cleared)
+    assert lum(img0.pixel(150, 100)) > 600     # the pencil stroke is drawn
+    assert is_black(img1.pixel(150, 100))      # and Clear wipes it
+    assert is_black(img1.pixel(200, 100))
+
+
 def test_keyboard_injection_exits_paint(native_mmcore, tmp_path):
     """Synthetic keys reach the app: Esc leaves PAINT and the REPL works."""
     s = NativeSession(tmp_path)

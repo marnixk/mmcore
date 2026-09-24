@@ -251,6 +251,20 @@ static int unsaved(void)
 	return PT.undo_depth > 0 || PT.redo_depth > 0;
 }
 
+/* Edit > Clear wipes the canvas to palette index 0 (black) through the frozen
+ * canvas accessor, then drops the undo/redo history so the cleared image is
+ * the new baseline. */
+static void clear_canvas(void)
+{
+	int x, y;
+
+	if (!PT.canvas || PT.width <= 0 || PT.height <= 0)
+		return;
+	for (y = 0; y < PT.height; y++)
+		for (x = 0; x < PT.width; x++)
+			pt_canvas_set(x, y, 0);
+}
+
 static void run_action(int act)
 {
 	switch (act)
@@ -278,7 +292,9 @@ static void run_action(int act)
 		pt_redo();
 		break;
 	case PTA_EDIT_CLEAR:
+		clear_canvas();
 		pt_undo_clear();
+		strncpy(PT.status, "Cleared", sizeof(PT.status) - 1);
 		break;
 	default:
 		break;

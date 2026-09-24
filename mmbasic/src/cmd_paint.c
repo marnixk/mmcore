@@ -136,14 +136,21 @@ void pt_redraw(void)
 		return;
 
 	tui_begin();
-	tui_clear(TUI_BRWHITE, TUI_BLACK);
-	pt_menus_draw();
+	/* Erase anything a dropdown / dialog left below the menu bar before the
+	 * canvas is repainted, but leave row 0 (the bar itself) untouched so it
+	 * does not flicker. The bar and the current overlay are composed and
+	 * flushed last, after the canvas / tools / palette passes, so those
+	 * direct-pixel draws cannot overpaint them (#661). */
+	tui_fill(0, 1, tui_cols(), tui_rows() - 1, ' ', TUI_BRWHITE, TUI_BLACK);
 	tui_flush();
 
 	pt_draw_canvas();
 	pt_tools_draw();
 	pt_palette_draw();
 	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down);
+
+	pt_menus_draw();
+	tui_flush();
 	pt_present();
 
 	PT.dirty = 0;
