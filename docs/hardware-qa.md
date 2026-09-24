@@ -10,7 +10,7 @@ is intentionally omitted (notarization profile unavailable in the build
 environment).
 
 ## Boot & sessions
-- [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - 2026 (c) Marnix Kok`, then the MMBasic/copyright lines. (#536)
+- [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - <version> - 2026 (c) Marnix Kok`, then `MMBasic` and the `Type HELP ME for a short introduction.` prompt. (#536, #730)
 - [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. `Ctrl+Alt+F1`…`F4` no longer switches. (#510, #603)
 
 ## Clock / network

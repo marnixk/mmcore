@@ -1,5 +1,5 @@
-"""Boot banner: mmcore wordmark, version, PicoMite copyright, HELP in bright
-white, two blank lines."""
+"""Boot banner: mmcore wordmark with version, the MMBasic notice, and HELP in
+bright white, followed by two blank lines."""
 
 import os
 import subprocess
@@ -18,7 +18,7 @@ def _mmb_version():
     ).strip()
 
 
-def test_startup_copyright_banner(kernel_image):
+def test_startup_banner(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -26,10 +26,10 @@ def test_startup_copyright_banner(kernel_image):
         text = raw.decode(errors="replace")
         low = text.lower()
         ver = _mmb_version()
-        assert f"mmbasic {ver}".lower() in low
-        assert "copyright 2011-2026 geoff graham" in low
-        assert "copyright 2016-2026 peter mather" in low
-        assert "adapted and extended by marnix kok" in low
+        assert f"mmcore operating system - {ver} - 2026 (c) marnix kok" in low
+        assert "mmbasic" in low
+        assert "copyright" not in low
+        assert "adapted and extended" not in low
         assert "type " in low
         assert "help me" in low
         assert "short introduction" in low
@@ -52,7 +52,7 @@ def test_startup_copyright_banner(kernel_image):
             and abs(c[1] - c[2]) <= 20
             and 120 <= c[0] <= 210
         ]
-        assert dim, "copyright text should be dim white"
+        assert dim, "banner text should be dim white"
         # The chrome wordmark is centred in the top band of the 1280-wide HDMI.
         logo_bright = [(x, y) for x, y in bright if y < 64]
         assert logo_bright, "boot logo should paint bright pixels in the top band"
@@ -63,9 +63,9 @@ def test_startup_copyright_banner(kernel_image):
 
         ocr = con.ocr_screen(crop="1280x256+0+0").lower()
         assert "mmcore" in ocr
-        assert "geoff" in ocr or "graham" in ocr or "copyright" in ocr
+        # OCR can split the short MMBasic line ("mmbas ic"); ignore spaces.
+        assert "mmbasic" in ocr.replace(" ", "")
         assert "help" in ocr
-        assert "mmbasic" in ocr or ver.lstrip("v")[:3] in ocr
         assert con.send_line("PRINT 6*7") == "42"
 
         # Console output must not repaint the splash logo off the top band
