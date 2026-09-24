@@ -3247,3 +3247,480 @@ void mmb_files_poll(void)
 		}
 	}
 }
+
+/* ======================================================================== *
+ * Reusable file picker (#640).
+ *
+ * A focused, self-contained variant of the EDIT file dialog that PAINT (and
+ * any future caller) can run to pick a path without disturbing the FILES
+ * browser. It owns its own state, so F.active / F.mode and the dual-pane
+ * panels are untouched. The caller drives it with mmb_files_pick_key() and
+ * reads the outcome from mmb_files_pick_result():
+ *
+ *   mmb_files_pick_begin(save, dir, seed);
+ *   while (mmb_files_pick_active())
+ *       if (mmb_files_pick_key(key)) mmb_files_pick_render();
+ *   if (!mmb_files_pick_cancelled()) use <result>;
+ *   mmb_files_pick_end();
+ *
+ * The picker lists directories and (for Open) only .PCX files, supports
+ * typed full paths for any drive, and reports a machine-readable
+ * "[PAINT-PICK] ..." line on the serial console so tests can follow it.
+ * ======================================================================== */
+
+#define PK_MAX_ENT 64
+
+typedef struct {
+	char name[FU_NAME];
+	int is_dir;
+} pk_ent;
+
+typedef struct {
+	int active;
+	int done;
+	int cancelled;
+	int save;		/* 1 = Save as, 0 = Open */
+	int focus;		/* 0 = list, 1 = name field */
+	int esc;		/* tiny Esc parser: 0 none, 1 Esc, 2 Esc [ */
+	char dir[FU_PATH];
+	char name[FU_NAME];
+	char result[FU_PATH];
+	pk_ent ent[PK_MAX_ENT];
+	int n, sel, top;
+} pk_state;
+
+static pk_state PK_s[MMB_MAX_CONSOLES];
+#define PK (PK_s[g_console])
+
+/* The dialog shell: one title row, one dir row, the list, a name row and a
+ * hint row. Keep the list height and the panel height in step. */
+#define PK_PANEL_W 64
+#define PK_PANEL_H 18
+
+static void pk_geom(int *x, int *y, int *w, int *h)
+{
+	tui_dialog_geom(PK_PANEL_W, PK_PANEL_H, x, y, w, h);
+}
+
+static int pk_list_rows(int h)
+{
+	int r = h - 6;
+	return r < 1 ? 1 : r;
+}
+
+static int pk_ent_less(const pk_ent *a, const pk_ent *b)
+{
+	int da = (a->name[0] == '.' && a->name[1] == '.' && a->name[2] == 0);
+	int db = (b->name[0] == '.' && b->name[1] == '.' && b->name[2] == 0);
+
+	if (da != db)
+		return da;
+	if (a->is_dir != b->is_dir)
+		return a->is_dir > b->is_dir;
+	return icmp(a->name, b->name) < 0;
+}
+
+static void pk_sort(void)
+{
+	int i, j;
+
+	for (i = 0; i < PK.n; i++)
+		for (j = i + 1; j < PK.n; j++)
+			if (pk_ent_less(&PK.ent[j], &PK.ent[i]))
+			{
+				pk_ent t = PK.ent[i];
+				PK.ent[i] = PK.ent[j];
+				PK.ent[j] = t;
+			}
+}
+
+static void pk_add(const char *name, int is_dir)
+{
+	if (PK.n >= PK_MAX_ENT)
+		return;
+	/* The real "." entry is noise; ".." is added by pk_reload(). */
+	if (name[0] == '.' && name[1] == 0)
+		return;
+	strncpy(PK.ent[PK.n].name, name, FU_NAME - 1);
+	PK.ent[PK.n].name[FU_NAME - 1] = 0;
+	PK.ent[PK.n].is_dir = is_dir;
+	PK.n++;
+}
+
+static void pk_clamp(void)
+{
+	int x, y, w, h, rows;
+
+	pk_geom(&x, &y, &w, &h);
+	rows = pk_list_rows(h);
+	if (PK.n <= 0)
+	{
+		PK.n = 0;
+		PK.sel = 0;
+		PK.top = 0;
+		return;
+	}
+	if (PK.sel < 0)
+		PK.sel = 0;
+	if (PK.sel >= PK.n)
+		PK.sel = PK.n - 1;
+	if (PK.sel < PK.top)
+		PK.top = PK.sel;
+	if (PK.sel >= PK.top + rows)
+		PK.top = PK.sel - rows + 1;
+	if (PK.top < 0)
+		PK.top = 0;
+}
+
+static void pk_reload(void)
+{
+	static mmb_dirent ents[FU_MAX_ENT];
+	int n, i, truncated = 0;
+
+	PK.n = 0;
+	pk_add("..", 1);
+	n = mmb_vfs_list_entries(PK.dir, ents, FU_MAX_ENT, &truncated);
+	if (n < 0)
+		n = 0;
+	for (i = 0; i < n; i++)
+	{
+		if (ents[i].name[0] == '.' &&
+		    (ents[i].name[1] == 0 ||
+		     (ents[i].name[1] == '.' && ents[i].name[2] == 0)))
+			continue;
+		if (ents[i].is_dir)
+			pk_add(ents[i].name, 1);
+		else if (PK.save ||
+			 mmb_keyword_eq(ext_of(ents[i].name), ".PCX"))
+			pk_add(ents[i].name, 0);
+	}
+	pk_sort();
+	PK.sel = 0;
+	pk_clamp();
+}
+
+static void pk_emit(void)
+{
+	char nb[16];
+
+	ser("[PAINT-PICK] ");
+	ser(PK.save ? "SAVE" : "OPEN");
+	ser(" ST=");
+	ser(PK.done ? (PK.cancelled ? "CANCEL" : "CHOSEN") : "ACTIVE");
+	ser(" DIR=");
+	ser(PK.dir);
+	ser(" SEL=");
+	if (PK.n > 0 && PK.sel >= 0 && PK.sel < PK.n)
+		ser(PK.ent[PK.sel].name);
+	ser(" NAME=");
+	ser(PK.name);
+	if (PK.result[0])
+	{
+		ser(" PATH=");
+		ser(PK.result);
+	}
+	ser(" N=");
+	fmt_uint(nb, (unsigned)PK.n);
+	ser(nb);
+	ser("\r\n");
+}
+
+static void pk_set_dir(const char *dir)
+{
+	strncpy(PK.dir, dir, FU_PATH - 1);
+	PK.dir[FU_PATH - 1] = 0;
+	if (PK.dir[0] && PK.dir[strlen(PK.dir) - 1] != '/')
+		strncat(PK.dir, "/", (unsigned)FU_PATH - strlen(PK.dir) - 1);
+	pk_reload();
+}
+
+static void pk_enter_dir(const char *name)
+{
+	if (!name || !name[0])
+		return;
+	if (name[0] == '.' && name[1] == '.' && name[2] == 0)
+	{
+		char up[FU_PATH];
+		strncpy(up, PK.dir, sizeof(up) - 1);
+		up[sizeof(up) - 1] = 0;
+		parent_of(up);
+		pk_set_dir(up);
+		return;
+	}
+	if (name[1] == ':' || name[0] == '/')
+	{
+		pk_set_dir(name);
+		return;
+	}
+	{
+		char full[FU_PATH];
+		join_path(full, sizeof(full), PK.dir, name);
+		pk_set_dir(full);
+	}
+}
+
+static void pk_finish(const char *path)
+{
+	char full[FU_PATH];
+
+	if (path && (path[1] == ':' || strchr(path, '/')))
+		strncpy(full, path, sizeof(full) - 1);
+	else
+		join_path(full, sizeof(full), PK.dir, path ? path : "");
+	full[sizeof(full) - 1] = 0;
+	if (mmb_vfs_resolve(full, PK.result, sizeof(PK.result)) != 0)
+	{
+		strncpy(PK.result, full, sizeof(PK.result) - 1);
+		PK.result[sizeof(PK.result) - 1] = 0;
+	}
+	PK.active = 0;
+	PK.done = 1;
+	PK.cancelled = 0;
+}
+
+static void pk_activate(void)
+{
+	if (PK.focus == 1 && PK.name[0])
+	{
+		int n = (int)strlen(PK.name);
+
+		if (PK.name[n - 1] == '/')
+		{
+			PK.name[n - 1] = 0;
+			pk_enter_dir(PK.name);
+			PK.name[0] = 0;
+			return;
+		}
+		pk_finish(PK.name);
+		return;
+	}
+	if (PK.n > 0 && PK.sel >= 0 && PK.sel < PK.n)
+	{
+		pk_ent *e = &PK.ent[PK.sel];
+
+		if (e->is_dir)
+		{
+			pk_enter_dir(e->name);
+			PK.name[0] = 0;
+		}
+		else
+			pk_finish(e->name);
+	}
+}
+
+static void pk_move(int d)
+{
+	if (PK.n <= 0)
+		return;
+	PK.sel += d;
+	if (PK.sel < 0)
+		PK.sel = PK.n - 1;
+	if (PK.sel >= PK.n)
+		PK.sel = 0;
+	pk_clamp();
+}
+
+/* Returns 1 when the key was consumed. */
+int mmb_files_pick_key(int key)
+{
+	if (!PK.active)
+		return 0;
+
+	if (PK.esc == 1)
+	{
+		PK.esc = 0;
+		if (key == '[')
+		{
+			PK.esc = 2;
+			return 1;
+		}
+		PK.active = 0;
+		PK.done = 1;
+		PK.cancelled = 1;
+		pk_emit();
+		return 1;
+	}
+	if (PK.esc == 2)
+	{
+		PK.esc = 0;
+		if (key == 'A')
+			pk_move(-1);
+		else if (key == 'B')
+			pk_move(1);
+		else if (key == 'C' || key == 'D')
+			PK.focus ^= 1;
+		pk_emit();
+		return 1;
+	}
+	if (key == 27)
+	{
+		PK.esc = 1;
+		return 1;
+	}
+	if (key == 9)
+	{
+		PK.focus ^= 1;
+		pk_emit();
+		return 1;
+	}
+	if (key == 13 || key == 10)
+	{
+		pk_activate();
+		pk_emit();
+		return 1;
+	}
+	if (key == 8 || key == 127)
+	{
+		if (PK.focus == 1)
+		{
+			int n = (int)strlen(PK.name);
+			if (n > 0)
+				PK.name[n - 1] = 0;
+		}
+		else
+			pk_enter_dir("..");
+		pk_emit();
+		return 1;
+	}
+	if (key == 16)		/* Ctrl-P */
+	{
+		pk_move(-1);
+		pk_emit();
+		return 1;
+	}
+	if (key == 14)		/* Ctrl-N */
+	{
+		pk_move(1);
+		pk_emit();
+		return 1;
+	}
+	if (key >= 32 && key < 127)
+	{
+		int n = (int)strlen(PK.name);
+		if (n < (int)sizeof(PK.name) - 1)
+		{
+			PK.name[n] = (char)key;
+			PK.name[n + 1] = 0;
+		}
+		PK.focus = 1;
+		pk_emit();
+		return 1;
+	}
+	pk_emit();
+	return 1;
+}
+
+void mmb_files_pick_begin(int save, const char *start_dir, const char *seed)
+{
+	memset(&PK, 0, sizeof(PK));
+	PK.active = 1;
+	PK.save = save ? 1 : 0;
+	PK.focus = save ? 1 : 0;
+	if (start_dir && start_dir[0])
+		strncpy(PK.dir, start_dir, FU_PATH - 1);
+	else
+		strncpy(PK.dir, mmb_vfs_cwd(), FU_PATH - 1);
+	PK.dir[FU_PATH - 1] = 0;
+	if (!strchr(PK.dir, ':'))
+	{
+		char tmp[FU_PATH];
+		tmp[0] = (char)(G.drive ? G.drive : 'A');
+		tmp[1] = ':';
+		tmp[2] = '/';
+		tmp[3] = 0;
+		if (PK.dir[0] == '/')
+			strncat(tmp, PK.dir + 1,
+				sizeof(tmp) - strlen(tmp) - 1);
+		else
+			strncat(tmp, PK.dir, sizeof(tmp) - strlen(tmp) - 1);
+		strncpy(PK.dir, tmp, FU_PATH - 1);
+		PK.dir[FU_PATH - 1] = 0;
+	}
+	if (PK.dir[0] && PK.dir[strlen(PK.dir) - 1] != '/')
+		strncat(PK.dir, "/", (unsigned)FU_PATH - strlen(PK.dir) - 1);
+	if (seed)
+	{
+		strncpy(PK.name, seed, sizeof(PK.name) - 1);
+		PK.name[sizeof(PK.name) - 1] = 0;
+	}
+	pk_reload();
+	pk_emit();
+}
+
+int mmb_files_pick_active(void)
+{
+	return PK.active;
+}
+
+int mmb_files_pick_done(void)
+{
+	return PK.done;
+}
+
+int mmb_files_pick_cancelled(void)
+{
+	return PK.cancelled;
+}
+
+const char *mmb_files_pick_result(void)
+{
+	return PK.result;
+}
+
+void mmb_files_pick_end(void)
+{
+	PK.active = 0;
+	PK.done = 0;
+	PK.cancelled = 0;
+	PK.result[0] = 0;
+}
+
+void mmb_files_pick_render(void)
+{
+	int x, y, w, h, i, rows, listy, ny;
+	char line[FU_PATH + 24];
+
+	if (!PK.active && !PK.done)
+		return;
+	tui_begin();
+	pk_geom(&x, &y, &w, &h);
+	if (w < 24 || h < 7)
+		return;
+	tui_dialog_panel(x, y, w, h, PK.save ? "Save as" : "Open",
+			 TUI_BLACK, TUI_WHITE, TUI_WHITE, TUI_BLUE,
+			 TUI_BRWHITE, TUI_BLUE);
+
+	sprintf(line, "Dir: %s", PK.dir);
+	tui_pad(x + 2, y + 2, line, w - 4, TUI_BRWHITE, TUI_BLACK);
+
+	rows = pk_list_rows(h);
+	listy = y + 3;
+	for (i = 0; i < rows; i++)
+	{
+		int idx = PK.top + i;
+		int sel = (PK.focus == 0 && idx == PK.sel);
+		int fg = sel ? TUI_BRWHITE : TUI_BLACK;
+		int bg = sel ? TUI_BRBLUE : TUI_WHITE;
+
+		if (idx < 0 || idx >= PK.n)
+		{
+			tui_pad(x + 2, listy + i, "", w - 4, fg, bg);
+			continue;
+		}
+		sprintf(line, "%s%s", PK.ent[idx].name,
+			PK.ent[idx].is_dir ? "/" : "");
+		tui_pad(x + 2, listy + i, line, w - 4, fg, bg);
+	}
+
+	ny = y + h - 3;
+	sprintf(line, "Name: %s", PK.name);
+	tui_pad(x + 2, ny, line, w - 4,
+		PK.focus == 1 ? TUI_BRWHITE : TUI_BLACK,
+		PK.focus == 1 ? TUI_BRBLUE : TUI_WHITE);
+
+	tui_pad(x + 2, y + h - 2,
+		"Enter choose  Tab list/name  Up/Down  Esc cancel",
+		w - 4, TUI_BRWHITE, TUI_BLACK);
+
+	tui_flush();
+}
