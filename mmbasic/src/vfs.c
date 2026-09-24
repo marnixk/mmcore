@@ -4,7 +4,11 @@
  * seeding (scripts/gen_ramdisk.py reads this define). Each seeded file and
  * each directory it needs counts as one node. */
 #define VFS_MAX 256
-#define PKG_MAX 96
+/* Initial package (B:) node capacity. The table lives on the heap and grows
+ * on demand (#715): the old fixed PKG_MAX = 96 capped a mounted .APP at 96
+ * nodes (files plus the intermediate directories the mount creates), so a
+ * package that packed fine failed to mount with ?PACKAGE. */
+#define PKG_INIT 96
 #define MMB_DRIVE_LO  'A'
 #define MMB_DRIVE_HI  'H'
 
@@ -23,7 +27,8 @@ typedef struct {
 } mmb_xpath;
 
 static vfs_node nodes[VFS_MAX];
-static vfs_node pkg_nodes[PKG_MAX];
+static vfs_node *pkg_nodes; /* heap-allocated, grows with the mounted package */
+static int pkg_cap;
 static int pkg_on;
 static char pkg_prev[128];
 static int pkg_have_prev;
@@ -36,7 +41,7 @@ static vfs_node *vol_nodes(int letter, int *max)
 {
 	if (letter == 'B')
 	{
-		*max = PKG_MAX;
+		*max = pkg_cap;
 		return pkg_nodes;
 	}
 	*max = VFS_MAX;
@@ -524,7 +529,12 @@ void mmb_vfs_init(void)
 	nodes[0].is_dir = 1;
 	nodes[0].parent = -1;
 	nodes[0].used = 1;
-	memset(pkg_nodes, 0, sizeof(pkg_nodes));
+	if (pkg_nodes)
+	{
+		G.plat->free(pkg_nodes);
+		pkg_nodes = 0;
+	}
+	pkg_cap = 0;
 	pkg_on = 0;
 	pkg_have_prev = 0;
 	pkg_prev[0] = 0;
@@ -1220,17 +1230,53 @@ int mmb_pkg_mounted(void)
 	return pkg_on;
 }
 
+/* Grow the package node table so it can hold at least `need` nodes, doubling
+ * from the current capacity. New slots are zeroed so `.used` stays 0 for free
+ * entries. Returns 0, or -1 on allocation failure. */
+static int pkg_ensure(int need)
+{
+	int ncap;
+	vfs_node *p;
+
+	if (need <= pkg_cap)
+		return 0;
+	ncap = pkg_cap ? pkg_cap * 2 : PKG_INIT;
+	while (ncap < need)
+		ncap *= 2;
+	p = G.plat->alloc((unsigned)ncap * sizeof(*p));
+	if (!p)
+		return -1;
+	if (pkg_nodes)
+	{
+		memcpy(p, pkg_nodes, (unsigned)pkg_cap * sizeof(*p));
+		G.plat->free(pkg_nodes);
+	}
+	memset(p + pkg_cap, 0, (unsigned)(ncap - pkg_cap) * sizeof(*p));
+	pkg_nodes = p;
+	pkg_cap = ncap;
+	return 0;
+}
+
 static void pkg_free_nodes(void)
 {
 	int i;
-	for (i = 0; i < PKG_MAX; i++)
+	if (pkg_nodes)
+		for (i = 0; i < pkg_cap; i++)
+			if (pkg_nodes[i].data)
+				G.plat->free(pkg_nodes[i].data);
+	/* Release a table grown for a large package back to the initial size so
+	 * an unmounted B: does not hold its high-water allocation forever. */
+	if (pkg_nodes && pkg_cap > PKG_INIT)
 	{
-		if (pkg_nodes[i].used && pkg_nodes[i].data)
-			G.plat->free(pkg_nodes[i].data);
-		pkg_nodes[i].used = 0;
-		pkg_nodes[i].data = 0;
+		G.plat->free(pkg_nodes);
+		pkg_nodes = 0;
+		pkg_cap = 0;
 	}
-	memset(pkg_nodes, 0, sizeof(pkg_nodes));
+	if (!pkg_nodes)
+		(void)pkg_ensure(PKG_INIT);
+	if (!pkg_nodes)
+		return;
+	memset(pkg_nodes, 0, (unsigned)pkg_cap * sizeof(*pkg_nodes));
 	strcpy(pkg_nodes[0].name, "/");
 	pkg_nodes[0].is_dir = 1;
 	pkg_nodes[0].parent = -1;
@@ -1275,32 +1321,56 @@ static int pkg_add_file(const char *path, const void *data, unsigned n, void *ct
 	char full[160];
 	int nested = 0;
 	const char *q, *base;
+
 	full[0] = '/';
 	strncpy(full + 1, path, sizeof(full) - 2);
 	full[sizeof(full) - 1] = 0;
-	if (n == 0 && !data)
-		return ram_walk(pkg_nodes, PKG_MAX, full, 0, 1) < 0 ? -1 : 0;
-	{
-		char dir[160];
-		char *p;
-		strncpy(dir, full, sizeof(dir) - 1);
-		dir[sizeof(dir) - 1] = 0;
-		p = dir + 1;
-		while (*p)
-		{
-			while (*p && *p != '/')
-				p++;
-			if (*p == 0)
-				break;
-			*p = 0;
-			if (ram_walk(pkg_nodes, PKG_MAX, dir, 0, 1) < 0)
-				return -1;
-			*p = '/';
-			p++;
-		}
-	}
-	if (ram_write(pkg_nodes, PKG_MAX, full, data, n, 0) != 0)
+	if (!pkg_nodes)
 		return -1;
+
+	/* Adding an entry can need new nodes (the file plus every missing parent
+	 * directory), so retry after growing the table whenever the walk runs out
+	 * of slots. A failed write with the node already present is a data
+	 * allocation failure, not a full table: growing cannot help there. */
+	for (;;)
+	{
+		int rc = 0;
+		if (n == 0 && !data)
+			rc = ram_walk(pkg_nodes, pkg_cap, full, 0, 1) < 0 ? -1 : 0;
+		else
+		{
+			char dir[160];
+			char *p;
+			strncpy(dir, full, sizeof(dir) - 1);
+			dir[sizeof(dir) - 1] = 0;
+			p = dir + 1;
+			while (*p)
+			{
+				while (*p && *p != '/')
+					p++;
+				if (*p == 0)
+					break;
+				*p = 0;
+				if (ram_walk(pkg_nodes, pkg_cap, dir, 0, 1) < 0)
+				{
+					rc = -1;
+					break;
+				}
+				*p = '/';
+				p++;
+			}
+			if (rc == 0 &&
+			    ram_write(pkg_nodes, pkg_cap, full, data, n, 0) != 0)
+				rc = -1;
+		}
+		if (rc == 0)
+			break;
+		if (n != 0 && ram_walk(pkg_nodes, pkg_cap, full, 0, 0) >= 0)
+			return -1;
+		if (pkg_ensure(pkg_cap + 1) != 0)
+			return -1;
+	}
+
 	base = path;
 	for (q = path; *q; q++)
 	{

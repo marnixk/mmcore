@@ -435,6 +435,51 @@ def test_package_folder_over_64_files(fresh_console):
     assert console.send_line("PRINT CWD$").upper().startswith("A:/MANYDEST")
 
 
+def test_package_run_app_over_95_nodes(fresh_console):
+    """#715: an app whose mount needs more than 96 nodes still runs.
+
+    The read-only B: mount built its node table from a fixed 96-slot array
+    (PKG_MAX), so an archive with more than ~95 files plus the intermediate
+    directories the mount synthesises failed with ?PACKAGE even though it
+    packed. 96 files plus MAIN.BAS is 99 mounted nodes; the table now grows on
+    the heap. A fresh console keeps the seeded ramdisk (147 nodes) from
+    starving the ~100-node source tree.
+    """
+    console = fresh_console
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "HUGE"') == ""
+    _write_lines(
+        console,
+        "HUGE/MAIN.BAS",
+        [
+            'PRINT "HUGEAPP"',
+            'OPEN "Z96.TXT" FOR INPUT AS #1',
+            "LINE INPUT #1, A$",
+            "PRINT A$",
+            "CLOSE #1",
+        ],
+    )
+    _write_lines(
+        console,
+        "HUGEGEN.BAS",
+        [
+            "FOR I = 1 TO 96",
+            'OPEN "A:/HUGE/Z"+LTRIM$(STR$(I))+".TXT" FOR OUTPUT AS #1',
+            'PRINT #1, "V"+LTRIM$(STR$(I))',
+            "CLOSE #1",
+            "NEXT I",
+            'PRINT "SEEDED"',
+        ],
+    )
+    assert "SEEDED" in console.send_line('RUN "HUGEGEN.BAS"')
+    assert console.send_line('PACKAGE "HUGE.APP", "HUGE/"') == ""
+    run = console.send_line('RUN "HUGE.APP"')
+    assert "?PACKAGE" not in run.upper(), run
+    assert "HUGEAPP" in run, run
+    assert "V96" in run, run
+    assert console.send_line("PRINT CWD$").upper().startswith("A:")
+
+
 def test_package_edit_after_run_is_untitled(kernel_image):
     import re
 
