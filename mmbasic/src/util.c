@@ -1076,13 +1076,8 @@ void mmb_print_startup(void)
 	/* Leave the top rows clear for the logo. */
 	mmb_console_write("\n\n\n\n");
 	mmb_console_write("\x1b[37m");
-	startup_centred("mmcore operating system - 2026 (c) Marnix Kok");
-	mmb_console_write("\n");
-	startup_centred("MMBasic " MMB_VERSION);
-	startup_centred("Copyright 2011-2026 Geoff Graham");
-	startup_centred("Copyright 2016-2026 Peter Mather");
-	startup_centred("Adapted and extended by Marnix Kok");
-	mmb_console_write("\n");
+	startup_centred("mmcore operating system - " MMB_VERSION " - 2026 (c) Marnix Kok");
+	startup_centred("MMBasic");
 	startup_centred("Type \x1b[97mHELP ME\x1b[37m for a short introduction.");
 	mmb_console_write("\n\n");
 	mmb_console_write("\x1b[0m");

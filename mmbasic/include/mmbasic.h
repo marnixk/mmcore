@@ -269,7 +269,7 @@ void mmb_console_write(const char *s);
 /* Serial only — live TERM/CONNECT must not paint debug on HDMI. */
 void mmb_serial_write(const char *s);
 
-/* PicoMite/MMBasic copyright, build version, and HELP hint. Call once at boot. */
+/* Boot banner: version, MMBasic notice, and HELP hint. Call once at boot. */
 void mmb_print_startup(void);
 
 /* Apply the boot destination (OPTION BOOT REPL|LAUNCHER|"app") and paint the
