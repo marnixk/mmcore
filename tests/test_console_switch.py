@@ -4,7 +4,13 @@ interpreter sessions with their own screen and state.
 The chord is driven through the real USB keyboard (``-device usb-kbd``) so
 modifiers can be held, matching how it is pressed on hardware."""
 
+import os
+import shutil
+import subprocess
+import tempfile
 import time
+
+import pytest
 
 from harness import MMBasicConsole
 from ihelp_util import dump_topic
@@ -226,6 +232,110 @@ def test_running_program_suspends_and_resumes(kernel_image):
         assert "GOT" in seen
     finally:
         con.stop()
+
+
+def test_switch_keeps_audio_playing(kernel_image):
+    """#620: the audio engine is one machine resource, so switching consoles
+    must not silence it. PLAYING() is global, and PLAY STOP from any console
+    stops the single engine for every console."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PLAY TONE 440, 440") == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        # A fresh console still sees the engine running.
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        # Stopping from the second console silences the one engine.
+        assert con.send_line("PLAY STOP") == ""
+        assert con.send_line("PRINT PLAYING()") == "0"
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_ramdisk_cwd(kernel_image):
+    """#618: the working directory is session state. CHDIR on one console must
+    not move a fresh console, and switching back restores each console's own
+    directory."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        assert con.send_line("PRINT CWD$") == "A:/tests"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT CWD$") == "A:/"
+        assert con.send_line('CHDIR "A:/lib"') == ""
+        assert con.send_line("PRINT CWD$") == "A:/lib"
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT CWD$") == "A:/tests"
+
+        # And the second console kept its own directory too.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT CWD$") == "A:/lib"
+    finally:
+        con.stop()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_switch_keeps_per_console_fat_cwd(kernel_image):
+    """#618: a physical drive's current directory is per console; the mount
+    itself stays visible to every console."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBCWD", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=[
+                "-device", "usb-kbd",
+                "-drive", f"file={img},if=sd,format=raw",
+            ],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            con.drain(quiet=0.3, timeout=2.0)
+            assert con.send_line('CHDIR "C:"') == ""
+            assert con.send_line('MKDIR "SUB"') == ""
+            assert con.send_line('CHDIR "SUB"') == ""
+            assert con.send_line("PRINT CWD$") == "C:/SUB"
+
+            _switch(con, 2)
+            con.drain(quiet=0.3, timeout=2.0)
+            # The mount is machine-global, but the cwd is not.
+            assert con.send_line("PRINT CWD$") == "A:/"
+            assert con.send_line('CHDIR "C:"') == ""
+            assert con.send_line("PRINT CWD$") == "C:/"
+
+            _switch(con, 1)
+            con.drain(quiet=0.3, timeout=2.0)
+            assert con.send_line("PRINT CWD$") == "C:/SUB"
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
 
 
 

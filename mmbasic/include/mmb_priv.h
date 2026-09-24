@@ -376,9 +376,13 @@ typedef struct mmb {
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
 	mmb_editor ed;
-	mmb_audio audio;
 	char cwd[128];
 	int drive;             /* 'A'..'H', default 'A' (ramdisk) */
+	/* Per-console working directory. The VFS node table and the FAT mount
+	 * table are machine-global, but where each console is looking is session
+	 * state, so it lives here rather than in file-scope statics. */
+	int cwd_node[2];                   /* A: (0) / B: (1) ramdisk node */
+	char cwd_path[MMB_MAX_DRIVES][128]; /* C:.. physical, letter - 'A' */
 	int data_line, data_pos;
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
@@ -496,6 +500,10 @@ extern mmb *g_mmb[MMB_MAX_CONSOLES];
 extern mmb *g_cur;
 extern int g_console;
 #define G (*g_cur)
+
+/* The audio engine is a single machine resource shared by every console, so
+ * its status is global rather than a field of the per-console mmb. */
+extern mmb_audio g_audio;
 
 /* Virtual-console suspension handshake (session.c / core.c). */
 int mmb_console_switch_pending(void);
@@ -840,6 +848,8 @@ int mmb_vfs_size(const char *path);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 void mmb_vfs_drives(char *out, int outsz);
 const char *mmb_vfs_cwd(void);
+/* Reset the active console's working directory to the ramdisk root. */
+void mmb_vfs_cwd_reset(void);
 void mmb_vfs_seed_file(const char *path, const void *data, unsigned n);int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n);
 void mmb_cmd_drive(void);
 void mmb_cmd_eject(void);
@@ -867,7 +877,6 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsi
 int mmb_fat_size(int letter, const char *path);
 int mmb_fat_exists(int letter, const char *path);
 int mmb_fat_isdir(int letter, const char *path);
-const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
 /* Friendly volume label (FAT name or host mount name); "" when none. */
 int mmb_fat_label(int letter, char *out, int outsz);

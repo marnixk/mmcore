@@ -13,6 +13,7 @@
 #include "mmb_priv.h"
 
 mmb_test_globals G;
+mmb_test_globals *g_mmb[MMB_MAX_CONSOLES] = { &G, 0, 0, 0 };
 
 static int fails;
 

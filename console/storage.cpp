@@ -37,7 +37,6 @@ static const struct {
 static const int kNMap = (int)(sizeof kMap / sizeof kMap[0]);
 
 static CStorage *s_st;
-static char s_cwd[8][128];
 static int s_ready[8];
 static int s_ejected[8];	/* user ejected; wait for a physical re-insert */
 static int s_present[8];	/* underlying disk reported the device present */
@@ -117,8 +116,6 @@ static void try_mount(int idx)
 	{
 		s_ready[idx] = 1;
 		s_present[idx] = 1;
-		if (!s_cwd[idx][0])
-			strcpy(s_cwd[idx], "/");
 		notice_mount(idx, "mounted");
 	}
 }
@@ -135,15 +132,11 @@ CStorage::~CStorage (void)
 
 boolean CStorage::Initialize (void)
 {
-	int i;
 	s_st = this;
-	memset(s_cwd, 0, sizeof s_cwd);
 	memset(s_ready, 0, sizeof s_ready);
 	memset(s_ejected, 0, sizeof s_ejected);
 	memset(s_present, 0, sizeof s_present);
 	s_notify_ready = 0;
-	for (i = 0; i < kNMap; i++)
-		strcpy(s_cwd[i], "/");
 
 	m_EMMC.Initialize ();
 	/* USB host may have no devices; never fail the kernel for that. */
@@ -171,8 +164,6 @@ void CStorage::Poll (void)
 			/* Stick pulled without ejecting: drop the stale mount. */
 			f_mount(0, kMap[i].vol, 0);
 			s_ready[i] = 0;
-			s_cwd[i][0] = '/';
-			s_cwd[i][1] = 0;
 			s_ejected[i] = 0;
 			s_present[i] = 0;
 			notice_mount(i, "removed");
@@ -300,8 +291,6 @@ int mmb_fat_eject(int letter)
 	f_mount (0, kMap[i].vol, 0);
 	s_ready[i] = 0;
 	s_ejected[i] = 1;
-	s_cwd[i][0] = '/';
-	s_cwd[i][1] = 0;
 	msg[n++] = kMap[i].letter;
 	msg[n++] = ':';
 	msg[n++] = ' ';
@@ -319,14 +308,6 @@ int mmb_fat_eject(int letter)
 	if (s_notify_ready)
 		mmb_storage_notice(msg);
 	return 0;
-}
-
-const char *mmb_fat_cwd(int letter)
-{
-	int i = slot_of(letter);
-	if (i < 0)
-		return "/";
-	return s_cwd[i][0] ? s_cwd[i] : "/";
 }
 
 void mmb_fat_drive_line(int letter, char *out, int outsz)
@@ -378,6 +359,9 @@ void mmb_fat_drive_line(int letter, char *out, int outsz)
 	}
 }
 
+/* Validate that a directory-absolute path names a directory. The current
+ * directory is session state and lives in the per-console mmb; only the drive
+ * mount table is global. */
 int mmb_fat_chdir(int letter, const char *path)
 {
 	FILINFO inf;
@@ -386,15 +370,10 @@ int mmb_fat_chdir(int letter, const char *path)
 	if (i < 0 || !s_ready[i])
 		return -1;
 	if (!path || !path[0] || (path[0] == '/' && path[1] == 0))
-	{
-		strcpy(s_cwd[i], "/");
 		return 0;
-	}
 	make_full(letter, path, full, sizeof full);
 	if (f_stat(full, &inf) != FR_OK || !(inf.fattrib & AM_DIR))
 		return -1;
-	strncpy(s_cwd[i], path, sizeof(s_cwd[i]) - 1);
-	s_cwd[i][sizeof(s_cwd[i]) - 1] = 0;
 	return 0;
 }
 

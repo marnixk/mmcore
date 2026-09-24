@@ -68,15 +68,14 @@ void mmb_console_reset(void)
 		console_free_context(g_mmb[0]);
 		memset(g_mmb[0], 0, sizeof(mmb));
 		g_mmb[0]->plat = plat;
-		/* A fresh session starts at the ramdisk root, like boot. */
-		g_mmb[0]->drive = 'A';
-		strcpy(g_mmb[0]->cwd, "A:/");
 	}
 	memset(s_initialized, 0, sizeof(s_initialized));
 	memset(s_shown, 0, sizeof(s_shown));
 	s_pending = -1;
 	g_console = 0;
 	g_cur = g_mmb[0];
+	/* A fresh session starts at the ramdisk root, like boot. */
+	mmb_vfs_cwd_reset();
 	s_initialized[0] = 1;
 	s_shown[0] = 1; /* the warm reset paints the banner and prompt itself */
 	mmb_front_reset();
@@ -185,8 +184,7 @@ static void console_bring_up(int idx, const mmb *from)
 	g_cur->rnd_seed = 0x12345678u;
 	/* A fresh console starts at the ramdisk root (mmb_vfs_init owns the
 	 * shared VFS node table and must not run again per console). */
-	g_cur->drive = 'A';
-	strcpy(g_cur->cwd, "A:/");
+	mmb_vfs_cwd_reset();
 	mmb_console_apply_colour();
 	s_initialized[idx] = 1;
 

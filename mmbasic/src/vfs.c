@@ -23,28 +23,52 @@ typedef struct {
 } mmb_xpath;
 
 static vfs_node nodes[VFS_MAX];
-static int ram_cwd;
 static vfs_node pkg_nodes[PKG_MAX];
-static int pkg_cwd;
 static int pkg_on;
 static char pkg_prev[128];
 static int pkg_have_prev;
 
 /* ---- ramdisk (A: and package B:) ----------------------------------- */
 
-static vfs_node *vol_nodes(int letter, int *max, int **cwd)
+/* The node tables are machine-global; the current directory within them is
+ * per console and lives in the active mmb (`G.cwd_node`). */
+static vfs_node *vol_nodes(int letter, int *max)
 {
 	if (letter == 'B')
 	{
 		*max = PKG_MAX;
-		if (cwd)
-			*cwd = &pkg_cwd;
 		return pkg_nodes;
 	}
 	*max = VFS_MAX;
-	if (cwd)
-		*cwd = &ram_cwd;
 	return nodes;
+}
+
+static int vol_cwd_slot(int letter)
+{
+	return letter == 'B' ? 1 : 0;
+}
+
+/* Current directory path for a physical drive, per console. */
+static const char *drive_cwd_mirror(int letter)
+{
+	int idx = letter - 'A';
+	if (idx < 0 || idx >= MMB_MAX_DRIVES)
+		return "/";
+	return G.cwd_path[idx][0] ? G.cwd_path[idx] : "/";
+}
+
+static void set_drive_cwd(int letter, const char *path)
+{
+	int idx = letter - 'A';
+	if (idx < 0 || idx >= MMB_MAX_DRIVES)
+		return;
+	if (!path || !path[0] || (path[0] == '/' && path[1] == 0))
+		strcpy(G.cwd_path[idx], "/");
+	else
+	{
+		strncpy(G.cwd_path[idx], path, sizeof(G.cwd_path[idx]) - 1);
+		G.cwd_path[idx][sizeof(G.cwd_path[idx]) - 1] = 0;
+	}
 }
 
 static int ram_find_child(vfs_node *ns, int max, int parent, const char *name)
@@ -345,15 +369,18 @@ static void drive_cwd_path(int letter, char *out, int outsz)
 	if (letter == 'A' || (letter == 'B' && pkg_on))
 	{
 		char tmp[128];
-		int max, *cwd;
-		vfs_node *ns = vol_nodes(letter, &max, &cwd);
-		ram_path_from_node(ns, *cwd, tmp, sizeof(tmp));
+		int max;
+		vfs_node *ns = vol_nodes(letter, &max);
+		int node = G.cwd_node[vol_cwd_slot(letter)];
+		if (node < 0 || node >= max || !ns[node].used)
+			node = 0;
+		ram_path_from_node(ns, node, tmp, sizeof(tmp));
 		strncpy(out, tmp, (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
 		return;
 	}
 	{
-		const char *p = mmb_fat_cwd(letter);
+		const char *p = drive_cwd_mirror(letter);
 		strncpy(out, p && p[0] ? p : "/", (unsigned)outsz - 1);
 		out[outsz - 1] = 0;
 	}
@@ -474,6 +501,17 @@ static int require_drive(int letter)
 
 /* ---- public API ------------------------------------------------------- */
 
+void mmb_vfs_cwd_reset(void)
+{
+	int i;
+	G.cwd_node[0] = 0;
+	G.cwd_node[1] = 0;
+	for (i = 0; i < MMB_MAX_DRIVES; i++)
+		strcpy(G.cwd_path[i], "/");
+	G.drive = 'A';
+	strcpy(G.cwd, "A:/");
+}
+
 void mmb_vfs_init(void)
 {
 	memset(nodes, 0, sizeof(nodes));
@@ -481,14 +519,11 @@ void mmb_vfs_init(void)
 	nodes[0].is_dir = 1;
 	nodes[0].parent = -1;
 	nodes[0].used = 1;
-	ram_cwd = 0;
 	memset(pkg_nodes, 0, sizeof(pkg_nodes));
-	pkg_cwd = 0;
 	pkg_on = 0;
 	pkg_have_prev = 0;
 	pkg_prev[0] = 0;
-	G.drive = 'A';
-	strcpy(G.cwd, "A:/");
+	mmb_vfs_cwd_reset();
 }
 
 const char *mmb_vfs_cwd(void)
@@ -518,15 +553,15 @@ int mmb_vfs_chdir(const char *path)
 		return -1;
 	if (x.letter == 'A' || x.letter == 'B')
 	{
-		int max, *cwd, n;
+		int max, n;
 		vfs_node *ns;
 		if (x.letter == 'B' && !pkg_on)
 			return -1;
-		ns = vol_nodes(x.letter, &max, &cwd);
+		ns = vol_nodes(x.letter, &max);
 		n = ram_walk(ns, max, x.path, 0, 0);
 		if (n < 0 || !ns[n].is_dir)
 			return -1;
-		*cwd = n;
+		G.cwd_node[vol_cwd_slot(x.letter)] = n;
 		G.drive = x.letter;
 		refresh_public_cwd();
 		return 0;
@@ -535,6 +570,7 @@ int mmb_vfs_chdir(const char *path)
 		return -1;
 	if (mmb_fat_chdir(x.letter, x.path) != 0)
 		return -1;
+	set_drive_cwd(x.letter, x.path);
 	G.drive = x.letter;
 	refresh_public_cwd();
 	return 0;
@@ -616,7 +652,7 @@ int mmb_vfs_exists(const char *path)
 		return 0;
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		ns = vol_nodes(x.letter, &max, 0);
+		ns = vol_nodes(x.letter, &max);
 		return ram_walk(ns, max, x.path, 0, 0) >= 0;
 	}
 	if (require_drive(x.letter) != 0)
@@ -633,7 +669,7 @@ int mmb_vfs_size(const char *path)
 		return -1;
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		ns = vol_nodes(x.letter, &max, 0);
+		ns = vol_nodes(x.letter, &max);
 		n = ram_walk(ns, max, x.path, 0, 0);
 		if (n < 0 || ns[n].is_dir)
 			return -1;
@@ -777,7 +813,7 @@ int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsi
 		return -1;
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		ns = vol_nodes(x.letter, &max, 0);
+		ns = vol_nodes(x.letter, &max);
 		return ram_read_at(ns, max, x.path, pos, data, n, got);
 	}
 	if (require_drive(x.letter) != 0)
@@ -801,7 +837,7 @@ int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
 		return -1;
 	if (x.letter != 'A' && !(x.letter == 'B' && pkg_on))
 		return -1;
-	ns = vol_nodes(x.letter, &max, 0);
+	ns = vol_nodes(x.letter, &max);
 	id = ram_walk(ns, max, x.path, 0, 0);
 	if (id < 0 || ns[id].is_dir)
 		return -1;
@@ -1025,7 +1061,7 @@ int mmb_vfs_list(const char *spec, char *out, int outsz)
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
 		int max;
-		vfs_node *ns = vol_nodes(x.letter, &max, 0);
+		vfs_node *ns = vol_nodes(x.letter, &max);
 		if (ram_list(ns, max, dir, glob, out, outsz) != 0)
 			return -1;
 		sort_dir_list(out, outsz);
@@ -1056,7 +1092,7 @@ int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
 		int vmax;
-		vfs_node *ns = vol_nodes(x.letter, &vmax, 0);
+		vfs_node *ns = vol_nodes(x.letter, &vmax);
 		n = ram_list_entries(ns, vmax, dir, glob, out, max, truncated);
 	}
 	else
@@ -1104,7 +1140,7 @@ int mmb_vfs_isdir(const char *path)
 		return 0;
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
-		ns = vol_nodes(x.letter, &max, 0);
+		ns = vol_nodes(x.letter, &max);
 		n = ram_walk(ns, max, x.path, 0, 0);
 		return n >= 0 && ns[n].is_dir;
 	}
@@ -1141,7 +1177,11 @@ static void pkg_free_nodes(void)
 	pkg_nodes[0].is_dir = 1;
 	pkg_nodes[0].parent = -1;
 	pkg_nodes[0].used = 1;
-	pkg_cwd = 0;
+	/* The package node table is shared; a mount/unmount invalidates every
+	 * console's B: directory, so reset them all. */
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+		if (g_mmb[i])
+			g_mmb[i]->cwd_node[1] = 0;
 }
 
 void mmb_pkg_unmount(void)
@@ -1162,11 +1202,11 @@ void mmb_pkg_unmount(void)
 	}
 	pkg_free_nodes();
 	pkg_on = 0;
-	if (G.drive == 'B')
-	{
-		G.drive = 'A';
-		refresh_public_cwd();
-	}
+	/* B: is gone: any console sitting on it falls back to the ramdisk. */
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+		if (g_mmb[i] && g_mmb[i]->drive == 'B')
+			g_mmb[i]->drive = 'A';
+	refresh_public_cwd();
 	if (have && saved[0])
 		mmb_vfs_chdir(saved);
 }
