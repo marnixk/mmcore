@@ -29,6 +29,7 @@ enum hs_kind {
 	HS_SHOT,
 	HS_MARK,
 	HS_FEED,
+	HS_WAIT,
 	HS_QUIT
 };
 
@@ -39,6 +40,7 @@ typedef struct {
 	int down;		/* HS_BUTTON */
 	SDL_Keycode sym;	/* HS_KEY */
 	int mods;		/* HS_KEY: SDL_Keymod bits */
+	int ms;			/* HS_WAIT: delay in milliseconds */
 	char arg[HS_ARG_MAX];	/* path / text / feed line */
 } hs_step;
 
@@ -245,6 +247,12 @@ static void hs_parse_line(char *line)
 		st.kind = HS_QUIT;
 		hs_push(&st);
 	}
+	else if (strcmp(word, "wait") == 0)
+	{
+		st.kind = HS_WAIT;
+		st.ms = (int)strtol(hs_skip(p), 0, 10);
+		hs_push(&st);
+	}
 }
 
 /* Read any newly appended bytes and enqueue their complete lines. */
@@ -339,6 +347,24 @@ static void hs_exec(const hs_step *st)
 	case HS_FEED:
 		mmb_front_feed(st->arg, (unsigned)strlen(st->arg));
 		mmb_front_feed_byte('\n');
+		break;
+	case HS_WAIT:
+		/* Advance wall-clock time in small steps, pumping the host poll so
+		 * app idle timers (the Esc flush) can fire mid-wait. */
+		{
+			int waited = 0;
+
+			while (waited < st->ms)
+			{
+				int step = st->ms - waited;
+
+				if (step > 10)
+					step = 10;
+				SDL_Delay((Uint32)step);
+				waited += step;
+				mmb_poll();
+			}
+		}
 		break;
 	case HS_QUIT:
 		sdl_video_request_quit();

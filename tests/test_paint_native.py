@@ -320,11 +320,16 @@ def test_held_press_after_menu_action_stays_off_canvas(native_mmcore, tmp_path):
 
 
 def test_keyboard_injection_exits_paint(native_mmcore, tmp_path):
-    """Synthetic keys reach the app: Esc leaves PAINT and the REPL works."""
+    """Synthetic keys reach the app: a lone Esc leaves PAINT and the REPL works.
+
+    Esc is buffered while a possible CSI/SS3 sequence could still follow, so
+    the idle window has to elapse before it resolves as a real Esc (#726).
+    """
     s = NativeSession(tmp_path)
     s.feed("PAINT")
     s.shot("paint.ppm")
     s.key("esc")
+    s.wait_ms(300)
     s.feed("PRINT 2+3")
     s.quit()
     out = s.run()
@@ -352,6 +357,136 @@ def test_text_input_injection(native_mmcore, tmp_path):
     s.quit()
     out = s.run()
     assert "81" in out, out
+
+
+# A dropdown pixel that only that menu covers: File's fifth row, Edit's third
+# row past the File panel, and Help's first row past the Edit panel.
+_MENU_MARK = ((30, 88), (90, 56), (130, 24))
+
+
+def _menu_lit(img, menu):
+    """True when the dropdown unique to ``menu`` is painted (white)."""
+    x, y = _MENU_MARK[menu]
+    return lum(img.pixel(x, y)) > 300
+
+
+def test_arrow_keys_keep_paint_open(native_mmcore, tmp_path):
+    """#726: CSI navigation keys must not be mistaken for the Esc quit.
+
+    The front end replays a non-F12 escape byte-by-byte, so the leading 0x1b
+    used to leave PAINT before the rest of the sequence arrived. After all four
+    arrows (and Home/End) PAINT still owns its 640x360 screen; only a real lone
+    Esc (after the idle window) returns to the prompt.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    for name in ("left", "right", "up", "down", "home", "end"):
+        s.key(name)
+    alive = s.shot("alive.ppm")
+    s.key("esc")
+    s.wait_ms(300)
+    s.feed("PRINT 2+3")
+    s.quit()
+    out = s.run()
+
+    assert "needs a mouse" not in out.lower(), out
+    img = Ppm(alive)
+    assert (img.width, img.height) == (PT_W, PT_H), "PAINT left on an arrow key"
+    assert lum(img.pixel(PT_PAL_X + 15 * PT_PAL_SW + 4, PT_PAL_Y + 4)) > 600
+    assert "5" in out, out
+
+
+def test_alt_letters_open_paint_menus(native_mmcore, tmp_path):
+    """#727: Alt+F/E/H open the matching dropdown, and Alt+X quits.
+
+    The chord is delivered as 0x01 + letter (the same bytes ``PollUsbAlt()``
+    synthesises in the firmware build), so this covers the PAINT-side path.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.key("alt+f")
+    f = s.shot("file.ppm")
+    s.key("alt+e")
+    e = s.shot("edit.ppm")
+    s.key("alt+h")
+    h = s.shot("help.ppm")
+    s.key("alt+x")
+    s.feed("PRINT 5*5")
+    s.quit()
+    out = s.run()
+
+    assert "needs a mouse" not in out.lower(), out
+    assert "25" in out, out
+    fi, ei, hi = Ppm(f), Ppm(e), Ppm(h)
+    assert _menu_lit(fi, 0) and not _menu_lit(fi, 1) and not _menu_lit(fi, 2)
+    assert _menu_lit(ei, 1) and not _menu_lit(ei, 0) and not _menu_lit(ei, 2)
+    assert _menu_lit(hi, 2) and not _menu_lit(hi, 0) and not _menu_lit(hi, 1)
+
+
+def _draw_stroke(s):
+    s.move(100, 100)
+    s.down("l")
+    s.move(160, 100)
+    s.up("l")
+
+
+def test_quit_confirms_unsaved_canvas(native_mmcore, tmp_path):
+    """#728: Esc on a dirty canvas prompts; No keeps it, Yes discards and quits."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    _draw_stroke(s)
+    s.key("esc")
+    s.wait_ms(300)			# lone Esc -> discard confirmation
+    dialog = s.shot("dialog.ppm")
+    s.key("n")				# No: stay in PAINT with the drawing
+    s.move(300, 200)
+    kept = s.shot("kept.ppm")
+    s.key("esc")			# dirty again -> prompt
+    s.wait_ms(300)
+    s.key("y")				# Yes: discard and tear down
+    s.feed("PRINT 8+1")
+    s.quit()
+    out = s.run()
+
+    assert "needs a mouse" not in out.lower(), out
+    assert "9" in out, out
+    # The centered confirm panel is white over the black canvas.
+    assert lum(Ppm(dialog).pixel(300, 200)) > 300, "no discard dialog on Esc"
+    # No kept PAINT and the stroke.
+    img = Ppm(kept)
+    assert lum(img.pixel(PT_PAL_X + 15 * PT_PAL_SW + 4, PT_PAL_Y + 4)) > 600
+    assert lum(img.pixel(130, 100)) > 600, "No discarded the edit"
+
+
+def test_open_confirms_unsaved_canvas(native_mmcore, tmp_path):
+    """#728: File > Open prompts when dirty; No keeps, Yes opens the picker."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    _draw_stroke(s)
+    s.move(12, 8)
+    s.click("l")			# File
+    s.move(12, 40)
+    s.click("l")			# Open
+    dialog = s.shot("open_dialog.ppm")
+    s.text("n")				# No: no picker, canvas intact
+    s.move(300, 200)
+    kept = s.shot("open_kept.ppm")
+    s.move(12, 8)
+    s.click("l")
+    s.move(12, 40)
+    s.click("l")			# Open again
+    s.text("y")				# Yes: the picker opens
+    s.key("esc")
+    s.key("enter")			# cancel the picker
+    s.quit()
+    out = s.run()
+
+    assert "needs a mouse" not in out.lower(), out
+    assert "OPEN ST=ACTIVE" in out, out
+    assert "OPEN ST=CHOSEN" not in out, out
+    assert lum(Ppm(dialog).pixel(300, 200)) > 300, "no discard dialog on Open"
+    assert is_black(Ppm(kept).pixel(300, 200)), "No opened the picker"
+
 
 
 def _cell(col, row):

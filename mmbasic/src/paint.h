@@ -175,6 +175,9 @@ void mmb_cmd_paint(void);
 int mmb_in_paint(void);
 const char *mmb_paint_key(char c);
 void mmb_paint_poll(void);
+/* Force the lifecycle teardown with no discard prompt: used by the warm reset,
+ * which must drop the canvas before the interpreter is rebuilt. */
+void pt_paint_leave(void);
 
 /* Test-only override: the native harness reports a mouse as present so
  * headless builds can enter PAINT. No effect on real targets. */
@@ -251,6 +254,10 @@ int pt_menus_mouse(int sx, int sy, int button, int down); /* 1 = consumed */
 int pt_menus_key(int key);		/* 1 = consumed */
 int pt_menus_active(void);
 void pt_menus_close(void);
+/* Quit entry point for the lifecycle's keyboard paths. Opens the discard
+ * confirmation and returns 1 when the canvas is dirty; returns 0 when the
+ * caller may tear down immediately. */
+int pt_menus_confirm_quit(void);
 
 /* ---- cursor module (#639) ---------------------------------------------- */
 
