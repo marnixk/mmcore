@@ -455,12 +455,33 @@ static int sub_find(const char *name)
 	return -1;
 }
 
-static int parse_as_sid(void)
+/* Parse an optional ``AS <type>`` clause.  Returns -1 when no AS is present,
+ * -2 for a scalar type (recorded in *type_out), and a struct id for a user
+ * type (*type_out set to T_STRUCT). */
+static int parse_as_sid(int *type_out)
 {
+	if (type_out)
+		*type_out = 0;
 	if (!mmb_match("AS"))
 		return -1;
-	if (mmb_match("INTEGER") || mmb_match("INT") || mmb_match("FLOAT") || mmb_match("STRING"))
+	if (mmb_match("STRING"))
+	{
+		if (type_out)
+			*type_out = T_STR;
 		return -2;
+	}
+	if (mmb_match("INTEGER") || mmb_match("INT"))
+	{
+		if (type_out)
+			*type_out = T_INT;
+		return -2;
+	}
+	if (mmb_match("FLOAT"))
+	{
+		if (type_out)
+			*type_out = T_NUM;
+		return -2;
+	}
 	{
 		char tn[MMB_MAX_NAME];
 		int sid;
@@ -469,7 +490,32 @@ static int parse_as_sid(void)
 		sid = mmb_struct_lookup(tn);
 		if (sid < 0)
 			mmb_error("?UNKNOWN TYPE");
+		if (type_out)
+			*type_out = T_STRUCT;
 		return sid;
+	}
+}
+
+/* Bind an argument to a variable of its declared scalar type, and make that
+ * binding reachable by the bare (unsuffixed) name when the declaration was
+ * unsuffixed -- mirroring how FUNCTION return values are bound. */
+static void bind_scalar_arg(const char *name, int type)
+{
+	char last;
+	int suffixed, unsuf, idx = 0;
+	mmb_var *v;
+	if (!type || type == T_STRUCT)
+		return;
+	last = name[0] ? name[strlen(name) - 1] : 0;
+	suffixed = (last == '$' || last == '%' || last == '!');
+	v = mmb_find_var(name, type, 1, 0, &idx);
+	if (!v)
+		return;
+	unsuf = !suffixed && type != (G.opt.default_type ? G.opt.default_type : T_NUM);
+	if (v->unsuffixed != unsuf)
+	{
+		v->unsuffixed = unsuf;
+		mmb_vars_rehash();
 	}
 }
 
@@ -497,13 +543,16 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 	G.subs[slot].ret_sid = -1;
 	G.subs[slot].ret_type = ret_type;
 	for (i = 0; i < MMB_MAX_SUB_ARGS; i++)
+	{
 		G.subs[slot].arg_sid[i] = -1;
+		G.subs[slot].arg_type[i] = 0;
+	}
 	mmb_skip_sp();
 	if (*G.p == '(')
 		G.p++;
 	while (G.subs[slot].nargs < MMB_MAX_SUB_ARGS)
 	{
-		int sid;
+		int sid, atype = 0;
 		mmb_skip_sp();
 		if (*G.p == ')' || *G.p == 0 || *G.p == '\'' || *G.p == ':')
 			break;
@@ -511,9 +560,10 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 		      (unsigned char)G.p[0] == 0x80))
 			break;
 		mmb_ident(G.subs[slot].args[G.subs[slot].nargs], MMB_MAX_NAME);
-		sid = parse_as_sid();
+		sid = parse_as_sid(&atype);
 		if (sid >= 0)
 			G.subs[slot].arg_sid[G.subs[slot].nargs] = sid;
+		G.subs[slot].arg_type[G.subs[slot].nargs] = atype;
 		G.subs[slot].nargs++;
 		mmb_skip_sp();
 		if (*G.p == ',')
@@ -1563,9 +1613,13 @@ int mmb_call_named_sub(const char *name)
 	{
 		mmb_var *v;
 		int idx = 0;
+		int atype = G.subs[si].arg_sid[i] >= 0 ? T_STRUCT : G.subs[si].arg_type[i];
 		strncpy(G.gosub_saven[g][i], G.subs[si].args[i], MMB_MAX_NAME - 1);
 		G.gosub_saven[g][i][MMB_MAX_NAME - 1] = 0;
-		v = mmb_find_var(G.subs[si].args[i], 0, 0, 0, &idx);
+		/* Look the caller's binding up with the declared type so a value
+		 * stored under a suffix (e.g. A$ for an ``AS STRING`` argument) is
+		 * saved and restored rather than shadowed by a fresh slot. */
+		v = mmb_find_var(G.subs[si].args[i], atype, 0, 0, &idx);
 		if (v)
 		{
 			G.gosub_savev[g][i] = mmb_load_var(v, 0);
@@ -1576,9 +1630,10 @@ int mmb_call_named_sub(const char *name)
 			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
 		if (G.subs[si].arg_sid[i] >= 0)
 			mmb_bind_struct_var(G.subs[si].args[i], G.subs[si].arg_sid[i]);
+		else
+			bind_scalar_arg(G.subs[si].args[i], G.subs[si].arg_type[i]);
 		if (i < narg)
-			mmb_do_assign(G.subs[si].args[i],
-				      G.subs[si].arg_sid[i] >= 0 ? T_STRUCT : 0, 0, 0, args[i]);
+			mmb_do_assign(G.subs[si].args[i], atype, 0, 0, args[i]);
 	}
 	if (G.subs[si].is_func)
 	{

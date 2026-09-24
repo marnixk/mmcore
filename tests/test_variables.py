@@ -183,6 +183,68 @@ def test_local_in_loop_resets_between_calls(console):
     assert console.send_line("RUN") == "3\n3"
 
 
+def test_sub_argument_as_string(console):
+    """#682: an unsuffixed SUB argument declared AS STRING is a string."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB SHOW(A AS STRING)") == ""
+    assert console.send_line("20 PRINT A") == ""
+    assert console.send_line("30 END SUB") == ""
+    assert console.send_line('40 SHOW "hello"') == ""
+    assert console.send_line("RUN") == "hello"
+
+
+def test_sub_argument_as_string_with_parens(console):
+    """#682: the same binding works for a parenthesised call."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB SHOW(A AS STRING)") == ""
+    assert console.send_line('20 PRINT A + "!"') == ""
+    assert console.send_line("30 END SUB") == ""
+    assert console.send_line('40 SHOW("hi")') == ""
+    assert console.send_line("RUN") == "hi!"
+
+
+def test_sub_argument_as_integer(console):
+    """#682: AS INTEGER on an unsuffixed SUB argument keeps the value."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB SHOW(A AS INTEGER)") == ""
+    assert console.send_line("20 PRINT A * 2") == ""
+    assert console.send_line("30 END SUB") == ""
+    assert console.send_line("40 SHOW 21") == ""
+    assert console.send_line("RUN") == "42"
+
+
+def test_sub_argument_as_float(console):
+    """#682: AS FLOAT on an unsuffixed SUB argument keeps the value."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB SHOW(A AS FLOAT)") == ""
+    assert console.send_line("20 PRINT A + 0.5") == ""
+    assert console.send_line("30 END SUB") == ""
+    assert console.send_line("40 SHOW 5") == ""
+    assert console.send_line("RUN") == "5.5"
+
+
+def test_function_argument_as_string(console):
+    """#682: AS STRING also binds FUNCTION arguments, not just SUBs."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FUNCTION LEN2(A AS STRING)") == ""
+    assert console.send_line("20 LEN2 = LEN(A)") == ""
+    assert console.send_line("30 END FUNCTION") == ""
+    assert console.send_line('40 PRINT LEN2("abcd")') == ""
+    assert console.send_line("RUN") == "4"
+
+
+def test_sub_argument_as_string_restores_caller(console):
+    """#682: a typed argument is restored after the call returns."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB SHOW(A AS STRING)") == ""
+    assert console.send_line("20 PRINT A") == ""
+    assert console.send_line("30 END SUB") == ""
+    assert console.send_line('40 A$ = "outer"') == ""
+    assert console.send_line('50 SHOW "inner"') == ""
+    assert console.send_line("60 PRINT A$") == ""
+    assert console.send_line("RUN") == "inner\nouter"
+
+
 def test_help_variable_gaps(console):
     out = dump_topic(console, "REDIM")
     assert "PRESERVE" in out
