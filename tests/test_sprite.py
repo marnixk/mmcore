@@ -21,11 +21,6 @@ def _rgb_is_blue(v):
     return b > 150 and r < 130 and g < 130
 
 
-def _rgb_is_black(v):
-    r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
-    return r < 40 and g < 40 and b < 40
-
-
 def _is_red(rgb):
     r, g, b = rgb
     return r > 150 and g < 130 and b < 130
@@ -39,10 +34,6 @@ def _is_green(rgb):
 def _is_blue(rgb):
     r, g, b = rgb
     return b > 150 and r < 130 and g < 130
-
-
-def _is_black(rgb):
-    return all(c < 40 for c in rgb)
 
 
 def test_sprite_show_move_restores_background(fresh_console):
