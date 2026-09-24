@@ -60,6 +60,22 @@ def native_mmcore():
     return SDL_BIN
 
 
+def _lit_near(img, x, y, r=8):
+    """True when any pixel in a small window around (x, y) is lit.
+
+    The cursor hotspot is not necessarily on an opaque art pixel (the pencil
+    tool's tip sits one pixel right of its hotspot), so assert the sprite was
+    drawn at the requested point by sampling a small neighbourhood instead of
+    one exact pixel.
+    """
+    for yy in range(y - r, y + r + 1):
+        for xx in range(x - r, x + r + 1):
+            if 0 <= xx < img.width and 0 <= yy < img.height:
+                if lum(img.pixel(xx, yy)) > 600:
+                    return True
+    return False
+
+
 def _run_with_dump(binary, tmp_path, name, program, extra_env=None):
     """Run the binary headlessly; dump the final framebuffer as PPM on exit."""
     ppm = os.path.join(str(tmp_path), name + ".ppm")
@@ -136,9 +152,11 @@ def test_mouse_move_and_click_change_pixels(native_mmcore, tmp_path):
     img0, img1, img2 = Ppm(before), Ppm(moved), Ppm(clicked)
     assert (img0.width, img0.height) == (PT_W, PT_H)
 
-    # The pointer moved onto the canvas: the cursor is drawn there now.
+    # The pointer moved onto the canvas: the cursor sprite is drawn at the
+    # requested framebuffer point (sampled, since the hotspot need not be an
+    # opaque art pixel and window placement must not shift it).
     assert is_black(img0.pixel(100, 100))
-    assert lum(img1.pixel(100, 100)) > 600
+    assert _lit_near(img1, 100, 100)
 
     # The click selected a foreground colour: the indicator swatch changed.
     assert lum(img0.pixel(IND_X, IND_Y)) > 600

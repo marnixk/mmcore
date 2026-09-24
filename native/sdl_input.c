@@ -47,6 +47,12 @@ void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
 		*wheel = s_mouse_wheel;
 }
 
+void sdl_input_mouse_move(int x, int y)
+{
+	s_mouse_x = x;
+	s_mouse_y = y;
+}
+
 /* SDL button numbers are 1=left, 2=middle, 3=right. */
 static int sdl_button_mask(unsigned char button)
 {
