@@ -4236,7 +4236,6 @@ void mmb_poll(void)
 	mmb_files_poll();
 	mmb_wordpad_poll();
 	mmb_paint_poll();
-	mmb_sprite_edit_poll();
 	mmb_afk_poll();
 	mmb_juke_poll();
 	mmb_front_poll();

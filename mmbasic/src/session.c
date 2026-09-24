@@ -103,7 +103,7 @@ static void warm_reset_close_apps(void)
 		/* These own the screen and leave on Alt+X. A modal does not eat the
 		 * chord because the Alt prefix is decoded before the dialog. */
 		else if (mmb_in_editor() || mmb_in_term() || mmb_in_wordpad() ||
-			 mmb_in_sprite_edit() || mmb_in_connect())
+			 mmb_in_connect())
 		{
 			if (mmb_in_editor())
 			{
@@ -119,11 +119,6 @@ static void warm_reset_close_apps(void)
 			{
 				mmb_wordpad_key(1);
 				mmb_wordpad_key('x');
-			}
-			else if (mmb_in_sprite_edit())
-			{
-				mmb_sprite_edit_key(1);
-				mmb_sprite_edit_key('x');
 			}
 			else
 			{
