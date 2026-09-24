@@ -1,46 +1,9 @@
 """CMM2-style sprite blitstore: restore saved background, dirty only the sprite rect."""
 
-import re
-
-
-def _plain(s):
-    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
-
-
-def _open_editor(con, command):
-    """Launch the sprite editor over raw serial (send_line hangs in full-screen apps)."""
-    assert con._ser is not None
-    con.drain(quiet=0.15)
-    con._ser.sendall(command.encode() + b"\r")
-    return _plain(con.drain(quiet=0.8).decode(errors="replace"))
-
-
-def _keys(con, data, quiet=0.4):
-    assert con._ser is not None
-    con._ser.sendall(data)
-    return _plain(con.drain(quiet=quiet).decode(errors="replace"))
-
-
-def _quit_editor(con):
-    return _keys(con, bytes([1]) + b"x", quiet=0.5)
-
 
 def _pixel(console, x, y):
     out = console.send_line(f"PRINT PIXEL({x},{y})")
     return int(out.split()[0])
-
-
-# Editor layout from mmbasic/src/cmd_sprite.c: the cell grid starts at the TUI
-# character cell (2, 2) and each sprite pixel is one character cell.
-SM_OX, SM_OY = 2, 2
-CELL_W, CELL_H = 8, 16
-
-
-def _grid_pixel(console, x, y):
-    """RGB of editor sprite pixel (x, y) as rendered on the TUI."""
-    px = (SM_OX + x) * CELL_W + CELL_W // 2
-    py = (SM_OY + y) * CELL_H + CELL_H // 2
-    return console.screen_pixel(px, py)
 
 
 def _rgb_is_red(v):
@@ -279,121 +242,10 @@ def test_sprite_transparent_pixels_keep_background(fresh_console):
     assert _is_red(c.screen_pixel(17, 16))
 
 
-def test_sprite_editor_draws_and_saves_png(fresh_console):
+def test_sprite_editor_commands_removed(fresh_console):
+    """#619: SPRITE EDIT/SHEET/FONT no longer open a TUI; they fail like any
+    other unknown SPRITE subcommand."""
     c = fresh_console
-    seen = _open_editor(c, 'SPRITE EDIT "ED1.PNG"')
-    assert "SPRITE EDIT" in seen.upper()
-    assert "ED1.PNG" in seen.upper()
-    # Colour 4 (red) then set the pixel under the cursor (top-left).
-    _keys(c, b"4 ")
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-    assert c.send_line('SPRITE LOADPNG 1, "ED1.PNG"') == ""
-    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _rgb_is_red(_pixel(c, 0, 0))
-    assert _is_red(c.screen_pixel(0, 0))
-    c.send_line("SPRITE CLOSE 1")
-
-
-def test_sprite_editor_grid_matches_saved_colours(fresh_console):
-    """#587: the grid shows the IBM palette the PNG stores (1 = blue, 4 = red).
-
-    Rendering the grid through the editor theme palette made colour 4 appear
-    blue on screen while the saved PNG contained red.
-    """
-    c = fresh_console
-    _open_editor(c, 'SPRITE EDIT "ED_PAL.PNG"')
-    _keys(c, b"4 ")          # red at (0,0)
-    _keys(c, b"\x1b[C")      # -> (1,0)
-    _keys(c, b"1 ")          # blue at (1,0)
-    _keys(c, b"\x1b[C")      # -> (2,0): cursor off the drawn pixels
-    on_red = _grid_pixel(c, 0, 0)
-    on_blue = _grid_pixel(c, 1, 0)
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-
-    assert _is_red(on_red), on_red
-    assert _is_blue(on_blue), on_blue
-
-    assert c.send_line('SPRITE LOADPNG 1, "ED_PAL.PNG"') == ""
-    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _rgb_is_red(_pixel(c, 0, 0))
-    assert _rgb_is_blue(_pixel(c, 1, 0))
-    c.send_line("SPRITE CLOSE 1")
-
-
-def test_sprite_editor_flip_horizontal(fresh_console):
-    c = fresh_console
-    _open_editor(c, 'SPRITE EDIT "ED2.PNG"')
-    _keys(c, b"4 ")
-    _keys(c, b"f")
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-    assert c.send_line('SPRITE LOADPNG 1, "ED2.PNG"') == ""
-    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _rgb_is_black(_pixel(c, 0, 0))
-    assert _rgb_is_red(_pixel(c, 7, 0))
-    c.send_line("SPRITE CLOSE 1")
-
-
-def test_sprite_editor_ctrl_z_undo(fresh_console):
-    """#532: Ctrl+Z undoes the last SPRITE EDIT pixel change."""
-    c = fresh_console
-    _open_editor(c, 'SPRITE EDIT "ED_UNDO.PNG"')
-    _keys(c, b"4 ")          # red at the cursor (top-left)
-    _keys(c, b"\x1a")        # Ctrl+Z restores transparent
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-    assert c.send_line('SPRITE LOADPNG 1, "ED_UNDO.PNG"') == ""
-    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _rgb_is_black(_pixel(c, 0, 0))
-    c.send_line("SPRITE CLOSE 1")
-
-
-def test_sprite_sheet_scrubs_frames(fresh_console):
-    c = fresh_console
-    _open_editor(c, 'SPRITE SHEET "ED3.PNG", 8, 4, 4')
-    _keys(c, b"n")  # scrub to frame 1 -> sheet offset (8,0)
-    _keys(c, b"4 ")
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-    assert c.send_line('SPRITE LOADPNG 1, "ED3.PNG"') == ""
-    assert c.send_line("SPRITE SHOW 1, 0, 0, 1") == ""
-    assert _rgb_is_black(_pixel(c, 0, 0))
-    assert _rgb_is_red(_pixel(c, 8, 0))
-    c.send_line("SPRITE CLOSE 1")
-
-
-def _write_bas(console, path, lines):
-    assert console.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
-    for line in lines:
-        esc = line.replace('"', '""')
-        assert console.send_line(f'PRINT #1, "{esc}"') == ""
-    assert console.send_line("CLOSE #1") == ""
-
-
-def test_sprite_font_editor_saves_loadable_json(fresh_console):
-    c = fresh_console
-    seen = _open_editor(c, 'SPRITE FONT "SPRFONT"')
-    assert "SPRITE FONT" in seen.upper()
-    _keys(c, b"4 ")
-    _keys(c, b"s", quiet=0.5)
-    _quit_editor(c)
-    _write_bas(
-        c,
-        "FONTEDIT.BAS",
-        [
-            '#INCLUDE "A:/fonts/gfx/fonts.inc"',
-            "DIM f AS FontDescription",
-            'f = fontLoad("SPRFONT")',
-            "PRINT f.source",
-            "PRINT f.charWidth",
-            "PRINT f.charHeight",
-            "PRINT f.charsPerRow",
-            "PRINT LEN(f.charset)",
-        ],
-    )
-    out = c.send_line('RUN "FONTEDIT.BAS"')
-    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
-    assert lines == ["SPRFONT.png", "8", "8", "40", "59"], out
-
+    assert c.send_line('SPRITE EDIT "ED1.PNG"') == "?SYNTAX ERROR"
+    assert c.send_line('SPRITE SHEET "ED3.PNG", 8, 4, 4') == "?SYNTAX ERROR"
+    assert c.send_line('SPRITE FONT "SPRFONT"') == "?SYNTAX ERROR"
