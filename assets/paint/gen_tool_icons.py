@@ -35,8 +35,9 @@ REPO = Path(__file__).resolve().parents[2]
 OUT_H = REPO / "mmbasic" / "src" / "paint_tool_icons.h"
 
 TOOLS = [
-    "pencil", "line", "rectangle", "ellipse", "circle", "fill", "eraser",
-    "pick", "grab", "magnify", "airbrush", "spray", "text",
+    "pencil", "eraser", "line", "text", "rectangle", "rectangle_filled",
+    "ellipse", "ellipse_filled", "circle", "circle_filled", "fill", "pick",
+    "airbrush", "spray", "grab", "magnify",
 ]
 
 
@@ -166,15 +167,33 @@ def art_rectangle():
     return m
 
 
+def art_rectangle_filled():
+    m = blank()
+    add_rect(m, 2, 3, 13, 12)
+    return m
+
+
 def art_ellipse():
     m = blank()
     add_ring(m, 7.5, 7.5, 6.2, 4.6, 2)
     return m
 
 
+def art_ellipse_filled():
+    m = blank()
+    add_disc(m, 7.5, 7.5, 6.2, 4.6)
+    return m
+
+
 def art_circle():
     m = blank()
     add_ring(m, 7.5, 7.5, 6.2, 6.2, 2)
+    return m
+
+
+def art_circle_filled():
+    m = blank()
+    add_disc(m, 7.5, 7.5, 6.2, 6.2)
     return m
 
 
@@ -260,9 +279,10 @@ def art_text():
 
 
 BUILDERS = [
-    art_pencil, art_line, art_rectangle, art_ellipse, art_circle, art_fill,
-    art_eraser, art_pick, art_grab, art_magnify, art_airbrush, art_spray,
-    art_text,
+    art_pencil, art_eraser, art_line, art_text, art_rectangle,
+    art_rectangle_filled, art_ellipse, art_ellipse_filled, art_circle,
+    art_circle_filled, art_fill, art_pick, art_airbrush, art_spray,
+    art_grab, art_magnify,
 ]
 
 

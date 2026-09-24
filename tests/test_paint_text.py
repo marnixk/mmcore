@@ -24,8 +24,8 @@ SRC = os.path.join(REPO, "mmbasic", "src")
 
 # Layout from mmbasic/src/paint.h.
 PT_CANVAS_Y = 16
-PT_TOOL_COUNT = 13
-TEXT = 12
+PT_TOOL_COUNT = 16
+TEXT = 3
 
 LEFT, RIGHT = 1, 2
 ENTER, ESC, BACKSPACE = 13, 27, 8

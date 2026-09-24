@@ -26,11 +26,6 @@
 #include "paint.h"
 #include "paint_tool_icons.h"
 
-/* Tool column: PT_TOOL_COUNT cells share the strip under the menu bar. The
- * width stays the frozen PT_TOOL_W; the height is split evenly so all tools
- * fit above the palette. */
-#define PT_CELL_H ((PT_PAL_Y - PT_CANVAS_Y) / PT_TOOL_COUNT)
-
 /* A grab has to move this far before it defines a new brush instead of
  * stamping the existing one. */
 #define PT_DRAG_MIN 2
@@ -109,10 +104,40 @@ static void line_plot(int x0, int y0, int x1, int y1, void (*pl)(int, int))
 	}
 }
 
+/* ---- pen width (#718) --------------------------------------------------- */
+
+/* The five selectable pen widths; the active one is PT.width_idx. */
+static const int s_pen_widths[PT_WB_COUNT] = { 1, 2, 3, 4, 6 };
+
+int pt_pen_width(void)
+{
+	int i = PT.width_idx;
+
+	if (i < 0)
+		i = 0;
+	if (i >= PT_WB_COUNT)
+		i = PT_WB_COUNT - 1;
+	return s_pen_widths[i];
+}
+
+static int s_pen_w;
+
+/* Stamp the pen as a square of the current width centred on (x, y). */
+static void cstamp(int x, int y)
+{
+	int o = -((s_pen_w - 1) / 2);
+	int i, j;
+
+	for (j = 0; j < s_pen_w; j++)
+		for (i = 0; i < s_pen_w; i++)
+			pt_canvas_set(x + o + i, y + o + j, s_cink);
+}
+
 static void canvas_line(int x0, int y0, int x1, int y1, int c)
 {
 	s_cink = c;
-	line_plot(x0, y0, x1, y1, cplot);
+	s_pen_w = pt_pen_width();
+	line_plot(x0, y0, x1, y1, s_pen_w > 1 ? cstamp : cplot);
 }
 
 /* Integer midpoint ellipse inscribed in the (x0,y0)-(x1,y1) box (Zingl). */
@@ -171,7 +196,8 @@ static void ellipse_plot(int x0, int y0, int x1, int y1, void (*pl)(int, int))
 static void canvas_ellipse_box(int x0, int y0, int x1, int y1, int c)
 {
 	s_cink = c;
-	ellipse_plot(x0, y0, x1, y1, cplot);
+	s_pen_w = pt_pen_width();
+	ellipse_plot(x0, y0, x1, y1, s_pen_w > 1 ? cstamp : cplot);
 }
 
 static void canvas_circle(int cx, int cy, int r, int c)
@@ -183,7 +209,7 @@ static void canvas_circle(int cx, int cy, int r, int c)
 
 static void canvas_rect(int x0, int y0, int x1, int y1, int c)
 {
-	int i, t;
+	int t;
 
 	if (x0 > x1)
 	{
@@ -197,16 +223,62 @@ static void canvas_rect(int x0, int y0, int x1, int y1, int c)
 		y0 = y1;
 		y1 = t;
 	}
-	for (i = x0; i <= x1; i++)
+	canvas_line(x0, y0, x1, y0, c);
+	canvas_line(x0, y1, x1, y1, c);
+	canvas_line(x0, y0, x0, y1, c);
+	canvas_line(x1, y0, x1, y1, c);
+}
+
+/* ---- filled shapes (#719) ---------------------------------------------- */
+
+static void canvas_rect_fill(int x0, int y0, int x1, int y1, int c)
+{
+	int x, y, t;
+
+	if (x0 > x1)
 	{
-		pt_canvas_set(i, y0, c);
-		pt_canvas_set(i, y1, c);
+		t = x0;
+		x0 = x1;
+		x1 = t;
 	}
-	for (i = y0; i <= y1; i++)
+	if (y0 > y1)
 	{
-		pt_canvas_set(x0, i, c);
-		pt_canvas_set(x1, i, c);
+		t = y0;
+		y0 = y1;
+		y1 = t;
 	}
+	for (y = y0; y <= y1; y++)
+		for (x = x0; x <= x1; x++)
+			pt_canvas_set(x, y, c);
+}
+
+/* Concentric outlines tile the interior, so the union is a filled ellipse. */
+static void canvas_ellipse_fill(int x0, int y0, int x1, int y1, int c)
+{
+	int t;
+
+	if (x0 > x1)
+	{
+		t = x0;
+		x0 = x1;
+		x1 = t;
+	}
+	if (y0 > y1)
+	{
+		t = y0;
+		y0 = y1;
+		y1 = t;
+	}
+	s_cink = c;
+	for (t = 0; 2 * t <= x1 - x0 && 2 * t <= y1 - y0; t++)
+		ellipse_plot(x0 + t, y0 + t, x1 - t, y1 - t, cplot);
+}
+
+static void canvas_circle_fill(int cx, int cy, int r, int c)
+{
+	if (r < 0)
+		r = -r;
+	canvas_ellipse_fill(cx - r, cy - r, cx + r, cy + r, c);
 }
 
 /* Exact-match scanline flood fill. The seed stack is allocated per fill; the
@@ -596,6 +668,7 @@ void pt_tools_init(void)
 	s_brush_h = 0;
 	s_brush_bg = PT.bg;
 	s_noise = 0x13579BDFu;
+	PT.width_idx = 0;
 }
 
 void pt_tools_draw(void)
@@ -606,15 +679,20 @@ void pt_tools_draw(void)
 		     0x202020u);
 	for (i = 0; i < PT_TOOL_COUNT; i++)
 	{
-		int y0 = PT_CANVAS_Y + i * PT_CELL_H;
+		int col = i % PT_TOOL_COLS;
+		int row = i / PT_TOOL_COLS;
+		int x0 = col * PT_CELL_W;
+		int y0 = PT_CANVAS_Y + row * PT_CELL_H;
 		int sel = (i == PT.tool);
 
 		if (y0 + PT_CELL_H > PT_PAL_Y)
 			break;
-		pt_fill_rect(0, y0, PT_TOOL_W, PT_CELL_H,
+		pt_fill_rect(x0, y0, PT_CELL_W, PT_CELL_H,
 			     sel ? 0x505050u : 0x181818u);
-		pt_fill_rect(0, y0 + PT_CELL_H - 1, PT_TOOL_W, 1, 0x303030u);
-		draw_tool_icon(i, 8, y0 + (PT_CELL_H - PTI_ICON_H) / 2,
+		pt_fill_rect(x0 + PT_CELL_W - 1, y0, 1, PT_CELL_H, 0x303030u);
+		pt_fill_rect(x0, y0 + PT_CELL_H - 1, PT_CELL_W, 1, 0x303030u);
+		draw_tool_icon(i, x0 + (PT_CELL_W - PTI_ICON_W) / 2,
+			       y0 + (PT_CELL_H - PTI_ICON_H) / 2,
 			       sel ? 0xFFFFFFu : 0xC0C0C0u,
 			       sel ? 0x505050u : 0x181818u);
 	}
@@ -622,16 +700,76 @@ void pt_tools_draw(void)
 
 int pt_tools_hit(int sx, int sy, int *tool)
 {
-	int row;
+	int col, row, t;
 
 	if (sx < 0 || sx >= PT_TOOL_W || sy < PT_CANVAS_Y || sy >= PT_PAL_Y)
 		return 0;
+	col = sx / PT_CELL_W;
 	row = (sy - PT_CANVAS_Y) / PT_CELL_H;
-	if (row < 0 || row >= PT_TOOL_COUNT)
+	if (col < 0 || col >= PT_TOOL_COLS || row < 0 || row >= PT_TOOL_ROWS)
+		return 0;
+	t = row * PT_TOOL_COLS + col;
+	if (t < 0 || t >= PT_TOOL_COUNT)
 		return 0;
 	if (tool)
-		*tool = row;
+		*tool = t;
 	return 1;
+}
+
+/* ---- line-width selector (#718) ---------------------------------------- */
+
+void pt_width_draw(void)
+{
+	int i, cw = PT_WB_W / PT_WB_COUNT;
+
+	pt_fill_rect(PT_WB_X, PT_WB_Y, PT_WB_W, PT_WB_H, 0x00303030u);
+	for (i = 0; i < PT_WB_COUNT; i++)
+	{
+		int x0 = PT_WB_X + i * cw;
+		int sel = (i == PT.width_idx);
+		int w = s_pen_widths[i];
+
+		if (sel)
+			pt_fill_rect(x0 + 1, PT_WB_Y + 1, cw - 2, PT_WB_H - 2,
+				     0x00505050u);
+		/* Sample bar drawn as thick as the pen, in the FG colour. */
+		pt_fill_rect(x0 + 3, PT_WB_Y + (PT_WB_H - w) / 2, cw - 6, w,
+			     pt_palette_rgb(PT.fg));
+	}
+	pt_fill_rect(PT_WB_X, PT_WB_Y, PT_WB_W, 1, 0x00FFFFFFu);
+	pt_fill_rect(PT_WB_X, PT_WB_Y + PT_WB_H - 1, PT_WB_W, 1, 0x00FFFFFFu);
+	pt_fill_rect(PT_WB_X, PT_WB_Y, 1, PT_WB_H, 0x00FFFFFFu);
+	pt_fill_rect(PT_WB_X + PT_WB_W - 1, PT_WB_Y, 1, PT_WB_H, 0x00FFFFFFu);
+	for (i = 1; i < PT_WB_COUNT; i++)
+		pt_fill_rect(PT_WB_X + i * cw, PT_WB_Y + 1, 1, PT_WB_H - 2,
+			     0x00808080u);
+}
+
+int pt_width_hit(int sx, int sy, int *idx)
+{
+	int c, cw = PT_WB_W / PT_WB_COUNT;
+
+	if (sx < PT_WB_X || sy < PT_WB_Y ||
+	    sx >= PT_WB_X + PT_WB_W || sy >= PT_WB_Y + PT_WB_H)
+		return 0;
+	c = (sx - PT_WB_X) / cw;
+	if (c < 0)
+		c = 0;
+	if (c >= PT_WB_COUNT)
+		c = PT_WB_COUNT - 1;
+	if (idx)
+		*idx = c;
+	return 1;
+}
+
+void pt_width_select(int idx)
+{
+	if (idx < 0)
+		idx = 0;
+	if (idx >= PT_WB_COUNT)
+		idx = PT_WB_COUNT - 1;
+	PT.width_idx = idx;
+	pt_request_redraw();
 }
 
 void pt_tool_select(int tool)
@@ -668,16 +806,19 @@ void pt_tool_begin(int cx, int cy, int button)
 	{
 	case PT_TOOL_PENCIL:
 		pt_undo_push();
-		pt_canvas_set(cx, cy, c);
+		canvas_line(cx, cy, cx, cy, c);
 		break;
 	case PT_TOOL_ERASER:
 		pt_undo_push();
-		pt_canvas_set(cx, cy, PT.bg);
+		canvas_line(cx, cy, cx, cy, PT.bg);
 		break;
 	case PT_TOOL_LINE:
 	case PT_TOOL_RECT:
+	case PT_TOOL_RECT_FILLED:
 	case PT_TOOL_ELLIPSE:
+	case PT_TOOL_ELLIPSE_FILLED:
 	case PT_TOOL_CIRCLE:
+	case PT_TOOL_CIRCLE_FILLED:
 		pt_undo_push();
 		preview_begin();
 		break;
@@ -743,11 +884,25 @@ void pt_tool_motion(int cx, int cy, int button)
 		canvas_rect(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
+	case PT_TOOL_RECT_FILLED:
+		if (s_shift)
+			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
+		preview_restore();
+		canvas_rect_fill(PT.anchor_x, PT.anchor_y, x, y, c);
+		preview_note(PT.anchor_x, PT.anchor_y, x, y);
+		break;
 	case PT_TOOL_ELLIPSE:
 		if (s_shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_box(PT.anchor_x, PT.anchor_y, x, y, c);
+		preview_note(PT.anchor_x, PT.anchor_y, x, y);
+		break;
+	case PT_TOOL_ELLIPSE_FILLED:
+		if (s_shift)
+			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
+		preview_restore();
+		canvas_ellipse_fill(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_CIRCLE:
@@ -759,6 +914,19 @@ void pt_tool_motion(int cx, int cy, int button)
 			r = ry;
 		preview_restore();
 		canvas_circle(PT.anchor_x, PT.anchor_y, r, c);
+		preview_note(PT.anchor_x - r, PT.anchor_y - r,
+			     PT.anchor_x + r, PT.anchor_y + r);
+		break;
+	}
+	case PT_TOOL_CIRCLE_FILLED:
+	{
+		int r = iabs(x - PT.anchor_x);
+		int ry = iabs(y - PT.anchor_y);
+
+		if (ry > r)
+			r = ry;
+		preview_restore();
+		canvas_circle_fill(PT.anchor_x, PT.anchor_y, r, c);
 		preview_note(PT.anchor_x - r, PT.anchor_y - r,
 			     PT.anchor_x + r, PT.anchor_y + r);
 		break;
@@ -810,11 +978,25 @@ void pt_tool_end(int cx, int cy, int button)
 		canvas_rect(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
+	case PT_TOOL_RECT_FILLED:
+		if (s_shift)
+			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
+		preview_restore();
+		canvas_rect_fill(PT.anchor_x, PT.anchor_y, x, y, c);
+		PT.scratch_valid = 0;
+		break;
 	case PT_TOOL_ELLIPSE:
 		if (s_shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_box(PT.anchor_x, PT.anchor_y, x, y, c);
+		PT.scratch_valid = 0;
+		break;
+	case PT_TOOL_ELLIPSE_FILLED:
+		if (s_shift)
+			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
+		preview_restore();
+		canvas_ellipse_fill(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
 	case PT_TOOL_CIRCLE:
@@ -826,6 +1008,18 @@ void pt_tool_end(int cx, int cy, int button)
 			r = ry;
 		preview_restore();
 		canvas_circle(PT.anchor_x, PT.anchor_y, r, c);
+		PT.scratch_valid = 0;
+		break;
+	}
+	case PT_TOOL_CIRCLE_FILLED:
+	{
+		int r = iabs(x - PT.anchor_x);
+		int ry = iabs(y - PT.anchor_y);
+
+		if (ry > r)
+			r = ry;
+		preview_restore();
+		canvas_circle_fill(PT.anchor_x, PT.anchor_y, r, c);
 		PT.scratch_valid = 0;
 		break;
 	}

@@ -37,13 +37,16 @@ from native_harness import (
 
 # Layout constants mirrored from mmbasic/src/paint.h (#634).
 PT_W, PT_H = 640, 360
-PT_TOOL_W = 32
-PT_CANVAS_X, PT_CANVAS_Y = 32, 16
-PT_PAL_X, PT_PAL_Y = 32, 328
+PT_TOOL_W = 64
+PT_CELL_W = 32
+PT_CELL_H = (328 - 16) // 8
+PT_CANVAS_X, PT_CANVAS_Y = 64, 16
+PT_PAL_X, PT_PAL_Y = 92, 328
 PT_PAL_SW = 8
 PT_PAL_MID = 16
+PT_WB_X, PT_WB_W, PT_WB_COUNT = 32, 60, 5
 # Inner FG/BG indicator square: the foreground colour lives here.
-IND_X, IND_Y = PT_TOOL_W // 2, PT_PAL_Y + PT_PAL_MID
+IND_X, IND_Y = 16, PT_PAL_Y + PT_PAL_MID
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cc") is None or shutil.which("make") is None,
@@ -215,10 +218,11 @@ def test_switching_menus_clears_the_old_dropdown(native_mmcore, tmp_path):
     assert "needs a mouse" not in out.lower(), out
 
     # Help's panel hangs from column 13 (x >= 104). Everything canvas-side of
-    # the old File dropdown (x 40..70) must be the restored black canvas.
+    # the old File dropdown must be the restored black canvas (the tool column
+    # now reaches x < 64).
     img = Ppm(after)
     for y in range(20, 92):
-        for x in range(40, 70):
+        for x in range(66, 78):
             assert is_black(img.pixel(x, y)), (x, y, img.pixel(x, y))
 
 
@@ -317,3 +321,48 @@ def test_text_input_injection(native_mmcore, tmp_path):
     s.quit()
     out = s.run()
     assert "81" in out, out
+
+
+def _cell(col, row):
+    return (col * PT_CELL_W + PT_CELL_W // 2,
+            PT_CANVAS_Y + row * PT_CELL_H + PT_CELL_H // 2)
+
+
+def test_filled_rectangle_cell_paints_a_solid_block(native_mmcore, tmp_path):
+    """#719: the rectangle-filled tool fills the interior, unlike the outline."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(*_cell(1, 2))       # RECT_FILLED is row 2, column 1
+    s.click("l")
+    s.move(120, 80)
+    s.down("l")
+    s.move(200, 140)
+    s.up("l")
+    s.move(430, 300)           # park the cursor clear of the check
+    shot = s.shot("filled.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    img = Ppm(shot)
+    assert lum(img.pixel(160, 110)) > 600    # interior is solid
+
+
+def test_width_selector_thickens_a_dot(native_mmcore, tmp_path):
+    """#718: picking the 6px width makes the pencil lay a fat dot."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(PT_WB_X + 4 * 12 + 6, PT_PAL_Y + PT_PAL_MID)   # 5th width cell
+    s.click("l")
+    s.move(150, 100)
+    s.down("l")
+    s.up("l")
+    s.move(430, 300)           # park the cursor clear of the dot
+    shot = s.shot("wide.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    img = Ppm(shot)
+    lit = sum(1 for y in range(92, 109) if lum(img.pixel(150, y)) > 600)
+    assert lit >= 5, lit

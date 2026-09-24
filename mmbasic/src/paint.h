@@ -29,25 +29,40 @@
 #define PT_H        360
 
 #define PT_MENU_H   16		/* menu bar text row, screen pixels */
-#define PT_TOOL_W   32		/* left tool column width */
+
+/* Tool palette: two columns of 32px cells (#719). */
+#define PT_TOOL_COLS 2
+#define PT_TOOL_ROWS 8
+#define PT_CELL_W   32		/* one tool cell, screen pixels */
+#define PT_TOOL_W   (PT_TOOL_COLS * PT_CELL_W)	/* 64 */
+#define PT_CELL_H   ((PT_PAL_Y - PT_CANVAS_Y) / PT_TOOL_ROWS)	/* 39 */
+
 #define PT_PAL_COLS 64
 #define PT_PAL_ROWS 4
 #define PT_PAL_SW   8		/* swatch size, screen pixels */
 #define PT_PAL_W    (PT_PAL_COLS * PT_PAL_SW)	/* 512 */
 #define PT_PAL_H    (PT_PAL_ROWS * PT_PAL_SW)	/* 32 */
-#define PT_PAL_X    PT_TOOL_W			/* strip starts beside tools */
 #define PT_PAL_Y    (PT_H - PT_PAL_H)		/* 328 */
 
 /* FG/BG indicator: the 32x32 cell at the far left of the bottom band. */
 #define PT_IND_X    0
 #define PT_IND_Y    PT_PAL_Y
-#define PT_IND_W    PT_TOOL_W
+#define PT_IND_W    32
 #define PT_IND_H    PT_PAL_H
+
+/* Line-width selector (#718): five sizes between the indicator and palette. */
+#define PT_WB_X     (PT_IND_X + PT_IND_W)	/* 32 */
+#define PT_WB_Y     PT_PAL_Y
+#define PT_WB_W     60
+#define PT_WB_H     PT_PAL_H
+#define PT_WB_COUNT 5
+
+#define PT_PAL_X    (PT_WB_X + PT_WB_W)		/* 92: strip starts after box */
 
 /* Canvas: between the menu bar, the tool column and the palette strip. */
 #define PT_CANVAS_X PT_TOOL_W
 #define PT_CANVAS_Y PT_MENU_H
-#define PT_CANVAS_W (PT_W - PT_TOOL_W)		/* 608 */
+#define PT_CANVAS_W (PT_W - PT_TOOL_W)		/* 576 */
 #define PT_CANVAS_H (PT_PAL_Y - PT_CANVAS_Y)	/* 312 */
 
 #define PT_MAX_W PT_CANVAS_W
@@ -57,18 +72,21 @@
 
 enum pt_tool {
 	PT_TOOL_PENCIL = 0,
-	PT_TOOL_LINE,
-	PT_TOOL_RECT,
-	PT_TOOL_ELLIPSE,
-	PT_TOOL_CIRCLE,
-	PT_TOOL_FILL,
 	PT_TOOL_ERASER,
+	PT_TOOL_LINE,
+	PT_TOOL_TEXT,
+	PT_TOOL_RECT,
+	PT_TOOL_RECT_FILLED,
+	PT_TOOL_ELLIPSE,
+	PT_TOOL_ELLIPSE_FILLED,
+	PT_TOOL_CIRCLE,
+	PT_TOOL_CIRCLE_FILLED,
+	PT_TOOL_FILL,
 	PT_TOOL_PICK,
-	PT_TOOL_GRAB,
-	PT_TOOL_MAGNIFY,
 	PT_TOOL_AIRBRUSH,
 	PT_TOOL_SPRAY,
-	PT_TOOL_TEXT,
+	PT_TOOL_GRAB,
+	PT_TOOL_MAGNIFY,
 	PT_TOOL_COUNT
 };
 
@@ -120,6 +138,7 @@ typedef struct pt_state {
 
 	int fg, bg;		/* foreground/background palette indices */
 	int tool;		/* enum pt_tool */
+	int width_idx;		/* selected pen width, 0..PT_WB_COUNT-1 (#718) */
 
 	int cursor_x, cursor_y;		/* canvas coords */
 	int cursor_sx, cursor_sy;	/* screen coords */
@@ -197,6 +216,13 @@ int pt_palette_hit(int sx, int sy, int *idx);	/* 1 when over a swatch */
 int pt_palette_indicator_hit(int sx, int sy);
 void pt_palette_select(int idx, int button);	/* 1 = FG, 2 = BG */
 void pt_palette_swap(void);
+
+/* ---- line-width selector (#718) ---------------------------------------- */
+
+void pt_width_draw(void);			/* box in the bottom bar */
+int pt_width_hit(int sx, int sy, int *idx);	/* 1 when over the box */
+void pt_width_select(int idx);
+int pt_pen_width(void);				/* selected width in pixels */
 
 /* ---- tools module (#636, bonus #641/#642) ------------------------------ */
 
