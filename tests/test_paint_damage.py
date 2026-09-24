@@ -73,10 +73,33 @@ int64_t mmb_as_int(mmb_val v) { (void)v; return 0; }
 void mmb_gfx_set_mode(int m, int b) { (void)m; (void)b; }
 void mmb_gfx_reset_console(int w) { (void)w; }
 int mmb_vfs_resolve(const char *p, char *o, int n) { (void)p; (void)o; (void)n; return 0; }
-int mmb_mouse_read(mmb_mouse_state *o) { (void)o; return 0; }
 void mmb_console_write(const char *s) { (void)s; }
 void mmb_hw_cursor(int s) { (void)s; }
 const char *mmb_prompt(void) { return ""; }
+
+/* ---- scripted pointer + menu poll forwarding (#708) ---- */
+static mmb_mouse_state s_mouse;
+static int menu_active;
+static int menu_press, menu_release, menu_motion;
+static int menu_prev_down;
+static int tool_begins;
+
+int mmb_mouse_read(mmb_mouse_state *o) { if (o) *o = s_mouse; return 1; }
+int pt_menus_mouse(int sx, int sy, int button, int down)
+{
+	(void)sx; (void)sy; (void)button;
+	if (down)
+		menu_press++;
+	else if (menu_prev_down)
+		menu_release++;
+	else
+		menu_motion++;
+	menu_prev_down = down;
+	return menu_active;
+}
+int pt_menus_active(void) { return menu_active; }
+void pt_tool_begin(int cx, int cy, int button)
+{ (void)cx; (void)cy; (void)button; tool_begins++; }
 
 /* tui shims used by cmd_paint.c and the weak module stubs */
 void tui_begin(void) {}
@@ -163,6 +186,34 @@ int main(void)
 	check(fill_count == 0, "present_only_no_recompose");
 	check(p_y0 == 50 && p_y1 == 89, "present_only_band");
 
+	/* 8. #708: the poll forwards pointer motion (no button) and button-up to
+	 *    the menu module, and an open menu consumes the pointer so no canvas
+	 *    tool starts. */
+	menu_active = 1;
+	s_mouse.present = 1;
+	s_mouse.x = 100;
+	s_mouse.y = 200;
+	s_mouse.buttons = 0;
+	tool_begins = 0;
+	mmb_paint_poll();		/* motion, no button */
+	check(menu_motion > 0, "poll_forwards_motion");
+	check(tool_begins == 0, "menu_motion_no_tool");
+
+	s_mouse.buttons = 1;
+	mmb_paint_poll();		/* press */
+	check(menu_press > 0, "poll_forwards_press");
+	check(PT.mouse_down == 0, "menu_press_no_canvas_drag");
+
+	/* The press can close the menu (activate); the release must still be
+	 * forwarded or the held-button state would stay stuck. */
+	menu_active = 0;
+	s_mouse.buttons = 0;
+	mmb_paint_poll();		/* release with no menu open */
+	check(menu_release > 0, "poll_forwards_release_after_close");
+	menu_motion = 0;
+	mmb_paint_poll();		/* later no-button motion is hover */
+	check(menu_motion > 0, "poll_motion_after_release");
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -231,3 +282,17 @@ def test_present_only_damage_does_not_recompose(checks):
     """Cursor motion marks a present band, not a canvas recomposite (#700/#701)."""
     assert checks.get("present_only_no_recompose") is True
     assert checks.get("present_only_band") is True
+
+
+def test_poll_forwards_hover_and_button_up(checks):
+    """#708: mmb_paint_poll forwards no-button motion and button-up to the menu
+    module, so hover follows the pointer and the held state cannot stick."""
+    for name in (
+        "poll_forwards_motion",
+        "menu_motion_no_tool",
+        "poll_forwards_press",
+        "menu_press_no_canvas_drag",
+        "poll_forwards_release_after_close",
+        "poll_motion_after_release",
+    ):
+        assert checks.get(name) is True, name
