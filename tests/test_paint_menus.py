@@ -39,6 +39,24 @@ void pt_file_save_as(void) { f_save_as++; }
 void pt_undo(void) { u_undo++; }
 void pt_redo(void) { u_redo++; }
 void pt_undo_clear(void) { u_clear++; }
+
+/* ---- canvas stub (Edit > Clear wipes it via pt_canvas_set) ---- */
+static unsigned char g_canvas[4 * 4];
+void pt_canvas_set(int cx, int cy, int idx)
+{
+	if (cx < 0 || cy < 0 || cx >= PT.width || cy >= PT.height)
+		return;
+	g_canvas[(size_t)cy * PT.width + cx] = (unsigned char)idx;
+}
+static int canvas_wiped(void)
+{
+	int i;
+
+	for (i = 0; i < (int)sizeof g_canvas; i++)
+		if (g_canvas[i] != 0)
+			return 0;
+	return 1;
+}
 const char *mmb_paint_key(char c)
 {
 	if ((unsigned char)c == 24)
@@ -163,6 +181,10 @@ int main(void)
 	memset(&PT, 0, sizeof PT);
 	PT.active = 1;
 	PT.menu = PT_MENU_NONE;
+	PT.canvas = g_canvas;
+	PT.width = 4;
+	PT.height = 4;
+	memset(g_canvas, 9, sizeof g_canvas);
 	pt_menus_init();
 
 	check(!pt_menus_active(), "idle_not_active");
@@ -270,6 +292,7 @@ int main(void)
 	check(u_clear == 0, "clear_waits");
 	check(pt_menus_key('y') == 1, "clear_yes");
 	check(u_clear == 1, "clear_dispatch");
+	check(canvas_wiped(), "clear_wipes_canvas");
 
 	/* mouse Yes / No buttons */
 	u_clear = 0;
@@ -412,6 +435,7 @@ def test_edit_actions_and_clear_dialog(checks):
         "clear_always_dialog",
         "clear_waits",
         "clear_dispatch",
+        "clear_wipes_canvas",
         "clear_mouse_no",
         "clear_mouse_yes",
     ):
