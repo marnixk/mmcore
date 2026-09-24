@@ -24,6 +24,7 @@
 #include "mmb_priv.h"
 #include "paint.h"
 #include "pcx.h"
+#include "tui.h"
 
 /* ---- reusable picker (cmd_files_ui.c, #640) ---------------------------- */
 
@@ -34,6 +35,8 @@ int mmb_files_pick_cancelled(void);
 const char *mmb_files_pick_result(void);
 int mmb_files_pick_key(int key);
 void mmb_files_pick_render(void);
+void mmb_files_pick_compose(void);
+int mmb_files_pick_geom(int *x, int *y, int *w, int *h);
 void mmb_files_pick_end(void);
 
 /* ---- module state ------------------------------------------------------ */
@@ -41,6 +44,10 @@ void mmb_files_pick_end(void);
 enum { PF_NONE = 0, PF_OPEN, PF_SAVEAS };
 
 static int s_mode;		/* active picker purpose */
+
+/* Picker overlay bookkeeping for pt_file_draw() (#722). */
+static int s_pick_drawn;
+static int s_pick_x, s_pick_y, s_pick_w, s_pick_h;
 
 static const char *pf_base(const char *p)
 {
@@ -276,7 +283,6 @@ static void pf_begin(int mode)
 		mmb_files_pick_begin(1, dir, PT.label[0] ? PT.label : "");
 		pf_status("Save as", 0);
 	}
-	mmb_files_pick_render();
 	pt_request_redraw();
 }
 
@@ -293,6 +299,8 @@ static void pf_commit(const char *path)
 void pt_file_init(void)
 {
 	s_mode = PF_NONE;
+	s_pick_drawn = 0;
+	s_pick_x = s_pick_y = s_pick_w = s_pick_h = 0;
 	PT.path[0] = 0;
 	PT.label[0] = 0;
 }
@@ -348,7 +356,41 @@ int pt_file_key(int key)
 		pt_request_redraw();
 		return 1;
 	}
-	mmb_files_pick_render();
 	pt_request_redraw();
 	return 1;
+}
+
+/* Compose the picker as part of PAINT's redraw. The dialog is drawn directly
+ * by the picker module outside pt_redraw(), so without this the frame's canvas
+ * pass paints over it and it vanishes after one frame (#722). Cell bookkeeping
+ * mirrors paint_menus.c: invalidate the panel while it is open (a partial
+ * canvas recomposite may have run underneath) and blank + accept the old
+ * rectangle when it closes so the text cannot re-blit over the canvas. */
+void pt_file_draw(void)
+{
+	int nx = 0, ny = 0, nw = 0, nh = 0;
+	int active = mmb_files_pick_active();
+
+	if (active)
+		mmb_files_pick_geom(&nx, &ny, &nw, &nh);
+
+	if (s_pick_drawn &&
+	    (nx != s_pick_x || ny != s_pick_y || nw != s_pick_w ||
+	     nh != s_pick_h))
+	{
+		tui_fill(s_pick_x, s_pick_y, s_pick_w, s_pick_h, ' ',
+			 TUI_WHITE, TUI_BLACK);
+		tui_accept_rect(s_pick_x, s_pick_y, s_pick_w, s_pick_h);
+	}
+	if (active)
+	{
+		tui_invalidate_rect(nx, ny, nw, nh);
+		mmb_files_pick_compose();
+	}
+
+	s_pick_drawn = active ? 1 : 0;
+	s_pick_x = nx;
+	s_pick_y = ny;
+	s_pick_w = nw;
+	s_pick_h = nh;
 }

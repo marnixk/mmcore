@@ -3675,7 +3675,7 @@ void mmb_files_pick_end(void)
 	PK.result[0] = 0;
 }
 
-void mmb_files_pick_render(void)
+static void pk_render(void)
 {
 	int x, y, w, h, i, rows, listy, ny;
 	char line[FU_PATH + 24];
@@ -3721,6 +3721,31 @@ void mmb_files_pick_render(void)
 	tui_pad(x + 2, y + h - 2,
 		"Enter choose  Tab list/name  Up/Down  Esc cancel",
 		w - 4, TUI_BRWHITE, TUI_BLACK);
+}
 
+/* Compose the dialog into the TUI buffer only (no present): PAINT calls this
+ * from pt_redraw() so the picker is part of the frame's single present. */
+void mmb_files_pick_compose(void)
+{
+	if (!PK.active)
+		return;
+	pk_render();
+}
+
+/* Draw and present the dialog standalone (non-PAINT callers). */
+void mmb_files_pick_render(void)
+{
+	if (!PK.active && !PK.done)
+		return;
+	pk_render();
 	tui_flush();
+}
+
+/* Report the dialog rectangle in text cells when a picker is open. */
+int mmb_files_pick_geom(int *x, int *y, int *w, int *h)
+{
+	if (!PK.active)
+		return 0;
+	pk_geom(x, y, w, h);
+	return 1;
 }
