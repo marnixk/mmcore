@@ -14,7 +14,10 @@ Design rules
 * Bodies are white (15) with a black (0) outline, the classic paint cursor
   look: legible over both light and dark canvas pixels.
 * Each tool has an idle sprite and an active (button-down) sprite that differs.
-* Hotspots are in sprite coordinates, 0..31.
+* Hotspots are in sprite coordinates, 0..31, and must name a **non-transparent**
+  pixel (the writing tip for the pointer tools, the centre for the shapes):
+  a hotspot on a transparent pixel lands the pointer beside the drawn art,
+  which is what #690 reported. ``build()`` enforces the invariant.
 
 Run from the repo root:
 
@@ -240,7 +243,10 @@ def art_arrow(active):
     if active:
         # Pressed: solid notch highlight at the tip.
         stamp(g, add_disc(blank_mask(), 4, 5, 2), RED)
-    return g, (2, 2)
+    # Hotspot is the topmost lit pixel of the tip (the black outline caps the
+    # white vertex at (2,2)); (2,2) itself sits one pixel down-right of the
+    # drawn tip (#690).
+    return g, (2, 1)
 
 
 def art_pencil(active):
@@ -261,7 +267,10 @@ def art_pencil(active):
     if active:
         # Pressed: little graphite dot at the point.
         stamp(g, add_disc(blank_mask(), 3, 28, 1), RED)
-    return g, (3, 28)
+    # The idle art's writing tip is its bottom-left pixel (4,28); the active
+    # art's red graphite dot extends one pixel further to (3,28). Each state
+    # names an opaque tip pixel so the pointer is never beside the art (#690).
+    return g, ((3, 28) if active else (4, 28))
 
 
 def art_line(active):
@@ -305,6 +314,9 @@ def art_ellipse(active):
         inner = blank_mask()
         add_disc(inner, 15, 15, 8, 5)
         stamp(g, inner, LGREY)
+    else:
+        # Mark the centre of the hollow ring so the centre hotspot is opaque.
+        dot(g, 15, 15, BLACK)
     return g, (15, 15)
 
 
@@ -319,6 +331,9 @@ def art_circle(active):
         inner = blank_mask()
         add_disc(inner, 15, 15, 8)
         stamp(g, inner, LGREY)
+    else:
+        # Mark the centre of the hollow ring so the centre hotspot is opaque.
+        dot(g, 15, 15, BLACK)
     return g, (15, 15)
 
 
@@ -557,7 +572,8 @@ typedef enum {
 /* One tool's idle and active art. Each bitmap is PCA_CURSOR_PIXELS bytes of
  * row-major default-VGA palette indices; PCA_CURSOR_TRANSPARENT marks a pixel
  * the sprite-restore runtime leaves untouched. The hotspot coordinates are in
- * sprite space (0..31) and are carried per state. */
+ * sprite space (0..31), are carried per state, and always name a
+ * non-transparent art pixel (#690). */
 typedef struct {
 \tconst char *name;
 \tconst uint8_t *idle;
@@ -583,6 +599,23 @@ extern const pca_sprite_t pca_sprites[PCA_TOOL_COUNT];
     }
 
 
+def check_hotspot(tool, state, grid, hot):
+    """Sanity check: the hotspot must name a non-transparent art pixel (#690).
+
+    A hotspot on a transparent pixel places the pointer beside the drawn art,
+    so the requested point is not on the cursor at all.
+    """
+    hx, hy = hot
+    if not (0 <= hx < W and 0 <= hy < H):
+        raise AssertionError(
+            "%s %s hotspot (%d,%d) is outside the sprite" % (tool, state, hx, hy)
+        )
+    if grid[hy][hx] == T:
+        raise AssertionError(
+            "%s %s hotspot (%d,%d) is transparent" % (tool, state, hx, hy)
+        )
+
+
 def build():
     arts = {}
     for tool in TOOLS:
@@ -594,6 +627,8 @@ def build():
             "idle_hot": idle_hot,
             "active_hot": active_hot,
         }
+        check_hotspot(tool, "idle", idle, idle_hot)
+        check_hotspot(tool, "active", active, active_hot)
     return arts
 
 

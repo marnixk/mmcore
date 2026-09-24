@@ -63,10 +63,10 @@ def native_mmcore():
 def _lit_near(img, x, y, r=8):
     """True when any pixel in a small window around (x, y) is lit.
 
-    The cursor hotspot is not necessarily on an opaque art pixel (the pencil
-    tool's tip sits one pixel right of its hotspot), so assert the sprite was
-    drawn at the requested point by sampling a small neighbourhood instead of
-    one exact pixel.
+    The hotspot names an opaque art pixel (#690), but the default pencil tool's
+    hotspot is its graphite tip, which is black, so assert the sprite was drawn
+    at the requested point by sampling a small neighbourhood (the white body)
+    rather than one exact pixel.
     """
     for yy in range(y - r, y + r + 1):
         for xx in range(x - r, x + r + 1):
@@ -153,8 +153,8 @@ def test_mouse_move_and_click_change_pixels(native_mmcore, tmp_path):
     assert (img0.width, img0.height) == (PT_W, PT_H)
 
     # The pointer moved onto the canvas: the cursor sprite is drawn at the
-    # requested framebuffer point (sampled, since the hotspot need not be an
-    # opaque art pixel and window placement must not shift it).
+    # requested framebuffer point. The pencil hotspot is its black tip, so
+    # sample the lit white body just inside instead of that one pixel.
     assert is_black(img0.pixel(100, 100))
     assert _lit_near(img1, 100, 100)
 
