@@ -28,7 +28,7 @@ def test_build_script_builds_hostap_only_for_hardware():
     assert "${QEMU:-1}" in text
     assert "wpa_supplicant" in text
     assert 'QEMU:-1}" = "0"' in text or '[ "${QEMU:-1}" = "0" ]' in text
-    assert "--kernel-max-size 8" in text
+    assert "--kernel-max-size 9" in text
     assert "MMB_VERSION" in text
     assert "USE_NAK_USB_FIX" in text
     assert "USE_QEMU_USB_FIX" in text
@@ -46,7 +46,7 @@ def test_package_and_install_ship_brcmfmac_firmware():
     assert "copy_wlan_firmware" in pkg
     assert "copy_wlan_firmware_dir" in inst
     assert "copy_wlan_firmware_mtools" in inst
-    assert "--kernel-max-size 8" in pkg
+    assert "--kernel-max-size 9" in pkg
     assert "check_kernel_end" in pkg
     assert 'MMB_VERSION="v${VERSION}"' in pkg
     subprocess.run(["bash", "-n", os.path.join(REPO, "scripts", "package-release.sh")], check=True)
@@ -109,7 +109,7 @@ def test_eth_cpp_opens_dhcp_ethernet_device():
 
 
 def test_qemu_kernel_end_fits_configured_max(kernel_image):
-    """Circle halt()s if _end >= MEM_KERNEL_START + KERNEL_MAX_SIZE (8MB)."""
+    """Circle halt()s if _end >= MEM_KERNEL_START + KERNEL_MAX_SIZE (9MB)."""
     map_path = os.path.join(os.path.dirname(kernel_image), "kernel8.map")
     assert os.path.isfile(map_path), map_path
     end = None
@@ -122,8 +122,8 @@ def test_qemu_kernel_end_fits_configured_max(kernel_image):
                     break
     assert end is not None, "_end not found in kernel8.map"
     start = 0x80000
-    limit = start + 8 * 0x100000
-    assert end < limit, f"_end 0x{end:x} exceeds 8MB kernel window (0x{limit:x})"
+    limit = start + 9 * 0x100000
+    assert end < limit, f"_end 0x{end:x} exceeds 9MB kernel window (0x{limit:x})"
 
 
 def test_term_tcp_drain_retries_empty_recv():

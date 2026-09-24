@@ -29,7 +29,7 @@ log "Configuring Circle (RASPPI=${RASPPI}, AArch64, ${QEMU_FLAG:-hardware})"
 # Circle sysinit halt()s when _end (text+data+BSS) exceeds KERNEL_MAX_SIZE.
 # The .img file omits BSS, so a ~1.4MB kernel8.img can still sit at ~4MB
 # in RAM (512KB TERM ring, wordpad, util). 4MB left almost no headroom
-# once WLAN is linked; 8MB is the configured cap.
+# once WLAN is linked; 8MB then 9MB (PAINT/TDF wave) are the configured caps.
 # QEMU usb-net sits on the DWC2 root port (no hub); Circle's NAK and USB
 # timing fixes keep CDC Ethernet from freezing or starving bulk IN.
 # configure --qemu also sets NO_SCREEN_DMA_BURST_LENGTH (SetArea falls back
@@ -39,7 +39,7 @@ QEMU_USB_DEFS=""
 if [ "${QEMU:-1}" = "1" ]; then
   QEMU_USB_DEFS="-d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX"
 fi
-( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} ${QEMU_USB_DEFS} --kernel-max-size 8 -f )
+( cd "${CIRCLE_DIR}" && ./configure -r "${RASPPI}" -p "${PREFIX64}" ${QEMU_FLAG} ${QEMU_USB_DEFS} --kernel-max-size 9 -f )
 
 if grep -q 'mmbasic-issue-149' "${CIRCLE_DIR}/addon/wlan/ether4330.c" 2>/dev/null; then
 	:
