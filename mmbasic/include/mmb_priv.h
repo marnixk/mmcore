@@ -455,6 +455,7 @@ typedef struct mmb {
 		int ret_sid;
 		int ret_type; /* T_NUM/T_INT/T_STR return type for functions */
 		int arg_sid[MMB_MAX_SUB_ARGS];
+		int arg_type[MMB_MAX_SUB_ARGS]; /* declared scalar type, 0 = from name */
 		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
