@@ -49,7 +49,7 @@ kernel_elf_for_rasppi() {
 # Circle compares _end to MEM_KERNEL_START+KERNEL_MAX_SIZE (not .img size).
 check_kernel_end() {
 	local elf="$1"
-	local max_mb="${KERNEL_MAX_SIZE_MB:-8}"
+	local max_mb="${KERNEL_MAX_SIZE_MB:-9}"
 	[ -f "${elf}" ] || die "missing ${elf}"
 	PREFIX64="${PREFIX64}" python3 - "${elf}" "${max_mb}" <<'PY'
 import os, subprocess, sys
@@ -320,7 +320,7 @@ package_pi400
 
 log "Restoring default QEMU Raspberry Pi 3 Circle config"
 clean_build_tree
-( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu -d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX --kernel-max-size 8 -f )
+( cd "${CIRCLE_DIR}" && ./configure -r 3 -p "${PREFIX64}" --qemu -d USE_NAK_USB_FIX -d USE_QEMU_USB_FIX --kernel-max-size 9 -f )
 
 log "Release artifacts"
 ls -la "${DIST}"/mmcore-console-*-v"${VERSION}".zip
