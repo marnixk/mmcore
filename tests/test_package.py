@@ -13,6 +13,14 @@ def _write_lines(con, path, lines):
     assert con.send_line("CLOSE #1") == ""
 
 
+def _read_line(con, path):
+    assert con.send_line(f'OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("LINE INPUT #1, A$") == ""
+    out = con.send_line("PRINT A$")
+    con.send_line("CLOSE #1")
+    return out
+
+
 def _make_game(con, folder, main_lines=None):
     assert con.send_line('CHDIR "A:/"') == ""
     assert con.send_line(f'MKDIR "{folder}"') == ""
@@ -377,6 +385,54 @@ def test_package_folder_listing_over_2k(fresh_console):
     run = console.send_line('RUN "BIGLST.APP"')
     assert "?PACKAGE" not in run.upper(), run
     assert "M60" in run, run
+
+
+def test_package_folder_over_64_files(fresh_console):
+    """#712: a folder with more than 64 entries packs and unpacks intact.
+
+    Before the fix the zip writer kept a fixed 64-entry table and the reader
+    rejected archives claiming more than 64 entries, so PACKAGE failed for
+    any folder with over 64 files. Pack 70 files (71 archive entries), then
+    drop the source tree to free ramdisk nodes before UNPACKing.
+    """
+    console = fresh_console
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "MANY"') == ""
+    _write_lines(console, "MANY/MAIN.BAS", ['PRINT "MANYOK"'])
+    _write_lines(
+        console,
+        "MAKGEN.BAS",
+        [
+            "FOR I = 1 TO 70",
+            'OPEN "A:/MANY/Z"+LTRIM$(STR$(I))+".TXT" FOR OUTPUT AS #1',
+            'PRINT #1, "V"+LTRIM$(STR$(I))',
+            "CLOSE #1",
+            "NEXT I",
+            'PRINT "SEEDED"',
+        ],
+    )
+    assert "SEEDED" in console.send_line('RUN "MAKGEN.BAS"')
+    out = console.send_line('PACKAGE "MANY.APP", "MANY/"')
+    assert "?PACKAGE" not in out.upper(), out
+    _write_lines(
+        console,
+        "MAKCLR.BAS",
+        [
+            "FOR I = 1 TO 70",
+            'KILL "A:/MANY/Z"+LTRIM$(STR$(I))+".TXT"',
+            "NEXT I",
+            'KILL "A:/MANY/MAIN.BAS"',
+            'RMDIR "A:/MANY"',
+            'PRINT "CLEARED"',
+        ],
+    )
+    assert "CLEARED" in console.send_line('RUN "MAKCLR.BAS"')
+    assert console.send_line('MKDIR "MANYDEST"') == ""
+    assert console.send_line('CHDIR "MANYDEST"') == ""
+    assert console.send_line('UNPACK "A:/MANY.APP"') == ""
+    assert _read_line(console, "A:/MANYDEST/Z70.TXT") == "V70"
+    assert _read_line(console, "A:/MANYDEST/Z65.TXT") == "V65"
+    assert console.send_line("PRINT CWD$").upper().startswith("A:/MANYDEST")
 
 
 def test_package_edit_after_run_is_untitled(kernel_image):

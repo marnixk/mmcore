@@ -99,6 +99,39 @@ static int buf_grow(unsigned char **buf, unsigned *cap, unsigned used, unsigned 
 	return 0;
 }
 
+/* Grow the entry table so it can hold `need` entries. The old writer stored a
+ * fixed MMB_ZIP_MAX_FILES array in the struct; the format's 16-bit EOCD count
+ * is the only real ceiling, so keep the table on the heap and double it (#712).
+ * Returns 0, or -1 on allocation failure / beyond the format limit. */
+static int ent_grow(mmb_zip_w *z, unsigned need)
+{
+	unsigned ncap;
+	mmb_zip_ent *p;
+	if (need <= (unsigned)z->ent_cap)
+		return 0;
+	if (need > MMB_ZIP_MAX_FILES)
+		return -1;
+	ncap = z->ent_cap ? (unsigned)z->ent_cap * 2 : 16;
+	while (ncap < need)
+		ncap *= 2;
+	if (ncap > MMB_ZIP_MAX_FILES)
+		ncap = MMB_ZIP_MAX_FILES;
+	if (need > ncap)
+		return -1;
+	p = G.plat->alloc(ncap * sizeof(*p));
+	if (!p)
+		return -1;
+	if (z->ent)
+	{
+		if (z->nent)
+			memcpy(p, z->ent, (unsigned)z->nent * sizeof(*p));
+		G.plat->free(z->ent);
+	}
+	z->ent = p;
+	z->ent_cap = (int)ncap;
+	return 0;
+}
+
 int mmb_zip_begin(mmb_zip_w *z)
 {
 	memset(z, 0, sizeof(*z));
@@ -109,6 +142,8 @@ void mmb_zip_abort(mmb_zip_w *z)
 {
 	if (z->buf)
 		G.plat->free(z->buf);
+	if (z->ent)
+		G.plat->free(z->ent);
 	memset(z, 0, sizeof(*z));
 }
 
@@ -118,7 +153,7 @@ int mmb_zip_add(mmb_zip_w *z, const char *name, const void *data, unsigned n)
 	unsigned char *p;
 	if (!z || !name || !mmb_zip_path_ok(name))
 		return -1;
-	if (z->nent >= MMB_ZIP_MAX_FILES)
+	if (ent_grow(z, (unsigned)z->nent + 1) != 0)
 		return -1;
 	nlen = (unsigned)strlen(name);
 	if (!nlen || nlen > 120)
@@ -204,6 +239,11 @@ int mmb_zip_finish(mmb_zip_w *z, unsigned char **out, unsigned *n)
 	}
 	*out = z->buf;
 	*n = z->len;
+	if (z->ent)
+		G.plat->free(z->ent);
+	z->ent = 0;
+	z->nent = 0;
+	z->ent_cap = 0;
 	z->buf = 0;
 	z->cap = 0;
 	z->len = 0;
@@ -247,7 +287,7 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 		return -1;
 	nent = u16le(zip + eocd + 10);
 	cd_off = u32le(zip + eocd + 16);
-	if (nent > MMB_ZIP_MAX_FILES || cd_off >= n)
+	if (cd_off >= n)
 		return -1;
 	pos = cd_off;
 	for (i = 0; i < nent; i++)
