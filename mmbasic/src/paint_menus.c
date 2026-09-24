@@ -57,6 +57,12 @@ static int s_dlg_yes;
 static int s_alt;
 static int s_hover;
 static int s_btn;
+/* The menu/dialog consumed the press in progress, so the poll keeps owning the
+ * button until it is released (#710). Without this a press that ran an
+ * immediate menu action (Undo/Redo/Open/Save) closes the menu and the next held
+ * poll falls through to cmd_paint.c's palette/tool/canvas handling, starting a
+ * stray stroke behind where the menu was. */
+static int s_owned;
 
 /* ---- geometry ---------------------------------------------------------- */
 
@@ -503,6 +509,7 @@ void pt_menus_init(void)
 	s_alt = 0;
 	s_hover = -1;
 	s_btn = 0;
+	s_owned = 0;
 	s_drawn_menu = PT_MENU_NONE;
 	s_drawn_hover = -1;
 	s_drawn_dlg = DLG_NONE;
@@ -687,14 +694,20 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 		if (s_btn)
 		{
 			s_btn = 0;
+			s_owned = 0;
 			return pt_menus_active();
 		}
 		return pointer_motion(sx, sy);
 	}
 
 	/* `fresh` is a genuine new press: the loop now forwards the button-up
-	 * too, so held motion is distinguished from a press. */
+	 * too, so held motion is distinguished from a press. A press that lands
+	 * while a menu/dialog is open belongs to it: if that press runs an
+	 * immediate action and closes the overlay, the menu keeps owning the
+	 * button so held polls do not reach the canvas (#710). */
 	fresh = !s_btn;
+	if (fresh)
+		s_owned = pt_menus_active();
 	s_btn = 1;
 
 	if (s_dlg == DLG_CONFIRM)
@@ -761,5 +774,11 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 			return 1;
 		}
 	}
+
+	/* A menu/dialog that is no longer on screen may still own this held
+	 * press (it ran an immediate action and closed). Keep consuming the
+	 * event until button-up so the press cannot leak into the canvas. */
+	if (s_owned)
+		return 1;
 	return 0;
 }

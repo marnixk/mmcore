@@ -219,6 +219,42 @@ def test_edit_clear_wipes_canvas(native_mmcore, tmp_path):
     assert is_black(img1.pixel(200, 100))
 
 
+def test_held_press_after_menu_action_stays_off_canvas(native_mmcore, tmp_path):
+    """#710: a button still held after an immediate menu action must not paint.
+
+    Draw an undoable stroke, open Edit, press-and-hold Undo. Undo runs and the
+    dropdown closes, but the held press used to fall through to the canvas and
+    start a pencil dot behind where the menu was. The pointer is then moved
+    away after release, so any leftover ink at the Undo row is canvas pixels.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(100, 100)
+    s.down("l")
+    s.move(160, 100)
+    s.up("l")
+    # Open Edit, press-and-hold Undo, and keep the button down for a frame.
+    s.move(60, 8)          # Edit title
+    s.click("l")
+    s.move(70, 20)         # Undo row
+    s.down("l")
+    s.move(71, 20)         # held frame: the old code leaked to the canvas here
+    held = s.shot("held.ppm")
+    s.up("l")
+    s.move(400, 300)       # park the pointer away from the row
+    final = s.shot("final.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    # The undo ran: the stroke drawn at y=100 is gone.
+    assert is_black(Ppm(held).pixel(130, 100))
+    # No stray pencil dot behind the closed dropdown.
+    img = Ppm(final)
+    assert is_black(img.pixel(70, 20))
+    assert is_black(img.pixel(71, 20))
+
+
 def test_keyboard_injection_exits_paint(native_mmcore, tmp_path):
     """Synthetic keys reach the app: Esc leaves PAINT and the REPL works."""
     s = NativeSession(tmp_path)

@@ -485,6 +485,22 @@ int main(void)
 	check(dmg_valid && dmg_y0 == 32, "up_then_hover_damage");
 	pt_menus_key(27);
 
+	/* ---- #710: a menu owns a held press after an immediate action ---- */
+	/* The fresh press runs Undo and closes the dropdown; the button is still
+	 * physically held. The poll must keep consuming it, so cmd_paint.c never
+	 * treats the held position as a fresh canvas press. */
+	u_undo = 0;
+	click(kEdit, 8);
+	press(kEdit, 20);	/* fresh press: Undo, menu closes */
+	check(u_undo == 1, "held_undo_dispatch");
+	check(!pt_menus_active(), "held_undo_closes");
+	check(pt_menus_mouse(kEdit, 20, PT_BTN_LEFT, 1) == 1, "held_undo_owned");
+	check(pt_menus_mouse(300, 200, PT_BTN_LEFT, 1) == 1, "held_move_owned");
+	release(300, 200);
+	/* Released: a fresh canvas press falls through to the canvas again. */
+	check(pt_menus_mouse(300, 200, PT_BTN_LEFT, 1) == 0, "release_frees_canvas");
+	release(300, 200);
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -596,6 +612,19 @@ def test_hover_follows_pointer(checks):
         "hover_cleanup",
         "held_move_no_activate",
         "up_then_hover_damage",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_held_press_owned_after_menu_action(checks):
+    """#710: a menu that runs an immediate action keeps owning the held press,
+    so it cannot leak into cmd_paint.c's canvas handling."""
+    for name in (
+        "held_undo_dispatch",
+        "held_undo_closes",
+        "held_undo_owned",
+        "held_move_owned",
+        "release_frees_canvas",
     ):
         assert checks.get(name) is True, name
 
