@@ -307,11 +307,19 @@ void pt_redraw(void)
 
 	/* Chrome is persistent: the tool column and palette only change when
 	 * PT.full_redraw is set, so a cursor move or a menu hover never touches
-	 * them. */
+	 * them. The exception is a dropdown at menu column 1, which overlaps the
+	 * tool column: pt_draw_canvas only repaints x >= PT_CANVAS_X, so the part
+	 * of a closed/switched dropdown over the tools would otherwise linger.
+	 * Damage there forces the column back before pt_menus_draw overlays. */
 	if (full)
 	{
 		pt_tools_draw();
 		pt_palette_draw();
+	}
+	else if (s_dmg_valid && s_dmg_x0 < PT_TOOL_W &&
+		 s_dmg_y1 >= PT_CANVAS_Y && s_dmg_y0 < PT_PAL_Y)
+	{
+		pt_tools_draw();
 	}
 
 	/* Compose the menu bar / open dropdown / dialog. paint_menus.c keeps the

@@ -195,6 +195,33 @@ def test_open_dropdown_is_not_overpainted(native_mmcore, tmp_path):
     assert is_black(img2.pixel(px, py))        # closed: canvas restored
 
 
+def test_switching_menus_clears_the_old_dropdown(native_mmcore, tmp_path):
+    """Switching File -> Help must erase the File dropdown from the canvas.
+
+    The File dropdown starts at menu column 1 and so overlaps the tool column.
+    pt_draw_canvas only repaints x >= PT_CANVAS_X, and the tool column is chrome
+    that used to be repainted only on a full frame, so the part of File's
+    dropdown over the canvas was left behind when the menu switched.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(12, 8)
+    s.click("l")           # open File
+    s.move(110, 8)         # hover the Help title: switches the open menu
+    s.move(400, 300)       # park the pointer clear of the checked pixels
+    after = s.shot("after.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    # Help's panel hangs from column 13 (x >= 104). Everything canvas-side of
+    # the old File dropdown (x 40..70) must be the restored black canvas.
+    img = Ppm(after)
+    for y in range(20, 92):
+        for x in range(40, 70):
+            assert is_black(img.pixel(x, y)), (x, y, img.pixel(x, y))
+
+
 def test_edit_clear_wipes_canvas(native_mmcore, tmp_path):
     """#669: Edit > Clear wipes the canvas, not just the undo history."""
     s = NativeSession(tmp_path)

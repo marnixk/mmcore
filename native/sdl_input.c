@@ -385,6 +385,13 @@ static void handle_event(const SDL_Event *e)
 	case SDL_WINDOWEVENT:
 		if (e->window.event == SDL_WINDOWEVENT_CLOSE)
 			sdl_video_request_quit();
+		else if (e->window.event == SDL_WINDOWEVENT_ENTER)
+			/* The pointer is over our framebuffer: hide the system
+			 * cursor so the app's own sprite is the only pointer
+			 * (PAINT paints its tool cursor; two arrows otherwise). */
+			SDL_ShowCursor(SDL_DISABLE);
+		else if (e->window.event == SDL_WINDOWEVENT_LEAVE)
+			SDL_ShowCursor(SDL_ENABLE);
 		else if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			 e->window.event == SDL_WINDOWEVENT_RESIZED ||
 			 e->window.event == SDL_WINDOWEVENT_MAXIMIZED ||
