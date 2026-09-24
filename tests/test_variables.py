@@ -183,6 +183,94 @@ def test_local_in_loop_resets_between_calls(console):
     assert console.send_line("RUN") == "3\n3"
 
 
+def test_error_in_sub_restores_caller_local(console):
+    """#692: a trapped error unwinds the SUB frame, so the caller's LOCAL
+    binding comes back before the ON ERROR handler runs."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 ON ERROR GOTO 500") == ""
+    assert console.send_line("20 SUB LEAF") == ""
+    assert console.send_line("30 LOCAL X") == ""
+    assert console.send_line("40 X = 99") == ""
+    assert console.send_line("50 DIM A(2)") == ""
+    assert console.send_line("60 A(5) = 1") == ""
+    assert console.send_line("70 END SUB") == ""
+    assert console.send_line("100 X = 5") == ""
+    assert console.send_line("110 LEAF") == ""
+    assert console.send_line('120 PRINT "after X="; X') == ""
+    assert console.send_line("130 END") == ""
+    assert console.send_line('500 PRINT "handler X="; X') == ""
+    assert console.send_line("510 RESUME 120") == ""
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["handler X=5", "after X=5"], out
+
+
+def test_error_in_sub_restores_caller_argument(console):
+    """#692: a trapped error restores the caller's argument slot too, so a
+    SUB that overwrote a global of the same name leaves it intact."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 ON ERROR GOTO 500") == ""
+    assert console.send_line("20 SUB LEAF(P$)") == ""
+    assert console.send_line("30 DIM A(2)") == ""
+    assert console.send_line("40 A(5) = 1") == ""
+    assert console.send_line("50 END SUB") == ""
+    assert console.send_line('100 P$ = "orig"') == ""
+    assert console.send_line('110 LEAF "changed"') == ""
+    assert console.send_line('120 PRINT "after P$="; P$') == ""
+    assert console.send_line("130 END") == ""
+    assert console.send_line('500 PRINT "handler P$="; P$') == ""
+    assert console.send_line("510 RESUME 120") == ""
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["handler P$=orig", "after P$=orig"], out
+
+
+def test_error_in_nested_sub_restores_every_frame(console):
+    """#692: nested SUB calls are all unwound, not just the innermost one."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 ON ERROR GOTO 500") == ""
+    assert console.send_line("20 SUB OUTER") == ""
+    assert console.send_line("30 LOCAL X") == ""
+    assert console.send_line("40 X = 77") == ""
+    assert console.send_line("50 INNER") == ""
+    assert console.send_line("60 END SUB") == ""
+    assert console.send_line("70 SUB INNER") == ""
+    assert console.send_line("80 DIM A(2)") == ""
+    assert console.send_line("90 A(5) = 1") == ""
+    assert console.send_line("100 END SUB") == ""
+    assert console.send_line("110 X = 5") == ""
+    assert console.send_line("120 OUTER") == ""
+    assert console.send_line('130 PRINT "after X="; X') == ""
+    assert console.send_line("140 END") == ""
+    assert console.send_line('500 PRINT "handler X="; X') == ""
+    assert console.send_line("510 RESUME 130") == ""
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["handler X=5", "after X=5"], out
+
+
+def test_error_in_function_restores_caller_local(console):
+    """#692: a FUNCTION frame is unwound on a trapped error as well."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 ON ERROR GOTO 500") == ""
+    assert console.send_line("20 FUNCTION FN(N)") == ""
+    assert console.send_line("30 LOCAL X") == ""
+    assert console.send_line("40 X = N * 10") == ""
+    assert console.send_line("50 DIM A(2)") == ""
+    assert console.send_line("60 A(5) = 1") == ""
+    assert console.send_line("70 FN = 0") == ""
+    assert console.send_line("80 END FUNCTION") == ""
+    assert console.send_line("100 X = 5") == ""
+    assert console.send_line("110 R = FN(3)") == ""
+    assert console.send_line('120 PRINT "after X="; X') == ""
+    assert console.send_line("130 END") == ""
+    assert console.send_line('500 PRINT "handler X="; X') == ""
+    assert console.send_line("510 RESUME 120") == ""
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["handler X=5", "after X=5"], out
+
+
 def test_sub_argument_as_string(console):
     """#682: an unsuffixed SUB argument declared AS STRING is a string."""
     assert console.send_line("NEW") == ""
