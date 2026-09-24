@@ -32,6 +32,37 @@ static int quit_key = -1;
 static int redraws;
 
 void pt_request_redraw(void) { redraws++; }
+
+/* ---- frame damage recording (#702) ---- */
+static int dmg_valid, dmg_x0, dmg_y0, dmg_x1, dmg_y1;
+void pt_damage(int x, int y, int w, int h)
+{
+	int x1 = x + w - 1, y1 = y + h - 1;
+
+	if (w < 1 || h < 1)
+		return;
+	if (!dmg_valid)
+	{
+		dmg_x0 = x;
+		dmg_y0 = y;
+		dmg_x1 = x1;
+		dmg_y1 = y1;
+		dmg_valid = 1;
+	}
+	else
+	{
+		if (x < dmg_x0)
+			dmg_x0 = x;
+		if (y < dmg_y0)
+			dmg_y0 = y;
+		if (x1 > dmg_x1)
+			dmg_x1 = x1;
+		if (y1 > dmg_y1)
+			dmg_y1 = y1;
+	}
+}
+static void dmg_reset(void) { dmg_valid = 0; }
+
 void pt_file_new(void) { f_new++; }
 void pt_file_open(void) { f_open++; }
 void pt_file_save(void) { f_save++; }
@@ -135,6 +166,30 @@ void tui_dialog_panel(int x, int y, int w, int h, const char *title, int bf,
 	(void)w;
 	(void)h;
 	tui_puts(x + 1, y, title, 0, 0);
+}
+void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg)
+{
+	int i, j;
+
+	(void)fg;
+	(void)bg;
+	for (j = 0; j < h; j++)
+		for (i = 0; i < w; i++)
+			put_cell(x + i, y + j, ch);
+}
+void tui_accept_rect(int x, int y, int w, int h)
+{
+	(void)x;
+	(void)y;
+	(void)w;
+	(void)h;
+}
+void tui_invalidate_rect(int x, int y, int w, int h)
+{
+	(void)x;
+	(void)y;
+	(void)w;
+	(void)h;
 }
 
 static int screen_has(const char *needle)
@@ -355,6 +410,30 @@ int main(void)
 	check(PT.dialog, "letter_accel_quit");
 	pt_menus_key('n');
 
+	/* ---- #702: menu damage stays inside the menu band ---- */
+	/* Opening File damages the bar (row 0) and the File dropdown only; it
+	 * never reaches the canvas below the dropdown, and never requests a full
+	 * frame. */
+	pt_menus_key(27);
+	dmg_reset();
+	redraws = 0;
+	click(kFile, 8);
+	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 5 * 16,
+	      "open_damage_bounded");
+	check(redraws == 0, "menu_nav_no_full_redraw");
+	/* Switching to Edit while open damages the old and new dropdowns + bar. */
+	dmg_reset();
+	press(kEdit, 8);
+	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 5 * 16,
+	      "switch_damage_bounded");
+	release(kEdit, 8);
+	/* Closing damages the dropdown rectangle + bar, still not the canvas. */
+	dmg_reset();
+	press(300, 200);
+	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 3 * 16,
+	      "close_damage_bounded");
+	release(300, 200);
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -438,6 +517,17 @@ def test_edit_actions_and_clear_dialog(checks):
         "clear_wipes_canvas",
         "clear_mouse_no",
         "clear_mouse_yes",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_menu_damage_is_bounded(checks):
+    """#702: open/switch/close damage only the menu band, never a full frame."""
+    for name in (
+        "open_damage_bounded",
+        "menu_nav_no_full_redraw",
+        "switch_damage_bounded",
+        "close_damage_bounded",
     ):
         assert checks.get(name) is True, name
 

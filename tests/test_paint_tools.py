@@ -128,6 +128,12 @@ unsigned pt_palette_rgb(int idx) { (void)idx; return 0; }
 
 void pt_request_redraw(void) { PT.dirty = 1; }
 
+/* Frame damage (#700): the tool preview marks the rectangle it reverts. */
+void pt_damage_canvas(int x, int y, int w, int h)
+{
+	(void)x; (void)y; (void)w; (void)h;
+}
+
 void pt_undo_push(void) {}
 
 /* paint_text.c (#642) is not linked in this shim; the tool only forwards the

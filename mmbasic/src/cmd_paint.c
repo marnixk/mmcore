@@ -26,6 +26,20 @@ static int s_force_mouse;	/* test-only override (#633) */
 static int s_alt_pend;
 static int s_saved_mode, s_saved_bits;
 
+/* ---- frame damage (#700) ---------------------------------------------- *
+ * One screen-space bounding box (inclusive pixels) per frame. Every edit
+ * unions its rectangle here; pt_redraw() recomposites only that box and
+ * pt_present() DMAs only those rows. This replaces the old full-canvas blit
+ * plus full-frame present that flickered on real hardware. */
+static int s_dmg_valid;
+static int s_dmg_x0, s_dmg_y0, s_dmg_x1, s_dmg_y1;
+/* The cursor only needs its rectangle presented; its saved background makes a
+ * canvas recomposite unnecessary, and recompositing would erase any overlay
+ * text it sits on. So cursor motion unions into a separate present band. */
+static int s_pres_valid;
+static int s_pres_x0, s_pres_y0, s_pres_x1, s_pres_y1;
+static int s_full_frame;	/* this frame is a full chrome+canvas repaint */
+
 /* Weak fallback hook so the module tickets can supply strong definitions. */
 #if defined(__GNUC__) || defined(__clang__)
 #define PT_WEAK __attribute__((weak))
@@ -93,67 +107,232 @@ void pt_canvas_set(int cx, int cy, int idx)
 	if (!PT.canvas || cx < 0 || cy < 0 || cx >= PT.width || cy >= PT.height)
 		return;
 	PT.canvas[(size_t)cy * PT.width + cx] = (unsigned char)(idx & 255);
+	pt_damage_canvas(cx, cy, 1, 1);
 }
 
+/* Clamp a rectangle to the screen and union it into a box. Returns 0 when the
+ * rectangle is empty after clamping. */
+static int box_union(int *valid, int *bx0, int *by0, int *bx1, int *by1,
+		     int x, int y, int w, int h)
+{
+	int x1, y1;
+
+	if (w < 1 || h < 1)
+		return 0;
+	x1 = x + w - 1;
+	y1 = y + h - 1;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x1 > PT_W - 1)
+		x1 = PT_W - 1;
+	if (y1 > PT_H - 1)
+		y1 = PT_H - 1;
+	if (x1 < x || y1 < y)
+		return 0;
+
+	if (!*valid)
+	{
+		*bx0 = x;
+		*by0 = y;
+		*bx1 = x1;
+		*by1 = y1;
+		*valid = 1;
+	}
+	else
+	{
+		if (x < *bx0)
+			*bx0 = x;
+		if (y < *by0)
+			*by0 = y;
+		if (x1 > *bx1)
+			*bx1 = x1;
+		if (y1 > *by1)
+			*by1 = y1;
+	}
+	return 1;
+}
+
+void pt_damage(int x, int y, int w, int h)
+{
+	box_union(&s_dmg_valid, &s_dmg_x0, &s_dmg_y0, &s_dmg_x1, &s_dmg_y1,
+		  x, y, w, h);
+	PT.dirty = 1;
+}
+
+void pt_damage_canvas(int x, int y, int w, int h)
+{
+	pt_damage(PT_CANVAS_X + x, PT_CANVAS_Y + y, w, h);
+}
+
+void pt_damage_present(int x, int y, int w, int h)
+{
+	box_union(&s_pres_valid, &s_pres_x0, &s_pres_y0, &s_pres_x1,
+		  &s_pres_y1, x, y, w, h);
+	PT.dirty = 1;
+}
+
+/* Blit only the damaged canvas region (or the whole canvas on a full frame).
+ * No black under-fill for partial damage: every pixel in the region is written
+ * from PT.canvas, so nothing flashes. */
 void pt_draw_canvas(void)
 {
-	int x, y;
+	int x0, y0, x1, y1, x, y;
 
 	if (!PT.canvas)
 		return;
-	pt_fill_rect(PT_CANVAS_X, PT_CANVAS_Y, PT_CANVAS_W, PT_CANVAS_H,
-		     0x000000u);
-	for (y = 0; y < PT.height; y++)
+
+	if (s_full_frame)
+	{
+		x0 = 0;
+		y0 = 0;
+		x1 = PT.width - 1;
+		y1 = PT.height - 1;
+		/* Cover any margin the canvas does not reach. */
+		pt_fill_rect(PT_CANVAS_X, PT_CANVAS_Y, PT_CANVAS_W, PT_CANVAS_H,
+			     0x000000u);
+	}
+	else if (!s_dmg_valid)
+	{
+		return;
+	}
+	else
+	{
+		if (s_dmg_x1 < PT_CANVAS_X || s_dmg_y1 < PT_CANVAS_Y ||
+		    s_dmg_x0 > PT_CANVAS_X + PT.width - 1 ||
+		    s_dmg_y0 > PT_CANVAS_Y + PT.height - 1)
+			return;
+		x0 = s_dmg_x0 - PT_CANVAS_X;
+		y0 = s_dmg_y0 - PT_CANVAS_Y;
+		x1 = s_dmg_x1 - PT_CANVAS_X;
+		y1 = s_dmg_y1 - PT_CANVAS_Y;
+		if (x0 < 0)
+			x0 = 0;
+		if (y0 < 0)
+			y0 = 0;
+		if (x1 > PT.width - 1)
+			x1 = PT.width - 1;
+		if (y1 > PT.height - 1)
+			y1 = PT.height - 1;
+	}
+	if (x1 < x0 || y1 < y0)
+		return;
+
+	for (y = y0; y <= y1; y++)
 	{
 		const unsigned char *row = PT.canvas + (size_t)y * PT.width;
-		x = 0;
-		while (x < PT.width)
+
+		x = x0;
+		while (x <= x1)
 		{
 			unsigned char c = row[x];
-			int x0 = x;
-			while (x < PT.width && row[x] == c)
+			int sx = x;
+
+			while (x <= x1 && row[x] == c)
 				x++;
-			pt_fill_rect(PT_CANVAS_X + x0, PT_CANVAS_Y + y, x - x0, 1,
-				     pt_palette_rgb(c));
+			pt_fill_rect(PT_CANVAS_X + sx, PT_CANVAS_Y + y, x - sx,
+				     1, pt_palette_rgb(c));
 		}
 	}
 }
 
 void pt_present(void)
 {
-	if (G.plat && G.plat->tui_present)
+	int y0, y1;
+
+	if (!G.plat || !G.plat->tui_present)
+		return;
+	if (!s_dmg_valid && !s_pres_valid)
+	{
 		G.plat->tui_present(0, PT_H - 1);
+		return;
+	}
+	y0 = s_dmg_valid ? s_dmg_y0 : PT_H;
+	y1 = s_dmg_valid ? s_dmg_y1 : -1;
+	if (s_pres_valid)
+	{
+		if (s_pres_y0 < y0)
+			y0 = s_pres_y0;
+		if (s_pres_y1 > y1)
+			y1 = s_pres_y1;
+	}
+	G.plat->tui_present(y0, y1);
 }
 
 void pt_request_redraw(void)
 {
+	PT.full_redraw = 1;
 	PT.dirty = 1;
 }
 
 void pt_redraw(void)
 {
+	int full;
+
 	if (!PT.active)
 		return;
 
-	tui_begin();
-	/* Erase anything a dropdown / dialog left below the menu bar before the
-	 * canvas is repainted, but leave row 0 (the bar itself) untouched so it
-	 * does not flicker. The bar and the current overlay are composed and
-	 * flushed last, after the canvas / tools / palette passes, so those
-	 * direct-pixel draws cannot overpaint them (#661). */
-	tui_fill(0, 1, tui_cols(), tui_rows() - 1, ' ', TUI_BRWHITE, TUI_BLACK);
-	tui_flush();
+	full = PT.full_redraw;
+	PT.full_redraw = 0;
+	s_full_frame = full;
 
+	if (full)
+		pt_damage(0, 0, PT_W, PT_H);
+
+	/* Lift the previous sprite before recomposing, so the saved block can
+	 * never revert a freshly drawn pixel (#701). pt_cursor_restore() damages
+	 * its own rectangle. */
+	pt_cursor_restore();
+
+	if (!s_dmg_valid && !s_pres_valid)
+	{
+		PT.dirty = 0;
+		s_full_frame = 0;
+		return;
+	}
+
+	tui_begin();
+	if (full)
+		tui_invalidate();
+
+	/* Resync any stale text cells (spaces, or a previous frame's overlay)
+	 * into the composition buffer *before* the raw pixel passes, so a blit
+	 * can never paint blank cells over the canvas / chrome. */
+	tui_flush_no_present();
+
+	/* Canvas first: this also paints over any old dropdown / dialog pixels
+	 * whose rectangle was damaged when it closed. */
 	pt_draw_canvas();
-	pt_tools_draw();
-	pt_palette_draw();
+
+	/* Chrome is persistent: the tool column and palette only change when
+	 * PT.full_redraw is set, so a cursor move or a menu hover never touches
+	 * them. */
+	if (full)
+	{
+		pt_tools_draw();
+		pt_palette_draw();
+	}
+
+	/* Compose the menu bar / open dropdown / dialog. paint_menus.c keeps the
+	 * text-cell bookkeeping (blank + accept / invalidate) scoped to the
+	 * overlay rectangle and marks its damage in the event handlers. */
+	pt_menus_draw();
+
+	/* Write changed text cells into the composition buffer without presenting:
+	 * the single damage-band present below carries them too. */
+	tui_flush_no_present();
+
+	/* Capture the cursor background from the finished frame and stamp the
+	 * sprite last, so it never samples itself and never gets overpainted. */
 	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down);
 
-	pt_menus_draw();
-	tui_flush();
 	pt_present();
 
 	PT.dirty = 0;
+	s_dmg_valid = 0;
+	s_pres_valid = 0;
+	s_full_frame = 0;
 }
 
 /* ---- lifecycle --------------------------------------------------------- */
@@ -276,6 +455,7 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	PT.cursor_sy = PT_CANVAS_Y;
 	PT.active = 1;
 	mmb_hw_cursor(0);
+	PT.full_redraw = 1;
 	pt_redraw();
 }
 
@@ -288,22 +468,14 @@ const char *mmb_paint_key(char c)
 	if (!PT.active)
 		return G.out;
 
-	/* An open dialog owns the keyboard. */
+	/* An open dialog owns the keyboard. The modules mark their own damage
+	 * (file/text request a full frame; menus damage only the menu band). */
 	if (pt_file_dialog_active() && pt_file_key((unsigned char)c))
-	{
-		pt_request_redraw();
 		return G.out;
-	}
 	if (pt_text_active() && pt_text_key((unsigned char)c))
-	{
-		pt_request_redraw();
 		return G.out;
-	}
 	if (pt_menus_key((unsigned char)c))
-	{
-		pt_request_redraw();
 		return G.out;
-	}
 
 	if ((unsigned char)c == 1)	/* Alt prefix */
 	{
@@ -358,6 +530,9 @@ void mmb_paint_poll(void)
 	if (!PT.have_mouse)
 	{
 		PT.have_mouse = 1;
+		/* First sighting: make sure the sprite gets composed even if the
+		 * pointer has not moved yet. */
+		pt_damage(PT.cursor_sx, PT.cursor_sy, 1, 1);
 		changed = 1;
 	}
 
@@ -432,8 +607,10 @@ void mmb_paint_poll(void)
 		}
 	}
 
+	/* Cursor moves and canvas edits already marked their rectangles; do not
+	 * turn every event into a full-frame redraw (#700). */
 	if (changed)
-		pt_request_redraw();
+		PT.dirty = 1;
 	if (PT.dirty)
 		pt_redraw();
 }

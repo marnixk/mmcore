@@ -166,10 +166,20 @@ int pt_mouse_present(void);
 
 void pt_plot(int x, int y, unsigned rgb);
 void pt_fill_rect(int x, int y, int w, int h, unsigned rgb);
-void pt_draw_canvas(void);		/* blit PT.canvas 1:1 */
-void pt_present(void);			/* flush dirty rows to HDMI */
-void pt_redraw(void);			/* full frame: chrome, canvas, cursor */
-void pt_request_redraw(void);
+/* Mark a screen-space rectangle changed for the next frame. Damage from every
+ * edit is unioned into one bounding box; pt_redraw() then only recomposites
+ * what moved and pt_present() DMAs only those rows (#700). */
+void pt_damage(int x, int y, int w, int h);
+/* Same, in canvas coordinates (the canvas sits at PT_CANVAS_X/Y). */
+void pt_damage_canvas(int x, int y, int w, int h);
+/* Mark a rectangle that only needs presenting, not recompositing. The cursor
+ * uses this: its saved background already restores the pixels, so a canvas
+ * repaint would needlessly erase any overlay it sits on. */
+void pt_damage_present(int x, int y, int w, int h);
+void pt_draw_canvas(void);		/* blit the damaged PT.canvas region 1:1 */
+void pt_present(void);			/* flush the damaged rows to HDMI */
+void pt_redraw(void);			/* recompose the damaged frame */
+void pt_request_redraw(void);		/* request a full chrome+canvas frame */
 
 /* Map a screen pixel to canvas coords; returns 1 when inside the canvas. */
 int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy);

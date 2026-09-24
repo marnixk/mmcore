@@ -58,6 +58,19 @@ void tui_vline(int x, int y, int h, int ch, int fg, int bg);
 void tui_frame(int x, int y, int w, int h, int fg, int bg);
 void tui_cursor(int x, int y, int vis);
 void tui_flush(void);
+/* Flush changed cells into the pixel composition buffer without presenting.
+ * A caller that owns the present (PAINT's damage band) uses this so one DMA
+ * carries both its pixel edits and the changed text cells. */
+void tui_flush_no_present(void);
+/* Force the next flush to re-blit a cell rectangle, even when its content is
+ * unchanged. Used when raw pixels were drawn over the cells (PAINT canvas). */
+void tui_invalidate_rect(int x, int y, int w, int h);
+/* Accept the current cell content as already shown for a rectangle, without
+ * drawing it. Used when raw pixels have replaced the cells. */
+void tui_accept_rect(int x, int y, int w, int h);
+/* Read a pixel from the TUI composition buffer (what tui_* and the pixel
+ * helpers compose into), as RGB888. Falls back to the platform get_pixel. */
+unsigned tui_get_px(int x, int y);
 
 /* ---- modal dialog shell (#590) ------------------------------------------
  * A dialog is a framed, centred inset panel drawn over the composed screen

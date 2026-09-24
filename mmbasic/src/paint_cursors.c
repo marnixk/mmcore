@@ -9,10 +9,13 @@
  * saved PCX captures and screenshots.
  *
  * This file owns only its save buffer and the art lookup; it draws through
- * the shared pt_plot()/pt_palette_rgb() helpers and reads the live screen
- * through the platform get_pixel hook.
+ * the shared pt_plot()/pt_palette_rgb() helpers and reads the composed frame
+ * through tui_get_px(). That reads the TUI composition buffer (s_tui_pix on a
+ * bare Pi) rather than the HDMI framebuffer, which still shows the previous
+ * frame including the old cursor position (#701).
  */
 #include "mmb_priv.h"
+#include "tui.h"
 #include "paint.h"
 #include "paint_cursor_art.h"
 
@@ -46,9 +49,7 @@ static int pt_cursor_art(int tool)
 
 static unsigned pt_cursor_get(int x, int y)
 {
-	if (G.plat && G.plat->get_pixel)
-		return G.plat->get_pixel(x, y);
-	return 0;
+	return tui_get_px(x, y);
 }
 
 void pt_cursor_init(void)
@@ -64,6 +65,9 @@ void pt_cursor_restore(void)
 
 	if (!s_have)
 		return;
+	/* The pixels being put back leave the old cursor footprint: damage it so
+	 * the canvas/chrome pass recomposites there (#700). */
+	pt_damage_present(s_bg_x, s_bg_y, s_bg_w, s_bg_h);
 	for (row = 0; row < s_bg_h; row++)
 		for (col = 0; col < s_bg_w; col++)
 			pt_plot(s_bg_x + col, s_bg_y + row,
@@ -115,11 +119,15 @@ void pt_cursor_draw(int sx, int sy, int tool, int active)
 		s_bg_y = y0;
 		s_bg_w = x1 - x0;
 		s_bg_h = y1 - y0;
+		/* Background is captured from the fully composed frame (this runs
+		 * last), so the sprite never saves a stale copy of itself. */
 		for (y = 0; y < s_bg_h; y++)
 			for (x = 0; x < s_bg_w; x++)
 				s_bg[(size_t)y * s_bg_w + x] =
 					pt_cursor_get(x0 + x, y0 + y);
 		s_have = 1;
+		/* The new sprite covers this rectangle; damage it for the present. */
+		pt_damage_present(x0, y0, s_bg_w, s_bg_h);
 	}
 	else
 	{

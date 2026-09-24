@@ -391,7 +391,7 @@ static void ser_row(int y)
 	G.plat->write_serial(line, (unsigned)n);
 }
 
-void tui_flush(void)
+static void tui_flush_impl(int present)
 {
 	int x, y;
 	int pix0 = -1, pix1 = -1;
@@ -441,7 +441,7 @@ void tui_flush(void)
 	}
 	else
 		prev_cx = prev_cy = -1;
-	if (G.plat && G.plat->tui_present && pix0 >= 0)
+	if (present && G.plat && G.plat->tui_present && pix0 >= 0)
 		G.plat->tui_present(pix0, pix1);
 	if (any_serial)
 	{
@@ -449,6 +449,65 @@ void tui_flush(void)
 			if (row_dirty[y])
 				ser_row(y);
 	}
+}
+
+void tui_flush(void)
+{
+	tui_flush_impl(1);
+}
+
+void tui_flush_no_present(void)
+{
+	tui_flush_impl(0);
+}
+
+void tui_invalidate_rect(int x, int y, int w, int h)
+{
+	int i, j;
+
+	if (!inited)
+		return;
+	for (j = y; j < y + h; j++)
+	{
+		if (j < 0 || j >= rows)
+			continue;
+		for (i = x; i < x + w; i++)
+		{
+			if (i < 0 || i >= cols)
+				continue;
+			shown[j][i].ch = 0xFF;
+			shown[j][i].fg = 0xFF;
+			shown[j][i].bg = 0xFF;
+		}
+	}
+}
+
+void tui_accept_rect(int x, int y, int w, int h)
+{
+	int i, j;
+
+	if (!inited)
+		return;
+	for (j = y; j < y + h; j++)
+	{
+		if (j < 0 || j >= rows)
+			continue;
+		for (i = x; i < x + w; i++)
+		{
+			if (i < 0 || i >= cols)
+				continue;
+			shown[j][i] = front[j][i];
+		}
+	}
+}
+
+unsigned tui_get_px(int x, int y)
+{
+	if (G.plat && G.plat->tui_get_px)
+		return G.plat->tui_get_px(x, y);
+	if (G.plat && G.plat->get_pixel)
+		return G.plat->get_pixel(x, y);
+	return 0;
 }
 
 /* ---- modal dialog shell (#590) -------------------------------------- */

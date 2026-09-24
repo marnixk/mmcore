@@ -137,6 +137,66 @@ static void keys_geom(int *x, int *y, int *w, int *h)
 	tui_dialog_geom(46, 11, x, y, w, h);
 }
 
+/* ---- damage + cell bookkeeping (#702) ---------------------------------- *
+ * A menu open/hover/close or a dialog only changes a small rectangle. Mark
+ * that rectangle with pt_damage() (screen pixels) so cmd_paint.c recomposites
+ * and presents just those rows, instead of requesting a full redraw. The TUI
+ * cell model is kept in step separately: a rectangle that closes is blanked
+ * and "accepted" (raw canvas pixels win), and a rectangle whose content
+ * changes is invalidated so its text re-blits over the canvas. */
+
+/* Dropdown rectangle in text cells: title column, first row below the bar. */
+static void dropdown_cells(int m, int *x, int *y, int *w, int *h)
+{
+	if (m < 0 || m >= PT_MENU_COUNT)
+	{
+		*x = *y = *w = *h = 0;
+		return;
+	}
+	*x = s_title_col[m];
+	*y = 1;
+	*w = menu_cells(m);
+	*h = s_item_count[m];
+}
+
+/* The overlay currently on screen: a dialog wins over a dropdown. */
+static void overlay_cells(int *x, int *y, int *w, int *h)
+{
+	if (s_dlg == DLG_CONFIRM)
+		confirm_geom(x, y, w, h);
+	else if (s_dlg == DLG_KEYS)
+		keys_geom(x, y, w, h);
+	else
+		dropdown_cells(PT.menu, x, y, w, h);
+}
+
+static void dmg_cells(int cx, int cy, int cw, int ch)
+{
+	if (cw > 0 && ch > 0)
+		pt_damage(cx * MENU_CW, cy * MENU_CH, cw * MENU_CW,
+			  ch * MENU_CH);
+}
+
+static void dmg_bar(void)
+{
+	pt_damage(0, 0, PT_W, PT_MENU_H);
+}
+
+/* Damage whatever overlay (dropdown or dialog) is showing right now. */
+static void dmg_overlay(void)
+{
+	int x, y, w, h;
+
+	overlay_cells(&x, &y, &w, &h);
+	dmg_cells(x, y, w, h);
+}
+
+/* Overlay rectangle painted on the previous frame, for cell bookkeeping. */
+static int s_drawn_menu = PT_MENU_NONE;
+static int s_drawn_hover = -1;
+static int s_drawn_dlg = DLG_NONE;
+static int s_drawn_yes = -1;
+
 /* ---- drawing ----------------------------------------------------------- */
 
 static void draw_bar(void)
@@ -233,8 +293,36 @@ static void draw_keys(void)
 
 void pt_menus_draw(void)
 {
+	int cx, cy, cw, ch;	/* overlay this frame */
+	int px, py, pw, ph;	/* overlay painted last frame */
+	int changed = 0;
+
 	if (!PT.active)
 		return;
+
+	overlay_cells(&cx, &cy, &cw, &ch);
+	if (s_drawn_dlg == DLG_CONFIRM)
+		confirm_geom(&px, &py, &pw, &ph);
+	else if (s_drawn_dlg == DLG_KEYS)
+		keys_geom(&px, &py, &pw, &ph);
+	else
+		dropdown_cells(s_drawn_menu, &px, &py, &pw, &ph);
+
+	if (px != cx || py != cy || pw != cw || ph != ch)
+	{
+		/* The old rectangle is canvas (or a new overlay) now: blank the
+		 * cells and accept them so the flush never repaints old text over
+		 * the pixels cmd_paint.c just recomposited. */
+		if (pw > 0 && ph > 0)
+		{
+			tui_fill(px, py, pw, ph, ' ', TUI_WHITE, TUI_BLACK);
+			tui_accept_rect(px, py, pw, ph);
+		}
+		if (cw > 0 && ch > 0)
+			tui_invalidate_rect(cx, cy, cw, ch);
+		changed = 1;
+	}
+
 	draw_bar();
 	if (PT.menu != PT_MENU_NONE)
 		draw_dropdown(PT.menu);
@@ -242,6 +330,18 @@ void pt_menus_draw(void)
 		draw_confirm();
 	else if (s_dlg == DLG_KEYS)
 		draw_keys();
+
+	if (PT.menu != s_drawn_menu || s_hover != s_drawn_hover ||
+	    s_dlg != s_drawn_dlg || s_dlg_yes != s_drawn_yes)
+		changed = 1;
+
+	if (changed && cw > 0 && ch > 0)
+		tui_invalidate_rect(cx, cy, cw, ch);
+
+	s_drawn_menu = PT.menu;
+	s_drawn_hover = s_hover;
+	s_drawn_dlg = s_dlg;
+	s_drawn_yes = s_dlg_yes;
 }
 
 /* ---- actions ----------------------------------------------------------- */
@@ -305,63 +405,77 @@ static void run_action(int act)
 
 static void open_menu(int m)
 {
+	if (PT.menu == m)
+		return;
+	dmg_overlay();
 	PT.menu = m;
 	s_hover = -1;
-	pt_request_redraw();
+	dmg_overlay();
+	dmg_bar();
 }
 
 static void close_menu(void)
 {
 	if (PT.menu != PT_MENU_NONE)
 	{
+		dmg_overlay();
 		PT.menu = PT_MENU_NONE;
 		s_hover = -1;
-		pt_request_redraw();
+		dmg_bar();
 	}
 }
 
 static void open_confirm(int act)
 {
+	dmg_overlay();
+	PT.menu = PT_MENU_NONE;
+	s_hover = -1;
+	dmg_bar();
 	s_dlg = DLG_CONFIRM;
 	s_dlg_action = act;
 	s_dlg_yes = 0;
-	PT.menu = PT_MENU_NONE;
-	s_hover = -1;
 	PT.dialog = 1;
-	pt_request_redraw();
+	dmg_overlay();
 }
 
 static void close_dialog(void)
 {
+	if (s_dlg == DLG_NONE)
+		return;
+	dmg_overlay();
 	s_dlg = DLG_NONE;
 	PT.dialog = 0;
-	pt_request_redraw();
 }
 
 static void answer_confirm(int yes)
 {
 	int act = s_dlg_action;
 
+	dmg_overlay();
 	s_dlg = DLG_NONE;
 	PT.dialog = 0;
 	if (yes)
 		run_action(act);
-	else
-		pt_request_redraw();
 }
 
 static void activate(int m, int i)
 {
 	int act = s_items[m][i].action;
+	int x, y, w, h;
 
+	/* The dropdown closes; damage its rectangle so the canvas under it is
+	 * recomposited. */
+	dropdown_cells(m, &x, &y, &w, &h);
+	dmg_cells(x, y, w, h);
 	PT.menu = PT_MENU_NONE;
 	s_hover = -1;
+	dmg_bar();
 
 	if (act == PTA_HELP_KEYS)
 	{
 		s_dlg = DLG_KEYS;
 		PT.dialog = 1;
-		pt_request_redraw();
+		dmg_overlay();
 		return;
 	}
 	if (act == PTA_FILE_NEW || act == PTA_FILE_QUIT)
@@ -391,6 +505,10 @@ void pt_menus_init(void)
 	s_hover = -1;
 	s_btn = 0;
 	s_last_sx = s_last_sy = -1;
+	s_drawn_menu = PT_MENU_NONE;
+	s_drawn_hover = -1;
+	s_drawn_dlg = DLG_NONE;
+	s_drawn_yes = -1;
 	PT.dialog = 0;
 }
 
@@ -401,22 +519,19 @@ int pt_menus_active(void)
 
 void pt_menus_close(void)
 {
-	int changed = 0;
-
 	if (PT.menu != PT_MENU_NONE)
 	{
+		dmg_overlay();
 		PT.menu = PT_MENU_NONE;
 		s_hover = -1;
-		changed = 1;
+		dmg_bar();
 	}
 	if (s_dlg == DLG_KEYS)
 	{
+		dmg_overlay();
 		s_dlg = DLG_NONE;
 		PT.dialog = 0;
-		changed = 1;
 	}
-	if (changed)
-		pt_request_redraw();
 }
 
 /* ---- keyboard ---------------------------------------------------------- */
@@ -591,8 +706,13 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 
 			if (it >= 0 && it != s_hover)
 			{
+				int x, y, w, h;
+
+				dropdown_cells(PT.menu, &x, &y, &w, &h);
+				if (s_hover >= 0)
+					dmg_cells(x, y + 1 + s_hover, w, 1);
+				dmg_cells(x, y + 1 + it, w, 1);
 				s_hover = it;
-				pt_request_redraw();
 			}
 		}
 		return 1;

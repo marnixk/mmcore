@@ -96,6 +96,16 @@ void sdl_tui_present(int y0, int y1)
 	sdl_video_present();
 }
 
+unsigned sdl_tui_get_px(int x, int y)
+{
+	uint16_t *fb = sdl_video_fb();
+
+	if (!fb || x < 0 || y < 0 || x >= sdl_video_width() ||
+	    y >= sdl_video_height())
+		return 0;
+	return sdl_native_to_rgb(fb[(size_t)y * sdl_video_width() + x]);
+}
+
 void sdl_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
 {
 	uint16_t *fb = sdl_video_fb();
