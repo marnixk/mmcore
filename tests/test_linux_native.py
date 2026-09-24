@@ -296,6 +296,37 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
     assert (root / "C" / "A" / "B.TXT").read_text().strip() == "HELLO STORAGE"
 
 
+def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
+    """#666: DIR lists full long names and flags a cut listing with ``... more``.
+
+    The structured listing raised the name cap from 80 to 256, so a long host /
+    FAT name is shown whole; a folder over the entry cap gets the note instead
+    of the silent cut the old 4096-byte newline listing had.
+    """
+    root = tmp_path / "drives"
+    long_dir = root / "C" / "LONG666"
+    many_dir = root / "C" / "MANY666"
+    long_dir.mkdir(parents=True)
+    many_dir.mkdir(parents=True)
+    long_name = "L" + "x" * 120 + "END666.TXT"
+    (long_dir / long_name).write_text("L")
+    (long_dir / "SHORT.TXT").write_text("S")
+    for i in range(520):
+        (many_dir / f"F{i:03d}.TXT").write_text("x")
+
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    program = (
+        'DIR "C:/LONG666"\n'
+        'DIR "C:/MANY666"\n'
+        'DIR "C:/MANY666" /W\n'
+    )
+    out = _run_env(mmb_linux, program, env)
+    assert long_name in out, "long name was truncated"
+    assert "SHORT.TXT" in out
+    # One note for the long listing and one for the wide listing.
+    assert out.count("... more") == 2, out
+
+
 def test_default_drive_root_creates_only_c(mmb_linux, tmp_path):
     """Default root is $HOME/.mmbasic; only the persistent C: drive is created."""
     home = tmp_path / "home"
