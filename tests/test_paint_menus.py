@@ -28,7 +28,7 @@ pt_state PT;
 /* ---- action/state recording ---- */
 static int f_new, f_open, f_save, f_save_as;
 static int u_undo, u_redo, u_clear;
-static int quit_key = -1;
+static int quit_leave;
 static int redraws;
 
 void pt_request_redraw(void) { redraws++; }
@@ -88,12 +88,8 @@ static int canvas_wiped(void)
 			return 0;
 	return 1;
 }
-const char *mmb_paint_key(char c)
-{
-	if ((unsigned char)c == 24)
-		quit_key = 24;
-	return "";
-}
+/* Quit menu / keyboard gate now tears down through the lifecycle directly. */
+void pt_paint_leave(void) { quit_leave++; }
 
 /* ---- minimal offscreen TUI ---- */
 #define COLS 80
@@ -321,19 +317,53 @@ int main(void)
 	check(f_new == 1, "new_yes_dispatch");
 	check(!PT.dialog, "new_yes_closes");
 
-	/* ---- File > Quit with unsaved: Yes routes through Ctrl+X ---- */
-	quit_key = -1;
+	/* ---- File > Open with unsaved changes (#728): confirm first ---- */
+	f_open = 0;
+	PT.undo_depth = 2;
+	click(kFile, 8);
+	click(kFile, 36);	/* second dropdown row: Open */
+	check(PT.dialog && pt_menus_active(), "open_dirty_dialog");
+	check(f_open == 0, "open_dirty_not_run");
+	check(pt_menus_key('n') == 1, "open_no_consumed");
+	check(f_open == 0, "open_no_keeps");
+	check(!pt_menus_active(), "open_no_closes");
+	/* Yes proceeds to the picker. */
+	click(kFile, 8);
+	click(kFile, 36);
+	check(PT.dialog, "open_dirty_dialog2");
+	check(pt_menus_key('y') == 1, "open_yes_consumed");
+	check(f_open == 1, "open_yes_dispatch");
+	check(!PT.dialog, "open_yes_closes");
+	/* Clean canvas: Open goes straight to the picker, no dialog. */
+	f_open = 0;
+	PT.undo_depth = 0;
+	click(kFile, 8);
+	click(kFile, 36);
+	check(!pt_menus_active(), "open_clean_no_dialog");
+	check(f_open == 1, "open_clean_dispatch");
+
+	/* ---- pt_menus_confirm_quit: clean no-op, dirty dialog (#728) ---- */
+	PT.undo_depth = 0;
+	check(pt_menus_confirm_quit() == 0, "confirm_quit_clean");
+	PT.undo_depth = 1;
+	check(pt_menus_confirm_quit() == 1, "confirm_quit_dirty");
+	check(PT.dialog, "confirm_quit_dialog");
+	check(pt_menus_key('n') == 1, "confirm_quit_cancel");
+	check(!PT.dialog, "confirm_quit_cancelled");
+
+	/* ---- File > Quit with unsaved: Yes tears down via the lifecycle ---- */
+	quit_leave = 0;
 	click(kFile, 8);
 	click(kFile, 88);	/* fifth row: Quit */
 	check(PT.dialog, "quit_dirty_dialog");
 	check(pt_menus_key(13) == 1, "quit_enter_consumed");
-	check(quit_key == -1, "quit_default_no");
+	check(quit_leave == 0, "quit_default_no");
 	/* default highlight is No; Tab flips to Yes, Enter confirms */
 	click(kFile, 8);
 	click(kFile, 88);
 	pt_menus_key(9);
 	pt_menus_key(13);
-	check(quit_key == 24, "quit_yes_ctl_x");
+	check(quit_leave == 1, "quit_yes_leave");
 
 	/* ---- Edit > Undo / Redo dispatch immediately ---- */
 	u_undo = 0;
@@ -568,7 +598,29 @@ def test_new_and_quit_confirmation(checks):
         "new_yes_dispatch",
         "quit_dirty_dialog",
         "quit_default_no",
-        "quit_yes_ctl_x",
+        "quit_yes_leave",
+        "open_dirty_dialog",
+        "open_dirty_not_run",
+        "open_no_consumed",
+        "open_no_keeps",
+        "open_no_closes",
+        "open_yes_consumed",
+        "open_yes_dispatch",
+        "open_yes_closes",
+        "open_clean_no_dialog",
+        "open_clean_dispatch",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_confirm_quit_helper(checks):
+    """#728: pt_menus_confirm_quit only prompts on a dirty canvas."""
+    for name in (
+        "confirm_quit_clean",
+        "confirm_quit_dirty",
+        "confirm_quit_dialog",
+        "confirm_quit_cancel",
+        "confirm_quit_cancelled",
     ):
         assert checks.get(name) is True, name
 

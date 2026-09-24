@@ -173,6 +173,7 @@ def test_open_cancel_leaves_the_canvas_unchanged(native_mmcore, tmp_path, root):
     before = s.shot("before.ppm")
 
     _menu(s, ITEM_OPEN)
+    s.text("y")			# dirty canvas: confirm discarding before Open
     s.key("esc")
     s.key("enter")		# resolves the pending Esc as a cancel
     _park(s)
@@ -199,6 +200,7 @@ def test_picker_browses_into_a_subdirectory(native_mmcore, tmp_path, root):
     _draw(s, 100, 200, 160, 200)
     # Open starts in C:/ART (the last path); Down selects PIC.PCX.
     _menu(s, ITEM_OPEN)
+    s.text("y")			# second stroke is unsaved: confirm discarding
     s.key("down")
     s.key("enter")
     _park(s)

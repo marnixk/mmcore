@@ -240,6 +240,9 @@ int mmb_in_wordpad(void);
 /* Feed a keystroke to WORDPAD. Returns text to emit (may be empty). */
 const char *mmb_wordpad_key(char c);
 
+/* True while PAINT owns the screen/keyboard. */
+int mmb_in_paint(void);
+
 /* True while AFK screensaver owns the screen/keyboard. */
 int mmb_in_afk(void);
 

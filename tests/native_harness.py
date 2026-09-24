@@ -156,6 +156,14 @@ class NativeSession:
         self._emit("shot " + path)
         return path
 
+    def wait_ms(self, ms: int) -> "NativeSession":
+        """Advance wall-clock time so app idle timers can fire.
+
+        The harness pumps the host poll while waiting, so a buffered lone Esc
+        resolves without a following key.
+        """
+        return self._emit("wait %d" % ms)
+
     def mark(self, name: str) -> str:
         path = os.path.join(self.workdir, name)
         self._emit("mark " + path)
