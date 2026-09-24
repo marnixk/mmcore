@@ -1532,6 +1532,20 @@ static void gosub_restore_top(void)
 	gosub_restore_ctrl(g);
 }
 
+/* A trapped runtime error abandons the call stack: run_program jumps to the
+ * ON ERROR handler, which runs at the outer level. Restore every pending
+ * frame's saved arguments and LOCAL bindings first, or the handler (and any
+ * later RESUME) would still see the failed callee's values. */
+static void unwind_call_frames(void)
+{
+	while (G.gosub_sp > 0)
+	{
+		G.gosub_sp--;
+		gosub_restore_top();
+	}
+	G.in_sub = 0;
+}
+
 int mmb_call_named_sub(const char *name)
 {
 	int si, i, narg = 0, ex, g;
@@ -4104,6 +4118,7 @@ static void run_program(void)
 		} while (loop && G.running);
 		if (trapped)
 		{
+			unwind_call_frames();
 			pc = G.on_error_pc;
 			continue;
 		}
