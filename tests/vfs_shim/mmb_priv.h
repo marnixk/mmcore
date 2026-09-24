@@ -13,6 +13,13 @@
 #define MMB_ZIP_MAX_BYTES (16u * 1024u * 1024u)
 #define T_STR             3
 
+/* Structured directory entry (#621); mirrors mmbasic.h. */
+typedef struct mmb_dirent {
+	char name[80];
+	int is_dir;
+	int size;
+} mmb_dirent;
+
 typedef struct mmb_val {
 	int type;
 	double f;
@@ -70,6 +77,8 @@ int mmb_fat_rmdir(int letter, const char *path);
 int mmb_fat_unlink(int letter, const char *path);
 int mmb_fat_rename(int letter, const char *from, const char *to);
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
+int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
+			 mmb_dirent *out, int max, int *truncated);
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append);
 void *mmb_fat_wopen(int letter, const char *path, int append);
 int mmb_fat_wwrite(void *handle, const void *data, unsigned n);

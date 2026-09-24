@@ -25,6 +25,17 @@ typedef struct mmb_mouse_state {
 	int wheel;
 } mmb_mouse_state;
 
+/* One entry from a structured directory listing (see mmb_vfs_list_entries).
+ * Shared between the C interpreter and the C++ Circle storage backend. `name`
+ * carries no trailing slash; `size` is -1 for directories or when a backend
+ * cannot tell without an extra lookup. */
+#define MMB_DIRENT_NAME 80
+typedef struct mmb_dirent {
+	char name[MMB_DIRENT_NAME];
+	int is_dir;
+	int size;
+} mmb_dirent;
+
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);

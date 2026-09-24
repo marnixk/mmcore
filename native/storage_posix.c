@@ -122,6 +122,26 @@ static int is_dir(const char *path)
 	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+/* Directory test that trusts dirent.d_type when the host fills it in, so a
+ * large listing does not stat every name (#621). Symlinks and DT_UNKNOWN fall
+ * back to stat() to keep following links the way the old code did. */
+static int dirent_is_dir(const char *dirpath, const struct dirent *e)
+{
+#if defined(DT_DIR) && defined(DT_REG) && defined(DT_UNKNOWN) && \
+	!defined(MMB_NO_DTYPE)
+	if (e->d_type == DT_DIR)
+		return 1;
+	if (e->d_type == DT_REG)
+		return 0;
+#endif
+	{
+		char sub[P_BUF];
+
+		snprintf(sub, sizeof sub, "%s/%s", dirpath, e->d_name);
+		return is_dir(sub);
+	}
+}
+
 static int ci_lookup(const char *dir, const char *name, char *out, int outsz)
 {
 	DIR *d = opendir(dir);
@@ -388,7 +408,6 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 		 int outsz)
 {
 	char full[P_BUF];
-	char sub[P_BUF];
 	DIR *d;
 	struct dirent *e;
 
@@ -413,8 +432,7 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 			continue;
 		if (!glob_ci(pat, e->d_name))
 			continue;
-		snprintf(sub, sizeof sub, "%s/%s", full, e->d_name);
-		isd = is_dir(sub);
+		isd = dirent_is_dir(full, e);
 		used = out ? strlen(out) : 0;
 		if (out && used + strlen(e->d_name) + 2 < (size_t)outsz)
 		{
@@ -426,6 +444,62 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 	}
 	closedir(d);
 	return 0;
+}
+
+int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
+			 mmb_dirent *out, int max, int *truncated)
+{
+	char full[P_BUF];
+	char sub[P_BUF];
+	DIR *d;
+	struct dirent *e;
+	int n = 0;
+
+	ensure_root();
+	if (truncated)
+		*truncated = 0;
+	if (!out || max <= 0)
+		return -1;
+	if (!dir || !dir[0] || strcmp(dir, "/") == 0)
+		drive_dir_raw(letter, full, sizeof full);
+	else if (!build_path(letter, dir, full, sizeof full, 1))
+		return -1;
+	d = opendir(full);
+	if (!d)
+		return -1;
+	if (!pat || !pat[0])
+		pat = "*";
+	while ((e = readdir(d)))
+	{
+		int isd;
+
+		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+			continue;
+		if (!glob_ci(pat, e->d_name))
+			continue;
+		if (n >= max)
+		{
+			if (truncated)
+				*truncated = 1;
+			break;
+		}
+		isd = dirent_is_dir(full, e);
+		memset(&out[n], 0, sizeof(out[n]));
+		snprintf(out[n].name, sizeof(out[n].name), "%s", e->d_name);
+		out[n].is_dir = isd;
+		out[n].size = -1;
+		if (!isd)
+		{
+			struct stat st;
+
+			snprintf(sub, sizeof sub, "%s/%s", full, e->d_name);
+			if (stat(sub, &st) == 0)
+				out[n].size = (int)st.st_size;
+		}
+		n++;
+	}
+	closedir(d);
+	return n;
 }
 
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,

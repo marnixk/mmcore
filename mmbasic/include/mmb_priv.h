@@ -817,6 +817,14 @@ int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
 int mmb_vfs_list(const char *spec, char *out, int outsz);
+/* Structured listing (#621): one pass yields name, type and size so callers
+ * that draw a size column (FILES) do not stat every file again. Entries come
+ * back folders-first, then case-insensitively by name. Returns the count, or
+ * -1 on error; *truncated is set when the directory held more than `max`
+ * entries. The mmb_dirent type lives in mmbasic.h (shared with the Circle
+ * storage backend). */
+int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
+			 int *truncated);
 int mmb_glob_match(const char *name, const char *pat);
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append);
 /* Streaming writes: open the target once, append chunks, then close. Avoids a
@@ -844,6 +852,12 @@ int mmb_fat_rmdir(int letter, const char *path);
 int mmb_fat_unlink(int letter, const char *path);
 int mmb_fat_rename(int letter, const char *from, const char *to);
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int outsz);
+/* Structured variant of mmb_fat_list (#621): fills `out` with up to `max`
+ * entries in one directory scan, using the backend's own type/size metadata
+ * (FatFs FILINFO / POSIX dirent + one stat per file) so callers do not repeat
+ * the lookup. See mmb_dirent. */
+int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
+			 mmb_dirent *out, int max, int *truncated);
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, int append);
 /* Streaming FAT writes; handle is an opaque open file (see mmb_vfs_wopen). */
 void *mmb_fat_wopen(int letter, const char *path, int append);
@@ -1086,6 +1100,15 @@ int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			uint32_t **out, int *w, int *h);
 int mmb_png_encode_rgb(const unsigned char *rgb, int w, int h,
 		       unsigned char **out, unsigned *out_len);
+/* ---- PCX codec (#631): encode/decode for PAINT and the FILES preview ---- */
+int mmb_pcx_decode_rgba(const unsigned char *file, unsigned n,
+			uint32_t **out, int *w, int *h);
+int mmb_pcx_decode_indexed(const unsigned char *file, unsigned n,
+			   unsigned char **idx, int *w, int *h,
+			   unsigned char *pal, int *ncol);
+int mmb_pcx_encode_indexed(const unsigned char *idx, int w, int h,
+			   const unsigned char *pal,
+			   unsigned char **out, unsigned *out_len);
 void mmb_clock_init(void);
 void mmb_clock_refresh(void);
 int mmb_clock_set_date(const char *s);

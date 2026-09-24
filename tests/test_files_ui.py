@@ -212,16 +212,41 @@ def test_files_preview_shows_name_size_and_arrows(fresh_console):
         for y in range(4, 20, 4)
     ]
     assert any(r > 150 and g > 150 and b > 150 for r, g, b in band), band
-    # Right -> next image, Left -> previous. Order is TEST.JPG, TEST.PNG, TESTZ.PNG.
+    # Right -> next image, Left -> previous. Order is TEST.JPG, TEST.PCX,
+    # TEST.PNG, TESTZ.PNG.
     seen = _keys(con, b"\x1b[C", quiet=0.9)
     assert "PREVIEW TESTZ.PNG 8x8 MODE 5" in seen
     seen = _keys(con, b"\x1b[D", quiet=0.9)
     assert "PREVIEW TEST.PNG 8x8 MODE 5" in seen
     seen = _keys(con, b"\x1b[D", quiet=0.9)
+    assert "PREVIEW TEST.PCX 8x8 MODE 5" in seen
+    seen = _keys(con, b"\x1b[D", quiet=0.9)
     assert "PREVIEW TEST.JPG 8x8 MODE 5" in seen
     # Enter returns with the browsed file selected.
     seen = _keys(con, b"\r", quiet=0.8)
     assert "SEL=TEST.JPG" in seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT MM.HRES") == "1280"
+
+
+def test_files_preview_seeded_pcx(fresh_console):
+    """#631: the FILES preview decodes and draws a .PCX."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/tests"') == ""
+    _select(con, "TEST.PCX")
+    seen = _keys(con, b"v", quiet=1.2)
+    assert "PREVIEW TEST.PCX 8x8 MODE 5" in seen, seen
+    assert con.screen_size() == (240, 216)
+    # The 8x8 image is centred and every pixel is VGA index 1 (blue).
+    w, h = con.screen_size()
+    x0, y0 = (w - 8) // 2, (h - 8) // 2
+    coords = [(x0 + dx, y0 + dy) for dx in range(8) for dy in range(8)]
+    blue = sum(
+        1 for r, g, b in con.screen_pixels(coords) if b > 120 and r < 60 and g < 60
+    )
+    assert blue > 40, blue
+    seen = _keys(con, b"\r", quiet=0.8)
+    assert "SEL=TEST.PCX" in seen
     _keys(con, b"q")
     assert con.send_line("PRINT MM.HRES") == "1280"
 
@@ -418,3 +443,50 @@ def test_files_tdf_multi_variant_preview(fresh_console):
     assert "SEL=" in seen
     _keys(con, b"q")
     assert con.send_line("PRINT MM.HRES") == "1280"
+
+
+def test_files_tdf_pageup_pagedown_single(fresh_console):
+    """#622: PageUp/PageDown page a single-record .TDF and return without error."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/fonts/tdf/mono"') == ""
+    _select(con, "STANDARD.TDF")
+    seen = _keys(con, b"\r", quiet=1.0)
+    assert "[FILES] TDF STANDARD.TDF" in seen, seen
+    # Two pages down then two back up (clamps at both ends), then return.
+    _keys(con, b"\x1b[6~", quiet=0.5)
+    _keys(con, b"\x1b[6~", quiet=0.5)
+    _keys(con, b"\x1b[5~", quiet=0.5)
+    _keys(con, b"\x1b[5~", quiet=0.5)
+    seen = _keys(con, b"\x1b", quiet=0.8)
+    assert "SEL=" in seen, seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT MM.HRES") == "1280"
+
+
+def test_files_many_entries_reports_truncation(fresh_console):
+    """#621: a folder over FU_MAX_ENT reports MORE=1 and still lists folders.
+
+    The structured listing fills names, types and sizes in one scan, so a folder
+    with 97 entries is cut at 96 and reported instead of silently dropped.
+    """
+    con = fresh_console
+    for line in (
+        '10 MKDIR "A:/BIG"',
+        '15 MKDIR "A:/BIG/SUB"',
+        '20 FOR I=1 TO 96',
+        '30 OPEN "A:/BIG/F"+LTRIM$(STR$(I))+".TXT" FOR OUTPUT AS #1',
+        '40 PRINT #1,"x"',
+        '50 CLOSE #1',
+        '60 NEXT',
+        '70 PRINT "SEEDED"',
+    ):
+        con.send_line(line)
+    assert "SEEDED" in con.send_line("RUN")
+    assert con.send_line('CHDIR "A:/BIG"') == ""
+    seen = _open_files(con)
+    assert "MORE=1" in seen, seen
+    assert "N=96" in seen, seen
+    # Directories survive the cap: SUB sorts ahead of the files and is shown.
+    assert "SUB/" in seen, seen
+    _keys(con, b"q")
+    assert con.send_line("PRINT 9") == "9"
