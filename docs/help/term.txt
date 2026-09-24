@@ -73,7 +73,7 @@ menu is open, so 80x25 uses all 25 rows for the terminal.
 ZMODEM downloads are automatic: when a BBS starts a ZMODEM send, TERM sees the
 ZRQINIT header (ZPAD ZPAD ZDLE) and receives the file into the download folder.
 The folder defaults to the current drive/folder; Download folder opens a
-directory browser (Use/Up/Cancel) and stores the choice as download_dir in
+directory browser (Use/Up/Cancel) and stores the choice per console in
 C:/.termconfig. Received names are stripped to a basename and a collision is
 saved as NAME-1.EXT rather than overwriting. CRC-16 and CRC-32, ZDLE escaping,
 ZCRCW/ZCRCQ/ZCRCG/ZCRCE subpackets, ZNAK/ZRPOS retries, and ZFIN cleanup are

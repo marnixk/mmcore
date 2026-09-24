@@ -411,18 +411,27 @@ static char find_scratch[MMB_ED_BUF];
 #define ERRBAR_MAX 160
 static int errbar_active;
 static char errbar_msg[ERRBAR_MAX];
-/* The file-picker root is per-console session state (#670): opening the
- * picker on one console must not reuse the root chosen on another. */
+/* The file-picker root and its transient list/selection state are per-console
+ * session state (#670, #680): opening the picker on one console must not reuse
+ * or rebuild the root/list another console's picker is using. */
 static char pick_root_s[MMB_MAX_CONSOLES][128];
 #define pick_root (pick_root_s[g_console])
-static char pick_path[ED_PICK_MAX][128];
-static int pick_pos[ED_PICK_MAX];
-static int pick_n;
-static int pick_sel;
-static int pick_row0;
-static int pick_view[ED_PICK_MAX];
-static int pick_vn;
-static int pick_kind; /* 0 files 1 outline */
+static char pick_path_s[MMB_MAX_CONSOLES][ED_PICK_MAX][128];
+static int pick_pos_s[MMB_MAX_CONSOLES][ED_PICK_MAX];
+static int pick_n_s[MMB_MAX_CONSOLES];
+static int pick_sel_s[MMB_MAX_CONSOLES];
+static int pick_row0_s[MMB_MAX_CONSOLES];
+static int pick_view_s[MMB_MAX_CONSOLES][ED_PICK_MAX];
+static int pick_vn_s[MMB_MAX_CONSOLES];
+static int pick_kind_s[MMB_MAX_CONSOLES]; /* 0 files 1 outline */
+#define pick_path (pick_path_s[g_console])
+#define pick_pos (pick_pos_s[g_console])
+#define pick_n (pick_n_s[g_console])
+#define pick_sel (pick_sel_s[g_console])
+#define pick_row0 (pick_row0_s[g_console])
+#define pick_view (pick_view_s[g_console])
+#define pick_vn (pick_vn_s[g_console])
+#define pick_kind (pick_kind_s[g_console])
 static int alt_pend;
 static int confirm_pending;
 static int confirm_btn;
