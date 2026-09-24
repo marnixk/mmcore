@@ -1,7 +1,9 @@
-"""Boot banner: mmcore wordmark with version, the MMBasic notice, and HELP in
-bright white, followed by two blank lines."""
+"""Boot banner: mmcore wordmark with version, the MMBasic notice and its
+required copyright lines, and HELP in bright white, followed by two blank
+lines."""
 
 import os
+import re
 import subprocess
 import time
 
@@ -28,11 +30,19 @@ def test_startup_banner(kernel_image):
         ver = _mmb_version()
         assert f"mmcore operating system - {ver} - 2026 (c) marnix kok" in low
         assert "mmbasic" in low
-        assert "copyright" not in low
-        assert "adapted and extended" not in low
+        assert "copyright 2011-2026 geoff graham" in low
+        assert "copyright 2016-2026 peter mather" in low
+        assert "adapted and extended by marnix kok" in low
         assert "type " in low
         assert "help me" in low
         assert "short introduction" in low
+        # A blank line keeps the mmcore line and the MMBasic notice apart.
+        norm = low.replace("\r", "")
+        between = re.search(r"marnix kok.*?mmbasic", norm, re.S)
+        assert between and between.group(0).count("\n") >= 2, (
+            "a blank line is required between the mmcore line and MMBasic: "
+            f"{between.group(0)!r}" if between else "MMBasic line missing"
+        )
         assert b"\x1b[97mHELP ME\x1b[37m" in raw
         idx = raw.find(b"short introduction.")
         assert idx >= 0
@@ -65,6 +75,7 @@ def test_startup_banner(kernel_image):
         assert "mmcore" in ocr
         # OCR can split the short MMBasic line ("mmbas ic"); ignore spaces.
         assert "mmbasic" in ocr.replace(" ", "")
+        assert "geoff" in ocr or "graham" in ocr or "copyright" in ocr
         assert "help" in ocr
         assert con.send_line("PRINT 6*7") == "42"
 
