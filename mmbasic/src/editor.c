@@ -5796,3 +5796,12 @@ void mmb_editor_on_ihelp_exit(void)
 	tui_invalidate();
 	redraw();
 }
+
+/* Cold-boot the EDITOR layer on a warm reset (#763): drop every console's
+ * session statics (find, kill buffer, dialogs, char picker, recovery). The
+ * per-console document/tab state lives in the interpreter context and is
+ * cleared separately. */
+void mmb_editor_reset_all(void)
+{
+	memset(s_ed, 0, sizeof(s_ed));
+}
