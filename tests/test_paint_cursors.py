@@ -47,6 +47,7 @@ SHIM_H = r"""
 #define MMB_PRIV_H
 #include <stddef.h>
 #define MMB_MAX_CONSOLES 4
+extern int g_console;
 typedef struct mmb_platform_shim {
     unsigned (*get_pixel)(int x, int y);
 } mmb_platform_shim;
@@ -549,6 +550,8 @@ static unsigned presented[NPX];
 
 mmb_global_shim G;
 static mmb_platform_shim g_plat;
+
+int g_console;
 
 static unsigned pat(int x, int y)
 {

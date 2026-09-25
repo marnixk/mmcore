@@ -44,11 +44,16 @@ void mmb_files_pick_end(void);
 
 enum { PF_NONE = 0, PF_OPEN, PF_SAVEAS };
 
-static int s_mode;		/* active picker purpose */
+/* One dialog state per virtual console: the open picker purpose and its
+ * overlay bookkeeping must not cross consoles (#766). */
+typedef struct {
+	int mode;		/* active picker purpose */
+	int pick_drawn;		/* overlay painted on the previous frame (#722) */
+	int pick_x, pick_y, pick_w, pick_h;
+} pt_file_state;
 
-/* Picker overlay bookkeeping for pt_file_draw() (#722). */
-static int s_pick_drawn;
-static int s_pick_x, s_pick_y, s_pick_w, s_pick_h;
+static pt_file_state s_file_state[MMB_MAX_CONSOLES];
+#define PICK (s_file_state[g_console])
 
 static const char *pf_base(const char *p)
 {
@@ -271,7 +276,7 @@ static void pf_begin(int mode)
 {
 	char dir[128];
 
-	s_mode = mode;
+	PICK.mode = mode;
 	if (mode == PF_OPEN)
 	{
 		pf_dir_of(PT.path, dir, sizeof(dir));
@@ -289,9 +294,9 @@ static void pf_begin(int mode)
 
 static void pf_commit(const char *path)
 {
-	if (s_mode == PF_OPEN)
+	if (PICK.mode == PF_OPEN)
 		pf_open(path);
-	else if (s_mode == PF_SAVEAS)
+	else if (PICK.mode == PF_SAVEAS)
 		pf_save(path);
 }
 
@@ -299,9 +304,9 @@ static void pf_commit(const char *path)
 
 void pt_file_init(void)
 {
-	s_mode = PF_NONE;
-	s_pick_drawn = 0;
-	s_pick_x = s_pick_y = s_pick_w = s_pick_h = 0;
+	PICK.mode = PF_NONE;
+	PICK.pick_drawn = 0;
+	PICK.pick_x = PICK.pick_y = PICK.pick_w = PICK.pick_h = 0;
 	PT.path[0] = 0;
 	PT.label[0] = 0;
 }
@@ -353,7 +358,7 @@ int pt_file_key(int key)
 		else
 			pf_status("Cancelled", 0);
 		mmb_files_pick_end();
-		s_mode = PF_NONE;
+		PICK.mode = PF_NONE;
 		pt_request_redraw();
 		return 1;
 	}
@@ -374,7 +379,7 @@ int pt_file_poll(void)
 	{
 		pf_status("Cancelled", 0);
 		mmb_files_pick_end();
-		s_mode = PF_NONE;
+		PICK.mode = PF_NONE;
 		pt_request_redraw();
 	}
 	return 1;
@@ -394,13 +399,13 @@ void pt_file_draw(void)
 	if (active)
 		mmb_files_pick_geom(&nx, &ny, &nw, &nh);
 
-	if (s_pick_drawn &&
-	    (nx != s_pick_x || ny != s_pick_y || nw != s_pick_w ||
-	     nh != s_pick_h))
+	if (PICK.pick_drawn &&
+	    (nx != PICK.pick_x || ny != PICK.pick_y || nw != PICK.pick_w ||
+	     nh != PICK.pick_h))
 	{
-		tui_fill(s_pick_x, s_pick_y, s_pick_w, s_pick_h, ' ',
+		tui_fill(PICK.pick_x, PICK.pick_y, PICK.pick_w, PICK.pick_h, ' ',
 			 TUI_WHITE, TUI_BLACK);
-		tui_accept_rect(s_pick_x, s_pick_y, s_pick_w, s_pick_h);
+		tui_accept_rect(PICK.pick_x, PICK.pick_y, PICK.pick_w, PICK.pick_h);
 	}
 	if (active)
 	{
@@ -408,9 +413,9 @@ void pt_file_draw(void)
 		mmb_files_pick_compose();
 	}
 
-	s_pick_drawn = active ? 1 : 0;
-	s_pick_x = nx;
-	s_pick_y = ny;
-	s_pick_w = nw;
-	s_pick_h = nh;
+	PICK.pick_drawn = active ? 1 : 0;
+	PICK.pick_x = nx;
+	PICK.pick_y = ny;
+	PICK.pick_w = nw;
+	PICK.pick_h = nh;
 }

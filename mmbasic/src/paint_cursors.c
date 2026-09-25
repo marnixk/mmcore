@@ -19,10 +19,16 @@
 #include "paint.h"
 #include "paint_cursor_art.h"
 
-/* Saved pixels under the current sprite (clamped to the screen). */
-static unsigned s_bg[PCA_CURSOR_PIXELS];
-static int s_bg_x, s_bg_y, s_bg_w, s_bg_h;
-static int s_have;
+/* Saved pixels under the current sprite (clamped to the screen). One buffer
+ * per virtual console so a switch does not restore the wrong screen (#766). */
+typedef struct {
+	unsigned bg[PCA_CURSOR_PIXELS];
+	int bg_x, bg_y, bg_w, bg_h;
+	int have;
+} pt_cursor_state;
+
+static pt_cursor_state s_cursor_state[MMB_MAX_CONSOLES];
+#define CUR (s_cursor_state[g_console])
 
 /* Map the app's tool id onto the baked cursor art. Unknown ids fall back to
  * the plain arrow so a fresh or out-of-range tool still draws a pointer. */
@@ -58,26 +64,26 @@ static unsigned pt_cursor_get(int x, int y)
 
 void pt_cursor_init(void)
 {
-	s_have = 0;
-	s_bg_x = s_bg_y = 0;
-	s_bg_w = s_bg_h = 0;
+	CUR.have = 0;
+	CUR.bg_x = CUR.bg_y = 0;
+	CUR.bg_w = CUR.bg_h = 0;
 }
 
 void pt_cursor_restore(void)
 {
 	int row, col;
 
-	if (!s_have)
+	if (!CUR.have)
 		return;
 	/* The pixels being put back leave the old cursor footprint: damage it so
 	 * the canvas/chrome pass recomposites there (#700). */
-	pt_damage_present(s_bg_x, s_bg_y, s_bg_w, s_bg_h);
-	for (row = 0; row < s_bg_h; row++)
-		for (col = 0; col < s_bg_w; col++)
-			pt_plot(s_bg_x + col, s_bg_y + row,
-				s_bg[(size_t)row * s_bg_w + col]);
-	s_have = 0;
-	s_bg_w = s_bg_h = 0;
+	pt_damage_present(CUR.bg_x, CUR.bg_y, CUR.bg_w, CUR.bg_h);
+	for (row = 0; row < CUR.bg_h; row++)
+		for (col = 0; col < CUR.bg_w; col++)
+			pt_plot(CUR.bg_x + col, CUR.bg_y + row,
+				CUR.bg[(size_t)row * CUR.bg_w + col]);
+	CUR.have = 0;
+	CUR.bg_w = CUR.bg_h = 0;
 }
 
 void pt_cursor_draw(int sx, int sy, int tool, int active)
@@ -128,23 +134,23 @@ void pt_cursor_draw(int sx, int sy, int tool, int active)
 
 	if (x1 > x0 && y1 > y0)
 	{
-		s_bg_x = x0;
-		s_bg_y = y0;
-		s_bg_w = x1 - x0;
-		s_bg_h = y1 - y0;
+		CUR.bg_x = x0;
+		CUR.bg_y = y0;
+		CUR.bg_w = x1 - x0;
+		CUR.bg_h = y1 - y0;
 		/* Background is captured from the fully composed frame (this runs
 		 * last), so the sprite never saves a stale copy of itself. */
-		for (y = 0; y < s_bg_h; y++)
-			for (x = 0; x < s_bg_w; x++)
-				s_bg[(size_t)y * s_bg_w + x] =
+		for (y = 0; y < CUR.bg_h; y++)
+			for (x = 0; x < CUR.bg_w; x++)
+				CUR.bg[(size_t)y * CUR.bg_w + x] =
 					pt_cursor_get(x0 + x, y0 + y);
-		s_have = 1;
+		CUR.have = 1;
 		/* The new sprite covers this rectangle; damage it for the present. */
-		pt_damage_present(x0, y0, s_bg_w, s_bg_h);
+		pt_damage_present(x0, y0, CUR.bg_w, CUR.bg_h);
 	}
 	else
 	{
-		s_have = 0;
+		CUR.have = 0;
 	}
 
 	/* Paint the opaque sprite pixels over the saved block. */

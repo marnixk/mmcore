@@ -67,23 +67,37 @@ static const int s_item_count[PT_MENU_COUNT] = { 5, 8, 1 };
 
 enum { DLG_NONE = 0, DLG_CONFIRM, DLG_KEYS };
 
-static int s_dlg;
-static int s_dlg_action;
-static int s_dlg_yes;
-static int s_alt;
-static int s_hover;
-static int s_btn;
-/* The menu/dialog consumed the press in progress, so the poll keeps owning the
- * button until it is released (#710). Without this a press that ran an
- * immediate menu action (Undo/Redo/Open/Save) closes the menu and the next held
- * poll falls through to cmd_paint.c's palette/tool/canvas handling, starting a
- * stray stroke behind where the menu was. */
-static int s_owned;
-/* Last pointer position seen by pt_menus_mouse(). A poll that repeats the same
- * position is not a real move, so it must not clear a keyboard-set highlight
- * (#755). A keyboard menu open arms an "ignore until the pointer moves" state
- * (s_ptr_seen = 0) so the next idle poll only records the baseline. */
-static int s_ptr_x, s_ptr_y, s_ptr_seen;
+/* One menu/dialog state per virtual console: an open dropdown, hover, held
+ * press and previous-frame bookkeeping must not cross consoles (#766). */
+typedef struct {
+	int dlg;
+	int dlg_action;
+	int dlg_yes;
+	int alt;
+	int hover;
+	int btn;
+	/* The menu/dialog consumed the press in progress, so the poll keeps owning
+	 * the button until it is released (#710). Without this a press that ran an
+	 * immediate menu action (Undo/Redo/Open/Save) closes the menu and the next
+	 * held poll falls through to cmd_paint.c's palette/tool/canvas handling,
+	 * starting a stray stroke behind where the menu was. */
+	int owned;
+	/* Last pointer position seen by pt_menus_mouse(). A poll that repeats the
+	 * same position is not a real move, so it must not clear a keyboard-set
+	 * highlight (#755). A keyboard menu open arms an "ignore until the pointer
+	 * moves" state (ptr_seen = 0) so the next idle poll only records the
+	 * baseline. */
+	int ptr_x, ptr_y, ptr_seen;
+
+	/* Overlay rectangle painted on the previous frame, for cell bookkeeping. */
+	int drawn_menu;
+	int drawn_hover;
+	int drawn_dlg;
+	int drawn_yes;
+} pt_menus_state;
+
+static pt_menus_state s_menus_state[MMB_MAX_CONSOLES];
+#define MENUS (s_menus_state[g_console])
 
 /* ---- geometry ---------------------------------------------------------- */
 
@@ -189,9 +203,9 @@ static void dropdown_cells(int m, int *x, int *y, int *w, int *h)
 /* The overlay currently on screen: a dialog wins over a dropdown. */
 static void overlay_cells(int *x, int *y, int *w, int *h)
 {
-	if (s_dlg == DLG_CONFIRM)
+	if (MENUS.dlg == DLG_CONFIRM)
 		confirm_geom(x, y, w, h);
-	else if (s_dlg == DLG_KEYS)
+	else if (MENUS.dlg == DLG_KEYS)
 		keys_geom(x, y, w, h);
 	else
 		dropdown_cells(PT.menu, x, y, w, h);
@@ -217,12 +231,6 @@ static void dmg_overlay(void)
 	overlay_cells(&x, &y, &w, &h);
 	dmg_cells(x, y, w, h);
 }
-
-/* Overlay rectangle painted on the previous frame, for cell bookkeeping. */
-static int s_drawn_menu = PT_MENU_NONE;
-static int s_drawn_hover = -1;
-static int s_drawn_dlg = DLG_NONE;
-static int s_drawn_yes = -1;
 
 /* ---- drawing ----------------------------------------------------------- */
 
@@ -251,7 +259,7 @@ static void draw_dropdown(int m)
 
 	for (i = 0; i < s_item_count[m]; i++)
 	{
-		int sel = (i == s_hover);
+		int sel = (i == MENUS.hover);
 		int fg = sel ? TUI_BRWHITE : TUI_BLACK;
 		int bg = sel ? TUI_BRBLUE : TUI_WHITE;
 		int row = 1 + i;
@@ -291,16 +299,16 @@ static void draw_confirm(void)
 	const char *title, *msg;
 	int x, y, w, h, yx, yy, nx, ny;
 
-	confirm_text(s_dlg_action, &title, &msg);
+	confirm_text(MENUS.dlg_action, &title, &msg);
 	confirm_geom(&x, &y, &w, &h);
 	confirm_buttons(x, y, w, h, &yx, &yy, &nx, &ny);
 	tui_dialog_panel(x, y, w, h, title, TUI_BLACK, TUI_WHITE, TUI_WHITE,
 			 TUI_BLUE, TUI_BRWHITE, TUI_BLUE);
 	tui_puts(x + 2, y + 2, msg, TUI_BLACK, TUI_WHITE);
-	tui_pad(yx, yy, "  Yes  ", 7, s_dlg_yes ? TUI_BRWHITE : TUI_BLACK,
-		s_dlg_yes ? TUI_BRBLUE : TUI_WHITE);
-	tui_pad(nx, ny, "  No   ", 7, !s_dlg_yes ? TUI_BRWHITE : TUI_BLACK,
-		!s_dlg_yes ? TUI_BRBLUE : TUI_WHITE);
+	tui_pad(yx, yy, "  Yes  ", 7, MENUS.dlg_yes ? TUI_BRWHITE : TUI_BLACK,
+		MENUS.dlg_yes ? TUI_BRBLUE : TUI_WHITE);
+	tui_pad(nx, ny, "  No   ", 7, !MENUS.dlg_yes ? TUI_BRWHITE : TUI_BLACK,
+		!MENUS.dlg_yes ? TUI_BRBLUE : TUI_WHITE);
 }
 
 static const char *const s_key_lines[] = {
@@ -335,12 +343,12 @@ void pt_menus_draw(void)
 		return;
 
 	overlay_cells(&cx, &cy, &cw, &ch);
-	if (s_drawn_dlg == DLG_CONFIRM)
+	if (MENUS.drawn_dlg == DLG_CONFIRM)
 		confirm_geom(&px, &py, &pw, &ph);
-	else if (s_drawn_dlg == DLG_KEYS)
+	else if (MENUS.drawn_dlg == DLG_KEYS)
 		keys_geom(&px, &py, &pw, &ph);
 	else
-		dropdown_cells(s_drawn_menu, &px, &py, &pw, &ph);
+		dropdown_cells(MENUS.drawn_menu, &px, &py, &pw, &ph);
 
 	if (px != cx || py != cy || pw != cw || ph != ch)
 	{
@@ -360,22 +368,22 @@ void pt_menus_draw(void)
 	draw_bar();
 	if (PT.menu != PT_MENU_NONE)
 		draw_dropdown(PT.menu);
-	if (s_dlg == DLG_CONFIRM)
+	if (MENUS.dlg == DLG_CONFIRM)
 		draw_confirm();
-	else if (s_dlg == DLG_KEYS)
+	else if (MENUS.dlg == DLG_KEYS)
 		draw_keys();
 
-	if (PT.menu != s_drawn_menu || s_hover != s_drawn_hover ||
-	    s_dlg != s_drawn_dlg || s_dlg_yes != s_drawn_yes)
+	if (PT.menu != MENUS.drawn_menu || MENUS.hover != MENUS.drawn_hover ||
+	    MENUS.dlg != MENUS.drawn_dlg || MENUS.dlg_yes != MENUS.drawn_yes)
 		changed = 1;
 
 	if (changed && cw > 0 && ch > 0)
 		tui_invalidate_rect(cx, cy, cw, ch);
 
-	s_drawn_menu = PT.menu;
-	s_drawn_hover = s_hover;
-	s_drawn_dlg = s_dlg;
-	s_drawn_yes = s_dlg_yes;
+	MENUS.drawn_menu = PT.menu;
+	MENUS.drawn_hover = MENUS.hover;
+	MENUS.drawn_dlg = MENUS.dlg;
+	MENUS.drawn_yes = MENUS.dlg_yes;
 }
 
 /* ---- actions ----------------------------------------------------------- */
@@ -480,13 +488,13 @@ static void focus_item(int it)
 		it = s_item_count[m] - 1;
 	else if (it >= s_item_count[m])
 		it = 0;
-	if (it == s_hover)
+	if (it == MENUS.hover)
 		return;
 	dropdown_cells(m, &x, &y, &w, &h);
-	if (s_hover >= 0)
-		dmg_cells(x, y + s_hover, w, 1);
+	if (MENUS.hover >= 0)
+		dmg_cells(x, y + MENUS.hover, w, 1);
 	dmg_cells(x, y + it, w, 1);
-	s_hover = it;
+	MENUS.hover = it;
 }
 
 /* Open dropdown `m`. `focus` puts the keyboard highlight on the first row (the
@@ -496,16 +504,16 @@ static void open_menu(int m, int focus)
 	/* A keyboard open ignores the pointer until it actually moves, so an
 	 * idle poll cannot immediately clear the first-row highlight. */
 	if (focus)
-		s_ptr_seen = 0;
+		MENUS.ptr_seen = 0;
 	if (PT.menu == m)
 	{
-		if (focus && s_hover < 0)
+		if (focus && MENUS.hover < 0)
 			focus_item(0);
 		return;
 	}
 	dmg_overlay();
 	PT.menu = m;
-	s_hover = -1;
+	MENUS.hover = -1;
 	dmg_overlay();
 	dmg_bar();
 	if (focus)
@@ -518,7 +526,7 @@ static void close_menu(void)
 	{
 		dmg_overlay();
 		PT.menu = PT_MENU_NONE;
-		s_hover = -1;
+		MENUS.hover = -1;
 		dmg_bar();
 	}
 }
@@ -527,30 +535,30 @@ static void open_confirm(int act)
 {
 	dmg_overlay();
 	PT.menu = PT_MENU_NONE;
-	s_hover = -1;
+	MENUS.hover = -1;
 	dmg_bar();
-	s_dlg = DLG_CONFIRM;
-	s_dlg_action = act;
-	s_dlg_yes = 0;
+	MENUS.dlg = DLG_CONFIRM;
+	MENUS.dlg_action = act;
+	MENUS.dlg_yes = 0;
 	PT.dialog = 1;
 	dmg_overlay();
 }
 
 static void close_dialog(void)
 {
-	if (s_dlg == DLG_NONE)
+	if (MENUS.dlg == DLG_NONE)
 		return;
 	dmg_overlay();
-	s_dlg = DLG_NONE;
+	MENUS.dlg = DLG_NONE;
 	PT.dialog = 0;
 }
 
 static void answer_confirm(int yes)
 {
-	int act = s_dlg_action;
+	int act = MENUS.dlg_action;
 
 	dmg_overlay();
-	s_dlg = DLG_NONE;
+	MENUS.dlg = DLG_NONE;
 	PT.dialog = 0;
 	if (yes)
 		run_action(act);
@@ -566,12 +574,12 @@ static void activate(int m, int i)
 	dropdown_cells(m, &x, &y, &w, &h);
 	dmg_cells(x, y, w, h);
 	PT.menu = PT_MENU_NONE;
-	s_hover = -1;
+	MENUS.hover = -1;
 	dmg_bar();
 
 	if (act == PTA_HELP_KEYS)
 	{
-		s_dlg = DLG_KEYS;
+		MENUS.dlg = DLG_KEYS;
 		PT.dialog = 1;
 		dmg_overlay();
 		return;
@@ -597,26 +605,26 @@ static void activate(int m, int i)
 
 void pt_menus_init(void)
 {
-	s_dlg = DLG_NONE;
-	s_dlg_action = PTA_NONE;
-	s_dlg_yes = 0;
-	s_alt = 0;
-	s_hover = -1;
-	s_btn = 0;
-	s_owned = 0;
-	s_ptr_x = 0;
-	s_ptr_y = 0;
-	s_ptr_seen = 0;
-	s_drawn_menu = PT_MENU_NONE;
-	s_drawn_hover = -1;
-	s_drawn_dlg = DLG_NONE;
-	s_drawn_yes = -1;
+	MENUS.dlg = DLG_NONE;
+	MENUS.dlg_action = PTA_NONE;
+	MENUS.dlg_yes = 0;
+	MENUS.alt = 0;
+	MENUS.hover = -1;
+	MENUS.btn = 0;
+	MENUS.owned = 0;
+	MENUS.ptr_x = 0;
+	MENUS.ptr_y = 0;
+	MENUS.ptr_seen = 0;
+	MENUS.drawn_menu = PT_MENU_NONE;
+	MENUS.drawn_hover = -1;
+	MENUS.drawn_dlg = DLG_NONE;
+	MENUS.drawn_yes = -1;
 	PT.dialog = 0;
 }
 
 int pt_menus_active(void)
 {
-	return (PT.menu != PT_MENU_NONE || s_dlg != DLG_NONE) ? 1 : 0;
+	return (PT.menu != PT_MENU_NONE || MENUS.dlg != DLG_NONE) ? 1 : 0;
 }
 
 void pt_menus_close(void)
@@ -625,13 +633,13 @@ void pt_menus_close(void)
 	{
 		dmg_overlay();
 		PT.menu = PT_MENU_NONE;
-		s_hover = -1;
+		MENUS.hover = -1;
 		dmg_bar();
 	}
-	if (s_dlg == DLG_KEYS)
+	if (MENUS.dlg == DLG_KEYS)
 	{
 		dmg_overlay();
-		s_dlg = DLG_NONE;
+		MENUS.dlg = DLG_NONE;
 		PT.dialog = 0;
 	}
 }
@@ -661,22 +669,22 @@ int pt_menus_key(int key)
 	if (key == 24)
 		return 0;
 
-	if (s_dlg == DLG_KEYS)
+	if (MENUS.dlg == DLG_KEYS)
 	{
 		close_dialog();
 		return 1;
 	}
-	if (s_dlg == DLG_CONFIRM)
+	if (MENUS.dlg == DLG_CONFIRM)
 	{
 		if (key == 'y' || key == 'Y')
 			answer_confirm(1);
 		else if (key == 'n' || key == 'N' || key == 27)
 			answer_confirm(0);
 		else if (key == 13)
-			answer_confirm(s_dlg_yes);
+			answer_confirm(MENUS.dlg_yes);
 		else if (key == 9 || key == ' ')
 		{
-			s_dlg_yes = !s_dlg_yes;
+			MENUS.dlg_yes = !MENUS.dlg_yes;
 			pt_request_redraw();
 		}
 		return 1;
@@ -685,12 +693,12 @@ int pt_menus_key(int key)
 	/* Alt prefix: report 0 so cmd_paint.c tracks its own chord state too. */
 	if (key == 1)
 	{
-		s_alt = 1;
+		MENUS.alt = 1;
 		return 0;
 	}
-	if (s_alt)
+	if (MENUS.alt)
 	{
-		s_alt = 0;
+		MENUS.alt = 0;
 		if (key == 'f' || key == 'F')
 			open_menu(PT_MENU_FILE, 1);
 		else if (key == 'e' || key == 'E')
@@ -712,12 +720,12 @@ int pt_menus_key(int key)
 		}
 		if (key == PT_KEY_UP)
 		{
-			focus_item(s_hover < 0 ? -1 : s_hover - 1);
+			focus_item(MENUS.hover < 0 ? -1 : MENUS.hover - 1);
 			return 1;
 		}
 		if (key == PT_KEY_DOWN)
 		{
-			focus_item(s_hover < 0 ? 0 : s_hover + 1);
+			focus_item(MENUS.hover < 0 ? 0 : MENUS.hover + 1);
 			return 1;
 		}
 		if (key == PT_KEY_LEFT)
@@ -732,7 +740,7 @@ int pt_menus_key(int key)
 		}
 		if (key == 13)
 		{
-			activate(m, s_hover >= 0 ? s_hover : 0);
+			activate(m, MENUS.hover >= 0 ? MENUS.hover : 0);
 			return 1;
 		}
 		for (i = 0; i < s_item_count[m]; i++)
@@ -759,14 +767,14 @@ static void hover_item(int sx, int sy)
 	if (PT.menu == PT_MENU_NONE)
 		return;
 	it = item_at(PT.menu, sx, sy);
-	if (it == s_hover)
+	if (it == MENUS.hover)
 		return;
 	dropdown_cells(PT.menu, &x, &y, &w, &h);
-	if (s_hover >= 0)
-		dmg_cells(x, y + s_hover, w, 1);
+	if (MENUS.hover >= 0)
+		dmg_cells(x, y + MENUS.hover, w, 1);
 	if (it >= 0)
 		dmg_cells(x, y + it, w, 1);
-	s_hover = it;
+	MENUS.hover = it;
 }
 
 /* Pointer motion with no fresh press: follow the pointer. Hovering a title
@@ -774,7 +782,7 @@ static void hover_item(int sx, int sy)
  * motion. Returns 1 when a menu/dialog is open (the event is consumed). */
 static int pointer_motion(int sx, int sy)
 {
-	if (s_dlg != DLG_NONE)
+	if (MENUS.dlg != DLG_NONE)
 		return 1;
 	if (PT.menu != PT_MENU_NONE)
 	{
@@ -802,48 +810,48 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 		/* A button-up ends a press; once the button is up an event is
 		 * pure motion and drives the hover highlight (#708). The
 		 * release edge itself is also forwarded - even after the menu
-		 * closed on the press - so `s_btn` cannot stay stuck set. */
-		if (s_btn)
+		 * closed on the press - so `MENUS.btn` cannot stay stuck set. */
+		if (MENUS.btn)
 		{
-			s_btn = 0;
-			s_owned = 0;
+			MENUS.btn = 0;
+			MENUS.owned = 0;
 			return pt_menus_active();
 		}
 		/* A poll that repeats the last position is not a real move:
 		 * record the baseline and leave any keyboard highlight alone
 		 * (#755). The first event after a keyboard open only arms the
 		 * baseline, so an idle poll cannot clear it either. */
-		if (!s_ptr_seen)
+		if (!MENUS.ptr_seen)
 		{
-			s_ptr_seen = 1;
-			s_ptr_x = sx;
-			s_ptr_y = sy;
+			MENUS.ptr_seen = 1;
+			MENUS.ptr_x = sx;
+			MENUS.ptr_y = sy;
 			return pt_menus_active();
 		}
-		if (sx == s_ptr_x && sy == s_ptr_y)
+		if (sx == MENUS.ptr_x && sy == MENUS.ptr_y)
 			return pt_menus_active();
-		s_ptr_x = sx;
-		s_ptr_y = sy;
+		MENUS.ptr_x = sx;
+		MENUS.ptr_y = sy;
 		return pointer_motion(sx, sy);
 	}
 
 	/* A press is a real pointer event: keep it as the baseline so the
 	 * button-up and any held motion compare against it (#708). */
-	s_ptr_seen = 1;
-	s_ptr_x = sx;
-	s_ptr_y = sy;
+	MENUS.ptr_seen = 1;
+	MENUS.ptr_x = sx;
+	MENUS.ptr_y = sy;
 
 	/* `fresh` is a genuine new press: the loop now forwards the button-up
 	 * too, so held motion is distinguished from a press. A press that lands
 	 * while a menu/dialog is open belongs to it: if that press runs an
 	 * immediate action and closes the overlay, the menu keeps owning the
 	 * button so held polls do not reach the canvas (#710). */
-	fresh = !s_btn;
+	fresh = !MENUS.btn;
 	if (fresh)
-		s_owned = pt_menus_active();
-	s_btn = 1;
+		MENUS.owned = pt_menus_active();
+	MENUS.btn = 1;
 
-	if (s_dlg == DLG_CONFIRM)
+	if (MENUS.dlg == DLG_CONFIRM)
 	{
 		if (fresh)
 		{
@@ -858,7 +866,7 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 		}
 		return 1;
 	}
-	if (s_dlg == DLG_KEYS)
+	if (MENUS.dlg == DLG_KEYS)
 	{
 		if (fresh)
 			close_dialog();
@@ -911,7 +919,7 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 	/* A menu/dialog that is no longer on screen may still own this held
 	 * press (it ran an immediate action and closed). Keep consuming the
 	 * event until button-up so the press cannot leak into the canvas. */
-	if (s_owned)
+	if (MENUS.owned)
 		return 1;
 	return 0;
 }
