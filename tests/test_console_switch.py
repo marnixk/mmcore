@@ -529,6 +529,64 @@ def test_switch_restores_term_after_juke(kernel_image):
         con.stop()
 
 
+def _is_colour(rgb, want, tol=60):
+    r, g, b = rgb
+    return (
+        abs(r - want[0]) <= tol
+        and abs(g - want[1]) <= tol
+        and abs(b - want[2]) <= tol
+        and max(r, g, b) > 60
+    )
+
+
+def _open_ansi(con, name: str) -> None:
+    """CHDIR to the seeded ANSI files and open one in the FILES viewer."""
+    assert con._ser is not None
+    con._ser.sendall(b"FILES\r")
+    seen = con.drain(quiet=0.8, timeout=8.0).decode(errors="replace")
+    for _ in range(16):
+        if f"SEL={name}" in seen:
+            break
+        con._ser.sendall(b"\x1b[B")
+        seen = con.drain(quiet=0.25).decode(errors="replace")
+    assert f"SEL={name}" in seen, seen
+    con._ser.sendall(b"\r")
+    seen = con.drain(quiet=1.0, timeout=8.0).decode(errors="replace")
+    assert f"[FILES] ANSI {name}" in seen, seen
+
+
+def test_switch_keeps_per_console_ansi_preview(kernel_image):
+    """#770: the ANSI preview grid is per console. Previewing WRAP.ANS on
+    console 2 must not overwrite console 1's TEST.ANS cells when console 1
+    repaints after the switch back."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _open_ansi(con, "TEST.ANS")
+        # Red block (ESC[41m) at 0-based row 1, col 2.
+        assert _is_colour(con.screen_pixel(20, 20), (170, 0, 0)), con.screen_pixel(20, 20)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _open_ansi(con, "WRAP.ANS")  # cyan in the same cell
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # Force console 1 to repaint from its own grid: still red, not cyan.
+        con._ser.sendall(b"f")
+        con.drain(quiet=1.0, timeout=8.0)
+        assert _is_colour(con.screen_pixel(20, 20), (170, 0, 0)), con.screen_pixel(20, 20)
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.6, timeout=6.0)
+        con._ser.sendall(b"q")
+        con.drain(quiet=0.4, timeout=4.0)
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
     """#670: the WORDPAD file-picker root is per-console. Ctrl+P on a console
     whose WORDPAD is already open must list its own directory, not another
