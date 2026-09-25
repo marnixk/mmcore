@@ -4,10 +4,12 @@ import subprocess
 
 import pytest
 
+import kernel_freshness
 from harness import MMBasicConsole, qemu_usb_net_args
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KERNEL = os.path.join(REPO_ROOT, "console", "kernel8.img")
+VERSION_HEADER = os.path.join(REPO_ROOT, "console", "mmb_version.h")
 BUILD_LOCK = os.path.join(REPO_ROOT, ".pytest-build.lock")
 
 BUILD_INPUT_DIRS = (
@@ -42,14 +44,17 @@ def kernel_image() -> str:
 
     Serialised with a lock so parallel pytest workers do not race inside
     ``scripts/build.sh``; the build is skipped when the image is newer than
-    every source it depends on.
+    every source it depends on and was built from the current version (#732).
     """
     with open(BUILD_LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            stale = not os.path.isfile(KERNEL)
-            if not stale:
-                stale = os.path.getmtime(KERNEL) < _newest_source_mtime()
+            stale = kernel_freshness.is_stale(
+                KERNEL,
+                VERSION_HEADER,
+                kernel_freshness.git_version(REPO_ROOT),
+                _newest_source_mtime(),
+            )
             if stale:
                 subprocess.run(
                     ["bash", os.path.join(REPO_ROOT, "scripts", "build.sh")],
