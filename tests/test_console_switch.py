@@ -529,6 +529,64 @@ def test_switch_restores_term_after_juke(kernel_image):
         con.stop()
 
 
+def _is_colour(rgb, want, tol=60):
+    r, g, b = rgb
+    return (
+        abs(r - want[0]) <= tol
+        and abs(g - want[1]) <= tol
+        and abs(b - want[2]) <= tol
+        and max(r, g, b) > 60
+    )
+
+
+def _open_ansi(con, name: str) -> None:
+    """CHDIR to the seeded ANSI files and open one in the FILES viewer."""
+    assert con._ser is not None
+    con._ser.sendall(b"FILES\r")
+    seen = con.drain(quiet=0.8, timeout=8.0).decode(errors="replace")
+    for _ in range(16):
+        if f"SEL={name}" in seen:
+            break
+        con._ser.sendall(b"\x1b[B")
+        seen = con.drain(quiet=0.25).decode(errors="replace")
+    assert f"SEL={name}" in seen, seen
+    con._ser.sendall(b"\r")
+    seen = con.drain(quiet=1.0, timeout=8.0).decode(errors="replace")
+    assert f"[FILES] ANSI {name}" in seen, seen
+
+
+def test_switch_keeps_per_console_ansi_preview(kernel_image):
+    """#770: the ANSI preview grid is per console. Previewing WRAP.ANS on
+    console 2 must not overwrite console 1's TEST.ANS cells when console 1
+    repaints after the switch back."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _open_ansi(con, "TEST.ANS")
+        # Red block (ESC[41m) at 0-based row 1, col 2.
+        assert _is_colour(con.screen_pixel(20, 20), (170, 0, 0)), con.screen_pixel(20, 20)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/tests"') == ""
+        _open_ansi(con, "WRAP.ANS")  # cyan in the same cell
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # Force console 1 to repaint from its own grid: still red, not cyan.
+        con._ser.sendall(b"f")
+        con.drain(quiet=1.0, timeout=8.0)
+        assert _is_colour(con.screen_pixel(20, 20), (170, 0, 0)), con.screen_pixel(20, 20)
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.6, timeout=6.0)
+        con._ser.sendall(b"q")
+        con.drain(quiet=0.4, timeout=4.0)
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
     """#670: the WORDPAD file-picker root is per-console. Ctrl+P on a console
     whose WORDPAD is already open must list its own directory, not another
@@ -571,6 +629,40 @@ def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
         con._ser.sendall(b"\x1b")
         con.drain(quiet=0.4, timeout=4.0)
         con._ser.sendall(bytes([24]))  # Ctrl+X quits WORDPAD
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([24]))
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_wordpad_undo(kernel_image):
+    """#768: WORDPAD's undo history is per-console. Starting WORDPAD on a
+    second console must not clear the history the first console built up."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"ABCDEF")
+        con.drain(quiet=0.5, timeout=4.0)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+
+        # Back on console 1, Ctrl+Z must still undo its own edit.
+        _switch(con, 1)
+        con.drain(quiet=0.5, timeout=4.0)
+        con._ser.sendall(bytes([26]))  # Ctrl+Z
+        undone = _plain(con.drain(quiet=0.6, timeout=6.0).decode(errors="replace"))
+        assert "ABCDEF" not in undone.upper(), undone
+
+        con._ser.sendall(bytes([24]))  # Ctrl+X quits console 1 WORDPAD
         con.drain(quiet=0.6, timeout=8.0)
         _switch(con, 2)
         con.drain(quiet=0.3, timeout=2.0)
@@ -821,6 +913,57 @@ def test_switch_keeps_per_console_edit_find_bar(kernel_image):
         time.sleep(0.4)
         back = _plain(con.drain(quiet=0.4, timeout=4.0).decode(errors="replace"))
         assert "Find: ZZTOPQ" in back, back
+
+    finally:
+        con.stop()
+
+
+def _open_term_demoburst(con, settle=1.8) -> str:
+    con.drain(quiet=0.1)
+    con._ser.sendall(b'TERM "demoburst", 23\r')
+    acc = con.drain(quiet=0.4, timeout=20)
+    time.sleep(settle)
+    acc += con.drain(quiet=0.4, timeout=10)
+    return _plain(acc.decode(errors="replace"))
+
+
+def _term_page_up(con, quiet=0.7, timeout=8.0) -> str:
+    con._ser.sendall(b"\x1b[5~")
+    return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
+
+
+def test_switch_keeps_per_console_term_scrollback(kernel_image):
+    """#767: TERM's scrollback ring is per-console. Opening TERM on a second
+    console must not wipe the first console's history, and each console pages
+    its own lines."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        # Console 1: fill the ring, then page back into it.
+        seen = _open_term_demoburst(con)
+        assert "line 40" in seen, seen
+        con.drain(quiet=0.3, timeout=3.0)
+        up = _term_page_up(con)
+        assert "SCROLL -" in up, up
+        assert "line 01" in up, up
+
+        # Console 2 opens TERM: its own ring, and console 1's stays intact.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        seen2 = _open_term_demoburst(con)
+        assert "line 40" in seen2, seen2
+        con.drain(quiet=0.3, timeout=3.0)
+        up2 = _term_page_up(con)
+        assert "SCROLL -" in up2, up2
+        assert "line 01" in up2, up2
+
+        # Back on console 1 the other console's TERM start did not wipe the
+        # history this console had scrolled into.
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        again = _term_page_up(con)
+        assert "SCROLL -" in again, again
+        assert "line 01" in again, again
     finally:
         con.stop()
 

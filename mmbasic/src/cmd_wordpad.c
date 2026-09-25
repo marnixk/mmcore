@@ -132,7 +132,76 @@ typedef struct {
 
 static wp_state W_s[MMB_MAX_CONSOLES];
 #define W (W_s[g_console])
-static wp_doc docs[WP_DOCS];
+/* The document store, undo pool, recovery scratch and file-dialog state are
+ * per-console, but they are large (docs alone is ~512 KB), so multiplying the
+ * old file statics by MMB_MAX_CONSOLES would blow the Circle kernel BSS
+ * budget.  Each console gets one lazily heap-allocated store instead (#768). */
+#define WP_UNDO_POOL 196608
+
+typedef struct {
+	wp_doc docs[WP_DOCS];
+	unsigned char undo_pool[WP_UNDO_POOL];
+	int undo_off[MMB_UNDO_DEPTH];
+	int undo_len[MMB_UNDO_DEPTH];
+	int undo_n, undo_bytes;
+	int hist_active, hist_taken;
+	char rec_sidecar[160];
+	char rec_tmp[WP_BUF];
+	char fd_dir[128];
+	/* Not "fd_mask": glibc declares that as a typedef via <sys/select.h>. */
+	char wp_fd_mask[32];
+	char fd_files[WP_FD_MAX][WP_FD_NAME];
+	char fd_dirs[WP_FD_MAX][WP_FD_NAME];
+	int fd_nfile, fd_ndir, fd_fsel, fd_dsel;
+	int fd_ftop, fd_dtop, fd_focus;
+	int fd_truncated; /* current folder listing was cut (#693) */
+	int menu_x[WP_MENU_COUNT];
+} wp_store;
+
+static wp_store *wp_store_s[MMB_MAX_CONSOLES];
+
+static wp_store *wp_store_get(void)
+{
+	wp_store *s = wp_store_s[g_console];
+
+	if (!s)
+	{
+		if (!G.plat || !G.plat->alloc)
+			return 0;
+		s = G.plat->alloc(sizeof(*s));
+		if (!s)
+			return 0;
+		memset(s, 0, sizeof(*s));
+		wp_store_s[g_console] = s;
+	}
+	return s;
+}
+
+#define WS (*wp_store_get())
+#define docs           (WS.docs)
+#define wp_undo_pool   (WS.undo_pool)
+#define wp_undo_off    (WS.undo_off)
+#define wp_undo_len    (WS.undo_len)
+#define wp_undo_n      (WS.undo_n)
+#define wp_undo_bytes  (WS.undo_bytes)
+#define wp_hist_active (WS.hist_active)
+#define wp_hist_taken  (WS.hist_taken)
+#define wp_rec_sidecar (WS.rec_sidecar)
+#define wp_rec_tmp     (WS.rec_tmp)
+#define fd_dir         (WS.fd_dir)
+#define wp_fd_mask     (WS.wp_fd_mask)
+#define fd_files       (WS.fd_files)
+#define fd_dirs        (WS.fd_dirs)
+#define fd_nfile       (WS.fd_nfile)
+#define fd_ndir        (WS.fd_ndir)
+#define fd_fsel        (WS.fd_fsel)
+#define fd_dsel        (WS.fd_dsel)
+#define fd_ftop        (WS.fd_ftop)
+#define fd_dtop        (WS.fd_dtop)
+#define fd_focus       (WS.fd_focus)
+#define fd_truncated   (WS.fd_truncated)
+#define menu_x         (WS.menu_x)
+
 /* The file-picker root and its transient list/selection state are per-console
  * session state (#670, #680): opening the picker on one console must not reuse
  * or rebuild the root/list another console's picker is using. */
@@ -154,8 +223,6 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 /* Crash-resume sidecar <path>.rec and its pending-prompt path. */
 #define WP_REC_SUFFIX  ".rec"
 #define WP_AUTOSAVE_MS 1500
-static char wp_rec_sidecar[160];
-static char wp_rec_tmp[WP_BUF];
 
 static int wp_save(void);
 static void wp_autosave(void);
@@ -163,14 +230,8 @@ static void wp_stash(void);
 
 /* Ctrl+Z undo (#532). WORDPAD's buffer is a flat string, so undo keeps a
  * compact pool of pre-edit copies (buffer + length), truncated to the shared
- * MMB_UNDO_DEPTH steps. The pool is shared across documents: only one WORDPAD
- * is active at a time. */
-#define WP_UNDO_POOL 196608
-static unsigned char wp_undo_pool[WP_UNDO_POOL];
-static int wp_undo_off[MMB_UNDO_DEPTH];
-static int wp_undo_len[MMB_UNDO_DEPTH];
-static int wp_undo_n, wp_undo_bytes;
-static int wp_hist_active, wp_hist_taken;
+ * MMB_UNDO_DEPTH steps. The pool is per-console, so switching away and back
+ * resumes that console's history (#768). */
 
 static void wp_undo_reset(void)
 {
@@ -241,22 +302,10 @@ static void wp_undo(void)
 
 static const char *menu_names[] = { "File", "Edit", "Settings" };
 static const char menu_hots[] = { 'F', 'E', 'S' };
-static int menu_x[WP_MENU_COUNT];
 
 static const char *file_items[] = { "New", "Open...", "Save", "Save As...", "Quit" };
 static const char *edit_items[] = { "Copy", "Cut", "Paste" };
 static const char *settings_items[] = { "Wide view" };
-
-static char fd_dir[128];
-/* Not "fd_mask": glibc declares that as a typedef via <sys/select.h>. */
-static char wp_fd_mask[32];
-static char fd_files[WP_FD_MAX][WP_FD_NAME];
-static char fd_dirs[WP_FD_MAX][WP_FD_NAME];
-static int fd_nfile, fd_ndir;
-static int fd_fsel, fd_dsel;
-static int fd_ftop, fd_dtop;
-static int fd_focus;
-static int fd_truncated; /* current folder listing was cut (#693) */
 
 static const mmb_ed_theme *wpth(void)
 {
@@ -1214,24 +1263,34 @@ static void wp_serial_dump(void)
 }
 
 /* Drop every module buffer that outlives a single WORDPAD session.  Called on
- * entry and exit so leaving and reopening with a file argument starts from the
- * same clean state as a first launch (issue #583). */
+ * entry, after the per-console store is allocated, so leaving and reopening
+ * with a file argument starts from the same clean state as a first launch
+ * (issue #583).  The store itself is freed by wp_release_globals(). */
 static void wp_reset_globals(void)
 {
-	memset(docs, 0, sizeof(docs));
+	wp_store *s = wp_store_get();
+
+	if (s)
+		memset(s, 0, sizeof(*s));
 	memset(pick_path, 0, sizeof(pick_path));
 	pick_root[0] = 0;
 	memset(pick_view, 0, sizeof(pick_view));
 	pick_n = pick_sel = pick_row0 = pick_vn = 0;
-	fd_dir[0] = 0;
-	memset(wp_fd_mask, 0, sizeof(wp_fd_mask));
-	memset(fd_files, 0, sizeof(fd_files));
-	memset(fd_dirs, 0, sizeof(fd_dirs));
-	fd_nfile = fd_ndir = fd_fsel = fd_dsel = 0;
-	fd_ftop = fd_dtop = fd_focus = 0;
-	memset(menu_x, 0, sizeof(menu_x));
-	wp_rec_sidecar[0] = 0;
-	wp_undo_reset();
+}
+
+/* Free the active console's store so a leave (or warm reset) does not leave a
+ * heap allocation behind (#768). */
+static void wp_release_globals(void)
+{
+	if (wp_store_s[g_console])
+	{
+		G.plat->free(wp_store_s[g_console]);
+		wp_store_s[g_console] = 0;
+	}
+	memset(pick_path, 0, sizeof(pick_path));
+	pick_root[0] = 0;
+	memset(pick_view, 0, sizeof(pick_view));
+	pick_n = pick_sel = pick_row0 = pick_vn = 0;
 }
 
 /* Restore the graphics mode the caller was in before WORDPAD took over and
@@ -1252,7 +1311,7 @@ static void wp_leave(void)
 	wp_restore_gfx();
 	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
-	wp_reset_globals();
+	wp_release_globals();
 }
 
 static void sel_clear(void)
@@ -3974,6 +4033,11 @@ void mmb_cmd_wordpad(void)
 	}
 	memset(&W, 0, sizeof(W));
 	wp_reset_globals();
+	if (!wp_store_s[g_console])
+	{
+		mmb_error("?OUT OF MEMORY");
+		return;
+	}
 	W.active = 1;
 	W.wide = 0;
 	W.ndoc = 1;
@@ -4045,4 +4109,27 @@ void mmb_wordpad_poll(void)
 	chrome = wp_chrome();
 	if (chrome != W.chrome_shown)
 		wp_redraw();
+}
+
+/* Cold-boot the WORDPAD layer on a warm reset (#763).  wp_leave() already
+ * frees the store of any console that was running WORDPAD, but clear every
+ * console's store and static session state here too so a reset cannot leave a
+ * heap allocation or stale picker behind (#768). */
+void mmb_wordpad_reset_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		memset(&W_s[i], 0, sizeof(W_s[i]));
+		if (wp_store_s[i] && G.plat && G.plat->free)
+		{
+			G.plat->free(wp_store_s[i]);
+			wp_store_s[i] = 0;
+		}
+		memset(pick_path_s[i], 0, sizeof(pick_path_s[i]));
+		pick_root_s[i][0] = 0;
+		memset(pick_view_s[i], 0, sizeof(pick_view_s[i]));
+		pick_n_s[i] = pick_sel_s[i] = pick_row0_s[i] = pick_vn_s[i] = 0;
+	}
 }

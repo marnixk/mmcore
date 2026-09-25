@@ -43,6 +43,12 @@ typedef struct {
 } fu_panel;
 
 typedef struct {
+	unsigned char ch;
+	unsigned char fg;
+	unsigned char bg;
+} an_cell;
+
+typedef struct {
 	int active;
 	fu_panel pan[2];
 	int cur;
@@ -78,6 +84,7 @@ typedef struct {
 	int an_mode80;
 	int an_saved_mode;
 	int an_saved_bits;
+	an_cell (*an_grid)[AN_MAX_COLS];
 	unsigned char *tdf_buf;
 	unsigned tdf_size;
 	int tdf_variants;
@@ -86,20 +93,54 @@ typedef struct {
 
 static fu_state F_s[MMB_MAX_CONSOLES];
 #define F (F_s[g_console])
+#define an_scr (F.an_grid)
 
+/* ANSI renderer parser state is per console so two consoles can hold their
+ * own preview at once (#770). Grid cells live in F.an_grid, heap-allocated on
+ * first use because four grids do not fit Circle's kernel BSS budget. */
 typedef struct {
-	unsigned char ch;
-	unsigned char fg;
-	unsigned char bg;
-} an_cell;
+	int cols;
+	int row, col;
+	int fg, bg, bold, inv;
+	int sav_row, sav_col;
+	int st;
+	int args[8], narg, priv;
+} an_parser;
 
-static an_cell an_scr[AN_MAX_ROWS][AN_MAX_COLS];
-static int an_p_cols;
-static int an_p_row, an_p_col;
-static int an_p_fg, an_p_bg, an_p_bold, an_p_inv;
-static int an_p_sav_row, an_p_sav_col;
-static int an_p_st;
-static int an_p_args[8], an_p_narg, an_p_priv;
+static an_parser an_ps[MMB_MAX_CONSOLES];
+#define AP        (an_ps[g_console])
+#define an_p_cols (AP.cols)
+#define an_p_row  (AP.row)
+#define an_p_col  (AP.col)
+#define an_p_fg   (AP.fg)
+#define an_p_bg   (AP.bg)
+#define an_p_bold (AP.bold)
+#define an_p_inv  (AP.inv)
+#define an_p_sav_row (AP.sav_row)
+#define an_p_sav_col (AP.sav_col)
+#define an_p_st   (AP.st)
+#define an_p_args (AP.args)
+#define an_p_narg (AP.narg)
+#define an_p_priv (AP.priv)
+
+static int an_grid_alloc(void)
+{
+	if (F.an_grid)
+		return 0;
+	if (!G.plat || !G.plat->alloc)
+		return -1;
+	F.an_grid = G.plat->alloc((unsigned)(AN_MAX_ROWS * AN_MAX_COLS * sizeof(an_cell)));
+	return F.an_grid ? 0 : -1;
+}
+
+static void an_grid_free(void)
+{
+	if (!F.an_grid)
+		return;
+	if (G.plat && G.plat->free)
+		G.plat->free(F.an_grid);
+	F.an_grid = 0;
+}
 
 #define FU_MENU_FG ((int)mmb_editor_theme()->menu_fg)
 #define FU_MENU_BG ((int)mmb_editor_theme()->menu_bg)
@@ -1101,6 +1142,7 @@ static void files_close_tui(int restore_prompt)
 	if (F.pv_saved)
 		preview_restore();
 	tdf_release();
+	an_grid_free();
 	if (mmb_ftp_running())
 		mmb_ftp_stop();
 	F.active = 0;
@@ -1374,6 +1416,8 @@ static void an_touch(int row)
 static void an_clear_cells(int r0, int c0, int r1, int c1)
 {
 	int r, c;
+	if (!an_scr)
+		return;
 	if (r0 < 0)
 		r0 = 0;
 	if (c0 < 0)
@@ -1466,6 +1510,8 @@ static void an_newline(void)
 static void an_put(unsigned char ch)
 {
 	int fg, bg;
+	if (!an_scr)
+		return;
 	if (an_p_row < 0 || an_p_row >= AN_MAX_ROWS)
 		return;
 	if (an_p_col >= an_p_cols)
@@ -1782,9 +1828,11 @@ static void an_reset(int cols)
 	an_p_priv = 0;
 	for (i = 0; i < 8; i++)
 		an_p_args[i] = 0;
-	memset(an_scr, 0, sizeof(an_scr));
 	F.an_rows = 0;
 	F.an_top = 0;
+	if (an_grid_alloc() != 0)
+		return;
+	memset(F.an_grid, 0, (size_t)AN_MAX_ROWS * AN_MAX_COLS * sizeof(an_cell));
 }
 
 static void an_parse(int cols)
@@ -1823,17 +1871,20 @@ static void an_render(void)
 		F.an_top = 0;
 	tui_set_palette(0);
 	tui_clear(7, 0);
-	for (r = 0; r < rows; r++)
+	if (F.an_grid)
 	{
-		int src = F.an_top + r;
-		if (src < 0 || src >= F.an_rows || src >= AN_MAX_ROWS)
-			continue;
-		for (c = 0; c < cols && c < AN_MAX_COLS; c++)
+		for (r = 0; r < rows; r++)
 		{
-			an_cell *cell = &an_scr[src][c];
-			if (!cell->ch)
+			int src = F.an_top + r;
+			if (src < 0 || src >= F.an_rows || src >= AN_MAX_ROWS)
 				continue;
-			tui_put(c, r, cell->ch, cell->fg, cell->bg);
+			for (c = 0; c < cols && c < AN_MAX_COLS; c++)
+			{
+				an_cell *cell = &an_scr[src][c];
+				if (!cell->ch)
+					continue;
+				tui_put(c, r, cell->ch, cell->fg, cell->bg);
+			}
 		}
 	}
 	tui_cursor(0, 0, 0);
@@ -1954,6 +2005,8 @@ static void do_ansi_view(const char *path, const char *name)
 static void tdf_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 {
 	(void)ctx;
+	if (!an_scr)
+		return;
 	if (x < 0 || x >= AN_MAX_COLS || y < 0 || y >= AN_MAX_ROWS)
 		return;
 	an_scr[y][x].ch = (unsigned char)ch;
@@ -1977,6 +2030,8 @@ static void tdf_release(void)
 /* Stamp plain console-font text into the CP437 grid (for variation captions). */
 static void tdf_text(int x, int y, const char *s, int fg, int bg)
 {
+	if (!an_scr)
+		return;
 	for (; *s; s++, x++)
 	{
 		if (x < 1 || x >= AN_MAX_COLS || y < 1 || y >= AN_MAX_ROWS)
@@ -3773,14 +3828,17 @@ int mmb_files_pick_geom(int *x, int *y, int *w, int *h)
 }
 
 /* Cold-boot the FILES browser and its reusable picker on a warm reset (#763).
- * warm_reset_close_apps() has already freed any retained TDF buffer, so this
- * only needs to drop the per-console session state. */
+ * warm_reset_close_apps() has already freed any retained TDF buffer and ANSI
+ * grid, but free any leftovers before the per-console session state is
+ * cleared (#770). */
 void mmb_files_reset_all(void)
 {
 	int i;
 
 	for (i = 0; i < MMB_MAX_CONSOLES; i++)
 	{
+		if (F_s[i].an_grid && G.plat && G.plat->free)
+			G.plat->free(F_s[i].an_grid);
 		memset(&F_s[i], 0, sizeof(F_s[i]));
 		memset(&PK_s[i], 0, sizeof(PK_s[i]));
 	}

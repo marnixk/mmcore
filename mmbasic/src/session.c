@@ -61,6 +61,7 @@ void mmb_console_reset(void)
 	mmb_term_reset_all();
 	mmb_files_reset_all();
 	mmb_paint_reset_all();
+	mmb_wordpad_reset_all();
 	mmb_tui_reset_all();
 
 	for (i = 1; i < MMB_MAX_CONSOLES; i++)

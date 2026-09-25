@@ -35,21 +35,32 @@ void pt_text_begin(int cx, int cy, int button);
 
 /* ---- module state ------------------------------------------------------ */
 
-static int s_shift;		/* Shift held (pt_tool_modifiers) */
-static int s_moved;		/* grab: the press turned into a drag */
+/* One set of tool state per virtual console: a live shape preview, grab brush
+ * and airbrush noise sequence must not cross consoles (#766). */
+typedef struct {
+	int shift;		/* Shift held (pt_tool_modifiers) */
+	int moved;		/* grab: the press turned into a drag */
 
-/* Bounding box of the live shape preview currently on the canvas, so the next
- * preview_restore() can damage the pixels it is about to revert (#700). */
-static int s_pv_valid;
-static int s_pv_x0, s_pv_y0, s_pv_x1, s_pv_y1;
+	/* Bounding box of the live shape preview currently on the canvas, so the
+	 * next preview_restore() can damage the pixels it is about to revert
+	 * (#700). */
+	int pv_valid;
+	int pv_x0, pv_y0, pv_x1, pv_y1;
 
-static unsigned char *s_brush;	/* custom brush, PT_MAX_W * PT_MAX_H */
-static int s_brush_w, s_brush_h;
-static int s_brush_bg;		/* index treated as transparent when stamped */
+	unsigned char *brush;	/* custom brush, PT_MAX_W * PT_MAX_H */
+	int brush_w, brush_h;
+	int brush_bg;		/* index treated as transparent when stamped */
 
-/* Ink for the shared line/ellipse rasterisers: canvas index or screen RGB. */
-static int s_cink;
-static unsigned s_sink;
+	/* Ink for the shared line/ellipse rasterisers: canvas index or RGB. */
+	int cink;
+	unsigned sink;
+
+	int pen_w;
+	unsigned noise;
+} pt_tools_state;
+
+static pt_tools_state s_tools_state[MMB_MAX_CONSOLES];
+#define TOOLS (s_tools_state[g_console])
 
 /* ---- small helpers ----------------------------------------------------- */
 
@@ -65,12 +76,12 @@ static int tool_pen(int button)
 
 static void cplot(int x, int y)
 {
-	pt_canvas_set(x, y, s_cink);
+	pt_canvas_set(x, y, TOOLS.cink);
 }
 
 static void splot(int x, int y)
 {
-	pt_fill_rect(x, y, 1, 1, s_sink);
+	pt_fill_rect(x, y, 1, 1, TOOLS.sink);
 }
 
 /* ---- primitives -------------------------------------------------------- */
@@ -120,24 +131,22 @@ int pt_pen_width(void)
 	return s_pen_widths[i];
 }
 
-static int s_pen_w;
-
 /* Stamp the pen as a square of the current width centred on (x, y). */
 static void cstamp(int x, int y)
 {
-	int o = -((s_pen_w - 1) / 2);
+	int o = -((TOOLS.pen_w - 1) / 2);
 	int i, j;
 
-	for (j = 0; j < s_pen_w; j++)
-		for (i = 0; i < s_pen_w; i++)
-			pt_canvas_set(x + o + i, y + o + j, s_cink);
+	for (j = 0; j < TOOLS.pen_w; j++)
+		for (i = 0; i < TOOLS.pen_w; i++)
+			pt_canvas_set(x + o + i, y + o + j, TOOLS.cink);
 }
 
 static void canvas_line(int x0, int y0, int x1, int y1, int c)
 {
-	s_cink = c;
-	s_pen_w = pt_pen_width();
-	line_plot(x0, y0, x1, y1, s_pen_w > 1 ? cstamp : cplot);
+	TOOLS.cink = c;
+	TOOLS.pen_w = pt_pen_width();
+	line_plot(x0, y0, x1, y1, TOOLS.pen_w > 1 ? cstamp : cplot);
 }
 
 /* Integer midpoint ellipse inscribed in the (x0,y0)-(x1,y1) box (Zingl). */
@@ -195,9 +204,9 @@ static void ellipse_plot(int x0, int y0, int x1, int y1, void (*pl)(int, int))
 
 static void canvas_ellipse_box(int x0, int y0, int x1, int y1, int c)
 {
-	s_cink = c;
-	s_pen_w = pt_pen_width();
-	ellipse_plot(x0, y0, x1, y1, s_pen_w > 1 ? cstamp : cplot);
+	TOOLS.cink = c;
+	TOOLS.pen_w = pt_pen_width();
+	ellipse_plot(x0, y0, x1, y1, TOOLS.pen_w > 1 ? cstamp : cplot);
 }
 
 static void canvas_circle(int cx, int cy, int r, int c)
@@ -442,14 +451,14 @@ static void preview_note(int x0, int y0, int x1, int y1)
 		y1 = PT.height - 1;
 	if (x1 < x0 || y1 < y0)
 	{
-		s_pv_valid = 0;
+		TOOLS.pv_valid = 0;
 		return;
 	}
-	s_pv_x0 = x0;
-	s_pv_y0 = y0;
-	s_pv_x1 = x1;
-	s_pv_y1 = y1;
-	s_pv_valid = 1;
+	TOOLS.pv_x0 = x0;
+	TOOLS.pv_y0 = y0;
+	TOOLS.pv_x1 = x1;
+	TOOLS.pv_y1 = y1;
+	TOOLS.pv_valid = 1;
 }
 
 static void preview_restore(void)
@@ -458,13 +467,13 @@ static void preview_restore(void)
 	{
 		/* The revert erases the previous preview, which the per-pixel
 		 * pt_canvas_set() damage does not cover. */
-		if (s_pv_valid)
-			pt_damage_canvas(s_pv_x0, s_pv_y0,
-					 s_pv_x1 - s_pv_x0 + 1,
-					 s_pv_y1 - s_pv_y0 + 1);
+		if (TOOLS.pv_valid)
+			pt_damage_canvas(TOOLS.pv_x0, TOOLS.pv_y0,
+					 TOOLS.pv_x1 - TOOLS.pv_x0 + 1,
+					 TOOLS.pv_y1 - TOOLS.pv_y0 + 1);
 		memcpy(PT.canvas, PT.scratch, (size_t)PT.width * PT.height);
 	}
-	s_pv_valid = 0;
+	TOOLS.pv_valid = 0;
 }
 
 /* ---- Shift constraints ------------------------------------------------- */
@@ -501,8 +510,8 @@ static void constrain_square(int ax, int ay, int *px, int *py)
 
 static void ensure_brush(void)
 {
-	if (!s_brush && G.plat && G.plat->alloc)
-		s_brush = (unsigned char *)
+	if (!TOOLS.brush && G.plat && G.plat->alloc)
+		TOOLS.brush = (unsigned char *)
 			G.plat->alloc((unsigned)PT_MAX_W * (unsigned)PT_MAX_H);
 }
 
@@ -533,14 +542,14 @@ static void grab_capture(int x0, int y0, int x1, int y1)
 	if (x1 < x0 || y1 < y0)
 		return;
 	ensure_brush();
-	if (!s_brush)
+	if (!TOOLS.brush)
 		return;
-	s_brush_w = x1 - x0 + 1;
-	s_brush_h = y1 - y0 + 1;
-	s_brush_bg = PT.bg;
-	for (j = 0; j < s_brush_h; j++)
-		for (i = 0; i < s_brush_w; i++)
-			s_brush[(size_t)j * s_brush_w + i] =
+	TOOLS.brush_w = x1 - x0 + 1;
+	TOOLS.brush_h = y1 - y0 + 1;
+	TOOLS.brush_bg = PT.bg;
+	for (j = 0; j < TOOLS.brush_h; j++)
+		for (i = 0; i < TOOLS.brush_w; i++)
+			TOOLS.brush[(size_t)j * TOOLS.brush_w + i] =
 				(unsigned char)pt_canvas_get(x0 + i, y0 + j);
 }
 
@@ -548,14 +557,14 @@ static void grab_stamp(int x, int y)
 {
 	int i, j;
 
-	if (!s_brush || s_brush_w <= 0 || s_brush_h <= 0)
+	if (!TOOLS.brush || TOOLS.brush_w <= 0 || TOOLS.brush_h <= 0)
 		return;
-	for (j = 0; j < s_brush_h; j++)
-		for (i = 0; i < s_brush_w; i++)
+	for (j = 0; j < TOOLS.brush_h; j++)
+		for (i = 0; i < TOOLS.brush_w; i++)
 		{
-			int v = s_brush[(size_t)j * s_brush_w + i];
+			int v = TOOLS.brush[(size_t)j * TOOLS.brush_w + i];
 
-			if (v == s_brush_bg)
+			if (v == TOOLS.brush_bg)
 				continue;	/* background is transparent */
 			pt_canvas_set(x + i, y + j, v);
 		}
@@ -576,12 +585,10 @@ static void grab_stamp(int x, int y)
  * 1:1. */
 #define PT_ZOOM_MAX   8
 
-static unsigned s_noise;
-
 static unsigned noise_next(void)
 {
-	s_noise = s_noise * 1664525u + 1013904223u;
-	return s_noise >> 8;
+	TOOLS.noise = TOOLS.noise * 1664525u + 1013904223u;
+	return TOOLS.noise >> 8;
 }
 
 static void air_dab(int x, int y, int c)
@@ -708,7 +715,7 @@ static void draw_tool_icon(int tool, int ox, int oy, unsigned fg, unsigned bg)
 
 			if (v == PTI_ICON_TRANSPARENT)
 				continue;
-			s_sink = (v == PTI_ICON_CUT) ? bg : fg;
+			TOOLS.sink = (v == PTI_ICON_CUT) ? bg : fg;
 			splot(ox + x, oy + y);
 		}
 	}
@@ -718,12 +725,19 @@ static void draw_tool_icon(int tool, int ox, int oy, unsigned fg, unsigned bg)
 
 void pt_tools_init(void)
 {
-	s_shift = 0;
-	s_moved = 0;
-	s_brush_w = 0;
-	s_brush_h = 0;
-	s_brush_bg = PT.bg;
-	s_noise = 0x13579BDFu;
+	if (TOOLS.brush && G.plat && G.plat->free)
+		G.plat->free(TOOLS.brush);
+	TOOLS.brush = 0;
+	TOOLS.shift = 0;
+	TOOLS.moved = 0;
+	TOOLS.pv_valid = 0;
+	TOOLS.brush_w = 0;
+	TOOLS.brush_h = 0;
+	TOOLS.brush_bg = PT.bg;
+	TOOLS.cink = 0;
+	TOOLS.sink = 0;
+	TOOLS.pen_w = 1;
+	TOOLS.noise = 0x13579BDFu;
 	PT.width_idx = 0;
 }
 
@@ -843,7 +857,7 @@ void pt_tool_select(int tool)
  * tests drive it directly and a later scaffold revision can wire the key. */
 void pt_tool_modifiers(int shift)
 {
-	s_shift = shift ? 1 : 0;
+	TOOLS.shift = shift ? 1 : 0;
 }
 
 void pt_tool_begin(int cx, int cy, int button)
@@ -855,8 +869,8 @@ void pt_tool_begin(int cx, int cy, int button)
 	PT.anchor_y = cy;
 	PT.last_cx = cx;
 	PT.last_cy = cy;
-	s_moved = 0;
-	s_pv_valid = 0;
+	TOOLS.moved = 0;
+	TOOLS.pv_valid = 0;
 
 	switch (PT.tool)
 	{
@@ -930,35 +944,35 @@ void pt_tool_motion(int cx, int cy, int button)
 		canvas_line(PT.last_cx, PT.last_cy, cx, cy, PT.bg);
 		break;
 	case PT_TOOL_LINE:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_line(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_line(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_RECT:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_rect(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_RECT_FILLED:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_rect_fill(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_ELLIPSE:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_box(PT.anchor_x, PT.anchor_y, x, y, c);
 		preview_note(PT.anchor_x, PT.anchor_y, x, y);
 		break;
 	case PT_TOOL_ELLIPSE_FILLED:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_fill(PT.anchor_x, PT.anchor_y, x, y, c);
@@ -991,14 +1005,14 @@ void pt_tool_motion(int cx, int cy, int button)
 		break;
 	}
 	case PT_TOOL_GRAB:
-		if (!s_moved &&
+		if (!TOOLS.moved &&
 		    (iabs(cx - PT.anchor_x) >= PT_DRAG_MIN ||
 		     iabs(cy - PT.anchor_y) >= PT_DRAG_MIN))
 		{
-			s_moved = 1;
+			TOOLS.moved = 1;
 			preview_begin();
 		}
-		if (s_moved)
+		if (TOOLS.moved)
 		{
 			preview_restore();
 			canvas_rect(PT.anchor_x, PT.anchor_y, cx, cy, c);
@@ -1027,35 +1041,35 @@ void pt_tool_end(int cx, int cy, int button)
 	switch (PT.tool)
 	{
 	case PT_TOOL_LINE:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_line(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_line(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
 	case PT_TOOL_RECT:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_rect(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
 	case PT_TOOL_RECT_FILLED:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_rect_fill(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
 	case PT_TOOL_ELLIPSE:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_box(PT.anchor_x, PT.anchor_y, x, y, c);
 		PT.scratch_valid = 0;
 		break;
 	case PT_TOOL_ELLIPSE_FILLED:
-		if (s_shift)
+		if (TOOLS.shift)
 			constrain_square(PT.anchor_x, PT.anchor_y, &x, &y);
 		preview_restore();
 		canvas_ellipse_fill(PT.anchor_x, PT.anchor_y, x, y, c);
@@ -1086,13 +1100,13 @@ void pt_tool_end(int cx, int cy, int button)
 		break;
 	}
 	case PT_TOOL_GRAB:
-		if (s_moved)
+		if (TOOLS.moved)
 		{
 			preview_restore();
 			grab_capture(PT.anchor_x, PT.anchor_y, cx, cy);
 			PT.scratch_valid = 0;
 		}
-		else if (s_brush && s_brush_w > 0)
+		else if (TOOLS.brush && TOOLS.brush_w > 0)
 		{
 			pt_undo_push();
 			grab_stamp(cx, cy);
@@ -1105,7 +1119,7 @@ void pt_tool_end(int cx, int cy, int button)
 		break;
 	}
 	PT.have_anchor = 0;
-	s_moved = 0;
+	TOOLS.moved = 0;
 }
 
 void pt_tool_cancel(void)
@@ -1118,5 +1132,5 @@ void pt_tool_cancel(void)
 		PT.scratch_valid = 0;
 	}
 	PT.have_anchor = 0;
-	s_moved = 0;
+	TOOLS.moved = 0;
 }

@@ -36,8 +36,12 @@ typedef struct {
 	unsigned esc_at;
 	int alt;
 	int menu;
+	unsigned char iac_out[64];
+	int iac_n;
 } cn_state;
 
+/* The telnet IAC parser state is per console (#771), but the TCP socket is a
+ * single machine resource shared by every console, like the audio engine. */
 static cn_state C_s[MMB_MAX_CONSOLES];
 #define C (C_s[g_console])
 
@@ -58,9 +62,6 @@ static void emit_both(const char *s, unsigned n)
 	emit_scr(s, n);
 	emit_ser(s, n);
 }
-
-static unsigned char iac_out[64];
-static int iac_n;
 
 static int tcp_send_all(const void *p, unsigned n)
 {
@@ -96,27 +97,27 @@ static void iac_flush(void)
 {
 	unsigned n;
 
-	if (iac_n <= 0)
+	if (C.iac_n <= 0)
 		return;
-	n = (unsigned)iac_n;
-	iac_n = 0;
-	tcp_send_all(iac_out, n);
+	n = (unsigned)C.iac_n;
+	C.iac_n = 0;
+	tcp_send_all(C.iac_out, n);
 }
 
 static void iac_append(const unsigned char *p, unsigned n)
 {
 	if (!p || n == 0)
 		return;
-	if (iac_n + (int)n > (int)sizeof(iac_out))
+	if (C.iac_n + (int)n > (int)sizeof(C.iac_out))
 		iac_flush();
-	if (n > sizeof(iac_out))
+	if (n > sizeof(C.iac_out))
 	{
 		iac_flush();
 		tcp_send_all(p, n);
 		return;
 	}
-	memcpy(iac_out + iac_n, p, n);
-	iac_n += (int)n;
+	memcpy(C.iac_out + C.iac_n, p, n);
+	C.iac_n += (int)n;
 }
 
 static void tcp_send(const void *p, unsigned n)
@@ -279,7 +280,7 @@ static void session_close(const char *why)
 	mmb_net_tcp_close();
 	C.active = 0;
 	C.linelen = 0;
-	iac_n = 0;
+	C.iac_n = 0;
 	if (why && why[0])
 		emit_both(why, (unsigned)strlen(why));
 	mmb_console_reset_prompt();
@@ -335,7 +336,7 @@ void mmb_cmd_connect(void)
 	C.alt = 0;
 	C.menu = 0;
 
-	iac_n = 0;
+	C.iac_n = 0;
 	if (mmb_tcp_any_open())
 		mmb_error("?FILE");
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
