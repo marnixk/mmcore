@@ -1094,6 +1094,7 @@ void mmb_afk_poll(void);
 void mmb_term_reset_all(void);
 void mmb_files_reset_all(void);
 void mmb_paint_reset_all(void);
+void mmb_wordpad_reset_all(void);
 void mmb_tui_reset_all(void);
 
 void mmb_editor_open(const char *path);
