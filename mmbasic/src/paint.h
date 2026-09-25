@@ -289,6 +289,7 @@ void pt_file_save(void);
 void pt_file_save_as(void);
 int pt_file_dialog_active(void);
 int pt_file_key(int key);		/* 1 = consumed by an open dialog */
+int pt_file_poll(void);			/* 1 = resolved a buffered lone Esc */
 void pt_file_draw(void);		/* compose the picker overlay (no present) */
 
 /* ---- selection + clipboard (#644) -------------------------------------- */

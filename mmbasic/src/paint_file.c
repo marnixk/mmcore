@@ -34,6 +34,7 @@ int mmb_files_pick_done(void);
 int mmb_files_pick_cancelled(void);
 const char *mmb_files_pick_result(void);
 int mmb_files_pick_key(int key);
+int mmb_files_pick_poll(void);
 void mmb_files_pick_render(void);
 void mmb_files_pick_compose(void);
 int mmb_files_pick_geom(int *x, int *y, int *w, int *h);
@@ -357,6 +358,25 @@ int pt_file_key(int key)
 		return 1;
 	}
 	pt_request_redraw();
+	return 1;
+}
+
+/* Resolve a lone Esc in the picker once its idle window elapses. The key
+ * handler buffers Esc to tell it from an arrow key, so without this poll the
+ * dialog would wait for another key (#760). */
+int pt_file_poll(void)
+{
+	if (!mmb_files_pick_active())
+		return 0;
+	if (!mmb_files_pick_poll())
+		return 0;
+	if (mmb_files_pick_done() && mmb_files_pick_cancelled())
+	{
+		pf_status("Cancelled", 0);
+		mmb_files_pick_end();
+		s_mode = PF_NONE;
+		pt_request_redraw();
+	}
 	return 1;
 }
 

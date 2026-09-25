@@ -626,6 +626,11 @@ void mmb_paint_poll(void)
 	if (!PT.active)
 		return;
 
+	/* A lone Esc buffered by the file picker cancels it once its idle window
+	 * elapses; without this the dialog would wait for a second key (#760). */
+	if (pt_file_poll())
+		changed = 1;
+
 	/* A buffered Esc that no key followed within the idle window is a real
 	 * Esc: close an open menu/dialog, or quit (through the discard prompt
 	 * when the canvas is dirty). */
@@ -1151,6 +1156,11 @@ PT_WEAK int pt_file_key(int key)
 	return 0;
 }
 
+PT_WEAK int pt_file_poll(void)
+{
+	return 0;
+}
+
 /* ---- text (#642) ------------------------------------------------------- */
 
 PT_WEAK void pt_text_init(void)
@@ -1217,4 +1227,35 @@ PT_WEAK int pt_select_hit(int cx, int cy)
 	(void)cx;
 	(void)cy;
 	return 0;
+}
+
+/* Cold-boot the PAINT layer on a warm reset (#763). warm_reset_close_apps()
+ * has already freed each console's canvas/scratch and the per-console PT
+ * state is restored below; re-run every module init to drop the global
+ * module state (menus, undo, text, selection, tools) that a leave does not
+ * fully clear. */
+void mmb_paint_reset_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+		memset(&pt_console_state[i], 0, sizeof(pt_console_state[i]));
+	memset(s_esc_state, 0, sizeof(s_esc_state));
+	memset(s_esc_at, 0, sizeof(s_esc_at));
+	memset(s_alt_pend, 0, sizeof(s_alt_pend));
+	memset(s_saved_mode, 0, sizeof(s_saved_mode));
+	memset(s_saved_bits, 0, sizeof(s_saved_bits));
+	s_dmg_valid = 0;
+	s_pres_valid = 0;
+	s_full_frame = 0;
+
+	pt_palette_init();
+	pt_tools_init();
+	pt_undo_clear();
+	pt_undo_init();
+	pt_menus_init();
+	pt_cursor_init();
+	pt_file_init();
+	pt_text_init();
+	pt_select_init();
 }
