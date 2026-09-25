@@ -27,6 +27,7 @@ static SDL_Texture *s_tex;
 static uint16_t *s_fb;     /* RGB555 (green bit 6) */
 static uint16_t *s_stage;  /* RGB565 for SDL */
 static int s_w, s_h;
+static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
 static int s_dirty = 1;
 
@@ -153,7 +154,8 @@ int sdl_video_resize(int w, int h)
 	s_h = h;
 	s_dirty = 1;
 	if (s_win)
-		SDL_SetWindowSize(s_win, w, h);
+		SDL_SetWindowSize(s_win, w * s_window_scale,
+				  h * s_window_scale);
 	return 1;
 }
 
@@ -273,9 +275,34 @@ void sdl_video_set_fullscreen(int on)
 		if (!(flags & SDL_WINDOW_FULLSCREEN_DESKTOP))
 			return;
 		SDL_SetWindowFullscreen(s_win, 0);
+		/* Restore the windowed size (the 2x client when --double is on)
+		 * rather than trusting the platform's own restore. */
+		SDL_SetWindowSize(s_win, s_w * s_window_scale,
+				  s_h * s_window_scale);
 	}
 	/* The drawable changed: force a full repaint (and a fresh letterbox). */
 	sdl_video_mark_dirty();
+}
+
+/* Set the windowed client-size multiplier (1 = 1:1, 2 = --double). Applies
+ * immediately unless fullscreen owns the drawable; sdl_video_resize() honours
+ * it thereafter so a MODE change keeps the scaled client. */
+void sdl_video_set_window_scale(int scale)
+{
+	if (scale < 1)
+		scale = 1;
+	s_window_scale = scale;
+	if (!s_win)
+		return;
+	if (SDL_GetWindowFlags(s_win) & SDL_WINDOW_FULLSCREEN_DESKTOP)
+		return;
+	SDL_SetWindowSize(s_win, s_w * scale, s_h * scale);
+	sdl_video_mark_dirty();
+}
+
+int sdl_video_window_scale(void)
+{
+	return s_window_scale;
 }
 
 void sdl_video_toggle_fullscreen(void)

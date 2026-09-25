@@ -82,6 +82,7 @@ static void help(const char *prog)
 	printf("  --term [HOST[:PORT]]  run TERM as a sealed session (exit when it ends)\n");
 	printf("  --repl, --stay    return to the REPL when an .app or TERM session ends\n");
 	printf("  --fullscreen      start the SDL window in fullscreen (desktop clients)\n");
+	printf("  --double          open the SDL window at 2x the framebuffer size (windowed)\n");
 	printf("  --help, -h        show this help\n");
 	printf("\n"
 	       "A positional argument that names an existing .app file runs it as a\n"
@@ -163,6 +164,11 @@ const struct mmb_cli_opts *mmb_cli_parse(int argc, char **argv)
 		{
 			/* SDL build opens the window fullscreen; a no-op headless. */
 			s_opts.fullscreen = 1;
+		}
+		else if (strcmp(a, "--double") == 0)
+		{
+			/* SDL build opens a 2x windowed client; a no-op headless. */
+			s_opts.double_scale = 2;
 		}
 		else if (a[0] != '-')
 		{
