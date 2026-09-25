@@ -580,6 +580,40 @@ def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
         con.stop()
 
 
+def test_switch_keeps_per_console_wordpad_undo(kernel_image):
+    """#768: WORDPAD's undo history is per-console. Starting WORDPAD on a
+    second console must not clear the history the first console built up."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"ABCDEF")
+        con.drain(quiet=0.5, timeout=4.0)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"WORDPAD\r")
+        con.drain(quiet=0.8, timeout=10.0)
+
+        # Back on console 1, Ctrl+Z must still undo its own edit.
+        _switch(con, 1)
+        con.drain(quiet=0.5, timeout=4.0)
+        con._ser.sendall(bytes([26]))  # Ctrl+Z
+        undone = _plain(con.drain(quiet=0.6, timeout=6.0).decode(errors="replace"))
+        assert "ABCDEF" not in undone.upper(), undone
+
+        con._ser.sendall(bytes([24]))  # Ctrl+X quits console 1 WORDPAD
+        con.drain(quiet=0.6, timeout=8.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(bytes([24]))
+        con.drain(quiet=0.6, timeout=8.0)
+    finally:
+        con.stop()
+
+
 def _open_term_download(con) -> str:
     """Open the TERM download-folder browser and leave it open."""
     con._ser.sendall(b'TERM "demo", 23\r')
