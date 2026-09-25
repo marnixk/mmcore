@@ -275,10 +275,12 @@ void sdl_video_set_fullscreen(int on)
 		if (!(flags & SDL_WINDOW_FULLSCREEN_DESKTOP))
 			return;
 		SDL_SetWindowFullscreen(s_win, 0);
-		/* Restore the windowed size (the 2x client when --double is on)
-		 * rather than trusting the platform's own restore. */
-		SDL_SetWindowSize(s_win, s_w * s_window_scale,
-				  s_h * s_window_scale);
+		/* --double: force the 2x client back (the platform may keep the
+		 * last size otherwise). At 1:1 leave SDL's own restore of the
+		 * windowed size alone, including a user's manual resize. */
+		if (s_window_scale > 1)
+			SDL_SetWindowSize(s_win, s_w * s_window_scale,
+					  s_h * s_window_scale);
 	}
 	/* The drawable changed: force a full repaint (and a fresh letterbox). */
 	sdl_video_mark_dirty();
