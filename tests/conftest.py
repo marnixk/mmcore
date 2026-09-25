@@ -118,31 +118,42 @@ def kernel_image() -> str:
     return KERNEL
 
 
+def _qemu_exclusive(request) -> bool:
+    """Whether a test/module asks for the QEMU lane to itself.
+
+    Timing-sensitive modules mark themselves ``qemu_exclusive`` so no other
+    QEMU instance competes for CPU while they run (see the lane lock in
+    ``harness/qemu_harness.py``).
+    """
+    return request.node.get_closest_marker("qemu_exclusive") is not None
+
+
 @pytest.fixture(scope="module")
-def console(kernel_image: str):
+def console(kernel_image: str, request):
     """A booted QEMU console shared across a module's tests."""
-    con = MMBasicConsole(kernel_image)
+    con = MMBasicConsole(kernel_image, exclusive=_qemu_exclusive(request))
     con.start()
     yield con
     con.stop()
 
 
 @pytest.fixture
-def fresh_console(kernel_image: str):
+def fresh_console(kernel_image: str, request):
     """A freshly booted console per test (clean screen for graphics tests)."""
-    con = MMBasicConsole(kernel_image)
+    con = MMBasicConsole(kernel_image, exclusive=_qemu_exclusive(request))
     con.start()
     yield con
     con.stop()
 
 
 @pytest.fixture(scope="module")
-def net_console(kernel_image: str):
+def net_console(kernel_image: str, request):
     """Booted QEMU with USB CDC Ethernet (SLIRP user net). Not the default."""
     con = MMBasicConsole(
         kernel_image,
         extra_qemu=qemu_usb_net_args(),
         boot_timeout=40.0,
+        exclusive=_qemu_exclusive(request),
     )
     con.start()
     yield con

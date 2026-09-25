@@ -26,11 +26,57 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None  # type: ignore[assignment]
 
 
 class HarnessError(RuntimeError):
     pass
+
+
+# Cross-process "QEMU lane" lock. Booting QEMU and draining its serial console
+# are CPU-heavy, and running many instances at once makes a slow boot sample
+# garbage. Every live console holds this lane: ordinary consoles take a shared
+# lock (many may run together), while a test marked ``qemu_exclusive`` holds it
+# exclusively so no other QEMU instance competes for CPU. The lock is
+# re-entrant within a process (a module and its per-test consoles overlap).
+_QEMU_LANE_LOCK = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".pytest-qemu.lock",
+)
+_lane_guard = threading.RLock()
+_lane_count = 0
+_lane_fh = None
+
+
+def _acquire_qemu_lane(exclusive: bool) -> None:
+    global _lane_count, _lane_fh
+    if fcntl is None:
+        return
+    with _lane_guard:
+        if _lane_count == 0:
+            _lane_fh = open(_QEMU_LANE_LOCK, "w")
+            fcntl.flock(_lane_fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        _lane_count += 1
+
+
+def _release_qemu_lane() -> None:
+    global _lane_count, _lane_fh
+    if fcntl is None:
+        return
+    with _lane_guard:
+        if _lane_count == 0:
+            return
+        _lane_count -= 1
+        if _lane_count == 0 and _lane_fh is not None:
+            fcntl.flock(_lane_fh.fileno(), fcntl.LOCK_UN)
+            _lane_fh.close()
+            _lane_fh = None
 
 
 def qemu_usb_net_args(
@@ -76,6 +122,7 @@ class MMBasicConsole:
         ready_marker: bytes = b"HELP ME",
         prompt: bytes = b"> ",
         extra_qemu: list[str] | None = None,
+        exclusive: bool = False,
     ) -> None:
         if not os.path.isfile(kernel):
             raise HarnessError(f"kernel image not found: {kernel}")
@@ -86,6 +133,7 @@ class MMBasicConsole:
         self.ready_marker = ready_marker
         self.prompt = prompt
         self.extra_qemu = extra_qemu or []
+        self.exclusive = exclusive
         self.boot_log = b""
 
         self._tmp = tempfile.mkdtemp(prefix="mmb-harness-")
@@ -97,6 +145,7 @@ class MMBasicConsole:
         self._mon: socket.socket | None = None
         self._qmp: socket.socket | None = None
         self._qemu_log_fh = None
+        self._lane_held = False
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> "MMBasicConsole":
@@ -112,34 +161,39 @@ class MMBasicConsole:
         cmd.extend(self.extra_qemu)
         log_path = os.path.join(self._tmp, "qemu.log")
         self._qemu_log_fh = open(log_path, "wb")
+        _acquire_qemu_lane(self.exclusive)
+        self._lane_held = True
         self._proc = subprocess.Popen(
             cmd, stdout=self._qemu_log_fh, stderr=subprocess.STDOUT
         )
-        self._ser = self._connect(self._ser_path)
-        self._mon = self._connect(self._mon_path)
-        self._ser.settimeout(0.4)
-        self._qmp_connect()
+        try:
+            self._ser = self._connect(self._ser_path)
+            self._mon = self._connect(self._mon_path)
+            self._ser.settimeout(0.4)
+            self._qmp_connect()
 
-        # wait for the firmware to announce it is ready, then the prompt
-        deadline = time.time() + self.boot_timeout
-        seen = b""
-        got_marker = False
-        while time.time() < deadline:
-            chunk = self._recv(self._ser)
-            if chunk:
-                seen += chunk
-                if self.ready_marker in seen:
-                    got_marker = True
-                if got_marker and self.prompt in seen:
-                    self.boot_log = seen
-                    return self
-            else:
-                time.sleep(0.05)
-        self.stop()
-        raise HarnessError(
-            f"console did not become ready within {self.boot_timeout}s; "
-            f"saw: {seen!r}"
-        )
+            # wait for the firmware to announce it is ready, then the prompt
+            deadline = time.time() + self.boot_timeout
+            seen = b""
+            got_marker = False
+            while time.time() < deadline:
+                chunk = self._recv(self._ser)
+                if chunk:
+                    seen += chunk
+                    if self.ready_marker in seen:
+                        got_marker = True
+                    if got_marker and self.prompt in seen:
+                        self.boot_log = seen
+                        return self
+                else:
+                    time.sleep(0.05)
+            raise HarnessError(
+                f"console did not become ready within {self.boot_timeout}s; "
+                f"saw: {seen!r}"
+            )
+        except BaseException:
+            self.stop()
+            raise
 
     def _connect(self, path: str) -> socket.socket:
         deadline = time.time() + 10
@@ -183,6 +237,9 @@ class MMBasicConsole:
             except OSError:
                 pass
             self._qemu_log_fh = None
+        if self._lane_held:
+            self._lane_held = False
+            _release_qemu_lane()
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def __enter__(self) -> "MMBasicConsole":
