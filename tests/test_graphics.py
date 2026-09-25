@@ -143,6 +143,37 @@ def test_circle_thick_stroke_no_background_leak(fresh_console):
     assert not (r < 40 and g < 40 and b < 40)
 
 
+def test_circle_fill_one_px_stroke_seals_rim(fresh_console):
+    """#741: a 1px stroke must keep a different-coloured fill inside r.
+
+    The midpoint fill disk is about a pixel fatter than the Bresenham
+    outline, so filling at R and stroking the same R left fill pixels on or
+    outside the geometric rim. Sample the annulus just outside r: only
+    stroke or background may appear there.
+    """
+    c = fresh_console
+    cx, cy, r = 200, 180, 60
+    assert c.send_line("CLS") == ""
+    assert c.send_line(f"CIRCLE {cx},{cy},{r},1,RGB(255,0,0),RGB(0,255,0)") == ""
+    coords = [
+        (cx + dx, cy + dy)
+        for dy in range(-(r + 2), r + 3)
+        for dx in range(-(r + 2), r + 3)
+        if r * r < dx * dx + dy * dy <= (r + 2) * (r + 2)
+    ]
+    leaked = [
+        (x, y)
+        for (x, y), rgb in zip(coords, c.screen_pixels(coords))
+        if _is_green(rgb)
+    ]
+    assert not leaked, f"fill leaked outside rim at {leaked[:8]}"
+    assert _is_green(c.screen_pixel(cx, cy))          # centre still fill
+    assert _is_red(c.screen_pixel(cx + r, cy))        # cardinal rim is stroke
+    assert _is_black(c.screen_pixel(cx + r + 2, cy))  # outside stays background
+    assert _is_red(c.screen_pixel(cx, cy + r))        # bottom rim is stroke
+    assert _is_red(c.screen_pixel(cx + 42, cy - 42))  # diagonal curve sample
+
+
 def test_bad_arg_count_is_syntax_error(fresh_console):
     assert fresh_console.send_line("BOX 1,2,3") == "?SYNTAX ERROR"
 

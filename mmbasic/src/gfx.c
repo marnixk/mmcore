@@ -1243,16 +1243,19 @@ void mmb_gfx_circle(int cx, int cy, int r, unsigned rgb, int lw, int fill)
 		lw = 1;
 	if (lw > 1024)
 		lw = 1024;
-	if (fill >= 0 && lw > 1)
+	if (fill >= 0)
 	{
+		/* Stroke first, then fill the inner disk: the midpoint fill is about
+		 * a pixel fatter than the Bresenham outline, so drawing the fill at
+		 * R and the stroke at the same R left fill pixels outside the rim
+		 * for lw == 1 (GH-741). Filling R with the stroke and R - lw with
+		 * the fill seals the ring for every width. */
 		int inner = r - lw;
 		fill_disk(cx, cy, r, rgb);
 		if (inner >= 0)
 			fill_disk(cx, cy, inner, mmb_quantize((unsigned)fill));
 		return;
 	}
-	if (fill >= 0)
-		fill_disk(cx, cy, r, mmb_quantize((unsigned)fill));
 	if (lw <= 1)
 		circle_outline(cx, cy, r, rgb);
 	else
