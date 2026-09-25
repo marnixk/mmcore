@@ -760,3 +760,53 @@ def test_switch_keeps_per_console_wordpad_pick_list(kernel_image):
     finally:
         con.stop()
 
+
+def _open_term_demoburst(con, settle=1.8) -> str:
+    con.drain(quiet=0.1)
+    con._ser.sendall(b'TERM "demoburst", 23\r')
+    acc = con.drain(quiet=0.4, timeout=20)
+    time.sleep(settle)
+    acc += con.drain(quiet=0.4, timeout=10)
+    return _plain(acc.decode(errors="replace"))
+
+
+def _term_page_up(con, quiet=0.7, timeout=8.0) -> str:
+    con._ser.sendall(b"\x1b[5~")
+    return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
+
+
+def test_switch_keeps_per_console_term_scrollback(kernel_image):
+    """#767: TERM's scrollback ring is per-console. Opening TERM on a second
+    console must not wipe the first console's history, and each console pages
+    its own lines."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        # Console 1: fill the ring, then page back into it.
+        seen = _open_term_demoburst(con)
+        assert "line 40" in seen, seen
+        con.drain(quiet=0.3, timeout=3.0)
+        up = _term_page_up(con)
+        assert "SCROLL -" in up, up
+        assert "line 01" in up, up
+
+        # Console 2 opens TERM: its own ring, and console 1's stays intact.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        seen2 = _open_term_demoburst(con)
+        assert "line 40" in seen2, seen2
+        con.drain(quiet=0.3, timeout=3.0)
+        up2 = _term_page_up(con)
+        assert "SCROLL -" in up2, up2
+        assert "line 01" in up2, up2
+
+        # Back on console 1 the other console's TERM start did not wipe the
+        # history this console had scrolled into.
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        again = _term_page_up(con)
+        assert "SCROLL -" in again, again
+        assert "line 01" in again, again
+    finally:
+        con.stop()
+

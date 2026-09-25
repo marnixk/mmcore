@@ -224,7 +224,7 @@ static tm_state T_s[MMB_MAX_CONSOLES];
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;
 
-static struct {
+typedef struct {
 	unsigned in_n;
 	unsigned out_n;
 	unsigned rendered;
@@ -232,12 +232,12 @@ static struct {
 	unsigned start_at;
 	int buf_n;
 	char buf[TM_LOG_BUF];
-} L;
+} term_log_state;
 
 /* Scrollback: complete lines that have scrolled off the top of the pane.
  * A ring, so the newest TM_SB_MAX lines are always available.  Widths are
  * per line because Boxed/Full can change mid-session. */
-static struct {
+typedef struct {
 	int cap;          /* configured line count; 0 disables scrollback */
 	int n;            /* stored lines (<= cap) */
 	int head;         /* next write slot */
@@ -245,7 +245,16 @@ static struct {
 	unsigned char ch[TM_SB_MAX][TM_SB_COLS];
 	unsigned fg[TM_SB_MAX][TM_SB_COLS];
 	unsigned bg[TM_SB_MAX][TM_SB_COLS];
-} H;
+} term_sb_state;
+
+/* The log and scrollback rings are large (L ~32 KB, H ~576 KB each), so every
+ * console gets its own heap copy on first TERM use instead of a 4x BSS array
+ * that would not fit Circle's kernel window (#767). term_session_alloc()
+ * allocates lazily; mmb_term_reset_all() frees every console's. */
+static term_log_state *L_s[MMB_MAX_CONSOLES];
+static term_sb_state *H_s[MMB_MAX_CONSOLES];
+#define L (*L_s[g_console])
+#define H (*H_s[g_console])
 
 static int host_is_demo(void)
 {
@@ -268,11 +277,20 @@ typedef struct {
 	int mode80x25;
 } term_bm;
 
-static term_bm g_bm[TM_BM_MAX];
-static int g_bm_n;
-static int dlg_c0, dlg_r0, dlg_cw, dlg_ch;
-static unsigned char s_iac_out[64];
-static int s_iac_n;
+static term_bm g_bm_s[MMB_MAX_CONSOLES][TM_BM_MAX];
+static int g_bm_n_s[MMB_MAX_CONSOLES];
+#define g_bm (g_bm_s[g_console])
+#define g_bm_n (g_bm_n_s[g_console])
+static int dlg_c0_s[MMB_MAX_CONSOLES], dlg_r0_s[MMB_MAX_CONSOLES];
+static int dlg_cw_s[MMB_MAX_CONSOLES], dlg_ch_s[MMB_MAX_CONSOLES];
+#define dlg_c0 (dlg_c0_s[g_console])
+#define dlg_r0 (dlg_r0_s[g_console])
+#define dlg_cw (dlg_cw_s[g_console])
+#define dlg_ch (dlg_ch_s[g_console])
+static unsigned char s_iac_out_s[MMB_MAX_CONSOLES][64];
+static int s_iac_n_s[MMB_MAX_CONSOLES];
+#define s_iac_out (s_iac_out_s[g_console])
+#define s_iac_n (s_iac_n_s[g_console])
 
 /* ZMODEM downloads. The download directory and the folder-browser cursor are
  * per-console session state (#670): switching consoles must not move the
@@ -280,17 +298,28 @@ static int s_iac_n;
  * too (#679), so Use on one console no longer seeds every other console or
  * future boot. The transient browser list/selection state is per-console as
  * well (#680): opening the dialog on a second console must not rebuild the
- * arrays the first is drawing. */
-static mmb_zm_rx ZM;
-static int zm_ready;
-static unsigned zm_shift;
-static char zm_shown[80];
+ * arrays the first is drawing. The transfer engine, its scan window, the
+ * in-flight destination and the last-download display are per-console too
+ * (#767). The raw TCP socket stays a single machine resource shared by every
+ * console (like JUKE/audio); it lives in console/net.cpp. */
+static mmb_zm_rx ZM_s[MMB_MAX_CONSOLES];
+static int zm_ready_s[MMB_MAX_CONSOLES];
+static unsigned zm_shift_s[MMB_MAX_CONSOLES];
+static char zm_shown_s[MMB_MAX_CONSOLES][80];
+#define ZM (ZM_s[g_console])
+#define zm_ready (zm_ready_s[g_console])
+#define zm_shift (zm_shift_s[g_console])
+#define zm_shown (zm_shown_s[g_console])
+static char zm_cur_path_s[MMB_MAX_CONSOLES][128];
+#define zm_cur_path (zm_cur_path_s[g_console])
 static char g_dl_dir_s[MMB_MAX_CONSOLES][96];
 static char g_dl_cur_s[MMB_MAX_CONSOLES][128];
 #define g_dl_dir (g_dl_dir_s[g_console])
 #define g_dl_cur (g_dl_cur_s[g_console])
-static char g_dl_last_name[MMB_ZM_MAX_NAME];
-static int g_dl_last_files;
+static char g_dl_last_name_s[MMB_MAX_CONSOLES][MMB_ZM_MAX_NAME];
+static int g_dl_last_files_s[MMB_MAX_CONSOLES];
+#define g_dl_last_name (g_dl_last_name_s[g_console])
+#define g_dl_last_files (g_dl_last_files_s[g_console])
 static char g_dl_names_s[MMB_MAX_CONSOLES][TM_DL_DIRS][64];
 static int g_dl_n_s[MMB_MAX_CONSOLES];
 static int g_dl_sel_s[MMB_MAX_CONSOLES];
@@ -303,6 +332,51 @@ static int g_dl_trunc_s[MMB_MAX_CONSOLES];
 #define g_dl_top (g_dl_top_s[g_console])
 #define g_dl_focus (g_dl_focus_s[g_console])
 #define g_dl_trunc (g_dl_trunc_s[g_console])
+
+static int term_log_alloc(void)
+{
+	if (!L_s[g_console])
+	{
+		if (!G.plat || !G.plat->alloc)
+			return -1;
+		L_s[g_console] = (term_log_state *)G.plat->alloc(sizeof(term_log_state));
+		if (!L_s[g_console])
+			return -1;
+		memset(L_s[g_console], 0, sizeof(term_log_state));
+	}
+	return 0;
+}
+
+static int term_session_alloc(void)
+{
+	if (term_log_alloc() != 0)
+		return -1;
+	if (!H_s[g_console])
+	{
+		if (!G.plat || !G.plat->alloc)
+			return -1;
+		H_s[g_console] = (term_sb_state *)G.plat->alloc(sizeof(term_sb_state));
+		if (!H_s[g_console])
+			return -1;
+		memset(H_s[g_console], 0, sizeof(term_sb_state));
+	}
+	return 0;
+}
+
+static void term_sb_free(int idx)
+{
+	if (H_s[idx] && G.plat && G.plat->free)
+		G.plat->free(H_s[idx]);
+	H_s[idx] = 0;
+}
+
+static void term_session_free(int idx)
+{
+	if (L_s[idx] && G.plat && G.plat->free)
+		G.plat->free(L_s[idx]);
+	L_s[idx] = 0;
+	term_sb_free(idx);
+}
 
 static void term_dl_open(void);
 static void term_dl_draw(void);
@@ -739,6 +813,8 @@ static void term_draw_sb_status(void)
 
 void mmb_term_scrollback_set(int lines)
 {
+	if (!H_s[g_console])
+		return;
 	if (lines < 0)
 		lines = 0;
 	if (lines > TM_SB_MAX)
@@ -1296,7 +1372,7 @@ static void term_draw_status(void)
 
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i, n, L, drop_h, bar_w;
+	int x0, y0, w, i, n, wlen, drop_h, bar_w;
 	const char *items[TM_MENU_ITEMS];
 	char echo[16];
 	unsigned brd = TM_DLG_FG;
@@ -1314,9 +1390,9 @@ static void term_draw_menu(void)
 	w = 10;
 	for (i = 0; i < n; i++)
 	{
-		L = (int)strlen(items[i]);
-		if (L + 2 > w)
-			w = L + 2;
+		wlen = (int)strlen(items[i]);
+		if (wlen + 2 > w)
+			w = wlen + 2;
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
@@ -1615,6 +1691,9 @@ static void term_exit(void)
 	mmb_net_rxbuf_reset(&term_rx);
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
+	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
+	 * session's counters; free the large scrollback ring on leave (#767). */
+	term_sb_free(g_console);
 }
 
 static void replay_tx(const unsigned char *p, unsigned n)
@@ -4018,6 +4097,8 @@ void mmb_term_log_enable(int on)
 {
 	char path[24];
 
+	if (term_log_alloc() != 0)
+		return;
 	if (!on)
 	{
 		term_log_flush();
@@ -4067,7 +4148,6 @@ static void term_rx_consume(unsigned n)
  * files in the configured download folder, auto-renaming collisions, and
  * reports progress on the status row and over serial.
  */
-static char zm_cur_path[128];
 
 static void zm_join(const char *dir, const char *base, char *out, unsigned outsz)
 {
@@ -5555,6 +5635,8 @@ void mmb_cmd_term(void)
 			mmb_error("?SYNTAX ERROR");
 	}
 
+	if (term_session_alloc() != 0)
+		mmb_error("?OUT OF MEMORY");
 	memset(&T, 0, sizeof(T));
 	H.n = 0;
 	H.head = 0;
@@ -6146,15 +6228,18 @@ void mmb_term_poll(void)
 }
 
 /* Cold-boot the TERM layer on a warm reset (#763). Closing each console's
- * session is done by warm_reset_close_apps(); this clears the shared log,
- * scrollback, bookmarks and download/browser state that would otherwise
- * survive. T_s is per console, the rest is single-session state. */
+ * session is done by warm_reset_close_apps(); this clears every console's
+ * log, scrollback, bookmarks and download/browser state that would otherwise
+ * survive, and frees the lazily allocated log/scrollback rings (#767). */
 void mmb_term_reset_all(void)
 {
 	int i;
 
 	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
 		memset(&T_s[i], 0, sizeof(T_s[i]));
+		term_session_free(i);
+	}
 	memset(g_dl_dir_s, 0, sizeof(g_dl_dir_s));
 	memset(g_dl_cur_s, 0, sizeof(g_dl_cur_s));
 	memset(g_dl_names_s, 0, sizeof(g_dl_names_s));
@@ -6163,17 +6248,19 @@ void mmb_term_reset_all(void)
 	memset(g_dl_top_s, 0, sizeof(g_dl_top_s));
 	memset(g_dl_focus_s, 0, sizeof(g_dl_focus_s));
 	memset(g_dl_trunc_s, 0, sizeof(g_dl_trunc_s));
-	memset(g_dl_last_name, 0, sizeof(g_dl_last_name));
-	g_dl_last_files = 0;
-	memset(&L, 0, sizeof(L));
-	memset(&H, 0, sizeof(H));
-	memset(g_bm, 0, sizeof(g_bm));
-	g_bm_n = 0;
-	dlg_c0 = dlg_r0 = dlg_cw = dlg_ch = 0;
-	memset(s_iac_out, 0, sizeof(s_iac_out));
-	s_iac_n = 0;
-	memset(&ZM, 0, sizeof(ZM));
-	zm_ready = 0;
-	zm_shift = 0;
-	zm_shown[0] = 0;
+	memset(g_dl_last_name_s, 0, sizeof(g_dl_last_name_s));
+	memset(g_dl_last_files_s, 0, sizeof(g_dl_last_files_s));
+	memset(g_bm_s, 0, sizeof(g_bm_s));
+	memset(g_bm_n_s, 0, sizeof(g_bm_n_s));
+	memset(dlg_c0_s, 0, sizeof(dlg_c0_s));
+	memset(dlg_r0_s, 0, sizeof(dlg_r0_s));
+	memset(dlg_cw_s, 0, sizeof(dlg_cw_s));
+	memset(dlg_ch_s, 0, sizeof(dlg_ch_s));
+	memset(s_iac_out_s, 0, sizeof(s_iac_out_s));
+	memset(s_iac_n_s, 0, sizeof(s_iac_n_s));
+	memset(ZM_s, 0, sizeof(ZM_s));
+	memset(zm_ready_s, 0, sizeof(zm_ready_s));
+	memset(zm_shift_s, 0, sizeof(zm_shift_s));
+	memset(zm_shown_s, 0, sizeof(zm_shown_s));
+	memset(zm_cur_path_s, 0, sizeof(zm_cur_path_s));
 }
