@@ -38,7 +38,14 @@ native/mmbasic
 native/mmcore
 native/mmbasic.exe
 native/mmcore.exe
+native/mmbasic-arm64
+native/mmcore-arm64
+native/mmbasic-x86_64
+native/mmcore-x86_64
 native/mmb_version.h
+
+# Downloaded universal SDL2 for macOS universal packaging
+.cache/
 # Generated from assets/branding/ during the Windows build
 native/mmcore.ico
 native/mmcore.rc
