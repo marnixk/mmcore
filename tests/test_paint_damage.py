@@ -27,6 +27,7 @@ DRIVER = r"""
 
 static mmb s_mmb;
 mmb *g_cur = &s_mmb;
+int g_console;
 
 /* ---- present / fill recording ---- */
 static int p_y0 = -1, p_y1 = -1, p_count;

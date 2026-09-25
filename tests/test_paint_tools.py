@@ -50,7 +50,8 @@ SHIM_C = r"""
 #include <stdlib.h>
 #include <string.h>
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
+int g_console;
 
 static mmb s_mmb;
 mmb *g_cur = &s_mmb;

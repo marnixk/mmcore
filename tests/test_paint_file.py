@@ -214,6 +214,34 @@ def test_picker_browses_into_a_subdirectory(native_mmcore, tmp_path, root):
     assert not _is_white(_px(os.path.join(tmp_path, "open.ppm"), 120, 200))
 
 
+def test_save_as_navigates_to_a_new_folder(native_mmcore, tmp_path, root):
+    """#757: Save As browses into another folder before naming the file.
+
+    A second Save As seeds the previous filename in the name field, so the list
+    must still take focus and Down/Enter must open a folder instead of
+    committing that seed name back into the old directory.
+    """
+    os.makedirs(os.path.join(root, "C", "ART"))
+    s = _session(tmp_path, root)
+    s.feed("PAINT")
+    _draw(s, 100, 100, 160, 100)
+    _menu(s, ITEM_SAVE_AS)
+    s.text("C:/FIRST.PCX")
+    s.key("enter")
+    # Reopen Save As: the name field holds FIRST.PCX and the list starts at "..".
+    _menu(s, ITEM_SAVE_AS)
+    s.key("down")			# take the list and select the ART folder
+    s.key("enter")			# open ART
+    s.text("SECOND")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+
+    assert "SAVE ST=CHOSEN" in out, out
+    assert os.path.exists(os.path.join(root, "C", "ART", "SECOND.PCX")), out
+    assert not os.path.exists(os.path.join(root, "C", "SECOND.PCX")), out
+
+
 def test_files_browser_survives_a_picker_session(native_mmcore, tmp_path, root):
     """The picker owns its own state; the FILES browser still opens after."""
     s = _session(tmp_path, root)

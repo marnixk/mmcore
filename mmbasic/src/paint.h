@@ -116,6 +116,15 @@ enum pt_event_type {
 #define PT_BTN_LEFT  1
 #define PT_BTN_RIGHT 2
 
+/* Synthetic key codes for the navigation keys the front end delivers as
+ * multi-byte CSI/SS3 escape sequences. cmd_paint.c's escape decoder turns the
+ * final byte into one of these and forwards it to pt_menus_key(); values over
+ * 0xff can never collide with a typed character byte. */
+#define PT_KEY_UP    0x100
+#define PT_KEY_DOWN  0x101
+#define PT_KEY_LEFT  0x102
+#define PT_KEY_RIGHT 0x103
+
 typedef struct pt_event {
 	int type;
 	int sx, sy;		/* screen pixel coords (mouse) */

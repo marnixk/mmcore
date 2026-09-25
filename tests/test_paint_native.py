@@ -359,9 +359,10 @@ def test_text_input_injection(native_mmcore, tmp_path):
     assert "81" in out, out
 
 
-# A dropdown pixel that only that menu covers: File's fifth row, Edit's third
-# row past the File panel, and Help's first row past the Edit panel.
-_MENU_MARK = ((30, 88), (90, 56), (130, 24))
+# A dropdown pixel that only that menu covers: File's fifth row (left of the
+# Edit panel), Edit's seventh row (below File's five rows, left of the Help
+# panel) and Help's first row, right of the Edit panel.
+_MENU_MARK = ((30, 88), (90, 120), (150, 24))
 
 
 def _menu_lit(img, menu):
@@ -421,6 +422,32 @@ def test_alt_letters_open_paint_menus(native_mmcore, tmp_path):
     assert _menu_lit(fi, 0) and not _menu_lit(fi, 1) and not _menu_lit(fi, 2)
     assert _menu_lit(ei, 1) and not _menu_lit(ei, 0) and not _menu_lit(ei, 2)
     assert _menu_lit(hi, 2) and not _menu_lit(hi, 0) and not _menu_lit(hi, 1)
+
+
+def test_arrow_keys_navigate_paint_menus(native_mmcore, tmp_path):
+    """#755: arrows drive the open dropdown through the real CSI path.
+
+    Alt+F focuses the first item; Down moves to Open and Enter activates it,
+    which opens the file picker (so "OPEN ST=ACTIVE" proves the focus moved).
+    A later Alt+F then Up wraps to Quit, which leaves PAINT on Enter.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.key("alt+f")
+    s.key("down")           # New -> Open
+    s.key("enter")          # Open the picker
+    s.key("esc")
+    s.key("enter")          # cancel the picker
+    s.key("alt+f")
+    s.key("up")             # wrap to Quit
+    s.key("enter")          # leave PAINT
+    s.feed("PRINT 6*7")
+    s.quit()
+    out = s.run()
+
+    assert "needs a mouse" not in out.lower(), out
+    assert "OPEN ST=ACTIVE" in out, out
+    assert "42" in out, out
 
 
 def _draw_stroke(s):

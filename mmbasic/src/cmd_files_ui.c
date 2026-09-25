@@ -3438,6 +3438,7 @@ static void pk_enter_dir(const char *name)
 {
 	if (!name || !name[0])
 		return;
+	PK.focus = 0;
 	if (name[0] == '.' && name[1] == '.' && name[2] == 0)
 	{
 		char up[FU_PATH];
@@ -3512,6 +3513,7 @@ static void pk_move(int d)
 {
 	if (PK.n <= 0)
 		return;
+	PK.focus = 0;
 	PK.sel += d;
 	if (PK.sel < 0)
 		PK.sel = PK.n - 1;
@@ -3615,7 +3617,7 @@ void mmb_files_pick_begin(int save, const char *start_dir, const char *seed)
 	memset(&PK, 0, sizeof(PK));
 	PK.active = 1;
 	PK.save = save ? 1 : 0;
-	PK.focus = save ? 1 : 0;
+	PK.focus = 0;
 	if (start_dir && start_dir[0])
 		strncpy(PK.dir, start_dir, FU_PATH - 1);
 	else

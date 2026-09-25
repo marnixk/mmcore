@@ -46,6 +46,7 @@ SHIM_H = r"""
 #ifndef MMB_PRIV_H
 #define MMB_PRIV_H
 #include <stddef.h>
+#define MMB_MAX_CONSOLES 4
 typedef struct mmb_platform_shim {
     unsigned (*get_pixel)(int x, int y);
 } mmb_platform_shim;
@@ -75,7 +76,8 @@ static unsigned char canvas_buf[PT_CANVAS_W * PT_CANVAS_H];
 mmb_global_shim G;
 static mmb_platform_shim g_plat;
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
+int g_console;
 
 static unsigned drv_get_pixel(int x, int y)
 {

@@ -36,8 +36,12 @@ enum pt_action {
 
 #define PT_MENU_MAX_ITEMS 9
 
+/* `key` is the accelerator: it is shown at the right of the dropdown row and
+ * is the exact letter that activates that item, so the hint can never disagree
+ * with what the keyboard does. */
 typedef struct pt_menu_item {
 	const char *label;
+	char key;
 	int action;
 } pt_menu_item;
 
@@ -45,16 +49,18 @@ static const char *const s_titles[PT_MENU_COUNT] = { "File", "Edit", "Help" };
 static const int s_title_col[PT_MENU_COUNT] = { 1, 7, 13 };
 
 static const pt_menu_item s_items[PT_MENU_COUNT][PT_MENU_MAX_ITEMS] = {
-	{ { "New", PTA_FILE_NEW }, { "Open", PTA_FILE_OPEN },
-	  { "Save", PTA_FILE_SAVE }, { "Save as", PTA_FILE_SAVE_AS },
-	  { "Quit", PTA_FILE_QUIT }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-	{ { "Undo", PTA_EDIT_UNDO }, { "Redo", PTA_EDIT_REDO },
-	  { "Clear", PTA_EDIT_CLEAR }, { "Cut", PTA_EDIT_CUT },
-	  { "Copy", PTA_EDIT_COPY }, { "Paste", PTA_EDIT_PASTE },
-	  { "Del sel", PTA_EDIT_CLEAR_SEL },
-	  { "Select", PTA_EDIT_SELECT_ALL }, { 0, 0 } },
-	{ { "Keys", PTA_HELP_KEYS }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
-	  { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } }
+	{ { "New", 'N', PTA_FILE_NEW }, { "Open", 'O', PTA_FILE_OPEN },
+	  { "Save", 'S', PTA_FILE_SAVE }, { "Save as", 'A', PTA_FILE_SAVE_AS },
+	  { "Quit", 'Q', PTA_FILE_QUIT }, { 0, 0, 0 }, { 0, 0, 0 },
+	  { 0, 0, 0 }, { 0, 0, 0 } },
+	{ { "Undo", 'U', PTA_EDIT_UNDO }, { "Redo", 'R', PTA_EDIT_REDO },
+	  { "Clear", 'L', PTA_EDIT_CLEAR }, { "Cut", 'T', PTA_EDIT_CUT },
+	  { "Copy", 'C', PTA_EDIT_COPY }, { "Paste", 'P', PTA_EDIT_PASTE },
+	  { "Del sel", 'D', PTA_EDIT_CLEAR_SEL },
+	  { "Select", 'S', PTA_EDIT_SELECT_ALL }, { 0, 0, 0 } },
+	{ { "Keys", 'K', PTA_HELP_KEYS }, { 0, 0, 0 }, { 0, 0, 0 },
+	  { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 },
+	  { 0, 0, 0 } }
 };
 
 static const int s_item_count[PT_MENU_COUNT] = { 5, 8, 1 };
@@ -73,6 +79,11 @@ static int s_btn;
  * poll falls through to cmd_paint.c's palette/tool/canvas handling, starting a
  * stray stroke behind where the menu was. */
 static int s_owned;
+/* Last pointer position seen by pt_menus_mouse(). A poll that repeats the same
+ * position is not a real move, so it must not clear a keyboard-set highlight
+ * (#755). A keyboard menu open arms an "ignore until the pointer moves" state
+ * (s_ptr_seen = 0) so the next idle poll only records the baseline. */
+static int s_ptr_x, s_ptr_y, s_ptr_seen;
 
 /* ---- geometry ---------------------------------------------------------- */
 
@@ -86,7 +97,8 @@ static int menu_cells(int m)
 		if (len > n)
 			n = len;
 	}
-	return n + 2;
+	/* Border, label, a separating blank and the accelerator cell. */
+	return n + 4;
 }
 
 /* Which title is under a screen pixel, or PT_MENU_NONE. */
@@ -149,7 +161,7 @@ static void confirm_buttons(int x, int y, int w, int h, int *yx, int *yy,
 
 static void keys_geom(int *x, int *y, int *w, int *h)
 {
-	tui_dialog_geom(46, 11, x, y, w, h);
+	tui_dialog_geom(46, 12, x, y, w, h);
 }
 
 /* ---- damage + cell bookkeeping (#702) ---------------------------------- *
@@ -245,7 +257,8 @@ static void draw_dropdown(int m)
 		int row = 1 + i;
 
 		tui_put(px, row, ' ', fg, bg);
-		tui_pad(px + 1, row, s_items[m][i].label, pw - 2, fg, bg);
+		tui_pad(px + 1, row, s_items[m][i].label, pw - 3, fg, bg);
+		tui_put(px + pw - 2, row, s_items[m][i].key, fg, bg);
 		tui_put(px + pw - 1, row, ' ', fg, bg);
 	}
 }
@@ -293,6 +306,8 @@ static void draw_confirm(void)
 static const char *const s_key_lines[] = {
 	"Esc / Alt+X   Leave PAINT",
 	"Alt+F/E/H     Open a menu",
+	"Up/Down       Move through items",
+	"Left/Right    Switch menu",
 	"Enter         Choose item",
 	"Y / N         Confirm Yes/No",
 	"Esc           Close a menu",
@@ -452,15 +467,49 @@ static void run_action(int act)
 		pt_request_redraw();
 }
 
-static void open_menu(int m)
+/* Move the dropdown highlight to item `it`, wrapping, and damage the row that
+ * loses it and the row that gains it. The keyboard arrows use this; the mouse
+ * path has its own hover_item(). */
+static void focus_item(int it)
 {
-	if (PT.menu == m)
+	int m = PT.menu, x, y, w, h;
+
+	if (m < 0 || m >= PT_MENU_COUNT)
 		return;
+	if (it < 0)
+		it = s_item_count[m] - 1;
+	else if (it >= s_item_count[m])
+		it = 0;
+	if (it == s_hover)
+		return;
+	dropdown_cells(m, &x, &y, &w, &h);
+	if (s_hover >= 0)
+		dmg_cells(x, y + s_hover, w, 1);
+	dmg_cells(x, y + it, w, 1);
+	s_hover = it;
+}
+
+/* Open dropdown `m`. `focus` puts the keyboard highlight on the first row (the
+ * keyboard openers do); a mouse open leaves no row highlighted until a hover. */
+static void open_menu(int m, int focus)
+{
+	/* A keyboard open ignores the pointer until it actually moves, so an
+	 * idle poll cannot immediately clear the first-row highlight. */
+	if (focus)
+		s_ptr_seen = 0;
+	if (PT.menu == m)
+	{
+		if (focus && s_hover < 0)
+			focus_item(0);
+		return;
+	}
 	dmg_overlay();
 	PT.menu = m;
 	s_hover = -1;
 	dmg_overlay();
 	dmg_bar();
+	if (focus)
+		focus_item(0);
 }
 
 static void close_menu(void)
@@ -555,6 +604,9 @@ void pt_menus_init(void)
 	s_hover = -1;
 	s_btn = 0;
 	s_owned = 0;
+	s_ptr_x = 0;
+	s_ptr_y = 0;
+	s_ptr_seen = 0;
 	s_drawn_menu = PT_MENU_NONE;
 	s_drawn_hover = -1;
 	s_drawn_dlg = DLG_NONE;
@@ -586,9 +638,9 @@ void pt_menus_close(void)
 
 /* ---- keyboard ---------------------------------------------------------- */
 
-static int match_label(char key, const char *label)
+static int match_accel(char key, char accel)
 {
-	char c = label[0];
+	char c = accel;
 
 	if (key == c)
 		return 1;
@@ -640,11 +692,11 @@ int pt_menus_key(int key)
 	{
 		s_alt = 0;
 		if (key == 'f' || key == 'F')
-			open_menu(PT_MENU_FILE);
+			open_menu(PT_MENU_FILE, 1);
 		else if (key == 'e' || key == 'E')
-			open_menu(PT_MENU_EDIT);
+			open_menu(PT_MENU_EDIT, 1);
 		else if (key == 'h' || key == 'H')
-			open_menu(PT_MENU_HELP);
+			open_menu(PT_MENU_HELP, 1);
 		/* Unhandled chords fall through so Alt+X still quits. */
 		return 0;
 	}
@@ -658,9 +710,24 @@ int pt_menus_key(int key)
 			close_menu();
 			return 1;
 		}
-		if (key == 9)
+		if (key == PT_KEY_UP)
 		{
-			open_menu((m + 1) % PT_MENU_COUNT);
+			focus_item(s_hover < 0 ? -1 : s_hover - 1);
+			return 1;
+		}
+		if (key == PT_KEY_DOWN)
+		{
+			focus_item(s_hover < 0 ? 0 : s_hover + 1);
+			return 1;
+		}
+		if (key == PT_KEY_LEFT)
+		{
+			open_menu((m + PT_MENU_COUNT - 1) % PT_MENU_COUNT, 1);
+			return 1;
+		}
+		if (key == PT_KEY_RIGHT || key == 9)
+		{
+			open_menu((m + 1) % PT_MENU_COUNT, 1);
 			return 1;
 		}
 		if (key == 13)
@@ -669,7 +736,7 @@ int pt_menus_key(int key)
 			return 1;
 		}
 		for (i = 0; i < s_item_count[m]; i++)
-			if (match_label((char)key, s_items[m][i].label))
+			if (match_accel((char)key, s_items[m][i].key))
 			{
 				activate(m, i);
 				return 1;
@@ -714,7 +781,7 @@ static int pointer_motion(int sx, int sy)
 		int t = title_at(sx, sy);
 
 		if (t >= 0 && t != PT.menu)
-			open_menu(t);
+			open_menu(t, 0);
 		else
 			hover_item(sx, sy);
 		return 1;
@@ -742,8 +809,29 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 			s_owned = 0;
 			return pt_menus_active();
 		}
+		/* A poll that repeats the last position is not a real move:
+		 * record the baseline and leave any keyboard highlight alone
+		 * (#755). The first event after a keyboard open only arms the
+		 * baseline, so an idle poll cannot clear it either. */
+		if (!s_ptr_seen)
+		{
+			s_ptr_seen = 1;
+			s_ptr_x = sx;
+			s_ptr_y = sy;
+			return pt_menus_active();
+		}
+		if (sx == s_ptr_x && sy == s_ptr_y)
+			return pt_menus_active();
+		s_ptr_x = sx;
+		s_ptr_y = sy;
 		return pointer_motion(sx, sy);
 	}
+
+	/* A press is a real pointer event: keep it as the baseline so the
+	 * button-up and any held motion compare against it (#708). */
+	s_ptr_seen = 1;
+	s_ptr_x = sx;
+	s_ptr_y = sy;
 
 	/* `fresh` is a genuine new press: the loop now forwards the button-up
 	 * too, so held motion is distinguished from a press. A press that lands
@@ -786,7 +874,7 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 			/* Held: hovering a title switches, hovering an item
 			 * highlights; a drag never activates an item. */
 			if (t >= 0 && t != PT.menu)
-				open_menu(t);
+				open_menu(t, 0);
 			else
 				hover_item(sx, sy);
 			return 1;
@@ -801,7 +889,7 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 			}
 			if (t >= 0 && t != PT.menu)
 			{
-				open_menu(t);
+				open_menu(t, 0);
 				return 1;
 			}
 			close_menu();
@@ -815,7 +903,7 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 
 		if (t >= 0)
 		{
-			open_menu(t);
+			open_menu(t, 0);
 			return 1;
 		}
 	}

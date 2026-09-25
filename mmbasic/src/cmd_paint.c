@@ -525,12 +525,11 @@ const char *mmb_paint_key(char c)
 		return G.out;
 	if (pt_text_active() && pt_text_key((unsigned char)c))
 		return G.out;
-	if (pt_menus_key((unsigned char)c))
-		return G.out;
-
-	/* An escape sequence in progress consumes its continuation bytes so an
-	 * arrow key (0x1b '[' 'A') cannot be mistaken for the Esc quit. A lone
-	 * Esc is resolved by mmb_paint_poll() after PT_ESC_IDLE_MS. */
+	/* Decode an escape sequence before the menu sees the byte: the leading
+	 * 0x1b of an arrow key is otherwise read as an Esc that closes the menu
+	 * before the rest of the sequence arrives. A complete CSI/SS3 navigation
+	 * key becomes a PT_KEY_* code for pt_menus_key(); a lone Esc is buffered
+	 * and resolved by mmb_paint_poll() after PT_ESC_IDLE_MS. */
 	if (s_esc_state[g_console] != PT_ESC_NONE)
 	{
 		if (s_esc_state[g_console] == PT_ESC_GOT)
@@ -551,6 +550,14 @@ const char *mmb_paint_key(char c)
 		else if (s_esc_state[g_console] == PT_ESC_SS3)
 		{
 			s_esc_state[g_console] = PT_ESC_NONE;
+			if (c == 'A')
+				pt_menus_key(PT_KEY_UP);
+			else if (c == 'B')
+				pt_menus_key(PT_KEY_DOWN);
+			else if (c == 'C')
+				pt_menus_key(PT_KEY_RIGHT);
+			else if (c == 'D')
+				pt_menus_key(PT_KEY_LEFT);
 			return G.out;
 		}
 		else /* PT_ESC_CSI: consume until the final byte. */
@@ -558,7 +565,17 @@ const char *mmb_paint_key(char c)
 			unsigned char uc = (unsigned char)c;
 
 			if (uc >= 0x40 && uc <= 0x7e)
+			{
 				s_esc_state[g_console] = PT_ESC_NONE;
+				if (uc == 'A')
+					pt_menus_key(PT_KEY_UP);
+				else if (uc == 'B')
+					pt_menus_key(PT_KEY_DOWN);
+				else if (uc == 'C')
+					pt_menus_key(PT_KEY_RIGHT);
+				else if (uc == 'D')
+					pt_menus_key(PT_KEY_LEFT);
+			}
 			return G.out;
 		}
 	}
@@ -568,6 +585,11 @@ const char *mmb_paint_key(char c)
 		s_esc_at[g_console] = mmb_now_ms();
 		return G.out;
 	}
+
+	/* An open menu/dialog is next, now that a leading Esc has been claimed
+	 * by the escape decoder above. */
+	if (pt_menus_key((unsigned char)c))
+		return G.out;
 
 	if ((unsigned char)c == 1)	/* Alt prefix */
 	{

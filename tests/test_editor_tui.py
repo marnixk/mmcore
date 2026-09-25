@@ -618,6 +618,43 @@ def test_editor_tab_char_does_not_shift_border(kernel_image):
         con.stop()
 
 
+def _brightest(con, x, y, w, h):
+    coords = [(x + dx, y + dy) for dy in range(0, h, 2) for dx in range(0, w, 2)]
+    px = con.screen_pixels(coords)
+    return max(px, key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2])
+
+
+def test_editor_highlights_basic_sources_only(kernel_image):
+    """#753: number highlighting shows in .BAS, but a .TXT tab is plain."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION EDIT THEME "Turbo"') == ""
+        for name in ("HLBASE.BAS", "HLTEXT.TXT"):
+            assert con.send_line(f'OPEN "{name}" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "12345"') == ""
+            assert con.send_line("CLOSE #1") == ""
+
+        _edit(con, "HLBASE.BAS")
+        _keys(con, b"\x1b[F", quiet=0.3)
+        base = _brightest(con, 16, 3 * 16, 32, 16)
+        assert base[0] < 200 < base[2], base
+
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        opened = _keys(con, b"HLTEXT.TXT\r", quiet=0.8)
+        assert "12345" in opened
+        plain = _brightest(con, 16, 3 * 16, 32, 16)
+        assert plain[0] > 200 and plain[1] > 200 and plain[2] > 200, plain
+
+        _keys(con, bytes([1]) + b"fo", quiet=0.5)
+        _keys(con, b"HLBASE.BAS\r", quiet=0.8)
+        again = _brightest(con, 16, 3 * 16, 32, 16)
+        assert again[0] < 200 < again[2], again
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def _cell_samples(con, col, row):
     x0, y0 = col * 8, row * 16
     return [
