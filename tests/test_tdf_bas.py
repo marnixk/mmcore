@@ -5,6 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+# The QEMU tests here are timing-sensitive: under parallel load a slow boot
+# makes the shared serial console sample garbage. Mark the module so it holds
+# the QEMU lane exclusively and no other QEMU instance runs alongside it.
+pytestmark = pytest.mark.qemu_exclusive
+
 REPO = Path(__file__).resolve().parents[1]
 LIB = REPO / "ramdisk" / "lib" / "TDF.BAS"
 DEMO = REPO / "ramdisk" / "apps" / "TDFDEMO.BAS"

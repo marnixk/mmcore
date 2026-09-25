@@ -7,6 +7,7 @@ __pycache__/
 .pytest-watch.pid
 .pytest-watch.started
 .pytest-build.lock
+.pytest-qemu.lock
 
 # Console build artifacts
 console/*.o
