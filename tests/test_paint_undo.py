@@ -27,6 +27,8 @@ SHIM = r"""
 #include <string.h>
 
 #define MMB_UNDO_DEPTH 8
+#define MMB_MAX_CONSOLES 4
+extern int g_console;
 
 typedef struct mmb_platform {
 	void *(*alloc)(unsigned n);
@@ -48,7 +50,8 @@ DRIVER = r"""
 #include <string.h>
 #include "paint.h"
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
+int g_console;
 
 static mmb_platform s_plat;
 mmb_test_globals G;

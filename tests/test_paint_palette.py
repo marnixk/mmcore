@@ -27,7 +27,8 @@ DRIVER = r"""
 #include <stdint.h>
 #include <string.h>
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
+int g_console;
 
 static unsigned char fb[PT_W * PT_H * 3];
 

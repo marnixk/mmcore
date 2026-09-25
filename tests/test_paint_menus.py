@@ -23,7 +23,8 @@ DRIVER = r"""
 #include <stdio.h>
 #include <string.h>
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
+int g_console;
 
 /* ---- action/state recording ---- */
 static int f_new, f_open, f_save, f_save_as;
