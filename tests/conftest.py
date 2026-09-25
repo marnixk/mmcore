@@ -1,5 +1,6 @@
 import fcntl
 import os
+import re
 import subprocess
 
 import pytest
@@ -17,6 +18,64 @@ BUILD_INPUT_DIRS = (
     "patches",
     "ramdisk",
 )
+
+# The kernel bakes the build-time `git describe` string into this banner
+# literal, so the image itself records the version it was built for.
+_BAKED_VERSION_RE = re.compile(
+    rb"mmcore operating system - (.*?) - 2026 \(c\) Marnix Kok"
+)
+
+
+def _git_describe() -> str:
+    """The version the source tree is currently at (``git describe``)."""
+    try:
+        return subprocess.check_output(
+            ["git", "describe", "--tags", "--always"],
+            cwd=REPO_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _baked_version(image: str = KERNEL) -> str | None:
+    """Version string embedded in a built kernel image, or ``None``."""
+    try:
+        with open(image, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    match = _BAKED_VERSION_RE.search(data)
+    return match.group(1).decode("utf-8", "replace") if match else None
+
+
+def _needs_version_rebuild(baked: str | None, described: str) -> bool:
+    """Whether the image's baked version no longer matches the tree.
+
+    A commit that touches no build input (docs/tests only) changes HEAD and
+    therefore ``git describe``, but leaves every mtime untouched. Comparing the
+    version actually embedded in the image against the current one catches
+    that without rebuilding on every run.
+    """
+    if not described:
+        return False
+    if baked is None:
+        # No version literal found: never trust an unrecognised image.
+        return True
+    return baked != described
+
+
+def _kernel_is_stale(image: str = KERNEL) -> bool:
+    if not os.path.isfile(image):
+        return True
+    if os.path.getmtime(image) < _newest_source_mtime():
+        return True
+    # An explicit MMB_VERSION (release packaging) is not `git describe`, so do
+    # not second-guess a deliberately versioned image.
+    if os.environ.get("MMB_VERSION"):
+        return False
+    return _needs_version_rebuild(_baked_version(image), _git_describe())
 
 
 def _newest_source_mtime() -> float:
@@ -47,10 +106,7 @@ def kernel_image() -> str:
     with open(BUILD_LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            stale = not os.path.isfile(KERNEL)
-            if not stale:
-                stale = os.path.getmtime(KERNEL) < _newest_source_mtime()
-            if stale:
+            if _kernel_is_stale():
                 subprocess.run(
                     ["bash", os.path.join(REPO_ROOT, "scripts", "build.sh")],
                     check=True,
