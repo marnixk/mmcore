@@ -1480,6 +1480,9 @@ static int plat_console_save(int slot, int tui)
 	fb = s_kernel->Screen().GetFrameBuffer();
 	if (fb)
 	{
+		/* Snapshot the scanned-out half, not whichever half the draw
+		 * offset happens to point at (PAGE DISPLAY flips them). */
+		fb_draw_visible(fb);
 		pitch = fb->GetPitch();
 		rows = fb->GetHeight();
 		off = fb->GetDrawOffsetY();
@@ -1518,21 +1521,23 @@ static int plat_console_restore(int slot, int tui)
 	if (!term)
 		return 0;
 
-	if (!s_console_saved[slot] || !s_console_buf[slot] ||
-	    s_console_size[slot] != term->GetConsoleBufferSize())
-	{
+	/* A console whose text buffer no longer matches the current display is
+	 * stale, but its framebuffer snapshot may still be valid; never lose
+	 * that restore just because the text grid changed (#758). */
+	if (s_console_saved[slot] && s_console_buf[slot] &&
+	    s_console_size[slot] == term->GetConsoleBufferSize())
+		term->RestoreConsole(s_console_buf[slot], s_console_cx[slot],
+				     s_console_cy[slot]);
+	else
 		term->Write("\x1b[H\x1b[2J", 7);
-		return 1;
-	}
-
-	term->RestoreConsole(s_console_buf[slot], s_console_cx[slot],
-			     s_console_cy[slot]);
 
 	if (tui && s_tui_pix && s_console_tui[slot] &&
 	    s_console_tui_size[slot] == s_tui_h * s_tui_pitch)
 		memcpy(s_tui_pix, s_console_tui[slot], s_console_tui_size[slot]);
 
 	fb = s_kernel->Screen().GetFrameBuffer();
+	if (fb)
+		fb_draw_visible(fb);
 	if (fb && s_console_fb[slot] &&
 	    s_console_fb_pitch[slot] == fb->GetPitch() &&
 	    s_console_fb_rows[slot] == fb->GetHeight())

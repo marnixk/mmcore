@@ -429,6 +429,106 @@ def test_switch_keeps_per_console_edit_pick_root(kernel_image):
         con.stop()
 
 
+def _qemu_has_usb_mouse() -> bool:
+    try:
+        out = subprocess.run(
+            ["qemu-system-aarch64", "-device", "help"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "usb-mouse" in out.stdout
+
+
+@pytest.mark.skipif(
+    not _qemu_has_usb_mouse(), reason="qemu-system-aarch64 lacks usb-mouse"
+)
+def test_paint_switch_leaves_other_console_usable(kernel_image):
+    """#754: a full-screen PAINT session belongs to the console it started on.
+    Switching away must release the keyboard and screen so the destination
+    console runs its own prompt, and switching back must restore PAINT."""
+    con = MMBasicConsole(
+        kernel_image,
+        extra_qemu=["-device", "usb-kbd", "-device", "usb-mouse"],
+        boot_timeout=40.0,
+    )
+    con.start()
+    try:
+        time.sleep(2.0)  # let the USB mouse enumerate and attach
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"PAINT\r")
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.screen_size() == (640, 360)
+
+        _switch(con, 2)
+        banner = con.drain(quiet=0.3, timeout=2.0).decode(errors="ignore")
+        assert "MMBasic" in banner
+        # The destination console accepts input; PAINT is not stealing keys.
+        assert con.send_line("PRINT 3+4") == "7"
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # PAINT still owns console 1: its 640x360 mode and Alt+X handler.
+        assert con.screen_size() == (640, 360)
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X leaves PAINT
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.send_line("PRINT 2+3") == "5"
+    finally:
+        con.stop()
+
+
+def test_switch_restores_term_screen(kernel_image):
+    """#758: leaving a full-screen terminal for another console and returning
+    restores its screen buffer, not just the destination prompt."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'TERM "demo", 23\r')
+        con.drain(quiet=0.8, timeout=12.0)
+        before = con.wait_ocr("line 30", timeout=12.0, crop="1280x400+0+0")
+        assert "line 30" in before, before
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 7*6") == "42"
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        after = con.wait_ocr("line 30", timeout=8.0, crop="1280x400+0+0")
+        assert "line 30" in after, after
+    finally:
+        con.stop()
+
+
+def test_switch_restores_term_after_juke(kernel_image):
+    """#758's repro: TERM on screen 1, JUKE on screen 2, then back to screen 1
+    restores the terminal buffer (a graphics app on the other screen must not
+    cost the first screen its pixels or text)."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'TERM "demo", 23\r')
+        con.drain(quiet=0.8, timeout=12.0)
+        before = con.wait_ocr("line 30", timeout=12.0, crop="1280x400+0+0")
+        assert "line 30" in before, before
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'JUKE "tests/TEST.MOD"\r')
+        con.drain(quiet=0.9, timeout=10.0)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        after = con.wait_ocr("line 30", timeout=8.0, crop="1280x400+0+0")
+        assert "line 30" in after, after
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_per_console_wordpad_pick_root(kernel_image):
     """#670: the WORDPAD file-picker root is per-console. Ctrl+P on a console
     whose WORDPAD is already open must list its own directory, not another

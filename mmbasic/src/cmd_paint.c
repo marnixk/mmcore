@@ -20,11 +20,14 @@
 #include "tui.h"
 #include "paint.h"
 
-pt_state PT;
+pt_state pt_console_state[MMB_MAX_CONSOLES];
 
 static int s_force_mouse;	/* test-only override (#633) */
-static int s_alt_pend;
-static int s_saved_mode, s_saved_bits;
+/* Key/timer state is per console too: a switch can land while PAINT is
+ * mid-sequence or holding an in-flight Esc, and the interrupted console must
+ * not inherit the other screen's pending key. */
+static int s_alt_pend[MMB_MAX_CONSOLES];
+static int s_saved_mode[MMB_MAX_CONSOLES], s_saved_bits[MMB_MAX_CONSOLES];
 
 /* ---- escape sequences (#726) ------------------------------------------- *
  * Terminal navigation keys (arrows, Home/End/PageUp/Down, function keys,
@@ -35,8 +38,8 @@ static int s_saved_mode, s_saved_bits;
  * after the idle window and only then quits / closes a menu. */
 #define PT_ESC_IDLE_MS 60
 enum { PT_ESC_NONE = 0, PT_ESC_GOT, PT_ESC_CSI, PT_ESC_SS3 };
-static int s_esc_state;
-static unsigned s_esc_at;
+static int s_esc_state[MMB_MAX_CONSOLES];
+static unsigned s_esc_at[MMB_MAX_CONSOLES];
 
 /* ---- frame damage (#700) ---------------------------------------------- *
  * One screen-space bounding box (inclusive pixels) per frame. Every edit
@@ -413,8 +416,8 @@ static void pt_leave(void)
 	if (!PT.active)
 		return;
 	PT.active = 0;
-	s_esc_state = PT_ESC_NONE;
-	s_alt_pend = 0;
+	s_esc_state[g_console] = PT_ESC_NONE;
+	s_alt_pend[g_console] = 0;
 
 	if (PT.canvas)
 		G.plat->free(PT.canvas);
@@ -424,8 +427,9 @@ static void pt_leave(void)
 	PT.scratch = 0;
 
 	tui_end();
-	if (s_saved_mode != G.gfx.mode || s_saved_bits != G.gfx.bits)
-		mmb_gfx_set_mode(s_saved_mode, s_saved_bits);
+	if (s_saved_mode[g_console] != G.gfx.mode ||
+	    s_saved_bits[g_console] != G.gfx.bits)
+		mmb_gfx_set_mode(s_saved_mode[g_console], s_saved_bits[g_console]);
 	mmb_gfx_reset_console(1);
 	G.home_prompt = 0;
 	pt_select_init();		/* release the clipboard / float buffers */
@@ -454,8 +458,8 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	PT.zoom = 1;
 	PT.fg = 15;
 	PT.bg = 0;
-	s_esc_state = PT_ESC_NONE;
-	s_alt_pend = 0;
+	s_esc_state[g_console] = PT_ESC_NONE;
+	s_alt_pend[g_console] = 0;
 
 	w = pt_clamp(w, 1, PT_MAX_W);
 	h = pt_clamp(h, 1, PT_MAX_H);
@@ -481,8 +485,8 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	strncpy(PT.status, "PAINT", sizeof(PT.status) - 1);
 
 	/* Fixed 640x360 display; remember the caller's mode for exit. */
-	s_saved_mode = G.gfx.mode;
-	s_saved_bits = G.gfx.bits;
+	s_saved_mode[g_console] = G.gfx.mode;
+	s_saved_bits[g_console] = G.gfx.bits;
 	mmb_gfx_set_mode(PT_MODE, 8);
 
 	pt_palette_init();
@@ -527,26 +531,26 @@ const char *mmb_paint_key(char c)
 	/* An escape sequence in progress consumes its continuation bytes so an
 	 * arrow key (0x1b '[' 'A') cannot be mistaken for the Esc quit. A lone
 	 * Esc is resolved by mmb_paint_poll() after PT_ESC_IDLE_MS. */
-	if (s_esc_state != PT_ESC_NONE)
+	if (s_esc_state[g_console] != PT_ESC_NONE)
 	{
-		if (s_esc_state == PT_ESC_GOT)
+		if (s_esc_state[g_console] == PT_ESC_GOT)
 		{
 			if (c == '[')
 			{
-				s_esc_state = PT_ESC_CSI;
+				s_esc_state[g_console] = PT_ESC_CSI;
 				return G.out;
 			}
 			if (c == 'O')
 			{
-				s_esc_state = PT_ESC_SS3;
+				s_esc_state[g_console] = PT_ESC_SS3;
 				return G.out;
 			}
 			/* Not a sequence: drop the Esc and process c as usual. */
-			s_esc_state = PT_ESC_NONE;
+			s_esc_state[g_console] = PT_ESC_NONE;
 		}
-		else if (s_esc_state == PT_ESC_SS3)
+		else if (s_esc_state[g_console] == PT_ESC_SS3)
 		{
-			s_esc_state = PT_ESC_NONE;
+			s_esc_state[g_console] = PT_ESC_NONE;
 			return G.out;
 		}
 		else /* PT_ESC_CSI: consume until the final byte. */
@@ -554,25 +558,25 @@ const char *mmb_paint_key(char c)
 			unsigned char uc = (unsigned char)c;
 
 			if (uc >= 0x40 && uc <= 0x7e)
-				s_esc_state = PT_ESC_NONE;
+				s_esc_state[g_console] = PT_ESC_NONE;
 			return G.out;
 		}
 	}
 	if (c == 27)			/* Esc: buffer, resolve after idle */
 	{
-		s_esc_state = PT_ESC_GOT;
-		s_esc_at = mmb_now_ms();
+		s_esc_state[g_console] = PT_ESC_GOT;
+		s_esc_at[g_console] = mmb_now_ms();
 		return G.out;
 	}
 
 	if ((unsigned char)c == 1)	/* Alt prefix */
 	{
-		s_alt_pend = 1;
+		s_alt_pend[g_console] = 1;
 		return G.out;
 	}
-	if (s_alt_pend)
+	if (s_alt_pend[g_console])
 	{
-		s_alt_pend = 0;
+		s_alt_pend[g_console] = 0;
 		if (c == 'x' || c == 'X')
 		{
 			if (!pt_menus_confirm_quit())
@@ -603,10 +607,10 @@ void mmb_paint_poll(void)
 	/* A buffered Esc that no key followed within the idle window is a real
 	 * Esc: close an open menu/dialog, or quit (through the discard prompt
 	 * when the canvas is dirty). */
-	if (s_esc_state == PT_ESC_GOT &&
-	    mmb_now_ms() - s_esc_at >= PT_ESC_IDLE_MS)
+	if (s_esc_state[g_console] == PT_ESC_GOT &&
+	    mmb_now_ms() - s_esc_at[g_console] >= PT_ESC_IDLE_MS)
 	{
-		s_esc_state = PT_ESC_NONE;
+		s_esc_state[g_console] = PT_ESC_NONE;
 		if (pt_menus_active())
 			pt_menus_key(27);
 		else if (!pt_menus_confirm_quit())

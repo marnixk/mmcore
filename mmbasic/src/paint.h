@@ -169,7 +169,11 @@ typedef struct pt_state {
 	char status[96];	/* one-line status hint */
 } pt_state;
 
-extern pt_state PT;
+/* One PAINT session per virtual console: PT resolves to the active console's
+ * state so switching consoles suspends this app on the screen it was started
+ * on instead of running it on every screen (#754). */
+extern pt_state pt_console_state[MMB_MAX_CONSOLES];
+#define PT (pt_console_state[g_console])
 
 /* ---- lifecycle (cmd_paint.c, wired into core/frontend/session) ---------- */
 
