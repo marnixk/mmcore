@@ -940,6 +940,15 @@ static int pick_ext_ok(const char *name)
 	return ed_str_icmp(dot, ".bas") == 0 || ed_str_icmp(dot, ".inc") == 0;
 }
 
+/* Only .BAS/.INC tabs get Basic syntax highlighting; anything else (e.g. a
+ * .TXT note) renders as plain text.  An untitled buffer is a new program. */
+static int path_is_basic(const char *path)
+{
+	if (!path || !path[0])
+		return 1;
+	return pick_ext_ok(path_basename(path));
+}
+
 static int path_is_dir(const char *path)
 {
 	return path && path[0] && mmb_vfs_exists(path) && mmb_vfs_size(path) < 0;
@@ -2913,20 +2922,21 @@ static int line_is_comment(const char *s, int n)
 	return 0;
 }
 
-static void draw_text_line(int x, int y, const char *s, int n, int col0, int buf_off)
+static void draw_text_line(int x, int y, const char *s, int n, int col0,
+			   int buf_off, int hl)
 {
 	int i, vis = 0, shown = 0, in_str = 0, in_cmt;
 	int pad_mark;
-	in_cmt = line_is_comment(s, n);
+	in_cmt = hl && line_is_comment(s, n);
 	for (i = 0; i < n && shown < TEXT_COLS; i++)
 	{
 		char ch = s[i];
 		int fg, bg, k, w, marked;
-		if (!in_cmt && !in_str && ch == '\'')
+		if (hl && !in_cmt && !in_str && ch == '\'')
 			in_cmt = 1;
-		if (!in_cmt && !in_str && ch == '"')
+		if (hl && !in_cmt && !in_str && ch == '"')
 			in_str = 1;
-		else if (in_str && ch == '"')
+		else if (hl && in_str && ch == '"')
 			in_str = 2;
 		marked = in_sel(buf_off + i);
 		if (marked)
@@ -2944,7 +2954,7 @@ static void draw_text_line(int x, int y, const char *s, int n, int col0, int buf
 			fg = C_STR_FG;
 			bg = C_EDIT_BG;
 		}
-		else if (ch >= '0' && ch <= '9')
+		else if (hl && ch >= '0' && ch <= '9')
 		{
 			fg = C_NUM_FG;
 			bg = C_EDIT_BG;
@@ -2987,13 +2997,14 @@ static void draw_empty_text_row(int y)
 static void draw_editor_body(void)
 {
 	mmb_ed_tab *t = cur_tab();
-	int vis, i, pos, row;
+	int vis, i, pos, row, hl;
 	if (!t)
 	{
 		for (vis = 0; vis < TEXT_ROWS; vis++)
 			draw_empty_text_row(ROW_TEXT + vis);
 		return;
 	}
+	hl = path_is_basic(t->path);
 	pos = 0;
 	row = 0;
 	while (row < t->row0 && pos < t->len)
@@ -3014,7 +3025,7 @@ static void draw_editor_body(void)
 			n++;
 			pos++;
 		}
-		draw_text_line(1, y, t->buf + start, n, t->col0, start);
+		draw_text_line(1, y, t->buf + start, n, t->col0, start, hl);
 		tui_put(COLS - 1, y, TUI_V, C_BRD_FG, C_BRD_BG);
 		if (pos < t->len && t->buf[pos] == '\n')
 			pos++;
