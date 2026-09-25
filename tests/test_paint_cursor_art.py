@@ -27,6 +27,7 @@ TRANSPARENT = 255
 TOOLS = [
     "arrow", "pencil", "line", "rectangle", "ellipse", "circle", "fill",
     "eraser", "pick", "grab", "magnify", "airbrush", "spray", "text",
+    "select",
 ]
 
 # Tools whose idle and active art must differ (button-held feedback).

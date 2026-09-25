@@ -27,15 +27,15 @@ PT_W, PT_H = 640, 360
 PT_MENU_H = 16
 PT_CELL_W = 32
 PT_TOOL_W = 64
-PT_CELL_H = (328 - 16) // 8
+PT_CELL_H = (328 - 16) // 9
 PT_PAL_Y = 328
 PT_CANVAS_Y = 16
-PT_TOOL_COUNT = 16
+PT_TOOL_COUNT = 17
 
-# enum pt_tool (#719 two-column order).
+# enum pt_tool (#719 two-column order; #644 adds the selection tool).
 (PENCIL, ERASER, LINE, TEXT, RECT, RECT_FILLED, ELLIPSE, ELLIPSE_FILLED,
  CIRCLE, CIRCLE_FILLED, FILL, PICK, AIRBRUSH, SPRAY, GRAB,
- MAGNIFY) = range(PT_TOOL_COUNT)
+ MAGNIFY, SELECT) = range(PT_TOOL_COUNT)
 
 # Bonus-tool radii from mmbasic/src/paint_tools.c.
 AIR_R = 6
@@ -142,6 +142,13 @@ void pt_plot(int x, int y, unsigned rgb) { (void)x; (void)y; (void)rgb; }
 unsigned pt_palette_rgb(int idx) { (void)idx; return 0; }
 
 void pt_request_redraw(void) { PT.dirty = 1; }
+
+/* paint_select.c (#644) is not linked here; the tool dispatcher references
+ * its hooks, so stub them out. */
+void pt_select_begin(int x, int y, int b) { (void)x; (void)y; (void)b; }
+void pt_select_motion(int x, int y) { (void)x; (void)y; }
+void pt_select_end(int x, int y) { (void)x; (void)y; }
+void pt_select_cancel(void) { }
 
 void pt_damage_canvas(int x, int y, int w, int h)
 {

@@ -23,10 +23,11 @@ PT_W, PT_H = 640, 360
 PT_CANVAS_W, PT_CANVAS_H = 576, 312
 PT_CANVAS_X, PT_CANVAS_Y = 64, 16
 
-# The 14 baked sprites (arrow + 13 raster tools).
+# The 15 baked sprites (arrow + 14 raster/selection tools).
 TOOLS = [
     "arrow", "pencil", "line", "rectangle", "ellipse", "circle", "fill",
     "eraser", "pick", "grab", "magnify", "airbrush", "spray", "text",
+    "select",
 ]
 
 # app tool id -> baked sprite name. The three filled variants (#719) reuse
@@ -37,9 +38,9 @@ TOOL_IDS = {
     "ellipse": "ellipse", "ellipse_filled": "ellipse",
     "circle": "circle", "circle_filled": "circle", "fill": "fill",
     "pick": "pick", "airbrush": "airbrush", "spray": "spray",
-    "grab": "grab", "magnify": "magnify",
+    "grab": "grab", "magnify": "magnify", "select": "select",
 }
-PT_TOOL_COUNT = 16
+PT_TOOL_COUNT = 17
 
 SHIM_H = r"""
 #ifndef MMB_PRIV_H
@@ -175,6 +176,7 @@ static int art_index(int tool)
 	case 13: return PCA_TOOL_SPRAY;
 	case 14: return PCA_TOOL_GRAB;
 	case 15: return PCA_TOOL_MAGNIFY;
+	case 16: return PCA_TOOL_SELECT;
 	default: return PCA_TOOL_ARROW;
 	}
 }

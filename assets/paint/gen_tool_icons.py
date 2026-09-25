@@ -37,7 +37,7 @@ OUT_H = REPO / "mmbasic" / "src" / "paint_tool_icons.h"
 TOOLS = [
     "pencil", "eraser", "line", "text", "rectangle", "rectangle_filled",
     "ellipse", "ellipse_filled", "circle", "circle_filled", "fill", "pick",
-    "airbrush", "spray", "grab", "magnify",
+    "airbrush", "spray", "grab", "magnify", "select",
 ]
 
 
@@ -278,11 +278,30 @@ def art_text():
     return m
 
 
+def art_select():
+    m = blank()
+    # Marching-ants marquee: dashed rectangle with solid corner handles.
+    for x in range(2, 14):
+        if x % 2 == 0:
+            put(m, x, 2)
+            put(m, x, 13)
+    for y in range(2, 14):
+        if y % 2 == 0:
+            put(m, 2, y)
+            put(m, 13, y)
+    for cx, cy in ((2, 2), (13, 2), (2, 13), (13, 13)):
+        put(m, cx, cy)
+    # Centre move grip.
+    add_rect(m, 7, 4, 8, 11)
+    add_rect(m, 4, 7, 11, 8)
+    return m
+
+
 BUILDERS = [
     art_pencil, art_eraser, art_line, art_text, art_rectangle,
     art_rectangle_filled, art_ellipse, art_ellipse_filled, art_circle,
     art_circle_filled, art_fill, art_pick, art_airbrush, art_spray,
-    art_grab, art_magnify,
+    art_grab, art_magnify, art_select,
 ]
 
 

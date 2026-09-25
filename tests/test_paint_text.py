@@ -115,10 +115,100 @@ unsigned pt_palette_rgb(int idx) { (void)idx; return 0; }
 
 void pt_request_redraw(void) { PT.dirty = 1; }
 
+/* paint_select.c (#644) is not linked here; the tool dispatcher references
+ * its hooks, so stub them out. */
+void pt_select_begin(int x, int y, int b) { (void)x; (void)y; (void)b; }
+void pt_select_motion(int x, int y) { (void)x; (void)y; }
+void pt_select_end(int x, int y) { (void)x; (void)y; }
+void pt_select_cancel(void) { }
+
 /* paint_tools.c links here too; its preview marks the reverted rectangle. */
 void pt_damage_canvas(int x, int y, int w, int h)
 {
 	(void)x; (void)y; (void)w; (void)h;
+}
+
+/* ---- fake A:/fonts/gfx for the font-picker tests (#643) ---------------- */
+
+static const char *TST_JSON =
+	"{\"source\":\"tst.png\",\"charset\":\"AB\",\"offsetX\":0,"
+	"\"offsetY\":0,\"charWidth\":8,\"charHeight\":8,\"charsPerRow\":16,"
+	"\"bgColour\":0}";
+
+static int s_fonts_off;
+
+void tst_fonts(int off) { s_fonts_off = off ? 1 : 0; }
+
+int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
+			 int *trunc)
+{
+	(void)spec;
+	(void)out;
+	if (trunc)
+		*trunc = 0;
+	if (s_fonts_off)
+		return 0;
+	if (max < 1)
+		return -1;
+	memset(out, 0, sizeof(*out));
+	strcpy(out[0].name, "tst.json");
+	out[0].is_dir = 0;
+	out[0].size = (int)strlen(TST_JSON);
+	return 1;
+}
+
+int mmb_vfs_size(const char *path)
+{
+	if (path && strstr(path, ".json"))
+		return (int)strlen(TST_JSON);
+	if (path && strstr(path, ".png"))
+		return 1;
+	return -1;
+}
+
+int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n)
+{
+	if (path && strstr(path, ".json"))
+	{
+		unsigned L = (unsigned)strlen(TST_JSON);
+		if (L > maxn)
+			L = maxn;
+		memcpy(data, TST_JSON, L);
+		if (n)
+			*n = L;
+		return 0;
+	}
+	if (path && strstr(path, ".png"))
+	{
+		if (n)
+			*n = 0;
+		((unsigned char *)data)[0] = 0;
+		return 0;
+	}
+	return -1;
+}
+
+/* 128x8 sheet: glyph 'A' is a solid block at x 0..7; glyph 'B' is one red
+ * pixel. 0xAARRGGBB, alpha 0 is transparent. */
+int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
+			uint32_t **out, int *w, int *h)
+{
+	uint32_t *p = malloc(128u * 8u * sizeof(uint32_t));
+	int x, y;
+
+	(void)file;
+	(void)n;
+	if (!p)
+		return -1;
+	memset(p, 0, 128u * 8u * sizeof(uint32_t));
+	for (y = 0; y < 8; y++)
+		for (x = 0; x < 8; x++)
+			p[y * 128 + x] = 0xFFFFFFFFu;
+	p[8] = 0xFFFF0000u;
+	*out = p;
+	*w = 128;
+	*h = 8;
+	return 0;
 }
 
 int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy)
@@ -198,12 +288,22 @@ class Pad:
         lib.tst_key.restype = ctypes.c_int
         lib.tst_active.restype = ctypes.c_int
         lib.tst_undo_depth.restype = ctypes.c_int
+        lib.tst_fonts.argtypes = [ctypes.c_int]
+        lib.pt_text_font_count.restype = ctypes.c_int
+        lib.pt_text_font_name.argtypes = [ctypes.c_int]
+        lib.pt_text_font_name.restype = ctypes.c_char_p
+        lib.pt_text_font_load.argtypes = [ctypes.c_int]
+        lib.pt_text_font_current.restype = ctypes.c_char_p
+        lib.pt_text_font_w.restype = ctypes.c_int
+        lib.pt_text_font_h.restype = ctypes.c_int
+        lib.pt_text_font_picker_active.restype = ctypes.c_int
         self.w, self.h = w, h
         self.reset(w, h)
 
     def reset(self, w=None, h=None):
         self.w = self.w if w is None else w
         self.h = self.h if h is None else h
+        self.lib.tst_fonts(0)
         self.lib.tst_reset(self.w, self.h)
 
     def px(self, x, y):
@@ -233,6 +333,36 @@ class Pad:
 
     def undo(self):
         self.lib.tst_undo()
+
+    def fonts_off(self, off):
+        self.lib.tst_fonts(1 if off else 0)
+
+    def font_count(self):
+        return self.lib.pt_text_font_count()
+
+    def font_name(self, i):
+        return self.lib.pt_text_font_name(i).decode()
+
+    def font_load(self, i):
+        return self.lib.pt_text_font_load(i)
+
+    def font_builtin(self):
+        self.lib.pt_text_font_builtin()
+
+    def font_current(self):
+        return self.lib.pt_text_font_current().decode()
+
+    def font_w(self):
+        return self.lib.pt_text_font_w()
+
+    def font_h(self):
+        return self.lib.pt_text_font_h()
+
+    def picker_open(self):
+        self.lib.pt_text_font_picker_open()
+
+    def picker_active(self):
+        return self.lib.pt_text_font_picker_active()
 
 
 @pytest.fixture
@@ -344,3 +474,69 @@ def test_tool_registration_routes_the_click_into_the_text_module(pt):
     pt.type("I")
     pt.key(ENTER)
     assert_glyph(pt, GLYPH_I, 1, 1, 6)
+
+
+# ---- font picker from A:/fonts/gfx (#643) ---------------------------------
+
+
+def test_font_catalog_lists_the_folder(pt):
+    assert pt.font_count() == 1
+    assert pt.font_name(0) == "tst"
+    assert pt.font_current() == ""
+
+
+def test_load_and_render_with_the_chosen_bitmap_font(pt):
+    assert pt.font_load(0) == 0
+    assert pt.font_current() == "tst"
+    assert (pt.font_w(), pt.font_h()) == (8, 8)
+
+    pt.colors(5, 0)
+    pt.begin(2, 2, LEFT)
+    pt.type("AB")
+    pt.key(ENTER)
+
+    # 'A' is a solid 8x8 block in the chosen foreground index.
+    for y in range(8):
+        for x in range(8):
+            assert pt.px(2 + x, 2 + y) == 5, (x, y)
+    # 'B' is a single red pixel at its top-left (the rest is background).
+    assert pt.px(10, 2) == 5
+    assert pt.px(11, 2) == 0
+    assert pt.px(10, 3) == 0
+
+
+def test_picker_open_navigate_and_choose(pt):
+    pt.begin(2, 2, LEFT)
+    pt.picker_open()
+    assert pt.picker_active() == 1
+    # The first entry is the built-in; 'n' moves to the first folder font.
+    assert pt.key(ord("n")) == 1
+    assert pt.key(ENTER) == 1
+    assert pt.picker_active() == 0
+    assert pt.font_current() == "tst"
+
+
+def test_builtin_fallback_when_no_fonts_are_available(pt):
+    pt.fonts_off(True)
+    assert pt.font_count() == 0
+    assert pt.font_load(0) == -1
+    assert pt.font_current() == ""
+    assert (pt.font_w(), pt.font_h()) == (8, 8)
+
+    pt.colors(7, 0)
+    pt.begin(2, 2, LEFT)
+    pt.type("H")
+    pt.key(ENTER)
+    assert_glyph(pt, GLYPH_H, 2, 2, 7)
+
+
+def test_switching_back_to_builtin(pt):
+    assert pt.font_load(0) == 0
+    assert pt.font_current() == "tst"
+    pt.font_builtin()
+    assert pt.font_current() == ""
+    pt.colors(4, 0)
+    pt.begin(2, 2, LEFT)
+    pt.type("H")
+    pt.key(ENTER)
+    assert_glyph(pt, GLYPH_H, 2, 2, 4)

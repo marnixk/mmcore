@@ -46,6 +46,7 @@ static int pt_cursor_art(int tool)
 	case PT_TOOL_AIRBRUSH:	return PCA_TOOL_AIRBRUSH;
 	case PT_TOOL_SPRAY:	return PCA_TOOL_SPRAY;
 	case PT_TOOL_TEXT:	return PCA_TOOL_TEXT;
+	case PT_TOOL_SELECT:	return PCA_TOOL_SELECT;
 	default:		return PCA_TOOL_ARROW;
 	}
 }

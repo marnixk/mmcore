@@ -26,8 +26,15 @@ enum pt_action {
 	PTA_EDIT_UNDO,
 	PTA_EDIT_REDO,
 	PTA_EDIT_CLEAR,
+	PTA_EDIT_CUT,
+	PTA_EDIT_COPY,
+	PTA_EDIT_PASTE,
+	PTA_EDIT_CLEAR_SEL,
+	PTA_EDIT_SELECT_ALL,
 	PTA_HELP_KEYS
 };
+
+#define PT_MENU_MAX_ITEMS 9
 
 typedef struct pt_menu_item {
 	const char *label;
@@ -37,17 +44,20 @@ typedef struct pt_menu_item {
 static const char *const s_titles[PT_MENU_COUNT] = { "File", "Edit", "Help" };
 static const int s_title_col[PT_MENU_COUNT] = { 1, 7, 13 };
 
-static const pt_menu_item s_items[PT_MENU_COUNT][6] = {
+static const pt_menu_item s_items[PT_MENU_COUNT][PT_MENU_MAX_ITEMS] = {
 	{ { "New", PTA_FILE_NEW }, { "Open", PTA_FILE_OPEN },
 	  { "Save", PTA_FILE_SAVE }, { "Save as", PTA_FILE_SAVE_AS },
-	  { "Quit", PTA_FILE_QUIT }, { 0, 0 } },
+	  { "Quit", PTA_FILE_QUIT }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
 	{ { "Undo", PTA_EDIT_UNDO }, { "Redo", PTA_EDIT_REDO },
-	  { "Clear", PTA_EDIT_CLEAR }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+	  { "Clear", PTA_EDIT_CLEAR }, { "Cut", PTA_EDIT_CUT },
+	  { "Copy", PTA_EDIT_COPY }, { "Paste", PTA_EDIT_PASTE },
+	  { "Del sel", PTA_EDIT_CLEAR_SEL },
+	  { "Select", PTA_EDIT_SELECT_ALL }, { 0, 0 } },
 	{ { "Keys", PTA_HELP_KEYS }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
-	  { 0, 0 } }
+	  { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } }
 };
 
-static const int s_item_count[PT_MENU_COUNT] = { 5, 3, 1 };
+static const int s_item_count[PT_MENU_COUNT] = { 5, 8, 1 };
 
 enum { DLG_NONE = 0, DLG_CONFIRM, DLG_KEYS };
 
@@ -419,6 +429,21 @@ static void run_action(int act)
 		clear_canvas();
 		pt_undo_clear();
 		strncpy(PT.status, "Cleared", sizeof(PT.status) - 1);
+		break;
+	case PTA_EDIT_CUT:
+		pt_select_cut();
+		break;
+	case PTA_EDIT_COPY:
+		pt_select_copy();
+		break;
+	case PTA_EDIT_PASTE:
+		pt_select_paste();
+		break;
+	case PTA_EDIT_CLEAR_SEL:
+		pt_select_clear();
+		break;
+	case PTA_EDIT_SELECT_ALL:
+		pt_select_all();
 		break;
 	default:
 		break;

@@ -30,12 +30,13 @@
 
 #define PT_MENU_H   16		/* menu bar text row, screen pixels */
 
-/* Tool palette: two columns of 32px cells (#719). */
+/* Tool palette: two columns of 32px cells (#719). The select tool (#644)
+ * needs a ninth row. */
 #define PT_TOOL_COLS 2
-#define PT_TOOL_ROWS 8
+#define PT_TOOL_ROWS 9
 #define PT_CELL_W   32		/* one tool cell, screen pixels */
 #define PT_TOOL_W   (PT_TOOL_COLS * PT_CELL_W)	/* 64 */
-#define PT_CELL_H   ((PT_PAL_Y - PT_CANVAS_Y) / PT_TOOL_ROWS)	/* 39 */
+#define PT_CELL_H   ((PT_PAL_Y - PT_CANVAS_Y) / PT_TOOL_ROWS)	/* 34 */
 
 #define PT_PAL_COLS 64
 #define PT_PAL_ROWS 4
@@ -87,6 +88,7 @@ enum pt_tool {
 	PT_TOOL_SPRAY,
 	PT_TOOL_GRAB,
 	PT_TOOL_MAGNIFY,
+	PT_TOOL_SELECT,
 	PT_TOOL_COUNT
 };
 
@@ -276,10 +278,56 @@ int pt_file_dialog_active(void);
 int pt_file_key(int key);		/* 1 = consumed by an open dialog */
 void pt_file_draw(void);		/* compose the picker overlay (no present) */
 
+/* ---- selection + clipboard (#644) -------------------------------------- */
+
+/* Rectangular selection with an animated marching-ants boundary and a pixel
+ * clipboard. The selection is screen-only (it is never baked into the canvas
+ * or a PCX); cut, paste, clear-in-selection and move each record exactly one
+ * undo step. Copy and the selection itself change no pixels. */
+void pt_select_init(void);
+int pt_select_has(void);		/* a selection rectangle exists */
+int pt_select_clip_has(void);		/* the clipboard holds an image */
+void pt_select_all(void);		/* select the whole canvas */
+void pt_select_none(void);		/* drop the selection (no pixel edit) */
+/* PT_TOOL_SELECT drag: press, motion and release in canvas coords. A press
+ * inside an existing selection moves it; otherwise it draws a new one. */
+void pt_select_begin(int cx, int cy, int button);
+void pt_select_motion(int cx, int cy);
+void pt_select_end(int cx, int cy);
+void pt_select_cancel(void);
+/* Draw the ants over the composed frame (screen pixels; never the canvas) and
+ * advance the animation phase. */
+void pt_select_draw(void);
+int pt_select_tick(void);		/* 1 when the phase moved */
+/* Clipboard actions (each canvas edit is one undo step). */
+void pt_select_cut(void);
+void pt_select_copy(void);
+void pt_select_paste(void);		/* stamp at the cursor, skipping the bg index */
+void pt_select_clear(void);		/* clear the selected pixels to PT.bg */
+/* Introspection for the native tests. */
+int pt_select_rect(int *x, int *y, int *w, int *h);
+int pt_select_clip_size(int *w, int *h);
+int pt_select_hit(int cx, int cy);	/* canvas point inside the selection */
+
 /* ---- text module (#642) ------------------------------------------------ */
 
 void pt_text_init(void);
 int pt_text_active(void);
 int pt_text_key(int key);		/* 1 = consumed */
+
+/* ---- text font catalog (#643) ------------------------------------------ */
+
+/* Scan A:/fonts/gfx for bitmap fonts (a .json description plus its .png
+ * sheet). The text tool's picker lists these; the built-in CP437 8x8 font is
+ * the fallback when the folder is empty or a load fails. */
+int pt_text_font_count(void);
+const char *pt_text_font_name(int i);
+int pt_text_font_load(int i);		/* 0 ok, -1 on an unknown/bad font */
+void pt_text_font_builtin(void);	/* select the built-in CP437 font */
+const char *pt_text_font_current(void);	/* "" while the built-in is used */
+int pt_text_font_w(void);		/* current glyph cell, canvas pixels */
+int pt_text_font_h(void);
+void pt_text_font_picker_open(void);
+int pt_text_font_picker_active(void);
 
 #endif /* MMB_PAINT_H */

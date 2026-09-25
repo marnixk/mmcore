@@ -73,6 +73,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/paint_cursors.o \
 	  $(MMB)/src/paint_file.o \
 	  $(MMB)/src/paint_text.o \
+	  $(MMB)/src/paint_select.o \
 	  $(MMB)/src/paint_cursor_art.o \
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/cmd_juke.o \
