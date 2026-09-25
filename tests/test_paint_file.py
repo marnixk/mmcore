@@ -175,7 +175,7 @@ def test_open_cancel_leaves_the_canvas_unchanged(native_mmcore, tmp_path, root):
     _menu(s, ITEM_OPEN)
     s.text("y")			# dirty canvas: confirm discarding before Open
     s.key("esc")
-    s.key("enter")		# resolves the pending Esc as a cancel
+    s.wait_ms(1500)		# a lone Esc must cancel without another key (#760)
     _park(s)
     s.shot("after.ppm")
     s.quit()
@@ -185,6 +185,22 @@ def test_open_cancel_leaves_the_canvas_unchanged(native_mmcore, tmp_path, root):
     assert "OPEN ST=CHOSEN" not in out, out
     for x in (100, 120, 160):
         assert _px(before, x, 100) == _px(os.path.join(tmp_path, "after.ppm"), x, 100), x
+
+
+def test_save_as_lone_esc_cancels(native_mmcore, tmp_path, root):
+    """A single Esc cancels Save As without a second key (#760)."""
+    s = _session(tmp_path, root)
+    s.feed("PAINT")
+    _draw(s, 100, 100, 160, 100)
+    _menu(s, ITEM_SAVE_AS)
+    s.key("esc")
+    s.wait_ms(1500)
+    s.quit()
+    out = s.run()
+
+    assert "SAVE ST=CANCEL" in out, out
+    assert "SAVE ST=CHOSEN" not in out, out
+    assert os.listdir(os.path.join(root, "C")) == [], out
 
 
 def test_picker_browses_into_a_subdirectory(native_mmcore, tmp_path, root):

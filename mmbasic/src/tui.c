@@ -601,3 +601,17 @@ int tui_overlay_end(void)
 	s_overlay_saved[g_console] = 0;
 	return restored ? 1 : 0;
 }
+
+/* Cold-boot the TUI layer on a warm reset (#763): every console's cell grid
+ * and any in-flight overlay snapshot is dropped, not just the active one. */
+void mmb_tui_reset_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		memset(&s_tui[i], 0, sizeof(s_tui[i]));
+		s_overlay_active[i] = 0;
+		s_overlay_saved[i] = 0;
+	}
+}

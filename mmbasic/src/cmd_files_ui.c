@@ -3282,6 +3282,7 @@ typedef struct {
 	int save;		/* 1 = Save as, 0 = Open */
 	int focus;		/* 0 = list, 1 = name field */
 	int esc;		/* tiny Esc parser: 0 none, 1 Esc, 2 Esc [ */
+	unsigned esc_at;	/* when a lone Esc was buffered */
 	char dir[FU_PATH];
 	char name[FU_NAME];
 	char result[FU_PATH];
@@ -3557,6 +3558,7 @@ int mmb_files_pick_key(int key)
 	if (key == 27)
 	{
 		PK.esc = 1;
+		PK.esc_at = mmb_now_ms();
 		return 1;
 	}
 	if (key == 9)
@@ -3677,6 +3679,24 @@ void mmb_files_pick_end(void)
 	PK.result[0] = 0;
 }
 
+/* Resolve a buffered lone Esc once no key follows it. The key handler stores
+ * Esc in PK.esc so a following '[' can still be decoded as an arrow key; a
+ * caller polls this each frame so the dialog cancels without a second key.
+ * Returns 1 when the pending Esc resolved into a cancel. */
+int mmb_files_pick_poll(void)
+{
+	if (!PK.active || PK.esc != 1)
+		return 0;
+	if (mmb_now_ms() - PK.esc_at < 60)
+		return 0;
+	PK.esc = 0;
+	PK.active = 0;
+	PK.done = 1;
+	PK.cancelled = 1;
+	pk_emit();
+	return 1;
+}
+
 static void pk_render(void)
 {
 	int x, y, w, h, i, rows, listy, ny;
@@ -3750,4 +3770,19 @@ int mmb_files_pick_geom(int *x, int *y, int *w, int *h)
 		return 0;
 	pk_geom(x, y, w, h);
 	return 1;
+}
+
+/* Cold-boot the FILES browser and its reusable picker on a warm reset (#763).
+ * warm_reset_close_apps() has already freed any retained TDF buffer, so this
+ * only needs to drop the per-console session state. */
+void mmb_files_reset_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		memset(&F_s[i], 0, sizeof(F_s[i]));
+		memset(&PK_s[i], 0, sizeof(PK_s[i]));
+	}
+	s_files_prompted = 0;
 }

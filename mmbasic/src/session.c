@@ -54,6 +54,15 @@ void mmb_console_reset(void)
 	const mmb_platform *plat = G.plat;
 	int i;
 
+	/* Cold-boot the app layer: a warm reset must leave every virtual console
+	 * exactly as a fresh boot would, so the per-console app arrays and the
+	 * shared session data they keep are cleared, not just the active
+	 * console's (#763). */
+	mmb_term_reset_all();
+	mmb_files_reset_all();
+	mmb_paint_reset_all();
+	mmb_tui_reset_all();
+
 	for (i = 1; i < MMB_MAX_CONSOLES; i++)
 	{
 		if (!g_mmb[i])
@@ -86,10 +95,19 @@ void mmb_console_reset(void)
  * REPL never gets the keyboard back (#606). Ask each app to leave through its
  * own key handler rather than reaching into its private state; PAINT buffers
  * Esc to tell an arrow key from the quit chord (#726), so it exposes a
- * force-leave lifecycle call instead. */
-static void warm_reset_close_apps(void)
+ * force-leave lifecycle call instead.
+ *
+ * Apps use their own `g_console`/`g_cur` to find their state, so the reset must
+ * run this for every console, not just the active one (#763): an app left on a
+ * background console otherwise stays active with stale state. */
+static void close_apps_on_console(int idx)
 {
 	int guard;
+	int save_console = g_console;
+	mmb *save_cur = g_cur;
+
+	g_console = idx;
+	g_cur = g_mmb[idx];
 
 	for (guard = 0; guard < 16; guard++)
 	{
@@ -132,12 +150,24 @@ static void warm_reset_close_apps(void)
 		else if (mmb_in_paint())
 			pt_paint_leave();
 		else if (mmb_in_afk())
-			mmb_afk_key(27);
+			mmb_afk_key(3);             /* Ctrl+C leaves AFK */
 		else if (mmb_in_juke())
 			mmb_juke_key(27);
 		else
 			break;
 	}
+
+	g_console = save_console;
+	g_cur = save_cur;
+}
+
+static void warm_reset_close_apps(void)
+{
+	int idx;
+
+	for (idx = 0; idx < MMB_MAX_CONSOLES; idx++)
+		if (g_mmb[idx])
+			close_apps_on_console(idx);
 }
 
 /* Ctrl+Alt+Del: re-initialise the interpreter in place. A hardware reset

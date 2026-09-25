@@ -1089,6 +1089,13 @@ int mmb_in_afk(void);
 void mmb_afk_key(char c);
 void mmb_afk_poll(void);
 
+/* Cold-boot the app layer on a warm reset: each clears every console's state
+ * and the shared session data the app keeps. Called from mmb_console_reset(). */
+void mmb_term_reset_all(void);
+void mmb_files_reset_all(void);
+void mmb_paint_reset_all(void);
+void mmb_tui_reset_all(void);
+
 void mmb_editor_open(const char *path);
 const char *mmb_editor_feed(char c);
 void mmb_editor_poll(void);

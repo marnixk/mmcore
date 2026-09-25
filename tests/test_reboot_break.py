@@ -148,3 +148,43 @@ def test_ctrl_alt_del_closes_settings_app(kernel_image):
         assert con.send_line("PRINT 6 * 7") == "42"
     finally:
         con.stop()
+
+
+def _switch_console(con: MMBasicConsole, n: int) -> None:
+    con.key_down("ctrl")
+    con.key_down("alt")
+    time.sleep(0.15)
+    con.key_down(str(n))
+    time.sleep(0.25)
+    con.key_up(str(n))
+    time.sleep(0.15)
+    con.key_up("alt")
+    con.key_up("ctrl")
+    time.sleep(0.5)
+
+
+def test_ctrl_alt_del_closes_app_on_background_console(kernel_image):
+    """#763: a full-screen app left on an inactive virtual console must not
+    survive the warm reset. Every console comes back at a ready prompt."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        _open_app(con, "FILES")
+        _switch_console(con, 2)
+        con.drain(quiet=0.3, timeout=3.0)
+
+        con.drain(quiet=0.2)
+        _ctrl_alt_del(con)
+        assert "MMBasic" in _wait_for_mmbasic(con)
+
+        # Console 1 held the app when the reset happened; it must be gone.
+        _switch_console(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 6 * 7") == "42"
+
+        # And console 2, active at reset time, is still usable.
+        _switch_console(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 7 * 7") == "49"
+    finally:
+        con.stop()

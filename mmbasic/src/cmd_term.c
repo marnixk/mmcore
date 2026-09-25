@@ -6144,3 +6144,36 @@ void mmb_term_poll(void)
 		term_draw();
 	mmb_net_yield();
 }
+
+/* Cold-boot the TERM layer on a warm reset (#763). Closing each console's
+ * session is done by warm_reset_close_apps(); this clears the shared log,
+ * scrollback, bookmarks and download/browser state that would otherwise
+ * survive. T_s is per console, the rest is single-session state. */
+void mmb_term_reset_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+		memset(&T_s[i], 0, sizeof(T_s[i]));
+	memset(g_dl_dir_s, 0, sizeof(g_dl_dir_s));
+	memset(g_dl_cur_s, 0, sizeof(g_dl_cur_s));
+	memset(g_dl_names_s, 0, sizeof(g_dl_names_s));
+	memset(g_dl_n_s, 0, sizeof(g_dl_n_s));
+	memset(g_dl_sel_s, 0, sizeof(g_dl_sel_s));
+	memset(g_dl_top_s, 0, sizeof(g_dl_top_s));
+	memset(g_dl_focus_s, 0, sizeof(g_dl_focus_s));
+	memset(g_dl_trunc_s, 0, sizeof(g_dl_trunc_s));
+	memset(g_dl_last_name, 0, sizeof(g_dl_last_name));
+	g_dl_last_files = 0;
+	memset(&L, 0, sizeof(L));
+	memset(&H, 0, sizeof(H));
+	memset(g_bm, 0, sizeof(g_bm));
+	g_bm_n = 0;
+	dlg_c0 = dlg_r0 = dlg_cw = dlg_ch = 0;
+	memset(s_iac_out, 0, sizeof(s_iac_out));
+	s_iac_n = 0;
+	memset(&ZM, 0, sizeof(ZM));
+	zm_ready = 0;
+	zm_shift = 0;
+	zm_shown[0] = 0;
+}
