@@ -1155,7 +1155,18 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
     ).stdout
     assert "@rpath/libSDL2-2.0.0.dylib" in deps, "install name must be rewritten"
 
-    with zipfile.ZipFile(dist / "mmcore-macos-arm64.zip") as z:
+    # The shipped bundle is universal: both the executable and the bundled
+    # SDL2 dylib must carry arm64 and x86_64 slices.
+    arches = subprocess.run(
+        ["lipo", "-archs", str(exe)], check=True, capture_output=True, text=True
+    ).stdout.split()
+    assert "arm64" in arches and "x86_64" in arches
+    fw_arches = subprocess.run(
+        ["lipo", "-archs", str(fw)], check=True, capture_output=True, text=True
+    ).stdout.split()
+    assert "arm64" in fw_arches and "x86_64" in fw_arches
+
+    with zipfile.ZipFile(dist / "mmcore-macos-universal.zip") as z:
         names = z.namelist()
     assert any(n.startswith("mmcore.app/Contents/MacOS/mmcore") for n in names)
 

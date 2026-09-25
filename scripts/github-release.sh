@@ -25,8 +25,8 @@ publish builds board images with scripts/package-release.sh, then uploads:
   dist/mmcore-console-pi400-vVERSION.zip
   scripts/install-sdcard.sh
 
-On macOS it also builds and attaches the arm64 app bundle:
-  dist/mmcore-macos-arm64.zip   (scripts/package-macos-app.sh)
+On macOS it also builds and attaches the universal (arm64 + x86_64) app bundle:
+  dist/mmcore-macos-universal.zip   (scripts/package-macos-app.sh)
 The bundle is notarized + stapled; a failed notarization aborts the release.
 
 The Windows zip is built by CI (.github/workflows/windows.yml) when the release
@@ -194,7 +194,7 @@ print(f"mmcore v{version}")
 print()
 print("Bare-metal mmcore for Raspberry Pi. Each zip is a FAT-ready SD-card image")
 print("plus `install-sdcard.sh` for Linux, and native desktop builds are attached:")
-print("a Linux AppImage, a Windows x86_64 zip, and an Apple Silicon macOS app."
+print("a Linux AppImage, a Windows x86_64 zip, and a universal macOS app."
       if macos_name else
       "a Linux AppImage and a Windows x86_64 zip.")
 print()
@@ -237,7 +237,7 @@ print(".\\mmcore-windows-x86_64\\mmcore.exe")
 print("```")
 print()
 if macos_name:
-    print("## macOS native (Apple Silicon)")
+    print("## macOS native (universal: Apple Silicon + Intel)")
     print()
     print("Unzip and drag `mmcore.app` to Applications, then launch it from Finder")
     print("(the SDL2 window shows the prompt and keyboard input):")
@@ -257,7 +257,7 @@ print("- `install-sdcard.sh` — same installer, also inside each zip")
 print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
 print("- `mmcore-windows-x86_64.zip` — Windows x86_64 native SDL2 build")
 if macos_name:
-    print(f"- `{macos_name}` — macOS arm64 app bundle (mmcore.app)")
+    print(f"- `{macos_name}` — macOS universal app bundle (mmcore.app)")
 print()
 if tag_range:
     print(f"## Changes since v{last}")
@@ -294,7 +294,7 @@ publish() {
 	pizero2w="${DIST}/mmcore-console-pizero2w-v${version}.zip"
 	pi400="${DIST}/mmcore-console-pi400-v${version}.zip"
 	installer="${REPO_ROOT}/scripts/install-sdcard.sh"
-	macos="${DIST}/mmcore-macos-arm64.zip"
+	macos="${DIST}/mmcore-macos-universal.zip"
 
 	[ -x "${installer}" ] || die "missing ${installer}"
 	command -v gh >/dev/null 2>&1 || die "gh is not on PATH"
@@ -378,7 +378,9 @@ case "${cmd}" in
 		;;
 	release-notes)
 		[ $# -eq 2 ] || die "release-notes needs VERSION (see --help)"
-		if [ -f "${DIST}/mmcore-macos-arm64.zip" ]; then
+		if [ -f "${DIST}/mmcore-macos-universal.zip" ]; then
+			release_notes "$(normalize_version "$2")" "${DIST}/mmcore-macos-universal.zip"
+		elif [ -f "${DIST}/mmcore-macos-arm64.zip" ]; then
 			release_notes "$(normalize_version "$2")" "${DIST}/mmcore-macos-arm64.zip"
 		else
 			release_notes "$(normalize_version "$2")"

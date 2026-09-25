@@ -242,14 +242,19 @@ Build it locally on Linux with `scripts/package-linux-appimage.sh` (result in
 
 ## macOS app bundle
 
-On an Apple Silicon Mac, `scripts/package-macos-app.sh` builds the same SDL2
-binary and packages it as a self-contained `mmcore.app`:
+`scripts/package-macos-app.sh` builds the same SDL2 binary and packages it as a
+self-contained, **universal** (arm64 + x86_64) `mmcore.app`, so one bundle runs
+on Apple Silicon and Intel Macs:
 
 ```bash
-brew install sdl2
-scripts/package-macos-app.sh          # dist/mmcore.app + dist/mmcore-macos-arm64.zip
+scripts/package-macos-app.sh          # dist/mmcore.app + dist/mmcore-macos-universal.zip
 open dist/mmcore.app
 ```
+
+It compiles each architecture separately (`MACOS_ARCHES`, default
+`"arm64 x86_64"`) and `lipo`s the slices together, then downloads the official
+universal SDL2 from libsdl.org and caches it under `.cache/sdl2-<version>/`
+(Homebrew SDL2 is not required and would only provide the host architecture).
 
 SDL2 is the only non-system dependency; it is copied into
 `Contents/Frameworks/` and the executable's install names are rewritten to load

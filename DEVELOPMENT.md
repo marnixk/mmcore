@@ -42,7 +42,7 @@ a submodule.
 | `scripts/build-native.sh` | Build the host-native (Linux/macOS) backend binaries |
 | `scripts/build-windows.sh` | Build the native Windows (MinGW-w64) backend binaries |
 | `scripts/package-linux-appimage.sh` | Package `native/mmcore` as a Linux AppImage |
-| `scripts/package-macos-app.sh` | Package `native/mmcore` as a signed macOS `.app` (arm64) |
+| `scripts/package-macos-app.sh` | Package `native/mmcore` as a signed universal (arm64 + x86_64) macOS `.app` |
 | `scripts/package-windows.sh` | Package `native/mmcore.exe` and its DLLs as a signed Windows zip |
 | `scripts/sign-windows-exe.sh` | Authenticode-sign a Windows executable (signtool/osslsigncode) |
 | `scripts/package-release.sh` | Hardware Pi 3, Zero 2 / 2W, and Pi 400 SD-card zips in `dist/` |
@@ -96,8 +96,11 @@ scripts/build-native.sh                                    # native/mmbasic + na
 
 A prebuilt Linux x86_64 SDL AppImage is attached to the rolling `linux-native`
 pre-release: <https://github.com/marnixk/mmcore/releases/download/linux-native/mmcore-x86_64.AppImage>.
-On Apple Silicon, `scripts/package-macos-app.sh` builds a signed `mmcore.app`
-bundle (`dist/mmcore-macos-arm64.zip`), also attached to normal releases.
+`scripts/package-macos-app.sh` builds a signed universal `mmcore.app` bundle
+(`dist/mmcore-macos-universal.zip`, arm64 + x86_64), also attached to normal
+releases. It compiles each slice with `-arch` (see `MACOS_ARCHES`) and downloads
+the official universal SDL2 from libsdl.org into `.cache/`, so no Intel
+Homebrew is needed.
 `scripts/build-windows.sh` / `scripts/package-windows.sh` build a native
 Windows x86_64 zip (`dist/mmcore-windows-x86_64.zip`); CI attaches it to every
 release and to the rolling `windows-native` pre-release.

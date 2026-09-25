@@ -1,6 +1,6 @@
 ---
 name: github-release
-description: Build hardware MMBasic images and publish a semantic GitHub Release that includes the compiled kernels, firmware, install-sdcard.sh, and (when run on macOS) a signed arm64 app bundle. Use when the user asks to release, ship, publish, tag, cut a version, or run the github-release skill.
+description: Build hardware MMBasic images and publish a semantic GitHub Release that includes the compiled kernels, firmware, install-sdcard.sh, and (when run on macOS) a signed universal (arm64 + x86_64) app bundle. Use when the user asks to release, ship, publish, tag, cut a version, or run the github-release skill.
 ---
 
 # GitHub semantic release
@@ -72,7 +72,7 @@ That script:
    Zero 2 / Zero 2 W reuse the Pi 3 kernel. Each zip includes `install-sdcard.sh`.
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
 3. On macOS, runs `scripts/package-macos-app.sh` and packages the native SDL2
-   binary as a signed `mmcore.app`, attached as `dist/mmcore-macos-arm64.zip`.
+   binary as a signed `mmcore.app`, attached as `dist/mmcore-macos-universal.zip`.
    Set `MMCORE_SKIP_MACOS=1` to skip it. The build sets
    `MMCORE_REQUIRE_NOTARY=1`: the bundle **must** be notarized + stapled, using
    the `mmcore-notary` keychain profile by default (override with
@@ -85,15 +85,15 @@ That script:
      script then prefers them over the keychain profile. The credentials live
      in the user's shell history (`~/.zsh_history`) from the last
      `xcrun notarytool store-credentials mmcore-notary` run. With a pre-built
-     `dist/mmcore-macos-arm64.zip`, publish with `MMCORE_SKIP_MACOS=1` so the
+     `dist/mmcore-macos-universal.zip`, publish with `MMCORE_SKIP_MACOS=1` so the
      existing bundle is attached instead of rebuilt.
 4. Creates annotated tag `vVERSION` and pushes it to `origin`.
 5. Creates the GitHub release with the zips, the macOS app (when built), **and**
    a top-level `install-sdcard.sh` asset.
 
 The release notes include an "Install" section, the Linux AppImage, a "Windows
-native (x86_64)" section, and a "macOS native (Apple Silicon)" section whenever
-`dist/mmcore-macos-arm64.zip` exists at publish time.
+native (x86_64)" section, and a "macOS native (universal: Apple Silicon + Intel)" section whenever
+`dist/mmcore-macos-universal.zip` exists at publish time.
 
 A Windows zip is not built locally. The `.github/workflows/windows.yml`
 workflow runs on `windows-latest` (MSYS2/MinGW) when the release is published
@@ -126,10 +126,10 @@ sudo ./install-sdcard.sh --bootstrap --model rpi3 /dev/sdX
 `--model pizero2w` select the Zero 2 zips (same `kernel8.img` as Pi 3).
 `--update` refreshes kernel and firmware without wiping user files on `C:`.
 
-## macOS app (Apple Silicon)
+## macOS app (universal)
 
 ```bash
-unzip mmcore-macos-arm64.zip
+unzip mmcore-macos-universal.zip
 open mmcore.app
 ```
 

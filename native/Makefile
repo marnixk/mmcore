@@ -50,11 +50,23 @@ endif
 OUT_STDIO := $(CURDIR)/mmbasic$(EXE)
 OUT_SDL   := $(CURDIR)/mmcore$(EXE)
 
+# macOS universal packaging (scripts/package-macos-app.sh) builds each slice
+# separately with -arch and lipo's the results. MACOS_ARCH names the slice
+# ("arm64"/"x86_64"); it keeps its own object tree and suffixed output so the
+# two builds never share objects. Unset means a normal native build.
+ifneq ($(MACOS_ARCH),)
+ARCHFLAGS := -arch $(MACOS_ARCH)
+BUILD     := $(CURDIR)/build/$(MACOS_ARCH)
+OUT_STDIO := $(CURDIR)/mmbasic-$(MACOS_ARCH)$(EXE)
+OUT_SDL   := $(CURDIR)/mmcore-$(MACOS_ARCH)$(EXE)
+endif
+
 CFLAGS += -DMMB_PLATFORM_POSIX \
 	  -I$(CURDIR) -I$(MMB)/include -I$(MMB)/src -I$(MMB)/third_party \
 	  -I$(CONSOLE) \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function
-LDLIBS += -lm
+CFLAGS  += $(ARCHFLAGS)
+LDLIBS  += -lm
 
 SDL_CFLAGS ?= $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null)
@@ -160,6 +172,8 @@ clean:
 	rm -rf $(CURDIR)/build
 	rm -f $(CURDIR)/mmbasic $(CURDIR)/mmbasic.exe \
 	      $(CURDIR)/mmcore $(CURDIR)/mmcore.exe \
+	      $(CURDIR)/mmbasic-arm64 $(CURDIR)/mmcore-arm64 \
+	      $(CURDIR)/mmbasic-x86_64 $(CURDIR)/mmcore-x86_64 \
 	      $(CURDIR)/mmcore.ico $(CURDIR)/mmcore.rc
 
 .PHONY: all stdio sdl clean
