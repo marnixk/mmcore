@@ -91,6 +91,10 @@ static CNetSubSystem *net_sys(void)
 	return s_stack;
 }
 
+/* The raw TCP socket is a single machine resource shared by every virtual
+ * console, like JUKE/audio: only the active console drives it, but opening it
+ * on one console is visible to all. Per-console TERM state (#767) must not
+ * duplicate it. */
 static CSocket *s_sock;
 static u8 s_rx[FRAME_BUFFER_SIZE];
 static unsigned s_rxn;
