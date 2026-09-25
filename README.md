@@ -1,11 +1,12 @@
-# mmcore
+<p align="center"><img src="ramdisk/mmcore.png" alt="mmcore" width="40%"></p>
 
+<p align="center">
 A modern take on a capable keyboard-based operating system that wraps itself
 around the amazing **MMBasic** compiler. It will turn your Raspberry Pi into a
 machine that boots you into the prompt in just a few seconds; but it also runs
 on Linux, macOS and Windows.
+</p>
 
-<p align="center"><img src="ramdisk/mmcore.png" alt="mmcore" width="40%"></p>
 
 ## Built-in apps
 
