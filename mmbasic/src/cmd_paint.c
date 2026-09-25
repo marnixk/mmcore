@@ -46,14 +46,22 @@ static unsigned s_esc_at[MMB_MAX_CONSOLES];
  * unions its rectangle here; pt_redraw() recomposites only that box and
  * pt_present() DMAs only those rows. This replaces the old full-canvas blit
  * plus full-frame present that flickered on real hardware. */
-static int s_dmg_valid;
-static int s_dmg_x0, s_dmg_y0, s_dmg_x1, s_dmg_y1;
-/* The cursor only needs its rectangle presented; its saved background makes a
- * canvas recomposite unnecessary, and recompositing would erase any overlay
- * text it sits on. So cursor motion unions into a separate present band. */
-static int s_pres_valid;
-static int s_pres_x0, s_pres_y0, s_pres_x1, s_pres_y1;
-static int s_full_frame;	/* this frame is a full chrome+canvas repaint */
+/* One frame's damage per virtual console: a pending band on one screen must
+ * not be presented or cleared by another console's redraw (#766). */
+typedef struct {
+	int dmg_valid;
+	int dmg_x0, dmg_y0, dmg_x1, dmg_y1;
+	/* The cursor only needs its rectangle presented; its saved background
+	 * makes a canvas recomposite unnecessary, and recompositing would erase
+	 * any overlay text it sits on. So cursor motion unions into a separate
+	 * present band. */
+	int pres_valid;
+	int pres_x0, pres_y0, pres_x1, pres_y1;
+	int full_frame;		/* this frame is a full chrome+canvas repaint */
+} pt_frame_state;
+
+static pt_frame_state s_frame_state[MMB_MAX_CONSOLES];
+#define FRAME (s_frame_state[g_console])
 
 /* Weak fallback hook so the module tickets can supply strong definitions. */
 #if defined(__GNUC__) || defined(__clang__)
@@ -171,7 +179,7 @@ static int box_union(int *valid, int *bx0, int *by0, int *bx1, int *by1,
 
 void pt_damage(int x, int y, int w, int h)
 {
-	box_union(&s_dmg_valid, &s_dmg_x0, &s_dmg_y0, &s_dmg_x1, &s_dmg_y1,
+	box_union(&FRAME.dmg_valid, &FRAME.dmg_x0, &FRAME.dmg_y0, &FRAME.dmg_x1, &FRAME.dmg_y1,
 		  x, y, w, h);
 	PT.dirty = 1;
 }
@@ -183,8 +191,8 @@ void pt_damage_canvas(int x, int y, int w, int h)
 
 void pt_damage_present(int x, int y, int w, int h)
 {
-	box_union(&s_pres_valid, &s_pres_x0, &s_pres_y0, &s_pres_x1,
-		  &s_pres_y1, x, y, w, h);
+	box_union(&FRAME.pres_valid, &FRAME.pres_x0, &FRAME.pres_y0, &FRAME.pres_x1,
+		  &FRAME.pres_y1, x, y, w, h);
 	PT.dirty = 1;
 }
 
@@ -198,7 +206,7 @@ void pt_draw_canvas(void)
 	if (!PT.canvas)
 		return;
 
-	if (s_full_frame)
+	if (FRAME.full_frame)
 	{
 		x0 = 0;
 		y0 = 0;
@@ -208,20 +216,20 @@ void pt_draw_canvas(void)
 		pt_fill_rect(PT_CANVAS_X, PT_CANVAS_Y, PT_CANVAS_W, PT_CANVAS_H,
 			     0x000000u);
 	}
-	else if (!s_dmg_valid)
+	else if (!FRAME.dmg_valid)
 	{
 		return;
 	}
 	else
 	{
-		if (s_dmg_x1 < PT_CANVAS_X || s_dmg_y1 < PT_CANVAS_Y ||
-		    s_dmg_x0 > PT_CANVAS_X + PT.width - 1 ||
-		    s_dmg_y0 > PT_CANVAS_Y + PT.height - 1)
+		if (FRAME.dmg_x1 < PT_CANVAS_X || FRAME.dmg_y1 < PT_CANVAS_Y ||
+		    FRAME.dmg_x0 > PT_CANVAS_X + PT.width - 1 ||
+		    FRAME.dmg_y0 > PT_CANVAS_Y + PT.height - 1)
 			return;
-		x0 = s_dmg_x0 - PT_CANVAS_X;
-		y0 = s_dmg_y0 - PT_CANVAS_Y;
-		x1 = s_dmg_x1 - PT_CANVAS_X;
-		y1 = s_dmg_y1 - PT_CANVAS_Y;
+		x0 = FRAME.dmg_x0 - PT_CANVAS_X;
+		y0 = FRAME.dmg_y0 - PT_CANVAS_Y;
+		x1 = FRAME.dmg_x1 - PT_CANVAS_X;
+		y1 = FRAME.dmg_y1 - PT_CANVAS_Y;
 		if (x0 < 0)
 			x0 = 0;
 		if (y0 < 0)
@@ -258,19 +266,19 @@ void pt_present(void)
 
 	if (!G.plat || !G.plat->tui_present)
 		return;
-	if (!s_dmg_valid && !s_pres_valid)
+	if (!FRAME.dmg_valid && !FRAME.pres_valid)
 	{
 		G.plat->tui_present(0, PT_H - 1);
 		return;
 	}
-	y0 = s_dmg_valid ? s_dmg_y0 : PT_H;
-	y1 = s_dmg_valid ? s_dmg_y1 : -1;
-	if (s_pres_valid)
+	y0 = FRAME.dmg_valid ? FRAME.dmg_y0 : PT_H;
+	y1 = FRAME.dmg_valid ? FRAME.dmg_y1 : -1;
+	if (FRAME.pres_valid)
 	{
-		if (s_pres_y0 < y0)
-			y0 = s_pres_y0;
-		if (s_pres_y1 > y1)
-			y1 = s_pres_y1;
+		if (FRAME.pres_y0 < y0)
+			y0 = FRAME.pres_y0;
+		if (FRAME.pres_y1 > y1)
+			y1 = FRAME.pres_y1;
 	}
 	G.plat->tui_present(y0, y1);
 }
@@ -290,7 +298,7 @@ void pt_redraw(void)
 
 	full = PT.full_redraw;
 	PT.full_redraw = 0;
-	s_full_frame = full;
+	FRAME.full_frame = full;
 
 	if (full)
 		pt_damage(0, 0, PT_W, PT_H);
@@ -300,10 +308,10 @@ void pt_redraw(void)
 	 * its own rectangle. */
 	pt_cursor_restore();
 
-	if (!s_dmg_valid && !s_pres_valid)
+	if (!FRAME.dmg_valid && !FRAME.pres_valid)
 	{
 		PT.dirty = 0;
-		s_full_frame = 0;
+		FRAME.full_frame = 0;
 		return;
 	}
 
@@ -336,8 +344,8 @@ void pt_redraw(void)
 		pt_palette_draw();
 		pt_width_draw();
 	}
-	else if (s_dmg_valid && s_dmg_x0 < PT_TOOL_W &&
-		 s_dmg_y1 >= PT_CANVAS_Y && s_dmg_y0 < PT_PAL_Y)
+	else if (FRAME.dmg_valid && FRAME.dmg_x0 < PT_TOOL_W &&
+		 FRAME.dmg_y1 >= PT_CANVAS_Y && FRAME.dmg_y0 < PT_PAL_Y)
 	{
 		pt_tools_draw();
 	}
@@ -363,9 +371,9 @@ void pt_redraw(void)
 	pt_present();
 
 	PT.dirty = 0;
-	s_dmg_valid = 0;
-	s_pres_valid = 0;
-	s_full_frame = 0;
+	FRAME.dmg_valid = 0;
+	FRAME.pres_valid = 0;
+	FRAME.full_frame = 0;
 }
 
 /* ---- lifecycle --------------------------------------------------------- */
@@ -432,7 +440,14 @@ static void pt_leave(void)
 		mmb_gfx_set_mode(s_saved_mode[g_console], s_saved_bits[g_console]);
 	mmb_gfx_reset_console(1);
 	G.home_prompt = 0;
-	pt_select_init();		/* release the clipboard / float buffers */
+	/* Release this console's heap-backed module state (undo snapshots, text
+	 * glyphs, tool brush, selection clipboard / float) before the session
+	 * struct is cleared (#766). */
+	pt_undo_clear();
+	pt_text_init();
+	pt_tools_init();
+	pt_select_init();
+	pt_file_init();
 	memset(&PT, 0, sizeof(PT));
 	mmb_console_write("\r\n");
 	mmb_console_write(mmb_prompt());
@@ -1230,13 +1245,14 @@ PT_WEAK int pt_select_hit(int cx, int cy)
 }
 
 /* Cold-boot the PAINT layer on a warm reset (#763). warm_reset_close_apps()
- * has already freed each console's canvas/scratch and the per-console PT
- * state is restored below; re-run every module init to drop the global
- * module state (menus, undo, text, selection, tools) that a leave does not
- * fully clear. */
+ * has already torn down each active session, but every console's module state
+ * is still rebuilt here: the init hooks free that console's heap buffers (undo
+ * snapshots, text glyphs, tool brush, selection clipboard / float) and clear
+ * its per-console state, so no allocation is left behind (#766). */
 void mmb_paint_reset_all(void)
 {
 	int i;
+	int save = g_console;
 
 	for (i = 0; i < MMB_MAX_CONSOLES; i++)
 		memset(&pt_console_state[i], 0, sizeof(pt_console_state[i]));
@@ -1245,17 +1261,19 @@ void mmb_paint_reset_all(void)
 	memset(s_alt_pend, 0, sizeof(s_alt_pend));
 	memset(s_saved_mode, 0, sizeof(s_saved_mode));
 	memset(s_saved_bits, 0, sizeof(s_saved_bits));
-	s_dmg_valid = 0;
-	s_pres_valid = 0;
-	s_full_frame = 0;
+	memset(s_frame_state, 0, sizeof(s_frame_state));
 
-	pt_palette_init();
-	pt_tools_init();
-	pt_undo_clear();
-	pt_undo_init();
-	pt_menus_init();
-	pt_cursor_init();
-	pt_file_init();
-	pt_text_init();
-	pt_select_init();
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		g_console = i;
+		pt_palette_init();
+		pt_tools_init();
+		pt_undo_init();
+		pt_menus_init();
+		pt_cursor_init();
+		pt_file_init();
+		pt_text_init();
+		pt_select_init();
+	}
+	g_console = save;
 }

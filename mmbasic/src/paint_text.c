@@ -306,28 +306,34 @@ static const unsigned char s_font[256 * PT_TEXT_FH] = {
 #define PT_FONT_MAX  32
 #define PT_FONT_NAME 40
 
-static char s_cat[PT_FONT_MAX][PT_FONT_NAME];	/* names, no extension */
-static int s_cat_n;
-static int s_cat_scanned;
+/* One text-tool state per virtual console: the font catalog selection, the
+ * loaded glyph buffer and the live caret buffer must not cross consoles
+ * (#766). */
+typedef struct {
+	char cat[PT_FONT_MAX][PT_FONT_NAME];	/* names, no extension */
+	int cat_n;
+	int cat_scanned;
 
-static int s_use_builtin = 1;
-static unsigned char *s_glyphs;		/* 256 glyphs, 1bpp, s_glyph_bytes each */
-static unsigned s_glyph_bytes;
-static int s_gw = PT_TEXT_FW;		/* current glyph cell, canvas pixels */
-static int s_gh = PT_TEXT_FH;
-static char s_font_name[PT_FONT_NAME];	/* "" while the built-in is used */
+	int use_builtin;
+	unsigned char *glyphs;	/* 256 glyphs, 1bpp, glyph_bytes each */
+	unsigned glyph_bytes;
+	int gw;			/* current glyph cell, canvas pixels */
+	int gh;
+	char font_name[PT_FONT_NAME];	/* "" while the built-in is used */
 
-static int s_picker;			/* the font picker overlay is open */
-static int s_pick_sel;			/* 0 = built-in, 1.. = catalog entry */
+	int picker;		/* the font picker overlay is open */
+	int pick_sel;		/* 0 = built-in, 1.. = catalog entry */
 
-/* ---- editing state ----------------------------------------------------- */
+	int active;		/* a caret is placed and the buffer is open */
+	int x, y;		/* caret origin, canvas coords */
+	int color;		/* palette index the text is drawn with */
+	int len;
+	unsigned char buf[PT_TEXT_MAX];
+	int have_base;		/* PT.scratch holds the pre-text canvas */
+} pt_text_state;
 
-static int s_active;		/* a caret is placed and the buffer is open */
-static int s_x, s_y;		/* caret origin, canvas coords */
-static int s_color;		/* palette index the text is drawn with */
-static int s_len;
-static unsigned char s_buf[PT_TEXT_MAX];
-static int s_have_base;		/* PT.scratch holds the pre-text canvas */
+static pt_text_state s_text_state[MMB_MAX_CONSOLES];
+#define TEXT (s_text_state[g_console])
 
 /* ---- drawing ----------------------------------------------------------- */
 
@@ -335,13 +341,13 @@ static int s_have_base;		/* PT.scratch holds the pre-text canvas */
  * is 8x8 with the MSB leftmost; a loaded font is 1bpp, row-major. */
 static int font_bit(int ch, int row, int col)
 {
-	if (s_use_builtin || !s_glyphs)
+	if (TEXT.use_builtin || !TEXT.glyphs)
 		return (s_font[(size_t)(ch & 255) * PT_TEXT_FH + row] &
 			(0x80u >> col)) != 0;
 	{
-		unsigned per_row = (unsigned)(s_gw + 7) / 8;
+		unsigned per_row = (unsigned)(TEXT.gw + 7) / 8;
 
-		return (s_glyphs[(size_t)(ch & 255) * s_glyph_bytes +
+		return (TEXT.glyphs[(size_t)(ch & 255) * TEXT.glyph_bytes +
 				 (size_t)row * per_row + (unsigned)(col >> 3)] &
 			(0x80u >> (col & 7))) != 0;
 	}
@@ -351,8 +357,8 @@ static void text_glyph(int x0, int y0, unsigned ch, int color)
 {
 	int row, col;
 
-	for (row = 0; row < s_gh; row++)
-		for (col = 0; col < s_gw; col++)
+	for (row = 0; row < TEXT.gh; row++)
+		for (col = 0; col < TEXT.gw; col++)
 			if (font_bit((int)ch, row, col))
 				pt_canvas_set(x0 + col, y0 + row, color);
 }
@@ -361,7 +367,7 @@ static void text_caret(int x, int y, int color)
 {
 	int row;
 
-	for (row = 0; row < s_gh; row++)
+	for (row = 0; row < TEXT.gh; row++)
 		pt_canvas_set(x, y + row, color);
 }
 
@@ -388,16 +394,16 @@ static void text_picker_draw(void)
 {
 	int rows, i, px, py, pw;
 
-	if (!s_picker)
+	if (!TEXT.picker)
 		return;
-	rows = s_cat_n + 1;
+	rows = TEXT.cat_n + 1;
 	if (rows > 10)
 		rows = 10;
 	pw = 20 * PT_TEXT_FW + 2;
 	px = PT.width - pw - 2;
 	if (px < 0)
 		px = 0;
-	py = s_y;
+	py = TEXT.y;
 	if (py + (rows + 1) * PT_TEXT_FH > PT.height)
 		py = PT.height - (rows + 1) * PT_TEXT_FH;
 	if (py < 0)
@@ -415,10 +421,10 @@ static void text_picker_draw(void)
 	}
 	for (i = 0; i < rows; i++)
 	{
-		const char *name = (i == 0) ? "Built-in CP437" : s_cat[i - 1];
-		int color = (i == s_pick_sel) ? 15 : 7;
+		const char *name = (i == 0) ? "Built-in CP437" : TEXT.cat[i - 1];
+		int color = (i == TEXT.pick_sel) ? 15 : 7;
 
-		if (i == s_pick_sel)
+		if (i == TEXT.pick_sel)
 		{
 			int x;
 
@@ -434,11 +440,11 @@ static void text_draw(int caret)
 {
 	int i;
 
-	for (i = 0; i < s_len; i++)
-		text_glyph(s_x + i * s_gw, s_y, s_buf[i], s_color);
-	if (caret && !s_picker)
-		text_caret(s_x + s_len * s_gw, s_y, s_color);
-	if (s_picker)
+	for (i = 0; i < TEXT.len; i++)
+		text_glyph(TEXT.x + i * TEXT.gw, TEXT.y, TEXT.buf[i], TEXT.color);
+	if (caret && !TEXT.picker)
+		text_caret(TEXT.x + TEXT.len * TEXT.gw, TEXT.y, TEXT.color);
+	if (TEXT.picker)
 		text_picker_draw();
 }
 
@@ -446,17 +452,17 @@ static void text_draw(int caret)
 
 static void text_capture(void)
 {
-	if (PT.scratch && PT.canvas && !s_have_base)
+	if (PT.scratch && PT.canvas && !TEXT.have_base)
 	{
 		memcpy(PT.scratch, PT.canvas, (size_t)PT.width * PT.height);
-		s_have_base = 1;
+		TEXT.have_base = 1;
 		PT.scratch_valid = 1;
 	}
 }
 
 static void text_restore(void)
 {
-	if (PT.scratch && PT.canvas && s_have_base)
+	if (PT.scratch && PT.canvas && TEXT.have_base)
 		memcpy(PT.canvas, PT.scratch, (size_t)PT.width * PT.height);
 }
 
@@ -470,10 +476,10 @@ static void text_refresh(void)
 
 static void text_finish(void)
 {
-	s_active = 0;
-	s_len = 0;
-	s_have_base = 0;
-	s_picker = 0;
+	TEXT.active = 0;
+	TEXT.len = 0;
+	TEXT.have_base = 0;
+	TEXT.picker = 0;
 	if (PT.scratch)
 		PT.scratch_valid = 0;
 }
@@ -505,14 +511,14 @@ static void fonts_scan(void)
 	mmb_dirent ents[PT_FONT_MAX];
 	int n, trunc = 0, i;
 
-	if (s_cat_scanned)
+	if (TEXT.cat_scanned)
 		return;
-	s_cat_scanned = 1;
-	s_cat_n = 0;
+	TEXT.cat_scanned = 1;
+	TEXT.cat_n = 0;
 	n = mmb_vfs_list_entries("A:/fonts/gfx", ents, PT_FONT_MAX, &trunc);
 	if (n <= 0)
 		return;
-	for (i = 0; i < n && s_cat_n < PT_FONT_MAX; i++)
+	for (i = 0; i < n && TEXT.cat_n < PT_FONT_MAX; i++)
 	{
 		const char *nm = ents[i].name;
 		size_t L;
@@ -524,48 +530,48 @@ static void fonts_scan(void)
 			continue;
 		if (!ci_endswith(nm, ".json"))
 			continue;
-		memcpy(s_cat[s_cat_n], nm, L - 5);
-		s_cat[s_cat_n][L - 5] = 0;
-		s_cat_n++;
+		memcpy(TEXT.cat[TEXT.cat_n], nm, L - 5);
+		TEXT.cat[TEXT.cat_n][L - 5] = 0;
+		TEXT.cat_n++;
 	}
 }
 
 int pt_text_font_count(void)
 {
 	fonts_scan();
-	return s_cat_n;
+	return TEXT.cat_n;
 }
 
 const char *pt_text_font_name(int i)
 {
 	fonts_scan();
-	if (i < 0 || i >= s_cat_n)
+	if (i < 0 || i >= TEXT.cat_n)
 		return "";
-	return s_cat[i];
+	return TEXT.cat[i];
 }
 
 const char *pt_text_font_current(void)
 {
-	return s_use_builtin ? "" : s_font_name;
+	return TEXT.use_builtin ? "" : TEXT.font_name;
 }
 
 int pt_text_font_w(void)
 {
-	return s_gw;
+	return TEXT.gw;
 }
 
 int pt_text_font_h(void)
 {
-	return s_gh;
+	return TEXT.gh;
 }
 
 void pt_text_font_builtin(void)
 {
-	s_use_builtin = 1;
-	s_gw = PT_TEXT_FW;
-	s_gh = PT_TEXT_FH;
-	s_font_name[0] = 0;
-	if (s_active)
+	TEXT.use_builtin = 1;
+	TEXT.gw = PT_TEXT_FW;
+	TEXT.gh = PT_TEXT_FH;
+	TEXT.font_name[0] = 0;
+	if (TEXT.active)
 		text_refresh();
 }
 
@@ -632,9 +638,9 @@ int pt_text_font_load(int i)
 	int code, gb, total, r, c;
 
 	fonts_scan();
-	if (i < 0 || i >= s_cat_n)
+	if (i < 0 || i >= TEXT.cat_n)
 		return -1;
-	sprintf(jpath, "A:/fonts/gfx/%s.json", s_cat[i]);
+	sprintf(jpath, "A:/fonts/gfx/%s.json", TEXT.cat[i]);
 	sz = mmb_vfs_size(jpath);
 	if (sz <= 0)
 		return -1;
@@ -646,7 +652,7 @@ int pt_text_font_load(int i)
 
 	jget_str(js, "source", src, sizeof(src));
 	if (!src[0])
-		sprintf(src, "%s.png", s_cat[i]);
+		sprintf(src, "%s.png", TEXT.cat[i]);
 	cw = jget_int(js, "charWidth", 0);
 	ch = jget_int(js, "charHeight", 0);
 	cpr = jget_int(js, "charsPerRow", 0);
@@ -716,64 +722,64 @@ int pt_text_font_load(int i)
 			}
 	}
 	G.plat->free(pix);
-	if (s_glyphs)
-		G.plat->free(s_glyphs);
-	s_glyphs = ng;
-	s_glyph_bytes = (unsigned)gb;
-	s_gw = cw;
-	s_gh = ch;
-	s_use_builtin = 0;
-	strncpy(s_font_name, s_cat[i], sizeof(s_font_name) - 1);
-	s_font_name[sizeof(s_font_name) - 1] = 0;
-	if (s_active)
+	if (TEXT.glyphs)
+		G.plat->free(TEXT.glyphs);
+	TEXT.glyphs = ng;
+	TEXT.glyph_bytes = (unsigned)gb;
+	TEXT.gw = cw;
+	TEXT.gh = ch;
+	TEXT.use_builtin = 0;
+	strncpy(TEXT.font_name, TEXT.cat[i], sizeof(TEXT.font_name) - 1);
+	TEXT.font_name[sizeof(TEXT.font_name) - 1] = 0;
+	if (TEXT.active)
 		text_refresh();
 	return 0;
 }
 
 void pt_text_font_picker_open(void)
 {
-	if (!s_active)
+	if (!TEXT.active)
 		return;
 	fonts_scan();
-	s_picker = 1;
-	s_pick_sel = 0;
+	TEXT.picker = 1;
+	TEXT.pick_sel = 0;
 	text_refresh();
 }
 
 int pt_text_font_picker_active(void)
 {
-	return s_picker;
+	return TEXT.picker;
 }
 
 /* ---- public hooks ------------------------------------------------------ */
 
 void pt_text_init(void)
 {
-	s_active = 0;
-	s_len = 0;
-	s_have_base = 0;
-	s_x = 0;
-	s_y = 0;
-	s_color = PT.fg;
-	s_picker = 0;
-	s_pick_sel = 0;
-	s_use_builtin = 1;
-	s_gw = PT_TEXT_FW;
-	s_gh = PT_TEXT_FH;
-	s_font_name[0] = 0;
-	s_glyph_bytes = 0;
-	s_cat_n = 0;
-	s_cat_scanned = 0;
-	if (s_glyphs && G.plat && G.plat->free)
+	TEXT.active = 0;
+	TEXT.len = 0;
+	TEXT.have_base = 0;
+	TEXT.x = 0;
+	TEXT.y = 0;
+	TEXT.color = PT.fg;
+	TEXT.picker = 0;
+	TEXT.pick_sel = 0;
+	TEXT.use_builtin = 1;
+	TEXT.gw = PT_TEXT_FW;
+	TEXT.gh = PT_TEXT_FH;
+	TEXT.font_name[0] = 0;
+	TEXT.glyph_bytes = 0;
+	TEXT.cat_n = 0;
+	TEXT.cat_scanned = 0;
+	if (TEXT.glyphs && G.plat && G.plat->free)
 	{
-		G.plat->free(s_glyphs);
-		s_glyphs = 0;
+		G.plat->free(TEXT.glyphs);
+		TEXT.glyphs = 0;
 	}
 }
 
 int pt_text_active(void)
 {
-	return s_active;
+	return TEXT.active;
 }
 
 /* Tool hook (called from paint_tools.c): a canvas click drops the caret and
@@ -782,17 +788,17 @@ void pt_text_begin(int cx, int cy, int button)
 {
 	if (!PT.canvas || PT.width <= 0 || PT.height <= 0)
 		return;
-	if (s_active)
+	if (TEXT.active)
 		pt_text_commit();
-	if (s_have_base)
+	if (TEXT.have_base)
 		text_restore();
-	s_picker = 0;
+	TEXT.picker = 0;
 
-	s_x = cx;
-	s_y = cy;
-	s_color = (button == PT_BTN_RIGHT) ? PT.bg : PT.fg;
-	s_len = 0;
-	s_active = 1;
+	TEXT.x = cx;
+	TEXT.y = cy;
+	TEXT.color = (button == PT_BTN_RIGHT) ? PT.bg : PT.fg;
+	TEXT.len = 0;
+	TEXT.active = 1;
 	text_capture();
 	text_draw(1);
 	pt_request_redraw();
@@ -800,13 +806,13 @@ void pt_text_begin(int cx, int cy, int button)
 
 void pt_text_commit(void)
 {
-	if (!s_active)
+	if (!TEXT.active)
 		return;
 
 	/* Rewind to the pre-text canvas, then record exactly one history step
 	 * before baking the string in. */
 	text_restore();
-	if (s_len > 0)
+	if (TEXT.len > 0)
 	{
 		pt_undo_push();
 		text_draw(0);
@@ -817,7 +823,7 @@ void pt_text_commit(void)
 
 void pt_text_cancel(void)
 {
-	if (!s_active)
+	if (!TEXT.active)
 		return;
 
 	text_restore();
@@ -829,37 +835,37 @@ int pt_text_key(int key)
 {
 	unsigned char c = (unsigned char)key;
 
-	if (!s_active)
+	if (!TEXT.active)
 		return 0;
 
-	if (s_picker)
+	if (TEXT.picker)
 	{
-		int rows = s_cat_n + 1;
+		int rows = TEXT.cat_n + 1;
 
 		if (c == 27)			/* Esc: close the list */
 		{
-			s_picker = 0;
+			TEXT.picker = 0;
 			text_refresh();
 		}
 		else if (c == 13 || c == 10)	/* Enter: choose */
 		{
-			if (s_pick_sel <= 0)
+			if (TEXT.pick_sel <= 0)
 				pt_text_font_builtin();
 			else
-				pt_text_font_load(s_pick_sel - 1);
-			s_picker = 0;
+				pt_text_font_load(TEXT.pick_sel - 1);
+			TEXT.picker = 0;
 			text_refresh();
 		}
 		else if (c == 'n' || c == 'j' || c == '2')
 		{
-			if (s_pick_sel + 1 < rows)
-				s_pick_sel++;
+			if (TEXT.pick_sel + 1 < rows)
+				TEXT.pick_sel++;
 			text_refresh();
 		}
 		else if (c == 'p' || c == 'k' || c == '8')
 		{
-			if (s_pick_sel > 0)
-				s_pick_sel--;
+			if (TEXT.pick_sel > 0)
+				TEXT.pick_sel--;
 			text_refresh();
 		}
 		return 1;
@@ -879,14 +885,14 @@ int pt_text_key(int key)
 		return 1;
 	case 8:				/* Backspace */
 	case 127:
-		if (s_len > 0)
-			s_len--;
+		if (TEXT.len > 0)
+			TEXT.len--;
 		text_refresh();
 		return 1;
 	default:
-		if (c >= 32 && s_len < PT_TEXT_MAX)
+		if (c >= 32 && TEXT.len < PT_TEXT_MAX)
 		{
-			s_buf[s_len++] = c;
+			TEXT.buf[TEXT.len++] = c;
 			text_refresh();
 		}
 		return 1;		/* swallow other keys while editing */

@@ -25,12 +25,18 @@ typedef struct {
 	unsigned bytes;
 } pt_undo_snap;
 
-static pt_undo_snap s_undo[MMB_UNDO_DEPTH];
-static pt_undo_snap s_redo[MMB_UNDO_DEPTH];
-static int s_undo_n, s_redo_n;
-static unsigned s_bytes;	/* bytes held across both stacks */
-static int s_w, s_h;		/* canvas the history was built for */
-static unsigned s_snap;		/* one canvas, bytes */
+/* One history per virtual console: undo/redo must not cross consoles (#766). */
+typedef struct {
+	pt_undo_snap undo[MMB_UNDO_DEPTH];
+	pt_undo_snap redo[MMB_UNDO_DEPTH];
+	int undo_n, redo_n;
+	unsigned bytes;		/* bytes held across both stacks */
+	int w, h;		/* canvas the history was built for */
+	unsigned snap;		/* one canvas, bytes */
+} pt_undo_state;
+
+static pt_undo_state s_undo_state[MMB_MAX_CONSOLES];
+#define UNDO (s_undo_state[g_console])
 
 static void snap_free(pt_undo_snap *s)
 {
@@ -46,7 +52,7 @@ static void stack_clear(pt_undo_snap *st, int *n)
 
 	for (i = 0; i < *n; i++)
 	{
-		s_bytes -= st[i].bytes;
+		UNDO.bytes -= st[i].bytes;
 		snap_free(&st[i]);
 	}
 	*n = 0;
@@ -58,7 +64,7 @@ static void stack_drop_oldest(pt_undo_snap *st, int *n)
 
 	if (*n <= 0)
 		return;
-	s_bytes -= st[0].bytes;
+	UNDO.bytes -= st[0].bytes;
 	snap_free(&st[0]);
 	for (i = 1; i < *n; i++)
 		st[i - 1] = st[i];
@@ -75,38 +81,38 @@ static int stack_add(pt_undo_snap *st, int *n)
 
 	if (!G.plat || !G.plat->alloc)
 		return 0;
-	if (s_bytes + s_snap > PT_UNDO_BUDGET)
+	if (UNDO.bytes + UNDO.snap > PT_UNDO_BUDGET)
 		return 0;
-	copy = G.plat->alloc(s_snap);
+	copy = G.plat->alloc(UNDO.snap);
 	if (!copy)
 		return 0;
-	memcpy(copy, PT.canvas, s_snap);
+	memcpy(copy, PT.canvas, UNDO.snap);
 	st[*n].pix = copy;
-	st[*n].bytes = s_snap;
-	s_bytes += s_snap;
+	st[*n].bytes = UNDO.snap;
+	UNDO.bytes += UNDO.snap;
 	(*n)++;
 	return 1;
 }
 
 static void sync_depths(void)
 {
-	PT.undo_depth = s_undo_n;
-	PT.redo_depth = s_redo_n;
+	PT.undo_depth = UNDO.undo_n;
+	PT.redo_depth = UNDO.redo_n;
 }
 
 void pt_undo_clear(void)
 {
-	stack_clear(s_undo, &s_undo_n);
-	stack_clear(s_redo, &s_redo_n);
-	s_bytes = 0;
+	stack_clear(UNDO.undo, &UNDO.undo_n);
+	stack_clear(UNDO.redo, &UNDO.redo_n);
+	UNDO.bytes = 0;
 	sync_depths();
 }
 
 void pt_undo_init(void)
 {
-	s_w = PT.width;
-	s_h = PT.height;
-	s_snap = (unsigned)PT.width * (unsigned)PT.height;
+	UNDO.w = PT.width;
+	UNDO.h = PT.height;
+	UNDO.snap = (unsigned)PT.width * (unsigned)PT.height;
 	pt_undo_clear();
 }
 
@@ -116,23 +122,23 @@ void pt_undo_push(void)
 		return;
 
 	/* A canvas of a different size cannot reuse the snapshots. */
-	if (PT.width != s_w || PT.height != s_h)
+	if (PT.width != UNDO.w || PT.height != UNDO.h)
 	{
-		stack_clear(s_undo, &s_undo_n);
-		stack_clear(s_redo, &s_redo_n);
-		s_w = PT.width;
-		s_h = PT.height;
-		s_snap = (unsigned)PT.width * (unsigned)PT.height;
+		stack_clear(UNDO.undo, &UNDO.undo_n);
+		stack_clear(UNDO.redo, &UNDO.redo_n);
+		UNDO.w = PT.width;
+		UNDO.h = PT.height;
+		UNDO.snap = (unsigned)PT.width * (unsigned)PT.height;
 	}
 
 	/* A fresh edit invalidates any redo future. */
-	stack_clear(s_redo, &s_redo_n);
+	stack_clear(UNDO.redo, &UNDO.redo_n);
 
-	while (s_undo_n >= MMB_UNDO_DEPTH ||
-	       (s_undo_n > 0 && s_bytes + s_snap > PT_UNDO_BUDGET))
-		stack_drop_oldest(s_undo, &s_undo_n);
+	while (UNDO.undo_n >= MMB_UNDO_DEPTH ||
+	       (UNDO.undo_n > 0 && UNDO.bytes + UNDO.snap > PT_UNDO_BUDGET))
+		stack_drop_oldest(UNDO.undo, &UNDO.undo_n);
 
-	if (!stack_add(s_undo, &s_undo_n))
+	if (!stack_add(UNDO.undo, &UNDO.undo_n))
 		return;
 	sync_depths();
 }
@@ -141,7 +147,7 @@ void pt_undo(void)
 {
 	pt_undo_snap *top;
 
-	if (s_undo_n <= 0)
+	if (UNDO.undo_n <= 0)
 	{
 		strncpy(PT.status, "Nothing to undo", sizeof(PT.status) - 1);
 		return;
@@ -149,22 +155,22 @@ void pt_undo(void)
 	if (!PT.canvas)
 		return;
 
-	while (s_redo_n >= MMB_UNDO_DEPTH)
-		stack_drop_oldest(s_redo, &s_redo_n);
+	while (UNDO.redo_n >= MMB_UNDO_DEPTH)
+		stack_drop_oldest(UNDO.redo, &UNDO.redo_n);
 
 	/* Remember where we are so redo can come back to it. */
-	if (!stack_add(s_redo, &s_redo_n))
+	if (!stack_add(UNDO.redo, &UNDO.redo_n))
 	{
 		strncpy(PT.status, "?OUT OF MEMORY", sizeof(PT.status) - 1);
 		return;
 	}
 
 	/* Restore the state recorded before the edit. */
-	top = &s_undo[s_undo_n - 1];
-	memcpy(PT.canvas, top->pix, s_snap);
-	s_bytes -= top->bytes;
+	top = &UNDO.undo[UNDO.undo_n - 1];
+	memcpy(PT.canvas, top->pix, UNDO.snap);
+	UNDO.bytes -= top->bytes;
 	snap_free(top);
-	s_undo_n--;
+	UNDO.undo_n--;
 
 	sync_depths();
 	pt_request_redraw();
@@ -175,7 +181,7 @@ void pt_redo(void)
 {
 	pt_undo_snap *top;
 
-	if (s_redo_n <= 0)
+	if (UNDO.redo_n <= 0)
 	{
 		strncpy(PT.status, "Nothing to redo", sizeof(PT.status) - 1);
 		return;
@@ -183,20 +189,20 @@ void pt_redo(void)
 	if (!PT.canvas)
 		return;
 
-	while (s_undo_n >= MMB_UNDO_DEPTH)
-		stack_drop_oldest(s_undo, &s_undo_n);
+	while (UNDO.undo_n >= MMB_UNDO_DEPTH)
+		stack_drop_oldest(UNDO.undo, &UNDO.undo_n);
 
-	if (!stack_add(s_undo, &s_undo_n))
+	if (!stack_add(UNDO.undo, &UNDO.undo_n))
 	{
 		strncpy(PT.status, "?OUT OF MEMORY", sizeof(PT.status) - 1);
 		return;
 	}
 
-	top = &s_redo[s_redo_n - 1];
-	memcpy(PT.canvas, top->pix, s_snap);
-	s_bytes -= top->bytes;
+	top = &UNDO.redo[UNDO.redo_n - 1];
+	memcpy(PT.canvas, top->pix, UNDO.snap);
+	UNDO.bytes -= top->bytes;
 	snap_free(top);
-	s_redo_n--;
+	UNDO.redo_n--;
 
 	sync_depths();
 	pt_request_redraw();
@@ -207,7 +213,7 @@ void pt_redo(void)
  * the hard ceiling they are kept under. */
 unsigned pt_undo_mem(void)
 {
-	return s_bytes;
+	return UNDO.bytes;
 }
 
 unsigned pt_undo_budget(void)

@@ -21,8 +21,15 @@
 
 /* ---- fixed default VGA 256 palette ------------------------------------- */
 
-static unsigned s_pal[256];
-static int s_ready;
+/* The palette is fixed, but it is cached per virtual console to match the
+ * rest of the module state (#766). */
+typedef struct {
+	unsigned pal[256];
+	int ready;
+} pt_palette_state;
+
+static pt_palette_state s_palette_state[MMB_MAX_CONSOLES];
+#define PAL (s_palette_state[g_console])
 
 /*
  * The default VGA palette as initialised by the VGA BIOS:
@@ -51,30 +58,30 @@ static void pt_palette_build(void)
 	static const int lvl[6] = { 0, 51, 102, 153, 204, 255 };
 	int i, r, g, b;
 
-	if (s_ready)
+	if (PAL.ready)
 		return;
 
 	for (i = 0; i < 16; i++)
-		s_pal[i] = ega[i];
+		PAL.pal[i] = ega[i];
 
 	for (i = 0; i < 16; i++)
 	{
 		unsigned v = (unsigned)((grey6[i] << 2) | (grey6[i] >> 4));
-		s_pal[16 + i] = (v << 16) | (v << 8) | v;
+		PAL.pal[16 + i] = (v << 16) | (v << 8) | v;
 	}
 
 	i = 32;
 	for (r = 0; r < 6; r++)
 		for (g = 0; g < 6; g++)
 			for (b = 0; b < 6; b++)
-				s_pal[i++] = ((unsigned)lvl[r] << 16) |
+				PAL.pal[i++] = ((unsigned)lvl[r] << 16) |
 					     ((unsigned)lvl[g] << 8) |
 					     (unsigned)lvl[b];
 
 	for (i = 248; i < 256; i++)
-		s_pal[i] = 0x000000u;
+		PAL.pal[i] = 0x000000u;
 
-	s_ready = 1;
+	PAL.ready = 1;
 }
 
 void pt_palette_init(void)
@@ -89,7 +96,7 @@ unsigned pt_palette_rgb(int idx)
 	if (idx > 255)
 		idx = 255;
 	pt_palette_build();
-	return s_pal[idx];
+	return PAL.pal[idx];
 }
 
 /* ---- FG/BG indicator --------------------------------------------------- */
@@ -147,7 +154,7 @@ void pt_palette_draw(void)
 			int idx = r * PT_PAL_COLS + c;
 			pt_fill_rect(PT_PAL_X + c * PT_PAL_SW,
 				     PT_PAL_Y + r * PT_PAL_SW,
-				     PT_PAL_SW, PT_PAL_SW, s_pal[idx]);
+				     PT_PAL_SW, PT_PAL_SW, PAL.pal[idx]);
 		}
 
 	pt_indicator_draw();
