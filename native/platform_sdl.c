@@ -397,6 +397,7 @@ static const mmb_platform sdl_plat = {
 	.millis = sdl_millis,
 	.read_line = sdl_read_line,
 	.poll_input = sdl_poll_input,
+	.take_break = sdl_input_take_break,
 	.mouse_state = sdl_mouse_state,
 	.reboot = sdl_reboot,
 	.can_quit = 1,

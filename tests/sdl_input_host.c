@@ -34,8 +34,11 @@ static int g_line_empty = 1;
 static int g_in_app;
 static char g_exec[64];
 static int g_exec_n;
+static int g_break_key = 3;
 
 int mmb_is_running(void) { return g_running; }
+
+int mmb_break_key(void) { return g_break_key; }
 
 int mmb_front_line_empty(void) { return g_line_empty; }
 
@@ -161,6 +164,20 @@ static void expect_queue(const char *name, const char *want)
 	}
 }
 
+/* The front end receives one deliver_str call per key; compare the whole
+ * escape sequence it was fed. */
+static void expect_feed(const char *name, const char *want)
+{
+	int want_n = (int)strlen(want);
+
+	if (g_feed_n != want_n || memcmp(g_feed, want, (size_t)want_n) != 0)
+	{
+		fprintf(stderr, "FAIL %s: feed len %d want %d\n", name,
+			g_feed_n, want_n);
+		fails++;
+	}
+}
+
 static void reset(void)
 {
 	g_inkey_n = 0;
@@ -170,6 +187,11 @@ static void reset(void)
 	g_in_app = 0;
 	g_exec_n = 0;
 	g_exec[0] = '\0';
+	g_break_key = 3;
+	(void)sdl_input_take_break();
+	/* Ctrl+Alt+digit sets the Alt+letter text swallow; clear all per-key
+	 * modifier state so each case starts clean. */
+	sdl_input_init();
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
 }
@@ -228,6 +250,83 @@ int main(void)
 			g_front_feeds, g_inkey_n);
 		fails++;
 	}
+
+	/* xterm CSI modifier encoding (#737/#738): mod = 1 + Shift + 2*Alt +
+	 * 4*Ctrl. Shift+arrows must not be mistaken for Alt, and plain
+	 * Alt+Left/Right stay 1;3 for the editor tab switch. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("shift-left", "\x1b[1;2D");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, KMOD_CTRL);
+	sdl_input_pump();
+	expect_feed("ctrl-left", "\x1b[1;5D");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, KMOD_CTRL | KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("ctrl-shift-left", "\x1b[1;6D");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_RIGHT, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-right", "\x1b[1;3C");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_UP, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("shift-up", "\x1b[1;2A");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_DOWN, 0);
+	sdl_input_pump();
+	expect_feed("plain-down", "\x1b[B");
+
+	/* Ins/Del/PgUp/PgDn carry the same modifiers (Circle PollUsbEditorNav):
+	 * Shift+Del cut, Ctrl+Ins copy, Shift+Ins paste. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_DELETE, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("shift-del", "\x1b[3;2~");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_INSERT, KMOD_CTRL);
+	sdl_input_pump();
+	expect_feed("ctrl-ins", "\x1b[2;5~");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_INSERT, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("shift-ins", "\x1b[2;2~");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_PAGEDOWN, KMOD_CTRL);
+	sdl_input_pump();
+	expect_feed("ctrl-pgdn", "\x1b[6;5~");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_HOME, 0);
+	sdl_input_pump();
+	expect_feed("plain-home", "\x1b[H");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_END, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_feed("shift-end", "\x1b[1;2F");
 
 	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
 	 * single NUL byte (#589). */
@@ -386,6 +485,96 @@ int main(void)
 	push_key(SDLK_v, KMOD_CTRL);
 	sdl_input_pump();
 	expect_queue("ctrl-v control", "\x16");
+
+	/* Ctrl+C while a program runs latches BREAK instead of INKEY$ 3 (#740),
+	 * so mmb_check_break() can stop the RUN. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_c, KMOD_CTRL);
+	sdl_input_pump();
+	if (g_inkey_n != 0 || !sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL break ctrl-c: queue=%d\n", g_inkey_n);
+		fails++;
+	}
+	/* Latched BREAK is consumed once. */
+	if (sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL break latch not cleared\n");
+		fails++;
+	}
+
+	/* OPTION BREAK 0 disables the break key: Ctrl+C is no longer a BREAK. */
+	reset();
+	g_running = 1;
+	g_break_key = 0;
+	push_key(SDLK_c, KMOD_CTRL);
+	sdl_input_pump();
+	{
+		int brk = sdl_input_take_break();
+
+		if (g_inkey_n != 1 || g_inkey[0] != 3 || brk)
+		{
+			fprintf(stderr,
+				"FAIL break disabled: queue=%d first=%d brk=%d\n",
+				g_inkey_n, g_inkey_n ? g_inkey[0] : -1, brk);
+			fails++;
+		}
+	}
+
+	/* OPTION BREAK n follows the configured key, not a hard-coded 3. */
+	reset();
+	g_running = 1;
+	g_break_key = 'A';
+	push_text("A");
+	sdl_input_pump();
+	if (g_inkey_n != 0 || !sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL break custom: queue=%d\n", g_inkey_n);
+		fails++;
+	}
+
+	/* A byte inside a CSI navigation sequence is not a BREAK even when it
+	 * matches the configured break key: Shift+Left ends in 'D'. */
+	reset();
+	g_running = 1;
+	g_break_key = 'D';
+	push_key(SDLK_LEFT, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_queue("csi not break", "\x1b[1;2D");
+	if (sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL csi latched break\n");
+		fails++;
+	}
+
+	/* A blocking INPUT inside a running program keeps its raw bytes: the
+	 * line reader breaks on the 0x03 itself. */
+	reset();
+	g_running = 1;
+	sdl_input_begin_line();
+	push_key(SDLK_c, KMOD_CTRL);
+	sdl_input_pump();
+	expect_queue("break during input", "\x03");
+	if (sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL break during input latched\n");
+		fails++;
+	}
+	sdl_input_end_line();
+
+	/* At the idle REPL Ctrl+C still cancels the line via the front end and
+	 * does not latch a BREAK. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_c, KMOD_CTRL);
+	sdl_input_pump();
+	expect_feed("ctrl-c repl", "\x03");
+	if (sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL break latched at REPL\n");
+		fails++;
+	}
 
 	/* A pointer is reported in framebuffer pixels with a button bitmask. */
 	reset();

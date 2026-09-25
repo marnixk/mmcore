@@ -13,6 +13,7 @@
 static int s_alt, s_ctrl, s_shift;
 static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
+static int s_break;        /* latched BREAK seen while a program runs */
 
 /* Pointer state, reported in software-framebuffer pixels so the full-screen
  * apps see the same coordinate space as the framebuffer. */
@@ -26,6 +27,7 @@ void sdl_input_init(void)
 	s_alt = s_ctrl = s_shift = 0;
 	s_swallow_text = 0;
 	s_line_input = 0;
+	s_break = 0;
 	s_mouse_present = 1;
 	s_mouse_x = s_mouse_y = 0;
 	s_mouse_buttons = 0;
@@ -112,18 +114,48 @@ int sdl_input_ctrl_alt_held(void)
 	return s_alt && s_ctrl;
 }
 
-/* Feed bytes to the running program or the interactive front end. */
+/* Feed bytes to the running program or the interactive front end. While a
+ * program runs, a key that matches the configured BREAK key is latched as a
+ * BREAK (returned by sdl_input_take_break) instead of reaching INKEY$; this
+ * mirrors Circle's PollInputChars/TakeBreak and lets Ctrl+C stop RUN. A
+ * blocking line prompt still receives its bytes raw so sdl_read_line can
+ * break out of INPUT itself. */
 static void deliver(const char *b, unsigned n)
 {
 	unsigned i;
 
-	if (s_line_input || mmb_is_running())
+	if (s_line_input)
 	{
 		for (i = 0; i < n; i++)
 			mmb_inkey_push((unsigned char)b[i]);
 	}
+	else if (mmb_is_running())
+	{
+		int bk = mmb_break_key();
+
+		for (i = 0; i < n; i++)
+		{
+			unsigned char c = (unsigned char)b[i];
+
+			/* Only a single cooked key can be a BREAK; do not
+			 * mistake a byte inside a CSI navigation sequence for
+			 * the break key. */
+			if (n == 1 && bk && c == (unsigned char)bk)
+				s_break = 1;
+			else
+				mmb_inkey_push(c);
+		}
+	}
 	else
 		mmb_front_feed(b, n);
+}
+
+int sdl_input_take_break(void)
+{
+	int v = s_break;
+
+	s_break = 0;
+	return v;
 }
 
 static void deliver_str(const char *s)
@@ -191,6 +223,40 @@ static int ctrl_code(SDL_Keycode k)
 	if (k == SDLK_SPACE)
 		return 0;
 	return -1;
+}
+
+/* xterm CSI modifier parameter: 1 + Shift + 2*Alt + 4*Ctrl. A value of 1
+ * means "no modifiers" and is omitted from the sequence. */
+static int csi_mod(int shift, int alt, int ctrl)
+{
+	return 1 + shift + 2 * alt + 4 * ctrl;
+}
+
+/* Arrow/Home/End style key: bare final when unmodified, else CSI
+ * 1;<mod><final>. */
+static void deliver_nav_final(char final, int shift, int alt, int ctrl)
+{
+	char body[8];
+	int mod = csi_mod(shift, alt, ctrl);
+
+	if (mod == 1)
+		snprintf(body, sizeof body, "%c", final);
+	else
+		snprintf(body, sizeof body, "1;%d%c", mod, final);
+	deliver_csi(body);
+}
+
+/* Ins/Del/PgUp/PgDn: bare CSI <num>~ when unmodified, else CSI <num>;<mod>~. */
+static void deliver_nav_tilde(int num, int shift, int alt, int ctrl)
+{
+	char body[16];
+	int mod = csi_mod(shift, alt, ctrl);
+
+	if (mod == 1)
+		snprintf(body, sizeof body, "%d~", num);
+	else
+		snprintf(body, sizeof body, "%d;%d~", num, mod);
+	deliver_csi(body);
 }
 
 static void handle_keydown(const SDL_KeyboardEvent *ke)
@@ -304,34 +370,34 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		deliver_ch(0x1b);
 		return;
 	case SDLK_LEFT:
-		deliver_csi(shift ? "1;3D" : (ctrl ? "1;5D" : "D"));
+		deliver_nav_final('D', shift, alt, ctrl);
 		return;
 	case SDLK_RIGHT:
-		deliver_csi(shift ? "1;3C" : (ctrl ? "1;5C" : "C"));
+		deliver_nav_final('C', shift, alt, ctrl);
 		return;
 	case SDLK_UP:
-		deliver_csi(shift ? "1;3A" : (ctrl ? "1;5A" : "A"));
+		deliver_nav_final('A', shift, alt, ctrl);
 		return;
 	case SDLK_DOWN:
-		deliver_csi(shift ? "1;3B" : (ctrl ? "1;5B" : "B"));
+		deliver_nav_final('B', shift, alt, ctrl);
 		return;
 	case SDLK_HOME:
-		deliver_csi("H");
+		deliver_nav_final('H', shift, alt, ctrl);
 		return;
 	case SDLK_END:
-		deliver_csi("F");
+		deliver_nav_final('F', shift, alt, ctrl);
 		return;
 	case SDLK_INSERT:
-		deliver_csi("2~");
+		deliver_nav_tilde(2, shift, alt, ctrl);
 		return;
 	case SDLK_DELETE:
-		deliver_csi("3~");
+		deliver_nav_tilde(3, shift, alt, ctrl);
 		return;
 	case SDLK_PAGEUP:
-		deliver_csi("5~");
+		deliver_nav_tilde(5, shift, alt, ctrl);
 		return;
 	case SDLK_PAGEDOWN:
-		deliver_csi("6~");
+		deliver_nav_tilde(6, shift, alt, ctrl);
 		return;
 	default:
 		break;

@@ -15,6 +15,11 @@ void sdl_input_init(void);
  * inkey queue) and handling quit/resize/fullscreen. */
 void sdl_input_pump(void);
 
+/* Return and clear a latched BREAK. While a program runs, a key matching the
+ * configured BREAK key (mmb_break_key(), Ctrl+C by default) is latched here
+ * instead of reaching INKEY$, mirroring Circle's TakeBreak. */
+int sdl_input_take_break(void);
+
 int sdl_input_alt_held(void);
 int sdl_input_ctrl_alt_held(void);
 
