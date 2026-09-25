@@ -853,6 +853,71 @@ def test_switch_keeps_per_console_wordpad_pick_list(kernel_image):
         con.stop()
 
 
+def test_switch_keeps_per_console_edit_kill_buffer(kernel_image):
+    """#769: the kill buffer belongs to the console that cut into it. A paste
+    on another console must not insert the first console's text."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "KB1.BAS")
+        con._ser.sendall(b"HELLO")
+        con._ser.sendall(b"\x1b[H")      # Home
+        con._ser.sendall(b"\x1b[1;2F")   # Shift+End selects the line
+        con._ser.sendall(b"\x1b[3;2~")   # Shift+Del cuts it to the kill buffer
+        con.drain(quiet=0.5, timeout=4.0)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "KB2.BAS")
+        con._ser.sendall(b"X")
+        con._ser.sendall(b"\x1b[2;2~")   # Shift+Ins paste
+        con.drain(quiet=0.5, timeout=4.0)
+        con._ser.sendall(bytes([19]))    # Ctrl+S save
+        con.drain(quiet=0.5, timeout=4.0)
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X quit
+        con.drain(quiet=0.6, timeout=8.0)
+
+        assert con.send_line('OPEN "KB2.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("PRINT A$") == "X"
+        con.send_line("CLOSE #1")
+    finally:
+        con.stop()
+
+
+def test_switch_keeps_per_console_edit_find_bar(kernel_image):
+    """#769: an open find bar is per console. Opening the editor on another
+    console must not clear the first console's bar or borrow its query."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "FND1.BAS")
+        con._ser.sendall(b"HELLO")
+        con._ser.sendall(b"\x1b[H")
+        con._ser.sendall(bytes([6]))  # Ctrl+F find
+        con._ser.sendall(b"ZZTOP")
+        time.sleep(0.4)
+        opened = _plain(con.drain(quiet=0.4, timeout=4.0).decode(errors="replace"))
+        assert "Find: ZZTOP" in opened, opened
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "FND2.BAS")
+        con.drain(quiet=0.3, timeout=2.0)
+
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"Q")  # this console's find bar still owns the keyboard
+        time.sleep(0.4)
+        back = _plain(con.drain(quiet=0.4, timeout=4.0).decode(errors="replace"))
+        assert "Find: ZZTOPQ" in back, back
+
+    finally:
+        con.stop()
+
+
 def _open_term_demoburst(con, settle=1.8) -> str:
     con.drain(quiet=0.1)
     con._ser.sendall(b'TERM "demoburst", 23\r')
