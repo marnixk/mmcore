@@ -398,30 +398,10 @@ int mmb_editor_theme_lookup(const char *s)
 #define FD_FOCUS_FILE 1
 #define FD_FOCUS_DIR  2
 
-static char killbuf[8192];
-static int killlen;
-
 #define FIND_QMAX 96
-static int find_active;
-static int find_replace;   /* replace bar shows the Replace field */
-static int find_field;     /* 0 find field, 1 replace field */
-static char find_q[FIND_QMAX];
-static int find_qlen;
-static char find_repl[FIND_QMAX];
-static int find_repllen;
-static char repl_last[FIND_QMAX];
-static int find_notfound;
-static char find_msg[48];
-static int find_have_match;
-static int find_lo, find_hi;
-static int find_confirm;
-static int find_confirm_n;
-static int find_cx, find_row0, find_col0, find_sel, find_anchor;
-static char find_scratch[MMB_ED_BUF];
 
 #define ERRBAR_MAX 160
-static int errbar_active;
-static char errbar_msg[ERRBAR_MAX];
+
 /* The file-picker root and its transient list/selection state are per-console
  * session state (#670, #680): opening the picker on one console must not reuse
  * or rebuild the root/list another console's picker is using. */
@@ -445,22 +425,6 @@ static int pick_trunc_s[MMB_MAX_CONSOLES];
 #define pick_vn (pick_vn_s[g_console])
 #define pick_kind (pick_kind_s[g_console])
 #define pick_trunc (pick_trunc_s[g_console])
-static int alt_pend;
-static int confirm_pending;
-static int confirm_btn;
-/* Crash-resume: when set the confirm dialog offers to restore a recovery
- * sidecar instead of prompting to save an untitled buffer. */
-static int confirm_recover;
-static int recover_tab;
-static char recover_sidecar[160];
-static unsigned ed_rec_at;
-static unsigned ed_rec_sig;
-static int ed_rec_tab = -1;
-static int esc_state;
-static unsigned esc_at;
-static int csi_n;
-static int csi_arg;
-static int csi_semi;
 
 #define CHARS_CODE0  128
 #define CHARS_N      128
@@ -468,10 +432,126 @@ static int csi_semi;
 #define CHARS_ROWS   (CHARS_N / CHARS_COLS)
 #define CHARS_HOLD_MS 750
 
-static int chars_sel;
-static int chars_armed;
-static int chars_opened;
-static unsigned chars_held_at;
+/* Editor session statics are per console (#769): an open find bar, kill
+ * buffer, dialog, or Esc/CSI parser on one console must not appear or leak
+ * into another. Each console keys into its own row of s_ed. */
+typedef struct ed_sess {
+	char killbuf[8192];
+	int killlen;
+	int find_active;
+	int find_replace;   /* replace bar shows the Replace field */
+	int find_field;     /* 0 find field, 1 replace field */
+	char find_q[FIND_QMAX];
+	int find_qlen;
+	char find_repl[FIND_QMAX];
+	int find_repllen;
+	char repl_last[FIND_QMAX];
+	int find_notfound;
+	char find_msg[48];
+	int find_have_match;
+	int find_lo, find_hi;
+	int find_confirm;
+	int find_confirm_n;
+	int find_cx, find_row0, find_col0, find_sel, find_anchor;
+	char find_scratch[MMB_ED_BUF];
+	int errbar_active;
+	char errbar_msg[ERRBAR_MAX];
+	int alt_pend;
+	int confirm_pending;
+	int confirm_btn;
+	/* Crash-resume: when set the confirm dialog offers to restore a recovery
+	 * sidecar instead of prompting to save an untitled buffer. */
+	int confirm_recover;
+	int recover_tab;
+	char recover_sidecar[160];
+	unsigned ed_rec_at;
+	unsigned ed_rec_sig;
+	int ed_rec_tab;
+	int esc_state;
+	unsigned esc_at;
+	int csi_n;
+	int csi_arg;
+	int csi_semi;
+	int chars_sel;
+	int chars_armed;
+	int chars_opened;
+	unsigned chars_held_at;
+	char fd_dir[128];
+	/* Not "ed_fd_mask": glibc declares that as a typedef via <sys/select.h>. */
+	char ed_fd_mask[32];
+	char fd_files[FD_MAX][FD_NAME];
+	char fd_dirs[FD_MAX][FD_NAME];
+	int fd_nfile, fd_ndir;
+	int fd_fsel, fd_dsel;
+	int fd_ftop, fd_dtop;
+	int fd_focus;
+	int fd_truncated; /* current folder listing was cut (#693) */
+	int menu_x[MENU_COUNT];
+	char edit_jump_label[32];
+	int h_txn_active;
+	int h_txn_id;
+} ed_sess;
+
+static ed_sess s_ed[MMB_MAX_CONSOLES];
+#define killbuf (s_ed[g_console].killbuf)
+#define killlen (s_ed[g_console].killlen)
+#define find_active (s_ed[g_console].find_active)
+#define find_replace (s_ed[g_console].find_replace)
+#define find_field (s_ed[g_console].find_field)
+#define find_q (s_ed[g_console].find_q)
+#define find_qlen (s_ed[g_console].find_qlen)
+#define find_repl (s_ed[g_console].find_repl)
+#define find_repllen (s_ed[g_console].find_repllen)
+#define repl_last (s_ed[g_console].repl_last)
+#define find_notfound (s_ed[g_console].find_notfound)
+#define find_msg (s_ed[g_console].find_msg)
+#define find_have_match (s_ed[g_console].find_have_match)
+#define find_lo (s_ed[g_console].find_lo)
+#define find_hi (s_ed[g_console].find_hi)
+#define find_confirm (s_ed[g_console].find_confirm)
+#define find_confirm_n (s_ed[g_console].find_confirm_n)
+#define find_cx (s_ed[g_console].find_cx)
+#define find_row0 (s_ed[g_console].find_row0)
+#define find_col0 (s_ed[g_console].find_col0)
+#define find_sel (s_ed[g_console].find_sel)
+#define find_anchor (s_ed[g_console].find_anchor)
+#define find_scratch (s_ed[g_console].find_scratch)
+#define errbar_active (s_ed[g_console].errbar_active)
+#define errbar_msg (s_ed[g_console].errbar_msg)
+#define alt_pend (s_ed[g_console].alt_pend)
+#define confirm_pending (s_ed[g_console].confirm_pending)
+#define confirm_btn (s_ed[g_console].confirm_btn)
+#define confirm_recover (s_ed[g_console].confirm_recover)
+#define recover_tab (s_ed[g_console].recover_tab)
+#define recover_sidecar (s_ed[g_console].recover_sidecar)
+#define ed_rec_at (s_ed[g_console].ed_rec_at)
+#define ed_rec_sig (s_ed[g_console].ed_rec_sig)
+#define ed_rec_tab (s_ed[g_console].ed_rec_tab)
+#define esc_state (s_ed[g_console].esc_state)
+#define esc_at (s_ed[g_console].esc_at)
+#define csi_n (s_ed[g_console].csi_n)
+#define csi_arg (s_ed[g_console].csi_arg)
+#define csi_semi (s_ed[g_console].csi_semi)
+#define chars_sel (s_ed[g_console].chars_sel)
+#define chars_armed (s_ed[g_console].chars_armed)
+#define chars_opened (s_ed[g_console].chars_opened)
+#define chars_held_at (s_ed[g_console].chars_held_at)
+#define fd_dir (s_ed[g_console].fd_dir)
+#define ed_fd_mask (s_ed[g_console].ed_fd_mask)
+#define fd_files (s_ed[g_console].fd_files)
+#define fd_dirs (s_ed[g_console].fd_dirs)
+#define fd_nfile (s_ed[g_console].fd_nfile)
+#define fd_ndir (s_ed[g_console].fd_ndir)
+#define fd_fsel (s_ed[g_console].fd_fsel)
+#define fd_dsel (s_ed[g_console].fd_dsel)
+#define fd_ftop (s_ed[g_console].fd_ftop)
+#define fd_dtop (s_ed[g_console].fd_dtop)
+#define fd_focus (s_ed[g_console].fd_focus)
+#define fd_truncated (s_ed[g_console].fd_truncated)
+#define menu_x (s_ed[g_console].menu_x)
+#define edit_jump_label (s_ed[g_console].edit_jump_label)
+#define h_txn_active (s_ed[g_console].h_txn_active)
+#define h_txn_id (s_ed[g_console].h_txn_id)
 
 static const char *k_chars_name[CHARS_N] = {
 	"C cedilla", "u umlaut", "e acute", "a circumflex", "a umlaut", "a grave",
@@ -505,20 +585,8 @@ static const char *k_chars_name[CHARS_N] = {
 	"superscript n", "superscript 2", "black square", "no-break space"
 };
 
-static char fd_dir[128];
-/* Not "ed_fd_mask": glibc declares that as a typedef via <sys/select.h>. */
-static char ed_fd_mask[32];
-static char fd_files[FD_MAX][FD_NAME];
-static char fd_dirs[FD_MAX][FD_NAME];
-static int fd_nfile, fd_ndir;
-static int fd_fsel, fd_dsel;
-static int fd_ftop, fd_dtop;
-static int fd_focus;
-static int fd_truncated; /* current folder listing was cut (#693) */
-
 static const char *menu_name[MENU_COUNT] = { "File", "Edit", "Run", "Theme", "Help" };
 static const char menu_hot[MENU_COUNT] = { 'F', 'E', 'R', 'T', 'H' };
-static int menu_x[MENU_COUNT];
 
 static const char *file_items[] = {
 	"New", "Open...", "Quick open...", "Outline...", "Save", "Save As...",
@@ -527,7 +595,6 @@ static const char *file_items[] = {
 static const char file_hots[] = { 'n', 'o', 'p', 'l', 's', 'a', 'c', 't', 'q' };
 static const char *edit_items[] = { "Copy", "Cut", "Cut line", "Paste", "Find...", "Replace...", "Undo", "Redo", "Jump to break" };
 static const char edit_hots[] = { 'o', 't', 'c', 'p', 'f', 'r', 'u', 'e', 'j' };
-static char edit_jump_label[32];
 static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
@@ -1655,9 +1722,6 @@ static void center_visible(void)
 }
 
 /* ---- undo / redo history ---- */
-
-static int h_txn_active;
-static int h_txn_id;
 
 static void hist_dirty(mmb_ed_tab *t)
 {
