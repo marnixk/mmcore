@@ -161,7 +161,7 @@ static void confirm_buttons(int x, int y, int w, int h, int *yx, int *yy,
 
 static void keys_geom(int *x, int *y, int *w, int *h)
 {
-	tui_dialog_geom(46, 11, x, y, w, h);
+	tui_dialog_geom(46, 12, x, y, w, h);
 }
 
 /* ---- damage + cell bookkeeping (#702) ---------------------------------- *
@@ -310,6 +310,7 @@ static const char *const s_key_lines[] = {
 	"Left/Right    Switch menu",
 	"Enter         Choose item",
 	"Y / N         Confirm Yes/No",
+	"Esc           Close a menu",
 	"Click         Choose item"
 };
 
