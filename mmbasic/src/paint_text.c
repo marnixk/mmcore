@@ -16,6 +16,10 @@
  */
 #include "paint.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 /* Public hooks implemented below; declared up front because pt_text_begin()
  * commits an already-open buffer. */
 void pt_text_begin(int cx, int cy, int button);
@@ -294,6 +298,28 @@ static const unsigned char s_font[256 * PT_TEXT_FH] = {
  * small fixed buffer. */
 #define PT_TEXT_MAX 96
 
+/* ---- bitmap font catalog (#643) ---------------------------------------- *
+ * Fonts live in A:/fonts/gfx/<name>.json (a description) plus its .png sheet.
+ * They are optional: the built-in CP437 8x8 above is the fallback and the
+ * default. A loaded font is compiled to a 1bpp glyph table so rendering stays
+ * a per-pixel test with no image decode on the hot path. */
+#define PT_FONT_MAX  32
+#define PT_FONT_NAME 40
+
+static char s_cat[PT_FONT_MAX][PT_FONT_NAME];	/* names, no extension */
+static int s_cat_n;
+static int s_cat_scanned;
+
+static int s_use_builtin = 1;
+static unsigned char *s_glyphs;		/* 256 glyphs, 1bpp, s_glyph_bytes each */
+static unsigned s_glyph_bytes;
+static int s_gw = PT_TEXT_FW;		/* current glyph cell, canvas pixels */
+static int s_gh = PT_TEXT_FH;
+static char s_font_name[PT_FONT_NAME];	/* "" while the built-in is used */
+
+static int s_picker;			/* the font picker overlay is open */
+static int s_pick_sel;			/* 0 = built-in, 1.. = catalog entry */
+
 /* ---- editing state ----------------------------------------------------- */
 
 static int s_active;		/* a caret is placed and the buffer is open */
@@ -305,27 +331,102 @@ static int s_have_base;		/* PT.scratch holds the pre-text canvas */
 
 /* ---- drawing ----------------------------------------------------------- */
 
+/* One bit of the current font's glyph `ch` at (row, col). The built-in font
+ * is 8x8 with the MSB leftmost; a loaded font is 1bpp, row-major. */
+static int font_bit(int ch, int row, int col)
+{
+	if (s_use_builtin || !s_glyphs)
+		return (s_font[(size_t)(ch & 255) * PT_TEXT_FH + row] &
+			(0x80u >> col)) != 0;
+	{
+		unsigned per_row = (unsigned)(s_gw + 7) / 8;
+
+		return (s_glyphs[(size_t)(ch & 255) * s_glyph_bytes +
+				 (size_t)row * per_row + (unsigned)(col >> 3)] &
+			(0x80u >> (col & 7))) != 0;
+	}
+}
+
 static void text_glyph(int x0, int y0, unsigned ch, int color)
 {
-	const unsigned char *g = s_font + (size_t)(ch & 255u) * PT_TEXT_FH;
 	int row, col;
 
-	for (row = 0; row < PT_TEXT_FH; row++)
-	{
-		unsigned bits = g[row];
-
-		for (col = 0; col < PT_TEXT_FW; col++)
-			if (bits & (0x80u >> col))
+	for (row = 0; row < s_gh; row++)
+		for (col = 0; col < s_gw; col++)
+			if (font_bit((int)ch, row, col))
 				pt_canvas_set(x0 + col, y0 + row, color);
-	}
 }
 
 static void text_caret(int x, int y, int color)
 {
 	int row;
 
-	for (row = 0; row < PT_TEXT_FH; row++)
+	for (row = 0; row < s_gh; row++)
 		pt_canvas_set(x, y + row, color);
+}
+
+/* A string in the built-in face, for the picker panel (always readable). */
+static void text_putstr(int x, int y, const char *s, int color)
+{
+	for (; s && *s; s++, x += PT_TEXT_FW)
+	{
+		const unsigned char *g =
+			s_font + (size_t)(unsigned char)*s * PT_TEXT_FH;
+		int row, col;
+
+		for (row = 0; row < PT_TEXT_FH; row++)
+			for (col = 0; col < PT_TEXT_FW; col++)
+				if (g[row] & (0x80u >> col))
+					pt_canvas_set(x + col, y + row, color);
+	}
+}
+
+/* The font list, drawn over the live text preview. It is ephemeral preview
+ * pixels: text_refresh() rewinds to the pre-text canvas first, so closing the
+ * picker or committing never bakes it in. */
+static void text_picker_draw(void)
+{
+	int rows, i, px, py, pw;
+
+	if (!s_picker)
+		return;
+	rows = s_cat_n + 1;
+	if (rows > 10)
+		rows = 10;
+	pw = 20 * PT_TEXT_FW + 2;
+	px = PT.width - pw - 2;
+	if (px < 0)
+		px = 0;
+	py = s_y;
+	if (py + (rows + 1) * PT_TEXT_FH > PT.height)
+		py = PT.height - (rows + 1) * PT_TEXT_FH;
+	if (py < 0)
+		py = 0;
+
+	for (i = 0; i < rows + 1; i++)
+	{
+		int x;
+
+		for (x = 0; x < pw; x++)
+		{
+			pt_canvas_set(px + x, py + i * PT_TEXT_FH, 9);	/* blue bg */
+			pt_canvas_set(px + x, py + i * PT_TEXT_FH + PT_TEXT_FH - 1, 15);
+		}
+	}
+	for (i = 0; i < rows; i++)
+	{
+		const char *name = (i == 0) ? "Built-in CP437" : s_cat[i - 1];
+		int color = (i == s_pick_sel) ? 15 : 7;
+
+		if (i == s_pick_sel)
+		{
+			int x;
+
+			for (x = 1; x < pw - 1; x++)
+				pt_canvas_set(px + x, py + (i + 1) * PT_TEXT_FH + 1, 8);
+		}
+		text_putstr(px + 2, py + (i + 1) * PT_TEXT_FH + 2, name, color);
+	}
 }
 
 /* Redraw the whole live string; the caret trails the last glyph. */
@@ -334,9 +435,11 @@ static void text_draw(int caret)
 	int i;
 
 	for (i = 0; i < s_len; i++)
-		text_glyph(s_x + i * PT_TEXT_FW, s_y, s_buf[i], s_color);
-	if (caret)
-		text_caret(s_x + s_len * PT_TEXT_FW, s_y, s_color);
+		text_glyph(s_x + i * s_gw, s_y, s_buf[i], s_color);
+	if (caret && !s_picker)
+		text_caret(s_x + s_len * s_gw, s_y, s_color);
+	if (s_picker)
+		text_picker_draw();
 }
 
 /* ---- preview / commit -------------------------------------------------- */
@@ -370,8 +473,276 @@ static void text_finish(void)
 	s_active = 0;
 	s_len = 0;
 	s_have_base = 0;
+	s_picker = 0;
 	if (PT.scratch)
 		PT.scratch_valid = 0;
+}
+
+/* ---- font catalog (#643) ----------------------------------------------- */
+
+static int ci_endswith(const char *s, const char *suf)
+{
+	size_t ls = strlen(s), lf = strlen(suf), i;
+
+	if (lf > ls)
+		return 0;
+	for (i = 0; i < lf; i++)
+	{
+		char a = s[ls - lf + i], b = suf[i];
+
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z')
+			b = (char)(b - 'A' + 'a');
+		if (a != b)
+			return 0;
+	}
+	return 1;
+}
+
+static void fonts_scan(void)
+{
+	mmb_dirent ents[PT_FONT_MAX];
+	int n, trunc = 0, i;
+
+	if (s_cat_scanned)
+		return;
+	s_cat_scanned = 1;
+	s_cat_n = 0;
+	n = mmb_vfs_list_entries("A:/fonts/gfx", ents, PT_FONT_MAX, &trunc);
+	if (n <= 0)
+		return;
+	for (i = 0; i < n && s_cat_n < PT_FONT_MAX; i++)
+	{
+		const char *nm = ents[i].name;
+		size_t L;
+
+		if (ents[i].is_dir)
+			continue;
+		L = strlen(nm);
+		if (L <= 5 || L - 5 >= PT_FONT_NAME)
+			continue;
+		if (!ci_endswith(nm, ".json"))
+			continue;
+		memcpy(s_cat[s_cat_n], nm, L - 5);
+		s_cat[s_cat_n][L - 5] = 0;
+		s_cat_n++;
+	}
+}
+
+int pt_text_font_count(void)
+{
+	fonts_scan();
+	return s_cat_n;
+}
+
+const char *pt_text_font_name(int i)
+{
+	fonts_scan();
+	if (i < 0 || i >= s_cat_n)
+		return "";
+	return s_cat[i];
+}
+
+const char *pt_text_font_current(void)
+{
+	return s_use_builtin ? "" : s_font_name;
+}
+
+int pt_text_font_w(void)
+{
+	return s_gw;
+}
+
+int pt_text_font_h(void)
+{
+	return s_gh;
+}
+
+void pt_text_font_builtin(void)
+{
+	s_use_builtin = 1;
+	s_gw = PT_TEXT_FW;
+	s_gh = PT_TEXT_FH;
+	s_font_name[0] = 0;
+	if (s_active)
+		text_refresh();
+}
+
+/* Minimal field readers: the descriptor JSON is flat and small, and PAINT
+ * must not pull the interpreter's JSON machinery into its path. */
+static int jget_int(const char *js, const char *key, int def)
+{
+	const char *p = strstr(js, key);
+
+	if (!p)
+		return def;
+	p = strchr(p, ':');
+	if (!p)
+		return def;
+	return atoi(p + 1);
+}
+
+static void jget_str(const char *js, const char *key, char *out, int outsz)
+{
+	const char *p = strstr(js, key);
+	int n = 0;
+
+	out[0] = 0;
+	if (!p)
+		return;
+	p = strchr(p, ':');
+	if (!p)
+		return;
+	p++;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p != '"')
+		return;
+	p++;
+	while (*p && *p != '"' && n < outsz - 1)
+	{
+		if (*p == '\\' && (p[1] == '"' || p[1] == '\\'))
+			p++;
+		out[n++] = *p++;
+	}
+	out[n] = 0;
+}
+
+/* Position of a character in the JSON charset string, or -1. */
+static int charset_pos(const char *js, int code)
+{
+	char set[300];
+	int i;
+
+	jget_str(js, "charset", set, sizeof(set));
+	for (i = 0; set[i]; i++)
+		if ((unsigned char)set[i] == (unsigned char)code)
+			return i;
+	return -1;
+}
+
+int pt_text_font_load(int i)
+{
+	char jpath[128], ppath[128], src[64], js[768];
+	unsigned char *file = 0, *ng;
+	uint32_t *pix = 0;
+	unsigned got = 0, per_row;
+	int sz, cw, ch, cpr, ox, oy, bg, pw = 0, ph = 0;
+	int code, gb, total, r, c;
+
+	fonts_scan();
+	if (i < 0 || i >= s_cat_n)
+		return -1;
+	sprintf(jpath, "A:/fonts/gfx/%s.json", s_cat[i]);
+	sz = mmb_vfs_size(jpath);
+	if (sz <= 0)
+		return -1;
+	if ((unsigned)sz > sizeof(js) - 1)
+		sz = (int)sizeof(js) - 1;
+	if (mmb_vfs_read(jpath, js, (unsigned)sz, &got) != 0)
+		return -1;
+	js[got] = 0;
+
+	jget_str(js, "source", src, sizeof(src));
+	if (!src[0])
+		sprintf(src, "%s.png", s_cat[i]);
+	cw = jget_int(js, "charWidth", 0);
+	ch = jget_int(js, "charHeight", 0);
+	cpr = jget_int(js, "charsPerRow", 0);
+	ox = jget_int(js, "offsetX", 0);
+	oy = jget_int(js, "offsetY", 0);
+	bg = jget_int(js, "bgColour", 0);
+	if (cw <= 0 || ch <= 0 || cw > 64 || ch > 64 || cpr <= 0 || cpr > 256)
+		return -1;
+
+	sprintf(ppath, "A:/fonts/gfx/%s", src);
+	sz = mmb_vfs_size(ppath);
+	if (sz <= 0)
+		return -1;
+	if (!G.plat || !G.plat->alloc)
+		return -1;
+	file = G.plat->alloc((unsigned)sz);
+	if (!file)
+		return -1;
+	if (mmb_vfs_read(ppath, file, (unsigned)sz, &got) != 0 ||
+	    mmb_png_decode_rgba(file, got, &pix, &pw, &ph) != 0)
+	{
+		G.plat->free(file);
+		return -1;
+	}
+	G.plat->free(file);
+	if (!pix || pw < 1 || ph < 1)
+	{
+		if (pix)
+			G.plat->free(pix);
+		return -1;
+	}
+
+	per_row = (unsigned)(cw + 7) / 8;
+	gb = (int)per_row * ch;
+	total = 256 * gb;
+	ng = G.plat->alloc((unsigned)total);
+	if (!ng)
+	{
+		G.plat->free(pix);
+		return -1;
+	}
+	memset(ng, 0, (unsigned)total);
+	for (code = 0; code < 256; code++)
+	{
+		int pos = charset_pos(js, code);
+		int gx, gy;
+
+		if (pos < 0)
+			continue;
+		gx = ox + (pos % cpr) * cw;
+		gy = oy + (pos / cpr) * ch;
+		for (r = 0; r < ch; r++)
+			for (c = 0; c < cw; c++)
+			{
+				int px = gx + c, py = gy + r;
+				uint32_t v;
+
+				if (px < 0 || py < 0 || px >= pw || py >= ph)
+					continue;
+				v = pix[(size_t)py * pw + px];
+				if ((v >> 24) == 0)
+					continue;	/* transparent */
+				if ((int)(v & 0xFFFFFFu) == (bg & 0xFFFFFF))
+					continue;	/* background */
+				ng[code * gb + r * (int)per_row + (c >> 3)] |=
+					(unsigned char)(0x80u >> (c & 7));
+			}
+	}
+	G.plat->free(pix);
+	if (s_glyphs)
+		G.plat->free(s_glyphs);
+	s_glyphs = ng;
+	s_glyph_bytes = (unsigned)gb;
+	s_gw = cw;
+	s_gh = ch;
+	s_use_builtin = 0;
+	strncpy(s_font_name, s_cat[i], sizeof(s_font_name) - 1);
+	s_font_name[sizeof(s_font_name) - 1] = 0;
+	if (s_active)
+		text_refresh();
+	return 0;
+}
+
+void pt_text_font_picker_open(void)
+{
+	if (!s_active)
+		return;
+	fonts_scan();
+	s_picker = 1;
+	s_pick_sel = 0;
+	text_refresh();
+}
+
+int pt_text_font_picker_active(void)
+{
+	return s_picker;
 }
 
 /* ---- public hooks ------------------------------------------------------ */
@@ -384,6 +755,20 @@ void pt_text_init(void)
 	s_x = 0;
 	s_y = 0;
 	s_color = PT.fg;
+	s_picker = 0;
+	s_pick_sel = 0;
+	s_use_builtin = 1;
+	s_gw = PT_TEXT_FW;
+	s_gh = PT_TEXT_FH;
+	s_font_name[0] = 0;
+	s_glyph_bytes = 0;
+	s_cat_n = 0;
+	s_cat_scanned = 0;
+	if (s_glyphs && G.plat && G.plat->free)
+	{
+		G.plat->free(s_glyphs);
+		s_glyphs = 0;
+	}
 }
 
 int pt_text_active(void)
@@ -401,6 +786,7 @@ void pt_text_begin(int cx, int cy, int button)
 		pt_text_commit();
 	if (s_have_base)
 		text_restore();
+	s_picker = 0;
 
 	s_x = cx;
 	s_y = cy;
@@ -446,8 +832,44 @@ int pt_text_key(int key)
 	if (!s_active)
 		return 0;
 
+	if (s_picker)
+	{
+		int rows = s_cat_n + 1;
+
+		if (c == 27)			/* Esc: close the list */
+		{
+			s_picker = 0;
+			text_refresh();
+		}
+		else if (c == 13 || c == 10)	/* Enter: choose */
+		{
+			if (s_pick_sel <= 0)
+				pt_text_font_builtin();
+			else
+				pt_text_font_load(s_pick_sel - 1);
+			s_picker = 0;
+			text_refresh();
+		}
+		else if (c == 'n' || c == 'j' || c == '2')
+		{
+			if (s_pick_sel + 1 < rows)
+				s_pick_sel++;
+			text_refresh();
+		}
+		else if (c == 'p' || c == 'k' || c == '8')
+		{
+			if (s_pick_sel > 0)
+				s_pick_sel--;
+			text_refresh();
+		}
+		return 1;
+	}
+
 	switch (c)
 	{
+	case 6:				/* Ctrl+F: choose a font */
+		pt_text_font_picker_open();
+		return 1;
 	case 13:			/* Enter: commit */
 	case 10:
 		pt_text_commit();

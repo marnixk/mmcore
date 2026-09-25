@@ -908,6 +908,9 @@ void pt_tool_begin(int cx, int cy, int button)
 	case PT_TOOL_TEXT:
 		pt_text_begin(cx, cy, button);
 		break;
+	case PT_TOOL_SELECT:
+		pt_select_begin(cx, cy, button);
+		break;
 	default:
 		break;
 	}
@@ -1008,6 +1011,9 @@ void pt_tool_motion(int cx, int cy, int button)
 	case PT_TOOL_SPRAY:
 		dab_line(spray_dab, PT.last_cx, PT.last_cy, cx, cy, c);
 		break;
+	case PT_TOOL_SELECT:
+		pt_select_motion(cx, cy);
+		break;
 	default:
 		break;
 	}
@@ -1092,6 +1098,9 @@ void pt_tool_end(int cx, int cy, int button)
 			grab_stamp(cx, cy);
 		}
 		break;
+	case PT_TOOL_SELECT:
+		pt_select_end(cx, cy);
+		break;
 	default:
 		break;
 	}
@@ -1101,6 +1110,8 @@ void pt_tool_end(int cx, int cy, int button)
 
 void pt_tool_cancel(void)
 {
+	if (PT.tool == PT_TOOL_SELECT)
+		pt_select_cancel();
 	if (PT.scratch_valid)
 	{
 		preview_restore();

@@ -68,12 +68,14 @@ TOOLS = [
     "airbrush",
     "spray",
     "text",
+    "select",
 ]
 
 # Tools whose active sprite is expected to differ (button-held feedback).
 SELECTION_TOOLS = {
     "arrow", "pencil", "line", "rectangle", "ellipse", "circle", "fill",
     "eraser", "pick", "grab", "magnify", "airbrush", "spray", "text",
+    "select",
 }
 
 
@@ -477,6 +479,34 @@ def art_text(active):
     return g, (8, 26)
 
 
+def art_select(active):
+    m = blank_mask()
+    # Marching-ants marquee: a dashed 22x22 border with solid corner handles.
+    for x in range(5, 27):
+        if x % 2 == 0:
+            put(m, x, 5)
+            put(m, x, 26)
+    for y in range(5, 27):
+        if y % 2 == 0:
+            put(m, 5, y)
+            put(m, 26, y)
+    for cx, cy in ((5, 5), (26, 5), (5, 26), (26, 26)):
+        for oy in (-1, 0, 1):
+            for ox in (-1, 0, 1):
+                put(m, cx + ox, cy + oy)
+    # Centre move grip so the (15,15) hotspot names an opaque pixel (#690).
+    add_seg(m, 15, 9, 15, 21, 1)
+    add_seg(m, 9, 15, 21, 15, 1)
+    g = render(m)
+    if active:
+        # Held: tint the marquee interior and dot the centre red.
+        inner = blank_mask()
+        add_rect(inner, 7, 7, 24, 24)
+        stamp(g, inner, LGREY)
+        stamp(g, add_disc(blank_mask(), 15, 15, 2), RED)
+    return g, (15, 15)
+
+
 ART = {
     "arrow": art_arrow,
     "pencil": art_pencil,
@@ -492,6 +522,7 @@ ART = {
     "airbrush": art_airbrush,
     "spray": art_spray,
     "text": art_text,
+    "select": art_select,
 }
 
 

@@ -39,7 +39,7 @@ from native_harness import (
 PT_W, PT_H = 640, 360
 PT_TOOL_W = 64
 PT_CELL_W = 32
-PT_CELL_H = (328 - 16) // 8
+PT_CELL_H = (328 - 16) // 9
 PT_CANVAS_X, PT_CANVAS_Y = 64, 16
 PT_PAL_X, PT_PAL_Y = 92, 328
 PT_PAL_SW = 8
@@ -512,6 +512,60 @@ def test_filled_rectangle_cell_paints_a_solid_block(native_mmcore, tmp_path):
 
     img = Ppm(shot)
     assert lum(img.pixel(160, 110)) > 600    # interior is solid
+
+
+def test_selection_tool_draws_marching_ants(native_mmcore, tmp_path):
+    """#644: the SELECT tool drags a marching-ants boundary over the canvas."""
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(*_cell(0, 8))       # SELECT tool
+    s.click("l")
+    s.move(200, 100)
+    s.down("l")
+    s.move(260, 150)
+    s.up("l")
+    s.move(430, 300)           # park the cursor clear of the boundary
+    shot = s.shot("ants.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    img = Ppm(shot)
+    # The top edge of the marquee alternates white and black dashes.
+    white = sum(1 for x in range(206, 256, 2) if sum(img.pixel(x, 100)) > 600)
+    black = sum(1 for x in range(206, 256, 2) if sum(img.pixel(x, 100)) < 40)
+    assert white >= 3 and black >= 3, (white, black)
+
+
+def test_text_font_picker_opens_and_closes(native_mmcore, tmp_path):
+    """#643: Ctrl+F lists A:/fonts/gfx over the canvas; Esc closes it.
+
+    The picker is drawn as ephemeral canvas preview pixels, so it must show up
+    in a framebuffer shot and vanish on close without baking anything in.
+    """
+    s = NativeSession(tmp_path)
+    s.feed("PAINT")
+    s.move(*_cell(1, 1))       # TEXT tool
+    s.click("l")
+    s.move(200, 100)
+    s.click("l")               # place the caret
+    s.key("ctrl+f")            # open the font picker
+    opened = s.shot("fontpick.ppm")
+    s.key("esc")               # close the list (the caret stays)
+    s.wait_ms(200)             # let the cleared frame present
+    closed = s.shot("fontpick_closed.ppm")
+    s.quit()
+    out = s.run()
+    assert "needs a mouse" not in out.lower(), out
+
+    def lit(path):
+        img = Ppm(path)
+        return sum(1 for y in range(100, 190, 2)
+                   for x in range(476, 638, 2)
+                   if sum(img.pixel(x, y)) > 150)
+
+    assert lit(opened) > 200, "font picker panel was not drawn"
+    assert lit(closed) < 20, "font picker panel did not clear"
 
 
 def test_width_selector_thickens_a_dot(native_mmcore, tmp_path):

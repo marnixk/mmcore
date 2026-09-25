@@ -30,6 +30,7 @@ typedef enum {
 	PCA_TOOL_AIRBRUSH = 11,
 	PCA_TOOL_SPRAY = 12,
 	PCA_TOOL_TEXT = 13,
+	PCA_TOOL_SELECT = 14,
 	PCA_TOOL_COUNT
 } pca_tool_t;
 
@@ -79,4 +80,6 @@ extern const uint8_t pca_spray_idle[PCA_CURSOR_PIXELS];
 extern const uint8_t pca_spray_active[PCA_CURSOR_PIXELS];
 extern const uint8_t pca_text_idle[PCA_CURSOR_PIXELS];
 extern const uint8_t pca_text_active[PCA_CURSOR_PIXELS];
+extern const uint8_t pca_select_idle[PCA_CURSOR_PIXELS];
+extern const uint8_t pca_select_active[PCA_CURSOR_PIXELS];
 #endif /* PAINT_CURSOR_ART_H */

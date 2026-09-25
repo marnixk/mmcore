@@ -317,6 +317,10 @@ void pt_redraw(void)
 	 * whose rectangle was damaged when it closed. */
 	pt_draw_canvas();
 
+	/* The selection marquee is drawn over the canvas as screen pixels; it is
+	 * never part of PT.canvas, so a PCX save never carries it. */
+	pt_select_draw();
+
 	/* Chrome is persistent: the tool column and palette only change when
 	 * PT.full_redraw is set, so a cursor move or a menu hover never touches
 	 * them. The exception is a dropdown at menu column 1, which overlaps the
@@ -424,6 +428,7 @@ static void pt_leave(void)
 		mmb_gfx_set_mode(s_saved_mode, s_saved_bits);
 	mmb_gfx_reset_console(1);
 	G.home_prompt = 0;
+	pt_select_init();		/* release the clipboard / float buffers */
 	memset(&PT, 0, sizeof(PT));
 	mmb_console_write("\r\n");
 	mmb_console_write(mmb_prompt());
@@ -487,6 +492,7 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	pt_cursor_init();
 	pt_file_init();
 	pt_text_init();
+	pt_select_init();
 
 	PT.cursor_x = PT.cursor_y = 0;
 	/* Start well inside the canvas: the tool-sprite hotspots sit low/right
@@ -607,6 +613,16 @@ void mmb_paint_poll(void)
 			pt_paint_leave();
 		if (!PT.active)
 			return;
+	}
+
+	/* Animate the selection marquee; a phase change redraws its boundary. */
+	if (pt_select_tick())
+	{
+		int ax, ay, aw, ah;
+
+		if (pt_select_rect(&ax, &ay, &aw, &ah))
+			pt_damage(PT_CANVAS_X + ax, PT_CANVAS_Y + ay, aw, ah);
+		changed = 1;
 	}
 
 	have = pt_mouse_present();
@@ -1123,5 +1139,56 @@ PT_WEAK int pt_text_active(void)
 PT_WEAK int pt_text_key(int key)
 {
 	(void)key;
+	return 0;
+}
+
+/* ---- selection (#644) -------------------------------------------------- */
+
+PT_WEAK void pt_select_init(void) {}
+PT_WEAK int pt_select_has(void) { return 0; }
+PT_WEAK int pt_select_clip_has(void) { return 0; }
+PT_WEAK void pt_select_all(void) {}
+PT_WEAK void pt_select_none(void) {}
+PT_WEAK void pt_select_begin(int cx, int cy, int button)
+{
+	(void)cx;
+	(void)cy;
+	(void)button;
+}
+PT_WEAK void pt_select_motion(int cx, int cy)
+{
+	(void)cx;
+	(void)cy;
+}
+PT_WEAK void pt_select_end(int cx, int cy)
+{
+	(void)cx;
+	(void)cy;
+}
+PT_WEAK void pt_select_cancel(void) {}
+PT_WEAK void pt_select_draw(void) {}
+PT_WEAK int pt_select_tick(void) { return 0; }
+PT_WEAK void pt_select_cut(void) {}
+PT_WEAK void pt_select_copy(void) {}
+PT_WEAK void pt_select_paste(void) {}
+PT_WEAK void pt_select_clear(void) {}
+PT_WEAK int pt_select_rect(int *x, int *y, int *w, int *h)
+{
+	(void)x;
+	(void)y;
+	(void)w;
+	(void)h;
+	return 0;
+}
+PT_WEAK int pt_select_clip_size(int *w, int *h)
+{
+	(void)w;
+	(void)h;
+	return 0;
+}
+PT_WEAK int pt_select_hit(int cx, int cy)
+{
+	(void)cx;
+	(void)cy;
 	return 0;
 }

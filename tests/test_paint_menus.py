@@ -71,6 +71,14 @@ void pt_undo(void) { u_undo++; }
 void pt_redo(void) { u_redo++; }
 void pt_undo_clear(void) { u_clear++; }
 
+/* #644 selection / clipboard actions. */
+static int s_cut, s_copy, s_paste, s_clear_sel, s_select_all;
+void pt_select_cut(void) { s_cut++; }
+void pt_select_copy(void) { s_copy++; }
+void pt_select_paste(void) { s_paste++; }
+void pt_select_clear(void) { s_clear_sel++; }
+void pt_select_all(void) { s_select_all++; }
+
 /* ---- canvas stub (Edit > Clear wipes it via pt_canvas_set) ---- */
 static unsigned char g_canvas[4 * 4];
 void pt_canvas_set(int cx, int cy, int idx)
@@ -377,6 +385,26 @@ int main(void)
 	click(kEdit, 36);
 	check(u_redo == 1, "edit_redo_dispatch");
 
+	/* ---- #644: Edit > Cut / Copy / Paste / Clear sel / Select all ---- */
+	s_cut = s_copy = s_paste = s_clear_sel = s_select_all = 0;
+	click(kEdit, 8);
+	click(kEdit, 68);
+	check(s_cut == 1, "edit_cut_dispatch");
+	click(kEdit, 8);
+	click(kEdit, 84);
+	check(s_copy == 1, "edit_copy_dispatch");
+	click(kEdit, 8);
+	click(kEdit, 100);
+	check(s_paste == 1, "edit_paste_dispatch");
+	click(kEdit, 8);
+	click(kEdit, 116);
+	check(s_clear_sel == 1, "edit_clear_sel_dispatch");
+	check(!PT.dialog, "clear_sel_no_dialog");
+	click(kEdit, 8);
+	click(kEdit, 132);
+	check(s_select_all == 1, "edit_select_all_dispatch");
+	check(!pt_menus_active(), "select_all_closes");
+
 	/* ---- Edit > Clear always confirms ---- */
 	u_clear = 0;
 	PT.undo_depth = 0;
@@ -460,16 +488,17 @@ int main(void)
 	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 5 * 16,
 	      "open_damage_bounded");
 	check(redraws == 0, "menu_nav_no_full_redraw");
-	/* Switching to Edit while open damages the old and new dropdowns + bar. */
+	/* Switching to Edit while open damages the old and new dropdowns + bar.
+	 * Edit now has eight rows (#644), so the band reaches 16 + 8*16. */
 	dmg_reset();
 	press(kEdit, 8);
-	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 5 * 16,
+	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 8 * 16,
 	      "switch_damage_bounded");
 	release(kEdit, 8);
 	/* Closing damages the dropdown rectangle + bar, still not the canvas. */
 	dmg_reset();
 	press(300, 200);
-	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 3 * 16,
+	check(dmg_valid && dmg_y0 == 0 && dmg_y1 <= 16 + 8 * 16,
 	      "close_damage_bounded");
 	release(300, 200);
 
@@ -636,6 +665,20 @@ def test_edit_actions_and_clear_dialog(checks):
         "clear_wipes_canvas",
         "clear_mouse_no",
         "clear_mouse_yes",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_selection_menu_actions(checks):
+    """#644: the Edit menu dispatches Cut/Copy/Paste/Clear sel/Select all."""
+    for name in (
+        "edit_cut_dispatch",
+        "edit_copy_dispatch",
+        "edit_paste_dispatch",
+        "edit_clear_sel_dispatch",
+        "clear_sel_no_dialog",
+        "edit_select_all_dispatch",
+        "select_all_closes",
     ):
         assert checks.get(name) is True, name
 
