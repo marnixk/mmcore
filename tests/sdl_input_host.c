@@ -534,6 +534,20 @@ int main(void)
 		fails++;
 	}
 
+	/* A byte inside a CSI navigation sequence is not a BREAK even when it
+	 * matches the configured break key: Shift+Left ends in 'D'. */
+	reset();
+	g_running = 1;
+	g_break_key = 'D';
+	push_key(SDLK_LEFT, KMOD_SHIFT);
+	sdl_input_pump();
+	expect_queue("csi not break", "\x1b[1;2D");
+	if (sdl_input_take_break())
+	{
+		fprintf(stderr, "FAIL csi latched break\n");
+		fails++;
+	}
+
 	/* A blocking INPUT inside a running program keeps its raw bytes: the
 	 * line reader breaks on the 0x03 itself. */
 	reset();

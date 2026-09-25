@@ -137,7 +137,10 @@ static void deliver(const char *b, unsigned n)
 		{
 			unsigned char c = (unsigned char)b[i];
 
-			if (bk && c == (unsigned char)bk)
+			/* Only a single cooked key can be a BREAK; do not
+			 * mistake a byte inside a CSI navigation sequence for
+			 * the break key. */
+			if (n == 1 && bk && c == (unsigned char)bk)
 				s_break = 1;
 			else
 				mmb_inkey_push(c);
