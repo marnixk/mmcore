@@ -206,6 +206,29 @@ static int screen_has(const char *needle)
 	return 0;
 }
 
+/* #756: the row whose text contains ``label`` must end (before the right
+ * border) with the accelerator ``key``. */
+static int hint_at(const char *label, char key)
+{
+	int y, x, found = 0;
+
+	for (y = 0; y < ROWS; y++) {
+		for (x = 0; x + (int)strlen(label) <= COLS; x++)
+			if (strncmp(&cells[y][x], label, strlen(label)) == 0) {
+				found = 1;
+				break;
+			}
+		if (found) {
+			int end = COLS - 1;
+
+			while (end >= 0 && cells[y][end] == ' ')
+				end--;
+			return end >= 0 && cells[y][end] == key;
+		}
+	}
+	return 0;
+}
+
 /* ---- checks ---- */
 static int fails;
 static void check(int ok, const char *name)
@@ -477,6 +500,74 @@ int main(void)
 	check(PT.dialog, "letter_accel_quit");
 	pt_menus_key('n');
 
+	/* ---- #755: arrow keys focus and activate menu items ---- */
+	PT.undo_depth = 0;
+	PT.redo_depth = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	check(PT.menu == PT_MENU_FILE, "arrow_open_file");
+	/* Down moves the focus from the first row to Open. */
+	check(pt_menus_key(PT_KEY_DOWN) == 1, "arrow_down_consumed");
+	f_open = 0;
+	check(pt_menus_key(13) == 1, "arrow_enter_consumed");
+	check(f_open == 1, "arrow_down_activates_second");
+	/* Up from the first row wraps to the last item (Quit), which leaves. */
+	quit_leave = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	check(pt_menus_key(PT_KEY_UP) == 1, "arrow_up_consumed");
+	check(pt_menus_key(13) == 1, "arrow_up_enter_consumed");
+	check(quit_leave == 1, "arrow_up_wraps_to_quit");
+	/* Right switches to Edit and resets the focus to the first item (Undo). */
+	u_undo = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	check(pt_menus_key(PT_KEY_RIGHT) == 1, "arrow_right_consumed");
+	check(PT.menu == PT_MENU_EDIT, "arrow_right_switches");
+	check(pt_menus_key(13) == 1, "arrow_right_enter_consumed");
+	check(u_undo == 1, "arrow_right_focuses_first");
+	/* Left wraps File back to Help (the Keys dialog). */
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	check(pt_menus_key(PT_KEY_LEFT) == 1, "arrow_left_consumed");
+	check(PT.menu == PT_MENU_HELP, "arrow_left_wraps");
+	check(pt_menus_key(13) == 1, "arrow_left_enter_consumed");
+	check(PT.dialog, "arrow_left_opens_keys");
+	pt_menus_key(27);
+
+	/* ---- #756: every item's hint is exactly the key that activates it ---- */
+	/* Save as takes 'a' because Save owns its first letter. */
+	f_save_as = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	pt_menus_key('a');
+	check(f_save_as == 1, "accel_save_as");
+	f_save = 0;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	pt_menus_key('s');
+	check(f_save == 1, "accel_save");
+
+	scr_clear();
+	PT.menu = PT_MENU_FILE;
+	pt_menus_draw();
+	check(hint_at("New", 'N'), "hint_new");
+	check(hint_at("Open", 'O'), "hint_open");
+	check(hint_at("Save as", 'A'), "hint_save_as");
+	check(hint_at("Quit", 'Q'), "hint_quit");
+	scr_clear();
+	PT.menu = PT_MENU_EDIT;
+	pt_menus_draw();
+	check(hint_at("Undo", 'U'), "hint_undo");
+	check(hint_at("Select", 'S'), "hint_select");
+	check(hint_at("Del sel", 'D'), "hint_del_sel");
+	PT.menu = PT_MENU_NONE;
+
 	/* ---- #702: menu damage stays inside the menu band ---- */
 	/* Opening File damages the bar (row 0) and the File dropdown only; it
 	 * never reaches the canvas below the dropdown, and never requests a full
@@ -743,5 +834,37 @@ def test_help_keys_and_keyboard_navigation(checks):
         "tab_to_help",
         "tab_wraps",
         "letter_accel_quit",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_keyboard_arrows_and_shortcut_hints(checks):
+    """#755/#756: arrows move/activate items, and each item shows the exact key
+    that activates it (Save as uses 'a' so Save can keep 's')."""
+    for name in (
+        "arrow_open_file",
+        "arrow_down_consumed",
+        "arrow_enter_consumed",
+        "arrow_down_activates_second",
+        "arrow_up_consumed",
+        "arrow_up_enter_consumed",
+        "arrow_up_wraps_to_quit",
+        "arrow_right_consumed",
+        "arrow_right_switches",
+        "arrow_right_enter_consumed",
+        "arrow_right_focuses_first",
+        "arrow_left_consumed",
+        "arrow_left_wraps",
+        "arrow_left_enter_consumed",
+        "arrow_left_opens_keys",
+        "accel_save_as",
+        "accel_save",
+        "hint_new",
+        "hint_open",
+        "hint_save_as",
+        "hint_quit",
+        "hint_undo",
+        "hint_select",
+        "hint_del_sel",
     ):
         assert checks.get(name) is True, name
