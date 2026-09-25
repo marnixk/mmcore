@@ -87,6 +87,7 @@ Users can confirm the signature with
 ```bash
 ./native/mmcore
 ./native/mmcore --fullscreen   # open directly in desktop-fullscreen
+./native/mmcore --double       # open a windowed client at 2x the framebuffer
 ```
 
 A window opens; the interpreter REPL is shown in it. The window is titled
@@ -101,6 +102,16 @@ second copy.
   can be combined with the other modes, e.g. `--fullscreen --term host` or
   `--fullscreen /path/app.app`. The headless `native/mmbasic` accepts the flag
   for CLI compatibility and ignores it.
+- `--double` opens a **windowed** client at **2x** the framebuffer size
+  (`2*MM.HRES` x `2*MM.VRES`); the 2x window is presented with the same
+  nearest-neighbour integer scale, so there is no letterbox and no blur. It is
+  not fullscreen and does not set `SDL_WINDOW_FULLSCREEN_DESKTOP`; a `MODE`
+  change keeps the window at 2x the new framebuffer while the flag is active.
+  Combined with the other modes like `--fullscreen` (`--double --term host`,
+  `--double /path/app.app`). With `--double --fullscreen` the window starts
+  fullscreen as usual, and leaving fullscreen (`Alt+Enter`) restores the 2x
+  window rather than 1:1. The headless `native/mmbasic` accepts the flag for CLI
+  compatibility and ignores it.
 - `Alt+Enter` at the prompt toggles fullscreen on the primary display. The
   graphics mode is integer-scaled and centred into the window/display, so the
   picture stays crisp with black bars filling any leftover area.
@@ -184,7 +195,7 @@ scope on Linux; those options report unavailable.
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
 | Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
-| Window / fullscreen | SDL2 window titled `mmcore`; `--fullscreen` at launch, `Alt+Enter` toggles on the primary display | HDMI fullscreen only |
+| Window / fullscreen | SDL2 window titled `mmcore`; `--double` opens a 2x windowed client, `--fullscreen` at launch, `Alt+Enter` toggles on the primary display | HDMI fullscreen only |
 | Clipboard | `EDIT`/`WORDPAD` copy to the host OS clipboard; `Ctrl+Shift+V` pastes it (#525) | in-memory buffer only (no host clipboard) |
 | vsync / page flip | software (single framebuffer, SDL vsync pacing) | hardware DMA, VSync flip |
 | App-VM CLI | `.app` and `--term` sealed launches (#490/#491) | n/a (boots to the REPL) |

@@ -127,6 +127,11 @@ int main(int argc, char **argv)
 			SDL_GetError());
 		return 1;
 	}
+	/* --double: open a 2x windowed client (integer, nearest-neighbour via
+	 * sdl_scale_viewport). Set before fullscreen so leaving fullscreen
+	 * restores the 2x window, not 1:1; headless builds ignore it. */
+	if (cli->double_scale)
+		sdl_video_set_window_scale(cli->double_scale);
 	/* --fullscreen: enter fullscreen before the first frame so the boot
 	 * banner is already fullscreen. Alt+Enter still toggles. */
 	if (cli->fullscreen)

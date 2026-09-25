@@ -1368,3 +1368,105 @@ def test_sdl_video_window_setup(tmp_path):
         env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
     )
     assert "all checks passed" in out.stdout
+
+
+def test_double_flag_help_and_headless_noop(mmb_linux, tmp_path):
+    """#736/#739: the shared CLI lists --double; the headless build ignores it."""
+    proc = subprocess.run(
+        [mmb_linux, "--help"], capture_output=True, text=True, timeout=60
+    )
+    assert "--double" in (proc.stdout + proc.stderr)
+    proc = subprocess.run(
+        [mmb_linux, "--double"],
+        input='PRINT 2+3\n',
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=_app_env(tmp_path),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0
+    assert "> 5" in out
+
+
+# Report the framebuffer and host-drawable sizes as `D1 w,h,hostw,hosth`.
+_D1 = (
+    'PRINT "D1 " + STR$(MM.HRES) + "," + STR$(MM.VRES) + ","'
+    ' + STR$(MM.HOST.HRES) + "," + STR$(MM.HOST.VRES)'
+)
+
+
+def _d1_dims(out):
+    """Every `D1 w,h,hostw,hosth` line as an int tuple."""
+    return [
+        tuple(int(v) for v in m)
+        for m in re.findall(r"D1 (\d+),(\d+),(\d+),(\d+)", out)
+    ]
+
+
+def test_sdl_double_flag_headless(tmp_path):
+    """#736/#739: --double opens a 2x window and MODE keeps the 2x client."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    env = dict(
+        os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root")
+    )
+    proc = subprocess.run(
+        [SDL_BIN, "--double"],
+        input=f"{_D1}\nMODE 7\n{_D1}\nQUIT\n",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    dims = _d1_dims(out)
+    assert len(dims) == 2, out
+    # The host drawable is twice the framebuffer, with no letterbox.
+    for fw, fh, hw, hh in dims:
+        assert (hw, hh) == (2 * fw, 2 * fh), out
+    # MODE 7 is 320x240, so the resized window must stay 640x480, not 1:1.
+    assert dims[1] == (320, 240, 640, 480), out
+
+
+def test_sdl_double_fullscreen_interplay(tmp_path):
+    """#736/#739: --double --fullscreen, and Alt+Enter, restore a 2x window."""
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    env = dict(
+        os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root")
+    )
+    harness = tmp_path / "harness.txt"
+
+    # Startup fullscreen plus --double: leaving fullscreen restores 2x, not 1:1.
+    harness.write_text("key alt+enter\n" f"feed {_D1}\n" "quit\n")
+    proc = subprocess.run(
+        [SDL_BIN, "--double", "--fullscreen"],
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=dict(env, MMB_SDL_HARNESS=str(harness)),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    dims = _d1_dims(out)
+    assert len(dims) == 1, out
+    fw, fh, hw, hh = dims[0]
+    assert (hw, hh) == (2 * fw, 2 * fh), out
+
+    # From a windowed --double, Alt+Enter in and out must land back at 2x.
+    harness.write_text("key alt+enter\n" "key alt+enter\n" f"feed {_D1}\n" "quit\n")
+    proc = subprocess.run(
+        [SDL_BIN, "--double"],
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=dict(env, MMB_SDL_HARNESS=str(harness)),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    dims = _d1_dims(out)
+    assert len(dims) == 1, out
+    fw, fh, hw, hh = dims[0]
+    assert (hw, hh) == (2 * fw, 2 * fh), out

@@ -17,6 +17,7 @@ struct mmb_cli_opts {
 	int term_port;         /* MMB_CLI_TERM: TCP port (default 23) */
 	int stay;              /* --repl/--stay: fall back to the REPL after */
 	int fullscreen;        /* --fullscreen: SDL window opens fullscreen */
+	int double_scale;      /* --double: SDL window opens at 2x the FB size */
 };
 
 /* Parse startup options (--drive, --drive-root, --term, --repl, and a

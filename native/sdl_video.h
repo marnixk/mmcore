@@ -46,6 +46,15 @@ void sdl_video_set_fullscreen(int on);
 /* Whether the window is in desktop-fullscreen (drawable is the display). */
 int sdl_video_is_fullscreen(void);
 
+/* Windowed client-size multiplier (`--double` sets 2). sdl_video_resize()
+ * keeps the window at scale x the framebuffer size. Values below 1 are
+ * clamped to 1. While fullscreen the drawable is the display, so the scale
+ * only takes effect on the windowed size (including when leaving fullscreen). */
+void sdl_video_set_window_scale(int scale);
+
+/* Current windowed client-size multiplier (default 1). */
+int sdl_video_window_scale(void);
+
 /* Current window title (empty when no window is open); for tests/debug. */
 const char *sdl_video_window_title(void);
 
