@@ -215,3 +215,51 @@ def test_help_hides_prompt_at_top_left(kernel_image):
         assert leaked == 0, f"prompt leaked over HELP ({leaked} grey pixels)"
     finally:
         con.stop()
+
+
+def test_baked_version_is_read_from_image(tmp_path):
+    """Regression for #732: the image records the version it was built for."""
+    from conftest import _baked_version
+
+    image = tmp_path / "kernel8.img"
+    image.write_bytes(
+        b"\x00\x01mmcore operating system - v9.9.9-2-gdeadbee - 2026 (c) "
+        b"Marnix Kok\x00"
+    )
+    assert _baked_version(str(image)) == "v9.9.9-2-gdeadbee"
+    image.write_bytes(b"no banner here")
+    assert _baked_version(str(image)) is None
+
+
+def test_needs_version_rebuild_on_head_move():
+    """A docs/test-only commit moves HEAD but no mtime; the baked version
+    catches the desync."""
+    from conftest import _needs_version_rebuild
+
+    assert _needs_version_rebuild("v1.0.0", "v1.0.0-1-gabc1234")
+    assert not _needs_version_rebuild("v1.0.0-1-gabc1234", "v1.0.0-1-gabc1234")
+    # An image without the version literal cannot be trusted.
+    assert _needs_version_rebuild(None, "v1.0.0")
+    # No git metadata: cannot prove staleness, so do not churn rebuilds.
+    assert not _needs_version_rebuild("v1.0.0", "")
+
+
+def test_kernel_staleness_uses_baked_version(monkeypatch, tmp_path):
+    """Staleness must not rebuild when HEAD is unchanged, but must rebuild
+    once HEAD (and so git describe) moves past the baked version."""
+    import conftest
+
+    image = tmp_path / "kernel8.img"
+    image.write_bytes(b"mmcore operating system - v1.0.0 - 2026 (c) Marnix Kok")
+    monkeypatch.setattr(conftest, "_newest_source_mtime", lambda: 0.0)
+    monkeypatch.delenv("MMB_VERSION", raising=False)
+
+    monkeypatch.setattr(conftest, "_git_describe", lambda: "v1.0.0-1-gabc1234")
+    assert conftest._kernel_is_stale(str(image))
+    monkeypatch.setattr(conftest, "_git_describe", lambda: "v1.0.0")
+    assert not conftest._kernel_is_stale(str(image))
+
+    # A deliberately versioned (release) image is left alone.
+    monkeypatch.setenv("MMB_VERSION", "v1.0.0")
+    monkeypatch.setattr(conftest, "_git_describe", lambda: "v1.0.0-1-gabc1234")
+    assert not conftest._kernel_is_stale(str(image))
