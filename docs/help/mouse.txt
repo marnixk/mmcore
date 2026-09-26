@@ -1,0 +1,46 @@
+name: MOUSE
+kind: command
+alias: MOUSE ON, MOUSE OFF, MOUSE CURSOR
+
+Enable the software mouse cursor, choose its icon, and install pointer event
+handlers. Coordinates are HDMI screen pixels with (0,0) at the top-left, the
+same space ~MM.INFO$~ and ~PAINT~ use.
+
+MOUSE ON
+MOUSE OFF
+MOUSE CURSOR [type]
+
+  type - pointer (default), hand, crosshair, questionmark, deny, or 0..4 in
+         that order.
+
+MOUSE ON draws a cursor at the current pointer position while a program runs.
+MOUSE OFF hides it. The cursor is composited over the finished frame and never
+writes to a ~PAGE~ buffer, so moving the pointer cannot change page pixels or
+interrupt drawing across multiple pages.
+
+Pointer events call SUB handlers installed with ~ON~:
+
+    ON MOUSECLICK handler
+    ON MOUSEMOVE handler
+
+The click handler receives the screen position and which button was pressed:
+
+    SUB click(x, y, button$)
+      PRINT x, y, button$      ' button$ is "left", "middle" or "right"
+    END SUB
+
+The move handler receives the new position:
+
+    SUB move(x, y)
+      PRINT x, y
+    END SUB
+
+Example:
+
+    MOUSE ON
+    MOUSE CURSOR crosshair
+    ON MOUSEMOVE move
+    ON MOUSECLICK click
+    DO
+      PAUSE 10
+    LOOP

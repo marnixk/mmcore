@@ -1,19 +1,22 @@
 name: ON
 kind: command
-alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
+alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON MOUSECLICK, ON MOUSEMOVE, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
-Jump to the n-th line number (1-based), or call a SUB when a key is waiting.
-ON ERROR GOTO installs a runtime error handler; use ~RESUME~ to continue.
+Jump to the n-th line number (1-based), or call a SUB when a key or pointer
+event is waiting. ON ERROR GOTO installs a runtime error handler; use ~RESUME~
+to continue.
 
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
 ON ERROR GOTO line
 ON ERROR
 ON KEY subname
+ON MOUSECLICK subname
+ON MOUSEMOVE subname
 
   n - 1-based index into the line list
   line - destination line numbers, or the error handler
-  subname - SUB called when a key is waiting
+  subname - SUB called when a key or pointer event is waiting
 
 ON ERROR GOTO jumps to the handler when a runtime error occurs during RUN.
 RESUME continues at the failing line, RESUME NEXT at the following line, and
@@ -44,3 +47,11 @@ B:
     RETURN
 
     ON KEY KeyHandler
+
+ON MOUSECLICK and ON MOUSEMOVE need ~MOUSE~ ON. The click handler receives
+(x, y, button$) with button$ equal to "left", "middle" or "right"; the move
+handler receives (x, y).
+
+    MOUSE ON
+    ON MOUSEMOVE MoveHandler
+    ON MOUSECLICK ClickHandler

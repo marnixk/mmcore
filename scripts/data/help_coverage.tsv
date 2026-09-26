@@ -159,6 +159,7 @@ MM.HOST.VRES	MM.HOST.VRES	topic	dedicated topic
 MM.RUNTIME	MM.RUNTIME$	alias	alias of MM.RUNTIME$
 MM.RUNTIME$	MM.RUNTIME$	topic	dedicated topic
 MODE	MODE	topic	dedicated topic
+MOUSE	MOUSE	topic	dedicated topic
 MV	RENAME	alias	alias of RENAME
 NAME	RENAME	alias	alias of RENAME
 NEW	NEW	topic	dedicated topic
@@ -170,6 +171,8 @@ ON ERROR	ON	alias	alias of ON
 ON GOSUB	ON	alias	alias of ON
 ON GOTO	ON	alias	alias of ON
 ON KEY	ON	alias	alias of ON
+ON MOUSECLICK	ON	alias	alias of ON
+ON MOUSEMOVE	ON	alias	alias of ON
 OPEN	OPEN	topic	dedicated topic
 OPTION	OPTION	topic	dedicated topic
 OPTIONS	OPTIONS	topic	dedicated topic

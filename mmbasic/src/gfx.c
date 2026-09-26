@@ -621,6 +621,18 @@ pixel_fallback:
 
 /* CMM2 BLIT lives in gfx_cmm2.c (source page + orientation). */
 
+/* Present a native-format rect from an arbitrary buffer. Used by the MOUSE
+ * software cursor (#792) to overlay its scratch copy without writing the
+ * composed page buffer. */
+void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
+			    int stride)
+{
+	if (!G.plat || !pix)
+		return;
+	present_wait_dma();
+	present_native_or_rgb(x, y, w, h, pix, stride);
+}
+
 void mmb_gfx_present(void)
 {
 	int hw, hh;
@@ -662,6 +674,9 @@ void mmb_gfx_present(void)
 	 * already in pg for any dirty rect that covers them. */
 	if (G.plat && G.plat->present_set_flip)
 		G.plat->present_set_flip(0);
+	/* Software cursor (#792): composited last, from pg, so the page
+	 * buffers are never written by pointer movement. */
+	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
 }
 
 void mmb_gfx_present_rect(int x, int y, int w, int h)
@@ -701,6 +716,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	if (x >= x1 || y >= y1)
 		return;
 	present_native_or_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
+	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
 }
 
 void mmb_gfx_init(void)
