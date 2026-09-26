@@ -45,6 +45,7 @@ typedef struct {
 	int cur;
 	int shuffle;
 	int truncated; /* the folder scan hit the newline buffer or the queue cap */
+	int owner;     /* virtual console that started this queue (#805) */
 	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
 	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
@@ -318,6 +319,10 @@ static int juke_start(int idx)
 	vr = g_audio.vol_r;
 	if (juke_play_path(p) != 0)
 		return -1;
+	/* The queue runs in the background on its own console: a track change
+	 * driven by the host poll must not re-attribute the engine to whichever
+	 * console happens to be active (#805). */
+	g_audio.owner = s_q.owner;
 	g_audio.vol_l = vl;
 	g_audio.vol_r = vr;
 	s_q.cur = idx;
@@ -585,6 +590,7 @@ void mmb_cmd_juke(void)
 	{
 		if (juke_build_queue(path) != 0)
 			mmb_error("?FILE");
+		s_q.owner = g_console;
 		if (juke_start(0) != 0)
 			mmb_error("?FILE");
 	}
@@ -592,6 +598,7 @@ void mmb_cmd_juke(void)
 	{
 		if (juke_build_queue(mmb_vfs_cwd()) != 0)
 			mmb_error("?DIRECTORY");
+		s_q.owner = g_console;
 		if (juke_start(0) != 0)
 			mmb_error("?FILE");
 	}

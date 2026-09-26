@@ -266,6 +266,100 @@ def test_switch_keeps_audio_playing(kernel_image):
         con.stop()
 
 
+def test_run_exit_keeps_audio_owned_by_other_console(kernel_image):
+    """#805: ending a program on one console must not stop music started on
+    another. The teardown is scoped to the console that started playback, while
+    an explicit PLAY STOP still clears the shared engine for every console."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PLAY TONE 440, 440") == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Console 2 owns no music: running a program that exits cleanly leaves
+        # console 1's playback untouched.
+        assert con.send_line("10 PRINT 42") == ""
+        assert con.send_line("RUN") == "42"
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        # A program on this console that did start music still stops it when it
+        # ends, exactly as before.
+        assert con.send_line("10 PLAY TONE 660, 660") == ""
+        assert con.send_line("RUN") == ""
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
+def test_editor_run_exit_keeps_audio_owned_by_other_console(kernel_image):
+    """#805: the editor's Run (Ctrl+R) uses the same program-exit teardown, so
+    it must leave another console's music alone too."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PLAY TONE 440, 440") == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Edit a short program on console 2 and run it from the editor.
+        con._ser.sendall(b'EDIT "RUN805.BAS"\r')
+        time.sleep(1.2)
+        con.drain(quiet=0.4)
+        con._ser.sendall(b"PRINT 42")
+        time.sleep(0.4)
+        con.drain(quiet=0.3)
+        con._ser.sendall(bytes([18]))  # Ctrl+R run
+        time.sleep(1.2)
+        seen = _plain(con.drain(quiet=1.0).decode(errors="replace"))
+        assert "42" in seen
+        assert "Press any key to continue" in seen
+        con._ser.sendall(b" ")  # return to the editor
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+
+        # Leave the editor; console 1's music is untouched.
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+        assert con.send_line("PRINT PLAYING()") == "1"
+    finally:
+        con.stop()
+
+
+def test_juke_keeps_playing_when_other_console_runs_a_program(kernel_image):
+    """#805 acceptance: music started by JUKE on one screen keeps playing when
+    a program runs and exits on another screen."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'JUKE "tests/TEST.MOD"\r')
+        time.sleep(1.2)
+        con.drain(quiet=0.5)
+        con._ser.sendall(b"\x1b")  # leave JUKE; playback continues
+        time.sleep(0.8)
+        con.drain(quiet=0.4)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("10 PRINT 42") == ""
+        assert con.send_line("RUN") == "42"
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        con.send_line("PLAY STOP")
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_per_console_ramdisk_cwd(kernel_image):
     """#618: the working directory is session state. CHDIR on one console must
     not move a fresh console, and switching back restores each console's own

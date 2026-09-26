@@ -213,6 +213,7 @@ int mmb_tok_expand(char *dst, int dstsz)
 }
 
 void mmb_play_stop(void) {}
+void mmb_play_stop_owned(void) {}
 
 static int syntax_hits;
 static int fails;

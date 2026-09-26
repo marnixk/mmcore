@@ -355,6 +355,11 @@ typedef struct mmb_audio {
 	int vol_l, vol_r;
 	unsigned samples_decoded;
 	char name[128];
+	/* Virtual console that started the current playback (-1 = none). A
+	 * program that ends on another console must not silence this one's
+	 * music (#805). PLAY STOP stays global: it clears the engine for every
+	 * console, matching the single shared audio resource (#620). */
+	int owner;
 } mmb_audio;
 
 typedef struct mmb {
@@ -1158,6 +1163,10 @@ typedef struct mmb_ramdisk_entry {
 void mmb_ramdisk_seed(void);
 
 void mmb_play_stop(void);
+/* Stop only when the active console owns the current playback. Program-exit
+ * teardown uses this so a background screen's music keeps playing (#805);
+ * explicit commands (PLAY STOP, JUKE 'S', reset) use mmb_play_stop(). */
+void mmb_play_stop_owned(void);
 void mmb_play_mix(void);
 void mmb_play_pause(int on);
 int mmb_play_take_ended(void);

@@ -2287,7 +2287,7 @@ void mmb_cmd_list(void)
 void mmb_cmd_end(void)
 {
 	G.running = 0;
-	mmb_play_stop();
+	mmb_play_stop_owned();
 }
 
 static void load_prog_from_disk(const char *name)
@@ -2784,7 +2784,7 @@ void mmb_cmd_reboot(void)
 void mmb_cmd_quit(void)
 {
 	G.running = 0;
-	mmb_play_stop();
+	mmb_play_stop_owned();
 	if (G.plat && G.plat->can_quit)
 		G.quit_requested = 1;
 }
@@ -2839,7 +2839,7 @@ void mmb_check_break(void)
 	mmb_run_events();
 	if (G.plat && G.plat->take_break && G.plat->take_break())
 	{
-		mmb_play_stop();
+		mmb_play_stop_owned();
 		mmb_error("?BREAK");
 	}
 }
@@ -4224,7 +4224,7 @@ static void run_program(void)
 	if (G.opt.profiling)
 		mmb_prof_report();
 	G.running = 0;
-	mmb_play_stop();
+	mmb_play_stop_owned();
 	mmb_gfx_reset_console(0);
 }
 

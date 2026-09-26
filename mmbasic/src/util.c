@@ -209,7 +209,7 @@ void mmb_error(const char *msg)
 		longjmp(G.run_errjmp, 1);
 	}
 	if (G.running)
-		mmb_play_stop();
+		mmb_play_stop_owned();
 	longjmp(G.errjmp, 1);
 }
 
@@ -1813,7 +1813,7 @@ static void inkey_poll(void)
 		G.plat->poll_input();
 	if (G.running && G.plat && G.plat->take_break && G.plat->take_break())
 	{
-		mmb_play_stop();
+		mmb_play_stop_owned();
 		mmb_error("?BREAK");
 	}
 }
