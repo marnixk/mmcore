@@ -360,6 +360,65 @@ def test_juke_keeps_playing_when_other_console_runs_a_program(kernel_image):
         con.stop()
 
 
+def _play_mod_in_files(con) -> None:
+    """Console 2: CHDIR to the seeded tests and start a FILES play preview."""
+    assert con.send_line('CHDIR "A:/tests"') == ""
+    con._ser.sendall(b"FILES\r")
+    seen = con.drain(quiet=0.8, timeout=8.0).decode(errors="replace")
+    for _ in range(40):
+        if "SEL=TEST.MOD" in seen:
+            break
+        con._ser.sendall(b"\x1b[B")
+        seen = con.drain(quiet=0.2).decode(errors="replace")
+    assert "SEL=TEST.MOD" in seen, seen
+    con._ser.sendall(b"\r")
+    seen = con.drain(quiet=1.0, timeout=8.0).decode(errors="replace")
+    assert "[FILES] PLAY TEST.MOD" in seen, seen
+
+
+def test_files_play_close_keeps_other_consoles_audio(kernel_image):
+    """#807: leaving the FILES play overlay must stop only audio this FILES
+    session started. A preview opened on console 2 and then abandoned while
+    console 1 starts its own music must not silence console 1 when the overlay
+    closes (closing an overlay is teardown, not an explicit PLAY STOP)."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Console 2 starts a FILES media preview (FU_PLAY).
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _play_mod_in_files(con)
+
+        # Console 1 starts music of its own while console 2's preview is open.
+        # The engine now belongs to console 1 (#805).
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'JUKE "tests/TEST.MOD"\r')
+        time.sleep(0.9)
+        con.drain(quiet=0.4)
+        con._ser.sendall(b"\x1b")  # leave JUKE; playback continues
+        time.sleep(0.7)
+        con.drain(quiet=0.3)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        # Back on console 2, close the FILES overlay (Esc) and leave FILES.
+        # Console 1's music must survive: console 2 no longer owns the engine.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b")  # close the FU_PLAY overlay
+        con.drain(quiet=0.6, timeout=6.0)
+        con._ser.sendall(b"q")  # leave the browser for the REPL
+        con.drain(quiet=0.6, timeout=6.0)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        con.send_line("PLAY STOP")
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_per_console_ramdisk_cwd(kernel_image):
     """#618: the working directory is session state. CHDIR on one console must
     not move a fresh console, and switching back restores each console's own

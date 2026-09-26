@@ -2487,7 +2487,7 @@ static void set_drive_letter(int letter)
 static void close_overlay(void)
 {
 	if (F.mode == FU_PLAY)
-		mmb_play_stop();
+		mmb_play_stop_owned();
 	if (F.mode == FU_FTP)
 		mmb_ftp_stop();
 	if (F.mode == FU_PREVIEW)
