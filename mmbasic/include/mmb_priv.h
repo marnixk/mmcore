@@ -543,6 +543,7 @@ int mmb_match(const char *kw);
 int mmb_match_exact(const char *kw);
 void mmb_expect(char c);
 int mmb_is_ident(char c);
+int mmb_is_ident_start(char c);
 int mmb_is_digit(char c);
 void mmb_ident(char *dst, int dstsz);
 int mmb_type_suffix(char *name); /* strips $ % ! and returns type, 0 if none */

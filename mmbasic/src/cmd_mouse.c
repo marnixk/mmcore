@@ -31,9 +31,7 @@ void mmb_cmd_mouse(void)
 		mmb_skip_sp();
 		if (*G.p && *G.p != ':' && *G.p != '\'' && *G.p != 0)
 		{
-			char c = *G.p;
-			if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-			    c == '_')
+			if (mmb_is_ident_start(*G.p))
 			{
 				char id[MMB_MAX_NAME];
 				mmb_ident(id, (int)sizeof(id));
@@ -41,7 +39,7 @@ void mmb_cmd_mouse(void)
 				if (type < 0)
 					mmb_syntax();
 			}
-			else if (c == '"')
+			else if (*G.p == '"')
 			{
 				mmb_val v = mmb_expr();
 				if (v.type != T_STR)

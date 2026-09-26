@@ -542,7 +542,7 @@ int mmb_try_function(mmb_val *out)
 		char name[MMB_MAX_NAME];
 		int nn = 0, aid;
 		mmb_skip_sp();
-		if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+		if (mmb_is_ident_start(*G.p))
 		{
 			while (mmb_is_ident(*G.p) && nn < MMB_MAX_NAME - 2)
 			{
