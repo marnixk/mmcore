@@ -21,15 +21,23 @@ DIST="${REPO_ROOT}/dist"
 APPDIR="${DIST}/mmcore.AppDir"
 TOOLS="${DIST}/.appimage-tools"
 ARCH="${APPIMAGE_ARCH:-$(uname -m)}"
-VERSION="$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo dev)"
+# VERSION (env) is the clean release version, e.g. "0.215.0". When set it is
+# baked into the native binary as MMB_VERSION="v<version>" (matching the
+# console build) instead of the pre-tag git-describe suffix; unset falls back
+# to git describe for dev builds (#780).
+if [ -n "${VERSION:-}" ]; then
+	MMB_VERSION="v${VERSION#v}"
+else
+	MMB_VERSION="$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo dev)"
+fi
 # Stable asset name so the rolling download URL never changes.
 OUT="${DIST}/mmcore-${ARCH}.AppImage"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
-log "Version ${VERSION}"
+log "Version ${MMB_VERSION}"
 log "Building native SDL binary"
-"${REPO_ROOT}/scripts/build-native.sh"
+"${REPO_ROOT}/scripts/build-native.sh" MMB_VERSION="${MMB_VERSION}"
 BIN="${REPO_ROOT}/native/mmcore"
 [ -x "${BIN}" ] || { echo "error: ${BIN} not built (SDL2 dev headers missing?)" >&2; exit 1; }
 
