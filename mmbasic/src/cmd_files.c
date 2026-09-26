@@ -742,6 +742,33 @@ void mmb_close_tcp_files(void)
 	mmb_tcp_release();
 }
 
+/* Machine-wide teardown for a reset. The single TCP socket may be owned by a
+ * console that is not active now: a program on console 1 opens it, the user
+ * switches to console 2, then resets. A warm reset frees every console's
+ * interpreter context, so walk every file table and close the TCP file where
+ * it actually lives, before that context (and its file table) is freed. The
+ * old active-console-only walk missed it and leaked the socket with no owner
+ * (#785). Non-reset callers keep using mmb_close_tcp_files() above, which is
+ * deliberately scoped to the active console (NEW must not reach into another
+ * console's program state). */
+void mmb_close_tcp_files_all(void)
+{
+	mmb *save = g_cur;
+	int c, i;
+
+	for (c = 0; c < MMB_MAX_CONSOLES; c++)
+	{
+		if (!g_mmb[c])
+			continue;
+		g_cur = g_mmb[c];
+		for (i = 1; i <= MMB_MAX_FILES; i++)
+			if (mmb_file_is_tcp(i))
+				mmb_file_close_n(i);
+	}
+	g_cur = save;
+	mmb_tcp_release();
+}
+
 int mmb_file_read(int fn, char *buf, int nch)
 {
 	unsigned got = 0;

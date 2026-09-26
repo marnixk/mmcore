@@ -715,6 +715,7 @@ char *mmb_tcp_in_use_text(char *buf);
 void mmb_tcp_in_use(void);
 void mmb_file_close_n(int fn);
 void mmb_close_tcp_files(void);
+void mmb_close_tcp_files_all(void);
 int mmb_file_read(int fn, char *buf, int nch);
 void mmb_file_write(int fn, const char *buf, unsigned n);
 void mmb_cmd_chdir(void);
