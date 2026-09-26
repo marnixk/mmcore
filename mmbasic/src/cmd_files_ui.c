@@ -3291,9 +3291,9 @@ void mmb_files_poll(void)
 	}
 	if (F.active && F.mode == FU_FTP)
 	{
-		const char *st;
-		mmb_ftp_poll();
-		st = mmb_ftp_status();
+		/* The server itself is polled globally from mmb_poll() (#812); here
+		 * we only mirror its status onto the active FILES screen. */
+		const char *st = mmb_ftp_status();
 		if (strcmp(st, F.ftp_last) != 0)
 		{
 			strncpy(F.ftp_last, st, sizeof(F.ftp_last) - 1);

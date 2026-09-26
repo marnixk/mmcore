@@ -3,8 +3,9 @@
 /*
  * Minimal FTP server for the FILES browser.
  *
- * Runs on the interpreter task: mmb_ftp_poll() is called from mmb_files_poll()
- * while the FILES modal is up. Socket operations are non-blocking (the accept
+ * Runs on the interpreter task: mmb_ftp_poll() is called from the host loop
+ * (mmb_poll in core.c) so the server keeps running while its FILES screen is a
+ * background console (#812). Socket operations are non-blocking (the accept
  * path is polled in console/net.cpp), so a transfer is dribbled a chunk per
  * poll and the modal keeps servicing Esc. Files are accessed through the VFS,
  * so A: (ramdisk), B: (package) and the FAT drives all work, and every request
@@ -20,6 +21,7 @@
 #define FTP_RECV_CAP  2048
 #define FTP_WAIT_MS   10000
 #define FTP_IDLE_MS   30000
+#define FTP_POLL_MAX_MS 1000	/* longest un-polled step the clock counts */
 #define FTP_RX_LOG    8192	/* STOR progress marker interval (bytes) */
 
 #define XF_NONE 0
@@ -52,6 +54,8 @@ typedef struct {
 	int data;
 	int xfer;
 	unsigned xfer_at;
+	unsigned clock;            /* polled-time ms clock, see mmb_ftp_poll */
+	unsigned clock_at;         /* real ms at the last poll */
 	char xpath[FTP_PATH_MAX];
 	int xsize;
 	unsigned xoff;
@@ -388,7 +392,7 @@ static int ftp_xfer_begin(int kind, const char *canon, int size)
 		return -1;
 	}
 	FT.xfer = kind;
-	FT.xfer_at = mmb_now_ms();
+	FT.xfer_at = FT.clock;
 	strncpy(FT.xpath, canon ? canon : "", sizeof(FT.xpath) - 1);
 	FT.xpath[sizeof(FT.xpath) - 1] = 0;
 	FT.xsize = size;
@@ -415,7 +419,7 @@ static void ftp_xfer_poll(void)
 		d = mmb_net_srv_accept(FT.data_lsn);
 		if (d < 0)
 		{
-			if (mmb_now_ms() - FT.xfer_at > FTP_WAIT_MS)
+			if (FT.clock - FT.xfer_at > FTP_WAIT_MS)
 				ftp_xfer_fail("425 Data connection timed out");
 			return;
 		}
@@ -456,7 +460,7 @@ static void ftp_xfer_poll(void)
 				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 			if ((unsigned)rc < got)
 				return;
 		}
@@ -487,7 +491,7 @@ static void ftp_xfer_poll(void)
 					ftp_xfer_finish();
 					return;
 				}
-				if (mmb_now_ms() - FT.xfer_at > FTP_IDLE_MS)
+				if (FT.clock - FT.xfer_at > FTP_IDLE_MS)
 				{
 					ftp_stor_fail(FT.xoff,
 						      "426 Data connection timed out",
@@ -505,7 +509,7 @@ static void ftp_xfer_poll(void)
 			}
 			FT.xoff += (unsigned)n;
 			sent += (unsigned)n;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 			if (FT.xoff - FT.rx_log >= FTP_RX_LOG)
 			{
 				char num[16];
@@ -538,7 +542,7 @@ static void ftp_xfer_poll(void)
 				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 		}
 		if (FT.xoff >= (unsigned)FT.list_len)
 		{
@@ -1183,6 +1187,9 @@ int mmb_ftp_start(const char *root, int port)
 	}
 	FT.running = 1;
 	FT.addr[0] = 0;
+	/* The polled-time clock starts now; mmb_ftp_poll() advances it. */
+	FT.clock = 0;
+	FT.clock_at = mmb_now_ms();
 	{
 		char ip[32];
 		char num[8];
@@ -1234,8 +1241,25 @@ void mmb_ftp_stop(void)
 
 void mmb_ftp_poll(void)
 {
+	unsigned now;
+
 	if (!FT.running)
 		return;
+	/* The transfer wait/idle timeouts measure time while the server is being
+	 * polled, not wall-clock time. When the FILES screen is a background
+	 * console (or the interpreter is busy) nothing polls the server, so that
+	 * gap must not count as client inactivity and abort an in-flight transfer
+	 * (#812). Cap each step at the longest interval a healthy host loop is
+	 * expected to leave between polls. */
+	now = mmb_now_ms();
+	{
+		unsigned dt = now - FT.clock_at;
+
+		if (dt > FTP_POLL_MAX_MS)
+			dt = FTP_POLL_MAX_MS;
+		FT.clock += dt;
+	}
+	FT.clock_at = now;
 	ftp_flush();
 	if (FT.ctl < 0)
 	{

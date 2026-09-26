@@ -259,6 +259,7 @@ static int g_data_error_code;
 static int g_data_eof_code;
 
 static int g_data_accepted;
+static int g_data_accept_fail;	/* hold the data connection down (background sim) */
 static int g_lsn_port[4];
 static int g_next_lsn;
 
@@ -304,6 +305,8 @@ int mmb_net_srv_accept(int lsn)
 {
 	if (lsn == 0)
 		return CONN_CTL;
+	if (g_data_accept_fail)
+		return -1;
 	g_data_accepted = 1;
 	return CONN_DATA;
 }
@@ -450,6 +453,7 @@ static void reset(void)
 	g_data_error_code = 0;
 	g_data_eof_code = 0;
 	g_data_accepted = 0;
+	g_data_accept_fail = 0;
 	g_nmkdirs = 0;
 	g_ndirs = 1;
 	strcpy(g_dirs[0], "A:/");
@@ -615,6 +619,83 @@ static void run_stor_eof(const unsigned char *payload, int payload_len)
 	mmb_ftp_stop();
 }
 
+/* #812: the transfer wait/idle timeouts must measure time the server is
+ * actually polled. While the FILES screen is a background console nothing
+ * calls mmb_ftp_poll(), so a long real-time gap must not be charged to the
+ * client and abort an in-flight transfer with "425 Data connection timed out"
+ * (or "426 Data connection timed out" after a STOR is connected). */
+static void run_stor_background_gap(const unsigned char *payload, int payload_len)
+{
+	int i;
+	char ctl[128];
+
+	reset();
+	check(mmb_ftp_start("A:/", 21) == 0, "start (background gap)");
+	g_data_in_len = payload_len;
+	if (payload_len > 0)
+		memcpy(g_data_in, payload, (size_t)payload_len);
+	/* The data connection does not come up before the gap: the server is
+	 * starved while the FILES screen is backgrounded. */
+	g_data_accept_fail = 1;
+
+	strcpy(ctl, "USER anonymous\r\nPASS x\r\nEPSV\r\nSTOR BG.BIN\r\n");
+	strcpy(g_ctl_in, ctl);
+	g_ctl_in_len = (int)strlen(g_ctl_in);
+
+	for (i = 0; i < 5; i++)
+	{
+		mmb_ftp_poll();
+		if (g_ctl_out_len)
+		{
+			feed(g_ctl_out);
+			g_ctl_out_len = 0;
+		}
+	}
+	check(out_has("150 "), "STOR begins before the gap");
+	check(!out_has("425 "), "no 425 before the gap");
+
+	/* Two real minutes pass on another console: no poll runs at all. */
+	g_now += 120000u;
+
+	/* The first poll back still finds no data connection (the client has not
+	 * connected yet): the stale real-time gap must not be charged as a wait
+	 * timeout. */
+	mmb_ftp_poll();
+	if (g_ctl_out_len)
+	{
+		feed(g_ctl_out);
+		g_ctl_out_len = 0;
+	}
+	check(!out_has("425 "), "no 425 on the first poll after the gap");
+
+	/* Back on the FILES screen: the transfer must resume, not time out. */
+	g_data_accept_fail = 0;
+	for (i = 0; i < 2000 && !out_has("226 ") && !out_has("425 ") &&
+	     !out_has("426 "); i++)
+	{
+		mmb_ftp_poll();
+		if (g_ctl_out_len)
+		{
+			feed(g_ctl_out);
+			g_ctl_out_len = 0;
+		}
+	}
+
+	check(out_has("226 "), "transfer completes after the gap");
+	check(!out_has("425 "), "no spurious 425 wait timeout");
+	check(!out_has("426 "), "no spurious 426 idle timeout");
+	check(g_written_len == payload_len &&
+	      memcmp(g_written, payload, (size_t)payload_len) == 0,
+	      "payload survived the gap");
+
+	if (g_failures)
+	{
+		printf("  replies  : %s\n", g_out);
+		printf("  serial   : %s\n", g_ser);
+	}
+	mmb_ftp_stop();
+}
+
 int main(void)
 {
 	static unsigned char payload[13312];
@@ -641,6 +722,10 @@ int main(void)
 
 	/* An orderly FIN is negative too, but completes the STOR. */
 	run_stor_eof(payload, 1024);
+
+	/* A long un-polled gap (FILES screen in the background) is not client
+	 * inactivity and must not fail the transfer. */
+	run_stor_background_gap(payload, 1024);
 
 	if (g_failures)
 	{
