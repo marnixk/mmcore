@@ -474,6 +474,8 @@ typedef struct mmb {
 	unsigned clk_ms;
 	int dim_local;
 	char on_key[MMB_MAX_NAME];
+	char on_mouseclick[MMB_MAX_NAME]; /* ON MOUSECLICK handler */
+	char on_mousemove[MMB_MAX_NAME];  /* ON MOUSEMOVE handler */
 	int tick_busy;
 	struct {
 		int period;
@@ -632,6 +634,16 @@ void mmb_cmd_inc(void);
 void mmb_cmd_dec(void);
 void mmb_cmd_cat(void);
 void mmb_cmd_on(void);
+void mmb_cmd_mouse(void);
+void mmb_mouse_reset_all(void);
+int mmb_mouse_cursor_type_from_name(const char *name);
+const char *mmb_mouse_cursor_type_name(int type);
+void mmb_mouse_cursor_set_on(int on);
+void mmb_mouse_cursor_set_type(int type);
+void mmb_mouse_cursor_refresh(void);
+void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h);
+void mmb_mouse_cursor_reset_all(void);
+int mmb_mouse_take_event(int *x, int *y, int *button);
 void mmb_cmd_continue(void);
 void mmb_cmd_exit(void);
 void mmb_cmd_mid(void);
@@ -794,6 +806,8 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
 void mmb_gfx_clear_overlay(void);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
+void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
+			    int stride);
 void mmb_gfx_present_if(int page);
 void mmb_gfx_dirty_reset(void);
 void mmb_gfx_dirty_add(int x, int y, int w, int h);

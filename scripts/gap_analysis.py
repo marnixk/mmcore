@@ -405,6 +405,8 @@ def extract_mmcore_commands() -> set[str]:
         "ON GOSUB": r"ON\s+GOSUB|mmb_match\(\"GOSUB\"\)",
         "ON KEY": r"ON\s+KEY|mmb_match\(\"KEY\"\)",
         "ON ERROR": r"ON\s+ERROR|mmb_match\(\"ERROR\"\)",
+        "ON MOUSECLICK": r"ON\s+MOUSECLICK|mmb_match\(\"MOUSECLICK\"\)",
+        "ON MOUSEMOVE": r"ON\s+MOUSEMOVE|mmb_match\(\"MOUSEMOVE\"\)",
     }
     for name, pat in compound_markers.items():
         if name.split()[0] in names or re.search(pat, core_all, re.I):

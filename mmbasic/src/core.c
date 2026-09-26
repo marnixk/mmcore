@@ -3049,6 +3049,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("CAT")] = mmb_cmd_cat;
 		tab[mmb_kw_id("SORT")] = mmb_cmd_sort;
 		tab[mmb_kw_id("ON")] = mmb_cmd_on;
+		tab[mmb_kw_id("MOUSE")] = mmb_cmd_mouse;
 		tab[mmb_kw_id("CLEAR")] = mmb_cmd_clear;
 		tab[mmb_kw_id("NEW")] = mmb_cmd_new;
 		tab[mmb_kw_id("LIST")] = tok_cmd_list;
@@ -4006,6 +4007,25 @@ int mmb_try_user_function(mmb_val *out)
 	return 1;
 }
 
+/* Append a signed decimal integer to buf (no stdio in this file). */
+static void append_int(char *buf, int *n, int v)
+{
+	char tmp[12];
+	int i = 0;
+	unsigned u = v < 0 ? (unsigned)(-(long)v) : (unsigned)v;
+	if (v < 0)
+		buf[(*n)++] = '-';
+	if (u == 0)
+		tmp[i++] = '0';
+	while (u)
+	{
+		tmp[i++] = (char)('0' + (u % 10));
+		u /= 10;
+	}
+	while (i)
+		buf[(*n)++] = tmp[--i];
+}
+
 void mmb_run_events(void)
 {
 	unsigned now;
@@ -4052,6 +4072,48 @@ void mmb_run_events(void)
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
 	}
+	{
+		int mx, my, mb, ev;
+		char abuf[64];
+		while ((ev = mmb_mouse_take_event(&mx, &my, &mb)) != 0)
+		{
+			const char *sub = ev == 2 ? G.on_mouseclick
+						  : G.on_mousemove;
+			int n = 0;
+			if (!sub[0])
+				continue;
+			abuf[n++] = '(';
+			append_int(abuf, &n, mx);
+			abuf[n++] = ',';
+			append_int(abuf, &n, my);
+			if (ev == 2)
+			{
+				const char *btn = mb == 1 ? "left" :
+						  mb == 2 ? "right" : "middle";
+				int i;
+				abuf[n++] = ',';
+				abuf[n++] = '"';
+				for (i = 0; btn[i]; i++)
+					abuf[n++] = btn[i];
+				abuf[n++] = '"';
+			}
+			abuf[n++] = ')';
+			abuf[n] = 0;
+			saved_pc = G.run_pc;
+			saved_p = G.p;
+			saved_branch = G.branch_pc;
+			saved_sp = G.gosub_sp;
+			G.tick_busy = 1;
+			G.p = abuf;
+			if (mmb_call_named_sub(sub))
+				run_gosub_body();
+			G.run_pc = saved_pc;
+			G.p = saved_p;
+			G.branch_pc = saved_branch;
+			G.gosub_sp = saved_sp;
+			G.tick_busy = 0;
+		}
+	}
 }
 
 static void run_program(void)
@@ -4081,6 +4143,8 @@ static void run_program(void)
 		G.nsubs = 0;
 		memset(G.tick, 0, sizeof(G.tick));
 		G.on_key[0] = 0;
+		G.on_mouseclick[0] = 0;
+		G.on_mousemove[0] = 0;
 		G.tick_busy = 0;
 		G.inkey_n = G.inkey_r = G.inkey_w = 0;
 		scan_labels();
