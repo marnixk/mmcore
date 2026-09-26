@@ -54,7 +54,7 @@ static const char *after_label(const char *body)
 	char name[MMB_MAX_NAME];
 	G.p = body;
 	mmb_skip_sp();
-	if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_')
+	if (mmb_is_ident_start(*G.p))
 	{
 		mmb_ident(name, sizeof(name));
 		mmb_skip_sp();
@@ -81,7 +81,7 @@ static int find_label_pc(const char *name)
 static int parse_target(void)
 {
 	mmb_skip_sp();
-	if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+	if (mmb_is_ident_start(*G.p))
 	{
 		char name[MMB_MAX_NAME];
 		const char *save = G.p;
@@ -109,7 +109,7 @@ static void scan_labels(void)
 		char name[MMB_MAX_NAME];
 		G.p = G.prog[i];
 		mmb_skip_sp();
-		if ((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') || *G.p == '_')
+		if (mmb_is_ident_start(*G.p))
 		{
 			mmb_ident(name, sizeof(name));
 			mmb_skip_sp();
@@ -2539,7 +2539,7 @@ void mmb_cmd_if(void)
 			G.branch_pc = mmb_find_line_pc(num);
 			return;
 		}
-		if (mmb_is_ident(*G.p))
+		if (mmb_is_ident_start(*G.p))
 		{
 			char name[MMB_MAX_NAME];
 			const char *save = G.p;
@@ -2655,7 +2655,7 @@ void mmb_cmd_next(void)
 	int named = 0;
 	int off;
 	mmb_skip_sp();
-	if (mmb_is_ident(*G.p))
+	if (mmb_is_ident_start(*G.p))
 	{
 		mmb_ident(name, sizeof(name));
 		mmb_type_suffix(name);
@@ -2703,7 +2703,7 @@ void mmb_cmd_next(void)
 				if (mmb_match("NEXT"))
 				{
 					mmb_skip_sp();
-					if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+					if (mmb_is_ident_start(*G.p))
 					{
 						mmb_ident(nbuf, sizeof(nbuf));
 						mmb_type_suffix(nbuf);
@@ -3969,7 +3969,7 @@ int mmb_try_user_function(mmb_val *out)
 	int si;
 
 	mmb_skip_sp();
-	if (!mmb_is_ident(*G.p))
+	if (!mmb_is_ident_start(*G.p))
 		return 0;
 	mmb_ident(name, sizeof(name));
 	strncpy(raw, name, MMB_MAX_NAME - 1);

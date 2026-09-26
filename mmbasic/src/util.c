@@ -47,6 +47,11 @@ int mmb_is_ident(char c)
 	       (c >= '0' && c <= '9') || c == '_' || c == '.';
 }
 
+int mmb_is_ident_start(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
 void mmb_upper(char *s)
 {
 	for (; *s; s++)

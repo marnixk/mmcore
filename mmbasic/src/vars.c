@@ -1064,7 +1064,7 @@ void mmb_cmd_common(void)
 	{
 		int t;
 		mmb_skip_sp();
-		if (!mmb_is_ident(*G.p))
+		if (!mmb_is_ident_start(*G.p))
 			break;
 		mmb_ident(name, sizeof(name));
 		t = mmb_type_suffix(name);
@@ -1191,8 +1191,7 @@ static int parse_ref_seg(char *out, int outsz)
 		out[n] = 0;
 		return 1;
 	}
-	if (!((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') ||
-	      *G.p == '_'))
+	if (!mmb_is_ident_start(*G.p))
 		return 0;
 	while (ref_name_char(*G.p) && n < outsz - 2)
 	{

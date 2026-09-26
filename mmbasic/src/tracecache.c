@@ -130,7 +130,7 @@ static int tc_add_const(tc_ent *e, double x)
 static int tc_parse_name(char *name, int *type)
 {
 	mmb_skip_sp();
-	if (!mmb_is_ident(*G.p) || (*G.p >= '0' && *G.p <= '9'))
+	if (!mmb_is_ident_start(*G.p))
 		return 0;
 	mmb_ident(name, MMB_MAX_NAME);
 	*type = mmb_type_suffix(name);
