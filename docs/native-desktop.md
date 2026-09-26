@@ -279,6 +279,6 @@ makes notarization mandatory and defaults the profile to `mmcore-notary`, so a
 release aborts if notarization or stapling fails. An unnotarized app therefore
 cannot ship unnoticed. For a local build without a Developer ID, sign ad-hoc
 (the default) and leave `NOTARY_PROFILE` unset; the mandatory default only
-applies to release builds. `scripts/github-release.sh publish` builds and
-attaches the zip on macOS automatically (skip with `MMCORE_SKIP_MACOS=1`).
+applies to release builds. `scripts/github-release.sh publish` builds,
+notarizes, and attaches the zip on macOS automatically (there is no skip).
 

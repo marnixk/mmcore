@@ -5,9 +5,10 @@ parallel issue waves; each item links the issue(s) it came from. Desktop-only
 items are marked and can be skipped on the Pi.
 
 Releases: **v0.197.0** (wave 1) → **v0.198.0** (wave 2) → **v0.199.0** (wave 3).
-Each ships the four board zips plus a Windows zip and a Linux AppImage. macOS
-is intentionally omitted (notarization profile unavailable in the build
-environment).
+Each ships the four board zips plus a Windows zip and a Linux AppImage. Those
+three versions omitted macOS (the notarization profile was unavailable in the
+build environment at the time); from v0.214.0 releases also ship a notarized
+universal macOS app.
 
 ## Boot & sessions
 - [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - <version> - 2026 (c) Marnix Kok`, a blank line, then `MMBasic` with the `Copyright 2011-2026 Geoff Graham` and `Copyright 2016-2026 Peter Mather` notices, a blank line, and the `Type HELP ME for a short introduction.` prompt. (#536, #730)
@@ -49,5 +50,7 @@ environment).
 - [ ] SDL binaries are named `mmcore` / `mmcore.exe`. Windows Authenticode is wired in CI but stays unsigned until a signing certificate secret is configured, so SmartScreen may still warn. (#552, #553)
 
 ## Known caveats
-- macOS bundle is not published (notarization profile unavailable in the build environment); same as v0.196.0/v0.197.0.
+- macOS was omitted from v0.196.0–v0.199.0 (the notarization profile was
+  unavailable in the build environment); releases now ship a notarized universal
+  `mmcore.app`.
 - One graphics test (`test_page1_alpha_composite_png`) is flaky only under parallel load; it passes in isolation.
