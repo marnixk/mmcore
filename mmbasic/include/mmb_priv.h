@@ -1076,8 +1076,18 @@ int mmb_net_srv_closed(int conn);
 void mmb_net_srv_close(int conn);
 int mmb_net_srv_ip(char *buf, int bufsize);
 
+/* mmb_ftp_start() return codes. The server is one machine-global resource
+ * whose UI is per console, so a second console starting it is told BUSY
+ * rather than silently adopting the running server (#818). */
+#define MMB_FTP_OK   0
+#define MMB_FTP_BUSY 1
+#define MMB_FTP_ERR  (-1)
+
 int mmb_ftp_start(const char *root, int port);
 void mmb_ftp_stop(void);
+void mmb_ftp_stop_owned(void);
+int mmb_ftp_owner(void);
+const char *mmb_ftp_root(void);
 void mmb_ftp_poll(void);
 int mmb_ftp_running(void);
 int mmb_ftp_port(void);

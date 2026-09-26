@@ -32,6 +32,7 @@
 
 typedef struct {
 	int running;
+	int owner;                 /* console that started it, -1 when free */
 	int port;
 	int data_port;
 	char root[FTP_PATH_MAX];   /* canonical, always ends in '/' */
@@ -1143,23 +1144,30 @@ int mmb_ftp_start(const char *root, int port)
 	unsigned t0;
 
 	if (FT.running)
-		return 0;
+	{
+		/* One global server, one owning console: re-starting from the owner
+		 * is a no-op, another console is refused so it does not adopt a
+		 * server rooted in someone else's folder (#818). */
+		if (FT.owner == g_console)
+			return MMB_FTP_OK;
+		return MMB_FTP_BUSY;
+	}
 	if (port < 1 || port > 64535)
-		return -1;
+		return MMB_FTP_ERR;
 	if (!mmb_net_available())
 	{
 		if (mmb_eth_start() != 0)
-			return -1;
+			return MMB_FTP_ERR;
 		t0 = mmb_now_ms();
 		while (!mmb_net_available() && mmb_now_ms() - t0 < 5000)
 			mmb_net_yield();
 	}
 	if (!mmb_net_available())
-		return -1;
+		return MMB_FTP_ERR;
 	if (!root || !root[0])
 		root = mmb_vfs_cwd();
 	if (mmb_vfs_resolve(root, canon, sizeof(canon)) != 0)
-		return -1;
+		return MMB_FTP_ERR;
 
 	memset(&FT, 0, sizeof(FT));
 	FT.ctl = -1;
@@ -1167,6 +1175,7 @@ int mmb_ftp_start(const char *root, int port)
 	FT.ctl_lsn = -1;
 	FT.data_lsn = -1;
 	FT.writer = -1;
+	FT.owner = -1;
 	strncpy(FT.root, canon, sizeof(FT.root) - 1);
 	FT.root[sizeof(FT.root) - 1] = 0;
 	if (FT.root[0] && FT.root[strlen(FT.root) - 1] != '/')
@@ -1183,9 +1192,11 @@ int mmb_ftp_start(const char *root, int port)
 		memset(&FT, 0, sizeof(FT));
 		FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
 		FT.writer = -1;
-		return -1;
+		FT.owner = -1;
+		return MMB_FTP_ERR;
 	}
 	FT.running = 1;
+	FT.owner = g_console;
 	FT.addr[0] = 0;
 	/* The polled-time clock starts now; mmb_ftp_poll() advances it. */
 	FT.clock = 0;
@@ -1219,7 +1230,7 @@ int mmb_ftp_start(const char *root, int port)
 	ftp_ser(" ADDR ");
 	ftp_ser(FT.addr);
 	ftp_ser("\r\n");
-	return 0;
+	return MMB_FTP_OK;
 }
 
 void mmb_ftp_stop(void)
@@ -1235,8 +1246,28 @@ void mmb_ftp_stop(void)
 	memset(&FT, 0, sizeof(FT));
 	FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
 	FT.writer = -1;
+	FT.owner = -1;
 	FT.running = 0;
 	ftp_ser("[FTP] STOP\r\n");
+}
+
+/* Teardown path for a screen: only the console that started the server may
+ * stop it, so backgrounding or leaving another console's FILES screen cannot
+ * kill a server that screen does not own (#818). */
+void mmb_ftp_stop_owned(void)
+{
+	if (FT.running && FT.owner == g_console)
+		mmb_ftp_stop();
+}
+
+int mmb_ftp_owner(void)
+{
+	return FT.running ? FT.owner : -1;
+}
+
+const char *mmb_ftp_root(void)
+{
+	return FT.running ? FT.root : "";
 }
 
 void mmb_ftp_poll(void)

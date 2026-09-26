@@ -13,6 +13,9 @@
 
 mmb_test_globals G;
 
+/* Active console, per mmb_priv.h (FTP server ownership, #818). */
+int g_console;
+
 /* ---- fake VFS --------------------------------------------------------- */
 
 static const char *g_listing = "";

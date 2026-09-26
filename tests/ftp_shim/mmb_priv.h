@@ -17,6 +17,10 @@ typedef struct mmb_test_globals {
 
 extern mmb_test_globals G;
 
+/* The real cmd_ftp.c reads the active console to track FTP server ownership
+ * (#818); the host tests drive it by assigning g_console. */
+extern int g_console;
+
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 const char *mmb_vfs_cwd(void);
 int mmb_vfs_isdir(const char *path);
@@ -51,8 +55,15 @@ void mmb_net_srv_close(int conn);
 int mmb_net_srv_ip(char *buf, int bufsize);
 
 /* Public API implemented by mmbasic/src/cmd_ftp.c. */
+#define MMB_FTP_OK   0
+#define MMB_FTP_BUSY 1
+#define MMB_FTP_ERR  (-1)
+
 int mmb_ftp_start(const char *root, int port);
 void mmb_ftp_stop(void);
+void mmb_ftp_stop_owned(void);
+int mmb_ftp_owner(void);
+const char *mmb_ftp_root(void);
 void mmb_ftp_poll(void);
 int mmb_ftp_running(void);
 int mmb_ftp_port(void);
