@@ -4456,6 +4456,10 @@ void mmb_poll(void)
 	mmb_package_poll();
 	mmb_apptui_poll();
 	mmb_settings_poll();
+	/* The FTP server is one machine-global resource owned by whichever FILES
+	 * screen started it, so poll it from the host loop and not only while
+	 * that screen is the active console (#812). */
+	mmb_ftp_poll();
 	mmb_files_poll();
 	mmb_wordpad_poll();
 	mmb_paint_poll();
