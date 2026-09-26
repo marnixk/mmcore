@@ -181,7 +181,9 @@ void mmb_warm_reset(void)
 {
 	G.running = 0;
 	mmb_play_stop();
-	mmb_close_tcp_files();
+	/* The socket may be owned by a background console, so close it on every
+	 * console before mmb_console_reset() frees the contexts (#785). */
+	mmb_close_tcp_files_all();
 	mmb_settings_save();
 
 	/* Hand the keyboard back before the interpreter state is replaced. */
