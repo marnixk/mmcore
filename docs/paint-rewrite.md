@@ -7,7 +7,7 @@ _Proposal, 2026-09-24. Supersedes the current Deluxe Paint-style
 
 Replace PAINT with a full-screen, mouse-driven pixel paint application in the
 spirit of "Dr. Genius" / "Dr. Halo": a black canvas that fills the screen, a
-tool column down the left, the 256-colour VGA palette across the bottom, and a
+tool strip down the left, the 256-colour VGA palette across the bottom, and a
 sprite-restored cursor that changes shape with the selected tool. Menus are
 drawn with the normal text font and driven by the mouse.
 
@@ -16,7 +16,6 @@ drawn with the normal text font and driven by the mouse.
 - Dithering / pattern fills. Solid colours only.
 - Editing the palette. It is the fixed default VGA 256 and cannot be changed.
 - Persisting settings (tool, colours, window state). None is remembered.
-- Selection tools and cut/copy/paste (deferred — see `not ready` ticket).
 - The old phone/tablet keyboard-only interaction model. PAINT needs a mouse.
 
 ## Screen and layout
@@ -25,9 +24,10 @@ drawn with the normal text font and driven by the mouse.
   one screen pixel.
 - **Row 0** is the menu bar (text). It takes its own row; the canvas begins
   directly below it.
-- **Left edge**: the tool column, one icon per tool.
-- **Bottom**: the palette strip — **4 rows × 64 = 256 swatches**, with the FG/BG
-  indicator at the left end.
+- **Left edge**: the tool strip, a **2 × 9 grid** of 32-pixel cells (one icon per
+  tool; the ninth row was added for the select tool).
+- **Bottom**: the FG/BG indicator at the left end, then the pen-width selector,
+  then the palette strip — **4 rows × 64 = 256 swatches**.
 - **Canvas** starts entirely black (palette index 0).
 
 ## Colour model
@@ -55,8 +55,13 @@ Behaviour:
 - Line / rectangle / ellipse use **live rubber-band preview** and commit on
   button release. **Shift** constrains to square / circle / 45°.
 - **Flood fill is exact-match** (no tolerance).
-- **Text** uses a built-in CP437 8×8 font; an extension may let the user pick a
-  font from `A:/FONTS/GFX` (see `not ready` tickets).
+- **Text** uses a built-in CP437 8×8 font. `Ctrl+F` while typing opens a font
+  picker that lists the bitmap fonts in `A:/FONTS/GFX` (a `.json` descriptor
+  plus its `.png` sheet); the built-in face stays the fallback and the default.
+- **Select** drags out a rectangle; pressing inside it lifts and moves the
+  pixels. **Cut / Copy / Paste** and **Del sel** work through a pixel clipboard
+  (paste treats the background index as transparent). The boundary is animated
+  "marching ants" drawn on screen only, never into the canvas or a saved PCX.
 
 ## Cursor
 
@@ -70,7 +75,7 @@ Behaviour:
 | Menu | Items |
 | --- | --- |
 | File | New canvas, Open, Save, Save as, Quit |
-| Edit | Undo, Redo, Clear |
+| Edit | Undo, Redo, Clear, Cut, Copy, Paste, Del sel, Select |
 | Help | Keys |
 
 - Dropdowns: click to open, hover to switch, click-away (or Esc) to close;
@@ -124,7 +129,8 @@ issues only add to their own `.c` file.
 | `mmbasic/src/paint_menus.c` | Menus | Menu bar, dropdowns, confirm dialogs |
 | `mmbasic/src/paint_cursors.c` | Cursor runtime | Sprite-restore cursor, per-tool shapes |
 | `mmbasic/src/paint_file.c` | File I/O | Open/Save via the shared file dialog |
-| `mmbasic/src/paint_text.c` | Text tool | CP437 text entry |
+| `mmbasic/src/paint_text.c` | Text tool | CP437 text entry + `A:/FONTS/GFX` picker |
+| `mmbasic/src/paint_select.c` | Selection | Rectangular select, move, cut/copy/paste |
 
 ## Dependency waves
 
@@ -146,10 +152,8 @@ Wave 2 (depend on wave 1)
   J. File Open/Save/Save-as           (A, D)
   K. Airbrush / spray / magnify       (F; edits paint_tools.c — serialize with F)
   L. Text tool                        (E, F)
-  M. Text font picker A:/FONTS/GFX    (L, #625)  [not ready]
-
-Deferred
-  N. Selection tools + clipboard      [not ready]
+  M. Text font picker A:/FONTS/GFX    (L, #625)   [landed #643]
+  N. Selection tools + clipboard                 [landed #644]
 ```
 
 Bundle guidance for the parallel coordinator: A, B, C, D are mutually
