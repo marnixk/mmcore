@@ -247,6 +247,12 @@ static int console_do_switch(int idx)
 	if (!g_mmb[idx])
 		return 0;
 
+	/* The pointer is a global device and PAINT's poll does not run on a
+	 * background screen, so a stroke still held here would be committed from
+	 * its stale press point when focus returns. Drop it as this screen stops
+	 * being active (#811). */
+	mmb_paint_console_deactivated(g_console);
+
 	g_console = idx;
 	g_cur = g_mmb[idx];
 	mmb_front_select(idx);
