@@ -191,13 +191,16 @@ int tst_canvas_nonzero_for(int n)
 	return c;
 }
 
-/* Mirror console_do_switch()'s paint hook: cancel the departing screen's
- * stroke, then hand the screen to the destination console (#811). */
+/* Mirror console_do_switch()'s paint hooks: cancel the departing screen's
+ * stroke (and pending keys), then hand the screen to the destination console
+ * and seed its pointer-edge tracker (#811, #814, #815). */
 void tst_switch(int n)
 {
 	if (pt_console_state[g_console].active)
 		mmb_paint_console_deactivated(g_console);
 	g_console = n;
+	if (pt_console_state[n].active)
+		mmb_paint_console_activated(n);
 }
 
 /* ---- stubs cmd_paint.c references (only its command/teardown paths) ----- */
@@ -315,6 +318,10 @@ def _bind(lib):
     lib.tst_switch.argtypes = [ctypes.c_int]
     lib.mmb_paint_poll.argtypes = []
     lib.mmb_paint_console_deactivated.argtypes = [ctypes.c_int]
+    lib.mmb_paint_console_activated.argtypes = [ctypes.c_int]
+    lib.mmb_paint_key.argtypes = [ctypes.c_char]
+    lib.mmb_paint_key.restype = ctypes.c_char_p
+    lib.mmb_in_paint.restype = ctypes.c_int
 
 
 def test_undo_history_is_per_console(lib):
@@ -468,3 +475,79 @@ def test_paint_stroke_does_not_commit_across_console_switch(lib):
     lib.mmb_paint_poll()
     assert lib.tst_mouse_down() == 0
     assert lib.tst_canvas_nonzero() == 0
+
+
+def test_held_button_does_not_begin_stroke_on_switch_in(lib):
+    """#814: a button already held as a PAINT console becomes active is not a
+    fresh press on that screen, so it must not begin a stroke.
+
+    The pointer is machine-wide: holding the button on console 0 and switching
+    to console 1 (also PAINT) must not call pt_tool_begin() on console 1 from
+    the carried-over hold. Only an up->down edge seen here is a press."""
+    _bind(lib)
+
+    # Console 1 is a background PAINT session that never saw a press.
+    lib.tst_set_console(1)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    # Console 0 runs PAINT and observes a real press on its canvas.
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+    lib.tst_mouse(1, 64 + 20, 16 + 20, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 1		# stroke live on console 0
+
+    # Focus moves to console 1 with the button still held.
+    lib.tst_switch(1)
+    assert lib.tst_console() == 1
+    assert lib.tst_mouse_down_for(1) == 0	# dest had no press of its own
+
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 0		# held button is not an edge
+    assert lib.tst_canvas_nonzero() == 0
+
+    # Releasing and pressing again on this screen is a fresh edge.
+    lib.tst_mouse(1, 64 + 20, 16 + 20, 0)
+    lib.mmb_paint_poll()
+    lib.tst_mouse(1, 64 + 20, 16 + 20, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 1
+
+
+def test_buffered_escape_is_dropped_across_console_switch(lib):
+    """#815: a lone Esc buffered on one screen must not resolve after a switch.
+
+    PAINT holds a lone Esc for PT_ESC_IDLE_MS so it can tell it from the lead
+    byte of a CSI/SS3 sequence. The clock is per console; time that passes on a
+    background screen must not cash the stale Esc in as a real one that closes
+    a menu or quits."""
+    _bind(lib)
+
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    lib.mmb_paint_key(b"\x1b")		# lone Esc buffered on console 0
+    lib.tst_switch(1)			# leave before the idle window elapses
+    lib.tst_switch(0)			# and come back
+
+    lib.mmb_paint_poll()
+    assert lib.mmb_in_paint() == 1	# the stale Esc must not quit PAINT
+
+
+def test_armed_alt_prefix_is_dropped_across_console_switch(lib):
+    """#815: an Alt prefix armed on one screen must not survive a switch, or an
+    ``x`` typed on return would quit PAINT as Alt+X."""
+    _bind(lib)
+
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    lib.mmb_paint_key(b"\x01")		# Alt prefix armed on console 0
+    lib.tst_switch(1)
+    lib.tst_switch(0)
+    lib.mmb_paint_key(b"x")		# would be Alt+X if the prefix survived
+    assert lib.mmb_in_paint() == 1
