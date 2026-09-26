@@ -78,6 +78,11 @@ RAMDISK_C := $(MMB)/src/ramdisk_data.c
 HELP_C    := $(MMB)/src/help_data.c
 VERSION_H := $(CURDIR)/mmb_version.h
 
+# Version baked into util.o/cmd_credits.o. The header is FORCEd so a commit
+# that only moves git describe (docs/tests) is picked up; gen-mmb-version.sh
+# rewrites it only when the content changes, so the objects stay put.
+MMB_VERSION ?= $(shell git -C $(REPO) describe --tags --always 2>/dev/null)
+
 MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 	    $(RAMDISK_C) $(HELP_C)
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
@@ -161,8 +166,8 @@ $(HELP_C): $(REPO)/scripts/gen_help.py $(wildcard $(REPO)/docs/help/*.txt)
 $(RAMDISK_C): $(REPO)/scripts/gen_ramdisk.py $(shell find $(REPO)/ramdisk -type f 2>/dev/null)
 	python3 $(REPO)/scripts/gen_ramdisk.py --out $@
 
-$(VERSION_H):
-	MMB_VERSION="$(shell git -C $(REPO) describe --tags --always 2>/dev/null)" \
+$(VERSION_H): FORCE
+	MMB_VERSION="$(MMB_VERSION)" \
 		bash $(REPO)/scripts/gen-mmb-version.sh $@
 
 -include $(COMMON_OBJS:.o=.d) $(BUILD)/platform_stdio.d $(BUILD)/main.d \
@@ -176,4 +181,6 @@ clean:
 	      $(CURDIR)/mmbasic-x86_64 $(CURDIR)/mmcore-x86_64 \
 	      $(CURDIR)/mmcore.ico $(CURDIR)/mmcore.rc
 
-.PHONY: all stdio sdl clean
+.PHONY: all stdio sdl clean FORCE
+
+FORCE:
