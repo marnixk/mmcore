@@ -1131,6 +1131,7 @@ void mmb_term_reset_all(void);
 void mmb_files_reset_all(void);
 void mmb_paint_reset_all(void);
 void mmb_paint_console_deactivated(int idx);
+void mmb_paint_console_activated(int idx);
 void mmb_wordpad_reset_all(void);
 void mmb_editor_reset_all(void);
 void mmb_editor_console_activated(int idx);

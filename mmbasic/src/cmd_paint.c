@@ -29,6 +29,11 @@ static int s_force_mouse;	/* test-only override (#633) */
  * not inherit the other screen's pending key. */
 static int s_alt_pend[MMB_MAX_CONSOLES];
 static int s_saved_mode[MMB_MAX_CONSOLES], s_saved_bits[MMB_MAX_CONSOLES];
+/* The global button state last seen by each console's poll. The mouse is a
+ * machine-wide device, so a button already held as a console becomes active
+ * was never pressed on this screen: only an up->down edge observed here may
+ * begin a stroke (#814). */
+static int s_mouse_btn[MMB_MAX_CONSOLES];
 
 /* ---- escape sequences (#726) ------------------------------------------- *
  * Terminal navigation keys (arrows, Home/End/PageUp/Down, function keys,
@@ -490,6 +495,13 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	PT.bg = 0;
 	s_esc_state[g_console] = PT_ESC_NONE;
 	s_alt_pend[g_console] = 0;
+	/* A button held as PAINT opens must not begin a stroke before it is
+	 * released: seed the edge tracker from the live device (#814). */
+	{
+		mmb_mouse_state m;
+
+		s_mouse_btn[g_console] = mmb_mouse_read(&m) && (m.buttons & 3);
+	}
 
 	w = pt_clamp(w, 1, PT_MAX_W);
 	h = pt_clamp(h, 1, PT_MAX_H);
@@ -747,6 +759,13 @@ void mmb_paint_poll(void)
 		int button = left ? PT_BTN_LEFT :
 			     (right ? PT_BTN_RIGHT : 0);
 		int down = (left || right) ? 1 : 0;
+		/* A press only counts when this screen saw the button go down:
+		 * a button already held on arrival (the user held it on the
+		 * console we switched from, or pressed while away) is not a
+		 * fresh press here (#814). */
+		int fresh = down && !s_mouse_btn[g_console];
+
+		s_mouse_btn[g_console] = down;
 
 		/* The menu module sees every pointer poll: a press opens,
 		 * switches or chooses; a release clears its held state; and
@@ -755,7 +774,7 @@ void mmb_paint_poll(void)
 		 * event, so a plain move never steals canvas input. */
 		if (pt_menus_mouse(sx, sy, button, down))
 			changed = 1;
-		else if (down)
+		else if (fresh)
 		{
 			int idx, tool, widx;
 
@@ -837,6 +856,35 @@ void mmb_paint_console_deactivated(int idx)
 	PT.mouse_button = 0;
 	PT.have_anchor = 0;
 	g_console = save;
+
+	/* A lone Esc or Alt prefix buffered on this screen must not cash in its
+	 * idle window after the switch (#815): the clock is per console, but
+	 * time that elapses while the screen is backgrounded is not this
+	 * screen's. Drop both so returning cannot close a menu or quit PAINT
+	 * from a stale key. */
+	s_esc_state[idx] = PT_ESC_NONE;
+	s_esc_at[idx] = 0;
+	s_alt_pend[idx] = 0;
+}
+
+/* The console switch has handed this screen the foreground (#814). The pointer
+ * is machine-wide, so a button already held right now was not pressed here:
+ * seed this console's last-seen button state from the live device. An up->down
+ * edge observed from now on is the only thing that may begin a stroke; a hold
+ * carried over from the console we left waits for a release and a fresh
+ * press. */
+void mmb_paint_console_activated(int idx)
+{
+	mmb_mouse_state m;
+
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	if (!pt_console_state[idx].active)
+		return;
+	if (mmb_mouse_read(&m))
+		s_mouse_btn[idx] = (m.buttons & 3) ? 1 : 0;
+	else
+		s_mouse_btn[idx] = 0;
 }
 
 /* ---- entry ------------------------------------------------------------- */
@@ -1307,6 +1355,7 @@ void mmb_paint_reset_all(void)
 	memset(s_esc_state, 0, sizeof(s_esc_state));
 	memset(s_esc_at, 0, sizeof(s_esc_at));
 	memset(s_alt_pend, 0, sizeof(s_alt_pend));
+	memset(s_mouse_btn, 0, sizeof(s_mouse_btn));
 	memset(s_saved_mode, 0, sizeof(s_saved_mode));
 	memset(s_saved_bits, 0, sizeof(s_saved_bits));
 	memset(s_frame_state, 0, sizeof(s_frame_state));

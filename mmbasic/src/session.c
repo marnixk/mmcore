@@ -259,6 +259,10 @@ static int console_do_switch(int idx)
 	/* The editor on this screen now owns the keyboard: drop any Ctrl+Alt
 	 * hold clock left over from the screen we are leaving (#810). */
 	mmb_editor_console_activated(idx);
+	/* The pointer is a global device too: seed PAINT's button-edge tracker
+	 * from the live state so a button already held on arrival cannot begin a
+	 * stroke with no press observed here (#814). */
+	mmb_paint_console_activated(idx);
 
 	/* Retune the display to this console's MODE before repainting it: the
 	 * hardware is still sized for the console we are leaving (#580). */
