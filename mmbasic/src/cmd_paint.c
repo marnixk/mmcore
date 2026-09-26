@@ -9,9 +9,10 @@
  * the tree building and lay out the chrome.
  *
  * Screen: MODE 18 (640x360). One canvas pixel is one screen pixel. The menu
- * bar is text row 0, the tool column runs down the left edge, the fixed VGA
- * palette is a 4x64 swatch strip across the bottom with the FG/BG indicator
- * at its left end, and the canvas starts black (palette index 0).
+ * bar is text row 0, the tool strip is a 2x9 grid of 32px cells down the left
+ * edge, the fixed VGA palette is a 4x64 swatch strip across the bottom with
+ * the FG/BG indicator at its left end, and the canvas starts black (palette
+ * index 0).
  *
  * PAINT needs a mouse: with none attached (and no test override) it prints a
  * clear message and returns to the prompt without touching the screen.
@@ -289,6 +290,16 @@ void pt_request_redraw(void)
 	PT.dirty = 1;
 }
 
+/* A modal overlay that covers the canvas owns input while it is up, so the
+ * pointer must stay the UI arrow even when it sits on a canvas pixel (#788,
+ * #791). Menus/dropdowns, the file open/save picker and the text-tool font
+ * picker are the overlays that draw over the canvas. */
+static int pt_overlay_active(void)
+{
+	return pt_menus_active() || pt_file_dialog_active() ||
+	       pt_text_font_picker_active();
+}
+
 void pt_redraw(void)
 {
 	int full;
@@ -366,10 +377,11 @@ void pt_redraw(void)
 
 	/* Capture the cursor background from the finished frame and stamp the
 	 * sprite last, so it never samples itself and never gets overpainted.
-	 * While a menu/dialog is open the pointer is forced to the UI arrow even
-	 * over the canvas its dropdown covers (#788). */
+	 * While a modal overlay owns input the pointer is forced to the UI arrow
+	 * even over the canvas it covers (#788): a dropdown, the file picker or
+	 * the text-tool font picker (#791). */
 	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down,
-		pt_menus_active());
+		pt_overlay_active());
 
 	pt_present();
 
@@ -1116,11 +1128,11 @@ PT_WEAK void pt_cursor_init(void)
 {
 }
 
-PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open)
+PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay)
 {
 	(void)tool;
 	(void)active;
-	(void)menu_open;
+	(void)overlay;
 	if (sx < 0 || sy < 0)
 		return;
 	pt_fill_rect(sx - 3, sy, 7, 1, 0xFFFFFFu);
@@ -1194,6 +1206,11 @@ PT_WEAK int pt_text_active(void)
 PT_WEAK int pt_text_key(int key)
 {
 	(void)key;
+	return 0;
+}
+
+PT_WEAK int pt_text_font_picker_active(void)
+{
 	return 0;
 }
 

@@ -104,6 +104,21 @@ int pt_menus_active(void) { return menu_active; }
 void pt_tool_begin(int cx, int cy, int button)
 { (void)cx; (void)cy; (void)button; tool_begins++; }
 
+/* ---- modal overlays that force the UI arrow (#791) ---- */
+static int file_active, font_picker_active;
+static int cursor_overlay = -1;
+
+int pt_file_dialog_active(void) { return file_active; }
+int pt_text_font_picker_active(void) { return font_picker_active; }
+
+/* Strong override of the weak cmd_paint.c stub: record the overlay flag the
+ * redraw passes to the cursor instead of stamping pixels. */
+void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay)
+{
+	(void)sx; (void)sy; (void)tool; (void)active;
+	cursor_overlay = overlay;
+}
+
 /* tui shims used by cmd_paint.c and the weak module stubs */
 void tui_begin(void) {}
 void tui_end(void) {}
@@ -217,6 +232,36 @@ int main(void)
 	mmb_paint_poll();		/* later no-button motion is hover */
 	check(menu_motion > 0, "poll_motion_after_release");
 
+	/* 9. #791: the cursor is forced to the UI arrow whenever any modal
+	 *    overlay that covers the canvas owns input, and stays a tool
+	 *    otherwise. The cursor stub records the overlay flag per redraw. */
+	file_active = font_picker_active = menu_active = 0;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 0, "cursor_no_overlay_tool");
+
+	file_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_file_picker_arrow");
+
+	file_active = 0;
+	font_picker_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_font_picker_arrow");
+
+	font_picker_active = 0;
+	menu_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_menu_arrow");
+	menu_active = 0;
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -297,5 +342,18 @@ def test_poll_forwards_hover_and_button_up(checks):
         "menu_press_no_canvas_drag",
         "poll_forwards_release_after_close",
         "poll_motion_after_release",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_overlays_force_ui_arrow_cursor(checks):
+    """#791: the redraw passes the overlay flag to pt_cursor_draw() while the
+    file picker, the text font picker or a menu owns input, so no tool sprite
+    is stamped over them; with no overlay the tool cursor is used."""
+    for name in (
+        "cursor_no_overlay_tool",
+        "cursor_file_picker_arrow",
+        "cursor_font_picker_arrow",
+        "cursor_menu_arrow",
     ):
         assert checks.get(name) is True, name
