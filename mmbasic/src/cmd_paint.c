@@ -365,8 +365,11 @@ void pt_redraw(void)
 	tui_flush_no_present();
 
 	/* Capture the cursor background from the finished frame and stamp the
-	 * sprite last, so it never samples itself and never gets overpainted. */
-	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down);
+	 * sprite last, so it never samples itself and never gets overpainted.
+	 * While a menu/dialog is open the pointer is forced to the UI arrow even
+	 * over the canvas its dropdown covers (#788). */
+	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down,
+		pt_menus_active());
 
 	pt_present();
 
@@ -1113,10 +1116,11 @@ PT_WEAK void pt_cursor_init(void)
 {
 }
 
-PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active)
+PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open)
 {
 	(void)tool;
 	(void)active;
+	(void)menu_open;
 	if (sx < 0 || sy < 0)
 		return;
 	pt_fill_rect(sx - 3, sy, 7, 1, 0xFFFFFFu);
