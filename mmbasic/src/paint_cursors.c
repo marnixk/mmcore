@@ -86,7 +86,7 @@ void pt_cursor_restore(void)
 	CUR.bg_w = CUR.bg_h = 0;
 }
 
-void pt_cursor_draw(int sx, int sy, int tool, int active)
+void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open)
 {
 	int idx, hx, hy, ox, oy, x0, y0, x1, y1, x, y;
 	int pcx, pcy, on_canvas;
@@ -102,9 +102,12 @@ void pt_cursor_draw(int sx, int sy, int tool, int active)
 
 	/* The tool sprite only reads over the canvas; over the menu bar, tool
 	 * column, palette and line-width bar the plain arrow is the right
-	 * pointer. */
+	 * pointer. An open menu/dialog forces the arrow everywhere, including
+	 * where its dropdown geometrically covers the canvas (#788): the whole
+	 * pointer stays UI-legible while an overlay owns input, with no flicker as
+	 * it crosses canvas pixels. */
 	on_canvas = pt_screen_to_canvas(sx, sy, &pcx, &pcy);
-	idx = on_canvas ? pt_cursor_art(tool) : PCA_TOOL_ARROW;
+	idx = (!menu_open && on_canvas) ? pt_cursor_art(tool) : PCA_TOOL_ARROW;
 	sp = &pca_sprites[idx];
 	if (active)
 	{

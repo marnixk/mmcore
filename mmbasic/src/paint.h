@@ -277,7 +277,11 @@ int pt_menus_confirm_quit(void);
 /* ---- cursor module (#639) ---------------------------------------------- */
 
 void pt_cursor_init(void);
-void pt_cursor_draw(int sx, int sy, int tool, int active);
+/* Draw the pointer at a screen pixel. `tool` selects the canvas sprite, but a
+ * negative id draws nothing; `menu_open` forces the UI arrow regardless of the
+ * pointer position, so an open dropdown never shows a tool sprite over the
+ * canvas (#788). */
+void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open);
 void pt_cursor_restore(void);
 
 /* ---- file module (#640) ------------------------------------------------ */

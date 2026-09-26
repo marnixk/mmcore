@@ -242,7 +242,7 @@ def _bind(lib):
     lib.pt_tool_motion.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
     lib.pt_tool_end.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
     lib.pt_cursor_draw.argtypes = [
-        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
     ]
     lib.pt_cursor_restore.argtypes = []
 
@@ -341,7 +341,7 @@ def test_cursor_background_is_per_console(lib):
     lib.tst_reset(32, 24)
 
     lib.tst_screen_set(100, 100, 0x123456)
-    lib.pt_cursor_draw(100, 100, PT_TOOL_PENCIL, 0)
+    lib.pt_cursor_draw(100, 100, PT_TOOL_PENCIL, 0, 0)
 
     # Poke the pixel after the capture: a restore of console 0's buffer would
     # put 0x123456 back.

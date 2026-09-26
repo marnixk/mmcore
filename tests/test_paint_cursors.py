@@ -223,7 +223,7 @@ static int check_shape(int tool, int active)
 
 	fill_bg();
 	pt_cursor_init();
-	pt_cursor_draw(sx, sy, tool, active);
+	pt_cursor_draw(sx, sy, tool, active, 0);
 
 	for (y = 0; y < PT_H; y++) {
 		for (x = 0; x < PT_W; x++) {
@@ -263,7 +263,41 @@ static int check_ui_arrow(void)
 
 	fill_bg();
 	pt_cursor_init();
-	pt_cursor_draw(sx, sy, 0, 0);	/* pencil selected, but over the UI */
+	pt_cursor_draw(sx, sy, 0, 0, 0);	/* pencil selected, but over the UI */
+
+	for (y = 0; y < PT_H; y++) {
+		for (x = 0; x < PT_W; x++) {
+			int in = x >= ox && x < ox + PCA_CURSOR_W &&
+				 y >= oy && y < oy + PCA_CURSOR_H;
+			unsigned want = BG;
+
+			if (in) {
+				uint8_t c = art[(y - oy) * PCA_CURSOR_W + (x - ox)];
+				if (c != PCA_CURSOR_TRANSPARENT)
+					want = pt_palette_rgb(c);
+			}
+			if (fb[y * PT_W + x] != want)
+				return 0;
+		}
+	}
+	pt_cursor_restore();
+	return all_bg();
+}
+
+/* #788: an open menu/dialog forces the UI arrow everywhere, even where its
+ * dropdown geometrically covers the canvas. The pointer here is on a canvas
+ * pixel (the canvas starts at 64,16) with the pencil selected. */
+static int check_menu_arrow(void)
+{
+	int sx = 100, sy = 100;	/* over the canvas, under a dropdown */
+	const pca_sprite_t *sp = &pca_sprites[PCA_TOOL_ARROW];
+	const uint8_t *art = sp->idle;
+	int hx = sp->idle_hotspot_x, hy = sp->idle_hotspot_y;
+	int ox = sx - hx, oy = sy - hy, x, y;
+
+	fill_bg();
+	pt_cursor_init();
+	pt_cursor_draw(sx, sy, 0, 0, 1);	/* pencil selected, menu open */
 
 	for (y = 0; y < PT_H; y++) {
 		for (x = 0; x < PT_W; x++) {
@@ -297,7 +331,7 @@ static unsigned signature(int tool, int active)
 
 	fill_bg();
 	pt_cursor_init();
-	pt_cursor_draw(100, 100, tool, active);
+	pt_cursor_draw(100, 100, tool, active, 0);
 
 	for (y = 0; y < PCA_CURSOR_H; y++) {
 		for (x = 0; x < PCA_CURSOR_W; x++) {
@@ -328,7 +362,7 @@ int main(void)
 	fill_bg();
 	memcpy(snap, fb, sizeof(fb));
 	pt_cursor_init();
-	pt_cursor_draw(100, 100, 0, 0);
+	pt_cursor_draw(100, 100, 0, 0, 0);
 	if (same_snap()) {
 		printf("FAIL restore_drew_nothing\n");
 		fails++;
@@ -345,8 +379,8 @@ int main(void)
 	/* 2. Moving lifts the old sprite: no trail anywhere. */
 	fill_bg();
 	pt_cursor_init();
-	pt_cursor_draw(200, 120, 5, 0);
-	pt_cursor_draw(300, 160, 5, 0);
+	pt_cursor_draw(200, 120, 5, 0, 0);
+	pt_cursor_draw(300, 160, 5, 0, 0);
 	pt_cursor_restore();
 	if (!all_bg()) {
 		printf("FAIL move_exact\n");
@@ -389,6 +423,14 @@ int main(void)
 		fails++;
 	}
 
+	/* 5b. An open menu forces the arrow over the canvas too (#788). */
+	if (check_menu_arrow())
+		printf("OK menu_arrow\n");
+	else {
+		printf("FAIL menu_arrow\n");
+		fails++;
+	}
+
 	/* 6. Shape signatures: per-tool distinct and idle != active. */
 	for (t = 0; t < (int)PT_TOOL_COUNT; t++)
 		printf("SIG %d %u %u\n", t, signature(t, 0), signature(t, 1));
@@ -407,9 +449,9 @@ int main(void)
 	fill_bg();
 	memcpy(snap, fb, sizeof(fb));
 	pt_cursor_init();
-	pt_cursor_draw(0, 0, 0, 0);
-	pt_cursor_draw(PT_W - 1, PT_H - 1, 0, 1);
-	pt_cursor_draw(-8, -8, 3, 0);
+	pt_cursor_draw(0, 0, 0, 0, 0);
+	pt_cursor_draw(PT_W - 1, PT_H - 1, 0, 1, 0);
+	pt_cursor_draw(-8, -8, 3, 0, 0);
 	pt_cursor_restore();
 	if (!same_snap()) {
 		printf("FAIL edge_restore\n");
@@ -425,7 +467,7 @@ int main(void)
 	memset(canvas_buf, 0, sizeof(canvas_buf));
 	memcpy(snap, fb, sizeof(fb));
 	pt_cursor_init();
-	pt_cursor_draw(PT_CANVAS_X + 50, PT_CANVAS_Y + 50, 0, 1);
+	pt_cursor_draw(PT_CANVAS_X + 50, PT_CANVAS_Y + 50, 0, 1, 0);
 	{
 		int i, dirty = 0;
 		for (i = 0; i < (int)sizeof(canvas_buf); i++)
@@ -489,6 +531,11 @@ def test_every_tool_shape_drawn_from_art(run):
 def test_arrow_over_chrome_and_tool_over_canvas(run):
     """Hovering non-canvas UI shows the arrow, even with a tool selected."""
     assert "OK ui_arrow" in run.stdout, run.stdout
+
+
+def test_menu_open_forces_arrow_over_canvas(run):
+    """#788: an open menu keeps the pointer as the UI arrow over the canvas."""
+    assert "OK menu_arrow" in run.stdout, run.stdout
 
 
 def test_shapes_follow_tool_and_idle_active_differ(run):
@@ -618,8 +665,8 @@ int main(void)
 					0x00FF00FFu;
 
 	pt_cursor_init();
-	pt_cursor_draw(100, 100, 0, 0);
-	pt_cursor_draw(140, 120, 0, 0);
+	pt_cursor_draw(100, 100, 0, 0, 0);
+	pt_cursor_draw(140, 120, 0, 0, 0);
 	pt_cursor_restore();
 
 	for (y = 0; y < PT_H; y++)
