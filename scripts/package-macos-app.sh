@@ -40,6 +40,10 @@
 #   MMCORE_SKIP_SIGN=1  skip the real identity and ad-hoc sign the bundle
 #                       (local smoke tests only; not distributable).
 #   VERSION             override the bundle version (default: git describe).
+#                       Also baked into the native binary as MMB_VERSION (the
+#                       clean release string, v-prefixed to match the console)
+#                       so the in-app banner/CREDITS agree with Info.plist
+#                       instead of showing the pre-tag git-describe suffix.
 #
 # Signing locally with an "Apple Development" certificate is fine for this Mac;
 # distributing to others needs a Developer ID + notarization to avoid Gatekeeper
@@ -151,6 +155,7 @@ build_universal_binary() {
 	local slices=() arch slice
 	for arch in ${MACOS_ARCHES}; do
 		make -C "${REPO_ROOT}/native" sdl \
+			MMB_VERSION="${MMB_VERSION}" \
 			MACOS_ARCH="${arch}" \
 			SDL_CFLAGS="${sd_cflags}" SDL_LIBS="${sd_libs}"
 		slice="${REPO_ROOT}/native/mmcore-${arch}"
@@ -191,12 +196,21 @@ if [ "${MMCORE_REQUIRE_NOTARY:-}" = "1" ]; then
 	fi
 fi
 
-RAW_VERSION="${VERSION:-$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo 0.0.0)}"
-RAW_VERSION="${RAW_VERSION#v}"
+# Bake the clean release version into the native binary. An explicit VERSION
+# becomes MMB_VERSION="v<version>" to match the console build; otherwise keep
+# the git-describe fallback so a dev build still reports something. Without
+# this the binary shows the pre-tag `vX.Y.Z-N-gSHA` string while the bundle
+# Info.plist shows the clean release version (#780).
+if [ -n "${VERSION:-}" ]; then
+	MMB_VERSION="v${VERSION#v}"
+else
+	MMB_VERSION="$(git -C "${REPO_ROOT}" describe --tags --always 2>/dev/null || echo 0.0.0)"
+fi
+RAW_VERSION="${MMB_VERSION#v}"
 SHORT_VERSION="$(printf '%s' "${RAW_VERSION}" | sed -n 's/^\([0-9][0-9]*\(\.[0-9][0-9]*\)\{0,2\}\).*/\1/p')"
 [ -n "${SHORT_VERSION}" ] || SHORT_VERSION="0.0.0"
 
-log "Version ${RAW_VERSION} (bundle ${SHORT_VERSION})"
+log "Version ${RAW_VERSION} (bundle ${SHORT_VERSION}, build ${MMB_VERSION})"
 build_universal_binary
 
 log "Staging ${APP}"

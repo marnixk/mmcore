@@ -1216,13 +1216,19 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
         )
     proc = subprocess.run(
         [str(exe)],
-        input='PRINT "MACOS_BUNDLE_OK"\n',
+        input='PRINT "MACOS_BUNDLE_OK"\nCREDITS\n',
         text=True,
         capture_output=True,
         timeout=120,
         env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
     )
-    assert "MACOS_BUNDLE_OK" in (proc.stdout + proc.stderr)
+    out = proc.stdout + proc.stderr
+    assert "MACOS_BUNDLE_OK" in out
+    # #780: the binary baked into the bundle must report the clean release
+    # version (v-prefixed to match the console), not the pre-tag git-describe
+    # suffix that a HEAD-before-tag build would embed.
+    assert "v9.9.9" in out, f"bundle must report v9.9.9, got: {out[-500:]}"
+    assert "9.9.9-" not in out, "no git-describe suffix in the bundled binary"
 
 
 @pytest.mark.skipif(
@@ -1261,6 +1267,28 @@ def test_native_packaging_derives_icons_from_branding():
     assert "assets" in gen and "mmcore-app-icon.png" in gen
     assert "gen-appicon.py" in mac and "--iconset" in mac
     assert "gen-appicon.py" in lin and "mmcore.png" in lin
+
+
+def test_native_packaging_bakes_release_version_into_binary():
+    """#780: both packaging scripts pass an explicit VERSION into the native
+    build as MMB_VERSION (clean, v-prefixed like the console build), so the
+    in-app banner/CREDITS show the release version rather than the pre-tag
+    git-describe suffix. An unset VERSION keeps the git-describe dev fallback.
+    """
+    mac = open(
+        os.path.join(REPO, "scripts", "package-macos-app.sh"), encoding="utf-8"
+    ).read()
+    lin = open(
+        os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
+    ).read()
+    for text in (mac, lin):
+        assert 'MMB_VERSION="v${VERSION#v}"' in text, (
+            "explicit VERSION must be v-prefixed"
+        )
+        assert "describe --tags" in text, "git-describe dev fallback missing"
+    # The resolved value must reach the make invocation that compiles the binary.
+    assert 'MMB_VERSION="${MMB_VERSION}"' in mac
+    assert 'build-native.sh" MMB_VERSION="${MMB_VERSION}"' in lin
 
 
 def test_window_identity_and_taskbar_icon():
