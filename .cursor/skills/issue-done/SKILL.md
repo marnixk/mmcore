@@ -91,11 +91,10 @@ This skips the `github-release` skill's "ask, then wait" step. Publish from
 
 If the macOS notarization is blocked because `notarytool` cannot read the
 keychain (a non-interactive/agent session: `User interaction is not allowed`),
-do not stop: export `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, and `NOTARY_PASSWORD`
-(recover them from `~/.zsh_history` after the last
-`xcrun notarytool store-credentials mmcore-notary`) and publish with
-`MMCORE_SKIP_MACOS=1` after building/staping the bundle, as the
-`github-release` skill describes.
+do not stop and do not skip the macOS build: export `NOTARY_APPLE_ID`,
+`NOTARY_TEAM_ID`, and `NOTARY_PASSWORD` (recover them from `~/.zsh_history` after
+the last `xcrun notarytool store-credentials mmcore-notary`) and publish
+normally, as the `github-release` skill describes.
 
 After `publish`, restore the QEMU kernel (`package-release.sh` reconfigures
 Circle `--qemu` but may leave a hardware `kernel8.img`):

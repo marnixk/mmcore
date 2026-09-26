@@ -73,20 +73,19 @@ That script:
 2. Restores the QEMU Pi 3 Circle config so pytest still works.
 3. On macOS, runs `scripts/package-macos-app.sh` and packages the native SDL2
    binary as a signed `mmcore.app`, attached as `dist/mmcore-macos-universal.zip`.
-   Set `MMCORE_SKIP_MACOS=1` to skip it. The build sets
+   This is mandatory on macOS — there is no skip. The build sets
    `MMCORE_REQUIRE_NOTARY=1`: the bundle **must** be notarized + stapled, using
    the `mmcore-notary` keychain profile by default (override with
    `NOTARY_PROFILE`). If notarization or stapling fails the release aborts, so
    an unnotarized app cannot ship unnoticed.
    - If `notarytool` cannot read the keychain (a non-interactive/agent session
      fails with `User interaction is not allowed`, or the profile is missing),
-     do **not** stop. Notarize with App Store Connect credentials directly by
-     exporting `NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, and `NOTARY_PASSWORD`; the
-     script then prefers them over the keychain profile. The credentials live
-     in the user's shell history (`~/.zsh_history`) from the last
-     `xcrun notarytool store-credentials mmcore-notary` run. With a pre-built
-     `dist/mmcore-macos-universal.zip`, publish with `MMCORE_SKIP_MACOS=1` so the
-     existing bundle is attached instead of rebuilt.
+     do **not** stop and do **not** skip the macOS build. Notarize with App Store
+     Connect credentials directly by exporting `NOTARY_APPLE_ID`,
+     `NOTARY_TEAM_ID`, and `NOTARY_PASSWORD`; the script then prefers them over
+     the keychain profile. The credentials live in the user's shell history
+     (`~/.zsh_history`) from the last `xcrun notarytool store-credentials
+     mmcore-notary` run.
 4. Creates annotated tag `vVERSION` and pushes it to `origin`.
 5. Creates the GitHub release with the zips, the macOS app (when built), **and**
    a top-level `install-sdcard.sh` asset.

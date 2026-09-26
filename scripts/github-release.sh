@@ -37,7 +37,6 @@ MMCORE_REQUIRE_WIN_SIGN=1 and supplies the WIN_SIGN_* signing secrets, so an
 unsigned Windows zip cannot ship unnoticed.
 
 Environment:
-  MMCORE_SKIP_MACOS=1   publish without building the macOS app
   SIGN_IDENTITY=...     codesign identity for the app bundle
   NOTARY_PROFILE=...    notarytool profile to notarize the app bundle
                         (default: mmcore-notary). The macOS asset is always
@@ -318,7 +317,7 @@ publish() {
 	assert_zip_has_installer "${pizero2w}"
 	assert_zip_has_installer "${pi400}"
 
-	if [ "$(uname -s)" = "Darwin" ] && [ "${MMCORE_SKIP_MACOS:-}" != "1" ]; then
+	if [ "$(uname -s)" = "Darwin" ]; then
 		log "Building macOS app bundle for ${tag}"
 		MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
 			bash "${REPO_ROOT}/scripts/package-macos-app.sh"
