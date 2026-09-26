@@ -250,6 +250,9 @@ static int console_do_switch(int idx)
 	g_console = idx;
 	g_cur = g_mmb[idx];
 	mmb_front_select(idx);
+	/* The editor on this screen now owns the keyboard: drop any Ctrl+Alt
+	 * hold clock left over from the screen we are leaving (#810). */
+	mmb_editor_console_activated(idx);
 
 	/* Retune the display to this console's MODE before repainting it: the
 	 * hardware is still sized for the console we are leaving (#580). */

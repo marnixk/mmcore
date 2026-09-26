@@ -493,6 +493,18 @@ typedef struct ed_sess {
 } ed_sess;
 
 static ed_sess s_ed[MMB_MAX_CONSOLES];
+
+/* Reset one console's char-picker hold clock. Defined before the per-console
+ * field macros below so the field names are not expanded (#810). */
+static void ed_char_hold_reset(int idx)
+{
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	s_ed[idx].chars_armed = 0;
+	s_ed[idx].chars_opened = 0;
+	s_ed[idx].chars_held_at = 0;
+}
+
 #define killbuf (s_ed[g_console].killbuf)
 #define killlen (s_ed[g_console].killlen)
 #define find_active (s_ed[g_console].find_active)
@@ -5709,7 +5721,19 @@ void mmb_cmd_edit(void)
 
 static void char_picker_poll(void)
 {
-	int held = (G.plat && G.plat->ctrl_alt_held) ? G.plat->ctrl_alt_held() : 0;
+	int held;
+
+	/* The picker is owned by the editor on the active virtual screen. Only an
+	 * editor that owns the keyboard may arm or tick this hold clock; the
+	 * per-console hold state is dropped when focus moves here (#810), so a
+	 * chord held on another screen can never cash in as an expired debounce. */
+	if (!G.ed.active)
+	{
+		chars_armed = 0;
+		chars_opened = 0;
+		return;
+	}
+	held = (G.plat && G.plat->ctrl_alt_held) ? G.plat->ctrl_alt_held() : 0;
 	if (held)
 	{
 		if (!chars_armed)
@@ -5804,4 +5828,13 @@ void mmb_editor_on_ihelp_exit(void)
 void mmb_editor_reset_all(void)
 {
 	memset(s_ed, 0, sizeof(s_ed));
+}
+
+/* A virtual-console switch hands the keyboard to a different editor (#810).
+ * Drop the Ctrl+Alt hold clock of the console being entered: time accrued on
+ * the screen we are leaving is not this editor's, so it must not open the
+ * special-characters picker the instant focus arrives. */
+void mmb_editor_console_activated(int idx)
+{
+	ed_char_hold_reset(idx);
 }
