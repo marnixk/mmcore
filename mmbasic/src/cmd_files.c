@@ -733,13 +733,17 @@ void mmb_file_close_n(int fn)
 	G.files[fn].ungot = -1;
 }
 
+/* NEW is a per-console command, so only release the machine-wide socket when
+ * this console actually held a TCP file (mmb_file_close_n() releases it as it
+ * closes). An unconditional release here let a NEW on a console that did not
+ * own the socket strand the owner's live connection with no owner, and the
+ * next OPEN on that console reset it out from under the owner (#801). */
 void mmb_close_tcp_files(void)
 {
 	int i;
 	for (i = 1; i <= MMB_MAX_FILES; i++)
 		if (mmb_file_is_tcp(i))
 			mmb_file_close_n(i);
-	mmb_tcp_release();
 }
 
 /* Machine-wide teardown for a reset. The single TCP socket may be owned by a
