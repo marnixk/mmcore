@@ -1197,3 +1197,47 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
     finally:
         con.stop()
 
+
+def test_editor_char_picker_hold_on_other_console_does_not_open(kernel_image):
+    """#810: EDIT's Ctrl+Alt special-characters debounce belongs to the screen
+    that owns the editor. A hold that starts on console 1, continues on console
+    2 (no editor there) past the debounce, and returns to console 1 must not
+    count as an expired hold and pop the picker."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "CPGATE.BAS")
+
+        # Arm console 1's hold (well under the 0.75s debounce), then switch to
+        # console 2 without releasing Ctrl+Alt.
+        con.key_down("ctrl")
+        con.key_down("alt")
+        time.sleep(0.3)
+        con.key_down("2")
+        time.sleep(0.25)
+        con.key_up("2")
+        time.sleep(0.2)
+        con.drain(quiet=0.2)
+
+        # Console 2 is a plain REPL: the held chord has no editor to arm here.
+        assert con.send_line("PRINT 7*6") == "42"
+
+        # Keep the chord down on console 2 longer than the debounce, then
+        # switch back to console 1 with it still held. The stale hold from
+        # console 1 (or the time spent on console 2) must not open the picker:
+        # release the chord promptly after arriving, well inside the 0.75s
+        # debounce, so a legitimate fresh hold cannot open it either.
+        time.sleep(1.0)
+        con.key_down("1")
+        time.sleep(0.3)  # the guest polls the switch chord while still down
+        con.key_up("1")
+        con.key_up("alt")
+        con.key_up("ctrl")
+        time.sleep(0.4)
+        seen = _plain(con.drain(quiet=0.4).decode(errors="replace"))
+
+        assert "Special characters" not in seen, seen
+    finally:
+        con.stop()
+
