@@ -14,6 +14,10 @@
 
 mmb_test_globals G;
 
+/* Active console, per mmb_priv.h. The FTP server tracks which console owns it
+ * so one console's FILES screen cannot adopt or stop another's (#818). */
+int g_console;
+
 /* ---- fake VFS --------------------------------------------------------- */
 
 static char g_mkdirs[16][160];
@@ -696,6 +700,50 @@ static void run_stor_background_gap(const unsigned char *payload, int payload_le
 	mmb_ftp_stop();
 }
 
+/* #818: the FTP server is one machine-global resource but the FILES UI that
+ * starts and stops it is per console. A second console must be refused the
+ * running server (not silently adopt it with a different root), and its
+ * teardown must not stop a server another console owns. */
+static void run_owner_cross_console(void)
+{
+	reset();
+	g_console = 0;
+	check(mmb_ftp_start("A:/", 21) == MMB_FTP_OK, "console 0 starts");
+	check(mmb_ftp_running(), "server is running");
+	check(mmb_ftp_owner() == 0, "console 0 is the owner");
+
+	g_console = 1;
+	check(mmb_ftp_start("A:/OTHER", 21) == MMB_FTP_BUSY,
+	      "console 1 is refused the running server");
+	check(mmb_ftp_owner() == 0, "owner stays console 0");
+	check(strcmp(mmb_ftp_root(), "A:/") == 0, "root is not re-adopted");
+
+	/* Console 1 leaving its FILES screen must not stop console 0's server. */
+	mmb_ftp_stop_owned();
+	check(mmb_ftp_running(), "non-owner teardown leaves the server running");
+	check(mmb_ftp_owner() == 0, "non-owner teardown keeps the owner");
+
+	/* The owner can still restart idempotently and stop its own server. */
+	g_console = 0;
+	check(mmb_ftp_start("A:/IGNORED", 21) == MMB_FTP_OK,
+	      "owner re-start is a no-op");
+	check(strcmp(mmb_ftp_root(), "A:/") == 0, "owner re-start keeps the root");
+	mmb_ftp_stop_owned();
+	check(!mmb_ftp_running(), "owner teardown stops the server");
+	check(mmb_ftp_owner() == -1, "no owner after stop");
+
+	/* Once released, another console can take ownership. */
+	g_console = 1;
+	check(mmb_ftp_start("A:/OTHER", 21) == MMB_FTP_OK,
+	      "console 1 starts a fresh server");
+	check(mmb_ftp_owner() == 1, "console 1 is the new owner");
+	mmb_ftp_stop_owned();
+	check(!mmb_ftp_running(), "new owner teardown stops the server");
+
+	g_console = 0;
+	reset();
+}
+
 int main(void)
 {
 	static unsigned char payload[13312];
@@ -726,6 +774,10 @@ int main(void)
 	/* A long un-polled gap (FILES screen in the background) is not client
 	 * inactivity and must not fail the transfer. */
 	run_stor_background_gap(payload, 1024);
+
+	/* The per-console FILES UI must not adopt or stop a server owned by
+	 * another console. */
+	run_owner_cross_console();
 
 	if (g_failures)
 	{

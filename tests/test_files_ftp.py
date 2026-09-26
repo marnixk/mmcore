@@ -238,3 +238,70 @@ def test_files_ftp_serves_from_background_console(ftp_console):
     con._ser.sendall(b"q")
     con.drain(quiet=0.5)
     assert con.send_line("PRINT 8") == "8"
+
+
+def test_files_ftp_second_console_cannot_adopt(ftp_console):
+    """#818: the server is machine-global but FILES is per console. A second
+    console must not adopt the running server (with a different root) nor stop
+    it when its own FILES screen is torn down."""
+    con = ftp_console
+    _enable_ethernet(con)
+    if not host_tcp_available(con):
+        pytest.skip("QEMU SLIRP TCP unavailable in this environment")
+
+    assert con.send_line('MKDIR "A:/OWNER1"') == ""
+    assert con.send_line('MKDIR "A:/OTHER2"') == ""
+    assert con.send_line('OPEN "A:/OWNER1/OWNED.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "owned"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('OPEN "A:/OTHER2/OTHER.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "other"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+    # Console 1 starts the server rooted in A:/OWNER1.
+    con.drain(quiet=0.2)
+    con._ser.sendall(b'FILES "A:/OWNER1"\r')
+    seen = con.drain(quiet=1.0).decode(errors="replace")
+    assert "[FILES]" in seen
+    con._ser.sendall(bytes([1]) + b"c")
+    con.drain(quiet=0.3)
+    con._ser.sendall(b"s")
+    started = _wait_serial(con, "[FTP] LISTEN", timeout=20)
+    assert "ROOT A:/OWNER1" in started.upper(), started[-600:]
+
+    # Console 2 tries to start a server rooted in A:/OTHER2: it must be
+    # refused and must not enter the FTP modal.
+    _switch_console(con, 2)
+    con.drain(quiet=0.3, timeout=2.0)
+    con._ser.sendall(b'FILES "A:/OTHER2"\r')
+    seen2 = con.drain(quiet=1.0).decode(errors="replace")
+    assert "[FILES]" in seen2, seen2[-400:]
+    con._ser.sendall(bytes([1]) + b"c")
+    con.drain(quiet=0.3)
+    con._ser.sendall(b"s")
+    refused = con.drain(quiet=1.0).decode(errors="replace")
+    assert "CONSOLE 1" in refused.upper(), refused[-500:]
+    assert "FTP SERVER" not in refused.upper(), refused[-500:]
+
+    # Console 2 quitting FILES must not stop console 1's server: it still
+    # serves console 1's root.
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.5)
+    ftp = ftplib.FTP()
+    ftp.connect("127.0.0.1", con.ctrl_host_port, timeout=20)
+    ftp.trust_server_pasv_ipv4_address = False
+    ftp.login("anonymous", "x")
+    names = [n.upper() for n in ftp.nlst()]
+    assert any("OWNED.TXT" in n for n in names), names
+    assert not any("OTHER.TXT" in n for n in names), names
+    ftp.quit()
+
+    # Back on console 1: Esc stops the server it owns.
+    _switch_console(con, 1)
+    con.drain(quiet=0.3, timeout=2.0)
+    con._ser.sendall(b"\x1b")
+    stopped = _wait_serial(con, "[FTP] STOP")
+    assert "[FTP] STOP" in stopped, stopped[-400:]
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.5)
+    assert con.send_line("PRINT 82") == "82"

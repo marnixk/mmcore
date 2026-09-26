@@ -1144,7 +1144,7 @@ static void files_close_tui(int restore_prompt)
 	tdf_release();
 	an_grid_free();
 	if (mmb_ftp_running())
-		mmb_ftp_stop();
+		mmb_ftp_stop_owned();
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
@@ -2215,15 +2215,30 @@ static void do_ftp_start(void)
 	char root[FU_PATH];
 	char ip[32];
 	char num[8];
+	int rc;
 
 	strncpy(root, curpan()->path, sizeof(root) - 1);
 	root[sizeof(root) - 1] = 0;
-	if (mmb_ftp_start(root, 21) != 0)
+	rc = mmb_ftp_start(root, 21);
+	if (rc == MMB_FTP_BUSY)
+	{
+		/* The server is machine-global but the FILES screen is per console:
+		 * do not adopt another console's running server with a different
+		 * root (#818). Keep this screen out of the FTP modal. */
+		char msg[80];
+		sprintf(msg, "FTP already running on console %d",
+			mmb_ftp_owner() + 1);
+		set_hint(msg);
+		return;
+	}
+	if (rc != MMB_FTP_OK)
 	{
 		set_hint("FTP server: network unavailable");
 		return;
 	}
-	strncpy(F.ftp_root, root, sizeof(F.ftp_root) - 1);
+	/* Show the root the running server actually serves (the owner's root if
+	 * this console re-entered the menu while it already owned the server). */
+	strncpy(F.ftp_root, mmb_ftp_root(), sizeof(F.ftp_root) - 1);
 	F.ftp_root[sizeof(F.ftp_root) - 1] = 0;
 	F.ftp_addr[0] = 0;
 	if (mmb_net_srv_ip(ip, sizeof(ip)) == 0)
@@ -2489,7 +2504,7 @@ static void close_overlay(void)
 	if (F.mode == FU_PLAY)
 		mmb_play_stop_owned();
 	if (F.mode == FU_FTP)
-		mmb_ftp_stop();
+		mmb_ftp_stop_owned();
 	if (F.mode == FU_PREVIEW)
 		preview_restore();
 	if (F.mode == FU_ANSI)
