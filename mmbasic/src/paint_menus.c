@@ -680,7 +680,7 @@ int pt_menus_key(int key)
 			answer_confirm(1);
 		else if (key == 'n' || key == 'N' || key == 27)
 			answer_confirm(0);
-		else if (key == 13)
+		else if (key == 13 || key == 10)
 			answer_confirm(MENUS.dlg_yes);
 		else if (key == 9 || key == ' ')
 		{
@@ -738,7 +738,7 @@ int pt_menus_key(int key)
 			open_menu((m + 1) % PT_MENU_COUNT, 1);
 			return 1;
 		}
-		if (key == 13)
+		if (key == 13 || key == 10)
 		{
 			activate(m, MENUS.hover >= 0 ? MENUS.hover : 0);
 			return 1;

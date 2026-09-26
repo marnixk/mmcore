@@ -540,6 +540,51 @@ int main(void)
 	check(PT.dialog, "arrow_left_opens_keys");
 	pt_menus_key(27);
 
+	/* ---- #787: the cooked USB keyboard delivers Enter as LF (10) ---- */
+	/* On real hardware Return arrives as byte 10, not CR 13, so activation
+	 * must accept both. Dropdown: Down then LF activates the highlight. */
+	PT.undo_depth = 0;
+	PT.redo_depth = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	check(PT.menu == PT_MENU_FILE, "lf_open_file");
+	check(pt_menus_key(PT_KEY_DOWN) == 1, "lf_down_consumed");
+	f_open = 0;
+	check(pt_menus_key(10) == 1, "lf_enter_consumed");
+	check(f_open == 1, "lf_activates_second");
+	/* Confirm dialog: LF confirms the highlighted (default No) answer. */
+	quit_leave = 0;
+	PT.undo_depth = 1;
+	click(kFile, 8);
+	click(kFile, 88);	/* fifth row: Quit */
+	check(PT.dialog, "lf_quit_dialog");
+	check(pt_menus_key(10) == 1, "lf_quit_enter_consumed");
+	check(quit_leave == 0, "lf_quit_default_no");
+	/* Tab flips to Yes, LF confirms. */
+	click(kFile, 8);
+	click(kFile, 88);
+	pt_menus_key(9);
+	pt_menus_key(10);
+	check(quit_leave == 1, "lf_quit_yes_leave");
+	/* Esc still dismisses without activating the highlighted item. */
+	PT.undo_depth = 0;
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	pt_menus_key(PT_KEY_DOWN);
+	f_open = 0;
+	check(pt_menus_key(27) == 1, "lf_esc_consumed");
+	check(!pt_menus_active() && f_open == 0, "lf_esc_dismisses_no_activate");
+	/* Byte 13 (CR) still activates after the change. */
+	PT.menu = PT_MENU_NONE;
+	pt_menus_key(1);
+	pt_menus_key('f');
+	pt_menus_key(PT_KEY_DOWN);
+	f_open = 0;
+	check(pt_menus_key(13) == 1, "cr_enter_still_consumed");
+	check(f_open == 1, "cr_still_activates_second");
+
 	/* ---- #756: every item's hint is exactly the key that activates it ---- */
 	/* Save as takes 'a' because Save owns its first letter. */
 	f_save_as = 0;
