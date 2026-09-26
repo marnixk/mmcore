@@ -479,6 +479,83 @@ def test_paint_switch_leaves_other_console_usable(kernel_image):
         con.stop()
 
 
+@pytest.mark.skipif(
+    not _qemu_has_usb_mouse(), reason="qemu-system-aarch64 lacks usb-mouse"
+)
+def test_switch_paint_term_mode_shrink_does_not_corrupt_framebuffer(kernel_image):
+    """#786: PAINT (graphics, 640x360) on console 1 and TERM on console 2 must
+    switch without leaving the framebuffer striped/corrupt.
+
+    Console 1's framebuffer snapshot buffer is first grown while the display is
+    at the boot resolution; PAINT then shrinks the live framebuffer to 640x360.
+    Restoring console 1 used to memcpy the stale, larger snapshot past the
+    smaller framebuffer, corrupting the display path."""
+    con = MMBasicConsole(
+        kernel_image,
+        extra_qemu=["-device", "usb-kbd", "-device", "usb-mouse"],
+        boot_timeout=40.0,
+    )
+    con.start()
+    try:
+        time.sleep(2.0)  # let the USB mouse enumerate and attach
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Grow console 1's framebuffer snapshot at the boot resolution, so its
+        # snapshot capacity is larger than PAINT's 640x360 frame will need.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        con._ser.sendall(b"PAINT\r")
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.screen_size() == (640, 360)
+
+        # The other console from the report runs a full-screen TERM.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'TERM "demo", 23\r')
+        con.drain(quiet=0.8, timeout=12.0)
+
+        # Restoring PAINT here is the copy that overran the shrink.
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.screen_size() == (640, 360)
+
+        # PAINT's chrome is intact: lit menu bar, black canvas, no blue bands.
+        assert sum(con.screen_pixel(400, 8)) > 60
+        assert sum(con.screen_pixel(150, 200)) < 40
+        pts = [
+            (x, y) for y in range(20, 300, 40) for x in range(80, 600, 40)
+        ]
+        blue = sum(
+            1
+            for r, g, b in con.screen_pixels(pts)
+            if b > 130 and r < 90 and g < 90
+        )
+        assert blue == 0, f"{blue} blue stripe pixels on the PAINT canvas"
+
+        # Bounce to TERM and back once more, then leave PAINT cleanly.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.screen_size() == (640, 360)
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X leaves PAINT
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.send_line("PRINT 3+4") == "7"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=5.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.8, timeout=15.0)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        con.stop()
+
+
 def test_switch_restores_term_screen(kernel_image):
     """#758: leaving a full-screen terminal for another console and returning
     restores its screen buffer, not just the destination prompt."""
