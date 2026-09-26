@@ -41,11 +41,47 @@ def _run(binary, text):
     return proc.stdout + proc.stderr
 
 
+def test_native_version_header_regenerates_on_make(tmp_path):
+    """#747: the native Makefile must FORCE mmb_version.h to regenerate.
+
+    The target had no prerequisites, so once the header existed it was never
+    rewritten and a docs/test-only commit left the binary reporting the
+    previous ``Build <version>``. Redirect VERSION_H to a temp path so the real
+    header is untouched, and bump MMB_VERSION to prove the second make
+    rewrites it (a no-op second make would keep the first version).
+    """
+    header = str(tmp_path / "mmb_version.h")
+    native = os.path.join(REPO, "native")
+    for ver in ("v0.0.0-first", "v0.0.0-second"):
+        subprocess.run(
+            ["make", "-C", native, "VERSION_H=" + header, header],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, MMB_VERSION=ver),
+        )
+        with open(header, encoding="utf-8") as fh:
+            assert f'#define MMB_VERSION "{ver}"' in fh.read()
+
+
 def test_banner_and_immediate_print(mmb_linux):
     out = _run(mmb_linux, 'PRINT 2+3\nPRINT "HELLO"\n')
     assert "MMBasic" in out
     assert "> 5" in out
     assert "> HELLO" in out
+
+
+def test_native_binary_reports_current_git_describe(mmb_linux):
+    """#747: native/mmbasic bakes the current git describe version.
+
+    With mmb_version.h FORCEd, the startup banner and CREDITS match HEAD even
+    after a commit that touches no build input (docs/tests only).
+    """
+    ver = subprocess.check_output(
+        ["git", "describe", "--tags", "--always"], cwd=REPO, text=True
+    ).strip()
+    assert f"mmcore operating system - {ver} -" in _run(mmb_linux, 'PRINT "V"\n')
+    assert f"build {ver}".lower() in _run(mmb_linux, "CREDITS\n").lower()
 
 
 def test_quit_ends_headless_repl(mmb_linux):
