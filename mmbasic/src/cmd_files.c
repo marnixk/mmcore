@@ -683,12 +683,52 @@ int mmb_tcp_any_open(void)
 	return 0;
 }
 
+/* The TCP client is a single machine-wide socket shared by TERM, CONNECT and
+ * OPEN ... AS #, so ownership is tracked per console rather than per console's
+ * file table (#778). Without it a second console would reset the connection
+ * out from under the first. -1 means no console owns the socket. */
+static int s_tcp_owner = -1;
+
+int mmb_tcp_owner(void)
+{
+	return s_tcp_owner;
+}
+
+int mmb_tcp_claim(void)
+{
+	if (s_tcp_owner >= 0 && s_tcp_owner != g_console)
+		return -1;
+	s_tcp_owner = g_console;
+	return 0;
+}
+
+void mmb_tcp_release(void)
+{
+	s_tcp_owner = -1;
+}
+
+char *mmb_tcp_in_use_text(char *buf)
+{
+	int owner = s_tcp_owner < 0 ? g_console : s_tcp_owner;
+	sprintf(buf, "?IN USE: TCP connection open on console %d", owner + 1);
+	return buf;
+}
+
+void mmb_tcp_in_use(void)
+{
+	char e[64];
+	mmb_error(mmb_tcp_in_use_text(e));
+}
+
 void mmb_file_close_n(int fn)
 {
 	if (fn < 1 || fn > MMB_MAX_FILES || !G.files[fn].open)
 		return;
 	if (G.files[fn].kind == MMB_FK_TCP)
+	{
 		mmb_net_tcp_close();
+		mmb_tcp_release();
+	}
 	memset(&G.files[fn], 0, sizeof(G.files[fn]));
 	G.files[fn].ungot = -1;
 }
@@ -699,6 +739,7 @@ void mmb_close_tcp_files(void)
 	for (i = 1; i <= MMB_MAX_FILES; i++)
 		if (mmb_file_is_tcp(i))
 			mmb_file_close_n(i);
+	mmb_tcp_release();
 }
 
 int mmb_file_read(int fn, char *buf, int nch)
@@ -856,9 +897,12 @@ void mmb_cmd_open(void)
 		mmb_error("?FILE NUMBER");
 	if (tcp)
 	{
-		int other;
+		int other, owner;
 		if (mmb_in_connect() || mmb_in_term())
 			mmb_error("?FILE");
+		owner = mmb_tcp_owner();
+		if (owner >= 0 && owner != g_console)
+			mmb_tcp_in_use();
 		other = mmb_tcp_any_open();
 		if (other && other != fn)
 			mmb_error("?FILE");
@@ -866,6 +910,7 @@ void mmb_cmd_open(void)
 			mmb_file_close_n(fn);
 		if (mmb_net_tcp_begin(host, port) != 0)
 			tcp_open_fail();
+		mmb_tcp_claim();
 		memset(&G.files[fn], 0, sizeof(G.files[fn]));
 		G.files[fn].open = 1;
 		G.files[fn].mode = mode;

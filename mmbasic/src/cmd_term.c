@@ -46,7 +46,6 @@
 #define TM_RECV_BUF     8192
 #define TM_INTERP_YIELD 256
 #define TM_DUMP_MS      250
-#define TM_SB_MAX       512
 #define TM_SB_MS        2000
 #define TM_BM_MAX       32
 #define TM_BM_NAME      40
@@ -1669,6 +1668,7 @@ static void term_exit(void)
 	zm_shift = 0;
 	term_log_flush();
 	mmb_net_tcp_close();
+	mmb_tcp_release();
 	T.tcp = 0;
 	T.connecting = 0;
 	term_present_drain();
@@ -3025,14 +3025,32 @@ static void term_bm_delete(void)
 static void term_bm_connect(void)
 {
 	term_bm *b;
-	int i, old_cols, n;
+	int i, old_cols, n, use_socket;
 
 	if (T.dlg_sel < 0 || T.dlg_sel >= g_bm_n)
 		return;
 	b = &g_bm[T.dlg_sel];
 	if (!b->host[0])
 		return;
-	tcp_close_quiet();
+	/* The TCP client is one machine resource, so a bookmark must not reset a
+	 * connection another console holds (#778). Demo/replay bookmarks use no
+	 * socket and must not close the owner's socket merely because the session
+	 * is reset below. */
+	use_socket = !(strcasecmp(b->host, "demo") == 0 ||
+		       strcasecmp(b->host, "demoburst") == 0 ||
+		       strcasecmp(b->host, "demoiac") == 0 ||
+		       strcasecmp(b->host, "replay") == 0);
+	if (use_socket && mmb_tcp_owner() >= 0 && mmb_tcp_owner() != g_console)
+	{
+		T.net_fail = 1;
+		mmb_tcp_in_use_text(T.net_msg);
+		pane_puts(T.net_msg);
+		pane_newline();
+		term_ui_refresh();
+		return;
+	}
+	if (use_socket || mmb_tcp_owner() == g_console)
+		tcp_close_quiet();
 	T.connecting = 0;
 	T.net_fail = 0;
 	T.net_msg[0] = 0;
@@ -3100,6 +3118,7 @@ static void term_bm_connect(void)
 		}
 		else
 		{
+			mmb_tcp_claim();
 			term_mark_live();
 			T.connecting = 1;
 			T.connect_at = mmb_now_ms();
@@ -5198,6 +5217,7 @@ static void tcp_close_quiet(void)
 {
 	s_iac_n = 0;
 	mmb_net_tcp_close();
+	mmb_tcp_release();
 	T.tcp = 0;
 	T.net_lost = 0;
 }
@@ -5210,6 +5230,7 @@ static void tcp_lost(const char *why)
 
 	s_iac_n = 0;
 	mmb_net_tcp_close();
+	mmb_tcp_release();
 	T.tcp = 0;
 	strncpy(T.net_msg, "Connection closed", sizeof(T.net_msg) - 1);
 	T.net_msg[sizeof(T.net_msg) - 1] = 0;
@@ -5676,8 +5697,13 @@ void mmb_cmd_term(void)
 	term_reset_pen();
 
 	ser("TERM\r\n");
-	if (!T.demo && !T.replay && !T.file_replay && mmb_tcp_any_open())
-		mmb_error("?FILE");
+	if (!T.demo && !T.replay && !T.file_replay)
+	{
+		if (mmb_tcp_owner() >= 0 && mmb_tcp_owner() != g_console)
+			mmb_tcp_in_use();
+		if (mmb_tcp_any_open())
+			mmb_error("?FILE");
+	}
 	if (T.replay)
 	{
 		T.tcp = 1;
@@ -5700,6 +5726,7 @@ void mmb_cmd_term(void)
 		}
 		else
 		{
+			mmb_tcp_claim();
 			term_mark_live();
 			T.connecting = 1;
 			T.connect_at = mmb_now_ms();
@@ -6188,6 +6215,7 @@ void mmb_term_poll(void)
 				strncpy(T.net_msg, mmb_net_tcp_errmsg(),
 					sizeof(T.net_msg) - 1);
 			mmb_net_tcp_close();
+			mmb_tcp_release();
 			T.net_fail = 1;
 			pane_puts(T.net_msg);
 			pane_newline();
