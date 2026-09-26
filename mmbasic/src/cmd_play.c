@@ -233,6 +233,7 @@ static void play_teardown(void)
 	g_audio.paused = 0;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
+	g_audio.owner = -1;
 	s_tone_left = 0;
 	s_tone_hz_l = s_tone_hz_r = 0;
 	s_tone_ph_l = s_tone_ph_r = 0;
@@ -245,6 +246,12 @@ void mmb_play_stop(void)
 	if (G.plat && G.plat->audio_flush)
 		G.plat->audio_flush();
 	play_teardown();
+}
+
+void mmb_play_stop_owned(void)
+{
+	if (g_audio.owner == g_console)
+		mmb_play_stop();
 }
 
 void mmb_audio_apply_options(void)
@@ -283,6 +290,7 @@ static void play_begin(int kind, const char *path)
 	g_audio.vol_l = g_audio.vol_r = 100;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
+	g_audio.owner = g_console;
 	if (path)
 		strncpy(g_audio.name, path, sizeof(g_audio.name) - 1);
 	s_mix_origin = mmb_now_ms();
