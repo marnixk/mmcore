@@ -156,23 +156,89 @@ def test_apps_launcher_lists_builtins_with_labels(console):
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
     seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    for label in (
+    labels = (
         "EDITOR",
         "FILE MANAGER",
         "WORD PROCESSOR",
         "PAINT",
         "JUKEBOX",
+        "TERMINAL",
         "HELP",
         "SETTINGS",
-        "PACKAGE",
-    ):
+    )
+    for label in labels:
         assert label in seen, (label, seen)
+    # #793: exactly this order, Terminal immediately after Jukebox.
+    positions = [seen.index(label) for label in labels]
+    assert positions == sorted(positions), (labels, positions)
+    # Package and Connect are no longer offered, but their commands remain.
+    assert "PACKAGE" not in seen
+    assert "CONNECT" not in seen
     # The overlay frame, not a full-width HOME/APPS title bar. ``APPS``
     # opens the boot-style launcher (title HOME); Ctrl+Space uses APPS.
     assert "HOME" in seen
     con._ser.sendall(b"\x1b")
     con.drain(quiet=0.9, timeout=3.0)
     assert con.send_line("PRINT 11") == "11"
+
+
+def _panel_rect(con, want_w, want_h):
+    """Mirror tui_dialog_geom for a dialog of want_w x want_h text cells."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    pw = min(want_w, cols - 2)
+    ph = min(want_h, rows - 2)
+    px = max(1, (cols - pw) // 2)
+    py = max(1, (rows - ph) // 2)
+    return px, py, pw, ph
+
+
+def _cell(col, row):
+    """A pixel at the vertical middle of a text cell (8x16 font)."""
+    return (col * 8 + 2, row * 16 + 8)
+
+
+def test_apps_launcher_chrome_matches_settings(console):
+    """#793: the APPS dialog backdrop, title bar and frame match SETTINGS.
+
+    The picker previously drew its body on the editor surface (edit_bg) and
+    its frame in the title colour, so it did not match the SETTINGS hub's
+    dialog surfaces. Sample the same roles in both dialogs.
+    """
+    con = console
+    ax, ay, aw, _ = _panel_rect(con, 52, 16)
+    sx, sy, sw, _ = _panel_rect(con, 68, 13)
+
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    con.drain(quiet=0.9, timeout=3.0)
+    apps = con.screen_pixels([
+        _cell(2, 2),               # backdrop margin, left of the panel
+        _cell(ax + 2, ay + 1),     # title bar interior
+        _cell(ax + aw // 2, ay),   # top frame
+        _cell(ax + aw - 3, ay + 2),  # body row, right of the intro text
+    ])
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 12") == "12"
+
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"SETTINGS\r")
+    con.drain(quiet=0.9, timeout=3.0)
+    settings = con.screen_pixels([
+        _cell(2, 2),
+        _cell(sx + 2, sy + 1),
+        _cell(sx + sw // 2, sy),
+        _cell(sx + sw - 3, sy + 2),
+    ])
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 13") == "13"
+
+    for role, a, s in zip(
+        ("backdrop", "title bar", "frame", "body"), apps, settings
+    ):
+        assert a == s, (role, apps, settings)
 
 
 def test_apps_launcher_restores_screen_on_close(fresh_console):
