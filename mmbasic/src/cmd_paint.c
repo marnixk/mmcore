@@ -812,6 +812,33 @@ int mmb_in_paint(void)
 	return PT.active;
 }
 
+/* A virtual-console switch takes the pointer away from this screen's PAINT
+ * session (#811). The mouse device is global and mmb_paint_poll() does not run
+ * while another console owns the screen, so a button still held when focus
+ * leaves would only be read again on switch-in and commit a stroke from the
+ * stale press point. Drop the in-progress stroke as the screen stops being
+ * active: clear the held-button flag and cancel any live anchor/preview, so no
+ * tool action can fire on return and a release elsewhere cannot extend it. */
+void mmb_paint_console_deactivated(int idx)
+{
+	int save;
+
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	if (!pt_console_state[idx].active)
+		return;
+
+	/* pt_tool_cancel() acts on the console's tool/selection state through
+	 * PT, so evaluate it on the console being left. */
+	save = g_console;
+	g_console = idx;
+	pt_tool_cancel();
+	PT.mouse_down = 0;
+	PT.mouse_button = 0;
+	PT.have_anchor = 0;
+	g_console = save;
+}
+
 /* ---- entry ------------------------------------------------------------- */
 
 void mmb_cmd_paint(void)
