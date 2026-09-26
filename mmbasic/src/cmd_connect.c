@@ -278,6 +278,7 @@ static void incoming_byte(unsigned char b)
 static void session_close(const char *why)
 {
 	mmb_net_tcp_close();
+	mmb_tcp_release();
 	C.active = 0;
 	C.linelen = 0;
 	C.iac_n = 0;
@@ -337,6 +338,8 @@ void mmb_cmd_connect(void)
 	C.menu = 0;
 
 	C.iac_n = 0;
+	if (mmb_tcp_owner() >= 0 && mmb_tcp_owner() != g_console)
+		mmb_tcp_in_use();
 	if (mmb_tcp_any_open())
 		mmb_error("?FILE");
 	if (mmb_net_tcp_open(C.host, C.port) != 0)
@@ -344,6 +347,7 @@ void mmb_cmd_connect(void)
 		mmb_out(mmb_net_tcp_errmsg());
 		return;
 	}
+	mmb_tcp_claim();
 	C.active = 1;
 	mmb_out("Connected. F10 / Alt+X / Ctrl+] to quit.");
 }
