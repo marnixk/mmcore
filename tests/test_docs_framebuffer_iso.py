@@ -38,6 +38,19 @@ def test_framebuffer_iso_doc_documents_quiet_boot():
     assert "hidden" in text
 
 
+def test_framebuffer_iso_doc_documents_installing_to_disk():
+    text = _read(DOC)
+    for needle in (
+        "Install to hard disk",
+        "mmcore-install",
+        "mmcore-update",
+        "MMCORE-SYS",
+        "MMCORE-DATA",
+        "mmcore-fb-linux-x86_64.tar.gz",
+    ):
+        assert needle in text, needle
+
+
 def test_framebuffer_iso_doc_documents_chromebooks():
     text = _read(DOC)
     for needle in (

@@ -77,6 +77,55 @@ At boot the image looks for a partition labelled `MMCORE` and mounts it at
 `install-usb.sh` that partition is created for you; `C:/` then survives
 reboots. Without it, files live in RAM and are lost on power-off.
 
+### Install to hard disk
+
+The live USB can also install mmcore onto an internal disk so the machine boots
+mmcore on its own. From the live session press `Alt+F2` for a root shell on
+tty2 and run `mmcore-install`:
+
+```sh
+mmcore-install                     # list the disks, then confirm
+mmcore-install --disk /dev/sdX     # choose non-interactively (still confirms)
+mmcore-install --disk /dev/sdX --yes
+```
+
+`mmcore-install` wipes the chosen disk and creates two partitions:
+
+| Partition | Label | Filesystem | Contents |
+| --- | --- | --- | --- |
+| 1 | `MMCORE-SYS` | FAT32 | GRUB (BIOS + UEFI), the live kernel + initramfs, the `mmcore` binary, and `C:` (`MMB_DRIVE_ROOT`) |
+| 2 | `MMCORE-DATA` | ext4 | the rest of the disk, mounted at boot as `D:` |
+
+The system partition is at least ~255 MiB (it grows to fit larger kernel and
+initramfs payloads). The kernel and initramfs are copied from the live media's
+own `/boot`, so the installed system matches the release that wrote the disk.
+The installer refuses the running live media and removable disks unless
+`--force` is passed; `--boot-dir DIR` reads the boot files from an
+already-mounted source instead of auto-detecting it.
+
+After installation the disk boots standalone on BIOS and UEFI: GRUB mounts
+`MMCORE-SYS` as `C:` and launches mmcore with `--drive /media/mmcore-data`, so
+`MMCORE-DATA` appears as `D:`.
+
+#### Update mmcore in place
+
+Once installed, `mmcore-update` fetches the latest published framebuffer build
+and replaces just the binary on `MMCORE-SYS` (and `/usr/local/bin/mmcore` for
+the running session), so the next boot runs the new version:
+
+```sh
+mmcore-update --check             # report installed vs. latest, change nothing
+mmcore-update                     # download, verify, install the latest
+mmcore-update --version 0.216.0   # install a specific version
+mmcore-update --url URL           # install from an explicit tarball/URL
+```
+
+It downloads `mmcore-fb-linux-x86_64.tar.gz`, checks that the tarball contains
+`mmcore-fb` and `VERSION.txt`, compares the version against the installed one,
+and replaces the binary atomically. `MMCORE_REPO`, `MMCORE_BASE_URL` and
+`MMCORE_API_URL` override where the release is resolved from.
+
+
 ### Networking
 
 Ethernet is brought up with DHCP at boot. From the prompt:

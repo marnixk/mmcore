@@ -19,6 +19,9 @@ ENTRY = os.path.join(SCRIPTS, "build-iso.sh")
 BUILDER = os.path.join(ISO, "build-in-container.sh")
 MMCORE = os.path.join(ISO, "build-mmcore.sh")
 OVERLAY = os.path.join(ISO, "rootfs-overlay")
+INSTALL = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-install")
+UPDATE = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-update")
+PROFILE = os.path.join(OVERLAY, "root", ".profile")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
@@ -98,6 +101,84 @@ def test_persistence_script_mounts_the_labeled_partition():
     assert "blkid -L MMCORE" in text
     assert "/media/mmcore" in text
     assert "mkfs.ext4" in text
+
+
+def test_installer_and_updater_scripts_are_present_and_executable():
+    for path in (INSTALL, UPDATE):
+        assert os.path.isfile(path), path
+        assert os.access(path, os.X_OK), path
+        _run(["bash", "-n", path])
+
+
+def test_installer_creates_the_two_partition_boot_layout():
+    text = open(INSTALL, encoding="utf-8").read()
+    assert "grub-install" in text
+    assert "MMCORE-SYS" in text
+    assert "MMCORE-DATA" in text
+    assert "mklabel" in text
+    assert "mkpart" in text
+    assert "255" in text  # the ~255 MiB system partition floor
+    # The installed boot uses MMCORE-SYS as C: and MMCORE-DATA as D:.
+    assert "mmcore.sys=LABEL=MMCORE-SYS" in text
+    assert "mmcore.data=LABEL=MMCORE-DATA" in text
+    profile = open(PROFILE, encoding="utf-8").read()
+    assert "mmcore.sys=" in profile
+    assert "/media/mmcore-sys" in profile
+    assert "--drive /media/mmcore-data" in profile
+
+
+def test_installer_help_documents_disk_selection():
+    out = _run(["sh", INSTALL, "--help"]).stdout
+    assert "--disk" in out
+    assert "--boot-dir" in out
+    assert "--yes" in out
+
+
+def test_updater_targets_the_framebuffer_release_asset():
+    text = open(UPDATE, encoding="utf-8").read()
+    assert "mmcore-fb-linux-x86_64.tar.gz" in text
+    assert "VERSION.txt" in text
+    assert "--check" in text
+    assert "--version" in text
+    assert "--url" in text
+    assert "MMCORE-SYS" in text
+    assert "/media/mmcore-sys" in text
+
+
+def test_updater_help_documents_the_flags():
+    out = _run(["sh", UPDATE, "--help"]).stdout
+    assert "--check" in out
+    assert "--version" in out
+    assert "--url" in out
+
+
+def test_rootfs_ships_partition_and_bootloader_tools():
+    text = open(BUILDER, encoding="utf-8").read()
+    # The rootfs (not just the builder) must be able to partition a disk and
+    # install GRUB, so these are on the `apk add --root` line.
+    assert "parted gdisk util-linux-misc grub grub-efi grub-bios" in text
+
+
+def test_update_version_compare_logic():
+    """#892: the updater's version compare runs on the host, no network."""
+    pairs = (
+        ("0.215.0", "0.216.0", "-1"),
+        ("0.216.0", "0.215.0", "1"),
+        ("v0.216.0", "0.216.0", "0"),
+        ("0.216", "0.216.0", "0"),
+        ("0.10.0", "0.9.9", "1"),
+        ("1.0.0", "0.999.999", "1"),
+        ("0.216.0-rc1", "0.216.0", "0"),
+        ("dev", "0.1.0", "-1"),
+    )
+    shell = (
+        'MMCORE_UPDATE_SOURCED=1 . "$1"; '
+        'mmcore_version_cmp "$2" "$3"'
+    )
+    for a, b, want in pairs:
+        out = _run([BASH, "-c", shell, "bash", UPDATE, a, b]).stdout.strip()
+        assert out == want, (a, b, out)
+
 
 
 def test_install_usb_script_parses_and_documents_persistence():

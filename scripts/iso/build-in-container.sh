@@ -56,7 +56,8 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alsa-lib alsa-utils libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
 	eudev-libs libxkbcommon \
-	e2fsprogs dosfstools blkid ca-certificates
+	e2fsprogs dosfstools blkid ca-certificates \
+	parted gdisk util-linux-misc grub grub-efi grub-bios
 
 # Wi-Fi firmware for common chipsets; not every package exists on every branch.
 for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
@@ -66,11 +67,20 @@ for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
 		"$fw" >/dev/null 2>&1 || true
 done
 
+# mmcore-update fetches over HTTPS (#892). `apk add --root` does not run
+# package triggers, so build the CA bundle explicitly.
+if ! chroot "${ROOTFS}" /usr/sbin/update-ca-certificates >/dev/null 2>&1; then
+	log "warning: could not build the CA bundle in the rootfs"
+fi
+
 log "Configuring the live system"
 cp /etc/resolv.conf "${ROOTFS}/etc/resolv.conf" 2>/dev/null || true
 : > "${ROOTFS}/etc/fstab"
 printf 'mmcore\n' > "${ROOTFS}/etc/hostname"
 printf '127.0.0.1\tlocalhost mmcore\n' > "${ROOTFS}/etc/hosts"
+# The release version, stamped so mmcore-install can record it on the installed
+# system partition and mmcore-update can compare against published builds.
+printf '%s\n' "${VERSION}" > "${ROOTFS}/etc/mmcore-version"
 ln -sf /sbin/init "${ROOTFS}/init"
 
 cat > "${ROOTFS}/etc/inittab" <<'EOF'
