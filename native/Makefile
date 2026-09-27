@@ -93,6 +93,15 @@ RAMDISK_C := $(MMB)/src/ramdisk_data.c
 HELP_C    := $(MMB)/src/help_data.c
 VERSION_H := $(CURDIR)/mmb_version.h
 
+# Versioned ramdisk/ tree embedded into the host binary. The stamp records the
+# sorted list of embedded files, so a removed or renamed file (which only drops
+# out of the prerequisite list) still changes the stamp and forces a rebuild of
+# ramdisk_data.c. Native keeps its own stamp: console release builds pass
+# RAMDISK_EXCLUDE=tests, so one shared stamp would be rewritten back and forth
+# between the two and race their writes to the shared generated file.
+RAMDISK_FILES := $(shell find $(REPO)/ramdisk -type f 2>/dev/null)
+RAMDISK_STAMP := $(MMB)/src/ramdisk_data.native.stamp
+
 # Version baked into util.o/cmd_credits.o. The header is FORCEd so a commit
 # that only moves git describe (docs/tests) is picked up; gen-mmb-version.sh
 # rewrites it only when the content changes, so the objects stay put.
@@ -183,7 +192,10 @@ $(BUILD)/util.o $(BUILD)/cmd_credits.o: $(VERSION_H)
 $(HELP_C): $(REPO)/scripts/gen_help.py $(wildcard $(REPO)/docs/help/*.txt)
 	python3 $(REPO)/scripts/gen_help.py $@
 
-$(RAMDISK_C): $(REPO)/scripts/gen_ramdisk.py $(shell find $(REPO)/ramdisk -type f 2>/dev/null)
+$(RAMDISK_STAMP): FORCE
+	python3 $(REPO)/scripts/gen_ramdisk.py --stamp-out $@
+
+$(RAMDISK_C): $(REPO)/scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(REPO)/scripts/gen_ramdisk.py --out $@
 
 $(VERSION_H): FORCE
@@ -195,6 +207,7 @@ $(VERSION_H): FORCE
 
 clean:
 	rm -rf $(CURDIR)/build
+	rm -f $(RAMDISK_STAMP)
 	rm -f $(CURDIR)/mmbasic $(CURDIR)/mmbasic.exe \
 	      $(CURDIR)/mmcore $(CURDIR)/mmcore.exe \
 	      $(CURDIR)/mmcore-fb $(CURDIR)/mmcore-fb.exe \

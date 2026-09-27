@@ -58,3 +58,4 @@ mmbasic/src/help_data.c
 # Generated at build from ramdisk/
 mmbasic/src/ramdisk_data.c
 mmbasic/src/ramdisk_data.stamp
+mmbasic/src/ramdisk_data.native.stamp

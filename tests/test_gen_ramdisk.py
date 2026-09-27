@@ -1,6 +1,7 @@
 """Host tests for scripts/gen_ramdisk.py."""
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 GEN = REPO / "scripts" / "gen_ramdisk.py"
 VFS = REPO / "mmbasic" / "src" / "vfs.c"
 MAKEFILE = REPO / "console" / "Makefile"
+NATIVE_MAKEFILE = REPO / "native" / "Makefile"
 
 
 def _run(tmp, root, out, extra=()):
@@ -176,3 +178,56 @@ def test_makefile_regenerates_when_ramdisk_file_removed(tmp_path):
     text = out.read_text()
     assert '"lib/gone.inc"' not in text
     assert '"lib/keep.inc"' in text
+
+
+def test_native_makefile_regenerates_when_ramdisk_file_removed(tmp_path):
+    """#879: native/Makefile has the same stale-ramdisk bug #874 fixed for the
+    console, so a removed file must still force a regenerate. Exercises the
+    real native rules in a miniature repo; native keeps its own stamp."""
+    make = shutil.which("make")
+    if make is None:
+        pytest.skip("make is not available")
+    if shutil.which("python3") is None:
+        pytest.skip("python3 is not available")
+
+    (tmp_path / "mmbasic" / "src").mkdir(parents=True)
+    shutil.copy(VFS, tmp_path / "mmbasic" / "src" / "vfs.c")
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(GEN, tmp_path / "scripts" / "gen_ramdisk.py")
+    (tmp_path / "native").mkdir()
+    shutil.copy(NATIVE_MAKEFILE, tmp_path / "native" / "Makefile")
+    lib = tmp_path / "ramdisk" / "lib"
+    lib.mkdir(parents=True)
+    (lib / "gone.inc").write_text("BYE\n")
+    (lib / "keep.inc").write_text("HI\n")
+
+    # native/Makefile locates the repo with $(abspath $(CURDIR)/..), and
+    # getcwd canonicalises symlinks (macOS /var -> /private/var), so drive it
+    # through the same canonical path rather than the raw tmp_path.
+    repo = Path(os.path.realpath(tmp_path))
+    out = repo / "mmbasic" / "src" / "ramdisk_data.c"
+    stamp = repo / "mmbasic" / "src" / "ramdisk_data.native.stamp"
+
+    def build():
+        return subprocess.run(
+            [make, "-C", str(repo / "native"), str(out)],
+            capture_output=True,
+            text=True,
+        )
+
+    res = build()
+    assert res.returncode == 0, res.stderr + res.stdout
+    assert '"lib/gone.inc"' in out.read_text()
+
+    # Make compares mtimes; keep the regenerated stamp a whole second newer
+    # than the first output so this is not a same-timestamp race.
+    time.sleep(1.1)
+    (lib / "gone.inc").unlink()
+    res = build()
+    assert res.returncode == 0, res.stderr + res.stdout
+    text = out.read_text()
+    assert '"lib/gone.inc"' not in text
+    assert '"lib/keep.inc"' in text
+    assert stamp.read_text() == "lib/keep.inc\n"
+    # The native build uses its own stamp, not the console one.
+    assert not (repo / "mmbasic" / "src" / "ramdisk_data.stamp").exists()
