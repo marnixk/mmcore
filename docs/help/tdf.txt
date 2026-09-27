@@ -19,7 +19,9 @@ TDF PRINT honours PAGE WRITE: with a graphics mode and a write target other
 than the page on screen it stamps each glyph cell into that page's buffer, so
 PAGE DISPLAY or PAGE COPY shows it and an offscreen write leaves the visible
 frame untouched. With no explicit page, or when the write target is the
-displayed page, it draws to the normal text console as before.
+displayed page, it draws to the normal text console as before. TDF PRINT is a
+character-cell command, so its page output stays top-down even under OPTION
+Y_AXIS UP.
 
 Commands
 
