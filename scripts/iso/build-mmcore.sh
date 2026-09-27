@@ -19,14 +19,15 @@ die() {
 }
 
 log "Installing mmcore build dependencies"
-apk add --no-cache --quiet build-base pkgconf sdl2-dev python3 alsa-lib >/dev/null
+apk add --no-cache --quiet build-base pkgconf sdl2-dev python3 alsa-lib bash \
+	>/dev/null
 
 # The native build only needs these trees (no Circle/picomite submodules).
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 cp -a "${REPO_ROOT}/mmbasic" "${REPO_ROOT}/native" "${REPO_ROOT}/console" \
 	"${REPO_ROOT}/ramdisk" "${REPO_ROOT}/assets" "${REPO_ROOT}/scripts" \
-	"${BUILD_DIR}/"
+	"${REPO_ROOT}/docs" "${BUILD_DIR}/"
 
 SDL_CFLAGS="$(pkg-config --cflags sdl2)"
 SDL_LIBS="$(pkg-config --libs sdl2)"
@@ -64,7 +65,8 @@ if ! cc "${probe_dir}/probe.c" ${SDL_CFLAGS} ${SDL_LIBS} -o "${probe_dir}/probe"
 	ninja -C "/tmp/SDL2-${SDL_VER}/build" install >/dev/null
 	SDL_CFLAGS="-I${PREFIX}/include/SDL2 -D_THREAD_SAFE"
 	SDL_LIBS="-L${PREFIX}/lib -lSDL2"
-	install -D -m 0755 "${PREFIX}/lib"/libSDL2-2.0.so.0* "${ROOTFS}/usr/lib/" \
+	mkdir -p "${ROOTFS}/usr/lib"
+	cp -a "${PREFIX}/lib"/libSDL2-2.0.so.0* "${ROOTFS}/usr/lib/" \
 		2>/dev/null || true
 fi
 
@@ -74,6 +76,7 @@ make -C "${BUILD_DIR}/native" sdl-fb \
 
 [ -x "${BUILD_DIR}/native/mmcore-fb" ] \
 	|| die "mmcore-fb was not built"
-install -D -m 0755 "${BUILD_DIR}/native/mmcore-fb" \
-	"${ROOTFS}/usr/local/bin/mmcore"
+mkdir -p "${ROOTFS}/usr/local/bin"
+cp "${BUILD_DIR}/native/mmcore-fb" "${ROOTFS}/usr/local/bin/mmcore"
+chmod 0755 "${ROOTFS}/usr/local/bin/mmcore"
 log "Installed mmcore into ${ROOTFS}/usr/local/bin/mmcore"

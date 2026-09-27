@@ -34,11 +34,27 @@ log "Building the Alpine rootfs (${ARCH})"
 rm -rf "${ROOTFS}" "${ISOROOT}"
 mkdir -p "${ROOTFS}" "${ISOROOT}/boot/grub" "$(dirname "${OUT}")"
 
+# apk --root reads its repositories from <root>/etc/apk/repositories, so seed
+# it before installing anything.
+ALPINE_VER="$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo 3.20)"
+if [ ! -s /etc/apk/repositories ]; then
+	printf '%s\n' \
+		"https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/main" \
+		"https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/community" \
+		> /etc/apk/repositories
+fi
+mkdir -p "${ROOTFS}/etc/apk"
+cp /etc/apk/repositories "${ROOTFS}/etc/apk/repositories"
+# apk --root also verifies the index with keys from <root>/etc/apk/keys.
+mkdir -p "${ROOTFS}/etc/apk/keys"
+cp -a /etc/apk/keys/. "${ROOTFS}/etc/apk/keys/" 2>/dev/null || true
+
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
 	linux-lts linux-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
+	libdrm mesa eudev-libs libxkbcommon \
 	e2fsprogs dosfstools blkid ca-certificates
 
 # Wi-Fi firmware for common chipsets; not every package exists on every branch.
