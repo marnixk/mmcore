@@ -433,3 +433,19 @@ def test_help_mm_host_and_runtime_topics(console):
     assert "MM.RUNTIME" in runtime
     assert "pi" in runtime and "linux" in runtime and "mac" in runtime
 
+
+def test_ihelp_topic_opens_at_top_when_taller_than_viewport(fresh_console):
+    """#877: a long topic opens at its first line, not scrolled to the tail.
+
+    On an 80x25 pane JUKE's first link sits below the fold; the old loader
+    selected that link and scrolled the pane to it, so the initial frame
+    started mid-topic and the first line was never drawn.
+    """
+    con = fresh_console
+    assert con.send_line("MODE 2") == ""
+    seen = open_ihelp(con, "JUKE")
+    assert "juke is a first-party retro music player" in seen.lower()
+    # Scrolling down still walks the topic to its end.
+    scrolled = scroll_all(con, seen)
+    assert "play stop" in scrolled.lower()
+    close_ihelp(con)
