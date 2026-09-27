@@ -28,10 +28,10 @@ Getting online
 
   Wi-Fi (store and join):
       OPTION WIFI "ssid","password"
-  Wi-Fi (scan and prompt):
+  Wi-Fi (connect with stored credentials):
       OPTION WIFI
-  Join with stored credentials:
-      OPTIONS WIFI
+  Wi-Fi (scan and prompt):
+      OPTION WIFI SCAN
   Set country (default US; UK is GB):
       OPTION WIFI COUNTRY "NZ"
   Wired Ethernet DHCP (Pi with RJ45):

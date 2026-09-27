@@ -47,9 +47,9 @@ the INI (including wiping Wi-Fi SSID/PSK) but does not delete `.BAS`
 programs.
 
 `OPTION WIFI "ssid","password"` stores credentials and, on a real Pi with
-firmware, brings the radio up with WPA2. Bare `OPTION WIFI` scans and prompts
-when the radio is present. `OPTIONS WIFI` joins using those stored credentials;
-with none stored it reports `?WIFI not configured`. Hardware release zips for
+firmware, brings the radio up with WPA2. `OPTION WIFI` with no arguments joins
+using stored credentials; `OPTION WIFI SCAN` scans and prompts when the radio is
+present. With none stored it reports `?WIFI not configured`. Hardware release zips for
 Pi 3 / 3B+ / 4 / 400 / Zero 2 W include `C:/firmware/` (CYW4343x). The Pi Zero 2
 (non-W) zip does not. QEMU does not emulate Wi-Fi: connect reports that the
 radio is unavailable. The PSK is written to the INI and is not printed on the

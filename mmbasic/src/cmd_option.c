@@ -300,9 +300,18 @@ static void parse_wifi(void)
 		mmb_wlan_apply_country();
 		return;
 	}
+	if (mmb_match("SCAN"))
+	{
+		mmb_skip_sp();
+		if (*G.p != 0 && *G.p != ':' && *G.p != '\'')
+			mmb_syntax();
+		parse_wifi_interactive();
+		return;
+	}
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
-		parse_wifi_interactive();
+		/* Bare OPTION WIFI: connect with the stored credentials. */
+		wifi_connect_stored();
 		return;
 	}
 	{
@@ -1068,17 +1077,6 @@ static void option_dispatch(void)
 		return;
 	}
 	mmb_syntax();
-}
-
-void mmb_cmd_options(void)
-{
-	mmb_skip_sp();
-	if (!mmb_match("WIFI"))
-		mmb_syntax();
-	mmb_skip_sp();
-	if (*G.p != 0 && *G.p != ':' && *G.p != '\'')
-		mmb_syntax();
-	wifi_connect_stored();
 }
 
 void mmb_cmd_option(void)

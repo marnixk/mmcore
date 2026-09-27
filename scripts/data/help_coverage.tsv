@@ -175,7 +175,6 @@ ON MOUSECLICK	ON	alias	alias of ON
 ON MOUSEMOVE	ON	alias	alias of ON
 OPEN	OPEN	topic	dedicated topic
 OPTION	OPTION	topic	dedicated topic
-OPTIONS	OPTIONS	topic	dedicated topic
 PACKAGE	PACKAGE	topic	dedicated topic
 PAGE	PAGE	topic	dedicated topic
 PAINT	PAINT	topic	dedicated topic

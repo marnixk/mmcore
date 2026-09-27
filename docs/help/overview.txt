@@ -114,7 +114,6 @@ System and Options
     ~ME~ - short mmCore introduction
     ~CREDITS~ - copyright notices
     ~OPTION~ - set options
-    ~OPTIONS~ - OPTIONS WIFI join
     ~FACTORY_RESET~ - restore defaults
     ~REBOOT~ - reboot the machine
     ~PROMPT~ - prompt format option

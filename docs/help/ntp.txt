@@ -2,7 +2,7 @@ name: NTP
 kind: command
 
 Synchronise the clock from a Network Time Protocol server. Requires Ethernet
-or Wi-Fi (see ~ETHERNET~ / ~OPTIONS~ WIFI) and runs best-effort: when the
+or Wi-Fi (see ~ETHERNET~ / OPTION WIFI) and runs best-effort: when the
 network is down the clock is left unchanged and an error is reported.
 
 NTP

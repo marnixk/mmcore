@@ -193,7 +193,7 @@ scope on Linux; those options report unavailable.
 | Audio | SDL2 (`PLAY TONE`/`MP3`/`MOD`/`XM`) | Circle HDMI / PWM audio |
 | Filesystems | `A:` ramdisk; `C:` persistent host directory under `MMB_DRIVE_ROOT`; `--drive` mounts `D:` | `A:` ramdisk; `C:` SD card; `D:`– USB mass storage |
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
-| Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
+| Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
 | Window / fullscreen | SDL2 window titled `mmcore`; `--double` opens a 2x windowed client, `--fullscreen` at launch, `Alt+Enter` toggles on the primary display | HDMI fullscreen only |
 | Clipboard | `EDIT`/`WORDPAD` copy to the host OS clipboard; `Ctrl+Shift+V` pastes it (#525) | in-memory buffer only (no host clipboard) |

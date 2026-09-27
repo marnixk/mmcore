@@ -49,9 +49,9 @@ Settings:
   DISPLAY/LCDPANEL/TOUCH/SDCARD/RESOLUTION/CLOCK/
   CPUSPEED/HEARTBEAT
   WIFI [ssid$ [, password$]]
-    No args: scan for networks and prompt (needs radio). With args: store
-    credentials and join with WPA2. Use OPTIONS WIFI to connect with stored
-    credentials.
+    No args: connect with the stored credentials (error if none). With args:
+    store credentials and join with WPA2. WIFI SCAN scans for networks and
+    prompts (needs radio).
   WIFI COUNTRY "XX"
     Set the Wi-Fi regulatory domain (default US; use GB for United Kingdom).
     Unknown codes are rejected.
@@ -84,7 +84,8 @@ Example:
     OPTION BASE 1
     OPTION WIFI COUNTRY "NZ"
     OPTION WIFI "MyNet", "secret"
-    OPTIONS WIFI
+    OPTION WIFI
+    OPTION WIFI SCAN
     OPTION WIFI DEBUG ON
     OPTION ETHERNET ON
     OPTION TERM LOG ON

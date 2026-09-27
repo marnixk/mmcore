@@ -235,7 +235,7 @@ def _load_meta() -> None:
     _m("System and Options", "Shows current memory usage statistics", "MEMORY")
     _m("System and Options", "Opens interactive on device help", "HELP", "IHELP")
     _m("System and Options", "Shows copyright and credit notices", "CREDITS")
-    _m("System and Options", "Sets persistent interpreter option values", "OPTION", "OPTIONS")
+    _m("System and Options", "Sets persistent interpreter option values", "OPTION")
     _m("System and Options", "Restores factory default option values", "FACTORY_RESET", "FACTORY RESET", "FACTORY")
     _m("System and Options", "Reboots the host hardware machine", "REBOOT", "RESTART", "CPU")
     _m("System and Options", "Closes the host MMBasic application", "QUIT")
