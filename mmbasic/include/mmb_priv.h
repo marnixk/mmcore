@@ -833,6 +833,7 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg);
 void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
 				unsigned bg);
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
+void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
 void mmb_gfx_clear_overlay(void);
 void mmb_gfx_present(void);

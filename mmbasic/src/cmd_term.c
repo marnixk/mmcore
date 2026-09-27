@@ -790,7 +790,7 @@ static void term_draw_sb_status(void)
 	unsigned bg = TM_MENU_BG, fg = TM_MENU_FG;
 	int y = term_status_y();
 
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	if (T.sb_search)
 	{
 		strcpy(text, "Search: ");
@@ -1271,7 +1271,7 @@ static void pane_puts(const char *s)
 
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
-	mmb_gfx_glyph_cell(x, y, ch, fg, bg);
+	mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
 }
 
 static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
@@ -1286,7 +1286,7 @@ static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned b
 static void term_fill_cells(int x, int y, int n, unsigned bg)
 {
 	if (n > 0)
-		mmb_gfx_fill_rect(x, y, n * TM_CW, TM_CH, bg);
+		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, TM_CH, bg);
 }
 
 static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
@@ -1321,7 +1321,7 @@ static void term_draw_status(void)
 		return;
 	y = term_status_y();
 	x0 = 0;
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
 	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
@@ -1400,7 +1400,7 @@ static void term_draw_menu(void)
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
-	mmb_gfx_fill_rect(0, 0, bar_w, TM_CH, TM_MENU_BG);
+	mmb_gfx_fill_rect_topdown(0, 0, bar_w, TM_CH, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
 	term_cell(0, 0, ' ', title_fg, title_bg);
@@ -1411,7 +1411,7 @@ static void term_draw_menu(void)
 	x0 = TM_CW;
 	y0 = TM_CH;
 	drop_h = n + 2;
-	mmb_gfx_fill_rect(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
@@ -1436,9 +1436,10 @@ static void term_draw_menu(void)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect(x0 + w * TM_CW, y0, 2 * TM_CW, drop_h * TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect(x0 + 2 * TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH,
-		    TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + w * TM_CW, y0, 2 * TM_CW,
+				  drop_h * TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * TM_CH,
+				  w * TM_CW, TM_CH, TM_SH_BG);
 }
 
 static void term_shadow_blank(void)
@@ -1477,7 +1478,7 @@ static void term_draw_row(int r)
 		if (key == term_cell_sh[r][c])
 			continue;
 		term_cell_sh[r][c] = key;
-		mmb_gfx_glyph_cell(x, y, ch, fg, bg);
+		mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
 	}
 }
 
@@ -1609,8 +1610,8 @@ static void term_draw(void)
 			term_draw_row(T.pane_rows - 1);
 	}
 	else
-		mmb_gfx_fill_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
-			    TM_BG);
+		mmb_gfx_fill_rect_topdown(0, term_status_y(), T.vid_cols * TM_CW,
+					  TM_CH, TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	if (full_screen)
@@ -2646,7 +2647,7 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 	y0 = dlg_r0 * TM_CH;
 	w = cw * TM_CW;
 	h = ch * TM_CH;
-	mmb_gfx_fill_rect(x0, y0, w, h, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w, h, TM_DLG_BG);
 	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
 	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
 			 TM_BOX_BR);
@@ -2657,8 +2658,9 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
 			  TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH,
+				  TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
@@ -4363,7 +4365,7 @@ static void zmodem_draw_status(void)
 		return;
 	strncpy(zm_shown, line, sizeof(zm_shown) - 1);
 	zm_shown[sizeof(zm_shown) - 1] = 0;
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	n = (int)strlen(line);
 	if (n > T.vid_cols)
 		n = T.vid_cols;

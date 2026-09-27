@@ -182,6 +182,56 @@ def test_term_page2_cells_not_overlay_after_mode14(kernel_image):
         con.stop()
 
 
+def _term_ink_bands(con) -> tuple[int, int]:
+    """Count bright (text/cursor) pixels in the pane's top and bottom bands.
+
+    TERM's first pane row (the disconnected banner) belongs at the top under
+    both axis settings.  Under the un-fixed mirroring it lands at the bottom,
+    so the two bands discriminate the regression without a golden image.
+    """
+    cols = list(range(168, 800, 8))
+    top = [(x, y) for y in (1, 4, 8, 12, 16, 20) for x in cols]
+    bottom = [(x, y) for y in (500, 508, 516, 524, 532, 539) for x in cols]
+    pix = con.screen_pixels(top + bottom)
+    top_ink = sum(1 for r, g, b in pix[: len(top)] if _luminance(r, g, b) > 40)
+    bot_ink = sum(1 for r, g, b in pix[len(top) :] if _luminance(r, g, b) > 40)
+    return top_ink, bot_ink
+
+
+def test_term_ignores_y_axis_up(kernel_image):
+    """#890: TERM draws character rows top-down, so OPTION Y_AXIS UP cannot
+    mirror the pane/bars.  The disconnected banner must stay in the top band
+    in both modes, and the option must survive TERM's exit."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION Y_AXIS DOWN") == ""
+        seen = _open_term(con, "TERM", quiet=0.5, timeout=10.0)
+        assert "Disconnected" in seen
+        time.sleep(0.4)
+        down_top, down_bottom = _term_ink_bands(con)
+        _quit(con)
+        assert con.send_line("PRINT 3*3") == "9"
+
+        assert con.send_line("OPTION Y_AXIS UP") == ""
+        seen = _open_term(con, "TERM", quiet=0.5, timeout=10.0)
+        assert "Disconnected" in seen
+        time.sleep(0.4)
+        up_top, up_bottom = _term_ink_bands(con)
+        _quit(con)
+
+        assert down_top > 0 and down_bottom == 0, (down_top, down_bottom)
+        assert up_top > 0 and up_bottom == 0, (
+            f"TERM mirrored under Y_AXIS UP: top={up_top} bottom={up_bottom}"
+        )
+        # The fix must not clobber the program's option state on exit.
+        assert con.send_line("PRINT 6*7") == "42"
+        assert "OPTION Y_AXIS UP" in con.send_line("OPTION LIST").upper()
+        assert con.send_line("OPTION Y_AXIS DOWN") == ""
+    finally:
+        con.stop()
+
+
 def test_term_immediate_altx_returns_prompt(kernel_image):
     """Disconnected TERM then Alt-X at once must restore a live prompt."""
     con = MMBasicConsole(kernel_image)
