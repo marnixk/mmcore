@@ -22,12 +22,13 @@ is kept, so earlier rows remain reachable. Press F to toggle the authentic
 80x25 view (MODE 2 640x400, the full-screen TERM pane), and F again to return
 to the MODE the preview opened in. Enter or Esc returns to the file manager.
 
-A .TDF preview decodes the TheDraw font with the same decoder as TDF.BAS
-(~TDF~) and draws a specimen of its glyphs: the font name, then printable
-ASCII 33-126 wrapped across the screen. It uses the current MODE's character
-grid (no MODE switch), Up/Down scroll taller fonts, and Enter or Esc returns.
-A file that is not a valid .TDF falls back to the file-info overlay instead of
-failing.
+A .TDF preview decodes the TheDraw font with the same decoder as the native
+~TDF~ commands and draws a specimen of its glyphs: the font name, then
+printable ASCII 33-126 wrapped across the screen. It uses the current MODE's
+character grid (no MODE switch) and Up/Down scrolls taller fonts. A file with
+several variations shows one at a time and Left/Right cycles them (wrapping at
+the ends), resetting the scroll to the top. Enter or Esc returns. A file that
+is not a valid .TDF falls back to the file-info overlay instead of failing.
 
 FILES
 

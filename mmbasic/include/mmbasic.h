@@ -285,6 +285,8 @@ void mmb_reboot(void);
 
 /* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
 void mmb_console_apply_colour(void);
+/* ANSI SGR code (30..97 foreground, 40..107 background) for an RGB888 colour. */
+int mmb_console_ansi_code(unsigned rgb888, int fg);
 void mmb_console_reset_prompt(void);
 void mmb_hw_cursor(int show);
 

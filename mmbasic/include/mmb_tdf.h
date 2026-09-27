@@ -3,8 +3,8 @@
 
 /* Shared TheDraw (.TDF) font decoder.
  *
- * Used by the FILES .TDF preview; the format is the one documented for the
- * ramdisk fonts (A:/fonts/tdf/) and ramdisk/lib/TDF.BAS. The decoder is pure
+ * Used by the native TDF commands and the FILES .TDF preview; the format is
+ * the one documented for the ramdisk fonts (A:/fonts/tdf/). The decoder is pure
  * C: the caller owns the file buffer and keeps it alive for as long as the
  * parsed font is used (the font points into it). A file may hold several
  * variations of one font; `index` selects one and mmb_tdf_count() reports how

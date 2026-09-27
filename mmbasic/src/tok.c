@@ -56,6 +56,8 @@ static const char *const kws[] = {
 	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING", "TYPE",
 	"TIMEZONE",
 	"THEME",
+	"TDF", "TDF.WIDTH", "TDF.NAME$", "TDF.TYPE%", "TDF.SPACING%",
+	"TDF.HEIGHT", "TDF.VARIANTS%", "TDF.VARIANT%", "TDF.VARIANTNAME$",
 	"UNTIL", "UNPACK", "UCASE$", "UP", "UPPER", "USBKEYBOARD",
 	"VAL", "VSYNC_WAIT", "WHILE", "WEND", "WORDPAD",
 	"WARP_H", "WARP_V", "WINDOW", "WRITE", "WIFI", "VERY", "XFER", "XOR",

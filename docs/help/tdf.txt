@@ -3,47 +3,61 @@ kind: page
 
 TheDraw fonts
 
-A:/lib/TDF.BAS loads the TheDraw (.TDF) fonts seeded in A:/fonts/tdf/
-(categories mono/, color/ and deco/) and draws banner text from a BASIC program
-using the normal text console (~LOCATE~, ~COLOUR~, ~PRINT~). Include it, load a
-font, then print:
+Native TDF commands load the TheDraw (.TDF) fonts seeded in A:/fonts/tdf/
+(categories mono/, color/ and deco/) and draw banner text using the normal
+text console. No include file is needed:
 
-    #INCLUDE "A:/lib/TDF.BAS"
-    TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"
-    TDF.Print 0, 3, "HELLO"
-    TDF.Close
+    TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"
+    TDF PRINT 0, 3, "HELLO"
+    TDF CLOSE
 
-TDF.Print x, y, s$ draws at character cell x (column, 0-based) and y (row,
+TDF PRINT x, y, s$ draws at character cell x (column, 0-based) and y (row,
 0-based) and leaves the cursor after the last glyph. Glyphs are ASCII 33 to
 126; a space advances by the font's letter spacing.
 
-API
+Commands
 
-  TDF.Load path$               load the first font in a .TDF file
-  TDF.LoadNamed path$, name$   load a font by name from a collection
-  TDF.LoadVariant path$, n%    load variation n% (0-based) from a file
-  TDF.VariantName$(n%)         name of variation n%
-  TDF.Variants%                number of variations in the loaded file
-  TDF.variant%                 index of the loaded variation
-  TDF.Print x, y, s$           draw a string at a character cell
-  TDF.Width(s$)                columns TDF.Print would advance
-  TDF.Close                    free the in-memory font buffer
+  TDF LOAD path$ [, variant%] [, slot%]   load a font (variant 0 by default)
+  TDF NAMED path$, name$ [, slot%]        load a font by name
+  TDF USE slot%                           make a loaded slot active
+  TDF PRINT x, y, s$ [, slot%]            draw a string at a character cell
+  TDF CLOSE [slot%]                       free a slot (default: active font)
 
-The whole file is read into memory at load and closed immediately, so TDF.Close
-does not release a file stream.
+Functions
 
-After a load, TDF.Name$ is the font name and TDF.Type% is the type: 0 Outline,
-1 Block, 2 Color. TDF.Spacing% and TDF.Height report the letter spacing and
-line height. A space or an undefined glyph advances by the spacing.
+  TDF.WIDTH(s$ [, slot%])          columns TDF PRINT would advance
+  TDF.NAME$([slot%])               font name
+  TDF.TYPE%([slot%])               0 Outline, 1 Block, 2 Color
+  TDF.SPACING%([slot%])            letter spacing
+  TDF.HEIGHT([slot%])              maximum glyph height
+  TDF.VARIANTS%([slot%])           variations in the file
+  TDF.VARIANT%([slot%])            index of the loaded variation
+  TDF.VARIANTNAME$(n% [, slot%])   name of variation n%
+
+Slots
+
+Up to four fonts can be loaded at once. The slot% argument is a 0-based index
+into that pool; an omitted slot uses the active font, and LOAD/NAMED without a
+slot take the first free one. A new load errors once every slot is full. The
+first load becomes active.
+
+    TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0
+    TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF", 0, 1
+    TDF USE 0 : TDF PRINT 0, 3, "HELLO"
+    TDF USE 1 : TDF PRINT 0, 10, "WORLD"
+    PRINT TDF.NAME$(0); " / "; TDF.NAME$(1)
+    TDF CLOSE 0
+    TDF CLOSE 1
 
 Variations
 
 A .TDF can pack several variations of one font (same glyphs, different colour
-palettes). TDF.Variants% counts them, TDF.VariantName$(n%) names one, and
-TDF.LoadVariant path$, n% loads it; TDF.Load loads variation 0. For example:
+palettes). TDF.VARIANTS% counts them and TDF.VARIANTNAME$(n%) names one; pass
+the variant index to TDF LOAD to choose one, and read TDF.VARIANT% afterwards.
+For example:
 
-    TDF.LoadVariant "A:/fonts/tdf/color/ACIDSC2X.TDF", 2
-    PRINT TDF.VariantName$(2); " ("; TDF.variant%; ")"
+    TDF LOAD "A:/fonts/tdf/color/ACIDSC2X.TDF", 2
+    PRINT TDF.VARIANTNAME$(2); " ("; TDF.VARIANT%; ")"
 
 Font types
 
@@ -58,9 +72,4 @@ A missing file, a bad header, or an unknown font name stops the program with a
 TDF error. Font rows are read to the NUL terminator, so descender lines are
 kept even when the Max Height header under-counts them.
 
-In ~FILES~, Enter or View on a .TDF file draws a specimen of the font using the
-same decoder, without leaving the current MODE. A file with several variations
-renders one labelled specimen block per variation; scroll with Up/Down and
-PgUp/PgDn.
-
-See also ~TEXT~, ~LOCATE~, ~COLOUR~ and ~FUNCTIONS~.
+See also: FILES

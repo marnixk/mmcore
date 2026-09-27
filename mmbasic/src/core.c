@@ -3099,6 +3099,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("COLOR")] = mmb_cmd_colour;
 		tab[mmb_kw_id("MODE")] = mmb_cmd_mode;
 		tab[mmb_kw_id("PAGE")] = mmb_cmd_page;
+		tab[mmb_kw_id("TDF")] = mmb_cmd_tdf;
 		tab[mmb_kw_id("BLIT")] = mmb_cmd_blit;
 		tab[mmb_kw_id("IMAGE")] = mmb_cmd_image;
 		tab[mmb_kw_id("FRAMEBUFFER")] = mmb_cmd_framebuffer;
