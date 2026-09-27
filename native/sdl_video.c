@@ -138,6 +138,9 @@ int sdl_video_open(int w, int h)
 	if (!sdl_video_resize(w, h))
 		return 0;
 #ifdef MMB_SDL_FRAMEBUFFER
+	/* No window manager and no reliable system cursor on DRM/KMS: the
+	 * interpreter's own software cursor (PAINT, MOUSE ON) is the pointer. */
+	SDL_ShowCursor(SDL_DISABLE);
 	/* No desktop to go windowed on: fill the display from the first frame. */
 	sdl_video_set_fullscreen(1);
 #endif
