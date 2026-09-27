@@ -360,6 +360,57 @@ def test_juke_keeps_playing_when_other_console_runs_a_program(kernel_image):
         con.stop()
 
 
+def test_juke_advances_while_backgrounded(kernel_image):
+    """#858: a JUKE queue keeps advancing while its console is not shown, and
+    switching back shows the now-playing track that replaced the finished one.
+
+    Console 1 queues a tiny MP3 followed by a looping MOD. The MP3 ends while
+    console 2 is the visible screen; the next track must start anyway."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert con.send_line('MKDIR "JB"') == ""
+        assert con.send_line('COPY "tests/TEST.MP3" TO "JB/A.MP3"') == ""
+        assert con.send_line('COPY "tests/TEST.MOD" TO "JB/B.MOD"') == ""
+        con._ser.sendall(b'JUKE "JB"\r')
+        time.sleep(1.0)
+        con.drain(quiet=0.5)
+
+        # Move to console 2; console 1's JUKE is now backgrounded.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Let the tiny A.MP3 finish, then require the queue to be playing the
+        # looping B.MOD (PLAYING() would be 0 if the queue stalled).
+        deadline = time.time() + 8.0
+        playing = "0"
+        while time.time() < deadline:
+            if con.send_line("PRINT PLAYING()") == "1":
+                time.sleep(1.5)
+                playing = con.send_line("PRINT PLAYING()")
+                break
+            time.sleep(0.3)
+        assert playing == "1", "JUKE did not advance to the next track off-screen"
+
+        # On return the JUKE screen must show the now-playing MOD, not the
+        # finished MP3 (its saved snapshot is stale until it repaints).
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # JUKE's title/header live in the top-left of its 960x540 screen.
+        screen = con.wait_ocr("MOD", timeout=12.0, crop="960x120+0+0")
+        assert "MOD" in screen.upper(), screen
+
+        # Leave JUKE (Esc) before sending REPL commands, then silence audio.
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.6, timeout=5.0)
+        assert con.send_line("PLAY STOP") == ""
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
 def _play_mod_in_files(con) -> None:
     """Console 2: CHDIR to the seeded tests and start a FILES play preview."""
     assert con.send_line('CHDIR "A:/tests"') == ""

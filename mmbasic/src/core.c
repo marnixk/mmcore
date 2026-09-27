@@ -4459,5 +4459,9 @@ void mmb_poll(void)
 	mmb_paint_poll();
 	mmb_afk_poll();
 	mmb_juke_poll();
+	/* #858: run the cooperative background callbacks registered by apps on
+	 * non-active consoles (JUKE queue, TERM/CONNECT socket drain). Rate
+	 * limits live in the registry, so this is cheap on every yield. */
+	mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
 }

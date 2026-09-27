@@ -10,6 +10,35 @@ static int s_initialized[MMB_MAX_CONSOLES];
 static int s_shown[MMB_MAX_CONSOLES];
 static int s_pending = -1;
 
+/* Background yield callbacks (yield.c) run while their owning console is not
+ * active. Select that console's interpreter context for the callback and hand
+ * the real one back afterwards. Only one callback runs at a time, so a single
+ * saved pair is enough. */
+static int s_bg_saved_console = -1;
+static mmb *s_bg_saved_cur;
+
+int mmb_bg_console_enter(int console)
+{
+	if (console < 0 || console >= MMB_MAX_CONSOLES)
+		return 0;
+	if (console == g_console || !g_mmb[console])
+		return 0;
+	s_bg_saved_console = g_console;
+	s_bg_saved_cur = g_cur;
+	g_console = console;
+	g_cur = g_mmb[console];
+	return 1;
+}
+
+void mmb_bg_console_leave(void)
+{
+	if (s_bg_saved_console < 0)
+		return;
+	g_console = s_bg_saved_console;
+	g_cur = s_bg_saved_cur;
+	s_bg_saved_console = -1;
+}
+
 int mmb_console_switch_pending(void)
 {
 	return s_pending >= 0;
@@ -90,6 +119,10 @@ void mmb_console_reset(void)
 	mmb_vfs_cwd_reset();
 	s_initialized[0] = 1;
 	s_shown[0] = 1; /* the warm reset paints the banner and prompt itself */
+	/* Background yield callbacks hold pointers into the contexts just freed
+	 * (and into app state that is about to be cleared), so drop them all
+	 * (#858). Apps re-register when they are next started. */
+	mmb_yield_clear();
 	mmb_front_reset();
 }
 

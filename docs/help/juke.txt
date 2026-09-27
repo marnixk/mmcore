@@ -43,6 +43,8 @@ that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
 Enter also quits; the music is not stopped, so you can keep listening from
 the console or join another screen. The queue keeps advancing in the
 background until it reaches the end of a single file or you use PLAY STOP.
+If you switch to another console while JUKE is open, the track still ends
+and the queue still advances there; see ~CONSOLES~.
 
 Example:
 

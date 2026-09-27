@@ -220,6 +220,11 @@ typedef struct {
 static tm_state T_s[MMB_MAX_CONSOLES];
 #define T (T_s[g_console])
 
+/* Set while mmb_term_poll() runs from a background yield callback (#858): the
+ * session is drained and interpreted, but nothing may be painted. */
+static int s_term_bg;
+static void term_bg_yield(int console, void *ctx);
+
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;
 
@@ -1554,6 +1559,12 @@ static void term_draw(void)
 {
 	int r, saved, lo, hi, full_screen;
 
+	if (s_term_bg)
+	{
+		/* Background drain: the grid is updated and need_draw stays set, so
+		 * returning to this console repaints from it (#858). */
+		return;
+	}
 	if (!T.need_draw)
 		return;
 	if (T.cur_vis)
@@ -1689,6 +1700,7 @@ static void term_exit(void)
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
+	mmb_yield_remove(term_bg_yield);
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
 	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
@@ -5760,6 +5772,11 @@ void mmb_cmd_term(void)
 	T.cur_col = 0;
 	T.cur_vis = 1;
 	T.active = 1;
+	/* #858: keep a live session drained if this console is switched away
+	 * from. The callback itself checks the socket owner, so demo/replay/file
+	 * sessions (which have no socket) are not touched. */
+	mmb_yield_remove(term_bg_yield);
+	mmb_yield_add(g_console, term_bg_yield, 0, 25);
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
 	mark_dirty_full();
@@ -6253,6 +6270,29 @@ void mmb_term_poll(void)
 	if (T.need_draw)
 		term_draw();
 	mmb_net_yield();
+}
+
+/* #858: keep an established TCP session drained while this console is not the
+ * active screen. Received bytes are interpreted into this console's own grid
+ * (scrollback, log, ANSI state all stay correct); painting is suppressed by
+ * s_term_bg and the active poll repaints from need_draw on return. Only the
+ * console that owns the machine-wide socket has a real session, so the shared
+ * receive ring has a single producer. Key handling never runs here. */
+static void term_bg_yield(int console, void *ctx)
+{
+	(void)ctx;
+	if (console == g_console)
+		return;
+	if (!T_s[console].active)
+		return;
+	if (mmb_tcp_owner() != console)
+		return;
+	if (!mmb_bg_console_enter(console))
+		return;
+	s_term_bg = 1;
+	mmb_term_poll();
+	s_term_bg = 0;
+	mmb_bg_console_leave();
 }
 
 /* Cold-boot the TERM layer on a warm reset (#763). Closing each console's
