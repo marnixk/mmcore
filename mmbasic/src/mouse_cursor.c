@@ -16,8 +16,8 @@
 #include "mmb_priv.h"
 #include <string.h>
 
-#define MMB_CURSOR_MAX_W 16
-#define MMB_CURSOR_MAX_H 16
+#define MMB_CURSOR_MAX_W 24
+#define MMB_CURSOR_MAX_H 24
 
 enum {
 	MMB_CURSOR_POINTER = 0,
@@ -25,6 +25,7 @@ enum {
 	MMB_CURSOR_CROSSHAIR,
 	MMB_CURSOR_QUESTION,
 	MMB_CURSOR_DENY,
+	MMB_CURSOR_HIDDEN,
 	MMB_CURSOR_COUNT
 };
 
@@ -54,78 +55,95 @@ static const mmb_cursor_art s_art[MMB_CURSOR_COUNT] = {
 		"#    #++#   ",
 		"      ##    ",
 	} },
-	{ 12, 16, 0, 0, {
-		"    ##      ",
-		"   #++#     ",
-		"   #++#     ",
-		"   #++#     ",
-		"  ##++#     ",
-		" #++++#     ",
-		"##++++#     ",
-		"#+++++#     ",
-		"#+++++#     ",
-		"#+++++#     ",
-		"#+++++#     ",
-		" #++++#     ",
-		" #++++#     ",
-		"  #++#      ",
-		"   ##       ",
-		"            ",
+	{ 18, 20, 8, 0, {
+		"       ###        ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"    ##+++++##     ",
+		" ###+++++++++#    ",
+		"#+++#+#+++#+++#   ",
+		"++++#+#+++#+++#   ",
+		"++++#+#+++#++++#  ",
+		"++++#+#+++#++++#  ",
+		"#+++++#+++#++++#  ",
+		" ##+++++++++++#   ",
+		" #+++++++++++++#  ",
+		" #+++++++++++++#  ",
+		" #+++++++++++++#  ",
+		"  #+++#####+++#   ",
+		"   ###     ###    ",
 	} },
-	{ 16, 16, 7, 6, {
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"  #####++#####  ",
-		"  #####++#####  ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"       ##       ",
-		"                ",
+	{ 21, 21, 10, 10, {
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"########+++++########",
+		"+++++++++++++++++++++",
+		"+++++++++++++++++++++",
+		"+++++++++++++++++++++",
+		"+++++++++++++++++++++",
+		"+++++++++++++++++++++",
+		"########+++++########",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
+		"       #+++++#       ",
 	} },
-	{ 16, 16, 0, 0, {
-		"   #####        ",
-		"  ##+++##       ",
-		" ##+++++##      ",
-		" ##+###+##      ",
-		"   #+++#        ",
-		"   #++##        ",
-		"    ##+##       ",
-		"     #+##       ",
-		"     #+#        ",
-		"     #+#        ",
-		"                ",
-		"     #+#        ",
-		"     #+#        ",
-		"     ###        ",
-		"                ",
-		"                ",
+	{ 18, 20, 9, 10, {
+		"    ##+++++##     ",
+		"   #+++++++++#    ",
+		"  #+++++++++++#   ",
+		"  #+++++++++++#   ",
+		" #++++#####++++#  ",
+		" #+++#     #+++#  ",
+		" #+++#     #+++#  ",
+		"  #++#     #++#   ",
+		"  #+++#  ##+++#   ",
+		"   ###  #++++#    ",
+		"        #+++#     ",
+		"        #+++#     ",
+		"        #++#      ",
+		"       ##++#      ",
+		"      #+++#       ",
+		"      #+++#       ",
+		"     #+++++#      ",
+		"     #+++++#      ",
+		"     #+++++#      ",
+		"      #+++#       ",
 	} },
-	{ 16, 16, 7, 7, {
-		"     #####      ",
-		"   ##+++++##    ",
-		"  #+++++++++#   ",
-		" #++++#####++#  ",
-		" #++##++++#++#  ",
-		"#++##++++++#++# ",
-		"#++#++++++++#++#",
-		"#+#++++++++++#+#",
-		"#+#++++++++++#+#",
-		"#++#++++++++#++#",
-		"#++##++++++#++# ",
-		" #++##++++#++#  ",
-		" #++++#####++#  ",
-		"  #+++++++++#   ",
-		"   ##+++++##    ",
-		"     #####      ",
+	{ 19, 19, 9, 9, {
+		"  ###         ###  ",
+		" #+++#       #+++# ",
+		"#+++++#     #+++++#",
+		"#++++++#   #++++++#",
+		"#+++++++# #+++++++#",
+		" #+++++++#+++++++# ",
+		"  #+++++++++++++#  ",
+		"   #+++++++++++#   ",
+		"    #+++++++++#    ",
+		"     #+++++++#     ",
+		"    #+++++++++#    ",
+		"   #+++++++++++#   ",
+		"  #+++++++++++++#  ",
+		" #+++++++#+++++++# ",
+		"#+++++++# #+++++++#",
+		"#++++++#   #++++++#",
+		"#+++++#     #+++++#",
+		" #+++#       #+++# ",
+		"  ###         ###  ",
 	} },
+	{ 0, 0, 0, 0, { 0 } },
 };
 
 /* One context per virtual console so a console switch never lifts the wrong
@@ -149,7 +167,7 @@ typedef struct {
 static mmb_mouse_ctx s_mc[MMB_MAX_CONSOLES];
 #define MC (s_mc[g_console])
 
-/* Map a MOUSE CURSOR name (or a 0..4 index string) onto a type id. Returns -1
+/* Map a MOUSE CURSOR name (or a 0..5 index string) onto a type id. Returns -1
  * for an unknown name so the caller can raise ?SYNTAX ERROR. */
 int mmb_mouse_cursor_type_from_name(const char *name)
 {
@@ -171,10 +189,18 @@ int mmb_mouse_cursor_type_from_name(const char *name)
 		return MMB_CURSOR_QUESTION;
 	if (!strcmp(up, "DENY") || !strcmp(up, "NO"))
 		return MMB_CURSOR_DENY;
+	if (!strcmp(up, "HIDDEN") || !strcmp(up, "NONE") ||
+	    !strcmp(up, "OFF"))
+		return MMB_CURSOR_HIDDEN;
 	for (i = 0; i < MMB_CURSOR_COUNT; i++)
 		if (up[0] == (char)('0' + i) && up[1] == 0)
 			return i;
 	return -1;
+}
+
+int mmb_mouse_cursor_type_count(void)
+{
+	return MMB_CURSOR_COUNT;
 }
 
 const char *mmb_mouse_cursor_type_name(int type)
@@ -185,6 +211,7 @@ const char *mmb_mouse_cursor_type_name(int type)
 	case MMB_CURSOR_CROSSHAIR:	return "crosshair";
 	case MMB_CURSOR_QUESTION:	return "questionmark";
 	case MMB_CURSOR_DENY:		return "deny";
+	case MMB_CURSOR_HIDDEN:		return "hidden";
 	default:			return "pointer";
 	}
 }
@@ -279,6 +306,10 @@ void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h)
 	MC.have_blit = 0;
 
 	if (!MC.on || !pg || w <= 0 || h <= 0)
+		return;
+	/* Hidden cursor (#825): keep tracking the pointer, composite no sprite.
+	 * Any previous footprint was already lifted by the erase above. */
+	if (MC.type == MMB_CURSOR_HIDDEN)
 		return;
 	if (!mmb_mouse_read(&m) || !m.present)
 		return;

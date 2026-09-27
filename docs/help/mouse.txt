@@ -10,13 +10,18 @@ MOUSE ON
 MOUSE OFF
 MOUSE CURSOR [type]
 
-  type - pointer (default), hand, crosshair, questionmark, deny, or 0..4 in
-         that order.
+  type - pointer (default), hand, crosshair, questionmark, deny, hidden, or
+         0..5 in that order.
 
 MOUSE ON draws a cursor at the current pointer position while a program runs.
 MOUSE OFF hides it. The cursor is composited over the finished frame and never
 writes to a ~PAGE~ buffer, so moving the pointer cannot change page pixels or
 interrupt drawing across multiple pages.
+
+Use MOUSE CURSOR hidden (type 5) to keep reading the pointer position and
+buttons -- MOUSE(x), MOUSE(y) and the ~ON MOUSEMOVE~ / ~ON MOUSECLICK~
+handlers all keep working -- while no cursor sprite is drawn. This lets a
+program draw its own pointer, or none at all.
 
 Pointer events call SUB handlers installed with ~ON~:
 
