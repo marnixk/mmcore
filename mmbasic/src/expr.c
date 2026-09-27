@@ -499,6 +499,7 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("MM.CMDLINE$")] = &&lbl_mmcmd;
 		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
 		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
+		fun_tab[mmb_kw_id("BATTERY%")] = &&lbl_battery;
 		finited = 1;
 	}
 	if ((unsigned char)*G.p == 0x80)
@@ -1574,6 +1575,26 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_int_val((int64_t)mmb_now_ms() - G.timer_base);
+		return 1;
+	}
+	if (mmb_match("BATTERY%"))
+	{
+	lbl_battery:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+#if defined(MMB_PLATFORM_POSIX) && defined(__linux__)
+		/* Native Linux (including the framebuffer/ISO build): report the
+		 * first battery's charge, falling back to 100 when none exists. */
+		*out = mmb_int_val((int64_t)mmb_battery_capacity_read(
+				   "/sys/class/power_supply/BAT0/capacity", 100));
+#else
+		/* Pi/Circle, Windows, macOS and any other target: no battery. */
+		*out = mmb_int_val(100);
+#endif
 		return 1;
 	}
 	if (mmb_match("LOF"))
