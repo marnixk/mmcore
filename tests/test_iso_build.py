@@ -157,6 +157,68 @@ def test_iso_workflow_builds_boot_smokes_and_attaches():
     assert "linux-iso" in wf
 
 
+def test_boot_smoke_uses_a_kms_drm_gpu():
+    """#861: -nographic has no DRM, so a crash-looping mmcore still passed
+    `pgrep`. Boot a virtio-gpu instead and assert the framebuffer path."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "-nographic" not in wf
+    assert "virtio-vga" in wf
+    assert "-display none" in wf
+    assert "-monitor none" in wf
+    assert "-serial stdio" in wf
+    # Positive checks: a DRM node, a stable (non-respawn) PID, and no SDL error.
+    assert "MMCORE_DRM_OK" in wf
+    assert "MMCORE_STABLE_OK" in wf
+    assert "MMCORE_SDL_OK" in wf
+    assert "/dev/dri/card0" in wf
+    assert "could not open SDL window" in wf
+
+
+def test_builder_ships_a_quiet_grub_with_a_splash():
+    """#863: hidden GRUB for ~1 s, a centered logo, and a quiet kernel."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert "set timeout=1" in builder
+    assert "timeout_style=hidden" in builder
+    assert "quiet" in builder
+    assert "vt.global_cursor_default=0" in builder
+    assert "splash.png" in builder
+    assert "background_image" in builder
+    assert os.path.isfile(os.path.join(ISO, "boot", "splash.png"))
+
+
+def test_builder_installs_sof_firmware_for_intel_chromebooks():
+    """#864: Sound Open Firmware is needed by many Intel Chromebooks."""
+    assert "sof-firmware" in open(BUILDER, encoding="utf-8").read()
+
+
+def test_overlay_loads_chromebook_modules():
+    """#864: cros_ec + I2C-HID touchpad/touchscreen + SOF audio modules."""
+    text = open(os.path.join(OVERLAY, "etc", "modules"), encoding="utf-8").read()
+    for module in (
+        "cros_ec",
+        "cros_ec_i2c",
+        "i2c_hid_acpi",
+        "i2c_hid_of",
+        "hid_multitouch",
+        "snd_sof",
+        "snd_sof_pci",
+    ):
+        assert module in text, module
+    # The pre-existing KMS drivers must stay.
+    for module in ("i915", "amdgpu", "virtio_gpu"):
+        assert module in text, module
+
+
+def test_rootfs_silences_the_display_banners():
+    """#863: no getty/login banner on tty1."""
+    issue = os.path.join(OVERLAY, "etc", "issue")
+    motd = os.path.join(OVERLAY, "etc", "motd")
+    assert os.path.isfile(issue)
+    assert os.path.getsize(issue) == 0
+    assert os.path.isfile(motd)
+    assert os.path.getsize(motd) == 0
+
+
 def test_iso_workflow_publishes_only_the_compressed_iso():
     wf = open(WORKFLOW, encoding="utf-8").read()
     # CI compresses after boot-smoking the raw ISO, then uploads the .zst...

@@ -51,7 +51,7 @@ cp -a /etc/apk/keys/. "${ROOTFS}/etc/apk/keys/" 2>/dev/null || true
 
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
-	linux-lts linux-firmware \
+	linux-lts linux-firmware sof-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
@@ -122,11 +122,33 @@ cp "${KERNEL}" "${ISOROOT}/boot/vmlinuz-lts"
 ( cd "${ROOTFS}" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -9 ) \
 	> "${ISOROOT}/boot/initramfs-lts"
 
+# Quiet boot: hide the menu for ~1 s (Shift still reveals it), show a centered
+# mmcore logo on the graphical console, and keep kernel/userspace chatter off
+# tty0. /dev/console is the last console= (ttyS0), so OpenRC/local.d output
+# lands on serial, not the display; tty2 and serial stay root shells.
+SPLASH="${REPO_ROOT}/scripts/iso/boot/splash.png"
+[ -f "${SPLASH}" ] || die "splash image not found: ${SPLASH}"
+cp "${SPLASH}" "${ISOROOT}/boot/grub/splash.png"
+
 cat > "${ISOROOT}/boot/grub/grub.cfg" <<'EOF'
-set timeout=5
+set timeout=1
 set default=0
+set timeout_style=hidden
+
+insmod all_video
+insmod gfxterm
+insmod png
+set gfxmode=1024x768,auto
+set gfxpayload=keep
+terminal_output gfxterm
+
+# Centered mmcore logo while GRUB waits, and (with gfxpayload=keep) as the
+# background the kernel keeps until mmcore modesets its own KMS surface.
+insmod gfxterm_background
+background_image /boot/grub/splash.png
+
 menuentry "mmcore" {
-	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200
+	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo
 	initrd /boot/initramfs-lts
 }
 EOF

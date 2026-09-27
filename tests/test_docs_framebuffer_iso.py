@@ -31,6 +31,29 @@ def test_readme_and_install_link_the_new_doc():
         assert "docs/framebuffer-and-iso.md" in _read(os.path.join(REPO, name)), name
 
 
+def test_framebuffer_iso_doc_documents_quiet_boot():
+    text = _read(DOC)
+    assert "Shift" in text
+    assert "quiet" in text
+    assert "hidden" in text
+
+
+def test_framebuffer_iso_doc_documents_chromebooks():
+    text = _read(DOC)
+    for needle in (
+        "Chromebook",
+        "developer mode",
+        "RW_LEGACY",
+        "MrChromebox",
+        "sof-firmware",
+        "cros_ec",
+        "i2c_hid_acpi",
+        "IA32",
+        "unsupported",
+    ):
+        assert needle in text, needle
+
+
 def test_native_desktop_and_new_doc_cross_link():
     native = _read(os.path.join(REPO, "docs", "native-desktop.md"))
     iso = _read(DOC)
