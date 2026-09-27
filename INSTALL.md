@@ -31,15 +31,18 @@ see [`docs/native-desktop.md`](docs/native-desktop.md).
 
 ## No Pi? Bootable USB / ISO (x86_64 PC)
 
-`mmcore-fb-x86_64.iso` is a minimal **Alpine Linux** live image with no X or
+`mmcore-fb-x86_64.iso.zst` is a minimal **Alpine Linux** live image with no X or
 Wayland. It boots straight into mmcore on the KMS/DRM framebuffer, brings up
-Ethernet DHCP, and can join Wi-Fi from the prompt with `OPTION WIFI`. Write it
-to a USB stick with the bundled installer, which also adds a persistent
-`MMCORE` partition for your BASIC files:
+Ethernet DHCP, and can join Wi-Fi from the prompt with `OPTION WIFI`. Decompress
+it, then write it to a USB stick with the bundled installer, which also adds a
+persistent `MMCORE` partition for your BASIC files:
 
 ```bash
+zstd -d mmcore-fb-x86_64.iso.zst          # -> mmcore-fb-x86_64.iso
 sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
 ```
+
+`install-usb.sh` also takes the compressed `.iso.zst` directly.
 
 Alt+F2 gives a root shell and the serial console (ttyS0, 115200) is available
 for headless use. A standalone KMS/DRM binary ships as

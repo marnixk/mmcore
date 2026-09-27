@@ -6,7 +6,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOC = os.path.join(REPO, "docs", "framebuffer-and-iso.md")
 ASSETS = (
     "mmcore-fb-linux-x86_64.tar.gz",
-    "mmcore-fb-x86_64.iso",
+    "mmcore-fb-x86_64.iso.zst",
     "install-usb.sh",
 )
 
@@ -23,6 +23,7 @@ def test_framebuffer_iso_doc_exists_and_names_the_assets():
     assert "OPTION WIFI" in text
     assert "MMCORE" in text
     assert "kmsdrm" in text
+    assert "zstd -d" in text
 
 
 def test_readme_and_install_link_the_new_doc():
@@ -42,5 +43,5 @@ def test_release_skill_names_the_iso_and_framebuffer_assets():
         os.path.join(REPO, ".cursor", "skills", "github-release", "SKILL.md")
     )
     assert "mmcore-fb-linux-x86_64.tar.gz" in skill
-    assert "mmcore-fb-x86_64.iso" in skill
+    assert "mmcore-fb-x86_64.iso.zst" in skill
     assert "install-usb.sh" in skill

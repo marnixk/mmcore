@@ -32,15 +32,21 @@ the KMS/DRM framebuffer, and its networking is driven from the MMBasic prompt.
 
 ### Write it to a USB stick
 
+Releases ship the ISO compressed as `mmcore-fb-x86_64.iso.zst`. Decompress it
+first, then write it (`zstd` is in the `zstd` package):
+
 ```bash
 # Linux only. Overwrites the device.
+zstd -d mmcore-fb-x86_64.iso.zst          # -> mmcore-fb-x86_64.iso
 sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
 ```
 
-`install-usb.sh` writes the hybrid ISO (BIOS + UEFI) and then adds a GPT
-partition labelled `MMCORE`, formatted ext4. Pass `--no-persist` to skip it.
-The same ISO can be burned to a DVD or written with any hybrid-ISO tool; without
-the `MMCORE` partition the session is read-only.
+`install-usb.sh` also accepts the compressed `.iso.zst`/`.iso.xz` directly and
+decompresses on the fly, so `--iso mmcore-fb-x86_64.iso.zst` works just as
+well. It writes the hybrid ISO (BIOS + UEFI) and then adds a GPT partition
+labelled `MMCORE`, formatted ext4. Pass `--no-persist` to skip it. The same ISO
+can be burned to a DVD or written with any hybrid-ISO tool; without the `MMCORE`
+partition the session is read-only.
 
 ### Boot behaviour
 
@@ -84,7 +90,10 @@ Docker:
 
 ```bash
 scripts/build-iso.sh                 # -> dist/mmcore-fb-x86_64.iso
+zstd -19 dist/mmcore-fb-x86_64.iso   # -> dist/mmcore-fb-x86_64.iso.zst
 ```
+
+The published asset is the `.zst`; CI compresses the ISO after boot-smoking it.
 
 On an x86_64 Alpine Linux host with `apk`, `ISO_DIRECT=1 scripts/build-iso.sh`
 runs the builder in place. The builder builds the Alpine rootfs, builds

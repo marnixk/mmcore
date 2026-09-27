@@ -7,8 +7,10 @@
 # system mounts it at /media/mmcore on boot (see the ISO's mmcore-persist
 # script).
 #
-# Linux only. Usage:
+# Linux only. The image may be a raw .iso or a compressed .iso.zst/.xz/.gz;
+# compressed input is decompressed on the fly (releases ship .iso.zst). Usage:
 #   sudo ./install-usb.sh --iso dist/mmcore-fb-x86_64.iso /dev/sdX
+#   sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso.zst /dev/sdX
 #   sudo ./install-usb.sh --no-persist /dev/sdX
 set -euo pipefail
 
@@ -16,6 +18,7 @@ ISO=""
 DEVICE=""
 PERSIST=1
 ASSUME_YES=0
+DECOMPRESS=(cat)
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -30,7 +33,8 @@ Usage: install-usb.sh [--iso PATH] [--no-persist] [-y|--yes] /dev/sdX
 Write the mmcore live ISO to a USB device.
 
 Options:
-  --iso PATH    ISO to write (default: dist/mmcore-fb-x86_64.iso)
+  --iso PATH    image to write: raw .iso or compressed .iso.zst/.xz/.gz
+                (default: dist/mmcore-fb-x86_64.iso)
   --no-persist  do not add the MMCORE persistent partition
   -y, --yes     skip the confirmation prompt
   -h, --help    show this help
@@ -60,6 +64,21 @@ done
 [ -n "${ISO}" ] || ISO="dist/mmcore-fb-x86_64.iso"
 [ -f "${ISO}" ] || die "${ISO} not found"
 
+case "${ISO}" in
+	*.zst)
+		command -v zstd >/dev/null 2>&1 || die "zstd is required to read ${ISO}"
+		DECOMPRESS=(zstd -dc)
+		;;
+	*.xz)
+		command -v xz >/dev/null 2>&1 || die "xz is required to read ${ISO}"
+		DECOMPRESS=(xz -dc)
+		;;
+	*.gz)
+		command -v gzip >/dev/null 2>&1 || die "gzip is required to read ${ISO}"
+		DECOMPRESS=(gzip -dc)
+		;;
+esac
+
 if grep -q "^${DEVICE}[0-9p]" /proc/mounts 2>/dev/null; then
 	die "${DEVICE} has mounted partitions; unmount them first"
 fi
@@ -71,8 +90,8 @@ if [ "${ASSUME_YES}" != "1" ]; then
 	[ "${reply}" = "yes" ] || die "aborted"
 fi
 
-log "Writing the ISO"
-dd if="${ISO}" of="${DEVICE}" bs=4M conv=fsync status=progress
+log "Writing the image"
+"${DECOMPRESS[@]}" "${ISO}" | dd of="${DEVICE}" bs=4M conv=fsync status=progress
 
 	if [ "${PERSIST}" = "1" ]; then
 		command -v sgdisk >/dev/null 2>&1 || die "sgdisk (gdisk) is required for --persist"
