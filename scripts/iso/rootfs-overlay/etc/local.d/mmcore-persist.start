@@ -1,0 +1,20 @@
+#!/bin/sh
+# Mount the persistent MMCORE partition so BASIC files survive reboots.
+#
+# install-usb.sh creates and labels the partition; this only mounts it (and
+# formats it on first use if it has no filesystem yet). No partition is created
+# at boot: a missing MMCORE partition simply means a read-only live session.
+DEV="$(blkid -L MMCORE 2>/dev/null || true)"
+if [ -z "${DEV}" ] && [ -e /dev/disk/by-label/MMCORE ]; then
+	DEV="/dev/disk/by-label/MMCORE"
+fi
+[ -n "${DEV}" ] || exit 0
+
+mkdir -p /media/mmcore
+
+if ! blkid "${DEV}" >/dev/null 2>&1; then
+	mkfs.ext4 -q -L MMCORE "${DEV}" || exit 1
+fi
+
+mount -o rw "${DEV}" /media/mmcore 2>/dev/null \
+	|| mount -o rw "${DEV}" /media/mmcore

@@ -75,6 +75,7 @@ enable hostname boot
 enable bootmisc boot
 enable syslog boot
 enable networking boot
+enable local boot
 
 if [ -x "${REPO_ROOT}/scripts/iso/build-mmcore.sh" ]; then
 	log "Building mmcore for the rootfs"
