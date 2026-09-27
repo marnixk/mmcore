@@ -39,6 +39,7 @@ int main(int argc, char **argv)
 	const int framebuffer = (argc > 1 && strcmp(argv[1], "fb") == 0);
 
 	unsetenv("SDL_VIDEODRIVER");
+	unsetenv("SDL_RENDER_DRIVER");
 
 	if (framebuffer)
 	{
@@ -50,6 +51,30 @@ int main(int argc, char **argv)
 		CHECK(SDL_getenv("SDL_VIDEODRIVER") &&
 		      strcmp(SDL_getenv("SDL_VIDEODRIVER"), "kmsdrm") == 0,
 		      "an unset driver picks kmsdrm");
+
+		/* kmsdrm must select the GLES2/EGL renderer by index: SDL's
+		 * default renderers draw to a buffer that never reaches the KMS
+		 * scanout (#862). */
+		CHECK(sdl_video_default_render_driver() &&
+		      strcmp(sdl_video_default_render_driver(), "opengles2") == 0,
+		      "framebuffer build defaults to opengles2");
+		{
+			int idx = sdl_video_render_driver_index();
+
+			if (idx >= 0)
+			{
+				SDL_RendererInfo info;
+
+				CHECK(SDL_GetRenderDriverInfo(idx, &info) == 0 &&
+				      strcmp(info.name, "opengles2") == 0,
+				      "the selected render driver is opengles2");
+			}
+		}
+		/* An explicit render driver leaves the choice to SDL. */
+		SDL_setenv("SDL_RENDER_DRIVER", "software", 1);
+		CHECK(sdl_video_render_driver_index() == -1,
+		      "an explicit render driver is preserved");
+		unsetenv("SDL_RENDER_DRIVER");
 
 		/* An explicit driver must survive open() (no kmsdrm forced). */
 		SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
@@ -75,6 +100,10 @@ int main(int argc, char **argv)
 	{
 		CHECK(sdl_video_default_driver() == 0,
 		      "desktop build has no forced driver");
+		CHECK(sdl_video_default_render_driver() == 0,
+		      "desktop build has no forced render driver");
+		CHECK(sdl_video_render_driver_index() == -1,
+		      "desktop build leaves the render driver to SDL");
 		sdl_video_apply_default_driver();
 		CHECK(SDL_getenv("SDL_VIDEODRIVER") == 0,
 		      "desktop build leaves the driver unset");
