@@ -1,0 +1,87 @@
+name: Linux framebuffer
+
+# Builds the native KMS/DRM framebuffer binary and packages it as a tarball.
+#
+#  - on a version release: attached to that GitHub release;
+#  - on push to ports/linux / master: attached to the rolling 'linux-native'
+#    pre-release for quick testing.
+on:
+  push:
+    branches: [ports/linux, master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-framebuffer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  framebuffer:
+    # 22.04 keeps the glibc baseline low enough for most current distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libsdl2-dev python3 file
+
+      - name: Build framebuffer tarball
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: scripts/package-framebuffer.sh
+
+      - name: Smoke-test the binary
+        run: |
+          rm -rf /tmp/mmcore-fb
+          mkdir -p /tmp/mmcore-fb
+          tar -C /tmp/mmcore-fb -xzf dist/mmcore-fb-linux-x86_64.tar.gz
+          export SDL_VIDEODRIVER=dummy
+          out=$(printf 'PRINT "SMOKE_FB 42"\n' | \
+            MMB_DRIVE_ROOT="$(mktemp -d)" \
+            /tmp/mmcore-fb/mmcore-fb-linux-x86_64/mmcore-fb 2>&1 || true)
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -q "SMOKE_FB 42"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmcore-framebuffer
+          path: dist/mmcore-fb-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            gh release upload "${GITHUB_REF_NAME}" dist/mmcore-fb-linux-x86_64.tar.gz --clobber
+            echo "Attached framebuffer tarball to release ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          tag="linux-native"
+          notes="Automated framebuffer build from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
+
+          Run it from a text virtual terminal (no X11/Wayland):
+          \`\`\`
+          tar -xzf mmcore-fb-linux-x86_64.tar.gz
+          ./mmcore-fb-linux-x86_64/mmcore-fb
+          \`\`\`"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Linux native (rolling)" \
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
+          fi
+          gh release upload "$tag" dist/mmcore-fb-linux-x86_64.tar.gz --clobber
