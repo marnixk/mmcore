@@ -49,6 +49,11 @@ universal macOS app.
 - [ ] Host clipboard bridge: copy out and `Ctrl+Shift+V` paste in the AppImage. (#525)
 - [ ] SDL binaries are named `mmcore` / `mmcore.exe`. Windows Authenticode is wired in CI but stays unsigned until a signing certificate secret is configured, so SmartScreen may still warn. (#552, #553)
 
+## Linux framebuffer (KMS/DRM) — `mmcore-fb`
+- [ ] From a text VT (not a desktop session) run `./native/mmcore-fb` (or `SDL_VIDEODRIVER=kmsdrm ./native/mmcore-fb`): the interpreter fills the display from the first frame with no X11/Wayland. (#828, #829)
+- [ ] There is no system cursor: PAINT's tool cursor and the `MOUSE ON` software cursor are the pointer; motion and clicks track. (#829)
+- [ ] With no usable video driver the build exits non-zero with a clear stderr message rather than a blank frame. (#829)
+
 ## Known caveats
 - macOS was omitted from v0.196.0–v0.199.0 (the notarization profile was
   unavailable in the build environment); releases now ship a notarized universal

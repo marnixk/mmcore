@@ -67,6 +67,8 @@ int main(int argc, char **argv)
 		      "open keeps the caller's driver");
 		CHECK(sdl_video_is_fullscreen(),
 		      "framebuffer open starts fullscreen");
+		CHECK(SDL_ShowCursor(SDL_QUERY) == SDL_DISABLE,
+		      "framebuffer open hides the system cursor");
 		sdl_video_close();
 	}
 	else
