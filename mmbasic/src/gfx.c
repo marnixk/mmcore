@@ -1385,7 +1385,9 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 	mmb_gfx_line(x3, y3, x1, y1, rgb, 1);
 }
 
-void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
+/* Fill a rect. `flip_y` runs every row through map_y() (the graphics axis);
+ * passing 0 keeps the character-cell rows top-down for TERM (#890). */
+static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 {
 	uint16_t *pg;
 	int tw, th, i, j, by, px;
@@ -1415,7 +1417,7 @@ void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
 		return;
 	for (j = 0; j < h; j++)
 	{
-		by = map_y(y + j);
+		by = flip_y ? map_y(y + j) : y + j;
 		if (by < 0 || by >= th)
 			continue;
 		if (x >= 0 && x + w <= tw)
@@ -1450,6 +1452,18 @@ void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
 		return;
 	if (G.gfx.write_page == G.gfx.display_page)
 		mmb_gfx_dirty_add(x < 0 ? 0 : x, 0, w, th);
+}
+
+void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
+{
+	fill_rect_flip(x, y, w, h, rgb, 1);
+}
+
+/* Character-cell fills (TERM semantics): rows stay top-down so the pane and
+ * its bars match the console even under OPTION Y_AXIS UP (#890). */
+void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb)
+{
+	fill_rect_flip(x, y, w, h, rgb, 0);
 }
 
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
