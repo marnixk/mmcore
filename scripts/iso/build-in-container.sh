@@ -35,17 +35,22 @@ rm -rf "${ROOTFS}" "${ISOROOT}"
 mkdir -p "${ROOTFS}" "${ISOROOT}/boot/grub" "$(dirname "${OUT}")"
 
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
+	--repositories-file /etc/apk/repositories \
 	alpine-base busybox openrc util-linux \
 	linux-lts linux-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
 	e2fsprogs dosfstools blkid ca-certificates
 
+# Keep the repository list in the live system for on-device apk.
+cp /etc/apk/repositories "${ROOTFS}/etc/apk/repositories"
+
 # Wi-Fi firmware for common chipsets; not every package exists on every branch.
 for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
 	linux-firmware-rtlwifi linux-firmware-rtw88 linux-firmware-mediatek \
 	linux-firmware-ath9k; do
 	apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
+		--repositories-file /etc/apk/repositories \
 		"$fw" >/dev/null 2>&1 || true
 done
 
