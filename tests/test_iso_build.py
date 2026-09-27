@@ -102,6 +102,26 @@ def test_install_usb_script_parses_and_documents_persistence():
     assert "mkfs.ext4" in text
 
 
+def test_overlay_wires_ethernet_dhcp_and_wifi():
+    net = os.path.join(OVERLAY, "etc", "local.d", "mmcore-net.start")
+    assert os.access(net, os.X_OK), net
+    _run(["bash", "-n", net])
+    net_text = open(net, encoding="utf-8").read()
+    assert "udhcpc" in net_text
+    assert "wireless" in net_text
+
+    wpa = os.path.join(OVERLAY, "etc", "wpa_supplicant", "wpa_supplicant.conf")
+    assert os.path.isfile(wpa)
+    assert "ctrl_interface" in open(wpa, encoding="utf-8").read()
+
+
+def test_builder_ships_wifi_firmware_and_supplicant():
+    text = open(BUILDER, encoding="utf-8").read()
+    assert "linux-firmware-iwlwifi" in text
+    assert "wpa_supplicant default" in text
+    assert "rootfs-overlay" in text
+
+
 @pytest.mark.skipif(
     os.environ.get("MMCORE_ISO_BUILD") != "1",
     reason="set MMCORE_ISO_BUILD=1 to run the Docker ISO build",
