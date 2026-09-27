@@ -1076,6 +1076,11 @@ int mmb_net_srv_closed(int conn);
 void mmb_net_srv_close(int conn);
 int mmb_net_srv_ip(char *buf, int bufsize);
 
+/* Battery capacity (#857): read an integer 0-100 from a sysfs-style file.
+ * Returns fallback when the file is missing, unreadable or non-numeric, and
+ * clamps out-of-range values. Shared by BATTERY%() and its host test. */
+int mmb_battery_capacity_read(const char *path, int fallback);
+
 /* mmb_ftp_start() return codes. The server is one machine-global resource
  * whose UI is per console, so a second console starting it is told BUSY
  * rather than silently adopting the running server (#818). */

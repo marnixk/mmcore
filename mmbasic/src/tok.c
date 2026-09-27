@@ -67,6 +67,7 @@ static const char *const kws[] = {
 	"SHARED", "PRESERVE", "COMMON", "REDIM",
 	"BIT", "BYTE", "EPOCH", "EXECUTE",
 	"STOP", "RESUME", "CHAIN", "ARRAY",
+	"BATTERY%",
 	0
 };
 
