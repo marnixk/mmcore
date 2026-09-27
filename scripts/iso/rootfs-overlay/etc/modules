@@ -1,0 +1,10 @@
+# KMS/DRM graphics drivers for common GPUs. Missing modules are ignored, so
+# this list is safe on hardware that does not match.
+i915
+amdgpu
+radeon
+nouveau
+virtio_gpu
+virtio-gpu
+bochs
+bochs-drm
