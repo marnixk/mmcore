@@ -1,3 +1,11 @@
+# Filesystems used by the installer/updater (#891, #892): the live media is
+# ISO9660 and the installed MMCORE-SYS partition is FAT32. Missing modules are
+# ignored.
+isofs
+vfat
+nls_cp437
+nls_iso8859-1
+
 # KMS/DRM graphics drivers for common GPUs. Missing modules are ignored, so
 # this list is safe on hardware that does not match. i915 covers Intel
 # integrated graphics (including Chromebooks); amdgpu/radeon/nouveau cover the

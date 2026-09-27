@@ -1,0 +1,209 @@
+#!/bin/sh
+# Update mmcore on an installed system partition (MMCORE-SYS) in place.
+#
+# Downloads a published framebuffer build, verifies the tarball, compares its
+# VERSION.txt against the installed version, and replaces the binary on the
+# system partition (and /usr/local/bin/mmcore for the running session) so the
+# next boot runs the new version.
+#
+# Usage:
+#   mmcore-update --check             # report installed vs. latest, change nothing
+#   mmcore-update                     # download, verify, install the latest
+#   mmcore-update --version 0.216.0   # install a specific version
+#   mmcore-update --url URL           # install from an explicit tarball/URL
+set -eu
+
+ASSET="mmcore-fb-linux-x86_64.tar.gz"
+SYS_DIR="${MMCORE_SYS:-/media/mmcore-sys}"
+SYS_LABEL="MMCORE-SYS"
+SESSION_BIN="/usr/local/bin/mmcore"
+FALLBACK_VERSION_FILE="/etc/mmcore-version"
+REPO="${MMCORE_REPO:-marnixk/mmcore}"
+BASE_URL="${MMCORE_BASE_URL:-https://github.com/${REPO}/releases/download}"
+API_URL="${MMCORE_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
+
+CHECK=0
+REQ_VERSION=""
+REQ_URL=""
+
+log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+die() {
+	printf 'mmcore-update: %s\n' "$*" >&2
+	exit 1
+}
+
+usage() {
+	cat <<'EOF'
+Usage: mmcore-update [options]
+
+Download a published framebuffer build and install it onto the MMCORE-SYS
+system partition of an mmcore hard-disk install.
+
+Options:
+  --check            report the installed and latest versions, then exit
+  --version V        install the release tagged V (vV) instead of the latest
+  --url URL          download an explicit mmcore-fb-linux-x86_64.tar.gz URL
+  -h, --help         show this help
+EOF
+}
+
+# Strip a leading v/V and any pre-release/build/space suffix, so
+# "v0.216.0-rc1" normalises to "0.216.0".
+mmcore_normalize_version() {
+	_v="$1"
+	_v="${_v#v}"
+	_v="${_v#V}"
+	_v="${_v%%-*}"
+	_v="${_v%%+*}"
+	_v="${_v%% *}"
+	printf '%s' "${_v}"
+}
+
+# Print the version recorded in a VERSION.txt (or a bare version file).
+mmcore_read_version() {
+	[ -f "$1" ] || return 1
+	if grep -q '^Version:' "$1" 2>/dev/null; then
+		sed -n 's/^Version:[[:space:]]*//p' "$1" | head -n 1
+	else
+		head -n 1 "$1"
+	fi | tr -d '[:space:]'
+}
+
+# Print -1, 0, or 1 when A is older than, the same as, or newer than B.
+mmcore_version_cmp() {
+	_a="$(mmcore_normalize_version "$1")"
+	_b="$(mmcore_normalize_version "$2")"
+	_i=1
+	while [ "${_i}" -le 4 ]; do
+		_fa="$(printf '%s' "${_a}" | cut -d. -f"${_i}" | tr -dc '0-9')"
+		_fb="$(printf '%s' "${_b}" | cut -d. -f"${_i}" | tr -dc '0-9')"
+		[ -n "${_fa}" ] || _fa=0
+		[ -n "${_fb}" ] || _fb=0
+		if [ "${_fa}" -gt "${_fb}" ]; then
+			printf '1\n'
+			return 0
+		fi
+		if [ "${_fa}" -lt "${_fb}" ]; then
+			printf -- '-1\n'
+			return 0
+		fi
+		_i=$((_i + 1))
+	done
+	printf '0\n'
+}
+
+# Make sure the system partition is mounted read-write.
+ensure_sys() {
+	mkdir -p "${SYS_DIR}" 2>/dev/null || true
+	if mountpoint -q "${SYS_DIR}" 2>/dev/null; then
+		return 0
+	fi
+	dev="$(blkid -L "${SYS_LABEL}" 2>/dev/null || true)"
+	[ -n "${dev}" ] || return 1
+	mount -o rw "${dev}" "${SYS_DIR}" 2>/dev/null || return 1
+}
+
+parse_args() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--check) CHECK=1; shift ;;
+			--version)
+				[ $# -ge 2 ] || die "--version needs a value"
+				REQ_VERSION="$2"
+				shift 2
+				;;
+			--version=*) REQ_VERSION="${1#--version=}"; shift ;;
+			--url)
+				[ $# -ge 2 ] || die "--url needs a value"
+				REQ_URL="$2"
+				shift 2
+				;;
+			--url=*) REQ_URL="${1#--url=}"; shift ;;
+			-h|--help) usage; exit 0 ;;
+			*) die "unknown option: $1 (see --help)" ;;
+		esac
+	done
+}
+
+update_main() {
+	parse_args "$@"
+
+	installed="$(mmcore_read_version "${SYS_DIR}/VERSION.txt" 2>/dev/null || true)"
+	[ -n "${installed}" ] \
+		|| installed="$(mmcore_read_version "${FALLBACK_VERSION_FILE}" 2>/dev/null || true)"
+	[ -n "${installed}" ] || installed="unknown"
+
+	url="${REQ_URL}"
+	if [ -z "${url}" ]; then
+		if [ -n "${REQ_VERSION}" ]; then
+			tag="v${REQ_VERSION#v}"
+		else
+			log "Resolving the latest release"
+			tag="$(wget -qO- "${API_URL}" 2>/dev/null \
+				| sed -n 's/.*"tag_name"[: ]*"\([^"]*\)".*/\1/p' \
+				| head -n 1)"
+			[ -n "${tag}" ] \
+				|| die "could not resolve the latest release (is networking up?)"
+		fi
+		url="${BASE_URL}/${tag}/${ASSET}"
+	fi
+
+	log "Downloading ${url}"
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "${tmp}"' EXIT
+	tarball="${tmp}/${ASSET}"
+	wget -q -O "${tarball}" "${url}" || die "download failed: ${url}"
+
+	tar -tzf "${tarball}" >/dev/null 2>&1 || die "not a gzip tarball: ${url}"
+	tar -tzf "${tarball}" | grep -q '/mmcore-fb$' \
+		|| die "tarball does not contain mmcore-fb"
+	tar -tzf "${tarball}" | grep -q '/VERSION.txt$' \
+		|| die "tarball does not contain VERSION.txt"
+	tar -xzf "${tarball}" -C "${tmp}" || die "could not extract ${ASSET}"
+
+	bin="$(find "${tmp}" -name mmcore-fb -type f -print 2>/dev/null | head -n 1)"
+	[ -n "${bin}" ] || die "mmcore-fb not found in ${ASSET}"
+	vfile="$(find "${tmp}" -name VERSION.txt -type f -print 2>/dev/null | head -n 1)"
+	[ -n "${vfile}" ] || die "VERSION.txt not found in ${ASSET}"
+
+	candidate="$(mmcore_read_version "${vfile}" 2>/dev/null || true)"
+	[ -n "${candidate}" ] || candidate="unknown"
+	cmp="$(mmcore_version_cmp "${installed}" "${candidate}")"
+
+	if [ "${CHECK}" = 1 ]; then
+		printf 'installed: %s\n' "${installed}"
+		printf 'latest:    %s\n' "${candidate}"
+		if [ "${cmp}" = "-1" ]; then
+			printf 'update:    available\n'
+		else
+			printf 'update:    none\n'
+		fi
+		exit 0
+	fi
+
+	if [ "${cmp}" = "0" ] && [ -z "${REQ_VERSION}" ] && [ -z "${REQ_URL}" ]; then
+		log "Already up to date (${installed})"
+		exit 0
+	fi
+
+	ensure_sys || die "${SYS_DIR} is unavailable; run mmcore-install first"
+
+	# Atomic in-place replace on MMCORE-SYS.
+	cp "${bin}" "${SYS_DIR}/.mmcore.new"
+	chmod 0755 "${SYS_DIR}/.mmcore.new"
+	mv -f "${SYS_DIR}/.mmcore.new" "${SYS_DIR}/mmcore"
+	cp "${vfile}" "${SYS_DIR}/VERSION.txt"
+
+	# Refresh the running session's copy so a restart picks up the new binary.
+	if [ -d "$(dirname "${SESSION_BIN}")" ]; then
+		cp "${bin}" "${SESSION_BIN}.new" 2>/dev/null || true
+		chmod 0755 "${SESSION_BIN}.new" 2>/dev/null || true
+		mv -f "${SESSION_BIN}.new" "${SESSION_BIN}" 2>/dev/null || true
+	fi
+
+	log "Updated mmcore ${installed} -> ${candidate}"
+}
+
+if [ "${MMCORE_UPDATE_SOURCED:-0}" != "1" ]; then
+	update_main "$@"
+fi

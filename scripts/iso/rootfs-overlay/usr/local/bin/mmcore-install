@@ -1,0 +1,265 @@
+#!/bin/sh
+# Install mmcore from the running live USB/ISO onto a hard disk.
+#
+# The chosen disk is wiped and turned into a standalone BIOS+UEFI system:
+#
+#   MMCORE-SYS   FAT32, at least ~255 MiB
+#                GRUB (BIOS + UEFI) + vmlinuz-lts + initramfs-lts + mmcore, C:
+#   MMCORE-DATA  ext4, the rest of the disk
+#                mounted at boot and exposed to mmcore as D:
+#
+# The kernel and initramfs are copied from the live media's own /boot, so the
+# installed system matches the release that wrote the disk. Everything on the
+# target disk is destroyed.
+#
+# Usage:
+#   mmcore-install                    # list disks and choose one
+#   mmcore-install --disk /dev/sdX    # choose non-interactively (confirms)
+#   mmcore-install --disk /dev/sdX --yes
+set -eu
+
+MIB=1048576
+SYS_LABEL="MMCORE-SYS"
+DATA_LABEL="MMCORE-DATA"
+SYS_FLOOR_MIB=255
+MNT="/mnt/mmcore-install"
+ASSET_BIN="/usr/local/bin/mmcore"
+VERSION_FILE="/etc/mmcore-version"
+
+DISK=""
+BOOT_DIR=""
+ASSUME_YES=0
+FORCE=0
+
+log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+die() {
+	printf 'mmcore-install: %s\n' "$*" >&2
+	exit 1
+}
+
+usage() {
+	cat <<'EOF'
+Usage: mmcore-install [options]
+
+Install mmcore from the running live USB/ISO onto a hard disk. The disk is
+wiped and turned into a standalone BIOS+UEFI system that boots on its own.
+
+Options:
+  --disk /dev/sdX   target disk (default: choose from a list)
+  --boot-dir DIR    directory holding the live /boot (default: auto-detect
+                    the mounted live media)
+  -y, --yes         skip the confirmation prompt
+  --force           allow the running live media or a removable disk as the
+                    target
+  -h, --help        show this help
+
+Everything on the target disk is destroyed.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--disk) DISK="$2"; shift 2 ;;
+		--boot-dir) BOOT_DIR="$2"; shift 2 ;;
+		-y|--yes) ASSUME_YES=1; shift ;;
+		--force) FORCE=1; shift ;;
+		-h|--help) usage; exit 0 ;;
+		-*) die "unknown option: $1 (see --help)" ;;
+		*) die "unexpected argument: $1" ;;
+	esac
+done
+
+[ "$(uname -s)" = "Linux" ] || die "installing to a disk is Linux-only"
+[ "$(id -u)" = "0" ] || die "must run as root"
+
+# /dev/sda1, /dev/nvme0n1p1, /dev/mmcblk0p1, ...
+part_dev() {
+	case "$1" in
+		*[0-9]) printf '%sp%s' "$1" "$2" ;;
+		*) printf '%s%s' "$1" "$2" ;;
+	esac
+}
+
+size_of() { stat -c %s "$1" 2>/dev/null || echo 0; }
+
+# Echo a directory holding boot/vmlinuz-lts and boot/initramfs-lts. The live
+# rootfs is an initramfs, so the ISO's own /boot is only reachable on the
+# mounted media; scan block devices for the ISO9660 image.
+find_payload() {
+	if [ -n "${BOOT_DIR}" ]; then
+		printf '%s\n' "${BOOT_DIR}"
+		return 0
+	fi
+	for mp in /media/cdrom /media/iso /mnt/cdrom /run/media/cdrom; do
+		if [ -f "${mp}/boot/initramfs-lts" ]; then
+			printf '%s\n' "${mp}"
+			return 0
+		fi
+	done
+	modprobe isofs 2>/dev/null || true
+	for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme* /dev/mmcblk*; do
+		[ -b "${dev}" ] || continue
+		mnt="$(mktemp -d)"
+		if mount -t iso9660 -o ro "${dev}" "${mnt}" 2>/dev/null; then
+			if [ -f "${mnt}/boot/initramfs-lts" ] \
+				&& [ -f "${mnt}/boot/vmlinuz-lts" ]; then
+				printf '%s\n' "${mnt}"
+				return 0
+			fi
+			umount "${mnt}" 2>/dev/null || true
+		fi
+		rmdir "${mnt}" 2>/dev/null || true
+	done
+	return 1
+}
+
+PAYLOAD="$(find_payload || true)"
+[ -n "${PAYLOAD}" ] \
+	|| die "cannot find the live /boot (is the media mounted? try --boot-dir)"
+[ -f "${PAYLOAD}/boot/vmlinuz-lts" ] || die "no /boot/vmlinuz-lts in ${PAYLOAD}"
+[ -f "${PAYLOAD}/boot/initramfs-lts" ] || die "no /boot/initramfs-lts in ${PAYLOAD}"
+[ -x "${ASSET_BIN}" ] || die "${ASSET_BIN} is missing"
+
+# Identify the running live media so it can be refused as a target.
+BOOT_DEV=""
+if [ "${PAYLOAD}" != "${BOOT_DIR}" ]; then
+	BOOT_DEV="$(findmnt -n -o SOURCE --target "${PAYLOAD}" 2>/dev/null || true)"
+fi
+
+if [ -z "${DISK}" ]; then
+	DISKS="$(mktemp)"
+	i=0
+	for sys in /sys/block/*; do
+		name="${sys##*/}"
+		case "${name}" in
+			loop*|ram*|sr*|dm-*|md*|zram*) continue ;;
+		esac
+		[ -r "${sys}/size" ] || continue
+		sectors="$(cat "${sys}/size" 2>/dev/null || echo 0)"
+		[ "${sectors}" -gt 0 ] 2>/dev/null || continue
+		gib=$(( sectors * 512 / MIB / 1024 ))
+		model="$(cat "${sys}/device/model" 2>/dev/null | tr -s ' ' || true)"
+		removable="$(cat "${sys}/removable" 2>/dev/null || echo 0)"
+		i=$((i + 1))
+		printf '%s /dev/%s %sGiB %s %s\n' \
+			"${i}" "${name}" "${gib}" "${removable}" "${model}" >> "${DISKS}"
+	done
+	[ "${i}" -gt 0 ] || die "no candidate disks found"
+	log "Candidate disks (removable=1 is a USB stick or card)"
+	while read -r n dev size rem model; do
+		printf '  %2s) %-14s %-8s removable=%s  %s\n' \
+			"${n}" "${dev}" "${size}" "${rem}" "${model}"
+	done < "${DISKS}"
+	printf 'Choose a disk [1-%s]: ' "${i}"
+	read -r choice
+	line="$(sed -n "${choice}p" "${DISKS}" 2>/dev/null || true)"
+	rm -f "${DISKS}"
+	[ -n "${line}" ] || die "invalid selection"
+	DISK="$(printf '%s\n' "${line}" | cut -d' ' -f2)"
+fi
+
+[ -b "${DISK}" ] || die "${DISK} is not a block device"
+DISK_NAME="${DISK##*/}"
+
+is_boot=0
+case "${BOOT_DEV}" in
+	"${DISK}"*) is_boot=1 ;;
+esac
+if [ "${is_boot}" = 1 ] && [ "${FORCE}" != 1 ]; then
+	die "${DISK} holds the running live media; refusing (use --force)"
+fi
+removable="$(cat "/sys/block/${DISK_NAME}/removable" 2>/dev/null || echo 0)"
+if [ "${removable}" = 1 ] && [ "${FORCE}" != 1 ]; then
+	die "${DISK} is removable; refusing (use --force)"
+fi
+
+log "About to wipe ${DISK} and install mmcore"
+if [ "${ASSUME_YES}" != 1 ]; then
+	printf 'Type "yes" to continue: '
+	read -r reply
+	[ "${reply}" = "yes" ] || die "aborted"
+fi
+
+# Size the system partition to the boot payload plus room for C: files, with
+# the ~255 MiB floor the release ships with.
+payload_bytes=$(( $(size_of "${PAYLOAD}/boot/vmlinuz-lts") \
+	+ $(size_of "${PAYLOAD}/boot/initramfs-lts") + $(size_of "${ASSET_BIN}") ))
+sys_mib=$(( payload_bytes / MIB + 128 ))
+[ "${sys_mib}" -ge "${SYS_FLOOR_MIB}" ] || sys_mib="${SYS_FLOOR_MIB}"
+sys_end=$(( sys_mib + 1 ))
+log "Using a ${sys_mib} MiB ${SYS_LABEL} partition"
+
+log "Partitioning ${DISK}"
+for part in "${DISK}"* "${DISK}"p*; do
+	[ -b "${part}" ] || continue
+	umount "${part}" 2>/dev/null || true
+done
+wipefs -a "${DISK}" >/dev/null 2>&1 || true
+dd if=/dev/zero of="${DISK}" bs=1M count=16 conv=fsync >/dev/null 2>&1 || true
+parted -s "${DISK}" mklabel msdos
+parted -s "${DISK}" unit MiB mkpart primary fat32 1 "${sys_end}"
+parted -s "${DISK}" set 1 boot on
+parted -s "${DISK}" unit MiB mkpart primary ext4 "${sys_end}" 100%
+partprobe "${DISK}" 2>/dev/null || true
+udevadm settle 2>/dev/null || true
+sleep 1
+
+SYS_DEV="$(part_dev "${DISK}" 1)"
+DATA_DEV="$(part_dev "${DISK}" 2)"
+[ -b "${SYS_DEV}" ] || die "missing ${SYS_DEV} after partitioning"
+[ -b "${DATA_DEV}" ] || die "missing ${DATA_DEV} after partitioning"
+
+log "Formatting ${SYS_DEV} (${SYS_LABEL}) and ${DATA_DEV} (${DATA_LABEL})"
+mkfs.vfat -F 32 -n "${SYS_LABEL}" "${SYS_DEV}" >/dev/null
+mkfs.ext4 -q -F -L "${DATA_LABEL}" "${DATA_DEV}"
+
+log "Copying the boot files and mmcore"
+mkdir -p "${MNT}"
+mount "${SYS_DEV}" "${MNT}"
+mkdir -p "${MNT}/boot/grub"
+cp "${PAYLOAD}/boot/vmlinuz-lts" "${MNT}/boot/vmlinuz-lts"
+cp "${PAYLOAD}/boot/initramfs-lts" "${MNT}/boot/initramfs-lts"
+if [ -f "${PAYLOAD}/boot/grub/splash.png" ]; then
+	cp "${PAYLOAD}/boot/grub/splash.png" "${MNT}/boot/grub/splash.png"
+fi
+cp "${ASSET_BIN}" "${MNT}/mmcore"
+chmod 0755 "${MNT}/mmcore"
+version="$(cat "${VERSION_FILE}" 2>/dev/null || echo dev)"
+printf 'mmcore system partition\nVersion: %s\n' "${version}" > "${MNT}/VERSION.txt"
+
+# The system partition is C: and the data partition is D:. MMB_DRIVE_ROOT and
+# --drive are wired up from these kernel parameters in root/.profile.
+cat > "${MNT}/boot/grub/grub.cfg" <<'EOF'
+set timeout=1
+set default=0
+set timeout_style=hidden
+
+insmod all_video
+insmod gfxterm
+insmod png
+set gfxmode=1024x768,auto
+set gfxpayload=keep
+terminal_output gfxterm
+
+insmod gfxterm_background
+if [ -f /boot/grub/splash.png ]; then
+  background_image /boot/grub/splash.png
+fi
+
+menuentry "mmcore" {
+  linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA
+  initrd /boot/initramfs-lts
+}
+EOF
+
+log "Installing the BIOS bootloader"
+grub-install --target=i386-pc --boot-directory="${MNT}/boot" --recheck "${DISK}"
+log "Installing the UEFI bootloader"
+grub-install --target=x86_64-efi --efi-directory="${MNT}" \
+	--boot-directory="${MNT}/boot" --removable "${DISK}"
+
+sync
+umount "${MNT}"
+rmdir "${MNT}" 2>/dev/null || true
+
+log "Done. ${DISK} boots mmcore on its own; ${DATA_LABEL} is D:."
