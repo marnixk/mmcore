@@ -697,6 +697,44 @@ int main(void)
 	check(pt_menus_mouse(300, 200, PT_BTN_LEFT, 1) == 0, "release_frees_canvas");
 	release(300, 200);
 
+	/* ---- #821: a held button carried over a console switch must not open a
+	 * menu on the destination screen. */
+	pt_menus_key(27);
+	g_console = 0;
+	pt_menus_init();
+	PT.active = 1;
+	press(kFile, 8);		/* a real edge here opens File on console 0 */
+	check(PT.menu == PT_MENU_FILE, "switch_src_menu_open");
+	/* The switch hands console 1 the foreground with the button still held
+	 * (console_do_switch calls pt_menus_console_activate(1)). */
+	g_console = 1;
+	PT.active = 1;
+	PT.menu = PT_MENU_NONE;
+	PT.dialog = 0;
+	pt_menus_console_activate(1);
+	check(PT.menu == PT_MENU_NONE, "switch_dest_starts_closed");
+	/* The carried-over hold is not a fresh press: it must not open a menu. */
+	check(pt_menus_mouse(kFile, 8, PT_BTN_LEFT, 1) == 0, "held_not_consumed");
+	check(PT.menu == PT_MENU_NONE, "held_no_menu_open");
+	/* Releasing ends the inherited press; a real edge then opens the menu. */
+	release(kFile, 8);
+	check(PT.menu == PT_MENU_NONE, "held_release_keeps_closed");
+	press(kFile, 8);
+	check(PT.menu == PT_MENU_FILE, "fresh_edge_opens_dest");
+	release(kFile, 8);
+	pt_menus_key(27);
+
+	/* A button held as PAINT opens (console 2) is likewise not a fresh press. */
+	g_console = 2;
+	pt_menus_init();
+	PT.menu = PT_MENU_NONE;
+	PT.dialog = 0;
+	PT.active = 1;
+	pt_menus_console_activate(1);
+	check(pt_menus_mouse(kFile, 8, PT_BTN_LEFT, 1) == 0, "enter_held_not_consumed");
+	check(PT.menu == PT_MENU_NONE, "enter_held_no_menu");
+	release(kFile, 8);
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -857,6 +895,23 @@ def test_held_press_owned_after_menu_action(checks):
         "held_undo_owned",
         "held_move_owned",
         "release_frees_canvas",
+    ):
+        assert checks.get(name) is True, name
+
+
+def test_held_button_does_not_open_menu_across_switch(checks):
+    """#821: a button held on another console is not a fresh press here, so it
+    must not open this screen's menu; only an up->down edge observed on this
+    screen may. The state is seeded by pt_menus_console_activate()."""
+    for name in (
+        "switch_src_menu_open",
+        "switch_dest_starts_closed",
+        "held_not_consumed",
+        "held_no_menu_open",
+        "held_release_keeps_closed",
+        "fresh_edge_opens_dest",
+        "enter_held_not_consumed",
+        "enter_held_no_menu",
     ):
         assert checks.get(name) is True, name
 

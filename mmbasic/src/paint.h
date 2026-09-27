@@ -270,6 +270,11 @@ int pt_menus_mouse(int sx, int sy, int button, int down); /* 1 = consumed */
 int pt_menus_key(int key);		/* 1 = consumed */
 int pt_menus_active(void);
 void pt_menus_close(void);
+/* A console switch or PAINT entry has made this screen active. The pointer is
+ * machine-wide, so a button already held here was not pressed on this screen:
+ * seed the menu module's held state from the live button so the carried-over
+ * hold is not read as a fresh press that opens a menu/dialog (#821). */
+void pt_menus_console_activate(int down);
 /* Quit entry point for the lifecycle's keyboard paths. Opens the discard
  * confirmation and returns 1 when the canvas is dirty; returns 0 when the
  * caller may tear down immediately. */

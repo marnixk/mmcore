@@ -535,6 +535,10 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	pt_tools_init();
 	pt_undo_init();
 	pt_menus_init();
+	/* The menu module tracks its own held press: seed it from the same live
+	 * button state so a hold at PAINT entry cannot open a menu with no press
+	 * edge observed here (#821). */
+	pt_menus_console_activate(s_mouse_btn[g_console]);
 	pt_cursor_init();
 	pt_file_init();
 	pt_text_init();
@@ -876,15 +880,26 @@ void mmb_paint_console_deactivated(int idx)
 void mmb_paint_console_activated(int idx)
 {
 	mmb_mouse_state m;
+	int save, down;
 
 	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
 		return;
 	if (!pt_console_state[idx].active)
 		return;
 	if (mmb_mouse_read(&m))
-		s_mouse_btn[idx] = (m.buttons & 3) ? 1 : 0;
+		down = (m.buttons & 3) ? 1 : 0;
 	else
-		s_mouse_btn[idx] = 0;
+		down = 0;
+	s_mouse_btn[idx] = down;
+
+	/* The menu module keeps its own held-press flag per console. A button
+	 * already held on arrival was pressed on the console we left, so seed
+	 * that flag too: otherwise the first held poll on this screen is read as
+	 * a fresh press and opens its menu from a stale edge (#821). */
+	save = g_console;
+	g_console = idx;
+	pt_menus_console_activate(down);
+	g_console = save;
 }
 
 /* ---- entry ------------------------------------------------------------- */
@@ -1195,6 +1210,11 @@ PT_WEAK int pt_menus_active(void)
 
 PT_WEAK void pt_menus_close(void)
 {
+}
+
+PT_WEAK void pt_menus_console_activate(int down)
+{
+	(void)down;
 }
 
 /* ---- cursor (#639) ----------------------------------------------------- */
