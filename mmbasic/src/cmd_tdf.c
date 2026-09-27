@@ -12,7 +12,8 @@
  *
  * A small pool of font instances is kept so a program can draw from more than
  * one font at once. `slot` is the pool index (0-based); an omitted slot uses
- * the active font, and an omitted slot on LOAD takes the first free one.
+ * the active font, and an omitted slot on LOAD/NAMED defaults to slot 0 and
+ * replaces whatever it held (CMM2 behaviour, #884).
  */
 
 #define TDF_MAX_FONTS 4
@@ -43,6 +44,10 @@ typedef struct {
 	int cols, rows;
 	char *buf;
 	int len;
+	/* When set, stamp decoded cells into the active graphics write target
+	 * with mmb_gfx_glyph_cell instead of emitting console ANSI. */
+	int gfx;
+	int box_x0, box_y0, box_x1, box_y1;
 } tdf_render;
 
 static int tdf_slot_open(int s)
@@ -57,15 +62,6 @@ static void tdf_clear_slot(int s)
 	if (g_tdf[s].buf && G.plat && G.plat->free)
 		G.plat->free(g_tdf[s].buf);
 	memset(&g_tdf[s], 0, sizeof(g_tdf[s]));
-}
-
-static int tdf_find_free(void)
-{
-	int i;
-	for (i = 0; i < TDF_MAX_FONTS; i++)
-		if (!g_tdf[i].open)
-			return i;
-	return -1;
 }
 
 static int tdf_name_eq(const char *a, const char *b)
@@ -190,9 +186,9 @@ static void tdf_cmd_load(void)
 	if (variant < 0)
 		variant = 0;
 	if (slot < 0)
-		slot = tdf_find_free();
-	if (slot < 0 || slot >= TDF_MAX_FONTS)
-		mmb_error("TDF: no free slot");
+		slot = 0;
+	if (slot >= TDF_MAX_FONTS)
+		mmb_error("TDF: bad slot");
 	tdf_load_file(path, variant, 0, slot);
 	g_tdf_active = slot;
 }
@@ -221,9 +217,9 @@ static void tdf_cmd_named(void)
 		slot = (int)mmb_as_int(mmb_expr());
 	}
 	if (slot < 0)
-		slot = tdf_find_free();
-	if (slot < 0 || slot >= TDF_MAX_FONTS)
-		mmb_error("TDF: no free slot");
+		slot = 0;
+	if (slot >= TDF_MAX_FONTS)
+		mmb_error("TDF: bad slot");
 	tdf_load_file(path, 0, name, slot);
 	g_tdf_active = slot;
 }
@@ -318,6 +314,38 @@ static void tdf_render_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 		return;
 	if (x < 0 || y < 0 || x >= r->cols || y >= r->rows)
 		return;
+	if (r->gfx)
+	{
+		/* Page target: cell blit at the matching 8x16 pixel cell. Colour
+		 * fonts carry per-cell fg/bg; the others use the current graphics
+		 * pen/paper, as the console path leaves the terminal colour in
+		 * place. */
+		unsigned c_fg = r->colour ? mmb_ibm_colour(fg & 15) : G.gfx.fg;
+		unsigned c_bg = r->colour ? mmb_ibm_colour(bg & 7) : G.gfx.bg;
+		mmb_gfx_glyph_cell(x * mmb_print_font_w(),
+				   y * mmb_print_font_h(), (unsigned)ch, c_fg,
+				   c_bg);
+		if (r->box_x1 < 0)
+		{
+			r->box_x0 = r->box_x1 = x;
+			r->box_y0 = r->box_y1 = y;
+		}
+		else
+		{
+			if (x < r->box_x0)
+				r->box_x0 = x;
+			if (y < r->box_y0)
+				r->box_y0 = y;
+			if (x > r->box_x1)
+				r->box_x1 = x;
+			if (y > r->box_y1)
+				r->box_y1 = y;
+		}
+		r->last_fg = fg;
+		r->last_bg = bg;
+		r->have_colour = 1;
+		return;
+	}
 	tdf_room(r, 48);
 	if (r->colour && (!r->have_colour || fg != r->last_fg || bg != r->last_bg))
 	{
@@ -362,6 +390,17 @@ static int tdf_string_width(const mmb_tdf *f, const char *s)
 			w += gap;
 	}
 	return w;
+}
+
+/* True when TDF PRINT must draw through the graphics layer instead of the
+ * console: a raw framebuffer write, or a soft page that is not the page
+ * currently on screen. The ANSI path can only paint the live console, so an
+ * offscreen write there would leak onto the visible frame (#883). */
+static int tdf_gfx_target(void)
+{
+	if (mmb_gfx_writing_fb())
+		return 1;
+	return G.gfx.pages > 0 && G.gfx.write_page != G.gfx.display_page;
 }
 
 static void tdf_cmd_print(void)
@@ -417,8 +456,21 @@ static void tdf_cmd_print(void)
 	r.exp_x = 0;
 	r.exp_y = 0;
 	r.have_exp = 0;
-	r.cols = (G.plat && G.plat->video_cols) ? G.plat->video_cols() : 80;
-	r.rows = (G.plat && G.plat->video_rows) ? G.plat->video_rows() : 25;
+	r.gfx = tdf_gfx_target();
+	r.box_x0 = r.box_y0 = r.cols = r.rows = 0;
+	r.box_x1 = r.box_y1 = -1;
+	if (r.gfx)
+	{
+		int pw = mmb_gfx_writing_fb() ? G.gfx.fb_w : G.gfx.w;
+		int ph = mmb_gfx_writing_fb() ? G.gfx.fb_h : G.gfx.h;
+		r.cols = pw / mmb_print_font_w();
+		r.rows = ph / mmb_print_font_h();
+	}
+	else
+	{
+		r.cols = (G.plat && G.plat->video_cols) ? G.plat->video_cols() : 80;
+		r.rows = (G.plat && G.plat->video_rows) ? G.plat->video_rows() : 25;
+	}
 	if (r.cols < 1)
 		r.cols = 80;
 	if (r.rows < 1)
@@ -437,15 +489,35 @@ static void tdf_cmd_print(void)
 			cx += f->spacing > 1 ? f->spacing : 1;
 	}
 
-	/* Leave the terminal and the tracked cursor at the end column, and the
-	 * console colour where the last colour cell left it (as TDF.BAS did). */
-	tdf_room(&r, 24);
-	tdf_puts(&r, "\x1b[");
-	tdf_put_int(&r, y + 1);
-	tdf_putc(&r, ';');
-	tdf_put_int(&r, cx + 1);
-	tdf_putc(&r, 'H');
-	tdf_flush(&r);
+	if (r.gfx)
+	{
+		/* Page target: flush the stamped AABB so an overlay write lands on
+		 * the displayed page; a hidden page or the raw framebuffer needs no
+		 * present. */
+		if (r.box_x1 >= 0 && !mmb_gfx_writing_fb())
+		{
+			mmb_gfx_dirty_add(r.box_x0 * mmb_print_font_w(),
+					  r.box_y0 * mmb_print_font_h(),
+					  (r.box_x1 - r.box_x0 + 1) *
+						  mmb_print_font_w(),
+					  (r.box_y1 - r.box_y0 + 1) *
+						  mmb_print_font_h());
+			mmb_gfx_present_if(MMB_PAGE_CUR);
+		}
+	}
+	else
+	{
+		/* Leave the terminal and the tracked cursor at the end column, and
+		 * the console colour where the last colour cell left it (as TDF.BAS
+		 * did). */
+		tdf_room(&r, 24);
+		tdf_puts(&r, "\x1b[");
+		tdf_put_int(&r, y + 1);
+		tdf_putc(&r, ';');
+		tdf_put_int(&r, cx + 1);
+		tdf_putc(&r, 'H');
+		tdf_flush(&r);
+	}
 	if (r.colour && r.have_colour)
 	{
 		G.gfx.fg = mmb_ibm_colour(r.last_fg & 15);
