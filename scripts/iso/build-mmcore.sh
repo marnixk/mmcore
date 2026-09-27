@@ -27,7 +27,7 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 cp -a "${REPO_ROOT}/mmbasic" "${REPO_ROOT}/native" "${REPO_ROOT}/console" \
 	"${REPO_ROOT}/ramdisk" "${REPO_ROOT}/assets" "${REPO_ROOT}/scripts" \
-	"${BUILD_DIR}/"
+	"${REPO_ROOT}/docs" "${BUILD_DIR}/"
 
 SDL_CFLAGS="$(pkg-config --cflags sdl2)"
 SDL_LIBS="$(pkg-config --libs sdl2)"
