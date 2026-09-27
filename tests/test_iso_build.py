@@ -19,6 +19,7 @@ ENTRY = os.path.join(SCRIPTS, "build-iso.sh")
 BUILDER = os.path.join(ISO, "build-in-container.sh")
 MMCORE = os.path.join(ISO, "build-mmcore.sh")
 OVERLAY = os.path.join(ISO, "rootfs-overlay")
+INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
 ASSET = "mmcore-fb-x86_64.iso"
 BASH = shutil.which("bash") or "/bin/bash"
 
@@ -77,6 +78,28 @@ def test_overlay_autostarts_mmcore_on_the_framebuffer():
     assert "tty1" in profile
     assert "kmsdrm" in profile
     assert os.path.isfile(os.path.join(OVERLAY, "etc", "modules"))
+
+
+def test_persistence_script_mounts_the_labeled_partition():
+    path = os.path.join(OVERLAY, "etc", "local.d", "mmcore-persist.start")
+    assert os.access(path, os.X_OK), path
+    _run(["bash", "-n", path])
+    text = open(path, encoding="utf-8").read()
+    assert "blkid -L MMCORE" in text
+    assert "/media/mmcore" in text
+    assert "mkfs.ext4" in text
+
+
+def test_install_usb_script_parses_and_documents_persistence():
+    assert os.access(INSTALL_USB, os.X_OK), INSTALL_USB
+    _run(["bash", "-n", INSTALL_USB])
+    help_out = _run([INSTALL_USB, "--help"]).stdout
+    assert "--no-persist" in help_out
+    assert "--iso" in help_out
+    text = open(INSTALL_USB, encoding="utf-8").read()
+    assert "MMCORE" in text
+    assert "dd if=" in text
+    assert "mkfs.ext4" in text
 
 
 @pytest.mark.skipif(
