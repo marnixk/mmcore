@@ -34,12 +34,23 @@ def test_mouse_on_off_parse(console):
 
 def test_mouse_cursor_types_parse(console):
     assert console.send_line("NEW") == ""
-    for name in ("pointer", "hand", "crosshair", "questionmark", "deny"):
+    for name in ("pointer", "hand", "crosshair", "questionmark", "deny",
+                 "hidden"):
         assert console.send_line("MOUSE CURSOR " + name) == "", name
-    for n in ("0", "1", "2", "3", "4"):
+    for n in ("0", "1", "2", "3", "4", "5"):
         assert console.send_line("MOUSE CURSOR " + n) == "", n
     # No argument is allowed and resets to the pointer.
     assert console.send_line("MOUSE CURSOR") == ""
+
+
+def test_mouse_cursor_hidden_aliases(console):
+    """#825: hidden accepts the name and its index; no sprite is drawn."""
+    assert console.send_line("NEW") == ""
+    for name in ("hidden", "none", "off", "5"):
+        assert console.send_line("MOUSE CURSOR " + name) == "", name
+    # 6 is past the last type now that hidden exists.
+    out = console.send_line("MOUSE CURSOR 6")
+    assert "SYNTAX" in out.upper() or "ERROR" in out.upper(), out
 
 
 def test_mouse_cursor_invalid_type(console):
@@ -90,7 +101,7 @@ def test_mouse_help_doc_covers_surface():
     text = open(path, encoding="utf-8").read()
     assert "name: MOUSE" in text
     for token in ("MOUSE ON", "MOUSE OFF", "MOUSE CURSOR", "pointer", "hand",
-                  "crosshair", "questionmark", "deny"):
+                  "crosshair", "questionmark", "deny", "hidden"):
         assert token in text, token
     on = open(os.path.join(REPO, "docs", "help", "on.txt"), encoding="utf-8").read()
     assert "ON MOUSECLICK" in on
@@ -128,6 +139,7 @@ void mmb_gfx_present(void);
 void mmb_gfx_present_native(int x, int y, int w, int h,
 			    const uint16_t *pix, int stride);
 int mmb_mouse_cursor_type_from_name(const char *name);
+int mmb_mouse_cursor_type_count(void);
 const char *mmb_mouse_cursor_type_name(int type);
 void mmb_mouse_cursor_set_on(int on);
 void mmb_mouse_cursor_set_type(int type);
@@ -306,7 +318,9 @@ int main(void)
 	check(cursor_drawn(200, 120, 12, 16), "cursor_moved");
 	printf("OK non_dirtying_move\n");
 
-	/* Every icon renders and leaves the page alone. */
+	/* Every visible icon renders at its hotspot -- so the hotspot is an
+	 * opaque pixel for every s_art entry (#824) -- and leaves the page
+	 * alone. Hidden (#825) composites nothing. */
 	for (t = 0; t < 5; t++) {
 		mmb_mouse_cursor_reset_all();
 		memset(presented, 0, sizeof(presented));
@@ -316,18 +330,42 @@ int main(void)
 		mmb_mouse_cursor_set_type(t);
 		mmb_mouse_cursor_present(page, W, H);
 		check(cursor_drawn(150, 100, 16, 16), "icon_drawn");
+		check(presented[100 * W + 150] != page[100 * W + 150],
+		      "hotspot_opaque");
 	}
 	check(page_unchanged(), "page_clean_all_icons");
 	printf("OK all_icons\n");
 
+	/* Hidden (#825): no sprite, but the pointer still tracks. */
+	mmb_mouse_cursor_reset_all();
+	mock.present = 1;
+	mock.x = 150;
+	mock.y = 100;
+	mock.buttons = 0;
+	mmb_mouse_cursor_set_on(1);
+	mmb_mouse_cursor_set_type(5);
+	memcpy(presented, page, sizeof(presented));
+	mmb_mouse_cursor_present(page, W, H);
+	check(!cursor_drawn(120, 70, 60, 60), "hidden_not_drawn");
+	check(page_unchanged(), "hidden_page_clean");
+	mock.x = 180;
+	mock.y = 130;
+	drain(got, sizeof(got));
+	check(!strcmp(got, " m180,130"), "hidden_tracks_move");
+	printf("OK hidden\n");
+
 	/* Icon name lookup. */
+	check(mmb_mouse_cursor_type_count() == 6, "type_count");
 	check(mmb_mouse_cursor_type_from_name("pointer") == 0, "name_pointer");
 	check(mmb_mouse_cursor_type_from_name("HAND") == 1, "name_hand");
 	check(mmb_mouse_cursor_type_from_name("crosshair") == 2, "name_cross");
 	check(mmb_mouse_cursor_type_from_name("questionmark") == 3, "name_q");
 	check(mmb_mouse_cursor_type_from_name("deny") == 4, "name_deny");
+	check(mmb_mouse_cursor_type_from_name("hidden") == 5, "name_hidden");
+	check(mmb_mouse_cursor_type_from_name("none") == 5, "name_none");
 	check(mmb_mouse_cursor_type_from_name("bogus") == -1, "name_bad");
 	check(!strcmp(mmb_mouse_cursor_type_name(2), "crosshair"), "tname");
+	check(!strcmp(mmb_mouse_cursor_type_name(5), "hidden"), "tname_hidden");
 	printf("OK icon_names\n");
 
 	/* Event classification: a move is reported once, then click edges for
@@ -401,5 +439,6 @@ def test_host_overlay_all_checks_pass(host_run):
 
 def test_host_markers(host_run):
     for marker in ("OK page_clean_after_draw", "OK non_dirtying_move",
-                   "OK all_icons", "OK icon_names", "OK event_classify"):
+                   "OK all_icons", "OK hidden", "OK icon_names",
+                   "OK event_classify"):
         assert marker in host_run.stdout, (marker, host_run.stdout)

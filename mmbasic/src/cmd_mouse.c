@@ -5,7 +5,7 @@
  * mouse_cursor.c; this file is the thin BASIC surface around them:
  *
  *   MOUSE ON | OFF
- *   MOUSE CURSOR [pointer|hand|crosshair|questionmark|deny|0..4]
+ *   MOUSE CURSOR [pointer|hand|crosshair|questionmark|deny|hidden|0..5]
  *
  * ON MOUSECLICK / ON MOUSEMOVE handler names are parsed by mmb_cmd_on() in
  * cmd_lang.c and stored in the per-console interpreter state.
@@ -53,7 +53,7 @@ void mmb_cmd_mouse(void)
 			{
 				mmb_val v = mmb_expr();
 				type = (int)mmb_as_int(v);
-				if (type < 0 || type > 4)
+				if (type < 0 || type >= mmb_mouse_cursor_type_count())
 					mmb_syntax();
 			}
 		}

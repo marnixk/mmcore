@@ -643,6 +643,7 @@ void mmb_cmd_on(void);
 void mmb_cmd_mouse(void);
 void mmb_mouse_reset_all(void);
 int mmb_mouse_cursor_type_from_name(const char *name);
+int mmb_mouse_cursor_type_count(void);
 const char *mmb_mouse_cursor_type_name(int type);
 void mmb_mouse_cursor_set_on(int on);
 void mmb_mouse_cursor_set_type(int type);
