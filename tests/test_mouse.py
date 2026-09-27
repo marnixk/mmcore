@@ -93,6 +93,39 @@ def test_on_mouse_clears_without_name(console):
     assert console.send_line("ON MOUSECLICK") == ""
 
 
+def test_on_mouse_down_up_parse(console):
+    """#860: MOUSEDOWN aliases MOUSECLICK; MOUSEUP registers a release handler."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('ON MOUSECLICK "C"') == ""
+    assert console.send_line('ON MOUSEDOWN "D"') == ""
+    assert console.send_line('ON MOUSEUP "U"') == ""
+    assert console.send_line("ON MOUSEDOWN DownH") == ""
+    assert console.send_line("ON MOUSEUP UpH") == ""
+    assert console.send_line("ON MOUSEDOWN") == ""
+    assert console.send_line("ON MOUSEUP") == ""
+
+
+def test_on_mouse_down_up_run(console):
+    """#860: a program using all three handler names runs to completion."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 MOUSE ON") == ""
+    assert console.send_line('20 ON MOUSEDOWN "DownH"') == ""
+    assert console.send_line('30 ON MOUSEUP "UpH"') == ""
+    assert console.send_line('40 ON MOUSECLICK "ClickH"') == ""
+    assert console.send_line('50 PRINT "DONE"') == ""
+    assert console.send_line("60 END") == ""
+    assert console.send_line("100 SUB DownH(x,y,b$)") == ""
+    assert console.send_line("110 PRINT x;y;b$") == ""
+    assert console.send_line("120 END SUB") == ""
+    assert console.send_line("130 SUB UpH(x,y,b$)") == ""
+    assert console.send_line("140 PRINT x;y;b$") == ""
+    assert console.send_line("150 END SUB") == ""
+    assert console.send_line("160 SUB ClickH(x,y,b$)") == ""
+    assert console.send_line("170 PRINT x;y;b$") == ""
+    assert console.send_line("180 END SUB") == ""
+    assert console.send_line("RUN") == "DONE"
+
+
 # ---- help docs ------------------------------------------------------------
 
 
@@ -103,9 +136,13 @@ def test_mouse_help_doc_covers_surface():
     for token in ("MOUSE ON", "MOUSE OFF", "MOUSE CURSOR", "pointer", "hand",
                   "crosshair", "questionmark", "deny", "hidden"):
         assert token in text, token
+    assert "ON MOUSEUP" in text
+    assert "ON MOUSEDOWN" in text
     on = open(os.path.join(REPO, "docs", "help", "on.txt"), encoding="utf-8").read()
     assert "ON MOUSECLICK" in on
     assert "ON MOUSEMOVE" in on
+    assert "ON MOUSEUP" in on
+    assert "ON MOUSEDOWN" in on
 
 
 # ---- host driver: overlay + event classifier ------------------------------
@@ -146,6 +183,8 @@ void mmb_mouse_cursor_set_type(int type);
 void mmb_mouse_cursor_refresh(void);
 void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h);
 void mmb_mouse_cursor_reset_all(void);
+int mmb_mouse_cursor_art(int type, int *w, int *h, int *hot_x, int *hot_y,
+			 const char *const **rows);
 int mmb_mouse_take_event(int *x, int *y, int *button);
 #endif
 """
@@ -258,7 +297,7 @@ static int cursor_drawn(int x0, int y0, int w, int h)
 	return 0;
 }
 
-/* Drain take_event into a compact string, e.g. "m10,10 c1 c2". */
+/* Drain take_event into a compact string, e.g. "m10,10 c1 u1". */
 static void drain(char *out, size_t cap)
 {
 	int x, y, b, ev;
@@ -267,6 +306,8 @@ static void drain(char *out, size_t cap)
 	while ((ev = mmb_mouse_take_event(&x, &y, &b)) != 0) {
 		if (ev == 1)
 			n += (size_t)snprintf(out + n, cap - n, " m%d,%d", x, y);
+		else if (ev == 3)
+			n += (size_t)snprintf(out + n, cap - n, " u%d", b);
 		else
 			n += (size_t)snprintf(out + n, cap - n, " c%d", b);
 	}
@@ -368,6 +409,44 @@ int main(void)
 	check(!strcmp(mmb_mouse_cursor_type_name(5), "hidden"), "tname_hidden");
 	printf("OK icon_names\n");
 
+	/* #845: every authored row is at least `w` characters and the geometry
+	 * fits MMB_CURSOR_MAX_W/H, so present() can never read past a row's NUL.
+	 * The hidden entry (type 5) carries no baked art. */
+	{
+		int art_ok = 1;
+		for (t = 0; t < mmb_mouse_cursor_type_count(); t++) {
+			int w = 0, h = 0, hx = 0, hy = 0, y;
+			const char *const *rows = 0;
+			if (!mmb_mouse_cursor_art(t, &w, &h, &hx, &hy, &rows)) {
+				printf("FAIL art_lookup t=%d\n", t);
+				art_ok = 0;
+				continue;
+			}
+			/* Mirrors MMB_CURSOR_MAX_W/H in mouse_cursor.c. */
+			if (w < 0 || w > 24 || h < 0 || h > 24) {
+				printf("FAIL art_cap t=%d w=%d h=%d\n", t, w, h);
+				art_ok = 0;
+			}
+			if (w == 0 || h == 0)
+				continue;
+			if (hx < 0 || hx >= w || hy < 0 || hy >= h) {
+				printf("FAIL art_hotspot t=%d\n", t);
+				art_ok = 0;
+			}
+			for (y = 0; y < h; y++)
+				if (rows[y] == 0 ||
+				    (int)strlen(rows[y]) < w) {
+					printf("FAIL art_row_width t=%d y=%d\n",
+					       t, y);
+					art_ok = 0;
+				}
+		}
+		if (art_ok)
+			printf("OK art_bounds\n");
+		else
+			fails++;
+	}
+
 	/* Event classification: a move is reported once, then click edges for
 	 * each newly pressed button. */
 	mmb_mouse_cursor_reset_all();
@@ -386,13 +465,13 @@ int main(void)
 	check(!strcmp(got, " c1"), "left_click");
 	mock.buttons = 0;
 	drain(got, sizeof(got));
-	check(got[0] == 0, "release_is_quiet");
+	check(!strcmp(got, " u1"), "left_release");
 	mock.buttons = 3;
 	drain(got, sizeof(got));
 	check(!strcmp(got, " c1 c2"), "two_buttons");
 	mock.buttons = 0;
 	drain(got, sizeof(got));
-	check(got[0] == 0, "no_release_event");
+	check(!strcmp(got, " u1 u2"), "two_releases");
 	G.tick_busy = 1;
 	drain(got, sizeof(got));
 	check(got[0] == 0, "tick_busy_suppressed");
@@ -440,5 +519,5 @@ def test_host_overlay_all_checks_pass(host_run):
 def test_host_markers(host_run):
     for marker in ("OK page_clean_after_draw", "OK non_dirtying_move",
                    "OK all_icons", "OK hidden", "OK icon_names",
-                   "OK event_classify"):
+                   "OK art_bounds", "OK event_classify"):
         assert marker in host_run.stdout, (marker, host_run.stdout)

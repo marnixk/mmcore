@@ -4071,8 +4071,9 @@ void mmb_run_events(void)
 		char abuf[64];
 		while ((ev = mmb_mouse_take_event(&mx, &my, &mb)) != 0)
 		{
-			const char *sub = ev == 2 ? G.on_mouseclick
-						  : G.on_mousemove;
+			const char *sub = ev == 1 ? G.on_mousemove :
+					  ev == 3 ? G.on_mouseup :
+						    G.on_mouseclick;
 			int n = 0;
 			if (!sub[0])
 				continue;
@@ -4080,7 +4081,7 @@ void mmb_run_events(void)
 			append_int(abuf, &n, mx);
 			abuf[n++] = ',';
 			append_int(abuf, &n, my);
-			if (ev == 2)
+			if (ev != 1)
 			{
 				const char *btn = mb == 1 ? "left" :
 						  mb == 2 ? "right" : "middle";
@@ -4139,6 +4140,7 @@ static void run_program(void)
 		G.on_key[0] = 0;
 		G.on_mouseclick[0] = 0;
 		G.on_mousemove[0] = 0;
+		G.on_mouseup[0] = 0;
 		G.tick_busy = 0;
 		G.inkey_n = G.inkey_r = G.inkey_w = 0;
 		scan_labels();
