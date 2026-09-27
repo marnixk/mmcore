@@ -11,6 +11,14 @@
 
 #include <stdint.h>
 
+/* The video driver a framebuffer (KMS/DRM) build should default to, or NULL
+ * when the build has no forced default and SDL chooses. */
+const char *sdl_video_default_driver(void);
+
+/* Apply sdl_video_default_driver() by setting SDL_VIDEODRIVER, but only when
+ * the caller has not already chosen a driver. Called from sdl_video_open(). */
+void sdl_video_apply_default_driver(void);
+
 int sdl_video_open(int w, int h);
 void sdl_video_close(void);
 int sdl_video_resize(int w, int h);

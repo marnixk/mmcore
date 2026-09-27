@@ -61,6 +61,16 @@ OUT_STDIO := $(CURDIR)/mmbasic-$(MACOS_ARCH)$(EXE)
 OUT_SDL   := $(CURDIR)/mmcore-$(MACOS_ARCH)$(EXE)
 endif
 
+# Framebuffer (KMS/DRM) variant: the same sources built with a compile-time
+# default video driver (native/sdl_video.c), no X11/Wayland. Selected by the
+# `sdl-fb` target via recursive make; FB gets its own object tree and output so
+# `sdl` and `sdl-fb` never share objects built with different defines.
+ifneq ($(FB),)
+BUILD   := $(CURDIR)/build/fb
+OUT_SDL := $(CURDIR)/mmcore-fb$(EXE)
+CFLAGS += -DMMB_SDL_FRAMEBUFFER=1
+endif
+
 CFLAGS += -DMMB_PLATFORM_POSIX \
 	  -I$(CURDIR) -I$(MMB)/include -I$(MMB)/src -I$(MMB)/third_party \
 	  -I$(CONSOLE) \
@@ -122,6 +132,11 @@ stdio: $(OUT_STDIO)
 
 sdl: $(OUT_SDL)
 
+# KMS/DRM framebuffer build (native/mmcore-fb). Recursive so FB selects its own
+# object tree and compile define.
+sdl-fb:
+	+"$(MAKE)" FB=1 sdl
+
 ifeq ($(HAVE_SDL),)
 $(OUT_SDL):
 	@echo "SDL2 not found (pkg-config sdl2); skipping $@"
@@ -177,10 +192,11 @@ clean:
 	rm -rf $(CURDIR)/build
 	rm -f $(CURDIR)/mmbasic $(CURDIR)/mmbasic.exe \
 	      $(CURDIR)/mmcore $(CURDIR)/mmcore.exe \
+	      $(CURDIR)/mmcore-fb $(CURDIR)/mmcore-fb.exe \
 	      $(CURDIR)/mmbasic-arm64 $(CURDIR)/mmcore-arm64 \
 	      $(CURDIR)/mmbasic-x86_64 $(CURDIR)/mmcore-x86_64 \
 	      $(CURDIR)/mmcore.ico $(CURDIR)/mmcore.rc
 
-.PHONY: all stdio sdl clean FORCE
+.PHONY: all stdio sdl sdl-fb clean FORCE
 
 FORCE:

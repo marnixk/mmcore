@@ -36,8 +36,10 @@ mmbasic/include/mmb_version.h
 native/build/
 native/mmbasic
 native/mmcore
+native/mmcore-fb
 native/mmbasic.exe
 native/mmcore.exe
+native/mmcore-fb.exe
 native/mmbasic-arm64
 native/mmcore-arm64
 native/mmbasic-x86_64

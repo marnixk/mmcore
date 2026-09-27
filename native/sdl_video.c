@@ -62,12 +62,35 @@ static void free_buffers(void)
 }
 
 /* Give the window a stable identity before the video subsystem starts, so the
- * shell can associate it with the installed .desktop entry (and its icon). */
+ * shell can associate it with the installed .desktop entry (and its icon). A
+ * framebuffer (KMS/DRM) build has no window manager to resolve them. */
 static void set_app_identity(void)
 {
 	SDL_SetHint(SDL_HINT_APP_NAME, "mmcore");
+#ifndef MMB_SDL_FRAMEBUFFER
 	SDL_SetHint(SDL_HINT_APP_ID, "com.marnixk.mmcore"); /* Wayland app-id */
 	SDL_SetHint(SDL_HINT_VIDEO_X11_WMCLASS, "mmcore");  /* X11 WM_CLASS */
+#endif
+}
+
+/* Framebuffer builds render straight to DRM/KMS with no X11/Wayland, so they
+ * default SDL to the kmsdrm driver. An explicit SDL_VIDEODRIVER always wins
+ * (headless tests, a desktop session, or a user overriding it). */
+const char *sdl_video_default_driver(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return "kmsdrm";
+#else
+	return 0;
+#endif
+}
+
+void sdl_video_apply_default_driver(void)
+{
+	const char *driver = sdl_video_default_driver();
+
+	if (driver && driver[0] && !SDL_getenv("SDL_VIDEODRIVER"))
+		SDL_setenv("SDL_VIDEODRIVER", driver, 1);
 }
 
 /* Show the M avatar in the taskbar/dock even when launched outside a package
@@ -91,6 +114,7 @@ static void set_window_icon(void)
 int sdl_video_open(int w, int h)
 {
 	set_app_identity();
+	sdl_video_apply_default_driver();
 	if (SDL_Init(SDL_INIT_VIDEO) != 0)
 		return 0;
 	SDL_InitSubSystem(SDL_INIT_AUDIO); /* non-fatal if unavailable */
@@ -111,7 +135,13 @@ int sdl_video_open(int w, int h)
 	if (!s_ren)
 		return 0;
 
-	return sdl_video_resize(w, h);
+	if (!sdl_video_resize(w, h))
+		return 0;
+#ifdef MMB_SDL_FRAMEBUFFER
+	/* No desktop to go windowed on: fill the display from the first frame. */
+	sdl_video_set_fullscreen(1);
+#endif
+	return 1;
 }
 
 void sdl_video_close(void)
