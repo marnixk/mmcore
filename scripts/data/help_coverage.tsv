@@ -231,6 +231,15 @@ SUB	SUB	topic	dedicated topic
 SWAP	SWAP	topic	dedicated topic
 TAB	TAB	topic	dedicated topic
 TAN	TAN	topic	dedicated topic
+TDF	TDF	topic	dedicated topic
+TDF.HEIGHT	TDF	alias	documented under TDF
+TDF.NAME$	TDF	alias	documented under TDF
+TDF.SPACING%	TDF	alias	documented under TDF
+TDF.TYPE%	TDF	alias	documented under TDF
+TDF.VARIANT%	TDF	alias	documented under TDF
+TDF.VARIANTNAME$	TDF	alias	documented under TDF
+TDF.VARIANTS%	TDF	alias	documented under TDF
+TDF.WIDTH	TDF	alias	documented under TDF
 TERM	TERM	topic	dedicated topic
 TEXT	TEXT	topic	dedicated topic
 THEME	THEME	topic	dedicated topic
