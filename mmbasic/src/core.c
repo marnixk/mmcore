@@ -3080,7 +3080,6 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("IF")] = mmb_cmd_if;
 		tab[mmb_kw_id("FOR")] = mmb_cmd_for;
 		tab[mmb_kw_id("NEXT")] = mmb_cmd_next;
-		tab[mmb_kw_id("OPTIONS")] = mmb_cmd_options;
 		tab[mmb_kw_id("OPTION")] = mmb_cmd_option;
 		tab[mmb_kw_id("FACTORY_RESET")] = mmb_cmd_factory_reset;
 		tab[mmb_kw_id("FACTORY")] = tok_cmd_factory;
@@ -3525,11 +3524,6 @@ static void exec_statement(void)
 	if (mmb_match("NEXT"))
 	{
 		mmb_cmd_next();
-		return;
-	}
-	if (mmb_match("OPTIONS"))
-	{
-		mmb_cmd_options();
 		return;
 	}
 	if (mmb_match("OPTION"))

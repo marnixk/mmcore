@@ -23,7 +23,6 @@ def test_help_lists_commands(console):
         "WORDPAD",
         "CREDITS",
         "IPCONFIG",
-        "OPTIONS",
         "MATH",
         "STRUCT",
         "JSON_PARSE",
@@ -197,7 +196,8 @@ def test_help_option_wifi(console):
     assert "persist" in out.lower() or "reboot" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
     assert "scan" in out.lower()
-    assert "OPTIONS WIFI" in out or "<OPTIONS> WIFI" in out
+    assert "OPTIONS WIFI" not in out
+    assert "OPTION WIFI" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
     assert "DEBUG" in out
@@ -208,18 +208,10 @@ def test_help_option_wifi(console):
     assert "<ETHERNET>" in out or "ETHERNET" in out
 
 
-def test_help_options_wifi(console):
+def test_help_options_wifi_topic_is_gone(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
-    assert "<OPTIONS>" in listing
+    assert "<OPTIONS>" not in listing
     close_ihelp(console)
-    out = dump_topic(console, "OPTIONS")
-    assert out != "?SYNTAX ERROR"
-    assert "OPTIONS WIFI" in out
-    assert "not configured" in out.lower()
-    assert "stored by OPTION WIFI" in out.lower() or "option wifi" in out.lower()
-    via = dump_topic(console, "OPTIONS WIFI")
-    assert "OPTIONS WIFI" in via
-    assert "Connected to" in via
 
 
 def test_ihelp_has_no_menu_bar(console):
