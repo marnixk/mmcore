@@ -62,6 +62,14 @@ def test_builder_boots_alpine_with_network_packages():
     assert "console=ttyS0" in text
 
 
+def test_rootfs_installs_mesa_runtime_libs_for_kmsdrm():
+    """SDL dlopens libgbm/libEGL/libGLESv2 and the Gallium DRI backends, which
+    on Alpine live in mesa subpackages, not the empty `mesa` metapackage."""
+    text = open(BUILDER, encoding="utf-8").read()
+    for pkg in ("mesa-gbm", "mesa-egl", "mesa-gles", "mesa-dri-gallium"):
+        assert pkg in text, pkg
+
+
 def test_mmcore_builder_targets_kmsdrm_and_installs():
     assert os.access(MMCORE, os.X_OK), MMCORE
     _run(["bash", "-n", MMCORE])
