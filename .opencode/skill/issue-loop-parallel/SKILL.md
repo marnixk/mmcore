@@ -1,0 +1,1 @@
+../../../.cursor/skills/issue-loop-parallel/SKILL.md
