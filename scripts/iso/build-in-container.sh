@@ -45,6 +45,9 @@ if [ ! -s /etc/apk/repositories ]; then
 fi
 mkdir -p "${ROOTFS}/etc/apk"
 cp /etc/apk/repositories "${ROOTFS}/etc/apk/repositories"
+# apk --root also verifies the index with keys from <root>/etc/apk/keys.
+mkdir -p "${ROOTFS}/etc/apk/keys"
+cp -a /etc/apk/keys/. "${ROOTFS}/etc/apk/keys/" 2>/dev/null || true
 
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
