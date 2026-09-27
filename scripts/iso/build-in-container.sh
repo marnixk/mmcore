@@ -54,7 +54,8 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	linux-lts linux-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
-	libdrm mesa eudev-libs libxkbcommon \
+	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
+	eudev-libs libxkbcommon \
 	e2fsprogs dosfstools blkid ca-certificates
 
 # Wi-Fi firmware for common chipsets; not every package exists on every branch.
