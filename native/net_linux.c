@@ -302,6 +302,17 @@ static void service_restart(const char *service)
 	run_capture(cmd, 0, 0);
 }
 
+/* Request a DHCP lease on `iface` (busybox udhcpc, as shipped on the ISO). */
+static void dhcp_get(const char *iface)
+{
+	char cmd[200];
+
+	if (!iface)
+		return;
+	snprintf(cmd, sizeof cmd, "udhcpc -i %s -b -q -n", iface);
+	run_capture(cmd, 0, 0);
+}
+
 int mmb_wlan_start(const char *ssid, const char *psk)
 {
 	if (!ssid || !ssid[0])
@@ -320,6 +331,7 @@ int mmb_wlan_connect(const char *ssid, const char *psk)
 
 	if (mmb_wlan_start(ssid, psk) != 0)
 		return -1;
+	dhcp_get(wlan_iface());
 	/* Association + DHCP take a moment; poll for the lease. */
 	while (waited < 15000)
 	{
@@ -376,6 +388,7 @@ int mmb_eth_start(void)
 	if (!eth_iface())
 		return -1;
 	service_restart("networking");
+	dhcp_get(eth_iface());
 	return 0;
 }
 

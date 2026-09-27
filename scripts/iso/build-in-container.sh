@@ -41,6 +41,14 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alsa-lib alsa-utils libgcc \
 	e2fsprogs dosfstools blkid ca-certificates
 
+# Wi-Fi firmware for common chipsets; not every package exists on every branch.
+for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
+	linux-firmware-rtlwifi linux-firmware-rtw88 linux-firmware-mediatek \
+	linux-firmware-ath9k; do
+	apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
+		"$fw" >/dev/null 2>&1 || true
+done
+
 log "Configuring the live system"
 cp /etc/resolv.conf "${ROOTFS}/etc/resolv.conf" 2>/dev/null || true
 : > "${ROOTFS}/etc/fstab"
@@ -76,6 +84,7 @@ enable bootmisc boot
 enable syslog boot
 enable networking boot
 enable local boot
+enable wpa_supplicant default
 
 if [ -x "${REPO_ROOT}/scripts/iso/build-mmcore.sh" ]; then
 	log "Building mmcore for the rootfs"

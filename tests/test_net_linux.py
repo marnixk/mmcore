@@ -92,6 +92,7 @@ def _fake_dir(tmp_path, name, iw_body):
     _write_exe(os.path.join(d, "wpa_cli"), WPA_OK)
     _write_exe(os.path.join(d, "ip"), IP_FAKE)
     _write_exe(os.path.join(d, "rc-service"), "exit 0\n")
+    _write_exe(os.path.join(d, "udhcpc"), "exit 0\n")
     return d
 
 

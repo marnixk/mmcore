@@ -1,0 +1,12 @@
+#!/bin/sh
+# Bring up wired interfaces with DHCP at boot. Wi-Fi is joined at runtime with
+# OPTION WIFI (the native backend writes wpa_supplicant.conf and restarts the
+# service); OPTION ETHERNET ON restarts networking.
+for path in /sys/class/net/*; do
+	[ -d "${path}" ] || continue
+	name="${path##*/}"
+	[ "${name}" = "lo" ] && continue
+	[ -d "${path}/wireless" ] && continue
+	ip link set "${name}" up 2>/dev/null || true
+	udhcpc -i "${name}" -b -q -n >/dev/null 2>&1 || true
+done
