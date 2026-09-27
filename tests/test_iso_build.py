@@ -22,6 +22,7 @@ OVERLAY = os.path.join(ISO, "rootfs-overlay")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
+COMPRESSED = "mmcore-fb-x86_64.iso.zst"
 BASH = shutil.which("bash") or "/bin/bash"
 
 
@@ -99,8 +100,11 @@ def test_install_usb_script_parses_and_documents_persistence():
     assert "--iso" in help_out
     text = open(INSTALL_USB, encoding="utf-8").read()
     assert "MMCORE" in text
-    assert "dd if=" in text
+    assert "dd of=" in text
     assert "mkfs.ext4" in text
+    # compressed release artifact is decompressed on the fly
+    assert "zstd -dc" in text
+    assert "*.zst)" in text
 
 
 def test_overlay_wires_ethernet_dhcp_and_wifi():
@@ -135,13 +139,24 @@ def test_iso_workflow_builds_boot_smokes_and_attaches():
     assert "linux-iso" in wf
 
 
+def test_iso_workflow_publishes_only_the_compressed_iso():
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    # CI compresses after boot-smoking the raw ISO, then uploads the .zst...
+    assert "zstd" in wf
+    assert COMPRESSED in wf
+    assert f"dist/{COMPRESSED} scripts/install-usb.sh" in wf
+    # ...and never uploads the raw .iso as a release asset.
+    assert f"dist/{ASSET} scripts/install-usb.sh" not in wf
+
+
 def test_release_notes_list_the_iso_assets():
     _run(["bash", "-n", os.path.join(SCRIPTS, "github-release.sh")])
     notes = _run(
         [os.path.join(SCRIPTS, "github-release.sh"), "release-notes", "9.9.9"]
     ).stdout
-    assert ASSET in notes
+    assert COMPRESSED in notes
     assert "install-usb.sh" in notes
+    assert "zstd -d" in notes
     assert "Bootable USB" in notes or "bootable" in notes.lower()
 
 

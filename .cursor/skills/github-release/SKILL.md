@@ -94,8 +94,9 @@ The release notes include an "Install" section, the Linux AppImage, a "Windows
 native (x86_64)" section, and a "macOS native (universal: Apple Silicon + Intel)" section whenever
 `dist/mmcore-macos-universal.zip` exists at publish time. They also name the
 Linux KMS/DRM framebuffer build (`mmcore-fb-linux-x86_64.tar.gz`) and the
-bootable USB/ISO (`mmcore-fb-x86_64.iso` plus `install-usb.sh`), which CI
-attaches on the release event (`.github/workflows/linux-framebuffer.yml` and
+bootable USB/ISO (compressed `mmcore-fb-x86_64.iso.zst` plus `install-usb.sh`;
+the raw `.iso` is not published), which CI attaches on the release event
+(`.github/workflows/linux-framebuffer.yml` and
 `.github/workflows/linux-iso.yml`); see
 [`docs/framebuffer-and-iso.md`](../../../docs/framebuffer-and-iso.md).
 
