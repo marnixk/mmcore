@@ -19,16 +19,20 @@ writes to a ~PAGE~ buffer, so moving the pointer cannot change page pixels or
 interrupt drawing across multiple pages.
 
 Use MOUSE CURSOR hidden (type 5) to keep reading the pointer position and
-buttons -- MOUSE(x), MOUSE(y) and the ~ON MOUSEMOVE~ / ~ON MOUSECLICK~
-handlers all keep working -- while no cursor sprite is drawn. This lets a
-program draw its own pointer, or none at all.
+buttons -- MOUSE(x), MOUSE(y) and the ~ON MOUSEMOVE~ / ~ON MOUSECLICK~ /
+~ON MOUSEDOWN~ / ~ON MOUSEUP~ handlers all keep working -- while no cursor
+sprite is drawn. This lets a program draw its own pointer, or none at all.
 
 Pointer events call SUB handlers installed with ~ON~:
 
     ON MOUSECLICK handler
+    ON MOUSEDOWN handler
+    ON MOUSEUP handler
     ON MOUSEMOVE handler
 
-The click handler receives the screen position and which button was pressed:
+ON MOUSEDOWN is an alias of ON MOUSECLICK: both fire on a button press.
+ON MOUSEUP fires when the button is released. Press and release handlers
+receive the screen position and button:
 
     SUB click(x, y, button$)
       PRINT x, y, button$      ' button$ is "left", "middle" or "right"
@@ -46,6 +50,7 @@ Example:
     MOUSE CURSOR crosshair
     ON MOUSEMOVE move
     ON MOUSECLICK click
+    ON MOUSEUP release
     DO
       PAUSE 10
     LOOP

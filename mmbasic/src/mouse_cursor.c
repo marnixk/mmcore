@@ -19,6 +19,13 @@
 #define MMB_CURSOR_MAX_W 24
 #define MMB_CURSOR_MAX_H 24
 
+/* w/h are stored as unsigned char and every row must stay inside MMB_CURSOR_MAX_W,
+ * so keep the caps in range at compile time (#845). */
+_Static_assert(MMB_CURSOR_MAX_W > 0 && MMB_CURSOR_MAX_W <= 255,
+	       "cursor width cap out of range");
+_Static_assert(MMB_CURSOR_MAX_H > 0 && MMB_CURSOR_MAX_H <= 255,
+	       "cursor height cap out of range");
+
 enum {
 	MMB_CURSOR_POINTER = 0,
 	MMB_CURSOR_HAND,
@@ -35,7 +42,12 @@ typedef struct {
 	const char *rows[MMB_CURSOR_MAX_H];
 } mmb_cursor_art;
 
-/* ' ' transparent, '#' black, '+' white. */
+/* ' ' transparent, '#' black, '+' white.
+ *
+ * The pointing hand is an original redraw of the conventional glyph: index
+ * finger extended, thumb and folded fingers closed beside it. Proportions
+ * follow the standard X11 cursor-font hand2 (MIT / X11 license) and the
+ * Adwaita/Breeze "pointer" cursors (LGPL-3.0); no theme bitmap is copied. */
 static const mmb_cursor_art s_art[MMB_CURSOR_COUNT] = {
 	{ 12, 16, 0, 0, {
 		"#           ",
@@ -55,27 +67,27 @@ static const mmb_cursor_art s_art[MMB_CURSOR_COUNT] = {
 		"#    #++#   ",
 		"      ##    ",
 	} },
-	{ 18, 20, 8, 0, {
-		"       ###        ",
-		"      #+++#       ",
-		"      #+++#       ",
-		"      #+++#       ",
-		"      #+++#       ",
-		"      #+++#       ",
-		"      #+++#       ",
-		"    ##+++++##     ",
-		" ###+++++++++#    ",
-		"#+++#+#+++#+++#   ",
-		"++++#+#+++#+++#   ",
-		"++++#+#+++#++++#  ",
-		"++++#+#+++#++++#  ",
-		"#+++++#+++#++++#  ",
-		" ##+++++++++++#   ",
-		" #+++++++++++++#  ",
-		" #+++++++++++++#  ",
-		" #+++++++++++++#  ",
-		"  #+++#####+++#   ",
-		"   ###     ###    ",
+	{ 18, 20, 3, 0, {
+		"   ####           ",
+		"   #++#           ",
+		"   #++#           ",
+		"   #++#           ",
+		"   #++#           ",
+		"   #++#           ",
+		"   #++#           ",
+		"   #++#  ###      ",
+		"   #++#  #++#     ",
+		"   #++# #+++#     ",
+		"  #++++#+++++#    ",
+		" #++++++++++++#   ",
+		" #++++++++++++#   ",
+		" #++++++++++++#   ",
+		" #+++++++++++#    ",
+		"  #++++++++++#    ",
+		"  #+++++++++#     ",
+		"   #+++++++#      ",
+		"    ##+++##       ",
+		"      ###         ",
 	} },
 	{ 21, 21, 10, 10, {
 		"       #+++++#       ",
@@ -162,6 +174,7 @@ typedef struct {
 	int phase;
 	int move_pending;
 	int pending_clicks;
+	int pending_releases;
 } mmb_mouse_ctx;
 
 static mmb_mouse_ctx s_mc[MMB_MAX_CONSOLES];
@@ -216,6 +229,31 @@ const char *mmb_mouse_cursor_type_name(int type)
 	}
 }
 
+/* Expose one baked icon's geometry and row strings so a host-side static check
+ * can assert every authored row is at least `w` characters and `h` fits the
+ * caps (#845). Returns 1 for a known type, 0 otherwise. `rows` (when non-NULL)
+ * stays valid for `h` entries and may contain NULL only for the empty hidden
+ * entry. */
+int mmb_mouse_cursor_art(int type, int *w, int *h, int *hot_x, int *hot_y,
+			 const char *const **rows)
+{
+	const mmb_cursor_art *art;
+	if (type < 0 || type >= MMB_CURSOR_COUNT)
+		return 0;
+	art = &s_art[type];
+	if (w)
+		*w = art->w;
+	if (h)
+		*h = art->h;
+	if (hot_x)
+		*hot_x = art->hot_x;
+	if (hot_y)
+		*hot_y = art->hot_y;
+	if (rows)
+		*rows = art->rows;
+	return 1;
+}
+
 void mmb_mouse_cursor_set_on(int on)
 {
 	int was = MC.on;
@@ -223,6 +261,7 @@ void mmb_mouse_cursor_set_on(int on)
 	MC.phase = 0;
 	MC.move_pending = 0;
 	MC.pending_clicks = 0;
+	MC.pending_releases = 0;
 	MC.have_pos = 0;
 	if (!MC.on && was && MC.have_blit)
 	{
@@ -295,7 +334,7 @@ void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h)
 	uint16_t tmp[(size_t)MMB_CURSOR_MAX_W * MMB_CURSOR_MAX_H];
 	const mmb_cursor_art *art;
 	mmb_mouse_state m;
-	int ox, oy, x0, y0, x1, y1, x, y, tw;
+	int ox, oy, x0, y0, x1, y1, x, y, tw, aw, ah;
 
 	/* Erase the previous footprint. The composed frame is clean there, so
 	 * this only repaints pixels the page already owns. A different frame
@@ -314,14 +353,22 @@ void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h)
 	if (!mmb_mouse_read(&m) || !m.present)
 		return;
 	art = &s_art[MC.type >= 0 && MC.type < MMB_CURSOR_COUNT ? MC.type : 0];
+	/* Clamp to the static caps so a malformed entry can never index past the
+	 * tmp scratch buffer; the host check (#845) keeps real art in range. */
+	aw = art->w;
+	ah = art->h;
+	if (aw > MMB_CURSOR_MAX_W)
+		aw = MMB_CURSOR_MAX_W;
+	if (ah > MMB_CURSOR_MAX_H)
+		ah = MMB_CURSOR_MAX_H;
 	ox = m.x - art->hot_x;
 	oy = m.y - art->hot_y;
 	x0 = ox < 0 ? 0 : ox;
 	y0 = oy < 0 ? 0 : oy;
-	x1 = ox + art->w;
+	x1 = ox + aw;
 	if (x1 > w)
 		x1 = w;
-	y1 = oy + art->h;
+	y1 = oy + ah;
 	if (y1 > h)
 		y1 = h;
 	if (x1 <= x0 || y1 <= y0)
@@ -331,15 +378,23 @@ void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h)
 	for (y = 0; y < y1 - y0; y++)
 		memcpy(&tmp[(size_t)y * tw], pg + (size_t)(y0 + y) * w + x0,
 		       (size_t)tw * sizeof(uint16_t));
-	for (y = 0; y < art->h; y++)
+	for (y = 0; y < ah; y++)
 	{
+		const char *row = art->rows[y];
+		size_t rlen = row ? strlen(row) : 0;
 		int py = oy + y;
 		if (py < 0 || py >= h)
 			continue;
-		for (x = 0; x < art->w; x++)
+		for (x = 0; x < aw; x++)
 		{
-			char c = art->rows[y][x];
-			int px = ox + x;
+			char c;
+			int px;
+			/* Never read past a row's NUL: a too-short row is
+			 * transparent on the missing columns (#845). */
+			if ((size_t)x >= rlen)
+				continue;
+			c = row[x];
+			px = ox + x;
 			if (c == ' ' || px < 0 || px >= w)
 				continue;
 			tmp[(size_t)(py - y0) * tw + (px - x0)] =
@@ -358,8 +413,8 @@ void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h)
 }
 
 /* Classify the next pointer event for core.c. Returns 0 when drained,
- * 1 for a move (x,y), 2 for a click (x,y plus the button bit: 1 left,
- * 2 right, 4 middle). */
+ * 1 for a move (x,y), 2 for a button press (x,y plus the button bit: 1 left,
+ * 2 right, 4 middle), 3 for a button release (same fields). */
 int mmb_mouse_take_event(int *x, int *y, int *button)
 {
 	if (x)
@@ -386,6 +441,7 @@ int mmb_mouse_take_event(int *x, int *y, int *button)
 			cursor_track(m.x, m.y);
 		}
 		MC.pending_clicks = m.buttons & ~MC.last_buttons;
+		MC.pending_releases = MC.last_buttons & ~m.buttons;
 		MC.last_buttons = m.buttons;
 	}
 	if (MC.move_pending)
@@ -408,6 +464,18 @@ int mmb_mouse_take_event(int *x, int *y, int *button)
 		if (button)
 			*button = bit;
 		return 2;
+	}
+	if (MC.pending_releases)
+	{
+		int bit = MC.pending_releases & -MC.pending_releases;
+		MC.pending_releases &= ~bit;
+		if (x)
+			*x = MC.last_x;
+		if (y)
+			*y = MC.last_y;
+		if (button)
+			*button = bit;
+		return 3;
 	}
 	MC.phase = 0;
 	return 0;

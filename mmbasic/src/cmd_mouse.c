@@ -7,8 +7,9 @@
  *   MOUSE ON | OFF
  *   MOUSE CURSOR [pointer|hand|crosshair|questionmark|deny|hidden|0..5]
  *
- * ON MOUSECLICK / ON MOUSEMOVE handler names are parsed by mmb_cmd_on() in
- * cmd_lang.c and stored in the per-console interpreter state.
+ * ON MOUSECLICK / ON MOUSEDOWN / ON MOUSEMOVE / ON MOUSEUP handler names are
+ * parsed by mmb_cmd_on() in cmd_lang.c and stored in the per-console
+ * interpreter state.
  */
 #include "mmb_priv.h"
 

@@ -479,8 +479,9 @@ typedef struct mmb {
 	unsigned clk_ms;
 	int dim_local;
 	char on_key[MMB_MAX_NAME];
-	char on_mouseclick[MMB_MAX_NAME]; /* ON MOUSECLICK handler */
+	char on_mouseclick[MMB_MAX_NAME]; /* ON MOUSECLICK / ON MOUSEDOWN handler */
 	char on_mousemove[MMB_MAX_NAME];  /* ON MOUSEMOVE handler */
+	char on_mouseup[MMB_MAX_NAME];    /* ON MOUSEUP handler */
 	int tick_busy;
 	struct {
 		int period;
@@ -650,6 +651,8 @@ void mmb_mouse_cursor_set_type(int type);
 void mmb_mouse_cursor_refresh(void);
 void mmb_mouse_cursor_present(const uint16_t *pg, int w, int h);
 void mmb_mouse_cursor_reset_all(void);
+int mmb_mouse_cursor_art(int type, int *w, int *h, int *hot_x, int *hot_y,
+			 const char *const **rows);
 int mmb_mouse_take_event(int *x, int *y, int *button);
 void mmb_cmd_continue(void);
 void mmb_cmd_exit(void);

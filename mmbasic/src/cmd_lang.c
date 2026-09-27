@@ -142,8 +142,9 @@ void mmb_cmd_cat(void)
 	}
 }
 
-/* Handler name for ON MOUSECLICK / ON MOUSEMOVE: a quoted string or a bare
- * SUB name. An empty tail clears the handler, mirroring ON KEY. */
+/* Handler name for ON MOUSECLICK / ON MOUSEDOWN / ON MOUSEMOVE / ON MOUSEUP:
+ * a quoted string or a bare SUB name. An empty tail clears the handler,
+ * mirroring ON KEY. */
 static void on_named_sub(char *dst, int cap)
 {
 	mmb_skip_sp();
@@ -209,9 +210,20 @@ void mmb_cmd_on(void)
 		on_named_sub(G.on_mouseclick, sizeof(G.on_mouseclick));
 		return;
 	}
+	if (mmb_match("MOUSEDOWN"))
+	{
+		/* #860: alias of ON MOUSECLICK (fires on button press). */
+		on_named_sub(G.on_mouseclick, sizeof(G.on_mouseclick));
+		return;
+	}
 	if (mmb_match("MOUSEMOVE"))
 	{
 		on_named_sub(G.on_mousemove, sizeof(G.on_mousemove));
+		return;
+	}
+	if (mmb_match("MOUSEUP"))
+	{
+		on_named_sub(G.on_mouseup, sizeof(G.on_mouseup));
 		return;
 	}
 	v = mmb_expr();
