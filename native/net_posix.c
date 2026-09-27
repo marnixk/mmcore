@@ -82,7 +82,9 @@ static void client_reset(void)
 	rx_reset();
 }
 
+#ifndef MMB_NET_LINUX
 int mmb_net_kind(void) { return MMB_NET_ETH; }
+#endif
 int mmb_net_open(int kind) { (void)kind; ignore_sigpipe(); return 0; }
 int mmb_net_available(void) { return 1; }
 int mmb_net_gateway_ok(int force) { (void)force; return 1; }
@@ -588,6 +590,8 @@ int mmb_net_srv_ip(char *buf, int bufsize)
 	return local_ipv4(buf, bufsize);
 }
 
+/* ---- wired / Wi-Fi interface status ------------------------------- */
+#ifndef MMB_NET_LINUX
 int mmb_eth_available(void)
 {
 	char b[32];
@@ -656,3 +660,4 @@ int mmb_wlan_ipconfig(char *buf, int bufsize)
 }
 void mmb_wlan_poll(void) {}
 void mmb_wlan_apply_country(void) {}
+#endif /* !MMB_NET_LINUX */

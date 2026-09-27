@@ -45,6 +45,11 @@ NET_SRC := net_win.c
 CFLAGS += -DSDL_MAIN_HANDLED -I$(CURDIR)/win
 LDLIBS += -lws2_32 -lwinmm -limm32 -lole32 -loleaut32 -luuid -lversion \
 	  -lsetupapi -luser32 -lgdi32 -lshell32
+else ifneq (,$(findstring Linux,$(UNAME_S)))
+# Linux uses the Wi-Fi/interface backend; other POSIX (macOS) keeps the
+# unavailable stubs in net_posix.c.
+NET_SRC += net_linux.c
+CFLAGS += -DMMB_NET_LINUX=1
 endif
 
 OUT_STDIO := $(CURDIR)/mmbasic$(EXE)
