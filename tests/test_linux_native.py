@@ -1445,6 +1445,60 @@ def test_sdl_video_window_setup(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), name)
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "native"),
+            *extra,
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_framebuffer_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return exe
+
+
+def test_sdl_framebuffer_default_driver(tmp_path):
+    """#828: a KMSDRM build defaults the driver but never overrides one."""
+    env = {k: v for k, v in os.environ.items() if k != "SDL_VIDEODRIVER"}
+
+    fb = _build_sdl_framebuffer_host(
+        tmp_path, "sdl_framebuffer_fb", ["-DMMB_SDL_FRAMEBUFFER=1"]
+    )
+    out = subprocess.run(
+        [fb, "fb"], check=True, capture_output=True, text=True, env=env
+    )
+    assert "all checks passed" in out.stdout
+
+    desktop = _build_sdl_framebuffer_host(tmp_path, "sdl_framebuffer_desktop")
+    out = subprocess.run(
+        [desktop, "desktop"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert "all checks passed" in out.stdout
+
+
 def test_double_flag_help_and_headless_noop(mmb_linux, tmp_path):
     """#736/#739: the shared CLI lists --double; the headless build ignores it."""
     proc = subprocess.run(

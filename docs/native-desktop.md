@@ -23,6 +23,32 @@ Produces:
 Build with `CC`/`CFLAGS` overrides if needed:
 `scripts/build-native.sh CC=gcc CFLAGS="-O0 -g"`.
 
+## Framebuffer (KMS/DRM)
+
+A third variant renders straight to the Linux framebuffer over DRM/KMS with no
+X11 or Wayland — for a text-console / kiosk box, and for the bootable USB image:
+
+```bash
+make -C native sdl-fb          # -> native/mmcore-fb
+scripts/build-native.sh sdl-fb # same, with the build banner
+```
+
+`mmcore-fb` is the same interpreter and window code built with
+`-DMMB_SDL_FRAMEBUFFER=1`: it defaults `SDL_VIDEODRIVER` to `kmsdrm` (unless the
+caller already set it) and opens fullscreen on the primary display. Run it from
+a virtual terminal, not from inside a desktop session:
+
+```bash
+SDL_VIDEODRIVER=kmsdrm ./native/mmcore-fb
+```
+
+The host needs SDL2 built with the `kmsdrm` video driver (`libsdl2` on Debian
+ships it) plus `libdrm`/GBM (`libdrm2`, `libgbm1`) and ALSA (`libasound2`).
+`SDL_VIDEODRIVER` overrides the built-in default, so `SDL_VIDEODRIVER=dummy`
+still runs it headless in tests. The window identity hints (`WM_CLASS`,
+Wayland app-id) are skipped in this build; there is no window manager to use
+them.
+
 ## Windows
 
 The same native backend builds for Windows x86_64 with MinGW-w64. In the MSYS2
