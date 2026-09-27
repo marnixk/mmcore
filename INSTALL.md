@@ -29,6 +29,23 @@ attached to the rolling `linux-native` pre-release:
 That build runs `.app` packages and sealed TERM sessions from the command line;
 see [`docs/native-desktop.md`](docs/native-desktop.md).
 
+## No Pi? Bootable USB / ISO (x86_64 PC)
+
+`mmcore-fb-x86_64.iso` is a minimal **Alpine Linux** live image with no X or
+Wayland. It boots straight into mmcore on the KMS/DRM framebuffer, brings up
+Ethernet DHCP, and can join Wi-Fi from the prompt with `OPTION WIFI`. Write it
+to a USB stick with the bundled installer, which also adds a persistent
+`MMCORE` partition for your BASIC files:
+
+```bash
+sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
+```
+
+Alt+F2 gives a root shell and the serial console (ttyS0, 115200) is available
+for headless use. A standalone KMS/DRM binary ships as
+`mmcore-fb-linux-x86_64.tar.gz` for an existing Linux install. Full notes:
+[`docs/framebuffer-and-iso.md`](docs/framebuffer-and-iso.md).
+
 DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
 slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
 `DRIVE` lists them; `CHDIR "C:"` selects the SD card. File commands without a

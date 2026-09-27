@@ -54,6 +54,11 @@ universal macOS app.
 - [ ] There is no system cursor: PAINT's tool cursor and the `MOUSE ON` software cursor are the pointer; motion and clicks track. (#829)
 - [ ] With no usable video driver the build exits non-zero with a clear stderr message rather than a blank frame. (#829)
 
+## Live USB / ISO (x86_64)
+- [ ] Boot `mmcore-fb-x86_64.iso` (USB written with `install-usb.sh`, or QEMU): the display reaches the mmcore prompt fullscreen; `Alt+F2` gives a shell; serial ttyS0 (115200) gives a root shell. (#833, #834)
+- [ ] `sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX`, boot, create a `.BAS` file on `C:`, reboot: the file is still there. (#835)
+- [ ] Ethernet: plug in and confirm `IPCONFIG` shows an address. Wi-Fi: `OPTION WIFI COUNTRY`, `OPTION WIFI "ssid","psk"`, then `IPCONFIG`. (#836)
+
 ## Known caveats
 - macOS was omitted from v0.196.0–v0.199.0 (the notarization profile was
   unavailable in the build environment); releases now ship a notarized universal
