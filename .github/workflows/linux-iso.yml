@@ -35,22 +35,60 @@ jobs:
           VERSION: ${{ github.event.release.tag_name }}
         run: scripts/build-iso.sh
 
-      - name: Boot-smoke the ISO
+      - name: Boot-smoke the ISO against a virtual KMS/DRM device
+        # A text-only console has no DRM at all, so the kmsdrm driver can never
+        # initialise and a crash-looping mmcore still satisfies `pgrep`. Boot a
+        # KMS-capable virtio-gpu instead (the ISO loads virtio_gpu), keep the
+        # runner headless with -display none, and drive the guest over the
+        # serial console.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86
-          ( sleep 120;
-            echo "echo MMCORE_ISO_BOOT_OK";
-            echo 'pgrep -x mmcore >/dev/null && echo MMCORE_PROC_OK || echo MMCORE_PROC_MISSING';
-            echo 'ip -4 addr show | grep -q "inet 10.0.2" && echo MMCORE_NET_OK || echo MMCORE_NET_MISSING';
-            sleep 10; echo "poweroff"; ) \
-            | timeout 420 qemu-system-x86_64 -m 2048 \
-                -cdrom dist/mmcore-fb-x86_64.iso \
-                -nographic -no-reboot -accel tcg 2>&1 | tee boot.log || true
+          rm -f boot.log serial.in
+          mkfifo serial.in
+          # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
+          # cannot wedge the whole step.
+          exec 3<>serial.in
+          timeout 720 qemu-system-x86_64 -m 2048 \
+            -cdrom dist/mmcore-fb-x86_64.iso \
+            -vga none -device virtio-vga \
+            -display none -monitor none \
+            -serial stdio \
+            -no-reboot -accel tcg <&3 > boot.log 2>&1 &
+          qemu_pid=$!
+
+          # The rootfs is ~790 MiB and SDL2 is built from source, so the old
+          # fixed 120 s sleep is too tight. Probe until ttyS0's autologin shell
+          # answers, then stop. The probe builds its marker with printf so an
+          # echoed command line cannot satisfy the check by itself.
+          tested=0
+          for _ in $(seq 1 60); do
+            echo "printf 'MMCORE_%s\n' SHELL_READY" >&3 || true
+            sleep 8
+            if grep -q MMCORE_SHELL_READY boot.log; then tested=1; break; fi
+          done
+          if [ "$tested" != 1 ]; then echo "warning: serial shell never answered"; fi
+
+          # Every marker is assembled by printf in the guest, so its literal
+          # text never appears in the echoed command line: the greps below only
+          # match real command output, not the script we typed.
+          {
+            echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
+            echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
+            echo 'pgrep -x mmcore | head -n1 > /tmp/p1; sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2'
+            echo "cmp -s /tmp/p1 /tmp/p2 && [ -s /tmp/p1 ] && printf 'MMCORE_%s\n' STABLE_OK || printf 'MMCORE_%s\n' STABLE_MISSING"
+            echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
+            echo "ip -4 addr show | grep -q 'inet 10.0.2' && printf 'MMCORE_%s\n' NET_OK || printf 'MMCORE_%s\n' NET_MISSING"
+            echo 'sleep 5; poweroff'
+          } >&3 || true
+
+          wait "$qemu_pid" || true
           echo "---- boot.log tail ----"
-          tail -n 40 boot.log || true
+          tail -n 60 boot.log || true
           grep -q "MMCORE_ISO_BOOT_OK" boot.log
-          grep -q "MMCORE_PROC_OK" boot.log
+          grep -q "MMCORE_DRM_OK" boot.log
+          grep -q "MMCORE_STABLE_OK" boot.log
+          grep -q "MMCORE_SDL_OK" boot.log
           grep -q "MMCORE_NET_OK" boot.log
 
       - name: Compress the ISO

@@ -58,6 +58,18 @@ partition the session is read-only.
 
 If mmcore exits, the tty1 session ends and it starts again.
 
+Boot is quiet: GRUB hides its menu and auto-boots the `mmcore` entry after
+~1 second; hold **Shift** while it counts down to reveal the menu for recovery
+or serial debugging. During GRUB (and, with `gfxpayload=keep`, as far as the
+kernel's framebuffer console allows) the graphical console shows a centered
+mmcore logo instead of boot text, and the kernel is booted with
+`quiet loglevel=3` plus a hidden cursor (`vt.global_cursor_default=0`) so
+printk and getty banners stay off tty1. `/dev/console` is the serial port, so
+OpenRC and `local.d` output go to `ttyS0`, not the display. Kernel errors and
+warnings still reach the serial console, which keeps `ttyS0` useful for
+debugging. The `MMCORE` persistence mount and networking bring-up are
+unaffected.
+
 ### Persistent storage
 
 At boot the image looks for a partition labelled `MMCORE` and mounts it at
@@ -105,10 +117,61 @@ BIOS+UEFI ISO with `grub-mkrescue`.
 `scripts/iso/build-mmcore.sh` builds the binary; `scripts/iso/rootfs-overlay/`
 adds the autostart, persistence and networking configuration.
 
+## Intel Chromebooks
+
+The x86_64 ISO can boot on most Intel Chromebooks once the firmware is
+unlocked, but some rootfs pieces differ from a generic PC. These are
+configuration changes only — the image stays the single hybrid BIOS+UEFI ISO.
+
+### Firmware prerequisites
+
+Stock Chromebook firmware (coreboot + depthcharge) only boots Google-signed
+ChromeOS kernels, so **no ISO boots as-is**. The device must first be switched
+to **developer mode**, and then either:
+
+- use the **`RW_LEGACY`** slot (SeaBIOS/edk2) bootloader, or
+- flash **MrChromebox coreboot + edk2** (the `UEFI (Full ROM)` firmware).
+
+With either one running, the hybrid ISO boots through the GRUB UEFI path.
+Installation does **not** bypass verified boot: the firmware unlock is a
+deliberate, user-initiated change, and nothing in the ISO touches the
+Google-signed firmware or the write-protect state.
+
+### What is supported
+
+- **Display.** Panel output comes up through `i915` (already loaded) and the
+  KMS/DRM path mmcore uses on any other Intel GPU.
+- **Wi-Fi.** Intel parts use `iwlwifi` (firmware included); the common
+  Broadcom/MediaTek/Qualcomm parts are covered by the extra
+  `linux-firmware-*` packages the builder installs.
+- **Storage.** eMMC (`dw_mmc`/`sdhci`) and NVMe are in Alpine's `linux-lts`.
+- **Keyboard.** The internal keyboard is handled by the embedded controller
+  (`cros_ec`) plus `atkbd`. The top row emits **F1–F12** (there are no media
+  keys unless you hold Fn), and the **Search** key replaces **Caps Lock**;
+  mmcore's function-key shortcuts therefore line up with F1–F12.
+- **Touchpad / touchscreen.** `cros_ec`, `i2c_hid_acpi`/`i2c_hid_of` and
+  `hid_multitouch` are loaded at boot.
+- **Audio.** `sof-firmware` plus the `snd_sof*` modules are installed for
+  Sound Open Firmware devices.
+
+### Known gap: 32-bit (IA32) UEFI models
+
+Bay Trail, Cherry Trail and some Braswell Chromebooks expose **32-bit UEFI**
+even though the CPU is 64-bit. Alpine's GRUB and the x86_64 `linux-lts` do not
+provide an IA32 EFI stub for free; booting them would need a separate build
+variant with an IA32 GRUB EFI stub and a 32-bit-EFI-capable kernel. Those
+models are **unsupported** for now — the ISO does not ship an IA32 variant.
+
+Validation note: the QEMU smoke test cannot reproduce `cros_ec`, panel timing,
+SOF audio or the keyboard controller, so the Chromebook configuration above can
+only be verified on real hardware.
+
 ## CI
 
 `.github/workflows/linux-framebuffer.yml` builds the `mmcore-fb` tarball;
-`.github/workflows/linux-iso.yml` builds the ISO and boots it in QEMU,
-asserting that it reaches a shell, that mmcore is running on the framebuffer,
-and that Ethernet DHCP comes up. Both attach their artifacts to the published
-release and to rolling `linux-native` / `linux-iso` pre-releases.
+`.github/workflows/linux-iso.yml` builds the ISO and boots it in QEMU on a
+virtio-gpu (KMS/DRM) device with a serial console, asserting that it reaches a
+shell, that `/dev/dri/card0` exists, that mmcore starts and stays up rather
+than crash-looping, and that Ethernet DHCP comes up. Both attach their
+artifacts to the published release and to rolling `linux-native` /
+`linux-iso` pre-releases.

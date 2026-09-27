@@ -1,5 +1,7 @@
 # KMS/DRM graphics drivers for common GPUs. Missing modules are ignored, so
-# this list is safe on hardware that does not match.
+# this list is safe on hardware that does not match. i915 covers Intel
+# integrated graphics (including Chromebooks); amdgpu/radeon/nouveau cover the
+# other desktop parts.
 i915
 amdgpu
 radeon
@@ -8,3 +10,27 @@ virtio_gpu
 virtio-gpu
 bochs
 bochs-drm
+
+# Intel Chromebooks (#864). cros_ec is the embedded controller (keyboard,
+# touchpad, sensors); i2c-hid + hid_multitouch drive the I2C touchpad and
+# touchscreen. These are modular in Alpine's linux-lts, so list them here.
+cros_ec
+cros_ec_chardev
+cros_ec_dev
+cros_ec_i2c
+cros_ec_spi
+cros_ec_sysfs
+cros_ec_lpcs
+i2c_hid_acpi
+i2c_hid_of
+i2c_hid
+hid_multitouch
+
+# Sound Open Firmware (SOF) audio on Intel Chromebooks (#864). sof-firmware
+# supplies the DSP firmware; the modules bind when a SOF PCI/ACPI device is
+# present and are harmless otherwise.
+snd_sof
+snd_sof_pci
+snd_sof_acpi
+snd_sof_intel_hda_common
+snd_sof_intel_hda
