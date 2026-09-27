@@ -41,6 +41,7 @@ jobs:
           ( sleep 120;
             echo "echo MMCORE_ISO_BOOT_OK";
             echo 'pgrep -x mmcore >/dev/null && echo MMCORE_PROC_OK || echo MMCORE_PROC_MISSING';
+            echo 'ip -4 addr show | grep -q "inet 10.0.2" && echo MMCORE_NET_OK || echo MMCORE_NET_MISSING';
             sleep 10; echo "poweroff"; ) \
             | timeout 420 qemu-system-x86_64 -m 2048 \
                 -cdrom dist/mmcore-fb-x86_64.iso \
@@ -49,6 +50,7 @@ jobs:
           tail -n 40 boot.log || true
           grep -q "MMCORE_ISO_BOOT_OK" boot.log
           grep -q "MMCORE_PROC_OK" boot.log
+          grep -q "MMCORE_NET_OK" boot.log
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
