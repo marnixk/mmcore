@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define IFNAME_MAX 32
 #define CMD_OUT 8192
@@ -248,20 +249,86 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 	return n;
 }
 
-/* Join a network: implemented with the OpenRC wpa_supplicant backend in a
- * follow-up; unavailable until then. */
+/* Join a network: write the wpa_supplicant config and (re)start the OpenRC
+ * services that own WPA and DHCP. */
+static const char *wpa_conf_path(void)
+{
+	const char *p = getenv("MMB_WPA_CONF");
+
+	return (p && p[0]) ? p : "/etc/wpa_supplicant/wpa_supplicant.conf";
+}
+
+static void fput_quoted(FILE *f, const char *s)
+{
+	fputc('"', f);
+	for (; s && *s; s++)
+	{
+		if (*s == '"' || *s == '\\')
+			fputc('\\', f);
+		fputc(*s, f);
+	}
+	fputc('"', f);
+}
+
+static int write_wpa_conf(const char *ssid, const char *psk)
+{
+	FILE *f = fopen(wpa_conf_path(), "w");
+
+	if (!f)
+		return -1;
+	fprintf(f, "ctrl_interface=/var/run/wpa_supplicant\n");
+	fprintf(f, "update_config=1\n\n");
+	fprintf(f, "network={\n\tssid=");
+	fput_quoted(f, ssid);
+	fprintf(f, "\n");
+	if (psk && psk[0])
+	{
+		fprintf(f, "\tpsk=");
+		fput_quoted(f, psk);
+		fprintf(f, "\n");
+	}
+	else
+		fprintf(f, "\tkey_mgmt=NONE\n");
+	fprintf(f, "}\n");
+	fclose(f);
+	return 0;
+}
+
+static void service_restart(const char *service)
+{
+	char cmd[160];
+
+	snprintf(cmd, sizeof cmd, "rc-service %s restart", service);
+	run_capture(cmd, 0, 0);
+}
+
 int mmb_wlan_start(const char *ssid, const char *psk)
 {
-	(void)ssid;
-	(void)psk;
-	return -1;
+	if (!ssid || !ssid[0])
+		return -1;
+	if (write_wpa_conf(ssid, psk) != 0)
+		return -1;
+	service_restart("wpa_supplicant");
+	service_restart("networking");
+	return 0;
 }
 
 int mmb_wlan_connect(const char *ssid, const char *psk)
 {
-	(void)ssid;
-	(void)psk;
-	return -1;
+	unsigned waited = 0;
+	char ip[40];
+
+	if (mmb_wlan_start(ssid, psk) != 0)
+		return -1;
+	/* Association + DHCP take a moment; poll for the lease. */
+	while (waited < 15000)
+	{
+		if (iface_ipv4(wlan_iface(), ip, sizeof ip))
+			return 0;
+		usleep(100000);
+		waited += 100;
+	}
+	return iface_ipv4(wlan_iface(), ip, sizeof ip) ? 0 : -1;
 }
 
 int mmb_wlan_status(void)
@@ -304,7 +371,13 @@ int mmb_eth_available(void)
 	return eth_iface() != 0;
 }
 
-int mmb_eth_start(void) { return 0; }
+int mmb_eth_start(void)
+{
+	if (!eth_iface())
+		return -1;
+	service_restart("networking");
+	return 0;
+}
 
 int mmb_eth_status(void)
 {
@@ -315,8 +388,19 @@ int mmb_eth_status(void)
 
 int mmb_eth_wait_dhcp(unsigned ms)
 {
-	(void)ms;
-	return 1;
+	char ip[40];
+	unsigned waited = 0;
+
+	if (ms == 0)
+		ms = 1;
+	while (waited < ms)
+	{
+		if (iface_ipv4(eth_iface(), ip, sizeof ip))
+			return 1;
+		usleep(100000);
+		waited += 100;
+	}
+	return iface_ipv4(eth_iface(), ip, sizeof ip) ? 1 : 0;
 }
 
 int mmb_eth_ip(char *buf, int bufsize)
