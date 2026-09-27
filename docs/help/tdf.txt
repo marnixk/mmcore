@@ -15,6 +15,12 @@ TDF PRINT x, y, s$ draws at character cell x (column, 0-based) and y (row,
 0-based) and leaves the cursor after the last glyph. Glyphs are ASCII 33 to
 126; a space advances by the font's letter spacing.
 
+TDF PRINT honours PAGE WRITE: with a graphics mode and a write target other
+than the page on screen it stamps each glyph cell into that page's buffer, so
+PAGE DISPLAY or PAGE COPY shows it and an offscreen write leaves the visible
+frame untouched. With no explicit page, or when the write target is the
+displayed page, it draws to the normal text console as before.
+
 Commands
 
   TDF LOAD path$ [, variant%] [, slot%]   load a font (variant 0 by default)
@@ -38,8 +44,9 @@ Slots
 
 Up to four fonts can be loaded at once. The slot% argument is a 0-based index
 into that pool; an omitted slot uses the active font, and LOAD/NAMED without a
-slot take the first free one. A new load errors once every slot is full. The
-first load becomes active.
+slot default to slot 0. A reload replaces the font already in its slot (slot 0
+is freed and reused), so repeated loads never run out of slots. An explicit
+slot outside 0-3 errors. The first load becomes active.
 
     TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0
     TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF", 0, 1

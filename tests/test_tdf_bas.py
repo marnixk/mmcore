@@ -232,6 +232,37 @@ def test_tdf_reload_after_close(console):
     assert _lines(out) == ["Standard", "Block", str(TYPE_COLOR)], out
 
 
+def test_tdf_no_slot_loads_slot_zero(console):
+    """#884: LOAD/NAMED without a slot default to 0 and replace it."""
+    out = _run(
+        console,
+        "TDFSLOT0.BAS",
+        [
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PRINT TDF.NAME$",
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF"',
+            "PRINT TDF.NAME$",
+            'TDF LOAD "A:/fonts/tdf/deco/BIGOUT.TDF", 0, 1',
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.NAME$(1)",
+            'TDF NAMED "A:/fonts/tdf/color/BLOCK.TDF", "Block"',
+            "PRINT TDF.NAME$",
+            "TDF CLOSE 1",
+            "TDF CLOSE",
+        ],
+    )
+    assert "no free slot" not in out.lower(), out
+    assert "?SYNTAX" not in out.upper(), out
+    assert _lines(out) == [
+        "Standard",
+        "Block",
+        "Standard",
+        "BigOutline",
+        "Block",
+    ], out
+
+
 def test_tdf_variants_exposed(console):
     """#629/#866: every record is addressable by index and by name."""
     path = COLOR_DIR / "ACIDSC2X.TDF"
@@ -447,6 +478,95 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
     blank = c.screen_pixels(paper[:40])
     assert all(r > 150 and g > 150 and b > 150 for r, g, b in ink), ink
     assert all(r < 40 and g < 40 and b < 40 for r, g, b in blank), blank
+
+
+def _first_glyph_pixels(path, ch, base_x, base_y):
+    """One ink and one paper pixel inside a TDF glyph's first drawn cells."""
+    from test_term_cp437 import load_cp437_font
+
+    font = load_cp437_font()
+    _, rows = glyph_rows(path, ch)
+    ink = paper = None
+    for r, row in enumerate(rows):
+        for col, code in enumerate(row):
+            bitmap = font[code]
+            for y in range(16):
+                for x in range(8):
+                    px = (base_x + col * 8 + x, base_y + r * 16 + y)
+                    if bitmap[y] & (0x80 >> x):
+                        if ink is None:
+                            ink = px
+                    elif paper is None:
+                        paper = px
+    return ink, paper
+
+
+def test_tdf_print_honours_page_write(fresh_console):
+    """#883: PAGE WRITE 1 + TDF PRINT paints the selected page, not the console."""
+    c = fresh_console
+    ink, paper = _first_glyph_pixels(MONO_DIR / "STANDARD.TDF", "I", 2 * 8, 3 * 16)
+    assert ink and paper
+
+    # Default/visible: no explicit page keeps the console ANSI stamp path.
+    _run(
+        c,
+        "TDFNOPAGE.BAS",
+        [
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "I"',
+            "TDF CLOSE",
+        ],
+    )
+    console_ink = c.screen_pixels([ink])[0]
+    console_paper = c.screen_pixels([paper])[0]
+    assert all(v > 150 for v in console_ink), console_ink
+    assert all(v < 40 for v in console_paper), console_paper
+
+    # An offscreen (non-overlay) page write must leave the visible frame alone.
+    _run(
+        c,
+        "TDFOFFSCR.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 0",
+            "PAGE DISPLAY 0",
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PAGE WRITE 2",
+            'TDF PRINT 2, 3, "I"',
+            "PRINT PIXEL({},{},2)".format(ink[0], ink[1]),
+            "TDF CLOSE",
+        ],
+    )
+    assert c.screen_pixel(ink[0], ink[1]) == (0, 0, 0), "offscreen write leaked"
+
+    # Page 1: PAGE DISPLAY 1 reveals the stamp.
+    out = _run(
+        c,
+        "TDFPAGE.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "I"',
+            "PAGE DISPLAY 1",
+            "PAGE WRITE 1",
+            "PRINT PIXEL({},{}); \",\"; PIXEL({},{})".format(
+                ink[0], ink[1], paper[0], paper[1]
+            ),
+            "TDF CLOSE",
+        ],
+    )
+    values = [int(v) for v in _lines(out)[-1].split(",")]
+    assert (values[0] >> 16) & 255 > 150, values
+    assert (values[0] >> 8) & 255 > 150, values
+    assert (values[0] & 255) > 150, values
+    assert (values[1] & 0xFFFFFF) == 0, values
 
 
 def test_tdf_print_spaces_advance_safely(fresh_console):
