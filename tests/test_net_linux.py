@@ -91,14 +91,17 @@ def _fake_dir(tmp_path, name, iw_body):
     _write_exe(os.path.join(d, "iw"), iw_body)
     _write_exe(os.path.join(d, "wpa_cli"), WPA_OK)
     _write_exe(os.path.join(d, "ip"), IP_FAKE)
+    _write_exe(os.path.join(d, "rc-service"), "exit 0\n")
     return d
 
 
-def _env(cmd_dir):
+def _env(cmd_dir, wpa_conf=None):
     env = dict(os.environ)
     env["MMB_NET_CMD_DIR"] = cmd_dir
     env["MMB_NET_WLAN_IFACE"] = "wlan0"
     env["MMB_NET_ETH_IFACE"] = "eth0"
+    if wpa_conf:
+        env["MMB_WPA_CONF"] = wpa_conf
     return env
 
 
@@ -120,5 +123,19 @@ def test_net_linux_wpa_cli_fallback(tmp_path):
         capture_output=True,
         text=True,
         env=_env(cmd_dir),
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_connect_writes_config_and_restarts(tmp_path):
+    exe = _build(tmp_path)
+    cmd_dir = _fake_dir(tmp_path, "fake_connect", IW_OK)
+    wpa_conf = os.path.join(str(tmp_path), "wpa_supplicant.conf")
+    out = subprocess.run(
+        [exe, "connect"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_env(cmd_dir, wpa_conf),
     )
     assert "all checks passed" in out.stdout
