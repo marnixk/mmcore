@@ -38,6 +38,7 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
 	linux-lts linux-firmware \
 	wpa_supplicant iw ifupdown-ng \
+	alsa-lib alsa-utils libgcc \
 	e2fsprogs dosfstools blkid ca-certificates
 
 log "Configuring the live system"
@@ -51,7 +52,8 @@ cat > "${ROOTFS}/etc/inittab" <<'EOF'
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
-tty1::respawn:/sbin/getty 38400 tty1
+tty1::respawn:/sbin/agetty --autologin root --noclear tty1 linux
+tty2::respawn:/sbin/agetty --autologin root --noclear tty2 linux
 ttyS0::respawn:/sbin/agetty --autologin root --noclear ttyS0 115200 vt100
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/openrc shutdown
@@ -73,6 +75,12 @@ enable hostname boot
 enable bootmisc boot
 enable syslog boot
 enable networking boot
+
+if [ -x "${REPO_ROOT}/scripts/iso/build-mmcore.sh" ]; then
+	log "Building mmcore for the rootfs"
+	REPO_ROOT="${REPO_ROOT}" ROOTFS="${ROOTFS}" MMB_VERSION="${VERSION}" \
+		sh "${REPO_ROOT}/scripts/iso/build-mmcore.sh"
+fi
 
 if [ -d "${OVERLAY}" ]; then
 	log "Applying rootfs overlay"

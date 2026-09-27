@@ -17,6 +17,8 @@ SCRIPTS = os.path.join(REPO, "scripts")
 ISO = os.path.join(SCRIPTS, "iso")
 ENTRY = os.path.join(SCRIPTS, "build-iso.sh")
 BUILDER = os.path.join(ISO, "build-in-container.sh")
+MMCORE = os.path.join(ISO, "build-mmcore.sh")
+OVERLAY = os.path.join(ISO, "rootfs-overlay")
 ASSET = "mmcore-fb-x86_64.iso"
 BASH = shutil.which("bash") or "/bin/bash"
 
@@ -51,9 +53,30 @@ def test_builder_boots_alpine_with_network_packages():
         "grub-mkrescue",
         "initramfs",
         "rootfs-overlay",
+        "build-mmcore.sh",
     ):
         assert needle in text, needle
     assert "console=ttyS0" in text
+
+
+def test_mmcore_builder_targets_kmsdrm_and_installs():
+    assert os.access(MMCORE, os.X_OK), MMCORE
+    _run(["bash", "-n", MMCORE])
+    text = open(MMCORE, encoding="utf-8").read()
+    assert "sdl-fb" in text
+    assert "kmsdrm" in text
+    assert "SDL_KMSDRM=ON" in text
+    assert "/usr/local/bin/mmcore" in text
+
+
+def test_overlay_autostarts_mmcore_on_the_framebuffer():
+    profile = open(
+        os.path.join(OVERLAY, "root", ".profile"), encoding="utf-8"
+    ).read()
+    assert "/usr/local/bin/mmcore" in profile
+    assert "tty1" in profile
+    assert "kmsdrm" in profile
+    assert os.path.isfile(os.path.join(OVERLAY, "etc", "modules"))
 
 
 @pytest.mark.skipif(
