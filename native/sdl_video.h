@@ -19,6 +19,14 @@ const char *sdl_video_default_driver(void);
  * the caller has not already chosen a driver. Called from sdl_video_open(). */
 void sdl_video_apply_default_driver(void);
 
+/* The render driver a framebuffer build must use (GLES2/EGL, the only one
+ * whose present reaches the KMS scanout), or NULL when SDL chooses. */
+const char *sdl_video_default_render_driver(void);
+
+/* SDL render-driver index for sdl_video_default_render_driver(), or -1 to let
+ * SDL choose. Called from sdl_video_open(). */
+int sdl_video_render_driver_index(void);
+
 int sdl_video_open(int w, int h);
 void sdl_video_close(void);
 int sdl_video_resize(int w, int h);

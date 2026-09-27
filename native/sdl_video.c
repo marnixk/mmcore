@@ -93,6 +93,49 @@ void sdl_video_apply_default_driver(void)
 		SDL_setenv("SDL_VIDEODRIVER", driver, 1);
 }
 
+/* The render driver a framebuffer (KMS/DRM) build should use, or NULL when SDL
+ * may choose. kmsdrm has no window surface: only the GLES2/EGL renderer's
+ * present reaches the KMS scanout. SDL otherwise picks desktop GL, which renders
+ * into a buffer that never reaches the CRTC (a black screen), and the software
+ * renderer has no window surface to present at all. */
+const char *sdl_video_default_render_driver(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return "opengles2";
+#else
+	return 0;
+#endif
+}
+
+/* The SDL render-driver index a framebuffer build should create, or -1 for
+ * SDL's default. kmsdrm has no window surface: only the GLES2/EGL renderer's
+ * present reaches the KMS scanout. SDL otherwise picks desktop GL, which renders
+ * into a buffer that never reaches the CRTC (a black screen), and the software
+ * renderer has no window surface to present at all.
+ *
+ * Selecting the index directly is deterministic; the SDL_HINT_RENDER_DRIVER
+ * hint is only a preference and SDL falls back to another driver. An explicit
+ * SDL_RENDER_DRIVER still wins, and a build without that driver (headless
+ * dummy) falls back to SDL's default. */
+int sdl_video_render_driver_index(void)
+{
+	const char *want = sdl_video_default_render_driver();
+	int i, n;
+
+	if (!want || !want[0] || SDL_getenv("SDL_RENDER_DRIVER"))
+		return -1;
+	n = SDL_GetNumRenderDrivers();
+	for (i = 0; i < n; ++i)
+	{
+		SDL_RendererInfo info;
+
+		if (SDL_GetRenderDriverInfo(i, &info) == 0 && info.name &&
+		    strcmp(info.name, want) == 0)
+			return i;
+	}
+	return -1;
+}
+
 /* Show the M avatar in the taskbar/dock even when launched outside a package
  * (no .desktop entry to resolve). SDL_SetWindowIcon copies the surface. */
 static void set_window_icon(void)
@@ -127,7 +170,9 @@ int sdl_video_open(int w, int h)
 		return 0;
 	set_window_icon();
 
-	s_ren = SDL_CreateRenderer(s_win, -1,
+	/* A framebuffer build must pick GLES2/EGL explicitly (index) or the KMS
+	 * scanout stays black; other builds and drivers use SDL's default. */
+	s_ren = SDL_CreateRenderer(s_win, sdl_video_render_driver_index(),
 				   SDL_RENDERER_ACCELERATED |
 				   SDL_RENDERER_PRESENTVSYNC);
 	if (!s_ren)
