@@ -171,6 +171,23 @@ run and listed under “queued” in the final summary.
 
 Do **not** merge or release. Stop at “PR ready”.
 
+**Before anything else, read and obey:**
+
+- `<worktree>/AGENTS.md`. It is authoritative for this repo: build/test
+  commands, the `mmbasic/` + `console/` source rule (`picomite-fork/` is
+  reference only), the percentage-test-progress rule, and the “never move a
+  branch another worktree has checked out” rule.
+- The skill files, by **literal path** (opencode does not auto-discover
+  `.cursor/skills/`, so `skill <name>` may not resolve):
+  - `.cursor/skills/issue-loop/SKILL.md` — repo specifics and the PR/issue
+    conventions.
+  - `.cursor/skills/test-suite-progress/SKILL.md` — scoped-test progress
+    reporting, required for every test run.
+
+  The same files are registered for `opencode` at
+  `.opencode/skill/<name>/SKILL.md`; use whichever resolves, but the literal
+  `.cursor/skills/...` paths always work.
+
 1. You are already on a branch in your own worktree — if not, branch from
    current `master`: `task/<slug>-0ccd` (lowercase, suffix `-0ccd`).
 2. Implement the bundle's issues. Repo specifics live in `issue-loop` step 2
@@ -202,6 +219,15 @@ Do **not** merge or release. Stop at “PR ready”.
 
 ## Spawning workers
 
+**Mandatory worker preamble.** The coordinator writes each per-bundle prompt by
+hand, so it must paste the preamble from the **Worker prompt template** (below)
+as the first lines of every prompt: read `<worktree>/AGENTS.md`, then read the
+skill files by literal path (`.cursor/skills/issue-loop/SKILL.md`,
+`.cursor/skills/test-suite-progress/SKILL.md`). Build each prompt file as
+`<preamble> + <bundle body>`; do **not** spawn a worker whose prompt omits it.
+This is what keeps every worker under the repo rules even though opencode does
+not auto-discover `.cursor/skills/`.
+
 **Scripted (works today) — preferred.** Drive the local T3 host API with the
 bundled driver, `.cursor/skills/issue-loop-parallel/t3-orchestrate.mjs`:
 
@@ -210,7 +236,8 @@ bundled driver, `.cursor/skills/issue-loop-parallel/t3-orchestrate.mjs`:
 node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs projects
 
 # one worker per bundle; the server creates BOTH the thread and the
-# git worktree/branch (from origin/master) and starts the first turn
+# git worktree/branch (from origin/master) and starts the first turn.
+# /tmp/worker-<slug>.txt MUST start with the mandatory preamble above.
 node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs spawn \
   --slug term --title "#528/#529 TERM scrollback + replay" \
   --prompt @/tmp/worker-term.txt
@@ -264,16 +291,27 @@ worktree, so they must not commit, branch, or push.
 
 ## Worker prompt template
 
+The first paragraph after the scope is **mandatory** — copy it verbatim into
+every per-bundle prompt (see “Spawning workers”).
+
 ```text
 Run the issue-loop-parallel skill in WORKER mode for bundle: #<N>, #<M> (<slug>).
 
 Scope: implement only these issues, in this worktree. Do NOT merge, do NOT cut
 a release. Stop when the PR is ready.
 
+Read and obey <worktree>/AGENTS.md first; it is authoritative for this repo
+(build/test commands, mmbasic/+console/ sources, percentage test progress,
+never move another worktree's branch). opencode does not auto-discover
+.cursor/skills/, so read the skill files by literal path before starting:
+  .cursor/skills/issue-loop/SKILL.md
+  .cursor/skills/test-suite-progress/SKILL.md
+
 - You are on branch task/<slug>-0ccd in your own worktree (scripted spawn
   creates both); if not, branch from current origin/master.
-- Implement per the skill; run only the bundle's scoped tests (test-suite-progress),
-  not the full suite.
+- Implement per the skill; run only the bundle's scoped tests
+  (.cursor/skills/test-suite-progress/SKILL.md, percentage progress), not the
+  full suite.
 - Open a PR against master with `Fixes #<N>` for every issue in the bundle;
   use ManagePullRequest or gh; mark ready when tests pass.
 - Register the PR with link_pull_request.

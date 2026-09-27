@@ -70,3 +70,15 @@ release).
   only) or run the update in that worktree; recover elsewhere with
   `git reset --hard` there once you have confirmed there are no real local
   edits.
+
+- **Skill discovery (`opencode`)** — agent skills live in
+  `.cursor/skills/<name>/SKILL.md` (the Cursor/host location). `opencode` does
+  **not** scan `.cursor/skills/`; it scans `.opencode/skill(s)/<name>/SKILL.md`
+  and `~/.config/opencode/skill(s)/<name>/SKILL.md` (both `skill` and `skills`
+  work; symlinks are followed). This repo therefore keeps
+  `.opencode/skill/<name>/SKILL.md` as symlinks to the
+  `.cursor/skills/<name>/SKILL.md` originals — edit the originals, never the
+  symlinks. Worker prompts also name the skill files by literal path
+  (`.cursor/skills/issue-loop/SKILL.md`,
+  `.cursor/skills/test-suite-progress/SKILL.md`) as a fallback when the
+  registration is missing, so a worker can always read them directly.
