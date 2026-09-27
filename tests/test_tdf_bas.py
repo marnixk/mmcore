@@ -501,6 +501,75 @@ def _first_glyph_pixels(path, ch, base_x, base_y):
     return ink, paper
 
 
+def _glyph_ink_paper(path, ch, base_x, base_y, limit=24):
+    """Up to `limit` ink and paper pixels inside a TDF glyph's cells."""
+    from test_term_cp437 import load_cp437_font
+
+    font = load_cp437_font()
+    _, rows = glyph_rows(path, ch)
+    ink, paper = [], []
+    for r, row in enumerate(rows):
+        for col, code in enumerate(row):
+            bitmap = font[code]
+            for y in range(16):
+                for x in range(8):
+                    px = (base_x + col * 8 + x, base_y + r * 16 + y)
+                    if bitmap[y] & (0x80 >> x):
+                        if len(ink) < limit:
+                            ink.append(px)
+                    elif len(paper) < limit:
+                        paper.append(px)
+    return ink, paper
+
+
+def _run_tdf_axis(c, name, up, ink, paper):
+    """Draw 'I' on page 1 and read the physical ink/paper pixels via PIXEL.
+
+    PIXEL applies OPTION Y_AXIS UP to its coordinate, so under Y_AXIS UP the
+    physical row `y` is read as `MM.VRES-1-y`; both runs then sample the same
+    physical pixels.
+    """
+    lines = ["MODE 8,16"]
+    if up:
+        lines.append("OPTION Y_AXIS UP")
+    lines += [
+        "PAGE WRITE 1",
+        "PAGE DISPLAY 0",
+        "CLS RGB(0,0,0)",
+        "COLOUR RGB(255,255,255), RGB(0,0,0)",
+        'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+        'TDF PRINT 2, 3, "I"',
+    ]
+    for tag, points in (("I", ink), ("P", paper)):
+        for i, (x, y) in enumerate(points):
+            ry = "MM.VRES-1-{}".format(y) if up else str(y)
+            lines.append('PRINT "{}{}"; ","; PIXEL({},{},1)'.format(tag, i, x, ry))
+    lines.append("TDF CLOSE")
+    out = _run(c, name, lines)
+    res = {}
+    for line in _lines(out):
+        label, sep, val = line.partition(",")
+        if sep and re.fullmatch(r"[IP]\d+", label):
+            res[label] = int(val) & 0xFFFFFF
+    return res
+
+
+def test_tdf_print_page_stays_topdown_under_y_axis_up(fresh_console):
+    """#888: TDF page cells keep console top-down semantics under Y_AXIS UP."""
+    c = fresh_console
+    ink, paper = _glyph_ink_paper(MONO_DIR / "STANDARD.TDF", "I", 2 * 8, 3 * 16)
+    assert len(ink) > 8 and len(paper) > 8, (len(ink), len(paper))
+
+    down = _run_tdf_axis(c, "TDFAXISD.BAS", False, ink, paper)
+    up = _run_tdf_axis(c, "TDFAXISU.BAS", True, ink, paper)
+
+    # Same drawing without Y_AXIS UP: ink lit, paper dark, and every physical
+    # pixel read back identically under OPTION Y_AXIS UP.
+    assert all(down[f"I{i}"] for i in range(len(ink))), down
+    assert not any(down[f"P{i}"] for i in range(len(paper))), down
+    assert up == down, (up, down)
+
+
 def test_tdf_print_honours_page_write(fresh_console):
     """#883: PAGE WRITE 1 + TDF PRINT paints the selected page, not the console."""
     c = fresh_console

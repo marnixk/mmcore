@@ -1563,7 +1563,11 @@ static void glyph_cell_row_opaque(uint16_t *pg, int tw, int by, int x,
 	}
 }
 
-void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+/* Blit one 8x16 CP437 glyph cell. `flip_y` runs every row through map_y()
+ * (the graphics axis), which is what TERM wants; passing 0 keeps the
+ * character-cell rows top-down so TDF page output matches the console. */
+static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
+			    int flip_y)
 {
 	uint16_t *pg;
 	int tw, th, row, col, by, px;
@@ -1589,7 +1593,7 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 		{
 			unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
 
-			by = map_y(y + row);
+			by = flip_y ? map_y(y + row) : y + row;
 			if (by < 0 || by >= th)
 				continue;
 			glyph_cell_row_opaque(pg, tw, by, x, fg_n, bg_n, bits);
@@ -1599,7 +1603,7 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 	for (row = 0; row < 16; row++)
 	{
 		unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
-		by = map_y(y + row);
+		by = flip_y ? map_y(y + row) : y + row;
 		if (by < 0 || by >= th)
 			continue;
 		for (col = 0; col < 8; col++)
@@ -1621,6 +1625,19 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 			}
 		}
 	}
+}
+
+void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+{
+	glyph_cell_flip(x, y, ch, fg, bg, 1);
+}
+
+/* Character-cell glyphs (console/TDF semantics): rows stay top-down so the
+ * page matches the console even under OPTION Y_AXIS UP (#888). */
+void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
+				unsigned bg)
+{
+	glyph_cell_flip(x, y, ch, fg, bg, 0);
 }
 
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb)

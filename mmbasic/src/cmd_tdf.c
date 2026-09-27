@@ -319,12 +319,13 @@ static void tdf_render_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 		/* Page target: cell blit at the matching 8x16 pixel cell. Colour
 		 * fonts carry per-cell fg/bg; the others use the current graphics
 		 * pen/paper, as the console path leaves the terminal colour in
-		 * place. */
+		 * place. TDF PRINT is a character-cell command, so the top-down
+		 * blit is used even under OPTION Y_AXIS UP (#888). */
 		unsigned c_fg = r->colour ? mmb_ibm_colour(fg & 15) : G.gfx.fg;
 		unsigned c_bg = r->colour ? mmb_ibm_colour(bg & 7) : G.gfx.bg;
-		mmb_gfx_glyph_cell(x * mmb_print_font_w(),
-				   y * mmb_print_font_h(), (unsigned)ch, c_fg,
-				   c_bg);
+		mmb_gfx_glyph_cell_topdown(x * mmb_print_font_w(),
+					   y * mmb_print_font_h(), (unsigned)ch,
+					   c_fg, c_bg);
 		if (r->box_x1 < 0)
 		{
 			r->box_x0 = r->box_x1 = x;
