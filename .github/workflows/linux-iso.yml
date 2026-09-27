@@ -1,0 +1,83 @@
+name: Linux ISO
+
+# Builds the bootable Alpine live ISO, boot-smokes it in QEMU, and attaches it
+# (plus install-usb.sh) to the release.
+#
+#  - on a version release: attached to that GitHub release;
+#  - on push to ports/linux / iso: attached to the rolling 'linux-iso'
+#    pre-release for quick testing.
+on:
+  push:
+    branches: [ports/linux, iso]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  iso:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build the ISO
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: scripts/build-iso.sh
+
+      - name: Boot-smoke the ISO
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          ( sleep 120; echo "echo MMCORE_ISO_BOOT_OK"; sleep 10; echo "poweroff"; ) \
+            | timeout 420 qemu-system-x86_64 -m 2048 \
+                -cdrom dist/mmcore-fb-x86_64.iso \
+                -nographic -no-reboot -accel tcg 2>&1 | tee boot.log || true
+          echo "---- boot.log tail ----"
+          tail -n 40 boot.log || true
+          grep -q "MMCORE_ISO_BOOT_OK" boot.log
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmcore-iso
+          path: dist/mmcore-fb-x86_64.iso
+          if-no-files-found: error
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              dist/mmcore-fb-x86_64.iso scripts/install-usb.sh --clobber
+            echo "Attached the ISO and install-usb.sh to release ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          tag="linux-iso"
+          notes="Automated ISO build from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
+
+          Write it to a USB stick; install-usb.sh adds a persistent MMCORE partition:
+          \`\`\`
+          sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
+          \`\`\`"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Linux ISO (rolling)" \
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
+          fi
+          gh release upload "$tag" \
+            dist/mmcore-fb-x86_64.iso scripts/install-usb.sh --clobber

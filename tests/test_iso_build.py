@@ -20,6 +20,7 @@ BUILDER = os.path.join(ISO, "build-in-container.sh")
 MMCORE = os.path.join(ISO, "build-mmcore.sh")
 OVERLAY = os.path.join(ISO, "rootfs-overlay")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
+WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
 BASH = shutil.which("bash") or "/bin/bash"
 
@@ -120,6 +121,28 @@ def test_builder_ships_wifi_firmware_and_supplicant():
     assert "linux-firmware-iwlwifi" in text
     assert "wpa_supplicant default" in text
     assert "rootfs-overlay" in text
+
+
+def test_iso_workflow_builds_boot_smokes_and_attaches():
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "release:" in wf
+    assert "types: [published]" in wf
+    assert "ubuntu-22.04" in wf
+    assert "qemu-system-x86_64" in wf
+    assert "MMCORE_ISO_BOOT_OK" in wf
+    assert ASSET in wf
+    assert "install-usb.sh" in wf
+    assert "linux-iso" in wf
+
+
+def test_release_notes_list_the_iso_assets():
+    _run(["bash", "-n", os.path.join(SCRIPTS, "github-release.sh")])
+    notes = _run(
+        [os.path.join(SCRIPTS, "github-release.sh"), "release-notes", "9.9.9"]
+    ).stdout
+    assert ASSET in notes
+    assert "install-usb.sh" in notes
+    assert "Bootable USB" in notes or "bootable" in notes.lower()
 
 
 @pytest.mark.skipif(
