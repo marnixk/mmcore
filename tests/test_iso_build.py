@@ -103,6 +103,16 @@ def test_install_usb_script_parses_and_documents_persistence():
     assert "mkfs.ext4" in text
 
 
+def test_install_usb_uses_a_free_partition_number():
+    """The hybrid ISO's GPT already uses 1-4, so persistence is partition 5."""
+    text = open(INSTALL_USB, encoding="utf-8").read()
+    assert "--new=5:0:0" in text
+    assert "--typecode=5:8300" in text
+    assert 'part="${DEVICE}5"' in text
+    assert "--move-second-header" in text
+    assert "--new=2:" not in text
+
+
 def test_overlay_wires_ethernet_dhcp_and_wifi():
     net = os.path.join(OVERLAY, "etc", "local.d", "mmcore-net.start")
     assert os.access(net, os.X_OK), net

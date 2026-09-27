@@ -52,6 +52,24 @@ jobs:
           grep -q "MMCORE_PROC_OK" boot.log
           grep -q "MMCORE_NET_OK" boot.log
 
+      - name: Verify install-usb.sh adds the persistence partition
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gdisk e2fsprogs util-linux
+          truncate -s 2G /tmp/usb.img
+          dev="$(sudo losetup --find --show --partscan /tmp/usb.img)"
+          echo "loop device: ${dev}"
+          sudo scripts/install-usb.sh --iso dist/mmcore-fb-x86_64.iso --yes "${dev}"
+          sudo partprobe "${dev}" || true
+          sudo udevadm settle || true
+          sudo partx -s "${dev}" || true
+          label_dev="$(sudo blkid -L MMCORE)"
+          echo "MMCORE is on ${label_dev}"
+          [ -n "${label_dev}" ]
+          case "${label_dev}" in "${dev}"*) ;; *) echo "unexpected device"; exit 1 ;; esac
+          sudo losetup -d "${dev}" || true
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

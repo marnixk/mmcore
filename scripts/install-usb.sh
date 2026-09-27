@@ -74,21 +74,26 @@ fi
 log "Writing the ISO"
 dd if="${ISO}" of="${DEVICE}" bs=4M conv=fsync status=progress
 
-if [ "${PERSIST}" = "1" ]; then
-	command -v sgdisk >/dev/null 2>&1 || die "sgdisk (gdisk) is required for --persist"
-	command -v mkfs.ext4 >/dev/null 2>&1 || die "mkfs.ext4 (e2fsprogs) is required for --persist"
-	log "Adding the MMCORE partition"
-	sgdisk --move-second-header "${DEVICE}" >/dev/null
-	sgdisk --new=2:0:0 --typecode=2:8300 --change-name=2:MMCORE \
-		"${DEVICE}" >/dev/null
-	partprobe "${DEVICE}" 2>/dev/null || true
-	udevadm settle 2>/dev/null || true
-	# /dev/sdX2 or /dev/nvme0n1p2, /dev/mmcblk0p2, ...
-	part="${DEVICE}2"
-	[ -b "${part}" ] || part="${DEVICE}p2"
-	[ -b "${part}" ] || die "could not find the new partition on ${DEVICE}"
-	mkfs.ext4 -q -L MMCORE "${part}"
-	log "Persistence partition ready: ${part} (label MMCORE)"
-fi
+	if [ "${PERSIST}" = "1" ]; then
+		command -v sgdisk >/dev/null 2>&1 || die "sgdisk (gdisk) is required for --persist"
+		command -v mkfs.ext4 >/dev/null 2>&1 || die "mkfs.ext4 (e2fsprogs) is required for --persist"
+		# The mmcore ISO is a hybrid image whose GPT already uses partitions
+		# 1-4 (Gap0, EFI boot partition, HFSPLUS, Gap1), so the persistent
+		# partition is 5, carved from the free space beyond the ISO.
+		log "Adding the MMCORE partition"
+		sgdisk --move-second-header "${DEVICE}" >/dev/null \
+			|| die "sgdisk could not resize the GPT on ${DEVICE}"
+		sgdisk --new=5:0:0 --typecode=5:8300 --change-name=5:MMCORE \
+			"${DEVICE}" >/dev/null \
+			|| die "sgdisk could not add partition 5 (is ${DEVICE} larger than ${ISO}?)"
+		partprobe "${DEVICE}" 2>/dev/null || true
+		udevadm settle 2>/dev/null || true
+		# /dev/sdX5 or /dev/nvme0n1p5, /dev/mmcblk0p5, ...
+		part="${DEVICE}5"
+		[ -b "${part}" ] || part="${DEVICE}p5"
+		[ -b "${part}" ] || die "could not find the new partition on ${DEVICE}"
+		mkfs.ext4 -q -L MMCORE "${part}"
+		log "Persistence partition ready: ${part} (label MMCORE)"
+	fi
 
 log "Done. Boot the device and mmcore's C: will persist on MMCORE."
