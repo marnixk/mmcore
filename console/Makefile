@@ -119,7 +119,9 @@ HELP_DOCS = $(wildcard $(MMB)/../docs/help/*.txt)
 
 # Versioned ramdisk/ tree embedded into the kernel. RAMDISK_EXCLUDE is a
 # comma-separated list of top-level folders to omit (release builds drop
-# `tests`). The mode stamp forces a regenerate when the option changes.
+# `tests`). The stamp records the sorted list of embedded files, so a removed
+# or renamed file (which only drops out of RAMDISK_FILES) still changes the
+# stamp and forces a regenerate.
 RAMDISK_EXCLUDE ?=
 RAMDISK_FILES = $(shell find $(MMB)/../ramdisk -type f 2>/dev/null)
 RAMDISK_STAMP = $(MMB)/src/ramdisk_data.stamp
@@ -139,7 +141,7 @@ $(MMB)/src/help_data.c: $(MMB)/../scripts/gen_help.py $(HELP_DOCS)
 	python3 $(MMB)/../scripts/gen_help.py $(MMB)/src/help_data.c
 
 $(RAMDISK_STAMP): FORCE
-	@printf '%s' "$(RAMDISK_EXCLUDE)" | cmp -s - $@ || printf '%s' "$(RAMDISK_EXCLUDE)" > $@
+	python3 $(MMB)/../scripts/gen_ramdisk.py --stamp-out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
 $(MMB)/src/ramdisk_data.c: $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(MMB)/../scripts/gen_ramdisk.py --out $@ --exclude "$(RAMDISK_EXCLUDE)"
