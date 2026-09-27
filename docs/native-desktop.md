@@ -49,6 +49,10 @@ still runs it headless in tests. The window identity hints (`WM_CLASS`,
 Wayland app-id) are skipped in this build; there is no window manager to use
 them.
 
+This is the build the bootable USB image ships. See
+[`framebuffer-and-iso.md`](framebuffer-and-iso.md) for the live image, and the
+`mmcore-fb-linux-x86_64.tar.gz` release asset for the standalone binary.
+
 ## Windows
 
 The same native backend builds for Windows x86_64 with MinGW-w64. In the MSYS2

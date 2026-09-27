@@ -73,6 +73,12 @@ lists live in [`INSTALL.md`](INSTALL.md). On a desktop you can instead build the
 native binaries (see [`DEVELOPMENT.md`](DEVELOPMENT.md)); prebuilt Linux and
 Windows builds are attached to the Releases page.
 
+For an x86_64 PC with no desktop, releases also include a **KMS/DRM framebuffer**
+build (`mmcore-fb-linux-x86_64.tar.gz`) and a bootable **live USB / ISO**
+(Alpine Linux, no X/Wayland) that starts mmcore on the framebuffer with Ethernet
+and Wi-Fi and an optional persistent `C:` drive. See
+[`docs/framebuffer-and-iso.md`](docs/framebuffer-and-iso.md).
+
 ## About MMBasic, PicoMite, CMM2 and Circle
 
 The language is **MMBasic**, Geoff Graham's classic BASIC dialect. mmcore's
