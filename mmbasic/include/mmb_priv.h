@@ -2,6 +2,7 @@
 #define MMB_PRIV_H
 
 #include "mmbasic.h"
+#include "yield.h"
 #if defined(MMB_PLATFORM_POSIX)
 /* Native (Linux/macOS) build: use libc for setjmp/alloc/strings. This is a
  * compile-time-only substitution so the Circle build keeps its own headers
@@ -540,6 +541,14 @@ extern mmb_audio g_audio;
 int mmb_console_switch_pending(void);
 int mmb_program_suspended(void);
 void mmb_resume_program(void);
+
+/* Background yield callbacks (core.c / session.c, #858). mmb_bg_console_enter()
+ * selects `console` as the active interpreter context so a registered callback
+ * can touch that console's per-console app state; mmb_bg_console_leave()
+ * restores the real active console. Enter returns 0 (and the callback must do
+ * nothing) when the console is already active or has no context. */
+int mmb_bg_console_enter(int console);
+void mmb_bg_console_leave(void);
 
 void mmb_error(const char *msg);
 void mmb_syntax(void);

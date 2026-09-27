@@ -17,6 +17,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/frontend.o \
 	  $(MMB)/src/session.o \
+	  $(MMB)/src/yield.o \
 	  $(MMB)/src/tok.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/cmd_struct.o \

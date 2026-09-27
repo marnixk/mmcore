@@ -364,6 +364,26 @@ static void juke_manage(void)
 		juke_advance();
 }
 
+/* #858: background queue advance. Registered for the queue's owning console
+ * while a queue is live; the yield registry rate-limits it to ~1 Hz so it
+ * stays cheap. It runs in the owner's interpreter context so a track change
+ * keeps that console's ownership (see juke_start). */
+static void juke_yield(int console, void *ctx)
+{
+	(void)ctx;
+	if (console != s_q.owner)
+		return;
+	if (mmb_bg_console_enter(console))
+	{
+		juke_manage();
+		mmb_bg_console_leave();
+	}
+	else
+		juke_manage();
+	if (!s_q.active)
+		mmb_yield_remove(juke_yield);
+}
+
 /* ---- drawing ---------------------------------------------------------- */
 
 static void juke_text(int x, int y, const char *s, unsigned col, int scale)
@@ -603,6 +623,16 @@ void mmb_cmd_juke(void)
 			mmb_error("?FILE");
 	}
 
+	/* #858: the queue keeps advancing while JUKE is not the active screen.
+	 * Register (or refresh) the background callback for its owner console.
+	 * This is only registered while a queue is live; it does not run key
+	 * handling or paint off-screen. */
+	if (s_q.active)
+	{
+		mmb_yield_remove(juke_yield);
+		mmb_yield_add(s_q.owner, juke_yield, 0, 1000);
+	}
+
 	memset(&U, 0, sizeof(U));
 	U.saved_mode = G.gfx.mode;
 	U.saved_bits = G.gfx.bits;
@@ -698,6 +728,7 @@ const char *mmb_juke_key(char c)
 	if (c == 's' || c == 'S')
 	{
 		s_q.active = 0;
+		mmb_yield_remove(juke_yield);
 		mmb_play_stop();
 		return "";
 	}
@@ -708,7 +739,9 @@ void mmb_juke_poll(void)
 {
 	unsigned now;
 
-	juke_manage();
+	/* Queue management runs from the registered background callback
+	 * (juke_yield), so it advances whether or not JUKE is the active
+	 * screen. Here we only repaint the visible player. */
 	if (!U.active)
 		return;
 	now = mmb_now_ms();
