@@ -940,6 +940,11 @@ static void ansi_put_int(char *seq, int *n, int v)
 		seq[(*n)++] = tmp[--i];
 }
 
+int mmb_console_ansi_code(unsigned rgb, int fg)
+{
+	return rgb_to_ansi(rgb, fg);
+}
+
 void mmb_console_apply_colour(void)
 {
 	char seq[32];

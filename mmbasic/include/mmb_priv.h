@@ -743,6 +743,16 @@ void mmb_cmd_colour(void);
 void mmb_cmd_page(void);
 void mmb_cmd_text(void);
 void mmb_cmd_font(void);
+/* Native TheDraw font commands and TDF.<fn> accessors (#866, #867). */
+void mmb_cmd_tdf(void);
+void mmb_tdf_fn_width(mmb_val *out);
+void mmb_tdf_fn_name(mmb_val *out);
+void mmb_tdf_fn_type(mmb_val *out);
+void mmb_tdf_fn_spacing(mmb_val *out);
+void mmb_tdf_fn_height(mmb_val *out);
+void mmb_tdf_fn_variants(mmb_val *out);
+void mmb_tdf_fn_variant(mmb_val *out);
+void mmb_tdf_fn_variantname(mmb_val *out);
 void mmb_cmd_blit(void);
 void mmb_cmd_rbox(void);
 void mmb_cmd_arc(void);

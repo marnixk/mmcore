@@ -423,7 +423,7 @@ def test_files_tdf_bad_font_fails_soft(fresh_console):
 
 
 def test_files_tdf_multi_variant_preview(fresh_console):
-    """#629: a multi-record .TDF renders every variation and reports the count."""
+    """#629/#865: one variation shows at a time; Left/Right cycles them."""
     con = fresh_console
     assert con.send_line('CHDIR "A:/fonts/tdf/color"') == ""
     _select(con, "ACIDSC2X.TDF")
@@ -437,7 +437,18 @@ def test_files_tdf_multi_variant_preview(fresh_console):
             break
         time.sleep(0.3)
     assert ink > 0.001, ink
-    # PgDn scrolls the stacked variation blocks (and is accepted in FU_TDF).
+    # Left/Right cycle variations (wrap at both ends) and report n/N.
+    seen = _keys(con, b"\x1b[C", quiet=0.4)
+    assert "variation 2/6" in seen, seen
+    seen = _keys(con, b"\x1b[C", quiet=0.4)
+    assert "variation 3/6" in seen, seen
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    assert "variation 2/6" in seen, seen
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    assert "variation 6/6" in seen, seen
+    # Up/Down still scroll within the current variation.
+    _keys(con, b"\x1b[B", quiet=0.3)
     _keys(con, b"\x1b[6~", quiet=0.5)
     seen = _keys(con, b"\x1b", quiet=0.8)
     assert "SEL=" in seen

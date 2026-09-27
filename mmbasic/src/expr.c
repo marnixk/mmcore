@@ -497,6 +497,14 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("MM.VER")] = &&lbl_mmver;
 		fun_tab[mmb_kw_id("MM.DEVICE$")] = &&lbl_mmdev;
 		fun_tab[mmb_kw_id("MM.CMDLINE$")] = &&lbl_mmcmd;
+		fun_tab[mmb_kw_id("TDF.WIDTH")] = &&lbl_tdfwidth;
+		fun_tab[mmb_kw_id("TDF.NAME$")] = &&lbl_tdfname;
+		fun_tab[mmb_kw_id("TDF.TYPE%")] = &&lbl_tdftype;
+		fun_tab[mmb_kw_id("TDF.SPACING%")] = &&lbl_tdfspacing;
+		fun_tab[mmb_kw_id("TDF.HEIGHT")] = &&lbl_tdfheight;
+		fun_tab[mmb_kw_id("TDF.VARIANTS%")] = &&lbl_tdfvariants;
+		fun_tab[mmb_kw_id("TDF.VARIANT%")] = &&lbl_tdfvariant;
+		fun_tab[mmb_kw_id("TDF.VARIANTNAME$")] = &&lbl_tdfvariantname;
 		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
 		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
 		fun_tab[mmb_kw_id("BATTERY%")] = &&lbl_battery;
@@ -2079,6 +2087,54 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_str_val(G.current_prog[0] ? G.current_prog : "");
+		return 1;
+	}
+	if (mmb_match("TDF.WIDTH"))
+	{
+	lbl_tdfwidth:
+		mmb_tdf_fn_width(out);
+		return 1;
+	}
+	if (mmb_match("TDF.NAME$"))
+	{
+	lbl_tdfname:
+		mmb_tdf_fn_name(out);
+		return 1;
+	}
+	if (mmb_match("TDF.TYPE%"))
+	{
+	lbl_tdftype:
+		mmb_tdf_fn_type(out);
+		return 1;
+	}
+	if (mmb_match("TDF.SPACING%"))
+	{
+	lbl_tdfspacing:
+		mmb_tdf_fn_spacing(out);
+		return 1;
+	}
+	if (mmb_match("TDF.HEIGHT"))
+	{
+	lbl_tdfheight:
+		mmb_tdf_fn_height(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANTS%"))
+	{
+	lbl_tdfvariants:
+		mmb_tdf_fn_variants(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANT%"))
+	{
+	lbl_tdfvariant:
+		mmb_tdf_fn_variant(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANTNAME$"))
+	{
+	lbl_tdfvariantname:
+		mmb_tdf_fn_variantname(out);
 		return 1;
 	}
 ident_tail:

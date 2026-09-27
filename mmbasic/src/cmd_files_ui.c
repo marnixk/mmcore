@@ -88,6 +88,7 @@ typedef struct {
 	unsigned char *tdf_buf;
 	unsigned tdf_size;
 	int tdf_variants;
+	int tdf_var;
 	mmb_tdf tdf;
 } fu_state;
 
@@ -2073,8 +2074,11 @@ static void tdf_render_font(const mmb_tdf *f, const char *fallback, int *yp)
 static void tdf_render_sample(const char *name)
 {
 	int nvar = F.tdf_variants > 1 ? F.tdf_variants : 1;
-	int v, y;
+	int v = F.tdf_var;
+	int y;
 
+	if (v < 0 || v >= nvar)
+		v = 0;
 	an_reset(AN_COLS);
 	y = 1;
 	if (nvar == 1)
@@ -2084,39 +2088,59 @@ static void tdf_render_sample(const char *name)
 	}
 	else
 	{
-		for (v = 0; v < nvar; v++)
-		{
-			mmb_tdf f;
-			char cap[80];
-			char num[12];
+		/* One variation at a time; Left/Right cycles (#865). */
+		mmb_tdf f;
+		char cap[80];
+		char num[12];
 
-			if (mmb_tdf_parse(F.tdf_buf, F.tdf_size, v, &f) != 0)
-				break;
-			strcpy(cap, "#");
-			fmt_uint(num, (unsigned)(v + 1));
-			strcat(cap, num);
-			strcat(cap, " ");
-			strncat(cap, f.name[0] ? f.name : name, 20);
-			strcat(cap, " (");
-			fmt_uint(num, (unsigned)(v + 1));
-			strcat(cap, num);
-			strcat(cap, "/");
-			fmt_uint(num, (unsigned)nvar);
-			strcat(cap, num);
-			strcat(cap, ")");
-			tdf_text(1, y, cap, 14, 0);
-			y += 2;
-			tdf_render_font(&f, name, &y);
-			y += 1;
-			if (y >= AN_MAX_ROWS - 1)
-				break;
-		}
+		if (mmb_tdf_parse(F.tdf_buf, F.tdf_size, v, &f) != 0)
+			f = F.tdf;
+		strcpy(cap, "#");
+		fmt_uint(num, (unsigned)(v + 1));
+		strcat(cap, num);
+		strcat(cap, " ");
+		strncat(cap, f.name[0] ? f.name : name, 20);
+		strcat(cap, " (");
+		fmt_uint(num, (unsigned)(v + 1));
+		strcat(cap, num);
+		strcat(cap, "/");
+		fmt_uint(num, (unsigned)nvar);
+		strcat(cap, num);
+		strcat(cap, ")");
+		tdf_text(1, y, cap, 14, 0);
+		y += 2;
+		tdf_render_font(&f, name, &y);
+		y += 1;
 	}
 	if (y < 1)
 		y = 1;
 	if (y > AN_MAX_ROWS)
 		y = AN_MAX_ROWS;
 	F.an_rows = y;
+}
+
+/* Left/Right cycles the visible variation and resets the scroll (#865). */
+static void tdf_step_var(int dir)
+{
+	int nvar = F.tdf_variants > 1 ? F.tdf_variants : 1;
+	char line[96];
+
+	if (nvar <= 1)
+		return;
+	F.tdf_var += dir;
+	if (F.tdf_var < 0)
+		F.tdf_var = nvar - 1;
+	else if (F.tdf_var >= nvar)
+		F.tdf_var = 0;
+	F.an_top = 0;
+	tdf_render_sample(F.info_name);
+	an_render();
+	strcpy(line, "[FILES] TDF variation ");
+	fmt_uint(line + strlen(line), (unsigned)(F.tdf_var + 1));
+	strcat(line, "/");
+	fmt_uint(line + strlen(line), (unsigned)nvar);
+	strcat(line, "\r\n");
+	ser(line);
 }
 
 static int tdf_open(const char *path, const char *name)
@@ -2153,11 +2177,12 @@ static int tdf_open(const char *path, const char *name)
 	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
 	F.info_name[sizeof(F.info_name) - 1] = 0;
 	F.an_top = 0;
+	F.tdf_var = 0;
 	tdf_render_sample(name);
 	F.mode = FU_TDF;
 	an_render();
 	set_hint(F.tdf_variants > 1
-			 ? "TDF preview  up/down/PgUp/PgDn scroll  Enter/Esc returns"
+			 ? "TDF preview  left/right variation  up/down/PgUp/PgDn scroll  Enter/Esc returns"
 			 : "TDF preview  up/down/PgUp/PgDn  Enter/Esc returns");
 	strcpy(line, "[FILES] TDF ");
 	strncat(line, name, 32);
@@ -2716,7 +2741,19 @@ static int files_alt(char c)
 static void handle_arrow(int which)
 {
 	fu_panel *p = curpan();
-	if (F.mode == FU_ANSI || F.mode == FU_TDF)
+	if (F.mode == FU_TDF)
+	{
+		if (which == 0)
+			an_scroll(-1);
+		else if (which == 1)
+			an_scroll(1);
+		else if (which == 2)
+			tdf_step_var(1);
+		else if (which == 3)
+			tdf_step_var(-1);
+		return;
+	}
+	if (F.mode == FU_ANSI)
 	{
 		if (which == 0)
 			an_scroll(-1);
