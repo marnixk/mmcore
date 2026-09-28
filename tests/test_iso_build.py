@@ -244,7 +244,10 @@ def test_iso_workflow_builds_boot_smokes_and_attaches():
     wf = open(WORKFLOW, encoding="utf-8").read()
     assert "release:" in wf
     assert "types: [published]" in wf
-    assert "ubuntu-22.04" in wf
+    # Built on the self-hosted mac mini runner, not GitHub-hosted ubuntu.
+    assert "self-hosted" in wf
+    assert "mmcore-iso" in wf
+    assert "macOS" in wf
     assert "qemu-system-x86_64" in wf
     assert "MMCORE_ISO_BOOT_OK" in wf
     assert ASSET in wf
@@ -306,6 +309,25 @@ def test_boot_smoke_waits_for_a_stable_mmcore_pid():
     line = stable_lines[0]
     assert "while" in line, line
     assert "pgrep -x mmcore" in line, line
+
+
+def test_iso_workflow_containerizes_the_linux_only_usb_check():
+    """The mac mini runner is macOS, and install-usb.sh is Linux-only
+    (losetup/sgdisk/mkfs). The verification must run in a privileged Linux
+    container rather than on the host."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "install-usb.sh" in wf
+    assert "--privileged" in wf
+    assert "losetup" in wf
+    assert "alpine:3.20" in wf
+
+
+def test_iso_workflow_starts_docker_desktop_on_the_mac_runner():
+    """Docker Desktop may be stopped on the mac runner; the job must start it
+    before the container build, or the build step fails."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "open -a Docker" in wf
+    assert "docker info" in wf
 
 
 def test_profile_documents_ctrl_alt_vt_switching():
@@ -533,11 +555,21 @@ def test_builder_guarantees_the_ca_bundle():
 
 
 def test_iso_workflow_verifies_guest_tls():
-    """#896: the boot smoke fetches the GitHub API over HTTPS from the guest."""
+    """#896: the boot smoke fetches the GitHub API over HTTPS from the guest.
+    The request may return an HTTP error (e.g. 403 rate limit); only a
+    cert/handshake failure is a TLS failure."""
     wf = open(WORKFLOW, encoding="utf-8").read()
     assert "api.github.com/repos/marnixk/mmcore/releases/latest" in wf
-    assert "MMCORE_TLS_OK" in wf
     assert "grep -q \"MMCORE_TLS_OK\" boot.log" in wf
+    tls_lines = [
+        ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "TLS_OK" in ln
+    ]
+    assert len(tls_lines) == 1, tls_lines
+    line = tls_lines[0]
+    # TLS_FAIL is reserved for cert/handshake errors, not HTTP errors like a
+    # 403 rate limit.
+    assert "TLS_FAIL" in line, line
+    assert "certificate" in line, line
 
 
 @pytest.mark.skipif(
