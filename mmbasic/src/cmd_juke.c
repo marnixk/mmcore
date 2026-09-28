@@ -42,7 +42,7 @@ typedef struct {
 	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
 	int logo_w, logo_h;
 	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
-	unsigned col_bar_lo, col_bar_hi, col_scan, col_rule, col_peak;
+	unsigned col_bar_lo, col_bar_hi, col_scan, col_peak;
 	unsigned col_scope_lo, col_vol, col_base;
 } juke_ui;
 
@@ -186,10 +186,9 @@ static void juke_load_colours(void)
 	U.col_track = 0x1A1D20u;    /* empty VOL / chip fill */
 	U.col_text = 0xFFFFFFu;     /* plain white           */
 	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
-	U.col_bar_lo = 0x49504Au;   /* cool grey bar base    */
+	U.col_bar_lo = 0x232724u;   /* near-black bar base   */
 	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
 	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
-	U.col_rule = 0x868C92u;     /* muted grey rule       */
 	U.col_peak = 0xC8E664u;     /* light lime cap        */
 	U.col_scope_lo = 0x2A3038u; /* cool dark ghost       */
 	U.col_vol = 0xB4BCC2u;      /* VOL body grey         */
@@ -486,9 +485,8 @@ static void juke_paint(int w, int h)
 
 	mmb_gfx_cls(U.col_bg);
 
-	/* Header: full-size graffiti wordmark, right-aligned status, muted rule.
-	 * The wordmark is 50px tall, so the header/rule sits a little lower than
-	 * the compact mock and the bar field below is shortened to fit. */
+	/* Header: full-size graffiti wordmark and right-aligned status. The
+	 * wordmark is 50px tall, so the bar field below is shortened to fit. */
 	juke_draw_logo(14, 1);
 	{
 		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
@@ -498,14 +496,12 @@ static void juke_paint(int w, int h)
 			s_q.truncated ? "  more" : "");
 		juke_text(w - 14 - (int)strlen(buf) * 8, 20, buf, U.col_dim, 1);
 	}
-	mmb_gfx_fill_rect(0, 52, w, 2, U.col_rule);
 
-	/* Now-playing line, folder, and visualiser labels. */
+	/* Now-playing line and folder. */
 	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
 	juke_text(14, 60, title, U.col_text, 1);
 	if (s_q.dir[0])
 		juke_text(14, 78, s_q.dir, U.col_dim, 1);
-	juke_text(14, 92, "WAVE", U.col_dim, 1);
 
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
@@ -546,17 +542,24 @@ static void juke_paint(int w, int h)
 	}
 
 	/* Spectrum: 24 grey-to-lime bars, no midfield guide lines. The bar field
-	 * is deliberately short so the full-size wordmark still fits above it. */
-	x0 = 14;
-	x1 = w - 14;
+	 * is deliberately short so the full-size wordmark still fits above it,
+	 * and it is centred so the leftover width splits evenly on both sides
+	 * instead of pooling to the right of the last band. */
 	base = h - 71;
 	maxh = base - 190;
 	if (maxh < 24)
 		maxh = 24;
 	gap = 3;
-	bw = (x1 - x0) / MMB_AUDIO_BANDS - gap;
+	bw = (w - 28) / MMB_AUDIO_BANDS - gap;
 	if (bw < 2)
 		bw = 2;
+	{
+		int span = MMB_AUDIO_BANDS * bw + (MMB_AUDIO_BANDS - 1) * gap;
+		x0 = 14 + (w - 28 - span) / 2;
+		if (x0 < 14)
+			x0 = 14;
+		x1 = x0 + span;
+	}
 
 	for (i = 0; i < MMB_AUDIO_BANDS; i++)
 	{

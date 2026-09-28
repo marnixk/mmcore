@@ -22,9 +22,9 @@ Supported formats:
 
 JUKE has its own fixed cool-grey palette: it does not follow OPTION THEME,
 so it looks the same under every system theme. Leaving JUKE restores your
-console theme untouched. The header carries a graffiti wordmark and a muted
-grey rule; the oscilloscope sits in its own panel under the title and trails
-a ghost history (older traces fade and cool, the newest stays lime). The 24
+console theme untouched. The header carries a graffiti wordmark; the
+oscilloscope sits in its own panel under the title and trails a ghost
+history (older traces fade and cool, the newest stays lime). The 24
 spectrum bars run grey to lime, and the transport and volume indicators run
 along the footer.
 
