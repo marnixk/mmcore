@@ -143,7 +143,12 @@ $(MMB)/src/help_data.c: $(MMB)/../scripts/gen_help.py $(HELP_DOCS)
 $(RAMDISK_STAMP): FORCE
 	python3 $(MMB)/../scripts/gen_ramdisk.py --stamp-out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
-$(MMB)/src/ramdisk_data.c: $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
+# #882: ramdisk_data.c is shared with native/, which embeds the whole tree
+# (no exclude) while a release console build embeds exclude=tests. Each build
+# keeps its own stamp, so a build could otherwise see the other mode's file as
+# up to date and link the wrong table. FORCE the generator every time; it
+# rewrites only when the rendered text (including the embedded mode) differs.
+$(MMB)/src/ramdisk_data.c: FORCE $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(MMB)/../scripts/gen_ramdisk.py --out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
 $(MMB)/src/util.o $(MMB)/src/cmd_credits.o: mmb_version.h

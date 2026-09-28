@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Write console/mmb_version.h from MMB_VERSION or git describe.
+#
+# The console Makefile FORCEs this target and several objects depend on it, so
+# parallel make can invoke the recipe more than once for one build. Write to a
+# per-invocation temp file and rename atomically so no invocation can expose a
+# missing/garbled header to a concurrent compiler (#897).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,8 +18,9 @@ if [ -z "${VER}" ]; then
 	VER="dev"
 fi
 
-tmp="${OUT}.tmp"
 mkdir -p "$(dirname "${OUT}")"
+tmp="$(mktemp "${OUT}.XXXXXX")"
+trap 'rm -f "${tmp}"' EXIT
 {
 	echo "#ifndef MMB_VERSION_H"
 	echo "#define MMB_VERSION_H"
@@ -22,7 +28,7 @@ mkdir -p "$(dirname "${OUT}")"
 	echo "#endif"
 } > "${tmp}"
 if [ -f "${OUT}" ] && cmp -s "${tmp}" "${OUT}"; then
-	rm -f "${tmp}"
+	:
 else
-	mv "${tmp}" "${OUT}"
+	mv -f "${tmp}" "${OUT}"
 fi
