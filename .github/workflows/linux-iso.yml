@@ -13,6 +13,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the built ISO to (e.g. v0.224.0)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -32,7 +37,7 @@ jobs:
 
       - name: Build the ISO
         env:
-          VERSION: ${{ github.event.release.tag_name }}
+          VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: scripts/build-iso.sh
 
       - name: Boot-smoke the ISO against a virtual KMS/DRM device
@@ -125,14 +130,16 @@ jobs:
       - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
+          # Release-event tag, or the workflow_dispatch release_tag input.
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           # Publish only the compressed image; drop any stale raw .iso asset.
-          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-            gh release delete-asset "${GITHUB_REF_NAME}" \
+          if [ -n "${RELEASE_TAG}" ]; then
+            gh release delete-asset "${RELEASE_TAG}" \
               mmcore-fb-x86_64.iso --yes 2>/dev/null || true
-            gh release upload "${GITHUB_REF_NAME}" \
+            gh release upload "${RELEASE_TAG}" \
               dist/mmcore-fb-x86_64.iso.zst scripts/install-usb.sh --clobber
-            echo "Attached the compressed ISO and install-usb.sh to release ${GITHUB_REF_NAME}"
+            echo "Attached the compressed ISO and install-usb.sh to release ${RELEASE_TAG}"
             exit 0
           fi
 

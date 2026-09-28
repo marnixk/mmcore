@@ -156,7 +156,7 @@ def test_rootfs_ships_partition_and_bootloader_tools():
     text = open(BUILDER, encoding="utf-8").read()
     # The rootfs (not just the builder) must be able to partition a disk and
     # install GRUB, so these are on the `apk add --root` line.
-    assert "parted gdisk util-linux-misc grub grub-efi grub-bios" in text
+    assert "parted gptfdisk util-linux-misc grub grub-efi grub-bios" in text
 
 
 def test_update_version_compare_logic():
