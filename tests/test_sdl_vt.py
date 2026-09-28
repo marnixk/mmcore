@@ -204,6 +204,30 @@ int main(void)
 	      g_front_feeds == 0,
 	      "fb Ctrl+Alt+KP4 switches mmcore console 4");
 
+	/* #927: the switch chords emit no SDL_TEXTINPUT, so they must not leave
+	 * the swallow flag armed and silently drop the next character typed. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_F2, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	push_key(SDLK_p, 0);
+	push_text("P");
+	sdl_input_pump();
+	CHECK(g_front_feeds == 1 && g_feed_n == 1 && g_feed[0] == 'P',
+	      "#927 character after Ctrl+Alt+F<n> is delivered");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_2, KMOD_CTRL | KMOD_ALT);
+	sdl_input_pump();
+	CHECK(g_console_switches == 1 && g_console_last == 1,
+	      "#927 Ctrl+Alt+2 switches mmcore console 2");
+	push_key(SDLK_p, 0);
+	push_text("P");
+	sdl_input_pump();
+	CHECK(g_front_feeds == 1 && g_feed_n == 1 && g_feed[0] == 'P',
+	      "#927 character after mmcore console switch is delivered");
+
 	/* A bare F2 (no chord) keeps its F-key escape sequence. */
 	reset();
 	g_running = 1;
