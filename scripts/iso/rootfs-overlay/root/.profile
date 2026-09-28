@@ -1,5 +1,6 @@
-# Start mmcore on the framebuffer console (tty1). Alt+F2 reaches a shell on
-# tty2; the serial console on ttyS0 also has an autologin root shell.
+# Start mmcore on the framebuffer console (tty1). Ctrl+Alt+F2 reaches a shell
+# on tty2 (Ctrl+Alt+F1 returns to mmcore); the serial console on ttyS0 also has
+# an autologin root shell.
 if [ "$(tty 2>/dev/null)" = "/dev/tty1" ]; then
 	export SDL_VIDEODRIVER=kmsdrm
 	# Keep mmcore's stderr for boot diagnostics (the QEMU smoke test greps it

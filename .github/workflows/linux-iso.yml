@@ -60,7 +60,12 @@ jobs:
           # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
           # cannot wedge the whole step.
           exec 3<>serial.in
-          timeout 720 qemu-system-x86_64 -m 2048 \
+          # -m 6144: the rootfs is packed as a single ~820 MiB initramfs that the
+          # kernel unpacks entirely into RAM. Measured on the shipped ISO, 4096
+          # MiB still panics with "VFS: Unable to mount root fs" before userspace
+          # and 5120 MiB boots, so 6144 leaves headroom (#913). Keep this in step
+          # with the "at least 5 GiB" note in docs/framebuffer-and-iso.md.
+          timeout 720 qemu-system-x86_64 -m 6144 \
             -cdrom dist/mmcore-fb-x86_64.iso \
             -vga none -device virtio-vga \
             -display none -monitor none \
@@ -89,7 +94,9 @@ jobs:
             echo 'pgrep -x mmcore | head -n1 > /tmp/p1; sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2'
             echo "cmp -s /tmp/p1 /tmp/p2 && [ -s /tmp/p1 ] && printf 'MMCORE_%s\n' STABLE_OK || printf 'MMCORE_%s\n' STABLE_MISSING"
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
-            echo "ip -4 addr show | grep -q 'inet 10.0.2' && printf 'MMCORE_%s\n' NET_OK || printf 'MMCORE_%s\n' NET_MISSING"
+            # DHCP can be slow (the interface often appears after the shell), so
+            # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
+            echo 'n=0; while [ "$n" -lt 6 ]; do ip -4 addr show | grep -q "inet 10.0.2" && break; n=$((n+1)); sleep 5; done; if [ "$n" -lt 6 ]; then printf "MMCORE_%s\n" NET_OK; else printf "MMCORE_%s\n" NET_MISSING; fi'
             # #896: prove the live rootfs CA bundle lets busybox wget verify the
             # GitHub certificate (mmcore-update depends on it). Retries absorb a
             # transient network blip; a cert failure repeats on every attempt.

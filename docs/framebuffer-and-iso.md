@@ -53,10 +53,17 @@ partition the session is read-only.
 | Console | What happens |
 | --- | --- |
 | tty1 (display) | Autologin root, then `mmcore` runs fullscreen on the framebuffer |
-| tty2 (`Alt+F2`) | Autologin root shell |
+| tty2 (`Ctrl+Alt+F2`) | Autologin root shell (`Ctrl+Alt+F1` returns to mmcore) |
 | ttyS0 (serial) | Autologin root shell at 115200 8N1 |
 
 If mmcore exits, the tty1 session ends and it starts again.
+
+The live image needs **at least 5 GiB of RAM**. The rootfs is packed as a single
+~820 MiB initramfs that the kernel decompresses entirely into memory, so a
+smaller guest panics with `VFS: Unable to mount root fs on unknown-block(1,0)`
+before userspace starts. Measured on the shipped ISO, `-m 4096` still panics
+while `-m 5120` boots. The CI boot smoke boots QEMU with `-m 6144` for
+headroom.
 
 Boot is quiet: GRUB hides its menu and auto-boots the `mmcore` entry after
 ~1 second; hold **Shift** while it counts down to reveal the menu for recovery
@@ -81,8 +88,8 @@ reboots. Without it, files live in RAM and are lost on power-off.
 ### Install to hard disk
 
 The live USB can also install mmcore onto an internal disk so the machine boots
-mmcore on its own. From the live session press `Alt+F2` for a root shell on
-tty2 and run `mmcore-install`:
+mmcore on its own. From the live session press `Ctrl+Alt+F2` for a root shell on
+tty2 (`Ctrl+Alt+F1` returns to mmcore) and run `mmcore-install`:
 
 ```sh
 mmcore-install                     # list the disks, then confirm
