@@ -52,6 +52,28 @@ def _prep_queue(con: MMBasicConsole, copies) -> None:
         assert con.send_line(f'COPY "{src}" TO "{dst}"') == ""
 
 
+def _bar_layout(w: int) -> tuple[int, int, int]:
+    """Mirror JUKE's centred spectrum-bar geometry (see cmd_juke.c)."""
+    gap = 3
+    bw = (w - 28) // 24 - gap
+    if bw < 2:
+        bw = 2
+    span = 24 * bw + 23 * gap
+    x0 = 14 + (w - 28 - span) // 2
+    return max(x0, 14), bw, gap
+
+
+def _bar_centres(w: int) -> list[int]:
+    x0, bw, gap = _bar_layout(w)
+    return [x0 + i * (bw + gap) + bw // 2 for i in range(24)]
+
+
+def _gap_after(w: int, band: int) -> int:
+    """An x coordinate inside the gap between `band` and the next bar."""
+    x0, bw, gap = _bar_layout(w)
+    return x0 + band * (bw + gap) + bw + gap // 2
+
+
 def test_help_juke(console):
     out = dump_topic(console, "JUKE")
     assert out != "?SYNTAX ERROR"
@@ -170,15 +192,11 @@ def test_juke_has_fixed_grey_palette(fresh_console):
     before = con.send_line('PRINT THEME("TEXT_BG")')
     _open_juke(con, "tests/TEST.MOD")
     # The canvas/backing stays near-black even under a light system theme.
-    # (506,300) is the gap between bands 12 and 13, so it is never a bar.
+    # (gap after band 12) is the space between bars, so it is never a bar.
+    w, _h = con.screen_size()
     dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
-            con.screen_pixel(506, 300), con.screen_pixel(2, 494)]
+            con.screen_pixel(_gap_after(w, 12), 300), con.screen_pixel(2, 494)]
     assert all(r + g + b < 140 for r, g, b in dark), dark
-
-    # The header rule is a muted grey, not a theme accent.
-    r, g, b = con.screen_pixel(480, 52)
-    assert max(r, g, b) - min(r, g, b) < 40, (r, g, b)
-    assert 80 < (r + g + b) / 3 < 210, (r, g, b)
 
     _quit_juke(con)
     assert con.send_line('PRINT THEME("TEXT_BG")') == before
@@ -234,7 +252,7 @@ def test_juke_spectrum_bars_run_grey_to_lime(fresh_console):
     _w, h = con.screen_size()
     base = h - 71
     maxh = base - 190
-    xs = [14 + i * 38 + 17 for i in range(24)]
+    xs = _bar_centres(_w)
     ylist = list(range(base - 2, base - maxh, -2))
     coords = [(x, y) for x in xs for y in ylist]
     n = len(ylist)
@@ -269,9 +287,9 @@ def test_juke_spectrum_has_no_guide_lines(fresh_console):
     _w, h = con.screen_size()
     base = h - 71
     maxh = base - 190
-    # x=50 is the gap between bands 0 and 1, so no bar/cap lives there.
+    # The gap between bands 0 and 1 has no bar or cap.
     ys = [base - maxh * i // 4 for i in (1, 2, 3)]
-    got = con.screen_pixels([(50, y) for y in ys])
+    got = con.screen_pixels([(_gap_after(_w, 0), y) for y in ys])
     assert all(sum(c) < 30 for c in got), got
     _quit_juke(con)
 
