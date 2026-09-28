@@ -6,6 +6,10 @@ if [ "$(tty 2>/dev/null)" = "/dev/tty1" ]; then
 	# for "could not open SDL window").
 	mkdir -p /tmp 2>/dev/null || true
 
+	# The early boot splash (#902) has served its purpose: stop repainting the
+	# framebuffer so mmcore's first KMS frame is not overwritten.
+	pkill -x mmcore-splash 2>/dev/null || true
+
 	# Hard-disk install (#891): the installed GRUB entry names the two
 	# partitions on the kernel command line. Mount MMCORE-SYS as C: and
 	# MMCORE-DATA as D:, then run the binary from the system partition so

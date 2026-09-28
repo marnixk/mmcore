@@ -60,15 +60,16 @@ If mmcore exits, the tty1 session ends and it starts again.
 
 Boot is quiet: GRUB hides its menu and auto-boots the `mmcore` entry after
 ~1 second; hold **Shift** while it counts down to reveal the menu for recovery
-or serial debugging. During GRUB (and, with `gfxpayload=keep`, as far as the
-kernel's framebuffer console allows) the graphical console shows a centered
-mmcore logo instead of boot text, and the kernel is booted with
-`quiet loglevel=3` plus a hidden cursor (`vt.global_cursor_default=0`) so
-printk and getty banners stay off tty1. `/dev/console` is the serial port, so
-OpenRC and `local.d` output go to `ttyS0`, not the display. Kernel errors and
-warnings still reach the serial console, which keeps `ttyS0` useful for
-debugging. The `MMCORE` persistence mount and networking bring-up are
-unaffected.
+or serial debugging. GRUB paints a centered mmcore logo, and the same artwork
+is baked into the rootfs and repainted by `mmcore-splash` from the moment the
+kernel's framebuffer console takes over tty1 until mmcore modesets its own KMS
+surface, so the logo stays on screen for the whole boot instead of a black gap.
+The kernel is booted with `quiet loglevel=3` plus a hidden cursor
+(`vt.global_cursor_default=0`) so printk and getty banners stay off tty1.
+`/dev/console` is the serial port, so OpenRC and `local.d` output go to
+`ttyS0`, not the display. Kernel errors and warnings still reach the serial
+console, which keeps `ttyS0` useful for debugging. The `MMCORE` persistence
+mount and networking bring-up are unaffected.
 
 ### Persistent storage
 
@@ -123,7 +124,10 @@ mmcore-update --url URL           # install from an explicit tarball/URL
 It downloads `mmcore-fb-linux-x86_64.tar.gz`, checks that the tarball contains
 `mmcore-fb` and `VERSION.txt`, compares the version against the installed one,
 and replaces the binary atomically. `MMCORE_REPO`, `MMCORE_BASE_URL` and
-`MMCORE_API_URL` override where the release is resolved from.
+`MMCORE_API_URL` override where the release is resolved from. The live image
+ships a CA bundle assembled by the ISO builder, so busybox `wget` verifies the
+GitHub TLS certificate; the boot smoke test fetches the releases API over HTTPS
+to prove it.
 
 
 ### Networking
@@ -221,6 +225,6 @@ only be verified on real hardware.
 `.github/workflows/linux-iso.yml` builds the ISO and boots it in QEMU on a
 virtio-gpu (KMS/DRM) device with a serial console, asserting that it reaches a
 shell, that `/dev/dri/card0` exists, that mmcore starts and stays up rather
-than crash-looping, and that Ethernet DHCP comes up. Both attach their
-artifacts to the published release and to rolling `linux-native` /
-`linux-iso` pre-releases.
+than crash-looping, that Ethernet DHCP comes up, and that the guest trusts the
+GitHub TLS certificate (`wget` over HTTPS). Both attach their artifacts to the
+published release and to rolling `linux-native` / `linux-iso` pre-releases.

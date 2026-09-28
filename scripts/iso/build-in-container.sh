@@ -15,6 +15,7 @@ OUT="${ISO_OUT:-/repo/dist/mmcore-fb-${ARCH}.iso}"
 ROOTFS="/tmp/mmcore-rootfs"
 ISOROOT="/tmp/mmcore-isoroot"
 OVERLAY="${REPO_ROOT}/scripts/iso/rootfs-overlay"
+SPLASH="${REPO_ROOT}/scripts/iso/boot/splash.png"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() {
@@ -67,11 +68,20 @@ for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
 		"$fw" >/dev/null 2>&1 || true
 done
 
-# mmcore-update fetches over HTTPS (#892). `apk add --root` does not run
-# package triggers, so build the CA bundle explicitly.
-if ! chroot "${ROOTFS}" /usr/sbin/update-ca-certificates >/dev/null 2>&1; then
-	log "warning: could not build the CA bundle in the rootfs"
+# mmcore-update fetches over HTTPS (#892). `apk add --root` may not run the
+# ca-certificates trigger, so guarantee a usable trust store: busybox wget
+# verifies certificates against the PEM bundle (the hash symlinks are only
+# needed for OpenSSL's directory lookup, not for wget).
+CA_BUNDLE="${ROOTFS}/etc/ssl/certs/ca-certificates.crt"
+if [ ! -s "${CA_BUNDLE}" ]; then
+	log "Assembling the CA bundle in the rootfs"
+	mkdir -p "$(dirname "${CA_BUNDLE}")"
+	{
+		find "${ROOTFS}/usr/share/ca-certificates" -name '*.crt' -type f \
+			2>/dev/null
+	} | while IFS= read -r cert; do cat "${cert}"; done > "${CA_BUNDLE}"
 fi
+[ -s "${CA_BUNDLE}" ] || die "the CA bundle is missing: ${CA_BUNDLE}"
 
 log "Configuring the live system"
 cp /etc/resolv.conf "${ROOTFS}/etc/resolv.conf" 2>/dev/null || true
@@ -84,6 +94,7 @@ printf '%s\n' "${VERSION}" > "${ROOTFS}/etc/mmcore-version"
 ln -sf /sbin/init "${ROOTFS}/init"
 
 cat > "${ROOTFS}/etc/inittab" <<'EOF'
+::sysinit:/usr/local/bin/mmcore-splash-start
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
@@ -119,6 +130,23 @@ if [ -x "${REPO_ROOT}/scripts/iso/build-mmcore.sh" ]; then
 		sh "${REPO_ROOT}/scripts/iso/build-mmcore.sh"
 fi
 
+log "Adding the boot splash to the rootfs"
+# The kernel's framebuffer console binds to tty1 and erases GRUB's artwork, so
+# bake the same image into the rootfs and repaint it from a tiny framebuffer
+# helper until mmcore modesets its own KMS surface (#902). png_to_ppm.py turns
+# the committed PNG into the PPM the helper reads (no image library).
+[ -f "${SPLASH}" ] || die "splash image not found: ${SPLASH}"
+apk add --no-cache --quiet python3 build-base linux-headers >/dev/null 2>&1 \
+	|| true
+mkdir -p "${ROOTFS}/usr/share/mmcore" "${ROOTFS}/usr/local/bin"
+python3 "${REPO_ROOT}/scripts/iso/boot/png_to_ppm.py" "${SPLASH}" \
+	"${ROOTFS}/usr/share/mmcore/splash.ppm" \
+	|| die "could not convert ${SPLASH} to PPM"
+cc -O2 -Wall -Wextra -o "${ROOTFS}/usr/local/bin/mmcore-splash" \
+	"${REPO_ROOT}/scripts/iso/boot/mmcore-splash.c" \
+	|| die "could not build mmcore-splash"
+chmod 0755 "${ROOTFS}/usr/local/bin/mmcore-splash"
+
 if [ -d "${OVERLAY}" ]; then
 	log "Applying rootfs overlay"
 	cp -a "${OVERLAY}/." "${ROOTFS}/"
@@ -136,8 +164,6 @@ cp "${KERNEL}" "${ISOROOT}/boot/vmlinuz-lts"
 # mmcore logo on the graphical console, and keep kernel/userspace chatter off
 # tty0. /dev/console is the last console= (ttyS0), so OpenRC/local.d output
 # lands on serial, not the display; tty2 and serial stay root shells.
-SPLASH="${REPO_ROOT}/scripts/iso/boot/splash.png"
-[ -f "${SPLASH}" ] || die "splash image not found: ${SPLASH}"
 cp "${SPLASH}" "${ISOROOT}/boot/grub/splash.png"
 
 cat > "${ISOROOT}/boot/grub/grub.cfg" <<'EOF'
@@ -152,8 +178,9 @@ set gfxmode=1024x768,auto
 set gfxpayload=keep
 terminal_output gfxterm
 
-# Centered mmcore logo while GRUB waits, and (with gfxpayload=keep) as the
-# background the kernel keeps until mmcore modesets its own KMS surface.
+# Centered mmcore logo while GRUB waits. The kernel's framebuffer console
+# erases it when it binds to tty1; mmcore-splash repaints the same artwork
+# until mmcore modesets its own KMS surface (#902).
 insmod gfxterm_background
 background_image /boot/grub/splash.png
 

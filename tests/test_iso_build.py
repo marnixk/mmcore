@@ -321,6 +321,78 @@ def test_release_notes_list_the_iso_assets():
     assert "Bootable USB" in notes or "bootable" in notes.lower()
 
 
+PNG2PPM = os.path.join(ISO, "boot", "png_to_ppm.py")
+SPLASH = os.path.join(ISO, "boot", "splash.png")
+SPLASH_C = os.path.join(ISO, "boot", "mmcore-splash.c")
+SPLASH_START = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-splash-start")
+
+
+def test_builder_bakes_and_starts_the_boot_splash():
+    """#902: repaint GRUB's logo from userspace until mmcore takes over."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert "mmcore-splash.c" in builder
+    assert "png_to_ppm.py" in builder
+    assert "/usr/share/mmcore/splash.ppm" in builder
+    assert "/usr/local/bin/mmcore-splash" in builder
+    # The early inittab hook starts the repainter before OpenRC.
+    inittab = builder.split("cat > \"${ROOTFS}/etc/inittab\"", 1)[1]
+    assert "::sysinit:/usr/local/bin/mmcore-splash-start" in inittab
+    assert inittab.index("mmcore-splash-start") < inittab.index("openrc sysinit")
+
+
+def test_splash_sources_and_wrapper_are_present():
+    assert os.path.isfile(SPLASH_C), SPLASH_C
+    assert os.path.isfile(PNG2PPM), PNG2PPM
+    assert os.access(PNG2PPM, os.X_OK), PNG2PPM
+    assert os.path.isfile(SPLASH_START), SPLASH_START
+    assert os.access(SPLASH_START, os.X_OK), SPLASH_START
+    _run(["bash", "-n", SPLASH_START])
+    wrapper = open(SPLASH_START, encoding="utf-8").read()
+    assert "mmcore-splash -i" in wrapper
+    helper = open(SPLASH_C, encoding="utf-8").read()
+    assert "P6" in helper
+    assert "/usr/share/mmcore/splash.ppm" in helper
+
+
+def test_profile_stops_the_splash_before_mmcore():
+    profile = open(PROFILE, encoding="utf-8").read()
+    assert "pkill -x mmcore-splash" in profile
+    assert profile.index("pkill -x mmcore-splash") < profile.index("exec /usr/local/bin/mmcore")
+
+
+def test_png_to_ppm_converts_the_splash(tmp_path):
+    out = tmp_path / "splash.ppm"
+    _run([sys.executable, PNG2PPM, SPLASH, str(out)])
+    data = out.read_bytes()
+    assert data[:2] == b"P6"
+    header, _, payload = data.partition(b"255\n")
+    width, height = (int(x) for x in header.split(b"\n")[1].split())
+    assert (width, height) == (1024, 768)
+    assert len(payload) == width * height * 3
+    # Black border with the wordmark somewhere in the middle.
+    assert payload[:3] == b"\x00\x00\x00"
+    center = ((height // 2) * width + width // 2) * 3
+    assert payload[center:center + 3] != b"\x00\x00\x00"
+
+
+def test_builder_guarantees_the_ca_bundle():
+    """#896: mmcore-update's HTTPS download must verify the GitHub cert."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert "/etc/ssl/certs/ca-certificates.crt" in builder
+    # If apk left the bundle unbuilt, assemble it from the shipped certs...
+    assert "usr/share/ca-certificates" in builder
+    # ...and fail loudly rather than ship a TLS-less image.
+    assert "[ -s \"${CA_BUNDLE}\" ] || die" in builder
+
+
+def test_iso_workflow_verifies_guest_tls():
+    """#896: the boot smoke fetches the GitHub API over HTTPS from the guest."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "api.github.com/repos/marnixk/mmcore/releases/latest" in wf
+    assert "MMCORE_TLS_OK" in wf
+    assert "grep -q \"MMCORE_TLS_OK\" boot.log" in wf
+
+
 @pytest.mark.skipif(
     os.environ.get("MMCORE_ISO_BUILD") != "1",
     reason="set MMCORE_ISO_BUILD=1 to run the Docker ISO build",
