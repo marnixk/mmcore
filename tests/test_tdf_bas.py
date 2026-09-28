@@ -638,6 +638,34 @@ def test_tdf_print_honours_page_write(fresh_console):
     assert (values[1] & 0xFFFFFF) == 0, values
 
 
+def test_tdf_print_keeps_active_colour_for_cls(fresh_console):
+    """TDF PRINT must not leave G.gfx.bg at the font's last cell colour.
+
+    A bare CLS clears the write page to G.gfx.bg. A colour font used to adopt
+    the last decoded cell's background, so CLS + PAGE COPY flashed the whole
+    frame in that colour (the reported occasional white flicker).
+    """
+    c = fresh_console
+    out = _run(
+        c,
+        "TDFCLS.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 2",
+            "PAGE DISPLAY 0",
+            "COLOUR RGB(255,255,255), RGB(255,0,0)",
+            'TDF LOAD "A:/fonts/tdf/color/ACID3DX.TDF"',
+            'TDF PRINT 0, 3, "A"',
+            "CLS",
+            "PAGE COPY 2 TO 0",
+            "PRINT PIXEL(2,2,0)",
+            "TDF CLOSE",
+        ],
+    )
+    value = int(_lines(out)[-1]) & 0xFFFFFF
+    assert value == 0xFF0000, hex(value)
+
+
 def test_tdf_print_spaces_advance_safely(fresh_console):
     """#588: leading, trailing and repeated spaces must advance, not fault."""
     c = fresh_console
