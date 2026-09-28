@@ -163,47 +163,117 @@ def _volume_lit(con: MMBasicConsole) -> int:
     return sum(1 for r, g, b in row if r + g + b > 150)
 
 
-def test_juke_has_fixed_cyberpunk_palette(fresh_console):
+def test_juke_has_fixed_grey_palette(fresh_console):
     """JUKE must not follow the system theme, and must leave it alone."""
     con = fresh_console
     assert con.send_line('OPTION THEME "Snow"') == ""
     before = con.send_line('PRINT THEME("TEXT_BG")')
     _open_juke(con, "tests/TEST.MOD")
-    # Header/backing panels stay near-black even under a light system theme.
+    # The canvas/backing stays near-black even under a light system theme.
     dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
-            con.screen_pixel(480, 44), con.screen_pixel(2, 494)]
+            con.screen_pixel(480, 300), con.screen_pixel(2, 494)]
     assert all(r + g + b < 140 for r, g, b in dark), dark
 
-    # The header rule is a neon magenta accent, not a theme colour.
-    r, g, b = con.screen_pixel(480, 46)
-    assert r > 120 and b > 100 and g < 120, (r, g, b)
+    # The header rule is a muted grey, not a theme accent.
+    r, g, b = con.screen_pixel(480, 44)
+    assert max(r, g, b) - min(r, g, b) < 40, (r, g, b)
+    assert 80 < (r + g + b) / 3 < 210, (r, g, b)
 
     _quit_juke(con)
     assert con.send_line('PRINT THEME("TEXT_BG")') == before
 
 
-def test_juke_visualiser_has_vertical_gradient(fresh_console):
+def test_juke_header_shows_graffiti_logo(fresh_console):
+    """#914: the header carries the colourful graffiti wordmark, not text."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    coords = [(x, y) for x in range(10, 110, 2) for y in range(4, 42, 2)]
+    colourful = 0
+    for _ in range(6):
+        for r, g, b in con.screen_pixels(coords):
+            if max(r, g, b) - min(r, g, b) > 50 and max(r, g, b) > 90:
+                colourful += 1
+        if colourful > 40:
+            break
+        time.sleep(0.2)
+    _quit_juke(con)
+    assert colourful > 40, "expected the colourful graffiti logo in the header"
+
+
+def test_juke_scope_lives_in_its_own_panel(fresh_console):
+    """#914: the oscilloscope sits in a bordered panel under the title."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _w, h = con.screen_size()
+
+    # The panel border is a muted cool grey (left edge and top edge). Mode 12
+    # stores RGB332, so a neutral grey shows equal red/green with blue close
+    # by, and it stays clearly darker than the white text.
+    for x, y in ((8, 121), (480, 95)):
+        border = con.screen_pixel(x, y)
+        r, g, b = border
+        assert r == g, (border, x, y)
+        assert b >= r - 5, (border, x, y)
+        assert r < 100, (border, x, y)
+
+    # The interior is mostly the dark panel fill (traces only cross a few
+    # pixels). The panel sits strictly above the spectrum baseline.
+    base = h - 71
+    assert 95 + 52 < base
+    pts = [(x, y) for x in range(12, 948, 20) for y in range(98, 144, 6)]
+    dark = sum(1 for c in con.screen_pixels(pts) if sum(c) < 60)
+    assert dark > len(pts) * 0.6, (dark, len(pts))
+    _quit_juke(con)
+
+
+def test_juke_spectrum_bars_run_grey_to_lime(fresh_console):
     con = fresh_console
     # TEST.WAV is a three-second tone, so the bars stay tall long enough to
     # sample the gradient (the MOD fixture is only a brief blip).
     _open_juke(con, "tests/TEST.WAV")
     _w, h = con.screen_size()
-    base = h - 66
+    base = h - 71
+    maxh = base - 160
     xs = [14 + i * 38 + 17 for i in range(24)]
-    coords = [(x, y) for x in xs for y in range(base - 2, base - 150, -2)]
-    cool = hot = False
+    ylist = list(range(base - 2, base - maxh, -2))
+    coords = [(x, y) for x in xs for y in ylist]
+    n = len(ylist)
+    saw_lime = saw_grey = False
     for _ in range(8):
-        for r, g, b in con.screen_pixels(coords):
-            if b > 180 and g > 170 and r < 90:
-                cool = True  # electric cyan base
-            if r > 180 and b > 180 and g < 120:
-                hot = True  # neon magenta tip
-        if cool and hot:
+        px = con.screen_pixels(coords)
+        for i in range(24):
+            run = []
+            for c in px[i * n:(i + 1) * n]:
+                if sum(c) <= 30:
+                    break
+                run.append(c)
+            if len(run) < 8:
+                continue
+            bottom, top = run[0], run[-1]
+            if top[1] > 170 and top[0] > 90 and top[2] < 150:
+                saw_lime = True
+            if max(bottom) - min(bottom) < 40 and 90 < sum(bottom) < 520:
+                saw_grey = True
+        if saw_lime and saw_grey:
             break
         time.sleep(0.2)
     _quit_juke(con)
-    assert cool, "expected a cool gradient base in the spectrum bars"
-    assert hot, "expected a hot gradient tip in the spectrum bars"
+    assert saw_lime, "expected a lime tip in the spectrum bars"
+    assert saw_grey, "expected a grey base in the spectrum bars"
+
+
+def test_juke_spectrum_has_no_guide_lines(fresh_console):
+    """#914 removed the midfield guide lines; the bar field is plain black."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _w, h = con.screen_size()
+    base = h - 71
+    maxh = base - 160
+    # x=50 is the gap between bands 0 and 1, so no bar/cap lives there.
+    ys = [base - maxh * i // 4 for i in (1, 2, 3)]
+    got = con.screen_pixels([(50, y) for y in ys])
+    assert all(sum(c) < 30 for c in got), got
+    _quit_juke(con)
 
 
 def test_juke_shuffle_toggle_lights_chip(fresh_console):
@@ -248,7 +318,8 @@ def test_help_juke_documents_shuffle_volume_transport(console):
     assert "shuffle" in low
     assert "volume" in low
     assert "prev" in low and "next" in low
-    assert "cyberpunk" in low
+    assert "grey" in low or "gray" in low
+    assert "oscilloscope" in low
     # The old bare < / > transport notation must be gone.
     assert "<  >" not in out
     assert "  <\n" not in out and "  >\n" not in out

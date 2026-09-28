@@ -23,6 +23,8 @@
 #define JUKE_MAX_QUEUE 64
 #define JUKE_PATH_MAX  160
 #define JUKE_LIST_MAX  2048
+#define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
+#define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
 
 typedef struct {
 	int active;
@@ -35,8 +37,13 @@ typedef struct {
 	int vol_saved;
 	unsigned last_ms;
 	float peak[MMB_AUDIO_BANDS];
-	unsigned col_bg, col_panel, col_panel2, col_hot, col_text, col_dim;
-	unsigned col_bar_lo, col_bar_mid, col_bar_hi, col_scan;
+	short scope_hist[JUKE_SCOPE_HIST][JUKE_SCOPE_N];
+	int scope_head;
+	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
+	int logo_w, logo_h;
+	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
+	unsigned col_bar_lo, col_bar_hi, col_scan, col_rule, col_peak;
+	unsigned col_scope_lo, col_vol, col_base;
 } juke_ui;
 
 typedef struct {
@@ -124,18 +131,10 @@ static void juke_set_shuffle(int on)
 }
 
 /* ---- colour helpers --------------------------------------------------- *
- * JUKE owns a fixed dark cyberpunk palette. It deliberately ignores
- * OPTION EDIT THEME so the player looks the same under every system theme;
- * because nothing here touches the TUI palette, leaving JUKE restores the
- * user's theme untouched. */
-
-static unsigned juke_dim(unsigned c)
-{
-	int r = (int)((c >> 16) & 255) / 3;
-	int g = (int)((c >> 8) & 255) / 3;
-	int b = (int)(c & 255) / 3;
-	return (unsigned)((r << 16) | (g << 8) | b);
-}
+ * JUKE owns a fixed cool-grey palette with the graffiti logo's lime accent.
+ * It deliberately ignores OPTION EDIT THEME so the player looks the same
+ * under every system theme; because nothing here touches the TUI palette,
+ * leaving JUKE restores the user's theme untouched. */
 
 /* Component-wise blend of a and b by t in [0,1]. */
 static unsigned juke_mix(unsigned a, unsigned b, float t)
@@ -154,30 +153,48 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Cool base -> electric purple -> hot tip, for the per-bar gradient. */
+/* Muted grey base -> lime tip, for the per-bar gradient. */
 static unsigned juke_grad(float t)
 {
 	if (t < 0.0f)
 		t = 0.0f;
 	if (t > 1.0f)
 		t = 1.0f;
+	return juke_mix(U.col_bar_lo, U.col_bar_hi, t);
+}
+
+/* Muted graffiti accents: magenta -> cyan -> lime, for the VOL fill edge. */
+static unsigned juke_logo_grad(float t)
+{
+	if (t < 0.0f)
+		t = 0.0f;
+	if (t > 1.0f)
+		t = 1.0f;
 	if (t < 0.5f)
-		return juke_mix(U.col_bar_lo, U.col_bar_mid, t * 2.0f);
-	return juke_mix(U.col_bar_mid, U.col_bar_hi, (t - 0.5f) * 2.0f);
+		return juke_mix(0x9736B3u, 0x2DB7B7u, t * 2.0f);
+	return juke_mix(0x2DB7B7u, 0x5BBA78u, (t - 0.5f) * 2.0f);
 }
 
 static void juke_load_colours(void)
 {
-	U.col_bg = 0x05060Fu;      /* near-black indigo   */
-	U.col_panel = 0x0C101Fu;   /* dark panel          */
-	U.col_panel2 = 0x1B1440u;  /* deep purple line    */
-	U.col_hot = 0xFF2BD6u;     /* neon magenta        */
-	U.col_text = 0xE6F5FFu;    /* icy white           */
-	U.col_dim = 0x7C89B8u;     /* muted periwinkle    */
-	U.col_bar_lo = 0x00E0FFu;  /* electric cyan       */
-	U.col_bar_mid = 0x9A4DFFu; /* electric purple     */
-	U.col_bar_hi = 0xFF2BD6u;  /* neon magenta        */
-	U.col_scan = 0x39FFEAu;    /* aqua trace          */
+	/* Mode 12 stores RGB332, so the source values are chosen to quantise
+	 * to cool greys: blue carries only two bits, so a neutral grey is
+	 * expressed as equal red/green with a matching (or slightly higher)
+	 * blue level. */
+	U.col_bg = 0x000000u;       /* black canvas          */
+	U.col_panel = 0x08090Au;    /* scope panel fill      */
+	U.col_panel2 = 0x3A3A55u;   /* cool dark grey border */
+	U.col_track = 0x000000u;    /* empty VOL / chip fill */
+	U.col_text = 0xFFFFFFu;     /* plain white           */
+	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
+	U.col_bar_lo = 0x50505Au;   /* cool grey bar base    */
+	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
+	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
+	U.col_rule = 0x868C92u;     /* muted grey rule       */
+	U.col_peak = 0xC8E664u;     /* light lime cap        */
+	U.col_scope_lo = 0x2A2A55u; /* cool dark ghost       */
+	U.col_vol = 0xB6B6ACu;      /* VOL body grey         */
+	U.col_base = 0x464A50u;     /* spectrum baseline     */
 }
 
 /* ---- paths / queue ---------------------------------------------------- */
@@ -410,23 +427,68 @@ static const char *juke_state_str(void)
 	return "STOP";
 }
 
+/* Decode the graffiti wordmark once per JUKE session (#914). It mirrors the
+ * startup_logo() path: A:/juke-logo.png is a build-time ramdisk asset. */
+static void juke_load_logo(void)
+{
+	const unsigned char *file = 0;
+	unsigned n = 0;
+	uint32_t *pix = 0;
+	int w = 0, h = 0;
+
+	U.logo = 0;
+	U.logo_w = U.logo_h = 0;
+	if (!G.plat)
+		return;
+	if (mmb_vfs_read_ptr("A:/juke-logo.png", &file, &n) != 0 || !file || !n)
+		return;
+	if (mmb_png_decode_rgba(file, n, &pix, &w, &h) != 0 || !pix)
+		return;
+	U.logo = pix;
+	U.logo_w = w;
+	U.logo_h = h;
+}
+
+static void juke_draw_logo(int x0, int y0)
+{
+	int i, j;
+
+	if (!U.logo)
+		return;
+	for (j = 0; j < U.logo_h; j++)
+		for (i = 0; i < U.logo_w; i++)
+		{
+			uint32_t c = U.logo[j * U.logo_w + i];
+			if (!(c >> 24))
+				continue;
+			mmb_gfx_plot(x0 + i, y0 + j, c & 0xFFFFFFu);
+		}
+}
+
 static void juke_paint(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
-	short scope[64];
-	int i, n, x0, x1, bw, gap, base, maxh, mid, fy, vol;
+	short scope[JUKE_SCOPE_N];
+	int i, n, x0, x1, bw, gap, base, maxh, fy, vol;
+	int px, py0, py1, cy, amp, age;
 	const char *title;
 	char buf[128];
 
 	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
-	n = mmb_audio_scope(scope, 64);
+	n = mmb_audio_scope(scope, JUKE_SCOPE_N);
+	if (n > JUKE_SCOPE_N)
+		n = JUKE_SCOPE_N;
+
+	/* AFK-style ghost history: keep a ring of past scope frames so older
+	 * traces fade and cool toward the base grey while the newest stays lime. */
+	U.scope_head = (U.scope_head + 1) % JUKE_SCOPE_HIST;
+	for (i = 0; i < JUKE_SCOPE_N; i++)
+		U.scope_hist[U.scope_head][i] = i < n ? scope[i] : 0;
 
 	mmb_gfx_cls(U.col_bg);
 
-	/* Header. */
-	mmb_gfx_fill_rect(0, 0, w, 46, U.col_panel);
-	mmb_gfx_fill_rect(0, 46, w, 2, U.col_hot);
-	juke_text(14, 8, "JUKE", U.col_hot, 2);
+	/* Header: graffiti wordmark, right-aligned status, muted grey rule. */
+	juke_draw_logo(14, 4);
 	{
 		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
 		sprintf(buf, "%s  %s  %d/%d%s%s", juke_state_str(), fmt,
@@ -435,40 +497,77 @@ static void juke_paint(int w, int h)
 			s_q.truncated ? "  more" : "");
 		juke_text(w - 14 - (int)strlen(buf) * 8, 17, buf, U.col_dim, 1);
 	}
+	mmb_gfx_fill_rect(0, 44, w, 2, U.col_rule);
 
-	/* Now-playing line. */
+	/* Now-playing line, folder, and visualiser labels. */
 	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
 	juke_text(14, 54, title, U.col_text, 1);
 	if (s_q.dir[0])
 		juke_text(14, 72, s_q.dir, U.col_dim, 1);
+	juke_text(14, 86, "WAVE", U.col_dim, 1);
 
-	/* Visualiser. */
+	/* Oscilloscope: its own bordered inset under the title, with a ghost
+	 * history of past frames (oldest first so the newest lands on top). */
+	{
+		int bx = 8, by = 95, bw2 = w - 16, bh2 = 52;
+		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
+		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
+		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
+		mmb_gfx_fill_rect(bx + bw2 - 1, by, 1, bh2, U.col_panel2);
+		mmb_gfx_fill_rect(bx + 1, by + 1, bw2 - 2, bh2 - 2, U.col_panel);
+		px = bx + 2;
+		x1 = bx + bw2 - 3;
+		py0 = by + 3;
+		py1 = by + bh2 - 4;
+		cy = (py0 + py1) / 2;
+		amp = (py1 - py0) / 2;
+		for (age = JUKE_SCOPE_HIST - 1; age >= 0; age--)
+		{
+			int idx = (U.scope_head + JUKE_SCOPE_HIST - age) % JUKE_SCOPE_HIST;
+			float t = (float)(JUKE_SCOPE_HIST - 1 - age) /
+				  (float)(JUKE_SCOPE_HIST - 1);
+			unsigned col = juke_mix(U.col_scope_lo, U.col_scan, t);
+			int lx = -1, ly = 0;
+			for (i = 0; i < JUKE_SCOPE_N; i++)
+			{
+				int xx = px + (int)((long)(x1 - px) * i / (JUKE_SCOPE_N - 1));
+				int yy = cy + (int)((long)U.scope_hist[idx][i] * amp / 32768);
+				if (yy < py0)
+					yy = py0;
+				if (yy > py1)
+					yy = py1;
+				if (lx >= 0)
+					mmb_gfx_line(lx, ly, xx, yy, col, 1);
+				lx = xx;
+				ly = yy;
+			}
+		}
+	}
+
+	/* Spectrum: 24 grey-to-lime bars, no midfield guide lines. */
 	x0 = 14;
 	x1 = w - 14;
-	base = h - 66;
-	maxh = base - 100;
+	base = h - 71;
+	maxh = base - 160;
 	if (maxh < 24)
 		maxh = 24;
-	mid = base - maxh / 2;
 	gap = 3;
 	bw = (x1 - x0) / MMB_AUDIO_BANDS - gap;
 	if (bw < 2)
 		bw = 2;
 
-	for (i = 1; i <= 3; i++)
-		mmb_gfx_fill_rect(x0, base - maxh * i / 4, x1 - x0, 1,
-				  U.col_panel2);
-
 	for (i = 0; i < MMB_AUDIO_BANDS; i++)
 	{
 		int bx = x0 + i * (bw + gap);
 		int bh = (int)(bands[i] * (float)maxh);
-		int y, rh, py;
+		int y, pycap;
 		float p;
 
 		if (bh < 2)
 			bh = 2;
-		/* Vertical per-bar gradient: cool base -> hot tip. */
+		if (bh > maxh)
+			bh = maxh;
+		/* Vertical per-bar gradient: grey base -> lime tip. */
 		for (y = 0; y < bh; y += 4)
 		{
 			float frac = (float)y / (float)bh;
@@ -478,12 +577,6 @@ static void juke_paint(int w, int h)
 			mmb_gfx_fill_rect(bx, base - y - seg_h, bw, seg_h,
 					  juke_grad(frac));
 		}
-
-		/* Reflection. */
-		rh = bh / 4;
-		if (rh > 16)
-			rh = 16;
-		mmb_gfx_fill_rect(bx, base + 3, bw, rh, juke_dim(U.col_bar_lo));
 
 		/* Peak cap falls slowly. */
 		p = U.peak[i];
@@ -496,57 +589,45 @@ static void juke_paint(int w, int h)
 				p = 0.0f;
 		}
 		U.peak[i] = p;
-		py = base - (int)(p * (float)maxh) - 3;
-		if (py < base - maxh - 3)
-			py = base - maxh - 3;
-		mmb_gfx_fill_rect(bx, py, bw, 2, U.col_hot);
+		pycap = base - (int)(p * (float)maxh) - 2;
+		if (pycap < base - maxh - 2)
+			pycap = base - maxh - 2;
+		mmb_gfx_fill_rect(bx, pycap, bw, 1, U.col_peak);
 	}
 
-	mmb_gfx_fill_rect(x0, base, x1 - x0, 2, U.col_panel2);
-
-	/* Oscilloscope trace. */
-	if (n > 1)
-	{
-		int px = -1, py = 0;
-		for (i = 0; i < n; i++)
-		{
-			int xx = x0 + (int)((long)(x1 - x0) * i / (n - 1));
-			int yy = mid + (int)((long)scope[i] * (maxh / 2) / 32768);
-			if (yy < base - maxh)
-				yy = base - maxh;
-			if (yy > base)
-				yy = base;
-			if (px >= 0)
-				mmb_gfx_line(px, py, xx, yy, U.col_scan, 1);
-			px = xx;
-			py = yy;
-		}
-	}
+	mmb_gfx_fill_rect(x0, base, x1 - x0, 1, U.col_base);
 
 	/* Footer: transport legend, then shuffle / volume indicators. */
 	fy = h - 48;
-	mmb_gfx_fill_rect(0, fy, w, 48, U.col_panel);
-	mmb_gfx_fill_rect(0, fy, w, 1, U.col_panel2);
 	juke_text(14, fy + 6,
 		  "SPACE play/pause   P prev   N next   R shuf   -/+ vol   M mute   S stop   ESC quit",
 		  U.col_dim, 1);
 
 	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
 	mmb_gfx_fill_rect(14, fy + 27, 14, 14,
-			  s_q.shuffle ? U.col_hot : U.col_panel2);
-	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_hot : U.col_dim, 1);
+			  s_q.shuffle ? U.col_peak : U.col_track);
+	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_text : U.col_dim, 1);
 
-	/* Volume level bar. */
+	/* Volume level bar: grey body with a muted logo-accent top edge. */
 	vol = g_audio.vol_l;
 	if (vol < 0)
 		vol = 0;
 	if (vol > 100)
 		vol = 100;
 	juke_text(110, fy + 28, "VOL", U.col_dim, 1);
-	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_panel2);
+	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_track);
 	if (vol > 0)
-		mmb_gfx_fill_rect(146, fy + 27, vol * 220 / 100, 14,
-				  juke_grad((float)vol / 100.0f));
+	{
+		int vw = vol * 220 / 100;
+		int vx;
+		mmb_gfx_fill_rect(146, fy + 27, vw, 14, U.col_vol);
+		for (vx = 0; vx < vw; vx += 2)
+		{
+			int seg = vw - vx < 2 ? vw - vx : 2;
+			mmb_gfx_fill_rect(146 + vx, fy + 27, seg, 2,
+					  juke_logo_grad((float)vx / 220.0f));
+		}
+	}
 	sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
 	juke_text(380, fy + 28, buf, U.col_text, 1);
 }
@@ -576,6 +657,12 @@ static void juke_leave(void)
 	if (!U.active)
 		return;
 	U.active = 0;
+	if (U.logo)
+	{
+		if (G.plat && G.plat->free)
+			G.plat->free(U.logo);
+		U.logo = 0;
+	}
 	if (U.saved_mode != G.gfx.mode || U.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(U.saved_mode, U.saved_bits);
 	G.gfx.font_scale = U.saved_font_scale;
@@ -648,6 +735,7 @@ void mmb_cmd_juke(void)
 	U.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	U.front = JUKE_PAGE_A;
 	juke_load_colours();
+	juke_load_logo();
 	U.active = 1;
 	U.last_ms = mmb_now_ms();
 	juke_frame();
