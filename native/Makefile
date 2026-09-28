@@ -195,7 +195,12 @@ $(HELP_C): $(REPO)/scripts/gen_help.py $(wildcard $(REPO)/docs/help/*.txt)
 $(RAMDISK_STAMP): FORCE
 	python3 $(REPO)/scripts/gen_ramdisk.py --stamp-out $@
 
-$(RAMDISK_C): $(REPO)/scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
+# #882: ramdisk_data.c is shared with console/, which a release build renders
+# with exclude=tests. Native keeps its own stamp, so the shared file can look
+# up to date here even though it holds the console mode. FORCE the generator
+# every time; it rewrites only when the rendered text (including the mode)
+# differs, so a native build always embeds the whole tree.
+$(RAMDISK_C): FORCE $(REPO)/scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(REPO)/scripts/gen_ramdisk.py --out $@
 
 $(VERSION_H): FORCE
