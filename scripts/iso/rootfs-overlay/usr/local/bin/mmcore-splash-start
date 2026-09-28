@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep the mmcore logo on the display until mmcore paints its first frame
+# (#902). The kernel's framebuffer console erases GRUB's artwork when it binds
+# to tty1, so mmcore-splash repaints the same image every two seconds; a driver
+# takeover or getty start can then only leave a sub-second black window.
+# root/.profile stops the helper immediately before launching mmcore.
+[ -x /usr/local/bin/mmcore-splash ] || exit 0
+/usr/local/bin/mmcore-splash -i 2 >/dev/null 2>&1 &

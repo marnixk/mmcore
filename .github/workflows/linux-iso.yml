@@ -90,6 +90,10 @@ jobs:
             echo "cmp -s /tmp/p1 /tmp/p2 && [ -s /tmp/p1 ] && printf 'MMCORE_%s\n' STABLE_OK || printf 'MMCORE_%s\n' STABLE_MISSING"
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
             echo "ip -4 addr show | grep -q 'inet 10.0.2' && printf 'MMCORE_%s\n' NET_OK || printf 'MMCORE_%s\n' NET_MISSING"
+            # #896: prove the live rootfs CA bundle lets busybox wget verify the
+            # GitHub certificate (mmcore-update depends on it). Retries absorb a
+            # transient network blip; a cert failure repeats on every attempt.
+            echo 'n=0; while [ "$n" -lt 3 ]; do wget -qO- -T 30 https://api.github.com/repos/marnixk/mmcore/releases/latest 2>/tmp/tls.err | grep -q tag_name && break; n=$((n+1)); sleep 4; done; if [ "$n" -lt 3 ]; then printf "MMCORE_%s\n" TLS_OK; else printf "MMCORE_%s\n" TLS_FAIL; sed -n "1,3p" /tmp/tls.err; fi'
             echo 'sleep 5; poweroff'
           } >&3 || true
 
@@ -101,6 +105,7 @@ jobs:
           grep -q "MMCORE_STABLE_OK" boot.log
           grep -q "MMCORE_SDL_OK" boot.log
           grep -q "MMCORE_NET_OK" boot.log
+          grep -q "MMCORE_TLS_OK" boot.log
 
       - name: Compress the ISO
         run: |
