@@ -72,6 +72,7 @@ struct replay {
 	int sample_rate, interpolation, global_vol;
 	int seq_pos, break_pos, row, next_row, tick;
 	int speed, tempo, pl_count, pl_chan;
+	int finished; /* Set once the song has run off the sequence and wrapped. */
 	int *ramp_buf;
 	char **play_count;
 	struct channel *channels;
@@ -1678,11 +1679,13 @@ static void replay_row( struct replay *replay ) {
 	if( replay->break_pos >= 0 ) {
 		if( replay->break_pos >= module->sequence_len ) {
 			replay->break_pos = replay->next_row = 0;
+			replay->finished = 1;
 		}
 		while( module->sequence[ replay->break_pos ] >= module->num_patterns ) {
 			replay->break_pos++;
 			if( replay->break_pos >= module->sequence_len ) {
 				replay->break_pos = replay->next_row = 0;
+				replay->finished = 1;
 			}
 		}
 		replay->seq_pos = replay->break_pos;
@@ -1827,6 +1830,7 @@ void replay_set_sequence_pos( struct replay *replay, int pos ) {
 	replay->break_pos = pos;
 	replay->next_row = 0;
 	replay->tick = 1;
+	replay->finished = 0;
 	replay->global_vol = module->default_gvol;
 	replay->speed = module->default_speed > 0 ? module->default_speed : 6;
 	replay->tempo = module->default_tempo > 0 ? module->default_tempo : 125;
@@ -1967,4 +1971,9 @@ int replay_get_sequence_pos( struct replay *replay ) {
 /* Returns the currently playing row in the pattern. */
 int replay_get_row( struct replay *replay ) {
 	return replay->row;
+}
+
+/* Returns 1 once the song has played through and wrapped around. */
+int replay_song_finished( struct replay *replay ) {
+	return replay->finished;
 }
