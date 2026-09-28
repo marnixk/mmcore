@@ -12,7 +12,7 @@ universal macOS app.
 
 ## Boot & sessions
 - [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - <version> - 2026 (c) Marnix Kok`, a blank line, then `MMBasic` with the `Copyright 2011-2026 Geoff Graham` and `Copyright 2016-2026 Peter Mather` notices, a blank line, and the `Type HELP ME for a short introduction.` prompt. (#536, #730)
-- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. `Ctrl+Alt+F1`…`F4` no longer switches. (#510, #603)
+- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. On the bare-metal Pi `Ctrl+Alt+F1`…`F12` do not switch (there is no Linux VT); on the framebuffer ISO they switch the Linux VT (tty1 = mmcore, tty2 = shell). (#510, #603, #903)
 
 ## Clock / network
 - [ ] `OPTION NTP ON`, `OPTION NTP SERVER "host[:port]"`, `NTP` one-shot, `OPTION TIMEZONE "Europe/Amsterdam"` (also `UTC+2`, `UTC-5:30`). Confirm `DATE$`/`TIME$`/`DATETIME$` shift and FAT timestamps use local time. (#524)
@@ -55,7 +55,7 @@ universal macOS app.
 - [ ] With no usable video driver the build exits non-zero with a clear stderr message rather than a blank frame. (#829)
 
 ## Live USB / ISO (x86_64)
-- [ ] Boot `mmcore-fb-x86_64.iso` (USB written with `install-usb.sh`, or QEMU): the display reaches the mmcore prompt fullscreen; `Alt+F2` gives a shell; serial ttyS0 (115200) gives a root shell. (#833, #834)
+- [ ] Boot `mmcore-fb-x86_64.iso` (USB written with `install-usb.sh`, or QEMU): the display reaches the mmcore prompt fullscreen; `Ctrl+Alt+F2` gives a shell on tty2 and `Ctrl+Alt+F1` returns to mmcore with the screen intact; serial ttyS0 (115200) gives a root shell. Keys typed at the mmcore prompt do not leak into tty1, and `Ctrl+C` still means BREAK, not SIGINT. (#833, #834, #903)
 - [ ] `sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX`, boot, create a `.BAS` file on `C:`, reboot: the file is still there. (#835)
 - [ ] Ethernet: plug in and confirm `IPCONFIG` shows an address. Wi-Fi: `OPTION WIFI COUNTRY`, `OPTION WIFI "ssid","psk"`, then `IPCONFIG`. (#836)
 

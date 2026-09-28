@@ -20,7 +20,7 @@ die() {
 
 log "Installing mmcore build dependencies"
 apk add --no-cache --quiet build-base pkgconf sdl2-dev python3 alsa-lib bash \
-	>/dev/null
+	linux-headers >/dev/null
 
 # The native build only needs these trees (no Circle/picomite submodules).
 rm -rf "${BUILD_DIR}"

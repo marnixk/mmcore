@@ -44,9 +44,10 @@ sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
 
 `install-usb.sh` also takes the compressed `.iso.zst` directly.
 
-Alt+F2 gives a root shell and the serial console (ttyS0, 115200) is available
-for headless use. A standalone KMS/DRM binary ships as
-`mmcore-fb-linux-x86_64.tar.gz` for an existing Linux install. Full notes:
+Ctrl+Alt+F2 gives a root shell on tty2 (Ctrl+Alt+F1 returns to mmcore) and the
+serial console (ttyS0, 115200) is available for headless use. A standalone
+KMS/DRM binary ships as `mmcore-fb-linux-x86_64.tar.gz` for an existing Linux
+install. Full notes:
 [`docs/framebuffer-and-iso.md`](docs/framebuffer-and-iso.md).
 
 DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
