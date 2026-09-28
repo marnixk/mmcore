@@ -476,7 +476,9 @@ class MMBasicConsole:
             time.sleep(0.4)
         raise HarnessError(last_err)
 
-    def capture_png(self, dest_png: str | None = None) -> str:
+    def capture_png(
+        self, dest_png: str | None = None, strict: bool = False
+    ) -> str:
         """Capture the framebuffer to a .png file and return its path.
 
         Callers often pass a fixed artifact path (for example under
@@ -484,6 +486,12 @@ class MMBasicConsole:
         the editor host.  Fall back to a distinct temp file next to the
         screendump so the capture still succeeds without ever reusing a path
         a later capture (or golden compare) would overwrite (#894).
+
+        With ``strict=True`` the requested destination must be honoured: if
+        ImageMagick cannot write ``dest_png``, raise :class:`HarnessError`
+        instead of silently substituting a temp path.  Use this for golden
+        regeneration and other callers that must not mistake a fallback for a
+        successful write (#906).
         """
         ppm = self.screendump()
         png = dest_png or self._unique_capture_path(".png")
@@ -491,6 +499,11 @@ class MMBasicConsole:
             ["convert", ppm, png], check=False, capture_output=True
         )
         if result.returncode != 0 and dest_png:
+            if strict:
+                detail = result.stderr.decode(errors="replace").strip()
+                raise HarnessError(
+                    f"capture_png could not write {dest_png!r}: {detail}"
+                )
             png = self._unique_capture_path(".png")
             subprocess.run(["convert", ppm, png], check=True, capture_output=True)
         elif result.returncode != 0:
