@@ -8,7 +8,9 @@ A real VT switch cannot run in CI (it needs root on a bare console), so the
 host harness composites ``native/sdl_input.c`` twice: once with
 ``MMB_SDL_FRAMEBUFFER`` (the chord is consumed, no escape leaks to the app)
 and once without (the desktop F-key mapping is unchanged). ``MMB_SDL_NO_VT``
-keeps any real ``/dev/tty0`` ioctl out of the test process.
+keeps any real ``/dev/tty0`` ioctl out of the test process. #922 additionally
+drives the ``s_vt_left`` input gate through an ``MMB_SDL_TEST`` hook, since
+SDL's evdev driver keeps enqueuing keys while another VT is foreground.
 """
 
 import os
@@ -105,6 +107,39 @@ static void push_key(SDL_Keycode sym, Uint16 mod)
 	SDL_PushEvent(&e);
 }
 
+#ifdef MMB_SDL_FRAMEBUFFER
+static void push_keyup(SDL_Keycode sym, Uint16 mod)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_KEYUP;
+	e.key.keysym.sym = sym;
+	e.key.keysym.mod = mod;
+	SDL_PushEvent(&e);
+}
+
+static void push_text(const char *t)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_TEXTINPUT;
+	snprintf(e.text.text, sizeof e.text.text, "%s", t);
+	SDL_PushEvent(&e);
+}
+
+static void push_mouse_button(Uint8 button, Uint32 type)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = type;
+	e.button.button = button;
+	SDL_PushEvent(&e);
+}
+#endif
+
 static void reset(void)
 {
 	g_inkey_n = 0;
@@ -113,6 +148,9 @@ static void reset(void)
 	g_console_switches = 0;
 	g_console_last = -1;
 	sdl_input_init();
+#ifdef MMB_SDL_TEST
+	sdl_input_test_set_vt_left(0);
+#endif
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
 }
@@ -173,6 +211,40 @@ int main(void)
 	sdl_input_pump();
 	CHECK(g_inkey_n == 5 && memcmp(g_inkey, "\x1b[12~", 5) == 0,
 	      "fb bare F2 -> CSI 12~");
+
+	/* #922: while another VT is foreground, SDL keeps enqueuing input.
+	 * It must not reach mmcore, and a modifier latched by the switch
+	 * chord must not stick across the switch. MMB_SDL_NO_VT keeps this
+	 * off real /dev/tty0, so drive the latch through the test hook. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LALT, KMOD_ALT);
+	sdl_input_pump();
+	CHECK(sdl_input_alt_held() == 1, "#922 Alt latched before switch");
+	sdl_input_test_set_vt_left(1);
+	push_key(SDLK_LEFT, KMOD_ALT); /* would deliver CSI D if not gated */
+	push_keyup(SDLK_LEFT, 0);
+	push_text("x");
+	push_mouse_button(SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN);
+	sdl_input_pump();
+	CHECK(g_front_feeds == 0 && g_inkey_n == 0,
+	      "#922 key/text input dropped while another VT is foreground");
+	CHECK(sdl_input_alt_held() == 0,
+	      "#922 modifier cleared while another VT is foreground");
+	{
+		int present, mx, my, mb, mw;
+
+		sdl_input_mouse_state(&present, &mx, &my, &mb, &mw);
+		CHECK(mb == 0, "#922 mouse buttons dropped while VT left");
+	}
+
+	/* Once mmcore's VT returns, delivery resumes unchanged. */
+	sdl_input_test_set_vt_left(0);
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	CHECK(g_front_feeds == 1 && g_feed_n == 3 &&
+	      memcmp(g_feed, "\x1b[D", 3) == 0,
+	      "#922 input resumes once mmcore's VT returns");
 #else
 	/* Desktop: Ctrl+Alt+F2 keeps the old F2 mapping and never switches a
 	 * VT or an mmcore console. */
@@ -252,8 +324,18 @@ def _run(exe):
 
 
 def test_framebuffer_build_consumes_vt_chord(tmp_path):
-    """Ctrl+Alt+F1..F12 are handled by the framebuffer build, not delivered."""
-    _run(_build_harness(tmp_path, "sdl_vt_fb", ["-DMMB_SDL_FRAMEBUFFER=1"]))
+    """Ctrl+Alt+F1..F12 are handled by the framebuffer build, not delivered.
+
+    Also covers #922: while another VT is foreground, key/text/mouse input is
+    gated on ``s_vt_left`` (driven via the MMB_SDL_TEST hook) and a modifier
+    latched by the switch chord is cleared."""
+    _run(
+        _build_harness(
+            tmp_path,
+            "sdl_vt_fb",
+            ["-DMMB_SDL_FRAMEBUFFER=1", "-DMMB_SDL_TEST=1"],
+        )
+    )
 
 
 def test_desktop_build_leaves_the_chord_alone(tmp_path):
