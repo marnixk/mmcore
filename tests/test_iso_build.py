@@ -244,7 +244,10 @@ def test_iso_workflow_builds_boot_smokes_and_attaches():
     wf = open(WORKFLOW, encoding="utf-8").read()
     assert "release:" in wf
     assert "types: [published]" in wf
-    assert "ubuntu-22.04" in wf
+    # Built on the self-hosted mac mini runner, not GitHub-hosted ubuntu.
+    assert "self-hosted" in wf
+    assert "mmcore-iso" in wf
+    assert "macOS" in wf
     assert "qemu-system-x86_64" in wf
     assert "MMCORE_ISO_BOOT_OK" in wf
     assert ASSET in wf
@@ -306,6 +309,25 @@ def test_boot_smoke_waits_for_a_stable_mmcore_pid():
     line = stable_lines[0]
     assert "while" in line, line
     assert "pgrep -x mmcore" in line, line
+
+
+def test_iso_workflow_containerizes_the_linux_only_usb_check():
+    """The mac mini runner is macOS, and install-usb.sh is Linux-only
+    (losetup/sgdisk/mkfs). The verification must run in a privileged Linux
+    container rather than on the host."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "install-usb.sh" in wf
+    assert "--privileged" in wf
+    assert "losetup" in wf
+    assert "alpine:3.20" in wf
+
+
+def test_iso_workflow_starts_docker_desktop_on_the_mac_runner():
+    """Docker Desktop may be stopped on the mac runner; the job must start it
+    before the container build, or the build step fails."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "open -a Docker" in wf
+    assert "docker info" in wf
 
 
 def test_profile_documents_ctrl_alt_vt_switching():

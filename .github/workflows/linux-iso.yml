@@ -4,6 +4,15 @@ name: Linux ISO
 # and attaches the compressed image (plus install-usb.sh) to the release. The
 # raw .iso is never published as an asset: users decompress before writing.
 #
+# Runs on the self-hosted mac mini runner (labels: self-hosted, macOS, ARM64,
+# mmcore-iso) instead of a GitHub-hosted ubuntu runner:
+#   - the ISO itself is built in the linux/amd64 Alpine container via Docker
+#     Desktop (scripts/build-iso.sh), so the host only needs Docker;
+#   - the boot smoke runs the host's qemu-system-x86_64 under TCG;
+#   - the Linux-only install-usb.sh verification runs inside a privileged
+#     Linux container (losetup/sgdisk/mkfs are not available on macOS).
+# The runner must have Docker Desktop, qemu (brew install qemu), zstd, and gh.
+#
 #  - on a version release: attached to that GitHub release;
 #  - on push to ports/linux / iso: attached to the rolling 'linux-iso'
 #    pre-release for quick testing.
@@ -33,12 +42,29 @@ concurrency:
 
 jobs:
   iso:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    runs-on: [self-hosted, macOS, mmcore-iso]
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Homebrew is not on the runner's default PATH; add it for docker, qemu,
+      # zstd, and gh.
+      - name: Put Homebrew on PATH
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Ensure Docker is running
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "Docker is not up; starting Docker Desktop"
+            open -a Docker || true
+            for _ in $(seq 1 60); do
+              docker info >/dev/null 2>&1 && break
+              sleep 5
+            done
+          fi
+          docker info >/dev/null 2>&1 || { echo "docker is not available"; exit 1; }
 
       - name: Build the ISO
         env:
@@ -53,8 +79,14 @@ jobs:
         # runner headless with -display none, and drive the guest over the
         # serial console.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          # GitHub-hosted runners need the distro qemu; the mac mini runner has
+          # it from Homebrew (brew install qemu).
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends qemu-system-x86
+          fi
+          command -v qemu-system-x86_64 >/dev/null 2>&1 \
+            || { echo "qemu-system-x86_64 is required (brew install qemu)"; exit 1; }
           rm -f boot.log serial.in
           mkfifo serial.in
           # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
@@ -119,27 +151,34 @@ jobs:
 
       - name: Compress the ISO
         run: |
-          sudo apt-get install -y --no-install-recommends zstd
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends zstd
+          fi
+          command -v zstd >/dev/null 2>&1 || { echo "zstd is required"; exit 1; }
           zstd -q -19 -T0 -f dist/mmcore-fb-x86_64.iso \
             -o dist/mmcore-fb-x86_64.iso.zst
 
+      # install-usb.sh is Linux-only (uname check, losetup, sgdisk, mkfs.ext4),
+      # so verify it inside a privileged linux/amd64 container on the mac runner.
       - name: Verify install-usb.sh writes the compressed ISO and adds the persistence partition
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gdisk e2fsprogs util-linux zstd
-          truncate -s 2G /tmp/usb.img
-          dev="$(sudo losetup --find --show --partscan /tmp/usb.img)"
-          echo "loop device: ${dev}"
-          sudo scripts/install-usb.sh --iso dist/mmcore-fb-x86_64.iso.zst --yes "${dev}"
-          sudo partprobe "${dev}" || true
-          sudo udevadm settle || true
-          sudo partx -s "${dev}" || true
-          label_dev="$(sudo blkid -L MMCORE)"
-          echo "MMCORE is on ${label_dev}"
-          [ -n "${label_dev}" ]
-          case "${label_dev}" in "${dev}"*) ;; *) echo "unexpected device"; exit 1 ;; esac
-          sudo losetup -d "${dev}" || true
+          docker run --rm --privileged \
+            -v "${PWD}:/repo" -w /repo \
+            alpine:3.20 sh -eu -c '
+              apk add --no-cache --quiet \
+                gdisk e2fsprogs util-linux util-linux-misc parted zstd bash >/dev/null
+              truncate -s 2G /tmp/usb.img
+              dev="$(losetup --find --show --partscan /tmp/usb.img)"
+              echo "loop device: ${dev}"
+              bash scripts/install-usb.sh --iso dist/mmcore-fb-x86_64.iso.zst --yes "${dev}"
+              partprobe "${dev}" || true
+              partx -s "${dev}" || true
+              label_dev="$(blkid -L MMCORE)"
+              echo "MMCORE is on ${label_dev}"
+              [ -n "${label_dev}" ]
+              case "${label_dev}" in "${dev}"*) ;; *) echo "unexpected device"; exit 1 ;; esac
+              losetup -d "${dev}" || true
+            '
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -154,6 +193,7 @@ jobs:
           # Release-event tag, or the workflow_dispatch release_tag input.
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
+          command -v gh >/dev/null 2>&1 || { echo "gh is required (brew install gh)"; exit 1; }
           # Publish only the compressed image; drop any stale raw .iso asset.
           if [ -n "${RELEASE_TAG}" ]; then
             gh release delete-asset "${RELEASE_TAG}" \
