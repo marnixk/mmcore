@@ -199,6 +199,55 @@ def test_prompt_block_cursor_visible(kernel_image):
         con.stop()
 
 
+def test_capture_png_fallback_is_not_shared(tmp_path, monkeypatch):
+    """Regression for #894: a capture whose explicit destination cannot be
+    written must fall back to a distinct path, not the shared ``fb.png``.
+    Otherwise a later capture overwrites the golden and ``image_diff_ratio``
+    diffs an image against itself (a silent false green)."""
+    kernel = tmp_path / "kernel8.img"
+    kernel.write_bytes(b"x")
+    con = MMBasicConsole(str(kernel))
+    try:
+        counter = {"n": 0}
+
+        def fake_monitor_cmd(cmd, *args, **kwargs):
+            path = cmd.split(" ", 1)[1]
+            counter["n"] += 1
+            shade = (counter["n"] * 97) % 256
+            subprocess.run(
+                ["convert", "-size", "1x1", f"xc:rgb({shade},0,0)", path],
+                check=True,
+                capture_output=True,
+            )
+
+        monkeypatch.setattr(con, "drain", lambda *a, **k: b"")
+        monkeypatch.setattr(con, "_monitor_drain", lambda *a, **k: b"")
+        monkeypatch.setattr(con, "_monitor_cmd", fake_monitor_cmd)
+
+        # A destination under a missing directory makes ImageMagick fail,
+        # which exercises the fallback branch.
+        missing = str(tmp_path / "missing" / "golden.png")
+        golden = con.capture_png(missing)
+        assert os.path.isfile(golden)
+
+        # Advance the frame, then compare. The compare's own capture must not
+        # reuse the golden path, or the ratio would be 0.0.
+        con.capture_png()
+        assert con.image_diff_ratio(golden) > 0
+
+        # Default captures must be distinct per call too.
+        first = con.capture_png()
+        second = con.capture_png()
+        assert first != second
+        with open(first, "rb") as fh:
+            first_bytes = fh.read()
+        with open(second, "rb") as fh:
+            second_bytes = fh.read()
+        assert first_bytes != second_bytes
+    finally:
+        con.stop()
+
+
 def test_help_hides_prompt_at_top_left(kernel_image):
     """Starting HELP must not leave the REPL prompt on the title bar."""
     con = MMBasicConsole(kernel_image)
