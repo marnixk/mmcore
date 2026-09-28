@@ -411,6 +411,12 @@ static void tdf_cmd_print(void)
 	const mmb_tdf *f;
 	tdf_render r;
 	int x, y, slot = -1, i, cx, tlen;
+	/* TDF PRINT draws with per-cell colours and must not leave the active
+	 * pen/paper changed: a bare CLS clears to G.gfx.bg, so adopting the
+	 * last colour cell as the background makes CLS (and the PAGE COPY that
+	 * follows it) flash the whole frame in the font's cell colour. Keep the
+	 * caller's colours for the duration of the command. */
+	unsigned saved_fg = G.gfx.fg, saved_bg = G.gfx.bg;
 
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
@@ -519,11 +525,11 @@ static void tdf_cmd_print(void)
 		tdf_putc(&r, 'H');
 		tdf_flush(&r);
 	}
-	if (r.colour && r.have_colour)
-	{
-		G.gfx.fg = mmb_ibm_colour(r.last_fg & 15);
-		G.gfx.bg = mmb_ibm_colour(r.last_bg & 7);
-	}
+	/* Restore the pen/paper the caller had before TDF PRINT (see above). The
+	 * console path already leaves the terminal SGR where the last colour
+	 * cell left it via the emitted ANSI, so this does not affect it. */
+	G.gfx.fg = saved_fg;
+	G.gfx.bg = saved_bg;
 	mmb_print_cursor_goto(cx * mmb_print_font_w(), y * mmb_print_font_h());
 	G.plat->free(text);
 }
