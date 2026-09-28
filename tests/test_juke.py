@@ -84,6 +84,16 @@ def test_juke_plays_mp3(fresh_console):
     con.send_line("PLAY STOP")
 
 
+def test_juke_plays_s3m(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.S3M")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+    assert con.send_line("PRINT PLAYING()") == "0"
+
+
 def test_juke_folder_queue_starts_a_track(fresh_console):
     con = fresh_console
     _open_juke(con, "tests")

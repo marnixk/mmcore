@@ -87,6 +87,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/libc_shims.o \
 	  $(MMB)/third_party/picojpeg.o \
 	  $(MMB)/third_party/hxcmod.o \
+	  $(MMB)/third_party/ibxm.o \
 	  $(MMB)/third_party/upng.o \
 	  $(MMB)/third_party/cJSON.o
 

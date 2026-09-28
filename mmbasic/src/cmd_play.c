@@ -16,12 +16,23 @@
 #define JAR_XM_IMPLEMENTATION
 #include "jar_xm.h"
 
+/* S3M replay lives in a separate engine (ibxm). MOD and XM keep hxcmod and
+ * jar_xm; ibxm is only reached for .S3M modules. */
+#include "ibxm.h"
+
 #define MIX_RATE     44100
 #define MIX_CHUNK    512
 #define MIX_PREROLL  1024
 /* Keep ~160ms in the DMA queue (two HDMI IEC958 periods are ~87ms). */
 #define MIX_TARGET   ((MIX_RATE * 160) / 1000)
 #define MIX_FILL_MAX 24
+
+/* ibxm emits one tracker tick per replay_get_audio() call, so a whole tick has
+ * to be held between mixer chunks. Tempo is >= 32, which makes the longest tick
+ * (sample_rate * 5) / (32 * 2) frames; 65 stereo frames of scratch and a *4
+ * factor match ibxm's calculate_mix_buf_len() at that tempo. */
+#define S3M_MIX_INTS ((((MIX_RATE * 5) / 64) + 65) * 4)
+static int s_s3m_mix[S3M_MIX_INTS];
 
 /* One audio engine, one status: shared by every virtual console so playback
  * (and the mixer pump) survives a console switch. See mmb_priv.h. */
@@ -32,6 +43,10 @@ static int s_mp3_on;
 static modcontext s_mod;
 static int s_mod_on;
 static jar_xm_context_t *s_xm;
+static struct module *s_s3m_mod;
+static struct replay *s_s3m;
+static int s_s3m_n; /* stereo frames available in s_s3m_mix */
+static int s_s3m_i; /* frames already consumed from s_s3m_mix */
 static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
 static unsigned char *s_wav;
@@ -212,6 +227,17 @@ static void play_teardown(void)
 		jar_xm_free_context(s_xm);
 		s_xm = 0;
 	}
+	if (s_s3m)
+	{
+		dispose_replay(s_s3m);
+		s_s3m = 0;
+	}
+	if (s_s3m_mod)
+	{
+		dispose_module(s_s3m_mod);
+		s_s3m_mod = 0;
+	}
+	s_s3m_n = s_s3m_i = 0;
 	if (s_moddata)
 	{
 		G.plat->free(s_moddata);
@@ -342,6 +368,38 @@ int mmb_play_xm(const char *path)
 		return -1;
 	jar_xm_set_max_loop_count(s_xm, 0);
 	play_begin(3, path);
+	return 0;
+}
+
+int mmb_play_s3m(const char *path)
+{
+	unsigned n = 0;
+	unsigned char *data = 0;
+	struct data d;
+	char msg[64];
+
+	mmb_play_stop();
+	if (load_bytes(path, &data, &n) != 0)
+		return -1;
+	d.buffer = (char *)data;
+	d.length = (int)n;
+	s_s3m_mod = module_load(&d, msg);
+	G.plat->free(data);
+	if (!s_s3m_mod)
+		return -1;
+	/* ibxm sizes its mix scratch for tempo >= 32; a malformed header can
+	 * carry a slower default, so fold that back to the usual 125 BPM. */
+	if (s_s3m_mod->default_tempo != 0 && s_s3m_mod->default_tempo < 32)
+		s_s3m_mod->default_tempo = 125;
+	s_s3m = new_replay(s_s3m_mod, MIX_RATE, 1);
+	if (!s_s3m)
+	{
+		dispose_module(s_s3m_mod);
+		s_s3m_mod = 0;
+		return -1;
+	}
+	s_s3m_n = s_s3m_i = 0;
+	play_begin(6, path);
 	return 0;
 }
 
@@ -491,6 +549,37 @@ static int mix_xm(unsigned nframes)
 	return 1;
 }
 
+static int mix_s3m(unsigned nframes)
+{
+	short pcm[MIX_CHUNK * 2];
+	unsigned i, take;
+
+	if (s_s3m_i >= s_s3m_n)
+	{
+		s_s3m_n = replay_get_audio(s_s3m, s_s3m_mix, 0);
+		s_s3m_i = 0;
+		if (s_s3m_n <= 0)
+			return 0;
+	}
+	take = (unsigned)(s_s3m_n - s_s3m_i);
+	if (take > nframes)
+		take = nframes;
+	for (i = 0; i < take; i++)
+	{
+		int l = s_s3m_mix[(s_s3m_i + (int)i) * 2];
+		int r = s_s3m_mix[(s_s3m_i + (int)i) * 2 + 1];
+		if (l > 32767) l = 32767;
+		if (l < -32768) l = -32768;
+		if (r > 32767) r = 32767;
+		if (r < -32768) r = -32768;
+		pcm[i * 2] = (short)l;
+		pcm[i * 2 + 1] = (short)r;
+	}
+	s_s3m_i += (int)take;
+	emit_pcm(pcm, take);
+	return 1;
+}
+
 static int mix_tone(unsigned nframes)
 {
 	short pcm[MIX_CHUNK * 2];
@@ -593,6 +682,8 @@ void mmb_play_mix(void)
 			keep = mix_mod(n);
 		else if (g_audio.playing == 3 && s_xm)
 			keep = mix_xm(n);
+		else if (g_audio.playing == 6 && s_s3m)
+			keep = mix_s3m(n);
 		else if (g_audio.playing == 4)
 			keep = mix_tone(n);
 		else if (g_audio.playing == 5)
@@ -773,6 +864,15 @@ void mmb_cmd_play(void)
 			mmb_syntax();
 		if (mmb_play_xm(v.s) != 0)
 			mmb_error("?XM");
+		return;
+	}
+	if (mmb_match("S3M") || mmb_match("S3MFILE"))
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		if (mmb_play_s3m(v.s) != 0)
+			mmb_error("?S3M");
 		return;
 	}
 	if (mmb_match("WAV") || mmb_match("EFFECT") || mmb_match("SOUND"))

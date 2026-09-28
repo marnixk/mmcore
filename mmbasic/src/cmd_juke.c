@@ -8,8 +8,8 @@
  *   JUKE           queue the current directory
  *
  * Player only: no pattern or sample editing. Supported formats are the ones
- * the audio engine already decodes: MP3, MOD, XM and WAV. The mixer runs from
- * mmb_poll, so leaving JUKE for another screen keeps the music going; the
+ * the audio engine already decodes: MP3, MOD, XM, S3M and WAV. The mixer runs
+ * from mmb_poll, so leaving JUKE for another screen keeps the music going; the
  * queue also keeps advancing while JUKE is in the background.
  *
  * UI state is per virtual console; the playback queue is global because there
@@ -202,7 +202,8 @@ static int juke_ext_ok(const char *name)
 {
 	const char *e = juke_ext(name);
 	return mmb_keyword_eq(e, "MP3") || mmb_keyword_eq(e, "MOD") ||
-	       mmb_keyword_eq(e, "XM") || mmb_keyword_eq(e, "WAV");
+	       mmb_keyword_eq(e, "XM") || mmb_keyword_eq(e, "S3M") ||
+	       mmb_keyword_eq(e, "WAV");
 }
 
 static const char *juke_basename(const char *p)
@@ -294,6 +295,8 @@ static int juke_play_path(const char *p)
 		return mmb_play_mod(p);
 	if (mmb_keyword_eq(juke_ext(p), "XM"))
 		return mmb_play_xm(p);
+	if (mmb_keyword_eq(juke_ext(p), "S3M"))
+		return mmb_play_s3m(p);
 	if (mmb_keyword_eq(juke_ext(p), "WAV"))
 		return mmb_play_wav(p);
 	return -1;

@@ -88,6 +88,27 @@ def test_play_mod_xm_tone(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_s3m(console):
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+    assert console.send_line('PLAY S3MFILE "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_s3m_missing_file_errors(console):
+    assert console.send_line('PLAY S3M "tests/NOPE.S3M"') == "?S3M"
+
+
+def test_help_play_mentions_s3m(console):
+    out = dump_topic(console, "PLAY")
+    assert "S3M" in out
+    assert "TEST.S3M" in out
+
+
 def test_beep_defaults_and_args(console):
     assert console.send_line("BEEP") == ""
     assert console.send_line("BEEP 440") == ""

@@ -1222,6 +1222,7 @@ void mmb_audio_apply_options(void);
 int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
+int mmb_play_s3m(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
 int mmb_img_probe(const char *path, int *w, int *h);

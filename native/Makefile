@@ -110,7 +110,8 @@ MMB_VERSION ?= $(shell git -C $(REPO) describe --tags --always 2>/dev/null)
 MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 	    $(RAMDISK_C) $(HELP_C)
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
-	    $(MMB)/third_party/picojpeg.c $(MMB)/third_party/upng.c
+	    $(MMB)/third_party/ibxm.c $(MMB)/third_party/picojpeg.c \
+	    $(MMB)/third_party/upng.c
 COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c $(NET_SRC) cli.c
 STDIO_SRCS := platform_stdio.c main.c
