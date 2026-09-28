@@ -16,7 +16,7 @@
  * is a single audio engine.
  */
 
-#define JUKE_MODE      12      /* 960x540, RGB444 */
+#define JUKE_MODE      12      /* 960x540, RGB332 (bits=8; see juke_paint) */
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
