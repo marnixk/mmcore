@@ -294,6 +294,20 @@ def test_boot_smoke_retries_dhcp():
     assert "while" in net_lines[0], net_lines[0]
 
 
+def test_boot_smoke_waits_for_a_stable_mmcore_pid():
+    """#918: mmcore starts on tty1 via agetty autologin, which lags the ttyS0
+    shell. The STABLE_OK sample must poll (bounded) until a PID is present and
+    unchanged, not sample once before mmcore is up."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    stable_lines = [
+        ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "STABLE_OK" in ln
+    ]
+    assert len(stable_lines) == 1, stable_lines
+    line = stable_lines[0]
+    assert "while" in line, line
+    assert "pgrep -x mmcore" in line, line
+
+
 def test_profile_documents_ctrl_alt_vt_switching():
     """#909: Alt+F2 never reaches the Linux tty; it must be Ctrl+Alt+F2."""
     profile = open(PROFILE, encoding="utf-8").read()
