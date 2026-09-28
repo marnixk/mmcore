@@ -555,11 +555,21 @@ def test_builder_guarantees_the_ca_bundle():
 
 
 def test_iso_workflow_verifies_guest_tls():
-    """#896: the boot smoke fetches the GitHub API over HTTPS from the guest."""
+    """#896: the boot smoke fetches the GitHub API over HTTPS from the guest.
+    The request may return an HTTP error (e.g. 403 rate limit); only a
+    cert/handshake failure is a TLS failure."""
     wf = open(WORKFLOW, encoding="utf-8").read()
     assert "api.github.com/repos/marnixk/mmcore/releases/latest" in wf
-    assert "MMCORE_TLS_OK" in wf
     assert "grep -q \"MMCORE_TLS_OK\" boot.log" in wf
+    tls_lines = [
+        ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "TLS_OK" in ln
+    ]
+    assert len(tls_lines) == 1, tls_lines
+    line = tls_lines[0]
+    # TLS_FAIL is reserved for cert/handshake errors, not HTTP errors like a
+    # 403 rate limit.
+    assert "TLS_FAIL" in line, line
+    assert "certificate" in line, line
 
 
 @pytest.mark.skipif(

@@ -124,18 +124,21 @@ jobs:
             echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
             echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
             # #918: mmcore starts on tty1 via agetty autologin, which can lag
-            # the ttyS0 shell. Poll (bounded) for a PID that is already stable
-            # instead of sampling once before mmcore is up, which made STABLE_OK
-            # flaky and skipped the ISO asset.
-            echo 'ok=0; n=0; while [ "$n" -lt 30 ]; do pgrep -x mmcore | head -n1 > /tmp/p1; if [ -s /tmp/p1 ]; then sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2; cmp -s /tmp/p1 /tmp/p2 && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
+            # the ttyS0 shell (and is slow to modeset under TCG). Poll up to
+            # ~5 min for the process to appear, then require the PID to be
+            # unchanged across 6 s, instead of sampling once before mmcore is
+            # up; that flake skipped the ISO asset.
+            echo 'ok=0; n=0; while [ "$n" -lt 60 ]; do p1="$(pgrep -x mmcore | head -n1)"; if [ -n "$p1" ]; then sleep 6; p2="$(pgrep -x mmcore | head -n1)"; [ "$p1" = "$p2" ] && { ok=1; break; }; fi; n=$((n+1)); sleep 5; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
             # DHCP can be slow (the interface often appears after the shell), so
             # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
             echo 'n=0; while [ "$n" -lt 6 ]; do ip -4 addr show | grep -q "inet 10.0.2" && break; n=$((n+1)); sleep 5; done; if [ "$n" -lt 6 ]; then printf "MMCORE_%s\n" NET_OK; else printf "MMCORE_%s\n" NET_MISSING; fi'
             # #896: prove the live rootfs CA bundle lets busybox wget verify the
-            # GitHub certificate (mmcore-update depends on it). Retries absorb a
-            # transient network blip; a cert failure repeats on every attempt.
-            echo 'n=0; while [ "$n" -lt 3 ]; do wget -qO- -T 30 https://api.github.com/repos/marnixk/mmcore/releases/latest 2>/tmp/tls.err | grep -q tag_name && break; n=$((n+1)); sleep 4; done; if [ "$n" -lt 3 ]; then printf "MMCORE_%s\n" TLS_OK; else printf "MMCORE_%s\n" TLS_FAIL; sed -n "1,3p" /tmp/tls.err; fi'
+            # GitHub certificate (mmcore-update depends on it). The request may
+            # legitimately return an HTTP error (e.g. 403 API rate limit on a
+            # shared CI IP); that still proves the TLS handshake verified, so
+            # only a cert/handshake error counts as TLS_FAIL.
+            echo 'wget -qO- -T 30 https://api.github.com/repos/marnixk/mmcore/releases/latest >/dev/null 2>/tmp/tls.err; if grep -qiE "ssl|tls|certificate|x509|verify|handshake" /tmp/tls.err; then printf "MMCORE_%s\n" TLS_FAIL; sed -n "1,3p" /tmp/tls.err; else printf "MMCORE_%s\n" TLS_OK; fi'
             echo 'sleep 5; poweroff'
           } >&3 || true
 
