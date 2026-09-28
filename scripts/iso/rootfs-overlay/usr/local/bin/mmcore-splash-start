@@ -4,5 +4,11 @@
 # to tty1, so mmcore-splash repaints the same image every two seconds; a driver
 # takeover or getty start can then only leave a sub-second black window.
 # root/.profile stops the helper immediately before launching mmcore.
+#
+# #921: record the child's PID. BusyBox pkill -x cannot match the helper's
+# absolute argv[0] (/usr/local/bin/mmcore-splash), so root/.profile kills this
+# pidfile instead of trusting a name match.
 [ -x /usr/local/bin/mmcore-splash ] || exit 0
+mkdir -p /run 2>/dev/null || true
 /usr/local/bin/mmcore-splash -i 2 >/dev/null 2>&1 &
+echo $! >/run/mmcore-splash.pid

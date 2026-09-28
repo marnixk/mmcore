@@ -8,8 +8,10 @@ anywhere.
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -336,7 +338,9 @@ def test_overlay_loads_chromebook_modules():
 
 
 def test_rootfs_silences_the_display_banners():
-    """#863: no getty/login banner on tty1."""
+    """#863: no getty/login banner on tty1. /etc/issue and /etc/motd are
+    printed by agetty/login on *every* console (including tty1), so they stay
+    empty; the #923 install/update hint is a tty-guarded shell message instead."""
     issue = os.path.join(OVERLAY, "etc", "issue")
     motd = os.path.join(OVERLAY, "etc", "motd")
     assert os.path.isfile(issue)
@@ -399,10 +403,56 @@ def test_splash_sources_and_wrapper_are_present():
     assert "/usr/share/mmcore/splash.ppm" in helper
 
 
-def test_profile_stops_the_splash_before_mmcore():
+def test_splash_launch_records_a_pidfile_and_profile_kills_it(tmp_path):
+    """#921: the helper is launched by absolute path, its PID is recorded, and
+    the profile kills that PID. BusyBox `pkill -x mmcore-splash` cannot match
+    the absolute argv[0], so the old name-only stop silently left the logo
+    repainting over tty2 forever."""
+    start = open(SPLASH_START, encoding="utf-8").read()
     profile = open(PROFILE, encoding="utf-8").read()
-    assert "pkill -x mmcore-splash" in profile
-    assert profile.index("pkill -x mmcore-splash") < profile.index("exec /usr/local/bin/mmcore")
+
+    # Launch path: absolute, with the child PID recorded for the stop path.
+    assert "/usr/local/bin/mmcore-splash -i 2" in start
+    assert "echo $! >/run/mmcore-splash.pid" in start
+    # Stop path: kill the recorded PID, not a BusyBox-quirk name match.
+    assert 'kill "$(cat /run/mmcore-splash.pid)"' in profile
+    assert "pkill -x mmcore-splash" not in profile
+    assert profile.index("/run/mmcore-splash.pid") < profile.index(
+        "exec /usr/local/bin/mmcore"
+    )
+
+    # Behaviour: run the real launcher against a stub helper and a temp
+    # pidfile (only the absolute paths are rewritten), then kill the recorded
+    # PID the way the profile does and confirm it is really gone.
+    stub = tmp_path / "mmcore-splash"
+    stub.write_text("#!/bin/sh\nexec sleep 60\n")
+    stub.chmod(0o755)
+    pidfile = tmp_path / "mmcore-splash.pid"
+    launcher = tmp_path / "mmcore-splash-start"
+    launcher.write_text(
+        start.replace("/usr/local/bin/mmcore-splash", str(stub)).replace(
+            "/run/mmcore-splash.pid", str(pidfile)
+        )
+    )
+    launcher.chmod(0o755)
+    _run([BASH, launcher])
+    pid = int(pidfile.read_text().strip())
+    try:
+        assert os.getpgid(pid)  # the recorded PID names a live process
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_png_to_ppm_converts_the_splash(tmp_path):
@@ -414,10 +464,48 @@ def test_png_to_ppm_converts_the_splash(tmp_path):
     width, height = (int(x) for x in header.split(b"\n")[1].split())
     assert (width, height) == (1024, 768)
     assert len(payload) == width * height * 3
-    # Black border with the wordmark somewhere in the middle.
-    assert payload[:3] == b"\x00\x00\x00"
-    center = ((height // 2) * width + width // 2) * 3
-    assert payload[center:center + 3] != b"\x00\x00\x00"
+
+    def pixel(x, y):
+        o = (y * width + x) * 3
+        return payload[o:o + 3]
+
+    # Black border all round...
+    for x, y in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
+        assert pixel(x, y) == b"\x00\x00\x00"
+    # ...and the wordmark, not the old metallic "M": a solid band of visible
+    # pixels in the centre rows, at ramdisk/mmcore.png's native 303x50 size
+    # (its visible bbox is 296x47), centred on a 1024x768 canvas.
+    visible = [
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if pixel(x, y) != b"\x00\x00\x00"
+    ]
+    assert len(visible) > 1000, len(visible)
+    xs = [x for x, _ in visible]
+    ys = [y for _, y in visible]
+    assert (max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) == (296, 47)
+    assert abs((min(xs) + max(xs)) / 2 - width / 2) <= 1
+    assert abs((min(ys) + max(ys)) / 2 - height / 2) <= 1
+    # NOTE: the exact centre pixel can fall in the gap between glyphs, so the
+    # band/bbox checks above (not a single pixel) are what prove the wordmark.
+
+
+def test_live_console_hints_install_and_update_on_tty2():
+    """#923: mmcore only paints tty1, so tty2 (and serial) get one unobtrusive
+    line naming the installer/updater. tty1 must stay banner-free (#863), so
+    the hint is a tty-guarded shell message, not /etc/motd."""
+    profile = open(PROFILE, encoding="utf-8").read()
+    hint = re.search(
+        r"mmcore live media\.[^\n]*mmcore-install[^\n]*mmcore-update", profile
+    )
+    assert hint, "the tty2 install/update hint is missing"
+    # The hint is inside a non-tty1 guard, so it never prints on tty1.
+    guard = profile.index('!= "/dev/tty1"')
+    assert guard < profile.index("mmcore-install")
+    # /etc/motd is printed by login on tty1 too and must stay empty.
+    motd = os.path.join(OVERLAY, "etc", "motd")
+    assert os.path.getsize(motd) == 0
 
 
 def test_builder_guarantees_the_ca_bundle():

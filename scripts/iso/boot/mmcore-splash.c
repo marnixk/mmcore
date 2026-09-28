@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
+#include <linux/vt.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -220,6 +221,26 @@ static int draw_once(const unsigned char *rgb, long w, long h, const char *dev)
 	return 0;
 }
 
+/*
+ * #921: paint only while tty1 is the active virtual terminal. If the stop path
+ * ever misses the process, this keeps the logo from stomping another console
+ * (e.g. the tty2 shell) forever. Defaults to painting when the state cannot be
+ * read, matching the pre-#921 behaviour on systems without /dev/tty0.
+ */
+static int tty1_is_active(void)
+{
+	struct vt_stat st = { 0 };
+	int fd = open("/dev/tty0", O_RDONLY | O_NONBLOCK);
+	int active = 1;
+
+	if (fd < 0)
+		return 1;
+	if (ioctl(fd, VT_GETSTATE, &st) == 0)
+		active = (st.v_active == 1);
+	close(fd);
+	return active;
+}
+
 int main(int argc, char **argv)
 {
 	const char *image = DEFAULT_IMAGE;
@@ -269,7 +290,8 @@ int main(int argc, char **argv)
 		int i;
 
 		/* Ignore a not-yet-registered /dev/fb0: retry on the next tick. */
-		(void)draw_once(rgb, w, h, dev);
+		if (tty1_is_active())
+			(void)draw_once(rgb, w, h, dev);
 		for (i = 0; i < interval * 10 && !g_stop; i++)
 			usleep(100 * 1000);
 	}
