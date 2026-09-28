@@ -6,6 +6,7 @@ anywhere.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,17 @@ def test_entry_names_the_iso_asset():
     assert "grub-mkrescue" not in text  # the container script owns the build
     assert "docker" in text
     assert "ISO_DIRECT" in text
+
+
+def test_build_iso_mounts_custom_dist_into_the_container():
+    """#912: a custom DIST must reach the Docker builder, not just the host
+    existence check, or test_iso_builds can never pass."""
+    text = open(ENTRY, encoding="utf-8").read()
+    # The builder writes to a container path that is a mount of DIST...
+    assert 'ISO_OUT=/iso-out/' in text
+    assert '${DIST}:/iso-out' in text
+    # ...and the host-side existence check still uses the host path.
+    assert '[ -f "${OUT}" ]' in text
 
 
 def test_builder_boots_alpine_with_network_packages():
@@ -253,6 +265,39 @@ def test_boot_smoke_uses_a_kms_drm_gpu():
     assert "MMCORE_SDL_OK" in wf
     assert "/dev/dri/card0" in wf
     assert "could not open SDL window" in wf
+
+
+def test_boot_smoke_gives_the_guest_enough_ram():
+    """#913: the ~820 MiB initramfs unpacks into RAM; measured on the shipped
+    ISO, 4096 MiB still panicked and 5120 MiB booted. The smoke and the docs
+    must agree on a minimum with headroom."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    match = re.search(r"-m\s+(\d+)", wf)
+    assert match, "the boot smoke has no -m RAM option"
+    ram = int(match.group(1))
+    assert ram >= 6144, f"boot smoke RAM {ram} MiB is too small for the initramfs"
+    doc = open(
+        os.path.join(REPO, "docs", "framebuffer-and-iso.md"), encoding="utf-8"
+    ).read()
+    assert "at least 5 GiB" in doc
+    assert "6144" in doc
+
+
+def test_boot_smoke_retries_dhcp():
+    """#901: DHCP can be slow, so the NET_OK marker is not a single one-shot
+    grep right after the shell appears."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    net_lines = [ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "NET_OK" in ln]
+    assert len(net_lines) == 1, net_lines
+    assert "while" in net_lines[0], net_lines[0]
+
+
+def test_profile_documents_ctrl_alt_vt_switching():
+    """#909: Alt+F2 never reaches the Linux tty; it must be Ctrl+Alt+F2."""
+    profile = open(PROFILE, encoding="utf-8").read()
+    assert "Ctrl+Alt+F2" in profile
+    assert "Ctrl+Alt+F1" in profile
+    assert "Alt+F2" not in profile.replace("Ctrl+Alt+F2", "")
 
 
 def test_builder_ships_a_quiet_grub_with_a_splash():

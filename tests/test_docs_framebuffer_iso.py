@@ -51,6 +51,15 @@ def test_framebuffer_iso_doc_documents_installing_to_disk():
         assert needle in text, needle
 
 
+def test_framebuffer_iso_doc_uses_ctrl_alt_for_vt_switching():
+    """#909: Alt+F2 does not reach the Linux tty (SDL consumes it); the docs
+    must say Ctrl+Alt+F2, with Ctrl+Alt+F1 to return to mmcore."""
+    text = _read(DOC)
+    assert "Ctrl+Alt+F2" in text
+    assert "Ctrl+Alt+F1" in text
+    assert "Alt+F2" not in text.replace("Ctrl+Alt+F2", "")
+
+
 def test_framebuffer_iso_doc_documents_chromebooks():
     text = _read(DOC)
     for needle in (
