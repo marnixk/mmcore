@@ -277,6 +277,14 @@ int sdl_input_vt_from_key(int sym)
 	return 0;
 }
 
+#ifdef MMB_SDL_FRAMEBUFFER
+/* Another Linux VT is foreground; wait for mmcore's VT before delivering more
+ * input. SDL's evdev driver keeps enqueuing events across a VT switch (#922),
+ * so the key/text/mouse handlers gate on this latch. It is set by vt_switch()
+ * and cleared by vt_sync(); non-Linux framebuffer builds never set it. */
+static int s_vt_left;
+#endif
+
 #ifdef MMB_SDL_HAVE_VT
 /* SDL's kmsdrm input reads keys from evdev and mutes the kernel console
  * keyboard (KDSKBMODE K_OFF), so keystrokes never reach tty1's line
@@ -289,7 +297,6 @@ int sdl_input_vt_from_key(int sym)
  * the ioctls alone (test/automation aid) while still consuming the chord. */
 static int s_vt_fd = -1; /* /dev/tty0, opened on first switch */
 static int s_vt_ours;    /* mmcore's VT, learned when we switch away */
-static int s_vt_left;    /* another VT is foreground; wait to re-mute */
 
 static int vt_ioctl_enabled(void)
 {
@@ -359,6 +366,28 @@ static void vt_switch(int n)
 #endif
 static void vt_sync(void)
 {
+}
+#endif
+
+#ifdef MMB_SDL_TEST
+/* Test-only: read/set the "another VT is foreground" latch so a host harness
+ * can drive the input gate without real DRM or /dev/tty0 (#922). */
+int sdl_input_test_vt_left(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+void sdl_input_test_set_vt_left(int v)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	s_vt_left = v;
+#else
+	(void)v;
+#endif
 }
 #endif
 
@@ -562,8 +591,49 @@ static void handle_text(const SDL_TextInputEvent *te)
 	}
 }
 
+/* True while another VT owns the console: SDL's evdev driver keeps enqueuing
+ * input regardless of the active VT, so it must be dropped here. Always false
+ * on builds without the framebuffer VT latch. */
+static int vt_holds_input(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+static int is_input_event(Uint32 type)
+{
+	switch (type)
+	{
+	case SDL_KEYDOWN:
+	case SDL_KEYUP:
+	case SDL_TEXTINPUT:
+	case SDL_MOUSEMOTION:
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+	case SDL_MOUSEWHEEL:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void handle_event(const SDL_Event *e)
 {
+	if (vt_holds_input() && is_input_event(e->type))
+	{
+		/* #922: another VT is foreground, but SDL still delivers its
+		 * keys/text/mouse to us. Drop them, and clear any modifier the
+		 * switch chord latched so it cannot stick across the switch.
+		 * Window events still flow through so vt_sync() can re-mute the
+		 * keyboard once mmcore's VT returns. */
+		s_alt = s_ctrl = s_shift = 0;
+		s_swallow_text = 0;
+		return;
+	}
+
 	switch (e->type)
 	{
 	case SDL_QUIT:
