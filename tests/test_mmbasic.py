@@ -275,6 +275,13 @@ def test_play_xm(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_s3m(console):
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
 def test_for_next_numbered(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 FOR I=1 TO 3") == ""

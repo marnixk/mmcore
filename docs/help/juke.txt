@@ -15,8 +15,9 @@ JUKE [path$]
 Supported formats:
 
     MP3     MPEG audio
-    MOD     ProTracker / ScreamTracker modules
+    MOD     ProTracker modules
     XM      FastTracker II modules
+    S3M     ScreamTracker 3 modules
     WAV     PCM audio
 
 JUKE has its own fixed dark cyberpunk palette: it does not follow OPTION

@@ -16,6 +16,7 @@ PLAY MP3 file$
 PLAY WAV file$
 PLAY MODFILE file$     (PLAY MOD file$)
 PLAY XM file$          (PLAY XMFILE file$)
+PLAY S3M file$         (PLAY S3MFILE file$)
 
 BEEP [frequency [, duration]]
 
@@ -33,4 +34,5 @@ Example:
     OPTION AUDIO_TARGET HDMI
     PLAY WAV "tests/TEST.WAV"
     PLAY MP3 "tests/TEST.MP3"
+    PLAY S3M "tests/TEST.S3M"
     PRINT PLAYING()

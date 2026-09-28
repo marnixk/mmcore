@@ -272,7 +272,8 @@ static int is_aud(const char *n)
 {
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".MP3") || mmb_keyword_eq(e, ".XM") ||
-	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".WAV");
+	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".S3M") ||
+	       mmb_keyword_eq(e, ".WAV");
 }
 
 static int is_ansi(const char *n)
@@ -2218,6 +2219,8 @@ static void do_play(const char *path, const char *name)
 		rc = mmb_play_mod(path);
 	else if (mmb_keyword_eq(e, ".XM"))
 		rc = mmb_play_xm(path);
+	else if (mmb_keyword_eq(e, ".S3M"))
+		rc = mmb_play_s3m(path);
 	else if (mmb_keyword_eq(e, ".WAV"))
 		rc = mmb_play_wav(path);
 	if (rc != 0)
