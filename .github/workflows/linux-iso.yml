@@ -91,8 +91,11 @@ jobs:
           {
             echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
             echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
-            echo 'pgrep -x mmcore | head -n1 > /tmp/p1; sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2'
-            echo "cmp -s /tmp/p1 /tmp/p2 && [ -s /tmp/p1 ] && printf 'MMCORE_%s\n' STABLE_OK || printf 'MMCORE_%s\n' STABLE_MISSING"
+            # #918: mmcore starts on tty1 via agetty autologin, which can lag
+            # the ttyS0 shell. Poll (bounded) for a PID that is already stable
+            # instead of sampling once before mmcore is up, which made STABLE_OK
+            # flaky and skipped the ISO asset.
+            echo 'ok=0; n=0; while [ "$n" -lt 30 ]; do pgrep -x mmcore | head -n1 > /tmp/p1; if [ -s /tmp/p1 ]; then sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2; cmp -s /tmp/p1 /tmp/p2 && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
             # DHCP can be slow (the interface often appears after the shell), so
             # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
