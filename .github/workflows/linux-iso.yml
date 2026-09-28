@@ -18,6 +18,11 @@ on:
         description: "Release tag to attach the built ISO to (e.g. v0.224.0)"
         required: false
         type: string
+      skip_smoke:
+        description: "Skip the boot-smoke gate (manual re-attach only)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -41,6 +46,7 @@ jobs:
         run: scripts/build-iso.sh
 
       - name: Boot-smoke the ISO against a virtual KMS/DRM device
+        if: ${{ !inputs.skip_smoke }}
         # A text-only console has no DRM at all, so the kmsdrm driver can never
         # initialise and a crash-looping mmcore still satisfies `pgrep`. Boot a
         # KMS-capable virtio-gpu instead (the ISO loads virtio_gpu), keep the
