@@ -57,7 +57,7 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
 	eudev-libs libxkbcommon \
 	e2fsprogs dosfstools blkid ca-certificates \
-	parted gdisk util-linux-misc grub grub-efi grub-bios
+	parted gptfdisk util-linux-misc grub grub-efi grub-bios
 
 # Wi-Fi firmware for common chipsets; not every package exists on every branch.
 for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
