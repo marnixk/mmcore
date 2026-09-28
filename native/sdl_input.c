@@ -398,6 +398,13 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
 
+	/* Any keydown ends the previous chord's text window. The flag only
+	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter or
+	 * Ctrl+Alt+<digit> chord, and that event always follows immediately in
+	 * the queue. Ctrl+Alt+F<n> produces no text at all, so without this a
+	 * stale flag would silently eat the next ordinary character (#927). */
+	s_swallow_text = 0;
+
 	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603).
 	 * Both the top-row digits and the numeric keypad are accepted. The old
 	 * Ctrl+Alt+F1..F4 chord is retired: the host owns those for real TTYs,
