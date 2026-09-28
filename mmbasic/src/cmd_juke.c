@@ -16,7 +16,7 @@
  * is a single audio engine.
  */
 
-#define JUKE_MODE      12      /* 960x540, RGB332 (bits=8; see juke_paint) */
+#define JUKE_MODE      12      /* 960x540 (32-bit pages; see juke_load_colours) */
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
@@ -177,23 +177,22 @@ static unsigned juke_logo_grad(float t)
 
 static void juke_load_colours(void)
 {
-	/* Mode 12 stores RGB332, so the source values are chosen to quantise
-	 * to cool greys: blue carries only two bits, so a neutral grey is
-	 * expressed as equal red/green with a matching (or slightly higher)
-	 * blue level. */
+	/* JUKE renders at 32-bit precision so the surface reaches the panel's
+	 * native depth: neutral greys stay neutral, and the bar/ghost gradients
+	 * do not band into the few levels RGB332 allows. */
 	U.col_bg = 0x000000u;       /* black canvas          */
 	U.col_panel = 0x08090Au;    /* scope panel fill      */
-	U.col_panel2 = 0x3A3A55u;   /* cool dark grey border */
-	U.col_track = 0x000000u;    /* empty VOL / chip fill */
+	U.col_panel2 = 0x373A3Eu;   /* muted grey border     */
+	U.col_track = 0x1A1D20u;    /* empty VOL / chip fill */
 	U.col_text = 0xFFFFFFu;     /* plain white           */
 	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
-	U.col_bar_lo = 0x50505Au;   /* cool grey bar base    */
+	U.col_bar_lo = 0x49504Au;   /* cool grey bar base    */
 	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
 	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
 	U.col_rule = 0x868C92u;     /* muted grey rule       */
 	U.col_peak = 0xC8E664u;     /* light lime cap        */
-	U.col_scope_lo = 0x2A2A55u; /* cool dark ghost       */
-	U.col_vol = 0xB6B6ACu;      /* VOL body grey         */
+	U.col_scope_lo = 0x2A3038u; /* cool dark ghost       */
+	U.col_vol = 0xB4BCC2u;      /* VOL body grey         */
 	U.col_base = 0x464A50u;     /* spectrum baseline     */
 }
 
@@ -487,29 +486,31 @@ static void juke_paint(int w, int h)
 
 	mmb_gfx_cls(U.col_bg);
 
-	/* Header: graffiti wordmark, right-aligned status, muted grey rule. */
-	juke_draw_logo(14, 4);
+	/* Header: full-size graffiti wordmark, right-aligned status, muted rule.
+	 * The wordmark is 50px tall, so the header/rule sits a little lower than
+	 * the compact mock and the bar field below is shortened to fit. */
+	juke_draw_logo(14, 1);
 	{
 		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
 		sprintf(buf, "%s  %s  %d/%d%s%s", juke_state_str(), fmt,
 			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
 			s_q.shuffle ? "  SHUF" : "",
 			s_q.truncated ? "  more" : "");
-		juke_text(w - 14 - (int)strlen(buf) * 8, 17, buf, U.col_dim, 1);
+		juke_text(w - 14 - (int)strlen(buf) * 8, 20, buf, U.col_dim, 1);
 	}
-	mmb_gfx_fill_rect(0, 44, w, 2, U.col_rule);
+	mmb_gfx_fill_rect(0, 52, w, 2, U.col_rule);
 
 	/* Now-playing line, folder, and visualiser labels. */
 	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
-	juke_text(14, 54, title, U.col_text, 1);
+	juke_text(14, 60, title, U.col_text, 1);
 	if (s_q.dir[0])
-		juke_text(14, 72, s_q.dir, U.col_dim, 1);
-	juke_text(14, 86, "WAVE", U.col_dim, 1);
+		juke_text(14, 78, s_q.dir, U.col_dim, 1);
+	juke_text(14, 92, "WAVE", U.col_dim, 1);
 
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
 	{
-		int bx = 8, by = 95, bw2 = w - 16, bh2 = 52;
+		int bx = 8, by = 100, bw2 = w - 16, bh2 = 52;
 		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
@@ -544,11 +545,12 @@ static void juke_paint(int w, int h)
 		}
 	}
 
-	/* Spectrum: 24 grey-to-lime bars, no midfield guide lines. */
+	/* Spectrum: 24 grey-to-lime bars, no midfield guide lines. The bar field
+	 * is deliberately short so the full-size wordmark still fits above it. */
 	x0 = 14;
 	x1 = w - 14;
 	base = h - 71;
-	maxh = base - 160;
+	maxh = base - 190;
 	if (maxh < 24)
 		maxh = 24;
 	gap = 3;
@@ -730,7 +732,7 @@ void mmb_cmd_juke(void)
 	U.saved_display_page = G.gfx.display_page;
 	U.saved_write_fb = G.gfx.write_fb;
 	U.saved_font_scale = G.gfx.font_scale;
-	mmb_gfx_set_mode(JUKE_MODE, 8);
+	mmb_gfx_set_mode(JUKE_MODE, 32);
 	U.w = G.gfx.w > 0 ? G.gfx.w : 960;
 	U.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	U.front = JUKE_PAGE_A;

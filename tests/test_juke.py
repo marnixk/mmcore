@@ -170,12 +170,13 @@ def test_juke_has_fixed_grey_palette(fresh_console):
     before = con.send_line('PRINT THEME("TEXT_BG")')
     _open_juke(con, "tests/TEST.MOD")
     # The canvas/backing stays near-black even under a light system theme.
+    # (506,300) is the gap between bands 12 and 13, so it is never a bar.
     dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
-            con.screen_pixel(480, 300), con.screen_pixel(2, 494)]
+            con.screen_pixel(506, 300), con.screen_pixel(2, 494)]
     assert all(r + g + b < 140 for r, g, b in dark), dark
 
     # The header rule is a muted grey, not a theme accent.
-    r, g, b = con.screen_pixel(480, 44)
+    r, g, b = con.screen_pixel(480, 52)
     assert max(r, g, b) - min(r, g, b) < 40, (r, g, b)
     assert 80 < (r + g + b) / 3 < 210, (r, g, b)
 
@@ -187,7 +188,7 @@ def test_juke_header_shows_graffiti_logo(fresh_console):
     """#914: the header carries the colourful graffiti wordmark, not text."""
     con = fresh_console
     _open_juke(con, "tests/TEST.MOD")
-    coords = [(x, y) for x in range(10, 110, 2) for y in range(4, 42, 2)]
+    coords = [(x, y) for x in range(12, 128, 2) for y in range(1, 50, 2)]
     colourful = 0
     for _ in range(6):
         for r, g, b in con.screen_pixels(coords):
@@ -206,21 +207,20 @@ def test_juke_scope_lives_in_its_own_panel(fresh_console):
     _open_juke(con, "tests/TEST.MOD")
     _w, h = con.screen_size()
 
-    # The panel border is a muted cool grey (left edge and top edge). Mode 12
-    # stores RGB332, so a neutral grey shows equal red/green with blue close
-    # by, and it stays clearly darker than the white text.
-    for x, y in ((8, 121), (480, 95)):
+    # The panel border is a muted cool grey (left edge and top edge); the
+    # RGB555 native surface may shift each channel a count or two.
+    for x, y in ((8, 126), (480, 100)):
         border = con.screen_pixel(x, y)
         r, g, b = border
-        assert r == g, (border, x, y)
-        assert b >= r - 5, (border, x, y)
+        assert max(border) - min(border) <= 16, (border, x, y)
+        assert b >= r, (border, x, y)
         assert r < 100, (border, x, y)
 
     # The interior is mostly the dark panel fill (traces only cross a few
     # pixels). The panel sits strictly above the spectrum baseline.
     base = h - 71
-    assert 95 + 52 < base
-    pts = [(x, y) for x in range(12, 948, 20) for y in range(98, 144, 6)]
+    assert 100 + 52 < base
+    pts = [(x, y) for x in range(12, 948, 20) for y in range(103, 148, 6)]
     dark = sum(1 for c in con.screen_pixels(pts) if sum(c) < 60)
     assert dark > len(pts) * 0.6, (dark, len(pts))
     _quit_juke(con)
@@ -233,7 +233,7 @@ def test_juke_spectrum_bars_run_grey_to_lime(fresh_console):
     _open_juke(con, "tests/TEST.WAV")
     _w, h = con.screen_size()
     base = h - 71
-    maxh = base - 160
+    maxh = base - 190
     xs = [14 + i * 38 + 17 for i in range(24)]
     ylist = list(range(base - 2, base - maxh, -2))
     coords = [(x, y) for x in xs for y in ylist]
@@ -268,7 +268,7 @@ def test_juke_spectrum_has_no_guide_lines(fresh_console):
     _open_juke(con, "tests/TEST.MOD")
     _w, h = con.screen_size()
     base = h - 71
-    maxh = base - 160
+    maxh = base - 190
     # x=50 is the gap between bands 0 and 1, so no bar/cap lives there.
     ys = [base - maxh * i // 4 for i in (1, 2, 3)]
     got = con.screen_pixels([(50, y) for y in ys])
