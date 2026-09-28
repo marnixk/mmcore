@@ -366,7 +366,9 @@ int mmb_play_xm(const char *path)
 		return -1;
 	if (jar_xm_create_context_safe(&s_xm, (const char *)s_xmdata, n, MIX_RATE) != 0)
 		return -1;
-	jar_xm_set_max_loop_count(s_xm, 0);
+	/* Tracker modules play once: mix_* stops at the engine's song-end signal
+	 * (see the one-shot policy in docs/help/play.txt), so JUKE advances its
+	 * queue instead of looping the module forever. */
 	play_begin(3, path);
 	return 0;
 }
@@ -527,9 +529,16 @@ static int mix_mp3(unsigned nframes)
 static int mix_mod(unsigned nframes)
 {
 	msample pcm[MIX_CHUNK * 2];
-	hxcmod_fillbuffer(&s_mod, pcm, nframes, 0, 0);
+	int done;
+
+	/* noloop=1: hxcmod returns 1 (and stops in place) once tablepos runs
+	 * past the song length. Honour in-pattern loops/jumps inside the song;
+	 * only the order-list wrap ends it. Zero the tail so a partial final
+	 * chunk is silence, not stale stack. */
+	memset(pcm, 0, sizeof(pcm));
+	done = hxcmod_fillbuffer(&s_mod, pcm, nframes, 0, 1);
 	emit_pcm((short *)pcm, nframes);
-	return 1;
+	return done ? 0 : 1;
 }
 
 static int mix_xm(unsigned nframes)
@@ -546,7 +555,9 @@ static int mix_xm(unsigned nframes)
 		pcm[i] = (short)v;
 	}
 	emit_pcm(pcm, nframes);
-	return 1;
+	/* jar_xm wraps to the restart position at song end; report one-shot
+	 * playback so JUKE advances instead of looping forever. */
+	return jar_xm_song_finished(s_xm) ? 0 : 1;
 }
 
 static int mix_s3m(unsigned nframes)
@@ -577,7 +588,8 @@ static int mix_s3m(unsigned nframes)
 	}
 	s_s3m_i += (int)take;
 	emit_pcm(pcm, take);
-	return 1;
+	/* ibxm wraps the sequence at song end; one-shot so JUKE advances. */
+	return replay_song_finished(s_s3m) ? 0 : 1;
 }
 
 static int mix_tone(unsigned nframes)

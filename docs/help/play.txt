@@ -29,6 +29,10 @@ BEEP [frequency [, duration]]
 On systems without audio output, files decode but no sound is heard; PLAYING()
 reflects playback state.
 
+MOD, XM and S3M modules play through once and then stop (loops and jumps that
+are part of the arrangement are honoured; the restart/order loop is not).
+JUKE uses this to advance a folder queue to the next file.
+
 Example:
 
     OPTION AUDIO_TARGET HDMI

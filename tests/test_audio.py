@@ -1,6 +1,20 @@
 """Real PLAY decode/mix and OPTION AUDIO_TARGET."""
 
+import time
+
 from ihelp_util import dump_topic
+
+
+def _play_until_stopped(console, command: str, timeout: float = 15.0) -> bool:
+    """Start a track and poll PLAYING() until it ends on its own."""
+    assert console.send_line(command) == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if console.send_line("PRINT PLAYING()") == "0":
+            return True
+        time.sleep(0.4)
+    return False
 
 
 def test_help_play_mentions_targets(console):
@@ -101,6 +115,17 @@ def test_play_s3m(console):
 
 def test_play_s3m_missing_file_errors(console):
     assert console.send_line('PLAY S3M "tests/NOPE.S3M"') == "?S3M"
+
+
+def test_play_tracker_modules_stop_at_song_end(console):
+    """#924: MOD/XM/S3M play once and report a natural end.
+
+    The one-pattern fixtures take ~8 s; if an engine still looped forever this
+    poll would time out and JUKE would never advance its queue.
+    """
+    assert _play_until_stopped(console, 'PLAY MODFILE "tests/TEST.MOD"')
+    assert _play_until_stopped(console, 'PLAY XM "tests/TEST.XM"')
+    assert _play_until_stopped(console, 'PLAY S3M "tests/TEST.S3M"')
 
 
 def test_help_play_mentions_s3m(console):

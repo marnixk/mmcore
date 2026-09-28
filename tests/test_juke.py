@@ -148,6 +148,21 @@ def test_juke_single_file_finishes(fresh_console):
     assert "1" not in samples, samples  # single file must not loop
 
 
+def test_juke_single_module_finishes_once(fresh_console):
+    """#924: a MOD queue must end after one play-through, not loop forever."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JQM/ONLY.MOD")])
+    _open_juke(con, "JQM")
+    _quit_juke(con)
+    for _ in range(40):  # the fixture is ~8 s; allow headroom
+        if con.send_line("PRINT PLAYING()") == "0":
+            break
+        time.sleep(0.5)
+    else:
+        raise AssertionError("module queued alone must end, not loop forever")
+    assert con.send_line("PRINT 1+1") == "2"
+
+
 def test_juke_pause_and_resume(fresh_console):
     con = fresh_console
     _open_juke(con, "tests/TEST.MOD")

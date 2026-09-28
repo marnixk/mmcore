@@ -79,5 +79,7 @@ int replay_get_audio( struct replay *replay, int *mix_buf, int mute );
 int replay_get_sequence_pos( struct replay *replay );
 /* Returns the currently playing row in the pattern. */
 int replay_get_row( struct replay *replay );
+/* Returns 1 once the song has played through and wrapped around. */
+int replay_song_finished( struct replay *replay );
 /* Returns the length of the output buffer required by replay_get_audio(). */
 int calculate_mix_buf_len( int sample_rate );
