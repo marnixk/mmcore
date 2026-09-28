@@ -23,6 +23,12 @@ int sdl_input_take_break(void);
 int sdl_input_alt_held(void);
 int sdl_input_ctrl_alt_held(void);
 
+/* Linux VT index (1..12) for a top-row F-key, or 0 when the key is not
+ * F1..F12. The framebuffer build maps Ctrl+Alt+F<n> through this to switch
+ * the active VT; exposed so a host test can assert the mapping without a real
+ * VT. Desktop builds never issue VT ioctls. */
+int sdl_input_vt_from_key(int sym);
+
 /* Latest pointer state, in software-framebuffer pixels (see
  * sdl_video_window_to_fb). Buttons is a bitmask: 1 left, 2 right, 4 middle.
  * present is non-zero whenever the SDL video backend is running. */
