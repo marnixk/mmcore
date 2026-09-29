@@ -45,11 +45,12 @@ Built-in themes, in order:
 
   0 Paper   1 Cloud   2 Snow   3 Night   4 Nord
   5 Slate   6 Forest  7 Violet 8 Turbo  9 Phosphor
+ 10 Monochrome
 
-Default is Slate. Turbo is the retro VGA palette; Phosphor is a green CRT.
-Themes can also be chosen from a program with OPTION THEME name. To give the
-editor its own look, pick from EDIT's Theme menu or use OPTION EDIT THEME;
-SYSTEM there follows this system theme.
+Default is Slate. Turbo is the retro VGA palette; Phosphor is a green CRT;
+Monochrome is greyscale. Themes can also be chosen from a program with
+OPTION THEME name. To give the editor its own look, pick from EDIT's Theme menu
+or use OPTION EDIT THEME; SYSTEM there follows this system theme.
 
 Example:
 

@@ -1431,7 +1431,7 @@ def test_editor_run_snow_overlay_break_restores_editor(kernel_image):
         con.stop()
 
 
-def test_editor_theme_menu_lists_system_plus_ten_themes(kernel_image):
+def test_editor_theme_menu_lists_system_plus_all_themes(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -1449,6 +1449,7 @@ def test_editor_theme_menu_lists_system_plus_ten_themes(kernel_image):
             "Violet",
             "Turbo",
             "Phosphor",
+            "Monochrome",
         ):
             assert name in seen, name
         _keys(con, b"\x1b", quiet=0.6)
@@ -1572,6 +1573,11 @@ def _region_lumas(png, x, y, w, h):
         "-crop",
         f"{w}x{h}+{x}+{y}",
         "+repage",
+        # A greyscale screen (the Monochrome theme) is written as a Gray PNG,
+        # whose txt: output carries one channel per pixel; force sRGB so every
+        # pixel enumerates as an (r,g,b) triple.
+        "-colorspace",
+        "sRGB",
         "txt:-",
     ]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
@@ -1600,6 +1606,7 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
         "Violet",
         "Turbo",
         "Phosphor",
+        "Monochrome",
     )
     con = MMBasicConsole(kernel_image)
     con.start()
