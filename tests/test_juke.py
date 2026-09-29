@@ -80,6 +80,7 @@ def test_help_juke(console):
     low = out.lower()
     assert "mp3" in low
     assert "folder" in low
+    assert "subfolder" in low
     assert "visualis" in low or "spectrum" in low
     assert "mod" in low
 
@@ -492,5 +493,61 @@ def test_juke_list_selection_follows_shuffle(fresh_console):
     _keys(con, b"\r")
     _quit_juke(con)
     assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def _mkdir_path(con: MMBasicConsole, path: str) -> None:
+    acc = ""
+    for part in path.split("/"):
+        if not part:
+            continue
+        acc = part if not acc else acc + "/" + part
+        assert con.send_line(f'MKDIR "{acc}"') == ""
+
+
+def test_juke_queues_nested_folder_before_siblings(fresh_console):
+    """#934: a subfolder's track is queued, and it plays before files beside it."""
+    con = fresh_console
+    _mkdir_path(con, "JY/SUB")
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JY/SUB/NEST.MOD"') == ""
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JY/TOP.MOD"') == ""
+    out = _open_juke(con, "JY")
+    assert "FILE" not in out.upper()
+    screen = con.wait_ocr("NEST", timeout=8.0, crop="960x90+0+0")
+    assert "NEST" in screen.upper(), screen
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_nested_only_file_still_plays(fresh_console):
+    con = fresh_console
+    _mkdir_path(con, "JZ/SUB")
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JZ/SUB/ONLY.MOD"') == ""
+    out = _open_juke(con, "JZ")
+    assert "FILE" not in out.upper() and "DIRECTORY" not in out.upper()
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_deep_tree_reports_truncation(fresh_console):
+    """Past the depth cap the scan stops and the header says more."""
+    con = fresh_console
+    acc = "JX"
+    _mkdir_path(con, acc)
+    for _ in range(9):
+        acc = acc + "/L"
+        assert con.send_line(f'MKDIR "{acc}"') == ""
+    assert con.send_line(f'COPY "tests/TEST.MOD" TO "{acc}/DEEP.MOD"') == ""
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JX/TOP.MOD"') == ""
+    out = _open_juke(con, "JX")
+    assert "FILE" not in out.upper()
+    screen = con.wait_ocr("more", timeout=8.0, crop="960x40+400+0")
+    assert "more" in screen.lower(), screen
+    title = con.ocr_screen(crop="960x40+0+50")
+    assert "DEEP" not in title.upper()
+    assert "TOP" in title.upper(), title
+    _quit_juke(con)
     con.send_line("PLAY STOP")
 
