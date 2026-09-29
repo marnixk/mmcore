@@ -10,6 +10,7 @@ unnotarized instead of aborting the release.
 import os
 import shutil
 import subprocess
+import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
@@ -43,6 +44,67 @@ def test_notarization_is_required_by_default():
     pkg = open(PACKAGER, encoding="utf-8").read()
     assert "MMCORE_REQUIRE_NOTARY" in pkg
     assert "want_notary=1" in pkg
+
+
+def test_notary_env_file_is_loaded_for_non_interactive_release():
+    notary_helper = os.path.join(SCRIPTS, "mmcore-notary-env.sh")
+    rel = open(RELEASE, encoding="utf-8").read()
+    pkg = open(PACKAGER, encoding="utf-8").read()
+    helper = open(notary_helper, encoding="utf-8").read()
+    path = ".config/mmcore/notary.env"
+    for text in (rel, pkg, helper):
+        assert path in text
+        assert "NOTARY_APPLE_ID" in text
+        assert "NOTARY_TEAM_ID" in text
+        assert "NOTARY_PASSWORD" in text
+    assert "mmcore-notary-env.sh" in rel
+    assert "mmcore-notary-env.sh" in pkg
+    _run([BASH, "-n", notary_helper])
+
+
+def test_notary_env_helper_sources_file_and_respects_existing_env():
+    notary_helper = os.path.join(SCRIPTS, "mmcore-notary-env.sh")
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = os.path.join(tmp, ".config", "mmcore")
+        os.makedirs(cfg)
+        env_file = os.path.join(cfg, "notary.env")
+        with open(env_file, "w", encoding="utf-8") as fh:
+            fh.write(
+                "export NOTARY_APPLE_ID=file@example.com\n"
+                "export NOTARY_TEAM_ID=FILETEAM\n"
+                "export NOTARY_PASSWORD=file-secret\n"
+            )
+        load_from_file = subprocess.run(
+            [
+                BASH,
+                "-c",
+                f'. "{notary_helper}"; printf "%s|%s|%s" '
+                '"$NOTARY_APPLE_ID" "$NOTARY_TEAM_ID" "$NOTARY_PASSWORD"',
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+            env={"HOME": tmp, "PATH": os.environ.get("PATH", "")},
+        )
+        assert load_from_file.stdout == "file@example.com|FILETEAM|file-secret"
+        keep_env = subprocess.run(
+            [
+                BASH,
+                "-c",
+                f'. "{notary_helper}"; printf "%s" "$NOTARY_APPLE_ID"',
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+            env={
+                "HOME": tmp,
+                "PATH": os.environ.get("PATH", ""),
+                "NOTARY_APPLE_ID": "env@example.com",
+                "NOTARY_TEAM_ID": "ENVTEAM",
+                "NOTARY_PASSWORD": "env-secret",
+            },
+        )
+        assert keep_env.stdout == "env@example.com"
 
 
 def test_skip_notary_escape_hatch_builds_unnotarized():

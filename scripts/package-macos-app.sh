@@ -31,7 +31,10 @@
 #                       instead of a keychain profile. Useful in non-interactive
 #                       sessions where notarytool cannot read the keychain
 #                       ("User interaction is not allowed"). When all three are
-#                       set they take precedence over NOTARY_PROFILE.
+#                       set they take precedence over NOTARY_PROFILE. If they
+#                       are not already in the environment, this script sources
+#                       ~/.config/mmcore/notary.env when that file exists and is
+#                       readable (export lines for the three variables above).
 #   MMCORE_REQUIRE_NOTARY=1
 #                       Release build: notarization is mandatory. The bundle is
 #                       notarized and stapled, and the script fails if either
@@ -59,6 +62,8 @@ case "$(uname -s)" in
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/mmcore-notary-env.sh
+. "${REPO_ROOT}/scripts/mmcore-notary-env.sh"
 DIST="${DIST:-${REPO_ROOT}/dist}"
 BIN="${REPO_ROOT}/native/mmcore"
 APP_NAME="mmcore"
