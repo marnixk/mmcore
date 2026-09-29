@@ -1,9 +1,8 @@
 name: Linux ISO
 
-# Builds the bootable Alpine live ISO, compresses it, and attaches the compressed
-# image (plus install-usb.sh) to the release. QEMU boot-smoke is disabled until
-# #941 (MMCORE_STABLE_MISSING flakiness) is fixed. The raw .iso is never
-# published as an asset: users decompress before writing.
+# Builds the bootable Alpine live ISO, boot-smokes it in QEMU, compresses it,
+# and attaches the compressed image (plus install-usb.sh) to the release. The
+# raw .iso is never published as an asset: users decompress before writing.
 #
 #  - on a version release: attached to that GitHub release;
 #  - on push to ports/linux / iso: attached to the rolling 'linux-iso'
@@ -20,10 +19,10 @@ on:
         required: false
         type: string
       skip_smoke:
-        description: "Ignored while boot-smoke is disabled (#941); kept for re-enable"
+        description: "Skip the boot-smoke gate (manual re-attach only)"
         required: false
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -46,9 +45,8 @@ jobs:
           VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: scripts/build-iso.sh
 
-      # TODO(#941): Re-enable when mmcore stability in QEMU is reliable again.
       - name: Boot-smoke the ISO against a virtual KMS/DRM device
-        if: false
+        if: ${{ !inputs.skip_smoke }}
         # A text-only console has no DRM at all, so the kmsdrm driver can never
         # initialise and a crash-looping mmcore still satisfies `pgrep`. Boot a
         # KMS-capable virtio-gpu instead (the ISO loads virtio_gpu), keep the
@@ -92,11 +90,19 @@ jobs:
           {
             echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
             echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
-            # #918: mmcore starts on tty1 via agetty autologin, which can lag
-            # the ttyS0 shell. Poll (bounded) for a PID that is already stable
-            # instead of sampling once before mmcore is up, which made STABLE_OK
-            # flaky and skipped the ISO asset.
-            echo 'ok=0; n=0; while [ "$n" -lt 30 ]; do pgrep -x mmcore | head -n1 > /tmp/p1; if [ -s /tmp/p1 ]; then sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2; cmp -s /tmp/p1 /tmp/p2 && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
+            # #918/#941: mmcore starts on tty1 via agetty autologin, which can
+            # lag the ttyS0 shell, so wait (bounded) for it to appear and then
+            # require the PID to be unchanged 6 s later (a crash loop never
+            # stabilises). Match the kernel's per-pid `comm` name: BusyBox's
+            # exact-name option anchors the whole argv[0]
+            # (`/usr/local/bin/mmcore`), so it never matched the running process
+            # and STABLE_OK was always missed (#941).
+            echo 'mmcore_pid() { for d in /proc/[0-9]*; do [ "$(cat "$d/comm" 2>/dev/null)" = mmcore ] && { printf "%s\n" "${d##*/}"; break; }; done; }'
+            echo 'ok=0; n=0; while [ "$n" -lt 60 ]; do a=$(mmcore_pid); if [ -n "$a" ]; then sleep 6; b=$(mmcore_pid); [ "$a" = "$b" ] && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
+            # #941: on a miss, dump why before poweroff (process table, mmcore
+            # stderr, tty1 agetty/login/mmcore state) so boot.log alone shows
+            # the cause of the next failure.
+            echo '[ "$ok" = 1 ] || { printf "MMCORE_%s\n" DIAG_BEGIN; echo "-- ps --"; ps w 2>&1 | head -25; echo "-- pgrep -a mmcore --"; pgrep -a mmcore 2>&1 || true; echo "-- /tmp/mmcore.stderr --"; ls -l /tmp/mmcore.stderr 2>&1; cat /tmp/mmcore.stderr 2>&1 | head -40; echo "-- comm scan --"; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); case "$c" in mmcore|agetty|login|mmcore-splash) echo "$d $c";; esac; done; printf "MMCORE_%s\n" DIAG_END; }'
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
             # DHCP can be slow (the interface often appears after the shell), so
             # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
@@ -110,7 +116,7 @@ jobs:
 
           wait "$qemu_pid" || true
           echo "---- boot.log tail ----"
-          tail -n 60 boot.log || true
+          tail -n 100 boot.log || true
           grep -q "MMCORE_ISO_BOOT_OK" boot.log
           grep -q "MMCORE_DRM_OK" boot.log
           grep -q "MMCORE_STABLE_OK" boot.log

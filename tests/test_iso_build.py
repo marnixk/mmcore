@@ -330,9 +330,11 @@ def test_boot_smoke_retries_dhcp():
 
 
 def test_boot_smoke_waits_for_a_stable_mmcore_pid():
-    """#918: mmcore starts on tty1 via agetty autologin, which lags the ttyS0
-    shell. The STABLE_OK sample must poll (bounded) until a PID is present and
-    unchanged, not sample once before mmcore is up."""
+    """#918/#941: mmcore starts on tty1 via agetty autologin, which lags the
+    ttyS0 shell. The STABLE_OK sample must poll (bounded) until a PID is present
+    and unchanged. BusyBox `pgrep -x` anchors the whole argv[0] path
+    (`/usr/local/bin/mmcore`), so it never matched; match the kernel `comm`
+    name instead."""
     wf = open(WORKFLOW, encoding="utf-8").read()
     stable_lines = [
         ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "STABLE_OK" in ln
@@ -340,7 +342,36 @@ def test_boot_smoke_waits_for_a_stable_mmcore_pid():
     assert len(stable_lines) == 1, stable_lines
     line = stable_lines[0]
     assert "while" in line, line
-    assert "pgrep -x mmcore" in line, line
+    assert "/proc/[0-9]*" in wf, wf
+    assert "/comm" in wf, wf
+    assert "pgrep -x mmcore" not in wf, "BusyBox -x anchors the full argv[0]"
+
+
+def test_boot_smoke_is_enabled():
+    """#941: the gate must run again now STABLE_OK matches mmcore's comm name."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "if: false" not in wf
+    assert "if: ${{ !inputs.skip_smoke }}" in wf
+    # The dispatch default must smoke, or a manual re-attach cannot exercise it.
+    assert "default: false" in wf
+
+
+def test_boot_smoke_dumps_diagnostics_on_failure():
+    """#941: a STABLE miss must dump why (process table, mmcore stderr, tty1
+    agetty/login/mmcore state) before poweroff, so boot.log alone is enough."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    # Assembled in the guest with printf (like the other markers), so the
+    # source spells out the printf, not the concatenated marker.
+    assert 'printf "MMCORE_%s\\n" DIAG_BEGIN' in wf
+    assert 'printf "MMCORE_%s\\n" DIAG_END' in wf
+    diag = [ln for ln in wf.splitlines() if "DIAG_BEGIN" in ln]
+    assert len(diag) == 1, diag
+    line = diag[0]
+    # Gated on a failed STABLE sample.
+    assert '[ "$ok" = 1 ] ||' in line, line
+    assert "ps w" in line, line
+    assert "/tmp/mmcore.stderr" in line, line
+    assert "/proc/[0-9]*" in line and "/comm" in line, line
 
 
 def test_profile_documents_ctrl_alt_vt_switching():
