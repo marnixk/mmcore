@@ -71,6 +71,13 @@ Applied after `circle-tcp-send.patch` (marker `mmbasic-tcp-ack` in
   and FIN was actually sent.
 - A 1-byte persist probe is sent when the peer advertises a zero window.
 
+## `circle-fb-unaligned.patch`
+
+Applied after `circle-fb-doublebuf.patch` (marker `mmbasic-fb-unaligned` in
+`lib/bcmframebuffer.cpp`). HDMI presents use 128-bit DMA, which needs a
+16-byte block length. Widths that are not a multiple of eight pixels
+(1366 and 683) are copied on the CPU instead.
+
 ## `circle-usb-cdc-rx.patch`
 
 Applied last (marker `mmbasic-usb-cdc-rx` in `lib/usb/usbcdcethernet.cpp`).
