@@ -129,6 +129,15 @@ def test_installer_and_updater_scripts_are_present_and_executable():
 def test_installer_creates_the_two_partition_boot_layout():
     text = open(INSTALL, encoding="utf-8").read()
     assert "grub-install" in text
+    assert "--recheck" not in text
+    assert "(hd0)" in text
+    assert "set 1 esp on" in text
+    assert "set 1 boot on" in text
+    assert "--removable" in text
+    assert "--bootloader-id=mmcore" in text
+    assert "--no-nvram" in text
+    assert "/sys/firmware/efi" in text
+    assert "search --no-floppy --set=root --label MMCORE-SYS" in text
     assert "MMCORE-SYS" in text
     assert "MMCORE-DATA" in text
     assert "mklabel" in text
@@ -174,7 +183,7 @@ def test_rootfs_ships_partition_and_bootloader_tools():
     text = open(BUILDER, encoding="utf-8").read()
     # The rootfs (not just the builder) must be able to partition a disk and
     # install GRUB, so these are on the `apk add --root` line.
-    assert "parted gptfdisk util-linux-misc grub grub-efi grub-bios" in text
+    assert "parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr" in text
 
 
 def test_update_version_compare_logic():

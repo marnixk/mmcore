@@ -120,12 +120,20 @@ mmcore-install --disk /dev/sdX --yes
 The system partition is at least ~255 MiB (it grows to fit the kernel, the
 initramfs, and the squashfs root). Those files are copied from the live
 media's own `/boot`, so the installed system matches the release that wrote
-the disk.
+the disk and boots with the USB stick removed.
 The installer refuses the running live media and removable disks unless
 `--force` is passed; `--boot-dir DIR` reads the boot files from an
 already-mounted source instead of auto-detecting it.
 
-After installation the disk boots standalone on BIOS and UEFI: GRUB mounts
+Partition 1 is the EFI system partition and the BIOS boot partition. GRUB is
+written into the MBR with this disk as the first hard disk, and the UEFI
+loader is installed at `\EFI\BOOT\BOOTX64.EFI` and `\EFI\mmcore\grubx64.efi`.
+A live session that was itself booted with UEFI also registers an `mmcore`
+entry in the firmware boot menu. A Legacy session cannot write that entry;
+on a UEFI-only machine, boot the USB from the firmware boot menu (F12 on a
+ThinkPad) and run the installer again.
+
+After installation the disk boots on its own, on BIOS and UEFI. GRUB mounts
 `MMCORE-SYS` as `C:` and launches mmcore with `--drive /media/mmcore-data`, so
 `MMCORE-DATA` appears as `D:`.
 

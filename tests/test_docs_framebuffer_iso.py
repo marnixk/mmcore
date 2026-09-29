@@ -47,6 +47,8 @@ def test_framebuffer_iso_doc_documents_installing_to_disk():
         "MMCORE-SYS",
         "MMCORE-DATA",
         "mmcore-fb-linux-x86_64.tar.gz",
+        "EFI system partition",
+        "BOOTX64.EFI",
     ):
         assert needle in text, needle
 
