@@ -44,6 +44,10 @@ Environment:
                         (default: mmcore-notary). The macOS asset is always
                         notarized + stapled and the release fails if that does
                         not succeed, so an unnotarized app cannot ship.
+  ~/.config/mmcore/notary.env
+                        optional file with NOTARY_APPLE_ID, NOTARY_TEAM_ID, and
+                        NOTARY_PASSWORD exports for non-interactive notarization
+                        (sourced automatically before the macOS package step).
   MMCORE_SKIP_NOTARY=1  local/emergency builds: sign the macOS app but do NOT
                         notarize or staple it, so the release can proceed
                         without notarytool credentials. Never set this for a
@@ -349,6 +353,8 @@ publish() {
 	assert_zip_has_installer "${pi400}"
 
 	if [ "$(uname -s)" = "Darwin" ]; then
+		# shellcheck source=scripts/mmcore-notary-env.sh
+		. "${REPO_ROOT}/scripts/mmcore-notary-env.sh"
 		if [ "${MMCORE_SKIP_NOTARY:-}" = "1" ]; then
 			log "Building UNNOTARIZED macOS app bundle for ${tag} (MMCORE_SKIP_NOTARY=1)"
 			MMCORE_REQUIRE_NOTARY=0 VERSION="${version}" \
