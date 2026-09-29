@@ -14,6 +14,8 @@
 #include <circle/machineinfo.h>
 #include <circle/atomic.h>
 
+extern "C" void mmb_play_mix(void);
+
 static CKernel *s_kernel;
 
 /* SetArea may DMA from these bounce buffers on hardware (SCREEN_DMA_BURST_LENGTH).
@@ -69,7 +71,7 @@ static volatile int s_present_busy;
 static void plat_present_wait(void)
 {
 	while (AtomicGet(&s_present_busy))
-		;
+		mmb_play_mix();
 }
 
 static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
@@ -355,6 +357,7 @@ static int plat_resize_hdmi(int w, int h)
 		return 1;
 
 	plat_term_present_drain();
+	mmb_play_mix();
 
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */
@@ -1248,7 +1251,7 @@ static void plat_term_present_drain(void)
 	for (;;)
 	{
 		while (AtomicGet(&s_term_in_flight))
-			;
+			mmb_play_mix();
 		pending = 0;
 		DisableInterrupts();
 		if (s_term_pending)

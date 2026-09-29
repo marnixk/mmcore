@@ -4445,6 +4445,9 @@ void mmb_poll(void)
 	}
 	mmb_ntp_poll();
 	mmb_connect_poll();
+	/* Fill the audio queue before TERM paint/present, then again after.
+	 * term_draw also mixes while it is on the screen (#936). */
+	mmb_play_mix();
 	mmb_term_poll();
 	mmb_net_tcp_debug_poll();
 	mmb_play_mix();

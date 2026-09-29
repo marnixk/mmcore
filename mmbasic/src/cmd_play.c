@@ -23,9 +23,11 @@
 #define MIX_RATE     44100
 #define MIX_CHUNK    512
 #define MIX_PREROLL  1024
-/* Keep ~160ms in the DMA queue (two HDMI IEC958 periods are ~87ms). */
-#define MIX_TARGET   ((MIX_RATE * 160) / 1000)
-#define MIX_FILL_MAX 24
+/* Keep ~320ms queued. A TERM repaint on another console can spend longer
+ * than the old 160ms cushion inside paint and present before the poll loop
+ * reaches the mixer again. 32 chunks cover that target from an empty queue. */
+#define MIX_TARGET   ((MIX_RATE * 320) / 1000)
+#define MIX_FILL_MAX 32
 
 /* ibxm emits one tracker tick per replay_get_audio() call, so a whole tick has
  * to be held between mixer chunks. Tempo is >= 32, which makes the longest tick
@@ -59,6 +61,9 @@ static double s_tone_ph_l, s_tone_ph_r;
 static unsigned s_tone_left; /* ~0u = hold until STOP */
 static unsigned s_mix_origin;
 static unsigned s_pause_at;
+static unsigned s_mix_at;
+static unsigned s_mix_gap_ms;
+static unsigned s_underruns;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
@@ -323,6 +328,9 @@ static void play_begin(int kind, const char *path)
 		strncpy(g_audio.name, path, sizeof(g_audio.name) - 1);
 	s_mix_origin = mmb_now_ms();
 	s_pause_at = 0;
+	s_mix_at = 0;
+	s_mix_gap_ms = 0;
+	s_underruns = 0;
 	mmb_audio_apply_options();
 	/* Queue a DMA preroll before the caller redraws HDMI. */
 	mmb_play_mix();
@@ -676,16 +684,52 @@ static int mix_wav(unsigned nframes)
 	return 1;
 }
 
+unsigned mmb_audio_mix_gap_ms(void)
+{
+	return s_mix_gap_ms;
+}
+
+unsigned mmb_audio_underruns(void)
+{
+	return s_underruns;
+}
+
 void mmb_play_mix(void)
 {
 	unsigned n;
+	unsigned now;
+	unsigned gap;
 	int keep = 1;
 	int loops;
+	static int busy;
 
-	if (!g_audio.playing || g_audio.paused)
+	if (busy)
 		return;
+	if (!g_audio.playing)
+		return;
+	now = mmb_now_ms();
+	if (g_audio.paused)
+	{
+		s_mix_at = now;
+		return;
+	}
+	if (s_mix_at != 0)
+	{
+		gap = now - s_mix_at;
+		if (gap > s_mix_gap_ms)
+			s_mix_gap_ms = gap;
+		if (G.opt.audio_on && G.plat && G.plat->audio_have_device &&
+		    G.plat->audio_have_device() && G.plat->audio_queued_frames &&
+		    G.plat->audio_queued_frames() == 0)
+			s_underruns++;
+	}
+	s_mix_at = now;
+	busy = 1;
 	if (!flush_pending())
+	{
+		busy = 0;
 		return;
+	}
 	for (loops = 0; loops < MIX_FILL_MAX; loops++)
 	{
 		n = due_frames();
@@ -718,6 +762,7 @@ void mmb_play_mix(void)
 		s_ended_natural = 1;
 		play_teardown();
 	}
+	busy = 0;
 }
 
 void mmb_play_pause(int on)

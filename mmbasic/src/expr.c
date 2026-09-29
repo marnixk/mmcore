@@ -1112,6 +1112,16 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
 				return 1;
 			}
+			if (mmb_keyword_eq(key, "MIXGAP"))
+			{
+				*out = mmb_int_val((int)mmb_audio_mix_gap_ms());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "UNDERRUN"))
+			{
+				*out = mmb_int_val((int)mmb_audio_underruns());
+				return 1;
+			}
 		}
 		/* MM.INFO(MODE) with keyword inside parens already consumed by call_args as expr - handle MODE ident */
 		*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);

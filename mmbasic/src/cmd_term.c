@@ -225,6 +225,14 @@ static tm_state T_s[MMB_MAX_CONSOLES];
 static int s_term_bg;
 static void term_bg_yield(int console, void *ctx);
 
+/* Long TERM paths (paint, present, TCP ingest) must keep the mixer fed.
+ * A full repaint can outlast the queued audio if the mixer waits for poll. */
+static void term_yield(void)
+{
+	mmb_net_yield();
+	mmb_play_mix();
+}
+
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;
 
@@ -1045,6 +1053,7 @@ static void term_serial_dump(void)
 		line[cols] = 0;
 		ser(line);
 		ser("\r\n");
+		mmb_play_mix();
 	}
 	if (T.sb_search)
 	{
@@ -1576,7 +1585,9 @@ static void term_draw(void)
 	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 	/* Present sources PAGE 2 directly, so a prior frame's DMA must finish
-	 * before this repaint overwrites it (#340). */
+	 * before this repaint overwrites it (#340). Top up audio first: the
+	 * drain below waits out that DMA. */
+	mmb_play_mix();
 	term_guard_present();
 	full_screen = T.dirty_full;
 	if (T.dirty_full)
@@ -1597,7 +1608,7 @@ static void term_draw(void)
 		{
 			term_draw_row(r);
 			if ((r & 3) == 0)
-				mmb_net_yield();
+				term_yield();
 		}
 	}
 	if (T.menu || T.alt_pend)
@@ -1754,7 +1765,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 		int left = (int)n, rc, idle = 0;
 
 		T.tx_n += n;
-		mmb_net_yield();
+		term_yield();
 		while (left > 0)
 		{
 			rc = mmb_net_tcp_send(p, (unsigned)left);
@@ -1769,7 +1780,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 			}
 			if (rc < 0)
 				return;
-			mmb_net_yield();
+			term_yield();
 			if (T.tcp && !T.replay && !T.file_replay)
 				term_tcp_drain(1);
 			if (++idle > 500)
@@ -4408,7 +4419,7 @@ static void zmodem_pump(void)
 		mmb_zm_feed(&ZM, buf, n, now);
 		if (!mmb_zm_active(&ZM))
 			break;
-		mmb_net_yield();
+		term_yield();
 	}
 	mmb_zm_tick(&ZM, now);
 }
@@ -4463,7 +4474,7 @@ static void zmodem_poll(void)
 		return;
 	}
 	zmodem_draw_status();
-	mmb_net_yield();
+	term_yield();
 }
 
 /* ---- download folder browser dialog ---------------------------------- */
@@ -4750,7 +4761,7 @@ static int term_tcp_drain(int idle_max)
 		}
 		if (n == 0)
 		{
-			mmb_net_yield();
+			term_yield();
 			if (++idle >= idle_max)
 				break;
 			continue;
@@ -4759,7 +4770,7 @@ static int term_tcp_drain(int idle_max)
 		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
 		T.rx_n += (unsigned)n;
 		got += n;
-		mmb_net_yield();
+		term_yield();
 	}
 	draining = 0;
 	return got;
@@ -4840,7 +4851,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -4854,7 +4865,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -6271,7 +6282,7 @@ void mmb_term_poll(void)
 	term_maybe_serial_dump(got);
 	if (T.need_draw)
 		term_draw();
-	mmb_net_yield();
+	term_yield();
 }
 
 /* #858: keep an established TCP session drained while this console is not the
