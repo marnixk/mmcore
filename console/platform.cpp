@@ -357,6 +357,7 @@ static int plat_resize_hdmi(int w, int h)
 		return 1;
 
 	plat_term_present_drain();
+	mmb_play_mix();
 
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */

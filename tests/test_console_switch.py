@@ -1294,18 +1294,24 @@ def test_editor_char_picker_hold_on_other_console_does_not_open(kernel_image):
 
 
 def test_s3m_keeps_mixing_while_term_repaints(kernel_image):
-    """#936: S3M on one console, TERM repainting on another. The mixer must
-    be serviced inside the paint, so the latched gap stays under the queue."""
+    """#936: S3M stays mixed while TERM repaints on another console.
+
+    A fresh console resizes HDMI in one blocking call, so the track is
+    started after that, in MODE 14,16 (TERM's letterbox). MIXGAP then
+    measures the repaint and the serial pane dump.
+    """
     con = _usb_console(kernel_image)
     con.start()
     try:
         con.drain(quiet=0.3, timeout=2.0)
-        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
-        assert con.send_line("PRINT PLAYING()") == "1"
-
         _switch(con, 2)
         con.drain(quiet=0.3, timeout=2.0)
-        seen = _open_term_demoburst(con, settle=0.5)
+        assert con.send_line("MODE 14,16") == ""
+        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+        assert int(con.send_line('PRINT MM.INFO("MIXGAP")')) < 200
+
+        seen = _open_term_demoburst(con, settle=0.4)
         assert "line 40" in seen, seen
         _term_page_up(con)
         con._ser.sendall(bytes([1]) + b"x")
