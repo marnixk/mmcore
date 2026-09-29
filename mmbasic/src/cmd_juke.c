@@ -30,7 +30,9 @@
 #define JUKE_SCAN_STACK 64
 #define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
 #define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
-#define JUKE_MID_Y      100    /* visualiser and playlist share this top */
+#define JUKE_MID_Y      100    /* oscilloscope inset top             */
+#define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
+#define JUKE_LIST_Y     (JUKE_MID_Y + JUKE_SCOPE_H + 8) /* below the scope */
 #define JUKE_LIST_ROW    18
 #define JUKE_LIST_SEL   0x3A4650u
 #define JUKE_ESC_IDLE_MS 60
@@ -51,7 +53,7 @@ typedef struct {
 	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
 	int logo_w, logo_h;
 	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
-	unsigned col_bar_lo, col_bar_hi, col_scan, col_peak;
+	unsigned col_bar_lo, col_bar_mid, col_bar_hi, col_scan, col_peak;
 	unsigned col_scope_lo, col_vol, col_base;
 	int list_on;
 	int sel;
@@ -218,14 +220,16 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Muted grey base -> lime tip, for the per-bar gradient. */
+/* Black base -> mid grey -> lime tip, for the per-bar gradient (#952). */
 static unsigned juke_grad(float t)
 {
 	if (t < 0.0f)
 		t = 0.0f;
 	if (t > 1.0f)
 		t = 1.0f;
-	return juke_mix(U.col_bar_lo, U.col_bar_hi, t);
+	if (t < 0.5f)
+		return juke_mix(U.col_bar_lo, U.col_bar_mid, t * 2.0f);
+	return juke_mix(U.col_bar_mid, U.col_bar_hi, (t - 0.5f) * 2.0f);
 }
 
 /* Muted graffiti accents: magenta -> cyan -> lime, for the VOL fill edge. */
@@ -251,7 +255,8 @@ static void juke_load_colours(void)
 	U.col_track = 0x1A1D20u;    /* empty VOL / chip fill */
 	U.col_text = 0xFFFFFFu;     /* plain white           */
 	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
-	U.col_bar_lo = 0x232724u;   /* near-black bar base   */
+	U.col_bar_lo = 0x000000u;   /* black bar base        */
+	U.col_bar_mid = 0x767C82u;  /* mid grey bar middle   */
 	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
 	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
 	U.col_peak = 0xC8E664u;     /* light lime cap        */
@@ -594,17 +599,6 @@ static void juke_text(int x, int y, const char *s, unsigned col, int scale)
 	G.gfx.font_scale = save;
 }
 
-static const char *juke_state_str(void)
-{
-	if (g_audio.playing && g_audio.paused)
-		return "PAUSED";
-	if (g_audio.playing)
-		return "PLAY";
-	if (s_q.active)
-		return "READY";
-	return "STOP";
-}
-
 /* Decode the graffiti wordmark once per JUKE session (#914). It mirrors the
  * startup_logo() path: A:/juke-logo.png is a build-time ramdisk asset. */
 static void juke_load_logo(void)
@@ -645,7 +639,7 @@ static void juke_draw_logo(int x0, int y0)
 
 static void juke_paint_list(int w, int h)
 {
-	int y0 = JUKE_MID_Y;
+	int y0 = JUKE_LIST_Y;
 	int y1 = h - 56;
 	int bw = w - 16;
 	int rows, top, vis;
@@ -702,14 +696,14 @@ static void juke_paint_list(int w, int h)
 	}
 }
 
-static void juke_paint_vis(int w, int h)
+/* Oscilloscope waveform inset, shared by the visualiser and the playlist view
+ * so the waveform stays visible while browsing the queue (#950). */
+static void juke_paint_scope(int w)
 {
-	float bands[MMB_AUDIO_BANDS];
 	short scope[JUKE_SCOPE_N];
-	int i, n, x0, x1, bw, gap, base, maxh;
-	int px, py0, py1, cy, amp, age;
+	int i, n;
+	int px, x1, py0, py1, cy, amp, age;
 
-	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
 	n = mmb_audio_scope(scope, JUKE_SCOPE_N);
 	if (n > JUKE_SCOPE_N)
 		n = JUKE_SCOPE_N;
@@ -723,7 +717,7 @@ static void juke_paint_vis(int w, int h)
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
 	{
-		int bx = 8, by = JUKE_MID_Y, bw2 = w - 16, bh2 = 52;
+		int bx = 8, by = JUKE_MID_Y, bw2 = w - 16, bh2 = JUKE_SCOPE_H;
 		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
@@ -757,11 +751,20 @@ static void juke_paint_vis(int w, int h)
 			}
 		}
 	}
+}
 
-	/* Spectrum: 24 grey-to-lime bars, no midfield guide lines. The bar field
-	 * is deliberately short so the full-size wordmark still fits above it,
-	 * and it is centred so the leftover width splits evenly on both sides
-	 * instead of pooling to the right of the last band. */
+static void juke_paint_vis(int w, int h)
+{
+	float bands[MMB_AUDIO_BANDS];
+	int i, x0, x1, bw, gap, base, maxh;
+
+	juke_paint_scope(w);
+	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
+
+	/* Spectrum: 24 black-to-grey-to-lime bars, no midfield guide lines. The
+	 * bar field is deliberately short so the full-size wordmark still fits
+	 * above it, and it is centred so the leftover width splits evenly on both
+	 * sides instead of pooling to the right of the last band. */
 	base = h - 71;
 	maxh = base - 190;
 	if (maxh < 24)
@@ -789,7 +792,7 @@ static void juke_paint_vis(int w, int h)
 			bh = 2;
 		if (bh > maxh)
 			bh = maxh;
-		/* Vertical per-bar gradient: grey base -> lime tip. */
+		/* Vertical per-bar gradient: black base -> grey -> lime tip. */
 		for (y = 0; y < bh; y += 4)
 		{
 			float frac = (float)y / (float)bh;
@@ -828,23 +831,12 @@ static void juke_paint(int w, int h)
 
 	mmb_gfx_cls(U.col_bg);
 
-	/* Header: full-size graffiti wordmark and right-aligned status. The
-	 * wordmark is 50px tall, so the bar field below is shortened to fit. */
+	/* Header: full-size graffiti wordmark. The wordmark is 50px tall, so the
+	 * bar field below is shortened to fit. The old top-right VIS/LIST/MOD
+	 * state chrome is gone (#951); only the truncation hint remains there. */
 	juke_draw_logo(14, 1);
-	{
-		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
-		int extra = s_q.truncated ? 6 : 0;
-		int x;
-		sprintf(buf, "%s  %s  %d/%d  %s%s", juke_state_str(), fmt,
-			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
-			U.list_on ? "LIST" : "VIS",
-			s_q.shuffle ? "  SHUF" : "");
-		x = w - 14 - ((int)strlen(buf) + extra) * 8;
-		juke_text(x, 20, buf, U.col_dim, 1);
-		if (s_q.truncated)
-			juke_text(x + (int)strlen(buf) * 8, 20, "  more",
-				  U.col_text, 1);
-	}
+	if (s_q.truncated)
+		juke_text(w - 46, 20, "more", U.col_text, 1);
 
 	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
 	juke_text(14, 60, title, U.col_text, 1);
@@ -858,7 +850,10 @@ static void juke_paint(int w, int h)
 	}
 
 	if (U.list_on)
+	{
+		juke_paint_scope(w);
 		juke_paint_list(w, h);
+	}
 	else
 		juke_paint_vis(w, h);
 
