@@ -292,6 +292,11 @@ def test_live_root_is_a_squashfs_the_kernel_reads():
     assert "modprobe.blacklist=uas" in builder
     assert "modprobe.blacklist=uas" in open(INSTALL, encoding="utf-8").read()
     assert "while" in live and "sleep 1" in live
+    # /proc must exist before it is mounted, or PID 1 exits and the kernel panics.
+    # mkdir is not on PATH until --install, so the first one goes through busybox.
+    assert "/bin/busybox mkdir -p" in live
+    assert live.index("/bin/busybox mkdir -p") < live.index("mount -t proc")
+    assert "/proc" in live.split("mount -t proc", 1)[0]
     wf = open(WORKFLOW, encoding="utf-8").read()
     match = re.search(r"-m\s+(\d+)", wf)
     assert match, "the boot smoke has no -m RAM option"
