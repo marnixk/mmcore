@@ -26,6 +26,8 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-tcp-robust.patch"),
     os.path.join(REPO, "patches", "circle-tcp-send.patch"),
     os.path.join(REPO, "patches", "circle-tcp-ack.patch"),
+    os.path.join(REPO, "patches", "circle-fb-doublebuf.patch"),
+    os.path.join(REPO, "patches", "circle-fb-unaligned.patch"),
     os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
     os.path.join(REPO, "patches", "circle-console-state.patch"),
 ]
@@ -71,13 +73,17 @@ def test_build_script_applies_patches_in_order():
     b = text.index("circle-tcp-robust.patch")
     c = text.index("circle-tcp-send.patch")
     d = text.index("circle-tcp-ack.patch")
+    db = text.index("circle-fb-doublebuf.patch")
+    ua = text.index("circle-fb-unaligned.patch")
     e = text.index("circle-usb-cdc-rx.patch")
     f = text.index("circle-console-state.patch")
-    assert a < b < c < d < e < f
+    assert a < b < c < d < db < ua < e < f
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
     assert "mmbasic-tcp-ack" in text
+    assert "mmbasic-fb-doublebuf" in text
+    assert "mmbasic-fb-unaligned" in text
     assert "mmbasic-usb-cdc-rx" in text
     assert "mmbasic-console-state" in text
 
@@ -103,6 +109,18 @@ def test_patches_carry_their_markers(patched_tree):
     qcpp = open(os.path.join(patched_tree, "lib/net/netbufferqueue.cpp"), encoding="utf-8").read()
     assert "RemoveHeader" in qcpp
     assert "nBytesAck == 1" not in tcp
+
+
+def test_fb_unaligned_patch_applies(patched_tree):
+    fb = open(
+        os.path.join(patched_tree, "lib/bcmframebuffer.cpp"), encoding="utf-8"
+    ).read()
+    assert "mmbasic-fb-unaligned" in fb
+    assert "mmbasic-fb-doublebuf" in fb
+    body = fb[fb.index("void CBcmFrameBuffer::SetArea") :]
+    body = body[: body.index("void CBcmFrameBuffer::DMACompletionRoutine")]
+    assert body.index("bDma") < body.index("SetupMemCopy2D")
+    assert "ulBlockLength & 15" in body
 
 
 def test_usb_cdc_rx_patch_applies(patched_tree):

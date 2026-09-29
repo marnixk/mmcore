@@ -1901,7 +1901,7 @@ static void an_apply_mode(void)
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
 	mode = F.an_mode80 ? 2 : F.an_saved_mode;
-	if (mode < 1 || mode > 17)
+	if (!mmb_gfx_mode_valid(mode))
 		mode = 14;
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
 		mmb_gfx_set_mode(mode, bits);

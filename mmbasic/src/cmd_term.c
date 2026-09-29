@@ -2164,7 +2164,7 @@ static void term_apply_session_mode(void)
 	else
 	{
 		mode = T.saved_mode;
-		if (mode < 1 || mode > 17)
+		if (!mmb_gfx_mode_valid(mode))
 			mode = 14;
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)

@@ -19,6 +19,8 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 16, 1920, 1080 },
 	{ 17, 384, 240 },
 	{ 18, 640, 360 },
+	{ 19, 1366, 768 },
+	{ 20, 683, 384 },
 };
 
 #define MMB_RGB_AFLAG 0x10000000u
@@ -742,15 +744,8 @@ void mmb_gfx_apply_default_mode(void)
 {
 	int mode = G.opt.default_mode;
 	int bits = G.gfx.bits ? G.gfx.bits : 8;
-	unsigned i;
-	int ok = 0;
 
-	if (mode <= 0)
-		return;
-	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
-		if (kModes[i].id == mode)
-			ok = 1;
-	if (!ok)
+	if (!mmb_gfx_mode_valid(mode))
 		return;
 	if ((mode == 9 || mode == 11 || mode == 12 || mode == 14) && bits == 12)
 		bits = 8;
@@ -794,6 +789,16 @@ void mmb_gfx_reapply_mode(void)
 		return;
 	if (G.gfx.w > 0 && G.gfx.h > 0)
 		G.plat->resize_hdmi(G.gfx.w, G.gfx.h);
+}
+
+int mmb_gfx_mode_valid(int mode)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
+		if (kModes[i].id == mode)
+			return 1;
+	return 0;
 }
 
 void mmb_gfx_set_mode(int mode, int bits)

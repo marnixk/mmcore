@@ -76,6 +76,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fb-doublebuf.patch"
 fi
 
+if grep -q 'mmbasic-fb-unaligned' "${CIRCLE_DIR}/lib/bcmframebuffer.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle framebuffer unaligned-width patch (1366x768 / 683x384)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fb-unaligned.patch"
+fi
+
 if grep -q 'mmbasic-usb-cdc-rx' "${CIRCLE_DIR}/lib/usb/usbcdcethernet.cpp" 2>/dev/null; then
 	:
 else
