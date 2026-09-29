@@ -6,6 +6,9 @@ same pattern will validate the real MMBasic implementation once it is ported
 onto Circle from picomite-fork.
 """
 
+import re
+import time
+
 import pytest
 
 from harness import MMBasicConsole
@@ -169,3 +172,31 @@ def test_delete_key_csi_consumed(fresh_console):
 def test_ctrl_c_cancels_line(fresh_console):
     fresh_console.send_keys(b"PRINT 999\x03")
     assert fresh_console.send_line("PRINT 7") == "7"
+
+
+def test_first_print_after_app_exit_keeps_newline(fresh_console):
+    """#957: leaving an app must not cost the next command its newline.
+
+    WORDPAD sets the global home_prompt flag while leaving. The shared
+    mmb_front_prompt() exit path must consume that flag; otherwise it leaks
+    into the next submit(), which then omits the leading CR/LF and prints the
+    command's result over the prompt on the same line.
+    """
+    con = fresh_console
+    con.drain(quiet=0.2)
+
+    con._ser.sendall(b"WORDPAD\r")
+    time.sleep(1.2)
+    opened = con.drain(quiet=0.4).decode(errors="replace")
+    assert "WORDPAD" in opened.upper(), opened
+
+    con._ser.sendall(bytes([1]) + b"x")  # Alt+X quits WORDPAD
+    time.sleep(0.9)
+    con.drain(quiet=0.6)
+
+    con._ser.sendall(b"PRINT 1+1\r")
+    raw = con.drain(quiet=0.8)
+    # Between the echoed command and the first LF only CRs may appear; the
+    # buggy home_prompt branch emits "1+1\r2\n" (result glued after the CR).
+    assert re.search(rb"1\+1\r+\n", raw), raw
+    assert b"2" in raw

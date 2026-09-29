@@ -646,6 +646,13 @@ void mmb_front_prompt(void)
 	 * and WORDPAD). A sealed CLI session never returns to the REPL at all. */
 	if (s_sealed || mmb_front_in_app())
 		return;
+	/* An app that homed or cleared the screen on exit (WORDPAD sets
+	 * G.home_prompt from wp_leave) leaves the flag set for the prompt that
+	 * follows. This function is the shared exit path that paints that prompt,
+	 * so consume the flag here; otherwise it survives into the next command's
+	 * submit() and suppresses its leading newline, colliding the first printed
+	 * output with the prompt (#957). */
+	(void)mmb_take_home_prompt();
 	mmb_hw_cursor(1);
 	fe_puts(mmb_prompt());
 }
