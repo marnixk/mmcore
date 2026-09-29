@@ -588,9 +588,10 @@ def test_juke_shows_id3_titles_and_basename_fallback(fresh_console):
     assert "ZBAD" in screen.upper().replace(" ", ""), screen
     _quit_juke(con)
     con.send_line("PLAY STOP")
-    _open_juke(con, "tests/TEST.WAV")
-    screen = _title_ocr(con, "WAV")
-    assert "WAV" in screen.upper(), screen
+    assert con.send_line('COPY "tests/TEST.WAV" TO "ZTONE.WAV"') == ""
+    _open_juke(con, "ZTONE.WAV")
+    screen = _title_ocr(con, "ZTONE")
+    assert "ZTONE" in screen.upper().replace(" ", ""), screen
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
