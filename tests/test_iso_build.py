@@ -20,6 +20,8 @@ SCRIPTS = os.path.join(REPO, "scripts")
 ISO = os.path.join(SCRIPTS, "iso")
 ENTRY = os.path.join(SCRIPTS, "build-iso.sh")
 BUILDER = os.path.join(ISO, "build-in-container.sh")
+PACK = os.path.join(ISO, "pack-initramfs.sh")
+LIVE_INIT = os.path.join(ISO, "live-init")
 MMCORE = os.path.join(ISO, "build-mmcore.sh")
 OVERLAY = os.path.join(ISO, "rootfs-overlay")
 INSTALL = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-install")
@@ -37,7 +39,7 @@ def _run(args, **kwargs):
 
 
 def test_iso_scripts_parse_and_are_executable():
-    for path in (ENTRY, BUILDER):
+    for path in (ENTRY, BUILDER, PACK, LIVE_INIT):
         _run(["bash", "-n", path])
         assert os.access(path, os.X_OK), path
 
@@ -135,6 +137,8 @@ def test_installer_creates_the_two_partition_boot_layout():
     # The installed boot uses MMCORE-SYS as C: and MMCORE-DATA as D:.
     assert "mmcore.sys=LABEL=MMCORE-SYS" in text
     assert "mmcore.data=LABEL=MMCORE-DATA" in text
+    assert 'cp "${PAYLOAD}/boot/rootfs.squashfs"' in text
+    assert "/mnt/live/media" in text
     profile = open(PROFILE, encoding="utf-8").read()
     assert "mmcore.sys=" in profile
     assert "/media/mmcore-sys" in profile
@@ -269,20 +273,37 @@ def test_boot_smoke_uses_a_kms_drm_gpu():
     assert "could not open SDL window" in wf
 
 
-def test_boot_smoke_gives_the_guest_enough_ram():
-    """#913: the ~820 MiB initramfs unpacks into RAM; measured on the shipped
-    ISO, 4096 MiB still panicked and 5120 MiB booted. The smoke and the docs
-    must agree on a minimum with headroom."""
+def test_live_root_is_a_squashfs_the_kernel_reads():
+    """Firmware USB reads on a ThinkPad T420 (and on flash drives tuned for
+    large sequential transfers) are too slow to load a full rootfs initramfs.
+    GRUB must load only a small initramfs; the rootfs is a 1 MiB-block squashfs."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert "mksquashfs" in builder
+    assert "rootfs.squashfs" in builder
+    assert "pack-initramfs.sh" in builder
+    assert "-b 1048576" in builder
+    assert 'cd "${ROOTFS}" && find' not in builder
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    assert "rootfs.squashfs" in live
+    assert "switch_root" in live
+    assert "overlay" in live
+    assert "blacklist uas" in live
+    assert "modprobe uas" not in live
+    assert "modprobe.blacklist=uas" in builder
+    assert "modprobe.blacklist=uas" in open(INSTALL, encoding="utf-8").read()
+    assert "while" in live and "sleep 1" in live
     wf = open(WORKFLOW, encoding="utf-8").read()
     match = re.search(r"-m\s+(\d+)", wf)
     assert match, "the boot smoke has no -m RAM option"
     ram = int(match.group(1))
-    assert ram >= 6144, f"boot smoke RAM {ram} MiB is too small for the initramfs"
+    assert 2048 <= ram <= 3072, ram
     doc = open(
         os.path.join(REPO, "docs", "framebuffer-and-iso.md"), encoding="utf-8"
     ).read()
-    assert "at least 5 GiB" in doc
-    assert "6144" in doc
+    assert "at least 2 GiB" in doc
+    assert "squashfs" in doc
+    assert "T420" in doc
+    assert "5 GiB" not in doc
 
 
 def test_boot_smoke_retries_dhcp():
@@ -538,6 +559,58 @@ def test_iso_workflow_verifies_guest_tls():
     assert "api.github.com/repos/marnixk/mmcore/releases/latest" in wf
     assert "MMCORE_TLS_OK" in wf
     assert "grep -q \"MMCORE_TLS_OK\" boot.log" in wf
+
+
+def test_pack_initramfs_keeps_the_storage_closure_and_drops_uas(tmp_path):
+    """The initramfs GRUB reads must stay small: storage modules and their
+    deps, not unrelated drivers, and never uas."""
+    if shutil.which("cpio") is None or shutil.which("gzip") is None:
+        pytest.skip("cpio and gzip are required")
+    root = tmp_path / "rootfs"
+    kver = root / "lib" / "modules" / "9.9.9"
+
+    def put(rel):
+        path = kver / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"mod")
+
+    put("kernel/fs/squashfs/squashfs.ko")
+    put("kernel/lib/libcrc32c.ko")
+    put("kernel/fs/overlayfs/overlay.ko")
+    put("kernel/drivers/usb/storage/usb-storage.ko")
+    put("kernel/drivers/usb/storage/uas.ko.xz")
+    put("kernel/drivers/net/wireless/extra.ko")
+    (kver / "modules.dep").write_text(
+        "kernel/fs/squashfs/squashfs.ko: kernel/lib/libcrc32c.ko\n"
+        "kernel/lib/libcrc32c.ko:\n"
+        "kernel/fs/overlayfs/overlay.ko:\n"
+        "kernel/drivers/usb/storage/usb-storage.ko: "
+        "kernel/lib/libcrc32c.ko kernel/drivers/usb/storage/uas.ko.xz\n"
+        "kernel/drivers/usb/storage/uas.ko.xz: kernel/lib/libcrc32c.ko\n"
+        "kernel/drivers/net/wireless/extra.ko:\n",
+        encoding="utf-8",
+    )
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "busybox").write_bytes(b"busybox")
+    (root / "lib" / "ld-musl-x86_64.so.1").write_bytes(b"musl")
+    out = tmp_path / "initramfs-lts"
+    _run(["sh", PACK, str(root), str(out)])
+    listing = _run(
+        ["sh", "-c", 'gzip -dc "$1" | cpio -t', "sh", str(out)]
+    ).stdout
+    assert "squashfs.ko" in listing
+    assert "libcrc32c.ko" in listing
+    assert "overlay.ko" in listing
+    assert "usb-storage.ko" in listing
+    assert "uas.ko" not in listing
+    assert "extra.ko" not in listing
+    assert "bin/busybox" in listing
+    assert "init" in listing
+    selected = _run(
+        ["sh", PACK, "--select-modules", str(kver / "modules.dep")]
+    ).stdout
+    assert "squashfs.ko" in selected
+    assert "uas.ko" not in selected
 
 
 @pytest.mark.skipif(

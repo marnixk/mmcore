@@ -62,12 +62,10 @@ jobs:
           # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
           # cannot wedge the whole step.
           exec 3<>serial.in
-          # -m 6144: the rootfs is packed as a single ~820 MiB initramfs that the
-          # kernel unpacks entirely into RAM. Measured on the shipped ISO, 4096
-          # MiB still panics with "VFS: Unable to mount root fs" before userspace
-          # and 5120 MiB boots, so 6144 leaves headroom (#913). Keep this in step
-          # with the "at least 5 GiB" note in docs/framebuffer-and-iso.md.
-          timeout 720 qemu-system-x86_64 -m 6144 \
+          # -m 2048: the rootfs is a squashfs the kernel mounts, not an initramfs
+          # unpacked into RAM. Keep this in step with the "at least 2 GiB" note
+          # in docs/framebuffer-and-iso.md.
+          timeout 720 qemu-system-x86_64 -m 2048 \
             -cdrom dist/mmcore-fb-x86_64.iso \
             -vga none -device virtio-vga \
             -display none -monitor none \
@@ -75,10 +73,11 @@ jobs:
             -no-reboot -accel tcg <&3 > boot.log 2>&1 &
           qemu_pid=$!
 
-          # The rootfs is ~790 MiB and SDL2 is built from source, so the old
-          # fixed 120 s sleep is too tight. Probe until ttyS0's autologin shell
-          # answers, then stop. The probe builds its marker with printf so an
-          # echoed command line cannot satisfy the check by itself.
+          # SDL2 is built from source and the guest still has to mount the squashfs
+          # under TCG, so the old fixed 120 s sleep is too tight. Probe until
+          # ttyS0's autologin shell answers, then stop. The probe builds its
+          # marker with printf so an echoed command line cannot satisfy the
+          # check by itself.
           tested=0
           for _ in $(seq 1 60); do
             echo "printf 'MMCORE_%s\n' SHELL_READY" >&3 || true

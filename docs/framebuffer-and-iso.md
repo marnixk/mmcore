@@ -58,12 +58,25 @@ partition the session is read-only.
 
 If mmcore exits, the tty1 session ends and it starts again.
 
-The live image needs **at least 5 GiB of RAM**. The rootfs is packed as a single
-~820 MiB initramfs that the kernel decompresses entirely into memory, so a
-smaller guest panics with `VFS: Unable to mount root fs on unknown-block(1,0)`
-before userspace starts. Measured on the shipped ISO, `-m 4096` still panics
-while `-m 5120` boots. The CI boot smoke boots QEMU with `-m 6144` for
-headroom.
+The live image needs **at least 2 GiB of RAM**. GRUB loads the kernel and a
+small initramfs. The root filesystem stays a squashfs on the stick, mounted
+with an in-memory overlay, and pages are read as userspace needs them.
+
+### Slow USB sticks (ThinkPad T420 and similar)
+
+A stick that was fine on a Raspberry Pi is often tuned for large sequential
+transfers and answers the small reads from a PC firmware USB stack very
+slowly. The ThinkPad T420 makes that worse: its BIOS reads USB at USB 2.0
+speeds even from the blue USB 3.0 ports, and its Renesas USB 3.0 controller
+stalls on the UAS protocol those sticks advertise.
+
+The image is built for that path. GRUB reads an initramfs that contains the
+kernel modules needed to reach the disk. The squashfs uses 1 MiB blocks, which
+is the transfer size those drives are good at, and the kernel reads it with
+its own USB driver once the firmware is out of the way. The boot command line
+blacklists UAS (`modprobe.blacklist=uas`) so the stick stays on the bulk-only
+protocol the T420 controller handles. Use a USB 3.0 port when the machine has
+one; the kernel reads the squashfs through that port.
 
 Boot is quiet: GRUB hides its menu and auto-boots the `mmcore` entry after
 ~1 second; hold **Shift** while it counts down to reveal the menu for recovery
@@ -101,12 +114,13 @@ mmcore-install --disk /dev/sdX --yes
 
 | Partition | Label | Filesystem | Contents |
 | --- | --- | --- | --- |
-| 1 | `MMCORE-SYS` | FAT32 | GRUB (BIOS + UEFI), the live kernel + initramfs, the `mmcore` binary, and `C:` (`MMB_DRIVE_ROOT`) |
+| 1 | `MMCORE-SYS` | FAT32 | GRUB (BIOS + UEFI), the live kernel, the small initramfs, the squashfs root, the `mmcore` binary, and `C:` (`MMB_DRIVE_ROOT`) |
 | 2 | `MMCORE-DATA` | ext4 | the rest of the disk, mounted at boot as `D:` |
 
-The system partition is at least ~255 MiB (it grows to fit larger kernel and
-initramfs payloads). The kernel and initramfs are copied from the live media's
-own `/boot`, so the installed system matches the release that wrote the disk.
+The system partition is at least ~255 MiB (it grows to fit the kernel, the
+initramfs, and the squashfs root). Those files are copied from the live
+media's own `/boot`, so the installed system matches the release that wrote
+the disk.
 The installer refuses the running live media and removable disks unless
 `--force` is passed; `--boot-dir DIR` reads the boot files from an
 already-mounted source instead of auto-detecting it.
@@ -170,8 +184,9 @@ The published asset is the `.zst`; CI compresses the ISO after boot-smoking it.
 On an x86_64 Alpine Linux host with `apk`, `ISO_DIRECT=1 scripts/build-iso.sh`
 runs the builder in place. The builder builds the Alpine rootfs, builds
 `mmcore-fb` against musl (building SDL2 with `-DSDL_KMSDRM=ON` if the Alpine
-package lacks the driver), packs the rootfs as the initramfs, and makes a hybrid
-BIOS+UEFI ISO with `grub-mkrescue`.
+package lacks the driver), packs the rootfs as a squashfs plus a small
+initramfs that mounts it, and makes a hybrid BIOS+UEFI ISO with
+`grub-mkrescue`.
 
 `scripts/iso/build-in-container.sh` builds the rootfs and ISO;
 `scripts/iso/build-mmcore.sh` builds the binary; `scripts/iso/rootfs-overlay/`
