@@ -1,0 +1,86 @@
+#!/bin/busybox sh
+# PID 1 for the live ISO and for a disk installed by mmcore-install.
+#
+# GRUB only loads this small initramfs. The root filesystem is a squashfs on
+# the same media; the kernel's own block driver reads it (large sequential
+# I/O) instead of the firmware USB stack.
+set -eu
+
+/bin/busybox --install -s
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+# The ThinkPad T420's Renesas USB 3.0 controller stalls on UAS. Bind the boot
+# disk with usb-storage (bulk-only) by never loading uas here.
+mkdir -p /etc/modprobe.d
+printf 'blacklist uas\n' > /etc/modprobe.d/blacklist-uas.conf
+
+for mod in \
+	loop squashfs overlay isofs vfat fat \
+	nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
+	usb-storage usbcore usb-common \
+	xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
+	sd_mod sr_mod cdrom scsi_mod \
+	ata_piix ata_generic ahci libahci libata \
+	virtio_pci virtio_blk virtio_scsi virtio virtio_ring \
+	mmc_block mmc_core sdhci sdhci-pci
+do
+	modprobe "$mod" 2>/dev/null || true
+done
+
+mkdir -p /mnt/media /mnt/lower /mnt/rw /newroot
+
+try_one() {
+	dev="$1"
+	[ -b "$dev" ] || return 1
+	mount -o ro "$dev" /mnt/media 2>/dev/null || return 1
+	if [ -f /mnt/media/boot/rootfs.squashfs ]; then
+		return 0
+	fi
+	umount /mnt/media 2>/dev/null || true
+	return 1
+}
+
+found=0
+i=0
+while [ "$i" -lt 30 ]; do
+	for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme*n* /dev/mmcblk*; do
+		if try_one "$dev"; then
+			found=1
+			break
+		fi
+	done
+	[ "$found" = 1 ] && break
+	i=$((i + 1))
+	sleep 1
+done
+
+if [ "$found" != 1 ]; then
+	printf '%s\n' 'mmcore: no rootfs.squashfs found' > /dev/console 2>/dev/null || true
+	printf '%s\n' 'mmcore: no rootfs.squashfs found' > /dev/tty0 2>/dev/null || true
+	exec sh
+fi
+
+if ! mount -t squashfs -o loop,ro /mnt/media/boot/rootfs.squashfs /mnt/lower; then
+	losetup /dev/loop0 /mnt/media/boot/rootfs.squashfs
+	mount -t squashfs -o ro /dev/loop0 /mnt/lower
+fi
+mount -t tmpfs -o mode=755 tmpfs /mnt/rw
+mkdir -p /mnt/rw/upper /mnt/rw/work
+mount -t overlay overlay \
+	-o lowerdir=/mnt/lower,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
+	/newroot
+
+mkdir -p /newroot/mnt/live/media /newroot/mnt/live/lower /newroot/mnt/live/rw
+mkdir -p /newroot/dev /newroot/proc /newroot/sys
+mount --move /mnt/media /newroot/mnt/live/media
+mount --move /mnt/lower /newroot/mnt/live/lower
+mount --move /mnt/rw /newroot/mnt/live/rw
+mount --move /dev /newroot/dev
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+
+exec switch_root /newroot /sbin/init

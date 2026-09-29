@@ -2,10 +2,11 @@
 # Build the mmcore live ISO rootfs and hybrid ISO. Runs inside an amd64 Alpine
 # container (or directly on an Alpine Linux host with ISO_DIRECT=1).
 #
-# Everything lives in the initramfs: the kernel unpacks it as the root
-# filesystem, so there is no squashfs/live-boot layer and no loop devices.
-# Files under scripts/iso/rootfs-overlay/ are copied in afterwards, which is
-# how the mmcore autostart, persistence, and network services are added.
+# The root filesystem is a squashfs on the ISO. GRUB loads only the kernel and
+# a small initramfs (scripts/iso/pack-initramfs.sh); that init mounts the
+# squashfs with the kernel's own block driver. Files under
+# scripts/iso/rootfs-overlay/ are copied into the rootfs first, which is how
+# the mmcore autostart, persistence, and network services are added.
 set -eu
 
 REPO_ROOT="${REPO_ROOT:-/repo}"
@@ -25,7 +26,7 @@ die() {
 
 log "Installing builder tools"
 # grub-bios is optional (present on x86_64); grub-mkrescue needs the rest.
-for pkg in cpio grub grub-efi grub-bios xorriso mtools dosfstools e2fsprogs; do
+for pkg in cpio grub grub-efi grub-bios xorriso mtools dosfstools e2fsprogs squashfs-tools; do
 	apk add --no-cache --quiet "$pkg" >/dev/null 2>&1 || true
 done
 command -v grub-mkrescue >/dev/null 2>&1 || die "grub-mkrescue is unavailable"
@@ -153,12 +154,23 @@ if [ -d "${OVERLAY}" ]; then
 	chroot "${ROOTFS}" /bin/sh -c 'chmod +x /etc/local.d/*.start 2>/dev/null || true'
 fi
 
-log "Packing kernel + initramfs"
+log "Packing the squashfs root and a small initramfs"
 KERNEL="$(ls "${ROOTFS}"/boot/vmlinuz-* 2>/dev/null | head -n 1)"
 [ -n "${KERNEL}" ] || die "no kernel found in the rootfs"
 cp "${KERNEL}" "${ISOROOT}/boot/vmlinuz-lts"
-( cd "${ROOTFS}" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -9 ) \
-	> "${ISOROOT}/boot/initramfs-lts"
+kcfg="$(ls "${ROOTFS}"/boot/config-* 2>/dev/null | head -n 1)"
+if [ -n "${kcfg}" ]; then
+	for opt in CONFIG_SQUASHFS CONFIG_SQUASHFS_ZLIB CONFIG_OVERLAY_FS CONFIG_BLK_DEV_LOOP; do
+		grep -q "^${opt}=[ym]" "${kcfg}" || die "${opt} is not enabled in ${kcfg}"
+	done
+fi
+# 1 MiB blocks match flash drives that are fast at large sequential reads and
+# slow at the small reads a firmware USB stack uses.
+mksquashfs "${ROOTFS}" "${ISOROOT}/boot/rootfs.squashfs" \
+	-comp gzip -b 1048576 -noappend -no-progress \
+	-wildcards -e 'boot/vmlinuz-*' 'boot/System.map-*' 'boot/config-*'
+sh "${REPO_ROOT}/scripts/iso/pack-initramfs.sh" \
+	"${ROOTFS}" "${ISOROOT}/boot/initramfs-lts"
 
 # Quiet boot: hide the menu for ~1 s (Shift still reveals it), show a centered
 # mmcore logo on the graphical console, and keep kernel/userspace chatter off
@@ -185,7 +197,7 @@ insmod gfxterm_background
 background_image /boot/grub/splash.png
 
 menuentry "mmcore" {
-	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo
+	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo usb-storage.delay_use=0 modprobe.blacklist=uas
 	initrd /boot/initramfs-lts
 }
 EOF
