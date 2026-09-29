@@ -6,6 +6,12 @@
 # I/O) instead of the firmware USB stack.
 set -eu
 
+# Applets are not on PATH until --install. A missing /proc makes this
+# script exit and the kernel panic.
+/bin/busybox mkdir -p /bin /sbin /usr/bin /usr/sbin \
+	/proc /sys /dev /etc/modprobe.d \
+	/mnt/media /mnt/lower /mnt/rw /newroot
+
 /bin/busybox --install -s
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
@@ -15,7 +21,6 @@ mount -t devtmpfs devtmpfs /dev
 
 # The ThinkPad T420's Renesas USB 3.0 controller stalls on UAS. Bind the boot
 # disk with usb-storage (bulk-only) by never loading uas here.
-mkdir -p /etc/modprobe.d
 printf 'blacklist uas\n' > /etc/modprobe.d/blacklist-uas.conf
 
 for mod in \
@@ -30,8 +35,6 @@ for mod in \
 do
 	modprobe "$mod" 2>/dev/null || true
 done
-
-mkdir -p /mnt/media /mnt/lower /mnt/rw /newroot
 
 try_one() {
 	dev="$1"
@@ -84,3 +87,5 @@ mount --move /proc /newroot/proc
 mount --move /sys /newroot/sys
 
 exec switch_root /newroot /sbin/init
+printf '%s\n' 'mmcore: switch_root failed' > /dev/tty0 2>/dev/null || true
+exec sh
