@@ -188,7 +188,7 @@ static void close_apps_on_console(int idx)
 		else if (mmb_in_afk())
 			mmb_afk_key(3);             /* Ctrl+C leaves AFK */
 		else if (mmb_in_juke())
-			mmb_juke_key(27);
+			mmb_juke_close();
 		else
 			break;
 	}

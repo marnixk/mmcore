@@ -719,6 +719,7 @@ void mmb_cmd_beep(void);
 void mmb_cmd_juke(void);
 int mmb_in_juke(void);
 const char *mmb_juke_key(char c);
+void mmb_juke_close(void);
 void mmb_juke_poll(void);
 void mmb_cmd_load(void);
 void mmb_cmd_edit(void);
