@@ -944,7 +944,9 @@ unsigned mmb_gfx_get(int x, int y)
 	return mmb_gfx_get_page(x, y, MMB_PAGE_CUR);
 }
 
-/* AArch64 has no REP STOSD; STP of duplicated halfwords fills eight pixels. */
+/* AArch64 has no REP STOSD. STP of duplicated halfwords writes eight
+ * pixels, so the block end is eight-pixel aligned and the scalar tail
+ * finishes a short row. A four-pixel end lets the last STP run past it. */
 static void fill_u16(uint16_t *dst, unsigned n, uint16_t v)
 {
 	uint16_t *end;
@@ -962,7 +964,7 @@ static void fill_u16(uint16_t *dst, unsigned n, uint16_t v)
 			*dst++ = v;
 		if (((uintptr_t)dst & 2u) && dst < end)
 			*dst++ = v;
-		blk = dst + ((unsigned)(end - dst) & ~3u);
+		blk = dst + ((unsigned)(end - dst) & ~7u);
 		if (dst < blk)
 		{
 			pair = ((uint32_t)v << 16) | (uint32_t)v;

@@ -240,16 +240,13 @@ def test_juke_scope_lives_in_its_own_panel(fresh_console):
     """#914: the oscilloscope sits in a bordered panel under the title."""
     con = fresh_console
     _open_juke(con, "tests/TEST.MOD")
-    _w, h = con.screen_size()
+    w, h = con.screen_size()
 
-    # The panel border is a muted cool grey (left edge and top edge); the
-    # RGB555 native surface may shift each channel a count or two.
-    for x, y in ((8, 126), (480, 100)):
-        border = con.screen_pixel(x, y)
-        r, g, b = border
-        assert max(border) - min(border) <= 16, (border, x, y)
-        assert b >= r, (border, x, y)
-        assert r < 100, (border, x, y)
+    # Muted cool-grey frame: left, right, and the top edge including its
+    # right corner.
+    frame = [(8, 126), (w - 9, 126), (480, 100), (w - 9, 100)]
+    for (x, y), border in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(border), (border, x, y)
 
     # The interior is mostly the dark panel fill (traces only cross a few
     # pixels). The panel sits strictly above the spectrum baseline.
@@ -384,6 +381,12 @@ def _is_list_sel(rgb: tuple[int, int, int]) -> bool:
     return r + g + b > 140 and abs(r - b) < 50 and g < r + 40
 
 
+def _is_panel_border(rgb: tuple[int, int, int]) -> bool:
+    """Muted cool grey of the JUKE panel frame (col_panel2)."""
+    r, _g, b = rgb
+    return max(rgb) - min(rgb) <= 16 and b >= r and 30 < r < 100 and sum(rgb) > 80
+
+
 def _is_lime_mark(rgb: tuple[int, int, int]) -> bool:
     r, g, b = rgb
     return g > 140 and g > r and g > b + 20
@@ -416,6 +419,38 @@ def test_juke_list_toggles_midfield(fresh_console):
     _keys(con, b"l")
     assert not _is_list_sel(con.screen_pixel(16, y0))
     assert not _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_keeps_right_border(fresh_console):
+    """The playlist frame's right edge stays visible on rows and between them."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JB/A.MOD"),
+                      ("tests/TEST.MOD", "JB/B.MOD")])
+    _open_juke(con, "JB")
+    w, h = con.screen_size()
+    _keys(con, b"l")
+    y_sel = _list_row_y(h, 0)
+    y_gap = _LIST_Y0 + 4 + 16
+    edge = w - 9
+    samples = [
+        (edge, y_sel),
+        (edge, y_gap),
+        (edge, _list_row_y(h, 1)),
+        (edge, 300),
+        (8, y_sel),
+        (w - 11, y_sel),
+        (w - 10, y_sel),
+        (w - 8, y_sel),
+    ]
+    got = con.screen_pixels(samples)
+    for (x, y), rgb in zip(samples[:5], got[:5]):
+        assert _is_panel_border(rgb), (rgb, x, y)
+    # Selection stops one pixel inside the frame; the margin past it is black.
+    assert _is_list_sel(got[5]), got[5]
+    assert sum(got[6]) < 60, got[6]
+    assert sum(got[7]) < 40, got[7]
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
