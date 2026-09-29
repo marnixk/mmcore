@@ -1053,6 +1053,7 @@ static void term_serial_dump(void)
 		line[cols] = 0;
 		ser(line);
 		ser("\r\n");
+		mmb_play_mix();
 	}
 	if (T.sb_search)
 	{
