@@ -204,7 +204,10 @@ wipefs -a "${DISK}" >/dev/null 2>&1 || true
 dd if=/dev/zero of="${DISK}" bs=1M count=16 conv=fsync >/dev/null 2>&1 || true
 parted -s "${DISK}" mklabel msdos
 parted -s "${DISK}" unit MiB mkpart primary fat32 1 "${sys_end}"
+# boot: Legacy firmware executes the MBR. esp: UEFI firmware treats the
+# FAT volume as the system partition (type 0xEF). Both flags together.
 parted -s "${DISK}" set 1 boot on
+parted -s "${DISK}" set 1 esp on
 parted -s "${DISK}" unit MiB mkpart primary ext4 "${sys_end}" 100%
 partprobe "${DISK}" 2>/dev/null || true
 udevadm settle 2>/dev/null || true
@@ -244,6 +247,11 @@ set timeout_style=hidden
 insmod all_video
 insmod gfxterm
 insmod png
+insmod part_msdos
+insmod fat
+insmod search
+insmod search_label
+search --no-floppy --set=root --label MMCORE-SYS
 set gfxmode=1024x768,auto
 set gfxpayload=keep
 terminal_output gfxterm
@@ -260,10 +268,27 @@ menuentry "mmcore" {
 EOF
 
 log "Installing the BIOS bootloader"
-grub-install --target=i386-pc --boot-directory="${MNT}/boot" --recheck "${DISK}"
+# The live USB is still attached. A probed map numbers that stick first and
+# records this disk as hd1. Pin it as hd0, which is the drive it is when the
+# machine boots from it.
+printf '(hd0) %s\n' "${DISK}" > "${MNT}/boot/grub/device.map"
+grub-install --target=i386-pc --boot-directory="${MNT}/boot" "${DISK}"
+
 log "Installing the UEFI bootloader"
+# Fallback path (\EFI\BOOT\BOOTX64.EFI) plus a named loader. --removable
+# skips the firmware boot menu; write that entry only from a UEFI session,
+# and keep going if the firmware rejects it.
 grub-install --target=x86_64-efi --efi-directory="${MNT}" \
-	--boot-directory="${MNT}/boot" --removable "${DISK}"
+	--boot-directory="${MNT}/boot" --removable --no-nvram "${DISK}"
+grub-install --target=x86_64-efi --efi-directory="${MNT}" \
+	--boot-directory="${MNT}/boot" --bootloader-id=mmcore --no-nvram "${DISK}"
+if [ -d /sys/firmware/efi ]; then
+	grub-install --target=x86_64-efi --efi-directory="${MNT}" \
+		--boot-directory="${MNT}/boot" --bootloader-id=mmcore "${DISK}" \
+		|| log "UEFI firmware boot entry was not registered"
+else
+	log "Legacy session: MBR is installed. Boot the USB via UEFI and rerun to register a firmware boot entry."
+fi
 
 sync
 umount "${MNT}"
