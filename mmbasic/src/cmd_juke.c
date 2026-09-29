@@ -23,6 +23,7 @@
 #define JUKE_FRAME_MS  33
 #define JUKE_MAX_QUEUE  256
 #define JUKE_PATH_MAX   160
+#define JUKE_TITLE_MAX  40
 #define JUKE_SCAN_DEPTH 8       /* directories deep, including the start */
 #define JUKE_SCAN_DIRS  48      /* directories opened during one scan */
 #define JUKE_DIR_CAP    48      /* entries kept from one directory */
@@ -70,6 +71,8 @@ typedef struct {
 	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
 	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
+	char title[JUKE_MAX_QUEUE][JUKE_TITLE_MAX];
+	unsigned char titled[JUKE_MAX_QUEUE];
 } juke_queue;
 
 static juke_ui s_ui[MMB_MAX_CONSOLES];
@@ -305,6 +308,36 @@ static const char *juke_dispname(const char *p)
 	return juke_basename(p);
 }
 
+/* Metadata title when one is cached, otherwise the path under the folder. */
+static const char *juke_row_title(int pos)
+{
+	int idx;
+	const char *path;
+
+	if (pos < 0 || pos >= s_q.n)
+		return "";
+	idx = s_q.order[pos];
+	if (idx < 0 || idx >= s_q.n)
+		return "";
+	path = s_q.item[idx];
+	if (!s_q.titled[idx])
+	{
+		s_q.titled[idx] = 1;
+		s_q.title[idx][0] = 0;
+		if (s_q.cur == pos && g_audio.name[0] &&
+		    mmb_keyword_eq(g_audio.name, path))
+		{
+			if (!mmb_audio_title(s_q.title[idx], JUKE_TITLE_MAX))
+				mmb_media_title(path, s_q.title[idx], JUKE_TITLE_MAX);
+		}
+		else
+			mmb_media_title(path, s_q.title[idx], JUKE_TITLE_MAX);
+	}
+	if (s_q.title[idx][0])
+		return s_q.title[idx];
+	return juke_dispname(path);
+}
+
 static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
 {
 	int n = 0;
@@ -422,6 +455,7 @@ static int juke_build_queue(const char *spec)
 	s_q.shuffle = 0;
 	s_q.truncated = 0;
 	s_q.dir[0] = 0;
+	memset(s_q.titled, 0, sizeof(s_q.titled));
 	if (mmb_vfs_isdir(spec))
 	{
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
@@ -654,7 +688,7 @@ static void juke_paint_list(int w, int h)
 			mmb_gfx_fill_rect(10, y, w - 20, 16, JUKE_LIST_SEL);
 		if (pos == s_q.cur)
 			mmb_gfx_fill_rect(11, y, 4, 16, U.col_bar_hi);
-		name = juke_dispname(juke_track(pos));
+		name = juke_row_title(pos);
 		maxc = (w - 48) / 8;
 		if (maxc < 8)
 			maxc = 8;
@@ -812,10 +846,16 @@ static void juke_paint(int w, int h)
 				  U.col_text, 1);
 	}
 
-	title = s_q.cur >= 0 ? juke_dispname(juke_track(s_q.cur)) : "(no track)";
+	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
 	juke_text(14, 60, title, U.col_text, 1);
-	if (s_q.dir[0])
-		juke_text(14, 78, s_q.dir, U.col_dim, 1);
+	if (s_q.cur >= 0)
+	{
+		const char *rel = juke_dispname(juke_track(s_q.cur));
+		if (rel[0] && !mmb_keyword_eq(title, rel))
+			juke_text(14, 78, rel, U.col_dim, 1);
+		else if (s_q.dir[0])
+			juke_text(14, 78, s_q.dir, U.col_dim, 1);
+	}
 
 	if (U.list_on)
 		juke_paint_list(w, h);

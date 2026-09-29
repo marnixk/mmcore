@@ -254,6 +254,32 @@ def make_mp3(path):
         return data
 
 
+def id3v1(title):
+    tag = bytearray(128)
+    tag[0:3] = b"TAG"
+    tag[3:33] = title.ljust(30, b"\0")[:30]
+    return bytes(tag)
+
+
+def id3v2_tit2(title):
+    data = b"\x00" + title + b"\x00"
+    frame = b"TIT2" + struct.pack(">I", len(data)) + b"\x00\x00" + data
+    size = len(frame)
+    syn = bytes([
+        (size >> 21) & 0x7F, (size >> 14) & 0x7F,
+        (size >> 7) & 0x7F, size & 0x7F,
+    ])
+    return b"ID3\x03\x00\x00" + syn + frame
+
+
+def strip_id3v2(data):
+    if data[:3] != b"ID3" or len(data) < 10:
+        return data
+    size = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) | (
+        (data[8] & 0x7F) << 7) | (data[9] & 0x7F)
+    return data[10 + size:]
+
+
 def make_wav(path):
     """Write a small 8-bit mono square-wave WAV (no C output)."""
     rate = 8000
@@ -278,6 +304,10 @@ def main():
     make_xm(out("TEST.XM"))
     make_s3m(out("TEST.S3M"))
     make_mp3(out("TEST.MP3"))
+    audio = strip_id3v2(open(out("TEST.MP3"), "rb").read())
+    open(out("ZV2.MP3"), "wb").write(id3v2_tit2(b"TWOSONG") + audio)
+    open(out("ZV1.MP3"), "wb").write(audio + id3v1(b"ONESONG"))
+    open(out("ZBAD.MP3"), "wb").write(audio + id3v1(b"   "))
     make_wav(out("TEST.WAV"))
     names = sorted(os.listdir(OUT_DIR))
     print("wrote", OUT_DIR, names)

@@ -40,6 +40,7 @@ mmb_audio g_audio;
 
 static drmp3 s_mp3;
 static int s_mp3_on;
+static unsigned s_mp3_len;
 static modcontext s_mod;
 static int s_mod_on;
 static jar_xm_context_t *s_xm;
@@ -217,6 +218,7 @@ static void play_teardown(void)
 		drmp3_uninit(&s_mp3);
 		s_mp3_on = 0;
 	}
+	s_mp3_len = 0;
 	if (s_mod_on)
 	{
 		hxcmod_unload(&s_mod);
@@ -339,6 +341,7 @@ int mmb_play_mp3(const char *path)
 		return -1;
 	}
 	s_mp3_on = 1;
+	s_mp3_len = n;
 	play_begin(1, path);
 	return 0;
 }
@@ -780,6 +783,242 @@ int mmb_audio_scope(short *out, int n)
 		out[i] = s_scope[idx];
 	}
 	return n;
+}
+
+static int title_clean(char *s)
+{
+	char *r, *w;
+
+	if (!s)
+		return 0;
+	r = s;
+	while (*r == ' ')
+		r++;
+	w = s;
+	while (*r)
+	{
+		unsigned char c = (unsigned char)*r++;
+		if (c < 32 || c > 126)
+		{
+			s[0] = 0;
+			return 0;
+		}
+		*w++ = (char)c;
+	}
+	while (w > s && w[-1] == ' ')
+		w--;
+	*w = 0;
+	return w != s;
+}
+
+static int title_store(const unsigned char *p, int n, char *dst, int dstn)
+{
+	int i, o = 0;
+
+	if (!dst || dstn < 2)
+		return 0;
+	for (i = 0; i < n && o < dstn - 1; i++)
+	{
+		if (p[i] == 0)
+			break;
+		dst[o++] = (char)p[i];
+	}
+	dst[o] = 0;
+	return title_clean(dst);
+}
+
+static int id3_text(const unsigned char *p, int n, char *dst, int dstn)
+{
+	int enc, i, o = 0;
+
+	if (n < 1 || dstn < 2)
+		return 0;
+	enc = p[0];
+	p++;
+	n--;
+	if (enc == 0 || enc == 3)
+		return title_store(p, n, dst, dstn);
+	if (enc == 1 && n >= 2)
+	{
+		int le = p[0] == 0xFF && p[1] == 0xFE;
+		int be = p[0] == 0xFE && p[1] == 0xFF;
+		if (!le && !be)
+			return 0;
+		for (i = 2; i + 1 < n && o < dstn - 1; i += 2)
+		{
+			unsigned c = le ? (unsigned)p[i] | ((unsigned)p[i + 1] << 8)
+					: ((unsigned)p[i] << 8) | (unsigned)p[i + 1];
+			if (c == 0)
+				break;
+			if (c < 32 || c > 126)
+			{
+				dst[0] = 0;
+				return 0;
+			}
+			dst[o++] = (char)c;
+		}
+		dst[o] = 0;
+		return title_clean(dst);
+	}
+	return 0;
+}
+
+static int synchsafe(const unsigned char *p)
+{
+	return ((p[0] & 0x7f) << 21) | ((p[1] & 0x7f) << 14) |
+	       ((p[2] & 0x7f) << 7) | (p[3] & 0x7f);
+}
+
+static int id3v2_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	unsigned off, end, ver;
+	int tag;
+
+	if (n < 10 || memcmp(p, "ID3", 3) != 0)
+		return 0;
+	if (p[5] & 0xC0)
+		return 0;
+	ver = p[3];
+	tag = synchsafe(p + 6);
+	end = 10u + (unsigned)tag;
+	if (end > n)
+		end = n;
+	off = 10;
+	if (ver == 2)
+	{
+		while (off + 6 <= end)
+		{
+			int sz = ((int)p[off + 3] << 16) | ((int)p[off + 4] << 8) |
+				 (int)p[off + 5];
+			if (p[off] == 0)
+				break;
+			if (sz < 0 || off + 6u + (unsigned)sz > end)
+				break;
+			if (memcmp(p + off, "TT2", 3) == 0 &&
+			    id3_text(p + off + 6, sz, dst, dstn))
+				return 1;
+			off += 6u + (unsigned)sz;
+		}
+		return 0;
+	}
+	if (ver != 3 && ver != 4)
+		return 0;
+	while (off + 10 <= end)
+	{
+		int sz = ver == 4 ? synchsafe(p + off + 4)
+				  : (int)(((unsigned)p[off + 4] << 24) |
+					  ((unsigned)p[off + 5] << 16) |
+					  ((unsigned)p[off + 6] << 8) |
+					  (unsigned)p[off + 7]);
+		if (p[off] == 0)
+			break;
+		if (sz < 0 || off + 10u + (unsigned)sz > end)
+			break;
+		if (memcmp(p + off, "TIT2", 4) == 0 &&
+		    id3_text(p + off + 10, sz, dst, dstn))
+			return 1;
+		off += 10u + (unsigned)sz;
+	}
+	return 0;
+}
+
+static int id3v1_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	if (n < 128 || memcmp(p + n - 128, "TAG", 3) != 0)
+		return 0;
+	return title_store(p + n - 128 + 3, 30, dst, dstn);
+}
+
+static int id3_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	if (id3v2_title(p, n, dst, dstn))
+		return 1;
+	return id3v1_title(p, n, dst, dstn);
+}
+
+static const char *title_ext(const char *p)
+{
+	const char *dot = 0;
+	if (!p)
+		return "";
+	for (; *p; p++)
+		if (*p == '.')
+			dot = p + 1;
+	return dot ? dot : "";
+}
+
+int mmb_audio_title(char *dst, int n)
+{
+	if (!dst || n < 2)
+		return 0;
+	dst[0] = 0;
+	if (g_audio.playing == 2 && s_mod_on)
+		return title_store(s_mod.song.title, 20, dst, n);
+	if (g_audio.playing == 3 && s_xm)
+		return title_store((const unsigned char *)jar_xm_get_module_name(s_xm),
+				   20, dst, n);
+	if (g_audio.playing == 6 && s_s3m_mod)
+		return title_store((const unsigned char *)s_s3m_mod->name, 28, dst, n);
+	if (g_audio.playing == 1 && s_mp3_on && s_moddata && s_mp3_len)
+		return id3_title(s_moddata, s_mp3_len, dst, n);
+	return 0;
+}
+
+int mmb_media_title(const char *path, char *dst, int n)
+{
+	static unsigned char buf[2048];
+	unsigned got = 0;
+	int sz;
+
+	if (!dst || n < 2)
+		return 0;
+	dst[0] = 0;
+	if (!path || !path[0])
+		return 0;
+	if (mmb_keyword_eq(title_ext(path), "MP3"))
+	{
+		unsigned char hdr[10];
+		if (mmb_vfs_read_at(path, 0, hdr, sizeof(hdr), &got) == 0 &&
+		    got == sizeof(hdr) && memcmp(hdr, "ID3", 3) == 0 &&
+		    (hdr[5] & 0xC0) == 0)
+		{
+			unsigned need = 10u + (unsigned)synchsafe(hdr + 6);
+			if (need > sizeof(buf))
+				need = sizeof(buf);
+			if (mmb_vfs_read_at(path, 0, buf, need, &got) == 0 &&
+			    id3v2_title(buf, got, dst, n))
+				return 1;
+		}
+		sz = mmb_vfs_size(path);
+		if (sz >= 128 &&
+		    mmb_vfs_read_at(path, (unsigned)sz - 128, buf, 128, &got) == 0 &&
+		    got == 128)
+			return id3v1_title(buf, 128, dst, n);
+		return 0;
+	}
+	if (mmb_keyword_eq(title_ext(path), "MOD"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 20, &got) != 0)
+			return 0;
+		return title_store(buf, (int)got, dst, n);
+	}
+	if (mmb_keyword_eq(title_ext(path), "XM"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 37, &got) != 0 || got < 37)
+			return 0;
+		if (memcmp(buf, "Extended Module: ", 17) != 0)
+			return 0;
+		return title_store(buf + 17, 20, dst, n);
+	}
+	if (mmb_keyword_eq(title_ext(path), "S3M"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 48, &got) != 0 || got < 48)
+			return 0;
+		if (memcmp(buf + 44, "SCRM", 4) != 0)
+			return 0;
+		return title_store(buf, 28, dst, n);
+	}
+	return 0;
 }
 
 void mmb_cmd_play(void)
