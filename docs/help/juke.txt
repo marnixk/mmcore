@@ -28,8 +28,8 @@ so it looks the same under every system theme. Leaving JUKE restores your
 console theme untouched. The header carries a graffiti wordmark; the
 oscilloscope sits in its own panel under the title and trails a ghost
 history (older traces fade and cool, the newest stays lime). The 24
-spectrum bars run grey to lime, and the transport and volume indicators run
-along the footer.
+spectrum bars run black through grey to lime, and the transport and volume
+indicators run along the footer.
 
 Controls:
 
@@ -46,13 +46,13 @@ Controls:
     ESC     quit JUKE (music keeps playing)
     Q       quit JUKE (music keeps playing)
 
-The header shows VIS or LIST for the pane in the middle. VIS is the default:
-the oscilloscope and the spectrum. LIST replaces that rectangle with the
-queue in play order, the same order NEXT and PREV follow. The current track
-is marked, the selection is highlighted, and the list scrolls when the queue
-is longer than the pane. Up and Down move the selection; Enter starts that
-track. SPACE, P, N, R, volume, mute, S, and ESC do the same in both panes.
-Going back to VIS leaves the selection where it was.
+L opens the playlist, which is laid out below the oscilloscope so the
+waveform stays visible. The queue is shown in play order, the same order
+NEXT and PREV follow. The current track is marked, the selection is
+highlighted, and the list scrolls when the queue is longer than the pane.
+Up and Down move the selection; Enter starts that track. Pressing L again
+returns to the visualiser and leaves the selection where it was. SPACE, P,
+N, R, volume, mute, S, and ESC do the same in both views.
 
 Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
 order, and the currently playing track stays put. The playlist follows that
