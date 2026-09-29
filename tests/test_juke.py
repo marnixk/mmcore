@@ -574,13 +574,13 @@ def test_juke_shows_module_song_titles(fresh_console):
 def test_juke_shows_id3_titles_and_basename_fallback(fresh_console):
     con = fresh_console
     _open_juke(con, "tests/ZV2.MP3")
-    screen = _title_ocr(con, "V2SONG")
-    assert "V2SONG" in screen.upper().replace(" ", ""), screen
+    screen = _title_ocr(con, "TWOSONG")
+    assert "TWOSONG" in screen.upper().replace(" ", ""), screen
     _quit_juke(con)
     con.send_line("PLAY STOP")
     _open_juke(con, "tests/ZV1.MP3")
-    screen = _title_ocr(con, "V1SONG")
-    assert "V1SONG" in screen.upper().replace(" ", ""), screen
+    screen = _title_ocr(con, "ONESONG")
+    assert "ONESONG" in screen.upper().replace(" ", ""), screen
     _quit_juke(con)
     con.send_line("PLAY STOP")
     _open_juke(con, "tests/ZBAD.MP3")
