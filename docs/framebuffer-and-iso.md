@@ -62,6 +62,27 @@ The live image needs **at least 2 GiB of RAM**. GRUB loads the kernel and a
 small initramfs. The root filesystem stays a squashfs on the stick, mounted
 with an in-memory overlay, and pages are read as userspace needs them.
 
+### Hardware firmware
+
+The image ships only the firmware a desktop or laptop PC needs, not Alpine's
+full `linux-firmware` meta package (which is ~1.1 GiB installed and covers ARM
+SoCs, server SmartNICs and embedded/DSL/USB-TV devices). The keep-list is:
+
+- **GPUs:** Intel `i915` and `xe` plus the `intel` audio/Bluetooth blobs, AMD
+  `amdgpu` and `radeon`, and NVIDIA `nvidia` (nouveau/GSP).
+- **Wi-Fi / Bluetooth:** Intel `iwlwifi`, Broadcom `brcm`, MediaTek
+  `mediatek`, Realtek `rtw88`/`rtw89`/`rtlwifi`/`rtl_bt`, Qualcomm Atheros
+  `ath10k`/`ath11k`/`ath12k`/`ath6k`/`qca`, and Marvell `libertas`/`mrvl`.
+- **Audio:** Intel Sound Open Firmware (`sof-firmware`) for Chromebooks and
+  modern laptops.
+
+Intel's `iwlwifi` blobs live in Alpine's uncategorized `linux-firmware-other`
+package alongside unrelated legacy blobs, so the builder installs that package
+and prunes it down to just the `iwlwifi-*.ucode` files. If your machine needs a
+firmware file that is not in the keep-list, install the matching
+`linux-firmware-*` package from Alpine into the installed system (or add it to
+the builder's list).
+
 ### Slow USB sticks (ThinkPad T420 and similar)
 
 A stick that was fine on a Raspberry Pi is often tuned for large sequential
@@ -225,8 +246,8 @@ Google-signed firmware or the write-protect state.
 - **Display.** Panel output comes up through `i915` (already loaded) and the
   KMS/DRM path mmcore uses on any other Intel GPU.
 - **Wi-Fi.** Intel parts use `iwlwifi` (firmware included); the common
-  Broadcom/MediaTek/Qualcomm parts are covered by the extra
-  `linux-firmware-*` packages the builder installs.
+  Broadcom, MediaTek and Qualcomm Atheros parts are in the desktop keep-list
+  (see [Hardware firmware](#hardware-firmware)).
 - **Storage.** eMMC (`dw_mmc`/`sdhci`) and NVMe are in Alpine's `linux-lts`.
 - **Keyboard.** The internal keyboard is handled by the embedded controller
   (`cros_ec`) plus `atkbd`. The top row emits **F1–F12** (there are no media

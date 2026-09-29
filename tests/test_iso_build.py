@@ -69,7 +69,7 @@ def test_builder_boots_alpine_with_network_packages():
         "alpine-base",
         "openrc",
         "linux-lts",
-        "linux-firmware",
+        "linux-firmware-i915",
         "wpa_supplicant",
         "iw",
         "grub-mkrescue",
@@ -248,9 +248,78 @@ def test_overlay_wires_ethernet_dhcp_and_wifi():
 
 def test_builder_ships_wifi_firmware_and_supplicant():
     text = open(BUILDER, encoding="utf-8").read()
-    assert "linux-firmware-iwlwifi" in text
+    for pkg in (
+        "linux-firmware-brcm",
+        "linux-firmware-mediatek",
+        "linux-firmware-rtw88",
+        "linux-firmware-ath10k",
+    ):
+        assert pkg in text, pkg
     assert "wpa_supplicant default" in text
     assert "rootfs-overlay" in text
+    # The old names are not Alpine 3.20 packages and silently no-op'd (#958).
+    assert "linux-firmware-iwlwifi" not in text
+    assert "linux-firmware-realtek" not in text
+
+
+def test_builder_ships_only_the_desktop_firmware_keep_list():
+    """#958: replace the whole `linux-firmware` meta with an explicit desktop
+    keep-list (GPU + WiFi/BT) and drop the ARM/SoC/server-NIC/embedded classes.
+    Intel iwlwifi is uncategorized (`linux-firmware-other`), so that one package
+    is pruned to the iwlwifi ucodes rather than dropped wholesale."""
+    text = open(BUILDER, encoding="utf-8").read()
+    # The kernel line no longer names the meta.
+    assert "linux-lts sof-firmware" in text
+    for pkg in (
+        # GPU
+        "linux-firmware-i915",
+        "linux-firmware-amdgpu",
+        "linux-firmware-radeon",
+        "linux-firmware-nvidia",
+        "linux-firmware-intel",
+        "linux-firmware-xe",
+        # WiFi/BT
+        "linux-firmware-brcm",
+        "linux-firmware-mediatek",
+        "linux-firmware-rtw88",
+        "linux-firmware-rtw89",
+        "linux-firmware-rtlwifi",
+        "linux-firmware-rtl_bt",
+        "linux-firmware-ath10k",
+        "linux-firmware-ath11k",
+        "linux-firmware-ath12k",
+        "linux-firmware-ath6k",
+        "linux-firmware-qca",
+        "linux-firmware-libertas",
+    ):
+        assert pkg in text, pkg
+    # The dropped classes are never installed by name.
+    for pkg in (
+        "linux-firmware-qcom",
+        "linux-firmware-netronome",
+        "linux-firmware-mellanox",
+        "linux-firmware-qed",
+        "linux-firmware-dpaa2",
+        "linux-firmware-liquidio",
+        "linux-firmware-cxgb4",
+        "linux-firmware-bnx2x",
+        "linux-firmware-cnm",
+        "linux-firmware-amlogic",
+        "linux-firmware-s5p-mfc",
+        "linux-firmware-cirrus",
+        "linux-firmware-ueagle-atm",
+        "linux-firmware-mwl8k",
+        "linux-firmware-mwlwifi",
+        "linux-firmware-ar3k",
+    ):
+        assert pkg not in text, pkg
+    # iwlwifi is kept from the uncategorized package via an ownership prune:
+    # install linux-firmware-other, then remove its non-iwlwifi /lib/firmware
+    # entries using apk's own `info -L` list.
+    assert "linux-firmware-other" in text
+    assert "info -L linux-firmware-other" in text
+    assert "*lib/firmware/iwlwifi-*" in text
+    assert '*lib/firmware/*) rm -f' in text
 
 
 def test_iso_workflow_builds_boot_smokes_and_attaches():
@@ -345,6 +414,19 @@ def test_boot_smoke_waits_for_a_stable_mmcore_pid():
     assert "/proc/[0-9]*" in wf, wf
     assert "/comm" in wf, wf
     assert "pgrep -x mmcore" not in wf, "BusyBox -x anchors the full argv[0]"
+
+
+def test_boot_smoke_verifies_the_firmware_keep_list_landed():
+    """#958: the smoke must assert representative kept firmware is present, so
+    a bad prune cannot ship silently without it."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    fw_lines = [ln for ln in wf.splitlines() if "iwlwifi-*.ucode" in ln]
+    assert len(fw_lines) == 1, fw_lines
+    line = fw_lines[0]
+    for path in ("/lib/firmware/i915", "/lib/firmware/amdgpu", "/lib/firmware/brcm"):
+        assert path in line, path
+    assert "FW_OK" in line, line
+    assert 'grep -q "MMCORE_FW_OK" boot.log' in wf
 
 
 def test_boot_smoke_is_enabled():

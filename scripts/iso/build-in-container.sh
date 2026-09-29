@@ -53,7 +53,7 @@ cp -a /etc/apk/keys/. "${ROOTFS}/etc/apk/keys/" 2>/dev/null || true
 
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
-	linux-lts linux-firmware sof-firmware \
+	linux-lts sof-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
@@ -61,13 +61,41 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	e2fsprogs dosfstools blkid ca-certificates \
 	parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr
 
-# Wi-Fi firmware for common chipsets; not every package exists on every branch.
-for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
-	linux-firmware-rtlwifi linux-firmware-rtw88 linux-firmware-mediatek \
-	linux-firmware-ath9k; do
+# Firmware keep-list (#958). The `linux-firmware` meta pulls in ~100
+# subpackages (1118 MiB installed, most of the rootfs) covering ARM SoCs,
+# server SmartNICs and embedded/DSL/USB-TV devices a desktop PC never has.
+# Alpine splits linux-firmware by upstream folder, so the desktop/laptop
+# keep-list is an explicit package list instead of the meta:
+#   GPU:     i915, amdgpu (+radeon), nvidia, intel (BT/audio), xe
+#   WiFi/BT: brcm (+cypress, synaptics), mediatek, rtw88, rtw89, rtlwifi,
+#            rtl_bt, ath10k, ath11k, ath12k, ath6k, qca, libertas
+# `libertas` and `mrvl` depend on each other, so keeping libertas also keeps
+# `linux-firmware-mrvl` (81 MiB); that is the conservative choice (ship the
+# firmware) over the size-oriented drop of mrvl.
+for fw in linux-firmware-i915 linux-firmware-amdgpu linux-firmware-radeon \
+	linux-firmware-nvidia linux-firmware-intel linux-firmware-xe \
+	linux-firmware-brcm linux-firmware-mediatek linux-firmware-rtw88 \
+	linux-firmware-rtw89 linux-firmware-rtlwifi linux-firmware-rtl_bt \
+	linux-firmware-ath10k linux-firmware-ath11k linux-firmware-ath12k \
+	linux-firmware-ath6k linux-firmware-qca linux-firmware-libertas; do
 	apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 		"$fw" >/dev/null 2>&1 || true
 done
+
+# `linux-firmware-other` is upstream's uncategorized catch-all: it holds the
+# Intel iwlwifi ucodes (which must ship) plus ~15 MiB of unrelated legacy
+# TV/USB/embedded blobs. It cannot be dropped wholesale, so install it and
+# prune it to the iwlwifi ucodes using apk's own file list. If either step
+# fails the package is left intact: extra firmware, never missing firmware.
+apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
+	linux-firmware-other >/dev/null 2>&1 || true
+apk --root "${ROOTFS}" info -L linux-firmware-other 2>/dev/null |
+	while IFS= read -r f; do
+		case "$f" in
+		*lib/firmware/iwlwifi-*) ;;
+		*lib/firmware/*) rm -f "${ROOTFS}/${f#/}" ;;
+		esac
+	done
 
 # mmcore-update fetches over HTTPS (#892). `apk add --root` may not run the
 # ca-certificates trigger, so guarantee a usable trust store: busybox wget
