@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "frontend.h"
 
 /*
  * JUKE: a first-party retro music player (ScreamTracker-era feel).
@@ -25,6 +26,10 @@
 #define JUKE_LIST_MAX  2048
 #define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
 #define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
+#define JUKE_MID_Y      100    /* visualiser and playlist share this top */
+#define JUKE_LIST_ROW    18
+#define JUKE_LIST_SEL   0x3A4650u
+#define JUKE_ESC_IDLE_MS 60
 
 typedef struct {
 	int active;
@@ -44,6 +49,12 @@ typedef struct {
 	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
 	unsigned col_bar_lo, col_bar_hi, col_scan, col_peak;
 	unsigned col_scope_lo, col_vol, col_base;
+	int list_on;
+	int sel;
+	int sel_item;
+	int list_top;
+	int esc;
+	unsigned esc_at;
 } juke_ui;
 
 typedef struct {
@@ -82,6 +93,53 @@ static const char *juke_track(int pos)
 	if (idx < 0 || idx >= s_q.n)
 		return "";
 	return s_q.item[idx];
+}
+
+static void juke_set_sel(int pos)
+{
+	if (s_q.n <= 0)
+	{
+		U.sel = 0;
+		U.sel_item = -1;
+		return;
+	}
+	if (pos < 0)
+		pos = 0;
+	if (pos >= s_q.n)
+		pos = s_q.n - 1;
+	U.sel = pos;
+	U.sel_item = s_q.order[pos];
+}
+
+static void juke_sel_move(int delta)
+{
+	if (!U.list_on || s_q.n <= 0)
+		return;
+	juke_set_sel(U.sel + delta);
+}
+
+/* Selection is an item, not a slot, so a shuffle keeps the same row's track. */
+static void juke_rebind_selection(void)
+{
+	int c;
+
+	for (c = 0; c < MMB_MAX_CONSOLES; c++)
+	{
+		int item = s_ui[c].sel_item;
+		int i;
+
+		if (!s_ui[c].active || item < 0)
+			continue;
+		s_ui[c].sel = 0;
+		for (i = 0; i < s_q.n; i++)
+		{
+			if (s_q.order[i] == item)
+			{
+				s_ui[c].sel = i;
+				break;
+			}
+		}
+	}
 }
 
 /* Toggle shuffle. The currently playing track stays put; the rest is
@@ -127,6 +185,7 @@ static void juke_set_shuffle(int on)
 		if (j >= 0)
 			s_q.cur = j;
 	}
+	juke_rebind_selection();
 	s_q.shuffle = on;
 }
 
@@ -463,14 +522,71 @@ static void juke_draw_logo(int x0, int y0)
 		}
 }
 
-static void juke_paint(int w, int h)
+static void juke_paint_list(int w, int h)
+{
+	int y0 = JUKE_MID_Y;
+	int y1 = h - 56;
+	int bw = w - 16;
+	int rows, top, vis;
+	char buf[JUKE_PATH_MAX + 8];
+
+	if (y1 < y0 + 24)
+		y1 = y0 + 24;
+	mmb_gfx_fill_rect(8, y0, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(8, y1 - 1, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(8, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(8 + bw - 1, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(9, y0 + 1, bw - 2, y1 - y0 - 2, U.col_panel);
+	if (s_q.n <= 0)
+	{
+		juke_text(22, y0 + 4, "(empty)", U.col_dim, 1);
+		return;
+	}
+	if (U.sel < 0 || U.sel >= s_q.n)
+		juke_set_sel(s_q.cur >= 0 ? s_q.cur : 0);
+	rows = (y1 - y0 - 8) / JUKE_LIST_ROW;
+	if (rows < 1)
+		rows = 1;
+	if (U.sel < U.list_top)
+		U.list_top = U.sel;
+	if (U.sel >= U.list_top + rows)
+		U.list_top = U.sel - rows + 1;
+	if (U.list_top < 0)
+		U.list_top = 0;
+	top = U.list_top;
+	for (vis = 0; vis < rows; vis++)
+	{
+		int pos = top + vis;
+		int y = y0 + 4 + vis * JUKE_LIST_ROW;
+		const char *name;
+		int maxc;
+
+		if (pos >= s_q.n)
+			break;
+		if (pos == U.sel)
+			mmb_gfx_fill_rect(10, y, w - 20, 16, JUKE_LIST_SEL);
+		if (pos == s_q.cur)
+			mmb_gfx_fill_rect(11, y, 4, 16, U.col_bar_hi);
+		name = juke_basename(juke_track(pos));
+		maxc = (w - 48) / 8;
+		if (maxc < 8)
+			maxc = 8;
+		if (maxc > (int)sizeof(buf) - 1)
+			maxc = (int)sizeof(buf) - 1;
+		sprintf(buf, "%2d  %s", pos + 1, name);
+		if ((int)strlen(buf) > maxc)
+			buf[maxc] = 0;
+		juke_text(22, y, buf,
+			  pos == U.sel ? U.col_text : U.col_dim, 1);
+	}
+}
+
+static void juke_paint_vis(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
 	short scope[JUKE_SCOPE_N];
-	int i, n, x0, x1, bw, gap, base, maxh, fy, vol;
+	int i, n, x0, x1, bw, gap, base, maxh;
 	int px, py0, py1, cy, amp, age;
-	const char *title;
-	char buf[128];
 
 	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
 	n = mmb_audio_scope(scope, JUKE_SCOPE_N);
@@ -483,30 +599,10 @@ static void juke_paint(int w, int h)
 	for (i = 0; i < JUKE_SCOPE_N; i++)
 		U.scope_hist[U.scope_head][i] = i < n ? scope[i] : 0;
 
-	mmb_gfx_cls(U.col_bg);
-
-	/* Header: full-size graffiti wordmark and right-aligned status. The
-	 * wordmark is 50px tall, so the bar field below is shortened to fit. */
-	juke_draw_logo(14, 1);
-	{
-		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
-		sprintf(buf, "%s  %s  %d/%d%s%s", juke_state_str(), fmt,
-			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
-			s_q.shuffle ? "  SHUF" : "",
-			s_q.truncated ? "  more" : "");
-		juke_text(w - 14 - (int)strlen(buf) * 8, 20, buf, U.col_dim, 1);
-	}
-
-	/* Now-playing line and folder. */
-	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
-	juke_text(14, 60, title, U.col_text, 1);
-	if (s_q.dir[0])
-		juke_text(14, 78, s_q.dir, U.col_dim, 1);
-
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
 	{
-		int bx = 8, by = 100, bw2 = w - 16, bh2 = 52;
+		int bx = 8, by = JUKE_MID_Y, bw2 = w - 16, bh2 = 52;
 		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
@@ -601,11 +697,43 @@ static void juke_paint(int w, int h)
 	}
 
 	mmb_gfx_fill_rect(x0, base, x1 - x0, 1, U.col_base);
+}
+
+static void juke_paint(int w, int h)
+{
+	int fy, vol;
+	const char *title;
+	char buf[128];
+
+	mmb_gfx_cls(U.col_bg);
+
+	/* Header: full-size graffiti wordmark and right-aligned status. The
+	 * wordmark is 50px tall, so the bar field below is shortened to fit. */
+	juke_draw_logo(14, 1);
+	{
+		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
+		sprintf(buf, "%s  %s  %d/%d  %s%s%s", juke_state_str(), fmt,
+			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
+			U.list_on ? "LIST" : "VIS",
+			s_q.shuffle ? "  SHUF" : "",
+			s_q.truncated ? "  more" : "");
+		juke_text(w - 14 - (int)strlen(buf) * 8, 20, buf, U.col_dim, 1);
+	}
+
+	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
+	juke_text(14, 60, title, U.col_text, 1);
+	if (s_q.dir[0])
+		juke_text(14, 78, s_q.dir, U.col_dim, 1);
+
+	if (U.list_on)
+		juke_paint_list(w, h);
+	else
+		juke_paint_vis(w, h);
 
 	/* Footer: transport legend, then shuffle / volume indicators. */
 	fy = h - 48;
 	juke_text(14, fy + 6,
-		  "SPACE play/pause   P prev   N next   R shuf   -/+ vol   M mute   S stop   ESC quit",
+		  "SPACE play/pause   P prev   N next   L list   R shuf   -/+ vol   M mute   S stop   ESC quit",
 		  U.col_dim, 1);
 
 	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
@@ -742,6 +870,9 @@ void mmb_cmd_juke(void)
 	juke_load_colours();
 	juke_load_logo();
 	U.active = 1;
+	U.sel_item = -1;
+	if (s_q.cur >= 0 && s_q.cur < s_q.n)
+		juke_set_sel(s_q.cur);
 	U.last_ms = mmb_now_ms();
 	juke_frame();
 }
@@ -768,9 +899,68 @@ const char *mmb_juke_key(char c)
 {
 	if (!U.active)
 		return "";
-	if (c == 27 || c == 3 || c == 'q' || c == 'Q' || c == '\r' || c == '\n')
+	if (U.esc != 0)
+	{
+		if (U.esc == 1)
+		{
+			if (c == '[')
+			{
+				U.esc = 2;
+				return "";
+			}
+			if (c == 'O')
+			{
+				U.esc = 3;
+				return "";
+			}
+			U.esc = 0;
+		}
+		else if (U.esc == 3)
+		{
+			U.esc = 0;
+			if (c == 'A')
+				juke_sel_move(-1);
+			else if (c == 'B')
+				juke_sel_move(1);
+			return "";
+		}
+		else
+		{
+			unsigned char uc = (unsigned char)c;
+
+			if (uc >= 0x40 && uc <= 0x7e)
+			{
+				U.esc = 0;
+				if (uc == 'A')
+					juke_sel_move(-1);
+				else if (uc == 'B')
+					juke_sel_move(1);
+			}
+			return "";
+		}
+	}
+	if (c == 27)
+	{
+		U.esc = 1;
+		U.esc_at = mmb_now_ms();
+		return "";
+	}
+	if (c == 3 || c == 'q' || c == 'Q')
 	{
 		juke_leave();
+		return "";
+	}
+	if (c == '\r' || c == '\n')
+	{
+		if (U.list_on && s_q.n > 0)
+			(void)juke_start(U.sel);
+		else
+			juke_leave();
+		return "";
+	}
+	if (c == 'l' || c == 'L')
+	{
+		U.list_on = !U.list_on;
 		return "";
 	}
 	if (c == ' ')
@@ -831,6 +1021,14 @@ const char *mmb_juke_key(char c)
 	return "";
 }
 
+void mmb_juke_close(void)
+{
+	if (!U.active)
+		return;
+	U.esc = 0;
+	juke_leave();
+}
+
 void mmb_juke_poll(void)
 {
 	unsigned now;
@@ -841,6 +1039,13 @@ void mmb_juke_poll(void)
 	if (!U.active)
 		return;
 	now = mmb_now_ms();
+	if (U.esc == 1 && now - U.esc_at >= JUKE_ESC_IDLE_MS)
+	{
+		U.esc = 0;
+		juke_leave();
+		mmb_front_prompt();
+		return;
+	}
 	if (now - U.last_ms < JUKE_FRAME_MS)
 		return;
 	U.last_ms = now;

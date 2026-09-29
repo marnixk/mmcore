@@ -33,6 +33,9 @@ Controls:
     SPACE   play or pause
     P       previous track
     N       next track
+    L       flip the middle of the screen between the visualiser and the playlist
+    Up Down move the playlist selection
+    Enter   play the selected track while the playlist is showing
     R       shuffle on or off (SHUF lights up)
     -  +    volume down / up (VOL bar shows the level)
     M       mute or unmute
@@ -40,13 +43,24 @@ Controls:
     ESC     quit JUKE (music keeps playing)
     Q       quit JUKE (music keeps playing)
 
-Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
-order, and the currently playing track stays put. Volume is the player gain
-that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
+The header shows VIS or LIST for the pane in the middle. VIS is the default:
+the oscilloscope and the spectrum. LIST replaces that rectangle with the
+queue in play order, the same order NEXT and PREV follow. The current track
+is marked, the selection is highlighted, and the list scrolls when the queue
+is longer than the pane. Up and Down move the selection; Enter starts that
+track. SPACE, P, N, R, volume, mute, S, and ESC do the same in both panes.
+Going back to VIS leaves the selection where it was.
 
-Enter also quits; the music is not stopped, so you can keep listening from
-the console or join another screen. The queue keeps advancing in the
-background until it reaches the end of a single file or you use PLAY STOP.
+Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
+order, and the currently playing track stays put. The playlist follows that
+order. A "more" note means the folder scan was cut off. Volume is the player
+gain that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
+
+Enter on the visualiser quits; the music is not stopped, so you can keep
+listening from the console or join another screen. The queue keeps advancing
+in the background until it reaches the end of a single file or you use PLAY
+STOP.
+
 If you switch to another console while JUKE is open, the track still ends
 and the queue still advances there; see ~CONSOLES~.
 

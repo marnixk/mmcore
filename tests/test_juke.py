@@ -353,7 +353,144 @@ def test_help_juke_documents_shuffle_volume_transport(console):
     assert "prev" in low and "next" in low
     assert "grey" in low or "gray" in low
     assert "oscilloscope" in low
+    assert "playlist" in low
+    assert "list" in low
     # The old bare < / > transport notation must be gone.
     assert "<  >" not in out
     assert "  <\n" not in out and "  >\n" not in out
+
+
+_LIST_Y0 = 100
+_LIST_ROW = 18
+
+
+def _list_rows(h: int) -> int:
+    y0 = _LIST_Y0
+    y1 = h - 56
+    if y1 < y0 + 24:
+        y1 = y0 + 24
+    rows = (y1 - y0 - 8) // _LIST_ROW
+    return rows if rows > 0 else 1
+
+
+def _list_row_y(h: int, vis: int) -> int:
+    return _LIST_Y0 + 4 + vis * _LIST_ROW + 8
+
+
+def _is_list_sel(rgb: tuple[int, int, int]) -> bool:
+    r, g, b = rgb
+    return r + g + b > 140 and abs(r - b) < 50 and g < r + 40
+
+
+def _is_lime_mark(rgb: tuple[int, int, int]) -> bool:
+    r, g, b = rgb
+    return g > 140 and g > r and g > b + 20
+
+
+def _keys(con: MMBasicConsole, data: bytes, quiet: float = 0.45) -> None:
+    assert con._ser is not None
+    con._ser.sendall(data)
+    con.drain(quiet=quiet, timeout=8)
+
+
+def test_juke_list_toggles_midfield(fresh_console):
+    """#933: L swaps the midfield; header and footer stay put."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JT/A.MOD"),
+                      ("tests/TEST.MOD", "JT/B.MOD")])
+    _open_juke(con, "JT")
+    _w, h = con.screen_size()
+    y0 = _list_row_y(h, 0)
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    logo = con.screen_pixel(40, 20)
+    shuf = _shuffle_lit(con)
+    _keys(con, b"l")
+    assert _is_list_sel(con.screen_pixel(16, y0)), con.screen_pixel(16, y0)
+    assert con.screen_pixel(40, 20) == logo
+    assert _shuffle_lit(con) == shuf
+    _keys(con, b"\x1b[B")
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"l")
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    assert not _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_arrows_on_visualiser_do_not_quit(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _keys(con, b"\x1b[A\x1b[B")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line("PRINT 1+1") == "2"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_enter_on_visualiser_quits(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _quit_juke(con, b"\r")
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_enter_starts_selection(fresh_console):
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JL/A.MOD"),
+                      ("tests/TEST.MOD", "JL/B.MOD")])
+    _open_juke(con, "JL")
+    _keys(con, b" ")
+    assert con._ser is not None
+    _w, h = con.screen_size()
+    _keys(con, b"l\x1b[B")
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"\r")
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_scrolls_and_keeps_now_playing(fresh_console):
+    con = fresh_console
+    copies = [("tests/TEST.MOD", "JSQ/%02d.MOD" % i) for i in range(22)]
+    _prep_queue(con, copies)
+    _open_juke(con, "JSQ")
+    _w, h = con.screen_size()
+    rows = _list_rows(h)
+    _keys(con, b"l", quiet=0.6)
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    assert _is_lime_mark(con.screen_pixel(12, _list_row_y(h, 0)))
+    _keys(con, b"\x1b[B" * (rows + 4), quiet=1.2)
+    assert not _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, rows - 1)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_selection_follows_shuffle(fresh_console):
+    """The highlighted row is the selected item after shuffle, and Enter plays it."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JSH/A.MOD"),
+                      ("tests/TEST.MOD", "JSH/B.MOD"),
+                      ("tests/TEST.MOD", "JSH/C.MOD"),
+                      ("tests/TEST.MOD", "JSH/D.MOD")])
+    _open_juke(con, "JSH")
+    _keys(con, b" ")
+    _w, h = con.screen_size()
+    _keys(con, b"l\x1b[B")
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"r", quiet=0.6)
+    hits = []
+    for vis in range(4):
+        if _is_list_sel(con.screen_pixel(16, _list_row_y(h, vis))):
+            hits.append(vis)
+    assert hits, "selection highlight missing after shuffle"
+    assert len(hits) == 1
+    assert _is_lime_mark(con.screen_pixel(12, _list_row_y(h, 0)))
+    _keys(con, b"\r")
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
 
