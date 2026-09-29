@@ -81,6 +81,7 @@ def test_help_juke(console):
     assert "mp3" in low
     assert "folder" in low
     assert "subfolder" in low
+    assert "id3" in low
     assert "visualis" in low or "spectrum" in low
     assert "mod" in low
 
@@ -548,6 +549,61 @@ def test_juke_deep_tree_reports_truncation(fresh_console):
     title = con.ocr_screen(crop="960x40+0+50")
     assert "DEEP" not in title.upper()
     assert "TOP" in title.upper(), title
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def _title_ocr(con: MMBasicConsole, needle: str) -> str:
+    return con.wait_ocr(needle, timeout=8.0, crop="960x24+0+56")
+
+
+def test_juke_shows_module_song_titles(fresh_console):
+    con = fresh_console
+    for path, needle in (
+        ("tests/TEST.MOD", "TESTMOD"),
+        ("tests/TEST.XM", "TESTXM"),
+        ("tests/TEST.S3M", "TESTS3M"),
+    ):
+        _open_juke(con, path)
+        screen = _title_ocr(con, needle)
+        assert needle in screen.upper().replace(" ", ""), screen
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+def test_juke_shows_id3_titles_and_basename_fallback(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/ZV2.MP3")
+    screen = _title_ocr(con, "V2SONG")
+    assert "V2SONG" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    _open_juke(con, "tests/ZV1.MP3")
+    screen = _title_ocr(con, "V1SONG")
+    assert "V1SONG" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    _open_juke(con, "tests/ZBAD.MP3")
+    screen = _title_ocr(con, "ZBAD")
+    assert "ZBAD" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    _open_juke(con, "tests/TEST.WAV")
+    screen = _title_ocr(con, "WAV")
+    assert "WAV" in screen.upper(), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_rows_use_song_titles(fresh_console):
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JTIT/A.MOD"),
+                      ("tests/TEST.XM", "JTIT/B.XM")])
+    _open_juke(con, "JTIT")
+    _keys(con, b"l", quiet=0.6)
+    screen = con.wait_ocr("TESTXM", timeout=8.0, crop="960x220+0+100")
+    assert "TESTXM" in screen.upper().replace(" ", ""), screen
+    assert "TESTMOD" in screen.upper().replace(" ", ""), screen
     _quit_juke(con)
     con.send_line("PLAY STOP")
 

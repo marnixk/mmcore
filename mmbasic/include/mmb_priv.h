@@ -1219,6 +1219,10 @@ int mmb_play_take_ended(void);
 #define MMB_AUDIO_SCOPE 256
 void mmb_audio_spectrum(float *bands, int nbands);
 int mmb_audio_scope(short *out, int n);
+/* Song title for the loaded engine, or a bounded read of path. 1 if dst
+ * holds a printable title. */
+int mmb_audio_title(char *dst, int n);
+int mmb_media_title(const char *path, char *dst, int n);
 void mmb_audio_apply_options(void);
 int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);

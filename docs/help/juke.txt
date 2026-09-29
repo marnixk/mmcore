@@ -56,7 +56,12 @@ Going back to VIS leaves the selection where it was.
 
 Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
 order, and the currently playing track stays put. The playlist follows that
-order. The playlist shows each track's path under the folder. A "more"
+order. The title line prefers the song name stored in a MOD, XM, or S3M module,
+or the ID3 title of an MP3. A missing or unreadable name falls back to the
+file name, and the path is shown under the title when the two differ.
+Titles are read for the current track and for playlist rows as they are
+shown, not for every file while the queue is built. The playlist shows
+each track's path under the folder when no song name is available. A "more"
 note means the scan hit the 256-track queue, the 8-level depth, or a
 directory that did not fit. Volume is the player
 gain that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
