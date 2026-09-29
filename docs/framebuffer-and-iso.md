@@ -171,9 +171,10 @@ OPTION WIFI                        ' join with the stored network
 IPCONFIG                           ' show the active interface and address
 ```
 
-`OPTION WIFI` writes `/etc/wpa_supplicant/wpa_supplicant.conf` and restarts the
-OpenRC `wpa_supplicant`/`networking` services, so the same commands work on any
-OpenRC system that has these packages. See
+`OPTION WIFI` writes `/etc/wpa_supplicant/wpa_supplicant.conf` and reloads the
+running supplicant (`wpa_cli reconfigure`). A helper that does not finish is
+killed after a few seconds, and DHCP is a foreground `udhcpc` with a short
+retry cap, so a stuck radio returns to the prompt. See
 [`native-desktop.md`](native-desktop.md#network) for the Linux backend details
 and the `MMB_NET_*` overrides.
 

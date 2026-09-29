@@ -29,8 +29,40 @@ int main(int argc, char **argv)
 	char ssids[16][64];
 	int wpa = (argc > 1 && strcmp(argv[1], "wpa") == 0);
 	int connect_mode = (argc > 1 && strcmp(argv[1], "connect") == 0);
+	int stuck = (argc > 1 && strcmp(argv[1], "stuck") == 0);
 	int n;
 	char buf[256];
+
+	if (stuck)
+	{
+		FILE *f;
+
+		CHECK(mmb_wlan_start("StuckNet", "secret") != 0,
+		      "a helper that never exits is abandoned");
+		f = fopen(getenv("MMB_WPA_CONF"), "r");
+		CHECK(f != 0, "the wpa config file was written");
+		if (f)
+		{
+			char all[1024] = "";
+			char line[256];
+
+			while (fgets(line, sizeof line, f))
+			{
+				size_t used = strlen(all);
+
+				if (used < sizeof all - 1)
+					strncat(all, line,
+						sizeof all - used - 1);
+			}
+			fclose(f);
+			CHECK(strstr(all, "ssid=\"StuckNet\"") != 0,
+			      "ssid is saved before the helpers run");
+		}
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
 
 	if (connect_mode)
 	{

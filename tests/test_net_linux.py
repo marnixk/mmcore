@@ -128,6 +128,31 @@ def test_net_linux_wpa_cli_fallback(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_net_linux_stuck_helper_is_killed(tmp_path):
+    exe = _build(tmp_path)
+    cmd_dir = os.path.join(str(tmp_path), "fake_stuck")
+    os.makedirs(cmd_dir, exist_ok=True)
+    _write_exe(os.path.join(cmd_dir, "ip"), IP_FAKE)
+    _write_exe(
+        os.path.join(cmd_dir, "wpa_cli"),
+        "case \" $* \" in *reconfigure*) sleep 60 ;; esac\n" + WPA_OK,
+    )
+    _write_exe(os.path.join(cmd_dir, "rc-service"), "sleep 60\n")
+    _write_exe(os.path.join(cmd_dir, "wpa_supplicant"), "sleep 60\n")
+    wpa_conf = os.path.join(str(tmp_path), "wpa_supplicant.conf")
+    env = _env(cmd_dir, wpa_conf)
+    env["MMB_NET_CMD_TIMEOUT_MS"] = "200"
+    out = subprocess.run(
+        [exe, "stuck"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
 def test_net_linux_connect_writes_config_and_restarts(tmp_path):
     exe = _build(tmp_path)
     cmd_dir = _fake_dir(tmp_path, "fake_connect", IW_OK)
