@@ -135,6 +135,8 @@ def test_help_mode_resolutions(console):
         "800x600",
         "1280x720",
         "1280x1024",
+        "1366x768",
+        "683x384",
     ):
         assert size in out, size
     assert "MODE 8,16" in out
