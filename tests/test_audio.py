@@ -23,6 +23,7 @@ def test_help_play_mentions_targets(console):
     assert "HDMI" in out
     assert "JACK" in out
     assert "PLAYING()" in out
+    assert "MIXGAP" in out
 
 
 def test_help_audio_target(console):
@@ -100,6 +101,19 @@ def test_play_mod_xm_tone(console):
     assert console.send_line("PLAY TONE 440, 880, 50") == ""
     console.send_line("PAUSE 400")
     assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_mix_gap_stays_short(console):
+    """#936: while the poll loop is idle the mixer is serviced often enough
+    that the latched gap stays well under the queued cushion."""
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    time.sleep(0.4)
+    gap = int(console.send_line('PRINT MM.INFO("MIXGAP")'))
+    underrun = console.send_line('PRINT MM.INFO("UNDERRUN")')
+    console.send_line("PLAY STOP")
+    assert gap < 200, gap
+    assert underrun == "0"
 
 
 def test_play_s3m(console):

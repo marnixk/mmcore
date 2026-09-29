@@ -1212,6 +1212,8 @@ void mmb_play_stop(void);
  * explicit commands (PLAY STOP, JUKE 'S', reset) use mmb_play_stop(). */
 void mmb_play_stop_owned(void);
 void mmb_play_mix(void);
+unsigned mmb_audio_mix_gap_ms(void);
+unsigned mmb_audio_underruns(void);
 void mmb_play_pause(int on);
 int mmb_play_take_ended(void);
 /* Read-only analyser feed for the JUKE visualiser. */

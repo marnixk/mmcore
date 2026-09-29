@@ -5,7 +5,8 @@
 #include <circle/timer.h>
 #include <circle/new.h>
 
-#define AUDIO_QUEUE_MS   200
+/* Must hold MIX_TARGET (~320ms) with room for one HDMI period. */
+#define AUDIO_QUEUE_MS   400
 #define HDMI_CHUNK       (384 * 10)
 #define PWM_CHUNK        2048
 
