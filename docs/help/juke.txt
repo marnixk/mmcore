@@ -9,8 +9,11 @@ editing.
 JUKE [path$]
 
   path$ - a file to play, or a folder to queue. Omit it to queue the
-          current directory. A single file plays once; a folder queue
-          continues through every supported file and then wraps around.
+          current directory. A folder queue includes supported files in
+          subfolders: each directory is taken folders A-Z, then the files
+          beside them, up to 8 directories deep and 256 tracks. A single
+          file plays once; a folder queue continues through the queued
+          files and then wraps around.
 
 Supported formats:
 
@@ -53,7 +56,9 @@ Going back to VIS leaves the selection where it was.
 
 Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
 order, and the currently playing track stays put. The playlist follows that
-order. A "more" note means the folder scan was cut off. Volume is the player
+order. The playlist shows each track's path under the folder. A "more"
+note means the scan hit the 256-track queue, the 8-level depth, or a
+directory that did not fit. Volume is the player
 gain that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
 
 Enter on the visualiser quits; the music is not stopped, so you can keep

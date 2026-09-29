@@ -5,7 +5,7 @@
  * JUKE: a first-party retro music player (ScreamTracker-era feel).
  *
  *   JUKE "file"    play one file
- *   JUKE "folder"  queue every supported file in a folder (continuous)
+ *   JUKE "folder"  queue supported files in a folder and its subfolders
  *   JUKE           queue the current directory
  *
  * Player only: no pattern or sample editing. Supported formats are the ones
@@ -21,9 +21,12 @@
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
-#define JUKE_MAX_QUEUE 64
-#define JUKE_PATH_MAX  160
-#define JUKE_LIST_MAX  2048
+#define JUKE_MAX_QUEUE  256
+#define JUKE_PATH_MAX   160
+#define JUKE_SCAN_DEPTH 8       /* directories deep, including the start */
+#define JUKE_SCAN_DIRS  48      /* directories opened during one scan */
+#define JUKE_DIR_CAP    48      /* entries kept from one directory */
+#define JUKE_SCAN_STACK 64
 #define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
 #define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
 #define JUKE_MID_Y      100    /* visualiser and playlist share this top */
@@ -286,6 +289,22 @@ static const char *juke_basename(const char *p)
 	return slash ? slash + 1 : p;
 }
 
+/* Path under the queued folder, so nested tracks stay distinct. */
+static const char *juke_dispname(const char *p)
+{
+	int n;
+
+	if (!p)
+		return "";
+	if (s_q.dir[0])
+	{
+		n = (int)strlen(s_q.dir);
+		if (n > 0 && strncmp(p, s_q.dir, (size_t)n) == 0 && p[n] == '/')
+			return p + n + 1;
+	}
+	return juke_basename(p);
+}
+
 static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
 {
 	int n = 0;
@@ -303,12 +322,101 @@ static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
 	dst[n] = 0;
 }
 
+static int juke_add_file(const char *dir, const char *name)
+{
+	if (s_q.n >= JUKE_MAX_QUEUE)
+	{
+		s_q.truncated = 1;
+		return -1;
+	}
+	juke_join(s_q.item[s_q.n], JUKE_PATH_MAX, dir, name);
+	s_q.n++;
+	return 0;
+}
+
+/* Folders A-Z, then the files beside them. Subfolders are queued before
+ * those files. The walk is capped so a deep tree cannot stall the command. */
+static int juke_scan_tree(const char *root)
+{
+	typedef struct {
+		char path[JUKE_PATH_MAX];
+		int pass;
+		int depth;
+	} juke_scan;
+	static juke_scan stack[JUKE_SCAN_STACK];
+	mmb_dirent *ents;
+	int sp = 0, seen = 0, failed = 0;
+
+	if (!G.plat || !G.plat->alloc || !G.plat->free)
+		return -1;
+	ents = G.plat->alloc(sizeof(*ents) * JUKE_DIR_CAP);
+	if (!ents)
+		return -1;
+	strncpy(stack[0].path, root, JUKE_PATH_MAX - 1);
+	stack[0].path[JUKE_PATH_MAX - 1] = 0;
+	stack[0].pass = 0;
+	stack[0].depth = 0;
+	sp = 1;
+	while (sp > 0 && !failed)
+	{
+		juke_scan cur = stack[--sp];
+		int n, trunc = 0, i;
+
+		if (cur.pass == 0 && seen >= JUKE_SCAN_DIRS)
+		{
+			s_q.truncated = 1;
+			continue;
+		}
+		n = mmb_vfs_list_entries(cur.path, ents, JUKE_DIR_CAP, &trunc);
+		if (n < 0)
+		{
+			if (cur.depth == 0 && cur.pass == 0)
+				failed = 1;
+			continue;
+		}
+		if (cur.pass == 0)
+			seen++;
+		if (trunc)
+			s_q.truncated = 1;
+		if (cur.pass == 0 && sp < JUKE_SCAN_STACK)
+		{
+			stack[sp] = cur;
+			stack[sp].pass = 1;
+			sp++;
+			for (i = n - 1; i >= 0; i--)
+			{
+				if (!ents[i].is_dir || !ents[i].name[0])
+					continue;
+				if (cur.depth + 1 >= JUKE_SCAN_DEPTH ||
+				    sp >= JUKE_SCAN_STACK)
+				{
+					s_q.truncated = 1;
+					continue;
+				}
+				juke_join(stack[sp].path, JUKE_PATH_MAX, cur.path,
+					  ents[i].name);
+				stack[sp].pass = 0;
+				stack[sp].depth = cur.depth + 1;
+				sp++;
+			}
+			continue;
+		}
+		if (cur.pass == 0)
+			s_q.truncated = 1;
+		for (i = 0; i < n; i++)
+		{
+			if (ents[i].is_dir || !juke_ext_ok(ents[i].name))
+				continue;
+			if (juke_add_file(cur.path, ents[i].name) != 0)
+				break;
+		}
+	}
+	G.plat->free(ents);
+	return failed ? -1 : 0;
+}
+
 static int juke_build_queue(const char *spec)
 {
-	char list[JUKE_LIST_MAX];
-	const char *p;
-	int truncated = 0;
-
 	s_q.n = 0;
 	s_q.cur = -1;
 	s_q.shuffle = 0;
@@ -316,31 +424,10 @@ static int juke_build_queue(const char *spec)
 	s_q.dir[0] = 0;
 	if (mmb_vfs_isdir(spec))
 	{
-		if (mmb_vfs_list(spec, list, sizeof(list), &truncated) != 0)
-			return -1;
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
-		p = list;
-		while (*p && s_q.n < JUKE_MAX_QUEUE)
-		{
-			char name[JUKE_PATH_MAX];
-			int l = 0;
-			while (*p && *p != '\n' && l < (int)sizeof(name) - 1)
-				name[l++] = *p++;
-			name[l] = 0;
-			while (*p == '\n')
-				p++;
-			if (l == 0 || name[l - 1] == '/')
-				continue;
-			if (!juke_ext_ok(name))
-				continue;
-			juke_join(s_q.item[s_q.n], JUKE_PATH_MAX, spec, name);
-			s_q.n++;
-		}
-		/* Either the folder listing was cut, or the queue itself filled
-		 * before the listing ran out (#693). */
-		if (truncated || s_q.n >= JUKE_MAX_QUEUE)
-			s_q.truncated = 1;
+		if (juke_scan_tree(spec) != 0)
+			return -1;
 	}
 	else
 	{
@@ -567,7 +654,7 @@ static void juke_paint_list(int w, int h)
 			mmb_gfx_fill_rect(10, y, w - 20, 16, JUKE_LIST_SEL);
 		if (pos == s_q.cur)
 			mmb_gfx_fill_rect(11, y, 4, 16, U.col_bar_hi);
-		name = juke_basename(juke_track(pos));
+		name = juke_dispname(juke_track(pos));
 		maxc = (w - 48) / 8;
 		if (maxc < 8)
 			maxc = 8;
@@ -712,15 +799,20 @@ static void juke_paint(int w, int h)
 	juke_draw_logo(14, 1);
 	{
 		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
-		sprintf(buf, "%s  %s  %d/%d  %s%s%s", juke_state_str(), fmt,
+		int extra = s_q.truncated ? 6 : 0;
+		int x;
+		sprintf(buf, "%s  %s  %d/%d  %s%s", juke_state_str(), fmt,
 			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
 			U.list_on ? "LIST" : "VIS",
-			s_q.shuffle ? "  SHUF" : "",
-			s_q.truncated ? "  more" : "");
-		juke_text(w - 14 - (int)strlen(buf) * 8, 20, buf, U.col_dim, 1);
+			s_q.shuffle ? "  SHUF" : "");
+		x = w - 14 - ((int)strlen(buf) + extra) * 8;
+		juke_text(x, 20, buf, U.col_dim, 1);
+		if (s_q.truncated)
+			juke_text(x + (int)strlen(buf) * 8, 20, "  more",
+				  U.col_text, 1);
 	}
 
-	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
+	title = s_q.cur >= 0 ? juke_dispname(juke_track(s_q.cur)) : "(no track)";
 	juke_text(14, 60, title, U.col_text, 1);
 	if (s_q.dir[0])
 		juke_text(14, 78, s_q.dir, U.col_dim, 1);
