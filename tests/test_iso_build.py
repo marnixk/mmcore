@@ -271,9 +271,9 @@ def test_builder_ships_only_the_desktop_firmware_keep_list():
     text = open(BUILDER, encoding="utf-8").read()
     # The kernel line no longer names the meta.
     assert "linux-lts sof-firmware" in text
-    # Assert against the `for fw in ...; do` argument list only, so prose in
-    # the surrounding comments (which names the dropped packages) is ignored.
-    keep = text.split("for fw in", 1)[1].split("; do", 1)[0]
+    # Assert against the FW_KEEP list only, so prose in the surrounding
+    # comments (which names the dropped packages) is ignored.
+    keep = text.split('FW_KEEP="', 1)[1].split('"', 1)[0]
     for pkg in (
         # CPU (security-relevant late-loadable microcode)
         "linux-firmware-amd-ucode",
@@ -334,6 +334,34 @@ def test_builder_ships_only_the_desktop_firmware_keep_list():
     assert "info -L linux-firmware-other" in text
     assert "*lib/firmware/iwlwifi-*" in text
     assert '*lib/firmware/*) rm -f' in text
+
+
+def test_builder_verifies_every_firmware_package_landed():
+    """#968: a typo or an Alpine package rename must fail the build, not ship
+    an ISO silently missing that firmware (the #958 failure mode)."""
+    text = open(BUILDER, encoding="utf-8").read()
+    # The keep-list is part of the base apk transaction: that is what makes apk
+    # satisfy linux-lts's `linux-firmware-any` from these packages instead of
+    # the `linux-firmware` meta. Installing them in a best-effort loop
+    # afterwards leaves the meta in the rootfs and apk exits non-zero while
+    # purging it, so the old `|| true` hid a real no-op (#968).
+    assert "efibootmgr \\\n\t${FW_KEEP}" in text, (
+        "the firmware keep-list must be in the base apk transaction"
+    )
+    # Every requested package is then checked to be really present in the
+    # rootfs using apk's own installed test...
+    assert 'FW_KEEP=' in text
+    assert 'apk --root "${ROOTFS}" info -e "$fw"' in text
+    # ...and a missing package aborts the build with a clear message.
+    assert '|| die "firmware package missing from the rootfs: $fw"' in text
+    # The verification loop must never swallow a failure or install anything.
+    verify = text.split("for fw in", 1)[1].split("done", 1)[0]
+    assert "apk add" not in verify, verify
+    assert "|| true" not in verify, verify
+    assert "die" in verify, verify
+    # `|| true` stays only on the genuinely optional builder tools.
+    tools = text.split("for pkg in", 1)[1].split("done", 1)[0]
+    assert "|| true" in tools, tools
 
 
 def test_iso_workflow_builds_boot_smokes_and_attaches():
