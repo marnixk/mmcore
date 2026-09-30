@@ -227,9 +227,11 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 #define pick_view (pick_view_s[g_console])
 #define pick_trunc (pick_trunc_s[g_console])
 
-/* Crash-resume sidecar <path>.rec and its pending-prompt path. */
+/* Crash-resume sidecar <path>.rec and its pending-prompt path.  The
+ * checkpoint runs about once a minute: frequent sidecar writes were visible
+ * filesystem activity while typing (#973). */
 #define WP_REC_SUFFIX  ".rec"
-#define WP_AUTOSAVE_MS 1500
+#define WP_AUTOSAVE_MS 60000
 
 static int wp_save(void);
 static void wp_autosave(void);

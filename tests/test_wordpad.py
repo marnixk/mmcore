@@ -993,20 +993,35 @@ def test_wordpad_enter_empty_top_item_terminates(kernel_image):
         con.stop()
 
 
-def test_wordpad_periodic_autosave_writes_sidecar(kernel_image):
-    """Issue #516/#521: a dirty buffer is checkpointed to <path>.rec."""
+def _wordpad_source() -> str:
+    return open(
+        os.path.join(_REPO, "mmbasic", "src", "cmd_wordpad.c"), encoding="utf-8"
+    ).read()
+
+
+def test_wordpad_autosave_interval_is_one_minute():
+    """#973: the crash-recovery checkpoint runs about once a minute."""
+    assert re.search(r"#define\s+WP_AUTOSAVE_MS\s+60000\b", _wordpad_source()), (
+        "WP_AUTOSAVE_MS should be 60000ms (#973)"
+    )
+
+
+def test_wordpad_no_early_sidecar_checkpoint(kernel_image):
+    """#973: a dirty named buffer is not checkpointed within a few seconds.
+
+    The 60s interval cannot be waited out in QEMU, so this is the honest
+    negative window: type, wait ~3s, and assert no `<path>.rec` appeared.  The
+    positive sidecar read/restore paths are covered by the recovery tests.
+    """
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open(con, 'WORDPAD "AUTO.MD"')
         _keys(con, b"draft text", quiet=0.5)
-        time.sleep(2.2)
+        time.sleep(3.0)
         _quit(con)
-        assert con.send_line('OPEN "AUTO.MD.REC" FOR INPUT AS #1') == ""
-        assert con.send_line("LINE INPUT #1, A$") == ""
-        got = con.send_line("PRINT A$")
-        assert con.send_line("CLOSE #1") == ""
-        assert "draft text" in got
+        listing = con.send_line("DIR").upper()
+        assert "AUTO.MD.REC" not in listing, listing
     finally:
         con.stop()
 
