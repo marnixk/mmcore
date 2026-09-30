@@ -23,6 +23,7 @@
 #define WP_DLG_SAVEAS  2
 #define WP_DLG_PICK    3
 #define WP_DLG_RECOVER 4
+#define WP_DLG_CONFIRM 5
 
 #define WP_DOCS       8
 /* Backing-store size for the recursive quick-open walk.  The ramdisk alone
@@ -103,6 +104,10 @@ typedef struct {
 	int dialog;
 	char dlg[WP_DLG];
 	int dlglen;
+	/* Dirty-exit confirmation: which button is focused and whether a
+	 * successful save should finish quitting WORDPAD (#972). */
+	int dlg_btn;
+	int quit_pending;
 	int scroll;
 	int vid_cols;
 	int vid_rows;
@@ -1378,14 +1383,31 @@ static void wp_restore_gfx(void)
 	mmb_gfx_cls(G.gfx.bg);
 }
 
-static void wp_leave(void)
+/* Tear the session down immediately.  Exit paths that must respect unsaved
+ * changes go through wp_request_exit() (#972); the explicit Save choice has
+ * already written the file by the time this runs. */
+static void wp_leave_now(void)
 {
-	wp_autosave();
 	tui_end();
 	wp_restore_gfx();
 	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
 	wp_release_globals();
+}
+
+/* Every quit path funnels here: a clean buffer leaves at once, a dirty one
+ * asks first so Ctrl+X can never be mistaken for an exit (issues #971/#972). */
+static void wp_request_exit(void)
+{
+	if (!W.dirty)
+	{
+		wp_leave_now();
+		return;
+	}
+	W.menu_open = 0;
+	W.dialog = WP_DLG_CONFIRM;
+	W.dlg_btn = 0;
+	W.quit_pending = 1;
 }
 
 static void sel_clear(void)
@@ -2030,6 +2052,7 @@ static void close_ui(void)
 	W.dialog = WP_DLG_NONE;
 	W.dlglen = 0;
 	W.dlg[0] = 0;
+	W.quit_pending = 0;
 	wp_rec_sidecar[0] = 0;
 }
 
@@ -2860,7 +2883,14 @@ static void fd_submit_path(const char *path)
 		{
 			strncpy(W.path, full, sizeof(W.path) - 1);
 			W.path[sizeof(W.path) - 1] = 0;
-			wp_save();
+			if (wp_save() == 1 && W.quit_pending)
+			{
+				/* Save-then-exit from the dirty confirmation: the
+				 * file is written, so finish the quit now. */
+				close_ui();
+				wp_leave_now();
+				return;
+			}
 		}
 		close_ui();
 	}
@@ -3061,6 +3091,49 @@ static void open_menu(int which)
 	W.menu_item = 0;
 }
 
+/* Dirty-exit confirmation buttons: 0 Save, 1 Discard, 2 Cancel (#972). */
+static void confirm_save(void)
+{
+	if (!W.path[0])
+	{
+		/* No filename yet: get one, then finish the quit on success. */
+		W.quit_pending = 1;
+		open_dialog(WP_DLG_SAVEAS);
+		return;
+	}
+	if (wp_save() == 1)
+	{
+		W.dialog = WP_DLG_NONE;
+		W.quit_pending = 0;
+		wp_leave_now();
+	}
+	/* A failed write leaves WORDPAD open with the buffer intact. */
+}
+
+static void confirm_discard(void)
+{
+	W.dirty = 0;
+	W.dialog = WP_DLG_NONE;
+	W.quit_pending = 0;
+	wp_leave_now();
+}
+
+static void confirm_cancel(void)
+{
+	W.dialog = WP_DLG_NONE;
+	W.quit_pending = 0;
+}
+
+static void confirm_activate(void)
+{
+	if (W.dlg_btn == 0)
+		confirm_save();
+	else if (W.dlg_btn == 1)
+		confirm_discard();
+	else
+		confirm_cancel();
+}
+
 static void activate_menu(void)
 {
 	int menu = W.menu;
@@ -3081,7 +3154,7 @@ static void activate_menu(void)
 		else if (item == 3)
 			open_dialog(WP_DLG_SAVEAS);
 		else if (item == 4)
-			wp_leave();
+			wp_request_exit();
 	}
 	else if (menu == WP_MENU_EDIT)
 	{
@@ -3120,7 +3193,7 @@ static int handle_alt(char c)
 	}
 	if (c == 'x')
 	{
-		wp_leave();
+		wp_request_exit();
 		return 1;
 	}
 	return 0;
@@ -3382,6 +3455,38 @@ static int dialog_key(char c)
 		close_ui();
 		return 1;
 	}
+	if (W.dialog == WP_DLG_CONFIRM)
+	{
+		char u = c;
+		if (c == '\r' || c == '\n')
+		{
+			confirm_activate();
+			return 1;
+		}
+		if (c == 9)
+		{
+			W.dlg_btn = (W.dlg_btn + 1) % 3;
+			return 1;
+		}
+		if (u >= 'A' && u <= 'Z')
+			u = (char)(u - 'A' + 'a');
+		if (u == 's')
+		{
+			W.dlg_btn = 0;
+			confirm_activate();
+		}
+		else if (u == 'd' || u == 'n')
+		{
+			W.dlg_btn = 1;
+			confirm_activate();
+		}
+		else if (u == 'c')
+		{
+			W.dlg_btn = 2;
+			confirm_activate();
+		}
+		return 1;
+	}
 	if (c == '\r' || c == '\n')
 	{
 		if (pick_on())
@@ -3607,6 +3712,59 @@ static void draw_recover_dialog(void)
 		msgx = 1;
 	wp_puts(c0 + 1 + msgx, r0 + 4, msg2, WP_DIM, sbg);
 	serial_row("Recover unsaved changes? Y/N");
+}
+
+/* Dirty-exit confirmation (#972): Save / Discard / Cancel; Esc cancels. */
+static void draw_confirm_dialog(void)
+{
+	unsigned sbg = dlg_bg();
+	int w = 48, h = 8, c0, r0, i, c, x, left;
+	static const char *btns[3] = { " Save ", " Discard ", " Cancel " };
+	int bw[3];
+	const char *title = " Save changes ";
+	const char *msg = "Save changes before quitting?";
+
+	if (w > W.vid_cols - 2)
+		w = W.vid_cols - 2;
+	if (h > W.vid_rows - 2)
+		h = W.vid_rows - 2;
+	if (w < 20)
+		w = 20;
+	c0 = (W.vid_cols - w) / 2;
+	if (c0 < 0)
+		c0 = 0;
+	r0 = (W.vid_rows - h) / 2;
+	if (r0 < 1)
+		r0 = 1;
+	for (i = 0; i < h; i++)
+		for (c = 0; c < w; c++)
+			G.plat->tui_glyph(c0 + c, r0 + i, ' ', WP_FG, sbg);
+	wp_box(c0, r0, w, h, WP_HEAD, sbg);
+	left = (w - 2 - (int)strlen(title)) / 2;
+	if (left < 1)
+		left = 1;
+	wp_puts(c0 + 1 + left, r0, title, WP_HEAD, sbg);
+	left = (w - 2 - (int)strlen(msg)) / 2;
+	if (left < 1)
+		left = 1;
+	wp_puts(c0 + 1 + left, r0 + 2, msg, WP_FG, sbg);
+	bw[0] = (int)strlen(btns[0]);
+	bw[1] = (int)strlen(btns[1]);
+	bw[2] = (int)strlen(btns[2]);
+	x = c0 + (w - (bw[0] + bw[1] + bw[2] + 4)) / 2;
+	if (x < c0 + 2)
+		x = c0 + 2;
+	for (i = 0; i < 3; i++)
+	{
+		unsigned fg = (i == W.dlg_btn) ? WP_SEL_FG : WP_FG;
+		unsigned bg = (i == W.dlg_btn) ? WP_SEL_BG : WP_DIM;
+
+		wp_puts(x, r0 + 4, btns[i], fg, bg);
+		x += bw[i] + 2;
+	}
+	wp_puts(c0 + 2, r0 + h - 2, "S Save  D Discard  C Cancel  Esc",
+		WP_DIM, sbg);
+	serial_row("Save changes before quitting? S Save  D Discard  C Cancel");
 }
 
 static void draw_picker(void)
@@ -3909,6 +4067,8 @@ static void wp_redraw(void)
 		draw_picker();
 	else if (W.dialog == WP_DLG_RECOVER)
 		draw_recover_dialog();
+	else if (W.dialog == WP_DLG_CONFIRM)
+		draw_confirm_dialog();
 	else if (W.dialog)
 		draw_file_dialog();
 	if (chrome)
@@ -4025,26 +4185,28 @@ static const char *wp_feed_inner(char c)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 24)
+	if (c == 24) /* Ctrl+X: cut selection; never quits the app (#971) */
 	{
-		wp_leave();
+		delete_selection(1);
+		if (W.active)
+			wp_redraw();
 		return G.out;
 	}
-	if (c == 3)
+	if (c == 3) /* Ctrl+C: copy selection */
 	{
 		copy_selection();
 		if (W.active)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 11)
+	if (c == 11) /* Ctrl+K: legacy cut (selection, else whole line) */
 	{
 		cut_selection();
 		if (W.active)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 21)
+	if (c == 22 || c == 21) /* Ctrl+V (standard) and Ctrl+U (legacy) paste */
 	{
 		paste_clip();
 		if (W.active)
@@ -4185,7 +4347,7 @@ void mmb_wordpad_poll(void)
 		wp_redraw();
 }
 
-/* Cold-boot the WORDPAD layer on a warm reset (#763).  wp_leave() already
+/* Cold-boot the WORDPAD layer on a warm reset (#763).  wp_leave_now() already
  * frees the store of any console that was running WORDPAD, but clear every
  * console's store and static session state here too so a reset cannot leave a
  * heap allocation or stale picker behind (#768). */

@@ -30,8 +30,17 @@ def _keys(con, data: bytes, quiet: float = 0.5) -> str:
     return _plain(con.drain(quiet=quiet).decode(errors="replace"))
 
 
-def _quit(con) -> str:
-    return _keys(con, bytes([24]))
+def _quit(con, quiet: float = 0.6) -> str:
+    """Quit via Alt+X (not Ctrl+X, which now cuts).
+
+    When the buffer is dirty WORDPAD asks before exiting; discard the changes
+    so the existing callers keep their old "leave now" behaviour.  A clean
+    exit shows no prompt and nothing extra is sent.
+    """
+    seen = _keys(con, bytes([1]) + b"x", quiet=quiet)
+    if "save changes" in seen.lower() or "discard" in seen.lower():
+        seen += _keys(con, b"d", quiet=quiet)
+    return seen
 
 
 def _alt_menu(con, letter: bytes, quiet: float = 0.5) -> str:
@@ -349,6 +358,135 @@ def test_wordpad_copy_paste(kernel_image):
         assert "xyz" in pasted
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_x_cuts_selection_not_exit(kernel_image):
+    """#971: Ctrl+X cuts the selection and keeps WORDPAD open."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CUT.MD"')
+        _keys(con, b"one two", quiet=0.7)
+        # Select the trailing " two" (4 chars) with Shift+Left.
+        _keys(con, b"\x1b[1;2D" * 4, quiet=0.5)
+        cut = _keys(con, bytes([24]), quiet=0.7)
+        assert "one" in cut
+        # Still inside WORDPAD: the File->Save menu path must work.
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CUT.MD", 1)
+        assert lines[0] == "[one]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_x_no_selection_is_noop(kernel_image):
+    """#971: Ctrl+X with no selection neither exits nor cuts the line."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "NOX.MD"')
+        _keys(con, b"keep", quiet=0.6)
+        _keys(con, bytes([24]), quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "NOX.MD", 1)
+        assert lines[0] == "[keep!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_c_copy_ctrl_v_paste(kernel_image):
+    """#971: Ctrl+C copies the selection and Ctrl+V pastes it at the caret."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CP.MD"')
+        _keys(con, b"copy me", quiet=0.7)
+        # Select " me" (3 chars), copy, go to end, paste.
+        _keys(con, b"\x1b[1;2D" * 3, quiet=0.5)
+        _keys(con, bytes([3]), quiet=0.5)
+        _keys(con, b"\x1b[F", quiet=0.4)
+        _keys(con, bytes([22]), quiet=0.6)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CP.MD", 1)
+        assert lines[0] == "[copy me me]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_clean_quit_no_prompt(kernel_image):
+    """#972: an unmodified buffer quits with no confirmation."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, "WORDPAD")
+        out = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" not in out.lower(), out
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_cancel_keeps_open(kernel_image):
+    """#972: Cancel on the dirty-exit prompt keeps the buffer intact."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "DIRTY.MD"')
+        _keys(con, b"draft", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"c", quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "DIRTY.MD", 1)
+        assert lines[0] == "[draft!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_discard_exits_without_saving(kernel_image):
+    """#972: Discard exits and leaves the on-disk file untouched."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "DISC.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "ORIGINAL"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _open(con, 'WORDPAD "DISC.MD"')
+        _keys(con, b" plus", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"d", quiet=0.7)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "DISC.MD", 1)
+        assert lines[0] == "[ORIGINAL]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_save_saves_then_exits(kernel_image):
+    """#972: Save on the dirty-exit prompt writes the file and exits."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "SAVEQ.MD"')
+        _keys(con, b"saved text", quiet=0.6)
+        _keys(con, bytes([1]) + b"x", quiet=0.7)
+        _keys(con, b"s", quiet=0.8)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "SAVEQ.MD", 1)
+        assert lines[0] == "[saved text]", lines
     finally:
         con.stop()
 
