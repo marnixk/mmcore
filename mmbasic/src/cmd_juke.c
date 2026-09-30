@@ -21,13 +21,12 @@
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
-#define JUKE_MAX_QUEUE  256
 #define JUKE_PATH_MAX   160
 #define JUKE_TITLE_MAX  40
-#define JUKE_SCAN_DEPTH 8       /* directories deep, including the start */
-#define JUKE_SCAN_DIRS  48      /* directories opened during one scan */
-#define JUKE_DIR_CAP    48      /* entries kept from one directory */
-#define JUKE_SCAN_STACK 64
+#define JUKE_QUEUE_INIT 32      /* queue slots allocated up front        */
+#define JUKE_DIR_INIT   32      /* directory listing grows by doubling   */
+#define JUKE_DIR_MAX    4096    /* soft limit: entries kept per directory */
+#define JUKE_SCAN_INIT  16      /* scan stack grows by doubling          */
 #define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
 #define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
 #define JUKE_MID_Y      100    /* oscilloscope inset top             */
@@ -66,15 +65,15 @@ typedef struct {
 typedef struct {
 	int active;
 	int n;
+	int cap;       /* allocated slots in the parallel arrays below */
 	int cur;
 	int shuffle;
-	int truncated; /* the folder scan hit the newline buffer or the queue cap */
 	int owner;     /* virtual console that started this queue (#805) */
-	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
+	int *order;    /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
-	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
-	char title[JUKE_MAX_QUEUE][JUKE_TITLE_MAX];
-	unsigned char titled[JUKE_MAX_QUEUE];
+	char **item;   /* each entry is a malloc'd full path */
+	char **title;  /* lazily allocated per-track metadata title */
+	unsigned char *titled;
 } juke_queue;
 
 static juke_ui s_ui[MMB_MAX_CONSOLES];
@@ -327,6 +326,12 @@ static const char *juke_row_title(int pos)
 	path = s_q.item[idx];
 	if (!s_q.titled[idx])
 	{
+		if (!s_q.title[idx])
+		{
+			s_q.title[idx] = G.plat->alloc(JUKE_TITLE_MAX);
+			if (!s_q.title[idx])
+				return juke_dispname(path);
+		}
 		s_q.titled[idx] = 1;
 		s_q.title[idx][0] = 0;
 		if (s_q.cur == pos && g_audio.name[0] &&
@@ -360,123 +365,281 @@ static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
 	dst[n] = 0;
 }
 
-static int juke_add_file(const char *dir, const char *name)
+/* Release every path, title, and index the queue owns. The queue is global
+ * and outlives individual JUKE screens, so this runs only when it is rebuilt. */
+static void juke_queue_free(void)
 {
-	if (s_q.n >= JUKE_MAX_QUEUE)
+	int i;
+
+	if (!G.plat || !G.plat->free)
+		return;
+	if (s_q.item)
 	{
-		s_q.truncated = 1;
+		for (i = 0; i < s_q.n; i++)
+			if (s_q.item[i])
+				G.plat->free(s_q.item[i]);
+		G.plat->free(s_q.item);
+	}
+	if (s_q.title)
+	{
+		for (i = 0; i < s_q.n; i++)
+			if (s_q.title[i])
+				G.plat->free(s_q.title[i]);
+		G.plat->free(s_q.title);
+	}
+	if (s_q.order)
+		G.plat->free(s_q.order);
+	if (s_q.titled)
+		G.plat->free(s_q.titled);
+	s_q.order = 0;
+	s_q.item = 0;
+	s_q.title = 0;
+	s_q.titled = 0;
+	s_q.n = 0;
+	s_q.cap = 0;
+}
+
+/* Grow the queue's parallel arrays to at least `need` slots. Doubling keeps
+ * the number of reallocations small; individual paths are allocated to their
+ * exact length so a large library costs only what it uses. */
+static int juke_queue_reserve(int need)
+{
+	int ncap, i;
+	int *order;
+	char **item, **title;
+	unsigned char *titled;
+
+	if (need <= s_q.cap)
+		return 0;
+	if (!G.plat || !G.plat->alloc || !G.plat->free)
+		return -1;
+	ncap = s_q.cap ? s_q.cap : JUKE_QUEUE_INIT;
+	while (ncap < need)
+		ncap *= 2;
+	order = G.plat->alloc((unsigned)ncap * sizeof(*order));
+	item = G.plat->alloc((unsigned)ncap * sizeof(*item));
+	title = G.plat->alloc((unsigned)ncap * sizeof(*title));
+	titled = G.plat->alloc((unsigned)ncap);
+	if (!order || !item || !title || !titled)
+	{
+		if (order) G.plat->free(order);
+		if (item) G.plat->free(item);
+		if (title) G.plat->free(title);
+		if (titled) G.plat->free(titled);
 		return -1;
 	}
-	juke_join(s_q.item[s_q.n], JUKE_PATH_MAX, dir, name);
+	for (i = 0; i < s_q.n; i++)
+	{
+		order[i] = s_q.order[i];
+		item[i] = s_q.item[i];
+		title[i] = s_q.title[i];
+		titled[i] = s_q.titled[i];
+	}
+	for (i = s_q.n; i < ncap; i++)
+	{
+		item[i] = 0;
+		title[i] = 0;
+		titled[i] = 0;
+	}
+	if (s_q.order) G.plat->free(s_q.order);
+	if (s_q.item) G.plat->free(s_q.item);
+	if (s_q.title) G.plat->free(s_q.title);
+	if (s_q.titled) G.plat->free(s_q.titled);
+	s_q.order = order;
+	s_q.item = item;
+	s_q.title = title;
+	s_q.titled = titled;
+	s_q.cap = ncap;
+	return 0;
+}
+
+static int juke_add_file(const char *dir, const char *name)
+{
+	char path[JUKE_PATH_MAX];
+	int len;
+	char *p;
+
+	juke_join(path, sizeof(path), dir, name);
+	if (!path[0])
+		return -1;
+	if (juke_queue_reserve(s_q.n + 1) != 0)
+		return -1;
+	len = (int)strlen(path);
+	p = G.plat->alloc((unsigned)len + 1);
+	if (!p)
+		return -1;
+	memcpy(p, path, (size_t)len + 1);
+	s_q.item[s_q.n] = p;
+	s_q.title[s_q.n] = 0;
+	s_q.titled[s_q.n] = 0;
+	s_q.order[s_q.n] = s_q.n;
 	s_q.n++;
 	return 0;
 }
 
+/* One sorted listing of a whole directory, growing the buffer until the
+ * backend reports no truncation. JUKE_DIR_MAX bounds the transient buffer
+ * (a directory with more entries keeps its first JUKE_DIR_MAX, sorted). */
+static mmb_dirent *juke_list_all(const char *path, int *out_n)
+{
+	int cap = JUKE_DIR_INIT;
+
+	*out_n = 0;
+	for (;;)
+	{
+		mmb_dirent *ents = G.plat->alloc(sizeof(*ents) * (unsigned)cap);
+		int n, trunc = 0, at_max = cap >= JUKE_DIR_MAX;
+
+		if (!ents)
+			return 0;
+		n = mmb_vfs_list_entries(path, ents, cap, &trunc);
+		if (n < 0)
+		{
+			G.plat->free(ents);
+			return 0;
+		}
+		if (!trunc || at_max)
+		{
+			*out_n = n;
+			return ents;
+		}
+		G.plat->free(ents);
+		cap *= 2;
+		if (cap > JUKE_DIR_MAX)
+			cap = JUKE_DIR_MAX;
+	}
+}
+
+typedef struct {
+	char path[JUKE_PATH_MAX];
+	int pass;
+	int depth;
+} juke_scan;
+
+/* Push a scan frame, growing the stack by doubling when it is full. */
+static int juke_scan_push(juke_scan **stack, int *sp, int *cap,
+			  const char *path, int pass, int depth)
+{
+	if (*sp >= *cap)
+	{
+		int ncap = *cap * 2;
+		juke_scan *ns = G.plat->alloc(sizeof(**stack) * (unsigned)ncap);
+		if (!ns)
+			return -1;
+		memcpy(ns, *stack, sizeof(**stack) * (size_t)*sp);
+		G.plat->free(*stack);
+		*stack = ns;
+		*cap = ncap;
+	}
+	strncpy((*stack)[*sp].path, path, JUKE_PATH_MAX - 1);
+	(*stack)[*sp].path[JUKE_PATH_MAX - 1] = 0;
+	(*stack)[*sp].pass = pass;
+	(*stack)[*sp].depth = depth;
+	(*sp)++;
+	return 0;
+}
+
 /* Folders A-Z, then the files beside them. Subfolders are queued before
- * those files. The walk is capped so a deep tree cannot stall the command. */
+ * those files. The stack and each listing grow on demand, so a large or
+ * deep tree is not capped by a fixed array. Recursion depth is naturally
+ * bounded by JUKE_PATH_MAX (each level adds at least "/x"). */
 static int juke_scan_tree(const char *root)
 {
-	typedef struct {
-		char path[JUKE_PATH_MAX];
-		int pass;
-		int depth;
-	} juke_scan;
-	static juke_scan stack[JUKE_SCAN_STACK];
-	mmb_dirent *ents;
-	int sp = 0, seen = 0, failed = 0;
+	juke_scan *stack;
+	int sp = 0, cap = JUKE_SCAN_INIT, failed = 0;
 
 	if (!G.plat || !G.plat->alloc || !G.plat->free)
 		return -1;
-	ents = G.plat->alloc(sizeof(*ents) * JUKE_DIR_CAP);
-	if (!ents)
+	stack = G.plat->alloc(sizeof(*stack) * (unsigned)cap);
+	if (!stack)
 		return -1;
-	strncpy(stack[0].path, root, JUKE_PATH_MAX - 1);
-	stack[0].path[JUKE_PATH_MAX - 1] = 0;
-	stack[0].pass = 0;
-	stack[0].depth = 0;
-	sp = 1;
+	if (juke_scan_push(&stack, &sp, &cap, root, 0, 0) != 0)
+	{
+		G.plat->free(stack);
+		return -1;
+	}
 	while (sp > 0 && !failed)
 	{
 		juke_scan cur = stack[--sp];
-		int n, trunc = 0, i;
+		mmb_dirent *ents;
+		int n = 0, i;
 
-		if (cur.pass == 0 && seen >= JUKE_SCAN_DIRS)
+		ents = juke_list_all(cur.path, &n);
+		if (!ents)
 		{
-			s_q.truncated = 1;
-			continue;
-		}
-		n = mmb_vfs_list_entries(cur.path, ents, JUKE_DIR_CAP, &trunc);
-		if (n < 0)
-		{
-			if (cur.depth == 0 && cur.pass == 0)
+			if (cur.pass == 0 && cur.depth == 0)
 				failed = 1;
 			continue;
 		}
 		if (cur.pass == 0)
-			seen++;
-		if (trunc)
-			s_q.truncated = 1;
-		if (cur.pass == 0 && sp < JUKE_SCAN_STACK)
 		{
-			stack[sp] = cur;
-			stack[sp].pass = 1;
-			sp++;
+			/* The directory's own files are queued after its subtrees,
+			 * so re-push it as a pass-1 frame under the subfolders. */
+			if (juke_scan_push(&stack, &sp, &cap, cur.path, 1,
+					   cur.depth) != 0)
+			{
+				G.plat->free(ents);
+				failed = 1;
+				break;
+			}
 			for (i = n - 1; i >= 0; i--)
 			{
+				char sub[JUKE_PATH_MAX];
 				if (!ents[i].is_dir || !ents[i].name[0])
 					continue;
-				if (cur.depth + 1 >= JUKE_SCAN_DEPTH ||
-				    sp >= JUKE_SCAN_STACK)
-				{
-					s_q.truncated = 1;
-					continue;
-				}
-				juke_join(stack[sp].path, JUKE_PATH_MAX, cur.path,
+				juke_join(sub, sizeof(sub), cur.path,
 					  ents[i].name);
-				stack[sp].pass = 0;
-				stack[sp].depth = cur.depth + 1;
-				sp++;
+				if (juke_scan_push(&stack, &sp, &cap, sub, 0,
+						   cur.depth + 1) != 0)
+				{
+					failed = 1;
+					break;
+				}
 			}
-			continue;
 		}
-		if (cur.pass == 0)
-			s_q.truncated = 1;
-		for (i = 0; i < n; i++)
+		else
 		{
-			if (ents[i].is_dir || !juke_ext_ok(ents[i].name))
-				continue;
-			if (juke_add_file(cur.path, ents[i].name) != 0)
-				break;
+			for (i = 0; i < n; i++)
+			{
+				if (ents[i].is_dir || !juke_ext_ok(ents[i].name))
+					continue;
+				if (juke_add_file(cur.path, ents[i].name) != 0)
+					break;
+			}
 		}
+		G.plat->free(ents);
 	}
-	G.plat->free(ents);
+	G.plat->free(stack);
 	return failed ? -1 : 0;
 }
 
 static int juke_build_queue(const char *spec)
 {
-	s_q.n = 0;
+	juke_queue_free();
 	s_q.cur = -1;
 	s_q.shuffle = 0;
-	s_q.truncated = 0;
 	s_q.dir[0] = 0;
-	memset(s_q.titled, 0, sizeof(s_q.titled));
 	if (mmb_vfs_isdir(spec))
 	{
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
 		if (juke_scan_tree(spec) != 0)
+		{
+			juke_queue_free();
 			return -1;
+		}
 	}
 	else
 	{
 		if (!juke_ext_ok(spec) || !mmb_vfs_exists(spec))
 			return -1;
-		strncpy(s_q.item[0], spec, JUKE_PATH_MAX - 1);
-		s_q.item[0][JUKE_PATH_MAX - 1] = 0;
+		if (juke_add_file("", spec) != 0)
+		{
+			juke_queue_free();
+			return -1;
+		}
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
-		s_q.n = 1;
 	}
 	{
 		int i;
@@ -831,12 +994,11 @@ static void juke_paint(int w, int h)
 
 	mmb_gfx_cls(U.col_bg);
 
-	/* Header: full-size graffiti wordmark. The wordmark is 50px tall, so the
-	 * bar field below is shortened to fit. The old top-right VIS/LIST/MOD
-	 * state chrome is gone (#951); only the truncation hint remains there. */
+	/* Header: just the full-size graffiti wordmark. The top-right status
+	 * chrome (VIS/LIST/MOD #951, then N/M, SHUF, and the "more" truncation
+	 * hint #965) is gone; the queue no longer truncates, so there is
+	 * nothing to report there. */
 	juke_draw_logo(14, 1);
-	if (s_q.truncated)
-		juke_text(w - 46, 20, "more", U.col_text, 1);
 
 	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
 	juke_text(14, 60, title, U.col_text, 1);

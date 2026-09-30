@@ -590,8 +590,8 @@ def test_juke_nested_only_file_still_plays(fresh_console):
     con.send_line("PLAY STOP")
 
 
-def test_juke_deep_tree_reports_truncation(fresh_console):
-    """Past the depth cap the scan stops and the header says more."""
+def test_juke_deep_tree_reaches_deep_file(fresh_console):
+    """#966: the scan is not depth-capped, so a deep track is queued and plays."""
     con = fresh_console
     acc = "JX"
     _mkdir_path(con, acc)
@@ -602,11 +602,12 @@ def test_juke_deep_tree_reports_truncation(fresh_console):
     assert con.send_line('COPY "tests/TEST.MOD" TO "JX/TOP.MOD"') == ""
     out = _open_juke(con, "JX")
     assert "FILE" not in out.upper()
-    screen = con.wait_ocr("more", timeout=8.0, crop="960x40+400+0")
-    assert "more" in screen.lower(), screen
-    title = con.ocr_screen(crop="960x40+0+50")
-    assert "DEEP" not in title.upper()
-    assert "TOP" in title.upper(), title
+    # Subfolders come first, so the deepest track is the one now playing.
+    title = con.wait_ocr("DEEP", timeout=8.0, crop="960x40+0+50")
+    assert "DEEP" in title.upper(), title
+    # The truncation hint is gone from the header (#965).
+    header = con.ocr_screen(crop="960x40+400+0")
+    assert "more" not in header.lower(), header
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
@@ -663,6 +664,30 @@ def test_juke_list_rows_use_song_titles(fresh_console):
     screen = con.wait_ocr("TESTXM", timeout=8.0, crop="960x220+0+100")
     assert "TESTXM" in screen.upper().replace(" ", ""), screen
     assert "TESTMOD" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_folder_beyond_64_files_is_fully_reachable(fresh_console):
+    """#966: a >64-file folder queues every file, not the first 64/256.
+
+    WAV fixtures fall back to their basename as the title, so the last track's
+    name proves the playlist reached the 70th entry rather than clamping.
+    """
+    con = fresh_console
+    total = 70
+    copies = [("tests/TEST.WAV", "JLG/%02d.WAV" % i) for i in range(total)]
+    _prep_queue(con, copies)
+    out = _open_juke(con, "JLG")
+    assert "FILE" not in out.upper()
+    _w, h = con.screen_size()
+    _keys(con, b"l", quiet=0.6)
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    # Walk the selection to the end of the queue and play it.
+    _keys(con, b"\x1b[B" * (total - 1), quiet=2.5)
+    _keys(con, b"\r", quiet=0.6)
+    title = _title_ocr(con, "69")
+    assert "69" in title.upper(), title
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
