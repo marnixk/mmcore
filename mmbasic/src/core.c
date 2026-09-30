@@ -894,7 +894,18 @@ void mmb_cmd_exit(void)
 	{
 		if (G.for_sp <= 0)
 			mmb_error("?EXIT FOR");
-		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].for_pc) + 1;
+		if (G.forstack[G.for_sp - 1].next_pos)
+		{
+			/* Same-line loop: resume after the matching NEXT statement,
+			 * falling to the next line when nothing follows it (#1004). */
+			G.branch_pc = G.forstack[G.for_sp - 1].after_pos
+					      ? G.forstack[G.for_sp - 1].next_pc
+					      : G.forstack[G.for_sp - 1].next_pc + 1;
+			G.branch_pos = G.forstack[G.for_sp - 1].after_pos;
+		}
+		else
+			G.branch_pc =
+				find_next_pc(G.forstack[G.for_sp - 1].for_pc) + 1;
 		G.for_sp--;
 		return;
 	}
@@ -918,7 +929,16 @@ void mmb_cmd_continue(void)
 	{
 		if (G.for_sp <= 0)
 			mmb_error("?CONTINUE FOR");
-		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].for_pc);
+		if (G.forstack[G.for_sp - 1].next_pos)
+		{
+			/* Same-line loop: resume at the matching NEXT statement, which
+			 * advances the loop when run (#1004). */
+			G.branch_pc = G.forstack[G.for_sp - 1].next_pc;
+			G.branch_pos = G.forstack[G.for_sp - 1].next_pos;
+		}
+		else
+			G.branch_pc =
+				find_next_pc(G.forstack[G.for_sp - 1].for_pc);
 		return;
 	}
 	if (mmb_match("DO"))
@@ -2694,6 +2714,106 @@ void mmb_cmd_if(void)
 	}
 }
 
+/* Advance *pp to the ':' that terminates the current statement (or to the
+ * NUL / comment that ends the line). Quoted strings and comments are skipped
+ * so a ':' or ' inside them does not end the statement. */
+static void skip_stmt(const char **pp)
+{
+	const char *p = *pp;
+	while (*p)
+	{
+		/* Keyword tokens are 3-byte escapes; their payload bytes must not
+		 * be mistaken for ':' or a quote. */
+		if ((unsigned char)*p == 0x80)
+		{
+			p += 3;
+			continue;
+		}
+		if (*p == '"')
+		{
+			p++;
+			while (*p)
+			{
+				if (*p != '"')
+				{
+					p++;
+					continue;
+				}
+				p++;
+				if (*p == '"')
+				{
+					p++;
+					continue;
+				}
+				break;
+			}
+			continue;
+		}
+		if (*p == '\'' || *p == ':')
+			break;
+		p++;
+	}
+	*pp = p;
+}
+
+/* Locate the NEXT statement matching the FOR at pc whose body starts at p
+ * (#1004). FOR/NEXT are matched at statement boundaries, walking across lines,
+ * so a single line may hold both and still be matched. Returns the NEXT
+ * statement pointer, or NULL when the FOR has no matching NEXT. */
+static const char *find_matching_next(int pc, const char *p, int *out_pc)
+{
+	int depth = 1;
+	while (pc < G.nprog)
+	{
+		while (*p)
+		{
+			const char *save = G.p;
+			int is_for = 0, is_next = 0;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (*p == 0 || *p == '\'')
+				break;
+			G.p = p;
+			if (mmb_match("FOR"))
+				is_for = 1;
+			else if (mmb_match("NEXT"))
+				is_next = 1;
+			G.p = save;
+			if (is_for)
+				depth++;
+			else if (is_next && --depth == 0)
+			{
+				*out_pc = pc;
+				return p;
+			}
+			skip_stmt(&p);
+			if (*p == ':')
+				p++;
+		}
+		pc++;
+		if (pc < G.nprog)
+			p = after_label(mmb_tok_line(pc));
+	}
+	return 0;
+}
+
+/* First statement after the NEXT at np, or NULL when it is the last statement
+ * on its line (#1004). */
+static const char *stmt_after(const char *np)
+{
+	const char *q = np;
+	skip_stmt(&q);
+	if (*q == ':')
+	{
+		q++;
+		while (*q == ' ' || *q == '\t')
+			q++;
+		if (*q && *q != '\'')
+			return q;
+	}
+	return 0;
+}
+
 void mmb_cmd_for(void)
 {
 	char name[MMB_MAX_NAME];
@@ -2713,7 +2833,9 @@ void mmb_cmd_for(void)
 		mmb_error("?FOR");
 	{
 		int off = 0, same_line = 0;
+		int next_pc = -1;
 		const char *base, *body = 0;
+		const char *next_pos = 0, *after_pos = 0;
 		mmb_var *v = mmb_find_var(name, t, 0, nidx, idx);
 		if (!v)
 			mmb_error("?FOR");
@@ -2729,6 +2851,20 @@ void mmb_cmd_for(void)
 			same_line = 1;
 			body = G.p + 1;
 		}
+		/* Same-line FOR/NEXT is not in the line-granular jump table, so
+		 * scan for the matching NEXT at statement level (#1004). This lets
+		 * EXIT/CONTINUE FOR resume mid-line instead of reporting ?NEXT. */
+		if (same_line)
+		{
+			int npc = -1;
+			const char *np = find_matching_next(G.run_pc, body, &npc);
+			if (np)
+			{
+				next_pc = npc;
+				next_pos = np;
+				after_pos = stmt_after(np);
+			}
+		}
 		strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
 		G.forstack[G.for_sp].var[MMB_MAX_NAME - 1] = 0;
 		G.forstack[G.for_sp].vp = v;
@@ -2738,6 +2874,9 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].for_pc = G.run_pc;
 		G.forstack[G.for_sp].line = same_line ? G.run_pc : G.run_pc + 1;
 		G.forstack[G.for_sp].pos = same_line ? body : 0;
+		G.forstack[G.for_sp].next_pc = next_pc;
+		G.forstack[G.for_sp].next_pos = next_pos;
+		G.forstack[G.for_sp].after_pos = after_pos;
 		G.forstack[G.for_sp].end_line =
 			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
 				? jmp_next[G.run_pc]
@@ -4062,12 +4201,14 @@ static void run_gosub_body(void)
 	int saved_ctrl = G.ctrl_sp;
 	int saved_for = G.for_sp;
 	int saved_running = G.running;
+	const char *saved_bpos = G.branch_pos;
 
 	G.running = 1;
 	if (G.gosub_sp > 0)
 		G.gosub_stack[G.gosub_sp - 1] = -2;
 	G.run_pc = G.branch_pc;
 	G.branch_pc = -1;
+	G.branch_pos = 0;
 	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
 	{
 		int loop;
@@ -4086,6 +4227,12 @@ static void run_gosub_body(void)
 			{
 				exec_line_from(mmb_tok_line(G.run_pc), resume);
 				resume = 0;
+			}
+			else if (G.branch_pos)
+			{
+				exec_line_from(mmb_tok_line(G.run_pc),
+					       G.branch_pos);
+				G.branch_pos = 0;
 			}
 			else
 				exec_line_body(mmb_tok_line(G.run_pc));
@@ -4113,6 +4260,7 @@ static void run_gosub_body(void)
 	G.ctrl_sp = saved_ctrl;
 	G.for_sp = saved_for;
 	G.running = saved_running;
+	G.branch_pos = saved_bpos;
 }
 
 int mmb_try_user_function(mmb_val *out)
@@ -4303,6 +4451,7 @@ static void run_program(void)
 		G.gosub_sp = 0;
 		G.ctrl_sp = 0;
 		G.branch_pc = -1;
+		G.branch_pos = 0;
 		G.if_skip = 0;
 		G.if_taken = 0;
 		G.sel_active = 0;
@@ -4384,6 +4533,12 @@ static void run_program(void)
 				exec_line_from(mmb_tok_line(pc), resume);
 				resume = 0;
 			}
+			else if (G.branch_pos)
+			{
+				/* EXIT/CONTINUE FOR requested a mid-line resume (#1004). */
+				exec_line_from(mmb_tok_line(pc), G.branch_pos);
+				G.branch_pos = 0;
+			}
 			else
 				exec_line_body(mmb_tok_line(pc));
 			if (G.branch_pc >= 0)
@@ -4402,6 +4557,7 @@ static void run_program(void)
 		if (trapped)
 		{
 			unwind_call_frames();
+			G.branch_pos = 0;
 			pc = G.on_error_pc;
 			continue;
 		}
@@ -4457,6 +4613,7 @@ static void clear_exec_flags(void)
 	G.sel_skip = 0;
 	G.sel_active = 0;
 	G.branch_pc = -1;
+	G.branch_pos = 0;
 }
 
 const char *mmb_exec_line(const char *line)
