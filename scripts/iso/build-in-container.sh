@@ -61,23 +61,35 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	e2fsprogs dosfstools blkid ca-certificates \
 	parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr
 
-# Firmware keep-list (#958). The `linux-firmware` meta pulls in ~100
+# Firmware keep-list (#958, #964). The `linux-firmware` meta pulls in ~100
 # subpackages (1118 MiB installed, most of the rootfs) covering ARM SoCs,
 # server SmartNICs and embedded/DSL/USB-TV devices a desktop PC never has.
 # Alpine splits linux-firmware by upstream folder, so the desktop/laptop
 # keep-list is an explicit package list instead of the meta:
+#   CPU:     amd-ucode (late-loadable AMD microcode; security-relevant)
 #   GPU:     i915, amdgpu (+radeon), nvidia, intel (BT/audio), xe
 #   WiFi/BT: brcm (+cypress, synaptics), mediatek, rtw88, rtw89, rtlwifi,
-#            rtl_bt, ath10k, ath11k, ath12k, ath6k, qca, libertas
-# `libertas` and `mrvl` depend on each other, so keeping libertas also keeps
-# `linux-firmware-mrvl` (81 MiB); that is the conservative choice (ship the
-# firmware) over the size-oriented drop of mrvl.
-for fw in linux-firmware-i915 linux-firmware-amdgpu linux-firmware-radeon \
-	linux-firmware-nvidia linux-firmware-intel linux-firmware-xe \
-	linux-firmware-brcm linux-firmware-mediatek linux-firmware-rtw88 \
-	linux-firmware-rtw89 linux-firmware-rtlwifi linux-firmware-rtl_bt \
-	linux-firmware-ath10k linux-firmware-ath11k linux-firmware-ath12k \
-	linux-firmware-ath6k linux-firmware-qca linux-firmware-libertas; do
+#            rtl_bt, ath10k, ath11k, ath12k, ath6k, ath9k_htc, qca
+# `linux-firmware-amd-ucode` is kept (#964): microcode late-loads from
+# /lib/firmware and carries security fixes; it is 104 KiB.
+# `linux-firmware-ath9k_htc` is kept (#964): the common AR9271 USB Wi-Fi
+# dongles, 140 KiB, sub-MiB like the other Atheros families.
+# `linux-firmware-libertas` and `linux-firmware-mrvl` are a hard circular
+# dependency in Alpine 3.20, so they are kept or dropped together. They are
+# dropped (#964): mrvl also ships Marvell Prestera switch-ASIC and Octeon
+# firmware -- server/embedded classes this keep-list exists to exclude -- so
+# it cannot be taken as "Wi-Fi only", and its libertas/mwifiex Wi-Fi is
+# legacy and rare on the supported x86_64 desktop/laptop hardware. Install
+# `linux-firmware-mrvl` on an installed system if such a card is present.
+# `linux-firmware-amd` (AMD SEV) is dropped too: virtualization firmware for
+# SEV guests/hosts, not a framebuffer desktop client need.
+for fw in linux-firmware-amd-ucode linux-firmware-i915 linux-firmware-amdgpu \
+	linux-firmware-radeon linux-firmware-nvidia linux-firmware-intel \
+	linux-firmware-xe linux-firmware-brcm linux-firmware-mediatek \
+	linux-firmware-rtw88 linux-firmware-rtw89 linux-firmware-rtlwifi \
+	linux-firmware-rtl_bt linux-firmware-ath10k linux-firmware-ath11k \
+	linux-firmware-ath12k linux-firmware-ath6k linux-firmware-ath9k_htc \
+	linux-firmware-qca; do
 	apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 		"$fw" >/dev/null 2>&1 || true
 done

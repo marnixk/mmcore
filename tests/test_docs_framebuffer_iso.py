@@ -79,14 +79,27 @@ def test_framebuffer_iso_doc_documents_chromebooks():
 
 
 def test_framebuffer_iso_doc_documents_the_firmware_keep_list():
-    """#958: the doc must say the ISO ships a desktop firmware keep-list, not
-    the full linux-firmware meta, and name what is covered."""
+    """#958/#964: the doc must say the ISO ships a desktop firmware keep-list,
+    not the full linux-firmware meta, and name what is (and is not) covered."""
     text = _read(DOC)
     assert "Hardware firmware" in text
     assert "keep-list" in text
     assert "linux-firmware" in text
-    for needle in ("i915", "amdgpu", "iwlwifi", "brcm", "mediatek", "sof-firmware"):
+    for needle in (
+        "amd-ucode",
+        "ath9k_htc",
+        "i915",
+        "amdgpu",
+        "iwlwifi",
+        "brcm",
+        "mediatek",
+        "sof-firmware",
+    ):
         assert needle in text, needle
+    # The removed packages and the SEV omission are documented decisions.
+    assert "libertas" in text
+    assert "mrvl" in text
+    assert "SEV" in text
 
 
 def test_native_desktop_and_new_doc_cross_link():
