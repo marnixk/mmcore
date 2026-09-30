@@ -197,6 +197,12 @@ never satisfy a live boot even when the disk is enumerated first. The
 installed system's own GRUB still uses `search --label MMCORE-SYS`, which is
 correct when the disk boots alone.
 
+The installed boot is pinned the other way around (#979). Its kernel command
+line carries `mmcore.sys=LABEL=MMCORE-SYS`, and `live-init` resolves that label
+with busybox `findfs` and mounts the squashfs only from that same device.
+A live stick enumerated first (`/dev/sda`) therefore cannot supply an installed
+boot's root, even though it also has a `/boot/rootfs.squashfs`.
+
 To run the live image with a disk install present, pick the USB from the
 firmware boot menu (F12 on a ThinkPad, or the machine's one-time boot key).
 With the installer's default (no NVRAM entry), removable media is preferred,
@@ -215,11 +221,17 @@ a stick. Verify the dual-boot path on hardware (or a two-disk VM):
    from the stick. On tty2, `cat /proc/cmdline` must show `mmcore.live=1` and
    no `mmcore.sys=`, and `cat /etc/mmcore-version` must match the stick, not
    the disk's `/media/mmcore-sys/VERSION.txt`.
-3. Remove the stick and boot the machine alone. It must reach the **installed**
+3. With the stick still in, boot the internal disk from the firmware boot menu
+   (or with `--register-efi`). It must reach the **installed** session from the
+   disk: `cat /proc/cmdline` shows `mmcore.sys=LABEL=MMCORE-SYS` and no
+   `mmcore.live=`, and `/media/mmcore-sys/VERSION.txt` is the disk's — even
+   though the stick is the first disk and also carries a
+   `/boot/rootfs.squashfs` (#979).
+4. Remove the stick and boot the machine alone. It must reach the **installed**
    session; `cat /media/mmcore-sys/VERSION.txt` shows the installed version.
-4. Under UEFI, `efibootmgr` must show no `mmcore` entry after a default
+5. Under UEFI, `efibootmgr` must show no `mmcore` entry after a default
    install, and a USB stick inserted at power-on must boot live.
-5. Re-run the installer with `--register-efi` and confirm the firmware menu now
+6. Re-run the installer with `--register-efi` and confirm the firmware menu now
    lists `mmcore`; the disk boots when selected (and, as documented, may then
    win over the stick).
 
