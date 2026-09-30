@@ -73,8 +73,20 @@ static const char *const kws[] = {
 	0
 };
 
+#define KW_MAX 511
+#define KW_HASH_BITS 10
+#define KW_HASH_SIZE (1 << KW_HASH_BITS)
+#define KW_HASH_MASK (KW_HASH_SIZE - 1)
+
 static const char *kwu[512];
 static int nkw;
+static int kw_bucket[KW_HASH_SIZE];
+
+#ifdef MMB_KW_STATS
+unsigned long mmb_kw_cmp_total;
+unsigned long mmb_kw_lookup_calls;
+#endif
+
 static char *tprog;
 static int tcap;
 static char tline[MMB_LINE_LEN];
@@ -97,12 +109,34 @@ static int ident_eq(const char *a, const char *b)
 	return *a == 0 && *b == 0;
 }
 
+static unsigned kw_hash(const char *s)
+{
+	unsigned h = 2166136261u;
+	for (; *s; s++)
+	{
+		unsigned char c = (unsigned char)*s;
+		if (c >= 'a' && c <= 'z')
+			c = (unsigned char)(c - 32);
+		h = (h ^ c) * 16777619u;
+	}
+	return h;
+}
+
 static int lookup_kw(const char *name)
 {
-	int i;
-	for (i = 0; i < nkw; i++)
-		if (ident_eq(name, kwu[i]))
-			return i + 1;
+	unsigned h = kw_hash(name) & KW_HASH_MASK;
+#ifdef MMB_KW_STATS
+	mmb_kw_lookup_calls++;
+#endif
+	while (kw_bucket[h])
+	{
+#ifdef MMB_KW_STATS
+		mmb_kw_cmp_total++;
+#endif
+		if (ident_eq(name, kwu[kw_bucket[h] - 1]))
+			return kw_bucket[h];
+		h = (h + 1) & KW_HASH_MASK;
+	}
 	return 0;
 }
 
@@ -133,11 +167,17 @@ static void init_kw(void)
 		return;
 	for (i = 0; kws[i]; i++)
 	{
-		if (lookup_kw(kws[i]))
-			continue;
-		if (nkw >= 511)
+		const char *name = kws[i];
+		unsigned h = kw_hash(name) & KW_HASH_MASK;
+
+		while (kw_bucket[h] && !ident_eq(name, kwu[kw_bucket[h] - 1]))
+			h = (h + 1) & KW_HASH_MASK;
+		if (kw_bucket[h])
+			continue; /* duplicate: first occurrence wins */
+		if (nkw >= KW_MAX)
 			break;
-		kwu[nkw++] = kws[i];
+		kwu[nkw] = name;
+		kw_bucket[h] = ++nkw;
 	}
 }
 
