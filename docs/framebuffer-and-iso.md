@@ -94,6 +94,11 @@ firmware file that is not in the keep-list, install the matching
 the builder's list) -- for example `linux-firmware-mrvl` for an older Marvell
 Wi-Fi card.
 
+The builder verifies every package in the keep-list is actually present in the
+rootfs after installing it, and **fails the build** if one is missing, so a
+typo or an Alpine package rename cannot silently ship an image without that
+firmware.
+
 ### Slow USB sticks (ThinkPad T420 and similar)
 
 A stick that was fine on a Raspberry Pi is often tuned for large sequential

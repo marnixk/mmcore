@@ -100,6 +100,8 @@ def test_framebuffer_iso_doc_documents_the_firmware_keep_list():
     assert "libertas" in text
     assert "mrvl" in text
     assert "SEV" in text
+    # #968: the builder fails the build when a kept package is missing.
+    assert "fails the build" in text
 
 
 def test_native_desktop_and_new_doc_cross_link():
