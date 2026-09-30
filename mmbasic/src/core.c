@@ -894,7 +894,7 @@ void mmb_cmd_exit(void)
 	{
 		if (G.for_sp <= 0)
 			mmb_error("?EXIT FOR");
-		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].line - 1) + 1;
+		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].for_pc) + 1;
 		G.for_sp--;
 		return;
 	}
@@ -918,7 +918,7 @@ void mmb_cmd_continue(void)
 	{
 		if (G.for_sp <= 0)
 			mmb_error("?CONTINUE FOR");
-		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].line - 1);
+		G.branch_pc = find_next_pc(G.forstack[G.for_sp - 1].for_pc);
 		return;
 	}
 	if (mmb_match("DO"))
@@ -2712,18 +2712,32 @@ void mmb_cmd_for(void)
 	if (G.for_sp >= 16)
 		mmb_error("?FOR");
 	{
-		int off = 0;
+		int off = 0, same_line = 0;
+		const char *base, *body = 0;
 		mmb_var *v = mmb_find_var(name, t, 0, nidx, idx);
 		if (!v)
 			mmb_error("?FOR");
 		off = mmb_var_offset(v, nidx, idx);
+		/* A body after `:` on the FOR line must resume mid-line on loop-back,
+		 * not at the next line (#997). Only trust the pointer when it lies
+		 * inside the tokenized program line: EXECUTE strings run from a local
+		 * buffer whose pointer would dangle once the statement returns. */
+		mmb_skip_sp();
+		base = (G.run_pc >= 0 && G.run_pc < G.nprog) ? mmb_tok_line(G.run_pc) : 0;
+		if (*G.p == ':' && base && G.p >= base && G.p < base + MMB_LINE_LEN)
+		{
+			same_line = 1;
+			body = G.p + 1;
+		}
 		strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
 		G.forstack[G.for_sp].var[MMB_MAX_NAME - 1] = 0;
 		G.forstack[G.for_sp].vp = v;
 		G.forstack[G.for_sp].off = off;
 		G.forstack[G.for_sp].to = mmb_as_int(to);
 		G.forstack[G.for_sp].step = mmb_as_int(step);
-		G.forstack[G.for_sp].line = G.run_pc + 1;
+		G.forstack[G.for_sp].for_pc = G.run_pc;
+		G.forstack[G.for_sp].line = same_line ? G.run_pc : G.run_pc + 1;
+		G.forstack[G.for_sp].pos = same_line ? body : 0;
 		G.forstack[G.for_sp].end_line =
 			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
 				? jmp_next[G.run_pc]
@@ -2780,6 +2794,10 @@ void mmb_cmd_next(void)
 			 * forward scan the old code did. The scan is only needed for
 			 * unusual control flow (duplicate or out-of-order NEXTs). */
 			if (jmp_ready && G.forstack[G.for_sp].end_line == G.run_pc)
+				return;
+			/* A same-line loop's matching NEXT is the one just executed, so
+			 * exiting falls through to the rest of the line (#997). */
+			if (G.forstack[G.for_sp].pos)
 				return;
 			for (i = G.run_pc + 1; i < G.nprog; i++)
 			{
@@ -3983,15 +4001,16 @@ static void exec_statement(void)
 	mmb_syntax();
 }
 
-static void exec_line_body(const char *body)
+static void exec_stmt_loop(void)
 {
-	if (process_line_structure(body))
-		return;
-	G.p = after_label(body);
 	for (;;)
 	{
 		exec_statement();
 		if (G.branch_pc >= 0)
+			return;
+		/* A NEXT that advanced requested a loop-back; stop the line so the
+		 * caller can resume the body (same-line FOR/NEXT, #997). */
+		if (G.for_sp > 0 && G.forstack[G.for_sp - 1].stmt == 1)
 			return;
 		mmb_skip_sp();
 		if (*G.p == ':')
@@ -4005,6 +4024,24 @@ static void exec_line_body(const char *body)
 			mmb_syntax();
 		break;
 	}
+}
+
+static void exec_line_body(const char *body)
+{
+	if (process_line_structure(body))
+		return;
+	G.p = after_label(body);
+	exec_stmt_loop();
+}
+
+/* Resume a line part-way through, for a same-line FOR loop body (#997). The
+ * line's label and block-structure prefix were already processed, so start at
+ * the saved statement boundary. */
+static void exec_line_from(const char *body, const char *at)
+{
+	(void)body;
+	G.p = at;
+	exec_stmt_loop();
 }
 
 void mmb_cmd_execute(void)
@@ -4034,6 +4071,7 @@ static void run_gosub_body(void)
 	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
 	{
 		int loop;
+		const char *resume = 0;
 		mmb_check_break();
 		do
 		{
@@ -4044,7 +4082,13 @@ static void run_gosub_body(void)
 			 * (function return, arguments, variables) are pooled already. */
 			mmb_str_reset();
 			G.branch_pc = -1;
-			exec_line_body(mmb_tok_line(G.run_pc));
+			if (resume)
+			{
+				exec_line_from(mmb_tok_line(G.run_pc), resume);
+				resume = 0;
+			}
+			else
+				exec_line_body(mmb_tok_line(G.run_pc));
 			if (G.branch_pc == -2)
 				break;
 			if (G.branch_pc >= 0)
@@ -4056,6 +4100,7 @@ static void run_gosub_body(void)
 			{
 				G.forstack[G.for_sp - 1].stmt = 0;
 				G.run_pc = G.forstack[G.for_sp - 1].line;
+				resume = G.forstack[G.for_sp - 1].pos;
 				loop = 1;
 			}
 		} while (loop && G.running);
@@ -4308,6 +4353,7 @@ static void run_program(void)
 	{
 		int loop;
 		int trapped = 0;
+		const char *resume = 0;
 		mmb_check_break();
 		if (mmb_console_switch_pending())
 		{
@@ -4333,7 +4379,13 @@ static void run_program(void)
 					break;
 				}
 			}
-			exec_line_body(mmb_tok_line(pc));
+			if (resume)
+			{
+				exec_line_from(mmb_tok_line(pc), resume);
+				resume = 0;
+			}
+			else
+				exec_line_body(mmb_tok_line(pc));
 			if (G.branch_pc >= 0)
 			{
 				pc = G.branch_pc;
@@ -4343,6 +4395,7 @@ static void run_program(void)
 			{
 				G.forstack[G.for_sp - 1].stmt = 0;
 				pc = G.forstack[G.for_sp - 1].line;
+				resume = G.forstack[G.for_sp - 1].pos;
 				loop = 1;
 			}
 		} while (loop && G.running);
@@ -4540,6 +4593,10 @@ void mmb_init(const mmb_platform *plat)
 		return;
 	memset(&G, 0, sizeof(G));
 	G.plat = plat;
+	/* The variable hash is file-scope and zero-initialised, which looks like
+	 * a full table to probe; clear it to -1 before any immediate-mode
+	 * variable is created (#998). */
+	mmb_clear_vars(0);
 	mmb_option_reset();
 	mmb_vfs_init();
 	mmb_gfx_init();

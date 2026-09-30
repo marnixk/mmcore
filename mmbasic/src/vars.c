@@ -224,15 +224,30 @@ static int elem_count(const int *dim, int ndims)
 	return n;
 }
 
+/* Row-major element strides: stride[dims-1] = 1, stride[i] is the product of
+ * the lengths of the dimensions after i. Depends on the current OPTION BASE,
+ * so a var records which base its cached strides belong to. */
+static void set_var_stride(mmb_var *v)
+{
+	int i;
+	v->stride_base = G.opt.base;
+	if (v->dims <= 0)
+		return;
+	v->stride[v->dims - 1] = 1;
+	for (i = v->dims - 2; i >= 0; i--)
+		v->stride[i] = v->stride[i + 1] * (v->dim[i + 1] - G.opt.base + 1);
+}
+
 static int offset_of(mmb_var *v, const int *idx)
 {
-	int off = 0, i, stride = 1;
+	int off = 0, i;
+	if (v->dims > 0 && v->stride_base != G.opt.base)
+		set_var_stride(v);
 	for (i = v->dims - 1; i >= 0; i--)
 	{
 		if (idx[i] < G.opt.base || idx[i] > v->dim[i])
 			mmb_error("?INDEX OUT OF BOUNDS");
-		off += (idx[i] - G.opt.base) * stride;
-		stride *= (v->dim[i] - G.opt.base + 1);
+		off += (idx[i] - G.opt.base) * v->stride[i];
 	}
 	return off;
 }
@@ -403,18 +418,10 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (type == 0)
 		type = T_NUM;
 
+	/* The hash is authoritative: mmb_init() clears it, and every in-place
+	 * binding change re-inserts or rebuilds it, so a miss means the
+	 * variable does not exist (#998). */
 	i = hash_lookup(nbuf, type);
-	if (i < 0)
-	{
-		for (i = 0; i < MMB_MAX_VARS; i++)
-			if (G.vars[i].used && G.vars[i].type == type && name_eq(G.vars[i].name, nbuf))
-			{
-				hash_ins(i);
-				break;
-			}
-		if (i >= MMB_MAX_VARS)
-			i = -1;
-	}
 	if (i >= 0)
 	{
 		if (nidx != G.vars[i].dims)
@@ -765,6 +772,7 @@ static void free_var_storage(mmb_var *v)
 static void alloc_var_storage(mmb_var *v, int n)
 {
 	int i;
+	set_var_stride(v);
 	if (v->type == T_INT)
 	{
 		v->data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
@@ -855,6 +863,7 @@ void mmb_local_restore(int g)
 			v->maxlen = ls->maxlen;
 			v->data.f = ls->data;
 			v->used = 1;
+			set_var_stride(v);
 		}
 		else
 		{

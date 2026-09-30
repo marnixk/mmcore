@@ -113,6 +113,8 @@ typedef struct mmb_var {
 	int type;
 	int dims;
 	int dim[MMB_MAX_DIMS]; /* inclusive upper bound */
+	int stride[MMB_MAX_DIMS]; /* cached row-major strides (#998) */
+	int stride_base;       /* OPTION BASE the strides were built for (#998) */
 	int size;              /* element count */
 	int struct_idx;
 	union {
@@ -397,6 +399,8 @@ typedef struct mmb {
 		int off;
 		int64_t to, step;
 		int line, stmt;
+		int for_pc;    /* pc of the FOR statement (EXIT/CONTINUE, #997) */
+		const char *pos; /* same-line loop-body resume, else NULL (#997) */
 		int end_line; /* matching NEXT pc, from jmp_next (#992) */
 	} forstack[16];
 	mmb_gfx gfx;

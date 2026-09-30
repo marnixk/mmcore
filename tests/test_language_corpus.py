@@ -70,6 +70,29 @@ def test_nested_for_exact(console):
     assert console.send_line("RUN") == "11122122"
 
 
+def test_for_same_line_body_exact(console):
+    """#997: a FOR body on the same line as the FOR must iterate."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I=1 TO 3: PRINT I;: NEXT I") == ""
+    assert console.send_line("20 PRINT") == ""
+    assert console.send_line("RUN") == "123"
+
+
+def test_nested_for_same_line_exact(console):
+    """#997: nested same-line FOR/NEXT must not report ?NEXT WITHOUT FOR."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I=1 TO 2: FOR J=1 TO 2: PRINT I;J;: NEXT J: NEXT I") == ""
+    assert console.send_line("20 PRINT") == ""
+    assert console.send_line("RUN") == "11122122"
+
+
+def test_for_same_line_empty_body_and_trailing(console):
+    """#997: empty same-line body and statements after NEXT on the line."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I=1 TO 2: NEXT I: PRINT I") == ""
+    assert console.send_line("RUN") == "3"
+
+
 def test_for_unnamed_next_and_step(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 FOR I=5 TO 1 STEP -2") == ""
