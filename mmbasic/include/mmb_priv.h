@@ -402,6 +402,9 @@ typedef struct mmb {
 		int for_pc;    /* pc of the FOR statement (EXIT/CONTINUE, #997) */
 		const char *pos; /* same-line loop-body resume, else NULL (#997) */
 		int end_line; /* matching NEXT pc, from jmp_next (#992) */
+		int next_pc;  /* matching NEXT statement pc, same-line scan (#1004) */
+		const char *next_pos;  /* matching NEXT statement pointer (#1004) */
+		const char *after_pos; /* statement after that NEXT, else NULL (#1004) */
 	} forstack[16];
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
@@ -423,6 +426,7 @@ typedef struct mmb {
 	mmb_val gosub_savev[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
 	mmb_val func_ret;
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
+	const char *branch_pos;/* mid-line resume at branch_pc, else NULL (#1004) */
 	int run_pc;            /* current program line index */
 	int on_error_pc;       /* ON ERROR GOTO target, -1 when inactive */
 	int error_active;      /* handling a trapped runtime error */
