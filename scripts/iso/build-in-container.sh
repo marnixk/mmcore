@@ -235,6 +235,13 @@ sh "${REPO_ROOT}/scripts/iso/pack-initramfs.sh" \
 # tty0. /dev/console is the last console= (ttyS0), so OpenRC/local.d output
 # lands on serial, not the display; tty2 and serial stay root shells.
 cp "${SPLASH}" "${ISOROOT}/boot/grub/splash.png"
+# A marker at the ISO root identifies the live media (#976). mmcore-install
+# copies only the live /boot onto the target disk, so an installed
+# MMCORE-SYS never carries this file: live-init refuses to mount a disk's
+# /boot/rootfs.squashfs on a live boot, and a chainloaded live grub.cfg can
+# reset its root back to the stick. Keep it outside /boot so the installer's
+# copy cannot bring it along.
+printf 'mmcore live media %s\n' "${VERSION}" > "${ISOROOT}/mmcore-live-media"
 
 cat > "${ISOROOT}/boot/grub/grub.cfg" <<'EOF'
 set timeout=1
@@ -244,6 +251,14 @@ set timeout_style=hidden
 insmod all_video
 insmod gfxterm
 insmod png
+insmod part_msdos
+insmod part_gpt
+insmod iso9660
+# Pin $root to the live media by its own marker, never by the installed disk's
+# MMCORE-SYS label (#976). A disk install that chainloads this file must not
+# drag its own root (and thus the installed build) along.
+insmod search
+search --no-floppy --set=root --file /mmcore-live-media
 set gfxmode=1024x768,auto
 set gfxpayload=keep
 terminal_output gfxterm
@@ -255,7 +270,7 @@ insmod gfxterm_background
 background_image /boot/grub/splash.png
 
 menuentry "mmcore" {
-	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo usb-storage.delay_use=0 modprobe.blacklist=uas
+	linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo usb-storage.delay_use=0 modprobe.blacklist=uas mmcore.live=1
 	initrd /boot/initramfs-lts
 }
 EOF

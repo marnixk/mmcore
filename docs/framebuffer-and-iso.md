@@ -58,6 +58,14 @@ partition the session is read-only.
 
 If mmcore exits, the tty1 session ends and it starts again.
 
+The live session is pinned to the media it booted from: GRUB sets its root by
+a marker file at the ISO's own root (`mmcore-live-media`) and the kernel
+command line carries `mmcore.live=1`, so the live root is always the stick's
+squashfs — even when an internal disk has an installed mmcore (see
+[Live USB with a disk installed](#live-usb-with-a-disk-installed-dual-boot)).
+The live command line never includes `mmcore.sys=`, so a live session cannot
+mount an installed system's `C:`.
+
 The live image needs **at least 2 GiB of RAM**. GRUB loads the kernel and a
 small initramfs. The root filesystem stays a squashfs on the stick, mounted
 with an in-memory overlay, and pages are read as userspace needs them.
@@ -164,15 +172,56 @@ already-mounted source instead of auto-detecting it.
 
 Partition 1 is the EFI system partition and the BIOS boot partition. GRUB is
 written into the MBR with this disk as the first hard disk, and the UEFI
-loader is installed at `\EFI\BOOT\BOOTX64.EFI` and `\EFI\mmcore\grubx64.efi`.
-A live session that was itself booted with UEFI also registers an `mmcore`
-entry in the firmware boot menu. A Legacy session cannot write that entry;
-on a UEFI-only machine, boot the USB from the firmware boot menu (F12 on a
-ThinkPad) and run the installer again.
+loader is installed at `\EFI\BOOT\BOOTX64.EFI`. The installer deliberately
+does **not** register a named `mmcore` NVRAM entry by default: such an entry
+sits ahead of removable media in the firmware boot order, so a machine with
+mmcore on the disk and a live USB inserted would boot the installed build
+instead of the stick (#976). With no named entry, the firmware falls through
+to the removable `\EFI\BOOT\BOOTX64.EFI` path, which a live USB wins when it
+is present. Pass `--register-efi` to add the named entry on a firmware that
+will not boot `\EFI\BOOT\BOOTX64.EFI` on its own; the disk then boots first
+even when a stick is inserted.
 
 After installation the disk boots on its own, on BIOS and UEFI. GRUB mounts
 `MMCORE-SYS` as `C:` and launches mmcore with `--drive /media/mmcore-data`, so
 `MMCORE-DATA` appears as `D:`.
+
+#### Live USB with a disk installed (dual boot)
+
+The live image is pinned to the stick it booted from, not to the disk. GRUB
+sets its root to the stick by the `mmcore-live-media` marker at the ISO root,
+and the live kernel command line carries `mmcore.live=1`. `live-init` then
+mounts only the marked media; an installed `MMCORE-SYS` partition carries no
+marker (the installer copies only `/boot`), so its `/boot/rootfs.squashfs` can
+never satisfy a live boot even when the disk is enumerated first. The
+installed system's own GRUB still uses `search --label MMCORE-SYS`, which is
+correct when the disk boots alone.
+
+To run the live image with a disk install present, pick the USB from the
+firmware boot menu (F12 on a ThinkPad, or the machine's one-time boot key).
+With the installer's default (no NVRAM entry), removable media is preferred,
+so the USB boots live without changing NVRAM; the installed disk keeps booting
+on its own when the stick is removed.
+
+#### Manual dual-boot QA checklist
+
+The QEMU CI smoke boots the ISO alone; it cannot model a disk install next to
+a stick. Verify the dual-boot path on hardware (or a two-disk VM):
+
+1. Write the stick and install: `install-usb.sh --iso mmcore-fb-x86_64.iso
+   /dev/sdX`, boot it, then run `mmcore-install --disk /dev/sdY --yes` for the
+   internal disk.
+2. Leave the stick in and boot the machine. It must reach the **live** session
+   from the stick. On tty2, `cat /proc/cmdline` must show `mmcore.live=1` and
+   no `mmcore.sys=`, and `cat /etc/mmcore-version` must match the stick, not
+   the disk's `/media/mmcore-sys/VERSION.txt`.
+3. Remove the stick and boot the machine alone. It must reach the **installed**
+   session; `cat /media/mmcore-sys/VERSION.txt` shows the installed version.
+4. Under UEFI, `efibootmgr` must show no `mmcore` entry after a default
+   install, and a USB stick inserted at power-on must boot live.
+5. Re-run the installer with `--register-efi` and confirm the firmware menu now
+   lists `mmcore`; the disk boots when selected (and, as documented, may then
+   win over the stick).
 
 #### Update mmcore in place
 
