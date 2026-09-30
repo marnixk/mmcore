@@ -199,6 +199,29 @@ def test_live_boot_pins_root_to_the_live_media():
     assert live.index("scan_media try_live_media") < live.index("scan_media try_one")
 
 
+def test_installed_boot_pins_root_to_the_system_partition():
+    """#979: an installed boot (mmcore.sys=) must resolve its MMCORE-SYS device
+    by label and mount the squashfs only from that device, so a live USB stick
+    enumerated first can never supply its root."""
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    assert "mmcore.sys=" in live, "live-init ignores the installed system partition"
+    assert "findfs" in live, "live-init does not resolve the system partition label"
+    assert "try_sys_media" in live
+    assert "scan_sys_media" in live
+    # The installed boot is resolved through findfs, not the generic
+    # first-rootfs.squashfs scan.
+    assert 'findfs "$spec"' in live
+    # The generic scan is only reached when the boot named no system partition:
+    # an installed boot (sys_spec non-empty) must never fall through to it.
+    assert "scan_sys_media" in live
+    assert live.index("scan_sys_media") < live.index("scan_media try_one")
+    fallback = live.split('if [ "$found" != 1 ]', 1)[1]
+    fallback = fallback.split("scan_media try_one", 1)[0]
+    assert "${sys_spec}" in fallback, (
+        "the generic scan is not excluded on an installed boot"
+    )
+
+
 def test_updater_targets_the_framebuffer_release_asset():
     text = open(UPDATE, encoding="utf-8").read()
     assert "mmcore-fb-linux-x86_64.tar.gz" in text
@@ -927,6 +950,163 @@ def test_dual_disk_boot_smoke_selects_the_live_media(built_iso, tmp_path):
         )
         assert "mmcore live media" in text, (
             "the live session did not start with an installed disk present\n"
+            + text[-2000:]
+            + "\n-- qemu stderr --\n"
+            + errfile.read_text(encoding="utf-8", errors="replace")[-1000:]
+        )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+REVERSE_BOOT_TIMEOUT = 600
+
+
+def _extract_iso_boot(iso, dest):
+    """Extract the live kernel and small initramfs from the built ISO, so the
+    reverse smoke can boot them with QEMU's -kernel/-initrd. That bypasses
+    GRUB (which the installed stand-in does not have) while still exercising
+    the same initramfs live-init the disk install uses."""
+    dest.mkdir(parents=True, exist_ok=True)
+    script = (
+        "apk add --no-cache --quiet xorriso >/dev/null && "
+        f"xorriso -osirrox on -indev /iso/{iso.name} "
+        "-extract /boot/vmlinuz-lts /out/vmlinuz-lts "
+        "-extract /boot/initramfs-lts /out/initramfs-lts"
+    )
+    _run(
+        [
+            "docker", "run", "--rm", "--platform", "linux/amd64",
+            "-v", f"{iso.parent}:/iso:ro",
+            "-v", f"{dest}:/out",
+            "alpine:3.20", "sh", "-c", script,
+        ],
+        timeout=900,
+    )
+
+
+def _make_reverse_boot_images(installed, live_stick):
+    """Build the two stand-ins for the #979 smoke.
+
+    `installed` is a whole-disk FAT volume labelled MMCORE-SYS whose
+    /boot/rootfs.squashfs is a real (tiny) squashfs; its /sbin/init prints a
+    marker over the serial console. `live_stick` is the stick stand-in: a FAT
+    volume with the live marker and a /boot/rootfs.squashfs that is
+    deliberately not a squashfs. The live-init generic scan would mount the
+    stick first and then fail to mount its fake squashfs, so only an
+    installed boot that resolves the labelled device reaches the marker. Built
+    in an alpine container with mtools/squashfs-tools, so no host tools and no
+    partition table are needed."""
+    work = installed.parent / "reverse-work"
+    work.mkdir(parents=True, exist_ok=True)
+    script = (
+        "set -e\n"
+        "apk add --no-cache --quiet squashfs-tools mtools >/dev/null\n"
+        "mkdir -p /work/rootfs/bin /work/rootfs/lib /work/rootfs/sbin\n"
+        "cp /bin/busybox /work/rootfs/bin/busybox\n"
+        "cp /lib/ld-musl-x86_64.so.1 /work/rootfs/lib/\n"
+        "cat > /work/rootfs/sbin/init <<'INIT'\n"
+        "#!/bin/busybox sh\n"
+        'echo "MMCORE_INSTALLED_ROOTFS_OK" > /dev/console\n'
+        "exec /bin/busybox sleep 86400\n"
+        "INIT\n"
+        "chmod 0755 /work/rootfs/sbin/init\n"
+        "mksquashfs /work/rootfs /work/rootfs.squashfs "
+        "-comp gzip -b 1M -noappend -no-progress >/dev/null\n"
+        f"dd if=/dev/zero of=/out/{installed.name} bs=1M count=64 status=none\n"
+        f"mformat -i /out/{installed.name} -F -v MMCORE-SYS ::\n"
+        f"mmd -i /out/{installed.name} ::/boot\n"
+        f"mcopy -i /out/{installed.name} /work/rootfs.squashfs "
+        "::/boot/rootfs.squashfs\n"
+        f"dd if=/dev/zero of=/out/{live_stick.name} bs=1M count=48 status=none\n"
+        f"mformat -i /out/{live_stick.name} -F -v LIVESTICK ::\n"
+        f"mmd -i /out/{live_stick.name} ::/boot\n"
+        "printf 'not a squashfs\\n' > /work/bogus\n"
+        f"mcopy -i /out/{live_stick.name} /work/bogus "
+        "::/boot/rootfs.squashfs\n"
+        "printf 'mmcore live media test\\n' > /work/marker\n"
+        f"mcopy -i /out/{live_stick.name} /work/marker ::/mmcore-live-media"
+    )
+    _run(
+        [
+            "docker", "run", "--rm", "--platform", "linux/amd64",
+            "-v", f"{work}:/work",
+            "-v", f"{installed.parent}:/out",
+            "alpine:3.20", "sh", "-c", script,
+        ],
+        timeout=900,
+    )
+    assert installed.is_file() and live_stick.is_file()
+
+
+@pytest.mark.skipif(
+    not _iso_build_enabled(),
+    reason="set MMCORE_ISO_BUILD=1 to run the dual-disk boot smoke",
+)
+def test_dual_disk_boot_smoke_installed_boot_ignores_the_live_stick(
+    built_iso, tmp_path
+):
+    """#979: the reverse of the #976 smoke. An installed boot (the kernel line
+    carries mmcore.sys=LABEL=MMCORE-SYS) with a live stick enumerated first
+    must mount the MMCORE-SYS device's squashfs, never the stick's. The stick's
+    squashfs is deliberately invalid: the old generic scan selected it and the
+    boot could not proceed, while the fixed live-init resolves the label and
+    reaches the installed marker."""
+    qemu = shutil.which("qemu-system-x86_64")
+    if qemu is None:
+        pytest.skip("qemu-system-x86_64 is not available")
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available")
+
+    bootdir = tmp_path / "iso-boot"
+    _extract_iso_boot(built_iso, bootdir)
+    installed = tmp_path / "installed.img"
+    live_stick = tmp_path / "live-stick.img"
+    _make_reverse_boot_images(installed, live_stick)
+
+    log = tmp_path / "reverse-boot.log"
+    cmd = [
+        qemu, "-m", "2048",
+        "-kernel", str(bootdir / "vmlinuz-lts"),
+        "-initrd", str(bootdir / "initramfs-lts"),
+        "-append",
+        "console=tty0 console=ttyS0,115200 quiet loglevel=3 "
+        "vt.global_cursor_default=0 modprobe.blacklist=uas "
+        "mmcore.sys=LABEL=MMCORE-SYS",
+        # The stick stand-in is /dev/sda (enumerated first); the installed disk
+        # is /dev/sdb. The generic scan would pick /dev/sda's fake squashfs.
+        "-drive", f"file={live_stick},format=raw,if=none,id=stick0",
+        "-device", "ide-hd,drive=stick0,bus=ide.0",
+        "-drive", f"file={installed},format=raw,if=none,id=inst0",
+        "-device", "ide-hd,drive=inst0,bus=ide.1",
+        "-vga", "none", "-device", "virtio-vga",
+        "-display", "none", "-monitor", "none",
+        "-serial", f"file:{log}", "-no-reboot", "-accel", "tcg",
+    ]
+    errfile = tmp_path / "qemu-reverse.err"
+    with open(errfile, "w", encoding="utf-8") as err:
+        proc = subprocess.Popen(cmd, stdout=err, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.time() + REVERSE_BOOT_TIMEOUT
+        while time.time() < deadline:
+            if log.exists() and "MMCORE_INSTALLED_ROOTFS_OK" in log.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(5)
+        text = (
+            log.read_text(encoding="utf-8", errors="replace")
+            if log.exists()
+            else ""
+        )
+        assert "MMCORE_INSTALLED_ROOTFS_OK" in text, (
+            "an installed boot did not use the MMCORE-SYS squashfs with a "
+            "live stick attached\n"
             + text[-2000:]
             + "\n-- qemu stderr --\n"
             + errfile.read_text(encoding="utf-8", errors="replace")[-1000:]
