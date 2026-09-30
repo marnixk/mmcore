@@ -62,6 +62,23 @@ def test_framebuffer_iso_doc_uses_ctrl_alt_for_vt_switching():
     assert "Alt+F2" not in text.replace("Ctrl+Alt+F2", "")
 
 
+def test_framebuffer_iso_doc_documents_dual_boot():
+    """#976: the doc must explain that a live USB runs live even with a disk
+    install present, and how the installer's NVRAM default keeps USB preferred,
+    plus the manual dual-disk QA checklist the CI smoke cannot cover."""
+    text = _read(DOC)
+    for needle in (
+        "Live USB with a disk installed",
+        "mmcore-live-media",
+        "mmcore.live=1",
+        "mmcore.sys=",
+        "--register-efi",
+        "efibootmgr",
+        "Manual dual-boot QA checklist",
+    ):
+        assert needle in text, needle
+
+
 def test_framebuffer_iso_doc_documents_chromebooks():
     text = _read(DOC)
     for needle in (

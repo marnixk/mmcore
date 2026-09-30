@@ -159,6 +159,44 @@ def test_installer_help_documents_disk_selection():
     assert "--disk" in out
     assert "--boot-dir" in out
     assert "--yes" in out
+    assert "--register-efi" in out
+
+
+def test_installer_defaults_to_no_sticky_uefi_entry():
+    """#976: a named NVRAM entry outranks removable media, so with mmcore on an
+    internal disk a live USB boots the installed build. The default writes only
+    the removable fallback; --register-efi is the explicit opt-in."""
+    text = open(INSTALL, encoding="utf-8").read()
+    assert "REGISTER_EFI=0" in text
+    assert "--register-efi" in text
+    assert "--removable --no-nvram" in text
+    # The named entry is behind the flag, never on the always-taken path.
+    guard = text.index('if [ "${REGISTER_EFI}" = "1" ]; then')
+    named = text.index("--bootloader-id=mmcore")
+    assert guard < named, "the named NVRAM entry must be behind --register-efi"
+    assert "--bootloader-id=mmcore" in text
+
+
+def test_live_boot_pins_root_to_the_live_media():
+    """#976: the live boot must use the stick's own squashfs, never an installed
+    MMCORE-SYS /boot/rootfs.squashfs. GRUB pins $root by a marker file the
+    installer never copies, and the live kernel line passes mmcore.live=1 --
+    and never mmcore.sys=, the installed path."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert '${ISOROOT}/mmcore-live-media' in builder, "the live marker is not built"
+    assert "--file /mmcore-live-media" in builder, "GRUB does not pin root by marker"
+    assert "mmcore.live=1" in builder, "the live kernel line does not pin live boot"
+    live_cfg = builder.split('cat > "${ISOROOT}/boot/grub/grub.cfg"', 1)[1]
+    live_cfg = live_cfg.split("\nEOF", 1)[0]
+    assert "search --no-floppy --set=root --label MMCORE-SYS" not in live_cfg
+    assert "mmcore.sys=" not in live_cfg
+
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    assert "mmcore-live-media" in live, "live-init ignores the live marker"
+    assert "mmcore.live=" in live, "live-init ignores mmcore.live="
+    # On a live boot the marked media is probed before the generic squashfs.
+    assert "scan_media try_live_media" in live
+    assert live.index("scan_media try_live_media") < live.index("scan_media try_one")
 
 
 def test_updater_targets_the_framebuffer_release_asset():
@@ -782,13 +820,120 @@ def test_pack_initramfs_keeps_the_storage_closure_and_drops_uas(tmp_path):
     assert "uas.ko" not in selected
 
 
-@pytest.mark.skipif(
-    os.environ.get("MMCORE_ISO_BUILD") != "1",
-    reason="set MMCORE_ISO_BUILD=1 to run the Docker ISO build",
-)
-def test_iso_builds(tmp_path):
+def _iso_build_enabled():
+    return os.environ.get("MMCORE_ISO_BUILD") == "1"
+
+
+@pytest.fixture(scope="module")
+def built_iso(tmp_path_factory):
+    """Build the ISO once for every MMCORE_ISO_BUILD=1 test in this module."""
+    if not _iso_build_enabled():
+        pytest.skip("set MMCORE_ISO_BUILD=1 to run the Docker ISO build")
     if shutil.which("docker") is None:
         pytest.skip("docker is not available")
-    env = dict(os.environ, DIST=str(tmp_path))
-    _run([BASH, ENTRY], env=env, timeout=3600)
-    assert (tmp_path / ASSET).is_file()
+    dist = tmp_path_factory.mktemp("iso-dist")
+    _run([BASH, ENTRY], env=dict(os.environ, DIST=str(dist)), timeout=3600)
+    iso = dist / ASSET
+    assert iso.is_file(), "the ISO build produced no image"
+    return iso
+
+
+def test_iso_builds(built_iso):
+    assert built_iso.is_file()
+
+
+DUAL_BOOT_TIMEOUT = 900
+
+
+def _make_installed_disk(path):
+    """Build an installed-disk stand-in (#976): an ext4 MMCORE-SYS volume whose
+    /boot/rootfs.squashfs is deliberately not a squashfs. A live-init that
+    mounted the first rootfs.squashfs it found would pick this disk and fail;
+    the fixed live-init must boot the live media instead. Built with the same
+    alpine builder as the ISO so no host loop device is needed."""
+    payload = path.parent / "installed-payload"
+    (payload / "boot").mkdir(parents=True, exist_ok=True)
+    (payload / "boot" / "rootfs.squashfs").write_bytes(
+        b"not a squashfs\n" * 4096
+    )
+    (payload / "VERSION.txt").write_text("INSTALLED-SENTINEL\n")
+    script = (
+        "apk add --no-cache --quiet e2fsprogs >/dev/null && "
+        f"dd if=/dev/zero of=/out/{path.name} bs=1M count=256 status=none && "
+        f"mke2fs -F -q -t ext4 -L MMCORE-SYS -d /payload /out/{path.name}"
+    )
+    _run(
+        [
+            "docker", "run", "--rm", "--platform", "linux/amd64",
+            "-v", f"{payload}:/payload:ro",
+            "-v", f"{path.parent}:/out",
+            "alpine:3.20", "sh", "-c", script,
+        ],
+        timeout=900,
+    )
+
+
+@pytest.mark.skipif(
+    not _iso_build_enabled(),
+    reason="set MMCORE_ISO_BUILD=1 to run the dual-disk boot smoke",
+)
+def test_dual_disk_boot_smoke_selects_the_live_media(built_iso, tmp_path):
+    """#976: with an installed-like MMCORE-SYS disk enumerated first, booting the
+    live media must still run the live image. The live ISO carries a marker the
+    disk stand-in lacks, so live-init must pick the marked media. A regression
+    (scanning for the first rootfs.squashfs) mounts the disk's bogus squashfs
+    and never reaches the live session."""
+    qemu = shutil.which("qemu-system-x86_64")
+    if qemu is None:
+        pytest.skip("qemu-system-x86_64 is not available")
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available")
+
+    installed = tmp_path / "installed.img"
+    _make_installed_disk(installed)
+    assert installed.is_file()
+
+    log = tmp_path / "dual-boot.log"
+    cmd = [
+        qemu, "-m", "2048",
+        # The installed stand-in is /dev/sda (enumerated first); the live media
+        # is /dev/sdb. bootindex starts the firmware on the live disk, which is
+        # what picking the USB in the boot menu does.
+        "-drive", f"file={installed},format=raw,if=none,id=inst0",
+        "-device", "ide-hd,drive=inst0,bus=ide.0,bootindex=2",
+        "-drive", f"file={built_iso},format=raw,if=none,id=live0",
+        "-device", "ide-hd,drive=live0,bus=ide.1,bootindex=1",
+        "-vga", "none", "-device", "virtio-vga",
+        "-display", "none", "-monitor", "none",
+        "-serial", f"file:{log}", "-no-reboot", "-accel", "tcg",
+    ]
+    errfile = tmp_path / "qemu.err"
+    with open(errfile, "w", encoding="utf-8") as err:
+        proc = subprocess.Popen(cmd, stdout=err, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.time() + DUAL_BOOT_TIMEOUT
+        while time.time() < deadline:
+            if log.exists() and "mmcore live media" in log.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(5)
+        text = (
+            log.read_text(encoding="utf-8", errors="replace")
+            if log.exists()
+            else ""
+        )
+        assert "mmcore live media" in text, (
+            "the live session did not start with an installed disk present\n"
+            + text[-2000:]
+            + "\n-- qemu stderr --\n"
+            + errfile.read_text(encoding="utf-8", errors="replace")[-1000:]
+        )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()

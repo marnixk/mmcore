@@ -31,6 +31,7 @@ DISK=""
 BOOT_DIR=""
 ASSUME_YES=0
 FORCE=0
+REGISTER_EFI=0
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -49,6 +50,12 @@ Options:
   --disk /dev/sdX   target disk (default: choose from a list)
   --boot-dir DIR    directory holding the live /boot (default: auto-detect
                     the mounted live media)
+  --register-efi    also register a named `mmcore` UEFI firmware boot entry.
+                    By default only the removable \EFI\BOOT\BOOTX64.EFI
+                    fallback is written, so a live USB still boots live when
+                    this disk is installed (#976). Use this flag only on a
+                    firmware that will not boot that fallback by itself; the
+                    disk then outranks a USB stick.
   -y, --yes         skip the confirmation prompt
   --force           allow the running live media or a removable disk as the
                     target
@@ -64,6 +71,7 @@ while [ $# -gt 0 ]; do
 		--boot-dir) BOOT_DIR="$2"; shift 2 ;;
 		-y|--yes) ASSUME_YES=1; shift ;;
 		--force) FORCE=1; shift ;;
+		--register-efi) REGISTER_EFI=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		-*) die "unknown option: $1 (see --help)" ;;
 		*) die "unexpected argument: $1" ;;
@@ -275,19 +283,26 @@ printf '(hd0) %s\n' "${DISK}" > "${MNT}/boot/grub/device.map"
 grub-install --target=i386-pc --boot-directory="${MNT}/boot" "${DISK}"
 
 log "Installing the UEFI bootloader"
-# Fallback path (\EFI\BOOT\BOOTX64.EFI) plus a named loader. --removable
-# skips the firmware boot menu; write that entry only from a UEFI session,
-# and keep going if the firmware rejects it.
+# Always write the removable fallback (\EFI\BOOT\BOOTX64.EFI): a firmware tries
+# that for removable media, so a live USB still wins over this disk. Do NOT
+# register a named NVRAM entry by default (#976): a sticky `mmcore` entry
+# outranks removable media, so with the disk installed a live USB would boot
+# the installed build. --register-efi adds the named entry for a firmware that
+# will not boot the fallback by itself; the cost is that the disk then outranks
+# a USB stick. Keep going if the firmware rejects the registration.
 grub-install --target=x86_64-efi --efi-directory="${MNT}" \
 	--boot-directory="${MNT}/boot" --removable --no-nvram "${DISK}"
-grub-install --target=x86_64-efi --efi-directory="${MNT}" \
-	--boot-directory="${MNT}/boot" --bootloader-id=mmcore --no-nvram "${DISK}"
-if [ -d /sys/firmware/efi ]; then
-	grub-install --target=x86_64-efi --efi-directory="${MNT}" \
-		--boot-directory="${MNT}/boot" --bootloader-id=mmcore "${DISK}" \
-		|| log "UEFI firmware boot entry was not registered"
+if [ "${REGISTER_EFI}" = "1" ]; then
+	if [ -d /sys/firmware/efi ]; then
+		grub-install --target=x86_64-efi --efi-directory="${MNT}" \
+			--boot-directory="${MNT}/boot" --bootloader-id=mmcore "${DISK}" \
+			|| log "UEFI firmware boot entry was not registered"
+	else
+		log "Legacy session: cannot register a UEFI entry. Boot the USB via UEFI and rerun with --register-efi."
+	fi
 else
-	log "Legacy session: MBR is installed. Boot the USB via UEFI and rerun to register a firmware boot entry."
+	log "No UEFI NVRAM entry registered (keeps a live USB preferred)."
+	log "Use --register-efi if this firmware will not boot \\EFI\\BOOT\\BOOTX64.EFI."
 fi
 
 sync

@@ -36,6 +36,19 @@ do
 	modprobe "$mod" 2>/dev/null || true
 done
 
+# #976: a disk installed by mmcore-install also has /boot/rootfs.squashfs on
+# its MMCORE-SYS partition, so scanning for that file alone can run the
+# installed build on a live boot. The live ISO carries a marker at its root
+# (mmcore-live-media) that the installer never copies to a disk; GRUB pins
+# $root to it and passes mmcore.live=1. On a live boot, mount only the marked
+# media.
+live_boot=0
+for arg in $(cat /proc/cmdline 2>/dev/null); do
+	case "$arg" in
+		mmcore.live=*) live_boot=1 ;;
+	esac
+done
+
 try_one() {
 	dev="$1"
 	[ -b "$dev" ] || return 1
@@ -47,19 +60,44 @@ try_one() {
 	return 1
 }
 
-found=0
-i=0
-while [ "$i" -lt 30 ]; do
-	for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme*n* /dev/mmcblk*; do
-		if try_one "$dev"; then
-			found=1
-			break
-		fi
+# The live marker is the boot media's own identity: require it *and* the
+# squashfs, so an installed disk (or any other squashfs) is never accepted.
+try_live_media() {
+	dev="$1"
+	[ -b "$dev" ] || return 1
+	mount -o ro "$dev" /mnt/media 2>/dev/null || return 1
+	if [ -f /mnt/media/mmcore-live-media ] \
+		&& [ -f /mnt/media/boot/rootfs.squashfs ]; then
+		return 0
+	fi
+	umount /mnt/media 2>/dev/null || true
+	return 1
+}
+
+scan_media() {
+	probe="$1"
+	i=0
+	while [ "$i" -lt 30 ]; do
+		for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme*n* /dev/mmcblk*; do
+			if "$probe" "$dev"; then
+				return 0
+			fi
+		done
+		i=$((i + 1))
+		sleep 1
 	done
-	[ "$found" = 1 ] && break
-	i=$((i + 1))
-	sleep 1
-done
+	return 1
+}
+
+found=0
+# Prefer the marked live media; an installed disk (mmcore.sys=, no marker) and
+# older images without the marker fall through to the generic scan.
+if [ "$live_boot" = 1 ]; then
+	scan_media try_live_media && found=1
+fi
+if [ "$found" != 1 ]; then
+	scan_media try_one && found=1
+fi
 
 if [ "$found" != 1 ]; then
 	printf '%s\n' 'mmcore: no rootfs.squashfs found' > /dev/console 2>/dev/null || true
