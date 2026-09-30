@@ -725,16 +725,19 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_str:
 		char buf[48];
+		int save;
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
-		G.outn = 0;
-		G.out[0] = 0;
+		/* PRINT accumulates its whole statement in G.out (#991). Format
+		 * the value after any pending output instead of clobbering it, so
+		 * `PRINT "x";STR$(5)` keeps the "x". */
+		save = G.outn;
 		mmb_print_val(a[0]);
-		strncpy(buf, G.out, sizeof(buf) - 1);
+		strncpy(buf, G.out + save, sizeof(buf) - 1);
 		buf[sizeof(buf) - 1] = 0;
-		G.outn = 0;
-		G.out[0] = 0;
+		G.outn = save;
+		G.out[save] = 0;
 		*out = mmb_str_val(buf);
 		return 1;
 	}

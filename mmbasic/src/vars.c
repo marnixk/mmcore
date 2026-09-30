@@ -9,8 +9,11 @@ static void hash_ins(int vi);
 static void hash_rebuild(void);
 static int mmb_local_save(int slot, int existed);
 
-static int var_tab[MMB_MAX_VARS];
-static int unsuf_tab[MMB_MAX_VARS];
+/* Hash table is deliberately larger than MMB_MAX_VARS so the load factor
+ * stays below ~0.5 and probing is short (#993). */
+#define MMB_HASH_SIZE 512
+static int var_tab[MMB_HASH_SIZE];
+static int unsuf_tab[MMB_HASH_SIZE];
 
 static int name_eq(const char *a, const char *b)
 {
@@ -32,7 +35,7 @@ static unsigned hash_key(const char *n, int type)
 static void hash_clear(void)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
 		var_tab[i] = -1;
 		unsuf_tab[i] = -1;
@@ -54,10 +57,10 @@ static void hash_ins(int vi)
 	int i;
 	if (vi < 0 || !G.vars[vi].used)
 		return;
-	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_MAX_VARS;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_HASH_SIZE;
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		if (var_tab[s] < 0)
 		{
 			var_tab[s] = vi;
@@ -66,10 +69,10 @@ static void hash_ins(int vi)
 	}
 	if (G.vars[vi].unsuffixed)
 	{
-		h = hash_key(G.vars[vi].name, 0) % MMB_MAX_VARS;
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		h = hash_key(G.vars[vi].name, 0) % MMB_HASH_SIZE;
+		for (i = 0; i < MMB_HASH_SIZE; i++)
 		{
-			int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+			int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 			if (unsuf_tab[s] < 0)
 			{
 				unsuf_tab[s] = vi;
@@ -81,11 +84,11 @@ static void hash_ins(int vi)
 
 static int hash_lookup(const char *nbuf, int type)
 {
-	unsigned h = hash_key(nbuf, type) % MMB_MAX_VARS;
+	unsigned h = hash_key(nbuf, type) % MMB_HASH_SIZE;
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		int vi = var_tab[s];
 		if (vi < 0)
 			return -1;
@@ -99,11 +102,11 @@ static int hash_lookup(const char *nbuf, int type)
 
 static int unsuf_lookup(const char *nbuf)
 {
-	unsigned h = hash_key(nbuf, 0) % MMB_MAX_VARS;
+	unsigned h = hash_key(nbuf, 0) % MMB_HASH_SIZE;
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		int vi = unsuf_tab[s];
 		if (vi < 0)
 			return -1;
@@ -161,6 +164,10 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	int i;
 	char nbuf[MMB_MAX_NAME];
 	int t;
+	/* Most programs declare no constants; skip the copy/uppercase/scan on
+	 * every scalar read and write (#993). */
+	if (G.nconst <= 0)
+		return 0;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);

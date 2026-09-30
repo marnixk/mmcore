@@ -226,26 +226,22 @@ static void build_jumps(void)
 		else if (line_match(G.prog[i], "NEXT") && sp > 0)
 			jmp_next[st[--sp]] = i;
 	}
+	/* SUB/END SUB with a single stack pass instead of scanning forward for
+	 * each definition (#992). Definitions are not lexically nested, but the
+	 * stack keeps mismatched END lines from corrupting the table. */
+	sp = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
 		const char *save = G.p;
 		G.p = after_label(G.prog[i]);
 		if (mmb_match("SUB") || mmb_match("FUNCTION"))
 		{
-			int j;
-			for (j = i + 1; j < G.nprog; j++)
-			{
-				const char *s2 = G.p;
-				G.p = after_label(G.prog[j]);
-				if (mmb_match("END") && (mmb_match("SUB") || mmb_match("FUNCTION")))
-				{
-					jmp_endsub[i] = j;
-					G.p = s2;
-					break;
-				}
-				G.p = s2;
-			}
+			if (sp < MMB_MAX_CTRL)
+				st[sp++] = i;
 		}
+		else if (sp > 0 && mmb_match("END") &&
+			 (mmb_match("SUB") || mmb_match("FUNCTION")))
+			jmp_endsub[st[--sp]] = i;
 		G.p = save;
 	}
 	sp = 0;
@@ -446,6 +442,8 @@ static int sub_find(const char *name)
 {
 	int i;
 	char nbuf[MMB_MAX_NAME];
+	if (G.nsubs <= 0)
+		return -1;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
@@ -655,32 +653,31 @@ static void file_ungetc(int fn, int c)
 
 static mmb_val read_data_item(void)
 {
-	int i, j;
+	int i;
 	for (i = G.data_line; i < G.nprog; i++)
 	{
 		const char *save = G.p;
-		const char *p = G.prog[i];
-		G.p = p;
-		if (!mmb_match("DATA"))
+		const char *line = G.prog[i];
+		G.p = line;
+		/* On the current DATA line we already know where the next item
+		 * begins, so skip straight to it instead of re-evaluating all
+		 * earlier items (#990). */
+		if (i == G.data_line && G.data_off > 0)
+			G.p = line + G.data_off;
+		else
 		{
-			G.p = save;
-			continue;
-		}
-		for (j = 0; j < G.data_pos; j++)
-		{
-			mmb_val skipv;
-			mmb_skip_sp();
-			skipv = mmb_expr();
-			(void)skipv;
-			mmb_skip_sp();
-			if (*G.p == ',')
-				G.p++;
+			if (!mmb_match("DATA"))
+			{
+				G.p = save;
+				continue;
+			}
 		}
 		mmb_skip_sp();
 		if (*G.p == 0 || *G.p == ':')
 		{
 			G.data_line = i + 1;
 			G.data_pos = 0;
+			G.data_off = 0;
 			G.p = save;
 			mmb_error("?OUT OF DATA");
 		}
@@ -688,10 +685,16 @@ static mmb_val read_data_item(void)
 			mmb_val v = mmb_expr();
 			mmb_skip_sp();
 			if (*G.p == ',')
+			{
+				G.p++;
 				G.data_pos++;
+				G.data_line = i;
+				G.data_off = (int)(G.p - line);
+			}
 			else
 			{
 				G.data_pos = 0;
+				G.data_off = 0;
 				G.data_line = i + 1;
 			}
 			G.p = save;
@@ -1134,6 +1137,7 @@ void mmb_cmd_restore(void)
 		}
 		G.data_line = pc;
 		G.data_pos = 0;
+		G.data_off = 0;
 		for (i = pc; i < G.nprog; i++)
 		{
 			if (line_match(G.prog[i], "DATA"))
@@ -1145,6 +1149,7 @@ void mmb_cmd_restore(void)
 	{
 		G.data_line = 0;
 		G.data_pos = 0;
+		G.data_off = 0;
 	}
 }
 
@@ -1876,6 +1881,8 @@ static void store_line(int num, const char *text)
 	int i, j, n;
 	char buf[MMB_LINE_LEN];
 
+	G.prog_dirty = 1; /* token/jump tables are stale until the next RUN (#992) */
+
 	while (*text == ' ' || *text == '\t')
 		text++;
 	n = 0;
@@ -2090,6 +2097,47 @@ void mmb_cmd_print(void)
 	}
 }
 
+/* G.p points just past '='. If the right-hand side begins with the same
+ * scalar string reference followed by '+', consume `<name>+` and return 1
+ * so the caller can append in place instead of rebuilding the string. */
+static int self_string_append_ref(const char *name)
+{
+	const char *save = G.p;
+	char nm[MMB_MAX_NAME];
+	int n = 0, is_str = 0;
+	mmb_skip_sp();
+	if (!mmb_is_ident_start(*G.p))
+	{
+		G.p = save;
+		return 0;
+	}
+	while (((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') ||
+		(*G.p >= '0' && *G.p <= '9') || *G.p == '_') &&
+	       n < MMB_MAX_NAME - 2)
+	{
+		char c = *G.p++;
+		if (c >= 'a' && c <= 'z')
+			c = (char)(c - 32);
+		nm[n++] = c;
+	}
+	if (*G.p == '$')
+	{
+		is_str = 1;
+		G.p++;
+	}
+	else if (*G.p == '%' || *G.p == '!')
+		G.p++;
+	nm[n] = 0;
+	mmb_skip_sp();
+	if (is_str && mmb_keyword_eq(nm, name) && *G.p == '+')
+	{
+		G.p++;
+		return 1;
+	}
+	G.p = save;
+	return 0;
+}
+
 static void do_let(void)
 {
 	char name[MMB_MAX_NAME];
@@ -2100,6 +2148,33 @@ static void do_let(void)
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
 	mmb_expect('=');
+	/* `a$ = a$ + ...` appends to the existing pool block in place, so the
+	 * prefix is not copied twice per iteration (#994). Scalar strings only:
+	 * array subscripts would need re-evaluating. */
+	if (t == T_STR && nidx == 0 && !mmb_keyword_eq(name, "DATE") &&
+	    !mmb_keyword_eq(name, "TIME"))
+	{
+		const char *rhs0 = G.p;
+		if (self_string_append_ref(name))
+		{
+			mmb_val dummy;
+			mmb_val rhs;
+			mmb_var *sv;
+			if (mmb_const_lookup(name, T_STR, &dummy))
+				mmb_error("?CONST");
+			rhs = mmb_expr();
+			if (rhs.type != T_STR)
+				mmb_error("?TYPE MISMATCH");
+			sv = mmb_find_var(name, T_STR, 1, 0, 0);
+			if (sv->type != T_STR)
+				mmb_error("?TYPE MISMATCH");
+			mmb_str_append(&sv->data.s[0], rhs.s ? rhs.s : "",
+				       rhs.s ? (int)strlen(rhs.s) : 0,
+				       sv->maxlen, sv->name);
+			return;
+		}
+		G.p = rhs0;
+	}
 	v = mmb_expr();
 	if (mmb_keyword_eq(name, "TIMER"))
 	{
@@ -2253,6 +2328,8 @@ static void chdir_to_file(const char *path)
 void mmb_cmd_new(void)
 {
 	G.nprog = 0;
+	G.prog_dirty = 1;
+	G.prog_ready = 0;
 	G.current_prog[0] = 0;
 	mmb_pkg_unmount();
 	mmb_clear_vars(1);
@@ -2301,6 +2378,8 @@ static void load_prog_from_disk(const char *name)
 	strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
 	G.current_prog[sizeof(G.current_prog) - 1] = 0;
 	G.nprog = 0;
+	G.prog_dirty = 1;
+	G.prog_ready = 0;
 	chdir_to_file(fname);
 	load_basic_file(fname, &auto_n, 0);
 }
@@ -2644,6 +2723,10 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].to = mmb_as_int(to);
 		G.forstack[G.for_sp].step = mmb_as_int(step);
 		G.forstack[G.for_sp].line = G.run_pc + 1;
+		G.forstack[G.for_sp].end_line =
+			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
+				? jmp_next[G.run_pc]
+				: -1;
 		G.for_sp++;
 	}
 }
@@ -2690,6 +2773,13 @@ void mmb_cmd_next(void)
 			vname[MMB_MAX_NAME - 1] = 0;
 			G.for_sp--;
 			G.forstack[G.for_sp].stmt = 0;
+			/* The matching NEXT pc was recorded at FOR (#992). When the
+			 * NEXT we are executing is exactly that line, exiting the
+			 * loop just falls through to the next line, so skip the
+			 * forward scan the old code did. The scan is only needed for
+			 * unusual control flow (duplicate or out-of-order NEXTs). */
+			if (jmp_ready && G.forstack[G.for_sp].end_line == G.run_pc)
+				return;
 			for (i = G.run_pc + 1; i < G.nprog; i++)
 			{
 				const char *save = G.p;
@@ -2730,11 +2820,10 @@ void mmb_cmd_pause(void)
 	unsigned ms = (unsigned)mmb_as_int(v);
 	unsigned start = mmb_now_ms();
 	if (G.plat && G.plat->millis)
+		/* One poll per spin: mmb_check_break already services storage,
+		 * input, network, audio and events (#988). */
 		while ((mmb_now_ms() - start) < ms)
-		{
-			mmb_poll();
 			mmb_check_break();
-		}
 	(void)ms;
 }
 
@@ -2749,10 +2838,7 @@ void mmb_cmd_vsync_wait(void)
 	if (last != 0 && (now - last) < 50)
 	{
 		while ((mmb_now_ms() - last) < 16)
-		{
-			mmb_poll();
 			mmb_check_break();
-		}
 	}
 	last = mmb_now_ms();
 }
@@ -2826,10 +2912,26 @@ int mmb_break_key(void)
 
 void mmb_check_break(void)
 {
+	unsigned now;
+
 	if (!G.running)
 		return;
 	if (G.opt.profiling)
 		G.prof.check_break++;
+	/* Ctrl-C / BREAK must be seen promptly, so check it on every line. */
+	if (G.plat && G.plat->take_break && G.plat->take_break())
+	{
+		mmb_play_stop_owned();
+		mmb_error("?BREAK");
+	}
+	/* The rest is a device/FS/network/audio poll stack. A loop body pays it
+	 * once per line, so rate-limit it to ~1 ms (#988) using the same
+	 * primitive the yield registry uses. */
+	now = mmb_now_ms();
+	if (G.break_primed && (int)(now - G.break_ms) < 1)
+		return;
+	G.break_primed = 1;
+	G.break_ms = now;
 	mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
@@ -2837,11 +2939,6 @@ void mmb_check_break(void)
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
 	mmb_run_events();
-	if (G.plat && G.plat->take_break && G.plat->take_break())
-	{
-		mmb_play_stop_owned();
-		mmb_error("?BREAK");
-	}
 }
 
 static void skip_balanced_paren(void)
@@ -3927,6 +4024,11 @@ static void run_gosub_body(void)
 		do
 		{
 			loop = 0;
+			/* Reclaim per-statement expression temporaries here too, or a
+			 * string-producing loop inside FUNCTION/SUB/ON TICK/ON KEY
+			 * grows the arena for the whole call (#989). Persistent values
+			 * (function return, arguments, variables) are pooled already. */
+			mmb_str_reset();
 			G.branch_pc = -1;
 			exec_line_body(mmb_tok_line(G.run_pc));
 			if (G.branch_pc == -2)
@@ -4029,6 +4131,20 @@ void mmb_run_events(void)
 
 	if (!G.running || G.tick_busy)
 		return;
+	/* Skip the clock read entirely when nothing is registered (#988). */
+	if (!G.on_key[0] && !G.on_mouseclick[0] && !G.on_mousemove[0] &&
+	    !G.on_mouseup[0])
+	{
+		int any = 0;
+		for (i = 0; i < MMB_MAX_TICK; i++)
+			if (G.tick[i].period > 0 && G.tick[i].sub[0])
+			{
+				any = 1;
+				break;
+			}
+		if (!any)
+			return;
+	}
 	now = mmb_now_ms();
 	for (i = 0; i < MMB_MAX_TICK; i++)
 	{
@@ -4135,6 +4251,7 @@ static void run_program(void)
 		G.in_sub = 0;
 		G.data_line = 0;
 		G.data_pos = 0;
+		G.data_off = 0;
 		memset(G.subs, 0, sizeof(G.subs));
 		G.nsubs = 0;
 		memset(G.tick, 0, sizeof(G.tick));
@@ -4144,9 +4261,16 @@ static void run_program(void)
 		G.on_mouseup[0] = 0;
 		G.tick_busy = 0;
 		G.inkey_n = G.inkey_r = G.inkey_w = 0;
-		scan_labels();
-		mmb_tokenize_program();
-		build_jumps();
+		/* Token/label/jump tables depend only on the program text, so a
+		 * re-RUN of an unchanged program can reuse them (#992). */
+		if (G.prog_dirty || !G.prog_ready)
+		{
+			scan_labels();
+			mmb_tokenize_program();
+			build_jumps();
+			G.prog_dirty = 0;
+			G.prog_ready = 1;
+		}
 		if (!run_preserve_vars)
 		{
 			mmb_clear_vars(1);
@@ -4419,9 +4543,16 @@ void mmb_reset(void)
 {
 	mmb_pkg_unmount();
 	mmb_clear_vars(0);
+	/* All pool-owned strings (variables, constants, saved call frames) are
+	 * released above or belong to a context that is about to be discarded,
+	 * so return the pooled slabs too (#989). mmb_strpool_reset had no
+	 * callers and every warm reset leaked them until the host freed them. */
+	mmb_strpool_reset();
 	mmb_option_reset();
 	mmb_play_stop();
 	G.nprog = 0;
+	G.prog_dirty = 1;
+	G.prog_ready = 0;
 	mmb_gfx_init();
 }
 
@@ -4468,6 +4599,7 @@ void mmb_poll(void)
 	/* #858: run the cooperative background callbacks registered by apps on
 	 * non-active consoles (JUKE queue, TERM/CONNECT socket drain). Rate
 	 * limits live in the registry, so this is cheap on every yield. */
-	mmb_yield_run(mmb_now_ms());
+	if (mmb_yield_count() > 0)
+		mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
 }

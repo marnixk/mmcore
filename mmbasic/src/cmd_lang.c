@@ -455,11 +455,71 @@ void mmb_cmd_byte(void)
 	mmb_str_set(&v->data.s[off], nb, final, v->maxlen, v->name);
 }
 
+/* Element comparison for SORT: same ordering the old bubble sort used
+ * (POD compare, byte strcmp for strings, no case fold). */
+static int sort_gt(mmb_var *v, int a, int b)
+{
+	if (v->type == T_STR)
+		return strcmp(v->data.s[a], v->data.s[b]) > 0;
+	if (v->type == T_INT)
+		return v->data.i[a] > v->data.i[b];
+	return v->data.f[a] > v->data.f[b];
+}
+
+static void sort_swap(mmb_var *v, int a, int b)
+{
+	if (v->type == T_STR)
+	{
+		char *tmp = v->data.s[a];
+		v->data.s[a] = v->data.s[b];
+		v->data.s[b] = tmp;
+	}
+	else if (v->type == T_INT)
+	{
+		int64_t tmp = v->data.i[a];
+		v->data.i[a] = v->data.i[b];
+		v->data.i[b] = tmp;
+	}
+	else
+	{
+		double tmp = v->data.f[a];
+		v->data.f[a] = v->data.f[b];
+		v->data.f[b] = tmp;
+	}
+}
+
+/* Sift the element at `root` down in a max-heap bounded by `end`. */
+static unsigned sort_sift(mmb_var *v, int root, int end, unsigned ops)
+{
+	for (;;)
+	{
+		int child = root * 2 + 1;
+		int swap = root;
+		if (child <= end)
+		{
+			ops++;
+			if (sort_gt(v, child, swap))
+				swap = child;
+			if (child + 1 <= end)
+			{
+				ops++;
+				if (sort_gt(v, child + 1, swap))
+					swap = child + 1;
+			}
+		}
+		if (swap == root)
+			return ops;
+		sort_swap(v, root, swap);
+		root = swap;
+	}
+}
+
 void mmb_cmd_sort(void)
 {
 	char name[MMB_MAX_NAME];
-	int t, i, j, n;
+	int t, i, n;
 	mmb_var *v = 0;
+	unsigned ops = 0;
 	mmb_ident(name, sizeof(name));
 	t = mmb_type_suffix(name);
 	mmb_skip_sp();
@@ -479,38 +539,31 @@ void mmb_cmd_sort(void)
 	if (!v || v->dims < 1)
 		mmb_error("?ARRAY");
 	n = v->size;
-	for (i = 0; i < n - 1; i++)
-		for (j = 0; j < n - 1 - i; j++)
+	/* Heapsort: O(n log n) and in-place, matching the old bubble sort's
+	 * ordering exactly (#990). Check for BREAK every so often so a big
+	 * sort stays interruptible. */
+	if (n > 1)
+	{
+		for (i = n / 2 - 1; i >= 0; i--)
 		{
-			int swap = 0;
-			if (v->type == T_STR)
-				swap = strcmp(v->data.s[j], v->data.s[j + 1]) > 0;
-			else if (v->type == T_INT)
-				swap = v->data.i[j] > v->data.i[j + 1];
-			else
-				swap = v->data.f[j] > v->data.f[j + 1];
-			if (swap)
+			ops = sort_sift(v, i, n - 1, ops);
+			if (ops >= 8192)
 			{
-				if (v->type == T_STR)
-				{
-					char *tmp = v->data.s[j];
-					v->data.s[j] = v->data.s[j + 1];
-					v->data.s[j + 1] = tmp;
-				}
-				else if (v->type == T_INT)
-				{
-					int64_t tmp = v->data.i[j];
-					v->data.i[j] = v->data.i[j + 1];
-					v->data.i[j + 1] = tmp;
-				}
-				else
-				{
-					double tmp = v->data.f[j];
-					v->data.f[j] = v->data.f[j + 1];
-					v->data.f[j + 1] = tmp;
-				}
+				ops = 0;
+				mmb_check_break();
 			}
 		}
+		for (i = n - 1; i > 0; i--)
+		{
+			sort_swap(v, 0, i);
+			ops = sort_sift(v, 0, i - 1, ops);
+			if (ops >= 8192)
+			{
+				ops = 0;
+				mmb_check_break();
+			}
+		}
+	}
 }
 
 void mmb_cmd_settick(void)
