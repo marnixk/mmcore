@@ -12,7 +12,7 @@ WORDPAD [file$]
 
 Menus: Alt+F File  Alt+E Edit  Alt+S Settings  F10 File menu.
 File: New, Open..., Save, Save As..., Quit.
-Edit: Copy, Cut, Paste (^C /^K /^U like EDIT).
+Edit: Copy, Cut, Paste (Ctrl+C / Ctrl+X / Ctrl+V; legacy ^K / ^U kept).
 Settings: Wide view toggles wrap 80/120 columns.
 Colours follow OPTION THEME (same as the other themed apps).
 
@@ -36,9 +36,11 @@ overwrites the real file when you save. A clean save removes the sidecar.
 
 Ctrl+P quick-open (recursive *.MD picker; typing filters on the document
 name first, then the path). Named buffers auto-save when
-switching files. F2 save  F3 open  Ctrl+Z undo  Ctrl+X or Quit leaves
-WORDPAD (CLS and restores the console colour). Open/Save As use a file
-picker (*.MD).
+switching files. F2 save  F3 open  Ctrl+Z undo  Ctrl+X cut selection
+(no selection is a no-op, it never exits)  Ctrl+C copy  Ctrl+V paste.
+Alt+X (or File, Quit) leaves WORDPAD; a dirty buffer first asks
+Save / Discard / Cancel. Exit CLSes and restores the console colour.
+Open/Save As use a file picker (*.MD).
 
 Example:
 
