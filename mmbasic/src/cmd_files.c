@@ -186,15 +186,19 @@ void mmb_cmd_cat_file(const char *arg)
 	}
 }
 
-#define DIR_LIST_MAX 4096
 #define DIR_PATH_MAX 160
 #define DIR_DEPTH_MAX 8
-#define DIR_ENT_MAX 512
-/* Cap on the accumulated results of a recursive search. Each result is a
- * structured mmb_dirent (name + type + size), so this bound is explicit and a
- * tree larger than it reports "... more" instead of silently dropping entries
- * the way the old fixed 4096-byte newline buffer did. */
-#define DIR_RESULT_MAX 4096
+/* Initial capacity for a heap-grown folder scan. The listing grows on demand
+ * so a large folder lists completely and stays sorted (#981). */
+#define DIR_ENT_INIT 256
+/* Safety cap on one folder scan (entries, not bytes). The buffer is
+ * heap-grown, so this only bounds a pathological folder; reaching it sets
+ * `truncated` rather than silently dropping entries. */
+#define DIR_ENT_MAX 262144
+/* Fixed cell width for DIR /W. The column count is derived from the current
+ * MODE's video width (video_cols()) so the wide layout does not depend on the
+ * longest name in the whole listing (#981). */
+#define DIR_WIDE_CELL 16
 
 static int dir_first;
 
@@ -260,68 +264,6 @@ static void dir_read_literal(char *out, int outsz)
 	out[n] = 0;
 }
 
-/* Wide listing: sorted names only, packed into dynamic fixed-width columns. */
-static void dir_wide(char *list)
-{
-	char *ptrs[DIR_ENT_MAX];
-	char line[DIR_LIST_MAX];
-	int n = 0, i, maxlen = 0, cols, rows, r, c;
-	char *p = list;
-	if (!list[0])
-	{
-		dir_put("(empty)");
-		return;
-	}
-	while (*p && n < DIR_ENT_MAX)
-	{
-		ptrs[n++] = p;
-		while (*p && *p != '\n')
-			p++;
-		if (*p == '\n')
-			*p++ = 0;
-	}
-	if (n == 0)
-	{
-		dir_put("(empty)");
-		return;
-	}
-	for (i = 0; i < n; i++)
-	{
-		int l = (int)strlen(ptrs[i]);
-		if (l > maxlen)
-			maxlen = l;
-	}
-	cols = (G.plat && G.plat->video_cols ? G.plat->video_cols() : 80) / (maxlen + 2);
-	if (cols < 1)
-		cols = 1;
-	if (cols > DIR_ENT_MAX)
-		cols = DIR_ENT_MAX;
-	rows = (n + cols - 1) / cols;
-	for (r = 0; r < rows; r++)
-	{
-		int len = 0;
-		for (c = 0; c < cols; c++)
-		{
-			int idx = r * cols + c;
-			int l, pad;
-			if (idx >= n)
-				break;
-			l = (int)strlen(ptrs[idx]);
-			if (len + l + 1 >= (int)sizeof(line))
-				break;
-			memcpy(line + len, ptrs[idx], (unsigned)l);
-			len += l;
-			pad = (c + 1 < cols && idx + 1 < n) ? maxlen - l + 2 : 0;
-			while (pad-- > 0 && len < (int)sizeof(line) - 1)
-				line[len++] = ' ';
-		}
-		while (len > 0 && line[len - 1] == ' ')
-			len--;
-		line[len] = 0;
-		dir_put(line);
-	}
-}
-
 static void dir_join(char *dst, int dstsz, const char *a, const char *sep, const char *b)
 {
 	const char *parts[3];
@@ -340,74 +282,62 @@ static void dir_join(char *dst, int dstsz, const char *a, const char *sep, const
 	dst[n] = 0;
 }
 
-/* Accumulated results of a recursive search (DIR /S). Each result is a
- * structured mmb_dirent whose `name` is the path relative to the search root,
- * so the long listing prints sizes straight from the directory scan with no
- * per-result mmb_vfs_size()/f_stat(). The list grows on the heap up to
- * DIR_RESULT_MAX entries; anything beyond sets `truncated` so the caller can
- * print a "... more" note. */
-typedef struct {
-	mmb_dirent *ents;
-	int n;
-	int cap;
-	int truncated;
-} dir_list;
-
-static void dir_list_add(dir_list *lst, const char *name, int is_dir, int size)
+/* Scan one folder into a heap-grown array. The structured listing is a bounded
+ * sorted-first selection, so a truncated result means "retry with room for
+ * more" and the scan repeats until the whole folder fits (#981). On failure
+ * *out_n is -1; on the safety cap (or an allocation failure) *out_trunc is set
+ * and the returned array is 0. An empty-but-successful folder returns a
+ * non-NULL array with *out_n == 0. */
+static mmb_dirent *dir_entries(const char *spec, int *out_n, int *out_trunc)
 {
-	mmb_dirent *e;
-	if (lst->n >= DIR_RESULT_MAX)
+	int cap = DIR_ENT_INIT;
+	*out_trunc = 0;
+	for (;;)
 	{
-		lst->truncated = 1;
-		return;
-	}
-	if (lst->n >= lst->cap)
-	{
-		int ncap = lst->cap ? lst->cap * 2 : 64;
-		mmb_dirent *nb;
-		if (ncap > DIR_RESULT_MAX)
-			ncap = DIR_RESULT_MAX;
-		nb = G.plat && G.plat->alloc
-			     ? (mmb_dirent *)G.plat->alloc(
-				       (unsigned)ncap * sizeof(mmb_dirent))
-			     : 0;
-		if (!nb)
+		mmb_dirent *ents =
+			G.plat && G.plat->alloc
+				? (mmb_dirent *)G.plat->alloc(
+					  (unsigned)cap * sizeof(mmb_dirent))
+				: 0;
+		int n, truncated = 0;
+		if (!ents)
 		{
-			lst->truncated = 1;
-			return;
+			*out_n = 0;
+			*out_trunc = 1;
+			return 0;
 		}
-		if (lst->ents)
+		n = mmb_vfs_list_entries(spec && spec[0] ? spec : 0, ents, cap,
+					 &truncated);
+		if (n < 0)
 		{
-			memcpy(nb, lst->ents,
-			       (unsigned)lst->n * sizeof(mmb_dirent));
-			G.plat->free(lst->ents);
+			G.plat->free(ents);
+			*out_n = -1;
+			return 0;
 		}
-		lst->ents = nb;
-		lst->cap = ncap;
+		if (!truncated)
+		{
+			*out_n = n;
+			return ents;
+		}
+		G.plat->free(ents);
+		if (cap >= DIR_ENT_MAX)
+		{
+			*out_n = 0;
+			*out_trunc = 1;
+			return 0;
+		}
+		cap *= 2;
+		if (cap > DIR_ENT_MAX)
+			cap = DIR_ENT_MAX;
 	}
-	e = &lst->ents[lst->n++];
-	strncpy(e->name, name, MMB_DIRENT_NAME - 1);
-	e->name[MMB_DIRENT_NAME - 1] = 0;
-	e->is_dir = is_dir;
-	e->size = size;
-}
-
-static void dir_list_free(dir_list *lst)
-{
-	if (lst->ents)
-		G.plat->free(lst->ents);
-	lst->ents = 0;
-	lst->n = 0;
-	lst->cap = 0;
 }
 
 /* Long listing straight from a structured listing (#666): the entry already
  * carries the size, so no per-file mmb_vfs_size() (an f_stat() over USB on
- * Circle) is needed. A folder with more entries than the caller's cap sets
- * `truncated`, which gets a trailing note instead of the silent cut the old
- * newline listing had. */
-static void dir_long_entries(const mmb_dirent *ents, int n, int truncated,
-			     const char *more)
+ * Circle) is needed. `cols`, when given, is the per-directory display column
+ * for each entry (DIR /S); otherwise one column is computed from the batch. */
+static void dir_long_entries(const mmb_dirent *ents, const int *cols, int n,
+			     int truncated, const char *more)
 {
 	int i, namecol = 4;
 	const int sizecol = 10;
@@ -416,20 +346,28 @@ static void dir_long_entries(const mmb_dirent *ents, int n, int truncated,
 		dir_put("(empty)");
 		return;
 	}
-	for (i = 0; i < n; i++)
+	if (!cols)
 	{
-		int l = (int)strlen(ents[i].name) + (ents[i].is_dir ? 1 : 0);
-		if (l > namecol)
-			namecol = l;
+		for (i = 0; i < n; i++)
+		{
+			int l = (int)strlen(ents[i].name) +
+				(ents[i].is_dir ? 1 : 0);
+			if (l > namecol)
+				namecol = l;
+		}
+		if (namecol > 60)
+			namecol = 60;
 	}
-	if (namecol > 60)
-		namecol = 60;
 	for (i = 0; i < n; i++)
 	{
 		char name[MMB_DIRENT_NAME + 2];
 		char line[MMB_DIRENT_NAME + 32];
 		char szs[16];
-		int l, pos, pad;
+		int l, pos, pad, col = cols ? cols[i] : namecol;
+		if (col < 1)
+			col = 1;
+		if (col > 60)
+			col = 60;
 		strcpy(name, ents[i].name);
 		if (ents[i].is_dir)
 			strcat(name, "/");
@@ -443,7 +381,7 @@ static void dir_long_entries(const mmb_dirent *ents, int n, int truncated,
 		}
 		memcpy(line, name, (unsigned)l);
 		pos = l;
-		for (pad = namecol - l; pad > 0 && pos < (int)sizeof(line) - 1; pad--)
+		for (pad = col - l; pad > 0 && pos < (int)sizeof(line) - 1; pad--)
 			line[pos++] = ' ';
 		line[pos++] = ' ';
 		for (pad = sizecol - (int)strlen(szs); pad > 0 && pos < (int)sizeof(line) - 1; pad--)
@@ -460,75 +398,167 @@ static void dir_long_entries(const mmb_dirent *ents, int n, int truncated,
 		dir_put(more ? more : "... more");
 }
 
-/* Wide listing from structured entries: rebuild the newline list on the heap so
- * a folder is not silently cut at DIR_LIST_MAX. Truncation is reported by the
- * caller from the entries count. */
+/* Wide listing from structured entries, laid out row-major in fixed cells
+ * derived from the current MODE (#981). Names longer than a cell are
+ * truncated; no dependence on the longest name in the set. */
 static void dir_wide_entries(const mmb_dirent *ents, int n, int truncated,
 			     const char *more)
 {
-	char *list, *w;
-	unsigned need = 1;
-	int i;
+	int cols, rows, r, c;
+	int vcols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	if (n <= 0)
 	{
 		dir_put("(empty)");
 		return;
 	}
-	for (i = 0; i < n; i++)
-		need += (unsigned)strlen(ents[i].name) +
-			(ents[i].is_dir ? 1u : 0u) + 1u;
-	list = G.plat && G.plat->alloc ? (char *)G.plat->alloc(need) : 0;
-	if (!list)
+	cols = vcols / DIR_WIDE_CELL;
+	if (cols < 1)
+		cols = 1;
+	rows = (n + cols - 1) / cols;
+	for (r = 0; r < rows; r++)
 	{
-		dir_long_entries(ents, n, truncated, more);
-		return;
+		char line[4096];
+		int len = 0;
+		for (c = 0; c < cols; c++)
+		{
+			int idx = r * cols + c;
+			const char *nm;
+			int j;
+			if (idx >= n)
+				break;
+			nm = ents[idx].name;
+			for (j = 0; nm[j] && j < DIR_WIDE_CELL - 1; j++)
+			{
+				if (len < (int)sizeof(line) - 1)
+					line[len++] = nm[j];
+			}
+			if (ents[idx].is_dir && len < (int)sizeof(line) - 1)
+				line[len++] = '/';
+			if (c + 1 < cols && idx + 1 < n)
+			{
+				while (len < (c + 1) * DIR_WIDE_CELL &&
+				       len < (int)sizeof(line) - 1)
+					line[len++] = ' ';
+			}
+		}
+		while (len > 0 && line[len - 1] == ' ')
+			len--;
+		line[len] = 0;
+		dir_put(line);
 	}
-	w = list;
-	for (i = 0; i < n; i++)
-	{
-		int l = (int)strlen(ents[i].name);
-		memcpy(w, ents[i].name, (unsigned)l);
-		w += l;
-		if (ents[i].is_dir)
-			*w++ = '/';
-		*w++ = (i + 1 < n) ? '\n' : 0;
-	}
-	dir_wide(list);
-	G.plat->free(list);
 	if (truncated)
 		dir_put(more ? more : "... more");
 }
 
+/* Accumulated results of a recursive search (DIR /S). Each result is a
+ * structured mmb_dirent whose `name` is the path relative to the search root,
+ * so the long listing prints sizes straight from the directory scan with no
+ * per-result mmb_vfs_size()/f_stat(). `cols` carries the per-directory name
+ * column, so the long listing aligns each directory's entries independently
+ * (#981). The arrays grow on the heap without a fixed total cap. */
+typedef struct {
+	mmb_dirent *ents;
+	int *cols;
+	int n;
+	int cap;
+	int truncated;
+} dir_list;
+
+static void dir_list_add(dir_list *lst, const char *name, int is_dir, int size,
+			 int col)
+{
+	mmb_dirent *e;
+	if (lst->n >= lst->cap)
+	{
+		int ncap = lst->cap ? lst->cap * 2 : 64;
+		mmb_dirent *nb = G.plat && G.plat->alloc
+					 ? (mmb_dirent *)G.plat->alloc(
+						   (unsigned)ncap * sizeof(mmb_dirent))
+					 : 0;
+		int *nc = G.plat && G.plat->alloc
+				  ? (int *)G.plat->alloc((unsigned)ncap * sizeof(int))
+				  : 0;
+		if (!nb || !nc)
+		{
+			if (nb)
+				G.plat->free(nb);
+			if (nc)
+				G.plat->free(nc);
+			lst->truncated = 1;
+			return;
+		}
+		if (lst->ents)
+		{
+			memcpy(nb, lst->ents,
+			       (unsigned)lst->n * sizeof(mmb_dirent));
+			G.plat->free(lst->ents);
+		}
+		if (lst->cols)
+		{
+			memcpy(nc, lst->cols, (unsigned)lst->n * sizeof(int));
+			G.plat->free(lst->cols);
+		}
+		lst->ents = nb;
+		lst->cols = nc;
+		lst->cap = ncap;
+	}
+	e = &lst->ents[lst->n];
+	strncpy(e->name, name, MMB_DIRENT_NAME - 1);
+	e->name[MMB_DIRENT_NAME - 1] = 0;
+	e->is_dir = is_dir;
+	e->size = size;
+	lst->cols[lst->n] = col;
+	lst->n++;
+}
+
+static void dir_list_free(dir_list *lst)
+{
+	if (lst->ents)
+		G.plat->free(lst->ents);
+	if (lst->cols)
+		G.plat->free(lst->cols);
+	lst->ents = 0;
+	lst->cols = 0;
+	lst->n = 0;
+	lst->cap = 0;
+}
+
 /* Recursive search (DIR /S): every matching entry under dirspec, with a path
  * prefix relative to the search root. Each directory is scanned once with the
- * structured entries API, so a big folder is not cut against a small newline
- * buffer and each result already carries its size. Results append to `res`
- * depth-first, folders first, matching the on-disk listing order. */
+ * structured entries API and grown until it fits, so a big folder is not cut
+ * against a small buffer. Results append depth-first, folders first, matching
+ * the on-disk listing order; each directory's entries carry their own display
+ * column. */
 static void dir_search(const char *dirspec, const char *prefix, const char *glob,
 		       int depth, dir_list *res)
 {
 	mmb_dirent *ents;
-	int n, truncated = 0, i;
+	int n, truncated = 0, i, dircol = 4;
 	if (depth > DIR_DEPTH_MAX)
 		return;
-	ents = G.plat && G.plat->alloc
-		       ? (mmb_dirent *)G.plat->alloc(
-				 (unsigned)(DIR_ENT_MAX * sizeof(mmb_dirent)))
-		       : 0;
-	if (!ents)
-	{
-		res->truncated = 1;
-		return;
-	}
-	n = mmb_vfs_list_entries(dirspec && dirspec[0] ? dirspec : 0, ents,
-				 DIR_ENT_MAX, &truncated);
+	ents = dir_entries(dirspec && dirspec[0] ? dirspec : 0, &n, &truncated);
 	if (n < 0)
-	{
-		G.plat->free(ents);
 		return;
-	}
 	if (truncated)
 		res->truncated = 1;
+	for (i = 0; i < n; i++)
+	{
+		char disp[DIR_PATH_MAX];
+		int l;
+		if (!ents[i].name[0])
+			continue;
+		if (prefix && prefix[0])
+			dir_join(disp, sizeof(disp), prefix, "/", ents[i].name);
+		else
+			dir_join(disp, sizeof(disp), ents[i].name, 0, 0);
+		if (!ents[i].is_dir && !mmb_glob_match(ents[i].name, glob))
+			continue;
+		l = (int)strlen(disp) + (ents[i].is_dir ? 1 : 0);
+		if (l > dircol)
+			dircol = l;
+	}
+	if (dircol > 60)
+		dircol = 60;
 	for (i = 0; i < n; i++)
 	{
 		char name[MMB_DIRENT_NAME];
@@ -552,13 +582,14 @@ static void dir_search(const char *dirspec, const char *prefix, const char *glob
 			else
 				dir_join(child, sizeof(child), name, 0, 0);
 			if (mmb_glob_match(name, glob))
-				dir_list_add(res, disp, 1, -1);
+				dir_list_add(res, disp, 1, -1, dircol);
 			dir_search(child, disp, glob, depth + 1, res);
 		}
 		else if (mmb_glob_match(name, glob))
-			dir_list_add(res, disp, 0, ents[i].size);
+			dir_list_add(res, disp, 0, ents[i].size, dircol);
 	}
-	G.plat->free(ents);
+	if (ents)
+		G.plat->free(ents);
 }
 
 /* Split a search spec into a directory and a glob. A path naming an existing
@@ -628,17 +659,16 @@ void mmb_cmd_files(const char *kw)
 		char dir[128], glob[128];
 		dir_list res;
 		res.ents = 0;
+		res.cols = 0;
 		res.n = 0;
 		res.cap = 0;
 		res.truncated = 0;
 		dir_split_spec(spec[0] ? spec : 0, dir, sizeof(dir), glob, sizeof(glob));
 		dir_search(dir, "", glob, 0, &res);
 		if (wide)
-			dir_wide_entries(res.ents, res.n, res.truncated,
-					 "... more (4096 max)");
+			dir_wide_entries(res.ents, res.n, res.truncated, 0);
 		else
-			dir_long_entries(res.ents, res.n, res.truncated,
-					 "... more (4096 max)");
+			dir_long_entries(res.ents, res.cols, res.n, res.truncated, 0);
 		dir_list_free(&res);
 		return;
 	}
@@ -646,24 +676,17 @@ void mmb_cmd_files(const char *kw)
 		mmb_dirent *ents;
 		int n, truncated = 0;
 		/* One structured scan yields name, type and size (folders first),
-		 * so a long listing no longer stats every file (#666). */
-		ents = G.plat && G.plat->alloc
-			       ? (mmb_dirent *)G.plat->alloc(
-					 (unsigned)(DIR_ENT_MAX * sizeof(mmb_dirent)))
-			       : 0;
+		 * so a long listing no longer stats every file (#666). The scan
+		 * grows until the whole folder fits (#981). */
+		ents = dir_entries(spec[0] ? spec : 0, &n, &truncated);
+		if (n < 0)
+			mmb_error("?DRIVE");
 		if (!ents)
 			mmb_error("?OUT OF MEMORY");
-		n = mmb_vfs_list_entries(spec[0] ? spec : 0, ents, DIR_ENT_MAX,
-					 &truncated);
-		if (n < 0)
-		{
-			G.plat->free(ents);
-			mmb_error("?DRIVE");
-		}
 		if (wide)
 			dir_wide_entries(ents, n, truncated, 0);
 		else
-			dir_long_entries(ents, n, truncated, 0);
+			dir_long_entries(ents, 0, n, truncated, 0);
 		G.plat->free(ents);
 	}
 }

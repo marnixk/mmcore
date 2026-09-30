@@ -9,6 +9,8 @@ import pytest
 
 from harness import MMBasicConsole
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def test_cwd_is_ramdisk(console):
     cwd = console.send_line("PRINT CWD$")
@@ -81,11 +83,13 @@ def test_dir_search_recurses_with_paths(console):
     _write_text(console, "A:/SRCH391/TOP.BAS")
     _write_text(console, "A:/SRCH391/alpha.txt")
     _write_text(console, "A:/SRCH391/SUB/DEEP.BAS")
+    # #981: each directory's entries align to their own name column, so the
+    # nested SUB/DEEP.BAS no longer widens the root listing's column.
     assert _lines(console.send_line('DIR /S "A:/SRCH391"')) == [
-        "SUB/              <DIR>",
+        "SUB/           <DIR>",
         "SUB/DEEP.BAS          2",
-        "alpha.txt             2",
-        "TOP.BAS               2",
+        "alpha.txt          2",
+        "TOP.BAS            2",
     ]
 
 
@@ -97,8 +101,22 @@ def test_dir_search_glob_matches_full_path(console):
     _write_text(console, "A:/GLOB391/NOTE.TXT")
     assert _lines(console.send_line('DIR "A:/GLOB391/*.BAS" /S')) == [
         "SUB/DEEP.BAS          2",
-        "TOP.BAS               2",
+        "TOP.BAS          2",
     ]
+
+
+def test_storage_latches_mount_probe():
+    """#982: an unmountable volume must not force a mount on every poll."""
+    src = open(os.path.join(REPO, "console", "storage.cpp"), encoding="utf-8").read()
+    assert "s_probed" in src
+    assert "s_ready[idx] || s_ejected[idx] || s_probed[idx]" in src
+
+
+def test_storage_chunks_usb_work_and_keeps_read_handle():
+    """#983/#984: FS work yields between chunks and reuses an open read FIL."""
+    src = open(os.path.join(REPO, "console", "storage.cpp"), encoding="utf-8").read()
+    assert "storage_yield" in src
+    assert "s_rd[idx]" in src
 
 
 def test_chdir_c_without_media(console):

@@ -30,6 +30,9 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-fb-unaligned.patch"),
     os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
     os.path.join(REPO, "patches", "circle-console-state.patch"),
+    os.path.join(REPO, "patches", "circle-device-dedupe.patch"),
+    os.path.join(REPO, "patches", "circle-usb-timeout.patch"),
+    os.path.join(REPO, "patches", "circle-fatfs-fastseek.patch"),
 ]
 
 
@@ -77,7 +80,10 @@ def test_build_script_applies_patches_in_order():
     ua = text.index("circle-fb-unaligned.patch")
     e = text.index("circle-usb-cdc-rx.patch")
     f = text.index("circle-console-state.patch")
-    assert a < b < c < d < db < ua < e < f
+    g = text.index("circle-device-dedupe.patch")
+    h = text.index("circle-usb-timeout.patch")
+    i = text.index("circle-fatfs-fastseek.patch")
+    assert a < b < c < d < db < ua < e < f < g < h < i
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
@@ -86,6 +92,9 @@ def test_build_script_applies_patches_in_order():
     assert "mmbasic-fb-unaligned" in text
     assert "mmbasic-usb-cdc-rx" in text
     assert "mmbasic-console-state" in text
+    assert "mmbasic-device-dedupe" in text
+    assert "mmbasic-dwhci-timeout" in text
+    assert "mmbasic-fastseek" in text
 
 
 def test_patches_carry_their_markers(patched_tree):
@@ -160,6 +169,42 @@ def test_console_state_patch_applies(patched_tree):
     assert "memcpy (m_pBuffer8, pBuffer, m_nSize)" in term
     assert "mmbasic-console-state" in scr_h
     assert "GetTerminal" in scr_h
+
+
+def test_device_dedupe_patch_applies(patched_tree):
+    dev = open(os.path.join(patched_tree, "lib/device.cpp"), encoding="utf-8").read()
+    assert "mmbasic-device-dedupe" in dev
+    body = dev[dev.index("CDevice::RegisterRemovedHandler") :]
+    body = body[: body.index("void CDevice::UnregisterRemovedHandler")]
+    # A repeated (handler, context) pair returns the existing entry before any
+    # new allocation.
+    ret = body.index("return (TRegistrationHandle) pExisting")
+    alloc = body.index("new TRemovedHandlerEntry")
+    assert ret < alloc
+    assert "m_RemovedHandlerList.GetNext" in body
+
+
+def test_usb_timeout_patch_applies(patched_tree):
+    dwhci = open(
+        os.path.join(patched_tree, "lib/usb/dwhcidevice.cpp"), encoding="utf-8"
+    ).read()
+    assert "mmbasic-dwhci-timeout" in dwhci
+    body = dwhci[dwhci.index("boolean CDWHCIDevice::TransferStage") :]
+    body = body[: body.index("void CDWHCIDevice::CompletionRoutine")]
+    assert "DWHCI_TRANSFER_TIMEOUT_MS" in body
+    assert "USBErrorTimeout" in body
+    # The wait is bounded inside the busy-wait loop.
+    loop = body[body.index("while (m_bWaiting[nWaitBlock])") :]
+    assert "m_pTimer->GetTicks" in loop
+    assert "DWHCI_TRANSFER_TIMEOUT_MS" in loop
+
+
+def test_fatfs_fastseek_patch_applies(patched_tree):
+    ffconf = open(
+        os.path.join(patched_tree, "addon/fatfs/ffconf.h"), encoding="utf-8"
+    ).read()
+    assert "mmbasic-fastseek" in ffconf
+    assert "#define FF_USE_FASTSEEK\t1" in ffconf
 
 
 def test_receive_drains_rx_queue_before_reporting_errno(patched_tree):
