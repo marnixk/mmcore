@@ -397,6 +397,7 @@ typedef struct mmb {
 		int off;
 		int64_t to, step;
 		int line, stmt;
+		int end_line; /* matching NEXT pc, from jmp_next (#992) */
 	} forstack[16];
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
@@ -409,6 +410,7 @@ typedef struct mmb {
 	int cwd_node[2];                   /* A: (0) / B: (1) ramdisk node */
 	char cwd_path[MMB_MAX_DRIVES][128]; /* C:.. physical, letter - 'A' */
 	int data_line, data_pos;
+	int data_off;          /* byte offset of the next item in prog[data_line] (#990) */
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
 	int gosub_event[MMB_MAX_GOSUB];
@@ -523,6 +525,10 @@ typedef struct mmb {
 	int jmp_endsel[MMB_MAX_LINES];
 	int jmp_ready;
 	int run_preserve_vars;
+	int prog_dirty;        /* program text changed since last tokenize (#992) */
+	int prog_ready;        /* tokenizer + jump tables are current (#992) */
+	int break_primed;      /* rate limiter for mmb_check_break's heavy work (#988) */
+	unsigned break_ms;     /* last time the heavy break poll ran */
 } mmb;
 
 /* Virtual consoles: one interpreter context per console. The active context
