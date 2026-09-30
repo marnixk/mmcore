@@ -443,6 +443,7 @@ def test_settings_appearance_theme_applies_and_persists(console):
 SHIPPED_THEMES = [
     "Paper", "Cloud", "Snow", "Night", "Nord",
     "Slate", "Forest", "Violet", "Turbo", "Phosphor",
+    "Monochrome",
 ]
 
 

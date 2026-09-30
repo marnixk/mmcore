@@ -1,6 +1,8 @@
 #include "mmb_priv.h"
 #include "tui.h"
 
+#include <math.h>
+
 #define WP_BUF      65536
 #define WP_CLIP     8192
 #define WP_DLG      128
@@ -414,6 +416,76 @@ static unsigned intense_fg(void)
 		b = b * 3 / 5;
 	}
 	return mmb_rgb_pack(r, g, b);
+}
+
+static unsigned blend_to(unsigned fg, unsigned bg, int pct)
+{
+	int r = (int)((fg >> 16) & 255);
+	int g = (int)((fg >> 8) & 255);
+	int b = (int)(fg & 255);
+	int br = (int)((bg >> 16) & 255);
+	int bgc = (int)((bg >> 8) & 255);
+	int bb = (int)(bg & 255);
+
+	return mmb_rgb_pack(r + (br - r) * pct / 100,
+			    g + (bgc - g) * pct / 100,
+			    b + (bb - b) * pct / 100);
+}
+
+static double wp_srgb(int c)
+{
+	double v = (double)c / 255.0;
+
+	return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+}
+
+static double wp_lum(unsigned rgb)
+{
+	return 0.2126 * wp_srgb((int)((rgb >> 16) & 255)) +
+	       0.7152 * wp_srgb((int)((rgb >> 8) & 255)) +
+	       0.0722 * wp_srgb((int)(rgb & 255));
+}
+
+static double wp_contrast(unsigned a, unsigned b)
+{
+	double la = wp_lum(a), lb = wp_lum(b);
+
+	if (la < lb)
+	{
+		double t = la;
+		la = lb;
+		lb = t;
+	}
+	return (la + 0.05) / (lb + 0.05);
+}
+
+/* Plain body text is a little dimmer than edit_fg so bold/italic emphasis
+ * reads clearly against it (#953).  The dim is theme-aware rather than a
+ * fixed colour: it takes the largest blend toward the pane background that
+ * still clears WCAG AA (4.5:1) there.  A theme whose edit_fg already sits
+ * near that floor (Phosphor, 4.8:1) simply dims less, so no per-theme ramp
+ * is needed and the greyscale Monochrome theme is covered for free. */
+static unsigned body_fg(void)
+{
+	static unsigned have_fg = 0xFFFFFFFFu, have_bg = 0xFFFFFFFFu, out;
+	int t;
+
+	if (have_fg == WP_FG && have_bg == WP_BG)
+		return out;
+	out = WP_FG;
+	for (t = 25; t >= 5; t -= 5)
+	{
+		unsigned cand = blend_to(WP_FG, WP_BG, t);
+
+		if (wp_contrast(cand, WP_BG) >= 4.5)
+		{
+			out = cand;
+			break;
+		}
+	}
+	have_fg = WP_FG;
+	have_bg = WP_BG;
+	return out;
 }
 
 static int wp_chrome(void)
@@ -1196,13 +1268,15 @@ static unsigned style_fg(int style)
 	case WP_STYLE_H1:
 	case WP_STYLE_H2:
 	case WP_STYLE_H3:
-	case WP_STYLE_BULLET:
-	case WP_STYLE_ORDERED:
 		return WP_HEAD;
 	case WP_STYLE_QUOTE:
 		return WP_DIM;
+	/* Lists share the body colour: the marker and its text must not carry a
+	 * second, heavier accent (#953). */
+	case WP_STYLE_BULLET:
+	case WP_STYLE_ORDERED:
 	default:
-		return WP_FG;
+		return body_fg();
 	}
 }
 

@@ -62,6 +62,43 @@ The live image needs **at least 2 GiB of RAM**. GRUB loads the kernel and a
 small initramfs. The root filesystem stays a squashfs on the stick, mounted
 with an in-memory overlay, and pages are read as userspace needs them.
 
+### Hardware firmware
+
+The image ships only the firmware a desktop or laptop PC needs, not Alpine's
+full `linux-firmware` meta package (which is ~1.1 GiB installed and covers ARM
+SoCs, server SmartNICs and embedded/DSL/USB-TV devices). The keep-list is:
+
+- **CPU:** AMD CPU microcode (`amd-ucode`) for late-loadable security fixes.
+- **GPUs:** Intel `i915` and `xe` plus the `intel` audio/Bluetooth blobs, AMD
+  `amdgpu` and `radeon`, and NVIDIA `nvidia` (nouveau/GSP).
+- **Wi-Fi / Bluetooth:** Intel `iwlwifi`, Broadcom `brcm`, MediaTek
+  `mediatek`, Realtek `rtw88`/`rtw89`/`rtlwifi`/`rtl_bt`, and Qualcomm Atheros
+  `ath10k`/`ath11k`/`ath12k`/`ath6k`/`ath9k_htc` (AR9271 USB)/`qca`.
+- **Audio:** Intel Sound Open Firmware (`sof-firmware`) for Chromebooks and
+  modern laptops.
+
+The legacy Marvell `libertas`/`mrvl` pair is intentionally omitted. In Alpine
+3.20 the two packages declare each other as hard dependencies, and `mrvl` also
+ships Marvell Prestera switch-ASIC and Octeon firmware from the server/embedded
+classes this keep-list drops, so it cannot be taken as "Wi-Fi only". Its
+libertas/mwifiex Wi-Fi is legacy and rare on the supported x86_64 desktop and
+laptop hardware, so the ~83 MiB pair is not worth its size. AMD's `amd` SEV
+firmware is omitted too: it is virtualization firmware for SEV guests/hosts,
+not a framebuffer desktop client.
+
+Intel's `iwlwifi` blobs live in Alpine's uncategorized `linux-firmware-other`
+package alongside unrelated legacy blobs, so the builder installs that package
+and prunes it down to just the `iwlwifi-*.ucode` files. If your machine needs a
+firmware file that is not in the keep-list, install the matching
+`linux-firmware-*` package from Alpine into the installed system (or add it to
+the builder's list) -- for example `linux-firmware-mrvl` for an older Marvell
+Wi-Fi card.
+
+The builder verifies every package in the keep-list is actually present in the
+rootfs after installing it, and **fails the build** if one is missing, so a
+typo or an Alpine package rename cannot silently ship an image without that
+firmware.
+
 ### Slow USB sticks (ThinkPad T420 and similar)
 
 A stick that was fine on a Raspberry Pi is often tuned for large sequential
@@ -226,8 +263,8 @@ Google-signed firmware or the write-protect state.
 - **Display.** Panel output comes up through `i915` (already loaded) and the
   KMS/DRM path mmcore uses on any other Intel GPU.
 - **Wi-Fi.** Intel parts use `iwlwifi` (firmware included); the common
-  Broadcom/MediaTek/Qualcomm parts are covered by the extra
-  `linux-firmware-*` packages the builder installs.
+  Broadcom, MediaTek and Qualcomm Atheros parts are in the desktop keep-list
+  (see [Hardware firmware](#hardware-firmware)).
 - **Storage.** eMMC (`dw_mmc`/`sdhci`) and NVMe are in Alpine's `linux-lts`.
 - **Keyboard.** The internal keyboard is handled by the embedded controller
   (`cros_ec`) plus `atkbd`. The top row emits **F1–F12** (there are no media

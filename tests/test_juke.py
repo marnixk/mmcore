@@ -258,7 +258,8 @@ def test_juke_scope_lives_in_its_own_panel(fresh_console):
     _quit_juke(con)
 
 
-def test_juke_spectrum_bars_run_grey_to_lime(fresh_console):
+def test_juke_spectrum_bars_run_black_grey_lime(fresh_console):
+    """#952: the per-bar ramp starts black, passes through grey, peaks lime."""
     con = fresh_console
     # TEST.WAV is a three-second tone, so the bars stay tall long enough to
     # sample the gradient (the MOD fixture is only a brief blip).
@@ -270,28 +271,31 @@ def test_juke_spectrum_bars_run_grey_to_lime(fresh_console):
     ylist = list(range(base - 2, base - maxh, -2))
     coords = [(x, y) for x in xs for y in ylist]
     n = len(ylist)
-    saw_lime = saw_grey = False
+    saw_black = saw_grey = saw_lime = False
     for _ in range(8):
         px = con.screen_pixels(coords)
         for i in range(24):
-            run = []
-            for c in px[i * n:(i + 1) * n]:
-                if sum(c) <= 30:
-                    break
-                run.append(c)
+            col = px[i * n:(i + 1) * n]
+            # The bar's lowest pixels fade to the black canvas, so skip them
+            # for the grey/lime checks but record the black base.
+            run = [c for c in col if sum(c) > 30]
             if len(run) < 8:
                 continue
-            bottom, top = run[0], run[-1]
+            first = next(k for k, c in enumerate(col) if sum(c) > 30)
+            if first > 0:
+                saw_black = True
+            top = run[-1]
             if top[1] > 170 and top[0] > 90 and top[2] < 150:
                 saw_lime = True
-            if max(bottom) - min(bottom) < 40 and 90 < sum(bottom) < 520:
+            if any(max(c) - min(c) < 40 and 90 < sum(c) < 520 for c in run):
                 saw_grey = True
-        if saw_lime and saw_grey:
+        if saw_black and saw_grey and saw_lime:
             break
         time.sleep(0.2)
     _quit_juke(con)
     assert saw_lime, "expected a lime tip in the spectrum bars"
-    assert saw_grey, "expected a grey base in the spectrum bars"
+    assert saw_grey, "expected a grey middle in the spectrum bars"
+    assert saw_black, "expected the spectrum bar base to fade to black"
 
 
 def test_juke_spectrum_has_no_guide_lines(fresh_console):
@@ -359,7 +363,7 @@ def test_help_juke_documents_shuffle_volume_transport(console):
     assert "  <\n" not in out and "  >\n" not in out
 
 
-_LIST_Y0 = 100
+_LIST_Y0 = 160
 _LIST_ROW = 18
 
 
@@ -451,6 +455,25 @@ def test_juke_list_keeps_right_border(fresh_console):
     assert _is_list_sel(got[5]), got[5]
     assert sum(got[6]) < 60, got[6]
     assert sum(got[7]) < 40, got[7]
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_keeps_waveform_visible(fresh_console):
+    """#950: with the playlist open the scope stays put and the list sits below."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JW/A.MOD"),
+                      ("tests/TEST.MOD", "JW/B.MOD")])
+    _open_juke(con, "JW")
+    w, h = con.screen_size()
+    _keys(con, b"l")
+    # The oscilloscope panel is still drawn while the playlist is showing.
+    frame = [(8, 126), (w - 9, 126), (480, 100), (w - 9, 100)]
+    for (x, y), border in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(border), (border, x, y)
+    # The playlist selection begins below the scope panel, not over it.
+    assert _list_row_y(h, 0) > 100 + 52
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
@@ -567,8 +590,8 @@ def test_juke_nested_only_file_still_plays(fresh_console):
     con.send_line("PLAY STOP")
 
 
-def test_juke_deep_tree_reports_truncation(fresh_console):
-    """Past the depth cap the scan stops and the header says more."""
+def test_juke_deep_tree_reaches_deep_file(fresh_console):
+    """#966: the scan is not depth-capped, so a deep track is queued and plays."""
     con = fresh_console
     acc = "JX"
     _mkdir_path(con, acc)
@@ -579,11 +602,12 @@ def test_juke_deep_tree_reports_truncation(fresh_console):
     assert con.send_line('COPY "tests/TEST.MOD" TO "JX/TOP.MOD"') == ""
     out = _open_juke(con, "JX")
     assert "FILE" not in out.upper()
-    screen = con.wait_ocr("more", timeout=8.0, crop="960x40+400+0")
-    assert "more" in screen.lower(), screen
-    title = con.ocr_screen(crop="960x40+0+50")
-    assert "DEEP" not in title.upper()
-    assert "TOP" in title.upper(), title
+    # Subfolders come first, so the deepest track is the one now playing.
+    title = con.wait_ocr("DEEP", timeout=8.0, crop="960x40+0+50")
+    assert "DEEP" in title.upper(), title
+    # The truncation hint is gone from the header (#965).
+    header = con.ocr_screen(crop="960x40+400+0")
+    assert "more" not in header.lower(), header
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
@@ -640,6 +664,30 @@ def test_juke_list_rows_use_song_titles(fresh_console):
     screen = con.wait_ocr("TESTXM", timeout=8.0, crop="960x220+0+100")
     assert "TESTXM" in screen.upper().replace(" ", ""), screen
     assert "TESTMOD" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_folder_beyond_64_files_is_fully_reachable(fresh_console):
+    """#966: a >64-file folder queues every file, not the first 64/256.
+
+    WAV fixtures fall back to their basename as the title, so the last track's
+    name proves the playlist reached the 70th entry rather than clamping.
+    """
+    con = fresh_console
+    total = 70
+    copies = [("tests/TEST.WAV", "JLG/%02d.WAV" % i) for i in range(total)]
+    _prep_queue(con, copies)
+    out = _open_juke(con, "JLG")
+    assert "FILE" not in out.upper()
+    _w, h = con.screen_size()
+    _keys(con, b"l", quiet=0.6)
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    # Walk the selection to the end of the queue and play it.
+    _keys(con, b"\x1b[B" * (total - 1), quiet=2.5)
+    _keys(con, b"\r", quiet=0.6)
+    title = _title_ocr(con, "69")
+    assert "69" in title.upper(), title
     _quit_juke(con)
     con.send_line("PLAY STOP")
 

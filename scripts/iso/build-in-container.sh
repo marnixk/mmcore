@@ -51,22 +51,80 @@ cp /etc/apk/repositories "${ROOTFS}/etc/apk/repositories"
 mkdir -p "${ROOTFS}/etc/apk/keys"
 cp -a /etc/apk/keys/. "${ROOTFS}/etc/apk/keys/" 2>/dev/null || true
 
+# Firmware keep-list (#958, #964, #968). The `linux-firmware` meta pulls in
+# ~100 subpackages (1118 MiB installed, most of the rootfs) covering ARM SoCs,
+# server SmartNICs and embedded/DSL/USB-TV devices a desktop PC never has.
+# Alpine splits linux-firmware by upstream folder, so the desktop/laptop
+# keep-list is an explicit package list instead of the meta:
+#   CPU:     amd-ucode (late-loadable AMD microcode; security-relevant)
+#   GPU:     i915, amdgpu (+radeon), nvidia, intel (BT/audio), xe
+#   WiFi/BT: brcm (+cypress, synaptics), mediatek, rtw88, rtw89, rtlwifi,
+#            rtl_bt, ath10k, ath11k, ath12k, ath6k, ath9k_htc, qca
+# `linux-firmware-amd-ucode` is kept (#964): microcode late-loads from
+# /lib/firmware and carries security fixes; it is 104 KiB.
+# `linux-firmware-ath9k_htc` is kept (#964): the common AR9271 USB Wi-Fi
+# dongles, 140 KiB, sub-MiB like the other Atheros families.
+# `linux-firmware-libertas` and `linux-firmware-mrvl` are a hard circular
+# dependency in Alpine 3.20, so they are kept or dropped together. They are
+# dropped (#964): mrvl also ships Marvell Prestera switch-ASIC and Octeon
+# firmware -- server/embedded classes this keep-list exists to exclude -- so
+# it cannot be taken as "Wi-Fi only", and its libertas/mwifiex Wi-Fi is
+# legacy and rare on the supported x86_64 desktop/laptop hardware. Install
+# `linux-firmware-mrvl` on an installed system if such a card is present.
+# `linux-firmware-amd` (AMD SEV) is dropped too: virtualization firmware for
+# SEV guests/hosts, not a framebuffer desktop client need.
+FW_KEEP="linux-firmware-amd-ucode linux-firmware-i915 linux-firmware-amdgpu \
+	linux-firmware-radeon linux-firmware-nvidia linux-firmware-intel \
+	linux-firmware-xe linux-firmware-brcm linux-firmware-mediatek \
+	linux-firmware-rtw88 linux-firmware-rtw89 linux-firmware-rtlwifi \
+	linux-firmware-rtl_bt linux-firmware-ath10k linux-firmware-ath11k \
+	linux-firmware-ath12k linux-firmware-ath6k linux-firmware-ath9k_htc \
+	linux-firmware-qca"
+# `linux-firmware-other` is upstream's uncategorized catch-all: it holds the
+# Intel iwlwifi ucodes (which must ship) plus ~15 MiB of unrelated legacy
+# TV/USB/embedded blobs. It cannot be dropped wholesale, so it is installed
+# with the rest and pruned to the iwlwifi ucodes below using apk's own file
+# list. It provides `linux-firmware-any` too.
+FW_KEEP="${FW_KEEP} linux-firmware-other"
+
+# `linux-lts` depends on the virtual `linux-firmware-any`. Installing the
+# keep-list in the SAME apk transaction makes apk satisfy that virtual from
+# these packages instead of pulling the `linux-firmware` meta. Installing them
+# one-by-one afterwards instead leaves the meta in the rootfs and makes apk
+# exit non-zero while purging it -- which a `|| true` then masked, the #968
+# silent-no-op class. So the list is part of the base transaction, never a
+# separate best-effort loop.
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux \
-	linux-lts linux-firmware sof-firmware \
+	linux-lts sof-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
 	eudev-libs libxkbcommon \
 	e2fsprogs dosfstools blkid ca-certificates \
-	parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr
+	parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr \
+	${FW_KEEP}
 
-# Wi-Fi firmware for common chipsets; not every package exists on every branch.
-for fw in linux-firmware-iwlwifi linux-firmware-realtek linux-firmware-brcm \
-	linux-firmware-rtlwifi linux-firmware-rtw88 linux-firmware-mediatek \
-	linux-firmware-ath9k; do
-	apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
-		"$fw" >/dev/null 2>&1 || true
+# Prune `linux-firmware-other` (installed above) to the iwlwifi ucodes. The
+# package stays installed, so it still verifies below; only its unrelated
+# firmware files are removed. If the file list cannot be read the files are
+# left intact: extra firmware, never missing firmware.
+apk --root "${ROOTFS}" info -L linux-firmware-other 2>/dev/null |
+	while IFS= read -r f; do
+		case "$f" in
+		*lib/firmware/iwlwifi-*) ;;
+		*lib/firmware/*) rm -f "${ROOTFS}/${f#/}" ;;
+		esac
+	done
+
+# #968: verify every requested firmware package really landed. A typo or an
+# Alpine package rename used to be swallowed by `|| true` and ship an image
+# without that firmware with no build signal (the #958 failure mode). `apk
+# info -e` proves presence in the rootfs regardless of how apk's own exit code
+# behaved, and a missing package fails the build.
+for fw in ${FW_KEEP}; do
+	apk --root "${ROOTFS}" info -e "$fw" >/dev/null 2>&1 \
+		|| die "firmware package missing from the rootfs: $fw"
 done
 
 # mmcore-update fetches over HTTPS (#892). `apk add --root` may not run the

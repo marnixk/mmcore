@@ -11,9 +11,9 @@ JUKE [path$]
   path$ - a file to play, or a folder to queue. Omit it to queue the
           current directory. A folder queue includes supported files in
           subfolders: each directory is taken folders A-Z, then the files
-          beside them, up to 8 directories deep and 256 tracks. A single
-          file plays once; a folder queue continues through the queued
-          files and then wraps around.
+          beside them, as deep as the paths allow. A single file plays
+          once; a folder queue continues through the queued files and then
+          wraps around.
 
 Supported formats:
 
@@ -28,8 +28,8 @@ so it looks the same under every system theme. Leaving JUKE restores your
 console theme untouched. The header carries a graffiti wordmark; the
 oscilloscope sits in its own panel under the title and trails a ghost
 history (older traces fade and cool, the newest stays lime). The 24
-spectrum bars run grey to lime, and the transport and volume indicators run
-along the footer.
+spectrum bars run black through grey to lime, and the transport and volume
+indicators run along the footer.
 
 Controls:
 
@@ -46,13 +46,13 @@ Controls:
     ESC     quit JUKE (music keeps playing)
     Q       quit JUKE (music keeps playing)
 
-The header shows VIS or LIST for the pane in the middle. VIS is the default:
-the oscilloscope and the spectrum. LIST replaces that rectangle with the
-queue in play order, the same order NEXT and PREV follow. The current track
-is marked, the selection is highlighted, and the list scrolls when the queue
-is longer than the pane. Up and Down move the selection; Enter starts that
-track. SPACE, P, N, R, volume, mute, S, and ESC do the same in both panes.
-Going back to VIS leaves the selection where it was.
+L opens the playlist, which is laid out below the oscilloscope so the
+waveform stays visible. The queue is shown in play order, the same order
+NEXT and PREV follow. The current track is marked, the selection is
+highlighted, and the list scrolls when the queue is longer than the pane.
+Up and Down move the selection; Enter starts that track. Pressing L again
+returns to the visualiser and leaves the selection where it was. SPACE, P,
+N, R, volume, mute, S, and ESC do the same in both views.
 
 Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
 order, and the currently playing track stays put. The playlist follows that
@@ -61,9 +61,10 @@ or the ID3 title of an MP3. A missing or unreadable name falls back to the
 file name, and the path is shown under the title when the two differ.
 Titles are read for the current track and for playlist rows as they are
 shown, not for every file while the queue is built. The playlist shows
-each track's path under the folder when no song name is available. A "more"
-note means the scan hit the 256-track queue, the 8-level depth, or a
-directory that did not fit. Volume is the player
+each track's path under the folder when no song name is available. The
+queue holds every supported file in the folder tree; it is bounded only by
+available memory (a path is capped at 159 characters, and one directory
+contributes at most 4096 entries). Volume is the player
 gain that ~PLAY~ VOLUME sets; it holds across track changes while JUKE is open.
 
 Enter on the visualiser quits; the music is not stopped, so you can keep

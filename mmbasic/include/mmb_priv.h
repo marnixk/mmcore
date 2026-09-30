@@ -467,7 +467,8 @@ typedef struct mmb {
 		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
-	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
+	int home_prompt;       /* CLS/app exit: next prompt has no leading CR/LF
+				* (consumed by mmb_front_prompt, #957) */
 	int quit_requested;    /* QUIT: host app should exit its main loop */
 	int print_x;           /* PRINT/LOCATE cursor X in pixels */
 	int print_y;           /* PRINT/LOCATE cursor Y in pixels */

@@ -29,7 +29,7 @@ static int ed_rows(void) { return tui_rows(); }
 #define MENU_HELP   4
 #define MENU_COUNT  5
 
-#define ED_THEME_N     10
+#define ED_THEME_N     11
 #define ED_THEME_SLATE 5
 #define ED_THEME_TURBO 8
 
@@ -86,6 +86,14 @@ static const unsigned pal_phosphor[16] = {
 	0x0000AAu, 0xAA00AAu, 0x2A8A8Au, 0x88AA88u,
 	0x143414u, 0xFF5555u, 0x55FF66u, 0xD4FF4Au,
 	0x5555FFu, 0xFF55FFu, 0x55FFCCu, 0xC8FFC8u
+};
+/* Greyscale: every entry is a neutral grey, spread so the same role map the
+ * colour themes use still clears WCAG AA. */
+static const unsigned pal_mono[16] = {
+	0x0E0E0Eu, 0x484848u, 0x6E6E6Eu, 0xB0B0B0u,
+	0x242424u, 0x8A8A8Au, 0xC4C4C4u, 0xDADADAu,
+	0x1C1C1Cu, 0x9A9A9Au, 0x7A7A7Au, 0xCACACAu,
+	0x323232u, 0x9E9E9Eu, 0xCCCCCCu, 0xECECECu
 };
 
 static const mmb_ed_theme k_themes[ED_THEME_N] = {
@@ -192,6 +200,17 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
 	  TUI_BRBLACK, TUI_BRBLACK, TUI_BRBLACK, TUI_BRWHITE, TUI_RED, TUI_BRGREEN, TUI_BRBLACK, pal_phosphor },
+	/* 1 greyscale */
+	{ "Monochrome",
+	  TUI_WHITE, TUI_BRBLACK, TUI_BRWHITE,
+	  TUI_BLACK, TUI_CYAN,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRMAGENTA, TUI_BRYELLOW, TUI_CYAN,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
+	  TUI_WHITE, TUI_BLACK,
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_BRBLUE, TUI_BRWHITE, TUI_RED, TUI_WHITE, TUI_BRBLUE, pal_mono },
 };
 
 static int theme_index_at(int i)
@@ -611,7 +630,7 @@ static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
 static const char help_hots[] = { 'k', 'm' };
-static const char theme_hots[] = { 'y', 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
+static const char theme_hots[] = { 'y', 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h', 'm' };
 
 static void redraw(void);
 static int save_tab(void);

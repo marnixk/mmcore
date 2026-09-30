@@ -132,8 +132,9 @@ def _pals_and_themes():
 
 def test_theme_palettes_parse():
     pals, themes = _load()
-    assert len(themes) == 10, sorted(themes)
+    assert len(themes) == 11, sorted(themes)
     assert "Slate" in themes
+    assert "Monochrome" in themes
     for name, theme in themes.items():
         if theme["pal"] != "0":
             assert theme["pal"] in pals, name
@@ -199,4 +200,5 @@ def test_default_and_names_unchanged():
     assert names == [
         "Paper", "Cloud", "Snow", "Night", "Nord",
         "Slate", "Forest", "Violet", "Turbo", "Phosphor",
+        "Monochrome",
     ]

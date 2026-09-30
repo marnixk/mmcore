@@ -69,7 +69,7 @@ def test_builder_boots_alpine_with_network_packages():
         "alpine-base",
         "openrc",
         "linux-lts",
-        "linux-firmware",
+        "linux-firmware-i915",
         "wpa_supplicant",
         "iw",
         "grub-mkrescue",
@@ -248,9 +248,120 @@ def test_overlay_wires_ethernet_dhcp_and_wifi():
 
 def test_builder_ships_wifi_firmware_and_supplicant():
     text = open(BUILDER, encoding="utf-8").read()
-    assert "linux-firmware-iwlwifi" in text
+    for pkg in (
+        "linux-firmware-brcm",
+        "linux-firmware-mediatek",
+        "linux-firmware-rtw88",
+        "linux-firmware-ath10k",
+    ):
+        assert pkg in text, pkg
     assert "wpa_supplicant default" in text
     assert "rootfs-overlay" in text
+    # The old names are not Alpine 3.20 packages and silently no-op'd (#958).
+    assert "linux-firmware-iwlwifi" not in text
+    assert "linux-firmware-realtek" not in text
+
+
+def test_builder_ships_only_the_desktop_firmware_keep_list():
+    """#958/#964: replace the whole `linux-firmware` meta with an explicit
+    desktop keep-list (CPU microcode + GPU + WiFi/BT) and drop the
+    ARM/SoC/server-NIC/embedded classes. Intel iwlwifi is uncategorized
+    (`linux-firmware-other`), so that one package is pruned to the iwlwifi
+    ucodes rather than dropped wholesale."""
+    text = open(BUILDER, encoding="utf-8").read()
+    # The kernel line no longer names the meta.
+    assert "linux-lts sof-firmware" in text
+    # Assert against the FW_KEEP list only, so prose in the surrounding
+    # comments (which names the dropped packages) is ignored.
+    keep = text.split('FW_KEEP="', 1)[1].split('"', 1)[0]
+    for pkg in (
+        # CPU (security-relevant late-loadable microcode)
+        "linux-firmware-amd-ucode",
+        # GPU
+        "linux-firmware-i915",
+        "linux-firmware-amdgpu",
+        "linux-firmware-radeon",
+        "linux-firmware-nvidia",
+        "linux-firmware-intel",
+        "linux-firmware-xe",
+        # WiFi/BT
+        "linux-firmware-brcm",
+        "linux-firmware-mediatek",
+        "linux-firmware-rtw88",
+        "linux-firmware-rtw89",
+        "linux-firmware-rtlwifi",
+        "linux-firmware-rtl_bt",
+        "linux-firmware-ath10k",
+        "linux-firmware-ath11k",
+        "linux-firmware-ath12k",
+        "linux-firmware-ath6k",
+        "linux-firmware-ath9k_htc",
+        "linux-firmware-qca",
+    ):
+        assert pkg in keep, pkg
+    # The dropped classes are never installed by name.
+    for pkg in (
+        "linux-firmware-qcom",
+        "linux-firmware-netronome",
+        "linux-firmware-mellanox",
+        "linux-firmware-qed",
+        "linux-firmware-dpaa2",
+        "linux-firmware-liquidio",
+        "linux-firmware-cxgb4",
+        "linux-firmware-bnx2x",
+        "linux-firmware-cnm",
+        "linux-firmware-amlogic",
+        "linux-firmware-s5p-mfc",
+        "linux-firmware-cirrus",
+        "linux-firmware-ueagle-atm",
+        "linux-firmware-mwl8k",
+        "linux-firmware-mwlwifi",
+        "linux-firmware-ar3k",
+        # #964: the legacy Marvell pair (hard circular dependency in Alpine
+        # 3.20; mrvl also drags Prestera/Octeon server blobs) is dropped.
+        "linux-firmware-libertas",
+        "linux-firmware-mrvl",
+    ):
+        assert pkg not in keep, pkg
+    # #964: AMD SEV firmware (`linux-firmware-amd`) is dropped, while the CPU
+    # microcode package (`linux-firmware-amd-ucode`) is kept. The kept name is a
+    # prefix of the dropped one, so match the bare package with a boundary.
+    assert re.search(r"linux-firmware-amd(?![\w-])", keep) is None
+    # iwlwifi is kept from the uncategorized package via an ownership prune:
+    # install linux-firmware-other, then remove its non-iwlwifi /lib/firmware
+    # entries using apk's own `info -L` list.
+    assert "linux-firmware-other" in text
+    assert "info -L linux-firmware-other" in text
+    assert "*lib/firmware/iwlwifi-*" in text
+    assert '*lib/firmware/*) rm -f' in text
+
+
+def test_builder_verifies_every_firmware_package_landed():
+    """#968: a typo or an Alpine package rename must fail the build, not ship
+    an ISO silently missing that firmware (the #958 failure mode)."""
+    text = open(BUILDER, encoding="utf-8").read()
+    # The keep-list is part of the base apk transaction: that is what makes apk
+    # satisfy linux-lts's `linux-firmware-any` from these packages instead of
+    # the `linux-firmware` meta. Installing them in a best-effort loop
+    # afterwards leaves the meta in the rootfs and apk exits non-zero while
+    # purging it, so the old `|| true` hid a real no-op (#968).
+    assert "efibootmgr \\\n\t${FW_KEEP}" in text, (
+        "the firmware keep-list must be in the base apk transaction"
+    )
+    # Every requested package is then checked to be really present in the
+    # rootfs using apk's own installed test...
+    assert 'FW_KEEP=' in text
+    assert 'apk --root "${ROOTFS}" info -e "$fw"' in text
+    # ...and a missing package aborts the build with a clear message.
+    assert '|| die "firmware package missing from the rootfs: $fw"' in text
+    # The verification loop must never swallow a failure or install anything.
+    verify = text.split("for fw in", 1)[1].split("done", 1)[0]
+    assert "apk add" not in verify, verify
+    assert "|| true" not in verify, verify
+    assert "die" in verify, verify
+    # `|| true` stays only on the genuinely optional builder tools.
+    tools = text.split("for pkg in", 1)[1].split("done", 1)[0]
+    assert "|| true" in tools, tools
 
 
 def test_iso_workflow_builds_boot_smokes_and_attaches():
@@ -330,9 +441,11 @@ def test_boot_smoke_retries_dhcp():
 
 
 def test_boot_smoke_waits_for_a_stable_mmcore_pid():
-    """#918: mmcore starts on tty1 via agetty autologin, which lags the ttyS0
-    shell. The STABLE_OK sample must poll (bounded) until a PID is present and
-    unchanged, not sample once before mmcore is up."""
+    """#918/#941: mmcore starts on tty1 via agetty autologin, which lags the
+    ttyS0 shell. The STABLE_OK sample must poll (bounded) until a PID is present
+    and unchanged. BusyBox `pgrep -x` anchors the whole argv[0] path
+    (`/usr/local/bin/mmcore`), so it never matched; match the kernel `comm`
+    name instead."""
     wf = open(WORKFLOW, encoding="utf-8").read()
     stable_lines = [
         ln for ln in wf.splitlines() if "MMCORE_%s" in ln and "STABLE_OK" in ln
@@ -340,7 +453,49 @@ def test_boot_smoke_waits_for_a_stable_mmcore_pid():
     assert len(stable_lines) == 1, stable_lines
     line = stable_lines[0]
     assert "while" in line, line
-    assert "pgrep -x mmcore" in line, line
+    assert "/proc/[0-9]*" in wf, wf
+    assert "/comm" in wf, wf
+    assert "pgrep -x mmcore" not in wf, "BusyBox -x anchors the full argv[0]"
+
+
+def test_boot_smoke_verifies_the_firmware_keep_list_landed():
+    """#958: the smoke must assert representative kept firmware is present, so
+    a bad prune cannot ship silently without it."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    fw_lines = [ln for ln in wf.splitlines() if "iwlwifi-*.ucode" in ln]
+    assert len(fw_lines) == 1, fw_lines
+    line = fw_lines[0]
+    for path in ("/lib/firmware/i915", "/lib/firmware/amdgpu", "/lib/firmware/brcm"):
+        assert path in line, path
+    assert "FW_OK" in line, line
+    assert 'grep -q "MMCORE_FW_OK" boot.log' in wf
+
+
+def test_boot_smoke_is_enabled():
+    """#941: the gate must run again now STABLE_OK matches mmcore's comm name."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    assert "if: false" not in wf
+    assert "if: ${{ !inputs.skip_smoke }}" in wf
+    # The dispatch default must smoke, or a manual re-attach cannot exercise it.
+    assert "default: false" in wf
+
+
+def test_boot_smoke_dumps_diagnostics_on_failure():
+    """#941: a STABLE miss must dump why (process table, mmcore stderr, tty1
+    agetty/login/mmcore state) before poweroff, so boot.log alone is enough."""
+    wf = open(WORKFLOW, encoding="utf-8").read()
+    # Assembled in the guest with printf (like the other markers), so the
+    # source spells out the printf, not the concatenated marker.
+    assert 'printf "MMCORE_%s\\n" DIAG_BEGIN' in wf
+    assert 'printf "MMCORE_%s\\n" DIAG_END' in wf
+    diag = [ln for ln in wf.splitlines() if "DIAG_BEGIN" in ln]
+    assert len(diag) == 1, diag
+    line = diag[0]
+    # Gated on a failed STABLE sample.
+    assert '[ "$ok" = 1 ] ||' in line, line
+    assert "ps w" in line, line
+    assert "/tmp/mmcore.stderr" in line, line
+    assert "/proc/[0-9]*" in line and "/comm" in line, line
 
 
 def test_profile_documents_ctrl_alt_vt_switching():
