@@ -6,17 +6,25 @@
  * `wireless` directory). External tools are run through one runner so tests
  * can inject fakes with MMB_NET_CMD_DIR; the interface names can be pinned
  * with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE. Wi-Fi scan uses `iw` and falls
- * back to `wpa_cli`; addresses come from `ip -4 addr show`. Joining a network
- * (wpa_supplicant config + service restart) lives in a follow-up.
+ * back to `wpa_cli`; addresses come from `ip -4 addr show`. Joining writes
+ * the wpa_supplicant config and reloads it in place. Every helper has a
+ * deadline (MMB_NET_CMD_TIMEOUT_MS in tests) so a stuck supplicant cannot
+ * freeze the console.
  */
 #include "mmbasic.h"
 #include "mmb_priv.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define IFNAME_MAX 32
@@ -65,12 +73,12 @@ static const char *discover_iface(int want_wireless)
 static const char *wlan_iface(void)
 {
 	static char cached[IFNAME_MAX];
-	static int done;
 	const char *env;
 
-	if (done)
-		return cached[0] ? cached : 0;
-	done = 1;
+	/* Keep a found name. A miss is not cached: the radio module may
+	 * appear after the first OPTION WIFI. */
+	if (cached[0])
+		return cached;
 	env = getenv("MMB_NET_WLAN_IFACE");
 	if (env && env[0])
 	{
@@ -110,30 +118,152 @@ static const char *eth_iface(void)
 	return cached[0] ? cached : 0;
 }
 
+static long long now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* MMB_NET_CMD_TIMEOUT_MS shortens every helper deadline (tests). */
+static unsigned cmd_budget_ms(unsigned fallback)
+{
+	const char *e = getenv("MMB_NET_CMD_TIMEOUT_MS");
+	unsigned v;
+
+	if (!e || !e[0])
+		return fallback;
+	v = (unsigned)atoi(e);
+	return v ? v : fallback;
+}
+
 /* Run `cmd` (parsed by the shell) capturing stdout. MMB_NET_CMD_DIR prefixes
- * argv[0] so tests supply fakes. Returns the exit status, or -1. */
-static int run_capture(const char *cmd, char *out, size_t outcap)
+ * argv[0] so tests supply fakes. Stdin is /dev/null and the child is its own
+ * process group: a helper that waits on the keyboard, or on OpenRC, is killed
+ * when `budget_ms` elapses instead of freezing the console. Returns the exit
+ * status, or -1. */
+static int run_capture(const char *cmd, char *out, size_t outcap, unsigned budget_ms)
 {
 	char full[512];
 	const char *dir = getenv("MMB_NET_CMD_DIR");
-	FILE *p;
+	int pipefd[2];
+	pid_t pid;
+	long long deadline;
+	size_t used = 0;
+	int status = 0;
+	int timed_out = 0;
 
-	if (outcap)
+	if (out && outcap)
 		out[0] = 0;
+	budget_ms = cmd_budget_ms(budget_ms);
 	if (dir && dir[0])
 		snprintf(full, sizeof full, "%s/%s", dir, cmd);
 	else
 		snprintf(full, sizeof full, "%s", cmd);
-	p = popen(full, "r");
-	if (!p)
+	if (pipe(pipefd) != 0)
 		return -1;
-	if (out && outcap)
+	pid = fork();
+	if (pid < 0)
 	{
-		size_t n = fread(out, 1, outcap - 1, p);
-
-		out[n] = 0;
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return -1;
 	}
-	return pclose(p);
+	if (pid == 0)
+	{
+		int devnull, fd;
+
+		setpgid(0, 0);
+		devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0)
+		{
+			dup2(devnull, 0);
+			dup2(devnull, 2);
+			if (devnull > 2)
+				close(devnull);
+		}
+		dup2(pipefd[1], 1);
+		close(pipefd[0]);
+		close(pipefd[1]);
+		for (fd = 3; fd < 256; fd++)
+			close(fd);
+		execl("/bin/sh", "sh", "-c", full, (char *)0);
+		_exit(127);
+	}
+	setpgid(pid, pid);
+	close(pipefd[1]);
+	deadline = now_ms() + (long long)budget_ms;
+	for (;;)
+	{
+		struct pollfd pfd;
+		long long left = deadline - now_ms();
+		int pr;
+		char chunk[512];
+		ssize_t n;
+
+		if (left < 0)
+			left = 0;
+		pfd.fd = pipefd[0];
+		pfd.events = POLLIN;
+		pr = poll(&pfd, 1, (int)left);
+		if (pr < 0)
+		{
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		if (pr == 0)
+		{
+			timed_out = 1;
+			break;
+		}
+		n = read(pipefd[0], chunk, sizeof chunk);
+		if (n > 0)
+		{
+			if (out && outcap > 1 && used + 1 < outcap)
+			{
+				size_t take = (size_t)n;
+
+				if (used + take >= outcap)
+					take = outcap - 1 - used;
+				memcpy(out + used, chunk, take);
+				used += take;
+				out[used] = 0;
+			}
+			continue;
+		}
+		break;
+	}
+	close(pipefd[0]);
+	if (!timed_out)
+	{
+		for (;;)
+		{
+			pid_t w = waitpid(pid, &status, WNOHANG);
+
+			if (w == pid)
+				break;
+			if (w < 0 && errno != EINTR)
+				return -1;
+			if (now_ms() > deadline)
+			{
+				timed_out = 1;
+				break;
+			}
+			usleep(10000);
+		}
+	}
+	if (timed_out)
+	{
+		kill(-pid, SIGKILL);
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+		return -1;
+	}
+	if (!WIFEXITED(status))
+		return -1;
+	return WEXITSTATUS(status);
 }
 
 /* IPv4 address of `iface` from `ip -4 addr show dev <iface>`, or 0. */
@@ -147,7 +277,7 @@ static int iface_ipv4(const char *iface, char *buf, size_t cap)
 		return 0;
 	buf[0] = 0;
 	snprintf(cmd, sizeof cmd, "ip -4 addr show dev %s", iface);
-	if (run_capture(cmd, out, sizeof out) != 0)
+	if (run_capture(cmd, out, sizeof out, 3000) != 0)
 		return 0;
 	p = strstr(out, "inet ");
 	if (!p)
@@ -203,11 +333,11 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 	if (!iface || maxn <= 0)
 		return 0;
 	snprintf(cmd, sizeof cmd, "iw dev %s scan", iface);
-	rc = run_capture(cmd, out, sizeof out);
+	rc = run_capture(cmd, out, sizeof out, 20000);
 	if (rc != 0)
 	{
 		snprintf(cmd, sizeof cmd, "wpa_cli -i %s scan_results", iface);
-		rc = run_capture(cmd, out, sizeof out);
+		rc = run_capture(cmd, out, sizeof out, 8000);
 	}
 	if (rc != 0)
 		return 0;
@@ -249,8 +379,7 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 	return n;
 }
 
-/* Join a network: write the wpa_supplicant config and (re)start the OpenRC
- * services that own WPA and DHCP. */
+/* Join a network: write the wpa_supplicant config and reload it. */
 static const char *wpa_conf_path(void)
 {
 	const char *p = getenv("MMB_WPA_CONF");
@@ -299,29 +428,51 @@ static void service_restart(const char *service)
 	char cmd[160];
 
 	snprintf(cmd, sizeof cmd, "rc-service %s restart", service);
-	run_capture(cmd, 0, 0);
+	run_capture(cmd, 0, 0, 8000);
 }
 
-/* Request a DHCP lease on `iface` (busybox udhcpc, as shipped on the ISO). */
+/* Request a DHCP lease on `iface` (busybox udhcpc, as shipped on the ISO).
+ * No -b: a backgrounded client would outlive this call and keep the console
+ * waiting on its parent. */
 static void dhcp_get(const char *iface)
 {
 	char cmd[200];
 
 	if (!iface)
 		return;
-	snprintf(cmd, sizeof cmd, "udhcpc -i %s -b -q -n", iface);
-	run_capture(cmd, 0, 0);
+	snprintf(cmd, sizeof cmd, "udhcpc -i %s -n -q -t 4 -T 2", iface);
+	run_capture(cmd, 0, 0, 12000);
 }
 
 int mmb_wlan_start(const char *ssid, const char *psk)
 {
+	const char *iface;
+	char cmd[320];
+
 	if (!ssid || !ssid[0])
 		return -1;
 	if (write_wpa_conf(ssid, psk) != 0)
 		return -1;
-	service_restart("wpa_supplicant");
-	service_restart("networking");
-	return 0;
+	if (!wlan_iface())
+		run_capture("modprobe iwlwifi", 0, 0, 8000);
+	iface = wlan_iface();
+	if (!iface)
+		return -1;
+	snprintf(cmd, sizeof cmd, "ip link set %s up", iface);
+	run_capture(cmd, 0, 0, 3000);
+	run_capture("rfkill unblock wifi", 0, 0, 3000);
+	/* Reload the config the running supplicant already has open. Restarting
+	 * the OpenRC service waits on supervise-daemon, which does not return
+	 * when the driver or the stop is stuck. */
+	snprintf(cmd, sizeof cmd, "wpa_cli -i %s reconfigure", iface);
+	if (run_capture(cmd, 0, 0, 5000) == 0)
+		return 0;
+	snprintf(cmd, sizeof cmd, "rc-service wpa_supplicant restart");
+	if (run_capture(cmd, 0, 0, 8000) == 0)
+		return 0;
+	snprintf(cmd, sizeof cmd,
+		 "wpa_supplicant -B -i %s -c %s", iface, wpa_conf_path());
+	return run_capture(cmd, 0, 0, 8000) == 0 ? 0 : -1;
 }
 
 int mmb_wlan_connect(const char *ssid, const char *psk)

@@ -219,9 +219,10 @@ the MMBasic prompt: `OPTION WIFI SCAN` scans, `OPTION WIFI` joins with stored
 credentials (or `OPTION WIFI "ssid","psk"` to store and join), and `OPTION
 ETHERNET ON` starts wired DHCP. It discovers interfaces under `/sys/class/net`,
 uses `iw` (falling back to `wpa_cli`) and `ip`, writes
-`/etc/wpa_supplicant/wpa_supplicant.conf`, and restarts the OpenRC
-`wpa_supplicant` / `networking` services — the stack the bootable USB image
-ships. `MMB_NET_WLAN_IFACE` / `MMB_NET_ETH_IFACE` pin the interface names,
+`/etc/wpa_supplicant/wpa_supplicant.conf`, and reloads the running
+supplicant. Helpers are killed on a deadline so a stuck `wpa_supplicant`
+returns to the prompt; the bootable USB image ships that stack.
+`MMB_NET_WLAN_IFACE` / `MMB_NET_ETH_IFACE` pin the interface names,
 `MMB_NET_CMD_DIR` overrides where the tools are run from (tests), and
 `MMB_WPA_CONF` the config path. macOS and Windows keep reporting Wi-Fi
 unavailable and use the host's network.
