@@ -119,6 +119,14 @@ def test_storage_chunks_usb_work_and_keeps_read_handle():
     assert "s_rd[idx]" in src
 
 
+def test_storage_keeps_append_write_handle():
+    """#1000: FAT append reuses one open write FIL instead of reopening and
+    f_lseek(f_size()) - a FAT-chain walk from cluster 0 - for every chunk."""
+    src = open(os.path.join(REPO, "console", "storage.cpp"), encoding="utf-8").read()
+    assert "s_wr[idx]" in src
+    assert "close_write_cache_path" in src
+
+
 def test_chdir_c_without_media(console):
     out = console.send_line('CHDIR "C:"')
     assert out.startswith("?")
@@ -197,6 +205,48 @@ def test_sd_volume_label_shown(kernel_image):
             # The SD slot is the system drive and must never be ejectable.
             assert con.send_line('EJECT "C:"').startswith("?")
             assert con.send_line('CHDIR "C:"') == ""
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_fat_append_reuses_write_handle(kernel_image):
+    """#1000: a FAT append session keeps prior bytes and order across a reused
+    open write FIL (the cache must not truncate or misposition the file)."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBAPP", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "C:"') == ""
+            assert con.send_line('OPEN "APP.TXT" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "ONE"') == ""
+            assert con.send_line("CLOSE #1") == ""
+            assert con.send_line('OPEN "APP.TXT" FOR APPEND AS #1') == ""
+            for i in range(20):
+                assert con.send_line(f'PRINT #1, "APP{i}"') == ""
+            assert con.send_line("CLOSE #1") == ""
+            out = con.send_line('cat "C:/APP.TXT"')
+            assert "ONE" in out
+            assert "APP0" in out and "APP19" in out
+            assert out.index("ONE") < out.index("APP0") < out.index("APP19")
+            assert "APP.TXT" in con.send_line('DIR "C:/"').upper()
         finally:
             con.stop()
     finally:

@@ -94,6 +94,48 @@ static void close_read_cache_path (int idx, const char *full)
 		close_read_cache (idx);
 }
 
+/* Open append write handle cache, one per volume (#1000). A fresh FIL starts
+ * at cluster 0, so reopening the file and f_lseek(f_size()) for every
+ * PRINT#/COPY chunk re-walks the FAT chain each call - O(n^2) over USB. Keep a
+ * FIL positioned at EOF instead, mirroring the read cache (#984), and f_sync()
+ * after each write so the directory entry (size) and data stay visible to a
+ * later read, listing or f_close. The append handle is capped at one per
+ * volume, like the read cache: interleaving appends to two files on one volume
+ * only reopens on the switch, not per chunk. */
+static FIL *s_wr[8];
+static char s_wr_path[8][160];
+
+static void close_write_cache (int idx)
+{
+	if (idx < 0 || idx >= (int)(sizeof s_wr / sizeof s_wr[0]))
+		return;
+	if (s_wr[idx])
+	{
+		f_close (s_wr[idx]);
+		free (s_wr[idx]);
+		s_wr[idx] = 0;
+	}
+	s_wr_path[idx][0] = 0;
+}
+
+static void close_all_write_cache (void)
+{
+	int i;
+	for (i = 0; i < (int)(sizeof s_wr / sizeof s_wr[0]); i++)
+		close_write_cache (i);
+}
+
+/* Close the append cache only when it is the file being modified, so a write
+ * to another file on the same volume (e.g. COPY's destination) does not force
+ * the source handle to be reopened. */
+static void close_write_cache_path (int idx, const char *full)
+{
+	if (idx < 0 || idx >= (int)(sizeof s_wr / sizeof s_wr[0]))
+		return;
+	if (s_wr[idx] && s_wr_path[idx][0] && strcmp(s_wr_path[idx], full) == 0)
+		close_write_cache (idx);
+}
+
 /* Yield to the cooperative scheduler between FS chunks (#983). Called only
  * when no FatFs call is on the stack, so mmb_poll()/mmb_check_break() may
  * safely re-enter the storage layer; s_in_fs stops a nested yield. */
@@ -186,6 +228,7 @@ static void try_mount(int idx)
 		return;
 	s_probed[idx] = 1;
 	close_read_cache(idx);
+	close_write_cache(idx);
 	if (f_mount(&s_st->m_fs[idx], kMap[idx].vol, 1) == FR_OK)
 	{
 		s_ready[idx] = 1;
@@ -212,6 +255,8 @@ boolean CStorage::Initialize (void)
 	memset(s_present, 0, sizeof s_present);
 	memset(s_probed, 0, sizeof s_probed);
 	memset(s_rd, 0, sizeof s_rd);
+	memset(s_wr, 0, sizeof s_wr);
+	memset(s_wr_path, 0, sizeof s_wr_path);
 	s_in_fs = 0;
 	s_last_yield = 0;
 	s_notify_ready = 0;
@@ -245,6 +290,7 @@ void CStorage::Poll (void)
 		{
 			/* Stick pulled without ejecting: drop the stale mount. */
 			close_read_cache(i);
+			close_write_cache(i);
 			f_mount(0, kMap[i].vol, 0);
 			s_ready[i] = 0;
 			s_ejected[i] = 0;
@@ -287,6 +333,7 @@ void mmb_storage_unmount (void)
 	if (!s_st)
 		return;
 	close_all_read_cache ();
+	close_all_write_cache ();
 	for (i = 0; i < kNMap; i++)
 	{
 		if (!s_ready[i])
@@ -372,6 +419,7 @@ int mmb_fat_eject(int letter)
 	unsigned n = 0;
 	if (i < 0 || letter == 'C' || !s_ready[i])
 		return -1;
+	close_write_cache(i);
 	disk_ioctl((BYTE)kMap[i].pd, CTRL_SYNC, 0);
 	close_read_cache(i);
 	f_mount (0, kMap[i].vol, 0);
@@ -495,6 +543,7 @@ int mmb_fat_mkdir(int letter, const char *path)
 	if (!mmb_fat_ready(letter))
 		return -1;
 	close_read_cache(slot_of(letter));
+	close_write_cache(slot_of(letter));
 	return mkdir_parents(letter, path);
 }
 
@@ -505,6 +554,7 @@ int mmb_fat_rmdir(int letter, const char *path)
 		return -1;
 	make_full(letter, path, full, sizeof full);
 	close_read_cache(slot_of(letter));
+	close_write_cache(slot_of(letter));
 	return f_rmdir(full) == FR_OK ? 0 : -1;
 }
 
@@ -515,6 +565,7 @@ int mmb_fat_unlink(int letter, const char *path)
 		return -1;
 	make_full(letter, path, full, sizeof full);
 	close_read_cache(slot_of(letter));
+	close_write_cache(slot_of(letter));
 	return f_unlink(full) == FR_OK ? 0 : -1;
 }
 
@@ -526,6 +577,7 @@ int mmb_fat_rename(int letter, const char *from, const char *to)
 	make_full(letter, from, a, sizeof a);
 	make_full(letter, to, b, sizeof b);
 	close_read_cache(slot_of(letter));
+	close_write_cache(slot_of(letter));
 	return f_rename(a, b) == FR_OK ? 0 : -1;
 }
 
@@ -573,15 +625,57 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, in
 	char full[160];
 	BYTE mode;
 	UINT bw = 0;
+	int idx;
 	if (!mmb_fat_ready(letter))
 		return -1;
+	idx = slot_of(letter);
 	make_full(letter, path, full, sizeof full);
-	close_read_cache_path(slot_of(letter), full);
-	mode = append ? (BYTE)(FA_OPEN_ALWAYS | FA_WRITE) : (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
+	close_read_cache_path(idx, full);
+	if (append)
+	{
+		FIL *wp;
+		/* #1000: keep one write FIL positioned at EOF and reuse it across
+		 * PRINT#/COPY chunks. Reopening and f_lseek(f_size()) per chunk makes
+		 * FatFs walk the FAT chain from cluster 0 every time - O(n^2). */
+		if (!(s_wr[idx] && strcmp(s_wr_path[idx], full) == 0))
+		{
+			close_write_cache(idx);
+			wp = (FIL *)malloc(sizeof(FIL));
+			if (!wp)
+				return -1;
+			if (f_open(wp, full, (BYTE)(FA_OPEN_ALWAYS | FA_WRITE)) != FR_OK)
+			{
+				free(wp);
+				return -1;
+			}
+			f_lseek(wp, f_size(wp));
+			s_wr[idx] = wp;
+			strncpy(s_wr_path[idx], full, sizeof(s_wr_path[idx]) - 1);
+			s_wr_path[idx][sizeof(s_wr_path[idx]) - 1] = 0;
+		}
+		wp = s_wr[idx];
+		if (n)
+		{
+			if (f_write(wp, data, n, &bw) != FR_OK || bw != n)
+			{
+				close_write_cache(idx);
+				return -1;
+			}
+			/* Commit the new size so a later read/stat/listing - or a
+			 * power loss before the next call - sees this chunk. */
+			if (f_sync(wp) != FR_OK)
+			{
+				close_write_cache(idx);
+				return -1;
+			}
+		}
+		storage_yield();
+		return 0;
+	}
+	close_write_cache_path(idx, full);
+	mode = (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
 	if (f_open(&fp, full, mode) != FR_OK)
 		return -1;
-	if (append)
-		f_lseek(&fp, f_size(&fp));
 	if (n && f_write(&fp, data, n, &bw) != FR_OK)
 	{
 		f_close(&fp);
@@ -604,6 +698,9 @@ void *mmb_fat_wopen(int letter, const char *path, int append)
 		return 0;
 	make_full(letter, path, full, sizeof full);
 	close_read_cache_path(slot_of(letter), full);
+	/* A streaming writer takes over the file; drop any cached append handle
+	 * so both do not fight over the same directory entry. */
+	close_write_cache_path(slot_of(letter), full);
 	mode = append ? (BYTE)(FA_OPEN_ALWAYS | FA_WRITE) : (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
 	if (f_open(fp, full, mode) != FR_OK)
 	{
