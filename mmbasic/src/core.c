@@ -17,6 +17,7 @@ static int find_end_select_pc(int from);
 static int find_end_sub_pc(int from);
 static int find_next_pc(int from);
 static void build_jumps(void);
+static void mmb_break_events(void);
 
 /* Jump tables and run flags are per-console interpreter state now that more
  * than one context exists; map the old names onto the active context. */
@@ -2820,10 +2821,13 @@ void mmb_cmd_pause(void)
 	unsigned ms = (unsigned)mmb_as_int(v);
 	unsigned start = mmb_now_ms();
 	if (G.plat && G.plat->millis)
-		/* One poll per spin: mmb_check_break already services storage,
-		 * input, network, audio and events (#988). */
+		/* One device/app poll per spin (mmb_poll), plus the cheap break
+		 * and event checks — previously both poll stacks ran (#988). */
 		while ((mmb_now_ms() - start) < ms)
-			mmb_check_break();
+		{
+			mmb_poll();
+			mmb_break_events();
+		}
 	(void)ms;
 }
 
@@ -2838,7 +2842,10 @@ void mmb_cmd_vsync_wait(void)
 	if (last != 0 && (now - last) < 50)
 	{
 		while ((mmb_now_ms() - last) < 16)
-			mmb_check_break();
+		{
+			mmb_poll();
+			mmb_break_events();
+		}
 	}
 	last = mmb_now_ms();
 }
@@ -2910,6 +2917,18 @@ int mmb_break_key(void)
 	return G.opt.break_key;
 }
 
+/* CTRL-C / events without the device/FS/network/audio poll stack, for
+ * callers that have already run mmb_poll() this spin. */
+static void mmb_break_events(void)
+{
+	if (G.plat && G.plat->take_break && G.plat->take_break())
+	{
+		mmb_play_stop_owned();
+		mmb_error("?BREAK");
+	}
+	mmb_run_events();
+}
+
 void mmb_check_break(void)
 {
 	unsigned now;
@@ -2919,11 +2938,7 @@ void mmb_check_break(void)
 	if (G.opt.profiling)
 		G.prof.check_break++;
 	/* Ctrl-C / BREAK must be seen promptly, so check it on every line. */
-	if (G.plat && G.plat->take_break && G.plat->take_break())
-	{
-		mmb_play_stop_owned();
-		mmb_error("?BREAK");
-	}
+	mmb_break_events();
 	/* The rest is a device/FS/network/audio poll stack. A loop body pays it
 	 * once per line, so rate-limit it to ~1 ms (#988) using the same
 	 * primitive the yield registry uses. */
@@ -2938,7 +2953,6 @@ void mmb_check_break(void)
 	mmb_play_mix();
 	if (G.plat && G.plat->poll_input)
 		G.plat->poll_input();
-	mmb_run_events();
 }
 
 static void skip_balanced_paren(void)
