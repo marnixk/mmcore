@@ -97,6 +97,27 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-console-state.patch"
 fi
 
+if grep -q 'mmbasic-device-dedupe' "${CIRCLE_DIR}/lib/device.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle device removed-handler dedupe patch (#985)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-device-dedupe.patch"
+fi
+
+if grep -q 'mmbasic-dwhci-timeout' "${CIRCLE_DIR}/lib/usb/dwhcidevice.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle DWHCI blocking-transfer timeout patch (#986)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-usb-timeout.patch"
+fi
+
+if grep -q 'mmbasic-fastseek' "${CIRCLE_DIR}/addon/fatfs/ffconf.h" 2>/dev/null; then
+	:
+else
+	log "Applying Circle FatFs fast-seek patch (#984)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fatfs-fastseek.patch"
+fi
+
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"
 MODE="RASPPI=${RASPPI} QEMU=${QEMU:-1}"
 if [ -f "${CIRCLE_DIR}/Config.mk" ]; then

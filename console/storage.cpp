@@ -18,6 +18,7 @@
  */
 
 extern "C" void mmb_storage_notice (const char *msg);
+extern "C" void mmb_check_break (void);
 
 static const struct {
 	char letter;
@@ -41,6 +42,75 @@ static int s_ready[8];
 static int s_ejected[8];	/* user ejected; wait for a physical re-insert */
 static int s_present[8];	/* underlying disk reported the device present */
 static int s_notify_ready;	/* suppress notices during initial probe */
+/* #982: a mount probe has been attempted for this slot since the last plug
+ * event. A present-but-unmountable volume (exFAT/ext4/odd partition) would
+ * otherwise run FatFs mount_volume/disk_read probing on every poll - i.e. on
+ * every executed BASIC line. The latch is cleared by a presence transition or
+ * an explicit EJECT. */
+static int s_probed[8];
+
+/* Open read handle cache, one per volume (#984). FatFs' normal f_lseek from a
+ * handle already positioned earlier in the file walks from the current cluster
+ * instead of cluster 0, so keeping one FIL open turns the chunked read loops
+ * (CAT/FILES viewer/TERM replay/copy) from O(n^2) into O(n). */
+static FIL *s_rd[8];
+static char s_rd_path[8][160];
+static unsigned s_rd_pos[8];
+
+/* Reentrancy guard and rate limit for storage_yield(): the cooperative
+ * callbacks must not fire from inside a FatFs call. */
+static int s_in_fs;
+static unsigned s_last_yield;
+
+static void close_read_cache (int idx)
+{
+	if (idx < 0 || idx >= (int)(sizeof s_rd / sizeof s_rd[0]))
+		return;
+	if (s_rd[idx])
+	{
+		f_close (s_rd[idx]);
+		free (s_rd[idx]);
+		s_rd[idx] = 0;
+	}
+	s_rd_path[idx][0] = 0;
+	s_rd_pos[idx] = 0;
+}
+
+static void close_all_read_cache (void)
+{
+	int i;
+	for (i = 0; i < (int)(sizeof s_rd / sizeof s_rd[0]); i++)
+		close_read_cache (i);
+}
+
+/* Close the read cache only when it is the file being modified, so a write to
+ * another file on the same volume (e.g. COPY's destination) does not force the
+ * source handle to be reopened for every chunk. */
+static void close_read_cache_path (int idx, const char *full)
+{
+	if (idx < 0 || idx >= (int)(sizeof s_rd / sizeof s_rd[0]))
+		return;
+	if (s_rd[idx] && s_rd_path[idx][0] && strcmp(s_rd_path[idx], full) == 0)
+		close_read_cache (idx);
+}
+
+/* Yield to the cooperative scheduler between FS chunks (#983). Called only
+ * when no FatFs call is on the stack, so mmb_poll()/mmb_check_break() may
+ * safely re-enter the storage layer; s_in_fs stops a nested yield. */
+static void storage_yield (void)
+{
+	unsigned now;
+	if (s_in_fs || !s_st)
+		return;
+	now = CTimer::Get ()->GetTicks ();
+	if ((unsigned)(now - s_last_yield) < MSEC2HZ (50))
+		return;
+	s_last_yield = now;
+	s_in_fs = 1;
+	mmb_poll ();
+	mmb_check_break ();
+	s_in_fs = 0;
+}
 
 static int map_index(int letter)
 {
@@ -108,10 +178,14 @@ static void try_mount(int idx)
 {
 	if (idx < 0 || idx >= kNMap)
 		return;
-	if (s_ready[idx] || s_ejected[idx])
+	/* #982: never re-probe a slot that has already been tried since the last
+	 * plug event; an unmountable volume must not cost USB reads per poll. */
+	if (s_ready[idx] || s_ejected[idx] || s_probed[idx])
 		return;
 	if (!s_st)
 		return;
+	s_probed[idx] = 1;
+	close_read_cache(idx);
 	if (f_mount(&s_st->m_fs[idx], kMap[idx].vol, 1) == FR_OK)
 	{
 		s_ready[idx] = 1;
@@ -136,6 +210,10 @@ boolean CStorage::Initialize (void)
 	memset(s_ready, 0, sizeof s_ready);
 	memset(s_ejected, 0, sizeof s_ejected);
 	memset(s_present, 0, sizeof s_present);
+	memset(s_probed, 0, sizeof s_probed);
+	memset(s_rd, 0, sizeof s_rd);
+	s_in_fs = 0;
+	s_last_yield = 0;
 	s_notify_ready = 0;
 
 	m_EMMC.Initialize ();
@@ -159,9 +237,14 @@ void CStorage::Poll (void)
 	for (i = 0; i < kNMap; i++)
 	{
 		int present = disk_status((BYTE)kMap[i].pd) == 0;
+		/* #982: a presence transition is the plug event that re-arms the
+		 * mount probe; an unchanged slot stays latched. */
+		if (present != s_present[i])
+			s_probed[i] = 0;
 		if (s_ready[i] && !present)
 		{
 			/* Stick pulled without ejecting: drop the stale mount. */
+			close_read_cache(i);
 			f_mount(0, kMap[i].vol, 0);
 			s_ready[i] = 0;
 			s_ejected[i] = 0;
@@ -203,6 +286,7 @@ void mmb_storage_unmount (void)
 	int i;
 	if (!s_st)
 		return;
+	close_all_read_cache ();
 	for (i = 0; i < kNMap; i++)
 	{
 		if (!s_ready[i])
@@ -212,6 +296,7 @@ void mmb_storage_unmount (void)
 	}
 	memset(s_ejected, 0, sizeof s_ejected);
 	memset(s_present, 0, sizeof s_present);
+	memset(s_probed, 0, sizeof s_probed);
 	s_notify_ready = 0;
 }
 
@@ -288,6 +373,7 @@ int mmb_fat_eject(int letter)
 	if (i < 0 || letter == 'C' || !s_ready[i])
 		return -1;
 	disk_ioctl((BYTE)kMap[i].pd, CTRL_SYNC, 0);
+	close_read_cache(i);
 	f_mount (0, kMap[i].vol, 0);
 	s_ready[i] = 0;
 	s_ejected[i] = 1;
@@ -408,6 +494,7 @@ int mmb_fat_mkdir(int letter, const char *path)
 {
 	if (!mmb_fat_ready(letter))
 		return -1;
+	close_read_cache(slot_of(letter));
 	return mkdir_parents(letter, path);
 }
 
@@ -417,6 +504,7 @@ int mmb_fat_rmdir(int letter, const char *path)
 	if (!mmb_fat_ready(letter))
 		return -1;
 	make_full(letter, path, full, sizeof full);
+	close_read_cache(slot_of(letter));
 	return f_rmdir(full) == FR_OK ? 0 : -1;
 }
 
@@ -426,6 +514,7 @@ int mmb_fat_unlink(int letter, const char *path)
 	if (!mmb_fat_ready(letter))
 		return -1;
 	make_full(letter, path, full, sizeof full);
+	close_read_cache(slot_of(letter));
 	return f_unlink(full) == FR_OK ? 0 : -1;
 }
 
@@ -436,6 +525,7 @@ int mmb_fat_rename(int letter, const char *from, const char *to)
 		return -1;
 	make_full(letter, from, a, sizeof a);
 	make_full(letter, to, b, sizeof b);
+	close_read_cache(slot_of(letter));
 	return f_rename(a, b) == FR_OK ? 0 : -1;
 }
 
@@ -486,6 +576,7 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, in
 	if (!mmb_fat_ready(letter))
 		return -1;
 	make_full(letter, path, full, sizeof full);
+	close_read_cache_path(slot_of(letter), full);
 	mode = append ? (BYTE)(FA_OPEN_ALWAYS | FA_WRITE) : (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
 	if (f_open(&fp, full, mode) != FR_OK)
 		return -1;
@@ -497,6 +588,7 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n, in
 		return -1;
 	}
 	f_close(&fp);
+	storage_yield();
 	return 0;
 }
 
@@ -511,6 +603,7 @@ void *mmb_fat_wopen(int letter, const char *path, int append)
 	if (!fp)
 		return 0;
 	make_full(letter, path, full, sizeof full);
+	close_read_cache_path(slot_of(letter), full);
 	mode = append ? (BYTE)(FA_OPEN_ALWAYS | FA_WRITE) : (BYTE)(FA_CREATE_ALWAYS | FA_WRITE);
 	if (f_open(fp, full, mode) != FR_OK)
 	{
@@ -532,6 +625,7 @@ int mmb_fat_wwrite(void *handle, const void *data, unsigned n)
 		return -1;
 	if (bw != n)
 		return -1;		/* short write (e.g. volume full) */
+	storage_yield();
 	return 0;
 }
 
@@ -543,29 +637,60 @@ int mmb_fat_wclose(void *handle)
 		return -1;
 	r = f_close(fp);
 	free(fp);
+	storage_yield();
 	return r == FR_OK ? 0 : -1;
 }
 
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
-	FIL fp;
 	char full[160];
 	UINT br = 0;
+	int idx = slot_of(letter);
+	FIL *fp;
 	*got = 0;
-	if (!mmb_fat_ready(letter))
+	if (!mmb_fat_ready(letter) || idx < 0)
 		return -1;
 	make_full(letter, path, full, sizeof full);
-	if (f_open(&fp, full, FA_READ) != FR_OK)
-		return -1;
-	if (pos)
-		f_lseek(&fp, pos);
-	if (n && f_read(&fp, data, n, &br) != FR_OK)
+	/* #984: reuse the open handle for a forward read of the same file. The
+	 * normal f_lseek then walks from the current cluster, not cluster 0. */
+	if (s_rd[idx] && strcmp(s_rd_path[idx], full) == 0 && pos >= s_rd_pos[idx])
 	{
-		f_close(&fp);
+		fp = s_rd[idx];
+		if (pos != s_rd_pos[idx] && f_lseek(fp, pos) != FR_OK)
+		{
+			close_read_cache(idx);
+			return -1;
+		}
+	}
+	else
+	{
+		close_read_cache(idx);
+		fp = (FIL *)malloc(sizeof(FIL));
+		if (!fp)
+			return -1;
+		if (f_open(fp, full, FA_READ) != FR_OK)
+		{
+			free(fp);
+			return -1;
+		}
+		if (pos && f_lseek(fp, pos) != FR_OK)
+		{
+			f_close(fp);
+			free(fp);
+			return -1;
+		}
+		s_rd[idx] = fp;
+		strncpy(s_rd_path[idx], full, sizeof(s_rd_path[idx]) - 1);
+		s_rd_path[idx][sizeof(s_rd_path[idx]) - 1] = 0;
+	}
+	if (n && f_read(fp, data, n, &br) != FR_OK)
+	{
+		close_read_cache(idx);
 		return -1;
 	}
-	f_close(&fp);
+	s_rd_pos[idx] = pos + br;
 	*got = br;
+	storage_yield();
 	return 0;
 }
 
@@ -611,7 +736,7 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 	DIR dp;
 	FILINFO inf;
 	char full[160];
-	int nent = 0;
+	int nent = 0, since = 0;
 	out[0] = 0;
 	if (truncated)
 		*truncated = 0;
@@ -624,6 +749,13 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 	{
 		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
 			break;
+		/* #983: let the cooperative scheduler run during a long scan. The
+		 * yield is between f_readdir calls, so no FatFs call is on the stack. */
+		if (++since >= 64)
+		{
+			since = 0;
+			storage_yield();
+		}
 		if (inf.fname[0] == '.')
 			continue;
 		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
@@ -645,6 +777,7 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 		}
 	}
 	f_closedir(&dp);
+	storage_yield();
 	return 0;
 }
 
@@ -659,7 +792,7 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	DIR dp;
 	FILINFO inf;
 	char full[160];
-	int n = 0, total = 0;
+	int n = 0, total = 0, since = 0;
 	if (truncated)
 		*truncated = 0;
 	if (!out || max <= 0 || !mmb_fat_ready(letter))
@@ -673,6 +806,12 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 
 		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
 			break;
+		/* #983: yield between f_readdir calls on a long scan. */
+		if (++since >= 64)
+		{
+			since = 0;
+			storage_yield();
+		}
 		if (inf.fname[0] == '.')
 			continue;
 		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
@@ -687,6 +826,7 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	f_closedir(&dp);
 	if (truncated)
 		*truncated = total > max;
+	storage_yield();
 	return n;
 }
 

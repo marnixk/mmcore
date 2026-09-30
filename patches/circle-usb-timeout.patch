@@ -1,0 +1,42 @@
+diff --git a/lib/usb/dwhcidevice.cpp b/lib/usb/dwhcidevice.cpp
+index 52be187d..0793b8dc 100644
+--- a/lib/usb/dwhcidevice.cpp
++++ b/lib/usb/dwhcidevice.cpp
+@@ -708,6 +708,11 @@ void CDWHCIDevice::FlushRxFIFO (void)
+ 	m_pTimer->usDelay (1);		// Wait for 3 PHY clocks
+ }
+ 
++// mmbasic-dwhci-timeout (#986): the blocking DWHCI transfer wait had no upper
++// bound and USB_TIMEOUT_NONE means the transfer-stage timeout never fires, so
++// a yanked device or wedged controller could spin forever. Guard the wait.
++#define DWHCI_TRANSFER_TIMEOUT_MS	5000
++
+ boolean CDWHCIDevice::TransferStage (CUSBRequest *pURB, boolean bIn, boolean bStatusStage,
+ 				     unsigned nTimeoutMs)
+ {
+@@ -731,11 +736,25 @@ boolean CDWHCIDevice::TransferStage (CUSBRequest *pURB, boolean bIn, boolean bSt
+ 		return FALSE;
+ 	}
+ 
++	unsigned nStartTicks = m_pTimer->GetTicks ();
++
+ 	while (m_bWaiting[nWaitBlock])
+ 	{
+ #ifdef NO_BUSY_WAIT
+ 		CScheduler::Get ()->Yield ();
+ #endif
++		// mmbasic-dwhci-timeout (#986): bound the blocking wait. Do not free
++		// the wait block here: the controller may still complete the channel
++		// later and its completion routine must not clear a reused block.
++		if (m_pTimer->GetTicks () - nStartTicks >= MSEC2HZ (DWHCI_TRANSFER_TIMEOUT_MS))
++		{
++			m_bWaiting[nWaitBlock] = FALSE;
++
++			pURB->SetStatus (0);
++			pURB->SetUSBError (USBErrorTimeout);
++
++			return FALSE;
++		}
+ 	}
+ 
+ 	FreeWaitBlock (nWaitBlock);
