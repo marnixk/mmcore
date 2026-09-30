@@ -108,6 +108,9 @@ typedef struct {
 	 * successful save should finish quitting WORDPAD (#972). */
 	int dlg_btn;
 	int quit_pending;
+	/* Transient status-line notice, e.g. a failed save (#975).  Cleared on
+	 * the next edit or a successful save. */
+	char notice[64];
 	int scroll;
 	int vid_cols;
 	int vid_rows;
@@ -236,6 +239,7 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 static int wp_save(void);
 static void wp_autosave(void);
 static void wp_stash(void);
+static void wp_save_outcome(int r);
 
 /* Ctrl+Z undo (#532). WORDPAD's buffer is a flat string, so undo keeps a
  * compact pool of pre-edit copies (buffer + length), truncated to the shared
@@ -284,6 +288,7 @@ static void wp_undo_push(void)
  * calls. Programmatic loads/recovery reset the history instead. */
 static void wp_note_edit(void)
 {
+	W.notice[0] = 0;
 	if (!wp_hist_active || wp_hist_taken)
 		return;
 	wp_undo_push();
@@ -497,7 +502,7 @@ static unsigned body_fg(void)
 
 static int wp_chrome(void)
 {
-	if (W.menu_open || W.dialog || W.alt_pend)
+	if (W.menu_open || W.dialog || W.alt_pend || W.notice[0])
 		return 1;
 	if (G.plat && G.plat->alt_held && G.plat->alt_held())
 		return 1;
@@ -2883,9 +2888,12 @@ static void fd_submit_path(const char *path)
 	{
 		if (full[0])
 		{
+			int r;
+
 			strncpy(W.path, full, sizeof(W.path) - 1);
 			W.path[sizeof(W.path) - 1] = 0;
-			if (wp_save() == 1 && W.quit_pending)
+			r = wp_save();
+			if (r == 1 && W.quit_pending)
 			{
 				/* Save-then-exit from the dirty confirmation: the
 				 * file is written, so finish the quit now. */
@@ -2893,6 +2901,10 @@ static void fd_submit_path(const char *path)
 				wp_leave_now();
 				return;
 			}
+			/* A failed Save As write must not vanish either: report it
+			 * on the status line (#975). */
+			if (r != 0)
+				wp_save_outcome(r);
 		}
 		close_ui();
 	}
@@ -3108,8 +3120,11 @@ static void confirm_save(void)
 		W.dialog = WP_DLG_NONE;
 		W.quit_pending = 0;
 		wp_leave_now();
+		return;
 	}
-	/* A failed write leaves WORDPAD open with the buffer intact. */
+	/* A failed write leaves WORDPAD open with the buffer intact; surface it
+	 * on the status line rather than dropping back silently (#975). */
+	wp_save_outcome(-1);
 }
 
 static void confirm_discard(void)
@@ -3136,6 +3151,35 @@ static void confirm_activate(void)
 		confirm_cancel();
 }
 
+/* Shared outcome handling for every explicit save (#975).  wp_save() returns
+ * 1 on success, 0 when there is no filename yet, and -1 when the write
+ * failed.  The old `if (!wp_save())` treated a real failure (-1) as "no path"
+ * and silently ignored it.  Open Save As only for the no-path case; report a
+ * failed write on the status line and keep the dirty buffer open so the user
+ * can retry. */
+static void wp_save_outcome(int r)
+{
+	if (r == 0)
+	{
+		W.notice[0] = 0;
+		open_dialog(WP_DLG_SAVEAS);
+		return;
+	}
+	if (r == -1)
+	{
+		strncpy(W.notice, "Save failed - file not written",
+			sizeof(W.notice) - 1);
+		W.notice[sizeof(W.notice) - 1] = 0;
+		return;
+	}
+	W.notice[0] = 0;
+}
+
+static void wp_save_cmd(void)
+{
+	wp_save_outcome(wp_save());
+}
+
 static void activate_menu(void)
 {
 	int menu = W.menu;
@@ -3149,10 +3193,7 @@ static void activate_menu(void)
 		else if (item == 1)
 			open_dialog(WP_DLG_OPEN);
 		else if (item == 2)
-		{
-			if (!wp_save())
-				open_dialog(WP_DLG_SAVEAS);
-		}
+			wp_save_cmd();
 		else if (item == 3)
 			open_dialog(WP_DLG_SAVEAS);
 		else if (item == 4)
@@ -3205,8 +3246,7 @@ static void do_fkey(int n)
 {
 	if (n == 2)
 	{
-		if (!wp_save())
-			open_dialog(WP_DLG_SAVEAS);
+		wp_save_cmd();
 	}
 	else if (n == 3)
 		open_dialog(WP_DLG_OPEN);
@@ -4004,11 +4044,27 @@ static void draw_status(void)
 	*p++ = ' ';
 	*p = 0;
 	wp_puts(0, row, chip, WP_FG, cbg);
-	p = right;
-	p = put_uint(p, words);
-	strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
-	right[sizeof(right) - 1] = 0;
-	wp_puts(W.vid_cols - (int)strlen(right), row, right, WP_DIM, WP_BG);
+	if (W.notice[0])
+	{
+		/* A save failure takes over the right-hand side of the status
+		 * line and keeps it visible until the next edit (#975). */
+		strncpy(right, W.notice, sizeof(right) - 1);
+		right[sizeof(right) - 1] = 0;
+	}
+	else
+	{
+		p = right;
+		p = put_uint(p, words);
+		strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
+		right[sizeof(right) - 1] = 0;
+	}
+	{
+		int start = W.vid_cols - (int)strlen(right);
+
+		if (start < 0)
+			start = 0;
+		wp_puts(start, row, right, W.notice[0] ? WP_HEAD : WP_DIM, WP_BG);
+	}
 	serial_row(chip);
 	serial_row(right);
 }

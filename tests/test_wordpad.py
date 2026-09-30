@@ -491,6 +491,57 @@ def test_wordpad_dirty_quit_save_saves_then_exits(kernel_image):
         con.stop()
 
 
+def test_wordpad_save_write_failure_is_surfaced(kernel_image):
+    """#975: a failed write is reported, not mistaken for a missing path.
+
+    B: is the read-only package mount, so ``mmb_vfs_write()`` always fails
+    there (``vfs.c`` returns -1 for letter B).  That gives a deterministic
+    failing write without needing read-only/full media, so both explicit-save
+    entry points - File->Save and F2 - can be checked end to end: the old
+    ``if (!wp_save())`` treated -1 exactly like "no path" and silently ignored
+    it, leaving the dirty marker with no error.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "B:/FAIL.MD"')
+        _keys(con, b"hello", quiet=0.5)
+
+        # File -> Save must surface the write failure.
+        _alt_menu(con, b"f", quiet=0.4)
+        saved = _keys(con, b"s", quiet=0.8)
+        assert "save failed" in saved.lower(), saved
+
+        # Editing clears the notice...
+        cleared = _keys(con, b"!", quiet=0.5)
+        assert "save failed" not in cleared.lower(), cleared
+
+        # ...and F2 quick-save must surface it again, not swallow it.
+        f2 = _keys(con, b"\x1b[12~", quiet=0.8)
+        assert "save failed" in f2.lower(), f2
+
+        # Still in WORDPAD: the buffer survived (Alt+X then Discard exits).
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_save_failure_handling_covers_both_call_sites():
+    """#975: guard both writers against the silent ``!wp_save()`` fall-through.
+
+    The QEMU test above proves the menu path and F2 surface a real write
+    failure; this cheap structural check keeps a future edit from
+    reintroducing the ``if (!wp_save())`` pattern that treated -1 like 0.
+    """
+    src = _wordpad_source()
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)  # ignore documentation
+    assert "!wp_save()" not in code, "wp_save() failure (-1) must not be ignored"
+    assert code.count("wp_save_cmd();") >= 2, (
+        "File->Save and F2 should share wp_save_cmd()"
+    )
+
+
 def _pane_left_px(con):
     w, _h = con.screen_size()
     cols = w // 8
