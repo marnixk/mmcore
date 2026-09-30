@@ -736,7 +736,7 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 	DIR dp;
 	FILINFO inf;
 	char full[160];
-	int nent = 0;
+	int nent = 0, since = 0;
 	out[0] = 0;
 	if (truncated)
 		*truncated = 0;
@@ -749,6 +749,13 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out, int ou
 	{
 		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
 			break;
+		/* #983: let the cooperative scheduler run during a long scan. The
+		 * yield is between f_readdir calls, so no FatFs call is on the stack. */
+		if (++since >= 64)
+		{
+			since = 0;
+			storage_yield();
+		}
 		if (inf.fname[0] == '.')
 			continue;
 		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
@@ -785,7 +792,7 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	DIR dp;
 	FILINFO inf;
 	char full[160];
-	int n = 0, total = 0;
+	int n = 0, total = 0, since = 0;
 	if (truncated)
 		*truncated = 0;
 	if (!out || max <= 0 || !mmb_fat_ready(letter))
@@ -799,6 +806,12 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 
 		if (f_readdir(&dp, &inf) != FR_OK || inf.fname[0] == 0)
 			break;
+		/* #983: yield between f_readdir calls on a long scan. */
+		if (++since >= 64)
+		{
+			since = 0;
+			storage_yield();
+		}
 		if (inf.fname[0] == '.')
 			continue;
 		if (pat && pat[0] && !fat_pat_match(inf.fname, pat))
