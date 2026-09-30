@@ -263,14 +263,20 @@ def test_builder_ships_wifi_firmware_and_supplicant():
 
 
 def test_builder_ships_only_the_desktop_firmware_keep_list():
-    """#958: replace the whole `linux-firmware` meta with an explicit desktop
-    keep-list (GPU + WiFi/BT) and drop the ARM/SoC/server-NIC/embedded classes.
-    Intel iwlwifi is uncategorized (`linux-firmware-other`), so that one package
-    is pruned to the iwlwifi ucodes rather than dropped wholesale."""
+    """#958/#964: replace the whole `linux-firmware` meta with an explicit
+    desktop keep-list (CPU microcode + GPU + WiFi/BT) and drop the
+    ARM/SoC/server-NIC/embedded classes. Intel iwlwifi is uncategorized
+    (`linux-firmware-other`), so that one package is pruned to the iwlwifi
+    ucodes rather than dropped wholesale."""
     text = open(BUILDER, encoding="utf-8").read()
     # The kernel line no longer names the meta.
     assert "linux-lts sof-firmware" in text
+    # Assert against the `for fw in ...; do` argument list only, so prose in
+    # the surrounding comments (which names the dropped packages) is ignored.
+    keep = text.split("for fw in", 1)[1].split("; do", 1)[0]
     for pkg in (
+        # CPU (security-relevant late-loadable microcode)
+        "linux-firmware-amd-ucode",
         # GPU
         "linux-firmware-i915",
         "linux-firmware-amdgpu",
@@ -289,10 +295,10 @@ def test_builder_ships_only_the_desktop_firmware_keep_list():
         "linux-firmware-ath11k",
         "linux-firmware-ath12k",
         "linux-firmware-ath6k",
+        "linux-firmware-ath9k_htc",
         "linux-firmware-qca",
-        "linux-firmware-libertas",
     ):
-        assert pkg in text, pkg
+        assert pkg in keep, pkg
     # The dropped classes are never installed by name.
     for pkg in (
         "linux-firmware-qcom",
@@ -311,8 +317,16 @@ def test_builder_ships_only_the_desktop_firmware_keep_list():
         "linux-firmware-mwl8k",
         "linux-firmware-mwlwifi",
         "linux-firmware-ar3k",
+        # #964: the legacy Marvell pair (hard circular dependency in Alpine
+        # 3.20; mrvl also drags Prestera/Octeon server blobs) is dropped.
+        "linux-firmware-libertas",
+        "linux-firmware-mrvl",
     ):
-        assert pkg not in text, pkg
+        assert pkg not in keep, pkg
+    # #964: AMD SEV firmware (`linux-firmware-amd`) is dropped, while the CPU
+    # microcode package (`linux-firmware-amd-ucode`) is kept. The kept name is a
+    # prefix of the dropped one, so match the bare package with a boundary.
+    assert re.search(r"linux-firmware-amd(?![\w-])", keep) is None
     # iwlwifi is kept from the uncategorized package via an ownership prune:
     # install linux-firmware-other, then remove its non-iwlwifi /lib/firmware
     # entries using apk's own `info -L` list.
