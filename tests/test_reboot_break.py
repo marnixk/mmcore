@@ -16,6 +16,16 @@ def _usb_console(kernel_image) -> MMBasicConsole:
     return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
 
 
+def test_help_shutdown(console):
+    listing = scroll_all(console, open_ihelp(console, "INDEX"))
+    assert "SHUTDOWN" in listing
+    close_ihelp(console)
+    out = dump_topic(console, "SHUTDOWN")
+    assert out != "?SYNTAX ERROR"
+    assert "SHUTDOWN" in out
+    assert "power" in out.lower() or "off" in out.lower()
+
+
 def test_help_reboot(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "REBOOT" in listing

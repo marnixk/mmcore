@@ -450,6 +450,15 @@ static void plat_reboot(void)
 	reboot();
 }
 
+static void plat_shutdown(void)
+{
+#if RASPPI >= 5
+	poweroff();
+#else
+	halt();
+#endif
+}
+
 static void plat_audio_set_target(int target)
 {
 	audio_set_target(target);
@@ -1603,6 +1612,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.mouse_state = plat_mouse_state;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;
+	plat.shutdown = plat_shutdown;
 	plat.audio_set_target = plat_audio_set_target;
 	plat.audio_enable = plat_audio_enable;
 	plat.audio_write = plat_audio_write;

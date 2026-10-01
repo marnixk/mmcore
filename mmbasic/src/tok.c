@@ -51,7 +51,7 @@ static const char *const kws[] = {
 	"SETTICK", "STRING", "STRING$", "STR$", "SQR", "SQRT", "SIN", "SINH",
 	"SGN", "SPACE$", "STEP", "SCREEN", "SERIAL", "STATUS", "SWAP",
 	"SLEEP", "SD", "SEARCH", "SMALL", "SUM", "SCALE", "SET", "SCREENSHOT",
-	"SETTINGS",
+	"SETTINGS", "SHUTDOWN",
 	"TO", "THEN", "TERM", "TRIANGLE", "TEXT", "TURTLE", "TIMER", "TIME$",
 	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING", "TYPE",
 	"TIMEZONE",

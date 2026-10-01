@@ -94,6 +94,8 @@ typedef struct mmb_platform {
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */
 	void (*reboot)(void);
+	/* Power off. Does not return. NULL when the host cannot shut down hardware. */
+	void (*shutdown)(void);
 	/* Non-zero when QUIT should end the host application (native builds).
 	 * A bare Pi has no application to close, so QUIT only stops the program. */
 	int can_quit;
@@ -282,6 +284,8 @@ void mmb_boot_start(void);
 
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
+/* Same teardown as mmb_reboot, then platform power-off when supported. */
+void mmb_shutdown(void);
 
 /* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
 void mmb_console_apply_colour(void);

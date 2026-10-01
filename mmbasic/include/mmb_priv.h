@@ -1151,6 +1151,7 @@ void mmb_cmd_connect(void);
 void mmb_cmd_term(void);
 void mmb_cmd_ipconfig(void);
 void mmb_cmd_reboot(void);
+void mmb_cmd_shutdown(void);
 void mmb_cmd_quit(void);
 void mmb_check_break(void);
 int mmb_in_connect(void);
