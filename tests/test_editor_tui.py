@@ -7,6 +7,8 @@ import time
 
 from harness import MMBasicConsole
 
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def _plain(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
@@ -2338,23 +2340,102 @@ def _switch(con, n: int) -> None:
     time.sleep(0.5)
 
 
-def test_editor_periodic_autosave_writes_sidecar(kernel_image):
-    """Issue #516/#521: a dirty tab is checkpointed to <path>.rec."""
+def _repo_source(rel: str) -> str:
+    return open(os.path.join(_REPO, rel), encoding="utf-8").read()
+
+
+def test_autosave_interval_is_shared_one_minute():
+    """#1011: EDIT and WORDPAD share one 60 s checkpoint period.
+
+    Keeping a single definition stops the two apps from drifting apart (they
+    were 1.5 s vs 60 s before this).
+    """
+    priv = _repo_source(os.path.join("mmbasic", "include", "mmb_priv.h"))
+    assert re.search(r"#define\s+MMB_AUTOSAVE_MS\s+60000\b", priv), (
+        "MMB_AUTOSAVE_MS should be 60000ms"
+    )
+    for rel in ("mmbasic/src/editor.c", "mmbasic/src/cmd_wordpad.c"):
+        src = _repo_source(rel.replace("/", os.sep))
+        assert "MMB_AUTOSAVE_MS" in src, f"{rel} should use the shared period"
+        assert "#define ED_AUTOSAVE_MS" not in src, rel
+        assert "#define WP_AUTOSAVE_MS" not in src, rel
+
+
+def test_editor_no_early_sidecar_checkpoint(kernel_image):
+    """#1011: a dirty named buffer is not checkpointed within a few seconds.
+
+    The 60 s period cannot be waited out in QEMU, so this is the honest
+    negative window: type, wait ~3 s, and assert no <path>.rec appeared. A
+    first-keystroke write (the old 1.5 s clock) would fail this.
+    """
     con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
     con.start()
     try:
-        _edit(con, "AUTOS.BAS")
+        _edit(con, "NOEARLY.BAS")
         _keys(con, b"10 PRINT 1", quiet=0.4)
-        time.sleep(2.2)
+        time.sleep(3.0)
         _switch(con, 2)
         con.drain(quiet=0.3, timeout=2.0)
-        assert con.send_line('OPEN "AUTOS.BAS.rec" FOR INPUT AS #1') == ""
-        assert con.send_line("LINE INPUT #1, A$") == ""
-        got = con.send_line("PRINT A$")
-        assert con.send_line("CLOSE #1") == ""
-        assert "PRINT 1" in got
+        listing = con.send_line("DIR").upper()
+        assert "NOEARLY.BAS.REC" not in listing, listing
         _switch(con, 1)
         _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_option_autosave_off_blocks_sidecar(kernel_image):
+    """#1011: OPTION AUTOSAVE OFF suppresses the periodic .rec checkpoint."""
+    con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+    con.start()
+    try:
+        assert con.send_line("OPTION AUTOSAVE OFF") == ""
+        assert "OPTION AUTOSAVE OFF" in con.send_line("OPTION LIST").upper()
+        _edit(con, "OFFAUTO.BAS")
+        _keys(con, b"10 PRINT 2", quiet=0.4)
+        time.sleep(3.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        listing = con.send_line("DIR").upper()
+        assert "OFFAUTO.BAS.REC" not in listing, listing
+        _switch(con, 1)
+        _quit(con)
+        assert con.send_line("OPTION AUTOSAVE ON") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_run_suspended_by_switch_returns_to_editor(kernel_image):
+    """#1012: a Ctrl+R run parked by a console switch must not be mistaken for
+    "program finished"."""
+    con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+    con.start()
+    try:
+        _edit(con, "PARKED.BAS")
+        _keys(con, b"DO\rLOOP", quiet=0.4)
+        running = _keys(con, bytes([18]), quiet=0.8)  # Ctrl+R
+        assert "Press any key to continue" not in running
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        # The program resumes under the switch; no continue overlay is drawn.
+        early = con.drain(quiet=0.6, timeout=2.0).decode(errors="replace")
+        assert "Press any key to continue" not in early, early
+
+        # Stop the parked + resumed program: the editor comes back cleanly.
+        con._ser.sendall(bytes([3]))  # Ctrl+C / BREAK
+        seen = ""
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            seen += con.drain(quiet=0.4).decode(errors="replace")
+            if "File" in seen and "Run" in seen:
+                break
+        assert "File" in seen and "Run" in seen, seen
+        assert "Press any key to continue" not in seen, seen
+        _keys(con, b" ", quiet=0.4)  # dismiss the BREAK error bar
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
 

@@ -231,10 +231,9 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 #define pick_trunc (pick_trunc_s[g_console])
 
 /* Crash-resume sidecar <path>.rec and its pending-prompt path.  The
- * checkpoint runs about once a minute: frequent sidecar writes were visible
- * filesystem activity while typing (#973). */
+ * checkpoint period is shared with EDIT (MMB_AUTOSAVE_MS): frequent sidecar
+ * writes were visible filesystem activity while typing (#973, #1011). */
 #define WP_REC_SUFFIX  ".rec"
-#define WP_AUTOSAVE_MS 60000
 
 static int wp_save(void);
 static void wp_autosave(void);
@@ -4388,16 +4387,24 @@ void mmb_wordpad_poll(void)
 			return;
 		}
 	}
-	if (!W.dialog && W.path[0] && W.dirty &&
-	    mmb_now_ms() - W.rec_at >= WP_AUTOSAVE_MS)
 	{
-		unsigned s = wp_sig();
+		int counting = G.opt.autosave && W.path[0] && W.dirty && !W.dialog;
 
-		W.rec_at = mmb_now_ms();
-		if (s != W.rec_sig)
+		/* Only age the clock while a checkpoint could fire, so the
+		 * first keystroke after an idle clean buffer does not write
+		 * the whole sidecar immediately (#1011). */
+		if (!counting)
+			W.rec_at = mmb_now_ms();
+		else if (mmb_now_ms() - W.rec_at >= MMB_AUTOSAVE_MS)
 		{
-			wp_rec_write();
-			W.rec_sig = s;
+			unsigned s = wp_sig();
+
+			W.rec_at = mmb_now_ms();
+			if (s != W.rec_sig)
+			{
+				wp_rec_write();
+				W.rec_sig = s;
+			}
 		}
 	}
 	chrome = wp_chrome();

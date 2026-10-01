@@ -29,10 +29,12 @@ level, and on an empty top-level item clears the marker to end the list.
 Fenced code blocks paint a full-width background band, and Enter inside one
 carries the previous line's leading whitespace onto the new line.
 
-Crash resume: while a named document is dirty it is checkpointed every couple
-of seconds to a sidecar <file>.rec. Reopening a document whose sidecar is newer
-offers Recover (Y) or Discard (N); Recover loads it into the buffer and only
-overwrites the real file when you save. A clean save removes the sidecar.
+Crash resume: while a named document is dirty it is checkpointed about once a
+minute to a sidecar <file>.rec; OPTION AUTOSAVE OFF disables that periodic
+checkpoint (the leave-time save still writes the real file). Reopening a
+document whose sidecar is newer offers Recover (Y) or Discard (N); Recover
+loads it into the buffer and only overwrites the real file when you save. A
+clean save removes the sidecar.
 
 Ctrl+P quick-open (recursive *.MD picker; typing filters on the document
 name first, then the path). Named buffers auto-save when

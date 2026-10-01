@@ -51,6 +51,9 @@
  * documented chord and snapshot-based apps keep this many steps. EDIT uses a
  * deeper op-journal; matching UX matters more than identical engines. */
 #define MMB_UNDO_DEPTH    8
+/* Crash-resume sidecar checkpoint period, shared by EDIT and WORDPAD so the
+ * two cannot drift (#1011). WORDPAD moved to 60 s in #973; EDIT follows. */
+#define MMB_AUTOSAVE_MS   60000
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
@@ -201,6 +204,7 @@ typedef struct mmb_options {
 	int theme;             /* system-wide colour theme, default Slate */
 	int edit_theme;        /* editor colour theme, -1 = follow system */
 	int edit_jump_break;   /* jump to the line on a run break/error */
+	int autosave;          /* OPTION AUTOSAVE ON|OFF (default ON) */
 	int escape;
 	char search_path[128];
 	char app_path[128];    /* OPTION PATH: .APP dirs, ';' separated (#520) */
@@ -335,6 +339,8 @@ typedef struct mmb_editor {
 	int active;
 	int run_on_exit;
 	int wait_continue;
+	int run_pending;   /* yielded the screen to a RUN a console switch parked
+			    * (#1012); finish it from mmb_editor_poll() */
 	int saved_mode;
 	int saved_bits;
 	int saved_write_page;

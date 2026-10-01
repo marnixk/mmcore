@@ -16,6 +16,11 @@ Settings:
   ANGLE DEGREES|RADIANS    Y_AXIS UP|DOWN
   TAB 2|3|4|8       BREAK n     AUTORUN ON|OFF
     (BREAK n is the cooked key; PrtScr always breaks)
+  AUTOSAVE ON|OFF
+    Periodic crash-resume checkpoint of a dirty named buffer in EDIT and
+    WORDPAD to a <file>.rec sidecar (default ON, about once a minute). OFF
+    disables only the periodic checkpoint; saving on leave still writes the
+    real file.
   COLOURCODE ON|OFF|REVERSE
   CONSOLE SCREEN|SERIAL|BOTH|NONE|SAVE|PORT n
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE
