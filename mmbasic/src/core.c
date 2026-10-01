@@ -1903,6 +1903,9 @@ static void store_line(int num, const char *text)
 	char buf[MMB_LINE_LEN];
 
 	G.prog_dirty = 1; /* token/jump tables are stale until the next RUN (#992) */
+	/* Editing a line rewrites its token text in place, so a resolve-cache
+	 * entry keyed on a token address may now name a different variable. */
+	mmb_resolve_invalidate();
 
 	while (*text == ' ' || *text == '\t')
 		text++;
@@ -2164,8 +2167,10 @@ static void do_let(void)
 	char name[MMB_MAX_NAME];
 	int nidx = 0, idx[MMB_MAX_DIMS], t;
 	mmb_val v;
+	const char *lhs_ref;
 	if (mmb_tcache_try_let())
 		return;
+	lhs_ref = G.p;
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
 	mmb_expect('=');
@@ -2186,7 +2191,7 @@ static void do_let(void)
 			rhs = mmb_expr();
 			if (rhs.type != T_STR)
 				mmb_error("?TYPE MISMATCH");
-			sv = mmb_find_var(name, T_STR, 1, 0, 0);
+			sv = mmb_find_var_ref(lhs_ref, name, T_STR, 1, 0, 0);
 			if (sv->type != T_STR)
 				mmb_error("?TYPE MISMATCH");
 			mmb_str_append(&sv->data.s[0], rhs.s ? rhs.s : "",
@@ -2214,7 +2219,7 @@ static void do_let(void)
 			strncpy(G.time_s, v.s, sizeof(G.time_s) - 1);
 		return;
 	}
-	mmb_do_assign(name, t, nidx, idx, v);
+	mmb_do_assign_ref(lhs_ref, name, t, nidx, idx, v);
 }
 
 static int is_include_line(const char *line, char *inc, int incsz)
@@ -4479,6 +4484,9 @@ static void run_program(void)
 			G.prog_dirty = 0;
 			G.prog_ready = 1;
 		}
+		/* A fresh run may execute re-tokenized text at addresses the cache
+		 * saw last run, so drop every parsed binding (#1002). */
+		mmb_resolve_invalidate();
 		if (!run_preserve_vars)
 		{
 			mmb_clear_vars(1);

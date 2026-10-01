@@ -140,6 +140,29 @@ def test_profiling_tracecache_array_let(console):
     assert on["expr"] < off["expr"] // 2
 
 
+def test_profiling_tracecache_2d_array_let(console):
+    """#1002: the trace cache compiles 2-D array LET and element reads, so the
+    2-D kernel stops taking the general path even with the cache ON."""
+    lines = [
+        "DIM A(20,20)",
+        "FOR I=0 TO 19",
+        "FOR J=0 TO 19",
+        "A(I,J)=I+J",
+        "NEXT J",
+        "NEXT I",
+        "PRINT A(3,4)",
+    ]
+    assert console.send_line("OPTION TRACECACHE OFF") == ""
+    off = _run_kernel(console, "TC2OFF.BAS", lines)
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    on = _run_kernel(console, "TC2ON.BAS", lines)
+    # The resolve cache already leaves findvar near its floor on both paths
+    # (#1002); the trace cache additionally removes the per-iteration parse.
+    assert off["findvar"] < 100
+    assert on["findvar"] < 100
+    assert on["expr"] < off["expr"] // 10
+
+
 def test_profiling_float_math(console):
     p = _run_kernel(
         console,

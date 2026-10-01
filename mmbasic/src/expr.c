@@ -2216,10 +2216,11 @@ static mmb_val expr_primary(void)
 		int nidx = 0, idx[MMB_MAX_DIMS], off = 0, t;
 		mmb_var *var;
 		mmb_val cv;
+		const char *ref = G.p;
 		t = mmb_parse_var_ref(name, &nidx, idx);
 		if (nidx == 0 && mmb_const_lookup(name, t, &cv))
 			return cv;
-		var = mmb_find_var(name, t, 1, nidx, idx);
+		var = mmb_find_var_ref(ref, name, t, 1, nidx, idx);
 		off = mmb_elem_off(var, nidx, idx);
 		return mmb_load_var(var, off);
 	}
