@@ -87,10 +87,14 @@ unsigned long mmb_kw_cmp_total;
 unsigned long mmb_kw_lookup_calls;
 #endif
 
-static char *tprog;
-static int tcap;
-static char tline[MMB_LINE_LEN];
-static int tok_ready;
+/* The tokenized program buffer, its capacity, the immediate-mode line buffer
+ * and the readiness flag are per interpreter instance (#1013). They used to be
+ * file-scope statics, so two consoles running the same file tokenized onto the
+ * same addresses and clobbered each other's compiled trace entries. */
+#define tprog     (G.tprog)
+#define tcap      (G.tcap)
+#define tline     (G.tline)
+#define tok_ready (G.tok_ready)
 
 static void init_kw(void);
 
@@ -262,6 +266,10 @@ void mmb_tokenize_program(void)
 {
 	int i, cap;
 	init_kw();
+	/* The trace cache is keyed by pointers into tprog, so any (re)tokenize of
+	 * this instance's program invalidates its entries: the text at a given
+	 * address may change (and a grown buffer moves every address). */
+	mmb_tcache_invalidate();
 	if (G.nprog <= 0)
 	{
 		tok_ready = 0;
@@ -269,6 +277,7 @@ void mmb_tokenize_program(void)
 	}
 	if (G.nprog > tcap)
 	{
+		char *buf;
 		cap = G.nprog + 32;
 		if (cap > MMB_MAX_LINES)
 			cap = MMB_MAX_LINES;
@@ -277,8 +286,16 @@ void mmb_tokenize_program(void)
 			tok_ready = 0;
 			return;
 		}
-		tprog = G.plat->alloc((unsigned)cap * MMB_LINE_LEN);
-		tcap = tprog ? cap : 0;
+		buf = G.plat->alloc((unsigned)cap * MMB_LINE_LEN);
+		if (!buf)
+		{
+			tok_ready = 0;
+			return;
+		}
+		if (tprog && G.plat->free)
+			G.plat->free(tprog);
+		tprog = buf;
+		tcap = cap;
 	}
 	if (!tprog)
 	{
@@ -288,6 +305,17 @@ void mmb_tokenize_program(void)
 	for (i = 0; i < G.nprog; i++)
 		mmb_tokenize_text(G.prog[i], tprog + i * MMB_LINE_LEN, MMB_LINE_LEN);
 	tok_ready = 1;
+}
+
+/* Release the instance-owned tokenized program buffer (#1013). Called from
+ * mmb_reset() before the context is discarded or reused. */
+void mmb_tok_release(void)
+{
+	if (tprog && G.plat && G.plat->free)
+		G.plat->free(tprog);
+	tprog = 0;
+	tcap = 0;
+	tok_ready = 0;
 }
 
 const char *mmb_tok_line(int pc)

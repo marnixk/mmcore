@@ -365,6 +365,28 @@ typedef struct mmb_audio {
 	int owner;
 } mmb_audio;
 
+/* Trace-cache slot (#1013). The cache is keyed by a pointer into this
+ * interpreter instance's tokenized program buffer, so it must live in the
+ * instance: a shared table let one console's compiled statement entries (with
+ * variable pointers bound to that console) alias another console's, freezing
+ * its variables. */
+#define MMB_TC_SLOTS 256
+#define MMB_TC_CODE  48
+#define MMB_TC_VARS  8
+#define MMB_TC_CONST 8
+
+typedef struct mmb_tc_ent {
+	const char *key;
+	const char *endp;
+	uint8_t code[MMB_TC_CODE];
+	int ncode;
+	mmb_var *vp[MMB_TC_VARS];
+	int nvp;
+	double c[MMB_TC_CONST];
+	int nc;
+	int8_t state;
+} mmb_tc_ent;
+
 typedef struct mmb {
 	const mmb_platform *plat;
 	jmp_buf errjmp;
@@ -537,6 +559,15 @@ typedef struct mmb {
 	int prog_ready;        /* tokenizer + jump tables are current (#992) */
 	int break_primed;      /* rate limiter for mmb_check_break's heavy work (#988) */
 	unsigned break_ms;     /* last time the heavy break poll ran */
+	/* Tokenized program buffer, owned by this instance (#1013). A single
+	 * file-scope buffer let two consoles running the same program tokenize
+	 * onto the same addresses, aliasing each other's trace-cache entries. */
+	char *tprog;
+	int tcap;              /* capacity of tprog, in MMB_LINE_LEN lines */
+	int tok_ready;         /* tprog holds the current program text */
+	char tline[MMB_LINE_LEN]; /* immediate-mode tokenize buffer (#1013) */
+	/* Trace cache for this instance (#1013); see mmb_tc_ent above. */
+	mmb_tc_ent tcache[MMB_TC_SLOTS];
 } mmb;
 
 /* Virtual consoles: one interpreter context per console. The active context
@@ -614,6 +645,7 @@ void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
 void mmb_tokenize_program(void);
+void mmb_tok_release(void); /* free the instance-owned tokenized program (#1013) */
 const char *mmb_tok_line(int pc);
 const char *mmb_tok_immediate(const char *src);
 int mmb_kw_id(const char *kw);

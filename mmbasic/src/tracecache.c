@@ -1,10 +1,15 @@
 #include "mmb_priv.h"
 
-#define TC_SLOTS 256
-#define TC_CODE  48
-#define TC_VARS  8
-#define TC_CONST 8
+/* Storage lives in the interpreter instance (#1013): the cache is keyed by
+ * pointers into that instance's tokenized program and holds pointers to that
+ * instance's variables, so a shared table aliased across consoles. The slot
+ * struct and capacity constants are in mmb_priv.h. */
+#define TC_SLOTS MMB_TC_SLOTS
+#define TC_CODE  MMB_TC_CODE
+#define TC_VARS  MMB_TC_VARS
+#define TC_CONST MMB_TC_CONST
 #define TC_STK   8
+#define tc_ent   mmb_tc_ent
 
 enum {
 	TC_PUSHC = 1,
@@ -29,24 +34,13 @@ enum {
 	TC_END
 };
 
-typedef struct {
-	const char *key;
-	const char *endp;
-	uint8_t code[TC_CODE];
-	int ncode;
-	mmb_var *vp[TC_VARS];
-	int nvp;
-	double c[TC_CONST];
-	int nc;
-	int8_t state;
-} tc_ent;
-
-static tc_ent tab[TC_SLOTS];
+/* The active instance's table; see mmb_tc_ent in mmb_priv.h (#1013). */
+#define tab (G.tcache)
 static int tc_compiling;
 
 void mmb_tcache_invalidate(void)
 {
-	memset(tab, 0, sizeof(tab));
+	memset(G.tcache, 0, sizeof(G.tcache));
 }
 
 static unsigned tc_hash(const char *k)

@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "frontend.h"
 #include <string.h>
 
 extern int mmb_parse_var_ref(char *name, int *nidx, int *idx);
@@ -18,6 +19,7 @@ static int find_end_sub_pc(int from);
 static int find_next_pc(int from);
 static void build_jumps(void);
 static void mmb_break_events(void);
+static void exec_error_reset(int was_running);
 
 /* mmb_poll() re-entrancy guard (see mmb_poll below). File scope so the
  * interpreter's setjmp error landings can clear it after an unwind. */
@@ -3093,11 +3095,37 @@ int mmb_program_suspended(void)
 	return G.run_suspended;
 }
 
-/* Continue a program suspended by a virtual-console switch. */
+/* Continue a program suspended by a virtual-console switch.
+ *
+ * mmb_exec_line()'s setjmp(G.errjmp) landing has already returned by the time
+ * a switch suspends RUN, so calling run_program() here directly left
+ * mmb_error() longjmping into a dead frame (#1014). Establish a fresh landing
+ * for the resumed run and report any break/error to this console, then prompt
+ * (the REPL submit() path that normally does that is not on this call path). */
 void mmb_resume_program(void)
 {
-	if (G.run_suspended)
-		run_program();
+	if (!G.run_suspended)
+		return;
+	if (setjmp(G.errjmp))
+	{
+		exec_error_reset(G.running);
+		G.run_suspended = 0;
+		mmb_out("\r\n");
+		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
+		mmb_out("\r\n");
+		mmb_out_flush();
+		mmb_front_prompt();
+		return;
+	}
+	run_program();
+	/* A resumed program that finishes (rather than suspending again) would
+	 * otherwise return to the host loop without a prompt. Errors took the
+	 * landing above. */
+	if (!G.run_suspended)
+	{
+		mmb_out_flush();
+		mmb_front_prompt();
+	}
 }
 
 int mmb_break_key(void)
@@ -4657,6 +4685,25 @@ static void clear_exec_flags(void)
 	G.branch_pos = 0;
 }
 
+/* Unwind state common to every setjmp(G.errjmp) landing: clear the poll
+ * re-entrancy guard the longjmp skipped past, drop execution flags, and
+ * restore the graphics state a stray error left behind. `was_running` is
+ * read before clear_exec_flags() resets G.running. G.out is left empty for
+ * the caller to fill with the error message. */
+static void exec_error_reset(int was_running)
+{
+	int pages_off = G.gfx.write_page || G.gfx.display_page ||
+			G.gfx.write_fb || G.gfx.page1_any ||
+			G.gfx.page1_alpha_used;
+	s_poll_active = 0;	/* longjmp unwound past mmb_poll() */
+	G.outn = 0;
+	G.out[0] = 0;
+	clear_exec_flags();
+	mmb_pkg_unmount();
+	if (was_running || pages_off)
+		mmb_gfx_reset_console(1);
+}
+
 const char *mmb_exec_line(const char *line)
 {
 	int num;
@@ -4667,17 +4714,7 @@ const char *mmb_exec_line(const char *line)
 	mmb_str_reset();
 	if (setjmp(G.errjmp))
 	{
-		int was_running = G.running;
-		int pages_off = G.gfx.write_page || G.gfx.display_page ||
-				G.gfx.write_fb || G.gfx.page1_any ||
-				G.gfx.page1_alpha_used;
-		s_poll_active = 0;	/* longjmp unwound past mmb_poll() */
-		G.outn = 0;
-		G.out[0] = 0;
-		clear_exec_flags();
-		mmb_pkg_unmount();
-		if (was_running || pages_off)
-			mmb_gfx_reset_console(1);
+		exec_error_reset(G.running);
 		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
 		return G.out;
 	}
@@ -4823,6 +4860,7 @@ void mmb_reset(void)
 	G.nprog = 0;
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
+	mmb_tok_release();
 	s_poll_active = 0;
 	mmb_gfx_init();
 }
