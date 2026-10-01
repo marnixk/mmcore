@@ -239,6 +239,97 @@ def test_running_program_suspends_and_resumes(kernel_image):
         con.stop()
 
 
+def _last_done(text: str) -> int | None:
+    """Last ``DONE <n>`` counter value printed by the loop program."""
+    found = re.findall(r"DONE\s+(\d+)", text)
+    return int(found[-1]) if found else None
+
+
+def test_two_consoles_same_file_keep_own_variables(kernel_image):
+    """#1013: two consoles running the same file must not share the tokenized
+    program buffer or the trace cache. Each console's ``counter`` must reflect
+    only its own execution; before the fix console 1's later reads drifted from
+    the value its own program last printed, because the compiled LET and the
+    resolved variable reference aliased the other instance."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        for line in (
+            "10 counter = 0",
+            "20 DO",
+            "30 counter = counter + 1",
+            "40 PAUSE 10",
+            "50 LOOP UNTIL INKEY$() = CHR$(27)",
+            '60 PRINT "DONE "; counter',
+        ):
+            con.send_line(line)
+        con.send_line('SAVE "PROG.BAS"')
+
+        # Console 1 runs the file, then stays suspended while console 2 loads
+        # and runs the same text (same line numbers, same token addresses).
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+        con.drain(quiet=0.2)
+
+        # Stop console 2: its own variable matches its own DONE value.
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text2 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done2 = _last_done(text2)
+        assert done2 is not None, text2
+        assert con.send_line("PRINT counter") == str(done2), text2
+
+        # Switch back to console 1 (resumes), stop it, and require the same
+        # self-consistency. Before the fix this printed the other instance's
+        # counter and the resumed program drifted.
+        _switch(con, 1)
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text1 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done1 = _last_done(text1)
+        assert done1 is not None, text1
+        assert con.send_line("PRINT counter") == str(done1), text1
+
+        # The guest is still responsive (no wedge).
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        con.stop()
+
+
+def test_break_after_resume_returns_to_prompt(kernel_image):
+    """#1014: a program suspended by a console switch resumes with a live
+    setjmp landing, so Ctrl+C returns to the REPL with ?BREAK instead of
+    longjmping into the dead frame mmb_exec_line() left behind."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"10 DO\r" b"20 LOOP\r" b"RUN\r")
+        time.sleep(0.6)
+        con.drain(quiet=0.2)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 7*6") == "42"
+
+        _switch(con, 1)
+        time.sleep(0.4)
+        con._ser.sendall(bytes([3]))  # Ctrl+C breaks the resumed program
+        seen = con.drain(quiet=0.6, timeout=6.0).decode(errors="replace")
+        assert "BREAK" in seen.upper(), seen
+
+        # The REPL is usable again on this console.
+        assert con.send_line("PRINT 1+2") == "3"
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_audio_playing(kernel_image):
     """#620: the audio engine is one machine resource, so switching consoles
     must not silence it. PLAYING() is global, and PLAY STOP from any console
