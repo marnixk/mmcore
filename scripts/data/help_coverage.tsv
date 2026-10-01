@@ -216,6 +216,7 @@ SELECT CASE	SELECT	alias	alias of SELECT
 SETTICK	SETTICK	topic	dedicated topic
 SETTINGS	SETTINGS	topic	dedicated topic
 SGN	SGN	topic	dedicated topic
+SHUTDOWN	SHUTDOWN	topic	dedicated topic
 SIN	SIN	topic	dedicated topic
 SORT	SORT	topic	dedicated topic
 SPACE$	SPACE$	topic	dedicated topic
