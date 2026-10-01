@@ -534,7 +534,7 @@ def test_wordpad_save_failure_handling_covers_both_call_sites():
     failure; this cheap structural check keeps a future edit from
     reintroducing the ``if (!wp_save())`` pattern that treated -1 like 0.
     """
-    src = _wordpad_source()
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
     code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)  # ignore documentation
     assert "!wp_save()" not in code, "wp_save() failure (-1) must not be ignored"
     assert code.count("wp_save_cmd();") >= 2, (
@@ -1044,17 +1044,56 @@ def test_wordpad_enter_empty_top_item_terminates(kernel_image):
         con.stop()
 
 
-def _wordpad_source() -> str:
-    return open(
-        os.path.join(_REPO, "mmbasic", "src", "cmd_wordpad.c"), encoding="utf-8"
-    ).read()
+def _repo_source(rel: str) -> str:
+    return open(os.path.join(_REPO, rel), encoding="utf-8").read()
 
 
-def test_wordpad_autosave_interval_is_one_minute():
-    """#973: the crash-recovery checkpoint runs about once a minute."""
-    assert re.search(r"#define\s+WP_AUTOSAVE_MS\s+60000\b", _wordpad_source()), (
-        "WP_AUTOSAVE_MS should be 60000ms (#973)"
+def test_wordpad_autosave_interval_is_shared_one_minute():
+    """#973/#1011: WORDPAD uses the shared 60 s checkpoint period."""
+    priv = _repo_source(os.path.join("mmbasic", "include", "mmb_priv.h"))
+    assert re.search(r"#define\s+MMB_AUTOSAVE_MS\s+60000\b", priv), (
+        "MMB_AUTOSAVE_MS should be 60000ms"
     )
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    assert "MMB_AUTOSAVE_MS" in src
+    assert "#define WP_AUTOSAVE_MS" not in src
+
+
+def _ini_path(con):
+    for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
+        out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
+        con.send_line("CLOSE #1")
+        if out == "":
+            return path
+    raise AssertionError("settings INI not found on A: or C:")
+
+
+def _read_ini(con, path=None):
+    if not path:
+        path = _ini_path(con)
+    assert con.send_line("NEW") == ""
+    assert con.send_line(f'10 OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+    assert con.send_line("30 LINE INPUT #1, A$") == ""
+    assert con.send_line("40 PRINT A$") == ""
+    assert con.send_line("50 GOTO 20") == ""
+    assert con.send_line("70 CLOSE #1") == ""
+    return con.send_line("RUN", timeout=8)
+
+
+def test_option_autosave_default_on_and_persists(console):
+    """#1011: OPTION AUTOSAVE defaults ON, toggles, and round-trips the INI."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL").upper()
+    assert "OPTION AUTOSAVE ON" in all_listed, all_listed
+    assert "AUTOSAVE" not in console.send_line("OPTION LIST").upper()
+
+    assert console.send_line("OPTION AUTOSAVE OFF") == ""
+    listed = console.send_line("OPTION LIST").upper()
+    assert "OPTION AUTOSAVE OFF" in listed, listed
+    assert "autosave=0" in _read_ini(console)
+    assert console.send_line("OPTION AUTOSAVE ON") == ""
+    assert "autosave=1" in _read_ini(console)
 
 
 def test_wordpad_no_early_sidecar_checkpoint(kernel_image):
@@ -1073,6 +1112,23 @@ def test_wordpad_no_early_sidecar_checkpoint(kernel_image):
         _quit(con)
         listing = con.send_line("DIR").upper()
         assert "AUTO.MD.REC" not in listing, listing
+    finally:
+        con.stop()
+
+
+def test_wordpad_option_autosave_off_blocks_sidecar(kernel_image):
+    """#1011: OPTION AUTOSAVE OFF suppresses WORDPAD's periodic sidecar."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION AUTOSAVE OFF") == ""
+        _open(con, 'WORDPAD "OFFAUTO.MD"')
+        _keys(con, b"draft text", quiet=0.5)
+        time.sleep(3.0)
+        _quit(con)
+        listing = con.send_line("DIR").upper()
+        assert "OFFAUTO.MD.REC" not in listing, listing
+        assert con.send_line("OPTION AUTOSAVE ON") == ""
     finally:
         con.stop()
 

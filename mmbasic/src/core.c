@@ -1861,6 +1861,7 @@ void mmb_option_reset(void)
 	G.opt.theme = MMB_OPT_DEFAULT_THEME;
 	G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
 	G.opt.edit_jump_break = 0;
+	G.opt.autosave = 1;
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */

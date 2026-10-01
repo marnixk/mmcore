@@ -608,6 +608,11 @@ static void option_dispatch(void)
 		G.opt.autorun = onoff();
 		return;
 	}
+	if (mmb_match("AUTOSAVE"))
+	{
+		G.opt.autosave = onoff();
+		return;
+	}
 	if (mmb_match("COLOURCODE") || mmb_match("COLORCODE"))
 	{
 		if (mmb_match("REVERSE"))
@@ -1193,6 +1198,8 @@ void mmb_option_list(int all)
 		ol_line_int(&n, "OPTION BREAK ", G.opt.break_key);
 	if (all || G.opt.autorun)
 		ol_line(&n, G.opt.autorun ? "OPTION AUTORUN ON" : "OPTION AUTORUN OFF");
+	if (all || !G.opt.autosave)
+		ol_line(&n, G.opt.autosave ? "OPTION AUTOSAVE ON" : "OPTION AUTOSAVE OFF");
 	if (all || !G.opt.colourcode || G.opt.colourcode_reverse)
 	{
 		if (G.opt.colourcode_reverse)
