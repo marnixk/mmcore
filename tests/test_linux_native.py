@@ -41,6 +41,11 @@ def _run(binary, text):
     return proc.stdout + proc.stderr
 
 
+def test_shutdown_unsupported_on_stdio_host(mmb_linux):
+    out = _run(mmb_linux, "SHUTDOWN\n")
+    assert "?SHUTDOWN" in out.upper()
+
+
 def test_native_version_header_regenerates_on_make(tmp_path):
     """#747: the native Makefile must FORCE mmb_version.h to regenerate.
 

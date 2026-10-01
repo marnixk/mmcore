@@ -68,6 +68,7 @@ def test_builder_boots_alpine_with_network_packages():
     for needle in (
         "alpine-base",
         "openrc",
+        "acpid",
         "linux-lts",
         "linux-firmware-i915",
         "wpa_supplicant",
@@ -107,6 +108,31 @@ def test_overlay_autostarts_mmcore_on_the_framebuffer():
     assert "tty1" in profile
     assert "kmsdrm" in profile
     assert os.path.isfile(os.path.join(OVERLAY, "etc", "modules"))
+
+
+def test_acpid_power_and_lid_handlers_are_in_the_overlay():
+    for rel in (
+        "etc/acpi/events/powerbtn",
+        "etc/acpi/events/lid",
+        "etc/acpi/mmcore-power.sh",
+        "etc/acpi/mmcore-lid.sh",
+        "etc/acpi/mmcore-sync-storage.sh",
+    ):
+        path = os.path.join(OVERLAY, rel)
+        assert os.path.isfile(path), path
+    text = open(BUILDER, encoding="utf-8").read()
+    assert "enable acpid default" in text
+    power = open(os.path.join(OVERLAY, "etc/acpi/mmcore-power.sh"), encoding="utf-8").read()
+    assert "/sbin/poweroff" in power
+    lid = open(os.path.join(OVERLAY, "etc/acpi/mmcore-lid.sh"), encoding="utf-8").read()
+    assert "/sys/power/state" in lid
+    assert "mem" in lid
+    sync = open(
+        os.path.join(OVERLAY, "etc/acpi/mmcore-sync-storage.sh"), encoding="utf-8"
+    ).read()
+    assert "/media/mmcore" in sync
+    for script in ("mmcore-power.sh", "mmcore-lid.sh", "mmcore-sync-storage.sh"):
+        _run(["bash", "-n", os.path.join(OVERLAY, "etc/acpi", script)])
 
 
 def test_persistence_script_mounts_the_labeled_partition():

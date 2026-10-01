@@ -2889,6 +2889,28 @@ void mmb_cmd_reboot(void)
 	mmb_reboot();
 }
 
+void mmb_shutdown(void)
+{
+	int i;
+
+	G.running = 0;
+	mmb_play_stop();
+	mmb_close_tcp_files();
+	for (i = 1; i <= MMB_MAX_FILES; i++)
+		G.files[i].open = 0;
+	mmb_settings_save();
+	mmb_storage_unmount();
+	mmb_console_write("Shutting down...\r\n");
+	if (G.plat && G.plat->shutdown)
+		G.plat->shutdown();
+	mmb_error("?SHUTDOWN");
+}
+
+void mmb_cmd_shutdown(void)
+{
+	mmb_shutdown();
+}
+
 /* QUIT: ask the host application to end. At the prompt this leaves the
  * interpreter; inside a program it also stops RUN. A platform with no host
  * loop to end (a bare Pi) just stops the program, like END. */
@@ -3273,6 +3295,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("VSYNC_WAIT")] = mmb_cmd_vsync_wait;
 		tab[mmb_kw_id("REBOOT")] = mmb_cmd_reboot;
 		tab[mmb_kw_id("RESTART")] = mmb_cmd_reboot;
+		tab[mmb_kw_id("SHUTDOWN")] = mmb_cmd_shutdown;
 		tab[mmb_kw_id("QUIT")] = mmb_cmd_quit;
 		tab[mmb_kw_id("ERASE")] = mmb_cmd_clear;
 		tab[mmb_kw_id("MATH")] = mmb_cmd_math;
@@ -3920,6 +3943,11 @@ static void exec_statement(void)
 	if (mmb_match("REBOOT") || mmb_match("RESTART"))
 	{
 		mmb_cmd_reboot();
+		return;
+	}
+	if (mmb_match("SHUTDOWN"))
+	{
+		mmb_cmd_shutdown();
 		return;
 	}
 	if (mmb_match("ERASE"))

@@ -58,6 +58,18 @@ partition the session is read-only.
 
 If mmcore exits, the tty1 session ends and it starts again.
 
+### Power management (laptops)
+
+`acpid` is enabled on the live and installed images. The **power button** runs a
+clean shutdown (`/sbin/poweroff`) after syncing disks and unmounting the
+`MMCORE` / `MMCORE-SYS` / `MMCORE-DATA` persistence mounts when they are
+mounted. **Closing the lid** suspends to RAM (`echo mem > /sys/power/state`);
+opening the lid resumes through the kernel with no extra handler.
+
+At the MMBasic prompt, `SHUTDOWN` performs the same style of power-off on the
+framebuffer image (and on a Raspberry Pi). The native Linux/macOS/Windows desktop
+apps do not shut down hardware; they report that `SHUTDOWN` is unavailable.
+
 The live session is pinned to the media it booted from: GRUB sets its root by
 a marker file at the ISO's own root (`mmcore-live-media`) and the kernel
 command line carries `mmcore.live=1`, so the live root is always the stick's

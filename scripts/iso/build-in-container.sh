@@ -95,7 +95,7 @@ FW_KEEP="${FW_KEEP} linux-firmware-other"
 # silent-no-op class. So the list is part of the base transaction, never a
 # separate best-effort loop.
 apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
-	alpine-base busybox openrc util-linux \
+	alpine-base busybox openrc util-linux acpid \
 	linux-lts sof-firmware \
 	wpa_supplicant iw ifupdown-ng \
 	alsa-lib alsa-utils libgcc \
@@ -182,6 +182,7 @@ enable syslog boot
 enable networking boot
 enable local boot
 enable wpa_supplicant default
+enable acpid default
 
 if [ -x "${REPO_ROOT}/scripts/iso/build-mmcore.sh" ]; then
 	log "Building mmcore for the rootfs"
@@ -209,7 +210,7 @@ chmod 0755 "${ROOTFS}/usr/local/bin/mmcore-splash"
 if [ -d "${OVERLAY}" ]; then
 	log "Applying rootfs overlay"
 	cp -a "${OVERLAY}/." "${ROOTFS}/"
-	chroot "${ROOTFS}" /bin/sh -c 'chmod +x /etc/local.d/*.start 2>/dev/null || true'
+	chroot "${ROOTFS}" /bin/sh -c 'chmod +x /etc/local.d/*.start /etc/acpi/*.sh 2>/dev/null || true'
 fi
 
 log "Packing the squashfs root and a small initramfs"

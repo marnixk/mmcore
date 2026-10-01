@@ -380,6 +380,17 @@ static void sdl_reboot(void)
 	exit(0);
 }
 
+#if defined(MMB_SDL_FRAMEBUFFER) && !defined(__APPLE__) && !defined(_WIN32)
+static void sdl_shutdown(void)
+{
+	sync();
+	execl("/sbin/poweroff", "poweroff", (char *)0);
+	execl("/bin/poweroff", "poweroff", (char *)0);
+	execl("/sbin/halt", "halt", "-p", (char *)0);
+	_exit(1);
+}
+#endif
+
 static const mmb_platform sdl_plat = {
 	.write_serial = sdl_serial,
 	.write_screen = sdl_screen,
@@ -400,6 +411,9 @@ static const mmb_platform sdl_plat = {
 	.take_break = sdl_input_take_break,
 	.mouse_state = sdl_mouse_state,
 	.reboot = sdl_reboot,
+#if defined(MMB_SDL_FRAMEBUFFER) && !defined(__APPLE__) && !defined(_WIN32)
+	.shutdown = sdl_shutdown,
+#endif
 	.can_quit = 1,
 	.alt_held = sdl_input_alt_held,
 	.ctrl_alt_held = sdl_input_ctrl_alt_held,
