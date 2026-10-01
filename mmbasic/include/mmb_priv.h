@@ -624,6 +624,13 @@ void mmb_clear_vars(int keep_options);
 void mmb_local_restore(int g);
 void mmb_vars_rehash(void);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
+/* Resolve a variable reference parsed from source, caching the binding per
+ * source-token address so a repeat execution skips the hash lookup (#1002). */
+mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int create,
+			  int nidx, int *idx);
+void mmb_do_assign_ref(const char *ref, const char *name, int type_hint, int nidx,
+		       int *idx, mmb_val val);
+void mmb_resolve_invalidate(void);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
 int mmb_elem_off(mmb_var *v, int nidx, const int *idx);
 int mmb_parse_var_ref(char *name, int *nidx, int *idx);
