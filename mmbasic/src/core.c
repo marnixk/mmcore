@@ -19,6 +19,10 @@ static int find_next_pc(int from);
 static void build_jumps(void);
 static void mmb_break_events(void);
 
+/* mmb_poll() re-entrancy guard (see mmb_poll below). File scope so the
+ * interpreter's setjmp error landings can clear it after an unwind. */
+static int s_poll_active;
+
 /* Jump tables and run flags are per-console interpreter state now that more
  * than one context exists; map the old names onto the active context. */
 #define jmp_wend          (G.jmp_wend)
@@ -4560,6 +4564,7 @@ static void run_program(void)
 			{
 				if (setjmp(G.run_errjmp))
 				{
+					s_poll_active = 0;	/* unwound past mmb_poll() */
 					trapped = 1;
 					break;
 				}
@@ -4666,6 +4671,7 @@ const char *mmb_exec_line(const char *line)
 		int pages_off = G.gfx.write_page || G.gfx.display_page ||
 				G.gfx.write_fb || G.gfx.page1_any ||
 				G.gfx.page1_alpha_used;
+		s_poll_active = 0;	/* longjmp unwound past mmb_poll() */
 		G.outn = 0;
 		G.out[0] = 0;
 		clear_exec_flags();
@@ -4817,12 +4823,24 @@ void mmb_reset(void)
 	G.nprog = 0;
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
+	s_poll_active = 0;
 	mmb_gfx_init();
 }
 
+/* mmb_poll() is not re-entrant: it drives the app polls and the one-shot
+ * boot-time network bring-up. A storage yield (or an app poll) can call back
+ * into it while it is still on the stack - a WLAN config write goes through
+ * the FS layer, whose per-chunk yield called mmb_poll() again, which re-ran
+ * the network bring-up and recursed. Guard the whole body so a nested call is
+ * a no-op instead of re-entering the poll stack. mmb_error()'s longjmp can
+ * leave the guard set, so the setjmp error landings clear it (see run_program
+ * and mmb_exec_line). */
 void mmb_poll(void)
 {
 	static int net_boot;
+	if (s_poll_active)
+		return;
+	s_poll_active = 1;
 	mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
@@ -4866,4 +4884,5 @@ void mmb_poll(void)
 	if (mmb_yield_count() > 0)
 		mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
+	s_poll_active = 0;
 }
