@@ -53,6 +53,20 @@ def _lines(text):
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def test_name_moves_file_between_folders(console):
+    """#1028: NAME across folders reparents a file on the A: ramdisk, so the
+    FILES cross-folder move no longer reports "Move failed"."""
+    assert console.send_line('CHDIR "A:"') == ""
+    assert console.send_line('MKDIR "RN1028A"') == ""
+    assert console.send_line('MKDIR "RN1028B"') == ""
+    _write_text(console, "A:/RN1028A/MV.TXT", "hi")
+    assert console.send_line(
+        'NAME "A:/RN1028A/MV.TXT" AS "A:/RN1028B/MV.TXT"'
+    ) == ""
+    assert "MV.TXT" not in console.send_line('DIR "A:/RN1028A"').upper()
+    assert "MV.TXT" in console.send_line('DIR "A:/RN1028B"').upper()
+
+
 def test_dir_sorts_folders_then_files(console):
     assert console.send_line('CHDIR "A:"') == ""
     assert console.send_line('MKDIR "SORT391"') == ""
