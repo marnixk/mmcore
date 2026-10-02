@@ -1,7 +1,12 @@
 """FILES dual-pane TUI: navigate, run .BAS, view unknown types, quit."""
 
+import os
+import shutil
 import subprocess
+import tempfile
 import time
+
+import pytest
 
 from harness import MMBasicConsole
 
@@ -499,6 +504,53 @@ def test_files_move_keeps_selection_near_moved(fresh_console):
     _keys(con, b"q")
     assert "F3.TXT" in con.send_line('DIR "A:/DESTDIR"').upper()
     assert "F3.TXT" not in con.send_line('DIR "A:/MOVEDIR"').upper()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_files_move_across_drives_copies_and_deletes(kernel_image):
+    """#1030: a move from the A: ramdisk to the C: SD volume has no single
+    rename primitive, so FILES must copy the file then delete the source."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True,
+            capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('OPEN "XFER.TXT" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "cross-drive"') == ""
+            assert con.send_line("CLOSE #1") == ""
+            _open_files(con)
+            # Right pane -> C: (Alt+R, then the "Drive C:" hotkey). Tab back
+            # to the left pane so the move source stays on A:.
+            _keys(con, bytes([1]) + b"rc", quiet=0.6)
+            _keys(con, b"\t", quiet=0.3)
+            _down_to(con, "SEL=XFER.TXT")
+            _keys(con, b"m", quiet=0.4)
+            seen = _keys(con, b"\r", quiet=1.0)
+            assert "Moved" in seen, seen
+            _keys(con, b"q")
+            assert "XFER.TXT" in con.send_line('DIR "C:/"').upper()
+            assert "XFER.TXT" not in con.send_line('DIR "A:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
 
 
 def test_files_many_entries_reports_truncation(fresh_console):

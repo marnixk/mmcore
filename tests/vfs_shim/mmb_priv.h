@@ -116,6 +116,7 @@ int mmb_vfs_exists(const char *path);
 int mmb_vfs_mkdir(const char *path);
 int mmb_vfs_isdir(const char *path);
 int mmb_vfs_rename(const char *src, const char *dst);
+int mmb_vfs_move(const char *src, const char *dst);
 const char *mmb_vfs_cwd(void);
 int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 			 int *truncated);

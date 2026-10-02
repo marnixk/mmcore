@@ -963,6 +963,26 @@ int mmb_vfs_rename(const char *src, const char *dst)
 	return 0;
 }
 
+int mmb_vfs_move(const char *src, const char *dst)
+{
+	mmb_xpath a, b;
+	if (split_path(src, &a) != 0 || split_path(dst, &b) != 0)
+		return -1;
+	if (a.letter == b.letter)
+		return mmb_vfs_rename(src, dst);
+	/* A rename cannot cross volumes, so copy the bytes and then drop the
+	 * source. If the source cannot be removed, undo the copy so a failed
+	 * move does not silently leave the file in both places. */
+	if (mmb_vfs_copy(src, dst) != 0)
+		return -1;
+	if (mmb_vfs_kill(src) != 0)
+	{
+		mmb_vfs_kill(dst);
+		return -1;
+	}
+	return 0;
+}
+
 int mmb_vfs_hidden_name(const char *name)
 {
 	return name && name[0] == '.';

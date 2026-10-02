@@ -2409,7 +2409,7 @@ static void apply_prompt(void)
 		}
 		else
 		{
-			if (mmb_vfs_rename(src, F.prompt) != 0)
+			if (mmb_vfs_move(src, F.prompt) != 0)
 				set_hint("Move failed");
 			else
 				set_hint("Moved");
