@@ -148,6 +148,25 @@ The kernel is booted with `quiet loglevel=3` plus a hidden cursor
 console, which keeps `ttyS0` useful for debugging. The `MMCORE` persistence
 mount and networking bring-up are unaffected.
 
+The repainter cannot fight mmcore for the framebuffer (#1032):
+
+- `root/.profile` signals `mmcore-splash` and waits up to ~1 s for it to close
+  `/dev/fb0` before `exec mmcore`, escalating to `SIGKILL` if it is wedged.
+- `mmcore-splash-start` also runs the helper with a bounded lifetime
+  (`-t`, default **180 s**, override with `MMCORE_SPLASH_TIMEOUT`). If the tty1
+  login never happens — for example on a Chromebook whose panel never lights
+  up — the helper self-terminates instead of repainting over mmcore forever. It
+  also exits after repeated framebuffer failures once mmcore has taken the
+  display.
+- mmcore's own video bring-up is bounded. If `SDL_Init(SDL_INIT_VIDEO)` /
+  `SDL_CreateWindow` / `SDL_CreateRenderer` does not complete within
+  `MMCORE_VIDEO_TIMEOUT` seconds (default **30**, `0` disables the watchdog),
+  mmcore logs why to stderr, `/dev/console` (the serial port) and `/dev/ttyS0`,
+  then exits so tty1 respawns it instead of hanging on the logo. A failed
+  window/renderer open is logged the same way together with the `/dev/dri`
+  nodes it saw.
+
+
 ### Persistent storage
 
 At boot the image looks for a partition labelled `MMCORE` and mounts it at
@@ -356,9 +375,73 @@ provide an IA32 EFI stub for free; booting them would need a separate build
 variant with an IA32 GRUB EFI stub and a 32-bit-EFI-capable kernel. Those
 models are **unsupported** for now — the ISO does not ship an IA32 variant.
 
+### If the boot hangs on the mmcore logo
+
+A report of "the logo paints, then nothing" (issue #1032) is a **splash →
+KMS handoff** problem, not firmware or GRUB: GRUB and the splash both painted,
+so the kernel and userspace early boot ran. QEMU cannot model `cros_ec`, panel
+timing, SOF or the Chromebook keyboard controller, so it cannot reproduce the
+hang; the timeout and console logging above exist to turn it into a
+diagnosable, self-recovering failure on real hardware.
+
+As of #1032 mmcore does not block forever: if the KMS/DRM modeset wedges, the
+`MMCORE_VIDEO_TIMEOUT` watchdog writes
+
+```text
+mmcore: SDL video init timed out (KMS/DRM modeset stuck); exiting so tty1
+retries. See docs/framebuffer-and-iso.md 'Intel Chromebooks'.
+```
+
+to `/dev/console` (the serial port), `/dev/ttyS0` and stderr, then exits so the
+tty1 respawn retries. If instead `SDL_CreateWindow`/`SDL_CreateRenderer`
+returns an error, the message is:
+
+```text
+mmcore: could not open SDL window: <SDL error>
+mmcore: /dev/dri contains:
+mmcore:   /dev/dri/card0
+```
+
+Both appear on the serial console, so a serial cable or a second machine
+catching `ttyS0` is enough to see them even when the panel never lights up.
+
+### Chromebook hardware QA checklist
+
+The QEMU boot smoke uses virtio-gpu and cannot exercise the Chromebook paths.
+When a real Chromebook fails to reach the prompt, collect the following and
+attach it to the issue (the facts the report was missing):
+
+1. **Model + CPU.** `cat /sys/class/dmi/id/product_name` (or the marketing
+   name) and `lscpu | grep 'Model name'`. Note Intel generation (Bay Trail,
+   Braswell, Skylake, Kaby Lake, ...) or ARM.
+2. **Firmware path.** Stock developer mode + `RW_LEGACY` (SeaBIOS/edk2) or
+   MrChromebox Full ROM UEFI. `sudo crossystem` or the MrChromebox firmware
+   menu confirms it. IA32 models are unsupported (above).
+3. **ISO version.** `cat /etc/mmcore-version` on tty2, or the release tag the
+   image was written from.
+4. **Can you reach tty2?** `Ctrl+Alt+F2` from the stuck logo, then
+   `Ctrl+Alt+F1` to return. If tty2 works, the panel and KMS are fine and the
+   failure is the tty1 autostart path; if it is also black, it is the modeset.
+5. **Serial fistful.** With a USB-serial adapter on the Chromebook's debug
+   port (or Servo), capture `ttyS0` at 115200 8N1 during the hang: the new
+   timeout message and `dmesg` warnings name the stalled driver directly.
+6. **On tty2 (or serial), collect:**
+   ```sh
+   dmesg | tail -80                 # i915/cros_ec/panel warnings first
+   ls -l /dev/dri                   # is there a card0/renderD128?
+   rc-status                        # did a boot service fail or hang?
+   ps w | grep -E 'mmcore|agetty|login'   # is mmcore running? agetty respawning?
+   cat /tmp/mmcore.stderr           # mmcore's own startup error, if any
+   cat /proc/cmdline                # confirm console= and mmcore.live=
+   ```
+7. **Does the timeout recover it?** A stuck but not crashed modeset should make
+   mmcore exit and respawn repeatedly. If it never respawns, the failure is
+   before `mmcore` (in agetty/login/`.profile`), which the `ps w` output shows.
+
 Validation note: the QEMU smoke test cannot reproduce `cros_ec`, panel timing,
 SOF audio or the keyboard controller, so the Chromebook configuration above can
 only be verified on real hardware.
+
 
 ## CI
 

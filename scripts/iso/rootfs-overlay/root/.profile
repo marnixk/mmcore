@@ -24,8 +24,15 @@ if [ "${mmcore_tty}" = "/dev/tty1" ]; then
 	# absolute argv[0], so a name match silently leaves it running (#921). The
 	# anchored -f fallback covers a stale or missing pidfile.
 	if [ -f /run/mmcore-splash.pid ]; then
-		kill "$(cat /run/mmcore-splash.pid)" 2>/dev/null || true
+		mmcore_splash_pid="$(cat /run/mmcore-splash.pid)"
+		kill "${mmcore_splash_pid}" 2>/dev/null || true
 		rm -f /run/mmcore-splash.pid
+		# #1032: wait for the helper to actually close /dev/fb0 before
+		# mmcore takes DRM master. Its loop notices SIGTERM within 100 ms;
+		# the 1 s grace is the bound, and SIGKILL escalates a wedged helper
+		# so it can never hold the framebuffer across the modeset.
+		sleep 1
+		kill -9 "${mmcore_splash_pid}" 2>/dev/null || true
 	fi
 	pkill -f '^/usr/local/bin/mmcore-splash' 2>/dev/null || true
 

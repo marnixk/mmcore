@@ -98,6 +98,25 @@ def test_framebuffer_iso_doc_documents_chromebooks():
         assert needle in text, needle
 
 
+def test_framebuffer_iso_doc_documents_the_chromebook_hang_and_watchdogs():
+    """#1032: the doc must describe the bounded splash, the bounded video
+    bring-up that logs to serial, and the hardware-QA steps QEMU cannot run."""
+    text = _read(DOC)
+    for needle in (
+        "MMCORE_SPLASH_TIMEOUT",
+        "MMCORE_VIDEO_TIMEOUT",
+        "KMS/DRM modeset stuck",
+        "If the boot hangs on the mmcore logo",
+        "Chromebook hardware QA checklist",
+        "dmesg | tail -80",
+        "/dev/dri",
+        "rc-status",
+        "cros_ec",
+        "Ctrl+Alt+F2",
+    ):
+        assert needle in text, needle
+
+
 def test_framebuffer_iso_doc_documents_the_firmware_keep_list():
     """#958/#964: the doc must say the ISO ships a desktop firmware keep-list,
     not the full linux-firmware meta, and name what is (and is not) covered."""
