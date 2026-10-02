@@ -50,17 +50,37 @@ if [ "${mmcore_tty}" = "/dev/tty1" ]; then
 	done
 	if [ -n "${mmcore_sys_dev}" ]; then
 		mkdir -p /media/mmcore-sys /media/mmcore-data 2>/dev/null || true
+
+		# #1034: a slow-to-probe block device (flaky eMMC/SD, a spun-down
+		# disk, USB enumeration) must not stall tty1 before `exec mmcore`.
+		# Bound every label lookup and mount with BusyBox `timeout`; on the
+		# cap, log to the serial console and fall through to the live path /
+		# the next step instead of blocking the login shell. Default 5 s,
+		# override with MMCORE_PROBE_TIMEOUT.
+		mmcore_probe_timeout="${MMCORE_PROBE_TIMEOUT:-5}"
+		mmcore_probe() {
+			mmcore_probe_rc=0
+			timeout "${mmcore_probe_timeout}" "$@" 2>/dev/null || mmcore_probe_rc=$?
+			case "${mmcore_probe_rc}" in
+				124|137|143)
+					printf '%s\n' "mmcore: ${mmcore_probe_timeout}s probe timeout: $*" >/dev/console 2>/dev/null || true
+					return 124
+					;;
+			esac
+			return "${mmcore_probe_rc}"
+		}
+
 		case "${mmcore_sys_dev}" in
-			LABEL=*) mmcore_sys_dev="$(blkid -L "${mmcore_sys_dev#LABEL=}" 2>/dev/null)" ;;
+			LABEL=*) mmcore_sys_dev="$(mmcore_probe blkid -L "${mmcore_sys_dev#LABEL=}" 2>/dev/null)" ;;
 		esac
 		case "${mmcore_data_dev}" in
-			LABEL=*) mmcore_data_dev="$(blkid -L "${mmcore_data_dev#LABEL=}" 2>/dev/null)" ;;
+			LABEL=*) mmcore_data_dev="$(mmcore_probe blkid -L "${mmcore_data_dev#LABEL=}" 2>/dev/null)" ;;
 		esac
 		if [ -n "${mmcore_sys_dev}" ]; then
-			mount -o rw "${mmcore_sys_dev}" /media/mmcore-sys 2>/dev/null || true
+			mmcore_probe mount -o rw "${mmcore_sys_dev}" /media/mmcore-sys 2>/dev/null || true
 		fi
 		if [ -n "${mmcore_data_dev}" ]; then
-			mount -o rw "${mmcore_data_dev}" /media/mmcore-data 2>/dev/null || true
+			mmcore_probe mount -o rw "${mmcore_data_dev}" /media/mmcore-data 2>/dev/null || true
 		fi
 		if [ -x /media/mmcore-sys/mmcore ]; then
 			export MMB_DRIVE_ROOT=/media/mmcore-sys

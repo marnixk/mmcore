@@ -598,6 +598,39 @@ def test_profile_documents_ctrl_alt_vt_switching():
     assert "Alt+F2" not in profile.replace("Ctrl+Alt+F2", "")
 
 
+def test_installed_probe_and_mount_are_bounded():
+    """#1034: the installed boot's label lookup and mounts must be bounded so a
+    slow block device cannot stall tty1 before `exec mmcore`. The installed
+    branch runs `blkid`/`mount` under BusyBox `timeout`, logs a cap to
+    /dev/console, and keeps the fall-through (the mounts keep `|| true` and the
+    live path below is untouched)."""
+    profile = open(PROFILE, encoding="utf-8").read()
+    # Isolate the installed branch: mmcore.sys= up to the live session.
+    installed = profile.split("mmcore.sys=", 1)[1].split("# Live session", 1)[0]
+
+    # BusyBox timeout wraps every probe/mount in the installed branch.
+    assert "MMCORE_PROBE_TIMEOUT" in installed, "the probe cap is not overridable"
+    assert 'timeout "${mmcore_probe_timeout}" "$@"' in installed, (
+        "the installed probe helper does not run under BusyBox timeout"
+    )
+    # No bare blkid/mount call survives: each goes through the bounded helper.
+    for line in installed.splitlines():
+        if "blkid" in line or "mount -o rw" in line:
+            assert "mmcore_probe " in line, line
+    assert installed.count("mmcore_probe blkid") == 2, installed
+    assert installed.count("mmcore_probe mount") == 2, installed
+
+    # A cap is logged to the serial console and never fails the shell.
+    assert "/dev/console" in installed
+    assert "probe timeout" in installed
+    # The mounts keep their best-effort fallback.
+    assert '2>/dev/null || true' in installed
+
+    # The live path is not regressed: it still execs the live binary.
+    live = profile.split("# Live session", 1)[1]
+    assert "exec /usr/local/bin/mmcore" in live
+
+
 def test_builder_ships_a_quiet_grub_with_a_splash():
     """#863: hidden GRUB for ~1 s, a centered logo, and a quiet kernel."""
     builder = open(BUILDER, encoding="utf-8").read()

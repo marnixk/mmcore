@@ -225,6 +225,13 @@ After installation the disk boots on its own, on BIOS and UEFI. GRUB mounts
 `MMCORE-SYS` as `C:` and launches mmcore with `--drive /media/mmcore-data`, so
 `MMCORE-DATA` appears as `D:`.
 
+The installed boot bounds its block-device probe (#1034). `root/.profile`
+wraps the `blkid -L` label lookups and the `mount` calls for `mmcore.sys=` /
+`mmcore.data=` in BusyBox `timeout` (default **5 s**, override with
+`MMCORE_PROBE_TIMEOUT`), logs a cap to `/dev/console`, and then falls through to
+`exec mmcore`. A slow-to-probe eMMC/SD card, a spun-down disk, or a USB device
+still enumerating therefore cannot stall tty1 before the prompt.
+
 #### Live USB with a disk installed (dual boot)
 
 The live image is pinned to the stick it booted from, not to the disk. GRUB
