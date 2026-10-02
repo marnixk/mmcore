@@ -962,6 +962,10 @@ int mmb_vfs_rmdir(const char *path);
 int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
+/* Move a file, falling back to copy-then-delete when the source and
+ * destination live on different volumes (a single rename cannot cross
+ * volumes). Only files move; the FILES UI rejects directories first. */
+int mmb_vfs_move(const char *src, const char *dst);
 /* Newline listing. Fills `out` with matching names, folders first, sorted;
  * *truncated is set (when non-NULL) if the folder held more names than fit in
  * `outsz` so the caller can report the cut instead of silently dropping the
