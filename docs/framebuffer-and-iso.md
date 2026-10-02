@@ -166,6 +166,14 @@ The repainter cannot fight mmcore for the framebuffer (#1032):
   window/renderer open is logged the same way together with the `/dev/dri`
   nodes it saw.
 
+The watchdog is a userspace `SIGALRM`, so it can only fire when the blocked
+thread is interruptible. If the modeset is wedged in an uninterruptible kernel
+wait (a driver `D`-state), the signal cannot be delivered and mmcore stays
+stuck; the serial console and the `dmesg`/`rc-status`/`ps` checklist below are
+then the way to identify the driver. It does cover the common case where SDL
+is retrying or blocked in an interruptible call, and it turns that from a
+silent forever-hang into a logged retry.
+
 
 ### Persistent storage
 
