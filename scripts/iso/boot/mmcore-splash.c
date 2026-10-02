@@ -8,15 +8,22 @@
  * gap between the bootloader and the application (#902).
  *
  * Usage:
- *   mmcore-splash [-i SECONDS] [-d DEV] [IMAGE]
+ *   mmcore-splash [-i SECONDS] [-t SECONDS] [-d DEV] [IMAGE]
  *
  *   -i SECONDS   keep redrawing every SECONDS until killed (default: draw once)
+ *   -t SECONDS   stop after SECONDS total even without a signal (default: none)
  *   -d DEV       framebuffer device to use (default: first working /dev/fb?N)
  *   IMAGE        P6 PPM to draw (default /usr/share/mmcore/splash.ppm)
  *
  * The helper writes the whole visible frame: black everywhere, with the image
  * centred at its native size. It understands the fbdev bit-field layout, so it
  * works on 16/24/32 bpp framebuffers.
+ *
+ * #1032: a repainter that outlives mmcore's KMS modeset (e.g. because a slow
+ * or absent Chromebook panel meant root/.profile never ran) can fight the
+ * driver for the framebuffer. The `-t` cap guarantees it stops on its own, and
+ * once it has painted at least once it also gives up after repeated
+ * framebuffer failures (the DRM takeover closed the fbdev).
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -29,9 +36,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
 #define DEFAULT_IMAGE "/usr/share/mmcore/splash.ppm"
+#define FAILURE_LIMIT 3
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -246,16 +255,23 @@ int main(int argc, char **argv)
 	const char *image = DEFAULT_IMAGE;
 	const char *dev = NULL;
 	int interval = 0;
+	int max_seconds = 0;
+	time_t deadline = 0;
 	unsigned char *rgb;
 	long w = 0, h = 0;
-	int opt;
+	int opt, drew_ok = 0, failures = 0;
 
-	while ((opt = getopt(argc, argv, "i:d:h")) != -1) {
+	while ((opt = getopt(argc, argv, "i:t:d:h")) != -1) {
 		switch (opt) {
 		case 'i':
 			interval = atoi(optarg);
 			if (interval < 0)
 				interval = 0;
+			break;
+		case 't':
+			max_seconds = atoi(optarg);
+			if (max_seconds < 0)
+				max_seconds = 0;
 			break;
 		case 'd':
 			dev = optarg;
@@ -263,7 +279,10 @@ int main(int argc, char **argv)
 		case 'h':
 		default:
 			fprintf(stderr,
-				"usage: mmcore-splash [-i SECONDS] [-d DEV] [IMAGE]\n");
+				"usage: mmcore-splash [-i SECONDS] [-t SECONDS] [-d DEV] [IMAGE]\n"
+				"  -i SECONDS   repaint every SECONDS until killed (default: once)\n"
+				"  -t SECONDS   self-terminate after SECONDS (default: no limit)\n"
+				"  -d DEV       framebuffer device (default: first /dev/fb?N)\n");
 			return opt == 'h' ? 0 : 2;
 		}
 	}
@@ -284,14 +303,27 @@ int main(int argc, char **argv)
 		return rc == 0 ? 0 : 1;
 	}
 
+	if (max_seconds > 0)
+		deadline = time(NULL) + max_seconds;
+
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);
 	while (!g_stop) {
 		int i;
 
-		/* Ignore a not-yet-registered /dev/fb0: retry on the next tick. */
-		if (tty1_is_active())
-			(void)draw_once(rgb, w, h, dev);
+		if (deadline && time(NULL) >= deadline)
+			break;
+		/* Ignore a not-yet-registered /dev/fb0: retry on the next tick.
+		 * After the first good paint, repeated failures mean mmcore's
+		 * KMS modeset has taken the display: stop before we fight it. */
+		if (tty1_is_active()) {
+			if (draw_once(rgb, w, h, dev) == 0) {
+				drew_ok = 1;
+				failures = 0;
+			} else if (drew_ok && ++failures >= FAILURE_LIMIT) {
+				break;
+			}
+		}
 		for (i = 0; i < interval * 10 && !g_stop; i++)
 			usleep(100 * 1000);
 	}

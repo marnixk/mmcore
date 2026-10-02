@@ -102,7 +102,7 @@ jobs:
             # #941: on a miss, dump why before poweroff (process table, mmcore
             # stderr, tty1 agetty/login/mmcore state) so boot.log alone shows
             # the cause of the next failure.
-            echo '[ "$ok" = 1 ] || { printf "MMCORE_%s\n" DIAG_BEGIN; echo "-- ps --"; ps w 2>&1 | head -25; echo "-- pgrep -a mmcore --"; pgrep -a mmcore 2>&1 || true; echo "-- /tmp/mmcore.stderr --"; ls -l /tmp/mmcore.stderr 2>&1; cat /tmp/mmcore.stderr 2>&1 | head -40; echo "-- comm scan --"; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); case "$c" in mmcore|agetty|login|mmcore-splash) echo "$d $c";; esac; done; printf "MMCORE_%s\n" DIAG_END; }'
+            echo '[ "$ok" = 1 ] || { printf "MMCORE_%s\n" DIAG_BEGIN; echo "-- ps --"; ps w 2>&1 | head -25; echo "-- pgrep -a mmcore --"; pgrep -a mmcore 2>&1 || true; echo "-- /tmp/mmcore.stderr --"; ls -l /tmp/mmcore.stderr 2>&1; cat /tmp/mmcore.stderr 2>&1 | head -40; echo "-- comm scan --"; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); case "$c" in mmcore|agetty|login|mmcore-splash) echo "$d $c";; esac; done; echo "-- dmesg --"; dmesg 2>&1 | tail -80; echo "-- /dev/dri --"; ls -l /dev/dri 2>&1; echo "-- rc-status --"; rc-status 2>&1 || true; printf "MMCORE_%s\n" DIAG_END; }'
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
             # #958: the firmware keep-list must actually reach the rootfs: a
             # representative Intel GPU, AMD GPU, Broadcom and iwlwifi blob.

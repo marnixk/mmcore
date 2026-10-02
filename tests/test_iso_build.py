@@ -583,6 +583,11 @@ def test_boot_smoke_dumps_diagnostics_on_failure():
     assert "ps w" in line, line
     assert "/tmp/mmcore.stderr" in line, line
     assert "/proc/[0-9]*" in line and "/comm" in line, line
+    # #1032: a KMS/DRM stall needs the kernel ring, DRM nodes and service state,
+    # not just the process table, to be actionable.
+    assert "dmesg" in line and "tail -80" in line, line
+    assert "/dev/dri" in line, line
+    assert "rc-status" in line, line
 
 
 def test_profile_documents_ctrl_alt_vt_switching():
@@ -694,6 +699,52 @@ def test_splash_sources_and_wrapper_are_present():
     assert "/usr/share/mmcore/splash.ppm" in helper
 
 
+def test_splash_self_terminates_and_yields_before_mmcore():
+    """#1032: the repainter must never outlive mmcore's KMS modeset. It has a
+    bounded lifetime and exits after repeated framebuffer failures, the wrapper
+    passes that cap, and the profile waits for the helper to close /dev/fb0
+    before it execs mmcore (with a SIGKILL escalation if it is wedged)."""
+    helper = open(SPLASH_C, encoding="utf-8").read()
+    assert '"i:t:d:h"' in helper, "the -t lifetime option is missing"
+    assert "-t SECONDS" in helper, "the -t option is undocumented"
+    assert "FAILURE_LIMIT" in helper, "the repeated-failure exit is missing"
+    assert "deadline" in helper and "time(" in helper
+
+    wrapper = open(SPLASH_START, encoding="utf-8").read()
+    assert "MMCORE_SPLASH_TIMEOUT" in wrapper, "the wrapper never bounds -t"
+    assert '-t "${MMCORE_SPLASH_TIMEOUT}"' in wrapper
+
+    profile = open(PROFILE, encoding="utf-8").read()
+    kill = profile.index("mmcore_splash_pid")
+    exec_mmcore = profile.index("exec /usr/local/bin/mmcore")
+    assert kill < exec_mmcore, "the profile must stop the splash before exec"
+    # It waits (bounded) for the helper to release /dev/fb0, then escalates.
+    assert "sleep 1" in profile
+    assert "kill -9" in profile
+    assert profile.index("kill -9") < exec_mmcore
+
+
+def test_native_video_bringup_is_bounded_and_logged():
+    """#1032: a hung KMS/DRM modeset must not leave mmcore on the logo
+    forever. The SDL video open is wrapped in a watchdog that logs to the
+    serial consoles and exits so tty1 respawns and retries."""
+    text = open(
+        os.path.join(REPO, "native", "main_sdl.c"), encoding="utf-8"
+    ).read()
+    assert "MMCORE_VIDEO_TIMEOUT" in text
+    assert "video_watchdog" in text
+    assert "SIGALRM" in text and "alarm(" in text
+    assert "_exit(2)" in text
+    # Diagnostics reach the serial consoles, not only redirected stderr.
+    assert '"/dev/console"' in text
+    assert '"/dev/ttyS0"' in text
+    assert "boot_log_drm" in text and "/dev/dri" in text
+    # The watchdog really wraps the video bring-up.
+    assert text.index("video_watchdog_arm()") < text.index("sdl_video_open")
+    assert text.index("sdl_video_open") < text.index("video_watchdog_disarm()")
+
+
+
 def test_splash_launch_records_a_pidfile_and_profile_kills_it(tmp_path):
     """#921: the helper is launched by absolute path, its PID is recorded, and
     the profile kills that PID. BusyBox `pkill -x mmcore-splash` cannot match
@@ -706,7 +757,8 @@ def test_splash_launch_records_a_pidfile_and_profile_kills_it(tmp_path):
     assert "/usr/local/bin/mmcore-splash -i 2" in start
     assert "echo $! >/run/mmcore-splash.pid" in start
     # Stop path: kill the recorded PID, not a BusyBox-quirk name match.
-    assert 'kill "$(cat /run/mmcore-splash.pid)"' in profile
+    assert 'mmcore_splash_pid="$(cat /run/mmcore-splash.pid)"' in profile
+    assert 'kill "${mmcore_splash_pid}"' in profile
     assert "pkill -x mmcore-splash" not in profile
     assert profile.index("/run/mmcore-splash.pid") < profile.index(
         "exec /usr/local/bin/mmcore"
