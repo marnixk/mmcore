@@ -64,6 +64,7 @@ static unsigned s_pause_at;
 static unsigned s_mix_at;
 static unsigned s_mix_gap_ms;
 static unsigned s_underruns;
+static unsigned s_audio_resets;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
@@ -285,6 +286,22 @@ void mmb_play_stop_owned(void)
 {
 	if (g_audio.owner == g_console)
 		mmb_play_stop();
+}
+
+/* #1024: recover a backend left dirty by USB contention or a ring underrun.
+ * Tear down and re-create the output device (DMA/ring state), drop any
+ * unflushed output from the stalled device, and restart the mix gap/underrun
+ * window. The decoder and playback state are kept, so a playing track resumes
+ * cleanly in place without a reboot. */
+static void do_play_reset(void)
+{
+	if (G.plat && G.plat->audio_reset)
+		G.plat->audio_reset();
+	s_pending_n = 0;
+	s_mix_gap_ms = 0;
+	s_underruns = 0;
+	s_mix_at = 0;
+	s_audio_resets++;
 }
 
 void mmb_audio_apply_options(void)
@@ -694,6 +711,11 @@ unsigned mmb_audio_underruns(void)
 	return s_underruns;
 }
 
+unsigned mmb_audio_resets(void)
+{
+	return s_audio_resets;
+}
+
 void mmb_play_mix(void)
 {
 	unsigned n;
@@ -1071,6 +1093,11 @@ void mmb_cmd_play(void)
 	if (mmb_match("STOP"))
 	{
 		mmb_play_stop();
+		return;
+	}
+	if (mmb_match("RESET"))
+	{
+		do_play_reset();
 		return;
 	}
 	if (mmb_match("PAUSE"))

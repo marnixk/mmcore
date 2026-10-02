@@ -109,6 +109,8 @@ typedef struct mmb_platform {
 	int (*audio_have_device)(void);
 	void (*audio_kick)(void);
 	void (*audio_flush)(void);
+	/* Tear down and re-create the output device, keeping target/enable. */
+	void (*audio_reset)(void);
 	/* Character-cell TUI: 8x16 cells covering the current HDMI mode. */
 	int (*video_cols)(void);
 	int (*video_rows)(void);
