@@ -902,7 +902,7 @@ static const char *last_slash(const char *path)
 int mmb_vfs_rename(const char *src, const char *dst)
 {
 	mmb_xpath a, b;
-	int s, ch;
+	int s, d, ch;
 	char dir[80], base[80];
 	const char *slash;
 	if (split_path(src, &a) != 0 || split_path(dst, &b) != 0)
@@ -918,7 +918,7 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		return mmb_fat_rename(a.letter, a.path, b.path);
 	}
 	s = ram_walk(nodes, VFS_MAX, a.path, 0, 0);
-	if (s < 0)
+	if (s <= 0)
 		return -1;
 	slash = last_slash(b.path);
 	if (!slash || !slash[1])
@@ -940,13 +940,26 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		strncpy(base, slash + 1, 79);
 		base[79] = 0;
 	}
-	if (ram_walk(nodes, VFS_MAX, dir, 0, 0) != nodes[s].parent)
+	/* Rename is a plain node edit on the ramdisk: resolve the destination
+	 * directory and reparent, so a move between folders works like FAT. */
+	d = ram_walk(nodes, VFS_MAX, dir, 0, 0);
+	if (d < 0 || !nodes[d].is_dir)
 		return -1;
-	ch = ram_find_child(nodes, VFS_MAX, nodes[s].parent, base);
+	ch = ram_find_child(nodes, VFS_MAX, d, base);
 	if (ch >= 0 && ch != s)
 		return -1;
+	/* Reparenting a directory into its own subtree would detach the tree
+	 * into a cycle, so refuse that case. */
+	if (nodes[s].is_dir)
+	{
+		int t;
+		for (t = d; t > 0; t = nodes[t].parent)
+			if (t == s)
+				return -1;
+	}
 	strncpy(nodes[s].name, base, 79);
 	nodes[s].name[79] = 0;
+	nodes[s].parent = d;
 	return 0;
 }
 

@@ -174,6 +174,47 @@ static void test_list_truncation(void)
 	check(truncated == 0, "roomy listing not truncated");
 }
 
+/* #1028: a ramdisk rename may change the parent directory, so a FILES move
+ * between folders (A:/M1 -> A:/M2) reparents the node like FAT. The node
+ * keeps its data; the source path disappears and the destination resolves. */
+static void test_rename_reparent(void)
+{
+	char buf[16];
+	unsigned got;
+
+	check(mmb_vfs_mkdir("A:/M1") == 0, "mkdir M1");
+	check(mmb_vfs_mkdir("A:/M2") == 0, "mkdir M2");
+	check(mmb_vfs_write("A:/M1/F.TXT", "hello", 5, 0) == 0, "seed F.TXT");
+
+	check(mmb_vfs_rename("A:/M1/F.TXT", "A:/M2/F.TXT") == 0, "reparent file");
+	check(mmb_vfs_exists("A:/M1/F.TXT") == 0, "reparent source gone");
+	check(mmb_vfs_exists("A:/M2/F.TXT") == 1, "reparent dest present");
+	check(mmb_vfs_size("A:/M2/F.TXT") == 5, "reparent dest size");
+	got = 0;
+	check(mmb_vfs_read_at("A:/M2/F.TXT", 0, buf, sizeof buf, &got) == 0 &&
+	      got == 5 && memcmp(buf, "hello", 5) == 0, "reparent dest content");
+	check(mmb_vfs_size("A:/M1/F.TXT") < 0, "reparent source size gone");
+
+	check(mmb_vfs_rename("A:/M2/F.TXT", "A:/M2/G.TXT") == 0, "rename in place");
+	check(mmb_vfs_exists("A:/M2/G.TXT") == 1, "in-place dest present");
+
+	/* A clash with an existing name in the destination folder is refused. */
+	check(mmb_vfs_write("A:/M1/H.TXT", "x", 1, 0) == 0, "seed H.TXT");
+	check(mmb_vfs_rename("A:/M2/G.TXT", "A:/M1/H.TXT") == -1, "clash refused");
+	check(mmb_vfs_exists("A:/M2/G.TXT") == 1, "clash source kept");
+
+	/* A directory reparents too, but never into its own subtree. */
+	check(mmb_vfs_mkdir("A:/M2/SUB") == 0, "mkdir SUB");
+	check(mmb_vfs_mkdir("A:/M2/SUB/DEEP") == 0, "mkdir DEEP");
+	check(mmb_vfs_rename("A:/M2/SUB", "A:/M1/SUB") == 0, "reparent dir");
+	check(mmb_vfs_isdir("A:/M1/SUB/DEEP") == 1, "moved subtree reachable");
+	check(mmb_vfs_rename("A:/M1/SUB", "A:/M1/SUB/DEEP") == -1, "cycle refused");
+	check(mmb_vfs_isdir("A:/M1/SUB") == 1, "dir kept after cycle refusal");
+
+	/* The volume root is never a rename target. */
+	check(mmb_vfs_rename("A:/M1/H.TXT", "A:/") == -1, "root target refused");
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -187,6 +228,7 @@ int main(void)
 
 	test_bounded_listing();
 	test_list_truncation();
+	test_rename_reparent();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);
