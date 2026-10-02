@@ -19,6 +19,9 @@ int audio_have_device(void);
 /* Start DMA if samples are queued but the device is still idle (short sounds). */
 void audio_kick(void);
 void audio_flush(void);
+/* Tear down and re-create the output device (DMA/ring), keeping the current
+ * target/enable options. Recovers a backend stuck after a USB stall (#1024). */
+void audio_reset(void);
 
 #ifdef __cplusplus
 }

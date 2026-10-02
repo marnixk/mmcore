@@ -16,6 +16,7 @@ unsigned sdl_audio_queued_frames(void);
 int sdl_audio_have_device(void);
 void sdl_audio_kick(void);
 void sdl_audio_flush(void);
+void sdl_audio_reset(void);
 void sdl_audio_shutdown(void);
 
 #endif

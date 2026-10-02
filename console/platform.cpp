@@ -504,6 +504,11 @@ static void plat_audio_flush(void)
 	audio_flush();
 }
 
+static void plat_audio_reset(void)
+{
+	audio_reset();
+}
+
 #define TUI_CW 8
 #define TUI_CH 16
 
@@ -1626,6 +1631,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_have_device = plat_audio_have_device;
 	plat.audio_kick = plat_audio_kick;
 	plat.audio_flush = plat_audio_flush;
+	plat.audio_reset = plat_audio_reset;
 	plat.video_cols = plat_video_cols;
 	plat.video_rows = plat_video_rows;
 	plat.tui_prepare = plat_tui_prepare;
