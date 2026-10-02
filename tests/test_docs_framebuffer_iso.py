@@ -117,6 +117,15 @@ def test_framebuffer_iso_doc_documents_the_chromebook_hang_and_watchdogs():
         assert needle in text, needle
 
 
+def test_framebuffer_iso_doc_documents_the_bounded_installed_probe():
+    """#1034: the doc must note that the installed boot's label lookup/mounts
+    are bounded so a slow block device cannot stall tty1 before the prompt."""
+    text = _read(DOC)
+    assert "MMCORE_PROBE_TIMEOUT" in text
+    assert "blkid" in text
+    assert "bounded" in text
+
+
 def test_framebuffer_iso_doc_documents_the_firmware_keep_list():
     """#958/#964: the doc must say the ISO ships a desktop firmware keep-list,
     not the full linux-firmware meta, and name what is (and is not) covered."""
