@@ -455,6 +455,11 @@ static void plat_shutdown(void)
 #if RASPPI >= 5
 	poweroff();
 #else
+	/* Pi 3 / Pi 4 / Pi 400 expose no software power-off through Circle
+	 * (poweroff() is Pi 5-only; there is no SMC/PMIC path on earlier SoCs).
+	 * halt() leaves the board powered, so tell the user it is now safe to
+	 * cut power instead of letting the still screen look like a crash. */
+	mmb_console_write("\r\nShutdown complete. It is now safe to turn off the power.\r\n");
 	halt();
 #endif
 }

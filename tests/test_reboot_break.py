@@ -26,6 +26,22 @@ def test_help_shutdown(console):
     assert "power" in out.lower() or "off" in out.lower()
 
 
+def test_shutdown_halts_with_safe_to_power_off_message(fresh_console):
+    """#1020: Pi 3/4/400 have no Circle software power-off, so SHUTDOWN halts.
+
+    QEMU builds the same RASPPI<5 ``halt()`` path as the Pi 400, so it can
+    check that shutdown ends with an explicit "safe to turn off" message
+    instead of a screen that looks frozen. The halted QEMU is killed by the
+    ``fresh_console`` teardown.
+    """
+    c = fresh_console
+    c.drain(quiet=0.25, timeout=2.5)
+    c._ser.sendall(b"SHUTDOWN\r")
+    out = c.drain(quiet=0.5, timeout=8.0).decode(errors="replace")
+    assert "Shutting down" in out
+    assert "safe to turn off the power" in out.lower()
+
+
 def test_help_reboot(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
     assert "REBOOT" in listing
