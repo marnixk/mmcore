@@ -474,6 +474,29 @@ def test_files_tdf_pageup_pagedown_single(fresh_console):
     assert con.send_line("PRINT MM.HRES") == "1280"
 
 
+def test_files_move_keeps_selection_near_moved(fresh_console):
+    """#1022: after a cross-pane move the source pane selects the row above."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "MOVEDIR"') == ""
+    for name in ("F1.TXT", "F2.TXT", "F3.TXT", "F4.TXT", "F5.TXT"):
+        assert con.send_line(f'OPEN "MOVEDIR/{name}" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "x"') == ""
+        assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('CHDIR "A:/MOVEDIR"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=F3.TXT")
+    _keys(con, b"m", quiet=0.4)
+    # Both panes are A:/MOVEDIR, so the seeded destination is A:/MOVEDIR/F3.TXT;
+    # rename it in place (the ramdisk move requires the same parent directory).
+    _keys(con, b"\x7f" * 6)
+    seen = _keys(con, b"G3.TXT\r", quiet=0.9)
+    assert "Moved" in seen, seen
+    # F3 is gone: the selection must land on F2 (index moved_idx-1), not "..".
+    assert "SEL=F2.TXT" in seen, seen
+    _keys(con, b"q")
+
+
 def test_files_many_entries_reports_truncation(fresh_console):
     """#621: a folder over FU_MAX_ENT reports MORE=1 and still lists folders.
 

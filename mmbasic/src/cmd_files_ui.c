@@ -445,7 +445,10 @@ static void panel_reload(fu_panel *p)
 	}
 	p->truncated = truncated;
 	panel_sort(p);
-	p->sel = 0;
+	/* Prefer the same name so scrolling/navigating reloads stay put. When
+	 * the row is gone (a move or delete removed it), land on the row just
+	 * above where it was instead of jumping to the top (#1022). */
+	p->sel = oldsel > 0 ? oldsel - 1 : 0;
 	if (keep[0])
 	{
 		int i;
@@ -1795,7 +1798,11 @@ static void an_feed(unsigned char b)
 	{
 		if (an_p_narg == 0)
 			an_p_narg = 1;
-		an_p_args[an_p_narg - 1] = an_p_args[an_p_narg - 1] * 10 + (b - '0');
+		/* Clamp so a runaway numeric parameter cannot overflow int
+		 * (undefined behaviour the clamp in an_arg/an_cup then hides). */
+		if (an_p_args[an_p_narg - 1] < 100000)
+			an_p_args[an_p_narg - 1] =
+				an_p_args[an_p_narg - 1] * 10 + (b - '0');
 		return;
 	}
 	if (b == ';')
@@ -1837,21 +1844,51 @@ static void an_reset(int cols)
 	memset(F.an_grid, 0, (size_t)AN_MAX_ROWS * AN_MAX_COLS * sizeof(an_cell));
 }
 
+/* Number of leading bytes that are ANSI art. A DOS SAUCE trailer is metadata,
+ * not art, so stop before its 128-byte record (and a trailing ^Z EOF marker);
+ * otherwise those binary bytes render as garbage and can carry stray control
+ * bytes into the viewer (#1023). */
+static unsigned an_ansi_limit(int sz)
+{
+	unsigned limit = (unsigned)sz;
+	unsigned char tail[128];
+	unsigned got = 0;
+
+	if (sz < (int)sizeof(tail))
+		return limit;
+	if (mmb_vfs_read_at(F.view_path, (unsigned)sz - sizeof(tail), tail,
+			    sizeof(tail), &got) != 0 ||
+	    got != sizeof(tail) || memcmp(tail, "SAUCE00", 7) != 0)
+		return limit;
+	limit -= sizeof(tail);
+	if (limit > 0)
+	{
+		unsigned char last = 0;
+		if (mmb_vfs_read_at(F.view_path, limit - 1u, &last, 1u, &got) == 0 &&
+		    got == 1u && last == 0x1A)
+			limit--;
+	}
+	return limit;
+}
+
 static void an_parse(int cols)
 {
 	static unsigned char buf[4096];
 	int sz = mmb_vfs_size(F.view_path);
-	unsigned pos = 0, got = 0;
+	unsigned pos = 0, got = 0, limit;
 
 	an_reset(cols);
 	if (sz <= 0)
 		return;
-	while (pos < (unsigned)sz && pos < AN_MAX_BYTES)
+	limit = an_ansi_limit(sz);
+	if (limit > AN_MAX_BYTES)
+		limit = AN_MAX_BYTES;
+	while (pos < limit)
 	{
 		unsigned want = (unsigned)sizeof(buf);
 		unsigned i;
-		if ((unsigned)sz - pos < want)
-			want = (unsigned)sz - pos;
+		if (limit - pos < want)
+			want = limit - pos;
 		if (mmb_vfs_read_at(F.view_path, pos, buf, want, &got) != 0 || got == 0)
 			break;
 		for (i = 0; i < got; i++)
@@ -1977,6 +2014,10 @@ static int an_open(const char *path, const char *name)
 	F.an_saved_bits = G.gfx.bits;
 	F.an_mode80 = 0;
 	an_parse(AN_COLS);
+	/* Without a grid there is nothing to show; fall back to the info overlay
+	 * instead of presenting a blank preview. */
+	if (!F.an_grid)
+		return -1;
 	F.mode = FU_ANSI;
 	an_render();
 	set_hint("ANSI preview  up/down/PgUp/PgDn  f 80x25  Esc exits");
@@ -2012,8 +2053,10 @@ static void tdf_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 	if (x < 0 || x >= AN_MAX_COLS || y < 0 || y >= AN_MAX_ROWS)
 		return;
 	an_scr[y][x].ch = (unsigned char)ch;
-	an_scr[y][x].fg = (unsigned char)fg;
-	an_scr[y][x].bg = (unsigned char)bg;
+	/* The preview grid is painted with the TUI/ANSI palette, so translate
+	 * the IBM-order glyph attribute the way TDF PRINT does (#1021). */
+	an_scr[y][x].fg = (unsigned char)mmb_tdf_ansi_colour(fg);
+	an_scr[y][x].bg = (unsigned char)mmb_tdf_ansi_colour(bg);
 }
 
 static void tdf_release(void)
@@ -2180,6 +2223,11 @@ static int tdf_open(const char *path, const char *name)
 	F.an_top = 0;
 	F.tdf_var = 0;
 	tdf_render_sample(name);
+	if (!F.an_grid)
+	{
+		tdf_release();
+		return -1;
+	}
 	F.mode = FU_TDF;
 	an_render();
 	set_hint(F.tdf_variants > 1

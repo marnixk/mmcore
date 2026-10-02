@@ -115,6 +115,16 @@ int mmb_tdf_count(const unsigned char *buf, unsigned n)
 	}
 }
 
+int mmb_tdf_ansi_colour(int nibble)
+{
+	static const unsigned char map[16] = {
+		0, 4, 2, 6, 1, 5, 3, 7,
+		8, 12, 10, 14, 9, 13, 11, 15
+	};
+
+	return map[nibble & 15];
+}
+
 /* Map an Outline-font letter to its CP437 box-drawing code. */
 static int mmb_outline_map(int c)
 {
