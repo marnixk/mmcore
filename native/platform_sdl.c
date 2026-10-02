@@ -425,6 +425,7 @@ static const mmb_platform sdl_plat = {
 	.audio_have_device = sdl_audio_have_device,
 	.audio_kick = sdl_audio_kick,
 	.audio_flush = sdl_audio_flush,
+	.audio_reset = sdl_audio_reset,
 	.present_rgb = sdl_present_rgb,
 	.present_native = sdl_present_native,
 	.present_wait = sdl_present_wait,

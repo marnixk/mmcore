@@ -455,6 +455,11 @@ static void plat_shutdown(void)
 #if RASPPI >= 5
 	poweroff();
 #else
+	/* Pi 3 / Pi 4 / Pi 400 expose no software power-off through Circle
+	 * (poweroff() is Pi 5-only; there is no SMC/PMIC path on earlier SoCs).
+	 * halt() leaves the board powered, so tell the user it is now safe to
+	 * cut power instead of letting the still screen look like a crash. */
+	mmb_console_write("\r\nShutdown complete. It is now safe to turn off the power.\r\n");
 	halt();
 #endif
 }
@@ -497,6 +502,11 @@ static void plat_audio_kick(void)
 static void plat_audio_flush(void)
 {
 	audio_flush();
+}
+
+static void plat_audio_reset(void)
+{
+	audio_reset();
 }
 
 #define TUI_CW 8
@@ -1621,6 +1631,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_have_device = plat_audio_have_device;
 	plat.audio_kick = plat_audio_kick;
 	plat.audio_flush = plat_audio_flush;
+	plat.audio_reset = plat_audio_reset;
 	plat.video_cols = plat_video_cols;
 	plat.video_rows = plat_video_rows;
 	plat.tui_prepare = plat_tui_prepare;

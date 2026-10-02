@@ -8,6 +8,7 @@ no analogue jack; use HDMI there. PLAYING() is 1 while audio is playing and
 not paused.
 
 PLAY STOP
+PLAY RESET
 PLAY PAUSE
 PLAY RESUME
 PLAY VOLUME left [, right]
@@ -34,6 +35,13 @@ long screen updates, including a TERM repaint on another console.
 MM.INFO("MIXGAP") is the longest gap between mixer services since PLAY
 started, in milliseconds. MM.INFO("UNDERRUN") counts times the output queue
 was empty when the mixer ran.
+
+If other USB activity stalls the output device, the mixer restarts the
+transfer automatically once data is queued again. PLAY RESET is an explicit
+recovery if artifacts persist: it tears down and re-creates the output device
+and clears its buffers, without stopping the current track or rebooting. A
+playing track resumes in place from the mixer's current position.
+MM.INFO("AUDIORESET") counts how many times PLAY RESET has run.
 
 MOD, XM and S3M modules play through once and then stop (loops and jumps that
 are part of the arrangement are honoured; the restart/order loop is not).
