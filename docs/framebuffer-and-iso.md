@@ -435,17 +435,31 @@ disk and boots without the card.
   keys unless you hold Fn), and the **Search** key replaces **Caps Lock**;
   mmcore's function-key shortcuts therefore line up with F1–F12.
 - **Touchpad / touchscreen.** `cros_ec`, `i2c_hid_acpi`/`i2c_hid_of` and
-  `hid_multitouch` are loaded at boot.
+  `hid_multitouch` cover ACPI-enumerated I2C-HID parts. Touchpads that bind
+  through a board driver instead also get their I2C host controller
+  (`intel_lpss*`, `i2c_designware_pci`, `i2c_i801`), the DMI-instantiated
+  client driver (`chromeos_laptop`) and the controller-family drivers
+  (`cyapatp`, `elan_i2c`, `synaptics_i2c`, `rmi_i2c`, `hid_rmi`, and the PS/2
+  fallback `psmouse`) loaded at boot (#1039). They are part of the image, so
+  no `modprobe` is needed after boot. No udev rule is required: mmcore reads
+  the touchpad through SDL's evdev backend, and the kernel driver binds by
+  name once the modules load.
 - **Audio.** `sof-firmware` plus the `snd_sof*` modules are installed for
   Sound Open Firmware devices.
 
-### Known gap: 32-bit (IA32) UEFI models
+### Known gap: models that need a kernel the ISO does not ship
 
 Bay Trail, Cherry Trail and some Braswell Chromebooks expose **32-bit UEFI**
 even though the CPU is 64-bit. Alpine's GRUB and the x86_64 `linux-lts` do not
 provide an IA32 EFI stub for free; booting them would need a separate build
 variant with an IA32 GRUB EFI stub and a 32-bit-EFI-capable kernel. Those
 models are **unsupported** for now — the ISO does not ship an IA32 variant.
+
+ARM Chromebooks (MediaTek, Rockchip and Qualcomm parts) need an **aarch64**
+kernel and userspace; the ISO is x86_64-only, so it does not boot them at all
+(and their I2C touchpads use device-tree drivers, not the x86 ACPI/DMI paths
+above). A touchpad fix on an ARM model therefore cannot be a module-list
+change to this image — it needs a separate aarch64 build.
 
 ### If the boot hangs on the mmcore logo
 
