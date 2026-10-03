@@ -29,7 +29,7 @@ static int ed_rows(void) { return tui_rows(); }
 #define MENU_HELP   4
 #define MENU_COUNT  5
 
-#define ED_THEME_N     10
+#define ED_THEME_N     11
 #define ED_THEME_SLATE 5
 #define ED_THEME_TURBO 8
 
@@ -86,6 +86,14 @@ static const unsigned pal_phosphor[16] = {
 	0x0000AAu, 0xAA00AAu, 0x2A8A8Au, 0x88AA88u,
 	0x143414u, 0xFF5555u, 0x55FF66u, 0xD4FF4Au,
 	0x5555FFu, 0xFF55FFu, 0x55FFCCu, 0xC8FFC8u
+};
+/* Greyscale: every entry is a neutral grey, spread so the same role map the
+ * colour themes use still clears WCAG AA. */
+static const unsigned pal_mono[16] = {
+	0x0E0E0Eu, 0x484848u, 0x6E6E6Eu, 0xB0B0B0u,
+	0x242424u, 0x8A8A8Au, 0xC4C4C4u, 0xDADADAu,
+	0x1C1C1Cu, 0x9A9A9Au, 0x7A7A7Au, 0xCACACAu,
+	0x323232u, 0x9E9E9Eu, 0xCCCCCCu, 0xECECECu
 };
 
 static const mmb_ed_theme k_themes[ED_THEME_N] = {
@@ -192,6 +200,17 @@ static const mmb_ed_theme k_themes[ED_THEME_N] = {
 	  TUI_GREEN, TUI_BLACK, TUI_BLACK, TUI_GREEN,
 	  TUI_BRGREEN, TUI_BLACK,
 	  TUI_BRBLACK, TUI_BRBLACK, TUI_BRBLACK, TUI_BRWHITE, TUI_RED, TUI_BRGREEN, TUI_BRBLACK, pal_phosphor },
+	/* 1 greyscale */
+	{ "Monochrome",
+	  TUI_WHITE, TUI_BRBLACK, TUI_BRWHITE,
+	  TUI_BLACK, TUI_CYAN,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_BLACK, TUI_WHITE,
+	  TUI_BRMAGENTA, TUI_BRYELLOW, TUI_CYAN,
+	  TUI_WHITE, TUI_BRBLACK,
+	  TUI_WHITE, TUI_BLACK, TUI_BLACK, TUI_WHITE,
+	  TUI_WHITE, TUI_BLACK,
+	  TUI_BRBLACK, TUI_BRBLACK, TUI_BRBLUE, TUI_BRWHITE, TUI_RED, TUI_WHITE, TUI_BRBLUE, pal_mono },
 };
 
 static int theme_index_at(int i)
@@ -493,6 +512,18 @@ typedef struct ed_sess {
 } ed_sess;
 
 static ed_sess s_ed[MMB_MAX_CONSOLES];
+
+/* Reset one console's char-picker hold clock. Defined before the per-console
+ * field macros below so the field names are not expanded (#810). */
+static void ed_char_hold_reset(int idx)
+{
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	s_ed[idx].chars_armed = 0;
+	s_ed[idx].chars_opened = 0;
+	s_ed[idx].chars_held_at = 0;
+}
+
 #define killbuf (s_ed[g_console].killbuf)
 #define killlen (s_ed[g_console].killlen)
 #define find_active (s_ed[g_console].find_active)
@@ -599,7 +630,7 @@ static const char *run_items[] = { "Run" };
 static const char run_hots[] = { 'r' };
 static const char *help_items[] = { "Keys...", "Manual" };
 static const char help_hots[] = { 'k', 'm' };
-static const char theme_hots[] = { 'y', 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h' };
+static const char theme_hots[] = { 'y', 'p', 'c', 's', 'i', 'o', 'l', 'f', 'v', 't', 'h', 'm' };
 
 static void redraw(void);
 static int save_tab(void);
@@ -4179,7 +4210,6 @@ static void redraw(void)
  * the buffer is dirty and removed on an explicit save; a surviving sidecar
  * that differs from the file triggers the recover prompt on next launch. */
 #define ED_REC_SUFFIX ".rec"
-#define ED_AUTOSAVE_MS 1500
 
 static void ed_rec_path(const char *path, char *out, int outsz)
 {
@@ -4458,6 +4488,24 @@ static void editor_restore_gfx(void)
 	mmb_gfx_reset_console(1);
 }
 
+/* Complete an editor-launched RUN: show the error bar and re-enter the editor
+ * on failure, else wait for a key. Shared by the synchronous path and by a run
+ * that a virtual-console switch parked and later resumed (#1012). */
+static void editor_run_finished(void)
+{
+	G.ed.run_pending = 0;
+	if (G.err[0])
+	{
+		errbar_set(G.err);
+		editor_resume();
+		return;
+	}
+	if (G.outn && G.out[G.outn - 1] != '\n' && G.out[G.outn - 1] != '\r')
+		mmb_out("\n");
+	mmb_out("Press any key to continue");
+	G.ed.wait_continue = 1;
+}
+
 static void editor_run(void)
 {
 	mmb_ed_tab *entry = find_main_tab();
@@ -4520,16 +4568,16 @@ static void editor_run(void)
 	strncat(cmd, entry_path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	mmb_exec_line(cmd);
-	if (G.err[0])
+	if (mmb_program_suspended())
 	{
-		errbar_set(G.err);
-		editor_resume();
+		/* A virtual-console switch parked RUN at a line boundary; the
+		 * switch that resumes it is still to come. Do not mistake this
+		 * for "program finished" (#1012): leave the editor yielded and
+		 * finish the run from mmb_editor_poll() once it really ends. */
+		G.ed.run_pending = 1;
 		return;
 	}
-	if (G.outn && G.out[G.outn - 1] != '\n' && G.out[G.outn - 1] != '\r')
-		mmb_out("\n");
-	mmb_out("Press any key to continue");
-	G.ed.wait_continue = 1;
+	editor_run_finished();
 }
 
 static void editor_resume(void)
@@ -5709,7 +5757,19 @@ void mmb_cmd_edit(void)
 
 static void char_picker_poll(void)
 {
-	int held = (G.plat && G.plat->ctrl_alt_held) ? G.plat->ctrl_alt_held() : 0;
+	int held;
+
+	/* The picker is owned by the editor on the active virtual screen. Only an
+	 * editor that owns the keyboard may arm or tick this hold clock; the
+	 * per-console hold state is dropped when focus moves here (#810), so a
+	 * chord held on another screen can never cash in as an expired debounce. */
+	if (!G.ed.active)
+	{
+		chars_armed = 0;
+		chars_opened = 0;
+		return;
+	}
+	held = (G.plat && G.plat->ctrl_alt_held) ? G.plat->ctrl_alt_held() : 0;
 	if (held)
 	{
 		if (!chars_armed)
@@ -5746,15 +5806,30 @@ int mmb_editor_char_picker_active(void)
 
 void mmb_editor_poll(void)
 {
+	if (G.ed.run_pending)
+	{
+		/* A run this editor launched was parked by a console switch and
+		 * has now finished (or been stopped) on this console. */
+		if (!mmb_program_suspended())
+			editor_run_finished();
+		return;
+	}
 	if (!G.ed.active || mmb_in_ihelp())
 		return;
 	char_picker_poll();
-	if (!G.ed.dialog && !G.ed.menu_open && !find_active && !errbar_active)
 	{
 		mmb_ed_tab *t = cur_tab();
 		unsigned now = mmb_now_ms();
-		if (t && t->used && t->path[0] && t->dirty &&
-		    now - ed_rec_at >= ED_AUTOSAVE_MS)
+		int counting = G.opt.autosave && t && t->used && t->path[0] &&
+			       t->dirty && !G.ed.dialog && !G.ed.menu_open &&
+			       !find_active && !errbar_active;
+		/* The checkpoint clock only ages while a write could fire.
+		 * Pinning it otherwise keeps the first keystroke after an idle
+		 * clean buffer from triggering an immediate blocking sidecar
+		 * write (#1011). */
+		if (!counting)
+			ed_rec_at = now;
+		else if (now - ed_rec_at >= MMB_AUTOSAVE_MS)
 		{
 			unsigned s = ed_sig(t);
 			ed_rec_at = now;
@@ -5804,4 +5879,13 @@ void mmb_editor_on_ihelp_exit(void)
 void mmb_editor_reset_all(void)
 {
 	memset(s_ed, 0, sizeof(s_ed));
+}
+
+/* A virtual-console switch hands the keyboard to a different editor (#810).
+ * Drop the Ctrl+Alt hold clock of the console being entered: time accrued on
+ * the screen we are leaving is not this editor's, so it must not open the
+ * special-characters picker the instant focus arrives. */
+void mmb_editor_console_activated(int idx)
+{
+	ed_char_hold_reset(idx);
 }

@@ -1,28 +1,40 @@
 #include "mmb_priv.h"
+#include "frontend.h"
 
 /*
  * JUKE: a first-party retro music player (ScreamTracker-era feel).
  *
  *   JUKE "file"    play one file
- *   JUKE "folder"  queue every supported file in a folder (continuous)
+ *   JUKE "folder"  queue supported files in a folder and its subfolders
  *   JUKE           queue the current directory
  *
  * Player only: no pattern or sample editing. Supported formats are the ones
- * the audio engine already decodes: MP3, MOD, XM and WAV. The mixer runs from
- * mmb_poll, so leaving JUKE for another screen keeps the music going; the
+ * the audio engine already decodes: MP3, MOD, XM, S3M and WAV. The mixer runs
+ * from mmb_poll, so leaving JUKE for another screen keeps the music going; the
  * queue also keeps advancing while JUKE is in the background.
  *
  * UI state is per virtual console; the playback queue is global because there
  * is a single audio engine.
  */
 
-#define JUKE_MODE      12      /* 960x540, RGB444 */
+#define JUKE_MODE      12      /* 960x540 (32-bit pages; see juke_load_colours) */
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
-#define JUKE_MAX_QUEUE 64
-#define JUKE_PATH_MAX  160
-#define JUKE_LIST_MAX  2048
+#define JUKE_PATH_MAX   160
+#define JUKE_TITLE_MAX  40
+#define JUKE_QUEUE_INIT 32      /* queue slots allocated up front        */
+#define JUKE_DIR_INIT   32      /* directory listing grows by doubling   */
+#define JUKE_DIR_MAX    4096    /* soft limit: entries kept per directory */
+#define JUKE_SCAN_INIT  16      /* scan stack grows by doubling          */
+#define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
+#define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
+#define JUKE_MID_Y      100    /* oscilloscope inset top             */
+#define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
+#define JUKE_LIST_Y     (JUKE_MID_Y + JUKE_SCOPE_H + 8) /* below the scope */
+#define JUKE_LIST_ROW    18
+#define JUKE_LIST_SEL   0x3A4650u
+#define JUKE_ESC_IDLE_MS 60
 
 typedef struct {
 	int active;
@@ -35,19 +47,33 @@ typedef struct {
 	int vol_saved;
 	unsigned last_ms;
 	float peak[MMB_AUDIO_BANDS];
-	unsigned col_bg, col_panel, col_panel2, col_hot, col_text, col_dim;
-	unsigned col_bar_lo, col_bar_mid, col_bar_hi, col_scan;
+	short scope_hist[JUKE_SCOPE_HIST][JUKE_SCOPE_N];
+	int scope_head;
+	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
+	int logo_w, logo_h;
+	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
+	unsigned col_bar_lo, col_bar_mid, col_bar_hi, col_scan, col_peak;
+	unsigned col_scope_lo, col_vol, col_base;
+	int list_on;
+	int sel;
+	int sel_item;
+	int list_top;
+	int esc;
+	unsigned esc_at;
 } juke_ui;
 
 typedef struct {
 	int active;
 	int n;
+	int cap;       /* allocated slots in the parallel arrays below */
 	int cur;
 	int shuffle;
-	int truncated; /* the folder scan hit the newline buffer or the queue cap */
-	int order[JUKE_MAX_QUEUE]; /* play order: item index at each queue slot */
+	int owner;     /* virtual console that started this queue (#805) */
+	int *order;    /* play order: item index at each queue slot */
 	char dir[JUKE_PATH_MAX];
-	char item[JUKE_MAX_QUEUE][JUKE_PATH_MAX];
+	char **item;   /* each entry is a malloc'd full path */
+	char **title;  /* lazily allocated per-track metadata title */
+	unsigned char *titled;
 } juke_queue;
 
 static juke_ui s_ui[MMB_MAX_CONSOLES];
@@ -74,6 +100,53 @@ static const char *juke_track(int pos)
 	if (idx < 0 || idx >= s_q.n)
 		return "";
 	return s_q.item[idx];
+}
+
+static void juke_set_sel(int pos)
+{
+	if (s_q.n <= 0)
+	{
+		U.sel = 0;
+		U.sel_item = -1;
+		return;
+	}
+	if (pos < 0)
+		pos = 0;
+	if (pos >= s_q.n)
+		pos = s_q.n - 1;
+	U.sel = pos;
+	U.sel_item = s_q.order[pos];
+}
+
+static void juke_sel_move(int delta)
+{
+	if (!U.list_on || s_q.n <= 0)
+		return;
+	juke_set_sel(U.sel + delta);
+}
+
+/* Selection is an item, not a slot, so a shuffle keeps the same row's track. */
+static void juke_rebind_selection(void)
+{
+	int c;
+
+	for (c = 0; c < MMB_MAX_CONSOLES; c++)
+	{
+		int item = s_ui[c].sel_item;
+		int i;
+
+		if (!s_ui[c].active || item < 0)
+			continue;
+		s_ui[c].sel = 0;
+		for (i = 0; i < s_q.n; i++)
+		{
+			if (s_q.order[i] == item)
+			{
+				s_ui[c].sel = i;
+				break;
+			}
+		}
+	}
 }
 
 /* Toggle shuffle. The currently playing track stays put; the rest is
@@ -119,22 +192,15 @@ static void juke_set_shuffle(int on)
 		if (j >= 0)
 			s_q.cur = j;
 	}
+	juke_rebind_selection();
 	s_q.shuffle = on;
 }
 
 /* ---- colour helpers --------------------------------------------------- *
- * JUKE owns a fixed dark cyberpunk palette. It deliberately ignores
- * OPTION EDIT THEME so the player looks the same under every system theme;
- * because nothing here touches the TUI palette, leaving JUKE restores the
- * user's theme untouched. */
-
-static unsigned juke_dim(unsigned c)
-{
-	int r = (int)((c >> 16) & 255) / 3;
-	int g = (int)((c >> 8) & 255) / 3;
-	int b = (int)(c & 255) / 3;
-	return (unsigned)((r << 16) | (g << 8) | b);
-}
+ * JUKE owns a fixed cool-grey palette with the graffiti logo's lime accent.
+ * It deliberately ignores OPTION EDIT THEME so the player looks the same
+ * under every system theme; because nothing here touches the TUI palette,
+ * leaving JUKE restores the user's theme untouched. */
 
 /* Component-wise blend of a and b by t in [0,1]. */
 static unsigned juke_mix(unsigned a, unsigned b, float t)
@@ -153,7 +219,7 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Cool base -> electric purple -> hot tip, for the per-bar gradient. */
+/* Black base -> mid grey -> lime tip, for the per-bar gradient (#952). */
 static unsigned juke_grad(float t)
 {
 	if (t < 0.0f)
@@ -165,18 +231,37 @@ static unsigned juke_grad(float t)
 	return juke_mix(U.col_bar_mid, U.col_bar_hi, (t - 0.5f) * 2.0f);
 }
 
+/* Muted graffiti accents: magenta -> cyan -> lime, for the VOL fill edge. */
+static unsigned juke_logo_grad(float t)
+{
+	if (t < 0.0f)
+		t = 0.0f;
+	if (t > 1.0f)
+		t = 1.0f;
+	if (t < 0.5f)
+		return juke_mix(0x9736B3u, 0x2DB7B7u, t * 2.0f);
+	return juke_mix(0x2DB7B7u, 0x5BBA78u, (t - 0.5f) * 2.0f);
+}
+
 static void juke_load_colours(void)
 {
-	U.col_bg = 0x05060Fu;      /* near-black indigo   */
-	U.col_panel = 0x0C101Fu;   /* dark panel          */
-	U.col_panel2 = 0x1B1440u;  /* deep purple line    */
-	U.col_hot = 0xFF2BD6u;     /* neon magenta        */
-	U.col_text = 0xE6F5FFu;    /* icy white           */
-	U.col_dim = 0x7C89B8u;     /* muted periwinkle    */
-	U.col_bar_lo = 0x00E0FFu;  /* electric cyan       */
-	U.col_bar_mid = 0x9A4DFFu; /* electric purple     */
-	U.col_bar_hi = 0xFF2BD6u;  /* neon magenta        */
-	U.col_scan = 0x39FFEAu;    /* aqua trace          */
+	/* JUKE renders at 32-bit precision so the surface reaches the panel's
+	 * native depth: neutral greys stay neutral, and the bar/ghost gradients
+	 * do not band into the few levels RGB332 allows. */
+	U.col_bg = 0x000000u;       /* black canvas          */
+	U.col_panel = 0x08090Au;    /* scope panel fill      */
+	U.col_panel2 = 0x373A3Eu;   /* muted grey border     */
+	U.col_track = 0x1A1D20u;    /* empty VOL / chip fill */
+	U.col_text = 0xFFFFFFu;     /* plain white           */
+	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
+	U.col_bar_lo = 0x000000u;   /* black bar base        */
+	U.col_bar_mid = 0x767C82u;  /* mid grey bar middle   */
+	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
+	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
+	U.col_peak = 0xC8E664u;     /* light lime cap        */
+	U.col_scope_lo = 0x2A3038u; /* cool dark ghost       */
+	U.col_vol = 0xB4BCC2u;      /* VOL body grey         */
+	U.col_base = 0x464A50u;     /* spectrum baseline     */
 }
 
 /* ---- paths / queue ---------------------------------------------------- */
@@ -201,13 +286,66 @@ static int juke_ext_ok(const char *name)
 {
 	const char *e = juke_ext(name);
 	return mmb_keyword_eq(e, "MP3") || mmb_keyword_eq(e, "MOD") ||
-	       mmb_keyword_eq(e, "XM") || mmb_keyword_eq(e, "WAV");
+	       mmb_keyword_eq(e, "XM") || mmb_keyword_eq(e, "S3M") ||
+	       mmb_keyword_eq(e, "WAV");
 }
 
 static const char *juke_basename(const char *p)
 {
 	const char *slash = juke_last(p, '/');
 	return slash ? slash + 1 : p;
+}
+
+/* Path under the queued folder, so nested tracks stay distinct. */
+static const char *juke_dispname(const char *p)
+{
+	int n;
+
+	if (!p)
+		return "";
+	if (s_q.dir[0])
+	{
+		n = (int)strlen(s_q.dir);
+		if (n > 0 && strncmp(p, s_q.dir, (size_t)n) == 0 && p[n] == '/')
+			return p + n + 1;
+	}
+	return juke_basename(p);
+}
+
+/* Metadata title when one is cached, otherwise the path under the folder. */
+static const char *juke_row_title(int pos)
+{
+	int idx;
+	const char *path;
+
+	if (pos < 0 || pos >= s_q.n)
+		return "";
+	idx = s_q.order[pos];
+	if (idx < 0 || idx >= s_q.n)
+		return "";
+	path = s_q.item[idx];
+	if (!s_q.titled[idx])
+	{
+		if (!s_q.title[idx])
+		{
+			s_q.title[idx] = G.plat->alloc(JUKE_TITLE_MAX);
+			if (!s_q.title[idx])
+				return juke_dispname(path);
+		}
+		s_q.titled[idx] = 1;
+		s_q.title[idx][0] = 0;
+		if (s_q.cur == pos && g_audio.name[0] &&
+		    mmb_keyword_eq(g_audio.name, path))
+		{
+			if (!mmb_audio_title(s_q.title[idx], JUKE_TITLE_MAX))
+				mmb_media_title(path, s_q.title[idx], JUKE_TITLE_MAX);
+		}
+		else
+			mmb_media_title(path, s_q.title[idx], JUKE_TITLE_MAX);
+	}
+	if (s_q.title[idx][0])
+		return s_q.title[idx];
+	return juke_dispname(path);
 }
 
 static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
@@ -227,54 +365,281 @@ static void juke_join(char *dst, int dstsz, const char *dir, const char *name)
 	dst[n] = 0;
 }
 
+/* Release every path, title, and index the queue owns. The queue is global
+ * and outlives individual JUKE screens, so this runs only when it is rebuilt. */
+static void juke_queue_free(void)
+{
+	int i;
+
+	if (!G.plat || !G.plat->free)
+		return;
+	if (s_q.item)
+	{
+		for (i = 0; i < s_q.n; i++)
+			if (s_q.item[i])
+				G.plat->free(s_q.item[i]);
+		G.plat->free(s_q.item);
+	}
+	if (s_q.title)
+	{
+		for (i = 0; i < s_q.n; i++)
+			if (s_q.title[i])
+				G.plat->free(s_q.title[i]);
+		G.plat->free(s_q.title);
+	}
+	if (s_q.order)
+		G.plat->free(s_q.order);
+	if (s_q.titled)
+		G.plat->free(s_q.titled);
+	s_q.order = 0;
+	s_q.item = 0;
+	s_q.title = 0;
+	s_q.titled = 0;
+	s_q.n = 0;
+	s_q.cap = 0;
+}
+
+/* Grow the queue's parallel arrays to at least `need` slots. Doubling keeps
+ * the number of reallocations small; individual paths are allocated to their
+ * exact length so a large library costs only what it uses. */
+static int juke_queue_reserve(int need)
+{
+	int ncap, i;
+	int *order;
+	char **item, **title;
+	unsigned char *titled;
+
+	if (need <= s_q.cap)
+		return 0;
+	if (!G.plat || !G.plat->alloc || !G.plat->free)
+		return -1;
+	ncap = s_q.cap ? s_q.cap : JUKE_QUEUE_INIT;
+	while (ncap < need)
+		ncap *= 2;
+	order = G.plat->alloc((unsigned)ncap * sizeof(*order));
+	item = G.plat->alloc((unsigned)ncap * sizeof(*item));
+	title = G.plat->alloc((unsigned)ncap * sizeof(*title));
+	titled = G.plat->alloc((unsigned)ncap);
+	if (!order || !item || !title || !titled)
+	{
+		if (order) G.plat->free(order);
+		if (item) G.plat->free(item);
+		if (title) G.plat->free(title);
+		if (titled) G.plat->free(titled);
+		return -1;
+	}
+	for (i = 0; i < s_q.n; i++)
+	{
+		order[i] = s_q.order[i];
+		item[i] = s_q.item[i];
+		title[i] = s_q.title[i];
+		titled[i] = s_q.titled[i];
+	}
+	for (i = s_q.n; i < ncap; i++)
+	{
+		item[i] = 0;
+		title[i] = 0;
+		titled[i] = 0;
+	}
+	if (s_q.order) G.plat->free(s_q.order);
+	if (s_q.item) G.plat->free(s_q.item);
+	if (s_q.title) G.plat->free(s_q.title);
+	if (s_q.titled) G.plat->free(s_q.titled);
+	s_q.order = order;
+	s_q.item = item;
+	s_q.title = title;
+	s_q.titled = titled;
+	s_q.cap = ncap;
+	return 0;
+}
+
+static int juke_add_file(const char *dir, const char *name)
+{
+	char path[JUKE_PATH_MAX];
+	int len;
+	char *p;
+
+	juke_join(path, sizeof(path), dir, name);
+	if (!path[0])
+		return -1;
+	if (juke_queue_reserve(s_q.n + 1) != 0)
+		return -1;
+	len = (int)strlen(path);
+	p = G.plat->alloc((unsigned)len + 1);
+	if (!p)
+		return -1;
+	memcpy(p, path, (size_t)len + 1);
+	s_q.item[s_q.n] = p;
+	s_q.title[s_q.n] = 0;
+	s_q.titled[s_q.n] = 0;
+	s_q.order[s_q.n] = s_q.n;
+	s_q.n++;
+	return 0;
+}
+
+/* One sorted listing of a whole directory, growing the buffer until the
+ * backend reports no truncation. JUKE_DIR_MAX bounds the transient buffer
+ * (a directory with more entries keeps its first JUKE_DIR_MAX, sorted). */
+static mmb_dirent *juke_list_all(const char *path, int *out_n)
+{
+	int cap = JUKE_DIR_INIT;
+
+	*out_n = 0;
+	for (;;)
+	{
+		mmb_dirent *ents = G.plat->alloc(sizeof(*ents) * (unsigned)cap);
+		int n, trunc = 0, at_max = cap >= JUKE_DIR_MAX;
+
+		if (!ents)
+			return 0;
+		n = mmb_vfs_list_entries(path, ents, cap, &trunc);
+		if (n < 0)
+		{
+			G.plat->free(ents);
+			return 0;
+		}
+		if (!trunc || at_max)
+		{
+			*out_n = n;
+			return ents;
+		}
+		G.plat->free(ents);
+		cap *= 2;
+		if (cap > JUKE_DIR_MAX)
+			cap = JUKE_DIR_MAX;
+	}
+}
+
+typedef struct {
+	char path[JUKE_PATH_MAX];
+	int pass;
+	int depth;
+} juke_scan;
+
+/* Push a scan frame, growing the stack by doubling when it is full. */
+static int juke_scan_push(juke_scan **stack, int *sp, int *cap,
+			  const char *path, int pass, int depth)
+{
+	if (*sp >= *cap)
+	{
+		int ncap = *cap * 2;
+		juke_scan *ns = G.plat->alloc(sizeof(**stack) * (unsigned)ncap);
+		if (!ns)
+			return -1;
+		memcpy(ns, *stack, sizeof(**stack) * (size_t)*sp);
+		G.plat->free(*stack);
+		*stack = ns;
+		*cap = ncap;
+	}
+	strncpy((*stack)[*sp].path, path, JUKE_PATH_MAX - 1);
+	(*stack)[*sp].path[JUKE_PATH_MAX - 1] = 0;
+	(*stack)[*sp].pass = pass;
+	(*stack)[*sp].depth = depth;
+	(*sp)++;
+	return 0;
+}
+
+/* Folders A-Z, then the files beside them. Subfolders are queued before
+ * those files. The stack and each listing grow on demand, so a large or
+ * deep tree is not capped by a fixed array. Recursion depth is naturally
+ * bounded by JUKE_PATH_MAX (each level adds at least "/x"). */
+static int juke_scan_tree(const char *root)
+{
+	juke_scan *stack;
+	int sp = 0, cap = JUKE_SCAN_INIT, failed = 0;
+
+	if (!G.plat || !G.plat->alloc || !G.plat->free)
+		return -1;
+	stack = G.plat->alloc(sizeof(*stack) * (unsigned)cap);
+	if (!stack)
+		return -1;
+	if (juke_scan_push(&stack, &sp, &cap, root, 0, 0) != 0)
+	{
+		G.plat->free(stack);
+		return -1;
+	}
+	while (sp > 0 && !failed)
+	{
+		juke_scan cur = stack[--sp];
+		mmb_dirent *ents;
+		int n = 0, i;
+
+		ents = juke_list_all(cur.path, &n);
+		if (!ents)
+		{
+			if (cur.pass == 0 && cur.depth == 0)
+				failed = 1;
+			continue;
+		}
+		if (cur.pass == 0)
+		{
+			/* The directory's own files are queued after its subtrees,
+			 * so re-push it as a pass-1 frame under the subfolders. */
+			if (juke_scan_push(&stack, &sp, &cap, cur.path, 1,
+					   cur.depth) != 0)
+			{
+				G.plat->free(ents);
+				failed = 1;
+				break;
+			}
+			for (i = n - 1; i >= 0; i--)
+			{
+				char sub[JUKE_PATH_MAX];
+				if (!ents[i].is_dir || !ents[i].name[0])
+					continue;
+				juke_join(sub, sizeof(sub), cur.path,
+					  ents[i].name);
+				if (juke_scan_push(&stack, &sp, &cap, sub, 0,
+						   cur.depth + 1) != 0)
+				{
+					failed = 1;
+					break;
+				}
+			}
+		}
+		else
+		{
+			for (i = 0; i < n; i++)
+			{
+				if (ents[i].is_dir || !juke_ext_ok(ents[i].name))
+					continue;
+				if (juke_add_file(cur.path, ents[i].name) != 0)
+					break;
+			}
+		}
+		G.plat->free(ents);
+	}
+	G.plat->free(stack);
+	return failed ? -1 : 0;
+}
+
 static int juke_build_queue(const char *spec)
 {
-	char list[JUKE_LIST_MAX];
-	const char *p;
-	int truncated = 0;
-
-	s_q.n = 0;
+	juke_queue_free();
 	s_q.cur = -1;
 	s_q.shuffle = 0;
-	s_q.truncated = 0;
 	s_q.dir[0] = 0;
 	if (mmb_vfs_isdir(spec))
 	{
-		if (mmb_vfs_list(spec, list, sizeof(list), &truncated) != 0)
-			return -1;
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
-		p = list;
-		while (*p && s_q.n < JUKE_MAX_QUEUE)
+		if (juke_scan_tree(spec) != 0)
 		{
-			char name[JUKE_PATH_MAX];
-			int l = 0;
-			while (*p && *p != '\n' && l < (int)sizeof(name) - 1)
-				name[l++] = *p++;
-			name[l] = 0;
-			while (*p == '\n')
-				p++;
-			if (l == 0 || name[l - 1] == '/')
-				continue;
-			if (!juke_ext_ok(name))
-				continue;
-			juke_join(s_q.item[s_q.n], JUKE_PATH_MAX, spec, name);
-			s_q.n++;
+			juke_queue_free();
+			return -1;
 		}
-		/* Either the folder listing was cut, or the queue itself filled
-		 * before the listing ran out (#693). */
-		if (truncated || s_q.n >= JUKE_MAX_QUEUE)
-			s_q.truncated = 1;
 	}
 	else
 	{
 		if (!juke_ext_ok(spec) || !mmb_vfs_exists(spec))
 			return -1;
-		strncpy(s_q.item[0], spec, JUKE_PATH_MAX - 1);
-		s_q.item[0][JUKE_PATH_MAX - 1] = 0;
+		if (juke_add_file("", spec) != 0)
+		{
+			juke_queue_free();
+			return -1;
+		}
 		strncpy(s_q.dir, spec, sizeof(s_q.dir) - 1);
 		s_q.dir[sizeof(s_q.dir) - 1] = 0;
-		s_q.n = 1;
 	}
 	{
 		int i;
@@ -293,6 +658,8 @@ static int juke_play_path(const char *p)
 		return mmb_play_mod(p);
 	if (mmb_keyword_eq(juke_ext(p), "XM"))
 		return mmb_play_xm(p);
+	if (mmb_keyword_eq(juke_ext(p), "S3M"))
+		return mmb_play_s3m(p);
 	if (mmb_keyword_eq(juke_ext(p), "WAV"))
 		return mmb_play_wav(p);
 	return -1;
@@ -318,6 +685,10 @@ static int juke_start(int idx)
 	vr = g_audio.vol_r;
 	if (juke_play_path(p) != 0)
 		return -1;
+	/* The queue runs in the background on its own console: a track change
+	 * driven by the host poll must not re-attribute the engine to whichever
+	 * console happens to be active (#805). */
+	g_audio.owner = s_q.owner;
 	g_audio.vol_l = vl;
 	g_audio.vol_r = vr;
 	s_q.cur = idx;
@@ -359,6 +730,26 @@ static void juke_manage(void)
 		juke_advance();
 }
 
+/* #858: background queue advance. Registered for the queue's owning console
+ * while a queue is live; the yield registry rate-limits it to ~1 Hz so it
+ * stays cheap. It runs in the owner's interpreter context so a track change
+ * keeps that console's ownership (see juke_start). */
+static void juke_yield(int console, void *ctx)
+{
+	(void)ctx;
+	if (console != s_q.owner)
+		return;
+	if (mmb_bg_console_enter(console))
+	{
+		juke_manage();
+		mmb_bg_console_leave();
+	}
+	else
+		juke_manage();
+	if (!s_q.active)
+		mmb_yield_remove(juke_yield);
+}
+
 /* ---- drawing ---------------------------------------------------------- */
 
 static void juke_text(int x, int y, const char *s, unsigned col, int scale)
@@ -371,76 +762,200 @@ static void juke_text(int x, int y, const char *s, unsigned col, int scale)
 	G.gfx.font_scale = save;
 }
 
-static const char *juke_state_str(void)
+/* Decode the graffiti wordmark once per JUKE session (#914). It mirrors the
+ * startup_logo() path: A:/juke-logo.png is a build-time ramdisk asset. */
+static void juke_load_logo(void)
 {
-	if (g_audio.playing && g_audio.paused)
-		return "PAUSED";
-	if (g_audio.playing)
-		return "PLAY";
-	if (s_q.active)
-		return "READY";
-	return "STOP";
+	const unsigned char *file = 0;
+	unsigned n = 0;
+	uint32_t *pix = 0;
+	int w = 0, h = 0;
+
+	U.logo = 0;
+	U.logo_w = U.logo_h = 0;
+	if (!G.plat)
+		return;
+	if (mmb_vfs_read_ptr("A:/juke-logo.png", &file, &n) != 0 || !file || !n)
+		return;
+	if (mmb_png_decode_rgba(file, n, &pix, &w, &h) != 0 || !pix)
+		return;
+	U.logo = pix;
+	U.logo_w = w;
+	U.logo_h = h;
 }
 
-static void juke_paint(int w, int h)
+static void juke_draw_logo(int x0, int y0)
+{
+	int i, j;
+
+	if (!U.logo)
+		return;
+	for (j = 0; j < U.logo_h; j++)
+		for (i = 0; i < U.logo_w; i++)
+		{
+			uint32_t c = U.logo[j * U.logo_w + i];
+			if (!(c >> 24))
+				continue;
+			mmb_gfx_plot(x0 + i, y0 + j, c & 0xFFFFFFu);
+		}
+}
+
+static void juke_paint_list(int w, int h)
+{
+	int y0 = JUKE_LIST_Y;
+	int y1 = h - 56;
+	int bw = w - 16;
+	int rows, top, vis;
+	char buf[JUKE_PATH_MAX + 8];
+
+	if (y1 < y0 + 24)
+		y1 = y0 + 24;
+	mmb_gfx_fill_rect(8, y0, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(8, y1 - 1, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(8, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(8 + bw - 1, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(9, y0 + 1, bw - 2, y1 - y0 - 2, U.col_panel);
+	if (s_q.n <= 0)
+	{
+		juke_text(22, y0 + 4, "(empty)", U.col_dim, 1);
+		return;
+	}
+	if (U.sel < 0 || U.sel >= s_q.n)
+		juke_set_sel(s_q.cur >= 0 ? s_q.cur : 0);
+	rows = (y1 - y0 - 8) / JUKE_LIST_ROW;
+	if (rows < 1)
+		rows = 1;
+	if (U.sel < U.list_top)
+		U.list_top = U.sel;
+	if (U.sel >= U.list_top + rows)
+		U.list_top = U.sel - rows + 1;
+	if (U.list_top < 0)
+		U.list_top = 0;
+	top = U.list_top;
+	for (vis = 0; vis < rows; vis++)
+	{
+		int pos = top + vis;
+		int y = y0 + 4 + vis * JUKE_LIST_ROW;
+		const char *name;
+		int maxc;
+
+		if (pos >= s_q.n)
+			break;
+		if (pos == U.sel)
+			mmb_gfx_fill_rect(10, y, w - 20, 16, JUKE_LIST_SEL);
+		if (pos == s_q.cur)
+			mmb_gfx_fill_rect(11, y, 4, 16, U.col_bar_hi);
+		name = juke_row_title(pos);
+		maxc = (w - 48) / 8;
+		if (maxc < 8)
+			maxc = 8;
+		if (maxc > (int)sizeof(buf) - 1)
+			maxc = (int)sizeof(buf) - 1;
+		sprintf(buf, "%2d  %s", pos + 1, name);
+		if ((int)strlen(buf) > maxc)
+			buf[maxc] = 0;
+		juke_text(22, y, buf,
+			  pos == U.sel ? U.col_text : U.col_dim, 1);
+	}
+}
+
+/* Oscilloscope waveform inset, shared by the visualiser and the playlist view
+ * so the waveform stays visible while browsing the queue (#950). */
+static void juke_paint_scope(int w)
+{
+	short scope[JUKE_SCOPE_N];
+	int i, n;
+	int px, x1, py0, py1, cy, amp, age;
+
+	n = mmb_audio_scope(scope, JUKE_SCOPE_N);
+	if (n > JUKE_SCOPE_N)
+		n = JUKE_SCOPE_N;
+
+	/* AFK-style ghost history: keep a ring of past scope frames so older
+	 * traces fade and cool toward the base grey while the newest stays lime. */
+	U.scope_head = (U.scope_head + 1) % JUKE_SCOPE_HIST;
+	for (i = 0; i < JUKE_SCOPE_N; i++)
+		U.scope_hist[U.scope_head][i] = i < n ? scope[i] : 0;
+
+	/* Oscilloscope: its own bordered inset under the title, with a ghost
+	 * history of past frames (oldest first so the newest lands on top). */
+	{
+		int bx = 8, by = JUKE_MID_Y, bw2 = w - 16, bh2 = JUKE_SCOPE_H;
+		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
+		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
+		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
+		mmb_gfx_fill_rect(bx + bw2 - 1, by, 1, bh2, U.col_panel2);
+		mmb_gfx_fill_rect(bx + 1, by + 1, bw2 - 2, bh2 - 2, U.col_panel);
+		px = bx + 2;
+		x1 = bx + bw2 - 3;
+		py0 = by + 3;
+		py1 = by + bh2 - 4;
+		cy = (py0 + py1) / 2;
+		amp = (py1 - py0) / 2;
+		for (age = JUKE_SCOPE_HIST - 1; age >= 0; age--)
+		{
+			int idx = (U.scope_head + JUKE_SCOPE_HIST - age) % JUKE_SCOPE_HIST;
+			float t = (float)(JUKE_SCOPE_HIST - 1 - age) /
+				  (float)(JUKE_SCOPE_HIST - 1);
+			unsigned col = juke_mix(U.col_scope_lo, U.col_scan, t);
+			int lx = -1, ly = 0;
+			for (i = 0; i < JUKE_SCOPE_N; i++)
+			{
+				int xx = px + (int)((long)(x1 - px) * i / (JUKE_SCOPE_N - 1));
+				int yy = cy + (int)((long)U.scope_hist[idx][i] * amp / 32768);
+				if (yy < py0)
+					yy = py0;
+				if (yy > py1)
+					yy = py1;
+				if (lx >= 0)
+					mmb_gfx_line(lx, ly, xx, yy, col, 1);
+				lx = xx;
+				ly = yy;
+			}
+		}
+	}
+}
+
+static void juke_paint_vis(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
-	short scope[64];
-	int i, n, x0, x1, bw, gap, base, maxh, mid, fy, vol;
-	const char *title;
-	char buf[128];
+	int i, x0, x1, bw, gap, base, maxh;
 
+	juke_paint_scope(w);
 	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
-	n = mmb_audio_scope(scope, 64);
 
-	mmb_gfx_cls(U.col_bg);
-
-	/* Header. */
-	mmb_gfx_fill_rect(0, 0, w, 46, U.col_panel);
-	mmb_gfx_fill_rect(0, 46, w, 2, U.col_hot);
-	juke_text(14, 8, "JUKE", U.col_hot, 2);
-	{
-		const char *fmt = s_q.cur >= 0 ? juke_ext(juke_track(s_q.cur)) : "";
-		sprintf(buf, "%s  %s  %d/%d%s%s", juke_state_str(), fmt,
-			s_q.cur >= 0 ? s_q.cur + 1 : 0, s_q.n,
-			s_q.shuffle ? "  SHUF" : "",
-			s_q.truncated ? "  more" : "");
-		juke_text(w - 14 - (int)strlen(buf) * 8, 17, buf, U.col_dim, 1);
-	}
-
-	/* Now-playing line. */
-	title = s_q.cur >= 0 ? juke_basename(juke_track(s_q.cur)) : "(no track)";
-	juke_text(14, 54, title, U.col_text, 1);
-	if (s_q.dir[0])
-		juke_text(14, 72, s_q.dir, U.col_dim, 1);
-
-	/* Visualiser. */
-	x0 = 14;
-	x1 = w - 14;
-	base = h - 66;
-	maxh = base - 100;
+	/* Spectrum: 24 black-to-grey-to-lime bars, no midfield guide lines. The
+	 * bar field is deliberately short so the full-size wordmark still fits
+	 * above it, and it is centred so the leftover width splits evenly on both
+	 * sides instead of pooling to the right of the last band. */
+	base = h - 71;
+	maxh = base - 190;
 	if (maxh < 24)
 		maxh = 24;
-	mid = base - maxh / 2;
 	gap = 3;
-	bw = (x1 - x0) / MMB_AUDIO_BANDS - gap;
+	bw = (w - 28) / MMB_AUDIO_BANDS - gap;
 	if (bw < 2)
 		bw = 2;
-
-	for (i = 1; i <= 3; i++)
-		mmb_gfx_fill_rect(x0, base - maxh * i / 4, x1 - x0, 1,
-				  U.col_panel2);
+	{
+		int span = MMB_AUDIO_BANDS * bw + (MMB_AUDIO_BANDS - 1) * gap;
+		x0 = 14 + (w - 28 - span) / 2;
+		if (x0 < 14)
+			x0 = 14;
+		x1 = x0 + span;
+	}
 
 	for (i = 0; i < MMB_AUDIO_BANDS; i++)
 	{
 		int bx = x0 + i * (bw + gap);
 		int bh = (int)(bands[i] * (float)maxh);
-		int y, rh, py;
+		int y, pycap;
 		float p;
 
 		if (bh < 2)
 			bh = 2;
-		/* Vertical per-bar gradient: cool base -> hot tip. */
+		if (bh > maxh)
+			bh = maxh;
+		/* Vertical per-bar gradient: black base -> grey -> lime tip. */
 		for (y = 0; y < bh; y += 4)
 		{
 			float frac = (float)y / (float)bh;
@@ -450,12 +965,6 @@ static void juke_paint(int w, int h)
 			mmb_gfx_fill_rect(bx, base - y - seg_h, bw, seg_h,
 					  juke_grad(frac));
 		}
-
-		/* Reflection. */
-		rh = bh / 4;
-		if (rh > 16)
-			rh = 16;
-		mmb_gfx_fill_rect(bx, base + 3, bw, rh, juke_dim(U.col_bar_lo));
 
 		/* Peak cap falls slowly. */
 		p = U.peak[i];
@@ -468,57 +977,79 @@ static void juke_paint(int w, int h)
 				p = 0.0f;
 		}
 		U.peak[i] = p;
-		py = base - (int)(p * (float)maxh) - 3;
-		if (py < base - maxh - 3)
-			py = base - maxh - 3;
-		mmb_gfx_fill_rect(bx, py, bw, 2, U.col_hot);
+		pycap = base - (int)(p * (float)maxh) - 2;
+		if (pycap < base - maxh - 2)
+			pycap = base - maxh - 2;
+		mmb_gfx_fill_rect(bx, pycap, bw, 1, U.col_peak);
 	}
 
-	mmb_gfx_fill_rect(x0, base, x1 - x0, 2, U.col_panel2);
+	mmb_gfx_fill_rect(x0, base, x1 - x0, 1, U.col_base);
+}
 
-	/* Oscilloscope trace. */
-	if (n > 1)
+static void juke_paint(int w, int h)
+{
+	int fy, vol;
+	const char *title;
+	char buf[128];
+
+	mmb_gfx_cls(U.col_bg);
+
+	/* Header: just the full-size graffiti wordmark. The top-right status
+	 * chrome (VIS/LIST/MOD #951, then N/M, SHUF, and the "more" truncation
+	 * hint #965) is gone; the queue no longer truncates, so there is
+	 * nothing to report there. */
+	juke_draw_logo(14, 1);
+
+	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
+	juke_text(14, 60, title, U.col_text, 1);
+	if (s_q.cur >= 0)
 	{
-		int px = -1, py = 0;
-		for (i = 0; i < n; i++)
-		{
-			int xx = x0 + (int)((long)(x1 - x0) * i / (n - 1));
-			int yy = mid + (int)((long)scope[i] * (maxh / 2) / 32768);
-			if (yy < base - maxh)
-				yy = base - maxh;
-			if (yy > base)
-				yy = base;
-			if (px >= 0)
-				mmb_gfx_line(px, py, xx, yy, U.col_scan, 1);
-			px = xx;
-			py = yy;
-		}
+		const char *rel = juke_dispname(juke_track(s_q.cur));
+		if (rel[0] && !mmb_keyword_eq(title, rel))
+			juke_text(14, 78, rel, U.col_dim, 1);
+		else if (s_q.dir[0])
+			juke_text(14, 78, s_q.dir, U.col_dim, 1);
 	}
+
+	if (U.list_on)
+	{
+		juke_paint_scope(w);
+		juke_paint_list(w, h);
+	}
+	else
+		juke_paint_vis(w, h);
 
 	/* Footer: transport legend, then shuffle / volume indicators. */
 	fy = h - 48;
-	mmb_gfx_fill_rect(0, fy, w, 48, U.col_panel);
-	mmb_gfx_fill_rect(0, fy, w, 1, U.col_panel2);
 	juke_text(14, fy + 6,
-		  "SPACE play/pause   P prev   N next   R shuf   -/+ vol   M mute   S stop   ESC quit",
+		  "SPACE play/pause   P prev   N next   L list   R shuf   -/+ vol   M mute   S stop   ESC quit",
 		  U.col_dim, 1);
 
 	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
 	mmb_gfx_fill_rect(14, fy + 27, 14, 14,
-			  s_q.shuffle ? U.col_hot : U.col_panel2);
-	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_hot : U.col_dim, 1);
+			  s_q.shuffle ? U.col_peak : U.col_track);
+	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_text : U.col_dim, 1);
 
-	/* Volume level bar. */
+	/* Volume level bar: grey body with a muted logo-accent top edge. */
 	vol = g_audio.vol_l;
 	if (vol < 0)
 		vol = 0;
 	if (vol > 100)
 		vol = 100;
 	juke_text(110, fy + 28, "VOL", U.col_dim, 1);
-	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_panel2);
+	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_track);
 	if (vol > 0)
-		mmb_gfx_fill_rect(146, fy + 27, vol * 220 / 100, 14,
-				  juke_grad((float)vol / 100.0f));
+	{
+		int vw = vol * 220 / 100;
+		int vx;
+		mmb_gfx_fill_rect(146, fy + 27, vw, 14, U.col_vol);
+		for (vx = 0; vx < vw; vx += 2)
+		{
+			int seg = vw - vx < 2 ? vw - vx : 2;
+			mmb_gfx_fill_rect(146 + vx, fy + 27, seg, 2,
+					  juke_logo_grad((float)vx / 220.0f));
+		}
+	}
 	sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
 	juke_text(380, fy + 28, buf, U.col_text, 1);
 }
@@ -548,6 +1079,12 @@ static void juke_leave(void)
 	if (!U.active)
 		return;
 	U.active = 0;
+	if (U.logo)
+	{
+		if (G.plat && G.plat->free)
+			G.plat->free(U.logo);
+		U.logo = 0;
+	}
 	if (U.saved_mode != G.gfx.mode || U.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(U.saved_mode, U.saved_bits);
 	G.gfx.font_scale = U.saved_font_scale;
@@ -585,6 +1122,7 @@ void mmb_cmd_juke(void)
 	{
 		if (juke_build_queue(path) != 0)
 			mmb_error("?FILE");
+		s_q.owner = g_console;
 		if (juke_start(0) != 0)
 			mmb_error("?FILE");
 	}
@@ -592,8 +1130,19 @@ void mmb_cmd_juke(void)
 	{
 		if (juke_build_queue(mmb_vfs_cwd()) != 0)
 			mmb_error("?DIRECTORY");
+		s_q.owner = g_console;
 		if (juke_start(0) != 0)
 			mmb_error("?FILE");
+	}
+
+	/* #858: the queue keeps advancing while JUKE is not the active screen.
+	 * Register (or refresh) the background callback for its owner console.
+	 * This is only registered while a queue is live; it does not run key
+	 * handling or paint off-screen. */
+	if (s_q.active)
+	{
+		mmb_yield_remove(juke_yield);
+		mmb_yield_add(s_q.owner, juke_yield, 0, 1000);
 	}
 
 	memset(&U, 0, sizeof(U));
@@ -603,12 +1152,16 @@ void mmb_cmd_juke(void)
 	U.saved_display_page = G.gfx.display_page;
 	U.saved_write_fb = G.gfx.write_fb;
 	U.saved_font_scale = G.gfx.font_scale;
-	mmb_gfx_set_mode(JUKE_MODE, 8);
+	mmb_gfx_set_mode(JUKE_MODE, 32);
 	U.w = G.gfx.w > 0 ? G.gfx.w : 960;
 	U.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	U.front = JUKE_PAGE_A;
 	juke_load_colours();
+	juke_load_logo();
 	U.active = 1;
+	U.sel_item = -1;
+	if (s_q.cur >= 0 && s_q.cur < s_q.n)
+		juke_set_sel(s_q.cur);
 	U.last_ms = mmb_now_ms();
 	juke_frame();
 }
@@ -635,9 +1188,68 @@ const char *mmb_juke_key(char c)
 {
 	if (!U.active)
 		return "";
-	if (c == 27 || c == 3 || c == 'q' || c == 'Q' || c == '\r' || c == '\n')
+	if (U.esc != 0)
+	{
+		if (U.esc == 1)
+		{
+			if (c == '[')
+			{
+				U.esc = 2;
+				return "";
+			}
+			if (c == 'O')
+			{
+				U.esc = 3;
+				return "";
+			}
+			U.esc = 0;
+		}
+		else if (U.esc == 3)
+		{
+			U.esc = 0;
+			if (c == 'A')
+				juke_sel_move(-1);
+			else if (c == 'B')
+				juke_sel_move(1);
+			return "";
+		}
+		else
+		{
+			unsigned char uc = (unsigned char)c;
+
+			if (uc >= 0x40 && uc <= 0x7e)
+			{
+				U.esc = 0;
+				if (uc == 'A')
+					juke_sel_move(-1);
+				else if (uc == 'B')
+					juke_sel_move(1);
+			}
+			return "";
+		}
+	}
+	if (c == 27)
+	{
+		U.esc = 1;
+		U.esc_at = mmb_now_ms();
+		return "";
+	}
+	if (c == 3 || c == 'q' || c == 'Q')
 	{
 		juke_leave();
+		return "";
+	}
+	if (c == '\r' || c == '\n')
+	{
+		if (U.list_on && s_q.n > 0)
+			(void)juke_start(U.sel);
+		else
+			juke_leave();
+		return "";
+	}
+	if (c == 'l' || c == 'L')
+	{
+		U.list_on = !U.list_on;
 		return "";
 	}
 	if (c == ' ')
@@ -691,20 +1303,38 @@ const char *mmb_juke_key(char c)
 	if (c == 's' || c == 'S')
 	{
 		s_q.active = 0;
+		mmb_yield_remove(juke_yield);
 		mmb_play_stop();
 		return "";
 	}
 	return "";
 }
 
+void mmb_juke_close(void)
+{
+	if (!U.active)
+		return;
+	U.esc = 0;
+	juke_leave();
+}
+
 void mmb_juke_poll(void)
 {
 	unsigned now;
 
-	juke_manage();
+	/* Queue management runs from the registered background callback
+	 * (juke_yield), so it advances whether or not JUKE is the active
+	 * screen. Here we only repaint the visible player. */
 	if (!U.active)
 		return;
 	now = mmb_now_ms();
+	if (U.esc == 1 && now - U.esc_at >= JUKE_ESC_IDLE_MS)
+	{
+		U.esc = 0;
+		juke_leave();
+		mmb_front_prompt();
+		return;
+	}
 	if (now - U.last_ms < JUKE_FRAME_MS)
 		return;
 	U.last_ms = now;

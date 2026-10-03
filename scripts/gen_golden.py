@@ -23,7 +23,12 @@ def main() -> None:
         for cmd in SCENE:
             con.send_line(cmd)
         golden = os.path.join(GOLDEN_DIR, "scene.png")
-        con.capture_png(golden)
+        written = con.capture_png(golden, strict=True)
+        if os.path.realpath(written) != os.path.realpath(golden):
+            raise SystemExit(
+                f"capture_png wrote {written!r}, not the requested {golden!r}; "
+                "refusing to report success (#906)"
+            )
         print("wrote", golden)
     finally:
         con.stop()

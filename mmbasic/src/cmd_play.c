@@ -16,12 +16,25 @@
 #define JAR_XM_IMPLEMENTATION
 #include "jar_xm.h"
 
+/* S3M replay lives in a separate engine (ibxm). MOD and XM keep hxcmod and
+ * jar_xm; ibxm is only reached for .S3M modules. */
+#include "ibxm.h"
+
 #define MIX_RATE     44100
 #define MIX_CHUNK    512
 #define MIX_PREROLL  1024
-/* Keep ~160ms in the DMA queue (two HDMI IEC958 periods are ~87ms). */
-#define MIX_TARGET   ((MIX_RATE * 160) / 1000)
-#define MIX_FILL_MAX 24
+/* Keep ~320ms queued. A TERM repaint on another console can spend longer
+ * than the old 160ms cushion inside paint and present before the poll loop
+ * reaches the mixer again. 32 chunks cover that target from an empty queue. */
+#define MIX_TARGET   ((MIX_RATE * 320) / 1000)
+#define MIX_FILL_MAX 32
+
+/* ibxm emits one tracker tick per replay_get_audio() call, so a whole tick has
+ * to be held between mixer chunks. Tempo is >= 32, which makes the longest tick
+ * (sample_rate * 5) / (32 * 2) frames; 65 stereo frames of scratch and a *4
+ * factor match ibxm's calculate_mix_buf_len() at that tempo. */
+#define S3M_MIX_INTS ((((MIX_RATE * 5) / 64) + 65) * 4)
+static int s_s3m_mix[S3M_MIX_INTS];
 
 /* One audio engine, one status: shared by every virtual console so playback
  * (and the mixer pump) survives a console switch. See mmb_priv.h. */
@@ -29,9 +42,14 @@ mmb_audio g_audio;
 
 static drmp3 s_mp3;
 static int s_mp3_on;
+static unsigned s_mp3_len;
 static modcontext s_mod;
 static int s_mod_on;
 static jar_xm_context_t *s_xm;
+static struct module *s_s3m_mod;
+static struct replay *s_s3m;
+static int s_s3m_n; /* stereo frames available in s_s3m_mix */
+static int s_s3m_i; /* frames already consumed from s_s3m_mix */
 static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
 static unsigned char *s_wav;
@@ -43,6 +61,10 @@ static double s_tone_ph_l, s_tone_ph_r;
 static unsigned s_tone_left; /* ~0u = hold until STOP */
 static unsigned s_mix_origin;
 static unsigned s_pause_at;
+static unsigned s_mix_at;
+static unsigned s_mix_gap_ms;
+static unsigned s_underruns;
+static unsigned s_audio_resets;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
@@ -202,6 +224,7 @@ static void play_teardown(void)
 		drmp3_uninit(&s_mp3);
 		s_mp3_on = 0;
 	}
+	s_mp3_len = 0;
 	if (s_mod_on)
 	{
 		hxcmod_unload(&s_mod);
@@ -212,6 +235,17 @@ static void play_teardown(void)
 		jar_xm_free_context(s_xm);
 		s_xm = 0;
 	}
+	if (s_s3m)
+	{
+		dispose_replay(s_s3m);
+		s_s3m = 0;
+	}
+	if (s_s3m_mod)
+	{
+		dispose_module(s_s3m_mod);
+		s_s3m_mod = 0;
+	}
+	s_s3m_n = s_s3m_i = 0;
 	if (s_moddata)
 	{
 		G.plat->free(s_moddata);
@@ -233,6 +267,7 @@ static void play_teardown(void)
 	g_audio.paused = 0;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
+	g_audio.owner = -1;
 	s_tone_left = 0;
 	s_tone_hz_l = s_tone_hz_r = 0;
 	s_tone_ph_l = s_tone_ph_r = 0;
@@ -245,6 +280,28 @@ void mmb_play_stop(void)
 	if (G.plat && G.plat->audio_flush)
 		G.plat->audio_flush();
 	play_teardown();
+}
+
+void mmb_play_stop_owned(void)
+{
+	if (g_audio.owner == g_console)
+		mmb_play_stop();
+}
+
+/* #1024: recover a backend left dirty by USB contention or a ring underrun.
+ * Tear down and re-create the output device (DMA/ring state), drop any
+ * unflushed output from the stalled device, and restart the mix gap/underrun
+ * window. The decoder and playback state are kept, so a playing track resumes
+ * cleanly in place without a reboot. */
+static void do_play_reset(void)
+{
+	if (G.plat && G.plat->audio_reset)
+		G.plat->audio_reset();
+	s_pending_n = 0;
+	s_mix_gap_ms = 0;
+	s_underruns = 0;
+	s_mix_at = 0;
+	s_audio_resets++;
 }
 
 void mmb_audio_apply_options(void)
@@ -283,10 +340,14 @@ static void play_begin(int kind, const char *path)
 	g_audio.vol_l = g_audio.vol_r = 100;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
+	g_audio.owner = g_console;
 	if (path)
 		strncpy(g_audio.name, path, sizeof(g_audio.name) - 1);
 	s_mix_origin = mmb_now_ms();
 	s_pause_at = 0;
+	s_mix_at = 0;
+	s_mix_gap_ms = 0;
+	s_underruns = 0;
 	mmb_audio_apply_options();
 	/* Queue a DMA preroll before the caller redraws HDMI. */
 	mmb_play_mix();
@@ -305,6 +366,7 @@ int mmb_play_mp3(const char *path)
 		return -1;
 	}
 	s_mp3_on = 1;
+	s_mp3_len = n;
 	play_begin(1, path);
 	return 0;
 }
@@ -332,8 +394,42 @@ int mmb_play_xm(const char *path)
 		return -1;
 	if (jar_xm_create_context_safe(&s_xm, (const char *)s_xmdata, n, MIX_RATE) != 0)
 		return -1;
-	jar_xm_set_max_loop_count(s_xm, 0);
+	/* Tracker modules play once: mix_* stops at the engine's song-end signal
+	 * (see the one-shot policy in docs/help/play.txt), so JUKE advances its
+	 * queue instead of looping the module forever. */
 	play_begin(3, path);
+	return 0;
+}
+
+int mmb_play_s3m(const char *path)
+{
+	unsigned n = 0;
+	unsigned char *data = 0;
+	struct data d;
+	char msg[64];
+
+	mmb_play_stop();
+	if (load_bytes(path, &data, &n) != 0)
+		return -1;
+	d.buffer = (char *)data;
+	d.length = (int)n;
+	s_s3m_mod = module_load(&d, msg);
+	G.plat->free(data);
+	if (!s_s3m_mod)
+		return -1;
+	/* ibxm sizes its mix scratch for tempo >= 32; a malformed header can
+	 * carry a slower default, so fold that back to the usual 125 BPM. */
+	if (s_s3m_mod->default_tempo != 0 && s_s3m_mod->default_tempo < 32)
+		s_s3m_mod->default_tempo = 125;
+	s_s3m = new_replay(s_s3m_mod, MIX_RATE, 1);
+	if (!s_s3m)
+	{
+		dispose_module(s_s3m_mod);
+		s_s3m_mod = 0;
+		return -1;
+	}
+	s_s3m_n = s_s3m_i = 0;
+	play_begin(6, path);
 	return 0;
 }
 
@@ -461,9 +557,16 @@ static int mix_mp3(unsigned nframes)
 static int mix_mod(unsigned nframes)
 {
 	msample pcm[MIX_CHUNK * 2];
-	hxcmod_fillbuffer(&s_mod, pcm, nframes, 0, 0);
+	int done;
+
+	/* noloop=1: hxcmod returns 1 (and stops in place) once tablepos runs
+	 * past the song length. Honour in-pattern loops/jumps inside the song;
+	 * only the order-list wrap ends it. Zero the tail so a partial final
+	 * chunk is silence, not stale stack. */
+	memset(pcm, 0, sizeof(pcm));
+	done = hxcmod_fillbuffer(&s_mod, pcm, nframes, 0, 1);
 	emit_pcm((short *)pcm, nframes);
-	return 1;
+	return done ? 0 : 1;
 }
 
 static int mix_xm(unsigned nframes)
@@ -480,7 +583,41 @@ static int mix_xm(unsigned nframes)
 		pcm[i] = (short)v;
 	}
 	emit_pcm(pcm, nframes);
-	return 1;
+	/* jar_xm wraps to the restart position at song end; report one-shot
+	 * playback so JUKE advances instead of looping forever. */
+	return jar_xm_song_finished(s_xm) ? 0 : 1;
+}
+
+static int mix_s3m(unsigned nframes)
+{
+	short pcm[MIX_CHUNK * 2];
+	unsigned i, take;
+
+	if (s_s3m_i >= s_s3m_n)
+	{
+		s_s3m_n = replay_get_audio(s_s3m, s_s3m_mix, 0);
+		s_s3m_i = 0;
+		if (s_s3m_n <= 0)
+			return 0;
+	}
+	take = (unsigned)(s_s3m_n - s_s3m_i);
+	if (take > nframes)
+		take = nframes;
+	for (i = 0; i < take; i++)
+	{
+		int l = s_s3m_mix[(s_s3m_i + (int)i) * 2];
+		int r = s_s3m_mix[(s_s3m_i + (int)i) * 2 + 1];
+		if (l > 32767) l = 32767;
+		if (l < -32768) l = -32768;
+		if (r > 32767) r = 32767;
+		if (r < -32768) r = -32768;
+		pcm[i * 2] = (short)l;
+		pcm[i * 2 + 1] = (short)r;
+	}
+	s_s3m_i += (int)take;
+	emit_pcm(pcm, take);
+	/* ibxm wraps the sequence at song end; one-shot so JUKE advances. */
+	return replay_song_finished(s_s3m) ? 0 : 1;
 }
 
 static int mix_tone(unsigned nframes)
@@ -564,16 +701,57 @@ static int mix_wav(unsigned nframes)
 	return 1;
 }
 
+unsigned mmb_audio_mix_gap_ms(void)
+{
+	return s_mix_gap_ms;
+}
+
+unsigned mmb_audio_underruns(void)
+{
+	return s_underruns;
+}
+
+unsigned mmb_audio_resets(void)
+{
+	return s_audio_resets;
+}
+
 void mmb_play_mix(void)
 {
 	unsigned n;
+	unsigned now;
+	unsigned gap;
 	int keep = 1;
 	int loops;
+	static int busy;
 
-	if (!g_audio.playing || g_audio.paused)
+	if (busy)
 		return;
+	if (!g_audio.playing)
+		return;
+	now = mmb_now_ms();
+	if (g_audio.paused)
+	{
+		s_mix_at = now;
+		return;
+	}
+	if (s_mix_at != 0)
+	{
+		gap = now - s_mix_at;
+		if (gap > s_mix_gap_ms)
+			s_mix_gap_ms = gap;
+		if (G.opt.audio_on && G.plat && G.plat->audio_have_device &&
+		    G.plat->audio_have_device() && G.plat->audio_queued_frames &&
+		    G.plat->audio_queued_frames() == 0)
+			s_underruns++;
+	}
+	s_mix_at = now;
+	busy = 1;
 	if (!flush_pending())
+	{
+		busy = 0;
 		return;
+	}
 	for (loops = 0; loops < MIX_FILL_MAX; loops++)
 	{
 		n = due_frames();
@@ -585,6 +763,8 @@ void mmb_play_mix(void)
 			keep = mix_mod(n);
 		else if (g_audio.playing == 3 && s_xm)
 			keep = mix_xm(n);
+		else if (g_audio.playing == 6 && s_s3m)
+			keep = mix_s3m(n);
 		else if (g_audio.playing == 4)
 			keep = mix_tone(n);
 		else if (g_audio.playing == 5)
@@ -604,6 +784,7 @@ void mmb_play_mix(void)
 		s_ended_natural = 1;
 		play_teardown();
 	}
+	busy = 0;
 }
 
 void mmb_play_pause(int on)
@@ -671,11 +852,252 @@ int mmb_audio_scope(short *out, int n)
 	return n;
 }
 
+static int title_clean(char *s)
+{
+	char *r, *w;
+
+	if (!s)
+		return 0;
+	r = s;
+	while (*r == ' ')
+		r++;
+	w = s;
+	while (*r)
+	{
+		unsigned char c = (unsigned char)*r++;
+		if (c < 32 || c > 126)
+		{
+			s[0] = 0;
+			return 0;
+		}
+		*w++ = (char)c;
+	}
+	while (w > s && w[-1] == ' ')
+		w--;
+	*w = 0;
+	return w != s;
+}
+
+static int title_store(const unsigned char *p, int n, char *dst, int dstn)
+{
+	int i, o = 0;
+
+	if (!dst || dstn < 2)
+		return 0;
+	for (i = 0; i < n && o < dstn - 1; i++)
+	{
+		if (p[i] == 0)
+			break;
+		dst[o++] = (char)p[i];
+	}
+	dst[o] = 0;
+	return title_clean(dst);
+}
+
+static int id3_text(const unsigned char *p, int n, char *dst, int dstn)
+{
+	int enc, i, o = 0;
+
+	if (n < 1 || dstn < 2)
+		return 0;
+	enc = p[0];
+	p++;
+	n--;
+	if (enc == 0 || enc == 3)
+		return title_store(p, n, dst, dstn);
+	if (enc == 1 && n >= 2)
+	{
+		int le = p[0] == 0xFF && p[1] == 0xFE;
+		int be = p[0] == 0xFE && p[1] == 0xFF;
+		if (!le && !be)
+			return 0;
+		for (i = 2; i + 1 < n && o < dstn - 1; i += 2)
+		{
+			unsigned c = le ? (unsigned)p[i] | ((unsigned)p[i + 1] << 8)
+					: ((unsigned)p[i] << 8) | (unsigned)p[i + 1];
+			if (c == 0)
+				break;
+			if (c < 32 || c > 126)
+			{
+				dst[0] = 0;
+				return 0;
+			}
+			dst[o++] = (char)c;
+		}
+		dst[o] = 0;
+		return title_clean(dst);
+	}
+	return 0;
+}
+
+static int synchsafe(const unsigned char *p)
+{
+	return ((p[0] & 0x7f) << 21) | ((p[1] & 0x7f) << 14) |
+	       ((p[2] & 0x7f) << 7) | (p[3] & 0x7f);
+}
+
+static int id3v2_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	unsigned off, end, ver;
+	int tag;
+
+	if (n < 10 || memcmp(p, "ID3", 3) != 0)
+		return 0;
+	if (p[5] & 0xC0)
+		return 0;
+	ver = p[3];
+	tag = synchsafe(p + 6);
+	end = 10u + (unsigned)tag;
+	if (end > n)
+		end = n;
+	off = 10;
+	if (ver == 2)
+	{
+		while (off + 6 <= end)
+		{
+			int sz = ((int)p[off + 3] << 16) | ((int)p[off + 4] << 8) |
+				 (int)p[off + 5];
+			if (p[off] == 0)
+				break;
+			if (sz < 0 || off + 6u + (unsigned)sz > end)
+				break;
+			if (memcmp(p + off, "TT2", 3) == 0 &&
+			    id3_text(p + off + 6, sz, dst, dstn))
+				return 1;
+			off += 6u + (unsigned)sz;
+		}
+		return 0;
+	}
+	if (ver != 3 && ver != 4)
+		return 0;
+	while (off + 10 <= end)
+	{
+		int sz = ver == 4 ? synchsafe(p + off + 4)
+				  : (int)(((unsigned)p[off + 4] << 24) |
+					  ((unsigned)p[off + 5] << 16) |
+					  ((unsigned)p[off + 6] << 8) |
+					  (unsigned)p[off + 7]);
+		if (p[off] == 0)
+			break;
+		if (sz < 0 || off + 10u + (unsigned)sz > end)
+			break;
+		if (memcmp(p + off, "TIT2", 4) == 0 &&
+		    id3_text(p + off + 10, sz, dst, dstn))
+			return 1;
+		off += 10u + (unsigned)sz;
+	}
+	return 0;
+}
+
+static int id3v1_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	if (n < 128 || memcmp(p + n - 128, "TAG", 3) != 0)
+		return 0;
+	return title_store(p + n - 128 + 3, 30, dst, dstn);
+}
+
+static int id3_title(const unsigned char *p, unsigned n, char *dst, int dstn)
+{
+	if (id3v2_title(p, n, dst, dstn))
+		return 1;
+	return id3v1_title(p, n, dst, dstn);
+}
+
+static const char *title_ext(const char *p)
+{
+	const char *dot = 0;
+	if (!p)
+		return "";
+	for (; *p; p++)
+		if (*p == '.')
+			dot = p + 1;
+	return dot ? dot : "";
+}
+
+int mmb_audio_title(char *dst, int n)
+{
+	if (!dst || n < 2)
+		return 0;
+	dst[0] = 0;
+	if (g_audio.playing == 2 && s_mod_on)
+		return title_store(s_mod.song.title, 20, dst, n);
+	if (g_audio.playing == 3 && s_xm)
+		return title_store((const unsigned char *)jar_xm_get_module_name(s_xm),
+				   20, dst, n);
+	if (g_audio.playing == 6 && s_s3m_mod)
+		return title_store((const unsigned char *)s_s3m_mod->name, 28, dst, n);
+	if (g_audio.playing == 1 && s_mp3_on && s_moddata && s_mp3_len)
+		return id3_title(s_moddata, s_mp3_len, dst, n);
+	return 0;
+}
+
+int mmb_media_title(const char *path, char *dst, int n)
+{
+	static unsigned char buf[2048];
+	unsigned got = 0;
+	int sz;
+
+	if (!dst || n < 2)
+		return 0;
+	dst[0] = 0;
+	if (!path || !path[0])
+		return 0;
+	if (mmb_keyword_eq(title_ext(path), "MP3"))
+	{
+		unsigned char hdr[10];
+		if (mmb_vfs_read_at(path, 0, hdr, sizeof(hdr), &got) == 0 &&
+		    got == sizeof(hdr) && memcmp(hdr, "ID3", 3) == 0 &&
+		    (hdr[5] & 0xC0) == 0)
+		{
+			unsigned need = 10u + (unsigned)synchsafe(hdr + 6);
+			if (need > sizeof(buf))
+				need = sizeof(buf);
+			if (mmb_vfs_read_at(path, 0, buf, need, &got) == 0 &&
+			    id3v2_title(buf, got, dst, n))
+				return 1;
+		}
+		sz = mmb_vfs_size(path);
+		if (sz >= 128 &&
+		    mmb_vfs_read_at(path, (unsigned)sz - 128, buf, 128, &got) == 0 &&
+		    got == 128)
+			return id3v1_title(buf, 128, dst, n);
+		return 0;
+	}
+	if (mmb_keyword_eq(title_ext(path), "MOD"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 20, &got) != 0)
+			return 0;
+		return title_store(buf, (int)got, dst, n);
+	}
+	if (mmb_keyword_eq(title_ext(path), "XM"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 37, &got) != 0 || got < 37)
+			return 0;
+		if (memcmp(buf, "Extended Module: ", 17) != 0)
+			return 0;
+		return title_store(buf + 17, 20, dst, n);
+	}
+	if (mmb_keyword_eq(title_ext(path), "S3M"))
+	{
+		if (mmb_vfs_read_at(path, 0, buf, 48, &got) != 0 || got < 48)
+			return 0;
+		if (memcmp(buf + 44, "SCRM", 4) != 0)
+			return 0;
+		return title_store(buf, 28, dst, n);
+	}
+	return 0;
+}
+
 void mmb_cmd_play(void)
 {
 	if (mmb_match("STOP"))
 	{
 		mmb_play_stop();
+		return;
+	}
+	if (mmb_match("RESET"))
+	{
+		do_play_reset();
 		return;
 	}
 	if (mmb_match("PAUSE"))
@@ -765,6 +1187,15 @@ void mmb_cmd_play(void)
 			mmb_syntax();
 		if (mmb_play_xm(v.s) != 0)
 			mmb_error("?XM");
+		return;
+	}
+	if (mmb_match("S3M") || mmb_match("S3MFILE"))
+	{
+		mmb_val v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		if (mmb_play_s3m(v.s) != 0)
+			mmb_error("?S3M");
 		return;
 	}
 	if (mmb_match("WAV") || mmb_match("EFFECT") || mmb_match("SOUND"))

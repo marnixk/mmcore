@@ -239,6 +239,97 @@ def test_running_program_suspends_and_resumes(kernel_image):
         con.stop()
 
 
+def _last_done(text: str) -> int | None:
+    """Last ``DONE <n>`` counter value printed by the loop program."""
+    found = re.findall(r"DONE\s+(\d+)", text)
+    return int(found[-1]) if found else None
+
+
+def test_two_consoles_same_file_keep_own_variables(kernel_image):
+    """#1013: two consoles running the same file must not share the tokenized
+    program buffer or the trace cache. Each console's ``counter`` must reflect
+    only its own execution; before the fix console 1's later reads drifted from
+    the value its own program last printed, because the compiled LET and the
+    resolved variable reference aliased the other instance."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        for line in (
+            "10 counter = 0",
+            "20 DO",
+            "30 counter = counter + 1",
+            "40 PAUSE 10",
+            "50 LOOP UNTIL INKEY$() = CHR$(27)",
+            '60 PRINT "DONE "; counter',
+        ):
+            con.send_line(line)
+        con.send_line('SAVE "PROG.BAS"')
+
+        # Console 1 runs the file, then stays suspended while console 2 loads
+        # and runs the same text (same line numbers, same token addresses).
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+        con.drain(quiet=0.2)
+
+        # Stop console 2: its own variable matches its own DONE value.
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text2 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done2 = _last_done(text2)
+        assert done2 is not None, text2
+        assert con.send_line("PRINT counter") == str(done2), text2
+
+        # Switch back to console 1 (resumes), stop it, and require the same
+        # self-consistency. Before the fix this printed the other instance's
+        # counter and the resumed program drifted.
+        _switch(con, 1)
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text1 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done1 = _last_done(text1)
+        assert done1 is not None, text1
+        assert con.send_line("PRINT counter") == str(done1), text1
+
+        # The guest is still responsive (no wedge).
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        con.stop()
+
+
+def test_break_after_resume_returns_to_prompt(kernel_image):
+    """#1014: a program suspended by a console switch resumes with a live
+    setjmp landing, so Ctrl+C returns to the REPL with ?BREAK instead of
+    longjmping into the dead frame mmb_exec_line() left behind."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"10 DO\r" b"20 LOOP\r" b"RUN\r")
+        time.sleep(0.6)
+        con.drain(quiet=0.2)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 7*6") == "42"
+
+        _switch(con, 1)
+        time.sleep(0.4)
+        con._ser.sendall(bytes([3]))  # Ctrl+C breaks the resumed program
+        seen = con.drain(quiet=0.6, timeout=6.0).decode(errors="replace")
+        assert "BREAK" in seen.upper(), seen
+
+        # The REPL is usable again on this console.
+        assert con.send_line("PRINT 1+2") == "3"
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_audio_playing(kernel_image):
     """#620: the audio engine is one machine resource, so switching consoles
     must not silence it. PLAYING() is global, and PLAY STOP from any console
@@ -261,6 +352,210 @@ def test_switch_keeps_audio_playing(kernel_image):
 
         _switch(con, 1)
         con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
+def test_run_exit_keeps_audio_owned_by_other_console(kernel_image):
+    """#805: ending a program on one console must not stop music started on
+    another. The teardown is scoped to the console that started playback, while
+    an explicit PLAY STOP still clears the shared engine for every console."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PLAY TONE 440, 440") == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Console 2 owns no music: running a program that exits cleanly leaves
+        # console 1's playback untouched.
+        assert con.send_line("10 PRINT 42") == ""
+        assert con.send_line("RUN") == "42"
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        # A program on this console that did start music still stops it when it
+        # ends, exactly as before.
+        assert con.send_line("10 PLAY TONE 660, 660") == ""
+        assert con.send_line("RUN") == ""
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
+def test_editor_run_exit_keeps_audio_owned_by_other_console(kernel_image):
+    """#805: the editor's Run (Ctrl+R) uses the same program-exit teardown, so
+    it must leave another console's music alone too."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PLAY TONE 440, 440") == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Edit a short program on console 2 and run it from the editor.
+        con._ser.sendall(b'EDIT "RUN805.BAS"\r')
+        time.sleep(1.2)
+        con.drain(quiet=0.4)
+        con._ser.sendall(b"PRINT 42")
+        time.sleep(0.4)
+        con.drain(quiet=0.3)
+        con._ser.sendall(bytes([18]))  # Ctrl+R run
+        time.sleep(1.2)
+        seen = _plain(con.drain(quiet=1.0).decode(errors="replace"))
+        assert "42" in seen
+        assert "Press any key to continue" in seen
+        con._ser.sendall(b" ")  # return to the editor
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+
+        # Leave the editor; console 1's music is untouched.
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X
+        time.sleep(0.6)
+        con.drain(quiet=0.3)
+        assert con.send_line("PRINT PLAYING()") == "1"
+    finally:
+        con.stop()
+
+
+def test_juke_keeps_playing_when_other_console_runs_a_program(kernel_image):
+    """#805 acceptance: music started by JUKE on one screen keeps playing when
+    a program runs and exits on another screen."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'JUKE "tests/TEST.MOD"\r')
+        time.sleep(1.2)
+        con.drain(quiet=0.5)
+        con._ser.sendall(b"\x1b")  # leave JUKE; playback continues
+        time.sleep(0.8)
+        con.drain(quiet=0.4)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("10 PRINT 42") == ""
+        assert con.send_line("RUN") == "42"
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        con.send_line("PLAY STOP")
+        assert con.send_line("PRINT PLAYING()") == "0"
+    finally:
+        con.stop()
+
+
+def test_juke_advances_while_backgrounded(kernel_image):
+    """#858: a JUKE queue keeps advancing while its console is not shown, and
+    switching back shows the now-playing track that replaced the finished one.
+
+    Console 1 queues a tiny MP3 followed by a looping MOD. The MP3 ends while
+    console 2 is the visible screen; the next track must start anyway."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line('CHDIR "A:/"') == ""
+        assert con.send_line('MKDIR "JB"') == ""
+        assert con.send_line('COPY "tests/TEST.MP3" TO "JB/A.MP3"') == ""
+        assert con.send_line('COPY "tests/TEST.MOD" TO "JB/B.MOD"') == ""
+        con._ser.sendall(b'JUKE "JB"\r')
+        time.sleep(1.0)
+        con.drain(quiet=0.5)
+
+        # Move to console 2; console 1's JUKE is now backgrounded.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Let the tiny A.MP3 finish, then require the queue to be playing the
+        # looping B.MOD (PLAYING() would be 0 if the queue stalled).
+        deadline = time.time() + 8.0
+        playing = "0"
+        while time.time() < deadline:
+            if con.send_line("PRINT PLAYING()") == "1":
+                time.sleep(1.5)
+                playing = con.send_line("PRINT PLAYING()")
+                break
+            time.sleep(0.3)
+        assert playing == "1", "JUKE did not advance to the next track off-screen"
+
+        # On return the JUKE screen must show the now-playing MOD, not the
+        # finished MP3 (its saved snapshot is stale until it repaints).
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        # JUKE's title/header live in the top-left of its 960x540 screen.
+        screen = con.wait_ocr("MOD", timeout=12.0, crop="960x120+0+0")
+        assert "MOD" in screen.upper(), screen
+
+        # Leave JUKE (Esc) before sending REPL commands, then silence audio.
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.6, timeout=5.0)
+        assert con.send_line("PLAY STOP") == ""
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
+def _play_mod_in_files(con) -> None:
+    """Console 2: CHDIR to the seeded tests and start a FILES play preview."""
+    assert con.send_line('CHDIR "A:/tests"') == ""
+    con._ser.sendall(b"FILES\r")
+    seen = con.drain(quiet=0.8, timeout=8.0).decode(errors="replace")
+    for _ in range(40):
+        if "SEL=TEST.MOD" in seen:
+            break
+        con._ser.sendall(b"\x1b[B")
+        seen = con.drain(quiet=0.2).decode(errors="replace")
+    assert "SEL=TEST.MOD" in seen, seen
+    con._ser.sendall(b"\r")
+    seen = con.drain(quiet=1.0, timeout=8.0).decode(errors="replace")
+    assert "[FILES] PLAY TEST.MOD" in seen, seen
+
+
+def test_files_play_close_keeps_other_consoles_audio(kernel_image):
+    """#807: leaving the FILES play overlay must stop only audio this FILES
+    session started. A preview opened on console 2 and then abandoned while
+    console 1 starts its own music must not silence console 1 when the overlay
+    closes (closing an overlay is teardown, not an explicit PLAY STOP)."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Console 2 starts a FILES media preview (FU_PLAY).
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _play_mod_in_files(con)
+
+        # Console 1 starts music of its own while console 2's preview is open.
+        # The engine now belongs to console 1 (#805).
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'JUKE "tests/TEST.MOD"\r')
+        time.sleep(0.9)
+        con.drain(quiet=0.4)
+        con._ser.sendall(b"\x1b")  # leave JUKE; playback continues
+        time.sleep(0.7)
+        con.drain(quiet=0.3)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        # Back on console 2, close the FILES overlay (Esc) and leave FILES.
+        # Console 1's music must survive: console 2 no longer owns the engine.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b")  # close the FU_PLAY overlay
+        con.drain(quiet=0.6, timeout=6.0)
+        con._ser.sendall(b"q")  # leave the browser for the REPL
+        con.drain(quiet=0.6, timeout=6.0)
+        assert con.send_line("PRINT PLAYING()") == "1"
+
+        con.send_line("PLAY STOP")
         assert con.send_line("PRINT PLAYING()") == "0"
     finally:
         con.stop()
@@ -475,6 +770,83 @@ def test_paint_switch_leaves_other_console_usable(kernel_image):
         con._ser.sendall(bytes([1]) + b"x")  # Alt+X leaves PAINT
         con.drain(quiet=0.8, timeout=8.0)
         assert con.send_line("PRINT 2+3") == "5"
+    finally:
+        con.stop()
+
+
+@pytest.mark.skipif(
+    not _qemu_has_usb_mouse(), reason="qemu-system-aarch64 lacks usb-mouse"
+)
+def test_switch_paint_term_mode_shrink_does_not_corrupt_framebuffer(kernel_image):
+    """#786: PAINT (graphics, 640x360) on console 1 and TERM on console 2 must
+    switch without leaving the framebuffer striped/corrupt.
+
+    Console 1's framebuffer snapshot buffer is first grown while the display is
+    at the boot resolution; PAINT then shrinks the live framebuffer to 640x360.
+    Restoring console 1 used to memcpy the stale, larger snapshot past the
+    smaller framebuffer, corrupting the display path."""
+    con = MMBasicConsole(
+        kernel_image,
+        extra_qemu=["-device", "usb-kbd", "-device", "usb-mouse"],
+        boot_timeout=40.0,
+    )
+    con.start()
+    try:
+        time.sleep(2.0)  # let the USB mouse enumerate and attach
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Grow console 1's framebuffer snapshot at the boot resolution, so its
+        # snapshot capacity is larger than PAINT's 640x360 frame will need.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        con._ser.sendall(b"PAINT\r")
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.screen_size() == (640, 360)
+
+        # The other console from the report runs a full-screen TERM.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'TERM "demo", 23\r')
+        con.drain(quiet=0.8, timeout=12.0)
+
+        # Restoring PAINT here is the copy that overran the shrink.
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.screen_size() == (640, 360)
+
+        # PAINT's chrome is intact: lit menu bar, black canvas, no blue bands.
+        assert sum(con.screen_pixel(400, 8)) > 60
+        assert sum(con.screen_pixel(150, 200)) < 40
+        pts = [
+            (x, y) for y in range(20, 300, 40) for x in range(80, 600, 40)
+        ]
+        blue = sum(
+            1
+            for r, g, b in con.screen_pixels(pts)
+            if b > 130 and r < 90 and g < 90
+        )
+        assert blue == 0, f"{blue} blue stripe pixels on the PAINT canvas"
+
+        # Bounce to TERM and back once more, then leave PAINT cleanly.
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.screen_size() == (640, 360)
+        con._ser.sendall(bytes([1]) + b"x")  # Alt+X leaves PAINT
+        con.drain(quiet=0.8, timeout=8.0)
+        assert con.send_line("PRINT 3+4") == "7"
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.4, timeout=5.0)
+        con._ser.sendall(bytes([1]) + b"x")
+        con.drain(quiet=0.8, timeout=15.0)
+        assert con.send_line("PRINT 4+4") == "8"
     finally:
         con.stop()
 
@@ -964,6 +1336,85 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
         again = _term_page_up(con)
         assert "SCROLL -" in again, again
         assert "line 01" in again, again
+    finally:
+        con.stop()
+
+
+def test_editor_char_picker_hold_on_other_console_does_not_open(kernel_image):
+    """#810: EDIT's Ctrl+Alt special-characters debounce belongs to the screen
+    that owns the editor. A hold that starts on console 1, continues on console
+    2 (no editor there) past the debounce, and returns to console 1 must not
+    count as an expired hold and pop the picker."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _edit(con, "CPGATE.BAS")
+
+        # Arm console 1's hold (well under the 0.75s debounce), then switch to
+        # console 2 without releasing Ctrl+Alt.
+        con.key_down("ctrl")
+        con.key_down("alt")
+        time.sleep(0.3)
+        con.key_down("2")
+        time.sleep(0.25)
+        con.key_up("2")
+        time.sleep(0.2)
+        con.drain(quiet=0.2)
+
+        # Console 2 is a plain REPL: the held chord has no editor to arm here.
+        assert con.send_line("PRINT 7*6") == "42"
+
+        # Keep the chord down on console 2 longer than the debounce, then
+        # switch back to console 1 with it still held. The stale hold from
+        # console 1 (or the time spent on console 2) must not open the picker:
+        # release the chord promptly after arriving, well inside the 0.75s
+        # debounce, so a legitimate fresh hold cannot open it either.
+        time.sleep(1.0)
+        con.key_down("1")
+        time.sleep(0.3)  # the guest polls the switch chord while still down
+        con.key_up("1")
+        con.key_up("alt")
+        con.key_up("ctrl")
+        time.sleep(0.4)
+        seen = _plain(con.drain(quiet=0.4).decode(errors="replace"))
+
+        assert "Special characters" not in seen, seen
+    finally:
+        con.stop()
+
+
+def test_s3m_keeps_mixing_while_term_repaints(kernel_image):
+    """#936: S3M stays mixed while TERM repaints on another console.
+
+    A fresh console resizes HDMI in one blocking call, so the track is
+    started after that, in MODE 14,16 (TERM's letterbox). MIXGAP then
+    measures the repaint and the serial pane dump.
+    """
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("MODE 14,16") == ""
+        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+        assert int(con.send_line('PRINT MM.INFO("MIXGAP")')) < 200
+
+        seen = _open_term_demoburst(con, settle=0.4)
+        assert "line 40" in seen, seen
+        _term_page_up(con)
+        con._ser.sendall(bytes([1]) + b"x")
+        left = _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert "MMBasic" in left or ">" in left, left
+
+        gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
+        assert gap < 250, gap
+        assert underrun == "0"
+        assert con.send_line("PRINT PLAYING()") == "1"
+        con.send_line("PLAY STOP")
     finally:
         con.stop()
 

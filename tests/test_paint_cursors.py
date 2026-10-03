@@ -284,9 +284,10 @@ static int check_ui_arrow(void)
 	return all_bg();
 }
 
-/* #788: an open menu/dialog forces the UI arrow everywhere, even where its
- * dropdown geometrically covers the canvas. The pointer here is on a canvas
- * pixel (the canvas starts at 64,16) with the pencil selected. */
+/* #788/#791: a modal overlay (open menu/dropdown, file picker or text font
+ * picker) forces the UI arrow everywhere, even where it geometrically covers
+ * the canvas. The pointer here is on a canvas pixel (the canvas starts at
+ * 64,16) with the pencil selected. */
 static int check_menu_arrow(void)
 {
 	int sx = 100, sy = 100;	/* over the canvas, under a dropdown */
@@ -298,6 +299,40 @@ static int check_menu_arrow(void)
 	fill_bg();
 	pt_cursor_init();
 	pt_cursor_draw(sx, sy, 0, 0, 1);	/* pencil selected, menu open */
+
+	for (y = 0; y < PT_H; y++) {
+		for (x = 0; x < PT_W; x++) {
+			int in = x >= ox && x < ox + PCA_CURSOR_W &&
+				 y >= oy && y < oy + PCA_CURSOR_H;
+			unsigned want = BG;
+
+			if (in) {
+				uint8_t c = art[(y - oy) * PCA_CURSOR_W + (x - ox)];
+				if (c != PCA_CURSOR_TRANSPARENT)
+					want = pt_palette_rgb(c);
+			}
+			if (fb[y * PT_W + x] != want)
+				return 0;
+		}
+	}
+	pt_cursor_restore();
+	return all_bg();
+}
+
+/* #791: the overlay flag outranks both the selected tool and a held button,
+ * so while the file/font picker owns input the pointer never flips back to a
+ * tool sprite when it crosses a canvas pixel. */
+static int check_overlay_active_arrow(void)
+{
+	int sx = 120, sy = 140;	/* over the canvas, under an overlay */
+	const pca_sprite_t *sp = &pca_sprites[PCA_TOOL_ARROW];
+	const uint8_t *art = sp->active;
+	int hx = sp->active_hotspot_x, hy = sp->active_hotspot_y;
+	int ox = sx - hx, oy = sy - hy, x, y;
+
+	fill_bg();
+	pt_cursor_init();
+	pt_cursor_draw(sx, sy, 0, 1, 1);	/* pencil held, overlay open */
 
 	for (y = 0; y < PT_H; y++) {
 		for (x = 0; x < PT_W; x++) {
@@ -431,6 +466,14 @@ int main(void)
 		fails++;
 	}
 
+	/* 5c. The overlay flag also outranks a held button (#791). */
+	if (check_overlay_active_arrow())
+		printf("OK overlay_active_arrow\n");
+	else {
+		printf("FAIL overlay_active_arrow\n");
+		fails++;
+	}
+
 	/* 6. Shape signatures: per-tool distinct and idle != active. */
 	for (t = 0; t < (int)PT_TOOL_COUNT; t++)
 		printf("SIG %d %u %u\n", t, signature(t, 0), signature(t, 1));
@@ -536,6 +579,12 @@ def test_arrow_over_chrome_and_tool_over_canvas(run):
 def test_menu_open_forces_arrow_over_canvas(run):
     """#788: an open menu keeps the pointer as the UI arrow over the canvas."""
     assert "OK menu_arrow" in run.stdout, run.stdout
+
+
+def test_overlay_forces_arrow_even_when_button_held(run):
+    """#791: the file/font picker overlay keeps the pointer as the UI arrow,
+    outranking a held button, when it covers the canvas."""
+    assert "OK overlay_active_arrow" in run.stdout, run.stdout
 
 
 def test_shapes_follow_tool_and_idle_active_differ(run):

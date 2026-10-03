@@ -9,8 +9,45 @@ static void hash_ins(int vi);
 static void hash_rebuild(void);
 static int mmb_local_save(int slot, int existed);
 
-static int var_tab[MMB_MAX_VARS];
-static int unsuf_tab[MMB_MAX_VARS];
+/* Hash table is deliberately larger than MMB_MAX_VARS so the load factor
+ * stays below ~0.5 and probing is short (#993). */
+#define MMB_HASH_SIZE 512
+static int var_tab[MMB_HASH_SIZE];
+static int unsuf_tab[MMB_HASH_SIZE];
+
+/* Direct-mapped resolve cache (#1002): parsing a statement re-resolves every
+ * variable token to an mmb_var* on each execution.  Key by the source-token
+ * address (unique per occurrence) plus the operand shape, so a repeat
+ * execution of the same statement reuses the binding.  Any change to the
+ * variable table or program text bumps the generation, invalidating all
+ * entries, and no pointer is returned across a rebuild. */
+#define MMB_RC_SIZE 256
+typedef struct {
+	const char *ref;
+	unsigned gen;
+	int type;
+	int nidx;
+	mmb_var *v;
+	/* The resolved name is compared on a hit so a reused transient parse
+	 * buffer (EXECUTE/EVAL) at the same address cannot return a stale
+	 * binding for different text. */
+	char name[MMB_MAX_NAME];
+} mmb_rc_ent;
+static mmb_rc_ent rc_tab[MMB_RC_SIZE];
+static unsigned rc_gen = 1;
+
+void mmb_resolve_invalidate(void)
+{
+	rc_gen++;
+}
+
+static mmb_rc_ent *rc_slot(const char *ref)
+{
+	uintptr_t x = (uintptr_t)ref;
+	/* Mix low bits so tokens a byte or two apart (``A=A+1``) do not thrash
+	 * the same slot. */
+	return &rc_tab[(x ^ (x >> 8) ^ (x >> 16)) & (MMB_RC_SIZE - 1)];
+}
 
 static int name_eq(const char *a, const char *b)
 {
@@ -32,7 +69,7 @@ static unsigned hash_key(const char *n, int type)
 static void hash_clear(void)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
 		var_tab[i] = -1;
 		unsuf_tab[i] = -1;
@@ -54,10 +91,10 @@ static void hash_ins(int vi)
 	int i;
 	if (vi < 0 || !G.vars[vi].used)
 		return;
-	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_MAX_VARS;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_HASH_SIZE;
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		if (var_tab[s] < 0)
 		{
 			var_tab[s] = vi;
@@ -66,10 +103,10 @@ static void hash_ins(int vi)
 	}
 	if (G.vars[vi].unsuffixed)
 	{
-		h = hash_key(G.vars[vi].name, 0) % MMB_MAX_VARS;
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		h = hash_key(G.vars[vi].name, 0) % MMB_HASH_SIZE;
+		for (i = 0; i < MMB_HASH_SIZE; i++)
 		{
-			int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+			int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 			if (unsuf_tab[s] < 0)
 			{
 				unsuf_tab[s] = vi;
@@ -81,11 +118,11 @@ static void hash_ins(int vi)
 
 static int hash_lookup(const char *nbuf, int type)
 {
-	unsigned h = hash_key(nbuf, type) % MMB_MAX_VARS;
+	unsigned h = hash_key(nbuf, type) % MMB_HASH_SIZE;
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		int vi = var_tab[s];
 		if (vi < 0)
 			return -1;
@@ -99,11 +136,11 @@ static int hash_lookup(const char *nbuf, int type)
 
 static int unsuf_lookup(const char *nbuf)
 {
-	unsigned h = hash_key(nbuf, 0) % MMB_MAX_VARS;
+	unsigned h = hash_key(nbuf, 0) % MMB_HASH_SIZE;
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < MMB_HASH_SIZE; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_MAX_VARS);
+		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
 		int vi = unsuf_tab[s];
 		if (vi < 0)
 			return -1;
@@ -126,6 +163,7 @@ void mmb_clear_consts(void)
 		G.consts[i].used = 0;
 	}
 	G.nconst = 0;
+	mmb_resolve_invalidate();
 }
 
 void mmb_const_define(const char *name, int type, mmb_val val)
@@ -154,6 +192,7 @@ void mmb_const_define(const char *name, int type, mmb_val val)
 		mmb_val_own(&G.consts[slot].val, &G.consts[slot].s, 0, nbuf);
 	G.consts[slot].used = 1;
 	G.nconst++;
+	mmb_resolve_invalidate();
 }
 
 int mmb_const_lookup(const char *name, int type, mmb_val *out)
@@ -161,6 +200,10 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	int i;
 	char nbuf[MMB_MAX_NAME];
 	int t;
+	/* Most programs declare no constants; skip the copy/uppercase/scan on
+	 * every scalar read and write (#993). */
+	if (G.nconst <= 0)
+		return 0;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
@@ -207,6 +250,7 @@ void mmb_clear_vars(int keep_options)
 	G.dim_used = 0;
 	hash_clear();
 	mmb_tcache_invalidate();
+	mmb_resolve_invalidate();
 }
 
 static int elem_count(const int *dim, int ndims)
@@ -217,15 +261,30 @@ static int elem_count(const int *dim, int ndims)
 	return n;
 }
 
+/* Row-major element strides: stride[dims-1] = 1, stride[i] is the product of
+ * the lengths of the dimensions after i. Depends on the current OPTION BASE,
+ * so a var records which base its cached strides belong to. */
+static void set_var_stride(mmb_var *v)
+{
+	int i;
+	v->stride_base = G.opt.base;
+	if (v->dims <= 0)
+		return;
+	v->stride[v->dims - 1] = 1;
+	for (i = v->dims - 2; i >= 0; i--)
+		v->stride[i] = v->stride[i + 1] * (v->dim[i + 1] - G.opt.base + 1);
+}
+
 static int offset_of(mmb_var *v, const int *idx)
 {
-	int off = 0, i, stride = 1;
+	int off = 0, i;
+	if (v->dims > 0 && v->stride_base != G.opt.base)
+		set_var_stride(v);
 	for (i = v->dims - 1; i >= 0; i--)
 	{
 		if (idx[i] < G.opt.base || idx[i] > v->dim[i])
 			mmb_error("?INDEX OUT OF BOUNDS");
-		off += (idx[i] - G.opt.base) * stride;
-		stride *= (v->dim[i] - G.opt.base + 1);
+		off += (idx[i] - G.opt.base) * v->stride[i];
 	}
 	return off;
 }
@@ -306,6 +365,7 @@ void mmb_bind_struct_var(const char *name, int sid)
 	memset(G.vars[slot].data.blob, 0, (unsigned)sz);
 	G.nvars++;
 	hash_ins(slot);
+	mmb_resolve_invalidate();
 }
 
 static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
@@ -396,18 +456,10 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (type == 0)
 		type = T_NUM;
 
+	/* The hash is authoritative: mmb_init() clears it, and every in-place
+	 * binding change re-inserts or rebuilds it, so a miss means the
+	 * variable does not exist (#998). */
 	i = hash_lookup(nbuf, type);
-	if (i < 0)
-	{
-		for (i = 0; i < MMB_MAX_VARS; i++)
-			if (G.vars[i].used && G.vars[i].type == type && name_eq(G.vars[i].name, nbuf))
-			{
-				hash_ins(i);
-				break;
-			}
-		if (i >= MMB_MAX_VARS)
-			i = -1;
-	}
 	if (i >= 0)
 	{
 		if (nidx != G.vars[i].dims)
@@ -468,11 +520,39 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	return &G.vars[i];
 }
 
+mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int create,
+			  int nidx, int *idx)
+{
+	mmb_rc_ent *e;
+	mmb_var *v;
+	/* Only stable, non-struct program tokens qualify: immediate-mode text
+	 * moves through a reused buffer, and a struct member path needs the
+	 * accumulator context that resides in G, not on the token. */
+	if (!ref || !G.running || G.acc_on || strchr(name, '.'))
+		return mmb_find_var(name, type, create, nidx, idx);
+	e = rc_slot(ref);
+	if (e->ref == ref && e->gen == rc_gen && e->type == type &&
+	    e->nidx == nidx && strcmp(e->name, name) == 0)
+		return e->v;
+	v = mmb_find_var(name, type, create, nidx, idx);
+	if (!v)
+		return 0; /* never cache a miss: a later create would be stale */
+	e->ref = ref;
+	e->gen = rc_gen;
+	e->type = type;
+	e->nidx = nidx;
+	e->v = v;
+	strncpy(e->name, name, MMB_MAX_NAME - 1);
+	e->name[MMB_MAX_NAME - 1] = 0;
+	return v;
+}
+
 void mmb_cmd_dim(void)
 {
 	/* DIM [SHARED] [INTEGER|FLOAT|STRING] name(d1[,d2...]) [AS type] [, ...] */
 	int group = 0;
 	mmb_tcache_invalidate();
+	mmb_resolve_invalidate();
 	mmb_skip_sp();
 	(void)mmb_match("SHARED"); /* MMBasic variables are global already */
 	mmb_skip_sp();
@@ -758,6 +838,7 @@ static void free_var_storage(mmb_var *v)
 static void alloc_var_storage(mmb_var *v, int n)
 {
 	int i;
+	set_var_stride(v);
 	if (v->type == T_INT)
 	{
 		v->data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
@@ -821,6 +902,7 @@ static int mmb_local_save(int slot, int existed)
 void mmb_vars_rehash(void)
 {
 	hash_rebuild();
+	mmb_resolve_invalidate();
 }
 
 void mmb_local_restore(int g)
@@ -848,6 +930,7 @@ void mmb_local_restore(int g)
 			v->maxlen = ls->maxlen;
 			v->data.f = ls->data;
 			v->used = 1;
+			set_var_stride(v);
 		}
 		else
 		{
@@ -860,6 +943,7 @@ void mmb_local_restore(int g)
 	if (rebuild)
 		hash_rebuild();
 	mmb_tcache_invalidate();
+	mmb_resolve_invalidate();
 }
 
 void mmb_cmd_redim(void)
@@ -867,6 +951,7 @@ void mmb_cmd_redim(void)
 	int preserve = 0;
 	int base = G.opt.base;
 	mmb_tcache_invalidate();
+	mmb_resolve_invalidate();
 	mmb_skip_sp();
 	(void)mmb_match("SHARED");
 	if (mmb_match("PRESERVE"))
@@ -1064,7 +1149,7 @@ void mmb_cmd_common(void)
 	{
 		int t;
 		mmb_skip_sp();
-		if (!mmb_is_ident(*G.p))
+		if (!mmb_is_ident_start(*G.p))
 			break;
 		mmb_ident(name, sizeof(name));
 		t = mmb_type_suffix(name);
@@ -1191,8 +1276,7 @@ static int parse_ref_seg(char *out, int outsz)
 		out[n] = 0;
 		return 1;
 	}
-	if (!((*G.p >= 'A' && *G.p <= 'Z') || (*G.p >= 'a' && *G.p <= 'z') ||
-	      *G.p == '_'))
+	if (!mmb_is_ident_start(*G.p))
 		return 0;
 	while (ref_name_char(*G.p) && n < outsz - 2)
 	{
@@ -1317,6 +1401,23 @@ void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val 
 	for (i = 0; i < nidx; i++)
 		idxcopy[i] = idx[i];
 	v = mmb_find_var(name, type_hint, 1, nidx, idxcopy);
+	off = mmb_elem_off(v, nidx, idx);
+	store(v, off, val);
+}
+
+void mmb_do_assign_ref(const char *ref, const char *name, int type_hint, int nidx,
+		       int *idx, mmb_val val)
+{
+	int off = 0;
+	int idxcopy[MMB_MAX_DIMS];
+	int i;
+	mmb_val dummy;
+	mmb_var *v;
+	if (nidx == 0 && mmb_const_lookup(name, type_hint, &dummy))
+		mmb_error("?CONST");
+	for (i = 0; i < nidx; i++)
+		idxcopy[i] = idx[i];
+	v = mmb_find_var_ref(ref, name, type_hint, 1, nidx, idxcopy);
 	off = mmb_elem_off(v, nidx, idx);
 	store(v, off, val);
 }

@@ -17,8 +17,6 @@ import pytest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "mmbasic", "src")
 CMD_PAINT_C = os.path.join(SRC, "cmd_paint.c")
-CURSORS_C = os.path.join(SRC, "paint_cursors.c")
-ART_C = os.path.join(SRC, "paint_cursor_art.c")
 
 DRIVER = r"""
 #include "paint.h"
@@ -37,40 +35,20 @@ static int fill_minx = 1 << 30, fill_miny = 1 << 30;
 static int fill_maxx = -1, fill_maxy = -1, fill_count;
 static int saw_tool_or_pal, saw_menu_row;
 
-/* The pixels the app composes: the raster helpers write here and the cursor
- * module samples it through tui_get_px (#701). */
-static unsigned g_fb[PT_W * PT_H];
-
 static void rec_fill(int x, int y, int w, int h, unsigned rgb)
 {
-	int i, j;
-
+	(void)rgb;
 	if (w < 1 || h < 1)
 		return;
 	if (x < fill_minx) fill_minx = x;
 	if (y < fill_miny) fill_miny = y;
 	if (x + w - 1 > fill_maxx) fill_maxx = x + w - 1;
 	if (y + h - 1 > fill_maxy) fill_maxy = y + h - 1;
-	for (j = 0; j < h; j++)
-		for (i = 0; i < w; i++)
-		{
-			int px = x + i, py = y + j;
-
-			if (px >= 0 && py >= 0 && px < PT_W && py < PT_H)
-				g_fb[(size_t)py * PT_W + px] = rgb;
-		}
 	fill_count++;
 	if (x < PT_TOOL_W && y + h > PT_CANVAS_Y && y < PT_PAL_Y)
 		saw_tool_or_pal = 1;
 	if (y < PT_MENU_H)
 		saw_menu_row = 1;
-}
-
-unsigned tui_get_px(int x, int y)
-{
-	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
-		return 0;
-	return g_fb[(size_t)y * PT_W + x];
 }
 static void rec_present(int y0, int y1) { p_y0 = y0; p_y1 = y1; p_count++; }
 
@@ -125,6 +103,26 @@ int pt_menus_mouse(int sx, int sy, int button, int down)
 int pt_menus_active(void) { return menu_active; }
 void pt_tool_begin(int cx, int cy, int button)
 { (void)cx; (void)cy; (void)button; tool_begins++; }
+
+/* ---- modal overlays that force the UI arrow (#791) ---- */
+static int file_active, font_picker_active;
+static int cursor_overlay = -1;
+/* Where the redraw last stamped the sprite (#1040). */
+static int cursor_x = -1, cursor_y = -1, cursor_calls;
+
+int pt_file_dialog_active(void) { return file_active; }
+int pt_text_font_picker_active(void) { return font_picker_active; }
+
+/* Strong override of the weak cmd_paint.c stub: record the overlay flag and
+ * position the redraw passes to the cursor instead of stamping pixels. */
+void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay)
+{
+	(void)tool; (void)active;
+	cursor_x = sx;
+	cursor_y = sy;
+	cursor_calls++;
+	cursor_overlay = overlay;
+}
 
 /* tui shims used by cmd_paint.c and the weak module stubs */
 void tui_begin(void) {}
@@ -239,18 +237,52 @@ int main(void)
 	mmb_paint_poll();		/* later no-button motion is hover */
 	check(menu_motion > 0, "poll_motion_after_release");
 
-	/* 9. #1040: a pointer driven fully off the right edge has no saved block
-	 *    to restore, so nothing is damaged when it comes back. The sprite
-	 *    must still be stamped, or it stays gone forever. */
+	/* 9. #791: the cursor is forced to the UI arrow whenever any modal
+	 *    overlay that covers the canvas owns input, and stays a tool
+	 *    otherwise. The cursor stub records the overlay flag per redraw. */
+	file_active = font_picker_active = menu_active = 0;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 0, "cursor_no_overlay_tool");
+
+	file_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_file_picker_arrow");
+
+	file_active = 0;
+	font_picker_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_font_picker_arrow");
+
+	font_picker_active = 0;
+	menu_active = 1;
+	cursor_overlay = -1;
+	PT.full_redraw = 1;
+	pt_redraw();
+	check(cursor_overlay == 1, "cursor_menu_arrow");
+	menu_active = 0;
+
+	/* 10. #1040: a pointer fully off-screen leaves no saved block to restore,
+	 *     so nothing is damaged on the way back. The redraw must still stamp
+	 *     the sprite rather than skip it; the stub records where it drew. */
+	PT.cursor_sx = 300;
+	PT.cursor_sy = 200;
 	s_mouse.buttons = 0;
 	s_mouse.x = 900;		/* whole sprite off the right edge */
 	s_mouse.y = 200;
 	mmb_paint_poll();
-	reset_rec();
+	cursor_x = cursor_y = -1;
+	cursor_calls = 0;
 	s_mouse.x = 320;		/* back inside the canvas */
 	s_mouse.y = 200;
 	mmb_paint_poll();
-	check(fill_count > 0, "cursor_returns_from_right_edge");
+	check(cursor_calls > 0 && cursor_x == 320 && cursor_y == 200,
+	      "cursor_returns_from_right_edge");
 
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
@@ -275,7 +307,7 @@ def damage_driver(tmp_path_factory):
             "-I", os.path.join(REPO, "mmbasic", "third_party"),
             "-I", os.path.join(REPO, "console"),
             "-I", os.path.join(REPO, "native"),
-            "-o", str(exe), str(driver), CMD_PAINT_C, CURSORS_C, ART_C,
+            "-o", str(exe), str(driver), CMD_PAINT_C,
         ],
         check=True,
         cwd=REPO,
@@ -336,8 +368,21 @@ def test_poll_forwards_hover_and_button_up(checks):
         assert checks.get(name) is True, name
 
 
+def test_overlays_force_ui_arrow_cursor(checks):
+    """#791: the redraw passes the overlay flag to pt_cursor_draw() while the
+    file picker, the text font picker or a menu owns input, so no tool sprite
+    is stamped over them; with no overlay the tool cursor is used."""
+    for name in (
+        "cursor_no_overlay_tool",
+        "cursor_file_picker_arrow",
+        "cursor_font_picker_arrow",
+        "cursor_menu_arrow",
+    ):
+        assert checks.get(name) is True, name
+
+
 def test_cursor_returns_after_leaving_the_right_edge(checks):
     """#1040: a sprite fully clipped off the right edge leaves no saved block,
     so a plain move back inside used to find no damage and skip the stamp. The
-    pointer must be redrawn as soon as it re-enters."""
+    redraw must stamp the pointer as soon as it re-enters the canvas."""
     assert checks.get("cursor_returns_from_right_edge") is True

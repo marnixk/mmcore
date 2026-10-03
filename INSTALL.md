@@ -29,6 +29,29 @@ attached to the rolling `linux-native` pre-release:
 That build runs `.app` packages and sealed TERM sessions from the command line;
 see [`docs/native-desktop.md`](docs/native-desktop.md).
 
+## No Pi? Bootable USB / ISO (x86_64 PC)
+
+`mmcore-fb-x86_64.iso.zst` is a minimal **Alpine Linux** live image with no X or
+Wayland. It boots straight into mmcore on the KMS/DRM framebuffer, brings up
+Ethernet DHCP, and can join Wi-Fi from the prompt with `OPTION WIFI`. Decompress
+it, then write it to a USB stick with the bundled installer, which also adds a
+persistent `MMCORE` partition for your BASIC files:
+
+```bash
+zstd -d mmcore-fb-x86_64.iso.zst          # -> mmcore-fb-x86_64.iso
+sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
+```
+
+`install-usb.sh` also takes the compressed `.iso.zst` directly. Add
+`--read-write` to keep the live session writable and persist `C:` on that
+stick or microSD without installing onto an internal disk.
+
+Ctrl+Alt+F2 gives a root shell on tty2 (Ctrl+Alt+F1 returns to mmcore) and the
+serial console (ttyS0, 115200) is available for headless use. A standalone
+KMS/DRM binary ships as `mmcore-fb-linux-x86_64.tar.gz` for an existing Linux
+install. Full notes:
+[`docs/framebuffer-and-iso.md`](docs/framebuffer-and-iso.md).
+
 DOS-style drives: `A:` is a RAM disk (always present). `C:` is the SD card
 slot. USB mass-storage volumes appear as `D:`, `E:`, … as they are enumerated.
 `DRIVE` lists them; `CHDIR "C:"` selects the SD card. File commands without a
@@ -47,9 +70,9 @@ the INI (including wiping Wi-Fi SSID/PSK) but does not delete `.BAS`
 programs.
 
 `OPTION WIFI "ssid","password"` stores credentials and, on a real Pi with
-firmware, brings the radio up with WPA2. Bare `OPTION WIFI` scans and prompts
-when the radio is present. `OPTIONS WIFI` joins using those stored credentials;
-with none stored it reports `?WIFI not configured`. Hardware release zips for
+firmware, brings the radio up with WPA2. `OPTION WIFI` with no arguments joins
+using stored credentials; `OPTION WIFI SCAN` scans and prompts when the radio is
+present. With none stored it reports `?WIFI not configured`. Hardware release zips for
 Pi 3 / 3B+ / 4 / 400 / Zero 2 W include `C:/firmware/` (CYW4343x). The Pi Zero 2
 (non-W) zip does not. QEMU does not emulate Wi-Fi: connect reports that the
 radio is unavailable. The PSK is written to the INI and is not printed on the

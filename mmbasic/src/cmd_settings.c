@@ -275,7 +275,7 @@ static void st_draw_network(int x, int y, int w, int h)
 		sizeof(line) - strlen(line) - 1);
 	tui_puts(x + 13, r++, line, ST_FG, ST_BG);
 	r++;
-	tui_puts(x + 2, r++, "Use OPTIONS WIFI / CONNECT / OPTION NTP at the prompt.",
+	tui_puts(x + 2, r++, "Use OPTION WIFI / CONNECT / OPTION NTP at the prompt.",
 		 ST_FG, ST_BG);
 	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
 }

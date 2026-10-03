@@ -45,6 +45,11 @@ NET_SRC := net_win.c
 CFLAGS += -DSDL_MAIN_HANDLED -I$(CURDIR)/win
 LDLIBS += -lws2_32 -lwinmm -limm32 -lole32 -loleaut32 -luuid -lversion \
 	  -lsetupapi -luser32 -lgdi32 -lshell32
+else ifneq (,$(findstring Linux,$(UNAME_S)))
+# Linux uses the Wi-Fi/interface backend; other POSIX (macOS) keeps the
+# unavailable stubs in net_posix.c.
+NET_SRC += net_linux.c
+CFLAGS += -DMMB_NET_LINUX=1
 endif
 
 OUT_STDIO := $(CURDIR)/mmbasic$(EXE)
@@ -59,6 +64,16 @@ ARCHFLAGS := -arch $(MACOS_ARCH)
 BUILD     := $(CURDIR)/build/$(MACOS_ARCH)
 OUT_STDIO := $(CURDIR)/mmbasic-$(MACOS_ARCH)$(EXE)
 OUT_SDL   := $(CURDIR)/mmcore-$(MACOS_ARCH)$(EXE)
+endif
+
+# Framebuffer (KMS/DRM) variant: the same sources built with a compile-time
+# default video driver (native/sdl_video.c), no X11/Wayland. Selected by the
+# `sdl-fb` target via recursive make; FB gets its own object tree and output so
+# `sdl` and `sdl-fb` never share objects built with different defines.
+ifneq ($(FB),)
+BUILD   := $(CURDIR)/build/fb
+OUT_SDL := $(CURDIR)/mmcore-fb$(EXE)
+CFLAGS += -DMMB_SDL_FRAMEBUFFER=1
 endif
 
 CFLAGS += -DMMB_PLATFORM_POSIX \
@@ -78,6 +93,15 @@ RAMDISK_C := $(MMB)/src/ramdisk_data.c
 HELP_C    := $(MMB)/src/help_data.c
 VERSION_H := $(CURDIR)/mmb_version.h
 
+# Versioned ramdisk/ tree embedded into the host binary. The stamp records the
+# sorted list of embedded files, so a removed or renamed file (which only drops
+# out of the prerequisite list) still changes the stamp and forces a rebuild of
+# ramdisk_data.c. Native keeps its own stamp: console release builds pass
+# RAMDISK_EXCLUDE=tests, so one shared stamp would be rewritten back and forth
+# between the two and race their writes to the shared generated file.
+RAMDISK_FILES := $(shell find $(REPO)/ramdisk -type f 2>/dev/null)
+RAMDISK_STAMP := $(MMB)/src/ramdisk_data.native.stamp
+
 # Version baked into util.o/cmd_credits.o. The header is FORCEd so a commit
 # that only moves git describe (docs/tests) is picked up; gen-mmb-version.sh
 # rewrites it only when the content changes, so the objects stay put.
@@ -86,7 +110,8 @@ MMB_VERSION ?= $(shell git -C $(REPO) describe --tags --always 2>/dev/null)
 MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 	    $(RAMDISK_C) $(HELP_C)
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
-	    $(MMB)/third_party/picojpeg.c $(MMB)/third_party/upng.c
+	    $(MMB)/third_party/ibxm.c $(MMB)/third_party/picojpeg.c \
+	    $(MMB)/third_party/upng.c
 COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c $(NET_SRC) cli.c
 STDIO_SRCS := platform_stdio.c main.c
@@ -121,6 +146,11 @@ all: $(OUT_STDIO) sdl
 stdio: $(OUT_STDIO)
 
 sdl: $(OUT_SDL)
+
+# KMS/DRM framebuffer build (native/mmcore-fb). Recursive so FB selects its own
+# object tree and compile define.
+sdl-fb:
+	+"$(MAKE)" FB=1 sdl
 
 ifeq ($(HAVE_SDL),)
 $(OUT_SDL):
@@ -163,7 +193,15 @@ $(BUILD)/util.o $(BUILD)/cmd_credits.o: $(VERSION_H)
 $(HELP_C): $(REPO)/scripts/gen_help.py $(wildcard $(REPO)/docs/help/*.txt)
 	python3 $(REPO)/scripts/gen_help.py $@
 
-$(RAMDISK_C): $(REPO)/scripts/gen_ramdisk.py $(shell find $(REPO)/ramdisk -type f 2>/dev/null)
+$(RAMDISK_STAMP): FORCE
+	python3 $(REPO)/scripts/gen_ramdisk.py --stamp-out $@
+
+# #882: ramdisk_data.c is shared with console/, which a release build renders
+# with exclude=tests. Native keeps its own stamp, so the shared file can look
+# up to date here even though it holds the console mode. FORCE the generator
+# every time; it rewrites only when the rendered text (including the mode)
+# differs, so a native build always embeds the whole tree.
+$(RAMDISK_C): FORCE $(REPO)/scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(REPO)/scripts/gen_ramdisk.py --out $@
 
 $(VERSION_H): FORCE
@@ -175,12 +213,14 @@ $(VERSION_H): FORCE
 
 clean:
 	rm -rf $(CURDIR)/build
+	rm -f $(RAMDISK_STAMP)
 	rm -f $(CURDIR)/mmbasic $(CURDIR)/mmbasic.exe \
 	      $(CURDIR)/mmcore $(CURDIR)/mmcore.exe \
+	      $(CURDIR)/mmcore-fb $(CURDIR)/mmcore-fb.exe \
 	      $(CURDIR)/mmbasic-arm64 $(CURDIR)/mmcore-arm64 \
 	      $(CURDIR)/mmbasic-x86_64 $(CURDIR)/mmcore-x86_64 \
 	      $(CURDIR)/mmcore.ico $(CURDIR)/mmcore.rc
 
-.PHONY: all stdio sdl clean FORCE
+.PHONY: all stdio sdl sdl-fb clean FORCE
 
 FORCE:

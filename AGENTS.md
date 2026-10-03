@@ -38,10 +38,13 @@ the tracker in parallel, run the `issue-loop-parallel` skill instead: bundle
 issues that share a test area, fan out one worker thread/worktree per bundle to
 implement and open PRs, and keep merges plus the single minor release serial in
 one coordinator thread (the full suite runs only once, before the release). The
-coordinator re-checks the tracker at least every ~30 minutes (and when a batch
+coordinator re-checks the tracker at least every ~30 minutes (and when a wave
 finishes) and schedules any newly filed ready issue into the run: file-disjoint
 work starts immediately, work that overlaps an in-flight worker queues for the
-next batch, and nothing new starts after the full-suite/release cutoff.
+next wave, and nothing new starts after the full-suite/release cutoff. Findings
+a worker files as tickets are harvested into follow-up waves processed in the
+same run before the release, and the coordinator reports every finding's fate
+afterwards.
 Wrapping up a single finished branch: run the `issue-done` skill (commit
 outstanding changes, open and merge a PR into `master`, then cut one minor
 release).
@@ -67,3 +70,15 @@ release).
   only) or run the update in that worktree; recover elsewhere with
   `git reset --hard` there once you have confirmed there are no real local
   edits.
+
+- **Skill discovery (`opencode`)** — agent skills live in
+  `.cursor/skills/<name>/SKILL.md` (the Cursor/host location). `opencode` does
+  **not** scan `.cursor/skills/`; it scans `.opencode/skill(s)/<name>/SKILL.md`
+  and `~/.config/opencode/skill(s)/<name>/SKILL.md` (both `skill` and `skills`
+  work; symlinks are followed). This repo therefore keeps
+  `.opencode/skill/<name>/SKILL.md` as symlinks to the
+  `.cursor/skills/<name>/SKILL.md` originals — edit the originals, never the
+  symlinks. Worker prompts also name the skill files by literal path
+  (`.cursor/skills/issue-loop/SKILL.md`,
+  `.cursor/skills/test-suite-progress/SKILL.md`) as a fallback when the
+  registration is missing, so a worker can always read them directly.

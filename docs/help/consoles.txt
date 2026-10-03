@@ -36,10 +36,22 @@ Full-screen apps
   editor open on one console, connect with TERM on another, and keep a
   calculator session on a third.
 
+Background work
+  Some things keep running while their console is not the one shown. A queue
+  started with ~JUKE~ advances to the next track, an established ~TERM~
+  session keeps draining its TCP connection, and a ~CONNECT~ session keeps
+  reading. Output for an inactive screen is held back and shown when you
+  return; network bytes still reach the serial port live.
+
+  This is deliberately limited to socket and queue housekeeping. Keyboard
+  input, focus-dependent keys and screen painting only ever happen on the
+  console that is shown, so a background app cannot swallow a keystroke or
+  draw over the active screen.
+
 Notes
   Only one instance of each full-screen app can be open at a time, and there
   is one network connection, so keep a single TERM session open and use the
   other consoles for editing and the prompt. ~FILES~ and ~WORDPAD~ views are
   per console but their working files are shared on the disk.
 
-See ~RUN~, ~EDIT~, ~FILES~, ~WORDPAD~ and ~TERM~.
+See ~RUN~, ~EDIT~, ~FILES~, ~WORDPAD~, ~TERM~ and ~CONNECT~.

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Keep the mmcore logo on the display until mmcore paints its first frame
+# (#902). The kernel's framebuffer console erases GRUB's artwork when it binds
+# to tty1, so mmcore-splash repaints the same image every two seconds; a driver
+# takeover or getty start can then only leave a sub-second black window.
+# root/.profile stops the helper immediately before launching mmcore.
+#
+# #921: record the child's PID. BusyBox pkill -x cannot match the helper's
+# absolute argv[0] (/usr/local/bin/mmcore-splash), so root/.profile kills this
+# pidfile instead of trusting a name match.
+#
+# #1032: cap the repainter's lifetime. On a Chromebook whose panel never lights
+# up, the tty1 login that runs root/.profile may never happen, and an
+# unbounded repainter then fights mmcore's KMS modeset forever. -t makes it
+# self-terminate even when no signal arrives. It also exits after repeated
+# framebuffer failures once mmcore has taken the display.
+[ -x /usr/local/bin/mmcore-splash ] || exit 0
+mkdir -p /run 2>/dev/null || true
+MMCORE_SPLASH_TIMEOUT="${MMCORE_SPLASH_TIMEOUT:-180}"
+/usr/local/bin/mmcore-splash -i 2 -t "${MMCORE_SPLASH_TIMEOUT}" >/dev/null 2>&1 &
+echo $! >/run/mmcore-splash.pid

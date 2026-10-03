@@ -3,8 +3,9 @@
 /*
  * Minimal FTP server for the FILES browser.
  *
- * Runs on the interpreter task: mmb_ftp_poll() is called from mmb_files_poll()
- * while the FILES modal is up. Socket operations are non-blocking (the accept
+ * Runs on the interpreter task: mmb_ftp_poll() is called from the host loop
+ * (mmb_poll in core.c) so the server keeps running while its FILES screen is a
+ * background console (#812). Socket operations are non-blocking (the accept
  * path is polled in console/net.cpp), so a transfer is dribbled a chunk per
  * poll and the modal keeps servicing Esc. Files are accessed through the VFS,
  * so A: (ramdisk), B: (package) and the FAT drives all work, and every request
@@ -20,6 +21,7 @@
 #define FTP_RECV_CAP  2048
 #define FTP_WAIT_MS   10000
 #define FTP_IDLE_MS   30000
+#define FTP_POLL_MAX_MS 1000	/* longest un-polled step the clock counts */
 #define FTP_RX_LOG    8192	/* STOR progress marker interval (bytes) */
 
 #define XF_NONE 0
@@ -30,6 +32,7 @@
 
 typedef struct {
 	int running;
+	int owner;                 /* console that started it, -1 when free */
 	int port;
 	int data_port;
 	char root[FTP_PATH_MAX];   /* canonical, always ends in '/' */
@@ -52,6 +55,8 @@ typedef struct {
 	int data;
 	int xfer;
 	unsigned xfer_at;
+	unsigned clock;            /* polled-time ms clock, see mmb_ftp_poll */
+	unsigned clock_at;         /* real ms at the last poll */
 	char xpath[FTP_PATH_MAX];
 	int xsize;
 	unsigned xoff;
@@ -388,7 +393,7 @@ static int ftp_xfer_begin(int kind, const char *canon, int size)
 		return -1;
 	}
 	FT.xfer = kind;
-	FT.xfer_at = mmb_now_ms();
+	FT.xfer_at = FT.clock;
 	strncpy(FT.xpath, canon ? canon : "", sizeof(FT.xpath) - 1);
 	FT.xpath[sizeof(FT.xpath) - 1] = 0;
 	FT.xsize = size;
@@ -415,7 +420,7 @@ static void ftp_xfer_poll(void)
 		d = mmb_net_srv_accept(FT.data_lsn);
 		if (d < 0)
 		{
-			if (mmb_now_ms() - FT.xfer_at > FTP_WAIT_MS)
+			if (FT.clock - FT.xfer_at > FTP_WAIT_MS)
 				ftp_xfer_fail("425 Data connection timed out");
 			return;
 		}
@@ -456,7 +461,7 @@ static void ftp_xfer_poll(void)
 				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 			if ((unsigned)rc < got)
 				return;
 		}
@@ -487,7 +492,7 @@ static void ftp_xfer_poll(void)
 					ftp_xfer_finish();
 					return;
 				}
-				if (mmb_now_ms() - FT.xfer_at > FTP_IDLE_MS)
+				if (FT.clock - FT.xfer_at > FTP_IDLE_MS)
 				{
 					ftp_stor_fail(FT.xoff,
 						      "426 Data connection timed out",
@@ -505,7 +510,7 @@ static void ftp_xfer_poll(void)
 			}
 			FT.xoff += (unsigned)n;
 			sent += (unsigned)n;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 			if (FT.xoff - FT.rx_log >= FTP_RX_LOG)
 			{
 				char num[16];
@@ -538,7 +543,7 @@ static void ftp_xfer_poll(void)
 				return;	/* peer window full; resume next poll */
 			FT.xoff += (unsigned)rc;
 			sent += (unsigned)rc;
-			FT.xfer_at = mmb_now_ms();
+			FT.xfer_at = FT.clock;
 		}
 		if (FT.xoff >= (unsigned)FT.list_len)
 		{
@@ -1139,23 +1144,30 @@ int mmb_ftp_start(const char *root, int port)
 	unsigned t0;
 
 	if (FT.running)
-		return 0;
+	{
+		/* One global server, one owning console: re-starting from the owner
+		 * is a no-op, another console is refused so it does not adopt a
+		 * server rooted in someone else's folder (#818). */
+		if (FT.owner == g_console)
+			return MMB_FTP_OK;
+		return MMB_FTP_BUSY;
+	}
 	if (port < 1 || port > 64535)
-		return -1;
+		return MMB_FTP_ERR;
 	if (!mmb_net_available())
 	{
 		if (mmb_eth_start() != 0)
-			return -1;
+			return MMB_FTP_ERR;
 		t0 = mmb_now_ms();
 		while (!mmb_net_available() && mmb_now_ms() - t0 < 5000)
 			mmb_net_yield();
 	}
 	if (!mmb_net_available())
-		return -1;
+		return MMB_FTP_ERR;
 	if (!root || !root[0])
 		root = mmb_vfs_cwd();
 	if (mmb_vfs_resolve(root, canon, sizeof(canon)) != 0)
-		return -1;
+		return MMB_FTP_ERR;
 
 	memset(&FT, 0, sizeof(FT));
 	FT.ctl = -1;
@@ -1163,6 +1175,7 @@ int mmb_ftp_start(const char *root, int port)
 	FT.ctl_lsn = -1;
 	FT.data_lsn = -1;
 	FT.writer = -1;
+	FT.owner = -1;
 	strncpy(FT.root, canon, sizeof(FT.root) - 1);
 	FT.root[sizeof(FT.root) - 1] = 0;
 	if (FT.root[0] && FT.root[strlen(FT.root) - 1] != '/')
@@ -1179,10 +1192,15 @@ int mmb_ftp_start(const char *root, int port)
 		memset(&FT, 0, sizeof(FT));
 		FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
 		FT.writer = -1;
-		return -1;
+		FT.owner = -1;
+		return MMB_FTP_ERR;
 	}
 	FT.running = 1;
+	FT.owner = g_console;
 	FT.addr[0] = 0;
+	/* The polled-time clock starts now; mmb_ftp_poll() advances it. */
+	FT.clock = 0;
+	FT.clock_at = mmb_now_ms();
 	{
 		char ip[32];
 		char num[8];
@@ -1212,7 +1230,7 @@ int mmb_ftp_start(const char *root, int port)
 	ftp_ser(" ADDR ");
 	ftp_ser(FT.addr);
 	ftp_ser("\r\n");
-	return 0;
+	return MMB_FTP_OK;
 }
 
 void mmb_ftp_stop(void)
@@ -1228,14 +1246,51 @@ void mmb_ftp_stop(void)
 	memset(&FT, 0, sizeof(FT));
 	FT.ctl = FT.data = FT.ctl_lsn = FT.data_lsn = -1;
 	FT.writer = -1;
+	FT.owner = -1;
 	FT.running = 0;
 	ftp_ser("[FTP] STOP\r\n");
 }
 
+/* Teardown path for a screen: only the console that started the server may
+ * stop it, so backgrounding or leaving another console's FILES screen cannot
+ * kill a server that screen does not own (#818). */
+void mmb_ftp_stop_owned(void)
+{
+	if (FT.running && FT.owner == g_console)
+		mmb_ftp_stop();
+}
+
+int mmb_ftp_owner(void)
+{
+	return FT.running ? FT.owner : -1;
+}
+
+const char *mmb_ftp_root(void)
+{
+	return FT.running ? FT.root : "";
+}
+
 void mmb_ftp_poll(void)
 {
+	unsigned now;
+
 	if (!FT.running)
 		return;
+	/* The transfer wait/idle timeouts measure time while the server is being
+	 * polled, not wall-clock time. When the FILES screen is a background
+	 * console (or the interpreter is busy) nothing polls the server, so that
+	 * gap must not count as client inactivity and abort an in-flight transfer
+	 * (#812). Cap each step at the longest interval a healthy host loop is
+	 * expected to leave between polls. */
+	now = mmb_now_ms();
+	{
+		unsigned dt = now - FT.clock_at;
+
+		if (dt > FTP_POLL_MAX_MS)
+			dt = FTP_POLL_MAX_MS;
+		FT.clock += dt;
+	}
+	FT.clock_at = now;
 	ftp_flush();
 	if (FT.ctl < 0)
 	{

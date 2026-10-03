@@ -71,6 +71,13 @@ Applied after `circle-tcp-send.patch` (marker `mmbasic-tcp-ack` in
   and FIN was actually sent.
 - A 1-byte persist probe is sent when the peer advertises a zero window.
 
+## `circle-fb-unaligned.patch`
+
+Applied after `circle-fb-doublebuf.patch` (marker `mmbasic-fb-unaligned` in
+`lib/bcmframebuffer.cpp`). HDMI presents use 128-bit DMA, which needs a
+16-byte block length. Widths that are not a multiple of eight pixels
+(1366 and 683) are copied on the CPU instead.
+
 ## `circle-usb-cdc-rx.patch`
 
 Applied last (marker `mmbasic-usb-cdc-rx` in `lib/usb/usbcdcethernet.cpp`).
@@ -106,4 +113,35 @@ Virtual consoles need to snapshot and restore one text console at a time:
   `RestoreConsole()` re-draws the cursor and repaints the whole text area.
 - `CScreenDevice::GetTerminal()` exposes the private terminal so the console
   platform backend can drive those calls.
+
+## `circle-device-dedupe.patch`
+
+Issue #985 (storage latency). `CDevice::RegisterRemovedHandler()` allocated
+and prepended a new list entry on every call, and `disk_initialize()`
+(`addon/fatfs/diskio.cpp`) registers on every successful mount, so repeated
+mounts leaked a heap entry plus list node without bound.
+
+- `CDevice::RegisterRemovedHandler()` scans the removed-handler list for an
+  existing entry with the same handler and context and returns it instead of
+  allocating a duplicate.
+
+## `circle-usb-timeout.patch`
+
+Issue #986 (USB FS latency/blocking). `CDWHCIDevice::TransferStage()` busy-waits
+for completion with no upper bound; the control path passes `USB_TIMEOUT_NONE`,
+so a device yanked mid-transfer or a wedged controller spun forever.
+
+- `TransferStage()` takes a start tick count and, in the wait loop, returns
+  `FALSE` with `USBErrorTimeout` after `DWHCI_TRANSFER_TIMEOUT_MS` (5 s). The
+  wait block is not freed on this path, so a late controller completion cannot
+  clear a block already reused by another transfer.
+
+## `circle-fatfs-fastseek.patch`
+
+Issue #984 (USB FS latency). `FF_USE_FASTSEEK` was 0, so chunked reads over
+USB re-walked the FAT chain.
+
+- `addon/fatfs/ffconf.h`: enable `FF_USE_FASTSEEK`. The console storage read
+  path keeps a `FIL` open across chunked reads, so a forward `f_lseek` walks
+  from the current cluster instead of cluster 0.
 

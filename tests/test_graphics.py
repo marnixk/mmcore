@@ -375,11 +375,21 @@ def test_page1_alpha_composite_png(fresh_console):
     # Collect the program's PIXEL output before screenshotting: a screendump
     # drains and discards pending serial. Page 1 is cleared when RUN ends, so
     # the values must come from the program itself.
+    #
+    # Parse only *complete* CR/LF-terminated output lines. The page-1 value is
+    # alpha-flagged (9 digits) and can be split across socket reads; stopping as
+    # soon as any >1000000 fragment appeared truncated it, and capture_png then
+    # drained the remainder, so `over`/`red` were read from a partial number
+    # (#804).
+    def complete_number_lines(raw: bytes) -> list[int]:
+        parts = re.split(rb"[\r\n]+", raw)
+        if raw and raw[-1:] not in (b"\r", b"\n"):
+            parts = parts[:-1]  # last line is still in flight
+        return [int(p) for p in parts if p.strip().isdigit()]
+
     buf = b""
     deadline = time.time() + 2.0
-    while time.time() < deadline and not any(
-        int(t) > 1000000 for t in re.findall(rb"\d+", buf)
-    ):
+    while time.time() < deadline and len(complete_number_lines(buf)) < 2:
         try:
             chunk = c._recv(c._ser)
         except Exception:
@@ -389,11 +399,9 @@ def test_page1_alpha_composite_png(fresh_console):
         else:
             time.sleep(0.05)
     png = c.capture_png("/opt/cursor/artifacts/issue260_page1_alpha.png")
-    vals = [int(t) for t in re.findall(rb"\d+", buf)]
-    big = [i for i, v in enumerate(vals) if v > 1000000]
-    assert big, buf[-200:]
-    over = vals[big[-1]]
-    red = vals[big[-1] - 1]
+    vals = complete_number_lines(buf)
+    assert len(vals) >= 2, buf[-200:]
+    red, over = vals[-2], vals[-1]
     assert ((red >> 16) & 255) < 80
     assert ((over >> 16) & 255) > 150
     out = subprocess.run(

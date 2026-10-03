@@ -36,8 +36,10 @@ mmbasic/include/mmb_version.h
 native/build/
 native/mmbasic
 native/mmcore
+native/mmcore-fb
 native/mmbasic.exe
 native/mmcore.exe
+native/mmcore-fb.exe
 native/mmbasic-arm64
 native/mmcore-arm64
 native/mmbasic-x86_64
@@ -56,3 +58,4 @@ mmbasic/src/help_data.c
 # Generated at build from ramdisk/
 mmbasic/src/ramdisk_data.c
 mmbasic/src/ramdisk_data.stamp
+mmbasic/src/ramdisk_data.native.stamp

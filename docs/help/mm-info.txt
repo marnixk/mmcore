@@ -6,8 +6,11 @@ Return information about the current graphics mode.
 value = MM.INFO
 value = MM.INFO(key)
 
-  key - "MODE" (default returns mode + bits/100), "HRES", or "AUDIO"
-        ("HDMI" or "JACK")
+  key - "MODE" (default returns mode + bits/100), "HRES", "AUDIO"
+        ("HDMI" or "JACK"), "MIXGAP" (longest mixer gap in milliseconds
+        since PLAY started), "UNDERRUN" (times the output queue was
+        empty when the mixer ran), or "AUDIORESET" (times PLAY RESET
+        has re-initialised the audio backend)
 
 See also ~MM.INFO$~, ~MODE~, ~AUDIO_TARGET~.
 

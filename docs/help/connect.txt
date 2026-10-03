@@ -18,8 +18,11 @@ press Esc twice or wait briefly to flush a lone Esc. Ctrl+], F10, or Alt+X
 quits. Alt+F opens a File menu with Exit.
 
 Without Ethernet or Wi-Fi, CONNECT reports Network not available. Connect
-after the network is up (OPTIONS WIFI or OPTION ETHERNET ON, then IPCONFIG).
+after the network is up (OPTION WIFI or OPTION ETHERNET ON, then IPCONFIG).
 DNS and the TCP handshake may take up to about 25 seconds.
+
+If you switch to another console, the session keeps draining and its output
+is buffered until you return; see ~CONSOLES~.
 
 Example:
 

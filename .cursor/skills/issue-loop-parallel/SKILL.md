@@ -1,6 +1,6 @@
 ---
 name: issue-loop-parallel
-description: Drain GitHub issues in parallel — fan out one worker thread/worktree per ticket bundle to implement and open PRs concurrently, then one coordinator thread merges them serially and cuts a single minor release. Use when asked to run the issue loop in parallel, fan out issues, bundle issues across threads/worktrees, or drain the tracker concurrently.
+description: Drain GitHub issues in parallel — fan out one worker thread/worktree per ticket bundle to implement and open PRs concurrently, then one coordinator thread merges them serially and cuts a single minor release. Worker findings are filed as tickets and harvested into follow-up waves processed in the same run before the release, with a findings report at the end. Use when asked to run the issue loop in parallel, fan out issues, bundle issues across threads/worktrees, or drain the tracker concurrently.
 ---
 
 # Issue loop — parallel (fan-out workers → serial coordinator)
@@ -9,6 +9,12 @@ Same objective as `issue-loop` (read GitHub issues, implement, merge to
 `master`, cut a minor release), but the **implement + PR** phase runs in
 parallel across threads/worktrees while **merge + release** stays serial in one
 coordinator.
+
+Work proceeds in **waves**. Wave 1 implements the ready tracker; any finding a
+worker judges worth resolving is filed as a ticket and harvested into a
+**findings wave** processed in the same loop, so the run resolves its own
+findings before the single release. Report every finding afterwards (resolved,
+deferred, or skipped).
 
 **Rule:** never parallelize merges, tags, or releases. They race the `master`
 ref, the version bump, and `gh release`. Parallelize only isolated
@@ -36,6 +42,30 @@ fewer, larger bundles over many tiny ones when the work is local to one area.
 
 Each bundle gets a short lowercase slug used for its branch and thread title.
 
+### Waves and findings
+
+A **wave** is one set of bundles fanned out together. Wave 1 is the ready
+tracker; each later wave is built from the tickets the previous wave's workers
+filed as findings. A finding is fixed by a **fresh** worker in a later wave,
+never by the worker that found it — so `follow-up` tickets stay out of the
+normal ready list and the coordinator re-includes them explicitly.
+
+- Harvest after a wave's PRs are merged (coordinator step 4), bundling the
+  findings with the same file-disjointness and test-module rules as wave 1.
+- Recurse while each wave files new resolvable findings; stop after **two
+  consecutive findings-only waves** and list the remainder as deferred.
+- Findings the workers judged not worth a ticket are never waved; they are
+  reported only.
+
+Report each wave as it lands and keep the **findings ledger** current:
+
+- `[wave N] merged #N,#M (<pr urls>)`
+- `[wave N findings] resolved #x via PR #P; filed #y,#z; deferred/skipped #w (<reason>)`
+
+The final summary gets a **Findings waves** section: every finding ticket, and
+its fate (resolved by which PR, deferred, or skipped with the reason). The user
+triages from that section, so never bury it in the progress log.
+
 ## Testing budget
 
 - **Workers: scoped tests only.** Run the bundle's test module(s) plus
@@ -47,7 +77,7 @@ Each bundle gets a short lowercase slug used for its branch and thread title.
 ## Coordinator (one thread)
 
 1. List open issues, drop **not ready**, split into bundles, write the
-   bundle → issue map.
+   bundle → issue map. This is **wave 1**.
 2. Spawn one worker per bundle (see “Spawning workers”).
 3. Collect worker PRs. For each ready PR, **one at a time** (serial):
    - `git fetch origin master`
@@ -55,8 +85,23 @@ Each bundle gets a short lowercase slug used for its branch and thread title.
      branch's own worktree**; resolve conflicts; push.
    - `GH_TOKEN="$GITHUB_PERSONAL_ACCESS_TOKEN" gh pr merge N --merge`
    - Confirm the issue closed: `gh issue view N --json state` is `CLOSED`.
-4. Once all bundles in the batch are merged, run the **full suite once on
-   `master`** — the only full run in the loop:
+   Log `[wave N] merged #N,#M`.
+4. **Harvest findings → next wave.** After every PR in the current wave is
+   merged, collect the tickets the workers filed as findings (worker step 8).
+   They carry `follow-up`, so the normal ready list excludes them — the
+   coordinator deliberately re-includes them here:
+   - Drop any that fail the `issue-loop` **not ready** rule, duplicate an
+     already-merged issue, or are not worth resolving; log
+     `[wave N findings] skipping #w (<reason>)`.
+   - Re-bundle the rest with the wave-1 rules (same test module / file scope).
+     Nothing is in flight now, so file overlaps are free to rebundle.
+   - Spawn the next wave with the same worker prompt and log
+     `[wave N+1] <slug> ← #y,#z`.
+   Repeat steps 3–4 while each wave files new resolvable findings. If findings
+   keep recursing, stop after **two consecutive findings-only waves** and list
+   the remainder as deferred.
+5. Once the final wave is merged, run the **full suite once on `master`** — the
+   only full run in the loop:
 
    ```bash
    scripts/build.sh
@@ -74,13 +119,17 @@ Each bundle gets a short lowercase slug used for its branch and thread title.
 
    If the user wants a release per issue, still do them serially here — never
    concurrently.
-5. Re-list issues and repeat until the `issue-loop` completion audit holds.
+6. Post the **Findings waves** summary (see “Waves and findings”), then re-list
+   issues and repeat until the `issue-loop` completion audit holds. Anything the
+   tracker gained after the release cutoff waits for the next run.
 
 ### Periodic check-in (every ~30 min)
 
-A batch can take a while and the tracker can grow while it runs. Re-check the
-tracker at least every ~30 minutes and again whenever a batch finishes, so a
+A wave can take a while and the tracker can grow while it runs. Re-check the
+tracker at least every ~30 minutes and again whenever a wave finishes, so a
 newly filed **ready** issue joins this run instead of waiting for the next one.
+Worker-filed findings on `follow-up` are skipped here; they are harvested into
+the next wave when the wave merges (coordinator step 4).
 
 At each check-in:
 
@@ -98,7 +147,7 @@ At each check-in:
      attaching it to a running worker that already owns the same test module
      and has not opened its PR yet; otherwise spawn a new worker
      (`t3-orchestrate.mjs spawn --slug <slug> …`) with the bundle prompt.
-   - **Overlaps an in-flight worker's files** → queue it for the next batch
+   - **Overlaps an in-flight worker's files** → queue it for the next wave
      after those PRs merge, so two workers never edit the same files. Record it
      in the bundle map as `queued (after <slug>)`.
      Decide overlap from the files each worker reported, or check directly with
@@ -113,13 +162,31 @@ A check-in with nothing new logs `[checkin] no changes` and the coordinator
 keeps watching the current workers.
 
 **Release cutoff.** The single minor release still closes the run, so do not
-start new workers once the batch's full-suite step has begun. A worker started
-at the last check-in must have its PR merged before that step, or it is deferred
-to the next run and listed under “queued” in the final summary.
+start new workers once the final wave's full-suite step has begun. Findings
+waves are scheduled before that step, not after it. A worker started at the last
+check-in must have its PR merged before that step, or it is deferred to the next
+run and listed under “queued” in the final summary.
 
 ## Worker (one thread per bundle)
 
 Do **not** merge or release. Stop at “PR ready”.
+
+**Before anything else, read and obey:**
+
+- `<worktree>/AGENTS.md`. It is authoritative for this repo: build/test
+  commands, the `mmbasic/` + `console/` source rule (`picomite-fork/` is
+  reference only), the percentage-test-progress rule, and the “never move a
+  branch another worktree has checked out” rule.
+- The skill files, by **literal path** (opencode does not auto-discover
+  `.cursor/skills/`, so `skill <name>` may not resolve):
+  - `.cursor/skills/issue-loop/SKILL.md` — repo specifics and the PR/issue
+    conventions.
+  - `.cursor/skills/test-suite-progress/SKILL.md` — scoped-test progress
+    reporting, required for every test run.
+
+  The same files are registered for `opencode` at
+  `.opencode/skill/<name>/SKILL.md`; use whichever resolves, but the literal
+  `.cursor/skills/...` paths always work.
 
 1. You are already on a branch in your own worktree — if not, branch from
    current `master`: `task/<slug>-0ccd` (lowercase, suffix `-0ccd`).
@@ -143,11 +210,23 @@ Do **not** merge or release. Stop at “PR ready”.
    behaviour, a stale code comment, a documented limitation, etc. File the
    out-of-scope defects as `gh issue create --label bug --label follow-up`
    (never fix them in-loop) and give the issue number; for anything you judged
-   not worth a ticket, say what and why. Report **all** of them, ticketed or
-   not, however minor — the coordinator relays them to the user for triage.
-   Write `none` if you genuinely hit nothing. Then stop.
+   not worth a ticket, say what and why. A ticketed finding seeds the
+   coordinator's next wave, so make the ticket self-contained (what is wrong,
+   where, and how to reproduce). Report **all** of them, ticketed or not,
+   however minor; the coordinator relays them to the user and reports the wave
+   outcome after it is processed. Write `none` if you genuinely hit nothing.
+   Then stop.
 
 ## Spawning workers
+
+**Mandatory worker preamble.** The coordinator writes each per-bundle prompt by
+hand, so it must paste the preamble from the **Worker prompt template** (below)
+as the first lines of every prompt: read `<worktree>/AGENTS.md`, then read the
+skill files by literal path (`.cursor/skills/issue-loop/SKILL.md`,
+`.cursor/skills/test-suite-progress/SKILL.md`). Build each prompt file as
+`<preamble> + <bundle body>`; do **not** spawn a worker whose prompt omits it.
+This is what keeps every worker under the repo rules even though opencode does
+not auto-discover `.cursor/skills/`.
 
 **Scripted (works today) — preferred.** Drive the local T3 host API with the
 bundled driver, `.cursor/skills/issue-loop-parallel/t3-orchestrate.mjs`:
@@ -157,7 +236,8 @@ bundled driver, `.cursor/skills/issue-loop-parallel/t3-orchestrate.mjs`:
 node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs projects
 
 # one worker per bundle; the server creates BOTH the thread and the
-# git worktree/branch (from origin/master) and starts the first turn
+# git worktree/branch (from origin/master) and starts the first turn.
+# /tmp/worker-<slug>.txt MUST start with the mandatory preamble above.
 node .cursor/skills/issue-loop-parallel/t3-orchestrate.mjs spawn \
   --slug term --title "#528/#529 TERM scrollback + replay" \
   --prompt @/tmp/worker-term.txt
@@ -211,23 +291,35 @@ worktree, so they must not commit, branch, or push.
 
 ## Worker prompt template
 
+The first paragraph after the scope is **mandatory** — copy it verbatim into
+every per-bundle prompt (see “Spawning workers”).
+
 ```text
 Run the issue-loop-parallel skill in WORKER mode for bundle: #<N>, #<M> (<slug>).
 
 Scope: implement only these issues, in this worktree. Do NOT merge, do NOT cut
 a release. Stop when the PR is ready.
 
+Read and obey <worktree>/AGENTS.md first; it is authoritative for this repo
+(build/test commands, mmbasic/+console/ sources, percentage test progress,
+never move another worktree's branch). opencode does not auto-discover
+.cursor/skills/, so read the skill files by literal path before starting:
+  .cursor/skills/issue-loop/SKILL.md
+  .cursor/skills/test-suite-progress/SKILL.md
+
 - You are on branch task/<slug>-0ccd in your own worktree (scripted spawn
   creates both); if not, branch from current origin/master.
-- Implement per the skill; run only the bundle's scoped tests (test-suite-progress),
-  not the full suite.
+- Implement per the skill; run only the bundle's scoped tests
+  (.cursor/skills/test-suite-progress/SKILL.md, percentage progress), not the
+  full suite.
 - Open a PR against master with `Fixes #<N>` for every issue in the bundle;
   use ManagePullRequest or gh; mark ready when tests pass.
 - Register the PR with link_pull_request.
 - Report: issues, branch, PR URL, test status, blockers, and all **Findings**
   (latent bugs, stale ticket assumptions, host/linker surprises, documented
   limits — ticketed as `bug`+`follow-up` where out of scope, or listed with a
-  reason). Write `none` if there were none. Then stop.
+  reason). Ticketed findings become the coordinator's next wave, so make each
+  self-contained. Write `none` if there were none. Then stop.
 ```
 
 ## Hazards / do not
@@ -244,6 +336,9 @@ a release. Stop when the PR is ready.
   belong in one bundle; split across bundles, they will conflict at merge and
   must be serialized by the coordinator.
 - Do not start a worker for an issue that touches files an in-flight worker is
-  editing; queue it for the next batch (see the periodic check-in rules).
+  editing; queue it for the next wave (see the periodic check-in rules).
 - Do not extend the run indefinitely for issues that arrive mid-flight; respect
   the release cutoff and leave later arrivals for the next run.
+- Do not recurse findings waves without bound. A findings wave is for the
+  tickets the previous wave filed, and no more than two consecutive findings-only
+  waves may run before the release; report the remainder as deferred.

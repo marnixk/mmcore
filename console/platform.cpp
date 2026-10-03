@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "audio.h"
+#include "console_state.h"
 #include "mmbasic.h"
 #include <circle/alloc.h>
 #include <circle/util.h>
@@ -12,6 +13,8 @@
 #include <circle/dmachannel.h>
 #include <circle/machineinfo.h>
 #include <circle/atomic.h>
+
+extern "C" void mmb_play_mix(void);
 
 static CKernel *s_kernel;
 
@@ -68,7 +71,7 @@ static volatile int s_present_busy;
 static void plat_present_wait(void)
 {
 	while (AtomicGet(&s_present_busy))
-		;
+		mmb_play_mix();
 }
 
 static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
@@ -354,6 +357,7 @@ static int plat_resize_hdmi(int w, int h)
 		return 1;
 
 	plat_term_present_drain();
+	mmb_play_mix();
 
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */
@@ -446,6 +450,20 @@ static void plat_reboot(void)
 	reboot();
 }
 
+static void plat_shutdown(void)
+{
+#if RASPPI >= 5
+	poweroff();
+#else
+	/* Pi 3 / Pi 4 / Pi 400 expose no software power-off through Circle
+	 * (poweroff() is Pi 5-only; there is no SMC/PMIC path on earlier SoCs).
+	 * halt() leaves the board powered, so tell the user it is now safe to
+	 * cut power instead of letting the still screen look like a crash. */
+	mmb_console_write("\r\nShutdown complete. It is now safe to turn off the power.\r\n");
+	halt();
+#endif
+}
+
 static void plat_audio_set_target(int target)
 {
 	audio_set_target(target);
@@ -484,6 +502,11 @@ static void plat_audio_kick(void)
 static void plat_audio_flush(void)
 {
 	audio_flush();
+}
+
+static void plat_audio_reset(void)
+{
+	audio_reset();
 }
 
 #define TUI_CW 8
@@ -1247,7 +1270,7 @@ static void plat_term_present_drain(void)
 	for (;;)
 	{
 		while (AtomicGet(&s_term_in_flight))
-			;
+			mmb_play_mix();
 		pending = 0;
 		DisableInterrupts();
 		if (s_term_pending)
@@ -1429,20 +1452,23 @@ static int plat_dma_copy2d(void *dst, const void *src, unsigned block_len,
 /* ---- virtual console screen snapshots (mmbasic-console-state) ---------- */
 
 static u8 *s_console_buf[MMB_MAX_CONSOLES];
-static unsigned s_console_size[MMB_MAX_CONSOLES];
+static unsigned s_console_size[MMB_MAX_CONSOLES]; /* allocated capacity */
+static unsigned s_console_len[MMB_MAX_CONSOLES];  /* bytes captured */
 static unsigned s_console_cx[MMB_MAX_CONSOLES];
 static unsigned s_console_cy[MMB_MAX_CONSOLES];
 static int s_console_saved[MMB_MAX_CONSOLES];
 
 /* Visible-framebuffer snapshot: covers TUI and graphics output too. */
 static u8 *s_console_fb[MMB_MAX_CONSOLES];
-static unsigned s_console_fb_size[MMB_MAX_CONSOLES];
+static unsigned s_console_fb_size[MMB_MAX_CONSOLES]; /* allocated capacity */
+static unsigned s_console_fb_len[MMB_MAX_CONSOLES];  /* bytes captured */
 static unsigned s_console_fb_pitch[MMB_MAX_CONSOLES];
 static unsigned s_console_fb_rows[MMB_MAX_CONSOLES];
 
 /* TUI offscreen snapshot (only for a console hosting a full-screen app). */
 static u8 *s_console_tui[MMB_MAX_CONSOLES];
-static unsigned s_console_tui_size[MMB_MAX_CONSOLES];
+static unsigned s_console_tui_size[MMB_MAX_CONSOLES]; /* allocated capacity */
+static unsigned s_console_tui_len[MMB_MAX_CONSOLES];  /* bytes captured */
 
 static u8 *console_alloc(u8 **slot, unsigned *cap, unsigned need)
 {
@@ -1471,13 +1497,16 @@ static int plat_console_save(int slot, int tui)
 		return 0;
 	if (!console_alloc(&s_console_buf[slot], &s_console_size[slot], need))
 		return 0;
-	if (s_console_size[slot] < need)
-		return 0;
 	term->SaveConsole(s_console_buf[slot], &s_console_cx[slot],
 			  &s_console_cy[slot]);
+	s_console_len[slot] = need;
 	s_console_saved[slot] = 1;
 
 	fb = s_kernel->Screen().GetFrameBuffer();
+	/* The slot's capacity can outlive a larger mode. Drop the previous
+	 * framebuffer snapshot before capturing this one so a later restore can
+	 * never copy bytes that no longer describe this console (#786). */
+	s_console_fb_len[slot] = 0;
 	if (fb)
 	{
 		/* Snapshot the scanned-out half, not whichever half the draw
@@ -1497,15 +1526,23 @@ static int plat_console_save(int slot, int tui)
 			       need);
 			s_console_fb_pitch[slot] = pitch;
 			s_console_fb_rows[slot] = rows;
+			s_console_fb_len[slot] = need;
 		}
 	}
 
-	if (tui && s_tui_pix)
+	if (tui)
 	{
-		need = s_tui_h * s_tui_pitch;
-		if (need && console_alloc(&s_console_tui[slot],
-					  &s_console_tui_size[slot], need))
-			memcpy(s_console_tui[slot], s_tui_pix, need);
+		s_console_tui_len[slot] = 0;
+		if (s_tui_pix)
+		{
+			need = s_tui_h * s_tui_pitch;
+			if (need && console_alloc(&s_console_tui[slot],
+						  &s_console_tui_size[slot], need))
+			{
+				memcpy(s_console_tui[slot], s_tui_pix, need);
+				s_console_tui_len[slot] = need;
+			}
+		}
 	}
 	return 1;
 }
@@ -1525,26 +1562,34 @@ static int plat_console_restore(int slot, int tui)
 	 * stale, but its framebuffer snapshot may still be valid; never lose
 	 * that restore just because the text grid changed (#758). */
 	if (s_console_saved[slot] && s_console_buf[slot] &&
-	    s_console_size[slot] == term->GetConsoleBufferSize())
+	    s_console_len[slot] == term->GetConsoleBufferSize())
 		term->RestoreConsole(s_console_buf[slot], s_console_cx[slot],
 				     s_console_cy[slot]);
 	else
 		term->Write("\x1b[H\x1b[2J", 7);
 
 	if (tui && s_tui_pix && s_console_tui[slot] &&
-	    s_console_tui_size[slot] == s_tui_h * s_tui_pitch)
-		memcpy(s_tui_pix, s_console_tui[slot], s_console_tui_size[slot]);
+	    s_console_tui_len[slot] == s_tui_h * s_tui_pitch)
+		memcpy(s_tui_pix, s_console_tui[slot], s_console_tui_len[slot]);
 
 	fb = s_kernel->Screen().GetFrameBuffer();
 	if (fb)
 		fb_draw_visible(fb);
-	if (fb && s_console_fb[slot] &&
-	    s_console_fb_pitch[slot] == fb->GetPitch() &&
-	    s_console_fb_rows[slot] == fb->GetHeight())
+	if (fb && s_console_fb[slot])
 	{
-		unsigned off = fb->GetDrawOffsetY();
-		memcpy((u8 *)(uintptr)fb->GetBuffer() + (size_t)off * fb->GetPitch(),
-		       s_console_fb[slot], s_console_fb_size[slot]);
+		/* Copy only the captured bytes, and only for the live geometry: a
+		 * snapshot buffer can be larger than the mode it now serves, and
+		 * copying its full capacity would overrun the framebuffer (#786). */
+		unsigned len = mmb_console_fb_restore_len(
+			s_console_fb_pitch[slot], s_console_fb_rows[slot],
+			s_console_fb_len[slot], fb->GetPitch(), fb->GetHeight());
+		if (len)
+		{
+			unsigned off = fb->GetDrawOffsetY();
+			memcpy((u8 *)(uintptr)fb->GetBuffer() +
+				       (size_t)off * fb->GetPitch(),
+			       s_console_fb[slot], len);
+		}
 	}
 	return 1;
 }
@@ -1577,6 +1622,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.mouse_state = plat_mouse_state;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;
+	plat.shutdown = plat_shutdown;
 	plat.audio_set_target = plat_audio_set_target;
 	plat.audio_enable = plat_audio_enable;
 	plat.audio_write = plat_audio_write;
@@ -1585,6 +1631,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_have_device = plat_audio_have_device;
 	plat.audio_kick = plat_audio_kick;
 	plat.audio_flush = plat_audio_flush;
+	plat.audio_reset = plat_audio_reset;
 	plat.video_cols = plat_video_cols;
 	plat.video_rows = plat_video_rows;
 	plat.tui_prepare = plat_tui_prepare;

@@ -19,6 +19,8 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 16, 1920, 1080 },
 	{ 17, 384, 240 },
 	{ 18, 640, 360 },
+	{ 19, 1366, 768 },
+	{ 20, 683, 384 },
 };
 
 #define MMB_RGB_AFLAG 0x10000000u
@@ -621,6 +623,18 @@ pixel_fallback:
 
 /* CMM2 BLIT lives in gfx_cmm2.c (source page + orientation). */
 
+/* Present a native-format rect from an arbitrary buffer. Used by the MOUSE
+ * software cursor (#792) to overlay its scratch copy without writing the
+ * composed page buffer. */
+void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
+			    int stride)
+{
+	if (!G.plat || !pix)
+		return;
+	present_wait_dma();
+	present_native_or_rgb(x, y, w, h, pix, stride);
+}
+
 void mmb_gfx_present(void)
 {
 	int hw, hh;
@@ -662,6 +676,9 @@ void mmb_gfx_present(void)
 	 * already in pg for any dirty rect that covers them. */
 	if (G.plat && G.plat->present_set_flip)
 		G.plat->present_set_flip(0);
+	/* Software cursor (#792): composited last, from pg, so the page
+	 * buffers are never written by pointer movement. */
+	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
 }
 
 void mmb_gfx_present_rect(int x, int y, int w, int h)
@@ -701,6 +718,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	if (x >= x1 || y >= y1)
 		return;
 	present_native_or_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
+	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
 }
 
 void mmb_gfx_init(void)
@@ -726,15 +744,8 @@ void mmb_gfx_apply_default_mode(void)
 {
 	int mode = G.opt.default_mode;
 	int bits = G.gfx.bits ? G.gfx.bits : 8;
-	unsigned i;
-	int ok = 0;
 
-	if (mode <= 0)
-		return;
-	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
-		if (kModes[i].id == mode)
-			ok = 1;
-	if (!ok)
+	if (!mmb_gfx_mode_valid(mode))
 		return;
 	if ((mode == 9 || mode == 11 || mode == 12 || mode == 14) && bits == 12)
 		bits = 8;
@@ -780,6 +791,16 @@ void mmb_gfx_reapply_mode(void)
 		G.plat->resize_hdmi(G.gfx.w, G.gfx.h);
 }
 
+int mmb_gfx_mode_valid(int mode)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(kModes) / sizeof(kModes[0]); i++)
+		if (kModes[i].id == mode)
+			return 1;
+	return 0;
+}
+
 void mmb_gfx_set_mode(int mode, int bits)
 {
 	unsigned i;
@@ -798,8 +819,10 @@ void mmb_gfx_set_mode(int mode, int bits)
 	if (!w)
 		mmb_error("?INVALID MODE");
 	present_wait_dma();
+	mmb_play_mix();
 	if (G.plat && G.plat->resize_hdmi)
 		G.plat->resize_hdmi(w, h);
+	mmb_play_mix();
 	free_pages();
 	G.gfx.mode = mode;
 	G.gfx.bits = bits;
@@ -926,7 +949,9 @@ unsigned mmb_gfx_get(int x, int y)
 	return mmb_gfx_get_page(x, y, MMB_PAGE_CUR);
 }
 
-/* AArch64 has no REP STOSD; STP of duplicated halfwords fills eight pixels. */
+/* AArch64 has no REP STOSD. STP of duplicated halfwords writes eight
+ * pixels, so the block end is eight-pixel aligned and the scalar tail
+ * finishes a short row. A four-pixel end lets the last STP run past it. */
 static void fill_u16(uint16_t *dst, unsigned n, uint16_t v)
 {
 	uint16_t *end;
@@ -944,7 +969,7 @@ static void fill_u16(uint16_t *dst, unsigned n, uint16_t v)
 			*dst++ = v;
 		if (((uintptr_t)dst & 2u) && dst < end)
 			*dst++ = v;
-		blk = dst + ((unsigned)(end - dst) & ~3u);
+		blk = dst + ((unsigned)(end - dst) & ~7u);
 		if (dst < blk)
 		{
 			pair = ((uint32_t)v << 16) | (uint32_t)v;
@@ -1369,7 +1394,9 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 	mmb_gfx_line(x3, y3, x1, y1, rgb, 1);
 }
 
-void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
+/* Fill a rect. `flip_y` runs every row through map_y() (the graphics axis);
+ * passing 0 keeps the character-cell rows top-down for TERM (#890). */
+static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 {
 	uint16_t *pg;
 	int tw, th, i, j, by, px;
@@ -1399,7 +1426,7 @@ void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
 		return;
 	for (j = 0; j < h; j++)
 	{
-		by = map_y(y + j);
+		by = flip_y ? map_y(y + j) : y + j;
 		if (by < 0 || by >= th)
 			continue;
 		if (x >= 0 && x + w <= tw)
@@ -1434,6 +1461,18 @@ void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
 		return;
 	if (G.gfx.write_page == G.gfx.display_page)
 		mmb_gfx_dirty_add(x < 0 ? 0 : x, 0, w, th);
+}
+
+void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb)
+{
+	fill_rect_flip(x, y, w, h, rgb, 1);
+}
+
+/* Character-cell fills (TERM semantics): rows stay top-down so the pane and
+ * its bars match the console even under OPTION Y_AXIS UP (#890). */
+void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb)
+{
+	fill_rect_flip(x, y, w, h, rgb, 0);
 }
 
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
@@ -1547,7 +1586,11 @@ static void glyph_cell_row_opaque(uint16_t *pg, int tw, int by, int x,
 	}
 }
 
-void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+/* Blit one 8x16 CP437 glyph cell. `flip_y` runs every row through map_y()
+ * (the graphics axis), which is what TERM wants; passing 0 keeps the
+ * character-cell rows top-down so TDF page output matches the console. */
+static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
+			    int flip_y)
 {
 	uint16_t *pg;
 	int tw, th, row, col, by, px;
@@ -1573,7 +1616,7 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 		{
 			unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
 
-			by = map_y(y + row);
+			by = flip_y ? map_y(y + row) : y + row;
 			if (by < 0 || by >= th)
 				continue;
 			glyph_cell_row_opaque(pg, tw, by, x, fg_n, bg_n, bits);
@@ -1583,7 +1626,7 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 	for (row = 0; row < 16; row++)
 	{
 		unsigned char bits = mmb_cp437_8x16[ch * 16 + row];
-		by = map_y(y + row);
+		by = flip_y ? map_y(y + row) : y + row;
 		if (by < 0 || by >= th)
 			continue;
 		for (col = 0; col < 8; col++)
@@ -1605,6 +1648,19 @@ void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 			}
 		}
 	}
+}
+
+void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
+{
+	glyph_cell_flip(x, y, ch, fg, bg, 1);
+}
+
+/* Character-cell glyphs (console/TDF semantics): rows stay top-down so the
+ * page matches the console even under OPTION Y_AXIS UP (#888). */
+void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
+				unsigned bg)
+{
+	glyph_cell_flip(x, y, ch, fg, bg, 0);
 }
 
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb)

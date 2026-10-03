@@ -23,6 +23,36 @@ Produces:
 Build with `CC`/`CFLAGS` overrides if needed:
 `scripts/build-native.sh CC=gcc CFLAGS="-O0 -g"`.
 
+## Framebuffer (KMS/DRM)
+
+A third variant renders straight to the Linux framebuffer over DRM/KMS with no
+X11 or Wayland — for a text-console / kiosk box, and for the bootable USB image:
+
+```bash
+make -C native sdl-fb          # -> native/mmcore-fb
+scripts/build-native.sh sdl-fb # same, with the build banner
+```
+
+`mmcore-fb` is the same interpreter and window code built with
+`-DMMB_SDL_FRAMEBUFFER=1`: it defaults `SDL_VIDEODRIVER` to `kmsdrm` (unless the
+caller already set it) and opens fullscreen on the primary display. Run it from
+a virtual terminal, not from inside a desktop session:
+
+```bash
+SDL_VIDEODRIVER=kmsdrm ./native/mmcore-fb
+```
+
+The host needs SDL2 built with the `kmsdrm` video driver (`libsdl2` on Debian
+ships it) plus `libdrm`/GBM (`libdrm2`, `libgbm1`) and ALSA (`libasound2`).
+`SDL_VIDEODRIVER` overrides the built-in default, so `SDL_VIDEODRIVER=dummy`
+still runs it headless in tests. The window identity hints (`WM_CLASS`,
+Wayland app-id) are skipped in this build; there is no window manager to use
+them.
+
+This is the build the bootable USB image ships. See
+[`framebuffer-and-iso.md`](framebuffer-and-iso.md) for the live image, and the
+`mmcore-fb-linux-x86_64.tar.gz` release asset for the standalone binary.
+
 ## Windows
 
 The same native backend builds for Windows x86_64 with MinGW-w64. In the MSYS2
@@ -182,8 +212,20 @@ though the host filesystem may not be.
 TCP client and server are implemented over BSD sockets (`native/net_posix.c`)
 with the same non-blocking contracts as the Circle transport, so `OPEN
 "TCP:host:port"`, `CONNECT`, `TERM`, and the FTP server work. `IPCONFIG`
-reports the active interface via `getifaddrs`. Wi-Fi radio scan/join is out of
-scope on Linux; those options report unavailable.
+reports the active interface.
+
+On Linux, `native/net_linux.c` also drives the host's Wi-Fi and Ethernet from
+the MMBasic prompt: `OPTION WIFI SCAN` scans, `OPTION WIFI` joins with stored
+credentials (or `OPTION WIFI "ssid","psk"` to store and join), and `OPTION
+ETHERNET ON` starts wired DHCP. It discovers interfaces under `/sys/class/net`,
+uses `iw` (falling back to `wpa_cli`) and `ip`, writes
+`/etc/wpa_supplicant/wpa_supplicant.conf`, and reloads the running
+supplicant. Helpers are killed on a deadline so a stuck `wpa_supplicant`
+returns to the prompt; the bootable USB image ships that stack.
+`MMB_NET_WLAN_IFACE` / `MMB_NET_ETH_IFACE` pin the interface names,
+`MMB_NET_CMD_DIR` overrides where the tools are run from (tests), and
+`MMB_WPA_CONF` the config path. macOS and Windows keep reporting Wi-Fi
+unavailable and use the host's network.
 
 ## Native desktop vs Pi
 
@@ -193,7 +235,7 @@ scope on Linux; those options report unavailable.
 | Audio | SDL2 (`PLAY TONE`/`MP3`/`MOD`/`XM`) | Circle HDMI / PWM audio |
 | Filesystems | `A:` ramdisk; `C:` persistent host directory under `MMB_DRIVE_ROOT`; `--drive` mounts `D:` | `A:` ramdisk; `C:` SD card; `D:`– USB mass storage |
 | TCP / `TERM` / `CONNECT` / FTP server | BSD sockets with the same non-blocking contract | Circle WLAN / Ethernet stack |
-| Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI` / `OPTIONS WIFI`, `OPTION ETHERNET` |
+| Wi-Fi radio scan/join | unavailable (uses the host's network) | `OPTION WIFI`, `OPTION ETHERNET` |
 | Full-screen TUIs | `EDIT`/`FILES`/`WORDPAD`/`HELP`/`AFK`/`TERM` into the SDL framebuffer | same code, HDMI |
 | Window / fullscreen | SDL2 window titled `mmcore`; `--double` opens a 2x windowed client, `--fullscreen` at launch, `Alt+Enter` toggles on the primary display | HDMI fullscreen only |
 | Clipboard | `EDIT`/`WORDPAD` copy to the host OS clipboard; `Ctrl+Shift+V` pastes it (#525) | in-memory buffer only (no host clipboard) |

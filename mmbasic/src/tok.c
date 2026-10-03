@@ -12,7 +12,7 @@ static const char *const kws[] = {
 	"CREDITS", "CAT", "CASE", "CALL", "CHDIR", "CHR$", "COS", "COSH",
 	"COLOR", "COLOUR", "COLOURS", "COLORS", "COLOURCODE", "COLORCODE",
 	"CONSOLE", "CRLF", "CR", "CLEAR", "CHI_P", "CHI", "CORREL", "CWD$",
-	"CPUSPEED", "CLOCK", "CREATE",
+	"CPUSPEED", "CLOCK", "CREATE", "CURSOR",
 	"DIM", "DO", "DIR", "DRIVE", "DEC", "DEL", "DATA", "DATE$", "DEFAULT",
 	"DEGREES", "DOWN", "DISPLAY", "DS3231", "DISABLE", "DOTPRODUCT",
 	"DOT", "DRAW", "DEVICE",
@@ -31,13 +31,14 @@ static const char *const kws[] = {
 	"LCASE$", "LOAD", "LOG", "LOG10", "LOF", "LOC", "LEGACY", "LARGE",
 	"LOWER", "LCDPANEL", "LEFT", "LENGTH",
 	"MEMORY", "MID$", "MKDIR", "MODE", "MATH", "MOD", "MV", "MOUSE",
+	"MOUSECLICK", "MOUSEMOVE", "MOUSEDOWN", "MOUSEUP",
 	"MILLISECONDS", "MEDIUM", "MONITOR", "MAX", "MIN", "MEAN", "MEDIAN",
 	"MAGNITUDE", "MM.HRES", "MM.VRES", "MM.HPOS", "MM.VPOS", "MM.INFO$",
 	"MM.INFO", "MM.VER", "MM.HOST.HRES", "MM.HOST.VRES",
 	"MM.RUNTIME", "MM.RUNTIME$",
 	"MM.DEVICE$", "MM.CMDLINE$",
 	"NEXT", "NEW", "NOT", "NAME", "NONE", "NOLED", "NORMAL", "NTP",
-	"OPEN", "OPTION", "OPTIONS", "OR", "OR_PIXELS", "ON", "OFF", "OUTPUT",
+	"OPEN", "OPTION", "OR", "OR_PIXELS", "ON", "OFF", "OUTPUT",
 	"OCT$",
 	"PRINT", "PIXEL", "PAGE", "PLAY", "PAUSE", "PACKAGE", "PAINT", "QUIT",
 	"POLYGON", "PLAYING", "PI", "PIN", "PROMPT", "PROFILING", "PNG",
@@ -50,11 +51,13 @@ static const char *const kws[] = {
 	"SETTICK", "STRING", "STRING$", "STR$", "SQR", "SQRT", "SIN", "SINH",
 	"SGN", "SPACE$", "STEP", "SCREEN", "SERIAL", "STATUS", "SWAP",
 	"SLEEP", "SD", "SEARCH", "SMALL", "SUM", "SCALE", "SET", "SCREENSHOT",
-	"SETTINGS",
+	"SETTINGS", "SHUTDOWN",
 	"TO", "THEN", "TERM", "TRIANGLE", "TEXT", "TURTLE", "TIMER", "TIME$",
 	"TAN", "TANH", "TAB", "TITLE", "TOUCH", "TURN", "TV", "TIMING", "TYPE",
 	"TIMEZONE",
 	"THEME",
+	"TDF", "TDF.WIDTH", "TDF.NAME$", "TDF.TYPE%", "TDF.SPACING%",
+	"TDF.HEIGHT", "TDF.VARIANTS%", "TDF.VARIANT%", "TDF.VARIANTNAME$",
 	"UNTIL", "UNPACK", "UCASE$", "UP", "UPPER", "USBKEYBOARD",
 	"VAL", "VSYNC_WAIT", "WHILE", "WEND", "WORDPAD",
 	"WARP_H", "WARP_V", "WINDOW", "WRITE", "WIFI", "VERY", "XFER", "XOR",
@@ -66,15 +69,32 @@ static const char *const kws[] = {
 	"SHARED", "PRESERVE", "COMMON", "REDIM",
 	"BIT", "BYTE", "EPOCH", "EXECUTE",
 	"STOP", "RESUME", "CHAIN", "ARRAY",
+	"BATTERY%",
 	0
 };
 
+#define KW_MAX 511
+#define KW_HASH_BITS 10
+#define KW_HASH_SIZE (1 << KW_HASH_BITS)
+#define KW_HASH_MASK (KW_HASH_SIZE - 1)
+
 static const char *kwu[512];
 static int nkw;
-static char *tprog;
-static int tcap;
-static char tline[MMB_LINE_LEN];
-static int tok_ready;
+static int kw_bucket[KW_HASH_SIZE];
+
+#ifdef MMB_KW_STATS
+unsigned long mmb_kw_cmp_total;
+unsigned long mmb_kw_lookup_calls;
+#endif
+
+/* The tokenized program buffer, its capacity, the immediate-mode line buffer
+ * and the readiness flag are per interpreter instance (#1013). They used to be
+ * file-scope statics, so two consoles running the same file tokenized onto the
+ * same addresses and clobbered each other's compiled trace entries. */
+#define tprog     (G.tprog)
+#define tcap      (G.tcap)
+#define tline     (G.tline)
+#define tok_ready (G.tok_ready)
 
 static void init_kw(void);
 
@@ -93,12 +113,34 @@ static int ident_eq(const char *a, const char *b)
 	return *a == 0 && *b == 0;
 }
 
+static unsigned kw_hash(const char *s)
+{
+	unsigned h = 2166136261u;
+	for (; *s; s++)
+	{
+		unsigned char c = (unsigned char)*s;
+		if (c >= 'a' && c <= 'z')
+			c = (unsigned char)(c - 32);
+		h = (h ^ c) * 16777619u;
+	}
+	return h;
+}
+
 static int lookup_kw(const char *name)
 {
-	int i;
-	for (i = 0; i < nkw; i++)
-		if (ident_eq(name, kwu[i]))
-			return i + 1;
+	unsigned h = kw_hash(name) & KW_HASH_MASK;
+#ifdef MMB_KW_STATS
+	mmb_kw_lookup_calls++;
+#endif
+	while (kw_bucket[h])
+	{
+#ifdef MMB_KW_STATS
+		mmb_kw_cmp_total++;
+#endif
+		if (ident_eq(name, kwu[kw_bucket[h] - 1]))
+			return kw_bucket[h];
+		h = (h + 1) & KW_HASH_MASK;
+	}
 	return 0;
 }
 
@@ -129,11 +171,17 @@ static void init_kw(void)
 		return;
 	for (i = 0; kws[i]; i++)
 	{
-		if (lookup_kw(kws[i]))
-			continue;
-		if (nkw >= 511)
+		const char *name = kws[i];
+		unsigned h = kw_hash(name) & KW_HASH_MASK;
+
+		while (kw_bucket[h] && !ident_eq(name, kwu[kw_bucket[h] - 1]))
+			h = (h + 1) & KW_HASH_MASK;
+		if (kw_bucket[h])
+			continue; /* duplicate: first occurrence wins */
+		if (nkw >= KW_MAX)
 			break;
-		kwu[nkw++] = kws[i];
+		kwu[nkw] = name;
+		kw_bucket[h] = ++nkw;
 	}
 }
 
@@ -218,6 +266,10 @@ void mmb_tokenize_program(void)
 {
 	int i, cap;
 	init_kw();
+	/* The trace cache is keyed by pointers into tprog, so any (re)tokenize of
+	 * this instance's program invalidates its entries: the text at a given
+	 * address may change (and a grown buffer moves every address). */
+	mmb_tcache_invalidate();
 	if (G.nprog <= 0)
 	{
 		tok_ready = 0;
@@ -225,6 +277,7 @@ void mmb_tokenize_program(void)
 	}
 	if (G.nprog > tcap)
 	{
+		char *buf;
 		cap = G.nprog + 32;
 		if (cap > MMB_MAX_LINES)
 			cap = MMB_MAX_LINES;
@@ -233,8 +286,16 @@ void mmb_tokenize_program(void)
 			tok_ready = 0;
 			return;
 		}
-		tprog = G.plat->alloc((unsigned)cap * MMB_LINE_LEN);
-		tcap = tprog ? cap : 0;
+		buf = G.plat->alloc((unsigned)cap * MMB_LINE_LEN);
+		if (!buf)
+		{
+			tok_ready = 0;
+			return;
+		}
+		if (tprog && G.plat->free)
+			G.plat->free(tprog);
+		tprog = buf;
+		tcap = cap;
 	}
 	if (!tprog)
 	{
@@ -244,6 +305,17 @@ void mmb_tokenize_program(void)
 	for (i = 0; i < G.nprog; i++)
 		mmb_tokenize_text(G.prog[i], tprog + i * MMB_LINE_LEN, MMB_LINE_LEN);
 	tok_ready = 1;
+}
+
+/* Release the instance-owned tokenized program buffer (#1013). Called from
+ * mmb_reset() before the context is discarded or reused. */
+void mmb_tok_release(void)
+{
+	if (tprog && G.plat && G.plat->free)
+		G.plat->free(tprog);
+	tprog = 0;
+	tcap = 0;
+	tok_ready = 0;
 }
 
 const char *mmb_tok_line(int pc)

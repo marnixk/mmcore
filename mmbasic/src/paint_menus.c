@@ -644,6 +644,18 @@ void pt_menus_close(void)
 	}
 }
 
+/* The pointer is a machine-wide device, so a button already held when this
+ * screen becomes active was not pressed here. Sync MENUS.btn with the live
+ * button: a held poll then takes the "no fresh press" path instead of opening
+ * a menu/dialog from a press edge that happened on the console we left (#821).
+ * The button-up still ends any real press, so the state cannot get stuck. */
+void pt_menus_console_activate(int down)
+{
+	MENUS.btn = down ? 1 : 0;
+	if (!down)
+		MENUS.owned = 0;
+}
+
 /* ---- keyboard ---------------------------------------------------------- */
 
 static int match_accel(char key, char accel)
@@ -680,7 +692,7 @@ int pt_menus_key(int key)
 			answer_confirm(1);
 		else if (key == 'n' || key == 'N' || key == 27)
 			answer_confirm(0);
-		else if (key == 13)
+		else if (key == 13 || key == 10)
 			answer_confirm(MENUS.dlg_yes);
 		else if (key == 9 || key == ' ')
 		{
@@ -738,7 +750,7 @@ int pt_menus_key(int key)
 			open_menu((m + 1) % PT_MENU_COUNT, 1);
 			return 1;
 		}
-		if (key == 13)
+		if (key == 13 || key == 10)
 		{
 			activate(m, MENUS.hover >= 0 ? MENUS.hover : 0);
 			return 1;

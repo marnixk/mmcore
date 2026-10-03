@@ -23,7 +23,6 @@ def test_help_lists_commands(console):
         "WORDPAD",
         "CREDITS",
         "IPCONFIG",
-        "OPTIONS",
         "MATH",
         "STRUCT",
         "JSON_PARSE",
@@ -136,6 +135,8 @@ def test_help_mode_resolutions(console):
         "800x600",
         "1280x720",
         "1280x1024",
+        "1366x768",
+        "683x384",
     ):
         assert size in out, size
     assert "MODE 8,16" in out
@@ -197,7 +198,8 @@ def test_help_option_wifi(console):
     assert "persist" in out.lower() or "reboot" in out.lower()
     assert "WPA2" in out or "wpa" in out.lower()
     assert "scan" in out.lower()
-    assert "OPTIONS WIFI" in out or "<OPTIONS> WIFI" in out
+    assert "OPTIONS WIFI" not in out
+    assert "OPTION WIFI" in out
     assert "COUNTRY" in out
     assert "[wifi]" in out
     assert "DEBUG" in out
@@ -208,18 +210,10 @@ def test_help_option_wifi(console):
     assert "<ETHERNET>" in out or "ETHERNET" in out
 
 
-def test_help_options_wifi(console):
+def test_help_options_wifi_topic_is_gone(console):
     listing = scroll_all(console, open_ihelp(console, "INDEX"))
-    assert "<OPTIONS>" in listing
+    assert "<OPTIONS>" not in listing
     close_ihelp(console)
-    out = dump_topic(console, "OPTIONS")
-    assert out != "?SYNTAX ERROR"
-    assert "OPTIONS WIFI" in out
-    assert "not configured" in out.lower()
-    assert "stored by OPTION WIFI" in out.lower() or "option wifi" in out.lower()
-    via = dump_topic(console, "OPTIONS WIFI")
-    assert "OPTIONS WIFI" in via
-    assert "Connected to" in via
 
 
 def test_ihelp_has_no_menu_bar(console):
@@ -441,3 +435,19 @@ def test_help_mm_host_and_runtime_topics(console):
     assert "MM.RUNTIME" in runtime
     assert "pi" in runtime and "linux" in runtime and "mac" in runtime
 
+
+def test_ihelp_topic_opens_at_top_when_taller_than_viewport(fresh_console):
+    """#877: a long topic opens at its first line, not scrolled to the tail.
+
+    On an 80x25 pane JUKE's first link sits below the fold; the old loader
+    selected that link and scrolled the pane to it, so the initial frame
+    started mid-topic and the first line was never drawn.
+    """
+    con = fresh_console
+    assert con.send_line("MODE 2") == ""
+    seen = open_ihelp(con, "JUKE")
+    assert "juke is a first-party retro music player" in seen.lower()
+    # Scrolling down still walks the topic to its end.
+    scrolled = scroll_all(con, seen)
+    assert "play stop" in scrolled.lower()
+    close_ihelp(con)

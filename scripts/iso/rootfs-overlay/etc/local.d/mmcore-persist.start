@@ -1,0 +1,80 @@
+#!/bin/sh
+# Mount the persistent MMCORE partition so BASIC files survive reboots.
+#
+# install-usb.sh creates and labels the partition. --read-write also drops
+# /.mmcore-rw; live-init then mounts that volume itself (overlay upper + C:)
+# and this script finds it already mounted. A plain MMCORE partition is
+# C: only. A missing partition is a read-only live session.
+
+mounted() {
+	while read -r _src mnt _rest; do
+		if [ "$mnt" = "$1" ]; then
+			return 0
+		fi
+	done < /proc/mounts || true
+	return 1
+}
+
+clear_ro() {
+	dev="$1"
+	name="${dev#/dev/}"
+	parent="$name"
+	case "$name" in
+		*p[0-9]|*p[0-9][0-9]) parent="${name%p*}" ;;
+		sd[a-z]*|vd[a-z]*|hd[a-z]*) parent="${name%%[0-9]*}" ;;
+	esac
+	blockdev --setrw "${dev}" 2>/dev/null || true
+	if [ "${parent}" != "${name}" ]; then
+		blockdev --setrw "/dev/${parent}" 2>/dev/null || true
+	fi
+}
+
+if mounted /media/mmcore; then
+	exit 0
+fi
+
+# A microSD can enumerate a few seconds after the modules service loads its
+# host driver (and, on a Chromebook, only after the card-reader module is in),
+# so probe the label with a bounded retry rather than one shot. On a boot that
+# genuinely has no MMCORE partition this costs at most MMCORE_PERSIST_WAIT
+# seconds. Without the retry, C: silently falls back to the RAM overlay and
+# settings do not survive a reboot.
+wait="${MMCORE_PERSIST_WAIT:-5}"
+DEV=""
+i=0
+while [ "$i" -lt "$wait" ]; do
+	DEV="$(blkid -L MMCORE 2>/dev/null || true)"
+	if [ -z "${DEV}" ] && [ -e /dev/disk/by-label/MMCORE ]; then
+		DEV="/dev/disk/by-label/MMCORE"
+	fi
+	[ -n "${DEV}" ] && break
+	i=$((i + 1))
+	[ "$i" -lt "$wait" ] && sleep 1
+done
+[ -n "${DEV}" ] || exit 0
+
+clear_ro "${DEV}"
+mkdir -p /media/mmcore
+
+if ! blkid "${DEV}" >/dev/null 2>&1; then
+	mkfs.ext4 -q -L MMCORE "${DEV}" || {
+		rmdir /media/mmcore 2>/dev/null || true
+		exit 1
+	}
+fi
+
+if ! mount -o rw "${DEV}" /media/mmcore; then
+	rmdir /media/mmcore 2>/dev/null || true
+	exit 1
+fi
+
+# The hybrid ISO mount can leave the filesystem read-only even after the
+# block device itself has been cleared. Ask for a writable remount.
+while read -r _src mnt _fs flags _rest; do
+	if [ "$mnt" = "/media/mmcore" ]; then
+		case ",${flags}," in
+			*,ro,*) mount -o remount,rw /media/mmcore 2>/dev/null || true ;;
+		esac
+		break
+	fi
+done < /proc/mounts || true

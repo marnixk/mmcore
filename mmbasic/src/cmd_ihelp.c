@@ -91,6 +91,7 @@ static void load_contents(void);
 static void load_overview(void);
 static void load_topic(int ti);
 static void ensure_visible(void);
+static void select_visible_after_scroll(int from_bottom);
 
 static int to_upper(char c)
 {
@@ -447,8 +448,12 @@ static void load_page(int page, const char *title, const char *lookup)
 	newline();
 	if (ti >= 0)
 		emit_source(mmb_help_topic_text(ti), ti);
-	H.sel = NAV_N < H.nlinks ? NAV_N : 0;
+	/* Open at the top of the page. Selecting the first content link must not
+	 * scroll the pane, or a page whose first link sits below the fold would
+	 * open showing its tail (#877). */
 	H.scroll = 0;
+	H.sel = 0;
+	select_visible_after_scroll(0);
 }
 
 static void load_overview(void)
@@ -472,9 +477,12 @@ static void load_topic(int ti)
 	set_title(name);
 	newline();
 	emit_source(mmb_help_topic_text(ti), ti);
-	H.sel = NAV_N < H.nlinks ? NAV_N : 0;
+	/* Open at the top of the topic. Selecting the first content link must not
+	 * scroll the pane, or a topic whose first link sits below the fold would
+	 * open showing its tail (#877). */
 	H.scroll = 0;
-	ensure_visible();
+	H.sel = 0;
+	select_visible_after_scroll(0);
 }
 
 static void push_frame(void)

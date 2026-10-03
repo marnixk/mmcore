@@ -10,11 +10,12 @@
  * Screen: 640x360 (MODE 18). Layout, in screen pixels:
  *
  *   row 0..15    menu bar (one 8x16 text row), full width
- *   x 0..31      tool column, one icon per tool, below the menu bar
+ *   x 0..63      tool strip: a 2x9 grid of 32px-wide cells holding the
+ *                tools, below the menu bar
  *   y 328..359   palette strip: 4 rows x 64 swatches of 8x8,
  *                FG/BG indicator at the left end
- *   the canvas  is the remaining area (608x312), one canvas pixel per
- *               screen pixel, black (index 0) on entry
+ *   the canvas  is the remaining area (576x312) from x 64, one canvas pixel
+ *               per screen pixel, black (index 0) on entry
  */
 #ifndef MMB_PAINT_H
 #define MMB_PAINT_H
@@ -269,6 +270,11 @@ int pt_menus_mouse(int sx, int sy, int button, int down); /* 1 = consumed */
 int pt_menus_key(int key);		/* 1 = consumed */
 int pt_menus_active(void);
 void pt_menus_close(void);
+/* A console switch or PAINT entry has made this screen active. The pointer is
+ * machine-wide, so a button already held here was not pressed on this screen:
+ * seed the menu module's held state from the live button so the carried-over
+ * hold is not read as a fresh press that opens a menu/dialog (#821). */
+void pt_menus_console_activate(int down);
 /* Quit entry point for the lifecycle's keyboard paths. Opens the discard
  * confirmation and returns 1 when the canvas is dirty; returns 0 when the
  * caller may tear down immediately. */
@@ -278,10 +284,10 @@ int pt_menus_confirm_quit(void);
 
 void pt_cursor_init(void);
 /* Draw the pointer at a screen pixel. `tool` selects the canvas sprite, but a
- * negative id draws nothing; `menu_open` forces the UI arrow regardless of the
- * pointer position, so an open dropdown never shows a tool sprite over the
- * canvas (#788). */
-void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open);
+ * negative id draws nothing; `overlay` forces the UI arrow regardless of the
+ * pointer position, so an open menu/dropdown, the file picker or the text font
+ * picker never shows a tool sprite over the canvas it covers (#788, #791). */
+void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay);
 void pt_cursor_restore(void);
 
 /* ---- file module (#640) ------------------------------------------------ */

@@ -44,6 +44,19 @@ def _wait_serial(con: MMBasicConsole, needle: str, timeout: float = 15.0) -> str
     return buf
 
 
+def _switch_console(con: MMBasicConsole, n: int) -> None:
+    """Ctrl+Alt+N through the USB keyboard (same chord the console uses)."""
+    con.key_down("ctrl")
+    con.key_down("alt")
+    time.sleep(0.15)
+    con.key_down(str(n))
+    time.sleep(0.25)
+    con.key_up(str(n))
+    time.sleep(0.15)
+    con.key_up("alt")
+    time.sleep(0.5)
+
+
 def test_files_command_menu_offers_ftp_server(fresh_console):
     con = fresh_console
     _prep_tree(con)
@@ -99,7 +112,8 @@ def ftp_console(kernel_image):
     forward = [f"tcp::{ctrl}-:21", f"tcp::{FTP_DATA_PORT}-:{FTP_DATA_PORT}"]
     con = MMBasicConsole(
         kernel_image,
-        extra_qemu=qemu_usb_net_args(forward),
+        # usb-kbd lets a test drive the Ctrl+Alt+N virtual-console chord.
+        extra_qemu=qemu_usb_net_args(forward) + ["-device", "usb-kbd"],
         boot_timeout=40.0,
     )
     con.ctrl_host_port = ctrl
@@ -173,3 +187,121 @@ def test_files_ftp_roundtrip(ftp_console):
     listing = con.send_line('DIR "A:/FTPDIR"')
     assert "UPLOAD.TXT" in listing.upper()
     assert con.send_line("PRINT 6") == "6"
+
+
+def test_files_ftp_serves_from_background_console(ftp_console):
+    """#812: the global FTP server keeps being polled while its FILES screen is
+    a background virtual console, so a client still connects and transfers."""
+    con = ftp_console
+    _enable_ethernet(con)
+    if not host_tcp_available(con):
+        pytest.skip("QEMU SLIRP TCP unavailable in this environment")
+
+    assert con.send_line('MKDIR "A:/BGFTP"') == ""
+    assert con.send_line('OPEN "A:/BGFTP/BG.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "background ftp"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+    con.drain(quiet=0.2)
+    con._ser.sendall(b'FILES "A:/BGFTP"\r')
+    seen = con.drain(quiet=1.0).decode(errors="replace")
+    assert "[FILES]" in seen
+
+    con._ser.sendall(bytes([1]) + b"c")
+    con.drain(quiet=0.3)
+    con._ser.sendall(b"s")
+    started = _wait_serial(con, "[FTP] LISTEN", timeout=20)
+    assert "[FTP] LISTEN" in started, started[-600:]
+
+    # Move the FILES screen to the background. The server is a machine-global
+    # resource: new clients are still accepted and transfers still run.
+    _switch_console(con, 2)
+    con.drain(quiet=0.3, timeout=2.0)
+
+    ftp = ftplib.FTP()
+    ftp.connect("127.0.0.1", con.ctrl_host_port, timeout=20)
+    ftp.trust_server_pasv_ipv4_address = False
+    ftp.login("anonymous", "x")
+    names = ftp.nlst()
+    assert any("BG.TXT" in n.upper() for n in names), names
+    data = bytearray()
+    ftp.retrbinary("RETR BG.TXT", data.extend)
+    assert b"background ftp" in bytes(data)
+    ftp.quit()
+
+    # Return to the FILES screen and stop the server cleanly.
+    _switch_console(con, 1)
+    con.drain(quiet=0.3, timeout=2.0)
+    con._ser.sendall(b"\x1b")
+    stopped = _wait_serial(con, "[FTP] STOP")
+    assert "[FTP] STOP" in stopped, stopped[-400:]
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.5)
+    assert con.send_line("PRINT 8") == "8"
+
+
+def test_files_ftp_second_console_cannot_adopt(ftp_console):
+    """#818: the server is machine-global but FILES is per console. A second
+    console must not adopt the running server (with a different root) nor stop
+    it when its own FILES screen is torn down."""
+    con = ftp_console
+    _enable_ethernet(con)
+    if not host_tcp_available(con):
+        pytest.skip("QEMU SLIRP TCP unavailable in this environment")
+
+    assert con.send_line('MKDIR "A:/OWNER1"') == ""
+    assert con.send_line('MKDIR "A:/OTHER2"') == ""
+    assert con.send_line('OPEN "A:/OWNER1/OWNED.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "owned"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('OPEN "A:/OTHER2/OTHER.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "other"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+    # Console 1 starts the server rooted in A:/OWNER1.
+    con.drain(quiet=0.2)
+    con._ser.sendall(b'FILES "A:/OWNER1"\r')
+    seen = con.drain(quiet=1.0).decode(errors="replace")
+    assert "[FILES]" in seen
+    con._ser.sendall(bytes([1]) + b"c")
+    con.drain(quiet=0.3)
+    con._ser.sendall(b"s")
+    started = _wait_serial(con, "[FTP] LISTEN", timeout=20)
+    assert "ROOT A:/OWNER1" in started.upper(), started[-600:]
+
+    # Console 2 tries to start a server rooted in A:/OTHER2: it must be
+    # refused and must not enter the FTP modal.
+    _switch_console(con, 2)
+    con.drain(quiet=0.3, timeout=2.0)
+    con._ser.sendall(b'FILES "A:/OTHER2"\r')
+    seen2 = con.drain(quiet=1.0).decode(errors="replace")
+    assert "[FILES]" in seen2, seen2[-400:]
+    con._ser.sendall(bytes([1]) + b"c")
+    con.drain(quiet=0.3)
+    con._ser.sendall(b"s")
+    refused = con.drain(quiet=1.0).decode(errors="replace")
+    assert "CONSOLE 1" in refused.upper(), refused[-500:]
+    assert "FTP SERVER" not in refused.upper(), refused[-500:]
+
+    # Console 2 quitting FILES must not stop console 1's server: it still
+    # serves console 1's root.
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.5)
+    ftp = ftplib.FTP()
+    ftp.connect("127.0.0.1", con.ctrl_host_port, timeout=20)
+    ftp.trust_server_pasv_ipv4_address = False
+    ftp.login("anonymous", "x")
+    names = [n.upper() for n in ftp.nlst()]
+    assert any("OWNED.TXT" in n for n in names), names
+    assert not any("OTHER.TXT" in n for n in names), names
+    ftp.quit()
+
+    # Back on console 1: Esc stops the server it owns.
+    _switch_console(con, 1)
+    con.drain(quiet=0.3, timeout=2.0)
+    con._ser.sendall(b"\x1b")
+    stopped = _wait_serial(con, "[FTP] STOP")
+    assert "[FTP] STOP" in stopped, stopped[-400:]
+    con._ser.sendall(b"q")
+    con.drain(quiet=0.5)
+    assert con.send_line("PRINT 82") == "82"

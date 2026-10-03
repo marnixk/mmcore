@@ -28,6 +28,8 @@ publish builds board images with scripts/package-release.sh, then uploads:
 On macOS it also builds and attaches the universal (arm64 + x86_64) app bundle:
   dist/mmcore-macos-universal.zip   (scripts/package-macos-app.sh)
 The bundle is notarized + stapled; a failed notarization aborts the release.
+Set MMCORE_SKIP_NOTARY=1 to ship a signed but UNNOTARIZED bundle when no
+notarytool credentials are available (local/emergency builds only).
 
 The Windows zip is built by CI (.github/workflows/windows.yml) when the release
 is published and attached as:
@@ -42,6 +44,14 @@ Environment:
                         (default: mmcore-notary). The macOS asset is always
                         notarized + stapled and the release fails if that does
                         not succeed, so an unnotarized app cannot ship.
+  ~/.config/mmcore/notary.env
+                        optional file with NOTARY_APPLE_ID, NOTARY_TEAM_ID, and
+                        NOTARY_PASSWORD exports for non-interactive notarization
+                        (sourced automatically before the macOS package step).
+  MMCORE_SKIP_NOTARY=1  local/emergency builds: sign the macOS app but do NOT
+                        notarize or staple it, so the release can proceed
+                        without notarytool credentials. Never set this for a
+                        normal release: Gatekeeper will block the app.
   MMCORE_SKIP_WIN_SIGN=1  local smoke tests: ship an unsigned Windows build
                           (never set this on a release)
 
@@ -224,6 +234,30 @@ print("chmod +x mmcore-x86_64.AppImage")
 print("./mmcore-x86_64.AppImage")
 print("```")
 print()
+print("## Linux framebuffer (KMS/DRM)")
+print()
+print("Run the KMS/DRM build from a text virtual terminal (no X11/Wayland):")
+print()
+print("```bash")
+print("tar -xzf mmcore-fb-linux-x86_64.tar.gz")
+print("./mmcore-fb-linux-x86_64/mmcore-fb")
+print("```")
+print()
+print("## Bootable USB / ISO (Alpine, KMS/DRM)")
+print()
+print("The ISO ships compressed as `mmcore-fb-x86_64.iso.zst`. Decompress it,")
+print("then write it to a USB stick or microSD; install-usb.sh adds a persistent MMCORE")
+print("partition so BASIC files survive reboots:")
+print()
+print("```bash")
+print("zstd -d mmcore-fb-x86_64.iso.zst")
+print("sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX")
+print("```")
+print()
+print("install-usb.sh also accepts the compressed `.iso.zst` directly.")
+print("`--read-write` keeps the live session writable and persists C: on that")
+print("stick or microSD without installing onto an internal disk.")
+print()
 print("## Windows native (x86_64)")
 print()
 print("Unzip and run `mmcore.exe` from Explorer or a terminal; keep the")
@@ -254,6 +288,9 @@ print(f"- `mmcore-console-pizero2w-v{version}.zip` — Raspberry Pi Zero 2 W (CY
 print(f"- `mmcore-console-pi400-v{version}.zip` — Raspberry Pi 400 (also Pi 4B / CM4)")
 print("- `install-sdcard.sh` — same installer, also inside each zip")
 print("- `mmcore-x86_64.AppImage` — Linux native SDL2 desktop build")
+print("- `mmcore-fb-linux-x86_64.tar.gz` — Linux x86_64 KMS/DRM framebuffer build")
+print("- `mmcore-fb-x86_64.iso.zst` — bootable Alpine live USB/ISO, zstd-compressed (KMS/DRM, Wi-Fi/Ethernet)")
+print("- `install-usb.sh` — decompress/write the ISO to USB and add the persistent partition")
 print("- `mmcore-windows-x86_64.zip` — Windows x86_64 native SDL2 build")
 if macos_name:
     print(f"- `{macos_name}` — macOS universal app bundle (mmcore.app)")
@@ -318,9 +355,17 @@ publish() {
 	assert_zip_has_installer "${pi400}"
 
 	if [ "$(uname -s)" = "Darwin" ]; then
-		log "Building macOS app bundle for ${tag}"
-		MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
-			bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		# shellcheck source=scripts/mmcore-notary-env.sh
+		. "${REPO_ROOT}/scripts/mmcore-notary-env.sh"
+		if [ "${MMCORE_SKIP_NOTARY:-}" = "1" ]; then
+			log "Building UNNOTARIZED macOS app bundle for ${tag} (MMCORE_SKIP_NOTARY=1)"
+			MMCORE_REQUIRE_NOTARY=0 VERSION="${version}" \
+				bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		else
+			log "Building macOS app bundle for ${tag}"
+			MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
+				bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		fi
 	fi
 	if [ -f "${macos}" ]; then
 		macos_arg=("${macos}")

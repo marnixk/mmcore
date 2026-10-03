@@ -19,6 +19,7 @@ ATAN2	ATAN2	topic	dedicated topic
 ATN	ATN	topic	dedicated topic
 ATN2	ATN2	topic	dedicated topic
 BASE$	BASE$	topic	dedicated topic
+BATTERY%	BATTERY%	topic	dedicated topic
 BEEP	PLAY	alias	alias of PLAY
 BIN$	BIN$	topic	dedicated topic
 BIT	BIT	topic	dedicated topic
@@ -159,6 +160,7 @@ MM.HOST.VRES	MM.HOST.VRES	topic	dedicated topic
 MM.RUNTIME	MM.RUNTIME$	alias	alias of MM.RUNTIME$
 MM.RUNTIME$	MM.RUNTIME$	topic	dedicated topic
 MODE	MODE	topic	dedicated topic
+MOUSE	MOUSE	topic	dedicated topic
 MV	RENAME	alias	alias of RENAME
 NAME	RENAME	alias	alias of RENAME
 NEW	NEW	topic	dedicated topic
@@ -170,9 +172,10 @@ ON ERROR	ON	alias	alias of ON
 ON GOSUB	ON	alias	alias of ON
 ON GOTO	ON	alias	alias of ON
 ON KEY	ON	alias	alias of ON
+ON MOUSECLICK	ON	alias	alias of ON
+ON MOUSEMOVE	ON	alias	alias of ON
 OPEN	OPEN	topic	dedicated topic
 OPTION	OPTION	topic	dedicated topic
-OPTIONS	OPTIONS	topic	dedicated topic
 PACKAGE	PACKAGE	topic	dedicated topic
 PAGE	PAGE	topic	dedicated topic
 PAINT	PAINT	topic	dedicated topic
@@ -213,6 +216,7 @@ SELECT CASE	SELECT	alias	alias of SELECT
 SETTICK	SETTICK	topic	dedicated topic
 SETTINGS	SETTINGS	topic	dedicated topic
 SGN	SGN	topic	dedicated topic
+SHUTDOWN	SHUTDOWN	topic	dedicated topic
 SIN	SIN	topic	dedicated topic
 SORT	SORT	topic	dedicated topic
 SPACE$	SPACE$	topic	dedicated topic
@@ -228,6 +232,15 @@ SUB	SUB	topic	dedicated topic
 SWAP	SWAP	topic	dedicated topic
 TAB	TAB	topic	dedicated topic
 TAN	TAN	topic	dedicated topic
+TDF	TDF	topic	dedicated topic
+TDF.HEIGHT	TDF	alias	documented under TDF
+TDF.NAME$	TDF	alias	documented under TDF
+TDF.SPACING%	TDF	alias	documented under TDF
+TDF.TYPE%	TDF	alias	documented under TDF
+TDF.VARIANT%	TDF	alias	documented under TDF
+TDF.VARIANTNAME$	TDF	alias	documented under TDF
+TDF.VARIANTS%	TDF	alias	documented under TDF
+TDF.WIDTH	TDF	alias	documented under TDF
 TERM	TERM	topic	dedicated topic
 TEXT	TEXT	topic	dedicated topic
 THEME	THEME	topic	dedicated topic

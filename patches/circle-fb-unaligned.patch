@@ -1,0 +1,93 @@
+diff --git a/lib/bcmframebuffer.cpp b/lib/bcmframebuffer.cpp
+--- a/lib/bcmframebuffer.cpp
++++ b/lib/bcmframebuffer.cpp
+@@ -228,42 +228,51 @@
+ 	Area.y1 += m_nDrawOffsetY;
+ 	Area.y2 += m_nDrawOffsetY;
+ 
+-#ifdef SCREEN_DMA_BURST_LENGTH
+-	while (AtomicCompareExchange (&m_nDMAInUse, 0, 1))
+-	{
+-		// TODO: Yield with NO_BUSY_WAIT, when on core 0 in TASK_LEVEL
+-	}
++	size_t ulBlockLength = (Area.x2 - Area.x1 + 1) * m_nDepth/8;
+ 
++#ifdef SCREEN_DMA_BURST_LENGTH
+ 	u32 x1 = Area.x1;
+-	u32 x2 = Area.x2;
+ 	u32 y1 = Area.y1;
+-	u32 y2 = Area.y2;
+-
+ 	void *pDestination = (void *) (uintptr) (m_nBufferPtr + y1*m_nPitch + x1*m_nDepth/8);
+-
+-	size_t ulBlockLength = (x2-x1+1) * m_nDepth/8;
+-
+-	m_DMAChannel.SetupMemCopy2D (pDestination, pPixels, ulBlockLength, y2-y1+1,
+-				     m_nPitch-ulBlockLength, SCREEN_DMA_BURST_LENGTH);
+-
+-	if (pRoutine)
++	/* 128-bit DMA needs 16-byte aligned ends. 1366 and 683 are not multiples
++	 * of eight pixels, so those rows are copied on the CPU.
++	 * mmbasic-fb-unaligned */
++	boolean bDma = ulBlockLength > 0
++		&& (ulBlockLength & 15) == 0
++		&& ((uintptr) pPixels & 15) == 0
++		&& ((uintptr) pDestination & 15) == 0
++		&& (m_nPitch & 15) == 0;
++	if (bDma)
+ 	{
+-		m_pCompletionRoutine = pRoutine;
+-		m_pCompletionParam = pParam;
+-
+-		m_DMAChannel.SetCompletionRoutine (DMACompletionRoutine, this);
+-		m_DMAChannel.Start ();
++		while (AtomicCompareExchange (&m_nDMAInUse, 0, 1))
++		{
++			// TODO: Yield with NO_BUSY_WAIT, when on core 0 in TASK_LEVEL
++		}
++
++		m_DMAChannel.SetupMemCopy2D (pDestination, pPixels, ulBlockLength,
++					     Area.y2 - Area.y1 + 1,
++					     m_nPitch-ulBlockLength, SCREEN_DMA_BURST_LENGTH);
++
++		if (pRoutine)
++		{
++			m_pCompletionRoutine = pRoutine;
++			m_pCompletionParam = pParam;
++
++			m_DMAChannel.SetCompletionRoutine (DMACompletionRoutine, this);
++			m_DMAChannel.Start ();
++		}
++		else
++		{
++			m_DMAChannel.Start ();
++			m_DMAChannel.Wait ();
++
++			AtomicSet (&m_nDMAInUse, 0);
++		}
++		return;
+ 	}
+-	else
++#endif
+ 	{
+-		m_DMAChannel.Start ();
+-		m_DMAChannel.Wait ();
+-
+-		AtomicSet (&m_nDMAInUse, 0);
+-	}
+-#else
+-	size_t ulWidth = Area.x2 - Area.x1 + 1;
+-	size_t ulBlockLength = ulWidth * m_nDepth/8;
++	size_t ulWidth = ulBlockLength / (m_nDepth / 8);
+ 
+ 	switch (m_nDepth)
+ 	{
+@@ -308,7 +317,7 @@
+ 	{
+ 		(*pRoutine) (pParam);
+ 	}
+-#endif
++	}
+ }
+ 
+ #ifdef SCREEN_DMA_BURST_LENGTH

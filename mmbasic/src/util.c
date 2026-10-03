@@ -47,6 +47,11 @@ int mmb_is_ident(char c)
 	       (c >= '0' && c <= '9') || c == '_' || c == '.';
 }
 
+int mmb_is_ident_start(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
 void mmb_upper(char *s)
 {
 	for (; *s; s++)
@@ -204,7 +209,7 @@ void mmb_error(const char *msg)
 		longjmp(G.run_errjmp, 1);
 	}
 	if (G.running)
-		mmb_play_stop();
+		mmb_play_stop_owned();
 	longjmp(G.errjmp, 1);
 }
 
@@ -505,6 +510,22 @@ static unsigned blk_total(const char *data)
 	return t;
 }
 
+/* Byte length currently stored in the block (excluding the NUL). Keeping it
+ * in the header makes appends O(1) amortized instead of scanning the whole
+ * accumulated string (#994). */
+static unsigned blk_len(const char *data)
+{
+	unsigned n;
+	memcpy(&n, data - MMB_STR_HDR + sizeof(unsigned), sizeof(n));
+	return n;
+}
+
+static void blk_set_len(char *data, int n)
+{
+	unsigned u = n < 0 ? 0u : (unsigned)n;
+	memcpy(data - MMB_STR_HDR + sizeof(unsigned), &u, sizeof(u));
+}
+
 static unsigned blk_cap(const char *data)
 {
 	return blk_total(data) - MMB_STR_HDR - 1;
@@ -547,6 +568,7 @@ static char *pool_alloc_raw(int need)
 			s_slab_left -= bsz;
 		}
 		memcpy(raw, &bsz, sizeof(bsz));
+		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
 	{
@@ -554,6 +576,7 @@ static char *pool_alloc_raw(int need)
 		if (!raw)
 			return 0;
 		memcpy(raw, &total, sizeof(total));
+		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
 }
@@ -609,6 +632,7 @@ char *mmb_str_alloc(int n)
 	if (!p)
 		mmb_error("?OUT OF MEMORY");
 	p[n] = 0;
+	blk_set_len(p, 0);
 	return p;
 }
 
@@ -676,6 +700,7 @@ char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *w
 		if (s && s != cur && len)
 			memmove(cur, s, (size_t)len);
 		cur[len] = 0;
+		blk_set_len(cur, len);
 		*slot = cur;
 		return cur;
 	}
@@ -686,6 +711,7 @@ char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *w
 		if (s && len)
 			memcpy(nb, s, (size_t)len);
 		nb[len] = 0;
+		blk_set_len(nb, len);
 		pool_free_raw(cur);
 		*slot = nb;
 		return nb;
@@ -702,7 +728,7 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	cur = *slot;
 	if (cur == MMB_EMPTY)
 		cur = 0;
-	clen = cur ? (int)strlen(cur) : 0;
+	clen = cur ? (int)blk_len(cur) : 0;
 	if (len < 0)
 		len = s ? (int)strlen(s) : 0;
 	if (maxlen > 0 && clen + len > maxlen)
@@ -727,6 +753,7 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	if (len)
 		memcpy(cur + clen, s, (size_t)len);
 	cur[clen + len] = 0;
+	blk_set_len(cur, clen + len);
 	*slot = cur;
 	return cur;
 }
@@ -933,6 +960,11 @@ static void ansi_put_int(char *seq, int *n, int v)
 	}
 	while (i > 0)
 		seq[(*n)++] = tmp[--i];
+}
+
+int mmb_console_ansi_code(unsigned rgb, int fg)
+{
+	return rgb_to_ansi(rgb, fg);
 }
 
 void mmb_console_apply_colour(void)
@@ -1808,7 +1840,7 @@ static void inkey_poll(void)
 		G.plat->poll_input();
 	if (G.running && G.plat && G.plat->take_break && G.plat->take_break())
 	{
-		mmb_play_stop();
+		mmb_play_stop_owned();
 		mmb_error("?BREAK");
 	}
 }

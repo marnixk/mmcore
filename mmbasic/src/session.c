@@ -10,6 +10,35 @@ static int s_initialized[MMB_MAX_CONSOLES];
 static int s_shown[MMB_MAX_CONSOLES];
 static int s_pending = -1;
 
+/* Background yield callbacks (yield.c) run while their owning console is not
+ * active. Select that console's interpreter context for the callback and hand
+ * the real one back afterwards. Only one callback runs at a time, so a single
+ * saved pair is enough. */
+static int s_bg_saved_console = -1;
+static mmb *s_bg_saved_cur;
+
+int mmb_bg_console_enter(int console)
+{
+	if (console < 0 || console >= MMB_MAX_CONSOLES)
+		return 0;
+	if (console == g_console || !g_mmb[console])
+		return 0;
+	s_bg_saved_console = g_console;
+	s_bg_saved_cur = g_cur;
+	g_console = console;
+	g_cur = g_mmb[console];
+	return 1;
+}
+
+void mmb_bg_console_leave(void)
+{
+	if (s_bg_saved_console < 0)
+		return;
+	g_console = s_bg_saved_console;
+	g_cur = s_bg_saved_cur;
+	s_bg_saved_console = -1;
+}
+
 int mmb_console_switch_pending(void)
 {
 	return s_pending >= 0;
@@ -64,6 +93,7 @@ void mmb_console_reset(void)
 	mmb_wordpad_reset_all();
 	mmb_editor_reset_all();
 	mmb_tui_reset_all();
+	mmb_mouse_reset_all();
 
 	for (i = 1; i < MMB_MAX_CONSOLES; i++)
 	{
@@ -89,6 +119,10 @@ void mmb_console_reset(void)
 	mmb_vfs_cwd_reset();
 	s_initialized[0] = 1;
 	s_shown[0] = 1; /* the warm reset paints the banner and prompt itself */
+	/* Background yield callbacks hold pointers into the contexts just freed
+	 * (and into app state that is about to be cleared), so drop them all
+	 * (#858). Apps re-register when they are next started. */
+	mmb_yield_clear();
 	mmb_front_reset();
 }
 
@@ -154,7 +188,7 @@ static void close_apps_on_console(int idx)
 		else if (mmb_in_afk())
 			mmb_afk_key(3);             /* Ctrl+C leaves AFK */
 		else if (mmb_in_juke())
-			mmb_juke_key(27);
+			mmb_juke_close();
 		else
 			break;
 	}
@@ -180,7 +214,9 @@ void mmb_warm_reset(void)
 {
 	G.running = 0;
 	mmb_play_stop();
-	mmb_close_tcp_files();
+	/* The socket may be owned by a background console, so close it on every
+	 * console before mmb_console_reset() frees the contexts (#785). */
+	mmb_close_tcp_files_all();
 	mmb_settings_save();
 
 	/* Hand the keyboard back before the interpreter state is replaced. */
@@ -235,22 +271,40 @@ static int console_do_switch(int idx)
 
 	/* Snapshot the current screen before bringing the target up: a fresh
 	 * console's gfx init retunes the HDMI framebuffer and would otherwise
-	 * wipe the screen we are leaving. */
+	 * wipe the screen we are leaving. Keep the mixer fed across the
+	 * snapshot and the mode change. */
+	mmb_play_mix();
 	if (plat && plat->console_save)
 		plat->console_save(g_console, mmb_front_in_app());
+	mmb_play_mix();
 
 	if (!s_initialized[idx])
 		console_bring_up(idx, from);
 	if (!g_mmb[idx])
 		return 0;
 
+	/* The pointer is a global device and PAINT's poll does not run on a
+	 * background screen, so a stroke still held here would be committed from
+	 * its stale press point when focus returns. Drop it as this screen stops
+	 * being active (#811). */
+	mmb_paint_console_deactivated(g_console);
+
 	g_console = idx;
 	g_cur = g_mmb[idx];
 	mmb_front_select(idx);
+	/* The editor on this screen now owns the keyboard: drop any Ctrl+Alt
+	 * hold clock left over from the screen we are leaving (#810). */
+	mmb_editor_console_activated(idx);
+	/* The pointer is a global device too: seed PAINT's button-edge tracker
+	 * from the live state so a button already held on arrival cannot begin a
+	 * stroke with no press observed here (#814). */
+	mmb_paint_console_activated(idx);
 
 	/* Retune the display to this console's MODE before repainting it: the
 	 * hardware is still sized for the console we are leaving (#580). */
+	mmb_play_mix();
 	mmb_gfx_reapply_mode();
+	mmb_play_mix();
 
 	/* The saved screen does not carry the terminal pen: re-apply this
 	 * console's COLOUR so the next characters use its foreground/background

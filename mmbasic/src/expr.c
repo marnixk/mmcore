@@ -497,8 +497,17 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("MM.VER")] = &&lbl_mmver;
 		fun_tab[mmb_kw_id("MM.DEVICE$")] = &&lbl_mmdev;
 		fun_tab[mmb_kw_id("MM.CMDLINE$")] = &&lbl_mmcmd;
+		fun_tab[mmb_kw_id("TDF.WIDTH")] = &&lbl_tdfwidth;
+		fun_tab[mmb_kw_id("TDF.NAME$")] = &&lbl_tdfname;
+		fun_tab[mmb_kw_id("TDF.TYPE%")] = &&lbl_tdftype;
+		fun_tab[mmb_kw_id("TDF.SPACING%")] = &&lbl_tdfspacing;
+		fun_tab[mmb_kw_id("TDF.HEIGHT")] = &&lbl_tdfheight;
+		fun_tab[mmb_kw_id("TDF.VARIANTS%")] = &&lbl_tdfvariants;
+		fun_tab[mmb_kw_id("TDF.VARIANT%")] = &&lbl_tdfvariant;
+		fun_tab[mmb_kw_id("TDF.VARIANTNAME$")] = &&lbl_tdfvariantname;
 		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
 		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
+		fun_tab[mmb_kw_id("BATTERY%")] = &&lbl_battery;
 		finited = 1;
 	}
 	if ((unsigned char)*G.p == 0x80)
@@ -542,7 +551,7 @@ int mmb_try_function(mmb_val *out)
 		char name[MMB_MAX_NAME];
 		int nn = 0, aid;
 		mmb_skip_sp();
-		if (mmb_is_ident(*G.p) && !(*G.p >= '0' && *G.p <= '9'))
+		if (mmb_is_ident_start(*G.p))
 		{
 			while (mmb_is_ident(*G.p) && nn < MMB_MAX_NAME - 2)
 			{
@@ -716,16 +725,19 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_str:
 		char buf[48];
+		int save;
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
-		G.outn = 0;
-		G.out[0] = 0;
+		/* PRINT accumulates its whole statement in G.out (#991). Format
+		 * the value after any pending output instead of clobbering it, so
+		 * `PRINT "x";STR$(5)` keeps the "x". */
+		save = G.outn;
 		mmb_print_val(a[0]);
-		strncpy(buf, G.out, sizeof(buf) - 1);
+		strncpy(buf, G.out + save, sizeof(buf) - 1);
 		buf[sizeof(buf) - 1] = 0;
-		G.outn = 0;
-		G.out[0] = 0;
+		G.outn = save;
+		G.out[save] = 0;
 		*out = mmb_str_val(buf);
 		return 1;
 	}
@@ -1101,6 +1113,21 @@ int mmb_try_function(mmb_val *out)
 			if (mmb_keyword_eq(key, "AUDIO") || peek_kw("AUDIO"))
 			{
 				*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MIXGAP"))
+			{
+				*out = mmb_int_val((int)mmb_audio_mix_gap_ms());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "UNDERRUN"))
+			{
+				*out = mmb_int_val((int)mmb_audio_underruns());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "AUDIORESET"))
+			{
+				*out = mmb_int_val((int)mmb_audio_resets());
 				return 1;
 			}
 		}
@@ -1574,6 +1601,26 @@ int mmb_try_function(mmb_val *out)
 			mmb_expect(')');
 		}
 		*out = mmb_int_val((int64_t)mmb_now_ms() - G.timer_base);
+		return 1;
+	}
+	if (mmb_match("BATTERY%"))
+	{
+	lbl_battery:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+#if defined(MMB_PLATFORM_POSIX) && defined(__linux__)
+		/* Native Linux (including the framebuffer/ISO build): report the
+		 * first battery's charge, falling back to 100 when none exists. */
+		*out = mmb_int_val((int64_t)mmb_battery_capacity_read(
+				   "/sys/class/power_supply/BAT0/capacity", 100));
+#else
+		/* Pi/Circle, Windows, macOS and any other target: no battery. */
+		*out = mmb_int_val(100);
+#endif
 		return 1;
 	}
 	if (mmb_match("LOF"))
@@ -2060,6 +2107,54 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_str_val(G.current_prog[0] ? G.current_prog : "");
 		return 1;
 	}
+	if (mmb_match("TDF.WIDTH"))
+	{
+	lbl_tdfwidth:
+		mmb_tdf_fn_width(out);
+		return 1;
+	}
+	if (mmb_match("TDF.NAME$"))
+	{
+	lbl_tdfname:
+		mmb_tdf_fn_name(out);
+		return 1;
+	}
+	if (mmb_match("TDF.TYPE%"))
+	{
+	lbl_tdftype:
+		mmb_tdf_fn_type(out);
+		return 1;
+	}
+	if (mmb_match("TDF.SPACING%"))
+	{
+	lbl_tdfspacing:
+		mmb_tdf_fn_spacing(out);
+		return 1;
+	}
+	if (mmb_match("TDF.HEIGHT"))
+	{
+	lbl_tdfheight:
+		mmb_tdf_fn_height(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANTS%"))
+	{
+	lbl_tdfvariants:
+		mmb_tdf_fn_variants(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANT%"))
+	{
+	lbl_tdfvariant:
+		mmb_tdf_fn_variant(out);
+		return 1;
+	}
+	if (mmb_match("TDF.VARIANTNAME$"))
+	{
+	lbl_tdfvariantname:
+		mmb_tdf_fn_variantname(out);
+		return 1;
+	}
 ident_tail:
 	if (mmb_try_user_function(out))
 		return 1;
@@ -2126,10 +2221,11 @@ static mmb_val expr_primary(void)
 		int nidx = 0, idx[MMB_MAX_DIMS], off = 0, t;
 		mmb_var *var;
 		mmb_val cv;
+		const char *ref = G.p;
 		t = mmb_parse_var_ref(name, &nidx, idx);
 		if (nidx == 0 && mmb_const_lookup(name, t, &cv))
 			return cv;
-		var = mmb_find_var(name, t, 1, nidx, idx);
+		var = mmb_find_var_ref(ref, name, t, 1, nidx, idx);
 		off = mmb_elem_off(var, nidx, idx);
 		return mmb_load_var(var, off);
 	}

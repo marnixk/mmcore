@@ -235,7 +235,7 @@ def _load_meta() -> None:
     _m("System and Options", "Shows current memory usage statistics", "MEMORY")
     _m("System and Options", "Opens interactive on device help", "HELP", "IHELP")
     _m("System and Options", "Shows copyright and credit notices", "CREDITS")
-    _m("System and Options", "Sets persistent interpreter option values", "OPTION", "OPTIONS")
+    _m("System and Options", "Sets persistent interpreter option values", "OPTION")
     _m("System and Options", "Restores factory default option values", "FACTORY_RESET", "FACTORY RESET", "FACTORY")
     _m("System and Options", "Reboots the host hardware machine", "REBOOT", "RESTART", "CPU")
     _m("System and Options", "Closes the host MMBasic application", "QUIT")
@@ -405,6 +405,8 @@ def extract_mmcore_commands() -> set[str]:
         "ON GOSUB": r"ON\s+GOSUB|mmb_match\(\"GOSUB\"\)",
         "ON KEY": r"ON\s+KEY|mmb_match\(\"KEY\"\)",
         "ON ERROR": r"ON\s+ERROR|mmb_match\(\"ERROR\"\)",
+        "ON MOUSECLICK": r"ON\s+MOUSECLICK|mmb_match\(\"MOUSECLICK\"\)",
+        "ON MOUSEMOVE": r"ON\s+MOUSEMOVE|mmb_match\(\"MOUSEMOVE\"\)",
     }
     for name, pat in compound_markers.items():
         if name.split()[0] in names or re.search(pat, core_all, re.I):

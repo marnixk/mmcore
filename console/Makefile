@@ -17,6 +17,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/frontend.o \
 	  $(MMB)/src/session.o \
+	  $(MMB)/src/yield.o \
 	  $(MMB)/src/tok.o \
 	  $(MMB)/src/vars.o \
 	  $(MMB)/src/cmd_struct.o \
@@ -41,6 +42,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/cmd_files.o \
 	  $(MMB)/src/cmd_files_ui.o \
 	  $(MMB)/src/mmb_tdf.o \
+	  $(MMB)/src/cmd_tdf.o \
 	  $(MMB)/src/cmd_ftp.o \
 	  $(MMB)/src/tui.o \
 	  $(MMB)/src/cmd_connect.o \
@@ -75,6 +77,8 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/paint_text.o \
 	  $(MMB)/src/paint_select.o \
 	  $(MMB)/src/paint_cursor_art.o \
+	  $(MMB)/src/cmd_mouse.o \
+	  $(MMB)/src/mouse_cursor.o \
 	  $(MMB)/src/cmd_play.o \
 	  $(MMB)/src/cmd_juke.o \
 	  $(MMB)/src/editor.o \
@@ -83,6 +87,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/libc_shims.o \
 	  $(MMB)/third_party/picojpeg.o \
 	  $(MMB)/third_party/hxcmod.o \
+	  $(MMB)/third_party/ibxm.o \
 	  $(MMB)/third_party/upng.o \
 	  $(MMB)/third_party/cJSON.o
 
@@ -115,7 +120,9 @@ HELP_DOCS = $(wildcard $(MMB)/../docs/help/*.txt)
 
 # Versioned ramdisk/ tree embedded into the kernel. RAMDISK_EXCLUDE is a
 # comma-separated list of top-level folders to omit (release builds drop
-# `tests`). The mode stamp forces a regenerate when the option changes.
+# `tests`). The stamp records the sorted list of embedded files, so a removed
+# or renamed file (which only drops out of RAMDISK_FILES) still changes the
+# stamp and forces a regenerate.
 RAMDISK_EXCLUDE ?=
 RAMDISK_FILES = $(shell find $(MMB)/../ramdisk -type f 2>/dev/null)
 RAMDISK_STAMP = $(MMB)/src/ramdisk_data.stamp
@@ -135,9 +142,14 @@ $(MMB)/src/help_data.c: $(MMB)/../scripts/gen_help.py $(HELP_DOCS)
 	python3 $(MMB)/../scripts/gen_help.py $(MMB)/src/help_data.c
 
 $(RAMDISK_STAMP): FORCE
-	@printf '%s' "$(RAMDISK_EXCLUDE)" | cmp -s - $@ || printf '%s' "$(RAMDISK_EXCLUDE)" > $@
+	python3 $(MMB)/../scripts/gen_ramdisk.py --stamp-out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
-$(MMB)/src/ramdisk_data.c: $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
+# #882: ramdisk_data.c is shared with native/, which embeds the whole tree
+# (no exclude) while a release console build embeds exclude=tests. Each build
+# keeps its own stamp, so a build could otherwise see the other mode's file as
+# up to date and link the wrong table. FORCE the generator every time; it
+# rewrites only when the rendered text (including the embedded mode) differs.
+$(MMB)/src/ramdisk_data.c: FORCE $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(MMB)/../scripts/gen_ramdisk.py --out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
 $(MMB)/src/util.o $(MMB)/src/cmd_credits.o: mmb_version.h

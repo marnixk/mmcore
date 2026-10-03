@@ -16,6 +16,10 @@
 
 #define CN_LINE  256
 #define CN_ESC_IDLE_MS  60
+/* Max screen output buffered while this console is backgrounded (#858). The
+ * serial log still receives every byte live; only the inactive screen is
+ * deferred, and older bytes are dropped if a peer floods faster than this. */
+#define CN_BG_BUF  2048
 
 typedef struct {
 	int active;
@@ -38,6 +42,9 @@ typedef struct {
 	int menu;
 	unsigned char iac_out[64];
 	int iac_n;
+	int bg;                 /* background drain: defer screen output */
+	int bg_n;
+	unsigned char bg_buf[CN_BG_BUF];
 } cn_state;
 
 /* The telnet IAC parser state is per console (#771), but the TCP socket is a
@@ -45,9 +52,24 @@ typedef struct {
 static cn_state C_s[MMB_MAX_CONSOLES];
 #define C (C_s[g_console])
 
+static void connect_bg_yield(int console, void *ctx);
+
 static void emit_scr(const char *s, unsigned n)
 {
-	if (s && n && G.plat && G.plat->write_screen)
+	if (!s || !n)
+		return;
+	if (C.bg)
+	{
+		/* Backgrounded: the visible screen belongs to another console, so
+		 * stash what would have been echoed and replay it when this console
+		 * returns (#858). Serial output is unaffected. */
+		unsigned i;
+		for (i = 0; i < n; i++)
+			if (C.bg_n < (int)sizeof(C.bg_buf))
+				C.bg_buf[C.bg_n++] = (unsigned char)s[i];
+		return;
+	}
+	if (G.plat && G.plat->write_screen)
 		G.plat->write_screen(s, n);
 }
 
@@ -279,7 +301,9 @@ static void session_close(const char *why)
 {
 	mmb_net_tcp_close();
 	mmb_tcp_release();
+	mmb_yield_remove(connect_bg_yield);
 	C.active = 0;
+	C.bg = 0;
 	C.linelen = 0;
 	C.iac_n = 0;
 	if (why && why[0])
@@ -349,6 +373,10 @@ void mmb_cmd_connect(void)
 	}
 	mmb_tcp_claim();
 	C.active = 1;
+	/* #858: keep draining if this console is switched away from. Input and
+	 * key handling stay with the active console only. */
+	mmb_yield_remove(connect_bg_yield);
+	mmb_yield_add(g_console, connect_bg_yield, 0, 25);
 	mmb_out("Connected. F10 / Alt+X / Ctrl+] to quit.");
 }
 
@@ -603,6 +631,15 @@ void mmb_connect_poll(void)
 
 	if (!C.active)
 		return;
+	/* #858: this console is active again; replay whatever a background drain
+	 * buffered for the screen. The serial log already saw it live. */
+	if (C.bg_n > 0)
+	{
+		int n = C.bg_n;
+		C.bg_n = 0;
+		if (G.plat && G.plat->write_screen)
+			G.plat->write_screen((const char *)C.bg_buf, (unsigned)n);
+	}
 	if (C.esc == 1 && C.esc_at &&
 	    mmb_now_ms() - C.esc_at >= CN_ESC_IDLE_MS)
 	{
@@ -639,6 +676,40 @@ void mmb_connect_poll(void)
 			incoming_byte(buf[i]);
 		iac_flush();
 	}
+}
+
+/* #858: while this console is not active, keep the socket drained so the peer
+ * is not stalled. Received bytes are parsed for telnet and logged to serial as
+ * usual; bytes bound for the (inactive) screen are buffered in C.bg_buf and
+ * replayed by mmb_connect_poll() when the console returns. Key handling never
+ * runs here. */
+static void connect_bg_yield(int console, void *ctx)
+{
+	unsigned char buf[512];
+	int n, loops, i;
+
+	(void)ctx;
+	if (console == g_console)
+		return;
+	if (!mmb_bg_console_enter(console))
+		return;
+	if (!C.active || mmb_tcp_owner() != console)
+	{
+		mmb_bg_console_leave();
+		return;
+	}
+	C.bg = 1;
+	for (loops = 0; loops < 32; loops++)
+	{
+		n = mmb_net_tcp_recv(buf, sizeof(buf));
+		if (n <= 0)
+			break;
+		for (i = 0; i < n; i++)
+			incoming_byte(buf[i]);
+		iac_flush();
+	}
+	C.bg = 0;
+	mmb_bg_console_leave();
 }
 
 void mmb_cmd_ipconfig(void)

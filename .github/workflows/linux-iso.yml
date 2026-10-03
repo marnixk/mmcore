@@ -1,0 +1,196 @@
+name: Linux ISO
+
+# Builds the bootable Alpine live ISO, boot-smokes it in QEMU, compresses it,
+# and attaches the compressed image (plus install-usb.sh) to the release. The
+# raw .iso is never published as an asset: users decompress before writing.
+#
+#  - on a version release: attached to that GitHub release;
+#  - on push to ports/linux / iso: attached to the rolling 'linux-iso'
+#    pre-release for quick testing.
+on:
+  push:
+    branches: [ports/linux, iso]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the built ISO to (e.g. v0.224.0)"
+        required: false
+        type: string
+      skip_smoke:
+        description: "Skip the boot-smoke gate (manual re-attach only)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  iso:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build the ISO
+        env:
+          VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: scripts/build-iso.sh
+
+      - name: Boot-smoke the ISO against a virtual KMS/DRM device
+        if: ${{ !inputs.skip_smoke }}
+        # A text-only console has no DRM at all, so the kmsdrm driver can never
+        # initialise and a crash-looping mmcore still satisfies `pgrep`. Boot a
+        # KMS-capable virtio-gpu instead (the ISO loads virtio_gpu), keep the
+        # runner headless with -display none, and drive the guest over the
+        # serial console.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          rm -f boot.log serial.in
+          mkfifo serial.in
+          # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
+          # cannot wedge the whole step.
+          exec 3<>serial.in
+          # -m 2048: the rootfs is a squashfs the kernel mounts, not an initramfs
+          # unpacked into RAM. Keep this in step with the "at least 2 GiB" note
+          # in docs/framebuffer-and-iso.md.
+          timeout 720 qemu-system-x86_64 -m 2048 \
+            -cdrom dist/mmcore-fb-x86_64.iso \
+            -vga none -device virtio-vga \
+            -display none -monitor none \
+            -serial stdio \
+            -no-reboot -accel tcg <&3 > boot.log 2>&1 &
+          qemu_pid=$!
+
+          # SDL2 is built from source and the guest still has to mount the squashfs
+          # under TCG, so the old fixed 120 s sleep is too tight. Probe until
+          # ttyS0's autologin shell answers, then stop. The probe builds its
+          # marker with printf so an echoed command line cannot satisfy the
+          # check by itself.
+          tested=0
+          for _ in $(seq 1 60); do
+            echo "printf 'MMCORE_%s\n' SHELL_READY" >&3 || true
+            sleep 8
+            if grep -q MMCORE_SHELL_READY boot.log; then tested=1; break; fi
+          done
+          if [ "$tested" != 1 ]; then echo "warning: serial shell never answered"; fi
+
+          # Every marker is assembled by printf in the guest, so its literal
+          # text never appears in the echoed command line: the greps below only
+          # match real command output, not the script we typed.
+          {
+            echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
+            echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
+            # #918/#941: mmcore starts on tty1 via agetty autologin, which can
+            # lag the ttyS0 shell, so wait (bounded) for it to appear and then
+            # require the PID to be unchanged 6 s later (a crash loop never
+            # stabilises). Match the kernel's per-pid `comm` name: BusyBox's
+            # exact-name option anchors the whole argv[0]
+            # (`/usr/local/bin/mmcore`), so it never matched the running process
+            # and STABLE_OK was always missed (#941).
+            echo 'mmcore_pid() { for d in /proc/[0-9]*; do [ "$(cat "$d/comm" 2>/dev/null)" = mmcore ] && { printf "%s\n" "${d##*/}"; break; }; done; }'
+            echo 'ok=0; n=0; while [ "$n" -lt 60 ]; do a=$(mmcore_pid); if [ -n "$a" ]; then sleep 6; b=$(mmcore_pid); [ "$a" = "$b" ] && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
+            # #941: on a miss, dump why before poweroff (process table, mmcore
+            # stderr, tty1 agetty/login/mmcore state) so boot.log alone shows
+            # the cause of the next failure.
+            echo '[ "$ok" = 1 ] || { printf "MMCORE_%s\n" DIAG_BEGIN; echo "-- ps --"; ps w 2>&1 | head -25; echo "-- pgrep -a mmcore --"; pgrep -a mmcore 2>&1 || true; echo "-- /tmp/mmcore.stderr --"; ls -l /tmp/mmcore.stderr 2>&1; cat /tmp/mmcore.stderr 2>&1 | head -40; echo "-- comm scan --"; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); case "$c" in mmcore|agetty|login|mmcore-splash) echo "$d $c";; esac; done; echo "-- dmesg --"; dmesg 2>&1 | tail -80; echo "-- /dev/dri --"; ls -l /dev/dri 2>&1; echo "-- rc-status --"; rc-status 2>&1 || true; printf "MMCORE_%s\n" DIAG_END; }'
+            echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
+            # #958: the firmware keep-list must actually reach the rootfs: a
+            # representative Intel GPU, AMD GPU, Broadcom and iwlwifi blob.
+            echo 'test -d /lib/firmware/i915 && test -d /lib/firmware/amdgpu && test -d /lib/firmware/brcm && ls /lib/firmware/iwlwifi-*.ucode >/dev/null 2>&1 && printf "MMCORE_%s\n" FW_OK || printf "MMCORE_%s\n" FW_MISSING'
+            # DHCP can be slow (the interface often appears after the shell), so
+            # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
+            echo 'n=0; while [ "$n" -lt 6 ]; do ip -4 addr show | grep -q "inet 10.0.2" && break; n=$((n+1)); sleep 5; done; if [ "$n" -lt 6 ]; then printf "MMCORE_%s\n" NET_OK; else printf "MMCORE_%s\n" NET_MISSING; fi'
+            # #896: prove the live rootfs CA bundle lets busybox wget verify the
+            # GitHub certificate (mmcore-update depends on it). Retries absorb a
+            # transient network blip; a cert failure repeats on every attempt.
+            echo 'n=0; while [ "$n" -lt 3 ]; do wget -qO- -T 30 https://api.github.com/repos/marnixk/mmcore/releases/latest 2>/tmp/tls.err | grep -q tag_name && break; n=$((n+1)); sleep 4; done; if [ "$n" -lt 3 ]; then printf "MMCORE_%s\n" TLS_OK; else printf "MMCORE_%s\n" TLS_FAIL; sed -n "1,3p" /tmp/tls.err; fi'
+            echo 'sleep 5; poweroff'
+          } >&3 || true
+
+          wait "$qemu_pid" || true
+          echo "---- boot.log tail ----"
+          tail -n 100 boot.log || true
+          grep -q "MMCORE_ISO_BOOT_OK" boot.log
+          grep -q "MMCORE_DRM_OK" boot.log
+          grep -q "MMCORE_STABLE_OK" boot.log
+          grep -q "MMCORE_SDL_OK" boot.log
+          grep -q "MMCORE_FW_OK" boot.log
+          grep -q "MMCORE_NET_OK" boot.log
+          grep -q "MMCORE_TLS_OK" boot.log
+
+      - name: Compress the ISO
+        run: |
+          sudo apt-get install -y --no-install-recommends zstd
+          zstd -q -19 -T0 -f dist/mmcore-fb-x86_64.iso \
+            -o dist/mmcore-fb-x86_64.iso.zst
+
+      - name: Verify install-usb.sh writes the compressed ISO and adds the persistence partition
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gdisk e2fsprogs util-linux zstd
+          truncate -s 2G /tmp/usb.img
+          dev="$(sudo losetup --find --show --partscan /tmp/usb.img)"
+          echo "loop device: ${dev}"
+          sudo scripts/install-usb.sh --iso dist/mmcore-fb-x86_64.iso.zst --yes "${dev}"
+          sudo partprobe "${dev}" || true
+          sudo udevadm settle || true
+          sudo partx -s "${dev}" || true
+          label_dev="$(sudo blkid -L MMCORE)"
+          echo "MMCORE is on ${label_dev}"
+          [ -n "${label_dev}" ]
+          case "${label_dev}" in "${dev}"*) ;; *) echo "unexpected device"; exit 1 ;; esac
+          sudo losetup -d "${dev}" || true
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmcore-iso
+          path: dist/mmcore-fb-x86_64.iso.zst
+          if-no-files-found: error
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Release-event tag, or the workflow_dispatch release_tag input.
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          # Publish only the compressed image; drop any stale raw .iso asset.
+          if [ -n "${RELEASE_TAG}" ]; then
+            gh release delete-asset "${RELEASE_TAG}" \
+              mmcore-fb-x86_64.iso --yes 2>/dev/null || true
+            gh release upload "${RELEASE_TAG}" \
+              dist/mmcore-fb-x86_64.iso.zst scripts/install-usb.sh --clobber
+            echo "Attached the compressed ISO and install-usb.sh to release ${RELEASE_TAG}"
+            exit 0
+          fi
+
+          tag="linux-iso"
+          notes="Automated ISO build from ${GITHUB_REF_NAME} at ${GITHUB_SHA:0:7}.
+
+          Decompress, then write it to a USB stick; install-usb.sh adds a persistent MMCORE partition:
+          \`\`\`
+          zstd -d mmcore-fb-x86_64.iso.zst
+          sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
+          \`\`\`"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --title "Linux ISO (rolling)" \
+              --notes "$notes"
+          else
+            gh release edit "$tag" --notes "$notes"
+          fi
+          gh release delete-asset "$tag" mmcore-fb-x86_64.iso --yes 2>/dev/null || true
+          gh release upload "$tag" \
+            dist/mmcore-fb-x86_64.iso.zst scripts/install-usb.sh --clobber

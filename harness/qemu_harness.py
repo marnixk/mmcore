@@ -438,10 +438,25 @@ class MMBasicConsole:
         self.key_event(qcode, True)
         self.key_event(qcode, False)
 
+    def _unique_capture_path(self, suffix: str) -> str:
+        """Return a fresh, unused path for one capture inside ``self._tmp``.
+
+        Default captures and fallback destinations must never share a path:
+        a later capture would overwrite the earlier image, so a golden compare
+        would end up diffing an image against itself (#894).
+        """
+        fd, path = tempfile.mkstemp(prefix="fb-", suffix=suffix, dir=self._tmp)
+        os.close(fd)
+        return path
+
     def screendump(self, dest_ppm: str | None = None) -> str:
-        """Capture the emulated framebuffer to a .ppm file and return its path."""
+        """Capture the emulated framebuffer to a .ppm file and return its path.
+
+        With no destination each call gets a distinct file, so consecutive
+        captures do not clobber one another.
+        """
         if dest_ppm is None:
-            dest_ppm = os.path.join(self._tmp, "fb.ppm")
+            dest_ppm = self._unique_capture_path(".ppm")
         last_err = "screendump did not produce a file"
         for _ in range(4):
             self.drain(quiet=0.02, timeout=0.2)
@@ -461,21 +476,35 @@ class MMBasicConsole:
             time.sleep(0.4)
         raise HarnessError(last_err)
 
-    def capture_png(self, dest_png: str | None = None) -> str:
+    def capture_png(
+        self, dest_png: str | None = None, strict: bool = False
+    ) -> str:
         """Capture the framebuffer to a .png file and return its path.
 
         Callers often pass a fixed artifact path (for example under
         ``/opt/cursor/artifacts``) that may not exist or be writable outside
-        the editor host.  Fall back to the temp directory next to the
-        screendump so the capture still succeeds.
+        the editor host.  Fall back to a distinct temp file next to the
+        screendump so the capture still succeeds without ever reusing a path
+        a later capture (or golden compare) would overwrite (#894).
+
+        With ``strict=True`` the requested destination must be honoured: if
+        ImageMagick cannot write ``dest_png``, raise :class:`HarnessError`
+        instead of silently substituting a temp path.  Use this for golden
+        regeneration and other callers that must not mistake a fallback for a
+        successful write (#906).
         """
         ppm = self.screendump()
-        png = dest_png or ppm.replace(".ppm", ".png")
+        png = dest_png or self._unique_capture_path(".png")
         result = subprocess.run(
             ["convert", ppm, png], check=False, capture_output=True
         )
         if result.returncode != 0 and dest_png:
-            png = ppm.replace(".ppm", ".png")
+            if strict:
+                detail = result.stderr.decode(errors="replace").strip()
+                raise HarnessError(
+                    f"capture_png could not write {dest_png!r}: {detail}"
+                )
+            png = self._unique_capture_path(".png")
             subprocess.run(["convert", ppm, png], check=True, capture_output=True)
         elif result.returncode != 0:
             raise subprocess.CalledProcessError(

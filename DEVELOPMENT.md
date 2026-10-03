@@ -111,13 +111,13 @@ Settings persist in `C:/.mmbasic.ini` on the SD card (`A:/.mmbasic.ini` when
 `C:` is missing, e.g. QEMU without an SD image). `FACTORY_RESET` restores
 defaults without deleting programs. `OPTION WIFI "ssid","password"` stores credentials and
 joins a WPA2 network on a real Pi 3 / 4 / 400 / Zero 2 W (firmware in `C:/firmware/`).
-`OPTIONS WIFI` reconnects with stored credentials (`?WIFI not configured` if none).
+`OPTION WIFI` reconnects with stored credentials (`?WIFI not configured` if none).
 `OPTION WIFI DEBUG ON` prints `[wifi]` progress on HDMI and serial
 (default off; the password is never printed). Hardware images program a
 firmware keep-alive on CYW43455/43456 (Pi 4 / 400) as well as 4330.
 `OPTION ETHERNET ON` uses the RJ45 port (DHCP) instead of Wi-Fi on boards that have
 one (Pi 3 / 3B+ USB LAN, Pi 4 Gigabit). Only one interface is active; Ethernet ON
-disables Wi-Fi auto-join, and `OPTIONS WIFI` disables Ethernet. A switch after the
+disables Wi-Fi auto-join, and `OPTION WIFI` disables Ethernet. A switch after the
 stack is already up needs `REBOOT`. If Ethernet is ON it initialises at boot.
 `IPCONFIG` reports the active interface (`Interface: Ethernet` or `Interface: Wi-Fi`)
 and prints connected only after a live gateway probe. QEMU has no Wi-Fi radio.

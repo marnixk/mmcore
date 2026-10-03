@@ -94,6 +94,8 @@ typedef struct mmb_platform {
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */
 	void (*reboot)(void);
+	/* Power off. Does not return. NULL when the host cannot shut down hardware. */
+	void (*shutdown)(void);
 	/* Non-zero when QUIT should end the host application (native builds).
 	 * A bare Pi has no application to close, so QUIT only stops the program. */
 	int can_quit;
@@ -107,6 +109,8 @@ typedef struct mmb_platform {
 	int (*audio_have_device)(void);
 	void (*audio_kick)(void);
 	void (*audio_flush)(void);
+	/* Tear down and re-create the output device, keeping target/enable. */
+	void (*audio_reset)(void);
 	/* Character-cell TUI: 8x16 cells covering the current HDMI mode. */
 	int (*video_cols)(void);
 	int (*video_rows)(void);
@@ -282,9 +286,13 @@ void mmb_boot_start(void);
 
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
+/* Same teardown as mmb_reboot, then platform power-off when supported. */
+void mmb_shutdown(void);
 
 /* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
 void mmb_console_apply_colour(void);
+/* ANSI SGR code (30..97 foreground, 40..107 background) for an RGB888 colour. */
+int mmb_console_ansi_code(unsigned rgb888, int fg);
 void mmb_console_reset_prompt(void);
 void mmb_hw_cursor(int show);
 

@@ -88,6 +88,7 @@ typedef struct {
 	unsigned char *tdf_buf;
 	unsigned tdf_size;
 	int tdf_variants;
+	int tdf_var;
 	mmb_tdf tdf;
 } fu_state;
 
@@ -271,7 +272,8 @@ static int is_aud(const char *n)
 {
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".MP3") || mmb_keyword_eq(e, ".XM") ||
-	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".WAV");
+	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".S3M") ||
+	       mmb_keyword_eq(e, ".WAV");
 }
 
 static int is_ansi(const char *n)
@@ -443,7 +445,10 @@ static void panel_reload(fu_panel *p)
 	}
 	p->truncated = truncated;
 	panel_sort(p);
-	p->sel = 0;
+	/* Prefer the same name so scrolling/navigating reloads stay put. When
+	 * the row is gone (a move or delete removed it), land on the row just
+	 * above where it was instead of jumping to the top (#1022). */
+	p->sel = oldsel > 0 ? oldsel - 1 : 0;
 	if (keep[0])
 	{
 		int i;
@@ -1144,7 +1149,7 @@ static void files_close_tui(int restore_prompt)
 	tdf_release();
 	an_grid_free();
 	if (mmb_ftp_running())
-		mmb_ftp_stop();
+		mmb_ftp_stop_owned();
 	F.active = 0;
 	F.mode = FU_BROWSE;
 	F.esc = 0;
@@ -1793,7 +1798,11 @@ static void an_feed(unsigned char b)
 	{
 		if (an_p_narg == 0)
 			an_p_narg = 1;
-		an_p_args[an_p_narg - 1] = an_p_args[an_p_narg - 1] * 10 + (b - '0');
+		/* Clamp so a runaway numeric parameter cannot overflow int
+		 * (undefined behaviour the clamp in an_arg/an_cup then hides). */
+		if (an_p_args[an_p_narg - 1] < 100000)
+			an_p_args[an_p_narg - 1] =
+				an_p_args[an_p_narg - 1] * 10 + (b - '0');
 		return;
 	}
 	if (b == ';')
@@ -1835,21 +1844,51 @@ static void an_reset(int cols)
 	memset(F.an_grid, 0, (size_t)AN_MAX_ROWS * AN_MAX_COLS * sizeof(an_cell));
 }
 
+/* Number of leading bytes that are ANSI art. A DOS SAUCE trailer is metadata,
+ * not art, so stop before its 128-byte record (and a trailing ^Z EOF marker);
+ * otherwise those binary bytes render as garbage and can carry stray control
+ * bytes into the viewer (#1023). */
+static unsigned an_ansi_limit(int sz)
+{
+	unsigned limit = (unsigned)sz;
+	unsigned char tail[128];
+	unsigned got = 0;
+
+	if (sz < (int)sizeof(tail))
+		return limit;
+	if (mmb_vfs_read_at(F.view_path, (unsigned)sz - sizeof(tail), tail,
+			    sizeof(tail), &got) != 0 ||
+	    got != sizeof(tail) || memcmp(tail, "SAUCE00", 7) != 0)
+		return limit;
+	limit -= sizeof(tail);
+	if (limit > 0)
+	{
+		unsigned char last = 0;
+		if (mmb_vfs_read_at(F.view_path, limit - 1u, &last, 1u, &got) == 0 &&
+		    got == 1u && last == 0x1A)
+			limit--;
+	}
+	return limit;
+}
+
 static void an_parse(int cols)
 {
 	static unsigned char buf[4096];
 	int sz = mmb_vfs_size(F.view_path);
-	unsigned pos = 0, got = 0;
+	unsigned pos = 0, got = 0, limit;
 
 	an_reset(cols);
 	if (sz <= 0)
 		return;
-	while (pos < (unsigned)sz && pos < AN_MAX_BYTES)
+	limit = an_ansi_limit(sz);
+	if (limit > AN_MAX_BYTES)
+		limit = AN_MAX_BYTES;
+	while (pos < limit)
 	{
 		unsigned want = (unsigned)sizeof(buf);
 		unsigned i;
-		if ((unsigned)sz - pos < want)
-			want = (unsigned)sz - pos;
+		if (limit - pos < want)
+			want = limit - pos;
 		if (mmb_vfs_read_at(F.view_path, pos, buf, want, &got) != 0 || got == 0)
 			break;
 		for (i = 0; i < got; i++)
@@ -1899,7 +1938,7 @@ static void an_apply_mode(void)
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
 	mode = F.an_mode80 ? 2 : F.an_saved_mode;
-	if (mode < 1 || mode > 17)
+	if (!mmb_gfx_mode_valid(mode))
 		mode = 14;
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
 		mmb_gfx_set_mode(mode, bits);
@@ -1975,6 +2014,10 @@ static int an_open(const char *path, const char *name)
 	F.an_saved_bits = G.gfx.bits;
 	F.an_mode80 = 0;
 	an_parse(AN_COLS);
+	/* Without a grid there is nothing to show; fall back to the info overlay
+	 * instead of presenting a blank preview. */
+	if (!F.an_grid)
+		return -1;
 	F.mode = FU_ANSI;
 	an_render();
 	set_hint("ANSI preview  up/down/PgUp/PgDn  f 80x25  Esc exits");
@@ -2010,8 +2053,10 @@ static void tdf_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 	if (x < 0 || x >= AN_MAX_COLS || y < 0 || y >= AN_MAX_ROWS)
 		return;
 	an_scr[y][x].ch = (unsigned char)ch;
-	an_scr[y][x].fg = (unsigned char)fg;
-	an_scr[y][x].bg = (unsigned char)bg;
+	/* The preview grid is painted with the TUI/ANSI palette, so translate
+	 * the IBM-order glyph attribute the way TDF PRINT does (#1021). */
+	an_scr[y][x].fg = (unsigned char)mmb_tdf_ansi_colour(fg);
+	an_scr[y][x].bg = (unsigned char)mmb_tdf_ansi_colour(bg);
 }
 
 static void tdf_release(void)
@@ -2073,8 +2118,11 @@ static void tdf_render_font(const mmb_tdf *f, const char *fallback, int *yp)
 static void tdf_render_sample(const char *name)
 {
 	int nvar = F.tdf_variants > 1 ? F.tdf_variants : 1;
-	int v, y;
+	int v = F.tdf_var;
+	int y;
 
+	if (v < 0 || v >= nvar)
+		v = 0;
 	an_reset(AN_COLS);
 	y = 1;
 	if (nvar == 1)
@@ -2084,39 +2132,59 @@ static void tdf_render_sample(const char *name)
 	}
 	else
 	{
-		for (v = 0; v < nvar; v++)
-		{
-			mmb_tdf f;
-			char cap[80];
-			char num[12];
+		/* One variation at a time; Left/Right cycles (#865). */
+		mmb_tdf f;
+		char cap[80];
+		char num[12];
 
-			if (mmb_tdf_parse(F.tdf_buf, F.tdf_size, v, &f) != 0)
-				break;
-			strcpy(cap, "#");
-			fmt_uint(num, (unsigned)(v + 1));
-			strcat(cap, num);
-			strcat(cap, " ");
-			strncat(cap, f.name[0] ? f.name : name, 20);
-			strcat(cap, " (");
-			fmt_uint(num, (unsigned)(v + 1));
-			strcat(cap, num);
-			strcat(cap, "/");
-			fmt_uint(num, (unsigned)nvar);
-			strcat(cap, num);
-			strcat(cap, ")");
-			tdf_text(1, y, cap, 14, 0);
-			y += 2;
-			tdf_render_font(&f, name, &y);
-			y += 1;
-			if (y >= AN_MAX_ROWS - 1)
-				break;
-		}
+		if (mmb_tdf_parse(F.tdf_buf, F.tdf_size, v, &f) != 0)
+			f = F.tdf;
+		strcpy(cap, "#");
+		fmt_uint(num, (unsigned)(v + 1));
+		strcat(cap, num);
+		strcat(cap, " ");
+		strncat(cap, f.name[0] ? f.name : name, 20);
+		strcat(cap, " (");
+		fmt_uint(num, (unsigned)(v + 1));
+		strcat(cap, num);
+		strcat(cap, "/");
+		fmt_uint(num, (unsigned)nvar);
+		strcat(cap, num);
+		strcat(cap, ")");
+		tdf_text(1, y, cap, 14, 0);
+		y += 2;
+		tdf_render_font(&f, name, &y);
+		y += 1;
 	}
 	if (y < 1)
 		y = 1;
 	if (y > AN_MAX_ROWS)
 		y = AN_MAX_ROWS;
 	F.an_rows = y;
+}
+
+/* Left/Right cycles the visible variation and resets the scroll (#865). */
+static void tdf_step_var(int dir)
+{
+	int nvar = F.tdf_variants > 1 ? F.tdf_variants : 1;
+	char line[96];
+
+	if (nvar <= 1)
+		return;
+	F.tdf_var += dir;
+	if (F.tdf_var < 0)
+		F.tdf_var = nvar - 1;
+	else if (F.tdf_var >= nvar)
+		F.tdf_var = 0;
+	F.an_top = 0;
+	tdf_render_sample(F.info_name);
+	an_render();
+	strcpy(line, "[FILES] TDF variation ");
+	fmt_uint(line + strlen(line), (unsigned)(F.tdf_var + 1));
+	strcat(line, "/");
+	fmt_uint(line + strlen(line), (unsigned)nvar);
+	strcat(line, "\r\n");
+	ser(line);
 }
 
 static int tdf_open(const char *path, const char *name)
@@ -2153,11 +2221,17 @@ static int tdf_open(const char *path, const char *name)
 	strncpy(F.info_name, name, sizeof(F.info_name) - 1);
 	F.info_name[sizeof(F.info_name) - 1] = 0;
 	F.an_top = 0;
+	F.tdf_var = 0;
 	tdf_render_sample(name);
+	if (!F.an_grid)
+	{
+		tdf_release();
+		return -1;
+	}
 	F.mode = FU_TDF;
 	an_render();
 	set_hint(F.tdf_variants > 1
-			 ? "TDF preview  up/down/PgUp/PgDn scroll  Enter/Esc returns"
+			 ? "TDF preview  left/right variation  up/down/PgUp/PgDn scroll  Enter/Esc returns"
 			 : "TDF preview  up/down/PgUp/PgDn  Enter/Esc returns");
 	strcpy(line, "[FILES] TDF ");
 	strncat(line, name, 32);
@@ -2193,6 +2267,8 @@ static void do_play(const char *path, const char *name)
 		rc = mmb_play_mod(path);
 	else if (mmb_keyword_eq(e, ".XM"))
 		rc = mmb_play_xm(path);
+	else if (mmb_keyword_eq(e, ".S3M"))
+		rc = mmb_play_s3m(path);
 	else if (mmb_keyword_eq(e, ".WAV"))
 		rc = mmb_play_wav(path);
 	if (rc != 0)
@@ -2215,15 +2291,30 @@ static void do_ftp_start(void)
 	char root[FU_PATH];
 	char ip[32];
 	char num[8];
+	int rc;
 
 	strncpy(root, curpan()->path, sizeof(root) - 1);
 	root[sizeof(root) - 1] = 0;
-	if (mmb_ftp_start(root, 21) != 0)
+	rc = mmb_ftp_start(root, 21);
+	if (rc == MMB_FTP_BUSY)
+	{
+		/* The server is machine-global but the FILES screen is per console:
+		 * do not adopt another console's running server with a different
+		 * root (#818). Keep this screen out of the FTP modal. */
+		char msg[80];
+		sprintf(msg, "FTP already running on console %d",
+			mmb_ftp_owner() + 1);
+		set_hint(msg);
+		return;
+	}
+	if (rc != MMB_FTP_OK)
 	{
 		set_hint("FTP server: network unavailable");
 		return;
 	}
-	strncpy(F.ftp_root, root, sizeof(F.ftp_root) - 1);
+	/* Show the root the running server actually serves (the owner's root if
+	 * this console re-entered the menu while it already owned the server). */
+	strncpy(F.ftp_root, mmb_ftp_root(), sizeof(F.ftp_root) - 1);
 	F.ftp_root[sizeof(F.ftp_root) - 1] = 0;
 	F.ftp_addr[0] = 0;
 	if (mmb_net_srv_ip(ip, sizeof(ip)) == 0)
@@ -2318,7 +2409,7 @@ static void apply_prompt(void)
 		}
 		else
 		{
-			if (mmb_vfs_rename(src, F.prompt) != 0)
+			if (mmb_vfs_move(src, F.prompt) != 0)
 				set_hint("Move failed");
 			else
 				set_hint("Moved");
@@ -2487,9 +2578,9 @@ static void set_drive_letter(int letter)
 static void close_overlay(void)
 {
 	if (F.mode == FU_PLAY)
-		mmb_play_stop();
+		mmb_play_stop_owned();
 	if (F.mode == FU_FTP)
-		mmb_ftp_stop();
+		mmb_ftp_stop_owned();
 	if (F.mode == FU_PREVIEW)
 		preview_restore();
 	if (F.mode == FU_ANSI)
@@ -2701,7 +2792,19 @@ static int files_alt(char c)
 static void handle_arrow(int which)
 {
 	fu_panel *p = curpan();
-	if (F.mode == FU_ANSI || F.mode == FU_TDF)
+	if (F.mode == FU_TDF)
+	{
+		if (which == 0)
+			an_scroll(-1);
+		else if (which == 1)
+			an_scroll(1);
+		else if (which == 2)
+			tdf_step_var(1);
+		else if (which == 3)
+			tdf_step_var(-1);
+		return;
+	}
+	if (F.mode == FU_ANSI)
 	{
 		if (which == 0)
 			an_scroll(-1);
@@ -3291,9 +3394,9 @@ void mmb_files_poll(void)
 	}
 	if (F.active && F.mode == FU_FTP)
 	{
-		const char *st;
-		mmb_ftp_poll();
-		st = mmb_ftp_status();
+		/* The server itself is polled globally from mmb_poll() (#812); here
+		 * we only mirror its status onto the active FILES screen. */
+		const char *st = mmb_ftp_status();
 		if (strcmp(st, F.ftp_last) != 0)
 		{
 			strncpy(F.ftp_last, st, sizeof(F.ftp_last) - 1);

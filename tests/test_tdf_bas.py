@@ -1,4 +1,8 @@
-"""TheDraw .TDF font library on the ramdisk (ramdisk/lib/TDF.BAS, issue #557)."""
+"""TheDraw .TDF fonts: native TDF commands (#866, #867, #868).
+
+The old interpreted library (ramdisk/lib/TDF.BAS, #557) is gone; these checks
+exercise the native commands against the same fonts and decoder.
+"""
 
 import re
 import subprocess
@@ -13,7 +17,6 @@ import pytest
 pytestmark = pytest.mark.qemu_exclusive
 
 REPO = Path(__file__).resolve().parents[1]
-LIB = REPO / "ramdisk" / "lib" / "TDF.BAS"
 DEMO = REPO / "ramdisk" / "apps" / "TDFDEMO.BAS"
 TDF_DIR = REPO / "ramdisk" / "fonts" / "tdf"
 MONO_DIR = TDF_DIR / "mono"
@@ -110,45 +113,16 @@ def tdf_records(path):
 
 # --- host checks -----------------------------------------------------------
 
-def test_tdf_lib_declares_api():
-    src = LIB.read_text(encoding="utf-8")
-    for needle in (
-        "SUB TDF.Load",
-        "SUB TDF.LoadNamed",
-        "SUB TDF.LoadVariant",
-        "SUB TDF.Print",
-        "SUB TDF.Close",
-        "FUNCTION TDF.Width",
-        "FUNCTION TDF.OutlineCode",
-        "TDF.VariantName$",
-        "TDF.Name$",
-        "TDF.Type%",
-        "TDF.Spacing%",
-        "TDF.Height",
-        "TDF.Variants%",
-        "A:/fonts",
-    ):
-        assert needle in src, needle
-
-
-def test_tdf_lib_guards_glyph_index():
-    """#588: TDF.def% must not be indexed before idx% is range-checked.
-
-    MMBasic AND is not short-circuit, so ``idx% >= 0 AND TDF.def%(idx%)``
-    still evaluates TDF.def%(-1) for a space and faults.
-    """
-    src = LIB.read_text(encoding="utf-8")
-    assert "AND TDF.def%(" not in src
-
-
-def test_tdf_demo_includes_library():
+def test_tdf_demo_uses_native_commands():
     src = DEMO.read_text(encoding="utf-8")
-    assert '#INCLUDE "A:/lib/TDF.BAS"' in src
-    assert "TDF.Load" in src
-    assert "TDF.Print" in src
+    assert '#INCLUDE' not in src.upper()
+    assert "TDF LOAD" in src.upper()
+    assert "TDF PRINT" in src.upper()
+    assert "TDF.NAME$" in src.upper()
+    assert "TDF CLOSE" in src.upper()
 
 
-def test_ramdisk_generator_embeds_tdf_lib(tmp_path):
+def test_ramdisk_generator_drops_tdf_lib(tmp_path):
     out = tmp_path / "ramdisk_data.c"
     gen = REPO / "scripts" / "gen_ramdisk.py"
     res = subprocess.run(
@@ -167,7 +141,7 @@ def test_ramdisk_generator_embeds_tdf_lib(tmp_path):
     )
     assert res.returncode == 0, res.stderr
     text = out.read_text()
-    assert "lib/TDF.BAS" in text
+    assert "lib/TDF.BAS" not in text
     assert "apps/TDFDEMO.BAS" in text
 
 
@@ -178,14 +152,13 @@ def test_tdf_block_font_metadata_and_width(console):
         console,
         "TDFBLK.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
-            "PRINT TDF.Name$",
-            "PRINT TDF.Type%",
-            "PRINT TDF.Spacing%",
-            "PRINT TDF.Height",
-            'PRINT TDF.Width("HELLO")',
-            "TDF.Close",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.TYPE%",
+            "PRINT TDF.SPACING%",
+            "PRINT TDF.HEIGHT",
+            'PRINT TDF.WIDTH("HELLO")',
+            "TDF CLOSE 0",
         ],
     )
     info = parse_tdf(MONO_DIR / "STANDARD.TDF")
@@ -204,12 +177,11 @@ def test_tdf_outline_font_metadata_and_width(console):
         console,
         "TDFOUT.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/deco/BIGOUT.TDF"',
-            "PRINT TDF.Name$",
-            "PRINT TDF.Type%",
-            'PRINT TDF.Width("HI")',
-            "TDF.Close",
+            'TDF LOAD "A:/fonts/tdf/deco/BIGOUT.TDF", 0, 0',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.TYPE%",
+            'PRINT TDF.WIDTH("HI")',
+            "TDF CLOSE 0",
         ],
     )
     info = parse_tdf(DECO_DIR / "BIGOUT.TDF")
@@ -226,12 +198,11 @@ def test_tdf_color_font_metadata_and_width(console):
         console,
         "TDFCOL.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/color/BLOCK.TDF"',
-            "PRINT TDF.Name$",
-            "PRINT TDF.Type%",
-            'PRINT TDF.Width("HELLO")',
-            "TDF.Close",
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF", 0, 0',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.TYPE%",
+            'PRINT TDF.WIDTH("HELLO")',
+            "TDF CLOSE 0",
         ],
     )
     info = parse_tdf(COLOR_DIR / "BLOCK.TDF")
@@ -244,26 +215,56 @@ def test_tdf_color_font_metadata_and_width(console):
 
 
 def test_tdf_reload_after_close(console):
-    """#627: the whole file is buffered and closed; a second load starts clean."""
+    """#627/#866: the whole file is buffered; a second load starts clean."""
     out = _run(
         console,
         "TDFRELOAD.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
-            "PRINT TDF.Name$",
-            "TDF.Close",
-            'TDF.Load "A:/fonts/tdf/color/BLOCK.TDF"',
-            "PRINT TDF.Name$",
-            "PRINT TDF.Type%",
-            "TDF.Close",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PRINT TDF.NAME$",
+            "TDF CLOSE",
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF"',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.TYPE%",
+            "TDF CLOSE",
         ],
     )
     assert _lines(out) == ["Standard", "Block", str(TYPE_COLOR)], out
 
 
+def test_tdf_no_slot_loads_slot_zero(console):
+    """#884: LOAD/NAMED without a slot default to 0 and replace it."""
+    out = _run(
+        console,
+        "TDFSLOT0.BAS",
+        [
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PRINT TDF.NAME$",
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF"',
+            "PRINT TDF.NAME$",
+            'TDF LOAD "A:/fonts/tdf/deco/BIGOUT.TDF", 0, 1',
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0',
+            "PRINT TDF.NAME$",
+            "PRINT TDF.NAME$(1)",
+            'TDF NAMED "A:/fonts/tdf/color/BLOCK.TDF", "Block"',
+            "PRINT TDF.NAME$",
+            "TDF CLOSE 1",
+            "TDF CLOSE",
+        ],
+    )
+    assert "no free slot" not in out.lower(), out
+    assert "?SYNTAX" not in out.upper(), out
+    assert _lines(out) == [
+        "Standard",
+        "Block",
+        "Standard",
+        "BigOutline",
+        "Block",
+    ], out
+
+
 def test_tdf_variants_exposed(console):
-    """#629: every record is addressable by index and by name."""
+    """#629/#866: every record is addressable by index and by name."""
     path = COLOR_DIR / "ACIDSC2X.TDF"
     recs = tdf_records(path)
     assert len(recs) > 1
@@ -272,17 +273,18 @@ def test_tdf_variants_exposed(console):
         console,
         "TDFVAR.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/color/ACIDSC2X.TDF"',
-            "PRINT TDF.Variants%",
-            "PRINT TDF.variant%",
-            "PRINT TDF.Name$",
-            "PRINT TDF.VariantName$(0)",
-            "PRINT TDF.VariantName$(1)",
-            'TDF.LoadVariant "A:/fonts/tdf/color/ACIDSC2X.TDF", 2',
-            "PRINT TDF.variant%",
-            "PRINT TDF.Name$",
-            "TDF.Close",
+            'TDF LOAD "A:/fonts/tdf/color/ACIDSC2X.TDF"',
+            "PRINT TDF.VARIANTS%",
+            "PRINT TDF.VARIANT%",
+            "PRINT TDF.NAME$",
+            "PRINT TDF.VARIANTNAME$(0)",
+            "PRINT TDF.VARIANTNAME$(1)",
+            'TDF LOAD "A:/fonts/tdf/color/ACIDSC2X.TDF", 2',
+            "PRINT TDF.VARIANT%",
+            "PRINT TDF.NAME$",
+            "TDF CLOSE 1",
+            "TDF USE 0",
+            "TDF CLOSE 0",
         ],
     )
     assert _lines(out) == [
@@ -301,13 +303,64 @@ def test_tdf_load_by_name(console):
         console,
         "TDFNAME.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.LoadNamed "A:/fonts/tdf/mono/STANDARD.TDF", "Standard"',
-            "PRINT TDF.Name$",
-            "TDF.Close",
+            'TDF NAMED "A:/fonts/tdf/mono/STANDARD.TDF", "Standard", 0',
+            "PRINT TDF.NAME$",
+            "TDF CLOSE 0",
         ],
     )
     assert _lines(out) == ["Standard"], out
+
+
+def test_tdf_slots_are_independent(console):
+    """#867: two fonts load and report their own metadata."""
+    out = _run(
+        console,
+        "TDFSLOT.BAS",
+        [
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0',
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF", 0, 1',
+            "PRINT TDF.NAME$(0)",
+            "PRINT TDF.NAME$(1)",
+            "PRINT TDF.TYPE%(0)",
+            "PRINT TDF.TYPE%(1)",
+            "TDF USE 1",
+            "PRINT TDF.NAME$",
+            "TDF CLOSE 0",
+            "PRINT TDF.NAME$(1)",
+            "TDF CLOSE 1",
+        ],
+    )
+    assert _lines(out) == [
+        "Standard",
+        "Block",
+        str(TYPE_BLOCK),
+        str(TYPE_COLOR),
+        "Block",
+        "Block",
+    ], out
+
+
+def test_tdf_slots_draw_two_fonts(fresh_console):
+    """#867: both slots draw in one program, selected by USE and by slot%."""
+    c = fresh_console
+    out = _run(
+        c,
+        "TDF2DRAW.BAS",
+        [
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF", 0, 0',
+            'TDF LOAD "A:/fonts/tdf/color/BLOCK.TDF", 0, 1',
+            'TDF USE 0 : TDF PRINT 0, 1, "A"',
+            'TDF USE 1 : TDF PRINT 0, 20, "A"',
+            'TDF PRINT 0, 40, "A", 0',
+            'PRINT "DONE"',
+            "TDF CLOSE 0",
+            "TDF CLOSE 1",
+        ],
+    )
+    assert "?SYNTAX" not in out.upper(), out
+    assert "DONE" in out, out
 
 
 def test_tdf_unknown_name_fails(console):
@@ -315,8 +368,7 @@ def test_tdf_unknown_name_fails(console):
         console,
         "TDFBAD.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.LoadNamed "A:/fonts/tdf/mono/STANDARD.TDF", "NoSuchFont"',
+            'TDF NAMED "A:/fonts/tdf/mono/STANDARD.TDF", "NoSuchFont"',
             "PRINT 1",
         ],
     )
@@ -329,8 +381,7 @@ def test_tdf_missing_file_fails(console):
         console,
         "TDFMISS.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "A:/fonts/tdf/mono/NOPE.TDF"',
+            'TDF LOAD "A:/fonts/tdf/mono/NOPE.TDF"',
             "PRINT 1",
         ],
     )
@@ -353,8 +404,7 @@ def test_tdf_bad_magic_fails(console):
         console,
         "TDFMAG.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
-            'TDF.Load "NOTFONT.TDF"',
+            'TDF LOAD "NOTFONT.TDF"',
             "PRINT 1",
         ],
     )
@@ -394,15 +444,14 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
         c,
         "TDFDRAW.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
             "CLS RGB(0,0,0)",
             "COLOUR RGB(255,255,255), RGB(0,0,0)",
-            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
-            'TDF.Print 2, 3, "I"',
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "I"',
             "H% = MM.HPOS : V% = MM.VPOS",
             "LOCATE 20, 0",
             'PRINT H%; ","; V%',
-            "TDF.Close",
+            "TDF CLOSE",
         ],
     )
     # Serial output concatenates the glyph cells, then the saved cursor.
@@ -431,6 +480,192 @@ def test_tdf_print_advances_cursor_and_draws(fresh_console):
     assert all(r < 40 and g < 40 and b < 40 for r, g, b in blank), blank
 
 
+def _first_glyph_pixels(path, ch, base_x, base_y):
+    """One ink and one paper pixel inside a TDF glyph's first drawn cells."""
+    from test_term_cp437 import load_cp437_font
+
+    font = load_cp437_font()
+    _, rows = glyph_rows(path, ch)
+    ink = paper = None
+    for r, row in enumerate(rows):
+        for col, code in enumerate(row):
+            bitmap = font[code]
+            for y in range(16):
+                for x in range(8):
+                    px = (base_x + col * 8 + x, base_y + r * 16 + y)
+                    if bitmap[y] & (0x80 >> x):
+                        if ink is None:
+                            ink = px
+                    elif paper is None:
+                        paper = px
+    return ink, paper
+
+
+def _glyph_ink_paper(path, ch, base_x, base_y, limit=24):
+    """Up to `limit` ink and paper pixels inside a TDF glyph's cells."""
+    from test_term_cp437 import load_cp437_font
+
+    font = load_cp437_font()
+    _, rows = glyph_rows(path, ch)
+    ink, paper = [], []
+    for r, row in enumerate(rows):
+        for col, code in enumerate(row):
+            bitmap = font[code]
+            for y in range(16):
+                for x in range(8):
+                    px = (base_x + col * 8 + x, base_y + r * 16 + y)
+                    if bitmap[y] & (0x80 >> x):
+                        if len(ink) < limit:
+                            ink.append(px)
+                    elif len(paper) < limit:
+                        paper.append(px)
+    return ink, paper
+
+
+def _run_tdf_axis(c, name, up, ink, paper):
+    """Draw 'I' on page 1 and read the physical ink/paper pixels via PIXEL.
+
+    PIXEL applies OPTION Y_AXIS UP to its coordinate, so under Y_AXIS UP the
+    physical row `y` is read as `MM.VRES-1-y`; both runs then sample the same
+    physical pixels.
+    """
+    lines = ["MODE 8,16"]
+    if up:
+        lines.append("OPTION Y_AXIS UP")
+    lines += [
+        "PAGE WRITE 1",
+        "PAGE DISPLAY 0",
+        "CLS RGB(0,0,0)",
+        "COLOUR RGB(255,255,255), RGB(0,0,0)",
+        'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+        'TDF PRINT 2, 3, "I"',
+    ]
+    for tag, points in (("I", ink), ("P", paper)):
+        for i, (x, y) in enumerate(points):
+            ry = "MM.VRES-1-{}".format(y) if up else str(y)
+            lines.append('PRINT "{}{}"; ","; PIXEL({},{},1)'.format(tag, i, x, ry))
+    lines.append("TDF CLOSE")
+    out = _run(c, name, lines)
+    res = {}
+    for line in _lines(out):
+        label, sep, val = line.partition(",")
+        if sep and re.fullmatch(r"[IP]\d+", label):
+            res[label] = int(val) & 0xFFFFFF
+    return res
+
+
+def test_tdf_print_page_stays_topdown_under_y_axis_up(fresh_console):
+    """#888: TDF page cells keep console top-down semantics under Y_AXIS UP."""
+    c = fresh_console
+    ink, paper = _glyph_ink_paper(MONO_DIR / "STANDARD.TDF", "I", 2 * 8, 3 * 16)
+    assert len(ink) > 8 and len(paper) > 8, (len(ink), len(paper))
+
+    down = _run_tdf_axis(c, "TDFAXISD.BAS", False, ink, paper)
+    up = _run_tdf_axis(c, "TDFAXISU.BAS", True, ink, paper)
+
+    # Same drawing without Y_AXIS UP: ink lit, paper dark, and every physical
+    # pixel read back identically under OPTION Y_AXIS UP.
+    assert all(down[f"I{i}"] for i in range(len(ink))), down
+    assert not any(down[f"P{i}"] for i in range(len(paper))), down
+    assert up == down, (up, down)
+
+
+def test_tdf_print_honours_page_write(fresh_console):
+    """#883: PAGE WRITE 1 + TDF PRINT paints the selected page, not the console."""
+    c = fresh_console
+    ink, paper = _first_glyph_pixels(MONO_DIR / "STANDARD.TDF", "I", 2 * 8, 3 * 16)
+    assert ink and paper
+
+    # Default/visible: no explicit page keeps the console ANSI stamp path.
+    _run(
+        c,
+        "TDFNOPAGE.BAS",
+        [
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "I"',
+            "TDF CLOSE",
+        ],
+    )
+    console_ink = c.screen_pixels([ink])[0]
+    console_paper = c.screen_pixels([paper])[0]
+    assert all(v > 150 for v in console_ink), console_ink
+    assert all(v < 40 for v in console_paper), console_paper
+
+    # An offscreen (non-overlay) page write must leave the visible frame alone.
+    _run(
+        c,
+        "TDFOFFSCR.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 0",
+            "PAGE DISPLAY 0",
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            "PAGE WRITE 2",
+            'TDF PRINT 2, 3, "I"',
+            "PRINT PIXEL({},{},2)".format(ink[0], ink[1]),
+            "TDF CLOSE",
+        ],
+    )
+    assert c.screen_pixel(ink[0], ink[1]) == (0, 0, 0), "offscreen write leaked"
+
+    # Page 1: PAGE DISPLAY 1 reveals the stamp.
+    out = _run(
+        c,
+        "TDFPAGE.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "COLOUR RGB(255,255,255), RGB(0,0,0)",
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "I"',
+            "PAGE DISPLAY 1",
+            "PAGE WRITE 1",
+            "PRINT PIXEL({},{}); \",\"; PIXEL({},{})".format(
+                ink[0], ink[1], paper[0], paper[1]
+            ),
+            "TDF CLOSE",
+        ],
+    )
+    values = [int(v) for v in _lines(out)[-1].split(",")]
+    assert (values[0] >> 16) & 255 > 150, values
+    assert (values[0] >> 8) & 255 > 150, values
+    assert (values[0] & 255) > 150, values
+    assert (values[1] & 0xFFFFFF) == 0, values
+
+
+def test_tdf_print_keeps_active_colour_for_cls(fresh_console):
+    """TDF PRINT must not leave G.gfx.bg at the font's last cell colour.
+
+    A bare CLS clears the write page to G.gfx.bg. A colour font used to adopt
+    the last decoded cell's background, so CLS + PAGE COPY flashed the whole
+    frame in that colour (the reported occasional white flicker).
+    """
+    c = fresh_console
+    out = _run(
+        c,
+        "TDFCLS.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 2",
+            "PAGE DISPLAY 0",
+            "COLOUR RGB(255,255,255), RGB(255,0,0)",
+            'TDF LOAD "A:/fonts/tdf/color/ACID3DX.TDF"',
+            'TDF PRINT 0, 3, "A"',
+            "CLS",
+            "PAGE COPY 2 TO 0",
+            "PRINT PIXEL(2,2,0)",
+            "TDF CLOSE",
+        ],
+    )
+    value = int(_lines(out)[-1]) & 0xFFFFFF
+    assert value == 0xFF0000, hex(value)
+
+
 def test_tdf_print_spaces_advance_safely(fresh_console):
     """#588: leading, trailing and repeated spaces must advance, not fault."""
     c = fresh_console
@@ -439,16 +674,15 @@ def test_tdf_print_spaces_advance_safely(fresh_console):
         c,
         "TDFSP.BAS",
         [
-            '#INCLUDE "A:/lib/TDF.BAS"',
             "CLS",
             "COLOUR RGB(255,255,255), RGB(0,0,0)",
-            'TDF.Load "A:/fonts/tdf/mono/STANDARD.TDF"',
-            'TDF.Print 2, 3, "' + text + '"',
+            'TDF LOAD "A:/fonts/tdf/mono/STANDARD.TDF"',
+            'TDF PRINT 2, 3, "' + text + '"',
             "H% = MM.HPOS : V% = MM.VPOS",
-            'W% = TDF.Width("' + text + '")',
+            'W% = TDF.WIDTH("' + text + '")',
             "LOCATE 20, 0",
             'PRINT H%; ","; V%; ","; W%',
-            "TDF.Close",
+            "TDF CLOSE",
         ],
     )
     exp = expected_width(MONO_DIR / "STANDARD.TDF", text)
@@ -467,3 +701,4 @@ def test_tdf_help_topic(console):
     seen = dump_topic(console, "TDF")
     assert "TheDraw" in seen
     assert "Outline" in seen
+

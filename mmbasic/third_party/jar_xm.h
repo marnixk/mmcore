@@ -152,6 +152,10 @@ void jar_xm_set_max_loop_count(jar_xm_context_t* ctx, uint8_t loopcnt);
 //** Get the loop count of the currently playing module. This value is 0 when the module is still playing, 1 when the module has looped once, etc.
 uint8_t jar_xm_get_loop_count(jar_xm_context_t* ctx);
 
+//** Whether the song has played through once and wrapped to its restart position.
+// * @return 1 after the first full play-through, 0 before.
+int jar_xm_song_finished(jar_xm_context_t* ctx);
+
 //** Mute or unmute a channel.
 // * @note Channel numbers go from 1 to jar_xm_get_number_of_channels(...).
 // * @return whether the channel was muted.
@@ -488,6 +492,11 @@ struct jar_xm_sample_s {
      uint8_t* row_loop_count; /* Array of size MAX_NUM_ROWS * module_length */
      uint8_t loop_count;
      uint8_t max_loop_count;
+     /* Set once the song has played through and wrapped back to its restart
+      * position. Unlike loop_count (a per-row visit counter) this is only set
+      * by jar_xm_post_pattern_change, so a backward position jump inside the
+      * arrangement does not trip it. */
+     bool song_finished;
 
      jar_xm_channel_context_t* channels;
 };
@@ -607,6 +616,10 @@ void jar_xm_set_max_loop_count(jar_xm_context_t *ctx, uint8_t loopcnt) {
 
 uint8_t jar_xm_get_loop_count(jar_xm_context_t *ctx) {
     return ctx->loop_count;
+}
+
+int jar_xm_song_finished(jar_xm_context_t *ctx) {
+    return ctx->song_finished ? 1 : 0;
 }
 
 bool jar_xm_mute_channel(jar_xm_context_t *ctx, uint16_t channel, bool mute) {
@@ -1246,6 +1259,7 @@ static void jar_xm_post_pattern_change(jar_xm_context_t* ctx) {
         ctx->tempo =ctx->default_tempo; // reset to file default value
         ctx->bpm = ctx->default_bpm; // reset to file default value
         ctx->global_volume = ctx->default_global_volume; // reset to file default value
+        ctx->song_finished = true; /* one full play-through is done */
     }
 }
 

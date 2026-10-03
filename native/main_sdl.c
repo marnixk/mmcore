@@ -26,7 +26,12 @@
 
 #include <SDL.h>
 
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+#include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +40,126 @@
 #include <unistd.h>
 
 void mmb_platform_bind_sdl(void);
+
+/*
+ * Boot logging that survives the ISO's stderr redirect.
+ *
+ * root/.profile sends mmcore's stderr to /tmp/mmcore.stderr, which is
+ * unreadable when the panel never lights up. Mirror startup diagnostics to the
+ * kernel console (/dev/console is the serial tty on the live ISO: the kernel
+ * line ends in `console=ttyS0`) and to ttyS0 directly, so a reporter stuck on
+ * the splash can still read why over serial (#1032).
+ */
+static void boot_log(const char *fmt, ...)
+{
+	char buf[512];
+	va_list ap;
+	int n;
+#ifndef _WIN32
+	static const char *const sinks[] = { "/dev/console", "/dev/ttyS0" };
+	size_t i;
+#endif
+
+	va_start(ap, fmt);
+	n = vsnprintf(buf, sizeof buf, fmt, ap);
+	va_end(ap);
+	if (n <= 0)
+		return;
+	if ((size_t)n >= sizeof buf)
+		n = (int)sizeof buf - 1;
+	fputs(buf, stderr);
+	fflush(stderr);
+#ifndef _WIN32
+	for (i = 0; i < sizeof sinks / sizeof sinks[0]; i++)
+	{
+		int fd = open(sinks[i], O_WRONLY | O_NOCTTY);
+
+		if (fd >= 0)
+		{
+			(void)write(fd, buf, (size_t)n);
+			close(fd);
+		}
+	}
+#endif
+}
+
+#ifndef _WIN32
+/* List the DRM nodes so a "no KMS/DRM" report carries the facts. */
+static void boot_log_drm(void)
+{
+	DIR *d = opendir("/dev/dri");
+	struct dirent *e;
+
+	boot_log("mmcore: /dev/dri %s\n", d ? "contains:" : "is missing");
+	if (!d)
+		return;
+	while ((e = readdir(d)) != 0)
+	{
+		if (e->d_name[0] == '.')
+			continue;
+		boot_log("mmcore:   /dev/dri/%s\n", e->d_name);
+	}
+	closedir(d);
+}
+
+/*
+ * #1032: a hung KMS/DRM modeset can block SDL_Init/CreateWindow/
+ * CreateRenderer forever, leaving the splash on screen with no diagnostic and
+ * no respawn (tty1 never sees mmcore exit). Bound the video bring-up: on
+ * timeout, log to stderr and the serial consoles and _exit(2), so the tty1
+ * respawn retries instead of hanging. MMCORE_VIDEO_TIMEOUT=0 disables (e.g. a
+ * debugger), and any positive value overrides the 30 s default.
+ */
+static void video_watchdog(int sig)
+{
+	static const char msg[] =
+		"mmcore: SDL video init timed out (KMS/DRM modeset stuck); "
+		"exiting so tty1 retries. See docs/framebuffer-and-iso.md "
+		"'Intel Chromebooks'.\n";
+	static const char *const sinks[] = { "/dev/console", "/dev/ttyS0" };
+	size_t i;
+
+	(void)sig;
+	(void)write(2, msg, sizeof msg - 1);
+	for (i = 0; i < sizeof sinks / sizeof sinks[0]; i++)
+	{
+		int fd = open(sinks[i], O_WRONLY | O_NOCTTY);
+
+		if (fd >= 0)
+		{
+			(void)write(fd, msg, sizeof msg - 1);
+			close(fd);
+		}
+	}
+	_exit(2);
+}
+
+static void video_watchdog_arm(void)
+{
+	const char *env = getenv("MMCORE_VIDEO_TIMEOUT");
+	long secs = (env && env[0]) ? strtol(env, 0, 10) : 30;
+	struct sigaction sa;
+
+	if (secs <= 0)
+		return;
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = video_watchdog;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGALRM, &sa, 0);
+	alarm((unsigned)secs);
+}
+
+static void video_watchdog_disarm(void)
+{
+	alarm(0);
+	signal(SIGALRM, SIG_DFL);
+}
+#else
+static void boot_log_drm(void) {}
+static void video_watchdog_arm(void) {}
+static void video_watchdog_disarm(void) {}
+#endif
 
 static void front_emit(void *ctx, const char *s, unsigned n)
 {
@@ -121,12 +246,16 @@ int main(int argc, char **argv)
 	sealed = (app_mode || term_mode) && !cli->stay;
 	stdin_open = stdin_usable();
 
+	video_watchdog_arm();
 	if (!sdl_video_open(640, 480))
 	{
-		fprintf(stderr, "mmbasic: could not open SDL window: %s\n",
-			SDL_GetError());
+		video_watchdog_disarm();
+		boot_log("mmcore: could not open SDL window: %s\n",
+			 SDL_GetError());
+		boot_log_drm();
 		return 1;
 	}
+	video_watchdog_disarm();
 	/* --double: open a 2x windowed client (integer, nearest-neighbour via
 	 * sdl_scale_viewport). Set before fullscreen so leaving fullscreen
 	 * restores the 2x window, not 1:1; headless builds ignore it. */

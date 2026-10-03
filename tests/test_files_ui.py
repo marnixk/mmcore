@@ -1,7 +1,12 @@
 """FILES dual-pane TUI: navigate, run .BAS, view unknown types, quit."""
 
+import os
+import shutil
 import subprocess
+import tempfile
 import time
+
+import pytest
 
 from harness import MMBasicConsole
 
@@ -423,7 +428,7 @@ def test_files_tdf_bad_font_fails_soft(fresh_console):
 
 
 def test_files_tdf_multi_variant_preview(fresh_console):
-    """#629: a multi-record .TDF renders every variation and reports the count."""
+    """#629/#865: one variation shows at a time; Left/Right cycles them."""
     con = fresh_console
     assert con.send_line('CHDIR "A:/fonts/tdf/color"') == ""
     _select(con, "ACIDSC2X.TDF")
@@ -437,7 +442,18 @@ def test_files_tdf_multi_variant_preview(fresh_console):
             break
         time.sleep(0.3)
     assert ink > 0.001, ink
-    # PgDn scrolls the stacked variation blocks (and is accepted in FU_TDF).
+    # Left/Right cycle variations (wrap at both ends) and report n/N.
+    seen = _keys(con, b"\x1b[C", quiet=0.4)
+    assert "variation 2/6" in seen, seen
+    seen = _keys(con, b"\x1b[C", quiet=0.4)
+    assert "variation 3/6" in seen, seen
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    assert "variation 2/6" in seen, seen
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    seen = _keys(con, b"\x1b[D", quiet=0.4)
+    assert "variation 6/6" in seen, seen
+    # Up/Down still scroll within the current variation.
+    _keys(con, b"\x1b[B", quiet=0.3)
     _keys(con, b"\x1b[6~", quiet=0.5)
     seen = _keys(con, b"\x1b", quiet=0.8)
     assert "SEL=" in seen
@@ -461,6 +477,80 @@ def test_files_tdf_pageup_pagedown_single(fresh_console):
     assert "SEL=" in seen, seen
     _keys(con, b"q")
     assert con.send_line("PRINT MM.HRES") == "1280"
+
+
+def test_files_move_keeps_selection_near_moved(fresh_console):
+    """#1022/#1028: a cross-folder move reparents the file and the source pane
+    selects the row above the moved one."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "MOVEDIR"') == ""
+    assert con.send_line('MKDIR "DESTDIR"') == ""
+    for name in ("F1.TXT", "F2.TXT", "F3.TXT", "F4.TXT", "F5.TXT"):
+        assert con.send_line(f'OPEN "MOVEDIR/{name}" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "x"') == ""
+        assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('CHDIR "A:/MOVEDIR"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=F3.TXT")
+    _keys(con, b"m", quiet=0.4)
+    # Both panes are A:/MOVEDIR, so the seeded destination is
+    # A:/MOVEDIR/F3.TXT; retype it cross-folder to A:/DESTDIR/F3.TXT.
+    _keys(con, b"\x7f" * 24)
+    seen = _keys(con, b"A:/DESTDIR/F3.TXT\r", quiet=0.9)
+    assert "Moved" in seen, seen
+    # F3 is gone: the selection must land on F2 (index moved_idx-1), not "..".
+    assert "SEL=F2.TXT" in seen, seen
+    _keys(con, b"q")
+    assert "F3.TXT" in con.send_line('DIR "A:/DESTDIR"').upper()
+    assert "F3.TXT" not in con.send_line('DIR "A:/MOVEDIR"').upper()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_files_move_across_drives_copies_and_deletes(kernel_image):
+    """#1030: a move from the A: ramdisk to the C: SD volume has no single
+    rename primitive, so FILES must copy the file then delete the source."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True,
+            capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('OPEN "XFER.TXT" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "cross-drive"') == ""
+            assert con.send_line("CLOSE #1") == ""
+            _open_files(con)
+            # Right pane -> C: (Alt+R, then the "Drive C:" hotkey). Tab back
+            # to the left pane so the move source stays on A:.
+            _keys(con, bytes([1]) + b"rc", quiet=0.6)
+            _keys(con, b"\t", quiet=0.3)
+            _down_to(con, "SEL=XFER.TXT")
+            _keys(con, b"m", quiet=0.4)
+            seen = _keys(con, b"\r", quiet=1.0)
+            assert "Moved" in seen, seen
+            _keys(con, b"q")
+            assert "XFER.TXT" in con.send_line('DIR "C:/"').upper()
+            assert "XFER.TXT" not in con.send_line('DIR "A:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
 
 
 def test_files_many_entries_reports_truncation(fresh_console):

@@ -76,6 +76,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fb-doublebuf.patch"
 fi
 
+if grep -q 'mmbasic-fb-unaligned' "${CIRCLE_DIR}/lib/bcmframebuffer.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle framebuffer unaligned-width patch (1366x768 / 683x384)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fb-unaligned.patch"
+fi
+
 if grep -q 'mmbasic-usb-cdc-rx' "${CIRCLE_DIR}/lib/usb/usbcdcethernet.cpp" 2>/dev/null; then
 	:
 else
@@ -88,6 +95,27 @@ if grep -q 'mmbasic-console-state' "${CIRCLE_DIR}/include/circle/terminal.h" 2>/
 else
 	log "Applying Circle text-console snapshot/restore patches (virtual consoles)"
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-console-state.patch"
+fi
+
+if grep -q 'mmbasic-device-dedupe' "${CIRCLE_DIR}/lib/device.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle device removed-handler dedupe patch (#985)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-device-dedupe.patch"
+fi
+
+if grep -q 'mmbasic-dwhci-timeout' "${CIRCLE_DIR}/lib/usb/dwhcidevice.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle DWHCI blocking-transfer timeout patch (#986)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-usb-timeout.patch"
+fi
+
+if grep -q 'mmbasic-fastseek' "${CIRCLE_DIR}/addon/fatfs/ffconf.h" 2>/dev/null; then
+	:
+else
+	log "Applying Circle FatFs fast-seek patch (#984)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-fatfs-fastseek.patch"
 fi
 
 MODE_STAMP="${CONSOLE_DIR}/.circle-build-mode"

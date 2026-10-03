@@ -220,6 +220,19 @@ typedef struct {
 static tm_state T_s[MMB_MAX_CONSOLES];
 #define T (T_s[g_console])
 
+/* Set while mmb_term_poll() runs from a background yield callback (#858): the
+ * session is drained and interpreted, but nothing may be painted. */
+static int s_term_bg;
+static void term_bg_yield(int console, void *ctx);
+
+/* Long TERM paths (paint, present, TCP ingest) must keep the mixer fed.
+ * A full repaint can outlast the queued audio if the mixer waits for poll. */
+static void term_yield(void)
+{
+	mmb_net_yield();
+	mmb_play_mix();
+}
+
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;
 
@@ -785,7 +798,7 @@ static void term_draw_sb_status(void)
 	unsigned bg = TM_MENU_BG, fg = TM_MENU_FG;
 	int y = term_status_y();
 
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	if (T.sb_search)
 	{
 		strcpy(text, "Search: ");
@@ -1040,6 +1053,7 @@ static void term_serial_dump(void)
 		line[cols] = 0;
 		ser(line);
 		ser("\r\n");
+		mmb_play_mix();
 	}
 	if (T.sb_search)
 	{
@@ -1266,7 +1280,7 @@ static void pane_puts(const char *s)
 
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
-	mmb_gfx_glyph_cell(x, y, ch, fg, bg);
+	mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
 }
 
 static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
@@ -1281,7 +1295,7 @@ static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned b
 static void term_fill_cells(int x, int y, int n, unsigned bg)
 {
 	if (n > 0)
-		mmb_gfx_fill_rect(x, y, n * TM_CW, TM_CH, bg);
+		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, TM_CH, bg);
 }
 
 static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
@@ -1316,7 +1330,7 @@ static void term_draw_status(void)
 		return;
 	y = term_status_y();
 	x0 = 0;
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
 	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
@@ -1395,7 +1409,7 @@ static void term_draw_menu(void)
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
-	mmb_gfx_fill_rect(0, 0, bar_w, TM_CH, TM_MENU_BG);
+	mmb_gfx_fill_rect_topdown(0, 0, bar_w, TM_CH, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
 	term_cell(0, 0, ' ', title_fg, title_bg);
@@ -1406,7 +1420,7 @@ static void term_draw_menu(void)
 	x0 = TM_CW;
 	y0 = TM_CH;
 	drop_h = n + 2;
-	mmb_gfx_fill_rect(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
@@ -1431,9 +1445,10 @@ static void term_draw_menu(void)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect(x0 + w * TM_CW, y0, 2 * TM_CW, drop_h * TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect(x0 + 2 * TM_CW, y0 + drop_h * TM_CH, w * TM_CW, TM_CH,
-		    TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + w * TM_CW, y0, 2 * TM_CW,
+				  drop_h * TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * TM_CH,
+				  w * TM_CW, TM_CH, TM_SH_BG);
 }
 
 static void term_shadow_blank(void)
@@ -1472,7 +1487,7 @@ static void term_draw_row(int r)
 		if (key == term_cell_sh[r][c])
 			continue;
 		term_cell_sh[r][c] = key;
-		mmb_gfx_glyph_cell(x, y, ch, fg, bg);
+		mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
 	}
 }
 
@@ -1554,6 +1569,12 @@ static void term_draw(void)
 {
 	int r, saved, lo, hi, full_screen;
 
+	if (s_term_bg)
+	{
+		/* Background drain: the grid is updated and need_draw stays set, so
+		 * returning to this console repaints from it (#858). */
+		return;
+	}
 	if (!T.need_draw)
 		return;
 	if (T.cur_vis)
@@ -1564,7 +1585,9 @@ static void term_draw(void)
 	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 	/* Present sources PAGE 2 directly, so a prior frame's DMA must finish
-	 * before this repaint overwrites it (#340). */
+	 * before this repaint overwrites it (#340). Top up audio first: the
+	 * drain below waits out that DMA. */
+	mmb_play_mix();
 	term_guard_present();
 	full_screen = T.dirty_full;
 	if (T.dirty_full)
@@ -1585,7 +1608,7 @@ static void term_draw(void)
 		{
 			term_draw_row(r);
 			if ((r & 3) == 0)
-				mmb_net_yield();
+				term_yield();
 		}
 	}
 	if (T.menu || T.alt_pend)
@@ -1598,8 +1621,8 @@ static void term_draw(void)
 			term_draw_row(T.pane_rows - 1);
 	}
 	else
-		mmb_gfx_fill_rect(0, term_status_y(), T.vid_cols * TM_CW, TM_CH,
-			    TM_BG);
+		mmb_gfx_fill_rect_topdown(0, term_status_y(), T.vid_cols * TM_CW,
+					  TM_CH, TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	if (full_screen)
@@ -1689,6 +1712,7 @@ static void term_exit(void)
 	if (!term_rx.data)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
+	mmb_yield_remove(term_bg_yield);
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
 	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
@@ -1741,7 +1765,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 		int left = (int)n, rc, idle = 0;
 
 		T.tx_n += n;
-		mmb_net_yield();
+		term_yield();
 		while (left > 0)
 		{
 			rc = mmb_net_tcp_send(p, (unsigned)left);
@@ -1756,7 +1780,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 			}
 			if (rc < 0)
 				return;
-			mmb_net_yield();
+			term_yield();
 			if (T.tcp && !T.replay && !T.file_replay)
 				term_tcp_drain(1);
 			if (++idle > 500)
@@ -2140,7 +2164,7 @@ static void term_apply_session_mode(void)
 	else
 	{
 		mode = T.saved_mode;
-		if (mode < 1 || mode > 17)
+		if (!mmb_gfx_mode_valid(mode))
 			mode = 14;
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
@@ -2634,7 +2658,7 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 	y0 = dlg_r0 * TM_CH;
 	w = cw * TM_CW;
 	h = ch * TM_CH;
-	mmb_gfx_fill_rect(x0, y0, w, h, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w, h, TM_DLG_BG);
 	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
 	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
 			 TM_BOX_BR);
@@ -2645,8 +2669,9 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
 			  TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH,
+				  TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
@@ -4351,7 +4376,7 @@ static void zmodem_draw_status(void)
 		return;
 	strncpy(zm_shown, line, sizeof(zm_shown) - 1);
 	zm_shown[sizeof(zm_shown) - 1] = 0;
-	mmb_gfx_fill_rect(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
 	n = (int)strlen(line);
 	if (n > T.vid_cols)
 		n = T.vid_cols;
@@ -4394,7 +4419,7 @@ static void zmodem_pump(void)
 		mmb_zm_feed(&ZM, buf, n, now);
 		if (!mmb_zm_active(&ZM))
 			break;
-		mmb_net_yield();
+		term_yield();
 	}
 	mmb_zm_tick(&ZM, now);
 }
@@ -4449,7 +4474,7 @@ static void zmodem_poll(void)
 		return;
 	}
 	zmodem_draw_status();
-	mmb_net_yield();
+	term_yield();
 }
 
 /* ---- download folder browser dialog ---------------------------------- */
@@ -4736,7 +4761,7 @@ static int term_tcp_drain(int idle_max)
 		}
 		if (n == 0)
 		{
-			mmb_net_yield();
+			term_yield();
 			if (++idle >= idle_max)
 				break;
 			continue;
@@ -4745,7 +4770,7 @@ static int term_tcp_drain(int idle_max)
 		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
 		T.rx_n += (unsigned)n;
 		got += n;
-		mmb_net_yield();
+		term_yield();
 	}
 	draining = 0;
 	return got;
@@ -4826,7 +4851,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -4840,7 +4865,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -5760,6 +5785,11 @@ void mmb_cmd_term(void)
 	T.cur_col = 0;
 	T.cur_vis = 1;
 	T.active = 1;
+	/* #858: keep a live session drained if this console is switched away
+	 * from. The callback itself checks the socket owner, so demo/replay/file
+	 * sessions (which have no socket) are not touched. */
+	mmb_yield_remove(term_bg_yield);
+	mmb_yield_add(g_console, term_bg_yield, 0, 25);
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
 	mark_dirty_full();
@@ -6252,7 +6282,30 @@ void mmb_term_poll(void)
 	term_maybe_serial_dump(got);
 	if (T.need_draw)
 		term_draw();
-	mmb_net_yield();
+	term_yield();
+}
+
+/* #858: keep an established TCP session drained while this console is not the
+ * active screen. Received bytes are interpreted into this console's own grid
+ * (scrollback, log, ANSI state all stay correct); painting is suppressed by
+ * s_term_bg and the active poll repaints from need_draw on return. Only the
+ * console that owns the machine-wide socket has a real session, so the shared
+ * receive ring has a single producer. Key handling never runs here. */
+static void term_bg_yield(int console, void *ctx)
+{
+	(void)ctx;
+	if (console == g_console)
+		return;
+	if (!T_s[console].active)
+		return;
+	if (mmb_tcp_owner() != console)
+		return;
+	if (!mmb_bg_console_enter(console))
+		return;
+	s_term_bg = 1;
+	mmb_term_poll();
+	s_term_bg = 0;
+	mmb_bg_console_leave();
 }
 
 /* Cold-boot the TERM layer on a warm reset (#763). Closing each console's

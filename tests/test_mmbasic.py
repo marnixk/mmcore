@@ -275,6 +275,13 @@ def test_play_xm(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_s3m(console):
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
 def test_for_next_numbered(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 FOR I=1 TO 3") == ""
@@ -564,11 +571,46 @@ def test_remaining_modes(console):
         (14, 8, 960, 540),
         (15, 8, 1280, 1024),
         (16, 8, 1920, 1080),
+        (19, 8, 1366, 768),
+        (20, 8, 683, 384),
     ]
     for mode, bits, w, h in extras:
         assert console.send_line(f"MODE {mode},{bits}") == ""
         assert console.send_line("PRINT MM.HRES") == str(w)
         assert console.send_line("PRINT MM.VRES") == str(h)
+    assert console.send_line("MODE 8,16") == ""
+
+
+def test_wxga_modes_are_fullscreen(console):
+    """Modes 19 and 20 retune HDMI to 1366x768 and half of that.
+    Earlier mode numbers are unchanged."""
+    assert console.send_line("MODE 16,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "1920"
+    assert console.send_line("PRINT MM.VRES") == "1080"
+    assert console.send_line("MODE 18,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "640"
+    assert console.send_line("PRINT MM.VRES") == "360"
+
+    assert console.send_line("MODE 19,16") == ""
+    assert console.send_line("PRINT MM.HRES") == "1366"
+    assert console.send_line("PRINT MM.VRES") == "768"
+    assert console.screen_size() == (1366, 768)
+    assert console.send_line("PIXEL 1365,767,RGB(255,0,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(1365,767)"))
+    assert ((pix >> 16) & 255) > 150
+
+    assert console.send_line("MODE 19,12") == ""
+    assert console.send_line("PRINT MM.HRES") == "1366"
+    assert console.send_line("MODE 20,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "683"
+    assert console.send_line("PRINT MM.VRES") == "384"
+    assert console.screen_size() == (683, 384)
+    assert console.send_line("PIXEL 682,383,RGB(0,255,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(682,383)"))
+    assert ((pix >> 8) & 255) > 150
+    assert "INVALID MODE" in console.send_line("MODE 21,8")
+    assert console.send_line("MODE 1,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "800"
     assert console.send_line("MODE 8,16") == ""
 
 

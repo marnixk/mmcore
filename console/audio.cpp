@@ -5,7 +5,8 @@
 #include <circle/timer.h>
 #include <circle/new.h>
 
-#define AUDIO_QUEUE_MS   200
+/* Must hold MIX_TARGET (~320ms) with room for one HDMI period. */
+#define AUDIO_QUEUE_MS   400
 #define HDMI_CHUNK       (384 * 10)
 #define PWM_CHUNK        2048
 
@@ -36,10 +37,18 @@ static void maybe_start(int force)
 {
 	unsigned used, need;
 
-	if (s_started || !s_dev || !s_enabled)
+	if (!s_dev || !s_enabled)
 		return;
 	used = s_dev->GetQueueFramesAvail();
 	if (used == 0)
+		return;
+	/* The backend cancels its own transfer when its ring underruns (HDMI
+	 * DMA cancel, PWM buffer handler). s_started would otherwise stay set,
+	 * so the mixer would never restart it and audio stays silent/glitched
+	 * until reboot. Re-arm whenever the transfer has stopped (#1024). */
+	if (s_started && !s_dev->IsActive())
+		s_started = 0;
+	if (s_started)
 		return;
 	need = chunk_frames() * 2;
 	if (!force && used < need)
@@ -177,4 +186,11 @@ void audio_flush(void)
 	if (!s_dev)
 		return;
 	s_dev->Flush();
+}
+
+void audio_reset(void)
+{
+	close_dev();
+	if (s_enabled)
+		open_dev();
 }

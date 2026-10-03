@@ -18,10 +18,12 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "mmbasic", "src")
+CMD_PAINT_C = os.path.join(SRC, "cmd_paint.c")
 
 PT_W, PT_H = 640, 360
 PT_TOOL_GRAB = 14
 PT_TOOL_PENCIL = 0
+PT_TOOL_LINE = 2
 LEFT = 1
 
 SHIM_C = r"""
@@ -40,6 +42,18 @@ mmb *g_cur = &s_mmb;
 static void *tst_alloc(unsigned n) { return malloc(n ? n : 1); }
 static void tst_free(void *p) { free(p); }
 
+static unsigned g_screen[PT_W * PT_H];
+#define TST_EMPTY 0x112233u
+
+static void tst_fill_px(int x, int y, int w, int h, unsigned rgb)
+{
+	int i, j;
+	for (j = 0; j < h; j++)
+		for (i = 0; i < w; i++)
+			if (x + i >= 0 && y + j >= 0 && x + i < PT_W && y + j < PT_H)
+				g_screen[(y + j) * PT_W + x + i] = rgb;
+}
+
 static mmb_platform g_plat;
 static int g_bound;
 
@@ -49,12 +63,10 @@ static void bind_plat(void)
 		return;
 	g_plat.alloc = tst_alloc;
 	g_plat.free = tst_free;
+	g_plat.tui_fill_px = tst_fill_px;
 	s_mmb.plat = &g_plat;
 	g_bound = 1;
 }
-
-static unsigned g_screen[PT_W * PT_H];
-#define TST_EMPTY 0x112233u
 
 void tst_set_console(int n) { g_console = n; }
 int tst_console(void) { return g_console; }
@@ -125,33 +137,7 @@ unsigned tui_get_px(int x, int y) { return tst_screen(x, y); }
 /* Time jumps 300ms per call so pt_select_tick() toggles every time. */
 unsigned mmb_now_ms(void) { static unsigned t; t += 300; return t; }
 
-void pt_fill_rect(int x, int y, int w, int h, unsigned rgb)
-{
-	int i, j;
-	for (j = 0; j < h; j++)
-		for (i = 0; i < w; i++)
-			if (x + i >= 0 && y + j >= 0 && x + i < PT_W && y + j < PT_H)
-				g_screen[(y + j) * PT_W + x + i] = rgb;
-}
-
-void pt_plot(int x, int y, unsigned rgb) { pt_fill_rect(x, y, 1, 1, rgb); }
 unsigned pt_palette_rgb(int idx) { return (unsigned)idx; }
-void pt_request_redraw(void) { PT.dirty = 1; }
-void pt_damage(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
-void pt_damage_canvas(int x, int y, int w, int h)
-{
-	(void)x; (void)y; (void)w; (void)h;
-}
-void pt_damage_present(int x, int y, int w, int h)
-{
-	(void)x; (void)y; (void)w; (void)h;
-}
-
-int pt_screen_to_canvas(int sx, int sy, int *cx, int *cy)
-{
-	(void)sx; (void)sy; (void)cx; (void)cy;
-	return 0;
-}
 
 /* paint_tools.c hands a TEXT click to paint_text.c, which is not linked. */
 void pt_text_begin(int cx, int cy, int button)
@@ -159,19 +145,92 @@ void pt_text_begin(int cx, int cy, int button)
 	(void)cx; (void)cy; (void)button;
 }
 
-int pt_canvas_get(int cx, int cy)
+/* ---- scripted global pointer (the device is machine-wide, #811) -------- */
+static mmb_mouse_state s_mouse;
+
+int mmb_mouse_read(mmb_mouse_state *out)
 {
-	if (!PT.canvas || cx < 0 || cy < 0 || cx >= PT.width || cy >= PT.height)
-		return 0;
-	return PT.canvas[(size_t)cy * PT.width + cx];
+	if (out)
+		*out = s_mouse;
+	return 1;
 }
 
-void pt_canvas_set(int cx, int cy, int idx)
+void tst_mouse(int present, int x, int y, int buttons)
 {
-	if (!PT.canvas || cx < 0 || cy < 0 || cx >= PT.width || cy >= PT.height)
-		return;
-	PT.canvas[(size_t)cy * PT.width + cx] = (unsigned char)(idx & 255);
+	s_mouse.present = present;
+	s_mouse.x = x;
+	s_mouse.y = y;
+	s_mouse.buttons = buttons;
 }
+
+void tst_active(int on) { PT.active = on; }
+int tst_mouse_down(void) { return PT.mouse_down; }
+
+int tst_canvas_nonzero(void)
+{
+	int i, n = 0;
+
+	for (i = 0; i < PT.width * PT.height; i++)
+		if (PT.canvas[i])
+			n++;
+	return n;
+}
+
+/* Console-indexed views: after a switch PT names the destination, so inspect
+ * the screen we left by index (#811). */
+int tst_mouse_down_for(int n) { return pt_console_state[n].mouse_down; }
+
+int tst_canvas_nonzero_for(int n)
+{
+	pt_state *st = &pt_console_state[n];
+	int i, c = 0;
+
+	for (i = 0; i < st->width * st->height; i++)
+		if (st->canvas[i])
+			c++;
+	return c;
+}
+
+/* Mirror console_do_switch()'s paint hooks: cancel the departing screen's
+ * stroke (and pending keys), then hand the screen to the destination console
+ * and seed its pointer-edge tracker (#811, #814, #815). */
+void tst_switch(int n)
+{
+	if (pt_console_state[g_console].active)
+		mmb_paint_console_deactivated(g_console);
+	g_console = n;
+	if (pt_console_state[n].active)
+		mmb_paint_console_activated(n);
+}
+
+/* ---- stubs cmd_paint.c references (only its command/teardown paths) ----- */
+void mmb_error(const char *m) { (void)m; }
+void mmb_syntax(void) {}
+void mmb_skip_sp(void) {}
+mmb_val mmb_expr(void) { mmb_val v; memset(&v, 0, sizeof v); v.type = T_STR; return v; }
+int64_t mmb_as_int(mmb_val v) { (void)v; return 0; }
+void mmb_gfx_set_mode(int m, int b) { (void)m; (void)b; }
+void mmb_gfx_reset_console(int w) { (void)w; }
+int mmb_vfs_resolve(const char *p, char *o, int n) { (void)p; (void)o; (void)n; return 0; }
+void mmb_console_write(const char *s) { (void)s; }
+void mmb_hw_cursor(int s) { (void)s; }
+const char *mmb_prompt(void) { return ""; }
+int pt_menus_confirm_quit(void) { return 0; }
+void tui_begin(void) {}
+void tui_end(void) {}
+void tui_invalidate(void) {}
+void tui_fill(int x, int y, int w, int h, int ch, int fg, int bg)
+{
+	(void)x; (void)y; (void)w; (void)h; (void)ch; (void)fg; (void)bg;
+}
+int tui_cols(void) { return 80; }
+int tui_rows(void) { return 25; }
+void tui_pad(int x, int y, const char *s, int w, int fg, int bg)
+{
+	(void)x; (void)y; (void)s; (void)w; (void)fg; (void)bg;
+}
+void tui_flush_no_present(void) {}
+void tui_flush(void) {}
 """
 
 
@@ -200,6 +259,7 @@ def _build(tmp_path):
         lib += ".so"
     cmd += [
         "-o", lib,
+        CMD_PAINT_C,
         os.path.join(SRC, "paint_undo.c"),
         os.path.join(SRC, "paint_select.c"),
         os.path.join(SRC, "paint_tools.c"),
@@ -245,6 +305,23 @@ def _bind(lib):
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
     ]
     lib.pt_cursor_restore.argtypes = []
+    lib.tst_mouse.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+    ]
+    lib.tst_active.argtypes = [ctypes.c_int]
+    lib.tst_mouse_down.restype = ctypes.c_int
+    lib.tst_canvas_nonzero.restype = ctypes.c_int
+    lib.tst_mouse_down_for.argtypes = [ctypes.c_int]
+    lib.tst_mouse_down_for.restype = ctypes.c_int
+    lib.tst_canvas_nonzero_for.argtypes = [ctypes.c_int]
+    lib.tst_canvas_nonzero_for.restype = ctypes.c_int
+    lib.tst_switch.argtypes = [ctypes.c_int]
+    lib.mmb_paint_poll.argtypes = []
+    lib.mmb_paint_console_deactivated.argtypes = [ctypes.c_int]
+    lib.mmb_paint_console_activated.argtypes = [ctypes.c_int]
+    lib.mmb_paint_key.argtypes = [ctypes.c_char]
+    lib.mmb_paint_key.restype = ctypes.c_char_p
+    lib.mmb_in_paint.restype = ctypes.c_int
 
 
 def test_undo_history_is_per_console(lib):
@@ -356,3 +433,121 @@ def test_cursor_background_is_per_console(lib):
     lib.tst_screen_set(100, 100, 0xABCDEF)
     lib.pt_cursor_restore()
     assert lib.tst_screen(100, 100) == 0x123456
+
+
+def test_paint_stroke_does_not_commit_across_console_switch(lib):
+    """#811: a button held on PAINT's screen must not commit a stroke when
+    focus returns from another console.
+
+    The pointer is a machine-wide device whose poll only runs on the active
+    screen. Pressing on console 0 starts a line preview; switching away while
+    held must cancel it, so releasing on console 1 and switching back cannot
+    commit a ghost line from the stale press point."""
+    _bind(lib)
+
+    # Console 0 runs PAINT with the line tool; the canvas is 64x48 at the
+    # usual (64, 16) screen origin, so screen = canvas + (64, 16).
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+    lib.tst_tool(PT_TOOL_LINE)
+
+    # Press on canvas (10,10) and drag to (36,34) while still held.
+    lib.tst_mouse(1, 64 + 10, 16 + 10, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 1
+
+    lib.tst_mouse(1, 64 + 36, 16 + 34, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_canvas_nonzero() > 0	# live line preview
+
+    # Focus leaves console 0 with the button still held (as console_do_switch
+    # does): the in-progress stroke is dropped and its preview reverted.
+    lib.tst_switch(1)
+    assert lib.tst_mouse_down_for(0) == 0
+    assert lib.tst_canvas_nonzero_for(0) == 0
+
+    # The release happens on console 1.
+    lib.tst_mouse(1, 64 + 36, 16 + 34, 0)
+
+    # Switching back must not fire a tool action from the stale point.
+    lib.tst_switch(0)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 0
+    assert lib.tst_canvas_nonzero() == 0
+
+
+def test_held_button_does_not_begin_stroke_on_switch_in(lib):
+    """#814: a button already held as a PAINT console becomes active is not a
+    fresh press on that screen, so it must not begin a stroke.
+
+    The pointer is machine-wide: holding the button on console 0 and switching
+    to console 1 (also PAINT) must not call pt_tool_begin() on console 1 from
+    the carried-over hold. Only an up->down edge seen here is a press."""
+    _bind(lib)
+
+    # Console 1 is a background PAINT session that never saw a press.
+    lib.tst_set_console(1)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    # Console 0 runs PAINT and observes a real press on its canvas.
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+    lib.tst_mouse(1, 64 + 20, 16 + 20, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 1		# stroke live on console 0
+
+    # Focus moves to console 1 with the button still held.
+    lib.tst_switch(1)
+    assert lib.tst_console() == 1
+    assert lib.tst_mouse_down_for(1) == 0	# dest had no press of its own
+
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 0		# held button is not an edge
+    assert lib.tst_canvas_nonzero() == 0
+
+    # Releasing and pressing again on this screen is a fresh edge.
+    lib.tst_mouse(1, 64 + 20, 16 + 20, 0)
+    lib.mmb_paint_poll()
+    lib.tst_mouse(1, 64 + 20, 16 + 20, LEFT)
+    lib.mmb_paint_poll()
+    assert lib.tst_mouse_down() == 1
+
+
+def test_buffered_escape_is_dropped_across_console_switch(lib):
+    """#815: a lone Esc buffered on one screen must not resolve after a switch.
+
+    PAINT holds a lone Esc for PT_ESC_IDLE_MS so it can tell it from the lead
+    byte of a CSI/SS3 sequence. The clock is per console; time that passes on a
+    background screen must not cash the stale Esc in as a real one that closes
+    a menu or quits."""
+    _bind(lib)
+
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    lib.mmb_paint_key(b"\x1b")		# lone Esc buffered on console 0
+    lib.tst_switch(1)			# leave before the idle window elapses
+    lib.tst_switch(0)			# and come back
+
+    lib.mmb_paint_poll()
+    assert lib.mmb_in_paint() == 1	# the stale Esc must not quit PAINT
+
+
+def test_armed_alt_prefix_is_dropped_across_console_switch(lib):
+    """#815: an Alt prefix armed on one screen must not survive a switch, or an
+    ``x`` typed on return would quit PAINT as Alt+X."""
+    _bind(lib)
+
+    lib.tst_set_console(0)
+    lib.tst_reset(64, 48)
+    lib.tst_active(1)
+
+    lib.mmb_paint_key(b"\x01")		# Alt prefix armed on console 0
+    lib.tst_switch(1)
+    lib.tst_switch(0)
+    lib.mmb_paint_key(b"x")		# would be Alt+X if the prefix survived
+    assert lib.mmb_in_paint() == 1

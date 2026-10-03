@@ -12,7 +12,7 @@ universal macOS app.
 
 ## Boot & sessions
 - [ ] Boot screen shows the centred mmcore logo, `mmcore operating system - <version> - 2026 (c) Marnix Kok`, a blank line, then `MMBasic` with the `Copyright 2011-2026 Geoff Graham` and `Copyright 2016-2026 Peter Mather` notices, a blank line, and the `Type HELP ME for a short introduction.` prompt. (#536, #730)
-- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. `Ctrl+Alt+F1`…`F4` no longer switches. (#510, #603)
+- [ ] Virtual consoles: `Ctrl+Alt+1`…`4` (top-row or keypad) give independent interpreter, screen, input line and history; switching back preserves the previous screen. On the bare-metal Pi `Ctrl+Alt+F1`…`F12` do not switch (there is no Linux VT); on the framebuffer ISO they switch the Linux VT (tty1 = mmcore, tty2 = shell). (#510, #603, #903)
 
 ## Clock / network
 - [ ] `OPTION NTP ON`, `OPTION NTP SERVER "host[:port]"`, `NTP` one-shot, `OPTION TIMEZONE "Europe/Amsterdam"` (also `UTC+2`, `UTC-5:30`). Confirm `DATE$`/`TIME$`/`DATETIME$` shift and FAT timestamps use local time. (#524)
@@ -35,7 +35,7 @@ universal macOS app.
 - [ ] PAINT: `PAINT [file$]`; keyboard tools and USB mouse (click/drag paint, right-click pick colour); save/reload PNG. (#512, #513)
 - [ ] SPRITE editor: grid-constrained sprite/font editing. (#527)
 - [ ] JUKE: `JUKE [path$]`, folder queue, visualiser, keeps playing off-screen; audio output correct. (#519)
-- [ ] TDF.BAS: `#INCLUDE "A:/lib/TDF.BAS"`, then `TDF.Load` / `TDF.Print` / `TDF.Close`; fonts load from `A:/fonts/tdf/` (`mono/`/`color/`/`deco/`), multi-variation files expose `TDF.Variants%` / `TDF.LoadVariant`. (#557)
+- [ ] TDF: native `TDF LOAD` / `TDF PRINT` / `TDF CLOSE` (plus `TDF USE` slots and the `TDF.*` accessors); fonts load from `A:/fonts/tdf/` (`mono/`/`color/`/`deco/`), multi-variation files expose `TDF.VARIANTS%` / the LOAD variant argument. (#557, #866, #867)
 
 ## Apps / prompt
 - [ ] App PATH: `OPTION PATH` (default `A:/APPS/`), type an app name at the prompt to run it, `APPS` launcher, `Ctrl+Space` picker, boot-to-app setting. (#515, #520)
@@ -48,6 +48,17 @@ universal macOS app.
 ## Desktop-only (skip on Pi)
 - [ ] Host clipboard bridge: copy out and `Ctrl+Shift+V` paste in the AppImage. (#525)
 - [ ] SDL binaries are named `mmcore` / `mmcore.exe`. Windows Authenticode is wired in CI but stays unsigned until a signing certificate secret is configured, so SmartScreen may still warn. (#552, #553)
+
+## Linux framebuffer (KMS/DRM) — `mmcore-fb`
+- [ ] From a text VT (not a desktop session) run `./native/mmcore-fb` (or `SDL_VIDEODRIVER=kmsdrm ./native/mmcore-fb`): the interpreter fills the display from the first frame with no X11/Wayland. (#828, #829)
+- [ ] There is no system cursor: PAINT's tool cursor and the `MOUSE ON` software cursor are the pointer; motion and clicks track. (#829)
+- [ ] With no usable video driver the build exits non-zero with a clear stderr message rather than a blank frame. (#829)
+
+## Live USB / ISO (x86_64)
+- [ ] Boot `mmcore-fb-x86_64.iso` (USB written with `install-usb.sh`, or QEMU): the display reaches the mmcore prompt fullscreen; `Ctrl+Alt+F2` gives a shell on tty2 and `Ctrl+Alt+F1` returns to mmcore with the screen intact; serial ttyS0 (115200) gives a root shell. Keys typed at the mmcore prompt do not leak into tty1, and `Ctrl+C` still means BREAK, not SIGINT. (#833, #834, #903)
+- [ ] `sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX`, boot, create a `.BAS` file on `C:`, reboot: the file is still there. (#835)
+- [ ] `sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0` (or the stick), boot, create a `.BAS` file on `C:`, reboot: the file is still there and the session is not a RAM-only live image. Closing the lid and opening it again leaves `C:` mounted.
+- [ ] Ethernet: plug in and confirm `IPCONFIG` shows an address. Wi-Fi: `OPTION WIFI COUNTRY`, `OPTION WIFI "ssid","psk"`, then `IPCONFIG`. (#836)
 
 ## Known caveats
 - macOS was omitted from v0.196.0–v0.199.0 (the notarization profile was

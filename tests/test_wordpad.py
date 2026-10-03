@@ -30,8 +30,17 @@ def _keys(con, data: bytes, quiet: float = 0.5) -> str:
     return _plain(con.drain(quiet=quiet).decode(errors="replace"))
 
 
-def _quit(con) -> str:
-    return _keys(con, bytes([24]))
+def _quit(con, quiet: float = 0.6) -> str:
+    """Quit via Alt+X (not Ctrl+X, which now cuts).
+
+    When the buffer is dirty WORDPAD asks before exiting; discard the changes
+    so the existing callers keep their old "leave now" behaviour.  A clean
+    exit shows no prompt and nothing extra is sent.
+    """
+    seen = _keys(con, bytes([1]) + b"x", quiet=quiet)
+    if "save changes" in seen.lower() or "discard" in seen.lower():
+        seen += _keys(con, b"d", quiet=quiet)
+    return seen
 
 
 def _alt_menu(con, letter: bytes, quiet: float = 0.5) -> str:
@@ -351,6 +360,186 @@ def test_wordpad_copy_paste(kernel_image):
         assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
+
+
+def test_wordpad_ctrl_x_cuts_selection_not_exit(kernel_image):
+    """#971: Ctrl+X cuts the selection and keeps WORDPAD open."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CUT.MD"')
+        _keys(con, b"one two", quiet=0.7)
+        # Select the trailing " two" (4 chars) with Shift+Left.
+        _keys(con, b"\x1b[1;2D" * 4, quiet=0.5)
+        cut = _keys(con, bytes([24]), quiet=0.7)
+        assert "one" in cut
+        # Still inside WORDPAD: the File->Save menu path must work.
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CUT.MD", 1)
+        assert lines[0] == "[one]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_x_no_selection_is_noop(kernel_image):
+    """#971: Ctrl+X with no selection neither exits nor cuts the line."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "NOX.MD"')
+        _keys(con, b"keep", quiet=0.6)
+        _keys(con, bytes([24]), quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "NOX.MD", 1)
+        assert lines[0] == "[keep!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_c_copy_ctrl_v_paste(kernel_image):
+    """#971: Ctrl+C copies the selection and Ctrl+V pastes it at the caret."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CP.MD"')
+        _keys(con, b"copy me", quiet=0.7)
+        # Select " me" (3 chars), copy, go to end, paste.
+        _keys(con, b"\x1b[1;2D" * 3, quiet=0.5)
+        _keys(con, bytes([3]), quiet=0.5)
+        _keys(con, b"\x1b[F", quiet=0.4)
+        _keys(con, bytes([22]), quiet=0.6)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CP.MD", 1)
+        assert lines[0] == "[copy me me]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_clean_quit_no_prompt(kernel_image):
+    """#972: an unmodified buffer quits with no confirmation."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, "WORDPAD")
+        out = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" not in out.lower(), out
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_cancel_keeps_open(kernel_image):
+    """#972: Cancel on the dirty-exit prompt keeps the buffer intact."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "DIRTY.MD"')
+        _keys(con, b"draft", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"c", quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "DIRTY.MD", 1)
+        assert lines[0] == "[draft!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_discard_exits_without_saving(kernel_image):
+    """#972: Discard exits and leaves the on-disk file untouched."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "DISC.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "ORIGINAL"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _open(con, 'WORDPAD "DISC.MD"')
+        _keys(con, b" plus", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"d", quiet=0.7)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "DISC.MD", 1)
+        assert lines[0] == "[ORIGINAL]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_save_saves_then_exits(kernel_image):
+    """#972: Save on the dirty-exit prompt writes the file and exits."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "SAVEQ.MD"')
+        _keys(con, b"saved text", quiet=0.6)
+        _keys(con, bytes([1]) + b"x", quiet=0.7)
+        _keys(con, b"s", quiet=0.8)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "SAVEQ.MD", 1)
+        assert lines[0] == "[saved text]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_save_write_failure_is_surfaced(kernel_image):
+    """#975: a failed write is reported, not mistaken for a missing path.
+
+    B: is the read-only package mount, so ``mmb_vfs_write()`` always fails
+    there (``vfs.c`` returns -1 for letter B).  That gives a deterministic
+    failing write without needing read-only/full media, so both explicit-save
+    entry points - File->Save and F2 - can be checked end to end: the old
+    ``if (!wp_save())`` treated -1 exactly like "no path" and silently ignored
+    it, leaving the dirty marker with no error.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "B:/FAIL.MD"')
+        _keys(con, b"hello", quiet=0.5)
+
+        # File -> Save must surface the write failure.
+        _alt_menu(con, b"f", quiet=0.4)
+        saved = _keys(con, b"s", quiet=0.8)
+        assert "save failed" in saved.lower(), saved
+
+        # Editing clears the notice...
+        cleared = _keys(con, b"!", quiet=0.5)
+        assert "save failed" not in cleared.lower(), cleared
+
+        # ...and F2 quick-save must surface it again, not swallow it.
+        f2 = _keys(con, b"\x1b[12~", quiet=0.8)
+        assert "save failed" in f2.lower(), f2
+
+        # Still in WORDPAD: the buffer survived (Alt+X then Discard exits).
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_save_failure_handling_covers_both_call_sites():
+    """#975: guard both writers against the silent ``!wp_save()`` fall-through.
+
+    The QEMU test above proves the menu path and F2 surface a real write
+    failure; this cheap structural check keeps a future edit from
+    reintroducing the ``if (!wp_save())`` pattern that treated -1 like 0.
+    """
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)  # ignore documentation
+    assert "!wp_save()" not in code, "wp_save() failure (-1) must not be ignored"
+    assert code.count("wp_save_cmd();") >= 2, (
+        "File->Save and F2 should share wp_save_cmd()"
+    )
 
 
 def _pane_left_px(con):
@@ -855,20 +1044,91 @@ def test_wordpad_enter_empty_top_item_terminates(kernel_image):
         con.stop()
 
 
-def test_wordpad_periodic_autosave_writes_sidecar(kernel_image):
-    """Issue #516/#521: a dirty buffer is checkpointed to <path>.rec."""
+def _repo_source(rel: str) -> str:
+    return open(os.path.join(_REPO, rel), encoding="utf-8").read()
+
+
+def test_wordpad_autosave_interval_is_shared_one_minute():
+    """#973/#1011: WORDPAD uses the shared 60 s checkpoint period."""
+    priv = _repo_source(os.path.join("mmbasic", "include", "mmb_priv.h"))
+    assert re.search(r"#define\s+MMB_AUTOSAVE_MS\s+60000\b", priv), (
+        "MMB_AUTOSAVE_MS should be 60000ms"
+    )
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    assert "MMB_AUTOSAVE_MS" in src
+    assert "#define WP_AUTOSAVE_MS" not in src
+
+
+def _ini_path(con):
+    for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
+        out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
+        con.send_line("CLOSE #1")
+        if out == "":
+            return path
+    raise AssertionError("settings INI not found on A: or C:")
+
+
+def _read_ini(con, path=None):
+    if not path:
+        path = _ini_path(con)
+    assert con.send_line("NEW") == ""
+    assert con.send_line(f'10 OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+    assert con.send_line("30 LINE INPUT #1, A$") == ""
+    assert con.send_line("40 PRINT A$") == ""
+    assert con.send_line("50 GOTO 20") == ""
+    assert con.send_line("70 CLOSE #1") == ""
+    return con.send_line("RUN", timeout=8)
+
+
+def test_option_autosave_default_on_and_persists(console):
+    """#1011: OPTION AUTOSAVE defaults ON, toggles, and round-trips the INI."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL").upper()
+    assert "OPTION AUTOSAVE ON" in all_listed, all_listed
+    assert "AUTOSAVE" not in console.send_line("OPTION LIST").upper()
+
+    assert console.send_line("OPTION AUTOSAVE OFF") == ""
+    listed = console.send_line("OPTION LIST").upper()
+    assert "OPTION AUTOSAVE OFF" in listed, listed
+    assert "autosave=0" in _read_ini(console)
+    assert console.send_line("OPTION AUTOSAVE ON") == ""
+    assert "autosave=1" in _read_ini(console)
+
+
+def test_wordpad_no_early_sidecar_checkpoint(kernel_image):
+    """#973: a dirty named buffer is not checkpointed within a few seconds.
+
+    The 60s interval cannot be waited out in QEMU, so this is the honest
+    negative window: type, wait ~3s, and assert no `<path>.rec` appeared.  The
+    positive sidecar read/restore paths are covered by the recovery tests.
+    """
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open(con, 'WORDPAD "AUTO.MD"')
         _keys(con, b"draft text", quiet=0.5)
-        time.sleep(2.2)
+        time.sleep(3.0)
         _quit(con)
-        assert con.send_line('OPEN "AUTO.MD.REC" FOR INPUT AS #1') == ""
-        assert con.send_line("LINE INPUT #1, A$") == ""
-        got = con.send_line("PRINT A$")
-        assert con.send_line("CLOSE #1") == ""
-        assert "draft text" in got
+        listing = con.send_line("DIR").upper()
+        assert "AUTO.MD.REC" not in listing, listing
+    finally:
+        con.stop()
+
+
+def test_wordpad_option_autosave_off_blocks_sidecar(kernel_image):
+    """#1011: OPTION AUTOSAVE OFF suppresses WORDPAD's periodic sidecar."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION AUTOSAVE OFF") == ""
+        _open(con, 'WORDPAD "OFFAUTO.MD"')
+        _keys(con, b"draft text", quiet=0.5)
+        time.sleep(3.0)
+        _quit(con)
+        listing = con.send_line("DIR").upper()
+        assert "OFFAUTO.MD.REC" not in listing, listing
+        assert con.send_line("OPTION AUTOSAVE ON") == ""
     finally:
         con.stop()
 

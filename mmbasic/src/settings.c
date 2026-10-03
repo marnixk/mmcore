@@ -233,6 +233,8 @@ static void apply_core(const char *k, const char *v)
 	}
 	else if (mmb_keyword_eq(k, "edit_jump_break"))
 		G.opt.edit_jump_break = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "autosave"))
+		G.opt.autosave = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "y_axis_up"))
 		G.opt.y_axis_up = parse_int(v);
 	else if (mmb_keyword_eq(k, "angle_degrees"))
@@ -376,6 +378,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "theme", G.opt.theme);
 	kv_int(buf, sizeof(buf), "edit_theme", G.opt.edit_theme);
 	kv_int(buf, sizeof(buf), "edit_jump_break", G.opt.edit_jump_break);
+	kv_int(buf, sizeof(buf), "autosave", G.opt.autosave);
 	kv_int(buf, sizeof(buf), "y_axis_up", G.opt.y_axis_up);
 	kv_int(buf, sizeof(buf), "angle_degrees", G.opt.angle_degrees);
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
@@ -525,13 +528,15 @@ void mmb_settings_load(void)
 	 * that as the system theme and leave the editor following it. */
 	if (!saw_theme_key && saw_edit_theme_key)
 	{
-		if (G.opt.edit_theme >= 0 && G.opt.edit_theme < 10)
+		if (G.opt.edit_theme >= 0 &&
+		    G.opt.edit_theme < mmb_editor_theme_count())
 			G.opt.theme = G.opt.edit_theme;
 		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
 	}
-	if (G.opt.theme < 0 || G.opt.theme >= 10)
+	if (G.opt.theme < 0 || G.opt.theme >= mmb_editor_theme_count())
 		G.opt.theme = MMB_OPT_DEFAULT_THEME;
-	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM || G.opt.edit_theme >= 10)
+	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM ||
+	    G.opt.edit_theme >= mmb_editor_theme_count())
 		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
 	if (G.opt.ethernet_enabled)
 		G.opt.wifi_enabled = 0;

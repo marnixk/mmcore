@@ -163,6 +163,37 @@ def test_second_console_term_reports_in_use(native_mmcore, tmp_path):
     assert len(srv.rx) == 1, "console 2 must not reach the net layer"
 
 
+def test_new_on_other_console_keeps_socket_owned(native_mmcore, tmp_path):
+    """#801: NEW on a console that does not own the shared socket must not
+    release it, or the next OPEN on that console resets the owner's live
+    connection out from under it."""
+    srv = _Listener()
+    try:
+        s = NativeSession(tmp_path)
+        s.feed('OPEN "%s" AS #1' % _tcp(srv.port))
+        s.wait_ms(600)
+        s.key("ctrl+alt+2")
+        s.wait_ms(500)
+        s.feed("NEW")
+        s.wait_ms(400)
+        # Console 2 still must not be able to claim the socket.
+        s.feed('OPEN "%s" AS #2' % _tcp(srv.port))
+        s.wait_ms(600)
+        s.key("ctrl+alt+1")
+        s.wait_ms(500)
+        # Console 1 still owns it and its connection is intact.
+        s.feed('PRINT #1, "PING"')
+        s.wait_ms(600)
+        s.quit()
+        out = s.run()
+    finally:
+        srv.close()
+
+    assert "?IN USE: TCP connection open on console 1" in out, out
+    assert len(srv.rx) == 1, "console 2 must not reach the net layer"
+    assert srv.wait_rx(0, b"PING\n") == b"PING\n"
+
+
 def test_closing_tcp_file_releases_ownership(native_mmcore, tmp_path):
     """CLOSE #1 releases the machine-wide socket for the next console."""
     srv = _Listener()

@@ -77,6 +77,18 @@ int main(int argc, char **argv)
 	expect_eq("garbage", mmb_tdf_count((const unsigned char *)"not a tdf", 9), 0);
 	expect_eq("too short", mmb_tdf_count(single, 10), 0);
 
+	/* #1021: colour attributes translate from IBM/VGA nibble order to the
+	 * ANSI index order the FILES preview paints. */
+	expect_eq("ibm 1 -> ansi 4", mmb_tdf_ansi_colour(1), 4);
+	expect_eq("ibm 4 -> ansi 1", mmb_tdf_ansi_colour(4), 1);
+	expect_eq("ibm 3 -> ansi 6", mmb_tdf_ansi_colour(3), 6);
+	expect_eq("ibm 6 -> ansi 3", mmb_tdf_ansi_colour(6), 3);
+	expect_eq("ansi black", mmb_tdf_ansi_colour(0), 0);
+	expect_eq("ansi white", mmb_tdf_ansi_colour(15), 15);
+	expect_eq("ansi bright blue", mmb_tdf_ansi_colour(9), 12);
+	expect_eq("ansi bright red", mmb_tdf_ansi_colour(12), 9);
+	expect_eq("masked", mmb_tdf_ansi_colour(31), 15);
+
 	free(single);
 	free(multi);
 	if (fails)

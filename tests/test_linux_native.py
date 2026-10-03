@@ -41,6 +41,11 @@ def _run(binary, text):
     return proc.stdout + proc.stderr
 
 
+def test_shutdown_unsupported_on_stdio_host(mmb_linux):
+    out = _run(mmb_linux, "SHUTDOWN\n")
+    assert "?SHUTDOWN" in out.upper()
+
+
 def test_native_version_header_regenerates_on_make(tmp_path):
     """#747: the native Makefile must FORCE mmb_version.h to regenerate.
 
@@ -334,11 +339,11 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
 
 
 def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
-    """#666: DIR lists full long names and flags a cut listing with ``... more``.
+    """#666/#981: DIR lists full long names and no longer cuts a big folder.
 
     The structured listing raised the name cap from 80 to 256, so a long host /
-    FAT name is shown whole; a folder over the entry cap gets the note instead
-    of the silent cut the old 4096-byte newline listing had.
+    FAT name is shown whole. The entry buffer is now heap-grown until the whole
+    folder fits, so neither the long nor the wide listing reports ``... more``.
     """
     root = tmp_path / "drives"
     long_dir = root / "C" / "LONG666"
@@ -360,16 +365,17 @@ def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
     out = _run_env(mmb_linux, program, env)
     assert long_name in out, "long name was truncated"
     assert "SHORT.TXT" in out
-    # One note for the long listing and one for the wide listing.
-    assert out.count("... more") == 2, out
+    # No cap remains, so neither listing is cut.
+    assert "... more" not in out, out
+    assert "F519.TXT" in out
 
 
 def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
-    """#676: a folder past DIR_ENT_MAX keeps the sorted-first 512 entries.
+    """#981: a folder past the old 512 cap lists completely and stays sorted.
 
-    The POSIX backend used to stop readdir() at the cap and only then sort, so
-    the survivors were whichever names the filesystem enumerated first. The cap
-    must keep exactly the names a sorted full listing would show first.
+    #676 made the bounded scan keep the sorted-first entries instead of an
+    arbitrary first-N cut. The buffer is now heap-grown until the whole folder
+    fits, so no sorted entry is dropped and the order is preserved.
     """
     root = tmp_path / "drives"
     many_dir = root / "C" / "CAP676"
@@ -379,19 +385,17 @@ def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
 
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR "C:/CAP676"\n', env)
-    assert out.count("... more") == 1, out
-    # Sorted-first 512 of 520 = F000..F511; the tail F512..F519 is dropped.
-    missing = [i for i in range(512) if f"F{i:03d}.TXT" not in out]
-    assert not missing, f"sorted-first entries dropped: {missing[:5]}"
-    leaked = [i for i in range(512, 520) if f"F{i:03d}.TXT" in out]
-    assert not leaked, f"unsorted tail survived the cap: {leaked}"
+    assert "... more" not in out, out
+    missing = [i for i in range(520) if f"F{i:03d}.TXT" not in out]
+    assert not missing, f"entries dropped: {missing[:5]}"
+    assert out.index("F000.TXT") < out.index("F519.TXT")
 
 
 def test_posix_list_entries_lazy_size(mmb_linux, tmp_path):
-    """#694: the POSIX backend keeps sizes without stat()ing the dropped tail.
+    """#694/#981: a large host folder lists completely with correct sizes.
 
-    The scan now fills sizes only for the entries that survive the cap, so a
-    large host folder still reports the right size for a kept file.
+    The scan fills sizes only for the entries it keeps; with the caps removed
+    every entry is kept, so a large folder still reports the right size.
     """
     root = tmp_path / "drives"
     many = root / "C" / "SIZE694"
@@ -403,8 +407,8 @@ def test_posix_list_entries_lazy_size(mmb_linux, tmp_path):
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR "C:/SIZE694"\n', env)
     assert re.search(r"F000\.TXT\s+7\b", out), out
-    # The cap still drops the tail and says so.
-    assert out.count("... more") == 1, out
+    assert "... more" not in out, out
+    assert "F519.TXT" in out
 
 
 def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
@@ -427,12 +431,11 @@ def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
     assert not missing, f"recursive listing dropped {len(missing)} files: {missing[:5]}"
 
 
-def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
-    """#674: DIR /S notes a tree past the accumulated cap with ``... more``.
+def test_recursive_dir_lists_a_large_tree(mmb_linux, tmp_path):
+    """#674/#981: DIR /S lists a tree past the old 4096-result cap.
 
-    Results accumulate as structured entries up to DIR_RESULT_MAX; a larger
-    tree is reported instead of silently dropping entries the way the old
-    4096-byte result buffer did.
+    Results accumulate as structured entries; the array is now heap-grown so a
+    large tree lists completely instead of being cut at DIR_RESULT_MAX.
     """
     root = tmp_path / "drives"
     top = root / "C" / "RTREE"
@@ -445,10 +448,11 @@ def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
 
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR /S "C:/RTREE"\n', env)
-    assert out.count("... more") == 1, out
-    # #693: the recursive listing states the cap it was cut at.
-    assert "... more (4096 max)" in out, out
+    assert "... more" not in out, out
     assert "D0/" in out, out
+    for d in range(10):
+        assert f"D{d}/f0000.txt" in out, f"missing D{d}/f0000.txt"
+        assert f"D{d}/f0419.txt" in out, f"missing D{d}/f0419.txt"
 
 
 def test_default_drive_root_creates_only_c(mmb_linux, tmp_path):
@@ -1216,13 +1220,19 @@ def test_macos_app_bundle(mmb_linux, tmp_path):
         )
     proc = subprocess.run(
         [str(exe)],
-        input='PRINT "MACOS_BUNDLE_OK"\n',
+        input='PRINT "MACOS_BUNDLE_OK"\nCREDITS\n',
         text=True,
         capture_output=True,
         timeout=120,
         env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
     )
-    assert "MACOS_BUNDLE_OK" in (proc.stdout + proc.stderr)
+    out = proc.stdout + proc.stderr
+    assert "MACOS_BUNDLE_OK" in out
+    # #780: the binary baked into the bundle must report the clean release
+    # version (v-prefixed to match the console), not the pre-tag git-describe
+    # suffix that a HEAD-before-tag build would embed.
+    assert "v9.9.9" in out, f"bundle must report v9.9.9, got: {out[-500:]}"
+    assert "9.9.9-" not in out, "no git-describe suffix in the bundled binary"
 
 
 @pytest.mark.skipif(
@@ -1261,6 +1271,28 @@ def test_native_packaging_derives_icons_from_branding():
     assert "assets" in gen and "mmcore-app-icon.png" in gen
     assert "gen-appicon.py" in mac and "--iconset" in mac
     assert "gen-appicon.py" in lin and "mmcore.png" in lin
+
+
+def test_native_packaging_bakes_release_version_into_binary():
+    """#780: both packaging scripts pass an explicit VERSION into the native
+    build as MMB_VERSION (clean, v-prefixed like the console build), so the
+    in-app banner/CREDITS show the release version rather than the pre-tag
+    git-describe suffix. An unset VERSION keeps the git-describe dev fallback.
+    """
+    mac = open(
+        os.path.join(REPO, "scripts", "package-macos-app.sh"), encoding="utf-8"
+    ).read()
+    lin = open(
+        os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
+    ).read()
+    for text in (mac, lin):
+        assert 'MMB_VERSION="v${VERSION#v}"' in text, (
+            "explicit VERSION must be v-prefixed"
+        )
+        assert "describe --tags" in text, "git-describe dev fallback missing"
+    # The resolved value must reach the make invocation that compiles the binary.
+    assert 'MMB_VERSION="${MMB_VERSION}"' in mac
+    assert 'build-native.sh" MMB_VERSION="${MMB_VERSION}"' in lin
 
 
 def test_window_identity_and_taskbar_icon():
@@ -1413,6 +1445,60 @@ def test_sdl_video_window_setup(tmp_path):
         capture_output=True,
         text=True,
         env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout
+
+
+def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), name)
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "native"),
+            *extra,
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_framebuffer_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return exe
+
+
+def test_sdl_framebuffer_default_driver(tmp_path):
+    """#828: a KMSDRM build defaults the driver but never overrides one."""
+    env = {k: v for k, v in os.environ.items() if k != "SDL_VIDEODRIVER"}
+
+    fb = _build_sdl_framebuffer_host(
+        tmp_path, "sdl_framebuffer_fb", ["-DMMB_SDL_FRAMEBUFFER=1"]
+    )
+    out = subprocess.run(
+        [fb, "fb"], check=True, capture_output=True, text=True, env=env
+    )
+    assert "all checks passed" in out.stdout
+
+    desktop = _build_sdl_framebuffer_host(tmp_path, "sdl_framebuffer_desktop")
+    out = subprocess.run(
+        [desktop, "desktop"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     assert "all checks passed" in out.stdout
 

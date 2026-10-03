@@ -62,7 +62,8 @@ Lowercase. Prefix `task/`, suffix `-0ccd`.
 - Language, commands, codecs, fonts, tests: `mmbasic/` and `console/`.
 - `picomite-fork/` is reference only — copy out, do not compile it.
 - Circle (`circle/`) stays a submodule.
-- `OPTIONS WIFI` is the stored-credential connect command (not `OPTION WIFI`).
+- `OPTION WIFI` with no arguments connects stored credentials; `OPTION WIFI
+  SCAN` scans and prompts.
 - Prefer tests in `tests/` plus `scripts/build.sh` and
   `.venv/bin/python -m pytest` (targeted first, then relevant neighbours).
 - QEMU harness: `harness/` drives `console/kernel8.img`.

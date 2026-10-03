@@ -10,6 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Linux virtual-terminal plumbing is only meaningful for the KMS/DRM
+ * framebuffer build on Linux; desktop builds never issue VT ioctls. */
+#if defined(MMB_SDL_FRAMEBUFFER) && defined(__linux__)
+#define MMB_SDL_HAVE_VT 1
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <linux/kd.h>
+#include <linux/vt.h>
+#endif
+
 static int s_alt, s_ctrl, s_shift;
 static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
@@ -259,12 +270,140 @@ static void deliver_nav_tilde(int num, int shift, int alt, int ctrl)
 	deliver_csi(body);
 }
 
+int sdl_input_vt_from_key(int sym)
+{
+	if (sym >= SDLK_F1 && sym <= SDLK_F12)
+		return (int)(sym - SDLK_F1) + 1;
+	return 0;
+}
+
+#ifdef MMB_SDL_FRAMEBUFFER
+/* Another Linux VT is foreground; wait for mmcore's VT before delivering more
+ * input. SDL's evdev driver keeps enqueuing events across a VT switch (#922),
+ * so the key/text/mouse handlers gate on this latch. It is set by vt_switch()
+ * and cleared by vt_sync(); non-Linux framebuffer builds never set it. */
+static int s_vt_left;
+#endif
+
+#ifdef MMB_SDL_HAVE_VT
+/* SDL's kmsdrm input reads keys from evdev and mutes the kernel console
+ * keyboard (KDSKBMODE K_OFF), so keystrokes never reach tty1's line
+ * discipline. The kernel therefore never sees Ctrl+Alt+F<n>, and SDL does not
+ * translate it either, so the framebuffer build drives the switch itself:
+ * unmute the console keyboard, ask the VT layer to activate the target, then
+ * re-mute once SDL reacquires mmcore's VT. SDL's KMSDRM_AcquireVT recreates
+ * the surfaces and sends SDL_WINDOWEVENT_RESIZED, which vt_sync() hooks;
+ * vt_sync() is also polled from the input pump. Set MMB_SDL_NO_VT=1 to leave
+ * the ioctls alone (test/automation aid) while still consuming the chord. */
+static int s_vt_fd = -1; /* /dev/tty0, opened on first switch */
+static int s_vt_ours;    /* mmcore's VT, learned when we switch away */
+
+static int vt_ioctl_enabled(void)
+{
+	return getenv("MMB_SDL_NO_VT") == 0;
+}
+
+static int vt_open(void)
+{
+	if (s_vt_fd >= 0)
+		return 1;
+	s_vt_fd = open("/dev/tty0", O_RDWR | O_CLOEXEC);
+	return s_vt_fd >= 0;
+}
+
+static int vt_set_kbd_mode(int mode)
+{
+	return vt_open() && ioctl(s_vt_fd, KDSKBMODE, (unsigned long)mode) == 0;
+}
+
+static int vt_active(void)
+{
+	struct vt_stat st;
+
+	if (!vt_open() || ioctl(s_vt_fd, VT_GETSTATE, &st) != 0)
+		return 0;
+	return st.v_active;
+}
+
+/* Ctrl+Alt+F<n>: leave mmcore for Linux VT n. The target getty can only read
+ * input once the console keyboard is unmuted; SDL's VT_PROCESS release
+ * callback then drops DRM master and pauses. */
+static void vt_switch(int n)
+{
+	if (n < 1 || n > 12 || !vt_ioctl_enabled())
+		return;
+	if (s_vt_ours > 0 && n == s_vt_ours)
+		return; /* already here: keep the keyboard muted */
+	if (!vt_open())
+		return;
+	if (s_vt_ours <= 0)
+		s_vt_ours = vt_active();
+	vt_set_kbd_mode(K_UNICODE);
+	if (ioctl(s_vt_fd, VT_ACTIVATE, (unsigned long)n) == 0)
+		s_vt_left = 1;
+}
+
+/* Once mmcore's VT is foreground again, re-apply the mute and force a repaint
+ * (kmsdrm destroyed the surfaces across the switch). Cheap and idempotent, so
+ * it is safe to call on every window event and frame while waiting. */
+static void vt_sync(void)
+{
+	if (!s_vt_left || !vt_ioctl_enabled())
+		return;
+	if (vt_active() == s_vt_ours)
+	{
+		s_vt_left = 0;
+		vt_set_kbd_mode(K_OFF);
+		sdl_video_mark_dirty();
+	}
+}
+#else
+#ifdef MMB_SDL_FRAMEBUFFER
+static void vt_switch(int n)
+{
+	(void)n;
+}
+#endif
+static void vt_sync(void)
+{
+}
+#endif
+
+#ifdef MMB_SDL_TEST
+/* Test-only: read/set the "another VT is foreground" latch so a host harness
+ * can drive the input gate without real DRM or /dev/tty0 (#922). */
+int sdl_input_test_vt_left(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+void sdl_input_test_set_vt_left(int v)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	s_vt_left = v;
+#else
+	(void)v;
+#endif
+}
+#endif
+
 static void handle_keydown(const SDL_KeyboardEvent *ke)
 {
 	SDL_Keycode k = ke->keysym.sym;
 	int ctrl = (ke->keysym.mod & KMOD_CTRL) != 0;
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
+
+	/* Any keydown ends the previous chord's text window. The flag only
+	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter or
+	 * Ctrl+Alt+<digit> chord, and that event always follows immediately in
+	 * the queue. Ctrl+Alt+F<n> produces no text at all, so without this a
+	 * stale flag would silently eat the next ordinary character (#927). */
+	s_swallow_text = 0;
 
 	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603).
 	 * Both the top-row digits and the numeric keypad are accepted. The old
@@ -274,6 +413,24 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	if (ctrl && alt)
 	{
 		int idx = -1;
+
+#ifdef MMB_SDL_FRAMEBUFFER
+		/* Framebuffer build: on the bare Linux console Ctrl+Alt+F1..F12
+		 * switches the real VT (tty1 is mmcore, tty2 a root shell). A
+		 * desktop host owns this chord, so other builds leave it for
+		 * the app/F-key mapping. mmcore's own consoles stay on
+		 * Ctrl+Alt+1..4 below. */
+		{
+			int vt = sdl_input_vt_from_key((int)k);
+
+			if (vt)
+			{
+				vt_switch(vt);
+				s_swallow_text = 1;
+				return;
+			}
+		}
+#endif
 
 		if (k >= SDLK_1 && k <= SDLK_4)
 			idx = (int)(k - SDLK_1);
@@ -441,8 +598,49 @@ static void handle_text(const SDL_TextInputEvent *te)
 	}
 }
 
+/* True while another VT owns the console: SDL's evdev driver keeps enqueuing
+ * input regardless of the active VT, so it must be dropped here. Always false
+ * on builds without the framebuffer VT latch. */
+static int vt_holds_input(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+static int is_input_event(Uint32 type)
+{
+	switch (type)
+	{
+	case SDL_KEYDOWN:
+	case SDL_KEYUP:
+	case SDL_TEXTINPUT:
+	case SDL_MOUSEMOTION:
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+	case SDL_MOUSEWHEEL:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void handle_event(const SDL_Event *e)
 {
+	if (vt_holds_input() && is_input_event(e->type))
+	{
+		/* #922: another VT is foreground, but SDL still delivers its
+		 * keys/text/mouse to us. Drop them, and clear any modifier the
+		 * switch chord latched so it cannot stick across the switch.
+		 * Window events still flow through so vt_sync() can re-mute the
+		 * keyboard once mmcore's VT returns. */
+		s_alt = s_ctrl = s_shift = 0;
+		s_swallow_text = 0;
+		return;
+	}
+
 	switch (e->type)
 	{
 	case SDL_QUIT:
@@ -451,6 +649,7 @@ static void handle_event(const SDL_Event *e)
 	case SDL_WINDOWEVENT:
 		if (e->window.event == SDL_WINDOWEVENT_CLOSE)
 			sdl_video_request_quit();
+#ifndef MMB_SDL_FRAMEBUFFER
 		else if (e->window.event == SDL_WINDOWEVENT_ENTER)
 			/* The pointer is over our framebuffer: hide the system
 			 * cursor so the app's own sprite is the only pointer
@@ -458,12 +657,21 @@ static void handle_event(const SDL_Event *e)
 			SDL_ShowCursor(SDL_DISABLE);
 		else if (e->window.event == SDL_WINDOWEVENT_LEAVE)
 			SDL_ShowCursor(SDL_ENABLE);
+#endif
 		else if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			 e->window.event == SDL_WINDOWEVENT_RESIZED ||
 			 e->window.event == SDL_WINDOWEVENT_MAXIMIZED ||
 			 e->window.event == SDL_WINDOWEVENT_RESTORED ||
 			 e->window.event == SDL_WINDOWEVENT_EXPOSED)
+		{
 			sdl_video_mark_dirty();
+			/* SDL's KMSDRM_AcquireVT recreates the surfaces and
+			 * sends RESIZED when mmcore's VT comes back, so this is
+			 * where the framebuffer build re-mutes the console
+			 * keyboard. A no-op on desktop builds and until a VT
+			 * switch has been requested. */
+			vt_sync();
+		}
 		break;
 	case SDL_KEYDOWN:
 		if (e->key.repeat && e->key.keysym.sym >= SDLK_F1 &&
@@ -503,4 +711,8 @@ void sdl_input_pump(void)
 
 	while (SDL_PollEvent(&e))
 		handle_event(&e);
+	/* Fallback for a VT switch: if SDL did not send a window event (or the
+	 * acquire callback arrived between frames), notice it here. No-op unless
+	 * a switch is in flight. */
+	vt_sync();
 }

@@ -24,8 +24,10 @@
 #define APPTUI_PICK     0
 #define APPTUI_LAUNCH   1
 
-/* Built-in full-screen apps offered beside user .APP packages. Labels are the
- * human-readable names shown in the launcher (#624). */
+/* Built-in full-screen apps offered beside user .APP packages, in the order
+ * shown in the launcher (labels are the human-readable names, #624). #793
+ * dropped Package/Connect from the offer and put Terminal after Jukebox; the
+ * PACKAGE and CONNECT commands still work when typed directly. */
 typedef struct builtin_app {
 	const char *cmd;
 	const char *label;
@@ -37,11 +39,9 @@ static const builtin_app at_builtins[] = {
 	{ "WORDPAD", "Word processor" },
 	{ "PAINT", "Paint" },
 	{ "JUKE", "Jukebox" },
+	{ "TERM", "Terminal" },
 	{ "HELP", "Help" },
 	{ "SETTINGS", "Settings" },
-	{ "PACKAGE", "Package" },
-	{ "CONNECT", "Connect" },
-	{ "TERM", "Terminal" },
 };
 #define AT_BUILTIN_COUNT ((int)(sizeof(at_builtins) / sizeof(at_builtins[0])))
 
@@ -60,15 +60,15 @@ static const mmb_ed_theme *atth(void)
 	return mmb_editor_theme();
 }
 
-#define AT_FG       ((int)atth()->edit_fg)
-#define AT_BG       ((int)atth()->edit_bg)
+#define AT_FG       ((int)atth()->dlg_fg)
+#define AT_BG       ((int)atth()->dlg_bg)
 #define AT_TITLE_FG ((int)atth()->menu_fg)
 #define AT_TITLE_BG ((int)atth()->menu_bg)
 #define AT_SEL_FG   ((int)atth()->sel_fg)
 #define AT_SEL_BG   ((int)atth()->sel_bg)
 #define AT_HOT      ((int)atth()->hot)
-#define AT_DIM      ((int)atth()->cmt_fg)
-#define AT_STR      ((int)atth()->str_fg)
+#define AT_BRD_FG   ((int)atth()->brd_fg)
+#define AT_BRD_BG   ((int)atth()->brd_bg)
 #define AT_ERR_FG   ((int)atth()->err_fg)
 #define AT_ERR_BG   ((int)atth()->err_bg)
 
@@ -359,16 +359,19 @@ static void at_draw(void)
 		return;
 	tui_begin();
 	mmb_editor_apply_tui_palette();
+	/* Same backdrop + panel chrome as SETTINGS (#793): fill the overlay with
+	 * the menu surface, then draw a brd-framed dialog body. */
+	tui_clear(AT_TITLE_FG, AT_TITLE_BG);
 	/* A small centred overlay dialog (#624), like the editor quick open. */
 	tui_dialog_geom(52, 16, &x, &y, &w, &h);
 	tui_dialog_panel(x, y, w, h, title, AT_FG, AT_BG,
-			 AT_TITLE_FG, AT_TITLE_BG, AT_TITLE_FG, AT_TITLE_BG);
+			 AT_BRD_FG, AT_BRD_BG, AT_TITLE_FG, AT_TITLE_BG);
 
 	if (AT.mode == APPTUI_LAUNCH)
 		tui_puts(x + 2, y + 2, "Choose an app. Esc returns to the REPL.",
-			 AT_STR, AT_BG);
+			 AT_HOT, AT_BG);
 	else
-		tui_puts(x + 2, y + 2, "Choose an app to run.", AT_STR, AT_BG);
+		tui_puts(x + 2, y + 2, "Choose an app to run.", AT_HOT, AT_BG);
 
 	listy = y + 3;
 	listh = (y + h - 2) - listy;
@@ -409,11 +412,11 @@ static void at_draw(void)
 	if (AT.mode == APPTUI_LAUNCH)
 		tui_status_hint_at(x + 1, y + h - 2, w - 2,
 			"<Up/Down> Move  <Enter> Run  <Esc> REPL",
-			AT_HOT, AT_DIM, AT_BG);
+			AT_HOT, AT_FG, AT_BG);
 	else
 		tui_status_hint_at(x + 1, y + h - 2, w - 2,
 			"<Up/Down> Move  <Enter> Run  <Esc> Cancel",
-			AT_HOT, AT_DIM, AT_BG);
+			AT_HOT, AT_FG, AT_BG);
 	tui_cursor(0, 0, 0);
 	tui_flush();
 }

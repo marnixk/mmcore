@@ -106,6 +106,21 @@ def test_files_ansi_page_scroll(fresh_console):
     _keys(con, b"q")
 
 
+def test_files_ansi_sauce_trailer_is_not_rendered(fresh_console):
+    """#1023: the binary SAUCE metadata trailer is not parsed as art.
+
+    SAUCE.ANS holds 30 rows of art (each ``Y`` + CRLF) and a trailing ``^Z``
+    EOF marker followed by a 128-byte SAUCE record. None of that metadata may
+    add a row, so the viewer reports 80x30 rather than 80x31.
+    """
+    con = fresh_console
+    seen = _open_ansi(con, "SAUCE.ANS")
+    assert "[FILES] ANSI SAUCE.ANS 80x30" in seen, seen
+    _keys(con, b"\x1b", quiet=0.8)
+    _keys(con, b"q")
+    assert con.send_line("PRINT 8") == "8"
+
+
 def test_files_ansi_wraps_at_80_columns(fresh_console):
     """A long line with no newline must autowrap at 80 cols, not the MODE width."""
     con = fresh_console

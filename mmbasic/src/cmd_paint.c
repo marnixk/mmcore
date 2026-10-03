@@ -9,9 +9,10 @@
  * the tree building and lay out the chrome.
  *
  * Screen: MODE 18 (640x360). One canvas pixel is one screen pixel. The menu
- * bar is text row 0, the tool column runs down the left edge, the fixed VGA
- * palette is a 4x64 swatch strip across the bottom with the FG/BG indicator
- * at its left end, and the canvas starts black (palette index 0).
+ * bar is text row 0, the tool strip is a 2x9 grid of 32px cells down the left
+ * edge, the fixed VGA palette is a 4x64 swatch strip across the bottom with
+ * the FG/BG indicator at its left end, and the canvas starts black (palette
+ * index 0).
  *
  * PAINT needs a mouse: with none attached (and no test override) it prints a
  * clear message and returns to the prompt without touching the screen.
@@ -28,6 +29,11 @@ static int s_force_mouse;	/* test-only override (#633) */
  * not inherit the other screen's pending key. */
 static int s_alt_pend[MMB_MAX_CONSOLES];
 static int s_saved_mode[MMB_MAX_CONSOLES], s_saved_bits[MMB_MAX_CONSOLES];
+/* The global button state last seen by each console's poll. The mouse is a
+ * machine-wide device, so a button already held as a console becomes active
+ * was never pressed on this screen: only an up->down edge observed here may
+ * begin a stroke (#814). */
+static int s_mouse_btn[MMB_MAX_CONSOLES];
 
 /* ---- escape sequences (#726) ------------------------------------------- *
  * Terminal navigation keys (arrows, Home/End/PageUp/Down, function keys,
@@ -289,6 +295,16 @@ void pt_request_redraw(void)
 	PT.dirty = 1;
 }
 
+/* A modal overlay that covers the canvas owns input while it is up, so the
+ * pointer must stay the UI arrow even when it sits on a canvas pixel (#788,
+ * #791). Menus/dropdowns, the file open/save picker and the text-tool font
+ * picker are the overlays that draw over the canvas. */
+static int pt_overlay_active(void)
+{
+	return pt_menus_active() || pt_file_dialog_active() ||
+	       pt_text_font_picker_active();
+}
+
 void pt_redraw(void)
 {
 	int full;
@@ -316,7 +332,7 @@ void pt_redraw(void)
 		 * this is the only path that can bring the pointer back (#1040).
 		 * The frame already in the buffer is the background to sample. */
 		pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down,
-			pt_menus_active());
+			pt_overlay_active());
 		if (FRAME.dmg_valid || FRAME.pres_valid)
 			pt_present();
 		PT.dirty = 0;
@@ -377,10 +393,11 @@ void pt_redraw(void)
 
 	/* Capture the cursor background from the finished frame and stamp the
 	 * sprite last, so it never samples itself and never gets overpainted.
-	 * While a menu/dialog is open the pointer is forced to the UI arrow even
-	 * over the canvas its dropdown covers (#788). */
+	 * While a modal overlay owns input the pointer is forced to the UI arrow
+	 * even over the canvas it covers (#788): a dropdown, the file picker or
+	 * the text-tool font picker (#791). */
 	pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down,
-		pt_menus_active());
+		pt_overlay_active());
 
 	pt_present();
 
@@ -489,6 +506,13 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	PT.bg = 0;
 	s_esc_state[g_console] = PT_ESC_NONE;
 	s_alt_pend[g_console] = 0;
+	/* A button held as PAINT opens must not begin a stroke before it is
+	 * released: seed the edge tracker from the live device (#814). */
+	{
+		mmb_mouse_state m;
+
+		s_mouse_btn[g_console] = mmb_mouse_read(&m) && (m.buttons & 3);
+	}
 
 	w = pt_clamp(w, 1, PT_MAX_W);
 	h = pt_clamp(h, 1, PT_MAX_H);
@@ -522,6 +546,10 @@ static void pt_enter(const char *name, int have_w, int want_w, int have_h,
 	pt_tools_init();
 	pt_undo_init();
 	pt_menus_init();
+	/* The menu module tracks its own held press: seed it from the same live
+	 * button state so a hold at PAINT entry cannot open a menu with no press
+	 * edge observed here (#821). */
+	pt_menus_console_activate(s_mouse_btn[g_console]);
 	pt_cursor_init();
 	pt_file_init();
 	pt_text_init();
@@ -746,6 +774,13 @@ void mmb_paint_poll(void)
 		int button = left ? PT_BTN_LEFT :
 			     (right ? PT_BTN_RIGHT : 0);
 		int down = (left || right) ? 1 : 0;
+		/* A press only counts when this screen saw the button go down:
+		 * a button already held on arrival (the user held it on the
+		 * console we switched from, or pressed while away) is not a
+		 * fresh press here (#814). */
+		int fresh = down && !s_mouse_btn[g_console];
+
+		s_mouse_btn[g_console] = down;
 
 		/* The menu module sees every pointer poll: a press opens,
 		 * switches or chooses; a release clears its held state; and
@@ -754,7 +789,7 @@ void mmb_paint_poll(void)
 		 * event, so a plain move never steals canvas input. */
 		if (pt_menus_mouse(sx, sy, button, down))
 			changed = 1;
-		else if (down)
+		else if (fresh)
 		{
 			int idx, tool, widx;
 
@@ -809,6 +844,73 @@ void mmb_paint_poll(void)
 int mmb_in_paint(void)
 {
 	return PT.active;
+}
+
+/* A virtual-console switch takes the pointer away from this screen's PAINT
+ * session (#811). The mouse device is global and mmb_paint_poll() does not run
+ * while another console owns the screen, so a button still held when focus
+ * leaves would only be read again on switch-in and commit a stroke from the
+ * stale press point. Drop the in-progress stroke as the screen stops being
+ * active: clear the held-button flag and cancel any live anchor/preview, so no
+ * tool action can fire on return and a release elsewhere cannot extend it. */
+void mmb_paint_console_deactivated(int idx)
+{
+	int save;
+
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	if (!pt_console_state[idx].active)
+		return;
+
+	/* pt_tool_cancel() acts on the console's tool/selection state through
+	 * PT, so evaluate it on the console being left. */
+	save = g_console;
+	g_console = idx;
+	pt_tool_cancel();
+	PT.mouse_down = 0;
+	PT.mouse_button = 0;
+	PT.have_anchor = 0;
+	g_console = save;
+
+	/* A lone Esc or Alt prefix buffered on this screen must not cash in its
+	 * idle window after the switch (#815): the clock is per console, but
+	 * time that elapses while the screen is backgrounded is not this
+	 * screen's. Drop both so returning cannot close a menu or quit PAINT
+	 * from a stale key. */
+	s_esc_state[idx] = PT_ESC_NONE;
+	s_esc_at[idx] = 0;
+	s_alt_pend[idx] = 0;
+}
+
+/* The console switch has handed this screen the foreground (#814). The pointer
+ * is machine-wide, so a button already held right now was not pressed here:
+ * seed this console's last-seen button state from the live device. An up->down
+ * edge observed from now on is the only thing that may begin a stroke; a hold
+ * carried over from the console we left waits for a release and a fresh
+ * press. */
+void mmb_paint_console_activated(int idx)
+{
+	mmb_mouse_state m;
+	int save, down;
+
+	if (idx < 0 || idx >= MMB_MAX_CONSOLES)
+		return;
+	if (!pt_console_state[idx].active)
+		return;
+	if (mmb_mouse_read(&m))
+		down = (m.buttons & 3) ? 1 : 0;
+	else
+		down = 0;
+	s_mouse_btn[idx] = down;
+
+	/* The menu module keeps its own held-press flag per console. A button
+	 * already held on arrival was pressed on the console we left, so seed
+	 * that flag too: otherwise the first held poll on this screen is read as
+	 * a fresh press and opens its menu from a stale edge (#821). */
+	save = g_console;
+	g_console = idx;
+	pt_menus_console_activate(down);
+	g_console = save;
 }
 
 /* ---- entry ------------------------------------------------------------- */
@@ -1121,17 +1223,22 @@ PT_WEAK void pt_menus_close(void)
 {
 }
 
+PT_WEAK void pt_menus_console_activate(int down)
+{
+	(void)down;
+}
+
 /* ---- cursor (#639) ----------------------------------------------------- */
 
 PT_WEAK void pt_cursor_init(void)
 {
 }
 
-PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active, int menu_open)
+PT_WEAK void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay)
 {
 	(void)tool;
 	(void)active;
-	(void)menu_open;
+	(void)overlay;
 	if (sx < 0 || sy < 0)
 		return;
 	pt_fill_rect(sx - 3, sy, 7, 1, 0xFFFFFFu);
@@ -1208,6 +1315,11 @@ PT_WEAK int pt_text_key(int key)
 	return 0;
 }
 
+PT_WEAK int pt_text_font_picker_active(void)
+{
+	return 0;
+}
+
 /* ---- selection (#644) -------------------------------------------------- */
 
 PT_WEAK void pt_select_init(void) {}
@@ -1274,6 +1386,7 @@ void mmb_paint_reset_all(void)
 	memset(s_esc_state, 0, sizeof(s_esc_state));
 	memset(s_esc_at, 0, sizeof(s_esc_at));
 	memset(s_alt_pend, 0, sizeof(s_alt_pend));
+	memset(s_mouse_btn, 0, sizeof(s_mouse_btn));
 	memset(s_saved_mode, 0, sizeof(s_saved_mode));
 	memset(s_saved_bits, 0, sizeof(s_saved_bits));
 	memset(s_frame_state, 0, sizeof(s_frame_state));

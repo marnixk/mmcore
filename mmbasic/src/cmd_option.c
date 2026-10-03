@@ -300,9 +300,18 @@ static void parse_wifi(void)
 		mmb_wlan_apply_country();
 		return;
 	}
+	if (mmb_match("SCAN"))
+	{
+		mmb_skip_sp();
+		if (*G.p != 0 && *G.p != ':' && *G.p != '\'')
+			mmb_syntax();
+		parse_wifi_interactive();
+		return;
+	}
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
-		parse_wifi_interactive();
+		/* Bare OPTION WIFI: connect with the stored credentials. */
+		wifi_connect_stored();
 		return;
 	}
 	{
@@ -597,6 +606,11 @@ static void option_dispatch(void)
 	if (mmb_match("AUTORUN"))
 	{
 		G.opt.autorun = onoff();
+		return;
+	}
+	if (mmb_match("AUTOSAVE"))
+	{
+		G.opt.autosave = onoff();
 		return;
 	}
 	if (mmb_match("COLOURCODE") || mmb_match("COLORCODE"))
@@ -1070,17 +1084,6 @@ static void option_dispatch(void)
 	mmb_syntax();
 }
 
-void mmb_cmd_options(void)
-{
-	mmb_skip_sp();
-	if (!mmb_match("WIFI"))
-		mmb_syntax();
-	mmb_skip_sp();
-	if (*G.p != 0 && *G.p != ':' && *G.p != '\'')
-		mmb_syntax();
-	wifi_connect_stored();
-}
-
 void mmb_cmd_option(void)
 {
 	const char *save = G.p;
@@ -1195,6 +1198,8 @@ void mmb_option_list(int all)
 		ol_line_int(&n, "OPTION BREAK ", G.opt.break_key);
 	if (all || G.opt.autorun)
 		ol_line(&n, G.opt.autorun ? "OPTION AUTORUN ON" : "OPTION AUTORUN OFF");
+	if (all || !G.opt.autosave)
+		ol_line(&n, G.opt.autosave ? "OPTION AUTOSAVE ON" : "OPTION AUTOSAVE OFF");
 	if (all || !G.opt.colourcode || G.opt.colourcode_reverse)
 	{
 		if (G.opt.colourcode_reverse)
