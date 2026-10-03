@@ -43,12 +43,14 @@ All supported modes (n, pixels, depths):
  16   1920x1080    8,12,16,32
  17   384x240      8,12,16,32
  18   640x360      8,12,16,32
- 19   1366x768     8,12,16,32
- 20   683x384      8,12,16,32
+ 19   1376x768     8,12,16,32
+ 20   688x384      8,12,16,32
 
-Mode 19 is a full-screen 1366x768 HDMI display. Mode 20 is half that
-resolution (683x384) and is also full-screen. MODE retunes HDMI to the
-mode's width and height, so both fill the display.
+Mode 19 is a full-screen 1376x768 HDMI display. Mode 20 is half that
+resolution (688x384) and is also full-screen. The widths are rounded up to
+the 16-pixel framebuffer alignment (the Chromebook native 1366/683 would
+otherwise leave a padded pitch that skews graphics). MODE retunes HDMI to
+the mode's width and height, so both fill the display.
 
 Unknown n or bits raises ?INVALID MODE.
 
