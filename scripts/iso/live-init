@@ -25,16 +25,27 @@ printf 'blacklist uas\n' > /etc/modprobe.d/blacklist-uas.conf
 
 for mod in \
 	loop squashfs overlay isofs vfat fat ext4 \
+	crc32c_generic crc32c-intel libcrc32c \
 	nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
 	usb-storage usbcore usb-common \
 	xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
 	sd_mod sr_mod cdrom scsi_mod \
 	ata_piix ata_generic ahci libahci libata \
 	virtio_pci virtio_blk virtio_scsi virtio virtio_ring \
-	mmc_block mmc_core sdhci sdhci-pci
+	mmc_block mmc_core sdhci sdhci-pci sdhci-acpi sdhci-pltfm \
+	rtsx_pci rtsx_pci_sdmmc rtsx_usb rtsx_usb_sdmmc
 do
 	modprobe "$mod" 2>/dev/null || true
 done
+
+# mkfs.ext4 defaults to metadata_csum, which needs the crc32c crypto shash
+# before the MMCORE partition can be mounted as the --read-write overlay
+# upper. ext4 request_module()s "crypto-crc32c"; the initramfs packs no
+# modules.alias, so the alias lookup cannot resolve and the driver is loaded
+# by its real filename here instead (#1037).
+modprobe crc32c_generic 2>/dev/null || true
+modprobe crc32c-intel 2>/dev/null || true
+modprobe libcrc32c 2>/dev/null || true
 
 # #976: a disk installed by mmcore-install also has /boot/rootfs.squashfs on
 # its MMCORE-SYS partition, so scanning for that file alone can run the

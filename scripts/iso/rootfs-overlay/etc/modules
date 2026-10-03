@@ -6,6 +6,22 @@ vfat
 nls_cp437
 nls_iso8859-1
 
+# MMC/SD card-reader host controllers. A microSD written with
+# install-usb.sh --read-write must stay visible so its MMCORE partition can be
+# mounted as C: (and, on a live boot, as the overlay's upper layer). Some
+# Chromebooks expose the card only through one of these modular host drivers,
+# so a missing one means C: falls back to RAM. Missing modules are ignored.
+rtsx_pci
+rtsx_pci_sdmmc
+rtsx_usb
+rtsx_usb_sdmmc
+sdhci
+sdhci_pci
+sdhci_acpi
+sdhci_pltfm
+mmc_block
+mmc_core
+
 # KMS/DRM graphics drivers for common GPUs. Missing modules are ignored, so
 # this list is safe on hardware that does not match. i915 covers Intel
 # integrated graphics (including Chromebooks); amdgpu/radeon/nouveau cover the
