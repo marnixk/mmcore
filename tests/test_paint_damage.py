@@ -17,6 +17,8 @@ import pytest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "mmbasic", "src")
 CMD_PAINT_C = os.path.join(SRC, "cmd_paint.c")
+CURSORS_C = os.path.join(SRC, "paint_cursors.c")
+ART_C = os.path.join(SRC, "paint_cursor_art.c")
 
 DRIVER = r"""
 #include "paint.h"
@@ -35,20 +37,40 @@ static int fill_minx = 1 << 30, fill_miny = 1 << 30;
 static int fill_maxx = -1, fill_maxy = -1, fill_count;
 static int saw_tool_or_pal, saw_menu_row;
 
+/* The pixels the app composes: the raster helpers write here and the cursor
+ * module samples it through tui_get_px (#701). */
+static unsigned g_fb[PT_W * PT_H];
+
 static void rec_fill(int x, int y, int w, int h, unsigned rgb)
 {
-	(void)rgb;
+	int i, j;
+
 	if (w < 1 || h < 1)
 		return;
 	if (x < fill_minx) fill_minx = x;
 	if (y < fill_miny) fill_miny = y;
 	if (x + w - 1 > fill_maxx) fill_maxx = x + w - 1;
 	if (y + h - 1 > fill_maxy) fill_maxy = y + h - 1;
+	for (j = 0; j < h; j++)
+		for (i = 0; i < w; i++)
+		{
+			int px = x + i, py = y + j;
+
+			if (px >= 0 && py >= 0 && px < PT_W && py < PT_H)
+				g_fb[(size_t)py * PT_W + px] = rgb;
+		}
 	fill_count++;
 	if (x < PT_TOOL_W && y + h > PT_CANVAS_Y && y < PT_PAL_Y)
 		saw_tool_or_pal = 1;
 	if (y < PT_MENU_H)
 		saw_menu_row = 1;
+}
+
+unsigned tui_get_px(int x, int y)
+{
+	if (x < 0 || y < 0 || x >= PT_W || y >= PT_H)
+		return 0;
+	return g_fb[(size_t)y * PT_W + x];
 }
 static void rec_present(int y0, int y1) { p_y0 = y0; p_y1 = y1; p_count++; }
 
@@ -217,6 +239,19 @@ int main(void)
 	mmb_paint_poll();		/* later no-button motion is hover */
 	check(menu_motion > 0, "poll_motion_after_release");
 
+	/* 9. #1040: a pointer driven fully off the right edge has no saved block
+	 *    to restore, so nothing is damaged when it comes back. The sprite
+	 *    must still be stamped, or it stays gone forever. */
+	s_mouse.buttons = 0;
+	s_mouse.x = 900;		/* whole sprite off the right edge */
+	s_mouse.y = 200;
+	mmb_paint_poll();
+	reset_rec();
+	s_mouse.x = 320;		/* back inside the canvas */
+	s_mouse.y = 200;
+	mmb_paint_poll();
+	check(fill_count > 0, "cursor_returns_from_right_edge");
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -240,7 +275,7 @@ def damage_driver(tmp_path_factory):
             "-I", os.path.join(REPO, "mmbasic", "third_party"),
             "-I", os.path.join(REPO, "console"),
             "-I", os.path.join(REPO, "native"),
-            "-o", str(exe), str(driver), CMD_PAINT_C,
+            "-o", str(exe), str(driver), CMD_PAINT_C, CURSORS_C, ART_C,
         ],
         check=True,
         cwd=REPO,
@@ -299,3 +334,10 @@ def test_poll_forwards_hover_and_button_up(checks):
         "poll_motion_after_release",
     ):
         assert checks.get(name) is True, name
+
+
+def test_cursor_returns_after_leaving_the_right_edge(checks):
+    """#1040: a sprite fully clipped off the right edge leaves no saved block,
+    so a plain move back inside used to find no damage and skip the stamp. The
+    pointer must be redrawn as soon as it re-enters."""
+    assert checks.get("cursor_returns_from_right_edge") is True
