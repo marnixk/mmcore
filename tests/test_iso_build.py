@@ -285,6 +285,30 @@ def test_persistence_probe_retries_for_a_late_card():
     assert "blkid -L MMCORE" in text
 
 
+def test_whole_disk_live_media_is_mounted_through_a_loop():
+    """#1039: when the ISO is dd'd to the microSD/USB, the live media is the
+    whole disk. Mounting it directly claims the device, so Linux refuses to
+    open the MMCORE partition on that same disk ("Can't open blockdev") and the
+    --read-write overlay and C: never come up. A whole-disk source must be
+    mounted through a read-only loop; the real disk is remembered so pick_mmcore
+    still prefers the partition it booted from."""
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    assert "mount_live_media()" in live
+    assert 'losetup -f' in live
+    assert 'losetup -r "$live_loop" "$dev"' in live
+    assert 'live_disk="$dev"' in live
+    # The whole-disk branch is keyed on disk_of(dev) == dev.
+    assert 'if [ "$(disk_of "$dev")" = "$name" ]; then' in live
+    # The read-write probe passes the real disk, not the loop device.
+    assert 'pick_src="$live_src"' in live
+    assert '[ -n "${live_disk}" ] && pick_src="$live_disk"' in live
+    assert 'pick_mmcore "$pick_src"' in live
+    # The squashfs fallback must not hardcode loop0: the live-media loop now
+    # takes the first free loop device.
+    assert "losetup /dev/loop0 /mnt/media" not in live
+    assert 'lower_loop="$(losetup -f' in live
+
+
 def test_live_boot_pins_root_to_the_live_media():
     """#976: the live boot must use the stick's own squashfs, never an installed
     MMCORE-SYS /boot/rootfs.squashfs. GRUB pins $root by a marker file the

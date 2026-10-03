@@ -215,6 +215,14 @@ silently falls back to a RAM overlay), and the MMC/SD host drivers
 `mmcore-persist.start` retries the label probe for a bounded time so `C:` lands
 on `MMCORE` rather than the RAM overlay.
 
+The dd'd image itself is a whole disk whose ISO9660 is mounted from the whole
+device (`/dev/sda`, not a partition). Mounting that directly would claim the
+disk, and Linux then refuses to open the `MMCORE` partition on the same disk
+(`Can't open blockdev`), so `live-init` mounts a whole-disk live medium through
+a read-only loop instead. The loop keeps the device open without claiming it,
+which leaves the partition mountable as the overlay upper and `C:`. A CD
+(`/dev/sr*`) and a partitioned live medium are mounted directly.
+
 ### Install to hard disk
 
 The live USB can also install mmcore onto an internal disk so the machine boots
