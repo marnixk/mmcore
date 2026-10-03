@@ -100,6 +100,25 @@ def test_framebuffer_iso_doc_documents_chromebooks():
         assert needle in text, needle
 
 
+def test_framebuffer_iso_doc_documents_chromebook_touchpad_drivers():
+    """#1039: the doc must name the touchpad drivers baked into the ISO (so a
+    built-in touchpad is claimed without a post-boot modprobe) and the models
+    that need a kernel the image does not ship."""
+    text = _read(DOC)
+    for needle in (
+        "intel_lpss",
+        "i2c_designware_pci",
+        "chromeos_laptop",
+        "cyapatp",
+        "elan_i2c",
+        "synaptics_i2c",
+        "psmouse",
+        "evdev",
+        "aarch64",
+    ):
+        assert needle in text, needle
+
+
 def test_framebuffer_iso_doc_documents_the_chromebook_hang_and_watchdogs():
     """#1032: the doc must describe the bounded splash, the bounded video
     bring-up that logs to serial, and the hardware-QA steps QEMU cannot run."""

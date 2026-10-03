@@ -50,6 +50,37 @@ i2c_hid_of
 i2c_hid
 hid_multitouch
 
+# Chromebook built-in touchpads that are not an ACPI-enumerated I2C-HID
+# device (#1039). #864 covered the EC + I2C-HID path; a Chromebook whose
+# touchpad binds through a board driver still did nothing because the driver
+# must already be registered when the I2C client is created, and `hwdrivers`
+# (which autoloads by modalias) runs before the DMI/I2C clients appear. These
+# are modules in Alpine's linux-lts (the DesignWare platform core is built in)
+# and bind only when the matching controller is present, so the list is safe
+# on other hardware. The live ISO ships them; no post-boot modprobe is needed.
+#
+# Intel LPSS/DesignWare + PCH I2C host controllers (the touchpad bus).
+intel_lpss
+intel_lpss_acpi
+intel_lpss_pci
+i2c_designware_pci
+i2c_i801
+i2c_smbus
+# Older Chromebooks instantiate the touchpad's I2C client from a DMI table
+# instead of ACPI, so the platform driver must be loaded by name.
+chromeos_laptop
+# Touchpad drivers by controller family: Cypress, Elan, Synaptics (native and
+# RMI4) plus the HID transport drivers for those parts, and the legacy PS/2
+# touchpad some models expose through the EC.
+cyapatp
+elan_i2c
+synaptics_i2c
+rmi_core
+rmi_i2c
+hid_elan
+hid_rmi
+psmouse
+
 # Sound Open Firmware (SOF) audio on Intel Chromebooks (#864). sof-firmware
 # supplies the DSP firmware; the modules bind when a SOF PCI/ACPI device is
 # present and are harmless otherwise.

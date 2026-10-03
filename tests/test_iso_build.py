@@ -841,6 +841,43 @@ def test_overlay_loads_chromebook_modules():
         assert module in text, module
 
 
+def test_overlay_loads_chromebook_touchpad_drivers():
+    """#1039: a Chromebook touchpad that is not an ACPI-enumerated I2C-HID
+    device still needs its I2C host controller and board driver loaded by
+    name, or the built-in touchpad does nothing while a USB mouse works. The
+    live ISO must ship them so no post-boot modprobe is required."""
+    text = open(os.path.join(OVERLAY, "etc", "modules"), encoding="utf-8").read()
+    modules = {
+        line.split("#", 1)[0].strip()
+        for line in text.splitlines()
+        if line.split("#", 1)[0].strip()
+    }
+    for module in (
+        # I2C host controllers (Intel LPSS/DesignWare + PCH SMBus).
+        "intel_lpss",
+        "intel_lpss_acpi",
+        "intel_lpss_pci",
+        "i2c_designware_pci",
+        "i2c_i801",
+        "i2c_smbus",
+        # DMI-instantiated touchpad client driver on older Chromebooks.
+        "chromeos_laptop",
+        # Touchpad drivers by controller family and their HID transports.
+        "cyapatp",
+        "elan_i2c",
+        "synaptics_i2c",
+        "rmi_core",
+        "rmi_i2c",
+        "hid_elan",
+        "hid_rmi",
+        "psmouse",
+    ):
+        assert module in modules, module
+    # The #864 ACPI I2C-HID path stays alongside the new drivers.
+    for module in ("cros_ec", "i2c_hid_acpi", "i2c_hid", "hid_multitouch"):
+        assert module in modules, module
+
+
 def test_rootfs_silences_the_display_banners():
     """#863: no getty/login banner on tty1. /etc/issue and /etc/motd are
     printed by agetty/login on *every* console (including tty1), so they stay
