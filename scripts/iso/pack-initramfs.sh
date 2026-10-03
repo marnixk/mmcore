@@ -11,13 +11,25 @@ INIT_SCRIPT="${SCRIPT_DIR}/live-init"
 
 # Names are normalised (hyphen == underscore) against modules.dep basenames.
 # uas is omitted on purpose: see live-init.
+#
+# crc32c: mkfs.ext4 enables metadata_csum by default, so mounting the MMCORE
+# partition (the --read-write overlay upper) needs the crc32c crypto shash.
+# ext4.ko does not declare it in modules.dep -- the kernel request_module()s
+# "crypto-crc32c" at mount time -- so it must be seeded explicitly or ext4
+# fails with "Cannot load crc32c driver" and the live session silently falls
+# back to a RAM overlay (#1037).
+#
+# rtsx*/sdhci-acpi/pltfm: a Chromebook may expose a microSD only through the
+# full system if the card-reader host driver is modular, so pack them too.
 SEEDS="squashfs overlay isofs vfat fat ext4 nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
+crc32c_generic crc32c-intel libcrc32c \
 usb-storage usbcore usb-common \
 xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
 sd_mod sr_mod cdrom scsi_mod \
 ata_piix ata_generic ahci libahci libata \
 virtio_pci virtio_blk virtio_scsi virtio virtio_ring \
-mmc_block mmc_core sdhci sdhci-pci \
+mmc_block mmc_core sdhci sdhci-pci sdhci-acpi sdhci-pltfm \
+rtsx_pci rtsx_pci_sdmmc rtsx_usb rtsx_usb_sdmmc \
 loop"
 
 die() {

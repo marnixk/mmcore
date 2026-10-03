@@ -236,6 +236,55 @@ def test_read_write_overlay_is_live_boot_only():
         "ext4" in pack.split("SEEDS=", 1)[1].split('"', 2)[1]
 
 
+def test_initramfs_can_mount_the_ext4_read_write_store():
+    """#1037: mkfs.ext4 enables metadata_csum, so ext4 request_module()s
+    "crypto-crc32c" at mount time. ext4.ko does not list it as a dep and the
+    initramfs packs no modules.alias, so the crc32c modules must be seeded and
+    loaded by name. Without them the --read-write overlay upper cannot mount
+    and the live session silently falls back to a RAM overlay."""
+    pack = open(PACK, encoding="utf-8").read()
+    seeds = pack.split("SEEDS=", 1)[1].split('loop"', 1)[0]
+    for mod in ("crc32c_generic", "crc32c-intel", "libcrc32c"):
+        assert mod in seeds, mod
+
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    # The crc32c probe is by real filename (no modules.alias in the initramfs)
+    # and happens before the read-write partition mount.
+    assert "modprobe crc32c_generic" in live
+    assert "modprobe crc32c-intel" in live
+    crc = live.index("modprobe crc32c_generic")
+    mount = live.index('mount -o rw "$rw_dev" /mnt/persist')
+    assert crc < mount, "crc32c must load before the read-write ext4 mount"
+
+
+def test_overlay_loads_card_reader_host_drivers():
+    """A Chromebook can expose the microSD only through a modular host driver;
+    it must be in both the initramfs seed list and the boot module list or C:
+    silently becomes a RAM overlay."""
+    pack = open(PACK, encoding="utf-8").read()
+    seeds = pack.split("SEEDS=", 1)[1].split('loop"', 1)[0]
+    modules = open(os.path.join(OVERLAY, "etc", "modules"), encoding="utf-8").read()
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    for mod in ("rtsx_pci", "rtsx_pci_sdmmc", "sdhci-acpi", "mmc_block"):
+        assert mod in seeds, mod
+    for mod in ("rtsx_pci", "rtsx_pci_sdmmc", "sdhci_acpi", "mmc_core"):
+        assert mod in modules, mod
+    assert "rtsx_pci_sdmmc" in live
+
+
+def test_persistence_probe_retries_for_a_late_card():
+    """#1037: a card whose host driver loads late may miss a one-shot label
+    probe. mmcore-persist.start must retry a bounded number of times so C:
+    still lands on MMCORE instead of the RAM overlay."""
+    text = open(
+        os.path.join(OVERLAY, "etc", "local.d", "mmcore-persist.start"),
+        encoding="utf-8",
+    ).read()
+    assert "MMCORE_PERSIST_WAIT" in text
+    assert "while" in text and "sleep 1" in text
+    assert "blkid -L MMCORE" in text
+
+
 def test_live_boot_pins_root_to_the_live_media():
     """#976: the live boot must use the stick's own squashfs, never an installed
     MMCORE-SYS /boot/rootfs.squashfs. GRUB pins $root by a marker file the

@@ -33,10 +33,24 @@ if mounted /media/mmcore; then
 	exit 0
 fi
 
-DEV="$(blkid -L MMCORE 2>/dev/null || true)"
-if [ -z "${DEV}" ] && [ -e /dev/disk/by-label/MMCORE ]; then
-	DEV="/dev/disk/by-label/MMCORE"
-fi
+# A microSD can enumerate a few seconds after the modules service loads its
+# host driver (and, on a Chromebook, only after the card-reader module is in),
+# so probe the label with a bounded retry rather than one shot. On a boot that
+# genuinely has no MMCORE partition this costs at most MMCORE_PERSIST_WAIT
+# seconds. Without the retry, C: silently falls back to the RAM overlay and
+# settings do not survive a reboot.
+wait="${MMCORE_PERSIST_WAIT:-5}"
+DEV=""
+i=0
+while [ "$i" -lt "$wait" ]; do
+	DEV="$(blkid -L MMCORE 2>/dev/null || true)"
+	if [ -z "${DEV}" ] && [ -e /dev/disk/by-label/MMCORE ]; then
+		DEV="/dev/disk/by-label/MMCORE"
+	fi
+	[ -n "${DEV}" ] && break
+	i=$((i + 1))
+	[ "$i" -lt "$wait" ] && sleep 1
+done
 [ -n "${DEV}" ] || exit 0
 
 clear_ro "${DEV}"

@@ -207,6 +207,14 @@ as a virtual CD (`/dev/sr*`) and the real card appears a few seconds later as
 Closing the lid syncs the volume and leaves it mounted, so resume does not
 drop `C:` back onto the RAM overlay.
 
+Two things make that early mount reliable on a Chromebook. The initramfs packs
+the `crc32c` crypto shash that `mkfs.ext4`'s default `metadata_csum` needs (an
+ext4 mount otherwise fails with `Cannot load crc32c driver` and the session
+silently falls back to a RAM overlay), and the MMC/SD host drivers
+(`rtsx_pci_sdmmc`, `sdhci_acpi`, ...). If the card still enumerates late,
+`mmcore-persist.start` retries the label probe for a bounded time so `C:` lands
+on `MMCORE` rather than the RAM overlay.
+
 ### Install to hard disk
 
 The live USB can also install mmcore onto an internal disk so the machine boots
