@@ -31,11 +31,25 @@ def _peak_lit(con: MMBasicConsole, samples: int = 12, gap: float = 0.3) -> float
     return best
 
 
-def _open_juke(con: MMBasicConsole, arg: str) -> str:
+def _open_juke(con: MMBasicConsole, arg: str, keep_mode: bool = False) -> str:
+    """Open JUKE.
+
+    Most layout tests pin the 960x540 baseline first so their geometry is
+    stable; ``keep_mode=True`` instead starts JUKE in whatever mode the
+    console is already in (the #1042 behaviour).
+    """
     assert con._ser is not None
+    if not keep_mode:
+        con.send_line("MODE 12,32")
     con.drain(quiet=0.15)
     con._ser.sendall(f'JUKE "{arg}"\r'.encode())
     return con.drain(quiet=0.9, timeout=10).decode(errors="replace")
+
+
+def _juke_scale(w: int, h: int) -> int:
+    """Mirror JUKE's layout scale: percent of the 960x540 design (see cmd_juke.c)."""
+    s = min(w * 100 // 960, h * 100 // 540)
+    return max(60, min(200, s))
 
 
 def _quit_juke(con: MMBasicConsole, key: bytes = b"\x1b") -> None:
@@ -627,6 +641,68 @@ def test_juke_shows_module_song_titles(fresh_console):
         screen = _title_ocr(con, needle)
         assert needle in screen.upper().replace(" ", ""), screen
         _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+def test_juke_keeps_current_mode(fresh_console):
+    """#1042: JUKE draws in the mode the console is already in and leaves it."""
+    con = fresh_console
+    before_mode = con.send_line("PRINT MM.INFO(MODE)")
+    w0, h0 = con.screen_size()
+    assert (w0, h0) == (1280, 720)  # the boot default, not JUKE's 960x540
+
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+
+    # The framebuffer is still the console's mode, not a forced 960x540.
+    assert con.screen_size() == (w0, h0), "JUKE switched video mode"
+    assert _peak_lit(con) > 0.001
+
+    _quit_juke(con)
+    assert con.send_line("PRINT MM.INFO(MODE)") == before_mode
+    con.send_line("PLAY STOP")
+
+
+def test_juke_layout_scales_with_current_mode(fresh_console):
+    """#1041: panels scale from the framebuffer rather than a fixed mode."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    s = _juke_scale(w, h)
+    assert s > 100  # 1280x720 must enlarge the 960x540 design
+
+    # The oscilloscope inset is anchored at the scaled offset, so it sits
+    # well below where the 960x540 layout would have put it (y = 100).
+    pad = 8 * s // 100
+    top = 100 * s // 100
+    bh = 52 * s // 100
+    left = pad
+    right = pad + (w - 16 * s // 100) - 1
+    assert top > 100 and bh > 52
+    frame = [(left + 40, top), (left + 40, top + bh - 1),
+             (left, top + 5), (right, top + 5)]
+    for (x, y), rgb in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(rgb), (rgb, x, y)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_keeps_chromebook_modes(fresh_console):
+    """#1042: JUKE runs in MODE 19 and MODE 20 and leaves each one in place.
+
+    Pixel-exact layout isn't asserted here: QEMU's HDMI pitch for these
+    non-16-pixel-aligned widths skews presented graphics independent of
+    JUKE (#1047), so the check is that the mode survives and the player
+    actually renders.
+    """
+    con = fresh_console
+    for mode, size, info in ((19, (1366, 768), "19.32"),
+                             (20, (683, 384), "20.32")):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == size
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        assert con.send_line("PRINT MM.INFO(MODE)") == info
         con.send_line("PLAY STOP")
 
 
