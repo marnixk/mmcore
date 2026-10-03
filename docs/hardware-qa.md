@@ -57,6 +57,7 @@ universal macOS app.
 ## Live USB / ISO (x86_64)
 - [ ] Boot `mmcore-fb-x86_64.iso` (USB written with `install-usb.sh`, or QEMU): the display reaches the mmcore prompt fullscreen; `Ctrl+Alt+F2` gives a shell on tty2 and `Ctrl+Alt+F1` returns to mmcore with the screen intact; serial ttyS0 (115200) gives a root shell. Keys typed at the mmcore prompt do not leak into tty1, and `Ctrl+C` still means BREAK, not SIGINT. (#833, #834, #903)
 - [ ] `sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX`, boot, create a `.BAS` file on `C:`, reboot: the file is still there. (#835)
+- [ ] `sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0` (or the stick), boot, create a `.BAS` file on `C:`, reboot: the file is still there and the session is not a RAM-only live image. Closing the lid and opening it again leaves `C:` mounted.
 - [ ] Ethernet: plug in and confirm `IPCONFIG` shows an address. Wi-Fi: `OPTION WIFI COUNTRY`, `OPTION WIFI "ssid","psk"`, then `IPCONFIG`. (#836)
 
 ## Known caveats

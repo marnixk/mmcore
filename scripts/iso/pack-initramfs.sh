@@ -11,7 +11,7 @@ INIT_SCRIPT="${SCRIPT_DIR}/live-init"
 
 # Names are normalised (hyphen == underscore) against modules.dep basenames.
 # uas is omitted on purpose: see live-init.
-SEEDS="squashfs overlay isofs vfat fat nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
+SEEDS="squashfs overlay isofs vfat fat ext4 nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
 usb-storage usbcore usb-common \
 xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
 sd_mod sr_mod cdrom scsi_mod \

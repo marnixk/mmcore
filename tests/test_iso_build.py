@@ -131,6 +131,14 @@ def test_acpid_power_and_lid_handlers_are_in_the_overlay():
         os.path.join(OVERLAY, "etc/acpi/mmcore-sync-storage.sh"), encoding="utf-8"
     ).read()
     assert "/media/mmcore" in sync
+    assert 'umount' in sync
+    assert '"umount"' in sync or "'umount'" in sync
+    lid = open(os.path.join(OVERLAY, "etc/acpi/mmcore-lid.sh"), encoding="utf-8").read()
+    assert "umount" not in lid
+    power = open(
+        os.path.join(OVERLAY, "etc/acpi/mmcore-power.sh"), encoding="utf-8"
+    ).read()
+    assert "umount" in power
     for script in ("mmcore-power.sh", "mmcore-lid.sh", "mmcore-sync-storage.sh"):
         _run(["bash", "-n", os.path.join(OVERLAY, "etc/acpi", script)])
 
@@ -143,6 +151,13 @@ def test_persistence_script_mounts_the_labeled_partition():
     assert "blkid -L MMCORE" in text
     assert "/media/mmcore" in text
     assert "mkfs.ext4" in text
+    assert "blockdev --setrw" in text
+    profile = open(PROFILE, encoding="utf-8").read()
+    assert 'mmcore_mnt}" = "/media/mmcore"' in profile or \
+        '"/media/mmcore"' in profile
+    assert "MMB_DRIVE_ROOT=/media/mmcore" in profile
+    # A bare directory on the RAM overlay must not be treated as C:.
+    assert "[ -d /media/mmcore ]" not in profile
 
 
 def test_installer_and_updater_scripts_are_present_and_executable():
@@ -201,6 +216,24 @@ def test_installer_defaults_to_no_sticky_uefi_entry():
     named = text.index("--bootloader-id=mmcore")
     assert guard < named, "the named NVRAM entry must be behind --register-efi"
     assert "--bootloader-id=mmcore" in text
+
+
+def test_read_write_overlay_is_live_boot_only():
+    """--read-write seeds /.mmcore-rw. Only a live boot may use that volume as
+    the overlay upper layer; an installed boot keeps mmcore.sys=."""
+    live = open(LIVE_INIT, encoding="utf-8").read()
+    assert ".mmcore-rw" in live
+    assert "upperdir=/mnt/persist/rw/upper" in live
+    assert "ext4" in live
+    guard = live.index('if [ "$live_boot" = 1 ]; then')
+    marker = live.index(".mmcore-rw")
+    assert guard < marker
+    # The installed-boot probe must not grow a dependency on the marker.
+    sys_fn = live.split("try_sys_media()", 1)[1].split("\nscan_media()", 1)[0]
+    assert ".mmcore-rw" not in sys_fn
+    pack = open(PACK, encoding="utf-8").read()
+    assert "ext4" in pack.split("SEEDS=", 1)[1].split("\n", 1)[0] or \
+        "ext4" in pack.split("SEEDS=", 1)[1].split('"', 2)[1]
 
 
 def test_live_boot_pins_root_to_the_live_media():
@@ -300,14 +333,82 @@ def test_install_usb_script_parses_and_documents_persistence():
     _run(["bash", "-n", INSTALL_USB])
     help_out = _run([INSTALL_USB, "--help"]).stdout
     assert "--no-persist" in help_out
+    assert "--read-write" in help_out
     assert "--iso" in help_out
     text = open(INSTALL_USB, encoding="utf-8").read()
     assert "MMCORE" in text
     assert "dd of=" in text
     assert "mkfs.ext4" in text
+    assert ".mmcore-rw" in text
     # compressed release artifact is decompressed on the fly
     assert "zstd -dc" in text
     assert "*.zst)" in text
+
+
+def test_install_usb_read_write_rejects_no_persist():
+    proc = subprocess.run(
+        [INSTALL_USB, "--read-write", "--no-persist"],
+        text=True,
+        capture_output=True,
+    )
+    assert proc.returncode != 0
+    assert "cannot be combined" in proc.stderr
+
+
+def test_install_usb_read_write_seeds_partition(tmp_path):
+    """--read-write formats the free space and drops the live-boot marker."""
+    if shutil.which("sgdisk") is None or shutil.which("mkfs.ext4") is None:
+        pytest.skip("sgdisk and mkfs.ext4 are required")
+    if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0:
+        pytest.skip("passwordless sudo is required")
+
+    iso = tmp_path / "mini.img"
+    disk = tmp_path / "disk.img"
+    mnt = tmp_path / "mnt"
+    mnt.mkdir()
+    subprocess.run(["truncate", "-s", "32M", str(iso)], check=True)
+    subprocess.run(
+        ["sgdisk", "-o", "-n", "1:2048:0", "-t", "1:ef00", str(iso)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["truncate", "-s", "96M", str(disk)], check=True)
+    dev = subprocess.run(
+        ["sudo", "losetup", "--find", "--show", "--partscan", str(disk)],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert dev.startswith("/dev/")
+    try:
+        proc = subprocess.run(
+            ["sudo", INSTALL_USB, "--read-write", "--yes", "--iso", str(iso), dev],
+            text=True,
+            capture_output=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        part = dev + "p5"
+        if not os.path.exists(part):
+            part = dev + "5"
+        assert os.path.exists(part), proc.stderr
+        subprocess.run(["sudo", "mount", "-o", "ro", part, str(mnt)], check=True)
+        marker = (mnt / ".mmcore-rw").read_text(encoding="utf-8")
+        assert "read-write" in marker
+        assert (mnt / "C").is_dir()
+        assert (mnt / "rw" / "upper").is_dir()
+        assert (mnt / "rw" / "work").is_dir()
+        label = subprocess.run(
+            ["sudo", "blkid", "-o", "value", "-s", "LABEL", part],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        assert label == "MMCORE"
+    finally:
+        subprocess.run(["sudo", "umount", str(mnt)], check=False)
+        if dev:
+            subprocess.run(["sudo", "losetup", "-d", dev], check=False)
 
 
 def test_install_usb_uses_a_free_partition_number():
@@ -318,6 +419,7 @@ def test_install_usb_uses_a_free_partition_number():
     assert 'part="${DEVICE}5"' in text
     assert "--move-second-header" in text
     assert "--new=2:" not in text
+    assert "partx -a -n 5:5" in text
 
 
 def test_overlay_wires_ethernet_dhcp_and_wifi():

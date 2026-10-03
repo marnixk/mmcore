@@ -48,6 +48,15 @@ labelled `MMCORE`, formatted ext4. Pass `--no-persist` to skip it. The same ISO
 can be burned to a DVD or written with any hybrid-ISO tool; without the `MMCORE`
 partition the session is read-only.
 
+`--read-write` seeds that same partition (marker `/.mmcore-rw`, plus a `C/`
+directory) so the live boot uses it as the writable upper layer instead of a
+RAM overlay. `C:` then persists on the stick or microSD, and the session is
+not read-only. This does not install mmcore onto an internal disk:
+
+```bash
+sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
+```
+
 ### Boot behaviour
 
 | Console | What happens |
@@ -181,6 +190,22 @@ At boot the image looks for a partition labelled `MMCORE` and mounts it at
 `/media/mmcore`, exported to mmcore as the drive root (`MMB_DRIVE_ROOT`). With
 `install-usb.sh` that partition is created for you; `C:/` then survives
 reboots. Without it, files live in RAM and are lost on power-off.
+
+`install-usb.sh --read-write` provisions that partition differently. It writes
+a `/.mmcore-rw` marker and the directories the live boot expects (`C/` for the
+BASIC drive, `rw/upper` and `rw/work` for the overlay). On a live boot,
+`live-init` mounts this volume as the overlay's upper directory instead of a
+tmpfs, then publishes it at `/media/mmcore`, so the session itself is
+read-write and `C:` (`/media/mmcore/C`) stays on the card across power-off.
+A plain `MMCORE` partition without the marker is still C:-only: the root
+filesystem stays a RAM overlay, and only files on `C:` persist. An installed
+disk boot (`mmcore.sys=`) does not use this marker.
+
+The marker is only honoured on a live boot. When firmware presents the image
+as a virtual CD (`/dev/sr*`) and the real card appears a few seconds later as
+`mmcblk`, `live-init` waits briefly for the `MMCORE` partition on that card.
+Closing the lid syncs the volume and leaves it mounted, so resume does not
+drop `C:` back onto the RAM overlay.
 
 ### Install to hard disk
 
@@ -364,6 +389,22 @@ With either one running, the hybrid ISO boots through the GRUB UEFI path.
 Installation does **not** bypass verified boot: the firmware unlock is a
 deliberate, user-initiated change, and nothing in the ISO touches the
 Google-signed firmware or the write-protect state.
+
+### Persistent C: on the microSD
+
+A Chromebook that can boot the live image does not need `mmcore-install`, and
+should not use it when the internal disk still holds ChromeOS. Write the
+microSD with `--read-write` (from another Linux machine; the card is the
+device, often `/dev/mmcblk0` or `/dev/sdX` in a reader):
+
+```bash
+sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
+```
+
+The ISO stays the read-only system image. Free space on the card becomes the
+`MMCORE` partition, and `C:` persists there. Boot the card the same way as a
+plain live image. `mmcore-install` remains the path that wipes an internal
+disk and boots without the card.
 
 ### What is supported
 

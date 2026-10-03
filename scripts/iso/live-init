@@ -24,7 +24,7 @@ mount -t devtmpfs devtmpfs /dev
 printf 'blacklist uas\n' > /etc/modprobe.d/blacklist-uas.conf
 
 for mod in \
-	loop squashfs overlay isofs vfat fat \
+	loop squashfs overlay isofs vfat fat ext4 \
 	nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
 	usb-storage usbcore usb-common \
 	xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
@@ -155,17 +155,127 @@ if ! mount -t squashfs -o loop,ro /mnt/media/boot/rootfs.squashfs /mnt/lower; th
 	losetup /dev/loop0 /mnt/media/boot/rootfs.squashfs
 	mount -t squashfs -o ro /dev/loop0 /mnt/lower
 fi
-mount -t tmpfs -o mode=755 tmpfs /mnt/rw
-mkdir -p /mnt/rw/upper /mnt/rw/work
-mount -t overlay overlay \
-	-o lowerdir=/mnt/lower,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
-	/newroot
+
+# Whole-disk name for a partition node: sda5 -> sda, mmcblk0p5 -> mmcblk0,
+# nvme0n1p5 -> nvme0n1. A bare disk name is returned unchanged.
+disk_of() {
+	n="${1#/dev/}"
+	case "$n" in
+		*p[0-9]|*p[0-9][0-9]) printf '%s' "${n%p*}" ;;
+		sd[a-z]*|vd[a-z]*|hd[a-z]*) printf '%s' "${n%%[0-9]*}" ;;
+		*) printf '%s' "$n" ;;
+	esac
+}
+
+has_mmcore_label() {
+	blkid "$1" 2>/dev/null | grep -q 'LABEL="MMCORE"'
+}
+
+# iso9660 on the hybrid image can leave the disk read-only, which then
+# blocks the persistence partition. The ioctl is what actually clears it.
+clear_ro() {
+	dev="$1"
+	name="${dev#/dev/}"
+	parent="$(disk_of "$dev")"
+	blockdev --setrw "$dev" 2>/dev/null || true
+	if [ "$parent" != "$name" ]; then
+		blockdev --setrw "/dev/${parent}" 2>/dev/null || true
+	fi
+}
+
+# Prefer the MMCORE partition on the disk we booted, so a second disk that
+# happens to carry the same label is not used as this session's store.
+# A virtual CD (/dev/sr*) is not that disk; fall through to findfs.
+pick_mmcore() {
+	live="$1"
+	base=""
+	case "$live" in
+		/dev/sr*|"") ;;
+		/dev/*) base="$(disk_of "$live")" ;;
+	esac
+	if [ -n "$base" ]; then
+		for dev in "/dev/${base}5" "/dev/${base}p5"; do
+			if [ -b "$dev" ] && has_mmcore_label "$dev"; then
+				printf '%s' "$dev"
+				return 0
+			fi
+		done
+	fi
+	findfs LABEL=MMCORE 2>/dev/null || true
+}
+
+# --read-write seeds /.mmcore-rw on the MMCORE partition. On a live boot,
+# use that partition as the overlay upper layer so the session is writable
+# and C: (the C/ directory on it) survives power-off. An installed boot
+# (mmcore.sys=) never takes this path. A plain MMCORE partition without the
+# marker stays C:-only and is mounted later by mmcore-persist.start.
+rw_dev=""
+rw_overlay=0
+if [ "$live_boot" = 1 ]; then
+	modprobe ext4 2>/dev/null || true
+	live_src=""
+	while read -r src mnt _rest; do
+		if [ "$mnt" = "/mnt/media" ]; then
+			live_src="$src"
+			break
+		fi
+	done < /proc/mounts || true
+	# Firmware that boots the image as a CD exposes only sr0 at first. The
+	# real microSD (mmcblk) shows up a few seconds later.
+	tries=1
+	case "$live_src" in
+		/dev/sr*) tries=10 ;;
+	esac
+	n=0
+	while [ "$n" -lt "$tries" ]; do
+		rw_dev="$(pick_mmcore "$live_src")"
+		if [ -n "$rw_dev" ] && [ -b "$rw_dev" ]; then
+			break
+		fi
+		rw_dev=""
+		n=$((n + 1))
+		if [ "$n" -lt "$tries" ]; then
+			sleep 1
+		fi
+	done
+	if [ -n "$rw_dev" ]; then
+		clear_ro "$rw_dev"
+		mkdir -p /mnt/persist
+		if mount -o rw "$rw_dev" /mnt/persist 2>/dev/null; then
+			if [ -f /mnt/persist/.mmcore-rw ]; then
+				rw_overlay=1
+			else
+				umount /mnt/persist 2>/dev/null || true
+			fi
+		fi
+	fi
+fi
+
+if [ "$rw_overlay" = 1 ]; then
+	mkdir -p /mnt/persist/rw/upper /mnt/persist/C
+	rm -rf /mnt/persist/rw/work
+	mkdir -p /mnt/persist/rw/work
+	mount -t overlay overlay \
+		-o lowerdir=/mnt/lower,upperdir=/mnt/persist/rw/upper,workdir=/mnt/persist/rw/work \
+		/newroot
+else
+	mount -t tmpfs -o mode=755 tmpfs /mnt/rw
+	mkdir -p /mnt/rw/upper /mnt/rw/work
+	mount -t overlay overlay \
+		-o lowerdir=/mnt/lower,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
+		/newroot
+fi
 
 mkdir -p /newroot/mnt/live/media /newroot/mnt/live/lower /newroot/mnt/live/rw
 mkdir -p /newroot/dev /newroot/proc /newroot/sys
 mount --move /mnt/media /newroot/mnt/live/media
 mount --move /mnt/lower /newroot/mnt/live/lower
-mount --move /mnt/rw /newroot/mnt/live/rw
+if [ "$rw_overlay" = 1 ]; then
+	mkdir -p /newroot/media/mmcore
+	mount --move /mnt/persist /newroot/media/mmcore
+else
+	mount --move /mnt/rw /newroot/mnt/live/rw
+fi
 mount --move /dev /newroot/dev
 mount --move /proc /newroot/proc
 mount --move /sys /newroot/sys
