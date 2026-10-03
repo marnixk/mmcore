@@ -17,7 +17,12 @@
  * is a single audio engine.
  */
 
-#define JUKE_MODE      12      /* 960x540 (32-bit pages; see juke_load_colours) */
+/* JUKE renders in whatever video mode the console is already in. The layout is
+ * derived from that framebuffer with a single percent scale relative to the
+ * 960x540 design, so a MODE 19/20 (or any other) screen gets a proportional
+ * player instead of a 960x540 one stretched or letterboxed into it. */
+#define JUKE_REF_W     960
+#define JUKE_REF_H     540
 #define JUKE_PAGE_A    0
 #define JUKE_PAGE_B    2
 #define JUKE_FRAME_MS  33
@@ -42,6 +47,7 @@ typedef struct {
 	int saved_write_page, saved_display_page, saved_write_fb;
 	int saved_font_scale;
 	int w, h;
+	int s;         /* layout scale percent: 100 matches the 960x540 design */
 	int front;
 	int muted;
 	int vol_saved;
@@ -78,6 +84,8 @@ typedef struct {
 
 static juke_ui s_ui[MMB_MAX_CONSOLES];
 #define U (s_ui[g_console])
+/* Scale a design-space (960x540) coordinate to the current framebuffer. */
+#define JS(v) ((v) * U.s / 100)
 static juke_queue s_q;
 static unsigned s_rand = 0x9E3779B9u;
 
@@ -802,27 +810,35 @@ static void juke_draw_logo(int x0, int y0)
 
 static void juke_paint_list(int w, int h)
 {
-	int y0 = JUKE_LIST_Y;
-	int y1 = h - 56;
-	int bw = w - 16;
+	int margin = JS(8);
+	int y0 = JS(JUKE_LIST_Y);
+	int y1 = h - JS(56);
+	int bw = w - JS(16);
+	int row = JS(JUKE_LIST_ROW);
+	int sel_h;
 	int rows, top, vis;
 	char buf[JUKE_PATH_MAX + 8];
 
-	if (y1 < y0 + 24)
-		y1 = y0 + 24;
-	mmb_gfx_fill_rect(8, y0, bw, 1, U.col_panel2);
-	mmb_gfx_fill_rect(8, y1 - 1, bw, 1, U.col_panel2);
-	mmb_gfx_fill_rect(8, y0, 1, y1 - y0, U.col_panel2);
-	mmb_gfx_fill_rect(8 + bw - 1, y0, 1, y1 - y0, U.col_panel2);
-	mmb_gfx_fill_rect(9, y0 + 1, bw - 2, y1 - y0 - 2, U.col_panel);
+	/* The list row can never be shorter than the fixed 16px font, or rows
+	 * would overlap when the scale drops below the 960x540 design. */
+	if (row < 16)
+		row = 16;
+	sel_h = row - 2;
+	if (y1 < y0 + JS(24))
+		y1 = y0 + JS(24);
+	mmb_gfx_fill_rect(margin, y0, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(margin, y1 - 1, bw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(margin, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(margin + bw - 1, y0, 1, y1 - y0, U.col_panel2);
+	mmb_gfx_fill_rect(margin + 1, y0 + 1, bw - 2, y1 - y0 - 2, U.col_panel);
 	if (s_q.n <= 0)
 	{
-		juke_text(22, y0 + 4, "(empty)", U.col_dim, 1);
+		juke_text(JS(22), y0 + JS(4), "(empty)", U.col_dim, 1);
 		return;
 	}
 	if (U.sel < 0 || U.sel >= s_q.n)
 		juke_set_sel(s_q.cur >= 0 ? s_q.cur : 0);
-	rows = (y1 - y0 - 8) / JUKE_LIST_ROW;
+	rows = (y1 - y0 - JS(8)) / row;
 	if (rows < 1)
 		rows = 1;
 	if (U.sel < U.list_top)
@@ -835,18 +851,19 @@ static void juke_paint_list(int w, int h)
 	for (vis = 0; vis < rows; vis++)
 	{
 		int pos = top + vis;
-		int y = y0 + 4 + vis * JUKE_LIST_ROW;
+		int y = y0 + JS(4) + vis * row;
 		const char *name;
 		int maxc;
 
 		if (pos >= s_q.n)
 			break;
 		if (pos == U.sel)
-			mmb_gfx_fill_rect(10, y, w - 20, 16, JUKE_LIST_SEL);
+			mmb_gfx_fill_rect(JS(10), y, w - JS(20), sel_h,
+					  JUKE_LIST_SEL);
 		if (pos == s_q.cur)
-			mmb_gfx_fill_rect(11, y, 4, 16, U.col_bar_hi);
+			mmb_gfx_fill_rect(JS(11), y, JS(4), sel_h, U.col_bar_hi);
 		name = juke_row_title(pos);
-		maxc = (w - 48) / 8;
+		maxc = (w - JS(48)) / 8;
 		if (maxc < 8)
 			maxc = 8;
 		if (maxc > (int)sizeof(buf) - 1)
@@ -854,7 +871,7 @@ static void juke_paint_list(int w, int h)
 		sprintf(buf, "%2d  %s", pos + 1, name);
 		if ((int)strlen(buf) > maxc)
 			buf[maxc] = 0;
-		juke_text(22, y, buf,
+		juke_text(JS(22), y, buf,
 			  pos == U.sel ? U.col_text : U.col_dim, 1);
 	}
 }
@@ -880,7 +897,10 @@ static void juke_paint_scope(int w)
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
 	{
-		int bx = 8, by = JUKE_MID_Y, bw2 = w - 16, bh2 = JUKE_SCOPE_H;
+		int bx = JS(8), by = JS(JUKE_MID_Y);
+		int bw2 = w - JS(16), bh2 = JS(JUKE_SCOPE_H);
+		if (bh2 < 12)
+			bh2 = 12;
 		mmb_gfx_fill_rect(bx, by, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by + bh2 - 1, bw2, 1, U.col_panel2);
 		mmb_gfx_fill_rect(bx, by, 1, bh2, U.col_panel2);
@@ -919,7 +939,7 @@ static void juke_paint_scope(int w)
 static void juke_paint_vis(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
-	int i, x0, x1, bw, gap, base, maxh;
+	int i, x0, x1, bw, gap, base, maxh, pad;
 
 	juke_paint_scope(w);
 	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
@@ -928,19 +948,22 @@ static void juke_paint_vis(int w, int h)
 	 * bar field is deliberately short so the full-size wordmark still fits
 	 * above it, and it is centred so the leftover width splits evenly on both
 	 * sides instead of pooling to the right of the last band. */
-	base = h - 71;
-	maxh = base - 190;
+	pad = JS(14);
+	base = h - JS(71);
+	maxh = base - JS(190);
 	if (maxh < 24)
 		maxh = 24;
-	gap = 3;
-	bw = (w - 28) / MMB_AUDIO_BANDS - gap;
+	gap = JS(3);
+	if (gap < 2)
+		gap = 2;
+	bw = (w - 2 * pad) / MMB_AUDIO_BANDS - gap;
 	if (bw < 2)
 		bw = 2;
 	{
 		int span = MMB_AUDIO_BANDS * bw + (MMB_AUDIO_BANDS - 1) * gap;
-		x0 = 14 + (w - 28 - span) / 2;
-		if (x0 < 14)
-			x0 = 14;
+		x0 = pad + (w - 2 * pad - span) / 2;
+		if (x0 < pad)
+			x0 = pad;
 		x1 = x0 + span;
 	}
 
@@ -998,17 +1021,17 @@ static void juke_paint(int w, int h)
 	 * chrome (VIS/LIST/MOD #951, then N/M, SHUF, and the "more" truncation
 	 * hint #965) is gone; the queue no longer truncates, so there is
 	 * nothing to report there. */
-	juke_draw_logo(14, 1);
+	juke_draw_logo(JS(14), JS(1));
 
 	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
-	juke_text(14, 60, title, U.col_text, 1);
+	juke_text(JS(14), JS(60), title, U.col_text, 1);
 	if (s_q.cur >= 0)
 	{
 		const char *rel = juke_dispname(juke_track(s_q.cur));
 		if (rel[0] && !mmb_keyword_eq(title, rel))
-			juke_text(14, 78, rel, U.col_dim, 1);
+			juke_text(JS(14), JS(78), rel, U.col_dim, 1);
 		else if (s_q.dir[0])
-			juke_text(14, 78, s_q.dir, U.col_dim, 1);
+			juke_text(JS(14), JS(78), s_q.dir, U.col_dim, 1);
 	}
 
 	if (U.list_on)
@@ -1020,15 +1043,16 @@ static void juke_paint(int w, int h)
 		juke_paint_vis(w, h);
 
 	/* Footer: transport legend, then shuffle / volume indicators. */
-	fy = h - 48;
-	juke_text(14, fy + 6,
+	fy = h - JS(48);
+	juke_text(JS(14), fy + JS(6),
 		  "SPACE play/pause   P prev   N next   L list   R shuf   -/+ vol   M mute   S stop   ESC quit",
 		  U.col_dim, 1);
 
 	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
-	mmb_gfx_fill_rect(14, fy + 27, 14, 14,
+	mmb_gfx_fill_rect(JS(14), fy + JS(27), JS(14), JS(14),
 			  s_q.shuffle ? U.col_peak : U.col_track);
-	juke_text(34, fy + 28, "SHUF", s_q.shuffle ? U.col_text : U.col_dim, 1);
+	juke_text(JS(34), fy + JS(28), "SHUF",
+		  s_q.shuffle ? U.col_text : U.col_dim, 1);
 
 	/* Volume level bar: grey body with a muted logo-accent top edge. */
 	vol = g_audio.vol_l;
@@ -1036,22 +1060,24 @@ static void juke_paint(int w, int h)
 		vol = 0;
 	if (vol > 100)
 		vol = 100;
-	juke_text(110, fy + 28, "VOL", U.col_dim, 1);
-	mmb_gfx_fill_rect(146, fy + 27, 220, 14, U.col_track);
+	juke_text(JS(110), fy + JS(28), "VOL", U.col_dim, 1);
+	mmb_gfx_fill_rect(JS(146), fy + JS(27), JS(220), JS(14), U.col_track);
 	if (vol > 0)
 	{
-		int vw = vol * 220 / 100;
+		int barw = JS(220);
+		int vw = vol * barw / 100;
 		int vx;
-		mmb_gfx_fill_rect(146, fy + 27, vw, 14, U.col_vol);
+		mmb_gfx_fill_rect(JS(146), fy + JS(27), vw, JS(14), U.col_vol);
 		for (vx = 0; vx < vw; vx += 2)
 		{
 			int seg = vw - vx < 2 ? vw - vx : 2;
-			mmb_gfx_fill_rect(146 + vx, fy + 27, seg, 2,
-					  juke_logo_grad((float)vx / 220.0f));
+			mmb_gfx_fill_rect(JS(146) + vx, fy + JS(27), seg, 2,
+					  juke_logo_grad((float)vx /
+							 (float)barw));
 		}
 	}
 	sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
-	juke_text(380, fy + 28, buf, U.col_text, 1);
+	juke_text(JS(380), fy + JS(28), buf, U.col_text, 1);
 }
 
 static void juke_frame(void)
@@ -1152,9 +1178,21 @@ void mmb_cmd_juke(void)
 	U.saved_display_page = G.gfx.display_page;
 	U.saved_write_fb = G.gfx.write_fb;
 	U.saved_font_scale = G.gfx.font_scale;
-	mmb_gfx_set_mode(JUKE_MODE, 32);
-	U.w = G.gfx.w > 0 ? G.gfx.w : 960;
-	U.h = G.gfx.h > 0 ? G.gfx.h : 540;
+	/* #1042: draw into whatever mode the console is already in (MODE 19/20
+	 * on the Chromebook) instead of forcing a fixed 960x540 mode. Leaving
+	 * the mode and depth untouched here also means there is nothing to
+	 * restore when JUKE exits. */
+	U.w = G.gfx.w > 0 ? G.gfx.w : JUKE_REF_W;
+	U.h = G.gfx.h > 0 ? G.gfx.h : JUKE_REF_H;
+	{
+		int sw = U.w * 100 / JUKE_REF_W;
+		int sh = U.h * 100 / JUKE_REF_H;
+		U.s = sw < sh ? sw : sh;
+		if (U.s < 60)
+			U.s = 60;
+		if (U.s > 200)
+			U.s = 200;
+	}
 	U.front = JUKE_PAGE_A;
 	juke_load_colours();
 	juke_load_logo();
