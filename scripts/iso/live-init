@@ -67,6 +67,53 @@ for arg in $(cat /proc/cmdline 2>/dev/null); do
 	esac
 done
 
+# Whole-disk name for a partition node: sda5 -> sda, mmcblk0p5 -> mmcblk0,
+# nvme0n1p5 -> nvme0n1. A bare disk name is returned unchanged.
+disk_of() {
+	n="${1#/dev/}"
+	case "$n" in
+		*p[0-9]|*p[0-9][0-9]) printf '%s' "${n%p*}" ;;
+		sd[a-z]*|vd[a-z]*|hd[a-z]*) printf '%s' "${n%%[0-9]*}" ;;
+		*) printf '%s' "$n" ;;
+	esac
+}
+
+# Mount the live media at /mnt/media. A dd'd hybrid ISO on a stick or microSD
+# is a *whole disk*: mounting it directly claims the whole device, and Linux
+# then refuses to open its MMCORE partition ("Can't open blockdev"), so the
+# --read-write overlay and C: can never come up. Mount a whole disk through a
+# read-only loop instead: the loop holds the device open without claiming it,
+# so the partition on the same disk stays mountable. A partition source or a
+# virtual CD (/dev/sr*, a separate device from the card) is mounted directly.
+live_loop=""
+live_disk=""
+mount_live_media() {
+	dev="$1"
+	name="${dev#/dev/}"
+	live_loop=""
+	live_disk=""
+	case "$name" in
+		sr[0-9]*)
+			mount -o ro "$dev" /mnt/media 2>/dev/null
+			return $?
+			;;
+	esac
+	if [ "$(disk_of "$dev")" = "$name" ]; then
+		live_loop="$(losetup -f 2>/dev/null || true)"
+		[ -n "$live_loop" ] || return 1
+		losetup -r "$live_loop" "$dev" 2>/dev/null \
+			|| { live_loop=""; return 1; }
+		if mount -o ro "$live_loop" /mnt/media 2>/dev/null; then
+			live_disk="$dev"
+			return 0
+		fi
+		losetup -d "$live_loop" 2>/dev/null || true
+		live_loop=""
+		return 1
+	fi
+	mount -o ro "$dev" /mnt/media 2>/dev/null
+}
+
 try_one() {
 	dev="$1"
 	[ -b "$dev" ] || return 1
@@ -103,12 +150,17 @@ try_sys_media() {
 try_live_media() {
 	dev="$1"
 	[ -b "$dev" ] || return 1
-	mount -o ro "$dev" /mnt/media 2>/dev/null || return 1
+	mount_live_media "$dev" || return 1
 	if [ -f /mnt/media/mmcore-live-media ] \
 		&& [ -f /mnt/media/boot/rootfs.squashfs ]; then
 		return 0
 	fi
 	umount /mnt/media 2>/dev/null || true
+	if [ -n "$live_loop" ]; then
+		losetup -d "$live_loop" 2>/dev/null || true
+	fi
+	live_loop=""
+	live_disk=""
 	return 1
 }
 
@@ -162,21 +214,12 @@ if [ "$found" != 1 ]; then
 	exec sh
 fi
 
-if ! mount -t squashfs -o loop,ro /mnt/media/boot/rootfs.squashfs /mnt/lower; then
-	losetup /dev/loop0 /mnt/media/boot/rootfs.squashfs
-	mount -t squashfs -o ro /dev/loop0 /mnt/lower
+if ! mount -t squashfs -o loop,ro /mnt/media/boot/rootfs.squashfs /mnt/lower 2>/dev/null; then
+	lower_loop="$(losetup -f 2>/dev/null || true)"
+	[ -n "$lower_loop" ] || lower_loop=/dev/loop0
+	losetup -r "$lower_loop" /mnt/media/boot/rootfs.squashfs
+	mount -t squashfs -o ro "$lower_loop" /mnt/lower
 fi
-
-# Whole-disk name for a partition node: sda5 -> sda, mmcblk0p5 -> mmcblk0,
-# nvme0n1p5 -> nvme0n1. A bare disk name is returned unchanged.
-disk_of() {
-	n="${1#/dev/}"
-	case "$n" in
-		*p[0-9]|*p[0-9][0-9]) printf '%s' "${n%p*}" ;;
-		sd[a-z]*|vd[a-z]*|hd[a-z]*) printf '%s' "${n%%[0-9]*}" ;;
-		*) printf '%s' "$n" ;;
-	esac
-}
 
 has_mmcore_label() {
 	blkid "$1" 2>/dev/null | grep -q 'LABEL="MMCORE"'
@@ -231,6 +274,11 @@ if [ "$live_boot" = 1 ]; then
 			break
 		fi
 	done < /proc/mounts || true
+	# When the media was mounted through a loop (a whole-disk dd'd image),
+	# live_src is the loop device; pick_mmcore still has to prefer the
+	# MMCORE partition on the disk we booted, so pass the real disk.
+	pick_src="$live_src"
+	[ -n "${live_disk}" ] && pick_src="$live_disk"
 	# Firmware that boots the image as a CD exposes only sr0 at first. The
 	# real microSD (mmcblk) shows up a few seconds later.
 	tries=1
@@ -239,7 +287,7 @@ if [ "$live_boot" = 1 ]; then
 	esac
 	n=0
 	while [ "$n" -lt "$tries" ]; do
-		rw_dev="$(pick_mmcore "$live_src")"
+		rw_dev="$(pick_mmcore "$pick_src")"
 		if [ -n "$rw_dev" ] && [ -b "$rw_dev" ]; then
 			break
 		fi
