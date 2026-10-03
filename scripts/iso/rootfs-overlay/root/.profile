@@ -89,8 +89,17 @@ if [ "${mmcore_tty}" = "/dev/tty1" ]; then
 	fi
 
 	# Live session: a partition labelled MMCORE is the persistent C: (#835).
+	# It has to be a real mount. A directory on the RAM overlay is not
+	# persistence; pointing C: at it would accept writes that vanish.
 	if [ -x /usr/local/bin/mmcore ]; then
-		if [ -d /media/mmcore ]; then
+		mmcore_persist_mounted=0
+		while read -r _src mmcore_mnt _rest; do
+			if [ "${mmcore_mnt}" = "/media/mmcore" ]; then
+				mmcore_persist_mounted=1
+				break
+			fi
+		done < /proc/mounts || true
+		if [ "${mmcore_persist_mounted}" = 1 ]; then
 			export MMB_DRIVE_ROOT=/media/mmcore
 		fi
 		exec /usr/local/bin/mmcore 2>/tmp/mmcore.stderr

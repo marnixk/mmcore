@@ -94,6 +94,8 @@ def test_framebuffer_iso_doc_documents_chromebooks():
         "i2c_hid_acpi",
         "IA32",
         "unsupported",
+        "--read-write",
+        "Persistent C: on the microSD",
     ):
         assert needle in text, needle
 

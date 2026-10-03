@@ -42,7 +42,9 @@ zstd -d mmcore-fb-x86_64.iso.zst          # -> mmcore-fb-x86_64.iso
 sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX
 ```
 
-`install-usb.sh` also takes the compressed `.iso.zst` directly.
+`install-usb.sh` also takes the compressed `.iso.zst` directly. Add
+`--read-write` to keep the live session writable and persist `C:` on that
+stick or microSD without installing onto an internal disk.
 
 Ctrl+Alt+F2 gives a root shell on tty2 (Ctrl+Alt+F1 returns to mmcore) and the
 serial console (ttyS0, 115200) is available for headless use. A standalone
