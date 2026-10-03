@@ -107,15 +107,20 @@ void pt_tool_begin(int cx, int cy, int button)
 /* ---- modal overlays that force the UI arrow (#791) ---- */
 static int file_active, font_picker_active;
 static int cursor_overlay = -1;
+/* Where the redraw last stamped the sprite (#1040). */
+static int cursor_x = -1, cursor_y = -1, cursor_calls;
 
 int pt_file_dialog_active(void) { return file_active; }
 int pt_text_font_picker_active(void) { return font_picker_active; }
 
-/* Strong override of the weak cmd_paint.c stub: record the overlay flag the
- * redraw passes to the cursor instead of stamping pixels. */
+/* Strong override of the weak cmd_paint.c stub: record the overlay flag and
+ * position the redraw passes to the cursor instead of stamping pixels. */
 void pt_cursor_draw(int sx, int sy, int tool, int active, int overlay)
 {
-	(void)sx; (void)sy; (void)tool; (void)active;
+	(void)tool; (void)active;
+	cursor_x = sx;
+	cursor_y = sy;
+	cursor_calls++;
 	cursor_overlay = overlay;
 }
 
@@ -262,6 +267,23 @@ int main(void)
 	check(cursor_overlay == 1, "cursor_menu_arrow");
 	menu_active = 0;
 
+	/* 10. #1040: a pointer fully off-screen leaves no saved block to restore,
+	 *     so nothing is damaged on the way back. The redraw must still stamp
+	 *     the sprite rather than skip it; the stub records where it drew. */
+	PT.cursor_sx = 300;
+	PT.cursor_sy = 200;
+	s_mouse.buttons = 0;
+	s_mouse.x = 900;		/* whole sprite off the right edge */
+	s_mouse.y = 200;
+	mmb_paint_poll();
+	cursor_x = cursor_y = -1;
+	cursor_calls = 0;
+	s_mouse.x = 320;		/* back inside the canvas */
+	s_mouse.y = 200;
+	mmb_paint_poll();
+	check(cursor_calls > 0 && cursor_x == 320 && cursor_y == 200,
+	      "cursor_returns_from_right_edge");
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
@@ -357,3 +379,10 @@ def test_overlays_force_ui_arrow_cursor(checks):
         "cursor_menu_arrow",
     ):
         assert checks.get(name) is True, name
+
+
+def test_cursor_returns_after_leaving_the_right_edge(checks):
+    """#1040: a sprite fully clipped off the right edge leaves no saved block,
+    so a plain move back inside used to find no damage and skip the stamp. The
+    redraw must stamp the pointer as soon as it re-enters the canvas."""
+    assert checks.get("cursor_returns_from_right_edge") is True

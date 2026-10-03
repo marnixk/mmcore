@@ -326,7 +326,18 @@ void pt_redraw(void)
 
 	if (!FRAME.dmg_valid && !FRAME.pres_valid)
 	{
+		/* Nothing changed on the canvas or chrome, but the sprite still has
+		 * to be stamped: it may have just moved back on-screen from a fully
+		 * clipped position. Restore then had no saved block to damage, so
+		 * this is the only path that can bring the pointer back (#1040).
+		 * The frame already in the buffer is the background to sample. */
+		pt_cursor_draw(PT.cursor_sx, PT.cursor_sy, PT.tool, PT.mouse_down,
+			pt_overlay_active());
+		if (FRAME.dmg_valid || FRAME.pres_valid)
+			pt_present();
 		PT.dirty = 0;
+		FRAME.dmg_valid = 0;
+		FRAME.pres_valid = 0;
 		FRAME.full_frame = 0;
 		return;
 	}
