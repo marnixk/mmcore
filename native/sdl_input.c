@@ -22,7 +22,7 @@
 #endif
 
 static int s_alt, s_ctrl, s_shift;
-static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
+static int s_swallow_text; /* Alt/Ctrl chords also emit SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
 static int s_break;        /* latched BREAK seen while a program runs */
 
@@ -400,10 +400,11 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	int gui = (ke->keysym.mod & KMOD_GUI) != 0;
 
 	/* Any keydown ends the previous chord's text window. The flag only
-	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter or
-	 * Ctrl+Alt+<digit> chord, and that event always follows immediately in
-	 * the queue. Ctrl+Alt+F<n> produces no text at all, so without this a
-	 * stale flag would silently eat the next ordinary character (#927). */
+	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter,
+	 * Ctrl+letter, or Ctrl+Alt+<digit> chord, and that event always follows
+	 * immediately in the queue. Ctrl+Alt+F<n> produces no text at all, so
+	 * without this a stale flag would silently eat the next ordinary
+	 * character (#927). */
 	s_swallow_text = 0;
 
 	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603).
@@ -449,6 +450,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	if (ctrl && shift && k == SDLK_v)
 	{
 		paste_host_clipboard();
+		s_swallow_text = 1;
 		return;
 	}
 
@@ -461,6 +463,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	    !s_line_input && !mmb_front_in_app() && mmb_front_line_empty())
 	{
 		mmb_exec_line("QUIT");
+		s_swallow_text = 1;
 		return;
 	}
 
@@ -491,6 +494,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
 		{
 			deliver_csi("29~");
+			s_swallow_text = 1;
 			return;
 		}
 		if (k >= SDLK_a && k <= SDLK_z)
@@ -499,12 +503,14 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 
 			if (code > 0)
 				deliver_ch((char)code);
+			s_swallow_text = 1;
 			return;
 		}
 		/* Ctrl+Space opens the app picker at the prompt (NUL). */
 		if (k == SDLK_SPACE)
 		{
 			deliver_ch(0);
+			s_swallow_text = 1;
 			return;
 		}
 	}
@@ -606,7 +612,13 @@ static void handle_text(const SDL_TextInputEvent *te)
 	const char *t = te->text;
 	size_t i, n;
 
-	if (s_swallow_text)
+	/* #1074: the KMS/DRM evdev backend emits SDL_TEXTINPUT for the base
+	 * letter of a Ctrl chord (desktop backends suppress it), which would
+	 * type the letter after the shortcut already ran. handle_keydown()
+	 * marks its chord returns with s_swallow_text; this guard is the
+	 * backstop for any Ctrl chord lacking a paired mark. Leave AltGr
+	 * (Ctrl+Alt) alone: some layouts deliver real characters that way. */
+	if ((s_ctrl && !s_alt) || s_swallow_text)
 	{
 		s_swallow_text = 0;
 		return;
