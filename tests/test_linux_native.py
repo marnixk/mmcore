@@ -1579,10 +1579,13 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     # Only the dirty rectangle is converted and uploaded.
     assert "sdl_video_mark_dirty_rect" in video
     assert "SDL_UpdateTexture(s_tex, &src" in video
-    # #1083: the present copies only the mapped destination sub-rectangle and
-    # clears only the letterbox bands, not the whole drawable.
-    assert "sdl_scale_map_rect" in video
-    assert "SDL_RenderCopy(s_ren, s_tex, &src" in video
+    # #1083/#1090: only the letterbox bands are cleared, not the whole
+    # drawable, but the whole texture is copied every present. SDL's
+    # accelerated renderer flips back buffers on present, so a partial copy
+    # would leave older-frame cells untouched and ghost in fullscreen.
+    assert "SDL_RenderCopy(s_ren, s_tex, 0, &dst)" in video
+    assert "SDL_RenderCopy(s_ren, s_tex, &src" not in video
+    assert "sdl_scale_map_rect" not in video
     assert "SDL_RenderFillRect" in video
     assert "SDL_RenderClear(s_ren)" not in video
     # sdl_poll_input() gates the present behind a minimum interval.
