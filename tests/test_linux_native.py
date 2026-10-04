@@ -1449,6 +1449,127 @@ def test_sdl_video_window_setup(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def _sdl_pkg_config():
+    r = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    return r.stdout.split()
+
+
+def test_sdl_present_dirty_rect_host(tmp_path):
+    """#1080: present converts/uploads only the changed rectangle.
+
+    A graphics-heavy program changes a small part of the screen between
+    presents; the dirty-rectangle contract is checked in a host build of
+    sdl_video.c (compiled with the SDL libraries after the sources so the
+    link resolves on distributions that default to --as-needed).
+    """
+    exe = os.path.join(str(tmp_path), "sdl_video_dirty_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "native"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_video_dirty_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+            *_sdl_pkg_config(),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run(
+        [exe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_sdl_present_is_dirty_rect_and_rate_limited():
+    """#1080: the RUN poll must not present once per program line.
+
+    check_break runs per line; an unconditional present there (or a full-frame
+    conversion in sdl_video_present) made a LINE loop pay ~a vblank per line on
+    a Chromebook. Guard the two properties structurally, since the timing guard
+    below only catches a gross regression.
+    """
+    video = open(
+        os.path.join(REPO, "native", "sdl_video.c"), encoding="utf-8"
+    ).read()
+    plat = open(
+        os.path.join(REPO, "native", "platform_sdl.c"), encoding="utf-8"
+    ).read()
+    # Only the dirty rectangle is converted and uploaded.
+    assert "sdl_video_mark_dirty_rect" in video
+    assert "SDL_UpdateTexture(s_tex, &src" in video
+    # sdl_poll_input() gates the present behind a minimum interval.
+    assert "SDL_PRESENT_MIN_MS" in plat
+
+
+def test_graphics_present_is_not_per_line(mmb_linux, tmp_path):
+    """#1080: drawing to the visible page must not cost a present per line.
+
+    The same 256-line loop is timed on the visible page (which presents) and
+    on a hidden page (no present, the fast path). Drawing to the visible page
+    may be a little slower, but not the ~100x it was when every program line
+    triggered a full-frame present under the RUN poll.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    program = (
+        "10 MODE 19\n"
+        "20 t=TIMER\n"
+        "30 FOR y=0 TO 127\n"
+        "40 LINE 0,y,320,y,RGB(y*2,0,0)\n"
+        "50 LINE 0,y+128,320,y+128,RGB(255-y*2,0,0)\n"
+        "60 NEXT y\n"
+        "70 VIS=TIMER-t\n"
+        "80 PAGE WRITE 1\n"
+        "90 t=TIMER\n"
+        "100 FOR y=0 TO 127\n"
+        "110 LINE 0,y,320,y,RGB(y*2,0,0)\n"
+        "120 LINE 0,y+128,320,y+128,RGB(255-y*2,0,0)\n"
+        "130 NEXT y\n"
+        "140 HID=TIMER-t\n"
+        "150 PAGE WRITE 0\n"
+        '160 PRINT "TIMESX";VIS;" ";HID\n'
+        "RUN\n"
+    )
+    env = dict(
+        os.environ,
+        SDL_VIDEODRIVER="dummy",
+        MMB_SDL_SERIAL="1",
+        MMB_DRIVE_ROOT=str(tmp_path / "root"),
+    )
+    proc = subprocess.run(
+        [SDL_BIN],
+        input=program,
+        text=True,
+        capture_output=True,
+        timeout=180,
+        env=env,
+    )
+    m = re.search(r"TIMESX(\d+)\s+(\d+)", proc.stdout)
+    assert m, proc.stdout + proc.stderr
+    vis, hid = int(m.group(1)), int(m.group(2))
+    assert vis < hid * 25 + 60, (
+        f"visible-page LINE loop took {vis} vs hidden {hid}; "
+        "the RUN poll is presenting per line again"
+    )
+
+
 def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
     sdl = subprocess.run(
         ["pkg-config", "--cflags", "--libs", "sdl2"],

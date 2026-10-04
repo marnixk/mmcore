@@ -50,6 +50,17 @@ unsigned sdl_native_to_rgb(unsigned native);
 
 void sdl_video_present(void);
 void sdl_video_mark_dirty(void);
+
+/* Mark only a rectangle of the software framebuffer as changed. The present
+ * then converts and uploads just that region instead of the whole panel, which
+ * keeps the per-present cost proportional to what a graphics-heavy program
+ * actually drew. Coordinates are clamped to the framebuffer; an empty rect is
+ * ignored. sdl_video_mark_dirty() remains the whole-screen case. */
+void sdl_video_mark_dirty_rect(int x, int y, int w, int h);
+
+/* The dirty rectangle not yet presented, or w == 0 when clean. Test/debug aid
+ * for the coalescing in sdl_video_present(). */
+void sdl_video_dirty_rect(int *x, int *y, int *w, int *h);
 int sdl_video_should_quit(void);
 void sdl_video_request_quit(void);
 void sdl_video_toggle_fullscreen(void);
