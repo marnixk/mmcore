@@ -98,7 +98,7 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alpine-base busybox openrc util-linux acpid \
 	linux-lts sof-firmware \
 	wpa_supplicant iw ifupdown-ng \
-	alsa-lib alsa-utils libgcc \
+	alsa-lib alsa-utils alsa-ucm-conf libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
 	eudev-libs libxkbcommon \
 	e2fsprogs dosfstools blkid ca-certificates \

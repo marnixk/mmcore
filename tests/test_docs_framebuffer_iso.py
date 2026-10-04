@@ -100,6 +100,23 @@ def test_framebuffer_iso_doc_documents_chromebooks():
         assert needle in text, needle
 
 
+def test_framebuffer_iso_doc_documents_usb_update():
+    """#1056: the doc must document install-usb --update, including that the
+    persistent partition is kept."""
+    text = _read(DOC)
+    assert "--update" in text
+    assert "mkfs.ext4" in text
+    assert "survive" in text or "survives" in text
+
+
+def test_framebuffer_iso_doc_documents_headphone_jack():
+    """#1059: the doc must name the UCM profiles and the jack-follow helper."""
+    text = _read(DOC)
+    for needle in ("alsa-ucm-conf", "Headphone Jack", "Auto-Mute Mode",
+                   "mmcore-audio.start"):
+        assert needle in text, needle
+
+
 def test_framebuffer_iso_doc_documents_chromebook_touchpad_drivers():
     """#1039: the doc must name the touchpad drivers baked into the ISO (so a
     built-in touchpad is claimed without a post-boot modprobe) and the models
