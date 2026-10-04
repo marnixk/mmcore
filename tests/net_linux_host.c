@@ -4,13 +4,17 @@
  *
  * The pytest writes those fakes into MMB_NET_CMD_DIR and pins the interface
  * names with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE. argv[1] == "wpa" expects
- * the wpa_cli fallback (the fake `iw` fails there).
+ * the wpa_cli fallback (the fake `iw` fails there). argv[1] == "boot" models
+ * the startup path of #1057: the lease only appears once MMB_NET_WLAN_READY
+ * exists, so the first mmb_wlan_start() must report pending and a retry must
+ * finish.
  */
 #include "mmbasic.h"
 #include "mmb_priv.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 static int fails;
 
@@ -30,8 +34,49 @@ int main(int argc, char **argv)
 	int wpa = (argc > 1 && strcmp(argv[1], "wpa") == 0);
 	int connect_mode = (argc > 1 && strcmp(argv[1], "connect") == 0);
 	int stuck = (argc > 1 && strcmp(argv[1], "stuck") == 0);
+	int boot = (argc > 1 && strcmp(argv[1], "boot") == 0);
+	int boot_timeout = (argc > 1 && strcmp(argv[1], "boot_timeout") == 0);
 	int n;
 	char buf[256];
+
+	if (boot)
+	{
+		FILE *f;
+
+		CHECK(mmb_wlan_start("SavedNet", "secret") != 0,
+		      "a cold boot start is pending");
+		CHECK(mmb_wlan_radio_pending() == 1,
+		      "the pending window is advertised for retry");
+		f = fopen(getenv("MMB_NET_WLAN_READY"), "w");
+		CHECK(f != 0, "the ready marker was created");
+		if (f)
+			fclose(f);
+		usleep(150000);
+		CHECK(mmb_wlan_start("SavedNet", "secret") == 0,
+		      "start completes once the lease appears");
+		CHECK(mmb_wlan_radio_pending() == 0,
+		      "pending clears on success");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
+
+	if (boot_timeout)
+	{
+		CHECK(mmb_wlan_start("SavedNet", "secret") != 0,
+		      "a start without a lease stays pending");
+		CHECK(mmb_wlan_radio_pending() == 1, "pending is advertised");
+		usleep(2500000);
+		CHECK(mmb_wlan_radio_pending() == 0,
+		      "the pending window gives up after its budget");
+		CHECK(mmb_wlan_start("SavedNet", "secret") != 0,
+		      "start does not silently succeed after the budget");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
 
 	if (stuck)
 	{
