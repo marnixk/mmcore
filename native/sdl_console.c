@@ -73,6 +73,7 @@ static void draw_cell(int col, int row, unsigned ch)
 		for (c = 0; c < CELL_W; c++)
 			dst[c] = (bits & (0x80u >> c)) ? fg : bg;
 	}
+	sdl_video_mark_dirty_rect(x, y, CELL_W, CELL_H);
 }
 
 static int cursor_cell_ok(void)
@@ -104,6 +105,7 @@ static void cursor_erase(void)
 	for (r = 0; r < CELL_H; r++)
 		memcpy(fb + (size_t)(s_cur_py + r) * sw + s_cur_px,
 		       s_cur_save + r * CELL_W, CELL_W * sizeof(uint16_t));
+	sdl_video_mark_dirty_rect(s_cur_px, s_cur_py, CELL_W, CELL_H);
 }
 
 static void cursor_draw(void)
@@ -133,6 +135,7 @@ static void cursor_draw(void)
 			dst[c] = v;
 	}
 	s_cur_drawn = 1;
+	sdl_video_mark_dirty_rect(s_cur_px, s_cur_py, CELL_W, CELL_H);
 }
 
 static void clear_cells(int x0, int y0, int x1, int y1, unsigned bg)
@@ -174,6 +177,8 @@ static void clear_cells(int x0, int y0, int x1, int y1, unsigned bg)
 			}
 		}
 	}
+	sdl_video_mark_dirty_rect(x0 * CELL_W, y0 * CELL_H,
+				  (x1 - x0) * CELL_W, (y1 - y0) * CELL_H);
 }
 
 static void scroll_up(void)
@@ -193,6 +198,8 @@ static void scroll_up(void)
 			(size_t)last * sw * sizeof(uint16_t));
 	for (i = (size_t)last * sw; i < (size_t)sh * sw; i++)
 		fb[i] = bg;
+	/* Every row shifts, so the whole screen is affected. */
+	sdl_video_mark_dirty_rect(0, 0, sw, sh);
 }
 
 static void newline(void)
@@ -499,12 +506,13 @@ void sdl_console_write(const char *s, unsigned n)
 	for (i = 0; i < n; i++)
 		esc_byte((unsigned char)s[i]);
 	cursor_draw();
-	/* Only mark dirty here. The front end writes one character at a time
-	 * while it edits a line, and presenting each one paces them across vsync
-	 * frames, which animates the cursor cell by cell. Circle's scanout
-	 * coalesces those writes instead, so the cursor jumps; let the event
-	 * loop / RUN poll present once after a burst. */
-	sdl_video_mark_dirty();
+	/* draw_cell / cursor_erase / cursor_draw / clear_cells / scroll_up each
+	 * mark just the rectangle they touched, so a burst of writes coalesces
+	 * into the union of the changed cells. The front end writes one
+	 * character at a time while it edits a line, and presenting each one
+	 * paces them across vsync frames, animating the cursor cell by cell;
+	 * Circle's scanout coalesces them instead, so let the event loop / RUN
+	 * poll present once after a burst. */
 }
 
 void sdl_console_fill(unsigned rgb888)

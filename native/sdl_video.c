@@ -354,10 +354,26 @@ int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 	return 1;
 }
 
+/* Fill one letterbox band black. A zero-area band (no bar on that edge) is
+ * skipped; the draw colour must already be black. */
+static void present_clear_band(int x, int y, int w, int h)
+{
+	SDL_Rect r;
+
+	if (w <= 0 || h <= 0)
+		return;
+	r.x = x;
+	r.y = y;
+	r.w = w;
+	r.h = h;
+	SDL_RenderFillRect(s_ren, &r);
+}
+
 void sdl_video_present(void)
 {
 	int x0, y0, x1, y1, y, x;
 	int ow = 0, oh = 0, dx, dy, dw, dh;
+	int rx0, ry0, rx1, ry1;
 	SDL_Rect src, dst;
 
 	if (!s_dirty)
@@ -409,14 +425,29 @@ void sdl_video_present(void)
 	/* Integer scale into the drawable, centred with black bars. */
 	sdl_video_host_size(&ow, &oh);
 	sdl_scale_viewport(ow, oh, s_w, s_h, &dx, &dy, &dw, &dh);
-	dst.x = dx;
-	dst.y = dy;
-	dst.w = dw;
-	dst.h = dh;
 
+	/* Clear only the letterbox bands the image does not cover, so the bars
+	 * stay black without the full-drawable SDL_RenderClear. The rest of the
+	 * drawable is left as the previous present left it, which is what lets
+	 * the copy below touch only the changed sub-rectangle. */
 	SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
-	SDL_RenderClear(s_ren);
-	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
+	present_clear_band(0, 0, ow, dy);
+	present_clear_band(0, dy + dh, ow, oh - (dy + dh));
+	present_clear_band(0, dy, dx, dh);
+	present_clear_band(dx + dw, dy, ow - (dx + dw), dh);
+
+	/* Present only the mapped destination sub-rectangle of the changed
+	 * framebuffer region, instead of the whole texture. */
+	sdl_scale_map_rect(ow, oh, s_w, s_h, x0, y0, x1, y1,
+			   &rx0, &ry0, &rx1, &ry1);
+	if (rx0 < rx1 && ry0 < ry1)
+	{
+		dst.x = rx0;
+		dst.y = ry0;
+		dst.w = rx1 - rx0;
+		dst.h = ry1 - ry0;
+		SDL_RenderCopy(s_ren, s_tex, &src, &dst);
+	}
 	SDL_RenderPresent(s_ren);
 }
 
