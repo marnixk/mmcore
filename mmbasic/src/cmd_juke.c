@@ -58,7 +58,7 @@ typedef struct {
 	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
 	int logo_w, logo_h;
 	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
-	unsigned col_bar_lo, col_bar_mid, col_bar_hi, col_scan, col_peak;
+	unsigned col_bar_lo, col_bar_hi, col_scan, col_peak;
 	unsigned col_scope_lo, col_vol, col_base;
 	int list_on;
 	int sel;
@@ -227,16 +227,14 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Black base -> mid grey -> lime tip, for the per-bar gradient (#952). */
+/* Black base -> lime tip, for the per-bar gradient (#1055, no grey mid). */
 static unsigned juke_grad(float t)
 {
 	if (t < 0.0f)
 		t = 0.0f;
 	if (t > 1.0f)
 		t = 1.0f;
-	if (t < 0.5f)
-		return juke_mix(U.col_bar_lo, U.col_bar_mid, t * 2.0f);
-	return juke_mix(U.col_bar_mid, U.col_bar_hi, (t - 0.5f) * 2.0f);
+	return juke_mix(U.col_bar_lo, U.col_bar_hi, t);
 }
 
 /* Muted graffiti accents: magenta -> cyan -> lime, for the VOL fill edge. */
@@ -263,7 +261,6 @@ static void juke_load_colours(void)
 	U.col_text = 0xFFFFFFu;     /* plain white           */
 	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
 	U.col_bar_lo = 0x000000u;   /* black bar base        */
-	U.col_bar_mid = 0x767C82u;  /* mid grey bar middle   */
 	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
 	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
 	U.col_peak = 0xC8E664u;     /* light lime cap        */
@@ -978,7 +975,7 @@ static void juke_paint_vis(int w, int h)
 			bh = 2;
 		if (bh > maxh)
 			bh = maxh;
-		/* Vertical per-bar gradient: black base -> grey -> lime tip. */
+		/* Vertical per-bar gradient: black base -> lime tip. */
 		for (y = 0; y < bh; y += 4)
 		{
 			float frac = (float)y / (float)bh;
