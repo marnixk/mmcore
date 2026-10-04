@@ -279,7 +279,6 @@ typedef struct mmb_gfx {
 		uint32_t *pix; /* RGB888 + alpha source */
 		uint16_t *npix; /* HDMI-native; 0 = transparent */
 		uint16_t *store; /* saved background, native */
-		uint8_t *astore; /* page-1 alpha snapshot, or NULL */
 	} sprite[MMB_MAX_SPRITE];
 	int turtle_on;
 	double turtle_x, turtle_y, turtle_hdg;
@@ -291,12 +290,8 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	/* HDMI-native page buffers. Page 1 alpha lives in page1_alpha. */
+	/* HDMI-native page buffers. Every page is a plain pixel plane. */
 	uint16_t *page[MMB_MAX_PAGES];
-	uint8_t *page1_alpha; /* 0=clear, 1..15=blend, 255=opaque (black-transparent if 0 colour) */
-	int page1_alpha_used; /* any partial AFLAG (1..15) written since last CLS */
-	int page1_any;        /* any non-zero native pixel on page 1 since last CLS */
-	uint16_t *present_scratch;
 	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
 	int dirty;
 	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
@@ -897,7 +892,6 @@ void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
-void mmb_gfx_clear_overlay(void);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
@@ -909,11 +903,9 @@ void mmb_gfx_dirty_flush(void);
 uint16_t *mmb_gfx_buf_for(int page, int *w, int *h);
 unsigned mmb_rgb_to_native(unsigned rgb888);
 unsigned mmb_native_to_rgb(unsigned native);
-unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte);
-uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out);
+uint16_t mmb_pix_store(unsigned rgb888);
 int mmb_gfx_map_y(int y, int h);
 int mmb_gfx_writing_fb(void);
-void ensure_page1_alpha(void);
 void mmb_gfx_fb_create(int w, int h);
 void mmb_gfx_fb_write(void);
 void mmb_gfx_fb_backup(void);

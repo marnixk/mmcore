@@ -706,7 +706,12 @@ def test_page_display_after_text_on_live_page(fresh_console):
 
 
 def test_live_pixel_after_page_display_roundtrip(fresh_console):
-    """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY."""
+    """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY.
+
+    The sample sits below the console's text rows: with page 1 a normal page,
+    CLS homes the console there and its prompt band repaints over graphics on
+    those rows (the same as any non-overlay page).
+    """
     c = fresh_console
     assert c.send_line("MODE 8,16") == ""
     assert c.send_line("PAGE WRITE 1") == ""
@@ -714,25 +719,25 @@ def test_live_pixel_after_page_display_roundtrip(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
     assert c.send_line("CLS RGB(0,0,0)") == ""
-    assert c.send_line("PIXEL 320,140,RGB(0,255,0)") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    assert c.send_line("PIXEL 320,400,RGB(0,255,0)") == ""
+    r, g, b = c.screen_pixel(320, 400)
     assert g > 180 and r < 80 and b < 80, (r, g, b)
-    soft = int(c.send_line("PRINT PIXEL(320,140)"))
+    soft = int(c.send_line("PRINT PIXEL(320,400)"))
     assert ((soft >> 8) & 255) > 180
     assert c.send_line("PAGE WRITE 3") == ""
     assert c.send_line("CLS RGB(255,0,0)") == ""
     assert c.send_line("PAGE DISPLAY 3") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE WRITE 3") == ""
-    red = int(c.send_line("PRINT PIXEL(320,140)"))
+    red = int(c.send_line("PRINT PIXEL(320,400)"))
     assert ((red >> 16) & 255) > 180
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
     assert g > 180 and r < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE DISPLAY 3") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
 
 

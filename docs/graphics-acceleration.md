@@ -56,7 +56,7 @@ Page buffers come from the Circle heap (already cache-line aligned).
 
 ## Dirty rectangles and async present
 
-Drawing that touches the display page (or page-1 overlay) expands a dirty AABB
+Drawing that touches the display page expands a dirty AABB
 (`mmb_gfx_dirty_add`). Opaque `PAGE COPY` / `BLIT` onto the visible page mark
 the copied region dirty. `mmb_gfx_present()` prefers `present_rect` of that AABB
 when dirty is set; otherwise it presents the full frame (MODE / `PAGE DISPLAY` /
@@ -111,24 +111,9 @@ path (same limit as `C2DGraphics`); presents use the single-buffer SetArea path.
 
 ## Still software
 
-Transparent blit, logic ops, and page-1 overlay composite (expand + blend in
-RGB888, store native into `present_scratch`) remain CPU work.
-
-## Page-1 transparency overlay cost
-
-`composite_display()` blends page 1 over the display page at present time. The
-slow path used to run an RGB888 expand + blend + quantize for **every** pixel as
-soon as any partial AFLAG alpha existed (Xmas sets this via `fades.inc`), even
-though almost all overlay pixels are fully transparent (alpha 0) or fully
-opaque (255, e.g. from `PAGE COPY ...,B`).
-
-The composite now handles those two cases natively — it copies the base or the
-overlay pixel directly — and only pays the expand/blend/quantize cost for the
-1..14 fade band. On an Xmas-shaped microbench (MODE 7 with a partial-alpha band,
-30× `PAGE COPY 2,1,B`) this cut the measured frame cost from ~340 ms to
-~120 ms in QEMU (`tests/test_profiling.py`, run with `MMCORE_PERF=1`), without
-changing the result. Page-1 overlay correctness stays covered by
-`tests/test_cmm2_gfx.py` and `tests/test_graphics.py`.
+Transparent blit and logic ops remain CPU work. Every page, page 1 included, is
+a plain native-format pixel plane; present scans the display page buffer
+directly.
 
 ## CMM2 drawing deviations still open
 

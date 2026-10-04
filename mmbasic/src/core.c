@@ -4694,8 +4694,7 @@ static void clear_exec_flags(void)
 static void exec_error_reset(int was_running)
 {
 	int pages_off = G.gfx.write_page || G.gfx.display_page ||
-			G.gfx.write_fb || G.gfx.page1_any ||
-			G.gfx.page1_alpha_used;
+			G.gfx.write_fb;
 	s_poll_active = 0;	/* longjmp unwound past mmb_poll() */
 	G.outn = 0;
 	G.out[0] = 0;

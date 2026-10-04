@@ -1699,7 +1699,6 @@ static void term_exit(void)
 		G.plat->present_wait();
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
-	mmb_gfx_clear_overlay();
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
@@ -2109,7 +2108,6 @@ static void term_fill_pages(void)
 	int saved = G.gfx.write_page;
 
 	term_guard_present();
-	mmb_gfx_clear_overlay();
 	G.gfx.write_page = TM_PAGE;
 	mmb_gfx_cls(TM_BG);
 	G.gfx.write_page = 0;
@@ -5771,7 +5769,6 @@ void mmb_cmd_term(void)
 	mmb_hw_cursor(0);
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	mmb_gfx_clear_overlay();
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
