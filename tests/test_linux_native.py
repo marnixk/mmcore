@@ -1449,6 +1449,146 @@ def test_sdl_video_window_setup(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_sdl_present_dirty_rect_host(tmp_path):
+    """#1080: the run-poll present region is the union of changed rectangles.
+
+    Covers the accumulate / clamp / replace / consume contract the dirty-rect
+    present relies on, including that a MODE change (resize to smaller buffers)
+    replaces a stale pending rectangle instead of leaving it pointing past the
+    new framebuffer.
+    """
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), "sdl_video_dirty_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_SDL_TEST=1",
+            "-I",
+            os.path.join(REPO, "native"),
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_video_dirty_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run(
+        [exe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout, out.stdout + out.stderr
+
+
+def test_sdl_present_is_dirty_rect_and_rate_limited():
+    """#1080: present uploads only the dirty rectangle and is frame-rate gated.
+
+    Structural guard: a regression would restore the whole-texture convert +
+    upload per RUN poll and drop the ``SDL_PRESENT_MIN_MS`` gate, which is the
+    ~100x slowdown the fix removes. Input must still be pumped every call so
+    BREAK stays responsive.
+    """
+    video = open(os.path.join(REPO, "native", "sdl_video.c"), encoding="utf-8").read()
+    plat = open(
+        os.path.join(REPO, "native", "platform_sdl.c"), encoding="utf-8"
+    ).read()
+    header = open(os.path.join(REPO, "native", "sdl_video.h"), encoding="utf-8").read()
+
+    # The dirty-rectangle API exists and present uploads a sub-rect.
+    assert "sdl_video_mark_dirty_rect" in header
+    assert "sdl_video_mark_dirty_rect" in video
+    assert "SDL_UpdateTexture(s_tex, &rect" in video, (
+        "present must upload only the pending rectangle"
+    )
+    # mark_dirty replaces the pending rect with the whole (current) screen.
+    assert "s_dirty_rect.w = s_w" in video, (
+        "a full repaint must replace the pending rectangle"
+    )
+
+    # The platform marks the exact rectangles at the write/Present boundaries.
+    assert "sdl_video_mark_dirty_rect(x, y, 1, 1)" in plat, "set_pixel marks 1x1"
+    assert "sdl_video_mark_dirty_rect(x, y, w, h)" in plat, (
+        "present_native/present_rgb mark their rect"
+    )
+
+    # The RUN poll presents at most once per display frame, after pumping input.
+    assert "SDL_PRESENT_MIN_MS" in plat, "the RUN poll must be rate limited"
+    poll = plat[plat.index("static void sdl_poll_input") :]
+    poll = poll[: poll.index("\n}")]
+    assert "sdl_input_pump();" in poll, "input must still be pumped every line"
+    assert poll.index("sdl_input_pump();") < poll.index("SDL_PRESENT_MIN_MS"), (
+        "input must be pumped before the present rate-limit return"
+    )
+
+
+def _parse_timer(out, label):
+    m = re.search(label + r"=(\d+)", out)
+    assert m, out
+    return int(m.group(1))
+
+
+def test_graphics_present_is_not_per_line(tmp_path):
+    """#1080: an on-screen graphics loop must not present once per program line.
+
+    Runs the same LINE loop on a hidden soft page and on the display page. The
+    hidden page never presents; before the fix the display page presented on
+    every RUN poll (full-texture convert + upload, vsync), taking hundreds of
+    ms. With the dirty rectangle and the frame-rate gate the two stay within a
+    generous budget, even on a loaded host.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    loop = [
+        "FOR Y=0 TO 1023",
+        "LINE 0,Y,320,Y,RGB(Y*2,0,0)",
+        "LINE 0,Y+128,320,Y+128,RGB(255-(Y*2),0,0)",
+        "NEXT Y",
+    ]
+    program = (
+        ["10 MODE 19", "20 PAGE WRITE 1", "30 T=TIMER"]
+        + [f"{40 + i} {line}" for i, line in enumerate(loop)]
+        + ['90 PRINT "HIDDEN=";TIMER-T', "100 PAGE DISPLAY 1", "110 T=TIMER"]
+        + [f"{120 + i} {line}" for i, line in enumerate(loop)]
+        + ['160 PRINT "VISIBLE=";TIMER-T', "170 QUIT", "RUN"]
+    )
+    env = dict(
+        os.environ, SDL_VIDEODRIVER="dummy", MMB_DRIVE_ROOT=str(tmp_path / "root")
+    )
+    proc = subprocess.run(
+        [SDL_BIN],
+        input="\n".join(program) + "\n",
+        text=True,
+        capture_output=True,
+        timeout=180,
+        env=env,
+    )
+    out = proc.stdout + proc.stderr
+    hidden_ms = _parse_timer(out, "HIDDEN")
+    visible_ms = _parse_timer(out, "VISIBLE")
+    # A present or two is fine; one per program line is the regression. The old
+    # path took a present per RUN poll (~270 ms for this loop under the dummy
+    # driver), so 150 ms fails it while leaving plenty of headroom for a loaded
+    # host (the fixed path is <10 ms).
+    assert visible_ms < 150, (
+        f"visible page took {visible_ms} ms (hidden {hidden_ms} ms): "
+        "the RUN poll is presenting per program line again"
+    )
+
+
 def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
     sdl = subprocess.run(
         ["pkg-config", "--cflags", "--libs", "sdl2"],

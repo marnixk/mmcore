@@ -108,7 +108,7 @@ static void sdl_set_pixel(int x, int y, unsigned rgb)
 	    y >= sdl_video_height())
 		return;
 	fb[y * sdl_video_width() + x] = (uint16_t)sdl_rgb_to_native(rgb);
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, 1, 1);
 }
 
 static unsigned sdl_get_pixel(int x, int y)
@@ -164,7 +164,7 @@ static void sdl_present_native(int x, int y, int w, int h, const void *pix,
 			fb[dy * sw + dx] = src[row * stride + col];
 		}
 	}
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, w, h);
 }
 
 static void sdl_present_rgb(int x, int y, int w, int h,
@@ -192,16 +192,30 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 				(uint16_t)sdl_rgb_to_native(rgb888[row * stride + col]);
 		}
 	}
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, w, h);
 }
 
-/* Called from mmb_check_break while a program runs: pump SDL input and
- * repaint so the window stays alive during long RUNs. */
+/* Present at most once per display frame while a program runs. The RUN poll
+ * fires on every program line, and each present waits for vsync, so presenting
+ * per line throttled a graphics loop to roughly one line per frame (#1080).
+ * Input is still pumped on every call so BREAK stays responsive. */
+#define SDL_PRESENT_MIN_MS 16
+
 static void sdl_poll_input(void)
 {
+	static int have_presented;
+	static unsigned last_present_ms;
+	unsigned now;
+
 	if (!mmb_is_running())
 		return;
 	sdl_input_pump();
+	now = sdl_millis();
+	if (have_presented &&
+	    (unsigned)(now - last_present_ms) < SDL_PRESENT_MIN_MS)
+		return;
+	have_presented = 1;
+	last_present_ms = now;
 	sdl_video_present();
 }
 

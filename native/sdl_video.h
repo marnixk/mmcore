@@ -49,7 +49,24 @@ unsigned sdl_rgb_to_native(unsigned rgb888);
 unsigned sdl_native_to_rgb(unsigned native);
 
 void sdl_video_present(void);
+
+/* Mark the whole screen as changed. This replaces (does not union) any
+ * pending rectangle, so a MODE change cannot leave a stale rect pointing past
+ * the new, possibly smaller buffers. */
 void sdl_video_mark_dirty(void);
+
+/* Union a changed rectangle (framebuffer pixels) into the pending present
+ * region, clamped to the framebuffer. sdl_video_present() converts and uploads
+ * only this region (#1080). */
+void sdl_video_mark_dirty_rect(int x, int y, int w, int h);
+
+#ifdef MMB_SDL_TEST
+/* Test-only: pending present rectangle in framebuffer pixels, or 0 when
+ * nothing is pending. Host tests cover the accumulate/clamp/replace/consume
+ * contract (#1080). */
+int sdl_video_test_dirty_rect(int *x, int *y, int *w, int *h);
+#endif
+
 int sdl_video_should_quit(void);
 void sdl_video_request_quit(void);
 void sdl_video_toggle_fullscreen(void);

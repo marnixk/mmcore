@@ -30,10 +30,66 @@ static int s_w, s_h;
 static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
 static int s_dirty = 1;
+static SDL_Rect s_dirty_rect; /* pending present region (valid while s_dirty) */
 
 void sdl_video_mark_dirty(void)
 {
 	s_dirty = 1;
+	/* Replace any accumulated rectangle with the whole screen. Replacing
+	 * (not unioning) matters after a MODE change: a pending rect computed
+	 * for the old, larger buffers must never survive into the new mode. */
+	s_dirty_rect.x = 0;
+	s_dirty_rect.y = 0;
+	s_dirty_rect.w = s_w;
+	s_dirty_rect.h = s_h;
+}
+
+void sdl_video_mark_dirty_rect(int x, int y, int w, int h)
+{
+	int x0, y0, x1, y1;
+
+	if (w <= 0 || h <= 0)
+		return;
+	x0 = x < 0 ? 0 : x;
+	y0 = y < 0 ? 0 : y;
+	x1 = x + w;
+	y1 = y + h;
+	if (x1 > s_w)
+		x1 = s_w;
+	if (y1 > s_h)
+		y1 = s_h;
+	if (x0 >= x1 || y0 >= y1)
+		return;
+
+	if (s_dirty)
+	{
+		int px0 = s_dirty_rect.x, py0 = s_dirty_rect.y;
+		int px1 = px0 + s_dirty_rect.w, py1 = py0 + s_dirty_rect.h;
+
+		/* Clamp the pending rect to the live framebuffer before unioning:
+		 * it may predate a resize that shrank the buffers. */
+		if (px0 < 0)
+			px0 = 0;
+		if (py0 < 0)
+			py0 = 0;
+		if (px1 > s_w)
+			px1 = s_w;
+		if (py1 > s_h)
+			py1 = s_h;
+		if (px0 < x0)
+			x0 = px0;
+		if (py0 < y0)
+			y0 = py0;
+		if (px1 > x1)
+			x1 = px1;
+		if (py1 > y1)
+			y1 = py1;
+	}
+	s_dirty = 1;
+	s_dirty_rect.x = x0;
+	s_dirty_rect.y = y0;
+	s_dirty_rect.w = x1 - x0;
+	s_dirty_rect.h = y1 - y0;
 }
 
 unsigned sdl_rgb_to_native(unsigned rgb888)
@@ -230,7 +286,8 @@ int sdl_video_resize(int w, int h)
 
 	s_w = w;
 	s_h = h;
-	s_dirty = 1;
+	/* Replaces any pending rectangle: the new buffers may be smaller. */
+	sdl_video_mark_dirty();
 	if (s_win)
 		SDL_SetWindowSize(s_win, w * s_window_scale,
 				  h * s_window_scale);
@@ -290,27 +347,61 @@ int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 
 void sdl_video_present(void)
 {
-	size_t n, i;
+	int x, y, x0, y0, x1, y1;
 	int ow = 0, oh = 0, dx, dy, dw, dh;
-	SDL_Rect dst;
+	SDL_Rect rect, dst;
 
 	if (!s_dirty)
 		return;
 	if (!s_tex || !s_fb || !s_stage)
 		return;
 
-	n = (size_t)s_w * (size_t)s_h;
-	for (i = 0; i < n; i++)
+	/* Convert and upload only the pending region. A graphics loop marks a
+	 * rectangle per drawn span; presenting the whole texture on every RUN
+	 * poll made an on-screen LINE loop ~100x slower than a hidden page
+	 * (#1080). */
+	x0 = s_dirty_rect.x;
+	y0 = s_dirty_rect.y;
+	x1 = x0 + s_dirty_rect.w;
+	y1 = y0 + s_dirty_rect.h;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > s_w)
+		x1 = s_w;
+	if (y1 > s_h)
+		y1 = s_h;
+	if (x0 >= x1 || y0 >= y1)
 	{
-		uint16_t v = s_fb[i];
-		unsigned r = (v >> 11) & 0x1Fu;
-		unsigned g = (v >> 6) & 0x1Fu;
-		unsigned b = v & 0x1Fu;
-		unsigned g6 = (g << 1) | (g >> 4);
-		s_stage[i] = (uint16_t)((r << 11) | (g6 << 5) | b);
+		s_dirty = 0;
+		return;
 	}
 
-	SDL_UpdateTexture(s_tex, 0, s_stage, s_w * (int)sizeof(uint16_t));
+	for (y = y0; y < y1; y++)
+	{
+		const uint16_t *src = s_fb + (size_t)y * s_w;
+		uint16_t *stage = s_stage + (size_t)y * s_w;
+
+		for (x = x0; x < x1; x++)
+		{
+			uint16_t v = src[x];
+			unsigned r = (v >> 11) & 0x1Fu;
+			unsigned g = (v >> 6) & 0x1Fu;
+			unsigned b = v & 0x1Fu;
+			unsigned g6 = (g << 1) | (g >> 4);
+
+			stage[x] = (uint16_t)((r << 11) | (g6 << 5) | b);
+		}
+	}
+
+	rect.x = x0;
+	rect.y = y0;
+	rect.w = x1 - x0;
+	rect.h = y1 - y0;
+	SDL_UpdateTexture(s_tex, &rect,
+			  s_stage + (size_t)y0 * s_w + x0,
+			  s_w * (int)sizeof(uint16_t));
 
 	/* Integer scale into the drawable, centred with black bars. */
 	sdl_video_host_size(&ow, &oh);
@@ -326,6 +417,23 @@ void sdl_video_present(void)
 	SDL_RenderPresent(s_ren);
 	s_dirty = 0;
 }
+
+#ifdef MMB_SDL_TEST
+int sdl_video_test_dirty_rect(int *x, int *y, int *w, int *h)
+{
+	if (!s_dirty || s_dirty_rect.w <= 0 || s_dirty_rect.h <= 0)
+		return 0;
+	if (x)
+		*x = s_dirty_rect.x;
+	if (y)
+		*y = s_dirty_rect.y;
+	if (w)
+		*w = s_dirty_rect.w;
+	if (h)
+		*h = s_dirty_rect.h;
+	return 1;
+}
+#endif
 
 void sdl_video_request_quit(void)
 {
