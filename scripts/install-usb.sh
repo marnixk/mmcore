@@ -15,12 +15,15 @@
 #   sudo ./install-usb.sh --no-persist /dev/sdX
 #   sudo ./install-usb.sh --update --iso mmcore-fb-x86_64.iso.zst /dev/sdX
 #
-# --update refreshes the mmcore system files on an already-written stick
-# without touching the persistent MMCORE partition. It writes the new ISO only
-# as far as the existing partition 5 starts, then re-creates that GPT entry at
-# its old offset, so C:, .mmbasic.ini, saved Wi-Fi settings and any other user
-# files on the ext4 survive. No reformat, no mkfs. It requires an existing
-# MMCORE partition and refuses an image that would overlap it.
+# --update refreshes the mmcore system files on an already-written stick: it
+# copies the persistent MMCORE partition's contents to a staging directory,
+# rewrites the whole image (fresh GPT plus a freshly formatted MMCORE
+# partition), then copies the files back. C:, .mmbasic.ini, saved Wi-Fi
+# settings and any other user files survive, whether or not the new image grew.
+# The staging directory defaults to $TMPDIR (else /tmp) and must hold the used
+# bytes of MMCORE; override it with MMCORE_UPDATE_BACKUP. It requires an
+# existing MMCORE partition. A failed update keeps the staged copy and reports
+# where it is.
 #
 # --read-write does not install onto an internal disk. It seeds the MMCORE
 # partition with a marker (/.mmcore-rw) so the live boot uses that partition
@@ -35,7 +38,8 @@ READ_WRITE=0
 UPDATE=0
 ASSUME_YES=0
 DECOMPRESS=(cat)
-TMP_ISO=""
+UPDATE_BACKUP_DIR=""
+UPDATE_MOUNT_DIR=""
 
 # GNU coreutils dd accepts status=progress; BusyBox dd (the default on Alpine,
 # the distro the ISO itself targets) aborts with an invalid-argument error
@@ -48,13 +52,90 @@ fi
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
 	printf 'install-usb: %s\n' "$*" >&2
+	# A failed --update must never throw away the only copy of the user's
+	# files: keep the staging directory and point at it.
+	if [ -n "${UPDATE_BACKUP_DIR}" ]; then
+		printf 'install-usb: MMCORE back-up kept at %s\n' \
+			"${UPDATE_BACKUP_DIR}" >&2
+	fi
 	exit 1
 }
 cleanup() {
-	[ -n "${TMP_ISO}" ] && rm -f "${TMP_ISO}"
+	[ -n "${UPDATE_MOUNT_DIR}" ] && umount "${UPDATE_MOUNT_DIR}" 2>/dev/null
 	return 0
 }
 trap cleanup EXIT
+
+# Locate the MMCORE partition node on ${DEVICE} (/dev/sdX5, /dev/nvme0n1p5, ...).
+mmcore_part() {
+	local p="${DEVICE}5"
+	[ -b "${p}" ] || p="${DEVICE}p5"
+	[ -b "${p}" ] || return 1
+	printf '%s' "${p}"
+}
+
+# --update step 1: stage the MMCORE partition's contents outside the device so
+# the normal install path can rewrite the whole medium (fresh GPT and a freshly
+# formatted MMCORE partition). update_restore puts them back afterwards. The
+# staging directory defaults to TMPDIR (else /tmp); MMCORE_UPDATE_BACKUP over-
+# rides it.
+update_backup() {
+	command -v sgdisk >/dev/null 2>&1 \
+		|| die "sgdisk (gdisk) is required to find the MMCORE partition"
+	LC_ALL=C sgdisk --info=5 "${DEVICE}" >/dev/null 2>&1 \
+		|| die "no MMCORE partition on ${DEVICE}; use a normal install (this wipes the device)"
+	local part5
+	part5="$(mmcore_part || true)"
+	if [ -z "${part5}" ]; then
+		partprobe "${DEVICE}" 2>/dev/null || true
+		udevadm settle 2>/dev/null || true
+		part5="$(mmcore_part || true)"
+	fi
+	[ -n "${part5}" ] || die "could not find the MMCORE partition node on ${DEVICE}"
+
+	UPDATE_BACKUP_DIR="$(mktemp -d \
+		"${MMCORE_UPDATE_BACKUP:-${TMPDIR:-/tmp}}/mmcore-update.XXXXXX")" \
+		|| die "could not create a staging directory; set MMCORE_UPDATE_BACKUP"
+	UPDATE_MOUNT_DIR="${UPDATE_BACKUP_DIR}/mnt"
+	mkdir -p "${UPDATE_MOUNT_DIR}" "${UPDATE_BACKUP_DIR}/data"
+	# A dirty ext4 (unclean power-off) refuses a read-only mount; noload reads
+	# the last consistent state without replaying the journal.
+	mount -o ro "${part5}" "${UPDATE_MOUNT_DIR}" 2>/dev/null \
+		|| mount -o ro,noload "${part5}" "${UPDATE_MOUNT_DIR}" \
+		|| die "could not mount ${part5} to back up the MMCORE contents"
+	local used_kb avail_kb
+	used_kb="$(df -Pk "${UPDATE_MOUNT_DIR}" | awk 'NR==2{print $3}')"
+	avail_kb="$(df -Pk "${UPDATE_BACKUP_DIR}" | awk 'NR==2{print $4}')"
+	if [ -n "${used_kb}" ] && [ -n "${avail_kb}" ] \
+		&& [ "${used_kb}" -gt "${avail_kb}" ]; then
+		die "not enough space in ${UPDATE_BACKUP_DIR} for the MMCORE contents (${used_kb} KiB needed, ${avail_kb} KiB free); set MMCORE_UPDATE_BACKUP to a larger location"
+	fi
+	cp -a "${UPDATE_MOUNT_DIR}/." "${UPDATE_BACKUP_DIR}/data/" \
+		|| die "could not back up the MMCORE contents"
+	sync
+	umount "${UPDATE_MOUNT_DIR}" \
+		|| die "could not unmount ${part5} after backing it up"
+	UPDATE_MOUNT_DIR=""
+	log "Backed up the MMCORE contents to ${UPDATE_BACKUP_DIR}"
+}
+
+# --update step 2: put the staged contents back into the newly formatted MMCORE
+# partition (the normal install created it and ran mkfs.ext4 on it).
+update_restore() {
+	UPDATE_MOUNT_DIR="${UPDATE_BACKUP_DIR}/mnt"
+	mkdir -p "${UPDATE_MOUNT_DIR}"
+	mount -o rw "${part}" "${UPDATE_MOUNT_DIR}" \
+		|| die "could not mount ${part} to restore the MMCORE contents"
+	cp -a "${UPDATE_BACKUP_DIR}/data/." "${UPDATE_MOUNT_DIR}/" \
+		|| die "could not restore the MMCORE contents"
+	sync
+	umount "${UPDATE_MOUNT_DIR}" \
+		|| die "could not unmount ${part} after restoring the contents"
+	UPDATE_MOUNT_DIR=""
+	log "Restored the MMCORE contents"
+	rm -rf "${UPDATE_BACKUP_DIR}"
+	UPDATE_BACKUP_DIR=""
+}
 
 usage() {
 	cat <<'EOF'
@@ -66,9 +147,11 @@ Options:
   --iso PATH     image to write: raw .iso or compressed .iso.zst/.xz/.gz
                  (default: dist/mmcore-fb-x86_64.iso)
   --update       refresh the system files on a stick that already has an
-                 MMCORE partition, without reformatting it: C:, .mmbasic.ini
-                 and saved settings on that partition survive. Requires an
-                 existing MMCORE partition.
+                 MMCORE partition: its contents are backed up, the image is
+                 rewritten, then the contents are restored, so C:,
+                 .mmbasic.ini and saved settings survive. Requires an
+                 existing MMCORE partition and staging space for its
+                 contents (MMCORE_UPDATE_BACKUP, default $TMPDIR or /tmp).
   --read-write   provision the free space as a read-write store (label
                  MMCORE, marker /.mmcore-rw). The live session uses it as
                  its writable layer and C: persists there. This does not
@@ -136,7 +219,7 @@ if grep -q "^${DEVICE}[0-9p]" /proc/mounts 2>/dev/null; then
 fi
 
 if [ "${UPDATE}" = 1 ]; then
-	log "About to update the mmcore system image on ${DEVICE} (MMCORE partition kept)"
+	log "About to update the mmcore system image on ${DEVICE} (MMCORE contents backed up and restored)"
 else
 	log "About to overwrite ${DEVICE} with ${ISO}"
 fi
@@ -147,61 +230,13 @@ if [ "${ASSUME_YES}" != "1" ]; then
 fi
 
 if [ "${UPDATE}" = 1 ]; then
-	command -v sgdisk >/dev/null 2>&1 \
-		|| die "sgdisk (gdisk) is required to update the MMCORE partition"
-	# Read the persistent partition's exact geometry before the ISO write
-	# replaces the primary GPT with the image's own (partitions 1-4).
-	part5_info="$(LC_ALL=C sgdisk --info=5 "${DEVICE}" 2>/dev/null)" \
-		|| die "no MMCORE partition on ${DEVICE}; use a normal install (this wipes the device)"
-	part5_first="$(printf '%s\n' "${part5_info}" | awk '/^First sector:/{print $3; exit}')"
-	part5_last="$(printf '%s\n' "${part5_info}" | awk '/^Last sector:/{print $3; exit}')"
-	[ -n "${part5_first}" ] && [ -n "${part5_last}" ] \
-		|| die "could not read the MMCORE partition geometry on ${DEVICE}"
-
-	# Materialise the image so its real size can be checked against the
-	# partition start: a compressed stream cannot be measured in advance,
-	# and an image that grew past the partition would clobber C:.
-	write_src="${ISO}"
-	case "${ISO}" in
-		*.zst|*.xz|*.gz)
-			TMP_ISO="$(mktemp)"
-			"${DECOMPRESS[@]}" "${ISO}" > "${TMP_ISO}"
-			write_src="${TMP_ISO}"
-			;;
-	esac
-	iso_bytes="$(wc -c < "${write_src}")"
-	part5_bytes=$((part5_first * 512))
-	if [ "${iso_bytes}" -gt "${part5_bytes}" ]; then
-		die "the new image (${iso_bytes} bytes) would overlap the MMCORE partition at sector ${part5_first}; a normal install wipes the device, or back up C: and reinstall"
-	fi
-
-	log "Refreshing the system image before the MMCORE partition"
-	# shellcheck disable=SC2086  # empty on BusyBox dd, a single word on GNU dd
-	dd if="${write_src}" of="${DEVICE}" bs=4M conv=fsync ${DD_PROGRESS}
-
-	# The ISO's own GPT names only partitions 1-4. Re-create the MMCORE
-	# entry at its old offset (no mkfs), then move the backup header to the
-	# device end so the partition stays addressable after a reboot.
-	log "Keeping the MMCORE partition (sectors ${part5_first}-${part5_last})"
-	sgdisk --move-second-header "${DEVICE}" >/dev/null \
-		|| die "sgdisk could not resize the GPT on ${DEVICE}"
-	sgdisk --new=5:"${part5_first}":"${part5_last}" --typecode=5:8300 \
-		--change-name=5:MMCORE "${DEVICE}" >/dev/null \
-		|| die "sgdisk could not restore partition 5 on ${DEVICE}"
-	partprobe "${DEVICE}" 2>/dev/null || true
-	udevadm settle 2>/dev/null || true
-	# Same node fallback as the fresh install: hosts without udev (or a loop
-	# device) may not get the partition node back after the GPT change.
-	if [ ! -b "${DEVICE}5" ] && [ ! -b "${DEVICE}p5" ]; then
-		partx -u "${DEVICE}" 2>/dev/null || true
-	fi
-	if [ ! -b "${DEVICE}5" ] && [ ! -b "${DEVICE}p5" ]; then
-		partx -a -n 5:5 "${DEVICE}" 2>/dev/null || true
-	fi
-	log "Updated. The MMCORE partition (C:, .mmbasic.ini, settings) is untouched."
-	exit 0
+	update_backup
 fi
 
+if [ "${UPDATE}" = 1 ]; then
+	# A previously mounted hybrid ISO can leave the whole disk read-only.
+	blockdev --setrw "${DEVICE}" 2>/dev/null || true
+fi
 log "Writing the image"
 # shellcheck disable=SC2086  # empty on BusyBox dd, a single word on GNU dd
 "${DECOMPRESS[@]}" "${ISO}" | dd of="${DEVICE}" bs=4M conv=fsync ${DD_PROGRESS}
@@ -261,7 +296,13 @@ if [ "${PERSIST}" = "1" ]; then
 	fi
 fi
 
-if [ "${READ_WRITE}" = "1" ]; then
+if [ "${UPDATE}" = 1 ]; then
+	update_restore
+fi
+
+if [ "${UPDATE}" = 1 ]; then
+	log "Done. The system image was updated and the MMCORE contents (C:, .mmbasic.ini, settings) were restored."
+elif [ "${READ_WRITE}" = "1" ]; then
 	log "Done. Boot the device: the live system is read-write and C: persists on MMCORE."
 elif [ "${PERSIST}" = "1" ]; then
 	log "Done. Boot the device and mmcore's C: will persist on MMCORE."

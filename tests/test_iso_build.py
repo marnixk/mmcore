@@ -515,25 +515,30 @@ def test_install_usb_uses_a_free_partition_number():
     assert "partx -a -n 5:5" in text
 
 
-def test_install_usb_update_keeps_the_mmcore_partition():
-    """#1056: --update refreshes the system image but re-creates the existing
-    MMCORE GPT entry at its old offset instead of formatting it, so C:,
-    .mmbasic.ini and saved settings on that ext4 survive."""
+def test_install_usb_update_backs_up_and_restores_the_mmcore_partition():
+    """#1056: --update stages the MMCORE partition's contents, rewrites the
+    whole image (fresh GPT and a freshly formatted MMCORE partition), then
+    restores the files, so C:, .mmbasic.ini and saved settings survive."""
     help_out = _run([INSTALL_USB, "--help"]).stdout
     assert "--update" in help_out
     text = open(INSTALL_USB, encoding="utf-8").read()
     assert "UPDATE=1" in text
-    # It reads the persistent partition's geometry before the ISO write
-    # replaces the primary GPT with the image's own partitions 1-4...
+    # The persistent partition is found before it is staged...
     assert "sgdisk --info=5" in text
-    assert "First sector" in text
-    assert "Last sector" in text
-    # ...writes the image, then re-adds partition 5 at its old offset, with no
-    # mkfs on the update path.
-    assert '--new=5:"${part5_first}":"${part5_last}"' in text
-    assert "--move-second-header" in text
-    # An image that grew past the partition is refused, not truncated.
-    assert "would overlap the MMCORE partition" in text
+    # ...its contents are copied out to a staging directory and back...
+    assert "update_backup" in text and "update_restore" in text
+    assert "cp -a" in text
+    assert "MMCORE_UPDATE_BACKUP" in text
+    # ...the normal install path rewrites the image and formats the partition...
+    assert "mkfs.ext4" in text
+    # ...in the right order...
+    assert text.index("\n\tupdate_backup\n") < text.index('log "Writing the image"')
+    assert text.index('log "Writing the image"') < text.index("\n\tupdate_restore\n")
+    # ...and a failed update keeps the staged copy instead of losing it.
+    assert "MMCORE back-up kept at" in text
+    # The old in-place re-partitioning is gone.
+    assert '--new=5:"${part5_first}"' not in text
+    assert "would overlap the MMCORE partition" not in text
 
 
 def test_install_usb_update_rejects_read_write_and_no_persist():
@@ -549,8 +554,8 @@ def test_install_usb_update_rejects_read_write_and_no_persist():
 
 def test_install_usb_update_preserves_the_persistent_partition(tmp_path):
     """#1056: a real --read-write install, a user file on C:, then --update
-    with a new image: the mmcore region changes and the ext4 (C:, .mmcore-rw,
-    label) is untouched."""
+    with a new image: the system image is rewritten and the MMCORE contents
+    (C:, .mmcore-rw, label) are backed up and restored."""
     if shutil.which("sgdisk") is None or shutil.which("mkfs.ext4") is None:
         pytest.skip("sgdisk and mkfs.ext4 are required")
     if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0:
@@ -609,7 +614,7 @@ def test_install_usb_update_preserves_the_persistent_partition(tmp_path):
         assert proc.returncode == 0, proc.stderr
         assert os.path.exists(part), proc.stderr
 
-        # The persistent ext4 is intact: user file, marker and label...
+        # The persistent contents were restored: user file, marker and label...
         subprocess.run(["sudo", "mount", "-o", "ro", part, str(mnt)], check=True)
         assert (mnt / "C" / "USER.BAS").read_text(encoding="utf-8") == "persist me\n"
         assert (mnt / ".mmcore-rw").exists()
