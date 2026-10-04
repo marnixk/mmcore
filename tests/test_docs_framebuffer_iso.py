@@ -102,10 +102,11 @@ def test_framebuffer_iso_doc_documents_chromebooks():
 
 def test_framebuffer_iso_doc_documents_usb_update():
     """#1056: the doc must document install-usb --update, including that the
-    persistent partition is kept."""
+    persistent partition's contents are backed up and restored."""
     text = _read(DOC)
     assert "--update" in text
     assert "mkfs.ext4" in text
+    assert "MMCORE_UPDATE_BACKUP" in text
     assert "survive" in text or "survives" in text
 
 

@@ -58,11 +58,14 @@ sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
 ```
 
 `--update` refreshes the mmcore system files on a stick that was already
-written, without touching the `MMCORE` partition: the system image (kernel,
-initramfs and squashfs) is rewritten and the partition is re-created in the GPT
-at its old offset, so `C:`, `.mmbasic.ini` and saved Wi-Fi settings survive. It
-never runs `mkfs.ext4`. It requires an existing `MMCORE` partition and refuses
-an image that has grown past it:
+written. It copies the `MMCORE` partition's contents to a staging directory
+(`MMCORE_UPDATE_BACKUP`, default `$TMPDIR` or `/tmp`), rewrites the whole image
+with a fresh GPT and a freshly formatted `MMCORE` partition (`mkfs.ext4`), then
+copies the files back, so `C:`, `.mmbasic.ini`, saved Wi-Fi settings and any
+other user files survive even when the new image has grown. The staging
+directory must hold the used bytes of `MMCORE`; a failed update keeps the
+staged copy and reports where it is. It requires an existing `MMCORE`
+partition:
 
 ```bash
 sudo ./install-usb.sh --update --iso mmcore-fb-x86_64.iso.zst /dev/sdX
