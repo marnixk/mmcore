@@ -833,6 +833,71 @@ def test_graphics_pixel_and_shapes(mmb_linux, tmp_path):
     assert _is_black(p(270, 180))
 
 
+SPAN_SCENE = (
+    "LINE 20,30,300,30,RGB(255,0,0)\n"
+    "LINE 40,50,220,180,RGB(0,255,0)\n"
+    "BOX 60,200,120,60,1,RGB(0,0,255),RGB(255,255,0)\n"
+    "CIRCLE 450,150,50,1,RGB(255,0,255),RGB(0,255,255)\n"
+)
+
+# Sampled coordinates across every span primitive: the two line ends and mid,
+# a box edge and its fill, the circle fill and rim, and one background pixel.
+SPAN_SAMPLES = (
+    (20, 30), (160, 30), (300, 30),
+    (40, 50), (220, 180),
+    (60, 200), (179, 259), (100, 220),
+    (450, 150), (500, 150), (400, 400),
+)
+
+
+def test_graphics_span_fast_path_visible_live_surface(mmb_linux, tmp_path):
+    """#1082: 1px spans drawn straight to the visible page land exactly.
+
+    The span fast path now covers the display page, so the live surface must
+    still show the same pixels the old per-pixel plot path produced (LINE,
+    BOX fill and CIRCLE fill all funnel through the shared span writer).
+    """
+    p = _shape_pixels(
+        mmb_linux,
+        tmp_path,
+        "span_visible",
+        "MODE 8,16\nCLS\n" + SPAN_SCENE,
+    )
+    assert _is_red(p(160, 30))
+    assert _is_green(p(40, 50))
+    assert _is_green(p(220, 180))
+    assert _is_blue(p(60, 200))
+    assert _is_yellow(p(100, 220))
+    assert _is_blue(p(179, 259))
+    assert (0, 255, 255) == p(450, 150)  # circle fill cyan
+    assert (255, 0, 255) == p(500, 150)  # circle stroke magenta
+    assert _is_black(p(400, 400))
+
+
+def test_graphics_span_fast_path_matches_hidden_page(mmb_linux, tmp_path):
+    """#1082: the visible-page span path stores the same pixels as a hidden page.
+
+    Draw the scene twice, to page 0 (visible, dirty/tracked) and page 1
+    (hidden), and compare PIXEL() readback at the sampled points.
+    """
+    reads = ';",";'.join(f"PIXEL({x},{y},P)" for x, y in SPAN_SAMPLES)
+    lines = (
+        ["MODE 8,16", "PAGE WRITE 0", "CLS"]
+        + SPAN_SCENE.splitlines()
+        + ["PAGE WRITE 1", "CLS"]
+        + SPAN_SCENE.splitlines()
+        + ["FOR P=0 TO 1", f'PRINT "PAGE";P;":";{reads}', "NEXT P"]
+    )
+    program = "".join(f"{10 * (i + 1)} {line}\n" for i, line in enumerate(lines))
+    out = _run(mmb_linux, program + "RUN\n")
+    pages = re.findall(r"PAGE(\d):([\d,]+)", out)
+    assert len(pages) == 2, out
+    visible = [int(v) for v in pages[0][1].split(",")]
+    hidden = [int(v) for v in pages[1][1].split(",")]
+    assert visible == hidden, (visible, hidden)
+    assert sum(1 for v in visible if v & 0xFFFFFF) >= 8, visible
+
+
 def test_scene_matches_pi_golden(mmb_linux, tmp_path):
     """LN-21 (#473): the CMM2 scene matches the Pi golden within 2%."""
     golden = os.path.join(REPO, "tests", "golden", "scene.png")

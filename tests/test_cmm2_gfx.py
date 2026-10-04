@@ -175,6 +175,42 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
 
 
+def test_span_fast_path_visible_matches_hidden(fresh_console):
+    """#1082: 1px spans drawn to the visible page match the hidden page.
+
+    LINE, BOX fill and CIRCLE fill take the resolved-span fast path. On the
+    visible page that also dirty-tracks and set_pixels; a hidden page only
+    writes the page buffer. Both must store byte-identical pixels.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    scene = [
+        "LINE 20,30,300,30,RGB(255,0,0)",
+        "LINE 40,50,220,180,RGB(0,255,0)",
+        "BOX 60,200,120,60,1,RGB(0,0,255),RGB(255,255,0)",
+        "CIRCLE 450,150,50,1,RGB(255,0,255),RGB(0,255,255)",
+    ]
+    samples = [
+        (20, 30), (160, 30), (300, 30),
+        (40, 50), (220, 180),
+        (60, 200), (179, 259), (100, 220),
+        (450, 150), (500, 150), (400, 400),
+    ]
+    values = {}
+    for page in (0, 1):
+        c.send_line(f"PAGE WRITE {page}")
+        c.send_line("CLS")
+        for line in scene:
+            assert c.send_line(line) == ""
+        values[page] = [
+            int(c.send_line(f"PRINT PIXEL({x},{y},{page})").split()[0])
+            for x, y in samples
+        ]
+    c.send_line("PAGE WRITE 0")
+    assert values[0] == values[1], (values[0], values[1])
+    assert sum(1 for v in values[0] if v & 0xFFFFFF) >= 8, values[0]
+
+
 def test_page1_is_not_composited_over_display(fresh_console):
     """#1051: page-1 pixels, with or without AFLAG, never appear over page 0."""
     c = fresh_console

@@ -836,42 +836,124 @@ void mmb_gfx_cls(unsigned rgb)
 	}
 }
 
+/* Resolved draw target for the 1px/span fast paths: the page buffer, its
+ * size, the packed native colour and whether writes must also hit the live
+ * visible surface (dirty AABB + platform set_pixel). mmb_gfx_plot()
+ * re-quantises the colour and re-resolves the buffer per pixel; a span
+ * resolves it once (#1082). */
+struct span_target {
+	uint16_t *pg;
+	int w, h;
+	uint16_t np;
+	unsigned live_rgb;
+	int live; /* visible display page: dirty-track and set_pixel */
+	int dx0, dy0, dx1, dy1;
+};
+
+static void span_target_init(struct span_target *t, unsigned rgb)
+{
+	int fb = mmb_gfx_writing_fb();
+	t->pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
+	t->w = fb ? G.gfx.fb_w : G.gfx.w;
+	t->h = fb ? G.gfx.fb_h : G.gfx.h;
+	t->np = mmb_pix_store(rgb);
+	t->live = !fb && G.gfx.write_page == G.gfx.display_page;
+	t->live_rgb = t->live ? mmb_native_to_rgb(t->np) : 0;
+	t->dx0 = 0;
+	t->dy0 = 0;
+	t->dx1 = -1;
+	t->dy1 = -1;
+}
+
+static void span_target_mark(struct span_target *t, int x, int y)
+{
+	if (t->dx1 < t->dx0)
+	{
+		t->dx0 = t->dx1 = x;
+		t->dy0 = t->dy1 = y;
+		return;
+	}
+	if (x < t->dx0)
+		t->dx0 = x;
+	if (y < t->dy0)
+		t->dy0 = y;
+	if (x > t->dx1)
+		t->dx1 = x;
+	if (y > t->dy1)
+		t->dy1 = y;
+}
+
+static void span_target_pixel(struct span_target *t, int x, int y)
+{
+	int by = G.opt.y_axis_up ? t->h - 1 - y : y;
+	if (x < 0 || by < 0 || x >= t->w || by >= t->h)
+		return;
+	t->pg[by * t->w + x] = t->np;
+	if (!t->live)
+		return;
+	span_target_mark(t, x, by);
+	if (G.plat && G.plat->set_pixel)
+		G.plat->set_pixel(x, by, t->live_rgb);
+}
+
+static void span_target_row(struct span_target *t, int x, int y, int w)
+{
+	int by, px;
+	if (w < 1)
+		return;
+	by = G.opt.y_axis_up ? t->h - 1 - y : y;
+	if (by < 0 || by >= t->h)
+		return;
+	if (x < 0)
+	{
+		w += x;
+		x = 0;
+	}
+	if (w < 1)
+		return;
+	if (x + w > t->w)
+		w = t->w - x;
+	if (w < 1)
+		return;
+	fill_u16(t->pg + by * t->w + x, (unsigned)w, t->np);
+	if (!t->live)
+		return;
+	span_target_mark(t, x, by);
+	span_target_mark(t, x + w - 1, by);
+	if (G.plat && G.plat->set_pixel)
+		for (px = 0; px < w; px++)
+			G.plat->set_pixel(x + px, by, t->live_rgb);
+}
+
+static void span_target_flush(struct span_target *t)
+{
+	if (t->live && t->dx1 >= t->dx0)
+		mmb_gfx_dirty_add(t->dx0, t->dy0, t->dx1 - t->dx0 + 1,
+				  t->dy1 - t->dy0 + 1);
+}
+
 void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 {
 	int dx, dy, sx, sy, err, i;
 	int adx, ady, horiz;
-	int simple = 0, tw = 0, th = 0;
-	uint16_t *pg = 0;
-	uint16_t np = 0;
+	int simple = 0;
+	struct span_target st;
 
 	if (lw < 1)
 		lw = 1;
 	if (lw > 1024)
 		lw = 1024; /* a colour parsed as a width must not hang the loop */
-	/* Fast path for straight 1px lines with no per-pixel side effects:
-	 * a hidden soft page (or the raw framebuffer) has no dirty tracking
-	 * and no direct HDMI pixel update. Resolve the target and colour once,
-	 * then write the Bresenham span directly. This is the
-	 * screensaver/graphics-heavy case (for example AFK) where one
-	 * mmb_gfx_plot() call per pixel dominated long lines. */
+	/* Fast path for straight 1px lines: resolve the target buffer and
+	 * colour once, then write the Bresenham span directly. A hidden soft
+	 * page or the raw framebuffer has no per-pixel side effects; the
+	 * visible page marks the drawn union dirty and updates the live
+	 * surface through set_pixel (same pixels as the plot path, #1082).
+	 * This is the screensaver/graphics-heavy case (for example AFK) where
+	 * one mmb_gfx_plot() call per pixel dominated long lines. */
 	if (lw <= 1)
 	{
-		int fb = mmb_gfx_writing_fb();
-		if (fb || G.gfx.write_page != G.gfx.display_page)
-		{
-			simple = 1;
-			tw = fb ? G.gfx.fb_w : G.gfx.w;
-			th = fb ? G.gfx.fb_h : G.gfx.h;
-			pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
-			np = mmb_pix_store(rgb);
-			/* Reflecting both endpoints equals mapping every plotted
-			 * pixel (the Bresenham steps are symmetric in y). */
-			if (G.opt.y_axis_up)
-			{
-				y0 = th - 1 - y0;
-				y1 = th - 1 - y1;
-			}
-		}
+		simple = 1;
+		span_target_init(&st, rgb);
 	}
 	dx = x1 - x0;
 	dy = y1 - y0;
@@ -886,10 +968,7 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 	for (;;)
 	{
 		if (simple)
-		{
-			if (x0 >= 0 && y0 >= 0 && x0 < tw && y0 < th)
-				pg[y0 * tw + x0] = np;
-		}
+			span_target_pixel(&st, x0, y0);
 		else if (lw <= 1)
 			mmb_gfx_plot(x0, y0, rgb);
 		else
@@ -906,6 +985,8 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 			if (e2 < dx) { err += dx; y0 += sy; }
 		}
 	}
+	if (simple)
+		span_target_flush(&st);
 }
 
 void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill)
@@ -916,10 +997,12 @@ void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill)
 	if (h < 0) { y += h; h = -h; }
 	if (fill >= 0)
 	{
+		struct span_target st;
 		fcol = mmb_quantize((unsigned)fill);
+		span_target_init(&st, fcol);
 		for (j = 0; j < h; j++)
-			for (i = 0; i < w; i++)
-				mmb_gfx_plot(x + i, y + j, fcol);
+			span_target_row(&st, x, y + j, w);
+		span_target_flush(&st);
 	}
 	if (lw < 1)
 		lw = 1;
@@ -936,32 +1019,35 @@ void mmb_gfx_box(int x, int y, int w, int h, unsigned rgb, int lw, int fill)
 
 static void hspan(int x0, int x1, int y, unsigned rgb)
 {
-	int x;
+	struct span_target st;
 	if (x0 > x1)
 	{
 		int t = x0;
 		x0 = x1;
 		x1 = t;
 	}
-	for (x = x0; x <= x1; x++)
-		mmb_gfx_plot(x, y, rgb);
+	span_target_init(&st, rgb);
+	span_target_row(&st, x0, y, x1 - x0 + 1);
+	span_target_flush(&st);
 }
 
 static void circle_outline(int cx, int cy, int r, unsigned rgb)
 {
 	int x = r, y = 0, err = 0;
+	struct span_target st;
 	if (r < 0)
 		return;
+	span_target_init(&st, rgb);
 	while (x >= y)
 	{
-		mmb_gfx_plot(cx + x, cy + y, rgb);
-		mmb_gfx_plot(cx + y, cy + x, rgb);
-		mmb_gfx_plot(cx - y, cy + x, rgb);
-		mmb_gfx_plot(cx - x, cy + y, rgb);
-		mmb_gfx_plot(cx - x, cy - y, rgb);
-		mmb_gfx_plot(cx - y, cy - x, rgb);
-		mmb_gfx_plot(cx + y, cy - x, rgb);
-		mmb_gfx_plot(cx + x, cy - y, rgb);
+		span_target_pixel(&st, cx + x, cy + y);
+		span_target_pixel(&st, cx + y, cy + x);
+		span_target_pixel(&st, cx - y, cy + x);
+		span_target_pixel(&st, cx - x, cy + y);
+		span_target_pixel(&st, cx - x, cy - y);
+		span_target_pixel(&st, cx - y, cy - x);
+		span_target_pixel(&st, cx + y, cy - x);
+		span_target_pixel(&st, cx + x, cy - y);
 		y++;
 		if (err <= 0)
 			err += 2 * y + 1;
@@ -971,6 +1057,7 @@ static void circle_outline(int cx, int cy, int r, unsigned rgb)
 			err -= 2 * x + 1;
 		}
 	}
+	span_target_flush(&st);
 }
 
 /* Midpoint disk: eight-way symmetry, one horizontal span per pair. */
