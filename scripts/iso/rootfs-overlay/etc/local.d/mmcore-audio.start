@@ -1,88 +1,256 @@
 #!/bin/sh
-# Route ALSA playback to the headphones when they are plugged in (#1059).
+# Route ALSA playback to the headphones when they are plugged in (#1059,
+# #1075).
 #
-# mmcore-fb opens SDL's default ALSA device, so the speaker/headphone switch
-# has to happen under that device in ALSA itself. Two mechanisms, in order:
+# mmcore-fb opens SDL's default ALSA device (device 0), so the
+# speaker/headphone switch has to happen under that device in ALSA itself.
+# Nothing here changes SDL or OPTION AUDIO_TARGET. Three mechanisms are
+# combined because none of them exists on every Chromebook:
 #
-#   1. The codec's own auto-mute. Intel HDA exposes an "Auto-Mute Mode"
-#      kcontrol that the kernel updates from the jack's presence detect;
-#      enabling it is all that is needed where it exists.
-#   2. A jack switch plus speaker/headphone controls. `amixer` is polled and
-#      the speakers are muted while a plug is present. Control names differ per
-#      codec, so the first matching name from each family is used.
+#   1. A board UCM profile. `alsa-ucm-conf` ships per-board profiles; SDL's
+#      `default` PCM does not load one on its own, so #1059 installing the
+#      profiles changed nothing. We apply the profile ourselves with
+#      `alsaucm`: select the verb for each card in /proc/asound/cards and
+#      switch the active device between `Speaker` and `Headphones`. This is
+#      the main fix for SOF/ASoC Chromebooks.
+#   2. The headphone jack as an input switch. On most codecs the jack is not
+#      an ALSA kcontrol at all: the codec/EC reports it as EV_SW /
+#      SW_HEADPHONE_INSERT on /dev/input/event*, normally consumed by a sound
+#      server. `mmcore-jack` (a tiny EVIOCGSW reader built into the image)
+#      reports that state; the event devices are found via
+#      /proc/bus/input/devices.
+#   3. HDA's own jack kcontrol or auto-mute. "Auto-Mute Mode" lets the kernel
+#      follow the jack itself; failing that a "Headphone Jack" style kcontrol
+#      plus Speaker/Headphone controls are driven explicitly.
 #
-# The exact codec control names are not knowable from the ISO build host, so
-# every step is best effort: with no card, no amixer, no auto-mute and no
-# recognisable jack switch this exits without changing anything, leaving the
-# previous (speaker) behaviour rather than breaking audio. `alsa-ucm-conf` is
-# installed too, so a board with a mainline UCM profile gets jack routing from
-# UCM before this runs.
+# Board verbs and control names are not knowable from the ISO build host, so
+# every step is data-driven from /etc/mmcore/audio.conf and best effort: with
+# no card, no tools, no UCM profile and no recognisable jack this exits
+# without changing anything, keeping the previous (speaker) behaviour rather
+# than breaking audio. The board-specific control names still need on-hardware
+# confirmation (QEMU has no SOF/codec).
 #
-# Overrides: MMCORE_AUDIO_CARD, MMCORE_AUDIO_POLL, MMCORE_AUDIO_CARDS,
-# MMCORE_AMIXER and MMCORE_AUDIO_ONESHOT (apply once and exit; used by tests).
+# Overrides (also used by tests): MMCORE_AUDIO_CARDS,
+# MMCORE_AUDIO_INPUT_DEVICES, MMCORE_AUDIO_CONF, MMCORE_AMIXER,
+# MMCORE_ALSAUCM, MMCORE_AUDIO_JACK, MMCORE_AUDIO_POLL and
+# MMCORE_AUDIO_ONESHOT (apply once and exit).
 set -eu
 
-CARDS="${MMCORE_AUDIO_CARDS:-/proc/asound/cards}"
+CARDS_FILE="${MMCORE_AUDIO_CARDS:-/proc/asound/cards}"
+INPUT_DEVICES="${MMCORE_AUDIO_INPUT_DEVICES:-/proc/bus/input/devices}"
+CONF="${MMCORE_AUDIO_CONF:-/etc/mmcore/audio.conf}"
 AMIXER="${MMCORE_AMIXER:-amixer}"
-command -v "${AMIXER}" >/dev/null 2>&1 || exit 0
-[ -r "${CARDS}" ] || exit 0
-grep -qE '^[[:space:]]*[0-9]+' "${CARDS}" || exit 0
-
-CARD="${MMCORE_AUDIO_CARD:-0}"
+ALSAUCM="${MMCORE_ALSAUCM:-alsaucm}"
+JACK="${MMCORE_AUDIO_JACK:-/usr/local/bin/mmcore-jack}"
 POLL="${MMCORE_AUDIO_POLL:-2}"
 
-amix() { "${AMIXER}" -c "${CARD}" "$@" 2>/dev/null; }
+# Sensible defaults. /etc/mmcore/audio.conf overrides any of these; the lists
+# are newline-separated so control names may contain spaces.
+UCM_VERBS='HiFi'
+UCM_ENADEV_SPEAKER='Speaker'
+UCM_ENADEV_HEADPHONES='Headphones'
+JACK_CONTROLS='Headphone Jack
+Front Headphone Jack
+Headset Jack
+Headphone Mic Jack'
+SPEAKER_CONTROLS='Speaker
+Bass Speaker'
+HEADPHONE_CONTROLS='Headphone
+Front Headphone
+Headphones'
 
-# 1. Let the codec follow the jack itself where it can.
-if amix sset 'Auto-Mute Mode' Enabled >/dev/null 2>&1; then
-	exit 0
-fi
+[ -r "${CONF}" ] && . "${CONF}"
 
-# 2. Follow the jack switch explicitly when the codec exposes one. Control
-# names have spaces, so every candidate is a single (quoted) argument.
-JACK=""
-for candidate in \
-	"Headphone Jack" "Front Headphone Jack" "Headset Jack" \
-	"Headphone Mic Jack"; do
-	if amix sget "${candidate}" >/dev/null 2>&1; then
-		JACK="${candidate}"
-		break
+# Every card index in /proc/asound/cards.
+cards() {
+	[ -r "${CARDS_FILE}" ] || return 0
+	sed -n 's/^[[:space:]]*\([0-9][0-9]*\)[[:space:]].*/\1/p' "${CARDS_FILE}"
+}
+
+has_card() {
+	[ -n "$(cards)" ]
+}
+
+have() {
+	command -v "$1" >/dev/null 2>&1
+}
+
+# The event devices the input layer knows about (from /proc/bus/input/devices);
+# empty when that file is unreadable, in which case mmcore-jack probes them
+# all itself.
+event_devices() {
+	if [ -r "${INPUT_DEVICES}" ]; then
+		grep -o 'event[0-9][0-9]*' "${INPUT_DEVICES}" 2>/dev/null |
+			sort -u | sed 's|^|/dev/input/|' | tr '\n' ' '
 	fi
-done
-[ -n "${JACK}" ] || exit 0
+}
 
+# The EV_SW jack state as "headphone=0|1 ...", or nothing when no switch
+# device is present.
+switch_state() {
+	[ -x "${JACK}" ] || have "${JACK}" || return 0
+	# shellcheck disable=SC2046
+	"${JACK}" $(event_devices) 2>/dev/null || true
+}
+
+# 0 = headphone present, 1 = absent, 2 = unknown.
 jack_present() {
-	amix sget "${JACK}" | grep -q '\[on\]'
+	state="$(switch_state)"
+	case "${state}" in
+	*headphone=1*) return 0 ;;
+	*headphone=0*) return 1 ;;
+	esac
+
+	# Fall back to an ALSA jack kcontrol (mostly Intel HDA).
+	have "${AMIXER}" || return 2
+	for card in $(cards); do
+		while IFS= read -r ctl; do
+			[ -n "${ctl}" ] || continue
+			"${AMIXER}" -c "${card}" sget "${ctl}" >/dev/null 2>&1 ||
+				continue
+			if "${AMIXER}" -c "${card}" sget "${ctl}" 2>/dev/null |
+				grep -q '\[on\]'; then
+				return 0
+			fi
+			return 1
+		done <<EOF
+${JACK_CONTROLS}
+EOF
+	done
+	return 2
+}
+
+# Apply the board UCM device for the requested state on every card.
+ucm_apply() {
+	have "${ALSAUCM}" || return 1
+	case "$1" in
+	headphones) enadev="${UCM_ENADEV_HEADPHONES}" ;;
+	*) enadev="${UCM_ENADEV_SPEAKER}" ;;
+	esac
+	applied=1
+	for card in $(cards); do
+		while IFS= read -r verb; do
+			[ -n "${verb}" ] || continue
+			# `list _verbs` prints verb+comment pairs, so trying the
+			# set is more robust than matching that output.
+			"${ALSAUCM}" -c "hw:${card}" set _verb "${verb}" \
+				>/dev/null 2>&1 || continue
+			"${ALSAUCM}" -c "hw:${card}" set _enadev "${enadev}" \
+				>/dev/null 2>&1 || true
+			applied=0
+			break
+		done <<EOF
+${UCM_VERBS}
+EOF
+	done
+	return "${applied}"
+}
+
+# Drive the explicit Speaker/Headphone mixer controls (fallback for boards
+# with no usable UCM profile).
+mixer_apply() {
+	have "${AMIXER}" || return 1
+	case "$1" in
+	headphones)
+		speaker_op=mute
+		headphone_op=unmute
+		;;
+	*)
+		speaker_op=unmute
+		headphone_op=mute
+		;;
+	esac
+	for card in $(cards); do
+		while IFS= read -r ctl; do
+			[ -n "${ctl}" ] || continue
+			"${AMIXER}" -c "${card}" sset "${ctl}" "${speaker_op}" \
+				>/dev/null 2>&1 || true
+		done <<EOF
+${SPEAKER_CONTROLS}
+EOF
+		while IFS= read -r ctl; do
+			[ -n "${ctl}" ] || continue
+			"${AMIXER}" -c "${card}" sset "${ctl}" "${headphone_op}" \
+				>/dev/null 2>&1 || true
+		done <<EOF
+${HEADPHONE_CONTROLS}
+EOF
+	done
+	return 0
+}
+
+# HDA auto-mute follows the jack in hardware; enable it only when no explicit
+# jack source exists, so it is not left fighting a UCM/mixer decision.
+enable_automute() {
+	have "${AMIXER}" || return 1
+	ok=1
+	for card in $(cards); do
+		"${AMIXER}" -c "${card}" sset 'Auto-Mute Mode' Enabled \
+			>/dev/null 2>&1 && ok=0
+	done
+	return "${ok}"
 }
 
 apply() {
+	case "$1" in
+	0)
+		ucm_apply headphones || true
+		mixer_apply headphones || true
+		;;
+	1)
+		ucm_apply speaker || true
+		mixer_apply speaker || true
+		;;
+	*)
+		# Unknown jack: select the speaker UCM device (the safe default)
+		# but leave the explicit mixer controls untouched.
+		ucm_apply speaker || true
+		;;
+	esac
+}
+
+detect_jack() {
+	# 2 = unknown, so the caller can keep the safe default.
+	if ! has_card; then
+		printf '2\n'
+		return 0
+	fi
 	if jack_present; then
-		for ctl in "Speaker" "Bass Speaker"; do
-			amix sset "${ctl}" mute || true
-		done
-		for ctl in "Headphone" "Front Headphone" "Headphones"; do
-			amix sset "${ctl}" unmute || true
-		done
+		printf '0\n'
 	else
-		for ctl in "Speaker" "Bass Speaker"; do
-			amix sset "${ctl}" unmute || true
-		done
-		for ctl in "Headphone" "Front Headphone" "Headphones"; do
-			amix sset "${ctl}" mute || true
-		done
+		printf '%s\n' "$?"
 	fi
 }
 
-apply
+LAST_STATE=""
+LAST_CARDS=""
+run_once() {
+	cards_now="$(cards)"
+	present="$(detect_jack)"
+	if [ "${present}" = "${LAST_STATE}" ] &&
+		[ "${cards_now}" = "${LAST_CARDS}" ]; then
+		return 0
+	fi
+	if [ "${present}" = "2" ] && enable_automute; then
+		LAST_STATE="${present}"
+		LAST_CARDS="${cards_now}"
+		return 0
+	fi
+	apply "${present}"
+	LAST_STATE="${present}"
+	LAST_CARDS="${cards_now}"
+}
+
+run_once
 # Follow the jack without blocking boot: local.d must return so OpenRC can
-# finish. A plain poll is used because jack kcontrols do not reliably emit
-# ALSA control events.
+# finish. A plain poll is used because jack kcontrols and EV_SW do not
+# reliably emit something local.d can subscribe to.
 if [ "${MMCORE_AUDIO_ONESHOT:-0}" = "1" ]; then
 	exit 0
 fi
 (
 	while :; do
 		sleep "${POLL}"
-		apply
+		run_once
 	done
 ) &
