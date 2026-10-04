@@ -349,7 +349,16 @@ void mmb_gfx_dirty_add(int x, int y, int w, int h)
 void mmb_gfx_dirty_flush(void)
 {
 	if (G.gfx.dirty)
+	{
 		mmb_gfx_present();
+		/* A partial present writes the dirty AABB straight to the
+		 * framebuffer, bypassing the bare-metal console's cached text/pixel
+		 * buffer. Reconcile it so the next console row flush cannot
+		 * re-stamp the pre-present pixels (#1072). Unlike mmb_gfx_present()
+		 * this is frequency-safe today: only BLIT COPY's visible-page path
+		 * calls it (AFK/JUKE render via mmb_gfx_present() directly). */
+		mmb_gfx_sync_console(G.gfx.display_page);
+	}
 }
 
 static void present_wait_dma(void)
