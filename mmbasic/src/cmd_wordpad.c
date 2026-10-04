@@ -1379,7 +1379,7 @@ static void wp_release_globals(void)
 }
 
 /* Restore the graphics mode the caller was in before WORDPAD took over and
- * clear page-1 overlay / sprite state an earlier program may have left armed,
+ * clear sprite state an earlier program may have left armed,
  * then repaint the console (mirrors the AFK/EDITOR teardown, issue #583). */
 static void wp_restore_gfx(void)
 {

@@ -43,11 +43,6 @@ static void sprite_free_ix(int ix)
 		G.plat->free(G.gfx.sprite[ix].store);
 		G.gfx.sprite[ix].store = 0;
 	}
-	if (G.gfx.sprite[ix].astore)
-	{
-		G.plat->free(G.gfx.sprite[ix].astore);
-		G.gfx.sprite[ix].astore = 0;
-	}
 	G.gfx.sprite[ix].used = 0;
 	G.gfx.sprite[ix].vis = 0;
 	G.gfx.sprite[ix].w = 0;
@@ -126,14 +121,6 @@ static void ensure_store(int ix)
 		if (!G.gfx.sprite[ix].store)
 			mmb_error("?OUT OF MEMORY");
 	}
-	if (G.gfx.write_page == 1 && !G.gfx.sprite[ix].astore)
-	{
-		G.gfx.sprite[ix].astore =
-			G.plat->alloc((unsigned)G.gfx.sprite[ix].w *
-				      (unsigned)G.gfx.sprite[ix].h);
-		if (!G.gfx.sprite[ix].astore)
-			mmb_error("?OUT OF MEMORY");
-	}
 }
 
 static int order_pos(int ix)
@@ -188,7 +175,7 @@ static int sprite_page_visible(void)
 {
 	if (mmb_gfx_writing_fb())
 		return 0;
-	return G.gfx.write_page == G.gfx.display_page || G.gfx.write_page == 1;
+	return G.gfx.write_page == G.gfx.display_page;
 }
 
 static int sprite_clip(int ix, int *ox, int *oy, int *ow, int *oh,
@@ -270,18 +257,6 @@ static void rect_flush(void)
 	s_nrect = 0;
 }
 
-static void copy_alpha_rect(uint8_t *dst, int dst_stride,
-			    const uint8_t *src, int src_stride,
-			    int w, int h)
-{
-	int y;
-
-	if (!dst || !src || w <= 0 || h <= 0)
-		return;
-	for (y = 0; y < h; y++)
-		memcpy(dst + y * dst_stride, src + y * src_stride, (unsigned)w);
-}
-
 static void blit_restore(int ix)
 {
 	int ox, oy, ow, oh, sx, sy, pw, ph, sw;
@@ -298,11 +273,6 @@ static void blit_restore(int ix)
 		mmb_blit_copy_rect16(pg + oy * pw + ox, pw,
 				     G.gfx.sprite[ix].store + sy * sw + sx, sw,
 				     ow, oh);
-		if (G.gfx.write_page == 1 && G.gfx.page1_alpha &&
-		    G.gfx.sprite[ix].astore)
-			copy_alpha_rect(G.gfx.page1_alpha + oy * pw + ox, pw,
-					G.gfx.sprite[ix].astore + sy * sw + sx, sw,
-					ow, oh);
 	}
 	G.gfx.sprite[ix].vis = 0;
 }
@@ -326,34 +296,9 @@ static void blit_show(int ix, int x, int y)
 		pg = sprite_buf(&pw, &ph);
 		mmb_blit_copy_rect16(G.gfx.sprite[ix].store + sy * sw + sx, sw,
 				     pg + oy * pw + ox, pw, ow, oh);
-		if (G.gfx.write_page == 1 && G.gfx.page1_alpha)
-		{
-			ensure_store(ix);
-			if (G.gfx.sprite[ix].astore)
-				copy_alpha_rect(G.gfx.sprite[ix].astore + sy * sw + sx, sw,
-						G.gfx.page1_alpha + oy * pw + ox, pw,
-						ow, oh);
-		}
 		mmb_blit_sprite_trans16(pg + oy * pw + ox, pw,
 					G.gfx.sprite[ix].npix + sy * sw + sx, sw,
 					ow, oh);
-		if (G.gfx.write_page == 1 && G.gfx.page1_alpha)
-		{
-			int i, j;
-			for (j = 0; j < oh; j++)
-			{
-				uint16_t *row = G.gfx.sprite[ix].npix + (sy + j) * sw + sx;
-				uint8_t *al = G.gfx.page1_alpha + (oy + j) * pw + ox;
-				for (i = 0; i < ow; i++)
-				{
-					if (row[i])
-					{
-						al[i] = 255;
-						G.gfx.page1_any = 1;
-					}
-				}
-			}
-		}
 	}
 	G.gfx.sprite[ix].vis = 1;
 	rect_push(x, y, G.gfx.sprite[ix].w, G.gfx.sprite[ix].h);

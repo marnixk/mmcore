@@ -223,37 +223,32 @@ def test_profiling_page_copy_mode17_bulk(console):
         ],
         timeout=12.0,
     )
-    assert p["present"] == 21  # 20 PAGE COPY presents plus the page-1 CLS present
+    assert p["present"] == 20  # 20 PAGE COPY presents; page-1 CLS no longer presents
     assert p["elapsed"] < 300  # generous: QEMU under parallel load is slow
 
 
 @pytest.mark.skipif(
     not PERF_ENABLED, reason="set MMCORE_PERF=1 to run timing guards"
 )
-def test_profiling_page1_overlay_alpha_bulk(console):
-    """#489: the page-1 alpha composite must not fall back to a per-pixel
-    RGB round-trip for opaque/transparent pixels (the Xmas hot path)."""
+def test_profiling_page1_offscreen_copy_bulk(console):
+    """#1051: page 1 is a plain page, so bulk PAGE COPY onto it is a native
+    copy with no present and no per-pixel alpha composite."""
     p = _run_kernel(
         console,
         "PALPHA.BAS",
         [
             "MODE 7,12",
+            "PAGE DISPLAY 0",
             "PAGE WRITE 2",
             "CLS RGB(0,0,200)",
             "PAGE WRITE 1",
             "CLS",
-            # A partial-alpha band forces the blend path (fades.inc does this).
-            "FOR X=0 TO 100",
-            "LINE X,0,X,50,RGB(255,0,0,1+(X MOD 14))",
-            "NEXT X",
             "FOR I=1 TO 30",
             "PAGE COPY 2,1,B",
             "NEXT I",
         ],
         timeout=25.0,
     )
-    assert p["present"] >= 30
-    # Calibrated on QEMU: ~120 ms optimised vs ~340 ms with the old
-    # per-pixel RGB round-trip. 250 catches a return to the slow path
-    # while leaving headroom for parallel-load jitter.
+    # Page 1 is offscreen (display page 0), so none of the writes present.
+    assert p["present"] == 0
     assert p["elapsed"] < 250

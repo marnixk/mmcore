@@ -348,97 +348,36 @@ def test_select_case_nested_sub_png(fresh_console):
     assert c.send_line("PRINT 1+1") == "2"
 
 
-def test_page1_alpha_composite_png(fresh_console):
-    """Issue #260: page 1 overlay composites onto page 0 at present."""
-    c = fresh_console
-    src = [
-        "MODE 7,12",
-        "PAGE WRITE 0",
-        "CLS RGB(0,0,200)",
-        "PAGE WRITE 1",
-        "CLS",
-        "BOX 60,40,80,80,1,RGB(220,0,0,15),RGB(220,0,0,15)",
-        "BOX 200,40,80,80,1,RGB(0,0,0,8),RGB(0,0,0,8)",
-        "PRINT PIXEL(80,60,0)",
-        "PRINT PIXEL(80,60,1)",
-        "PAGE WRITE 0",
-        "PAUSE 2500",
-    ]
-    assert c.send_line("NEW") == ""
-    assert c.send_line('OPEN "P1.BAS" FOR OUTPUT AS #1') == ""
-    for line in src:
-        esc = line.replace('"', '""')
-        assert c.send_line(f'PRINT #1, "{esc}"') == ""
-    assert c.send_line("CLOSE #1") == ""
-    c.drain(quiet=0.1)
-    c._ser.sendall(b'RUN "P1.BAS"\r')
-    # Collect the program's PIXEL output before screenshotting: a screendump
-    # drains and discards pending serial. Page 1 is cleared when RUN ends, so
-    # the values must come from the program itself.
-    #
-    # Parse only *complete* CR/LF-terminated output lines. The page-1 value is
-    # alpha-flagged (9 digits) and can be split across socket reads; stopping as
-    # soon as any >1000000 fragment appeared truncated it, and capture_png then
-    # drained the remainder, so `over`/`red` were read from a partial number
-    # (#804).
-    def complete_number_lines(raw: bytes) -> list[int]:
-        parts = re.split(rb"[\r\n]+", raw)
-        if raw and raw[-1:] not in (b"\r", b"\n"):
-            parts = parts[:-1]  # last line is still in flight
-        return [int(p) for p in parts if p.strip().isdigit()]
+def test_page1_is_a_normal_page(fresh_console):
+    """#1051: page 1 is a normal page, not a transparency overlay.
 
-    buf = b""
-    deadline = time.time() + 2.0
-    while time.time() < deadline and len(complete_number_lines(buf)) < 2:
-        try:
-            chunk = c._recv(c._ser)
-        except Exception:
-            chunk = b""
-        if chunk:
-            buf += chunk
-        else:
-            time.sleep(0.05)
-    png = c.capture_png("/opt/cursor/artifacts/issue260_page1_alpha.png")
-    vals = complete_number_lines(buf)
-    assert len(vals) >= 2, buf[-200:]
-    red, over = vals[-2], vals[-1]
-    assert ((red >> 16) & 255) < 80
-    assert ((over >> 16) & 255) > 150
-    out = subprocess.run(
-        ["convert", png, "-crop", "8x8+80+60", "+repage", "txt:-"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    redn = 0
-    for line in out.splitlines():
-        if "(" not in line:
-            continue
-        inner = line[line.find("(") + 1 : line.find(")")]
-        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
-        if len(parts) < 3:
-            continue
-        rgb = tuple(int(float(p)) for p in parts[:3])
-        if rgb[0] > 150 and rgb[1] < 80 and rgb[2] < 80:
-            redn += 1
-    assert redn > 0, "HDMI snapshot missing opaque red page-1 overlay"
-    dark = subprocess.run(
-        ["convert", png, "-crop", "8x8+220+60", "+repage", "txt:-"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    found_blend = 0
-    for line in dark.splitlines():
-        if "(" not in line:
-            continue
-        inner = line[line.find("(") + 1 : line.find(")")]
-        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
-        if len(parts) < 3:
-            continue
-        rgb = tuple(int(float(p)) for p in parts[:3])
-        if rgb[2] > 40 and rgb[2] < 180 and rgb[0] < 80 and rgb[1] < 80:
-            found_blend += 1
-    assert found_blend > 0, "HDMI snapshot missing half-alpha black over blue"
-    time.sleep(2.6)  # let the program's PAUSE finish
-    assert c.send_line("PRINT 2+2", timeout=10) == "4"
+    RGB(...,t) no longer affects the screen, opaque black is a real pixel, and
+    page-1 writes never composite over the displayed page.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("CLS RGB(0,0,200)") == ""
+
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS RGB(80,0,0)") == ""
+    # Alpha 0 used to be the overlay's clear key; now the colour is stored.
+    assert c.send_line("PIXEL 100,80,RGB(0,0,0,0)") == ""
+    assert int(c.send_line("PRINT PIXEL(100,80,1)")) == 0
+    # The page-1 write must not leak onto the displayed page 0.
+    r, g, b = c.screen_pixel(100, 80)
+    assert b > 150 and r < 80 and g < 80, (r, g, b)
+
+    # Displaying page 1 shows the real buffer: opaque black covers the page.
+    assert c.send_line("PAGE DISPLAY 1") == ""
+    r, g, b = c.screen_pixel(100, 80)
+    assert r < 40 and g < 40 and b < 40, (r, g, b)
+    r, g, b = c.screen_pixel(20, 20)
+    assert r > 40 and b < 80, (r, g, b)
+
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    r, g, b = c.screen_pixel(100, 80)
+    assert b > 150 and r < 80 and g < 80, (r, g, b)
+    assert c.send_line("PRINT 2+2") == "4"

@@ -64,4 +64,3 @@ universal macOS app.
 - macOS was omitted from v0.196.0–v0.199.0 (the notarization profile was
   unavailable in the build environment); releases now ship a notarized universal
   `mmcore.app`.
-- One graphics test (`test_page1_alpha_composite_png`) is flaky only under parallel load; it passes in isolation.

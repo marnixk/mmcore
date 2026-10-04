@@ -140,7 +140,7 @@ def test_term_draws_on_page_two_not_overlay():
     # #340: present straight from the PAGE 2 paint buffer, no PAGE 0 staging.
     assert "mmb_gfx_buf_for(TM_PAGE" in term
     assert "mmb_gfx_copy_rect(TM_PAGE, 0" not in term
-    assert "mmb_gfx_clear_overlay" in term
+    assert "mmb_gfx_clear_overlay" not in term
     assert "plat_present_wait();" in plat
     assert "fb->SetArea(area, pix, plat_present_done" not in plat
     assert "void mmb_gfx_glyph_cell" in gfx

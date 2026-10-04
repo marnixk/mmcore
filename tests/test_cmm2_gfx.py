@@ -151,7 +151,8 @@ def test_help_cmm2_gfx_topics(console):
 
 
 def test_rgb_alpha_and_page_copy_b(fresh_console):
-    """Issue #260: RGB(...,t) packing and PAGE COPY B skip-black."""
+    """RGB(...,t) still packs, but t no longer affects the screen; PAGE COPY B
+    skip-black onto page 1 is a plain copy (#1051)."""
     c = fresh_console
     assert c.send_line("PRINT HEX$(RGB(RED))") == "AA0000"
     packed = int(c.send_line("PRINT RGB(1,2,3,15)"))
@@ -163,8 +164,9 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert c.send_line("BOX 40,40,40,40,1,RGB(220,0,0),RGB(220,0,0)") == ""
     assert c.send_line("PAGE WRITE 1") == ""
     assert c.send_line("CLS") == ""
+    # Alpha 15 is ignored: the black pixel is stored, not flagged transparent.
     assert c.send_line("PIXEL 10,10,RGB(0,0,0,15)") == ""
-    assert int(c.send_line("PRINT PIXEL(10,10,1)")) != 0
+    assert int(c.send_line("PRINT PIXEL(10,10,1)")) == 0
     assert c.send_line("PAGE COPY 2, 1, B") == ""
     red = int(c.send_line("PRINT PIXEL(50,50,1)").split()[0])
     gap = int(c.send_line("PRINT PIXEL(10,40,1)").split()[0])
@@ -173,8 +175,8 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
 
 
-def test_page1_overlay_nonzero_blit_without_alpha(fresh_console):
-    """Issue #313: opaque page-1 overlay composites without RGB blend when no AFLAG."""
+def test_page1_is_not_composited_over_display(fresh_console):
+    """#1051: page-1 pixels, with or without AFLAG, never appear over page 0."""
     c = fresh_console
     assert c.send_line("MODE 8,16") == ""
     assert c.send_line("PAGE WRITE 0") == ""
@@ -185,15 +187,22 @@ def test_page1_overlay_nonzero_blit_without_alpha(fresh_console):
     assert c.send_line("PIXEL 100,80,RGB(255,200,0)") == ""
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
+    # Page 0 keeps its own pixels; the page-1 orange does not composite over it.
+    r, g, b = c.screen_pixel(100, 80)
+    assert r < 40 and g < 40 and b > 60, (r, g, b)
+
+    # Displaying page 1 shows the real pixel instead.
+    assert c.send_line("PAGE DISPLAY 1") == ""
     r, g, b = c.screen_pixel(100, 80)
     assert r > 200 and g > 150 and b < 80, (r, g, b)
-    br, bg, bb = c.screen_pixel(20, 20)
-    assert br < 40 and bg < 40 and bb > 60, (br, bg, bb)
+
+    # A partial-alpha colour is stored opaque (t is ignored).
     assert c.send_line("PAGE WRITE 1") == ""
     assert c.send_line("CLS") == ""
     assert c.send_line("PIXEL 50,50,RGB(255,0,0,8)") == ""
-    assert c.send_line("PAGE WRITE 0") == ""
-    assert c.send_line("CLS RGB(0,0,0)") == ""
+    assert int(c.send_line("PRINT PIXEL(50,50,1)")) & 0xFFFFFF == 0xFF0000
+    assert c.send_line("PAGE DISPLAY 1") == ""
+    r, g, b = c.screen_pixel(50, 50)
+    assert r > 200 and g < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE DISPLAY 0") == ""
-    rr, rg, rb = c.screen_pixel(50, 50)
-    assert rr > 80, (rr, rg, rb)
+    assert c.send_line("PAGE WRITE 0") == ""

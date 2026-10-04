@@ -64,34 +64,10 @@ unsigned mmb_native_to_rgb(unsigned native)
 	return soft_native_to_rgb(native);
 }
 
-uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out)
+uint16_t mmb_pix_store(unsigned rgb888)
 {
 	unsigned q = mmb_quantize(rgb888);
-	unsigned rgb = q & 0xFFFFFFu;
-	unsigned alpha;
-
-	if (q & MMB_RGB_AFLAG)
-	{
-		alpha = (q >> 24) & 15u;
-		if (alpha == 0)
-			alpha = 0;
-	}
-	else if (rgb == 0)
-		alpha = 0;
-	else
-		alpha = 255;
-	if (alpha_out)
-		*alpha_out = alpha;
-	return (uint16_t)mmb_rgb_to_native(rgb);
-}
-
-unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte)
-{
-	unsigned rgb = mmb_native_to_rgb(pix);
-	/* 0..15: CMM2 AFLAG alpha (0 = transparent). 255 = fully opaque. */
-	if (alpha_byte <= 15)
-		return MMB_RGB_AFLAG | (alpha_byte << 24) | rgb;
-	return rgb;
+	return (uint16_t)mmb_rgb_to_native(q & 0xFFFFFFu);
 }
 
 unsigned mmb_rgb_pack(int r, int g, int b)
@@ -109,28 +85,6 @@ unsigned mmb_rgb_pack_a(int r, int g, int b, int a)
 	if (a > 15)
 		a = 15;
 	return MMB_RGB_AFLAG | ((unsigned)a << 24) | mmb_rgb_pack(r, g, b);
-}
-
-static unsigned overlay_blend(unsigned base, unsigned over)
-{
-	unsigned rgb = over & 0xFFFFFFu;
-	int a, br, bg, bb, rr, rg, rb;
-	if (over & MMB_RGB_AFLAG)
-	{
-		a = (int)((over >> 24) & 15);
-		if (a <= 0)
-			return base & 0xFFFFFFu;
-		if (a >= 15)
-			return rgb;
-		mmb_rgb_unpack(base, &br, &bg, &bb);
-		mmb_rgb_unpack(over, &rr, &rg, &rb);
-		return mmb_rgb_pack((br * (15 - a) + rr * a) / 15,
-				    (bg * (15 - a) + rg * a) / 15,
-				    (bb * (15 - a) + rb * a) / 15);
-	}
-	if (rgb == 0)
-		return base & 0xFFFFFFu;
-	return rgb;
 }
 
 void mmb_rgb_unpack(unsigned c, int *r, int *g, int *b)
@@ -295,7 +249,7 @@ static void free_pages(void)
 {
 	int i;
 
-	/* Async SetArea may still be reading page / present_scratch (#315). */
+	/* Async SetArea may still be reading a page buffer (#315). */
 	present_wait_dma();
 	free_soft();
 	for (i = 0; i < MMB_MAX_PAGES; i++)
@@ -306,31 +260,6 @@ static void free_pages(void)
 			G.gfx.page[i] = 0;
 		}
 	}
-	if (G.gfx.page1_alpha)
-	{
-		G.plat->free(G.gfx.page1_alpha);
-		G.gfx.page1_alpha = 0;
-	}
-	G.gfx.page1_alpha_used = 0;
-	G.gfx.page1_any = 0;
-	if (G.gfx.present_scratch)
-	{
-		G.plat->free(G.gfx.present_scratch);
-		G.gfx.present_scratch = 0;
-	}
-}
-
-void ensure_page1_alpha(void)
-{
-	unsigned bytes;
-	if (G.gfx.page1_alpha)
-		return;
-	bytes = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-	if (!G.plat || !G.plat->alloc)
-		return;
-	G.gfx.page1_alpha = G.plat->alloc(bytes);
-	if (G.gfx.page1_alpha)
-		memset(G.gfx.page1_alpha, 0, bytes);
 }
 
 static uint16_t *page_buf(int n)
@@ -345,8 +274,6 @@ static uint16_t *page_buf(int n)
 	if (!G.gfx.page[n])
 		mmb_error("?OUT OF MEMORY");
 	memset(G.gfx.page[n], 0, bytes);
-	if (n == 1)
-		ensure_page1_alpha();
 	return G.gfx.page[n];
 }
 
@@ -442,7 +369,7 @@ void mmb_gfx_present_if(int page)
 			return;
 		p = G.gfx.write_page;
 	}
-	if (p == G.gfx.display_page || p == 1)
+	if (p == G.gfx.display_page)
 	{
 		/* Full frame if nothing was tracked; else flush dirty AABB. */
 		if (!G.gfx.dirty)
@@ -469,126 +396,17 @@ void mmb_gfx_copy_page(int src, int dst, int blit)
 			;
 		else
 			memcpy(d, s, bytes);
-		if (dst == 1 && src != 1)
-		{
-			ensure_page1_alpha();
-			if (G.gfx.page1_alpha)
-			{
-				for (i = 0; i < n; i++)
-					G.gfx.page1_alpha[i] = s[i] ? 255 : 0;
-			}
-			G.gfx.page1_alpha_used = 0;
-			G.gfx.page1_any = 0;
-			for (i = 0; i < n; i++)
-			{
-				if (s[i])
-				{
-					G.gfx.page1_any = 1;
-					break;
-				}
-			}
-		}
-		if (dst == G.gfx.display_page || dst == 1)
+		if (dst == G.gfx.display_page)
 			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		return;
 	}
 	for (i = 0; i < n; i++)
 	{
 		if (s[i] != 0)
-		{
 			d[i] = s[i];
-			if (dst == 1)
-			{
-				ensure_page1_alpha();
-				if (G.gfx.page1_alpha)
-				{
-					if (src == 1)
-						; /* same alpha plane */
-					else
-						G.gfx.page1_alpha[i] = 255;
-				}
-				G.gfx.page1_any = 1;
-			}
-		}
 	}
-	if (dst == G.gfx.display_page || dst == 1)
+	if (dst == G.gfx.display_page)
 		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
-}
-
-static void note_page1_pixel(uint16_t np, unsigned alpha)
-{
-	if (np)
-		G.gfx.page1_any = 1;
-	if (alpha >= 1 && alpha <= 15)
-		G.gfx.page1_alpha_used = 1;
-}
-
-static uint16_t *composite_display(void)
-{
-	uint16_t *base, *over, *out;
-	uint8_t *oa;
-	unsigned n, i, bytes;
-	base = page_buf(G.gfx.display_page);
-	if (G.gfx.display_page == 1 || !G.gfx.page[1])
-		return base;
-	/* Black-transparent overlay with no AFLAG: skip composite when empty,
-	 * else native non-zero blit (no RGB round-trip) — #313. */
-	if (!G.gfx.page1_alpha_used)
-	{
-		if (!G.gfx.page1_any)
-			return base;
-		over = G.gfx.page[1];
-		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-		bytes = n * sizeof(uint16_t);
-		if (!G.gfx.present_scratch)
-		{
-			if (!G.plat || !G.plat->alloc)
-				return base;
-			G.gfx.present_scratch = G.plat->alloc(bytes);
-			if (!G.gfx.present_scratch)
-				return base;
-		}
-		out = G.gfx.present_scratch;
-		for (i = 0; i < n; i++)
-			out[i] = over[i] ? over[i] : base[i];
-		return out;
-	}
-	over = G.gfx.page[1];
-	oa = G.gfx.page1_alpha;
-	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-	bytes = n * sizeof(uint16_t);
-	if (!G.gfx.present_scratch)
-	{
-		if (!G.plat || !G.plat->alloc)
-			return base;
-		G.gfx.present_scratch = G.plat->alloc(bytes);
-		if (!G.gfx.present_scratch)
-			return base;
-	}
-	out = G.gfx.present_scratch;
-	for (i = 0; i < n; i++)
-	{
-		/* Fast paths first: a fully transparent or fully opaque overlay
-		 * pixel needs no RGB round-trip. Xmas-style page-1 overlays are
-		 * almost entirely 0/255, so only the fade band below pays the
-		 * expand/blend/quantize cost (#489). */
-		unsigned raw = over[i];
-		unsigned a = oa ? oa[i] : (raw ? 255u : 0u);
-
-		if (a == 0)
-			out[i] = base[i];
-		else if (a >= 15)
-			out[i] = raw ? (uint16_t)raw : base[i];
-		else
-		{
-			unsigned base_rgb = mmb_native_to_rgb(base[i]);
-			unsigned over_rgb = mmb_pix_load(raw, a);
-			unsigned blended = overlay_blend(base_rgb, over_rgb);
-
-			out[i] = (uint16_t)mmb_rgb_to_native(blended);
-		}
-	}
-	return out;
 }
 
 static void present_native_or_rgb(int x, int y, int w, int h,
@@ -649,7 +467,7 @@ void mmb_gfx_present(void)
 	if (!G.plat)
 		return;
 	present_wait_dma();
-	pg = composite_display();
+	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
 	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
 	if (hw > G.gfx.w)
@@ -693,7 +511,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	if (!G.plat)
 		return;
 	present_wait_dma();
-	pg = composite_display();
+	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
 	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
 	if (hw > G.gfx.w)
@@ -845,21 +663,11 @@ void mmb_gfx_set_mode(int mode, int bits)
 
 void mmb_gfx_reset_console(int wipe)
 {
-	unsigned n;
 	int i;
 
 	G.gfx.write_fb = 0;
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
-	if (G.gfx.page[1] && G.gfx.w > 0 && G.gfx.h > 0)
-	{
-		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-		memset(G.gfx.page[1], 0, n * sizeof(uint16_t));
-		if (G.gfx.page1_alpha)
-			memset(G.gfx.page1_alpha, 0, n);
-	}
-	G.gfx.page1_alpha_used = 0;
-	G.gfx.page1_any = 0;
 	for (i = 0; i < MMB_MAX_SPRITE; i++)
 		G.gfx.sprite[i].vis = 0;
 	if (G.plat && G.plat->present_set_flip)
@@ -877,76 +685,38 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 {
 	uint16_t *pg;
 	int tw, th, by;
-	unsigned alpha;
 	uint16_t np;
 	tw = tgt_w();
 	th = tgt_h();
 	y = map_y(y);
 	if (x < 0 || y < 0 || x >= tw || y >= th)
 		return;
-	np = mmb_pix_store(rgb, &alpha);
+	np = mmb_pix_store(rgb);
 	if (mmb_gfx_writing_fb())
 		pg = G.gfx.fb;
 	else
 		pg = page_buf(G.gfx.write_page);
 	by = y;
 	pg[by * tw + x] = np;
-	if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
-	{
-		ensure_page1_alpha();
-		if (G.gfx.page1_alpha)
-			G.gfx.page1_alpha[by * tw + x] = (uint8_t)alpha;
-		note_page1_pixel(np, alpha);
-	}
 	if (mmb_gfx_writing_fb())
 		return;
-	/* Expand dirty AABB when drawing to the visible page or page-1 overlay. */
-	if (G.gfx.write_page == G.gfx.display_page || G.gfx.write_page == 1)
+	/* Expand dirty AABB when drawing to the visible page. */
+	if (G.gfx.write_page == G.gfx.display_page)
 		mmb_gfx_dirty_add(x, by, 1, 1);
-	rgb = mmb_pix_load(np, alpha);
 	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
-	{
-		unsigned shown = rgb;
-		if (G.gfx.display_page != 1 && G.gfx.page[1])
-		{
-			unsigned oa = G.gfx.page1_alpha
-					     ? G.gfx.page1_alpha[by * tw + x]
-					     : (G.gfx.page[1][by * tw + x] ? 255u : 0u);
-			shown = overlay_blend(rgb, mmb_pix_load(G.gfx.page[1][by * tw + x], oa));
-		}
-		G.plat->set_pixel(x, by, shown & 0xFFFFFFu);
-	}
-	else if (G.gfx.write_page == 1 && G.gfx.display_page != 1 &&
-		 G.plat && G.plat->set_pixel)
-	{
-		uint16_t *base = page_buf(G.gfx.display_page);
-		G.plat->set_pixel(x, by,
-				  overlay_blend(mmb_native_to_rgb(base[by * tw + x]), rgb) &
-					  0xFFFFFFu);
-	}
+		G.plat->set_pixel(x, by, mmb_native_to_rgb(np));
 }
 
 unsigned mmb_gfx_get_page(int x, int y, int page)
 {
-	int w, h, by, resolved;
+	int w, h, by;
 	uint16_t *pg;
-	unsigned alpha = 255;
 
-	resolved = page;
-	if (resolved == MMB_PAGE_CUR)
-	{
-		if (mmb_gfx_writing_fb())
-			resolved = MMB_PAGE_FB;
-		else
-			resolved = G.gfx.write_page;
-	}
 	pg = mmb_gfx_buf_for(page, &w, &h);
 	by = mmb_gfx_map_y(y, h);
 	if (x < 0 || by < 0 || x >= w || by >= h)
 		return 0;
-	if (resolved == 1 && G.gfx.page1_alpha)
-		alpha = G.gfx.page1_alpha[by * w + x];
-	return mmb_pix_load(pg[by * w + x], alpha);
+	return mmb_native_to_rgb(pg[by * w + x]);
 }
 
 unsigned mmb_gfx_get(int x, int y)
@@ -998,9 +768,8 @@ void mmb_gfx_cls(unsigned rgb)
 {
 	int tw, th;
 	uint16_t *pg;
-	unsigned alpha;
 	uint16_t np;
-	np = mmb_pix_store(rgb, &alpha);
+	np = mmb_pix_store(rgb);
 	tw = tgt_w();
 	th = tgt_h();
 	if (mmb_gfx_writing_fb())
@@ -1008,41 +777,20 @@ void mmb_gfx_cls(unsigned rgb)
 	else
 		pg = page_buf(G.gfx.write_page);
 	fill_u16(pg, (unsigned)tw * (unsigned)th, np);
-	if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
-	{
-		ensure_page1_alpha();
-		if (G.gfx.page1_alpha)
-			memset(G.gfx.page1_alpha, (int)alpha, (unsigned)tw * (unsigned)th);
-		/* CLS of the overlay resets blend bookkeeping (#313). */
-		G.gfx.page1_alpha_used = (alpha >= 1 && alpha <= 15) ? 1 : 0;
-		G.gfx.page1_any = np ? 1 : 0;
-	}
 	if (mmb_gfx_writing_fb())
 		return;
-	if (G.gfx.write_page == G.gfx.display_page &&
-	    G.plat && G.plat->fill_screen)
+	if (G.gfx.write_page == G.gfx.display_page)
 	{
-		if (G.gfx.display_page != 1 && G.gfx.page[1])
-		{
-			/* Overlay: full present (clear dirty so we do not clip). */
-			mmb_gfx_dirty_reset();
-			mmb_gfx_present();
-		}
-		else
+		if (G.plat && G.plat->fill_screen)
 		{
 			G.plat->fill_screen(mmb_native_to_rgb(np));
 			mmb_gfx_dirty_reset();
 		}
-	}
-	else if (G.gfx.write_page == 1)
-	{
-		mmb_gfx_dirty_reset();
-		mmb_gfx_present();
-	}
-	else if (G.gfx.write_page == G.gfx.display_page)
-	{
-		mmb_gfx_dirty_add(0, 0, tw, th);
-		mmb_gfx_present();
+		else
+		{
+			mmb_gfx_dirty_add(0, 0, tw, th);
+			mmb_gfx_present();
+		}
 	}
 }
 
@@ -1053,29 +801,27 @@ void mmb_gfx_line(int x0, int y0, int x1, int y1, unsigned rgb, int lw)
 	int simple = 0, tw = 0, th = 0;
 	uint16_t *pg = 0;
 	uint16_t np = 0;
-	unsigned alpha = 0;
 
 	if (lw < 1)
 		lw = 1;
 	if (lw > 1024)
 		lw = 1024; /* a colour parsed as a width must not hang the loop */
 	/* Fast path for straight 1px lines with no per-pixel side effects:
-	 * a hidden soft page (or the raw framebuffer) has no dirty tracking,
-	 * overlay alpha and no direct HDMI pixel update. Resolve the target and
-	 * colour once, then write the Bresenham span directly. This is the
+	 * a hidden soft page (or the raw framebuffer) has no dirty tracking
+	 * and no direct HDMI pixel update. Resolve the target and colour once,
+	 * then write the Bresenham span directly. This is the
 	 * screensaver/graphics-heavy case (for example AFK) where one
 	 * mmb_gfx_plot() call per pixel dominated long lines. */
 	if (lw <= 1)
 	{
 		int fb = mmb_gfx_writing_fb();
-		if (fb || (G.gfx.write_page != G.gfx.display_page &&
-			   G.gfx.write_page != 1))
+		if (fb || G.gfx.write_page != G.gfx.display_page)
 		{
 			simple = 1;
 			tw = fb ? G.gfx.fb_w : G.gfx.w;
 			th = fb ? G.gfx.fb_h : G.gfx.h;
 			pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
-			np = mmb_pix_store(rgb, &alpha);
+			np = mmb_pix_store(rgb);
 			/* Reflecting both endpoints equals mapping every plotted
 			 * pixel (the Bresenham steps are symmetric in y). */
 			if (G.opt.y_axis_up)
@@ -1405,7 +1151,6 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 {
 	uint16_t *pg;
 	int tw, th, i, j, by, px;
-	unsigned alpha;
 	uint16_t np;
 
 	if (w < 0)
@@ -1422,7 +1167,7 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 		return;
 	tw = tgt_w();
 	th = tgt_h();
-	np = mmb_pix_store(rgb, &alpha);
+	np = mmb_pix_store(rgb);
 	if (mmb_gfx_writing_fb())
 		pg = G.gfx.fb;
 	else
@@ -1437,14 +1182,6 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 		if (x >= 0 && x + w <= tw)
 		{
 			fill_u16(pg + by * tw + x, (unsigned)w, np);
-			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
-			{
-				ensure_page1_alpha();
-				if (G.gfx.page1_alpha)
-					memset(G.gfx.page1_alpha + by * tw + x, (int)alpha,
-					       (unsigned)w);
-				note_page1_pixel(np, alpha);
-			}
 			continue;
 		}
 		for (i = 0; i < w; i++)
@@ -1453,13 +1190,6 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 			if (px < 0 || px >= tw)
 				continue;
 			pg[by * tw + px] = np;
-			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
-			{
-				ensure_page1_alpha();
-				if (G.gfx.page1_alpha)
-					G.gfx.page1_alpha[by * tw + px] = (uint8_t)alpha;
-				note_page1_pixel(np, alpha);
-			}
 		}
 	}
 	if (mmb_gfx_writing_fb())
@@ -1531,21 +1261,6 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
 	}
 }
 
-void mmb_gfx_clear_overlay(void)
-{
-	unsigned n;
-
-	if (G.gfx.page[1] && G.gfx.w > 0 && G.gfx.h > 0)
-	{
-		n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
-		memset(G.gfx.page[1], 0, n * sizeof(uint16_t));
-		if (G.gfx.page1_alpha)
-			memset(G.gfx.page1_alpha, 0, n);
-	}
-	G.gfx.page1_alpha_used = 0;
-	G.gfx.page1_any = 0;
-}
-
 void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
 {
 	unsigned row, col;
@@ -1599,14 +1314,13 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 {
 	uint16_t *pg;
 	int tw, th, row, col, by, px;
-	unsigned fa, ba;
 	uint16_t fg_n, bg_n;
 	int opaque_fast;
 
 	tw = tgt_w();
 	th = tgt_h();
-	fg_n = mmb_pix_store(fg, &fa);
-	bg_n = mmb_pix_store(bg, &ba);
+	fg_n = mmb_pix_store(fg);
+	bg_n = mmb_pix_store(bg);
 	if (mmb_gfx_writing_fb())
 		pg = G.gfx.fb;
 	else
@@ -1614,7 +1328,7 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 	if (!pg)
 		return;
 	ch &= 0xFFu;
-	opaque_fast = !mmb_gfx_writing_fb() && G.gfx.write_page != 1;
+	opaque_fast = !mmb_gfx_writing_fb();
 	if (opaque_fast)
 	{
 		for (row = 0; row < 16; row++)
@@ -1636,21 +1350,10 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 			continue;
 		for (col = 0; col < 8; col++)
 		{
-			uint16_t np;
-
 			px = x + col;
 			if (px < 0 || px >= tw)
 				continue;
-			np = (bits & (unsigned char)(0x80u >> col)) ? fg_n : bg_n;
-			pg[by * tw + px] = np;
-			if (!mmb_gfx_writing_fb() && G.gfx.write_page == 1)
-			{
-				unsigned a = (bits & (unsigned char)(0x80u >> col)) ? fa : ba;
-				ensure_page1_alpha();
-				if (G.gfx.page1_alpha)
-					G.gfx.page1_alpha[by * tw + px] = (uint8_t)a;
-				note_page1_pixel(np, a);
-			}
+			pg[by * tw + px] = (bits & (unsigned char)(0x80u >> col)) ? fg_n : bg_n;
 		}
 	}
 }

@@ -54,7 +54,7 @@ on Circle's `CBcmFrameBuffer` + software rasterisers, with HDMI-native pixels
 (`COLOR16`, 5-5-5) and RGB888 only at the API boundary.
 
 `MODE r, bits` (modes 1–17, bitdepths 8/12/16/32), multi-page framebuffers,
-page-1 transparency/overlay compositing, and `RGB()`/`COLOUR` are all
+and `RGB()`/`COLOUR` are all
 implemented. See [`graphics-acceleration.md`](graphics-acceleration.md) for the
 present/DMA/double-buffer paths and the CPU-only leftovers.
 
@@ -113,8 +113,8 @@ surface, files, audio codecs, networking, TUIs, and the native backend
 4. **Screen modes & pages** — done: `MODE`, `PAGE`, `RGB()`/`COLOUR`,
    fonts/`TEXT`.
 5. **Files, network, audio, TUIs, Linux native** — done.
-6. **Remaining parity & polish** — open: drawing edges (#487), Xmas page-1
-   overlay performance (#489), Linux-native fast loop (#486), AppImage/CLI
+6. **Remaining parity & polish** — open: drawing edges (#487),
+   Linux-native fast loop (#486), AppImage/CLI
    app-VM launch (#490, #491).
 
 Circle upstream tickets for the vendored pre-build patches are tracked in
