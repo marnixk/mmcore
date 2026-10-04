@@ -12,6 +12,7 @@
  * Runs headless under SDL_VIDEODRIVER=dummy.
  */
 #include "sdl_video.h"
+#include "sdl_scale.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -42,6 +43,21 @@ static void check_rect(int ex, int ey, int ew, int eh, const char *msg)
 	{
 		fprintf(stderr, "FAIL %s: got (%d,%d,%d,%d) want (%d,%d,%d,%d)\n",
 			msg, x, y, w, h, ex, ey, ew, eh);
+		fails++;
+	}
+}
+
+static void check_map(int ow, int oh, int tw, int th,
+		      int sx0, int sy0, int sx1, int sy1,
+		      int ex0, int ey0, int ex1, int ey1, const char *msg)
+{
+	int x0 = -1, y0 = -1, x1 = -1, y1 = -1;
+
+	sdl_scale_map_rect(ow, oh, tw, th, sx0, sy0, sx1, sy1, &x0, &y0, &x1, &y1);
+	if (x0 != ex0 || y0 != ey0 || x1 != ex1 || y1 != ey1)
+	{
+		fprintf(stderr, "FAIL %s: got (%d,%d,%d,%d) want (%d,%d,%d,%d)\n",
+			msg, x0, y0, x1, y1, ex0, ey0, ex1, ey1);
 		fails++;
 	}
 }
@@ -86,6 +102,21 @@ int main(void)
 	sdl_video_mark_dirty_rect(1, 1, 3, 3);
 	sdl_video_mark_dirty();
 	check_rect(0, 0, 640, 480, "full mark replaces the pending rect");
+
+	/* #1083: map a dirty framebuffer sub-rectangle through the viewport to
+	 * the destination sub-rectangle the present copies. */
+	check_map(1280, 960, 640, 480, 10, 20, 40, 60, 20, 40, 80, 120,
+		  "2x integer scale maps the sub-rect");
+	check_map(1280, 960, 640, 480, 0, 0, 640, 480, 0, 0, 1280, 960,
+		  "2x full frame maps to the viewport");
+	check_map(1280, 720, 640, 480, 8, 16, 16, 32, 328, 136, 336, 152,
+		  "1:1 letterbox offset is applied");
+	check_map(500, 400, 640, 480, 0, 0, 640, 480, 0, 12, 500, 387,
+		  "aspect-fit full frame maps to the viewport");
+	check_map(1280, 960, 640, 480, -5, -5, 650, 490, 0, 0, 1280, 960,
+		  "out-of-bounds source is clamped");
+	check_map(0, 0, 640, 480, 10, 10, 20, 20, 0, 0, 0, 0,
+		  "degenerate drawable maps to empty");
 
 	sdl_video_close();
 

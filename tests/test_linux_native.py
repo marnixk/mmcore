@@ -1514,8 +1514,34 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     # Only the dirty rectangle is converted and uploaded.
     assert "sdl_video_mark_dirty_rect" in video
     assert "SDL_UpdateTexture(s_tex, &src" in video
+    # #1083: the present copies only the mapped destination sub-rectangle and
+    # clears only the letterbox bands, not the whole drawable.
+    assert "sdl_scale_map_rect" in video
+    assert "SDL_RenderCopy(s_ren, s_tex, &src" in video
+    assert "SDL_RenderFillRect" in video
+    assert "SDL_RenderClear(s_ren)" not in video
     # sdl_poll_input() gates the present behind a minimum interval.
     assert "SDL_PRESENT_MIN_MS" in plat
+
+
+def test_native_console_and_tui_mark_rects_not_whole_screen():
+    """#1081: the ANSI console and TUI mark only the cells they touch.
+
+    A PRINT loop / HELP/WORDPAD writes a few cells per present; the whole-screen
+    mark made every present convert and upload a full 1366x768 frame. Guard the
+    per-cell call sites structurally; the exact console rectangles are checked
+    behaviourally in tests/sdl_console_present_host.c.
+    """
+    console = open(
+        os.path.join(REPO, "native", "sdl_console.c"), encoding="utf-8"
+    ).read()
+    tui = open(os.path.join(REPO, "native", "sdl_tui.c"), encoding="utf-8").read()
+    for name, text in (("console", console), ("tui", tui)):
+        assert "sdl_video_mark_dirty_rect" in text, name
+    # The whole-screen mark survives only for whole-screen fills (reset/fill/
+    # restore, TUI prepare); the incremental writers use rectangles.
+    assert console.count("sdl_video_mark_dirty()") == 3
+    assert tui.count("sdl_video_mark_dirty()") == 1
 
 
 def test_graphics_present_is_not_per_line(mmb_linux, tmp_path):
