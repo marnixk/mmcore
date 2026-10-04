@@ -400,11 +400,77 @@ int main(void)
 		fails++;
 	}
 
-	/* Ctrl+D at an empty prompt runs QUIT (#646). */
+	/* #1074: the KMS/DRM evdev backend emits SDL_TEXTINPUT for the base
+	 * letter of a Ctrl chord, so Ctrl+X would cut and also type 'x'. The
+	 * control byte must be delivered alone. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_x, KMOD_CTRL);
+	push_text("x");
+	sdl_input_pump();
+	expect_feed("ctrl-x text swallowed", "\x18");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_c, KMOD_CTRL);
+	push_text("c");
+	sdl_input_pump();
+	expect_feed("ctrl-c text swallowed", "\x03");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_z, KMOD_CTRL);
+	push_text("z");
+	sdl_input_pump();
+	expect_feed("ctrl-z text swallowed", "\x1a");
+
+	/* The Ctrl+Space NUL must not be followed by a literal space. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_SPACE, KMOD_CTRL);
+	push_text(" ");
+	sdl_input_pump();
+	if (g_front_feeds != 1 || g_feed_n != 1 || g_feed[0] != 0)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-space text: feeds=%d n=%d first=%d\n",
+			g_front_feeds, g_feed_n, g_feed_n ? g_feed[0] : -1);
+		fails++;
+	}
+
+	/* Ctrl+Return delivers its CSI sequence and no carriage return. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_RETURN, KMOD_CTRL);
+	push_text("\r");
+	sdl_input_pump();
+	expect_feed("ctrl-return text swallowed", "\x1b[29~");
+
+	/* Ctrl+V (control byte) and Ctrl+Shift+V (clipboard paste) must not
+	 * also insert the literal 'v'. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_v, KMOD_CTRL);
+	push_text("v");
+	sdl_input_pump();
+	expect_queue("ctrl-v text swallowed", "\x16");
+
+	reset();
+	g_running = 1;
+	snprintf(g_clip, sizeof g_clip, "P1");
+	g_clip_set = 1;
+	push_key(SDLK_v, KMOD_CTRL | KMOD_SHIFT);
+	push_text("v");
+	sdl_input_pump();
+	expect_queue("paste text swallowed", "P1");
+
+	/* Ctrl+D at an empty prompt runs QUIT (#646). The paired TEXTINPUT
+	 * for 'd' (KMS/DRM) must not be typed afterwards. */
 	reset();
 	g_running = 0;
 	g_line_empty = 1;
 	push_key(SDLK_d, KMOD_CTRL);
+	push_text("d");
 	sdl_input_pump();
 	if (g_exec_n != 1 || strcmp(g_exec, "QUIT") != 0 ||
 	    g_front_feeds != 0 || g_inkey_n != 0)
