@@ -272,8 +272,19 @@ def test_juke_scope_lives_in_its_own_panel(fresh_console):
     _quit_juke(con)
 
 
-def test_juke_spectrum_bars_run_black_grey_lime(fresh_console):
-    """#952: the per-bar ramp starts black, passes through grey, peaks lime."""
+def _on_black_lime_ramp(c: tuple[int, int, int], tol: int = 30) -> bool:
+    """True when a bar pixel lies on the straight black (0x000000) -> lime
+    (0x9DEE5E) line. The removed grey stop (0x767C82) is neutral, so it has
+    no green-dominant hue and misses the line."""
+    r, g, b = c
+    if g < 40 or g < r or g < b:
+        return False
+    t = g / 238.0  # lime green channel
+    return abs(r - 157 * t) <= tol and abs(b - 94 * t) <= tol
+
+
+def test_juke_spectrum_bars_run_black_lime(fresh_console):
+    """#1055: the per-bar ramp runs straight black -> lime, with no grey stop."""
     con = fresh_console
     # TEST.WAV is a three-second tone, so the bars stay tall long enough to
     # sample the gradient (the MOD fixture is only a brief blip).
@@ -285,13 +296,13 @@ def test_juke_spectrum_bars_run_black_grey_lime(fresh_console):
     ylist = list(range(base - 2, base - maxh, -2))
     coords = [(x, y) for x in xs for y in ylist]
     n = len(ylist)
-    saw_black = saw_grey = saw_lime = False
+    saw_black = saw_lime = saw_mid_ramp = False
     for _ in range(8):
         px = con.screen_pixels(coords)
         for i in range(24):
             col = px[i * n:(i + 1) * n]
             # The bar's lowest pixels fade to the black canvas, so skip them
-            # for the grey/lime checks but record the black base.
+            # for the ramp checks but record the black base.
             run = [c for c in col if sum(c) > 30]
             if len(run) < 8:
                 continue
@@ -301,14 +312,16 @@ def test_juke_spectrum_bars_run_black_grey_lime(fresh_console):
             top = run[-1]
             if top[1] > 170 and top[0] > 90 and top[2] < 150:
                 saw_lime = True
-            if any(max(c) - min(c) < 40 and 90 < sum(c) < 520 for c in run):
-                saw_grey = True
-        if saw_black and saw_grey and saw_lime:
+            # The bar midpoint must sit on the straight black->lime line; the
+            # old ramp put a neutral grey there instead.
+            if _on_black_lime_ramp(run[len(run) // 2]):
+                saw_mid_ramp = True
+        if saw_black and saw_lime and saw_mid_ramp:
             break
         time.sleep(0.2)
     _quit_juke(con)
     assert saw_lime, "expected a lime tip in the spectrum bars"
-    assert saw_grey, "expected a grey middle in the spectrum bars"
+    assert saw_mid_ramp, "expected the bar midpoint on the straight black->lime ramp"
     assert saw_black, "expected the spectrum bar base to fade to black"
 
 
