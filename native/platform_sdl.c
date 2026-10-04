@@ -108,7 +108,7 @@ static void sdl_set_pixel(int x, int y, unsigned rgb)
 	    y >= sdl_video_height())
 		return;
 	fb[y * sdl_video_width() + x] = (uint16_t)sdl_rgb_to_native(rgb);
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, 1, 1);
 }
 
 static unsigned sdl_get_pixel(int x, int y)
@@ -164,7 +164,7 @@ static void sdl_present_native(int x, int y, int w, int h, const void *pix,
 			fb[dy * sw + dx] = src[row * stride + col];
 		}
 	}
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, w, h);
 }
 
 static void sdl_present_rgb(int x, int y, int w, int h,
@@ -192,16 +192,35 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 				(uint16_t)sdl_rgb_to_native(rgb888[row * stride + col]);
 		}
 	}
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, w, h);
 }
 
 /* Called from mmb_check_break while a program runs: pump SDL input and
- * repaint so the window stays alive during long RUNs. */
+ * repaint so the window stays alive during long RUNs.
+ *
+ * check_break runs once per program line, so presenting on every call made a
+ * graphics loop (LINE/PLOT in a FOR) pay a present per line. With
+ * SDL_RENDERER_PRESENTVSYNC each present waits for a vblank, which throttled
+ * the whole RUN to roughly one line per frame (#1080). Repaint at most once
+ * per display frame instead; a fast loop then reaches the event loop's own
+ * final present almost immediately, and a long draw stays at the refresh
+ * rate. Input is still pumped on every line so BREAK stays responsive. */
+#define SDL_PRESENT_MIN_MS 16u
+
 static void sdl_poll_input(void)
 {
+	static unsigned last_present;
+
 	if (!mmb_is_running())
 		return;
 	sdl_input_pump();
+	{
+		unsigned now = mmb_now_ms();
+
+		if ((unsigned)(now - last_present) < SDL_PRESENT_MIN_MS)
+			return;
+		last_present = now;
+	}
 	sdl_video_present();
 }
 

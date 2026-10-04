@@ -29,10 +29,76 @@ static uint16_t *s_stage;  /* RGB565 for SDL */
 static int s_w, s_h;
 static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
-static int s_dirty = 1;
+static int s_dirty;
+static int s_dirty_x0, s_dirty_y0, s_dirty_x1, s_dirty_y1;
 
+/* Union a changed rectangle into the pending dirty area. A running program
+ * changes only a small part of the screen between presents; converting and
+ * uploading just that area makes the per-present cost proportional to the
+ * change rather than to the panel size (a Chromebook is 1366x768). */
+void sdl_video_mark_dirty_rect(int x, int y, int w, int h)
+{
+	int x1, y1;
+
+	if (w <= 0 || h <= 0)
+		return;
+	x1 = x + w;
+	y1 = y + h;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x1 > s_w)
+		x1 = s_w;
+	if (y1 > s_h)
+		y1 = s_h;
+	if (x >= x1 || y >= y1)
+		return;
+	if (!s_dirty)
+	{
+		s_dirty_x0 = x;
+		s_dirty_y0 = y;
+		s_dirty_x1 = x1;
+		s_dirty_y1 = y1;
+		s_dirty = 1;
+		return;
+	}
+	if (x < s_dirty_x0)
+		s_dirty_x0 = x;
+	if (y < s_dirty_y0)
+		s_dirty_y0 = y;
+	if (x1 > s_dirty_x1)
+		s_dirty_x1 = x1;
+	if (y1 > s_dirty_y1)
+		s_dirty_y1 = y1;
+}
+
+void sdl_video_dirty_rect(int *x, int *y, int *w, int *h)
+{
+	if (x)
+		*x = s_dirty ? s_dirty_x0 : 0;
+	if (y)
+		*y = s_dirty ? s_dirty_y0 : 0;
+	if (w)
+		*w = s_dirty ? s_dirty_x1 - s_dirty_x0 : 0;
+	if (h)
+		*h = s_dirty ? s_dirty_y1 - s_dirty_y0 : 0;
+}
+
+/* Mark the whole screen. Unlike sdl_video_mark_dirty_rect() this replaces any
+ * pending rectangle: callers use it after a mode change or a full-screen fill,
+ * when an older, larger rectangle may no longer fit the new buffers. */
 void sdl_video_mark_dirty(void)
 {
+	if (s_w <= 0 || s_h <= 0)
+	{
+		s_dirty = 0;
+		return;
+	}
+	s_dirty_x0 = 0;
+	s_dirty_y0 = 0;
+	s_dirty_x1 = s_w;
+	s_dirty_y1 = s_h;
 	s_dirty = 1;
 }
 
@@ -230,7 +296,7 @@ int sdl_video_resize(int w, int h)
 
 	s_w = w;
 	s_h = h;
-	s_dirty = 1;
+	sdl_video_mark_dirty();
 	if (s_win)
 		SDL_SetWindowSize(s_win, w * s_window_scale,
 				  h * s_window_scale);
@@ -290,27 +356,55 @@ int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 
 void sdl_video_present(void)
 {
-	size_t n, i;
+	int x0, y0, x1, y1, y, x;
 	int ow = 0, oh = 0, dx, dy, dw, dh;
-	SDL_Rect dst;
+	SDL_Rect src, dst;
 
 	if (!s_dirty)
 		return;
 	if (!s_tex || !s_fb || !s_stage)
 		return;
 
-	n = (size_t)s_w * (size_t)s_h;
-	for (i = 0; i < n; i++)
+	/* Take the pending dirty rectangle and clear it before the (possibly
+	 * slow) upload so a caller that draws again during the present starts a
+	 * fresh rectangle. */
+	x0 = s_dirty_x0;
+	y0 = s_dirty_y0;
+	x1 = s_dirty_x1;
+	y1 = s_dirty_y1;
+	s_dirty = 0;
+	if (x0 >= x1 || y0 >= y1)
+		return;
+
+	/* Convert RGB555 (green at bit 6) to SDL's RGB565, but only the region
+	 * that changed. */
+	for (y = y0; y < y1; y++)
 	{
-		uint16_t v = s_fb[i];
-		unsigned r = (v >> 11) & 0x1Fu;
-		unsigned g = (v >> 6) & 0x1Fu;
-		unsigned b = v & 0x1Fu;
-		unsigned g6 = (g << 1) | (g >> 4);
-		s_stage[i] = (uint16_t)((r << 11) | (g6 << 5) | b);
+		const uint16_t *srow = s_fb + (size_t)y * (size_t)s_w;
+		uint16_t *drow = s_stage + (size_t)y * (size_t)s_w;
+
+		for (x = x0; x < x1; x++)
+		{
+			uint16_t v = srow[x];
+			unsigned r = (v >> 11) & 0x1Fu;
+			unsigned g = (v >> 6) & 0x1Fu;
+			unsigned b = v & 0x1Fu;
+			unsigned g6 = (g << 1) | (g >> 4);
+
+			drow[x] = (uint16_t)((r << 11) | (g6 << 5) | b);
+		}
 	}
 
-	SDL_UpdateTexture(s_tex, 0, s_stage, s_w * (int)sizeof(uint16_t));
+	/* Update only that rectangle of the streaming texture. SDL_UpdateTexture
+	 * treats a non-NULL rect as a sub-region whose pixels start at the given
+	 * pointer, with pitch still spanning a full row. */
+	src.x = x0;
+	src.y = y0;
+	src.w = x1 - x0;
+	src.h = y1 - y0;
+	SDL_UpdateTexture(s_tex, &src,
+			  s_stage + (size_t)y0 * (size_t)s_w + x0,
+			  s_w * (int)sizeof(uint16_t));
 
 	/* Integer scale into the drawable, centred with black bars. */
 	sdl_video_host_size(&ow, &oh);
@@ -324,7 +418,6 @@ void sdl_video_present(void)
 	SDL_RenderClear(s_ren);
 	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
 	SDL_RenderPresent(s_ren);
-	s_dirty = 0;
 }
 
 void sdl_video_request_quit(void)
