@@ -1360,6 +1360,51 @@ static void plat_present_native(int x, int y, int w, int h,
 		plat_set_area(fb, area, buf);
 }
 
+/* PAGE DISPLAY replaces the whole visible frame through the framebuffer,
+ * bypassing the Circle terminal's cached pixel buffer. The terminal flushes
+ * whole rows from that cache on the next text write, so without this a stale
+ * row is stamped back over the new page (old text and any live PIXEL pixels
+ * still in the cache). Copy the presented frame into the cache so the flush
+ * reproduces the page; text written later still overpaints it normally. */
+static void plat_present_sync_console(const void *pix, int w, int h, int stride)
+{
+	CTerminalDevice *term;
+	const u8 *row;
+	unsigned x, y, tw, th, bpp;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return;
+	tw = term->GetWidth();
+	th = term->GetHeight();
+	/* Only reconcile an exact full-frame page present. */
+	if ((unsigned)w != tw || (unsigned)h != th)
+		return;
+	/* Drop the cached hardware cursor before overwriting its backing store;
+	 * the next text write redraws it from the synced pixels. */
+	term->SaveConsole(0, 0, 0);
+	bpp = (unsigned)(DEPTH / 8);
+	row = static_cast<const u8 *>(pix);
+	for (y = 0; y < th; y++)
+	{
+		const u8 *p = row;
+		for (x = 0; x < tw; x++)
+		{
+#if DEPTH == 32
+			term->SetRawPixel(x, y, *(const u32 *)p);
+#elif DEPTH == 16
+			term->SetRawPixel(x, y, *(const u16 *)p);
+#else
+			term->SetRawPixel(x, y, *p);
+#endif
+			p += bpp;
+		}
+		row += (size_t)stride * bpp;
+	}
+}
+
 static int plat_wait_vsync(void)
 {
 #ifdef NO_SDHOST
@@ -1653,6 +1698,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.term_present_drain = plat_term_present_drain;
 	plat.term_present_locked = plat_term_present_locked;
 	plat.present_set_flip = plat_present_set_flip;
+	plat.present_sync_console = plat_present_sync_console;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;
