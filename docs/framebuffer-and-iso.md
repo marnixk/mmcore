@@ -57,6 +57,17 @@ not read-only. This does not install mmcore onto an internal disk:
 sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
 ```
 
+`--update` refreshes the mmcore system files on a stick that was already
+written, without touching the `MMCORE` partition: the system image (kernel,
+initramfs and squashfs) is rewritten and the partition is re-created in the GPT
+at its old offset, so `C:`, `.mmbasic.ini` and saved Wi-Fi settings survive. It
+never runs `mkfs.ext4`. It requires an existing `MMCORE` partition and refuses
+an image that has grown past it:
+
+```bash
+sudo ./install-usb.sh --update --iso mmcore-fb-x86_64.iso.zst /dev/sdX
+```
+
 ### Boot behaviour
 
 | Console | What happens |
@@ -444,8 +455,13 @@ disk and boots without the card.
   no `modprobe` is needed after boot. No udev rule is required: mmcore reads
   the touchpad through SDL's evdev backend, and the kernel driver binds by
   name once the modules load.
-- **Audio.** `sof-firmware` plus the `snd_sof*` modules are installed for
-  Sound Open Firmware devices.
+- **Audio.** `sof-firmware`, the `snd_sof*` modules and the mainline
+  `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. When
+  the codec exposes an `Auto-Mute Mode` kcontrol the kernel follows the
+  headphone jack itself; otherwise a boot helper (`mmcore-audio.start`, from
+  `/etc/local.d/`) polls a `Headphone Jack` switch and mutes the speakers while
+  a plug is present. On a codec whose controls it does not recognise the helper
+  changes nothing, so playback keeps working.
 
 ### Known gap: models that need a kernel the ISO does not ship
 

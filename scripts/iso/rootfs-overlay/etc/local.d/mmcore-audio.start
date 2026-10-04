@@ -1,0 +1,88 @@
+#!/bin/sh
+# Route ALSA playback to the headphones when they are plugged in (#1059).
+#
+# mmcore-fb opens SDL's default ALSA device, so the speaker/headphone switch
+# has to happen under that device in ALSA itself. Two mechanisms, in order:
+#
+#   1. The codec's own auto-mute. Intel HDA exposes an "Auto-Mute Mode"
+#      kcontrol that the kernel updates from the jack's presence detect;
+#      enabling it is all that is needed where it exists.
+#   2. A jack switch plus speaker/headphone controls. `amixer` is polled and
+#      the speakers are muted while a plug is present. Control names differ per
+#      codec, so the first matching name from each family is used.
+#
+# The exact codec control names are not knowable from the ISO build host, so
+# every step is best effort: with no card, no amixer, no auto-mute and no
+# recognisable jack switch this exits without changing anything, leaving the
+# previous (speaker) behaviour rather than breaking audio. `alsa-ucm-conf` is
+# installed too, so a board with a mainline UCM profile gets jack routing from
+# UCM before this runs.
+#
+# Overrides: MMCORE_AUDIO_CARD, MMCORE_AUDIO_POLL, MMCORE_AUDIO_CARDS,
+# MMCORE_AMIXER and MMCORE_AUDIO_ONESHOT (apply once and exit; used by tests).
+set -eu
+
+CARDS="${MMCORE_AUDIO_CARDS:-/proc/asound/cards}"
+AMIXER="${MMCORE_AMIXER:-amixer}"
+command -v "${AMIXER}" >/dev/null 2>&1 || exit 0
+[ -r "${CARDS}" ] || exit 0
+grep -qE '^[[:space:]]*[0-9]+' "${CARDS}" || exit 0
+
+CARD="${MMCORE_AUDIO_CARD:-0}"
+POLL="${MMCORE_AUDIO_POLL:-2}"
+
+amix() { "${AMIXER}" -c "${CARD}" "$@" 2>/dev/null; }
+
+# 1. Let the codec follow the jack itself where it can.
+if amix sset 'Auto-Mute Mode' Enabled >/dev/null 2>&1; then
+	exit 0
+fi
+
+# 2. Follow the jack switch explicitly when the codec exposes one. Control
+# names have spaces, so every candidate is a single (quoted) argument.
+JACK=""
+for candidate in \
+	"Headphone Jack" "Front Headphone Jack" "Headset Jack" \
+	"Headphone Mic Jack"; do
+	if amix sget "${candidate}" >/dev/null 2>&1; then
+		JACK="${candidate}"
+		break
+	fi
+done
+[ -n "${JACK}" ] || exit 0
+
+jack_present() {
+	amix sget "${JACK}" | grep -q '\[on\]'
+}
+
+apply() {
+	if jack_present; then
+		for ctl in "Speaker" "Bass Speaker"; do
+			amix sset "${ctl}" mute || true
+		done
+		for ctl in "Headphone" "Front Headphone" "Headphones"; do
+			amix sset "${ctl}" unmute || true
+		done
+	else
+		for ctl in "Speaker" "Bass Speaker"; do
+			amix sset "${ctl}" unmute || true
+		done
+		for ctl in "Headphone" "Front Headphone" "Headphones"; do
+			amix sset "${ctl}" mute || true
+		done
+	fi
+}
+
+apply
+# Follow the jack without blocking boot: local.d must return so OpenRC can
+# finish. A plain poll is used because jack kcontrols do not reliably emit
+# ALSA control events.
+if [ "${MMCORE_AUDIO_ONESHOT:-0}" = "1" ]; then
+	exit 0
+fi
+(
+	while :; do
+		sleep "${POLL}"
+		apply
+	done
+) &

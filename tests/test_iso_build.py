@@ -28,6 +28,7 @@ INSTALL = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-install")
 UPDATE = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-update")
 PROFILE = os.path.join(OVERLAY, "root", ".profile")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
+AUDIO = os.path.join(OVERLAY, "etc", "local.d", "mmcore-audio.start")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
 COMPRESSED = "mmcore-fb-x86_64.iso.zst"
@@ -495,6 +496,122 @@ def test_install_usb_uses_a_free_partition_number():
     assert "partx -a -n 5:5" in text
 
 
+def test_install_usb_update_keeps_the_mmcore_partition():
+    """#1056: --update refreshes the system image but re-creates the existing
+    MMCORE GPT entry at its old offset instead of formatting it, so C:,
+    .mmbasic.ini and saved settings on that ext4 survive."""
+    help_out = _run([INSTALL_USB, "--help"]).stdout
+    assert "--update" in help_out
+    text = open(INSTALL_USB, encoding="utf-8").read()
+    assert "UPDATE=1" in text
+    # It reads the persistent partition's geometry before the ISO write
+    # replaces the primary GPT with the image's own partitions 1-4...
+    assert "sgdisk --info=5" in text
+    assert "First sector" in text
+    assert "Last sector" in text
+    # ...writes the image, then re-adds partition 5 at its old offset, with no
+    # mkfs on the update path.
+    assert '--new=5:"${part5_first}":"${part5_last}"' in text
+    assert "--move-second-header" in text
+    # An image that grew past the partition is refused, not truncated.
+    assert "would overlap the MMCORE partition" in text
+
+
+def test_install_usb_update_rejects_read_write_and_no_persist():
+    for flag in ("--read-write", "--no-persist"):
+        proc = subprocess.run(
+            [INSTALL_USB, "--update", flag],
+            text=True,
+            capture_output=True,
+        )
+        assert proc.returncode != 0
+        assert "cannot be combined" in proc.stderr
+
+
+def test_install_usb_update_preserves_the_persistent_partition(tmp_path):
+    """#1056: a real --read-write install, a user file on C:, then --update
+    with a new image: the mmcore region changes and the ext4 (C:, .mmcore-rw,
+    label) is untouched."""
+    if shutil.which("sgdisk") is None or shutil.which("mkfs.ext4") is None:
+        pytest.skip("sgdisk and mkfs.ext4 are required")
+    if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0:
+        pytest.skip("passwordless sudo is required")
+
+    def make_iso(path, marker):
+        subprocess.run(["truncate", "-s", "32M", str(path)], check=True)
+        subprocess.run(
+            ["sgdisk", "-o", "-n", "1:2048:0", "-t", "1:ef00", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        with open(path, "r+b") as fh:
+            fh.seek(1024 * 1024)
+            fh.write(marker)
+
+    old_iso = tmp_path / "old.iso"
+    new_iso = tmp_path / "new.iso"
+    disk = tmp_path / "disk.img"
+    mnt = tmp_path / "mnt"
+    mnt.mkdir()
+    make_iso(old_iso, b"OLD-SYSTEM-IMAGE\n")
+    make_iso(new_iso, b"NEW-SYSTEM-IMAGE\n")
+    subprocess.run(["truncate", "-s", "96M", str(disk)], check=True)
+
+    dev = subprocess.run(
+        ["sudo", "losetup", "--find", "--show", "--partscan", str(disk)],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert dev.startswith("/dev/")
+    part = dev + "p5"
+    try:
+        proc = subprocess.run(
+            ["sudo", INSTALL_USB, "--read-write", "--yes",
+             "--iso", str(old_iso), dev],
+            text=True,
+            capture_output=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        if not os.path.exists(part):
+            part = dev + "5"
+        assert os.path.exists(part), proc.stderr
+        subprocess.run(["sudo", "mount", part, str(mnt)], check=True)
+        (mnt / "C" / "USER.BAS").write_text("persist me\n", encoding="utf-8")
+        subprocess.run(["sudo", "umount", str(mnt)], check=True)
+
+        proc = subprocess.run(
+            ["sudo", INSTALL_USB, "--update", "--yes",
+             "--iso", str(new_iso), dev],
+            text=True,
+            capture_output=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert os.path.exists(part), proc.stderr
+
+        # The persistent ext4 is intact: user file, marker and label...
+        subprocess.run(["sudo", "mount", "-o", "ro", part, str(mnt)], check=True)
+        assert (mnt / "C" / "USER.BAS").read_text(encoding="utf-8") == "persist me\n"
+        assert (mnt / ".mmcore-rw").exists()
+        subprocess.run(["sudo", "umount", str(mnt)], check=True)
+        label = subprocess.run(
+            ["sudo", "blkid", "-o", "value", "-s", "LABEL", part],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        assert label == "MMCORE"
+        # ...while the ISO region now carries the new image.
+        with open(disk, "rb") as fh:
+            fh.seek(1024 * 1024)
+            assert fh.read(len(b"NEW-SYSTEM-IMAGE\n")) == b"NEW-SYSTEM-IMAGE\n"
+    finally:
+        subprocess.run(["sudo", "umount", str(mnt)], check=False)
+        if dev:
+            subprocess.run(["sudo", "losetup", "-d", dev], check=False)
+
+
 def test_overlay_wires_ethernet_dhcp_and_wifi():
     net = os.path.join(OVERLAY, "etc", "local.d", "mmcore-net.start")
     assert os.access(net, os.X_OK), net
@@ -821,6 +938,99 @@ def test_builder_ships_a_quiet_grub_with_a_splash():
 def test_builder_installs_sof_firmware_for_intel_chromebooks():
     """#864: Sound Open Firmware is needed by many Intel Chromebooks."""
     assert "sof-firmware" in open(BUILDER, encoding="utf-8").read()
+
+
+def test_builder_installs_alsa_ucm_profiles():
+    """#1059: prefer the mainline UCM profile so a SOF Chromebook routes
+    playback to the headphone jack when a plug is present."""
+    text = open(BUILDER, encoding="utf-8").read()
+    assert "alsa-ucm-conf" in text
+
+
+def test_overlay_follows_the_headphone_jack():
+    """#1059: with no codec auto-mute, a boot helper follows the jack kcontrol
+    and mutes the speakers. It no-ops safely on hardware whose controls it
+    does not know."""
+    assert os.path.isfile(AUDIO), AUDIO
+    assert os.access(AUDIO, os.X_OK), AUDIO
+    _run(["bash", "-n", AUDIO])
+    text = open(AUDIO, encoding="utf-8").read()
+    assert "amixer" in text
+    assert "Auto-Mute Mode" in text
+    assert "Headphone Jack" in text
+    assert "Speaker" in text
+    assert "MMCORE_AUDIO_ONESHOT" in text
+    # It exits cleanly rather than erroring when the controls are absent.
+    assert "exit 0" in text
+
+
+def test_audio_helper_routes_speakers_and_headphones(tmp_path):
+    """#1059: run the real helper against a stub amixer that models a codec
+    with no auto-mute but a Headphone Jack switch, and assert the routing
+    decision in both jack states plus the no-op case."""
+    cards = tmp_path / "cards"
+    cards.write_text(" 0 [PCH ]: HDA-Intel - HDA Intel PCH\n", encoding="utf-8")
+    log = tmp_path / "amixer.log"
+    stub = tmp_path / "amixer"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "${STUB_LOG}"\n'
+        'case "$*" in\n'
+        '  *"sset Auto-Mute Mode"*) exit 1 ;;\n'
+        '  *"sget Headphone Jack"*) printf "Mixer [%s]\\n" '
+        '"${STUB_JACK:-off}"; exit 0 ;;\n'
+        '  *"sget "*) exit 1 ;;\n'
+        '  *"sset "*) exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    base_env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AMIXER=str(stub),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+
+    def run(jack):
+        log.write_text("", encoding="utf-8")
+        env = dict(base_env, STUB_JACK=jack)
+        proc = subprocess.run(
+            [BASH, AUDIO], env=env, text=True, capture_output=True
+        )
+        assert proc.returncode == 0, proc.stderr
+        return log.read_text(encoding="utf-8")
+
+    on = run("on")
+    assert "sget Headphone Jack" in on
+    assert "sset Speaker mute" in on
+    assert "sset Headphone unmute" in on
+    assert "sset Speaker unmute" not in on
+
+    off = run("off")
+    assert "sset Speaker unmute" in off
+    assert "sset Headphone mute" in off
+    assert "sset Speaker mute" not in off
+
+    # No recognisable jack switch: probe the candidates, then change nothing.
+    stub.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "${STUB_LOG}"\n'
+        'case "$*" in\n'
+        "  *\"sset Auto-Mute Mode\"*) exit 1 ;;\n"
+        '  *"sget "*) exit 1 ;;\n'
+        '  *"sset "*) exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    none = run("off")
+    assert "sget Headphone Jack" in none
+    assert "sset Speaker" not in none
+    assert "sset Headphone" not in none
 
 
 def test_overlay_loads_chromebook_modules():
