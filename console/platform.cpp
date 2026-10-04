@@ -1360,6 +1360,68 @@ static void plat_present_native(int x, int y, int w, int h,
 		plat_set_area(fb, area, buf);
 }
 
+/* Copy an HDMI-native region into the Circle terminal's cached pixel buffer so
+ * a later text flush reproduces the presented pixels instead of re-stamping the
+ * stale row. */
+static void present_sync_console_region(int x, int y, int w, int h,
+					const void *pix, int stride)
+{
+	CTerminalDevice *term;
+	const u8 *row;
+	int px, py;
+	unsigned tw, th, bpp;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return;
+	tw = term->GetWidth();
+	th = term->GetHeight();
+	if (x < 0)
+	{
+		w += x;
+		pix = static_cast<const u8 *>(pix) + (size_t)(-x) * (DEPTH / 8);
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		pix = static_cast<const u8 *>(pix) +
+		      (size_t)(-y) * (unsigned)stride * (DEPTH / 8);
+		y = 0;
+	}
+	if ((unsigned)(x + w) > tw)
+		w = (int)tw - x;
+	if ((unsigned)(y + h) > th)
+		h = (int)th - y;
+	if (w < 1 || h < 1)
+		return;
+	/* Drop the cached hardware cursor before overwriting its backing store;
+	 * the next text write redraws it from the synced pixels. */
+	term->SaveConsole(0, 0, 0);
+	bpp = (unsigned)(DEPTH / 8);
+	row = static_cast<const u8 *>(pix);
+	for (py = 0; py < h; py++)
+	{
+		const u8 *p = row;
+		for (px = 0; px < w; px++)
+		{
+#if DEPTH == 32
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py),
+					  *(const u32 *)p);
+#elif DEPTH == 16
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py),
+					  *(const u16 *)p);
+#else
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py), *p);
+#endif
+			p += bpp;
+		}
+		row += (size_t)stride * bpp;
+	}
+}
+
 /* PAGE DISPLAY replaces the whole visible frame through the framebuffer,
  * bypassing the Circle terminal's cached pixel buffer. The terminal flushes
  * whole rows from that cache on the next text write, so without this a stale
@@ -1369,8 +1431,7 @@ static void plat_present_native(int x, int y, int w, int h,
 static void plat_present_sync_console(const void *pix, int w, int h, int stride)
 {
 	CTerminalDevice *term;
-	const u8 *row;
-	unsigned x, y, tw, th, bpp;
+	unsigned tw, th;
 
 	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
 		return;
@@ -1382,27 +1443,15 @@ static void plat_present_sync_console(const void *pix, int w, int h, int stride)
 	/* Only reconcile an exact full-frame page present. */
 	if ((unsigned)w != tw || (unsigned)h != th)
 		return;
-	/* Drop the cached hardware cursor before overwriting its backing store;
-	 * the next text write redraws it from the synced pixels. */
-	term->SaveConsole(0, 0, 0);
-	bpp = (unsigned)(DEPTH / 8);
-	row = static_cast<const u8 *>(pix);
-	for (y = 0; y < th; y++)
-	{
-		const u8 *p = row;
-		for (x = 0; x < tw; x++)
-		{
-#if DEPTH == 32
-			term->SetRawPixel(x, y, *(const u32 *)p);
-#elif DEPTH == 16
-			term->SetRawPixel(x, y, *(const u16 *)p);
-#else
-			term->SetRawPixel(x, y, *p);
-#endif
-			p += bpp;
-		}
-		row += (size_t)stride * bpp;
-	}
+	present_sync_console_region(0, 0, w, h, pix, stride);
+}
+
+/* Reconcile just the presented rect (sprites, TERM fallback) so the next
+ * console row flush cannot re-stamp the pre-present pixels (#1079). */
+static void plat_present_sync_console_rect(int x, int y, int w, int h,
+					   const void *pix, int stride)
+{
+	present_sync_console_region(x, y, w, h, pix, stride);
 }
 
 static int plat_wait_vsync(void)
@@ -1699,6 +1748,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.term_present_locked = plat_term_present_locked;
 	plat.present_set_flip = plat_present_set_flip;
 	plat.present_sync_console = plat_present_sync_console;
+	plat.present_sync_console_rect = plat_present_sync_console_rect;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;

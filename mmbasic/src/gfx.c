@@ -573,6 +573,16 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	if (x >= x1 || y >= y1)
 		return;
 	present_native_or_rgb(x, y, x1 - x, y1 - y, pg + y * G.gfx.w + x, G.gfx.w);
+	/* A partial present writes the rect straight to the framebuffer,
+	 * bypassing the bare-metal console's cached text/pixel buffer, so the
+	 * next console row flush would re-stamp the pre-present pixels over it
+	 * (#1079). Reconcile just the presented rect: sprites call this once per
+	 * dirty sprite, so a whole-frame sync here would be a hot-path cost. TERM
+	 * only reaches this path through its non-async fallback (native builds
+	 * carry no console hook), so this does not fight the terminal cache. */
+	if (G.plat->present_sync_console_rect)
+		G.plat->present_sync_console_rect(x, y, x1 - x, y1 - y,
+						  pg + y * G.gfx.w + x, G.gfx.w);
 	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
 }
 

@@ -158,6 +158,13 @@ typedef struct mmb_platform {
 	 * cached text/pixel buffer with the new frame so the next text flush
 	 * cannot re-stamp a stale row over it. */
 	void (*present_sync_console)(const void *pix, int w, int h, int stride);
+	/* Reconcile just the (x,y,w,h) region of the console's cached text/pixel
+	 * buffer after a partial present. Optional; native builds carry no
+	 * console. Unlike present_sync_console this does not require a
+	 * full-frame page, so per-rect presents (sprites/TERM) can update the
+	 * cache without copying the whole screen. */
+	void (*present_sync_console_rect)(int x, int y, int w, int h,
+					  const void *pix, int stride);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);

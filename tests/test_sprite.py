@@ -233,6 +233,29 @@ def test_sprite_transparent_pixels_keep_background(fresh_console):
     assert _is_red(c.screen_pixel(17, 16))
 
 
+def test_sprite_show_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1079: SPRITE SHOW presents each dirty sprite rect straight to the
+    framebuffer via mmb_gfx_present_rect(), bypassing the console's cached
+    pixel buffer. A later console row write must repaint the sprite, not
+    re-stamp the stale pixel the terminal buffer still held under it.
+
+    The sprite covers the sample (320,4) in the prompt row, so the next text
+    flush would stamp the pre-show green pixel back over the red sprite.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 BOX 0,0,16,16,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    assert c.send_line("30 SPRITE READ 1,0,0,16,16") == ""
+    assert c.send_line("40 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("50 SPRITE SHOW 1,312,0,1") == ""
+    assert c.send_line('60 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
 def test_sprite_editor_commands_removed(fresh_console):
     """#619: SPRITE EDIT/SHEET/FONT no longer open a TUI; they fail like any
     other unknown SPRITE subcommand."""
