@@ -4843,7 +4843,7 @@ void mmb_init(const mmb_platform *plat)
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	G.timer_base = 0;
-	G.rnd_seed = 0x12345678u;
+	G.rnd_seed = mmb_rng_seed();
 	mmb_clock_init();
 }
 
