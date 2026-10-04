@@ -316,12 +316,49 @@ static const char *line_ssid(const char *line)
 	return 0;
 }
 
+/* #1057: boot-time association. The ini can already hold an SSID when
+ * mmb_poll() first runs, but the radio module, the interface, wpa_supplicant,
+ * association and DHCP may all still be pending. mmb_wlan_start() is therefore
+ * a non-blocking, idempotent bring-up: it returns 0 only once the station has
+ * an IPv4 address, and -1 while the attempt is still in flight.
+ * mmb_wlan_radio_pending() reports that window so core's boot bring-up retries
+ * instead of latching `net_boot` and giving up. The window is bounded so a
+ * missing radio cannot spin forever. */
+#define WLAN_BOOT_BUDGET_MS 60000u
+#define WLAN_ATTEMPT_MS 700u
+
+static int s_wlan_window;       /* a start attempt window is open */
+static int s_wlan_conf;         /* wpa_supplicant.conf written this window */
+static int s_wlan_modprobe;     /* tried to load the radio module */
+static int s_wlan_kicked;       /* link up + association command issued */
+static long long s_wlan_deadline;
+static long long s_wlan_next_try;
+static char s_wlan_ssid[128];
+static char s_wlan_psk[128];
+
+/* Shorten the retry window (tests). */
+static unsigned wlan_env_ms(const char *name, unsigned fallback)
+{
+	const char *e = getenv(name);
+	unsigned v;
+
+	if (!e || !e[0])
+		return fallback;
+	v = (unsigned)atoi(e);
+	return v ? v : fallback;
+}
+
 int mmb_wlan_available(void)
 {
 	return wlan_iface() != 0;
 }
 
-int mmb_wlan_radio_pending(void) { return 0; }
+int mmb_wlan_radio_pending(void)
+{
+	if (!s_wlan_window)
+		return 0;
+	return now_ms() < s_wlan_deadline;
+}
 
 int mmb_wlan_scan(char ssids[][64], int maxn)
 {
@@ -444,54 +481,127 @@ static void dhcp_get(const char *iface)
 	run_capture(cmd, 0, 0, 12000);
 }
 
-int mmb_wlan_start(const char *ssid, const char *psk)
+/* Open a fresh association window for `ssid`/`psk`. */
+static void wlan_begin_window(const char *ssid, const char *psk)
+{
+	snprintf(s_wlan_ssid, sizeof s_wlan_ssid, "%s", ssid);
+	snprintf(s_wlan_psk, sizeof s_wlan_psk, "%s", psk ? psk : "");
+	s_wlan_conf = 0;
+	s_wlan_modprobe = 0;
+	s_wlan_kicked = 0;
+	s_wlan_next_try = 0;
+	s_wlan_window = 1;
+	s_wlan_deadline = now_ms() +
+			  (long long)wlan_env_ms("MMB_NET_WLAN_BUDGET_MS",
+						 WLAN_BOOT_BUDGET_MS);
+}
+
+/* One bring-up attempt: make sure the interface is up, association has been
+ * requested and DHCP has run. Returns 0 when an IPv4 address is present. */
+static int wlan_attempt(const char *ssid, const char *psk)
 {
 	const char *iface;
 	char cmd[320];
+	char ip[40];
 
-	if (!ssid || !ssid[0])
-		return -1;
-	if (write_wpa_conf(ssid, psk) != 0)
-		return -1;
-	if (!wlan_iface())
+	if (!s_wlan_conf)
+	{
+		if (write_wpa_conf(ssid, psk) != 0)
+			return -1;
+		s_wlan_conf = 1;
+	}
+	if (!wlan_iface() && !s_wlan_modprobe)
+	{
 		run_capture("modprobe iwlwifi", 0, 0, 8000);
+		s_wlan_modprobe = 1;
+	}
 	iface = wlan_iface();
 	if (!iface)
 		return -1;
-	snprintf(cmd, sizeof cmd, "ip link set %s up", iface);
-	run_capture(cmd, 0, 0, 3000);
-	run_capture("rfkill unblock wifi", 0, 0, 3000);
-	/* Reload the config the running supplicant already has open. Restarting
-	 * the OpenRC service waits on supervise-daemon, which does not return
-	 * when the driver or the stop is stuck. */
-	snprintf(cmd, sizeof cmd, "wpa_cli -i %s reconfigure", iface);
-	if (run_capture(cmd, 0, 0, 5000) == 0)
+	if (!s_wlan_kicked)
+	{
+		snprintf(cmd, sizeof cmd, "ip link set %s up", iface);
+		run_capture(cmd, 0, 0, 3000);
+		run_capture("rfkill unblock wifi", 0, 0, 3000);
+		/* Reload the config the running supplicant already has open.
+		 * Restarting the OpenRC service waits on supervise-daemon, which
+		 * does not return when the driver or the stop is stuck. */
+		snprintf(cmd, sizeof cmd, "wpa_cli -i %s reconfigure", iface);
+		if (run_capture(cmd, 0, 0, 5000) != 0)
+		{
+			snprintf(cmd, sizeof cmd,
+				 "rc-service wpa_supplicant restart");
+			if (run_capture(cmd, 0, 0, 8000) != 0)
+			{
+				snprintf(cmd, sizeof cmd,
+					 "wpa_supplicant -B -i %s -c %s",
+					 iface, wpa_conf_path());
+				if (run_capture(cmd, 0, 0, 8000) != 0)
+					return -1;
+			}
+		}
+		s_wlan_kicked = 1;
+	}
+	/* Association is asynchronous; the lease only lands once it does. Returning
+	 * early here would latch the boot bring-up before DHCP ever ran. */
+	if (iface_ipv4(iface, ip, sizeof ip))
 		return 0;
-	snprintf(cmd, sizeof cmd, "rc-service wpa_supplicant restart");
-	if (run_capture(cmd, 0, 0, 8000) == 0)
-		return 0;
-	snprintf(cmd, sizeof cmd,
-		 "wpa_supplicant -B -i %s -c %s", iface, wpa_conf_path());
-	return run_capture(cmd, 0, 0, 8000) == 0 ? 0 : -1;
+	dhcp_get(iface);
+	return iface_ipv4(iface, ip, sizeof ip) ? 0 : -1;
+}
+
+int mmb_wlan_start(const char *ssid, const char *psk)
+{
+	long long now;
+	unsigned interval;
+	int rc;
+
+	if (!ssid || !ssid[0])
+	{
+		s_wlan_window = 0;
+		return -1;
+	}
+	if (!s_wlan_window || strcmp(ssid, s_wlan_ssid) != 0 ||
+	    strcmp(psk ? psk : "", s_wlan_psk) != 0)
+		wlan_begin_window(ssid, psk);
+	now = now_ms();
+	if (now >= s_wlan_deadline)
+		return -1;
+	interval = wlan_env_ms("MMB_NET_WLAN_INTERVAL_MS", WLAN_ATTEMPT_MS);
+	if (now < s_wlan_next_try)
+		return -1;
+	rc = wlan_attempt(ssid, psk);
+	/* Pace on completion, not on entry: a helper that blocks for seconds must
+	 * not make the next poll immediately re-run it. */
+	s_wlan_next_try = now_ms() + (long long)interval;
+	if (rc == 0)
+		s_wlan_window = 0;
+	return rc;
 }
 
 int mmb_wlan_connect(const char *ssid, const char *psk)
 {
 	unsigned waited = 0;
-	char ip[40];
+	unsigned budget;
 
-	if (mmb_wlan_start(ssid, psk) != 0)
+	if (!ssid || !ssid[0])
 		return -1;
-	dhcp_get(wlan_iface());
-	/* Association + DHCP take a moment; poll for the lease. */
-	while (waited < 15000)
+	/* A manual join gets a fresh window even if a boot attempt already
+	 * exhausted its budget and mmb_poll latched. */
+	wlan_begin_window(ssid, psk);
+	budget = wlan_env_ms("MMB_NET_WLAN_BUDGET_MS", WLAN_BOOT_BUDGET_MS);
+	if (budget > 20000u)
+		budget = 20000u;
+	while (waited < budget)
 	{
-		if (iface_ipv4(wlan_iface(), ip, sizeof ip))
+		if (mmb_wlan_start(ssid, psk) == 0)
 			return 0;
+		if (!mmb_wlan_radio_pending())
+			return -1;
 		usleep(100000);
 		waited += 100;
 	}
-	return iface_ipv4(wlan_iface(), ip, sizeof ip) ? 0 : -1;
+	return mmb_wlan_start(ssid, psk) == 0 ? 0 : -1;
 }
 
 int mmb_wlan_status(void)
