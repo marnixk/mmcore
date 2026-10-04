@@ -741,6 +741,28 @@ def test_live_pixel_after_page_display_roundtrip(fresh_console):
     assert r > 180 and g < 80 and b < 80, (r, g, b)
 
 
+def test_page_display_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1068: the console row band flushed after PAGE DISPLAY must show
+    the presented page, not the pixels/text the terminal buffer still held.
+
+    CLS homes the cursor, so the sample sits in the prompt band. After PAGE
+    DISPLAY 3 the next console write must repaint the red page, not re-stamp
+    the green pixel left in the terminal buffer.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("30 PAGE WRITE 3") == ""
+    assert c.send_line("40 CLS RGB(255,0,0)") == ""
+    assert c.send_line("50 PAGE DISPLAY 3") == ""
+    assert c.send_line('60 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""

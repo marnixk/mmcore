@@ -153,6 +153,11 @@ typedef struct mmb_platform {
 	int (*term_present_locked)(void);
 	/* Next full-frame present may virt-offset flip (PAGE DISPLAY). Optional. */
 	void (*present_set_flip)(int on);
+	/* PAGE DISPLAY replaced the visible frame with HDMI-native pixels
+	 * (stride in pixels). Optional: reconcile the bare-metal console's
+	 * cached text/pixel buffer with the new frame so the next text flush
+	 * cannot re-stamp a stale row over it. */
+	void (*present_sync_console)(const void *pix, int w, int h, int stride);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);
