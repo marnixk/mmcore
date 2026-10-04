@@ -28,7 +28,7 @@ so it looks the same under every system theme. Leaving JUKE restores your
 console theme untouched. The header carries a graffiti wordmark; the
 oscilloscope sits in its own panel under the title and trails a ghost
 history (older traces fade and cool, the newest stays lime). The 24
-spectrum bars run black through grey to lime, and the transport and volume
+spectrum bars run straight from black to lime, and the transport and volume
 indicators run along the footer.
 
 Controls:
