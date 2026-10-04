@@ -397,6 +397,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	int ctrl = (ke->keysym.mod & KMOD_CTRL) != 0;
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
+	int gui = (ke->keysym.mod & KMOD_GUI) != 0;
 
 	/* Any keydown ends the previous chord's text window. The flag only
 	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter or
@@ -505,6 +506,32 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		{
 			deliver_ch(0);
 			return;
+		}
+	}
+
+	/* Chromebooks have no dedicated Home/End/PgUp/PgDn keys; the Search
+	 * key is Super (Left Meta). Map Super+arrows onto those keys so they
+	 * emit the real keys' bytes, leaving the arrow keys alone and Super by
+	 * itself inert (#1054). Shift/Alt/Ctrl still combine through the same
+	 * xterm modifier encoding as the real keys. */
+	if (gui)
+	{
+		switch (k)
+		{
+		case SDLK_UP:
+			k = SDLK_PAGEUP;
+			break;
+		case SDLK_DOWN:
+			k = SDLK_PAGEDOWN;
+			break;
+		case SDLK_LEFT:
+			k = SDLK_HOME;
+			break;
+		case SDLK_RIGHT:
+			k = SDLK_END;
+			break;
+		default:
+			break;
 		}
 	}
 
