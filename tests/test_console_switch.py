@@ -302,6 +302,44 @@ def test_two_consoles_same_file_keep_own_variables(kernel_image):
         con.stop()
 
 
+def _rnd_sequence(con: MMBasicConsole, count: int = 4) -> list[str]:
+    """Run a program that prints ``count`` RND(1) values and return them."""
+    assert con.send_line("NEW") == ""
+    for line in (
+        f"10 FOR I=1 TO {count}",
+        "20 PRINT RND(1)",
+        "30 NEXT I",
+    ):
+        con.send_line(line)
+    out = con.send_line("RUN", timeout=10.0)
+    return [
+        ln.strip()
+        for ln in out.replace("\r", "\n").split("\n")
+        if ln.strip()
+    ]
+
+
+def test_two_consoles_get_distinct_rnd_seeds(kernel_image):
+    """#1015: a fresh console must not seed RND from the boot console's
+    constant, or two instances running the same program print the same
+    sequence."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        seq1 = _rnd_sequence(con)
+        assert len(seq1) == 4, seq1
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        seq2 = _rnd_sequence(con)
+        assert len(seq2) == 4, seq2
+
+        assert seq1 != seq2, (seq1, seq2)
+    finally:
+        con.stop()
+
+
 def test_break_after_resume_returns_to_prompt(kernel_image):
     """#1014: a program suspended by a console switch resumes with a live
     setjmp landing, so Ctrl+C returns to the REPL with ?BREAK instead of

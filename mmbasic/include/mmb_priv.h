@@ -1348,6 +1348,10 @@ void mmb_play_tts(void);
 int mmb_keyword_eq(const char *a, const char *b);
 void mmb_upper(char *s);
 unsigned mmb_now_ms(void);
+/* Seed for a console's RND state (#1015): mixes the platform millisecond
+ * clock with a call counter so each fresh interpreter instance starts its RNG
+ * at a different point, even when two are brought up in the same tick. */
+uint32_t mmb_rng_seed(void);
 
 /* functions inside expressions */
 int mmb_try_function(mmb_val *out);

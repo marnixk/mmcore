@@ -163,6 +163,20 @@ def test_profiling_tracecache_2d_array_let(console):
     assert on["expr"] < off["expr"] // 10
 
 
+def test_tracecache_chain_invalidates(console):
+    """#1007: CHAIN re-tokenizes the next program, so the trace cache must be
+    dropped too. Otherwise a compiled entry from the previous program is
+    replayed against the new text at the same token address and raises a
+    spurious syntax error."""
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    _write_bas(console, "TCCH1.BAS", ["X=5", 'CHAIN "TCCH2.BAS"'])
+    _write_bas(console, "TCCH2.BAS", ["Y=X+1", "PRINT Y"])
+    out = console.send_line('RUN "TCCH1.BAS"')
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert "?SYNTAX" not in out.upper(), out
+    assert "6" in lines, out
+
+
 def test_profiling_float_math(console):
     p = _run_kernel(
         console,

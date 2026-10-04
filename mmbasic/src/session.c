@@ -251,7 +251,7 @@ static void console_bring_up(int idx, const mmb *from)
 	mmb_gfx_init();
 	mmb_gfx_apply_default_mode();
 	g_cur->timer_base = 0;
-	g_cur->rnd_seed = 0x12345678u;
+	g_cur->rnd_seed = mmb_rng_seed();
 	/* A fresh console starts at the ramdisk root (mmb_vfs_init owns the
 	 * shared VFS node table and must not run again per console). */
 	mmb_vfs_cwd_reset();
