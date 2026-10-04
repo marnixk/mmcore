@@ -375,7 +375,30 @@ void mmb_gfx_present_if(int page)
 		if (!G.gfx.dirty)
 			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		mmb_gfx_present();
+		/* A full-frame present replaces the visible screen directly in the
+		 * framebuffer, bypassing the bare-metal console's cached row buffer.
+		 * Reconcile it so the next text flush cannot re-stamp a stale row
+		 * over the presented page (#1070; PAGE DISPLAY handled in
+		 * mmb_cmd_page). */
+		mmb_gfx_sync_console(G.gfx.display_page);
 	}
+}
+
+/* Reconcile the bare-metal console's cached text/pixel buffer with the frame
+ * just presented to the display page. The platform present writes the
+ * framebuffer directly, so the console's row cache still holds the
+ * pre-present pixels and its next text flush would stamp that stale row back
+ * over the new frame (#1068, #1070). Optional hook: native builds carry no
+ * console, and the platform sync only reconciles an exact full-frame page. */
+void mmb_gfx_sync_console(int page)
+{
+	int pw, ph;
+	uint16_t *buf;
+
+	if (!G.plat || !G.plat->present_sync_console)
+		return;
+	buf = mmb_gfx_buf_for(page, &pw, &ph);
+	G.plat->present_sync_console(buf, pw, ph, pw);
 }
 
 void mmb_gfx_copy_page(int src, int dst, int blit)

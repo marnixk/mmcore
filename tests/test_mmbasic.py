@@ -763,6 +763,29 @@ def test_page_display_flush_does_not_restamp_stale_row(fresh_console):
     assert r > 180 and g < 80 and b < 80, (r, g, b)
 
 
+def test_page_copy_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1070: PAGE COPY to the visible page presents a full native frame
+    straight to the framebuffer, bypassing the console cache. The next console
+    write must repaint the copied page, not re-stamp the stale green pixel the
+    terminal buffer still held.
+
+    Same band as the #1068 PAGE DISPLAY case: CLS homes the cursor, so the
+    sample sits in the prompt row.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("30 PAGE WRITE 3") == ""
+    assert c.send_line("40 CLS RGB(255,0,0)") == ""
+    assert c.send_line("50 PAGE COPY 3 TO 0") == ""
+    assert c.send_line('60 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
 def test_colour_rgb_red_print_text(fresh_console):
     c = fresh_console
     assert c.send_line("NEW") == ""

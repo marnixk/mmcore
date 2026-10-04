@@ -569,13 +569,8 @@ void mmb_cmd_page(void)
 		mmb_gfx_present();
 		/* The platform present bypasses the bare-metal console's cached
 		 * text/pixel buffer, so the next console write would flush a
-		 * stale row over the page. Hand it the new frame to reconcile. */
-		if (G.plat && G.plat->present_sync_console)
-		{
-			int pw, ph;
-			uint16_t *buf = mmb_gfx_buf_for(pg, &pw, &ph);
-			G.plat->present_sync_console(buf, pw, ph, pw);
-		}
+		 * stale row over the page. Reconcile it with the new frame. */
+		mmb_gfx_sync_console(pg);
 		return;
 	}
 	if (mmb_match("COPY"))
