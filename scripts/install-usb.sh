@@ -37,6 +37,14 @@ ASSUME_YES=0
 DECOMPRESS=(cat)
 TMP_ISO=""
 
+# GNU coreutils dd accepts status=progress; BusyBox dd (the default on Alpine,
+# the distro the ISO itself targets) aborts with an invalid-argument error
+# (#1065). Probe the host dd once and only pass the flag where it works.
+DD_PROGRESS=""
+if dd --version 2>/dev/null | grep -q coreutils; then
+	DD_PROGRESS="status=progress"
+fi
+
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
 	printf 'install-usb: %s\n' "$*" >&2
@@ -168,7 +176,8 @@ if [ "${UPDATE}" = 1 ]; then
 	fi
 
 	log "Refreshing the system image before the MMCORE partition"
-	dd if="${write_src}" of="${DEVICE}" bs=4M conv=fsync status=progress
+	# shellcheck disable=SC2086  # empty on BusyBox dd, a single word on GNU dd
+	dd if="${write_src}" of="${DEVICE}" bs=4M conv=fsync ${DD_PROGRESS}
 
 	# The ISO's own GPT names only partitions 1-4. Re-create the MMCORE
 	# entry at its old offset (no mkfs), then move the backup header to the
@@ -194,7 +203,8 @@ if [ "${UPDATE}" = 1 ]; then
 fi
 
 log "Writing the image"
-"${DECOMPRESS[@]}" "${ISO}" | dd of="${DEVICE}" bs=4M conv=fsync status=progress
+# shellcheck disable=SC2086  # empty on BusyBox dd, a single word on GNU dd
+"${DECOMPRESS[@]}" "${ISO}" | dd of="${DEVICE}" bs=4M conv=fsync ${DD_PROGRESS}
 
 if [ "${PERSIST}" = "1" ]; then
 	command -v sgdisk >/dev/null 2>&1 || die "sgdisk (gdisk) is required to add the MMCORE partition"

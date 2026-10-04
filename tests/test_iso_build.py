@@ -419,6 +419,25 @@ def test_install_usb_script_parses_and_documents_persistence():
     assert "*.zst)" in text
 
 
+def test_install_usb_dd_is_busybox_compatible():
+    """#1065: BusyBox dd (Alpine's default) aborts on GNU's status=progress,
+    so each image write must take the flag from a host probe, not hard-code
+    it."""
+    text = open(INSTALL_USB, encoding="utf-8").read()
+    writes = [
+        ln for ln in text.splitlines()
+        if re.search(r"\bdd\b", ln) and "of=" in ln
+    ]
+    assert writes, "install-usb.sh should write the image with dd"
+    for ln in writes:
+        assert "status=progress" not in ln, ln
+        assert "${DD_PROGRESS}" in ln, ln
+    # The GNU-only flag is enabled only after probing the host dd for
+    # coreutils, so BusyBox dd never sees it.
+    assert 'DD_PROGRESS="status=progress"' in text
+    assert re.search(r"dd --version.*coreutils", text), text
+
+
 def test_install_usb_read_write_rejects_no_persist():
     proc = subprocess.run(
         [INSTALL_USB, "--read-write", "--no-persist"],
