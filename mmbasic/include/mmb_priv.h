@@ -897,6 +897,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 			    int stride);
 void mmb_gfx_present_if(int page);
+void mmb_gfx_sync_console(int page);
 void mmb_gfx_dirty_reset(void);
 void mmb_gfx_dirty_add(int x, int y, int w, int h);
 void mmb_gfx_dirty_flush(void);
