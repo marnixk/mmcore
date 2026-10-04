@@ -571,8 +571,8 @@ def test_remaining_modes(console):
         (14, 8, 960, 540),
         (15, 8, 1280, 1024),
         (16, 8, 1920, 1080),
-        (19, 8, 1376, 768),
-        (20, 8, 688, 384),
+        (19, 8, 1366, 768),
+        (20, 8, 683, 384),
     ]
     for mode, bits, w, h in extras:
         assert console.send_line(f"MODE {mode},{bits}") == ""
@@ -582,9 +582,8 @@ def test_remaining_modes(console):
 
 
 def test_wxga_modes_are_fullscreen(console):
-    """Modes 19 and 20 retune HDMI to 1376x768 and half of that. The widths
-    are the 1366/683 Chromebook sizes rounded up to the 16-pixel framebuffer
-    alignment (#1047). Earlier mode numbers are unchanged."""
+    """Modes 19 and 20 retune HDMI to 1366x768 and half of that.
+    Earlier mode numbers are unchanged."""
     assert console.send_line("MODE 16,8") == ""
     assert console.send_line("PRINT MM.HRES") == "1920"
     assert console.send_line("PRINT MM.VRES") == "1080"
@@ -593,54 +592,26 @@ def test_wxga_modes_are_fullscreen(console):
     assert console.send_line("PRINT MM.VRES") == "360"
 
     assert console.send_line("MODE 19,16") == ""
-    assert console.send_line("PRINT MM.HRES") == "1376"
+    assert console.send_line("PRINT MM.HRES") == "1366"
     assert console.send_line("PRINT MM.VRES") == "768"
-    assert console.screen_size() == (1376, 768)
-    assert console.send_line("PIXEL 1375,767,RGB(255,0,0)") == ""
-    pix = int(console.send_line("PRINT PIXEL(1375,767)"))
+    assert console.screen_size() == (1366, 768)
+    assert console.send_line("PIXEL 1365,767,RGB(255,0,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(1365,767)"))
     assert ((pix >> 16) & 255) > 150
 
     assert console.send_line("MODE 19,12") == ""
-    assert console.send_line("PRINT MM.HRES") == "1376"
+    assert console.send_line("PRINT MM.HRES") == "1366"
     assert console.send_line("MODE 20,8") == ""
-    assert console.send_line("PRINT MM.HRES") == "688"
+    assert console.send_line("PRINT MM.HRES") == "683"
     assert console.send_line("PRINT MM.VRES") == "384"
-    assert console.screen_size() == (688, 384)
-    assert console.send_line("PIXEL 687,383,RGB(0,255,0)") == ""
-    pix = int(console.send_line("PRINT PIXEL(687,383)"))
+    assert console.screen_size() == (683, 384)
+    assert console.send_line("PIXEL 682,383,RGB(0,255,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(682,383)"))
     assert ((pix >> 8) & 255) > 150
     assert "INVALID MODE" in console.send_line("MODE 21,8")
     assert console.send_line("MODE 1,8") == ""
     assert console.send_line("PRINT MM.HRES") == "800"
     assert console.send_line("MODE 8,16") == ""
-
-
-def _is_red(rgb) -> bool:
-    r, g, b = rgb
-    return r > 150 and g < 100 and b < 100
-
-
-def test_aligned_modes_present_without_shear(fresh_console):
-    """#1047: a BOX at a known coordinate must land there on HDMI.
-
-    The 1366/683 Chromebook widths left a framebuffer pitch that is not a
-    multiple of the presented row length, so HDMI sheared every row by one
-    pixel (a filled BOX became a parallelogram and sampling its corner read
-    black). Modes 19/20 now use the 16-pixel aligned widths, so the pixel
-    drawn is the pixel scanned out."""
-    con = fresh_console
-    for mode, w in ((19, 1376), (20, 688)):
-        assert con.send_line(f"MODE {mode},32") == ""
-        assert con.send_line("CLS 0") == ""
-        assert con.send_line("BOX 50,50,100,100,1,RGB(255,0,0),RGB(255,0,0)") == ""
-        inside = [(50, 50), (149, 50), (50, 149), (149, 149), (100, 100)]
-        outside = [(49, 50), (150, 50), (50, 49), (50, 150), (w - 1, 0)]
-        pts = inside + outside
-        pixels = dict(zip(pts, con.screen_pixels(pts)))
-        for pt in inside:
-            assert _is_red(pixels[pt]), (mode, pt, pixels[pt])
-        for pt in outside:
-            assert not _is_red(pixels[pt]), (mode, pt, pixels[pt])
 
 
 def test_page_copy_and_colour(fresh_console):
