@@ -19,12 +19,13 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 16, 1920, 1080 },
 	{ 17, 384, 240 },
 	{ 18, 640, 360 },
-	/* 19/20 are the Chromebook 1366x768 / 683x384 sizes rounded up to the
-	 * 16-pixel framebuffer alignment. 1366 and 683 are not multiples of it,
-	 * so the presented row pitch diverged from width*bpp and HDMI sheared
-	 * graphics by one pixel per row (#1047). */
-	{ 19, 1376, 768 },
-	{ 20, 688, 384 },
+	/* 19/20 are the Chromebook panel sizes and must stay exact: 1366x768 is
+	 * the native panel resolution (1:1) and 683x384 is exactly half of it, so
+	 * the panel upscales MODE 20 by a clean 2x. The odd widths make QEMU's
+	 * bcm2835-fb scanout shear presented graphics (#1050), but that is a host
+	 * emulator defect, not a reason to retune the real modes (#1052). */
+	{ 19, 1366, 768 },
+	{ 20, 683, 384 },
 };
 
 #define MMB_RGB_AFLAG 0x10000000u
