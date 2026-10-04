@@ -37,6 +37,18 @@ case "$iface" in
 esac
 """
 
+IP_BOOT = """\
+iface="$5"
+case "$iface" in
+  wlan0)
+    [ -f "$MMB_NET_WLAN_READY" ] || exit 1
+    echo "2: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.0.2.55/24 brd 192.0.2.255 scope global wlan0"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+
 IW_OK = """\
 cat <<'EOF'
 BSS aa:bb:cc:dd:ee:01(on wlan0)
@@ -163,5 +175,55 @@ def test_net_linux_connect_writes_config_and_restarts(tmp_path):
         capture_output=True,
         text=True,
         env=_env(cmd_dir, wpa_conf),
+    )
+    assert "all checks passed" in out.stdout
+
+
+def _boot_dir(tmp_path, name):
+    d = os.path.join(str(tmp_path), name)
+    os.makedirs(d, exist_ok=True)
+    _write_exe(os.path.join(d, "iw"), IW_OK)
+    _write_exe(os.path.join(d, "wpa_cli"), WPA_OK)
+    _write_exe(os.path.join(d, "ip"), IP_BOOT)
+    _write_exe(os.path.join(d, "rc-service"), "exit 0\n")
+    _write_exe(os.path.join(d, "udhcpc"), "exit 0\n")
+    return d
+
+
+def test_net_linux_saved_wifi_retries_until_ready(tmp_path):
+    """#1057: a saved SSID must associate on boot, not only via OPTION WIFI."""
+    exe = _build(tmp_path)
+    cmd_dir = _boot_dir(tmp_path, "fake_boot")
+    wpa_conf = os.path.join(str(tmp_path), "wpa_supplicant.conf")
+    env = _env(cmd_dir, wpa_conf)
+    env["MMB_NET_WLAN_READY"] = os.path.join(str(tmp_path), "wlan-ready")
+    env["MMB_NET_WLAN_INTERVAL_MS"] = "50"
+    out = subprocess.run(
+        [exe, "boot"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_wifi_pending_budget_expires(tmp_path):
+    """A radio that never comes up must stop being retried (bounded)."""
+    exe = _build(tmp_path)
+    cmd_dir = _boot_dir(tmp_path, "fake_boot_timeout")
+    wpa_conf = os.path.join(str(tmp_path), "wpa_supplicant.conf")
+    env = _env(cmd_dir, wpa_conf)
+    env["MMB_NET_WLAN_READY"] = os.path.join(str(tmp_path), "never")
+    env["MMB_NET_WLAN_INTERVAL_MS"] = "50"
+    env["MMB_NET_WLAN_BUDGET_MS"] = "2000"
+    out = subprocess.run(
+        [exe, "boot_timeout"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=8,
     )
     assert "all checks passed" in out.stdout

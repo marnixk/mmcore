@@ -196,6 +196,37 @@ static void reset(void)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
 }
 
+/* #1054: a Super (Chromebook Search / Left Meta) + arrow chord must emit
+ * exactly the bytes the real Home/End/PgUp/PgDn key emits. Compare the two
+ * front-end feeds rather than hard-coding the escape sequence. */
+static void expect_super_same(const char *name, SDL_Keycode super_sym,
+			      SDL_Keycode real_sym)
+{
+	unsigned char real[64], sup[64];
+	int real_n, sup_n;
+
+	reset();
+	g_running = 0;
+	push_key(real_sym, 0);
+	sdl_input_pump();
+	real_n = g_feed_n;
+	memcpy(real, g_feed, (size_t)real_n);
+
+	reset();
+	g_running = 0;
+	push_key(super_sym, KMOD_LGUI);
+	sdl_input_pump();
+	sup_n = g_feed_n;
+	memcpy(sup, g_feed, (size_t)sup_n);
+
+	if (real_n != sup_n || memcmp(real, sup, (size_t)real_n) != 0)
+	{
+		fprintf(stderr, "FAIL %s: super len %d real len %d\n", name,
+			sup_n, real_n);
+		fails++;
+	}
+}
+
 int main(void)
 {
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0)
@@ -327,6 +358,32 @@ int main(void)
 	push_key(SDLK_END, KMOD_SHIFT);
 	sdl_input_pump();
 	expect_feed("shift-end", "\x1b[1;2F");
+
+	/* #1054: Super+arrows (Chromebook Search key, KMOD_LGUI) must match the
+	 * real Home/End/PgUp/PgDn keys exactly. */
+	expect_super_same("super-left home", SDLK_LEFT, SDLK_HOME);
+	expect_super_same("super-right end", SDLK_RIGHT, SDLK_END);
+	expect_super_same("super-up pgup", SDLK_UP, SDLK_PAGEUP);
+	expect_super_same("super-down pgdn", SDLK_DOWN, SDLK_PAGEDOWN);
+
+	/* Super by itself stays inert: no bytes to the front end. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LGUI, KMOD_LGUI);
+	sdl_input_pump();
+	if (g_front_feeds != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr, "FAIL super alone: feeds=%d queue=%d\n",
+			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* A bare arrow is unchanged by the mapping. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_feed("plain-left", "\x1b[D");
 
 	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
 	 * single NUL byte (#589). */

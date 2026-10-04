@@ -881,6 +881,17 @@ unsigned mmb_now_ms(void)
 	return G.plat && G.plat->millis ? G.plat->millis() : 0;
 }
 
+uint32_t mmb_rng_seed(void)
+{
+	/* A per-call counter guarantees two consoles brought up within the same
+	 * millisecond still get distinct seeds; the millisecond clock keeps the
+	 * sequence from repeating across boots (#1015). */
+	static uint32_t serial;
+	uint32_t ticks = mmb_now_ms();
+	serial++;
+	return (ticks * 2654435761u) ^ (serial * 0x9E3779B9u) ^ 1u;
+}
+
 void mmb_console_write(const char *s)
 {
 	unsigned n;
