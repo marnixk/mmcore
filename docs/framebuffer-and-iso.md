@@ -459,12 +459,21 @@ disk and boots without the card.
   the touchpad through SDL's evdev backend, and the kernel driver binds by
   name once the modules load.
 - **Audio.** `sof-firmware`, the `snd_sof*` modules and the mainline
-  `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. When
-  the codec exposes an `Auto-Mute Mode` kcontrol the kernel follows the
-  headphone jack itself; otherwise a boot helper (`mmcore-audio.start`, from
-  `/etc/local.d/`) polls a `Headphone Jack` switch and mutes the speakers while
-  a plug is present. On a codec whose controls it does not recognise the helper
-  changes nothing, so playback keeps working.
+  `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. The
+  `local` boot helper (`mmcore-audio.start`, from `/etc/local.d/`) *applies*
+  the board UCM profile itself — installing the profiles alone changes nothing
+  (#1075), because SDL opens the `default` PCM and ALSA does not load UCM on
+  its own. It enumerates every card in `/proc/asound/cards` and runs
+  `alsaucm -c hw:N set _verb <verb>` plus `set _enadev Speaker|Headphones`
+  (`HiFi` / `Speaker` / `Headphones` by default). The jack state comes from an
+  input switch (`SW_HEADPHONE_INSERT` and friends, read by `mmcore-jack` from
+  the event devices in `/proc/bus/input/devices`), falling back to an ALSA
+  `Headphone Jack` kcontrol and then to HDA `Auto-Mute Mode`. Board verbs and
+  control names are data-driven from `/etc/mmcore/audio.conf`; a board whose
+  controls are unknown is left unchanged rather than guessed at. Chromebook
+  codec control names cannot be verified from the build host (QEMU has no
+  SOF/codec), so this path is confirmed only on real hardware — see the
+  Chromebook hardware QA checklist below.
 
 ### Known gap: models that need a kernel the ISO does not ship
 

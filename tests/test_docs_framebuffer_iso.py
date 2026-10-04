@@ -111,10 +111,12 @@ def test_framebuffer_iso_doc_documents_usb_update():
 
 
 def test_framebuffer_iso_doc_documents_headphone_jack():
-    """#1059: the doc must name the UCM profiles and the jack-follow helper."""
+    """#1059/#1075: the doc must name the UCM profiles, the `alsaucm` that
+    applies them, the EV_SW jack reader and the jack-follow helper."""
     text = _read(DOC)
-    for needle in ("alsa-ucm-conf", "Headphone Jack", "Auto-Mute Mode",
-                   "mmcore-audio.start"):
+    for needle in ("alsa-ucm-conf", "alsaucm", "SW_HEADPHONE_INSERT",
+                   "mmcore-jack", "/etc/mmcore/audio.conf", "Headphone Jack",
+                   "Auto-Mute Mode", "mmcore-audio.start"):
         assert needle in text, needle
 
 

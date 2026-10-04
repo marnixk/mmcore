@@ -207,6 +207,18 @@ cc -O2 -Wall -Wextra -o "${ROOTFS}/usr/local/bin/mmcore-splash" \
 	|| die "could not build mmcore-splash"
 chmod 0755 "${ROOTFS}/usr/local/bin/mmcore-splash"
 
+# #1075: the audio helper reads the headphone jack's EV_SW state (EVIOCGSW) on
+# Chromebooks where it is not an ALSA kcontrol. BusyBox cannot do that, so bake
+# a tiny reader (same approach as mmcore-splash). `alsaucm` (from alsa-utils,
+# installed above) applies the board UCM profile; a missing one would silently
+# disable that path, so fail the build instead (#968 philosophy).
+cc -O2 -Wall -Wextra -o "${ROOTFS}/usr/local/bin/mmcore-jack" \
+	"${REPO_ROOT}/scripts/iso/boot/mmcore-jack.c" \
+	|| die "could not build mmcore-jack"
+chmod 0755 "${ROOTFS}/usr/local/bin/mmcore-jack"
+[ -x "${ROOTFS}/usr/bin/alsaucm" ] \
+	|| die "alsaucm is missing (needed to apply UCM profiles)"
+
 if [ -d "${OVERLAY}" ]; then
 	log "Applying rootfs overlay"
 	cp -a "${OVERLAY}/." "${ROOTFS}/"

@@ -965,20 +965,34 @@ def test_builder_installs_sof_firmware_for_intel_chromebooks():
 
 
 def test_builder_installs_alsa_ucm_profiles():
-    """#1059: prefer the mainline UCM profile so a SOF Chromebook routes
-    playback to the headphone jack when a plug is present."""
+    """#1059/#1075: the mainline UCM profiles are installed, the `alsaucm`
+    that actually applies them is verified in the rootfs, and the EV_SW jack
+    reader is compiled in."""
     text = open(BUILDER, encoding="utf-8").read()
     assert "alsa-ucm-conf" in text
+    assert "mmcore-jack.c" in text
+    assert "/usr/local/bin/mmcore-jack" in text
+    assert "alsaucm" in text
+
+
+AUDIO_CONF = os.path.join(OVERLAY, "etc", "mmcore", "audio.conf")
+JACK_C = os.path.join(ISO, "boot", "mmcore-jack.c")
 
 
 def test_overlay_follows_the_headphone_jack():
-    """#1059: with no codec auto-mute, a boot helper follows the jack kcontrol
-    and mutes the speakers. It no-ops safely on hardware whose controls it
-    does not know."""
+    """#1059/#1075: with no codec auto-mute, a boot helper applies the board
+    UCM profile, reads the jack from an EV_SW switch, and falls back to a jack
+    kcontrol. It no-ops safely on hardware whose controls it does not know."""
     assert os.path.isfile(AUDIO), AUDIO
     assert os.access(AUDIO, os.X_OK), AUDIO
     _run(["bash", "-n", AUDIO])
     text = open(AUDIO, encoding="utf-8").read()
+    assert "alsaucm" in text
+    assert "_verb" in text
+    assert "_enadev" in text
+    assert "/proc/asound/cards" in text
+    assert "/proc/bus/input/devices" in text
+    assert "mmcore-jack" in text
     assert "amixer" in text
     assert "Auto-Mute Mode" in text
     assert "Headphone Jack" in text
@@ -986,6 +1000,27 @@ def test_overlay_follows_the_headphone_jack():
     assert "MMCORE_AUDIO_ONESHOT" in text
     # It exits cleanly rather than erroring when the controls are absent.
     assert "exit 0" in text
+
+
+def test_audio_board_config_ships_with_defaults():
+    """#1075: board verbs/control names are data-driven."""
+    assert os.path.isfile(AUDIO_CONF), AUDIO_CONF
+    conf = open(AUDIO_CONF, encoding="utf-8").read()
+    for needle in ("UCM_VERBS", "UCM_ENADEV_SPEAKER", "UCM_ENADEV_HEADPHONES",
+                   "SPEAKER_CONTROLS", "HEADPHONE_CONTROLS", "JACK_CONTROLS"):
+        assert needle in conf, needle
+
+
+def test_jack_helper_reads_ev_switch_state():
+    """#1075: the EV_SW reader must look at the headphone/mic/lineout switch
+    bits the issue names, on the input event devices."""
+    assert os.path.isfile(JACK_C), JACK_C
+    src = open(JACK_C, encoding="utf-8").read()
+    assert "EVIOCGSW" in src
+    assert "SW_HEADPHONE_INSERT" in src
+    assert "SW_MICROPHONE_INSERT" in src
+    assert "SW_LINEOUT_INSERT" in src
+    assert "/dev/input/event" in src
 
 
 def test_audio_helper_routes_speakers_and_headphones(tmp_path):
@@ -1014,6 +1049,10 @@ def test_audio_helper_routes_speakers_and_headphones(tmp_path):
         os.environ,
         MMCORE_AUDIO_CARDS=str(cards),
         MMCORE_AMIXER=str(stub),
+        # No UCM and no EV_SW switch here: this test is about the kcontrol
+        # fallback only.
+        MMCORE_ALSAUCM=str(tmp_path / "no-alsaucm"),
+        MMCORE_AUDIO_JACK=str(tmp_path / "no-jack"),
         MMCORE_AUDIO_ONESHOT="1",
         STUB_LOG=str(log),
     )
@@ -1055,6 +1094,190 @@ def test_audio_helper_routes_speakers_and_headphones(tmp_path):
     assert "sget Headphone Jack" in none
     assert "sset Speaker" not in none
     assert "sset Headphone" not in none
+
+
+def _audio_stubs(tmp_path):
+    """Write amixer/alsaucm/mmcore-jack stubs that log their argv to one file.
+
+    The EV_SW stub prints whatever STUB_SW holds and exits 1 when it is empty
+    (i.e. no switch device); the Auto-Mute attempt is controlled by
+    STUB_AUTOMUTE.
+    """
+    log = tmp_path / "audio.log"
+    amixer = tmp_path / "amixer"
+    amixer.write_text(
+        "#!/bin/sh\n"
+        'printf "amixer %s\\n" "$*" >> "${STUB_LOG}"\n'
+        'case "$*" in\n'
+        '  *"sset Auto-Mute Mode"*) exit "${STUB_AUTOMUTE:-1}" ;;\n'
+        '  *"sget "*) exit 1 ;;\n'
+        '  *"sset "*) exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    amixer.chmod(0o755)
+    alsaucm = tmp_path / "alsaucm"
+    alsaucm.write_text(
+        "#!/bin/sh\n"
+        'printf "alsaucm %s\\n" "$*" >> "${STUB_LOG}"\n'
+        'case "$*" in\n'
+        '  *"list _verbs"*) printf "%b" "${STUB_VERBS:-HiFi\\nVoice\\n}";'
+        " exit 0 ;;\n"
+        '  *"set "*) exit 0 ;;\n'
+        "esac\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    alsaucm.chmod(0o755)
+    jack = tmp_path / "mmcore-jack"
+    jack.write_text(
+        "#!/bin/sh\n"
+        'printf "jack %s\\n" "$*" >> "${STUB_LOG}"\n'
+        '[ -n "${STUB_SW:-}" ] || exit 1\n'
+        'printf "%s\\n" "${STUB_SW}"\n',
+        encoding="utf-8",
+    )
+    jack.chmod(0o755)
+    return log, amixer, alsaucm, jack
+
+
+def test_audio_helper_applies_ucm_from_ev_sw(tmp_path):
+    """#1075: the jack state comes from the EV_SW switch on the input event
+    device, and the board UCM profile is applied on every card, selecting
+    Headphones when plugged and Speaker when not."""
+    cards = tmp_path / "cards"
+    cards.write_text(
+        " 0 [PCH ]: HDA-Intel - HDA Intel PCH\n"
+        " 1 [sof ]: SOF - sof-hda-dsp\n",
+        encoding="utf-8",
+    )
+    inputs = tmp_path / "input-devices"
+    inputs.write_text(
+        "I: Bus=0019 Vendor=0000 Product=0000 Version=0000\n"
+        'N: Name="Headset Jack"\n'
+        "H: Handlers=kbd event7\n"
+        "B: SW=4\n",
+        encoding="utf-8",
+    )
+    log, amixer, alsaucm, jack = _audio_stubs(tmp_path)
+    base_env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AUDIO_INPUT_DEVICES=str(inputs),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(alsaucm),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+
+    def run(state):
+        log.write_text("", encoding="utf-8")
+        env = dict(base_env, STUB_SW=state)
+        proc = subprocess.run(
+            [BASH, AUDIO], env=env, text=True, capture_output=True
+        )
+        assert proc.returncode == 0, proc.stderr
+        return log.read_text(encoding="utf-8")
+
+    plugged = run("headphone=1 microphone=1")
+    # The EV_SW helper is handed the event device from the input table...
+    assert "jack /dev/input/event7" in plugged
+    # ...and the UCM profile is applied for both cards.
+    assert "alsaucm -c hw:0 set _verb HiFi" in plugged
+    assert "alsaucm -c hw:1 set _verb HiFi" in plugged
+    assert "alsaucm -c hw:0 set _enadev Headphones" in plugged
+    assert "alsaucm -c hw:1 set _enadev Headphones" in plugged
+    # Auto-mute is not forced on while an explicit EV_SW source exists.
+    assert "sset Auto-Mute Mode" not in plugged
+
+    unplugged = run("headphone=0")
+    assert "alsaucm -c hw:0 set _enadev Speaker" in unplugged
+    assert "alsaucm -c hw:1 set _enadev Speaker" in unplugged
+    assert "set _enadev Headphones" not in unplugged
+
+
+def test_audio_helper_defers_to_hda_auto_mute(tmp_path):
+    """#1075: when the codec exposes Auto-Mute Mode and there is no explicit
+    jack source, the kernel follows the jack itself and the helper leaves it
+    alone, exactly as #1059 did."""
+    cards = tmp_path / "cards"
+    cards.write_text(" 0 [PCH ]: HDA-Intel - HDA Intel PCH\n", encoding="utf-8")
+    log, amixer, alsaucm, jack = _audio_stubs(tmp_path)
+    env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(alsaucm),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+        STUB_AUTOMUTE="0",
+    )
+    proc = subprocess.run([BASH, AUDIO], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    text = log.read_text(encoding="utf-8")
+    assert "sset Auto-Mute Mode Enabled" in text
+    assert "alsaucm" not in text
+    assert "sset Speaker" not in text
+
+
+def test_audio_helper_is_a_safe_noop_without_tools(tmp_path):
+    """#1075: with no UCM profile, no jack source and no Auto-Mute it changes
+    nothing rather than guessing a board's controls."""
+    cards = tmp_path / "cards"
+    cards.write_text(" 1 [sof ]: SOF - sof-hda-dsp\n", encoding="utf-8")
+    log = tmp_path / "audio.log"
+    amixer = tmp_path / "amixer"
+    amixer.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "${STUB_LOG}"\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    amixer.chmod(0o755)
+    jack = tmp_path / "mmcore-jack"
+    jack.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    jack.chmod(0o755)
+    env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AUDIO_INPUT_DEVICES=str(tmp_path / "missing"),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(tmp_path / "no-alsaucm"),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+    proc = subprocess.run([BASH, AUDIO], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    text = log.read_text(encoding="utf-8")
+    # It tried Auto-Mute (the stub refuses) and then changed nothing.
+    assert "sset Auto-Mute Mode Enabled" in text
+    assert "sset Speaker" not in text
+    assert "sset Headphone" not in text
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="needs Linux input headers"
+)
+def test_jack_helper_compiles_and_noops_without_a_switch(tmp_path):
+    """#1075: the EV_SW reader must build cleanly and report 'no switch
+    device' (exit 1, no output) when handed a path that is not one."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    binary = tmp_path / "mmcore-jack"
+    _run([cc, "-O2", "-Wall", "-Wextra", "-o", str(binary), JACK_C])
+    proc = subprocess.run(
+        [str(binary), str(tmp_path / "not-a-device")],
+        text=True,
+        capture_output=True,
+    )
+    assert proc.returncode == 1
+    assert proc.stdout == ""
+
 
 
 def test_overlay_loads_chromebook_modules():
