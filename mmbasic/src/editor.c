@@ -5744,8 +5744,9 @@ void mmb_cmd_edit(void)
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
 		mmb_val v = mmb_expr();
-		if (v.type == T_STR)
-			strncpy(path, v.s, sizeof(path) - 1);
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(path, v.s, sizeof(path) - 1);
 	}
 	else if (G.current_prog[0] && !mmb_pkg_is_name(G.current_prog) &&
 		 !(G.current_prog[0] == 'B' && G.current_prog[1] == ':'))
