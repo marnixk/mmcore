@@ -16,6 +16,15 @@ QEMU ``raspi3b`` has no onboard NIC. Optional ``usb-net`` (SLIRP user
 networking) attaches Circle's USB CDC Ethernet driver; see
 ``qemu_usb_net_args()``. Default tests omit it so USB enumerate/DHCP does
 not slow the suite.
+
+Known emulation limitation (#1050): QEMU's ``bcm2835-fb`` device scans a
+framebuffer whose physical width is not a multiple of 4 out with one pixel of
+horizontal drift per row. That is a host defect -- the guest framebuffer memory
+is written correctly -- so ``screen_pixels``/``screen_pixel`` (which read the
+emulated scanout) can be skewed for those modes. MODE 19 (1366 px) and MODE 20
+(683 px) keep those exact widths on purpose (#1052), so assert their graphics
+through the console's own ``PIXEL(x, y)`` function, which reads guest memory
+rather than the scanout.
 """
 
 from __future__ import annotations

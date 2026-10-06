@@ -614,6 +614,30 @@ def test_wxga_modes_are_fullscreen(console):
     assert console.send_line("MODE 8,16") == ""
 
 
+def test_unaligned_mode_guest_memory_is_correct(console):
+    """#1050: a non-4-aligned mode's guest framebuffer holds the right pixels.
+
+    MODE 20 is 683 px wide, the Chromebook 2x size kept exact on purpose
+    (#1052). QEMU's bcm2835-fb scans that width out sheared by one pixel per
+    row, but that is a host emulator defect: the interpreter's framebuffer
+    memory is written correctly. PIXEL() reads that guest memory (not the
+    emulated scanout), so a filled BOX must read back exactly where it was
+    drawn. This pins the guest side so the width cannot be rounded again to
+    chase the QEMU artifact.
+    """
+    assert console.send_line("MODE 20,32") == ""
+    assert console.send_line("PRINT MM.HRES") == "683"
+    assert console.send_line("CLS 0") == ""
+    assert console.send_line("BOX 50,50,100,100,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    for x, y in ((50, 50), (149, 50), (50, 149), (149, 149), (100, 100)):
+        r, g, b = _rgb_components(console, f"PRINT PIXEL({x},{y})")
+        assert r > 150 and g < 80 and b < 80, (x, y, r, g, b)
+    for x, y in ((49, 50), (150, 50), (50, 49), (50, 150)):
+        r, g, b = _rgb_components(console, f"PRINT PIXEL({x},{y})")
+        assert r < 80, (x, y, r, g, b)
+    assert console.send_line("MODE 8,16") == ""
+
+
 def test_page_copy_and_colour(fresh_console):
     c = fresh_console
     assert c.send_line("CLS") == ""
