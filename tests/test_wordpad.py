@@ -713,6 +713,41 @@ def _rgb_close(a, b, tol=24):
     return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
+def _dlg_surface_bg(edit_bg):
+    """Mirror cmd_wordpad.c's dlg_bg(): a light/dark shift of TEXT_BG."""
+    r, g, b = edit_bg
+    d = 28 if (r * 3 + g * 6 + b) // 10 < 140 else -28
+    return tuple(max(0, min(255, c + d)) for c in (r, g, b))
+
+
+def _confirm_dialog_geom(con):
+    """Return (c0, r0) of the WORDPAD dirty-exit confirm dialog."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    dw, dh = 48, 8
+    if dw > cols - 2:
+        dw = cols - 2
+    if dh > rows - 2:
+        dh = rows - 2
+    r0 = (rows - dh) // 2
+    if r0 < 1:
+        r0 = 1
+    return (cols - dw) // 2, r0
+
+
+def _confirm_button_pixels(con, c0, r0):
+    """Background pixel of each Save/Discard/Cancel button cell (row 4)."""
+    bw = [len(" Save "), len(" Discard "), len(" Cancel ")]
+    x = c0 + (48 - (bw[0] + bw[1] + bw[2] + 4)) // 2
+    if x < c0 + 2:
+        x = c0 + 2
+    px = []
+    for i in range(3):
+        px.append(con.screen_pixel(x * 8 + 4, (r0 + 4) * 16 + 8))
+        x += bw[i] + 2
+    return px
+
+
 def test_wordpad_file_dialog_selection_uses_theme(kernel_image):
     """#1094: the Open/Save file row highlights with the theme selection pair.
 
@@ -758,6 +793,36 @@ def test_wordpad_file_dialog_selection_uses_theme(kernel_image):
                 )
                 _keys(con, b"\x1b", quiet=0.5)
                 _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_confirm_dialog_buttons_use_surface_bg(kernel_image):
+    """#1102: unselected dirty-exit buttons use the dialog surface, not cmt_fg.
+
+    The old code painted them as edit_fg on cmt_fg (a foreground role), which
+    is near-white on light cyan (Slate) or light grey (Monochrome) and
+    unreadable.  The selected button must still use SELECT_FG/SELECT_BG.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for theme in ("Slate", "Monochrome"):
+            assert con.send_line(f'OPTION THEME "{theme}"') == ""
+            sel_bg = _theme_rgb(con, "SELECT_BG")
+            cmt_fg = _theme_rgb(con, "COMMENT_FG")
+            surface = _dlg_surface_bg(_theme_rgb(con, "TEXT_BG"))
+            _open(con, 'WORDPAD "DIALOG.MD"')
+            _keys(con, b"dirty text", quiet=0.5)
+            _keys(con, bytes([1]) + b"x", quiet=0.8)
+            time.sleep(0.3)
+            c0, r0 = _confirm_dialog_geom(con)
+            px = _confirm_button_pixels(con, c0, r0)
+            assert _rgb_close(px[0], sel_bg), (theme, "selected", px[0], sel_bg)
+            for i, name in ((1, "Discard"), (2, "Cancel")):
+                assert not _rgb_close(px[i], cmt_fg), (theme, name, px[i], cmt_fg)
+                assert _rgb_close(px[i], surface), (theme, name, px[i], surface)
+            _keys(con, b"d", quiet=0.6)  # Discard: leave without saving
     finally:
         con.stop()
 
