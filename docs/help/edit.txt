@@ -6,7 +6,8 @@ current program name if set.
 
 EDIT [file$]
 
-  file$ - path to edit (optional)
+  file$ - path to edit (optional); must be a string, e.g. "HI.BAS" (an
+          unquoted token such as HI.BAS is a ?SYNTAX error)
 
 Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+T Theme  Alt+H Help  F10 File.
 Help: Keys... (shortcut list) and Manual (opens interactive HELP; Esc/Ctrl+C

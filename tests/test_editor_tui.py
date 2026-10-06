@@ -47,6 +47,21 @@ def test_editor_menu_labels_on_serial(kernel_image):
         con.stop()
 
 
+def test_editor_unquoted_filename_is_syntax_error(kernel_image):
+    """#1092: EDIT's filename must be a string expression."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("EDIT UNQUOTED.BAS") == "?SYNTAX ERROR"
+        assert con.send_line("PRINT 1") == "1"
+        # A quoted filename still opens the editor.
+        seen = _edit(con, "QUOTED.BAS")
+        assert "File" in seen
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_editor_ocr_file_label(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
