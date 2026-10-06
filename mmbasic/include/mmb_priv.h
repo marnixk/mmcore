@@ -1200,6 +1200,7 @@ void mmb_term_log_enable(int on);
 void mmb_term_scrollback_set(int lines);
 
 void mmb_cmd_wordpad(void);
+void mmb_wordpad_open(const char *path);
 int mmb_in_wordpad(void);
 const char *mmb_wordpad_key(char c);
 void mmb_wordpad_poll(void);
