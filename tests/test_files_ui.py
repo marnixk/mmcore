@@ -364,6 +364,44 @@ def test_files_f4_shows_editor_immediately(fresh_console):
     assert con.send_line("PRINT 5") == "5"
 
 
+def test_files_edit_txt_opens_line_editor(fresh_console):
+    """#1093: a non-markdown text file keeps the plain line editor."""
+    con = fresh_console
+    _prep_tree(con)
+    assert con.send_line('OPEN "NOTES.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "plain text"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    _open_files(con)
+    _down_to(con, "SEL=NOTES.TXT")
+    opened = _keys(con, b"\x1b[14~", quiet=0.9)  # F4 edit
+    assert "WORDPAD" not in opened.upper(), opened
+    assert "File" in opened
+    assert "Run" in opened or "Alt+X" in opened
+    _keys(con, bytes([1]) + b"x", quiet=0.6)  # leave the line editor
+    _keys(con, b"q")
+    assert con.send_line("PRINT 5") == "5"
+
+
+def test_files_edit_md_opens_wordpad(fresh_console):
+    """#1093: editing a .md from FILES opens WORDPAD and returns to FILES."""
+    con = fresh_console
+    _prep_tree(con)
+    assert con.send_line('OPEN "NOTES.MD" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "# Heading"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    _open_files(con)
+    _down_to(con, "SEL=NOTES.MD")
+    opened = _keys(con, b"\x1b[14~", quiet=1.0)  # F4 edit
+    assert "WORDPAD" in opened.upper(), opened
+    # WORDPAD rendered the markdown document (the leading "#" is hidden).
+    assert "Heading" in opened
+    # A clean WORDPAD quit (Alt+X) returns to the FILES browser.
+    back = _keys(con, bytes([1]) + b"x", quiet=0.8)
+    assert "[FILES]" in back or "SEL=" in back, back
+    _keys(con, b"q")
+    assert con.send_line("PRINT 6") == "6"
+
+
 def _select(con: MMBasicConsole, name: str, maxn: int = 40) -> str:
     seen = _open_files(con)
     for _ in range(maxn):

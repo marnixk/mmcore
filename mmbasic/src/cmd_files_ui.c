@@ -294,6 +294,11 @@ static int is_text(const char *n)
 	return is_bas(n) || mmb_keyword_eq(e, ".TXT") || mmb_keyword_eq(e, ".MD");
 }
 
+static int is_md(const char *n)
+{
+	return mmb_keyword_eq(ext_of(n), ".MD");
+}
+
 static int is_dotdot(const fu_ent *e)
 {
 	return e->name[0] == '.' && e->name[1] == '.' && e->name[2] == 0;
@@ -1117,7 +1122,7 @@ static void files_draw(void)
 static void files_draw_if_idle(void)
 {
 	if (F.active && F.mode != FU_PREVIEW && F.mode != FU_ANSI &&
-	    F.mode != FU_TDF && !mmb_in_editor())
+	    F.mode != FU_TDF && !mmb_in_editor() && !mmb_in_wordpad())
 		files_draw();
 }
 
@@ -2345,7 +2350,13 @@ static void do_run(const char *path)
 static void do_edit(const char *path)
 {
 	F.mode = FU_BROWSE;
-	mmb_editor_open(path);
+	/* Markdown documents are the WORDPAD format; everything else keeps the
+	 * plain line editor.  WORDPAD stays a separate layer so quitting it
+	 * returns to the FILES screen (#1093). */
+	if (is_md(path))
+		mmb_wordpad_open(path);
+	else
+		mmb_editor_open(path);
 }
 
 static void start_prompt(int kind, const char *seed)

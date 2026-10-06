@@ -3665,11 +3665,11 @@ static void draw_file_dialog(void)
 			G.plat->tui_glyph(c0 + c, r0 + r, ' ', WP_FG, sbg);
 	wp_box(c0, r0, w, h, WP_HEAD, sbg);
 	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_FG : WP_FG;
-	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_BG : WP_DIM;
-	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
-	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : sbg;
-	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
-	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : sbg;
+	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_BG : sbg;
+	ffg = WP_FG;
+	fbg = sbg;
+	dfg = WP_FG;
+	dbg = sbg;
 	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", WP_HEAD, sbg);
 	wp_puts(c0 + 2, r0 + 2, "Name:", WP_DIM, sbg);
 	{
@@ -3691,16 +3691,16 @@ static void draw_file_dialog(void)
 
 		if (fi == fd_fsel && fd_nfile > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
-			sbg2 = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : WP_DIM;
+			sfg = WP_SEL_FG;
+			sbg2 = WP_SEL_BG;
 		}
 		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg2);
 		sfg = dfg;
 		sbg2 = dbg;
 		if (di == fd_dsel && fd_ndir > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
-			sbg2 = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : WP_DIM;
+			sfg = WP_SEL_FG;
+			sbg2 = WP_SEL_BG;
 		}
 		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg2);
 	}
@@ -4311,19 +4311,13 @@ static const char *wp_feed(char c)
 	return r;
 }
 
-void mmb_cmd_wordpad(void)
+/* Open WORDPAD on an explicit path (or an untitled buffer when empty).  Shared
+ * by the WORDPAD command and by other full-screen apps (FILES) that launch the
+ * editor directly, so callers do not have to build a command string. */
+void mmb_wordpad_open(const char *path)
 {
-	char path[128];
 	char canon[128];
 
-	memset(path, 0, sizeof(path));
-	mmb_skip_sp();
-	if (*G.p && *G.p != ':' && *G.p != '\'')
-	{
-		mmb_val v = mmb_expr();
-		if (v.type == T_STR)
-			strncpy(path, v.s, sizeof(path) - 1);
-	}
 	memset(&W, 0, sizeof(W));
 	wp_reset_globals();
 	if (!wp_store_s[g_console])
@@ -4340,7 +4334,7 @@ void mmb_cmd_wordpad(void)
 	W.rec_sig = 0;
 	W.saved_mode = G.gfx.mode;
 	W.saved_bits = G.gfx.bits;
-	if (path[0])
+	if (path && path[0])
 	{
 		canon_path(path, canon, sizeof(canon));
 		strncpy(W.path, canon, sizeof(W.path) - 1);
@@ -4358,6 +4352,21 @@ void mmb_cmd_wordpad(void)
 		G.plat->tui_prepare();
 	wp_layout_geom();
 	wp_redraw();
+}
+
+void mmb_cmd_wordpad(void)
+{
+	char path[128];
+
+	memset(path, 0, sizeof(path));
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		mmb_val v = mmb_expr();
+		if (v.type == T_STR)
+			strncpy(path, v.s, sizeof(path) - 1);
+	}
+	mmb_wordpad_open(path);
 }
 
 int mmb_in_wordpad(void)

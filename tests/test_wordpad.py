@@ -682,6 +682,86 @@ def _seed_wp_files(con):
     assert con.send_line("CLOSE #1") == ""
 
 
+def _theme_rgb(con, name):
+    v = int(con.send_line(f'PRINT THEME("{name}")'))
+    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+
+
+def _dialog_list_geom(con):
+    """Return (c0, r0) of the WORDPAD file dialog for the current mode."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    dw, dh = 62, 18
+    if dw > cols - 2:
+        dw = cols - 2
+    if dh > rows - 2:
+        dh = rows - 2
+    return (cols - dw) // 2, (rows - dh) // 2
+
+
+def _dialog_row_pixels(con, c0, row):
+    """Every pixel in the file-list cells of one dialog row (28 columns)."""
+    coords = [
+        (c * 8 + 4, row * 16 + yy)
+        for c in range(c0 + 2, c0 + 30)
+        for yy in range(16)
+    ]
+    return con.screen_pixels(coords)
+
+
+def _rgb_close(a, b, tol=24):
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def test_wordpad_file_dialog_selection_uses_theme(kernel_image):
+    """#1094: the Open/Save file row highlights with the theme selection pair.
+
+    The dialog opens with focus on the Name field, so the file-list selection
+    is unfocused.  It must still use SELECT_FG/SELECT_BG -- the old code drew
+    it as edit_fg on cmt_fg, which is near-white on light cyan (Slate) or
+    white on light grey (Monochrome) and unreadable.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_wp_files(con)
+        for theme in ("Slate", "Monochrome"):
+            assert con.send_line(f'OPTION THEME "{theme}"') == ""
+            sel_fg = _theme_rgb(con, "SELECT_FG")
+            sel_bg = _theme_rgb(con, "SELECT_BG")
+            for opener in (b"2", b"4"):  # File > Open..., File > Save As...
+                _open(con)
+                _alt_menu(con, b"f", quiet=0.4)
+                _keys(con, opener, quiet=0.9)
+                time.sleep(0.3)
+                c0, r0 = _dialog_list_geom(con)
+                selected = _dialog_row_pixels(con, c0, r0 + 6)
+                unselected = _dialog_row_pixels(con, c0, r0 + 7)
+                assert any(_rgb_close(p, sel_bg) for p in selected), (
+                    theme,
+                    opener,
+                    sel_bg,
+                    selected[:8],
+                )
+                assert any(_rgb_close(p, sel_fg) for p in selected), (
+                    theme,
+                    opener,
+                    sel_fg,
+                    selected[:8],
+                )
+                unsel_bg = max(set(unselected), key=unselected.count)
+                assert not _rgb_close(unsel_bg, sel_bg), (
+                    theme,
+                    opener,
+                    unsel_bg,
+                    sel_bg,
+                )
+                _keys(con, b"\x1b", quiet=0.5)
+                _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_ctrl_p_quick_open(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

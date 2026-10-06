@@ -459,6 +459,28 @@ static void front_feed_dispatch(char c)
 		}
 		return;
 	}
+	if (mmb_in_wordpad())
+	{
+		const char *out = mmb_wordpad_key(c);
+
+		if (out && out[0])
+			fe_puts(out);
+		if (!mmb_in_wordpad())
+		{
+			/* WORDPAD launched from FILES returns to that screen,
+			 * mirroring the editor's exit path (#1093). */
+			if (mmb_in_files())
+			{
+				(void)mmb_take_home_prompt();
+				fe_puts(mmb_files_resume());
+				if (!mmb_in_files())
+					mmb_front_prompt();
+			}
+			else
+				mmb_front_prompt();
+		}
+		return;
+	}
 	if (mmb_in_files())
 	{
 		fe_puts(mmb_files_key(c));
@@ -476,16 +498,6 @@ static void front_feed_dispatch(char c)
 		if (out && out[0])
 			fe_puts(out);
 		if (!mmb_in_term())
-			mmb_front_prompt();
-		return;
-	}
-	if (mmb_in_wordpad())
-	{
-		const char *out = mmb_wordpad_key(c);
-
-		if (out && out[0])
-			fe_puts(out);
-		if (!mmb_in_wordpad())
 			mmb_front_prompt();
 		return;
 	}
