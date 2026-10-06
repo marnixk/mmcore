@@ -408,6 +408,13 @@ void mmb_gfx_sync_console(int page)
 		return;
 	buf = mmb_gfx_buf_for(page, &pw, &ph);
 	G.plat->present_sync_console(buf, pw, ph, pw);
+	/* The page sync above leaves the console cache holding page pixels. The
+	 * software cursor (#792) is composited onto the framebuffer after the
+	 * page present, so re-apply it: its overlay present reconciles the cache
+	 * again through mmb_gfx_present_native(), keeping a stationary cursor
+	 * from being re-stamped by the next console row flush (#1088). */
+	if (page == G.gfx.display_page)
+		mmb_mouse_cursor_present(buf, pw, ph);
 }
 
 void mmb_gfx_copy_page(int src, int dst, int blit)
@@ -488,6 +495,15 @@ void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 		return;
 	present_wait_dma();
 	present_native_or_rgb(x, y, w, h, pix, stride);
+	/* The overlay rect is written straight to the framebuffer, bypassing the
+	 * bare-metal console's cached text/pixel buffer, so a later console row
+	 * flush would re-stamp the page over a stationary software cursor
+	 * (#1088). Reconcile just the presented rect, the same way the partial
+	 * present-rect path does (#1079): the erase present syncs the page
+	 * pixels back, the draw present syncs the composited sprite. Optional
+	 * hook: native builds carry no console. */
+	if (G.plat->present_sync_console_rect)
+		G.plat->present_sync_console_rect(x, y, w, h, pix, stride);
 }
 
 void mmb_gfx_present(void)
