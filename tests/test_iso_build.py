@@ -1007,7 +1007,9 @@ def test_audio_board_config_ships_with_defaults():
     assert os.path.isfile(AUDIO_CONF), AUDIO_CONF
     conf = open(AUDIO_CONF, encoding="utf-8").read()
     for needle in ("UCM_VERBS", "UCM_ENADEV_SPEAKER", "UCM_ENADEV_HEADPHONES",
-                   "SPEAKER_CONTROLS", "HEADPHONE_CONTROLS", "JACK_CONTROLS"):
+                   "SPEAKER_CONTROLS", "HEADPHONE_CONTROLS", "JACK_CONTROLS",
+                   "HEADPHONE_SETUP", "BOARD_MATCH",
+                   "HEADPHONE_JACK_CONTROLS", "HEADPHONE_PCM_MATCH"):
         assert needle in conf, needle
 
 
@@ -1068,14 +1070,14 @@ def test_audio_helper_routes_speakers_and_headphones(tmp_path):
 
     on = run("on")
     assert "sget Headphone Jack" in on
-    assert "sset Speaker mute" in on
-    assert "sset Headphone unmute" in on
-    assert "sset Speaker unmute" not in on
+    assert "cset name=Speaker off" in on
+    assert "cset name=Headphone on" in on
+    assert "cset name=Speaker on" not in on
 
     off = run("off")
-    assert "sset Speaker unmute" in off
-    assert "sset Headphone mute" in off
-    assert "sset Speaker mute" not in off
+    assert "cset name=Speaker on" in off
+    assert "cset name=Headphone off" in off
+    assert "cset name=Speaker off" not in off
 
     # No recognisable jack switch: probe the candidates, then change nothing.
     stub.write_text(
@@ -1092,8 +1094,158 @@ def test_audio_helper_routes_speakers_and_headphones(tmp_path):
     stub.chmod(0o755)
     none = run("off")
     assert "sget Headphone Jack" in none
-    assert "sset Speaker" not in none
-    assert "sset Headphone" not in none
+    assert "cset name=Speaker" not in none
+    assert "cset name=Headphone" not in none
+
+
+def test_audio_helper_applies_board_headphone_setup(tmp_path):
+    """#1075: boards whose codec path defaults disconnected/muted are fixed by
+    the data-driven HEADPHONE_SETUP list, applied once via `amixer cset` and
+    independent of the jack state."""
+    cards = tmp_path / "cards"
+    cards.write_text(
+        " 0 [sofgylkda7219max]: SOF - glkda7219max\n", encoding="utf-8"
+    )
+    conf = tmp_path / "audio.conf"
+    conf.write_text(
+        "HEADPHONE_SETUP='Headphone Jack Switch=on\n"
+        "Out DACL Mux=DAIL\n"
+        "Playback Digital Switch=on\n"
+        "Headphone Volume=57,57'\n",
+        encoding="utf-8",
+    )
+    log, amixer, alsaucm, jack = _audio_stubs(tmp_path)
+    env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AUDIO_INPUT_DEVICES=str(tmp_path / "missing"),
+        MMCORE_AUDIO_CONF=str(conf),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(tmp_path / "no-alsaucm"),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+    proc = subprocess.run([BASH, AUDIO], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    text = log.read_text(encoding="utf-8")
+    assert "amixer -c 0 cset name=Headphone Jack Switch on" in text
+    assert "amixer -c 0 cset name=Out DACL Mux DAIL" in text
+    assert "amixer -c 0 cset name=Playback Digital Switch on" in text
+    assert "amixer -c 0 cset name=Headphone Volume 57,57" in text
+
+
+def test_audio_helper_makes_default_play_to_both_pcms(tmp_path):
+    """#1075: when the speaker and headphone codec are separate PCMs, ALSA's
+    `default` (what mmcore-fb's SDL device 0 opens) becomes a `multi` to both,
+    so routing never waits on the slow jack-type classification."""
+    cards = tmp_path / "cards"
+    cards.write_text(
+        " 0 [sofgylkda7219max]: SOF - glkda7219max\n", encoding="utf-8"
+    )
+    pcm = tmp_path / "pcm"
+    pcm.write_text(
+        "00-00: Speakers : : playback 1 : capture 1\n"
+        "00-01: Headset : : playback 1 : capture 1\n",
+        encoding="utf-8",
+    )
+    conf = tmp_path / "audio.conf"
+    conf.write_text("HEADPHONE_PCM_MATCH='Headset'\n", encoding="utf-8")
+    asound = tmp_path / "asound.conf"
+    log, amixer, alsaucm, jack = _audio_stubs(tmp_path)
+    env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AUDIO_INPUT_DEVICES=str(tmp_path / "missing"),
+        MMCORE_AUDIO_CONF=str(conf),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(tmp_path / "no-alsaucm"),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_PCM=str(pcm),
+        MMCORE_ASOUND_CONF=str(asound),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+    proc = subprocess.run([BASH, AUDIO], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    assert asound.is_file()
+    text = asound.read_text(encoding="utf-8")
+    assert "pcm.mmcore_both" in text
+    assert 'slaves.a.pcm "hw:0,0"' in text
+    assert 'slaves.b.pcm "hw:0,1"' in text
+    assert "card 0" in text
+    # The override is only written when it is absent or ours; a foreign file is
+    # left alone.
+    asound.write_text("pcm.!default { type hw card 9 }\n", encoding="utf-8")
+    proc = subprocess.run([BASH, AUDIO], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "mmcore_both" not in asound.read_text(encoding="utf-8")
+
+
+def test_audio_helper_reads_board_jack_status(tmp_path):
+    """#1075: on the DA7219 card the jack is read from the CARD "Line Out Jack"
+    status (via cget), not the machine PIN_SWITCH the setup itself forces on,
+    so the mixer routing follows the right polarity."""
+    cards = tmp_path / "cards"
+    cards.write_text(
+        " 0 [sofgylkda7219max]: SOF - glkda7219max\n", encoding="utf-8"
+    )
+    conf = tmp_path / "audio.conf"
+    conf.write_text(
+        "BOARD_MATCH='glkda7219'\n"
+        "HEADPHONE_JACK_CONTROLS='Line Out Jack'\n",
+        encoding="utf-8",
+    )
+    log = tmp_path / "audio.log"
+    amixer = tmp_path / "amixer"
+    amixer.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "${STUB_LOG}"\n'
+        'case "$*" in\n'
+        '  *"sget "*) exit 1 ;;\n'
+        '  *"iface=MIXER,name=Line Out Jack"*) exit 1 ;;\n'
+        '  *"iface=CARD,name=Line Out Jack"*)\n'
+        '    printf "  : values=%s\\n" "${STUB_JACK:-false}"; exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    amixer.chmod(0o755)
+    jack = tmp_path / "mmcore-jack"
+    jack.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    jack.chmod(0o755)
+    base_env = dict(
+        os.environ,
+        MMCORE_AUDIO_CARDS=str(cards),
+        MMCORE_AUDIO_INPUT_DEVICES=str(tmp_path / "missing"),
+        MMCORE_AUDIO_CONF=str(conf),
+        MMCORE_AMIXER=str(amixer),
+        MMCORE_ALSAUCM=str(tmp_path / "no-alsaucm"),
+        MMCORE_AUDIO_JACK=str(jack),
+        MMCORE_AUDIO_ONESHOT="1",
+        STUB_LOG=str(log),
+    )
+
+    def run(val):
+        log.write_text("", encoding="utf-8")
+        env = dict(base_env, STUB_JACK=val)
+        proc = subprocess.run(
+            [BASH, AUDIO], env=env, text=True, capture_output=True
+        )
+        assert proc.returncode == 0, proc.stderr
+        return log.read_text(encoding="utf-8")
+
+    plugged = run("true")
+    assert "iface=CARD,name=Line Out Jack" in plugged
+    assert "cset name=Speaker off" in plugged
+    assert "cset name=Spk Switch off" in plugged
+    assert "cset name=Speaker on" not in plugged
+
+    unplugged = run("false")
+    assert "iface=CARD,name=Line Out Jack" in unplugged
+    assert "cset name=Speaker on" in unplugged
+    assert "cset name=Spk Switch on" in unplugged
+    assert "cset name=Speaker off" not in unplugged
 
 
 def _audio_stubs(tmp_path):

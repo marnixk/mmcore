@@ -22,6 +22,22 @@
 #   3. HDA's own jack kcontrol or auto-mute. "Auto-Mute Mode" lets the kernel
 #      follow the jack itself; failing that a "Headphone Jack" style kcontrol
 #      plus Speaker/Headphone controls are driven explicitly.
+#   4. A board control setup, re-applied on every poll. Some codecs (the
+#      DA7219 on SOF/GLK Chromebooks, #1075) default their DAPM route
+#      disconnected and both mute bits set, with no UCM profile to fix it, and
+#      the jack handler/AAD can disable the route again after boot. The
+#      data-driven HEADPHONE_SETUP list re-asserts a `name=value` sequence
+#      with `amixer cset` on any card that exposes the controls.
+#   5. An ALSA `default` override. On some SOF cards the internal speaker and
+#      the headphone codec are separate PCMs, so the switch is at the device
+#      level: /etc/asound.conf's `pcm.!default` is turned into a `multi` that
+#      plays to both the speaker and the headphone PCM (found by matching
+#      HEADPHONE_PCM_MATCH against /proc/asound/pcm). This needs no jack
+#      classification -- the DA7219 only reports the jack *type* after a slow
+#      HP-test -- and keeps the speaker working when nothing is plugged.
+#      mmcore-fb opens SDL's default device, so it follows this without any
+#      code change (picked up when the device is next opened: boot, or PLAY
+#      RESET).
 #
 # Board verbs and control names are not knowable from the ISO build host, so
 # every step is data-driven from /etc/mmcore/audio.conf and best effort: with
@@ -43,6 +59,8 @@ AMIXER="${MMCORE_AMIXER:-amixer}"
 ALSAUCM="${MMCORE_ALSAUCM:-alsaucm}"
 JACK="${MMCORE_AUDIO_JACK:-/usr/local/bin/mmcore-jack}"
 POLL="${MMCORE_AUDIO_POLL:-2}"
+PCM_FILE="${MMCORE_AUDIO_PCM:-/proc/asound/pcm}"
+ASOUND_CONF="${MMCORE_ASOUND_CONF:-/etc/asound.conf}"
 
 # Sensible defaults. /etc/mmcore/audio.conf overrides any of these; the lists
 # are newline-separated so control names may contain spaces.
@@ -52,12 +70,30 @@ UCM_ENADEV_HEADPHONES='Headphones'
 JACK_CONTROLS='Headphone Jack
 Front Headphone Jack
 Headset Jack
-Headphone Mic Jack'
+Headphone Mic Jack
+Line Out Switch
+Line Out Jack'
 SPEAKER_CONTROLS='Speaker
-Bass Speaker'
+Bass Speaker
+Speaker Switch
+Spk Switch'
 HEADPHONE_CONTROLS='Headphone
 Front Headphone
 Headphones'
+# Board-specific `name=value` control setup applied once (see mechanism 4 in
+# the header). Empty here so cards without the controls are untouched.
+HEADPHONE_SETUP=''
+# Substring of the /proc/asound/pcm playback PCM to point ALSA's `default` at
+# while the jack is in (mechanism 5). Empty = never touch /etc/asound.conf.
+HEADPHONE_PCM_MATCH=''
+# Card-name substring selecting the board-specific jack controls below. This
+# matters because the setup forces the machine PIN_SWITCH ("Headphone Jack
+# Switch") on, so detection must not read a control we drove ourselves.
+BOARD_MATCH=''
+# Newline-separated jack kcontrols for BOARD_MATCH cards. Each is read with
+# `amixer sget` and, if that is not a simple control, with `amixer cget`
+# looking for `values=true|on` (CARD jack status reports).
+HEADPHONE_JACK_CONTROLS=''
 
 [ -r "${CONF}" ] && . "${CONF}"
 
@@ -91,6 +127,56 @@ switch_state() {
 	[ -x "${JACK}" ] || have "${JACK}" || return 0
 	# shellcheck disable=SC2046
 	"${JACK}" $(event_devices) 2>/dev/null || true
+}
+
+# Read one kcontrol as a jack signal: 0 = on/true, 1 = off/false, 2 = unreadable.
+# Simple mixer switches report "[on]"; CARD jack reports print ": values=true".
+ctl_on() {
+	card=$1
+	ctl=$2
+	if "${AMIXER}" -c "${card}" sget "${ctl}" >/dev/null 2>&1; then
+		"${AMIXER}" -c "${card}" sget "${ctl}" 2>/dev/null |
+			grep -qi '\[on\]' && return 0
+		return 1
+	fi
+	# CARD jack status has no simple-control name, so cget must name the
+	# interface explicitly; try both it and MIXER.
+	for iface in MIXER CARD; do
+		out=$("${AMIXER}" -c "${card}" \
+			cget "iface=${iface},name=${ctl}" 2>/dev/null) || continue
+		printf '%s\n' "${out}" |
+			grep -qiE ':[[:space:]]*values=(true|on|1)' && return 0
+		return 1
+	done
+	return 2
+}
+
+# Cards whose /proc/asound/cards line matches BOARD_MATCH.
+board_cards() {
+	[ -n "${BOARD_MATCH}" ] || return 0
+	[ -r "${CARDS_FILE}" ] || return 0
+	while IFS= read -r line; do
+		printf '%s\n' "${line}" | grep -qi "${BOARD_MATCH}" || continue
+		printf '%s\n' "${line}" |
+			sed -n 's/^[[:space:]]*\([0-9][0-9]*\)[[:space:]].*/\1/p'
+	done < "${CARDS_FILE}"
+}
+
+# 0 = present, 1 = absent, 2 = unknown, using the board jack controls.
+board_jack() {
+	for card in $(board_cards); do
+		while IFS= read -r ctl; do
+			[ -n "${ctl}" ] || continue
+			ctl_on "${card}" "${ctl}"
+			case "$?" in
+			0) return 0 ;;
+			1) return 1 ;;
+			esac
+		done <<EOF
+${HEADPHONE_JACK_CONTROLS}
+EOF
+	done
+	return 2
 }
 
 # 0 = headphone present, 1 = absent, 2 = unknown.
@@ -146,36 +232,137 @@ EOF
 	return "${applied}"
 }
 
-# Drive the explicit Speaker/Headphone mixer controls (fallback for boards
-# with no usable UCM profile).
+# Set one switch to on/off by full control id. `cset name=` is used rather
+# than `sset`, because DAPM pin switches (e.g. the MAX98357A "Spk Switch") are
+# not simple mixer controls and `sset` cannot address them. `off`/`on` is
+# tried mono then stereo (a bare value only works for single-channel controls).
+mixer_set() {
+	"${AMIXER}" -c "$1" cset name="$2" "$3" >/dev/null 2>&1 ||
+		"${AMIXER}" -c "$1" cset name="$2" "$3,$3" >/dev/null 2>&1 ||
+		true
+}
+
+# Drive the explicit Speaker/Headphone controls (fallback for boards with no
+# usable UCM profile).
 mixer_apply() {
 	have "${AMIXER}" || return 1
 	case "$1" in
 	headphones)
-		speaker_op=mute
-		headphone_op=unmute
+		speaker_val=off
+		headphone_val=on
 		;;
 	*)
-		speaker_op=unmute
-		headphone_op=mute
+		speaker_val=on
+		headphone_val=off
 		;;
 	esac
 	for card in $(cards); do
 		while IFS= read -r ctl; do
 			[ -n "${ctl}" ] || continue
-			"${AMIXER}" -c "${card}" sset "${ctl}" "${speaker_op}" \
-				>/dev/null 2>&1 || true
+			mixer_set "${card}" "${ctl}" "${speaker_val}"
 		done <<EOF
 ${SPEAKER_CONTROLS}
 EOF
 		while IFS= read -r ctl; do
 			[ -n "${ctl}" ] || continue
-			"${AMIXER}" -c "${card}" sset "${ctl}" "${headphone_op}" \
-				>/dev/null 2>&1 || true
+			mixer_set "${card}" "${ctl}" "${headphone_val}"
 		done <<EOF
 ${HEADPHONE_CONTROLS}
 EOF
 	done
+	return 0
+}
+
+# Apply the board one-time control setup (mechanism 4): the muxes, route
+# enables and unmute bits a UCM profile would otherwise set. Each
+# HEADPHONE_SETUP line is `name=value`; a control that a card does not expose
+# simply fails and is skipped, so this is a no-op elsewhere.
+setup_apply() {
+	have "${AMIXER}" || return 1
+	[ -n "${HEADPHONE_SETUP}" ] || return 1
+	applied=1
+	for card in $(cards); do
+		while IFS= read -r line; do
+			case "${line}" in
+			*=*) ;;
+			*) continue ;;
+			esac
+			name=${line%%=*}
+			val=${line#*=}
+			[ -n "${name}" ] || continue
+			"${AMIXER}" -c "${card}" cset name="${name}" "${val}" \
+				>/dev/null 2>&1 && applied=0
+		done <<EOF
+${HEADPHONE_SETUP}
+EOF
+	done
+	return "${applied}"
+}
+
+# The first playback PCM in /proc/asound/pcm whose name matches
+# HEADPHONE_PCM_MATCH, printed as "card device" (e.g. "0 1"), or nothing.
+# A line looks like "00-01: Headset : ... : playback 1 : capture 1".
+headphone_pcm() {
+	[ -n "${HEADPHONE_PCM_MATCH}" ] || return 1
+	[ -r "${PCM_FILE}" ] || return 1
+	while IFS= read -r line; do
+		case "${line}" in
+		[0-9][0-9]-[0-9][0-9]:*) ;;
+		*) continue ;;
+		esac
+		key=${line%%:*}
+		rest=${line#*:}
+		printf '%s' "${rest}" | grep -qi 'playback' || continue
+		printf '%s' "${rest}" | grep -qi "${HEADPHONE_PCM_MATCH}" || continue
+		card=$(printf '%s' "${key%%-*}" | sed 's/^0*//')
+		dev=$(printf '%s' "${key#*-}" | sed 's/^0*//')
+		[ -n "${card}" ] || card=0
+		[ -n "${dev}" ] || dev=0
+		printf '%s %s\n' "${card}" "${dev}"
+		return 0
+	done < "${PCM_FILE}"
+	return 1
+}
+
+ASOUND_MARK='# mmcore-audio.start multi-output override (#1075)'
+
+# Mechanism 5: make ALSA's `default` a `multi` PCM that plays to both the
+# speaker (device 0) and the headphone codec PCM, so mmcore-fb -- which opens
+# SDL device 0 -- always reaches the jack. This does not wait for the kernel's
+# jack *type* classification (the DA7219 only completes that after a slow
+# HP-test, up to ~20 s when idle) and keeps the internal speaker working when
+# nothing is plugged. Written once; only a file this script owns (ASOUND_MARK)
+# is touched, and only when the headphone PCM is not device 0.
+pcm_apply() {
+	[ -n "${HEADPHONE_PCM_MATCH}" ] || return 1
+	if [ -e "${ASOUND_CONF}" ] &&
+		! grep -qF "${ASOUND_MARK}" "${ASOUND_CONF}" 2>/dev/null; then
+		return 1
+	fi
+	grep -qF 'mmcore_both' "${ASOUND_CONF}" 2>/dev/null && return 0
+	pcm="$(headphone_pcm)" || return 1
+	card=${pcm% *}
+	dev=${pcm#* }
+	[ "${dev}" != "0" ] || return 1
+	{
+		printf '%s\n' "${ASOUND_MARK}"
+		printf 'pcm.!default {\n    type plug\n    slave.pcm "mmcore_route"\n}\n'
+		printf 'pcm.mmcore_route {\n    type route\n'
+		printf '    slave.pcm "mmcore_both"\n    slave.channels 4\n'
+		printf '    ttable.0.0 1\n    ttable.1.1 1\n'
+		printf '    ttable.0.2 1\n    ttable.1.3 1\n}\n'
+		printf 'pcm.mmcore_both {\n    type multi\n'
+		printf '    slaves.a.pcm "hw:%s,0"\n' "${card}"
+		printf '    slaves.a.channels 2\n'
+		printf '    slaves.b.pcm "hw:%s,%s"\n' "${card}" "${dev}"
+		printf '    slaves.b.channels 2\n'
+		printf '    bindings.0.slave a\n    bindings.0.channel 0\n'
+		printf '    bindings.1.slave a\n    bindings.1.channel 1\n'
+		printf '    bindings.2.slave b\n    bindings.2.channel 0\n'
+		printf '    bindings.3.slave b\n    bindings.3.channel 1\n'
+		printf '}\n'
+		printf 'ctl.!default {\n    type hw\n    card %s\n}\n' "${card}"
+	} > "${ASOUND_CONF}" 2>/dev/null || return 1
 	return 0
 }
 
@@ -215,6 +402,22 @@ detect_jack() {
 		printf '2\n'
 		return 0
 	fi
+	# 1. The EV_SW switch, where the codec/EC exposes one.
+	state="$(switch_state)"
+	case "${state}" in
+	*headphone=1*) printf '0\n'; return 0 ;;
+	*headphone=0*) printf '1\n'; return 0 ;;
+	esac
+	# 2. The board-specific jack control (card name gated); it is a real jack
+	#    status, unlike the PIN_SWITCH the setup drives.
+	if [ -n "${BOARD_MATCH}" ] && [ -n "$(board_cards)" ]; then
+		board_jack
+		case "$?" in
+		0) printf '0\n'; return 0 ;;
+		1) printf '1\n'; return 0 ;;
+		esac
+	fi
+	# 3. Generic kcontrol fallback.
 	if jack_present; then
 		printf '0\n'
 	else
@@ -226,6 +429,16 @@ LAST_STATE=""
 LAST_CARDS=""
 run_once() {
 	cards_now="$(cards)"
+	# Re-assert the board control setup on every pass, independent of the jack
+	# state. Applying it once at boot is not enough: the machine jack handler
+	# and the codec AAD settle afterwards and can leave the output route
+	# disabled (the DA7219 re-arms its headphone output only on a jack event),
+	# so a later write is what actually brings the path up. The writes are
+	# idempotent, so repeating them is cheap.
+	if [ -n "${cards_now}" ]; then
+		setup_apply || true
+		pcm_apply || true
+	fi
 	present="$(detect_jack)"
 	if [ "${present}" = "${LAST_STATE}" ] &&
 		[ "${cards_now}" = "${LAST_CARDS}" ]; then
