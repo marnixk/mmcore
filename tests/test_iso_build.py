@@ -29,6 +29,7 @@ UPDATE = os.path.join(OVERLAY, "usr", "local", "bin", "mmcore-update")
 PROFILE = os.path.join(OVERLAY, "root", ".profile")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
 AUDIO = os.path.join(OVERLAY, "etc", "local.d", "mmcore-audio.start")
+TOUCHPAD = os.path.join(OVERLAY, "etc", "local.d", "mmcore-touchpad.start")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
 COMPRESSED = "mmcore-fb-x86_64.iso.zst"
@@ -1468,6 +1469,8 @@ def test_overlay_loads_chromebook_touchpad_drivers():
         "intel_lpss_pci",
         "i2c_designware_pci",
         "i2c_i801",
+        "i2c_piix4",
+        "i2c_scmi",
         "i2c_smbus",
         # DMI-instantiated touchpad client driver on older Chromebooks.
         "chromeos_laptop",
@@ -1479,12 +1482,116 @@ def test_overlay_loads_chromebook_touchpad_drivers():
         "rmi_i2c",
         "hid_elan",
         "hid_rmi",
+        "hid_alps",
         "psmouse",
     ):
         assert module in modules, module
     # The #864 ACPI I2C-HID path stays alongside the new drivers.
     for module in ("cros_ec", "i2c_hid_acpi", "i2c_hid", "hid_multitouch"):
         assert module in modules, module
+
+
+def test_overlay_loads_the_intel_ish_hid_touchpad_stack():
+    """#1039 (reopened): a Chromebook whose touchpad is an Intel Integrated
+    Sensor Hub (HID-over-ISH) client needs the ISH transport modules, which are
+    modular in Alpine's linux-lts (CONFIG_INTEL_ISH_HID=m). Without them the
+    ISH touchpad never binds while a USB mouse still works. `cros_ec_ishtp`
+    covers the EC-over-ISH link used by some of the same boards."""
+    text = open(os.path.join(OVERLAY, "etc", "modules"), encoding="utf-8").read()
+    modules = {
+        line.split("#", 1)[0].strip()
+        for line in text.splitlines()
+        if line.split("#", 1)[0].strip()
+    }
+    for module in (
+        "intel_ishtp",
+        "intel_ish_ipc",
+        "intel_ishtp_hid",
+        "cros_ec_ishtp",
+    ):
+        assert module in modules, module
+
+
+def test_touchpad_helper_is_executable_and_parses():
+    """#1039 (reopened): the late second pass runs from /etc/local.d."""
+    assert os.path.isfile(TOUCHPAD), TOUCHPAD
+    assert os.access(TOUCHPAD, os.X_OK), TOUCHPAD
+    _run(["bash", "-n", TOUCHPAD])
+
+
+def _touchpad_env(tmp_path, *, devices=(), modprobe_log=None):
+    """A fake /sys/bus/i2c tree plus a modprobe stub.
+
+    `devices` is a sequence of (name, bound) pairs. Returns (env, probe_file,
+    modprobe_log) where probe_file holds the last device name written to
+    drivers_probe.
+    """
+    sysdir = tmp_path / "sys"
+    (sysdir / "bus" / "i2c" / "devices").mkdir(parents=True)
+    probe = sysdir / "bus" / "i2c" / "drivers_probe"
+    probe.write_text("", encoding="utf-8")
+    for name, bound in devices:
+        dev = sysdir / "bus" / "i2c" / "devices" / name
+        dev.mkdir()
+        if bound:
+            (dev / "driver").mkdir()
+    log = modprobe_log or (tmp_path / "modprobe.log")
+    modprobe = tmp_path / "modprobe"
+    modprobe.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "${STUB_LOG}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    modprobe.chmod(0o755)
+    env = dict(
+        os.environ,
+        MMCORE_SYS=str(sysdir),
+        MMCORE_MODPROBE=str(modprobe),
+        STUB_LOG=str(log),
+    )
+    return env, probe, log
+
+
+def test_touchpad_helper_loads_drivers_and_reprobes_unbound_clients(tmp_path):
+    """#1039 (reopened): the helper loads the host/client drivers by name and
+    writes only an unbound, touchpad-named I2C client to drivers_probe, so a
+    device whose driver appeared late still binds while a working one and an
+    unrelated device are left alone."""
+    env, probe, log = _touchpad_env(
+        tmp_path,
+        devices=(
+            ("i2c-ELAN066C:00", False),   # unbound touchpad -> re-probed
+            ("i2c-SYNA0000:00", True),    # already bound -> untouched
+            ("i2c-i801", False),          # not a touchpad -> untouched
+        ),
+    )
+    proc = subprocess.run([BASH, TOUCHPAD], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    mods = log.read_text(encoding="utf-8")
+    for module in (
+        "intel_ishtp",
+        "intel_ishtp_hid",
+        "cros_ec_ishtp",
+        "hid_alps",
+        "i2c_piix4",
+        "i2c_scmi",
+        "chromeos_laptop",
+        "elan_i2c",
+    ):
+        assert module in mods, module
+    assert probe.read_text(encoding="utf-8") == "i2c-ELAN066C:00"
+
+
+def test_touchpad_helper_is_a_safe_noop_without_devices(tmp_path):
+    """#1039 (reopened): with no touchpad device the helper changes nothing but
+    still succeeds, so it is harmless on every other machine."""
+    env, probe, log = _touchpad_env(tmp_path)
+    proc = subprocess.run([BASH, TOUCHPAD], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    assert probe.read_text(encoding="utf-8") == ""
+    # It still attempted the best-effort module loads.
+    assert "i2c_hid_acpi" in log.read_text(encoding="utf-8")
 
 
 def test_rootfs_silences_the_display_banners():
