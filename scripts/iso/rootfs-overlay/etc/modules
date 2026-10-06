@@ -52,26 +52,41 @@ hid_multitouch
 
 # Chromebook built-in touchpads that are not an ACPI-enumerated I2C-HID
 # device (#1039). #864 covered the EC + I2C-HID path; a Chromebook whose
-# touchpad binds through a board driver still did nothing because the driver
-# must already be registered when the I2C client is created, and `hwdrivers`
-# (which autoloads by modalias) runs before the DMI/I2C clients appear. These
-# are modules in Alpine's linux-lts (the DesignWare platform core is built in)
-# and bind only when the matching controller is present, so the list is safe
-# on other hardware. The live ISO ships them; no post-boot modprobe is needed.
+# touchpad binds through a bus or board driver still did nothing, and a USB
+# mouse on the same machine worked. Every name here is a module in Alpine's
+# linux-lts and binds only when the matching controller/device is present, so
+# the list is safe on hardware that does not match; a name the kernel does not
+# build is ignored by modprobe. The live ISO ships them and the
+# mmcore-touchpad.start helper re-loads them late; no manual modprobe is
+# needed.
 #
-# Intel LPSS/DesignWare + PCH I2C host controllers (the touchpad bus).
+# Note: the ACPI DesignWare I2C host driver -- `i2c-designware-platform`,
+# which binds ACPI INT33C2/INT33C3, 80860F41/808622C1 (Intel LPSS) and
+# AMD0010/AMDI0010 (AMD Chromebooks), i.e. the touchpad bus on most
+# Chromebooks -- is *built in* to Alpine's linux-lts
+# (CONFIG_I2C_DESIGNWARE_PLATFORM=y), so that adapter comes up with no module.
+# Only the PCI variant is modular.
+# Intel LPSS/DesignWare + PCH/SMBus I2C host controllers.
 intel_lpss
 intel_lpss_acpi
 intel_lpss_pci
 i2c_designware_pci
 i2c_i801
+i2c_piix4
+i2c_scmi
 i2c_smbus
 # Older Chromebooks instantiate the touchpad's I2C client from a DMI table
 # instead of ACPI, so the platform driver must be loaded by name.
 chromeos_laptop
+# Chromebooks whose touchpad/EC hangs off the Intel Integrated Sensor Hub
+# (HID-over-ISH): the ISH IPC and HID transport, plus the ChromeOS EC ISH link.
+intel_ishtp
+intel_ish_ipc
+intel_ishtp_hid
+cros_ec_ishtp
 # Touchpad drivers by controller family: Cypress, Elan, Synaptics (native and
-# RMI4) plus the HID transport drivers for those parts, and the legacy PS/2
-# touchpad some models expose through the EC.
+# RMI4), Alps, plus the HID transport drivers for those parts, and the legacy
+# PS/2 touchpad some models expose through the EC.
 cyapatp
 elan_i2c
 synaptics_i2c
@@ -79,6 +94,7 @@ rmi_core
 rmi_i2c
 hid_elan
 hid_rmi
+hid_alps
 psmouse
 
 # Sound Open Firmware (SOF) audio on Intel Chromebooks (#864). sof-firmware

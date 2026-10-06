@@ -128,13 +128,32 @@ def test_framebuffer_iso_doc_documents_chromebook_touchpad_drivers():
     for needle in (
         "intel_lpss",
         "i2c_designware_pci",
+        "i2c_piix4",
         "chromeos_laptop",
+        "intel_ishtp",
+        "cros_ec_ishtp",
         "cyapatp",
         "elan_i2c",
         "synaptics_i2c",
+        "hid_alps",
         "psmouse",
-        "evdev",
+        "mmcore-touchpad.start",
         "aarch64",
+    ):
+        assert needle in text, needle
+
+
+def test_framebuffer_iso_doc_documents_the_elan066c_dsdt_gap():
+    """#1039 (reopened): the AMD Chromebook touchpad is a firmware DSDT bug, not
+    a module gap, so the doc must say so and explain the ACPI override cannot
+    be shipped for one machine."""
+    text = _read(DOC)
+    for needle in (
+        "ELAN066C",
+        "DSDT",
+        "TPTY",
+        "ACPI table override",
+        "not shipped",
     ):
         assert needle in text, needle
 

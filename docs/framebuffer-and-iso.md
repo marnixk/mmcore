@@ -449,15 +449,25 @@ disk and boots without the card.
   keys unless you hold Fn), and the **Search** key replaces **Caps Lock**;
   mmcore's function-key shortcuts therefore line up with F1–F12.
 - **Touchpad / touchscreen.** `cros_ec`, `i2c_hid_acpi`/`i2c_hid_of` and
-  `hid_multitouch` cover ACPI-enumerated I2C-HID parts. Touchpads that bind
-  through a board driver instead also get their I2C host controller
-  (`intel_lpss*`, `i2c_designware_pci`, `i2c_i801`), the DMI-instantiated
-  client driver (`chromeos_laptop`) and the controller-family drivers
-  (`cyapatp`, `elan_i2c`, `synaptics_i2c`, `rmi_i2c`, `hid_rmi`, and the PS/2
-  fallback `psmouse`) loaded at boot (#1039). They are part of the image, so
-  no `modprobe` is needed after boot. No udev rule is required: mmcore reads
-  the touchpad through SDL's evdev backend, and the kernel driver binds by
-  name once the modules load.
+  `hid_multitouch` cover ACPI-enumerated I2C-HID parts; the ACPI DesignWare
+  I2C host driver (`i2c-designware-platform`, binding Intel LPSS `INT33C2`/
+  `80860F41` and AMD `AMD0010`/`AMDI0010` — the touchpad bus on most
+  Chromebooks) is built in to Alpine's `linux-lts`, so that bus comes up with
+  no module. Touchpads that bind through a board driver or another bus also
+  get their modules loaded at boot (#1039): the host controllers (`intel_lpss*`,
+  `i2c_designware_pci`, `i2c_i801`, `i2c_piix4`, `i2c_scmi`), the
+  DMI-instantiated client driver (`chromeos_laptop`), the Intel ISH HID stack
+  (`intel_ishtp`, `intel_ish_ipc`, `intel_ishtp_hid`, `cros_ec_ishtp`), and
+  the controller-family drivers (`cyapatp`, `elan_i2c`, `synaptics_i2c`,
+  `rmi_i2c`, `hid_rmi`, `hid_alps`, and the PS/2 fallback `psmouse`).
+  `/etc/local.d/mmcore-touchpad.start` is a second, late pass that re-loads
+  them and re-probes an unbound, touchpad-named I2C client before mmcore
+  starts, because the ISO has no udev (OpenRC uses mdev) to re-probe a device
+  the kernel enumerated before the rootfs. No manual `modprobe` is needed:
+  mmcore reads the touchpad through SDL's evdev backend, so once the kernel
+  driver binds there is no extra input daemon to install. A touchpad that
+  still does nothing may be the AMD ELAN066C firmware bug in the known gaps
+  below, which no module load can fix.
 - **Audio.** `sof-firmware`, the `snd_sof*` modules and the mainline
   `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. The
   `local` boot helper (`mmcore-audio.start`, from `/etc/local.d/`) *applies*
@@ -488,6 +498,24 @@ kernel and userspace; the ISO is x86_64-only, so it does not boot them at all
 (and their I2C touchpads use device-tree drivers, not the x86 ACPI/DMI paths
 above). A touchpad fix on an ARM model therefore cannot be a module-list
 change to this image — it needs a separate aarch64 build.
+
+### Known gap: the AMD ELAN066C touchpad DSDT firmware bug
+
+The Lenovo 100e/300e Chromebook 2nd Gen (AMD, types 82CD/82GJ) use an
+**ELAN066C** I2C touchpad whose firmware DSDT leaves the device without an I2C
+resource: two consecutive `If (TPTY == 0x01)` / `If (TPTY == 0x02)` branches
+assign the address and interrupt, and when `TPTY` matches neither value the
+touchpad gets no resource at all. No kernel driver — and therefore no module in
+the list above — can bind a device with no I2C address or IRQ; a USB mouse
+still works because it is not on that bus. The community fix patches the second
+`If` to an `Else` and boots the kernel with an ACPI table override (GRUB
+`acpi /boot/dsdt.aml`, or the distribution's equivalent). That override is
+hardware- and firmware-specific, so it is deliberately not shipped in the
+ISO: loading one machine's DSDT on another would describe different hardware
+and can break it. A user hitting this must extract and patch their own DSDT (or
+move to firmware that fixes it); the module list and
+`mmcore-touchpad.start` cannot address it. This is tracked as a follow-up, and
+the touchpad path still needs real Chromebook hardware to verify.
 
 ### If the boot hangs on the mmcore logo
 
