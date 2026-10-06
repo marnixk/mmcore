@@ -3798,7 +3798,7 @@ static void draw_confirm_dialog(void)
 	for (i = 0; i < 3; i++)
 	{
 		unsigned fg = (i == W.dlg_btn) ? WP_SEL_FG : WP_FG;
-		unsigned bg = (i == W.dlg_btn) ? WP_SEL_BG : WP_DIM;
+		unsigned bg = (i == W.dlg_btn) ? WP_SEL_BG : sbg;
 
 		wp_puts(x, r0 + 4, btns[i], fg, bg);
 		x += bw[i] + 2;
@@ -4364,7 +4364,10 @@ void mmb_cmd_wordpad(void)
 	{
 		mmb_val v = mmb_expr();
 		if (v.type == T_STR)
+		{
 			strncpy(path, v.s, sizeof(path) - 1);
+			path[sizeof(path) - 1] = 0;
+		}
 	}
 	mmb_wordpad_open(path);
 }

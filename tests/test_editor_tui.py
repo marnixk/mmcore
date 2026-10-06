@@ -2359,6 +2359,33 @@ def _repo_source(rel: str) -> str:
     return open(os.path.join(_REPO, rel), encoding="utf-8").read()
 
 
+def test_filename_string_copies_are_nul_terminated():
+    """#1100: every ``strncpy(path, v.s, sizeof(path) - 1)`` guards the NUL.
+
+    ``strncpy`` does not terminate when the string expression is 127+ chars,
+    so ``mmb_editor_open()`` (and the sprite/juke/files/wordpad/load callers)
+    can read past the buffer.  Each call site must follow it with
+    ``path[sizeof(path) - 1] = 0;``.  This keeps the whole family honest
+    without waiting on a QEMU OOB read that may not visibly fault.
+    """
+    srcdir = os.path.join(_REPO, "mmbasic", "src")
+    copy = re.compile(r"strncpy\(path,\s*v\.s,\s*sizeof\(path\)\s*-\s*1\)")
+    guard = re.compile(r"path\[sizeof\(path\)\s*-\s*1\]\s*=\s*0;")
+    checked = 0
+    for name in sorted(os.listdir(srcdir)):
+        if not name.endswith(".c"):
+            continue
+        lines = open(os.path.join(srcdir, name), encoding="utf-8").read().splitlines()
+        for i, line in enumerate(lines):
+            if copy.search(line):
+                checked += 1
+                window = "\n".join(lines[i + 1 : i + 3])
+                assert guard.search(window), (
+                    f"{name}:{i + 1}: missing guard after {line.strip()}"
+                )
+    assert checked >= 2, checked
+
+
 def test_autosave_interval_is_shared_one_minute():
     """#1011: EDIT and WORDPAD share one 60 s checkpoint period.
 
