@@ -2375,11 +2375,8 @@ static void start_copy_or_move(int move)
 		set_hint("Nothing to copy");
 		return;
 	}
-	if (e->is_dir)
-	{
-		set_hint("Directory copy is not supported");
-		return;
-	}
+	/* Files and folders both: mmb_vfs_copy()/mmb_vfs_move() copy a folder
+	 * tree recursively, so the same destination prompt serves both. */
 	join_path(dst, sizeof(dst), otherpan()->path, e->name);
 	start_prompt(move ? FU_PR_MOVE : FU_PR_COPY, dst);
 }

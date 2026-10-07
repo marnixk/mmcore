@@ -1,15 +1,20 @@
 name: COPY
 kind: command
 
-Copy a file to a new path or name.
+Copy a file or folder to a new path or name.
 
 COPY src$ [TO] dst$
 COPY src$, dst$
 
-  src$ - source path
-  dst$ - destination path
+  src$ - source path (a folder copies its whole tree, empty nests included)
+  dst$ - destination path; if it names an existing folder, src$ is copied
+         inside it under its own name
+
+An existing file at the destination is overwritten. Copying a folder into
+itself or into one of its subfolders is refused.
 
 Example:
 
     COPY "A.TXT" TO "B.TXT"
     COPY "A.TXT", "B.TXT"
+    COPY "SRC" TO "BACKUP/SRC"

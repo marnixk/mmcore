@@ -35,6 +35,11 @@ FILES
 Menus: Alt+L Left  Alt+F File  Alt+C Command  Alt+O Options  Alt+R Right.
 Colours follow OPTION THEME (same palettes as the other themed apps).
 
+Copy (5/C) and Move (6/M) work on the selected file or folder: a folder is
+copied or moved with its whole tree, empty nests included, into the destination
+shown in the prompt (seeded from the other pane). A cross-drive move copies and
+then deletes the source.
+
 The Command menu (or s in the F9 menu) has "FTP server". It serves the active
 pane's folder over FTP on port 21 (passive data on port 1021), using the
 current address from IPCONFIG, so a desktop FTP client can copy files to and

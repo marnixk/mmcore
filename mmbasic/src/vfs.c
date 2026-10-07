@@ -861,7 +861,81 @@ int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
 	return 0;
 }
 
-int mmb_vfs_copy(const char *src, const char *dst)
+/* Bound on directory nesting for recursive copy/move/delete so a malformed
+ * tree cannot recurse without limit. */
+#define VFS_TREE_DEPTH_MAX 16
+
+/* Append `name` to directory `dir`, inserting one '/'. */
+static void vfs_join(char *out, int outsz, const char *dir, const char *name)
+{
+	int n;
+	strncpy(out, dir, (size_t)outsz - 1);
+	out[outsz - 1] = 0;
+	n = (int)strlen(out);
+	if (n > 0 && out[n - 1] != '/')
+		strncat(out, "/", (size_t)outsz - strlen(out) - 1);
+	strncat(out, name, (size_t)outsz - strlen(out) - 1);
+}
+
+/* Case-insensitive test that canonical path `path` names `dir` itself or an
+ * entry beneath it. Both are "L:/..." strings from mmb_vfs_resolve(). */
+static int vfs_path_within(const char *dir, const char *path)
+{
+	size_t n = strlen(dir);
+	size_t i;
+	while (n > 0 && dir[n - 1] == '/')
+		n--;
+	if (n == 0)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		char a = dir[i], b = path[i];
+		if (b == 0)
+			return 0;
+		if (a >= 'a' && a <= 'z')
+			a = (char)(a - 32);
+		if (b >= 'a' && b <= 'z')
+			b = (char)(b - 32);
+		if (a != b)
+			return 0;
+	}
+	return path[n] == 0 || path[n] == '/';
+}
+
+/* Scan a folder into a heap array that grows until the whole folder fits.
+ * Returns a heap array the caller frees (with *out_n entries), or 0 on
+ * failure, in which case *out_n is left at 0. */
+static mmb_dirent *vfs_dir_entries(const char *spec, int *out_n)
+{
+	int cap = 64;
+	*out_n = 0;
+	for (;;)
+	{
+		mmb_dirent *ents = (mmb_dirent *)G.plat->alloc(
+			(unsigned)cap * sizeof(*ents));
+		int n, truncated = 0;
+		if (!ents)
+			return 0;
+		n = mmb_vfs_list_entries(spec, ents, cap, &truncated);
+		if (n < 0)
+		{
+			G.plat->free(ents);
+			return 0;
+		}
+		if (!truncated)
+		{
+			*out_n = n;
+			return ents;
+		}
+		G.plat->free(ents);
+		if (cap >= 4096)
+			return 0;
+		cap *= 2;
+	}
+}
+
+/* Copy one file's bytes (the single-file case of mmb_vfs_copy). */
+static int vfs_copy_file(const char *src, const char *dst)
 {
 	int sz, off;
 	unsigned char buf[1024];
@@ -885,6 +959,90 @@ int mmb_vfs_copy(const char *src, const char *dst)
 		off += (int)got;
 	}
 	return 0;
+}
+
+/* Recursively copy directory src into dst, creating folders as needed. A file
+ * that already exists is overwritten, matching single-file COPY. Empty and
+ * nested-empty folders come across too. Returns -1 if any entry failed but
+ * keeps going, so as much of the tree as possible is copied and the caller can
+ * report the partial failure. */
+static int vfs_copy_tree(const char *src, const char *dst, int depth)
+{
+	mmb_dirent *ents;
+	int n = 0, i, rc = 0;
+
+	if (depth > VFS_TREE_DEPTH_MAX)
+		return -1;
+	if (mmb_vfs_mkdir(dst) != 0)
+		return -1;
+	ents = vfs_dir_entries(src, &n);
+	if (!ents)
+		return -1;
+	for (i = 0; i < n; i++)
+	{
+		char cs[160], cd[160];
+		if (!ents[i].name[0])
+			continue;
+		vfs_join(cs, sizeof(cs), src, ents[i].name);
+		vfs_join(cd, sizeof(cd), dst, ents[i].name);
+		if (ents[i].is_dir)
+		{
+			if (vfs_copy_tree(cs, cd, depth + 1) != 0)
+				rc = -1;
+		}
+		else if (vfs_copy_file(cs, cd) != 0)
+			rc = -1;
+	}
+	G.plat->free(ents);
+	return rc;
+}
+
+/* Recursively delete a directory tree (used by a cross-volume move). */
+static int vfs_remove_tree(const char *path, int depth)
+{
+	mmb_dirent *ents;
+	int n = 0, i, rc = 0;
+
+	if (depth > VFS_TREE_DEPTH_MAX)
+		return -1;
+	ents = vfs_dir_entries(path, &n);
+	if (!ents)
+		return -1;
+	for (i = 0; i < n; i++)
+	{
+		char child[160];
+		if (!ents[i].name[0])
+			continue;
+		vfs_join(child, sizeof(child), path, ents[i].name);
+		if (ents[i].is_dir)
+		{
+			if (vfs_remove_tree(child, depth + 1) != 0)
+				rc = -1;
+		}
+		else if (mmb_vfs_kill(child) != 0)
+			rc = -1;
+	}
+	G.plat->free(ents);
+	if (mmb_vfs_rmdir(path) != 0)
+		rc = -1;
+	return rc;
+}
+
+int mmb_vfs_copy(const char *src, const char *dst)
+{
+	char ra[128], rb[128];
+
+	if (!mmb_vfs_isdir(src))
+		return vfs_copy_file(src, dst);
+	/* A folder copied into itself or into one of its own subfolders would
+	 * recurse forever, so refuse it. */
+	if (mmb_vfs_resolve(src, ra, sizeof(ra)) == 0 &&
+	    mmb_vfs_resolve(dst, rb, sizeof(rb)) == 0 &&
+	    vfs_path_within(ra, rb))
+		return -1;
+	if (mmb_vfs_exists(dst) && !mmb_vfs_isdir(dst))
+		return -1;
+	return vfs_copy_tree(src, dst, 0);
 }
 
 static const char *last_slash(const char *path)
@@ -911,6 +1069,17 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		return -1;
 	if (a.letter == 'B')
 		return -1;
+	/* Moving a folder into itself or one of its own subfolders would detach
+	 * the tree into a cycle; the ramdisk path below also checks this, but the
+	 * FAT rename needs the same guard. */
+	if (mmb_vfs_isdir(src))
+	{
+		char ra[128], rb[128];
+		if (mmb_vfs_resolve(src, ra, sizeof(ra)) == 0 &&
+		    mmb_vfs_resolve(dst, rb, sizeof(rb)) == 0 &&
+		    vfs_path_within(ra, rb))
+			return -1;
+	}
 	if (a.letter != 'A')
 	{
 		if (require_drive(a.letter) != 0)
@@ -970,11 +1139,21 @@ int mmb_vfs_move(const char *src, const char *dst)
 		return -1;
 	if (a.letter == b.letter)
 		return mmb_vfs_rename(src, dst);
-	/* A rename cannot cross volumes, so copy the bytes and then drop the
-	 * source. If the source cannot be removed, undo the copy so a failed
-	 * move does not silently leave the file in both places. */
+	/* A rename cannot cross volumes, so copy the tree then drop the source.
+	 * If the source cannot be removed, undo the copy so a failed move does
+	 * not silently leave it in both places. A directory uses a recursive
+	 * delete; a single file keeps the cheaper kill path. */
 	if (mmb_vfs_copy(src, dst) != 0)
 		return -1;
+	if (mmb_vfs_isdir(src))
+	{
+		if (vfs_remove_tree(src, 0) != 0)
+		{
+			vfs_remove_tree(dst, 0);
+			return -1;
+		}
+		return 0;
+	}
 	if (mmb_vfs_kill(src) != 0)
 	{
 		mmb_vfs_kill(dst);

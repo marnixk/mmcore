@@ -796,6 +796,12 @@ static void handle_event(const SDL_Event *e)
 		s_alt = (e->key.keysym.mod & KMOD_ALT) != 0;
 		s_ctrl = (e->key.keysym.mod & KMOD_CTRL) != 0;
 		s_shift = (e->key.keysym.mod & KMOD_SHIFT) != 0;
+		/* A chord's mirror SDL_TEXTINPUT (if the backend emits one) is
+		 * queued with the keydown, so it has already been processed by
+		 * this keyup. The one-shot swallow is therefore spent; drop it
+		 * here so a chord that emits no text cannot eat an unrelated
+		 * later text event (#1104). */
+		s_swallow_text = 0;
 		break;
 	case SDL_TEXTINPUT:
 		handle_text(&e->text);
