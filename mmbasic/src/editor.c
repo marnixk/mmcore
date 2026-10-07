@@ -5321,8 +5321,18 @@ static int handle_escape(char c)
 					do_fkey(n - 10);
 				else if (n >= 17 && n <= 21)
 					do_fkey(n - 11);
-				else if (n == 29 && find_active)
-					find_replace_all_prompt();
+				else if (n == 29)
+				{
+					/* Ctrl+Enter arrives as CSI 29~ from the
+					 * native SDL/ISO input path while Ctrl+Alt
+					 * are held to open the picker (#1105), so it
+					 * must insert there too, not only drive the
+					 * find/replace-all prompt. */
+					if (G.ed.dialog == DLG_CHARS)
+						insert_char((char)(CHARS_CODE0 + chars_sel));
+					else if (find_active)
+						find_replace_all_prompt();
+				}
 			}
 			else if (c == 'Z')
 			{
