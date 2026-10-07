@@ -139,6 +139,28 @@ static int tc_add_const(tc_ent *e, double x)
 	return e->nc++;
 }
 
+/* A dotted name is a struct member only when the part before the first dot
+ * names a declared struct variable. CMM2 also allows plain variables whose
+ * name contains a dot (e.g. ``DIM POS.X(100)``), which this cache can still
+ * compile. Resolving a member array needs its parsed index values, which the
+ * scalar/array compiler here does not carry (it passes a NULL index vector to
+ * mmb_find_var()), so struct members are left to the interpreter's own parser.
+ * mmb_ident() folds '.' into the identifier, hence this explicit split. */
+static int tc_is_struct_member(const char *name)
+{
+	char base[MMB_MAX_NAME];
+	const char *dot = strchr(name, '.');
+	int n;
+	if (!dot)
+		return 0;
+	n = (int)(dot - name);
+	if (n <= 0 || n >= MMB_MAX_NAME)
+		return 0;
+	memcpy(base, name, (size_t)n);
+	base[n] = 0;
+	return mmb_lookup_struct_var(base) != 0;
+}
+
 static int tc_parse_name(char *name, int *type)
 {
 	mmb_skip_sp();
@@ -148,6 +170,8 @@ static int tc_parse_name(char *name, int *type)
 	*type = mmb_type_suffix(name);
 	if (mmb_keyword_eq(name, "TIMER") || mmb_keyword_eq(name, "DATE") ||
 	    mmb_keyword_eq(name, "TIME"))
+		return 0;
+	if (tc_is_struct_member(name))
 		return 0;
 	return 1;
 }

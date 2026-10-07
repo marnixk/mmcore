@@ -122,6 +122,42 @@ def test_run_ramdisk_program(mmb_linux):
     assert "Hello from A:/apps/HELLO.BAS" in out
 
 
+def test_struct_member_array_variable_indices(mmb_linux):
+    """A 2D struct-member array indexed by loop variables must not fault.
+
+    Regression: the trace cache resolved the dotted array name with a NULL
+    index vector, so member_index_off() dereferenced NULL. Bare metal read
+    address 0 and aliased every element to (0, 0); the native POSIX build
+    segfaulted (SIGSEGV). Each element must now round-trip.
+    """
+    program = (
+        "10 TYPE Board\n"
+        "20 cells(2, 2) AS INTEGER\n"
+        "30 END TYPE\n"
+        "40 DIM b AS Board\n"
+        "50 FOR i = 0 TO 2\n"
+        "60 FOR j = 0 TO 2\n"
+        "70 b.cells(i, j) = i * 10 + j\n"
+        "80 NEXT j\n"
+        "90 NEXT i\n"
+        "100 total = 0\n"
+        "110 FOR i = 0 TO 2\n"
+        "120 FOR j = 0 TO 2\n"
+        "130 total = total + b.cells(i, j)\n"
+        "140 NEXT j\n"
+        "150 NEXT i\n"
+        "160 PRINT total\n"
+        "RUN\n"
+        "QUIT\n"
+    )
+    proc = subprocess.run(
+        [mmb_linux], input=program, text=True, capture_output=True, timeout=120
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "99" in out, out
+
+
 def test_runtime_and_host_resolution(mmb_linux):
     """#498: MM.RUNTIME names the native host; MM.HOST.* are its drawable."""
     native = "mac" if sys.platform == "darwin" else "linux"
