@@ -33,6 +33,16 @@ static int s_mouse_x, s_mouse_y;
 static int s_mouse_buttons;
 static int s_mouse_wheel;
 
+/* Relative pointer motion synthesised from an evdev touchpad/clickpad. SDL's
+ * raw evdev backend exposes a touchpad as a touch device and passes
+ * window == NULL to SDL_SendTouch(), so SDL's built-in touch-to-mouse
+ * synthesis (which requires a window) never runs and mmcore would otherwise
+ * get no SDL_MOUSEMOTION for it (#1039). Track one finger and accumulate its
+ * normalised deltas into framebuffer pixels. */
+static int s_finger_track_valid;
+static SDL_FingerID s_finger_track;
+static float s_finger_ax, s_finger_ay;
+
 void sdl_input_init(void)
 {
 	s_alt = s_ctrl = s_shift = 0;
@@ -43,6 +53,8 @@ void sdl_input_init(void)
 	s_mouse_x = s_mouse_y = 0;
 	s_mouse_buttons = 0;
 	s_mouse_wheel = 0;
+	s_finger_track_valid = 0;
+	s_finger_ax = s_finger_ay = 0.0f;
 }
 
 void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
@@ -103,6 +115,61 @@ static void handle_mouse_button(const SDL_MouseButtonEvent *be)
 		s_mouse_buttons |= mask;
 	else if (be->type == SDL_MOUSEBUTTONUP)
 		s_mouse_buttons &= ~mask;
+}
+
+/* A touchpad/clickpad reaches SDL as a touch device: SDL_evdev sends
+ * SDL_SendTouch(fingerId, window=NULL, ...), and SDL's touch-to-mouse
+ * synthesis is gated on a non-NULL window, so no SDL_MOUSEMOTION is emitted
+ * (#1039). Turn the normalised finger motion into the same relative pointer
+ * state a mouse would produce. Clicks already arrive as SDL_MOUSEBUTTON from
+ * the device's BTN_LEFT, so only motion is synthesised here. */
+static void handle_finger_down(const SDL_TouchFingerEvent *fe)
+{
+	if (!s_finger_track_valid)
+	{
+		s_finger_track_valid = 1;
+		s_finger_track = fe->fingerId;
+		s_finger_ax = s_finger_ay = 0.0f;
+	}
+}
+
+static void handle_finger_up(const SDL_TouchFingerEvent *fe)
+{
+	if (s_finger_track_valid && fe->fingerId == s_finger_track)
+		s_finger_track_valid = 0;
+}
+
+static void handle_finger_motion(const SDL_TouchFingerEvent *fe)
+{
+	int w, h, dx, dy;
+
+	if (s_finger_track_valid && fe->fingerId != s_finger_track)
+		return;
+	w = sdl_video_width();
+	h = sdl_video_height();
+	if (w <= 0 || h <= 0)
+		return;
+	/* fe->dx/dy are normalised across the touchpad; scaling by the panel
+	 * lets a full-width swipe cross the screen. Keep the sub-pixel
+	 * remainder so slow drags still move. */
+	s_finger_ax += fe->dx * (float)w;
+	s_finger_ay += fe->dy * (float)h;
+	dx = (int)s_finger_ax;
+	dy = (int)s_finger_ay;
+	if (!dx && !dy)
+		return;
+	s_finger_ax -= (float)dx;
+	s_finger_ay -= (float)dy;
+	s_mouse_x += dx;
+	s_mouse_y += dy;
+	if (s_mouse_x < 0)
+		s_mouse_x = 0;
+	else if (s_mouse_x > w - 1)
+		s_mouse_x = w - 1;
+	if (s_mouse_y < 0)
+		s_mouse_y = 0;
+	else if (s_mouse_y > h - 1)
+		s_mouse_y = h - 1;
 }
 
 void sdl_input_begin_line(void)
@@ -656,6 +723,9 @@ static int is_input_event(Uint32 type)
 	case SDL_KEYDOWN:
 	case SDL_KEYUP:
 	case SDL_TEXTINPUT:
+	case SDL_FINGERDOWN:
+	case SDL_FINGERUP:
+	case SDL_FINGERMOTION:
 	case SDL_MOUSEMOTION:
 	case SDL_MOUSEBUTTONDOWN:
 	case SDL_MOUSEBUTTONUP:
@@ -677,6 +747,7 @@ static void handle_event(const SDL_Event *e)
 		 * keyboard once mmcore's VT returns. */
 		s_alt = s_ctrl = s_shift = 0;
 		s_swallow_text = 0;
+		s_finger_track_valid = 0;
 		return;
 	}
 
@@ -728,6 +799,15 @@ static void handle_event(const SDL_Event *e)
 		break;
 	case SDL_TEXTINPUT:
 		handle_text(&e->text);
+		break;
+	case SDL_FINGERDOWN:
+		handle_finger_down(&e->tfinger);
+		break;
+	case SDL_FINGERUP:
+		handle_finger_up(&e->tfinger);
+		break;
+	case SDL_FINGERMOTION:
+		handle_finger_motion(&e->tfinger);
 		break;
 	case SDL_MOUSEMOTION:
 		handle_mouse_motion(&e->motion);
