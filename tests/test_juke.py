@@ -1061,3 +1061,95 @@ def test_juke_header_scales_at_chromebook_modes(fresh_console):
         con.send_line("PLAY STOP")
 
 
+# ---- #1123: playlist panel stays clear of the footer legend ----------------
+
+
+def _list_geometry(w: int, h: int) -> tuple[int, int, int]:
+    """Mirror JUKE's playlist frame (see cmd_juke.c): (y0, y1, footer_top).
+
+    ``y1`` is the scaled panel bottom clamped above the footer legend top so
+    the list frame never crosses the fixed 16px legend row.
+    """
+    s = _juke_scale(w, h)
+    y0 = _header_geometry(w, h)[3]  # juke_list_y()
+    footer_top = _footer_geometry(w, h)[0]  # juke_footer_geometry().legend_y
+    y1 = h - 56 * s // 100
+    y1 = min(y1, footer_top)
+    floor = y0 + 24 * s // 100
+    return y0, max(y1, floor), footer_top
+
+
+def test_juke_list_panel_clear_of_footer_low_resolution(fresh_console):
+    """#1123: at the 60% floor the panel bottom no longer cuts the legend.
+
+    The panel bottom is a scaled design coordinate while the footer legend is
+    anchored to the margin, so below ~80% the frame crossed the legend row.
+    """
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+
+    _keys(con, b"l", quiet=0.6)  # playlist on
+    assert con.screen_size() == (400, 300)
+
+    _y0, y1, footer_top = _list_geometry(w, h)
+    assert y1 <= footer_top, (y1, footer_top)
+
+    s = _juke_scale(w, h)
+    margin = 8 * s // 100
+    bw = w - 16 * s // 100
+    xs = list(range(margin + 2, margin + bw - 2, 4))
+
+    # The panel's bottom border row is a real frame line above the legend.
+    border = con.screen_pixels([(x, y1 - 1) for x in xs])
+    assert sum(1 for c in border if _is_panel_border(c)) > len(border) * 2 // 3
+
+    # And no frame line runs through the legend row itself.
+    legend = con.screen_pixels([(x, footer_top + 4) for x in xs])
+    assert not any(_is_panel_border(c) for c in legend), legend
+
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_panel_clear_of_footer_chromebook_modes(fresh_console):
+    """#1123: the panel stays above the legend in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry plus that the player rendered, not pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        _y0, y1, footer_top = _list_geometry(w, h)
+        assert y1 <= footer_top, (mode, y1, footer_top)
+        raw = h - 56 * _juke_scale(w, h) // 100
+        if mode == 20:
+            # 71% layout: the unclamped bottom would sit below the legend.
+            assert raw > footer_top, (raw, footer_top)
+            assert y1 == footer_top
+        else:
+            assert y1 == raw  # design-scale clamp is a no-op
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+def test_juke_list_panel_keeps_design_bottom(fresh_console):
+    """#1123: at the design scale the clamp is a no-op (panel stays put)."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")  # MODE 12,32 = 960x540
+    w, h = con.screen_size()
+    assert (w, h) == (960, 540)
+    _y0, y1, footer_top = _list_geometry(w, h)
+    assert y1 == h - 56, (y1, h - 56)
+    assert y1 < footer_top, (y1, footer_top)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+

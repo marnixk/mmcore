@@ -125,6 +125,42 @@ static int juke_list_y(void)
 	return juke_scope_y() + JS(JUKE_SCOPE_H) + JS(8);
 }
 
+/* Footer rows are anchored to the bottom with a fixed 16px font, so the top
+ * row (the transport legend) sits at a fixed offset above the margin while the
+ * playlist panel bottom is a scaled design coordinate. Below ~80% the scaled
+ * panel bottom crossed the legend, so both `juke_paint()` and the list panel
+ * share this geometry and the panel is clamped above `legend_y` (#1123). */
+typedef struct
+{
+	int fy;       /* top of the volume row    */
+	int cy;       /* chip / bar top           */
+	int ly;       /* text baseline row        */
+	int legend_y; /* transport legend row top */
+} juke_footer_geom;
+
+static juke_footer_geom juke_footer_geometry(int h)
+{
+	juke_footer_geom g;
+	int line = JUKE_LINE_H;
+	int bar_h = JS(14);
+	int vol_row_h, pad, gap;
+
+	if (bar_h < 8)
+		bar_h = 8;
+	vol_row_h = bar_h > line ? bar_h : line;
+	pad = JS(8);
+	if (pad < 4)
+		pad = 4;
+	gap = JS(8);
+	if (gap < 6)
+		gap = 6;
+	g.fy = h - pad - vol_row_h;
+	g.cy = g.fy + (vol_row_h - bar_h) / 2;
+	g.ly = g.fy + (vol_row_h - line) / 2;
+	g.legend_y = g.fy - gap - line;
+	return g;
+}
+
 /* Small xorshift PRNG; no libc rand() on bare metal. */
 static unsigned juke_rand(void)
 {
@@ -910,6 +946,7 @@ static void juke_paint_list(int w, int h)
 	int margin = JS(8);
 	int y0 = juke_list_y();
 	int y1 = h - JS(56);
+	int footer_top = juke_footer_geometry(h).legend_y;
 	int bw = w - JS(16);
 	int row = JS(JUKE_LIST_ROW);
 	int sel_h;
@@ -921,6 +958,10 @@ static void juke_paint_list(int w, int h)
 	if (row < 16)
 		row = 16;
 	sel_h = row - 2;
+	/* The panel bottom is a scaled design coordinate but the footer legend
+	 * is anchored to the margin, so keep the frame above it (#1123). */
+	if (y1 > footer_top)
+		y1 = footer_top;
 	if (y1 < y0 + JS(24))
 		y1 = y0 + JS(24);
 	mmb_gfx_fill_rect(margin, y0, bw, 1, U.col_panel2);
@@ -1182,7 +1223,7 @@ static void juke_paint_help(int w, int h)
 
 static void juke_paint(int w, int h)
 {
-	int fy, vol;
+	int vol;
 	const char *title;
 	char buf[128];
 
@@ -1219,31 +1260,16 @@ static void juke_paint(int w, int h)
 	 * the volume row collided; anchoring the rows from the bottom and gating
 	 * the gap keeps them apart at every scale. */
 	{
-		int line = 16;
-		int bar_h = JS(14);
-		int vol_row_h, pad, gap, cy, ly;
+		juke_footer_geom g = juke_footer_geometry(h);
 
-		if (bar_h < 8)
-			bar_h = 8;
-		vol_row_h = bar_h > line ? bar_h : line;
-		pad = JS(8);
-		if (pad < 4)
-			pad = 4;
-		gap = JS(8);
-		if (gap < 6)
-			gap = 6;
-		fy = h - pad - vol_row_h;             /* top of the volume row */
-		cy = fy + (vol_row_h - bar_h) / 2;    /* chip / bar top          */
-		ly = fy + (vol_row_h - line) / 2;     /* text baseline row       */
-
-		juke_text_clip(JS(14), fy - gap - line,
+		juke_text_clip(JS(14), g.legend_y,
 			       "SPACE play/pause   P prev   N next   ESC quit   ? help",
 			       U.col_dim, w - JS(14));
 
 		/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
-		mmb_gfx_fill_rect(JS(14), cy, JS(14), JS(14),
+		mmb_gfx_fill_rect(JS(14), g.cy, JS(14), JS(14),
 				  s_q.shuffle ? U.col_peak : U.col_track);
-		juke_text(JS(34), ly, "SHUF",
+		juke_text(JS(34), g.ly, "SHUF",
 			  s_q.shuffle ? U.col_text : U.col_dim, 1);
 
 		/* Volume level bar: grey body with a muted logo-accent top edge. */
@@ -1252,24 +1278,24 @@ static void juke_paint(int w, int h)
 			vol = 0;
 		if (vol > 100)
 			vol = 100;
-		juke_text(JS(110), ly, "VOL", U.col_dim, 1);
-		mmb_gfx_fill_rect(JS(146), cy, JS(220), JS(14), U.col_track);
+		juke_text(JS(110), g.ly, "VOL", U.col_dim, 1);
+		mmb_gfx_fill_rect(JS(146), g.cy, JS(220), JS(14), U.col_track);
 		if (vol > 0)
 		{
 			int barw = JS(220);
 			int vw = vol * barw / 100;
 			int vx;
-			mmb_gfx_fill_rect(JS(146), cy, vw, JS(14), U.col_vol);
+			mmb_gfx_fill_rect(JS(146), g.cy, vw, JS(14), U.col_vol);
 			for (vx = 0; vx < vw; vx += 2)
 			{
 				int seg = vw - vx < 2 ? vw - vx : 2;
-				mmb_gfx_fill_rect(JS(146) + vx, cy, seg, 2,
+				mmb_gfx_fill_rect(JS(146) + vx, g.cy, seg, 2,
 						  juke_logo_grad((float)vx /
 								 (float)barw));
 			}
 		}
 		sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
-		juke_text(JS(380), ly, buf, U.col_text, 1);
+		juke_text(JS(380), g.ly, buf, U.col_text, 1);
 	}
 
 	if (U.help_on)
