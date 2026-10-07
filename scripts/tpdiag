@@ -1,0 +1,119 @@
+#!/bin/sh
+# tpdiag - touchpad/input diagnostic for the mmcore Linux ISO (#1039).
+#
+# Run it from a root shell on tty2 (Ctrl+Alt+F2 from mmcore; Ctrl+Alt+F1 back).
+# It needs no packages and only reads sysfs/procfs. Paste the whole output back
+# into the issue. It ends with a 6-second raw-event test: DRAG YOUR FINGER on
+# the touchpad during that window.
+#
+# Quick run (Linux ISO trusts the GitHub TLS certificate):
+#   wget -qO- https://raw.githubusercontent.com/marnixk/mmcore/master/scripts/tpdiag | sh
+#
+# Options:
+#   --no-raw     skip the interactive raw-event test
+#   --seconds N  how long to sample the touchpad node (default 6)
+
+SYS=/sys
+SECS=6
+RAW=1
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--no-raw) RAW=0 ;;
+	--seconds) shift; SECS=${1:-6} ;;
+	*) echo "tpdiag: unknown option '$1'" >&2 ;;
+	esac
+	shift
+done
+
+sec() { printf '\n===== %s =====\n' "$1"; }
+
+echo "mmcore touchpad diagnostic"
+echo "date: $(date 2>/dev/null)"
+echo "version: $(cat /etc/mmcore-version 2>/dev/null || echo '?')"
+echo "kernel: $(uname -r) ($(uname -m))"
+echo "cmdline: $(cat /proc/cmdline 2>/dev/null)"
+
+sec "DMI"
+for f in sys_vendor product_name product_version board_name bios_version bios_date; do
+	printf '%s: ' "$f"
+	cat "$SYS/class/dmi/id/$f" 2>/dev/null || echo '?'
+done
+
+sec "CPU"
+grep -m1 'model name' /proc/cpuinfo 2>/dev/null || echo '?'
+grep -m1 -i 'vendor_id' /proc/cpuinfo 2>/dev/null || true
+
+sec "INPUT DEVICES (/proc/bus/input/devices)"
+cat /proc/bus/input/devices 2>/dev/null || echo '?'
+echo '--- /dev/input/by-path ---'
+ls -l /dev/input/by-path/ 2>/dev/null || echo '?'
+echo '--- /dev/input nodes ---'
+ls -l /dev/input/event* 2>/dev/null || echo '?'
+
+sec "I2C CLIENTS (name + bound driver)"
+for d in "$SYS"/bus/i2c/devices/*; do
+	[ -e "$d" ] || continue
+	n=$(cat "$d/name" 2>/dev/null)
+	drv=$(basename "$(readlink -f "$d/driver" 2>/dev/null)" 2>/dev/null)
+	echo "$(basename "$d") name=${n:-?} driver=${drv:-NONE}"
+done
+
+sec "I2C ADAPTERS"
+for d in "$SYS"/bus/i2c/devices/i2c-*; do
+	[ -e "$d/name" ] || continue
+	echo "$(basename "$d") $(cat "$d/name" 2>/dev/null)"
+done
+
+sec "LSMOD"
+lsmod 2>/dev/null || echo '?'
+echo '--- modules present in the image ---'
+K=$(uname -r)
+for m in elan_i2c synaptics_i2c cyapatp hid_alps hid_elan hid_rmi \
+	i2c_hid i2c_hid_acpi chromeos_laptop intel_lpss_pci intel_ish_ipc; do
+	f=$(find "/lib/modules/$K" -name "$m.ko*" 2>/dev/null | head -1)
+	printf '%s: %s\n' "$m" "${f:-MISSING}"
+done
+
+sec "DMESG (touchpad/i2c/hid/cros/ish/acpi)"
+dmesg 2>/dev/null | grep -iE 'i2c|hid|elan|synaptics|cyapa|alps|psmouse|cros_ec|intel_lpss|designware|ish|touchpad|mmcore-touchpad|acpi' | tail -160 || echo '?'
+
+sec "TOUCHPAD HELPER"
+echo "mmcore-touchpad logs in dmesg:"
+dmesg 2>/dev/null | grep -i 'mmcore-touchpad' || echo '(none)'
+echo "helper present: $(ls -l /etc/local.d/mmcore-touchpad.start 2>/dev/null || echo no)"
+
+sec "RAW EVENT TEST"
+ev=""
+for d in "$SYS"/class/input/event*; do
+	[ -e "$d/device/name" ] || continue
+	name=$(cat "$d/device/name" 2>/dev/null)
+	case "$name" in
+	*ouchpad*|*ouchPad*|*SYNA*|*SYNAP*|*ELAN*|*ALPS*|*Cypress*|*CYAP*)
+		ev="/dev/input/$(basename "$d")"
+		echo "touchpad node: $ev  ($name)"
+		;;
+	esac
+done
+
+if [ -z "$ev" ]; then
+	echo "RESULT: no touchpad-named input node found."
+	echo "  -> the kernel has no touchpad input device; check the I2C clients + dmesg above."
+else
+	if [ "$RAW" -eq 1 ]; then
+		echo "DRAG YOUR FINGER ON THE TOUCHPAD NOW for ${SECS}s ..."
+		sleep 1
+		n=$(timeout "$SECS" cat "$ev" 2>/dev/null | wc -c)
+		echo "bytes read from $ev in ${SECS}s: $n"
+		if [ "${n:-0}" -gt 0 ]; then
+			echo "RESULT: kernel driver DELIVERS events -> fault is mmcore/SDL, not the kernel."
+		else
+			echo "RESULT: no events -> driver/bus not delivering on this node (or wrong node)."
+		fi
+	else
+		echo "(raw test skipped; default node would be $ev)"
+	fi
+fi
+
+echo
+echo "Paste everything above into the issue."
+echo "Also useful: 'grep -i -A4 touchpad /proc/bus/input/devices' and, if you can, 'evtest $ev'."
