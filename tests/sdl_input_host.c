@@ -80,6 +80,28 @@ void mmb_inkey_push(int c)
 		g_inkey[g_inkey_n++] = (unsigned char)c;
 }
 
+/* CMM2 KEYDOWN() set published by sdl_input.c (native/Linux-ISO parity with
+ * the Circle USB HID path). g_cur is the interpreter state pointer the shared
+ * code guards KEYDOWN publishes with; point it at a dummy so publishing runs. */
+static mmb g_mmb_state;
+mmb *g_cur = &g_mmb_state;
+
+static int g_keydown[6];
+static int g_keydown_n;
+
+void mmb_keydown_set(const int *codes, int n)
+{
+	int i;
+
+	if (n < 0)
+		n = 0;
+	if (n > 6)
+		n = 6;
+	g_keydown_n = n;
+	for (i = 0; i < n; i++)
+		g_keydown[i] = codes[i];
+}
+
 void sdl_video_mark_dirty(void) {}
 void sdl_video_request_quit(void) {}
 void sdl_video_toggle_fullscreen(void) {}
@@ -116,6 +138,17 @@ static void push_key(SDL_Keycode sym, Uint16 mod)
 
 	SDL_zero(e);
 	e.type = SDL_KEYDOWN;
+	e.key.keysym.sym = sym;
+	e.key.keysym.mod = mod;
+	SDL_PushEvent(&e);
+}
+
+static void push_keyup(SDL_Keycode sym, Uint16 mod)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_KEYUP;
 	e.key.keysym.sym = sym;
 	e.key.keysym.mod = mod;
 	SDL_PushEvent(&e);
@@ -195,6 +228,17 @@ static void expect_queue(const char *name, const char *want)
 	{
 		fprintf(stderr, "FAIL %s: queue len %d want %d\n", name,
 			g_inkey_n, want_n);
+		fails++;
+	}
+}
+
+static void expect_keydown(const char *name, const int *want, int want_n)
+{
+	if (g_keydown_n != want_n ||
+	    (want_n != 0 && memcmp(g_keydown, want, sizeof(int) * want_n) != 0))
+	{
+		fprintf(stderr, "FAIL %s: keydown n=%d want %d\n", name,
+			g_keydown_n, want_n);
 		fails++;
 	}
 }
@@ -419,6 +463,54 @@ int main(void)
 	push_key(SDLK_LEFT, 0);
 	sdl_input_pump();
 	expect_feed("plain-left", "\x1b[D");
+
+	/* KEYDOWN(): the compat games poll this while a program runs, so the
+	 * native/Linux-ISO build must publish the same CMM2 codes the Circle USB
+	 * HID path does. Left=130, Right=131, Escape=27, 'z'=122. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left", (const int[]){130}, 1);
+
+	push_key(SDLK_RIGHT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left+right", (const int[]){130, 131}, 2);
+
+	/* Auto-repeat re-sends KEYDOWN: the code must not be listed twice. */
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown repeat", (const int[]){130, 131}, 2);
+
+	expect_queue("keydown arrows inkey", "\x1b[D\x1b[C\x1b[D");
+
+	push_keyup(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left released", (const int[]){131}, 1);
+
+	push_keyup(SDLK_RIGHT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown all released", 0, 0);
+
+	reset();
+	g_running = 1;
+	push_key(SDLK_z, 0);
+	push_key(SDLK_ESCAPE, 0);
+	sdl_input_pump();
+	expect_keydown("keydown letter+esc", (const int[]){122, 27}, 2);
+
+	/* Losing window focus drops the held set (no KEYUPs are delivered for
+	 * keys released while unfocused). */
+	{
+		SDL_Event ev;
+
+		SDL_zero(ev);
+		ev.type = SDL_WINDOWEVENT;
+		ev.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+		SDL_PushEvent(&ev);
+		sdl_input_pump();
+		expect_keydown("keydown focus lost", 0, 0);
+	}
 
 	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
 	 * single NUL byte (#589). */

@@ -26,6 +26,16 @@ static int s_swallow_text; /* Alt/Ctrl chords also emit SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
 static int s_break;        /* latched BREAK seen while a program runs */
 
+/* CMM2 KEYDOWN() scan codes for the keys currently held. SDL reports a key by
+ * keysym in SDL_KEYDOWN/SDL_KEYUP, so the held set is rebuilt on each event and
+ * pushed to the interpreter. This mirrors the Circle USB HID path in
+ * console/kernel.cpp so the compat games (which poll KEYDOWN) behave the same
+ * on the native/Linux-ISO build. */
+static int s_keydown[6];
+static int s_keydown_n;
+
+static void keydown_publish(void);
+
 /* Pointer state, reported in software-framebuffer pixels so the full-screen
  * apps see the same coordinate space as the framebuffer. */
 static int s_mouse_present;
@@ -49,6 +59,8 @@ void sdl_input_init(void)
 	s_swallow_text = 0;
 	s_line_input = 0;
 	s_break = 0;
+	s_keydown_n = 0;
+	keydown_publish();
 	s_mouse_present = 1;
 	s_mouse_x = s_mouse_y = 0;
 	s_mouse_buttons = 0;
@@ -458,6 +470,110 @@ void sdl_input_test_set_vt_left(int v)
 }
 #endif
 
+/* Map an SDL keysym to the CMM2 KEYDOWN() code the compat games expect.
+ * Letters, digits and punctuation are their ASCII codes; the arrows use the
+ * Colour Maximite codes Up=128, Down=129, Left=130, Right=131. This is the
+ * same set console/kernel.cpp emits from USB HID usage codes. */
+static int sdl_key_to_cmm2(SDL_Keycode k)
+{
+	if (k >= SDLK_a && k <= SDLK_z)
+		return (int)('a' + (k - SDLK_a));
+	if (k >= SDLK_1 && k <= SDLK_9)
+		return (int)('1' + (k - SDLK_1));
+	if (k == SDLK_0)
+		return '0';
+	switch (k)
+	{
+	case SDLK_RETURN:
+		return 10;
+	case SDLK_ESCAPE:
+		return 27;
+	case SDLK_SPACE:
+		return 32;
+	case SDLK_MINUS:
+		return '-';
+	case SDLK_EQUALS:
+		return '=';
+	case SDLK_LEFTBRACKET:
+		return '[';
+	case SDLK_RIGHTBRACKET:
+		return ']';
+	case SDLK_BACKSLASH:
+		return '\\';
+	case SDLK_SEMICOLON:
+		return ';';
+	case SDLK_QUOTE:
+		return '\'';
+	case SDLK_COMMA:
+		return ',';
+	case SDLK_PERIOD:
+		return '.';
+	case SDLK_SLASH:
+		return '/';
+	case SDLK_RIGHT:
+		return 131;
+	case SDLK_LEFT:
+		return 130;
+	case SDLK_DOWN:
+		return 129;
+	case SDLK_UP:
+		return 128;
+	default:
+		return 0;
+	}
+}
+
+/* g_cur is NULL during early platform init, before the interpreter session
+ * exists; nothing can be held then, so skip the push rather than dereference
+ * it. */
+static void keydown_publish(void)
+{
+	if (g_cur)
+		mmb_keydown_set(s_keydown, s_keydown_n);
+}
+
+static void keydown_clear(void)
+{
+	s_keydown_n = 0;
+	keydown_publish();
+}
+
+/* Add a held key (ignoring auto-repeat) and publish the set. */
+static void keydown_press(SDL_Keycode k)
+{
+	int code = sdl_key_to_cmm2(k);
+	int i;
+
+	if (!code)
+		return;
+	for (i = 0; i < s_keydown_n; i++)
+		if (s_keydown[i] == code)
+			return;
+	if (s_keydown_n < (int)(sizeof s_keydown / sizeof s_keydown[0]))
+		s_keydown[s_keydown_n++] = code;
+	keydown_publish();
+}
+
+/* Remove a released key and publish the set. */
+static void keydown_release(SDL_Keycode k)
+{
+	int code = sdl_key_to_cmm2(k);
+	int i, j;
+
+	if (!code)
+		return;
+	for (i = 0; i < s_keydown_n; i++)
+	{
+		if (s_keydown[i] != code)
+			continue;
+		for (j = i; j + 1 < s_keydown_n; j++)
+			s_keydown[j] = s_keydown[j + 1];
+		s_keydown_n--;
+		keydown_publish();
+		return;
+	}
+}
+
 static void handle_keydown(const SDL_KeyboardEvent *ke)
 {
 	SDL_Keycode k = ke->keysym.sym;
@@ -768,6 +884,10 @@ static void handle_event(const SDL_Event *e)
 		else if (e->window.event == SDL_WINDOWEVENT_LEAVE)
 			SDL_ShowCursor(SDL_ENABLE);
 #endif
+		else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+			/* SDL does not deliver the KEYUPs for keys released while
+			 * unfocused, so drop the held-key set or they stick. */
+			keydown_clear();
 		else if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			 e->window.event == SDL_WINDOWEVENT_RESIZED ||
 			 e->window.event == SDL_WINDOWEVENT_MAXIMIZED ||
@@ -790,12 +910,14 @@ static void handle_event(const SDL_Event *e)
 		s_alt = (e->key.keysym.mod & KMOD_ALT) != 0;
 		s_ctrl = (e->key.keysym.mod & KMOD_CTRL) != 0;
 		s_shift = (e->key.keysym.mod & KMOD_SHIFT) != 0;
+		keydown_press(e->key.keysym.sym);
 		handle_keydown(&e->key);
 		break;
 	case SDL_KEYUP:
 		s_alt = (e->key.keysym.mod & KMOD_ALT) != 0;
 		s_ctrl = (e->key.keysym.mod & KMOD_CTRL) != 0;
 		s_shift = (e->key.keysym.mod & KMOD_SHIFT) != 0;
+		keydown_release(e->key.keysym.sym);
 		/* A chord's mirror SDL_TEXTINPUT (if the backend emits one) is
 		 * queued with the keydown, so it has already been processed by
 		 * this keyup. The one-shot swallow is therefore spent; drop it

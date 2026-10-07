@@ -62,6 +62,9 @@ void mmb_inkey_push(int c)
 		g_inkey[g_inkey_n++] = (unsigned char)c;
 }
 
+void mmb_keydown_set(const int *codes, int n) { (void)codes; (void)n; }
+mmb *g_cur;
+
 void mmb_front_feed(const char *s, unsigned n)
 {
 	unsigned i;
