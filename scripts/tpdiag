@@ -82,6 +82,28 @@ echo "mmcore-touchpad logs in dmesg:"
 dmesg 2>/dev/null | grep -i 'mmcore-touchpad' || echo '(none)'
 echo "helper present: $(ls -l /etc/local.d/mmcore-touchpad.start 2>/dev/null || echo no)"
 
+sec "MMCORE INPUT FDS / SDL STACK"
+pid=$(pidof mmcore 2>/dev/null | awk '{print $1}')
+if [ -n "$pid" ]; then
+	echo "mmcore pid: $pid"
+	exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+	echo "exe: ${exe:-?}"
+	echo "open /dev/input/event* nodes:"
+	ls -l "/proc/$pid/fd" 2>/dev/null | grep -oE '/dev/input/event[0-9]+' | sort -u || echo '(none open)'
+	echo "ldd (SDL/input/udev/drm):"
+	ldd "$exe" 2>/dev/null | grep -iE 'sdl|input|udev|drm' || echo '(ldd unavailable / no matches)'
+else
+	echo "mmcore not running (pidof found nothing)"
+fi
+echo '--- SDL / libinput / udev present ---'
+for f in /usr/lib/libSDL2-2.0.so* /usr/lib/libSDL2.so* /usr/lib/libinput.so* /usr/lib/libudev.so*; do
+	[ -e "$f" ] && echo "$f"
+done
+ls -d /run/udev /dev/.udev 2>/dev/null || echo "no udev runtime dir (libinput's udev backend cannot start)"
+
+sec "TOUCHPAD CAPABILITIES"
+grep -iA12 'Touchpad' /proc/bus/input/devices 2>/dev/null || echo '?'
+
 sec "RAW EVENT TEST"
 ev=""
 for d in "$SYS"/class/input/event*; do
