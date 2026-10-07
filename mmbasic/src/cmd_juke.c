@@ -66,6 +66,7 @@ typedef struct {
 	int list_top;
 	int esc;
 	unsigned esc_at;
+	int help_on;   /* `?` shortcut modal is up (#1114) */
 } juke_ui;
 
 typedef struct {
@@ -684,12 +685,19 @@ static int juke_start(int idx)
 	p = juke_track(idx);
 	if (!p || !p[0])
 		return -1;
-	/* play_begin resets the gain to 100; keep JUKE's own volume across
-	 * track changes (shuffle/next must not blast the mixer). */
+	/* play_begin resets the gain to 100 and queues its preroll right away.
+	 * Arm JUKE's own gain first so that first buffer is already scaled (#1113);
+	 * without this the very start of every track (and each skip) played at 100
+	 * for a few ms. The arm is consumed by play_begin, or dropped on failure. */
 	vl = g_audio.vol_l;
 	vr = g_audio.vol_r;
+	mmb_play_set_begin_vol(vl, vr);
 	if (juke_play_path(p) != 0)
+	{
+		mmb_play_set_begin_vol(-1, -1);
 		return -1;
+	}
+	mmb_play_set_begin_vol(-1, -1);
 	/* The queue runs in the background on its own console: a track change
 	 * driven by the host poll must not re-attribute the engine to whichever
 	 * console happens to be active (#805). */
@@ -789,20 +797,77 @@ static void juke_load_logo(void)
 	U.logo_h = h;
 }
 
+/* Draw the wordmark scaled by the layout percent. Scaling it with everything
+ * else keeps it clear of the title/path below in low modes: an unscaled
+ * 114x50 logo collides with the JS(60) title once the scale drops (#1115). */
 static void juke_draw_logo(int x0, int y0)
 {
-	int i, j;
+	int dw, dh, dx, dy;
 
 	if (!U.logo)
 		return;
-	for (j = 0; j < U.logo_h; j++)
-		for (i = 0; i < U.logo_w; i++)
+	dw = U.logo_w * U.s / 100;
+	dh = U.logo_h * U.s / 100;
+	if (dw < 1)
+		dw = 1;
+	if (dh < 1)
+		dh = 1;
+	for (dy = 0; dy < dh; dy++)
+	{
+		int sy = (int)((long)dy * U.logo_h / dh);
+		if (sy >= U.logo_h)
+			sy = U.logo_h - 1;
+		for (dx = 0; dx < dw; dx++)
 		{
-			uint32_t c = U.logo[j * U.logo_w + i];
+			int sx = (int)((long)dx * U.logo_w / dw);
+			uint32_t c;
+			if (sx >= U.logo_w)
+				sx = U.logo_w - 1;
+			c = U.logo[sy * U.logo_w + sx];
 			if (!(c >> 24))
 				continue;
-			mmb_gfx_plot(x0 + i, y0 + j, c & 0xFFFFFFu);
+			mmb_gfx_plot(x0 + dx, y0 + dy, c & 0xFFFFFFu);
 		}
+	}
+}
+
+/* Draw text clipped to end before maxx, cutting long titles/paths to an
+ * ellipsis so they never run into the logo or off the screen (#1115). */
+static void juke_text_clip(int x, int y, const char *s, unsigned col, int maxx)
+{
+	char buf[JUKE_PATH_MAX + 8];
+	int maxc = (maxx - x) / 8; /* 8px glyph cell at scale 1 */
+	size_t n;
+
+	if (!s)
+		return;
+	if (maxc < 1)
+		maxc = 1;
+	n = strlen(s);
+	if ((int)n <= maxc)
+	{
+		juke_text(x, y, s, col, 1);
+		return;
+	}
+	if (maxc > (int)sizeof(buf) - 1)
+		maxc = (int)sizeof(buf) - 1;
+	if (maxc >= 3)
+	{
+		size_t keep = (size_t)(maxc - 3);
+		if (keep > n)
+			keep = n;
+		memcpy(buf, s, keep);
+		buf[keep] = '.';
+		buf[keep + 1] = '.';
+		buf[keep + 2] = '.';
+		buf[keep + 3] = 0;
+	}
+	else
+	{
+		memcpy(buf, s, (size_t)maxc);
+		buf[maxc] = 0;
+	}
+	juke_text(x, y, buf, col, 1);
 }
 
 static void juke_paint_list(int w, int h)
@@ -1006,6 +1071,80 @@ static void juke_paint_vis(int w, int h)
 	mmb_gfx_fill_rect(x0, base, x1 - x0, 1, U.col_base);
 }
 
+/* Modal shortcut list opened with `?` (#1114). It is painted last so it sits
+ * over the live player, which keeps running underneath. Geometry is clamped to
+ * the framebuffer so it stays on-screen in every mode; the panel uses JUKE's
+ * own palette. */
+static void juke_paint_help(int w, int h)
+{
+	static const struct { const char *k, *d; } rows[] = {
+		{ "SPACE",   "play / pause" },
+		{ "P",       "previous track" },
+		{ "N",       "next track" },
+		{ "L",       "playlist on / off" },
+		{ "UP DOWN", "move selection" },
+		{ "ENTER",   "play selected track" },
+		{ "R",       "shuffle on / off" },
+		{ "-  +",    "volume down / up" },
+		{ "M",       "mute / unmute" },
+		{ "S",       "stop the queue" },
+		{ "ESC",     "close help (then quits)" },
+		{ "?",       "toggle this help" },
+	};
+	int n = (int)(sizeof(rows) / sizeof(rows[0]));
+	int i, lh = 16, pad = JS(12), gap = JS(14);
+	int kw = 0, dw = 0, pw, ph, px, py, ty, maxx;
+
+	if (pad < 8)
+		pad = 8;
+	if (gap < 10)
+		gap = 10;
+	for (i = 0; i < n; i++)
+	{
+		int a = (int)strlen(rows[i].k) * 8;
+		int b = (int)strlen(rows[i].d) * 8;
+		if (a > kw)
+			kw = a;
+		if (b > dw)
+			dw = b;
+	}
+	pw = pad * 2 + kw + gap + dw;
+	ph = pad * 2 + (n + 1) * lh + JS(6);
+	if (pw > w - JS(8))
+		pw = w - JS(8);
+	if (ph > h - JS(8))
+		ph = h - JS(8);
+	if (pw < 1)
+		pw = 1;
+	if (ph < 1)
+		ph = 1;
+	px = (w - pw) / 2;
+	py = (h - ph) / 2;
+	if (px < 0)
+		px = 0;
+	if (py < 0)
+		py = 0;
+
+	mmb_gfx_fill_rect(px, py, pw, ph, U.col_panel);
+	mmb_gfx_fill_rect(px, py, pw, 1, U.col_peak);
+	mmb_gfx_fill_rect(px, py + ph - 1, pw, 1, U.col_panel2);
+	mmb_gfx_fill_rect(px, py, 1, ph, U.col_panel2);
+	mmb_gfx_fill_rect(px + pw - 1, py, 1, ph, U.col_panel2);
+
+	ty = py + pad;
+	juke_text(px + pad, ty, "JUKE HELP", U.col_text, 1);
+	ty += lh + JS(6);
+	maxx = px + pw - pad;
+	for (i = 0; i < n; i++)
+	{
+		if (ty + lh > py + ph - pad)
+			break;
+		juke_text(px + pad, ty, rows[i].k, U.col_bar_hi, 1);
+		juke_text_clip(px + pad + kw + gap, ty, rows[i].d, U.col_dim, maxx);
+		ty += lh;
+	}
+}
+
 static void juke_paint(int w, int h)
 {
 	int fy, vol;
@@ -1021,14 +1160,14 @@ static void juke_paint(int w, int h)
 	juke_draw_logo(JS(14), JS(1));
 
 	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
-	juke_text(JS(14), JS(60), title, U.col_text, 1);
+	juke_text_clip(JS(14), JS(60), title, U.col_text, w - JS(14));
 	if (s_q.cur >= 0)
 	{
 		const char *rel = juke_dispname(juke_track(s_q.cur));
 		if (rel[0] && !mmb_keyword_eq(title, rel))
-			juke_text(JS(14), JS(78), rel, U.col_dim, 1);
+			juke_text_clip(JS(14), JS(78), rel, U.col_dim, w - JS(14));
 		else if (s_q.dir[0])
-			juke_text(JS(14), JS(78), s_q.dir, U.col_dim, 1);
+			juke_text_clip(JS(14), JS(78), s_q.dir, U.col_dim, w - JS(14));
 	}
 
 	if (U.list_on)
@@ -1039,42 +1178,67 @@ static void juke_paint(int w, int h)
 	else
 		juke_paint_vis(w, h);
 
-	/* Footer: transport legend, then shuffle / volume indicators. */
-	fy = h - JS(48);
-	juke_text(JS(14), fy + JS(6),
-		  "SPACE play/pause   P prev   N next   L list   R shuf   -/+ vol   M mute   S stop   ESC quit",
-		  U.col_dim, 1);
-
-	/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
-	mmb_gfx_fill_rect(JS(14), fy + JS(27), JS(14), JS(14),
-			  s_q.shuffle ? U.col_peak : U.col_track);
-	juke_text(JS(34), fy + JS(28), "SHUF",
-		  s_q.shuffle ? U.col_text : U.col_dim, 1);
-
-	/* Volume level bar: grey body with a muted logo-accent top edge. */
-	vol = g_audio.vol_l;
-	if (vol < 0)
-		vol = 0;
-	if (vol > 100)
-		vol = 100;
-	juke_text(JS(110), fy + JS(28), "VOL", U.col_dim, 1);
-	mmb_gfx_fill_rect(JS(146), fy + JS(27), JS(220), JS(14), U.col_track);
-	if (vol > 0)
+	/* Footer: two stacked rows — the trimmed transport legend (#1114) on top,
+	 * shuffle/volume below it with a fixed gap. Low modes used to scale the
+	 * only row's offsets smaller than the fixed 16px font, so the legend and
+	 * the volume row collided; anchoring the rows from the bottom and gating
+	 * the gap keeps them apart at every scale. */
 	{
-		int barw = JS(220);
-		int vw = vol * barw / 100;
-		int vx;
-		mmb_gfx_fill_rect(JS(146), fy + JS(27), vw, JS(14), U.col_vol);
-		for (vx = 0; vx < vw; vx += 2)
+		int line = 16;
+		int bar_h = JS(14);
+		int vol_row_h, pad, gap, cy, ly;
+
+		if (bar_h < 8)
+			bar_h = 8;
+		vol_row_h = bar_h > line ? bar_h : line;
+		pad = JS(8);
+		if (pad < 4)
+			pad = 4;
+		gap = JS(8);
+		if (gap < 6)
+			gap = 6;
+		fy = h - pad - vol_row_h;             /* top of the volume row */
+		cy = fy + (vol_row_h - bar_h) / 2;    /* chip / bar top          */
+		ly = fy + (vol_row_h - line) / 2;     /* text baseline row       */
+
+		juke_text_clip(JS(14), fy - gap - line,
+			       "SPACE play/pause   P prev   N next   ESC quit   ? help",
+			       U.col_dim, w - JS(14));
+
+		/* Shuffle chip: a solid swatch that lights up when shuffle is on. */
+		mmb_gfx_fill_rect(JS(14), cy, JS(14), JS(14),
+				  s_q.shuffle ? U.col_peak : U.col_track);
+		juke_text(JS(34), ly, "SHUF",
+			  s_q.shuffle ? U.col_text : U.col_dim, 1);
+
+		/* Volume level bar: grey body with a muted logo-accent top edge. */
+		vol = g_audio.vol_l;
+		if (vol < 0)
+			vol = 0;
+		if (vol > 100)
+			vol = 100;
+		juke_text(JS(110), ly, "VOL", U.col_dim, 1);
+		mmb_gfx_fill_rect(JS(146), cy, JS(220), JS(14), U.col_track);
+		if (vol > 0)
 		{
-			int seg = vw - vx < 2 ? vw - vx : 2;
-			mmb_gfx_fill_rect(JS(146) + vx, fy + JS(27), seg, 2,
-					  juke_logo_grad((float)vx /
-							 (float)barw));
+			int barw = JS(220);
+			int vw = vol * barw / 100;
+			int vx;
+			mmb_gfx_fill_rect(JS(146), cy, vw, JS(14), U.col_vol);
+			for (vx = 0; vx < vw; vx += 2)
+			{
+				int seg = vw - vx < 2 ? vw - vx : 2;
+				mmb_gfx_fill_rect(JS(146) + vx, cy, seg, 2,
+						  juke_logo_grad((float)vx /
+								 (float)barw));
+			}
 		}
+		sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
+		juke_text(JS(380), ly, buf, U.col_text, 1);
 	}
-	sprintf(buf, "%3d%%%s", vol, U.muted ? " MUTE" : "");
-	juke_text(JS(380), fy + JS(28), buf, U.col_text, 1);
+
+	if (U.help_on)
+		juke_paint_help(w, h);
 }
 
 static void juke_frame(void)
@@ -1137,7 +1301,7 @@ void mmb_cmd_juke(void)
 
 	/* g_audio volumes default to 0 until the first track starts. JUKE keeps
 	 * one player volume across tracks, so seed an audible level if none is
-	 * set yet, then juke_start() saves/restores it around play_begin(). */
+	 * set yet; juke_start() then arms that gain for play_begin() (#1113). */
 	if (g_audio.vol_l <= 0)
 		g_audio.vol_l = g_audio.vol_r = 100;
 
@@ -1263,8 +1427,20 @@ const char *mmb_juke_key(char c)
 			return "";
 		}
 	}
+	if (c == '?')
+	{
+		U.help_on = !U.help_on;
+		return "";
+	}
 	if (c == 27)
 	{
+		/* Esc closes the help modal only; it must not quit JUKE while the
+		 * modal is up (#1114). A second Esc after that quits as usual. */
+		if (U.help_on)
+		{
+			U.help_on = 0;
+			return "";
+		}
 		U.esc = 1;
 		U.esc_at = mmb_now_ms();
 		return "";
@@ -1366,6 +1542,13 @@ void mmb_juke_poll(void)
 	if (U.esc == 1 && now - U.esc_at >= JUKE_ESC_IDLE_MS)
 	{
 		U.esc = 0;
+		/* While the help modal is up, an idle Esc closes it instead of
+		 * quitting the player (#1114). */
+		if (U.help_on)
+		{
+			U.help_on = 0;
+			return;
+		}
 		juke_leave();
 		mmb_front_prompt();
 		return;

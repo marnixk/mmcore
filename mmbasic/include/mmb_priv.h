@@ -1272,6 +1272,13 @@ void mmb_play_stop(void);
  * explicit commands (PLAY STOP, JUKE 'S', reset) use mmb_play_stop(). */
 void mmb_play_stop_owned(void);
 void mmb_play_mix(void);
+/* Arm a one-shot gain for the next mmb_play_*() call, so the buffer it queues
+ * is mixed at this volume instead of being reset to 100 first (#1113). Pass a
+ * negative value to drop a pending arm. */
+void mmb_play_set_begin_vol(int vl, int vr);
+/* Gain used for the first buffer after the last play started (0xFFFFFFFF if
+ * none yet) — a diagnostic for the no-full-volume-burst check (#1113). */
+unsigned mmb_audio_first_mix_vol(void);
 unsigned mmb_audio_mix_gap_ms(void);
 unsigned mmb_audio_underruns(void);
 unsigned mmb_audio_resets(void);
