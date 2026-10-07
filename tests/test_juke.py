@@ -970,3 +970,94 @@ def test_juke_logo_and_title_clear_at_chromebook_modes(fresh_console):
         _quit_juke(con)
         con.send_line("PLAY STOP")
 
+
+# ---- #1118: header lines keep a fixed one-line pitch at low scales ---------
+
+
+def _header_geometry(w: int, h: int) -> tuple[int, int, int, int]:
+    """Mirror JUKE's header anchors (see cmd_juke.c).
+
+    Returns ``(title_y, path_y, scope_y, list_y)``. The title/path offsets are
+    scaled by the layout percent but the pixel font is a fixed 16px, so each
+    line is clamped to at least one fixed line below the one above, and the
+    scope (then the list) is pushed below the header when it grows.
+    """
+    s = _juke_scale(w, h)
+    title_y = 60 * s // 100
+    path_y = max(78 * s // 100, title_y + 16)
+    gap = max(4, 6 * s // 100)
+    scope_y = max(100 * s // 100, path_y + 16 + gap)
+    list_y = scope_y + 52 * s // 100 + 8 * s // 100
+    return title_y, path_y, scope_y, list_y
+
+
+def _is_header_path(c: tuple[int, int, int]) -> bool:
+    """JUKE's dim steel-blue path text (col_dim 0x6A95AC)."""
+    r, g, b = c
+    return b > r + 20 and g > r and 60 < b < 220
+
+
+def test_juke_header_lines_do_not_overlap_low_resolution(fresh_console):
+    """#1118: the path is anchored one full line below the title at MODE 13.
+
+    At the 60% floor the scaled title/path gap is 10px, under the fixed 16px
+    font, so the path used to be drawn at the un-clamped scaled offset over the
+    title's lower cell rows, and its bottom collided with the scope panel top.
+    """
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    title_y, path_y, scope_y, list_y = _header_geometry(w, h)
+
+    # A full fixed line between title and path, and the scope below the header.
+    assert path_y - title_y >= 16, (title_y, path_y)
+    assert scope_y >= path_y + 16, (path_y, scope_y)
+    assert list_y > scope_y, (scope_y, list_y)
+
+    title_rows, path_rows, border_rows = [], [], []
+    for y in range(title_y, min(h, list_y)):
+        row = con.screen_pixels([(x, y) for x in range(0, w, 2)])
+        if any(min(c) > 200 for c in row):
+            title_rows.append(y)
+        if any(_is_header_path(c) for c in row):
+            path_rows.append(y)
+        if sum(1 for c in row if _is_panel_border(c)) > w // 8:
+            border_rows.append(y)
+
+    assert title_rows, "title line not rendered"
+    assert path_rows, "path line not rendered"
+    # The clamped anchors actually placed the glyphs: the title stays above the
+    # path anchor and the path begins at or below it (pre-fix it started at the
+    # smaller scaled offset).
+    assert max(title_rows) < path_y, (title_rows, path_y)
+    assert min(path_rows) >= path_y, (path_rows, path_y)
+    # The scope panel top moved down with the header instead of sitting under
+    # the path's bottom row.
+    assert border_rows, "scope panel top border not found"
+    assert min(border_rows) >= path_y + 16, (border_rows, path_y)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_header_scales_at_chromebook_modes(fresh_console):
+    """#1118: header pitch and anchors hold in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry plus that the player rendered, not pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        title_y, path_y, scope_y, list_y = _header_geometry(w, h)
+        assert path_y - title_y >= 16, (mode, title_y, path_y)
+        assert scope_y >= path_y + 16, (mode, path_y, scope_y)
+        assert list_y > scope_y, (mode, scope_y, list_y)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+

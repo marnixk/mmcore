@@ -34,10 +34,10 @@
 #define JUKE_SCAN_INIT  16      /* scan stack grows by doubling          */
 #define JUKE_SCOPE_N    64     /* scope samples drawn per frame      */
 #define JUKE_SCOPE_HIST 6      /* ghost history frames (AFK-style)   */
-#define JUKE_MID_Y      100    /* oscilloscope inset top             */
+#define JUKE_MID_Y      100    /* oscilloscope inset top (at scale 100) */
 #define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
-#define JUKE_LIST_Y     (JUKE_MID_Y + JUKE_SCOPE_H + 8) /* below the scope */
 #define JUKE_LIST_ROW    18
+#define JUKE_LINE_H      16    /* fixed pixel-font line height (#1118)  */
 #define JUKE_LIST_SEL   0x3A4650u
 #define JUKE_ESC_IDLE_MS 60
 
@@ -89,6 +89,41 @@ static juke_ui s_ui[MMB_MAX_CONSOLES];
 #define JS(v) ((v) * U.s / 100)
 static juke_queue s_q;
 static unsigned s_rand = 0x9E3779B9u;
+
+/* Header line and panel anchors. The title/path offsets are scaled by the
+ * layout percent but the pixel font is a fixed 16px at every scale, so below
+ * ~89% the scaled gap between the two header lines drops under one line and
+ * the path draws over the title (#1118). Clamp each line to at least one fixed
+ * line below the one above, then push the scope (and hence the list) below the
+ * header when it grows. At scale 100 these reduce to the design coordinates. */
+static int juke_title_y(void)
+{
+	return JS(60);
+}
+
+static int juke_path_y(void)
+{
+	int y = JS(78);
+	int floor = juke_title_y() + JUKE_LINE_H;
+	return y < floor ? floor : y;
+}
+
+static int juke_scope_y(void)
+{
+	int gap = JS(6);
+	int y = JS(JUKE_MID_Y);
+	int floor;
+
+	if (gap < 4)
+		gap = 4;
+	floor = juke_path_y() + JUKE_LINE_H + gap;
+	return y < floor ? floor : y;
+}
+
+static int juke_list_y(void)
+{
+	return juke_scope_y() + JS(JUKE_SCOPE_H) + JS(8);
+}
 
 /* Small xorshift PRNG; no libc rand() on bare metal. */
 static unsigned juke_rand(void)
@@ -873,7 +908,7 @@ static void juke_text_clip(int x, int y, const char *s, unsigned col, int maxx)
 static void juke_paint_list(int w, int h)
 {
 	int margin = JS(8);
-	int y0 = JS(JUKE_LIST_Y);
+	int y0 = juke_list_y();
 	int y1 = h - JS(56);
 	int bw = w - JS(16);
 	int row = JS(JUKE_LIST_ROW);
@@ -959,7 +994,7 @@ static void juke_paint_scope(int w)
 	/* Oscilloscope: its own bordered inset under the title, with a ghost
 	 * history of past frames (oldest first so the newest lands on top). */
 	{
-		int bx = JS(8), by = JS(JUKE_MID_Y);
+		int bx = JS(8), by = juke_scope_y();
 		int bw2 = w - JS(16), bh2 = JS(JUKE_SCOPE_H);
 		if (bh2 < 12)
 			bh2 = 12;
@@ -1160,14 +1195,14 @@ static void juke_paint(int w, int h)
 	juke_draw_logo(JS(14), JS(1));
 
 	title = s_q.cur >= 0 ? juke_row_title(s_q.cur) : "(no track)";
-	juke_text_clip(JS(14), JS(60), title, U.col_text, w - JS(14));
+	juke_text_clip(JS(14), juke_title_y(), title, U.col_text, w - JS(14));
 	if (s_q.cur >= 0)
 	{
 		const char *rel = juke_dispname(juke_track(s_q.cur));
 		if (rel[0] && !mmb_keyword_eq(title, rel))
-			juke_text_clip(JS(14), JS(78), rel, U.col_dim, w - JS(14));
+			juke_text_clip(JS(14), juke_path_y(), rel, U.col_dim, w - JS(14));
 		else if (s_q.dir[0])
-			juke_text_clip(JS(14), JS(78), s_q.dir, U.col_dim, w - JS(14));
+			juke_text_clip(JS(14), juke_path_y(), s_q.dir, U.col_dim, w - JS(14));
 	}
 
 	if (U.list_on)
