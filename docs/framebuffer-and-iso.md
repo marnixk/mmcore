@@ -465,9 +465,10 @@ disk and boots without the card.
   starts, because the ISO has no udev (OpenRC uses mdev) to re-probe a device
   the kernel enumerated before the rootfs. No manual `modprobe` is needed:
   mmcore reads the touchpad through SDL's evdev backend, so once the kernel
-  driver binds there is no extra input daemon to install. A touchpad that
-  still does nothing may be the AMD ELAN066C firmware bug in the known gaps
-  below, which no module load can fix.
+   driver binds there is no extra input daemon to install. A touchpad on an
+   **AMD-based** board that still does nothing may be the AMD ELAN066C firmware
+   bug in the known gaps below, which no module load can fix; the Intel Lenovo
+   100e Chromebook Gen 2 in #1039 uses the Intel I2C-HID path above instead.
 - **Audio.** `sof-firmware`, the `snd_sof*` modules and the mainline
   `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. The
   `local` boot helper (`mmcore-audio.start`, from `/etc/local.d/`) *applies*
@@ -501,9 +502,9 @@ change to this image — it needs a separate aarch64 build.
 
 ### Known gap: the AMD ELAN066C touchpad DSDT firmware bug
 
-The Lenovo 100e/300e Chromebook 2nd Gen (AMD, types 82CD/82GJ) use an
-**ELAN066C** I2C touchpad whose firmware DSDT leaves the device without an I2C
-resource: two consecutive `If (TPTY == 0x01)` / `If (TPTY == 0x02)` branches
+An **AMD-based** Lenovo 100e/300e Chromebook with an **ELAN066C** I2C touchpad
+has a firmware DSDT that leaves the device without an I2C resource: two
+consecutive `If (TPTY == 0x01)` / `If (TPTY == 0x02)` branches
 assign the address and interrupt, and when `TPTY` matches neither value the
 touchpad gets no resource at all. No kernel driver — and therefore no module in
 the list above — can bind a device with no I2C address or IRQ; a USB mouse
@@ -512,10 +513,13 @@ still works because it is not on that bus. The community fix patches the second
 `acpi /boot/dsdt.aml`, or the distribution's equivalent). That override is
 hardware- and firmware-specific, so it is deliberately not shipped in the
 ISO: loading one machine's DSDT on another would describe different hardware
-and can break it. A user hitting this must extract and patch their own DSDT (or
-move to firmware that fixes it); the module list and
-`mmcore-touchpad.start` cannot address it. This is tracked as a follow-up, and
-the touchpad path still needs real Chromebook hardware to verify.
+  and can break it. A user hitting this must extract and patch their own DSDT (or
+  move to firmware that fixes it); the module list and
+  `mmcore-touchpad.start` cannot address it. This is tracked as follow-up #1097.
+  It is an **AMD** board, distinct from the Intel Lenovo 100e Chromebook Gen 2
+  reported in #1039 (which binds through the normal Intel I2C-HID path and is a
+  module/ordering concern, not this DSDT bug). The touchpad path still needs real
+  Chromebook hardware to verify.
 
 ### If the boot hangs on the mmcore logo
 
