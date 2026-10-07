@@ -68,6 +68,32 @@ static unsigned s_audio_resets;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
+/* One-shot gain for the buffer play_begin() queues. mmb_play_*() reset the
+ * gain to 100 by default; JUKE arms this first so its preroll is mixed at its
+ * own volume instead of blasting at 100 for the first few ms (#1113). */
+static int s_begin_vol_l, s_begin_vol_r, s_begin_vol_armed;
+/* Gain applied to the first buffer emitted after play_begin(); a diagnostic
+ * for "did the first sample use the set volume?" (#1113). */
+static int s_first_mix_vol;
+static int s_first_mix_valid;
+
+void mmb_play_set_begin_vol(int vl, int vr)
+{
+	if (vl < 0 || vr < 0)
+	{
+		s_begin_vol_armed = 0;
+		return;
+	}
+	s_begin_vol_l = vl;
+	s_begin_vol_r = vr;
+	s_begin_vol_armed = 1;
+}
+
+unsigned mmb_audio_first_mix_vol(void)
+{
+	return s_first_mix_valid ? (unsigned)s_first_mix_vol : 0xFFFFFFFFu;
+}
+
 /* ---- Visualiser tap (JUKE) -------------------------------------------- *
  * A cheap filter-bank: a chain of one-pole low-passes with increasing cutoff.
  * The difference between adjacent stages isolates a frequency band. This
@@ -138,6 +164,11 @@ static void apply_vol(short *pcm, unsigned nframes)
 {
 	int i, n = (int)(nframes * 2);
 	int vl = g_audio.vol_l, vr = g_audio.vol_r;
+	if (!s_first_mix_valid)
+	{
+		s_first_mix_vol = vl;
+		s_first_mix_valid = 1;
+	}
 	if (vl < 0) vl = 0;
 	if (vl > 100) vl = 100;
 	if (vr < 0) vr = 0;
@@ -337,7 +368,17 @@ static void play_begin(int kind, const char *path)
 {
 	g_audio.playing = kind;
 	g_audio.paused = 0;
-	g_audio.vol_l = g_audio.vol_r = 100;
+	/* Use the caller's armed gain (JUKE) for the preroll, else the historical
+	 * reset to 100. Consume the arm so the next PLAY starts at 100 again. */
+	if (s_begin_vol_armed)
+	{
+		g_audio.vol_l = s_begin_vol_l;
+		g_audio.vol_r = s_begin_vol_r;
+		s_begin_vol_armed = 0;
+	}
+	else
+		g_audio.vol_l = g_audio.vol_r = 100;
+	s_first_mix_valid = 0;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
 	g_audio.owner = g_console;

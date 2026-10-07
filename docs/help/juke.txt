@@ -45,6 +45,7 @@ Controls:
     S       stop the queue and silence audio
     ESC     quit JUKE (music keeps playing)
     Q       quit JUKE (music keeps playing)
+    ?       open or close the shortcut help
 
 L opens the playlist, which is laid out below the oscilloscope so the
 waveform stays visible. The queue is shown in play order, the same order
@@ -53,6 +54,11 @@ highlighted, and the list scrolls when the queue is longer than the pane.
 Up and Down move the selection; Enter starts that track. Pressing L again
 returns to the visualiser and leaves the selection where it was. SPACE, P,
 N, R, volume, mute, S, and ESC do the same in both views.
+
+The bottom bar shows only the core transport hints (play/pause, prev, next,
+ESC and `?`); every other shortcut is in the help modal. Press `?` to open it,
+and `?` or ESC to close it. Esc closes the modal only — a second Esc quits
+JUKE. Playback keeps running while the modal is open.
 
 Shuffle reorders folder and queue play: NEXT and PREV follow the shuffled
 order, and the currently playing track stays put. The playlist follows that

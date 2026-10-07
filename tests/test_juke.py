@@ -781,3 +781,192 @@ def test_juke_folder_beyond_64_files_is_fully_reachable(fresh_console):
     _quit_juke(con)
     con.send_line("PLAY STOP")
 
+
+# ---- #1113: the first mixed buffer already uses the set volume -------------
+
+
+def test_juke_first_buffer_uses_current_volume(fresh_console):
+    """#1113: no full-volume preroll; the first buffer is scaled to the volume.
+
+    ``MM.INFO("FIRSTVOL")`` is the gain the mixer applied to the first buffer
+    after the track started. It used to be 100 for a few ms before JUKE
+    restored its own setting.
+    """
+    con = fresh_console
+    assert con.send_line("PLAY VOLUME 40") == ""
+    _open_juke(con, "tests/TEST.MOD")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "40"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_next_track_first_buffer_is_silent_at_zero(fresh_console):
+    """#1113: with volume 0 a skip is silent from its very first sample."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JV/A.MOD"),
+                      ("tests/TEST.MOD", "JV/B.MOD")])
+    _open_juke(con, "JV")
+    _keys(con, b"-" * 24, quiet=0.8)  # 100 -> 0
+    _keys(con, b"n", quiet=0.8)       # next track re-arms the gain at 0
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "0"
+    con.send_line("PLAY STOP")
+
+
+# ---- #1114: trimmed shortcut bar and ? help modal --------------------------
+
+
+def _footer_geometry(w: int, h: int) -> tuple[int, int, int]:
+    """Mirror JUKE's footer rows (see cmd_juke.c): (legend_y, vol_y, bar_h)."""
+    s = _juke_scale(w, h)
+    line = 16
+    bar_h = max(8, 14 * s // 100)
+    vol_row_h = max(bar_h, line)
+    pad = max(4, 8 * s // 100)
+    gap = max(6, 8 * s // 100)
+    vol_y = h - pad - vol_row_h
+    return vol_y - gap - line, vol_y, bar_h
+
+
+def _help_title_crop(w: int, h: int) -> str:
+    """A crop around the help modal's title row (see cmd_juke.c)."""
+    s = _juke_scale(w, h)
+    pad = max(8, 12 * s // 100)
+    gap = max(10, 14 * s // 100)
+    kw = len("UP DOWN") * 8
+    dw = len("close help (then quits)") * 8
+    pw = min(pad * 2 + kw + gap + dw, w - 8 * s // 100)
+    ph = min(pad * 2 + 13 * 16 + 6 * s // 100, h - 8 * s // 100)
+    px = (w - pw) // 2
+    py = (h - ph) // 2
+    return f"{pw}x36+{px}+{py}"
+
+
+def test_juke_footer_lists_only_core_shortcuts(fresh_console):
+    """#1114: the bar keeps only play/pause, prev, next, esc and ?."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    w, h = con.screen_size()
+    legend_y, _vol_y, _bar_h = _footer_geometry(w, h)
+    out = con.ocr_screen(crop=f"{w}x20+0+{max(0, legend_y - 2)}").lower()
+    assert "space" in out, out
+    assert "prev" in out and "next" in out, out
+    assert "esc" in out, out
+    assert "?" in out or "help" in out, out
+    for gone in ("shuf", "mute", "stop"):
+        assert gone not in out, (gone, out)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_help_modal_toggles_and_esc_is_dialog_only(fresh_console):
+    """#1114: `?` opens/closes help; Esc closes the dialog, not the player."""
+    con = fresh_console
+    # A two-track queue wraps, so audio is still live at the end of the test.
+    _prep_queue(con, [("tests/TEST.MOD", "JH/A.MOD"),
+                      ("tests/TEST.MOD", "JH/B.MOD")])
+    _open_juke(con, "JH")
+    w, h = con.screen_size()
+    crop = _help_title_crop(w, h)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" in con.wait_ocr("HELP", timeout=8.0, crop=crop).upper()
+
+    # `?` a second time closes it.
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+
+    # Esc closes the dialog only; JUKE keeps rendering and a later Esc quits.
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" in con.wait_ocr("HELP", timeout=8.0, crop=crop).upper()
+    _keys(con, b"\x1b", quiet=0.5)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+    assert _peak_lit(con) > 0.001, "Esc closed JUKE instead of just the dialog"
+    # Keys still work after the dialog; restart a track so the playback check
+    # does not land in the ~1 s queue-advance gap between two MODs.
+    _keys(con, b"n", quiet=0.4)
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"  # dialog never stopped audio
+    con.send_line("PLAY STOP")
+
+
+def test_juke_footer_gap_at_low_resolution(fresh_console):
+    """#1114: a clear gap between the shortcut bar and the volume row."""
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    s = _juke_scale(w, h)
+    legend_y, vol_y, _bar_h = _footer_geometry(w, h)
+    assert vol_y - (legend_y + 16) >= 6, (legend_y, vol_y)
+    lx = 14 * s // 100
+    right = min(lx + 220 * s // 100, w - 1)
+    for y in range(legend_y + 16, vol_y):
+        row = con.screen_pixels([(x, y) for x in range(lx, right, 3)])
+        assert all(sum(c) < 70 for c in row), (y, row)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+# ---- #1115: logo never overlaps the track / path text ----------------------
+
+
+def _is_vivid_pixel(c: tuple[int, int, int]) -> bool:
+    """Vivid graffiti-logo hue (the dim path text and white title miss it)."""
+    return max(c) - min(c) > 90 and max(c) > 120
+
+
+def _logo_bottom_and_title(con: MMBasicConsole, w: int, h: int) -> tuple[int, bool]:
+    """Lowest vivid logo pixel in the header, and whether the title is visible."""
+    coords = [(x, y) for x in range(0, w, 2) for y in range(0, min(70, h), 2)]
+    vivid_y = []
+    for c, (x, y) in zip(con.screen_pixels(coords), coords):
+        if _is_vivid_pixel(c):
+            vivid_y.append(y)
+    title_y = 60 * _juke_scale(w, h) // 100
+    row = [(x, y) for x in range(0, w, 2)
+           for y in range(title_y, min(title_y + 16, h), 2)]
+    white = sum(1 for c in con.screen_pixels(row) if min(c) > 200)
+    return max(vivid_y) if vivid_y else -1, white > 0
+
+
+def test_juke_logo_clear_of_title_low_resolution(fresh_console):
+    """#1115: in a low mode the scaled logo ends above the title row."""
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    s = _juke_scale(w, h)
+    title_y = 60 * s // 100
+    logo_bottom, title_visible = _logo_bottom_and_title(con, w, h)
+    assert logo_bottom >= 0, "no graffiti logo found in the header"
+    assert logo_bottom < title_y, (logo_bottom, title_y)
+    assert title_visible, "track title not drawn below the logo"
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_logo_and_title_clear_at_chromebook_modes(fresh_console):
+    """#1115: logo and title do not collide in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry (logo bottom above the title) plus that the player
+    rendered, rather than pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        s = _juke_scale(w, h)
+        logo_bottom = (1 * s // 100) + 50 * s // 100
+        title_y = 60 * s // 100
+        assert logo_bottom < title_y, (mode, logo_bottom, title_y)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+

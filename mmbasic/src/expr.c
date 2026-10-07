@@ -1125,6 +1125,12 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_int_val((int)mmb_audio_underruns());
 				return 1;
 			}
+			if (mmb_keyword_eq(key, "FIRSTVOL"))
+			{
+				/* Gain applied to the first buffer after play began (#1113). */
+				*out = mmb_int_val((int)mmb_audio_first_mix_vol());
+				return 1;
+			}
 			if (mmb_keyword_eq(key, "AUDIORESET"))
 			{
 				*out = mmb_int_val((int)mmb_audio_resets());

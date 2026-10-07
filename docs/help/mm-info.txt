@@ -9,8 +9,10 @@ value = MM.INFO(key)
   key - "MODE" (default returns mode + bits/100), "HRES", "AUDIO"
         ("HDMI" or "JACK"), "MIXGAP" (longest mixer gap in milliseconds
         since PLAY started), "UNDERRUN" (times the output queue was
-        empty when the mixer ran), or "AUDIORESET" (times PLAY RESET
-        has re-initialised the audio backend)
+        empty when the mixer ran), "AUDIORESET" (times PLAY RESET
+        has re-initialised the audio backend), or "FIRSTVOL" (the gain
+        applied to the first mixed buffer after playback began; -1 if
+        nothing has played yet)
 
 See also ~MM.INFO$~, ~MODE~, ~AUDIO_TARGET~.
 
