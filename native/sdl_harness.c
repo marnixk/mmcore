@@ -339,7 +339,10 @@ static void hs_exec(const hs_step *st)
 		e.type = SDL_KEYUP;
 		e.key.state = SDL_RELEASED;
 		e.key.keysym.sym = st->sym;
-		e.key.keysym.mod = (SDL_Keymod)st->mods;
+		/* The injected chord is a complete press-and-release, so the
+		 * modifiers go up with it. Leaving them latched keeps s_alt/
+		 * s_ctrl set and swallows a later text injection (#1104). */
+		e.key.keysym.mod = KMOD_NONE;
 		hs_push_event(&e);
 		break;
 	case HS_TEXT:

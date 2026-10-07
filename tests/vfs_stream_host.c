@@ -215,6 +215,76 @@ static void test_rename_reparent(void)
 	check(mmb_vfs_rename("A:/M1/H.TXT", "A:/") == -1, "root target refused");
 }
 
+static void seed_text(const char *path, const char *text)
+{
+	check(mmb_vfs_write(path, text, (unsigned)strlen(text), 0) == 0, path);
+}
+
+/* #1112: COPY of a folder brings the whole tree, including empty and nested
+ * empty folders, and refuses to copy a folder into itself or its subtree. */
+static void test_copy_directory_recursive(void)
+{
+	char buf[16];
+	unsigned got;
+
+	check(mmb_vfs_mkdir("A:/CSRC") == 0, "mkdir CSRC");
+	check(mmb_vfs_mkdir("A:/CSRC/SUB") == 0, "mkdir CSRC/SUB");
+	check(mmb_vfs_mkdir("A:/CSRC/SUB/EMPTY") == 0, "mkdir nested empty");
+	seed_text("A:/CSRC/TOP.TXT", "top");
+	seed_text("A:/CSRC/SUB/DEEP.TXT", "deep");
+
+	check(mmb_vfs_copy("A:/CSRC", "A:/CDST") == 0, "copy dir");
+	check(mmb_vfs_isdir("A:/CDST") == 1, "copy made root");
+	check(mmb_vfs_isdir("A:/CDST/SUB") == 1, "copy made subdir");
+	check(mmb_vfs_isdir("A:/CDST/SUB/EMPTY") == 1, "copy made empty nest");
+	check(mmb_vfs_size("A:/CDST/TOP.TXT") == 3, "copy top size");
+	check(mmb_vfs_size("A:/CDST/SUB/DEEP.TXT") == 4, "copy deep size");
+	got = 0;
+	check(mmb_vfs_read_at("A:/CDST/SUB/DEEP.TXT", 0, buf, sizeof buf, &got) == 0 &&
+	      got == 4 && memcmp(buf, "deep", 4) == 0, "copy deep content");
+
+	check(mmb_vfs_copy("A:/CSRC", "A:/CSRC") == -1, "copy into self refused");
+	check(mmb_vfs_copy("A:/CSRC", "A:/CSRC/SUB") == -1, "copy into subtree refused");
+}
+
+/* #1112: an existing destination folder merges (files overwritten, other
+ * files kept); a destination that is a file is refused. */
+static void test_copy_destination_rules(void)
+{
+	check(mmb_vfs_mkdir("A:/DSRC") == 0, "mkdir DSRC");
+	seed_text("A:/DSRC/A.TXT", "a");
+	check(mmb_vfs_mkdir("A:/DDST") == 0, "mkdir DDST");
+	seed_text("A:/DDST/KEEP.TXT", "keep");
+	seed_text("A:/DDST/A.TXT", "old");
+	check(mmb_vfs_copy("A:/DSRC", "A:/DDST") == 0, "merge copy");
+	check(mmb_vfs_size("A:/DDST/A.TXT") == 1, "overwrite file size");
+	check(mmb_vfs_exists("A:/DDST/KEEP.TXT") == 1, "extra file kept");
+
+	seed_text("A:/DFILE.TXT", "f");
+	check(mmb_vfs_copy("A:/DSRC", "A:/DFILE.TXT") == -1,
+	      "copy dir onto file refused");
+}
+
+/* #1112: a folder move reparents the whole subtree, and never into itself. */
+static void test_move_directory_reparent(void)
+{
+	check(mmb_vfs_mkdir("A:/MSRC") == 0, "mkdir MSRC");
+	check(mmb_vfs_mkdir("A:/MSRC/IN") == 0, "mkdir MSRC/IN");
+	seed_text("A:/MSRC/X.TXT", "x");
+	seed_text("A:/MSRC/IN/Y.TXT", "y");
+	check(mmb_vfs_mkdir("A:/MDST") == 0, "mkdir MDST");
+
+	check(mmb_vfs_move("A:/MSRC", "A:/MDST/MSRC") == 0, "move dir");
+	check(mmb_vfs_exists("A:/MSRC") == 0, "move source gone");
+	check(mmb_vfs_isdir("A:/MDST/MSRC") == 1, "move dest dir");
+	check(mmb_vfs_isdir("A:/MDST/MSRC/IN") == 1, "move nested dir");
+	check(mmb_vfs_size("A:/MDST/MSRC/IN/Y.TXT") == 1, "move nested size");
+
+	check(mmb_vfs_move("A:/MDST/MSRC", "A:/MDST/MSRC/IN") == -1,
+	      "move into self refused");
+	check(mmb_vfs_isdir("A:/MDST/MSRC") == 1, "dir kept after refusal");
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -229,6 +299,9 @@ int main(void)
 	test_bounded_listing();
 	test_list_truncation();
 	test_rename_reparent();
+	test_copy_directory_recursive();
+	test_copy_destination_rules();
+	test_move_directory_reparent();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);

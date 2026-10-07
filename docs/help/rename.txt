@@ -2,18 +2,24 @@ name: RENAME
 kind: command
 alias: NAME, MV
 
-Rename a file, or move it to another folder on the same drive. Destination may
-be a new name or a path.
+Rename a file or folder, or move it to another folder. Destination may be a
+new name or a path, on the same or another drive.
 
 RENAME src$ [AS|TO] dst$
 NAME src$ AS dst$
 MV src$ [AS|TO] dst$
 
   src$ - existing path
-  dst$ - new name or path
+  dst$ - new name or path; if it names an existing folder, src$ is moved
+         inside it under its own name
+
+A folder moves with its whole tree. Across drives the move falls back to a
+copy followed by a delete of the source. Moving a folder into itself or into
+one of its subfolders is refused.
 
 Example:
 
     RENAME "B.TXT" AS "C.TXT"
     NAME "B.TXT" AS "C.TXT"
     MV "C.TXT" TO "DATA/C.TXT"
+    NAME "SRC" AS "C:/BACKUP"

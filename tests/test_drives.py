@@ -67,6 +67,135 @@ def test_name_moves_file_between_folders(console):
     assert "MV.TXT" in console.send_line('DIR "A:/RN1028B"').upper()
 
 
+def _dir_names(con, spec):
+    """The bare entry names in a listing, upper-cased."""
+    out = []
+    for line in con.send_line(f'DIR "{spec}"').splitlines():
+        line = line.strip()
+        if not line or line == "(empty)":
+            continue
+        out.append(line.split()[0].upper())
+    return out
+
+
+def test_copy_directory_recursively(console):
+    """#1112: COPY on a folder brings the whole tree, empty nests included."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "C1112SRC"') == ""
+    assert console.send_line('MKDIR "A:/C1112SRC/SUB"') == ""
+    assert console.send_line('MKDIR "A:/C1112SRC/SUB/EMPTY"') == ""
+    _write_text(console, "A:/C1112SRC/TOP.TXT", "top")
+    _write_text(console, "A:/C1112SRC/SUB/DEEP.TXT", "deep")
+
+    assert console.send_line('COPY "A:/C1112SRC" TO "A:/C1112DST"') == ""
+    assert _dir_names(console, "A:/C1112DST") == ["SUB/", "TOP.TXT"]
+    assert _dir_names(console, "A:/C1112DST/SUB") == ["EMPTY/", "DEEP.TXT"]
+    # The nested empty folder came across as a folder.
+    assert console.send_line('CHDIR "A:/C1112DST/SUB/EMPTY"') == ""
+    assert console.send_line('CHDIR "A:/"') == ""
+
+
+def test_copy_directory_into_existing_folder(console):
+    """#1112: an existing destination folder receives the source under its own
+    name; a same-named file inside it is overwritten."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "C1112S2"') == ""
+    _write_text(console, "A:/C1112S2/F.TXT", "new")
+    assert console.send_line('MKDIR "C1112E2"') == ""
+    _write_text(console, "A:/C1112E2/C1112S2/F.TXT", "old")
+    _write_text(console, "A:/C1112E2/KEEP.TXT", "keep")
+
+    assert console.send_line('COPY "A:/C1112S2" TO "A:/C1112E2"') == ""
+    assert _dir_names(console, "A:/C1112E2/C1112S2") == ["F.TXT"]
+    assert "new" in console.send_line('cat "A:/C1112E2/C1112S2/F.TXT"')
+    assert _dir_names(console, "A:/C1112E2") == ["C1112S2/", "KEEP.TXT"]
+
+
+def test_copy_directory_into_itself_is_refused(console):
+    """#1112: copying a folder into itself or its subtree must fail, not loop."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "C1112SELF"') == ""
+    assert console.send_line('MKDIR "A:/C1112SELF/SUB"') == ""
+    _write_text(console, "A:/C1112SELF/SUB/X.TXT", "x")
+    assert console.send_line(
+        'COPY "A:/C1112SELF" TO "A:/C1112SELF/SUB"'
+    ).startswith("?")
+    assert console.send_line(
+        'COPY "A:/C1112SELF" TO "A:/C1112SELF/SUB/NEW"'
+    ).startswith("?")
+    # Nothing was created and the source is intact.
+    assert "X.TXT" in console.send_line('DIR "A:/C1112SELF/SUB"').upper()
+
+
+def test_name_moves_directory_into_folder(console):
+    """#1112: NAME on a folder moves the whole tree inside another folder."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "M1112SRC"') == ""
+    assert console.send_line('MKDIR "A:/M1112SRC/IN"') == ""
+    _write_text(console, "A:/M1112SRC/TOP.TXT", "t")
+    _write_text(console, "A:/M1112SRC/IN/DEEP.TXT", "d")
+    assert console.send_line('MKDIR "M1112DST"') == ""
+
+    assert console.send_line('NAME "A:/M1112SRC" AS "A:/M1112DST"') == ""
+    assert "M1112SRC" not in console.send_line('DIR "A:/"').upper()
+    assert _dir_names(console, "A:/M1112DST") == ["M1112SRC/"]
+    assert _dir_names(console, "A:/M1112DST/M1112SRC") == ["IN/", "TOP.TXT"]
+    assert _dir_names(console, "A:/M1112DST/M1112SRC/IN") == ["DEEP.TXT"]
+
+
+def test_name_directory_into_itself_is_refused(console):
+    """#1112: moving a folder into its own subtree is refused."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('MKDIR "M1112SELF"') == ""
+    assert console.send_line('MKDIR "A:/M1112SELF/SUB"') == ""
+    assert console.send_line(
+        'NAME "A:/M1112SELF" AS "A:/M1112SELF/SUB"'
+    ).startswith("?")
+    assert "SUB/" in console.send_line('DIR "A:/M1112SELF"').upper()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_move_directory_across_drives_copies_and_deletes(kernel_image):
+    """#1112: moving a folder A: -> C: has no rename primitive, so it copies
+    the tree and then deletes the source, empty nests included."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('MKDIR "X1112SRC"') == ""
+            assert con.send_line('MKDIR "A:/X1112SRC/SUB"') == ""
+            assert con.send_line('MKDIR "A:/X1112SRC/SUB/EMPTY"') == ""
+            _write_text(con, "A:/X1112SRC/TOP.TXT", "top")
+            _write_text(con, "A:/X1112SRC/SUB/DEEP.TXT", "deep")
+
+            assert con.send_line('NAME "A:/X1112SRC" AS "C:/X1112SRC"') == ""
+            assert "X1112SRC" not in con.send_line('DIR "A:/"').upper()
+            assert _dir_names(con, "C:/X1112SRC") == ["SUB/", "TOP.TXT"]
+            assert _dir_names(con, "C:/X1112SRC/SUB") == ["EMPTY/", "DEEP.TXT"]
+            assert con.send_line('CHDIR "C:/X1112SRC/SUB/EMPTY"') == ""
+            assert con.send_line('CHDIR "A:/"') == ""
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
 def test_dir_sorts_folders_then_files(console):
     assert console.send_line('CHDIR "A:"') == ""
     assert console.send_line('MKDIR "SORT391"') == ""

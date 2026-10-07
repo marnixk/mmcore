@@ -53,10 +53,37 @@ void mmb_cmd_kill(void)
 		mmb_error("?FILE NOT FOUND");
 }
 
+/* If `dst` already names a directory, copy/move `src` into it under its own
+ * basename (the usual "into a folder" idiom); otherwise `dst` is the target
+ * path as typed. The destination may be on another drive. */
+static void copy_dest_path(const char *src, const char *dst, char *out, int outsz)
+{
+	const char *base = src, *q;
+	int n;
+
+	out[0] = 0;
+	if (!mmb_vfs_isdir(dst))
+	{
+		strncpy(out, dst, (size_t)outsz - 1);
+		out[outsz - 1] = 0;
+		return;
+	}
+	for (q = src; *q; q++)
+		if (*q == '/' || *q == '\\')
+			base = q + 1;
+	strncpy(out, dst, (size_t)outsz - 1);
+	out[outsz - 1] = 0;
+	n = (int)strlen(out);
+	if (n > 0 && out[n - 1] != '/')
+		strncat(out, "/", (size_t)outsz - strlen(out) - 1);
+	strncat(out, base, (size_t)outsz - strlen(out) - 1);
+}
+
 void mmb_cmd_copy(void)
 {
-	char src[128], dst[128];
+	char src[128], dst[128], target[160];
 	strncpy(src, need_path(), sizeof(src) - 1);
+	src[sizeof(src) - 1] = 0;
 	mmb_skip_sp();
 	if (mmb_match("TO"))
 		;
@@ -67,9 +94,11 @@ void mmb_cmd_copy(void)
 			G.p++;
 	}
 	strncpy(dst, need_path(), sizeof(dst) - 1);
-	if (mmb_vfs_readonly_path(dst))
+	dst[sizeof(dst) - 1] = 0;
+	copy_dest_path(src, dst, target, sizeof(target));
+	if (mmb_vfs_readonly_path(target))
 		mmb_error("?READ ONLY");
-	if (mmb_vfs_copy(src, dst) != 0)
+	if (mmb_vfs_copy(src, target) != 0)
 		mmb_error("?FILE");
 }
 
@@ -121,8 +150,9 @@ void mmb_cmd_xfer(void)
 
 void mmb_cmd_name(void)
 {
-	char src[128], dst[128];
+	char src[128], dst[128], target[160];
 	strncpy(src, need_path(), sizeof(src) - 1);
+	src[sizeof(src) - 1] = 0;
 	mmb_skip_sp();
 	if (!mmb_match("AS") && !mmb_match("TO"))
 	{
@@ -130,9 +160,13 @@ void mmb_cmd_name(void)
 			G.p++;
 	}
 	strncpy(dst, need_path(), sizeof(dst) - 1);
-	if (mmb_vfs_readonly_path(dst) || mmb_vfs_readonly_path(src))
+	dst[sizeof(dst) - 1] = 0;
+	copy_dest_path(src, dst, target, sizeof(target));
+	if (mmb_vfs_readonly_path(target) || mmb_vfs_readonly_path(src))
 		mmb_error("?READ ONLY");
-	if (mmb_vfs_rename(src, dst) != 0)
+	/* mmb_vfs_move keeps the plain rename on one drive and falls back to a
+	 * copy plus delete across drives, so a folder can move A: -> C:. */
+	if (mmb_vfs_move(src, target) != 0)
 		mmb_error("?FILE");
 }
 

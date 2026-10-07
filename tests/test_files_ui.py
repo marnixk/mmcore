@@ -544,6 +544,109 @@ def test_files_move_keeps_selection_near_moved(fresh_console):
     assert "F3.TXT" not in con.send_line('DIR "A:/MOVEDIR"').upper()
 
 
+def _seed_file(con: MMBasicConsole, path: str, text: str = "x") -> None:
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    assert con.send_line(f'PRINT #1, "{text}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_files_copies_directory_tree(fresh_console):
+    """#1112: Copy on a folder brings the whole tree, empty nests included."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC/SUB"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC/SUB/EMPTY"') == ""
+    _seed_file(con, "A:/FCOPYSRC/TOP.TXT", "top")
+    _seed_file(con, "A:/FCOPYSRC/SUB/DEEP.TXT", "deep")
+    assert con.send_line('MKDIR "FCOPYDST"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=FCOPYSRC/")
+    _keys(con, b"c", quiet=0.4)
+    # Both panes are A:/, so the seed is A:/FCOPYSRC; retype the destination.
+    _keys(con, b"\x7f" * 40)
+    seen = _keys(con, b"A:/FCOPYDST/FCOPYSRC\r", quiet=1.5)
+    assert "Copied" in seen, seen
+    _keys(con, b"q")
+    assert "TOP.TXT" in con.send_line('DIR "A:/FCOPYDST/FCOPYSRC"').upper()
+    assert "DEEP.TXT" in con.send_line('DIR "A:/FCOPYDST/FCOPYSRC/SUB"').upper()
+    assert con.send_line('CHDIR "A:/FCOPYDST/FCOPYSRC/SUB/EMPTY"') == ""
+    assert con.send_line('CHDIR "A:/"') == ""
+
+
+def test_files_moves_directory_into_folder(fresh_console):
+    """#1112: Move on a folder reparents the whole tree into a destination."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "FMOVESRC"') == ""
+    assert con.send_line('MKDIR "FMOVESRC/IN"') == ""
+    _seed_file(con, "A:/FMOVESRC/A.TXT", "a")
+    _seed_file(con, "A:/FMOVESRC/IN/B.TXT", "b")
+    assert con.send_line('MKDIR "FMOVEDST"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=FMOVESRC/")
+    _keys(con, b"m", quiet=0.4)
+    _keys(con, b"\x7f" * 40)
+    seen = _keys(con, b"A:/FMOVEDST/FMOVESRC\r", quiet=1.5)
+    assert "Moved" in seen, seen
+    _keys(con, b"q")
+    assert "A.TXT" in con.send_line('DIR "A:/FMOVEDST/FMOVESRC"').upper()
+    assert "B.TXT" in con.send_line('DIR "A:/FMOVEDST/FMOVESRC/IN"').upper()
+    assert "FMOVESRC" not in con.send_line('DIR "A:/"').upper()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_files_move_directory_across_drives_copies_and_deletes(kernel_image):
+    """#1112: moving a folder A: -> C: in FILES copies the tree then deletes
+    the source, empty nested folders included."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True,
+            capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('MKDIR "XDIRSRC"') == ""
+            assert con.send_line('MKDIR "XDIRSRC/SUB"') == ""
+            assert con.send_line('MKDIR "XDIRSRC/SUB/EMPTY"') == ""
+            _seed_file(con, "A:/XDIRSRC/TOP.TXT", "top")
+            _seed_file(con, "A:/XDIRSRC/SUB/DEEP.TXT", "deep")
+            _open_files(con)
+            # Right pane -> C: (Alt+R, then the "Drive C:" hotkey); Tab back
+            # to the left pane so the move source stays on A:.
+            _keys(con, bytes([1]) + b"rc", quiet=0.6)
+            _keys(con, b"\t", quiet=0.3)
+            _down_to(con, "SEL=XDIRSRC/")
+            _keys(con, b"m", quiet=0.4)
+            seen = _keys(con, b"\r", quiet=2.0)
+            assert "Moved" in seen, seen
+            _keys(con, b"q")
+            assert "TOP.TXT" in con.send_line('DIR "C:/XDIRSRC"').upper()
+            assert "DEEP.TXT" in con.send_line('DIR "C:/XDIRSRC/SUB"').upper()
+            assert con.send_line('CHDIR "C:/XDIRSRC/SUB/EMPTY"') == ""
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert "XDIRSRC" not in con.send_line('DIR "A:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
 @pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
 def test_files_move_across_drives_copies_and_deletes(kernel_image):
     """#1030: a move from the A: ramdisk to the C: SD volume has no single
