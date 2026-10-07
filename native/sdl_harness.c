@@ -30,6 +30,8 @@ enum hs_kind {
 	HS_MARK,
 	HS_FEED,
 	HS_WAIT,
+	HS_FINGER,
+	HS_POINTER,
 	HS_QUIT
 };
 
@@ -41,7 +43,8 @@ typedef struct {
 	SDL_Keycode sym;	/* HS_KEY */
 	int mods;		/* HS_KEY: SDL_Keymod bits */
 	int ms;			/* HS_WAIT: delay in milliseconds */
-	char arg[HS_ARG_MAX];	/* path / text / feed line */
+	float fx, fy;		/* HS_FINGER: normalised drag deltas */
+	char arg[HS_ARG_MAX];	/* path / text / feed line / HS_POINTER path */
 } hs_step;
 
 static FILE *s_fp;
@@ -253,6 +256,23 @@ static void hs_parse_line(char *line)
 		st.ms = (int)strtol(hs_skip(p), 0, 10);
 		hs_push(&st);
 	}
+	else if (strcmp(word, "finger") == 0)
+	{
+		char *end;
+
+		st.kind = HS_FINGER;
+		p = hs_skip(p);
+		st.fx = strtof(p, &end);
+		p = hs_skip(end);
+		st.fy = strtof(p, &end);
+		hs_push(&st);
+	}
+	else if (strcmp(word, "pointer") == 0)
+	{
+		st.kind = HS_POINTER;
+		hs_rest(p, st.arg, sizeof st.arg);
+		hs_push(&st);
+	}
 }
 
 /* Read any newly appended bytes and enqueue their complete lines. */
@@ -366,6 +386,42 @@ static void hs_exec(const hs_step *st)
 			}
 		}
 		break;
+	case HS_FINGER:
+		/* A touchpad drag as SDL delivers it: a finger down, then a
+		 * motion carrying the normalised delta (#1039). */
+		memset(&e, 0, sizeof e);
+		e.type = SDL_FINGERDOWN;
+		e.tfinger.touchId = 1;
+		e.tfinger.fingerId = 1;
+		e.tfinger.x = 0.5f;
+		e.tfinger.y = 0.5f;
+		e.tfinger.pressure = 1.0f;
+		hs_push_event(&e);
+		memset(&e, 0, sizeof e);
+		e.type = SDL_FINGERMOTION;
+		e.tfinger.touchId = 1;
+		e.tfinger.fingerId = 1;
+		e.tfinger.x = 0.5f + st->fx;
+		e.tfinger.y = 0.5f + st->fy;
+		e.tfinger.dx = st->fx;
+		e.tfinger.dy = st->fy;
+		e.tfinger.pressure = 1.0f;
+		hs_push_event(&e);
+		break;
+	case HS_POINTER:
+	{
+		int present, x, y, buttons, wheel;
+		FILE *f;
+
+		sdl_input_mouse_state(&present, &x, &y, &buttons, &wheel);
+		f = st->arg[0] ? fopen(st->arg, "w") : 0;
+		if (f)
+		{
+			fprintf(f, "%d %d\n", x, y);
+			fclose(f);
+		}
+		break;
+	}
 	case HS_QUIT:
 		sdl_video_request_quit();
 		break;

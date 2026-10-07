@@ -84,6 +84,10 @@ void sdl_video_mark_dirty(void) {}
 void sdl_video_request_quit(void) {}
 void sdl_video_toggle_fullscreen(void) {}
 
+/* Fixed framebuffer size so finger deltas scale predictably (#1039). */
+int sdl_video_width(void) { return 640; }
+int sdl_video_height(void) { return 480; }
+
 /* Identity viewport for the host test: window pixels == framebuffer pixels. */
 int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 {
@@ -135,6 +139,37 @@ static void push_button(int button, int down)
 	SDL_zero(e);
 	e.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
 	e.button.button = (Uint8)button;
+	SDL_PushEvent(&e);
+}
+
+static void push_finger_down(SDL_FingerID id, float x, float y)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_FINGERDOWN;
+	e.tfinger.touchId = 1;
+	e.tfinger.fingerId = id;
+	e.tfinger.x = x;
+	e.tfinger.y = y;
+	e.tfinger.pressure = 1.0f;
+	SDL_PushEvent(&e);
+}
+
+static void push_finger_motion(SDL_FingerID id, float x, float y, float dx,
+			       float dy)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_FINGERMOTION;
+	e.tfinger.touchId = 1;
+	e.tfinger.fingerId = id;
+	e.tfinger.x = x;
+	e.tfinger.y = y;
+	e.tfinger.dx = dx;
+	e.tfinger.dy = dy;
+	e.tfinger.pressure = 1.0f;
 	SDL_PushEvent(&e);
 }
 
@@ -713,6 +748,51 @@ int main(void)
 	push_motion(200, 96);
 	sdl_input_pump();
 	expect_mouse("mouse release+move", 200, 96, 0);
+
+	/* #1039: an evdev touchpad/clickpad arrives as SDL_FINGER* (window is
+	 * NULL, so SDL itself never synthesises mouse motion). The normalised
+	 * drag delta must move the pointer: 0.25 * 640 = 160, 0.25 * 480 = 120. */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(1, 0.75f, 0.75f, 0.25f, 0.25f);
+	sdl_input_pump();
+	expect_mouse("touchpad finger motion", 160, 120, 0);
+
+	/* Sub-pixel deltas are held in a remainder and accumulate instead of
+	 * being rounded away (a slow drag must still move the pointer). */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(1, 0.5002f, 0.5002f, 0.0002f, 0.0002f);
+	sdl_input_pump();
+	expect_mouse("touchpad subpixel no jump", 0, 0, 0);
+	{
+		int i;
+		int present = 0, mx = 0, my = 0, mb = 0, wheel = 0;
+
+		for (i = 0; i < 20; i++)
+		{
+			push_finger_motion(1, 0.6f, 0.6f, 0.0002f, 0.0002f);
+			sdl_input_pump();
+		}
+		sdl_input_mouse_state(&present, &mx, &my, &mb, &wheel);
+		if (mx <= 0 || my <= 0)
+		{
+			fprintf(stderr,
+				"FAIL touchpad subpixel accumulates: pos=(%d,%d)\n",
+				mx, my);
+			fails++;
+		}
+	}
+
+	/* A second, untracked finger must not move the pointer. */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(2, 0.9f, 0.9f, 0.4f, 0.4f);
+	sdl_input_pump();
+	expect_mouse("touchpad ignores second finger", 0, 0, 0);
 
 	SDL_Quit();
 	if (fails)

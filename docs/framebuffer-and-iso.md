@@ -464,8 +464,13 @@ disk and boots without the card.
   them and re-probes an unbound, touchpad-named I2C client before mmcore
   starts, because the ISO has no udev (OpenRC uses mdev) to re-probe a device
   the kernel enumerated before the rootfs. No manual `modprobe` is needed:
-  mmcore reads the touchpad through SDL's evdev backend, so once the kernel
-   driver binds there is no extra input daemon to install. A touchpad on an
+   mmcore reads the touchpad through SDL's evdev backend, so once the kernel
+   driver binds there is no extra input daemon to install. A clickpad reaches
+   SDL as an absolute *touch* device (SDL's evdev path treats a touchpad like a
+   touchscreen) and SDL only synthesises mouse motion from touch when it has a
+   window, which it does not here; the native input therefore turns the
+   `SDL_FINGER*` motion into relative pointer movement itself (#1039). A
+   touchpad on an
    **AMD-based** board that still does nothing may be the AMD ELAN066C firmware
    bug in the known gaps below, which no module load can fix; the Intel Lenovo
    100e Chromebook Gen 2 in #1039 uses the Intel I2C-HID path above instead.
