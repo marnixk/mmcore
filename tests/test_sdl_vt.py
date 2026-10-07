@@ -75,6 +75,9 @@ void sdl_video_mark_dirty(void) {}
 void sdl_video_request_quit(void) {}
 void sdl_video_toggle_fullscreen(void) {}
 
+int sdl_video_width(void) { return 640; }
+int sdl_video_height(void) { return 480; }
+
 int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 {
 	if (fx)
