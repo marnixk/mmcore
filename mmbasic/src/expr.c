@@ -507,7 +507,8 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("TDF.VARIANTNAME$")] = &&lbl_tdfvariantname;
 		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
 		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
-		fun_tab[mmb_kw_id("BATTERY%")] = &&lbl_battery;
+		fun_tab[mmb_kw_id("MM.BATTERY%")] = &&lbl_mmbattery;
+		fun_tab[mmb_kw_id("MM.BRIGHTNESS%")] = &&lbl_mmbrightness;
 		finited = 1;
 	}
 	if ((unsigned char)*G.p == 0x80)
@@ -1609,9 +1610,9 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_int_val((int64_t)mmb_now_ms() - G.timer_base);
 		return 1;
 	}
-	if (mmb_match("BATTERY%"))
+	if (mmb_match("MM.BATTERY%"))
 	{
-	lbl_battery:
+	lbl_mmbattery:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -1625,6 +1626,26 @@ int mmb_try_function(mmb_val *out)
 				   "/sys/class/power_supply/BAT0/capacity", 100));
 #else
 		/* Pi/Circle, Windows, macOS and any other target: no battery. */
+		*out = mmb_int_val(100);
+#endif
+		return 1;
+	}
+	if (mmb_match("MM.BRIGHTNESS%"))
+	{
+	lbl_mmbrightness:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+#if defined(MMB_PLATFORM_POSIX)
+		/* Native Linux (Chromebook ISO / framebuffer): read the panel
+		 * backlight percentage, falling back to 100 when none exists. */
+		*out = mmb_int_val(mmb_brightness_get());
+#else
+		/* Pi/Circle and other bare-metal targets: no controllable
+		 * backlight. */
 		*out = mmb_int_val(100);
 #endif
 		return 1;

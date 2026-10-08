@@ -1,7 +1,7 @@
 /*
  * Host test for mmbasic/src/battery.c (#857).
  *
- * BATTERY%() reads /sys/class/power_supply/BAT0/capacity on native Linux and
+ * MM.BATTERY% reads /sys/class/power_supply/BAT0/capacity on native Linux and
  * falls back to 100 otherwise. The path-taking helper is compiled here and
  * driven against files pytest writes, so the parsing and clamping are checked
  * on any host without a real battery.
