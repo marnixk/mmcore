@@ -1,7 +1,7 @@
 /*
  * Battery capacity helper (#857).
  *
- * The interpreter's BATTERY%() function reads the Linux sysfs battery
+ * The interpreter's MM.BATTERY% function reads the Linux sysfs battery
  * capacity on the native build and returns 100 everywhere else. The read
  * itself lives behind this path-taking helper so it can be unit tested on
  * any host without a real battery.

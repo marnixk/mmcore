@@ -169,7 +169,8 @@ static int tc_parse_name(char *name, int *type)
 	mmb_ident(name, MMB_MAX_NAME);
 	*type = mmb_type_suffix(name);
 	if (mmb_keyword_eq(name, "TIMER") || mmb_keyword_eq(name, "DATE") ||
-	    mmb_keyword_eq(name, "TIME"))
+	    mmb_keyword_eq(name, "TIME") ||
+	    mmb_keyword_eq(name, "MM.BRIGHTNESS"))
 		return 0;
 	if (tc_is_struct_member(name))
 		return 0;

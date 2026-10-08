@@ -1,4 +1,4 @@
-"""#857: BATTERY%() reads a sysfs capacity on Linux and falls back to 100.
+"""#857: MM.BATTERY%() reads a sysfs capacity on Linux and falls back to 100.
 
 The path-taking helper (``mmbasic/src/battery.c``) is compiled and driven on
 the host against files pytest writes, so the parsing and clamping are checked
@@ -115,13 +115,13 @@ def _expected_capacity():
     reason="needs a host C toolchain (cc/make)",
 )
 def test_battery_function_wired_into_interpreter(tmp_path):
-    """The native binary dispatches BATTERY% (bare and parenthesised)."""
+    """The native binary dispatches MM.BATTERY% (bare and parenthesised)."""
     build_native()
     assert os.path.isfile(BIN), "native build produced no binary"
     env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
     proc = subprocess.run(
         [BIN],
-        input="PRINT BATTERY%\nPRINT BATTERY%()\n",
+        input="PRINT MM.BATTERY%\nPRINT MM.BATTERY%()\n",
         text=True,
         capture_output=True,
         timeout=120,

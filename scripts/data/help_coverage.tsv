@@ -19,7 +19,6 @@ ATAN2	ATAN2	topic	dedicated topic
 ATN	ATN	topic	dedicated topic
 ATN2	ATN2	topic	dedicated topic
 BASE$	BASE$	topic	dedicated topic
-BATTERY%	BATTERY%	topic	dedicated topic
 BEEP	PLAY	alias	alias of PLAY
 BIN$	BIN$	topic	dedicated topic
 BIT	BIT	topic	dedicated topic
@@ -146,6 +145,8 @@ MEMORY	MEMORY	topic	dedicated topic
 MID$	MID$	topic	dedicated topic
 MIN	MIN	topic	dedicated topic
 MKDIR	MKDIR	topic	dedicated topic
+MM.BATTERY%	MM.BATTERY%	topic	dedicated topic
+MM.BRIGHTNESS%	MM.BRIGHTNESS%	topic	dedicated topic
 MM.CMDLINE$	MM.CMDLINE$	topic	dedicated topic
 MM.DEVICE$	MM.DEVICE$	topic	dedicated topic
 MM.HPOS	MM.HPOS	topic	dedicated topic

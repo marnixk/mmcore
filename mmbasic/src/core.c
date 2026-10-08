@@ -2226,6 +2226,17 @@ static void do_let(void)
 			strncpy(G.time_s, v.s, sizeof(G.time_s) - 1);
 		return;
 	}
+	if (mmb_keyword_eq(name, "MM.BRIGHTNESS"))
+	{
+#if defined(MMB_PLATFORM_POSIX)
+		/* Set the panel backlight percentage; a system with no controllable
+		 * backlight ignores the assignment (read still returns 100). */
+		(void)mmb_brightness_set((int)mmb_as_int(v));
+#else
+		(void)v;
+#endif
+		return;
+	}
 	mmb_do_assign_ref(lhs_ref, name, t, nidx, idx, v);
 }
 

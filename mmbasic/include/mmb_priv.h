@@ -1162,8 +1162,19 @@ int mmb_net_srv_ip(char *buf, int bufsize);
 
 /* Battery capacity (#857): read an integer 0-100 from a sysfs-style file.
  * Returns fallback when the file is missing, unreadable or non-numeric, and
- * clamps out-of-range values. Shared by BATTERY%() and its host test. */
+ * clamps out-of-range values. Shared by MM.BATTERY% and its host test. */
 int mmb_battery_capacity_read(const char *path, int fallback);
+
+/* Display backlight: MM.BRIGHTNESS% reads and writes the panel
+ * brightness percentage. The (devdir, ...) helpers work on a sysfs backlight
+ * device directory so the percentage maths is host testable; the get/set
+ * wrappers discover the device under /sys/class/backlight on Linux and fall
+ * back to 100 / no-op elsewhere. */
+int mmb_brightness_read(const char *devdir, int fallback);
+int mmb_brightness_write(const char *devdir, int pct);
+int mmb_backlight_find(char *out, int outsz);
+int mmb_brightness_get(void);
+int mmb_brightness_set(int pct);
 
 /* mmb_ftp_start() return codes. The server is one machine-global resource
  * whose UI is per console, so a second console starting it is told BUSY
