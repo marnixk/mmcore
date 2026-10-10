@@ -38,6 +38,12 @@
 #define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
 #define JUKE_LIST_ROW    18
 #define JUKE_LINE_H      16    /* fixed pixel-font line height (#1118)  */
+/* The fixed 8x16 CP437 pixel font paints upper-case letters and digits in
+ * cell rows 2..11: two blank rows above the cap line and four below. Centring
+ * that painted span (not the whole cell, whose lower leading is deeper) is
+ * what makes a highlight bar's top and bottom padding look even (#1127). */
+#define JUKE_GLYPH_TOP   2
+#define JUKE_GLYPH_H    10
 #define JUKE_LIST_SEL   0x3A4650u
 #define JUKE_ESC_IDLE_MS 60
 
@@ -846,6 +852,15 @@ static void juke_text(int x, int y, const char *s, unsigned col, int scale)
 	G.gfx.font_scale = save;
 }
 
+/* Top of the 16px text cell that centres its painted glyph span inside a row
+ * or highlight bar of height `box_h`. Derived from the font's own ink metrics
+ * (JUKE_GLYPH_TOP/H) rather than a fixed nudge, so the padding stays even at
+ * every layout scale and font cell (#1127). */
+static int juke_text_top(int box_h)
+{
+	return (box_h - JUKE_GLYPH_H) / 2 - JUKE_GLYPH_TOP;
+}
+
 /* Decode the graffiti wordmark once per JUKE session (#914). It mirrors the
  * startup_logo() path: A:/juke-logo.png is a build-time ramdisk asset. */
 static void juke_load_logo(void)
@@ -990,6 +1005,7 @@ static void juke_paint_list(int w, int h)
 	{
 		int pos = top + vis;
 		int y = y0 + JS(4) + vis * row;
+		int ty = y + juke_text_top(sel_h);
 		const char *name;
 		int maxc;
 
@@ -1009,7 +1025,7 @@ static void juke_paint_list(int w, int h)
 		sprintf(buf, "%2d  %s", pos + 1, name);
 		if ((int)strlen(buf) > maxc)
 			buf[maxc] = 0;
-		juke_text(JS(22), y, buf,
+		juke_text(JS(22), ty, buf,
 			  pos == U.sel ? U.col_text : U.col_dim, 1);
 	}
 }
