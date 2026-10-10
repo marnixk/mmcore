@@ -327,6 +327,28 @@ static void apply_wifi(const char *k, const char *v)
 	}
 }
 
+/* [netdrive] (#1128): the stored UNC, user and NTLM-hashed password for Z:. */
+static void apply_netdrive(const char *k, const char *v)
+{
+	if (mmb_keyword_eq(k, "unc"))
+	{
+		strncpy(G.opt.netdrv_unc, v, sizeof(G.opt.netdrv_unc) - 1);
+		G.opt.netdrv_unc[sizeof(G.opt.netdrv_unc) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "user"))
+	{
+		strncpy(G.opt.netdrv_user, v, sizeof(G.opt.netdrv_user) - 1);
+		G.opt.netdrv_user[sizeof(G.opt.netdrv_user) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "pass"))
+	{
+		strncpy(G.opt.netdrv_pass, v, sizeof(G.opt.netdrv_pass) - 1);
+		G.opt.netdrv_pass[sizeof(G.opt.netdrv_pass) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "enabled"))
+		G.opt.netdrv_enabled = parse_int(v) ? 1 : 0;
+}
+
 void mmb_settings_save(void)
 {
 	char buf[SETTINGS_MAX];
@@ -422,6 +444,12 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "enabled", G.opt.wifi_enabled);
 	kv_int(buf, sizeof(buf), "debug", G.opt.wifi_debug);
 	kv_str(buf, sizeof(buf), "country", mmb_opt_wifi_country());
+	append(buf, sizeof(buf), "\n[netdrive]\n");
+	kv_str(buf, sizeof(buf), "unc", G.opt.netdrv_unc);
+	kv_str(buf, sizeof(buf), "user", G.opt.netdrv_user);
+	/* The stored password is the NTLM hash ("ntlm:<hex>" or empty). */
+	kv_str(buf, sizeof(buf), "pass", G.opt.netdrv_pass);
+	kv_int(buf, sizeof(buf), "enabled", G.opt.netdrv_enabled);
 	append(buf, sizeof(buf), "\n[ethernet]\n");
 	kv_int(buf, sizeof(buf), "enabled", G.opt.ethernet_enabled);
 	append(buf, sizeof(buf), "\n[ntp]\n");
@@ -436,7 +464,7 @@ void mmb_settings_load(void)
 	char buf[SETTINGS_MAX];
 	unsigned got = 0;
 	char *p, *nl;
-	int section = 0; /* 1 core 2 wifi 3 ethernet 4 ntp */
+	int section = 0; /* 1 core 2 wifi 3 ethernet 4 ntp 5 netdrive */
 
 	saw_theme_key = 0;
 	saw_edit_theme_key = 0;
@@ -472,6 +500,8 @@ void mmb_settings_load(void)
 				section = 3;
 			else if (mmb_keyword_eq(p, "[ntp]"))
 				section = 4;
+			else if (mmb_keyword_eq(p, "[netdrive]"))
+				section = 5;
 			else
 				section = 0;
 			p = nl;
@@ -520,6 +550,8 @@ void mmb_settings_load(void)
 						}
 					}
 				}
+				else if (section == 5)
+					apply_netdrive(p, eq);
 			}
 		}
 		p = nl;
@@ -551,6 +583,10 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
+	G.opt.netdrv_unc[0] = 0;
+	G.opt.netdrv_user[0] = 0;
+	G.opt.netdrv_pass[0] = 0;
+	G.opt.netdrv_enabled = 0;
 	G.opt.ethernet_enabled = 0;
 	G.opt.ntp_enabled = MMB_NTP_AUTO;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);

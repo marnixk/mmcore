@@ -112,7 +112,23 @@ MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
 	    $(MMB)/third_party/ibxm.c $(MMB)/third_party/picojpeg.c \
 	    $(MMB)/third_party/upng.c
-COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
+
+# Vendored libsmb2 (#1128) for OPTION NETWORK DRIVE on Z:. Windows/Winsock is
+# out of scope for phase 1, so netfs_smb2.c compiles to nothing there (no
+# MMB_HAVE_SMB2) and no SMB objects are built.
+SMB2_DIR := $(MMB)/third_party/libsmb2
+ifneq ($(WIN_BUILD),)
+SMB2_SRCS :=
+else
+CFLAGS += -DMMB_HAVE_SMB2=1 -DHAVE_CONFIG_H -D_U_='__attribute__((unused))'
+CFLAGS += -I$(SMB2_DIR) -I$(SMB2_DIR)/include -I$(SMB2_DIR)/include/smb2 \
+	  -I$(SMB2_DIR)/lib
+# The sync API blocks in poll(1000) with no break hook; we only use async, so
+# drop lib/sync.c from the build.
+SMB2_SRCS := $(filter-out $(SMB2_DIR)/lib/sync.c,$(wildcard $(SMB2_DIR)/lib/*.c))
+endif
+
+COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(SMB2_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c $(NET_SRC) cli.c
 STDIO_SRCS := platform_stdio.c main.c
 SDL_SRCS   := platform_sdl.c sdl_video.c sdl_scale.c sdl_console.c sdl_tui.c \
@@ -139,7 +155,7 @@ endif
 endif
 endif
 
-VPATH := $(MMB)/src:$(MMB)/third_party:$(CONSOLE):$(CURDIR)
+VPATH := $(MMB)/src:$(MMB)/third_party:$(SMB2_DIR)/lib:$(CONSOLE):$(CURDIR)
 
 all: $(OUT_STDIO) sdl
 

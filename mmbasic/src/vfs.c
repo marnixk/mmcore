@@ -10,7 +10,31 @@
  * package that packed fine failed to mount with ?PACKAGE. */
 #define PKG_INIT 96
 #define MMB_DRIVE_LO  'A'
-#define MMB_DRIVE_HI  'H'
+#define MMB_DRIVE_HI  MMB_NET_DRIVE
+
+/* Volume-ops tables. The FAT backend is the C:..H: contract; the network
+ * backend (Z:) lives in netfs_smb2.c. Keeping both behind mmb_vol_ops lets
+ * vfs.c dispatch by letter and leaves a clean seam for the future Circle SMB
+ * socket layer. */
+const mmb_vol_ops mmb_fat_ops = {
+	mmb_fat_ready, mmb_fat_chdir, mmb_fat_mkdir, mmb_fat_rmdir,
+	mmb_fat_unlink, mmb_fat_rename, mmb_fat_list, mmb_fat_list_entries,
+	mmb_fat_write, mmb_fat_wopen, mmb_fat_wwrite, mmb_fat_wclose,
+	mmb_fat_read_at, mmb_fat_size, mmb_fat_exists, mmb_fat_isdir,
+	mmb_fat_drive_line, mmb_fat_label, mmb_fat_eject
+};
+
+/* Ops for a physical volume letter, or 0 when the letter has no backend. */
+static const mmb_vol_ops *vol_ops_for(int letter)
+{
+	if (letter >= 'C' && letter <= MMB_FAT_DRIVE_HI)
+		return &mmb_fat_ops;
+#ifdef MMB_HAVE_SMB2
+	if (letter == MMB_NET_DRIVE)
+		return &mmb_net_ops;
+#endif
+	return 0;
+}
 
 typedef struct vfs_node {
 	char name[80];
@@ -495,18 +519,26 @@ static void split_dir_glob(const char *path, char *dir, char *glob)
 
 static int physical(int letter)
 {
-	return letter >= 'C' && letter <= MMB_DRIVE_HI;
+	return vol_ops_for(letter) != 0;
 }
 
 static int require_drive(int letter)
 {
+	const mmb_vol_ops *ops;
 	if (letter == 'A')
 		return 0;
 	if (letter == 'B')
 		return pkg_on ? 0 : -1;
-	if (!physical(letter))
+	ops = vol_ops_for(letter);
+	if (!ops)
 		return -1;
-	return mmb_fat_ready(letter) ? 0 : -1;
+	return ops->ready(letter) ? 0 : -1;
+}
+
+/* Ops table for a physical letter after a successful ready check, else 0. */
+static const mmb_vol_ops *drive_ops(int letter)
+{
+	return require_drive(letter) == 0 ? vol_ops_for(letter) : 0;
 }
 
 /* ---- public API ------------------------------------------------------- */
@@ -583,8 +615,11 @@ int mmb_vfs_chdir(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	if (mmb_fat_chdir(x.letter, x.path) != 0)
-		return -1;
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		if (!ops || ops->chdir(x.letter, x.path) != 0)
+			return -1;
+	}
 	set_drive_cwd(x.letter, x.path);
 	G.drive = x.letter;
 	refresh_public_cwd();
@@ -600,9 +635,10 @@ int mmb_vfs_mkdir(const char *path)
 		return -1;
 	if (x.letter == 'A')
 		return ram_walk(nodes, VFS_MAX, x.path, 0, 1) < 0 ? -1 : 0;
-	if (require_drive(x.letter) != 0)
-		return -1;
-	return mmb_fat_mkdir(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->mkdir(x.letter, x.path) : -1;
+	}
 }
 
 int mmb_vfs_rmdir(const char *path)
@@ -616,9 +652,8 @@ int mmb_vfs_rmdir(const char *path)
 		return -1;
 	if (x.letter != 'A')
 	{
-		if (require_drive(x.letter) != 0)
-			return -1;
-		return mmb_fat_rmdir(x.letter, x.path);
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->rmdir(x.letter, x.path) : -1;
 	}
 	ns = nodes;
 	max = VFS_MAX;
@@ -643,9 +678,8 @@ int mmb_vfs_kill(const char *path)
 		return -1;
 	if (x.letter != 'A')
 	{
-		if (require_drive(x.letter) != 0)
-			return -1;
-		return mmb_fat_unlink(x.letter, x.path);
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->unlink(x.letter, x.path) : -1;
 	}
 	ns = nodes;
 	max = VFS_MAX;
@@ -672,7 +706,10 @@ int mmb_vfs_exists(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return 0;
-	return mmb_fat_exists(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->exists(x.letter, x.path) : 0;
+	}
 }
 
 int mmb_vfs_size(const char *path)
@@ -692,7 +729,10 @@ int mmb_vfs_size(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	return mmb_fat_size(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->size(x.letter, x.path) : -1;
+	}
 }
 
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
@@ -704,9 +744,10 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 		return -1;
 	if (x.letter == 'A')
 		return ram_write(nodes, VFS_MAX, x.path, data, n, append);
-	if (require_drive(x.letter) != 0)
-		return -1;
-	return mmb_fat_write(x.letter, x.path, data, n, append);
+	{
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->write(x.letter, x.path, data, n, append) : -1;
+	}
 }
 
 /* ---- streaming writes ------------------------------------------------- */
@@ -781,9 +822,10 @@ int mmb_vfs_wopen(const char *path, int append)
 	else
 	{
 		void *fp;
-		if (require_drive(x.letter) != 0)
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		if (!ops)
 			return -1;
-		fp = mmb_fat_wopen(x.letter, x.path, append);
+		fp = ops->wopen(x.letter, x.path, append);
 		if (!fp)
 			return -1;
 		writers[i].fat = fp;
@@ -801,7 +843,10 @@ int mmb_vfs_wwrite(int handle, const void *data, unsigned n)
 		return 0;
 	if (writers[handle].is_ram)
 		return ram_stream_write(nodes, writers[handle].node, data, n);
-	return mmb_fat_wwrite(writers[handle].fat, data, n);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(writers[handle].letter);
+		return ops ? ops->wwrite(writers[handle].fat, data, n) : -1;
+	}
 }
 
 int mmb_vfs_wclose(int handle)
@@ -812,7 +857,8 @@ int mmb_vfs_wclose(int handle)
 	writers[handle].used = 0;
 	if (!writers[handle].is_ram)
 	{
-		rc = mmb_fat_wclose(writers[handle].fat);
+		const mmb_vol_ops *ops = vol_ops_for(writers[handle].letter);
+		rc = ops ? ops->wclose(writers[handle].fat) : -1;
 		writers[handle].fat = 0;
 	}
 	return rc;
@@ -833,7 +879,10 @@ int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsi
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	return mmb_fat_read_at(x.letter, x.path, pos, data, n, got);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->read_at(x.letter, x.path, pos, data, n, got) : -1;
+	}
 }
 
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n)
@@ -1082,9 +1131,8 @@ int mmb_vfs_rename(const char *src, const char *dst)
 	}
 	if (a.letter != 'A')
 	{
-		if (require_drive(a.letter) != 0)
-			return -1;
-		return mmb_fat_rename(a.letter, a.path, b.path);
+		const mmb_vol_ops *ops = drive_ops(a.letter);
+		return ops ? ops->rename(a.letter, a.path, b.path) : -1;
 	}
 	s = ram_walk(nodes, VFS_MAX, a.path, 0, 0);
 	if (s <= 0)
@@ -1349,8 +1397,11 @@ int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	if (mmb_fat_list(x.letter, dir, glob, out, outsz, truncated) != 0)
-		return -1;
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		if (!ops || ops->list(x.letter, dir, glob, out, outsz, truncated) != 0)
+			return -1;
+	}
 	sort_dir_list(out, outsz);
 	return 0;
 }
@@ -1377,9 +1428,10 @@ int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 	}
 	else
 	{
-		if (require_drive(x.letter) != 0)
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		if (!ops)
 			return -1;
-		n = mmb_fat_list_entries(x.letter, dir, glob, out, max, truncated);
+		n = ops->list_entries(x.letter, dir, glob, out, max, truncated);
 	}
 	if (n < 0)
 		return -1;
@@ -1397,7 +1449,7 @@ void mmb_vfs_drives(char *out, int outsz)
 	int i;
 	out[0] = 0;
 	strncat(out, "A: RAM", (unsigned)outsz - 1);
-	for (i = 'C'; i <= MMB_DRIVE_HI; i++)
+	for (i = 'C'; i <= MMB_FAT_DRIVE_HI; i++)
 	{
 		char line[80];
 		line[0] = 0;
@@ -1409,6 +1461,47 @@ void mmb_vfs_drives(char *out, int outsz)
 		strcat(out, "\n");
 		strcat(out, line);
 	}
+	{
+		char line[160];
+		line[0] = 0;
+		mmb_vfs_drive_line(MMB_NET_DRIVE, line, sizeof(line));
+		if (line[0] && (int)strlen(out) + (int)strlen(line) + 2 < outsz)
+		{
+			strcat(out, "\n");
+			strcat(out, line);
+		}
+	}
+}
+
+int mmb_vfs_drive_ready(int letter)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	return ops ? ops->ready(letter) : 0;
+}
+
+void mmb_vfs_drive_line(int letter, char *out, int outsz)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	if (out && outsz > 0)
+		out[0] = 0;
+	if (ops)
+		ops->drive_line(letter, out, outsz);
+}
+
+int mmb_vfs_label(int letter, char *out, int outsz)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	if (out && outsz > 0)
+		out[0] = 0;
+	if (!ops)
+		return -1;
+	return ops->label(letter, out, outsz);
+}
+
+int mmb_vfs_eject(int letter)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	return ops ? ops->eject(letter) : -1;
 }
 
 int mmb_vfs_isdir(const char *path)
@@ -1426,7 +1519,10 @@ int mmb_vfs_isdir(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return 0;
-	return mmb_fat_isdir(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->isdir(x.letter, x.path) : 0;
+	}
 }
 
 int mmb_vfs_readonly_path(const char *path)
@@ -1706,7 +1802,7 @@ void mmb_cmd_eject(void)
 		letter = G.drive;
 	if (letter == 'A' || letter == 'B')
 		mmb_error("?EJECT");
-	if (mmb_fat_eject(letter) != 0)
+	if (mmb_vfs_eject(letter) != 0)
 		mmb_error("?EJECT");
 	if (G.drive == letter)
 	{

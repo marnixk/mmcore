@@ -229,6 +229,11 @@ typedef struct mmb_options {
 	int ntp_enabled;       /* OPTION NTP: MMB_NTP_AUTO/0 OFF/1 ON (#581) */
 	char timezone[64];     /* OPTION TIMEZONE name/offset (default UTC) */
 	int tz_offset_min;     /* derived minutes east of UTC */
+	/* OPTION NETWORK DRIVE (#1128): mounts an SMB share at Z:. */
+	char netdrv_unc[128];  /* normalised \\host[:port]\share[\sub] */
+	char netdrv_user[64];  /* DOMAIN\user or user; empty = guest */
+	char netdrv_pass[64];  /* stored form: "ntlm:<32 hex>" or empty (guest) */
+	int netdrv_enabled;    /* 1 when a network drive is configured */
 } mmb_options;
 
 #define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
@@ -1023,6 +1028,73 @@ int mmb_fat_label(int letter, char *out, int outsz);
 /* Safe eject/unmount of a removable volume; 0 on success. */
 int mmb_fat_eject(int letter);
 void mmb_storage_poll(void);
+
+/* Backend contract for a physical volume (#1128). The C:..H: FAT/FatFs
+ * backend (console/storage.cpp, native/storage_posix.c) and the Z: SMB
+ * backend (mmbasic/src/netfs_smb2.c) each fill one of these tables, so vfs.c
+ * dispatches by letter without knowing the transport. Signatures mirror the
+ * mmb_fat_* functions; `letter` lets one backend serve more than one letter. */
+typedef struct mmb_vol_ops {
+	int (*ready)(int letter);
+	int (*chdir)(int letter, const char *path);
+	int (*mkdir)(int letter, const char *path);
+	int (*rmdir)(int letter, const char *path);
+	int (*unlink)(int letter, const char *path);
+	int (*rename)(int letter, const char *from, const char *to);
+	int (*list)(int letter, const char *dir, const char *pat, char *out,
+		    int outsz, int *truncated);
+	int (*list_entries)(int letter, const char *dir, const char *pat,
+			    mmb_dirent *out, int max, int *truncated);
+	int (*write)(int letter, const char *path, const void *data, unsigned n,
+		     int append);
+	void *(*wopen)(int letter, const char *path, int append);
+	int (*wwrite)(void *handle, const void *data, unsigned n);
+	int (*wclose)(void *handle);
+	int (*read_at)(int letter, const char *path, unsigned pos, void *data,
+		       unsigned n, unsigned *got);
+	int (*size)(int letter, const char *path);
+	int (*exists)(int letter, const char *path);
+	int (*isdir)(int letter, const char *path);
+	void (*drive_line)(int letter, char *out, int outsz);
+	int (*label)(int letter, char *out, int outsz);
+	int (*eject)(int letter);
+} mmb_vol_ops;
+
+/* FAT/FatFs ops table (defined in vfs.c, pointing at mmb_fat_*). */
+extern const mmb_vol_ops mmb_fat_ops;
+/* SMB2 ops table (defined in netfs_smb2.c when MMB_HAVE_SMB2 is set). */
+extern const mmb_vol_ops mmb_net_ops;
+
+/* VFS wrappers that pick the right volume ops for a letter (so the FILES UI
+ * and other callers never call mmb_fat_* directly). `mmb_vfs_drive_ready` and
+ * `mmb_vfs_drive_line` must not connect the network drive. */
+int mmb_vfs_drive_ready(int letter);
+int mmb_vfs_label(int letter, char *out, int outsz);
+int mmb_vfs_eject(int letter);
+void mmb_vfs_drive_line(int letter, char *out, int outsz);
+
+/* OPTION NETWORK DRIVE (#1128). Implemented in netfs_smb2.c. */
+/* Normalise a user-typed UNC into "\host[:port]\share[\sub]". Accepts leading
+ * "\\", doubled backslashes, "//", "smb://" and mixed separators. Returns 1 on
+ * success, 0 if the input is not a usable \\host\share. */
+int mmb_netdrive_normalize(const char *in, char *out, int outsz);
+/* Convert a plain password to the stored "ntlm:<32 hex>" form (empty stays
+ * empty). Uses MD4 over the UTF-16LE password. */
+void mmb_netdrive_hash_password(const char *pass, char *out, int outsz);
+/* 1 when a network drive is configured (does not connect). */
+int mmb_netdrive_configured(void);
+/* Lazily connect the configured share with a hard timeout and Ctrl-C abort.
+ * Returns 0 on success, -1 on failure (see mmb_netdrive_last_error). */
+int mmb_netdrive_connect(void);
+const char *mmb_netdrive_last_error(void);
+/* Drop any live connection (called by OPTION NETWORK DRIVE OFF / EJECT). */
+void mmb_netdrive_disconnect(void);
+
+/* Poll one file descriptor for events (POLLIN/POLLOUT style bitmask) for up to
+ * timeout_ms, returning the revents mask, 0 on timeout, -1 on error. The
+ * network backend owns its own sockets, so this is the only platform hook the
+ * shared SMB code needs; Circle supplies its own implementation. */
+int mmb_plat_poll_fd(int fd, int events, int timeout_ms);
 
 void mmb_storage_unmount(void);
 
