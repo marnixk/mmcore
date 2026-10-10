@@ -407,9 +407,14 @@ def _list_row_y(h: int, vis: int) -> int:
     return _LIST_Y0 + 4 + vis * _LIST_ROW + 8
 
 
+# JUKE's playlist selection fill (JUKE_LIST_SEL, cmd_juke.c). Matched as an
+# exact-ish colour: the old loose sum threshold also accepted the panel border
+# grey (col_panel2, 0x373A3E) and other muted greys (#1131).
+_LIST_SEL_RGB = (0x3A, 0x46, 0x50)
+
+
 def _is_list_sel(rgb: tuple[int, int, int]) -> bool:
-    r, g, b = rgb
-    return r + g + b > 140 and abs(r - b) < 50 and g < r + 40
+    return all(abs(c - s) <= 6 for c, s in zip(rgb, _LIST_SEL_RGB))
 
 
 def _is_panel_border(rgb: tuple[int, int, int]) -> bool:
@@ -1154,13 +1159,8 @@ def test_juke_list_panel_keeps_design_bottom(fresh_console):
 
 # ---- #1127: highlight-row text is vertically centred ------------------------
 
-# JUKE's selection fill (JUKE_LIST_SEL). Matched exactly because the loose
-# _is_list_sel predicate also accepts the panel border grey.
-_SEL_BG = (0x3A, 0x46, 0x50)
-
-
 def _is_sel_bg(c: tuple[int, int, int]) -> bool:
-    return all(abs(a - b) <= 6 for a, b in zip(c, _SEL_BG))
+    return _is_list_sel(c)
 
 
 def _highlight_padding(
