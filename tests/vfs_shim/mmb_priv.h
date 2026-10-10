@@ -15,6 +15,11 @@
 #define MMB_ZIP_MAX_BYTES (16u * 1024u * 1024u)
 #define T_STR             3
 
+/* One fixed network drive at Z: (#1128); mirrors mmbasic.h. vfs.c builds
+ * MMB_DRIVE_HI from this. */
+#define MMB_NET_DRIVE    'Z'
+#define MMB_FAT_DRIVE_HI 'H'  /* highest FAT-backed physical drive letter */
+
 /* Structured directory entry (#621); mirrors mmbasic.h. */
 #define MMB_DIRENT_NAME 256
 typedef struct mmb_dirent {
@@ -22,6 +27,36 @@ typedef struct mmb_dirent {
 	int is_dir;
 	int size;
 } mmb_dirent;
+
+/* Volume-ops contract (#1128); mirrors mmb_priv.h. vfs.c dispatches by letter
+ * through this table. The host test only exercises A:, so only the type is
+ * needed here; the mmb_fat_* implementations are stubbed in
+ * tests/vfs_stream_host.c. */
+typedef struct mmb_vol_ops {
+	int (*ready)(int letter);
+	int (*chdir)(int letter, const char *path);
+	int (*mkdir)(int letter, const char *path);
+	int (*rmdir)(int letter, const char *path);
+	int (*unlink)(int letter, const char *path);
+	int (*rename)(int letter, const char *from, const char *to);
+	int (*list)(int letter, const char *dir, const char *pat, char *out,
+		    int outsz, int *truncated);
+	int (*list_entries)(int letter, const char *dir, const char *pat,
+			    mmb_dirent *out, int max, int *truncated);
+	int (*write)(int letter, const char *path, const void *data, unsigned n,
+		     int append);
+	void *(*wopen)(int letter, const char *path, int append);
+	int (*wwrite)(void *handle, const void *data, unsigned n);
+	int (*wclose)(void *handle);
+	int (*read_at)(int letter, const char *path, unsigned pos, void *data,
+		       unsigned n, unsigned *got);
+	int (*size)(int letter, const char *path);
+	int (*exists)(int letter, const char *path);
+	int (*isdir)(int letter, const char *path);
+	void (*drive_line)(int letter, char *out, int outsz);
+	int (*label)(int letter, char *out, int outsz);
+	int (*eject)(int letter);
+} mmb_vol_ops;
 
 /* Bounded sorted listing helpers (#676); mirrors mmbasic.h. */
 int mmb_dirent_cmp(const mmb_dirent *a, const mmb_dirent *b);
@@ -100,6 +135,7 @@ int mmb_fat_exists(int letter, const char *path);
 int mmb_fat_isdir(int letter, const char *path);
 const char *mmb_fat_cwd(int letter);
 void mmb_fat_drive_line(int letter, char *out, int outsz);
+int mmb_fat_label(int letter, char *out, int outsz);
 int mmb_fat_eject(int letter);
 int mmb_files_notice(const char *msg);
 
@@ -124,5 +160,11 @@ const char *mmb_vfs_cwd(void);
 int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 			 int *truncated);
 int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated);
+
+/* Per-letter volume wrappers (#1128) that pick the backend, declared here
+ * because vfs.c calls them before their definitions. */
+int mmb_vfs_drive_ready(int letter);
+void mmb_vfs_drive_line(int letter, char *out, int outsz);
+int mmb_vfs_label(int letter, char *out, int outsz);
 
 #endif

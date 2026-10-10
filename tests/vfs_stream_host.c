@@ -94,6 +94,7 @@ int mmb_fat_exists(int letter, const char *path) { (void)letter; (void)path; ret
 int mmb_fat_isdir(int letter, const char *path) { (void)letter; (void)path; return 0; }
 const char *mmb_fat_cwd(int letter) { (void)letter; return "/"; }
 void mmb_fat_drive_line(int letter, char *out, int outsz) { (void)letter; if (outsz > 0) out[0] = 0; }
+int mmb_fat_label(int letter, char *out, int outsz) { (void)letter; if (outsz > 0) out[0] = 0; return 0; }
 
 /* ---- interpreter stubs (the test never reaches the package/DRIVE path) - */
 void mmb_error(const char *msg) { (void)msg; }

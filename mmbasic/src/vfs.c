@@ -517,11 +517,6 @@ static void split_dir_glob(const char *path, char *dir, char *glob)
 	}
 }
 
-static int physical(int letter)
-{
-	return vol_ops_for(letter) != 0;
-}
-
 static int require_drive(int letter)
 {
 	const mmb_vol_ops *ops;
