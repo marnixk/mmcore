@@ -334,6 +334,85 @@ static void parse_wifi(void)
 	}
 }
 
+#ifdef MMB_HAVE_SMB2
+/* Store a configured SMB share and clear any live connection so the next Z:
+ * access reconnects with the new credentials. The password is hashed to
+ * "ntlm:<hex>" here: the plain text never reaches .mmbasic.ini. */
+static void netdrive_store(const char *unc, const char *user, const char *pass)
+{
+	strncpy(G.opt.netdrv_unc, unc, sizeof(G.opt.netdrv_unc) - 1);
+	G.opt.netdrv_unc[sizeof(G.opt.netdrv_unc) - 1] = 0;
+	strncpy(G.opt.netdrv_user, user ? user : "", sizeof(G.opt.netdrv_user) - 1);
+	G.opt.netdrv_user[sizeof(G.opt.netdrv_user) - 1] = 0;
+	mmb_netdrive_hash_password(pass ? pass : "", G.opt.netdrv_pass,
+				   sizeof(G.opt.netdrv_pass));
+	G.opt.netdrv_enabled = G.opt.netdrv_unc[0] ? 1 : 0;
+	mmb_netdrive_disconnect();
+	mmb_settings_save();
+}
+
+static void parse_network_drive(void)
+{
+	mmb_skip_sp();
+	if (mmb_match("OFF"))
+	{
+		G.opt.netdrv_unc[0] = 0;
+		G.opt.netdrv_user[0] = 0;
+		G.opt.netdrv_pass[0] = 0;
+		G.opt.netdrv_enabled = 0;
+		mmb_netdrive_disconnect();
+		mmb_settings_save();
+		return;
+	}
+	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+	{
+		/* Bare OPTION NETWORK DRIVE: connect with the stored credentials. */
+		if (!G.opt.netdrv_enabled || !G.opt.netdrv_unc[0])
+			mmb_error("?NETWORK DRIVE not configured");
+		mmb_netdrive_disconnect();
+		if (mmb_netdrive_connect() != 0)
+			mmb_error(mmb_netdrive_last_error());
+		return;
+	}
+	{
+		mmb_val unc = mmb_expr();
+		mmb_val user, pass;
+		char norm[128];
+		if (unc.type != T_STR)
+			mmb_syntax();
+		user = mmb_str_val("");
+		pass = mmb_str_val("");
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			mmb_skip_sp();
+			if (!(*G.p == 0 || *G.p == ':' || *G.p == '\''))
+			{
+				user = mmb_expr();
+				if (user.type != T_STR)
+					mmb_syntax();
+			}
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				mmb_skip_sp();
+				if (!(*G.p == 0 || *G.p == ':' || *G.p == '\''))
+				{
+					pass = mmb_expr();
+					if (pass.type != T_STR)
+						mmb_syntax();
+				}
+			}
+		}
+		if (!mmb_netdrive_normalize(unc.s, norm, sizeof(norm)))
+			mmb_error("?SYNTAX ERROR");
+		netdrive_store(norm, user.s, pass.s);
+	}
+}
+#endif /* MMB_HAVE_SMB2 */
+
 static void parse_ethernet(void)
 {
 	int on = onoff();
@@ -983,6 +1062,18 @@ static void option_dispatch(void)
 		parse_wifi();
 		return;
 	}
+	if (mmb_match("NETWORK"))
+	{
+		mmb_skip_sp();
+		if (!mmb_match("DRIVE"))
+			mmb_syntax();
+#ifdef MMB_HAVE_SMB2
+		parse_network_drive();
+#else
+		mmb_syntax();
+#endif
+		return;
+	}
 	if (mmb_match("ETHERNET"))
 	{
 		parse_ethernet();
@@ -1039,10 +1130,12 @@ static void option_dispatch(void)
 	if (mmb_match("RESET"))
 	{
 		char ssid[64], psk[64], ntp_server[64], timezone[64];
+		char nd_unc[128], nd_user[64], nd_pass[64];
 		int en = G.opt.wifi_enabled;
 		int eth = G.opt.ethernet_enabled;
 		int ntp_en = G.opt.ntp_enabled;
 		int tzoff = G.opt.tz_offset_min;
+		int nd_en = G.opt.netdrv_enabled;
 		strncpy(ssid, G.opt.wifi_ssid, sizeof(ssid) - 1);
 		ssid[sizeof(ssid) - 1] = 0;
 		strncpy(psk, G.opt.wifi_psk, sizeof(psk) - 1);
@@ -1051,6 +1144,12 @@ static void option_dispatch(void)
 		ntp_server[sizeof(ntp_server) - 1] = 0;
 		strncpy(timezone, G.opt.timezone, sizeof(timezone) - 1);
 		timezone[sizeof(timezone) - 1] = 0;
+		strncpy(nd_unc, G.opt.netdrv_unc, sizeof(nd_unc) - 1);
+		nd_unc[sizeof(nd_unc) - 1] = 0;
+		strncpy(nd_user, G.opt.netdrv_user, sizeof(nd_user) - 1);
+		nd_user[sizeof(nd_user) - 1] = 0;
+		strncpy(nd_pass, G.opt.netdrv_pass, sizeof(nd_pass) - 1);
+		nd_pass[sizeof(nd_pass) - 1] = 0;
 		mmb_option_reset();
 		strncpy(G.opt.wifi_ssid, ssid, sizeof(G.opt.wifi_ssid) - 1);
 		G.opt.wifi_ssid[sizeof(G.opt.wifi_ssid) - 1] = 0;
@@ -1064,6 +1163,14 @@ static void option_dispatch(void)
 		G.opt.timezone[sizeof(G.opt.timezone) - 1] = 0;
 		G.opt.ntp_enabled = ntp_en;
 		G.opt.tz_offset_min = tzoff;
+		/* OPTION RESET preserves the network-drive credentials, like Wi-Fi. */
+		strncpy(G.opt.netdrv_unc, nd_unc, sizeof(G.opt.netdrv_unc) - 1);
+		G.opt.netdrv_unc[sizeof(G.opt.netdrv_unc) - 1] = 0;
+		strncpy(G.opt.netdrv_user, nd_user, sizeof(G.opt.netdrv_user) - 1);
+		G.opt.netdrv_user[sizeof(G.opt.netdrv_user) - 1] = 0;
+		strncpy(G.opt.netdrv_pass, nd_pass, sizeof(G.opt.netdrv_pass) - 1);
+		G.opt.netdrv_pass[sizeof(G.opt.netdrv_pass) - 1] = 0;
+		G.opt.netdrv_enabled = nd_en;
 		mmb_gfx_apply_default_mode();
 		return;
 	}
@@ -1414,6 +1521,27 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.term_autolog ? "OPTION TERM AUTOLOG ON" : "OPTION TERM AUTOLOG OFF");
 	if (all || G.opt.term_scrollback != 200)
 		ol_line_int(&n, "OPTION TERM SCROLLBACK ", G.opt.term_scrollback);
+	if (all || G.opt.netdrv_enabled)
+	{
+		if (G.opt.netdrv_enabled && G.opt.netdrv_unc[0])
+		{
+			if (n)
+				mmb_out("\n");
+			/* The password (or its NTLM hash) is never printed. */
+			mmb_out("OPTION NETWORK DRIVE \"");
+			mmb_out(G.opt.netdrv_unc);
+			mmb_out("\"");
+			if (G.opt.netdrv_user[0])
+			{
+				mmb_out(",\"");
+				mmb_out(G.opt.netdrv_user);
+				mmb_out("\"");
+			}
+			n++;
+		}
+		else
+			ol_line(&n, "OPTION NETWORK DRIVE OFF");
+	}
 	if (all || (G.opt.wifi_country[0] &&
 		    !(G.opt.wifi_country[0] == 'U' && G.opt.wifi_country[1] == 'S' &&
 		      G.opt.wifi_country[2] == 0)))

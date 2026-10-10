@@ -14,8 +14,14 @@ extern "C" {
 /* Number of virtual consoles (Ctrl+Alt+1..4 sessions on every platform). */
 #define MMB_MAX_CONSOLES 4
 
-/* Drive letters A..H (see the VFS). Physical drives are C..H. */
-#define MMB_MAX_DRIVES 8
+/* Drive letter space A..Z (see the VFS). A: is the RAM disk, B: a mounted
+ * package, C:..H: the FAT/FatFs physical drives, and Z: the SMB network drive
+ * (#1128). I:..Y: are unused. MMB_MAX_DRIVES sizes the per-console cwd_path
+ * table, indexed by letter - 'A'. */
+#define MMB_MAX_DRIVES 26
+#define MMB_FAT_DRIVE_HI 'H'  /* highest FAT-backed physical drive letter */
+#define MMB_NET_DRIVE    'Z'  /* OPTION NETWORK DRIVE mounts here */
+#define MMB_DRIVE_HI     MMB_NET_DRIVE
 
 /* Pointer state for the full-screen apps (currently PAINT). Coordinates are
  * in screen pixels with (0,0) at the top-left, matching hdmi_width()/

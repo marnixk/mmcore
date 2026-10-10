@@ -1030,6 +1030,8 @@ static void fu_caption(const char *path, char *out, int outsz)
 		kind = "NVME";
 	else if (drv >= 'D' && drv <= 'G')
 		kind = "USB";
+	else if (drv == MMB_NET_DRIVE)
+		kind = "SMB";
 	if (!kind)
 	{
 		strncpy(out, path, (unsigned)outsz - 1);
@@ -1047,7 +1049,7 @@ static void fu_caption(const char *path, char *out, int outsz)
 	if (drv >= 'C')
 	{
 		char lab[16];
-		if (mmb_fat_label(drv, lab, sizeof lab) == 0 && lab[0])
+		if (mmb_vfs_label(drv, lab, sizeof lab) == 0 && lab[0])
 		{
 			const char *p = lab;
 			out[n++] = ' ';
@@ -2443,13 +2445,14 @@ static void apply_prompt(void)
 			letter = (char)(letter - 32);
 		if (letter == 'B')
 			set_hint("Drive not available");
-		else if (letter >= 'A' && letter <= 'H')
+		else if ((letter >= 'A' && letter <= MMB_FAT_DRIVE_HI) ||
+			 letter == MMB_NET_DRIVE)
 		{
 			char spec[8];
 			spec[0] = (char)letter;
 			spec[1] = ':';
 			spec[2] = 0;
-			if (letter != 'A' && !mmb_fat_ready(letter))
+			if (letter != 'A' && !mmb_vfs_drive_ready(letter))
 				set_hint("Drive not ready");
 			else
 			{
@@ -2564,9 +2567,10 @@ static void set_drive_letter(int letter)
 		set_hint("Drive not available");
 		return;
 	}
-	if (letter < 'A' || letter > 'H')
+	if (!((letter >= 'A' && letter <= MMB_FAT_DRIVE_HI) ||
+	      letter == MMB_NET_DRIVE))
 		return;
-	if (letter != 'A' && !mmb_fat_ready(letter))
+	if (letter != 'A' && !mmb_vfs_drive_ready(letter))
 	{
 		set_hint("Drive not ready");
 		return;
@@ -2676,7 +2680,7 @@ static void do_eject(void)
 	char drv = curpan()->path[0];
 	if (drv >= 'a' && drv <= 'z')
 		drv = (char)(drv - 32);
-	if (mmb_fat_eject(drv) != 0)
+	if (mmb_vfs_eject(drv) != 0)
 	{
 		set_hint("No removable drive to eject");
 		return;
@@ -3378,10 +3382,13 @@ const char *mmb_files_key(char c)
 			return G.out;
 		}
 	}
-	if ((c >= 'A' && c <= 'H') || (c >= 'a' && c <= 'h'))
-		F.pend_drive = (c >= 'a') ? (c - 32) : c;
-	else
-		F.pend_drive = 0;
+	{
+		int cl = (c >= 'a' && c <= 'z') ? (c - 32) : c;
+		if ((cl >= 'A' && cl <= MMB_FAT_DRIVE_HI) || cl == MMB_NET_DRIVE)
+			F.pend_drive = cl;
+		else
+			F.pend_drive = 0;
+	}
 	if (c >= 32 && c < 127)
 		handle_letter(c);
 	if (was_active && F.active && F.mode != FU_PREVIEW)
