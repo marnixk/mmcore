@@ -1152,4 +1152,116 @@ def test_juke_list_panel_keeps_design_bottom(fresh_console):
     con.send_line("PLAY STOP")
 
 
+# ---- #1127: highlight-row text is vertically centred ------------------------
+
+# JUKE's selection fill (JUKE_LIST_SEL). Matched exactly because the loose
+# _is_list_sel predicate also accepts the panel border grey.
+_SEL_BG = (0x3A, 0x46, 0x50)
+
+
+def _is_sel_bg(c: tuple[int, int, int]) -> bool:
+    return all(abs(a - b) <= 6 for a, b in zip(c, _SEL_BG))
+
+
+def _highlight_padding(
+    con: MMBasicConsole, vis: int = 0, pixel_bar: bool = True
+) -> tuple[int, int]:
+    """Pixel padding above/below the selected row's text (#1127).
+
+    Scans the white glyph ink in the row's text area. With ``pixel_bar`` the
+    selection bar's edges come from its exact fill colour (reliable on the
+    16-aligned modes); otherwise the bar is the derived row geometry, because
+    QEMU's colour-cycling shear on the non-16-aligned Chromebook widths (#1050)
+    makes the fill impossible to locate by colour there.
+    """
+    w, h = con.screen_size()
+    s = _juke_scale(w, h)
+    row = max(16, 18 * s // 100)
+    sel_h = row - 2
+    y = _header_geometry(w, h)[3] + 4 * s // 100 + vis * row
+    if pixel_bar:
+        span = list(range(max(0, y - 4), min(h, y + sel_h + 4)))
+        x0 = 22 * s // 100
+        xb0 = 11 * s // 100 + 4 * s // 100  # clear of the now-playing chip
+        bars = list(range(xb0, max(xb0 + 1, x0 - 1)))
+        px = dict(zip([(x, yy) for x in bars for yy in span],
+                      con.screen_pixels([(x, yy) for x in bars for yy in span])))
+        seen = []
+        for x in bars:
+            nb = [yy for yy in span if _is_sel_bg(px[(x, yy)])]
+            if nb:
+                seen.append((min(nb), max(nb)))
+        assert seen, "selection bar not found"
+        seen.sort()
+        top, bot = seen[len(seen) // 2]
+    else:
+        top, bot = y, y + sel_h - 1
+    x0 = 22 * s // 100
+    x1 = min(w - 22 * s // 100, 600)
+    coords = [(x, yy) for yy in range(top - 6, bot + 7)
+              for x in range(x0, x1, 2)]
+    cols = con.screen_pixels(coords)
+    ink = [yy for (x, yy), c in zip(coords, cols) if min(c) > 200]
+    assert ink, "no row text ink found"
+    return min(ink) - top, bot - max(ink)
+
+
+def _prep_highlight_queue(con: MMBasicConsole) -> None:
+    _prep_queue(con, [("tests/TEST.MOD", "JC/A.MOD"),
+                      ("tests/TEST.MOD", "JC/B.MOD"),
+                      ("tests/TEST.MOD", "JC/C.MOD")])
+
+
+def test_juke_highlight_text_centred(fresh_console):
+    """#1127: the selected row's text has equal padding above and below."""
+    con = fresh_console
+    _prep_highlight_queue(con)
+    _open_juke(con, "JC")
+    _keys(con, b"l", quiet=0.6)
+    top, bot = _highlight_padding(con)
+    assert abs(top - bot) <= 1, (top, bot)
+    # The offset is per-row, so the next selected row is centred too.
+    _keys(con, b"\x1b[B")
+    top, bot = _highlight_padding(con, vis=1)
+    assert abs(top - bot) <= 1, (top, bot)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_highlight_text_centred_low_resolution(fresh_console):
+    """#1127: centred in the shortest supported row (60% layout floor)."""
+    con = fresh_console
+    _prep_highlight_queue(con)
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "JC", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    _keys(con, b"l", quiet=0.6)
+    top, bot = _highlight_padding(con)
+    assert abs(top - bot) <= 1, (top, bot)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_highlight_text_centred_chromebook_modes(fresh_console):
+    """#1127: centred in MODE 19/20, where the bar is taller than the font.
+
+    QEMU's colour-cycling shear on these non-16-aligned widths (#1050) makes
+    the selection fill impossible to locate by colour, so the bar comes from
+    the derived row geometry and only the glyph ink is read from pixels.
+    """
+    con = fresh_console
+    _prep_highlight_queue(con)
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "JC", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        _keys(con, b"l", quiet=0.6)
+        top, bot = _highlight_padding(con, pixel_bar=False)
+        assert abs(top - bot) <= 1, (mode, top, bot)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
 
