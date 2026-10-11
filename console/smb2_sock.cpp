@@ -573,16 +573,17 @@ void freeaddrinfo (struct addrinfo *pResult)
 
 /* ---- the single platform hook netfs_smb2.c needs -------------------- */
 
-int mmb_plat_poll_fd (int fd, int events, int timeout_ms)
+int mmb_plat_poll_fd (intptr_t fd, int events, int timeout_ms)
 {
 	unsigned start = mmb_now_ms ();
 	int r;
+	int slot = (int) fd;
 
-	if (fd < 0 || fd >= SMB_MAX_FD || !s_fds[fd].used)
+	if (slot < 0 || slot >= SMB_MAX_FD || !s_fds[slot].used)
 		return -1;
 	for (;;)
 	{
-		r = smb_fd_check (fd, events);
+		r = smb_fd_check (slot, events);
 		if (r)
 			return r;
 		if (timeout_ms <= 0 ||

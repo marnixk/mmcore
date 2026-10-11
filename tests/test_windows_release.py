@@ -97,9 +97,9 @@ def test_winsock_platform_poll_hook_exists():
     """
     win = open(os.path.join(REPO, "native", "net_win.c"), encoding="utf-8").read()
     posix = open(os.path.join(REPO, "native", "net_posix.c"), encoding="utf-8").read()
-    assert "int mmb_plat_poll_fd(int fd, int events, int timeout_ms)" in win
+    assert "mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)" in win
     assert "select(" in win
-    assert "int mmb_plat_poll_fd(int fd, int events, int timeout_ms)" in posix
+    assert "mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)" in posix
 
 
 MINGW_CC = shutil.which("x86_64-w64-mingw32-gcc")
