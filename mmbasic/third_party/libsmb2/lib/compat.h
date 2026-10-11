@@ -113,7 +113,10 @@ typedef unsigned int uintptr_t;
 #define EBADF WSAENOTSOCK
 #endif
 
-#if defined(_XBOX) || defined(__MINGW32__)
+/* MinGW-w64's <winsock2.h> already declares gethostname(char *, int) and
+ * provides snprintf; the old shims are only needed for the Xbox XDK. This
+ * matches upstream master. */
+#if defined(_XBOX)
 #define snprintf _snprintf
 int gethostname(char* name, size_t len);
 #endif

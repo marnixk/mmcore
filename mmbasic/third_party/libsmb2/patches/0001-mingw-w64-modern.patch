@@ -1,0 +1,50 @@
+diff --git a/mmbasic/third_party/libsmb2/include/asprintf.h b/mmbasic/third_party/libsmb2/include/asprintf.h
+index 5657502..54b1227 100644
+--- a/mmbasic/third_party/libsmb2/include/asprintf.h
++++ b/mmbasic/third_party/libsmb2/include/asprintf.h
+@@ -13,7 +13,10 @@
+ #define inline __inline
+ #endif
+ 
+-#ifndef _XBOX
++/* MinGW-w64 declares asprintf/vasprintf in <stdio.h> (when _GNU_SOURCE is
++ * set), so both the helper and the inline definitions below are skipped on
++ * MinGW and the CRT versions are used. Mirrors upstream master. */
++#if !defined(_XBOX) && !defined(__MINGW32__)
+ #ifndef _vscprintf
+ /* For some reason, MSVC fails to honour this #ifndef. */
+ /* Hence function renamed to _vscprintf_so(). */
+@@ -28,7 +31,7 @@ static inline int _vscprintf_so(const char * format, va_list pargs) {
+ #endif /* _vscprintf */
+ #endif
+ 
+-#ifndef vasprintf
++#if !defined(vasprintf) && !defined(__MINGW32__)
+ static inline int vasprintf(char **strp, const char *fmt, va_list ap) {
+ #ifdef _XBOX
+   int len = _vscprintf(fmt, ap);
+@@ -51,7 +54,7 @@ static inline int vasprintf(char **strp, const char *fmt, va_list ap) {
+ }
+ #endif /* vasprintf */
+ 
+-#ifndef asprintf
++#if !defined(asprintf) && !defined(__MINGW32__)
+ static inline int asprintf(char *strp[], const char *fmt, ...) {
+   int r;
+   va_list ap;
+diff --git a/mmbasic/third_party/libsmb2/lib/compat.h b/mmbasic/third_party/libsmb2/lib/compat.h
+index dd9b8d9..e488b3b 100644
+--- a/mmbasic/third_party/libsmb2/lib/compat.h
++++ b/mmbasic/third_party/libsmb2/lib/compat.h
+@@ -113,7 +113,10 @@ typedef unsigned int uintptr_t;
+ #define EBADF WSAENOTSOCK
+ #endif
+ 
+-#if defined(_XBOX) || defined(__MINGW32__)
++/* MinGW-w64's <winsock2.h> already declares gethostname(char *, int) and
++ * provides snprintf; the old shims are only needed for the Xbox XDK. This
++ * matches upstream master. */
++#if defined(_XBOX)
+ #define snprintf _snprintf
+ int gethostname(char* name, size_t len);
+ #endif

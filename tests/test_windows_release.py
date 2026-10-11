@@ -8,6 +8,8 @@ import struct
 import subprocess
 import sys
 
+import pytest
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "windows.yml")
@@ -63,6 +65,77 @@ def test_makefile_builds_net_win_and_separates_objects():
     assert "SDL_MAIN_HANDLED" in mk
     for name in ("net_win.c", "win_compat.h", "win/sys/select.h"):
         assert os.path.exists(os.path.join(REPO, "native", *name.split("/"))), name
+
+
+def test_makefile_builds_winsock_smb_backend():
+    """#1134: the MinGW/Winsock build compiles libsmb2 and the SMB backend.
+
+    Phase 1 left the Windows build without MMB_HAVE_SMB2 and built no libsmb2
+    objects; the Windows path must now do both (with its own config.h and the
+    Winsock compatibility defines) without changing the POSIX path.
+    """
+    mk = open(os.path.join(REPO, "native", "Makefile"), encoding="utf-8").read()
+    assert "MMB_HAVE_SMB2" in mk
+    assert "libsmb2" in mk
+    assert "libsmb2/include/win" in mk or "include/win" in mk
+    assert "_WINDOWS" in mk
+    assert "sync.c" in mk  # the blocking sync API stays out of the build
+
+    cfg = os.path.join(
+        REPO, "mmbasic", "third_party", "libsmb2", "include", "win", "config.h"
+    )
+    assert os.path.isfile(cfg), cfg
+    text = open(cfg, encoding="utf-8").read()
+    assert "HAVE_LINGER" in text
+
+
+def test_winsock_platform_poll_hook_exists():
+    """#1134: netfs_smb2.c's only platform seam is mmb_plat_poll_fd().
+
+    The POSIX hook uses poll(); the Winsock one must exist as well, built on
+    select() (the only readiness primitive Winsock offers for sockets).
+    """
+    win = open(os.path.join(REPO, "native", "net_win.c"), encoding="utf-8").read()
+    posix = open(os.path.join(REPO, "native", "net_posix.c"), encoding="utf-8").read()
+    assert "int mmb_plat_poll_fd(int fd, int events, int timeout_ms)" in win
+    assert "select(" in win
+    assert "int mmb_plat_poll_fd(int fd, int events, int timeout_ms)" in posix
+
+
+MINGW_CC = shutil.which("x86_64-w64-mingw32-gcc")
+
+
+@pytest.mark.skipif(MINGW_CC is None, reason="needs x86_64-w64-mingw32-gcc")
+def test_windows_smb_tus_cross_compile(tmp_path):
+    """#1134: the SMB backend + libsmb2 compatibility layer compile for MinGW.
+
+    Compile two representative translation units for the Windows target: the
+    backend (netfs_smb2.c, which includes the libsmb2 public headers) and the
+    vendored compat.c (which exercises config.h and the Winsock shims). Uses
+    the Makefile's own flags via a redirected BUILD dir so the tree stays clean.
+    """
+    native = os.path.join(REPO, "native")
+    build = str(tmp_path / "win")
+    objs = []
+    for name in ("netfs_smb2.o", "compat.o"):
+        obj = os.path.join(build, name)
+        subprocess.run(
+            [
+                "make",
+                "-C",
+                native,
+                "TARGET_WINDOWS=1",
+                "CC=" + MINGW_CC,
+                "BUILD=" + build,
+                obj,
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert os.path.isfile(obj), obj
+        objs.append(obj)
+    assert objs
 
 
 def test_release_notes_list_the_windows_asset():
