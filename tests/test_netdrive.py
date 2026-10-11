@@ -1,4 +1,4 @@
-"""#1128 phase 1: OPTION NETWORK DRIVE (SMB share mounted at Z:).
+"""#1128 network drive (SMB share mounted at Z:), phases 1 and 3 (#1133).
 
 Two layers are covered here:
 
@@ -8,8 +8,9 @@ Two layers are covered here:
   interpreter and need no server.
 * Live SMB behaviour (opt-in): a local Samba ``smbd`` is started on a
   non-privileged port with a guest and a user share, and DIR / SAVE / LOAD /
-  OPEN / COPY / KILL / MKDIR / NAME are exercised on Z:. These need a real
-  Samba ``smbd`` and ``MMCORE_LIVE_NET=1`` (the same gate the other live
+  OPEN / COPY / KILL / MKDIR / NAME are exercised on Z:, plus the #1133
+  reconnect-after-drop path and the cached PRINT#/INPUT# handles. These need a
+  real Samba ``smbd`` and ``MMCORE_LIVE_NET=1`` (the same gate the other live
   network tests use); they skip otherwise.
 
 A host-level C test (``tests/netdrive_host.c``) checks the UNC/hash helpers
@@ -199,6 +200,26 @@ def test_connect_failure_does_not_leak_password(mmb_native, tmp_path):
     assert "topsecret" not in out
 
 
+def test_repeated_connect_failure_stays_short(mmb_native, tmp_path):
+    """Two failed Z: uses in one session both stay short and never crash the
+    teardown/reconnect path (#1133)."""
+    root = str(tmp_path / "root")
+    out = run_mmb(
+        mmb_native,
+        'OPTION NETWORK DRIVE "\\\\127.0.0.1:1\\share","user","topsecret"\n'
+        'DIR "Z:/"\n'
+        'PRINT "between"\n'
+        'DIR "Z:/"\n'
+        "PRINT \"after\"\n",
+        root,
+        timeout=40,
+    )
+    assert out.count("?NETWORK DRIVE: host unreachable") >= 2
+    assert "topsecret" not in out
+    assert "between" in out
+    assert "after" in out
+
+
 # --------------------------------------------------------------------------
 # Host C test for the pure UNC / hash helpers
 # --------------------------------------------------------------------------
@@ -242,13 +263,15 @@ def _free_port() -> int:
 
 
 def _real_samba_smbd() -> str | None:
-    """A Samba ``smbd`` (not Apple's macOS smbd) with its companion tools."""
-    smbd = shutil.which("smbd")
-    if not smbd:
-        return None
+    """A Samba ``smbd`` (not Apple's macOS smbd) with its companion tools.
+
+    ``smbpasswd`` only comes with real Samba (never Apple's), so it gates the
+    check; Homebrew renames the server to ``samba-dot-org-smbd`` to avoid
+    shadowing ``/usr/sbin/smbd``, while Linux ships the plain ``smbd`` name.
+    """
     if shutil.which("smbpasswd") is None:
         return None
-    return smbd
+    return shutil.which("samba-dot-org-smbd") or shutil.which("smbd")
 
 
 class SambaServer:
@@ -258,7 +281,10 @@ class SambaServer:
         self.proc: subprocess.Popen | None = None
         self.guest = os.path.join(tmpdir, "guest")
         self.user = os.path.join(tmpdir, "user")
-        self.priv = os.path.join(tmpdir, "private")
+        # Samba's private dir holds UNIX sockets whose path must stay under the
+        # ~104-char sun_path limit; pytest's tmp tree is far too deep, so keep
+        # the server state in a short /tmp dir (#1133).
+        self.priv = tempfile.mkdtemp(prefix="mmbsmb-", dir="/tmp")
         self.user_name = "mmtest"
         self.user_pass = "mmtestpass"
         for d in (self.guest, self.user, self.priv):
@@ -357,13 +383,27 @@ class SambaServer:
                 time.sleep(0.2)
         raise RuntimeError("smbd did not start listening")
 
-    def stop(self) -> None:
+    def _terminate(self) -> None:
+        # Homebrew smbd can wedge in Popen.wait(); SIGKILL plus a poll loop is
+        # enough for a throwaway test server and never blocks the suite.
         if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
             try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
                 self.proc.kill()
+            except OSError:
+                pass
+            deadline = time.time() + 5
+            while time.time() < deadline and self.proc.poll() is None:
+                time.sleep(0.05)
+        self.proc = None
+
+    def stop(self) -> None:
+        self._terminate()
+        shutil.rmtree(self.priv, ignore_errors=True)
+
+    def restart(self) -> "SambaServer":
+        """Bounce smbd on the same port (reconnect tests, #1133)."""
+        self._terminate()
+        return self.start()
 
 
 @pytest.fixture(scope="module")
@@ -494,3 +534,113 @@ def test_smb_does_not_disturb_term_connection(samba, mmb_native, tmp_path):
     out = run_mmb(mmb_native, script, root, timeout=120)
     srv.close()
     assert "T1:one T2:two T3:three" in out
+
+
+# --------------------------------------------------------------------------
+# Reconnect + open-handle caching (#1133)
+# --------------------------------------------------------------------------
+
+def _bounce_when_marker(samba: SambaServer, marker: str,
+                        timeout: float = 30.0) -> threading.Thread:
+    """Restart the share once the guest drops a handshake file.
+
+    The native interpreter runs the whole script as one subprocess, so the only
+    way to drop the share *mid-session* is for a watcher thread to bounce smbd
+    while the guest busy-waits in ``PAUSE``.
+    """
+    def worker() -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline and not os.path.exists(marker):
+            time.sleep(0.1)
+        if not os.path.exists(marker):
+            return
+        try:
+            samba.restart()
+        except Exception:  # the assertion below reports the failure
+            pass
+
+    th = threading.Thread(target=worker, daemon=True)
+    th.start()
+    return th
+
+
+def test_z_reconnects_after_share_restart(samba, mmb_native, tmp_path):
+    """An idempotent Z: op after the share drops reconnects once and retries,
+    keeping the pre-drop file and writing the post-drop one."""
+    root = str(tmp_path / "root")
+    os.makedirs(os.path.join(root, "C"), exist_ok=True)
+    marker = os.path.join(root, "C", "phase1.done")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'OPEN "Z:/before.txt" FOR OUTPUT AS #1\n'
+        + 'PRINT #1, "before"\n'
+        + "CLOSE #1\n"
+        + 'DIR "Z:/"\n'
+        + 'OPEN "C:/phase1.done" FOR OUTPUT AS #2\n'
+        + 'PRINT #2, "go"\n'
+        + "CLOSE #2\n"
+        + "PAUSE 15000\n"
+        + 'PRINT "dropped"\n'
+        + 'DIR "Z:/"\n'
+        + 'OPEN "Z:/after.txt" FOR OUTPUT AS #1\n'
+        + 'PRINT #1, "after"\n'
+        + "CLOSE #1\n"
+        + 'DIR "Z:/"\n'
+    )
+    th = _bounce_when_marker(samba, marker)
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    th.join(timeout=10)
+    assert "?NETWORK DRIVE" not in out
+    assert "before.txt" in out
+    assert "after.txt" in out
+    with open(os.path.join(samba.guest, "after.txt")) as fh:
+        assert fh.read().strip() == "after"
+
+
+def test_z_dropped_write_fails_file(samba, mmb_native, tmp_path):
+    """A write that finds the share already dropped fails with ?FILE and is not
+    replayed (#1133)."""
+    root = str(tmp_path / "root")
+    os.makedirs(os.path.join(root, "C"), exist_ok=True)
+    marker = os.path.join(root, "C", "phase1.done")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'OPEN "Z:/before.txt" FOR OUTPUT AS #1\n'
+        + 'PRINT #1, "before"\n'
+        + "CLOSE #1\n"
+        + 'DIR "Z:/"\n'
+        + 'OPEN "C:/phase1.done" FOR OUTPUT AS #2\n'
+        + 'PRINT #2, "go"\n'
+        + "CLOSE #2\n"
+        + "PAUSE 15000\n"
+        + 'OPEN "Z:/late.txt" FOR OUTPUT AS #1\n'
+    )
+    th = _bounce_when_marker(samba, marker)
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    th.join(timeout=10)
+    assert "?FILE" in out
+    assert not os.path.exists(os.path.join(samba.guest, "late.txt"))
+
+
+def test_z_many_print_and_input_lines(samba, mmb_native, tmp_path):
+    """The cached append handle keeps PRINT# offsets correct across many calls
+    and INPUT# reads them back byte-for-byte (#1133)."""
+    root = str(tmp_path / "root")
+    lines = 40
+    script = 'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+    script += 'OPEN "Z:/many.txt" FOR OUTPUT AS #1\n'
+    for i in range(1, lines + 1):
+        script += 'PRINT #1, "line %d"\n' % i
+    script += "CLOSE #1\n"
+    script += 'OPEN "Z:/many.txt" FOR INPUT AS #1\n'
+    for i in range(1, lines + 1):
+        script += "INPUT #1, x$\n"
+        script += 'IF x$ <> "line %d" THEN PRINT "BAD %d:"; x$\n' % (i, i)
+    script += "CLOSE #1\n"
+    script += 'PRINT "DONE"\n'
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    assert "BAD" not in out
+    assert "?FILE" not in out
+    assert "DONE" in out
+    with open(os.path.join(samba.guest, "many.txt")) as fh:
+        assert fh.read() == "".join("line %d\n" % i for i in range(1, lines + 1))
