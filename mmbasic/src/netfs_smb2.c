@@ -975,9 +975,35 @@ static int netfs_simple(int letter, const char *path, int which)
 	return rc;
 }
 
+/*
+ * A MKDIR that succeeds server-side can still come back as a failure from
+ * Samba. libsmb2 sends mkdir as a compound CREATE(FILE_CREATE)+CLOSE;
+ * smbd's mkdir_internal() first builds the directory under a temporary name
+ * and RENAMEAT()s it into place, and on some filesystems (observed with
+ * Homebrew Samba 4.25 on macOS) that rename is refused with
+ * NT_STATUS_ACCESS_DENIED *after* the directory has been created. The net
+ * result is a correct directory plus a spurious error, so MMBasic reported
+ * ?DIRECTORY even though a subsequent DIR showed the folder.
+ *
+ * Resolve it by looking at the filesystem instead of the status alone: if
+ * the directory already existed before the call, keep the ?DIRECTORY that
+ * FAT gives for a duplicate; otherwise accept the now-present directory as
+ * success. A genuine failure (e.g. permission denied) leaves nothing behind
+ * and still reports ?DIRECTORY.
+ */
 static int mmb_net_mkdir(int letter, const char *path)
 {
-	return netfs_simple(letter, path, 0);
+	struct smb2_stat_64 st;
+	int rc;
+
+	if (netfs_stat_retry(path, &st) == 0 &&
+	    st.smb2_type == SMB2_TYPE_DIRECTORY)
+		return -1;
+	rc = netfs_simple(letter, path, 0);
+	if (rc != 0 && netfs_stat_retry(path, &st) == 0 &&
+	    st.smb2_type == SMB2_TYPE_DIRECTORY)
+		rc = 0;
+	return rc;
 }
 
 static int mmb_net_rmdir(int letter, const char *path)
