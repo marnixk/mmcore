@@ -283,7 +283,7 @@ def test_eject_missing_drive_errors(console):
 
 def test_eject_ramdisk_and_unknown_letter_error(console):
     assert console.send_line('EJECT "A:"').startswith("?")
-    assert console.send_line('EJECT "Z:"').startswith("?")
+    assert console.send_line('EJECT "Y:"').startswith("?")
 
 
 def test_drive_never_labels_ramdisk(console):
