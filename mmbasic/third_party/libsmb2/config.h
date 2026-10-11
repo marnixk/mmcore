@@ -36,7 +36,9 @@
 #define HAVE_SYS_TIME_H 1
 #define HAVE_SYS_TYPES_H 1
 #define HAVE_SYS_UIO_H 1
-#define HAVE_SYS_UNISTD_H 1
+/* No HAVE_SYS_UNISTD_H: it is a glibc/macOS compatibility header that musl
+ * (Alpine, the ISO builder) and other libcs do not ship, and <unistd.h>
+ * (HAVE_UNISTD_H) already provides everything libsmb2 needs from it. */
 #define HAVE_TIME_H 1
 #define HAVE_UNISTD_H 1
 #define STDC_HEADERS 1
