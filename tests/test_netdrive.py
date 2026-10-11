@@ -461,6 +461,52 @@ def test_z_guest_round_trip(samba, mmb_native, tmp_path):
     assert "HELLO" in out
 
 
+def test_z_repeated_mkdir_one_session(samba, mmb_native, tmp_path):
+    """Every MKDIR in a session succeeds, not just the first, and one after a
+    non-mkdir Z: op works too (#1139).
+
+    Samba's mkdir_internal() can return a spurious NT_STATUS_ACCESS_DENIED
+    *after* creating the directory (it builds it under a temporary name and
+    RENAMEAT()s it), which used to make a later MKDIR report ?DIRECTORY while
+    still leaving the folder on the share.
+    """
+    root = str(tmp_path / "root")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'MKDIR "Z:/m1"\n'
+        + 'MKDIR "Z:/m2"\n'
+        + 'OPEN "Z:/x.txt" FOR OUTPUT AS #1\n'
+        + 'PRINT #1, "x"\n'
+        + "CLOSE #1\n"
+        + 'MKDIR "Z:/m3"\n'
+        + 'DIR "Z:/"\n'
+        + 'PRINT "AFTER"\n'
+    )
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    assert "?DIRECTORY" not in out
+    assert "?FILE" not in out
+    assert "AFTER" in out
+    for name in ("m1", "m2", "m3"):
+        assert "%s/" % name in out
+        assert os.path.isdir(os.path.join(samba.guest, name))
+
+
+def test_z_mkdir_existing_still_reports_directory(samba, mmb_native, tmp_path):
+    """A MKDIR on a directory that truly pre-exists is still ?DIRECTORY, so the
+    #1139 fix does not swallow the duplicate case."""
+    root = str(tmp_path / "root")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'MKDIR "Z:/dup"\n'
+        + 'MKDIR "Z:/dup"\n'
+        + 'PRINT "DONE"\n'
+    )
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    assert out.count("?DIRECTORY") == 1
+    assert "DONE" in out
+    assert os.path.isdir(os.path.join(samba.guest, "dup"))
+
+
 def test_z_user_share_authenticated(samba, mmb_native, tmp_path):
     if not getattr(samba, "user_ok", False):
         pytest.skip("could not create the Samba test user")
