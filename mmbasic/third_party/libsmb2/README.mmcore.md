@@ -12,9 +12,13 @@ used by the `OPTION NETWORK DRIVE` (Z:) backend in `mmbasic/src/netfs_smb2.c`.
   `LICENCE-LGPL-2.1.txt`. mmcore ships the full source of this tree, so the
   LGPL relinking obligation is met by public source availability; the release
   credits must carry the LGPL notice. (Not legal advice.)
-- **No local patches yet.** If a patch is ever needed, add it under
-  `patches/` as a `NNNN-<name>.patch` (plain `git format-patch`) and list it
-  here, so the modifications stay public.
+- **Local patches:** `patches/0001-mingw-w64-modern.patch` (applied) makes the
+  vendored tree build with modern MinGW-w64: `compat.h` no longer redeclares
+  `gethostname`/`snprintf` for MinGW (winsock2.h provides them now) and
+  `asprintf.h` skips its inline `asprintf`/`vasprintf` when the MinGW CRT
+  already declares them. Both are backports of upstream master fixes. Apply
+  from the repo root with `git apply`. List every patch here so the
+  modifications stay public.
 
 ## Build shim
 
@@ -23,6 +27,12 @@ generates it with CMake/autoconf for each target; mmcore builds the library
 from a plain `native/Makefile`, so this file supplies the `HAVE_*` feature
 macros for the POSIX desktop targets (macOS and Linux). It is compiled with
 `-DHAVE_CONFIG_H` and this directory on the include path.
+
+The MinGW/Winsock target uses `include/win/config.h` (also mmcore-authored)
+instead, selected by putting `include/win/` ahead of this directory on the
+include path. It enables only the standard C headers MinGW-w64 ships and lets
+`<compat.h>` supply the Winsock socket shims, mirroring how upstream's CMake
+Windows path relies on `compat.h`.
 
 A future bare-metal Circle port must not rely on this POSIX shim: it should
 supply its own `config.h` (the upstream `include/esp/` or `include/picow/`
