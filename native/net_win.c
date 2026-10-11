@@ -53,7 +53,7 @@ static void sock_close(SOCKET fd)
 #define POLLHUP 0x0010
 #endif
 
-int mmb_plat_poll_fd(int fd, int events, int timeout_ms)
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)
 {
 	fd_set rfds, wfds, efds;
 	struct timeval tv, *ptv;

@@ -203,17 +203,29 @@ static int netfs_status_is_transport(int st)
 		return 1;
 	switch (st)
 	{
+#ifdef ENETRESET
 	case -ENETRESET:
+#endif
 	case -ETIMEDOUT:
 	case -ECONNRESET:
 	case -ECONNREFUSED:
 	case -EPIPE:
+#ifdef ENOTCONN
 	case -ENOTCONN:
+#endif
+#ifdef EHOSTDOWN
 	case -EHOSTDOWN:
+#endif
+#ifdef EHOSTUNREACH
 	case -EHOSTUNREACH:
+#endif
 	case -ENETDOWN:
+#ifdef ENETUNREACH
 	case -ENETUNREACH:
+#endif
+#ifdef ESHUTDOWN
 	case -ESHUTDOWN:
+#endif
 		return 1;
 	default:
 		return 0;

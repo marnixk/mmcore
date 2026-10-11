@@ -48,6 +48,16 @@ typedef int t_socket;
 #define SMB2_INVALID_SOCKET		-1
 #endif
 
+/*
+ * Bare-metal Circle port (#1132): no BSD socket headers, so mmcore supplies
+ * the socket types, constants and prototypes here. The implementation is in
+ * console/smb2_sock.cpp (Circle CSocket + a small fd table). Included from
+ * compat.h so every libsmb2 translation unit sees it.
+ */
+#ifdef __circle__
+#include <circle/smb2_circle.h>
+#endif
+
 #if defined(_XBOX) || defined(_WINDOWS) || defined(__MINGW32__)
 
 #include <stddef.h>

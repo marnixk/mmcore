@@ -20,7 +20,7 @@ used by the `OPTION NETWORK DRIVE` (Z:) backend in `mmbasic/src/netfs_smb2.c`.
   from the repo root with `git apply`. List every patch here so the
   modifications stay public.
 
-## Build shim
+## Build shims
 
 `config.h` in this directory is **mmcore-authored**, not upstream. Upstream
 generates it with CMake/autoconf for each target; mmcore builds the library
@@ -34,10 +34,21 @@ include path. It enables only the standard C headers MinGW-w64 ships and lets
 `<compat.h>` supply the Winsock socket shims, mirroring how upstream's CMake
 Windows path relies on `compat.h`.
 
-A future bare-metal Circle port must not rely on this POSIX shim: it should
-supply its own `config.h` (the upstream `include/esp/` or `include/picow/`
-configs are the model) and a socket/libc shim, exactly as the design analysis
-for #1128 describes. The Circle adapter is out of scope for this vendoring.
+The bare-metal Circle target uses `include/circle/config.h` (#1132), selected by
+putting `include/circle/` first on the include path. AArch64-newlib has no BSD
+socket headers, so that config turns them off and `lib/compat.h` includes
+`include/circle/smb2_circle.h`, which declares the socket types and calls
+libsmb2 uses. `console/smb2_sock.cpp` implements them on top of Circle `CSocket`
+(plus the small libc shims libsmb2 needs). The Circle build (`console/Makefile`)
+drops `lib/sync.c` (it blocks in `poll(1000)` with no break hook; only the async
+API is used).
+
+Manual hardware check (no Circle SMB test runs in CI; QEMU SLIRP guest→host
+TCP is only transiently usable, #389): on a Pi 400 over Wi-Fi against a real
+Samba server, set `OPTION NETWORK DRIVE "\\host\share","user","pass"` and
+exercise `DIR Z:`, `SAVE`/`LOAD`, `OPEN`, `COPY`, `KILL`, `MKDIR` and `NAME`.
+Confirm a 64 KB-plus file reads correctly (the largest untested Circle TCP
+path) and that Ctrl-C during a stalled op returns to the prompt.
 
 ## Updating
 

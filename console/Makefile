@@ -13,7 +13,20 @@ ifeq ($(findstring NO_SDHOST,$(DEFINE)),)
 DEFINE += -DMMB_CIRCLE_WLAN
 endif
 
+# Vendored libsmb2 (#1128/#1132) for OPTION NETWORK DRIVE on Z:. The shared
+# backend (mmbasic/src/netfs_smb2.c) talks to the BSD socket surface in
+# console/smb2_sock.cpp, which sits on Circle CSocket. lib/sync.c is dropped
+# because it blocks in poll(1000) with no break hook; the backend only uses
+# the async API.
+SMB2      = $(MMB)/third_party/libsmb2
+SMB2_SRCS = $(filter-out $(SMB2)/lib/sync.c,$(wildcard $(SMB2)/lib/*.c))
+SMB2_OBJS = $(SMB2_SRCS:.c=.o)
+
 OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_rxbuf.o audio.o \
+	  smb2_sock.o \
+	  $(MMB)/src/netfs_smb2.o \
+	  $(MMB)/src/netdrive_unc.o \
+	  $(SMB2_OBJS) \
 	  $(MMB)/src/util.o \
 	  $(MMB)/src/frontend.o \
 	  $(MMB)/src/session.o \
@@ -107,7 +120,15 @@ LIBS := $(CIRCLEHOME)/addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a \
 	$(LIBS)
 endif
 
-EXTRAINCLUDE = -I . -I $(MMB)/include -I $(MMB)/third_party
+EXTRAINCLUDE = -I . -I $(MMB)/include -I $(MMB)/third_party \
+	       -I $(SMB2)/include/circle -I $(SMB2)/include \
+	       -I $(SMB2)/include/smb2 -I $(SMB2)/lib
+
+# MMB_HAVE_SMB2 enables the shared Z: backend (netfs_smb2.c) and the OPTION
+# NETWORK DRIVE parser. HAVE_CONFIG_H picks up include/circle/config.h (the
+# directory is first on the include path above). _U_ silences libsmb2's
+# intentionally unused iovectors the same way native/Makefile does.
+DEFINE += -DMMB_HAVE_SMB2=1 -DHAVE_CONFIG_H -D_U_='__attribute__((unused))'
 
 MMB_VERSION ?= $(shell git -C $(MMB)/.. describe --tags --always 2>/dev/null)
 ifeq ($(strip $(MMB_VERSION)),)
@@ -131,6 +152,7 @@ EXTRACLEAN = $(MMB)/src/*.o $(MMB)/src/*.d \
 	     $(MMB)/src/help_data.c \
 	     $(MMB)/src/ramdisk_data.c $(MMB)/src/ramdisk_data.stamp \
 	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d \
+	     $(SMB2)/lib/*.o $(SMB2)/lib/*.d \
 	     mmb_version.h
 
 include $(CIRCLEHOME)/Rules.mk
