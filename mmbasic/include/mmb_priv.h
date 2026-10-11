@@ -1093,8 +1093,9 @@ void mmb_netdrive_disconnect(void);
 /* Poll one file descriptor for events (POLLIN/POLLOUT style bitmask) for up to
  * timeout_ms, returning the revents mask, 0 on timeout, -1 on error. The
  * network backend owns its own sockets, so this is the only platform hook the
- * shared SMB code needs; Circle supplies its own implementation. */
-int mmb_plat_poll_fd(int fd, int events, int timeout_ms);
+ * shared SMB code needs; Circle supplies its own implementation. The fd is an
+ * intptr_t so a 64-bit Winsock SOCKET (UINT_PTR) survives the call (#1136). */
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms);
 
 void mmb_storage_unmount(void);
 

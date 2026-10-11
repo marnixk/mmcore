@@ -54,13 +54,15 @@ static int set_nonblock(int fd)
 }
 
 /* Generic poll hook for the SMB backend (netfs_smb2.c), which owns its own
- * libsmb2 sockets and must not touch the CONNECT/TERM client above. */
-int mmb_plat_poll_fd(int fd, int events, int timeout_ms)
+ * libsmb2 sockets and must not touch the CONNECT/TERM client above. The fd is
+ * carried as an intptr_t so a pointer-sized Winsock SOCKET is not truncated
+ * (#1136); a POSIX fd is always an int, so the cast back is exact. */
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)
 {
 	struct pollfd p;
 	int r;
 
-	p.fd = fd;
+	p.fd = (int)fd;
 	p.events = (short)events;
 	p.revents = 0;
 	r = poll(&p, 1, timeout_ms);
