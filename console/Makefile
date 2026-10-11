@@ -22,6 +22,16 @@ SMB2      = $(MMB)/third_party/libsmb2
 SMB2_SRCS = $(filter-out $(SMB2)/lib/sync.c,$(wildcard $(SMB2)/lib/*.c))
 SMB2_OBJS = $(SMB2_SRCS:.c=.o)
 
+# libsmb2's md5.c defines unprefixed MD5Init/MD5Update/MD5Final. Hardware
+# images (NO_SDHOST unset -> MMB_CIRCLE_WLAN) also link the hostap
+# wpa_supplicant archive, which defines the same three, so the link fails with
+# multiple definitions. Namespace libsmb2's copies for every vendored source so
+# its own callers bind to its implementation, not hostap's. QEMU images that
+# skip hostap are unaffected but get the same names for consistency.
+$(SMB2_OBJS): DEFINE += -DMD5Init=mmb_smb2_MD5Init \
+			 -DMD5Update=mmb_smb2_MD5Update \
+			 -DMD5Final=mmb_smb2_MD5Final
+
 OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_rxbuf.o audio.o \
 	  smb2_sock.o \
 	  $(MMB)/src/netfs_smb2.o \
