@@ -7,6 +7,13 @@
  * compile this unchanged once it supplies that hook plus libsmb2's own socket
  * layer.
  *
+ * Bulk I/O (#1142/#1143): each transfer is sized from the server's negotiated
+ * maximum read/write size (capped for memory) instead of a fixed 64 KB, and the
+ * read/write loops keep a small window of PDUs outstanding so throughput is not
+ * limited to one round trip per chunk. SMB2 credits let libsmb2 shrink an
+ * individual request when the server grants fewer; a short write is therefore
+ * resumed rather than failed, while a short read is EOF.
+ *
  * Reconnect (#1133): a transport failure (socket reset / op timeout /
  * NT_STATUS_NETWORK_NAME_DELETED) destroys the libsmb2 context and marks Z:
  * disconnected; the next op reconnects lazily. Idempotent ops (stat / isdir /
@@ -46,8 +53,14 @@
 #include "smb2.h"
 #include "libsmb2.h"
 
-/* Cap our own I/O chunks; the negotiated max may be larger. */
-#define NETFS_CHUNK 65536u
+/* Fixed fallback when the server advertises no max read/write size. */
+#define NETFS_CHUNK_FALLBACK 65536u
+/* Memory bound on one PDU: the negotiated max can be 8 MB, but a PDU's data
+ * buffer lives for the whole request and NETFS_WINDOW of them can be live at
+ * once, so cap each chunk (~1 MB) to stay inside Circle's RAM budget. */
+#define NETFS_CHUNK_CAP (1u << 20)
+/* Outstanding PDUs kept in flight by the bulk read/write loops (#1143). */
+#define NETFS_WINDOW 4
 /* Hard budgets for the lazy connect and each op, in milliseconds. */
 #define NETFS_CONNECT_MS 5000u
 #define NETFS_OP_MS 10000u
@@ -297,6 +310,163 @@ static int netfs_await(struct netfs_req *r, unsigned budget_ms)
 	if (netfs_status_is_transport(r->status))
 		s_dead = 1;
 	return r->status;
+}
+
+/* ---- bulk-transfer sizing and pipelining (#1142/#1143) ------------- */
+
+/* The chunk size for one read or write PDU: the size the server negotiated,
+ * clamped to our memory cap, with a fixed fallback when it reports none. */
+static unsigned netfs_chunk(int is_read)
+{
+	uint32_t m = is_read ? smb2_get_max_read_size(s_ctx)
+			     : smb2_get_max_write_size(s_ctx);
+
+	if (m == 0)
+		return NETFS_CHUNK_FALLBACK;
+	if (m > NETFS_CHUNK_CAP)
+		m = NETFS_CHUNK_CAP;
+	return (unsigned)m;
+}
+
+/* One slot in the in-flight window. Each owns its completion record so a PDU
+ * finishes against its own stack slot rather than the single s_active pointer
+ * the one-op-at-a-time calls use. */
+struct netfs_slot {
+	struct netfs_req req;
+	unsigned off;   /* byte offset within the caller's buffer */
+	unsigned len;   /* bytes still to transfer for this range */
+};
+
+static void netfs_pipe_cb(struct smb2_context *smb2, int status,
+			  void *command_data, void *private_data)
+{
+	struct netfs_req *r = private_data;
+
+	(void)smb2;
+	(void)command_data;
+	if (!r)
+		return;
+	r->status = status;
+	r->done = 1;
+}
+
+static int netfs_slot_issue(struct netfs_slot *s, struct smb2fh *fh, void *data,
+			    uint64_t base, int is_read)
+{
+	s->req.done = 0;
+	s->req.status = 0;
+	s->req.data = 0;
+	if (is_read)
+		return smb2_pread_async(s_ctx, fh, (uint8_t *)data + s->off,
+					s->len, base + s->off, netfs_pipe_cb,
+					&s->req);
+	return smb2_pwrite_async(s_ctx, fh, (const uint8_t *)data + s->off,
+				 s->len, base + s->off, netfs_pipe_cb, &s->req);
+}
+
+/*
+ * Move n bytes between `data` and the file `fh` with up to NETFS_WINDOW PDUs
+ * outstanding. Reads fill data[0..n); writes drain it. `base` is the file
+ * offset of data[0]. A short write is resumed (libsmb2 may have shrunk the
+ * request to fit the credits the server granted), a short read is EOF. Returns
+ * 0 on success or -1 on failure; *got receives the bytes transferred.
+ *
+ * Every PDU is drained before returning so no callback can outlive this frame;
+ * on a dead transport the context is torn down here instead.
+ */
+static int netfs_io_window(struct smb2fh *fh, void *data, uint64_t base,
+			   unsigned n, unsigned chunk, int is_read,
+			   unsigned *got)
+{
+	struct netfs_slot slots[NETFS_WINDOW];
+	int head = 0, tail = 0, inflight = 0;
+	unsigned next = 0, done = 0;
+	int eof = 0, rc = 0;
+
+	if (got)
+		*got = 0;
+	memset(slots, 0, sizeof(slots));
+	while (rc == 0)
+	{
+		while (!eof && inflight < NETFS_WINDOW && next < n)
+		{
+			struct netfs_slot *s = &slots[head];
+			unsigned len = n - next;
+
+			if (len > chunk)
+				len = chunk;
+			s->off = next;
+			s->len = len;
+			next += len;
+			if (netfs_slot_issue(s, fh, data, base, is_read) < 0)
+			{
+				rc = -1;
+				break;
+			}
+			head = (head + 1) % NETFS_WINDOW;
+			inflight++;
+		}
+		if (rc != 0 || inflight == 0)
+			break;
+
+		/* Wait for the oldest PDU; later ones may finish with it. */
+		{
+			struct netfs_slot *s = &slots[tail];
+			int st;
+
+			if (netfs_await(&s->req, NETFS_OP_MS) < 0 || s_dead)
+			{
+				rc = -1;
+				break;
+			}
+			st = s->req.status;
+			/* Also catches the raw positive PDU-timeout status. */
+			if (st < 0 || (unsigned)st > s->len)
+			{
+				rc = -1;
+				break;
+			}
+			if (st == 0)
+			{
+				/* Read EOF; a zero-length write is refused. */
+				if (!is_read)
+				{
+					rc = -1;
+					break;
+				}
+				eof = 1;
+				s->len = 0;
+			}
+			else
+			{
+				done += (unsigned)st;
+				s->off += (unsigned)st;
+				s->len -= (unsigned)st;
+			}
+			if (s->len == 0)
+			{
+				tail = (tail + 1) % NETFS_WINDOW;
+				inflight--;
+			}
+			else if (netfs_slot_issue(s, fh, data, base, is_read) < 0)
+			{
+				rc = -1;
+				break;
+			}
+		}
+	}
+
+	while (inflight > 0 && !s_dead)
+	{
+		netfs_await(&slots[tail].req, NETFS_OP_MS);
+		tail = (tail + 1) % NETFS_WINDOW;
+		inflight--;
+	}
+	if (s_dead)
+		netfs_teardown();
+	if (got)
+		*got = done;
+	return rc;
 }
 
 /* ---- config parsing / connection ----------------------------------- */
@@ -636,10 +806,7 @@ static struct smb2dir *netfs_opendir(const char *path)
 static int netfs_read_do(const char *path, unsigned pos, void *data,
 			 unsigned n, unsigned *got)
 {
-	struct netfs_req req;
 	char full[NETFS_PATH_MAX];
-	unsigned done = 0;
-	int rc = 0;
 
 	if (got)
 		*got = 0;
@@ -656,33 +823,8 @@ static int netfs_read_do(const char *path, unsigned pos, void *data,
 			return -1;
 		snprintf(s_rd_path, sizeof(s_rd_path), "%s", full);
 	}
-	while (done < n)
-	{
-		unsigned chunk = n - done;
-		if (chunk > NETFS_CHUNK)
-			chunk = NETFS_CHUNK;
-		netfs_reset(&req);
-		if (smb2_pread_async(s_ctx, s_rd_fh, (uint8_t *)data + done,
-				     chunk, (uint64_t)pos + done, netfs_cb,
-				     NULL) < 0)
-		{
-			rc = -1;
-			break;
-		}
-		if (netfs_await(&req, NETFS_OP_MS) < 0 || req.status < 0)
-		{
-			rc = -1;
-			break;
-		}
-		if (req.status == 0)
-			break;
-		done += (unsigned)req.status;
-		if ((unsigned)req.status < chunk)
-			break; /* short read: EOF */
-	}
-	if (got)
-		*got = done;
-	return rc;
+	return netfs_io_window(s_rd_fh, data, (uint64_t)pos, n,
+			       netfs_chunk(1), 1, got);
 }
 
 static int netfs_read_retry(const char *path, unsigned pos, void *data,
@@ -723,25 +865,10 @@ static int netfs_open_denied(void)
 static int netfs_pwrite_all(struct smb2fh *fh, const void *data, unsigned n,
 			    uint64_t off)
 {
-	unsigned done = 0;
+	unsigned got = 0;
 
-	while (done < n)
-	{
-		struct netfs_req req;
-		unsigned chunk = n - done;
-
-		if (chunk > NETFS_CHUNK)
-			chunk = NETFS_CHUNK;
-		netfs_reset(&req);
-		if (smb2_pwrite_async(s_ctx, fh, (const uint8_t *)data + done,
-				      chunk, off + done, netfs_cb, NULL) < 0)
-			return -1;
-		if (netfs_await(&req, NETFS_OP_MS) < 0 ||
-		    req.status != (int)chunk)
-			return -1;
-		done += chunk;
-	}
-	return 0;
+	return netfs_io_window(fh, (void *)data, off, n, netfs_chunk(0), 0,
+			       &got);
 }
 
 static int netfs_unlink_path(const char *path)
@@ -809,7 +936,7 @@ static int netfs_write_do(const char *path, const void *data, unsigned n,
 	char full[NETFS_PATH_MAX];
 	struct smb2fh *fh;
 	uint64_t off = 0;
-	unsigned done = 0;
+	unsigned got = 0;
 
 	if (netfs_ensure() != 0)
 		return -1;
@@ -855,23 +982,9 @@ static int netfs_write_do(const char *path, const void *data, unsigned n,
 		}
 		fh = s_wr_fh;
 		off = s_wr_off;
-		while (done < n)
-		{
-			struct netfs_req req;
-			unsigned chunk = n - done;
-			if (chunk > NETFS_CHUNK)
-				chunk = NETFS_CHUNK;
-			netfs_reset(&req);
-			if (smb2_pwrite_async(s_ctx, fh,
-					      (const uint8_t *)data + done,
-					      chunk, off + done, netfs_cb,
-					      NULL) < 0)
-				return -1;
-			if (netfs_await(&req, NETFS_OP_MS) < 0 ||
-			    req.status != (int)chunk)
-				return -1;
-			done += chunk;
-		}
+		if (netfs_io_window(fh, (void *)data, off, n, netfs_chunk(0), 0,
+				    &got) != 0)
+			return -1;
 		s_wr_off += n;
 		return 0;
 	}
@@ -895,27 +1008,8 @@ static int netfs_write_do(const char *path, const void *data, unsigned n,
 		if (!fh)
 			return -1;
 	}
-	while (done < n)
-	{
-		struct netfs_req req;
-		unsigned chunk = n - done;
-		if (chunk > NETFS_CHUNK)
-			chunk = NETFS_CHUNK;
-		netfs_reset(&req);
-		if (smb2_pwrite_async(s_ctx, fh, (const uint8_t *)data + done,
-				      chunk, done, netfs_cb, NULL) < 0)
-		{
-			done = n + 1; /* fall out with failure */
-			break;
-		}
-		if (netfs_await(&req, NETFS_OP_MS) < 0 || req.status != (int)chunk)
-		{
-			done = n + 1;
-			break;
-		}
-		done += chunk;
-	}
-	if (done != n)
+	if (netfs_io_window(fh, (void *)data, 0, n, netfs_chunk(0), 0,
+			    &got) != 0)
 	{
 		/* Do not try to close on a dead socket; the teardown frees it. */
 		if (!s_dead)
@@ -989,7 +1083,7 @@ static void *mmb_net_wopen(int letter, const char *path, int append)
 static int mmb_net_wwrite(void *handle, const void *data, unsigned n)
 {
 	netfs_file *f = handle;
-	unsigned done = 0;
+	unsigned got = 0;
 
 	if (!f || !f->fh)
 		return -1;
@@ -998,28 +1092,15 @@ static int mmb_net_wwrite(void *handle, const void *data, unsigned n)
 	s_dead = 0;
 	if (netfs_ensure() != 0)
 		return -1;
-	while (done < n)
+	if (netfs_io_window(f->fh, (void *)data, f->off, n, netfs_chunk(0), 0,
+			    &got) != 0)
 	{
-		struct netfs_req req;
-		unsigned chunk = n - done;
-		if (chunk > NETFS_CHUNK)
-			chunk = NETFS_CHUNK;
-		netfs_reset(&req);
-		if (smb2_pwrite_async(s_ctx, f->fh,
-				      (const uint8_t *)data + done, chunk,
-				      f->off + done, netfs_cb, NULL) < 0)
-			return -1;
-		if (netfs_await(&req, NETFS_OP_MS) < 0 ||
-		    req.status != (int)chunk)
+		if (s_dead)
 		{
-			if (s_dead)
-			{
-				f->fh = 0; /* context frees it on teardown */
-				netfs_teardown();
-			}
-			return -1;
+			f->fh = 0; /* context frees it on teardown */
+			netfs_teardown();
 		}
-		done += chunk;
+		return -1;
 	}
 	f->off += n;
 	return 0;

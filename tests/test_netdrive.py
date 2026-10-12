@@ -22,11 +22,13 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zlib
 
 import pytest
 
@@ -748,3 +750,60 @@ def test_z_many_print_and_input_lines(samba, mmb_native, tmp_path):
     assert "DONE" in out
     with open(os.path.join(samba.guest, "many.txt")) as fh:
         assert fh.read() == "".join("line %d\n" % i for i in range(1, lines + 1))
+
+
+# --------------------------------------------------------------------------
+# Large single transfer (#1142/#1143): negotiated chunking + pipelined window
+# --------------------------------------------------------------------------
+
+def _padded_png(pad: int = 1200 * 1024) -> bytes:
+    """A small valid RGB PNG preceded by an ancillary tEXt chunk of `pad`
+    bytes.
+
+    The padding makes the file larger than the 1 MB per-PDU cap, so reading it
+    through Z: in one call must slice it into several pipelined SMB2 reads. The
+    padding sits *before* the IDAT, so a truncated read loses the image data
+    and the decode fails -- the assertion actually checks the bytes arrived.
+    uPNG skips unknown ancillary chunks, so the padding is transparent.
+    """
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data +
+                struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    w, h = 320, 240
+    raw = bytearray()
+    for _ in range(h):
+        raw.append(0)  # filter type 0
+        raw.extend(os.urandom(w * 3))
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"tEXt", b"pad\x00" + os.urandom(pad))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+            + chunk(b"IEND", b""))
+
+
+def test_z_large_read_slices_into_pdus(samba, mmb_native, tmp_path):
+    """A Z: file bigger than one negotiated chunk is read correctly in one call.
+
+    ``LOAD IMAGE`` reads the whole file with a single ``read_at`` (#1142 sizes
+    that read from the negotiated max, capped at 1 MB; #1143 keeps several PDUs
+    outstanding). The PNG's decompressed image is checked by uPNG's CRC, so a
+    short or misordered read fails the load.
+    """
+    png = _padded_png()
+    assert len(png) > (1 << 20), len(png)
+    with open(os.path.join(samba.guest, "big.png"), "wb") as fh:
+        fh.write(png)
+    root = str(tmp_path / "root")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'LOAD IMAGE "Z:/big.png"\n'
+        + 'PRINT "LOADED"; PIXEL(0, 0)\n'
+    )
+    out = run_mmb(mmb_native, script, root, timeout=120)
+    assert "?PNG" not in out
+    assert "?FILE" not in out
+    assert "?NETWORK DRIVE" not in out
+    assert "LOADED" in out
+
