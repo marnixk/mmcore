@@ -9,7 +9,8 @@
  *    client in console/net.cpp). socket() allocates a slot, connect() starts a
  *    CTask that resolves the name and connects (returning EINPROGRESS), and
  *    mmb_plat_poll_fd() reports POLLOUT once connected and POLLIN when a
- *    DONTWAIT Receive() into the slot's 1600-byte leftover buffer found data.
+ *    DONTWAIT Receive() burst into the slot's dedicated 32 KB receive buffer
+ *    (SMB_RX_BUFFER_SIZE, independent of the 1600-byte net frame) found data.
  *    readv()/writev() loop over Receive()/Send() and close() deletes the
  *    socket.
  *
@@ -60,6 +61,15 @@ extern "C" int mmb_vsnprintf (char *str, unsigned long size, const char *fmt,
 
 #define SMB_MAX_FD 8
 
+/* Dedicated receive buffer for the SMB sockets (#1144). FRAME_BUFFER_SIZE is
+ * the 1600-byte net frame size; a single CSocket::Receive() returns only one
+ * reassembled TCP frame (<= ~1460 bytes), so a 64 KB SMB2 READ response would
+ * otherwise take dozens of readv()/poll() round-trips, each with a scheduler
+ * yield. This larger buffer lets one readiness check / readv() drain a whole
+ * burst of frames first. SMB_MAX_FD slots are allocated once and live in BSS;
+ * 32 KB x 8 = 256 KB, modest on the 512 MB Pi Zero 2. */
+#define SMB_RX_BUFFER_SIZE (32u * 1024u)
+
 enum smb_fd_state
 {
 	SMB_FD_FREE = 0,
@@ -78,7 +88,7 @@ struct smb_fd
 	unsigned short port;
 	CSocket *sock;
 	int connect_rc;
-	unsigned char rx[FRAME_BUFFER_SIZE];
+	unsigned char rx[SMB_RX_BUFFER_SIZE];
 	unsigned rxn;
 	unsigned rxoff;
 	int peer_closed;
@@ -100,8 +110,38 @@ static struct smb_fd *fd_slot (int fd)
 	return &s_fds[fd];
 }
 
-/* Report the readiness of one slot. May consume a TCP segment into the
- * leftover buffer. 0 means "nothing yet". */
+/* Top up the slot's receive buffer from the socket without blocking. Each
+ * CSocket::Receive() returns at most one TCP frame, so loop until the buffer
+ * is full, the socket would block (0), or it errors/closes (<0). Leftover
+ * bytes are compacted to the front first. Returns the bytes now buffered. */
+static int smb_fd_drain (struct smb_fd *s)
+{
+	unsigned avail = s->rxn - s->rxoff;
+
+	if (avail && s->rxoff)
+		memmove (s->rx, s->rx + s->rxoff, avail);
+	s->rxn = avail;
+	s->rxoff = 0;
+
+	while (s->rxn < SMB_RX_BUFFER_SIZE)
+	{
+		int n = s->sock->Receive (s->rx + s->rxn,
+					  SMB_RX_BUFFER_SIZE - s->rxn,
+					  MSG_DONTWAIT);
+		if (n > 0)
+		{
+			s->rxn += (unsigned) n;
+			continue;
+		}
+		if (n < 0)
+			s->peer_closed = 1;
+		break;
+	}
+	return (int) (s->rxn - s->rxoff);
+}
+
+/* Report the readiness of one slot. May consume TCP frames into the leftover
+ * buffer. 0 means "nothing yet". */
 static int smb_fd_check (int fd, int events)
 {
 	struct smb_fd *s;
@@ -124,21 +164,14 @@ static int smb_fd_check (int fd, int events)
 			revents |= POLLIN;	/* let readv() report EOF */
 		else
 		{
-			int n = s->sock->Receive (s->rx, FRAME_BUFFER_SIZE,
-						  MSG_DONTWAIT);
+			int avail = smb_fd_drain (s);
+
 			if (CScheduler::IsActive ())
 				CScheduler::Get ()->Yield ();
-			if (n > 0)
-			{
-				s->rxn = (unsigned) n;
-				s->rxoff = 0;
+			if (avail > 0)
 				revents |= POLLIN;
-			}
-			else if (n < 0)
-			{
-				s->peer_closed = 1;
+			else if (s->peer_closed)
 				revents |= POLLIN;
-			}
 		}
 	}
 	return revents;
@@ -351,27 +384,19 @@ ssize_t readv (int nSocket, const struct iovec *pVectors, int nVectorCount)
 	}
 	if (s->rxoff >= s->rxn)
 	{
-		int n;
+		int avail;
 
 		if (s->peer_closed)
 			return 0;
-		n = s->sock->Receive (s->rx, FRAME_BUFFER_SIZE, MSG_DONTWAIT);
+		avail = smb_fd_drain (s);
 		if (CScheduler::IsActive ())
 			CScheduler::Get ()->Yield ();
-		if (n > 0)
+		if (avail <= 0)
 		{
-			s->rxn = (unsigned) n;
-			s->rxoff = 0;
-		}
-		else if (n == 0)
-		{
+			if (s->peer_closed)
+				return 0;
 			errno = EAGAIN;
 			return -1;
-		}
-		else
-		{
-			s->peer_closed = 1;
-			return 0;
 		}
 	}
 	for (i = 0; i < nVectorCount && s->rxoff < s->rxn; i++)
