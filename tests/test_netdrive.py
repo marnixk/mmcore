@@ -783,6 +783,31 @@ def _padded_png(pad: int = 1200 * 1024) -> bytes:
             + chunk(b"IEND", b""))
 
 
+def test_z_copy_large_file(samba, mmb_native, tmp_path):
+    """COPY between two Z: paths moves a file bigger than the copy buffer (#1147).
+
+    The old 1 KB loop issued one SMB2 PDU per kilobyte in each direction; the
+    copy now streams through a large buffer, so this checks the bytes rather
+    than only the speed. A short or misordered transfer fails the comparison.
+    """
+    root = str(tmp_path / "root")
+    size = 2 * 1024 * 1024 + 12345
+    data = (bytes(range(256)) * ((size // 256) + 1))[:size]
+    with open(os.path.join(samba.guest, "zcopy_src.bin"), "wb") as fh:
+        fh.write(data)
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + 'COPY "Z:/zcopy_src.bin" "Z:/zcopy_dst.bin"\n'
+        + 'PRINT "COPIED"\n'
+    )
+    out = run_mmb(mmb_native, script, root, timeout=180)
+    assert "?FILE" not in out
+    assert "?NETWORK DRIVE" not in out
+    assert "COPIED" in out
+    with open(os.path.join(samba.guest, "zcopy_dst.bin"), "rb") as fh:
+        assert fh.read() == data
+
+
 def test_z_large_read_slices_into_pdus(samba, mmb_native, tmp_path):
     """A Z: file bigger than one negotiated chunk is read correctly in one call.
 

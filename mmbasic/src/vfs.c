@@ -978,31 +978,65 @@ static mmb_dirent *vfs_dir_entries(const char *spec, int *out_n)
 	}
 }
 
-/* Copy one file's bytes (the single-file case of mmb_vfs_copy). */
+/* Copy buffer for vfs_copy_file(). A network backend (Z:) issues one SMB2 PDU
+ * per write and slices each read into the negotiated chunk, so a 1 KB loop
+ * costs a PDU per kilobyte and never lets its pipelined window run (#1147).
+ * 256 KB hands a full negotiated chunk (or several 64 KB ones) to the backend
+ * per call and is small enough to allocate for one file at a time. */
+#define VFS_COPY_BUF (256u * 1024u)
+
+/* Copy one file's bytes (the single-file case of mmb_vfs_copy).
+ *
+ * The destination is opened once as a streaming writer so the ramdisk grows
+ * geometrically (#693) and FAT/SMB keep the file open across the loop, then
+ * each full read buffer is written in a single backend call. Falls back to a
+ * small stack buffer if the heap is too tight to allocate the large one. */
 static int vfs_copy_file(const char *src, const char *dst)
 {
-	int sz, off;
-	unsigned char buf[1024];
+	int sz, off, h;
+	unsigned char small[1024];
+	unsigned char *buf;
+	unsigned bufsz;
+	int rc = 0;
+
 	sz = mmb_vfs_size(src);
 	if (sz < 0)
 		return -1;
-	if (mmb_vfs_write(dst, "", 0, 0) != 0)
+	h = mmb_vfs_wopen(dst, 0);
+	if (h < 0)
 		return -1;
+	buf = (unsigned char *)G.plat->alloc(VFS_COPY_BUF);
+	bufsz = VFS_COPY_BUF;
+	if (!buf)
+	{
+		buf = small;
+		bufsz = sizeof(small);
+	}
 	for (off = 0; off < sz; )
 	{
 		unsigned got = 0;
 		unsigned chunk = (unsigned)sz - (unsigned)off;
-		if (chunk > sizeof(buf))
-			chunk = sizeof(buf);
+		if (chunk > bufsz)
+			chunk = bufsz;
 		if (mmb_vfs_read_at(src, (unsigned)off, buf, chunk, &got) != 0)
-			return -1;
+		{
+			rc = -1;
+			break;
+		}
 		if (!got)
 			break;
-		if (mmb_vfs_write(dst, buf, got, 1) != 0)
-			return -1;
+		if (mmb_vfs_wwrite(h, buf, got) != 0)
+		{
+			rc = -1;
+			break;
+		}
 		off += (int)got;
 	}
-	return 0;
+	if (buf != small)
+		G.plat->free(buf);
+	if (mmb_vfs_wclose(h) != 0)
+		rc = -1;
+	return rc;
 }
 
 /* Recursively copy directory src into dst, creating folders as needed. A file
