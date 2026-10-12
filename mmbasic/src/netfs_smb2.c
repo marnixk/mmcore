@@ -705,6 +705,104 @@ static int netfs_read_retry(const char *path, unsigned pos, void *data,
 
 /* ---- writes (never replayed; cached append handle) ----------------- */
 
+/* Some servers let the session create and delete files but not reopen an
+ * existing one for writing. That is the normal anonymous/guest case on Samba:
+ * an anonymous logon maps to the read-only Everyone SID, while the files it
+ * creates are owned by the guest account, so only a *named* guest logon (which
+ * libsmb2 does not produce here) may write them again. The directory still
+ * grants create/delete, so when a write open fails with ACCESS_DENIED we
+ * recreate the file (copying the old bytes for an append) instead of failing,
+ * which matches what `smbclient -N` achieves by logging in as the guest. */
+#define NETFS_REWRITE_MAX (32u << 20)
+
+static int netfs_open_denied(void)
+{
+	return s_ctx && smb2_get_nterror(s_ctx) == SMB2_STATUS_ACCESS_DENIED;
+}
+
+static int netfs_pwrite_all(struct smb2fh *fh, const void *data, unsigned n,
+			    uint64_t off)
+{
+	unsigned done = 0;
+
+	while (done < n)
+	{
+		struct netfs_req req;
+		unsigned chunk = n - done;
+
+		if (chunk > NETFS_CHUNK)
+			chunk = NETFS_CHUNK;
+		netfs_reset(&req);
+		if (smb2_pwrite_async(s_ctx, fh, (const uint8_t *)data + done,
+				      chunk, off + done, netfs_cb, NULL) < 0)
+			return -1;
+		if (netfs_await(&req, NETFS_OP_MS) < 0 ||
+		    req.status != (int)chunk)
+			return -1;
+		done += chunk;
+	}
+	return 0;
+}
+
+static int netfs_unlink_path(const char *path)
+{
+	struct netfs_req req;
+	char full[NETFS_PATH_MAX];
+
+	if (netfs_ensure() != 0)
+		return -1;
+	netfs_full(path, full, sizeof(full));
+	netfs_stat_invalidate(full);
+	netfs_read_cache_drop(full);
+	netfs_write_cache_drop(full);
+	netfs_reset(&req);
+	if (smb2_unlink_async(s_ctx, full, netfs_cb, NULL) < 0)
+		return -1;
+	if (netfs_await(&req, NETFS_OP_MS) != 0 || req.status != 0)
+		return -1;
+	return 0;
+}
+
+/* Recreate `path` (holding the old bytes for an append) and return a fresh
+ * write handle with those bytes already written, or 0 on failure. */
+static struct smb2fh *netfs_recreate_preserve(const char *path, uint64_t oldlen)
+{
+	uint8_t *old;
+	struct smb2fh *fh;
+	unsigned got = 0;
+
+	if (oldlen > NETFS_REWRITE_MAX)
+		return 0;
+	old = malloc(oldlen ? (size_t)oldlen : 1);
+	if (!old)
+		return 0;
+	if (oldlen &&
+	    netfs_read_retry(path, 0, old, (unsigned)oldlen, &got) != 0)
+	{
+		free(old);
+		return 0;
+	}
+	if (netfs_unlink_path(path) != 0)
+	{
+		free(old);
+		return 0;
+	}
+	fh = netfs_open_path(path, O_WRONLY | O_CREAT | O_TRUNC, NETFS_OP_MS);
+	if (!fh)
+	{
+		free(old);
+		return 0;
+	}
+	if (got && netfs_pwrite_all(fh, old, got, 0) != 0)
+	{
+		netfs_close_path(fh);
+		free(old);
+		return 0;
+	}
+	free(old);
+	return fh;
+}
+
 static int netfs_write_do(const char *path, const void *data, unsigned n,
 			  int append)
 {
@@ -727,19 +825,31 @@ static int netfs_write_do(const char *path, const void *data, unsigned n,
 		if (!(s_wr_fh && strcmp(s_wr_path, full) == 0))
 		{
 			struct smb2_stat_64 st;
+			int existed = 0;
 
 			netfs_write_cache_drop(0);
 			if (s_dead)
 				return -1;
 			if (netfs_stat_query(path, &st) == 0 &&
 			    st.smb2_type != SMB2_TYPE_DIRECTORY)
+			{
 				off = st.smb2_size;
+				existed = 1;
+			}
 			if (s_dead)
 				return -1;
 			s_wr_fh = netfs_open_path(path, O_WRONLY | O_CREAT,
 						  NETFS_OP_MS);
 			if (!s_wr_fh)
-				return -1;
+			{
+				/* Server denies reopening an existing file for
+				 * writing but lets us recreate it. */
+				if (!netfs_open_denied() || !existed || s_dead)
+					return -1;
+				s_wr_fh = netfs_recreate_preserve(path, off);
+				if (!s_wr_fh)
+					return -1;
+			}
 			snprintf(s_wr_path, sizeof(s_wr_path), "%s", full);
 			s_wr_off = off;
 		}
@@ -772,7 +882,19 @@ static int netfs_write_do(const char *path, const void *data, unsigned n,
 		return -1;
 	fh = netfs_open_path(path, O_WRONLY | O_CREAT | O_TRUNC, NETFS_OP_MS);
 	if (!fh)
-		return -1;
+	{
+		/* Server denies reopening the existing file for writing but
+		 * lets us delete and recreate it (guest/anonymous on a Samba
+		 * share whose files are owned by the guest account). */
+		if (!netfs_open_denied() || s_dead)
+			return -1;
+		if (netfs_unlink_path(path) != 0)
+			return -1;
+		fh = netfs_open_path(path, O_WRONLY | O_CREAT | O_TRUNC,
+				     NETFS_OP_MS);
+		if (!fh)
+			return -1;
+	}
 	while (done < n)
 	{
 		struct netfs_req req;

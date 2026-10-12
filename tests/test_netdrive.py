@@ -281,13 +281,17 @@ class SambaServer:
         self.proc: subprocess.Popen | None = None
         self.guest = os.path.join(tmpdir, "guest")
         self.user = os.path.join(tmpdir, "user")
+        # A share with Samba's default (owner-only) create mask, so an anonymous
+        # guest session can create files but cannot reopen them for writing --
+        # the case that needs the recreate fallback in netfs_smb2.c.
+        self.strict = os.path.join(tmpdir, "strict")
         # Samba's private dir holds UNIX sockets whose path must stay under the
         # ~104-char sun_path limit; pytest's tmp tree is far too deep, so keep
         # the server state in a short /tmp dir (#1133).
         self.priv = tempfile.mkdtemp(prefix="mmbsmb-", dir="/tmp")
         self.user_name = "mmtest"
         self.user_pass = "mmtestpass"
-        for d in (self.guest, self.user, self.priv):
+        for d in (self.guest, self.user, self.strict, self.priv):
             os.makedirs(d, exist_ok=True)
             os.chmod(d, 0o777)
         with open(os.path.join(self.guest, "hello.txt"), "w") as fh:
@@ -334,6 +338,14 @@ class SambaServer:
    valid users = {self.user_name}
    create mask = 0666
    directory mask = 0777
+
+[strict]
+   path = {self.strict}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   create mask = 0644
+   directory mask = 0755
 """
 
     def _add_user(self) -> bool:
@@ -431,6 +443,10 @@ def _user_unc(srv: SambaServer) -> str:
     return "\\\\127.0.0.1:%d\\user" % srv.port
 
 
+def _strict_unc(srv: SambaServer) -> str:
+    return "\\\\127.0.0.1:%d\\strict" % srv.port
+
+
 def test_z_guest_round_trip(samba, mmb_native, tmp_path):
     """DIR / OPEN / COPY / MKDIR / NAME / KILL / LOAD / SAVE on Z: (guest)."""
     root = str(tmp_path / "root")
@@ -505,6 +521,48 @@ def test_z_mkdir_existing_still_reports_directory(samba, mmb_native, tmp_path):
     assert out.count("?DIRECTORY") == 1
     assert "DONE" in out
     assert os.path.isdir(os.path.join(samba.guest, "dup"))
+
+
+def test_z_write_existing_on_owner_only_share(samba, mmb_native, tmp_path):
+    """Overwrite and append an existing file on a share whose files are
+    owner-only (Samba's default create mask).
+
+    An anonymous/guest session on such a share maps to the read-only Everyone
+    SID: it can create and delete but not reopen an existing file for writing
+    (only a *named* guest logon owns the file). netfs_smb2.c must fall back to
+    recreating the file, copying the old bytes for an append, instead of
+    reporting ?FILE -- which is what made EDIT save fail on a real Samba box.
+    """
+    root = str(tmp_path / "root")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _strict_unc(samba)
+        + 'OPEN "Z:/f.txt" FOR OUTPUT AS #1\n'
+        + 'PRINT #1, "AAA"\n'
+        + "CLOSE #1\n"
+        # Overwrite the file it just created (reopen denied -> recreate).
+        + 'OPEN "Z:/f.txt" FOR OUTPUT AS #2\n'
+        + 'PRINT #2, "BBB"\n'
+        + "CLOSE #2\n"
+        + 'OPEN "Z:/f.txt" FOR INPUT AS #3\n'
+        + "LINE INPUT #3, a$\n"
+        + "CLOSE #3\n"
+        + 'PRINT "AFTER_OVERWRITE="; a$\n'
+        # Append to the existing file (reopen denied -> recreate preserving).
+        + 'OPEN "Z:/f.txt" FOR APPEND AS #4\n'
+        + 'PRINT #4, "CCC"\n'
+        + "CLOSE #4\n"
+        + 'OPEN "Z:/f.txt" FOR INPUT AS #5\n'
+        + "LINE INPUT #5, b$\n"
+        + "LINE INPUT #5, c$\n"
+        + "CLOSE #5\n"
+        + 'PRINT "L1="; b$\n'
+        + 'PRINT "L2="; c$\n'
+    )
+    out = run_mmb(mmb_native, script, root, timeout=180)
+    assert "?FILE" not in out
+    assert "AFTER_OVERWRITE=BBB" in out
+    assert "L1=BBB" in out
+    assert "L2=CCC" in out
 
 
 def test_z_user_share_authenticated(samba, mmb_native, tmp_path):
