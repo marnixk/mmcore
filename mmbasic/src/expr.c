@@ -1137,6 +1137,12 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_int_val((int)mmb_audio_resets());
 				return 1;
 			}
+			if (mmb_keyword_eq(key, "MP3BUF"))
+			{
+				/* Peak MP3 decoder-buffer allocation (#1150). */
+				*out = mmb_int_val((int)mmb_audio_mp3_buffer_peak());
+				return 1;
+			}
 		}
 		/* MM.INFO(MODE) with keyword inside parens already consumed by call_args as expr - handle MODE ident */
 		*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);

@@ -1366,6 +1366,7 @@ unsigned mmb_audio_first_mix_vol(void);
 unsigned mmb_audio_mix_gap_ms(void);
 unsigned mmb_audio_underruns(void);
 unsigned mmb_audio_resets(void);
+unsigned mmb_audio_mp3_buffer_peak(void);
 void mmb_play_pause(int on);
 int mmb_play_take_ended(void);
 /* Read-only analyser feed for the JUKE visualiser. */
