@@ -738,10 +738,15 @@ int mmb_fat_wclose(void *handle)
 	return r == FR_OK ? 0 : -1;
 }
 
+/* #1149: serve a physical read in bounded slices so the cooperative scheduler
+ * (mmb_poll()/mmb_check_break() via storage_yield()) runs during a long read
+ * instead of only after it returns. 256 KB keeps each slice short while staying
+ * far below the SCSI READ(10) 16-bit transfer-length limit (~32 MB). */
+#define MMB_FAT_READ_SLICE (256u * 1024u)
+
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
 	char full[160];
-	UINT br = 0;
 	int idx = slot_of(letter);
 	FIL *fp;
 	*got = 0;
@@ -780,13 +785,33 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsi
 		strncpy(s_rd_path[idx], full, sizeof(s_rd_path[idx]) - 1);
 		s_rd_path[idx][sizeof(s_rd_path[idx]) - 1] = 0;
 	}
-	if (n && f_read(fp, data, n, &br) != FR_OK)
+	if (n)
 	{
-		close_read_cache(idx);
-		return -1;
+		unsigned char *dst = (unsigned char *)data;
+		unsigned total = 0;
+		while (total < n)
+		{
+			UINT want = n - total;
+			UINT r = 0;
+			if (want > MMB_FAT_READ_SLICE)
+				want = MMB_FAT_READ_SLICE;
+			if (f_read(fp, dst + total, want, &r) != FR_OK)
+			{
+				close_read_cache(idx);
+				return -1;
+			}
+			total += r;
+			if (r < want)
+				break;		/* short read: end of file */
+			/* #1149: yield between slices so the UI/audio keep running and
+			 * Ctrl-C can abort a long physical read. */
+			storage_yield();
+		}
+		s_rd_pos[idx] = pos + total;
+		*got = total;
 	}
-	s_rd_pos[idx] = pos + br;
-	*got = br;
+	else
+		s_rd_pos[idx] = pos;
 	storage_yield();
 	return 0;
 }

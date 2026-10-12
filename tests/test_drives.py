@@ -262,6 +262,19 @@ def test_storage_chunks_usb_work_and_keeps_read_handle():
     assert "s_rd[idx]" in src
 
 
+def test_storage_read_at_slices_and_yields():
+    """#1149: a large physical read is served in bounded slices that call
+    storage_yield() between f_read() calls, so the scheduler keeps running
+    during the read instead of only after it returns."""
+    src = open(os.path.join(REPO, "console", "storage.cpp"), encoding="utf-8").read()
+    assert "#define MMB_FAT_READ_SLICE" in src
+    # The f_read + storage_yield pair must sit inside the slice loop.
+    body = src[src.index("while (total < n)"):]
+    body = body[: body.index("s_rd_pos[idx] = pos + total;")]
+    assert "f_read(fp, dst + total, want, &r)" in body
+    assert "storage_yield();" in body
+
+
 def test_storage_keeps_append_write_handle():
     """#1000: FAT append reuses one open write FIL instead of reopening and
     f_lseek(f_size()) - a FAT-chain walk from cluster 0 - for every chunk."""
@@ -390,6 +403,60 @@ def test_fat_append_reuses_write_handle(kernel_image):
             assert "APP0" in out and "APP19" in out
             assert out.index("ONE") < out.index("APP0") < out.index("APP19")
             assert "APP.TXT" in con.send_line('DIR "C:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_large_physical_read_spans_slices(kernel_image):
+    """#1149: a whole-file read larger than one slice (>256 KB here) is served
+    from the SD volume in one VFS read and leaves the console responsive.
+
+    The SD backend is a host file, so QEMU cannot reproduce the multi-second
+    read whose blocking froze the interpreter; this exercises the slice loop
+    end to end, while test_storage_read_at_slices_and_yields() pins the
+    per-slice storage_yield() that keeps the scheduler running.
+    """
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBSLICE", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            # Build a >256 KB file on C:. The generator program stays tiny so
+            # it fits program memory; the payload is only ever read back.
+            assert con.send_line('10 OPEN "C:/BIG.BIN" FOR OUTPUT AS #1') == ""
+            assert con.send_line("20 FOR I=1 TO 320") == ""
+            assert con.send_line(
+                '30 PRINT #1, STRING$(1000, ".")+CHR$(13)+CHR$(10);'
+            ) == ""
+            assert con.send_line("40 NEXT I") == ""
+            assert con.send_line("50 CLOSE #1") == ""
+            assert con.send_line("RUN", timeout=120) == ""
+            listing = con.send_line('DIR "C:/"').upper()
+            assert "BIG.BIN" in listing
+            size = int(listing.split("BIG.BIN")[1].split()[0])
+            assert size > 256 * 1024
+            # PLAY MP3 loads the whole file with one VFS read (load_bytes), so
+            # it spans two slices. It is not valid audio, so a clean ?MP3
+            # proves the read returned and the console kept running.
+            assert con.send_line('PLAY MP3 "C:/BIG.BIN"').startswith("?")
+            assert con.send_line("PRINT 6*7") == "42"
         finally:
             con.stop()
     finally:
