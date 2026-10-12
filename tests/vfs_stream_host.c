@@ -216,6 +216,42 @@ static void test_rename_reparent(void)
 	check(mmb_vfs_rename("A:/M1/H.TXT", "A:/") == -1, "root target refused");
 }
 
+/* #1147: COPY moves a file bigger than the copy buffer byte-for-byte, so the
+ * multi-fill read/write loop (and the streaming writer it opens once) is
+ * exercised rather than a single pass. */
+static void test_copy_large_file(void)
+{
+	enum { NCH = 75, CHSZ = 4096 };
+	static unsigned char pat[CHSZ];
+	static unsigned char back[CHSZ];
+	unsigned total = (unsigned)NCH * CHSZ, off, got;
+	int h, i;
+
+	for (i = 0; i < CHSZ; i++)
+		pat[i] = (unsigned char)(i * 13 + 5);
+
+	h = mmb_vfs_wopen("A:/LC_SRC.BIN", 0);
+	check(h >= 0, "large src wopen");
+	for (i = 0; i < NCH; i++)
+		check(mmb_vfs_wwrite(h, pat, CHSZ) == 0, "large src write");
+	check(mmb_vfs_wclose(h) == 0, "large src close");
+	check(mmb_vfs_size("A:/LC_SRC.BIN") == (int)total, "large src size");
+
+	check(mmb_vfs_copy("A:/LC_SRC.BIN", "A:/LC_DST.BIN") == 0, "large copy");
+	check(mmb_vfs_size("A:/LC_DST.BIN") == (int)total, "large copy size");
+
+	for (off = 0; off < total; off += CHSZ)
+	{
+		got = 0;
+		if (mmb_vfs_read_at("A:/LC_DST.BIN", off, back, CHSZ, &got) != 0 ||
+		    got != CHSZ || memcmp(back, pat, CHSZ) != 0)
+		{
+			check(0, "large copy content");
+			break;
+		}
+	}
+}
+
 static void seed_text(const char *path, const char *text)
 {
 	check(mmb_vfs_write(path, text, (unsigned)strlen(text), 0) == 0, path);
@@ -303,6 +339,7 @@ int main(void)
 	test_copy_directory_recursive();
 	test_copy_destination_rules();
 	test_move_directory_reparent();
+	test_copy_large_file();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);
