@@ -1,8 +1,14 @@
 """Real PLAY decode/mix and OPTION AUDIO_TARGET."""
 
+import os
 import time
 
 from ihelp_util import dump_topic
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# dr_mp3's decode buffer (DRMP3_DATA_CHUNK_SIZE); the streaming MP3 path keeps
+# its allocation at or below this regardless of file size (#1150).
+MP3_BUF_MAX = 65536
 
 
 def _play_until_stopped(console, command: str, timeout: float = 15.0) -> bool:
@@ -81,6 +87,22 @@ def test_play_mp3_mixes_and_stops(console):
     assert playing in ("0", "1")
     console.send_line("PLAY STOP")
     assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_mp3_streams_without_whole_file_buffer(console):
+    """#1150: MP3 decode streams through a bounded buffer, not the file size.
+
+    BIG.MP3 is ~20 s and larger than the decoder buffer. If PLAY still loaded
+    the whole file into RAM, the peak MP3 allocation would be at least the
+    file size (and MM.INFO("MP3BUF") would report that).
+    """
+    size = os.path.getsize(os.path.join(REPO_ROOT, "ramdisk", "tests", "BIG.MP3"))
+    assert size > MP3_BUF_MAX
+    assert console.send_line('PLAY MP3 "tests/BIG.MP3"') == ""
+    peak = int(console.send_line('PRINT MM.INFO("MP3BUF")'))
+    console.send_line("PLAY STOP")
+    assert 0 < peak <= MP3_BUF_MAX, (peak, size)
+    assert peak < size, (peak, size)
 
 
 def test_play_mod_xm_tone(console):

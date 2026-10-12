@@ -42,7 +42,6 @@ mmb_audio g_audio;
 
 static drmp3 s_mp3;
 static int s_mp3_on;
-static unsigned s_mp3_len;
 static modcontext s_mod;
 static int s_mod_on;
 static jar_xm_context_t *s_xm;
@@ -67,6 +66,126 @@ static unsigned s_underruns;
 static unsigned s_audio_resets;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
+
+/* ---- MP3 streaming (#1150) -------------------------------------------- *
+ * The MP3 path used to allocate a buffer the size of the whole file and hand
+ * it to drmp3_init_memory(). A long track could not start until the entire
+ * file was resident, and the allocation grew with the file. Instead the
+ * decoder now pulls through a fixed read-ahead window over the VFS, so memory
+ * stays bounded by that window plus dr_mp3's own decode buffer regardless of
+ * file size, and playback begins after the first window. Reads go through
+ * mmb_vfs_read_at() in fixed chunks, which cooperates with the chunked,
+ * yielding physical backend (#1149). */
+#define MP3_READAHEAD 32768
+
+typedef struct mp3_stream {
+	char path[132]; /* "X:" + the VFS's 128-byte absolute path */
+	unsigned size;     /* file size in bytes */
+	unsigned pos;      /* next logical byte offset to read */
+	unsigned buf_off;  /* file offset of buf[0] */
+	unsigned buf_len;  /* valid bytes in buf */
+	unsigned char buf[MP3_READAHEAD];
+} mp3_stream;
+
+static mp3_stream s_mp3_stream;
+/* Peak bytes the decoder obtained from the platform allocator; a diagnostic
+ * proving the MP3 path allocates a bounded buffer, not the file size. */
+static unsigned s_mp3_peak_alloc;
+
+static void *mp3_stream_alloc(size_t sz, void *ud)
+{
+	void *p;
+	(void)ud;
+	if (!G.plat || !G.plat->alloc || sz > 0xFFFFFFFFu)
+		return 0;
+	p = G.plat->alloc((unsigned)sz);
+	if (p && (unsigned)sz > s_mp3_peak_alloc)
+		s_mp3_peak_alloc = (unsigned)sz;
+	return p;
+}
+
+static void mp3_stream_free(void *p, void *ud)
+{
+	(void)ud;
+	if (p && G.plat && G.plat->free)
+		G.plat->free(p);
+}
+
+static size_t mp3_stream_read(void *ud, void *out, size_t want)
+{
+	mp3_stream *s = (mp3_stream *)ud;
+	unsigned char *dst = (unsigned char *)out;
+	size_t done = 0;
+
+	while (done < want)
+	{
+		unsigned off, avail, take;
+		if (s->pos >= s->buf_off &&
+		    s->pos - s->buf_off < s->buf_len)
+		{
+			off = s->pos - s->buf_off;
+			avail = s->buf_len - off;
+			take = (unsigned)(want - done);
+			if (take > avail)
+				take = avail;
+			memcpy(dst + done, s->buf + off, take);
+			s->pos += take;
+			done += take;
+			continue;
+		}
+		if (s->pos >= s->size)
+			break; /* end of stream */
+		{
+			unsigned rn = MP3_READAHEAD;
+			unsigned got = 0;
+			if (rn > s->size - s->pos)
+				rn = s->size - s->pos;
+			if (mmb_vfs_read_at(s->path, s->pos, s->buf, rn, &got) != 0 ||
+			    got == 0)
+			{
+				/* Read failure: stop cleanly rather than spin. */
+				s->buf_off = s->pos;
+				s->buf_len = 0;
+				break;
+			}
+			s->buf_off = s->pos;
+			s->buf_len = got;
+		}
+	}
+	return done;
+}
+
+static drmp3_bool32 mp3_stream_seek(void *ud, int offset, drmp3_seek_origin origin)
+{
+	mp3_stream *s = (mp3_stream *)ud;
+	long long base, np;
+
+	if (origin == DRMP3_SEEK_SET)
+		base = 0;
+	else if (origin == DRMP3_SEEK_CUR)
+		base = (long long)s->pos;
+	else if (origin == DRMP3_SEEK_END)
+		base = (long long)s->size;
+	else
+		return DRMP3_FALSE;
+	np = base + offset;
+	if (np < 0 || (unsigned long long)np > s->size)
+		return DRMP3_FALSE;
+	s->pos = (unsigned)np;
+	return DRMP3_TRUE;
+}
+
+static drmp3_bool32 mp3_stream_tell(void *ud, drmp3_int64 *cursor)
+{
+	mp3_stream *s = (mp3_stream *)ud;
+	*cursor = (drmp3_int64)s->pos;
+	return DRMP3_TRUE;
+}
+
+unsigned mmb_audio_mp3_buffer_peak(void)
+{
+	return s_mp3_peak_alloc;
+}
 
 /* One-shot gain for the buffer play_begin() queues. mmb_play_*() reset the
  * gain to 100 by default; JUKE arms this first so its preroll is mixed at its
@@ -255,7 +374,6 @@ static void play_teardown(void)
 		drmp3_uninit(&s_mp3);
 		s_mp3_on = 0;
 	}
-	s_mp3_len = 0;
 	if (s_mod_on)
 	{
 		hxcmod_unload(&s_mod);
@@ -396,18 +514,33 @@ static void play_begin(int kind, const char *path)
 
 int mmb_play_mp3(const char *path)
 {
-	unsigned n = 0;
+	drmp3_allocation_callbacks allocs;
+	int sz;
+
 	mmb_play_stop();
-	if (load_bytes(path, &s_moddata, &n) != 0)
+	/* Resolve to an absolute "X:/..." path now: reads continue after PLAY
+	 * returns, so a later CHDIR must not retarget the stream. */
+	if (mmb_vfs_resolve(path, s_mp3_stream.path,
+			    sizeof(s_mp3_stream.path)) != 0)
 		return -1;
-	if (!drmp3_init_memory(&s_mp3, s_moddata, n, NULL))
-	{
-		G.plat->free(s_moddata);
-		s_moddata = 0;
+	sz = mmb_vfs_size(s_mp3_stream.path);
+	if (sz <= 0)
 		return -1;
-	}
+	s_mp3_stream.size = (unsigned)sz;
+	s_mp3_stream.pos = 0;
+	s_mp3_stream.buf_off = 0;
+	s_mp3_stream.buf_len = 0;
+	s_mp3_peak_alloc = 0;
+	/* Route dr_mp3's decode buffer through the platform allocator so it is
+	 * accounted for (and bounded) like the rest of the audio path. */
+	allocs.pUserData = 0;
+	allocs.onMalloc = mp3_stream_alloc;
+	allocs.onRealloc = 0;
+	allocs.onFree = mp3_stream_free;
+	if (!drmp3_init(&s_mp3, mp3_stream_read, mp3_stream_seek, mp3_stream_tell,
+			0, &s_mp3_stream, &allocs))
+		return -1;
 	s_mp3_on = 1;
-	s_mp3_len = n;
 	play_begin(1, path);
 	return 0;
 }
@@ -1037,13 +1170,6 @@ static int id3v1_title(const unsigned char *p, unsigned n, char *dst, int dstn)
 	return title_store(p + n - 128 + 3, 30, dst, dstn);
 }
 
-static int id3_title(const unsigned char *p, unsigned n, char *dst, int dstn)
-{
-	if (id3v2_title(p, n, dst, dstn))
-		return 1;
-	return id3v1_title(p, n, dst, dstn);
-}
-
 static const char *title_ext(const char *p)
 {
 	const char *dot = 0;
@@ -1067,8 +1193,10 @@ int mmb_audio_title(char *dst, int n)
 				   20, dst, n);
 	if (g_audio.playing == 6 && s_s3m_mod)
 		return title_store((const unsigned char *)s_s3m_mod->name, 28, dst, n);
-	if (g_audio.playing == 1 && s_mp3_on && s_moddata && s_mp3_len)
-		return id3_title(s_moddata, s_mp3_len, dst, n);
+	if (g_audio.playing == 1 && s_mp3_on && g_audio.name[0])
+		/* The streamed MP3 no longer keeps the file in RAM; read the tags
+		 * back through the VFS (bounded ID3v2 window + ID3v1 tail). */
+		return mmb_media_title(g_audio.name, dst, n);
 	return 0;
 }
 

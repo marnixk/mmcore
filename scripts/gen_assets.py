@@ -254,6 +254,28 @@ def make_mp3(path):
         return data
 
 
+def make_big_mp3(path):
+    """A ~20 s silent MP3 larger than dr_mp3's decode buffer (#1150).
+
+    The streaming PLAY test asserts the whole file is not loaded into RAM, so
+    the fixture has to be bigger than the bounded decoder buffer.
+    """
+    import subprocess
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+             "-t", "21", "-ar", "44100", "-ac", "1", "-b:a", "32k", path],
+            check=True, capture_output=True,
+        )
+        return open(path, "rb").read()
+    except Exception:
+        base = strip_id3v2(open(out("TEST.MP3"), "rb").read())
+        reps = (70 * 1024) // max(1, len(base)) + 1
+        data = base * reps
+        open(path, "wb").write(data)
+        return data
+
+
 def id3v1(title):
     tag = bytearray(128)
     tag[0:3] = b"TAG"
@@ -304,6 +326,7 @@ def main():
     make_xm(out("TEST.XM"))
     make_s3m(out("TEST.S3M"))
     make_mp3(out("TEST.MP3"))
+    make_big_mp3(out("BIG.MP3"))
     audio = strip_id3v2(open(out("TEST.MP3"), "rb").read())
     open(out("ZV2.MP3"), "wb").write(id3v2_tit2(b"TWOSONG") + audio)
     open(out("ZV1.MP3"), "wb").write(audio + id3v1(b"ONESONG"))
