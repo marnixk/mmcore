@@ -39,8 +39,21 @@ static int s_ejected[26];
 static int s_present[26];
 static int s_notify_ready;
 
+/* Open read handle cache, one per volume slot (#1151), mirroring the Circle
+ * backend's (#984, console/storage.cpp). A chunked read_at loop over the same
+ * file otherwise pays an fopen/fseek/fread/fclose per chunk; keeping one
+ * FILE* positioned at the last read offset lets an in-order chunk reuse it
+ * with no reopen or seek. The handle is keyed by the resolved host path and
+ * invalidated whenever that path (or its volume) is modified, so a stale
+ * handle can never serve old bytes. */
+static FILE *s_rd[26];
+static char s_rd_path[26][P_BUF];
+static unsigned s_rd_pos[26];
+
 static int drive_of(int letter);
 static void drive_dir_raw(int letter, char *out, int outsz);
+static void rd_cache_close(int letter);
+static void rd_cache_close_path(int letter, const char *full);
 
 int storage_posix_mount(int letter, const char *path)
 {
@@ -309,6 +322,9 @@ int mmb_fat_mkdir(int letter, const char *path)
 	ensure_root();
 	if (!build_path(letter, path, full, sizeof full, 0))
 		return -1;
+	/* A directory change can introduce or remove a name the cached path
+	 * resolution depended on; drop the volume's handle to be safe. */
+	rd_cache_close(letter);
 	mkdirs(full);
 	return is_dir(full) ? 0 : -1;
 }
@@ -320,6 +336,7 @@ int mmb_fat_rmdir(int letter, const char *path)
 	ensure_root();
 	if (!build_path(letter, path, full, sizeof full, 1))
 		return -1;
+	rd_cache_close(letter);
 	return rmdir(full) == 0 ? 0 : -1;
 }
 
@@ -330,6 +347,7 @@ int mmb_fat_unlink(int letter, const char *path)
 	ensure_root();
 	if (!build_path(letter, path, full, sizeof full, 1))
 		return -1;
+	rd_cache_close(letter);
 	return unlink(full) == 0 ? 0 : -1;
 }
 
@@ -342,6 +360,8 @@ int mmb_fat_rename(int letter, const char *from, const char *to)
 		return -1;
 	if (!build_path(letter, to, b, sizeof b, 0))
 		return -1;
+	/* The cached handle can name either end of the rename. */
+	rd_cache_close(letter);
 	return rename(a, b) == 0 ? 0 : -1;
 }
 
@@ -491,6 +511,45 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	return n;
 }
 
+/* Drop the cached read handle for one volume. */
+static void rd_cache_close(int letter)
+{
+	int idx;
+
+	if (!drive_of(letter))
+		return;
+	idx = letter - 'A';
+	if (s_rd[idx])
+	{
+		fclose(s_rd[idx]);
+		s_rd[idx] = 0;
+	}
+	s_rd_path[idx][0] = 0;
+	s_rd_pos[idx] = 0;
+}
+
+static void rd_cache_close_all(void)
+{
+	int letter;
+
+	for (letter = DRIVE_LO; letter <= DRIVE_HI; letter++)
+		rd_cache_close(letter);
+}
+
+/* Close the cached handle only when it is the file being modified, so a write
+ * to another file on the same volume (e.g. COPY's destination) does not force
+ * the source handle to be reopened for every chunk (mirrors #984). */
+static void rd_cache_close_path(int letter, const char *full)
+{
+	int idx;
+
+	if (!drive_of(letter))
+		return;
+	idx = letter - 'A';
+	if (s_rd[idx] && s_rd_path[idx][0] && strcmp(s_rd_path[idx], full) == 0)
+		rd_cache_close(letter);
+}
+
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
 		  int append)
 {
@@ -500,6 +559,9 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
 	ensure_root();
 	if (!build_path(letter, path, full, sizeof full, 0))
 		return -1;
+	/* A write replaces (or extends) the bytes a cached read handle would
+	 * serve, so drop it before touching the file. */
+	rd_cache_close_path(letter, full);
 	mkdirs_parent(full);
 	f = fopen(full, append ? "ab" : "wb");
 	if (!f)
@@ -521,6 +583,9 @@ void *mmb_fat_wopen(int letter, const char *path, int append)
 	ensure_root();
 	if (!build_path(letter, path, full, sizeof full, 0))
 		return 0;
+	/* A streaming writer takes over the file; drop any cached read handle so
+	 * it cannot serve the pre-write bytes. */
+	rd_cache_close_path(letter, full);
 	mkdirs_parent(full);
 	f = fopen(full, append ? "ab" : "wb");
 	return f; /* FILE* is the opaque handle */
@@ -550,6 +615,7 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 		    unsigned n, unsigned *got)
 {
 	char full[P_BUF];
+	int idx;
 	FILE *f;
 
 	ensure_root();
@@ -557,22 +623,48 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 		*got = 0;
 	if (!build_path(letter, path, full, sizeof full, 1))
 		return -1;
-	f = fopen(full, "rb");
-	if (!f)
-		return -1;
-	if (fseek(f, (long)pos, SEEK_SET) != 0)
+	idx = letter - 'A';
+	/* #1151: reuse the open handle for the same file. The cached stream is
+	 * already positioned at s_rd_pos, so an in-order chunk needs no seek at
+	 * all; only a backward move (or any move off the cached position) does. */
+	if (s_rd[idx] && strcmp(s_rd_path[idx], full) == 0)
 	{
-		fclose(f);
-		return -1;
+		f = s_rd[idx];
+		if (pos != s_rd_pos[idx] &&
+		    fseek(f, (long)pos, SEEK_SET) != 0)
+		{
+			rd_cache_close(letter);
+			return -1;
+		}
 	}
+	else
+	{
+		f = fopen(full, "rb");
+		if (!f)
+		{
+			/* The file exists but cannot be opened: make sure no stale
+			 * same-path handle lingers. */
+			rd_cache_close_path(letter, full);
+			return -1;
+		}
+		rd_cache_close(letter);
+		s_rd[idx] = f;
+		snprintf(s_rd_path[idx], sizeof s_rd_path[idx], "%s", full);
+		if (pos && fseek(f, (long)pos, SEEK_SET) != 0)
+		{
+			rd_cache_close(letter);
+			return -1;
+		}
+	}
+	s_rd_pos[idx] = pos;
 	if (n)
 	{
 		size_t r = fread(data, 1, n, f);
 
 		if (got)
 			*got = (unsigned)r;
+		s_rd_pos[idx] = pos + (unsigned)r;
 	}
-	fclose(f);
 	return 0;
 }
 
@@ -628,6 +720,7 @@ int mmb_fat_eject(int letter)
 	drive_dir_raw(letter, db, sizeof db);
 	if (!is_dir(db) || s_ejected[letter - 'A'])
 		return -1;
+	rd_cache_close(letter);
 	s_ejected[letter - 'A'] = 1;
 	/* Host writes are synchronous, so there is nothing to flush. */
 	snprintf(msg, sizeof msg, "%c: %s ejected", (char)letter,
@@ -681,6 +774,8 @@ void mmb_storage_poll(void)
 		s_present[idx] = present;
 		/* A (re)insert clears any prior eject. */
 		s_ejected[idx] = 0;
+		if (!present)
+			rd_cache_close(letter);
 		if (!s_notify_ready || letter == 'C')
 			continue;
 		if (present)
@@ -704,6 +799,7 @@ void mmb_storage_poll(void)
 void mmb_storage_unmount(void)
 {
 	/* Nothing to flush: writes are synchronous. */
+	rd_cache_close_all();
 	memset(s_ejected, 0, sizeof s_ejected);
 	memset(s_present, 0, sizeof s_present);
 	s_notify_ready = 0;
