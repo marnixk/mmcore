@@ -872,6 +872,7 @@ void mmb_gfx_apply_default_mode(void);
 void mmb_gfx_reapply_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
 int mmb_gfx_mode_valid(int mode);
+int mmb_gfx_mode_h(int mode);
 int mmb_gfx_mode_for_size(int w, int h);
 void mmb_gfx_reset_console(int wipe);
 void mmb_gfx_cls(unsigned rgb);
@@ -886,6 +887,7 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 void mmb_gfx_fill_polygon(const int *xs, const int *ys, int n, unsigned rgb);
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
 extern const unsigned char mmb_cp437_8x16[256 * 16];
+extern const unsigned char mmb_cp437_8x14[256 * 14];
 extern const unsigned char mmb_tnr_8x16[256 * 16];
 extern const unsigned char mmb_tnr_16x32[95 * 32 * 2];
 extern const unsigned char mmb_tnr_24x48[95 * 48 * 3];
@@ -894,6 +896,11 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg);
 void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
 				unsigned bg);
+/* Top-down character cell with a selectable glyph height: 14 draws the EGA
+ * 8x14 CP437 face, anything else the VGA 8x16 face. TERM uses 8x14 when an
+ * 80x25 bookmark cannot fit 25 rows of 8x16 on the current display. */
+void mmb_gfx_glyph_cell_topdown_h(int x, int y, unsigned ch, unsigned fg,
+				  unsigned bg, int h);
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
