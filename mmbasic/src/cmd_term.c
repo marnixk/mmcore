@@ -28,8 +28,12 @@
 
 #define TM_COLS_BOXED 80
 #define TM_MAX_COLS   256
-#define TM_CH         16
 #define TM_CW         8
+/* Default VGA glyph cell height. TERM lowers it to the EGA 8x14 face
+ * (TM_CH_EGA) when a fullscreen 80x25 bookmark cannot fit 25 rows of 8x16
+ * on the current display; see term_pick_cell_h(). */
+#define TM_CH_VGA     16
+#define TM_CH_EGA     14
 #define TM_PAGE       2
 #define TM_MAX_ROWS   80
 #define TM_LINE     256
@@ -114,6 +118,8 @@ typedef struct {
 	int pane_cols;
 	int letterbox;
 	int mode80x25;
+	int cell_h;            /* glyph cell height: 16 (VGA) or 14 (EGA) */
+	int pane_top;          /* pane's vertical pixel offset (centring margin) */
 	int vid_rows;
 	int vid_cols;
 	int cur_row;
@@ -798,7 +804,7 @@ static void term_draw_sb_status(void)
 	unsigned bg = TM_MENU_BG, fg = TM_MENU_FG;
 	int y = term_status_y();
 
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	if (T.sb_search)
 	{
 		strcpy(text, "Search: ");
@@ -1089,17 +1095,59 @@ static void term_serial_dump(void)
 	T.serial_gen++;
 }
 
+/* Pick the glyph face for this session. An 80x25 bookmark wants 25 rows of
+ * 8x16, which needs MM.VRES >= 400. Judge that from the display's own mode
+ * (the console mode TERM started from, T.saved_mode) rather than TERM's
+ * current session mode, so TERM's own Boxed/Full switch cannot mask a short
+ * panel. A 1366x768 Chromebook whose 2x logical mode is MODE 20 (683x384)
+ * gives only 24 rows of 8x16, so fall back to the EGA 8x14 face, which needs
+ * just 350, and keep the native mode. Every other session, display and app
+ * stays on 8x16. */
+static void term_pick_cell_h(void)
+{
+	int h = mmb_gfx_mode_h(T.saved_mode);
+
+	if (h <= 0)
+		h = G.gfx.h;
+	T.cell_h = TM_CH_VGA;
+	if (T.mode80x25 && h > 0 && h / 16 < 25)
+		T.cell_h = TM_CH_EGA;
+}
+
 static void term_layout(void)
 {
+	int fb_h = G.gfx.h > 0 ? G.gfx.h : 400;
+
 	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
-	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
+	if (T.cell_h == TM_CH_EGA)
+		T.vid_rows = fb_h / T.cell_h;
+	else
+		T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
+	T.pane_top = 0;
 	if (T.mode80x25)
 	{
 		T.pane_cols = TM_COLS_BOXED;
 		if (T.pane_cols > T.vid_cols)
 			T.pane_cols = T.vid_cols;
-		T.pane_left = 0;
-		T.pane_rows = T.vid_rows;
+		if (T.cell_h == TM_CH_EGA)
+		{
+			/* Centre an exact 80x25 grid; the leftover rows and
+			 * columns become margin (#1155). */
+			T.pane_rows = T.vid_rows < 25 ? T.vid_rows : 25;
+			if (T.pane_cols != TM_COLS_BOXED)
+				T.pane_rows = T.vid_rows;
+			T.pane_left = (T.vid_cols - T.pane_cols) / 2;
+			if (T.pane_left < 0)
+				T.pane_left = 0;
+			T.pane_top = (fb_h - T.pane_rows * T.cell_h) / 2;
+			if (T.pane_top < 0)
+				T.pane_top = 0;
+		}
+		else
+		{
+			T.pane_left = 0;
+			T.pane_rows = T.vid_rows;
+		}
 	}
 	else
 	{
@@ -1132,21 +1180,21 @@ static int term_fb_h(void)
 	int hh;
 
 	if (h < 1)
-		h = T.vid_rows * TM_CH;
+		h = T.vid_rows * T.cell_h;
 	if (G.plat && G.plat->hdmi_height)
 	{
 		hh = G.plat->hdmi_height();
 		if (hh > 0 && hh < h)
 			h = hh;
 	}
-	if (h < TM_CH)
-		h = TM_CH;
+	if (h < T.cell_h)
+		h = T.cell_h;
 	return h;
 }
 
 static int term_status_y(void)
 {
-	return term_fb_h() - TM_CH;
+	return term_fb_h() - T.cell_h;
 }
 
 static void pane_clear_row(int row)
@@ -1280,7 +1328,7 @@ static void pane_puts(const char *s)
 
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
-	mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
+	mmb_gfx_glyph_cell_topdown_h(x, y, ch, fg, bg, T.cell_h);
 }
 
 static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
@@ -1295,7 +1343,7 @@ static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned b
 static void term_fill_cells(int x, int y, int n, unsigned bg)
 {
 	if (n > 0)
-		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, TM_CH, bg);
+		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, T.cell_h, bg);
 }
 
 static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
@@ -1330,7 +1378,7 @@ static void term_draw_status(void)
 		return;
 	y = term_status_y();
 	x0 = 0;
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
 	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
@@ -1409,7 +1457,7 @@ static void term_draw_menu(void)
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
-	mmb_gfx_fill_rect_topdown(0, 0, bar_w, TM_CH, TM_MENU_BG);
+	mmb_gfx_fill_rect_topdown(0, 0, bar_w, T.cell_h, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
 	term_cell(0, 0, ' ', title_fg, title_bg);
@@ -1418,16 +1466,16 @@ static void term_draw_menu(void)
 	if (!T.menu)
 		return;
 	x0 = TM_CW;
-	y0 = TM_CH;
+	y0 = T.cell_h;
 	drop_h = n + 2;
-	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * T.cell_h, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
 	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
 	for (i = 0; i < n; i++)
 	{
-		int y = y0 + (1 + i) * TM_CH;
+		int y = y0 + (1 + i) * T.cell_h;
 		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
 		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
 
@@ -1439,16 +1487,16 @@ static void term_draw_menu(void)
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
-		int y = y0 + (n + 1) * TM_CH;
+		int y = y0 + (n + 1) * T.cell_h;
 		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
 		for (i = 1; i < w - 1; i++)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
 	mmb_gfx_fill_rect_topdown(x0 + w * TM_CW, y0, 2 * TM_CW,
-				  drop_h * TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * TM_CH,
-				  w * TM_CW, TM_CH, TM_SH_BG);
+				  drop_h * T.cell_h, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * T.cell_h,
+				  w * TM_CW, T.cell_h, TM_SH_BG);
 }
 
 static void term_shadow_blank(void)
@@ -1469,7 +1517,7 @@ static void term_draw_row(int r)
 
 	if (r < 0 || r >= T.pane_rows)
 		return;
-	y = r * TM_CH;
+	y = T.pane_top + r * T.cell_h;
 	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
@@ -1487,7 +1535,7 @@ static void term_draw_row(int r)
 		if (key == term_cell_sh[r][c])
 			continue;
 		term_cell_sh[r][c] = key;
-		mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
+		term_cell(x, y, ch, fg, bg);
 	}
 }
 
@@ -1622,7 +1670,7 @@ static void term_draw(void)
 	}
 	else
 		mmb_gfx_fill_rect_topdown(0, term_status_y(), T.vid_cols * TM_CW,
-					  TM_CH, TM_BG);
+					  T.cell_h, TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	if (full_screen)
@@ -1643,29 +1691,29 @@ static void term_draw(void)
 
 		if (T.menu || T.alt_pend)
 		{
-			int top_h = T.menu ? 8 * TM_CH : TM_CH;
+			int top_h = T.menu ? 8 * T.cell_h : T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, top_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else if (T.sb_view > 0 || T.sb_search)
 		{
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else if (lo >= 0 && hi >= lo)
 		{
-			int y = lo * TM_CH;
-			int rh = (hi - lo + 1) * TM_CH;
+			int y = T.pane_top + lo * T.cell_h;
+			int rh = (hi - lo + 1) * T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, y, pane_w, rh);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
@@ -2150,13 +2198,22 @@ static void term_apply_session_mode(void)
 {
 	int mode, bits;
 
+	term_pick_cell_h();
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
 	if (bits < 16)
 		bits = 16;
-	if (T.mode80x25)
+	if (T.mode80x25 && T.cell_h == TM_CH_VGA)
 		mode = TM_MODE_80X25;
+	else if (T.mode80x25)
+	{
+		/* 80x25 on the 8x14 face: keep the display's own mode and let
+		 * term_layout() centre the grid in the margin. */
+		mode = T.saved_mode;
+		if (!mmb_gfx_mode_valid(mode))
+			mode = G.gfx.mode;
+	}
 	else if (T.letterbox)
 		mode = 14;
 	else
@@ -2206,9 +2263,9 @@ static void term_present_overlay(int extra_w, int extra_h)
 	if (dlg_cw <= 0 || dlg_ch <= 0)
 		return;
 	x = dlg_c0 * TM_CW;
-	y = dlg_r0 * TM_CH;
+	y = dlg_r0 * T.cell_h;
 	pw = (dlg_cw + extra_w) * TM_CW;
-	ph = (dlg_ch + extra_h) * TM_CH;
+	ph = (dlg_ch + extra_h) * T.cell_h;
 	term_present_async_rect(x, y, pw, ph);
 }
 
@@ -2237,9 +2294,9 @@ static void term_overlay_chrome(void)
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
-		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * T.cell_h);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-				T.vid_cols * TM_CW, TM_CH);
+				T.vid_cols * TM_CW, T.cell_h);
 		if (pw > 0 && ph > 0)
 			term_present_async_rect(px, py, pw, ph);
 	}
@@ -2653,23 +2710,23 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 
 	dlg_center(cw, ch);
 	x0 = dlg_c0 * TM_CW;
-	y0 = dlg_r0 * TM_CH;
+	y0 = dlg_r0 * T.cell_h;
 	w = cw * TM_CW;
-	h = ch * TM_CH;
+	h = ch * T.cell_h;
 	mmb_gfx_fill_rect_topdown(x0, y0, w, h, TM_DLG_BG);
 	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
-	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
+	term_dlg_hline_bg(x0, y0 + (ch - 1) * T.cell_h, cw, TM_BOX_BL, TM_BOX_H,
 			 TM_BOX_BR);
 	for (i = 1; i < ch - 1; i++)
 	{
-		term_cell(x0, y0 + i * TM_CH, TM_BOX_V, brd, TM_DLG_BG);
-		term_fill_cells(x0 + TM_CW, y0 + i * TM_CH, cw - 2, TM_DLG_BG);
-		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
+		term_cell(x0, y0 + i * T.cell_h, TM_BOX_V, brd, TM_DLG_BG);
+		term_fill_cells(x0 + TM_CW, y0 + i * T.cell_h, cw - 2, TM_DLG_BG);
+		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * T.cell_h, TM_BOX_V, brd,
 			  TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect_topdown(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH,
+	mmb_gfx_fill_rect_topdown(x0 + w, y0 + T.cell_h, 2 * TM_CW, h - T.cell_h,
 				  TM_SH_BG);
-	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, T.cell_h, TM_SH_BG);
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
@@ -2689,7 +2746,7 @@ static void dlg_text_at(int dcol, int drow, const char *s, int hi)
 		return;
 	n = (int)strlen(s);
 	x = (dlg_c0 + dcol) * TM_CW;
-	y = (dlg_r0 + drow) * TM_CH;
+	y = (dlg_r0 + drow) * T.cell_h;
 	fg = hi ? TM_SEL_FG : TM_DLG_FG;
 	bg = hi ? TM_SEL_BG : TM_DLG_BG;
 	if (n > 0)
@@ -2732,7 +2789,7 @@ static void dlg_field_scroll(int dcol, int drow, int width, const char *s, int h
 	unsigned fg, bg;
 
 	x = (dlg_c0 + dcol) * TM_CW;
-	y = (dlg_r0 + drow) * TM_CH;
+	y = (dlg_r0 + drow) * T.cell_h;
 	fg = hi ? TM_SEL_FG : TM_FIELD_FG;
 	bg = hi ? TM_SEL_BG : TM_FIELD_BG;
 	if (width < 1)
@@ -4374,13 +4431,13 @@ static void zmodem_draw_status(void)
 		return;
 	strncpy(zm_shown, line, sizeof(zm_shown) - 1);
 	zm_shown[sizeof(zm_shown) - 1] = 0;
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	n = (int)strlen(line);
 	if (n > T.vid_cols)
 		n = T.vid_cols;
 	x = (T.vid_cols - n) * TM_CW;
 	term_put_str_bg(x, y, line, fg, bg);
-	term_present_async_rect(0, y, T.vid_cols * TM_CW, TM_CH);
+	term_present_async_rect(0, y, T.vid_cols * TM_CW, T.cell_h);
 }
 
 static void zmodem_start(void)

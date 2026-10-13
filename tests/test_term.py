@@ -1016,6 +1016,91 @@ def test_term_bookmark_80x25_mode(kernel_image):
         con.stop()
 
 
+def _seed_80x25_bookmark(con, name="Eighty", host="demo"):
+    """Write a single 80x25 demo bookmark into the TERM config, then return
+    its path. Faster and less brittle than walking the New-bookmark form."""
+    path = _termconfig_path(con) or "A:/.termconfig"
+    assert con.send_line("NEW") == ""
+    program = [
+        f'10 OPEN "{path}" FOR OUTPUT AS #1',
+        '20 PRINT #1, "# TERM bookmarks"',
+        '30 PRINT #1, ""',
+        '40 PRINT #1, "[bm.0]"',
+        f'50 PRINT #1, "name={name}"',
+        f'60 PRINT #1, "host={host}"',
+        '70 PRINT #1, "port=23"',
+        '80 PRINT #1, "echo=0"',
+        '90 PRINT #1, "letterboxed=0"',
+        '100 PRINT #1, "mode80x25=1"',
+        '110 CLOSE #1',
+    ]
+    for line in program:
+        assert con.send_line(line) == ""
+    assert con.send_line("RUN", timeout=8) == ""
+    return path
+
+
+def _connect_bookmark(con):
+    con._ser.sendall(bytes([1]) + b"t")
+    _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+    con._ser.sendall(b"k")
+    _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+    con._ser.sendall(b"\r")  # Connect is the default button
+    return _plain(con.drain(quiet=1.0, timeout=12).decode(errors="replace"))
+
+
+def test_term_80x25_uses_ega_font_on_short_display(kernel_image):
+    """#1155: when the display cannot fit 25 rows of 8x16, an 80x25 bookmark
+    keeps the display mode and centres a 25-row 8x14 EGA grid."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_80x25_bookmark(con)
+        # MODE 20 (683x384) is the Chromebook 2x logical mode: 384/16 = 24
+        # rows of 8x16, one short of 25, but 384/14 = 27 for the EGA face.
+        assert con.send_line("MODE 20,32") == ""
+        assert con.screen_size() == (683, 384)
+        _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        connected = _connect_bookmark(con)
+        # The mode is kept (no 640x400 switch) and the full 25 rows render.
+        assert con.screen_size() == (683, 384)
+        rows_80 = [
+            ln
+            for ln in connected.replace("\r", "").split("\n")
+            if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        con.capture_png("/opt/cursor/artifacts/term_80x25_ega_short.png")
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_term_80x25_keeps_mode_2_on_tall_display(kernel_image):
+    """Control for #1155: a display that fits 8x16 still switches to MODE 2."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_80x25_bookmark(con)
+        # MODE 11 (1280x720) fits 45 rows of 8x16, so the 80x25 bookmark keeps
+        # the existing behaviour and retunes to MODE 2 (640x400).
+        assert con.send_line("MODE 11,32") == ""
+        _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        connected = _connect_bookmark(con)
+        assert con.screen_size() == (640, 400)
+        rows_80 = [
+            ln
+            for ln in connected.replace("\r", "").split("\n")
+            if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        _quit(con)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        con.stop()
+
+
 def test_term_bookmark_host_field_scrolls(kernel_image):
     """A Host longer than its field scrolls so the tail stays visible."""
     con = MMBasicConsole(kernel_image)
