@@ -53,6 +53,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/cmd_option.o \
 	  $(MMB)/src/tracecache.o \
 	  $(MMB)/src/settings.o \
+	  $(MMB)/src/battery.o \
 	  $(MMB)/src/gfx.o \
 	  $(MMB)/src/gfx_cmm2.o \
 	  $(MMB)/src/cmd_graphics.o \

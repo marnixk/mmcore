@@ -199,6 +199,16 @@ def test_play_pause_resume_volume(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_volume_drives_first_buffer(console):
+    """#1157: PLAY VOLUME seeds the persisted gain, so the next track starts
+    at that level without a full-volume preroll."""
+    assert console.send_line("PLAY VOLUME 37") == ""
+    assert console.send_line("PLAY TONE 440, 440") == ""
+    assert console.send_line('PRINT MM.INFO("FIRSTVOL")') == "37"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PLAY VOLUME 100") == ""
+
+
 def test_play_reset_reinitialises_backend(console):
     """#1024: PLAY RESET re-creates the audio backend without a reboot.
 
