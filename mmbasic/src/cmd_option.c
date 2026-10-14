@@ -992,8 +992,12 @@ static void option_dispatch(void)
 			mmb_val v = mmb_expr();
 			if (v.type != T_STR)
 				mmb_syntax();
-			mmb_afk_hash_password(v.s, G.opt.afk_password,
-					      (int)sizeof(G.opt.afk_password));
+			/* An empty password means "no lock", not a lock on "". */
+			if (!v.s[0])
+				G.opt.afk_password[0] = 0;
+			else
+				mmb_afk_hash_password(v.s, G.opt.afk_password,
+						      (int)sizeof(G.opt.afk_password));
 		}
 		return;
 	}

@@ -104,7 +104,11 @@ def test_afk_password_listed_and_hidden(kernel_image):
         listed = con.send_line("OPTION LIST")
         assert "AFK PASSWORD" in listed
         assert "secret" not in listed
+        # An empty password disarms like FORGET.
+        assert con.send_line('OPTION AFK PASSWORD ""') == ""
+        assert "AFK PASSWORD" not in con.send_line("OPTION LIST")
         # FORGET removes it again.
+        assert con.send_line('OPTION AFK PASSWORD "secret"') == ""
         assert con.send_line("OPTION AFK PASSWORD FORGET") == ""
         assert "AFK PASSWORD" not in con.send_line("OPTION LIST")
     finally:
