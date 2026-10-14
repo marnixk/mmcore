@@ -56,7 +56,40 @@ After the version `VERSION` is confirmed:
 - Do **not** compile `picomite-fork/`. Hardware images come from
   `scripts/package-release.sh` (local `mmbasic/` + Circle).
 
-## 4. Publish
+## 4. Test only what changed
+
+The full QEMU suite takes tens of minutes, and much of it exercises code that
+rarely changes. Before publishing, select the suites related to the diff since
+the last release and run only those:
+
+```bash
+scripts/release-tests.sh plan     # what would run, and why (no build, no QEMU)
+scripts/release-tests.sh run      # build + run the selected suites
+```
+
+`scripts/release_tests.py` holds the mapping (data-driven `RULES`: changed-path
+glob → test modules), and `scripts/release-tests.sh` is the wrapper (it finds
+the project venv). Examples of the mapping:
+
+- `mmbasic/src/cmd_wordpad.c` → `tests/test_wordpad*.py`
+- `mmbasic/src/paint_*.c` → `tests/test_paint*.py`
+- `console/wlan*.c` → `tests/test_wlan_*.py`
+
+If any changed path is broad or cannot be mapped, it falls back to the **full
+suite** so a release can never ship untested. The full fallback covers the core
+interpreter (`mmbasic/src/core.c`, `expr.c`, `tok.c`, `vars.c`, `util.c`,
+`gfx.c`, any `mmbasic/src/*.h`), the build (`scripts/build.sh`, `Makefile`),
+Circle, `patches/`, and any source file with no mapping.
+
+`plan` prints every selected suite and the reason it was selected (the rule and
+the changed path that matched); capture that in the release log. `run` starts
+the selection through `scripts/test-watch.py` — poll it with `status --sleep 60`
+for the required percentage progress (see the `test-suite-progress` skill). Do
+**not** publish until the selected suites are green. The same selection is
+written into the GitHub release notes under `## Tests` by
+`release_notes` in `scripts/github-release.sh`.
+
+## 5. Publish
 
 ```bash
 scripts/github-release.sh publish VERSION
@@ -113,7 +146,7 @@ release" with `gh: command not found`, download its `mmcore-Windows` artifact
 
 Do not force-push tags. If `vVERSION` already exists, stop.
 
-## 5. Afterward
+## 6. Afterward
 
 - Show the release URL from `gh release view vVERSION`.
 - Do not commit `dist/` (it is gitignored).
