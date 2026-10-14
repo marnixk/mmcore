@@ -11,6 +11,9 @@
 
 extern void mmb_platform_bind(CKernel *k);
 
+/* Service the audio mixer while blocked on serial output (#1166). */
+extern "C" void mmb_play_mix(void);
+
 extern "C" const unsigned char mmb_cp437_8x16[];
 
 static const TFont FontCP437 =
@@ -103,13 +106,21 @@ static void emit_n (CKernel *k, const void *p, unsigned n)
 	{
 		/* Circle's buffered serial Write drops the tail when its TX ring
 		 * fills, so retry until everything has been queued (bounded so a
-		 * stalled reader cannot hang the kernel forever). */
+		 * stalled reader cannot hang the kernel forever). Service the
+		 * audio mixer while we wait so a caller writing a large buffer in
+		 * one ser()/PRINT cannot starve JUKE/PLAY for the whole ring
+		 * drain (#1166); the platform DMA wait does the same
+		 * (plat_present_wait() in console/platform.cpp). Rate-limit to
+		 * about one mix per 10 ms of waiting so a normal write is not
+		 * slowed. */
 		unsigned spins = 0;
 		while (left && spins < 100000)
 		{
 			int w = k->Serial ().Write (c, left);
 			if (w <= 0)
 			{
+				if (spins % 50 == 0)
+					mmb_play_mix ();
 				CTimer::SimpleusDelay (200);
 				spins++;
 				continue;
