@@ -28,8 +28,9 @@ automatically, `defaultThreadEnvMode: worktree`) or an explicit
 
 ### Bundling
 
-Bundle to cut test-suite cost. A full run takes tens of minutes, so the full
-suite runs **once, before the release** — never per issue or per worker. Group
+Bundle to cut test-suite cost. A full run takes tens of minutes, so the
+release tests run **once, before the release** — never per issue or per worker
+— scoped to what changed since the last tag (`scripts/release-tests.sh`). Group
 every issue that can be validated by the same scoped test run, and prefer
 fewer, larger bundles over many tiny ones when the work is local to one area.
 
@@ -70,7 +71,10 @@ triages from that section, so never bury it in the progress log.
 
 - **Workers: scoped tests only.** Run the bundle's test module(s) plus
   immediate neighbours — not the full suite.
-- **Full suite: exactly once, on `master`, before the release** (coordinator).
+- **Release tests: once, on `master`, before the release** (coordinator). Scope
+  them to the change since the last tag with `scripts/release-tests.sh` (see
+  step 5); it falls back to the full suite when the change is broad or
+  unmappable.
 - Use `scripts/test-watch.py` for percentage progress on every run, per
   AGENTS.md.
 
@@ -100,15 +104,19 @@ triages from that section, so never bury it in the progress log.
    Repeat steps 3–4 while each wave files new resolvable findings. If findings
    keep recursing, stop after **two consecutive findings-only waves** and list
    the remainder as deferred.
-5. Once the final wave is merged, run the **full suite once on `master`** — the
-   only full run in the loop:
+5. Once the final wave is merged, run the **release tests once on `master`** —
+   the only test run before the release. Scope them to the change since the
+   last release tag; broad/unmapped changes (core interpreter, build, Circle)
+   fall back to the full suite automatically:
 
    ```bash
-   scripts/build.sh
-   .venv/bin/python scripts/test-watch.py start
+   scripts/release-tests.sh plan   # which suites, and why
+   scripts/release-tests.sh run    # build + run the selected suites
    ```
 
-   Do not publish unless it is green. Then cut **one** minor release (matches
+   `run` starts the selection through `scripts/test-watch.py`, so poll
+   `status --sleep 60` for percentage progress. Do not publish unless the
+   selected suites are green. Then cut **one** minor release (matches
    AGENTS.md “one minor release at the end”):
 
    ```bash
@@ -162,7 +170,7 @@ A check-in with nothing new logs `[checkin] no changes` and the coordinator
 keeps watching the current workers.
 
 **Release cutoff.** The single minor release still closes the run, so do not
-start new workers once the final wave's full-suite step has begun. Findings
+start new workers once the final wave's release-test step has begun. Findings
 waves are scheduled before that step, not after it. A worker started at the last
 check-in must have its PR merged before that step, or it is deferred to the next
 run and listed under “queued” in the final summary.
@@ -195,7 +203,7 @@ Do **not** merge or release. Stop at “PR ready”.
 3. Test **scoped only** — the bundle's test module(s) plus immediate
    neighbours, via the `test-suite-progress` skill, e.g.
    `scripts/test-watch.py start -- tests/test_<area>.py`. Do **not** run the
-   full suite here; that happens once, before the release.
+   release test selection here; that happens once, before the release.
 4. Commit; `git push -u origin <branch>`.
 5. Open the PR against `master` (ManagePullRequest, or `gh pr create` where it
    is unavailable — see `issue-done`). Body must include `Fixes #N` for every
@@ -325,8 +333,8 @@ never move another worktree's branch). opencode does not auto-discover
 ## Hazards / do not
 
 - Do not run the serial `issue-loop` inside a worker — it merges and releases.
-- Do not run the full suite in a worker; it runs once, on `master`, before the
-  release. Workers use scoped tests only.
+- Do not run the release test selection in a worker; it runs once, on `master`,
+  before the release. Workers use scoped tests only.
 - Do not advance `master` from a worker (no `git push origin <branch>:master`);
   only the coordinator merges.
 - Do not move a branch another worktree has checked out (AGENTS.md). Rebase a

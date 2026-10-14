@@ -188,16 +188,20 @@ last_version() {
 release_notes() {
 	local version="$1"
 	local macos_asset="${2:-}"
-	local last tag_range
+	local last tag_range tests_section
 	last="$(last_version)"
 	if [ "${last}" = "0.0.0" ]; then
 		tag_range=""
 	else
 		tag_range="v${last}..HEAD"
 	fi
-	python3 - "${version}" "${last}" "${tag_range}" "${macos_asset}" <<'PY'
+	# Record which related suites this release scoped to (and why), from the
+	# same diff the release is cut on. Never fail the release if selection is
+	# unavailable (for example a shallow clone with no tags).
+	tests_section="$(python3 "${REPO_ROOT}/scripts/release_tests.py" notes --since "${last}" 2>/dev/null || true)"
+	python3 - "${version}" "${last}" "${tag_range}" "${macos_asset}" "${tests_section}" <<'PY'
 import os, subprocess, sys
-version, last, tag_range, macos_asset = sys.argv[1:5]
+version, last, tag_range, macos_asset, tests_section = sys.argv[1:6]
 macos_name = os.path.basename(macos_asset) if macos_asset else ""
 print(f"mmcore v{version}")
 print()
@@ -295,6 +299,9 @@ print("- `mmcore-windows-x86_64.zip` — Windows x86_64 native SDL2 build")
 if macos_name:
     print(f"- `{macos_name}` — macOS universal app bundle (mmcore.app)")
 print()
+if tests_section:
+    print(tests_section)
+    print()
 if tag_range:
     print(f"## Changes since v{last}")
     print()
