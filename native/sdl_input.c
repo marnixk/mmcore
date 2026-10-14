@@ -658,10 +658,16 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		return;
 	}
 
-	/* Alt+letter is the app Alt menu / picker prefix. */
-	if (alt && !ctrl && k >= SDLK_a && k <= SDLK_z)
+	/* Alt+letter is the app Alt menu / picker prefix; Alt+digit is the
+	 * editor's tab-switch prefix. Both expect SOH (0x01) then the key
+	 * character, the same bytes the Circle USB path emits (hid_alt_char
+	 * covers letters and digits). Without the digit case Alt+1..Alt+9
+	 * never reached EDIT on the ISO/native SDL path (#1180). */
+	if (alt && !ctrl &&
+	    ((k >= SDLK_a && k <= SDLK_z) || (k >= SDLK_0 && k <= SDLK_9)))
 	{
-		char c = (char)('a' + (k - SDLK_a));
+		char c = (k >= SDLK_a) ? (char)('a' + (k - SDLK_a))
+				       : (char)('0' + (k - SDLK_0));
 
 		if (!mmb_is_running() && !s_line_input)
 		{

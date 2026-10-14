@@ -2,8 +2,10 @@
 
 /*
  * AFK: a Win31 "Mystify"-style screensaver. Two polygons of 3-6 vertices
- * bounce around a MODE 11 screen, each vertex trailing a fading ring of
- * positions. Enter or the break key exits and restores the prior mode.
+ * bounce around a 960x540/MODE 12 screen, each vertex trailing a fading ring
+ * of positions. When the console is already in MODE 19/20 (the Chromebook
+ * panel sizes) AFK renders in MODE 19 instead. Enter or the break key exits
+ * and restores the prior mode.
  */
 
 #define AFK_SETS 2
@@ -11,6 +13,7 @@
 #define AFK_HIST 24
 #define AFK_FRAME_MS 16
 #define AFK_MODE 12
+#define AFK_MODE_WIDE 19
 #define AFK_PASS_MAX 32
 /* Soft pages 0 and 2 are the front/back buffers; page 1 is the CMM2 overlay. */
 #define AFK_PAGE_A 0
@@ -261,7 +264,7 @@ static void afk_draw_lock(void)
 		stars[i] = '*';
 	stars[A.inlen] = 0;
 	mmb_gfx_text(bx + 24, by + 56, stars, fg);
-	mmb_gfx_text(bx + 24, by + 96, "ENTER=UNLOCK  ESC=CLEAR", hint);
+	mmb_gfx_text(bx + 24, by + 96, "ENTER=UNLOCK  ESC=CANCEL", hint);
 	G.gfx.display_page = A.front;
 	mmb_gfx_dirty_add(0, 0, A.w, A.h);
 	if (G.plat && G.plat->present_set_flip)
@@ -280,7 +283,13 @@ void mmb_cmd_afk(void)
 	A.saved_write_page = G.gfx.write_page;
 	A.saved_display_page = G.gfx.display_page;
 	A.saved_write_fb = G.gfx.write_fb;
-	mmb_gfx_set_mode(AFK_MODE, 8);
+	/* The Chromebook (Lenovo 100e Gen 2) runs its console in MODE 19/20.
+	 * AFK's 960x540 design looks wrong on that panel, so render in MODE 19
+	 * (1366x768) when the console is already one of those modes; afk_leave
+	 * restores the saved mode either way. */
+	mmb_gfx_set_mode((A.saved_mode == 19 || A.saved_mode == 20) ? AFK_MODE_WIDE
+								    : AFK_MODE,
+			 8);
 	A.w = G.gfx.w > 0 ? G.gfx.w : 960;
 	A.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	A.rng = (unsigned)(mmb_now_ms() * 2654435761u) + 0x9E3779B9u;
@@ -340,9 +349,13 @@ void mmb_afk_key(char c)
 		}
 		if (c == 27)
 		{
+			/* Escape cancels the dialog: drop the lock, discard the
+			 * input and resume the screensaver without leaving AFK. */
+			A.locked = 0;
 			A.inlen = 0;
 			A.input[0] = 0;
-			afk_draw_lock();
+			A.last_ms = mmb_now_ms();
+			afk_frame();
 			return;
 		}
 		if (c >= 32 && c < 127 && A.inlen < AFK_PASS_MAX)
