@@ -711,6 +711,50 @@ int main(void)
 		fails++;
 	}
 
+	/* #1180: Alt+1..Alt+9 is EDIT's tab-switch prefix. The ISO/native SDL
+	 * path must deliver SOH then the digit, mirroring both the Alt+letter
+	 * menu prefix and the Circle hid_alt_char path. */
+	for (int d = 1; d <= 9; d++)
+	{
+		char want[3] = {'\x01', (char)('0' + d), '\0'};
+
+		reset();
+		g_running = 0;
+		push_key(SDLK_1 + (d - 1), KMOD_ALT);
+		sdl_input_pump();
+		expect_feed("alt-digit tab prefix", want);
+	}
+
+	/* Alt+0 carries the same prefix, matching Circle (hid_alt_char accepts
+	 * '0'..'9'); EDIT ignores an unknown digit. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_0, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-0 tab prefix", "\x01" "0");
+
+	/* Alt+digit while a program runs is not the tab chord: no SOH leaks
+	 * into the program's INKEY queue. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_3, KMOD_ALT);
+	sdl_input_pump();
+	expect_queue("alt-digit running no SOH", "");
+
+	/* Alt+Left/Right still emit the xterm CSI the editor decodes as the
+	 * same tab switch (regression guard for the digit change). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-left tab", "\x1b[1;3D");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_RIGHT, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-right tab", "\x1b[1;3C");
+
 	/* Ctrl+Shift+V pastes the host clipboard into the raw inkey queue while a
 	 * program runs: CR/LF collapse to a single CR and are not swallowed. */
 	reset();
