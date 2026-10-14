@@ -13,7 +13,9 @@ AFK
 AFK switches to MODE 12 (960x540), or MODE 19 (1366x768) when the console is
 already in MODE 19 or 20 (the Chromebook panel sizes), renders each frame into
 a hidden page and flips it into view on the vertical blank (no tearing), and
-restores the previous mode, bits, pages and framebuffer when it exits.
+restores the previous mode and bits when it exits. As with the other
+full-screen apps, PAGE WRITE, PAGE DISPLAY and the framebuffer target return to
+0 (so the prompt is never left on a hidden page).
 
 Controls:
 

@@ -5,7 +5,8 @@
  * bounce around a 960x540/MODE 12 screen, each vertex trailing a fading ring
  * of positions. When the console is already in MODE 19/20 (the Chromebook
  * panel sizes) AFK renders in MODE 19 instead. Enter or the break key exits
- * and restores the prior mode.
+ * and restores the prior mode and bits; PAGE WRITE, PAGE DISPLAY and the
+ * framebuffer target home to 0 like the other full-screen apps.
  */
 
 #define AFK_SETS 2
@@ -31,7 +32,6 @@ static struct {
 	char input[AFK_PASS_MAX + 1];
 	int inlen;
 	int saved_mode, saved_bits;
-	int saved_write_page, saved_display_page, saved_write_fb;
 	int nv[AFK_SETS];
 	afk_vert v[AFK_SETS][AFK_MAXV];
 	unsigned rgb[AFK_SETS];
@@ -238,6 +238,10 @@ static void afk_leave(void)
 	A.active = 0;
 	if (A.saved_mode != G.gfx.mode || A.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(A.saved_mode, A.saved_bits);
+	/* Home PAGE WRITE/DISPLAY and the framebuffer target rather than
+	 * restoring the pages AFK ran on: presenting an off-screen page leaves a
+	 * black HDMI plane the console cannot recover (CMM2 Ctrl-C also homes
+	 * PAGE WRITE), so afk_leave does not save them. */
 	mmb_gfx_reset_console(1);
 }
 
@@ -280,9 +284,6 @@ void mmb_cmd_afk(void)
 	memset(&A, 0, sizeof(A));
 	A.saved_mode = G.gfx.mode;
 	A.saved_bits = G.gfx.bits;
-	A.saved_write_page = G.gfx.write_page;
-	A.saved_display_page = G.gfx.display_page;
-	A.saved_write_fb = G.gfx.write_fb;
 	/* The Chromebook (Lenovo 100e Gen 2) runs its console in MODE 19/20.
 	 * AFK's 960x540 design looks wrong on that panel, so render in MODE 19
 	 * (1366x768) when the console is already one of those modes; afk_leave
