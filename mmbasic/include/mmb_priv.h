@@ -221,6 +221,9 @@ typedef struct mmb_options {
 	int ethernet_enabled;  /* OPTION ETHERNET ON|OFF (default OFF) */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
+	int brightness;        /* MM.BRIGHTNESS% persisted in .mmbasic.ini (#1157) */
+	int volume_l;          /* PLAY VOLUME left persisted in .mmbasic.ini (#1157) */
+	int volume_r;          /* PLAY VOLUME right persisted in .mmbasic.ini (#1157) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " (default CWD) */
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */

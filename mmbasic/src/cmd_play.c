@@ -495,7 +495,10 @@ static void play_begin(int kind, const char *path)
 		s_begin_vol_armed = 0;
 	}
 	else
-		g_audio.vol_l = g_audio.vol_r = 100;
+	{
+		g_audio.vol_l = G.opt.volume_l;
+		g_audio.vol_r = G.opt.volume_r;
+	}
 	s_first_mix_valid = 0;
 	g_audio.samples_decoded = 0;
 	g_audio.name[0] = 0;
@@ -1289,15 +1292,27 @@ void mmb_cmd_play(void)
 	}
 	if (mmb_match("VOLUME"))
 	{
-		g_audio.vol_l = (int)mmb_as_int(mmb_expr());
+		int vl = (int)mmb_as_int(mmb_expr());
+		int vr;
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
 			G.p++;
-			g_audio.vol_r = (int)mmb_as_int(mmb_expr());
+			vr = (int)mmb_as_int(mmb_expr());
 		}
 		else
-			g_audio.vol_r = g_audio.vol_l;
+			vr = vl;
+		if (vl < 0)
+			vl = 0;
+		if (vl > 100)
+			vl = 100;
+		if (vr < 0)
+			vr = 0;
+		if (vr > 100)
+			vr = 100;
+		G.opt.volume_l = g_audio.vol_l = vl;
+		G.opt.volume_r = g_audio.vol_r = vr;
+		mmb_settings_save();
 		return;
 	}
 	if (mmb_match("TONE"))

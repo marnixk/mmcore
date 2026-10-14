@@ -212,3 +212,63 @@ def test_brightness_wired_into_interpreter(tmp_path):
             except ValueError:
                 pass
     assert values[:4] == [37, 42, 100, 100], out
+
+
+@pytest.mark.skipif(
+    shutil.which("cc") is None or shutil.which("make") is None,
+    reason="needs a host C toolchain (cc/make)",
+)
+def test_brightness_and_volume_restore_on_start(tmp_path):
+    """#1157: a saved brightness/volume is written to .mmbasic.ini and applied
+    on the next start (the panel value is overwritten, PLAY uses the volume)."""
+    build_native()
+    assert os.path.isfile(BIN), "native build produced no binary"
+    dev = _dev(tmp_path / "panel", max_brightness=100, brightness=37)
+    root = tmp_path / "root"
+    root.mkdir()
+    env = dict(
+        os.environ,
+        MMB_DRIVE_ROOT=str(root),
+        MMB_BACKLIGHT=dev,
+    )
+
+    first = subprocess.run(
+        [BIN],
+        input="MM.BRIGHTNESS% = 42\nPLAY VOLUME 30, 70\n",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    ini = (root / "C" / ".mmbasic.ini").read_text()
+    assert "brightness=42" in ini, ini
+    assert "volume_l=30" in ini, ini
+    assert "volume_r=70" in ini, ini
+
+    # The panel moved on between sessions; the saved value must win, and the
+    # restored volume must scale the first mixed buffer.
+    (tmp_path / "panel" / "brightness").write_text("88\n")
+    second = subprocess.run(
+        [BIN],
+        input=(
+            "PRINT MM.BRIGHTNESS%\n"
+            "PLAY TONE 440, 440\n"
+            'PRINT MM.INFO("FIRSTVOL")\n'
+            "PLAY STOP\n"
+        ),
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    out = ANSI.sub("", second.stdout + second.stderr)
+    values = []
+    for line in out.splitlines():
+        if line.startswith("> "):
+            try:
+                values.append(int(line[2:].strip()))
+            except ValueError:
+                pass
+    assert values[:2] == [42, 30], out
+    assert (tmp_path / "panel" / "brightness").read_text().strip() == "42"

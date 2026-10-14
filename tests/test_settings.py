@@ -97,6 +97,28 @@ def test_option_persists_to_hidden_ini(console):
     assert "[core]" in ini
 
 
+def test_brightness_and_volume_persist(console):
+    """#1157: MM.BRIGHTNESS% and PLAY VOLUME write .mmbasic.ini and the
+    factory defaults seed all three keys."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    ini = _read_ini(console)
+    assert "brightness=100" in ini
+    assert "volume_l=100" in ini
+    assert "volume_r=100" in ini
+    assert console.send_line("MM.BRIGHTNESS% = 42") == ""
+    assert console.send_line("PLAY VOLUME 30, 70") == ""
+    ini = _read_ini(console)
+    assert "brightness=42" in ini
+    assert "volume_l=30" in ini
+    assert "volume_r=70" in ini
+    assert console.send_line("MM.BRIGHTNESS% = 150") == ""
+    assert console.send_line("PLAY VOLUME 200") == ""
+    ini = _read_ini(console)
+    assert "brightness=100" in ini
+    assert "volume_l=100" in ini
+    assert "volume_r=100" in ini
+
+
 def test_dir_hides_dotfiles(console):
     assert console.send_line('CHDIR "A:/"') == ""
     assert console.send_line('OPEN "A:/.hidden.txt" FOR OUTPUT AS #1') == ""
