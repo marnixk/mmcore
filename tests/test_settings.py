@@ -398,18 +398,21 @@ def test_settings_dialog_is_inset_not_fullscreen(console):
 
 
 def test_settings_hub_lists_categories(console):
-    """#591: the hub has peer category slots, Appearance first."""
+    """#591/#1159: the hub has peer category slots, Appearance first."""
     con = console
     seen = _settings_open(con).upper()
-    for name in ("APPEARANCE", "NETWORK", "SYSTEM", "SOUND"):
+    for name in ("APPEARANCE", "NETWORK"):
         assert name in seen, seen
+    assert "SYSTEM" not in seen, seen
+    assert "SOUND" not in seen, seen
     assert "THEME" in seen, seen
     _settings_keys(con, b"\x1b")
     assert con.send_line("PRINT 1+1") == "2"
 
 
 def test_settings_network_section_shows_status(console):
-    """#591: Network is a real peer section wired to existing status/config."""
+    """#591/#1159: Network is a real peer section wired to existing
+    status/config, including the current IP address."""
     con = console
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
     _settings_open(con)
@@ -417,6 +420,7 @@ def test_settings_network_section_shows_status(console):
     seen = _settings_keys(con, b"\r", quiet=0.6).upper()
     assert "NETWORK" in seen, seen
     assert "WI-FI" in seen, seen
+    assert "IP" in seen, seen
     assert "NTP" in seen, seen
     _settings_keys(con, b"\x1b")  # back to hub
     _settings_keys(con, b"\x1b")  # close
@@ -561,6 +565,22 @@ def test_settings_appearance_preview_fits_above_hint(console):
     # Nothing of the swatch is drawn on the hint row.
     assert not re.search(r"\+-{2,}", rows[hint][22:]), rows
 
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 6*7") == "42"
+
+
+def test_settings_appearance_has_blank_line_before_hint(console):
+    """#1159: at least one empty line separates the last theme name from the
+    shortcut hint row."""
+    con = console
+    _settings_open(con)
+    rows = _frame_rows(_settings_keys(con, b"\r", quiet=0.6))
+    mono = next(i for i, ln in enumerate(rows) if "Monochrome" in ln)
+    hint = next(i for i, ln in enumerate(rows) if "<Up/Down> Preview" in ln)
+    assert hint > mono, (mono, hint)
+    between = [ln for ln in rows[mono + 1:hint] if not ln.replace("|", "").strip()]
+    assert between, rows[mono:hint + 1]
     _settings_keys(con, b"\x1b")  # back to hub
     _settings_keys(con, b"\x1b")  # close
     assert con.send_line("PRINT 6*7") == "42"

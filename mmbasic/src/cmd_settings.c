@@ -8,28 +8,24 @@
  * A small modal dialog (see tui_dialog_panel) rather than a full-screen
  * takeover. The hub lists categories; Appearance hosts the theme picker from
  * #509 (live preview, Enter persists via mmb_settings_save, Esc restores the
- * theme active on entry). Network, System and Sound are peer slots so the
- * product can grow without another one-off UI. Esc backs a section to the hub
- * and closes from the hub, returning to the prompt.
+ * theme active on entry). Network is a peer slot so the product can grow
+ * without another one-off UI. Esc backs a section to the hub and closes from
+ * the hub, returning to the prompt.
  */
 
 #define SET_ESC_IDLE_MS 60
 
 #define ST_SEC_APPEARANCE 0
 #define ST_SEC_NETWORK    1
-#define ST_SEC_SYSTEM     2
-#define ST_SEC_SOUND      3
-#define ST_SEC_COUNT      4
+#define ST_SEC_COUNT      2
 
 static const char *const st_sec_name[ST_SEC_COUNT] = {
-	"Appearance", "Network", "System", "Sound"
+	"Appearance", "Network"
 };
 
 static const char *const st_sec_desc[ST_SEC_COUNT] = {
 	"Theme and interface colours",
-	"Wi-Fi, Ethernet and NTP",
-	"Boot destination and REPL options",
-	"Audio output and mute"
+	"Wi-Fi, Ethernet and NTP"
 };
 
 typedef struct settings_state {
@@ -252,9 +248,20 @@ static void st_draw_theme(int x, int y, int w, int h)
 		"<Up/Down> Preview  <Enter> Apply  <Esc> Back");
 }
 
+/* Current IP address from the same source IPCONFIG formats, without starting
+ * a connection or waiting on DHCP: an unconnected link reports no address. */
+static int st_network_ip(char *buf, int bufsize)
+{
+	buf[0] = 0;
+	if (G.opt.ethernet_enabled || mmb_net_kind() == MMB_NET_ETH)
+		return mmb_eth_ip(buf, bufsize) == 0 && buf[0];
+	return mmb_wlan_ip(buf, bufsize) == 0 && buf[0];
+}
+
 static void st_draw_network(int x, int y, int w, int h)
 {
 	char line[160];
+	char ip[64];
 	int r = y + 2;
 	const char *ssid = G.opt.wifi_ssid[0] ? G.opt.wifi_ssid : "(none)";
 
@@ -263,6 +270,11 @@ static void st_draw_network(int x, int y, int w, int h)
 	tui_puts(x + 2, r++, mmb_net_available() ? "Link: up" : "Link: none",
 		 mmb_net_available() ? ST_FG : ST_ERR_FG,
 		 mmb_net_available() ? ST_BG : ST_ERR_BG);
+	tui_puts(x + 2, r, "IP       :", ST_FG, ST_BG);
+	if (st_network_ip(ip, (int)sizeof(ip)))
+		tui_puts(x + 13, r++, ip, ST_FG, ST_BG);
+	else
+		tui_puts(x + 13, r++, "none", ST_ERR_FG, ST_ERR_BG);
 	r++;
 	tui_puts(x + 2, r, "Wi-Fi    :", ST_FG, ST_BG);
 	tui_puts(x + 13, r++, ssid, ST_FG, ST_BG);
@@ -280,50 +292,6 @@ static void st_draw_network(int x, int y, int w, int h)
 	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
 }
 
-static void st_draw_system(int x, int y, int w, int h)
-{
-	int r = y + 2;
-	const char *boot = "REPL";
-
-	(void)w;
-	if (G.opt.boot_mode == 1)
-		boot = "Launcher";
-	else if (G.opt.boot_mode == 2)
-		boot = "App";
-	tui_puts(x + 2, r++, "System", ST_HOT, ST_BG);
-	r++;
-	tui_puts(x + 2, r, "Boot      :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, boot, ST_FG, ST_BG);
-	tui_puts(x + 2, r, "App path  :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, G.opt.app_path, ST_FG, ST_BG);
-	tui_puts(x + 2, r, "Prompt    :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, G.opt.prompt ? "CWD" : "BARE", ST_FG, ST_BG);
-	tui_puts(x + 2, r, "Theme     :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, mmb_editor_theme_name(G.opt.theme), ST_FG,
-		 ST_BG);
-	r++;
-	tui_puts(x + 2, r++, "Change these with OPTION at the prompt.",
-		 ST_FG, ST_BG);
-	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
-}
-
-static void st_draw_sound(int x, int y, int w, int h)
-{
-	int r = y + 2;
-
-	(void)w;
-	tui_puts(x + 2, r++, "Sound", ST_HOT, ST_BG);
-	r++;
-	tui_puts(x + 2, r, "Audio     :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, G.opt.audio_on ? "ON" : "OFF", ST_FG, ST_BG);
-	tui_puts(x + 2, r, "Output    :", ST_FG, ST_BG);
-	tui_puts(x + 14, r++, G.opt.audio_target ? "HDMI" : "JACK", ST_FG, ST_BG);
-	r++;
-	tui_puts(x + 2, r++, "Use OPTION AUDIO / AUDIO OUTPUT at the prompt.",
-		 ST_FG, ST_BG);
-	st_hint(x + 1, y + h - 2, w - 2, "<Esc> Back");
-}
-
 static void st_draw_section(void)
 {
 	int x, y, w, h;
@@ -333,7 +301,7 @@ static void st_draw_section(void)
 	strncat(title, "SETTINGS - ", sizeof(title) - 1);
 	strncat(title, st_sec_name[S.sec], sizeof(title) - strlen(title) - 1);
 	if (S.sec == ST_SEC_APPEARANCE)
-		st_panel(title, 72, 17, &x, &y, &w, &h);
+		st_panel(title, 72, 18, &x, &y, &w, &h);
 	else
 		st_panel(title, 68, 13, &x, &y, &w, &h);
 
@@ -342,14 +310,8 @@ static void st_draw_section(void)
 	case ST_SEC_APPEARANCE:
 		st_draw_theme(x, y, w, h);
 		break;
-	case ST_SEC_NETWORK:
-		st_draw_network(x, y, w, h);
-		break;
-	case ST_SEC_SYSTEM:
-		st_draw_system(x, y, w, h);
-		break;
 	default:
-		st_draw_sound(x, y, w, h);
+		st_draw_network(x, y, w, h);
 		break;
 	}
 }

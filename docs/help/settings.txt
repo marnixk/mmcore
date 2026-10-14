@@ -13,9 +13,7 @@ SETTINGS THEME name|n
 Categories:
 
   Appearance - the TUI theme picker (below)
-  Network    - Wi-Fi / Ethernet / NTP status and pointers to the commands
-  System     - boot destination, app PATH, prompt and theme summary
-  Sound      - audio output and mute
+  Network    - Wi-Fi / Ethernet / NTP status, IP address and command pointers
 
 Theme (Appearance)
 
@@ -27,6 +25,11 @@ PACKAGE, APPS and the rest of the themed chrome. The editor follows this theme
 too unless a different editor-only theme is picked from EDIT's Theme menu (or
 with OPTION EDIT THEME). It is saved to C:/.mmbasic.ini (A: if there is no SD
 card) and survives a reboot.
+
+The Network category shows the current link state, the assigned IP address
+(or "none" when there is no address yet) and the Wi-Fi / Ethernet / NTP
+configuration. Use OPTION WIFI / CONNECT / OPTION NTP at the prompt to change
+them; the category itself is read-only.
 
 Keys in the hub:
 
