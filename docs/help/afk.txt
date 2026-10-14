@@ -19,6 +19,19 @@ Controls:
     Enter   exit and return to the prompt
     Ctrl+C  exit (the break key)
 
+Lock screen:
+
+    OPTION AFK PASSWORD "pass$"   arm the lock; FORGET disarms it.
+
+With a password set, pressing any key stops the animation and shows a small
+password box. Typed characters appear as `*`. Enter checks the input: the
+correct password exits AFK, a wrong one clears the box and stays locked. Esc
+clears the input. Ctrl+C no longer exits while the lock is armed. The password
+is stored as a hash in .mmbasic.ini and is never printed by OPTION LIST; this is
+a deterrent, not real security.
+
 Example:
 
     AFK
+    OPTION AFK PASSWORD "open sesame"
+    OPTION AFK PASSWORD FORGET
