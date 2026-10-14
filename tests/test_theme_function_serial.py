@@ -37,10 +37,13 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
     try:
         assert con.send_line("OPTION THEME SLATE") == ""
 
-        # Open the hub on Appearance (index 5); Enter enters the theme
-        # picker, whose title bar shows the active theme's menu_bg.
+        # Settings is the first hub entry (#1158); one Down selects
+        # Appearance. Enter enters the theme picker, whose title bar shows
+        # the active theme's menu_bg.
         con._ser.sendall(b"SETTINGS\r")
         time.sleep(0.8)
+        con._ser.sendall(b"\x1b[B")
+        time.sleep(0.3)
         con._ser.sendall(b"\r")
         time.sleep(0.4)
         slate_bar = con.screen_pixel(4, 4)
@@ -74,6 +77,8 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
         assert con.send_line("OPTION THEME SLATE") == ""
         con._ser.sendall(b"SETTINGS\r")
         time.sleep(0.8)
+        con._ser.sendall(b"\x1b[B")  # Settings -> Appearance
+        time.sleep(0.3)
         con._ser.sendall(b"\r")
         time.sleep(0.4)
         con._ser.sendall(b"\x1b[B")
