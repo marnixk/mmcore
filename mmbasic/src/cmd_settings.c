@@ -330,18 +330,28 @@ static void st_clock_text(char *out, int outsz)
 		 st_months[mo - 1], 2000 + y);
 }
 
-/* Battery badge "[80%]" coloured red / blue / green by charge band. */
-static void st_battery_badge(int x, int y, int w, int pct)
+/* Status line for the whole SETTINGS app: local date/time top-left and the
+ * battery badge "[80%]" (coloured red / blue / green by charge band)
+ * top-right, both on row 0 of the screen so they sit OUTSIDE the dialog
+ * chrome on the backdrop, not inside the panel body. */
+static void st_draw_status(void)
 {
 	static const int band[3] = { TUI_RED, TUI_BLUE, TUI_GREEN };
-	char buf[8];
+	char dt[64];
+	char bat[8];
+	int cols = tui_cols();
+	int pct = mmb_battery_percent();
 	int bx;
 
-	snprintf(buf, sizeof(buf), "[%d%%]", pct);
-	bx = x + w - 3 - (int)strlen(buf);
-	if (bx < x + 2)
-		bx = x + 2;
-	tui_puts(bx, y, buf, band[mmb_battery_status_class(pct)], ST_BG);
+	if (cols < 1)
+		return;
+	st_clock_text(dt, (int)sizeof(dt));
+	tui_pad(0, 0, dt, cols, ST_TITLE_FG, ST_TITLE_BG);
+	snprintf(bat, sizeof(bat), "[%d%%]", pct);
+	bx = cols - (int)strlen(bat);
+	if (bx < 2)
+		bx = 2;
+	tui_puts(bx, 0, bat, band[mmb_battery_status_class(pct)], ST_TITLE_BG);
 }
 
 /* A [====------] slider; the focused one uses the selection surface. */
@@ -364,7 +374,6 @@ static void st_slider(int x, int y, int width, int pct, int focused)
 static void st_draw_settings(int x, int y, int w, int h)
 {
 	static const char *const labels[2] = { "Brightness", "Volume" };
-	char dt[64];
 	int slider_x = x + 15;
 	int slider_w = 30;
 	int pct[2];
@@ -373,15 +382,11 @@ static void st_draw_settings(int x, int y, int w, int h)
 	pct[0] = G.opt.brightness;
 	pct[1] = g_audio.vol_l;
 
-	st_clock_text(dt, (int)sizeof(dt));
-	tui_puts(x + 2, y + 2, dt, ST_FG, ST_BG);
-	st_battery_badge(x, y + 2, w, mmb_battery_percent());
-
-	tui_puts(x + 2, y + 4, "Brightness and volume", ST_HOT, ST_BG);
+	tui_puts(x + 2, y + 2, "Brightness and volume", ST_HOT, ST_BG);
 
 	for (i = 0; i < 2; i++)
 	{
-		int ry = y + 6 + i * 2;
+		int ry = y + 4 + i * 2;
 		int fg = (S.sel == i) ? ST_SEL_FG : ST_FG;
 		int bg = (S.sel == i) ? ST_SEL_BG : ST_BG;
 		char val[8];
@@ -408,7 +413,7 @@ static void st_draw_section(void)
 	if (S.sec == ST_SEC_APPEARANCE)
 		st_panel(title, 72, 18, &x, &y, &w, &h);
 	else if (S.sec == ST_SEC_SETTINGS)
-		st_panel(title, 60, 12, &x, &y, &w, &h);
+		st_panel(title, 60, 10, &x, &y, &w, &h);
 	else
 		st_panel(title, 68, 13, &x, &y, &w, &h);
 
@@ -436,6 +441,7 @@ static void st_draw(void)
 		st_draw_hub();
 	else
 		st_draw_section();
+	st_draw_status();
 	tui_cursor(0, 0, 0);
 	tui_flush();
 }

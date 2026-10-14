@@ -614,11 +614,11 @@ def test_settings_appearance_has_blank_line_before_hint(console):
 # --- #1158: Settings tab (sliders, battery, clock) --------------------------
 
 
-def test_settings_tab_shows_sliders_battery_and_clock(console):
-    """#1158: the Settings tab renders the clock, battery badge and both
-    sliders with their current percentages."""
-    import re
-
+def test_settings_tab_shows_sliders(console):
+    """#1158: the Settings tab renders both sliders with their current
+    percentages. The clock/battery live on the row-0 status line (see
+    test_settings_status_line_sits_outside_the_chrome), so they are absent
+    from the section's own diff."""
     con = console
     assert con.send_line("MM.BRIGHTNESS% = 50") == ""
     assert con.send_line("PLAY VOLUME 50") == ""
@@ -628,9 +628,30 @@ def test_settings_tab_shows_sliders_battery_and_clock(console):
     assert "SETTINGS - SETTINGS" in upper, seen
     assert "BRIGHTNESS AND VOLUME" in upper, seen
     assert "BRIGHTNESS" in upper and "VOLUME" in upper, seen
-    assert "[100%]" in seen, seen
-    assert re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", seen), seen
     assert " 50%" in seen, seen
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 3+3") == "6"
+
+
+def test_settings_status_line_sits_outside_the_chrome(console):
+    """#1158: the date/time (top-left) and battery (top-right) render on
+    screen row 0, above the dialog panel, not inside its body."""
+    import re
+
+    con = console
+    assert con.send_line("OPTION THEME SLATE") == ""
+    rows = _frame_rows(_settings_open(con))  # hub frame is a full-screen draw
+    clock_row = next(
+        i
+        for i, ln in enumerate(rows)
+        if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+    )
+    assert "[100%]" in rows[clock_row], rows[clock_row]
+    panel_top = next(i for i, ln in enumerate(rows) if ln.strip().startswith("+"))
+    assert clock_row < panel_top, (clock_row, panel_top, rows[:4])
+    assert "+" not in rows[clock_row] and "|" not in rows[clock_row], rows[clock_row]
+    _settings_keys(con, b"\r", quiet=0.6)  # Settings tab keeps the status line
     _settings_keys(con, b"\x1b")  # back to hub
     _settings_keys(con, b"\x1b")  # close
     assert con.send_line("PRINT 3+3") == "6"
@@ -657,21 +678,18 @@ def test_settings_tab_slider_keys_adjust(console):
 
 def test_settings_battery_badge_is_green_when_full(console):
     """#1158: the battery badge is coloured by charge band; QEMU reports
-    100% (no battery), so the badge must render green."""
+    100% (no battery), so the badge renders green on the row-0 status line,
+    top-right of the screen and outside the dialog chrome."""
     con = console
     assert con.send_line("OPTION THEME SLATE") == ""
     _settings_open(con)
     _settings_keys(con, b"\r", quiet=0.6)
-    w, h = con.screen_size()
-    cols, rows = w // 8, h // 16
-    pw = min(60, cols - 2)
-    ph = min(12, rows - 2)
-    px = max(1, (cols - pw) // 2)
-    py = max(1, (rows - ph) // 2)
+    w, _h = con.screen_size()
+    cols = w // 8
     badge = "[100%]"
-    bx = px + pw - 3 - len(badge)
+    bx = cols - len(badge)
     coords = [
-        (c * 8 + dx, (py + 2) * 16 + 8)
+        (c * 8 + dx, 8)
         for c in range(bx, bx + len(badge))
         for dx in range(7)
     ]
