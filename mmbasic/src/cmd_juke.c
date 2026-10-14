@@ -1376,10 +1376,13 @@ void mmb_cmd_juke(void)
 		have = 1;
 	}
 
-	/* g_audio volumes default to 0 until the first track starts. JUKE keeps
-	 * one player volume across tracks, so seed an audible level if none is
-	 * set yet; juke_start() then arms that gain for play_begin() (#1113). */
-	if (g_audio.vol_l <= 0)
+	/* g_audio volumes start unset (MMB_AUDIO_VOL_UNSET) but the persisted
+	 * PLAY VOLUME and PLAY VOLUME itself only store 0..100. JUKE keeps one
+	 * player volume across tracks, so seed an audible level only for a
+	 * genuinely unset engine: a stored 0 (muted, now persisted in
+	 * .mmbasic.ini) must stay 0, not be turned back up (#1163). juke_start()
+	 * then arms that gain for play_begin() (#1113). */
+	if (g_audio.vol_l < 0)
 		g_audio.vol_l = g_audio.vol_r = 100;
 
 	if (have)

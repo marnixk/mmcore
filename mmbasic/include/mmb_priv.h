@@ -361,10 +361,16 @@ typedef struct mmb_editor {
 	mmb_ed_tab tab[MMB_ED_TABS];
 } mmb_editor;
 
+/* g_audio volume before any PLAY VOLUME / persisted setting has been applied.
+ * settings_finish() and PLAY VOLUME only ever store 0..100, so a negative
+ * value is an unambiguous "never set" signal: JUKE seeds 100 for it while
+ * leaving an intentional 0 (a persisted or in-session mute) alone (#1163). */
+#define MMB_AUDIO_VOL_UNSET (-1)
+
 typedef struct mmb_audio {
 	int playing; /* 0 none 1 mp3 2 mod 3 xm 4 tone */
 	int paused;
-	int vol_l, vol_r;
+	int vol_l, vol_r; /* 0..100, or MMB_AUDIO_VOL_UNSET before first set */
 	unsigned samples_decoded;
 	char name[128];
 	/* Virtual console that started the current playback (-1 = none). A
