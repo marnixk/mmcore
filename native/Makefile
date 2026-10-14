@@ -74,6 +74,12 @@ ifneq ($(FB),)
 BUILD   := $(CURDIR)/build/fb
 OUT_SDL := $(CURDIR)/mmcore-fb$(EXE)
 CFLAGS += -DMMB_SDL_FRAMEBUFFER=1
+# #1181: this is the real device target (the Alpine live ISO runs mmcore-fb),
+# so it syncs the clock at boot once the network is up. The headless stdio and
+# desktop SDL host builds deliberately leave this off: net_posix.c reports the
+# network as always available and would reach the developer's real network from
+# the test harness.
+CFLAGS += -DMMB_NTP_AUTOSYNC=1
 endif
 
 CFLAGS += -DMMB_PLATFORM_POSIX \
