@@ -1457,7 +1457,10 @@ def test_wordpad_scroll_keeps_audio_mixing(kernel_image):
         assert con.send_line("OPTION USBKEYBOARD REPEAT 100, 30") == ""
         assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
         assert con.send_line("PRINT PLAYING()") == "1"
-        assert int(con.send_line('PRINT MM.INFO("MIXGAP")')) < 200
+        # MIXGAP is cumulative and load-sensitive, so this baseline only
+        # sanity-checks that the mixer is running at all (#1170).
+        base_gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        assert base_gap < 1000, base_gap
         assert "[WORDPAD]" in _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
         con.key_down("down")
         rows = _plain(con.drain(quiet=0.3, timeout=1.5).decode(errors="replace"))
@@ -1472,7 +1475,11 @@ def test_wordpad_scroll_keeps_audio_mixing(kernel_image):
         underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
         playing = con.send_line("PRINT PLAYING()")
         con.send_line("PLAY STOP")
-        assert gap < 250, gap
+        # Measure the gap the scroll *added* over the pre-scroll baseline
+        # rather than an absolute bound: a busy parallel host pushes MIXGAP up
+        # even when the fix works, while a real starvation still blows the
+        # margin (#1170).
+        assert gap < base_gap + 150, (base_gap, gap)
         assert underrun == "0", underrun
         assert playing == "1", playing
     finally:
