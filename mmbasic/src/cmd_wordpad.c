@@ -239,6 +239,7 @@ static int wp_save(void);
 static void wp_autosave(void);
 static void wp_stash(void);
 static void wp_save_outcome(int r);
+static void wp_service_audio(void);
 
 /* Ctrl+Z undo (#532). WORDPAD's buffer is a flat string, so undo keeps a
  * compact pool of pre-edit copies (buffer + length), truncated to the shared
@@ -1199,6 +1200,10 @@ static void wp_build_layout(void)
 		}
 		else
 			break;
+		/* A long document makes this layout pass expensive on every
+		 * scroll frame; keep the audio queue fed across it (#1160). */
+		if ((vr & 31) == 0)
+			wp_service_audio();
 	}
 	W.total_vrows = vr;
 	if (!found_cx && W.cx == W.len && W.total_vrows > 0)
@@ -1341,6 +1346,12 @@ static void serial_row(const char *s)
 	if (s)
 		ser(s);
 	ser("\r\n");
+	/* A redraw streams every visible row to the serial console, and a held
+	 * cursor key drives those redraws back to back. The serial write can
+	 * stall on a saturated 115200-baud TX ring, so top the audio queue up
+	 * after each row: background JUKE/PLAY must keep playing while the pane
+	 * is dumped (mirrors TERM #936; #1160). */
+	wp_service_audio();
 }
 
 static void wp_serial_dump(void)
@@ -4068,6 +4079,15 @@ static void draw_status(void)
 	serial_row(right);
 }
 
+/* Keep the background audio mixer serviced while a long blocking scroll or
+ * repaint is on the stack (#1160). mmb_play_mix() fills the output queue and
+ * is a cheap no-op when nothing is playing, so it is safe on the hot path;
+ * this mirrors term_draw()'s mixing while TERM repaints (#936). */
+static void wp_service_audio(void)
+{
+	mmb_play_mix();
+}
+
 static void wp_smooth_scroll(int from, int to)
 {
 	int delta, x, y, w, h, pixels, step, done, dir, d;
@@ -4092,8 +4112,12 @@ static void wp_smooth_scroll(int from, int to)
 		d = step;
 		if (d > pixels - done)
 			d = pixels - done;
+		/* Each tui_scroll() blit presents and waits for its DMA, so top
+		 * the audio queue back up between frames: a held cursor key can
+		 * otherwise fire these back to back and starve JUKE/PLAY. */
 		G.plat->tui_scroll(x, y, w, h, dir * d, WP_BG);
 		done += d;
+		wp_service_audio();
 	}
 }
 
@@ -4130,6 +4154,9 @@ static void wp_redraw(void)
 		draw_file_dialog();
 	if (chrome)
 		draw_status();
+	/* Top the audio queue up before the blocking present/DMA wait, so a
+	 * repaint that follows a scroll cannot leave the mixer starved (#1160). */
+	wp_service_audio();
 	G.plat->tui_present(0, W.vid_rows * 16 - 1);
 	W.last_scroll = W.scroll;
 	W.chrome_shown = chrome;
@@ -4363,11 +4390,13 @@ void mmb_cmd_wordpad(void)
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
 		mmb_val v = mmb_expr();
-		if (v.type == T_STR)
-		{
-			strncpy(path, v.s, sizeof(path) - 1);
-			path[sizeof(path) - 1] = 0;
-		}
+		/* The filename must be a string expression; an unquoted token
+		 * such as WORDPAD myfile.md is a ?SYNTAX error, matching EDIT
+		 * (#1092, #1161). */
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(path, v.s, sizeof(path) - 1);
+		path[sizeof(path) - 1] = 0;
 	}
 	mmb_wordpad_open(path);
 }
