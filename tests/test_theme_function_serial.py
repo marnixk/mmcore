@@ -38,28 +38,29 @@ def test_settings_picker_live_applies_and_persists(kernel_image):
         assert con.send_line("OPTION THEME SLATE") == ""
 
         # Settings is the first hub entry (#1158); one Down selects
-        # Appearance. Enter enters the theme picker, whose title bar shows
-        # the active theme's menu_bg.
+        # Appearance. Enter enters the theme picker, whose backdrop shows the
+        # active theme's menu_bg. Sample row 1, not row 0: the SETTINGS app
+        # now draws its clock/battery status line on row 0.
         con._ser.sendall(b"SETTINGS\r")
         time.sleep(0.8)
         con._ser.sendall(b"\x1b[B")
         time.sleep(0.3)
         con._ser.sendall(b"\r")
         time.sleep(0.4)
-        slate_bar = con.screen_pixel(4, 4)
+        slate_bar = con.screen_pixel(4, 20)
         assert _near(slate_bar, (42, 44, 50)), slate_bar
 
         # One Down lands on Forest (6); the title bar must recolour
         # immediately, before Enter is pressed (live preview).
         con._ser.sendall(b"\x1b[B")
         time.sleep(0.4)
-        forest_bar = con.screen_pixel(4, 4)
+        forest_bar = con.screen_pixel(4, 20)
         assert _near(forest_bar, (10, 20, 12)), forest_bar
 
         # A second Down lands on Violet (7).
         con._ser.sendall(b"\x1b[B")
         time.sleep(0.4)
-        violet_bar = con.screen_pixel(4, 4)
+        violet_bar = con.screen_pixel(4, 20)
         assert _near(violet_bar, (18, 10, 24)), violet_bar
 
         con._ser.sendall(b"\r")
