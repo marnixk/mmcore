@@ -73,6 +73,24 @@ def test_wordpad_opens_untitled(kernel_image):
         con.stop()
 
 
+def test_wordpad_unquoted_filename_is_syntax_error(kernel_image):
+    """#1161: WORDPAD's filename must be a string expression (as EDIT #1092).
+
+    An unquoted token used to be silently ignored, opening an empty document.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("WORDPAD UNQUOTED.MD") == "?SYNTAX ERROR"
+        assert con.send_line("PRINT 1") == "1"
+        # A quoted filename still opens WORDPAD.
+        seen = _open(con, 'WORDPAD "QUOTED.MD"', quiet=1.0)
+        assert "[WORDPAD]" in seen
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_exit_cls_and_restores_colour(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -1401,3 +1419,83 @@ def test_wordpad_exit_reopen_with_file_cycles(kernel_image):
         assert con.send_line("PRINT 3+4") == "7"
     finally:
         con.stop()
+
+
+def _usb_console(kernel_image):
+    return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+
+
+def _seed_long_doc(con, lines: int = 120, path: str = "LONG.MD") -> None:
+    """Write a document long enough that the cursor must scroll the pane."""
+    for line in (
+        f'10 OPEN "{path}" FOR OUTPUT AS #1',
+        f"20 FOR I=1 TO {lines}",
+        '30 PRINT #1, "line "; I',
+        "40 NEXT I",
+        "50 CLOSE #1",
+        '60 PRINT "SEEDED"',
+    ):
+        assert con.send_line(line) == ""
+    assert "SEEDED" in con.send_line("RUN", timeout=10)
+    assert con.send_line("NEW") == ""
+
+
+def test_wordpad_scroll_keeps_audio_mixing(kernel_image):
+    """#1160: holding a cursor key scrolls the pane and music keeps playing.
+
+    Mirrors the TERM repaint/audio test (#936).  WORDPAD streams every visible
+    row to the serial console on each redraw, so the hold is drained like a
+    serial reader (a saturated 115200-baud TX ring is what starves the mixer
+    on hardware).  The drained rows prove the view really scrolled, and
+    MIXGAP stays well under the queued cushion.
+    """
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        _seed_long_doc(con)
+        # A fast repeat drives many scroll frames in the hold window.
+        assert con.send_line("OPTION USBKEYBOARD REPEAT 100, 30") == ""
+        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+        assert int(con.send_line('PRINT MM.INFO("MIXGAP")')) < 200
+        assert "[WORDPAD]" in _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
+        con.key_down("down")
+        rows = _plain(con.drain(quiet=0.3, timeout=1.5).decode(errors="replace"))
+        con.key_up("down")
+        time.sleep(0.2)
+        seen = {int(m) for m in re.findall(r"line (\d+)", rows)}
+        # The pane started at line 1; the held key must have scrolled well past
+        # the initial window (~23 text rows).
+        assert seen and max(seen) >= 30, sorted(seen)
+        _quit(con)
+        gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
+        playing = con.send_line("PRINT PLAYING()")
+        con.send_line("PLAY STOP")
+        assert gap < 250, gap
+        assert underrun == "0", underrun
+        assert playing == "1", playing
+    finally:
+        con.stop()
+
+
+def test_wordpad_scroll_path_services_audio():
+    """#1160: structural guard for the audio servicing in the scroll path.
+
+    The QEMU harness has no real HDMI/PWM audio and blocks the vCPU when the
+    serial reader stalls, so the timing above cannot show the hardware stall;
+    this deterministic check keeps the mixer call from being dropped from the
+    scroll and serial-dump hot paths (mirrors TERM #936).
+    """
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    assert "mmb_play_mix();" in code
+    smooth = code.split("static void wp_smooth_scroll(int from, int to)", 1)[1]
+    smooth = smooth.split("static void wp_redraw(void)", 1)[0]
+    assert "wp_service_audio();" in smooth, "smooth scroll must service audio"
+    # A redraw streams the visible pane to serial; each dumped row must top up
+    # the audio queue, exactly as term_serial_dump() does (#936).
+    row = code.split("static void serial_row(const char *s)", 1)[1]
+    row = row.split("\n}", 1)[0]
+    assert "wp_service_audio();" in row, "the serial row dump must service audio"
+

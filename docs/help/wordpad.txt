@@ -8,7 +8,9 @@ argument opens an empty untitled document.
 WORDPAD [file$]
 
   file$ - optional path; loads via the filesystem when present, otherwise an
-          empty buffer is used with that path (.MD default)
+          empty buffer is used with that path (.MD default). Must be a string,
+          e.g. "NOTES.MD" (an unquoted token such as NOTES.MD is a ?SYNTAX
+          error)
 
 Menus: Alt+F File  Alt+E Edit  Alt+S Settings  F10 File menu.
 File: New, Open..., Save, Save As..., Quit.
