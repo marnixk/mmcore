@@ -973,6 +973,30 @@ static void option_dispatch(void)
 		G.opt.escape = 1;
 		return;
 	}
+	if (mmb_match("AFK"))
+	{
+		/* OPTION AFK PASSWORD "pass": arm the AFK lock screen. The password
+		 * is stored as a hash; FORGET disarms it (#1175). */
+		mmb_skip_sp();
+		if (!mmb_match("PASSWORD"))
+			mmb_syntax();
+		mmb_skip_sp();
+		if (mmb_match("FORGET"))
+		{
+			G.opt.afk_password[0] = 0;
+			return;
+		}
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			mmb_syntax();
+		{
+			mmb_val v = mmb_expr();
+			if (v.type != T_STR)
+				mmb_syntax();
+			mmb_afk_hash_password(v.s, G.opt.afk_password,
+					      (int)sizeof(G.opt.afk_password));
+		}
+		return;
+	}
 	if (mmb_match("SEARCH"))
 	{
 		if (!mmb_match("PATH"))
@@ -1136,6 +1160,7 @@ static void option_dispatch(void)
 		int ntp_en = G.opt.ntp_enabled;
 		int tzoff = G.opt.tz_offset_min;
 		int nd_en = G.opt.netdrv_enabled;
+		char afk_pass[sizeof(G.opt.afk_password)];
 		strncpy(ssid, G.opt.wifi_ssid, sizeof(ssid) - 1);
 		ssid[sizeof(ssid) - 1] = 0;
 		strncpy(psk, G.opt.wifi_psk, sizeof(psk) - 1);
@@ -1150,6 +1175,8 @@ static void option_dispatch(void)
 		nd_user[sizeof(nd_user) - 1] = 0;
 		strncpy(nd_pass, G.opt.netdrv_pass, sizeof(nd_pass) - 1);
 		nd_pass[sizeof(nd_pass) - 1] = 0;
+		strncpy(afk_pass, G.opt.afk_password, sizeof(afk_pass) - 1);
+		afk_pass[sizeof(afk_pass) - 1] = 0;
 		mmb_option_reset();
 		strncpy(G.opt.wifi_ssid, ssid, sizeof(G.opt.wifi_ssid) - 1);
 		G.opt.wifi_ssid[sizeof(G.opt.wifi_ssid) - 1] = 0;
@@ -1171,6 +1198,9 @@ static void option_dispatch(void)
 		strncpy(G.opt.netdrv_pass, nd_pass, sizeof(G.opt.netdrv_pass) - 1);
 		G.opt.netdrv_pass[sizeof(G.opt.netdrv_pass) - 1] = 0;
 		G.opt.netdrv_enabled = nd_en;
+		/* OPTION RESET preserves the AFK lock password too. */
+		strncpy(G.opt.afk_password, afk_pass, sizeof(G.opt.afk_password) - 1);
+		G.opt.afk_password[sizeof(G.opt.afk_password) - 1] = 0;
 		mmb_gfx_apply_default_mode();
 		return;
 	}
@@ -1485,6 +1515,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.audio_target ? "OPTION AUDIO_TARGET HDMI" : "OPTION AUDIO_TARGET JACK");
 	if (all || !G.opt.audio_on)
 		ol_line(&n, G.opt.audio_on ? "OPTION AUDIO ON" : "OPTION AUDIO OFF");
+	if (G.opt.afk_password[0])
+		ol_line(&n, "OPTION AFK PASSWORD ********");
 	if (all || G.opt.wifi_debug)
 		ol_line(&n, G.opt.wifi_debug ? "OPTION WIFI DEBUG ON" : "OPTION WIFI DEBUG OFF");
 	if (all || G.opt.ethernet_enabled)

@@ -237,6 +237,7 @@ typedef struct mmb_options {
 	char netdrv_user[64];  /* DOMAIN\user or user; empty = guest */
 	char netdrv_pass[64];  /* stored form: "ntlm:<32 hex>" or empty (guest) */
 	int netdrv_enabled;    /* 1 when a network drive is configured */
+	char afk_password[65]; /* OPTION AFK PASSWORD: FNV-1a hash (hex); empty = none */
 } mmb_options;
 
 #define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
@@ -1319,6 +1320,7 @@ void mmb_cmd_afk(void);
 int mmb_in_afk(void);
 void mmb_afk_key(char c);
 void mmb_afk_poll(void);
+void mmb_afk_hash_password(const char *pass, char *out, int outsz);
 
 /* Cold-boot the app layer on a warm reset: each clears every console's state
  * and the shared session data the app keeps. Called from mmb_console_reset(). */

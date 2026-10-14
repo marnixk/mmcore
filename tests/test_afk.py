@@ -94,3 +94,62 @@ def test_afk_not_available_in_run(kernel_image):
         assert "NOT AVAILABLE IN RUN" in out, out
     finally:
         con.stop()
+
+
+def test_afk_password_listed_and_hidden(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION AFK PASSWORD "secret"') == ""
+        listed = con.send_line("OPTION LIST")
+        assert "AFK PASSWORD" in listed
+        assert "secret" not in listed
+        # FORGET removes it again.
+        assert con.send_line("OPTION AFK PASSWORD FORGET") == ""
+        assert "AFK PASSWORD" not in con.send_line("OPTION LIST")
+    finally:
+        con.stop()
+
+
+def test_afk_password_locks_and_wrong_then_right(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION AFK PASSWORD "secret"') == ""
+        con.drain(quiet=0.2)
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert _peak_lit(con) > 0.0005
+        # A key stops the animation and raises the lock prompt.
+        con._ser.sendall(b" ")
+        con.drain(quiet=0.5, timeout=4)
+        # A wrong password keeps AFK locked, so a command is swallowed.
+        con._ser.sendall(b"wrong\r")
+        con.drain(quiet=0.4, timeout=3)
+        con._ser.sendall(b"PRINT 5+5\r")
+        locked = con.drain(quiet=0.6, timeout=4)
+        assert b"10" not in locked
+        # The right password exits; the prompt is back.
+        con._ser.sendall(b"secret\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        con.stop()
+
+
+def test_afk_password_forget_exits_on_key(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION AFK PASSWORD "hunter2"') == ""
+        assert con.send_line("OPTION AFK PASSWORD FORGET") == ""
+        con.drain(quiet=0.2)
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert _peak_lit(con) > 0.0005
+        # No lock armed: the first key exits as before.
+        con._ser.sendall(b"\r")
+        con.drain(quiet=0.6, timeout=8)
+        assert con.send_line("PRINT 8+1") == "9"
+    finally:
+        con.stop()

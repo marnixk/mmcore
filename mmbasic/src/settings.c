@@ -289,6 +289,12 @@ static void apply_core(const char *k, const char *v)
 		strncpy(G.opt.app_path, v, sizeof(G.opt.app_path) - 1);
 		G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
 	}
+	else if (mmb_keyword_eq(k, "afk_password"))
+	{
+		/* Stored as a hash (see mmb_afk_hash_password); empty = no lock. */
+		strncpy(G.opt.afk_password, v, sizeof(G.opt.afk_password) - 1);
+		G.opt.afk_password[sizeof(G.opt.afk_password) - 1] = 0;
+	}
 	else if (mmb_keyword_eq(k, "boot_mode"))
 	{
 		G.opt.boot_mode = parse_int(v);
@@ -430,6 +436,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
+	kv_str(buf, sizeof(buf), "afk_password", G.opt.afk_password);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
 	kv_int(buf, sizeof(buf), "bg", (int64_t)G.gfx.bg);
 	if (G.opt.search_path[0])
