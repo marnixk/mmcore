@@ -1625,15 +1625,9 @@ int mmb_try_function(mmb_val *out)
 			G.p++;
 			mmb_expect(')');
 		}
-#if defined(MMB_PLATFORM_POSIX) && defined(__linux__)
-		/* Native Linux (including the framebuffer/ISO build): report the
-		 * first battery's charge, falling back to 100 when none exists. */
-		*out = mmb_int_val((int64_t)mmb_battery_capacity_read(
-				   "/sys/class/power_supply/BAT0/capacity", 100));
-#else
-		/* Pi/Circle, Windows, macOS and any other target: no battery. */
-		*out = mmb_int_val(100);
-#endif
+		/* Native Linux reports the first battery's charge; Pi/Circle,
+		 * Windows, macOS and any other target report 100 (no battery). */
+		*out = mmb_int_val((int64_t)mmb_battery_percent());
 		return 1;
 	}
 	if (mmb_match("MM.BRIGHTNESS%"))

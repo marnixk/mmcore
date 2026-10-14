@@ -100,6 +100,34 @@ def test_capacity_falls_back_when_missing(host_bin, tmp_path):
     _check(host_bin, "", 100, 100)
 
 
+def _class(host_bin, pct, expected):
+    out = subprocess.run(
+        [host_bin, "class", str(pct), str(expected)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert f"-> {expected}" in out.stdout
+
+
+@pytest.mark.parametrize(
+    "pct,expected",
+    [
+        (0, 0),
+        (29, 0),
+        (30, 1),
+        (69, 1),
+        (70, 2),
+        (100, 2),
+        (-5, 0),  # clamped up
+        (150, 2),  # clamped down
+    ],
+)
+def test_status_class_bands(host_bin, pct, expected):
+    """#1158: battery indicator colour band (0 red, 1 blue, 2 green)."""
+    _class(host_bin, pct, expected)
+
+
 def _expected_capacity():
     if sys.platform.startswith("linux") and os.path.exists(CAPACITY):
         try:

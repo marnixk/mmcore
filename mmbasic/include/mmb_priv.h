@@ -221,6 +221,9 @@ typedef struct mmb_options {
 	int ethernet_enabled;  /* OPTION ETHERNET ON|OFF (default OFF) */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
+	int brightness;        /* MM.BRIGHTNESS% persisted in .mmbasic.ini (#1157) */
+	int volume_l;          /* PLAY VOLUME left persisted in .mmbasic.ini (#1157) */
+	int volume_r;          /* PLAY VOLUME right persisted in .mmbasic.ini (#1157) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " (default CWD) */
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
@@ -358,10 +361,16 @@ typedef struct mmb_editor {
 	mmb_ed_tab tab[MMB_ED_TABS];
 } mmb_editor;
 
+/* g_audio volume before any PLAY VOLUME / persisted setting has been applied.
+ * settings_finish() and PLAY VOLUME only ever store 0..100, so a negative
+ * value is an unambiguous "never set" signal: JUKE seeds 100 for it while
+ * leaving an intentional 0 (a persisted or in-session mute) alone (#1163). */
+#define MMB_AUDIO_VOL_UNSET (-1)
+
 typedef struct mmb_audio {
 	int playing; /* 0 none 1 mp3 2 mod 3 xm 4 tone */
 	int paused;
-	int vol_l, vol_r;
+	int vol_l, vol_r; /* 0..100, or MMB_AUDIO_VOL_UNSET before first set */
 	unsigned samples_decoded;
 	char name[128];
 	/* Virtual console that started the current playback (-1 = none). A
@@ -1244,6 +1253,10 @@ int mmb_net_srv_ip(char *buf, int bufsize);
  * Returns fallback when the file is missing, unreadable or non-numeric, and
  * clamps out-of-range values. Shared by MM.BATTERY% and its host test. */
 int mmb_battery_capacity_read(const char *path, int fallback);
+/* Battery level MM.BATTERY% reports, and the indicator colour band (#1158):
+ * 0 red, 1 blue, 2 green. */
+int mmb_battery_percent(void);
+int mmb_battery_status_class(int pct);
 
 /* Display backlight: MM.BRIGHTNESS% reads and writes the panel
  * brightness percentage. The (devdir, ...) helpers work on a sysfs backlight

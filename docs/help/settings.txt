@@ -12,10 +12,23 @@ SETTINGS THEME name|n
 
 Categories:
 
+  Settings   - brightness / volume sliders, battery and clock
   Appearance - the TUI theme picker (below)
-  Network    - Wi-Fi / Ethernet / NTP status and pointers to the commands
-  System     - boot destination, app PATH, prompt and theme summary
-  Sound      - audio output and mute
+  Network    - Wi-Fi / Ethernet / NTP status, IP address and command pointers
+
+Settings (brightness, volume and status)
+
+The Settings tab shows the local date/time and a battery badge ("[80%]": red
+below 30%, blue to 70%, green above) on the top line, then brightness and
+volume sliders. Up / Down move between the two sliders; Left / Right change
+the focused one in 5% steps. Brightness is applied to the panel live
+(platforms with no controllable backlight ignore it) and the volume drives the
+PLAY output. Both are saved to .mmbasic.ini and restored on the next start.
+
+Keys in Settings:
+
+  Up / Down     select the brightness or volume slider
+  Left / Right  adjust the selected slider in 5% steps
 
 Theme (Appearance)
 
@@ -27,6 +40,11 @@ PACKAGE, APPS and the rest of the themed chrome. The editor follows this theme
 too unless a different editor-only theme is picked from EDIT's Theme menu (or
 with OPTION EDIT THEME). It is saved to C:/.mmbasic.ini (A: if there is no SD
 card) and survives a reboot.
+
+The Network category shows the current link state, the assigned IP address
+(or "none" when there is no address yet) and the Wi-Fi / Ethernet / NTP
+configuration. Use OPTION WIFI / CONNECT / OPTION NTP at the prompt to change
+them; the category itself is read-only.
 
 Keys in the hub:
 

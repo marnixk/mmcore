@@ -1865,6 +1865,9 @@ void mmb_option_reset(void)
 	G.opt.mouse_sens = 1;
 	G.opt.audio_on = 1;
 	G.opt.audio_target = 1; /* HDMI */
+	G.opt.brightness = 100;
+	G.opt.volume_l = 100;
+	G.opt.volume_r = 100;
 	G.opt.wifi_debug = 0;
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
@@ -2228,13 +2231,18 @@ static void do_let(void)
 	}
 	if (mmb_keyword_eq(name, "MM.BRIGHTNESS"))
 	{
+		int pct = (int)mmb_as_int(v);
+		if (pct < 0)
+			pct = 0;
+		if (pct > 100)
+			pct = 100;
+		G.opt.brightness = pct;
 #if defined(MMB_PLATFORM_POSIX)
 		/* Set the panel backlight percentage; a system with no controllable
 		 * backlight ignores the assignment (read still returns 100). */
-		(void)mmb_brightness_set((int)mmb_as_int(v));
-#else
-		(void)v;
+		(void)mmb_brightness_set(pct);
 #endif
+		mmb_settings_save();
 		return;
 	}
 	mmb_do_assign_ref(lhs_ref, name, t, nidx, idx, v);
@@ -4848,6 +4856,9 @@ void mmb_init(const mmb_platform *plat)
 	mmb_vfs_init();
 	mmb_gfx_init();
 	mmb_ramdisk_seed();
+	/* Mark the player gain unset until the persisted PLAY VOLUME is applied;
+	 * settings_finish() below stamps a real 0..100 value (#1163). */
+	g_audio.vol_l = g_audio.vol_r = MMB_AUDIO_VOL_UNSET;
 	mmb_settings_load();
 	mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();

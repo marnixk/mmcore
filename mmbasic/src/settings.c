@@ -155,6 +155,9 @@ static void trim(char *s)
 /* Which theme keys the file carried, so old configs can be migrated onto the
  * split system/editor theme options (see mmb_settings_load). */
 static int saw_theme_key, saw_edit_theme_key;
+/* Whether the brightness/volume keys were present, so a config written before
+ * #1157 does not force a default over the live panel / audio state. */
+static int saw_brightness_key, saw_volume_key;
 
 static void apply_core(const char *k, const char *v)
 {
@@ -245,6 +248,21 @@ static void apply_core(const char *k, const char *v)
 		G.opt.audio_on = parse_int(v);
 	else if (mmb_keyword_eq(k, "audio_target"))
 		G.opt.audio_target = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "brightness"))
+	{
+		saw_brightness_key = 1;
+		G.opt.brightness = parse_int(v);
+	}
+	else if (mmb_keyword_eq(k, "volume_l"))
+	{
+		saw_volume_key = 1;
+		G.opt.volume_l = parse_int(v);
+	}
+	else if (mmb_keyword_eq(k, "volume_r"))
+	{
+		saw_volume_key = 1;
+		G.opt.volume_r = parse_int(v);
+	}
 	else if (mmb_keyword_eq(k, "term_log"))
 		G.opt.term_log = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "term_scrollback"))
@@ -406,6 +424,9 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
 	kv_int(buf, sizeof(buf), "audio_on", G.opt.audio_on);
 	kv_int(buf, sizeof(buf), "audio_target", G.opt.audio_target);
+	kv_int(buf, sizeof(buf), "brightness", G.opt.brightness);
+	kv_int(buf, sizeof(buf), "volume_l", G.opt.volume_l);
+	kv_int(buf, sizeof(buf), "volume_r", G.opt.volume_r);
 	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
@@ -459,6 +480,52 @@ void mmb_settings_save(void)
 	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
 }
 
+/* Clamp and apply the persisted brightness/volume after the INI has been
+ * parsed, and after a miss too so a config without the #1157 keys still
+ * seeds the runtime from the live panel state. */
+static void settings_finish(void)
+{
+	/* Pre-split configs stored the single shared theme in edit_theme. Treat
+	 * that as the system theme and leave the editor following it. */
+	if (!saw_theme_key && saw_edit_theme_key)
+	{
+		if (G.opt.edit_theme >= 0 &&
+		    G.opt.edit_theme < mmb_editor_theme_count())
+			G.opt.theme = G.opt.edit_theme;
+		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
+	}
+	if (G.opt.theme < 0 || G.opt.theme >= mmb_editor_theme_count())
+		G.opt.theme = MMB_OPT_DEFAULT_THEME;
+	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM ||
+	    G.opt.edit_theme >= mmb_editor_theme_count())
+		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
+	if (G.opt.ethernet_enabled)
+		G.opt.wifi_enabled = 0;
+#if defined(MMB_PLATFORM_POSIX)
+	if (!saw_brightness_key)
+		G.opt.brightness = mmb_brightness_get();
+#endif
+	if (G.opt.brightness < 0)
+		G.opt.brightness = 0;
+	if (G.opt.brightness > 100)
+		G.opt.brightness = 100;
+#if defined(MMB_PLATFORM_POSIX)
+	(void)mmb_brightness_set(G.opt.brightness);
+#endif
+	if (!saw_volume_key)
+		G.opt.volume_l = G.opt.volume_r = 100;
+	if (G.opt.volume_l < 0)
+		G.opt.volume_l = 0;
+	if (G.opt.volume_l > 100)
+		G.opt.volume_l = 100;
+	if (G.opt.volume_r < 0)
+		G.opt.volume_r = 0;
+	if (G.opt.volume_r > 100)
+		G.opt.volume_r = 100;
+	g_audio.vol_l = G.opt.volume_l;
+	g_audio.vol_r = G.opt.volume_r;
+}
+
 void mmb_settings_load(void)
 {
 	char buf[SETTINGS_MAX];
@@ -468,11 +535,19 @@ void mmb_settings_load(void)
 
 	saw_theme_key = 0;
 	saw_edit_theme_key = 0;
+	saw_brightness_key = 0;
+	saw_volume_key = 0;
 	choose_path();
 	if (!mmb_vfs_exists(settings_path))
+	{
+		settings_finish();
 		return;
+	}
 	if (mmb_vfs_read(settings_path, buf, sizeof(buf) - 1, &got) != 0)
+	{
+		settings_finish();
 		return;
+	}
 	buf[got] = 0;
 	p = buf;
 	while (*p)
@@ -556,22 +631,7 @@ void mmb_settings_load(void)
 		}
 		p = nl;
 	}
-	/* Pre-split configs stored the single shared theme in edit_theme. Treat
-	 * that as the system theme and leave the editor following it. */
-	if (!saw_theme_key && saw_edit_theme_key)
-	{
-		if (G.opt.edit_theme >= 0 &&
-		    G.opt.edit_theme < mmb_editor_theme_count())
-			G.opt.theme = G.opt.edit_theme;
-		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
-	}
-	if (G.opt.theme < 0 || G.opt.theme >= mmb_editor_theme_count())
-		G.opt.theme = MMB_OPT_DEFAULT_THEME;
-	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM ||
-	    G.opt.edit_theme >= mmb_editor_theme_count())
-		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
-	if (G.opt.ethernet_enabled)
-		G.opt.wifi_enabled = 0;
+	settings_finish();
 }
 
 void mmb_cmd_factory_reset(void)
@@ -597,9 +657,14 @@ void mmb_cmd_factory_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
+	g_audio.vol_l = G.opt.volume_l;
+	g_audio.vol_r = G.opt.volume_r;
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	mmb_gfx_apply_default_mode();
+#if defined(MMB_PLATFORM_POSIX)
+	(void)mmb_brightness_set(G.opt.brightness);
+#endif
 	mmb_settings_save();
 	mmb_out("Factory defaults restored");
 }
