@@ -141,6 +141,78 @@ def test_afk_password_locks_and_wrong_then_right(kernel_image):
         con.stop()
 
 
+def test_afk_escape_cancels_lock_and_resumes(kernel_image):
+    """#1178: Escape cancels the lock dialog and resumes the animation."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPTION AFK PASSWORD "secret"') == ""
+        con.drain(quiet=0.2)
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert _peak_lit(con) > 0.0005
+        # Any key raises the lock and freezes the animation.
+        con._ser.sendall(b" ")
+        con.drain(quiet=0.5, timeout=4)
+        frozen = con.capture_png()
+        time.sleep(0.6)
+        assert con.image_diff_ratio(frozen) < 0.001, "animation did not stop"
+        # Escape drops the lock and the frame starts changing again.
+        con._ser.sendall(bytes([27]))
+        con.drain(quiet=0.5, timeout=4)
+        assert _peak_lit(con) > 0.0005
+        # AFK is still the active app, in its own 960x540 mode.
+        assert con.screen_size() == (960, 540)
+        moving = con.capture_png()
+        time.sleep(0.6)
+        assert con.image_diff_ratio(moving) > 0.001, "animation did not resume"
+        # A later key re-arms the lock, and the right password still exits.
+        con._ser.sendall(b" ")
+        con.drain(quiet=0.4, timeout=3)
+        con._ser.sendall(b"secret\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert con.send_line("PRINT 7*6") == "42"
+    finally:
+        con.stop()
+
+
+def test_afk_uses_chromebook_mode_for_19_and_20(kernel_image):
+    """#1179: AFK renders in MODE 19 when the console is already in 19/20."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        # A MODE 19 console: AFK keeps the 1366x768 panel size.
+        assert con.send_line("MODE 19,32") == ""
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert con.screen_size() == (1366, 768)
+        assert _peak_lit(con) > 0.0005
+        con._ser.sendall(b"\r")
+        con.drain(quiet=0.6, timeout=8)
+        assert con.send_line("PRINT MM.INFO(MODE)") == "19.32"
+
+        # A MODE 20 console also renders AFK in MODE 19 (1366x768), then the
+        # console's own 683x384 mode comes back.
+        assert con.send_line("MODE 20,32") == ""
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert con.screen_size() == (1366, 768)
+        con._ser.sendall(b"\r")
+        con.drain(quiet=0.6, timeout=8)
+        assert con.send_line("PRINT MM.INFO(MODE)") == "20.32"
+
+        # Any other console mode still gets AFK's 960x540 MODE 12.
+        assert con.send_line("MODE 11,16") == ""
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert con.screen_size() == (960, 540)
+        con._ser.sendall(b"\r")
+        con.drain(quiet=0.6, timeout=8)
+        assert con.send_line("PRINT MM.INFO(MODE)") == "11.16"
+    finally:
+        con.stop()
+
+
 def test_afk_password_forget_exits_on_key(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
