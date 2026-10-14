@@ -12,8 +12,23 @@ SETTINGS THEME name|n
 
 Categories:
 
+  Settings   - brightness / volume sliders, battery and clock
   Appearance - the TUI theme picker (below)
   Network    - Wi-Fi / Ethernet / NTP status, IP address and command pointers
+
+Settings (brightness, volume and status)
+
+The Settings tab shows the local date/time and a battery badge ("[80%]": red
+below 30%, blue to 70%, green above) on the top line, then brightness and
+volume sliders. Up / Down move between the two sliders; Left / Right change
+the focused one in 5% steps. Brightness is applied to the panel live
+(platforms with no controllable backlight ignore it) and the volume drives the
+PLAY output. Both are saved to .mmbasic.ini and restored on the next start.
+
+Keys in Settings:
+
+  Up / Down     select the brightness or volume slider
+  Left / Right  adjust the selected slider in 5% steps
 
 Theme (Appearance)
 

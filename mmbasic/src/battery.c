@@ -40,3 +40,29 @@ int mmb_battery_capacity_read(const char *path, int fallback)
 		v = 100;
 	return (int)v;
 }
+
+/* The battery level MM.BATTERY% reports: the first battery's capacity on
+ * native Linux, 100 (no battery) everywhere else. */
+int mmb_battery_percent(void)
+{
+#if defined(MMB_PLATFORM_POSIX) && defined(__linux__)
+	return mmb_battery_capacity_read("/sys/class/power_supply/BAT0/capacity", 100);
+#else
+	return 100;
+#endif
+}
+
+/* Colour band for the battery indicator (#1158): 0 red, 1 blue, 2 green.
+ * Lives here so the thresholds are unit tested on the host. */
+int mmb_battery_status_class(int pct)
+{
+	if (pct < 0)
+		pct = 0;
+	if (pct > 100)
+		pct = 100;
+	if (pct < 30)
+		return 0;
+	if (pct < 70)
+		return 1;
+	return 2;
+}

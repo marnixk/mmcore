@@ -1247,6 +1247,10 @@ int mmb_net_srv_ip(char *buf, int bufsize);
  * Returns fallback when the file is missing, unreadable or non-numeric, and
  * clamps out-of-range values. Shared by MM.BATTERY% and its host test. */
 int mmb_battery_capacity_read(const char *path, int fallback);
+/* Battery level MM.BATTERY% reports, and the indicator colour band (#1158):
+ * 0 red, 1 blue, 2 green. */
+int mmb_battery_percent(void);
+int mmb_battery_status_class(int pct);
 
 /* Display backlight: MM.BRIGHTNESS% reads and writes the panel
  * brightness percentage. The (devdir, ...) helpers work on a sysfs backlight
