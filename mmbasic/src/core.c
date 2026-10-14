@@ -4856,6 +4856,9 @@ void mmb_init(const mmb_platform *plat)
 	mmb_vfs_init();
 	mmb_gfx_init();
 	mmb_ramdisk_seed();
+	/* Mark the player gain unset until the persisted PLAY VOLUME is applied;
+	 * settings_finish() below stamps a real 0..100 value (#1163). */
+	g_audio.vol_l = g_audio.vol_r = MMB_AUDIO_VOL_UNSET;
 	mmb_settings_load();
 	mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();

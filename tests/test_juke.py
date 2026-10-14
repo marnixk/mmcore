@@ -819,6 +819,27 @@ def test_juke_next_track_first_buffer_is_silent_at_zero(fresh_console):
     con.send_line("PLAY STOP")
 
 
+# ---- #1163: an intentional volume 0 survives JUKE opening ------------------
+
+
+def test_juke_keeps_persisted_zero_volume(fresh_console):
+    """#1163: opening JUKE must not seed 100 over a stored PLAY VOLUME 0.
+
+    ``PLAY VOLUME 0`` sets the live player gain to 0 and persists
+    ``volume_l=0``/``volume_r=0``. On the next boot ``settings_finish()``
+    restores that 0 into ``g_audio``; JUKE used to treat ``<= 0`` as "unset"
+    and turn it back up to full. The bar stays empty and the track's first
+    buffer is silent (the #1113 armed-gain path is unchanged).
+    """
+    con = fresh_console
+    assert con.send_line("PLAY VOLUME 0") == ""
+    _open_juke(con, "tests/TEST.MOD")
+    assert _volume_lit(con) == 0, _volume_lit(con)
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "0"
+    con.send_line("PLAY VOLUME 100")
+
+
 # ---- #1114: trimmed shortcut bar and ? help modal --------------------------
 
 
