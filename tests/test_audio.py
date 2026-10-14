@@ -1,6 +1,7 @@
 """Real PLAY decode/mix and OPTION AUDIO_TARGET."""
 
 import os
+import re
 import time
 
 from ihelp_util import dump_topic
@@ -277,3 +278,30 @@ def test_play_stops_when_program_falls_off_end(console):
     assert console.send_line("20 PRINT 1") == ""
     assert console.send_line("RUN") == "1"
     assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_console_serial_wait_services_audio():
+    """#1166: emit_n()'s serial TX-ring wait must service the audio mixer.
+
+    #1160 fixed WORDPAD's held-key scroll app-side, but any caller that writes
+    a large buffer to serial in one ser()/PRINT can still stall JUKE/PLAY for
+    the whole ring drain. The QEMU harness blocks the guest vCPU when the host
+    stops reading the serial socket, so that specific stall cannot be
+    reproduced here; this deterministic guard keeps the mixer call (and its
+    rate limit) from being dropped from emit_n()'s retry loop. It mirrors the
+    platform DMA wait (plat_present_wait()) and term #936 / wordpad #1160.
+    """
+    path = os.path.join(REPO_ROOT, "console", "kernel.cpp")
+    code = open(path, encoding="utf-8").read()
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
+    code = re.sub(r"//[^\n]*", "", code)
+    assert 'extern "C" void mmb_play_mix(void);' in code, (
+        "console must declare the mmbasic mixer entry point"
+    )
+    body = code.split("static void emit_n", 1)[1].split("\n}", 1)[0]
+    assert re.search(r"mmb_play_mix\s*\(\s*\)", body), (
+        "emit_n() must service the audio mixer while the TX ring is full"
+    )
+    assert re.search(
+        r"if\s*\(\s*spins\s*%\s*50\s*==\s*0\s*\)\s*\n\s*mmb_play_mix", body
+    ), "the mixer call must be rate-limited to about one per 10 ms of waiting"
