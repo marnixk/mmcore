@@ -13,7 +13,12 @@
 #define NTP_UNIX_DELTA 2208988800ULL
 
 #define MMB_NTP_QUERY_TIMEOUT_MS 2000
-#define MMB_NTP_AUTOSYNC_TRIES   3
+
+/* #1181: how long the boot-time poll keeps retrying once the network reports
+ * ready. On the Linux ISO the link can report available (net_posix.c returns a
+ * constant 1) while DHCP or Wi-Fi association is still finishing, so a fixed
+ * handful of tries gave up before the clock was reachable. */
+#define MMB_NTP_AUTOSYNC_WINDOW_MS 120000u
 
 int mmb_ntp_parse_server(const char *spec, char *host, int hostcap, int *port)
 {
@@ -195,16 +200,27 @@ void mmb_cmd_ntp(void)
  * synced yet, but only once the network is up, and retries with a short
  * backoff when connectivity appears after boot. It never prints on failure so
  * an offline machine stays quiet. */
-static int ntp_net_ready(void)
+
+/* #1181: auto-sync is a real-device feature. The POSIX host/desktop build
+ * keeps it off because net_posix.c reports the network as always available;
+ * auto-syncing there would reach the developer's real network (pool.ntp.org)
+ * from the test harness. Only an explicit NTP command talks to the network on
+ * that target. The framebuffer/ISO build defines MMB_NTP_AUTOSYNC (see
+ * native/Makefile) so it does sync at boot. */
+static int ntp_autosync_allowed(void)
 {
-#if defined(MMB_PLATFORM_POSIX)
-	/* The host build reports the network as always available; auto-syncing
-	 * there would reach the developer's real network from the test harness,
-	 * so only an explicit NTP command talks to the network on that target. */
+#if defined(MMB_PLATFORM_POSIX) && !defined(MMB_NTP_AUTOSYNC)
 	return 0;
 #else
-	return mmb_net_available();
+	return 1;
 #endif
+}
+
+static int ntp_net_ready(void)
+{
+	if (!ntp_autosync_allowed())
+		return 0;
+	return mmb_net_available();
 }
 
 void mmb_ntp_poll(void)
@@ -214,6 +230,7 @@ void mmb_ntp_poll(void)
 	static int fails;      /* attempts used since connectivity appeared */
 	static int last_mode;  /* ntp_enabled value seen on the previous poll */
 	static unsigned next_ms;
+	static unsigned deadline; /* give-up time for the current ready window */
 	int64_t epoch = 0;
 
 	if (G.opt.ntp_enabled != last_mode)
@@ -222,6 +239,7 @@ void mmb_ntp_poll(void)
 		done = 0;
 		fails = 0;
 		next_ms = 0;
+		deadline = 0;
 	}
 	if (done || G.opt.ntp_enabled == 0 || !G.opt.ntp_server[0])
 		return;
@@ -233,20 +251,28 @@ void mmb_ntp_poll(void)
 	if (!ntp_net_ready())
 	{
 		/* Offline: stay quiet and forget the failed run so a later
-		 * connection gets a fresh set of attempts. */
+		 * connection gets a fresh window of attempts. */
 		was_ready = 0;
 		fails = 0;
 		next_ms = 0;
+		deadline = 0;
 		return;
 	}
 	if (!was_ready)
 	{
-		/* Connectivity just appeared: try immediately. */
+		/* Connectivity just appeared: try immediately and keep
+		 * retrying until the window closes. */
 		was_ready = 1;
 		fails = 0;
 		next_ms = 0;
+		deadline = mmb_now_ms() + MMB_NTP_AUTOSYNC_WINDOW_MS;
 	}
-	if (fails >= MMB_NTP_AUTOSYNC_TRIES)
+	/* #1181: a wired link reports ready before DHCP finishes and Wi-Fi
+	 * associates asynchronously, so keep the backoff retries running for a
+	 * bounded window instead of giving up after a fixed handful of tries.
+	 * The window is forgotten as soon as the link drops (above), so a
+	 * connection that appears later still gets a fresh set. */
+	if (deadline && (int32_t)(mmb_now_ms() - deadline) >= 0)
 		return;
 	if (next_ms && (int32_t)(mmb_now_ms() - next_ms) < 0)
 		return;

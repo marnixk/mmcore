@@ -1854,3 +1854,77 @@ def test_sdl_double_fullscreen_interplay(tmp_path):
     assert len(dims) == 1, out
     fw, fh, hw, hh = dims[0]
     assert (hw, hh) == (2 * fw, 2 * fh), out
+
+
+def _build_ntp_host(tmp_path, name, *defines):
+    """Compile tests/ntp_host.c + the real ntp.c against the NTP shims."""
+    exe = os.path.join(str(tmp_path), name)
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            *defines,
+            "-I",
+            os.path.join(REPO, "tests", "ntp_shim"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "ntp_host.c"),
+            os.path.join(REPO, "mmbasic", "src", "ntp.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return exe
+
+
+def test_ntp_boot_autosync_host_build_is_disabled(tmp_path):
+    """#1181: the POSIX host/desktop build never auto-syncs.
+
+    net_posix.c reports the network as always available, so the boot poll would
+    otherwise reach the developer's real network from the test harness. The
+    host build compiles the real ntp.c without MMB_NTP_AUTOSYNC: even with the
+    link ready and OPTION NTP ON the fake exchange must never be called.
+    """
+    exe = _build_ntp_host(tmp_path, "ntp_host", "-DMMB_PLATFORM_POSIX")
+    for scenario in ("host_off", "host_forced_on"):
+        out = subprocess.run(
+            [exe, scenario], capture_output=True, text=True, timeout=60
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "all checks passed" in out.stdout
+
+
+def test_ntp_boot_autosync_framebuffer_waits_for_link(tmp_path):
+    """#1181: the framebuffer/ISO build syncs at boot and waits for the link.
+
+    Compiled with MMB_NTP_AUTOSYNC (as the FB target defines it), the fake
+    clock/link show: offline polls stay quiet, a link that appears triggers an
+    immediate sync, failures retry inside a bounded window, and a link that
+    appears after that window still gets a fresh attempt.
+    """
+    exe = _build_ntp_host(
+        tmp_path, "ntp_auto", "-DMMB_PLATFORM_POSIX", "-DMMB_NTP_AUTOSYNC"
+    )
+    for scenario in ("offline", "linkup", "retry_window", "late_linkup"):
+        out = subprocess.run(
+            [exe, scenario], capture_output=True, text=True, timeout=60
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "all checks passed" in out.stdout
+
+
+def test_ntp_autosync_scoped_to_framebuffer_target():
+    """#1181: only the framebuffer/ISO target opts into boot auto-sync.
+
+    The host stdio and desktop SDL builds share MMB_PLATFORM_POSIX but must
+    keep the gate off, so MMB_NTP_AUTOSYNC is defined inside the FB block only.
+    """
+    make = open(os.path.join(REPO, "native", "Makefile"), encoding="utf-8").read()
+    assert "-DMMB_NTP_AUTOSYNC=1" in make
+    fb_at = make.index("ifneq ($(FB),")
+    assert "-DMMB_NTP_AUTOSYNC=1" in make[fb_at : fb_at + 800], (
+        "auto-sync must be an FB-target opt-in"
+    )
