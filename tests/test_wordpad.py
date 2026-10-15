@@ -297,6 +297,59 @@ def test_wordpad_heading_wraps_long_line(kernel_image):
         con.stop()
 
 
+def test_wordpad_wrapped_header_line_height_is_tighter(kernel_image):
+    """#1202: a wrapped H1 draws consecutive lines three text rows apart.
+
+    Screenshot regression: the glyphs of a wrapped large header used to be a
+    full 4-row (64px) cell apart; they are now tightened to 3 rows (48px)
+    while a single-line heading and body text keep the full height.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        _open(con)
+        # Seven "Mellow " words wrap a level-1 heading onto two lines; the
+        # trailing body line parks the cursor away from the header.
+        _keys(con, b"# " + b"Mellow " * 7 + b"\rbody", quiet=1.0)
+        time.sleep(0.3)
+        ox = _pane_left_px(con)
+        png = con.capture_png("/opt/cursor/artifacts/issue1202_wrapped_header.png")
+        out = subprocess.run(
+            ["convert", png, "-crop", f"480x300+{ox}+0", "+repage", "txt:-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        lit = set()
+        for line in out.splitlines():
+            if ":" not in line or "(" not in line:
+                continue
+            coord = line.split(":")[0].strip()
+            if "," not in coord:
+                continue
+            _x, y = (int(p) for p in coord.split(","))
+            inner = line[line.find("(") + 1 : line.find(")")]
+            parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+            if len(parts) < 3:
+                continue
+            if _lum(tuple(int(float(p)) for p in parts[:3])) > 1200:
+                lit.add(y)
+        # Group lit pixel rows into text lines separated by a blank gap.
+        lines = []
+        for y in sorted(lit):
+            if lines and y - lines[-1][-1] <= 8:
+                lines[-1].append(y)
+            else:
+                lines.append([y])
+        assert len(lines) >= 2, sorted(lit)
+        advance = lines[1][0] - lines[0][0]
+        assert 32 < advance < 64, (advance, lines)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_word_wrap(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -319,29 +372,75 @@ def test_wordpad_word_wrap(kernel_image):
 
 
 def test_wordpad_wide_view_toggle(kernel_image):
+    """#1201: the Settings view item cycles normal -> wide -> narrow, centring
+    the 80/120/60-column pane; the label names the current mode."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         assert con.send_line("MODE 14,16") == ""
         _apply_slate_theme(con)
         time.sleep(0.3)
-        assert con.screen_size() == (960, 540)
+        assert con.screen_size() == (960, 540)  # 120 columns
         _open(con, quiet=1.0)
-        margin = con.screen_pixel(40, 80)
-        assert _is_dark_theme_bg(*margin), margin
+        _keys(con, b"H", quiet=0.6)
+        time.sleep(0.3)
+        # normal: 80 columns centred -> pane starts at column 20 (160px)
+        assert abs(_first_ink_x(con, 8) - 160) <= 10
+
         menu = _alt_menu(con, b"s", quiet=0.5)
-        if "Wide" in menu or "wide" in menu.lower():
-            toggled = _keys(con, b"\r", quiet=0.8)
-        else:
-            toggled = _keys(con, b"w", quiet=0.8)
-        low = toggled.lower()
-        wide_hint = "wide" in low or "120" in toggled
-        still_hd = con.screen_size() == (960, 540)
-        margin_after = con.screen_pixel(40, 80)
-        margin_stays_bg = _is_dark_theme_bg(*margin_after)
-        assert wide_hint or (still_hd and margin_stays_bg)
+        assert "View: Normal" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # wide: 120 columns fill the screen -> pane starts at column 0
+        assert _first_ink_x(con, 8) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Wide" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # narrow: 60 columns centred -> pane starts at column 30 (240px)
+        assert abs(_first_ink_x(con, 8) - 240) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Narrow" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # back to normal
+        assert abs(_first_ink_x(con, 8) - 160) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Normal" in menu, menu
+        _keys(con, b"\x1b", quiet=0.5)
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_narrow_view_wraps_at_sixty(kernel_image):
+    """#1201: the narrow view wraps at 60 columns (normal fits 80)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
+        time.sleep(0.3)
+        _open(con, quiet=1.0)
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # normal -> wide
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # wide -> narrow
+        time.sleep(0.3)
+        _keys(con, b"x" * 70, quiet=1.0)
+        time.sleep(0.3)
+        # 70 columns cannot fit one 60-column row: a second visual row has ink.
+        assert _first_ink_x(con, 24) is not None
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # narrow -> normal
+        time.sleep(0.3)
+        # The same 70 columns fit one 80-column row, so row 2 is blank.
+        assert _first_ink_x(con, 24) is None
+        _quit(con)
     finally:
         con.stop()
 
@@ -567,6 +666,33 @@ def _pane_left_px(con):
     if cols <= wrap:
         return 0
     return ((cols - wrap) // 2) * 8
+
+
+def _first_ink_x(con, y, x0=0, width=960, threshold=1200):
+    """X of the leftmost lit pixel on screen row ``y`` (None when blank)."""
+    png = con.capture_png()
+    out = subprocess.run(
+        ["convert", png, "-crop", f"{width}x1+{x0}+{y}", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    cols = []
+    for line in out.splitlines():
+        if ":" not in line or "(" not in line:
+            continue
+        coord = line.split(":")[0].strip()
+        if "," not in coord:
+            continue
+        x = int(coord.split(",")[0])
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if _lum(rgb) > threshold:
+            cols.append(x0 + x)
+    return min(cols) if cols else None
 
 
 def _lum(rgb):

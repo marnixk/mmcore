@@ -6,6 +6,7 @@
 #define WP_BUF      65536
 #define WP_CLIP     8192
 #define WP_DLG      128
+#define WP_WRAP_NARROW 60
 #define WP_WRAP_N   80
 #define WP_WRAP_W   120
 #define WP_MAX_VR   4096
@@ -44,6 +45,12 @@
 #define WP_MENU_SETTINGS 2
 #define WP_MENU_COUNT    3
 
+/* Document column widths cycled by the Settings menu: normal, wide and
+ * narrow (all horizontally centred). */
+#define WP_VIEW_NORMAL 0
+#define WP_VIEW_WIDE   1
+#define WP_VIEW_NARROW 2
+
 #define WP_FD_FOCUS_NAME 0
 #define WP_FD_FOCUS_FILE 1
 #define WP_FD_FOCUS_DIR  2
@@ -73,6 +80,11 @@ typedef struct {
 	int indent_len;
 	int hide_prefix;
 	int scale;
+	/* Set on every visual row of a heading that wraps onto more than one
+	 * row.  Such rows advance by a reduced height (see vrow_h) so a
+	 * multi-line header reads tighter than the full glyph cell, while a
+	 * single-line heading and body text keep the full scale. */
+	int tight;
 } wp_vrow;
 
 typedef struct {
@@ -97,7 +109,7 @@ typedef struct {
 	int sel_anchor;
 	char clip[WP_CLIP];
 	int cliplen;
-	int wide;
+	int view;
 	int menu_open;
 	int menu;
 	int menu_item;
@@ -319,7 +331,27 @@ static const char menu_hots[] = { 'F', 'E', 'S' };
 
 static const char *file_items[] = { "New", "Open...", "Save", "Save As...", "Quit" };
 static const char *edit_items[] = { "Copy", "Cut", "Paste" };
-static const char *settings_items[] = { "Wide view" };
+/* The single Settings entry names the current view so the normal -> wide ->
+ * narrow cycle is discoverable; settings_sync_label() rewrites it. */
+static char settings_view_item[16] = "View: Normal";
+static const char *settings_items[] = { settings_view_item };
+
+static void settings_sync_label(void)
+{
+	const char *name = "Normal";
+	char *p = settings_view_item;
+	const char *s;
+
+	if (W.view == WP_VIEW_WIDE)
+		name = "Wide";
+	else if (W.view == WP_VIEW_NARROW)
+		name = "Narrow";
+	memcpy(p, "View: ", 6);
+	p += 6;
+	for (s = name; *s && p < settings_view_item + sizeof(settings_view_item) - 1; s++)
+		*p++ = *s;
+	*p = 0;
+}
 
 static const mmb_ed_theme *wpth(void)
 {
@@ -520,7 +552,8 @@ static int heading_scale(int style)
 	return 1;
 }
 
-static int vrow_h(int vr)
+/* Glyph scale of a visual row: 4/3/2 for H1/H2/H3, 1 for body. */
+static int vrow_scale(int vr)
 {
 	int s;
 	if (vr < 0 || vr >= W.total_vrows)
@@ -530,6 +563,21 @@ static int vrow_h(int vr)
 		return 1;
 	if (s > 4)
 		return 4;
+	return s;
+}
+
+/* Screen-row height a visual row occupies.  Every row of a heading that wraps
+ * onto more than one row advances one row less than its glyph scale, drawing
+ * the same glyphs closer together with a small gap between the lines; a
+ * single-line heading and body text keep the full scale (issue #1202). */
+static int vrow_h(int vr)
+{
+	int s;
+	if (vr < 0 || vr >= W.total_vrows)
+		return 1;
+	s = vrow_scale(vr);
+	if (W.vrows[vr].tight && s > 1)
+		return s - 1;
 	return s;
 }
 
@@ -794,7 +842,12 @@ static void wp_layout_geom(void)
 
 	W.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	W.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 25;
-	wrap = W.wide ? WP_WRAP_W : WP_WRAP_N;
+	if (W.view == WP_VIEW_WIDE)
+		wrap = WP_WRAP_W;
+	else if (W.view == WP_VIEW_NARROW)
+		wrap = WP_WRAP_NARROW;
+	else
+		wrap = WP_WRAP_N;
 	if (W.vid_cols < wrap)
 	{
 		W.pane_width = W.vid_cols;
@@ -1075,6 +1128,7 @@ static void wp_build_layout(void)
 		int cursor_on;
 		int i, col;
 		int break_at, break_col;
+		int line_v0 = vr;
 
 		while (le < W.len && W.buf[le] != '\n')
 			le++;
@@ -1099,6 +1153,7 @@ static void wp_build_layout(void)
 		W.vrows[vr].indent_len = indent_len;
 		W.vrows[vr].hide_prefix = hide_prefix;
 		W.vrows[vr].scale = scale;
+		W.vrows[vr].tight = 0;
 		while (i < le)
 		{
 			unsigned vis;
@@ -1146,6 +1201,8 @@ static void wp_build_layout(void)
 					W.vrows[vr].indent_len = indent_len;
 					W.vrows[vr].hide_prefix = hide_prefix;
 					W.vrows[vr].scale = scale;
+					W.vrows[line_v0].tight = 1;
+					W.vrows[vr].tight = 1;
 					continue;
 				}
 				W.vrows[vr].off1 = i;
@@ -1164,6 +1221,8 @@ static void wp_build_layout(void)
 				W.vrows[vr].indent_len = indent_len;
 				W.vrows[vr].hide_prefix = hide_prefix;
 				W.vrows[vr].scale = scale;
+				W.vrows[line_v0].tight = 1;
+				W.vrows[vr].tight = 1;
 				continue;
 				}
 			}
@@ -3220,7 +3279,8 @@ static void activate_menu(void)
 	}
 	else if (menu == WP_MENU_SETTINGS)
 	{
-		W.wide = !W.wide;
+		W.view = (W.view + 1) % (WP_VIEW_NARROW + 1);
+		settings_sync_label();
 		W.scroll = 0;
 	}
 }
@@ -3873,7 +3933,7 @@ static void draw_picker(void)
 }
 
 static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsigned bg,
-			     int scale)
+			     int scale, int vh)
 {
 	int left = 0;
 	int adv;
@@ -3881,7 +3941,7 @@ static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsig
 	if (scale > 1)
 	{
 		adv = heading_metrics(scale, ch, &left);
-		wp_fill_px(x_px, y_px, adv, scale * 16, fg);
+		wp_fill_px(x_px, y_px, adv, vh * 16, fg);
 		wp_glyph_px(x_px - left, y_px, ch, bg, fg, scale);
 	}
 	else
@@ -3909,8 +3969,8 @@ static void draw_body(void)
 	screen_y = 0;
 	for (vr = 0; vr < W.total_vrows; vr++)
 	{
-		int scale = vrow_h(vr);
-		int vh = scale;
+		int scale = vrow_scale(vr);
+		int vh = vrow_h(vr);
 		int ls = W.vrows[vr].line_start;
 		int style = W.vrows[vr].style;
 		int hide_prefix = W.vrows[vr].hide_prefix;
@@ -3991,7 +4051,7 @@ static void draw_body(void)
 						{
 							if (on_cur)
 								wp_fill_px(x_px, screen_row * 16,
-									   adv, scale * 16, chbg);
+									   adv, vh * 16, chbg);
 							wp_glyph_px(x_px - left, screen_row * 16,
 								    (unsigned)ch, chfg, chbg,
 								    scale);
@@ -4010,7 +4070,7 @@ static void draw_body(void)
 				{
 					if (vis >= 0 && vis < W.text_rows)
 						draw_cursor_cell(x_px, screen_row * 16, ' ',
-								 fg, bg, scale);
+								 fg, bg, scale, vh);
 				}
 				while (spos < W.pane_width)
 					srow[spos++] = ' ';
@@ -4023,7 +4083,7 @@ static void draw_body(void)
 	if (W.total_vrows == 0 && !W.dialog)
 	{
 		int screen_row = W.text_top;
-		draw_cursor_cell(W.pane_left * 8, screen_row * 16, ' ', WP_FG, WP_BG, 1);
+		draw_cursor_cell(W.pane_left * 8, screen_row * 16, ' ', WP_FG, WP_BG, 1, 1);
 		serial_row("");
 	}
 	else if (W.cx_vrow >= W.total_vrows && !W.dialog)
@@ -4031,7 +4091,7 @@ static void draw_body(void)
 		int vis2 = screen_row_of_vrow(W.total_vrows) - W.scroll;
 		if (vis2 >= 0 && vis2 < W.text_rows)
 			draw_cursor_cell(W.pane_left * 8, (W.text_top + vis2) * 16, ' ',
-					 WP_FG, WP_BG, 1);
+					 WP_FG, WP_BG, 1, 1);
 	}
 }
 
@@ -4353,7 +4413,8 @@ void mmb_wordpad_open(const char *path)
 		return;
 	}
 	W.active = 1;
-	W.wide = 0;
+	W.view = WP_VIEW_NORMAL;
+	settings_sync_label();
 	W.ndoc = 1;
 	W.cur = 0;
 	W.last_scroll = -1;
