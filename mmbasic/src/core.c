@@ -3045,7 +3045,10 @@ void mmb_reboot(void)
 	mmb_play_stop();
 	mmb_close_tcp_files();
 	for (i = 1; i <= MMB_MAX_FILES; i++)
+	{
+		mmb_vfs_rbuf_free(&G.files[i].rbuf);
 		G.files[i].open = 0;
+	}
 	mmb_settings_save();
 	mmb_storage_unmount();
 	mmb_console_write("Rebooting...\r\n");
@@ -3067,7 +3070,10 @@ void mmb_shutdown(void)
 	mmb_play_stop();
 	mmb_close_tcp_files();
 	for (i = 1; i <= MMB_MAX_FILES; i++)
+	{
+		mmb_vfs_rbuf_free(&G.files[i].rbuf);
 		G.files[i].open = 0;
+	}
 	mmb_settings_save();
 	mmb_storage_unmount();
 	mmb_console_write("Shutting down...\r\n");

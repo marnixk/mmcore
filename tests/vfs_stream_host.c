@@ -41,8 +41,19 @@ int mmb_keyword_eq(const char *a, const char *b)
 	return *a == 0 && *b == 0;
 }
 
-/* ---- FAT volume stubs (the test stays on A:) -------------------------- */
-int mmb_fat_ready(int letter) { (void)letter; return 0; }
+/* ---- fake C: volume for the read-ahead test (#1205) ------------------- */
+static unsigned char g_fat_data[64000];
+static unsigned g_fat_size;
+static int g_fat_reads;    /* backend read_at calls */
+static unsigned g_fat_bytes; /* bytes actually handed back by the backend */
+
+static int fat_is_target(const char *path)
+{
+	return path && strcmp(path, "/BIG.TXT") == 0;
+}
+
+/* ---- FAT volume stubs (the A: tests stay on A:; C: is the fake above) - */
+int mmb_fat_ready(int letter) { return letter == 'C'; }
 int mmb_fat_chdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_mkdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_rmdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
@@ -84,12 +95,26 @@ int mmb_fat_wwrite(void *handle, const void *data, unsigned n)
 int mmb_fat_wclose(void *handle) { (void)handle; return -1; }
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
-	(void)letter; (void)path; (void)pos; (void)data; (void)n;
+	unsigned avail, take;
 	if (got)
 		*got = 0;
-	return -1;
+	if (letter != 'C' || !fat_is_target(path))
+		return -1;
+	g_fat_reads++;
+	if (pos >= g_fat_size)
+		return 0;
+	avail = g_fat_size - pos;
+	take = n < avail ? n : avail;
+	memcpy(data, g_fat_data + pos, take);
+	g_fat_bytes += take;
+	if (got)
+		*got = take;
+	return 0;
 }
-int mmb_fat_size(int letter, const char *path) { (void)letter; (void)path; return -1; }
+int mmb_fat_size(int letter, const char *path)
+{
+	return (letter == 'C' && fat_is_target(path)) ? (int)g_fat_size : -1;
+}
 int mmb_fat_exists(int letter, const char *path) { (void)letter; (void)path; return 0; }
 int mmb_fat_isdir(int letter, const char *path) { (void)letter; (void)path; return 0; }
 const char *mmb_fat_cwd(int letter) { (void)letter; return "/"; }
@@ -322,6 +347,76 @@ static void test_move_directory_reparent(void)
 	check(mmb_vfs_isdir("A:/MDST/MSRC") == 1, "dir kept after refusal");
 }
 
+/* #1205: the per-handle read-ahead cache must serve a byte-at-a-time reader
+ * from whole chunks (one backend read per chunk, not per byte), return the
+ * exact bytes across refills and a seek back inside the window, and stop at
+ * the true EOF. */
+static void test_readahead(void)
+{
+	mmb_vfs_rbuf r;
+	static unsigned char big[MMB_VFS_RBUF];
+	unsigned char c;
+	unsigned pos, got, chunks;
+	int i, quiet;
+
+	memset(&r, 0, sizeof r);
+	for (i = 0; i < (int)sizeof g_fat_data; i++)
+		g_fat_data[i] = (unsigned char)(i * 7 + 11);
+	g_fat_size = sizeof g_fat_data;
+	g_fat_reads = 0;
+	g_fat_bytes = 0;
+
+	/* Byte-at-a-time over the whole file. */
+	quiet = fails;
+	pos = 0;
+	for (i = 0; i < (int)g_fat_size; i++)
+	{
+		got = 0;
+		c = 0;
+		check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", pos, &c, 1, &got) == 0 &&
+		      got == 1 && c == g_fat_data[i], "readahead byte content");
+		pos += got;
+	}
+	check(fails == quiet, "readahead every byte exact");
+	check(pos == g_fat_size, "readahead covered whole file");
+	chunks = (g_fat_size + MMB_VFS_RBUF - 1) / MMB_VFS_RBUF;
+	check(g_fat_reads <= (int)chunks, "readahead one backend read per chunk");
+	check(g_fat_reads < 8, "readahead few backend reads");
+	check(g_fat_bytes == g_fat_size, "readahead bytes fetched once");
+
+	/* A read at the logical end yields nothing (EOF). */
+	got = 123;
+	c = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", (unsigned)g_fat_size, &c, 1, &got) == 0 &&
+	      got == 0, "readahead eof");
+
+	/* Seeking back inside the cached window returns the same bytes. */
+	got = 0;
+	c = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 5, &c, 1, &got) == 0 &&
+	      got == 1 && c == g_fat_data[5], "readahead seek back");
+
+	/* A fresh cache, then a read that spans the cached tail: contiguous. */
+	mmb_vfs_rbuf_free(&r);
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 0, &c, 1, &got) == 0 && got == 1,
+	      "readahead prime");
+	pos = (unsigned)MMB_VFS_RBUF - 2;
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", pos, big, 64, &got) == 0 &&
+	      got == 64 && memcmp(big, g_fat_data + pos, 64) == 0,
+	      "readahead spans chunk boundary");
+
+	/* A request at least as large as the cache bypasses it and is exact. */
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 0, big, MMB_VFS_RBUF, &got) == 0 &&
+	      got == MMB_VFS_RBUF && memcmp(big, g_fat_data, MMB_VFS_RBUF) == 0,
+	      "readahead large bypass");
+
+	mmb_vfs_rbuf_free(&r);
+	check(r.buf == 0 && r.cap == 0 && r.len == 0, "readahead freed");
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -340,6 +435,7 @@ int main(void)
 	test_copy_destination_rules();
 	test_move_directory_reparent();
 	test_copy_large_file();
+	test_readahead();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);

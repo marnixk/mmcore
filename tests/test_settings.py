@@ -87,6 +87,36 @@ def test_eof_hash_file_number(console):
     assert console.send_line("CLOSE #1") == ""
 
 
+def test_line_input_large_file(console):
+    """#1205: LINE INPUT over a file larger than the per-handle read-ahead
+    chunk returns every line and reports EOF at the true end.
+
+    The file is bigger than MMB_VFS_RBUF, so the reader must refill its
+    read-ahead buffer several times; a short read, a stale EOF or a misordered
+    refill would show up as a missing or wrong line."""
+    lines = 5000
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 OPEN "A:/LARGE.TXT" FOR OUTPUT AS #1') == ""
+    assert console.send_line("20 FOR I = 1 TO %d" % lines) == ""
+    assert console.send_line("30 PRINT #1, I") == ""
+    assert console.send_line("40 NEXT I") == ""
+    assert console.send_line("50 CLOSE #1") == ""
+    assert console.send_line('60 OPEN "A:/LARGE.TXT" FOR INPUT AS #1') == ""
+    assert console.send_line("70 N = 0") == ""
+    assert console.send_line("80 DO") == ""
+    assert console.send_line("90 LINE INPUT #1, A$") == ""
+    assert console.send_line("100 N = N + 1") == ""
+    # `NOT (.. = ..)` avoids a `>` character, which the serial harness would
+    # mistake for the prompt and read half the echoed line as the response.
+    assert console.send_line('110 IF NOT (VAL(A$) = N) THEN PRINT "BAD "; N; " "; A$') == ""
+    assert console.send_line("120 LOOP UNTIL EOF(#1)") == ""
+    assert console.send_line("130 CLOSE #1") == ""
+    assert console.send_line('140 PRINT "COUNT "; N') == ""
+    out = console.send_line("RUN", timeout=30)
+    assert "BAD" not in out, out
+    assert "COUNT %d" % lines in out, out
+
+
 def test_option_persists_to_hidden_ini(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     assert console.send_line("OPTION TAB 4") == ""

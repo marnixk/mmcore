@@ -885,6 +885,78 @@ int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n)
 	return mmb_vfs_read_at(path, 0, data, maxn, n);
 }
 
+/* ---- per-handle read-ahead (#1205) ------------------------------------ */
+
+void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r)
+{
+	if (!r)
+		return;
+	if (r->buf)
+		G.plat->free(r->buf);
+	r->buf = 0;
+	r->cap = 0;
+	r->len = 0;
+	r->start = 0;
+}
+
+/* Read `n` bytes at `pos` through the read-ahead cache. The caller owns the
+ * logical position; the cache only serves bytes it previously fetched starting
+ * at r->start, so a seek or an ungetc that moves `pos` outside the cached
+ * window just refetches and can never return the wrong byte. A short result
+ * only happens at EOF, matching mmb_vfs_read_at. */
+int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
+		      void *data, unsigned n, unsigned *got)
+{
+	unsigned off, avail, take, filled;
+
+	if (got)
+		*got = 0;
+	if (!r || n == 0)
+		return mmb_vfs_read_at(path, pos, data, n, got);
+	if (n >= MMB_VFS_RBUF)
+	{
+		/* A large read already goes to the backend in one call, so cache it
+		 * only if it is small enough to be worth keeping. */
+		r->len = 0;
+		return mmb_vfs_read_at(path, pos, data, n, got);
+	}
+	if (r->len > 0 && pos >= r->start && pos - r->start < (unsigned)r->len)
+	{
+		off = pos - r->start;
+		avail = (unsigned)r->len - off;
+		if (n <= avail)
+		{
+			memcpy(data, r->buf + off, n);
+			if (got)
+				*got = n;
+			return 0;
+		}
+		/* The request spans the cached tail; fall through and refetch from
+		 * `pos` so a large caller read is never split short mid-file. */
+	}
+	if (!r->buf)
+	{
+		r->buf = (unsigned char *)G.plat->alloc(MMB_VFS_RBUF);
+		if (!r->buf)
+			return mmb_vfs_read_at(path, pos, data, n, got);
+		r->cap = MMB_VFS_RBUF;
+	}
+	filled = 0;
+	if (mmb_vfs_read_at(path, pos, r->buf, (unsigned)r->cap, &filled) != 0)
+	{
+		r->len = 0;
+		return -1;
+	}
+	r->start = pos;
+	r->len = (int)filled;
+	take = n < filled ? n : filled;
+	if (take)
+		memcpy(data, r->buf, take);
+	if (got)
+		*got = take;
+	return 0;
+}
+
 int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
 {
 	mmb_xpath x;
@@ -1639,7 +1711,10 @@ void mmb_pkg_unmount(void)
 		if (G.files[i].open && G.files[i].path[0] &&
 		    (G.files[i].path[0] == 'B' || G.files[i].path[0] == 'b') &&
 		    G.files[i].path[1] == ':')
+		{
+			mmb_vfs_rbuf_free(&G.files[i].rbuf);
 			G.files[i].open = 0;
+		}
 	}
 	pkg_free_nodes();
 	pkg_on = 0;
