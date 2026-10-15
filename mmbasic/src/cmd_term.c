@@ -2214,10 +2214,15 @@ static void term_apply_session_mode(void)
 		if (!mmb_gfx_mode_valid(mode))
 			mode = G.gfx.mode;
 	}
-	else if (T.letterbox)
+	else if (T.letterbox && T.saved_mode != 19 && T.saved_mode != 20)
 		mode = 14;
 	else
 	{
+		/* #1200: the Chromebook's console runs in MODE 19/20 (1366x768 and
+		 * 683x384), whose ~85x23 text grid is what TERM's boxed pane is
+		 * designed around. Forcing MODE 14 there shrinks everything, so
+		 * boxed TERM keeps those two modes; every other prompt mode still
+		 * gets the 960x540 letterbox default. */
 		mode = T.saved_mode;
 		if (!mmb_gfx_mode_valid(mode))
 			mode = 14;

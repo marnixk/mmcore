@@ -1101,6 +1101,48 @@ def test_term_80x25_keeps_mode_2_on_tall_display(kernel_image):
         con.stop()
 
 
+def test_term_boxed_keeps_chromebook_modes(kernel_image):
+    """#1200: TERM started from a MODE 19/20 prompt keeps that mode.
+
+    The Chromebook console runs in MODE 19/20 (~85x23); the default boxed
+    TERM must not shrink to its 960x540 letterbox mode there. The console
+    mode must also survive TERM's exit.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for mode, size, info in ((19, (1366, 768), "19.16"),
+                                 (20, (683, 384), "20.16")):
+            assert con.send_line(f"MODE {mode},16") == ""
+            assert con.screen_size() == size
+            _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+            time.sleep(0.3)
+            assert con.screen_size() == size, f"MODE {mode} switched mode"
+            _quit(con)
+            assert con.send_line("PRINT MM.INFO(MODE)") == info
+    finally:
+        con.stop()
+
+
+def test_term_boxed_default_mode_for_other_prompts(kernel_image):
+    """#1200 neighbour: non-Chromebook prompts still open boxed TERM in
+    MODE 14 (960x540), unchanged."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for mode in (2, 9, 14):
+            assert con.send_line(f"MODE {mode},16") == ""
+            w, h = con.screen_size()
+            _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+            time.sleep(0.3)
+            assert con.screen_size() == (960, 540), f"MODE {mode} -> not 960x540"
+            _quit(con)
+            assert con.send_line("PRINT MM.INFO(MODE)") == f"{mode}.16"
+            assert con.screen_size() == (w, h)
+    finally:
+        con.stop()
+
+
 def test_term_bookmark_host_field_scrolls(kernel_image):
     """A Host longer than its field scrolls so the tail stays visible."""
     con = MMBasicConsole(kernel_image)
