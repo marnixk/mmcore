@@ -657,6 +657,33 @@ def test_settings_status_line_sits_outside_the_chrome(console):
     assert con.send_line("PRINT 3+3") == "6"
 
 
+def test_settings_status_line_shows_real_month_name(console):
+    """#1199: the row-0 clock renders the real month name for single- and
+    two-digit months (the parser used to fold any two-digit month back to
+    January)."""
+    import re
+
+    con = console
+    assert con.send_line("OPTION TIMEZONE \"UTC\"") == ""
+    cases = {
+        "15-01-26": "15 Jan 2026",
+        "15-10-26": "15 Oct 2026",
+        "31-12-26": "31 Dec 2026",
+    }
+    for date_s, expected in cases.items():
+        assert con.send_line(f'DATE$="{date_s}"') == ""
+        assert con.send_line('TIME$="12:00:00"') == ""
+        rows = _frame_rows(_settings_open(con))
+        clock_row = next(
+            ln
+            for ln in rows
+            if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+        )
+        assert expected in clock_row, (date_s, clock_row)
+        _settings_keys(con, b"\x1b")  # close the hub
+    assert con.send_line("PRINT 3+3") == "6"
+
+
 def test_settings_tab_slider_keys_adjust(console):
     """#1158: Left/Right adjust the focused slider; Up/Down move focus."""
     con = console
