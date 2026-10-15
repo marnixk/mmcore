@@ -69,6 +69,13 @@ typedef struct mmb_val {
 	const char *s;
 } mmb_val;
 
+typedef struct mmb_vfs_rbuf {
+	unsigned char *buf;
+	int cap;
+	int len;
+	unsigned start;
+} mmb_vfs_rbuf;
+
 typedef struct mmb_file {
 	int open;
 	int mode;
@@ -76,6 +83,7 @@ typedef struct mmb_file {
 	int kind;
 	int ungot;
 	char path[128];
+	mmb_vfs_rbuf rbuf; /* per-handle read-ahead cache (#1205) */
 } mmb_file;
 
 typedef struct mmb_test_plat {
@@ -147,6 +155,10 @@ int mmb_vfs_wwrite(int handle, const void *data, unsigned n);
 int mmb_vfs_wclose(int handle);
 int mmb_vfs_size(const char *path);
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
+#define MMB_VFS_RBUF (16 * 1024)
+int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
+		      void *data, unsigned n, unsigned *got);
+void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_mkdir(const char *path);

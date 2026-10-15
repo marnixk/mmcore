@@ -752,6 +752,37 @@ def test_z_many_print_and_input_lines(samba, mmb_native, tmp_path):
         assert fh.read() == "".join("line %d\n" % i for i in range(1, lines + 1))
 
 
+def test_z_line_input_large_file(samba, mmb_native, tmp_path):
+    """#1205: LINE INPUT over a Z: file larger than the read-ahead chunk.
+
+    The file is written straight onto the share, so this exercises the SMB read
+    path with several buffer refills (the old byte-at-a-time reader issued one
+    SMB2 PDU per character). Every line must come back intact and EOF must fire
+    at the true end."""
+    lines = 4000
+    with open(os.path.join(samba.guest, "lines.txt"), "w") as fh:
+        fh.write("".join("%d\n" % i for i in range(1, lines + 1)))
+    root = str(tmp_path / "root")
+    script = (
+        'OPTION NETWORK DRIVE "%s"\n' % _guest_unc(samba)
+        + "NEW\n"
+        + '10 OPEN "Z:/lines.txt" FOR INPUT AS #1\n'
+        + "20 N = 0\n"
+        + "30 DO\n"
+        + "40 LINE INPUT #1, A$\n"
+        + "50 N = N + 1\n"
+        + '60 IF VAL(A$) <> N THEN PRINT "BAD "; N; " "; A$\n'
+        + "70 LOOP UNTIL EOF(#1)\n"
+        + "80 CLOSE #1\n"
+        + '90 PRINT "COUNT "; N\n'
+        + "RUN\n"
+    )
+    out = run_mmb(mmb_native, script, root, timeout=180)
+    assert "BAD" not in out, out
+    assert "?FILE" not in out, out
+    assert "COUNT %d" % lines in out, out
+
+
 # --------------------------------------------------------------------------
 # Large single transfer (#1142/#1143): negotiated chunking + pipelined window
 # --------------------------------------------------------------------------

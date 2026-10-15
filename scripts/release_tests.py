@@ -138,7 +138,11 @@ RULES: tuple[Rule, ...] = (
     Rule(
         "files",
         ("mmbasic/src/cmd_files.c", "mmbasic/src/cmd_files_ui.c"),
-        ("tests/test_files_ansi.py", "tests/test_files_ui.py"),
+        (
+            "tests/test_files_ansi.py",
+            "tests/test_files_ui.py",
+            "tests/test_settings.py",
+        ),
         "FILES sources changed",
     ),
     Rule(

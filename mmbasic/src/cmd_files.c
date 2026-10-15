@@ -786,6 +786,8 @@ void mmb_file_close_n(int fn)
 		mmb_net_tcp_close();
 		mmb_tcp_release();
 	}
+	else
+		mmb_vfs_rbuf_free(&G.files[fn].rbuf);
 	memset(&G.files[fn], 0, sizeof(G.files[fn]));
 	G.files[fn].ungot = -1;
 }
@@ -857,8 +859,9 @@ int mmb_file_read(int fn, char *buf, int nch)
 		buf[n] = 0;
 		return n;
 	}
-	if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
-			    buf, (unsigned)nch, &got) != 0)
+	if (mmb_vfs_rbuf_read(&G.files[fn].rbuf, G.files[fn].path,
+			      (unsigned)G.files[fn].pos, buf, (unsigned)nch,
+			      &got) != 0)
 		got = 0;
 	G.files[fn].pos += (int)got;
 	buf[got] = 0;

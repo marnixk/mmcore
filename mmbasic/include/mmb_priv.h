@@ -253,6 +253,18 @@ typedef struct mmb_options {
 #define MMB_FK_TCP  1
 #define MMB_FM_BOTH 3
 
+/* Read-ahead cache for one open input file (#1205). A network drive (Z:)
+ * issues one SMB2 READ PDU per backend call, so the byte-at-a-time LINE INPUT /
+ * INPUT# loop used to cost a round trip per character. The cache holds a chunk
+ * fetched from `start`; the caller's logical `pos` decides when it is refetched,
+ * so seek, ungetc and EOF stay exact. */
+typedef struct mmb_vfs_rbuf {
+	unsigned char *buf; /* heap buffer, NULL until first refill */
+	int cap;            /* allocated capacity */
+	int len;            /* valid bytes in buf (0 = empty) */
+	unsigned start;     /* file offset of buf[0] */
+} mmb_vfs_rbuf;
+
 typedef struct mmb_file {
 	int open;
 	int mode; /* 0 input 1 output 2 append 3 both (TCP default) */
@@ -260,6 +272,7 @@ typedef struct mmb_file {
 	int kind;  /* MMB_FK_FILE or MMB_FK_TCP */
 	int ungot; /* TCP pushback, -1 none */
 	char path[128];
+	mmb_vfs_rbuf rbuf; /* read-ahead cache for MMB_FK_FILE (#1205) */
 } mmb_file;
 
 typedef struct mmb_blit_buf {
@@ -1001,6 +1014,14 @@ int mmb_vfs_wwrite(int handle, const void *data, unsigned n);
 int mmb_vfs_wclose(int handle);
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n);
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
+/* Sequential read-ahead (#1205): cache a chunk per open file handle so a
+ * byte-at-a-time reader (file_getc) does not issue one backend read per byte.
+ * `r` may be NULL to bypass the cache. Returns 0 and sets *got (which may be
+ * short at EOF), or -1 on a backend error. */
+#define MMB_VFS_RBUF (16 * 1024)
+int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
+		      void *data, unsigned n, unsigned *got);
+void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r);
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_size(const char *path);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
