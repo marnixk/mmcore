@@ -704,3 +704,36 @@ int mmb_net_kind(void)
 {
 	return mmb_wlan_status() ? MMB_NET_WIFI : MMB_NET_ETH;
 }
+
+/* #1187: the Linux build must report a real link, not a constant 1. A lease
+ * (non-loopback IPv4) on the wired or wireless interface means connectivity.
+ * Probing shells out to `ip`, which is too heavy for the poll loop, so the
+ * result is cached for a short TTL. MMB_NET_AVAIL_TTL_MS overrides the TTL
+ * (tests; 0 disables the cache and re-probes every call). */
+#define NET_AVAIL_TTL_MS 2000u
+
+static unsigned net_avail_ttl_ms(void)
+{
+	const char *e = getenv("MMB_NET_AVAIL_TTL_MS");
+
+	if (!e || !e[0])
+		return NET_AVAIL_TTL_MS;
+	return (unsigned)atoi(e);
+}
+
+int mmb_net_available(void)
+{
+	static int cached;
+	static int have;
+	static long long checked;
+	long long now = now_ms();
+	unsigned ttl = net_avail_ttl_ms();
+
+	if (have && ttl && now - checked < (long long)ttl)
+		return cached;
+	/* A wired lease is the common case; only probe Wi-Fi when it is absent. */
+	cached = mmb_eth_status() || mmb_wlan_status();
+	checked = now;
+	have = 1;
+	return cached;
+}
