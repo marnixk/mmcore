@@ -4557,9 +4557,6 @@ static void editor_run(void)
 	hist_break();
 	G.ed.saved_mode = G.gfx.mode;
 	G.ed.saved_bits = G.gfx.bits;
-	G.ed.saved_write_page = G.gfx.write_page;
-	G.ed.saved_display_page = G.gfx.display_page;
-	G.ed.saved_write_fb = G.gfx.write_fb;
 	G.ed.menu_open = 0;
 	G.ed.dialog = 0;
 	tui_end();

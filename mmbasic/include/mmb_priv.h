@@ -347,9 +347,6 @@ typedef struct mmb_editor {
 			    * (#1012); finish it from mmb_editor_poll() */
 	int saved_mode;
 	int saved_bits;
-	int saved_write_page;
-	int saved_display_page;
-	int saved_write_fb;
 	int ntabs;
 	int cur;
 	int menu_open;     /* dropdown visible */

@@ -50,7 +50,6 @@
 typedef struct {
 	int active;
 	int saved_mode, saved_bits;
-	int saved_write_page, saved_display_page, saved_write_fb;
 	int saved_font_scale;
 	int w, h;
 	int s;         /* layout scale percent: 100 matches the 960x540 design */
@@ -1352,6 +1351,10 @@ static void juke_leave(void)
 	if (U.saved_mode != G.gfx.mode || U.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(U.saved_mode, U.saved_bits);
 	G.gfx.font_scale = U.saved_font_scale;
+	/* Home PAGE WRITE/DISPLAY and the framebuffer target rather than
+	 * restoring the pages JUKE ran on: presenting an off-screen page leaves a
+	 * black HDMI plane the console cannot recover (CMM2 Ctrl-C also homes
+	 * PAGE WRITE), so juke_leave does not save them. */
 	mmb_gfx_reset_console(1);
 }
 
@@ -1415,9 +1418,6 @@ void mmb_cmd_juke(void)
 	memset(&U, 0, sizeof(U));
 	U.saved_mode = G.gfx.mode;
 	U.saved_bits = G.gfx.bits;
-	U.saved_write_page = G.gfx.write_page;
-	U.saved_display_page = G.gfx.display_page;
-	U.saved_write_fb = G.gfx.write_fb;
 	U.saved_font_scale = G.gfx.font_scale;
 	/* #1042: draw into whatever mode the console is already in (MODE 19/20
 	 * on the Chromebook) instead of forcing a fixed 960x540 mode. Leaving
