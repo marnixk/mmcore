@@ -67,6 +67,41 @@ def test_prompt_left_inserts_in_place(console):
     assert console.send_line("PRINT 0") == "0"
 
 
+def test_prompt_ctrl_u_clears_line(console):
+    """#1203: Ctrl+U (0x15) discards the whole input line."""
+    console.drain(quiet=0.1)
+    # Type a line, clear it, then run a fresh one. A swallowed Ctrl+U would
+    # concatenate the two into ?SYNTAX and never print 222.
+    console._ser.sendall(b"PRINT 111\x15PRINT 222\r")
+    text = console.drain(quiet=0.8).decode(errors="replace").replace("\r", "")
+    assert "?SYNTAX" not in text.upper(), text
+    assert "222" in text
+
+
+def test_prompt_ctrl_w_deletes_word(console):
+    """#1203: Ctrl+W (0x17) deletes back to the start of the word."""
+    console.drain(quiet=0.1)
+    # Delete the trailing word, then extend the line; a swallowed Ctrl+W would
+    # run PRINT 1234599 instead of PRINT 99.
+    console._ser.sendall(b"PRINT 12345\x1799\r")
+    text = console.drain(quiet=0.8).decode(errors="replace").replace("\r", "")
+    assert "?SYNTAX" not in text.upper(), text
+    assert "1234599" not in text, text
+    assert "99" in text
+
+
+def test_prompt_ctrl_l_keeps_line(console):
+    """#1203: Ctrl+L (0x0c) clears the screen but keeps the input line."""
+    console.drain(quiet=0.1)
+    console._ser.sendall(b"PRINT 77\x0c\r")
+    text = console.drain(quiet=0.8).decode(errors="replace").replace("\r", "")
+    assert "?SYNTAX" not in text.upper(), text
+    assert "77" in text
+    # The console was handed the home + erase-display CSI.
+    assert "\x1b[H\x1b[2J" in text, repr(text)
+
+
+
 def test_prompt_drive_and_cd(console):
     assert console.send_line("D:") == "" or console.send_line("D:").startswith("?")
     # A: always exists

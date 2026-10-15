@@ -181,6 +181,44 @@ static void line_delete(void)
 		fe_puts("\b");
 }
 
+/* True for the whitespace that separates words on the input line. */
+static int line_is_space(char c)
+{
+	return c == ' ' || c == '\t';
+}
+
+/* Ctrl+W: delete back to the start of the current/previous word. Skip any
+ * spaces immediately before the cursor, then the run of non-spaces before
+ * them, so it works both mid-word and after a space. */
+static void line_delete_word(void)
+{
+	while (s_pos > 0 && line_is_space(s_line[s_pos - 1]))
+		line_backspace();
+	while (s_pos > 0 && !line_is_space(s_line[s_pos - 1]))
+		line_backspace();
+}
+
+/* Ctrl+L: clear the screen but keep the input line. Repaint the prompt and
+ * the line (the console interprets the CSI clear), then step the cursor back
+ * to where it was so editing continues in place. */
+static void line_clear_screen(void)
+{
+	unsigned back;
+
+	fe_puts("\x1b[H\x1b[2J");
+	mmb_front_prompt();
+	if (s_pos > s_len)
+		s_pos = s_len;
+	if (s_len)
+		fe_emit(s_line, s_len);
+	back = s_len - s_pos;
+	while (back > 0)
+	{
+		fe_puts("\b");
+		back--;
+	}
+}
+
 static void hist_add(const char *s)
 {
 	if (!s || !s[0])
@@ -599,6 +637,12 @@ static void front_feed_dispatch(char c)
 		fe_puts("\r\n");
 		mmb_front_prompt();
 	}
+	else if (c == 0x15) /* Ctrl+U: clear the whole input line */
+		line_clear_vis();
+	else if (c == 0x17) /* Ctrl+W: delete back to the previous word */
+		line_delete_word();
+	else if (c == 0x0c) /* Ctrl+L: clear the screen, keep the line */
+		line_clear_screen();
 	else if (c == '\t' || (unsigned char)c < 32)
 	{
 		/* Controls other than the ones above never enter the line. */
