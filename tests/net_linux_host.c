@@ -13,6 +13,7 @@
 #include "mmb_priv.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -36,8 +37,56 @@ int main(int argc, char **argv)
 	int stuck = (argc > 1 && strcmp(argv[1], "stuck") == 0);
 	int boot = (argc > 1 && strcmp(argv[1], "boot") == 0);
 	int boot_timeout = (argc > 1 && strcmp(argv[1], "boot_timeout") == 0);
+	int avail = (argc > 1 && strcmp(argv[1], "avail") == 0);
 	int n;
 	char buf[256];
+
+	if (avail)
+	{
+		const char *marker = getenv("MMB_NET_AVAIL_READY");
+		const char *ttl_s = getenv("MMB_NET_AVAIL_TTL_MS");
+		int ttl = ttl_s ? atoi(ttl_s) : 0;
+		unsigned wait_ms;
+		FILE *f;
+
+		/* No lease on either interface: the link is down (#1187). */
+		CHECK(mmb_net_available() == 0, "no lease means unavailable");
+		f = fopen(marker, "w");
+		CHECK(f != 0, "the lease marker was created");
+		if (f)
+			fclose(f);
+		if (ttl == 0)
+		{
+			CHECK(mmb_net_available() == 1,
+			      "a lease appears immediately with the cache off");
+		}
+		else
+		{
+			CHECK(mmb_net_available() == 0,
+			      "the TTL cache hides the new lease");
+			wait_ms = (unsigned)ttl + 300u;
+			usleep((useconds_t)wait_ms * 1000);
+			CHECK(mmb_net_available() == 1,
+			      "the lease is seen once the cache expires");
+		}
+		unlink(marker);
+		if (ttl == 0)
+		{
+			CHECK(mmb_net_available() == 0,
+			      "a lease drop is seen immediately");
+		}
+		else
+		{
+			wait_ms = (unsigned)ttl + 300u;
+			usleep((useconds_t)wait_ms * 1000);
+			CHECK(mmb_net_available() == 0,
+			      "the lease drop is seen after expiry");
+		}
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
 
 	if (boot)
 	{

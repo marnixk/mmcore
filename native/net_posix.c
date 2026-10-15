@@ -106,7 +106,11 @@ static void client_reset(void)
 int mmb_net_kind(void) { return MMB_NET_ETH; }
 #endif
 int mmb_net_open(int kind) { (void)kind; ignore_sigpipe(); return 0; }
+#ifndef MMB_NET_LINUX
+/* #1187: macOS and other POSIX hosts keep the constant stub; the Linux
+ * backend (net_linux.c) overrides this with a real link/lease check. */
 int mmb_net_available(void) { return 1; }
+#endif
 int mmb_net_gateway_ok(int force) { (void)force; return 1; }
 void mmb_net_yield(void) { sched_yield(); }
 

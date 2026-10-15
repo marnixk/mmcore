@@ -223,6 +223,13 @@ static int hid_to_cmm2 (unsigned char hid)
 		return (int)('1' + (hid - 0x1e));
 	if (hid == 0x27)
 		return (int)'0';
+	/* Numeric keypad digits (HID 0x59..0x61 = 1..9, 0x62 = 0) carry the
+	 * same CMM2 codes as the top row, so KEYDOWN() and the Alt+digit tab
+	 * chord work on the keypad too (#1183). */
+	if (hid >= 0x59 && hid <= 0x61)
+		return (int)('1' + (hid - 0x59));
+	if (hid == 0x62)
+		return (int)'0';
 	if (hid == 0x28)
 		return 10; /* Enter */
 	if (hid == 0x29)
@@ -262,7 +269,8 @@ static int hid_to_cmm2 (unsigned char hid)
 	return 0;
 }
 
-/* Letters and digits for TUI Alt+key. Circle's cooked keymap returns
+/* Letters and digits for TUI Alt+key, including the numeric keypad digits
+ * that hid_to_cmm2 maps (#1183). Circle's cooked keymap returns
  * KeyNone for Left Alt, so USB Alt never reaches ProcessChar otherwise. */
 static int hid_alt_char (unsigned char hid)
 {

@@ -49,6 +49,24 @@ case "$iface" in
 esac
 """
 
+# #1187: an IPv4 lease exists only while the marker does, so mmb_net_available
+# can be driven up and down by the host test.
+IP_AVAIL = """\
+iface="$5"
+[ -f "$MMB_NET_AVAIL_READY" ] || exit 1
+case "$iface" in
+  wlan0)
+    echo "2: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.0.2.55/24 brd 192.0.2.255 scope global wlan0"
+    ;;
+  eth0)
+    echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 198.51.100.7/24 brd 198.51.100.255 scope global eth0"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+
 IW_OK = """\
 cat <<'EOF'
 BSS aa:bb:cc:dd:ee:01(on wlan0)
@@ -227,3 +245,40 @@ def test_net_linux_wifi_pending_budget_expires(tmp_path):
         timeout=8,
     )
     assert "all checks passed" in out.stdout
+
+
+def _avail_dir(tmp_path, name):
+    d = os.path.join(str(tmp_path), name)
+    os.makedirs(d, exist_ok=True)
+    _write_exe(os.path.join(d, "ip"), IP_AVAIL)
+    _write_exe(os.path.join(d, "wpa_cli"), WPA_OK)
+    _write_exe(os.path.join(d, "rc-service"), "exit 0\n")
+    _write_exe(os.path.join(d, "udhcpc"), "exit 0\n")
+    return d
+
+
+def _run_avail(tmp_path, name, ttl):
+    exe = _build(tmp_path)
+    cmd_dir = _avail_dir(tmp_path, name)
+    env = _env(cmd_dir)
+    env["MMB_NET_AVAIL_READY"] = os.path.join(str(tmp_path), name + "-ready")
+    env["MMB_NET_AVAIL_TTL_MS"] = str(ttl)
+    out = subprocess.run(
+        [exe, "avail"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_net_available_follows_lease(tmp_path):
+    """#1187: mmb_net_available tracks the real lease (cache disabled)."""
+    _run_avail(tmp_path, "avail_nocache", 0)
+
+
+def test_net_linux_net_available_ttl_cache(tmp_path):
+    """#1187: the `ip` probe is cached for a short TTL, then re-run."""
+    _run_avail(tmp_path, "avail_cache", 200)

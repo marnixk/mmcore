@@ -741,6 +741,69 @@ int main(void)
 	sdl_input_pump();
 	expect_queue("alt-digit running no SOH", "");
 
+	/* #1183: the numeric keypad is the other flavour of the same tab
+	 * chord. Alt+KP1..KP9 must deliver SOH+digit exactly like the top row,
+	 * mirroring Ctrl+Alt+KP1..KP4 and the Circle hid_alt_char path. */
+	for (int d = 1; d <= 9; d++)
+	{
+		char want[3] = {'\x01', (char)('0' + d), '\0'};
+
+		reset();
+		g_running = 0;
+		push_key(SDLK_KP_1 + (d - 1), KMOD_ALT);
+		sdl_input_pump();
+		expect_feed("alt-keypad-digit tab prefix", want);
+	}
+
+	/* Alt+KP0 mirrors Alt+0 (SOH+'0'); EDIT ignores the unknown digit. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_KP_0, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-kp0 tab prefix", "\x01" "0");
+
+	/* Alt+keypad digit while a program runs is not the tab chord either. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_KP_3, KMOD_ALT);
+	sdl_input_pump();
+	expect_queue("alt-keypad-digit running no SOH", "");
+
+	/* #1183: KEYDOWN() must be identical for the top row and the numeric
+	 * keypad. Compare the published CMM2 code for each digit's two keysyms
+	 * (sdl_key_to_cmm2 parity); Circle's hid_to_cmm2 maps the same HID
+	 * usages 0x59..0x62 to the same digit codes. */
+	for (int d = 1; d <= 9; d++)
+	{
+		int top, kp;
+
+		reset();
+		g_running = 1;
+		push_key(SDLK_1 + (d - 1), 0);
+		sdl_input_pump();
+		top = g_keydown_n == 1 ? g_keydown[0] : -1;
+
+		reset();
+		g_running = 1;
+		push_key(SDLK_KP_1 + (d - 1), 0);
+		sdl_input_pump();
+		kp = g_keydown_n == 1 ? g_keydown[0] : -1;
+
+		if (top != ('0' + d) || kp != top)
+		{
+			fprintf(stderr,
+				"FAIL keydown keypad parity %d: top=%d kp=%d\n",
+				d, top, kp);
+			fails++;
+		}
+	}
+
+	reset();
+	g_running = 1;
+	push_key(SDLK_KP_0, 0);
+	sdl_input_pump();
+	expect_keydown("keydown keypad 0", (const int[]){'0'}, 1);
+
 	/* Alt+Left/Right still emit the xterm CSI the editor decodes as the
 	 * same tab switch (regression guard for the digit change). */
 	reset();
