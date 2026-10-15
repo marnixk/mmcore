@@ -67,6 +67,9 @@ case "$iface" in
 esac
 """
 
+# No interface has a lease: iface_ipv4() must report "not connected".
+IP_NONE = "exit 1\n"
+
 IW_OK = """\
 cat <<'EOF'
 BSS aa:bb:cc:dd:ee:01(on wlan0)
@@ -282,3 +285,75 @@ def test_net_linux_net_available_follows_lease(tmp_path):
 def test_net_linux_net_available_ttl_cache(tmp_path):
     """#1187: the `ip` probe is cached for a short TTL, then re-run."""
     _run_avail(tmp_path, "avail_cache", 200)
+
+
+def _sysfs(tmp_path, name, wired=(), wireless=()):
+    root = os.path.join(str(tmp_path), name)
+    os.makedirs(root, exist_ok=True)
+    for iface in list(wired) + list(wireless):
+        os.makedirs(os.path.join(root, iface), exist_ok=True)
+    for iface in wireless:
+        os.makedirs(os.path.join(root, iface, "wireless"), exist_ok=True)
+    return root
+
+
+def _discovery_dir(tmp_path, name, ip_body=IP_FAKE):
+    d = os.path.join(str(tmp_path), name)
+    os.makedirs(d, exist_ok=True)
+    _write_exe(os.path.join(d, "ip"), ip_body)
+    return d
+
+
+def _discovery_env(cmd_dir, sysfs):
+    env = dict(os.environ)
+    env["MMB_NET_CMD_DIR"] = cmd_dir
+    env["MMB_NET_SYSFS_NET"] = sysfs
+    return env
+
+
+def test_net_linux_late_wired_nic_is_discovered(tmp_path):
+    """#1193: a miss must not be cached, so a late wired NIC is picked up."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_late", wired=["lo"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_late", IP_NONE)
+    out = subprocess.run(
+        [exe, "late_eth"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_kind_wifi_without_lease(tmp_path):
+    """#1194: an unassociated wireless interface must report WIFI."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_wifi", wired=["eth0"], wireless=["wlan0"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_wifi", IP_NONE)
+    out = subprocess.run(
+        [exe, "kind_wifi"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_kind_eth_without_wireless(tmp_path):
+    """#1194: with no wireless interface the kind falls back to ETH."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_eth", wired=["lo", "eth0"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_eth", IP_NONE)
+    out = subprocess.run(
+        [exe, "kind_eth"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout

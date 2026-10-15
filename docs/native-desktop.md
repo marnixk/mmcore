@@ -226,7 +226,8 @@ same as Circle). Helpers are killed on a deadline so a stuck
 `wpa_supplicant` returns to the prompt; the bootable USB image ships that
 stack.
 `MMB_NET_WLAN_IFACE` / `MMB_NET_ETH_IFACE` pin the interface names,
-`MMB_NET_CMD_DIR` overrides where the tools are run from (tests), and
+`MMB_NET_SYSFS_NET` points interface discovery at a different directory
+(tests), `MMB_NET_CMD_DIR` overrides where the tools are run from (tests), and
 `MMB_WPA_CONF` the config path. macOS and Windows keep reporting Wi-Fi
 unavailable and use the host's network.
 
