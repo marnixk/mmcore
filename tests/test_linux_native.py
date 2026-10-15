@@ -16,7 +16,7 @@ import zipfile
 
 import pytest
 
-from native_harness import build_native
+from native_harness import NativeSession, build_native, sdl_backend_available
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "native", "mmbasic")
@@ -1162,6 +1162,52 @@ def test_quit_ends_sdl_app(mmb_linux):
     assert proc.returncode == 0
     assert "BEFORE" in out
     assert "AFTER" not in out, "QUIT must end the SDL app"
+
+
+def test_prompt_ctrl_u_clears_line_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+U clears the REPL input line on the native SDL/KMS target."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 111")
+    s.key("ctrl+u")
+    s.text("PRINT 222")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "222" in out, out
+
+
+def test_prompt_ctrl_w_deletes_word_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+W deletes back to the word start on the native target."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 12345")
+    s.key("ctrl+w")
+    s.text("99")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "1234599" not in out, out
+    assert "99" in out, out
+
+
+def test_prompt_ctrl_l_keeps_line_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+L clears the screen but keeps the input line (native)."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 77")
+    s.key("ctrl+l")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "77" in out, out
+    assert "\x1b[H\x1b[2J" in out, repr(out)
 
 
 def _make_app(path):

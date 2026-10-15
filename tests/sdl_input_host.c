@@ -551,6 +551,30 @@ int main(void)
 	sdl_input_pump();
 	expect_feed("ctrl-z text swallowed", "\x1a");
 
+	/* #1203: the Ctrl+U/W/L line-editing shortcuts reach the front end as
+	 * their raw control bytes on every target, and the KMS/DRM mirrored
+	 * text event for the base letter is swallowed (#1074). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_u, KMOD_CTRL);
+	push_text("u");
+	sdl_input_pump();
+	expect_feed("ctrl-u text swallowed", "\x15");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_w, KMOD_CTRL);
+	push_text("w");
+	sdl_input_pump();
+	expect_feed("ctrl-w text swallowed", "\x17");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_l, KMOD_CTRL);
+	push_text("l");
+	sdl_input_pump();
+	expect_feed("ctrl-l text swallowed", "\x0c");
+
 	/* The Ctrl+Space NUL must not be followed by a literal space. */
 	reset();
 	g_running = 0;
