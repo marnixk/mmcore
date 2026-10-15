@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 static int fails;
@@ -38,8 +40,61 @@ int main(int argc, char **argv)
 	int boot = (argc > 1 && strcmp(argv[1], "boot") == 0);
 	int boot_timeout = (argc > 1 && strcmp(argv[1], "boot_timeout") == 0);
 	int avail = (argc > 1 && strcmp(argv[1], "avail") == 0);
+	int late_eth = (argc > 1 && strcmp(argv[1], "late_eth") == 0);
+	int kind_wifi = (argc > 1 && strcmp(argv[1], "kind_wifi") == 0);
+	int kind_eth = (argc > 1 && strcmp(argv[1], "kind_eth") == 0);
 	int n;
 	char buf[256];
+
+	/* The discovery scenarios drive /sys/class/net through MMB_NET_SYSFS_NET;
+	 * the name pins would short-circuit that, so clear them. */
+	if (late_eth || kind_wifi || kind_eth)
+	{
+		unsetenv("MMB_NET_WLAN_IFACE");
+		unsetenv("MMB_NET_ETH_IFACE");
+	}
+
+	if (late_eth)
+	{
+		const char *root = getenv("MMB_NET_SYSFS_NET");
+		char ethdir[256];
+
+		CHECK(mmb_eth_available() == 0, "an absent wired NIC is a miss");
+		CHECK(mmb_eth_status() == 0, "the miss is not cached");
+		CHECK(root != 0, "the sysfs root is set");
+		snprintf(ethdir, sizeof ethdir, "%s/eth0", root ? root : "");
+		CHECK(mkdir(ethdir, 0755) == 0, "the late NIC directory exists");
+		CHECK(mmb_eth_available() == 1,
+		      "a wired NIC that appears later is discovered");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
+
+	if (kind_wifi)
+	{
+		CHECK(mmb_wlan_available() == 1, "a wireless interface is discovered");
+		CHECK(mmb_wlan_status() == 0, "the interface has no lease yet");
+		CHECK(mmb_net_kind() == MMB_NET_WIFI,
+		      "an unassociated Wi-Fi device reports WIFI");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
+
+	if (kind_eth)
+	{
+		CHECK(mmb_wlan_available() == 0, "no wireless interface exists");
+		CHECK(mmb_eth_available() == 1, "a wired interface exists");
+		CHECK(mmb_net_kind() == MMB_NET_ETH,
+		      "with no wireless interface the kind falls back to ETH");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
 
 	if (avail)
 	{
