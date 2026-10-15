@@ -106,9 +106,10 @@ def test_line_input_large_file(console):
     assert console.send_line("80 DO") == ""
     assert console.send_line("90 LINE INPUT #1, A$") == ""
     assert console.send_line("100 N = N + 1") == ""
-    # `NOT (.. = ..)` avoids a `>` character, which the serial harness would
-    # mistake for the prompt and read half the echoed line as the response.
-    assert console.send_line('110 IF NOT (VAL(A$) = N) THEN PRINT "BAD "; N; " "; A$') == ""
+    # The `<>` exercises a `>` inside the echoed command: the harness must not
+    # mistake it for the prompt and read half the echoed line as the response
+    # (#1211).
+    assert console.send_line('110 IF VAL(A$) <> N THEN PRINT "BAD "; N; " "; A$') == ""
     assert console.send_line("120 LOOP UNTIL EOF(#1)") == ""
     assert console.send_line("130 CLOSE #1") == ""
     assert console.send_line('140 PRINT "COUNT "; N') == ""
