@@ -5,7 +5,8 @@
  * Interface discovery reads /sys/class/net (a wireless interface has a
  * `wireless` directory). External tools are run through one runner so tests
  * can inject fakes with MMB_NET_CMD_DIR; the interface names can be pinned
- * with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE. Wi-Fi scan uses `iw` and falls
+ * with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE and MMB_NET_SYSFS_NET points
+ * discovery at a test directory. Wi-Fi scan uses `iw` and falls
  * back to `wpa_cli`; addresses come from `ip -4 addr show`. Joining writes
  * the wpa_supplicant config and reloads it in place. Every helper has a
  * deadline (MMB_NET_CMD_TIMEOUT_MS in tests) so a stuck supplicant cannot
@@ -37,11 +38,20 @@ static int path_exists(const char *path)
 	return stat(path, &st) == 0;
 }
 
+/* Interface discovery reads sysfs. MMB_NET_SYSFS_NET overrides the directory
+ * so tests can present a controlled set of interfaces (and add one later). */
+static const char *sysfs_net_dir(void)
+{
+	const char *e = getenv("MMB_NET_SYSFS_NET");
+
+	return (e && e[0]) ? e : "/sys/class/net";
+}
+
 static int is_wireless(const char *name)
 {
-	char path[128];
+	char path[160];
 
-	snprintf(path, sizeof path, "/sys/class/net/%s/wireless", name);
+	snprintf(path, sizeof path, "%s/%s/wireless", sysfs_net_dir(), name);
 	return path_exists(path);
 }
 
@@ -49,7 +59,7 @@ static int is_wireless(const char *name)
 static const char *discover_iface(int want_wireless)
 {
 	static char name[IFNAME_MAX];
-	DIR *d = opendir("/sys/class/net");
+	DIR *d = opendir(sysfs_net_dir());
 	struct dirent *e;
 
 	name[0] = 0;
@@ -97,12 +107,12 @@ static const char *wlan_iface(void)
 static const char *eth_iface(void)
 {
 	static char cached[IFNAME_MAX];
-	static int done;
 	const char *env;
 
-	if (done)
-		return cached[0] ? cached : 0;
-	done = 1;
+	/* Keep a found name. A miss is not cached: a USB or late-loaded wired
+	 * NIC may appear after the first query. */
+	if (cached[0])
+		return cached;
 	env = getenv("MMB_NET_ETH_IFACE");
 	if (env && env[0])
 	{
@@ -702,7 +712,15 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 
 int mmb_net_kind(void)
 {
-	return mmb_wlan_status() ? MMB_NET_WIFI : MMB_NET_ETH;
+	/* Report the interface kind by presence, not by lease: a Wi-Fi-only
+	 * device that is still associating has a wireless interface but no
+	 * lease yet, and must not be reported as wired. This mirrors Circle's
+	 * s_net_kind, which reflects the opened interface. */
+	if (mmb_wlan_available())
+		return MMB_NET_WIFI;
+	if (mmb_eth_available())
+		return MMB_NET_ETH;
+	return MMB_NET_NONE;
 }
 
 /* #1187: the Linux build must report a real link, not a constant 1. A lease
