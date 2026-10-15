@@ -619,6 +619,74 @@ def test_editor_shift_tab_outdents_selection(kernel_image):
         con.stop()
 
 
+def _fd_dialog_cells(con):
+    """Return sample points in the Open/Save dialog's Name row and Directories
+    header row, mirroring draw_dialog()/fd_geom() (8x16 cells)."""
+    w_px, h_px = con.screen_size()
+    cols, rows = w_px // 8, h_px // 16
+    dw = min(62, cols - 2)
+    dh = min(18, rows - 2)
+    c0 = max((cols - dw) // 2, 0)
+    r0 = max((rows - dh) // 2, 2)
+    inner = dw - 4
+    # A blank column inside both the Name field and the Directories pane.
+    col = c0 + 2 + (inner - 2)
+    x = col * 8 + 4
+    return x, (r0 + 2) * 16 + 8, (r0 + 3) * 16 + 8
+
+
+def test_editor_shift_tab_in_open_dialog_moves_focus_back(kernel_image):
+    """#1204: Shift+Tab cycles dialog focus backwards (Name -> Directories)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "FOCUS.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 1"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "FOCUS.BAS")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Directories" in seen
+        x, y_name, y_dir = _fd_dialog_cells(con)
+        name_before = con.screen_pixel(x, y_name)
+        dir_before = con.screen_pixel(x, y_dir)
+        _keys(con, b"\x1b[Z", quiet=0.4)  # Shift+Tab
+        name_after = con.screen_pixel(x, y_name)
+        dir_after = con.screen_pixel(x, y_dir)
+        # The Name field is no longer highlighted...
+        assert name_after != name_before, (name_before, name_after)
+        # ...and the selection moved to Directories, not Files (which is
+        # where a forward Tab would land).
+        assert dir_after == name_before, (name_before, dir_after)
+        assert dir_after != dir_before, (dir_before, dir_after)
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_shift_tab_in_open_dialog_does_not_deindent(kernel_image):
+    """#1204: Shift+Tab while the Open dialog is up must not touch the buffer."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "DLGSTAB.BAS")
+        _keys(con, b"    HI")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Directories" in seen
+        _keys(con, b"\x1b[Z", quiet=0.4)  # Shift+Tab, consumed by the dialog
+        _keys(con, b"\x1b", quiet=0.4)  # Esc closes the dialog
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "DLGSTAB.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT LEN(A$)") == "6"
+        assert con.send_line("PRINT ASC(A$)") == "32"
+        assert con.send_line("PRINT MID$(A$,5)") == "HI"
+    finally:
+        con.stop()
+
+
 def test_editor_tab_char_does_not_shift_border(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

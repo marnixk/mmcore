@@ -3754,6 +3754,18 @@ static void fd_tab(void)
 		fd_copy_file_to_name();
 }
 
+static void fd_tab_back(void)
+{
+	if (fd_focus == FD_FOCUS_NAME)
+		fd_focus = fd_ndir ? FD_FOCUS_DIR : (fd_nfile ? FD_FOCUS_FILE : FD_FOCUS_NAME);
+	else if (fd_focus == FD_FOCUS_DIR)
+		fd_focus = fd_nfile ? FD_FOCUS_FILE : FD_FOCUS_NAME;
+	else
+		fd_focus = FD_FOCUS_NAME;
+	if (fd_focus == FD_FOCUS_FILE)
+		fd_copy_file_to_name();
+}
+
 static void fd_move_sel(int *sel, int n, int delta)
 {
 	if (n <= 0)
@@ -3974,7 +3986,7 @@ static void draw_dialog(void)
 			"Tab    4 spaces      Alt+1..9 file tab",
 			"Arrows move          Enter  activate",
 			"Open/Save: Name, Files, Directories",
-			"        Tab cycles  Enter file/folder",
+			"     Tab/Shift+Tab  Enter file/folder",
 			"^R/F9  Run; press a key to return",
 			"     Enter or Esc closes this box",
 		};
@@ -4039,7 +4051,7 @@ static void draw_dialog(void)
 		if (fd_truncated)
 			strncat(st, "  ... more", sizeof(st) - strlen(st) - 1);
 		tui_pad(c0 + 2, r0 + h - 3, st, w - 4, C_DLG_FG, C_DLG_BG);
-		tui_pad(c0 + 2, r0 + h - 2, "Tab  Enter=OK  Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
+		tui_pad(c0 + 2, r0 + h - 2, "Tab/Shift+Tab  Enter=OK  Esc=Cancel", w - 4, C_DLG_FG, C_DLG_BG);
 	}
 }
 
@@ -5214,6 +5226,16 @@ static int handle_arrow_or_special(int kind, int mod)
 	return 1;
 }
 
+/* Shift+Tab (CSI Z) while a modal is open moves focus backwards inside the
+ * modal and never touches the editor buffer behind it. */
+static void dialog_focus_back(void)
+{
+	if (G.ed.dialog == DLG_CONFIRM)
+		confirm_btn = (confirm_btn + 2) % 3;
+	else if (fd_on())
+		fd_tab_back();
+}
+
 static int handle_escape(char c)
 {
 	if (esc_state == ESC_GOT)
@@ -5335,7 +5357,11 @@ static int handle_escape(char c)
 			{
 				if (find_active)
 					find_focus_back();
-				else
+				else if (G.ed.dialog)
+					dialog_focus_back();
+				else if (errbar_active)
+					errbar_dismiss();
+				else if (!G.ed.menu_open)
 					indent_lines(1);
 			}
 		}
