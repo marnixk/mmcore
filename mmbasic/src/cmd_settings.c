@@ -309,7 +309,7 @@ static const char *const st_months[12] = {
 static void st_clock_text(char *out, int outsz)
 {
 	const char *s;
-	int d = 0, mo = 1, y = 0;
+	int d = 0, mo = 0, y = 0;
 
 	mmb_clock_refresh();
 	s = G.date_s;
