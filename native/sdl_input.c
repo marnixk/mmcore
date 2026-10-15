@@ -482,6 +482,12 @@ static int sdl_key_to_cmm2(SDL_Keycode k)
 		return (int)('1' + (k - SDLK_1));
 	if (k == SDLK_0)
 		return '0';
+	/* Numeric keypad digits map to the same CMM2 codes as the top row, so
+	 * KEYDOWN() is identical whichever digit cluster a game reads (#1183). */
+	if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
+		return (int)('1' + (k - SDLK_KP_1));
+	if (k == SDLK_KP_0)
+		return '0';
 	switch (k)
 	{
 	case SDLK_RETURN:
@@ -662,12 +668,23 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	 * editor's tab-switch prefix. Both expect SOH (0x01) then the key
 	 * character, the same bytes the Circle USB path emits (hid_alt_char
 	 * covers letters and digits). Without the digit case Alt+1..Alt+9
-	 * never reached EDIT on the ISO/native SDL path (#1180). */
+	 * never reached EDIT on the ISO/native SDL path (#1180); the numeric
+	 * keypad digits are accepted too, matching Ctrl+Alt+KP1..KP4 and the
+	 * Circle alt path (#1183). */
 	if (alt && !ctrl &&
-	    ((k >= SDLK_a && k <= SDLK_z) || (k >= SDLK_0 && k <= SDLK_9)))
+	    ((k >= SDLK_a && k <= SDLK_z) || (k >= SDLK_0 && k <= SDLK_9) ||
+	     (k >= SDLK_KP_1 && k <= SDLK_KP_9) || k == SDLK_KP_0))
 	{
-		char c = (k >= SDLK_a) ? (char)('a' + (k - SDLK_a))
-				       : (char)('0' + (k - SDLK_0));
+		char c;
+
+		if (k >= SDLK_a && k <= SDLK_z)
+			c = (char)('a' + (k - SDLK_a));
+		else if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
+			c = (char)('1' + (k - SDLK_KP_1));
+		else if (k == SDLK_KP_0)
+			c = '0';
+		else
+			c = (char)('0' + (k - SDLK_0));
 
 		if (!mmb_is_running() && !s_line_input)
 		{
