@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from harness import MMBasicConsole, TermReplay
+from harness import MMBasicConsole, TermReplay, prompt_at_buffer_end
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -248,7 +248,7 @@ def _wait_prompt(con: MMBasicConsole, timeout: float = 20.0) -> None:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-        if buf.rstrip().endswith(b">"):
+        if prompt_at_buffer_end(buf, con.prompt):
             return
     return
 
