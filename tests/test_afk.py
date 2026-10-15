@@ -52,6 +52,38 @@ def test_afk_draws_and_enter_exits(kernel_image):
         con.stop()
 
 
+def test_afk_exit_homes_pages_and_framebuffer(kernel_image):
+    """#1185: AFK homes PAGE WRITE/DISPLAY and the framebuffer target to 0.
+
+    The saved page/framebuffer fields were dead code: afk_leave() only
+    restored mode/bits and reset the console. A non-default page state before
+    AFK must not come back afterwards (that would leave the prompt on an
+    off-screen page), so draw after exit and check the pixel landed on page 0.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 12") == ""
+        # Enter AFK from a non-default page/framebuffer state.
+        assert con.send_line("PAGE WRITE 1") == ""
+        assert con.send_line("PAGE DISPLAY 1") == ""
+        con.drain(quiet=0.2)
+        con._ser.sendall(b"AFK\r")
+        con.drain(quiet=0.8, timeout=8)
+        assert _peak_lit(con) > 0.0005
+        con._ser.sendall(b"\r")
+        con.drain(quiet=0.6, timeout=8)
+        assert con.send_line("PRINT 1+1") == "2"
+        # PAGE WRITE/DISPLAY are back at 0, not the page 1 AFK started from:
+        # a drawn pixel lands on page 0 and nowhere else.
+        assert con.send_line("CLS") == ""
+        assert con.send_line("PIXEL 200,200,RGB(255,0,0)") == ""
+        assert (int(con.send_line("PRINT PIXEL(200,200,0)")) & 0xFFFFFF) == 0xFF0000
+        assert (int(con.send_line("PRINT PIXEL(200,200,1)")) & 0xFFFFFF) != 0xFF0000
+    finally:
+        con.stop()
+
+
 def test_afk_ctrl_c_exits(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
