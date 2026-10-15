@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from harness import MMBasicConsole
+from harness import MMBasicConsole, prompt_at_buffer_end
 from artifacts_util import ARTIFACTS
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -398,7 +398,7 @@ def _wait_prompt(con, timeout=20.0) -> str:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 return buf.decode(errors="replace")
         else:
             time.sleep(0.02)
@@ -716,7 +716,7 @@ def test_cmm2_compat_syntaxshock_runs(fresh_console):
         chunk = c._recv(c._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, c.prompt):
                 break
     out = buf.decode(errors="replace")
     log_path = os.path.join(ARTIFACTS, "issue274_syntaxshock_run.log")
@@ -757,7 +757,7 @@ def test_cmm2_compat_xmas_runs(console):
         chunk = console._recv(console._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, console.prompt):
                 break
     out = buf.decode(errors="replace")
     up = out.upper()

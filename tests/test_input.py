@@ -2,6 +2,8 @@
 
 import time
 
+from harness import prompt_at_buffer_end
+
 
 def _wait_contains(con, token: bytes, timeout: float = 5.0) -> bytes:
     deadline = time.time() + timeout
@@ -24,7 +26,7 @@ def _until_prompt(con, timeout: float = 5.0) -> str:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
         else:
             time.sleep(0.05)

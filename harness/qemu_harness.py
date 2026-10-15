@@ -128,7 +128,7 @@ def _is_prompt_line(ln: str) -> bool:
     return False
 
 
-def _prompt_at_buffer_end(buf: bytes, prompt: bytes) -> bool:
+def prompt_at_buffer_end(buf: bytes, prompt: bytes) -> bool:
     """True when ``buf`` ends with the console prompt on a fresh line.
 
     The console echoes the typed command, so a ``>`` inside it -- the ``<>``
@@ -331,7 +331,7 @@ class MMBasicConsole:
             chunk = self._recv(self._ser)
             if chunk:
                 buf += chunk
-            if _prompt_at_buffer_end(buf, self.prompt):
+            if prompt_at_buffer_end(buf, self.prompt):
                 break
         return self._extract_response(buf, text)
 
@@ -347,7 +347,7 @@ class MMBasicConsole:
             chunk = self._recv(self._ser)
             if chunk:
                 buf += chunk
-            if _prompt_at_buffer_end(buf, self.prompt):
+            if prompt_at_buffer_end(buf, self.prompt):
                 break
         return self._extract_response(buf, "")
 

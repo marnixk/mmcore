@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from harness import prompt_at_buffer_end
+
 
 def _read_until(con, needle: bytes, timeout: float = 2.0) -> bytes:
     deadline = time.time() + timeout
@@ -26,7 +28,7 @@ def _break_to_prompt(con, timeout: float = 3.0) -> str:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
     return buf.decode(errors="replace")
 
