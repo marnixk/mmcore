@@ -304,6 +304,127 @@ def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
         con.stop()
 
 
+def _red_count(con, row: int, cols, pane_left: int = 20) -> int:
+    coords = [((pane_left + c) * 8 + 4, row * 16 + 8) for c in cols]
+    return sum(1 for rgb in con.screen_pixels(coords) if _is_red(rgb))
+
+
+def _is_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 100 and r > g + 40 and r > b + 40
+
+
+def _replay_settle(replay):
+    time.sleep(0.35)
+    replay.pump_once(recv_tcp=False)
+    time.sleep(0.15)
+
+
+def test_term_replay_il_dl_shift_lines(kernel_image):
+    """#1223: IL (CSI L) and DL (CSI M) insert/delete lines in the pane."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        # A blue row 1, then reset to the default pen.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[2;1H\x1b[44m\x1b[K\x1b[0m")
+        _replay_settle(replay)
+        assert _blue_count(con, 1, all_cols) == len(all_cols), "setup blue row 1"
+
+        # IL 1 at row 0 pushes the blue row down to row 2, blanks rows 0-1.
+        replay._to_guest(b"\x1b[1;1H\x1b[1L")
+        _replay_settle(replay)
+        assert _blue_count(con, 2, all_cols) == len(all_cols), "IL must shift down"
+        assert _blue_count(con, 0, all_cols) == 0, "IL inserts a blank line"
+        assert _blue_count(con, 1, all_cols) == 0, "IL inserts a blank line"
+        con.capture_png("/opt/cursor/artifacts/term_csi_il.png")
+
+        # DL 1 at row 0 pulls the blue row up to row 0; row 1 becomes blank.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[2;1H\x1b[44m\x1b[K\x1b[0m")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[1;1H\x1b[1M")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "DL must shift up"
+        assert _blue_count(con, 1, all_cols) == 0, "DL blanks the freed row"
+        con.capture_png("/opt/cursor/artifacts/term_csi_dl.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_ich_dch_edit_row(kernel_image):
+    """#1223: ICH (CSI @) and DCH (CSI P) shift row cells; inserted cells BCE."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+
+        # ICH 2 at col 0: blue cols 2-3 shift right to 4-5, insertion is red.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;3H\x1b[44m  \x1b[0m")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, [2, 3]) == 2, "setup blue cols 2-3"
+        replay._to_guest(b"\x1b[1;1H\x1b[41m\x1b[2@")
+        _replay_settle(replay)
+        assert _red_count(con, 0, [0, 1]) == 2, "ICH inserts BCE cells"
+        assert _blue_count(con, 0, [4, 5]) == 2, "ICH shifts content right"
+        assert _blue_count(con, 0, [2, 3]) == 0, "ICH clears the insertion point"
+        con.capture_png("/opt/cursor/artifacts/term_csi_ich.png")
+
+        # DCH 2 at col 0: blue cols 2-3 pull left to 0-1, row tail turns red.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;3H\x1b[44m  \x1b[0m")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[1;1H\x1b[41m\x1b[2P")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, [0, 1]) == 2, "DCH pulls content left"
+        assert _blue_count(con, 0, [2, 3]) == 0, "DCH clears the vacated cells"
+        assert _red_count(con, 0, [78, 79]) == 2, "DCH blanks the tail with BCE"
+        con.capture_png("/opt/cursor/artifacts/term_csi_dch.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_rep_repeats_last_char(kernel_image):
+    """#1223: REP (CSI b) repeats the preceding graphic character."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1HH\x1b[5b")
+        _replay_settle(replay)
+        for col in range(0, 6):
+            assert _pane_grey_hits(con, col, 0) > 0, f"REP should fill col {col}"
+        assert _pane_grey_hits(con, 6, 0) == 0, "REP must stop after n repeats"
+        con.capture_png("/opt/cursor/artifacts/term_csi_rep.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def test_term_replay_bce_erases_with_background(kernel_image):
     """#1219: EL/ECH/ED erase with the current SGR background (BCE)."""
     con = MMBasicConsole(kernel_image)
