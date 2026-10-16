@@ -1632,3 +1632,38 @@ def test_wordpad_scroll_path_services_audio():
     row = row.split("\n}", 1)[0]
     assert "wp_service_audio();" in row, "the serial row dump must service audio"
 
+
+def test_wordpad_page_keys_jump_a_whole_screen(kernel_image):
+    """#1216: PageUp/PageDown move the pane a whole screen in one repaint.
+
+    Paging used to move only the cursor by a screen and let ensure_scroll()
+    pull the pane one line to keep it visible, so the first PageDown from the
+    top scrolled the view a single row (the cursor teleported to the bottom).
+    The bytes of the escape sequence each forced a full repaint as well.  A
+    single PageDown must land the pane a whole screen down in one frame, and
+    PageUp must undo it, with no intermediate frame still showing the old top.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_long_doc(con)
+        seen = _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
+        first = [int(m) for m in re.findall(r"line (\d+)", seen)]
+        assert first and first[0] == 1, first[:5]
+        rows = len(first)
+        con.drain(quiet=0.1)
+
+        dn = _keys(con, b"\x1b[6~", quiet=0.5)
+        dnums = [int(m) for m in re.findall(r"line (\d+)", dn)]
+        # Exactly one frame, and it is the next full screen: no leftover frame
+        # with the old top (line 1) and no one-line step to line 2.
+        assert dnums == list(range(rows + 1, 2 * rows + 1)), dnums
+        assert 1 not in dnums, dnums
+
+        up = _keys(con, b"\x1b[5~", quiet=0.5)
+        unums = [int(m) for m in re.findall(r"line (\d+)", up)]
+        assert unums == list(range(1, rows + 1)), unums
+        assert rows + 1 not in unums, unums
+        _quit(con)
+    finally:
+        con.stop()

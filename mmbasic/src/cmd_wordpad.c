@@ -1872,6 +1872,22 @@ static void move_end(void)
 	W.cx = W.vrows[W.cx_vrow].off1;
 }
 
+/* The largest viewport top that still fills the pane: keep the last line at
+ * the bottom instead of scrolling it to the top of an all-but-empty screen. */
+static int max_scroll(void)
+{
+	int total = screen_row_of_vrow(W.total_vrows);
+
+	if (total <= W.text_rows)
+		return 0;
+	return total - W.text_rows;
+}
+
+/* PageUp/PageDown move the cursor and the viewport together in one pass.
+ * Both shift a whole screen in the same direction, so the cursor keeps its
+ * row on screen and the pane jumps directly to the new page.  Scrolling the
+ * viewport here (rather than letting ensure_scroll() pull it one line to keep
+ * the cursor visible) is what stops paging from stepping line by line (#1216). */
 static void page_up(void)
 {
 	int vr, vc;
@@ -1882,11 +1898,14 @@ static void page_up(void)
 	if (vr < 0)
 		vr = 0;
 	W.cx = vrow_col_to_off(vr, vc);
+	W.scroll -= W.text_rows;
+	if (W.scroll < 0)
+		W.scroll = 0;
 }
 
 static void page_down(void)
 {
-	int vr, vc;
+	int vr, vc, mx;
 
 	wp_build_layout();
 	vr = W.cx_vrow + W.text_rows;
@@ -1894,6 +1913,12 @@ static void page_down(void)
 	if (vr >= W.total_vrows)
 		vr = W.total_vrows > 0 ? W.total_vrows - 1 : 0;
 	W.cx = vrow_col_to_off(vr, vc);
+	W.scroll += W.text_rows;
+	mx = max_scroll();
+	if (W.scroll > mx)
+		W.scroll = mx;
+	if (W.scroll < 0)
+		W.scroll = 0;
 }
 
 static void wp_load_file(const char *path)
@@ -4293,7 +4318,11 @@ static const char *wp_feed_inner(char c)
 	{
 		if (handle_escape(c))
 		{
-			if (W.active)
+			/* Only a completed escape sequence changes the view.  A
+			 * leading ESC / '[' / digit is still buffering, so repainting
+			 * here would turn one PageUp/PageDown into several full
+			 * repaints (and an apparent line-by-line crawl) (#1216). */
+			if (W.active && W.esc_state == WP_ESC_NONE)
 				wp_redraw();
 			return G.out;
 		}
