@@ -31,12 +31,14 @@ def _f10(con):
 
 
 def _quit(con):
-    con._ser.sendall(bytes([1]) + b"x")
+    # F10 then Exit: works offline and over a remote session, where the
+    # Ctrl+A/Alt prefix belongs to the remote (#1218).
+    con._ser.sendall(b"\x1b[21~x")
     return _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
 
 
 def _menu(con):
-    con._ser.sendall(bytes([1]) + b"t")
+    con._ser.sendall(b"\x1b[21~")
     return _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
 
 
