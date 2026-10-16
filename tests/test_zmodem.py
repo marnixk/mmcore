@@ -287,7 +287,9 @@ def test_term_zmodem_download(kernel_image, use32):
         assert _wait_extra(extras, b"!ZMODEM done", timeout=10.0), b"".join(extras)
         stop[0] = True
         pump.join(timeout=2)
-        con._ser.sendall(bytes([1]) + b"x")
+        # F10 then Exit: over a live/replay session the Ctrl+A/Alt prefix
+        # belongs to the remote since #1218.
+        con._ser.sendall(b"\x1b[21~x")
         _wait_prompt(con)
         assert con.send_line('OPEN "A:/E2E.TXT" FOR INPUT AS #1') == ""
         assert con.send_line("LINE INPUT #1, A$") == ""
