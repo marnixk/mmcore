@@ -241,6 +241,41 @@ def test_apps_launcher_chrome_matches_settings(console):
         assert a == s, (role, apps, settings)
 
 
+def _launcher_rows(con, opener):
+    """Open the picker/launcher and return the raw serial frame as rows."""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(opener)
+    text = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace")
+    return [ln.rstrip() for ln in text.replace("\r", "\n").split("\n")]
+
+
+def test_apps_launcher_status_header(console):
+    """#1217: the Ctrl+Space picker and the HOME launcher show the same row-0
+    status line as SETTINGS -- local date/time top-left and the battery badge
+    top-right, on the backdrop above the dialog chrome."""
+    import re
+
+    con = console
+    for opener in (b"\x00", b"APPS\r"):  # Ctrl+Space picker, HOME launcher
+        rows = _launcher_rows(con, opener)
+        clock_row = next(
+            i
+            for i, ln in enumerate(rows)
+            if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+        )
+        assert "[100%]" in rows[clock_row], (opener, rows[clock_row])
+        panel_top = next(
+            i for i, ln in enumerate(rows) if ln.strip().startswith("+")
+        )
+        assert clock_row < panel_top, (opener, clock_row, panel_top, rows[:4])
+        assert (
+            "+" not in rows[clock_row] and "|" not in rows[clock_row]
+        ), (opener, rows[clock_row])
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 7") == "7"
+
+
 def test_apps_launcher_restores_screen_on_close(fresh_console):
     """Esc from the launcher restores the REPL screen behind the overlay."""
     con = fresh_console
