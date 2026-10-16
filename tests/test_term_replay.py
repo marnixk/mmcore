@@ -465,3 +465,166 @@ def test_term_replay_bce_erases_with_background(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def _is_green(rgb) -> bool:
+    r, g, b = rgb
+    return g > 100 and g > r + 40 and g > b + 40
+
+
+def _green_count(con, row: int, cols, pane_left: int = 20) -> int:
+    coords = [((pane_left + c) * 8 + 4, row * 16 + 8) for c in cols]
+    return sum(1 for rgb in con.screen_pixels(coords) if _is_green(rgb))
+
+
+def _decstbm_paint(replay):
+    """Paint row 1 blue (above region), rows 2..4 red/green/blue, row 5 blue."""
+    replay._to_guest(b"\x1b[0m\x1b[2J")
+    _replay_settle(replay)
+    replay._to_guest(
+        b"\x1b[?25l"
+        b"\x1b[1;1H\x1b[44m\x1b[K"
+        b"\x1b[2;1H\x1b[41m\x1b[K"
+        b"\x1b[3;1H\x1b[42m\x1b[K"
+        b"\x1b[4;1H\x1b[44m\x1b[K"
+        b"\x1b[5;1H\x1b[44m\x1b[K"
+        b"\x1b[0m"
+    )
+    _replay_settle(replay)
+
+
+def test_term_replay_decstbm_il_dl_respect_region(kernel_image):
+    """#1225: IL/DL are bounded by the DECSTBM bottom margin."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        # Region rows 2..4.  IL at row 2 blanks row 2 and shifts red row 2 -> 3
+        # and green row 3 -> 4; blue at row 5 (below the margin) must not move.
+        _decstbm_paint(replay)
+        replay._to_guest(b"\x1b[2;4r\x1b[2;1H\x1b[1L")
+        _replay_settle(replay)
+        assert _red_count(con, 1, all_cols) == 0, "IL blanks the cursor row"
+        assert _red_count(con, 2, all_cols) == len(all_cols), "IL shifts red down"
+        assert _green_count(con, 3, all_cols) == len(all_cols), "IL shifts green down"
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "row above region fixed"
+        assert _blue_count(con, 4, all_cols) == len(all_cols), "row below margin fixed"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_il.png")
+
+        # DL at row 2 pulls green -> row 2 and blue -> row 3, blanks row 4.
+        _decstbm_paint(replay)
+        replay._to_guest(b"\x1b[2;4r\x1b[2;1H\x1b[1M")
+        _replay_settle(replay)
+        assert _green_count(con, 1, all_cols) == len(all_cols), "DL pulls green up"
+        assert _blue_count(con, 2, all_cols) == len(all_cols), "DL pulls blue up"
+        assert _red_count(con, 1, all_cols) == 0, "DL removes red"
+        assert _green_count(con, 3, all_cols) == 0, "DL blanks the freed row"
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "row above region fixed"
+        assert _blue_count(con, 4, all_cols) == len(all_cols), "row below margin fixed"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_dl.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_decstbm_su_sd_respect_region(kernel_image):
+    """#1225: SU/SD scroll only the DECSTBM region."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        # SU 1 on rows 2..4 lifts green -> 2 and blue -> 3, blanking row 4.
+        _decstbm_paint(replay)
+        replay._to_guest(b"\x1b[2;4r\x1b[1S")
+        _replay_settle(replay)
+        assert _green_count(con, 1, all_cols) == len(all_cols), "SU lifts green up"
+        assert _blue_count(con, 2, all_cols) == len(all_cols), "SU lifts blue up"
+        assert _red_count(con, 1, all_cols) == 0, "SU drops red"
+        assert _blue_count(con, 3, all_cols) == 0, "SU blanks the region bottom"
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "SU leaves row above"
+        assert _blue_count(con, 4, all_cols) == len(all_cols), "SU leaves row below"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_su.png")
+
+        # SD 1 on rows 2..4 drops red -> 3 and green -> 4, blanking row 2.
+        _decstbm_paint(replay)
+        replay._to_guest(b"\x1b[2;4r\x1b[1T")
+        _replay_settle(replay)
+        assert _red_count(con, 2, all_cols) == len(all_cols), "SD drops red down"
+        assert _green_count(con, 3, all_cols) == len(all_cols), "SD drops green down"
+        assert _red_count(con, 1, all_cols) == 0, "SD blanks the region top"
+        assert _green_count(con, 1, all_cols) == 0, "SD blanks the region top"
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "SD leaves row above"
+        assert _blue_count(con, 4, all_cols) == len(all_cols), "SD leaves row below"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_sd.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_decstbm_reset_to_full_pane(kernel_image):
+    """#1225: CSI r resets the region to the whole pane."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(
+            b"\x1b[?25l"
+            b"\x1b[1;1H\x1b[44m\x1b[K"
+            b"\x1b[3;1H\x1b[41m\x1b[K"
+            b"\x1b[0m"
+        )
+        _replay_settle(replay)
+        # Set a sub-region, then reset it; IL at row 1 must now push the red
+        # row 3 down to row 4 across the whole pane.
+        replay._to_guest(b"\x1b[2;4r\x1b[r\x1b[1;1H\x1b[1L")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, all_cols) == 0, "blue shifted off row 1"
+        assert _blue_count(con, 1, all_cols) == len(all_cols), "blue moves to row 2"
+        assert _red_count(con, 2, all_cols) == 0, "region reset before IL"
+        assert _red_count(con, 3, all_cols) == len(all_cols), "red shifts to row 4"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_reset.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_decstbm_homes_cursor(kernel_image):
+    """#1225: CSI r moves the cursor to home (xterm/DEC behaviour)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[3;5H\x1b[2;4rX")
+        _replay_settle(replay)
+        assert _pane_grey_hits(con, 0, 0) > 0, "DECSTBM homes the cursor"
+        assert _pane_grey_hits(con, 4, 2) == 0, "old cursor column stays empty"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_home.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()

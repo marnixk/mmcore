@@ -140,6 +140,8 @@ typedef struct {
 	int ansi_priv;
 	int sav_row;
 	int sav_col;
+	int scroll_top;        /* DECSTBM scrolling region, 0-based inclusive */
+	int scroll_bot;
 	unsigned last_gch;     /* last graphic char printed, for REP (CSI b) */
 	int char_mode;
 	int no_echo;
@@ -1275,14 +1277,28 @@ static void term_set_cursor_vis(int vis)
 		mark_dirty_row(T.cur_shown_row);
 }
 
+/* #1225: DECSTBM scrolling region.  scroll_top/scroll_bot are 0-based and
+ * inclusive; the default covers the whole pane.  It is (re)set explicitly
+ * whenever the pane is (re)laid out, since a zeroed struct would otherwise
+ * look like a one-row region at row 0. */
+static void term_reset_scroll_region(void)
+{
+	T.scroll_top = 0;
+	T.scroll_bot = T.pane_rows > 0 ? T.pane_rows - 1 : 0;
+}
+
 static void pane_scroll_up(void)
 {
-	int r, c;
-	if (T.pane_rows <= 1)
+	int r, c, top = T.scroll_top, bot = T.scroll_bot;
+
+	if (bot <= top)
 		return;
-	sb_push((const unsigned char *)T.cell[0], T.cell_fg[0], T.cell_bg[0],
-		term_width());
-	for (r = 0; r < T.pane_rows - 1; r++)
+	/* Only a region anchored at the pane top spills into scrollback; a
+	 * sub-region scroll discards the line at its top margin. (#1225) */
+	if (top == 0)
+		sb_push((const unsigned char *)T.cell[0], T.cell_fg[0],
+			T.cell_bg[0], term_width());
+	for (r = top; r < bot; r++)
 	{
 		for (c = 0; c < term_width(); c++)
 		{
@@ -1291,20 +1307,20 @@ static void pane_scroll_up(void)
 			T.cell_bg[r][c] = T.cell_bg[r + 1][c];
 		}
 	}
-	pane_erase_row_pen(T.pane_rows - 1);
-	T.cur_row = T.pane_rows - 1;
+	pane_erase_row_pen(bot);
+	T.cur_row = bot;
 	T.cur_col = 0;
 	T.need_draw = 1;
 	if (!T.dirty_full)
 	{
-		T.dirty_lo = 0;
-		T.dirty_hi = T.pane_rows - 1;
+		T.dirty_lo = top;
+		T.dirty_hi = bot;
 	}
 }
 
 static void pane_newline(void)
 {
-	if (T.cur_row >= T.pane_rows - 1)
+	if (T.cur_row >= T.scroll_bot)
 	{
 		pane_scroll_up();
 		term_log_mark();
@@ -2270,6 +2286,7 @@ static void term_toggle_letterbox(void)
 	T.letterbox = T.letterbox ? 0 : 1;
 	term_apply_session_mode();
 	term_layout();
+	term_reset_scroll_region();
 	term_init_extra_cols(old_cols);
 	term_clamp_cursor();
 	term_fill_pages();
@@ -3198,6 +3215,7 @@ static void term_bm_connect(void)
 	term_reset_pen();
 	term_apply_session_mode();
 	term_layout();
+	term_reset_scroll_region();
 	term_init_extra_cols(old_cols);
 	term_clamp_cursor();
 	for (i = 0; i < T.pane_rows; i++)
@@ -3799,19 +3817,22 @@ static void ansi_blank_cell(int r, int c)
 }
 
 /* IL (CSI n L): insert n blank lines at the cursor row, pushing the lines
- * below down and off the bottom.  The cursor is unaffected.  Inserted lines
- * carry the active SGR background (BCE), like ED/EL/ECH. (#1223) */
+ * below down and off the bottom margin.  The cursor is unaffected.  Inserted
+ * lines carry the active SGR background (BCE), like ED/EL/ECH.  Bounded by the
+ * DECSTBM bottom margin, and a no-op when the cursor is below it. (#1223) */
 static void ansi_insert_lines(int n)
 {
-	int r, c, w = term_width();
+	int r, c, w = term_width(), bot = T.scroll_bot;
 
 	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
 		return;
+	if (T.cur_row > bot)
+		return;
 	if (n < 1)
 		n = 1;
-	if (n > T.pane_rows - T.cur_row)
-		n = T.pane_rows - T.cur_row;
-	for (r = T.pane_rows - 1; r >= T.cur_row + n; r--)
+	if (n > bot - T.cur_row + 1)
+		n = bot - T.cur_row + 1;
+	for (r = bot; r >= T.cur_row + n; r--)
 		for (c = 0; c < w; c++)
 		{
 			T.cell[r][c] = T.cell[r - n][c];
@@ -3820,32 +3841,35 @@ static void ansi_insert_lines(int n)
 		}
 	for (r = T.cur_row; r < T.cur_row + n; r++)
 		pane_erase_row_pen(r);
-	for (r = T.cur_row; r < T.pane_rows; r++)
+	for (r = T.cur_row; r <= bot; r++)
 		mark_dirty_row(r);
 }
 
 /* DL (CSI n M): delete n lines from the cursor row, pulling the lines below
- * up and blanking the freed rows at the bottom (BCE).  Cursor unaffected. */
+ * up and blanking the freed rows at the bottom margin (BCE).  Cursor
+ * unaffected; bounded by the DECSTBM bottom margin. */
 static void ansi_delete_lines(int n)
 {
-	int r, c, w = term_width();
+	int r, c, w = term_width(), bot = T.scroll_bot;
 
 	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
 		return;
+	if (T.cur_row > bot)
+		return;
 	if (n < 1)
 		n = 1;
-	if (n > T.pane_rows - T.cur_row)
-		n = T.pane_rows - T.cur_row;
-	for (r = T.cur_row; r < T.pane_rows - n; r++)
+	if (n > bot - T.cur_row + 1)
+		n = bot - T.cur_row + 1;
+	for (r = T.cur_row; r <= bot - n; r++)
 		for (c = 0; c < w; c++)
 		{
 			T.cell[r][c] = T.cell[r + n][c];
 			T.cell_fg[r][c] = T.cell_fg[r + n][c];
 			T.cell_bg[r][c] = T.cell_bg[r + n][c];
 		}
-	for (r = T.pane_rows - n; r < T.pane_rows; r++)
+	for (r = bot - n + 1; r <= bot; r++)
 		pane_erase_row_pen(r);
-	for (r = T.cur_row; r < T.pane_rows; r++)
+	for (r = T.cur_row; r <= bot; r++)
 		mark_dirty_row(r);
 }
 
@@ -3918,45 +3942,72 @@ static void ansi_repeat(int n)
 		pane_put((char)T.last_gch);
 }
 
-/* SU (CSI n S) / SD (CSI n T): scroll the pane up/down n lines.  There is no
- * DECSTBM scrolling region, so the whole pane scrolls.  Unlike the newline
- * scroll the cursor stays put and nothing is added to scrollback. */
+/* SU (CSI n S) / SD (CSI n T): scroll the DECSTBM region up/down n lines.
+ * With the default region this is the whole pane.  Unlike the newline scroll
+ * the cursor stays put and nothing is added to scrollback. (#1223, #1225) */
 static void ansi_scroll_pane(int n, int up)
 {
 	int r, c, w = term_width();
+	int top = T.scroll_top, bot = T.scroll_bot, rows = bot - top + 1;
 
-	if (T.pane_rows < 1)
+	if (rows < 1)
 		return;
 	if (n < 1)
 		n = 1;
-	if (n > T.pane_rows)
-		n = T.pane_rows;
+	if (n > rows)
+		n = rows;
 	if (up)
 	{
-		for (r = 0; r < T.pane_rows - n; r++)
+		for (r = top; r <= bot - n; r++)
 			for (c = 0; c < w; c++)
 			{
 				T.cell[r][c] = T.cell[r + n][c];
 				T.cell_fg[r][c] = T.cell_fg[r + n][c];
 				T.cell_bg[r][c] = T.cell_bg[r + n][c];
 			}
-		for (r = T.pane_rows - n; r < T.pane_rows; r++)
+		for (r = bot - n + 1; r <= bot; r++)
 			pane_erase_row_pen(r);
 	}
 	else
 	{
-		for (r = T.pane_rows - 1; r >= n; r--)
+		for (r = bot; r >= top + n; r--)
 			for (c = 0; c < w; c++)
 			{
 				T.cell[r][c] = T.cell[r - n][c];
 				T.cell_fg[r][c] = T.cell_fg[r - n][c];
 				T.cell_bg[r][c] = T.cell_bg[r - n][c];
 			}
-		for (r = 0; r < n; r++)
+		for (r = top; r < top + n; r++)
 			pane_erase_row_pen(r);
 	}
 	for (r = 0; r < T.pane_rows; r++)
 		mark_dirty_row(r);
+}
+
+/* DECSTBM (CSI top;bot r): set the scrolling region, clamped to the pane.
+ * Omitted or invalid parameters (top >= bot) reset the region to the whole
+ * pane, matching xterm; the cursor moves home afterwards. (#1225) */
+static void ansi_set_scroll_region(void)
+{
+	int rows = T.pane_rows;
+	int top, bot;
+
+	if (rows < 1)
+		return;
+	top = ansi_arg(0, 1);
+	bot = ansi_arg(1, rows);
+	if (top < 1)
+		top = 1;
+	if (bot < 1 || bot > rows)
+		bot = rows;
+	if (top >= bot)
+		term_reset_scroll_region();
+	else
+	{
+		T.scroll_top = top - 1;
+		T.scroll_bot = bot - 1;
+	}
+	ansi_cup(1, 1);
 }
 
 static void ansi_exec_csi(char cmd)
@@ -4028,6 +4079,8 @@ static void ansi_exec_csi(char cmd)
 		ansi_scroll_pane(n, 1);
 	else if (cmd == 'T')
 		ansi_scroll_pane(n, 0);
+	else if (cmd == 'r')
+		ansi_set_scroll_region();
 	else if (cmd == 'J')
 		ansi_erase_disp(T.ansi_narg ? T.ansi_arg[0] : 0);
 	else if (cmd == 'K')
@@ -6065,6 +6118,7 @@ void mmb_cmd_term(void)
 	mmb_gfx_cls(TM_BG);
 
 	term_layout();
+	term_reset_scroll_region();
 	for (i = 0; i < T.pane_rows; i++)
 		pane_clear_row(i);
 	T.cur_row = 0;
