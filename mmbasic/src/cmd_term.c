@@ -913,6 +913,15 @@ static void term_reset_pen(void)
 	T.ansi_inv = 0;
 }
 
+/* The USB keyboard delivers Alt+key as Ctrl+A then the key, so a byte 1 on
+ * its own is ambiguous. While a real Alt is held it is an Alt chord (local
+ * menu/exit); otherwise it is a genuine Ctrl+A and belongs to the remote
+ * (#1218). */
+static int term_alt_held(void)
+{
+	return (G.plat && G.plat->alt_held && G.plat->alt_held()) ? 1 : 0;
+}
+
 static void ser(const char *s)
 {
 	unsigned n;
@@ -1210,6 +1219,22 @@ static void pane_clear_row(int row)
 	}
 }
 
+/* Erase a row to the current SGR pen, so erased cells keep the active
+ * background (Background Color Erase). Used by ED and by the blank line a
+ * scroll lifts in; EL and ECH already do this per cell. (#1219) */
+static void pane_erase_row_pen(int row)
+{
+	int c;
+	if (row < 0 || row >= T.pane_rows)
+		return;
+	for (c = 0; c < term_width(); c++)
+	{
+		T.cell[row][c] = ' ';
+		T.cell_fg[row][c] = term_pen();
+		T.cell_bg[row][c] = term_paper();
+	}
+}
+
 static void mark_dirty_row(int row)
 {
 	if (row < 0 || row >= T.pane_rows)
@@ -1265,7 +1290,7 @@ static void pane_scroll_up(void)
 			T.cell_bg[r][c] = T.cell_bg[r + 1][c];
 		}
 	}
-	pane_clear_row(T.pane_rows - 1);
+	pane_erase_row_pen(T.pane_rows - 1);
 	T.cur_row = T.pane_rows - 1;
 	T.cur_col = 0;
 	T.need_draw = 1;
@@ -1381,7 +1406,7 @@ static void term_draw_status(void)
 	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
-	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
+	term_put_str_bg(x0 + 7 * TM_CW, y, "F10", TM_HOT, bg);
 	if (T.demo)
 	{
 		term_cell(x0 + 13 * TM_CW, y, 176, fg, bg);
@@ -3728,15 +3753,33 @@ static void ansi_erase_line(int mode)
 
 static void ansi_erase_disp(int mode)
 {
-	int r, a, b;
+	int r, a, b, c, w = term_width();
+	unsigned fg = term_pen();
+	unsigned bg = term_paper();
+
 	a = 0;
 	b = T.pane_rows;
 	if (mode == 0)
 		a = T.cur_row;
 	else if (mode == 1)
 		b = T.cur_row + 1;
-	for (r = a; r < b; r++)
-		pane_clear_row(r);
+	for (r = a; r < b && r < T.pane_rows; r++)
+	{
+		int ca = (mode == 0 && r == T.cur_row) ? T.cur_col : 0;
+		int cb = (mode == 1 && r == T.cur_row) ? T.cur_col + 1 : w;
+
+		if (ca < 0)
+			ca = 0;
+		if (cb > w)
+			cb = w;
+		for (c = ca; c < cb; c++)
+		{
+			T.cell[r][c] = ' ';
+			T.cell_fg[r][c] = fg;
+			T.cell_bg[r][c] = bg;
+		}
+		mark_dirty_row(r);
+	}
 	if (mode == 2 || mode == 3)
 	{
 		T.cur_row = 0;
@@ -3744,8 +3787,6 @@ static void ansi_erase_disp(int mode)
 		mark_dirty_full();
 		return;
 	}
-	for (r = a; r < b; r++)
-		mark_dirty_row(r);
 }
 
 static void ansi_exec_csi(char cmd)
@@ -5875,7 +5916,7 @@ void mmb_cmd_term(void)
 	}
 	else if (no_args)
 	{
-		pane_puts("Disconnected - Alt+T for Bookmarks");
+		pane_puts("Disconnected - F10 for Bookmarks");
 		pane_newline();
 	}
 	else if (T.demo && !T.demo_iac)
@@ -6068,6 +6109,20 @@ const char *mmb_term_key(char c)
 	}
 	if ((unsigned char)c == 1)
 	{
+		/* Connected to a remote session with no local menu/dialog open:
+		 * Ctrl+A is the screen/tmux prefix, so forward it instead of
+		 * showing TERM's chrome. A real Alt key still takes the local
+		 * path (menu/exit), and F10 is the menu key when no Alt exists
+		 * (#1218). */
+		if (T.tcp && !T.file_replay && !T.dlg && !T.menu &&
+		    T.sb_view <= 0 && !term_alt_held())
+		{
+			unsigned char ca = 1;
+
+			term_log_tx(&ca, 1);
+			term_net_send(&ca, 1);
+			return "";
+		}
 		T.alt = 1;
 		T.alt_pend = 1;
 		term_overlay_chrome();

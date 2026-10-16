@@ -234,3 +234,113 @@ def test_term_replay_newline_burst_paints_latest_line(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def _is_blue(rgb) -> bool:
+    r, g, b = rgb
+    return b > 100 and b > r + 40 and b > g + 40
+
+
+def _blue_count(con, row: int, cols, pane_left: int = 20) -> int:
+    coords = [((pane_left + c) * 8 + 4, row * 16 + 8) for c in cols]
+    return sum(1 for rgb in con.screen_pixels(coords) if _is_blue(rgb))
+
+
+def _outbound(replay) -> bytes:
+    return b"".join(p for k, _t, p in list(replay.log) if k == "out")
+
+
+def _outbound_until(replay, pred, timeout: float = 6.0) -> bytes:
+    """Pump until ``pred(out)`` holds, or timeout; return the outbound bytes."""
+    deadline = time.time() + timeout
+    out = _outbound(replay)
+    while time.time() < deadline:
+        replay.pump_once(recv_tcp=False)
+        out = _outbound(replay)
+        if pred(out):
+            return out
+        time.sleep(0.02)
+    return out
+
+
+def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
+    """#1218: Ctrl+A is screen's prefix and must reach the remote.
+
+    Over a connected session Ctrl+A (byte 1) is forwarded instead of opening
+    TERM's menu; a real USB Alt still takes the local menu/exit path.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        # Ask for SGA so typed bytes are forwarded immediately (raw mode).
+        base = _outbound(replay).count(bytes([255, 253, 3]))
+        replay._to_guest(bytes([255, 251, 3]))  # IAC WILL SGA
+        # Wait for this request's answer so the guest is in char mode before
+        # we type; otherwise the command key would be line-buffered.
+        _outbound_until(
+            replay, lambda out: out.count(bytes([255, 253, 3])) > base
+        )
+
+        serial = ""
+        replay.send_keys(b"\x01c")
+        deadline = time.time() + 6.0
+        while time.time() < deadline:
+            serial += replay.pump_once(recv_tcp=False).decode(errors="replace")
+            out = _outbound(replay)
+            if b"\x01" in out and b"c" in out:
+                break
+            time.sleep(0.02)
+        out = _outbound(replay)
+        assert b"\x01" in out, out
+        assert b"c" in out, out
+        assert "Bookmarks" not in _plain(serial), "Ctrl+A must not open the menu"
+
+        _quit(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_bce_erases_with_background(kernel_image):
+    """#1219: EL/ECH/ED erase with the current SGR background (BCE)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        def settle():
+            time.sleep(0.35)
+            replay.pump_once(recv_tcp=False)
+            time.sleep(0.15)
+
+        # EL (ESC[K): fill row 0 from column 0 with the blue background.
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[44m\x1b[K")
+        settle()
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "EL must BCE"
+        con.capture_png("/opt/cursor/artifacts/term_bce_el.png")
+
+        # ECH (ESC[10X): erased cells keep the background, later cells do not.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        settle()
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[44m\x1b[10X")
+        settle()
+        assert _blue_count(con, 0, list(range(0, 10))) == 10, "ECH must BCE"
+        assert _blue_count(con, 0, list(range(12, 80, 4))) == 0, "ECH must stop"
+
+        # ED 2 (ESC[2J): the whole screen takes the background.
+        replay._to_guest(b"\x1b[0m\x1b[44m\x1b[2J")
+        settle()
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "ED must BCE"
+        assert _blue_count(con, 3, all_cols) == len(all_cols), "ED rows below must BCE"
+        con.capture_png("/opt/cursor/artifacts/term_bce_ed.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        replay.stop()
+        con.stop()
