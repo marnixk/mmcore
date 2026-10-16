@@ -140,6 +140,7 @@ typedef struct {
 	int ansi_priv;
 	int sav_row;
 	int sav_col;
+	unsigned last_gch;     /* last graphic char printed, for REP (CSI b) */
 	int char_mode;
 	int no_echo;
 	int echo_user;
@@ -1326,6 +1327,7 @@ static void pane_put(char ch)
 		T.cell[T.cur_row][T.cur_col] = ch;
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
+		T.last_gch = (unsigned char)ch;
 		T.cur_col++;
 		mark_dirty_row(T.cur_row);
 		term_log_mark();
@@ -3789,6 +3791,174 @@ static void ansi_erase_disp(int mode)
 	}
 }
 
+static void ansi_blank_cell(int r, int c)
+{
+	T.cell[r][c] = ' ';
+	T.cell_fg[r][c] = term_pen();
+	T.cell_bg[r][c] = term_paper();
+}
+
+/* IL (CSI n L): insert n blank lines at the cursor row, pushing the lines
+ * below down and off the bottom.  The cursor is unaffected.  Inserted lines
+ * carry the active SGR background (BCE), like ED/EL/ECH. (#1223) */
+static void ansi_insert_lines(int n)
+{
+	int r, c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > T.pane_rows - T.cur_row)
+		n = T.pane_rows - T.cur_row;
+	for (r = T.pane_rows - 1; r >= T.cur_row + n; r--)
+		for (c = 0; c < w; c++)
+		{
+			T.cell[r][c] = T.cell[r - n][c];
+			T.cell_fg[r][c] = T.cell_fg[r - n][c];
+			T.cell_bg[r][c] = T.cell_bg[r - n][c];
+		}
+	for (r = T.cur_row; r < T.cur_row + n; r++)
+		pane_erase_row_pen(r);
+	for (r = T.cur_row; r < T.pane_rows; r++)
+		mark_dirty_row(r);
+}
+
+/* DL (CSI n M): delete n lines from the cursor row, pulling the lines below
+ * up and blanking the freed rows at the bottom (BCE).  Cursor unaffected. */
+static void ansi_delete_lines(int n)
+{
+	int r, c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > T.pane_rows - T.cur_row)
+		n = T.pane_rows - T.cur_row;
+	for (r = T.cur_row; r < T.pane_rows - n; r++)
+		for (c = 0; c < w; c++)
+		{
+			T.cell[r][c] = T.cell[r + n][c];
+			T.cell_fg[r][c] = T.cell_fg[r + n][c];
+			T.cell_bg[r][c] = T.cell_bg[r + n][c];
+		}
+	for (r = T.pane_rows - n; r < T.pane_rows; r++)
+		pane_erase_row_pen(r);
+	for (r = T.cur_row; r < T.pane_rows; r++)
+		mark_dirty_row(r);
+}
+
+/* ICH (CSI n @): insert n blank cells at the cursor, shifting the rest of the
+ * row right and discarding what leaves the right edge.  Inserted cells carry
+ * the active SGR background (BCE).  The cursor is unaffected. */
+static void ansi_insert_chars(int n)
+{
+	int c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (T.cur_col < 0)
+		T.cur_col = 0;
+	if (T.cur_col >= w || n > w - T.cur_col)
+		n = w - T.cur_col;
+	if (n <= 0)
+		return;
+	for (c = w - 1; c >= T.cur_col + n; c--)
+	{
+		T.cell[T.cur_row][c] = T.cell[T.cur_row][c - n];
+		T.cell_fg[T.cur_row][c] = T.cell_fg[T.cur_row][c - n];
+		T.cell_bg[T.cur_row][c] = T.cell_bg[T.cur_row][c - n];
+	}
+	for (c = T.cur_col; c < T.cur_col + n; c++)
+		ansi_blank_cell(T.cur_row, c);
+	mark_dirty_row(T.cur_row);
+}
+
+/* DCH (CSI n P): delete n cells at the cursor, shifting the rest of the row
+ * left and blanking the freed cells at the right edge (BCE). */
+static void ansi_delete_chars(int n)
+{
+	int c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (T.cur_col < 0)
+		T.cur_col = 0;
+	if (T.cur_col >= w || n > w - T.cur_col)
+		n = w - T.cur_col;
+	if (n <= 0)
+		return;
+	for (c = T.cur_col; c < w - n; c++)
+	{
+		T.cell[T.cur_row][c] = T.cell[T.cur_row][c + n];
+		T.cell_fg[T.cur_row][c] = T.cell_fg[T.cur_row][c + n];
+		T.cell_bg[T.cur_row][c] = T.cell_bg[T.cur_row][c + n];
+	}
+	for (c = w - n; c < w; c++)
+		ansi_blank_cell(T.cur_row, c);
+	mark_dirty_row(T.cur_row);
+}
+
+/* REP (CSI n b): repeat the last graphic character n times, with the active
+ * SGR pen.  A no-op until something graphic has been printed. */
+static void ansi_repeat(int n)
+{
+	int i;
+
+	if (n < 1)
+		n = 1;
+	if (!T.last_gch)
+		return;
+	for (i = 0; i < n; i++)
+		pane_put((char)T.last_gch);
+}
+
+/* SU (CSI n S) / SD (CSI n T): scroll the pane up/down n lines.  There is no
+ * DECSTBM scrolling region, so the whole pane scrolls.  Unlike the newline
+ * scroll the cursor stays put and nothing is added to scrollback. */
+static void ansi_scroll_pane(int n, int up)
+{
+	int r, c, w = term_width();
+
+	if (T.pane_rows < 1)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > T.pane_rows)
+		n = T.pane_rows;
+	if (up)
+	{
+		for (r = 0; r < T.pane_rows - n; r++)
+			for (c = 0; c < w; c++)
+			{
+				T.cell[r][c] = T.cell[r + n][c];
+				T.cell_fg[r][c] = T.cell_fg[r + n][c];
+				T.cell_bg[r][c] = T.cell_bg[r + n][c];
+			}
+		for (r = T.pane_rows - n; r < T.pane_rows; r++)
+			pane_erase_row_pen(r);
+	}
+	else
+	{
+		for (r = T.pane_rows - 1; r >= n; r--)
+			for (c = 0; c < w; c++)
+			{
+				T.cell[r][c] = T.cell[r - n][c];
+				T.cell_fg[r][c] = T.cell_fg[r - n][c];
+				T.cell_bg[r][c] = T.cell_bg[r - n][c];
+			}
+		for (r = 0; r < n; r++)
+			pane_erase_row_pen(r);
+	}
+	for (r = 0; r < T.pane_rows; r++)
+		mark_dirty_row(r);
+}
+
 static void ansi_exec_csi(char cmd)
 {
 	int n = ansi_arg(0, 1);
@@ -3844,6 +4014,20 @@ static void ansi_exec_csi(char cmd)
 	}
 	else if (cmd == 'H' || cmd == 'f')
 		ansi_cup(ansi_arg(0, 1), ansi_arg(1, 1));
+	else if (cmd == 'L')
+		ansi_insert_lines(n);
+	else if (cmd == 'M')
+		ansi_delete_lines(n);
+	else if (cmd == '@')
+		ansi_insert_chars(n);
+	else if (cmd == 'P')
+		ansi_delete_chars(n);
+	else if (cmd == 'b')
+		ansi_repeat(n);
+	else if (cmd == 'S')
+		ansi_scroll_pane(n, 1);
+	else if (cmd == 'T')
+		ansi_scroll_pane(n, 0);
 	else if (cmd == 'J')
 		ansi_erase_disp(T.ansi_narg ? T.ansi_arg[0] : 0);
 	else if (cmd == 'K')
@@ -3988,7 +4172,9 @@ static int ansi_feed(unsigned char b)
 			T.ansi_narg++;
 		return 1;
 	}
-	if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z'))
+	/* ECMA-48 final byte is 0x40..0x7E; anything else ends the sequence with
+	 * no effect.  `@` (ICH) is the common non-letter final byte. (#1223) */
+	if (b >= '@' && b <= '~')
 	{
 		if (T.ansi_priv)
 			ansi_exec_priv((char)b);
