@@ -330,11 +330,13 @@ static void st_clock_text(char *out, int outsz)
 		 st_months[mo - 1], 2000 + y);
 }
 
-/* Status line for the whole SETTINGS app: local date/time top-left and the
- * battery badge "[80%]" (coloured red / blue / green by charge band)
- * top-right, both on row 0 of the screen so they sit OUTSIDE the dialog
- * chrome on the backdrop, not inside the panel body. */
-static void st_draw_status(void)
+/* Status line shared by the SETTINGS app, the Ctrl+Space app navigator and
+ * the HOME launcher (#1217): local date/time top-left and the battery badge
+ * "[80%]" (coloured red / blue / green by charge band) top-right, both on
+ * row 0 of the screen so they sit OUTSIDE the dialog chrome on the backdrop,
+ * not inside the panel body. Declared in mmb_priv.h so the picker renders
+ * the identical format, colours and thresholds. */
+void mmb_tui_status_header(void)
 {
 	static const int band[3] = { TUI_RED, TUI_BLUE, TUI_GREEN };
 	char dt[64];
@@ -441,7 +443,7 @@ static void st_draw(void)
 		st_draw_hub();
 	else
 		st_draw_section();
-	st_draw_status();
+	mmb_tui_status_header();
 	tui_cursor(0, 0, 0);
 	tui_flush();
 }

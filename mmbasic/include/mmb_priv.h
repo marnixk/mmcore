@@ -1382,6 +1382,12 @@ void mmb_editor_apply_tui_palette(void);
 int mmb_editor_theme_field(const char *name, unsigned char *idx);
 int mmb_editor_theme_rgb(const char *name, unsigned *rgb);
 
+/* Row-0 status header (#1158, #1217): local date/time top-left and the
+ * battery badge top-right on the dialog backdrop. Shared by SETTINGS, the
+ * Ctrl+Space app navigator and the HOME launcher so the format, colours and
+ * battery thresholds stay identical. */
+void mmb_tui_status_header(void);
+
 typedef struct mmb_ramdisk_entry {
 	const char *path;
 	const unsigned char *data;
