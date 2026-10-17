@@ -195,6 +195,12 @@ int main(void)
 	check(mmb_fat_read_at('C', "/NOPE.TXT", 0, scratch, 1, 0) == -1,
 	      "missing file");
 
+	/* 9. Persistence health is a no-op off the live ISO (no mmcore.live=1
+	 * on the test cmdline): revalidating must not report a lost store. */
+	mmb_storage_revalidate();
+	check(!mmb_storage_persistence_lost(),
+	      "persistence not reported lost off the live ISO");
+
 	if (fails)
 	{
 		printf("%d check(s) failed\n", fails);

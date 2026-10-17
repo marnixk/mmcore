@@ -2461,6 +2461,8 @@ static void bm_append_int(char *buf, int sz, int v)
 
 static void term_dl_dirs_load(int keep_active);
 
+static int s_bm_save_warned;
+
 static void term_bm_save(void)
 {
 	char path[24];
@@ -2503,7 +2505,24 @@ static void term_bm_save(void)
 		bm_append(buf, sizeof(buf), g_dl_dir_s[i]);
 		bm_append(buf, sizeof(buf), "\n");
 	}
-	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
+	if (mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0) != 0)
+	{
+		if (!s_bm_save_warned)
+		{
+			s_bm_save_warned = 1;
+			mmb_storage_notice("!TERM bookmarks not saved: storage unavailable");
+		}
+	}
+	else if (mmb_storage_persistence_lost())
+	{
+		if (!s_bm_save_warned)
+		{
+			s_bm_save_warned = 1;
+			mmb_storage_notice("!TERM bookmarks are session-only: MMCORE not mounted");
+		}
+	}
+	else
+		s_bm_save_warned = 0;
 }
 
 static void bm_trim(char *s)

@@ -89,6 +89,14 @@ clean shutdown (`/sbin/poweroff`) after syncing disks and unmounting the
 mounted. **Closing the lid** suspends to RAM (`echo mem > /sys/power/state`);
 opening the lid resumes through the kernel with no extra handler.
 
+A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
+gone (or read-only) after wake. mmcore detects a resume from the growing gap
+between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume,
+remounts it by label (`MMCORE`, or the basename of `MMB_DRIVE_ROOT`) and asks
+for a read-write remount. C: is re-pointed at the restored mount. If it cannot
+be recovered, the next settings/bookmark save prints `!settings ... storage
+unavailable` (or `session-only`) instead of silently writing to the RAM overlay.
+
 At the MMBasic prompt, `SHUTDOWN` performs the same style of power-off on the
 framebuffer image (and on a Raspberry Pi). The native Linux/macOS/Windows desktop
 apps do not shut down hardware; they report that `SHUTDOWN` is unavailable.
