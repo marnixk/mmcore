@@ -31,7 +31,10 @@ static int keyboard_id(const char *s)
 
 static void choose_path(void)
 {
-	if (mmb_fat_ready('C'))
+	/* Never select a C: that is only a directory on the RAM overlay: on the
+	 * live ISO that happens when MMCORE is away after a resume. Session
+	 * changes go to A: instead and are migrated back once C: is real. */
+	if (mmb_fat_ready('C') && !mmb_storage_persistence_lost())
 		strncpy(settings_path, "C:/.mmbasic.ini", sizeof(settings_path) - 1);
 	else
 		strncpy(settings_path, "A:/.mmbasic.ini", sizeof(settings_path) - 1);

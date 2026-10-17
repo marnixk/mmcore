@@ -113,6 +113,7 @@ int main(void)
 	char *root = mkdtemp(tmpl);
 	char fpath[512], gpath[512];
 	char apath[512], bpath[512];
+	char rpath[512], rnew[512];
 	char scratch[8];
 	const char *body = "0123456789ABCDEFGHIJ"; /* 20 bytes */
 	const char *neww = "NEWCONTENT";            /* 10 bytes */
@@ -127,6 +128,8 @@ int main(void)
 	snprintf(gpath, sizeof gpath, "%s/C/G.TXT", root);
 	snprintf(apath, sizeof apath, "%s/C/A.TXT", root);
 	snprintf(bpath, sizeof bpath, "%s/C/B.TXT", root);
+	snprintf(rpath, sizeof rpath, "%s/C/R.TXT", root);
+	snprintf(rnew, sizeof rnew, "%s/C/R.NEW", root);
 
 	write_file("/F.TXT", body);
 
@@ -195,7 +198,16 @@ int main(void)
 	check(mmb_fat_read_at('C', "/NOPE.TXT", 0, scratch, 1, 0) == -1,
 	      "missing file");
 
-	/* 9. Persistence health is a no-op off the live ISO (no mmcore.live=1
+	/* 9. Replacing a file (new inode at the same path) invalidates the
+	 * cached stream: this is the suspend/remount case in miniature. */
+	write_file("/R.TXT", "OLD");
+	check(read_is('C', "/R.TXT", 0, "OLD", 3), "read R before replace");
+	write_file("/R.NEW", "NEWDATA");
+	check(rename(rnew, rpath) == 0, "rename over cached R.TXT");
+	check(read_is('C', "/R.TXT", 0, "NEWDATA", 7),
+	      "replaced file read, not the stale handle");
+
+	/* 10. Persistence health is a no-op off the live ISO (no mmcore.live=1
 	 * on the test cmdline): revalidating must not report a lost store. */
 	mmb_storage_revalidate();
 	check(!mmb_storage_persistence_lost(),

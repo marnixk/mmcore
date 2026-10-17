@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import zipfile
 
 import pytest
@@ -2021,3 +2022,56 @@ def test_ntp_autosync_scoped_to_framebuffer_target():
     assert "-DMMB_NTP_AUTOSYNC=1" in make[fb_at : fb_at + 800], (
         "auto-sync must be an FB-target opt-in"
     )
+
+def test_term_bookmarks_reload_after_file_replaced(mmb_linux, tmp_path):
+    """Reloading after a suspend/resume remount must not keep a stale stream.
+
+    Native storage keeps one open FILE* per volume.  A remount (or a file
+    replaced underneath it) can leave that stream on the old inode, reading
+    EOF or stale bytes, which made TERM show an empty bookmark list until a
+    reboot.  Replace the file between two TERM sessions and check the second
+    session reads the new content.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    drive = tmp_path / "drive"
+    cdir = drive / "C"
+    cdir.mkdir(parents=True)
+    cfg = cdir / ".termconfig"
+
+    def write_cfg(name):
+        tmp = cdir / ".termconfig.new"
+        tmp.write_text(
+            "# TERM bookmarks\n\n[bm.0]\nname=%s\nhost=demo\nport=23\n" % name
+        )
+        os.replace(tmp, cfg)
+
+    def enter_term_and_list(session):
+        session.feed("TERM")
+        session.wait_ms(600)
+        session.key("f10")
+        session.wait_ms(300)
+        session.text("b")
+        session.wait_ms(400)
+
+    def leave_term(session):
+        session.key("f10")
+        session.wait_ms(300)
+        session.text("x")
+        session.wait_ms(800)
+
+    write_cfg("Alpha")
+    s = NativeSession(tmp_path, env={"MMB_DRIVE_ROOT": str(drive)}, binary=SDL_BIN)
+    enter_term_and_list(s)
+    s.wait_ms(3000)      # hold here so the file can change mid-session
+    s.start()
+
+    time.sleep(1.6)
+    write_cfg("Beta")    # same path, new inode
+    leave_term(s)
+    enter_term_and_list(s)
+    s.wait_ms(400)
+    s.quit()
+    out = s.wait(timeout=60)
+    assert out.count("Bookmarks\nAlpha") >= 1, out
+    assert out.count("Bookmarks\nBeta") >= 1, out

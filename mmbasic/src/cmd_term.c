@@ -2417,7 +2417,10 @@ static int bm_find_name(const char *name)
 
 static void bm_path(char *dst, unsigned n)
 {
-	if (mmb_fat_ready('C'))
+	/* C: on the live ISO is only a real persistent drive when MMCORE is
+	 * mounted; otherwise keep the session's bookmarks on A: and migrate
+	 * them back when the volume returns. */
+	if (mmb_fat_ready('C') && !mmb_storage_persistence_lost())
 		strncpy(dst, "C:/.termconfig", n - 1);
 	else
 		strncpy(dst, "A:/.termconfig", n - 1);
@@ -2635,9 +2638,11 @@ static void term_dl_dirs_load(int keep_active)
 	}
 }
 
-static void term_bm_load(void)
+/* Parse one .termconfig into the in-memory list. Returns 0 when the file is
+ * missing or cannot be read, leaving g_bm empty; the caller decides whether to
+ * keep the previous list. */
+static int term_bm_parse_file(const char *path)
 {
-	char path[24];
 	char buf[4096];
 	unsigned got = 0;
 	char *p, *nl;
@@ -2645,12 +2650,14 @@ static void term_bm_load(void)
 
 	g_bm_n = 0;
 	memset(g_bm, 0, sizeof(g_bm));
-	term_dl_dirs_load(0);
-	bm_path(path, sizeof(path));
 	if (!mmb_vfs_exists(path))
-		return;
+		return 0;
 	if (mmb_vfs_read(path, buf, sizeof(buf) - 1, &got) != 0)
-		return;
+		return 0;
+	/* A cached stream left stale by a remount can report EOF for a file that
+	 * still has bytes. Treat that as a failed read, not as "no bookmarks". */
+	if (got == 0 && mmb_vfs_size(path) > 0)
+		return 0;
 	buf[got] = 0;
 	p = buf;
 	while (*p)
@@ -2735,6 +2742,45 @@ static void term_bm_load(void)
 		p = nl;
 	}
 	bm_sort();
+	return 1;
+}
+
+static void term_bm_load(void)
+{
+	char path[24];
+	const char *other;
+	term_bm saved_list[TM_BM_MAX];
+	int saved_n = g_bm_n;
+	int loaded_from_a = 0;
+
+	/* Opening Bookmarks reloads from disk. A read failure (for example the
+	 * MMCORE mount is away right after a resume) must not look like "no
+	 * bookmarks": keep the list already in memory instead. */
+	memcpy(saved_list, g_bm, sizeof(saved_list));
+	term_dl_dirs_load(0);
+	bm_path(path, sizeof(path));
+	/* Try the other drive too: while C: is volatile bm_path() prefers the
+	 * session copy on A:, and after a recovery the older C: copy may be the
+	 * only one with the user's bookmarks. */
+	other = (path[0] == 'C') ? "A:/.termconfig" : "C:/.termconfig";
+	if (!term_bm_parse_file(path))
+	{
+		if ((other[0] != 'C' || mmb_fat_ready('C')) &&
+		    term_bm_parse_file(other))
+			loaded_from_a = (other[0] == 'A');
+		else
+		{
+			memcpy(g_bm, saved_list, sizeof(saved_list));
+			g_bm_n = saved_n;
+			bm_sort();
+			return;
+		}
+	}
+	/* A fallback read from A: is this session's live copy. Once C: is
+	 * available again, write it there so it survives the next reboot. */
+	if (loaded_from_a && mmb_fat_ready('C') &&
+	    !mmb_storage_persistence_lost())
+		term_bm_save();
 }
 
 static void dlg_center(int cw, int ch)
