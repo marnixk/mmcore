@@ -555,6 +555,22 @@ static void rd_cache_close_all(void)
 static long long s_suspend_offset_ms;
 static int s_suspend_tracked;
 static int s_live_boot = -1;
+static int s_overlay_backed = -1;
+static int s_overlay_lost_notified;
+static int s_overlay_broken;
+
+/* --read-write seeds /.mmcore-rw and rw/upper + rw/work; live-init then uses
+ * that volume as the root overlay's upper. Detect it at boot, before a resume
+ * can drop the mount and make the paths unreadable. */
+static int live_overlay_backed(void)
+{
+	if (s_overlay_backed < 0)
+		s_overlay_backed =
+			(is_dir("/media/mmcore/rw/upper") &&
+			 is_dir("/media/mmcore/rw/work") &&
+			 access("/media/mmcore/.mmcore-rw", F_OK) == 0) ? 1 : 0;
+	return s_overlay_backed;
+}
 
 static int linux_is_live_boot(void)
 {
@@ -660,12 +676,69 @@ static int try_mount_root(const char *root)
 	return 0;
 }
 
+static int remount_root_rw(const char *root)
+{
+	static const char *const helpers[] = {
+		"/bin/mount", "/sbin/mount", "/usr/bin/mount"
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
+	{
+		char *argv[] = { (char *)helpers[i], "-o", "remount,rw",
+				 (char *)root, 0 };
+
+		if (run_mount(argv) == 0)
+			return 0;
+	}
+	return -1;
+}
+
+/* A write through the root overlay proves its upper is still usable. Used
+ * only after a resume when MMCORE backs the upper (--read-write). */
+static int root_overlay_writable(void)
+{
+	int fd = open("/tmp/.mmcore-persist-probe", O_WRONLY | O_CREAT | O_TRUNC,
+		      0600);
+
+	if (fd < 0)
+		return 0;
+	close(fd);
+	unlink("/tmp/.mmcore-persist-probe");
+	return 1;
+}
+
 static void revalidate_live_root(void)
 {
 	const char *env = getenv("MMB_DRIVE_ROOT");
 	char fallback[] = "/media/mmcore";
 	const char *root = (env && env[0]) ? env : fallback;
 	int mounted = is_mountpoint(root);
+
+	if (live_overlay_backed())
+	{
+		/* The root overlay's upper lives on this volume (--read-write).
+		 * A normal resume leaves the mount in place: lift a read-only
+		 * remount and carry on. If the volume dropped, mounting it again
+		 * would restore C: but leave the overlay's cached upper stale
+		 * (/tmp writes fail with EIO), so a reboot is the only safe
+		 * recovery. */
+		if (mounted)
+		{
+			(void)remount_root_rw(root);
+			rd_cache_close_all();
+			s_init = 0;
+			if (root_overlay_writable())
+				return;
+		}
+		s_overlay_broken = 1;
+		if (!s_overlay_lost_notified)
+		{
+			s_overlay_lost_notified = 1;
+			mmb_storage_notice("!MMCORE reset after suspend: reboot to recover storage");
+		}
+		return;
+	}
 
 	if (!mounted)
 	{
@@ -682,21 +755,7 @@ static void revalidate_live_root(void)
 	if (!mounted)
 		return;
 	/* ext4 can come back read-only after a device reset. */
-	{
-		static const char *const helpers[] = {
-			"/bin/mount", "/sbin/mount", "/usr/bin/mount"
-		};
-		size_t i;
-
-		for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
-		{
-			char *argv[] = { (char *)helpers[i], "-o", "remount,rw",
-					 (char *)root, 0 };
-
-			if (run_mount(argv) == 0)
-				break;
-		}
-	}
+	(void)remount_root_rw(root);
 	/* Drop cached handles and the cached root: C: is live again. */
 	rd_cache_close_all();
 	s_init = 0;
@@ -718,6 +777,8 @@ static void storage_check_resume(void)
 	{
 		s_suspend_tracked = 1;
 		s_suspend_offset_ms = off;
+		/* Cache --read-write at boot, while the volume is mounted. */
+		(void)live_overlay_backed();
 		return;
 	}
 	/* BOOTTIME - MONOTONIC only grows while the machine is suspended. */
@@ -745,14 +806,16 @@ int mmb_storage_persistence_lost(void)
 {
 #if defined(__linux__)
 	const char *root;
+	int mounted;
 
 	if (!linux_is_live_boot())
 		return 0;
 	storage_check_resume();
+	if (s_overlay_broken)
+		return 1;
 	root = getenv("MMB_DRIVE_ROOT");
-	if (!root || !root[0])
-		return is_mountpoint("/media/mmcore") ? 0 : 1;
-	return is_mountpoint(root) ? 0 : 1;
+	mounted = is_mountpoint((root && root[0]) ? root : "/media/mmcore");
+	return mounted ? 0 : 1;
 #else
 	return 0;
 #endif

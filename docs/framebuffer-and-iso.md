@@ -91,11 +91,18 @@ opening the lid resumes through the kernel with no extra handler.
 
 A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
 gone (or read-only) after wake. mmcore detects a resume from the growing gap
-between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume,
-remounts it by label (`MMCORE`, or the basename of `MMB_DRIVE_ROOT`) and asks
-for a read-write remount. C: is re-pointed at the restored mount. If it cannot
-be recovered, the next settings/bookmark save prints `!settings ... storage
-unavailable` (or `session-only`) instead of silently writing to the RAM overlay.
+between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume.
+With plain `MMCORE` persistence it remounts the volume by label (`MMCORE`, or
+the basename of `MMB_DRIVE_ROOT`), asks for a read-write remount and re-points
+C: at it. With `--read-write` the same volume is also the root overlay's upper:
+a normal resume keeps the mount, so mmcore only lifts a read-only remount in
+place and standby continues to work. If the volume actually disappeared (or the
+root overlay is already unwritable), remounting it cannot repair the overlay's
+stale upper, so mmcore deliberately does not create a second mount there and
+prints `!MMCORE reset after suspend: reboot to recover storage`. If C: cannot
+be recovered either way, the next settings/bookmark save prints
+`!settings ... storage unavailable` (or `session-only`) instead of silently
+writing to the RAM overlay.
 
 At the MMBasic prompt, `SHUTDOWN` performs the same style of power-off on the
 framebuffer image (and on a Raspberry Pi). The native Linux/macOS/Windows desktop
