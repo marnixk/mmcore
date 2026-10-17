@@ -980,7 +980,7 @@ int mmb_console_ansi_code(unsigned rgb, int fg)
 
 void mmb_console_apply_colour(void)
 {
-	char seq[32];
+	char seq[40];
 	int n = 0;
 
 	if (!G.plat || !G.plat->write_screen)
@@ -998,7 +998,28 @@ void mmb_console_apply_colour(void)
 	seq[n++] = 'm';
 	seq[n++] = '\x1b';
 	seq[n++] = '[';
-	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
+	if (G.plat->ansi_truecolour)
+	{
+		/* Paint the cell background with the exact colour CLS used, not the
+		 * nearest of 16 ANSI colours. Quantise the same way as the graphics
+		 * fill so MODE x,8/RGB backgrounds match pixel for pixel (#1234). */
+		int r, g, b;
+		mmb_rgb_unpack(mmb_quantize(G.gfx.bg), &r, &g, &b);
+		seq[n++] = '4';
+		seq[n++] = '8';
+		seq[n++] = ';';
+		seq[n++] = '2';
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, r);
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, g);
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, b);
+	}
+	else
+	{
+		ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
+	}
 	seq[n++] = 'm';
 	G.plat->write_screen(seq, (unsigned)n);
 }

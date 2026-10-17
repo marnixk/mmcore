@@ -63,6 +63,11 @@ void mmb_dirent_offer(mmb_dirent *heap, int *n, int max, const mmb_dirent *e);
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);
+	/* Non-zero when the screen ANSI renderer understands 24-bit background
+	 * SGR (`ESC[48;2;r;g;bm`). The bare-metal Circle terminal is patched
+	 * for this; native consoles render text from the same palette as CLS
+	 * and need no true-colour escape. */
+	int ansi_truecolour;
 	void (*set_pixel)(int x, int y, unsigned rgb888);
 	/* Draw a pixel that must survive console text flushes (boot-splash
 	 * logo). A bare-metal console keeps its own pixel buffer and repaints

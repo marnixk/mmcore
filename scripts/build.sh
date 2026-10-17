@@ -97,6 +97,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-console-state.patch"
 fi
 
+if grep -q 'mmbasic-ansi-truecolour' "${CIRCLE_DIR}/lib/terminal.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle ANSI 24-bit background patch (#1234)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-ansi-truecolour.patch"
+fi
+
 if grep -q 'mmbasic-device-dedupe' "${CIRCLE_DIR}/lib/device.cpp" 2>/dev/null; then
 	:
 else

@@ -1700,6 +1700,7 @@ void mmb_platform_bind(CKernel *k)
 		fb_flip_reset(k->Screen().GetFrameBuffer());
 	plat.write_serial = plat_write_serial;
 	plat.write_screen = plat_write_screen;
+	plat.ansi_truecolour = 1; /* Circle terminal patch: ESC[48;2;r;g;bm */
 	plat.set_pixel = plat_set_pixel;
 	plat.console_pixel = plat_console_pixel;
 	plat.get_pixel = plat_get_pixel;
