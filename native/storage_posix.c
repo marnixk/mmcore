@@ -27,6 +27,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <time.h>
+#include <sys/wait.h>
+#endif
+
 #define DRIVE_LO 'C'
 #define DRIVE_HI 'H'
 #define DRIVE_N (DRIVE_HI - DRIVE_LO + 1)
@@ -54,6 +60,7 @@ static int drive_of(int letter);
 static void drive_dir_raw(int letter, char *out, int outsz);
 static void rd_cache_close(int letter);
 static void rd_cache_close_path(int letter, const char *full);
+static void storage_check_resume(void);
 
 int storage_posix_mount(int letter, const char *path)
 {
@@ -287,6 +294,7 @@ int mmb_fat_ready(int letter)
 {
 	char db[P_BUF];
 
+	storage_check_resume();
 	ensure_root();
 	if (!drive_of(letter) || s_ejected[letter - 'A'])
 		return 0;
@@ -536,6 +544,220 @@ static void rd_cache_close_all(void)
 		rd_cache_close(letter);
 }
 
+/* ---- live-ISO persistence guard --------------------------------------- *
+ * On the live ISO the C: home lives on the MMCORE volume mounted at
+ * MMB_DRIVE_ROOT. Suspend-to-RAM can reset the USB/SD controller, after which
+ * the mount may be gone or read-only; mmcore keeps running from the squashfs
+ * and would silently write configuration to the RAM overlay. Detect a resume
+ * (the gap between CLOCK_BOOTTIME and CLOCK_MONOTONIC grows), try to remount
+ * the volume, and report whether C: is currently volatile. */
+#if defined(__linux__)
+static long long s_suspend_offset_ms;
+static int s_suspend_tracked;
+static int s_live_boot = -1;
+
+static int linux_is_live_boot(void)
+{
+	char buf[512];
+	FILE *f;
+	size_t n;
+
+	if (s_live_boot >= 0)
+		return s_live_boot;
+	s_live_boot = 0;
+	f = fopen("/proc/cmdline", "rb");
+	if (!f)
+		return 0;
+	n = fread(buf, 1, sizeof(buf) - 1, f);
+	fclose(f);
+	buf[n] = 0;
+	if (strstr(buf, "mmcore.live=1"))
+		s_live_boot = 1;
+	return s_live_boot;
+}
+
+/* A mount point has a different device id from its parent directory. */
+static int is_mountpoint(const char *path)
+{
+	char parent[P_BUF];
+	struct stat a, b;
+	size_t n;
+
+	if (!path || stat(path, &a) != 0 || !S_ISDIR(a.st_mode))
+		return 0;
+	snprintf(parent, sizeof parent, "%s", path);
+	n = strlen(parent);
+	while (n > 1 && parent[n - 1] == '/')
+		parent[--n] = 0;
+	while (n > 1 && parent[n - 1] != '/')
+		n--;
+	if (n > 1)
+		parent[n - 1] = 0;
+	else
+		strcpy(parent, "/");
+	if (stat(parent, &b) != 0)
+		return 0;
+	return a.st_dev != b.st_dev;
+}
+
+/* Run a mount helper without letting its diagnostics paint over the UI. */
+static int run_mount(char *const argv[])
+{
+	pid_t pid;
+	int st;
+
+	pid = fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0)
+	{
+		int devnull = open("/dev/null", O_WRONLY);
+
+		if (devnull >= 0)
+		{
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			if (devnull > STDERR_FILENO)
+				close(devnull);
+		}
+		execv(argv[0], argv);
+		_exit(127);
+	}
+	if (waitpid(pid, &st, 0) != pid)
+		return -1;
+	return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
+}
+
+static void mount_label_from_root(const char *root, char *label, size_t cap)
+{
+	const char *base = strrchr(root, '/');
+	size_t i;
+
+	base = (base && base[1]) ? base + 1 : root;
+	snprintf(label, cap, "%s", base);
+	for (i = 0; label[i]; i++)
+		if (label[i] >= 'a' && label[i] <= 'z')
+			label[i] = (char)(label[i] - 'a' + 'A');
+}
+
+static int try_mount_root(const char *root)
+{
+	static const char *const helpers[] = {
+		"/bin/mount", "/sbin/mount", "/usr/bin/mount"
+	};
+	char label[64];
+	size_t i;
+
+	mount_label_from_root(root, label, sizeof label);
+	for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
+	{
+		char *argv[] = { (char *)helpers[i], "-o", "rw", "-L", label,
+				 (char *)root, 0 };
+
+		if (run_mount(argv) == 0 && is_mountpoint(root))
+			return 1;
+	}
+	return 0;
+}
+
+static void revalidate_live_root(void)
+{
+	const char *env = getenv("MMB_DRIVE_ROOT");
+	char fallback[] = "/media/mmcore";
+	const char *root = (env && env[0]) ? env : fallback;
+	int mounted = is_mountpoint(root);
+
+	if (!mounted)
+	{
+		mkdir(root, 0777);
+		mounted = try_mount_root(root);
+		if (mounted && !(env && env[0]))
+		{
+			/* The volume arrived after startup: point C: at it from
+			 * now on instead of the RAM-overlay home. */
+			setenv("MMB_DRIVE_ROOT", root, 1);
+			s_init = 0;
+		}
+	}
+	if (!mounted)
+		return;
+	/* ext4 can come back read-only after a device reset. */
+	{
+		static const char *const helpers[] = {
+			"/bin/mount", "/sbin/mount", "/usr/bin/mount"
+		};
+		size_t i;
+
+		for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
+		{
+			char *argv[] = { (char *)helpers[i], "-o", "remount,rw",
+					 (char *)root, 0 };
+
+			if (run_mount(argv) == 0)
+				break;
+		}
+	}
+	/* Drop cached handles and the cached root: C: is live again. */
+	rd_cache_close_all();
+	s_init = 0;
+}
+
+static void storage_check_resume(void)
+{
+	struct timespec bt, mt;
+	long long off;
+
+	if (!linux_is_live_boot())
+		return;
+	if (clock_gettime(CLOCK_BOOTTIME, &bt) != 0 ||
+	    clock_gettime(CLOCK_MONOTONIC, &mt) != 0)
+		return;
+	off = (long long)bt.tv_sec * 1000 + bt.tv_nsec / 1000000
+	    - ((long long)mt.tv_sec * 1000 + mt.tv_nsec / 1000000);
+	if (!s_suspend_tracked)
+	{
+		s_suspend_tracked = 1;
+		s_suspend_offset_ms = off;
+		return;
+	}
+	/* BOOTTIME - MONOTONIC only grows while the machine is suspended. */
+	if (off - s_suspend_offset_ms >= 2000)
+	{
+		s_suspend_offset_ms = off;
+		revalidate_live_root();
+	}
+	else if (off < s_suspend_offset_ms)
+		s_suspend_offset_ms = off; /* clock source reset/oddity */
+}
+#else
+static void storage_check_resume(void) { }
+#endif
+
+void mmb_storage_revalidate(void)
+{
+#if defined(__linux__)
+	if (linux_is_live_boot())
+		revalidate_live_root();
+#endif
+}
+
+int mmb_storage_persistence_lost(void)
+{
+#if defined(__linux__)
+	const char *root;
+
+	if (!linux_is_live_boot())
+		return 0;
+	storage_check_resume();
+	root = getenv("MMB_DRIVE_ROOT");
+	if (!root || !root[0])
+		return is_mountpoint("/media/mmcore") ? 0 : 1;
+	return is_mountpoint(root) ? 0 : 1;
+#else
+	return 0;
+#endif
+}
+
 /* Close the cached handle only when it is the file being modified, so a write
  * to another file on the same volume (e.g. COPY's destination) does not force
  * the source handle to be reopened for every chunk (mirrors #984). */
@@ -550,8 +772,8 @@ static void rd_cache_close_path(int letter, const char *full)
 		rd_cache_close(letter);
 }
 
-int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
-		  int append)
+static int fat_write_impl(int letter, const char *path, const void *data,
+			  unsigned n, int append)
 {
 	char full[P_BUF];
 	FILE *f;
@@ -573,6 +795,24 @@ int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
 	}
 	fclose(f);
 	return 0;
+}
+
+int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
+		  int append)
+{
+	int rc;
+
+	storage_check_resume();
+	rc = fat_write_impl(letter, path, data, n, append);
+	if (rc != 0 && letter == 'C')
+	{
+		/* A reset persistence mount is the common cause of a write
+		 * failure on the live ISO; try to recover once before giving
+		 * up (the caller surfaces the failure). */
+		mmb_storage_revalidate();
+		rc = fat_write_impl(letter, path, data, n, append);
+	}
+	return rc;
 }
 
 void *mmb_fat_wopen(int letter, const char *path, int append)

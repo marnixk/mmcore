@@ -373,10 +373,15 @@ static void apply_netdrive(const char *k, const char *v)
 		G.opt.netdrv_enabled = parse_int(v) ? 1 : 0;
 }
 
+/* Warn once per failure streak: .mmbasic.ini could be read-only/full, or on
+ * the live ISO the MMCORE mount may be gone after a resume. */
+static int s_save_warned;
+
 void mmb_settings_save(void)
 {
 	char buf[SETTINGS_MAX];
 	int i;
+
 	choose_path();
 	buf[0] = 0;
 	append(buf, sizeof(buf), "[core]\n");
@@ -484,7 +489,24 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "enabled", G.opt.ntp_enabled);
 	kv_str(buf, sizeof(buf), "server", G.opt.ntp_server);
 	kv_str(buf, sizeof(buf), "timezone", G.opt.timezone);
-	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
+	if (mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0) != 0)
+	{
+		if (!s_save_warned)
+		{
+			s_save_warned = 1;
+			mmb_storage_notice("!settings not saved: storage unavailable");
+		}
+	}
+	else if (mmb_storage_persistence_lost())
+	{
+		if (!s_save_warned)
+		{
+			s_save_warned = 1;
+			mmb_storage_notice("!settings are session-only: MMCORE not mounted");
+		}
+	}
+	else
+		s_save_warned = 0;
 }
 
 /* Clamp and apply the persisted brightness/volume after the INI has been

@@ -46,6 +46,53 @@ def test_shutdown_unsupported_on_stdio_host(mmb_linux):
     assert "?SHUTDOWN" in out.upper()
 
 
+def test_settings_write_failure_is_reported(mmb_linux, tmp_path):
+    """A save that cannot reach storage must say so, not fail silently.
+
+    Reproduces the live-ISO shape (C: present but not writable, e.g. after the
+    MMCORE mount was lost) and checks the notice plus the absent file.
+    """
+    if os.name != "posix":
+        pytest.skip("needs POSIX mode bits")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root can write to a 0555 directory")
+
+    drive = tmp_path / "drive"
+    cdir = drive / "C"
+    cdir.mkdir(parents=True)
+    os.chmod(cdir, 0o555)
+    try:
+        proc = subprocess.run(
+            [mmb_linux],
+            input="OPTION TAB 8\n",
+            text=True,
+            capture_output=True,
+            timeout=120,
+            env=dict(os.environ, MMB_DRIVE_ROOT=str(drive)),
+        )
+    finally:
+        os.chmod(cdir, 0o755)
+    out = proc.stdout + proc.stderr
+    assert "settings not saved" in out, out
+    assert not (cdir / ".mmbasic.ini").exists()
+
+
+def test_settings_save_writes_when_storage_is_writable(mmb_linux, tmp_path):
+    drive = tmp_path / "drive"
+    (drive / "C").mkdir(parents=True)
+    proc = subprocess.run(
+        [mmb_linux],
+        input="OPTION TAB 8\n",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=dict(os.environ, MMB_DRIVE_ROOT=str(drive)),
+    )
+    out = proc.stdout + proc.stderr
+    assert "settings not saved" not in out, out
+    assert (drive / "C" / ".mmbasic.ini").is_file()
+
+
 def test_native_version_header_regenerates_on_make(tmp_path):
     """#747: the native Makefile must FORCE mmb_version.h to regenerate.
 

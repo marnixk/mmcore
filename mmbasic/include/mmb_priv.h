@@ -1134,6 +1134,15 @@ int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms);
 
 void mmb_storage_unmount(void);
 
+/* Persistence health for the C: home. On the live Linux ISO, C: only
+ * survives a reboot when MMB_DRIVE_ROOT is a mounted MMCORE volume; after a
+ * standby resume the device may reset and drop the mount, leaving writes on
+ * the RAM overlay. revalidate() re-checks/remounts (Linux live only) and
+ * persistence_lost() reports whether C: is currently volatile. Non-ISO
+ * platforms return 0 (nothing to guard). */
+void mmb_storage_revalidate(void);
+int mmb_storage_persistence_lost(void);
+
 /* Hotplug/idle notices from the storage layer (USB mount/unmount, eject).
  * Printed at the prompt unless a full-screen app claims them (FILES hint). */
 void mmb_storage_notice(const char *msg);

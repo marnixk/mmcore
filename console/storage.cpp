@@ -347,6 +347,17 @@ void mmb_storage_unmount (void)
 	s_notify_ready = 0;
 }
 
+/* The live-ISO persistence guard only applies to the Linux framebuffer build;
+ * a Circle image never suspends and C: is the SD card (or absent). */
+extern "C" void mmb_storage_revalidate (void)
+{
+}
+
+extern "C" int mmb_storage_persistence_lost (void)
+{
+	return 0;
+}
+
 int mmb_fat_ready(int letter)
 {
 	int i = slot_of(letter);
