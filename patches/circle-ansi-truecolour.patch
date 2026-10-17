@@ -1,0 +1,113 @@
+--- a/include/circle/terminal.h
++++ b/include/circle/terminal.h
+@@ -217,7 +217,10 @@
+ 		StateSemicolon,
+ 		StateNumber2,
+ 		StateNumber3,
+-		StateAutoPage
++		StateAutoPage,
++		StateRgbRed,
++		StateRgbGreen,
++		StateRgbBlue
+ 	};
+ 
+ private:
+@@ -253,6 +256,7 @@
+ 	boolean		     m_bInsertOn;
+ 	unsigned	     m_nParam1;
+ 	unsigned	     m_nParam2;
++	unsigned	     m_nParam3;
+ 	boolean		     m_bAutoPage;
+ 	boolean		     m_bDelayedUpdate;
+ 	unsigned	     m_nLastUpdateTicks;
+--- a/lib/terminal.cpp
++++ b/lib/terminal.cpp
+@@ -549,6 +549,22 @@
+ 			m_State = StateStart;
+ 			break;
+ 
++		case ';':
++			/* mmbasic-ansi-truecolour: Select Graphic Rendition
++			 * 48;2;R;G;B (24-bit background). */
++			if (m_nParam1 == 48 && m_nParam2 == 2)
++			{
++				m_nParam1 = 0;
++				m_nParam2 = 0;
++				m_nParam3 = 0;
++				m_State = StateRgbRed;
++			}
++			else
++			{
++				m_State = StateStart;
++			}
++			break;
++
+ 		default:
+ 			if ('0' <= chChar && chChar <= '9')
+ 			{
+@@ -599,6 +615,65 @@
+ 		}
+ 		break;
+ 
++	case StateRgbRed:
++		if ('0' <= chChar && chChar <= '9')
++		{
++			m_nParam1 = m_nParam1 * 10 + (chChar - '0');
++			if (m_nParam1 > 255)
++			{
++				m_State = StateStart;
++			}
++		}
++		else if (chChar == ';')
++		{
++			m_State = StateRgbGreen;
++		}
++		else
++		{
++			m_State = StateStart;
++		}
++		break;
++
++	case StateRgbGreen:
++		if ('0' <= chChar && chChar <= '9')
++		{
++			m_nParam2 = m_nParam2 * 10 + (chChar - '0');
++			if (m_nParam2 > 255)
++			{
++				m_State = StateStart;
++			}
++		}
++		else if (chChar == ';')
++		{
++			m_State = StateRgbBlue;
++		}
++		else
++		{
++			m_State = StateStart;
++		}
++		break;
++
++	case StateRgbBlue:
++		if ('0' <= chChar && chChar <= '9')
++		{
++			m_nParam3 = m_nParam3 * 10 + (chChar - '0');
++			if (m_nParam3 > 255)
++			{
++				m_State = StateStart;
++			}
++		}
++		else if (chChar == 'm')
++		{
++			m_BackgroundColor = m_pDisplay->GetColor (
++				DISPLAY_COLOR (m_nParam1, m_nParam2, m_nParam3));
++			m_State = StateStart;
++		}
++		else
++		{
++			m_State = StateStart;
++		}
++		break;
++
+ 	case StateAutoPage:
+ 		switch (chChar)
+ 		{

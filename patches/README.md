@@ -114,6 +114,18 @@ Virtual consoles need to snapshot and restore one text console at a time:
 - `CScreenDevice::GetTerminal()` exposes the private terminal so the console
   platform backend can drive those calls.
 
+## `circle-ansi-truecolour.patch`
+
+Applied after `circle-console-state.patch` (marker `mmbasic-ansi-truecolour` in
+`lib/terminal.cpp`). Issue #1234: PRINT text backgrounds must be the exact
+colour of the CLS fill, including arbitrary RGB and the RGB332 quantisation of
+`MODE ...,8`. Circle's terminal only understood the 16 ANSI SGR colours, so the
+nearest one was painted behind every cell.
+
+- `CTerminalDevice` parses `ESC[48;2;R;G;Bm` (24-bit background SGR) and stores
+  the logical colour through `CDisplay::GetColor()`, the same RGB565/ARGB8888
+  conversion a direct framebuffer fill uses.
+
 ## `circle-device-dedupe.patch`
 
 Issue #985 (storage latency). `CDevice::RegisterRemovedHandler()` allocated
