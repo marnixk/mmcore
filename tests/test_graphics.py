@@ -243,6 +243,31 @@ def test_cls_repeats_rgb_dword(fresh_console):
     assert int(c.send_line("PRINT PIXEL(0,0)").split()[0]) == 0
 
 
+def test_print_background_matches_cls_fill(fresh_console):
+    """#1233: PRINT's text background must match the CLS fill for every colour.
+
+    Direct pixels are standard RGB565 on Circle, but text is painted by the
+    terminal's ANSI palette. Packing the CLS fill as 5-5-5 (Circle's COLOR16)
+    made index 8 come out a different shade from the same text background.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    for bg in range(16):
+        assert c.send_line(f"COLOR 0,{bg}") == ""
+        assert c.send_line("CLS") == ""
+        assert c.send_line(f"COLOR 15,{bg}") == ""
+        assert c.send_line("LOCATE 1,6") == ""
+        c.send_line('PRINT "MMMM"')
+        cls_px, text_px = c.screen_pixels([(200, 300), (0, 80)])
+        assert cls_px == text_px, (bg, cls_px, text_px)
+
+    assert c.send_line("COLOR 0,8") == ""
+    assert c.send_line("CLS") == ""
+    indirect = c.screen_pixel(200, 300)
+    assert c.send_line("CLS 8") == ""
+    assert c.screen_pixel(200, 300) == indirect
+
+
 def test_scene_matches_golden(fresh_console):
     golden = os.path.join(GOLDEN_DIR, "scene.png")
     assert os.path.isfile(golden), "run scripts/gen_golden.py to create the golden"

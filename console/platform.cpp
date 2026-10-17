@@ -142,6 +142,10 @@ static int present_wants_flip(CScreenDevice *sc, int x, int y, int w, int h)
 	return 1;
 }
 
+/* Circle's COLOR16 macro leaves bit 5 unused (5-5-5 with green at bit 6), but
+ * the framebuffer and the terminal's ANSI palette are standard 5-6-5. Packing
+ * with COLOR16 here made a direct fill (CLS) a different shade from the text
+ * background the terminal paints for the same colour (#1233). */
 static unsigned rgb_to_raw(unsigned rgb)
 {
 	unsigned r = (rgb >> 16) & 255;
@@ -150,7 +154,7 @@ static unsigned rgb_to_raw(unsigned rgb)
 #if DEPTH == 32
 	return COLOR32(r, g, b, 255);
 #elif DEPTH == 16
-	return COLOR16(r >> 3, g >> 3, b >> 3);
+	return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 #else
 	return (unsigned)((r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6));
 #endif
@@ -273,10 +277,10 @@ static unsigned plat_get_pixel(int x, int y)
 #elif DEPTH == 16
 	{
 		unsigned r = ((unsigned)raw >> 11) & 0x1F;
-		unsigned g = ((unsigned)raw >> 6) & 0x1F;
+		unsigned g = ((unsigned)raw >> 5) & 0x3F;
 		unsigned b = (unsigned)raw & 0x1F;
 		r = r * 255 / 31;
-		g = g * 255 / 31;
+		g = g * 255 / 63;
 		b = b * 255 / 31;
 		return (r << 16) | (g << 8) | b;
 	}
@@ -889,10 +893,10 @@ static unsigned plat_native_to_rgb(unsigned native)
 #elif DEPTH == 16
 	{
 		unsigned r = (native >> 11) & 0x1F;
-		unsigned g = (native >> 6) & 0x1F;
+		unsigned g = (native >> 5) & 0x3F;
 		unsigned b = native & 0x1F;
 		r = r * 255 / 31;
-		g = g * 255 / 31;
+		g = g * 255 / 63;
 		b = b * 255 / 31;
 		return (r << 16) | (g << 8) | b;
 	}
