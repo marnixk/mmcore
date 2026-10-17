@@ -835,6 +835,23 @@ static void rd_cache_close_path(int letter, const char *full)
 		rd_cache_close(letter);
 }
 
+/* The cached stream can outlive the file or its mount: after a suspend/resume
+ * the volume may be remounted underneath it (or the file replaced), leaving
+ * the FILE* on an old inode that reads back EOF. Only reuse a handle whose
+ * inode still matches the path. */
+static int rd_cache_matches(int letter, const char *full)
+{
+	int idx = letter - 'A';
+	struct stat path_st, fd_st;
+
+	if (!s_rd[idx])
+		return 0;
+	if (stat(full, &path_st) != 0 ||
+	    fstat(fileno(s_rd[idx]), &fd_st) != 0)
+		return 0;
+	return path_st.st_dev == fd_st.st_dev && path_st.st_ino == fd_st.st_ino;
+}
+
 static int fat_write_impl(int letter, const char *path, const void *data,
 			  unsigned n, int append)
 {
@@ -921,6 +938,9 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	int idx;
 	FILE *f;
 
+	/* A read can be the first storage access after a standby resume; let the
+	 * guard revalidate/remount before resolving the path. */
+	storage_check_resume();
 	ensure_root();
 	if (got)
 		*got = 0;
@@ -930,7 +950,8 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	/* #1151: reuse the open handle for the same file. The cached stream is
 	 * already positioned at s_rd_pos, so an in-order chunk needs no seek at
 	 * all; only a backward move (or any move off the cached position) does. */
-	if (s_rd[idx] && strcmp(s_rd_path[idx], full) == 0)
+	if (s_rd[idx] && strcmp(s_rd_path[idx], full) == 0 &&
+	    rd_cache_matches(letter, full))
 	{
 		f = s_rd[idx];
 		if (pos != s_rd_pos[idx] &&
@@ -964,6 +985,29 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	{
 		size_t r = fread(data, 1, n, f);
 
+		if (r == 0)
+		{
+			struct stat st;
+
+			/* A stream invalidated by a remount can report EOF while
+			 * the file still has bytes; reopen once and retry. */
+			if (stat(full, &st) == 0 && st.st_size > (off_t)pos)
+			{
+				rd_cache_close(letter);
+				f = fopen(full, "rb");
+				if (!f)
+					return -1;
+				s_rd[idx] = f;
+				snprintf(s_rd_path[idx], sizeof s_rd_path[idx],
+					 "%s", full);
+				if (pos && fseek(f, (long)pos, SEEK_SET) != 0)
+				{
+					rd_cache_close(letter);
+					return -1;
+				}
+				r = fread(data, 1, n, f);
+			}
+		}
 		if (got)
 			*got = (unsigned)r;
 		s_rd_pos[idx] = pos + (unsigned)r;
