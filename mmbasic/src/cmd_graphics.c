@@ -115,7 +115,7 @@ void mmb_cmd_cls(void)
 	int n = parse_args(a, 2);
 	unsigned c = G.gfx.bg;
 	if (n >= 1)
-		c = (unsigned)mmb_as_int(a[0]);
+		c = mmb_colour_from_int(mmb_as_int(a[0]));
 	mmb_gfx_cls(c);
 	G.home_prompt = 1;
 	G.print_x = 0;
@@ -503,7 +503,7 @@ void mmb_cmd_mode(void)
 		bits = (int)mmb_as_int(a[1]);
 	mmb_gfx_set_mode(mode, bits);
 	if (n >= 3)
-		mmb_gfx_cls((unsigned)mmb_as_int(a[2]));
+		mmb_gfx_cls(mmb_colour_from_int(mmb_as_int(a[2])));
 	G.home_prompt = 1;
 }
 
