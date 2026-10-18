@@ -30,6 +30,7 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-fb-unaligned.patch"),
     os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
     os.path.join(REPO, "patches", "circle-console-state.patch"),
+    os.path.join(REPO, "patches", "circle-ansi-truecolour.patch"),
     os.path.join(REPO, "patches", "circle-device-dedupe.patch"),
     os.path.join(REPO, "patches", "circle-usb-timeout.patch"),
     os.path.join(REPO, "patches", "circle-fatfs-fastseek.patch"),
@@ -80,10 +81,11 @@ def test_build_script_applies_patches_in_order():
     ua = text.index("circle-fb-unaligned.patch")
     e = text.index("circle-usb-cdc-rx.patch")
     f = text.index("circle-console-state.patch")
+    ft = text.index("circle-ansi-truecolour.patch")
     g = text.index("circle-device-dedupe.patch")
     h = text.index("circle-usb-timeout.patch")
     i = text.index("circle-fatfs-fastseek.patch")
-    assert a < b < c < d < db < ua < e < f < g < h < i
+    assert a < b < c < d < db < ua < e < f < ft < g < h < i
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
@@ -92,6 +94,7 @@ def test_build_script_applies_patches_in_order():
     assert "mmbasic-fb-unaligned" in text
     assert "mmbasic-usb-cdc-rx" in text
     assert "mmbasic-console-state" in text
+    assert "mmbasic-ansi-truecolour" in text
     assert "mmbasic-device-dedupe" in text
     assert "mmbasic-dwhci-timeout" in text
     assert "mmbasic-fastseek" in text
@@ -169,6 +172,20 @@ def test_console_state_patch_applies(patched_tree):
     assert "memcpy (m_pBuffer8, pBuffer, m_nSize)" in term
     assert "mmbasic-console-state" in scr_h
     assert "GetTerminal" in scr_h
+
+
+def test_ansi_truecolour_patch_applies(patched_tree):
+    term_h = open(
+        os.path.join(patched_tree, "include/circle/terminal.h"), encoding="utf-8"
+    ).read()
+    term = open(os.path.join(patched_tree, "lib/terminal.cpp"), encoding="utf-8").read()
+    assert "StateRgbRed" in term_h
+    assert "StateRgbRed" in term
+    assert "mmbasic-ansi-truecolour" in term
+    body = term[term.index("case StateRgbBlue:") :]
+    body = body[: body.index("case StateAutoPage:")]
+    assert "DISPLAY_COLOR (m_nParam1, m_nParam2, m_nParam3)" in body
+    assert "m_BackgroundColor = m_pDisplay->GetColor" in body
 
 
 def test_device_dedupe_patch_applies(patched_tree):

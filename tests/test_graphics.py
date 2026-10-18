@@ -268,6 +268,42 @@ def test_print_background_matches_cls_fill(fresh_console):
     assert c.screen_pixel(200, 300) == indirect
 
 
+def test_print_background_matches_cls_rgb_and_8bit(fresh_console):
+    """#1234: arbitrary RGB and MODE ...,8 text backgrounds match the CLS fill.
+
+    The text path must use the same effective colour as the graphics fill:
+    24-bit ANSI background on Circle, and the same RGB332 quantisation in
+    MODE ...,8, so neither quantisation can disagree with the terminal.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("COLOR 0,RGB(10,20,30)") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("COLOR 15,RGB(10,20,30)") == ""
+    assert c.send_line("LOCATE 1,6") == ""
+    c.send_line('PRINT "MMMM"')
+    cls_px, text_px = c.screen_pixels([(200, 300), (0, 80)])
+    assert cls_px == text_px, ("rgb", cls_px, text_px)
+    # The graphics page agrees with the HDMI CLS pixel. QEMU expands RGB565
+    # for its screenshot by shifting, while PIXEL() rounds via *255/31, so
+    # allow the one-step expansion difference.
+    page_px = _rgb888(_px(c, 200, 300))
+    assert all(abs(a - b) <= 3 for a, b in zip(page_px, cls_px)), (
+        page_px, cls_px)
+
+    assert c.send_line("MODE 8,8") == ""
+    assert c.send_line("COLOR 0,8") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("COLOR 15,8") == ""
+    assert c.send_line("LOCATE 1,6") == ""
+    c.send_line('PRINT "MMMM"')
+    cls_px, text_px = c.screen_pixels([(200, 300), (0, 80)])
+    assert cls_px == text_px, ("8-bit", cls_px, text_px)
+    page_px = _rgb888(_px(c, 200, 300))
+    assert all(abs(a - b) <= 3 for a, b in zip(page_px, cls_px)), (
+        page_px, cls_px)
+
+
 def test_scene_matches_golden(fresh_console):
     golden = os.path.join(GOLDEN_DIR, "scene.png")
     assert os.path.isfile(golden), "run scripts/gen_golden.py to create the golden"
