@@ -1320,15 +1320,22 @@ static void pane_scroll_up(void)
 
 static void pane_newline(void)
 {
-	if (T.cur_row >= T.scroll_bot)
+	/* #1227: DECSTBM only scrolls when the cursor sits on the bottom
+	 * margin.  Below the region (or outside it in general) a line feed is
+	 * ordinary cursor movement; at the pane bottom it clamps, with no
+	 * scroll, matching DEC/xterm. */
+	if (T.cur_row == T.scroll_bot)
 	{
 		pane_scroll_up();
 		term_log_mark();
 		return;
 	}
-	T.cur_row++;
-	T.cur_col = 0;
-	mark_dirty_row(T.cur_row);
+	if (T.cur_row < T.pane_rows - 1)
+	{
+		T.cur_row++;
+		T.cur_col = 0;
+		mark_dirty_row(T.cur_row);
+	}
 	term_log_mark();
 }
 
