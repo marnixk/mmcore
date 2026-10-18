@@ -21,6 +21,11 @@
 
 static int fails;
 
+/* net_linux.c asks mmb_net_kind() what OPTION configured; production sets this
+ * up in mmb_init(). The discovery tests only need the zeroed option fields. */
+static mmb s_test_mmb;
+mmb *g_cur = &s_test_mmb;
+
 #define CHECK(cond, msg)                                                       \
 	do                                                                     \
 	{                                                                      \
@@ -43,27 +48,81 @@ int main(int argc, char **argv)
 	int late_eth = (argc > 1 && strcmp(argv[1], "late_eth") == 0);
 	int kind_wifi = (argc > 1 && strcmp(argv[1], "kind_wifi") == 0);
 	int kind_eth = (argc > 1 && strcmp(argv[1], "kind_eth") == 0);
+	int kind_eth_option = (argc > 1 && strcmp(argv[1], "kind_eth_option") == 0);
+	int virtual_eth = (argc > 1 && strcmp(argv[1], "virtual_eth") == 0);
+	int lease_eth = (argc > 1 && strcmp(argv[1], "lease_eth") == 0);
 	int n;
 	char buf[256];
 
 	/* The discovery scenarios drive /sys/class/net through MMB_NET_SYSFS_NET;
 	 * the name pins would short-circuit that, so clear them. */
-	if (late_eth || kind_wifi || kind_eth)
+	if (late_eth || kind_wifi || kind_eth || kind_eth_option ||
+	    virtual_eth || lease_eth)
 	{
 		unsetenv("MMB_NET_WLAN_IFACE");
 		unsetenv("MMB_NET_ETH_IFACE");
+	}
+
+	if (virtual_eth)
+	{
+		const char *docker_ip = "172.17.0.1";
+
+		CHECK(mmb_eth_available() == 1, "a physical wired NIC is discovered");
+		CHECK(mmb_eth_status() == 0, "the physical NIC has no lease");
+		CHECK(mmb_eth_ip(buf, sizeof buf) == 0, "eth ip query succeeds");
+		CHECK(strcmp(buf, docker_ip) != 0,
+		      "a virtual interface with a lease is not latched");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
+
+	if (lease_eth)
+	{
+		CHECK(mmb_eth_available() == 1, "a wired NIC is discovered");
+		CHECK(mmb_eth_status() == 1, "the leased wired NIC reports up");
+		CHECK(mmb_eth_ip(buf, sizeof buf) == 0 &&
+		      strcmp(buf, "203.0.113.9") == 0,
+		      "discovery prefers the wired NIC that has a lease");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
+	}
+
+	if (kind_eth_option)
+	{
+		CHECK(mmb_wlan_available() == 1, "a wireless interface is present");
+		CHECK(mmb_eth_available() == 1, "a wired interface is present");
+		CHECK(mmb_net_kind() == MMB_NET_WIFI,
+		      "unconfigured discovery still reports the present Wi-Fi");
+		G.opt.ethernet_enabled = 1;
+		G.opt.wifi_enabled = 0;
+		CHECK(mmb_net_kind() == MMB_NET_ETH,
+		      "OPTION ETHERNET ON wins on a dual-interface host");
+		G.opt.ethernet_enabled = 0;
+		CHECK(mmb_net_kind() == MMB_NET_WIFI,
+		      "switching back to Wi-Fi is reflected again");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
 	}
 
 	if (late_eth)
 	{
 		const char *root = getenv("MMB_NET_SYSFS_NET");
 		char ethdir[256];
+		char devdir[256];
 
 		CHECK(mmb_eth_available() == 0, "an absent wired NIC is a miss");
 		CHECK(mmb_eth_status() == 0, "the miss is not cached");
 		CHECK(root != 0, "the sysfs root is set");
 		snprintf(ethdir, sizeof ethdir, "%s/eth0", root ? root : "");
+		snprintf(devdir, sizeof devdir, "%s/device", ethdir);
 		CHECK(mkdir(ethdir, 0755) == 0, "the late NIC directory exists");
+		CHECK(mkdir(devdir, 0755) == 0, "the late NIC looks physical");
 		CHECK(mmb_eth_available() == 1,
 		      "a wired NIC that appears later is discovered");
 		if (fails)

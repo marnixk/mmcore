@@ -38,6 +38,17 @@ static int path_exists(const char *path)
 	return stat(path, &st) == 0;
 }
 
+/* lstat() so a sysfs "device" symlink counts even when a test points it at a
+ * target that does not exist. */
+static int link_exists(const char *path)
+{
+	struct stat st;
+
+	return lstat(path, &st) == 0;
+}
+
+static int iface_ipv4(const char *iface, char *buf, size_t cap);
+
 /* Interface discovery reads sysfs. MMB_NET_SYSFS_NET overrides the directory
  * so tests can present a controlled set of interfaces (and add one later). */
 static const char *sysfs_net_dir(void)
@@ -55,28 +66,54 @@ static int is_wireless(const char *name)
 	return path_exists(path);
 }
 
-/* First interface matching `want_wireless` (1 wireless, 0 wired), or NULL. */
+/* Physical NICs have a "device" symlink under /sys/class/net/<name>. Bridges,
+ * docker0, veth*, virbr0 and tun/tap devices do not, so requiring it keeps
+ * discovery from latching a virtual interface. */
+static int is_physical(const char *name)
+{
+	char path[160];
+
+	snprintf(path, sizeof path, "%s/%s/device", sysfs_net_dir(), name);
+	return link_exists(path);
+}
+
+/* First physical interface matching `want_wireless` (1 wireless, 0 wired), or
+ * NULL. When several match, prefer one that already has an IPv4 lease so a
+ * wired NIC without one cannot shadow a connected NIC. */
 static const char *discover_iface(int want_wireless)
 {
 	static char name[IFNAME_MAX];
+	char fallback[IFNAME_MAX];
 	DIR *d = opendir(sysfs_net_dir());
 	struct dirent *e;
 
 	name[0] = 0;
+	fallback[0] = 0;
 	if (!d)
 		return 0;
 	while ((e = readdir(d)))
 	{
+		char ip[40];
+
 		if (e->d_name[0] == '.')
 			continue;
 		if (strcmp(e->d_name, "lo") == 0)
 			continue;
 		if (is_wireless(e->d_name) != want_wireless)
 			continue;
-		snprintf(name, sizeof name, "%s", e->d_name);
-		break;
+		if (!is_physical(e->d_name))
+			continue;
+		if (!fallback[0])
+			snprintf(fallback, sizeof fallback, "%s", e->d_name);
+		if (iface_ipv4(e->d_name, ip, sizeof ip))
+		{
+			snprintf(name, sizeof name, "%s", e->d_name);
+			break;
+		}
 	}
 	closedir(d);
+	if (!name[0] && fallback[0])
+		snprintf(name, sizeof name, "%s", fallback);
 	return name[0] ? name : 0;
 }
 
@@ -712,10 +749,16 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 
 int mmb_net_kind(void)
 {
-	/* Report the interface kind by presence, not by lease: a Wi-Fi-only
-	 * device that is still associating has a wireless interface but no
-	 * lease yet, and must not be reported as wired. This mirrors Circle's
-	 * s_net_kind, which reflects the opened interface. */
+	/* Native Linux always has both stacks present, so presence alone cannot
+	 * tell which one OPTION configured. Honour the saved Ethernet option
+	 * first: parse_ethernet() sets it before asking, so a dual-interface host
+	 * no longer refuses "OPTION ETHERNET ON" because a wireless interface
+	 * happens to exist. With no configured Ethernet, report by presence, not
+	 * by lease: a Wi-Fi-only device that is still associating has a wireless
+	 * interface but no lease yet, and must not be reported as wired (#1194).
+	 * This mirrors Circle's s_net_kind, which reflects the opened interface. */
+	if (G.opt.ethernet_enabled && mmb_eth_available())
+		return MMB_NET_ETH;
 	if (mmb_wlan_available())
 		return MMB_NET_WIFI;
 	if (mmb_eth_available())

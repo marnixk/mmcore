@@ -70,6 +70,29 @@ esac
 # No interface has a lease: iface_ipv4() must report "not connected".
 IP_NONE = "exit 1\n"
 
+# Minimal lease answers for the interface-selection scenarios (#1195).
+IP_VIRTUAL = """\
+iface="$5"
+case "$iface" in
+  docker0)
+    echo "3: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500"
+    echo "    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+
+IP_ETH1 = """\
+iface="$5"
+case "$iface" in
+  eth1)
+    echo "3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 203.0.113.9/24 brd 203.0.113.255 scope global eth1"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+
 IW_OK = """\
 cat <<'EOF'
 BSS aa:bb:cc:dd:ee:01(on wlan0)
@@ -287,13 +310,16 @@ def test_net_linux_net_available_ttl_cache(tmp_path):
     _run_avail(tmp_path, "avail_cache", 200)
 
 
-def _sysfs(tmp_path, name, wired=(), wireless=()):
+def _sysfs(tmp_path, name, wired=(), wireless=(), virtual=()):
     root = os.path.join(str(tmp_path), name)
     os.makedirs(root, exist_ok=True)
     for iface in list(wired) + list(wireless):
         os.makedirs(os.path.join(root, iface), exist_ok=True)
+        os.makedirs(os.path.join(root, iface, "device"), exist_ok=True)
     for iface in wireless:
         os.makedirs(os.path.join(root, iface, "wireless"), exist_ok=True)
+    for iface in virtual:
+        os.makedirs(os.path.join(root, iface), exist_ok=True)
     return root
 
 
@@ -350,6 +376,59 @@ def test_net_linux_kind_eth_without_wireless(tmp_path):
     cmd_dir = _discovery_dir(tmp_path, "fake_eth", IP_NONE)
     out = subprocess.run(
         [exe, "kind_eth"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_skips_virtual_interfaces(tmp_path):
+    """#1195: docker0/veth must not be discovered as the wired NIC."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(
+        tmp_path,
+        "sysfs_virtual",
+        wired=["eth0"],
+        virtual=["docker0", "veth1234"],
+    )
+    cmd_dir = _discovery_dir(tmp_path, "fake_virtual", IP_VIRTUAL)
+    out = subprocess.run(
+        [exe, "virtual_eth"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_prefers_wired_nic_with_lease(tmp_path):
+    """#1195: when several wired NICs exist, pick the one with a lease."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_lease", wired=["eth0", "eth1"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_lease", IP_ETH1)
+    out = subprocess.run(
+        [exe, "lease_eth"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_kind_honours_ethernet_option(tmp_path):
+    """#1196: OPTION ETHERNET ON must win over a present unassociated Wi-Fi."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_option", wired=["eth0"], wireless=["wlan0"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_option", IP_NONE)
+    out = subprocess.run(
+        [exe, "kind_eth_option"],
         check=True,
         capture_output=True,
         text=True,
