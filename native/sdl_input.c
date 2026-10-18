@@ -470,77 +470,124 @@ void sdl_input_test_set_vt_left(int v)
 }
 #endif
 
-/* Map an SDL keysym to the CMM2 KEYDOWN() code the compat games expect.
- * Letters, digits and punctuation are their ASCII codes; the arrows use the
- * Colour Maximite codes Up=128, Down=129, Left=130, Right=131. This is the
- * same set console/kernel.cpp emits from USB HID usage codes. */
-static int sdl_key_to_cmm2(SDL_Keycode k)
+/* Map an SDL keysym to the PC/AT set-1 scan code KEYDOWN() tests. Typing and
+ * INKEY$ use their own character/escape sequences; this table only feeds the
+ * held-key set. console/kernel.cpp emits the same set-1 codes from USB HID
+ * usage codes. */
+static int sdl_key_to_scancode(SDL_Keycode k)
 {
+	static const unsigned char letter_scan[26] = {
+		30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+		49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44
+	};
+	static const unsigned char kp_digit_scan[9] = {
+		79, 80, 81, 75, 76, 77, 71, 72, 73
+	};
+
 	if (k >= SDLK_a && k <= SDLK_z)
-		return (int)('a' + (k - SDLK_a));
+		return letter_scan[k - SDLK_a];
 	if (k >= SDLK_1 && k <= SDLK_9)
-		return (int)('1' + (k - SDLK_1));
+		return 2 + (int)(k - SDLK_1);
 	if (k == SDLK_0)
-		return '0';
-	/* Numeric keypad digits map to the same CMM2 codes as the top row, so
-	 * KEYDOWN() is identical whichever digit cluster a game reads (#1183). */
+		return 11;
+	/* The numeric keypad keeps its own set-1 cluster (Home/7 = 71 ...), so
+	 * KEYDOWN() distinguishes a keypad digit from the top-row digit. */
 	if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
-		return (int)('1' + (k - SDLK_KP_1));
+		return kp_digit_scan[k - SDLK_KP_1];
 	if (k == SDLK_KP_0)
-		return '0';
+		return 82;
 	switch (k)
 	{
 	case SDLK_RETURN:
 	case SDLK_KP_ENTER:
-		return 10;
-	/* The numeric keypad operators carry the character they spell, so a
-	 * game polling KEYDOWN() sees the key's own glyph on either cluster
-	 * (#1191). */
-	case SDLK_KP_PLUS:
-		return '+';
-	case SDLK_KP_MINUS:
-		return '-';
-	case SDLK_KP_MULTIPLY:
-		return '*';
+		return 28;
 	case SDLK_KP_DIVIDE:
-		return '/';
+		return 53;
+	case SDLK_KP_MULTIPLY:
+		return 55;
+	case SDLK_KP_MINUS:
+		return 74;
+	case SDLK_KP_PLUS:
+		return 78;
 	case SDLK_KP_PERIOD:
-		return '.';
+		return 83;
 	case SDLK_KP_EQUALS:
-		return '=';
+		return 89;
 	case SDLK_ESCAPE:
-		return 27;
+		return 1;
+	case SDLK_BACKSPACE:
+		return 14;
+	case SDLK_TAB:
+		return 15;
 	case SDLK_SPACE:
-		return 32;
+		return 57;
 	case SDLK_MINUS:
-		return '-';
+		return 12;
 	case SDLK_EQUALS:
-		return '=';
+		return 13;
 	case SDLK_LEFTBRACKET:
-		return '[';
+		return 26;
 	case SDLK_RIGHTBRACKET:
-		return ']';
+		return 27;
 	case SDLK_BACKSLASH:
-		return '\\';
+		return 43;
 	case SDLK_SEMICOLON:
-		return ';';
+		return 39;
 	case SDLK_QUOTE:
-		return '\'';
+		return 40;
+	case SDLK_BACKQUOTE:
+		return 41;
 	case SDLK_COMMA:
-		return ',';
+		return 51;
 	case SDLK_PERIOD:
-		return '.';
+		return 52;
 	case SDLK_SLASH:
-		return '/';
+		return 53;
 	case SDLK_RIGHT:
-		return 131;
+		return 77;
 	case SDLK_LEFT:
-		return 130;
+		return 75;
 	case SDLK_DOWN:
-		return 129;
+		return 80;
 	case SDLK_UP:
-		return 128;
+		return 72;
+	case SDLK_HOME:
+		return 71;
+	case SDLK_END:
+		return 79;
+	case SDLK_PAGEUP:
+		return 73;
+	case SDLK_PAGEDOWN:
+		return 81;
+	case SDLK_INSERT:
+		return 82;
+	case SDLK_DELETE:
+		return 83;
+	case SDLK_CAPSLOCK:
+		return 58;
+	case SDLK_NUMLOCKCLEAR:
+		return 69;
+	case SDLK_SCROLLLOCK:
+		return 70;
+	case SDLK_PRINTSCREEN:
+		return 55;
+	case SDLK_LSHIFT:
+		return 42;
+	case SDLK_RSHIFT:
+		return 54;
+	case SDLK_LCTRL:
+	case SDLK_RCTRL:
+		return 29;
+	case SDLK_LALT:
+	case SDLK_RALT:
+		return 56;
+	case SDLK_F11:
+		return 133;
+	case SDLK_F12:
+		return 134;
 	default:
+		if (k >= SDLK_F1 && k <= SDLK_F10)
+			return 59 + (int)(k - SDLK_F1);
 		return 0;
 	}
 }
@@ -563,7 +610,7 @@ static void keydown_clear(void)
 /* Add a held key (ignoring auto-repeat) and publish the set. */
 static void keydown_press(SDL_Keycode k)
 {
-	int code = sdl_key_to_cmm2(k);
+	int code = sdl_key_to_scancode(k);
 	int i;
 
 	if (!code)
@@ -579,7 +626,7 @@ static void keydown_press(SDL_Keycode k)
 /* Remove a released key and publish the set. */
 static void keydown_release(SDL_Keycode k)
 {
-	int code = sdl_key_to_cmm2(k);
+	int code = sdl_key_to_scancode(k);
 	int i, j;
 
 	if (!code)
