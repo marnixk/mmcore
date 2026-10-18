@@ -628,3 +628,47 @@ def test_term_replay_decstbm_homes_cursor(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def test_term_replay_decstbm_lf_below_margin_moves_down(kernel_image):
+    """#1227: LF below the DECSTBM margin moves the cursor, without scrolling."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        all_cols = list(range(0, 80, 4))
+
+        # Region rows 2..4, cursor at row 10 (below the margin): LF moves the
+        # cursor down one row and leaves the region untouched.
+        _decstbm_paint(replay)
+        replay._to_guest(b"\x1b[2;4r\x1b[10;1H\nX")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "row above region fixed"
+        assert _red_count(con, 1, all_cols) == len(all_cols), "red row did not scroll"
+        assert _green_count(con, 2, all_cols) == len(all_cols), "green row did not scroll"
+        assert _blue_count(con, 3, all_cols) == len(all_cols), "region bottom did not scroll"
+        assert _blue_count(con, 4, all_cols) == len(all_cols), "row below region fixed"
+        assert _pane_grey_hits(con, 0, 10) > 0, "LF moved the cursor to row 11"
+        assert _pane_grey_hits(con, 0, 3) == 0, "no output at the bottom margin"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_lf_below.png")
+
+        # At the pane bottom, still below the margin, LF clamps with no scroll
+        # (DEC/xterm behaviour): the region is untouched and X lands on the
+        # bottom row.
+        _decstbm_paint(replay)
+        bottom = con.screen_size()[1] // 16 - 2
+        replay._to_guest(b"\x1b[2;4r\x1b[999;1H\nX")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, all_cols) == len(all_cols), "row above region fixed"
+        assert _red_count(con, 1, all_cols) == len(all_cols), "red row did not scroll"
+        assert _green_count(con, 2, all_cols) == len(all_cols), "green row did not scroll"
+        assert _blue_count(con, 3, all_cols) == len(all_cols), "region bottom did not scroll"
+        assert _pane_grey_hits(con, 0, bottom) > 0, "LF clamps at the pane bottom"
+        con.capture_png("/opt/cursor/artifacts/term_csi_decstbm_lf_bottom.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        replay.stop()
+        con.stop()

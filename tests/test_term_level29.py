@@ -252,13 +252,26 @@ def test_term_level29_mid_username_negotiation(kernel_image):
     try:
         seen = replay.open_session(connect=False)
         replay._to_guest(b"User: ")
-        replay._to_guest(
-            b"i\xff\xfd\x18\xff\xfd \xff\xfb\x00\xff\xfd\x00\xff\xfd\x17"
-        )
+        seen += replay.wait_serial(lambda s: "User: " in s, timeout=6.0)
+        replay._to_guest(b"i")
         more = replay.wait_serial(lambda s: "User: i" in s, timeout=6.0)
         text = _plain(seen + more)
         assert "User: i" in text
-        outs = b"".join(d for kind, _, d in replay.log if kind == "out")
+        # #1168: send the negotiation bytes in their own frame once the guest
+        # has caught up.  A combined burst can overflow the guest's serial
+        # input before the tail (including WONT TERMINAL-SPEED) is parsed.
+        replay._to_guest(
+            b"\xff\xfd\x18\xff\xfd \xff\xfb\x00\xff\xfd\x00\xff\xfd\x17"
+        )
+        # Poll the outbound log with a bounded timeout rather than sampling it
+        # once: the replies may trail the echoed input.
+        from test_term_replay import _outbound_until
+
+        outs = _outbound_until(
+            replay,
+            lambda o: b"\xff\xfb\x18" in o and b"\xff\xfc\x20" in o,
+            timeout=6.0,
+        )
         assert bytes([255, 251, 24]) in outs
         assert bytes([255, 252, 32]) in outs
         _quit(con)
