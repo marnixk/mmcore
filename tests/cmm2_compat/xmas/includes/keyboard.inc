@@ -47,8 +47,8 @@ sub keyb.GatherKeyInfo
   if keydown(77) then keyboard(K_Right) = True   ' Right arrow
   if keydown(72) then keyboard(K_Up) = True      ' Up arrow
   if keydown(80) then keyboard(K_Down) = True    ' Down arrow
-  if keydown(6) then keyboard(K_Middle) = True   ' top-row 5
-  if keydown(53) then keyboard(K_Middle) = True  ' /
+  if keydown(76) then keyboard(K_Middle) = True  ' keypad 5 (middle)
+  if keydown(53) then keyboard(K_Middle) = True  ' / or keypad divide
   if keydown(28) then keyboard(K_Enter) = True   ' Enter
   if keydown(1) then keyboard(K_Escape) = True   ' Esc
 
