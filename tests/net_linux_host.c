@@ -51,16 +51,44 @@ int main(int argc, char **argv)
 	int kind_eth_option = (argc > 1 && strcmp(argv[1], "kind_eth_option") == 0);
 	int virtual_eth = (argc > 1 && strcmp(argv[1], "virtual_eth") == 0);
 	int lease_eth = (argc > 1 && strcmp(argv[1], "lease_eth") == 0);
+	int lease_late = (argc > 1 && strcmp(argv[1], "lease_late") == 0);
 	int n;
 	char buf[256];
 
 	/* The discovery scenarios drive /sys/class/net through MMB_NET_SYSFS_NET;
 	 * the name pins would short-circuit that, so clear them. */
 	if (late_eth || kind_wifi || kind_eth || kind_eth_option ||
-	    virtual_eth || lease_eth)
+	    virtual_eth || lease_eth || lease_late)
 	{
 		unsetenv("MMB_NET_WLAN_IFACE");
 		unsetenv("MMB_NET_ETH_IFACE");
+	}
+
+	if (lease_late)
+	{
+		const char *eth0 = getenv("MMB_NET_ETH0_READY");
+		const char *eth1 = getenv("MMB_NET_ETH1_READY");
+		FILE *f;
+
+		CHECK(eth0 != 0 && eth1 != 0, "the lease markers are set");
+		CHECK(mmb_eth_ip(buf, sizeof buf) == 0 &&
+		      strcmp(buf, "192.0.2.10") == 0,
+		      "the wired NIC with the first lease is selected");
+		if (eth0)
+			unlink(eth0);
+		f = eth1 ? fopen(eth1, "w") : 0;
+		CHECK(f != 0, "the second NIC lease marker was created");
+		if (f)
+			fclose(f);
+		CHECK(mmb_eth_status() == 1,
+		      "a lease landing on another wired NIC is seen");
+		CHECK(mmb_eth_ip(buf, sizeof buf) == 0 &&
+		      strcmp(buf, "203.0.113.9") == 0,
+		      "the newly leased wired NIC replaces the cached one");
+		if (fails)
+			return 1;
+		printf("all checks passed\n");
+		return 0;
 	}
 
 	if (virtual_eth)

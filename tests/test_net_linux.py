@@ -93,6 +93,23 @@ case "$iface" in
 esac
 """
 
+IP_ETH_SWITCH = """\
+iface="$5"
+case "$iface" in
+  eth0)
+    [ -f "$MMB_NET_ETH0_READY" ] || exit 1
+    echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.0.2.10/24 brd 192.0.2.255 scope global eth0"
+    ;;
+  eth1)
+    [ -f "$MMB_NET_ETH1_READY" ] || exit 1
+    echo "3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 203.0.113.9/24 brd 203.0.113.255 scope global eth1"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+
 IW_OK = """\
 cat <<'EOF'
 BSS aa:bb:cc:dd:ee:01(on wlan0)
@@ -433,6 +450,28 @@ def test_net_linux_kind_honours_ethernet_option(tmp_path):
         capture_output=True,
         text=True,
         env=_discovery_env(cmd_dir, sysfs),
+        timeout=8,
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_net_linux_switches_to_newly_leased_wired_nic(tmp_path):
+    """#1195: a lease that lands on another wired NIC must not stay cached out."""
+    exe = _build(tmp_path)
+    sysfs = _sysfs(tmp_path, "sysfs_switch", wired=["eth0", "eth1"])
+    cmd_dir = _discovery_dir(tmp_path, "fake_switch", IP_ETH_SWITCH)
+    first = tmp_path / "eth0-ready"
+    second = tmp_path / "eth1-ready"
+    first.write_text("")
+    env = _discovery_env(cmd_dir, sysfs)
+    env["MMB_NET_ETH0_READY"] = str(first)
+    env["MMB_NET_ETH1_READY"] = str(second)
+    out = subprocess.run(
+        [exe, "lease_late"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
         timeout=8,
     )
     assert "all checks passed" in out.stdout

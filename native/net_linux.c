@@ -146,10 +146,19 @@ static const char *eth_iface(void)
 	static char cached[IFNAME_MAX];
 	const char *env;
 
-	/* Keep a found name. A miss is not cached: a USB or late-loaded wired
-	 * NIC may appear after the first query. */
+	/* Keep a found name while it has a lease. A wired NIC whose DHCP is
+	 * still pending (or that lost its lease) is re-evaluated, so a lease that
+	 * lands on another wired NIC later is picked up instead of staying
+	 * latched to the first physical port. A miss is not cached either: a USB
+	 * or late-loaded wired NIC may appear after the first query. */
 	if (cached[0])
-		return cached;
+	{
+		char ip[40];
+
+		if (iface_ipv4(cached, ip, sizeof ip))
+			return cached;
+		cached[0] = 0;
+	}
 	env = getenv("MMB_NET_ETH_IFACE");
 	if (env && env[0])
 	{
