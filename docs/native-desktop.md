@@ -218,6 +218,8 @@ On Linux, `native/net_linux.c` also drives the host's Wi-Fi and Ethernet from
 the MMBasic prompt: `OPTION WIFI SCAN` scans, `OPTION WIFI` joins with stored
 credentials (or `OPTION WIFI "ssid","psk"` to store and join), and `OPTION
 ETHERNET ON` starts wired DHCP. It discovers interfaces under `/sys/class/net`,
+skips bridges and virtual interfaces (they have no `device` symlink), and
+prefers a wired NIC that already has a lease when several are present. It
 uses `iw` (falling back to `wpa_cli`) and `ip`, writes
 `/etc/wpa_supplicant/wpa_supplicant.conf`, and reloads the running
 supplicant. When the ini already holds an SSID, the boot poll joins it
