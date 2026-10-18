@@ -491,7 +491,23 @@ static int sdl_key_to_cmm2(SDL_Keycode k)
 	switch (k)
 	{
 	case SDLK_RETURN:
+	case SDLK_KP_ENTER:
 		return 10;
+	/* The numeric keypad operators carry the character they spell, so a
+	 * game polling KEYDOWN() sees the key's own glyph on either cluster
+	 * (#1191). */
+	case SDLK_KP_PLUS:
+		return '+';
+	case SDLK_KP_MINUS:
+		return '-';
+	case SDLK_KP_MULTIPLY:
+		return '*';
+	case SDLK_KP_DIVIDE:
+		return '/';
+	case SDLK_KP_PERIOD:
+		return '.';
+	case SDLK_KP_EQUALS:
+		return '=';
 	case SDLK_ESCAPE:
 		return 27;
 	case SDLK_SPACE:

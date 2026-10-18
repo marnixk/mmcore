@@ -230,6 +230,22 @@ static int hid_to_cmm2 (unsigned char hid)
 		return (int)('1' + (hid - 0x59));
 	if (hid == 0x62)
 		return (int)'0';
+	/* Numeric keypad operators and Enter carry the same CMM2 codes as the
+	 * top row on the native SDL path (#1191). */
+	if (hid == 0x54)
+		return (int)'/';
+	if (hid == 0x55)
+		return (int)'*';
+	if (hid == 0x56)
+		return (int)'-';
+	if (hid == 0x57)
+		return (int)'+';
+	if (hid == 0x58)
+		return 10; /* Keypad Enter */
+	if (hid == 0x63)
+		return (int)'.';
+	if (hid == 0x67)
+		return (int)'=';
 	if (hid == 0x28)
 		return 10; /* Enter */
 	if (hid == 0x29)
