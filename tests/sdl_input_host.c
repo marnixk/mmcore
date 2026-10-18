@@ -828,6 +828,82 @@ int main(void)
 	sdl_input_pump();
 	expect_keydown("keydown keypad 0", (const int[]){'0'}, 1);
 
+	/* #1191: keypad Enter and the operators are mapped too. Enter uses the
+	 * top-row's 10; each operator uses the character on its keycap, so
+	 * KEYDOWN() sees the same code on either cluster. The HID usages
+	 * 0x54..0x58/0x63/0x67 in console/kernel.cpp carry the same codes. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_KP_ENTER, 0);
+	sdl_input_pump();
+	expect_keydown("keydown keypad enter", (const int[]){10}, 1);
+
+	{
+		struct kp_case {
+			const char *name;
+			SDL_Keycode sym;
+			int code;
+		};
+		static const struct kp_case cases[] = {
+			{"keydown keypad plus", SDLK_KP_PLUS, '+'},
+			{"keydown keypad minus", SDLK_KP_MINUS, '-'},
+			{"keydown keypad multiply", SDLK_KP_MULTIPLY, '*'},
+			{"keydown keypad divide", SDLK_KP_DIVIDE, '/'},
+			{"keydown keypad period", SDLK_KP_PERIOD, '.'},
+			{"keydown keypad equals", SDLK_KP_EQUALS, '='},
+		};
+
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++)
+		{
+			reset();
+			g_running = 1;
+			push_key(cases[i].sym, 0);
+			sdl_input_pump();
+			expect_keydown(cases[i].name,
+				       (const int[]){cases[i].code}, 1);
+		}
+	}
+
+	/* The unshifted top-row equivalents must stay in lockstep where they
+	 * exist: '-' '.' '/' and '='. '+' and '*' are shifted top-row keys, so
+	 * they have no separate unshifted code to compare against. */
+	{
+		static const struct {
+			SDL_Keycode top;
+			SDL_Keycode kp;
+			const char *name;
+		} pairs[] = {
+			{SDLK_MINUS, SDLK_KP_MINUS, "keydown minus parity"},
+			{SDLK_PERIOD, SDLK_KP_PERIOD, "keydown period parity"},
+			{SDLK_SLASH, SDLK_KP_DIVIDE, "keydown divide parity"},
+			{SDLK_EQUALS, SDLK_KP_EQUALS, "keydown equals parity"},
+		};
+
+		for (unsigned i = 0; i < sizeof pairs / sizeof pairs[0]; i++)
+		{
+			int top, kp;
+
+			reset();
+			g_running = 1;
+			push_key(pairs[i].top, 0);
+			sdl_input_pump();
+			top = g_keydown_n == 1 ? g_keydown[0] : -1;
+
+			reset();
+			g_running = 1;
+			push_key(pairs[i].kp, 0);
+			sdl_input_pump();
+			kp = g_keydown_n == 1 ? g_keydown[0] : -1;
+
+			if (top != kp)
+			{
+				fprintf(stderr, "FAIL %s: top=%d kp=%d\n",
+					pairs[i].name, top, kp);
+				fails++;
+			}
+		}
+	}
+
 	/* Alt+Left/Right still emit the xterm CSI the editor decodes as the
 	 * same tab switch (regression guard for the digit change). */
 	reset();
