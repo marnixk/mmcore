@@ -1,6 +1,12 @@
 """Console INPUT reads a typed line into variables."""
 
+import os
+import shutil
+import subprocess
+import sys
 import time
+
+import pytest
 
 from harness import prompt_at_buffer_end
 
@@ -122,3 +128,92 @@ def test_help_input_describes_console(console):
     assert "not implemented" not in out.lower()
     assert "prompt" in out.lower()
     assert "INPUT" in out
+
+
+# ---- KEYDOWN contract (host unit test) ------------------------------------
+#
+# #1238 removed the old "nth held key" indexing. KEYDOWN(0) is the held-key
+# count and KEYDOWN(n>0) is a boolean test for set-1 scan code n. Compile the
+# real mmbasic/src/util.c so the implementation, not a copy, stays pinned.
+
+KEYDOWN_DRIVER_C = r"""
+#include "mmb_priv.h"
+#include <stdio.h>
+
+mmb g_state;
+mmb *g_cur = &g_state;
+
+static int fails;
+
+static void check(int cond, const char *what)
+{
+	if (!cond)
+	{
+		printf("FAIL %s\n", what);
+		fails++;
+	}
+}
+
+int main(void)
+{
+	int none[1] = { 0 };
+	int z[1] = { 44 };
+	int combo[3] = { 44, 1, 75 };
+
+	mmb_keydown_set(none, 0);
+	check(mmb_keydown_get(0) == 0, "empty count");
+	check(mmb_keydown_get(44) == 0, "empty scan false");
+
+	/* Holding z alone must not make the Esc or Left scan codes true. */
+	mmb_keydown_set(z, 1);
+	check(mmb_keydown_get(0) == 1, "one count");
+	check(mmb_keydown_get(44) == 1, "z held");
+	check(mmb_keydown_get(1) == 0, "unrelated esc false");
+	check(mmb_keydown_get(75) == 0, "unrelated left false");
+
+	mmb_keydown_set(combo, 3);
+	check(mmb_keydown_get(0) == 3, "combo count");
+	check(mmb_keydown_get(44) == 1, "combo z");
+	check(mmb_keydown_get(1) == 1, "combo esc");
+	check(mmb_keydown_get(75) == 1, "combo left");
+	check(mmb_keydown_get(77) == 0, "combo right false");
+
+	printf("%s\n", fails ? "FAILURES" : "ALL OK");
+	return fails ? 1 : 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def keydown_host_run(tmp_path_factory):
+    if shutil.which("cc") is None:
+        pytest.skip("needs a host C toolchain (cc)")
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tmp = tmp_path_factory.mktemp("keydown_contract")
+    (tmp / "mmb_version.h").write_text('#define MMB_VERSION "test"\n')
+    (tmp / "driver.c").write_text(KEYDOWN_DRIVER_C)
+    exe = tmp / "driver"
+    gcflags = ["-Wl,-dead_strip"] if sys.platform == "darwin" else ["-Wl,--gc-sections"]
+    subprocess.run(
+        [
+            "cc", "-std=c11", "-O0", "-Wall", "-Wextra",
+            "-DMMB_PLATFORM_POSIX",
+            "-ffunction-sections", "-fdata-sections",
+            "-I", str(tmp),
+            "-I", os.path.join(repo, "mmbasic", "include"),
+            "-o", str(exe),
+            str(tmp / "driver.c"),
+            os.path.join(repo, "mmbasic", "src", "util.c"),
+            *gcflags,
+        ],
+        check=True,
+        cwd=repo,
+    )
+    return subprocess.run([str(exe)], check=False, capture_output=True, text=True)
+
+
+def test_keydown_scan_boolean(keydown_host_run):
+    out = keydown_host_run.stdout + keydown_host_run.stderr
+    assert keydown_host_run.returncode == 0, out
+    assert "ALL OK" in out, out
+    assert "FAIL" not in out, out

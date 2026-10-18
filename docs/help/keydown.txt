@@ -1,11 +1,19 @@
 name: KEYDOWN
 kind: command
 
-Return non-zero while a keyboard key is held down.
+Test whether a keyboard key is held down, or count the held keys.
 
 flag = KEYDOWN(scan)
+count = KEYDOWN(0)
 
-  scan - keyboard scan code (see ~KEYBOARD SCAN CODES~)
+  scan  - PC/AT set-1 keyboard scan code (see ~KEYBOARD SCAN CODES~)
+  count - number of scan codes currently held (0 when no key is down)
+
+KEYDOWN(scan) is 1 while that scan code is held and 0 otherwise. Holding
+one key does not make KEYDOWN() true for any other scan code.
+
+Only the KEYDOWN() held-key table uses scan codes. Normal typing, ~INKEY$~
+and its extended arrow/function codes are separate.
 
 See also ~INKEY$~.
 
