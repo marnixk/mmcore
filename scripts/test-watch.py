@@ -71,6 +71,36 @@ def _fmt(sec: float) -> str:
     return f"{sec // 60:02d}:{sec % 60:02d}"
 
 
+_COLLECTED_RE = re.compile(r"collected (\d+) items(.*)$")
+_COLLECTED_BRACKET_RE = re.compile(r"\[(\d+) items\]")
+_SELECTED_RE = re.compile(r"(\d+) selected\b")
+_DESELECTED_RE = re.compile(r"(\d+) deselected\b")
+
+
+def _collected_total(line: str) -> int | None:
+    """Return the number of tests that will run, from a pytest collection line.
+
+    ``collected N items / D deselected / S selected`` means only ``S`` tests
+    run, so progress must be measured against ``S`` rather than ``N`` (#1244).
+    A plain ``collected N items`` still means all ``N`` run.
+    """
+    m = _COLLECTED_RE.search(line)
+    if m:
+        collected = int(m.group(1))
+        tail = m.group(2)
+        selected = _SELECTED_RE.search(tail)
+        if selected:
+            return int(selected.group(1))
+        deselected = _DESELECTED_RE.search(tail)
+        if deselected:
+            return max(collected - int(deselected.group(1)), 0)
+        return collected
+    m = _COLLECTED_BRACKET_RE.search(line)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def snapshot():
     """Parse the log into (total, passed, failed, skipped, last, summary)."""
     total = None
@@ -82,11 +112,9 @@ def snapshot():
             for raw in fh:
                 line = raw.rstrip("\n")
                 if total is None:
-                    m = re.search(r"collected (\d+) items", line)
-                    if not m:
-                        m = re.search(r"\[(\d+) items\]", line)
-                    if m:
-                        total = int(m.group(1))
+                    parsed = _collected_total(line)
+                    if parsed is not None:
+                        total = parsed
                 tid = re.search(r"(tests/\S+?)(?:::\S+)?(?:\s|$)", line)
                 if " PASSED" in line:
                     passed += 1
