@@ -12,8 +12,12 @@ value = MM.INFO(key)
         empty when the mixer ran), "AUDIORESET" (times PLAY RESET
         has re-initialised the audio backend), "FIRSTVOL" (the gain
         applied to the first mixed buffer after playback began; -1 if
-        nothing has played yet), or "MP3BUF" (peak bytes the streaming
-        MP3 decoder allocated; bounded, not the file size)
+        nothing has played yet), "MP3BUF" (peak bytes the streaming
+        MP3 decoder allocated; bounded, not the file size), or the
+        last MP3's sample rate and frame counts: "MP3RATE" (source
+        rate in Hz), "MP3SRC" (source frames decoded) and "MP3OUT"
+        (44100 Hz frames mixed — MP3SRC * 44100 / MP3RATE when the
+        resampler is correct)
 
 See also ~MM.INFO$~, ~MODE~, ~AUDIO_TARGET~.
 

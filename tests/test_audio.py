@@ -106,6 +106,43 @@ def test_play_mp3_streams_without_whole_file_buffer(console):
     assert peak < size, (peak, size)
 
 
+# #1247: the mixer runs at 44100 Hz, so every source rate must be resampled.
+# TEST.MP3 is the seeded 44.1 kHz fixture; RATE48/32/22 are 1 s 440 Hz tones.
+RATE_MP3S = (
+    ("tests/TEST.MP3", 44100),
+    ("tests/RATE48.MP3", 48000),
+    ("tests/RATE32.MP3", 32000),
+    ("tests/RATE22.MP3", 22050),
+)
+
+
+def test_mp3_resamples_source_rate_to_mixer_rate(console):
+    """#1247: MP3s at every supported rate play at the right speed/pitch.
+
+    A 48 kHz file used to play 8.8% fast and a 22.05 kHz file at double speed,
+    because mix_mp3() emitted decoder frames as if they were already 44100 Hz.
+    The decoded and mixed frame counts prove the resampling ratio.
+    """
+    for path, rate in RATE_MP3S:
+        assert console.send_line(f'PLAY MP3 "{path}"') == ""
+        # TEST.MP3 is only 0.23 s; it may already have ended by this poll.
+        assert console.send_line("PRINT PLAYING()") in ("0", "1"), path
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            if console.send_line("PRINT PLAYING()") == "0":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"{path} never finished")
+        got_rate = int(console.send_line('PRINT MM.INFO("MP3RATE")'))
+        src = int(console.send_line('PRINT MM.INFO("MP3SRC")'))
+        out = int(console.send_line('PRINT MM.INFO("MP3OUT")'))
+        assert got_rate == rate, (path, got_rate)
+        assert src > 0 and out > 0, (path, src, out)
+        want = src * 44100.0 / rate
+        assert abs(out - want) <= 4, (path, src, out, want)
+
+
 def test_play_mod_xm_tone(console):
     assert console.send_line('PLAY MODFILE "tests/TEST.MOD"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"

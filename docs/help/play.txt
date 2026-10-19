@@ -49,7 +49,10 @@ JUKE uses this to advance a folder queue to the next file.
 
 MP3 files are streamed: PLAY reads the file in chunks and can start after a
 small read-ahead, so a long track does not have to fit in RAM. MM.INFO("MP3BUF")
-reports the peak bytes the decoder allocated.
+reports the peak bytes the decoder allocated. MP3s at 22.05, 32, 44.1 and
+48 kHz are resampled to the 44100 Hz mixer, so duration and pitch match the
+source; MM.INFO("MP3RATE"), "MP3SRC" and "MP3OUT" report the last file's source
+rate and decoded/mixed frame counts.
 
 Example:
 

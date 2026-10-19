@@ -2,7 +2,8 @@
 """Generate the tiny binary test fixtures under ``ramdisk/tests/``.
 
 Outputs uppercase fixtures (TEST.PNG, TESTZ.PNG, TEST.JPG, TEST.MOD, TEST.XM,
-TEST.S3M, TEST.MP3, TEST.WAV) that the QEMU tests consume as ``A:/tests/...``.
+TEST.S3M, TEST.MP3, RATE48/RATE32/RATE22.MP3, TEST.WAV) that the QEMU tests
+consume as ``A:/tests/...``.
 No C source is produced; the ramdisk build embeds them from
 ``ramdisk/tests/``.
 """
@@ -254,6 +255,34 @@ def make_mp3(path):
         return data
 
 
+def make_rate_mp3(path, rate):
+    """A 1 s 440 Hz mono MP3 at ``rate`` Hz (#1247).
+
+    PLAY mixes at 44100 Hz, so files at other rates must be resampled to keep
+    their duration and pitch. These fixtures let the QEMU test compare the
+    decoded source frame count with the mixed output frame count.
+    """
+    import subprocess
+    wav = out("_tone_%d.wav" % rate)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-ar", str(rate), "-ac", "1", wav],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav, "-codec:a", "libmp3lame", "-q:a", "9", path],
+            check=True, capture_output=True,
+        )
+        os.remove(wav)
+        return open(path, "rb").read()
+    except Exception:
+        frame = bytes([0xFF, 0xFB, 0x10, 0xC4]) + bytes(104)
+        data = frame * 400
+        open(path, "wb").write(data)
+        return data
+
+
 def make_big_mp3(path):
     """A ~20 s silent MP3 larger than dr_mp3's decode buffer (#1150).
 
@@ -326,6 +355,9 @@ def main():
     make_xm(out("TEST.XM"))
     make_s3m(out("TEST.S3M"))
     make_mp3(out("TEST.MP3"))
+    make_rate_mp3(out("RATE48.MP3"), 48000)
+    make_rate_mp3(out("RATE32.MP3"), 32000)
+    make_rate_mp3(out("RATE22.MP3"), 22050)
     make_big_mp3(out("BIG.MP3"))
     audio = strip_id3v2(open(out("TEST.MP3"), "rb").read())
     open(out("ZV2.MP3"), "wb").write(id3v2_tit2(b"TWOSONG") + audio)
