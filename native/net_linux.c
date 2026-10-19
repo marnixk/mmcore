@@ -5,18 +5,27 @@
  * Interface discovery reads /sys/class/net (a wireless interface has a
  * `wireless` directory). External tools are run through one runner so tests
  * can inject fakes with MMB_NET_CMD_DIR; the interface names can be pinned
- * with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE. Wi-Fi scan uses `iw` and falls
- * back to `wpa_cli`; addresses come from `ip -4 addr show`. Joining a network
- * (wpa_supplicant config + service restart) lives in a follow-up.
+ * with MMB_NET_WLAN_IFACE / MMB_NET_ETH_IFACE and MMB_NET_SYSFS_NET points
+ * discovery at a test directory. Wi-Fi scan uses `iw` and falls
+ * back to `wpa_cli`; addresses come from `ip -4 addr show`. Joining writes
+ * the wpa_supplicant config and reloads it in place. Every helper has a
+ * deadline (MMB_NET_CMD_TIMEOUT_MS in tests) so a stuck supplicant cannot
+ * freeze the console.
  */
 #include "mmbasic.h"
 #include "mmb_priv.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define IFNAME_MAX 32
@@ -29,48 +38,94 @@ static int path_exists(const char *path)
 	return stat(path, &st) == 0;
 }
 
+/* lstat() so a sysfs "device" symlink counts even when a test points it at a
+ * target that does not exist. */
+static int link_exists(const char *path)
+{
+	struct stat st;
+
+	return lstat(path, &st) == 0;
+}
+
+static int iface_ipv4(const char *iface, char *buf, size_t cap);
+
+/* Interface discovery reads sysfs. MMB_NET_SYSFS_NET overrides the directory
+ * so tests can present a controlled set of interfaces (and add one later). */
+static const char *sysfs_net_dir(void)
+{
+	const char *e = getenv("MMB_NET_SYSFS_NET");
+
+	return (e && e[0]) ? e : "/sys/class/net";
+}
+
 static int is_wireless(const char *name)
 {
-	char path[128];
+	char path[160];
 
-	snprintf(path, sizeof path, "/sys/class/net/%s/wireless", name);
+	snprintf(path, sizeof path, "%s/%s/wireless", sysfs_net_dir(), name);
 	return path_exists(path);
 }
 
-/* First interface matching `want_wireless` (1 wireless, 0 wired), or NULL. */
+/* Physical NICs have a "device" symlink under /sys/class/net/<name>. Bridges,
+ * docker0, veth*, virbr0 and tun/tap devices do not, so requiring it keeps
+ * discovery from latching a virtual interface. */
+static int is_physical(const char *name)
+{
+	char path[160];
+
+	snprintf(path, sizeof path, "%s/%s/device", sysfs_net_dir(), name);
+	return link_exists(path);
+}
+
+/* First physical interface matching `want_wireless` (1 wireless, 0 wired), or
+ * NULL. When several match, prefer one that already has an IPv4 lease so a
+ * wired NIC without one cannot shadow a connected NIC. */
 static const char *discover_iface(int want_wireless)
 {
 	static char name[IFNAME_MAX];
-	DIR *d = opendir("/sys/class/net");
+	char fallback[IFNAME_MAX];
+	DIR *d = opendir(sysfs_net_dir());
 	struct dirent *e;
 
 	name[0] = 0;
+	fallback[0] = 0;
 	if (!d)
 		return 0;
 	while ((e = readdir(d)))
 	{
+		char ip[40];
+
 		if (e->d_name[0] == '.')
 			continue;
 		if (strcmp(e->d_name, "lo") == 0)
 			continue;
 		if (is_wireless(e->d_name) != want_wireless)
 			continue;
-		snprintf(name, sizeof name, "%s", e->d_name);
-		break;
+		if (!is_physical(e->d_name))
+			continue;
+		if (!fallback[0])
+			snprintf(fallback, sizeof fallback, "%s", e->d_name);
+		if (iface_ipv4(e->d_name, ip, sizeof ip))
+		{
+			snprintf(name, sizeof name, "%s", e->d_name);
+			break;
+		}
 	}
 	closedir(d);
+	if (!name[0] && fallback[0])
+		snprintf(name, sizeof name, "%s", fallback);
 	return name[0] ? name : 0;
 }
 
 static const char *wlan_iface(void)
 {
 	static char cached[IFNAME_MAX];
-	static int done;
 	const char *env;
 
-	if (done)
-		return cached[0] ? cached : 0;
-	done = 1;
+	/* Keep a found name. A miss is not cached: the radio module may
+	 * appear after the first OPTION WIFI. */
+	if (cached[0])
+		return cached;
 	env = getenv("MMB_NET_WLAN_IFACE");
 	if (env && env[0])
 	{
@@ -89,12 +144,21 @@ static const char *wlan_iface(void)
 static const char *eth_iface(void)
 {
 	static char cached[IFNAME_MAX];
-	static int done;
 	const char *env;
 
-	if (done)
-		return cached[0] ? cached : 0;
-	done = 1;
+	/* Keep a found name while it has a lease. A wired NIC whose DHCP is
+	 * still pending (or that lost its lease) is re-evaluated, so a lease that
+	 * lands on another wired NIC later is picked up instead of staying
+	 * latched to the first physical port. A miss is not cached either: a USB
+	 * or late-loaded wired NIC may appear after the first query. */
+	if (cached[0])
+	{
+		char ip[40];
+
+		if (iface_ipv4(cached, ip, sizeof ip))
+			return cached;
+		cached[0] = 0;
+	}
 	env = getenv("MMB_NET_ETH_IFACE");
 	if (env && env[0])
 	{
@@ -110,30 +174,152 @@ static const char *eth_iface(void)
 	return cached[0] ? cached : 0;
 }
 
+static long long now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* MMB_NET_CMD_TIMEOUT_MS shortens every helper deadline (tests). */
+static unsigned cmd_budget_ms(unsigned fallback)
+{
+	const char *e = getenv("MMB_NET_CMD_TIMEOUT_MS");
+	unsigned v;
+
+	if (!e || !e[0])
+		return fallback;
+	v = (unsigned)atoi(e);
+	return v ? v : fallback;
+}
+
 /* Run `cmd` (parsed by the shell) capturing stdout. MMB_NET_CMD_DIR prefixes
- * argv[0] so tests supply fakes. Returns the exit status, or -1. */
-static int run_capture(const char *cmd, char *out, size_t outcap)
+ * argv[0] so tests supply fakes. Stdin is /dev/null and the child is its own
+ * process group: a helper that waits on the keyboard, or on OpenRC, is killed
+ * when `budget_ms` elapses instead of freezing the console. Returns the exit
+ * status, or -1. */
+static int run_capture(const char *cmd, char *out, size_t outcap, unsigned budget_ms)
 {
 	char full[512];
 	const char *dir = getenv("MMB_NET_CMD_DIR");
-	FILE *p;
+	int pipefd[2];
+	pid_t pid;
+	long long deadline;
+	size_t used = 0;
+	int status = 0;
+	int timed_out = 0;
 
-	if (outcap)
+	if (out && outcap)
 		out[0] = 0;
+	budget_ms = cmd_budget_ms(budget_ms);
 	if (dir && dir[0])
 		snprintf(full, sizeof full, "%s/%s", dir, cmd);
 	else
 		snprintf(full, sizeof full, "%s", cmd);
-	p = popen(full, "r");
-	if (!p)
+	if (pipe(pipefd) != 0)
 		return -1;
-	if (out && outcap)
+	pid = fork();
+	if (pid < 0)
 	{
-		size_t n = fread(out, 1, outcap - 1, p);
-
-		out[n] = 0;
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return -1;
 	}
-	return pclose(p);
+	if (pid == 0)
+	{
+		int devnull, fd;
+
+		setpgid(0, 0);
+		devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0)
+		{
+			dup2(devnull, 0);
+			dup2(devnull, 2);
+			if (devnull > 2)
+				close(devnull);
+		}
+		dup2(pipefd[1], 1);
+		close(pipefd[0]);
+		close(pipefd[1]);
+		for (fd = 3; fd < 256; fd++)
+			close(fd);
+		execl("/bin/sh", "sh", "-c", full, (char *)0);
+		_exit(127);
+	}
+	setpgid(pid, pid);
+	close(pipefd[1]);
+	deadline = now_ms() + (long long)budget_ms;
+	for (;;)
+	{
+		struct pollfd pfd;
+		long long left = deadline - now_ms();
+		int pr;
+		char chunk[512];
+		ssize_t n;
+
+		if (left < 0)
+			left = 0;
+		pfd.fd = pipefd[0];
+		pfd.events = POLLIN;
+		pr = poll(&pfd, 1, (int)left);
+		if (pr < 0)
+		{
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		if (pr == 0)
+		{
+			timed_out = 1;
+			break;
+		}
+		n = read(pipefd[0], chunk, sizeof chunk);
+		if (n > 0)
+		{
+			if (out && outcap > 1 && used + 1 < outcap)
+			{
+				size_t take = (size_t)n;
+
+				if (used + take >= outcap)
+					take = outcap - 1 - used;
+				memcpy(out + used, chunk, take);
+				used += take;
+				out[used] = 0;
+			}
+			continue;
+		}
+		break;
+	}
+	close(pipefd[0]);
+	if (!timed_out)
+	{
+		for (;;)
+		{
+			pid_t w = waitpid(pid, &status, WNOHANG);
+
+			if (w == pid)
+				break;
+			if (w < 0 && errno != EINTR)
+				return -1;
+			if (now_ms() > deadline)
+			{
+				timed_out = 1;
+				break;
+			}
+			usleep(10000);
+		}
+	}
+	if (timed_out)
+	{
+		kill(-pid, SIGKILL);
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+		return -1;
+	}
+	if (!WIFEXITED(status))
+		return -1;
+	return WEXITSTATUS(status);
 }
 
 /* IPv4 address of `iface` from `ip -4 addr show dev <iface>`, or 0. */
@@ -147,7 +333,7 @@ static int iface_ipv4(const char *iface, char *buf, size_t cap)
 		return 0;
 	buf[0] = 0;
 	snprintf(cmd, sizeof cmd, "ip -4 addr show dev %s", iface);
-	if (run_capture(cmd, out, sizeof out) != 0)
+	if (run_capture(cmd, out, sizeof out, 3000) != 0)
 		return 0;
 	p = strstr(out, "inet ");
 	if (!p)
@@ -186,12 +372,49 @@ static const char *line_ssid(const char *line)
 	return 0;
 }
 
+/* #1057: boot-time association. The ini can already hold an SSID when
+ * mmb_poll() first runs, but the radio module, the interface, wpa_supplicant,
+ * association and DHCP may all still be pending. mmb_wlan_start() is therefore
+ * a non-blocking, idempotent bring-up: it returns 0 only once the station has
+ * an IPv4 address, and -1 while the attempt is still in flight.
+ * mmb_wlan_radio_pending() reports that window so core's boot bring-up retries
+ * instead of latching `net_boot` and giving up. The window is bounded so a
+ * missing radio cannot spin forever. */
+#define WLAN_BOOT_BUDGET_MS 60000u
+#define WLAN_ATTEMPT_MS 700u
+
+static int s_wlan_window;       /* a start attempt window is open */
+static int s_wlan_conf;         /* wpa_supplicant.conf written this window */
+static int s_wlan_modprobe;     /* tried to load the radio module */
+static int s_wlan_kicked;       /* link up + association command issued */
+static long long s_wlan_deadline;
+static long long s_wlan_next_try;
+static char s_wlan_ssid[128];
+static char s_wlan_psk[128];
+
+/* Shorten the retry window (tests). */
+static unsigned wlan_env_ms(const char *name, unsigned fallback)
+{
+	const char *e = getenv(name);
+	unsigned v;
+
+	if (!e || !e[0])
+		return fallback;
+	v = (unsigned)atoi(e);
+	return v ? v : fallback;
+}
+
 int mmb_wlan_available(void)
 {
 	return wlan_iface() != 0;
 }
 
-int mmb_wlan_radio_pending(void) { return 0; }
+int mmb_wlan_radio_pending(void)
+{
+	if (!s_wlan_window)
+		return 0;
+	return now_ms() < s_wlan_deadline;
+}
 
 int mmb_wlan_scan(char ssids[][64], int maxn)
 {
@@ -203,11 +426,11 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 	if (!iface || maxn <= 0)
 		return 0;
 	snprintf(cmd, sizeof cmd, "iw dev %s scan", iface);
-	rc = run_capture(cmd, out, sizeof out);
+	rc = run_capture(cmd, out, sizeof out, 20000);
 	if (rc != 0)
 	{
 		snprintf(cmd, sizeof cmd, "wpa_cli -i %s scan_results", iface);
-		rc = run_capture(cmd, out, sizeof out);
+		rc = run_capture(cmd, out, sizeof out, 8000);
 	}
 	if (rc != 0)
 		return 0;
@@ -249,8 +472,7 @@ int mmb_wlan_scan(char ssids[][64], int maxn)
 	return n;
 }
 
-/* Join a network: write the wpa_supplicant config and (re)start the OpenRC
- * services that own WPA and DHCP. */
+/* Join a network: write the wpa_supplicant config and reload it. */
 static const char *wpa_conf_path(void)
 {
 	const char *p = getenv("MMB_WPA_CONF");
@@ -299,48 +521,143 @@ static void service_restart(const char *service)
 	char cmd[160];
 
 	snprintf(cmd, sizeof cmd, "rc-service %s restart", service);
-	run_capture(cmd, 0, 0);
+	run_capture(cmd, 0, 0, 8000);
 }
 
-/* Request a DHCP lease on `iface` (busybox udhcpc, as shipped on the ISO). */
+/* Request a DHCP lease on `iface` (busybox udhcpc, as shipped on the ISO).
+ * No -b: a backgrounded client would outlive this call and keep the console
+ * waiting on its parent. */
 static void dhcp_get(const char *iface)
 {
 	char cmd[200];
 
 	if (!iface)
 		return;
-	snprintf(cmd, sizeof cmd, "udhcpc -i %s -b -q -n", iface);
-	run_capture(cmd, 0, 0);
+	snprintf(cmd, sizeof cmd, "udhcpc -i %s -n -q -t 4 -T 2", iface);
+	run_capture(cmd, 0, 0, 12000);
+}
+
+/* Open a fresh association window for `ssid`/`psk`. */
+static void wlan_begin_window(const char *ssid, const char *psk)
+{
+	snprintf(s_wlan_ssid, sizeof s_wlan_ssid, "%s", ssid);
+	snprintf(s_wlan_psk, sizeof s_wlan_psk, "%s", psk ? psk : "");
+	s_wlan_conf = 0;
+	s_wlan_modprobe = 0;
+	s_wlan_kicked = 0;
+	s_wlan_next_try = 0;
+	s_wlan_window = 1;
+	s_wlan_deadline = now_ms() +
+			  (long long)wlan_env_ms("MMB_NET_WLAN_BUDGET_MS",
+						 WLAN_BOOT_BUDGET_MS);
+}
+
+/* One bring-up attempt: make sure the interface is up, association has been
+ * requested and DHCP has run. Returns 0 when an IPv4 address is present. */
+static int wlan_attempt(const char *ssid, const char *psk)
+{
+	const char *iface;
+	char cmd[320];
+	char ip[40];
+
+	if (!s_wlan_conf)
+	{
+		if (write_wpa_conf(ssid, psk) != 0)
+			return -1;
+		s_wlan_conf = 1;
+	}
+	if (!wlan_iface() && !s_wlan_modprobe)
+	{
+		run_capture("modprobe iwlwifi", 0, 0, 8000);
+		s_wlan_modprobe = 1;
+	}
+	iface = wlan_iface();
+	if (!iface)
+		return -1;
+	if (!s_wlan_kicked)
+	{
+		snprintf(cmd, sizeof cmd, "ip link set %s up", iface);
+		run_capture(cmd, 0, 0, 3000);
+		run_capture("rfkill unblock wifi", 0, 0, 3000);
+		/* Reload the config the running supplicant already has open.
+		 * Restarting the OpenRC service waits on supervise-daemon, which
+		 * does not return when the driver or the stop is stuck. */
+		snprintf(cmd, sizeof cmd, "wpa_cli -i %s reconfigure", iface);
+		if (run_capture(cmd, 0, 0, 5000) != 0)
+		{
+			snprintf(cmd, sizeof cmd,
+				 "rc-service wpa_supplicant restart");
+			if (run_capture(cmd, 0, 0, 8000) != 0)
+			{
+				snprintf(cmd, sizeof cmd,
+					 "wpa_supplicant -B -i %s -c %s",
+					 iface, wpa_conf_path());
+				if (run_capture(cmd, 0, 0, 8000) != 0)
+					return -1;
+			}
+		}
+		s_wlan_kicked = 1;
+	}
+	/* Association is asynchronous; the lease only lands once it does. Returning
+	 * early here would latch the boot bring-up before DHCP ever ran. */
+	if (iface_ipv4(iface, ip, sizeof ip))
+		return 0;
+	dhcp_get(iface);
+	return iface_ipv4(iface, ip, sizeof ip) ? 0 : -1;
 }
 
 int mmb_wlan_start(const char *ssid, const char *psk)
 {
+	long long now;
+	unsigned interval;
+	int rc;
+
 	if (!ssid || !ssid[0])
+	{
+		s_wlan_window = 0;
 		return -1;
-	if (write_wpa_conf(ssid, psk) != 0)
+	}
+	if (!s_wlan_window || strcmp(ssid, s_wlan_ssid) != 0 ||
+	    strcmp(psk ? psk : "", s_wlan_psk) != 0)
+		wlan_begin_window(ssid, psk);
+	now = now_ms();
+	if (now >= s_wlan_deadline)
 		return -1;
-	service_restart("wpa_supplicant");
-	service_restart("networking");
-	return 0;
+	interval = wlan_env_ms("MMB_NET_WLAN_INTERVAL_MS", WLAN_ATTEMPT_MS);
+	if (now < s_wlan_next_try)
+		return -1;
+	rc = wlan_attempt(ssid, psk);
+	/* Pace on completion, not on entry: a helper that blocks for seconds must
+	 * not make the next poll immediately re-run it. */
+	s_wlan_next_try = now_ms() + (long long)interval;
+	if (rc == 0)
+		s_wlan_window = 0;
+	return rc;
 }
 
 int mmb_wlan_connect(const char *ssid, const char *psk)
 {
 	unsigned waited = 0;
-	char ip[40];
+	unsigned budget;
 
-	if (mmb_wlan_start(ssid, psk) != 0)
+	if (!ssid || !ssid[0])
 		return -1;
-	dhcp_get(wlan_iface());
-	/* Association + DHCP take a moment; poll for the lease. */
-	while (waited < 15000)
+	/* A manual join gets a fresh window even if a boot attempt already
+	 * exhausted its budget and mmb_poll latched. */
+	wlan_begin_window(ssid, psk);
+	budget = wlan_env_ms("MMB_NET_WLAN_BUDGET_MS", WLAN_BOOT_BUDGET_MS);
+	if (budget > 20000u)
+		budget = 20000u;
+	while (waited < budget)
 	{
-		if (iface_ipv4(wlan_iface(), ip, sizeof ip))
+		if (mmb_wlan_start(ssid, psk) == 0)
 			return 0;
+		if (!mmb_wlan_radio_pending())
+			return -1;
 		usleep(100000);
 		waited += 100;
 	}
-	return iface_ipv4(wlan_iface(), ip, sizeof ip) ? 0 : -1;
+	return mmb_wlan_start(ssid, psk) == 0 ? 0 : -1;
 }
 
 int mmb_wlan_status(void)
@@ -441,5 +758,52 @@ int mmb_eth_ipconfig(char *buf, int bufsize)
 
 int mmb_net_kind(void)
 {
-	return mmb_wlan_status() ? MMB_NET_WIFI : MMB_NET_ETH;
+	/* Native Linux always has both stacks present, so presence alone cannot
+	 * tell which one OPTION configured. Honour the saved Ethernet option
+	 * first: parse_ethernet() sets it before asking, so a dual-interface host
+	 * no longer refuses "OPTION ETHERNET ON" because a wireless interface
+	 * happens to exist. With no configured Ethernet, report by presence, not
+	 * by lease: a Wi-Fi-only device that is still associating has a wireless
+	 * interface but no lease yet, and must not be reported as wired (#1194).
+	 * This mirrors Circle's s_net_kind, which reflects the opened interface. */
+	if (G.opt.ethernet_enabled && mmb_eth_available())
+		return MMB_NET_ETH;
+	if (mmb_wlan_available())
+		return MMB_NET_WIFI;
+	if (mmb_eth_available())
+		return MMB_NET_ETH;
+	return MMB_NET_NONE;
+}
+
+/* #1187: the Linux build must report a real link, not a constant 1. A lease
+ * (non-loopback IPv4) on the wired or wireless interface means connectivity.
+ * Probing shells out to `ip`, which is too heavy for the poll loop, so the
+ * result is cached for a short TTL. MMB_NET_AVAIL_TTL_MS overrides the TTL
+ * (tests; 0 disables the cache and re-probes every call). */
+#define NET_AVAIL_TTL_MS 2000u
+
+static unsigned net_avail_ttl_ms(void)
+{
+	const char *e = getenv("MMB_NET_AVAIL_TTL_MS");
+
+	if (!e || !e[0])
+		return NET_AVAIL_TTL_MS;
+	return (unsigned)atoi(e);
+}
+
+int mmb_net_available(void)
+{
+	static int cached;
+	static int have;
+	static long long checked;
+	long long now = now_ms();
+	unsigned ttl = net_avail_ttl_ms();
+
+	if (have && ttl && now - checked < (long long)ttl)
+		return cached;
+	/* A wired lease is the common case; only probe Wi-Fi when it is absent. */
+	cached = mmb_eth_status() || mmb_wlan_status();
+	checked = now;
+	have = 1;
+	return cached;
 }

@@ -28,6 +28,8 @@ publish builds board images with scripts/package-release.sh, then uploads:
 On macOS it also builds and attaches the universal (arm64 + x86_64) app bundle:
   dist/mmcore-macos-universal.zip   (scripts/package-macos-app.sh)
 The bundle is notarized + stapled; a failed notarization aborts the release.
+Set MMCORE_SKIP_NOTARY=1 to ship a signed but UNNOTARIZED bundle when no
+notarytool credentials are available (local/emergency builds only).
 
 The Windows zip is built by CI (.github/workflows/windows.yml) when the release
 is published and attached as:
@@ -42,6 +44,14 @@ Environment:
                         (default: mmcore-notary). The macOS asset is always
                         notarized + stapled and the release fails if that does
                         not succeed, so an unnotarized app cannot ship.
+  ~/.config/mmcore/notary.env
+                        optional file with NOTARY_APPLE_ID, NOTARY_TEAM_ID, and
+                        NOTARY_PASSWORD exports for non-interactive notarization
+                        (sourced automatically before the macOS package step).
+  MMCORE_SKIP_NOTARY=1  local/emergency builds: sign the macOS app but do NOT
+                        notarize or staple it, so the release can proceed
+                        without notarytool credentials. Never set this for a
+                        normal release: Gatekeeper will block the app.
   MMCORE_SKIP_WIN_SIGN=1  local smoke tests: ship an unsigned Windows build
                           (never set this on a release)
 
@@ -178,16 +188,20 @@ last_version() {
 release_notes() {
 	local version="$1"
 	local macos_asset="${2:-}"
-	local last tag_range
+	local last tag_range tests_section
 	last="$(last_version)"
 	if [ "${last}" = "0.0.0" ]; then
 		tag_range=""
 	else
 		tag_range="v${last}..HEAD"
 	fi
-	python3 - "${version}" "${last}" "${tag_range}" "${macos_asset}" <<'PY'
+	# Record which related suites this release scoped to (and why), from the
+	# same diff the release is cut on. Never fail the release if selection is
+	# unavailable (for example a shallow clone with no tags).
+	tests_section="$(python3 "${REPO_ROOT}/scripts/release_tests.py" notes --since "${last}" 2>/dev/null || true)"
+	python3 - "${version}" "${last}" "${tag_range}" "${macos_asset}" "${tests_section}" <<'PY'
 import os, subprocess, sys
-version, last, tag_range, macos_asset = sys.argv[1:5]
+version, last, tag_range, macos_asset, tests_section = sys.argv[1:6]
 macos_name = os.path.basename(macos_asset) if macos_asset else ""
 print(f"mmcore v{version}")
 print()
@@ -236,7 +250,7 @@ print()
 print("## Bootable USB / ISO (Alpine, KMS/DRM)")
 print()
 print("The ISO ships compressed as `mmcore-fb-x86_64.iso.zst`. Decompress it,")
-print("then write it to a USB stick; install-usb.sh adds a persistent MMCORE")
+print("then write it to a USB stick or microSD; install-usb.sh adds a persistent MMCORE")
 print("partition so BASIC files survive reboots:")
 print()
 print("```bash")
@@ -245,6 +259,8 @@ print("sudo ./install-usb.sh --iso mmcore-fb-x86_64.iso /dev/sdX")
 print("```")
 print()
 print("install-usb.sh also accepts the compressed `.iso.zst` directly.")
+print("`--read-write` keeps the live session writable and persists C: on that")
+print("stick or microSD without installing onto an internal disk.")
 print()
 print("## Windows native (x86_64)")
 print()
@@ -283,6 +299,9 @@ print("- `mmcore-windows-x86_64.zip` — Windows x86_64 native SDL2 build")
 if macos_name:
     print(f"- `{macos_name}` — macOS universal app bundle (mmcore.app)")
 print()
+if tests_section:
+    print(tests_section)
+    print()
 if tag_range:
     print(f"## Changes since v{last}")
     print()
@@ -343,9 +362,17 @@ publish() {
 	assert_zip_has_installer "${pi400}"
 
 	if [ "$(uname -s)" = "Darwin" ]; then
-		log "Building macOS app bundle for ${tag}"
-		MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
-			bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		# shellcheck source=scripts/mmcore-notary-env.sh
+		. "${REPO_ROOT}/scripts/mmcore-notary-env.sh"
+		if [ "${MMCORE_SKIP_NOTARY:-}" = "1" ]; then
+			log "Building UNNOTARIZED macOS app bundle for ${tag} (MMCORE_SKIP_NOTARY=1)"
+			MMCORE_REQUIRE_NOTARY=0 VERSION="${version}" \
+				bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		else
+			log "Building macOS app bundle for ${tag}"
+			MMCORE_REQUIRE_NOTARY=1 VERSION="${version}" \
+				bash "${REPO_ROOT}/scripts/package-macos-app.sh"
+		fi
 	fi
 	if [ -f "${macos}" ]; then
 		macos_arg=("${macos}")

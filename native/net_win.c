@@ -32,6 +32,68 @@ static void sock_close(SOCKET fd)
 		closesocket(fd);
 }
 
+/* ---- SMB backend platform hook (netfs_smb2.c, #1134) --------------- *
+ *
+ * libsmb2's async event loop owns its own socket and asks the platform to
+ * wait for it. Winsock select() only watches sockets, which is exactly the
+ * one fd we are handed, so it is a direct fit. The event bit values mirror
+ * libsmb2's <compat.h> (POLLIN/POLLOUT/POLLERR); they are not defined by
+ * MinGW's own headers, so fall back to those values.
+ */
+#ifndef POLLIN
+#define POLLIN 0x0001
+#endif
+#ifndef POLLOUT
+#define POLLOUT 0x0004
+#endif
+#ifndef POLLERR
+#define POLLERR 0x0008
+#endif
+#ifndef POLLHUP
+#define POLLHUP 0x0010
+#endif
+
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)
+{
+	fd_set rfds, wfds, efds;
+	struct timeval tv, *ptv;
+	SOCKET s;
+	int r;
+
+	if (fd < 0)
+		return -1;
+	s = (SOCKET)fd;
+	FD_ZERO(&rfds);
+	FD_ZERO(&wfds);
+	FD_ZERO(&efds);
+	if (events & POLLIN)
+		FD_SET(s, &rfds);
+	if (events & POLLOUT)
+		FD_SET(s, &wfds);
+	FD_SET(s, &efds);
+	if (timeout_ms < 0)
+		ptv = 0;
+	else
+	{
+		tv.tv_sec = timeout_ms / 1000;
+		tv.tv_usec = (timeout_ms % 1000) * 1000;
+		ptv = &tv;
+	}
+	r = select(0, &rfds, &wfds, &efds, ptv);
+	if (r == SOCKET_ERROR)
+		return -1;
+	if (r == 0)
+		return 0;
+	r = 0;
+	if (FD_ISSET(s, &rfds))
+		r |= POLLIN;
+	if (FD_ISSET(s, &wfds))
+		r |= POLLOUT;
+	if (FD_ISSET(s, &efds))
+		r |= POLLERR;
+	return r;
+}
+
 /* ---- client -------------------------------------------------------- */
 
 enum { C_IDLE = 0, C_CONNECTING = 1, C_CONNECTED = 2, C_FAILED = 3, C_CLOSED = 4 };

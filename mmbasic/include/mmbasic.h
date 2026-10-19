@@ -14,8 +14,14 @@ extern "C" {
 /* Number of virtual consoles (Ctrl+Alt+1..4 sessions on every platform). */
 #define MMB_MAX_CONSOLES 4
 
-/* Drive letters A..H (see the VFS). Physical drives are C..H. */
-#define MMB_MAX_DRIVES 8
+/* Drive letter space A..Z (see the VFS). A: is the RAM disk, B: a mounted
+ * package, C:..H: the FAT/FatFs physical drives, and Z: the SMB network drive
+ * (#1128). I:..Y: are unused. MMB_MAX_DRIVES sizes the per-console cwd_path
+ * table, indexed by letter - 'A'. */
+#define MMB_MAX_DRIVES 26
+#define MMB_FAT_DRIVE_HI 'H'  /* highest FAT-backed physical drive letter */
+#define MMB_NET_DRIVE    'Z'  /* OPTION NETWORK DRIVE mounts here */
+#define MMB_DRIVE_HI     MMB_NET_DRIVE
 
 /* Pointer state for the full-screen apps (currently PAINT). Coordinates are
  * in screen pixels with (0,0) at the top-left, matching hdmi_width()/
@@ -57,6 +63,11 @@ void mmb_dirent_offer(mmb_dirent *heap, int *n, int max, const mmb_dirent *e);
 typedef struct mmb_platform {
 	void (*write_serial)(const char *s, unsigned n);
 	void (*write_screen)(const char *s, unsigned n);
+	/* Non-zero when the screen ANSI renderer understands 24-bit background
+	 * SGR (`ESC[48;2;r;g;bm`). The bare-metal Circle terminal is patched
+	 * for this; native consoles render text from the same palette as CLS
+	 * and need no true-colour escape. */
+	int ansi_truecolour;
 	void (*set_pixel)(int x, int y, unsigned rgb888);
 	/* Draw a pixel that must survive console text flushes (boot-splash
 	 * logo). A bare-metal console keeps its own pixel buffer and repaints
@@ -94,6 +105,8 @@ typedef struct mmb_platform {
 	int (*take_break)(void);
 	/* Hardware reset. Does not return. */
 	void (*reboot)(void);
+	/* Power off. Does not return. NULL when the host cannot shut down hardware. */
+	void (*shutdown)(void);
 	/* Non-zero when QUIT should end the host application (native builds).
 	 * A bare Pi has no application to close, so QUIT only stops the program. */
 	int can_quit;
@@ -107,6 +120,8 @@ typedef struct mmb_platform {
 	int (*audio_have_device)(void);
 	void (*audio_kick)(void);
 	void (*audio_flush)(void);
+	/* Tear down and re-create the output device, keeping target/enable. */
+	void (*audio_reset)(void);
 	/* Character-cell TUI: 8x16 cells covering the current HDMI mode. */
 	int (*video_cols)(void);
 	int (*video_rows)(void);
@@ -149,6 +164,18 @@ typedef struct mmb_platform {
 	int (*term_present_locked)(void);
 	/* Next full-frame present may virt-offset flip (PAGE DISPLAY). Optional. */
 	void (*present_set_flip)(int on);
+	/* PAGE DISPLAY replaced the visible frame with HDMI-native pixels
+	 * (stride in pixels). Optional: reconcile the bare-metal console's
+	 * cached text/pixel buffer with the new frame so the next text flush
+	 * cannot re-stamp a stale row over it. */
+	void (*present_sync_console)(const void *pix, int w, int h, int stride);
+	/* Reconcile just the (x,y,w,h) region of the console's cached text/pixel
+	 * buffer after a partial present. Optional; native builds carry no
+	 * console. Unlike present_sync_console this does not require a
+	 * full-frame page, so per-rect presents (sprites/TERM) can update the
+	 * cache without copying the whole screen. */
+	void (*present_sync_console_rect)(int x, int y, int w, int h,
+					  const void *pix, int stride);
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);
@@ -282,6 +309,8 @@ void mmb_boot_start(void);
 
 /* Stop audio, save settings, unmount disks, then hardware reset. */
 void mmb_reboot(void);
+/* Same teardown as mmb_reboot, then platform power-off when supported. */
+void mmb_shutdown(void);
 
 /* Apply COLOUR / OPTION DEFAULT COLOURS to HDMI text (ANSI). */
 void mmb_console_apply_colour(void);

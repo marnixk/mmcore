@@ -10,15 +10,32 @@ AFK
 
   (no arguments)
 
-AFK switches to MODE 12, renders each frame into a hidden page and flips it
-into view on the vertical blank (no tearing), and restores the previous mode,
-bits, pages and framebuffer when it exits.
+AFK switches to MODE 12 (960x540), or MODE 19 (1366x768) when the console is
+already in MODE 19 or 20 (the Chromebook panel sizes), renders each frame into
+a hidden page and flips it into view on the vertical blank (no tearing), and
+restores the previous mode and bits when it exits. As with the other
+full-screen apps, PAGE WRITE, PAGE DISPLAY and the framebuffer target return to
+0 (so the prompt is never left on a hidden page).
 
 Controls:
 
     Enter   exit and return to the prompt
     Ctrl+C  exit (the break key)
 
+Lock screen:
+
+    OPTION AFK PASSWORD "pass$"   arm the lock; FORGET disarms it.
+
+With a password set, pressing any key stops the animation and shows a small
+password box. Typed characters appear as `*`. Enter checks the input: the
+correct password exits AFK, a wrong one clears the box and stays locked. Esc
+cancels the dialog and resumes the animation (any later key re-arms the lock).
+Ctrl+C no longer exits while the lock is armed. The password
+is stored as a hash in .mmbasic.ini and is never printed by OPTION LIST; this is
+a deterrent, not real security.
+
 Example:
 
     AFK
+    OPTION AFK PASSWORD "open sesame"
+    OPTION AFK PASSWORD FORGET

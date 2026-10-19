@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from harness import prompt_at_buffer_end
+
 
 def _read_until(con, needle: bytes, timeout: float = 2.0) -> bytes:
     deadline = time.time() + timeout
@@ -26,7 +28,7 @@ def _break_to_prompt(con, timeout: float = 3.0) -> str:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
     return buf.decode(errors="replace")
 
@@ -270,6 +272,13 @@ def test_play_mod(console):
 
 def test_play_xm(console):
     assert console.send_line('PLAY XM "tests/TEST.XM"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_s3m(console):
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
     console.send_line("PLAY STOP")
     assert console.send_line("PRINT PLAYING()") == "0"
@@ -564,11 +573,70 @@ def test_remaining_modes(console):
         (14, 8, 960, 540),
         (15, 8, 1280, 1024),
         (16, 8, 1920, 1080),
+        (19, 8, 1366, 768),
+        (20, 8, 683, 384),
     ]
     for mode, bits, w, h in extras:
         assert console.send_line(f"MODE {mode},{bits}") == ""
         assert console.send_line("PRINT MM.HRES") == str(w)
         assert console.send_line("PRINT MM.VRES") == str(h)
+    assert console.send_line("MODE 8,16") == ""
+
+
+def test_wxga_modes_are_fullscreen(console):
+    """Modes 19 and 20 retune HDMI to 1366x768 and half of that.
+    Earlier mode numbers are unchanged."""
+    assert console.send_line("MODE 16,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "1920"
+    assert console.send_line("PRINT MM.VRES") == "1080"
+    assert console.send_line("MODE 18,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "640"
+    assert console.send_line("PRINT MM.VRES") == "360"
+
+    assert console.send_line("MODE 19,16") == ""
+    assert console.send_line("PRINT MM.HRES") == "1366"
+    assert console.send_line("PRINT MM.VRES") == "768"
+    assert console.screen_size() == (1366, 768)
+    assert console.send_line("PIXEL 1365,767,RGB(255,0,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(1365,767)"))
+    assert ((pix >> 16) & 255) > 150
+
+    assert console.send_line("MODE 19,12") == ""
+    assert console.send_line("PRINT MM.HRES") == "1366"
+    assert console.send_line("MODE 20,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "683"
+    assert console.send_line("PRINT MM.VRES") == "384"
+    assert console.screen_size() == (683, 384)
+    assert console.send_line("PIXEL 682,383,RGB(0,255,0)") == ""
+    pix = int(console.send_line("PRINT PIXEL(682,383)"))
+    assert ((pix >> 8) & 255) > 150
+    assert "INVALID MODE" in console.send_line("MODE 21,8")
+    assert console.send_line("MODE 1,8") == ""
+    assert console.send_line("PRINT MM.HRES") == "800"
+    assert console.send_line("MODE 8,16") == ""
+
+
+def test_unaligned_mode_guest_memory_is_correct(console):
+    """#1050: a non-4-aligned mode's guest framebuffer holds the right pixels.
+
+    MODE 20 is 683 px wide, the Chromebook 2x size kept exact on purpose
+    (#1052). QEMU's bcm2835-fb scans that width out sheared by one pixel per
+    row, but that is a host emulator defect: the interpreter's framebuffer
+    memory is written correctly. PIXEL() reads that guest memory (not the
+    emulated scanout), so a filled BOX must read back exactly where it was
+    drawn. This pins the guest side so the width cannot be rounded again to
+    chase the QEMU artifact.
+    """
+    assert console.send_line("MODE 20,32") == ""
+    assert console.send_line("PRINT MM.HRES") == "683"
+    assert console.send_line("CLS 0") == ""
+    assert console.send_line("BOX 50,50,100,100,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    for x, y in ((50, 50), (149, 50), (50, 149), (149, 149), (100, 100)):
+        r, g, b = _rgb_components(console, f"PRINT PIXEL({x},{y})")
+        assert r > 150 and g < 80 and b < 80, (x, y, r, g, b)
+    for x, y in ((49, 50), (150, 50), (50, 49), (50, 150)):
+        r, g, b = _rgb_components(console, f"PRINT PIXEL({x},{y})")
+        assert r < 80, (x, y, r, g, b)
     assert console.send_line("MODE 8,16") == ""
 
 
@@ -664,7 +732,12 @@ def test_page_display_after_text_on_live_page(fresh_console):
 
 
 def test_live_pixel_after_page_display_roundtrip(fresh_console):
-    """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY."""
+    """Issue #320: live PIXEL on the display page stays on HDMI after PAGE DISPLAY.
+
+    The sample sits below the console's text rows: with page 1 a normal page,
+    CLS homes the console there and its prompt band repaints over graphics on
+    those rows (the same as any non-overlay page).
+    """
     c = fresh_console
     assert c.send_line("MODE 8,16") == ""
     assert c.send_line("PAGE WRITE 1") == ""
@@ -672,25 +745,94 @@ def test_live_pixel_after_page_display_roundtrip(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
     assert c.send_line("CLS RGB(0,0,0)") == ""
-    assert c.send_line("PIXEL 320,140,RGB(0,255,0)") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    assert c.send_line("PIXEL 320,400,RGB(0,255,0)") == ""
+    r, g, b = c.screen_pixel(320, 400)
     assert g > 180 and r < 80 and b < 80, (r, g, b)
-    soft = int(c.send_line("PRINT PIXEL(320,140)"))
+    soft = int(c.send_line("PRINT PIXEL(320,400)"))
     assert ((soft >> 8) & 255) > 180
     assert c.send_line("PAGE WRITE 3") == ""
     assert c.send_line("CLS RGB(255,0,0)") == ""
     assert c.send_line("PAGE DISPLAY 3") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE WRITE 3") == ""
-    red = int(c.send_line("PRINT PIXEL(320,140)"))
+    red = int(c.send_line("PRINT PIXEL(320,400)"))
     assert ((red >> 16) & 255) > 180
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
     assert g > 180 and r < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE DISPLAY 3") == ""
-    r, g, b = c.screen_pixel(320, 140)
+    r, g, b = c.screen_pixel(320, 400)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
+def test_page_display_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1068: the console row band flushed after PAGE DISPLAY must show
+    the presented page, not the pixels/text the terminal buffer still held.
+
+    CLS homes the cursor, so the sample sits in the prompt band. After PAGE
+    DISPLAY 3 the next console write must repaint the red page, not re-stamp
+    the green pixel left in the terminal buffer.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("30 PAGE WRITE 3") == ""
+    assert c.send_line("40 CLS RGB(255,0,0)") == ""
+    assert c.send_line("50 PAGE DISPLAY 3") == ""
+    assert c.send_line('60 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
+def test_page_copy_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1070: PAGE COPY to the visible page presents a full native frame
+    straight to the framebuffer, bypassing the console cache. The next console
+    write must repaint the copied page, not re-stamp the stale green pixel the
+    terminal buffer still held.
+
+    Same band as the #1068 PAGE DISPLAY case: CLS homes the cursor, so the
+    sample sits in the prompt row.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("30 PAGE WRITE 3") == ""
+    assert c.send_line("40 CLS RGB(255,0,0)") == ""
+    assert c.send_line("50 PAGE COPY 3 TO 0") == ""
+    assert c.send_line('60 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
+    assert r > 180 and g < 80 and b < 80, (r, g, b)
+
+
+def test_blit_copy_flush_does_not_restamp_stale_row(fresh_console):
+    """Issue #1072: BLIT COPY onto the visible page presents only the dirty
+    rect straight to the framebuffer, bypassing the console cache. The next
+    console write must repaint the BLIT'd page, not re-stamp the stale green
+    pixel the terminal buffer still held.
+
+    Same band as the #1068/#1070 cases: CLS homes the cursor, so the sample
+    sits in the prompt row.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("NEW") == ""
+    assert c.send_line("10 CLS RGB(0,0,0)") == ""
+    assert c.send_line("20 PIXEL 320,4,RGB(0,255,0)") == ""
+    assert c.send_line("30 PAGE WRITE 3") == ""
+    assert c.send_line("40 CLS RGB(255,0,0)") == ""
+    assert c.send_line("50 PAGE WRITE 0") == ""
+    assert c.send_line("60 BLIT 300,0,300,0,40,20,3") == ""
+    assert c.send_line('70 PRINT "X"') == ""
+    assert "X" in c.send_line("RUN")
+    r, g, b = c.screen_pixel(320, 4)
     assert r > 180 and g < 80 and b < 80, (r, g, b)
 
 

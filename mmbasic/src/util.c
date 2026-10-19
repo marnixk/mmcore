@@ -510,6 +510,22 @@ static unsigned blk_total(const char *data)
 	return t;
 }
 
+/* Byte length currently stored in the block (excluding the NUL). Keeping it
+ * in the header makes appends O(1) amortized instead of scanning the whole
+ * accumulated string (#994). */
+static unsigned blk_len(const char *data)
+{
+	unsigned n;
+	memcpy(&n, data - MMB_STR_HDR + sizeof(unsigned), sizeof(n));
+	return n;
+}
+
+static void blk_set_len(char *data, int n)
+{
+	unsigned u = n < 0 ? 0u : (unsigned)n;
+	memcpy(data - MMB_STR_HDR + sizeof(unsigned), &u, sizeof(u));
+}
+
 static unsigned blk_cap(const char *data)
 {
 	return blk_total(data) - MMB_STR_HDR - 1;
@@ -552,6 +568,7 @@ static char *pool_alloc_raw(int need)
 			s_slab_left -= bsz;
 		}
 		memcpy(raw, &bsz, sizeof(bsz));
+		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
 	{
@@ -559,6 +576,7 @@ static char *pool_alloc_raw(int need)
 		if (!raw)
 			return 0;
 		memcpy(raw, &total, sizeof(total));
+		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
 }
@@ -614,6 +632,7 @@ char *mmb_str_alloc(int n)
 	if (!p)
 		mmb_error("?OUT OF MEMORY");
 	p[n] = 0;
+	blk_set_len(p, 0);
 	return p;
 }
 
@@ -681,6 +700,7 @@ char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *w
 		if (s && s != cur && len)
 			memmove(cur, s, (size_t)len);
 		cur[len] = 0;
+		blk_set_len(cur, len);
 		*slot = cur;
 		return cur;
 	}
@@ -691,6 +711,7 @@ char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *w
 		if (s && len)
 			memcpy(nb, s, (size_t)len);
 		nb[len] = 0;
+		blk_set_len(nb, len);
 		pool_free_raw(cur);
 		*slot = nb;
 		return nb;
@@ -707,7 +728,7 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	cur = *slot;
 	if (cur == MMB_EMPTY)
 		cur = 0;
-	clen = cur ? (int)strlen(cur) : 0;
+	clen = cur ? (int)blk_len(cur) : 0;
 	if (len < 0)
 		len = s ? (int)strlen(s) : 0;
 	if (maxlen > 0 && clen + len > maxlen)
@@ -732,6 +753,7 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	if (len)
 		memcpy(cur + clen, s, (size_t)len);
 	cur[clen + len] = 0;
+	blk_set_len(cur, clen + len);
 	*slot = cur;
 	return cur;
 }
@@ -859,6 +881,17 @@ unsigned mmb_now_ms(void)
 	return G.plat && G.plat->millis ? G.plat->millis() : 0;
 }
 
+uint32_t mmb_rng_seed(void)
+{
+	/* A per-call counter guarantees two consoles brought up within the same
+	 * millisecond still get distinct seeds; the millisecond clock keeps the
+	 * sequence from repeating across boots (#1015). */
+	static uint32_t serial;
+	uint32_t ticks = mmb_now_ms();
+	serial++;
+	return (ticks * 2654435761u) ^ (serial * 0x9E3779B9u) ^ 1u;
+}
+
 void mmb_console_write(const char *s)
 {
 	unsigned n;
@@ -947,7 +980,7 @@ int mmb_console_ansi_code(unsigned rgb, int fg)
 
 void mmb_console_apply_colour(void)
 {
-	char seq[32];
+	char seq[40];
 	int n = 0;
 
 	if (!G.plat || !G.plat->write_screen)
@@ -965,7 +998,28 @@ void mmb_console_apply_colour(void)
 	seq[n++] = 'm';
 	seq[n++] = '\x1b';
 	seq[n++] = '[';
-	ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
+	if (G.plat->ansi_truecolour)
+	{
+		/* Paint the cell background with the exact colour CLS used, not the
+		 * nearest of 16 ANSI colours. Quantise the same way as the graphics
+		 * fill so MODE x,8/RGB backgrounds match pixel for pixel (#1234). */
+		int r, g, b;
+		mmb_rgb_unpack(mmb_quantize(G.gfx.bg), &r, &g, &b);
+		seq[n++] = '4';
+		seq[n++] = '8';
+		seq[n++] = ';';
+		seq[n++] = '2';
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, r);
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, g);
+		seq[n++] = ';';
+		ansi_put_int(seq, &n, b);
+	}
+	else
+	{
+		ansi_put_int(seq, &n, rgb_to_ansi(G.gfx.bg, 0));
+	}
 	seq[n++] = 'm';
 	G.plat->write_screen(seq, (unsigned)n);
 }
@@ -2056,9 +2110,17 @@ void mmb_keydown_set(const int *codes, int n)
 
 int mmb_keydown_get(int n)
 {
+	int i;
+
+	/* KEYDOWN(0) is the number of held keys. Any positive argument is a
+	 * set-1 scan code tested for membership; it is not an index into the
+	 * held set (that was the pre-#1238 contract). */
 	if (n == 0)
 		return G.nkeydown;
-	if (n < 1 || n > G.nkeydown)
+	if (n < 1)
 		return 0;
-	return G.keydown[n - 1];
+	for (i = 0; i < G.nkeydown; i++)
+		if (G.keydown[i] == n)
+			return 1;
+	return 0;
 }

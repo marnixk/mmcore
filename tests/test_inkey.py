@@ -3,6 +3,7 @@
 import re
 import time
 
+from harness import prompt_at_buffer_end
 from ihelp_util import dump_topic
 
 
@@ -27,7 +28,7 @@ def _until_prompt(con, timeout: float = 5.0) -> str:
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
         else:
             time.sleep(0.05)

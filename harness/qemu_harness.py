@@ -16,6 +16,15 @@ QEMU ``raspi3b`` has no onboard NIC. Optional ``usb-net`` (SLIRP user
 networking) attaches Circle's USB CDC Ethernet driver; see
 ``qemu_usb_net_args()``. Default tests omit it so USB enumerate/DHCP does
 not slow the suite.
+
+Known emulation limitation (#1050): QEMU's ``bcm2835-fb`` device scans a
+framebuffer whose physical width is not a multiple of 4 out with one pixel of
+horizontal drift per row. That is a host defect -- the guest framebuffer memory
+is written correctly -- so ``screen_pixels``/``screen_pixel`` (which read the
+emulated scanout) can be skewed for those modes. MODE 19 (1366 px) and MODE 20
+(683 px) keep those exact widths on purpose (#1052), so assert their graphics
+through the console's own ``PIXEL(x, y)`` function, which reads guest memory
+rather than the scanout.
 """
 
 from __future__ import annotations
@@ -108,6 +117,38 @@ def qemu_usb_net_args(
             f"filter-dump,id=fnet0,netdev=net0,file={dump}",
         ]
     return args
+
+
+def _is_prompt_line(ln: str) -> bool:
+    if ln == ">":
+        return True
+    # OPTION PROMPT CWD: A:/> or A:/DIR>
+    if ln.endswith(">") and len(ln) >= 3 and ln[1] == ":":
+        return True
+    return False
+
+
+def prompt_at_buffer_end(buf: bytes, prompt: bytes) -> bool:
+    """True when ``buf`` ends with the console prompt on a fresh line.
+
+    The console echoes the typed command, so a ``>`` inside it -- the ``<>``
+    not-equal operator, ``IF x > y`` -- must not be mistaken for the prompt.
+    Only a prompt that follows a line terminator counts, so the trailing ``>``
+    of a still-arriving echo is ignored and the whole echoed line is available
+    to :meth:`MMBasicConsole._extract_response` (#1211).
+    """
+    stripped = buf.rstrip()
+    if not stripped:
+        return False
+    # Anything on the first line is the echoed command, not its prompt.
+    start = max(stripped.rfind(b"\n"), stripped.rfind(b"\r")) + 1
+    if start == 0:
+        return False
+    last = stripped[start:].decode(errors="replace").strip()
+    if _is_prompt_line(last):
+        return True
+    token = prompt.decode(errors="replace").strip()
+    return bool(token) and last == token
 
 
 class MMBasicConsole:
@@ -285,18 +326,13 @@ class MMBasicConsole:
 
         deadline = time.time() + timeout
         buf = b""
-        # the response is complete once the next prompt is echoed back
+        # the response is complete once the next prompt arrives on its own line
         while time.time() < deadline:
             chunk = self._recv(self._ser)
             if chunk:
                 buf += chunk
-                if buf.count(self.prompt) >= 1 and buf.rstrip().endswith(
-                    self.prompt.rstrip()
-                ):
-                    break
-            else:
-                if buf.rstrip().endswith(self.prompt.rstrip()):
-                    break
+            if prompt_at_buffer_end(buf, self.prompt):
+                break
         return self._extract_response(buf, text)
 
     def send_keys(self, data: bytes, timeout: float = 3.0) -> str:
@@ -311,13 +347,8 @@ class MMBasicConsole:
             chunk = self._recv(self._ser)
             if chunk:
                 buf += chunk
-                if buf.count(self.prompt) >= 1 and buf.rstrip().endswith(
-                    self.prompt.rstrip()
-                ):
-                    break
-            else:
-                if buf.rstrip().endswith(self.prompt.rstrip()):
-                    break
+            if prompt_at_buffer_end(buf, self.prompt):
+                break
         return self._extract_response(buf, "")
 
     def _extract_response(self, raw: bytes, echoed: str) -> str:
@@ -325,17 +356,8 @@ class MMBasicConsole:
         # strip the echoed command and surrounding prompt/whitespace
         lines = [ln.strip() for ln in text.replace("\r", "\n").split("\n")]
         lines = [ln for ln in lines if ln and ln != echoed.strip()]
-        cleaned = [ln for ln in lines if not self._is_prompt_line(ln)]
+        cleaned = [ln for ln in lines if not _is_prompt_line(ln)]
         return "\n".join(cleaned).strip()
-
-    @staticmethod
-    def _is_prompt_line(ln: str) -> bool:
-        if ln == ">":
-            return True
-        # OPTION PROMPT CWD: A:/> or A:/DIR>
-        if ln.endswith(">") and len(ln) >= 3 and ln[1] == ":":
-            return True
-        return False
 
     # -- screen (framebuffer) ---------------------------------------------
     def _monitor_drain(self) -> bytes:

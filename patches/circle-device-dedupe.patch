@@ -1,0 +1,27 @@
+diff --git a/lib/device.cpp b/lib/device.cpp
+index 194703f2..d1090a41 100644
+--- a/lib/device.cpp
++++ b/lib/device.cpp
+@@ -89,6 +89,22 @@ CDevice::TRegistrationHandle CDevice::RegisterRemovedHandler (TDeviceRemovedHand
+ {
+ 	assert (pHandler != 0);		// not allowed any more to unregister
+ 
++	// mmbasic-device-dedupe (#985): registering the same handler/context pair
++	// again must reuse the existing entry instead of allocating another list
++	// node. disk_initialize() registers on every successful mount, so without
++	// this the removed-handler list grows and leaks heap without bound.
++	for (TPtrListElement *pScan = m_RemovedHandlerList.GetFirst ();
++	     pScan != 0;
++	     pScan = m_RemovedHandlerList.GetNext (pScan))
++	{
++		TRemovedHandlerEntry *pExisting =
++			(TRemovedHandlerEntry *) m_RemovedHandlerList.GetPtr (pScan);
++		if (pExisting->pHandler == pHandler && pExisting->pContext == pContext)
++		{
++			return (TRegistrationHandle) pExisting;
++		}
++	}
++
+ 	TRemovedHandlerEntry *pEntry = new TRemovedHandlerEntry;
+ 	assert (pEntry != 0);
+ 	pEntry->pHandler = pHandler;

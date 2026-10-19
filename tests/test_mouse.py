@@ -15,6 +15,7 @@ same spirit as tests/test_paint_cursors.py.
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -521,3 +522,180 @@ def test_host_markers(host_run):
                    "OK all_icons", "OK hidden", "OK icon_names",
                    "OK art_bounds", "OK event_classify"):
         assert marker in host_run.stdout, (marker, host_run.stdout)
+
+
+# ---- host driver: console-cache reconciliation (#1088) --------------------
+
+# QEMU cannot inject a pointer, so the restamp cannot be driven end to end.
+# Compile the real gfx.c + mouse_cursor.c with a recording platform instead:
+# an overlay present must reconcile the console cache with the pixels it put
+# on the framebuffer, and a page sync must re-apply the cursor so a later
+# console row flush cannot re-stamp the page over a stationary pointer.
+RECONCILE_DRIVER = r"""
+#include "mmb_priv.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+mmb s_mmb;
+mmb *g_cur = &s_mmb;
+int g_console;
+mmb_audio g_audio;
+
+#define W 64
+#define H 48
+static uint16_t page[W * H];
+static uint16_t presented[W * H];
+static int present_calls, sync_full_calls, sync_rect_calls;
+static int sync_rect_page, sync_rect_cursor;
+static int sync_x, sync_y, sync_w, sync_h;
+static uint16_t sync_pix[W * H];
+
+mmb_mouse_state mock;
+void mmb_error(const char *m) { (void)m; }
+int mmb_mouse_read(mmb_mouse_state *o) { if (o) *o = mock; return mock.present; }
+void mmb_upper(char *s) { (void)s; }
+
+static void *my_alloc(unsigned n) { return malloc(n); }
+static void my_free(void *p) { free(p); }
+
+static void rec_present(int x, int y, int w, int h, const void *p, int s)
+{
+	const uint16_t *src = p;
+	int r, c;
+	present_calls++;
+	for (r = 0; r < h; r++)
+		for (c = 0; c < w; c++) {
+			int dx = x + c, dy = y + r;
+			if (dx >= 0 && dx < W && dy >= 0 && dy < H)
+				presented[dy * W + dx] = src[r * s + c];
+		}
+}
+static void rec_sync_full(const void *p, int w, int h, int s)
+{ (void)p; (void)w; (void)h; (void)s; sync_full_calls++; }
+static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
+{
+	const uint16_t *src = p;
+	int r, c, diff = 0;
+	sync_rect_calls++;
+	if (w > 0 && h > 0 && w * h <= (int)(sizeof sync_pix / sizeof sync_pix[0]))
+		memcpy(sync_pix, src, (size_t)w * (size_t)h * sizeof(uint16_t));
+	sync_x = x; sync_y = y; sync_w = w; sync_h = h;
+	for (r = 0; r < h; r++)
+		for (c = 0; c < w; c++)
+			if (src[r * s + c] != page[(y + r) * W + (x + c)])
+				diff = 1;
+	if (diff)
+		sync_rect_cursor = 1;
+	else
+		sync_rect_page = 1;
+}
+
+int main(void)
+{
+	static mmb_platform plat;
+	uint16_t *pg;
+	int x, y;
+	g_cur->plat = &plat;
+	plat.present_native = rec_present;
+	plat.present_sync_console = rec_sync_full;
+	plat.present_sync_console_rect = rec_sync_rect;
+	plat.alloc = my_alloc;
+	plat.free = my_free;
+	g_cur->running = 1;
+	g_cur->gfx.w = W;
+	g_cur->gfx.h = H;
+	g_cur->gfx.display_page = 0;
+	g_cur->gfx.pages = MMB_MAX_PAGES;
+	for (y = 0; y < H; y++)
+		for (x = 0; x < W; x++)
+			page[y * W + x] = (uint16_t)(x * 3 + y * 5 + 1);
+	pg = mmb_gfx_buf_for(0, &x, &y);
+	memcpy(pg, page, sizeof page);
+
+	/* 1. An overlay present reconciles the console cache with the exact
+	 * pixels it wrote to the framebuffer, same as present-rect (#1079). */
+	{
+		static uint16_t sprite[4 * 4];
+		int i;
+		for (i = 0; i < 16; i++)
+			sprite[i] = 0xABCD;
+		present_calls = sync_rect_calls = 0;
+		mmb_gfx_present_native(4, 5, 4, 4, sprite, 4);
+		if (present_calls != 1 || sync_rect_calls != 1 ||
+		    sync_x != 4 || sync_y != 5 || sync_w != 4 || sync_h != 4 ||
+		    memcmp(sync_pix, sprite, sizeof sprite) != 0) {
+			printf("FAIL reconcile_present p=%d s=%d\n",
+			       present_calls, sync_rect_calls);
+			return 1;
+		}
+		printf("OK reconcile_present\n");
+	}
+
+	/* 2. After a page sync the cursor is re-applied: the erase syncs the
+	 * page pixels, the draw syncs the composited sprite, so a subsequent
+	 * console row flush reproduces the stationary cursor (#1088). */
+	mock.present = 1;
+	mock.x = 10;
+	mock.y = 10;
+	mock.buttons = 0;
+	mmb_mouse_cursor_reset_all();
+	mmb_mouse_cursor_set_on(1);
+	present_calls = sync_full_calls = sync_rect_calls = 0;
+	sync_rect_page = sync_rect_cursor = 0;
+	g_cur->gfx.dirty = 0;
+	mmb_gfx_sync_console(0);
+	if (sync_full_calls < 1 || present_calls < 2 ||
+	    !sync_rect_page || !sync_rect_cursor) {
+		printf("FAIL reconcile_sync full=%d p=%d page=%d cursor=%d\n",
+		       sync_full_calls, present_calls, sync_rect_page,
+		       sync_rect_cursor);
+		return 1;
+	}
+	printf("OK reconcile_sync\n");
+
+	printf("ALL OK\n");
+	return 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def reconcile_run(tmp_path_factory):
+    if shutil.which("cc") is None:
+        pytest.skip("needs a host C toolchain (cc)")
+    tmp = tmp_path_factory.mktemp("gfx_reconcile")
+    (tmp / "driver.c").write_text(RECONCILE_DRIVER)
+    exe = tmp / "driver"
+    # -ffunction-sections/-fdata-sections + gc-sections let the driver link
+    # only mmb_gfx_present_native()/mmb_gfx_sync_console() and their callees;
+    # the rest of gfx.c is dropped instead of needing stubs.
+    gc = ["-Wl,-dead_strip"] if sys.platform == "darwin" else ["-Wl,--gc-sections"]
+    subprocess.run(
+        [
+            "cc", "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+            "-DMMB_PLATFORM_POSIX", "-ffunction-sections", "-fdata-sections",
+            "-I", os.path.join(REPO, "mmbasic", "include"),
+            "-I", SRC,
+            *gc,
+            "-o", str(exe),
+            str(tmp / "driver.c"),
+            os.path.join(SRC, "gfx.c"),
+            MOUSE_C,
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return subprocess.run([str(exe)], check=False, capture_output=True, text=True)
+
+
+def test_host_console_sync_reconciles_overlay(reconcile_run):
+    out = reconcile_run.stdout + reconcile_run.stderr
+    assert reconcile_run.returncode == 0, out
+    assert "ALL OK" in out, out
+    assert "FAIL" not in out, out
+
+
+def test_host_console_sync_markers(reconcile_run):
+    for marker in ("OK reconcile_present", "OK reconcile_sync"):
+        assert marker in reconcile_run.stdout, (marker, reconcile_run.stdout)

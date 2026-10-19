@@ -12,8 +12,7 @@ COLOR fg [, bg]
   fg - foreground RGB integer or named colour
   bg - background (optional)
 
-Colours are RGB integers: RGB(r,g,b), RGB(r,g,b,t), RGB(RED), or RGB("RED").
-t is 0 (clear) to 15 (solid) when drawing on page 1 (the graphics overlay).
+Colours are RGB integers: RGB(r,g,b), RGB(RED), or RGB("RED").
 Integers 0 to 31 are the IBM PC palette (CGA/VGA): 0-7 normal, 8-15 bright,
 16-31 repeat 0-15. COLOUR 4 is the same as COLOUR RED.
 

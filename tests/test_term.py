@@ -31,12 +31,14 @@ def _f10(con):
 
 
 def _quit(con):
-    con._ser.sendall(bytes([1]) + b"x")
+    # F10 then Exit: works offline and over a remote session, where the
+    # Ctrl+A/Alt prefix belongs to the remote (#1218).
+    con._ser.sendall(b"\x1b[21~x")
     return _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
 
 
 def _menu(con):
-    con._ser.sendall(bytes([1]) + b"t")
+    con._ser.sendall(b"\x1b[21~")
     return _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
 
 
@@ -140,7 +142,7 @@ def test_term_draws_on_page_two_not_overlay():
     # #340: present straight from the PAGE 2 paint buffer, no PAGE 0 staging.
     assert "mmb_gfx_buf_for(TM_PAGE" in term
     assert "mmb_gfx_copy_rect(TM_PAGE, 0" not in term
-    assert "mmb_gfx_clear_overlay" in term
+    assert "mmb_gfx_clear_overlay" not in term
     assert "plat_present_wait();" in plat
     assert "fb->SetArea(area, pix, plat_present_done" not in plat
     assert "void mmb_gfx_glyph_cell" in gfx
@@ -1012,6 +1014,133 @@ def test_term_bookmark_80x25_mode(kernel_image):
         ini = _read_termconfig(con, path)
         assert "mode80x25=1" in ini.replace(" ", "")
         assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        con.stop()
+
+
+def _seed_80x25_bookmark(con, name="Eighty", host="demo"):
+    """Write a single 80x25 demo bookmark into the TERM config, then return
+    its path. Faster and less brittle than walking the New-bookmark form."""
+    path = _termconfig_path(con) or "A:/.termconfig"
+    assert con.send_line("NEW") == ""
+    program = [
+        f'10 OPEN "{path}" FOR OUTPUT AS #1',
+        '20 PRINT #1, "# TERM bookmarks"',
+        '30 PRINT #1, ""',
+        '40 PRINT #1, "[bm.0]"',
+        f'50 PRINT #1, "name={name}"',
+        f'60 PRINT #1, "host={host}"',
+        '70 PRINT #1, "port=23"',
+        '80 PRINT #1, "echo=0"',
+        '90 PRINT #1, "letterboxed=0"',
+        '100 PRINT #1, "mode80x25=1"',
+        '110 CLOSE #1',
+    ]
+    for line in program:
+        assert con.send_line(line) == ""
+    assert con.send_line("RUN", timeout=8) == ""
+    return path
+
+
+def _connect_bookmark(con):
+    con._ser.sendall(bytes([1]) + b"t")
+    _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+    con._ser.sendall(b"k")
+    _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
+    con._ser.sendall(b"\r")  # Connect is the default button
+    return _plain(con.drain(quiet=1.0, timeout=12).decode(errors="replace"))
+
+
+def test_term_80x25_uses_ega_font_on_short_display(kernel_image):
+    """#1155: when the display cannot fit 25 rows of 8x16, an 80x25 bookmark
+    keeps the display mode and centres a 25-row 8x14 EGA grid."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_80x25_bookmark(con)
+        # MODE 20 (683x384) is the Chromebook 2x logical mode: 384/16 = 24
+        # rows of 8x16, one short of 25, but 384/14 = 27 for the EGA face.
+        assert con.send_line("MODE 20,32") == ""
+        assert con.screen_size() == (683, 384)
+        _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        connected = _connect_bookmark(con)
+        # The mode is kept (no 640x400 switch) and the full 25 rows render.
+        assert con.screen_size() == (683, 384)
+        rows_80 = [
+            ln
+            for ln in connected.replace("\r", "").split("\n")
+            if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        con.capture_png("/opt/cursor/artifacts/term_80x25_ega_short.png")
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_term_80x25_keeps_mode_2_on_tall_display(kernel_image):
+    """Control for #1155: a display that fits 8x16 still switches to MODE 2."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_80x25_bookmark(con)
+        # MODE 11 (1280x720) fits 45 rows of 8x16, so the 80x25 bookmark keeps
+        # the existing behaviour and retunes to MODE 2 (640x400).
+        assert con.send_line("MODE 11,32") == ""
+        _open_term(con, "TERM", quiet=0.8, timeout=10.0)
+        connected = _connect_bookmark(con)
+        assert con.screen_size() == (640, 400)
+        rows_80 = [
+            ln
+            for ln in connected.replace("\r", "").split("\n")
+            if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        _quit(con)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        con.stop()
+
+
+def test_term_boxed_keeps_chromebook_modes(kernel_image):
+    """#1200: TERM started from a MODE 19/20 prompt keeps that mode.
+
+    The Chromebook console runs in MODE 19/20 (~85x23); the default boxed
+    TERM must not shrink to its 960x540 letterbox mode there. The console
+    mode must also survive TERM's exit.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for mode, size, info in ((19, (1366, 768), "19.16"),
+                                 (20, (683, 384), "20.16")):
+            assert con.send_line(f"MODE {mode},16") == ""
+            assert con.screen_size() == size
+            _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+            time.sleep(0.3)
+            assert con.screen_size() == size, f"MODE {mode} switched mode"
+            _quit(con)
+            assert con.send_line("PRINT MM.INFO(MODE)") == info
+    finally:
+        con.stop()
+
+
+def test_term_boxed_default_mode_for_other_prompts(kernel_image):
+    """#1200 neighbour: non-Chromebook prompts still open boxed TERM in
+    MODE 14 (960x540), unchanged."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for mode in (2, 9, 14):
+            assert con.send_line(f"MODE {mode},16") == ""
+            w, h = con.screen_size()
+            _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+            time.sleep(0.3)
+            assert con.screen_size() == (960, 540), f"MODE {mode} -> not 960x540"
+            _quit(con)
+            assert con.send_line("PRINT MM.INFO(MODE)") == f"{mode}.16"
+            assert con.screen_size() == (w, h)
     finally:
         con.stop()
 

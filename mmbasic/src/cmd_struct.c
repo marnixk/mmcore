@@ -292,6 +292,11 @@ static int find_member(const mmb_sdef *d, const char *name)
 static int member_index_off(const mmb_smem *m, int nidx, const int *idx)
 {
 	int off = 0, i, stride = 1, esz;
+	/* A struct member array needs a real index vector. Callers that resolve a
+	 * member path without parsed subscripts (notably the trace cache) pass NULL;
+	 * fail cleanly instead of dereferencing it. */
+	if (nidx > 0 && !idx)
+		mmb_error("?SUBSCRIPT");
 	if (nidx != m->dims)
 	{
 		if (nidx == 0 && m->dims > 0)

@@ -1,0 +1,344 @@
+#!/bin/busybox sh
+# PID 1 for the live ISO and for a disk installed by mmcore-install.
+#
+# GRUB only loads this small initramfs. The root filesystem is a squashfs on
+# the same media; the kernel's own block driver reads it (large sequential
+# I/O) instead of the firmware USB stack.
+set -eu
+
+# Applets are not on PATH until --install. A missing /proc makes this
+# script exit and the kernel panic.
+/bin/busybox mkdir -p /bin /sbin /usr/bin /usr/sbin \
+	/proc /sys /dev /etc/modprobe.d \
+	/mnt/media /mnt/lower /mnt/rw /newroot
+
+/bin/busybox --install -s
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+# The ThinkPad T420's Renesas USB 3.0 controller stalls on UAS. Bind the boot
+# disk with usb-storage (bulk-only) by never loading uas here.
+printf 'blacklist uas\n' > /etc/modprobe.d/blacklist-uas.conf
+
+for mod in \
+	loop squashfs overlay isofs vfat fat ext4 \
+	crc32c_generic crc32c-intel libcrc32c \
+	nls_cp437 nls_iso8859_1 nls_utf8 nls_ascii \
+	usb-storage usbcore usb-common \
+	xhci-pci xhci-hcd ehci-pci ehci-hcd uhci-hcd ohci-pci ohci-hcd \
+	sd_mod sr_mod cdrom scsi_mod \
+	ata_piix ata_generic ahci libahci libata \
+	virtio_pci virtio_blk virtio_scsi virtio virtio_ring \
+	mmc_block mmc_core sdhci sdhci-pci sdhci-acpi sdhci-pltfm \
+	rtsx_pci rtsx_pci_sdmmc rtsx_usb rtsx_usb_sdmmc
+do
+	modprobe "$mod" 2>/dev/null || true
+done
+
+# mkfs.ext4 defaults to metadata_csum, which needs the crc32c crypto shash
+# before the MMCORE partition can be mounted as the --read-write overlay
+# upper. ext4 request_module()s "crypto-crc32c"; the initramfs packs no
+# modules.alias, so the alias lookup cannot resolve and the driver is loaded
+# by its real filename here instead (#1037).
+modprobe crc32c_generic 2>/dev/null || true
+modprobe crc32c-intel 2>/dev/null || true
+modprobe libcrc32c 2>/dev/null || true
+
+# #976: a disk installed by mmcore-install also has /boot/rootfs.squashfs on
+# its MMCORE-SYS partition, so scanning for that file alone can run the
+# installed build on a live boot. The live ISO carries a marker at its root
+# (mmcore-live-media) that the installer never copies to a disk; GRUB pins
+# $root to it and passes mmcore.live=1. On a live boot, mount only the marked
+# media.
+#
+# #979: the reverse is wrong too. An installed boot names its system partition
+# (mmcore.sys=LABEL=MMCORE-SYS) but used the same generic scan, so with a live
+# stick enumerated first it mounted the stick's live squashfs. An installed
+# boot resolves that name and mounts the squashfs from that same device only.
+live_boot=0
+sys_spec=""
+for arg in $(cat /proc/cmdline 2>/dev/null); do
+	case "$arg" in
+		mmcore.live=*) live_boot=1 ;;
+		mmcore.sys=*) sys_spec="${arg#mmcore.sys=}" ;;
+	esac
+done
+
+# Whole-disk name for a partition node: sda5 -> sda, mmcblk0p5 -> mmcblk0,
+# nvme0n1p5 -> nvme0n1. A bare disk name is returned unchanged.
+disk_of() {
+	n="${1#/dev/}"
+	case "$n" in
+		*p[0-9]|*p[0-9][0-9]) printf '%s' "${n%p*}" ;;
+		sd[a-z]*|vd[a-z]*|hd[a-z]*) printf '%s' "${n%%[0-9]*}" ;;
+		*) printf '%s' "$n" ;;
+	esac
+}
+
+# Mount the live media at /mnt/media. A dd'd hybrid ISO on a stick or microSD
+# is a *whole disk*: mounting it directly claims the whole device, and Linux
+# then refuses to open its MMCORE partition ("Can't open blockdev"), so the
+# --read-write overlay and C: can never come up. Mount a whole disk through a
+# read-only loop instead: the loop holds the device open without claiming it,
+# so the partition on the same disk stays mountable. A partition source or a
+# virtual CD (/dev/sr*, a separate device from the card) is mounted directly.
+live_loop=""
+live_disk=""
+mount_live_media() {
+	dev="$1"
+	name="${dev#/dev/}"
+	live_loop=""
+	live_disk=""
+	case "$name" in
+		sr[0-9]*)
+			mount -o ro "$dev" /mnt/media 2>/dev/null
+			return $?
+			;;
+	esac
+	if [ "$(disk_of "$dev")" = "$name" ]; then
+		live_loop="$(losetup -f 2>/dev/null || true)"
+		[ -n "$live_loop" ] || return 1
+		losetup -r "$live_loop" "$dev" 2>/dev/null \
+			|| { live_loop=""; return 1; }
+		if mount -o ro "$live_loop" /mnt/media 2>/dev/null; then
+			live_disk="$dev"
+			return 0
+		fi
+		losetup -d "$live_loop" 2>/dev/null || true
+		live_loop=""
+		return 1
+	fi
+	mount -o ro "$dev" /mnt/media 2>/dev/null
+}
+
+try_one() {
+	dev="$1"
+	[ -b "$dev" ] || return 1
+	mount -o ro "$dev" /mnt/media 2>/dev/null || return 1
+	if [ -f /mnt/media/boot/rootfs.squashfs ]; then
+		return 0
+	fi
+	umount /mnt/media 2>/dev/null || true
+	return 1
+}
+
+# #979: an installed boot names its system partition. Resolve exactly that
+# device (busybox findfs understands LABEL=/UUID=/PARTUUID=) and accept the
+# squashfs only from it, so a live stick's /boot/rootfs.squashfs can never
+# satisfy an installed boot. A bare device path is used as-is.
+try_sys_media() {
+	spec="$1"
+	case "$spec" in
+		/*) dev="$spec" ;;
+		*) dev="$(findfs "$spec" 2>/dev/null || true)" ;;
+	esac
+	[ -n "$dev" ] || return 1
+	[ -b "$dev" ] || return 1
+	mount -o ro "$dev" /mnt/media 2>/dev/null || return 1
+	if [ -f /mnt/media/boot/rootfs.squashfs ]; then
+		return 0
+	fi
+	umount /mnt/media 2>/dev/null || true
+	return 1
+}
+
+# The live marker is the boot media's own identity: require it *and* the
+# squashfs, so an installed disk (or any other squashfs) is never accepted.
+try_live_media() {
+	dev="$1"
+	[ -b "$dev" ] || return 1
+	mount_live_media "$dev" || return 1
+	if [ -f /mnt/media/mmcore-live-media ] \
+		&& [ -f /mnt/media/boot/rootfs.squashfs ]; then
+		return 0
+	fi
+	umount /mnt/media 2>/dev/null || true
+	if [ -n "$live_loop" ]; then
+		losetup -d "$live_loop" 2>/dev/null || true
+	fi
+	live_loop=""
+	live_disk=""
+	return 1
+}
+
+scan_media() {
+	probe="$1"
+	i=0
+	while [ "$i" -lt 30 ]; do
+		for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme*n* /dev/mmcblk*; do
+			if "$probe" "$dev"; then
+				return 0
+			fi
+		done
+		i=$((i + 1))
+		sleep 1
+	done
+	return 1
+}
+
+scan_sys_media() {
+	spec="$1"
+	i=0
+	while [ "$i" -lt 30 ]; do
+		if try_sys_media "$spec"; then
+			return 0
+		fi
+		i=$((i + 1))
+		sleep 1
+	done
+	return 1
+}
+
+found=0
+# Prefer the media the boot named: the marked live media on a live boot
+# (#976), the labelled MMCORE-SYS device on an installed boot (#979).
+if [ "$live_boot" = 1 ]; then
+	scan_media try_live_media && found=1
+elif [ -n "${sys_spec}" ]; then
+	scan_sys_media "$sys_spec" && found=1
+fi
+# Generic first-squashfs scan only for a boot that named no media (an older
+# live image with no mmcore.live= marker). An installed boot is deliberately
+# excluded: its squashfs must come from the named system partition, never a
+# live stick's.
+if [ "$found" != 1 ] && [ -z "${sys_spec}" ]; then
+	scan_media try_one && found=1
+fi
+
+if [ "$found" != 1 ]; then
+	printf '%s\n' 'mmcore: no rootfs.squashfs found' > /dev/console 2>/dev/null || true
+	printf '%s\n' 'mmcore: no rootfs.squashfs found' > /dev/tty0 2>/dev/null || true
+	exec sh
+fi
+
+if ! mount -t squashfs -o loop,ro /mnt/media/boot/rootfs.squashfs /mnt/lower 2>/dev/null; then
+	lower_loop="$(losetup -f 2>/dev/null || true)"
+	[ -n "$lower_loop" ] || lower_loop=/dev/loop0
+	losetup -r "$lower_loop" /mnt/media/boot/rootfs.squashfs
+	mount -t squashfs -o ro "$lower_loop" /mnt/lower
+fi
+
+has_mmcore_label() {
+	blkid "$1" 2>/dev/null | grep -q 'LABEL="MMCORE"'
+}
+
+# iso9660 on the hybrid image can leave the disk read-only, which then
+# blocks the persistence partition. The ioctl is what actually clears it.
+clear_ro() {
+	dev="$1"
+	name="${dev#/dev/}"
+	parent="$(disk_of "$dev")"
+	blockdev --setrw "$dev" 2>/dev/null || true
+	if [ "$parent" != "$name" ]; then
+		blockdev --setrw "/dev/${parent}" 2>/dev/null || true
+	fi
+}
+
+# Prefer the MMCORE partition on the disk we booted, so a second disk that
+# happens to carry the same label is not used as this session's store.
+# A virtual CD (/dev/sr*) is not that disk; fall through to findfs.
+pick_mmcore() {
+	live="$1"
+	base=""
+	case "$live" in
+		/dev/sr*|"") ;;
+		/dev/*) base="$(disk_of "$live")" ;;
+	esac
+	if [ -n "$base" ]; then
+		for dev in "/dev/${base}5" "/dev/${base}p5"; do
+			if [ -b "$dev" ] && has_mmcore_label "$dev"; then
+				printf '%s' "$dev"
+				return 0
+			fi
+		done
+	fi
+	findfs LABEL=MMCORE 2>/dev/null || true
+}
+
+# --read-write seeds /.mmcore-rw on the MMCORE partition. On a live boot,
+# use that partition as the overlay upper layer so the session is writable
+# and C: (the C/ directory on it) survives power-off. An installed boot
+# (mmcore.sys=) never takes this path. A plain MMCORE partition without the
+# marker stays C:-only and is mounted later by mmcore-persist.start.
+rw_dev=""
+rw_overlay=0
+if [ "$live_boot" = 1 ]; then
+	modprobe ext4 2>/dev/null || true
+	live_src=""
+	while read -r src mnt _rest; do
+		if [ "$mnt" = "/mnt/media" ]; then
+			live_src="$src"
+			break
+		fi
+	done < /proc/mounts || true
+	# When the media was mounted through a loop (a whole-disk dd'd image),
+	# live_src is the loop device; pick_mmcore still has to prefer the
+	# MMCORE partition on the disk we booted, so pass the real disk.
+	pick_src="$live_src"
+	[ -n "${live_disk}" ] && pick_src="$live_disk"
+	# Firmware that boots the image as a CD exposes only sr0 at first. The
+	# real microSD (mmcblk) shows up a few seconds later.
+	tries=1
+	case "$live_src" in
+		/dev/sr*) tries=10 ;;
+	esac
+	n=0
+	while [ "$n" -lt "$tries" ]; do
+		rw_dev="$(pick_mmcore "$pick_src")"
+		if [ -n "$rw_dev" ] && [ -b "$rw_dev" ]; then
+			break
+		fi
+		rw_dev=""
+		n=$((n + 1))
+		if [ "$n" -lt "$tries" ]; then
+			sleep 1
+		fi
+	done
+	if [ -n "$rw_dev" ]; then
+		clear_ro "$rw_dev"
+		mkdir -p /mnt/persist
+		if mount -o rw "$rw_dev" /mnt/persist 2>/dev/null; then
+			if [ -f /mnt/persist/.mmcore-rw ]; then
+				rw_overlay=1
+			else
+				umount /mnt/persist 2>/dev/null || true
+			fi
+		fi
+	fi
+fi
+
+if [ "$rw_overlay" = 1 ]; then
+	mkdir -p /mnt/persist/rw/upper /mnt/persist/C
+	rm -rf /mnt/persist/rw/work
+	mkdir -p /mnt/persist/rw/work
+	mount -t overlay overlay \
+		-o lowerdir=/mnt/lower,upperdir=/mnt/persist/rw/upper,workdir=/mnt/persist/rw/work \
+		/newroot
+else
+	mount -t tmpfs -o mode=755 tmpfs /mnt/rw
+	mkdir -p /mnt/rw/upper /mnt/rw/work
+	mount -t overlay overlay \
+		-o lowerdir=/mnt/lower,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
+		/newroot
+fi
+
+mkdir -p /newroot/mnt/live/media /newroot/mnt/live/lower /newroot/mnt/live/rw
+mkdir -p /newroot/dev /newroot/proc /newroot/sys
+mount --move /mnt/media /newroot/mnt/live/media
+mount --move /mnt/lower /newroot/mnt/live/lower
+if [ "$rw_overlay" = 1 ]; then
+	mkdir -p /newroot/media/mmcore
+	mount --move /mnt/persist /newroot/media/mmcore
+else
+	mount --move /mnt/rw /newroot/mnt/live/rw
+fi
+mount --move /dev /newroot/dev
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+
+exec switch_root /newroot /sbin/init
+printf '%s\n' 'mmcore: switch_root failed' > /dev/tty0 2>/dev/null || true
+exec sh

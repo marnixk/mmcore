@@ -362,6 +362,8 @@ static void at_draw(void)
 	/* Same backdrop + panel chrome as SETTINGS (#793): fill the overlay with
 	 * the menu surface, then draw a brd-framed dialog body. */
 	tui_clear(AT_TITLE_FG, AT_TITLE_BG);
+	/* Row-0 backdrop header (#1217), same as SETTINGS: date/time + battery. */
+	mmb_tui_status_header();
 	/* A small centred overlay dialog (#624), like the editor quick open. */
 	tui_dialog_geom(52, 16, &x, &y, &w, &h);
 	tui_dialog_panel(x, y, w, h, title, AT_FG, AT_BG,

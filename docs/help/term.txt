@@ -43,17 +43,21 @@ pane, menu, and dialog rows stay top-down even under OPTION Y_AXIS UP. A line
 scroll updates the cell buffer and redraws the pane so a burst of BBS ANSI
 newlines is one present, not a pixel shift per line.
 
-ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL) plus telnet TTYPE=ANSI
-and DA/DSR replies for BBS autodetection. NAWS reports 80 columns when boxed
-and the Full MODE width when full. ESC ( B charset sequences are eaten so they
-do not print a stray B. OSC strings time out. Glyphs are IBM VGA 8x16 (CP437),
-so box drawing and shade characters 176-178 match a DOS VGA terminal.
+ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL/ECH) plus telnet
+TTYPE=ANSI and DA/DSR replies for BBS autodetection. Erasing keeps the current
+SGR background (Background Color Erase), so full-width bars such as irssi's
+status line fill to the edge. NAWS reports 80 columns when boxed and the Full
+MODE width when full. ESC ( B charset sequences are eaten so they do not print a
+stray B. OSC strings time out. Glyphs are IBM VGA 8x16 (CP437), so box drawing
+and shade characters 176-178 match a DOS VGA terminal.
 
-Alt+X exits and restores the previous MODE. F10 or Alt+T opens the Terminal
-menu (WORDPAD-style: the top bar is a full-width menu colour only while
-Alt/menu is active). The status bar (Alt-X, Echo, host) is shown only while
-that menu is open. Echo ON backspace only erases characters typed since the
-last newline.
+Alt+X exits and restores the previous MODE. F10 opens the Terminal menu
+(WORDPAD-style: the top bar is a full-width menu colour only while the menu is
+active). The status bar (Alt-X, F10 Menu, Echo, host) is shown only while that
+menu is open. Echo ON backspace only erases characters typed since the last
+newline. While a remote session is connected, Ctrl+A (and other control chords)
+is sent to the remote so GNU screen, tmux and friends get their prefix; use F10
+for TERM's own menu there. A real USB Alt+X still exits.
 
 Scrollback keeps the last OPTION TERM SCROLLBACK lines (default 200) above the
 pane. Once lines have scrolled off, Page Up / Page Down page through history,
@@ -69,7 +73,11 @@ Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
 Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
 bookmark host, port, echo, letterbox, and optional 80x25 mode (MODE 2 640x400,
 full pane, no letterbox, NAWS 80x25). The status bar is shown only while that
-menu is open, so 80x25 uses all 25 rows for the terminal.
+menu is open, so 80x25 uses all 25 rows for the terminal. When the display is
+too short for 25 rows of the 8x16 VGA face (for example a Chromebook at MODE 20,
+683x384), TERM keeps that mode, switches to the 8x14 EGA CP437 face, and centres
+the grid with the leftover rows and columns as margin. Displays that fit 25 rows
+are unchanged.
 
 ZMODEM downloads are automatic: when a BBS starts a ZMODEM send, TERM sees the
 ZRQINIT header (ZPAD ZPAD ZDLE) and receives the file into the download folder.

@@ -89,6 +89,20 @@ def test_ntp_stays_quiet_offline(console):
     assert console.send_line("PRINT 6*7") == "42"
 
 
+def test_ntp_explicit_on_stays_quiet_offline(console):
+    """#1181: OPTION NTP ON with no link must not spam or stall the prompt.
+
+    The boot poll gates on an actual network link, so an explicit ON on a
+    machine with no NIC stays silent just like AUTO; only the NTP command
+    reports the failure.
+    """
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    assert console.send_line("OPTION NTP ON") == ""
+    late = console.drain(quiet=0.3, timeout=3.0).decode(errors="replace")
+    assert "NTP" not in late.upper()
+    assert console.send_line("PRINT 5*5") == "25"
+
+
 def test_ntp_command_errors_offline(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     out = console.send_line("NTP")

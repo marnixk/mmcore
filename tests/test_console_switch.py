@@ -239,6 +239,135 @@ def test_running_program_suspends_and_resumes(kernel_image):
         con.stop()
 
 
+def _last_done(text: str) -> int | None:
+    """Last ``DONE <n>`` counter value printed by the loop program."""
+    found = re.findall(r"DONE\s+(\d+)", text)
+    return int(found[-1]) if found else None
+
+
+def test_two_consoles_same_file_keep_own_variables(kernel_image):
+    """#1013: two consoles running the same file must not share the tokenized
+    program buffer or the trace cache. Each console's ``counter`` must reflect
+    only its own execution; before the fix console 1's later reads drifted from
+    the value its own program last printed, because the compiled LET and the
+    resolved variable reference aliased the other instance."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        for line in (
+            "10 counter = 0",
+            "20 DO",
+            "30 counter = counter + 1",
+            "40 PAUSE 10",
+            "50 LOOP UNTIL INKEY$() = CHR$(27)",
+            '60 PRINT "DONE "; counter',
+        ):
+            con.send_line(line)
+        con.send_line('SAVE "PROG.BAS"')
+
+        # Console 1 runs the file, then stays suspended while console 2 loads
+        # and runs the same text (same line numbers, same token addresses).
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b'RUN "PROG.BAS"\r')
+        time.sleep(0.5)
+        con.drain(quiet=0.2)
+
+        # Stop console 2: its own variable matches its own DONE value.
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text2 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done2 = _last_done(text2)
+        assert done2 is not None, text2
+        assert con.send_line("PRINT counter") == str(done2), text2
+
+        # Switch back to console 1 (resumes), stop it, and require the same
+        # self-consistency. Before the fix this printed the other instance's
+        # counter and the resumed program drifted.
+        _switch(con, 1)
+        con._ser.sendall(b"\x1b")
+        time.sleep(0.6)
+        text1 = con.drain(quiet=0.4, timeout=3.0).decode(errors="replace")
+        done1 = _last_done(text1)
+        assert done1 is not None, text1
+        assert con.send_line("PRINT counter") == str(done1), text1
+
+        # The guest is still responsive (no wedge).
+        assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        con.stop()
+
+
+def _rnd_sequence(con: MMBasicConsole, count: int = 4) -> list[str]:
+    """Run a program that prints ``count`` RND(1) values and return them."""
+    assert con.send_line("NEW") == ""
+    for line in (
+        f"10 FOR I=1 TO {count}",
+        "20 PRINT RND(1)",
+        "30 NEXT I",
+    ):
+        con.send_line(line)
+    out = con.send_line("RUN", timeout=10.0)
+    return [
+        ln.strip()
+        for ln in out.replace("\r", "\n").split("\n")
+        if ln.strip()
+    ]
+
+
+def test_two_consoles_get_distinct_rnd_seeds(kernel_image):
+    """#1015: a fresh console must not seed RND from the boot console's
+    constant, or two instances running the same program print the same
+    sequence."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        seq1 = _rnd_sequence(con)
+        assert len(seq1) == 4, seq1
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        seq2 = _rnd_sequence(con)
+        assert len(seq2) == 4, seq2
+
+        assert seq1 != seq2, (seq1, seq2)
+    finally:
+        con.stop()
+
+
+def test_break_after_resume_returns_to_prompt(kernel_image):
+    """#1014: a program suspended by a console switch resumes with a live
+    setjmp landing, so Ctrl+C returns to the REPL with ?BREAK instead of
+    longjmping into the dead frame mmb_exec_line() left behind."""
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(b"10 DO\r" b"20 LOOP\r" b"RUN\r")
+        time.sleep(0.6)
+        con.drain(quiet=0.2)
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT 7*6") == "42"
+
+        _switch(con, 1)
+        time.sleep(0.4)
+        con._ser.sendall(bytes([3]))  # Ctrl+C breaks the resumed program
+        seen = con.drain(quiet=0.6, timeout=6.0).decode(errors="replace")
+        assert "BREAK" in seen.upper(), seen
+
+        # The REPL is usable again on this console.
+        assert con.send_line("PRINT 1+2") == "3"
+    finally:
+        con.stop()
+
+
 def test_switch_keeps_audio_playing(kernel_image):
     """#620: the audio engine is one machine resource, so switching consoles
     must not silence it. PLAYING() is global, and PLAY STOP from any console
@@ -1289,6 +1418,41 @@ def test_editor_char_picker_hold_on_other_console_does_not_open(kernel_image):
         seen = _plain(con.drain(quiet=0.4).decode(errors="replace"))
 
         assert "Special characters" not in seen, seen
+    finally:
+        con.stop()
+
+
+def test_s3m_keeps_mixing_while_term_repaints(kernel_image):
+    """#936: S3M stays mixed while TERM repaints on another console.
+
+    A fresh console resizes HDMI in one blocking call, so the track is
+    started after that, in MODE 14,16 (TERM's letterbox). MIXGAP then
+    measures the repaint and the serial pane dump.
+    """
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("MODE 14,16") == ""
+        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+        assert int(con.send_line('PRINT MM.INFO("MIXGAP")')) < 200
+
+        seen = _open_term_demoburst(con, settle=0.4)
+        assert "line 40" in seen, seen
+        _term_page_up(con)
+        con._ser.sendall(bytes([1]) + b"x")
+        left = _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
+        assert "MMBasic" in left or ">" in left, left
+
+        gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
+        assert gap < 250, gap
+        assert underrun == "0"
+        assert con.send_line("PRINT PLAYING()") == "1"
+        con.send_line("PLAY STOP")
     finally:
         con.stop()
 

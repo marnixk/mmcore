@@ -6,7 +6,8 @@ current program name if set.
 
 EDIT [file$]
 
-  file$ - path to edit (optional)
+  file$ - path to edit (optional); must be a string, e.g. "HI.BAS" (an
+          unquoted token such as HI.BAS is a ?SYNTAX error)
 
 Menus: Alt+F File  Alt+E Edit  Alt+R Run  Alt+T Theme  Alt+H Help  F10 File.
 Help: Keys... (shortcut list) and Manual (opens interactive HELP; Esc/Ctrl+C
@@ -19,11 +20,13 @@ to return to the editor. MODE is restored. PAGE WRITE and PAGE DISPLAY return
 to 0 (BREAK / Ctrl-C does the same so the editor is not left on a black
 off-screen page).
 
-Crash resume: while a named buffer is dirty it is checkpointed every couple of
-seconds to a sidecar <file>.rec. If a sidecar is newer than the saved file when
-EDIT opens it, a Recover/Discard/Cancel prompt appears. Recover loads the
-sidecar into the buffer (the real file is overwritten only when you save).
-Discard removes the sidecar. A clean save removes it too.
+Crash resume: while a named buffer is dirty it is checkpointed about once a
+minute to a sidecar <file>.rec; OPTION AUTOSAVE OFF disables that periodic
+checkpoint (the leave-time save still writes the real file). If a sidecar is
+newer than the saved file when EDIT opens it, a Recover/Discard/Cancel prompt
+appears. Recover loads the sidecar into the buffer (the real file is
+overwritten only when you save). Discard removes the sidecar. A clean save
+removes it too.
 
 Theme menu (Alt+T): 10 colour schemes. Syntax colours follow the theme.
 Non-VGA themes use custom palettes. Default is Slate. Saved with OPTION EDIT

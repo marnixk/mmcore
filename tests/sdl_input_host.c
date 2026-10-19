@@ -80,9 +80,35 @@ void mmb_inkey_push(int c)
 		g_inkey[g_inkey_n++] = (unsigned char)c;
 }
 
+/* CMM2 KEYDOWN() set published by sdl_input.c (native/Linux-ISO parity with
+ * the Circle USB HID path). g_cur is the interpreter state pointer the shared
+ * code guards KEYDOWN publishes with; point it at a dummy so publishing runs. */
+static mmb g_mmb_state;
+mmb *g_cur = &g_mmb_state;
+
+static int g_keydown[6];
+static int g_keydown_n;
+
+void mmb_keydown_set(const int *codes, int n)
+{
+	int i;
+
+	if (n < 0)
+		n = 0;
+	if (n > 6)
+		n = 6;
+	g_keydown_n = n;
+	for (i = 0; i < n; i++)
+		g_keydown[i] = codes[i];
+}
+
 void sdl_video_mark_dirty(void) {}
 void sdl_video_request_quit(void) {}
 void sdl_video_toggle_fullscreen(void) {}
+
+/* Fixed framebuffer size so finger deltas scale predictably (#1039). */
+int sdl_video_width(void) { return 640; }
+int sdl_video_height(void) { return 480; }
 
 /* Identity viewport for the host test: window pixels == framebuffer pixels. */
 int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
@@ -117,6 +143,17 @@ static void push_key(SDL_Keycode sym, Uint16 mod)
 	SDL_PushEvent(&e);
 }
 
+static void push_keyup(SDL_Keycode sym, Uint16 mod)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_KEYUP;
+	e.key.keysym.sym = sym;
+	e.key.keysym.mod = mod;
+	SDL_PushEvent(&e);
+}
+
 static void push_motion(int x, int y)
 {
 	SDL_Event e;
@@ -135,6 +172,37 @@ static void push_button(int button, int down)
 	SDL_zero(e);
 	e.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
 	e.button.button = (Uint8)button;
+	SDL_PushEvent(&e);
+}
+
+static void push_finger_down(SDL_FingerID id, float x, float y)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_FINGERDOWN;
+	e.tfinger.touchId = 1;
+	e.tfinger.fingerId = id;
+	e.tfinger.x = x;
+	e.tfinger.y = y;
+	e.tfinger.pressure = 1.0f;
+	SDL_PushEvent(&e);
+}
+
+static void push_finger_motion(SDL_FingerID id, float x, float y, float dx,
+			       float dy)
+{
+	SDL_Event e;
+
+	SDL_zero(e);
+	e.type = SDL_FINGERMOTION;
+	e.tfinger.touchId = 1;
+	e.tfinger.fingerId = id;
+	e.tfinger.x = x;
+	e.tfinger.y = y;
+	e.tfinger.dx = dx;
+	e.tfinger.dy = dy;
+	e.tfinger.pressure = 1.0f;
 	SDL_PushEvent(&e);
 }
 
@@ -160,6 +228,17 @@ static void expect_queue(const char *name, const char *want)
 	{
 		fprintf(stderr, "FAIL %s: queue len %d want %d\n", name,
 			g_inkey_n, want_n);
+		fails++;
+	}
+}
+
+static void expect_keydown(const char *name, const int *want, int want_n)
+{
+	if (g_keydown_n != want_n ||
+	    (want_n != 0 && memcmp(g_keydown, want, sizeof(int) * want_n) != 0))
+	{
+		fprintf(stderr, "FAIL %s: keydown n=%d want %d\n", name,
+			g_keydown_n, want_n);
 		fails++;
 	}
 }
@@ -194,6 +273,37 @@ static void reset(void)
 	sdl_input_init();
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0)
 		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+}
+
+/* #1054: a Super (Chromebook Search / Left Meta) + arrow chord must emit
+ * exactly the bytes the real Home/End/PgUp/PgDn key emits. Compare the two
+ * front-end feeds rather than hard-coding the escape sequence. */
+static void expect_super_same(const char *name, SDL_Keycode super_sym,
+			      SDL_Keycode real_sym)
+{
+	unsigned char real[64], sup[64];
+	int real_n, sup_n;
+
+	reset();
+	g_running = 0;
+	push_key(real_sym, 0);
+	sdl_input_pump();
+	real_n = g_feed_n;
+	memcpy(real, g_feed, (size_t)real_n);
+
+	reset();
+	g_running = 0;
+	push_key(super_sym, KMOD_LGUI);
+	sdl_input_pump();
+	sup_n = g_feed_n;
+	memcpy(sup, g_feed, (size_t)sup_n);
+
+	if (real_n != sup_n || memcmp(real, sup, (size_t)real_n) != 0)
+	{
+		fprintf(stderr, "FAIL %s: super len %d real len %d\n", name,
+			sup_n, real_n);
+		fails++;
+	}
 }
 
 int main(void)
@@ -328,6 +438,82 @@ int main(void)
 	sdl_input_pump();
 	expect_feed("shift-end", "\x1b[1;2F");
 
+	/* #1054: Super+arrows (Chromebook Search key, KMOD_LGUI) must match the
+	 * real Home/End/PgUp/PgDn keys exactly. */
+	expect_super_same("super-left home", SDLK_LEFT, SDLK_HOME);
+	expect_super_same("super-right end", SDLK_RIGHT, SDLK_END);
+	expect_super_same("super-up pgup", SDLK_UP, SDLK_PAGEUP);
+	expect_super_same("super-down pgdn", SDLK_DOWN, SDLK_PAGEDOWN);
+
+	/* Super by itself stays inert: no bytes to the front end. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LGUI, KMOD_LGUI);
+	sdl_input_pump();
+	if (g_front_feeds != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr, "FAIL super alone: feeds=%d queue=%d\n",
+			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* A bare arrow is unchanged by the mapping. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_feed("plain-left", "\x1b[D");
+
+	/* KEYDOWN(): the compat games poll this while a program runs, so the
+	 * native/Linux-ISO build publishes PC/AT set-1 scan codes, the same set
+	 * the Circle USB HID path does. Left=75, Right=77, Escape=1, 'z'=44. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left", (const int[]){75}, 1);
+
+	push_key(SDLK_RIGHT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left+right", (const int[]){75, 77}, 2);
+
+	/* Auto-repeat re-sends KEYDOWN: the code must not be listed twice. */
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown repeat", (const int[]){75, 77}, 2);
+
+	expect_queue("keydown arrows inkey", "\x1b[D\x1b[C\x1b[D");
+
+	push_keyup(SDLK_LEFT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown left released", (const int[]){77}, 1);
+
+	push_keyup(SDLK_RIGHT, 0);
+	sdl_input_pump();
+	expect_keydown("keydown all released", 0, 0);
+
+	reset();
+	g_running = 1;
+	push_key(SDLK_z, 0);
+	sdl_input_pump();
+	expect_keydown("keydown single key", (const int[]){44}, 1);
+	push_key(SDLK_ESCAPE, 0);
+	sdl_input_pump();
+	expect_keydown("keydown letter+esc", (const int[]){44, 1}, 2);
+
+	/* Losing window focus drops the held set (no KEYUPs are delivered for
+	 * keys released while unfocused). */
+	{
+		SDL_Event ev;
+
+		SDL_zero(ev);
+		ev.type = SDL_WINDOWEVENT;
+		ev.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+		SDL_PushEvent(&ev);
+		sdl_input_pump();
+		expect_keydown("keydown focus lost", 0, 0);
+	}
+
 	/* Ctrl+Space at the idle REPL opens the app picker: the front end sees a
 	 * single NUL byte (#589). */
 	reset();
@@ -343,11 +529,101 @@ int main(void)
 		fails++;
 	}
 
-	/* Ctrl+D at an empty prompt runs QUIT (#646). */
+	/* #1074: the KMS/DRM evdev backend emits SDL_TEXTINPUT for the base
+	 * letter of a Ctrl chord, so Ctrl+X would cut and also type 'x'. The
+	 * control byte must be delivered alone. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_x, KMOD_CTRL);
+	push_text("x");
+	sdl_input_pump();
+	expect_feed("ctrl-x text swallowed", "\x18");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_c, KMOD_CTRL);
+	push_text("c");
+	sdl_input_pump();
+	expect_feed("ctrl-c text swallowed", "\x03");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_z, KMOD_CTRL);
+	push_text("z");
+	sdl_input_pump();
+	expect_feed("ctrl-z text swallowed", "\x1a");
+
+	/* #1203: the Ctrl+U/W/L line-editing shortcuts reach the front end as
+	 * their raw control bytes on every target, and the KMS/DRM mirrored
+	 * text event for the base letter is swallowed (#1074). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_u, KMOD_CTRL);
+	push_text("u");
+	sdl_input_pump();
+	expect_feed("ctrl-u text swallowed", "\x15");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_w, KMOD_CTRL);
+	push_text("w");
+	sdl_input_pump();
+	expect_feed("ctrl-w text swallowed", "\x17");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_l, KMOD_CTRL);
+	push_text("l");
+	sdl_input_pump();
+	expect_feed("ctrl-l text swallowed", "\x0c");
+
+	/* The Ctrl+Space NUL must not be followed by a literal space. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_SPACE, KMOD_CTRL);
+	push_text(" ");
+	sdl_input_pump();
+	if (g_front_feeds != 1 || g_feed_n != 1 || g_feed[0] != 0)
+	{
+		fprintf(stderr,
+			"FAIL ctrl-space text: feeds=%d n=%d first=%d\n",
+			g_front_feeds, g_feed_n, g_feed_n ? g_feed[0] : -1);
+		fails++;
+	}
+
+	/* Ctrl+Return delivers its CSI sequence and no carriage return. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_RETURN, KMOD_CTRL);
+	push_text("\r");
+	sdl_input_pump();
+	expect_feed("ctrl-return text swallowed", "\x1b[29~");
+
+	/* Ctrl+V (control byte) and Ctrl+Shift+V (clipboard paste) must not
+	 * also insert the literal 'v'. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_v, KMOD_CTRL);
+	push_text("v");
+	sdl_input_pump();
+	expect_queue("ctrl-v text swallowed", "\x16");
+
+	reset();
+	g_running = 1;
+	snprintf(g_clip, sizeof g_clip, "P1");
+	g_clip_set = 1;
+	push_key(SDLK_v, KMOD_CTRL | KMOD_SHIFT);
+	push_text("v");
+	sdl_input_pump();
+	expect_queue("paste text swallowed", "P1");
+
+	/* Ctrl+D at an empty prompt runs QUIT (#646). The paired TEXTINPUT
+	 * for 'd' (KMS/DRM) must not be typed afterwards. */
 	reset();
 	g_running = 0;
 	g_line_empty = 1;
 	push_key(SDLK_d, KMOD_CTRL);
+	push_text("d");
 	sdl_input_pump();
 	if (g_exec_n != 1 || strcmp(g_exec, "QUIT") != 0 ||
 	    g_front_feeds != 0 || g_inkey_n != 0)
@@ -460,6 +736,152 @@ int main(void)
 			g_console_switches);
 		fails++;
 	}
+
+	/* #1180: Alt+1..Alt+9 is EDIT's tab-switch prefix. The ISO/native SDL
+	 * path must deliver SOH then the digit, mirroring both the Alt+letter
+	 * menu prefix and the Circle hid_alt_char path. */
+	for (int d = 1; d <= 9; d++)
+	{
+		char want[3] = {'\x01', (char)('0' + d), '\0'};
+
+		reset();
+		g_running = 0;
+		push_key(SDLK_1 + (d - 1), KMOD_ALT);
+		sdl_input_pump();
+		expect_feed("alt-digit tab prefix", want);
+	}
+
+	/* Alt+0 carries the same prefix, matching Circle (hid_alt_char accepts
+	 * '0'..'9'); EDIT ignores an unknown digit. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_0, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-0 tab prefix", "\x01" "0");
+
+	/* Alt+digit while a program runs is not the tab chord: no SOH leaks
+	 * into the program's INKEY queue. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_3, KMOD_ALT);
+	sdl_input_pump();
+	expect_queue("alt-digit running no SOH", "");
+
+	/* #1183: the numeric keypad is the other flavour of the same tab
+	 * chord. Alt+KP1..KP9 must deliver SOH+digit exactly like the top row,
+	 * mirroring Ctrl+Alt+KP1..KP4 and the Circle hid_alt_char path. */
+	for (int d = 1; d <= 9; d++)
+	{
+		char want[3] = {'\x01', (char)('0' + d), '\0'};
+
+		reset();
+		g_running = 0;
+		push_key(SDLK_KP_1 + (d - 1), KMOD_ALT);
+		sdl_input_pump();
+		expect_feed("alt-keypad-digit tab prefix", want);
+	}
+
+	/* Alt+KP0 mirrors Alt+0 (SOH+'0'); EDIT ignores the unknown digit. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_KP_0, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-kp0 tab prefix", "\x01" "0");
+
+	/* Alt+keypad digit while a program runs is not the tab chord either. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_KP_3, KMOD_ALT);
+	sdl_input_pump();
+	expect_queue("alt-keypad-digit running no SOH", "");
+
+	/* #1183/#1238: keypad digits keep their own set-1 keypad scan codes
+	 * (Home/7=71 ... Ins/0=82), distinct from the top row. Circle's
+	 * hid_to_scancode maps HID 0x1e..0x27 and 0x59..0x62 the same way. */
+	{
+		static const struct {
+			const char *name;
+			SDL_Keycode sym;
+			int code;
+		} digits[] = {
+			{"keydown top 1", SDLK_1, 2},
+			{"keydown top 2", SDLK_2, 3},
+			{"keydown top 3", SDLK_3, 4},
+			{"keydown top 4", SDLK_4, 5},
+			{"keydown top 5", SDLK_5, 6},
+			{"keydown top 6", SDLK_6, 7},
+			{"keydown top 7", SDLK_7, 8},
+			{"keydown top 8", SDLK_8, 9},
+			{"keydown top 9", SDLK_9, 10},
+			{"keydown top 0", SDLK_0, 11},
+			{"keydown keypad 1", SDLK_KP_1, 79},
+			{"keydown keypad 2", SDLK_KP_2, 80},
+			{"keydown keypad 3", SDLK_KP_3, 81},
+			{"keydown keypad 4", SDLK_KP_4, 75},
+			{"keydown keypad 5", SDLK_KP_5, 76},
+			{"keydown keypad 6", SDLK_KP_6, 77},
+			{"keydown keypad 7", SDLK_KP_7, 71},
+			{"keydown keypad 8", SDLK_KP_8, 72},
+			{"keydown keypad 9", SDLK_KP_9, 73},
+			{"keydown keypad 0", SDLK_KP_0, 82},
+		};
+
+		for (unsigned i = 0; i < sizeof digits / sizeof digits[0]; i++)
+		{
+			reset();
+			g_running = 1;
+			push_key(digits[i].sym, 0);
+			sdl_input_pump();
+			expect_keydown(digits[i].name,
+				       (const int[]){digits[i].code}, 1);
+		}
+	}
+
+	/* #1191: keypad Enter and the operators use their set-1 keypad codes;
+	 * the HID usages 0x54..0x58/0x63/0x67 in console/kernel.cpp match. */
+	{
+		static const struct {
+			const char *name;
+			SDL_Keycode sym;
+			int code;
+		} cases[] = {
+			{"keydown keypad enter", SDLK_KP_ENTER, 28},
+			{"keydown keypad plus", SDLK_KP_PLUS, 78},
+			{"keydown keypad minus", SDLK_KP_MINUS, 74},
+			{"keydown keypad multiply", SDLK_KP_MULTIPLY, 55},
+			{"keydown keypad divide", SDLK_KP_DIVIDE, 53},
+			{"keydown keypad period", SDLK_KP_PERIOD, 83},
+			{"keydown keypad equals", SDLK_KP_EQUALS, 89},
+			{"keydown top minus", SDLK_MINUS, 12},
+			{"keydown top period", SDLK_PERIOD, 52},
+			{"keydown top slash", SDLK_SLASH, 53},
+			{"keydown top equals", SDLK_EQUALS, 13},
+		};
+
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++)
+		{
+			reset();
+			g_running = 1;
+			push_key(cases[i].sym, 0);
+			sdl_input_pump();
+			expect_keydown(cases[i].name,
+				       (const int[]){cases[i].code}, 1);
+		}
+	}
+
+	/* Alt+Left/Right still emit the xterm CSI the editor decodes as the
+	 * same tab switch (regression guard for the digit change). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_LEFT, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-left tab", "\x1b[1;3D");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_RIGHT, KMOD_ALT);
+	sdl_input_pump();
+	expect_feed("alt-right tab", "\x1b[1;3C");
 
 	/* Ctrl+Shift+V pastes the host clipboard into the raw inkey queue while a
 	 * program runs: CR/LF collapse to a single CR and are not swallowed. */
@@ -590,6 +1012,51 @@ int main(void)
 	push_motion(200, 96);
 	sdl_input_pump();
 	expect_mouse("mouse release+move", 200, 96, 0);
+
+	/* #1039: an evdev touchpad/clickpad arrives as SDL_FINGER* (window is
+	 * NULL, so SDL itself never synthesises mouse motion). The normalised
+	 * drag delta must move the pointer: 0.25 * 640 = 160, 0.25 * 480 = 120. */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(1, 0.75f, 0.75f, 0.25f, 0.25f);
+	sdl_input_pump();
+	expect_mouse("touchpad finger motion", 160, 120, 0);
+
+	/* Sub-pixel deltas are held in a remainder and accumulate instead of
+	 * being rounded away (a slow drag must still move the pointer). */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(1, 0.5002f, 0.5002f, 0.0002f, 0.0002f);
+	sdl_input_pump();
+	expect_mouse("touchpad subpixel no jump", 0, 0, 0);
+	{
+		int i;
+		int present = 0, mx = 0, my = 0, mb = 0, wheel = 0;
+
+		for (i = 0; i < 20; i++)
+		{
+			push_finger_motion(1, 0.6f, 0.6f, 0.0002f, 0.0002f);
+			sdl_input_pump();
+		}
+		sdl_input_mouse_state(&present, &mx, &my, &mb, &wheel);
+		if (mx <= 0 || my <= 0)
+		{
+			fprintf(stderr,
+				"FAIL touchpad subpixel accumulates: pos=(%d,%d)\n",
+				mx, my);
+			fails++;
+		}
+	}
+
+	/* A second, untracked finger must not move the pointer. */
+	reset();
+	push_finger_down(1, 0.5f, 0.5f);
+	sdl_input_pump();
+	push_finger_motion(2, 0.9f, 0.9f, 0.4f, 0.4f);
+	sdl_input_pump();
+	expect_mouse("touchpad ignores second finger", 0, 0, 0);
 
 	SDL_Quit();
 	if (fails)

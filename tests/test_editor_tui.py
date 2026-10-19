@@ -7,6 +7,8 @@ import time
 
 from harness import MMBasicConsole
 
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def _plain(s: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
@@ -40,6 +42,21 @@ def test_editor_menu_labels_on_serial(kernel_image):
         assert "Run" in seen
         assert "Theme" in seen
         assert "F2" in seen
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_unquoted_filename_is_syntax_error(kernel_image):
+    """#1092: EDIT's filename must be a string expression."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("EDIT UNQUOTED.BAS") == "?SYNTAX ERROR"
+        assert con.send_line("PRINT 1") == "1"
+        # A quoted filename still opens the editor.
+        seen = _edit(con, "QUOTED.BAS")
+        assert "File" in seen
         _quit(con)
     finally:
         con.stop()
@@ -598,6 +615,74 @@ def test_editor_shift_tab_outdents_selection(kernel_image):
         assert con.send_line("PRINT B$") == "BB"
         assert con.send_line("PRINT LEN(A$)") == "2"
         assert con.send_line("PRINT LEN(B$)") == "2"
+    finally:
+        con.stop()
+
+
+def _fd_dialog_cells(con):
+    """Return sample points in the Open/Save dialog's Name row and Directories
+    header row, mirroring draw_dialog()/fd_geom() (8x16 cells)."""
+    w_px, h_px = con.screen_size()
+    cols, rows = w_px // 8, h_px // 16
+    dw = min(62, cols - 2)
+    dh = min(18, rows - 2)
+    c0 = max((cols - dw) // 2, 0)
+    r0 = max((rows - dh) // 2, 2)
+    inner = dw - 4
+    # A blank column inside both the Name field and the Directories pane.
+    col = c0 + 2 + (inner - 2)
+    x = col * 8 + 4
+    return x, (r0 + 2) * 16 + 8, (r0 + 3) * 16 + 8
+
+
+def test_editor_shift_tab_in_open_dialog_moves_focus_back(kernel_image):
+    """#1204: Shift+Tab cycles dialog focus backwards (Name -> Directories)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "FOCUS.BAS" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "PRINT 1"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _edit(con, "FOCUS.BAS")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Directories" in seen
+        x, y_name, y_dir = _fd_dialog_cells(con)
+        name_before = con.screen_pixel(x, y_name)
+        dir_before = con.screen_pixel(x, y_dir)
+        _keys(con, b"\x1b[Z", quiet=0.4)  # Shift+Tab
+        name_after = con.screen_pixel(x, y_name)
+        dir_after = con.screen_pixel(x, y_dir)
+        # The Name field is no longer highlighted...
+        assert name_after != name_before, (name_before, name_after)
+        # ...and the selection moved to Directories, not Files (which is
+        # where a forward Tab would land).
+        assert dir_after == name_before, (name_before, dir_after)
+        assert dir_after != dir_before, (dir_before, dir_after)
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_shift_tab_in_open_dialog_does_not_deindent(kernel_image):
+    """#1204: Shift+Tab while the Open dialog is up must not touch the buffer."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _edit(con, "DLGSTAB.BAS")
+        _keys(con, b"    HI")
+        seen = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Directories" in seen
+        _keys(con, b"\x1b[Z", quiet=0.4)  # Shift+Tab, consumed by the dialog
+        _keys(con, b"\x1b", quiet=0.4)  # Esc closes the dialog
+        _save(con, quiet=0.4)
+        _quit(con)
+        assert con.send_line('OPEN "DLGSTAB.BAS" FOR INPUT AS #1') == ""
+        assert con.send_line("LINE INPUT #1, A$") == ""
+        assert con.send_line("CLOSE #1") == ""
+        assert con.send_line("PRINT LEN(A$)") == "6"
+        assert con.send_line("PRINT ASC(A$)") == "32"
+        assert con.send_line("PRINT MID$(A$,5)") == "HI"
     finally:
         con.stop()
 
@@ -1431,7 +1516,7 @@ def test_editor_run_snow_overlay_break_restores_editor(kernel_image):
         con.stop()
 
 
-def test_editor_theme_menu_lists_system_plus_ten_themes(kernel_image):
+def test_editor_theme_menu_lists_system_plus_all_themes(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -1449,6 +1534,7 @@ def test_editor_theme_menu_lists_system_plus_ten_themes(kernel_image):
             "Violet",
             "Turbo",
             "Phosphor",
+            "Monochrome",
         ):
             assert name in seen, name
         _keys(con, b"\x1b", quiet=0.6)
@@ -1572,6 +1658,11 @@ def _region_lumas(png, x, y, w, h):
         "-crop",
         f"{w}x{h}+{x}+{y}",
         "+repage",
+        # A greyscale screen (the Monochrome theme) is written as a Gray PNG,
+        # whose txt: output carries one channel per pixel; force sRGB so every
+        # pixel enumerates as an (r,g,b) triple.
+        "-colorspace",
+        "sRGB",
         "txt:-",
     ]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
@@ -1600,6 +1691,7 @@ def test_editor_unselected_menu_contrasts_all_themes(kernel_image):
         "Violet",
         "Turbo",
         "Phosphor",
+        "Monochrome",
     )
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -2331,23 +2423,129 @@ def _switch(con, n: int) -> None:
     time.sleep(0.5)
 
 
-def test_editor_periodic_autosave_writes_sidecar(kernel_image):
-    """Issue #516/#521: a dirty tab is checkpointed to <path>.rec."""
+def _repo_source(rel: str) -> str:
+    return open(os.path.join(_REPO, rel), encoding="utf-8").read()
+
+
+def test_filename_string_copies_are_nul_terminated():
+    """#1100: every ``strncpy(path, v.s, sizeof(path) - 1)`` guards the NUL.
+
+    ``strncpy`` does not terminate when the string expression is 127+ chars,
+    so ``mmb_editor_open()`` (and the sprite/juke/files/wordpad/load callers)
+    can read past the buffer.  Each call site must follow it with
+    ``path[sizeof(path) - 1] = 0;``.  This keeps the whole family honest
+    without waiting on a QEMU OOB read that may not visibly fault.
+    """
+    srcdir = os.path.join(_REPO, "mmbasic", "src")
+    copy = re.compile(r"strncpy\(path,\s*v\.s,\s*sizeof\(path\)\s*-\s*1\)")
+    guard = re.compile(r"path\[sizeof\(path\)\s*-\s*1\]\s*=\s*0;")
+    checked = 0
+    for name in sorted(os.listdir(srcdir)):
+        if not name.endswith(".c"):
+            continue
+        lines = open(os.path.join(srcdir, name), encoding="utf-8").read().splitlines()
+        for i, line in enumerate(lines):
+            if copy.search(line):
+                checked += 1
+                window = "\n".join(lines[i + 1 : i + 3])
+                assert guard.search(window), (
+                    f"{name}:{i + 1}: missing guard after {line.strip()}"
+                )
+    assert checked >= 2, checked
+
+
+def test_autosave_interval_is_shared_one_minute():
+    """#1011: EDIT and WORDPAD share one 60 s checkpoint period.
+
+    Keeping a single definition stops the two apps from drifting apart (they
+    were 1.5 s vs 60 s before this).
+    """
+    priv = _repo_source(os.path.join("mmbasic", "include", "mmb_priv.h"))
+    assert re.search(r"#define\s+MMB_AUTOSAVE_MS\s+60000\b", priv), (
+        "MMB_AUTOSAVE_MS should be 60000ms"
+    )
+    for rel in ("mmbasic/src/editor.c", "mmbasic/src/cmd_wordpad.c"):
+        src = _repo_source(rel.replace("/", os.sep))
+        assert "MMB_AUTOSAVE_MS" in src, f"{rel} should use the shared period"
+        assert "#define ED_AUTOSAVE_MS" not in src, rel
+        assert "#define WP_AUTOSAVE_MS" not in src, rel
+
+
+def test_editor_no_early_sidecar_checkpoint(kernel_image):
+    """#1011: a dirty named buffer is not checkpointed within a few seconds.
+
+    The 60 s period cannot be waited out in QEMU, so this is the honest
+    negative window: type, wait ~3 s, and assert no <path>.rec appeared. A
+    first-keystroke write (the old 1.5 s clock) would fail this.
+    """
     con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
     con.start()
     try:
-        _edit(con, "AUTOS.BAS")
+        _edit(con, "NOEARLY.BAS")
         _keys(con, b"10 PRINT 1", quiet=0.4)
-        time.sleep(2.2)
+        time.sleep(3.0)
         _switch(con, 2)
         con.drain(quiet=0.3, timeout=2.0)
-        assert con.send_line('OPEN "AUTOS.BAS.rec" FOR INPUT AS #1') == ""
-        assert con.send_line("LINE INPUT #1, A$") == ""
-        got = con.send_line("PRINT A$")
-        assert con.send_line("CLOSE #1") == ""
-        assert "PRINT 1" in got
+        listing = con.send_line("DIR").upper()
+        assert "NOEARLY.BAS.REC" not in listing, listing
         _switch(con, 1)
         _quit(con)
+    finally:
+        con.stop()
+
+
+def test_editor_option_autosave_off_blocks_sidecar(kernel_image):
+    """#1011: OPTION AUTOSAVE OFF suppresses the periodic .rec checkpoint."""
+    con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+    con.start()
+    try:
+        assert con.send_line("OPTION AUTOSAVE OFF") == ""
+        assert "OPTION AUTOSAVE OFF" in con.send_line("OPTION LIST").upper()
+        _edit(con, "OFFAUTO.BAS")
+        _keys(con, b"10 PRINT 2", quiet=0.4)
+        time.sleep(3.0)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        listing = con.send_line("DIR").upper()
+        assert "OFFAUTO.BAS.REC" not in listing, listing
+        _switch(con, 1)
+        _quit(con)
+        assert con.send_line("OPTION AUTOSAVE ON") == ""
+    finally:
+        con.stop()
+
+
+def test_editor_run_suspended_by_switch_returns_to_editor(kernel_image):
+    """#1012: a Ctrl+R run parked by a console switch must not be mistaken for
+    "program finished"."""
+    con = MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+    con.start()
+    try:
+        _edit(con, "PARKED.BAS")
+        _keys(con, b"DO\rLOOP", quiet=0.4)
+        running = _keys(con, bytes([18]), quiet=0.8)  # Ctrl+R
+        assert "Press any key to continue" not in running
+
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        _switch(con, 1)
+        # The program resumes under the switch; no continue overlay is drawn.
+        early = con.drain(quiet=0.6, timeout=2.0).decode(errors="replace")
+        assert "Press any key to continue" not in early, early
+
+        # Stop the parked + resumed program: the editor comes back cleanly.
+        con._ser.sendall(bytes([3]))  # Ctrl+C / BREAK
+        seen = ""
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            seen += con.drain(quiet=0.4).decode(errors="replace")
+            if "File" in seen and "Run" in seen:
+                break
+        assert "File" in seen and "Run" in seen, seen
+        assert "Press any key to continue" not in seen, seen
+        _keys(con, b" ", quiet=0.4)  # dismiss the BREAK error bar
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
     finally:
         con.stop()
 

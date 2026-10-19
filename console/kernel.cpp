@@ -11,6 +11,9 @@
 
 extern void mmb_platform_bind(CKernel *k);
 
+/* Service the audio mixer while blocked on serial output (#1166). */
+extern "C" void mmb_play_mix(void);
+
 extern "C" const unsigned char mmb_cp437_8x16[];
 
 static const TFont FontCP437 =
@@ -103,13 +106,21 @@ static void emit_n (CKernel *k, const void *p, unsigned n)
 	{
 		/* Circle's buffered serial Write drops the tail when its TX ring
 		 * fills, so retry until everything has been queued (bounded so a
-		 * stalled reader cannot hang the kernel forever). */
+		 * stalled reader cannot hang the kernel forever). Service the
+		 * audio mixer while we wait so a caller writing a large buffer in
+		 * one ser()/PRINT cannot starve JUKE/PLAY for the whole ring
+		 * drain (#1166); the platform DMA wait does the same
+		 * (plat_present_wait() in console/platform.cpp). Rate-limit to
+		 * about one mix per 10 ms of waiting so a normal write is not
+		 * slowed. */
 		unsigned spins = 0;
 		while (left && spins < 100000)
 		{
 			int w = k->Serial ().Write (c, left);
 			if (w <= 0)
 			{
+				if (spins % 50 == 0)
+					mmb_play_mix ();
 				CTimer::SimpleusDelay (200);
 				spins++;
 				continue;
@@ -203,7 +214,8 @@ static unsigned now_ms (void)
 	return CTimer::GetClockTicks () / 1000;
 }
 
-/* CMM2 KEYDOWN codes used by the compat games. */
+/* Character codes for normal typing and the Alt+key chords. KEYDOWN() uses
+ * the separate set-1 scan-code table below. */
 static int hid_to_cmm2 (unsigned char hid)
 {
 	if (hid >= 0x04 && hid <= 0x1d)
@@ -212,6 +224,29 @@ static int hid_to_cmm2 (unsigned char hid)
 		return (int)('1' + (hid - 0x1e));
 	if (hid == 0x27)
 		return (int)'0';
+	/* Numeric keypad digits (HID 0x59..0x61 = 1..9, 0x62 = 0) carry the
+	 * same CMM2 codes as the top row, so KEYDOWN() and the Alt+digit tab
+	 * chord work on the keypad too (#1183). */
+	if (hid >= 0x59 && hid <= 0x61)
+		return (int)('1' + (hid - 0x59));
+	if (hid == 0x62)
+		return (int)'0';
+	/* Numeric keypad operators and Enter carry the same CMM2 codes as the
+	 * top row on the native SDL path (#1191). */
+	if (hid == 0x54)
+		return (int)'/';
+	if (hid == 0x55)
+		return (int)'*';
+	if (hid == 0x56)
+		return (int)'-';
+	if (hid == 0x57)
+		return (int)'+';
+	if (hid == 0x58)
+		return 10; /* Keypad Enter */
+	if (hid == 0x63)
+		return (int)'.';
+	if (hid == 0x67)
+		return (int)'=';
 	if (hid == 0x28)
 		return 10; /* Enter */
 	if (hid == 0x29)
@@ -251,7 +286,96 @@ static int hid_to_cmm2 (unsigned char hid)
 	return 0;
 }
 
-/* Letters and digits for TUI Alt+key. Circle's cooked keymap returns
+/* Map a USB HID keyboard usage to a PC/AT set-1 scan code. This is the same
+ * set native/sdl_input.c publishes from SDL keysyms, so KEYDOWN(scan) means
+ * the same thing on the Circle and native/Linux builds. */
+static int hid_to_scancode (unsigned char hid)
+{
+	static const unsigned char letter_scan[26] = {
+		30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+		49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44
+	};
+	static const unsigned char kp_digit_scan[10] = {
+		82, 79, 80, 81, 75, 76, 77, 71, 72, 73
+	};
+
+	if (hid >= 0x04 && hid <= 0x1d)
+		return letter_scan[hid - 0x04];
+	if (hid >= 0x1e && hid <= 0x26)
+		return 2 + (hid - 0x1e);
+	if (hid == 0x27)
+		return 11;
+	/* Numeric keypad digits keep their own set-1 cluster (Home/7 = 71,
+	 * Up/8 = 72, ...), not the top-row codes. */
+	if (hid >= 0x59 && hid <= 0x61)
+		return kp_digit_scan[hid - 0x58];
+	if (hid == 0x62)
+		return kp_digit_scan[0];
+	if (hid >= 0x3a && hid <= 0x43)
+		return 59 + (hid - 0x3a); /* F1..F10 */
+	switch (hid)
+	{
+	case 0x28: return 28;	/* Enter */
+	case 0x29: return 1;	/* Esc */
+	case 0x2a: return 14;	/* Backspace */
+	case 0x2b: return 15;	/* Tab */
+	case 0x2c: return 57;	/* Space */
+	case 0x2d: return 12;	/* - */
+	case 0x2e: return 13;	/* = */
+	case 0x2f: return 26;	/* [ */
+	case 0x30: return 27;	/* ] */
+	case 0x31: return 43;	/* \ */
+	case 0x33: return 39;	/* ; */
+	case 0x34: return 40;	/* ' */
+	case 0x35: return 41;	/* ` */
+	case 0x36: return 51;	/* , */
+	case 0x37: return 52;	/* . */
+	case 0x38: return 53;	/* / */
+	case 0x39: return 58;	/* Caps Lock */
+	case 0x44: return 133;	/* F11 */
+	case 0x45: return 134;	/* F12 */
+	case 0x46: return 55;	/* PrtSc / * */
+	case 0x47: return 70;	/* Scroll Lock */
+	case 0x49: return 82;	/* Insert / 0 */
+	case 0x4a: return 71;	/* Home / 7 */
+	case 0x4b: return 73;	/* PgUp / 9 */
+	case 0x4c: return 83;	/* Delete / . */
+	case 0x4d: return 79;	/* End / 1 */
+	case 0x4e: return 81;	/* PgDn / 3 */
+	case 0x4f: return 77;	/* Right / 6 */
+	case 0x50: return 75;	/* Left / 4 */
+	case 0x51: return 80;	/* Down / 2 */
+	case 0x52: return 72;	/* Up / 8 */
+	case 0x53: return 69;	/* Num Lock */
+	case 0x54: return 53;	/* Keypad / */
+	case 0x55: return 55;	/* Keypad * */
+	case 0x56: return 74;	/* Keypad - */
+	case 0x57: return 78;	/* Keypad + */
+	case 0x58: return 28;	/* Keypad Enter */
+	case 0x63: return 83;	/* Keypad . */
+	case 0x64: return 43;	/* Non-US \ */
+	case 0x67: return 89;	/* Keypad = */
+	default: return 0;
+	}
+}
+
+/* Hold the modifier scan codes too: Circle reports them separately from the
+ * six key slots, while SDL sends them as ordinary key events. */
+static void add_key_scan (int *codes, int *n, int scan)
+{
+	int i;
+
+	if (scan == 0)
+		return;
+	for (i = 0; i < *n; i++)
+		if (codes[i] == scan)
+			return;
+	if (*n < 6)
+		codes[(*n)++] = scan;
+}
+
+/* Letters and digits for TUI Alt+key, including the numeric keypad digits
+ * that hid_to_cmm2 maps (#1183). Circle's cooked keymap returns
  * KeyNone for Left Alt, so USB Alt never reaches ProcessChar otherwise. */
 static int hid_alt_char (unsigned char hid)
 {
@@ -265,15 +389,17 @@ void CKernel::ApplyRawKeys (void)
 {
 	int codes[6];
 	int n = 0, i;
-	for (i = 0; i < 6 && n < 6; i++)
-	{
-		int c;
-		if (m_RawKeys[i] == 0)
-			continue;
-		c = hid_to_cmm2 (m_RawKeys[i]);
-		if (c)
-			codes[n++] = c;
-	}
+
+	for (i = 0; i < 6; i++)
+		add_key_scan (codes, &n, hid_to_scancode (m_RawKeys[i]));
+	if ((m_LastMods & LSHIFT) != 0)
+		add_key_scan (codes, &n, 42);
+	if ((m_LastMods & RSHIFT) != 0)
+		add_key_scan (codes, &n, 54);
+	if ((m_LastMods & (LCTRL | RCTRL)) != 0)
+		add_key_scan (codes, &n, 29);
+	if ((m_LastMods & (ALT | ALTGR)) != 0)
+		add_key_scan (codes, &n, 56);
 	mmb_keydown_set (codes, n);
 }
 

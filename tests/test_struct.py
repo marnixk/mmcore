@@ -350,6 +350,39 @@ def test_nested_type_two_level_array(console):
     assert console.send_line("RUN") == "7"
 
 
+def test_struct_member_array_loop_variable_indices(console):
+    """Member arrays indexed by loop variables must resolve real offsets.
+
+    Regression: the trace cache resolved a dotted LHS/RHS array with a NULL
+    index vector, so member_index_off() read index 0/1 and either faulted
+    (native Linux/macOS) or silently aliased every element to (0, 0) on bare
+    metal. Writing then reading a 2D member array with loop variables must
+    round-trip each element.
+    """
+    _prog(
+        console,
+        [
+            "TYPE Board",
+            "cells(2, 2) AS INTEGER",
+            "END TYPE",
+            "DIM b AS Board",
+            "FOR i = 0 TO 2",
+            "FOR j = 0 TO 2",
+            "b.cells(i, j) = i * 10 + j",
+            "NEXT j",
+            "NEXT i",
+            "total = 0",
+            "FOR i = 0 TO 2",
+            "FOR j = 0 TO 2",
+            "total = total + b.cells(i, j)",
+            "NEXT j",
+            "NEXT i",
+            "PRINT total",
+        ],
+    )
+    assert console.send_line("RUN") == "99"
+
+
 
 def test_list_type_after_run(console):
     _prog(

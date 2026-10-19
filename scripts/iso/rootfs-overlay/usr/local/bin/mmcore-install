@@ -4,13 +4,14 @@
 # The chosen disk is wiped and turned into a standalone BIOS+UEFI system:
 #
 #   MMCORE-SYS   FAT32, at least ~255 MiB
-#                GRUB (BIOS + UEFI) + vmlinuz-lts + initramfs-lts + mmcore, C:
+#                GRUB (BIOS + UEFI) + vmlinuz-lts + initramfs-lts
+#                + rootfs.squashfs + mmcore, C:
 #   MMCORE-DATA  ext4, the rest of the disk
 #                mounted at boot and exposed to mmcore as D:
 #
-# The kernel and initramfs are copied from the live media's own /boot, so the
-# installed system matches the release that wrote the disk. Everything on the
-# target disk is destroyed.
+# The kernel, initramfs, and squashfs root are copied from the live media's own
+# /boot, so the installed system matches the release that wrote the disk.
+# Everything on the target disk is destroyed.
 #
 # Usage:
 #   mmcore-install                    # list disks and choose one
@@ -30,6 +31,7 @@ DISK=""
 BOOT_DIR=""
 ASSUME_YES=0
 FORCE=0
+REGISTER_EFI=0
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -48,6 +50,12 @@ Options:
   --disk /dev/sdX   target disk (default: choose from a list)
   --boot-dir DIR    directory holding the live /boot (default: auto-detect
                     the mounted live media)
+  --register-efi    also register a named `mmcore` UEFI firmware boot entry.
+                    By default only the removable \EFI\BOOT\BOOTX64.EFI
+                    fallback is written, so a live USB still boots live when
+                    this disk is installed (#976). Use this flag only on a
+                    firmware that will not boot that fallback by itself; the
+                    disk then outranks a USB stick.
   -y, --yes         skip the confirmation prompt
   --force           allow the running live media or a removable disk as the
                     target
@@ -63,6 +71,7 @@ while [ $# -gt 0 ]; do
 		--boot-dir) BOOT_DIR="$2"; shift 2 ;;
 		-y|--yes) ASSUME_YES=1; shift ;;
 		--force) FORCE=1; shift ;;
+		--register-efi) REGISTER_EFI=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		-*) die "unknown option: $1 (see --help)" ;;
 		*) die "unexpected argument: $1" ;;
@@ -82,16 +91,17 @@ part_dev() {
 
 size_of() { stat -c %s "$1" 2>/dev/null || echo 0; }
 
-# Echo a directory holding boot/vmlinuz-lts and boot/initramfs-lts. The live
-# rootfs is an initramfs, so the ISO's own /boot is only reachable on the
-# mounted media; scan block devices for the ISO9660 image.
+# Echo a directory holding the live boot payload. The running root is an
+# overlay, so the ISO's own /boot is only reachable on the mounted media.
 find_payload() {
 	if [ -n "${BOOT_DIR}" ]; then
 		printf '%s\n' "${BOOT_DIR}"
 		return 0
 	fi
-	for mp in /media/cdrom /media/iso /mnt/cdrom /run/media/cdrom; do
-		if [ -f "${mp}/boot/initramfs-lts" ]; then
+	for mp in /media/cdrom /media/iso /mnt/cdrom /mnt/live/media /run/media/cdrom; do
+		if [ -f "${mp}/boot/rootfs.squashfs" ] \
+			&& [ -f "${mp}/boot/vmlinuz-lts" ] \
+			&& [ -f "${mp}/boot/initramfs-lts" ]; then
 			printf '%s\n' "${mp}"
 			return 0
 		fi
@@ -100,9 +110,10 @@ find_payload() {
 	for dev in /dev/sr* /dev/sd* /dev/vd* /dev/nvme* /dev/mmcblk*; do
 		[ -b "${dev}" ] || continue
 		mnt="$(mktemp -d)"
-		if mount -t iso9660 -o ro "${dev}" "${mnt}" 2>/dev/null; then
-			if [ -f "${mnt}/boot/initramfs-lts" ] \
-				&& [ -f "${mnt}/boot/vmlinuz-lts" ]; then
+		if mount -o ro "${dev}" "${mnt}" 2>/dev/null; then
+			if [ -f "${mnt}/boot/rootfs.squashfs" ] \
+				&& [ -f "${mnt}/boot/vmlinuz-lts" ] \
+				&& [ -f "${mnt}/boot/initramfs-lts" ]; then
 				printf '%s\n' "${mnt}"
 				return 0
 			fi
@@ -118,6 +129,7 @@ PAYLOAD="$(find_payload || true)"
 	|| die "cannot find the live /boot (is the media mounted? try --boot-dir)"
 [ -f "${PAYLOAD}/boot/vmlinuz-lts" ] || die "no /boot/vmlinuz-lts in ${PAYLOAD}"
 [ -f "${PAYLOAD}/boot/initramfs-lts" ] || die "no /boot/initramfs-lts in ${PAYLOAD}"
+[ -f "${PAYLOAD}/boot/rootfs.squashfs" ] || die "no /boot/rootfs.squashfs in ${PAYLOAD}"
 [ -x "${ASSET_BIN}" ] || die "${ASSET_BIN} is missing"
 
 # Identify the running live media so it can be refused as a target.
@@ -183,7 +195,9 @@ fi
 # Size the system partition to the boot payload plus room for C: files, with
 # the ~255 MiB floor the release ships with.
 payload_bytes=$(( $(size_of "${PAYLOAD}/boot/vmlinuz-lts") \
-	+ $(size_of "${PAYLOAD}/boot/initramfs-lts") + $(size_of "${ASSET_BIN}") ))
+	+ $(size_of "${PAYLOAD}/boot/initramfs-lts") \
+	+ $(size_of "${PAYLOAD}/boot/rootfs.squashfs") \
+	+ $(size_of "${ASSET_BIN}") ))
 sys_mib=$(( payload_bytes / MIB + 128 ))
 [ "${sys_mib}" -ge "${SYS_FLOOR_MIB}" ] || sys_mib="${SYS_FLOOR_MIB}"
 sys_end=$(( sys_mib + 1 ))
@@ -198,7 +212,10 @@ wipefs -a "${DISK}" >/dev/null 2>&1 || true
 dd if=/dev/zero of="${DISK}" bs=1M count=16 conv=fsync >/dev/null 2>&1 || true
 parted -s "${DISK}" mklabel msdos
 parted -s "${DISK}" unit MiB mkpart primary fat32 1 "${sys_end}"
+# boot: Legacy firmware executes the MBR. esp: UEFI firmware treats the
+# FAT volume as the system partition (type 0xEF). Both flags together.
 parted -s "${DISK}" set 1 boot on
+parted -s "${DISK}" set 1 esp on
 parted -s "${DISK}" unit MiB mkpart primary ext4 "${sys_end}" 100%
 partprobe "${DISK}" 2>/dev/null || true
 udevadm settle 2>/dev/null || true
@@ -219,6 +236,7 @@ mount "${SYS_DEV}" "${MNT}"
 mkdir -p "${MNT}/boot/grub"
 cp "${PAYLOAD}/boot/vmlinuz-lts" "${MNT}/boot/vmlinuz-lts"
 cp "${PAYLOAD}/boot/initramfs-lts" "${MNT}/boot/initramfs-lts"
+cp "${PAYLOAD}/boot/rootfs.squashfs" "${MNT}/boot/rootfs.squashfs"
 if [ -f "${PAYLOAD}/boot/grub/splash.png" ]; then
 	cp "${PAYLOAD}/boot/grub/splash.png" "${MNT}/boot/grub/splash.png"
 fi
@@ -237,6 +255,11 @@ set timeout_style=hidden
 insmod all_video
 insmod gfxterm
 insmod png
+insmod part_msdos
+insmod fat
+insmod search
+insmod search_label
+search --no-floppy --set=root --label MMCORE-SYS
 set gfxmode=1024x768,auto
 set gfxpayload=keep
 terminal_output gfxterm
@@ -247,16 +270,40 @@ if [ -f /boot/grub/splash.png ]; then
 fi
 
 menuentry "mmcore" {
-  linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA
+  linux /boot/vmlinuz-lts console=tty0 console=ttyS0,115200 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo usb-storage.delay_use=0 modprobe.blacklist=uas mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA
   initrd /boot/initramfs-lts
 }
 EOF
 
 log "Installing the BIOS bootloader"
-grub-install --target=i386-pc --boot-directory="${MNT}/boot" --recheck "${DISK}"
+# The live USB is still attached. A probed map numbers that stick first and
+# records this disk as hd1. Pin it as hd0, which is the drive it is when the
+# machine boots from it.
+printf '(hd0) %s\n' "${DISK}" > "${MNT}/boot/grub/device.map"
+grub-install --target=i386-pc --boot-directory="${MNT}/boot" "${DISK}"
+
 log "Installing the UEFI bootloader"
+# Always write the removable fallback (\EFI\BOOT\BOOTX64.EFI): a firmware tries
+# that for removable media, so a live USB still wins over this disk. Do NOT
+# register a named NVRAM entry by default (#976): a sticky `mmcore` entry
+# outranks removable media, so with the disk installed a live USB would boot
+# the installed build. --register-efi adds the named entry for a firmware that
+# will not boot the fallback by itself; the cost is that the disk then outranks
+# a USB stick. Keep going if the firmware rejects the registration.
 grub-install --target=x86_64-efi --efi-directory="${MNT}" \
-	--boot-directory="${MNT}/boot" --removable "${DISK}"
+	--boot-directory="${MNT}/boot" --removable --no-nvram "${DISK}"
+if [ "${REGISTER_EFI}" = "1" ]; then
+	if [ -d /sys/firmware/efi ]; then
+		grub-install --target=x86_64-efi --efi-directory="${MNT}" \
+			--boot-directory="${MNT}/boot" --bootloader-id=mmcore "${DISK}" \
+			|| log "UEFI firmware boot entry was not registered"
+	else
+		log "Legacy session: cannot register a UEFI entry. Boot the USB via UEFI and rerun with --register-efi."
+	fi
+else
+	log "No UEFI NVRAM entry registered (keeps a live USB preferred)."
+	log "Use --register-efi if this firmware will not boot \\EFI\\BOOT\\BOOTX64.EFI."
+fi
 
 sync
 umount "${MNT}"

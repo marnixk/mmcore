@@ -507,7 +507,8 @@ int mmb_try_function(mmb_val *out)
 		fun_tab[mmb_kw_id("TDF.VARIANTNAME$")] = &&lbl_tdfvariantname;
 		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
 		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
-		fun_tab[mmb_kw_id("BATTERY%")] = &&lbl_battery;
+		fun_tab[mmb_kw_id("MM.BATTERY%")] = &&lbl_mmbattery;
+		fun_tab[mmb_kw_id("MM.BRIGHTNESS%")] = &&lbl_mmbrightness;
 		finited = 1;
 	}
 	if ((unsigned char)*G.p == 0x80)
@@ -725,16 +726,19 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_str:
 		char buf[48];
+		int save;
 		call_args(a, 1, &n);
 		if (n != 1)
 			mmb_syntax();
-		G.outn = 0;
-		G.out[0] = 0;
+		/* PRINT accumulates its whole statement in G.out (#991). Format
+		 * the value after any pending output instead of clobbering it, so
+		 * `PRINT "x";STR$(5)` keeps the "x". */
+		save = G.outn;
 		mmb_print_val(a[0]);
-		strncpy(buf, G.out, sizeof(buf) - 1);
+		strncpy(buf, G.out + save, sizeof(buf) - 1);
 		buf[sizeof(buf) - 1] = 0;
-		G.outn = 0;
-		G.out[0] = 0;
+		G.outn = save;
+		G.out[save] = 0;
 		*out = mmb_str_val(buf);
 		return 1;
 	}
@@ -1110,6 +1114,51 @@ int mmb_try_function(mmb_val *out)
 			if (mmb_keyword_eq(key, "AUDIO") || peek_kw("AUDIO"))
 			{
 				*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MIXGAP"))
+			{
+				*out = mmb_int_val((int)mmb_audio_mix_gap_ms());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "UNDERRUN"))
+			{
+				*out = mmb_int_val((int)mmb_audio_underruns());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "FIRSTVOL"))
+			{
+				/* Gain applied to the first buffer after play began (#1113). */
+				*out = mmb_int_val((int)mmb_audio_first_mix_vol());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "AUDIORESET"))
+			{
+				*out = mmb_int_val((int)mmb_audio_resets());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3BUF"))
+			{
+				/* Peak MP3 decoder-buffer allocation (#1150). */
+				*out = mmb_int_val((int)mmb_audio_mp3_buffer_peak());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3RATE"))
+			{
+				/* Source sample rate of the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_rate());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3SRC"))
+			{
+				/* Source-rate frames decoded from the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_src_frames());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3OUT"))
+			{
+				/* 44100 Hz frames mixed from the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
 				return 1;
 			}
 		}
@@ -1585,22 +1634,36 @@ int mmb_try_function(mmb_val *out)
 		*out = mmb_int_val((int64_t)mmb_now_ms() - G.timer_base);
 		return 1;
 	}
-	if (mmb_match("BATTERY%"))
+	if (mmb_match("MM.BATTERY%"))
 	{
-	lbl_battery:
+	lbl_mmbattery:
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
 			G.p++;
 			mmb_expect(')');
 		}
-#if defined(MMB_PLATFORM_POSIX) && defined(__linux__)
-		/* Native Linux (including the framebuffer/ISO build): report the
-		 * first battery's charge, falling back to 100 when none exists. */
-		*out = mmb_int_val((int64_t)mmb_battery_capacity_read(
-				   "/sys/class/power_supply/BAT0/capacity", 100));
+		/* Native Linux reports the first battery's charge; Pi/Circle,
+		 * Windows, macOS and any other target report 100 (no battery). */
+		*out = mmb_int_val((int64_t)mmb_battery_percent());
+		return 1;
+	}
+	if (mmb_match("MM.BRIGHTNESS%"))
+	{
+	lbl_mmbrightness:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+#if defined(MMB_PLATFORM_POSIX)
+		/* Native Linux (Chromebook ISO / framebuffer): read the panel
+		 * backlight percentage, falling back to 100 when none exists. */
+		*out = mmb_int_val(mmb_brightness_get());
 #else
-		/* Pi/Circle, Windows, macOS and any other target: no battery. */
+		/* Pi/Circle and other bare-metal targets: no controllable
+		 * backlight. */
 		*out = mmb_int_val(100);
 #endif
 		return 1;
@@ -2203,10 +2266,11 @@ static mmb_val expr_primary(void)
 		int nidx = 0, idx[MMB_MAX_DIMS], off = 0, t;
 		mmb_var *var;
 		mmb_val cv;
+		const char *ref = G.p;
 		t = mmb_parse_var_ref(name, &nidx, idx);
 		if (nidx == 0 && mmb_const_lookup(name, t, &cv))
 			return cv;
-		var = mmb_find_var(name, t, 1, nidx, idx);
+		var = mmb_find_var_ref(ref, name, t, 1, nidx, idx);
 		off = mmb_elem_off(var, nidx, idx);
 		return mmb_load_var(var, off);
 	}

@@ -1,6 +1,27 @@
 """Real PLAY decode/mix and OPTION AUDIO_TARGET."""
 
+import os
+import re
+import time
+
 from ihelp_util import dump_topic
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# dr_mp3's decode buffer (DRMP3_DATA_CHUNK_SIZE); the streaming MP3 path keeps
+# its allocation at or below this regardless of file size (#1150).
+MP3_BUF_MAX = 65536
+
+
+def _play_until_stopped(console, command: str, timeout: float = 15.0) -> bool:
+    """Start a track and poll PLAYING() until it ends on its own."""
+    assert console.send_line(command) == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if console.send_line("PRINT PLAYING()") == "0":
+            return True
+        time.sleep(0.4)
+    return False
 
 
 def test_help_play_mentions_targets(console):
@@ -9,6 +30,7 @@ def test_help_play_mentions_targets(console):
     assert "HDMI" in out
     assert "JACK" in out
     assert "PLAYING()" in out
+    assert "MIXGAP" in out
 
 
 def test_help_audio_target(console):
@@ -68,6 +90,59 @@ def test_play_mp3_mixes_and_stops(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_mp3_streams_without_whole_file_buffer(console):
+    """#1150: MP3 decode streams through a bounded buffer, not the file size.
+
+    BIG.MP3 is ~20 s and larger than the decoder buffer. If PLAY still loaded
+    the whole file into RAM, the peak MP3 allocation would be at least the
+    file size (and MM.INFO("MP3BUF") would report that).
+    """
+    size = os.path.getsize(os.path.join(REPO_ROOT, "ramdisk", "tests", "BIG.MP3"))
+    assert size > MP3_BUF_MAX
+    assert console.send_line('PLAY MP3 "tests/BIG.MP3"') == ""
+    peak = int(console.send_line('PRINT MM.INFO("MP3BUF")'))
+    console.send_line("PLAY STOP")
+    assert 0 < peak <= MP3_BUF_MAX, (peak, size)
+    assert peak < size, (peak, size)
+
+
+# #1247: the mixer runs at 44100 Hz, so every source rate must be resampled.
+# TEST.MP3 is the seeded 44.1 kHz fixture; RATE48/32/22 are 1 s 440 Hz tones.
+RATE_MP3S = (
+    ("tests/TEST.MP3", 44100),
+    ("tests/RATE48.MP3", 48000),
+    ("tests/RATE32.MP3", 32000),
+    ("tests/RATE22.MP3", 22050),
+)
+
+
+def test_mp3_resamples_source_rate_to_mixer_rate(console):
+    """#1247: MP3s at every supported rate play at the right speed/pitch.
+
+    A 48 kHz file used to play 8.8% fast and a 22.05 kHz file at double speed,
+    because mix_mp3() emitted decoder frames as if they were already 44100 Hz.
+    The decoded and mixed frame counts prove the resampling ratio.
+    """
+    for path, rate in RATE_MP3S:
+        assert console.send_line(f'PLAY MP3 "{path}"') == ""
+        # TEST.MP3 is only 0.23 s; it may already have ended by this poll.
+        assert console.send_line("PRINT PLAYING()") in ("0", "1"), path
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            if console.send_line("PRINT PLAYING()") == "0":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"{path} never finished")
+        got_rate = int(console.send_line('PRINT MM.INFO("MP3RATE")'))
+        src = int(console.send_line('PRINT MM.INFO("MP3SRC")'))
+        out = int(console.send_line('PRINT MM.INFO("MP3OUT")'))
+        assert got_rate == rate, (path, got_rate)
+        assert src > 0 and out > 0, (path, src, out)
+        want = src * 44100.0 / rate
+        assert abs(out - want) <= 4, (path, src, out, want)
+
+
 def test_play_mod_xm_tone(console):
     assert console.send_line('PLAY MODFILE "tests/TEST.MOD"') == ""
     assert console.send_line("PRINT PLAYING()") == "1"
@@ -86,6 +161,51 @@ def test_play_mod_xm_tone(console):
     assert console.send_line("PLAY TONE 440, 880, 50") == ""
     console.send_line("PAUSE 400")
     assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_mix_gap_stays_short(console):
+    """#936: while the poll loop is idle the mixer is serviced often enough
+    that the latched gap stays well under the queued cushion."""
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    time.sleep(0.4)
+    gap = int(console.send_line('PRINT MM.INFO("MIXGAP")'))
+    underrun = console.send_line('PRINT MM.INFO("UNDERRUN")')
+    console.send_line("PLAY STOP")
+    assert gap < 200, gap
+    assert underrun == "0"
+
+
+def test_play_s3m(console):
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+    assert console.send_line('PLAY S3MFILE "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_s3m_missing_file_errors(console):
+    assert console.send_line('PLAY S3M "tests/NOPE.S3M"') == "?S3M"
+
+
+def test_play_tracker_modules_stop_at_song_end(console):
+    """#924: MOD/XM/S3M play once and report a natural end.
+
+    The one-pattern fixtures take ~8 s; if an engine still looped forever this
+    poll would time out and JUKE would never advance its queue.
+    """
+    assert _play_until_stopped(console, 'PLAY MODFILE "tests/TEST.MOD"')
+    assert _play_until_stopped(console, 'PLAY XM "tests/TEST.XM"')
+    assert _play_until_stopped(console, 'PLAY S3M "tests/TEST.S3M"')
+
+
+def test_help_play_mentions_s3m(console):
+    out = dump_topic(console, "PLAY")
+    assert "S3M" in out
+    assert "TEST.S3M" in out
 
 
 def test_beep_defaults_and_args(console):
@@ -117,6 +237,57 @@ def test_play_pause_resume_volume(console):
     assert console.send_line("PRINT PLAYING()") == "0"
 
 
+def test_play_volume_drives_first_buffer(console):
+    """#1157: PLAY VOLUME seeds the persisted gain, so the next track starts
+    at that level without a full-volume preroll."""
+    assert console.send_line("PLAY VOLUME 37") == ""
+    assert console.send_line("PLAY TONE 440, 440") == ""
+    assert console.send_line('PRINT MM.INFO("FIRSTVOL")') == "37"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PLAY VOLUME 100") == ""
+
+
+def test_play_reset_reinitialises_backend(console):
+    """#1024: PLAY RESET re-creates the audio backend without a reboot.
+
+    The command dispatch and state reset are testable under QEMU even though
+    the deviceless harness cannot exercise the Circle DMA path itself.
+    """
+    before = int(console.send_line('PRINT MM.INFO("AUDIORESET")'))
+    assert console.send_line("PLAY TONE 440, 440") == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    assert console.send_line("PLAY RESET") == ""
+    assert console.send_line('PRINT MM.INFO("AUDIORESET")') == str(before + 1)
+    # The decoder/engine are kept, so the track keeps playing after recovery.
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_reset_when_idle_is_harmless(console):
+    """#1024: reset with no active playback is a valid no-op, not an error."""
+    assert console.send_line("PLAY STOP") == ""
+    assert console.send_line("PLAY RESET") == ""
+    assert console.send_line("PRINT PLAYING()") == "0"
+    assert console.send_line("PLAY TONE 440, 440, 40") == ""
+    console.send_line("PAUSE 200")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_reset_clears_mix_counters(console):
+    """#1024: reset restarts the MIXGAP/UNDERRUN window."""
+    assert console.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PAUSE 200")
+    assert console.send_line("PLAY RESET") == ""
+    gap = int(console.send_line('PRINT MM.INFO("MIXGAP")'))
+    assert gap < 200
+    assert console.send_line('PRINT MM.INFO("UNDERRUN")') == "0"
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
 def test_audio_off_still_tracks_playing(console):
     assert console.send_line("OPTION AUDIO OFF") == ""
     assert console.send_line("PLAY TONE 440, 440, 4000") == ""
@@ -144,3 +315,30 @@ def test_play_stops_when_program_falls_off_end(console):
     assert console.send_line("20 PRINT 1") == ""
     assert console.send_line("RUN") == "1"
     assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_console_serial_wait_services_audio():
+    """#1166: emit_n()'s serial TX-ring wait must service the audio mixer.
+
+    #1160 fixed WORDPAD's held-key scroll app-side, but any caller that writes
+    a large buffer to serial in one ser()/PRINT can still stall JUKE/PLAY for
+    the whole ring drain. The QEMU harness blocks the guest vCPU when the host
+    stops reading the serial socket, so that specific stall cannot be
+    reproduced here; this deterministic guard keeps the mixer call (and its
+    rate limit) from being dropped from emit_n()'s retry loop. It mirrors the
+    platform DMA wait (plat_present_wait()) and term #936 / wordpad #1160.
+    """
+    path = os.path.join(REPO_ROOT, "console", "kernel.cpp")
+    code = open(path, encoding="utf-8").read()
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
+    code = re.sub(r"//[^\n]*", "", code)
+    assert 'extern "C" void mmb_play_mix(void);' in code, (
+        "console must declare the mmbasic mixer entry point"
+    )
+    body = code.split("static void emit_n", 1)[1].split("\n}", 1)[0]
+    assert re.search(r"mmb_play_mix\s*\(\s*\)", body), (
+        "emit_n() must service the audio mixer while the TX ring is full"
+    )
+    assert re.search(
+        r"if\s*\(\s*spins\s*%\s*50\s*==\s*0\s*\)\s*\n\s*mmb_play_mix", body
+    ), "the mixer call must be rate-limited to about one per 10 ms of waiting"

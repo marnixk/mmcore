@@ -272,7 +272,8 @@ static int is_aud(const char *n)
 {
 	const char *e = ext_of(n);
 	return mmb_keyword_eq(e, ".MP3") || mmb_keyword_eq(e, ".XM") ||
-	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".WAV");
+	       mmb_keyword_eq(e, ".MOD") || mmb_keyword_eq(e, ".S3M") ||
+	       mmb_keyword_eq(e, ".WAV");
 }
 
 static int is_ansi(const char *n)
@@ -291,6 +292,11 @@ static int is_text(const char *n)
 {
 	const char *e = ext_of(n);
 	return is_bas(n) || mmb_keyword_eq(e, ".TXT") || mmb_keyword_eq(e, ".MD");
+}
+
+static int is_md(const char *n)
+{
+	return mmb_keyword_eq(ext_of(n), ".MD");
 }
 
 static int is_dotdot(const fu_ent *e)
@@ -444,7 +450,10 @@ static void panel_reload(fu_panel *p)
 	}
 	p->truncated = truncated;
 	panel_sort(p);
-	p->sel = 0;
+	/* Prefer the same name so scrolling/navigating reloads stay put. When
+	 * the row is gone (a move or delete removed it), land on the row just
+	 * above where it was instead of jumping to the top (#1022). */
+	p->sel = oldsel > 0 ? oldsel - 1 : 0;
 	if (keep[0])
 	{
 		int i;
@@ -1021,6 +1030,8 @@ static void fu_caption(const char *path, char *out, int outsz)
 		kind = "NVME";
 	else if (drv >= 'D' && drv <= 'G')
 		kind = "USB";
+	else if (drv == MMB_NET_DRIVE)
+		kind = "SMB";
 	if (!kind)
 	{
 		strncpy(out, path, (unsigned)outsz - 1);
@@ -1038,7 +1049,7 @@ static void fu_caption(const char *path, char *out, int outsz)
 	if (drv >= 'C')
 	{
 		char lab[16];
-		if (mmb_fat_label(drv, lab, sizeof lab) == 0 && lab[0])
+		if (mmb_vfs_label(drv, lab, sizeof lab) == 0 && lab[0])
 		{
 			const char *p = lab;
 			out[n++] = ' ';
@@ -1113,7 +1124,7 @@ static void files_draw(void)
 static void files_draw_if_idle(void)
 {
 	if (F.active && F.mode != FU_PREVIEW && F.mode != FU_ANSI &&
-	    F.mode != FU_TDF && !mmb_in_editor())
+	    F.mode != FU_TDF && !mmb_in_editor() && !mmb_in_wordpad())
 		files_draw();
 }
 
@@ -1794,7 +1805,11 @@ static void an_feed(unsigned char b)
 	{
 		if (an_p_narg == 0)
 			an_p_narg = 1;
-		an_p_args[an_p_narg - 1] = an_p_args[an_p_narg - 1] * 10 + (b - '0');
+		/* Clamp so a runaway numeric parameter cannot overflow int
+		 * (undefined behaviour the clamp in an_arg/an_cup then hides). */
+		if (an_p_args[an_p_narg - 1] < 100000)
+			an_p_args[an_p_narg - 1] =
+				an_p_args[an_p_narg - 1] * 10 + (b - '0');
 		return;
 	}
 	if (b == ';')
@@ -1836,21 +1851,51 @@ static void an_reset(int cols)
 	memset(F.an_grid, 0, (size_t)AN_MAX_ROWS * AN_MAX_COLS * sizeof(an_cell));
 }
 
+/* Number of leading bytes that are ANSI art. A DOS SAUCE trailer is metadata,
+ * not art, so stop before its 128-byte record (and a trailing ^Z EOF marker);
+ * otherwise those binary bytes render as garbage and can carry stray control
+ * bytes into the viewer (#1023). */
+static unsigned an_ansi_limit(int sz)
+{
+	unsigned limit = (unsigned)sz;
+	unsigned char tail[128];
+	unsigned got = 0;
+
+	if (sz < (int)sizeof(tail))
+		return limit;
+	if (mmb_vfs_read_at(F.view_path, (unsigned)sz - sizeof(tail), tail,
+			    sizeof(tail), &got) != 0 ||
+	    got != sizeof(tail) || memcmp(tail, "SAUCE00", 7) != 0)
+		return limit;
+	limit -= sizeof(tail);
+	if (limit > 0)
+	{
+		unsigned char last = 0;
+		if (mmb_vfs_read_at(F.view_path, limit - 1u, &last, 1u, &got) == 0 &&
+		    got == 1u && last == 0x1A)
+			limit--;
+	}
+	return limit;
+}
+
 static void an_parse(int cols)
 {
 	static unsigned char buf[4096];
 	int sz = mmb_vfs_size(F.view_path);
-	unsigned pos = 0, got = 0;
+	unsigned pos = 0, got = 0, limit;
 
 	an_reset(cols);
 	if (sz <= 0)
 		return;
-	while (pos < (unsigned)sz && pos < AN_MAX_BYTES)
+	limit = an_ansi_limit(sz);
+	if (limit > AN_MAX_BYTES)
+		limit = AN_MAX_BYTES;
+	while (pos < limit)
 	{
 		unsigned want = (unsigned)sizeof(buf);
 		unsigned i;
-		if ((unsigned)sz - pos < want)
-			want = (unsigned)sz - pos;
+		if (limit - pos < want)
+			want = limit - pos;
 		if (mmb_vfs_read_at(F.view_path, pos, buf, want, &got) != 0 || got == 0)
 			break;
 		for (i = 0; i < got; i++)
@@ -1900,7 +1945,7 @@ static void an_apply_mode(void)
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
 	mode = F.an_mode80 ? 2 : F.an_saved_mode;
-	if (mode < 1 || mode > 17)
+	if (!mmb_gfx_mode_valid(mode))
 		mode = 14;
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
 		mmb_gfx_set_mode(mode, bits);
@@ -1976,6 +2021,10 @@ static int an_open(const char *path, const char *name)
 	F.an_saved_bits = G.gfx.bits;
 	F.an_mode80 = 0;
 	an_parse(AN_COLS);
+	/* Without a grid there is nothing to show; fall back to the info overlay
+	 * instead of presenting a blank preview. */
+	if (!F.an_grid)
+		return -1;
 	F.mode = FU_ANSI;
 	an_render();
 	set_hint("ANSI preview  up/down/PgUp/PgDn  f 80x25  Esc exits");
@@ -2011,8 +2060,10 @@ static void tdf_cell(void *ctx, int x, int y, int ch, int fg, int bg)
 	if (x < 0 || x >= AN_MAX_COLS || y < 0 || y >= AN_MAX_ROWS)
 		return;
 	an_scr[y][x].ch = (unsigned char)ch;
-	an_scr[y][x].fg = (unsigned char)fg;
-	an_scr[y][x].bg = (unsigned char)bg;
+	/* The preview grid is painted with the TUI/ANSI palette, so translate
+	 * the IBM-order glyph attribute the way TDF PRINT does (#1021). */
+	an_scr[y][x].fg = (unsigned char)mmb_tdf_ansi_colour(fg);
+	an_scr[y][x].bg = (unsigned char)mmb_tdf_ansi_colour(bg);
 }
 
 static void tdf_release(void)
@@ -2179,6 +2230,11 @@ static int tdf_open(const char *path, const char *name)
 	F.an_top = 0;
 	F.tdf_var = 0;
 	tdf_render_sample(name);
+	if (!F.an_grid)
+	{
+		tdf_release();
+		return -1;
+	}
 	F.mode = FU_TDF;
 	an_render();
 	set_hint(F.tdf_variants > 1
@@ -2218,6 +2274,8 @@ static void do_play(const char *path, const char *name)
 		rc = mmb_play_mod(path);
 	else if (mmb_keyword_eq(e, ".XM"))
 		rc = mmb_play_xm(path);
+	else if (mmb_keyword_eq(e, ".S3M"))
+		rc = mmb_play_s3m(path);
 	else if (mmb_keyword_eq(e, ".WAV"))
 		rc = mmb_play_wav(path);
 	if (rc != 0)
@@ -2294,7 +2352,13 @@ static void do_run(const char *path)
 static void do_edit(const char *path)
 {
 	F.mode = FU_BROWSE;
-	mmb_editor_open(path);
+	/* Markdown documents are the WORDPAD format; everything else keeps the
+	 * plain line editor.  WORDPAD stays a separate layer so quitting it
+	 * returns to the FILES screen (#1093). */
+	if (is_md(path))
+		mmb_wordpad_open(path);
+	else
+		mmb_editor_open(path);
 }
 
 static void start_prompt(int kind, const char *seed)
@@ -2313,11 +2377,8 @@ static void start_copy_or_move(int move)
 		set_hint("Nothing to copy");
 		return;
 	}
-	if (e->is_dir)
-	{
-		set_hint("Directory copy is not supported");
-		return;
-	}
+	/* Files and folders both: mmb_vfs_copy()/mmb_vfs_move() copy a folder
+	 * tree recursively, so the same destination prompt serves both. */
 	join_path(dst, sizeof(dst), otherpan()->path, e->name);
 	start_prompt(move ? FU_PR_MOVE : FU_PR_COPY, dst);
 }
@@ -2358,7 +2419,7 @@ static void apply_prompt(void)
 		}
 		else
 		{
-			if (mmb_vfs_rename(src, F.prompt) != 0)
+			if (mmb_vfs_move(src, F.prompt) != 0)
 				set_hint("Move failed");
 			else
 				set_hint("Moved");
@@ -2384,13 +2445,14 @@ static void apply_prompt(void)
 			letter = (char)(letter - 32);
 		if (letter == 'B')
 			set_hint("Drive not available");
-		else if (letter >= 'A' && letter <= 'H')
+		else if ((letter >= 'A' && letter <= MMB_FAT_DRIVE_HI) ||
+			 letter == MMB_NET_DRIVE)
 		{
 			char spec[8];
 			spec[0] = (char)letter;
 			spec[1] = ':';
 			spec[2] = 0;
-			if (letter != 'A' && !mmb_fat_ready(letter))
+			if (letter != 'A' && !mmb_vfs_drive_ready(letter))
 				set_hint("Drive not ready");
 			else
 			{
@@ -2505,9 +2567,10 @@ static void set_drive_letter(int letter)
 		set_hint("Drive not available");
 		return;
 	}
-	if (letter < 'A' || letter > 'H')
+	if (!((letter >= 'A' && letter <= MMB_FAT_DRIVE_HI) ||
+	      letter == MMB_NET_DRIVE))
 		return;
-	if (letter != 'A' && !mmb_fat_ready(letter))
+	if (letter != 'A' && !mmb_vfs_drive_ready(letter))
 	{
 		set_hint("Drive not ready");
 		return;
@@ -2617,7 +2680,7 @@ static void do_eject(void)
 	char drv = curpan()->path[0];
 	if (drv >= 'a' && drv <= 'z')
 		drv = (char)(drv - 32);
-	if (mmb_fat_eject(drv) != 0)
+	if (mmb_vfs_eject(drv) != 0)
 	{
 		set_hint("No removable drive to eject");
 		return;
@@ -3319,10 +3382,13 @@ const char *mmb_files_key(char c)
 			return G.out;
 		}
 	}
-	if ((c >= 'A' && c <= 'H') || (c >= 'a' && c <= 'h'))
-		F.pend_drive = (c >= 'a') ? (c - 32) : c;
-	else
-		F.pend_drive = 0;
+	{
+		int cl = (c >= 'a' && c <= 'z') ? (c - 32) : c;
+		if ((cl >= 'A' && cl <= MMB_FAT_DRIVE_HI) || cl == MMB_NET_DRIVE)
+			F.pend_drive = cl;
+		else
+			F.pend_drive = 0;
+	}
 	if (c >= 32 && c < 127)
 		handle_letter(c);
 	if (was_active && F.active && F.mode != FU_PREVIEW)

@@ -10,7 +10,31 @@
  * package that packed fine failed to mount with ?PACKAGE. */
 #define PKG_INIT 96
 #define MMB_DRIVE_LO  'A'
-#define MMB_DRIVE_HI  'H'
+#define MMB_DRIVE_HI  MMB_NET_DRIVE
+
+/* Volume-ops tables. The FAT backend is the C:..H: contract; the network
+ * backend (Z:) lives in netfs_smb2.c. Keeping both behind mmb_vol_ops lets
+ * vfs.c dispatch by letter and leaves a clean seam for the future Circle SMB
+ * socket layer. */
+const mmb_vol_ops mmb_fat_ops = {
+	mmb_fat_ready, mmb_fat_chdir, mmb_fat_mkdir, mmb_fat_rmdir,
+	mmb_fat_unlink, mmb_fat_rename, mmb_fat_list, mmb_fat_list_entries,
+	mmb_fat_write, mmb_fat_wopen, mmb_fat_wwrite, mmb_fat_wclose,
+	mmb_fat_read_at, mmb_fat_size, mmb_fat_exists, mmb_fat_isdir,
+	mmb_fat_drive_line, mmb_fat_label, mmb_fat_eject
+};
+
+/* Ops for a physical volume letter, or 0 when the letter has no backend. */
+static const mmb_vol_ops *vol_ops_for(int letter)
+{
+	if (letter >= 'C' && letter <= MMB_FAT_DRIVE_HI)
+		return &mmb_fat_ops;
+#ifdef MMB_HAVE_SMB2
+	if (letter == MMB_NET_DRIVE)
+		return &mmb_net_ops;
+#endif
+	return 0;
+}
 
 typedef struct vfs_node {
 	char name[80];
@@ -493,20 +517,23 @@ static void split_dir_glob(const char *path, char *dir, char *glob)
 	}
 }
 
-static int physical(int letter)
-{
-	return letter >= 'C' && letter <= MMB_DRIVE_HI;
-}
-
 static int require_drive(int letter)
 {
+	const mmb_vol_ops *ops;
 	if (letter == 'A')
 		return 0;
 	if (letter == 'B')
 		return pkg_on ? 0 : -1;
-	if (!physical(letter))
+	ops = vol_ops_for(letter);
+	if (!ops)
 		return -1;
-	return mmb_fat_ready(letter) ? 0 : -1;
+	return ops->ready(letter) ? 0 : -1;
+}
+
+/* Ops table for a physical letter after a successful ready check, else 0. */
+static const mmb_vol_ops *drive_ops(int letter)
+{
+	return require_drive(letter) == 0 ? vol_ops_for(letter) : 0;
 }
 
 /* ---- public API ------------------------------------------------------- */
@@ -583,8 +610,11 @@ int mmb_vfs_chdir(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	if (mmb_fat_chdir(x.letter, x.path) != 0)
-		return -1;
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		if (!ops || ops->chdir(x.letter, x.path) != 0)
+			return -1;
+	}
 	set_drive_cwd(x.letter, x.path);
 	G.drive = x.letter;
 	refresh_public_cwd();
@@ -600,9 +630,10 @@ int mmb_vfs_mkdir(const char *path)
 		return -1;
 	if (x.letter == 'A')
 		return ram_walk(nodes, VFS_MAX, x.path, 0, 1) < 0 ? -1 : 0;
-	if (require_drive(x.letter) != 0)
-		return -1;
-	return mmb_fat_mkdir(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->mkdir(x.letter, x.path) : -1;
+	}
 }
 
 int mmb_vfs_rmdir(const char *path)
@@ -616,9 +647,8 @@ int mmb_vfs_rmdir(const char *path)
 		return -1;
 	if (x.letter != 'A')
 	{
-		if (require_drive(x.letter) != 0)
-			return -1;
-		return mmb_fat_rmdir(x.letter, x.path);
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->rmdir(x.letter, x.path) : -1;
 	}
 	ns = nodes;
 	max = VFS_MAX;
@@ -643,9 +673,8 @@ int mmb_vfs_kill(const char *path)
 		return -1;
 	if (x.letter != 'A')
 	{
-		if (require_drive(x.letter) != 0)
-			return -1;
-		return mmb_fat_unlink(x.letter, x.path);
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->unlink(x.letter, x.path) : -1;
 	}
 	ns = nodes;
 	max = VFS_MAX;
@@ -672,7 +701,10 @@ int mmb_vfs_exists(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return 0;
-	return mmb_fat_exists(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->exists(x.letter, x.path) : 0;
+	}
 }
 
 int mmb_vfs_size(const char *path)
@@ -692,7 +724,10 @@ int mmb_vfs_size(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	return mmb_fat_size(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->size(x.letter, x.path) : -1;
+	}
 }
 
 int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
@@ -704,9 +739,10 @@ int mmb_vfs_write(const char *path, const void *data, unsigned n, int append)
 		return -1;
 	if (x.letter == 'A')
 		return ram_write(nodes, VFS_MAX, x.path, data, n, append);
-	if (require_drive(x.letter) != 0)
-		return -1;
-	return mmb_fat_write(x.letter, x.path, data, n, append);
+	{
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		return ops ? ops->write(x.letter, x.path, data, n, append) : -1;
+	}
 }
 
 /* ---- streaming writes ------------------------------------------------- */
@@ -781,9 +817,10 @@ int mmb_vfs_wopen(const char *path, int append)
 	else
 	{
 		void *fp;
-		if (require_drive(x.letter) != 0)
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		if (!ops)
 			return -1;
-		fp = mmb_fat_wopen(x.letter, x.path, append);
+		fp = ops->wopen(x.letter, x.path, append);
 		if (!fp)
 			return -1;
 		writers[i].fat = fp;
@@ -801,7 +838,10 @@ int mmb_vfs_wwrite(int handle, const void *data, unsigned n)
 		return 0;
 	if (writers[handle].is_ram)
 		return ram_stream_write(nodes, writers[handle].node, data, n);
-	return mmb_fat_wwrite(writers[handle].fat, data, n);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(writers[handle].letter);
+		return ops ? ops->wwrite(writers[handle].fat, data, n) : -1;
+	}
 }
 
 int mmb_vfs_wclose(int handle)
@@ -812,7 +852,8 @@ int mmb_vfs_wclose(int handle)
 	writers[handle].used = 0;
 	if (!writers[handle].is_ram)
 	{
-		rc = mmb_fat_wclose(writers[handle].fat);
+		const mmb_vol_ops *ops = vol_ops_for(writers[handle].letter);
+		rc = ops ? ops->wclose(writers[handle].fat) : -1;
 		writers[handle].fat = 0;
 	}
 	return rc;
@@ -833,12 +874,87 @@ int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsi
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	return mmb_fat_read_at(x.letter, x.path, pos, data, n, got);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->read_at(x.letter, x.path, pos, data, n, got) : -1;
+	}
 }
 
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n)
 {
 	return mmb_vfs_read_at(path, 0, data, maxn, n);
+}
+
+/* ---- per-handle read-ahead (#1205) ------------------------------------ */
+
+void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r)
+{
+	if (!r)
+		return;
+	if (r->buf)
+		G.plat->free(r->buf);
+	r->buf = 0;
+	r->cap = 0;
+	r->len = 0;
+	r->start = 0;
+}
+
+/* Read `n` bytes at `pos` through the read-ahead cache. The caller owns the
+ * logical position; the cache only serves bytes it previously fetched starting
+ * at r->start, so a seek or an ungetc that moves `pos` outside the cached
+ * window just refetches and can never return the wrong byte. A short result
+ * only happens at EOF, matching mmb_vfs_read_at. */
+int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
+		      void *data, unsigned n, unsigned *got)
+{
+	unsigned off, avail, take, filled;
+
+	if (got)
+		*got = 0;
+	if (!r || n == 0)
+		return mmb_vfs_read_at(path, pos, data, n, got);
+	if (n >= MMB_VFS_RBUF)
+	{
+		/* A large read already goes to the backend in one call, so cache it
+		 * only if it is small enough to be worth keeping. */
+		r->len = 0;
+		return mmb_vfs_read_at(path, pos, data, n, got);
+	}
+	if (r->len > 0 && pos >= r->start && pos - r->start < (unsigned)r->len)
+	{
+		off = pos - r->start;
+		avail = (unsigned)r->len - off;
+		if (n <= avail)
+		{
+			memcpy(data, r->buf + off, n);
+			if (got)
+				*got = n;
+			return 0;
+		}
+		/* The request spans the cached tail; fall through and refetch from
+		 * `pos` so a large caller read is never split short mid-file. */
+	}
+	if (!r->buf)
+	{
+		r->buf = (unsigned char *)G.plat->alloc(MMB_VFS_RBUF);
+		if (!r->buf)
+			return mmb_vfs_read_at(path, pos, data, n, got);
+		r->cap = MMB_VFS_RBUF;
+	}
+	filled = 0;
+	if (mmb_vfs_read_at(path, pos, r->buf, (unsigned)r->cap, &filled) != 0)
+	{
+		r->len = 0;
+		return -1;
+	}
+	r->start = pos;
+	r->len = (int)filled;
+	take = n < filled ? n : filled;
+	if (take)
+		memcpy(data, r->buf, take);
+	if (got)
+		*got = take;
+	return 0;
 }
 
 int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
@@ -861,30 +977,222 @@ int mmb_vfs_read_ptr(const char *path, const unsigned char **ptr, unsigned *n)
 	return 0;
 }
 
-int mmb_vfs_copy(const char *src, const char *dst)
+/* Bound on directory nesting for recursive copy/move/delete so a malformed
+ * tree cannot recurse without limit. */
+#define VFS_TREE_DEPTH_MAX 16
+
+/* Append `name` to directory `dir`, inserting one '/'. */
+static void vfs_join(char *out, int outsz, const char *dir, const char *name)
 {
-	int sz, off;
-	unsigned char buf[1024];
+	int n;
+	strncpy(out, dir, (size_t)outsz - 1);
+	out[outsz - 1] = 0;
+	n = (int)strlen(out);
+	if (n > 0 && out[n - 1] != '/')
+		strncat(out, "/", (size_t)outsz - strlen(out) - 1);
+	strncat(out, name, (size_t)outsz - strlen(out) - 1);
+}
+
+/* Case-insensitive test that canonical path `path` names `dir` itself or an
+ * entry beneath it. Both are "L:/..." strings from mmb_vfs_resolve(). */
+static int vfs_path_within(const char *dir, const char *path)
+{
+	size_t n = strlen(dir);
+	size_t i;
+	while (n > 0 && dir[n - 1] == '/')
+		n--;
+	if (n == 0)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		char a = dir[i], b = path[i];
+		if (b == 0)
+			return 0;
+		if (a >= 'a' && a <= 'z')
+			a = (char)(a - 32);
+		if (b >= 'a' && b <= 'z')
+			b = (char)(b - 32);
+		if (a != b)
+			return 0;
+	}
+	return path[n] == 0 || path[n] == '/';
+}
+
+/* Scan a folder into a heap array that grows until the whole folder fits.
+ * Returns a heap array the caller frees (with *out_n entries), or 0 on
+ * failure, in which case *out_n is left at 0. */
+static mmb_dirent *vfs_dir_entries(const char *spec, int *out_n)
+{
+	int cap = 64;
+	*out_n = 0;
+	for (;;)
+	{
+		mmb_dirent *ents = (mmb_dirent *)G.plat->alloc(
+			(unsigned)cap * sizeof(*ents));
+		int n, truncated = 0;
+		if (!ents)
+			return 0;
+		n = mmb_vfs_list_entries(spec, ents, cap, &truncated);
+		if (n < 0)
+		{
+			G.plat->free(ents);
+			return 0;
+		}
+		if (!truncated)
+		{
+			*out_n = n;
+			return ents;
+		}
+		G.plat->free(ents);
+		if (cap >= 4096)
+			return 0;
+		cap *= 2;
+	}
+}
+
+/* Copy buffer for vfs_copy_file(). A network backend (Z:) issues one SMB2 PDU
+ * per write and slices each read into the negotiated chunk, so a 1 KB loop
+ * costs a PDU per kilobyte and never lets its pipelined window run (#1147).
+ * 256 KB hands a full negotiated chunk (or several 64 KB ones) to the backend
+ * per call and is small enough to allocate for one file at a time. */
+#define VFS_COPY_BUF (256u * 1024u)
+
+/* Copy one file's bytes (the single-file case of mmb_vfs_copy).
+ *
+ * The destination is opened once as a streaming writer so the ramdisk grows
+ * geometrically (#693) and FAT/SMB keep the file open across the loop, then
+ * each full read buffer is written in a single backend call. Falls back to a
+ * small stack buffer if the heap is too tight to allocate the large one. */
+static int vfs_copy_file(const char *src, const char *dst)
+{
+	int sz, off, h;
+	unsigned char small[1024];
+	unsigned char *buf;
+	unsigned bufsz;
+	int rc = 0;
+
 	sz = mmb_vfs_size(src);
 	if (sz < 0)
 		return -1;
-	if (mmb_vfs_write(dst, "", 0, 0) != 0)
+	h = mmb_vfs_wopen(dst, 0);
+	if (h < 0)
 		return -1;
+	buf = (unsigned char *)G.plat->alloc(VFS_COPY_BUF);
+	bufsz = VFS_COPY_BUF;
+	if (!buf)
+	{
+		buf = small;
+		bufsz = sizeof(small);
+	}
 	for (off = 0; off < sz; )
 	{
 		unsigned got = 0;
 		unsigned chunk = (unsigned)sz - (unsigned)off;
-		if (chunk > sizeof(buf))
-			chunk = sizeof(buf);
+		if (chunk > bufsz)
+			chunk = bufsz;
 		if (mmb_vfs_read_at(src, (unsigned)off, buf, chunk, &got) != 0)
-			return -1;
+		{
+			rc = -1;
+			break;
+		}
 		if (!got)
 			break;
-		if (mmb_vfs_write(dst, buf, got, 1) != 0)
-			return -1;
+		if (mmb_vfs_wwrite(h, buf, got) != 0)
+		{
+			rc = -1;
+			break;
+		}
 		off += (int)got;
 	}
-	return 0;
+	if (buf != small)
+		G.plat->free(buf);
+	if (mmb_vfs_wclose(h) != 0)
+		rc = -1;
+	return rc;
+}
+
+/* Recursively copy directory src into dst, creating folders as needed. A file
+ * that already exists is overwritten, matching single-file COPY. Empty and
+ * nested-empty folders come across too. Returns -1 if any entry failed but
+ * keeps going, so as much of the tree as possible is copied and the caller can
+ * report the partial failure. */
+static int vfs_copy_tree(const char *src, const char *dst, int depth)
+{
+	mmb_dirent *ents;
+	int n = 0, i, rc = 0;
+
+	if (depth > VFS_TREE_DEPTH_MAX)
+		return -1;
+	if (mmb_vfs_mkdir(dst) != 0)
+		return -1;
+	ents = vfs_dir_entries(src, &n);
+	if (!ents)
+		return -1;
+	for (i = 0; i < n; i++)
+	{
+		char cs[160], cd[160];
+		if (!ents[i].name[0])
+			continue;
+		vfs_join(cs, sizeof(cs), src, ents[i].name);
+		vfs_join(cd, sizeof(cd), dst, ents[i].name);
+		if (ents[i].is_dir)
+		{
+			if (vfs_copy_tree(cs, cd, depth + 1) != 0)
+				rc = -1;
+		}
+		else if (vfs_copy_file(cs, cd) != 0)
+			rc = -1;
+	}
+	G.plat->free(ents);
+	return rc;
+}
+
+/* Recursively delete a directory tree (used by a cross-volume move). */
+static int vfs_remove_tree(const char *path, int depth)
+{
+	mmb_dirent *ents;
+	int n = 0, i, rc = 0;
+
+	if (depth > VFS_TREE_DEPTH_MAX)
+		return -1;
+	ents = vfs_dir_entries(path, &n);
+	if (!ents)
+		return -1;
+	for (i = 0; i < n; i++)
+	{
+		char child[160];
+		if (!ents[i].name[0])
+			continue;
+		vfs_join(child, sizeof(child), path, ents[i].name);
+		if (ents[i].is_dir)
+		{
+			if (vfs_remove_tree(child, depth + 1) != 0)
+				rc = -1;
+		}
+		else if (mmb_vfs_kill(child) != 0)
+			rc = -1;
+	}
+	G.plat->free(ents);
+	if (mmb_vfs_rmdir(path) != 0)
+		rc = -1;
+	return rc;
+}
+
+int mmb_vfs_copy(const char *src, const char *dst)
+{
+	char ra[128], rb[128];
+
+	if (!mmb_vfs_isdir(src))
+		return vfs_copy_file(src, dst);
+	/* A folder copied into itself or into one of its own subfolders would
+	 * recurse forever, so refuse it. */
+	if (mmb_vfs_resolve(src, ra, sizeof(ra)) == 0 &&
+	    mmb_vfs_resolve(dst, rb, sizeof(rb)) == 0 &&
+	    vfs_path_within(ra, rb))
+		return -1;
+	if (mmb_vfs_exists(dst) && !mmb_vfs_isdir(dst))
+		return -1;
+	return vfs_copy_tree(src, dst, 0);
 }
 
 static const char *last_slash(const char *path)
@@ -902,7 +1210,7 @@ static const char *last_slash(const char *path)
 int mmb_vfs_rename(const char *src, const char *dst)
 {
 	mmb_xpath a, b;
-	int s, ch;
+	int s, d, ch;
 	char dir[80], base[80];
 	const char *slash;
 	if (split_path(src, &a) != 0 || split_path(dst, &b) != 0)
@@ -911,14 +1219,24 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		return -1;
 	if (a.letter == 'B')
 		return -1;
+	/* Moving a folder into itself or one of its own subfolders would detach
+	 * the tree into a cycle; the ramdisk path below also checks this, but the
+	 * FAT rename needs the same guard. */
+	if (mmb_vfs_isdir(src))
+	{
+		char ra[128], rb[128];
+		if (mmb_vfs_resolve(src, ra, sizeof(ra)) == 0 &&
+		    mmb_vfs_resolve(dst, rb, sizeof(rb)) == 0 &&
+		    vfs_path_within(ra, rb))
+			return -1;
+	}
 	if (a.letter != 'A')
 	{
-		if (require_drive(a.letter) != 0)
-			return -1;
-		return mmb_fat_rename(a.letter, a.path, b.path);
+		const mmb_vol_ops *ops = drive_ops(a.letter);
+		return ops ? ops->rename(a.letter, a.path, b.path) : -1;
 	}
 	s = ram_walk(nodes, VFS_MAX, a.path, 0, 0);
-	if (s < 0)
+	if (s <= 0)
 		return -1;
 	slash = last_slash(b.path);
 	if (!slash || !slash[1])
@@ -940,13 +1258,56 @@ int mmb_vfs_rename(const char *src, const char *dst)
 		strncpy(base, slash + 1, 79);
 		base[79] = 0;
 	}
-	if (ram_walk(nodes, VFS_MAX, dir, 0, 0) != nodes[s].parent)
+	/* Rename is a plain node edit on the ramdisk: resolve the destination
+	 * directory and reparent, so a move between folders works like FAT. */
+	d = ram_walk(nodes, VFS_MAX, dir, 0, 0);
+	if (d < 0 || !nodes[d].is_dir)
 		return -1;
-	ch = ram_find_child(nodes, VFS_MAX, nodes[s].parent, base);
+	ch = ram_find_child(nodes, VFS_MAX, d, base);
 	if (ch >= 0 && ch != s)
 		return -1;
+	/* Reparenting a directory into its own subtree would detach the tree
+	 * into a cycle, so refuse that case. */
+	if (nodes[s].is_dir)
+	{
+		int t;
+		for (t = d; t > 0; t = nodes[t].parent)
+			if (t == s)
+				return -1;
+	}
 	strncpy(nodes[s].name, base, 79);
 	nodes[s].name[79] = 0;
+	nodes[s].parent = d;
+	return 0;
+}
+
+int mmb_vfs_move(const char *src, const char *dst)
+{
+	mmb_xpath a, b;
+	if (split_path(src, &a) != 0 || split_path(dst, &b) != 0)
+		return -1;
+	if (a.letter == b.letter)
+		return mmb_vfs_rename(src, dst);
+	/* A rename cannot cross volumes, so copy the tree then drop the source.
+	 * If the source cannot be removed, undo the copy so a failed move does
+	 * not silently leave it in both places. A directory uses a recursive
+	 * delete; a single file keeps the cheaper kill path. */
+	if (mmb_vfs_copy(src, dst) != 0)
+		return -1;
+	if (mmb_vfs_isdir(src))
+	{
+		if (vfs_remove_tree(src, 0) != 0)
+		{
+			vfs_remove_tree(dst, 0);
+			return -1;
+		}
+		return 0;
+	}
+	if (mmb_vfs_kill(src) != 0)
+	{
+		mmb_vfs_kill(dst);
+		return -1;
+	}
 	return 0;
 }
 
@@ -1137,8 +1498,11 @@ int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 	}
 	if (require_drive(x.letter) != 0)
 		return -1;
-	if (mmb_fat_list(x.letter, dir, glob, out, outsz, truncated) != 0)
-		return -1;
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		if (!ops || ops->list(x.letter, dir, glob, out, outsz, truncated) != 0)
+			return -1;
+	}
 	sort_dir_list(out, outsz);
 	return 0;
 }
@@ -1165,9 +1529,10 @@ int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 	}
 	else
 	{
-		if (require_drive(x.letter) != 0)
+		const mmb_vol_ops *ops = drive_ops(x.letter);
+		if (!ops)
 			return -1;
-		n = mmb_fat_list_entries(x.letter, dir, glob, out, max, truncated);
+		n = ops->list_entries(x.letter, dir, glob, out, max, truncated);
 	}
 	if (n < 0)
 		return -1;
@@ -1185,7 +1550,7 @@ void mmb_vfs_drives(char *out, int outsz)
 	int i;
 	out[0] = 0;
 	strncat(out, "A: RAM", (unsigned)outsz - 1);
-	for (i = 'C'; i <= MMB_DRIVE_HI; i++)
+	for (i = 'C'; i <= MMB_FAT_DRIVE_HI; i++)
 	{
 		char line[80];
 		line[0] = 0;
@@ -1197,6 +1562,47 @@ void mmb_vfs_drives(char *out, int outsz)
 		strcat(out, "\n");
 		strcat(out, line);
 	}
+	{
+		char line[160];
+		line[0] = 0;
+		mmb_vfs_drive_line(MMB_NET_DRIVE, line, sizeof(line));
+		if (line[0] && (int)strlen(out) + (int)strlen(line) + 2 < outsz)
+		{
+			strcat(out, "\n");
+			strcat(out, line);
+		}
+	}
+}
+
+int mmb_vfs_drive_ready(int letter)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	return ops ? ops->ready(letter) : 0;
+}
+
+void mmb_vfs_drive_line(int letter, char *out, int outsz)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	if (out && outsz > 0)
+		out[0] = 0;
+	if (ops)
+		ops->drive_line(letter, out, outsz);
+}
+
+int mmb_vfs_label(int letter, char *out, int outsz)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	if (out && outsz > 0)
+		out[0] = 0;
+	if (!ops)
+		return -1;
+	return ops->label(letter, out, outsz);
+}
+
+int mmb_vfs_eject(int letter)
+{
+	const mmb_vol_ops *ops = vol_ops_for(letter);
+	return ops ? ops->eject(letter) : -1;
 }
 
 int mmb_vfs_isdir(const char *path)
@@ -1214,7 +1620,10 @@ int mmb_vfs_isdir(const char *path)
 	}
 	if (require_drive(x.letter) != 0)
 		return 0;
-	return mmb_fat_isdir(x.letter, x.path);
+	{
+		const mmb_vol_ops *ops = vol_ops_for(x.letter);
+		return ops ? ops->isdir(x.letter, x.path) : 0;
+	}
 }
 
 int mmb_vfs_readonly_path(const char *path)
@@ -1302,7 +1711,10 @@ void mmb_pkg_unmount(void)
 		if (G.files[i].open && G.files[i].path[0] &&
 		    (G.files[i].path[0] == 'B' || G.files[i].path[0] == 'b') &&
 		    G.files[i].path[1] == ':')
+		{
+			mmb_vfs_rbuf_free(&G.files[i].rbuf);
 			G.files[i].open = 0;
+		}
 	}
 	pkg_free_nodes();
 	pkg_on = 0;
@@ -1494,7 +1906,7 @@ void mmb_cmd_eject(void)
 		letter = G.drive;
 	if (letter == 'A' || letter == 'B')
 		mmb_error("?EJECT");
-	if (mmb_fat_eject(letter) != 0)
+	if (mmb_vfs_eject(letter) != 0)
 		mmb_error("?EJECT");
 	if (G.drive == letter)
 	{

@@ -2,8 +2,11 @@
 
 /*
  * AFK: a Win31 "Mystify"-style screensaver. Two polygons of 3-6 vertices
- * bounce around a MODE 11 screen, each vertex trailing a fading ring of
- * positions. Enter or the break key exits and restores the prior mode.
+ * bounce around a 960x540/MODE 12 screen, each vertex trailing a fading ring
+ * of positions. When the console is already in MODE 19/20 (the Chromebook
+ * panel sizes) AFK renders in MODE 19 instead. Enter or the break key exits
+ * and restores the prior mode and bits; PAGE WRITE, PAGE DISPLAY and the
+ * framebuffer target home to 0 like the other full-screen apps.
  */
 
 #define AFK_SETS 2
@@ -11,6 +14,8 @@
 #define AFK_HIST 24
 #define AFK_FRAME_MS 16
 #define AFK_MODE 12
+#define AFK_MODE_WIDE 19
+#define AFK_PASS_MAX 32
 /* Soft pages 0 and 2 are the front/back buffers; page 1 is the CMM2 overlay. */
 #define AFK_PAGE_A 0
 #define AFK_PAGE_B 2
@@ -23,8 +28,10 @@ typedef struct {
 
 static struct {
 	int active;
+	int locked;            /* OPTION AFK PASSWORD: showing the lock prompt */
+	char input[AFK_PASS_MAX + 1];
+	int inlen;
 	int saved_mode, saved_bits;
-	int saved_write_page, saved_display_page, saved_write_fb;
 	int nv[AFK_SETS];
 	afk_vert v[AFK_SETS][AFK_MAXV];
 	unsigned rgb[AFK_SETS];
@@ -34,6 +41,34 @@ static struct {
 	unsigned rng;
 } A_s[MMB_MAX_CONSOLES];
 #define A (A_s[g_console])
+
+/* OPTION AFK PASSWORD stores a cheap FNV-1a hash (16 hex digits) so the plain
+ * text never reaches .mmbasic.ini. This is a deterrent, not security. The same
+ * function hashes the typed input for the lock-screen check. */
+void mmb_afk_hash_password(const char *pass, char *out, int outsz)
+{
+	static const char hex[] = "0123456789abcdef";
+	uint64_t h = 1469598103934665603ULL;
+	int i;
+
+	if (!out || outsz <= 0)
+		return;
+	if (outsz < 17)
+	{
+		out[0] = 0;
+		return;
+	}
+	if (!pass)
+		pass = "";
+	for (; *pass; pass++)
+	{
+		h ^= (unsigned char)*pass;
+		h *= 1099511628211ULL;
+	}
+	for (i = 0; i < 16; i++)
+		out[i] = hex[(h >> (60 - i * 4)) & 0xf];
+	out[16] = 0;
+}
 
 static unsigned afk_rand(void)
 {
@@ -171,12 +206,14 @@ static void afk_frame(void)
 	G.gfx.write_page = back;
 	G.gfx.write_fb = 0;
 	mmb_gfx_cls(0);
-	for (s = 0; s < AFK_SETS; s++)
+	/* Draw by depth, not by set: the oldest (faintest) trails from both sets
+	 * go down first, then each newer, brighter ring, so the brightest lines
+	 * always end up on top regardless of which set they belong to (#1174). */
+	for (a = AFK_HIST - 1; a >= 0; a--)
 	{
-		/* Oldest first so the newest polygon ends up on top. */
-		for (a = AFK_HIST - 1; a >= 0; a--)
+		int pct = 100 - (a * 95) / (AFK_HIST - 1);
+		for (s = 0; s < AFK_SETS; s++)
 		{
-			int pct = 100 - (a * 95) / (AFK_HIST - 1);
 			unsigned c = afk_scale(A.rgb[s], pct);
 			for (i = 0; i < A.nv[s]; i++)
 			{
@@ -201,7 +238,42 @@ static void afk_leave(void)
 	A.active = 0;
 	if (A.saved_mode != G.gfx.mode || A.saved_bits != G.gfx.bits)
 		mmb_gfx_set_mode(A.saved_mode, A.saved_bits);
+	/* Home PAGE WRITE/DISPLAY and the framebuffer target rather than
+	 * restoring the pages AFK ran on: presenting an off-screen page leaves a
+	 * black HDMI plane the console cannot recover (CMM2 Ctrl-C also homes
+	 * PAGE WRITE), so afk_leave does not save them. */
 	mmb_gfx_reset_console(1);
+}
+
+/* OPTION AFK PASSWORD: stop the animation and draw the lock prompt over the
+ * frozen frame. The typed password shows as asterisks. */
+static void afk_draw_lock(void)
+{
+	int bw = 360, bh = 132;
+	int bx, by, i;
+	unsigned edge = 0xF0F0F0u, fg = 0xFFFFFFu, bg = 0x101018u, hint = 0x9090A0u;
+	char stars[AFK_PASS_MAX + 1];
+
+	bx = (A.w - bw) / 2;
+	by = (A.h - bh) / 2;
+	if (bx < 0)
+		bx = 0;
+	if (by < 0)
+		by = 0;
+	G.gfx.write_page = A.front;
+	G.gfx.write_fb = 0;
+	mmb_gfx_box(bx, by, bw, bh, edge, 2, (int)bg);
+	mmb_gfx_text(bx + 24, by + 24, "PASSWORD:", fg);
+	for (i = 0; i < A.inlen; i++)
+		stars[i] = '*';
+	stars[A.inlen] = 0;
+	mmb_gfx_text(bx + 24, by + 56, stars, fg);
+	mmb_gfx_text(bx + 24, by + 96, "ENTER=UNLOCK  ESC=CANCEL", hint);
+	G.gfx.display_page = A.front;
+	mmb_gfx_dirty_add(0, 0, A.w, A.h);
+	if (G.plat && G.plat->present_set_flip)
+		G.plat->present_set_flip(1);
+	mmb_gfx_present();
 }
 
 void mmb_cmd_afk(void)
@@ -212,10 +284,13 @@ void mmb_cmd_afk(void)
 	memset(&A, 0, sizeof(A));
 	A.saved_mode = G.gfx.mode;
 	A.saved_bits = G.gfx.bits;
-	A.saved_write_page = G.gfx.write_page;
-	A.saved_display_page = G.gfx.display_page;
-	A.saved_write_fb = G.gfx.write_fb;
-	mmb_gfx_set_mode(AFK_MODE, 8);
+	/* The Chromebook (Lenovo 100e Gen 2) runs its console in MODE 19/20.
+	 * AFK's 960x540 design looks wrong on that panel, so render in MODE 19
+	 * (1366x768) when the console is already one of those modes; afk_leave
+	 * restores the saved mode either way. */
+	mmb_gfx_set_mode((A.saved_mode == 19 || A.saved_mode == 20) ? AFK_MODE_WIDE
+								    : AFK_MODE,
+			 8);
 	A.w = G.gfx.w > 0 ? G.gfx.w : 960;
 	A.h = G.gfx.h > 0 ? G.gfx.h : 540;
 	A.rng = (unsigned)(mmb_now_ms() * 2654435761u) + 0x9E3779B9u;
@@ -240,6 +315,58 @@ void mmb_afk_key(char c)
 {
 	if (!A.active)
 		return;
+	if (G.opt.afk_password[0])
+	{
+		/* The lock is a deterrent: every key (including Ctrl+C) stops the
+		 * animation and asks for the password instead of leaving. */
+		if (!A.locked)
+		{
+			A.locked = 1;
+			A.inlen = 0;
+			A.input[0] = 0;
+			afk_draw_lock();
+			return;
+		}
+		if (c == '\r' || c == '\n')
+		{
+			char h[17];
+			mmb_afk_hash_password(A.input, h, sizeof(h));
+			if (strcmp(h, G.opt.afk_password) == 0)
+			{
+				afk_leave();
+				return;
+			}
+			A.inlen = 0;
+			A.input[0] = 0;
+			afk_draw_lock();
+			return;
+		}
+		if (c == 8 || c == 127)
+		{
+			if (A.inlen > 0)
+				A.input[--A.inlen] = 0;
+			afk_draw_lock();
+			return;
+		}
+		if (c == 27)
+		{
+			/* Escape cancels the dialog: drop the lock, discard the
+			 * input and resume the screensaver without leaving AFK. */
+			A.locked = 0;
+			A.inlen = 0;
+			A.input[0] = 0;
+			A.last_ms = mmb_now_ms();
+			afk_frame();
+			return;
+		}
+		if (c >= 32 && c < 127 && A.inlen < AFK_PASS_MAX)
+		{
+			A.input[A.inlen++] = c;
+			A.input[A.inlen] = 0;
+			afk_draw_lock();
+		}
+		return;
+	}
 	if (c == '\r' || c == '\n' || c == 3)
 		afk_leave();
 }
@@ -247,7 +374,7 @@ void mmb_afk_key(char c)
 void mmb_afk_poll(void)
 {
 	unsigned now;
-	if (!A.active)
+	if (!A.active || A.locked)
 		return;
 	now = mmb_now_ms();
 	if (now < A.last_ms + AFK_FRAME_MS)

@@ -1,7 +1,12 @@
 """FILES dual-pane TUI: navigate, run .BAS, view unknown types, quit."""
 
+import os
+import shutil
 import subprocess
+import tempfile
 import time
+
+import pytest
 
 from harness import MMBasicConsole
 
@@ -359,6 +364,44 @@ def test_files_f4_shows_editor_immediately(fresh_console):
     assert con.send_line("PRINT 5") == "5"
 
 
+def test_files_edit_txt_opens_line_editor(fresh_console):
+    """#1093: a non-markdown text file keeps the plain line editor."""
+    con = fresh_console
+    _prep_tree(con)
+    assert con.send_line('OPEN "NOTES.TXT" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "plain text"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    _open_files(con)
+    _down_to(con, "SEL=NOTES.TXT")
+    opened = _keys(con, b"\x1b[14~", quiet=0.9)  # F4 edit
+    assert "WORDPAD" not in opened.upper(), opened
+    assert "File" in opened
+    assert "Run" in opened or "Alt+X" in opened
+    _keys(con, bytes([1]) + b"x", quiet=0.6)  # leave the line editor
+    _keys(con, b"q")
+    assert con.send_line("PRINT 5") == "5"
+
+
+def test_files_edit_md_opens_wordpad(fresh_console):
+    """#1093: editing a .md from FILES opens WORDPAD and returns to FILES."""
+    con = fresh_console
+    _prep_tree(con)
+    assert con.send_line('OPEN "NOTES.MD" FOR OUTPUT AS #1') == ""
+    assert con.send_line('PRINT #1, "# Heading"') == ""
+    assert con.send_line("CLOSE #1") == ""
+    _open_files(con)
+    _down_to(con, "SEL=NOTES.MD")
+    opened = _keys(con, b"\x1b[14~", quiet=1.0)  # F4 edit
+    assert "WORDPAD" in opened.upper(), opened
+    # WORDPAD rendered the markdown document (the leading "#" is hidden).
+    assert "Heading" in opened
+    # A clean WORDPAD quit (Alt+X) returns to the FILES browser.
+    back = _keys(con, bytes([1]) + b"x", quiet=0.8)
+    assert "[FILES]" in back or "SEL=" in back, back
+    _keys(con, b"q")
+    assert con.send_line("PRINT 6") == "6"
+
+
 def _select(con: MMBasicConsole, name: str, maxn: int = 40) -> str:
     seen = _open_files(con)
     for _ in range(maxn):
@@ -472,6 +515,183 @@ def test_files_tdf_pageup_pagedown_single(fresh_console):
     assert "SEL=" in seen, seen
     _keys(con, b"q")
     assert con.send_line("PRINT MM.HRES") == "1280"
+
+
+def test_files_move_keeps_selection_near_moved(fresh_console):
+    """#1022/#1028: a cross-folder move reparents the file and the source pane
+    selects the row above the moved one."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "MOVEDIR"') == ""
+    assert con.send_line('MKDIR "DESTDIR"') == ""
+    for name in ("F1.TXT", "F2.TXT", "F3.TXT", "F4.TXT", "F5.TXT"):
+        assert con.send_line(f'OPEN "MOVEDIR/{name}" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "x"') == ""
+        assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('CHDIR "A:/MOVEDIR"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=F3.TXT")
+    _keys(con, b"m", quiet=0.4)
+    # Both panes are A:/MOVEDIR, so the seeded destination is
+    # A:/MOVEDIR/F3.TXT; retype it cross-folder to A:/DESTDIR/F3.TXT.
+    _keys(con, b"\x7f" * 24)
+    seen = _keys(con, b"A:/DESTDIR/F3.TXT\r", quiet=0.9)
+    assert "Moved" in seen, seen
+    # F3 is gone: the selection must land on F2 (index moved_idx-1), not "..".
+    assert "SEL=F2.TXT" in seen, seen
+    _keys(con, b"q")
+    assert "F3.TXT" in con.send_line('DIR "A:/DESTDIR"').upper()
+    assert "F3.TXT" not in con.send_line('DIR "A:/MOVEDIR"').upper()
+
+
+def _seed_file(con: MMBasicConsole, path: str, text: str = "x") -> None:
+    assert con.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    assert con.send_line(f'PRINT #1, "{text}"') == ""
+    assert con.send_line("CLOSE #1") == ""
+
+
+def test_files_copies_directory_tree(fresh_console):
+    """#1112: Copy on a folder brings the whole tree, empty nests included."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC/SUB"') == ""
+    assert con.send_line('MKDIR "FCOPYSRC/SUB/EMPTY"') == ""
+    _seed_file(con, "A:/FCOPYSRC/TOP.TXT", "top")
+    _seed_file(con, "A:/FCOPYSRC/SUB/DEEP.TXT", "deep")
+    assert con.send_line('MKDIR "FCOPYDST"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=FCOPYSRC/")
+    _keys(con, b"c", quiet=0.4)
+    # Both panes are A:/, so the seed is A:/FCOPYSRC; retype the destination.
+    _keys(con, b"\x7f" * 40)
+    seen = _keys(con, b"A:/FCOPYDST/FCOPYSRC\r", quiet=1.5)
+    assert "Copied" in seen, seen
+    _keys(con, b"q")
+    assert "TOP.TXT" in con.send_line('DIR "A:/FCOPYDST/FCOPYSRC"').upper()
+    assert "DEEP.TXT" in con.send_line('DIR "A:/FCOPYDST/FCOPYSRC/SUB"').upper()
+    assert con.send_line('CHDIR "A:/FCOPYDST/FCOPYSRC/SUB/EMPTY"') == ""
+    assert con.send_line('CHDIR "A:/"') == ""
+
+
+def test_files_moves_directory_into_folder(fresh_console):
+    """#1112: Move on a folder reparents the whole tree into a destination."""
+    con = fresh_console
+    assert con.send_line('CHDIR "A:/"') == ""
+    assert con.send_line('MKDIR "FMOVESRC"') == ""
+    assert con.send_line('MKDIR "FMOVESRC/IN"') == ""
+    _seed_file(con, "A:/FMOVESRC/A.TXT", "a")
+    _seed_file(con, "A:/FMOVESRC/IN/B.TXT", "b")
+    assert con.send_line('MKDIR "FMOVEDST"') == ""
+    _open_files(con)
+    _down_to(con, "SEL=FMOVESRC/")
+    _keys(con, b"m", quiet=0.4)
+    _keys(con, b"\x7f" * 40)
+    seen = _keys(con, b"A:/FMOVEDST/FMOVESRC\r", quiet=1.5)
+    assert "Moved" in seen, seen
+    _keys(con, b"q")
+    assert "A.TXT" in con.send_line('DIR "A:/FMOVEDST/FMOVESRC"').upper()
+    assert "B.TXT" in con.send_line('DIR "A:/FMOVEDST/FMOVESRC/IN"').upper()
+    assert "FMOVESRC" not in con.send_line('DIR "A:/"').upper()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_files_move_directory_across_drives_copies_and_deletes(kernel_image):
+    """#1112: moving a folder A: -> C: in FILES copies the tree then deletes
+    the source, empty nested folders included."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True,
+            capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('MKDIR "XDIRSRC"') == ""
+            assert con.send_line('MKDIR "XDIRSRC/SUB"') == ""
+            assert con.send_line('MKDIR "XDIRSRC/SUB/EMPTY"') == ""
+            _seed_file(con, "A:/XDIRSRC/TOP.TXT", "top")
+            _seed_file(con, "A:/XDIRSRC/SUB/DEEP.TXT", "deep")
+            _open_files(con)
+            # Right pane -> C: (Alt+R, then the "Drive C:" hotkey); Tab back
+            # to the left pane so the move source stays on A:.
+            _keys(con, bytes([1]) + b"rc", quiet=0.6)
+            _keys(con, b"\t", quiet=0.3)
+            _down_to(con, "SEL=XDIRSRC/")
+            _keys(con, b"m", quiet=0.4)
+            seen = _keys(con, b"\r", quiet=2.0)
+            assert "Moved" in seen, seen
+            _keys(con, b"q")
+            assert "TOP.TXT" in con.send_line('DIR "C:/XDIRSRC"').upper()
+            assert "DEEP.TXT" in con.send_line('DIR "C:/XDIRSRC/SUB"').upper()
+            assert con.send_line('CHDIR "C:/XDIRSRC/SUB/EMPTY"') == ""
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert "XDIRSRC" not in con.send_line('DIR "A:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_files_move_across_drives_copies_and_deletes(kernel_image):
+    """#1030: a move from the A: ramdisk to the C: SD volume has no single
+    rename primitive, so FILES must copy the file then delete the source."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBXDRV", img],
+            check=True,
+            capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "A:/"') == ""
+            assert con.send_line('OPEN "XFER.TXT" FOR OUTPUT AS #1') == ""
+            assert con.send_line('PRINT #1, "cross-drive"') == ""
+            assert con.send_line("CLOSE #1") == ""
+            _open_files(con)
+            # Right pane -> C: (Alt+R, then the "Drive C:" hotkey). Tab back
+            # to the left pane so the move source stays on A:.
+            _keys(con, bytes([1]) + b"rc", quiet=0.6)
+            _keys(con, b"\t", quiet=0.3)
+            _down_to(con, "SEL=XFER.TXT")
+            _keys(con, b"m", quiet=0.4)
+            seen = _keys(con, b"\r", quiet=1.0)
+            assert "Moved" in seen, seen
+            _keys(con, b"q")
+            assert "XFER.TXT" in con.send_line('DIR "C:/"').upper()
+            assert "XFER.TXT" not in con.send_line('DIR "A:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
 
 
 def test_files_many_entries_reports_truncation(fresh_console):

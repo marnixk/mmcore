@@ -14,6 +14,8 @@
 #include <circle/machineinfo.h>
 #include <circle/atomic.h>
 
+extern "C" void mmb_play_mix(void);
+
 static CKernel *s_kernel;
 
 /* SetArea may DMA from these bounce buffers on hardware (SCREEN_DMA_BURST_LENGTH).
@@ -69,7 +71,7 @@ static volatile int s_present_busy;
 static void plat_present_wait(void)
 {
 	while (AtomicGet(&s_present_busy))
-		;
+		mmb_play_mix();
 }
 
 static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
@@ -140,6 +142,10 @@ static int present_wants_flip(CScreenDevice *sc, int x, int y, int w, int h)
 	return 1;
 }
 
+/* Circle's COLOR16 macro leaves bit 5 unused (5-5-5 with green at bit 6), but
+ * the framebuffer and the terminal's ANSI palette are standard 5-6-5. Packing
+ * with COLOR16 here made a direct fill (CLS) a different shade from the text
+ * background the terminal paints for the same colour (#1233). */
 static unsigned rgb_to_raw(unsigned rgb)
 {
 	unsigned r = (rgb >> 16) & 255;
@@ -148,7 +154,7 @@ static unsigned rgb_to_raw(unsigned rgb)
 #if DEPTH == 32
 	return COLOR32(r, g, b, 255);
 #elif DEPTH == 16
-	return COLOR16(r >> 3, g >> 3, b >> 3);
+	return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 #else
 	return (unsigned)((r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6));
 #endif
@@ -271,10 +277,10 @@ static unsigned plat_get_pixel(int x, int y)
 #elif DEPTH == 16
 	{
 		unsigned r = ((unsigned)raw >> 11) & 0x1F;
-		unsigned g = ((unsigned)raw >> 6) & 0x1F;
+		unsigned g = ((unsigned)raw >> 5) & 0x3F;
 		unsigned b = (unsigned)raw & 0x1F;
 		r = r * 255 / 31;
-		g = g * 255 / 31;
+		g = g * 255 / 63;
 		b = b * 255 / 31;
 		return (r << 16) | (g << 8) | b;
 	}
@@ -355,6 +361,7 @@ static int plat_resize_hdmi(int w, int h)
 		return 1;
 
 	plat_term_present_drain();
+	mmb_play_mix();
 
 	/* Resize() leaves the device unusable on failure; restore the
 	 * previous timing immediately so later writes cannot crash. */
@@ -447,6 +454,20 @@ static void plat_reboot(void)
 	reboot();
 }
 
+static void plat_shutdown(void)
+{
+#if RASPPI >= 5
+	poweroff();
+#else
+	/* Pi 3 / Pi 4 / Pi 400 expose no software power-off through Circle
+	 * (poweroff() is Pi 5-only; there is no SMC/PMIC path on earlier SoCs).
+	 * halt() leaves the board powered, so tell the user it is now safe to
+	 * cut power instead of letting the still screen look like a crash. */
+	mmb_console_write("\r\nShutdown complete. It is now safe to turn off the power.\r\n");
+	halt();
+#endif
+}
+
 static void plat_audio_set_target(int target)
 {
 	audio_set_target(target);
@@ -485,6 +506,11 @@ static void plat_audio_kick(void)
 static void plat_audio_flush(void)
 {
 	audio_flush();
+}
+
+static void plat_audio_reset(void)
+{
+	audio_reset();
 }
 
 #define TUI_CW 8
@@ -867,10 +893,10 @@ static unsigned plat_native_to_rgb(unsigned native)
 #elif DEPTH == 16
 	{
 		unsigned r = (native >> 11) & 0x1F;
-		unsigned g = (native >> 6) & 0x1F;
+		unsigned g = (native >> 5) & 0x3F;
 		unsigned b = native & 0x1F;
 		r = r * 255 / 31;
-		g = g * 255 / 31;
+		g = g * 255 / 63;
 		b = b * 255 / 31;
 		return (r << 16) | (g << 8) | b;
 	}
@@ -1248,7 +1274,7 @@ static void plat_term_present_drain(void)
 	for (;;)
 	{
 		while (AtomicGet(&s_term_in_flight))
-			;
+			mmb_play_mix();
 		pending = 0;
 		DisableInterrupts();
 		if (s_term_pending)
@@ -1336,6 +1362,100 @@ static void plat_present_native(int x, int y, int w, int h,
 		plat_set_area_flip(fb, area, buf);
 	else
 		plat_set_area(fb, area, buf);
+}
+
+/* Copy an HDMI-native region into the Circle terminal's cached pixel buffer so
+ * a later text flush reproduces the presented pixels instead of re-stamping the
+ * stale row. */
+static void present_sync_console_region(int x, int y, int w, int h,
+					const void *pix, int stride)
+{
+	CTerminalDevice *term;
+	const u8 *row;
+	int px, py;
+	unsigned tw, th, bpp;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return;
+	tw = term->GetWidth();
+	th = term->GetHeight();
+	if (x < 0)
+	{
+		w += x;
+		pix = static_cast<const u8 *>(pix) + (size_t)(-x) * (DEPTH / 8);
+		x = 0;
+	}
+	if (y < 0)
+	{
+		h += y;
+		pix = static_cast<const u8 *>(pix) +
+		      (size_t)(-y) * (unsigned)stride * (DEPTH / 8);
+		y = 0;
+	}
+	if ((unsigned)(x + w) > tw)
+		w = (int)tw - x;
+	if ((unsigned)(y + h) > th)
+		h = (int)th - y;
+	if (w < 1 || h < 1)
+		return;
+	/* Drop the cached hardware cursor before overwriting its backing store;
+	 * the next text write redraws it from the synced pixels. */
+	term->SaveConsole(0, 0, 0);
+	bpp = (unsigned)(DEPTH / 8);
+	row = static_cast<const u8 *>(pix);
+	for (py = 0; py < h; py++)
+	{
+		const u8 *p = row;
+		for (px = 0; px < w; px++)
+		{
+#if DEPTH == 32
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py),
+					  *(const u32 *)p);
+#elif DEPTH == 16
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py),
+					  *(const u16 *)p);
+#else
+			term->SetRawPixel((unsigned)(x + px), (unsigned)(y + py), *p);
+#endif
+			p += bpp;
+		}
+		row += (size_t)stride * bpp;
+	}
+}
+
+/* PAGE DISPLAY replaces the whole visible frame through the framebuffer,
+ * bypassing the Circle terminal's cached pixel buffer. The terminal flushes
+ * whole rows from that cache on the next text write, so without this a stale
+ * row is stamped back over the new page (old text and any live PIXEL pixels
+ * still in the cache). Copy the presented frame into the cache so the flush
+ * reproduces the page; text written later still overpaints it normally. */
+static void plat_present_sync_console(const void *pix, int w, int h, int stride)
+{
+	CTerminalDevice *term;
+	unsigned tw, th;
+
+	if (!s_kernel || !pix || w < 1 || h < 1 || stride < w)
+		return;
+	term = s_kernel->Screen().GetTerminal();
+	if (!term)
+		return;
+	tw = term->GetWidth();
+	th = term->GetHeight();
+	/* Only reconcile an exact full-frame page present. */
+	if ((unsigned)w != tw || (unsigned)h != th)
+		return;
+	present_sync_console_region(0, 0, w, h, pix, stride);
+}
+
+/* Reconcile just the presented rect (sprites, TERM fallback) so the next
+ * console row flush cannot re-stamp the pre-present pixels (#1079). */
+static void plat_present_sync_console_rect(int x, int y, int w, int h,
+					   const void *pix, int stride)
+{
+	present_sync_console_region(x, y, w, h, pix, stride);
 }
 
 static int plat_wait_vsync(void)
@@ -1580,6 +1700,7 @@ void mmb_platform_bind(CKernel *k)
 		fb_flip_reset(k->Screen().GetFrameBuffer());
 	plat.write_serial = plat_write_serial;
 	plat.write_screen = plat_write_screen;
+	plat.ansi_truecolour = 1; /* Circle terminal patch: ESC[48;2;r;g;bm */
 	plat.set_pixel = plat_set_pixel;
 	plat.console_pixel = plat_console_pixel;
 	plat.get_pixel = plat_get_pixel;
@@ -1600,6 +1721,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.mouse_state = plat_mouse_state;
 	plat.take_break = plat_take_break;
 	plat.reboot = plat_reboot;
+	plat.shutdown = plat_shutdown;
 	plat.audio_set_target = plat_audio_set_target;
 	plat.audio_enable = plat_audio_enable;
 	plat.audio_write = plat_audio_write;
@@ -1608,6 +1730,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.audio_have_device = plat_audio_have_device;
 	plat.audio_kick = plat_audio_kick;
 	plat.audio_flush = plat_audio_flush;
+	plat.audio_reset = plat_audio_reset;
 	plat.video_cols = plat_video_cols;
 	plat.video_rows = plat_video_rows;
 	plat.tui_prepare = plat_tui_prepare;
@@ -1629,6 +1752,8 @@ void mmb_platform_bind(CKernel *k)
 	plat.term_present_drain = plat_term_present_drain;
 	plat.term_present_locked = plat_term_present_locked;
 	plat.present_set_flip = plat_present_set_flip;
+	plat.present_sync_console = plat_present_sync_console;
+	plat.present_sync_console_rect = plat_present_sync_console_rect;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;

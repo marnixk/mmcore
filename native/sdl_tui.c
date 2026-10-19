@@ -29,7 +29,7 @@ static void plot(int x, int y, uint16_t v)
 	if (fb)
 	{
 		fb[(size_t)y * w + x] = v;
-		sdl_video_mark_dirty();
+		sdl_video_mark_dirty_rect(x, y, 1, 1);
 	}
 }
 
@@ -159,7 +159,7 @@ void sdl_tui_scroll(int x, int y, int w, int h, int dy, unsigned fill_rgb)
 				fb[(size_t)row * sw + px] = fill;
 		}
 	}
-	sdl_video_mark_dirty();
+	sdl_video_mark_dirty_rect(x, y, w, h);
 	sdl_tui_present(y, y + h - 1);
 }
 

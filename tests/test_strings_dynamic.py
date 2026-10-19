@@ -7,6 +7,8 @@ members, JSON_STRINGIFY$ and console INPUT/LINE INPUT.
 
 import time
 
+from harness import prompt_at_buffer_end
+
 
 def _prog(console, lines):
     assert console.send_line("NEW") == ""
@@ -186,7 +188,7 @@ def _until_prompt(c, timeout=6.0):
         chunk = c._recv(c._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, c.prompt):
                 break
         else:
             time.sleep(0.05)

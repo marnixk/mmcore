@@ -1,0 +1,18 @@
+name: MM.BATTERY%
+kind: command
+
+Return the battery charge as a percentage (0-100).
+
+level = MM.BATTERY%
+
+On Linux the value is read from the first battery reported by sysfs at
+/sys/class/power_supply/BAT0/capacity. If that file is missing or unreadable,
+or on any other platform (Raspberry Pi / Circle, Windows, macOS), the
+function returns 100.
+
+See ~MM.BRIGHTNESS%~ to read or set the display backlight on a laptop or
+Chromebook.
+
+Example:
+
+    PRINT MM.BATTERY%

@@ -87,6 +87,37 @@ def test_eof_hash_file_number(console):
     assert console.send_line("CLOSE #1") == ""
 
 
+def test_line_input_large_file(console):
+    """#1205: LINE INPUT over a file larger than the per-handle read-ahead
+    chunk returns every line and reports EOF at the true end.
+
+    The file is bigger than MMB_VFS_RBUF, so the reader must refill its
+    read-ahead buffer several times; a short read, a stale EOF or a misordered
+    refill would show up as a missing or wrong line."""
+    lines = 5000
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 OPEN "A:/LARGE.TXT" FOR OUTPUT AS #1') == ""
+    assert console.send_line("20 FOR I = 1 TO %d" % lines) == ""
+    assert console.send_line("30 PRINT #1, I") == ""
+    assert console.send_line("40 NEXT I") == ""
+    assert console.send_line("50 CLOSE #1") == ""
+    assert console.send_line('60 OPEN "A:/LARGE.TXT" FOR INPUT AS #1') == ""
+    assert console.send_line("70 N = 0") == ""
+    assert console.send_line("80 DO") == ""
+    assert console.send_line("90 LINE INPUT #1, A$") == ""
+    assert console.send_line("100 N = N + 1") == ""
+    # The `<>` exercises a `>` inside the echoed command: the harness must not
+    # mistake it for the prompt and read half the echoed line as the response
+    # (#1211).
+    assert console.send_line('110 IF VAL(A$) <> N THEN PRINT "BAD "; N; " "; A$') == ""
+    assert console.send_line("120 LOOP UNTIL EOF(#1)") == ""
+    assert console.send_line("130 CLOSE #1") == ""
+    assert console.send_line('140 PRINT "COUNT "; N') == ""
+    out = console.send_line("RUN", timeout=30)
+    assert "BAD" not in out, out
+    assert "COUNT %d" % lines in out, out
+
+
 def test_option_persists_to_hidden_ini(console):
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     assert console.send_line("OPTION TAB 4") == ""
@@ -95,6 +126,28 @@ def test_option_persists_to_hidden_ini(console):
     assert "tab=4" in ini
     assert "break=4" in ini
     assert "[core]" in ini
+
+
+def test_brightness_and_volume_persist(console):
+    """#1157: MM.BRIGHTNESS% and PLAY VOLUME write .mmbasic.ini and the
+    factory defaults seed all three keys."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    ini = _read_ini(console)
+    assert "brightness=100" in ini
+    assert "volume_l=100" in ini
+    assert "volume_r=100" in ini
+    assert console.send_line("MM.BRIGHTNESS% = 42") == ""
+    assert console.send_line("PLAY VOLUME 30, 70") == ""
+    ini = _read_ini(console)
+    assert "brightness=42" in ini
+    assert "volume_l=30" in ini
+    assert "volume_r=70" in ini
+    assert console.send_line("MM.BRIGHTNESS% = 150") == ""
+    assert console.send_line("PLAY VOLUME 200") == ""
+    ini = _read_ini(console)
+    assert "brightness=100" in ini
+    assert "volume_l=100" in ini
+    assert "volume_r=100" in ini
 
 
 def test_dir_hides_dotfiles(console):
@@ -398,25 +451,29 @@ def test_settings_dialog_is_inset_not_fullscreen(console):
 
 
 def test_settings_hub_lists_categories(console):
-    """#591: the hub has peer category slots, Appearance first."""
+    """#591/#1158: the hub has peer category slots, Settings first."""
     con = console
     seen = _settings_open(con).upper()
-    for name in ("APPEARANCE", "NETWORK", "SYSTEM", "SOUND"):
+    for name in ("SETTINGS", "APPEARANCE", "NETWORK"):
         assert name in seen, seen
+    assert "SYSTEM" not in seen, seen
+    assert "SOUND" not in seen, seen
     assert "THEME" in seen, seen
     _settings_keys(con, b"\x1b")
     assert con.send_line("PRINT 1+1") == "2"
 
 
 def test_settings_network_section_shows_status(console):
-    """#591: Network is a real peer section wired to existing status/config."""
+    """#591/#1159: Network is a real peer section wired to existing
+    status/config, including the current IP address."""
     con = console
     assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
     _settings_open(con)
-    _settings_keys(con, b"\x1b[B")  # Appearance -> Network
+    _settings_keys(con, b"\x1b[B\x1b[B")  # Settings -> Appearance -> Network
     seen = _settings_keys(con, b"\r", quiet=0.6).upper()
     assert "NETWORK" in seen, seen
     assert "WI-FI" in seen, seen
+    assert "IP" in seen, seen
     assert "NTP" in seen, seen
     _settings_keys(con, b"\x1b")  # back to hub
     _settings_keys(con, b"\x1b")  # close
@@ -428,6 +485,7 @@ def test_settings_appearance_theme_applies_and_persists(console):
     con = console
     assert con.send_line("OPTION THEME SLATE") == ""
     _settings_open(con)
+    _settings_keys(con, b"\x1b[B")   # Settings -> Appearance
     _settings_keys(con, b"\r")       # open Appearance
     _settings_keys(con, b"\x1b[B")   # Slate -> Forest (live preview)
     _settings_keys(con, b"\r")       # apply and close
@@ -443,6 +501,7 @@ def test_settings_appearance_theme_applies_and_persists(console):
 SHIPPED_THEMES = [
     "Paper", "Cloud", "Snow", "Night", "Nord",
     "Slate", "Forest", "Violet", "Turbo", "Phosphor",
+    "Monochrome",
 ]
 
 
@@ -491,7 +550,7 @@ def test_settings_legible_in_every_theme(console):
     """
     con = console
     x, y, w, h = _hub_rect(con)
-    row = y + 5          # Network, the second hub row
+    row = y + 5          # Appearance, the second hub row (Settings is first)
     hint_row = y + h - 2  # last interior row holds the hints
     body_at = _cell(x + w - 5, row)
     focus_at = _cell(x + w - 5, row - 1)
@@ -528,6 +587,7 @@ def test_settings_appearance_preview_fits_above_hint(console):
 
     con = console
     _settings_open(con)
+    _settings_keys(con, b"\x1b[B")  # Settings -> Appearance
     frame = _settings_keys(con, b"\r", quiet=0.6)
     rows = _frame_rows(frame)
 
@@ -563,4 +623,138 @@ def test_settings_appearance_preview_fits_above_hint(console):
     _settings_keys(con, b"\x1b")  # back to hub
     _settings_keys(con, b"\x1b")  # close
     assert con.send_line("PRINT 6*7") == "42"
+
+
+def test_settings_appearance_has_blank_line_before_hint(console):
+    """#1159: at least one empty line separates the last theme name from the
+    shortcut hint row."""
+    con = console
+    _settings_open(con)
+    _settings_keys(con, b"\x1b[B")  # Settings -> Appearance
+    rows = _frame_rows(_settings_keys(con, b"\r", quiet=0.6))
+    mono = next(i for i, ln in enumerate(rows) if "Monochrome" in ln)
+    hint = next(i for i, ln in enumerate(rows) if "<Up/Down> Preview" in ln)
+    assert hint > mono, (mono, hint)
+    between = [ln for ln in rows[mono + 1:hint] if not ln.replace("|", "").strip()]
+    assert between, rows[mono:hint + 1]
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 6*7") == "42"
+
+
+# --- #1158: Settings tab (sliders, battery, clock) --------------------------
+
+
+def test_settings_tab_shows_sliders(console):
+    """#1158: the Settings tab renders both sliders with their current
+    percentages. The clock/battery live on the row-0 status line (see
+    test_settings_status_line_sits_outside_the_chrome), so they are absent
+    from the section's own diff."""
+    con = console
+    assert con.send_line("MM.BRIGHTNESS% = 50") == ""
+    assert con.send_line("PLAY VOLUME 50") == ""
+    _settings_open(con)
+    seen = _settings_keys(con, b"\r", quiet=0.6)
+    upper = seen.upper()
+    assert "SETTINGS - SETTINGS" in upper, seen
+    assert "BRIGHTNESS AND VOLUME" in upper, seen
+    assert "BRIGHTNESS" in upper and "VOLUME" in upper, seen
+    assert " 50%" in seen, seen
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 3+3") == "6"
+
+
+def test_settings_status_line_sits_outside_the_chrome(console):
+    """#1158: the date/time (top-left) and battery (top-right) render on
+    screen row 0, above the dialog panel, not inside its body."""
+    import re
+
+    con = console
+    assert con.send_line("OPTION THEME SLATE") == ""
+    rows = _frame_rows(_settings_open(con))  # hub frame is a full-screen draw
+    clock_row = next(
+        i
+        for i, ln in enumerate(rows)
+        if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+    )
+    assert "[100%]" in rows[clock_row], rows[clock_row]
+    panel_top = next(i for i, ln in enumerate(rows) if ln.strip().startswith("+"))
+    assert clock_row < panel_top, (clock_row, panel_top, rows[:4])
+    assert "+" not in rows[clock_row] and "|" not in rows[clock_row], rows[clock_row]
+    _settings_keys(con, b"\r", quiet=0.6)  # Settings tab keeps the status line
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 3+3") == "6"
+
+
+def test_settings_status_line_shows_real_month_name(console):
+    """#1199: the row-0 clock renders the real month name for single- and
+    two-digit months (the parser used to fold any two-digit month back to
+    January)."""
+    import re
+
+    con = console
+    assert con.send_line("OPTION TIMEZONE \"UTC\"") == ""
+    cases = {
+        "15-01-26": "15 Jan 2026",
+        "15-10-26": "15 Oct 2026",
+        "31-12-26": "31 Dec 2026",
+    }
+    for date_s, expected in cases.items():
+        assert con.send_line(f'DATE$="{date_s}"') == ""
+        assert con.send_line('TIME$="12:00:00"') == ""
+        rows = _frame_rows(_settings_open(con))
+        clock_row = next(
+            ln
+            for ln in rows
+            if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+        )
+        assert expected in clock_row, (date_s, clock_row)
+        _settings_keys(con, b"\x1b")  # close the hub
+    assert con.send_line("PRINT 3+3") == "6"
+
+
+def test_settings_tab_slider_keys_adjust(console):
+    """#1158: Left/Right adjust the focused slider; Up/Down move focus."""
+    con = console
+    assert con.send_line("MM.BRIGHTNESS% = 50") == ""
+    assert con.send_line("PLAY VOLUME 100") == ""
+    _settings_open(con)
+    _settings_keys(con, b"\r", quiet=0.6)  # open Settings (brightness focused)
+    up = _settings_keys(con, b"\x1b[C")  # brightness 50 -> 55
+    assert " 55%" in up, up
+    down = _settings_keys(con, b"\x1b[D\x1b[D")  # 55 -> 45
+    assert " 45%" in down, down
+    _settings_keys(con, b"\x1b[B")  # focus volume (100%)
+    vol = _settings_keys(con, b"\x1b[D")  # volume 100 -> 95
+    assert " 95%" in vol, vol
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 5+5") == "10"
+
+
+def test_settings_battery_badge_is_green_when_full(console):
+    """#1158: the battery badge is coloured by charge band; QEMU reports
+    100% (no battery), so the badge renders green on the row-0 status line,
+    top-right of the screen and outside the dialog chrome."""
+    con = console
+    assert con.send_line("OPTION THEME SLATE") == ""
+    _settings_open(con)
+    _settings_keys(con, b"\r", quiet=0.6)
+    w, _h = con.screen_size()
+    cols = w // 8
+    badge = "[100%]"
+    bx = cols - len(badge)
+    coords = [
+        (c * 8 + dx, 8)
+        for c in range(bx, bx + len(badge))
+        for dx in range(7)
+    ]
+    vals = con.screen_pixels(coords)
+    green = [p for p in vals if p[1] > p[0] + 20 and p[1] > p[2] + 20]
+    assert green, ("no green battery pixel", vals)
+    _settings_keys(con, b"\x1b")  # back to hub
+    _settings_keys(con, b"\x1b")  # close
+    assert con.send_line("PRINT 4*4") == "16"
 

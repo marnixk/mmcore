@@ -2,8 +2,10 @@
 """Generate the tiny binary test fixtures under ``ramdisk/tests/``.
 
 Outputs uppercase fixtures (TEST.PNG, TESTZ.PNG, TEST.JPG, TEST.MOD, TEST.XM,
-TEST.MP3, TEST.WAV) that the QEMU tests consume as ``A:/tests/...``. No C
-source is produced; the ramdisk build embeds them from ``ramdisk/tests/``.
+TEST.S3M, TEST.MP3, RATE48/RATE32/RATE22.MP3, TEST.WAV) that the QEMU tests
+consume as ``A:/tests/...``.
+No C source is produced; the ramdisk build embeds them from
+``ramdisk/tests/``.
 """
 import os
 import struct
@@ -164,6 +166,73 @@ def make_xm(path):
     return data
 
 
+def make_s3m(path):
+    """Write a minimal Scream Tracker 3 module: one 8-bit square-wave sample,
+    one pattern, one row, C-4 on channel 0 (mirrors make_mod/make_xm)."""
+    sample_len = 512
+    inst_off = 0x100
+    pat_off = 0x200
+    sam_off = 0x300
+
+    hdr = bytearray(96)
+    name = b"TESTS3M"
+    hdr[0:len(name)] = name
+    hdr[28] = 0x1A  # type: ST3 module
+    hdr[29] = 0x10
+    struct.pack_into("<H", hdr, 32, 1)      # sequence length
+    struct.pack_into("<H", hdr, 34, 1)      # instruments
+    struct.pack_into("<H", hdr, 36, 1)      # patterns
+    struct.pack_into("<H", hdr, 38, 0)      # flags
+    struct.pack_into("<H", hdr, 40, 0x1300)  # created with ST3
+    struct.pack_into("<H", hdr, 42, 1)      # signed samples
+    hdr[44:48] = b"SCRM"
+    hdr[48] = 64                            # global volume
+    hdr[49] = 6                             # initial speed
+    hdr[50] = 125                           # initial tempo
+    hdr[51] = 0x80 | 64                     # stereo, master volume 64
+    hdr[52] = 0                             # ultra click removal
+    hdr[53] = 0                             # no default-panning block
+    hdr[64] = 0                             # channel 0 -> playback channel 0
+    for i in range(1, 32):
+        hdr[64 + i] = 255                   # remaining channels unused
+
+    inst = bytearray(80)
+    inst[0] = 1                             # PCM sample
+    inst[1:9] = b"samp.s3m"
+    inst[13] = 0                            # memseg high byte
+    struct.pack_into("<H", inst, 14, sam_off >> 4)
+    struct.pack_into("<I", inst, 16, sample_len)
+    struct.pack_into("<I", inst, 20, 0)     # loop begin
+    struct.pack_into("<I", inst, 24, 0)     # loop end
+    inst[28] = 64                           # volume
+    inst[30] = 0                            # unpacked
+    inst[31] = 0                            # 8-bit mono, no loop
+    struct.pack_into("<I", inst, 32, 8363)  # C-2 speed
+    inst[48:52] = b"tone"
+    inst[76:78] = b"SC"                     # "SCRS" signature
+
+    pat = bytearray(struct.pack("<H", 8))
+    pat += bytes([0x20, 0x40, 0x01])        # row 0: C-4, instrument 1
+    pat += bytes(64)                        # row terminators (0 = next row)
+
+    sample_data = bytearray(sample_len)
+    for i in range(sample_len):
+        sample_data[i] = 0x7F if (i // 32) % 2 == 0 else 0x81
+
+    body = bytearray(hdr)
+    body += bytes([0])                      # order list: pattern 0
+    body += struct.pack("<H", inst_off >> 4)  # instrument parapointer
+    body += struct.pack("<H", pat_off >> 4)   # pattern parapointer
+    body += bytes(inst_off - len(body))
+    body += bytes(inst)
+    body += bytes(pat_off - len(body))
+    body += bytes(pat)
+    body += bytes(sam_off - len(body))
+    body += bytes(sample_data)
+    open(path, "wb").write(bytes(body))
+    return bytes(body)
+
+
 def make_mp3(path):
     import subprocess
     wav = out("_tone.wav")
@@ -184,6 +253,82 @@ def make_mp3(path):
         data = frame * 20
         open(path, "wb").write(data)
         return data
+
+
+def make_rate_mp3(path, rate):
+    """A 1 s 440 Hz mono MP3 at ``rate`` Hz (#1247).
+
+    PLAY mixes at 44100 Hz, so files at other rates must be resampled to keep
+    their duration and pitch. These fixtures let the QEMU test compare the
+    decoded source frame count with the mixed output frame count.
+    """
+    import subprocess
+    wav = out("_tone_%d.wav" % rate)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-ar", str(rate), "-ac", "1", wav],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav, "-codec:a", "libmp3lame", "-q:a", "9", path],
+            check=True, capture_output=True,
+        )
+        os.remove(wav)
+        return open(path, "rb").read()
+    except Exception:
+        frame = bytes([0xFF, 0xFB, 0x10, 0xC4]) + bytes(104)
+        data = frame * 400
+        open(path, "wb").write(data)
+        return data
+
+
+def make_big_mp3(path):
+    """A ~20 s silent MP3 larger than dr_mp3's decode buffer (#1150).
+
+    The streaming PLAY test asserts the whole file is not loaded into RAM, so
+    the fixture has to be bigger than the bounded decoder buffer.
+    """
+    import subprocess
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+             "-t", "21", "-ar", "44100", "-ac", "1", "-b:a", "32k", path],
+            check=True, capture_output=True,
+        )
+        return open(path, "rb").read()
+    except Exception:
+        base = strip_id3v2(open(out("TEST.MP3"), "rb").read())
+        reps = (70 * 1024) // max(1, len(base)) + 1
+        data = base * reps
+        open(path, "wb").write(data)
+        return data
+
+
+def id3v1(title):
+    tag = bytearray(128)
+    tag[0:3] = b"TAG"
+    tag[3:33] = title.ljust(30, b"\0")[:30]
+    return bytes(tag)
+
+
+def id3v2_tit2(title):
+    data = b"\x00" + title + b"\x00"
+    frame = b"TIT2" + struct.pack(">I", len(data)) + b"\x00\x00" + data
+    size = len(frame)
+    syn = bytes([
+        (size >> 21) & 0x7F, (size >> 14) & 0x7F,
+        (size >> 7) & 0x7F, size & 0x7F,
+    ])
+    return b"ID3\x03\x00\x00" + syn + frame
+
+
+def strip_id3v2(data):
+    if data[:3] != b"ID3" or len(data) < 10:
+        return data
+    size = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) | (
+        (data[8] & 0x7F) << 7) | (data[9] & 0x7F)
+    return data[10 + size:]
 
 
 def make_wav(path):
@@ -208,7 +353,16 @@ def main():
     make_jpeg(out("TEST.JPG"))
     make_mod(out("TEST.MOD"))
     make_xm(out("TEST.XM"))
+    make_s3m(out("TEST.S3M"))
     make_mp3(out("TEST.MP3"))
+    make_rate_mp3(out("RATE48.MP3"), 48000)
+    make_rate_mp3(out("RATE32.MP3"), 32000)
+    make_rate_mp3(out("RATE22.MP3"), 22050)
+    make_big_mp3(out("BIG.MP3"))
+    audio = strip_id3v2(open(out("TEST.MP3"), "rb").read())
+    open(out("ZV2.MP3"), "wb").write(id3v2_tit2(b"TWOSONG") + audio)
+    open(out("ZV1.MP3"), "wb").write(audio + id3v1(b"ONESONG"))
+    open(out("ZBAD.MP3"), "wb").write(audio + id3v1(b"   "))
     make_wav(out("TEST.WAV"))
     names = sorted(os.listdir(OUT_DIR))
     print("wrote", OUT_DIR, names)

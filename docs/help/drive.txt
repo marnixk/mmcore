@@ -12,6 +12,11 @@ present. B: is an internal package mount and is never listed. A FAT volume's
 label is shown in quotes, e.g. `D: USB "MYSTICK"`, and in the FILES pane
 captions. Use EJECT to unmount a stick safely before pulling it.
 
+Z: is the network drive set up with ~OPTION~ NETWORK DRIVE, an SMB share
+mounted over the network. It is listed as `Z: SMB \\host\share` and shows
+`(not connected)` until the first Z: access connects it; listing drives does
+not connect. EJECT "Z:" drops the connection.
+
 Example:
 
     DRIVE

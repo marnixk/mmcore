@@ -188,7 +188,7 @@ static void close_apps_on_console(int idx)
 		else if (mmb_in_afk())
 			mmb_afk_key(3);             /* Ctrl+C leaves AFK */
 		else if (mmb_in_juke())
-			mmb_juke_key(27);
+			mmb_juke_close();
 		else
 			break;
 	}
@@ -251,7 +251,7 @@ static void console_bring_up(int idx, const mmb *from)
 	mmb_gfx_init();
 	mmb_gfx_apply_default_mode();
 	g_cur->timer_base = 0;
-	g_cur->rnd_seed = 0x12345678u;
+	g_cur->rnd_seed = mmb_rng_seed();
 	/* A fresh console starts at the ramdisk root (mmb_vfs_init owns the
 	 * shared VFS node table and must not run again per console). */
 	mmb_vfs_cwd_reset();
@@ -271,9 +271,12 @@ static int console_do_switch(int idx)
 
 	/* Snapshot the current screen before bringing the target up: a fresh
 	 * console's gfx init retunes the HDMI framebuffer and would otherwise
-	 * wipe the screen we are leaving. */
+	 * wipe the screen we are leaving. Keep the mixer fed across the
+	 * snapshot and the mode change. */
+	mmb_play_mix();
 	if (plat && plat->console_save)
 		plat->console_save(g_console, mmb_front_in_app());
+	mmb_play_mix();
 
 	if (!s_initialized[idx])
 		console_bring_up(idx, from);
@@ -299,7 +302,9 @@ static int console_do_switch(int idx)
 
 	/* Retune the display to this console's MODE before repainting it: the
 	 * hardware is still sized for the console we are leaving (#580). */
+	mmb_play_mix();
 	mmb_gfx_reapply_mode();
+	mmb_play_mix();
 
 	/* The saved screen does not carry the terminal pen: re-apply this
 	 * console's COLOUR so the next characters use its foreground/background

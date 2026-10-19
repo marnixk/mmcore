@@ -1,4 +1,4 @@
-"""#857: BATTERY%() reads a sysfs capacity on Linux and falls back to 100.
+"""#857: MM.BATTERY%() reads a sysfs capacity on Linux and falls back to 100.
 
 The path-taking helper (``mmbasic/src/battery.c``) is compiled and driven on
 the host against files pytest writes, so the parsing and clamping are checked
@@ -100,6 +100,34 @@ def test_capacity_falls_back_when_missing(host_bin, tmp_path):
     _check(host_bin, "", 100, 100)
 
 
+def _class(host_bin, pct, expected):
+    out = subprocess.run(
+        [host_bin, "class", str(pct), str(expected)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert f"-> {expected}" in out.stdout
+
+
+@pytest.mark.parametrize(
+    "pct,expected",
+    [
+        (0, 0),
+        (29, 0),
+        (30, 1),
+        (69, 1),
+        (70, 2),
+        (100, 2),
+        (-5, 0),  # clamped up
+        (150, 2),  # clamped down
+    ],
+)
+def test_status_class_bands(host_bin, pct, expected):
+    """#1158: battery indicator colour band (0 red, 1 blue, 2 green)."""
+    _class(host_bin, pct, expected)
+
+
 def _expected_capacity():
     if sys.platform.startswith("linux") and os.path.exists(CAPACITY):
         try:
@@ -115,13 +143,13 @@ def _expected_capacity():
     reason="needs a host C toolchain (cc/make)",
 )
 def test_battery_function_wired_into_interpreter(tmp_path):
-    """The native binary dispatches BATTERY% (bare and parenthesised)."""
+    """The native binary dispatches MM.BATTERY% (bare and parenthesised)."""
     build_native()
     assert os.path.isfile(BIN), "native build produced no binary"
     env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "root"))
     proc = subprocess.run(
         [BIN],
-        input="PRINT BATTERY%\nPRINT BATTERY%()\n",
+        input="PRINT MM.BATTERY%\nPRINT MM.BATTERY%()\n",
         text=True,
         capture_output=True,
         timeout=120,

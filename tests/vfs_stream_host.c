@@ -41,8 +41,19 @@ int mmb_keyword_eq(const char *a, const char *b)
 	return *a == 0 && *b == 0;
 }
 
-/* ---- FAT volume stubs (the test stays on A:) -------------------------- */
-int mmb_fat_ready(int letter) { (void)letter; return 0; }
+/* ---- fake C: volume for the read-ahead test (#1205) ------------------- */
+static unsigned char g_fat_data[64000];
+static unsigned g_fat_size;
+static int g_fat_reads;    /* backend read_at calls */
+static unsigned g_fat_bytes; /* bytes actually handed back by the backend */
+
+static int fat_is_target(const char *path)
+{
+	return path && strcmp(path, "/BIG.TXT") == 0;
+}
+
+/* ---- FAT volume stubs (the A: tests stay on A:; C: is the fake above) - */
+int mmb_fat_ready(int letter) { return letter == 'C'; }
 int mmb_fat_chdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_mkdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_rmdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
@@ -84,16 +95,31 @@ int mmb_fat_wwrite(void *handle, const void *data, unsigned n)
 int mmb_fat_wclose(void *handle) { (void)handle; return -1; }
 int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data, unsigned n, unsigned *got)
 {
-	(void)letter; (void)path; (void)pos; (void)data; (void)n;
+	unsigned avail, take;
 	if (got)
 		*got = 0;
-	return -1;
+	if (letter != 'C' || !fat_is_target(path))
+		return -1;
+	g_fat_reads++;
+	if (pos >= g_fat_size)
+		return 0;
+	avail = g_fat_size - pos;
+	take = n < avail ? n : avail;
+	memcpy(data, g_fat_data + pos, take);
+	g_fat_bytes += take;
+	if (got)
+		*got = take;
+	return 0;
 }
-int mmb_fat_size(int letter, const char *path) { (void)letter; (void)path; return -1; }
+int mmb_fat_size(int letter, const char *path)
+{
+	return (letter == 'C' && fat_is_target(path)) ? (int)g_fat_size : -1;
+}
 int mmb_fat_exists(int letter, const char *path) { (void)letter; (void)path; return 0; }
 int mmb_fat_isdir(int letter, const char *path) { (void)letter; (void)path; return 0; }
 const char *mmb_fat_cwd(int letter) { (void)letter; return "/"; }
 void mmb_fat_drive_line(int letter, char *out, int outsz) { (void)letter; if (outsz > 0) out[0] = 0; }
+int mmb_fat_label(int letter, char *out, int outsz) { (void)letter; if (outsz > 0) out[0] = 0; return 0; }
 
 /* ---- interpreter stubs (the test never reaches the package/DRIVE path) - */
 void mmb_error(const char *msg) { (void)msg; }
@@ -174,6 +200,223 @@ static void test_list_truncation(void)
 	check(truncated == 0, "roomy listing not truncated");
 }
 
+/* #1028: a ramdisk rename may change the parent directory, so a FILES move
+ * between folders (A:/M1 -> A:/M2) reparents the node like FAT. The node
+ * keeps its data; the source path disappears and the destination resolves. */
+static void test_rename_reparent(void)
+{
+	char buf[16];
+	unsigned got;
+
+	check(mmb_vfs_mkdir("A:/M1") == 0, "mkdir M1");
+	check(mmb_vfs_mkdir("A:/M2") == 0, "mkdir M2");
+	check(mmb_vfs_write("A:/M1/F.TXT", "hello", 5, 0) == 0, "seed F.TXT");
+
+	check(mmb_vfs_rename("A:/M1/F.TXT", "A:/M2/F.TXT") == 0, "reparent file");
+	check(mmb_vfs_exists("A:/M1/F.TXT") == 0, "reparent source gone");
+	check(mmb_vfs_exists("A:/M2/F.TXT") == 1, "reparent dest present");
+	check(mmb_vfs_size("A:/M2/F.TXT") == 5, "reparent dest size");
+	got = 0;
+	check(mmb_vfs_read_at("A:/M2/F.TXT", 0, buf, sizeof buf, &got) == 0 &&
+	      got == 5 && memcmp(buf, "hello", 5) == 0, "reparent dest content");
+	check(mmb_vfs_size("A:/M1/F.TXT") < 0, "reparent source size gone");
+
+	check(mmb_vfs_rename("A:/M2/F.TXT", "A:/M2/G.TXT") == 0, "rename in place");
+	check(mmb_vfs_exists("A:/M2/G.TXT") == 1, "in-place dest present");
+
+	/* A clash with an existing name in the destination folder is refused. */
+	check(mmb_vfs_write("A:/M1/H.TXT", "x", 1, 0) == 0, "seed H.TXT");
+	check(mmb_vfs_rename("A:/M2/G.TXT", "A:/M1/H.TXT") == -1, "clash refused");
+	check(mmb_vfs_exists("A:/M2/G.TXT") == 1, "clash source kept");
+
+	/* A directory reparents too, but never into its own subtree. */
+	check(mmb_vfs_mkdir("A:/M2/SUB") == 0, "mkdir SUB");
+	check(mmb_vfs_mkdir("A:/M2/SUB/DEEP") == 0, "mkdir DEEP");
+	check(mmb_vfs_rename("A:/M2/SUB", "A:/M1/SUB") == 0, "reparent dir");
+	check(mmb_vfs_isdir("A:/M1/SUB/DEEP") == 1, "moved subtree reachable");
+	check(mmb_vfs_rename("A:/M1/SUB", "A:/M1/SUB/DEEP") == -1, "cycle refused");
+	check(mmb_vfs_isdir("A:/M1/SUB") == 1, "dir kept after cycle refusal");
+
+	/* The volume root is never a rename target. */
+	check(mmb_vfs_rename("A:/M1/H.TXT", "A:/") == -1, "root target refused");
+}
+
+/* #1147: COPY moves a file bigger than the copy buffer byte-for-byte, so the
+ * multi-fill read/write loop (and the streaming writer it opens once) is
+ * exercised rather than a single pass. */
+static void test_copy_large_file(void)
+{
+	enum { NCH = 75, CHSZ = 4096 };
+	static unsigned char pat[CHSZ];
+	static unsigned char back[CHSZ];
+	unsigned total = (unsigned)NCH * CHSZ, off, got;
+	int h, i;
+
+	for (i = 0; i < CHSZ; i++)
+		pat[i] = (unsigned char)(i * 13 + 5);
+
+	h = mmb_vfs_wopen("A:/LC_SRC.BIN", 0);
+	check(h >= 0, "large src wopen");
+	for (i = 0; i < NCH; i++)
+		check(mmb_vfs_wwrite(h, pat, CHSZ) == 0, "large src write");
+	check(mmb_vfs_wclose(h) == 0, "large src close");
+	check(mmb_vfs_size("A:/LC_SRC.BIN") == (int)total, "large src size");
+
+	check(mmb_vfs_copy("A:/LC_SRC.BIN", "A:/LC_DST.BIN") == 0, "large copy");
+	check(mmb_vfs_size("A:/LC_DST.BIN") == (int)total, "large copy size");
+
+	for (off = 0; off < total; off += CHSZ)
+	{
+		got = 0;
+		if (mmb_vfs_read_at("A:/LC_DST.BIN", off, back, CHSZ, &got) != 0 ||
+		    got != CHSZ || memcmp(back, pat, CHSZ) != 0)
+		{
+			check(0, "large copy content");
+			break;
+		}
+	}
+}
+
+static void seed_text(const char *path, const char *text)
+{
+	check(mmb_vfs_write(path, text, (unsigned)strlen(text), 0) == 0, path);
+}
+
+/* #1112: COPY of a folder brings the whole tree, including empty and nested
+ * empty folders, and refuses to copy a folder into itself or its subtree. */
+static void test_copy_directory_recursive(void)
+{
+	char buf[16];
+	unsigned got;
+
+	check(mmb_vfs_mkdir("A:/CSRC") == 0, "mkdir CSRC");
+	check(mmb_vfs_mkdir("A:/CSRC/SUB") == 0, "mkdir CSRC/SUB");
+	check(mmb_vfs_mkdir("A:/CSRC/SUB/EMPTY") == 0, "mkdir nested empty");
+	seed_text("A:/CSRC/TOP.TXT", "top");
+	seed_text("A:/CSRC/SUB/DEEP.TXT", "deep");
+
+	check(mmb_vfs_copy("A:/CSRC", "A:/CDST") == 0, "copy dir");
+	check(mmb_vfs_isdir("A:/CDST") == 1, "copy made root");
+	check(mmb_vfs_isdir("A:/CDST/SUB") == 1, "copy made subdir");
+	check(mmb_vfs_isdir("A:/CDST/SUB/EMPTY") == 1, "copy made empty nest");
+	check(mmb_vfs_size("A:/CDST/TOP.TXT") == 3, "copy top size");
+	check(mmb_vfs_size("A:/CDST/SUB/DEEP.TXT") == 4, "copy deep size");
+	got = 0;
+	check(mmb_vfs_read_at("A:/CDST/SUB/DEEP.TXT", 0, buf, sizeof buf, &got) == 0 &&
+	      got == 4 && memcmp(buf, "deep", 4) == 0, "copy deep content");
+
+	check(mmb_vfs_copy("A:/CSRC", "A:/CSRC") == -1, "copy into self refused");
+	check(mmb_vfs_copy("A:/CSRC", "A:/CSRC/SUB") == -1, "copy into subtree refused");
+}
+
+/* #1112: an existing destination folder merges (files overwritten, other
+ * files kept); a destination that is a file is refused. */
+static void test_copy_destination_rules(void)
+{
+	check(mmb_vfs_mkdir("A:/DSRC") == 0, "mkdir DSRC");
+	seed_text("A:/DSRC/A.TXT", "a");
+	check(mmb_vfs_mkdir("A:/DDST") == 0, "mkdir DDST");
+	seed_text("A:/DDST/KEEP.TXT", "keep");
+	seed_text("A:/DDST/A.TXT", "old");
+	check(mmb_vfs_copy("A:/DSRC", "A:/DDST") == 0, "merge copy");
+	check(mmb_vfs_size("A:/DDST/A.TXT") == 1, "overwrite file size");
+	check(mmb_vfs_exists("A:/DDST/KEEP.TXT") == 1, "extra file kept");
+
+	seed_text("A:/DFILE.TXT", "f");
+	check(mmb_vfs_copy("A:/DSRC", "A:/DFILE.TXT") == -1,
+	      "copy dir onto file refused");
+}
+
+/* #1112: a folder move reparents the whole subtree, and never into itself. */
+static void test_move_directory_reparent(void)
+{
+	check(mmb_vfs_mkdir("A:/MSRC") == 0, "mkdir MSRC");
+	check(mmb_vfs_mkdir("A:/MSRC/IN") == 0, "mkdir MSRC/IN");
+	seed_text("A:/MSRC/X.TXT", "x");
+	seed_text("A:/MSRC/IN/Y.TXT", "y");
+	check(mmb_vfs_mkdir("A:/MDST") == 0, "mkdir MDST");
+
+	check(mmb_vfs_move("A:/MSRC", "A:/MDST/MSRC") == 0, "move dir");
+	check(mmb_vfs_exists("A:/MSRC") == 0, "move source gone");
+	check(mmb_vfs_isdir("A:/MDST/MSRC") == 1, "move dest dir");
+	check(mmb_vfs_isdir("A:/MDST/MSRC/IN") == 1, "move nested dir");
+	check(mmb_vfs_size("A:/MDST/MSRC/IN/Y.TXT") == 1, "move nested size");
+
+	check(mmb_vfs_move("A:/MDST/MSRC", "A:/MDST/MSRC/IN") == -1,
+	      "move into self refused");
+	check(mmb_vfs_isdir("A:/MDST/MSRC") == 1, "dir kept after refusal");
+}
+
+/* #1205: the per-handle read-ahead cache must serve a byte-at-a-time reader
+ * from whole chunks (one backend read per chunk, not per byte), return the
+ * exact bytes across refills and a seek back inside the window, and stop at
+ * the true EOF. */
+static void test_readahead(void)
+{
+	mmb_vfs_rbuf r;
+	static unsigned char big[MMB_VFS_RBUF];
+	unsigned char c;
+	unsigned pos, got, chunks;
+	int i, quiet;
+
+	memset(&r, 0, sizeof r);
+	for (i = 0; i < (int)sizeof g_fat_data; i++)
+		g_fat_data[i] = (unsigned char)(i * 7 + 11);
+	g_fat_size = sizeof g_fat_data;
+	g_fat_reads = 0;
+	g_fat_bytes = 0;
+
+	/* Byte-at-a-time over the whole file. */
+	quiet = fails;
+	pos = 0;
+	for (i = 0; i < (int)g_fat_size; i++)
+	{
+		got = 0;
+		c = 0;
+		check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", pos, &c, 1, &got) == 0 &&
+		      got == 1 && c == g_fat_data[i], "readahead byte content");
+		pos += got;
+	}
+	check(fails == quiet, "readahead every byte exact");
+	check(pos == g_fat_size, "readahead covered whole file");
+	chunks = (g_fat_size + MMB_VFS_RBUF - 1) / MMB_VFS_RBUF;
+	check(g_fat_reads <= (int)chunks, "readahead one backend read per chunk");
+	check(g_fat_reads < 8, "readahead few backend reads");
+	check(g_fat_bytes == g_fat_size, "readahead bytes fetched once");
+
+	/* A read at the logical end yields nothing (EOF). */
+	got = 123;
+	c = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", (unsigned)g_fat_size, &c, 1, &got) == 0 &&
+	      got == 0, "readahead eof");
+
+	/* Seeking back inside the cached window returns the same bytes. */
+	got = 0;
+	c = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 5, &c, 1, &got) == 0 &&
+	      got == 1 && c == g_fat_data[5], "readahead seek back");
+
+	/* A fresh cache, then a read that spans the cached tail: contiguous. */
+	mmb_vfs_rbuf_free(&r);
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 0, &c, 1, &got) == 0 && got == 1,
+	      "readahead prime");
+	pos = (unsigned)MMB_VFS_RBUF - 2;
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", pos, big, 64, &got) == 0 &&
+	      got == 64 && memcmp(big, g_fat_data + pos, 64) == 0,
+	      "readahead spans chunk boundary");
+
+	/* A request at least as large as the cache bypasses it and is exact. */
+	got = 0;
+	check(mmb_vfs_rbuf_read(&r, "C:/BIG.TXT", 0, big, MMB_VFS_RBUF, &got) == 0 &&
+	      got == MMB_VFS_RBUF && memcmp(big, g_fat_data, MMB_VFS_RBUF) == 0,
+	      "readahead large bypass");
+
+	mmb_vfs_rbuf_free(&r);
+	check(r.buf == 0 && r.cap == 0 && r.len == 0, "readahead freed");
+}
+
 int main(void)
 {
 	static unsigned char chunk[CHUNK];
@@ -187,6 +430,12 @@ int main(void)
 
 	test_bounded_listing();
 	test_list_truncation();
+	test_rename_reparent();
+	test_copy_directory_recursive();
+	test_copy_destination_rules();
+	test_move_directory_reparent();
+	test_copy_large_file();
+	test_readahead();
 
 	for (i = 0; i < CHUNK; i++)
 		chunk[i] = (unsigned char)(i * 31 + 7);

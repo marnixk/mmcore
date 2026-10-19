@@ -8,12 +8,15 @@ argument opens an empty untitled document.
 WORDPAD [file$]
 
   file$ - optional path; loads via the filesystem when present, otherwise an
-          empty buffer is used with that path (.MD default)
+          empty buffer is used with that path (.MD default). Must be a string,
+          e.g. "NOTES.MD" (an unquoted token such as NOTES.MD is a ?SYNTAX
+          error)
 
 Menus: Alt+F File  Alt+E Edit  Alt+S Settings  F10 File menu.
 File: New, Open..., Save, Save As..., Quit.
-Edit: Copy, Cut, Paste (^C /^K /^U like EDIT).
-Settings: Wide view toggles wrap 80/120 columns.
+Edit: Copy, Cut, Paste (Ctrl+C / Ctrl+X / Ctrl+V; legacy ^K / ^U kept).
+Settings: View cycles normal / wide / narrow; the item names the current
+view. The centred text column wraps at 80, 120 or 60 columns respectively.
 Colours follow OPTION THEME (same as the other themed apps).
 
 Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style
@@ -29,16 +32,20 @@ level, and on an empty top-level item clears the marker to end the list.
 Fenced code blocks paint a full-width background band, and Enter inside one
 carries the previous line's leading whitespace onto the new line.
 
-Crash resume: while a named document is dirty it is checkpointed every couple
-of seconds to a sidecar <file>.rec. Reopening a document whose sidecar is newer
-offers Recover (Y) or Discard (N); Recover loads it into the buffer and only
-overwrites the real file when you save. A clean save removes the sidecar.
+Crash resume: while a named document is dirty it is checkpointed about once a
+minute to a sidecar <file>.rec; OPTION AUTOSAVE OFF disables that periodic
+checkpoint (the leave-time save still writes the real file). Reopening a
+document whose sidecar is newer offers Recover (Y) or Discard (N); Recover
+loads it into the buffer and only overwrites the real file when you save. A
+clean save removes the sidecar.
 
 Ctrl+P quick-open (recursive *.MD picker; typing filters on the document
 name first, then the path). Named buffers auto-save when
-switching files. F2 save  F3 open  Ctrl+Z undo  Ctrl+X or Quit leaves
-WORDPAD (CLS and restores the console colour). Open/Save As use a file
-picker (*.MD).
+switching files. F2 save  F3 open  Ctrl+Z undo  Ctrl+X cut selection
+(no selection is a no-op, it never exits)  Ctrl+C copy  Ctrl+V paste.
+Alt+X (or File, Quit) leaves WORDPAD; a dirty buffer first asks
+Save / Discard / Cancel. Exit CLSes and restores the console colour.
+Open/Save As use a file picker (*.MD).
 
 Example:
 

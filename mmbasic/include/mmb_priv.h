@@ -51,6 +51,9 @@
  * documented chord and snapshot-based apps keep this many steps. EDIT uses a
  * deeper op-journal; matching UX matters more than identical engines. */
 #define MMB_UNDO_DEPTH    8
+/* Crash-resume sidecar checkpoint period, shared by EDIT and WORDPAD so the
+ * two cannot drift (#1011). WORDPAD moved to 60 s in #973; EDIT follows. */
+#define MMB_AUTOSAVE_MS   60000
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
@@ -113,6 +116,8 @@ typedef struct mmb_var {
 	int type;
 	int dims;
 	int dim[MMB_MAX_DIMS]; /* inclusive upper bound */
+	int stride[MMB_MAX_DIMS]; /* cached row-major strides (#998) */
+	int stride_base;       /* OPTION BASE the strides were built for (#998) */
 	int size;              /* element count */
 	int struct_idx;
 	union {
@@ -199,6 +204,7 @@ typedef struct mmb_options {
 	int theme;             /* system-wide colour theme, default Slate */
 	int edit_theme;        /* editor colour theme, -1 = follow system */
 	int edit_jump_break;   /* jump to the line on a run break/error */
+	int autosave;          /* OPTION AUTOSAVE ON|OFF (default ON) */
 	int escape;
 	char search_path[128];
 	char app_path[128];    /* OPTION PATH: .APP dirs, ';' separated (#520) */
@@ -215,6 +221,9 @@ typedef struct mmb_options {
 	int ethernet_enabled;  /* OPTION ETHERNET ON|OFF (default OFF) */
 	int audio_on;          /* OPTION AUDIO ON|OFF (default ON) */
 	int audio_target;      /* 0 JACK, 1 HDMI (default HDMI) */
+	int brightness;        /* MM.BRIGHTNESS% persisted in .mmbasic.ini (#1157) */
+	int volume_l;          /* PLAY VOLUME left persisted in .mmbasic.ini (#1157) */
+	int volume_r;          /* PLAY VOLUME right persisted in .mmbasic.ini (#1157) */
 	int prompt;            /* 0 BARE "> ", 1 CWD "A:/> " (default CWD) */
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
@@ -223,6 +232,12 @@ typedef struct mmb_options {
 	int ntp_enabled;       /* OPTION NTP: MMB_NTP_AUTO/0 OFF/1 ON (#581) */
 	char timezone[64];     /* OPTION TIMEZONE name/offset (default UTC) */
 	int tz_offset_min;     /* derived minutes east of UTC */
+	/* OPTION NETWORK DRIVE (#1128): mounts an SMB share at Z:. */
+	char netdrv_unc[128];  /* normalised \\host[:port]\share[\sub] */
+	char netdrv_user[64];  /* DOMAIN\user or user; empty = guest */
+	char netdrv_pass[64];  /* stored form: "ntlm:<32 hex>" or empty (guest) */
+	int netdrv_enabled;    /* 1 when a network drive is configured */
+	char afk_password[65]; /* OPTION AFK PASSWORD: FNV-1a hash (hex); empty = none */
 } mmb_options;
 
 #define MMB_NTP_DEFAULT_SERVER "pool.ntp.org"
@@ -238,6 +253,18 @@ typedef struct mmb_options {
 #define MMB_FK_TCP  1
 #define MMB_FM_BOTH 3
 
+/* Read-ahead cache for one open input file (#1205). A network drive (Z:)
+ * issues one SMB2 READ PDU per backend call, so the byte-at-a-time LINE INPUT /
+ * INPUT# loop used to cost a round trip per character. The cache holds a chunk
+ * fetched from `start`; the caller's logical `pos` decides when it is refetched,
+ * so seek, ungetc and EOF stay exact. */
+typedef struct mmb_vfs_rbuf {
+	unsigned char *buf; /* heap buffer, NULL until first refill */
+	int cap;            /* allocated capacity */
+	int len;            /* valid bytes in buf (0 = empty) */
+	unsigned start;     /* file offset of buf[0] */
+} mmb_vfs_rbuf;
+
 typedef struct mmb_file {
 	int open;
 	int mode; /* 0 input 1 output 2 append 3 both (TCP default) */
@@ -245,6 +272,7 @@ typedef struct mmb_file {
 	int kind;  /* MMB_FK_FILE or MMB_FK_TCP */
 	int ungot; /* TCP pushback, -1 none */
 	char path[128];
+	mmb_vfs_rbuf rbuf; /* read-ahead cache for MMB_FK_FILE (#1205) */
 } mmb_file;
 
 typedef struct mmb_blit_buf {
@@ -273,7 +301,6 @@ typedef struct mmb_gfx {
 		uint32_t *pix; /* RGB888 + alpha source */
 		uint16_t *npix; /* HDMI-native; 0 = transparent */
 		uint16_t *store; /* saved background, native */
-		uint8_t *astore; /* page-1 alpha snapshot, or NULL */
 	} sprite[MMB_MAX_SPRITE];
 	int turtle_on;
 	double turtle_x, turtle_y, turtle_hdg;
@@ -285,12 +312,8 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	/* HDMI-native page buffers. Page 1 alpha lives in page1_alpha. */
+	/* HDMI-native page buffers. Every page is a plain pixel plane. */
 	uint16_t *page[MMB_MAX_PAGES];
-	uint8_t *page1_alpha; /* 0=clear, 1..15=blend, 255=opaque (black-transparent if 0 colour) */
-	int page1_alpha_used; /* any partial AFLAG (1..15) written since last CLS */
-	int page1_any;        /* any non-zero native pixel on page 1 since last CLS */
-	uint16_t *present_scratch;
 	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
 	int dirty;
 	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
@@ -333,11 +356,10 @@ typedef struct mmb_editor {
 	int active;
 	int run_on_exit;
 	int wait_continue;
+	int run_pending;   /* yielded the screen to a RUN a console switch parked
+			    * (#1012); finish it from mmb_editor_poll() */
 	int saved_mode;
 	int saved_bits;
-	int saved_write_page;
-	int saved_display_page;
-	int saved_write_fb;
 	int ntabs;
 	int cur;
 	int menu_open;     /* dropdown visible */
@@ -350,10 +372,16 @@ typedef struct mmb_editor {
 	mmb_ed_tab tab[MMB_ED_TABS];
 } mmb_editor;
 
+/* g_audio volume before any PLAY VOLUME / persisted setting has been applied.
+ * settings_finish() and PLAY VOLUME only ever store 0..100, so a negative
+ * value is an unambiguous "never set" signal: JUKE seeds 100 for it while
+ * leaving an intentional 0 (a persisted or in-session mute) alone (#1163). */
+#define MMB_AUDIO_VOL_UNSET (-1)
+
 typedef struct mmb_audio {
 	int playing; /* 0 none 1 mp3 2 mod 3 xm 4 tone */
 	int paused;
-	int vol_l, vol_r;
+	int vol_l, vol_r; /* 0..100, or MMB_AUDIO_VOL_UNSET before first set */
 	unsigned samples_decoded;
 	char name[128];
 	/* Virtual console that started the current playback (-1 = none). A
@@ -362,6 +390,28 @@ typedef struct mmb_audio {
 	 * console, matching the single shared audio resource (#620). */
 	int owner;
 } mmb_audio;
+
+/* Trace-cache slot (#1013). The cache is keyed by a pointer into this
+ * interpreter instance's tokenized program buffer, so it must live in the
+ * instance: a shared table let one console's compiled statement entries (with
+ * variable pointers bound to that console) alias another console's, freezing
+ * its variables. */
+#define MMB_TC_SLOTS 256
+#define MMB_TC_CODE  48
+#define MMB_TC_VARS  8
+#define MMB_TC_CONST 8
+
+typedef struct mmb_tc_ent {
+	const char *key;
+	const char *endp;
+	uint8_t code[MMB_TC_CODE];
+	int ncode;
+	mmb_var *vp[MMB_TC_VARS];
+	int nvp;
+	double c[MMB_TC_CONST];
+	int nc;
+	int8_t state;
+} mmb_tc_ent;
 
 typedef struct mmb {
 	const mmb_platform *plat;
@@ -397,6 +447,12 @@ typedef struct mmb {
 		int off;
 		int64_t to, step;
 		int line, stmt;
+		int for_pc;    /* pc of the FOR statement (EXIT/CONTINUE, #997) */
+		const char *pos; /* same-line loop-body resume, else NULL (#997) */
+		int end_line; /* matching NEXT pc, from jmp_next (#992) */
+		int next_pc;  /* matching NEXT statement pc, same-line scan (#1004) */
+		const char *next_pos;  /* matching NEXT statement pointer (#1004) */
+		const char *after_pos; /* statement after that NEXT, else NULL (#1004) */
 	} forstack[16];
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
@@ -409,6 +465,7 @@ typedef struct mmb {
 	int cwd_node[2];                   /* A: (0) / B: (1) ramdisk node */
 	char cwd_path[MMB_MAX_DRIVES][128]; /* C:.. physical, letter - 'A' */
 	int data_line, data_pos;
+	int data_off;          /* byte offset of the next item in prog[data_line] (#990) */
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
 	int gosub_event[MMB_MAX_GOSUB];
@@ -417,6 +474,7 @@ typedef struct mmb {
 	mmb_val gosub_savev[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
 	mmb_val func_ret;
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
+	const char *branch_pos;/* mid-line resume at branch_pc, else NULL (#1004) */
 	int run_pc;            /* current program line index */
 	int on_error_pc;       /* ON ERROR GOTO target, -1 when inactive */
 	int error_active;      /* handling a trapped runtime error */
@@ -467,7 +525,8 @@ typedef struct mmb {
 		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
 	} subs[MMB_MAX_SUBS];
 	int in_sub;            /* executing inside sub body */
-	int home_prompt;       /* CLS: next immediate prompt has no leading CR/LF */
+	int home_prompt;       /* CLS/app exit: next prompt has no leading CR/LF
+				* (consumed by mmb_front_prompt, #957) */
 	int quit_requested;    /* QUIT: host app should exit its main loop */
 	int print_x;           /* PRINT/LOCATE cursor X in pixels */
 	int print_y;           /* PRINT/LOCATE cursor Y in pixels */
@@ -522,6 +581,19 @@ typedef struct mmb {
 	int jmp_endsel[MMB_MAX_LINES];
 	int jmp_ready;
 	int run_preserve_vars;
+	int prog_dirty;        /* program text changed since last tokenize (#992) */
+	int prog_ready;        /* tokenizer + jump tables are current (#992) */
+	int break_primed;      /* rate limiter for mmb_check_break's heavy work (#988) */
+	unsigned break_ms;     /* last time the heavy break poll ran */
+	/* Tokenized program buffer, owned by this instance (#1013). A single
+	 * file-scope buffer let two consoles running the same program tokenize
+	 * onto the same addresses, aliasing each other's trace-cache entries. */
+	char *tprog;
+	int tcap;              /* capacity of tprog, in MMB_LINE_LEN lines */
+	int tok_ready;         /* tprog holds the current program text */
+	char tline[MMB_LINE_LEN]; /* immediate-mode tokenize buffer (#1013) */
+	/* Trace cache for this instance (#1013); see mmb_tc_ent above. */
+	mmb_tc_ent tcache[MMB_TC_SLOTS];
 } mmb;
 
 /* Virtual consoles: one interpreter context per console. The active context
@@ -599,6 +671,7 @@ void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
 void mmb_tokenize_program(void);
+void mmb_tok_release(void); /* free the instance-owned tokenized program (#1013) */
 const char *mmb_tok_line(int pc);
 const char *mmb_tok_immediate(const char *src);
 int mmb_kw_id(const char *kw);
@@ -609,6 +682,13 @@ void mmb_clear_vars(int keep_options);
 void mmb_local_restore(int g);
 void mmb_vars_rehash(void);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
+/* Resolve a variable reference parsed from source, caching the binding per
+ * source-token address so a repeat execution skips the hash lookup (#1002). */
+mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int create,
+			  int nidx, int *idx);
+void mmb_do_assign_ref(const char *ref, const char *name, int type_hint, int nidx,
+		       int *idx, mmb_val val);
+void mmb_resolve_invalidate(void);
 int mmb_var_offset(mmb_var *v, int nidx, const int *idx);
 int mmb_elem_off(mmb_var *v, int nidx, const int *idx);
 int mmb_parse_var_ref(char *name, int *nidx, int *idx);
@@ -719,6 +799,7 @@ void mmb_cmd_beep(void);
 void mmb_cmd_juke(void);
 int mmb_in_juke(void);
 const char *mmb_juke_key(char c);
+void mmb_juke_close(void);
 void mmb_juke_poll(void);
 void mmb_cmd_load(void);
 void mmb_cmd_edit(void);
@@ -810,6 +891,8 @@ void mmb_gfx_init(void);
 void mmb_gfx_apply_default_mode(void);
 void mmb_gfx_reapply_mode(void);
 void mmb_gfx_set_mode(int mode, int bits);
+int mmb_gfx_mode_valid(int mode);
+int mmb_gfx_mode_h(int mode);
 int mmb_gfx_mode_for_size(int w, int h);
 void mmb_gfx_reset_console(int wipe);
 void mmb_gfx_cls(unsigned rgb);
@@ -824,6 +907,7 @@ void mmb_gfx_triangle(int x1, int y1, int x2, int y2, int x3, int y3, unsigned r
 void mmb_gfx_fill_polygon(const int *xs, const int *ys, int n, unsigned rgb);
 void mmb_gfx_text(int x, int y, const char *s, unsigned rgb);
 extern const unsigned char mmb_cp437_8x16[256 * 16];
+extern const unsigned char mmb_cp437_8x14[256 * 14];
 extern const unsigned char mmb_tnr_8x16[256 * 16];
 extern const unsigned char mmb_tnr_16x32[95 * 32 * 2];
 extern const unsigned char mmb_tnr_24x48[95 * 48 * 3];
@@ -832,26 +916,29 @@ void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb);
 void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg);
 void mmb_gfx_glyph_cell_topdown(int x, int y, unsigned ch, unsigned fg,
 				unsigned bg);
+/* Top-down character cell with a selectable glyph height: 14 draws the EGA
+ * 8x14 CP437 face, anything else the VGA 8x16 face. TERM uses 8x14 when an
+ * 80x25 bookmark cannot fit 25 rows of 8x16 on the current display. */
+void mmb_gfx_glyph_cell_topdown_h(int x, int y, unsigned ch, unsigned fg,
+				  unsigned bg, int h);
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
-void mmb_gfx_clear_overlay(void);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 			    int stride);
 void mmb_gfx_present_if(int page);
+void mmb_gfx_sync_console(int page);
 void mmb_gfx_dirty_reset(void);
 void mmb_gfx_dirty_add(int x, int y, int w, int h);
 void mmb_gfx_dirty_flush(void);
 uint16_t *mmb_gfx_buf_for(int page, int *w, int *h);
 unsigned mmb_rgb_to_native(unsigned rgb888);
 unsigned mmb_native_to_rgb(unsigned native);
-unsigned mmb_pix_load(uint16_t pix, unsigned alpha_byte);
-uint16_t mmb_pix_store(unsigned rgb888, unsigned *alpha_out);
+uint16_t mmb_pix_store(unsigned rgb888);
 int mmb_gfx_map_y(int y, int h);
 int mmb_gfx_writing_fb(void);
-void ensure_page1_alpha(void);
 void mmb_gfx_fb_create(int w, int h);
 void mmb_gfx_fb_write(void);
 void mmb_gfx_fb_backup(void);
@@ -900,6 +987,10 @@ int mmb_vfs_rmdir(const char *path);
 int mmb_vfs_kill(const char *path);
 int mmb_vfs_copy(const char *src, const char *dst);
 int mmb_vfs_rename(const char *src, const char *dst);
+/* Move a file, falling back to copy-then-delete when the source and
+ * destination live on different volumes (a single rename cannot cross
+ * volumes). Only files move; the FILES UI rejects directories first. */
+int mmb_vfs_move(const char *src, const char *dst);
 /* Newline listing. Fills `out` with matching names, folders first, sorted;
  * *truncated is set (when non-NULL) if the folder held more names than fit in
  * `outsz` so the caller can report the cut instead of silently dropping the
@@ -923,6 +1014,14 @@ int mmb_vfs_wwrite(int handle, const void *data, unsigned n);
 int mmb_vfs_wclose(int handle);
 int mmb_vfs_read(const char *path, void *data, unsigned maxn, unsigned *n);
 int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsigned *got);
+/* Sequential read-ahead (#1205): cache a chunk per open file handle so a
+ * byte-at-a-time reader (file_getc) does not issue one backend read per byte.
+ * `r` may be NULL to bypass the cache. Returns 0 and sets *got (which may be
+ * short at EOF), or -1 on a backend error. */
+#define MMB_VFS_RBUF (16 * 1024)
+int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
+		      void *data, unsigned n, unsigned *got);
+void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r);
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_size(const char *path);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
@@ -965,7 +1064,84 @@ int mmb_fat_label(int letter, char *out, int outsz);
 int mmb_fat_eject(int letter);
 void mmb_storage_poll(void);
 
+/* Backend contract for a physical volume (#1128). The C:..H: FAT/FatFs
+ * backend (console/storage.cpp, native/storage_posix.c) and the Z: SMB
+ * backend (mmbasic/src/netfs_smb2.c) each fill one of these tables, so vfs.c
+ * dispatches by letter without knowing the transport. Signatures mirror the
+ * mmb_fat_* functions; `letter` lets one backend serve more than one letter. */
+typedef struct mmb_vol_ops {
+	int (*ready)(int letter);
+	int (*chdir)(int letter, const char *path);
+	int (*mkdir)(int letter, const char *path);
+	int (*rmdir)(int letter, const char *path);
+	int (*unlink)(int letter, const char *path);
+	int (*rename)(int letter, const char *from, const char *to);
+	int (*list)(int letter, const char *dir, const char *pat, char *out,
+		    int outsz, int *truncated);
+	int (*list_entries)(int letter, const char *dir, const char *pat,
+			    mmb_dirent *out, int max, int *truncated);
+	int (*write)(int letter, const char *path, const void *data, unsigned n,
+		     int append);
+	void *(*wopen)(int letter, const char *path, int append);
+	int (*wwrite)(void *handle, const void *data, unsigned n);
+	int (*wclose)(void *handle);
+	int (*read_at)(int letter, const char *path, unsigned pos, void *data,
+		       unsigned n, unsigned *got);
+	int (*size)(int letter, const char *path);
+	int (*exists)(int letter, const char *path);
+	int (*isdir)(int letter, const char *path);
+	void (*drive_line)(int letter, char *out, int outsz);
+	int (*label)(int letter, char *out, int outsz);
+	int (*eject)(int letter);
+} mmb_vol_ops;
+
+/* FAT/FatFs ops table (defined in vfs.c, pointing at mmb_fat_*). */
+extern const mmb_vol_ops mmb_fat_ops;
+/* SMB2 ops table (defined in netfs_smb2.c when MMB_HAVE_SMB2 is set). */
+extern const mmb_vol_ops mmb_net_ops;
+
+/* VFS wrappers that pick the right volume ops for a letter (so the FILES UI
+ * and other callers never call mmb_fat_* directly). `mmb_vfs_drive_ready` and
+ * `mmb_vfs_drive_line` must not connect the network drive. */
+int mmb_vfs_drive_ready(int letter);
+int mmb_vfs_label(int letter, char *out, int outsz);
+int mmb_vfs_eject(int letter);
+void mmb_vfs_drive_line(int letter, char *out, int outsz);
+
+/* OPTION NETWORK DRIVE (#1128). Implemented in netfs_smb2.c. */
+/* Normalise a user-typed UNC into "\host[:port]\share[\sub]". Accepts leading
+ * "\\", doubled backslashes, "//", "smb://" and mixed separators. Returns 1 on
+ * success, 0 if the input is not a usable \\host\share. */
+int mmb_netdrive_normalize(const char *in, char *out, int outsz);
+/* Convert a plain password to the stored "ntlm:<32 hex>" form (empty stays
+ * empty). Uses MD4 over the UTF-16LE password. */
+void mmb_netdrive_hash_password(const char *pass, char *out, int outsz);
+/* 1 when a network drive is configured (does not connect). */
+int mmb_netdrive_configured(void);
+/* Lazily connect the configured share with a hard timeout and Ctrl-C abort.
+ * Returns 0 on success, -1 on failure (see mmb_netdrive_last_error). */
+int mmb_netdrive_connect(void);
+const char *mmb_netdrive_last_error(void);
+/* Drop any live connection (called by OPTION NETWORK DRIVE OFF / EJECT). */
+void mmb_netdrive_disconnect(void);
+
+/* Poll one file descriptor for events (POLLIN/POLLOUT style bitmask) for up to
+ * timeout_ms, returning the revents mask, 0 on timeout, -1 on error. The
+ * network backend owns its own sockets, so this is the only platform hook the
+ * shared SMB code needs; Circle supplies its own implementation. The fd is an
+ * intptr_t so a 64-bit Winsock SOCKET (UINT_PTR) survives the call (#1136). */
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms);
+
 void mmb_storage_unmount(void);
+
+/* Persistence health for the C: home. On the live Linux ISO, C: only
+ * survives a reboot when MMB_DRIVE_ROOT is a mounted MMCORE volume; after a
+ * standby resume the device may reset and drop the mount, leaving writes on
+ * the RAM overlay. revalidate() re-checks/remounts (Linux live only) and
+ * persistence_lost() reports whether C: is currently volatile. Non-ISO
+ * platforms return 0 (nothing to guard). */
+void mmb_storage_revalidate(void);
+int mmb_storage_persistence_lost(void);
 
 /* Hotplug/idle notices from the storage layer (USB mount/unmount, eject).
  * Printed at the prompt unless a full-screen app claims them (FILES hint). */
@@ -1103,8 +1279,23 @@ int mmb_net_srv_ip(char *buf, int bufsize);
 
 /* Battery capacity (#857): read an integer 0-100 from a sysfs-style file.
  * Returns fallback when the file is missing, unreadable or non-numeric, and
- * clamps out-of-range values. Shared by BATTERY%() and its host test. */
+ * clamps out-of-range values. Shared by MM.BATTERY% and its host test. */
 int mmb_battery_capacity_read(const char *path, int fallback);
+/* Battery level MM.BATTERY% reports, and the indicator colour band (#1158):
+ * 0 red, 1 blue, 2 green. */
+int mmb_battery_percent(void);
+int mmb_battery_status_class(int pct);
+
+/* Display backlight: MM.BRIGHTNESS% reads and writes the panel
+ * brightness percentage. The (devdir, ...) helpers work on a sysfs backlight
+ * device directory so the percentage maths is host testable; the get/set
+ * wrappers discover the device under /sys/class/backlight on Linux and fall
+ * back to 100 / no-op elsewhere. */
+int mmb_brightness_read(const char *devdir, int fallback);
+int mmb_brightness_write(const char *devdir, int pct);
+int mmb_backlight_find(char *out, int outsz);
+int mmb_brightness_get(void);
+int mmb_brightness_set(int pct);
 
 /* mmb_ftp_start() return codes. The server is one machine-global resource
  * whose UI is per console, so a second console starting it is told BUSY
@@ -1127,6 +1318,7 @@ void mmb_cmd_connect(void);
 void mmb_cmd_term(void);
 void mmb_cmd_ipconfig(void);
 void mmb_cmd_reboot(void);
+void mmb_cmd_shutdown(void);
 void mmb_cmd_quit(void);
 void mmb_check_break(void);
 int mmb_in_connect(void);
@@ -1140,6 +1332,7 @@ void mmb_term_log_enable(int on);
 void mmb_term_scrollback_set(int lines);
 
 void mmb_cmd_wordpad(void);
+void mmb_wordpad_open(const char *path);
 int mmb_in_wordpad(void);
 const char *mmb_wordpad_key(char c);
 void mmb_wordpad_poll(void);
@@ -1154,6 +1347,7 @@ void mmb_cmd_afk(void);
 int mmb_in_afk(void);
 void mmb_afk_key(char c);
 void mmb_afk_poll(void);
+void mmb_afk_hash_password(const char *pass, char *out, int outsz);
 
 /* Cold-boot the app layer on a warm reset: each clears every console's state
  * and the shared session data the app keeps. Called from mmb_console_reset(). */
@@ -1197,6 +1391,12 @@ void mmb_editor_apply_tui_palette(void);
 int mmb_editor_theme_field(const char *name, unsigned char *idx);
 int mmb_editor_theme_rgb(const char *name, unsigned *rgb);
 
+/* Row-0 status header (#1158, #1217): local date/time top-left and the
+ * battery badge top-right on the dialog backdrop. Shared by SETTINGS, the
+ * Ctrl+Space app navigator and the HOME launcher so the format, colours and
+ * battery thresholds stay identical. */
+void mmb_tui_status_header(void);
+
 typedef struct mmb_ramdisk_entry {
 	const char *path;
 	const unsigned char *data;
@@ -1211,6 +1411,21 @@ void mmb_play_stop(void);
  * explicit commands (PLAY STOP, JUKE 'S', reset) use mmb_play_stop(). */
 void mmb_play_stop_owned(void);
 void mmb_play_mix(void);
+/* Arm a one-shot gain for the next mmb_play_*() call, so the buffer it queues
+ * is mixed at this volume instead of being reset to 100 first (#1113). Pass a
+ * negative value to drop a pending arm. */
+void mmb_play_set_begin_vol(int vl, int vr);
+/* Gain used for the first buffer after the last play started (0xFFFFFFFF if
+ * none yet) — a diagnostic for the no-full-volume-burst check (#1113). */
+unsigned mmb_audio_first_mix_vol(void);
+unsigned mmb_audio_mix_gap_ms(void);
+unsigned mmb_audio_underruns(void);
+unsigned mmb_audio_resets(void);
+unsigned mmb_audio_mp3_buffer_peak(void);
+/* Source sample rate and decoded/mixed frame counts of the last MP3 (#1247). */
+unsigned mmb_audio_mp3_rate(void);
+unsigned mmb_audio_mp3_src_frames(void);
+unsigned mmb_audio_mp3_out_frames(void);
 void mmb_play_pause(int on);
 int mmb_play_take_ended(void);
 /* Read-only analyser feed for the JUKE visualiser. */
@@ -1218,10 +1433,15 @@ int mmb_play_take_ended(void);
 #define MMB_AUDIO_SCOPE 256
 void mmb_audio_spectrum(float *bands, int nbands);
 int mmb_audio_scope(short *out, int n);
+/* Song title for the loaded engine, or a bounded read of path. 1 if dst
+ * holds a printable title. */
+int mmb_audio_title(char *dst, int n);
+int mmb_media_title(const char *path, char *dst, int n);
 void mmb_audio_apply_options(void);
 int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
+int mmb_play_s3m(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
 int mmb_img_probe(const char *path, int *w, int *h);
@@ -1281,6 +1501,10 @@ void mmb_play_tts(void);
 int mmb_keyword_eq(const char *a, const char *b);
 void mmb_upper(char *s);
 unsigned mmb_now_ms(void);
+/* Seed for a console's RND state (#1015): mixes the platform millisecond
+ * clock with a call counter so each fresh interpreter instance starts its RNG
+ * at a different point, even when two are brought up in the same tick. */
+uint32_t mmb_rng_seed(void);
 
 /* functions inside expressions */
 int mmb_try_function(mmb_val *out);

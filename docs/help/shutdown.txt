@@ -1,0 +1,19 @@
+name: SHUTDOWN
+kind: command
+
+Power off the machine. Saves settings, stops audio, and unmounts drives first,
+then turns off power. Control does not return to the prompt.
+
+Supported on the bare Raspberry Pi build and on the Linux framebuffer live
+USB / installed Alpine image (`mmcore-fb`). On Raspberry Pi 5 the board powers
+off. On earlier Pi models, including the Pi 4 and Pi 400, the hardware has no
+software power-off, so the CPU halts, the screen says it is safe to turn off
+the power, and you remove power. The native Linux, macOS, and Windows desktop
+apps do not support hardware shutdown; use the host's own power controls
+instead.
+
+SHUTDOWN
+
+Example:
+
+    SHUTDOWN

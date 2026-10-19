@@ -1,0 +1,20 @@
+name: MM.BRIGHTNESS%
+kind: command
+
+Read or set the display backlight brightness as a percentage (0-100).
+
+    b = MM.BRIGHTNESS%
+    MM.BRIGHTNESS% = 50
+
+On a Linux framebuffer build (Chromebook ISO) the value comes from the panel
+backlight under /sys/class/backlight; the real Intel/AMD panel backlight is
+preferred over the ACPI video shim. Reading returns the current percentage and
+assigning changes the panel.
+
+On every other build (Raspberry Pi / Circle, Windows, macOS, or a Linux host
+with no backlight) reading returns 100 and assigning is ignored.
+
+Example:
+
+    MM.BRIGHTNESS% = 25
+    PRINT MM.BRIGHTNESS%

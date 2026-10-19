@@ -170,8 +170,6 @@ void mmb_gfx_fb_window(int x, int y, int page)
 			if (sx >= 0 && sy >= 0 && sx < G.gfx.fb_w && sy < G.gfx.fb_h)
 				c = G.gfx.fb[sy * G.gfx.fb_w + sx];
 			d[j * dw + i] = c;
-			if (page == 1 && G.gfx.page1_alpha)
-				G.gfx.page1_alpha[j * dw + i] = c ? 255 : 0;
 		}
 	}
 	mmb_gfx_present_if(page);
@@ -262,28 +260,6 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 							;
 						else
 							memcpy(d, s, row_bytes);
-					}
-				}
-
-				if (G.gfx.write_page == 1 && !mmb_gfx_writing_fb())
-				{
-					ensure_page1_alpha();
-					if (G.gfx.page1_alpha)
-					{
-						for (j = 0; j < h; j++)
-						{
-							uint16_t *row =
-								dst + (y2 + j) * dw + x2;
-							uint8_t *al =
-								G.gfx.page1_alpha +
-								(y2 + j) * dw + x2;
-							for (i = 0; i < w; i++)
-							{
-								al[i] = row[i] ? 255 : 0;
-								if (row[i])
-									G.gfx.page1_any = 1;
-							}
-						}
 					}
 				}
 				if (!mmb_gfx_writing_fb() &&
@@ -523,26 +499,15 @@ void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
 {
 	int w, h, i, j;
 	uint16_t *pg, *tmp;
-	uint8_t *al = 0, *atmp = 0;
-	unsigned bytes, fcol = 0, falpha = 0;
+	unsigned bytes, fcol = 0;
 	pg = mmb_gfx_buf_for(page, &w, &h);
 	bytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
 	tmp = G.plat->alloc(bytes);
 	if (!tmp)
 		mmb_error("?OUT OF MEMORY");
 	memcpy(tmp, pg, bytes);
-	if (page == 1 && G.gfx.page1_alpha)
-	{
-		al = G.gfx.page1_alpha;
-		atmp = G.plat->alloc((unsigned)w * (unsigned)h);
-		if (atmp)
-			memcpy(atmp, al, (unsigned)w * (unsigned)h);
-	}
 	if (has_fill && fill >= 0)
-	{
-		uint16_t np = mmb_pix_store((unsigned)fill, &falpha);
-		fcol = np;
-	}
+		fcol = mmb_pix_store((unsigned)fill);
 	for (j = 0; j < h; j++)
 	{
 		for (i = 0; i < w; i++)
@@ -560,29 +525,17 @@ void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
 				if (sj < 0)
 					sj += h;
 				pg[j * w + i] = tmp[sj * w + si];
-				if (al && atmp)
-					al[j * w + i] = atmp[sj * w + si];
 			}
 			else if (si < 0 || sj < 0 || si >= w || sj >= h)
 			{
 				if (fill != -1)
-				{
 					pg[j * w + i] = (uint16_t)fcol;
-					if (al)
-						al[j * w + i] = (uint8_t)falpha;
-				}
 			}
 			else
-			{
 				pg[j * w + i] = tmp[sj * w + si];
-				if (al && atmp)
-					al[j * w + i] = atmp[sj * w + si];
-			}
 		}
 	}
 	G.plat->free(tmp);
-	if (atmp)
-		G.plat->free(atmp);
 	mmb_gfx_present_if(page);
 }
 

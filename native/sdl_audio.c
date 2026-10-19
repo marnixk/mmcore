@@ -107,6 +107,12 @@ void sdl_audio_flush(void)
 		SDL_ClearQueuedAudio(s_dev);
 }
 
+void sdl_audio_reset(void)
+{
+	close_dev();
+	open_dev();
+}
+
 void sdl_audio_shutdown(void)
 {
 	close_dev();

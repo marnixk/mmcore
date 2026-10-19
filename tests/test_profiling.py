@@ -140,6 +140,43 @@ def test_profiling_tracecache_array_let(console):
     assert on["expr"] < off["expr"] // 2
 
 
+def test_profiling_tracecache_2d_array_let(console):
+    """#1002: the trace cache compiles 2-D array LET and element reads, so the
+    2-D kernel stops taking the general path even with the cache ON."""
+    lines = [
+        "DIM A(20,20)",
+        "FOR I=0 TO 19",
+        "FOR J=0 TO 19",
+        "A(I,J)=I+J",
+        "NEXT J",
+        "NEXT I",
+        "PRINT A(3,4)",
+    ]
+    assert console.send_line("OPTION TRACECACHE OFF") == ""
+    off = _run_kernel(console, "TC2OFF.BAS", lines)
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    on = _run_kernel(console, "TC2ON.BAS", lines)
+    # The resolve cache already leaves findvar near its floor on both paths
+    # (#1002); the trace cache additionally removes the per-iteration parse.
+    assert off["findvar"] < 100
+    assert on["findvar"] < 100
+    assert on["expr"] < off["expr"] // 10
+
+
+def test_tracecache_chain_invalidates(console):
+    """#1007: CHAIN re-tokenizes the next program, so the trace cache must be
+    dropped too. Otherwise a compiled entry from the previous program is
+    replayed against the new text at the same token address and raises a
+    spurious syntax error."""
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    _write_bas(console, "TCCH1.BAS", ["X=5", 'CHAIN "TCCH2.BAS"'])
+    _write_bas(console, "TCCH2.BAS", ["Y=X+1", "PRINT Y"])
+    out = console.send_line('RUN "TCCH1.BAS"')
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert "?SYNTAX" not in out.upper(), out
+    assert "6" in lines, out
+
+
 def test_profiling_float_math(console):
     p = _run_kernel(
         console,
@@ -200,37 +237,32 @@ def test_profiling_page_copy_mode17_bulk(console):
         ],
         timeout=12.0,
     )
-    assert p["present"] == 21  # 20 PAGE COPY presents plus the page-1 CLS present
+    assert p["present"] == 20  # 20 PAGE COPY presents; page-1 CLS no longer presents
     assert p["elapsed"] < 300  # generous: QEMU under parallel load is slow
 
 
 @pytest.mark.skipif(
     not PERF_ENABLED, reason="set MMCORE_PERF=1 to run timing guards"
 )
-def test_profiling_page1_overlay_alpha_bulk(console):
-    """#489: the page-1 alpha composite must not fall back to a per-pixel
-    RGB round-trip for opaque/transparent pixels (the Xmas hot path)."""
+def test_profiling_page1_offscreen_copy_bulk(console):
+    """#1051: page 1 is a plain page, so bulk PAGE COPY onto it is a native
+    copy with no present and no per-pixel alpha composite."""
     p = _run_kernel(
         console,
         "PALPHA.BAS",
         [
             "MODE 7,12",
+            "PAGE DISPLAY 0",
             "PAGE WRITE 2",
             "CLS RGB(0,0,200)",
             "PAGE WRITE 1",
             "CLS",
-            # A partial-alpha band forces the blend path (fades.inc does this).
-            "FOR X=0 TO 100",
-            "LINE X,0,X,50,RGB(255,0,0,1+(X MOD 14))",
-            "NEXT X",
             "FOR I=1 TO 30",
             "PAGE COPY 2,1,B",
             "NEXT I",
         ],
         timeout=25.0,
     )
-    assert p["present"] >= 30
-    # Calibrated on QEMU: ~120 ms optimised vs ~340 ms with the old
-    # per-pixel RGB round-trip. 250 catches a return to the slow path
-    # while leaving headroom for parallel-load jitter.
+    # Page 1 is offscreen (display page 0), so none of the writes present.
+    assert p["present"] == 0
     assert p["elapsed"] < 250

@@ -151,7 +151,8 @@ def test_help_cmm2_gfx_topics(console):
 
 
 def test_rgb_alpha_and_page_copy_b(fresh_console):
-    """Issue #260: RGB(...,t) packing and PAGE COPY B skip-black."""
+    """RGB(...,t) still packs, but t no longer affects the screen; PAGE COPY B
+    skip-black onto page 1 is a plain copy (#1051)."""
     c = fresh_console
     assert c.send_line("PRINT HEX$(RGB(RED))") == "AA0000"
     packed = int(c.send_line("PRINT RGB(1,2,3,15)"))
@@ -163,8 +164,9 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert c.send_line("BOX 40,40,40,40,1,RGB(220,0,0),RGB(220,0,0)") == ""
     assert c.send_line("PAGE WRITE 1") == ""
     assert c.send_line("CLS") == ""
+    # Alpha 15 is ignored: the black pixel is stored, not flagged transparent.
     assert c.send_line("PIXEL 10,10,RGB(0,0,0,15)") == ""
-    assert int(c.send_line("PRINT PIXEL(10,10,1)")) != 0
+    assert int(c.send_line("PRINT PIXEL(10,10,1)")) == 0
     assert c.send_line("PAGE COPY 2, 1, B") == ""
     red = int(c.send_line("PRINT PIXEL(50,50,1)").split()[0])
     gap = int(c.send_line("PRINT PIXEL(10,40,1)").split()[0])
@@ -173,8 +175,44 @@ def test_rgb_alpha_and_page_copy_b(fresh_console):
     assert c.send_line("PAGE WRITE 0") == ""
 
 
-def test_page1_overlay_nonzero_blit_without_alpha(fresh_console):
-    """Issue #313: opaque page-1 overlay composites without RGB blend when no AFLAG."""
+def test_span_fast_path_visible_matches_hidden(fresh_console):
+    """#1082: 1px spans drawn to the visible page match the hidden page.
+
+    LINE, BOX fill and CIRCLE fill take the resolved-span fast path. On the
+    visible page that also dirty-tracks and set_pixels; a hidden page only
+    writes the page buffer. Both must store byte-identical pixels.
+    """
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    scene = [
+        "LINE 20,30,300,30,RGB(255,0,0)",
+        "LINE 40,50,220,180,RGB(0,255,0)",
+        "BOX 60,200,120,60,1,RGB(0,0,255),RGB(255,255,0)",
+        "CIRCLE 450,150,50,1,RGB(255,0,255),RGB(0,255,255)",
+    ]
+    samples = [
+        (20, 30), (160, 30), (300, 30),
+        (40, 50), (220, 180),
+        (60, 200), (179, 259), (100, 220),
+        (450, 150), (500, 150), (400, 400),
+    ]
+    values = {}
+    for page in (0, 1):
+        c.send_line(f"PAGE WRITE {page}")
+        c.send_line("CLS")
+        for line in scene:
+            assert c.send_line(line) == ""
+        values[page] = [
+            int(c.send_line(f"PRINT PIXEL({x},{y},{page})").split()[0])
+            for x, y in samples
+        ]
+    c.send_line("PAGE WRITE 0")
+    assert values[0] == values[1], (values[0], values[1])
+    assert sum(1 for v in values[0] if v & 0xFFFFFF) >= 8, values[0]
+
+
+def test_page1_is_not_composited_over_display(fresh_console):
+    """#1051: page-1 pixels, with or without AFLAG, never appear over page 0."""
     c = fresh_console
     assert c.send_line("MODE 8,16") == ""
     assert c.send_line("PAGE WRITE 0") == ""
@@ -185,15 +223,22 @@ def test_page1_overlay_nonzero_blit_without_alpha(fresh_console):
     assert c.send_line("PIXEL 100,80,RGB(255,200,0)") == ""
     assert c.send_line("PAGE WRITE 0") == ""
     assert c.send_line("PAGE DISPLAY 0") == ""
+    # Page 0 keeps its own pixels; the page-1 orange does not composite over it.
+    r, g, b = c.screen_pixel(100, 80)
+    assert r < 40 and g < 40 and b > 60, (r, g, b)
+
+    # Displaying page 1 shows the real pixel instead.
+    assert c.send_line("PAGE DISPLAY 1") == ""
     r, g, b = c.screen_pixel(100, 80)
     assert r > 200 and g > 150 and b < 80, (r, g, b)
-    br, bg, bb = c.screen_pixel(20, 20)
-    assert br < 40 and bg < 40 and bb > 60, (br, bg, bb)
+
+    # A partial-alpha colour is stored opaque (t is ignored).
     assert c.send_line("PAGE WRITE 1") == ""
     assert c.send_line("CLS") == ""
     assert c.send_line("PIXEL 50,50,RGB(255,0,0,8)") == ""
-    assert c.send_line("PAGE WRITE 0") == ""
-    assert c.send_line("CLS RGB(0,0,0)") == ""
+    assert int(c.send_line("PRINT PIXEL(50,50,1)")) & 0xFFFFFF == 0xFF0000
+    assert c.send_line("PAGE DISPLAY 1") == ""
+    r, g, b = c.screen_pixel(50, 50)
+    assert r > 200 and g < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE DISPLAY 0") == ""
-    rr, rg, rb = c.screen_pixel(50, 50)
-    assert rr > 80, (rr, rg, rb)
+    assert c.send_line("PAGE WRITE 0") == ""

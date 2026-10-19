@@ -1,9 +1,12 @@
 #include "mmb_priv.h"
 #include "tui.h"
 
+#include <math.h>
+
 #define WP_BUF      65536
 #define WP_CLIP     8192
 #define WP_DLG      128
+#define WP_WRAP_NARROW 60
 #define WP_WRAP_N   80
 #define WP_WRAP_W   120
 #define WP_MAX_VR   4096
@@ -21,6 +24,7 @@
 #define WP_DLG_SAVEAS  2
 #define WP_DLG_PICK    3
 #define WP_DLG_RECOVER 4
+#define WP_DLG_CONFIRM 5
 
 #define WP_DOCS       8
 /* Backing-store size for the recursive quick-open walk.  The ramdisk alone
@@ -40,6 +44,12 @@
 #define WP_MENU_EDIT     1
 #define WP_MENU_SETTINGS 2
 #define WP_MENU_COUNT    3
+
+/* Document column widths cycled by the Settings menu: normal, wide and
+ * narrow (all horizontally centred). */
+#define WP_VIEW_NORMAL 0
+#define WP_VIEW_WIDE   1
+#define WP_VIEW_NARROW 2
 
 #define WP_FD_FOCUS_NAME 0
 #define WP_FD_FOCUS_FILE 1
@@ -70,6 +80,11 @@ typedef struct {
 	int indent_len;
 	int hide_prefix;
 	int scale;
+	/* Set on every visual row of a heading that wraps onto more than one
+	 * row.  Such rows advance by a reduced height (see vrow_h) so a
+	 * multi-line header reads tighter than the full glyph cell, while a
+	 * single-line heading and body text keep the full scale. */
+	int tight;
 } wp_vrow;
 
 typedef struct {
@@ -94,13 +109,20 @@ typedef struct {
 	int sel_anchor;
 	char clip[WP_CLIP];
 	int cliplen;
-	int wide;
+	int view;
 	int menu_open;
 	int menu;
 	int menu_item;
 	int dialog;
 	char dlg[WP_DLG];
 	int dlglen;
+	/* Dirty-exit confirmation: which button is focused and whether a
+	 * successful save should finish quitting WORDPAD (#972). */
+	int dlg_btn;
+	int quit_pending;
+	/* Transient status-line notice, e.g. a failed save (#975).  Cleared on
+	 * the next edit or a successful save. */
+	char notice[64];
 	int scroll;
 	int vid_cols;
 	int vid_rows;
@@ -220,13 +242,16 @@ static int pick_view_s[MMB_MAX_CONSOLES][WP_PICK_MAX];
 #define pick_view (pick_view_s[g_console])
 #define pick_trunc (pick_trunc_s[g_console])
 
-/* Crash-resume sidecar <path>.rec and its pending-prompt path. */
+/* Crash-resume sidecar <path>.rec and its pending-prompt path.  The
+ * checkpoint period is shared with EDIT (MMB_AUTOSAVE_MS): frequent sidecar
+ * writes were visible filesystem activity while typing (#973, #1011). */
 #define WP_REC_SUFFIX  ".rec"
-#define WP_AUTOSAVE_MS 1500
 
 static int wp_save(void);
 static void wp_autosave(void);
 static void wp_stash(void);
+static void wp_save_outcome(int r);
+static void wp_service_audio(void);
 
 /* Ctrl+Z undo (#532). WORDPAD's buffer is a flat string, so undo keeps a
  * compact pool of pre-edit copies (buffer + length), truncated to the shared
@@ -275,6 +300,7 @@ static void wp_undo_push(void)
  * calls. Programmatic loads/recovery reset the history instead. */
 static void wp_note_edit(void)
 {
+	W.notice[0] = 0;
 	if (!wp_hist_active || wp_hist_taken)
 		return;
 	wp_undo_push();
@@ -305,7 +331,27 @@ static const char menu_hots[] = { 'F', 'E', 'S' };
 
 static const char *file_items[] = { "New", "Open...", "Save", "Save As...", "Quit" };
 static const char *edit_items[] = { "Copy", "Cut", "Paste" };
-static const char *settings_items[] = { "Wide view" };
+/* The single Settings entry names the current view so the normal -> wide ->
+ * narrow cycle is discoverable; settings_sync_label() rewrites it. */
+static char settings_view_item[16] = "View: Normal";
+static const char *settings_items[] = { settings_view_item };
+
+static void settings_sync_label(void)
+{
+	const char *name = "Normal";
+	char *p = settings_view_item;
+	const char *s;
+
+	if (W.view == WP_VIEW_WIDE)
+		name = "Wide";
+	else if (W.view == WP_VIEW_NARROW)
+		name = "Narrow";
+	memcpy(p, "View: ", 6);
+	p += 6;
+	for (s = name; *s && p < settings_view_item + sizeof(settings_view_item) - 1; s++)
+		*p++ = *s;
+	*p = 0;
+}
 
 static const mmb_ed_theme *wpth(void)
 {
@@ -416,9 +462,79 @@ static unsigned intense_fg(void)
 	return mmb_rgb_pack(r, g, b);
 }
 
+static unsigned blend_to(unsigned fg, unsigned bg, int pct)
+{
+	int r = (int)((fg >> 16) & 255);
+	int g = (int)((fg >> 8) & 255);
+	int b = (int)(fg & 255);
+	int br = (int)((bg >> 16) & 255);
+	int bgc = (int)((bg >> 8) & 255);
+	int bb = (int)(bg & 255);
+
+	return mmb_rgb_pack(r + (br - r) * pct / 100,
+			    g + (bgc - g) * pct / 100,
+			    b + (bb - b) * pct / 100);
+}
+
+static double wp_srgb(int c)
+{
+	double v = (double)c / 255.0;
+
+	return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+}
+
+static double wp_lum(unsigned rgb)
+{
+	return 0.2126 * wp_srgb((int)((rgb >> 16) & 255)) +
+	       0.7152 * wp_srgb((int)((rgb >> 8) & 255)) +
+	       0.0722 * wp_srgb((int)(rgb & 255));
+}
+
+static double wp_contrast(unsigned a, unsigned b)
+{
+	double la = wp_lum(a), lb = wp_lum(b);
+
+	if (la < lb)
+	{
+		double t = la;
+		la = lb;
+		lb = t;
+	}
+	return (la + 0.05) / (lb + 0.05);
+}
+
+/* Plain body text is a little dimmer than edit_fg so bold/italic emphasis
+ * reads clearly against it (#953).  The dim is theme-aware rather than a
+ * fixed colour: it takes the largest blend toward the pane background that
+ * still clears WCAG AA (4.5:1) there.  A theme whose edit_fg already sits
+ * near that floor (Phosphor, 4.8:1) simply dims less, so no per-theme ramp
+ * is needed and the greyscale Monochrome theme is covered for free. */
+static unsigned body_fg(void)
+{
+	static unsigned have_fg = 0xFFFFFFFFu, have_bg = 0xFFFFFFFFu, out;
+	int t;
+
+	if (have_fg == WP_FG && have_bg == WP_BG)
+		return out;
+	out = WP_FG;
+	for (t = 25; t >= 5; t -= 5)
+	{
+		unsigned cand = blend_to(WP_FG, WP_BG, t);
+
+		if (wp_contrast(cand, WP_BG) >= 4.5)
+		{
+			out = cand;
+			break;
+		}
+	}
+	have_fg = WP_FG;
+	have_bg = WP_BG;
+	return out;
+}
+
 static int wp_chrome(void)
 {
-	if (W.menu_open || W.dialog || W.alt_pend)
+	if (W.menu_open || W.dialog || W.alt_pend || W.notice[0])
 		return 1;
 	if (G.plat && G.plat->alt_held && G.plat->alt_held())
 		return 1;
@@ -436,7 +552,8 @@ static int heading_scale(int style)
 	return 1;
 }
 
-static int vrow_h(int vr)
+/* Glyph scale of a visual row: 4/3/2 for H1/H2/H3, 1 for body. */
+static int vrow_scale(int vr)
 {
 	int s;
 	if (vr < 0 || vr >= W.total_vrows)
@@ -446,6 +563,21 @@ static int vrow_h(int vr)
 		return 1;
 	if (s > 4)
 		return 4;
+	return s;
+}
+
+/* Screen-row height a visual row occupies.  Every row of a heading that wraps
+ * onto more than one row advances one row less than its glyph scale, drawing
+ * the same glyphs closer together with a small gap between the lines; a
+ * single-line heading and body text keep the full scale (issue #1202). */
+static int vrow_h(int vr)
+{
+	int s;
+	if (vr < 0 || vr >= W.total_vrows)
+		return 1;
+	s = vrow_scale(vr);
+	if (W.vrows[vr].tight && s > 1)
+		return s - 1;
 	return s;
 }
 
@@ -710,7 +842,12 @@ static void wp_layout_geom(void)
 
 	W.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
 	W.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 25;
-	wrap = W.wide ? WP_WRAP_W : WP_WRAP_N;
+	if (W.view == WP_VIEW_WIDE)
+		wrap = WP_WRAP_W;
+	else if (W.view == WP_VIEW_NARROW)
+		wrap = WP_WRAP_NARROW;
+	else
+		wrap = WP_WRAP_N;
 	if (W.vid_cols < wrap)
 	{
 		W.pane_width = W.vid_cols;
@@ -991,6 +1128,7 @@ static void wp_build_layout(void)
 		int cursor_on;
 		int i, col;
 		int break_at, break_col;
+		int line_v0 = vr;
 
 		while (le < W.len && W.buf[le] != '\n')
 			le++;
@@ -1015,6 +1153,7 @@ static void wp_build_layout(void)
 		W.vrows[vr].indent_len = indent_len;
 		W.vrows[vr].hide_prefix = hide_prefix;
 		W.vrows[vr].scale = scale;
+		W.vrows[vr].tight = 0;
 		while (i < le)
 		{
 			unsigned vis;
@@ -1062,6 +1201,8 @@ static void wp_build_layout(void)
 					W.vrows[vr].indent_len = indent_len;
 					W.vrows[vr].hide_prefix = hide_prefix;
 					W.vrows[vr].scale = scale;
+					W.vrows[line_v0].tight = 1;
+					W.vrows[vr].tight = 1;
 					continue;
 				}
 				W.vrows[vr].off1 = i;
@@ -1080,6 +1221,8 @@ static void wp_build_layout(void)
 				W.vrows[vr].indent_len = indent_len;
 				W.vrows[vr].hide_prefix = hide_prefix;
 				W.vrows[vr].scale = scale;
+				W.vrows[line_v0].tight = 1;
+				W.vrows[vr].tight = 1;
 				continue;
 				}
 			}
@@ -1116,6 +1259,10 @@ static void wp_build_layout(void)
 		}
 		else
 			break;
+		/* A long document makes this layout pass expensive on every
+		 * scroll frame; keep the audio queue fed across it (#1160). */
+		if ((vr & 31) == 0)
+			wp_service_audio();
 	}
 	W.total_vrows = vr;
 	if (!found_cx && W.cx == W.len && W.total_vrows > 0)
@@ -1196,13 +1343,15 @@ static unsigned style_fg(int style)
 	case WP_STYLE_H1:
 	case WP_STYLE_H2:
 	case WP_STYLE_H3:
-	case WP_STYLE_BULLET:
-	case WP_STYLE_ORDERED:
 		return WP_HEAD;
 	case WP_STYLE_QUOTE:
 		return WP_DIM;
+	/* Lists share the body colour: the marker and its text must not carry a
+	 * second, heavier accent (#953). */
+	case WP_STYLE_BULLET:
+	case WP_STYLE_ORDERED:
 	default:
-		return WP_FG;
+		return body_fg();
 	}
 }
 
@@ -1256,6 +1405,12 @@ static void serial_row(const char *s)
 	if (s)
 		ser(s);
 	ser("\r\n");
+	/* A redraw streams every visible row to the serial console, and a held
+	 * cursor key drives those redraws back to back. The serial write can
+	 * stall on a saturated 115200-baud TX ring, so top the audio queue up
+	 * after each row: background JUKE/PLAY must keep playing while the pane
+	 * is dumped (mirrors TERM #936; #1160). */
+	wp_service_audio();
 }
 
 static void wp_serial_dump(void)
@@ -1294,7 +1449,7 @@ static void wp_release_globals(void)
 }
 
 /* Restore the graphics mode the caller was in before WORDPAD took over and
- * clear page-1 overlay / sprite state an earlier program may have left armed,
+ * clear sprite state an earlier program may have left armed,
  * then repaint the console (mirrors the AFK/EDITOR teardown, issue #583). */
 static void wp_restore_gfx(void)
 {
@@ -1304,14 +1459,31 @@ static void wp_restore_gfx(void)
 	mmb_gfx_cls(G.gfx.bg);
 }
 
-static void wp_leave(void)
+/* Tear the session down immediately.  Exit paths that must respect unsaved
+ * changes go through wp_request_exit() (#972); the explicit Save choice has
+ * already written the file by the time this runs. */
+static void wp_leave_now(void)
 {
-	wp_autosave();
 	tui_end();
 	wp_restore_gfx();
 	G.home_prompt = 1;
 	memset(&W, 0, sizeof(W));
 	wp_release_globals();
+}
+
+/* Every quit path funnels here: a clean buffer leaves at once, a dirty one
+ * asks first so Ctrl+X can never be mistaken for an exit (issues #971/#972). */
+static void wp_request_exit(void)
+{
+	if (!W.dirty)
+	{
+		wp_leave_now();
+		return;
+	}
+	W.menu_open = 0;
+	W.dialog = WP_DLG_CONFIRM;
+	W.dlg_btn = 0;
+	W.quit_pending = 1;
 }
 
 static void sel_clear(void)
@@ -1700,6 +1872,22 @@ static void move_end(void)
 	W.cx = W.vrows[W.cx_vrow].off1;
 }
 
+/* The largest viewport top that still fills the pane: keep the last line at
+ * the bottom instead of scrolling it to the top of an all-but-empty screen. */
+static int max_scroll(void)
+{
+	int total = screen_row_of_vrow(W.total_vrows);
+
+	if (total <= W.text_rows)
+		return 0;
+	return total - W.text_rows;
+}
+
+/* PageUp/PageDown move the cursor and the viewport together in one pass.
+ * Both shift a whole screen in the same direction, so the cursor keeps its
+ * row on screen and the pane jumps directly to the new page.  Scrolling the
+ * viewport here (rather than letting ensure_scroll() pull it one line to keep
+ * the cursor visible) is what stops paging from stepping line by line (#1216). */
 static void page_up(void)
 {
 	int vr, vc;
@@ -1710,11 +1898,14 @@ static void page_up(void)
 	if (vr < 0)
 		vr = 0;
 	W.cx = vrow_col_to_off(vr, vc);
+	W.scroll -= W.text_rows;
+	if (W.scroll < 0)
+		W.scroll = 0;
 }
 
 static void page_down(void)
 {
-	int vr, vc;
+	int vr, vc, mx;
 
 	wp_build_layout();
 	vr = W.cx_vrow + W.text_rows;
@@ -1722,6 +1913,12 @@ static void page_down(void)
 	if (vr >= W.total_vrows)
 		vr = W.total_vrows > 0 ? W.total_vrows - 1 : 0;
 	W.cx = vrow_col_to_off(vr, vc);
+	W.scroll += W.text_rows;
+	mx = max_scroll();
+	if (W.scroll > mx)
+		W.scroll = mx;
+	if (W.scroll < 0)
+		W.scroll = 0;
 }
 
 static void wp_load_file(const char *path)
@@ -1956,6 +2153,7 @@ static void close_ui(void)
 	W.dialog = WP_DLG_NONE;
 	W.dlglen = 0;
 	W.dlg[0] = 0;
+	W.quit_pending = 0;
 	wp_rec_sidecar[0] = 0;
 }
 
@@ -2784,9 +2982,23 @@ static void fd_submit_path(const char *path)
 	{
 		if (full[0])
 		{
+			int r;
+
 			strncpy(W.path, full, sizeof(W.path) - 1);
 			W.path[sizeof(W.path) - 1] = 0;
-			wp_save();
+			r = wp_save();
+			if (r == 1 && W.quit_pending)
+			{
+				/* Save-then-exit from the dirty confirmation: the
+				 * file is written, so finish the quit now. */
+				close_ui();
+				wp_leave_now();
+				return;
+			}
+			/* A failed Save As write must not vanish either: report it
+			 * on the status line (#975). */
+			if (r != 0)
+				wp_save_outcome(r);
 		}
 		close_ui();
 	}
@@ -2987,6 +3199,81 @@ static void open_menu(int which)
 	W.menu_item = 0;
 }
 
+/* Dirty-exit confirmation buttons: 0 Save, 1 Discard, 2 Cancel (#972). */
+static void confirm_save(void)
+{
+	if (!W.path[0])
+	{
+		/* No filename yet: get one, then finish the quit on success. */
+		W.quit_pending = 1;
+		open_dialog(WP_DLG_SAVEAS);
+		return;
+	}
+	if (wp_save() == 1)
+	{
+		W.dialog = WP_DLG_NONE;
+		W.quit_pending = 0;
+		wp_leave_now();
+		return;
+	}
+	/* A failed write leaves WORDPAD open with the buffer intact; surface it
+	 * on the status line rather than dropping back silently (#975). */
+	wp_save_outcome(-1);
+}
+
+static void confirm_discard(void)
+{
+	W.dirty = 0;
+	W.dialog = WP_DLG_NONE;
+	W.quit_pending = 0;
+	wp_leave_now();
+}
+
+static void confirm_cancel(void)
+{
+	W.dialog = WP_DLG_NONE;
+	W.quit_pending = 0;
+}
+
+static void confirm_activate(void)
+{
+	if (W.dlg_btn == 0)
+		confirm_save();
+	else if (W.dlg_btn == 1)
+		confirm_discard();
+	else
+		confirm_cancel();
+}
+
+/* Shared outcome handling for every explicit save (#975).  wp_save() returns
+ * 1 on success, 0 when there is no filename yet, and -1 when the write
+ * failed.  The old `if (!wp_save())` treated a real failure (-1) as "no path"
+ * and silently ignored it.  Open Save As only for the no-path case; report a
+ * failed write on the status line and keep the dirty buffer open so the user
+ * can retry. */
+static void wp_save_outcome(int r)
+{
+	if (r == 0)
+	{
+		W.notice[0] = 0;
+		open_dialog(WP_DLG_SAVEAS);
+		return;
+	}
+	if (r == -1)
+	{
+		strncpy(W.notice, "Save failed - file not written",
+			sizeof(W.notice) - 1);
+		W.notice[sizeof(W.notice) - 1] = 0;
+		return;
+	}
+	W.notice[0] = 0;
+}
+
+static void wp_save_cmd(void)
+{
+	wp_save_outcome(wp_save());
+}
+
 static void activate_menu(void)
 {
 	int menu = W.menu;
@@ -3000,14 +3287,11 @@ static void activate_menu(void)
 		else if (item == 1)
 			open_dialog(WP_DLG_OPEN);
 		else if (item == 2)
-		{
-			if (!wp_save())
-				open_dialog(WP_DLG_SAVEAS);
-		}
+			wp_save_cmd();
 		else if (item == 3)
 			open_dialog(WP_DLG_SAVEAS);
 		else if (item == 4)
-			wp_leave();
+			wp_request_exit();
 	}
 	else if (menu == WP_MENU_EDIT)
 	{
@@ -3020,7 +3304,8 @@ static void activate_menu(void)
 	}
 	else if (menu == WP_MENU_SETTINGS)
 	{
-		W.wide = !W.wide;
+		W.view = (W.view + 1) % (WP_VIEW_NARROW + 1);
+		settings_sync_label();
 		W.scroll = 0;
 	}
 }
@@ -3046,7 +3331,7 @@ static int handle_alt(char c)
 	}
 	if (c == 'x')
 	{
-		wp_leave();
+		wp_request_exit();
 		return 1;
 	}
 	return 0;
@@ -3056,8 +3341,7 @@ static void do_fkey(int n)
 {
 	if (n == 2)
 	{
-		if (!wp_save())
-			open_dialog(WP_DLG_SAVEAS);
+		wp_save_cmd();
 	}
 	else if (n == 3)
 		open_dialog(WP_DLG_OPEN);
@@ -3308,6 +3592,38 @@ static int dialog_key(char c)
 		close_ui();
 		return 1;
 	}
+	if (W.dialog == WP_DLG_CONFIRM)
+	{
+		char u = c;
+		if (c == '\r' || c == '\n')
+		{
+			confirm_activate();
+			return 1;
+		}
+		if (c == 9)
+		{
+			W.dlg_btn = (W.dlg_btn + 1) % 3;
+			return 1;
+		}
+		if (u >= 'A' && u <= 'Z')
+			u = (char)(u - 'A' + 'a');
+		if (u == 's')
+		{
+			W.dlg_btn = 0;
+			confirm_activate();
+		}
+		else if (u == 'd' || u == 'n')
+		{
+			W.dlg_btn = 1;
+			confirm_activate();
+		}
+		else if (u == 'c')
+		{
+			W.dlg_btn = 2;
+			confirm_activate();
+		}
+		return 1;
+	}
 	if (c == '\r' || c == '\n')
 	{
 		if (pick_on())
@@ -3445,11 +3761,11 @@ static void draw_file_dialog(void)
 			G.plat->tui_glyph(c0 + c, r0 + r, ' ', WP_FG, sbg);
 	wp_box(c0, r0, w, h, WP_HEAD, sbg);
 	nfg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_FG : WP_FG;
-	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_BG : WP_DIM;
-	ffg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
-	fbg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : sbg;
-	dfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
-	dbg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : sbg;
+	nbg = (fd_focus == WP_FD_FOCUS_NAME) ? WP_SEL_BG : sbg;
+	ffg = WP_FG;
+	fbg = sbg;
+	dfg = WP_FG;
+	dbg = sbg;
 	wp_puts(c0 + 2, r0 + 1, W.dialog == WP_DLG_OPEN ? "Open" : "Save As", WP_HEAD, sbg);
 	wp_puts(c0 + 2, r0 + 2, "Name:", WP_DIM, sbg);
 	{
@@ -3471,16 +3787,16 @@ static void draw_file_dialog(void)
 
 		if (fi == fd_fsel && fd_nfile > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_FG : WP_FG;
-			sbg2 = (fd_focus == WP_FD_FOCUS_FILE) ? WP_SEL_BG : WP_DIM;
+			sfg = WP_SEL_FG;
+			sbg2 = WP_SEL_BG;
 		}
 		wp_puts(c0 + 2, r0 + 6 + i, fn, sfg, sbg2);
 		sfg = dfg;
 		sbg2 = dbg;
 		if (di == fd_dsel && fd_ndir > 0)
 		{
-			sfg = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_FG : WP_FG;
-			sbg2 = (fd_focus == WP_FD_FOCUS_DIR) ? WP_SEL_BG : WP_DIM;
+			sfg = WP_SEL_FG;
+			sbg2 = WP_SEL_BG;
 		}
 		wp_puts(c0 + 2 + w / 2, r0 + 6 + i, dn, sfg, sbg2);
 	}
@@ -3533,6 +3849,59 @@ static void draw_recover_dialog(void)
 		msgx = 1;
 	wp_puts(c0 + 1 + msgx, r0 + 4, msg2, WP_DIM, sbg);
 	serial_row("Recover unsaved changes? Y/N");
+}
+
+/* Dirty-exit confirmation (#972): Save / Discard / Cancel; Esc cancels. */
+static void draw_confirm_dialog(void)
+{
+	unsigned sbg = dlg_bg();
+	int w = 48, h = 8, c0, r0, i, c, x, left;
+	static const char *btns[3] = { " Save ", " Discard ", " Cancel " };
+	int bw[3];
+	const char *title = " Save changes ";
+	const char *msg = "Save changes before quitting?";
+
+	if (w > W.vid_cols - 2)
+		w = W.vid_cols - 2;
+	if (h > W.vid_rows - 2)
+		h = W.vid_rows - 2;
+	if (w < 20)
+		w = 20;
+	c0 = (W.vid_cols - w) / 2;
+	if (c0 < 0)
+		c0 = 0;
+	r0 = (W.vid_rows - h) / 2;
+	if (r0 < 1)
+		r0 = 1;
+	for (i = 0; i < h; i++)
+		for (c = 0; c < w; c++)
+			G.plat->tui_glyph(c0 + c, r0 + i, ' ', WP_FG, sbg);
+	wp_box(c0, r0, w, h, WP_HEAD, sbg);
+	left = (w - 2 - (int)strlen(title)) / 2;
+	if (left < 1)
+		left = 1;
+	wp_puts(c0 + 1 + left, r0, title, WP_HEAD, sbg);
+	left = (w - 2 - (int)strlen(msg)) / 2;
+	if (left < 1)
+		left = 1;
+	wp_puts(c0 + 1 + left, r0 + 2, msg, WP_FG, sbg);
+	bw[0] = (int)strlen(btns[0]);
+	bw[1] = (int)strlen(btns[1]);
+	bw[2] = (int)strlen(btns[2]);
+	x = c0 + (w - (bw[0] + bw[1] + bw[2] + 4)) / 2;
+	if (x < c0 + 2)
+		x = c0 + 2;
+	for (i = 0; i < 3; i++)
+	{
+		unsigned fg = (i == W.dlg_btn) ? WP_SEL_FG : WP_FG;
+		unsigned bg = (i == W.dlg_btn) ? WP_SEL_BG : sbg;
+
+		wp_puts(x, r0 + 4, btns[i], fg, bg);
+		x += bw[i] + 2;
+	}
+	wp_puts(c0 + 2, r0 + h - 2, "S Save  D Discard  C Cancel  Esc",
+		WP_DIM, sbg);
+	serial_row("Save changes before quitting? S Save  D Discard  C Cancel");
 }
 
 static void draw_picker(void)
@@ -3589,7 +3958,7 @@ static void draw_picker(void)
 }
 
 static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsigned bg,
-			     int scale)
+			     int scale, int vh)
 {
 	int left = 0;
 	int adv;
@@ -3597,7 +3966,7 @@ static void draw_cursor_cell(int x_px, int y_px, unsigned ch, unsigned fg, unsig
 	if (scale > 1)
 	{
 		adv = heading_metrics(scale, ch, &left);
-		wp_fill_px(x_px, y_px, adv, scale * 16, fg);
+		wp_fill_px(x_px, y_px, adv, vh * 16, fg);
 		wp_glyph_px(x_px - left, y_px, ch, bg, fg, scale);
 	}
 	else
@@ -3625,8 +3994,8 @@ static void draw_body(void)
 	screen_y = 0;
 	for (vr = 0; vr < W.total_vrows; vr++)
 	{
-		int scale = vrow_h(vr);
-		int vh = scale;
+		int scale = vrow_scale(vr);
+		int vh = vrow_h(vr);
 		int ls = W.vrows[vr].line_start;
 		int style = W.vrows[vr].style;
 		int hide_prefix = W.vrows[vr].hide_prefix;
@@ -3707,7 +4076,7 @@ static void draw_body(void)
 						{
 							if (on_cur)
 								wp_fill_px(x_px, screen_row * 16,
-									   adv, scale * 16, chbg);
+									   adv, vh * 16, chbg);
 							wp_glyph_px(x_px - left, screen_row * 16,
 								    (unsigned)ch, chfg, chbg,
 								    scale);
@@ -3726,7 +4095,7 @@ static void draw_body(void)
 				{
 					if (vis >= 0 && vis < W.text_rows)
 						draw_cursor_cell(x_px, screen_row * 16, ' ',
-								 fg, bg, scale);
+								 fg, bg, scale, vh);
 				}
 				while (spos < W.pane_width)
 					srow[spos++] = ' ';
@@ -3739,7 +4108,7 @@ static void draw_body(void)
 	if (W.total_vrows == 0 && !W.dialog)
 	{
 		int screen_row = W.text_top;
-		draw_cursor_cell(W.pane_left * 8, screen_row * 16, ' ', WP_FG, WP_BG, 1);
+		draw_cursor_cell(W.pane_left * 8, screen_row * 16, ' ', WP_FG, WP_BG, 1, 1);
 		serial_row("");
 	}
 	else if (W.cx_vrow >= W.total_vrows && !W.dialog)
@@ -3747,7 +4116,7 @@ static void draw_body(void)
 		int vis2 = screen_row_of_vrow(W.total_vrows) - W.scroll;
 		if (vis2 >= 0 && vis2 < W.text_rows)
 			draw_cursor_cell(W.pane_left * 8, (W.text_top + vis2) * 16, ' ',
-					 WP_FG, WP_BG, 1);
+					 WP_FG, WP_BG, 1, 1);
 	}
 }
 
@@ -3770,13 +4139,38 @@ static void draw_status(void)
 	*p++ = ' ';
 	*p = 0;
 	wp_puts(0, row, chip, WP_FG, cbg);
-	p = right;
-	p = put_uint(p, words);
-	strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
-	right[sizeof(right) - 1] = 0;
-	wp_puts(W.vid_cols - (int)strlen(right), row, right, WP_DIM, WP_BG);
+	if (W.notice[0])
+	{
+		/* A save failure takes over the right-hand side of the status
+		 * line and keeps it visible until the next edit (#975). */
+		strncpy(right, W.notice, sizeof(right) - 1);
+		right[sizeof(right) - 1] = 0;
+	}
+	else
+	{
+		p = right;
+		p = put_uint(p, words);
+		strncpy(p, " words ", sizeof(right) - (size_t)(p - right) - 1);
+		right[sizeof(right) - 1] = 0;
+	}
+	{
+		int start = W.vid_cols - (int)strlen(right);
+
+		if (start < 0)
+			start = 0;
+		wp_puts(start, row, right, W.notice[0] ? WP_HEAD : WP_DIM, WP_BG);
+	}
 	serial_row(chip);
 	serial_row(right);
+}
+
+/* Keep the background audio mixer serviced while a long blocking scroll or
+ * repaint is on the stack (#1160). mmb_play_mix() fills the output queue and
+ * is a cheap no-op when nothing is playing, so it is safe on the hot path;
+ * this mirrors term_draw()'s mixing while TERM repaints (#936). */
+static void wp_service_audio(void)
+{
+	mmb_play_mix();
 }
 
 static void wp_smooth_scroll(int from, int to)
@@ -3803,8 +4197,12 @@ static void wp_smooth_scroll(int from, int to)
 		d = step;
 		if (d > pixels - done)
 			d = pixels - done;
+		/* Each tui_scroll() blit presents and waits for its DMA, so top
+		 * the audio queue back up between frames: a held cursor key can
+		 * otherwise fire these back to back and starve JUKE/PLAY. */
 		G.plat->tui_scroll(x, y, w, h, dir * d, WP_BG);
 		done += d;
+		wp_service_audio();
 	}
 }
 
@@ -3835,10 +4233,15 @@ static void wp_redraw(void)
 		draw_picker();
 	else if (W.dialog == WP_DLG_RECOVER)
 		draw_recover_dialog();
+	else if (W.dialog == WP_DLG_CONFIRM)
+		draw_confirm_dialog();
 	else if (W.dialog)
 		draw_file_dialog();
 	if (chrome)
 		draw_status();
+	/* Top the audio queue up before the blocking present/DMA wait, so a
+	 * repaint that follows a scroll cannot leave the mixer starved (#1160). */
+	wp_service_audio();
 	G.plat->tui_present(0, W.vid_rows * 16 - 1);
 	W.last_scroll = W.scroll;
 	W.chrome_shown = chrome;
@@ -3915,7 +4318,11 @@ static const char *wp_feed_inner(char c)
 	{
 		if (handle_escape(c))
 		{
-			if (W.active)
+			/* Only a completed escape sequence changes the view.  A
+			 * leading ESC / '[' / digit is still buffering, so repainting
+			 * here would turn one PageUp/PageDown into several full
+			 * repaints (and an apparent line-by-line crawl) (#1216). */
+			if (W.active && W.esc_state == WP_ESC_NONE)
 				wp_redraw();
 			return G.out;
 		}
@@ -3951,26 +4358,28 @@ static const char *wp_feed_inner(char c)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 24)
+	if (c == 24) /* Ctrl+X: cut selection; never quits the app (#971) */
 	{
-		wp_leave();
+		delete_selection(1);
+		if (W.active)
+			wp_redraw();
 		return G.out;
 	}
-	if (c == 3)
+	if (c == 3) /* Ctrl+C: copy selection */
 	{
 		copy_selection();
 		if (W.active)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 11)
+	if (c == 11) /* Ctrl+K: legacy cut (selection, else whole line) */
 	{
 		cut_selection();
 		if (W.active)
 			wp_redraw();
 		return G.out;
 	}
-	if (c == 21)
+	if (c == 22 || c == 21) /* Ctrl+V (standard) and Ctrl+U (legacy) paste */
 	{
 		paste_clip();
 		if (W.active)
@@ -4018,19 +4427,13 @@ static const char *wp_feed(char c)
 	return r;
 }
 
-void mmb_cmd_wordpad(void)
+/* Open WORDPAD on an explicit path (or an untitled buffer when empty).  Shared
+ * by the WORDPAD command and by other full-screen apps (FILES) that launch the
+ * editor directly, so callers do not have to build a command string. */
+void mmb_wordpad_open(const char *path)
 {
-	char path[128];
 	char canon[128];
 
-	memset(path, 0, sizeof(path));
-	mmb_skip_sp();
-	if (*G.p && *G.p != ':' && *G.p != '\'')
-	{
-		mmb_val v = mmb_expr();
-		if (v.type == T_STR)
-			strncpy(path, v.s, sizeof(path) - 1);
-	}
 	memset(&W, 0, sizeof(W));
 	wp_reset_globals();
 	if (!wp_store_s[g_console])
@@ -4039,7 +4442,8 @@ void mmb_cmd_wordpad(void)
 		return;
 	}
 	W.active = 1;
-	W.wide = 0;
+	W.view = WP_VIEW_NORMAL;
+	settings_sync_label();
 	W.ndoc = 1;
 	W.cur = 0;
 	W.last_scroll = -1;
@@ -4047,7 +4451,7 @@ void mmb_cmd_wordpad(void)
 	W.rec_sig = 0;
 	W.saved_mode = G.gfx.mode;
 	W.saved_bits = G.gfx.bits;
-	if (path[0])
+	if (path && path[0])
 	{
 		canon_path(path, canon, sizeof(canon));
 		strncpy(W.path, canon, sizeof(W.path) - 1);
@@ -4065,6 +4469,26 @@ void mmb_cmd_wordpad(void)
 		G.plat->tui_prepare();
 	wp_layout_geom();
 	wp_redraw();
+}
+
+void mmb_cmd_wordpad(void)
+{
+	char path[128];
+
+	memset(path, 0, sizeof(path));
+	mmb_skip_sp();
+	if (*G.p && *G.p != ':' && *G.p != '\'')
+	{
+		mmb_val v = mmb_expr();
+		/* The filename must be a string expression; an unquoted token
+		 * such as WORDPAD myfile.md is a ?SYNTAX error, matching EDIT
+		 * (#1092, #1161). */
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(path, v.s, sizeof(path) - 1);
+		path[sizeof(path) - 1] = 0;
+	}
+	mmb_wordpad_open(path);
 }
 
 int mmb_in_wordpad(void)
@@ -4094,16 +4518,24 @@ void mmb_wordpad_poll(void)
 			return;
 		}
 	}
-	if (!W.dialog && W.path[0] && W.dirty &&
-	    mmb_now_ms() - W.rec_at >= WP_AUTOSAVE_MS)
 	{
-		unsigned s = wp_sig();
+		int counting = G.opt.autosave && W.path[0] && W.dirty && !W.dialog;
 
-		W.rec_at = mmb_now_ms();
-		if (s != W.rec_sig)
+		/* Only age the clock while a checkpoint could fire, so the
+		 * first keystroke after an idle clean buffer does not write
+		 * the whole sidecar immediately (#1011). */
+		if (!counting)
+			W.rec_at = mmb_now_ms();
+		else if (mmb_now_ms() - W.rec_at >= MMB_AUTOSAVE_MS)
 		{
-			wp_rec_write();
-			W.rec_sig = s;
+			unsigned s = wp_sig();
+
+			W.rec_at = mmb_now_ms();
+			if (s != W.rec_sig)
+			{
+				wp_rec_write();
+				W.rec_sig = s;
+			}
 		}
 	}
 	chrome = wp_chrome();
@@ -4111,7 +4543,7 @@ void mmb_wordpad_poll(void)
 		wp_redraw();
 }
 
-/* Cold-boot the WORDPAD layer on a warm reset (#763).  wp_leave() already
+/* Cold-boot the WORDPAD layer on a warm reset (#763).  wp_leave_now() already
  * frees the store of any console that was running WORDPAD, but clear every
  * console's store and static session state here too so a reset cannot leave a
  * heap allocation or stale picker behind (#768). */

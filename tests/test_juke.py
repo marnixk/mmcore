@@ -31,11 +31,25 @@ def _peak_lit(con: MMBasicConsole, samples: int = 12, gap: float = 0.3) -> float
     return best
 
 
-def _open_juke(con: MMBasicConsole, arg: str) -> str:
+def _open_juke(con: MMBasicConsole, arg: str, keep_mode: bool = False) -> str:
+    """Open JUKE.
+
+    Most layout tests pin the 960x540 baseline first so their geometry is
+    stable; ``keep_mode=True`` instead starts JUKE in whatever mode the
+    console is already in (the #1042 behaviour).
+    """
     assert con._ser is not None
+    if not keep_mode:
+        con.send_line("MODE 12,32")
     con.drain(quiet=0.15)
     con._ser.sendall(f'JUKE "{arg}"\r'.encode())
     return con.drain(quiet=0.9, timeout=10).decode(errors="replace")
+
+
+def _juke_scale(w: int, h: int) -> int:
+    """Mirror JUKE's layout scale: percent of the 960x540 design (see cmd_juke.c)."""
+    s = min(w * 100 // 960, h * 100 // 540)
+    return max(60, min(200, s))
 
 
 def _quit_juke(con: MMBasicConsole, key: bytes = b"\x1b") -> None:
@@ -52,12 +66,36 @@ def _prep_queue(con: MMBasicConsole, copies) -> None:
         assert con.send_line(f'COPY "{src}" TO "{dst}"') == ""
 
 
+def _bar_layout(w: int) -> tuple[int, int, int]:
+    """Mirror JUKE's centred spectrum-bar geometry (see cmd_juke.c)."""
+    gap = 3
+    bw = (w - 28) // 24 - gap
+    if bw < 2:
+        bw = 2
+    span = 24 * bw + 23 * gap
+    x0 = 14 + (w - 28 - span) // 2
+    return max(x0, 14), bw, gap
+
+
+def _bar_centres(w: int) -> list[int]:
+    x0, bw, gap = _bar_layout(w)
+    return [x0 + i * (bw + gap) + bw // 2 for i in range(24)]
+
+
+def _gap_after(w: int, band: int) -> int:
+    """An x coordinate inside the gap between `band` and the next bar."""
+    x0, bw, gap = _bar_layout(w)
+    return x0 + band * (bw + gap) + bw + gap // 2
+
+
 def test_help_juke(console):
     out = dump_topic(console, "JUKE")
     assert out != "?SYNTAX ERROR"
     low = out.lower()
     assert "mp3" in low
     assert "folder" in low
+    assert "subfolder" in low
+    assert "id3" in low
     assert "visualis" in low or "spectrum" in low
     assert "mod" in low
 
@@ -82,6 +120,16 @@ def test_juke_plays_mp3(fresh_console):
     playing = con.send_line("PRINT PLAYING()")
     assert playing in ("0", "1")  # the seeded MP3 is very short
     con.send_line("PLAY STOP")
+
+
+def test_juke_plays_s3m(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.S3M")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+    assert con.send_line("PRINT PLAYING()") == "0"
 
 
 def test_juke_folder_queue_starts_a_track(fresh_console):
@@ -114,6 +162,21 @@ def test_juke_single_file_finishes(fresh_console):
         samples.append(con.send_line("PRINT PLAYING()"))
         time.sleep(0.25)
     assert "1" not in samples, samples  # single file must not loop
+
+
+def test_juke_single_module_finishes_once(fresh_console):
+    """#924: a MOD queue must end after one play-through, not loop forever."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JQM/ONLY.MOD")])
+    _open_juke(con, "JQM")
+    _quit_juke(con)
+    for _ in range(40):  # the fixture is ~8 s; allow headroom
+        if con.send_line("PRINT PLAYING()") == "0":
+            break
+        time.sleep(0.5)
+    else:
+        raise AssertionError("module queued alone must end, not loop forever")
+    assert con.send_line("PRINT 1+1") == "2"
 
 
 def test_juke_pause_and_resume(fresh_console):
@@ -153,47 +216,127 @@ def _volume_lit(con: MMBasicConsole) -> int:
     return sum(1 for r, g, b in row if r + g + b > 150)
 
 
-def test_juke_has_fixed_cyberpunk_palette(fresh_console):
+def test_juke_has_fixed_grey_palette(fresh_console):
     """JUKE must not follow the system theme, and must leave it alone."""
     con = fresh_console
     assert con.send_line('OPTION THEME "Snow"') == ""
     before = con.send_line('PRINT THEME("TEXT_BG")')
     _open_juke(con, "tests/TEST.MOD")
-    # Header/backing panels stay near-black even under a light system theme.
+    # The canvas/backing stays near-black even under a light system theme.
+    # (gap after band 12) is the space between bars, so it is never a bar.
+    w, _h = con.screen_size()
     dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
-            con.screen_pixel(480, 44), con.screen_pixel(2, 494)]
+            con.screen_pixel(_gap_after(w, 12), 300), con.screen_pixel(2, 494)]
     assert all(r + g + b < 140 for r, g, b in dark), dark
-
-    # The header rule is a neon magenta accent, not a theme colour.
-    r, g, b = con.screen_pixel(480, 46)
-    assert r > 120 and b > 100 and g < 120, (r, g, b)
 
     _quit_juke(con)
     assert con.send_line('PRINT THEME("TEXT_BG")') == before
 
 
-def test_juke_visualiser_has_vertical_gradient(fresh_console):
+def test_juke_header_shows_graffiti_logo(fresh_console):
+    """#914: the header carries the colourful graffiti wordmark, not text."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    coords = [(x, y) for x in range(12, 128, 2) for y in range(1, 50, 2)]
+    colourful = 0
+    for _ in range(6):
+        for r, g, b in con.screen_pixels(coords):
+            if max(r, g, b) - min(r, g, b) > 50 and max(r, g, b) > 90:
+                colourful += 1
+        if colourful > 40:
+            break
+        time.sleep(0.2)
+    _quit_juke(con)
+    assert colourful > 40, "expected the colourful graffiti logo in the header"
+
+
+def test_juke_scope_lives_in_its_own_panel(fresh_console):
+    """#914: the oscilloscope sits in a bordered panel under the title."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    w, h = con.screen_size()
+
+    # Muted cool-grey frame: left, right, and the top edge including its
+    # right corner.
+    frame = [(8, 126), (w - 9, 126), (480, 100), (w - 9, 100)]
+    for (x, y), border in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(border), (border, x, y)
+
+    # The interior is mostly the dark panel fill (traces only cross a few
+    # pixels). The panel sits strictly above the spectrum baseline.
+    base = h - 71
+    assert 100 + 52 < base
+    pts = [(x, y) for x in range(12, 948, 20) for y in range(103, 148, 6)]
+    dark = sum(1 for c in con.screen_pixels(pts) if sum(c) < 60)
+    assert dark > len(pts) * 0.6, (dark, len(pts))
+    _quit_juke(con)
+
+
+def _on_black_lime_ramp(c: tuple[int, int, int], tol: int = 30) -> bool:
+    """True when a bar pixel lies on the straight black (0x000000) -> lime
+    (0x9DEE5E) line. The removed grey stop (0x767C82) is neutral, so it has
+    no green-dominant hue and misses the line."""
+    r, g, b = c
+    if g < 40 or g < r or g < b:
+        return False
+    t = g / 238.0  # lime green channel
+    return abs(r - 157 * t) <= tol and abs(b - 94 * t) <= tol
+
+
+def test_juke_spectrum_bars_run_black_lime(fresh_console):
+    """#1055: the per-bar ramp runs straight black -> lime, with no grey stop."""
     con = fresh_console
     # TEST.WAV is a three-second tone, so the bars stay tall long enough to
     # sample the gradient (the MOD fixture is only a brief blip).
     _open_juke(con, "tests/TEST.WAV")
     _w, h = con.screen_size()
-    base = h - 66
-    xs = [14 + i * 38 + 17 for i in range(24)]
-    coords = [(x, y) for x in xs for y in range(base - 2, base - 150, -2)]
-    cool = hot = False
+    base = h - 71
+    maxh = base - 190
+    xs = _bar_centres(_w)
+    ylist = list(range(base - 2, base - maxh, -2))
+    coords = [(x, y) for x in xs for y in ylist]
+    n = len(ylist)
+    saw_black = saw_lime = saw_mid_ramp = False
     for _ in range(8):
-        for r, g, b in con.screen_pixels(coords):
-            if b > 180 and g > 170 and r < 90:
-                cool = True  # electric cyan base
-            if r > 180 and b > 180 and g < 120:
-                hot = True  # neon magenta tip
-        if cool and hot:
+        px = con.screen_pixels(coords)
+        for i in range(24):
+            col = px[i * n:(i + 1) * n]
+            # The bar's lowest pixels fade to the black canvas, so skip them
+            # for the ramp checks but record the black base.
+            run = [c for c in col if sum(c) > 30]
+            if len(run) < 8:
+                continue
+            first = next(k for k, c in enumerate(col) if sum(c) > 30)
+            if first > 0:
+                saw_black = True
+            top = run[-1]
+            if top[1] > 170 and top[0] > 90 and top[2] < 150:
+                saw_lime = True
+            # The bar midpoint must sit on the straight black->lime line; the
+            # old ramp put a neutral grey there instead.
+            if _on_black_lime_ramp(run[len(run) // 2]):
+                saw_mid_ramp = True
+        if saw_black and saw_lime and saw_mid_ramp:
             break
         time.sleep(0.2)
     _quit_juke(con)
-    assert cool, "expected a cool gradient base in the spectrum bars"
-    assert hot, "expected a hot gradient tip in the spectrum bars"
+    assert saw_lime, "expected a lime tip in the spectrum bars"
+    assert saw_mid_ramp, "expected the bar midpoint on the straight black->lime ramp"
+    assert saw_black, "expected the spectrum bar base to fade to black"
+
+
+def test_juke_spectrum_has_no_guide_lines(fresh_console):
+    """#914 removed the midfield guide lines; the bar field is plain black."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _w, h = con.screen_size()
+    base = h - 71
+    maxh = base - 190
+    # The gap between bands 0 and 1 has no bar or cap.
+    ys = [base - maxh * i // 4 for i in (1, 2, 3)]
+    got = con.screen_pixels([(_gap_after(_w, 0), y) for y in ys])
+    assert all(sum(c) < 30 for c in got), got
+    _quit_juke(con)
 
 
 def test_juke_shuffle_toggle_lights_chip(fresh_console):
@@ -238,8 +381,908 @@ def test_help_juke_documents_shuffle_volume_transport(console):
     assert "shuffle" in low
     assert "volume" in low
     assert "prev" in low and "next" in low
-    assert "cyberpunk" in low
+    assert "grey" in low or "gray" in low
+    assert "oscilloscope" in low
+    assert "playlist" in low
+    assert "list" in low
     # The old bare < / > transport notation must be gone.
     assert "<  >" not in out
     assert "  <\n" not in out and "  >\n" not in out
+
+
+_LIST_Y0 = 160
+_LIST_ROW = 18
+
+
+def _list_rows(h: int) -> int:
+    y0 = _LIST_Y0
+    y1 = h - 56
+    if y1 < y0 + 24:
+        y1 = y0 + 24
+    rows = (y1 - y0 - 8) // _LIST_ROW
+    return rows if rows > 0 else 1
+
+
+def _list_row_y(h: int, vis: int) -> int:
+    return _LIST_Y0 + 4 + vis * _LIST_ROW + 8
+
+
+# JUKE's playlist selection fill (JUKE_LIST_SEL, cmd_juke.c). Matched as an
+# exact-ish colour: the old loose sum threshold also accepted the panel border
+# grey (col_panel2, 0x373A3E) and other muted greys (#1131).
+_LIST_SEL_RGB = (0x3A, 0x46, 0x50)
+
+
+def _is_list_sel(rgb: tuple[int, int, int]) -> bool:
+    return all(abs(c - s) <= 6 for c, s in zip(rgb, _LIST_SEL_RGB))
+
+
+def _is_panel_border(rgb: tuple[int, int, int]) -> bool:
+    """Muted cool grey of the JUKE panel frame (col_panel2)."""
+    r, _g, b = rgb
+    return max(rgb) - min(rgb) <= 16 and b >= r and 30 < r < 100 and sum(rgb) > 80
+
+
+def _is_lime_mark(rgb: tuple[int, int, int]) -> bool:
+    r, g, b = rgb
+    return g > 140 and g > r and g > b + 20
+
+
+def _keys(con: MMBasicConsole, data: bytes, quiet: float = 0.45) -> None:
+    assert con._ser is not None
+    con._ser.sendall(data)
+    con.drain(quiet=quiet, timeout=8)
+
+
+def test_juke_list_toggles_midfield(fresh_console):
+    """#933: L swaps the midfield; header and footer stay put."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JT/A.MOD"),
+                      ("tests/TEST.MOD", "JT/B.MOD")])
+    _open_juke(con, "JT")
+    _w, h = con.screen_size()
+    y0 = _list_row_y(h, 0)
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    logo = con.screen_pixel(40, 20)
+    shuf = _shuffle_lit(con)
+    _keys(con, b"l")
+    assert _is_list_sel(con.screen_pixel(16, y0)), con.screen_pixel(16, y0)
+    assert con.screen_pixel(40, 20) == logo
+    assert _shuffle_lit(con) == shuf
+    _keys(con, b"\x1b[B")
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"l")
+    assert not _is_list_sel(con.screen_pixel(16, y0))
+    assert not _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_keeps_right_border(fresh_console):
+    """The playlist frame's right edge stays visible on rows and between them."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JB/A.MOD"),
+                      ("tests/TEST.MOD", "JB/B.MOD")])
+    _open_juke(con, "JB")
+    w, h = con.screen_size()
+    _keys(con, b"l")
+    y_sel = _list_row_y(h, 0)
+    y_gap = _LIST_Y0 + 4 + 16
+    edge = w - 9
+    samples = [
+        (edge, y_sel),
+        (edge, y_gap),
+        (edge, _list_row_y(h, 1)),
+        (edge, 300),
+        (8, y_sel),
+        (w - 11, y_sel),
+        (w - 10, y_sel),
+        (w - 8, y_sel),
+    ]
+    got = con.screen_pixels(samples)
+    for (x, y), rgb in zip(samples[:5], got[:5]):
+        assert _is_panel_border(rgb), (rgb, x, y)
+    # Selection stops one pixel inside the frame; the margin past it is black.
+    assert _is_list_sel(got[5]), got[5]
+    assert sum(got[6]) < 60, got[6]
+    assert sum(got[7]) < 40, got[7]
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_keeps_waveform_visible(fresh_console):
+    """#950: with the playlist open the scope stays put and the list sits below."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JW/A.MOD"),
+                      ("tests/TEST.MOD", "JW/B.MOD")])
+    _open_juke(con, "JW")
+    w, h = con.screen_size()
+    _keys(con, b"l")
+    # The oscilloscope panel is still drawn while the playlist is showing.
+    frame = [(8, 126), (w - 9, 126), (480, 100), (w - 9, 100)]
+    for (x, y), border in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(border), (border, x, y)
+    # The playlist selection begins below the scope panel, not over it.
+    assert _list_row_y(h, 0) > 100 + 52
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_arrows_on_visualiser_do_not_quit(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _keys(con, b"\x1b[A\x1b[B")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line("PRINT 1+1") == "2"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_enter_on_visualiser_quits(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    _quit_juke(con, b"\r")
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_enter_starts_selection(fresh_console):
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JL/A.MOD"),
+                      ("tests/TEST.MOD", "JL/B.MOD")])
+    _open_juke(con, "JL")
+    _keys(con, b" ")
+    assert con._ser is not None
+    _w, h = con.screen_size()
+    _keys(con, b"l\x1b[B")
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"\r")
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_scrolls_and_keeps_now_playing(fresh_console):
+    con = fresh_console
+    copies = [("tests/TEST.MOD", "JSQ/%02d.MOD" % i) for i in range(22)]
+    _prep_queue(con, copies)
+    _open_juke(con, "JSQ")
+    _w, h = con.screen_size()
+    rows = _list_rows(h)
+    _keys(con, b"l", quiet=0.6)
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    assert _is_lime_mark(con.screen_pixel(12, _list_row_y(h, 0)))
+    _keys(con, b"\x1b[B" * (rows + 4), quiet=1.2)
+    assert not _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, rows - 1)))
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_selection_follows_shuffle(fresh_console):
+    """The highlighted row is the selected item after shuffle, and Enter plays it."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JSH/A.MOD"),
+                      ("tests/TEST.MOD", "JSH/B.MOD"),
+                      ("tests/TEST.MOD", "JSH/C.MOD"),
+                      ("tests/TEST.MOD", "JSH/D.MOD")])
+    _open_juke(con, "JSH")
+    _keys(con, b" ")
+    _w, h = con.screen_size()
+    _keys(con, b"l\x1b[B")
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 1)))
+    _keys(con, b"r", quiet=0.6)
+    hits = []
+    for vis in range(4):
+        if _is_list_sel(con.screen_pixel(16, _list_row_y(h, vis))):
+            hits.append(vis)
+    assert hits, "selection highlight missing after shuffle"
+    assert len(hits) == 1
+    assert _is_lime_mark(con.screen_pixel(12, _list_row_y(h, 0)))
+    _keys(con, b"\r")
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def _mkdir_path(con: MMBasicConsole, path: str) -> None:
+    acc = ""
+    for part in path.split("/"):
+        if not part:
+            continue
+        acc = part if not acc else acc + "/" + part
+        assert con.send_line(f'MKDIR "{acc}"') == ""
+
+
+def test_juke_queues_nested_folder_before_siblings(fresh_console):
+    """#934: a subfolder's track is queued, and it plays before files beside it."""
+    con = fresh_console
+    _mkdir_path(con, "JY/SUB")
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JY/SUB/NEST.MOD"') == ""
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JY/TOP.MOD"') == ""
+    out = _open_juke(con, "JY")
+    assert "FILE" not in out.upper()
+    screen = con.wait_ocr("NEST", timeout=8.0, crop="960x90+0+0")
+    assert "NEST" in screen.upper(), screen
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_nested_only_file_still_plays(fresh_console):
+    con = fresh_console
+    _mkdir_path(con, "JZ/SUB")
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JZ/SUB/ONLY.MOD"') == ""
+    out = _open_juke(con, "JZ")
+    assert "FILE" not in out.upper() and "DIRECTORY" not in out.upper()
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_deep_tree_reaches_deep_file(fresh_console):
+    """#966: the scan is not depth-capped, so a deep track is queued and plays."""
+    con = fresh_console
+    acc = "JX"
+    _mkdir_path(con, acc)
+    for _ in range(9):
+        acc = acc + "/L"
+        assert con.send_line(f'MKDIR "{acc}"') == ""
+    assert con.send_line(f'COPY "tests/TEST.MOD" TO "{acc}/DEEP.MOD"') == ""
+    assert con.send_line('COPY "tests/TEST.MOD" TO "JX/TOP.MOD"') == ""
+    out = _open_juke(con, "JX")
+    assert "FILE" not in out.upper()
+    # Subfolders come first, so the deepest track is the one now playing.
+    title = con.wait_ocr("DEEP", timeout=8.0, crop="960x40+0+50")
+    assert "DEEP" in title.upper(), title
+    # The truncation hint is gone from the header (#965).
+    header = con.ocr_screen(crop="960x40+400+0")
+    assert "more" not in header.lower(), header
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def _title_ocr(con: MMBasicConsole, needle: str) -> str:
+    return con.wait_ocr(needle, timeout=8.0, crop="960x24+0+56")
+
+
+def test_juke_shows_module_song_titles(fresh_console):
+    con = fresh_console
+    for path, needle in (
+        ("tests/TEST.MOD", "TESTMOD"),
+        ("tests/TEST.XM", "TESTXM"),
+        ("tests/TEST.S3M", "TESTS3M"),
+    ):
+        _open_juke(con, path)
+        screen = _title_ocr(con, needle)
+        assert needle in screen.upper().replace(" ", ""), screen
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+def test_juke_keeps_current_mode(fresh_console):
+    """#1042: JUKE draws in the mode the console is already in and leaves it."""
+    con = fresh_console
+    before_mode = con.send_line("PRINT MM.INFO(MODE)")
+    w0, h0 = con.screen_size()
+    assert (w0, h0) == (1280, 720)  # the boot default, not JUKE's 960x540
+
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+
+    # The framebuffer is still the console's mode, not a forced 960x540.
+    assert con.screen_size() == (w0, h0), "JUKE switched video mode"
+    assert _peak_lit(con) > 0.001
+
+    _quit_juke(con)
+    assert con.send_line("PRINT MM.INFO(MODE)") == before_mode
+    con.send_line("PLAY STOP")
+
+
+def test_juke_layout_scales_with_current_mode(fresh_console):
+    """#1041: panels scale from the framebuffer rather than a fixed mode."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    s = _juke_scale(w, h)
+    assert s > 100  # 1280x720 must enlarge the 960x540 design
+
+    # The oscilloscope inset is anchored at the scaled offset, so it sits
+    # well below where the 960x540 layout would have put it (y = 100).
+    pad = 8 * s // 100
+    top = 100 * s // 100
+    bh = 52 * s // 100
+    left = pad
+    right = pad + (w - 16 * s // 100) - 1
+    assert top > 100 and bh > 52
+    frame = [(left + 40, top), (left + 40, top + bh - 1),
+             (left, top + 5), (right, top + 5)]
+    for (x, y), rgb in zip(frame, con.screen_pixels(frame)):
+        assert _is_panel_border(rgb), (rgb, x, y)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_keeps_chromebook_modes(fresh_console):
+    """#1042: JUKE runs in MODE 19 and MODE 20 and leaves each one in place.
+
+    Modes 19/20 keep the Chromebook native/2x sizes (1366x768, 683x384) so the
+    panel scales them cleanly (#1052). Pixel-exact layout isn't asserted here:
+    QEMU's bcm2835-fb scanout shears these non-16-pixel-aligned widths
+    independent of JUKE (host emulator defect, #1050), so the check is that the
+    mode survives and the player actually renders.
+    """
+    con = fresh_console
+    for mode, size, info in ((19, (1366, 768), "19.32"),
+                             (20, (683, 384), "20.32")):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == size
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        assert con.send_line("PRINT MM.INFO(MODE)") == info
+        con.send_line("PLAY STOP")
+
+
+def test_juke_shows_id3_titles_and_basename_fallback(fresh_console):
+    con = fresh_console
+    _open_juke(con, "tests/ZV2.MP3")
+    screen = _title_ocr(con, "TWOSONG")
+    assert "TWOSONG" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    _open_juke(con, "tests/ZV1.MP3")
+    screen = _title_ocr(con, "ONESONG")
+    assert "ONESONG" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    _open_juke(con, "tests/ZBAD.MP3")
+    screen = _title_ocr(con, "ZBAD")
+    assert "ZBAD" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+    assert con.send_line('COPY "tests/TEST.WAV" TO "ZTONE.WAV"') == ""
+    _open_juke(con, "ZTONE.WAV")
+    screen = _title_ocr(con, "ZTONE")
+    assert "ZTONE" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_rows_use_song_titles(fresh_console):
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JTIT/A.MOD"),
+                      ("tests/TEST.XM", "JTIT/B.XM")])
+    _open_juke(con, "JTIT")
+    _keys(con, b"l", quiet=0.6)
+    screen = con.wait_ocr("TESTXM", timeout=8.0, crop="960x220+0+100")
+    assert "TESTXM" in screen.upper().replace(" ", ""), screen
+    assert "TESTMOD" in screen.upper().replace(" ", ""), screen
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_folder_beyond_64_files_is_fully_reachable(fresh_console):
+    """#966: a >64-file folder queues every file, not the first 64/256.
+
+    WAV fixtures fall back to their basename as the title, so the last track's
+    name proves the playlist reached the 70th entry rather than clamping.
+    """
+    con = fresh_console
+    total = 70
+    copies = [("tests/TEST.WAV", "JLG/%02d.WAV" % i) for i in range(total)]
+    _prep_queue(con, copies)
+    out = _open_juke(con, "JLG")
+    assert "FILE" not in out.upper()
+    _w, h = con.screen_size()
+    _keys(con, b"l", quiet=0.6)
+    assert _is_list_sel(con.screen_pixel(16, _list_row_y(h, 0)))
+    # Walk the selection to the end of the queue and play it.
+    _keys(con, b"\x1b[B" * (total - 1), quiet=2.5)
+    _keys(con, b"\r", quiet=0.6)
+    title = _title_ocr(con, "69")
+    assert "69" in title.upper(), title
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+# ---- #1113: the first mixed buffer already uses the set volume -------------
+
+
+def test_juke_first_buffer_uses_current_volume(fresh_console):
+    """#1113: no full-volume preroll; the first buffer is scaled to the volume.
+
+    ``MM.INFO("FIRSTVOL")`` is the gain the mixer applied to the first buffer
+    after the track started. It used to be 100 for a few ms before JUKE
+    restored its own setting.
+    """
+    con = fresh_console
+    assert con.send_line("PLAY VOLUME 40") == ""
+    _open_juke(con, "tests/TEST.MOD")
+    assert _peak_lit(con) > 0.001
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "40"
+    con.send_line("PLAY STOP")
+
+
+def test_juke_next_track_first_buffer_is_silent_at_zero(fresh_console):
+    """#1113: with volume 0 a skip is silent from its very first sample."""
+    con = fresh_console
+    _prep_queue(con, [("tests/TEST.MOD", "JV/A.MOD"),
+                      ("tests/TEST.MOD", "JV/B.MOD")])
+    _open_juke(con, "JV")
+    _keys(con, b"-" * 24, quiet=0.8)  # 100 -> 0
+    _keys(con, b"n", quiet=0.8)       # next track re-arms the gain at 0
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "0"
+    con.send_line("PLAY STOP")
+
+
+# ---- #1163: an intentional volume 0 survives JUKE opening ------------------
+
+
+def test_juke_keeps_persisted_zero_volume(fresh_console):
+    """#1163: opening JUKE must not seed 100 over a stored PLAY VOLUME 0.
+
+    ``PLAY VOLUME 0`` sets the live player gain to 0 and persists
+    ``volume_l=0``/``volume_r=0``. On the next boot ``settings_finish()``
+    restores that 0 into ``g_audio``; JUKE used to treat ``<= 0`` as "unset"
+    and turn it back up to full. The bar stays empty and the track's first
+    buffer is silent (the #1113 armed-gain path is unchanged).
+    """
+    con = fresh_console
+    assert con.send_line("PLAY VOLUME 0") == ""
+    _open_juke(con, "tests/TEST.MOD")
+    assert _volume_lit(con) == 0, _volume_lit(con)
+    _quit_juke(con)
+    assert con.send_line('PRINT MM.INFO("FIRSTVOL")') == "0"
+    con.send_line("PLAY VOLUME 100")
+
+
+# ---- #1114: trimmed shortcut bar and ? help modal --------------------------
+
+
+def _footer_geometry(w: int, h: int) -> tuple[int, int, int]:
+    """Mirror JUKE's footer rows (see cmd_juke.c): (legend_y, vol_y, bar_h)."""
+    s = _juke_scale(w, h)
+    line = 16
+    bar_h = max(8, 14 * s // 100)
+    vol_row_h = max(bar_h, line)
+    pad = max(4, 8 * s // 100)
+    gap = max(6, 8 * s // 100)
+    vol_y = h - pad - vol_row_h
+    return vol_y - gap - line, vol_y, bar_h
+
+
+def _help_title_crop(w: int, h: int) -> str:
+    """A crop around the help modal's title row (see cmd_juke.c)."""
+    s = _juke_scale(w, h)
+    pad = max(8, 12 * s // 100)
+    gap = max(10, 14 * s // 100)
+    kw = len("UP DOWN") * 8
+    dw = len("close help (then quits)") * 8
+    pw = min(pad * 2 + kw + gap + dw, w - 8 * s // 100)
+    ph = min(pad * 2 + 13 * 16 + 6 * s // 100, h - 8 * s // 100)
+    px = (w - pw) // 2
+    py = (h - ph) // 2
+    return f"{pw}x36+{px}+{py}"
+
+
+def test_juke_footer_lists_only_core_shortcuts(fresh_console):
+    """#1114: the bar keeps only play/pause, prev, next, esc and ?."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")
+    w, h = con.screen_size()
+    legend_y, _vol_y, _bar_h = _footer_geometry(w, h)
+    out = con.ocr_screen(crop=f"{w}x20+0+{max(0, legend_y - 2)}").lower()
+    assert "space" in out, out
+    assert "prev" in out and "next" in out, out
+    assert "esc" in out, out
+    assert "?" in out or "help" in out, out
+    for gone in ("shuf", "mute", "stop"):
+        assert gone not in out, (gone, out)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_help_modal_toggles_and_esc_is_dialog_only(fresh_console):
+    """#1114: `?` opens/closes help; Esc closes the dialog, not the player."""
+    con = fresh_console
+    # A two-track queue wraps, so audio is still live at the end of the test.
+    _prep_queue(con, [("tests/TEST.MOD", "JH/A.MOD"),
+                      ("tests/TEST.MOD", "JH/B.MOD")])
+    _open_juke(con, "JH")
+    w, h = con.screen_size()
+    crop = _help_title_crop(w, h)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" in con.wait_ocr("HELP", timeout=8.0, crop=crop).upper()
+
+    # `?` a second time closes it.
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+
+    # Esc closes the dialog only; JUKE keeps rendering and a later Esc quits.
+    _keys(con, b"?", quiet=0.6)
+    assert "HELP" in con.wait_ocr("HELP", timeout=8.0, crop=crop).upper()
+    _keys(con, b"\x1b", quiet=0.5)
+    assert "HELP" not in con.ocr_screen(crop=crop).upper()
+    assert _peak_lit(con) > 0.001, "Esc closed JUKE instead of just the dialog"
+    # Keys still work after the dialog; restart a track so the playback check
+    # does not land in the ~1 s queue-advance gap between two MODs.
+    _keys(con, b"n", quiet=0.4)
+    _quit_juke(con)
+    assert con.send_line("PRINT PLAYING()") == "1"  # dialog never stopped audio
+    con.send_line("PLAY STOP")
+
+
+def test_juke_footer_gap_at_low_resolution(fresh_console):
+    """#1114: a clear gap between the shortcut bar and the volume row."""
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    s = _juke_scale(w, h)
+    legend_y, vol_y, _bar_h = _footer_geometry(w, h)
+    assert vol_y - (legend_y + 16) >= 6, (legend_y, vol_y)
+    lx = 14 * s // 100
+    right = min(lx + 220 * s // 100, w - 1)
+    for y in range(legend_y + 16, vol_y):
+        row = con.screen_pixels([(x, y) for x in range(lx, right, 3)])
+        assert all(sum(c) < 70 for c in row), (y, row)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+# ---- #1115: logo never overlaps the track / path text ----------------------
+
+
+def _is_vivid_pixel(c: tuple[int, int, int]) -> bool:
+    """Vivid graffiti-logo hue (the dim path text and white title miss it)."""
+    return max(c) - min(c) > 90 and max(c) > 120
+
+
+def _logo_bottom_and_title(con: MMBasicConsole, w: int, h: int) -> tuple[int, bool]:
+    """Lowest vivid logo pixel in the header, and whether the title is visible."""
+    coords = [(x, y) for x in range(0, w, 2) for y in range(0, min(70, h), 2)]
+    vivid_y = []
+    for c, (x, y) in zip(con.screen_pixels(coords), coords):
+        if _is_vivid_pixel(c):
+            vivid_y.append(y)
+    title_y = 60 * _juke_scale(w, h) // 100
+    row = [(x, y) for x in range(0, w, 2)
+           for y in range(title_y, min(title_y + 16, h), 2)]
+    white = sum(1 for c in con.screen_pixels(row) if min(c) > 200)
+    return max(vivid_y) if vivid_y else -1, white > 0
+
+
+def test_juke_logo_clear_of_title_low_resolution(fresh_console):
+    """#1115: in a low mode the scaled logo ends above the title row."""
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    s = _juke_scale(w, h)
+    title_y = 60 * s // 100
+    logo_bottom, title_visible = _logo_bottom_and_title(con, w, h)
+    assert logo_bottom >= 0, "no graffiti logo found in the header"
+    assert logo_bottom < title_y, (logo_bottom, title_y)
+    assert title_visible, "track title not drawn below the logo"
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_logo_and_title_clear_at_chromebook_modes(fresh_console):
+    """#1115: logo and title do not collide in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry (logo bottom above the title) plus that the player
+    rendered, rather than pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        s = _juke_scale(w, h)
+        logo_bottom = (1 * s // 100) + 50 * s // 100
+        title_y = 60 * s // 100
+        assert logo_bottom < title_y, (mode, logo_bottom, title_y)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+# ---- #1118: header lines keep a fixed one-line pitch at low scales ---------
+
+
+def _header_geometry(w: int, h: int) -> tuple[int, int, int, int]:
+    """Mirror JUKE's header anchors (see cmd_juke.c).
+
+    Returns ``(title_y, path_y, scope_y, list_y)``. The title/path offsets are
+    scaled by the layout percent but the pixel font is a fixed 16px, so each
+    line is clamped to at least one fixed line below the one above, and the
+    scope (then the list) is pushed below the header when it grows.
+    """
+    s = _juke_scale(w, h)
+    title_y = 60 * s // 100
+    path_y = max(78 * s // 100, title_y + 16)
+    gap = max(4, 6 * s // 100)
+    scope_y = max(100 * s // 100, path_y + 16 + gap)
+    list_y = scope_y + 52 * s // 100 + 8 * s // 100
+    return title_y, path_y, scope_y, list_y
+
+
+def _is_header_path(c: tuple[int, int, int]) -> bool:
+    """JUKE's dim steel-blue path text (col_dim 0x6A95AC)."""
+    r, g, b = c
+    return b > r + 20 and g > r and 60 < b < 220
+
+
+def test_juke_header_lines_do_not_overlap_low_resolution(fresh_console):
+    """#1118: the path is anchored one full line below the title at MODE 13.
+
+    At the 60% floor the scaled title/path gap is 10px, under the fixed 16px
+    font, so the path used to be drawn at the un-clamped scaled offset over the
+    title's lower cell rows, and its bottom collided with the scope panel top.
+    """
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    title_y, path_y, scope_y, list_y = _header_geometry(w, h)
+
+    # A full fixed line between title and path, and the scope below the header.
+    assert path_y - title_y >= 16, (title_y, path_y)
+    assert scope_y >= path_y + 16, (path_y, scope_y)
+    assert list_y > scope_y, (scope_y, list_y)
+
+    title_rows, path_rows, border_rows = [], [], []
+    for y in range(title_y, min(h, list_y)):
+        row = con.screen_pixels([(x, y) for x in range(0, w, 2)])
+        if any(min(c) > 200 for c in row):
+            title_rows.append(y)
+        if any(_is_header_path(c) for c in row):
+            path_rows.append(y)
+        if sum(1 for c in row if _is_panel_border(c)) > w // 8:
+            border_rows.append(y)
+
+    assert title_rows, "title line not rendered"
+    assert path_rows, "path line not rendered"
+    # The clamped anchors actually placed the glyphs: the title stays above the
+    # path anchor and the path begins at or below it (pre-fix it started at the
+    # smaller scaled offset).
+    assert max(title_rows) < path_y, (title_rows, path_y)
+    assert min(path_rows) >= path_y, (path_rows, path_y)
+    # The scope panel top moved down with the header instead of sitting under
+    # the path's bottom row.
+    assert border_rows, "scope panel top border not found"
+    assert min(border_rows) >= path_y + 16, (border_rows, path_y)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_header_scales_at_chromebook_modes(fresh_console):
+    """#1118: header pitch and anchors hold in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry plus that the player rendered, not pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        title_y, path_y, scope_y, list_y = _header_geometry(w, h)
+        assert path_y - title_y >= 16, (mode, title_y, path_y)
+        assert scope_y >= path_y + 16, (mode, path_y, scope_y)
+        assert list_y > scope_y, (mode, scope_y, list_y)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+# ---- #1123: playlist panel stays clear of the footer legend ----------------
+
+
+def _list_geometry(w: int, h: int) -> tuple[int, int, int]:
+    """Mirror JUKE's playlist frame (see cmd_juke.c): (y0, y1, footer_top).
+
+    ``y1`` is the scaled panel bottom clamped above the footer legend top so
+    the list frame never crosses the fixed 16px legend row.
+    """
+    s = _juke_scale(w, h)
+    y0 = _header_geometry(w, h)[3]  # juke_list_y()
+    footer_top = _footer_geometry(w, h)[0]  # juke_footer_geometry().legend_y
+    y1 = h - 56 * s // 100
+    y1 = min(y1, footer_top)
+    floor = y0 + 24 * s // 100
+    return y0, max(y1, floor), footer_top
+
+
+def test_juke_list_panel_clear_of_footer_low_resolution(fresh_console):
+    """#1123: at the 60% floor the panel bottom no longer cuts the legend.
+
+    The panel bottom is a scaled design coordinate while the footer legend is
+    anchored to the margin, so below ~80% the frame crossed the legend row.
+    """
+    con = fresh_console
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+
+    _keys(con, b"l", quiet=0.6)  # playlist on
+    assert con.screen_size() == (400, 300)
+
+    _y0, y1, footer_top = _list_geometry(w, h)
+    assert y1 <= footer_top, (y1, footer_top)
+
+    s = _juke_scale(w, h)
+    margin = 8 * s // 100
+    bw = w - 16 * s // 100
+    xs = list(range(margin + 2, margin + bw - 2, 4))
+
+    # The panel's bottom border row is a real frame line above the legend.
+    border = con.screen_pixels([(x, y1 - 1) for x in xs])
+    assert sum(1 for c in border if _is_panel_border(c)) > len(border) * 2 // 3
+
+    # And no frame line runs through the legend row itself.
+    legend = con.screen_pixels([(x, footer_top + 4) for x in xs])
+    assert not any(_is_panel_border(c) for c in legend), legend
+
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_list_panel_clear_of_footer_chromebook_modes(fresh_console):
+    """#1123: the panel stays above the legend in MODE 19/20.
+
+    QEMU shears these non-16-aligned widths (#1050), so this asserts the
+    derived geometry plus that the player rendered, not pixel-exact rows.
+    """
+    con = fresh_console
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        _y0, y1, footer_top = _list_geometry(w, h)
+        assert y1 <= footer_top, (mode, y1, footer_top)
+        raw = h - 56 * _juke_scale(w, h) // 100
+        if mode == 20:
+            # 71% layout: the unclamped bottom would sit below the legend.
+            assert raw > footer_top, (raw, footer_top)
+            assert y1 == footer_top
+        else:
+            assert y1 == raw  # design-scale clamp is a no-op
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
+def test_juke_list_panel_keeps_design_bottom(fresh_console):
+    """#1123: at the design scale the clamp is a no-op (panel stays put)."""
+    con = fresh_console
+    _open_juke(con, "tests/TEST.MOD")  # MODE 12,32 = 960x540
+    w, h = con.screen_size()
+    assert (w, h) == (960, 540)
+    _y0, y1, footer_top = _list_geometry(w, h)
+    assert y1 == h - 56, (y1, h - 56)
+    assert y1 < footer_top, (y1, footer_top)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+# ---- #1127: highlight-row text is vertically centred ------------------------
+
+def _is_sel_bg(c: tuple[int, int, int]) -> bool:
+    return _is_list_sel(c)
+
+
+def _highlight_padding(
+    con: MMBasicConsole, vis: int = 0, pixel_bar: bool = True
+) -> tuple[int, int]:
+    """Pixel padding above/below the selected row's text (#1127).
+
+    Scans the white glyph ink in the row's text area. With ``pixel_bar`` the
+    selection bar's edges come from its exact fill colour (reliable on the
+    16-aligned modes); otherwise the bar is the derived row geometry, because
+    QEMU's colour-cycling shear on the non-16-aligned Chromebook widths (#1050)
+    makes the fill impossible to locate by colour there.
+    """
+    w, h = con.screen_size()
+    s = _juke_scale(w, h)
+    row = max(16, 18 * s // 100)
+    sel_h = row - 2
+    y = _header_geometry(w, h)[3] + 4 * s // 100 + vis * row
+    if pixel_bar:
+        span = list(range(max(0, y - 4), min(h, y + sel_h + 4)))
+        x0 = 22 * s // 100
+        xb0 = 11 * s // 100 + 4 * s // 100  # clear of the now-playing chip
+        bars = list(range(xb0, max(xb0 + 1, x0 - 1)))
+        px = dict(zip([(x, yy) for x in bars for yy in span],
+                      con.screen_pixels([(x, yy) for x in bars for yy in span])))
+        seen = []
+        for x in bars:
+            nb = [yy for yy in span if _is_sel_bg(px[(x, yy)])]
+            if nb:
+                seen.append((min(nb), max(nb)))
+        assert seen, "selection bar not found"
+        seen.sort()
+        top, bot = seen[len(seen) // 2]
+    else:
+        top, bot = y, y + sel_h - 1
+    x0 = 22 * s // 100
+    x1 = min(w - 22 * s // 100, 600)
+    coords = [(x, yy) for yy in range(top - 6, bot + 7)
+              for x in range(x0, x1, 2)]
+    cols = con.screen_pixels(coords)
+    ink = [yy for (x, yy), c in zip(coords, cols) if min(c) > 200]
+    assert ink, "no row text ink found"
+    return min(ink) - top, bot - max(ink)
+
+
+def _prep_highlight_queue(con: MMBasicConsole) -> None:
+    _prep_queue(con, [("tests/TEST.MOD", "JC/A.MOD"),
+                      ("tests/TEST.MOD", "JC/B.MOD"),
+                      ("tests/TEST.MOD", "JC/C.MOD")])
+
+
+def test_juke_highlight_text_centred(fresh_console):
+    """#1127: the selected row's text has equal padding above and below."""
+    con = fresh_console
+    _prep_highlight_queue(con)
+    _open_juke(con, "JC")
+    _keys(con, b"l", quiet=0.6)
+    top, bot = _highlight_padding(con)
+    assert abs(top - bot) <= 1, (top, bot)
+    # The offset is per-row, so the next selected row is centred too.
+    _keys(con, b"\x1b[B")
+    top, bot = _highlight_padding(con, vis=1)
+    assert abs(top - bot) <= 1, (top, bot)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_highlight_text_centred_low_resolution(fresh_console):
+    """#1127: centred in the shortest supported row (60% layout floor)."""
+    con = fresh_console
+    _prep_highlight_queue(con)
+    con.send_line("MODE 13,32")  # 400x300, lays out at the 60% floor
+    _open_juke(con, "JC", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (400, 300)
+    _keys(con, b"l", quiet=0.6)
+    top, bot = _highlight_padding(con)
+    assert abs(top - bot) <= 1, (top, bot)
+    _quit_juke(con)
+    con.send_line("PLAY STOP")
+
+
+def test_juke_highlight_text_centred_chromebook_modes(fresh_console):
+    """#1127: centred in MODE 19/20, where the bar is taller than the font.
+
+    QEMU's colour-cycling shear on these non-16-aligned widths (#1050) makes
+    the selection fill impossible to locate by colour, so the bar comes from
+    the derived row geometry and only the glyph ink is read from pixels.
+    """
+    con = fresh_console
+    _prep_highlight_queue(con)
+    for mode, (w, h) in ((19, (1366, 768)), (20, (683, 384))):
+        assert con.send_line(f"MODE {mode},32") == ""
+        _open_juke(con, "JC", keep_mode=True)
+        assert con.screen_size() == (w, h)
+        _keys(con, b"l", quiet=0.6)
+        top, bot = _highlight_padding(con, pixel_bar=False)
+        assert abs(top - bot) <= 1, (mode, top, bot)
+        assert _peak_lit(con) > 0.001, f"MODE {mode} rendered nothing"
+        _quit_juke(con)
+        con.send_line("PLAY STOP")
+
+
 

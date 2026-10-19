@@ -30,8 +30,17 @@ def _keys(con, data: bytes, quiet: float = 0.5) -> str:
     return _plain(con.drain(quiet=quiet).decode(errors="replace"))
 
 
-def _quit(con) -> str:
-    return _keys(con, bytes([24]))
+def _quit(con, quiet: float = 0.6) -> str:
+    """Quit via Alt+X (not Ctrl+X, which now cuts).
+
+    When the buffer is dirty WORDPAD asks before exiting; discard the changes
+    so the existing callers keep their old "leave now" behaviour.  A clean
+    exit shows no prompt and nothing extra is sent.
+    """
+    seen = _keys(con, bytes([1]) + b"x", quiet=quiet)
+    if "save changes" in seen.lower() or "discard" in seen.lower():
+        seen += _keys(con, b"d", quiet=quiet)
+    return seen
 
 
 def _alt_menu(con, letter: bytes, quiet: float = 0.5) -> str:
@@ -60,6 +69,24 @@ def test_wordpad_opens_untitled(kernel_image):
         _keys(con, b"\x1b", quiet=0.6)
         _quit(con)
         assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_wordpad_unquoted_filename_is_syntax_error(kernel_image):
+    """#1161: WORDPAD's filename must be a string expression (as EDIT #1092).
+
+    An unquoted token used to be silently ignored, opening an empty document.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("WORDPAD UNQUOTED.MD") == "?SYNTAX ERROR"
+        assert con.send_line("PRINT 1") == "1"
+        # A quoted filename still opens WORDPAD.
+        seen = _open(con, 'WORDPAD "QUOTED.MD"', quiet=1.0)
+        assert "[WORDPAD]" in seen
+        _quit(con)
     finally:
         con.stop()
 
@@ -270,6 +297,59 @@ def test_wordpad_heading_wraps_long_line(kernel_image):
         con.stop()
 
 
+def test_wordpad_wrapped_header_line_height_is_tighter(kernel_image):
+    """#1202: a wrapped H1 draws consecutive lines three text rows apart.
+
+    Screenshot regression: the glyphs of a wrapped large header used to be a
+    full 4-row (64px) cell apart; they are now tightened to 3 rows (48px)
+    while a single-line heading and body text keep the full height.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        _open(con)
+        # Seven "Mellow " words wrap a level-1 heading onto two lines; the
+        # trailing body line parks the cursor away from the header.
+        _keys(con, b"# " + b"Mellow " * 7 + b"\rbody", quiet=1.0)
+        time.sleep(0.3)
+        ox = _pane_left_px(con)
+        png = con.capture_png("/opt/cursor/artifacts/issue1202_wrapped_header.png")
+        out = subprocess.run(
+            ["convert", png, "-crop", f"480x300+{ox}+0", "+repage", "txt:-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        lit = set()
+        for line in out.splitlines():
+            if ":" not in line or "(" not in line:
+                continue
+            coord = line.split(":")[0].strip()
+            if "," not in coord:
+                continue
+            _x, y = (int(p) for p in coord.split(","))
+            inner = line[line.find("(") + 1 : line.find(")")]
+            parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+            if len(parts) < 3:
+                continue
+            if _lum(tuple(int(float(p)) for p in parts[:3])) > 1200:
+                lit.add(y)
+        # Group lit pixel rows into text lines separated by a blank gap.
+        lines = []
+        for y in sorted(lit):
+            if lines and y - lines[-1][-1] <= 8:
+                lines[-1].append(y)
+            else:
+                lines.append([y])
+        assert len(lines) >= 2, sorted(lit)
+        advance = lines[1][0] - lines[0][0]
+        assert 32 < advance < 64, (advance, lines)
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_word_wrap(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -292,29 +372,75 @@ def test_wordpad_word_wrap(kernel_image):
 
 
 def test_wordpad_wide_view_toggle(kernel_image):
+    """#1201: the Settings view item cycles normal -> wide -> narrow, centring
+    the 80/120/60-column pane; the label names the current mode."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         assert con.send_line("MODE 14,16") == ""
         _apply_slate_theme(con)
         time.sleep(0.3)
-        assert con.screen_size() == (960, 540)
+        assert con.screen_size() == (960, 540)  # 120 columns
         _open(con, quiet=1.0)
-        margin = con.screen_pixel(40, 80)
-        assert _is_dark_theme_bg(*margin), margin
+        _keys(con, b"H", quiet=0.6)
+        time.sleep(0.3)
+        # normal: 80 columns centred -> pane starts at column 20 (160px)
+        assert abs(_first_ink_x(con, 8) - 160) <= 10
+
         menu = _alt_menu(con, b"s", quiet=0.5)
-        if "Wide" in menu or "wide" in menu.lower():
-            toggled = _keys(con, b"\r", quiet=0.8)
-        else:
-            toggled = _keys(con, b"w", quiet=0.8)
-        low = toggled.lower()
-        wide_hint = "wide" in low or "120" in toggled
-        still_hd = con.screen_size() == (960, 540)
-        margin_after = con.screen_pixel(40, 80)
-        margin_stays_bg = _is_dark_theme_bg(*margin_after)
-        assert wide_hint or (still_hd and margin_stays_bg)
+        assert "View: Normal" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # wide: 120 columns fill the screen -> pane starts at column 0
+        assert _first_ink_x(con, 8) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Wide" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # narrow: 60 columns centred -> pane starts at column 30 (240px)
+        assert abs(_first_ink_x(con, 8) - 240) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Narrow" in menu, menu
+        _keys(con, b"\r", quiet=0.8)
+        time.sleep(0.3)
+        # back to normal
+        assert abs(_first_ink_x(con, 8) - 160) <= 10
+
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Normal" in menu, menu
+        _keys(con, b"\x1b", quiet=0.5)
         _quit(con)
         assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_narrow_view_wraps_at_sixty(kernel_image):
+    """#1201: the narrow view wraps at 60 columns (normal fits 80)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
+        time.sleep(0.3)
+        _open(con, quiet=1.0)
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # normal -> wide
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # wide -> narrow
+        time.sleep(0.3)
+        _keys(con, b"x" * 70, quiet=1.0)
+        time.sleep(0.3)
+        # 70 columns cannot fit one 60-column row: a second visual row has ink.
+        assert _first_ink_x(con, 24) is not None
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # narrow -> normal
+        time.sleep(0.3)
+        # The same 70 columns fit one 80-column row, so row 2 is blank.
+        assert _first_ink_x(con, 24) is None
+        _quit(con)
     finally:
         con.stop()
 
@@ -353,6 +479,186 @@ def test_wordpad_copy_paste(kernel_image):
         con.stop()
 
 
+def test_wordpad_ctrl_x_cuts_selection_not_exit(kernel_image):
+    """#971: Ctrl+X cuts the selection and keeps WORDPAD open."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CUT.MD"')
+        _keys(con, b"one two", quiet=0.7)
+        # Select the trailing " two" (4 chars) with Shift+Left.
+        _keys(con, b"\x1b[1;2D" * 4, quiet=0.5)
+        cut = _keys(con, bytes([24]), quiet=0.7)
+        assert "one" in cut
+        # Still inside WORDPAD: the File->Save menu path must work.
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CUT.MD", 1)
+        assert lines[0] == "[one]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_x_no_selection_is_noop(kernel_image):
+    """#971: Ctrl+X with no selection neither exits nor cuts the line."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "NOX.MD"')
+        _keys(con, b"keep", quiet=0.6)
+        _keys(con, bytes([24]), quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "NOX.MD", 1)
+        assert lines[0] == "[keep!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_ctrl_c_copy_ctrl_v_paste(kernel_image):
+    """#971: Ctrl+C copies the selection and Ctrl+V pastes it at the caret."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "CP.MD"')
+        _keys(con, b"copy me", quiet=0.7)
+        # Select " me" (3 chars), copy, go to end, paste.
+        _keys(con, b"\x1b[1;2D" * 3, quiet=0.5)
+        _keys(con, bytes([3]), quiet=0.5)
+        _keys(con, b"\x1b[F", quiet=0.4)
+        _keys(con, bytes([22]), quiet=0.6)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "CP.MD", 1)
+        assert lines[0] == "[copy me me]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_clean_quit_no_prompt(kernel_image):
+    """#972: an unmodified buffer quits with no confirmation."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, "WORDPAD")
+        out = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" not in out.lower(), out
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_cancel_keeps_open(kernel_image):
+    """#972: Cancel on the dirty-exit prompt keeps the buffer intact."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "DIRTY.MD"')
+        _keys(con, b"draft", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"c", quiet=0.6)
+        _keys(con, b"!", quiet=0.5)
+        _alt_menu(con, b"f", quiet=0.4)
+        _keys(con, b"s", quiet=0.7)
+        _quit(con)
+        lines = _read_lines(con, "DIRTY.MD", 1)
+        assert lines[0] == "[draft!]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_discard_exits_without_saving(kernel_image):
+    """#972: Discard exits and leaves the on-disk file untouched."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line('OPEN "DISC.MD" FOR OUTPUT AS #1') == ""
+        assert con.send_line('PRINT #1, "ORIGINAL"') == ""
+        assert con.send_line("CLOSE #1") == ""
+        _open(con, 'WORDPAD "DISC.MD"')
+        _keys(con, b" plus", quiet=0.6)
+        prompt = _keys(con, bytes([1]) + b"x", quiet=0.7)
+        assert "save changes" in prompt.lower(), prompt
+        _keys(con, b"d", quiet=0.7)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "DISC.MD", 1)
+        assert lines[0] == "[ORIGINAL]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_dirty_quit_save_saves_then_exits(kernel_image):
+    """#972: Save on the dirty-exit prompt writes the file and exits."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "SAVEQ.MD"')
+        _keys(con, b"saved text", quiet=0.6)
+        _keys(con, bytes([1]) + b"x", quiet=0.7)
+        _keys(con, b"s", quiet=0.8)
+        assert con.send_line("PRINT 1") == "1"
+        lines = _read_lines(con, "SAVEQ.MD", 1)
+        assert lines[0] == "[saved text]", lines
+    finally:
+        con.stop()
+
+
+def test_wordpad_save_write_failure_is_surfaced(kernel_image):
+    """#975: a failed write is reported, not mistaken for a missing path.
+
+    B: is the read-only package mount, so ``mmb_vfs_write()`` always fails
+    there (``vfs.c`` returns -1 for letter B).  That gives a deterministic
+    failing write without needing read-only/full media, so both explicit-save
+    entry points - File->Save and F2 - can be checked end to end: the old
+    ``if (!wp_save())`` treated -1 exactly like "no path" and silently ignored
+    it, leaving the dirty marker with no error.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "B:/FAIL.MD"')
+        _keys(con, b"hello", quiet=0.5)
+
+        # File -> Save must surface the write failure.
+        _alt_menu(con, b"f", quiet=0.4)
+        saved = _keys(con, b"s", quiet=0.8)
+        assert "save failed" in saved.lower(), saved
+
+        # Editing clears the notice...
+        cleared = _keys(con, b"!", quiet=0.5)
+        assert "save failed" not in cleared.lower(), cleared
+
+        # ...and F2 quick-save must surface it again, not swallow it.
+        f2 = _keys(con, b"\x1b[12~", quiet=0.8)
+        assert "save failed" in f2.lower(), f2
+
+        # Still in WORDPAD: the buffer survived (Alt+X then Discard exits).
+        _quit(con)
+        assert con.send_line("PRINT 1") == "1"
+    finally:
+        con.stop()
+
+
+def test_wordpad_save_failure_handling_covers_both_call_sites():
+    """#975: guard both writers against the silent ``!wp_save()`` fall-through.
+
+    The QEMU test above proves the menu path and F2 surface a real write
+    failure; this cheap structural check keeps a future edit from
+    reintroducing the ``if (!wp_save())`` pattern that treated -1 like 0.
+    """
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)  # ignore documentation
+    assert "!wp_save()" not in code, "wp_save() failure (-1) must not be ignored"
+    assert code.count("wp_save_cmd();") >= 2, (
+        "File->Save and F2 should share wp_save_cmd()"
+    )
+
+
 def _pane_left_px(con):
     w, _h = con.screen_size()
     cols = w // 8
@@ -360,6 +666,33 @@ def _pane_left_px(con):
     if cols <= wrap:
         return 0
     return ((cols - wrap) // 2) * 8
+
+
+def _first_ink_x(con, y, x0=0, width=960, threshold=1200):
+    """X of the leftmost lit pixel on screen row ``y`` (None when blank)."""
+    png = con.capture_png()
+    out = subprocess.run(
+        ["convert", png, "-crop", f"{width}x1+{x0}+{y}", "+repage", "txt:-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    cols = []
+    for line in out.splitlines():
+        if ":" not in line or "(" not in line:
+            continue
+        coord = line.split(":")[0].strip()
+        if "," not in coord:
+            continue
+        x = int(coord.split(",")[0])
+        inner = line[line.find("(") + 1 : line.find(")")]
+        parts = [p.strip() for p in inner.replace("%", "").split(",") if p.strip()]
+        if len(parts) < 3:
+            continue
+        rgb = tuple(int(float(p)) for p in parts[:3])
+        if _lum(rgb) > threshold:
+            cols.append(x0 + x)
+    return min(cols) if cols else None
 
 
 def _lum(rgb):
@@ -491,6 +824,151 @@ def _seed_wp_files(con):
     assert con.send_line('OPEN "NEST/B.MD" FOR OUTPUT AS #1') == ""
     assert con.send_line('PRINT #1, "beta-doc"') == ""
     assert con.send_line("CLOSE #1") == ""
+
+
+def _theme_rgb(con, name):
+    v = int(con.send_line(f'PRINT THEME("{name}")'))
+    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+
+
+def _dialog_list_geom(con):
+    """Return (c0, r0) of the WORDPAD file dialog for the current mode."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    dw, dh = 62, 18
+    if dw > cols - 2:
+        dw = cols - 2
+    if dh > rows - 2:
+        dh = rows - 2
+    return (cols - dw) // 2, (rows - dh) // 2
+
+
+def _dialog_row_pixels(con, c0, row):
+    """Every pixel in the file-list cells of one dialog row (28 columns)."""
+    coords = [
+        (c * 8 + 4, row * 16 + yy)
+        for c in range(c0 + 2, c0 + 30)
+        for yy in range(16)
+    ]
+    return con.screen_pixels(coords)
+
+
+def _rgb_close(a, b, tol=24):
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def _dlg_surface_bg(edit_bg):
+    """Mirror cmd_wordpad.c's dlg_bg(): a light/dark shift of TEXT_BG."""
+    r, g, b = edit_bg
+    d = 28 if (r * 3 + g * 6 + b) // 10 < 140 else -28
+    return tuple(max(0, min(255, c + d)) for c in (r, g, b))
+
+
+def _confirm_dialog_geom(con):
+    """Return (c0, r0) of the WORDPAD dirty-exit confirm dialog."""
+    w, h = con.screen_size()
+    cols, rows = w // 8, h // 16
+    dw, dh = 48, 8
+    if dw > cols - 2:
+        dw = cols - 2
+    if dh > rows - 2:
+        dh = rows - 2
+    r0 = (rows - dh) // 2
+    if r0 < 1:
+        r0 = 1
+    return (cols - dw) // 2, r0
+
+
+def _confirm_button_pixels(con, c0, r0):
+    """Background pixel of each Save/Discard/Cancel button cell (row 4)."""
+    bw = [len(" Save "), len(" Discard "), len(" Cancel ")]
+    x = c0 + (48 - (bw[0] + bw[1] + bw[2] + 4)) // 2
+    if x < c0 + 2:
+        x = c0 + 2
+    px = []
+    for i in range(3):
+        px.append(con.screen_pixel(x * 8 + 4, (r0 + 4) * 16 + 8))
+        x += bw[i] + 2
+    return px
+
+
+def test_wordpad_file_dialog_selection_uses_theme(kernel_image):
+    """#1094: the Open/Save file row highlights with the theme selection pair.
+
+    The dialog opens with focus on the Name field, so the file-list selection
+    is unfocused.  It must still use SELECT_FG/SELECT_BG -- the old code drew
+    it as edit_fg on cmt_fg, which is near-white on light cyan (Slate) or
+    white on light grey (Monochrome) and unreadable.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_wp_files(con)
+        for theme in ("Slate", "Monochrome"):
+            assert con.send_line(f'OPTION THEME "{theme}"') == ""
+            sel_fg = _theme_rgb(con, "SELECT_FG")
+            sel_bg = _theme_rgb(con, "SELECT_BG")
+            for opener in (b"2", b"4"):  # File > Open..., File > Save As...
+                _open(con)
+                _alt_menu(con, b"f", quiet=0.4)
+                _keys(con, opener, quiet=0.9)
+                time.sleep(0.3)
+                c0, r0 = _dialog_list_geom(con)
+                selected = _dialog_row_pixels(con, c0, r0 + 6)
+                unselected = _dialog_row_pixels(con, c0, r0 + 7)
+                assert any(_rgb_close(p, sel_bg) for p in selected), (
+                    theme,
+                    opener,
+                    sel_bg,
+                    selected[:8],
+                )
+                assert any(_rgb_close(p, sel_fg) for p in selected), (
+                    theme,
+                    opener,
+                    sel_fg,
+                    selected[:8],
+                )
+                unsel_bg = max(set(unselected), key=unselected.count)
+                assert not _rgb_close(unsel_bg, sel_bg), (
+                    theme,
+                    opener,
+                    unsel_bg,
+                    sel_bg,
+                )
+                _keys(con, b"\x1b", quiet=0.5)
+                _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_confirm_dialog_buttons_use_surface_bg(kernel_image):
+    """#1102: unselected dirty-exit buttons use the dialog surface, not cmt_fg.
+
+    The old code painted them as edit_fg on cmt_fg (a foreground role), which
+    is near-white on light cyan (Slate) or light grey (Monochrome) and
+    unreadable.  The selected button must still use SELECT_FG/SELECT_BG.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        for theme in ("Slate", "Monochrome"):
+            assert con.send_line(f'OPTION THEME "{theme}"') == ""
+            sel_bg = _theme_rgb(con, "SELECT_BG")
+            cmt_fg = _theme_rgb(con, "COMMENT_FG")
+            surface = _dlg_surface_bg(_theme_rgb(con, "TEXT_BG"))
+            _open(con, 'WORDPAD "DIALOG.MD"')
+            _keys(con, b"dirty text", quiet=0.5)
+            _keys(con, bytes([1]) + b"x", quiet=0.8)
+            time.sleep(0.3)
+            c0, r0 = _confirm_dialog_geom(con)
+            px = _confirm_button_pixels(con, c0, r0)
+            assert _rgb_close(px[0], sel_bg), (theme, "selected", px[0], sel_bg)
+            for i, name in ((1, "Discard"), (2, "Cancel")):
+                assert not _rgb_close(px[i], cmt_fg), (theme, name, px[i], cmt_fg)
+                assert _rgb_close(px[i], surface), (theme, name, px[i], surface)
+            _keys(con, b"d", quiet=0.6)  # Discard: leave without saving
+    finally:
+        con.stop()
 
 
 def test_wordpad_ctrl_p_quick_open(kernel_image):
@@ -855,20 +1333,91 @@ def test_wordpad_enter_empty_top_item_terminates(kernel_image):
         con.stop()
 
 
-def test_wordpad_periodic_autosave_writes_sidecar(kernel_image):
-    """Issue #516/#521: a dirty buffer is checkpointed to <path>.rec."""
+def _repo_source(rel: str) -> str:
+    return open(os.path.join(_REPO, rel), encoding="utf-8").read()
+
+
+def test_wordpad_autosave_interval_is_shared_one_minute():
+    """#973/#1011: WORDPAD uses the shared 60 s checkpoint period."""
+    priv = _repo_source(os.path.join("mmbasic", "include", "mmb_priv.h"))
+    assert re.search(r"#define\s+MMB_AUTOSAVE_MS\s+60000\b", priv), (
+        "MMB_AUTOSAVE_MS should be 60000ms"
+    )
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    assert "MMB_AUTOSAVE_MS" in src
+    assert "#define WP_AUTOSAVE_MS" not in src
+
+
+def _ini_path(con):
+    for path in ("A:/.mmbasic.ini", "C:/.mmbasic.ini"):
+        out = con.send_line(f'OPEN "{path}" FOR INPUT AS #1')
+        con.send_line("CLOSE #1")
+        if out == "":
+            return path
+    raise AssertionError("settings INI not found on A: or C:")
+
+
+def _read_ini(con, path=None):
+    if not path:
+        path = _ini_path(con)
+    assert con.send_line("NEW") == ""
+    assert con.send_line(f'10 OPEN "{path}" FOR INPUT AS #1') == ""
+    assert con.send_line("20 IF EOF(#1) THEN GOTO 70") == ""
+    assert con.send_line("30 LINE INPUT #1, A$") == ""
+    assert con.send_line("40 PRINT A$") == ""
+    assert con.send_line("50 GOTO 20") == ""
+    assert con.send_line("70 CLOSE #1") == ""
+    return con.send_line("RUN", timeout=8)
+
+
+def test_option_autosave_default_on_and_persists(console):
+    """#1011: OPTION AUTOSAVE defaults ON, toggles, and round-trips the INI."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL").upper()
+    assert "OPTION AUTOSAVE ON" in all_listed, all_listed
+    assert "AUTOSAVE" not in console.send_line("OPTION LIST").upper()
+
+    assert console.send_line("OPTION AUTOSAVE OFF") == ""
+    listed = console.send_line("OPTION LIST").upper()
+    assert "OPTION AUTOSAVE OFF" in listed, listed
+    assert "autosave=0" in _read_ini(console)
+    assert console.send_line("OPTION AUTOSAVE ON") == ""
+    assert "autosave=1" in _read_ini(console)
+
+
+def test_wordpad_no_early_sidecar_checkpoint(kernel_image):
+    """#973: a dirty named buffer is not checkpointed within a few seconds.
+
+    The 60s interval cannot be waited out in QEMU, so this is the honest
+    negative window: type, wait ~3s, and assert no `<path>.rec` appeared.  The
+    positive sidecar read/restore paths are covered by the recovery tests.
+    """
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
         _open(con, 'WORDPAD "AUTO.MD"')
         _keys(con, b"draft text", quiet=0.5)
-        time.sleep(2.2)
+        time.sleep(3.0)
         _quit(con)
-        assert con.send_line('OPEN "AUTO.MD.REC" FOR INPUT AS #1') == ""
-        assert con.send_line("LINE INPUT #1, A$") == ""
-        got = con.send_line("PRINT A$")
-        assert con.send_line("CLOSE #1") == ""
-        assert "draft text" in got
+        listing = con.send_line("DIR").upper()
+        assert "AUTO.MD.REC" not in listing, listing
+    finally:
+        con.stop()
+
+
+def test_wordpad_option_autosave_off_blocks_sidecar(kernel_image):
+    """#1011: OPTION AUTOSAVE OFF suppresses WORDPAD's periodic sidecar."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("OPTION AUTOSAVE OFF") == ""
+        _open(con, 'WORDPAD "OFFAUTO.MD"')
+        _keys(con, b"draft text", quiet=0.5)
+        time.sleep(3.0)
+        _quit(con)
+        listing = con.send_line("DIR").upper()
+        assert "OFFAUTO.MD.REC" not in listing, listing
+        assert con.send_line("OPTION AUTOSAVE ON") == ""
     finally:
         con.stop()
 
@@ -994,5 +1543,127 @@ def test_wordpad_exit_reopen_with_file_cycles(kernel_image):
         assert "[WORDPAD]" in _open(con, quiet=0.8)
         _quit(con)
         assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def _usb_console(kernel_image):
+    return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
+
+
+def _seed_long_doc(con, lines: int = 120, path: str = "LONG.MD") -> None:
+    """Write a document long enough that the cursor must scroll the pane."""
+    for line in (
+        f'10 OPEN "{path}" FOR OUTPUT AS #1',
+        f"20 FOR I=1 TO {lines}",
+        '30 PRINT #1, "line "; I',
+        "40 NEXT I",
+        "50 CLOSE #1",
+        '60 PRINT "SEEDED"',
+    ):
+        assert con.send_line(line) == ""
+    assert "SEEDED" in con.send_line("RUN", timeout=10)
+    assert con.send_line("NEW") == ""
+
+
+def test_wordpad_scroll_keeps_audio_mixing(kernel_image):
+    """#1160: holding a cursor key scrolls the pane and music keeps playing.
+
+    Mirrors the TERM repaint/audio test (#936).  WORDPAD streams every visible
+    row to the serial console on each redraw, so the hold is drained like a
+    serial reader (a saturated 115200-baud TX ring is what starves the mixer
+    on hardware).  The drained rows prove the view really scrolled, and
+    MIXGAP stays well under the queued cushion.
+    """
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        _seed_long_doc(con)
+        # A fast repeat drives many scroll frames in the hold window.
+        assert con.send_line("OPTION USBKEYBOARD REPEAT 100, 30") == ""
+        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
+        assert con.send_line("PRINT PLAYING()") == "1"
+        # MIXGAP is cumulative and load-sensitive, so this baseline only
+        # sanity-checks that the mixer is running at all (#1170).
+        base_gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        assert base_gap < 1000, base_gap
+        assert "[WORDPAD]" in _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
+        con.key_down("down")
+        rows = _plain(con.drain(quiet=0.3, timeout=1.5).decode(errors="replace"))
+        con.key_up("down")
+        time.sleep(0.2)
+        seen = {int(m) for m in re.findall(r"line (\d+)", rows)}
+        # The pane started at line 1; the held key must have scrolled well past
+        # the initial window (~23 text rows).
+        assert seen and max(seen) >= 30, sorted(seen)
+        _quit(con)
+        gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
+        underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
+        playing = con.send_line("PRINT PLAYING()")
+        con.send_line("PLAY STOP")
+        # Measure the gap the scroll *added* over the pre-scroll baseline
+        # rather than an absolute bound: a busy parallel host pushes MIXGAP up
+        # even when the fix works, while a real starvation still blows the
+        # margin (#1170).
+        assert gap < base_gap + 150, (base_gap, gap)
+        assert underrun == "0", underrun
+        assert playing == "1", playing
+    finally:
+        con.stop()
+
+
+def test_wordpad_scroll_path_services_audio():
+    """#1160: structural guard for the audio servicing in the scroll path.
+
+    The QEMU harness has no real HDMI/PWM audio and blocks the vCPU when the
+    serial reader stalls, so the timing above cannot show the hardware stall;
+    this deterministic check keeps the mixer call from being dropped from the
+    scroll and serial-dump hot paths (mirrors TERM #936).
+    """
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    assert "mmb_play_mix();" in code
+    smooth = code.split("static void wp_smooth_scroll(int from, int to)", 1)[1]
+    smooth = smooth.split("static void wp_redraw(void)", 1)[0]
+    assert "wp_service_audio();" in smooth, "smooth scroll must service audio"
+    # A redraw streams the visible pane to serial; each dumped row must top up
+    # the audio queue, exactly as term_serial_dump() does (#936).
+    row = code.split("static void serial_row(const char *s)", 1)[1]
+    row = row.split("\n}", 1)[0]
+    assert "wp_service_audio();" in row, "the serial row dump must service audio"
+
+
+def test_wordpad_page_keys_jump_a_whole_screen(kernel_image):
+    """#1216: PageUp/PageDown move the pane a whole screen in one repaint.
+
+    Paging used to move only the cursor by a screen and let ensure_scroll()
+    pull the pane one line to keep it visible, so the first PageDown from the
+    top scrolled the view a single row (the cursor teleported to the bottom).
+    The bytes of the escape sequence each forced a full repaint as well.  A
+    single PageDown must land the pane a whole screen down in one frame, and
+    PageUp must undo it, with no intermediate frame still showing the old top.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _seed_long_doc(con)
+        seen = _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
+        first = [int(m) for m in re.findall(r"line (\d+)", seen)]
+        assert first and first[0] == 1, first[:5]
+        rows = len(first)
+        con.drain(quiet=0.1)
+
+        dn = _keys(con, b"\x1b[6~", quiet=0.5)
+        dnums = [int(m) for m in re.findall(r"line (\d+)", dn)]
+        # Exactly one frame, and it is the next full screen: no leftover frame
+        # with the old top (line 1) and no one-line step to line 2.
+        assert dnums == list(range(rows + 1, 2 * rows + 1)), dnums
+        assert 1 not in dnums, dnums
+
+        up = _keys(con, b"\x1b[5~", quiet=0.5)
+        unums = [int(m) for m in re.findall(r"line (\d+)", up)]
+        assert unums == list(range(1, rows + 1)), unums
+        assert rows + 1 not in unums, unums
+        _quit(con)
     finally:
         con.stop()

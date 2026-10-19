@@ -1,0 +1,63 @@
+#!/bin/sh
+# Bring up a Chromebook built-in touchpad whose driver was not ready when the
+# device was enumerated (#1039).
+#
+# The live rootfs has no udev (OpenRC uses mdev), so a device the kernel
+# probed before the rootfs -- and therefore before /etc/modules -- is not
+# re-probed by a hotplug daemon. /etc/modules still loads the drivers at boot,
+# but a board driver that creates its I2C client at module-init time
+# (`chromeos_laptop`) can run before its host-controller sibling, and an ACPI
+# client whose modalias autoload is swallowed can stay bound to nothing. By the
+# time the `local` runlevel runs, every module is loadable and the buses are
+# up, so this is the second pass that binds the touchpad before mmcore starts.
+#
+# Best effort: a module the kernel does not build is ignored, and only
+# unbound I2C clients whose name names a known touchpad vendor are re-probed,
+# so on hardware without a touchpad this changes nothing. See
+# docs/framebuffer-and-iso.md for the AMD ELAN066C DSDT firmware bug, which no
+# module load can fix.
+#
+# Overrides (also used by tests): MMCORE_SYS, MMCORE_MODPROBE.
+set -u
+
+SYS="${MMCORE_SYS:-/sys}"
+MODPROBE="${MMCORE_MODPROBE:-modprobe}"
+
+log() {
+	[ -w /dev/console ] || return 0
+	printf 'mmcore-touchpad: %s\n' "$*" > /dev/console 2>/dev/null || true
+}
+
+# Host controllers first, then the DMI/board client drivers, then the
+# controller-family drivers and their HID transports (mirrors /etc/modules).
+TOUCHPAD_MODULES="cros_ec cros_ec_i2c cros_ec_ishtp chromeos_laptop \
+intel_lpss intel_lpss_acpi intel_lpss_pci intel_ishtp intel_ish_ipc \
+intel_ishtp_hid i2c_i801 i2c_piix4 i2c_scmi i2c_designware_pci \
+i2c_hid i2c_hid_acpi hid_multitouch hid_elan hid_rmi hid_alps \
+elan_i2c synaptics_i2c cyapatp rmi_core rmi_i2c psmouse"
+
+for m in ${TOUCHPAD_MODULES}; do
+	"${MODPROBE}" "$m" 2>/dev/null || true
+done
+
+# Re-probe I2C clients that were enumerated before their driver existed. Only
+# devices with no bound driver and a touchpad-vendor name are touched, so an
+# already-working device is never disturbed.
+probe="${SYS}/bus/i2c/drivers_probe"
+if [ -w "${probe}" ] && [ -d "${SYS}/bus/i2c/devices" ]; then
+	for dev in "${SYS}"/bus/i2c/devices/*; do
+		[ -e "${dev}" ] || continue
+		[ -e "${dev}/driver" ] && continue
+		name="${dev##*/}"
+		lower="$(printf '%s' "${name}" | tr 'A-Z' 'a-z')"
+		case "${lower}" in
+		*elan*|*syna*|*cyap*|*alps*|*ntrg*|*msft*|*atml*|\
+		*pnp0c50*|*acpi0c50*)
+			printf '%s' "${name}" > "${probe}" 2>/dev/null || true
+			log "re-probed I2C client ${name}"
+			;;
+		esac
+	done
+fi
+
+exit 0

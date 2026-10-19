@@ -36,6 +36,12 @@ int mmb_tdf_parse(const unsigned char *buf, unsigned n, int index, mmb_tdf *f);
  * record that fails, so a truncated/garbage tail still yields its prefix. */
 int mmb_tdf_count(const unsigned char *buf, unsigned n);
 
+/* Map a colour TDF glyph's IBM/VGA attribute nibble (1=blue, 4=red, ...) to
+ * the ANSI/VGA palette index the console and TUI use (1=red, 4=blue, ...).
+ * This is the final index TDF PRINT reaches via mmb_ibm_colour() and the
+ * console's ANSI palette, so the FILES preview stays colour-accurate (#1021). */
+int mmb_tdf_ansi_colour(int nibble);
+
 /* Write one CP437 cell. x/y are screen cells; implementations clip. */
 typedef void (*mmb_tdf_cell_fn)(void *ctx, int x, int y, int ch, int fg, int bg);
 

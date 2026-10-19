@@ -169,6 +169,16 @@ class NativeSession:
         self._emit("mark " + path)
         return path
 
+    def finger(self, dx: float, dy: float) -> "NativeSession":
+        """Inject a synthetic touchpad drag by normalised deltas (0..1)."""
+        return self._emit("finger %.6f %.6f" % (dx, dy))
+
+    def pointer(self, name: str) -> str:
+        """Queue a dump of the software pointer position; returns its path."""
+        path = os.path.join(self.workdir, name)
+        self._emit("pointer " + path)
+        return path
+
     def quit(self) -> "NativeSession":
         return self._emit("quit")
 

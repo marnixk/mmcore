@@ -37,14 +37,14 @@ file out-of-scope bugs as `follow-up` tickets instead of fixing them). To drain
 the tracker in parallel, run the `issue-loop-parallel` skill instead: bundle
 issues that share a test area, fan out one worker thread/worktree per bundle to
 implement and open PRs, and keep merges plus the single minor release serial in
-one coordinator thread (the full suite runs only once, before the release). The
-coordinator re-checks the tracker at least every ~30 minutes (and when a wave
-finishes) and schedules any newly filed ready issue into the run: file-disjoint
-work starts immediately, work that overlaps an in-flight worker queues for the
-next wave, and nothing new starts after the full-suite/release cutoff. Findings
-a worker files as tickets are harvested into follow-up waves processed in the
-same run before the release, and the coordinator reports every finding's fate
-afterwards.
+one coordinator thread (the release tests run only once, before the release).
+The coordinator re-checks the tracker at least every ~30 minutes (and when a
+wave finishes) and schedules any newly filed ready issue into the run:
+file-disjoint work starts immediately, work that overlaps an in-flight worker
+queues for the next wave, and nothing new starts after the release-test/release
+cutoff. Findings a worker files as tickets are harvested into follow-up waves
+processed in the same run before the release, and the coordinator reports every
+finding's fate afterwards.
 Wrapping up a single finished branch: run the `issue-done` skill (commit
 outstanding changes, open and merge a PR into `master`, then cut one minor
 release).
@@ -59,6 +59,16 @@ release).
   the user in the conversation, not just to the log**: poll `status --sleep 60`
   in a loop and post an update each interval (never a single silent blocking
   `wait` that surfaces only at the end). See the `test-suite-progress` skill.
+
+- **Scoped release tests** — before a release, do not re-run the whole suite.
+  `scripts/release-tests.sh plan` maps the paths changed since the last release
+  tag (`scripts/release_tests.py`, data-driven `RULES`) to the test modules that
+  exercise them, and `scripts/release-tests.sh run` builds and runs only those
+  through `scripts/test-watch.py`. Broad or unmapped changes (core interpreter,
+  build, Circle, `patches/`, any source file with no rule) fall back to the
+  full suite, so a release can never ship untested. The plan — which suites and
+  why — is logged and written into the GitHub release notes under `## Tests`.
+  See the `github-release` skill.
 
 - **Never move a branch another worktree has checked out** — all worktrees
   share one ref store, so `git update-ref refs/heads/<b>`, `git branch -f <b>`,

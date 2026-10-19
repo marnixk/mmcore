@@ -28,8 +28,12 @@
 
 #define TM_COLS_BOXED 80
 #define TM_MAX_COLS   256
-#define TM_CH         16
 #define TM_CW         8
+/* Default VGA glyph cell height. TERM lowers it to the EGA 8x14 face
+ * (TM_CH_EGA) when a fullscreen 80x25 bookmark cannot fit 25 rows of 8x16
+ * on the current display; see term_pick_cell_h(). */
+#define TM_CH_VGA     16
+#define TM_CH_EGA     14
 #define TM_PAGE       2
 #define TM_MAX_ROWS   80
 #define TM_LINE     256
@@ -114,6 +118,8 @@ typedef struct {
 	int pane_cols;
 	int letterbox;
 	int mode80x25;
+	int cell_h;            /* glyph cell height: 16 (VGA) or 14 (EGA) */
+	int pane_top;          /* pane's vertical pixel offset (centring margin) */
 	int vid_rows;
 	int vid_cols;
 	int cur_row;
@@ -134,6 +140,9 @@ typedef struct {
 	int ansi_priv;
 	int sav_row;
 	int sav_col;
+	int scroll_top;        /* DECSTBM scrolling region, 0-based inclusive */
+	int scroll_bot;
+	unsigned last_gch;     /* last graphic char printed, for REP (CSI b) */
 	int char_mode;
 	int no_echo;
 	int echo_user;
@@ -224,6 +233,14 @@ static tm_state T_s[MMB_MAX_CONSOLES];
  * session is drained and interpreted, but nothing may be painted. */
 static int s_term_bg;
 static void term_bg_yield(int console, void *ctx);
+
+/* Long TERM paths (paint, present, TCP ingest) must keep the mixer fed.
+ * A full repaint can outlast the queued audio if the mixer waits for poll. */
+static void term_yield(void)
+{
+	mmb_net_yield();
+	mmb_play_mix();
+}
 
 static unsigned char term_rx_store[MMB_NET_RX_CAP];
 static mmb_net_rxbuf term_rx;
@@ -790,7 +807,7 @@ static void term_draw_sb_status(void)
 	unsigned bg = TM_MENU_BG, fg = TM_MENU_FG;
 	int y = term_status_y();
 
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	if (T.sb_search)
 	{
 		strcpy(text, "Search: ");
@@ -897,6 +914,15 @@ static void term_reset_pen(void)
 	T.cur_bg = TM_BG;
 	T.ansi_bold = 0;
 	T.ansi_inv = 0;
+}
+
+/* The USB keyboard delivers Alt+key as Ctrl+A then the key, so a byte 1 on
+ * its own is ambiguous. While a real Alt is held it is an Alt chord (local
+ * menu/exit); otherwise it is a genuine Ctrl+A and belongs to the remote
+ * (#1218). */
+static int term_alt_held(void)
+{
+	return (G.plat && G.plat->alt_held && G.plat->alt_held()) ? 1 : 0;
 }
 
 static void ser(const char *s)
@@ -1045,6 +1071,7 @@ static void term_serial_dump(void)
 		line[cols] = 0;
 		ser(line);
 		ser("\r\n");
+		mmb_play_mix();
 	}
 	if (T.sb_search)
 	{
@@ -1080,17 +1107,59 @@ static void term_serial_dump(void)
 	T.serial_gen++;
 }
 
+/* Pick the glyph face for this session. An 80x25 bookmark wants 25 rows of
+ * 8x16, which needs MM.VRES >= 400. Judge that from the display's own mode
+ * (the console mode TERM started from, T.saved_mode) rather than TERM's
+ * current session mode, so TERM's own Boxed/Full switch cannot mask a short
+ * panel. A 1366x768 Chromebook whose 2x logical mode is MODE 20 (683x384)
+ * gives only 24 rows of 8x16, so fall back to the EGA 8x14 face, which needs
+ * just 350, and keep the native mode. Every other session, display and app
+ * stays on 8x16. */
+static void term_pick_cell_h(void)
+{
+	int h = mmb_gfx_mode_h(T.saved_mode);
+
+	if (h <= 0)
+		h = G.gfx.h;
+	T.cell_h = TM_CH_VGA;
+	if (T.mode80x25 && h > 0 && h / 16 < 25)
+		T.cell_h = TM_CH_EGA;
+}
+
 static void term_layout(void)
 {
+	int fb_h = G.gfx.h > 0 ? G.gfx.h : 400;
+
 	T.vid_cols = G.plat && G.plat->video_cols ? G.plat->video_cols() : 80;
-	T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
+	if (T.cell_h == TM_CH_EGA)
+		T.vid_rows = fb_h / T.cell_h;
+	else
+		T.vid_rows = G.plat && G.plat->video_rows ? G.plat->video_rows() : 33;
+	T.pane_top = 0;
 	if (T.mode80x25)
 	{
 		T.pane_cols = TM_COLS_BOXED;
 		if (T.pane_cols > T.vid_cols)
 			T.pane_cols = T.vid_cols;
-		T.pane_left = 0;
-		T.pane_rows = T.vid_rows;
+		if (T.cell_h == TM_CH_EGA)
+		{
+			/* Centre an exact 80x25 grid; the leftover rows and
+			 * columns become margin (#1155). */
+			T.pane_rows = T.vid_rows < 25 ? T.vid_rows : 25;
+			if (T.pane_cols != TM_COLS_BOXED)
+				T.pane_rows = T.vid_rows;
+			T.pane_left = (T.vid_cols - T.pane_cols) / 2;
+			if (T.pane_left < 0)
+				T.pane_left = 0;
+			T.pane_top = (fb_h - T.pane_rows * T.cell_h) / 2;
+			if (T.pane_top < 0)
+				T.pane_top = 0;
+		}
+		else
+		{
+			T.pane_left = 0;
+			T.pane_rows = T.vid_rows;
+		}
 	}
 	else
 	{
@@ -1123,21 +1192,21 @@ static int term_fb_h(void)
 	int hh;
 
 	if (h < 1)
-		h = T.vid_rows * TM_CH;
+		h = T.vid_rows * T.cell_h;
 	if (G.plat && G.plat->hdmi_height)
 	{
 		hh = G.plat->hdmi_height();
 		if (hh > 0 && hh < h)
 			h = hh;
 	}
-	if (h < TM_CH)
-		h = TM_CH;
+	if (h < T.cell_h)
+		h = T.cell_h;
 	return h;
 }
 
 static int term_status_y(void)
 {
-	return term_fb_h() - TM_CH;
+	return term_fb_h() - T.cell_h;
 }
 
 static void pane_clear_row(int row)
@@ -1150,6 +1219,22 @@ static void pane_clear_row(int row)
 		T.cell[row][c] = ' ';
 		T.cell_fg[row][c] = TM_FG;
 		T.cell_bg[row][c] = TM_BG;
+	}
+}
+
+/* Erase a row to the current SGR pen, so erased cells keep the active
+ * background (Background Color Erase). Used by ED and by the blank line a
+ * scroll lifts in; EL and ECH already do this per cell. (#1219) */
+static void pane_erase_row_pen(int row)
+{
+	int c;
+	if (row < 0 || row >= T.pane_rows)
+		return;
+	for (c = 0; c < term_width(); c++)
+	{
+		T.cell[row][c] = ' ';
+		T.cell_fg[row][c] = term_pen();
+		T.cell_bg[row][c] = term_paper();
 	}
 }
 
@@ -1192,14 +1277,28 @@ static void term_set_cursor_vis(int vis)
 		mark_dirty_row(T.cur_shown_row);
 }
 
+/* #1225: DECSTBM scrolling region.  scroll_top/scroll_bot are 0-based and
+ * inclusive; the default covers the whole pane.  It is (re)set explicitly
+ * whenever the pane is (re)laid out, since a zeroed struct would otherwise
+ * look like a one-row region at row 0. */
+static void term_reset_scroll_region(void)
+{
+	T.scroll_top = 0;
+	T.scroll_bot = T.pane_rows > 0 ? T.pane_rows - 1 : 0;
+}
+
 static void pane_scroll_up(void)
 {
-	int r, c;
-	if (T.pane_rows <= 1)
+	int r, c, top = T.scroll_top, bot = T.scroll_bot;
+
+	if (bot <= top)
 		return;
-	sb_push((const unsigned char *)T.cell[0], T.cell_fg[0], T.cell_bg[0],
-		term_width());
-	for (r = 0; r < T.pane_rows - 1; r++)
+	/* Only a region anchored at the pane top spills into scrollback; a
+	 * sub-region scroll discards the line at its top margin. (#1225) */
+	if (top == 0)
+		sb_push((const unsigned char *)T.cell[0], T.cell_fg[0],
+			T.cell_bg[0], term_width());
+	for (r = top; r < bot; r++)
 	{
 		for (c = 0; c < term_width(); c++)
 		{
@@ -1208,28 +1307,35 @@ static void pane_scroll_up(void)
 			T.cell_bg[r][c] = T.cell_bg[r + 1][c];
 		}
 	}
-	pane_clear_row(T.pane_rows - 1);
-	T.cur_row = T.pane_rows - 1;
+	pane_erase_row_pen(bot);
+	T.cur_row = bot;
 	T.cur_col = 0;
 	T.need_draw = 1;
 	if (!T.dirty_full)
 	{
-		T.dirty_lo = 0;
-		T.dirty_hi = T.pane_rows - 1;
+		T.dirty_lo = top;
+		T.dirty_hi = bot;
 	}
 }
 
 static void pane_newline(void)
 {
-	if (T.cur_row >= T.pane_rows - 1)
+	/* #1227: DECSTBM only scrolls when the cursor sits on the bottom
+	 * margin.  Below the region (or outside it in general) a line feed is
+	 * ordinary cursor movement; at the pane bottom it clamps, with no
+	 * scroll, matching DEC/xterm. */
+	if (T.cur_row == T.scroll_bot)
 	{
 		pane_scroll_up();
 		term_log_mark();
 		return;
 	}
-	T.cur_row++;
-	T.cur_col = 0;
-	mark_dirty_row(T.cur_row);
+	if (T.cur_row < T.pane_rows - 1)
+	{
+		T.cur_row++;
+		T.cur_col = 0;
+		mark_dirty_row(T.cur_row);
+	}
 	term_log_mark();
 }
 
@@ -1244,6 +1350,7 @@ static void pane_put(char ch)
 		T.cell[T.cur_row][T.cur_col] = ch;
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
+		T.last_gch = (unsigned char)ch;
 		T.cur_col++;
 		mark_dirty_row(T.cur_row);
 		term_log_mark();
@@ -1271,7 +1378,7 @@ static void pane_puts(const char *s)
 
 static void term_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)
 {
-	mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
+	mmb_gfx_glyph_cell_topdown_h(x, y, ch, fg, bg, T.cell_h);
 }
 
 static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned bg)
@@ -1286,7 +1393,7 @@ static void term_put_str_bg(int x, int y, const char *s, unsigned fg, unsigned b
 static void term_fill_cells(int x, int y, int n, unsigned bg)
 {
 	if (n > 0)
-		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, TM_CH, bg);
+		mmb_gfx_fill_rect_topdown(x, y, n * TM_CW, T.cell_h, bg);
 }
 
 static void term_put_hot(int x, int y, const char *s, char hot, unsigned fg,
@@ -1321,10 +1428,10 @@ static void term_draw_status(void)
 		return;
 	y = term_status_y();
 	x0 = 0;
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	term_put_str_bg(x0, y, "Alt-X", TM_HOT, bg);
 	term_put_str_bg(x0 + 5 * TM_CW, y, "  ", fg, bg);
-	term_put_str_bg(x0 + 7 * TM_CW, y, "Alt-T", TM_HOT, bg);
+	term_put_str_bg(x0 + 7 * TM_CW, y, "F10", TM_HOT, bg);
 	if (T.demo)
 	{
 		term_cell(x0 + 13 * TM_CW, y, 176, fg, bg);
@@ -1400,7 +1507,7 @@ static void term_draw_menu(void)
 	}
 	w += 2;
 	bar_w = T.vid_cols * TM_CW;
-	mmb_gfx_fill_rect_topdown(0, 0, bar_w, TM_CH, TM_MENU_BG);
+	mmb_gfx_fill_rect_topdown(0, 0, bar_w, T.cell_h, TM_MENU_BG);
 	title_fg = T.menu ? TM_SEL_FG : TM_MENU_FG;
 	title_bg = T.menu ? TM_SEL_BG : TM_MENU_BG;
 	term_cell(0, 0, ' ', title_fg, title_bg);
@@ -1409,16 +1516,16 @@ static void term_draw_menu(void)
 	if (!T.menu)
 		return;
 	x0 = TM_CW;
-	y0 = TM_CH;
+	y0 = T.cell_h;
 	drop_h = n + 2;
-	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * TM_CH, TM_DLG_BG);
+	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * T.cell_h, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
 	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
 	for (i = 0; i < n; i++)
 	{
-		int y = y0 + (1 + i) * TM_CH;
+		int y = y0 + (1 + i) * T.cell_h;
 		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
 		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
 
@@ -1430,16 +1537,16 @@ static void term_draw_menu(void)
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
-		int y = y0 + (n + 1) * TM_CH;
+		int y = y0 + (n + 1) * T.cell_h;
 		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
 		for (i = 1; i < w - 1; i++)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_BR, brd, TM_DLG_BG);
 	}
 	mmb_gfx_fill_rect_topdown(x0 + w * TM_CW, y0, 2 * TM_CW,
-				  drop_h * TM_CH, TM_SH_BG);
-	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * TM_CH,
-				  w * TM_CW, TM_CH, TM_SH_BG);
+				  drop_h * T.cell_h, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + 2 * TM_CW, y0 + drop_h * T.cell_h,
+				  w * TM_CW, T.cell_h, TM_SH_BG);
 }
 
 static void term_shadow_blank(void)
@@ -1460,7 +1567,7 @@ static void term_draw_row(int r)
 
 	if (r < 0 || r >= T.pane_rows)
 		return;
-	y = r * TM_CH;
+	y = T.pane_top + r * T.cell_h;
 	for (c = 0; c < term_width(); c++)
 	{
 		x = (T.pane_left + c) * TM_CW;
@@ -1478,7 +1585,7 @@ static void term_draw_row(int r)
 		if (key == term_cell_sh[r][c])
 			continue;
 		term_cell_sh[r][c] = key;
-		mmb_gfx_glyph_cell_topdown(x, y, ch, fg, bg);
+		term_cell(x, y, ch, fg, bg);
 	}
 }
 
@@ -1576,7 +1683,9 @@ static void term_draw(void)
 	G.gfx.write_page = TM_PAGE;
 	G.gfx.display_page = 0;
 	/* Present sources PAGE 2 directly, so a prior frame's DMA must finish
-	 * before this repaint overwrites it (#340). */
+	 * before this repaint overwrites it (#340). Top up audio first: the
+	 * drain below waits out that DMA. */
+	mmb_play_mix();
 	term_guard_present();
 	full_screen = T.dirty_full;
 	if (T.dirty_full)
@@ -1597,7 +1706,7 @@ static void term_draw(void)
 		{
 			term_draw_row(r);
 			if ((r & 3) == 0)
-				mmb_net_yield();
+				term_yield();
 		}
 	}
 	if (T.menu || T.alt_pend)
@@ -1611,7 +1720,7 @@ static void term_draw(void)
 	}
 	else
 		mmb_gfx_fill_rect_topdown(0, term_status_y(), T.vid_cols * TM_CW,
-					  TM_CH, TM_BG);
+					  T.cell_h, TM_BG);
 	term_draw_menu();
 	term_draw_dlg();
 	if (full_screen)
@@ -1632,29 +1741,29 @@ static void term_draw(void)
 
 		if (T.menu || T.alt_pend)
 		{
-			int top_h = T.menu ? 8 * TM_CH : TM_CH;
+			int top_h = T.menu ? 8 * T.cell_h : T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, top_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else if (T.sb_view > 0 || T.sb_search)
 		{
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else if (lo >= 0 && hi >= lo)
 		{
-			int y = lo * TM_CH;
-			int rh = (hi - lo + 1) * TM_CH;
+			int y = T.pane_top + lo * T.cell_h;
+			int rh = (hi - lo + 1) * T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, y, pane_w, rh);
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-					T.vid_cols * TM_CW, TM_CH);
+					T.vid_cols * TM_CW, T.cell_h);
 		}
 		else
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
@@ -1688,7 +1797,6 @@ static void term_exit(void)
 		G.plat->present_wait();
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
-	mmb_gfx_clear_overlay();
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
@@ -1754,7 +1862,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 		int left = (int)n, rc, idle = 0;
 
 		T.tx_n += n;
-		mmb_net_yield();
+		term_yield();
 		while (left > 0)
 		{
 			rc = mmb_net_tcp_send(p, (unsigned)left);
@@ -1769,7 +1877,7 @@ static void term_net_send_raw(const void *data, unsigned n)
 			}
 			if (rc < 0)
 				return;
-			mmb_net_yield();
+			term_yield();
 			if (T.tcp && !T.replay && !T.file_replay)
 				term_tcp_drain(1);
 			if (++idle > 500)
@@ -2098,7 +2206,6 @@ static void term_fill_pages(void)
 	int saved = G.gfx.write_page;
 
 	term_guard_present();
-	mmb_gfx_clear_overlay();
 	G.gfx.write_page = TM_PAGE;
 	mmb_gfx_cls(TM_BG);
 	G.gfx.write_page = 0;
@@ -2141,19 +2248,33 @@ static void term_apply_session_mode(void)
 {
 	int mode, bits;
 
+	term_pick_cell_h();
 	bits = T.saved_bits;
 	if (bits != 8 && bits != 12 && bits != 16 && bits != 32)
 		bits = 16;
 	if (bits < 16)
 		bits = 16;
-	if (T.mode80x25)
+	if (T.mode80x25 && T.cell_h == TM_CH_VGA)
 		mode = TM_MODE_80X25;
-	else if (T.letterbox)
+	else if (T.mode80x25)
+	{
+		/* 80x25 on the 8x14 face: keep the display's own mode and let
+		 * term_layout() centre the grid in the margin. */
+		mode = T.saved_mode;
+		if (!mmb_gfx_mode_valid(mode))
+			mode = G.gfx.mode;
+	}
+	else if (T.letterbox && T.saved_mode != 19 && T.saved_mode != 20)
 		mode = 14;
 	else
 	{
+		/* #1200: the Chromebook's console runs in MODE 19/20 (1366x768 and
+		 * 683x384), whose ~85x23 text grid is what TERM's boxed pane is
+		 * designed around. Forcing MODE 14 there shrinks everything, so
+		 * boxed TERM keeps those two modes; every other prompt mode still
+		 * gets the 960x540 letterbox default. */
 		mode = T.saved_mode;
-		if (mode < 1 || mode > 17)
+		if (!mmb_gfx_mode_valid(mode))
 			mode = 14;
 	}
 	if (G.gfx.mode != mode || G.gfx.bits != bits)
@@ -2172,6 +2293,7 @@ static void term_toggle_letterbox(void)
 	T.letterbox = T.letterbox ? 0 : 1;
 	term_apply_session_mode();
 	term_layout();
+	term_reset_scroll_region();
 	term_init_extra_cols(old_cols);
 	term_clamp_cursor();
 	term_fill_pages();
@@ -2197,9 +2319,9 @@ static void term_present_overlay(int extra_w, int extra_h)
 	if (dlg_cw <= 0 || dlg_ch <= 0)
 		return;
 	x = dlg_c0 * TM_CW;
-	y = dlg_r0 * TM_CH;
+	y = dlg_r0 * T.cell_h;
 	pw = (dlg_cw + extra_w) * TM_CW;
-	ph = (dlg_ch + extra_h) * TM_CH;
+	ph = (dlg_ch + extra_h) * T.cell_h;
 	term_present_async_rect(x, y, pw, ph);
 }
 
@@ -2228,9 +2350,9 @@ static void term_overlay_chrome(void)
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
-		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * TM_CH);
+		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * T.cell_h);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
-				T.vid_cols * TM_CW, TM_CH);
+				T.vid_cols * TM_CW, T.cell_h);
 		if (pw > 0 && ph > 0)
 			term_present_async_rect(px, py, pw, ph);
 	}
@@ -2302,7 +2424,10 @@ static int bm_find_name(const char *name)
 
 static void bm_path(char *dst, unsigned n)
 {
-	if (mmb_fat_ready('C'))
+	/* C: on the live ISO is only a real persistent drive when MMCORE is
+	 * mounted; otherwise keep the session's bookmarks on A: and migrate
+	 * them back when the volume returns. */
+	if (mmb_fat_ready('C') && !mmb_storage_persistence_lost())
 		strncpy(dst, "C:/.termconfig", n - 1);
 	else
 		strncpy(dst, "A:/.termconfig", n - 1);
@@ -2346,6 +2471,8 @@ static void bm_append_int(char *buf, int sz, int v)
 
 static void term_dl_dirs_load(int keep_active);
 
+static int s_bm_save_warned;
+
 static void term_bm_save(void)
 {
 	char path[24];
@@ -2388,7 +2515,24 @@ static void term_bm_save(void)
 		bm_append(buf, sizeof(buf), g_dl_dir_s[i]);
 		bm_append(buf, sizeof(buf), "\n");
 	}
-	mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0);
+	if (mmb_vfs_write(path, buf, (unsigned)strlen(buf), 0) != 0)
+	{
+		if (!s_bm_save_warned)
+		{
+			s_bm_save_warned = 1;
+			mmb_storage_notice("!TERM bookmarks not saved: storage unavailable");
+		}
+	}
+	else if (mmb_storage_persistence_lost())
+	{
+		if (!s_bm_save_warned)
+		{
+			s_bm_save_warned = 1;
+			mmb_storage_notice("!TERM bookmarks are session-only: MMCORE not mounted");
+		}
+	}
+	else
+		s_bm_save_warned = 0;
 }
 
 static void bm_trim(char *s)
@@ -2501,9 +2645,11 @@ static void term_dl_dirs_load(int keep_active)
 	}
 }
 
-static void term_bm_load(void)
+/* Parse one .termconfig into the in-memory list. Returns 0 when the file is
+ * missing or cannot be read, leaving g_bm empty; the caller decides whether to
+ * keep the previous list. */
+static int term_bm_parse_file(const char *path)
 {
-	char path[24];
 	char buf[4096];
 	unsigned got = 0;
 	char *p, *nl;
@@ -2511,12 +2657,14 @@ static void term_bm_load(void)
 
 	g_bm_n = 0;
 	memset(g_bm, 0, sizeof(g_bm));
-	term_dl_dirs_load(0);
-	bm_path(path, sizeof(path));
 	if (!mmb_vfs_exists(path))
-		return;
+		return 0;
 	if (mmb_vfs_read(path, buf, sizeof(buf) - 1, &got) != 0)
-		return;
+		return 0;
+	/* A cached stream left stale by a remount can report EOF for a file that
+	 * still has bytes. Treat that as a failed read, not as "no bookmarks". */
+	if (got == 0 && mmb_vfs_size(path) > 0)
+		return 0;
 	buf[got] = 0;
 	p = buf;
 	while (*p)
@@ -2601,6 +2749,45 @@ static void term_bm_load(void)
 		p = nl;
 	}
 	bm_sort();
+	return 1;
+}
+
+static void term_bm_load(void)
+{
+	char path[24];
+	const char *other;
+	term_bm saved_list[TM_BM_MAX];
+	int saved_n = g_bm_n;
+	int loaded_from_a = 0;
+
+	/* Opening Bookmarks reloads from disk. A read failure (for example the
+	 * MMCORE mount is away right after a resume) must not look like "no
+	 * bookmarks": keep the list already in memory instead. */
+	memcpy(saved_list, g_bm, sizeof(saved_list));
+	term_dl_dirs_load(0);
+	bm_path(path, sizeof(path));
+	/* Try the other drive too: while C: is volatile bm_path() prefers the
+	 * session copy on A:, and after a recovery the older C: copy may be the
+	 * only one with the user's bookmarks. */
+	other = (path[0] == 'C') ? "A:/.termconfig" : "C:/.termconfig";
+	if (!term_bm_parse_file(path))
+	{
+		if ((other[0] != 'C' || mmb_fat_ready('C')) &&
+		    term_bm_parse_file(other))
+			loaded_from_a = (other[0] == 'A');
+		else
+		{
+			memcpy(g_bm, saved_list, sizeof(saved_list));
+			g_bm_n = saved_n;
+			bm_sort();
+			return;
+		}
+	}
+	/* A fallback read from A: is this session's live copy. Once C: is
+	 * available again, write it there so it survives the next reboot. */
+	if (loaded_from_a && mmb_fat_ready('C') &&
+	    !mmb_storage_persistence_lost())
+		term_bm_save();
 }
 
 static void dlg_center(int cw, int ch)
@@ -2644,23 +2831,23 @@ static void term_dlg_frame(int cw, int ch, const char *title)
 
 	dlg_center(cw, ch);
 	x0 = dlg_c0 * TM_CW;
-	y0 = dlg_r0 * TM_CH;
+	y0 = dlg_r0 * T.cell_h;
 	w = cw * TM_CW;
-	h = ch * TM_CH;
+	h = ch * T.cell_h;
 	mmb_gfx_fill_rect_topdown(x0, y0, w, h, TM_DLG_BG);
 	term_dlg_hline_bg(x0, y0, cw, TM_BOX_TL, TM_BOX_H, TM_BOX_TR);
-	term_dlg_hline_bg(x0, y0 + (ch - 1) * TM_CH, cw, TM_BOX_BL, TM_BOX_H,
+	term_dlg_hline_bg(x0, y0 + (ch - 1) * T.cell_h, cw, TM_BOX_BL, TM_BOX_H,
 			 TM_BOX_BR);
 	for (i = 1; i < ch - 1; i++)
 	{
-		term_cell(x0, y0 + i * TM_CH, TM_BOX_V, brd, TM_DLG_BG);
-		term_fill_cells(x0 + TM_CW, y0 + i * TM_CH, cw - 2, TM_DLG_BG);
-		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * TM_CH, TM_BOX_V, brd,
+		term_cell(x0, y0 + i * T.cell_h, TM_BOX_V, brd, TM_DLG_BG);
+		term_fill_cells(x0 + TM_CW, y0 + i * T.cell_h, cw - 2, TM_DLG_BG);
+		term_cell(x0 + (cw - 1) * TM_CW, y0 + i * T.cell_h, TM_BOX_V, brd,
 			  TM_DLG_BG);
 	}
-	mmb_gfx_fill_rect_topdown(x0 + w, y0 + TM_CH, 2 * TM_CW, h - TM_CH,
+	mmb_gfx_fill_rect_topdown(x0 + w, y0 + T.cell_h, 2 * TM_CW, h - T.cell_h,
 				  TM_SH_BG);
-	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, TM_CH, TM_SH_BG);
+	mmb_gfx_fill_rect_topdown(x0 + TM_CW, y0 + h, w, T.cell_h, TM_SH_BG);
 	if (title && title[0])
 	{
 		tw = (int)strlen(title);
@@ -2680,7 +2867,7 @@ static void dlg_text_at(int dcol, int drow, const char *s, int hi)
 		return;
 	n = (int)strlen(s);
 	x = (dlg_c0 + dcol) * TM_CW;
-	y = (dlg_r0 + drow) * TM_CH;
+	y = (dlg_r0 + drow) * T.cell_h;
 	fg = hi ? TM_SEL_FG : TM_DLG_FG;
 	bg = hi ? TM_SEL_BG : TM_DLG_BG;
 	if (n > 0)
@@ -2723,7 +2910,7 @@ static void dlg_field_scroll(int dcol, int drow, int width, const char *s, int h
 	unsigned fg, bg;
 
 	x = (dlg_c0 + dcol) * TM_CW;
-	y = (dlg_r0 + drow) * TM_CH;
+	y = (dlg_r0 + drow) * T.cell_h;
 	fg = hi ? TM_SEL_FG : TM_FIELD_FG;
 	bg = hi ? TM_SEL_BG : TM_FIELD_BG;
 	if (width < 1)
@@ -3100,6 +3287,7 @@ static void term_bm_connect(void)
 	term_reset_pen();
 	term_apply_session_mode();
 	term_layout();
+	term_reset_scroll_region();
 	term_init_extra_cols(old_cols);
 	term_clamp_cursor();
 	for (i = 0; i < T.pane_rows; i++)
@@ -3657,15 +3845,33 @@ static void ansi_erase_line(int mode)
 
 static void ansi_erase_disp(int mode)
 {
-	int r, a, b;
+	int r, a, b, c, w = term_width();
+	unsigned fg = term_pen();
+	unsigned bg = term_paper();
+
 	a = 0;
 	b = T.pane_rows;
 	if (mode == 0)
 		a = T.cur_row;
 	else if (mode == 1)
 		b = T.cur_row + 1;
-	for (r = a; r < b; r++)
-		pane_clear_row(r);
+	for (r = a; r < b && r < T.pane_rows; r++)
+	{
+		int ca = (mode == 0 && r == T.cur_row) ? T.cur_col : 0;
+		int cb = (mode == 1 && r == T.cur_row) ? T.cur_col + 1 : w;
+
+		if (ca < 0)
+			ca = 0;
+		if (cb > w)
+			cb = w;
+		for (c = ca; c < cb; c++)
+		{
+			T.cell[r][c] = ' ';
+			T.cell_fg[r][c] = fg;
+			T.cell_bg[r][c] = bg;
+		}
+		mark_dirty_row(r);
+	}
 	if (mode == 2 || mode == 3)
 	{
 		T.cur_row = 0;
@@ -3673,8 +3879,207 @@ static void ansi_erase_disp(int mode)
 		mark_dirty_full();
 		return;
 	}
-	for (r = a; r < b; r++)
+}
+
+static void ansi_blank_cell(int r, int c)
+{
+	T.cell[r][c] = ' ';
+	T.cell_fg[r][c] = term_pen();
+	T.cell_bg[r][c] = term_paper();
+}
+
+/* IL (CSI n L): insert n blank lines at the cursor row, pushing the lines
+ * below down and off the bottom margin.  The cursor is unaffected.  Inserted
+ * lines carry the active SGR background (BCE), like ED/EL/ECH.  Bounded by the
+ * DECSTBM bottom margin, and a no-op when the cursor is below it. (#1223) */
+static void ansi_insert_lines(int n)
+{
+	int r, c, w = term_width(), bot = T.scroll_bot;
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (T.cur_row > bot)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > bot - T.cur_row + 1)
+		n = bot - T.cur_row + 1;
+	for (r = bot; r >= T.cur_row + n; r--)
+		for (c = 0; c < w; c++)
+		{
+			T.cell[r][c] = T.cell[r - n][c];
+			T.cell_fg[r][c] = T.cell_fg[r - n][c];
+			T.cell_bg[r][c] = T.cell_bg[r - n][c];
+		}
+	for (r = T.cur_row; r < T.cur_row + n; r++)
+		pane_erase_row_pen(r);
+	for (r = T.cur_row; r <= bot; r++)
 		mark_dirty_row(r);
+}
+
+/* DL (CSI n M): delete n lines from the cursor row, pulling the lines below
+ * up and blanking the freed rows at the bottom margin (BCE).  Cursor
+ * unaffected; bounded by the DECSTBM bottom margin. */
+static void ansi_delete_lines(int n)
+{
+	int r, c, w = term_width(), bot = T.scroll_bot;
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (T.cur_row > bot)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > bot - T.cur_row + 1)
+		n = bot - T.cur_row + 1;
+	for (r = T.cur_row; r <= bot - n; r++)
+		for (c = 0; c < w; c++)
+		{
+			T.cell[r][c] = T.cell[r + n][c];
+			T.cell_fg[r][c] = T.cell_fg[r + n][c];
+			T.cell_bg[r][c] = T.cell_bg[r + n][c];
+		}
+	for (r = bot - n + 1; r <= bot; r++)
+		pane_erase_row_pen(r);
+	for (r = T.cur_row; r <= bot; r++)
+		mark_dirty_row(r);
+}
+
+/* ICH (CSI n @): insert n blank cells at the cursor, shifting the rest of the
+ * row right and discarding what leaves the right edge.  Inserted cells carry
+ * the active SGR background (BCE).  The cursor is unaffected. */
+static void ansi_insert_chars(int n)
+{
+	int c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (T.cur_col < 0)
+		T.cur_col = 0;
+	if (T.cur_col >= w || n > w - T.cur_col)
+		n = w - T.cur_col;
+	if (n <= 0)
+		return;
+	for (c = w - 1; c >= T.cur_col + n; c--)
+	{
+		T.cell[T.cur_row][c] = T.cell[T.cur_row][c - n];
+		T.cell_fg[T.cur_row][c] = T.cell_fg[T.cur_row][c - n];
+		T.cell_bg[T.cur_row][c] = T.cell_bg[T.cur_row][c - n];
+	}
+	for (c = T.cur_col; c < T.cur_col + n; c++)
+		ansi_blank_cell(T.cur_row, c);
+	mark_dirty_row(T.cur_row);
+}
+
+/* DCH (CSI n P): delete n cells at the cursor, shifting the rest of the row
+ * left and blanking the freed cells at the right edge (BCE). */
+static void ansi_delete_chars(int n)
+{
+	int c, w = term_width();
+
+	if (T.cur_row < 0 || T.cur_row >= T.pane_rows)
+		return;
+	if (n < 1)
+		n = 1;
+	if (T.cur_col < 0)
+		T.cur_col = 0;
+	if (T.cur_col >= w || n > w - T.cur_col)
+		n = w - T.cur_col;
+	if (n <= 0)
+		return;
+	for (c = T.cur_col; c < w - n; c++)
+	{
+		T.cell[T.cur_row][c] = T.cell[T.cur_row][c + n];
+		T.cell_fg[T.cur_row][c] = T.cell_fg[T.cur_row][c + n];
+		T.cell_bg[T.cur_row][c] = T.cell_bg[T.cur_row][c + n];
+	}
+	for (c = w - n; c < w; c++)
+		ansi_blank_cell(T.cur_row, c);
+	mark_dirty_row(T.cur_row);
+}
+
+/* REP (CSI n b): repeat the last graphic character n times, with the active
+ * SGR pen.  A no-op until something graphic has been printed. */
+static void ansi_repeat(int n)
+{
+	int i;
+
+	if (n < 1)
+		n = 1;
+	if (!T.last_gch)
+		return;
+	for (i = 0; i < n; i++)
+		pane_put((char)T.last_gch);
+}
+
+/* SU (CSI n S) / SD (CSI n T): scroll the DECSTBM region up/down n lines.
+ * With the default region this is the whole pane.  Unlike the newline scroll
+ * the cursor stays put and nothing is added to scrollback. (#1223, #1225) */
+static void ansi_scroll_pane(int n, int up)
+{
+	int r, c, w = term_width();
+	int top = T.scroll_top, bot = T.scroll_bot, rows = bot - top + 1;
+
+	if (rows < 1)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > rows)
+		n = rows;
+	if (up)
+	{
+		for (r = top; r <= bot - n; r++)
+			for (c = 0; c < w; c++)
+			{
+				T.cell[r][c] = T.cell[r + n][c];
+				T.cell_fg[r][c] = T.cell_fg[r + n][c];
+				T.cell_bg[r][c] = T.cell_bg[r + n][c];
+			}
+		for (r = bot - n + 1; r <= bot; r++)
+			pane_erase_row_pen(r);
+	}
+	else
+	{
+		for (r = bot; r >= top + n; r--)
+			for (c = 0; c < w; c++)
+			{
+				T.cell[r][c] = T.cell[r - n][c];
+				T.cell_fg[r][c] = T.cell_fg[r - n][c];
+				T.cell_bg[r][c] = T.cell_bg[r - n][c];
+			}
+		for (r = top; r < top + n; r++)
+			pane_erase_row_pen(r);
+	}
+	for (r = 0; r < T.pane_rows; r++)
+		mark_dirty_row(r);
+}
+
+/* DECSTBM (CSI top;bot r): set the scrolling region, clamped to the pane.
+ * Omitted or invalid parameters (top >= bot) reset the region to the whole
+ * pane, matching xterm; the cursor moves home afterwards. (#1225) */
+static void ansi_set_scroll_region(void)
+{
+	int rows = T.pane_rows;
+	int top, bot;
+
+	if (rows < 1)
+		return;
+	top = ansi_arg(0, 1);
+	bot = ansi_arg(1, rows);
+	if (top < 1)
+		top = 1;
+	if (bot < 1 || bot > rows)
+		bot = rows;
+	if (top >= bot)
+		term_reset_scroll_region();
+	else
+	{
+		T.scroll_top = top - 1;
+		T.scroll_bot = bot - 1;
+	}
+	ansi_cup(1, 1);
 }
 
 static void ansi_exec_csi(char cmd)
@@ -3732,6 +4137,22 @@ static void ansi_exec_csi(char cmd)
 	}
 	else if (cmd == 'H' || cmd == 'f')
 		ansi_cup(ansi_arg(0, 1), ansi_arg(1, 1));
+	else if (cmd == 'L')
+		ansi_insert_lines(n);
+	else if (cmd == 'M')
+		ansi_delete_lines(n);
+	else if (cmd == '@')
+		ansi_insert_chars(n);
+	else if (cmd == 'P')
+		ansi_delete_chars(n);
+	else if (cmd == 'b')
+		ansi_repeat(n);
+	else if (cmd == 'S')
+		ansi_scroll_pane(n, 1);
+	else if (cmd == 'T')
+		ansi_scroll_pane(n, 0);
+	else if (cmd == 'r')
+		ansi_set_scroll_region();
 	else if (cmd == 'J')
 		ansi_erase_disp(T.ansi_narg ? T.ansi_arg[0] : 0);
 	else if (cmd == 'K')
@@ -3876,7 +4297,9 @@ static int ansi_feed(unsigned char b)
 			T.ansi_narg++;
 		return 1;
 	}
-	if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z'))
+	/* ECMA-48 final byte is 0x40..0x7E; anything else ends the sequence with
+	 * no effect.  `@` (ICH) is the common non-letter final byte. (#1223) */
+	if (b >= '@' && b <= '~')
 	{
 		if (T.ansi_priv)
 			ansi_exec_priv((char)b);
@@ -4365,13 +4788,13 @@ static void zmodem_draw_status(void)
 		return;
 	strncpy(zm_shown, line, sizeof(zm_shown) - 1);
 	zm_shown[sizeof(zm_shown) - 1] = 0;
-	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, TM_CH, bg);
+	mmb_gfx_fill_rect_topdown(0, y, T.vid_cols * TM_CW, T.cell_h, bg);
 	n = (int)strlen(line);
 	if (n > T.vid_cols)
 		n = T.vid_cols;
 	x = (T.vid_cols - n) * TM_CW;
 	term_put_str_bg(x, y, line, fg, bg);
-	term_present_async_rect(0, y, T.vid_cols * TM_CW, TM_CH);
+	term_present_async_rect(0, y, T.vid_cols * TM_CW, T.cell_h);
 }
 
 static void zmodem_start(void)
@@ -4408,7 +4831,7 @@ static void zmodem_pump(void)
 		mmb_zm_feed(&ZM, buf, n, now);
 		if (!mmb_zm_active(&ZM))
 			break;
-		mmb_net_yield();
+		term_yield();
 	}
 	mmb_zm_tick(&ZM, now);
 }
@@ -4463,7 +4886,7 @@ static void zmodem_poll(void)
 		return;
 	}
 	zmodem_draw_status();
-	mmb_net_yield();
+	term_yield();
 }
 
 /* ---- download folder browser dialog ---------------------------------- */
@@ -4750,7 +5173,7 @@ static int term_tcp_drain(int idle_max)
 		}
 		if (n == 0)
 		{
-			mmb_net_yield();
+			term_yield();
 			if (++idle >= idle_max)
 				break;
 			continue;
@@ -4759,7 +5182,7 @@ static int term_tcp_drain(int idle_max)
 		mmb_net_rxbuf_push(&term_rx, buf, (unsigned)n);
 		T.rx_n += (unsigned)n;
 		got += n;
-		mmb_net_yield();
+		term_yield();
 	}
 	draining = 0;
 	return got;
@@ -4840,7 +5263,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -4854,7 +5277,7 @@ static int term_rx_interpret(void)
 			got++;
 			if ((got & (TM_INTERP_YIELD - 1)) == 0)
 			{
-				mmb_net_yield();
+				term_yield();
 				if (T.tcp && !T.replay && !T.file_replay &&
 				    term_tcp_drain(1) < 0)
 					return got;
@@ -5760,7 +6183,6 @@ void mmb_cmd_term(void)
 	mmb_hw_cursor(0);
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	mmb_gfx_clear_overlay();
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	mmb_gfx_cls(TM_BG);
@@ -5768,6 +6190,7 @@ void mmb_cmd_term(void)
 	mmb_gfx_cls(TM_BG);
 
 	term_layout();
+	term_reset_scroll_region();
 	for (i = 0; i < T.pane_rows; i++)
 		pane_clear_row(i);
 	T.cur_row = 0;
@@ -5805,7 +6228,7 @@ void mmb_cmd_term(void)
 	}
 	else if (no_args)
 	{
-		pane_puts("Disconnected - Alt+T for Bookmarks");
+		pane_puts("Disconnected - F10 for Bookmarks");
 		pane_newline();
 	}
 	else if (T.demo && !T.demo_iac)
@@ -5998,6 +6421,20 @@ const char *mmb_term_key(char c)
 	}
 	if ((unsigned char)c == 1)
 	{
+		/* Connected to a remote session with no local menu/dialog open:
+		 * Ctrl+A is the screen/tmux prefix, so forward it instead of
+		 * showing TERM's chrome. A real Alt key still takes the local
+		 * path (menu/exit), and F10 is the menu key when no Alt exists
+		 * (#1218). */
+		if (T.tcp && !T.file_replay && !T.dlg && !T.menu &&
+		    T.sb_view <= 0 && !term_alt_held())
+		{
+			unsigned char ca = 1;
+
+			term_log_tx(&ca, 1);
+			term_net_send(&ca, 1);
+			return "";
+		}
 		T.alt = 1;
 		T.alt_pend = 1;
 		term_overlay_chrome();
@@ -6271,7 +6708,7 @@ void mmb_term_poll(void)
 	term_maybe_serial_dump(got);
 	if (T.need_draw)
 		term_draw();
-	mmb_net_yield();
+	term_yield();
 }
 
 /* #858: keep an established TCP session drained while this console is not the

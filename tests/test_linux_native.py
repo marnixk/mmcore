@@ -12,11 +12,12 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import zipfile
 
 import pytest
 
-from native_harness import build_native
+from native_harness import NativeSession, build_native, sdl_backend_available
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "native", "mmbasic")
@@ -39,6 +40,58 @@ def _run(binary, text):
         [binary], input=text, text=True, capture_output=True, timeout=120
     )
     return proc.stdout + proc.stderr
+
+
+def test_shutdown_unsupported_on_stdio_host(mmb_linux):
+    out = _run(mmb_linux, "SHUTDOWN\n")
+    assert "?SHUTDOWN" in out.upper()
+
+
+def test_settings_write_failure_is_reported(mmb_linux, tmp_path):
+    """A save that cannot reach storage must say so, not fail silently.
+
+    Reproduces the live-ISO shape (C: present but not writable, e.g. after the
+    MMCORE mount was lost) and checks the notice plus the absent file.
+    """
+    if os.name != "posix":
+        pytest.skip("needs POSIX mode bits")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root can write to a 0555 directory")
+
+    drive = tmp_path / "drive"
+    cdir = drive / "C"
+    cdir.mkdir(parents=True)
+    os.chmod(cdir, 0o555)
+    try:
+        proc = subprocess.run(
+            [mmb_linux],
+            input="OPTION TAB 8\n",
+            text=True,
+            capture_output=True,
+            timeout=120,
+            env=dict(os.environ, MMB_DRIVE_ROOT=str(drive)),
+        )
+    finally:
+        os.chmod(cdir, 0o755)
+    out = proc.stdout + proc.stderr
+    assert "settings not saved" in out, out
+    assert not (cdir / ".mmbasic.ini").exists()
+
+
+def test_settings_save_writes_when_storage_is_writable(mmb_linux, tmp_path):
+    drive = tmp_path / "drive"
+    (drive / "C").mkdir(parents=True)
+    proc = subprocess.run(
+        [mmb_linux],
+        input="OPTION TAB 8\n",
+        text=True,
+        capture_output=True,
+        timeout=120,
+        env=dict(os.environ, MMB_DRIVE_ROOT=str(drive)),
+    )
+    out = proc.stdout + proc.stderr
+    assert "settings not saved" not in out, out
+    assert (drive / "C" / ".mmbasic.ini").is_file()
 
 
 def test_native_version_header_regenerates_on_make(tmp_path):
@@ -115,6 +168,42 @@ def test_quit_stops_running_program(mmb_linux):
 def test_run_ramdisk_program(mmb_linux):
     out = _run(mmb_linux, 'RUN "A:/apps/HELLO.BAS"\n')
     assert "Hello from A:/apps/HELLO.BAS" in out
+
+
+def test_struct_member_array_variable_indices(mmb_linux):
+    """A 2D struct-member array indexed by loop variables must not fault.
+
+    Regression: the trace cache resolved the dotted array name with a NULL
+    index vector, so member_index_off() dereferenced NULL. Bare metal read
+    address 0 and aliased every element to (0, 0); the native POSIX build
+    segfaulted (SIGSEGV). Each element must now round-trip.
+    """
+    program = (
+        "10 TYPE Board\n"
+        "20 cells(2, 2) AS INTEGER\n"
+        "30 END TYPE\n"
+        "40 DIM b AS Board\n"
+        "50 FOR i = 0 TO 2\n"
+        "60 FOR j = 0 TO 2\n"
+        "70 b.cells(i, j) = i * 10 + j\n"
+        "80 NEXT j\n"
+        "90 NEXT i\n"
+        "100 total = 0\n"
+        "110 FOR i = 0 TO 2\n"
+        "120 FOR j = 0 TO 2\n"
+        "130 total = total + b.cells(i, j)\n"
+        "140 NEXT j\n"
+        "150 NEXT i\n"
+        "160 PRINT total\n"
+        "RUN\n"
+        "QUIT\n"
+    )
+    proc = subprocess.run(
+        [mmb_linux], input=program, text=True, capture_output=True, timeout=120
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "99" in out, out
 
 
 def test_runtime_and_host_resolution(mmb_linux):
@@ -334,11 +423,11 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
 
 
 def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
-    """#666: DIR lists full long names and flags a cut listing with ``... more``.
+    """#666/#981: DIR lists full long names and no longer cuts a big folder.
 
     The structured listing raised the name cap from 80 to 256, so a long host /
-    FAT name is shown whole; a folder over the entry cap gets the note instead
-    of the silent cut the old 4096-byte newline listing had.
+    FAT name is shown whole. The entry buffer is now heap-grown until the whole
+    folder fits, so neither the long nor the wide listing reports ``... more``.
     """
     root = tmp_path / "drives"
     long_dir = root / "C" / "LONG666"
@@ -360,16 +449,17 @@ def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
     out = _run_env(mmb_linux, program, env)
     assert long_name in out, "long name was truncated"
     assert "SHORT.TXT" in out
-    # One note for the long listing and one for the wide listing.
-    assert out.count("... more") == 2, out
+    # No cap remains, so neither listing is cut.
+    assert "... more" not in out, out
+    assert "F519.TXT" in out
 
 
 def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
-    """#676: a folder past DIR_ENT_MAX keeps the sorted-first 512 entries.
+    """#981: a folder past the old 512 cap lists completely and stays sorted.
 
-    The POSIX backend used to stop readdir() at the cap and only then sort, so
-    the survivors were whichever names the filesystem enumerated first. The cap
-    must keep exactly the names a sorted full listing would show first.
+    #676 made the bounded scan keep the sorted-first entries instead of an
+    arbitrary first-N cut. The buffer is now heap-grown until the whole folder
+    fits, so no sorted entry is dropped and the order is preserved.
     """
     root = tmp_path / "drives"
     many_dir = root / "C" / "CAP676"
@@ -379,19 +469,17 @@ def test_dir_cap_keeps_sorted_first(mmb_linux, tmp_path):
 
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR "C:/CAP676"\n', env)
-    assert out.count("... more") == 1, out
-    # Sorted-first 512 of 520 = F000..F511; the tail F512..F519 is dropped.
-    missing = [i for i in range(512) if f"F{i:03d}.TXT" not in out]
-    assert not missing, f"sorted-first entries dropped: {missing[:5]}"
-    leaked = [i for i in range(512, 520) if f"F{i:03d}.TXT" in out]
-    assert not leaked, f"unsorted tail survived the cap: {leaked}"
+    assert "... more" not in out, out
+    missing = [i for i in range(520) if f"F{i:03d}.TXT" not in out]
+    assert not missing, f"entries dropped: {missing[:5]}"
+    assert out.index("F000.TXT") < out.index("F519.TXT")
 
 
 def test_posix_list_entries_lazy_size(mmb_linux, tmp_path):
-    """#694: the POSIX backend keeps sizes without stat()ing the dropped tail.
+    """#694/#981: a large host folder lists completely with correct sizes.
 
-    The scan now fills sizes only for the entries that survive the cap, so a
-    large host folder still reports the right size for a kept file.
+    The scan fills sizes only for the entries it keeps; with the caps removed
+    every entry is kept, so a large folder still reports the right size.
     """
     root = tmp_path / "drives"
     many = root / "C" / "SIZE694"
@@ -403,8 +491,8 @@ def test_posix_list_entries_lazy_size(mmb_linux, tmp_path):
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR "C:/SIZE694"\n', env)
     assert re.search(r"F000\.TXT\s+7\b", out), out
-    # The cap still drops the tail and says so.
-    assert out.count("... more") == 1, out
+    assert "... more" not in out, out
+    assert "F519.TXT" in out
 
 
 def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
@@ -427,12 +515,11 @@ def test_recursive_dir_does_not_cut_a_large_folder(mmb_linux, tmp_path):
     assert not missing, f"recursive listing dropped {len(missing)} files: {missing[:5]}"
 
 
-def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
-    """#674: DIR /S notes a tree past the accumulated cap with ``... more``.
+def test_recursive_dir_lists_a_large_tree(mmb_linux, tmp_path):
+    """#674/#981: DIR /S lists a tree past the old 4096-result cap.
 
-    Results accumulate as structured entries up to DIR_RESULT_MAX; a larger
-    tree is reported instead of silently dropping entries the way the old
-    4096-byte result buffer did.
+    Results accumulate as structured entries; the array is now heap-grown so a
+    large tree lists completely instead of being cut at DIR_RESULT_MAX.
     """
     root = tmp_path / "drives"
     top = root / "C" / "RTREE"
@@ -445,10 +532,11 @@ def test_recursive_dir_flags_a_cut_tree(mmb_linux, tmp_path):
 
     env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
     out = _run_env(mmb_linux, 'DIR /S "C:/RTREE"\n', env)
-    assert out.count("... more") == 1, out
-    # #693: the recursive listing states the cap it was cut at.
-    assert "... more (4096 max)" in out, out
+    assert "... more" not in out, out
     assert "D0/" in out, out
+    for d in range(10):
+        assert f"D{d}/f0000.txt" in out, f"missing D{d}/f0000.txt"
+        assert f"D{d}/f0419.txt" in out, f"missing D{d}/f0419.txt"
 
 
 def test_default_drive_root_creates_only_c(mmb_linux, tmp_path):
@@ -829,6 +917,71 @@ def test_graphics_pixel_and_shapes(mmb_linux, tmp_path):
     assert _is_black(p(270, 180))
 
 
+SPAN_SCENE = (
+    "LINE 20,30,300,30,RGB(255,0,0)\n"
+    "LINE 40,50,220,180,RGB(0,255,0)\n"
+    "BOX 60,200,120,60,1,RGB(0,0,255),RGB(255,255,0)\n"
+    "CIRCLE 450,150,50,1,RGB(255,0,255),RGB(0,255,255)\n"
+)
+
+# Sampled coordinates across every span primitive: the two line ends and mid,
+# a box edge and its fill, the circle fill and rim, and one background pixel.
+SPAN_SAMPLES = (
+    (20, 30), (160, 30), (300, 30),
+    (40, 50), (220, 180),
+    (60, 200), (179, 259), (100, 220),
+    (450, 150), (500, 150), (400, 400),
+)
+
+
+def test_graphics_span_fast_path_visible_live_surface(mmb_linux, tmp_path):
+    """#1082: 1px spans drawn straight to the visible page land exactly.
+
+    The span fast path now covers the display page, so the live surface must
+    still show the same pixels the old per-pixel plot path produced (LINE,
+    BOX fill and CIRCLE fill all funnel through the shared span writer).
+    """
+    p = _shape_pixels(
+        mmb_linux,
+        tmp_path,
+        "span_visible",
+        "MODE 8,16\nCLS\n" + SPAN_SCENE,
+    )
+    assert _is_red(p(160, 30))
+    assert _is_green(p(40, 50))
+    assert _is_green(p(220, 180))
+    assert _is_blue(p(60, 200))
+    assert _is_yellow(p(100, 220))
+    assert _is_blue(p(179, 259))
+    assert (0, 255, 255) == p(450, 150)  # circle fill cyan
+    assert (255, 0, 255) == p(500, 150)  # circle stroke magenta
+    assert _is_black(p(400, 400))
+
+
+def test_graphics_span_fast_path_matches_hidden_page(mmb_linux, tmp_path):
+    """#1082: the visible-page span path stores the same pixels as a hidden page.
+
+    Draw the scene twice, to page 0 (visible, dirty/tracked) and page 1
+    (hidden), and compare PIXEL() readback at the sampled points.
+    """
+    reads = ';",";'.join(f"PIXEL({x},{y},P)" for x, y in SPAN_SAMPLES)
+    lines = (
+        ["MODE 8,16", "PAGE WRITE 0", "CLS"]
+        + SPAN_SCENE.splitlines()
+        + ["PAGE WRITE 1", "CLS"]
+        + SPAN_SCENE.splitlines()
+        + ["FOR P=0 TO 1", f'PRINT "PAGE";P;":";{reads}', "NEXT P"]
+    )
+    program = "".join(f"{10 * (i + 1)} {line}\n" for i, line in enumerate(lines))
+    out = _run(mmb_linux, program + "RUN\n")
+    pages = re.findall(r"PAGE(\d):([\d,]+)", out)
+    assert len(pages) == 2, out
+    visible = [int(v) for v in pages[0][1].split(",")]
+    hidden = [int(v) for v in pages[1][1].split(",")]
+    assert visible == hidden, (visible, hidden)
+    assert sum(1 for v in visible if v & 0xFFFFFF) >= 8, visible
+
+
 def test_scene_matches_pi_golden(mmb_linux, tmp_path):
     """LN-21 (#473): the CMM2 scene matches the Pi golden within 2%."""
     golden = os.path.join(REPO, "tests", "golden", "scene.png")
@@ -1057,6 +1210,52 @@ def test_quit_ends_sdl_app(mmb_linux):
     assert proc.returncode == 0
     assert "BEFORE" in out
     assert "AFTER" not in out, "QUIT must end the SDL app"
+
+
+def test_prompt_ctrl_u_clears_line_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+U clears the REPL input line on the native SDL/KMS target."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 111")
+    s.key("ctrl+u")
+    s.text("PRINT 222")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "222" in out, out
+
+
+def test_prompt_ctrl_w_deletes_word_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+W deletes back to the word start on the native target."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 12345")
+    s.key("ctrl+w")
+    s.text("99")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "1234599" not in out, out
+    assert "99" in out, out
+
+
+def test_prompt_ctrl_l_keeps_line_native(mmb_linux, tmp_path):
+    """#1203: Ctrl+L clears the screen but keeps the input line (native)."""
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.text("PRINT 77")
+    s.key("ctrl+l")
+    s.key("enter")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out.upper(), out
+    assert "77" in out, out
+    assert "\x1b[H\x1b[2J" in out, repr(out)
 
 
 def _make_app(path):
@@ -1445,6 +1644,156 @@ def test_sdl_video_window_setup(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def _sdl_pkg_config():
+    r = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    return r.stdout.split()
+
+
+def test_sdl_present_dirty_rect_host(tmp_path):
+    """#1080: present converts/uploads only the changed rectangle.
+
+    A graphics-heavy program changes a small part of the screen between
+    presents; the dirty-rectangle contract is checked in a host build of
+    sdl_video.c (compiled with the SDL libraries after the sources so the
+    link resolves on distributions that default to --as-needed).
+    """
+    exe = os.path.join(str(tmp_path), "sdl_video_dirty_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-I",
+            os.path.join(REPO, "native"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_video_dirty_host.c"),
+            os.path.join(REPO, "native", "sdl_video.c"),
+            os.path.join(REPO, "native", "sdl_scale.c"),
+            *_sdl_pkg_config(),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run(
+        [exe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy"),
+    )
+    assert "all checks passed" in out.stdout
+
+
+def test_sdl_present_is_dirty_rect_and_rate_limited():
+    """#1080: the RUN poll must not present once per program line.
+
+    check_break runs per line; an unconditional present there (or a full-frame
+    conversion in sdl_video_present) made a LINE loop pay ~a vblank per line on
+    a Chromebook. Guard the two properties structurally, since the timing guard
+    below only catches a gross regression.
+    """
+    video = open(
+        os.path.join(REPO, "native", "sdl_video.c"), encoding="utf-8"
+    ).read()
+    plat = open(
+        os.path.join(REPO, "native", "platform_sdl.c"), encoding="utf-8"
+    ).read()
+    # Only the dirty rectangle is converted and uploaded.
+    assert "sdl_video_mark_dirty_rect" in video
+    assert "SDL_UpdateTexture(s_tex, &src" in video
+    # #1083/#1090: only the letterbox bands are cleared, not the whole
+    # drawable, but the whole texture is copied every present. SDL's
+    # accelerated renderer flips back buffers on present, so a partial copy
+    # would leave older-frame cells untouched and ghost in fullscreen.
+    assert "SDL_RenderCopy(s_ren, s_tex, 0, &dst)" in video
+    assert "SDL_RenderCopy(s_ren, s_tex, &src" not in video
+    assert "sdl_scale_map_rect" not in video
+    assert "SDL_RenderFillRect" in video
+    assert "SDL_RenderClear(s_ren)" not in video
+    # sdl_poll_input() gates the present behind a minimum interval.
+    assert "SDL_PRESENT_MIN_MS" in plat
+
+
+def test_native_console_and_tui_mark_rects_not_whole_screen():
+    """#1081: the ANSI console and TUI mark only the cells they touch.
+
+    A PRINT loop / HELP/WORDPAD writes a few cells per present; the whole-screen
+    mark made every present convert and upload a full 1366x768 frame. Guard the
+    per-cell call sites structurally; the exact console rectangles are checked
+    behaviourally in tests/sdl_console_present_host.c.
+    """
+    console = open(
+        os.path.join(REPO, "native", "sdl_console.c"), encoding="utf-8"
+    ).read()
+    tui = open(os.path.join(REPO, "native", "sdl_tui.c"), encoding="utf-8").read()
+    for name, text in (("console", console), ("tui", tui)):
+        assert "sdl_video_mark_dirty_rect" in text, name
+    # The whole-screen mark survives only for whole-screen fills (reset/fill/
+    # restore, TUI prepare); the incremental writers use rectangles.
+    assert console.count("sdl_video_mark_dirty()") == 3
+    assert tui.count("sdl_video_mark_dirty()") == 1
+
+
+def test_graphics_present_is_not_per_line(mmb_linux, tmp_path):
+    """#1080: drawing to the visible page must not cost a present per line.
+
+    The same 256-line loop is timed on the visible page (which presents) and
+    on a hidden page (no present, the fast path). Drawing to the visible page
+    may be a little slower, but not the ~100x it was when every program line
+    triggered a full-frame present under the RUN poll.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    program = (
+        "10 MODE 19\n"
+        "20 t=TIMER\n"
+        "30 FOR y=0 TO 127\n"
+        "40 LINE 0,y,320,y,RGB(y*2,0,0)\n"
+        "50 LINE 0,y+128,320,y+128,RGB(255-y*2,0,0)\n"
+        "60 NEXT y\n"
+        "70 VIS=TIMER-t\n"
+        "80 PAGE WRITE 1\n"
+        "90 t=TIMER\n"
+        "100 FOR y=0 TO 127\n"
+        "110 LINE 0,y,320,y,RGB(y*2,0,0)\n"
+        "120 LINE 0,y+128,320,y+128,RGB(255-y*2,0,0)\n"
+        "130 NEXT y\n"
+        "140 HID=TIMER-t\n"
+        "150 PAGE WRITE 0\n"
+        '160 PRINT "TIMESX";VIS;" ";HID\n'
+        "RUN\n"
+    )
+    env = dict(
+        os.environ,
+        SDL_VIDEODRIVER="dummy",
+        MMB_SDL_SERIAL="1",
+        MMB_DRIVE_ROOT=str(tmp_path / "root"),
+    )
+    proc = subprocess.run(
+        [SDL_BIN],
+        input=program,
+        text=True,
+        capture_output=True,
+        timeout=180,
+        env=env,
+    )
+    m = re.search(r"TIMESX(\d+)\s+(\d+)", proc.stdout)
+    assert m, proc.stdout + proc.stderr
+    vis, hid = int(m.group(1)), int(m.group(2))
+    assert vis < hid * 25 + 60, (
+        f"visible-page LINE loop took {vis} vs hidden {hid}; "
+        "the RUN poll is presenting per line again"
+    )
+
+
 def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
     sdl = subprocess.run(
         ["pkg-config", "--cflags", "--libs", "sdl2"],
@@ -1599,3 +1948,130 @@ def test_sdl_double_fullscreen_interplay(tmp_path):
     assert len(dims) == 1, out
     fw, fh, hw, hh = dims[0]
     assert (hw, hh) == (2 * fw, 2 * fh), out
+
+
+def _build_ntp_host(tmp_path, name, *defines):
+    """Compile tests/ntp_host.c + the real ntp.c against the NTP shims."""
+    exe = os.path.join(str(tmp_path), name)
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            *defines,
+            "-I",
+            os.path.join(REPO, "tests", "ntp_shim"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "ntp_host.c"),
+            os.path.join(REPO, "mmbasic", "src", "ntp.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    return exe
+
+
+def test_ntp_boot_autosync_host_build_is_disabled(tmp_path):
+    """#1181: the POSIX host/desktop build never auto-syncs.
+
+    net_posix.c reports the network as always available, so the boot poll would
+    otherwise reach the developer's real network from the test harness. The
+    host build compiles the real ntp.c without MMB_NTP_AUTOSYNC: even with the
+    link ready and OPTION NTP ON the fake exchange must never be called.
+    """
+    exe = _build_ntp_host(tmp_path, "ntp_host", "-DMMB_PLATFORM_POSIX")
+    for scenario in ("host_off", "host_forced_on"):
+        out = subprocess.run(
+            [exe, scenario], capture_output=True, text=True, timeout=60
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "all checks passed" in out.stdout
+
+
+def test_ntp_boot_autosync_framebuffer_waits_for_link(tmp_path):
+    """#1181: the framebuffer/ISO build syncs at boot and waits for the link.
+
+    Compiled with MMB_NTP_AUTOSYNC (as the FB target defines it), the fake
+    clock/link show: offline polls stay quiet, a link that appears triggers an
+    immediate sync, failures retry inside a bounded window, and a link that
+    appears after that window still gets a fresh attempt.
+    """
+    exe = _build_ntp_host(
+        tmp_path, "ntp_auto", "-DMMB_PLATFORM_POSIX", "-DMMB_NTP_AUTOSYNC"
+    )
+    for scenario in ("offline", "linkup", "retry_window", "late_linkup"):
+        out = subprocess.run(
+            [exe, scenario], capture_output=True, text=True, timeout=60
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "all checks passed" in out.stdout
+
+
+def test_ntp_autosync_scoped_to_framebuffer_target():
+    """#1181: only the framebuffer/ISO target opts into boot auto-sync.
+
+    The host stdio and desktop SDL builds share MMB_PLATFORM_POSIX but must
+    keep the gate off, so MMB_NTP_AUTOSYNC is defined inside the FB block only.
+    """
+    make = open(os.path.join(REPO, "native", "Makefile"), encoding="utf-8").read()
+    assert "-DMMB_NTP_AUTOSYNC=1" in make
+    fb_at = make.index("ifneq ($(FB),")
+    assert "-DMMB_NTP_AUTOSYNC=1" in make[fb_at : fb_at + 800], (
+        "auto-sync must be an FB-target opt-in"
+    )
+
+def test_term_bookmarks_reload_after_file_replaced(mmb_linux, tmp_path):
+    """Reloading after a suspend/resume remount must not keep a stale stream.
+
+    Native storage keeps one open FILE* per volume.  A remount (or a file
+    replaced underneath it) can leave that stream on the old inode, reading
+    EOF or stale bytes, which made TERM show an empty bookmark list until a
+    reboot.  Replace the file between two TERM sessions and check the second
+    session reads the new content.
+    """
+    if not os.path.isfile(SDL_BIN):
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    drive = tmp_path / "drive"
+    cdir = drive / "C"
+    cdir.mkdir(parents=True)
+    cfg = cdir / ".termconfig"
+
+    def write_cfg(name):
+        tmp = cdir / ".termconfig.new"
+        tmp.write_text(
+            "# TERM bookmarks\n\n[bm.0]\nname=%s\nhost=demo\nport=23\n" % name
+        )
+        os.replace(tmp, cfg)
+
+    def enter_term_and_list(session):
+        session.feed("TERM")
+        session.wait_ms(600)
+        session.key("f10")
+        session.wait_ms(300)
+        session.text("b")
+        session.wait_ms(400)
+
+    def leave_term(session):
+        session.key("f10")
+        session.wait_ms(300)
+        session.text("x")
+        session.wait_ms(800)
+
+    write_cfg("Alpha")
+    s = NativeSession(tmp_path, env={"MMB_DRIVE_ROOT": str(drive)}, binary=SDL_BIN)
+    enter_term_and_list(s)
+    s.wait_ms(3000)      # hold here so the file can change mid-session
+    s.start()
+
+    time.sleep(1.6)
+    write_cfg("Beta")    # same path, new inode
+    leave_term(s)
+    enter_term_and_list(s)
+    s.wait_ms(400)
+    s.quit()
+    out = s.wait(timeout=60)
+    assert out.count("Bookmarks\nAlpha") >= 1, out
+    assert out.count("Bookmarks\nBeta") >= 1, out

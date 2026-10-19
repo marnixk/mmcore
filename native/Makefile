@@ -74,6 +74,12 @@ ifneq ($(FB),)
 BUILD   := $(CURDIR)/build/fb
 OUT_SDL := $(CURDIR)/mmcore-fb$(EXE)
 CFLAGS += -DMMB_SDL_FRAMEBUFFER=1
+# #1181: this is the real device target (the Alpine live ISO runs mmcore-fb),
+# so it syncs the clock at boot once the network is up. The headless stdio and
+# desktop SDL host builds deliberately leave this off: net_posix.c reports the
+# network as always available and would reach the developer's real network from
+# the test harness.
+CFLAGS += -DMMB_NTP_AUTOSYNC=1
 endif
 
 CFLAGS += -DMMB_PLATFORM_POSIX \
@@ -110,8 +116,32 @@ MMB_VERSION ?= $(shell git -C $(REPO) describe --tags --always 2>/dev/null)
 MMB_SRCS := $(filter-out $(RAMDISK_C) $(HELP_C),$(wildcard $(MMB)/src/*.c)) \
 	    $(RAMDISK_C) $(HELP_C)
 TP_SRCS  := $(MMB)/third_party/cJSON.c $(MMB)/third_party/hxcmod.c \
-	    $(MMB)/third_party/picojpeg.c $(MMB)/third_party/upng.c
-COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(CONSOLE)/net_rxbuf.c \
+	    $(MMB)/third_party/ibxm.c $(MMB)/third_party/picojpeg.c \
+	    $(MMB)/third_party/upng.c
+
+# Vendored libsmb2 (#1128, #1134) for OPTION NETWORK DRIVE on Z:. Built for the
+# POSIX targets and for the MinGW/Winsock Windows target; netfs_smb2.c is
+# platform-neutral apart from the mmb_plat_poll_fd() hook.
+SMB2_DIR := $(MMB)/third_party/libsmb2
+CFLAGS += -DMMB_HAVE_SMB2=1 -DHAVE_CONFIG_H -D_U_='__attribute__((unused))'
+ifneq ($(WIN_BUILD),)
+# Find the MinGW config.h (include/win) ahead of the POSIX one in $(SMB2_DIR).
+CFLAGS += -I$(SMB2_DIR)/include/win
+endif
+CFLAGS += -I$(SMB2_DIR) -I$(SMB2_DIR)/include -I$(SMB2_DIR)/include/smb2 \
+	  -I$(SMB2_DIR)/lib
+ifneq ($(WIN_BUILD),)
+# MinGW/Winsock: libsmb2's Windows path keys off _WINDOWS and wants winsock2.h
+# ahead of windows.h (WIN32_LEAN_AND_MEAN). compat.c supplies the small
+# helpers these NEED_* macros select because the CRT lacks them.
+CFLAGS += -D_WINDOWS -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS \
+	  -DNEED_GETLOGIN_R -DNEED_GETPID -DNEED_RANDOM -DNEED_SRANDOM
+endif
+# The sync API blocks in poll(1000) with no break hook; we only use async, so
+# drop lib/sync.c from the build.
+SMB2_SRCS := $(filter-out $(SMB2_DIR)/lib/sync.c,$(wildcard $(SMB2_DIR)/lib/*.c))
+
+COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(SMB2_SRCS) $(CONSOLE)/net_rxbuf.c \
 	       storage_posix.c $(NET_SRC) cli.c
 STDIO_SRCS := platform_stdio.c main.c
 SDL_SRCS   := platform_sdl.c sdl_video.c sdl_scale.c sdl_console.c sdl_tui.c \
@@ -138,7 +168,7 @@ endif
 endif
 endif
 
-VPATH := $(MMB)/src:$(MMB)/third_party:$(CONSOLE):$(CURDIR)
+VPATH := $(MMB)/src:$(MMB)/third_party:$(SMB2_DIR)/lib:$(CONSOLE):$(CURDIR)
 
 all: $(OUT_STDIO) sdl
 

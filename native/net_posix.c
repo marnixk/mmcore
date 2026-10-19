@@ -53,6 +53,26 @@ static int set_nonblock(int fd)
 	return fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 }
 
+/* Generic poll hook for the SMB backend (netfs_smb2.c), which owns its own
+ * libsmb2 sockets and must not touch the CONNECT/TERM client above. The fd is
+ * carried as an intptr_t so a pointer-sized Winsock SOCKET is not truncated
+ * (#1136); a POSIX fd is always an int, so the cast back is exact. */
+int mmb_plat_poll_fd(intptr_t fd, int events, int timeout_ms)
+{
+	struct pollfd p;
+	int r;
+
+	p.fd = (int)fd;
+	p.events = (short)events;
+	p.revents = 0;
+	r = poll(&p, 1, timeout_ms);
+	if (r < 0)
+		return -1;
+	if (r == 0)
+		return 0;
+	return p.revents;
+}
+
 /* ---- client -------------------------------------------------------- */
 
 enum { C_IDLE = 0, C_CONNECTING = 1, C_CONNECTED = 2, C_FAILED = 3, C_CLOSED = 4 };
@@ -86,7 +106,11 @@ static void client_reset(void)
 int mmb_net_kind(void) { return MMB_NET_ETH; }
 #endif
 int mmb_net_open(int kind) { (void)kind; ignore_sigpipe(); return 0; }
+#ifndef MMB_NET_LINUX
+/* #1187: macOS and other POSIX hosts keep the constant stub; the Linux
+ * backend (net_linux.c) overrides this with a real link/lease check. */
 int mmb_net_available(void) { return 1; }
+#endif
 int mmb_net_gateway_ok(int force) { (void)force; return 1; }
 void mmb_net_yield(void) { sched_yield(); }
 

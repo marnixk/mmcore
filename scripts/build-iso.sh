@@ -17,7 +17,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${DIST:-${REPO_ROOT}/dist}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.20}"
 OUT_NAME="mmcore-fb-${ISO_ARCH:-x86_64}.iso"
-OUT="${DIST}/${OUT_NAME}"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -25,7 +24,11 @@ die() {
 	exit 1
 }
 
+# Resolve DIST to an absolute path: docker -v requires one, and the container
+# gets it mounted at a fixed path (/iso-out) so a custom DIST is honoured.
 mkdir -p "${DIST}"
+DIST="$(cd "${DIST}" && pwd)"
+OUT="${DIST}/${OUT_NAME}"
 rm -f "${OUT}"
 
 if [ "${ISO_DIRECT:-0}" = "1" ]; then
@@ -46,8 +49,9 @@ docker run --rm \
 	--platform "linux/${ISO_ARCH:-x86_64}" \
 	-e "MMCORE_VERSION=${VERSION:-dev}" \
 	-e "ISO_ARCH=${ISO_ARCH:-x86_64}" \
-	-e "ISO_OUT=/repo/dist/${OUT_NAME}" \
+	-e "ISO_OUT=/iso-out/${OUT_NAME}" \
 	-v "${REPO_ROOT}:/repo" \
+	-v "${DIST}:/iso-out" \
 	-w /repo \
 	"${ALPINE_IMAGE}" \
 	/repo/scripts/iso/build-in-container.sh

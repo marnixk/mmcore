@@ -22,9 +22,19 @@
 #endif
 
 static int s_alt, s_ctrl, s_shift;
-static int s_swallow_text; /* Alt+letter also emits SDL_TEXTINPUT */
+static int s_swallow_text; /* Alt/Ctrl chords also emit SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
 static int s_break;        /* latched BREAK seen while a program runs */
+
+/* CMM2 KEYDOWN() scan codes for the keys currently held. SDL reports a key by
+ * keysym in SDL_KEYDOWN/SDL_KEYUP, so the held set is rebuilt on each event and
+ * pushed to the interpreter. This mirrors the Circle USB HID path in
+ * console/kernel.cpp so the compat games (which poll KEYDOWN) behave the same
+ * on the native/Linux-ISO build. */
+static int s_keydown[6];
+static int s_keydown_n;
+
+static void keydown_publish(void);
 
 /* Pointer state, reported in software-framebuffer pixels so the full-screen
  * apps see the same coordinate space as the framebuffer. */
@@ -33,16 +43,30 @@ static int s_mouse_x, s_mouse_y;
 static int s_mouse_buttons;
 static int s_mouse_wheel;
 
+/* Relative pointer motion synthesised from an evdev touchpad/clickpad. SDL's
+ * raw evdev backend exposes a touchpad as a touch device and passes
+ * window == NULL to SDL_SendTouch(), so SDL's built-in touch-to-mouse
+ * synthesis (which requires a window) never runs and mmcore would otherwise
+ * get no SDL_MOUSEMOTION for it (#1039). Track one finger and accumulate its
+ * normalised deltas into framebuffer pixels. */
+static int s_finger_track_valid;
+static SDL_FingerID s_finger_track;
+static float s_finger_ax, s_finger_ay;
+
 void sdl_input_init(void)
 {
 	s_alt = s_ctrl = s_shift = 0;
 	s_swallow_text = 0;
 	s_line_input = 0;
 	s_break = 0;
+	s_keydown_n = 0;
+	keydown_publish();
 	s_mouse_present = 1;
 	s_mouse_x = s_mouse_y = 0;
 	s_mouse_buttons = 0;
 	s_mouse_wheel = 0;
+	s_finger_track_valid = 0;
+	s_finger_ax = s_finger_ay = 0.0f;
 }
 
 void sdl_input_mouse_state(int *present, int *x, int *y, int *buttons,
@@ -103,6 +127,61 @@ static void handle_mouse_button(const SDL_MouseButtonEvent *be)
 		s_mouse_buttons |= mask;
 	else if (be->type == SDL_MOUSEBUTTONUP)
 		s_mouse_buttons &= ~mask;
+}
+
+/* A touchpad/clickpad reaches SDL as a touch device: SDL_evdev sends
+ * SDL_SendTouch(fingerId, window=NULL, ...), and SDL's touch-to-mouse
+ * synthesis is gated on a non-NULL window, so no SDL_MOUSEMOTION is emitted
+ * (#1039). Turn the normalised finger motion into the same relative pointer
+ * state a mouse would produce. Clicks already arrive as SDL_MOUSEBUTTON from
+ * the device's BTN_LEFT, so only motion is synthesised here. */
+static void handle_finger_down(const SDL_TouchFingerEvent *fe)
+{
+	if (!s_finger_track_valid)
+	{
+		s_finger_track_valid = 1;
+		s_finger_track = fe->fingerId;
+		s_finger_ax = s_finger_ay = 0.0f;
+	}
+}
+
+static void handle_finger_up(const SDL_TouchFingerEvent *fe)
+{
+	if (s_finger_track_valid && fe->fingerId == s_finger_track)
+		s_finger_track_valid = 0;
+}
+
+static void handle_finger_motion(const SDL_TouchFingerEvent *fe)
+{
+	int w, h, dx, dy;
+
+	if (s_finger_track_valid && fe->fingerId != s_finger_track)
+		return;
+	w = sdl_video_width();
+	h = sdl_video_height();
+	if (w <= 0 || h <= 0)
+		return;
+	/* fe->dx/dy are normalised across the touchpad; scaling by the panel
+	 * lets a full-width swipe cross the screen. Keep the sub-pixel
+	 * remainder so slow drags still move. */
+	s_finger_ax += fe->dx * (float)w;
+	s_finger_ay += fe->dy * (float)h;
+	dx = (int)s_finger_ax;
+	dy = (int)s_finger_ay;
+	if (!dx && !dy)
+		return;
+	s_finger_ax -= (float)dx;
+	s_finger_ay -= (float)dy;
+	s_mouse_x += dx;
+	s_mouse_y += dy;
+	if (s_mouse_x < 0)
+		s_mouse_x = 0;
+	else if (s_mouse_x > w - 1)
+		s_mouse_x = w - 1;
+	if (s_mouse_y < 0)
+		s_mouse_y = 0;
+	else if (s_mouse_y > h - 1)
+		s_mouse_y = h - 1;
 }
 
 void sdl_input_begin_line(void)
@@ -277,6 +356,14 @@ int sdl_input_vt_from_key(int sym)
 	return 0;
 }
 
+#ifdef MMB_SDL_FRAMEBUFFER
+/* Another Linux VT is foreground; wait for mmcore's VT before delivering more
+ * input. SDL's evdev driver keeps enqueuing events across a VT switch (#922),
+ * so the key/text/mouse handlers gate on this latch. It is set by vt_switch()
+ * and cleared by vt_sync(); non-Linux framebuffer builds never set it. */
+static int s_vt_left;
+#endif
+
 #ifdef MMB_SDL_HAVE_VT
 /* SDL's kmsdrm input reads keys from evdev and mutes the kernel console
  * keyboard (KDSKBMODE K_OFF), so keystrokes never reach tty1's line
@@ -289,7 +376,6 @@ int sdl_input_vt_from_key(int sym)
  * the ioctls alone (test/automation aid) while still consuming the chord. */
 static int s_vt_fd = -1; /* /dev/tty0, opened on first switch */
 static int s_vt_ours;    /* mmcore's VT, learned when we switch away */
-static int s_vt_left;    /* another VT is foreground; wait to re-mute */
 
 static int vt_ioctl_enabled(void)
 {
@@ -362,12 +448,216 @@ static void vt_sync(void)
 }
 #endif
 
+#ifdef MMB_SDL_TEST
+/* Test-only: read/set the "another VT is foreground" latch so a host harness
+ * can drive the input gate without real DRM or /dev/tty0 (#922). */
+int sdl_input_test_vt_left(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+void sdl_input_test_set_vt_left(int v)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	s_vt_left = v;
+#else
+	(void)v;
+#endif
+}
+#endif
+
+/* Map an SDL keysym to the PC/AT set-1 scan code KEYDOWN() tests. Typing and
+ * INKEY$ use their own character/escape sequences; this table only feeds the
+ * held-key set. console/kernel.cpp emits the same set-1 codes from USB HID
+ * usage codes. */
+static int sdl_key_to_scancode(SDL_Keycode k)
+{
+	static const unsigned char letter_scan[26] = {
+		30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+		49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44
+	};
+	static const unsigned char kp_digit_scan[9] = {
+		79, 80, 81, 75, 76, 77, 71, 72, 73
+	};
+
+	if (k >= SDLK_a && k <= SDLK_z)
+		return letter_scan[k - SDLK_a];
+	if (k >= SDLK_1 && k <= SDLK_9)
+		return 2 + (int)(k - SDLK_1);
+	if (k == SDLK_0)
+		return 11;
+	/* The numeric keypad keeps its own set-1 cluster (Home/7 = 71 ...), so
+	 * KEYDOWN() distinguishes a keypad digit from the top-row digit. */
+	if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
+		return kp_digit_scan[k - SDLK_KP_1];
+	if (k == SDLK_KP_0)
+		return 82;
+	switch (k)
+	{
+	case SDLK_RETURN:
+	case SDLK_KP_ENTER:
+		return 28;
+	case SDLK_KP_DIVIDE:
+		return 53;
+	case SDLK_KP_MULTIPLY:
+		return 55;
+	case SDLK_KP_MINUS:
+		return 74;
+	case SDLK_KP_PLUS:
+		return 78;
+	case SDLK_KP_PERIOD:
+		return 83;
+	case SDLK_KP_EQUALS:
+		return 89;
+	case SDLK_ESCAPE:
+		return 1;
+	case SDLK_BACKSPACE:
+		return 14;
+	case SDLK_TAB:
+		return 15;
+	case SDLK_SPACE:
+		return 57;
+	case SDLK_MINUS:
+		return 12;
+	case SDLK_EQUALS:
+		return 13;
+	case SDLK_LEFTBRACKET:
+		return 26;
+	case SDLK_RIGHTBRACKET:
+		return 27;
+	case SDLK_BACKSLASH:
+		return 43;
+	case SDLK_SEMICOLON:
+		return 39;
+	case SDLK_QUOTE:
+		return 40;
+	case SDLK_BACKQUOTE:
+		return 41;
+	case SDLK_COMMA:
+		return 51;
+	case SDLK_PERIOD:
+		return 52;
+	case SDLK_SLASH:
+		return 53;
+	case SDLK_RIGHT:
+		return 77;
+	case SDLK_LEFT:
+		return 75;
+	case SDLK_DOWN:
+		return 80;
+	case SDLK_UP:
+		return 72;
+	case SDLK_HOME:
+		return 71;
+	case SDLK_END:
+		return 79;
+	case SDLK_PAGEUP:
+		return 73;
+	case SDLK_PAGEDOWN:
+		return 81;
+	case SDLK_INSERT:
+		return 82;
+	case SDLK_DELETE:
+		return 83;
+	case SDLK_CAPSLOCK:
+		return 58;
+	case SDLK_NUMLOCKCLEAR:
+		return 69;
+	case SDLK_SCROLLLOCK:
+		return 70;
+	case SDLK_PRINTSCREEN:
+		return 55;
+	case SDLK_LSHIFT:
+		return 42;
+	case SDLK_RSHIFT:
+		return 54;
+	case SDLK_LCTRL:
+	case SDLK_RCTRL:
+		return 29;
+	case SDLK_LALT:
+	case SDLK_RALT:
+		return 56;
+	case SDLK_F11:
+		return 133;
+	case SDLK_F12:
+		return 134;
+	default:
+		if (k >= SDLK_F1 && k <= SDLK_F10)
+			return 59 + (int)(k - SDLK_F1);
+		return 0;
+	}
+}
+
+/* g_cur is NULL during early platform init, before the interpreter session
+ * exists; nothing can be held then, so skip the push rather than dereference
+ * it. */
+static void keydown_publish(void)
+{
+	if (g_cur)
+		mmb_keydown_set(s_keydown, s_keydown_n);
+}
+
+static void keydown_clear(void)
+{
+	s_keydown_n = 0;
+	keydown_publish();
+}
+
+/* Add a held key (ignoring auto-repeat) and publish the set. */
+static void keydown_press(SDL_Keycode k)
+{
+	int code = sdl_key_to_scancode(k);
+	int i;
+
+	if (!code)
+		return;
+	for (i = 0; i < s_keydown_n; i++)
+		if (s_keydown[i] == code)
+			return;
+	if (s_keydown_n < (int)(sizeof s_keydown / sizeof s_keydown[0]))
+		s_keydown[s_keydown_n++] = code;
+	keydown_publish();
+}
+
+/* Remove a released key and publish the set. */
+static void keydown_release(SDL_Keycode k)
+{
+	int code = sdl_key_to_scancode(k);
+	int i, j;
+
+	if (!code)
+		return;
+	for (i = 0; i < s_keydown_n; i++)
+	{
+		if (s_keydown[i] != code)
+			continue;
+		for (j = i; j + 1 < s_keydown_n; j++)
+			s_keydown[j] = s_keydown[j + 1];
+		s_keydown_n--;
+		keydown_publish();
+		return;
+	}
+}
+
 static void handle_keydown(const SDL_KeyboardEvent *ke)
 {
 	SDL_Keycode k = ke->keysym.sym;
 	int ctrl = (ke->keysym.mod & KMOD_CTRL) != 0;
 	int alt = (ke->keysym.mod & KMOD_ALT) != 0;
 	int shift = (ke->keysym.mod & KMOD_SHIFT) != 0;
+	int gui = (ke->keysym.mod & KMOD_GUI) != 0;
+
+	/* Any keydown ends the previous chord's text window. The flag only
+	 * exists to drop the SDL_TEXTINPUT that can mirror an Alt+letter,
+	 * Ctrl+letter, or Ctrl+Alt+<digit> chord, and that event always follows
+	 * immediately in the queue. Ctrl+Alt+F<n> produces no text at all, so
+	 * without this a stale flag would silently eat the next ordinary
+	 * character (#927). */
+	s_swallow_text = 0;
 
 	/* Ctrl+Alt+1..4 switch virtual consoles on every platform (#603).
 	 * Both the top-row digits and the numeric keypad are accepted. The old
@@ -412,6 +702,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	if (ctrl && shift && k == SDLK_v)
 	{
 		paste_host_clipboard();
+		s_swallow_text = 1;
 		return;
 	}
 
@@ -424,6 +715,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 	    !s_line_input && !mmb_front_in_app() && mmb_front_line_empty())
 	{
 		mmb_exec_line("QUIT");
+		s_swallow_text = 1;
 		return;
 	}
 
@@ -435,10 +727,27 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		return;
 	}
 
-	/* Alt+letter is the app Alt menu / picker prefix. */
-	if (alt && !ctrl && k >= SDLK_a && k <= SDLK_z)
+	/* Alt+letter is the app Alt menu / picker prefix; Alt+digit is the
+	 * editor's tab-switch prefix. Both expect SOH (0x01) then the key
+	 * character, the same bytes the Circle USB path emits (hid_alt_char
+	 * covers letters and digits). Without the digit case Alt+1..Alt+9
+	 * never reached EDIT on the ISO/native SDL path (#1180); the numeric
+	 * keypad digits are accepted too, matching Ctrl+Alt+KP1..KP4 and the
+	 * Circle alt path (#1183). */
+	if (alt && !ctrl &&
+	    ((k >= SDLK_a && k <= SDLK_z) || (k >= SDLK_0 && k <= SDLK_9) ||
+	     (k >= SDLK_KP_1 && k <= SDLK_KP_9) || k == SDLK_KP_0))
 	{
-		char c = (char)('a' + (k - SDLK_a));
+		char c;
+
+		if (k >= SDLK_a && k <= SDLK_z)
+			c = (char)('a' + (k - SDLK_a));
+		else if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
+			c = (char)('1' + (k - SDLK_KP_1));
+		else if (k == SDLK_KP_0)
+			c = '0';
+		else
+			c = (char)('0' + (k - SDLK_0));
 
 		if (!mmb_is_running() && !s_line_input)
 		{
@@ -454,6 +763,7 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 		if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
 		{
 			deliver_csi("29~");
+			s_swallow_text = 1;
 			return;
 		}
 		if (k >= SDLK_a && k <= SDLK_z)
@@ -462,13 +772,41 @@ static void handle_keydown(const SDL_KeyboardEvent *ke)
 
 			if (code > 0)
 				deliver_ch((char)code);
+			s_swallow_text = 1;
 			return;
 		}
 		/* Ctrl+Space opens the app picker at the prompt (NUL). */
 		if (k == SDLK_SPACE)
 		{
 			deliver_ch(0);
+			s_swallow_text = 1;
 			return;
+		}
+	}
+
+	/* Chromebooks have no dedicated Home/End/PgUp/PgDn keys; the Search
+	 * key is Super (Left Meta). Map Super+arrows onto those keys so they
+	 * emit the real keys' bytes, leaving the arrow keys alone and Super by
+	 * itself inert (#1054). Shift/Alt/Ctrl still combine through the same
+	 * xterm modifier encoding as the real keys. */
+	if (gui)
+	{
+		switch (k)
+		{
+		case SDLK_UP:
+			k = SDLK_PAGEUP;
+			break;
+		case SDLK_DOWN:
+			k = SDLK_PAGEDOWN;
+			break;
+		case SDLK_LEFT:
+			k = SDLK_HOME;
+			break;
+		case SDLK_RIGHT:
+			k = SDLK_END;
+			break;
+		default:
+			break;
 		}
 	}
 
@@ -543,7 +881,13 @@ static void handle_text(const SDL_TextInputEvent *te)
 	const char *t = te->text;
 	size_t i, n;
 
-	if (s_swallow_text)
+	/* #1074: the KMS/DRM evdev backend emits SDL_TEXTINPUT for the base
+	 * letter of a Ctrl chord (desktop backends suppress it), which would
+	 * type the letter after the shortcut already ran. handle_keydown()
+	 * marks its chord returns with s_swallow_text; this guard is the
+	 * backstop for any Ctrl chord lacking a paired mark. Leave AltGr
+	 * (Ctrl+Alt) alone: some layouts deliver real characters that way. */
+	if ((s_ctrl && !s_alt) || s_swallow_text)
 	{
 		s_swallow_text = 0;
 		return;
@@ -562,8 +906,53 @@ static void handle_text(const SDL_TextInputEvent *te)
 	}
 }
 
+/* True while another VT owns the console: SDL's evdev driver keeps enqueuing
+ * input regardless of the active VT, so it must be dropped here. Always false
+ * on builds without the framebuffer VT latch. */
+static int vt_holds_input(void)
+{
+#ifdef MMB_SDL_FRAMEBUFFER
+	return s_vt_left;
+#else
+	return 0;
+#endif
+}
+
+static int is_input_event(Uint32 type)
+{
+	switch (type)
+	{
+	case SDL_KEYDOWN:
+	case SDL_KEYUP:
+	case SDL_TEXTINPUT:
+	case SDL_FINGERDOWN:
+	case SDL_FINGERUP:
+	case SDL_FINGERMOTION:
+	case SDL_MOUSEMOTION:
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+	case SDL_MOUSEWHEEL:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void handle_event(const SDL_Event *e)
 {
+	if (vt_holds_input() && is_input_event(e->type))
+	{
+		/* #922: another VT is foreground, but SDL still delivers its
+		 * keys/text/mouse to us. Drop them, and clear any modifier the
+		 * switch chord latched so it cannot stick across the switch.
+		 * Window events still flow through so vt_sync() can re-mute the
+		 * keyboard once mmcore's VT returns. */
+		s_alt = s_ctrl = s_shift = 0;
+		s_swallow_text = 0;
+		s_finger_track_valid = 0;
+		return;
+	}
+
 	switch (e->type)
 	{
 	case SDL_QUIT:
@@ -581,6 +970,10 @@ static void handle_event(const SDL_Event *e)
 		else if (e->window.event == SDL_WINDOWEVENT_LEAVE)
 			SDL_ShowCursor(SDL_ENABLE);
 #endif
+		else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+			/* SDL does not deliver the KEYUPs for keys released while
+			 * unfocused, so drop the held-key set or they stick. */
+			keydown_clear();
 		else if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
 			 e->window.event == SDL_WINDOWEVENT_RESIZED ||
 			 e->window.event == SDL_WINDOWEVENT_MAXIMIZED ||
@@ -603,15 +996,32 @@ static void handle_event(const SDL_Event *e)
 		s_alt = (e->key.keysym.mod & KMOD_ALT) != 0;
 		s_ctrl = (e->key.keysym.mod & KMOD_CTRL) != 0;
 		s_shift = (e->key.keysym.mod & KMOD_SHIFT) != 0;
+		keydown_press(e->key.keysym.sym);
 		handle_keydown(&e->key);
 		break;
 	case SDL_KEYUP:
 		s_alt = (e->key.keysym.mod & KMOD_ALT) != 0;
 		s_ctrl = (e->key.keysym.mod & KMOD_CTRL) != 0;
 		s_shift = (e->key.keysym.mod & KMOD_SHIFT) != 0;
+		keydown_release(e->key.keysym.sym);
+		/* A chord's mirror SDL_TEXTINPUT (if the backend emits one) is
+		 * queued with the keydown, so it has already been processed by
+		 * this keyup. The one-shot swallow is therefore spent; drop it
+		 * here so a chord that emits no text cannot eat an unrelated
+		 * later text event (#1104). */
+		s_swallow_text = 0;
 		break;
 	case SDL_TEXTINPUT:
 		handle_text(&e->text);
+		break;
+	case SDL_FINGERDOWN:
+		handle_finger_down(&e->tfinger);
+		break;
+	case SDL_FINGERUP:
+		handle_finger_up(&e->tfinger);
+		break;
+	case SDL_FINGERMOTION:
+		handle_finger_motion(&e->tfinger);
 		break;
 	case SDL_MOUSEMOTION:
 		handle_mouse_motion(&e->motion);

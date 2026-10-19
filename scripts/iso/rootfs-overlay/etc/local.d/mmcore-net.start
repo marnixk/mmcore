@@ -1,7 +1,8 @@
 #!/bin/sh
-# Bring up wired interfaces with DHCP at boot. Wi-Fi is joined at runtime with
-# OPTION WIFI (the native backend writes wpa_supplicant.conf and restarts the
-# service); OPTION ETHERNET ON restarts networking.
+# Bring up wired interfaces with DHCP at boot. Saved Wi-Fi credentials are
+# joined by mmcore itself: the first mmb_poll() drives mmb_wlan_start(), so
+# OPTION WIFI is only needed to scan/change. OPTION ETHERNET ON restarts
+# networking.
 for path in /sys/class/net/*; do
 	[ -d "${path}" ] || continue
 	name="${path##*/}"

@@ -16,6 +16,11 @@ Settings:
   ANGLE DEGREES|RADIANS    Y_AXIS UP|DOWN
   TAB 2|3|4|8       BREAK n     AUTORUN ON|OFF
     (BREAK n is the cooked key; PrtScr always breaks)
+  AUTOSAVE ON|OFF
+    Periodic crash-resume checkpoint of a dirty named buffer in EDIT and
+    WORDPAD to a <file>.rec sidecar (default ON, about once a minute). OFF
+    disables only the periodic checkpoint; saving on leave still writes the
+    real file.
   COLOURCODE ON|OFF|REVERSE
   CONSOLE SCREEN|SERIAL|BOTH|NONE|SAVE|PORT n
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE
@@ -46,6 +51,11 @@ Settings:
   F1..F12 string$    AUDIO ON|OFF
   AUDIO_TARGET HDMI|JACK   (HDMI0 or 3.5mm PWM jack)
   AUDIO TARGET HDMI|JACK   (same)
+  AFK PASSWORD "pass$"|FORGET
+    Arm the AFK screensaver lock: any key stops the animation and asks for the
+    password before AFK exits. The password is stored as a hash in
+    .mmbasic.ini and is never printed by OPTION LIST. FORGET removes it.
+    A deterrent, not real security. See ~AFK~.
   DISPLAY/LCDPANEL/TOUCH/SDCARD/RESOLUTION/CLOCK/
   CPUSPEED/HEARTBEAT
   WIFI [ssid$ [, password$]]
@@ -72,6 +82,26 @@ Settings:
   TIMEZONE "name"
     Local zone for DATE$/TIME$/DATETIME$ (default UTC; no daylight saving).
     See ~TIMEZONE~.
+  NETWORK DRIVE "\\host\share[\sub]" [, "user" [, "pass"]]
+    Mount an SMB2/3 share (Samba or Windows) as drive Z:. The host may carry
+    a non-default port, e.g. "\\host:4455\share". Backslashes and forward
+    slashes are both accepted, as are doubled backslashes and the smb://
+    scheme; the value is normalised to a UNC and validated immediately. An
+    optional sub-folder after the share becomes the root of Z:. USER and PASS
+    are optional: with neither, Z: connects as a guest. A DOMAIN\user form is
+    accepted. The password is stored as its NTLM hash (ntlm:<hex>) in
+    .mmbasic.ini and is never printed by OPTION LIST, DIR or error messages.
+    The share is opened on first use of Z:, with a timeout and Ctrl-C to
+    abort; DRIVE and OPTION LIST never connect. OPTION RESET keeps the saved
+    share, like it keeps Wi-Fi credentials.
+  NETWORK DRIVE
+    Reconnect the stored share immediately.
+  NETWORK DRIVE OFF
+    Forget the stored share and drop the connection.
+    Limitations: SMB 2.02 to 3.1.1 only (no SMB1), NTLMv2 authentication, and
+    no encryption. Guest access needs the server to map guests (for example
+    Samba's "map to guest = Bad User"); Windows 11 blocks insecure guest
+    logons by default. See ~DRIVE~.
   TERM LOG ON|OFF
     Write session traffic to C:/.termlog (A: if no SD). Default OFF.
   TERM AUTOLOG ON|OFF
@@ -88,9 +118,11 @@ Example:
     OPTION WIFI SCAN
     OPTION WIFI DEBUG ON
     OPTION ETHERNET ON
+    OPTION NETWORK DRIVE "\\host\share","user","pass"
     OPTION TERM LOG ON
     OPTION TERM SCROLLBACK 400
     OPTION PROMPT CWD
     OPTION PATH "A:/APPS/"
     OPTION BOOT REPL
+    OPTION AFK PASSWORD "open sesame"
     OPTION LIST

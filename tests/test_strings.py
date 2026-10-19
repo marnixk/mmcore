@@ -94,6 +94,14 @@ def test_dir_function(console):
     assert console.send_line("PRINT D$") == ""
 
 
+def test_str_dollar_keeps_pending_print(console):
+    """STR$ must not clobber output already accumulated by PRINT (#991)."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('PRINT "x";STR$(5)') == "x5"
+    assert console.send_line('PRINT STR$(1);"x";STR$(2)') == "1x2"
+    assert console.send_line('PRINT "a";STR$(-12.5);"b"') == "a-12.5b"
+
+
 def test_help_string_gaps(console):
     out = dump_topic(console, "LSET")
     assert "RSET" in out

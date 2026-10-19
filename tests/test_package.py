@@ -2,6 +2,7 @@
 
 import time
 
+from harness import prompt_at_buffer_end
 from ihelp_util import dump_topic
 
 
@@ -106,7 +107,7 @@ def test_package_overwrite_prompt(console):
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
     assert b"?FILE EXISTS" not in buf.upper()
     assert "HELLOPKG" in console.send_line('RUN "OW.APP"')
@@ -126,7 +127,7 @@ def test_package_overwrite_prompt(console):
         chunk = con._recv(con._ser)
         if chunk:
             buf += chunk
-            if buf.rstrip().endswith(b">"):
+            if prompt_at_buffer_end(buf, con.prompt):
                 break
     assert "HELLOPKG" in console.send_line('RUN "OW.APP"')
 

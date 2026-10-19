@@ -31,7 +31,10 @@ static int keyboard_id(const char *s)
 
 static void choose_path(void)
 {
-	if (mmb_fat_ready('C'))
+	/* Never select a C: that is only a directory on the RAM overlay: on the
+	 * live ISO that happens when MMCORE is away after a resume. Session
+	 * changes go to A: instead and are migrated back once C: is real. */
+	if (mmb_fat_ready('C') && !mmb_storage_persistence_lost())
 		strncpy(settings_path, "C:/.mmbasic.ini", sizeof(settings_path) - 1);
 	else
 		strncpy(settings_path, "A:/.mmbasic.ini", sizeof(settings_path) - 1);
@@ -155,6 +158,9 @@ static void trim(char *s)
 /* Which theme keys the file carried, so old configs can be migrated onto the
  * split system/editor theme options (see mmb_settings_load). */
 static int saw_theme_key, saw_edit_theme_key;
+/* Whether the brightness/volume keys were present, so a config written before
+ * #1157 does not force a default over the live panel / audio state. */
+static int saw_brightness_key, saw_volume_key;
 
 static void apply_core(const char *k, const char *v)
 {
@@ -233,6 +239,8 @@ static void apply_core(const char *k, const char *v)
 	}
 	else if (mmb_keyword_eq(k, "edit_jump_break"))
 		G.opt.edit_jump_break = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "autosave"))
+		G.opt.autosave = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "y_axis_up"))
 		G.opt.y_axis_up = parse_int(v);
 	else if (mmb_keyword_eq(k, "angle_degrees"))
@@ -243,6 +251,21 @@ static void apply_core(const char *k, const char *v)
 		G.opt.audio_on = parse_int(v);
 	else if (mmb_keyword_eq(k, "audio_target"))
 		G.opt.audio_target = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "brightness"))
+	{
+		saw_brightness_key = 1;
+		G.opt.brightness = parse_int(v);
+	}
+	else if (mmb_keyword_eq(k, "volume_l"))
+	{
+		saw_volume_key = 1;
+		G.opt.volume_l = parse_int(v);
+	}
+	else if (mmb_keyword_eq(k, "volume_r"))
+	{
+		saw_volume_key = 1;
+		G.opt.volume_r = parse_int(v);
+	}
 	else if (mmb_keyword_eq(k, "term_log"))
 		G.opt.term_log = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "term_scrollback"))
@@ -268,6 +291,12 @@ static void apply_core(const char *k, const char *v)
 	{
 		strncpy(G.opt.app_path, v, sizeof(G.opt.app_path) - 1);
 		G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "afk_password"))
+	{
+		/* Stored as a hash (see mmb_afk_hash_password); empty = no lock. */
+		strncpy(G.opt.afk_password, v, sizeof(G.opt.afk_password) - 1);
+		G.opt.afk_password[sizeof(G.opt.afk_password) - 1] = 0;
 	}
 	else if (mmb_keyword_eq(k, "boot_mode"))
 	{
@@ -325,10 +354,37 @@ static void apply_wifi(const char *k, const char *v)
 	}
 }
 
+/* [netdrive] (#1128): the stored UNC, user and NTLM-hashed password for Z:. */
+static void apply_netdrive(const char *k, const char *v)
+{
+	if (mmb_keyword_eq(k, "unc"))
+	{
+		strncpy(G.opt.netdrv_unc, v, sizeof(G.opt.netdrv_unc) - 1);
+		G.opt.netdrv_unc[sizeof(G.opt.netdrv_unc) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "user"))
+	{
+		strncpy(G.opt.netdrv_user, v, sizeof(G.opt.netdrv_user) - 1);
+		G.opt.netdrv_user[sizeof(G.opt.netdrv_user) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "pass"))
+	{
+		strncpy(G.opt.netdrv_pass, v, sizeof(G.opt.netdrv_pass) - 1);
+		G.opt.netdrv_pass[sizeof(G.opt.netdrv_pass) - 1] = 0;
+	}
+	else if (mmb_keyword_eq(k, "enabled"))
+		G.opt.netdrv_enabled = parse_int(v) ? 1 : 0;
+}
+
+/* Warn once per failure streak: .mmbasic.ini could be read-only/full, or on
+ * the live ISO the MMCORE mount may be gone after a resume. */
+static int s_save_warned;
+
 void mmb_settings_save(void)
 {
 	char buf[SETTINGS_MAX];
 	int i;
+
 	choose_path();
 	buf[0] = 0;
 	append(buf, sizeof(buf), "[core]\n");
@@ -376,14 +432,19 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "theme", G.opt.theme);
 	kv_int(buf, sizeof(buf), "edit_theme", G.opt.edit_theme);
 	kv_int(buf, sizeof(buf), "edit_jump_break", G.opt.edit_jump_break);
+	kv_int(buf, sizeof(buf), "autosave", G.opt.autosave);
 	kv_int(buf, sizeof(buf), "y_axis_up", G.opt.y_axis_up);
 	kv_int(buf, sizeof(buf), "angle_degrees", G.opt.angle_degrees);
 	kv_int(buf, sizeof(buf), "error_continue", G.opt.error_continue);
 	kv_int(buf, sizeof(buf), "audio_on", G.opt.audio_on);
 	kv_int(buf, sizeof(buf), "audio_target", G.opt.audio_target);
+	kv_int(buf, sizeof(buf), "brightness", G.opt.brightness);
+	kv_int(buf, sizeof(buf), "volume_l", G.opt.volume_l);
+	kv_int(buf, sizeof(buf), "volume_r", G.opt.volume_r);
 	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
+	kv_str(buf, sizeof(buf), "afk_password", G.opt.afk_password);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
 	kv_int(buf, sizeof(buf), "bg", (int64_t)G.gfx.bg);
 	if (G.opt.search_path[0])
@@ -419,13 +480,82 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "enabled", G.opt.wifi_enabled);
 	kv_int(buf, sizeof(buf), "debug", G.opt.wifi_debug);
 	kv_str(buf, sizeof(buf), "country", mmb_opt_wifi_country());
+	append(buf, sizeof(buf), "\n[netdrive]\n");
+	kv_str(buf, sizeof(buf), "unc", G.opt.netdrv_unc);
+	kv_str(buf, sizeof(buf), "user", G.opt.netdrv_user);
+	/* The stored password is the NTLM hash ("ntlm:<hex>" or empty). */
+	kv_str(buf, sizeof(buf), "pass", G.opt.netdrv_pass);
+	kv_int(buf, sizeof(buf), "enabled", G.opt.netdrv_enabled);
 	append(buf, sizeof(buf), "\n[ethernet]\n");
 	kv_int(buf, sizeof(buf), "enabled", G.opt.ethernet_enabled);
 	append(buf, sizeof(buf), "\n[ntp]\n");
 	kv_int(buf, sizeof(buf), "enabled", G.opt.ntp_enabled);
 	kv_str(buf, sizeof(buf), "server", G.opt.ntp_server);
 	kv_str(buf, sizeof(buf), "timezone", G.opt.timezone);
-	mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0);
+	if (mmb_vfs_write(settings_path, buf, (unsigned)strlen(buf), 0) != 0)
+	{
+		if (!s_save_warned)
+		{
+			s_save_warned = 1;
+			mmb_storage_notice("!settings not saved: storage unavailable");
+		}
+	}
+	else if (mmb_storage_persistence_lost())
+	{
+		if (!s_save_warned)
+		{
+			s_save_warned = 1;
+			mmb_storage_notice("!settings are session-only: MMCORE not mounted");
+		}
+	}
+	else
+		s_save_warned = 0;
+}
+
+/* Clamp and apply the persisted brightness/volume after the INI has been
+ * parsed, and after a miss too so a config without the #1157 keys still
+ * seeds the runtime from the live panel state. */
+static void settings_finish(void)
+{
+	/* Pre-split configs stored the single shared theme in edit_theme. Treat
+	 * that as the system theme and leave the editor following it. */
+	if (!saw_theme_key && saw_edit_theme_key)
+	{
+		if (G.opt.edit_theme >= 0 &&
+		    G.opt.edit_theme < mmb_editor_theme_count())
+			G.opt.theme = G.opt.edit_theme;
+		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
+	}
+	if (G.opt.theme < 0 || G.opt.theme >= mmb_editor_theme_count())
+		G.opt.theme = MMB_OPT_DEFAULT_THEME;
+	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM ||
+	    G.opt.edit_theme >= mmb_editor_theme_count())
+		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
+	if (G.opt.ethernet_enabled)
+		G.opt.wifi_enabled = 0;
+#if defined(MMB_PLATFORM_POSIX)
+	if (!saw_brightness_key)
+		G.opt.brightness = mmb_brightness_get();
+#endif
+	if (G.opt.brightness < 0)
+		G.opt.brightness = 0;
+	if (G.opt.brightness > 100)
+		G.opt.brightness = 100;
+#if defined(MMB_PLATFORM_POSIX)
+	(void)mmb_brightness_set(G.opt.brightness);
+#endif
+	if (!saw_volume_key)
+		G.opt.volume_l = G.opt.volume_r = 100;
+	if (G.opt.volume_l < 0)
+		G.opt.volume_l = 0;
+	if (G.opt.volume_l > 100)
+		G.opt.volume_l = 100;
+	if (G.opt.volume_r < 0)
+		G.opt.volume_r = 0;
+	if (G.opt.volume_r > 100)
+		G.opt.volume_r = 100;
+	g_audio.vol_l = G.opt.volume_l;
+	g_audio.vol_r = G.opt.volume_r;
 }
 
 void mmb_settings_load(void)
@@ -433,15 +563,23 @@ void mmb_settings_load(void)
 	char buf[SETTINGS_MAX];
 	unsigned got = 0;
 	char *p, *nl;
-	int section = 0; /* 1 core 2 wifi 3 ethernet 4 ntp */
+	int section = 0; /* 1 core 2 wifi 3 ethernet 4 ntp 5 netdrive */
 
 	saw_theme_key = 0;
 	saw_edit_theme_key = 0;
+	saw_brightness_key = 0;
+	saw_volume_key = 0;
 	choose_path();
 	if (!mmb_vfs_exists(settings_path))
+	{
+		settings_finish();
 		return;
+	}
 	if (mmb_vfs_read(settings_path, buf, sizeof(buf) - 1, &got) != 0)
+	{
+		settings_finish();
 		return;
+	}
 	buf[got] = 0;
 	p = buf;
 	while (*p)
@@ -469,6 +607,8 @@ void mmb_settings_load(void)
 				section = 3;
 			else if (mmb_keyword_eq(p, "[ntp]"))
 				section = 4;
+			else if (mmb_keyword_eq(p, "[netdrive]"))
+				section = 5;
 			else
 				section = 0;
 			p = nl;
@@ -517,24 +657,13 @@ void mmb_settings_load(void)
 						}
 					}
 				}
+				else if (section == 5)
+					apply_netdrive(p, eq);
 			}
 		}
 		p = nl;
 	}
-	/* Pre-split configs stored the single shared theme in edit_theme. Treat
-	 * that as the system theme and leave the editor following it. */
-	if (!saw_theme_key && saw_edit_theme_key)
-	{
-		if (G.opt.edit_theme >= 0 && G.opt.edit_theme < 10)
-			G.opt.theme = G.opt.edit_theme;
-		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
-	}
-	if (G.opt.theme < 0 || G.opt.theme >= 10)
-		G.opt.theme = MMB_OPT_DEFAULT_THEME;
-	if (G.opt.edit_theme < MMB_OPT_EDIT_THEME_SYSTEM || G.opt.edit_theme >= 10)
-		G.opt.edit_theme = MMB_OPT_EDIT_THEME_SYSTEM;
-	if (G.opt.ethernet_enabled)
-		G.opt.wifi_enabled = 0;
+	settings_finish();
 }
 
 void mmb_cmd_factory_reset(void)
@@ -546,6 +675,10 @@ void mmb_cmd_factory_reset(void)
 	G.opt.wifi_psk[0] = 0;
 	G.opt.wifi_enabled = 0;
 	G.opt.wifi_debug = 0;
+	G.opt.netdrv_unc[0] = 0;
+	G.opt.netdrv_user[0] = 0;
+	G.opt.netdrv_pass[0] = 0;
+	G.opt.netdrv_enabled = 0;
 	G.opt.ethernet_enabled = 0;
 	G.opt.ntp_enabled = MMB_NTP_AUTO;
 	strncpy(G.opt.ntp_server, MMB_NTP_DEFAULT_SERVER, sizeof(G.opt.ntp_server) - 1);
@@ -556,9 +689,14 @@ void mmb_cmd_factory_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
+	g_audio.vol_l = G.opt.volume_l;
+	g_audio.vol_r = G.opt.volume_r;
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();
 	mmb_gfx_apply_default_mode();
+#if defined(MMB_PLATFORM_POSIX)
+	(void)mmb_brightness_set(G.opt.brightness);
+#endif
 	mmb_settings_save();
 	mmb_out("Factory defaults restored");
 }

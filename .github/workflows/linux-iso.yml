@@ -60,6 +60,9 @@ jobs:
           # O_RDWR on the FIFO never blocks, so a QEMU that fails to start
           # cannot wedge the whole step.
           exec 3<>serial.in
+          # -m 2048: the rootfs is a squashfs the kernel mounts, not an initramfs
+          # unpacked into RAM. Keep this in step with the "at least 2 GiB" note
+          # in docs/framebuffer-and-iso.md.
           timeout 720 qemu-system-x86_64 -m 2048 \
             -cdrom dist/mmcore-fb-x86_64.iso \
             -vga none -device virtio-vga \
@@ -68,10 +71,11 @@ jobs:
             -no-reboot -accel tcg <&3 > boot.log 2>&1 &
           qemu_pid=$!
 
-          # The rootfs is ~790 MiB and SDL2 is built from source, so the old
-          # fixed 120 s sleep is too tight. Probe until ttyS0's autologin shell
-          # answers, then stop. The probe builds its marker with printf so an
-          # echoed command line cannot satisfy the check by itself.
+          # SDL2 is built from source and the guest still has to mount the squashfs
+          # under TCG, so the old fixed 120 s sleep is too tight. Probe until
+          # ttyS0's autologin shell answers, then stop. The probe builds its
+          # marker with printf so an echoed command line cannot satisfy the
+          # check by itself.
           tested=0
           for _ in $(seq 1 60); do
             echo "printf 'MMCORE_%s\n' SHELL_READY" >&3 || true
@@ -86,10 +90,26 @@ jobs:
           {
             echo "printf 'MMCORE_%s\n' ISO_BOOT_OK"
             echo "test -e /dev/dri/card0 && printf 'MMCORE_%s\n' DRM_OK || printf 'MMCORE_%s\n' DRM_MISSING"
-            echo 'pgrep -x mmcore | head -n1 > /tmp/p1; sleep 6; pgrep -x mmcore | head -n1 > /tmp/p2'
-            echo "cmp -s /tmp/p1 /tmp/p2 && [ -s /tmp/p1 ] && printf 'MMCORE_%s\n' STABLE_OK || printf 'MMCORE_%s\n' STABLE_MISSING"
+            # #918/#941: mmcore starts on tty1 via agetty autologin, which can
+            # lag the ttyS0 shell, so wait (bounded) for it to appear and then
+            # require the PID to be unchanged 6 s later (a crash loop never
+            # stabilises). Match the kernel's per-pid `comm` name: BusyBox's
+            # exact-name option anchors the whole argv[0]
+            # (`/usr/local/bin/mmcore`), so it never matched the running process
+            # and STABLE_OK was always missed (#941).
+            echo 'mmcore_pid() { for d in /proc/[0-9]*; do [ "$(cat "$d/comm" 2>/dev/null)" = mmcore ] && { printf "%s\n" "${d##*/}"; break; }; done; }'
+            echo 'ok=0; n=0; while [ "$n" -lt 60 ]; do a=$(mmcore_pid); if [ -n "$a" ]; then sleep 6; b=$(mmcore_pid); [ "$a" = "$b" ] && { ok=1; break; }; fi; n=$((n+1)); sleep 2; done; [ "$ok" = 1 ] && printf "MMCORE_%s\n" STABLE_OK || printf "MMCORE_%s\n" STABLE_MISSING'
+            # #941: on a miss, dump why before poweroff (process table, mmcore
+            # stderr, tty1 agetty/login/mmcore state) so boot.log alone shows
+            # the cause of the next failure.
+            echo '[ "$ok" = 1 ] || { printf "MMCORE_%s\n" DIAG_BEGIN; echo "-- ps --"; ps w 2>&1 | head -25; echo "-- pgrep -a mmcore --"; pgrep -a mmcore 2>&1 || true; echo "-- /tmp/mmcore.stderr --"; ls -l /tmp/mmcore.stderr 2>&1; cat /tmp/mmcore.stderr 2>&1 | head -40; echo "-- comm scan --"; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); case "$c" in mmcore|agetty|login|mmcore-splash) echo "$d $c";; esac; done; echo "-- dmesg --"; dmesg 2>&1 | tail -80; echo "-- /dev/dri --"; ls -l /dev/dri 2>&1; echo "-- rc-status --"; rc-status 2>&1 || true; printf "MMCORE_%s\n" DIAG_END; }'
             echo "grep -q 'could not open SDL window' /tmp/mmcore.stderr 2>/dev/null && printf 'MMCORE_%s\n' SDL_FAIL || printf 'MMCORE_%s\n' SDL_OK"
-            echo "ip -4 addr show | grep -q 'inet 10.0.2' && printf 'MMCORE_%s\n' NET_OK || printf 'MMCORE_%s\n' NET_MISSING"
+            # #958: the firmware keep-list must actually reach the rootfs: a
+            # representative Intel GPU, AMD GPU, Broadcom and iwlwifi blob.
+            echo 'test -d /lib/firmware/i915 && test -d /lib/firmware/amdgpu && test -d /lib/firmware/brcm && ls /lib/firmware/iwlwifi-*.ucode >/dev/null 2>&1 && printf "MMCORE_%s\n" FW_OK || printf "MMCORE_%s\n" FW_MISSING'
+            # DHCP can be slow (the interface often appears after the shell), so
+            # give SLIRP up to ~30 s to hand out 10.0.2.x before failing (#901).
+            echo 'n=0; while [ "$n" -lt 6 ]; do ip -4 addr show | grep -q "inet 10.0.2" && break; n=$((n+1)); sleep 5; done; if [ "$n" -lt 6 ]; then printf "MMCORE_%s\n" NET_OK; else printf "MMCORE_%s\n" NET_MISSING; fi'
             # #896: prove the live rootfs CA bundle lets busybox wget verify the
             # GitHub certificate (mmcore-update depends on it). Retries absorb a
             # transient network blip; a cert failure repeats on every attempt.
@@ -99,11 +119,12 @@ jobs:
 
           wait "$qemu_pid" || true
           echo "---- boot.log tail ----"
-          tail -n 60 boot.log || true
+          tail -n 100 boot.log || true
           grep -q "MMCORE_ISO_BOOT_OK" boot.log
           grep -q "MMCORE_DRM_OK" boot.log
           grep -q "MMCORE_STABLE_OK" boot.log
           grep -q "MMCORE_SDL_OK" boot.log
+          grep -q "MMCORE_FW_OK" boot.log
           grep -q "MMCORE_NET_OK" boot.log
           grep -q "MMCORE_TLS_OK" boot.log
 

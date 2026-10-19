@@ -48,15 +48,130 @@ labelled `MMCORE`, formatted ext4. Pass `--no-persist` to skip it. The same ISO
 can be burned to a DVD or written with any hybrid-ISO tool; without the `MMCORE`
 partition the session is read-only.
 
+`--read-write` seeds that same partition (marker `/.mmcore-rw`, plus a `C/`
+directory) so the live boot uses it as the writable upper layer instead of a
+RAM overlay. `C:` then persists on the stick or microSD, and the session is
+not read-only. This does not install mmcore onto an internal disk:
+
+```bash
+sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
+```
+
+`--update` refreshes the mmcore system files on a stick that was already
+written. It copies the `MMCORE` partition's contents to a staging directory
+(`MMCORE_UPDATE_BACKUP`, default `$TMPDIR` or `/tmp`), rewrites the whole image
+with a fresh GPT and a freshly formatted `MMCORE` partition (`mkfs.ext4`), then
+copies the files back, so `C:`, `.mmbasic.ini`, saved Wi-Fi settings and any
+other user files survive even when the new image has grown. The staging
+directory must hold the used bytes of `MMCORE`; a failed update keeps the
+staged copy and reports where it is. It requires an existing `MMCORE`
+partition:
+
+```bash
+sudo ./install-usb.sh --update --iso mmcore-fb-x86_64.iso.zst /dev/sdX
+```
+
 ### Boot behaviour
 
 | Console | What happens |
 | --- | --- |
 | tty1 (display) | Autologin root, then `mmcore` runs fullscreen on the framebuffer |
-| tty2 (`Alt+F2`) | Autologin root shell |
+| tty2 (`Ctrl+Alt+F2`) | Autologin root shell (`Ctrl+Alt+F1` returns to mmcore) |
 | ttyS0 (serial) | Autologin root shell at 115200 8N1 |
 
 If mmcore exits, the tty1 session ends and it starts again.
+
+### Power management (laptops)
+
+`acpid` is enabled on the live and installed images. The **power button** runs a
+clean shutdown (`/sbin/poweroff`) after syncing disks and unmounting the
+`MMCORE` / `MMCORE-SYS` / `MMCORE-DATA` persistence mounts when they are
+mounted. **Closing the lid** suspends to RAM (`echo mem > /sys/power/state`);
+opening the lid resumes through the kernel with no extra handler.
+
+A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
+gone (or read-only) after wake. mmcore detects a resume from the growing gap
+between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume.
+With plain `MMCORE` persistence it remounts the volume by label (`MMCORE`, or
+the basename of `MMB_DRIVE_ROOT`), asks for a read-write remount and re-points
+C: at it. With `--read-write` the same volume is also the root overlay's upper:
+a normal resume keeps the mount, so mmcore only lifts a read-only remount in
+place and standby continues to work. If the volume actually disappeared (or the
+root overlay is already unwritable), remounting it cannot repair the overlay's
+stale upper, so mmcore deliberately does not create a second mount there and
+prints `!MMCORE reset after suspend: reboot to recover storage`. If C: cannot
+be recovered either way, the next settings/bookmark save prints
+`!settings ... storage unavailable` (or `session-only`) instead of silently
+writing to the RAM overlay.
+
+At the MMBasic prompt, `SHUTDOWN` performs the same style of power-off on the
+framebuffer image (and on a Raspberry Pi). The native Linux/macOS/Windows desktop
+apps do not shut down hardware; they report that `SHUTDOWN` is unavailable.
+
+The live session is pinned to the media it booted from: GRUB sets its root by
+a marker file at the ISO's own root (`mmcore-live-media`) and the kernel
+command line carries `mmcore.live=1`, so the live root is always the stick's
+squashfs — even when an internal disk has an installed mmcore (see
+[Live USB with a disk installed](#live-usb-with-a-disk-installed-dual-boot)).
+The live command line never includes `mmcore.sys=`, so a live session cannot
+mount an installed system's `C:`.
+
+The live image needs **at least 2 GiB of RAM**. GRUB loads the kernel and a
+small initramfs. The root filesystem stays a squashfs on the stick, mounted
+with an in-memory overlay, and pages are read as userspace needs them.
+
+### Hardware firmware
+
+The image ships only the firmware a desktop or laptop PC needs, not Alpine's
+full `linux-firmware` meta package (which is ~1.1 GiB installed and covers ARM
+SoCs, server SmartNICs and embedded/DSL/USB-TV devices). The keep-list is:
+
+- **CPU:** AMD CPU microcode (`amd-ucode`) for late-loadable security fixes.
+- **GPUs:** Intel `i915` and `xe` plus the `intel` audio/Bluetooth blobs, AMD
+  `amdgpu` and `radeon`, and NVIDIA `nvidia` (nouveau/GSP).
+- **Wi-Fi / Bluetooth:** Intel `iwlwifi`, Broadcom `brcm`, MediaTek
+  `mediatek`, Realtek `rtw88`/`rtw89`/`rtlwifi`/`rtl_bt`, and Qualcomm Atheros
+  `ath10k`/`ath11k`/`ath12k`/`ath6k`/`ath9k_htc` (AR9271 USB)/`qca`.
+- **Audio:** Intel Sound Open Firmware (`sof-firmware`) for Chromebooks and
+  modern laptops.
+
+The legacy Marvell `libertas`/`mrvl` pair is intentionally omitted. In Alpine
+3.20 the two packages declare each other as hard dependencies, and `mrvl` also
+ships Marvell Prestera switch-ASIC and Octeon firmware from the server/embedded
+classes this keep-list drops, so it cannot be taken as "Wi-Fi only". Its
+libertas/mwifiex Wi-Fi is legacy and rare on the supported x86_64 desktop and
+laptop hardware, so the ~83 MiB pair is not worth its size. AMD's `amd` SEV
+firmware is omitted too: it is virtualization firmware for SEV guests/hosts,
+not a framebuffer desktop client.
+
+Intel's `iwlwifi` blobs live in Alpine's uncategorized `linux-firmware-other`
+package alongside unrelated legacy blobs, so the builder installs that package
+and prunes it down to just the `iwlwifi-*.ucode` files. If your machine needs a
+firmware file that is not in the keep-list, install the matching
+`linux-firmware-*` package from Alpine into the installed system (or add it to
+the builder's list) -- for example `linux-firmware-mrvl` for an older Marvell
+Wi-Fi card.
+
+The builder verifies every package in the keep-list is actually present in the
+rootfs after installing it, and **fails the build** if one is missing, so a
+typo or an Alpine package rename cannot silently ship an image without that
+firmware.
+
+### Slow USB sticks (ThinkPad T420 and similar)
+
+A stick that was fine on a Raspberry Pi is often tuned for large sequential
+transfers and answers the small reads from a PC firmware USB stack very
+slowly. The ThinkPad T420 makes that worse: its BIOS reads USB at USB 2.0
+speeds even from the blue USB 3.0 ports, and its Renesas USB 3.0 controller
+stalls on the UAS protocol those sticks advertise.
+
+The image is built for that path. GRUB reads an initramfs that contains the
+kernel modules needed to reach the disk. The squashfs uses 1 MiB blocks, which
+is the transfer size those drives are good at, and the kernel reads it with
+its own USB driver once the firmware is out of the way. The boot command line
+blacklists UAS (`modprobe.blacklist=uas`) so the stick stays on the bulk-only
+protocol the T420 controller handles. Use a USB 3.0 port when the machine has
+one; the kernel reads the squashfs through that port.
 
 Boot is quiet: GRUB hides its menu and auto-boots the `mmcore` entry after
 ~1 second; hold **Shift** while it counts down to reveal the menu for recovery
@@ -71,6 +186,33 @@ The kernel is booted with `quiet loglevel=3` plus a hidden cursor
 console, which keeps `ttyS0` useful for debugging. The `MMCORE` persistence
 mount and networking bring-up are unaffected.
 
+The repainter cannot fight mmcore for the framebuffer (#1032):
+
+- `root/.profile` signals `mmcore-splash` and waits up to ~1 s for it to close
+  `/dev/fb0` before `exec mmcore`, escalating to `SIGKILL` if it is wedged.
+- `mmcore-splash-start` also runs the helper with a bounded lifetime
+  (`-t`, default **180 s**, override with `MMCORE_SPLASH_TIMEOUT`). If the tty1
+  login never happens — for example on a Chromebook whose panel never lights
+  up — the helper self-terminates instead of repainting over mmcore forever. It
+  also exits after repeated framebuffer failures once mmcore has taken the
+  display.
+- mmcore's own video bring-up is bounded. If `SDL_Init(SDL_INIT_VIDEO)` /
+  `SDL_CreateWindow` / `SDL_CreateRenderer` does not complete within
+  `MMCORE_VIDEO_TIMEOUT` seconds (default **30**, `0` disables the watchdog),
+  mmcore logs why to stderr, `/dev/console` (the serial port) and `/dev/ttyS0`,
+  then exits so tty1 respawns it instead of hanging on the logo. A failed
+  window/renderer open is logged the same way together with the `/dev/dri`
+  nodes it saw.
+
+The watchdog is a userspace `SIGALRM`, so it can only fire when the blocked
+thread is interruptible. If the modeset is wedged in an uninterruptible kernel
+wait (a driver `D`-state), the signal cannot be delivered and mmcore stays
+stuck; the serial console and the `dmesg`/`rc-status`/`ps` checklist below are
+then the way to identify the driver. It does cover the common case where SDL
+is retrying or blocked in an interruptible call, and it turns that from a
+silent forever-hang into a logged retry.
+
+
 ### Persistent storage
 
 At boot the image looks for a partition labelled `MMCORE` and mounts it at
@@ -78,11 +220,43 @@ At boot the image looks for a partition labelled `MMCORE` and mounts it at
 `install-usb.sh` that partition is created for you; `C:/` then survives
 reboots. Without it, files live in RAM and are lost on power-off.
 
+`install-usb.sh --read-write` provisions that partition differently. It writes
+a `/.mmcore-rw` marker and the directories the live boot expects (`C/` for the
+BASIC drive, `rw/upper` and `rw/work` for the overlay). On a live boot,
+`live-init` mounts this volume as the overlay's upper directory instead of a
+tmpfs, then publishes it at `/media/mmcore`, so the session itself is
+read-write and `C:` (`/media/mmcore/C`) stays on the card across power-off.
+A plain `MMCORE` partition without the marker is still C:-only: the root
+filesystem stays a RAM overlay, and only files on `C:` persist. An installed
+disk boot (`mmcore.sys=`) does not use this marker.
+
+The marker is only honoured on a live boot. When firmware presents the image
+as a virtual CD (`/dev/sr*`) and the real card appears a few seconds later as
+`mmcblk`, `live-init` waits briefly for the `MMCORE` partition on that card.
+Closing the lid syncs the volume and leaves it mounted, so resume does not
+drop `C:` back onto the RAM overlay.
+
+Two things make that early mount reliable on a Chromebook. The initramfs packs
+the `crc32c` crypto shash that `mkfs.ext4`'s default `metadata_csum` needs (an
+ext4 mount otherwise fails with `Cannot load crc32c driver` and the session
+silently falls back to a RAM overlay), and the MMC/SD host drivers
+(`rtsx_pci_sdmmc`, `sdhci_acpi`, ...). If the card still enumerates late,
+`mmcore-persist.start` retries the label probe for a bounded time so `C:` lands
+on `MMCORE` rather than the RAM overlay.
+
+The dd'd image itself is a whole disk whose ISO9660 is mounted from the whole
+device (`/dev/sda`, not a partition). Mounting that directly would claim the
+disk, and Linux then refuses to open the `MMCORE` partition on the same disk
+(`Can't open blockdev`), so `live-init` mounts a whole-disk live medium through
+a read-only loop instead. The loop keeps the device open without claiming it,
+which leaves the partition mountable as the overlay upper and `C:`. A CD
+(`/dev/sr*`) and a partitioned live medium are mounted directly.
+
 ### Install to hard disk
 
 The live USB can also install mmcore onto an internal disk so the machine boots
-mmcore on its own. From the live session press `Alt+F2` for a root shell on
-tty2 and run `mmcore-install`:
+mmcore on its own. From the live session press `Ctrl+Alt+F2` for a root shell on
+tty2 (`Ctrl+Alt+F1` returns to mmcore) and run `mmcore-install`:
 
 ```sh
 mmcore-install                     # list the disks, then confirm
@@ -94,19 +268,88 @@ mmcore-install --disk /dev/sdX --yes
 
 | Partition | Label | Filesystem | Contents |
 | --- | --- | --- | --- |
-| 1 | `MMCORE-SYS` | FAT32 | GRUB (BIOS + UEFI), the live kernel + initramfs, the `mmcore` binary, and `C:` (`MMB_DRIVE_ROOT`) |
+| 1 | `MMCORE-SYS` | FAT32 | GRUB (BIOS + UEFI), the live kernel, the small initramfs, the squashfs root, the `mmcore` binary, and `C:` (`MMB_DRIVE_ROOT`) |
 | 2 | `MMCORE-DATA` | ext4 | the rest of the disk, mounted at boot as `D:` |
 
-The system partition is at least ~255 MiB (it grows to fit larger kernel and
-initramfs payloads). The kernel and initramfs are copied from the live media's
-own `/boot`, so the installed system matches the release that wrote the disk.
+The system partition is at least ~255 MiB (it grows to fit the kernel, the
+initramfs, and the squashfs root). Those files are copied from the live
+media's own `/boot`, so the installed system matches the release that wrote
+the disk and boots with the USB stick removed.
 The installer refuses the running live media and removable disks unless
 `--force` is passed; `--boot-dir DIR` reads the boot files from an
 already-mounted source instead of auto-detecting it.
 
-After installation the disk boots standalone on BIOS and UEFI: GRUB mounts
+Partition 1 is the EFI system partition and the BIOS boot partition. GRUB is
+written into the MBR with this disk as the first hard disk, and the UEFI
+loader is installed at `\EFI\BOOT\BOOTX64.EFI`. The installer deliberately
+does **not** register a named `mmcore` NVRAM entry by default: such an entry
+sits ahead of removable media in the firmware boot order, so a machine with
+mmcore on the disk and a live USB inserted would boot the installed build
+instead of the stick (#976). With no named entry, the firmware falls through
+to the removable `\EFI\BOOT\BOOTX64.EFI` path, which a live USB wins when it
+is present. Pass `--register-efi` to add the named entry on a firmware that
+will not boot `\EFI\BOOT\BOOTX64.EFI` on its own; the disk then boots first
+even when a stick is inserted.
+
+After installation the disk boots on its own, on BIOS and UEFI. GRUB mounts
 `MMCORE-SYS` as `C:` and launches mmcore with `--drive /media/mmcore-data`, so
 `MMCORE-DATA` appears as `D:`.
+
+The installed boot bounds its block-device probe (#1034). `root/.profile`
+wraps the `blkid -L` label lookups and the `mount` calls for `mmcore.sys=` /
+`mmcore.data=` in BusyBox `timeout` (default **5 s**, override with
+`MMCORE_PROBE_TIMEOUT`), logs a cap to `/dev/console`, and then falls through to
+`exec mmcore`. A slow-to-probe eMMC/SD card, a spun-down disk, or a USB device
+still enumerating therefore cannot stall tty1 before the prompt.
+
+#### Live USB with a disk installed (dual boot)
+
+The live image is pinned to the stick it booted from, not to the disk. GRUB
+sets its root to the stick by the `mmcore-live-media` marker at the ISO root,
+and the live kernel command line carries `mmcore.live=1`. `live-init` then
+mounts only the marked media; an installed `MMCORE-SYS` partition carries no
+marker (the installer copies only `/boot`), so its `/boot/rootfs.squashfs` can
+never satisfy a live boot even when the disk is enumerated first. The
+installed system's own GRUB still uses `search --label MMCORE-SYS`, which is
+correct when the disk boots alone.
+
+The installed boot is pinned the other way around (#979). Its kernel command
+line carries `mmcore.sys=LABEL=MMCORE-SYS`, and `live-init` resolves that label
+with busybox `findfs` and mounts the squashfs only from that same device.
+A live stick enumerated first (`/dev/sda`) therefore cannot supply an installed
+boot's root, even though it also has a `/boot/rootfs.squashfs`.
+
+To run the live image with a disk install present, pick the USB from the
+firmware boot menu (F12 on a ThinkPad, or the machine's one-time boot key).
+With the installer's default (no NVRAM entry), removable media is preferred,
+so the USB boots live without changing NVRAM; the installed disk keeps booting
+on its own when the stick is removed.
+
+#### Manual dual-boot QA checklist
+
+The QEMU CI smoke boots the ISO alone; it cannot model a disk install next to
+a stick. Verify the dual-boot path on hardware (or a two-disk VM):
+
+1. Write the stick and install: `install-usb.sh --iso mmcore-fb-x86_64.iso
+   /dev/sdX`, boot it, then run `mmcore-install --disk /dev/sdY --yes` for the
+   internal disk.
+2. Leave the stick in and boot the machine. It must reach the **live** session
+   from the stick. On tty2, `cat /proc/cmdline` must show `mmcore.live=1` and
+   no `mmcore.sys=`, and `cat /etc/mmcore-version` must match the stick, not
+   the disk's `/media/mmcore-sys/VERSION.txt`.
+3. With the stick still in, boot the internal disk from the firmware boot menu
+   (or with `--register-efi`). It must reach the **installed** session from the
+   disk: `cat /proc/cmdline` shows `mmcore.sys=LABEL=MMCORE-SYS` and no
+   `mmcore.live=`, and `/media/mmcore-sys/VERSION.txt` is the disk's — even
+   though the stick is the first disk and also carries a
+   `/boot/rootfs.squashfs` (#979).
+4. Remove the stick and boot the machine alone. It must reach the **installed**
+   session; `cat /media/mmcore-sys/VERSION.txt` shows the installed version.
+5. Under UEFI, `efibootmgr` must show no `mmcore` entry after a default
+   install, and a USB stick inserted at power-on must boot live.
+6. Re-run the installer with `--register-efi` and confirm the firmware menu now
+   lists `mmcore`; the disk boots when selected (and, as documented, may then
+   win over the stick).
 
 #### Update mmcore in place
 
@@ -142,9 +385,10 @@ OPTION WIFI                        ' join with the stored network
 IPCONFIG                           ' show the active interface and address
 ```
 
-`OPTION WIFI` writes `/etc/wpa_supplicant/wpa_supplicant.conf` and restarts the
-OpenRC `wpa_supplicant`/`networking` services, so the same commands work on any
-OpenRC system that has these packages. See
+`OPTION WIFI` writes `/etc/wpa_supplicant/wpa_supplicant.conf` and reloads the
+running supplicant (`wpa_cli reconfigure`). A helper that does not finish is
+killed after a few seconds, and DHCP is a foreground `udhcpc` with a short
+retry cap, so a stuck radio returns to the prompt. See
 [`native-desktop.md`](native-desktop.md#network) for the Linux backend details
 and the `MMB_NET_*` overrides.
 
@@ -163,8 +407,9 @@ The published asset is the `.zst`; CI compresses the ISO after boot-smoking it.
 On an x86_64 Alpine Linux host with `apk`, `ISO_DIRECT=1 scripts/build-iso.sh`
 runs the builder in place. The builder builds the Alpine rootfs, builds
 `mmcore-fb` against musl (building SDL2 with `-DSDL_KMSDRM=ON` if the Alpine
-package lacks the driver), packs the rootfs as the initramfs, and makes a hybrid
-BIOS+UEFI ISO with `grub-mkrescue`.
+package lacks the driver), packs the rootfs as a squashfs plus a small
+initramfs that mounts it, and makes a hybrid BIOS+UEFI ISO with
+`grub-mkrescue`.
 
 `scripts/iso/build-in-container.sh` builds the rootfs and ISO;
 `scripts/iso/build-mmcore.sh` builds the binary; `scripts/iso/rootfs-overlay/`
@@ -190,24 +435,78 @@ Installation does **not** bypass verified boot: the firmware unlock is a
 deliberate, user-initiated change, and nothing in the ISO touches the
 Google-signed firmware or the write-protect state.
 
+### Persistent C: on the microSD
+
+A Chromebook that can boot the live image does not need `mmcore-install`, and
+should not use it when the internal disk still holds ChromeOS. Write the
+microSD with `--read-write` (from another Linux machine; the card is the
+device, often `/dev/mmcblk0` or `/dev/sdX` in a reader):
+
+```bash
+sudo ./install-usb.sh --read-write --iso mmcore-fb-x86_64.iso /dev/mmcblk0
+```
+
+The ISO stays the read-only system image. Free space on the card becomes the
+`MMCORE` partition, and `C:` persists there. Boot the card the same way as a
+plain live image. `mmcore-install` remains the path that wipes an internal
+disk and boots without the card.
+
 ### What is supported
 
 - **Display.** Panel output comes up through `i915` (already loaded) and the
   KMS/DRM path mmcore uses on any other Intel GPU.
 - **Wi-Fi.** Intel parts use `iwlwifi` (firmware included); the common
-  Broadcom/MediaTek/Qualcomm parts are covered by the extra
-  `linux-firmware-*` packages the builder installs.
+  Broadcom, MediaTek and Qualcomm Atheros parts are in the desktop keep-list
+  (see [Hardware firmware](#hardware-firmware)).
 - **Storage.** eMMC (`dw_mmc`/`sdhci`) and NVMe are in Alpine's `linux-lts`.
 - **Keyboard.** The internal keyboard is handled by the embedded controller
   (`cros_ec`) plus `atkbd`. The top row emits **F1–F12** (there are no media
   keys unless you hold Fn), and the **Search** key replaces **Caps Lock**;
   mmcore's function-key shortcuts therefore line up with F1–F12.
 - **Touchpad / touchscreen.** `cros_ec`, `i2c_hid_acpi`/`i2c_hid_of` and
-  `hid_multitouch` are loaded at boot.
-- **Audio.** `sof-firmware` plus the `snd_sof*` modules are installed for
-  Sound Open Firmware devices.
+  `hid_multitouch` cover ACPI-enumerated I2C-HID parts; the ACPI DesignWare
+  I2C host driver (`i2c-designware-platform`, binding Intel LPSS `INT33C2`/
+  `80860F41` and AMD `AMD0010`/`AMDI0010` — the touchpad bus on most
+  Chromebooks) is built in to Alpine's `linux-lts`, so that bus comes up with
+  no module. Touchpads that bind through a board driver or another bus also
+  get their modules loaded at boot (#1039): the host controllers (`intel_lpss*`,
+  `i2c_designware_pci`, `i2c_i801`, `i2c_piix4`, `i2c_scmi`), the
+  DMI-instantiated client driver (`chromeos_laptop`), the Intel ISH HID stack
+  (`intel_ishtp`, `intel_ish_ipc`, `intel_ishtp_hid`, `cros_ec_ishtp`), and
+  the controller-family drivers (`cyapatp`, `elan_i2c`, `synaptics_i2c`,
+  `rmi_i2c`, `hid_rmi`, `hid_alps`, and the PS/2 fallback `psmouse`).
+  `/etc/local.d/mmcore-touchpad.start` is a second, late pass that re-loads
+  them and re-probes an unbound, touchpad-named I2C client before mmcore
+  starts, because the ISO has no udev (OpenRC uses mdev) to re-probe a device
+  the kernel enumerated before the rootfs. No manual `modprobe` is needed:
+   mmcore reads the touchpad through SDL's evdev backend, so once the kernel
+   driver binds there is no extra input daemon to install. A clickpad reaches
+   SDL as an absolute *touch* device (SDL's evdev path treats a touchpad like a
+   touchscreen) and SDL only synthesises mouse motion from touch when it has a
+   window, which it does not here; the native input therefore turns the
+   `SDL_FINGER*` motion into relative pointer movement itself (#1039). A
+   touchpad on an
+   **AMD-based** board that still does nothing may be the AMD ELAN066C firmware
+   bug in the known gaps below, which no module load can fix; the Intel Lenovo
+   100e Chromebook Gen 2 in #1039 uses the Intel I2C-HID path above instead.
+- **Audio.** `sof-firmware`, the `snd_sof*` modules and the mainline
+  `alsa-ucm-conf` profiles are installed for Sound Open Firmware devices. The
+  `local` boot helper (`mmcore-audio.start`, from `/etc/local.d/`) *applies*
+  the board UCM profile itself — installing the profiles alone changes nothing
+  (#1075), because SDL opens the `default` PCM and ALSA does not load UCM on
+  its own. It enumerates every card in `/proc/asound/cards` and runs
+  `alsaucm -c hw:N set _verb <verb>` plus `set _enadev Speaker|Headphones`
+  (`HiFi` / `Speaker` / `Headphones` by default). The jack state comes from an
+  input switch (`SW_HEADPHONE_INSERT` and friends, read by `mmcore-jack` from
+  the event devices in `/proc/bus/input/devices`), falling back to an ALSA
+  `Headphone Jack` kcontrol and then to HDA `Auto-Mute Mode`. Board verbs and
+  control names are data-driven from `/etc/mmcore/audio.conf`; a board whose
+  controls are unknown is left unchanged rather than guessed at. Chromebook
+  codec control names cannot be verified from the build host (QEMU has no
+  SOF/codec), so this path is confirmed only on real hardware — see the
+  Chromebook hardware QA checklist below.
 
-### Known gap: 32-bit (IA32) UEFI models
+### Known gap: models that need a kernel the ISO does not ship
 
 Bay Trail, Cherry Trail and some Braswell Chromebooks expose **32-bit UEFI**
 even though the CPU is 64-bit. Alpine's GRUB and the x86_64 `linux-lts` do not
@@ -215,9 +514,100 @@ provide an IA32 EFI stub for free; booting them would need a separate build
 variant with an IA32 GRUB EFI stub and a 32-bit-EFI-capable kernel. Those
 models are **unsupported** for now — the ISO does not ship an IA32 variant.
 
+ARM Chromebooks (MediaTek, Rockchip and Qualcomm parts) need an **aarch64**
+kernel and userspace; the ISO is x86_64-only, so it does not boot them at all
+(and their I2C touchpads use device-tree drivers, not the x86 ACPI/DMI paths
+above). A touchpad fix on an ARM model therefore cannot be a module-list
+change to this image — it needs a separate aarch64 build.
+
+### Known gap: the AMD ELAN066C touchpad DSDT firmware bug
+
+An **AMD-based** Lenovo 100e/300e Chromebook with an **ELAN066C** I2C touchpad
+has a firmware DSDT that leaves the device without an I2C resource: two
+consecutive `If (TPTY == 0x01)` / `If (TPTY == 0x02)` branches
+assign the address and interrupt, and when `TPTY` matches neither value the
+touchpad gets no resource at all. No kernel driver — and therefore no module in
+the list above — can bind a device with no I2C address or IRQ; a USB mouse
+still works because it is not on that bus. The community fix patches the second
+`If` to an `Else` and boots the kernel with an ACPI table override (GRUB
+`acpi /boot/dsdt.aml`, or the distribution's equivalent). That override is
+hardware- and firmware-specific, so it is deliberately not shipped in the
+ISO: loading one machine's DSDT on another would describe different hardware
+  and can break it. A user hitting this must extract and patch their own DSDT (or
+  move to firmware that fixes it); the module list and
+  `mmcore-touchpad.start` cannot address it. This is tracked as follow-up #1097.
+  It is an **AMD** board, distinct from the Intel Lenovo 100e Chromebook Gen 2
+  reported in #1039 (which binds through the normal Intel I2C-HID path and is a
+  module/ordering concern, not this DSDT bug). The touchpad path still needs real
+  Chromebook hardware to verify.
+
+### If the boot hangs on the mmcore logo
+
+A report of "the logo paints, then nothing" (issue #1032) is a **splash →
+KMS handoff** problem, not firmware or GRUB: GRUB and the splash both painted,
+so the kernel and userspace early boot ran. QEMU cannot model `cros_ec`, panel
+timing, SOF or the Chromebook keyboard controller, so it cannot reproduce the
+hang; the timeout and console logging above exist to turn it into a
+diagnosable, self-recovering failure on real hardware.
+
+As of #1032 mmcore does not block forever: if the KMS/DRM modeset wedges, the
+`MMCORE_VIDEO_TIMEOUT` watchdog writes
+
+```text
+mmcore: SDL video init timed out (KMS/DRM modeset stuck); exiting so tty1
+retries. See docs/framebuffer-and-iso.md 'Intel Chromebooks'.
+```
+
+to `/dev/console` (the serial port), `/dev/ttyS0` and stderr, then exits so the
+tty1 respawn retries. If instead `SDL_CreateWindow`/`SDL_CreateRenderer`
+returns an error, the message is:
+
+```text
+mmcore: could not open SDL window: <SDL error>
+mmcore: /dev/dri contains:
+mmcore:   /dev/dri/card0
+```
+
+Both appear on the serial console, so a serial cable or a second machine
+catching `ttyS0` is enough to see them even when the panel never lights up.
+
+### Chromebook hardware QA checklist
+
+The QEMU boot smoke uses virtio-gpu and cannot exercise the Chromebook paths.
+When a real Chromebook fails to reach the prompt, collect the following and
+attach it to the issue (the facts the report was missing):
+
+1. **Model + CPU.** `cat /sys/class/dmi/id/product_name` (or the marketing
+   name) and `lscpu | grep 'Model name'`. Note Intel generation (Bay Trail,
+   Braswell, Skylake, Kaby Lake, ...) or ARM.
+2. **Firmware path.** Stock developer mode + `RW_LEGACY` (SeaBIOS/edk2) or
+   MrChromebox Full ROM UEFI. `sudo crossystem` or the MrChromebox firmware
+   menu confirms it. IA32 models are unsupported (above).
+3. **ISO version.** `cat /etc/mmcore-version` on tty2, or the release tag the
+   image was written from.
+4. **Can you reach tty2?** `Ctrl+Alt+F2` from the stuck logo, then
+   `Ctrl+Alt+F1` to return. If tty2 works, the panel and KMS are fine and the
+   failure is the tty1 autostart path; if it is also black, it is the modeset.
+5. **Serial fistful.** With a USB-serial adapter on the Chromebook's debug
+   port (or Servo), capture `ttyS0` at 115200 8N1 during the hang: the new
+   timeout message and `dmesg` warnings name the stalled driver directly.
+6. **On tty2 (or serial), collect:**
+   ```sh
+   dmesg | tail -80                 # i915/cros_ec/panel warnings first
+   ls -l /dev/dri                   # is there a card0/renderD128?
+   rc-status                        # did a boot service fail or hang?
+   ps w | grep -E 'mmcore|agetty|login'   # is mmcore running? agetty respawning?
+   cat /tmp/mmcore.stderr           # mmcore's own startup error, if any
+   cat /proc/cmdline                # confirm console= and mmcore.live=
+   ```
+7. **Does the timeout recover it?** A stuck but not crashed modeset should make
+   mmcore exit and respawn repeatedly. If it never respawns, the failure is
+   before `mmcore` (in agetty/login/`.profile`), which the `ps w` output shows.
+
 Validation note: the QEMU smoke test cannot reproduce `cros_ec`, panel timing,
 SOF audio or the keyboard controller, so the Chromebook configuration above can
 only be verified on real hardware.
+
 
 ## CI
 
