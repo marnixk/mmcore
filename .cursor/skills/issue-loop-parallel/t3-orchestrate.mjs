@@ -17,7 +17,16 @@
 //   node t3-orchestrate.mjs dispatch <command.json|->  # raw ClientOrchestrationCommand
 //   node t3-orchestrate.mjs rm-thread <threadId>
 //
-// Requires node >= 18 (global fetch) and the `sqlite3` CLI on PATH.
+// Works with both T3 Code (Alpha) and T3 Code (Beta). The server flavour is
+// detected from GET /.well-known/t3/environment (unauthenticated):
+//   - Alpha (no orchestrationProtocolVersion): sessions live in state.sqlite;
+//     writes go to POST /api/orchestration/dispatch.
+//   - Beta (orchestrationProtocolVersion 2): sessions live in statev2.sqlite,
+//     HTTP reads need the `x-t3-orchestration-protocol: 2` header, and there is
+//     no HTTP dispatch endpoint, so writes go over the /ws Effect-RPC socket
+//     (orchestration.dispatchCommand / orchestration.launchThread).
+//
+// Requires node >= 22 (global fetch + WebSocket) and the `sqlite3` CLI on PATH.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
@@ -26,7 +35,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const T3_HOME = join(homedir(), ".t3", "userdata");
-const DB_PATH = join(T3_HOME, "state.sqlite");
 const KEY_PATH = join(T3_HOME, "secrets", "server-signing-key.bin");
 const SCOPES = [
   "orchestration:read",
@@ -51,9 +59,26 @@ function serverBase() {
   return `${rt.origin ?? `http://${rt.host}:${rt.port}`}`.replace(/\/$/, "");
 }
 
+// Filled in by detectServer(): { base, protocol, dbPath }.
+let server;
+
+async function detectServer() {
+  const base = serverBase();
+  let protocol = 1;
+  try {
+    const res = await fetch(`${base}/.well-known/t3/environment`);
+    if (res.ok) protocol = (await res.json()).orchestrationProtocolVersion ?? 1;
+  } catch {
+    /* unreachable or Alpha without the descriptor: assume protocol 1 */
+  }
+  const dbPath = join(T3_HOME, protocol >= 2 ? "statev2.sqlite" : "state.sqlite");
+  server = { base, protocol, dbPath };
+  return server;
+}
+
 function sqlite(sql) {
   // The live server holds the same SQLite DB; wait out writer locks.
-  return execFileSync("sqlite3", ["-cmd", ".timeout 15000", DB_PATH], { input: sql, encoding: "utf8" });
+  return execFileSync("sqlite3", ["-cmd", ".timeout 15000", server.dbPath], { input: sql, encoding: "utf8" });
 }
 
 function withRetry(fn, attempts = 4) {
@@ -111,6 +136,7 @@ function revokeSession(sessionId) {
 }
 
 async function withSession(fn) {
+  await detectServer();
   const { token, sessionId } = mintSession();
   try {
     return await fn(token);
@@ -124,9 +150,11 @@ async function withSession(fn) {
 }
 
 async function api(token, path, body) {
-  const res = await fetch(serverBase() + path, {
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  if (server.protocol >= 2) headers["x-t3-orchestration-protocol"] = String(server.protocol);
+  const res = await fetch(server.base + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -138,6 +166,42 @@ async function api(token, path, body) {
   }
   if (!res.ok) throw new Error(`${res.status} ${path}: ${text}`);
   return parsed;
+}
+
+// One unary Effect-RPC call over the Beta /ws socket (JSON serialization).
+async function rpc(token, tag, payload) {
+  const url = `${server.base.replace(/^http/, "ws")}/ws?orchestrationProtocol=${server.protocol}`;
+  const ws = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`rpc ${tag}: timed out`)), 60_000);
+      const done = (fn, value) => {
+        clearTimeout(timer);
+        fn(value);
+      };
+      ws.onopen = () => ws.send(JSON.stringify({ _tag: "Request", id: "1", tag, payload, headers: [] }));
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(String(event.data));
+        if (msg._tag === "Ping") return ws.send(JSON.stringify({ _tag: "Pong" }));
+        if (msg._tag === "Exit" && msg.requestId === "1") {
+          if (msg.exit._tag === "Success") done(resolve, msg.exit.value);
+          else done(reject, new Error(`rpc ${tag}: ${JSON.stringify(msg.exit.cause)}`));
+        } else if (msg._tag === "Defect" || msg._tag === "ClientProtocolError") {
+          done(reject, new Error(`rpc ${tag}: ${JSON.stringify(msg)}`));
+        }
+      };
+      ws.onerror = (event) => done(reject, new Error(`rpc ${tag}: websocket error ${event.message ?? ""}`));
+      ws.onclose = (event) => done(reject, new Error(`rpc ${tag}: socket closed (${event.code}) before a reply`));
+    });
+  } finally {
+    ws.close();
+  }
+}
+
+// Dispatch an orchestration command on whichever API the server speaks.
+async function dispatchCommand(token, cmd) {
+  if (server.protocol >= 2) return rpc(token, "orchestration.dispatchCommand", cmd);
+  return api(token, "/api/orchestration/dispatch", cmd);
 }
 
 function findProject(snapshot, name) {
@@ -185,7 +249,7 @@ const commands = {
     await withSession(async (token) => {
       const snap = await api(token, "/api/orchestration/shell");
       for (const t of snap.threads ?? []) {
-        console.log(`${t.id}\t${t.session?.status ?? "?"}\t${t.branch ?? "-"}\t${t.title}`);
+        console.log(`${t.id}\t${t.session?.status ?? t.status ?? "?"}\t${t.branch ?? "-"}\t${t.title}`);
       }
     });
   },
@@ -196,7 +260,7 @@ const commands = {
     const text = src === "-" ? readFileSync(0, "utf8") : readFileSync(src, "utf8");
     const cmd = JSON.parse(text);
     await withSession(async (token) => {
-      console.log(JSON.stringify(await api(token, "/api/orchestration/dispatch", cmd)));
+      console.log(JSON.stringify(await dispatchCommand(token, cmd)));
     });
   },
 
@@ -204,7 +268,11 @@ const commands = {
     const threadId = argv[0];
     if (!threadId) throw new Error("usage: rm-thread <threadId>");
     await withSession(async (token) => {
-      console.log(JSON.stringify(await api(token, "/api/orchestration/dispatch", command("thread.delete", { threadId }))));
+      const cmd =
+        server.protocol >= 2
+          ? { type: "thread.delete", commandId: randomUUID(), threadId }
+          : command("thread.delete", { threadId });
+      console.log(JSON.stringify(await dispatchCommand(token, cmd)));
     });
   },
 
@@ -241,6 +309,25 @@ const commands = {
         execFileSync("git", ["-C", projectCwd, "worktree", "add", "-b", branch, worktreePath, `origin/${baseBranch}`], { stdio: "inherit" });
       }
       try {
+        if (server.protocol >= 2) {
+          // Beta: one launchThread RPC creates the thread on our worktree and
+          // starts the first turn.
+          const launched = await rpc(token, "orchestration.launchThread", {
+            commandId: randomUUID(),
+            threadId,
+            projectId: project.id,
+            title,
+            modelSelection,
+            runtimeMode,
+            interactionMode,
+            workspaceStrategy: { type: "existing_worktree", worktreePath, branch },
+            initialMessage: { messageId: randomUUID(), text: prompt, attachments: [] },
+          });
+          console.log(
+            JSON.stringify({ threadId: launched.threadId, branch, worktreePath, projectId: project.id, projectCwd, resumed: launched.resumed }),
+          );
+          return;
+        }
         await api(
           token,
           "/api/orchestration/dispatch",
