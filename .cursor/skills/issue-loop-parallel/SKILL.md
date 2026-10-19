@@ -265,6 +265,16 @@ selection.
 
 Mechanics (so this does not need re-investigating):
 
+- **Alpha vs Beta.** The script reads the unauthenticated
+  `GET /.well-known/t3/environment`. T3 Code (Beta) reports
+  `orchestrationProtocolVersion: 2` and differs from Alpha (below) in three ways:
+  sessions live in `~/.t3/userdata/statev2.sqlite` (not `state.sqlite`), HTTP
+  reads need the header `x-t3-orchestration-protocol: 2`, and there is no HTTP
+  dispatch endpoint. Writes go over the `/ws?orchestrationProtocol=2`
+  Effect-RPC socket with the same Bearer token: `orchestration.dispatchCommand`
+  for raw commands and `rm-thread`, and `orchestration.launchThread` (with
+  `workspaceStrategy: existing_worktree`) for `spawn`. The bullets below
+  describe Alpha.
 - Endpoint `POST /api/orchestration/dispatch` on the server from
   `~/.t3/userdata/server-runtime.json` (default `http://127.0.0.1:3773`).
   `GET /api/orchestration/shell` lists projects/threads.
