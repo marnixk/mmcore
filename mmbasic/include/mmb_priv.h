@@ -1422,6 +1422,10 @@ unsigned mmb_audio_mix_gap_ms(void);
 unsigned mmb_audio_underruns(void);
 unsigned mmb_audio_resets(void);
 unsigned mmb_audio_mp3_buffer_peak(void);
+/* Source sample rate and decoded/mixed frame counts of the last MP3 (#1247). */
+unsigned mmb_audio_mp3_rate(void);
+unsigned mmb_audio_mp3_src_frames(void);
+unsigned mmb_audio_mp3_out_frames(void);
 void mmb_play_pause(int on);
 int mmb_play_take_ended(void);
 /* Read-only analyser feed for the JUKE visualiser. */

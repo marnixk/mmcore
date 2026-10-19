@@ -1143,6 +1143,24 @@ int mmb_try_function(mmb_val *out)
 				*out = mmb_int_val((int)mmb_audio_mp3_buffer_peak());
 				return 1;
 			}
+			if (mmb_keyword_eq(key, "MP3RATE"))
+			{
+				/* Source sample rate of the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_rate());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3SRC"))
+			{
+				/* Source-rate frames decoded from the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_src_frames());
+				return 1;
+			}
+			if (mmb_keyword_eq(key, "MP3OUT"))
+			{
+				/* 44100 Hz frames mixed from the last MP3 (#1247). */
+				*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
+				return 1;
+			}
 		}
 		/* MM.INFO(MODE) with keyword inside parens already consumed by call_args as expr - handle MODE ident */
 		*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);

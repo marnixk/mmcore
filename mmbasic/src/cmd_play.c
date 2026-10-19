@@ -42,6 +42,23 @@ mmb_audio g_audio;
 
 static drmp3 s_mp3;
 static int s_mp3_on;
+/* MP3 frames decode at the file's own rate (22.05, 32, 44.1 or 48 kHz) but
+ * the mixer always produces MIX_RATE. Resample linearly across mixer calls so
+ * duration and pitch match the source; without this a 48 kHz file played 8.8%
+ * fast and a 22.05 kHz file ran at double speed (#1247). */
+/* 48 kHz consumes ~558 source frames per 512 output frames; refills keep this
+ * buffer topped up, so the cap only sets the decode batch size. */
+#define MP3_SRC_CAP (MIX_CHUNK * 2 + 8)
+static short s_mp3_src[MP3_SRC_CAP * 2];    /* stereo, source rate */
+static short s_mp3_decode[MP3_SRC_CAP * 2]; /* decoder output before expansion */
+static unsigned s_mp3_src_n;                /* frames held in s_mp3_src */
+static unsigned s_mp3_src_i;                /* next source frame to read */
+static double s_mp3_frac;                   /* position between src_i and +1 */
+static double s_mp3_step = 1.0;             /* source frames per mixer frame */
+static unsigned s_mp3_rate = MIX_RATE;      /* source rate of the last file */
+static unsigned s_mp3_src_total;            /* decoded source frames (diag) */
+static unsigned s_mp3_out_total;            /* mixed 44.1 kHz frames (diag) */
+static void mp3_resample_reset(void);
 static modcontext s_mod;
 static int s_mod_on;
 static jar_xm_context_t *s_xm;
@@ -185,6 +202,23 @@ static drmp3_bool32 mp3_stream_tell(void *ud, drmp3_int64 *cursor)
 unsigned mmb_audio_mp3_buffer_peak(void)
 {
 	return s_mp3_peak_alloc;
+}
+
+/* #1247 diagnostics: source rate and frame counts for the last MP3, so a test
+ * can prove the mixer resamples to 44.1 kHz instead of just replaying frames. */
+unsigned mmb_audio_mp3_rate(void)
+{
+	return s_mp3_rate;
+}
+
+unsigned mmb_audio_mp3_src_frames(void)
+{
+	return s_mp3_src_total;
+}
+
+unsigned mmb_audio_mp3_out_frames(void)
+{
+	return s_mp3_out_total;
 }
 
 /* One-shot gain for the buffer play_begin() queues. mmb_play_*() reset the
@@ -543,6 +577,7 @@ int mmb_play_mp3(const char *path)
 	if (!drmp3_init(&s_mp3, mp3_stream_read, mp3_stream_seek, mp3_stream_tell,
 			0, &s_mp3_stream, &allocs))
 		return -1;
+	mp3_resample_reset();
 	s_mp3_on = 1;
 	play_begin(1, path);
 	return 0;
@@ -709,26 +744,120 @@ static unsigned due_frames(void)
 	}
 }
 
+static void mp3_resample_reset(void)
+{
+	unsigned rate = s_mp3.sampleRate;
+
+	if (rate == 0)
+		rate = MIX_RATE;
+	s_mp3_rate = rate;
+	s_mp3_step = (double)rate / (double)MIX_RATE;
+	if (!(s_mp3_step > 0.0))
+		s_mp3_step = 1.0;
+	s_mp3_src_n = s_mp3_src_i = 0;
+	s_mp3_frac = 0.0;
+	s_mp3_src_total = s_mp3_out_total = 0;
+}
+
+/* Top up the source buffer to capacity, keeping unconsumed frames at the
+ * front. Stops early at end of stream. */
+static void mp3_fill(void)
+{
+	unsigned move = s_mp3_src_i;
+
+	if (move >= s_mp3_src_n)
+	{
+		s_mp3_src_n = 0;
+		s_mp3_src_i = 0;
+	}
+	else if (move)
+	{
+		unsigned left = s_mp3_src_n - move;
+
+		memmove(s_mp3_src, s_mp3_src + move * 2,
+			left * 2 * sizeof(short));
+		s_mp3_src_n = left;
+		s_mp3_src_i = 0;
+	}
+	while (s_mp3_src_n < MP3_SRC_CAP)
+	{
+		drmp3_uint64 got = drmp3_read_pcm_frames_s16(
+			&s_mp3, MP3_SRC_CAP - s_mp3_src_n, s_mp3_decode);
+		unsigned i, ch = (unsigned)s_mp3.channels;
+
+		if (got == 0)
+			break;
+		if (ch < 1)
+			ch = 1;
+		for (i = 0; i < (unsigned)got; i++)
+		{
+			short l = s_mp3_decode[i * ch];
+			short r = ch > 1 ? s_mp3_decode[i * ch + 1] : l;
+
+			s_mp3_src[(s_mp3_src_n + i) * 2] = l;
+			s_mp3_src[(s_mp3_src_n + i) * 2 + 1] = r;
+		}
+		s_mp3_src_total += (unsigned)got;
+		s_mp3_src_n += (unsigned)got;
+	}
+}
+
+static short mp3_clip(double v)
+{
+	if (v > 32767.0)
+		return 32767;
+	if (v < -32768.0)
+		return -32768;
+	return (short)(v + (v >= 0.0 ? 0.5 : -0.5));
+}
+
 static int mix_mp3(unsigned nframes)
 {
 	short pcm[MIX_CHUNK * 2];
-	drmp3_uint64 got;
-	unsigned i;
+	unsigned i = 0;
 
-	got = drmp3_read_pcm_frames_s16(&s_mp3, nframes, pcm);
-	if (got == 0)
-		return 0;
-	if (s_mp3.channels == 1)
+	while (i < nframes)
 	{
-		for (i = (unsigned)got; i-- > 0;)
+		unsigned a;
+		double f;
+		int l0, l1, r0, r1;
+
+		if (s_mp3_src_i + 2 > s_mp3_src_n)
 		{
-			short s = pcm[i];
-			pcm[i * 2] = s;
-			pcm[i * 2 + 1] = s;
+			mp3_fill();
+			if (s_mp3_src_i >= s_mp3_src_n)
+				break;
+			if (s_mp3_src_i + 2 > s_mp3_src_n)
+			{
+				/* Last source frame: hold it, no neighbour left. */
+				pcm[i * 2] = s_mp3_src[s_mp3_src_i * 2];
+				pcm[i * 2 + 1] = s_mp3_src[s_mp3_src_i * 2 + 1];
+				i++;
+				s_mp3_src_i++;
+				break;
+			}
+		}
+		a = s_mp3_src_i;
+		f = s_mp3_frac;
+		l0 = s_mp3_src[a * 2];
+		l1 = s_mp3_src[(a + 1) * 2];
+		r0 = s_mp3_src[a * 2 + 1];
+		r1 = s_mp3_src[(a + 1) * 2 + 1];
+		pcm[i * 2] = mp3_clip((double)l0 + (double)(l1 - l0) * f);
+		pcm[i * 2 + 1] = mp3_clip((double)r0 + (double)(r1 - r0) * f);
+		i++;
+		s_mp3_frac += s_mp3_step;
+		while (s_mp3_frac >= 1.0)
+		{
+			s_mp3_frac -= 1.0;
+			s_mp3_src_i++;
 		}
 	}
-	emit_pcm(pcm, (unsigned)got);
-	return got >= nframes ? 1 : 0;
+	if (!i)
+		return 0;
+	s_mp3_out_total += i;
+	emit_pcm(pcm, i);
+	return i >= nframes ? 1 : 0;
 }
 
 static int mix_mod(unsigned nframes)
