@@ -228,6 +228,7 @@ typedef struct mmb_options {
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
 	int term_autolog;      /* OPTION TERM AUTOLOG ON|OFF (default OFF) */
+	int wordpad_view;      /* WORDPAD last view: 0 normal 1 wide 2 narrow */
 	char ntp_server[64];   /* OPTION NTP SERVER "host[:port]" (#524) */
 	int ntp_enabled;       /* OPTION NTP: MMB_NTP_AUTO/0 OFF/1 ON (#581) */
 	char timezone[64];     /* OPTION TIMEZONE name/offset (default UTC) */
