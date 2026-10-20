@@ -984,8 +984,8 @@ static int term_width(void)
 static const char *term_width_label(void)
 {
 	if (T.mode80x25)
-		return "80x25";
-	return T.letterbox ? "Boxed" : "Full";
+		return "View: 80x25";
+	return T.letterbox ? "View: Boxed" : "View: Full";
 }
 
 static void term_mark_live(void)
@@ -2286,11 +2286,25 @@ static void term_apply_session_mode(void)
 	G.gfx.display_page = 0;
 }
 
-static void term_toggle_letterbox(void)
+/* Cycle the pane view Full -> Boxed -> 80x25 -> Full. 80x25 uses the same
+ * session mode/font path as an 80x25 bookmark, including the 8x14 EGA
+ * fallback when the display cannot fit 25 rows of 8x16 (#1155). */
+static void term_cycle_view(void)
 {
 	int old_cols = term_width();
-	T.mode80x25 = 0;
-	T.letterbox = T.letterbox ? 0 : 1;
+
+	if (T.mode80x25)
+	{
+		T.mode80x25 = 0;
+		T.letterbox = 0;
+	}
+	else if (T.letterbox)
+	{
+		T.mode80x25 = 1;
+		T.letterbox = 0;
+	}
+	else
+		T.letterbox = 1;
 	term_apply_session_mode();
 	term_layout();
 	term_reset_scroll_region();
@@ -3637,7 +3651,7 @@ static void term_menu_activate(void)
 	}
 	if (T.menu_sel == 2)
 	{
-		term_toggle_letterbox();
+		term_cycle_view();
 		return;
 	}
 	if (T.menu_sel == 3)
@@ -6503,7 +6517,7 @@ const char *mmb_term_key(char c)
 		}
 		if (c == 'w' || c == 'W' || c == 'o' || c == 'O')
 		{
-			term_toggle_letterbox();
+			term_cycle_view();
 			return "";
 		}
 		if (c == 'b' || c == 'B' || c == 'k' || c == 'K')
@@ -6526,7 +6540,11 @@ const char *mmb_term_key(char c)
 			return "";
 		}
 		b = (unsigned char)c;
-		if (b == 127)
+		/* A USB Backspace arrives as DEL (127). Linux getty/login sets
+		 * stty erase to ^?, so sending BS (^H) over telnet prints the
+		 * literal caret sequence instead of erasing (#1255). Keep BS
+		 * for local/demo sessions that expect it. */
+		if (b == 127 && !T.tcp)
 			b = 8;
 		if (T.tcp)
 		{

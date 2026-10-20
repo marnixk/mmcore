@@ -24,10 +24,13 @@ connects at once (up to about 25s for DNS+TCP). Failures say Network not
 available, DNS failed, TCP timeout, or TCP refused.
 
 Default is an 80-column pane centred on a black background (boxed, MODE 14
-960x540). Terminal-menu Boxed/Full: Boxed stays on MODE 14 with an 80-column
+960x540). Terminal-menu View cycles Full -> Boxed -> 80x25 -> Full, and its
+label names the current one. Boxed stays on MODE 14 with an 80-column
 letterbox. Full restores the MODE that was active when TERM started and uses
-that framebuffer width with no letterbox. The choice is for this TERM session
-only.
+that framebuffer width with no letterbox. 80x25 is the bookmark-manager
+fullscreen mode: MODE 2 640x400, a full 80x25 pane, NAWS 80x25, and the 8x14
+EGA fallback on short displays (see below). The choice is for this TERM
+session only.
 
 Incoming TCP (and TERM replay) writes a 512KB ring, then the ANSI parser reads
 that ring. CSI/IAC state spans bytes; an IAC at the read cursor waits until the
@@ -68,7 +71,8 @@ N step to older and newer matches. The status row shows SCROLL -n while you
 are back in history; typing any other key returns to the live pane first. Set
 OPTION TERM SCROLLBACK 0 to disable history.
 
-Terminal menu: Bookmarks, Echo ON/OFF, Boxed/Full, Download folder, Exit.
+Terminal menu: Bookmarks, Echo ON/OFF, View: Full/Boxed/80x25, Download folder,
+Exit.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
 Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
 bookmark host, port, echo, letterbox, and optional 80x25 mode (MODE 2 640x400,
@@ -91,7 +95,8 @@ line shows on the status row while a file is arriving. Press Esc to abort a
 transfer, or Alt-X to abort and leave TERM. Uploads are not implemented.
 
 Esc is sent to the host; press Esc twice or wait briefly to flush a lone Esc.
-USB Backspace (DEL) is sent as BS.
+USB Backspace (DEL) is sent as DEL (^?) over telnet, matching Linux getty and
+login erase; local demo sessions still get BS.
 
 Telnet IAC (255) is recognised only when the next byte is a real command
 (WILL/WONT/DO/DONT, a known SB option, NOP-GA, or another 255). Other 0xFF

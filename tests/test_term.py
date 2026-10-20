@@ -721,7 +721,8 @@ def _max_dump_width(text: str) -> int:
     return max((len(ln.replace("\r", "")) for ln in text.split("\n")), default=0)
 
 
-def test_term_file_menu_boxed_full_toggle(kernel_image):
+def test_term_file_menu_view_cycle(kernel_image):
+    """#1256: the view item cycles Full -> Boxed -> 80x25 -> Full."""
     con = MMBasicConsole(kernel_image)
     con.start()
     try:
@@ -733,10 +734,22 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
         margin = con.screen_pixel(20, 200)
         assert _is_black(*margin), margin
         menu = _menu(con)
-        assert "Boxed" in menu
+        assert "View: Boxed" in menu
+
+        # Boxed -> 80x25: MODE 2, a full 25-row pane.
+        con._ser.sendall(b"w")
+        tiny = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "View: 80x25" in tiny
+        assert con.screen_size() == (640, 400)
+        rows_80 = [
+            ln for ln in tiny.replace("\r", "").split("\n") if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+
+        # 80x25 -> Full: the MODE TERM started from, no letterbox.
         con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "Full" in full
+        assert "View: Full" in full
         assert con.screen_size() == (640, 480)
         assert _max_dump_width(full) == 80
         found_grey = False
@@ -749,13 +762,40 @@ def test_term_file_menu_boxed_full_toggle(kernel_image):
             if found_grey:
                 break
         assert found_grey, "expected grey glyphs at the left edge in full-width mode"
+
+        # Full -> Boxed: letterboxed MODE 14.
         con._ser.sendall(b"w")
         boxed = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "Boxed" in boxed
+        assert "View: Boxed" in boxed
         assert _max_dump_width(boxed) == 80
         assert con.screen_size() == (960, 540)
         _quit(con)
         assert con.send_line("PRINT 1+2") == "3"
+    finally:
+        con.stop()
+
+
+def test_term_view_cycle_80x25_ega_fallback(kernel_image):
+    """#1256/#1155: cycling to 80x25 on a short display uses the EGA face."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        # MODE 20 is 683x384: 24 rows of 8x16, so 80x25 needs 8x14.
+        assert con.send_line("MODE 20,32") == ""
+        assert con.screen_size() == (683, 384)
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        time.sleep(0.3)
+        _menu(con)
+        con._ser.sendall(b"w")
+        tiny = _plain(con.drain(quiet=0.8, timeout=8).decode(errors="replace"))
+        assert "View: 80x25" in tiny
+        assert con.screen_size() == (683, 384)
+        rows_80 = [
+            ln for ln in tiny.replace("\r", "").split("\n") if len(ln) == 80
+        ]
+        assert len(rows_80) >= 25, len(rows_80)
+        _quit(con)
+        assert con.send_line("PRINT 3+4") == "7"
     finally:
         con.stop()
 
@@ -771,6 +811,8 @@ def test_term_full_keeps_mode14_if_started_there(kernel_image):
         assert con.screen_size() == (960, 540)
         con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=8).decode(errors="replace"))
+        con._ser.sendall(b"w")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Full" in full
@@ -792,6 +834,8 @@ def test_term_full_uses_wide_start_mode(kernel_image):
         time.sleep(0.3)
         con._ser.sendall(bytes([1]) + b"t")
         _plain(con.drain(quiet=0.5, timeout=8).decode(errors="replace"))
+        con._ser.sendall(b"w")
+        _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         con._ser.sendall(b"w")
         full = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
         assert "Full" in full
