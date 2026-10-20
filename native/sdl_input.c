@@ -838,9 +838,15 @@ static void handle_text(const SDL_TextInputEvent *te)
 	 * letter of a Ctrl chord (desktop backends suppress it), which would
 	 * type the letter after the shortcut already ran. handle_keydown()
 	 * marks its chord returns with s_swallow_text; this guard is the
-	 * backstop for any Ctrl chord lacking a paired mark. Leave AltGr
-	 * (Ctrl+Alt) alone: some layouts deliver real characters that way. */
-	if ((s_ctrl && !s_alt) || s_swallow_text)
+	 * backstop for any Ctrl chord lacking a paired mark.
+	 *
+	 * #1261: the same backend mirrors text for an unbound Alt chord (for
+	 * example Alt+/), which must not type into WORDPAD or any app. Circle's
+	 * cooked keymap returns KeyNone while Alt is held, so a plain Alt (with
+	 * no Ctrl) has no text of its own here either; only an Alt chord that
+	 * handle_keydown() recognised delivers bytes. Leave AltGr (Ctrl+Alt)
+	 * alone: some layouts deliver real characters that way. */
+	if ((s_ctrl && !s_alt) || (s_alt && !s_ctrl) || s_swallow_text)
 	{
 		s_swallow_text = 0;
 		return;
