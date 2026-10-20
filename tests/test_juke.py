@@ -283,6 +283,39 @@ def _on_black_lime_ramp(c: tuple[int, int, int], tol: int = 30) -> bool:
     return abs(r - 157 * t) <= tol and abs(b - 94 * t) <= tol
 
 
+def _bar_column_runs(col: list[tuple[int, int, int]],
+                     threshold: int = 25) -> list[tuple[int, list[tuple[int, int, int]]]]:
+    """Maximal runs of lit pixels in one bar column, bottom-up.
+
+    Returns ``(start_index, colours)`` per run. A run is one flat bar
+    rectangle (or the 1px peak-hold cap); the dark gap between stacked LED
+    segments is below the threshold and splits them.
+    """
+    runs = []
+    cur: list[tuple[int, int, int]] = []
+    start = 0
+    for k, c in enumerate(col):
+        if sum(c) > threshold:
+            if not cur:
+                start = k
+            cur.append(c)
+        elif cur:
+            runs.append((start, cur))
+            cur = []
+    if cur:
+        runs.append((start, cur))
+    return runs
+
+
+def _is_peak_cap(run: tuple[int, list[tuple[int, int, int]]]) -> bool:
+    """The peak-hold cap is a 1px light-lime line above the bar (#1254)."""
+    _start, cols = run
+    if len(cols) != 1:
+        return False
+    r, g, b = cols[0]
+    return r >= 190 and g >= 210 and b <= 130
+
+
 def test_juke_spectrum_bars_run_black_lime(fresh_console):
     """#1055: the per-bar ramp runs straight black -> lime, with no grey stop."""
     con = fresh_console
@@ -293,36 +326,90 @@ def test_juke_spectrum_bars_run_black_lime(fresh_console):
     base = h - 71
     maxh = base - 190
     xs = _bar_centres(_w)
-    ylist = list(range(base - 2, base - maxh, -2))
-    coords = [(x, y) for x in xs for y in ylist]
-    n = len(ylist)
-    saw_black = saw_lime = saw_mid_ramp = False
+    ys = list(range(base - 1, base - maxh, -1))
+    coords = [(x, y) for x in xs for y in ys]
+    n = len(ys)
+    saw_black = saw_mid_ramp = False
     for _ in range(8):
         px = con.screen_pixels(coords)
         for i in range(24):
             col = px[i * n:(i + 1) * n]
-            # The bar's lowest pixels fade to the black canvas, so skip them
-            # for the ramp checks but record the black base.
-            run = [c for c in col if sum(c) > 30]
-            if len(run) < 8:
+            # The peak cap is not part of the bar; skip it so the ramp checks
+            # look at real segments. The lowest pixels fade to black, which is
+            # the black end of the ramp.
+            runs = [r for r in _bar_column_runs(col) if not _is_peak_cap(r)]
+            if len(runs) < 2:
                 continue
-            first = next(k for k, c in enumerate(col) if sum(c) > 30)
-            if first > 0:
+            if runs[0][0] > 0:
                 saw_black = True
-            top = run[-1]
-            if top[1] > 170 and top[0] > 90 and top[2] < 150:
-                saw_lime = True
             # The bar midpoint must sit on the straight black->lime line; the
-            # old ramp put a neutral grey there instead.
-            if _on_black_lime_ramp(run[len(run) // 2]):
+            # old ramp put a neutral grey there instead. (TEST.WAV's bands do
+            # not reach the lime endpoint, so the midpoint is the check.)
+            mid = runs[len(runs) // 2][1]
+            if _on_black_lime_ramp(mid[len(mid) // 2]):
                 saw_mid_ramp = True
-        if saw_black and saw_lime and saw_mid_ramp:
+        if saw_black and saw_mid_ramp:
             break
         time.sleep(0.2)
     _quit_juke(con)
-    assert saw_lime, "expected a lime tip in the spectrum bars"
     assert saw_mid_ramp, "expected the bar midpoint on the straight black->lime ramp"
     assert saw_black, "expected the spectrum bar base to fade to black"
+
+
+def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
+    """#1254: flat LED segments, whose ramp position follows band intensity.
+
+    The tip of each bar must sit at the ramp position for that bar's height
+    above the baseline, not at the ramp's end: loud bands reach lime and quiet
+    ones stay dark. Each rectangle is one solid colour, with a dark gap between
+    stacked segments instead of a continuous gradient.
+    """
+    con = fresh_console
+    _open_juke(con, "tests/TEST.WAV")
+    _w, h = con.screen_size()
+    base = h - 71
+    maxh = base - 190
+    xs = _bar_centres(_w)
+    ys = list(range(base - 1, base - maxh, -1))
+    coords = [(x, y) for x in xs for y in ys]
+    n = len(ys)
+    saw_gaps = saw_segments = saw_quiet_tip = False
+    for _ in range(10):
+        px = con.screen_pixels(coords)
+        for i in range(24):
+            col = px[i * n:(i + 1) * n]
+            runs = _bar_column_runs(col)
+            # Every segment is a single flat colour; a continuous gradient
+            # would put several colours in one run. The caps are flat too.
+            assert all(len(set(cols)) == 1 for _, cols in runs), (i, runs)
+            real = [r for r in runs if not _is_peak_cap(r)]
+            if not real:
+                continue
+            if len(real) >= 4:
+                saw_segments = True
+            if any(b[0] - (a[0] + len(a[1])) >= 1
+                   for a, b in zip(real, real[1:])):
+                saw_gaps = True
+            # The top rectangle's colour is sampled at its own height, so a
+            # bar that only climbs half as far only shows the dark half of
+            # the black -> lime ramp.
+            start, cols = real[-1]
+            tip = cols[0]
+            k = start + len(cols) // 2
+            t = tip[1] / 238.0
+            assert abs(tip[0] - 157 * t) <= 20, (i, k, tip)
+            assert abs(tip[2] - 94 * t) <= 20, (i, k, tip)
+            expected_g = 238.0 * k / maxh
+            assert abs(tip[1] - expected_g) <= 12, (i, k, tip, expected_g)
+            if k < maxh // 2:
+                saw_quiet_tip = True
+        if saw_gaps and saw_segments and saw_quiet_tip:
+            break
+        time.sleep(0.15)
+    _quit_juke(con)
+    assert saw_segments, "expected stacked LED segments in a spectrum bar"
+    assert saw_gaps, "expected dark gaps between the stacked segments"
+    assert saw_quiet_tip, "expected a quiet band to stop in the dark ramp"
 
 
 def test_juke_spectrum_has_no_guide_lines(fresh_console):
