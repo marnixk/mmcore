@@ -67,6 +67,35 @@ def test_prompt_left_inserts_in_place(console):
     assert console.send_line("PRINT 0") == "0"
 
 
+def _prompt_cell_lum(con, col):
+    coords = [(col * 8 + x, y) for y in range(16) for x in range(8)]
+    return [r * 3 + g * 6 + b for r, g, b in con.screen_pixels(coords)]
+
+
+def test_prompt_left_right_keep_character_visible(console):
+    """#1258: the block cursor is inverse video, so the glyph stays visible.
+
+    The old solid foreground block blanked the character it sat on. Type two
+    characters, step back and forth over them, and each cell must still hold
+    both the dark glyph pixels and the light cursor-block pixels.
+    """
+    assert console.send_line("CLS") == ""
+    console.drain(quiet=0.1)
+    # Prompt is "> ", so A/B sit in columns 2/3, row 0 (8x16 font).
+    console._ser.sendall(b"AB\x1b[D\x1b[D")
+    console.drain(quiet=0.5)
+
+    left = _prompt_cell_lum(console, 2)
+    assert max(left) > 1000, "cursor block is not visible over A"
+    assert min(left) < 100, "glyph A under the cursor was blanked out"
+
+    console._ser.sendall(b"\x1b[C")
+    console.drain(quiet=0.5)
+    right = _prompt_cell_lum(console, 3)
+    assert max(right) > 1000, "cursor block is not visible over B"
+    assert min(right) < 100, "glyph B under the cursor was blanked out"
+
+
 def test_prompt_ctrl_u_clears_line(console):
     """#1203: Ctrl+U (0x15) discards the whole input line."""
     console.drain(quiet=0.1)

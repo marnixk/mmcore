@@ -19,7 +19,18 @@
 #include <stdio.h>
 #include <string.h>
 
-const unsigned char mmb_cp437_8x16[256 * 16] = { 0 };
+/* A minimal 'A' so the cursor test can tell a preserved glyph from a blank
+ * cell; everything else is empty. */
+const unsigned char mmb_cp437_8x16[256 * 16] = {
+	[65 * 16 + 0] = 0x18,
+	[65 * 16 + 1] = 0x24,
+	[65 * 16 + 2] = 0x42,
+	[65 * 16 + 3] = 0x42,
+	[65 * 16 + 4] = 0x7E,
+	[65 * 16 + 5] = 0x42,
+	[65 * 16 + 6] = 0x42,
+	[65 * 16 + 7] = 0x42,
+};
 
 static uint16_t g_fb[640 * 480];
 static int g_presents;
@@ -164,6 +175,35 @@ int main(void)
 	reset_dirty();
 	sdl_console_write("\x1b[2C", 4);
 	check_rect(8, 0, 24, 16, "cursor move marks old + new cursor cell");
+
+	/* #1258: the block cursor is inverse video, not a solid foreground
+	 * block. Write 'A', move back over it, then the cell must still hold
+	 * both glyph pixels (background) and block pixels (foreground). */
+	sdl_console_reset();
+	sdl_console_write("A", 1);
+	sdl_console_write("\b", 1);
+	{
+		int dark = 0, light = 0;
+		int r, c;
+
+		for (r = 0; r < 16; r++)
+		{
+			for (c = 0; c < 8; c++)
+			{
+				if (g_fb[r * 640 + c] == 0)
+					dark++;
+				else
+					light++;
+			}
+		}
+		if (!dark || !light)
+		{
+			fprintf(stderr,
+				"FAIL: block cursor blanked the glyph (dark=%d light=%d)\n",
+				dark, light);
+			fails++;
+		}
+	}
 
 	g_presents = 0;
 	sdl_console_fill(0);

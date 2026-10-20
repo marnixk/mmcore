@@ -26,8 +26,9 @@ static int s_cx, s_cy;
 static unsigned s_fg, s_bg;
 static int s_bold;
 
-/* Block cursor (like Circle's SetCursorBlock): a solid cell in the current
- * foreground colour, shown at the prompt / hidden for full-screen apps. */
+/* Block cursor (like Circle's SetCursorBlock): inverse video over the cell, so
+ * the glyph under it stays visible, shown at the prompt / hidden for
+ * full-screen apps. */
 static int s_cur_vis = 1;
 static int s_cur_drawn;
 static uint16_t s_cur_save[CELL_W * CELL_H];
@@ -110,7 +111,7 @@ static void cursor_erase(void)
 
 static void cursor_draw(void)
 {
-	uint16_t *fb, v;
+	uint16_t *fb, fg, bg;
 	int sw, sh, r, c;
 
 	if (!cursor_cell_ok())
@@ -126,13 +127,15 @@ static void cursor_draw(void)
 		memcpy(s_cur_save + r * CELL_W,
 		       fb + (size_t)(s_cur_py + r) * sw + s_cur_px,
 		       CELL_W * sizeof(uint16_t));
-	v = s_pal[s_fg & 15];
+	fg = s_pal[s_fg & 15];
+	bg = s_pal[s_bg & 15];
 	for (r = 0; r < CELL_H; r++)
 	{
 		uint16_t *dst = fb + (size_t)(s_cur_py + r) * sw + s_cur_px;
 
 		for (c = 0; c < CELL_W; c++)
-			dst[c] = v;
+			/* Inverse video: swap fg/bg so the glyph stays visible. */
+			dst[c] = s_cur_save[r * CELL_W + c] == bg ? fg : bg;
 	}
 	s_cur_drawn = 1;
 	sdl_video_mark_dirty_rect(s_cur_px, s_cur_py, CELL_W, CELL_H);
