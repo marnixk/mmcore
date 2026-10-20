@@ -39,6 +39,8 @@ static unsigned char g_feed[64];
 static int g_feed_n;
 static unsigned char g_inkey[MMB_INKEY];
 static int g_inkey_n;
+static int g_keydown[6];
+static int g_keydown_n;
 static int g_console_switches;
 static int g_console_last;
 
@@ -62,8 +64,16 @@ void mmb_inkey_push(int c)
 		g_inkey[g_inkey_n++] = (unsigned char)c;
 }
 
-void mmb_keydown_set(const int *codes, int n) { (void)codes; (void)n; }
-mmb *g_cur;
+void mmb_keydown_set(const int *codes, int n)
+{
+	int i;
+
+	g_keydown_n = n > 6 ? 6 : n;
+	for (i = 0; i < g_keydown_n; i++)
+		g_keydown[i] = codes[i];
+}
+static mmb g_dummy_state;
+mmb *g_cur = &g_dummy_state;
 
 void mmb_front_feed(const char *s, unsigned n)
 {
@@ -149,6 +159,7 @@ static void push_mouse_button(Uint8 button, Uint32 type)
 static void reset(void)
 {
 	g_inkey_n = 0;
+	g_keydown_n = 0;
 	g_front_feeds = 0;
 	g_feed_n = 0;
 	g_console_switches = 0;
@@ -179,6 +190,22 @@ int main(void)
 	CHECK(sdl_input_vt_from_key(SDLK_a) == 0, "letter is not a VT");
 
 #ifdef MMB_SDL_FRAMEBUFFER
+	/* #1250: the framebuffer/Linux ISO build must publish the CMM2
+	 * list/character codes for KEYDOWN(), like the desktop SDL build. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_LEFT, 0);
+	sdl_input_pump();
+	CHECK(g_keydown_n == 1 && g_keydown[0] == 130,
+	      "fb KEYDOWN left=130");
+	push_key(SDLK_RIGHT, 0);
+	sdl_input_pump();
+	CHECK(g_keydown_n == 2 && g_keydown[0] == 130 &&
+	      g_keydown[1] == 131, "fb KEYDOWN left+right");
+	push_key(SDLK_ESCAPE, 0);
+	sdl_input_pump();
+	CHECK(g_keydown_n == 3 && g_keydown[2] == 27, "fb KEYDOWN escape=27");
+
 	/* The chord is consumed: nothing reaches the app and it is not one of
 	 * mmcore's own virtual consoles. MMB_SDL_NO_VT stops the handler from
 	 * opening /dev/tty0 in the test process. */

@@ -8,7 +8,7 @@ returns to the prompt.
 
   +Orientation-------------------------+ +Quick Reference-----------------+
   | ~USING HELP~                       | | ~ASCII CHARACTER CODES~         |
-  | ~SYNTAX CONVENTIONS~               | | ~KEYBOARD SCAN CODES~           |
+  | ~SYNTAX CONVENTIONS~               | | ~KEYBOARD CODES~               |
   +------------------------------------+ +--------------------------------+
 
 Also: ~CONTENTS~ (command map)  ~INDEX~ (A-Z)  ~HELP~ (viewer)

@@ -132,9 +132,9 @@ def test_help_input_describes_console(console):
 
 # ---- KEYDOWN contract (host unit test) ------------------------------------
 #
-# #1238 removed the old "nth held key" indexing. KEYDOWN(0) is the held-key
-# count and KEYDOWN(n>0) is a boolean test for set-1 scan code n. Compile the
-# real mmbasic/src/util.c so the implementation, not a copy, stays pinned.
+# CMM2 contract (restored in #1250): KEYDOWN(0) is the held-key count and
+# KEYDOWN(n>0) is the code of the nth held key. Compile the real
+# mmbasic/src/util.c so the implementation, not a copy, stays pinned.
 
 KEYDOWN_DRIVER_C = r"""
 #include "mmb_priv.h"
@@ -157,26 +157,38 @@ static void check(int cond, const char *what)
 int main(void)
 {
 	int none[1] = { 0 };
-	int z[1] = { 44 };
-	int combo[3] = { 44, 1, 75 };
+	int left[1] = { 130 };
+	int right_esc[2] = { 131, 27 };
+	int i, paddle = 100, quit = 0;
 
 	mmb_keydown_set(none, 0);
 	check(mmb_keydown_get(0) == 0, "empty count");
-	check(mmb_keydown_get(44) == 0, "empty scan false");
+	check(mmb_keydown_get(1) == 0, "empty index");
 
-	/* Holding z alone must not make the Esc or Left scan codes true. */
-	mmb_keydown_set(z, 1);
-	check(mmb_keydown_get(0) == 1, "one count");
-	check(mmb_keydown_get(44) == 1, "z held");
-	check(mmb_keydown_get(1) == 0, "unrelated esc false");
-	check(mmb_keydown_get(75) == 0, "unrelated left false");
+	/* sprites.bas style: iterate the held-key list from KEYDOWN(0). */
+	mmb_keydown_set(left, 1);
+	check(mmb_keydown_get(0) == 1, "left count");
+	check(mmb_keydown_get(1) == 130, "left code");
+	check(mmb_keydown_get(2) == 0, "list ends after one key");
+	for (i = 1; i <= mmb_keydown_get(0); i++)
+		if (mmb_keydown_get(i) == 130)
+			paddle -= 3;
+	check(paddle == 97, "paddle moved left");
 
-	mmb_keydown_set(combo, 3);
-	check(mmb_keydown_get(0) == 3, "combo count");
-	check(mmb_keydown_get(44) == 1, "combo z");
-	check(mmb_keydown_get(1) == 1, "combo esc");
-	check(mmb_keydown_get(75) == 1, "combo left");
-	check(mmb_keydown_get(77) == 0, "combo right false");
+	/* Holding right and Escape must move the paddle and quit. */
+	mmb_keydown_set(right_esc, 2);
+	check(mmb_keydown_get(0) == 2, "two held");
+	check(mmb_keydown_get(1) == 131, "right code");
+	check(mmb_keydown_get(2) == 27, "escape code");
+	for (i = 1; i <= mmb_keydown_get(0); i++)
+	{
+		if (mmb_keydown_get(i) == 131)
+			paddle += 3;
+		if (mmb_keydown_get(i) == 27)
+			quit = 1;
+	}
+	check(paddle == 100, "paddle moved right");
+	check(quit == 1, "escape quits");
 
 	printf("%s\n", fails ? "FAILURES" : "ALL OK");
 	return fails ? 1 : 0;
@@ -212,7 +224,7 @@ def keydown_host_run(tmp_path_factory):
     return subprocess.run([str(exe)], check=False, capture_output=True, text=True)
 
 
-def test_keydown_scan_boolean(keydown_host_run):
+def test_keydown_list_contract(keydown_host_run):
     out = keydown_host_run.stdout + keydown_host_run.stderr
     assert keydown_host_run.returncode == 0, out
     assert "ALL OK" in out, out

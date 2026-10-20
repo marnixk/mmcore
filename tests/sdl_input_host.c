@@ -465,28 +465,28 @@ int main(void)
 	expect_feed("plain-left", "\x1b[D");
 
 	/* KEYDOWN(): the compat games poll this while a program runs, so the
-	 * native/Linux-ISO build publishes PC/AT set-1 scan codes, the same set
-	 * the Circle USB HID path does. Left=75, Right=77, Escape=1, 'z'=44. */
+	 * native/Linux-ISO build publishes the CMM2 list codes, the same set the
+	 * Circle USB HID path does. Left=130, Right=131, Escape=27, 'z'=122. */
 	reset();
 	g_running = 1;
 	push_key(SDLK_LEFT, 0);
 	sdl_input_pump();
-	expect_keydown("keydown left", (const int[]){75}, 1);
+	expect_keydown("keydown left", (const int[]){130}, 1);
 
 	push_key(SDLK_RIGHT, 0);
 	sdl_input_pump();
-	expect_keydown("keydown left+right", (const int[]){75, 77}, 2);
+	expect_keydown("keydown left+right", (const int[]){130, 131}, 2);
 
 	/* Auto-repeat re-sends KEYDOWN: the code must not be listed twice. */
 	push_key(SDLK_LEFT, 0);
 	sdl_input_pump();
-	expect_keydown("keydown repeat", (const int[]){75, 77}, 2);
+	expect_keydown("keydown repeat", (const int[]){130, 131}, 2);
 
 	expect_queue("keydown arrows inkey", "\x1b[D\x1b[C\x1b[D");
 
 	push_keyup(SDLK_LEFT, 0);
 	sdl_input_pump();
-	expect_keydown("keydown left released", (const int[]){77}, 1);
+	expect_keydown("keydown left released", (const int[]){131}, 1);
 
 	push_keyup(SDLK_RIGHT, 0);
 	sdl_input_pump();
@@ -496,10 +496,10 @@ int main(void)
 	g_running = 1;
 	push_key(SDLK_z, 0);
 	sdl_input_pump();
-	expect_keydown("keydown single key", (const int[]){44}, 1);
+	expect_keydown("keydown single key", (const int[]){122}, 1);
 	push_key(SDLK_ESCAPE, 0);
 	sdl_input_pump();
-	expect_keydown("keydown letter+esc", (const int[]){44, 1}, 2);
+	expect_keydown("keydown letter+esc", (const int[]){122, 27}, 2);
 
 	/* Losing window focus drops the held set (no KEYUPs are delivered for
 	 * keys released while unfocused). */
@@ -795,35 +795,34 @@ int main(void)
 	sdl_input_pump();
 	expect_queue("alt-keypad-digit running no SOH", "");
 
-	/* #1183/#1238: keypad digits keep their own set-1 keypad scan codes
-	 * (Home/7=71 ... Ins/0=82), distinct from the top row. Circle's
-	 * hid_to_scancode maps HID 0x1e..0x27 and 0x59..0x62 the same way. */
+	/* #1183/#1250: keypad digits carry the same CMM2 code as the top row,
+	 * so KEYDOWN() is identical whichever cluster a game polls. */
 	{
 		static const struct {
 			const char *name;
 			SDL_Keycode sym;
 			int code;
 		} digits[] = {
-			{"keydown top 1", SDLK_1, 2},
-			{"keydown top 2", SDLK_2, 3},
-			{"keydown top 3", SDLK_3, 4},
-			{"keydown top 4", SDLK_4, 5},
-			{"keydown top 5", SDLK_5, 6},
-			{"keydown top 6", SDLK_6, 7},
-			{"keydown top 7", SDLK_7, 8},
-			{"keydown top 8", SDLK_8, 9},
-			{"keydown top 9", SDLK_9, 10},
-			{"keydown top 0", SDLK_0, 11},
-			{"keydown keypad 1", SDLK_KP_1, 79},
-			{"keydown keypad 2", SDLK_KP_2, 80},
-			{"keydown keypad 3", SDLK_KP_3, 81},
-			{"keydown keypad 4", SDLK_KP_4, 75},
-			{"keydown keypad 5", SDLK_KP_5, 76},
-			{"keydown keypad 6", SDLK_KP_6, 77},
-			{"keydown keypad 7", SDLK_KP_7, 71},
-			{"keydown keypad 8", SDLK_KP_8, 72},
-			{"keydown keypad 9", SDLK_KP_9, 73},
-			{"keydown keypad 0", SDLK_KP_0, 82},
+			{"keydown top 1", SDLK_1, '1'},
+			{"keydown top 2", SDLK_2, '2'},
+			{"keydown top 3", SDLK_3, '3'},
+			{"keydown top 4", SDLK_4, '4'},
+			{"keydown top 5", SDLK_5, '5'},
+			{"keydown top 6", SDLK_6, '6'},
+			{"keydown top 7", SDLK_7, '7'},
+			{"keydown top 8", SDLK_8, '8'},
+			{"keydown top 9", SDLK_9, '9'},
+			{"keydown top 0", SDLK_0, '0'},
+			{"keydown keypad 1", SDLK_KP_1, '1'},
+			{"keydown keypad 2", SDLK_KP_2, '2'},
+			{"keydown keypad 3", SDLK_KP_3, '3'},
+			{"keydown keypad 4", SDLK_KP_4, '4'},
+			{"keydown keypad 5", SDLK_KP_5, '5'},
+			{"keydown keypad 6", SDLK_KP_6, '6'},
+			{"keydown keypad 7", SDLK_KP_7, '7'},
+			{"keydown keypad 8", SDLK_KP_8, '8'},
+			{"keydown keypad 9", SDLK_KP_9, '9'},
+			{"keydown keypad 0", SDLK_KP_0, '0'},
 		};
 
 		for (unsigned i = 0; i < sizeof digits / sizeof digits[0]; i++)
@@ -837,25 +836,25 @@ int main(void)
 		}
 	}
 
-	/* #1191: keypad Enter and the operators use their set-1 keypad codes;
-	 * the HID usages 0x54..0x58/0x63/0x67 in console/kernel.cpp match. */
+	/* #1191/#1250: keypad Enter is 10 and the operators carry their glyph,
+	 * matching the HID usages 0x54..0x58/0x63/0x67 in console/kernel.cpp. */
 	{
 		static const struct {
 			const char *name;
 			SDL_Keycode sym;
 			int code;
 		} cases[] = {
-			{"keydown keypad enter", SDLK_KP_ENTER, 28},
-			{"keydown keypad plus", SDLK_KP_PLUS, 78},
-			{"keydown keypad minus", SDLK_KP_MINUS, 74},
-			{"keydown keypad multiply", SDLK_KP_MULTIPLY, 55},
-			{"keydown keypad divide", SDLK_KP_DIVIDE, 53},
-			{"keydown keypad period", SDLK_KP_PERIOD, 83},
-			{"keydown keypad equals", SDLK_KP_EQUALS, 89},
-			{"keydown top minus", SDLK_MINUS, 12},
-			{"keydown top period", SDLK_PERIOD, 52},
-			{"keydown top slash", SDLK_SLASH, 53},
-			{"keydown top equals", SDLK_EQUALS, 13},
+			{"keydown keypad enter", SDLK_KP_ENTER, 10},
+			{"keydown keypad plus", SDLK_KP_PLUS, '+'},
+			{"keydown keypad minus", SDLK_KP_MINUS, '-'},
+			{"keydown keypad multiply", SDLK_KP_MULTIPLY, '*'},
+			{"keydown keypad divide", SDLK_KP_DIVIDE, '/'},
+			{"keydown keypad period", SDLK_KP_PERIOD, '.'},
+			{"keydown keypad equals", SDLK_KP_EQUALS, '='},
+			{"keydown top minus", SDLK_MINUS, '-'},
+			{"keydown top period", SDLK_PERIOD, '.'},
+			{"keydown top slash", SDLK_SLASH, '/'},
+			{"keydown top equals", SDLK_EQUALS, '='},
 		};
 
 		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++)

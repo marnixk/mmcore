@@ -1,24 +1,29 @@
 name: KEYDOWN
 kind: command
 
-Test whether a keyboard key is held down, or count the held keys.
+Return a held key's code, or count the keys held down.
 
-flag = KEYDOWN(scan)
 count = KEYDOWN(0)
+code  = KEYDOWN(n)
 
-  scan  - PC/AT set-1 keyboard scan code (see ~KEYBOARD SCAN CODES~)
-  count - number of scan codes currently held (0 when no key is down)
+  count - number of keys currently held (0 when no key is down)
+  n     - index 1..KEYDOWN(0) of the held key to return
 
-KEYDOWN(scan) is 1 while that scan code is held and 0 otherwise. Holding
-one key does not make KEYDOWN() true for any other scan code.
+KEYDOWN(n) returns the Colour Maximite 2 code of the nth held key.
+Printable keys use their ASCII code; the arrows use Up=128, Down=129,
+Left=130, Right=131 and Escape is 27, the same values ~INKEY$~ returns.
+The numeric keypad reports the same code as its top-row equivalent.
 
-Only the KEYDOWN() held-key table uses scan codes. Normal typing, ~INKEY$~
-and its extended arrow/function codes are separate.
+This is the CMM2 list contract: loop from 1 to KEYDOWN(0) and compare
+each KEYDOWN(n) against the code you want. To test one key, scan the
+list; there is no separate scan-code test. KEYDOWN() does not use PC/AT
+scan codes.
 
-See also ~INKEY$~.
+See also ~INKEY$~ and ~KEYBOARD CODES~.
 
 Example:
 
-    DO
-      IF KEYDOWN(1) THEN PRINT "ESC held"
-    LOOP
+    FOR i = 1 TO KEYDOWN(0)
+      IF KEYDOWN(i) = 130 THEN x = x - 1
+      IF KEYDOWN(i) = 131 THEN x = x + 1
+    NEXT i
