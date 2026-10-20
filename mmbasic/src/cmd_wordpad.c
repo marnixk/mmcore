@@ -3305,8 +3305,10 @@ static void activate_menu(void)
 	else if (menu == WP_MENU_SETTINGS)
 	{
 		W.view = (W.view + 1) % (WP_VIEW_NARROW + 1);
+		G.opt.wordpad_view = W.view;
 		settings_sync_label();
 		W.scroll = 0;
+		mmb_settings_save();
 	}
 }
 
@@ -4442,7 +4444,9 @@ void mmb_wordpad_open(const char *path)
 		return;
 	}
 	W.active = 1;
-	W.view = WP_VIEW_NORMAL;
+	W.view = G.opt.wordpad_view;
+	if (W.view < WP_VIEW_NORMAL || W.view > WP_VIEW_NARROW)
+		W.view = WP_VIEW_NORMAL;
 	settings_sync_label();
 	W.ndoc = 1;
 	W.cur = 0;

@@ -278,6 +278,12 @@ static void apply_core(const char *k, const char *v)
 	}
 	else if (mmb_keyword_eq(k, "term_autolog"))
 		G.opt.term_autolog = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "wordpad_view"))
+	{
+		G.opt.wordpad_view = parse_int(v);
+		if (G.opt.wordpad_view < 0 || G.opt.wordpad_view > 2)
+			G.opt.wordpad_view = 0;
+	}
 	else if (mmb_keyword_eq(k, "fg"))
 		G.gfx.fg = (unsigned)parse_int(v);
 	else if (mmb_keyword_eq(k, "bg"))
@@ -444,6 +450,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
+	kv_int(buf, sizeof(buf), "wordpad_view", G.opt.wordpad_view);
 	kv_str(buf, sizeof(buf), "afk_password", G.opt.afk_password);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
 	kv_int(buf, sizeof(buf), "bg", (int64_t)G.gfx.bg);

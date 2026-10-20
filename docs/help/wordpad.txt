@@ -17,6 +17,7 @@ File: New, Open..., Save, Save As..., Quit.
 Edit: Copy, Cut, Paste (Ctrl+C / Ctrl+X / Ctrl+V; legacy ^K / ^U kept).
 Settings: View cycles normal / wide / narrow; the item names the current
 view. The centred text column wraps at 80, 120 or 60 columns respectively.
+The chosen view is remembered for the next launch.
 Colours follow OPTION THEME (same as the other themed apps).
 
 Markdown: body is VGA 8x16 monospace. # / ## / ### headings use Times-style

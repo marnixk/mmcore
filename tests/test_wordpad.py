@@ -445,6 +445,90 @@ def test_wordpad_narrow_view_wraps_at_sixty(kernel_image):
         con.stop()
 
 
+def test_wordpad_view_persists_across_launches(kernel_image):
+    """#1252: the Settings view is written when changed and restored on launch."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
+        time.sleep(0.3)
+        _open(con, quiet=1.0)
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # normal -> wide
+        time.sleep(0.3)
+        _quit(con)
+        assert "wordpad_view=1" in _read_ini(con)
+
+        _open(con, quiet=1.0)
+        _keys(con, b"H", quiet=0.6)
+        time.sleep(0.3)
+        # Restored wide view fills the 120-column screen (pane starts at x=0).
+        assert _first_ink_x(con, 8) <= 10
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Wide" in menu, menu
+        _keys(con, b"\r", quiet=0.8)  # wide -> narrow
+        time.sleep(0.3)
+        _quit(con)
+        assert "wordpad_view=2" in _read_ini(con)
+
+        _open(con, quiet=1.0)
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Narrow" in menu, menu
+        _keys(con, b"\x1b", quiet=0.5)
+        _quit(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_view_factory_reset_restores_normal(kernel_image):
+    """#1252: factory reset returns the remembered view to normal."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
+        time.sleep(0.3)
+        _open(con, quiet=1.0)
+        _alt_menu(con, b"s", quiet=0.4)
+        _keys(con, b"\r", quiet=0.8)  # normal -> wide
+        time.sleep(0.2)
+        _quit(con)
+        assert "wordpad_view=1" in _read_ini(con)
+
+        assert con.send_line("FACTORY_RESET") == "Factory defaults restored"
+        assert con.send_line("MODE 14,16") == ""
+        _apply_slate_theme(con)
+        time.sleep(0.3)
+        _open(con, quiet=1.0)
+        menu = _alt_menu(con, b"s", quiet=0.5)
+        assert "View: Normal" in menu, menu
+        _keys(con, b"\x1b", quiet=0.5)
+        _quit(con)
+        assert "wordpad_view=0" in _read_ini(con)
+    finally:
+        con.stop()
+
+
+def test_wordpad_view_saves_immediately_and_clamps_invalid_ini():
+    """#1252: the cycle persists at once, and a bad INI value clamps to normal."""
+    src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
+    block = re.search(r"else if \(menu == WP_MENU_SETTINGS\).*?\n\t\}", src, re.S)
+    assert block is not None
+    assert "G.opt.wordpad_view = W.view;" in block.group(0)
+    assert "mmb_settings_save();" in block.group(0)
+
+    settings = _repo_source(os.path.join("mmbasic", "src", "settings.c"))
+    assert re.search(
+        r'G\.opt\.wordpad_view = parse_int\(v\);'
+        r'.*?if \(G\.opt\.wordpad_view < 0 \|\| G\.opt\.wordpad_view > 2\)'
+        r'.*?G\.opt\.wordpad_view = 0;',
+        settings,
+        re.S,
+    ), "invalid wordpad_view values must fall back to normal"
+
+
+
 def test_wordpad_follows_edit_theme_phosphor(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
