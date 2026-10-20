@@ -795,6 +795,77 @@ int main(void)
 	sdl_input_pump();
 	expect_queue("alt-keypad-digit running no SOH", "");
 
+	/* #1261: the KMS/DRM evdev backend mirrors SDL_TEXTINPUT for the base
+	 * key of an unbound Alt chord. Circle's cooked keymap returns KeyNone
+	 * while Alt is held, so Alt+/ must type nothing at the REPL or into a
+	 * running program's INKEY queue (the WORDPAD/EDIT/FILES/TERM path). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_SLASH, KMOD_ALT);
+	push_text("/");
+	sdl_input_pump();
+	if (g_front_feeds != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr, "FAIL alt-slash repl: feeds=%d queue=%d\n",
+			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	reset();
+	g_running = 1;
+	push_key(SDLK_SLASH, KMOD_ALT);
+	push_text("/");
+	sdl_input_pump();
+	expect_queue("alt-slash running swallowed", "");
+
+	reset();
+	g_running = 0;
+	sdl_input_begin_line();
+	push_key(SDLK_PERIOD, KMOD_ALT);
+	push_text(".");
+	sdl_input_pump();
+	expect_queue("alt-period line prompt swallowed", "");
+	sdl_input_end_line();
+
+	/* A recognised Alt chord still delivers its bytes and swallows the
+	 * mirrored base text (SOH+letter, SOH+digit). */
+	reset();
+	g_running = 0;
+	push_key(SDLK_f, KMOD_ALT);
+	push_text("f");
+	sdl_input_pump();
+	expect_feed("alt-letter text swallowed", "\x01" "f");
+
+	reset();
+	g_running = 0;
+	push_key(SDLK_1, KMOD_ALT);
+	push_text("1");
+	sdl_input_pump();
+	expect_feed("alt-digit text swallowed", "\x01" "1");
+
+	/* Alt+Enter toggles fullscreen and must not also type the mirrored CR. */
+	reset();
+	g_running = 0;
+	push_key(SDLK_RETURN, KMOD_ALT);
+	push_text("\r");
+	sdl_input_pump();
+	if (g_front_feeds != 0 || g_inkey_n != 0)
+	{
+		fprintf(stderr, "FAIL alt-enter text: feeds=%d queue=%d\n",
+			g_front_feeds, g_inkey_n);
+		fails++;
+	}
+
+	/* AltGr is Ctrl+Alt, not a plain Alt: layouts that deliver real
+	 * characters through it must keep them (Circle has a separate ALTGR
+	 * table). Use a punctuation key so no Ctrl shortcut claims it. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_SLASH, KMOD_CTRL | KMOD_ALT);
+	push_text("/");
+	sdl_input_pump();
+	expect_queue("altgr text kept", "/");
+
 	/* #1183/#1250: keypad digits carry the same CMM2 code as the top row,
 	 * so KEYDOWN() is identical whichever cluster a game polls. */
 	{
