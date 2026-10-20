@@ -304,6 +304,33 @@ def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
         con.stop()
 
 
+def test_term_replay_backspace_sends_del_in_char_mode(kernel_image):
+    """#1255: in telnet character mode Backspace must send DEL, not BS.
+
+    Linux getty/login set erase to ^?; sending ^H (BS) prints a literal
+    caret sequence instead of erasing.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        base = _outbound(replay).count(bytes([255, 253, 3]))
+        replay._to_guest(bytes([255, 251, 3]))  # IAC WILL SGA -> char mode
+        _outbound_until(
+            replay, lambda out: out.count(bytes([255, 253, 3])) > base
+        )
+        replay.send_keys(b"ab\x7f")
+        out = _outbound_until(replay, lambda chunk: b"\x7f" in chunk)
+        assert b"\x7f" in out, out
+        assert b"\x08" not in out, out
+        _quit(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def _red_count(con, row: int, cols, pane_left: int = 20) -> int:
     coords = [((pane_left + c) * 8 + 4, row * 16 + 8) for c in cols]
     return sum(1 for rgb in con.screen_pixels(coords) if _is_red(rgb))
