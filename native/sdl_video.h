@@ -51,6 +51,11 @@ unsigned sdl_native_to_rgb(unsigned native);
 void sdl_video_present(void);
 void sdl_video_mark_dirty(void);
 
+/* Whether the active renderer makes SDL_RenderPresent wait for the vertical
+ * blank (SDL_RENDERER_PRESENTVSYNC). When false, sdl_video_present() aligns
+ * the scanout copy to a display frame itself so animations do not tear. */
+int sdl_video_present_is_vsynced(void);
+
 /* Mark only a rectangle of the software framebuffer as changed. The present
  * then converts and uploads just that region instead of the whole panel, which
  * keeps the per-present cost proportional to what a graphics-heavy program

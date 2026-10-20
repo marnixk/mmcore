@@ -54,6 +54,12 @@ int main(void)
 		return 1;
 	}
 
+	/* #1265: SDL's software renderer advertises PRESENTVSYNC but its present
+	 * returns immediately, so sdl_video.c only trusts the flag on an
+	 * accelerated renderer and paces the scanout copy itself here. */
+	CHECK(sdl_video_present_is_vsynced() == 0,
+	      "the software renderer does not vsync presents");
+
 	/* A fresh open marks the whole framebuffer dirty. */
 	check_rect(0, 0, 640, 480, "open marks the full frame");
 	sdl_video_present();

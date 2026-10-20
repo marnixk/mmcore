@@ -262,6 +262,22 @@ static int s_viz_ready;
 static short s_scope[VIZ_SCOPE];
 static unsigned s_scope_w;
 
+/* Adaptive spectrum gain (#1265). The filter bank's raw magnitudes depend
+ * on the track's mix and master level, so ordinary music stayed in the dark
+ * end of JUKE's ramp. Track a slow running average of each frame's loudest
+ * band (what counts as "middle" intensity) and map it to most of a bar's
+ * height. It rises in about 0.4 s so a loud passage does not pin every bar,
+ * and falls over ~2.5 s so a quiet passage stays quiet. The reference is
+ * frozen while stopped/paused, so resuming a track does not slam every bar
+ * to full height. */
+#define VIZ_REF_TAU_MS 2500.0f /* release: quiet -> reference falls slowly */
+#define VIZ_REF_ATTACK_MS 400.0f /* loud -> reference catches up quickly   */
+#define VIZ_REF_FLOOR  0.06f    /* never amplify silence into full bars    */
+#define VIZ_REF_KNEE   0.75f    /* running-averaged loudest band lands here */
+static float s_viz_ref;
+static unsigned s_viz_ref_ms;
+static int s_viz_ref_valid;
+
 static void viz_init(void)
 {
 	int b;
@@ -1119,24 +1135,67 @@ int mmb_play_take_ended(void)
 
 void mmb_audio_spectrum(float *bands, int nbands)
 {
-	int i;
+	int i, live;
+	float raw[VIZ_BANDS], loud = 0.0f, gain, ref;
+	unsigned now;
 
 	if (!bands || nbands <= 0)
 		return;
-	if (!g_audio.playing || g_audio.paused)
+	live = g_audio.playing && !g_audio.paused;
+	if (!live)
 	{
 		for (i = 0; i < VIZ_BANDS; i++)
 			s_viz_band[i] *= 0.6f;
 	}
+	for (i = 0; i < VIZ_BANDS; i++)
+	{
+		float v = sqrtf(s_viz_band[i] * 12.0f);
+		if (v > 1.0f)
+			v = 1.0f;
+		raw[i] = v;
+		if (v > loud)
+			loud = v;
+	}
+
+	/* Update the running reference only while audio is actually playing.
+	 * The timestamp still advances while paused so resuming does not apply
+	 * one huge catch-up step. */
+	now = mmb_now_ms();
+	if (live)
+	{
+		if (!s_viz_ref_valid)
+		{
+			if (loud > 0.0f)
+			{
+				s_viz_ref = loud;
+				s_viz_ref_valid = 1;
+			}
+		}
+		else if (now != s_viz_ref_ms)
+		{
+			unsigned dt = now - s_viz_ref_ms;
+			float tau = loud > s_viz_ref ? VIZ_REF_ATTACK_MS
+						     : VIZ_REF_TAU_MS;
+			float a;
+
+			/* A long pause must not jump the average in one step. */
+			if (dt > 250u)
+				dt = 250u;
+			a = 1.0f - expf(-(float)dt / tau);
+			s_viz_ref += (loud - s_viz_ref) * a;
+		}
+	}
+	s_viz_ref_ms = now;
+
+	ref = s_viz_ref_valid ? s_viz_ref : 0.0f;
+	if (ref < VIZ_REF_FLOOR)
+		ref = VIZ_REF_FLOOR;
+	gain = VIZ_REF_KNEE / ref;
 	for (i = 0; i < nbands; i++)
 	{
-		float v = 0.0f;
-		if (i < VIZ_BANDS)
-		{
-			v = sqrtf(s_viz_band[i] * 12.0f);
-			if (v > 1.0f)
-				v = 1.0f;
-		}
+		float v = i < VIZ_BANDS ? raw[i] * gain : 0.0f;
+		if (v > 1.0f)
+			v = 1.0f;
 		bands[i] = v;
 	}
 }

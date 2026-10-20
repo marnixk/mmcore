@@ -31,6 +31,14 @@ static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
 static int s_dirty;
 static int s_dirty_x0, s_dirty_y0, s_dirty_x1, s_dirty_y1;
+/* Present pacing (#1265). SDL only guarantees that SDL_RenderPresent waits
+ * for the vertical blank when the renderer was created with
+ * SDL_RENDERER_PRESENTVSYNC. A software renderer (the fallback when the
+ * accelerated/GLES renderer cannot be created) copies straight into scanout,
+ * so an unsynchronised present tears while an animation runs. */
+static int s_present_vsync;
+static unsigned s_frame_interval; /* display frame period in ms */
+static unsigned s_frame_next;     /* millis at the next frame boundary */
 
 /* Union a changed rectangle into the pending dirty area. A running program
  * changes only a small part of the screen between presents; converting and
@@ -245,6 +253,21 @@ int sdl_video_open(int w, int h)
 		s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
 	if (!s_ren)
 		return 0;
+	{
+		SDL_RendererInfo info;
+
+		/* A renderer can report PRESENTVSYNC without honouring it: SDL's
+		 * software renderer sets the flag but its present is a plain copy
+		 * that returns immediately. Only an accelerated renderer can be
+		 * trusted to block for the vertical blank. */
+		s_present_vsync = 0;
+		if (SDL_GetRendererInfo(s_ren, &info) == 0)
+			s_present_vsync =
+				(info.flags & SDL_RENDERER_PRESENTVSYNC) != 0 &&
+				(info.flags & SDL_RENDERER_SOFTWARE) == 0;
+	}
+	s_frame_interval = 0;
+	s_frame_next = 0;
 
 	if (!sdl_video_resize(w, h))
 		return 0;
@@ -369,6 +392,51 @@ static void present_clear_band(int x, int y, int w, int h)
 	SDL_RenderFillRect(s_ren, &r);
 }
 
+int sdl_video_present_is_vsynced(void)
+{
+	return s_present_vsync;
+}
+
+/* Display frame period in milliseconds. The refresh rate comes from the
+ * current mode; a driver that reports nothing useful (dummy/headless) falls
+ * back to 60 Hz. */
+static unsigned sdl_frame_period_ms(void)
+{
+	SDL_DisplayMode mode;
+	int hz = 0;
+
+	if (SDL_GetCurrentDisplayMode(0, &mode) == 0)
+		hz = mode.refresh_rate;
+	if (hz < 24 || hz > 240)
+		hz = 60;
+	return (unsigned)((1000 + hz / 2) / hz);
+}
+
+/* Start the next present at the top of a display frame. Only used when the
+ * renderer does not already pause presents for vsync: a software/KMS renderer
+ * copies the whole frame into scanout, and starting that copy at an arbitrary
+ * point makes the visualiser tear. Presenting at a frame boundary gives the
+ * copy the frame interval before scanout reaches it. This runs on the present
+ * path (once per main-loop frame, not per program line), so it caps the frame
+ * rate without throttling the interpreter (#1080). */
+static void sdl_frame_wait(void)
+{
+	unsigned now, interval, next;
+
+	if (!s_frame_interval)
+		s_frame_interval = sdl_frame_period_ms();
+	interval = s_frame_interval;
+	now = SDL_GetTicks();
+	if (!s_frame_next)
+		s_frame_next = now;
+	next = s_frame_next;
+	if ((int)(now - next) > (int)interval)
+		next = now; /* fell behind (pause, mode change): resync */
+	if ((int)(now - next) < 0)
+		SDL_Delay(next - now);
+	s_frame_next = next + interval;
+}
+
 void sdl_video_present(void)
 {
 	int x0, y0, x1, y1, y, x;
@@ -445,6 +513,13 @@ void sdl_video_present(void)
 	dst.w = dw;
 	dst.h = dh;
 	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
+	/* #1265: a renderer without PRESENTVSYNC copies into scanout as soon as
+	 * the present runs, which tears while the visualiser animates. Start
+	 * that copy at a frame boundary instead. A vsynced renderer blocks in
+	 * SDL_RenderPresent already, so waiting here as well would halve its
+	 * frame rate. */
+	if (!s_present_vsync)
+		sdl_frame_wait();
 	SDL_RenderPresent(s_ren);
 }
 
