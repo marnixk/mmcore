@@ -30,6 +30,7 @@ PATCHES = [
     os.path.join(REPO, "patches", "circle-fb-unaligned.patch"),
     os.path.join(REPO, "patches", "circle-usb-cdc-rx.patch"),
     os.path.join(REPO, "patches", "circle-console-state.patch"),
+    os.path.join(REPO, "patches", "circle-cursor-inverse.patch"),
     os.path.join(REPO, "patches", "circle-ansi-truecolour.patch"),
     os.path.join(REPO, "patches", "circle-device-dedupe.patch"),
     os.path.join(REPO, "patches", "circle-usb-timeout.patch"),
@@ -81,11 +82,12 @@ def test_build_script_applies_patches_in_order():
     ua = text.index("circle-fb-unaligned.patch")
     e = text.index("circle-usb-cdc-rx.patch")
     f = text.index("circle-console-state.patch")
+    fc = text.index("circle-cursor-inverse.patch")
     ft = text.index("circle-ansi-truecolour.patch")
     g = text.index("circle-device-dedupe.patch")
     h = text.index("circle-usb-timeout.patch")
     i = text.index("circle-fatfs-fastseek.patch")
-    assert a < b < c < d < db < ua < e < f < ft < g < h < i
+    assert a < b < c < d < db < ua < e < f < fc < ft < g < h < i
     assert "mmbasic-issue-149" in text
     assert "mmbasic-tcp-robust" in text
     assert "mmbasic-tcp-send" in text
@@ -172,6 +174,15 @@ def test_console_state_patch_applies(patched_tree):
     assert "memcpy (m_pBuffer8, pBuffer, m_nSize)" in term
     assert "mmbasic-console-state" in scr_h
     assert "GetTerminal" in scr_h
+
+
+def test_cursor_inverse_patch_applies(patched_tree):
+    term = open(os.path.join(patched_tree, "lib/terminal.cpp"), encoding="utf-8").read()
+    assert "mmbasic-cursor-inverse" in term
+    body = term[term.index("void CTerminalDevice::InvertCursor") :]
+    # The block cursor swaps fg/bg instead of stamping a solid fg block.
+    assert "nPixel == nTextBackground ? nTextColor" in body
+    assert "SetRawPixel (m_nCursorX + x, m_nCursorY + y, m_Color)" not in body
 
 
 def test_ansi_truecolour_patch_applies(patched_tree):

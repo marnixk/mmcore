@@ -114,6 +114,16 @@ Virtual consoles need to snapshot and restore one text console at a time:
 - `CScreenDevice::GetTerminal()` exposes the private terminal so the console
   platform backend can drive those calls.
 
+## `circle-cursor-inverse.patch`
+
+Applied after `circle-console-state.patch` (marker `mmbasic-cursor-inverse` in
+`lib/terminal.cpp`). Issue #1258: the block cursor painted the whole cell in the
+foreground colour, hiding the character underneath. `InvertCursor()` now swaps
+the cell's text foreground and background while the cursor is drawn, so the
+glyph stays visible as inverse video (black text on the grey block at the
+prompt). `native/sdl_console.c` draws the same inverse block for the SDL
+targets.
+
 ## `circle-ansi-truecolour.patch`
 
 Applied after `circle-console-state.patch` (marker `mmbasic-ansi-truecolour` in

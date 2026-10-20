@@ -1,0 +1,35 @@
+diff --git a/lib/terminal.cpp b/lib/terminal.cpp
+index c92f0c61..0014bf2b 100644
+--- a/lib/terminal.cpp
++++ b/lib/terminal.cpp
+@@ -1038,6 +1038,8 @@ void CTerminalDevice::InvertCursor (void)
+ 		return;
+ 	}
+ 
++	CDisplay::TRawColor nTextColor = GetTextColor ();
++	CDisplay::TRawColor nTextBackground = GetTextBackgroundColor ();
+ 	CDisplay::TRawColor *pPixelData = m_pCursorPixels;
+ 	unsigned y0 = m_bCursorBlock ? 0 : m_CharGen.GetUnderline ();
+ 	for (unsigned y = y0; y < m_CharGen.GetCharHeight (); y++)
+@@ -1046,11 +1048,17 @@ void CTerminalDevice::InvertCursor (void)
+ 		{
+ 			if (!m_bCursorVisible)
+ 			{
+-				// Store the old pixel
+-				*pPixelData++ = GetRawPixel (m_nCursorX + x, m_nCursorY + y);
++				CDisplay::TRawColor nPixel = GetRawPixel (m_nCursorX + x, m_nCursorY + y);
+ 
+-				// Plot the cursor with the current FG Colour
+-				SetRawPixel (m_nCursorX + x, m_nCursorY + y, m_Color);
++				// Store the old pixel
++				*pPixelData++ = nPixel;
++
++				// mmbasic-cursor-inverse (#1258): swap the text foreground
++				// and background so the glyph under the block cursor stays
++				// visible as inverse video instead of being blanked out.
++				SetRawPixel (m_nCursorX + x, m_nCursorY + y,
++					     nPixel == nTextBackground ? nTextColor
++							       : nTextBackground);
+ 			}
+ 			else
+ 			{

@@ -97,6 +97,13 @@ else
 	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-console-state.patch"
 fi
 
+if grep -q 'mmbasic-cursor-inverse' "${CIRCLE_DIR}/lib/terminal.cpp" 2>/dev/null; then
+	:
+else
+	log "Applying Circle inverse-video block cursor patch (#1258)"
+	patch -d "${CIRCLE_DIR}" -p1 --forward < "${REPO_ROOT}/patches/circle-cursor-inverse.patch"
+fi
+
 if grep -q 'mmbasic-ansi-truecolour' "${CIRCLE_DIR}/lib/terminal.cpp" 2>/dev/null; then
 	:
 else
