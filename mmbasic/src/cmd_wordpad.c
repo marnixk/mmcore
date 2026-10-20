@@ -4303,12 +4303,13 @@ static const char *wp_feed_inner(char c)
 	if (W.alt_pend)
 	{
 		W.alt_pend = 0;
-		if (handle_alt(c))
-		{
-			if (W.active)
-				wp_redraw();
-			return G.out;
-		}
+		handle_alt(c);
+		/* While Alt is held, a key that is not one of the menu shortcuts
+		 * is swallowed: it must not be inserted into the document, nor
+		 * fall through to the menu/dialog/editing handlers (#1257). */
+		if (W.active)
+			wp_redraw();
+		return G.out;
 	}
 	if (c == 1)
 	{
