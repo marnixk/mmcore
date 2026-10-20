@@ -38,6 +38,8 @@
 #define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
 #define JUKE_LIST_ROW    18
 #define JUKE_LINE_H      16    /* fixed pixel-font line height (#1118)  */
+#define JUKE_BAR_SEG      8    /* spectrum LED segment height at 100%   */
+#define JUKE_BAR_GAP      2    /* dark gap between LED segments         */
 /* The fixed 8x16 CP437 pixel font paints upper-case letters and digits in
  * cell rows 2..11: two blank rows above the cap line and four below. Centring
  * that painted span (not the whole cell, whose lower leading is deeper) is
@@ -304,7 +306,8 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Black base -> lime tip, for the per-bar gradient (#1055, no grey mid). */
+/* Black base -> lime tip ramp (#1055, no grey mid), shared by the bar
+ * segments (#1254). */
 static unsigned juke_grad(float t)
 {
 	if (t < 0.0f)
@@ -1092,12 +1095,12 @@ static void juke_paint_scope(int w)
 static void juke_paint_vis(int w, int h)
 {
 	float bands[MMB_AUDIO_BANDS];
-	int i, x0, x1, bw, gap, base, maxh, pad;
+	int i, x0, x1, bw, gap, base, maxh, pad, seg, seg_gap, step;
 
 	juke_paint_scope(w);
 	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
 
-	/* Spectrum: 24 black-to-grey-to-lime bars, no midfield guide lines. The
+	/* Spectrum: 24 segmented black-to-lime bars, no midfield guide lines. The
 	 * bar field is deliberately short so the full-size wordmark still fits
 	 * above it, and it is centred so the leftover width splits evenly on both
 	 * sides instead of pooling to the right of the last band. */
@@ -1120,6 +1123,17 @@ static void juke_paint_vis(int w, int h)
 		x1 = x0 + span;
 	}
 
+	/* LED-like segments: a flat rectangle per step with a dark gap between
+	 * them, scaled with the layout so the stack reads the same at every
+	 * supported resolution. */
+	seg = JS(JUKE_BAR_SEG);
+	seg_gap = JS(JUKE_BAR_GAP);
+	if (seg < 3)
+		seg = 3;
+	if (seg_gap < 1)
+		seg_gap = 1;
+	step = seg + seg_gap;
+
 	for (i = 0; i < MMB_AUDIO_BANDS; i++)
 	{
 		int bx = x0 + i * (bw + gap);
@@ -1131,14 +1145,20 @@ static void juke_paint_vis(int w, int h)
 			bh = 2;
 		if (bh > maxh)
 			bh = maxh;
-		/* Vertical per-bar gradient: black base -> lime tip. */
-		for (y = 0; y < bh; y += 4)
+		/* Each segment's colour is sampled by its height above the baseline,
+		 * not by the bar's own height (#1254). The ramp therefore stops where
+		 * the band's intensity stops: a loud band climbs all the way to lime
+		 * while a quiet one never leaves the dark end. */
+		for (y = 0; y < bh; y += step)
 		{
-			float frac = (float)y / (float)bh;
-			int seg_h = 4;
-			if (y + seg_h > bh)
-				seg_h = bh - y;
-			mmb_gfx_fill_rect(bx, base - y - seg_h, bw, seg_h,
+			int sh = seg;
+			float frac;
+			if (y + sh > bh)
+				sh = bh - y;
+			if (sh <= 0)
+				break;
+			frac = (float)(y + sh / 2) / (float)maxh;
+			mmb_gfx_fill_rect(bx, base - y - sh, bw, sh,
 					  juke_grad(frac));
 		}
 
