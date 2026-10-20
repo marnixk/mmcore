@@ -31,12 +31,16 @@ static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
 static int s_dirty;
 static int s_dirty_x0, s_dirty_y0, s_dirty_x1, s_dirty_y1;
-/* Present pacing (#1265). SDL only guarantees that SDL_RenderPresent waits
- * for the vertical blank when the renderer was created with
- * SDL_RENDERER_PRESENTVSYNC. A software renderer (the fallback when the
- * accelerated/GLES renderer cannot be created) copies straight into scanout,
- * so an unsynchronised present tears while an animation runs. */
-static int s_present_vsync;
+/* Present pacing (#1265). SDL_RenderPresent only waits for the vertical blank
+ * when the renderer actually honours SDL_RENDERER_PRESENTVSYNC. The flag alone
+ * is not trustworthy: SDL's software renderer advertises it yet returns in
+ * 0 ms, and a KMS/EGL driver may also fail to block in the swap. Start from
+ * the renderer-info hint, then time each present and flip to explicit frame
+ * pacing if the call returns without waiting. */
+static int s_present_software;   /* software renderer never waits for blank */
+static int s_present_synced;     /* current belief: present waits for blank */
+static float s_present_ms;       /* running average of present call duration */
+static int s_present_samples;    /* presents since the last mode change */
 static unsigned s_frame_interval; /* display frame period in ms */
 static unsigned s_frame_next;     /* millis at the next frame boundary */
 
@@ -256,15 +260,21 @@ int sdl_video_open(int w, int h)
 	{
 		SDL_RendererInfo info;
 
-		/* A renderer can report PRESENTVSYNC without honouring it: SDL's
-		 * software renderer sets the flag but its present is a plain copy
-		 * that returns immediately. Only an accelerated renderer can be
-		 * trusted to block for the vertical blank. */
-		s_present_vsync = 0;
+		/* The renderer-info flags are only a starting hint. A software
+		 * renderer never waits for the blank; an accelerated renderer is
+		 * trusted only until the first presents are timed (see
+		 * sdl_present_measure()). */
+		s_present_software = 0;
+		s_present_synced = 0;
+		s_present_ms = 0.0f;
+		s_present_samples = 0;
 		if (SDL_GetRendererInfo(s_ren, &info) == 0)
-			s_present_vsync =
-				(info.flags & SDL_RENDERER_PRESENTVSYNC) != 0 &&
-				(info.flags & SDL_RENDERER_SOFTWARE) == 0;
+		{
+			s_present_software =
+				(info.flags & SDL_RENDERER_SOFTWARE) != 0;
+			s_present_synced = !s_present_software &&
+				(info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+		}
 	}
 	s_frame_interval = 0;
 	s_frame_next = 0;
@@ -394,7 +404,7 @@ static void present_clear_band(int x, int y, int w, int h)
 
 int sdl_video_present_is_vsynced(void)
 {
-	return s_present_vsync;
+	return s_present_synced;
 }
 
 /* Display frame period in milliseconds. The refresh rate comes from the
@@ -410,6 +420,38 @@ static unsigned sdl_frame_period_ms(void)
 	if (hz < 24 || hz > 240)
 		hz = 60;
 	return (unsigned)((1000 + hz / 2) / hz);
+}
+
+/* Track how long SDL_RenderPresent() took and decide whether presents really
+ * wait for the vertical blank. A blocking present spends a sizeable part of a
+ * frame inside the call; a non-blocking one queues the copy and returns in a
+ * few ms. Three samples after each change are required so one unusually early
+ * vblank cannot flip the mode on its own. The thresholds are far apart: a
+ * genuine vsync wait averages around half a frame at a uniform arrival phase,
+ * while a copy-and-return present stays near zero. */
+static void sdl_present_measure(unsigned ms)
+{
+	float interval;
+
+	if (s_present_samples++ == 0)
+		s_present_ms = (float)ms;
+	else
+		s_present_ms += ((float)ms - s_present_ms) * 0.2f;
+	if (s_present_software || s_present_samples < 3)
+		return;
+	if (!s_frame_interval)
+		s_frame_interval = sdl_frame_period_ms();
+	interval = (float)s_frame_interval;
+	if (s_present_synced && s_present_ms < interval * 0.25f)
+	{
+		s_present_synced = 0;
+		s_present_samples = 0;
+	}
+	else if (!s_present_synced && s_present_ms > interval * 0.70f)
+	{
+		s_present_synced = 1;
+		s_present_samples = 0;
+	}
 }
 
 /* Start the next present at the top of a display frame. Only used when the
@@ -513,14 +555,20 @@ void sdl_video_present(void)
 	dst.w = dw;
 	dst.h = dh;
 	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
-	/* #1265: a renderer without PRESENTVSYNC copies into scanout as soon as
-	 * the present runs, which tears while the visualiser animates. Start
-	 * that copy at a frame boundary instead. A vsynced renderer blocks in
-	 * SDL_RenderPresent already, so waiting here as well would halve its
-	 * frame rate. */
-	if (!s_present_vsync)
+	/* #1265: a renderer that does not really wait for vsync copies into
+	 * scanout as soon as the present runs, which tears while the visualiser
+	 * animates. Start that copy at a frame boundary instead. The decision is
+	 * made from measured present durations, so an accelerated renderer that
+	 * silently ignores PRESENTVSYNC is caught too; a genuinely vsynced
+	 * renderer blocks below without the extra wait. */
+	if (!s_present_synced)
 		sdl_frame_wait();
-	SDL_RenderPresent(s_ren);
+	{
+		unsigned t0 = SDL_GetTicks();
+
+		SDL_RenderPresent(s_ren);
+		sdl_present_measure(SDL_GetTicks() - t0);
+	}
 }
 
 void sdl_video_request_quit(void)
