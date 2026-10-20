@@ -44,11 +44,14 @@ end Sub
 '    Figure out what keys were pressed and adjust state
 '
 function InterpretKeys(state as GameState) as GameState
-    ' KEYDOWN with a scan code tests that PC/AT set-1 key.
-    if keydown(75) then dec state.padX, 3   ' Left arrow
-    if keydown(77) then inc state.padX, 3   ' Right arrow
-    if keydown(1) then state.quit = 1       ' Esc
-
+    local keyIdx
+    
+    for keyIdx = 1 to keydown(0)
+        if keydown(keyIdx) = 130 then dec state.padX, 3
+        if keydown(keyIdx) = 131 then inc state.padX, 3
+        if keydown(keyIdx) = 27 then state.quit = 1
+    next keyIdx
+            
     InterpretKeys = state
 end function
 

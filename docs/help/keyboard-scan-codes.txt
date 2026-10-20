@@ -1,48 +1,29 @@
-name: KEYBOARD SCAN CODES
+name: KEYBOARD CODES
 kind: page
-alias: Keyboard Scan Codes, SCAN CODES
+alias: Keyboard Scan Codes, SCAN CODES, KEYBOARD CODES
 
-Keyboard Scan Codes
+Keyboard Codes
 
-PC/AT set-1 make codes (decimal). KEYDOWN(scan) tests these codes;
-KEYDOWN(0) returns how many are held. ~INKEY$~ extended keys use their
-own separate character codes.
+KEYDOWN() and ~INKEY$~ use Colour Maximite 2 character codes, not PC/AT
+scan codes. Printable keys return their ASCII code; Escape is 27, Enter
+is 10 and the arrow keys are:
 
-  Esc 1          A 30           Caps Lock 58
-  1 ! 2          S 31           F1 59
-  2 @ 3          D 32           F2 60
-  3 # 4          F 33           F3 61
-  4 $ 5          G 34           F4 62
-  5 % 6          H 35           F5 63
-  6 ^ 7          J 36           F6 64
-  7 & 8          K 37           F7 65
-  8 * 9          L 38           F8 66
-  9 ( 10         ; : 39         F9 67
-  0 ) 11         ' " 40         F10 68
-  - _ 12         ` ~~ 41         F11 133
-  = + 13         Left Shift 42  F12 134
-  Bksp 14        \ | 43         Num Lock 69
-  Tab 15         Z 44           Scroll Lock 70
-  Q 16           X 45           Home / 7 71
-  W 17           C 46           Up / 8 72
-  E 18           V 47           PgUp / 9 73
-  R 19           B 48           Gray - 74
-  T 20           N 49           Left / 4 75
-  Y 21           M 50           Center / 5 76
-  U 22           , < 51         Right / 6 77
-  I 23           . > 52         Gray + 78
-  O 24           / ? 53         End / 1 79
-  P 25           Right Shift 54 Down / 2 80
-  [ { 26         PrtSc / * 55   PgDn / 3 81
-  ] } 27         Alt 56         Ins / 0 82
-  Enter 28       Space 57       Del / . 83
-  Ctrl 29                       Keypad = 89
+  Up 128   Down 129   Left 130   Right 131
 
-Keypad digits report their own scan codes (Home/7 = 71, Up/8 = 72, ...),
-not the top-row digit codes. On this console, ~INKEY$~ maps VT100 arrows
-and function keys to Colour Maximite 2 codes (Up=128). See ~INKEY$~ for
-the mapped values.
+The numeric keypad reports the same code as its top-row equivalent, so
+keypad 5 is 53 ("5") and keypad Enter is 10.
+
+KEYDOWN(0) is the number of keys currently held. KEYDOWN(n) for n =
+1..KEYDOWN(0) returns the code of the nth held key. This list contract
+is how CMM2 games poll held keys.
+
+~INKEY$~ additionally returns Insert 132, Home 134, End 135, PageUp 136,
+PageDown 137, Delete 127 and F1-F12 145-156.
+
+See also ~KEYDOWN~, ~INKEY$~ and ~ASCII CHARACTER CODES~.
 
 Example:
 
-    PRINT ASC(INKEY$)
+    FOR i = 1 TO KEYDOWN(0)
+      IF KEYDOWN(i) = 130 THEN PRINT "LEFT"
+    NEXT i

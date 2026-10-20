@@ -26,7 +26,7 @@ static int s_swallow_text; /* Alt/Ctrl chords also emit SDL_TEXTINPUT */
 static int s_line_input;   /* a blocking line prompt owns the keyboard */
 static int s_break;        /* latched BREAK seen while a program runs */
 
-/* CMM2 KEYDOWN() scan codes for the keys currently held. SDL reports a key by
+/* CMM2 KEYDOWN() codes for the keys currently held. SDL reports a key by
  * keysym in SDL_KEYDOWN/SDL_KEYUP, so the held set is rebuilt on each event and
  * pushed to the interpreter. This mirrors the Circle USB HID path in
  * console/kernel.cpp so the compat games (which poll KEYDOWN) behave the same
@@ -470,124 +470,77 @@ void sdl_input_test_set_vt_left(int v)
 }
 #endif
 
-/* Map an SDL keysym to the PC/AT set-1 scan code KEYDOWN() tests. Typing and
- * INKEY$ use their own character/escape sequences; this table only feeds the
- * held-key set. console/kernel.cpp emits the same set-1 codes from USB HID
- * usage codes. */
-static int sdl_key_to_scancode(SDL_Keycode k)
+/* Map an SDL keysym to the CMM2 KEYDOWN() code the compat games expect.
+ * Letters, digits and punctuation are their ASCII codes; the arrows use the
+ * Colour Maximite codes Up=128, Down=129, Left=130, Right=131. This is the
+ * same set console/kernel.cpp emits from USB HID usage codes. */
+static int sdl_key_to_cmm2(SDL_Keycode k)
 {
-	static const unsigned char letter_scan[26] = {
-		30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
-		49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44
-	};
-	static const unsigned char kp_digit_scan[9] = {
-		79, 80, 81, 75, 76, 77, 71, 72, 73
-	};
-
 	if (k >= SDLK_a && k <= SDLK_z)
-		return letter_scan[k - SDLK_a];
+		return (int)('a' + (k - SDLK_a));
 	if (k >= SDLK_1 && k <= SDLK_9)
-		return 2 + (int)(k - SDLK_1);
+		return (int)('1' + (k - SDLK_1));
 	if (k == SDLK_0)
-		return 11;
-	/* The numeric keypad keeps its own set-1 cluster (Home/7 = 71 ...), so
-	 * KEYDOWN() distinguishes a keypad digit from the top-row digit. */
+		return '0';
+	/* Numeric keypad digits map to the same CMM2 codes as the top row, so
+	 * KEYDOWN() is identical whichever digit cluster a game reads (#1183). */
 	if (k >= SDLK_KP_1 && k <= SDLK_KP_9)
-		return kp_digit_scan[k - SDLK_KP_1];
+		return (int)('1' + (k - SDLK_KP_1));
 	if (k == SDLK_KP_0)
-		return 82;
+		return '0';
 	switch (k)
 	{
 	case SDLK_RETURN:
 	case SDLK_KP_ENTER:
-		return 28;
-	case SDLK_KP_DIVIDE:
-		return 53;
-	case SDLK_KP_MULTIPLY:
-		return 55;
-	case SDLK_KP_MINUS:
-		return 74;
+		return 10;
+	/* The numeric keypad operators carry the character they spell, so a
+	 * game polling KEYDOWN() sees the key's own glyph on either cluster
+	 * (#1191). */
 	case SDLK_KP_PLUS:
-		return 78;
+		return '+';
+	case SDLK_KP_MINUS:
+		return '-';
+	case SDLK_KP_MULTIPLY:
+		return '*';
+	case SDLK_KP_DIVIDE:
+		return '/';
 	case SDLK_KP_PERIOD:
-		return 83;
+		return '.';
 	case SDLK_KP_EQUALS:
-		return 89;
+		return '=';
 	case SDLK_ESCAPE:
-		return 1;
-	case SDLK_BACKSPACE:
-		return 14;
-	case SDLK_TAB:
-		return 15;
-	case SDLK_SPACE:
-		return 57;
-	case SDLK_MINUS:
-		return 12;
-	case SDLK_EQUALS:
-		return 13;
-	case SDLK_LEFTBRACKET:
-		return 26;
-	case SDLK_RIGHTBRACKET:
 		return 27;
+	case SDLK_SPACE:
+		return 32;
+	case SDLK_MINUS:
+		return '-';
+	case SDLK_EQUALS:
+		return '=';
+	case SDLK_LEFTBRACKET:
+		return '[';
+	case SDLK_RIGHTBRACKET:
+		return ']';
 	case SDLK_BACKSLASH:
-		return 43;
+		return '\\';
 	case SDLK_SEMICOLON:
-		return 39;
+		return ';';
 	case SDLK_QUOTE:
-		return 40;
-	case SDLK_BACKQUOTE:
-		return 41;
+		return '\'';
 	case SDLK_COMMA:
-		return 51;
+		return ',';
 	case SDLK_PERIOD:
-		return 52;
+		return '.';
 	case SDLK_SLASH:
-		return 53;
+		return '/';
 	case SDLK_RIGHT:
-		return 77;
+		return 131;
 	case SDLK_LEFT:
-		return 75;
+		return 130;
 	case SDLK_DOWN:
-		return 80;
+		return 129;
 	case SDLK_UP:
-		return 72;
-	case SDLK_HOME:
-		return 71;
-	case SDLK_END:
-		return 79;
-	case SDLK_PAGEUP:
-		return 73;
-	case SDLK_PAGEDOWN:
-		return 81;
-	case SDLK_INSERT:
-		return 82;
-	case SDLK_DELETE:
-		return 83;
-	case SDLK_CAPSLOCK:
-		return 58;
-	case SDLK_NUMLOCKCLEAR:
-		return 69;
-	case SDLK_SCROLLLOCK:
-		return 70;
-	case SDLK_PRINTSCREEN:
-		return 55;
-	case SDLK_LSHIFT:
-		return 42;
-	case SDLK_RSHIFT:
-		return 54;
-	case SDLK_LCTRL:
-	case SDLK_RCTRL:
-		return 29;
-	case SDLK_LALT:
-	case SDLK_RALT:
-		return 56;
-	case SDLK_F11:
-		return 133;
-	case SDLK_F12:
-		return 134;
+		return 128;
 	default:
-		if (k >= SDLK_F1 && k <= SDLK_F10)
-			return 59 + (int)(k - SDLK_F1);
 		return 0;
 	}
 }
@@ -610,7 +563,7 @@ static void keydown_clear(void)
 /* Add a held key (ignoring auto-repeat) and publish the set. */
 static void keydown_press(SDL_Keycode k)
 {
-	int code = sdl_key_to_scancode(k);
+	int code = sdl_key_to_cmm2(k);
 	int i;
 
 	if (!code)
@@ -626,7 +579,7 @@ static void keydown_press(SDL_Keycode k)
 /* Remove a released key and publish the set. */
 static void keydown_release(SDL_Keycode k)
 {
-	int code = sdl_key_to_scancode(k);
+	int code = sdl_key_to_cmm2(k);
 	int i, j;
 
 	if (!code)

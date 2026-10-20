@@ -2110,17 +2110,11 @@ void mmb_keydown_set(const int *codes, int n)
 
 int mmb_keydown_get(int n)
 {
-	int i;
-
-	/* KEYDOWN(0) is the number of held keys. Any positive argument is a
-	 * set-1 scan code tested for membership; it is not an index into the
-	 * held set (that was the pre-#1238 contract). */
+	/* Colour Maximite 2 contract: KEYDOWN(0) is the number of held keys
+	 * and KEYDOWN(n) is the code of the nth held key (1-based). */
 	if (n == 0)
 		return G.nkeydown;
-	if (n < 1)
+	if (n < 1 || n > G.nkeydown)
 		return 0;
-	for (i = 0; i < G.nkeydown; i++)
-		if (G.keydown[i] == n)
-			return 1;
-	return 0;
+	return G.keydown[n - 1];
 }

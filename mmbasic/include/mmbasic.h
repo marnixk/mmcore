@@ -345,7 +345,7 @@ const char *mmb_opt_wifi_country(void);
 int mmb_net_kind(void);
 int mmb_net_open(int kind);
 
-/* Host input: typeahead / INKEY$ FIFO and KEYDOWN() scan codes. */
+/* Host input: typeahead / INKEY$ FIFO and the KEYDOWN() held-key list. */
 void mmb_inkey_push(int c);
 void mmb_keydown_set(const int *codes, int n);
 
