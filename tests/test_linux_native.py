@@ -1720,6 +1720,17 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     assert "SDL_RenderClear(s_ren)" not in video
     # sdl_poll_input() gates the present behind a minimum interval.
     assert "SDL_PRESENT_MIN_MS" in plat
+    # #1265: when presents do not really wait for vblank, sdl_video_present()
+    # aligns the scanout copy to a display frame itself. The renderer-info
+    # flag is only a hint: the present call is timed, so an accelerated
+    # renderer that ignores PRESENTVSYNC is caught as well.
+    assert "sdl_video_present_is_vsynced" in video
+    assert "s_present_software" in video
+    assert "sdl_present_measure" in video
+    assert "if (!s_present_synced)" in video
+    assert "sdl_present_measure(SDL_GetTicks() - t0)" in video
+    assert "s_present_synced = 0;" in video
+    assert "s_present_synced = 1;" in video
 
 
 def test_native_console_and_tui_mark_rects_not_whole_screen():

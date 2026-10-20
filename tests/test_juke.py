@@ -357,15 +357,25 @@ def test_juke_spectrum_bars_run_black_lime(fresh_console):
 
 
 def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
-    """#1254: flat LED segments, whose ramp position follows band intensity.
+    """#1254/#1265: flat LED segments whose ramp follows band intensity.
 
     The tip of each bar must sit at the ramp position for that bar's height
     above the baseline, not at the ramp's end: loud bands reach lime and quiet
     ones stay dark. Each rectangle is one solid colour, with a dark gap between
     stacked segments instead of a continuous gradient.
+
+    #1265: the adaptive gain must lift ordinary music out of the dark end, so
+    a loud fixture also has to reach the mid/upper segments instead of every
+    bar sitting near the baseline.
+
+    A QEMU screendump takes several seconds, by which time a single 3 s
+    TEST.WAV has already ended. Queue ten copies instead so the visualiser is
+    still playing live audio when the capture lands (JUKE auto-advances).
     """
     con = fresh_console
-    _open_juke(con, "tests/TEST.WAV")
+    copies = [("tests/TEST.WAV", "JQSP/%02d.WAV" % i) for i in range(10)]
+    _prep_queue(con, copies)
+    _open_juke(con, "JQSP")
     _w, h = con.screen_size()
     base = h - 71
     maxh = base - 190
@@ -373,7 +383,8 @@ def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
     ys = list(range(base - 1, base - maxh, -1))
     coords = [(x, y) for x in xs for y in ys]
     n = len(ys)
-    saw_gaps = saw_segments = saw_quiet_tip = False
+    saw_gaps = saw_segments = saw_quiet_tip = saw_bright_tip = False
+    best_tip = 0
     for _ in range(10):
         px = con.screen_pixels(coords)
         for i in range(24):
@@ -396,6 +407,7 @@ def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
             start, cols = real[-1]
             tip = cols[0]
             k = start + len(cols) // 2
+            best_tip = max(best_tip, k)
             t = tip[1] / 238.0
             assert abs(tip[0] - 157 * t) <= 20, (i, k, tip)
             assert abs(tip[2] - 94 * t) <= 20, (i, k, tip)
@@ -403,13 +415,19 @@ def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
             assert abs(tip[1] - expected_g) <= 12, (i, k, tip, expected_g)
             if k < maxh // 2:
                 saw_quiet_tip = True
-        if saw_gaps and saw_segments and saw_quiet_tip:
+            if k >= maxh * 62 // 100:
+                saw_bright_tip = True
+        if saw_gaps and saw_segments and saw_quiet_tip and saw_bright_tip:
             break
         time.sleep(0.15)
     _quit_juke(con)
     assert saw_segments, "expected stacked LED segments in a spectrum bar"
     assert saw_gaps, "expected dark gaps between the stacked segments"
     assert saw_quiet_tip, "expected a quiet band to stop in the dark ramp"
+    assert saw_bright_tip, (
+        f"adaptive gain left every bar in the dark end (best tip "
+        f"{best_tip}/{maxh})"
+    )
 
 
 def test_juke_spectrum_has_no_guide_lines(fresh_console):

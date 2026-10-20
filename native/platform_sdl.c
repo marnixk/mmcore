@@ -253,7 +253,11 @@ static void sdl_present_set_flip(int on)
 
 static int sdl_wait_vsync(void)
 {
-	/* SDL_RENDERER_PRESENTVSYNC already paces; no separate wait. */
+	/* The present path owns the sync (#1265): sdl_video_present() measures
+	 * whether SDL_RenderPresent() really waits for the vertical blank and,
+	 * when it does not, aligns the scanout copy to a display frame. JUKE/AFK
+	 * call this hook before painting, so waiting here too would pace them a
+	 * second time and halve their frame rate. */
 	return 0;
 }
 
