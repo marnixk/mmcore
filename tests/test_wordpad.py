@@ -147,6 +147,28 @@ def test_wordpad_type_save_and_reload(kernel_image):
         con.stop()
 
 
+def test_wordpad_unknown_alt_key_is_swallowed(kernel_image):
+    """#1257: Alt+an unbound key must not insert that key into the document."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open(con, 'WORDPAD "ALT.MD"')
+        _keys(con, b"body", quiet=0.5)
+        # None of these is a WORDPAD shortcut; each key must be swallowed.
+        _keys(con, bytes([1]) + b"z", quiet=0.4)
+        _keys(con, bytes([1]) + b"q", quiet=0.4)
+        _keys(con, bytes([1]) + b"1", quiet=0.4)
+        _keys(con, b"!", quiet=0.4)
+        # A recognised Alt shortcut still opens its menu.
+        menu = _alt_menu(con, b"f", quiet=0.5)
+        assert "File" in menu
+        _keys(con, b"s", quiet=0.6)
+        _quit(con)
+        assert _read_lines(con, "ALT.MD", 1) == ["[body!]"]
+    finally:
+        con.stop()
+
+
 def test_wordpad_markdown_heading_style(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
