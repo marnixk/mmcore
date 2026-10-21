@@ -830,6 +830,45 @@ def test_juke_keeps_chromebook_modes(fresh_console):
         con.send_line("PLAY STOP")
 
 
+def _scope_border_rgb(con: MMBasicConsole) -> tuple[int, int, int]:
+    """Colour of the oscilloscope panel frame at the 960x540 baseline.
+
+    The frame is the flat col_panel2 (0x373A3E). RGB332 quantises it to
+    (33,36,0) - all of its blue is gone - while RGB565 and above keep the cool
+    grey around (49,56,57), so the blue channel identifies the depth.
+    """
+    for _ in range(6):
+        c = con.screen_pixel(8, 126)
+        if sum(c) > 80:
+            break
+        time.sleep(0.2)
+    return c
+
+
+def test_juke_uses_16bit_colour_and_restores_depth(fresh_console):
+    """#1267: JUKE raises an 8-bit console to 16-bit and restores it.
+
+    The resolution/mode stays put; only the depth changes. Starting at 16-bit
+    (or 32-bit) must stay there, and leaving JUKE must put the console's
+    previous depth back - including when the mode id did not change.
+    """
+    con = fresh_console
+    for depth, info in ((8, "12.08"), (16, "12.16"), (32, "12.32")):
+        assert con.send_line(f"MODE 12,{depth}") == ""
+        assert con.send_line("PRINT MM.INFO(MODE)") == info
+
+        _open_juke(con, "tests/TEST.MOD", keep_mode=True)
+        assert con.screen_size() == (960, 540), f"depth {depth} changed mode"
+        r, g, b = _scope_border_rgb(con)
+        # (33,36,0) is the RGB332 border; anything with blue is >= 16-bit.
+        assert b > 30 and abs(b - g) < 20, (depth, (r, g, b))
+        _quit_juke(con)
+
+        restored = con.send_line("PRINT MM.INFO(MODE)")
+        assert restored == info, f"depth {depth} restored as {restored}"
+        con.send_line("PLAY STOP")
+
+
 def test_juke_shows_id3_titles_and_basename_fallback(fresh_console):
     con = fresh_console
     _open_juke(con, "tests/ZV2.MP3")
