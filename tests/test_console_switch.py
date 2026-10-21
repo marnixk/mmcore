@@ -954,7 +954,10 @@ def _open_ansi(con, name: str) -> None:
     assert con._ser is not None
     con._ser.sendall(b"FILES\r")
     seen = con.drain(quiet=0.8, timeout=8.0).decode(errors="replace")
-    for _ in range(16):
+    # Bound the walk by the listing length (N=) instead of a fixed count: the
+    # seeded folder grows, and a stale cap can stop one row short of the file.
+    match = re.search(r"N=(\d+)", seen)
+    for _ in range(int(match.group(1)) if match else 64):
         if f"SEL={name}" in seen:
             break
         con._ser.sendall(b"\x1b[B")
