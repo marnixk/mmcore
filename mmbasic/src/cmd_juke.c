@@ -1440,9 +1440,17 @@ void mmb_cmd_juke(void)
 	U.saved_bits = G.gfx.bits;
 	U.saved_font_scale = G.gfx.font_scale;
 	/* #1042: draw into whatever mode the console is already in (MODE 19/20
-	 * on the Chromebook) instead of forcing a fixed 960x540 mode. Leaving
-	 * the mode and depth untouched here also means there is nothing to
-	 * restore when JUKE exits. */
+	 * on the Chromebook) instead of forcing a fixed 960x540 mode.
+	 *
+	 * #1267: keep that mode but raise a limited palette to 16-bit RGB565,
+	 * because JUKE's neutral greys and gradients band badly in RGB332. A
+	 * console already at 16-bit is left alone, and so is 32-bit (already
+	 * full colour: there is nothing to gain from quantising it down to 16).
+	 * Only 8/12 -> 16 can change here, and juke_leave restores the saved
+	 * depth. Do it before deriving the layout: MODE owns G.gfx.w/h, and the
+	 * SDL/native path rebuilds its stage in mmb_gfx_set_mode. */
+	if (G.gfx.bits < 16)
+		mmb_gfx_set_mode(G.gfx.mode, 16);
 	U.w = G.gfx.w > 0 ? G.gfx.w : JUKE_REF_W;
 	U.h = G.gfx.h > 0 ? G.gfx.h : JUKE_REF_H;
 	{
