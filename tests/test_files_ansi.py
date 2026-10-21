@@ -5,6 +5,8 @@ The seeded ``A:/tests/TEST.ANS`` paints eight-cell blocks at 1-based rows 2,
 backgrounds so the tests can locate them as pixels.
 """
 
+import re
+
 from harness import MMBasicConsole
 
 
@@ -24,7 +26,10 @@ def _keys(con: MMBasicConsole, data: bytes, quiet: float = 0.45) -> str:
 def _open_ansi(con: MMBasicConsole, name: str = "TEST.ANS") -> str:
     assert con.send_line('CHDIR "A:/tests"') == ""
     seen = _open_files(con)
-    for _ in range(16):
+    # Bound the walk by the listing length (N=) instead of a fixed count: the
+    # seeded folder grows, and a stale cap can stop one row short of the file.
+    match = re.search(r"N=(\d+)", seen)
+    for _ in range(int(match.group(1)) if match else 64):
         if f"SEL={name}" in seen:
             break
         seen = _keys(con, b"\x1b[B", quiet=0.25)
