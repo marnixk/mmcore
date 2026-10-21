@@ -30,6 +30,8 @@ PROFILE = os.path.join(OVERLAY, "root", ".profile")
 INSTALL_USB = os.path.join(SCRIPTS, "install-usb.sh")
 AUDIO = os.path.join(OVERLAY, "etc", "local.d", "mmcore-audio.start")
 TOUCHPAD = os.path.join(OVERLAY, "etc", "local.d", "mmcore-touchpad.start")
+POWER = os.path.join(OVERLAY, "etc", "acpi", "mmcore-power.sh")
+POWER_CONF = os.path.join(OVERLAY, "etc", "mmcore", "power.conf")
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "linux-iso.yml")
 ASSET = "mmcore-fb-x86_64.iso"
 COMPRESSED = "mmcore-fb-x86_64.iso.zst"
@@ -141,8 +143,134 @@ def test_acpid_power_and_lid_handlers_are_in_the_overlay():
         os.path.join(OVERLAY, "etc/acpi/mmcore-power.sh"), encoding="utf-8"
     ).read()
     assert "umount" in power
+    # #1268: the Chromebook policy is configurable and documented.
+    assert os.path.isfile(POWER_CONF), POWER_CONF
+    assert "MMCORE_POWER_KEY" in power
+    conf = open(POWER_CONF, encoding="utf-8").read()
+    assert "MMCORE_POWER_KEY=auto" in conf
+    assert "ignore" in conf
+    assert "poweroff" in conf
     for script in ("mmcore-power.sh", "mmcore-lid.sh", "mmcore-sync-storage.sh"):
         _run(["bash", "-n", os.path.join(OVERLAY, "etc/acpi", script)])
+
+
+def _power_env(tmp_path, *, vendor="", product="", board_vendor="",
+               compatible=None, policy=None):
+    """A fake DMI/device-tree tree plus sync/poweroff stubs (#1268)."""
+    sysdir = tmp_path / "sys"
+    dmi = sysdir / "class" / "dmi" / "id"
+    dmi.mkdir(parents=True)
+    for name, value in (
+        ("sys_vendor", vendor),
+        ("product_name", product),
+        ("board_vendor", board_vendor),
+    ):
+        (dmi / name).write_text(value + "\n", encoding="utf-8")
+    if compatible is not None:
+        dt = sysdir / "firmware" / "devicetree" / "base"
+        dt.mkdir(parents=True)
+        (dt / "compatible").write_bytes(compatible)
+    log = tmp_path / "power.log"
+    sync = tmp_path / "sync-storage"
+    sync.write_text(
+        "#!/bin/sh\n"
+        'printf "sync %s\\n" "$*" >> "${STUB_LOG}"\n',
+        encoding="utf-8",
+    )
+    sync.chmod(0o755)
+    poweroff = tmp_path / "poweroff"
+    poweroff.write_text(
+        "#!/bin/sh\n"
+        'printf "poweroff %s\\n" "$*" >> "${STUB_LOG}"\n',
+        encoding="utf-8",
+    )
+    poweroff.chmod(0o755)
+    conf = tmp_path / "power.conf"
+    if policy is not None:
+        conf.write_text("MMCORE_POWER_KEY=%s\n" % policy, encoding="utf-8")
+    env = dict(
+        os.environ,
+        MMCORE_SYS=str(sysdir),
+        MMCORE_POWER_CONF=str(conf),
+        MMCORE_SYNC_STORAGE=str(sync),
+        MMCORE_POWEROFF=str(poweroff),
+        STUB_LOG=str(log),
+    )
+    return env, log
+
+
+def _run_power(env):
+    proc = subprocess.run([BASH, POWER], env=env, text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    return proc
+
+
+def test_power_button_ignored_on_a_chromebook_but_storage_synced(tmp_path):
+    """#1268: the key above Backspace must not power a Chromebook off, but a
+    stray press must not lose pending writes either."""
+    env, log = _power_env(
+        tmp_path, vendor="Google", product="Google Kefka",
+        board_vendor="Google",
+    )
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert text.startswith("sync")
+    assert "umount" not in text
+    assert "poweroff" not in text
+
+
+def test_power_button_still_shuts_down_a_non_chromebook(tmp_path):
+    env, log = _power_env(tmp_path, vendor="LENOVO", product="ThinkPad T420")
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert "sync umount" in text
+    assert "poweroff" in text
+
+
+def test_power_button_ignores_google_cloud_vms(tmp_path):
+    """GCE reports sys_vendor=Google; it is not a Chromebook."""
+    env, log = _power_env(
+        tmp_path, vendor="Google", product="Google Compute Engine",
+        board_vendor="Google",
+    )
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert "sync umount" in text
+    assert "poweroff" in text
+
+
+def test_power_button_ignored_on_an_arm_chromebook(tmp_path):
+    """ARM Chromebooks expose no DMI; the device-tree compatible names Google."""
+    env, log = _power_env(
+        tmp_path, compatible=b"google,kepler\0google,cros-ec-keyb\0",
+    )
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert "sync" in text
+    assert "umount" not in text
+    assert "poweroff" not in text
+
+
+def test_power_button_policy_override_restores_shutdown(tmp_path):
+    env, log = _power_env(
+        tmp_path, vendor="Google", product="Google Kefka",
+        board_vendor="Google", policy="poweroff",
+    )
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert "sync umount" in text
+    assert "poweroff" in text
+
+
+def test_power_button_policy_can_ignore_on_any_hardware(tmp_path):
+    env, log = _power_env(
+        tmp_path, vendor="LENOVO", product="ThinkPad T420", policy="ignore",
+    )
+    _run_power(env)
+    text = log.read_text(encoding="utf-8")
+    assert text.startswith("sync")
+    assert "umount" not in text
+    assert "poweroff" not in text
 
 
 def test_persistence_script_mounts_the_labeled_partition():
