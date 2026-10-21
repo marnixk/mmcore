@@ -110,6 +110,13 @@ the kernel also emits `KEY_POWER` on an input device, but the image has no
 nothing consumes it. The ChromeOS EC's button (`cros_ec_buttons`/`GOOG0007`)
 and the fixed ACPI power button both reach the same ACPI handler covered here.
 
+The root filesystem is normally a squashfs on a RAM overlay, so
+`/etc/mmcore/power.conf` is read-only there. A live card written with
+`--read-write` keeps its overlay upper on the card: edit the file there and
+reboot to make the override persistent. Otherwise the policy is fixed at
+image-build time (the file lives under
+`scripts/iso/rootfs-overlay/etc/mmcore/`).
+
 A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
 gone (or read-only) after wake. mmcore detects a resume from the growing gap
 between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume.
