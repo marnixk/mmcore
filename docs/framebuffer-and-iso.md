@@ -89,6 +89,27 @@ clean shutdown (`/sbin/poweroff`) after syncing disks and unmounting the
 mounted. **Closing the lid** suspends to RAM (`echo mem > /sys/power/state`);
 opening the lid resumes through the kernel with no extra handler.
 
+On a **Chromebook** a short power-button press is ignored instead, because the
+key sits directly above Backspace. The handler still flushes storage (the
+persistence mounts stay mounted, since the session continues). Detection is
+from DMI (`sys_vendor`/`board_vendor` `Google`, excluding Google Compute
+Engine) or, on ARM, the device-tree compatible list. The policy lives in
+`/etc/mmcore/power.conf`:
+
+```sh
+MMCORE_POWER_KEY=auto      # ignore on a Chromebook, clean shutdown elsewhere
+# MMCORE_POWER_KEY=ignore  # never shut down from a short press
+# MMCORE_POWER_KEY=poweroff # always shut down
+```
+
+The policy only covers a short press. A long press (about 10 seconds) still
+hard-powers the embedded controller off on a Chromebook, which is the fallback
+when the session is wedged. `acpid` is the only power-off path on this image:
+the kernel also emits `KEY_POWER` on an input device, but the image has no
+`systemd-logind`/`powerd` and `acpid` does not listen for input events, so
+nothing consumes it. The ChromeOS EC's button (`cros_ec_buttons`/`GOOG0007`)
+and the fixed ACPI power button both reach the same ACPI handler covered here.
+
 A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
 gone (or read-only) after wake. mmcore detects a resume from the growing gap
 between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, then re-checks the volume.
