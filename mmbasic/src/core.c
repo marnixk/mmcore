@@ -3362,10 +3362,15 @@ int mmb_break_key(void)
 	return G.opt.break_key;
 }
 
-/* CTRL-C / events without the device/FS/network/audio poll stack, for
- * callers that have already run mmb_poll() this spin. */
+/* CTRL-C / events without the FS/network/audio poll stack, for callers that
+ * have already run mmb_poll() this spin. Read pending keyboard bytes first so
+ * ON KEY sees a key that arrived during PAUSE (or on the previous statement)
+ * at this boundary instead of one statement later; take_break() then still
+ * catches a BREAK byte read here before any handler runs. */
 static void mmb_break_events(void)
 {
+	if (G.plat && G.plat->poll_input)
+		G.plat->poll_input();
 	if (G.plat && G.plat->take_break && G.plat->take_break())
 	{
 		mmb_play_stop_owned();
@@ -3382,7 +3387,8 @@ void mmb_check_break(void)
 		return;
 	if (G.opt.profiling)
 		G.prof.check_break++;
-	/* Ctrl-C / BREAK must be seen promptly, so check it on every line. */
+	/* Ctrl-C / BREAK and ON KEY must be seen promptly, so check them on
+	 * every line. mmb_break_events() also reads pending keyboard bytes. */
 	mmb_break_events();
 	/* The rest is a device/FS/network/audio poll stack. A loop body pays it
 	 * once per line, so rate-limit it to ~1 ms (#988) using the same
@@ -3396,8 +3402,6 @@ void mmb_check_break(void)
 	mmb_wlan_poll();
 	mmb_net_yield();
 	mmb_play_mix();
-	if (G.plat && G.plat->poll_input)
-		G.plat->poll_input();
 }
 
 static void skip_balanced_paren(void)

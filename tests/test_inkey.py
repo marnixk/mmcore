@@ -142,9 +142,11 @@ def _load_program(con, lines) -> None:
     con.drain(quiet=0.1)
 
 
-def _run_and_send(con, keys: bytes, timeout: float = 8.0) -> str:
+def _run_and_send(con, keys: bytes, timeout: float = 8.0, delay: float = 0.0) -> str:
     con._ser.sendall(b"RUN\r")
     assert b"READY" in _wait_contains(con, b"READY", timeout=timeout)
+    if delay:
+        time.sleep(delay)
     con._ser.sendall(keys)
     return _until_prompt(con, timeout=timeout)
 
@@ -260,3 +262,43 @@ def test_on_key_ascii_zero_disables_handler(fresh_console):
     out = _run_and_send(fresh_console, b"\x1b[A")
     assert "UP" not in out
     assert "DRAIN128" in out
+
+
+def test_on_key_ascii_fires_during_pause(fresh_console):
+    # #1289: a key sent while PAUSE runs must reach the ON KEY handler at the
+    # following statement boundary, without an extra PAUSE to pump input.
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY 128, ArrowUp",
+            '20 PRINT "READY"',
+            "30 PAUSE 1500",
+            '40 PRINT "LEFT[";INKEY$;"]"',
+            "50 END",
+            "100 SUB ArrowUp",
+            '110 PRINT "UP"',
+            "120 END SUB",
+        ],
+    )
+    out = _run_and_send(fresh_console, b"\x1b[A", delay=0.4)
+    assert "UP" in out
+    assert "LEFT[]" in out
+
+
+def test_general_on_key_fires_during_pause(fresh_console):
+    # #1289: the general ON KEY handler wins over an INKEY$ on the statement
+    # immediately after PAUSE, and still consumes the key it reads.
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY Drain",
+            '20 PRINT "READY"',
+            "30 PAUSE 1500",
+            '40 PRINT "AFTER[";INKEY$;"]"',
+            "50 END",
+            *_DRAIN_SUB,
+        ],
+    )
+    out = _run_and_send(fresh_console, b"q", delay=0.4)
+    assert "DRAIN113" in out
+    assert "AFTER[]" in out
