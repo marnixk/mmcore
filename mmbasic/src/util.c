@@ -1221,10 +1221,26 @@ static void fmt_double(double x, char *buf, int buflen)
 		buf[n] = 0;
 		return;
 	}
-	/* up to 6 decimal places, strip trailing zeros */
+	/* up to 6 decimal places, rounded (not truncated), strip trailing zeros.
+	 * A value such as 1.2 is really 1.19999999999999995559...; extracting
+	 * digits one at a time would print 1.199999. Scale and round first, as
+	 * the printf core's %f does, so the last printed digit is correct (#1284). */
 	char tmp[48];
-	char *p = tmp + 24;
 	int pos = 0;
+	uint64_t fi = (uint64_t)(frac * 1000000.0);
+	{
+		double diff = frac * 1000000.0 - (double)fi;
+		/* Round half to even, matching the printf core's %f. */
+		if (diff > 0.5)
+			fi++;
+		else if (diff == 0.5 && (fi & 1))
+			fi++;
+	}
+	if (fi >= 1000000)
+	{
+		ip++;
+		fi = 0;
+	}
 	uint64_t v = (uint64_t)ip;
 	char ibuf[24];
 	int in = 0;
@@ -1240,16 +1256,13 @@ static void fmt_double(double x, char *buf, int buflen)
 	for (i = in - 1; i >= 0; i--)
 		tmp[pos++] = ibuf[i];
 	tmp[pos++] = '.';
-	for (i = 0; i < 6; i++)
+	for (i = 5; i >= 0; i--)
 	{
-		frac *= 10.0;
-		int d = (int)frac;
-		if (d < 0)
-			d = 0;
-		if (d > 9)
-			d = 9;
-		tmp[pos++] = (char)('0' + d);
-		frac -= d;
+		uint64_t d = fi;
+		int j;
+		for (j = 0; j < i; j++)
+			d /= 10;
+		tmp[pos++] = (char)('0' + (int)(d % 10));
 	}
 	while (pos > 0 && tmp[pos - 1] == '0')
 		pos--;
@@ -1257,9 +1270,11 @@ static void fmt_double(double x, char *buf, int buflen)
 		pos--;
 	tmp[pos] = 0;
 	n = 0;
-	p = tmp;
-	while (*p && n < buflen - 1)
-		buf[n++] = *p++;
+	{
+		char *p = tmp;
+		while (*p && n < buflen - 1)
+			buf[n++] = *p++;
+	}
 	buf[n] = 0;
 }
 

@@ -102,6 +102,20 @@ def test_str_dollar_keeps_pending_print(console):
     assert console.send_line('PRINT "a";STR$(-12.5);"b"') == "a-12.5b"
 
 
+def test_print_float_rounds_last_digit_1284(console):
+    """#1284: PRINT/STR$ round at the printed precision instead of truncating."""
+    assert console.send_line("NEW") == ""
+    for literal, want in (
+        ("1.2", "1.2"),
+        ("1.23", "1.23"),
+        ("2.73", "2.73"),
+        ("3.14", "3.14"),
+        ("9.99", "9.99"),
+    ):
+        assert console.send_line(f"PRINT {literal}") == want
+        assert console.send_line(f"PRINT STR$({literal})") == want
+
+
 def test_string_temporaries_survive_user_function_calls(console):
     """#1275: a nested function body must not reset the caller's arena."""
     assert console.send_line("NEW") == ""
