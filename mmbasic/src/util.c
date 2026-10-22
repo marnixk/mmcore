@@ -815,6 +815,32 @@ void mmb_str_reset(void)
 	s_arena_cur = s_arena;
 }
 
+/* Remember the current arena high-water mark. A nested run_gosub_body()
+ * releases back to this mark instead of resetting the whole arena, so the
+ * caller's still-pending temporaries (see mmb_try_user_function()) survive a
+ * user FUNCTION/SUB or event body (#1275). */
+void mmb_arena_mark(mmb_arena_save *m)
+{
+	m->chunk = s_arena_cur;
+	m->used = s_arena_cur ? s_arena_cur->used : 0;
+}
+
+void mmb_arena_release(mmb_arena_save *m)
+{
+	mmb_achunk *c;
+	if (!m->chunk)
+	{
+		for (c = s_arena; c; c = c->next)
+			c->used = 0;
+		s_arena_cur = s_arena;
+		return;
+	}
+	for (c = ((mmb_achunk *)m->chunk)->next; c; c = c->next)
+		c->used = 0;
+	((mmb_achunk *)m->chunk)->used = m->used;
+	s_arena_cur = (mmb_achunk *)m->chunk;
+}
+
 mmb_val mmb_arena_val(char *p)
 {
 	mmb_val v;

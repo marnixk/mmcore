@@ -314,6 +314,43 @@ def test_function_local_return_by_name(console):
     assert console.send_line("RUN") == "42"
 
 
+def test_string_expression_function_call_temporaries(console):
+    """#1275: FUNCTION calls inside string expressions keep earlier operands."""
+    _write_bas(
+        console,
+        "STREXPR.BAS",
+        [
+            "OPTION EXPLICIT",
+            "OPTION DEFAULT INTEGER",
+            "FUNCTION A$(N)",
+            '  A$ = "A" + STR$(N)',
+            "END FUNCTION",
+            "FUNCTION B$(N)",
+            '  B$ = "B" + STR$(N)',
+            "END FUNCTION",
+            "FUNCTION W(S$)",
+            "  W = LEN(S$)",
+            "END FUNCTION",
+            "SUB SHOW(S$, X)",
+            '  PRINT "show [" + S$ + "]"; X',
+            "END SUB",
+            "FUNCTION PAD2$(N)",
+            '  PAD2$ = RIGHT$("0" + STR$(N), 2)',
+            "END FUNCTION",
+            "FUNCTION JOIN2$(P$, R$)",
+            '  JOIN2$ = P$ + "|" + R$',
+            "END FUNCTION",
+            'PRINT A$(1) + "-" + B$(2)',
+            'PRINT PAD2$(0) + ":" + PAD2$(2)',
+            'DIM Q$ = "ESC PAUSE"',
+            "SHOW Q$, 100 - W(Q$)",
+            'PRINT JOIN2$(JOIN2$("x", "y"), A$(7))',
+        ],
+    )
+    out = console.send_line('RUN "STREXPR.BAS"')
+    assert out == "A1-B2\n00:02\nshow [ESC PAUSE]91\nx|y|A7"
+
+
 def test_data_restore_label_order(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 DATA 1,2") == ""
