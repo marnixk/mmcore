@@ -2056,23 +2056,26 @@ void mmb_inkey_push(int c)
 	G.inkey_n++;
 }
 
-int mmb_inkey_pop(void)
+static int inkey_decode(int consume, int *out_len)
 {
-	int c, mapped, end;
+	int c, mapped, end, dropn;
 
+	if (out_len)
+		*out_len = 0;
 	if (G.inkey_n <= 0)
 		return -1;
 	c = inkey_at(0);
 	if (c != 0x1b)
 	{
-		inkey_drop(1);
-		return c;
+		dropn = 1;
+		goto done;
 	}
 
 	if (!inkey_wait_n(2, 30))
 	{
-		inkey_drop(1);
-		return 0x1b;
+		c = 0x1b;
+		dropn = 1;
+		goto done;
 	}
 
 	c = inkey_at(1);
@@ -2080,8 +2083,9 @@ int mmb_inkey_pop(void)
 	{
 		if (!inkey_wait_n(3, 50))
 		{
-			inkey_drop(1);
-			return 0x1b;
+			c = 0x1b;
+			dropn = 1;
+			goto done;
 		}
 		c = inkey_at(2);
 		mapped = inkey_map_arrow(c);
@@ -2089,22 +2093,26 @@ int mmb_inkey_pop(void)
 			mapped = MMB_KEY_F1 + (c - 'P');
 		if (mapped >= 0)
 		{
-			inkey_drop(3);
-			return mapped;
+			c = mapped;
+			dropn = 3;
+			goto done;
 		}
-		inkey_drop(1);
-		return 0x1b;
+		c = 0x1b;
+		dropn = 1;
+		goto done;
 	}
 	if (c != '[')
 	{
-		inkey_drop(1);
-		return 0x1b;
+		c = 0x1b;
+		dropn = 1;
+		goto done;
 	}
 
 	if (!inkey_wait_n(3, 50))
 	{
-		inkey_drop(1);
-		return 0x1b;
+		c = 0x1b;
+		dropn = 1;
+		goto done;
 	}
 
 	end = inkey_csi_end();
@@ -2114,8 +2122,9 @@ int mmb_inkey_pop(void)
 
 		if (!G.plat || !G.plat->millis)
 		{
-			inkey_drop(1);
-			return 0x1b;
+			c = 0x1b;
+			dropn = 1;
+			goto done;
 		}
 		start = mmb_now_ms();
 		while (end == -1 && (mmb_now_ms() - start) < 90)
@@ -2129,12 +2138,37 @@ int mmb_inkey_pop(void)
 		mapped = inkey_map_csi(end);
 		if (mapped >= 0)
 		{
-			inkey_drop(end + 1);
-			return mapped;
+			c = mapped;
+			dropn = end + 1;
+			goto done;
 		}
 	}
-	inkey_drop(1);
-	return 0x1b;
+	c = 0x1b;
+	dropn = 1;
+
+done:
+	if (out_len)
+		*out_len = dropn;
+	if (consume)
+		inkey_drop(dropn);
+	return c;
+}
+
+int mmb_inkey_pop(void)
+{
+	return inkey_decode(1, 0);
+}
+
+/* Decode the next key without removing it, so ON KEY ascii can match the
+ * mapped CMM2 code. *len receives the number of queued bytes it occupies. */
+int mmb_inkey_peek(int *len)
+{
+	return inkey_decode(0, len);
+}
+
+void mmb_inkey_consume(int n)
+{
+	inkey_drop(n);
 }
 
 void mmb_keydown_set(const int *codes, int n)

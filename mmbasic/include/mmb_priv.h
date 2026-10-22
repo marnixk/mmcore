@@ -38,6 +38,7 @@
 #define MMB_MAX_SUB_ARGS  16
 #define MMB_MAX_LOCALS    64
 #define MMB_MAX_TICK      4
+#define MMB_MAX_ONKEY     24
 #define MMB_INKEY         64
 #define MMB_FB_MAX_W      1920
 #define MMB_FB_MAX_H      1080
@@ -555,6 +556,10 @@ typedef struct mmb {
 	unsigned clk_ms;
 	int dim_local;
 	char on_key[MMB_MAX_NAME];
+	struct {
+		int code;
+		char sub[MMB_MAX_NAME];
+	} on_key_ascii[MMB_MAX_ONKEY];   /* ON KEY ascii, sub handlers */
 	char on_mouseclick[MMB_MAX_NAME]; /* ON MOUSECLICK / ON MOUSEDOWN handler */
 	char on_mousemove[MMB_MAX_NAME];  /* ON MOUSEMOVE handler */
 	char on_mouseup[MMB_MAX_NAME];    /* ON MOUSEUP handler */
@@ -1509,6 +1514,8 @@ int mmb_clipboard_set(const char *utf8);
 int mmb_clipboard_setn(const char *s, unsigned n);
 
 int mmb_inkey_pop(void);
+int mmb_inkey_peek(int *len);
+void mmb_inkey_consume(int n);
 int mmb_keydown_get(int n);
 void mmb_run_events(void);
 void mmb_cmd_settick(void);

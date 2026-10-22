@@ -170,6 +170,43 @@ static void on_named_sub(char *dst, int cap)
 	mmb_type_suffix(dst);
 }
 
+static int on_key_ascii_slot(int code)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_ONKEY; i++)
+		if (G.on_key_ascii[i].sub[0] && G.on_key_ascii[i].code == code)
+			return i;
+	return -1;
+}
+
+static void on_key_ascii_set(int code, const char *sub)
+{
+	int i, slot = on_key_ascii_slot(code);
+
+	if (slot < 0)
+	{
+		for (i = 0; i < MMB_MAX_ONKEY; i++)
+			if (!G.on_key_ascii[i].sub[0])
+				break;
+		if (i == MMB_MAX_ONKEY)
+			mmb_error("?TOO MANY ON KEY");
+		slot = i;
+		G.on_key_ascii[slot].code = code;
+	}
+	for (i = 0; i < MMB_MAX_NAME - 1 && sub[i]; i++)
+		G.on_key_ascii[slot].sub[i] = sub[i];
+	G.on_key_ascii[slot].sub[i] = 0;
+}
+
+static void on_key_ascii_clear(int code)
+{
+	int slot = on_key_ascii_slot(code);
+
+	if (slot >= 0)
+		G.on_key_ascii[slot].sub[0] = 0;
+}
+
 void mmb_cmd_on(void)
 {
 	mmb_val v;
@@ -199,6 +236,42 @@ void mmb_cmd_on(void)
 		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 		{
 			G.on_key[0] = 0;
+			return;
+		}
+		/* ON KEY n, subname installs a per-key handler (#1285). The
+		 * general handler is a bare SUB name. */
+		if ((*G.p >= '0' && *G.p <= '9') || *G.p == '-' || *G.p == '+' ||
+		    *G.p == '.' || *G.p == '(')
+		{
+			int code = (int)mmb_as_int(mmb_expr());
+			char target[MMB_MAX_NAME];
+
+			mmb_skip_sp();
+			if (code < 0 || code > 255)
+				mmb_syntax();
+			if (code == 0)
+			{
+				/* ON KEY 0 disables the general handler. */
+				if (*G.p && *G.p != ':' && *G.p != '\'')
+					mmb_syntax();
+				G.on_key[0] = 0;
+				return;
+			}
+			mmb_expect(',');
+			mmb_skip_sp();
+			if ((*G.p >= '0' && *G.p <= '9') || *G.p == '-' ||
+			    *G.p == '+' || *G.p == '.' || *G.p == '(')
+			{
+				/* ON KEY ascii, 0 disables this key's handler. */
+				if (mmb_as_int(mmb_expr()) != 0)
+					mmb_syntax();
+				on_key_ascii_clear(code);
+				return;
+			}
+			on_named_sub(target, sizeof(target));
+			if (!target[0])
+				mmb_error("?INVALID");
+			on_key_ascii_set(code, target);
 			return;
 		}
 		mmb_ident(G.on_key, sizeof(G.on_key));

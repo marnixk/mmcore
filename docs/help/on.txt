@@ -11,6 +11,9 @@ ON n GOSUB line [, line]...
 ON ERROR GOTO line
 ON ERROR
 ON KEY subname
+ON KEY 0
+ON KEY ascii, subname
+ON KEY ascii, 0
 ON MOUSECLICK subname
 ON MOUSEDOWN subname
 ON MOUSEUP subname
@@ -19,6 +22,17 @@ ON MOUSEMOVE subname
   n - 1-based index into the line list
   line - destination line numbers, or the error handler
   subname - SUB called when a key or pointer event is waiting
+  ascii - Colour Maximite 2 key code (see ~KEYBOARD CODES~)
+
+ON KEY subname installs the general key interrupt: subname is called when any
+key is waiting. The key stays in the input buffer for ~INKEY$~ to read. Bare
+ON KEY and ON KEY 0 clear the general interrupt.
+
+ON KEY ascii, subname installs a handler for one key only. The key is removed
+from the input buffer, so INKEY$ does not also return it. This is independent
+of the general ON KEY handler, so both can be active at once. Up to 24
+per-key handlers may be registered; ON KEY ascii, 0 removes one. Use the same
+codes as INKEY$, for example Escape 27 and arrows 128-131.
 
 ON ERROR GOTO jumps to the handler when a runtime error occurs during RUN.
 RESUME continues at the failing line, RESUME NEXT at the following line, and
@@ -49,6 +63,7 @@ B:
     RETURN
 
     ON KEY KeyHandler
+    ON KEY 128, UpHandler
 
 ON MOUSECLICK and ON MOUSEUP need ~MOUSE~ ON. The click handler receives
 (x, y, button$) with button$ equal to "left", "middle" or "right"; the move
