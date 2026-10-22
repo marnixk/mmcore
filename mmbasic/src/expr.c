@@ -1,6 +1,9 @@
 #include "mmb_priv.h"
-#include "mmb_version.h"
 #include <math.h>
+
+/* MMBasic compatibility version reported by MM.VER and MM.INFO(VERSION). */
+#define MMB_COMPAT_VERSION "1.8"
+#define MMB_COMPAT_VERSION_NUM 1.8
 
 extern mmb_val mmb_load_var(mmb_var *v, int off);
 extern int mmb_parse_var_ref(char *name, int *nidx, int *idx);
@@ -15,41 +18,6 @@ static int peek_kw(const char *kw)
 	int r = mmb_match(kw);
 	G.p = save;
 	return r;
-}
-
-/* MM.INFO(VERSION) is a number built from the firmware version, as on the
- * CMM2/PicoMite: 5.07.03 -> 5.0703. Non-numeric "dev" builds report 0. */
-static double info_version_number(void)
-{
-	const char *s = MMB_VERSION;
-	double v = 0;
-	int part = 0, any = 0;
-	if (*s == 'v' || *s == 'V')
-		s++;
-	while (part < 3)
-	{
-		int n = 0, got = 0;
-		while (*s >= '0' && *s <= '9')
-		{
-			n = n * 10 + (*s - '0');
-			s++;
-			got = 1;
-		}
-		if (!got)
-			break;
-		if (part == 0)
-			v = n;
-		else if (part == 1)
-			v += n / 100.0;
-		else
-			v += n / 10000.0;
-		part++;
-		any = 1;
-		if (*s != '.')
-			break;
-		s++;
-	}
-	return any ? v : 0;
 }
 
 /* Parse the one optional MM.INFO/MM.INFO$ argument: either a quoted string or
@@ -1181,7 +1149,7 @@ int mmb_try_function(mmb_val *out)
 		}
 		if (mmb_keyword_eq(key, "VERSION"))
 		{
-			*out = mmb_num_val(info_version_number());
+			*out = mmb_num_val(MMB_COMPAT_VERSION_NUM);
 			return 1;
 		}
 		if (mmb_keyword_eq(key, "AUDIO"))
@@ -2196,7 +2164,7 @@ int mmb_try_function(mmb_val *out)
 			G.p++;
 			mmb_expect(')');
 		}
-		*out = mmb_str_val("1.8");
+		*out = mmb_str_val(MMB_COMPAT_VERSION);
 		return 1;
 	}
 	if (mmb_match("MM.RUNTIME") || mmb_match("MM.RUNTIME$"))

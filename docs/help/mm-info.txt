@@ -7,7 +7,7 @@ value = MM.INFO
 value = MM.INFO(key)
 
   key - MODE (default returns mode + bits/100), HRES, VRES, VERSION
-        (a numeric form of the firmware version, e.g. 5.0703),
+        (the MMBasic compatibility version number, as ~MM.VER~),
         AUDIO ("HDMI" or
         "JACK"), MIXGAP (longest mixer gap in milliseconds since PLAY
         started), UNDERRUN (times the output queue was empty when the

@@ -198,17 +198,15 @@ def test_mm_info_bareword_keys(console):
     assert console.send_line('PRINT MM.INFO("HRES")') == "1280"
     assert console.send_line("PRINT MM.INFO(MODE)") == "11.16"
     assert console.send_line("PRINT MM.INFO$(HRES)") == "1280"
-    # VERSION is a real key, not a silent fallback to the mode value.
-    version = console.send_line("PRINT MM.INFO(VERSION)")
-    assert not version.upper().startswith("?")
-    assert version == console.send_line('PRINT MM.INFO("VERSION")')
-    assert version != console.send_line("PRINT MM.INFO(MODE)")
+    # VERSION is a real key, not a silent fallback to the mode value, and
+    # reports the same compatibility version as MM.VER.
+    assert console.send_line("PRINT MM.INFO(VERSION)") == "1.8"
+    assert console.send_line('PRINT MM.INFO("VERSION")') == "1.8"
+    assert console.send_line("PRINT MM.VER") == "1.8"
     # MM.INFO$ accepts the AUDIO bareword too.
     assert console.send_line("PRINT MM.INFO$(AUDIO)") == console.send_line(
         'PRINT MM.INFO$("AUDIO")'
     )
-    # MM.VER still parses as a function, not a variable.
-    assert not console.send_line("PRINT MM.VER").upper().startswith("?")
     # An unknown key is an error, not the MODE value.
     assert "SYNTAX ERROR" in console.send_line(
         'PRINT MM.INFO("NOT_A_KEY")'
