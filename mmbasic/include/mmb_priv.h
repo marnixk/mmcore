@@ -448,6 +448,10 @@ typedef struct mmb {
 		mmb_var *vp;
 		int off;
 		int64_t to, step;
+		/* Evaluated float bounds for fractional/mixed STEP (#1280).
+		 * Integer-only ranges keep the exact int64 path. */
+		double to_f, step_f, cur_f;
+		int float_loop;
 		int line, stmt;
 		int for_pc;    /* pc of the FOR statement (EXIT/CONTINUE, #997) */
 		const char *pos; /* same-line loop-body resume, else NULL (#997) */

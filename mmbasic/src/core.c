@@ -3069,6 +3069,13 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].off = off;
 		G.forstack[G.for_sp].to = mmb_as_int(to);
 		G.forstack[G.for_sp].step = mmb_as_int(step);
+		G.forstack[G.for_sp].to_f = mmb_as_float(to);
+		G.forstack[G.for_sp].step_f = mmb_as_float(step);
+		G.forstack[G.for_sp].cur_f = mmb_as_float(from);
+		/* Fractional or mixed bounds must advance in floating point, while
+		 * an all-integer range stays exact (#1280). */
+		G.forstack[G.for_sp].float_loop =
+			!(from.type == T_INT && to.type == T_INT && step.type == T_INT);
 		G.forstack[G.for_sp].for_pc = G.run_pc;
 		G.forstack[G.for_sp].line = same_line ? G.run_pc : G.run_pc + 1;
 		G.forstack[G.for_sp].pos = same_line ? body : 0;
@@ -3106,15 +3113,38 @@ void mmb_cmd_next(void)
 	if (!v)
 		mmb_error("?NEXT WITHOUT FOR");
 	{
-		int64_t cur = v->type == T_INT ? v->data.i[off] : (int64_t)v->data.f[off];
-		int64_t step = G.forstack[G.for_sp - 1].step;
-		int64_t to = G.forstack[G.for_sp - 1].to;
-		cur += step;
-		if (v->type == T_INT)
-			v->data.i[off] = cur;
+		int frame = G.for_sp - 1;
+		int cont;
+		if (G.forstack[frame].float_loop)
+		{
+			double step = G.forstack[frame].step_f;
+			double to = G.forstack[frame].to_f;
+			/* A float variable reflects body edits; an integer variable
+			 * cannot hold a fractional accumulator, so keep it here. */
+			double cur = v->type == T_INT ? G.forstack[frame].cur_f
+						      : v->data.f[off];
+			cur += step;
+			G.forstack[frame].cur_f = cur;
+			if (v->type == T_INT)
+				v->data.i[off] = (int64_t)cur;
+			else
+				v->data.f[off] = cur;
+			cont = (step >= 0 && cur <= to) || (step < 0 && cur >= to);
+		}
 		else
-			v->data.f[off] = (double)cur;
-		if ((step >= 0 && cur <= to) || (step < 0 && cur >= to))
+		{
+			int64_t cur = v->type == T_INT ? v->data.i[off]
+						       : (int64_t)v->data.f[off];
+			int64_t step = G.forstack[frame].step;
+			int64_t to = G.forstack[frame].to;
+			cur += step;
+			if (v->type == T_INT)
+				v->data.i[off] = cur;
+			else
+				v->data.f[off] = (double)cur;
+			cont = (step >= 0 && cur <= to) || (step < 0 && cur >= to);
+		}
+		if (cont)
 		{
 			G.forstack[G.for_sp - 1].stmt = 1;
 			/* Next iteration: discard IF blocks opened in this one. */
