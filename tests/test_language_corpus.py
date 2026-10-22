@@ -262,7 +262,10 @@ def test_same_line_if_else_elseif_and_string(console):
     assert console.send_line("IF 0 THEN PRINT 1 ELSEIF 1 THEN PRINT 3") == "3"
     assert console.send_line("IF 1 THEN PRINT 4 ELSEIF 1 THEN PRINT 5") == "4"
     assert console.send_line('IF 0 THEN PRINT "ELSE" ELSE PRINT 9') == "9"
-    assert console.send_line('IF 0 THEN PRINT "ELSE": PRINT 7') == "7"
+    # #1276: the THEN arm owns statements after the colon, so a false
+    # condition skips PRINT 7 too; a quoted ELSE is not the keyword.
+    assert console.send_line('IF 0 THEN PRINT "ELSE": PRINT 7') == ""
+    assert console.send_line('IF 1 THEN PRINT "ELSE": PRINT 7') == "ELSE\n7"
     _write_bas(
         console,
         "IFSL.BAS",
@@ -699,3 +702,275 @@ def test_explicit_const_false_array_in_sub(console):
     assert "?SYNTAX" not in out.upper(), out
     compact = out.replace(" ", "").replace("\n", "")
     assert "001" in compact, out
+
+
+def _norm_lines(text: str) -> list[str]:
+    return [" ".join(ln.split()) for ln in text.split("\n") if ln.strip()]
+
+
+def test_nested_multiline_if_keeps_outer_else_1273(console):
+    """#1273: a nested block IF must not make the outer ELSE/ELSEIF run."""
+    _write_bas(
+        console,
+        "IFNEST.BAS",
+        [
+            'a = 1 : b = 1 : c = 0',
+            'if a then',
+            '  if b then',
+            '    print "1 inner"',
+            '  end if',
+            'else',
+            '  print "1 BAD else"',
+            'end if',
+            '',
+            'if a then',
+            '  if c then',
+            '    print "2 BAD"',
+            '  else',
+            '    print "2 inner else ok"',
+            '  end if',
+            'elseif b then',
+            '  print "2 BAD elseif"',
+            'else',
+            '  print "2 BAD else"',
+            'end if',
+            '',
+            'sub s()',
+            '  local k',
+            '  for k = 1 to 2',
+            '    if k = 1 then',
+            '      if b then',
+            '        print "3 k1"',
+            '      end if',
+            '    elseif k = 2 then',
+            '      print "3 k2"',
+            '    else',
+            '      print "3 BAD"',
+            '    end if',
+            '  next k',
+            'end sub',
+            's',
+            'print "done"',
+        ],
+    )
+    assert _norm_lines(console.send_line('RUN "IFNEST.BAS"')) == [
+        "1 inner",
+        "2 inner else ok",
+        "3 k1",
+        "3 k2",
+        "done",
+    ]
+
+
+def test_nested_multiline_if_depth_three_1273(console):
+    """#1273: per-level state must also hold at nesting depth > 2."""
+    _write_bas(
+        console,
+        "IFDEEP.BAS",
+        [
+            "a = 1 : b = 1 : c = 1 : d = 0",
+            "if a then",
+            "  if b then",
+            "    if c then",
+            '      print "deep"',
+            "    else",
+            '      print "bad c"',
+            "    end if",
+            "  else",
+            '    print "bad b"',
+            "  end if",
+            "else",
+            '  print "bad a"',
+            "end if",
+            "if a then",
+            "  if b then",
+            "    if d then",
+            '      print "bad d"',
+            "    else",
+            '      print "deep else"',
+            "    end if",
+            "  elseif c then",
+            '    print "bad b elseif"',
+            "  end if",
+            "elseif b then",
+            '  print "bad a elseif"',
+            "else",
+            '  print "bad a else"',
+            "end if",
+            'print "end"',
+        ],
+    )
+    assert _norm_lines(console.send_line('RUN "IFDEEP.BAS"')) == [
+        "deep",
+        "deep else",
+        "end",
+    ]
+
+
+def test_exit_do_from_taken_nested_if_1273(console):
+    """#1273: EXIT DO inside a taken branch must unwind its IF frames."""
+    _write_bas(
+        console,
+        "IFEXITDO.BAS",
+        [
+            "n = 0",
+            "do",
+            "  n = n + 1",
+            "  if n = 1 then",
+            "    if n = 1 then",
+            '      print "one"',
+            "    end if",
+            "  end if",
+            "  if n = 2 then",
+            "    if n = 2 then",
+            '      print "two"',
+            "      exit do",
+            "    end if",
+            '    print "bad"',
+            "  end if",
+            '  print "iter"; n',
+            "loop",
+            'print "after"',
+            "if n = 2 then",
+            "  if 1 then",
+            '    print "clean"',
+            "  else",
+            '    print "bad inner"',
+            "  end if",
+            "else",
+            '  print "bad outer"',
+            "end if",
+        ],
+    )
+    assert _norm_lines(console.send_line('RUN "IFEXITDO.BAS"')) == [
+        "one",
+        "iter1",
+        "two",
+        "after",
+        "clean",
+    ]
+
+
+def test_exit_for_from_taken_nested_if_1273(console):
+    """#1273: EXIT FOR inside a taken branch must unwind its IF frames."""
+    _write_bas(
+        console,
+        "IFEXITFOR.BAS",
+        [
+            "for i = 1 to 3",
+            "  if i = 2 then",
+            "    if i = 2 then",
+            '      print "out"',
+            "      exit for",
+            "    end if",
+            '    print "bad"',
+            "  end if",
+            '  print "i"; i',
+            "next i",
+            'print "after"',
+            "if i = 2 then",
+            "  if 1 then",
+            '    print "clean"',
+            "  else",
+            '    print "bad inner"',
+            "  end if",
+            "else",
+            '  print "bad outer"',
+            "end if",
+        ],
+    )
+    assert _norm_lines(console.send_line('RUN "IFEXITFOR.BAS"')) == [
+        "i1",
+        "out",
+        "after",
+        "clean",
+    ]
+
+
+def test_skipped_block_does_not_evaluate_if_conditions_1274(console):
+    """#1274: conditions inside a skipped block must not run or index arrays."""
+    _write_bas(
+        console,
+        "IFSKIP.BAS",
+        [
+            "option explicit",
+            "option default integer",
+            "function f()",
+            '  print "f called"',
+            "  f = 1",
+            "end function",
+            "dim a(9), d = 10, bad = 0",
+            "if bad then",
+            '  if f() then print "x"',
+            "end if",
+            'print "A"',
+            "if bad then",
+            "  if f() = 1 then",
+            '    print "y"',
+            "  end if",
+            "end if",
+            'print "B"',
+            "if bad then",
+            '  if a(d) > 1 then print "never"',
+            "end if",
+            'print "C"',
+        ],
+    )
+    out = console.send_line('RUN "IFSKIP.BAS"')
+    assert "?INDEX OUT OF BOUNDS" not in out.upper(), out
+    assert _norm_lines(out) == ["A", "B", "C"]
+
+
+def test_one_line_if_owns_rest_of_line_1276(console):
+    """#1276: THEN/ELSE arms own every colon-separated statement."""
+    _write_bas(
+        console,
+        "IFLINE.BAS",
+        [
+            "option explicit",
+            "option default integer",
+            "dim a = 0, b = 0, c = 0",
+            "if a then b = 1 : c = 1",
+            'print "false:", b, c',
+            "a = 1 : b = 0 : c = 0",
+            "if a then b = 1 : c = 1",
+            'print "true:", b, c',
+            "sub q(x)",
+            '  print "q"; x;',
+            "end sub",
+            'q(1) : print " after-colon"',
+            "a = 0 : b = 0 : c = 0",
+            "if a then b = 1 : c = 1 else b = 2 : c = 2",
+            'print "else form:", b, c',
+            "a = 1 : b = 0 : c = 0",
+            "if a then b = 1 : c = 1 else b = 2 : c = 2",
+            'print "then form:", b, c',
+        ],
+    )
+    out = console.send_line('RUN "IFLINE.BAS"')
+    assert "?SYNTAX" not in out.upper(), out
+    assert _norm_lines(out) == [
+        "false: 0 0",
+        "true: 1 1",
+        "q1 after-colon",
+        "else form: 2 2",
+        "then form: 1 1",
+    ]
+
+
+def test_one_line_if_exit_do_owns_colon_statements_1276(console):
+    """#1276: `if c then a = 1 : exit do` must not exit when c is false."""
+    _write_bas(
+        console,
+        "IFLINEEXIT.BAS",
+        [
+            "n = 0",
+            "do",
+            "  n = n + 1",
+            "  if n = 2 then flag = 1 : exit do",
+            "  if n > 5 then exit do",
+            "loop",
+            'print "n"; n; "f"; flag',
+        ],
+    )
+    assert _norm_lines(console.send_line('RUN "IFLINEEXIT.BAS"')) == ["n2f1"]

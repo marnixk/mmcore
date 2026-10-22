@@ -522,7 +522,12 @@ static int tc_compile_if(tc_ent *e)
 	mmb_skip_sp();
 	if (tc_at_stmt_end())
 		return 0;
-	return tc_compile_let_from_lhs(e);
+	if (!tc_compile_let_from_lhs(e))
+		return 0;
+	/* Only a one-statement THEN arm can be replayed here: the interpreter
+	 * owns the rest of the line for `... : ...` and `ELSE` arms (#1276). */
+	mmb_skip_sp();
+	return *G.p == 0 || *G.p == '\'';
 }
 
 static double tc_load_scl(mmb_var *v)
