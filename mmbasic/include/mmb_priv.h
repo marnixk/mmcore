@@ -655,6 +655,12 @@ mmb_val mmb_str_valn(const char *s, int n);
 mmb_val mmb_arena_val(char *p);
 void mmb_str_reset(void);
 void mmb_strpool_reset(void);
+typedef struct mmb_arena_save {
+	void *chunk;
+	unsigned used;
+} mmb_arena_save;
+void mmb_arena_mark(mmb_arena_save *m);
+void mmb_arena_release(mmb_arena_save *m);
 char *mmb_tmp_alloc(int n);
 char *mmb_str_alloc(int n);
 void mmb_str_free(char *p);

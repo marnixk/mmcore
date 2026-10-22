@@ -2976,6 +2976,23 @@ static const char *stmt_after(const char *np)
 	return 0;
 }
 
+/* True when the FOR range is already exhausted before the first pass:
+ * start > end for a positive step, start < end for a negative step. The
+ * test uses the evaluated values, not just literals, so a variable or
+ * expression bound behaves like CMM2 (#1277). */
+static int for_range_empty(mmb_val from, mmb_val to, mmb_val step)
+{
+	if (from.type == T_INT && to.type == T_INT && step.type == T_INT)
+		return (step.i >= 0 && from.i > to.i) ||
+		       (step.i < 0 && from.i < to.i);
+	{
+		double f = mmb_as_float(from);
+		double t = mmb_as_float(to);
+		double s = mmb_as_float(step);
+		return (s >= 0 && f > t) || (s < 0 && f < t);
+	}
+}
+
 void mmb_cmd_for(void)
 {
 	char name[MMB_MAX_NAME];
@@ -3026,6 +3043,25 @@ void mmb_cmd_for(void)
 				next_pos = np;
 				after_pos = stmt_after(np);
 			}
+		}
+		/* An empty range is tested before the first pass, so the body must
+		 * not run at all (#1277). A same-line body resumes after its NEXT;
+		 * a line body jumps past the matching NEXT line. Immediate mode has
+		 * no stored body to skip, so it keeps line-at-a-time behaviour. */
+		if (for_range_empty(from, to, step))
+		{
+			if (same_line && next_pos)
+			{
+				G.branch_pc = after_pos ? next_pc : next_pc + 1;
+				G.branch_pos = after_pos;
+			}
+			else if (!same_line && jmp_ready && G.run_pc >= 0 &&
+				 G.run_pc < G.nprog && jmp_next[G.run_pc] >= 0)
+			{
+				G.branch_pc = jmp_next[G.run_pc] + 1;
+				G.branch_pos = 0;
+			}
+			return;
 		}
 		strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
 		G.forstack[G.for_sp].var[MMB_MAX_NAME - 1] = 0;
@@ -4461,6 +4497,7 @@ static void run_gosub_body(void)
 	int saved_for = G.for_sp;
 	int saved_running = G.running;
 	const char *saved_bpos = G.branch_pos;
+	mmb_arena_save arena_mark;
 
 	G.running = 1;
 	if (G.gosub_sp > 0)
@@ -4468,6 +4505,13 @@ static void run_gosub_body(void)
 	G.run_pc = G.branch_pc;
 	G.branch_pc = -1;
 	G.branch_pos = 0;
+	/* Reclaim per-statement expression temporaries here too, or a
+	 * string-producing loop inside FUNCTION/SUB/ON TICK/ON KEY grows the
+	 * arena for the whole call (#989). Persistent values (function return,
+	 * arguments, variables) are pooled already. Release only back to this
+	 * body's entry mark, never a full reset: the caller may still hold
+	 * temporaries earlier in the statement being evaluated (#1275). */
+	mmb_arena_mark(&arena_mark);
 	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
 	{
 		int loop;
@@ -4476,11 +4520,7 @@ static void run_gosub_body(void)
 		do
 		{
 			loop = 0;
-			/* Reclaim per-statement expression temporaries here too, or a
-			 * string-producing loop inside FUNCTION/SUB/ON TICK/ON KEY
-			 * grows the arena for the whole call (#989). Persistent values
-			 * (function return, arguments, variables) are pooled already. */
-			mmb_str_reset();
+			mmb_arena_release(&arena_mark);
 			G.branch_pc = -1;
 			if (resume)
 			{
@@ -4520,6 +4560,7 @@ static void run_gosub_body(void)
 	G.for_sp = saved_for;
 	G.running = saved_running;
 	G.branch_pos = saved_bpos;
+	mmb_arena_release(&arena_mark);
 }
 
 int mmb_try_user_function(mmb_val *out)
@@ -4566,7 +4607,22 @@ int mmb_try_user_function(mmb_val *out)
 	G.branch_pc = saved_branch;
 	G.gosub_sp = saved_sp;
 	G.p = saved_p;
+	/* G.func_ret/G.func_ret_s is a single shared slot: a later nested call
+	 * (the next argument, or the other side of a concatenation) would
+	 * overwrite it while the caller still holds this value. Detach the
+	 * result into the shared arena; nothing resets it before the enclosing
+	 * statement finishes (#1275). */
 	*out = G.func_ret;
+	if (out->type == T_STR)
+		*out = mmb_str_val(G.func_ret.s ? G.func_ret.s : "");
+	else if (out->type == T_STRUCT && out->blob &&
+		 out->struct_idx >= 0 && out->struct_idx < MMB_MAX_STRUCT_TYPES)
+	{
+		int sz = G.sdef[out->struct_idx].total;
+		char *p = mmb_tmp_alloc(sz);
+		memcpy(p, out->blob, (size_t)sz);
+		out->blob = p;
+	}
 	return 1;
 }
 

@@ -478,6 +478,10 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 
 	if (!create)
 		return 0;
+	/* Declaring (or implicitly creating) a variable with a built-in's name
+	 * would only fail later, where the token is parsed as that function. */
+	if (t == 0 && mmb_kw_id(nbuf))
+		mmb_error("?RESERVED WORD");
 	if (type == T_STRUCT)
 		mmb_error("?UNDECLARED");
 	if (G.opt.explicit)
@@ -629,6 +633,13 @@ void mmb_cmd_dim(void)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
 		if (type == T_STRUCT && struct_idx < 0)
 			mmb_syntax();
+		/* Built-in names (CHOICE, ...) are reserved unless a type suffix
+		 * makes them an ordinary identifier (CHOICE% is not a keyword
+		 * token in the CMM2 tokeniser). Struct variables may shadow a
+		 * built-in: the expression parser resolves x(...)/x.y through the
+		 * struct before the function token. */
+		if (!had_suffix && type != T_STRUCT && mmb_kw_id(name))
+			mmb_error("?RESERVED WORD");
 
 		for (i = 0; i < MMB_MAX_VARS; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)

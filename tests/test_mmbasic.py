@@ -229,6 +229,41 @@ def test_files_mkdir_copy_rename(console):
     assert console.send_line('CHDIR "/"') == ""
 
 
+def test_dir_dollar_exact_filename(console):
+    """#1278: DIR$("name.ext", FILE) is the CMM2 file-exists idiom."""
+    assert console.send_line('CHDIR "/"') == ""
+    assert console.send_line('MKDIR "DRTEST1278"') == ""
+    assert console.send_line('CHDIR "DRTEST1278"') == ""
+    assert console.send_line('OPEN "exact.txt" FOR OUTPUT AS #1') == ""
+    assert console.send_line('PRINT #1, "x"') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert (
+        console.send_line('PRINT "exact  ["; DIR$("exact.txt", FILE); "]"')
+        == "exact  [exact.txt]"
+    )
+    assert (
+        console.send_line('PRINT "quoted ["; DIR$("exact.txt", "FILE"); "]"')
+        == "quoted [exact.txt]"
+    )
+    assert (
+        console.send_line('PRINT "wild   ["; DIR$("exact.*", FILE); "]"')
+        == "wild   [exact.txt]"
+    )
+    # DIR filter excludes a plain file, and a missing name matches nothing.
+    assert console.send_line('PRINT "["; DIR$("exact.txt", DIR); "]"') == "[]"
+    assert console.send_line('PRINT "["; DIR$("missing.txt", FILE); "]"') == "[]"
+    # A drive-qualified exact path works the same way.
+    assert console.send_line('CHDIR "/"') == ""
+    assert (
+        console.send_line('PRINT "abs    ["; DIR$("A:/DRTEST1278/exact.txt", FILE); "]"')
+        == "abs    [exact.txt]"
+    )
+    assert console.send_line('CHDIR "DRTEST1278"') == ""
+    assert console.send_line('KILL "exact.txt"') == ""
+    assert console.send_line('CHDIR "/"') == ""
+    assert console.send_line('RMDIR "DRTEST1278"') == ""
+
+
 def test_load_png(fresh_console):
     assert fresh_console.send_line("CLS") == ""
     assert fresh_console.send_line('LOAD PNG "tests/TEST.PNG"') == ""
