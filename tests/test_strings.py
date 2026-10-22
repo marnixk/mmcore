@@ -102,6 +102,63 @@ def test_str_dollar_keeps_pending_print(console):
     assert console.send_line('PRINT "a";STR$(-12.5);"b"') == "a-12.5b"
 
 
+def test_string_temporaries_survive_user_function_calls(console):
+    """#1275: a nested function body must not reset the caller's arena."""
+    assert console.send_line("NEW") == ""
+    lines = [
+        "OPTION EXPLICIT",
+        "OPTION DEFAULT INTEGER",
+        "FUNCTION A$(N)",
+        '  A$ = "A" + STR$(N)',
+        "END FUNCTION",
+        "FUNCTION B$(N)",
+        '  B$ = "B" + STR$(N)',
+        "END FUNCTION",
+        "FUNCTION W(S$)",
+        "  W = LEN(S$)",
+        "END FUNCTION",
+        "SUB SHOW(S$, X)",
+        '  PRINT "show [" + S$ + "]"; X',
+        "END SUB",
+        "FUNCTION PAD2$(N)",
+        '  PAD2$ = RIGHT$("0" + STR$(N), 2)',
+        "END FUNCTION",
+        "FUNCTION JOIN2$(P$, R$)",
+        '  JOIN2$ = P$ + "|" + R$',
+        "END FUNCTION",
+        'PRINT A$(1) + "-" + B$(2)',
+        'PRINT A$(1) + "-" + A$(2)',
+        'PRINT PAD2$(0) + ":" + PAD2$(2)',
+        'DIM Z$ = "A1"',
+        'Z$ = Z$ + "-" + A$(2)',
+        "PRINT Z$",
+        "SHOW A$(3), W(A$(4))",
+        'DIM Q$ = "ESC PAUSE"',
+        "SHOW Q$, 100 - W(Q$)",
+        'PRINT JOIN2$(A$(5), B$(6))',
+        'PRINT JOIN2$(JOIN2$("x", "y"), A$(7))',
+        "X = W(Q$)",
+        "PRINT X",
+        'PRINT W("ABCD") + W("EF")',
+    ]
+    for n, line in enumerate(lines):
+        assert console.send_line(f"{(n + 1) * 10} {line}") == ""
+    # This build's PRINT emits no CMM2 sign space before a positive number,
+    # so the SHOW values are appended directly to the bracket.
+    assert console.send_line("RUN") == (
+        "A1-B2\n"
+        "A1-A2\n"
+        "00:02\n"
+        "A1-A2\n"
+        "show [A3]2\n"
+        "show [ESC PAUSE]91\n"
+        "A5|B6\n"
+        "x|y|A7\n"
+        "9\n"
+        "6"
+    )
+
+
 def test_help_string_gaps(console):
     out = dump_topic(console, "LSET")
     assert "RSET" in out

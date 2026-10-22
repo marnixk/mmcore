@@ -189,6 +189,51 @@ def test_format_bound_choice(console):
     assert console.send_line("PRINT DATE$") == "28-7-26"
 
 
+def test_mm_info_bareword_keys(console):
+    """#1278: MM.INFO(MODE) style keys are keywords, not variables."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("OPTION EXPLICIT") == ""
+    # A bareword HRES used to raise ?UNDECLARED under OPTION EXPLICIT.
+    assert console.send_line("PRINT MM.INFO(HRES)") == "1280"
+    assert console.send_line('PRINT MM.INFO("HRES")') == "1280"
+    assert console.send_line("PRINT MM.INFO(MODE)") == "11.16"
+    assert console.send_line("PRINT MM.INFO$(HRES)") == "1280"
+    # VERSION is a real key, not a silent fallback to the mode value.
+    version = console.send_line("PRINT MM.INFO(VERSION)")
+    assert not version.upper().startswith("?")
+    assert version == console.send_line('PRINT MM.INFO("VERSION")')
+    assert version != console.send_line("PRINT MM.INFO(MODE)")
+    # MM.INFO$ accepts the AUDIO bareword too.
+    assert console.send_line("PRINT MM.INFO$(AUDIO)") == console.send_line(
+        'PRINT MM.INFO$("AUDIO")'
+    )
+    # MM.VER still parses as a function, not a variable.
+    assert not console.send_line("PRINT MM.VER").upper().startswith("?")
+    # An unknown key is an error, not the MODE value.
+    assert "SYNTAX ERROR" in console.send_line(
+        'PRINT MM.INFO("NOT_A_KEY")'
+    ).upper()
+    assert "SYNTAX ERROR" in console.send_line("PRINT MM.INFO(NOT_A_KEY)").upper()
+    assert console.send_line("OPTION EXPLICIT OFF") == ""
+
+
+def test_choice_is_reserved_at_declaration(console):
+    """#1278: DIM must reject a built-in function name, not fail later."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("OPTION EXPLICIT") == ""
+    assert "RESERVED" in console.send_line("DIM choice = 1").upper()
+    assert "RESERVED" in console.send_line("DIM CHOICE(2)").upper()
+    # CHOICE() itself keeps working.
+    assert console.send_line("PRINT CHOICE(1,9,8)") == "9"
+    # A type suffix makes CHOICE% an ordinary identifier in the tokeniser, as
+    # on the CMM2 (and in tests/cmm2_compat/alienbreak).
+    assert console.send_line("DIM choice% = 1") == ""
+    assert console.send_line("PRINT choice%") == "1"
+    assert console.send_line("OPTION EXPLICIT OFF") == ""
+    # Implicit declaration on assignment is rejected the same way.
+    assert "RESERVED" in console.send_line("choice = 1").upper()
+
+
 # ---- identifier predicates (host unit test) --------------------------------
 #
 # #797: mmb_is_ident() is the *continuation* predicate (digits and dots keep an

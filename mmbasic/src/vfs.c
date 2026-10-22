@@ -484,8 +484,9 @@ static int split_path(const char *in, mmb_xpath *out)
 	return 0;
 }
 
-static void split_dir_glob(const char *path, char *dir, char *glob)
+static void split_dir_glob(const mmb_xpath *x, char *dir, char *glob)
 {
+	const char *path = x->path;
 	const char *slash = 0, *q = path, *base;
 	while (*q)
 	{
@@ -495,25 +496,43 @@ static void split_dir_glob(const char *path, char *dir, char *glob)
 	}
 	base = slash ? slash + 1 : path;
 	if (strchr(base, '*') || strchr(base, '?'))
+		goto glob;
 	{
-		strncpy(glob, base, 127);
-		glob[127] = 0;
-		if (!slash || slash == path)
-			strcpy(dir, "/");
-		else
+		/* A plain path is a directory to list. If it names a file instead,
+		 * treat its final component as an exact match: on the CMM2
+		 * DIR$("name.ext") is the file-exists idiom. */
+		char full[132];
+		full[0] = (char)x->letter;
+		full[1] = ':';
+		strncpy(full + 2, path, sizeof(full) - 3);
+		full[sizeof(full) - 1] = 0;
+		if (mmb_vfs_isdir(full))
 		{
-			int n = (int)(slash - path);
-			if (n > 127)
-				n = 127;
-			memcpy(dir, path, (unsigned)n);
-			dir[n] = 0;
+			glob[0] = 0;
+			strncpy(dir, path, 127);
+			dir[127] = 0;
+			return;
 		}
-	}
-	else
-	{
+		if (mmb_vfs_exists(full))
+			goto glob;
+		/* Missing path: keep the old directory-not-found result. */
 		glob[0] = 0;
 		strncpy(dir, path, 127);
 		dir[127] = 0;
+		return;
+	}
+glob:
+	strncpy(glob, base, 127);
+	glob[127] = 0;
+	if (!slash || slash == path)
+		strcpy(dir, "/");
+	else
+	{
+		int n = (int)(slash - path);
+		if (n > 127)
+			n = 127;
+		memcpy(dir, path, (unsigned)n);
+		dir[n] = 0;
 	}
 }
 
@@ -1486,7 +1505,7 @@ int mmb_vfs_list(const char *spec, char *out, int outsz, int *truncated)
 		*truncated = 0;
 	if (split_path(spec ? spec : "", &x) != 0)
 		return -1;
-	split_dir_glob(x.path, dir, glob);
+	split_dir_glob(&x, dir, glob);
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
 		int max;
@@ -1520,7 +1539,7 @@ int mmb_vfs_list_entries(const char *spec, mmb_dirent *out, int max,
 		return -1;
 	if (split_path(spec ? spec : "", &x) != 0)
 		return -1;
-	split_dir_glob(x.path, dir, glob);
+	split_dir_glob(&x, dir, glob);
 	if (x.letter == 'A' || (x.letter == 'B' && pkg_on))
 	{
 		int vmax;

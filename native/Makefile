@@ -217,7 +217,7 @@ $(BUILD):
 
 $(BUILD)/ramdisk_data.o: $(RAMDISK_C)
 $(BUILD)/help_data.o: $(HELP_C)
-$(BUILD)/util.o $(BUILD)/cmd_credits.o: $(VERSION_H)
+$(BUILD)/util.o $(BUILD)/cmd_credits.o $(BUILD)/expr.o: $(VERSION_H)
 
 $(HELP_C): $(REPO)/scripts/gen_help.py $(wildcard $(REPO)/docs/help/*.txt)
 	python3 $(REPO)/scripts/gen_help.py $@
