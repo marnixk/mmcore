@@ -2487,6 +2487,8 @@ void mmb_cmd_new(void)
 	mmb_close_tcp_files();
 	memset(G.subs, 0, sizeof(G.subs));
 	G.nsubs = 0;
+	G.on_key[0] = 0;
+	memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
 	G.opt.autorun = 0;
 }
 
@@ -4675,6 +4677,26 @@ static void append_int(char *buf, int *n, int v)
 		buf[(*n)++] = tmp[--i];
 }
 
+static int on_key_ascii_active(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_ONKEY; i++)
+		if (G.on_key_ascii[i].sub[0])
+			return 1;
+	return 0;
+}
+
+static const char *on_key_ascii_handler(int code)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_ONKEY; i++)
+		if (G.on_key_ascii[i].sub[0] && G.on_key_ascii[i].code == code)
+			return G.on_key_ascii[i].sub;
+	return 0;
+}
+
 void mmb_run_events(void)
 {
 	unsigned now;
@@ -4684,8 +4706,8 @@ void mmb_run_events(void)
 	if (!G.running || G.tick_busy)
 		return;
 	/* Skip the clock read entirely when nothing is registered (#988). */
-	if (!G.on_key[0] && !G.on_mouseclick[0] && !G.on_mousemove[0] &&
-	    !G.on_mouseup[0])
+	if (!G.on_key[0] && !on_key_ascii_active() && !G.on_mouseclick[0] &&
+	    !G.on_mousemove[0] && !G.on_mouseup[0])
 	{
 		int any = 0;
 		for (i = 0; i < MMB_MAX_TICK; i++)
@@ -4718,6 +4740,37 @@ void mmb_run_events(void)
 		G.branch_pc = saved_branch;
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
+	}
+	if (on_key_ascii_active() && G.inkey_n > 0)
+	{
+		int guard;
+
+		for (guard = 0; guard < MMB_INKEY; guard++)
+		{
+			int len = 0, code;
+			const char *sub;
+
+			code = mmb_inkey_peek(&len);
+			if (code < 0 || len <= 0)
+				break;
+			sub = on_key_ascii_handler(code);
+			if (!sub)
+				break;
+			mmb_inkey_consume(len);
+			saved_pc = G.run_pc;
+			saved_p = G.p;
+			saved_branch = G.branch_pc;
+			saved_sp = G.gosub_sp;
+			G.tick_busy = 1;
+			G.p = "";
+			if (mmb_call_named_sub(sub))
+				run_gosub_body();
+			G.run_pc = saved_pc;
+			G.p = saved_p;
+			G.branch_pc = saved_branch;
+			G.gosub_sp = saved_sp;
+			G.tick_busy = 0;
+		}
 	}
 	if (G.on_key[0] && G.inkey_n > 0)
 	{
@@ -4810,6 +4863,7 @@ static void run_program(void)
 		G.nsubs = 0;
 		memset(G.tick, 0, sizeof(G.tick));
 		G.on_key[0] = 0;
+		memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
 		G.on_mouseclick[0] = 0;
 		G.on_mousemove[0] = 0;
 		G.on_mouseup[0] = 0;

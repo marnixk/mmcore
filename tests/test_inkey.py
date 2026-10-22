@@ -133,3 +133,130 @@ def test_help_inkey_lists_cmm2_codes(console):
     assert "129" in out
     assert "145" in out
     assert "VT100" in out or "CMM2" in out
+
+
+def _load_program(con, lines) -> None:
+    con.send_line("NEW")
+    for line in lines:
+        con.send_line(line)
+    con.drain(quiet=0.1)
+
+
+def _run_and_send(con, keys: bytes, timeout: float = 8.0) -> str:
+    con._ser.sendall(b"RUN\r")
+    assert b"READY" in _wait_contains(con, b"READY", timeout=timeout)
+    con._ser.sendall(keys)
+    return _until_prompt(con, timeout=timeout)
+
+
+_DRAIN_SUB = [
+    "200 SUB Drain",
+    "210 LOCAL C$",
+    "220 C$=INKEY$",
+    '230 IF C$<>"" THEN PRINT "DRAIN";ASC(C$)',
+    "240 END SUB",
+]
+
+
+def test_on_key_zero_clears_general_handler(fresh_console):
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY Drain",
+            "20 ON KEY 0",
+            '30 PRINT "READY"',
+            "40 PAUSE 1200",
+            '50 PRINT "K";ASC(INKEY$)',
+            "60 END",
+            *_DRAIN_SUB,
+        ],
+    )
+    out = _run_and_send(fresh_console, b"q")
+    assert "?SYNTAX" not in out.upper()
+    assert "DRAIN" not in out
+    assert "K113" in out
+
+
+def test_bare_on_key_clears_general_handler(fresh_console):
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY Drain",
+            "20 ON KEY",
+            '30 PRINT "READY"',
+            "40 PAUSE 1200",
+            '50 PRINT "K";ASC(INKEY$)',
+            "60 END",
+            *_DRAIN_SUB,
+        ],
+    )
+    out = _run_and_send(fresh_console, b"q")
+    assert "?SYNTAX" not in out.upper()
+    assert "DRAIN" not in out
+    assert "K113" in out
+
+
+def test_on_key_ascii_consumes_key_without_general(fresh_console):
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY 128, ArrowUp",
+            '20 PRINT "READY"',
+            "30 PAUSE 1200",
+            "40 PAUSE 200",
+            '50 PRINT "LEFT[";INKEY$;"]"',
+            "60 END",
+            "100 SUB ArrowUp",
+            '110 PRINT "UP"',
+            "120 END SUB",
+        ],
+    )
+    out = _run_and_send(fresh_console, b"\x1b[A")
+    assert "UP" in out
+    assert "LEFT[]" in out
+
+
+def test_on_key_ascii_and_general_are_independent(fresh_console):
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY 128, ArrowUp",
+            "20 ON KEY Drain",
+            '30 PRINT "READY"',
+            "40 PAUSE 1200",
+            "50 PAUSE 200",
+            '60 PRINT "END"',
+            "70 END",
+            "100 SUB ArrowUp",
+            '110 PRINT "UP"',
+            "120 END SUB",
+            *_DRAIN_SUB,
+        ],
+    )
+    out = _run_and_send(fresh_console, b"\x1b[Az")
+    assert "UP" in out
+    assert "DRAIN128" not in out
+    assert "DRAIN122" in out
+
+
+def test_on_key_ascii_zero_disables_handler(fresh_console):
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY 128, ArrowUp",
+            "20 ON KEY 128, 0",
+            "30 ON KEY Drain",
+            '40 PRINT "READY"',
+            "50 PAUSE 1200",
+            "60 PAUSE 200",
+            '70 PRINT "END"',
+            "80 END",
+            "100 SUB ArrowUp",
+            '110 PRINT "UP"',
+            "120 END SUB",
+            *_DRAIN_SUB,
+        ],
+    )
+    out = _run_and_send(fresh_console, b"\x1b[A")
+    assert "UP" not in out
+    assert "DRAIN128" in out
