@@ -123,6 +123,76 @@ def test_for_unnamed_next_and_step(console):
     assert console.send_line("RUN") == "531-1"
 
 
+def test_for_empty_range_skips_body_issue_1277(console):
+    """#1277: the termination test runs before the first pass, including for
+    variable/expression bounds, a negative STEP and a float STEP."""
+    _write_bas(
+        console,
+        "TZEROT.BAS",
+        [
+            "OPTION EXPLICIT",
+            "OPTION DEFAULT INTEGER",
+            "DIM I, N = 1",
+            "FOR I = 1 TO 0",
+            '  PRINT "ran body A", I',
+            "NEXT I",
+            "FOR I = 1 TO N - 1",
+            '  PRINT "ran body B", I',
+            "NEXT I",
+            "SUB S(N)",
+            "  LOCAL I",
+            "  FOR I = 1 TO N - 1",
+            '    PRINT "ran body C", I',
+            "  NEXT I",
+            '  PRINT "s done"',
+            "END SUB",
+            "S(1)",
+            "FOR I = 9 TO 10 STEP -1",
+            '  PRINT "ran body D", I',
+            "NEXT I",
+            'PRINT "end"',
+        ],
+    )
+    assert console.send_line('RUN "TZEROT.BAS"') == "s done\nend"
+
+
+def test_for_empty_range_zero_trip_corpus(console):
+    """#1277: literal, variable and expression bounds, negative and float
+    STEP all skip, while a non-empty control loop still runs."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 N = 1") == ""
+    assert console.send_line("20 FOR I = 1 TO 0") == ""
+    assert console.send_line('30 PRINT "A";') == ""
+    assert console.send_line("40 NEXT I") == ""
+    assert console.send_line("50 FOR I = 1 TO N - 1") == ""
+    assert console.send_line('60 PRINT "B";') == ""
+    assert console.send_line("70 NEXT I") == ""
+    assert console.send_line("80 FOR I = 9 TO 10 STEP -1") == ""
+    assert console.send_line('90 PRINT "C";') == ""
+    assert console.send_line("100 NEXT I") == ""
+    assert console.send_line("110 FOR I = 1 TO 0 STEP 0.5") == ""
+    assert console.send_line('120 PRINT "D";') == ""
+    assert console.send_line("130 NEXT I") == ""
+    assert console.send_line("140 FOR I = 0 TO 1 STEP -0.5") == ""
+    assert console.send_line('150 PRINT "E";') == ""
+    assert console.send_line("160 NEXT I") == ""
+    assert console.send_line("170 FOR I = 1 TO 2") == ""
+    assert console.send_line('180 PRINT "x";I;') == ""
+    assert console.send_line("190 NEXT I") == ""
+    assert console.send_line("200 PRINT") == ""
+    assert console.send_line('210 PRINT "done"') == ""
+    assert console.send_line("RUN") == "x1x2\ndone"
+
+
+def test_for_same_line_empty_range_zero_trip(console):
+    """#1277/#997: an empty same-line FOR skips its body and resumes after
+    the matching NEXT."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 FOR I = 1 TO 0: PRINT "x";: NEXT I: PRINT "y"') == ""
+    assert console.send_line('20 PRINT "z"') == ""
+    assert console.send_line("RUN") == "y\nz"
+
+
 def test_array_let_mul_add_and_wrap_if(console):
     _write_bas(
         console,
