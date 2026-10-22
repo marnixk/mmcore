@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include "mmb_version.h"
 #include <math.h>
 
 extern mmb_val mmb_load_var(mmb_var *v, int off);
@@ -14,6 +15,70 @@ static int peek_kw(const char *kw)
 	int r = mmb_match(kw);
 	G.p = save;
 	return r;
+}
+
+/* MM.INFO(VERSION) is a number built from the firmware version, as on the
+ * CMM2/PicoMite: 5.07.03 -> 5.0703. Non-numeric "dev" builds report 0. */
+static double info_version_number(void)
+{
+	const char *s = MMB_VERSION;
+	double v = 0;
+	int part = 0, any = 0;
+	if (*s == 'v' || *s == 'V')
+		s++;
+	while (part < 3)
+	{
+		int n = 0, got = 0;
+		while (*s >= '0' && *s <= '9')
+		{
+			n = n * 10 + (*s - '0');
+			s++;
+			got = 1;
+		}
+		if (!got)
+			break;
+		if (part == 0)
+			v = n;
+		else if (part == 1)
+			v += n / 100.0;
+		else
+			v += n / 10000.0;
+		part++;
+		any = 1;
+		if (*s != '.')
+			break;
+		s++;
+	}
+	return any ? v : 0;
+}
+
+/* Parse the one optional MM.INFO/MM.INFO$ argument: either a quoted string or
+ * a bareword key such as MODE or HRES. Returns 0 when no key was given. */
+static int info_key_arg(char *key, int keysz)
+{
+	key[0] = 0;
+	mmb_skip_sp();
+	if (*G.p != '(')
+		return 0;
+	G.p++;
+	mmb_skip_sp();
+	if (*G.p != ')')
+	{
+		if (*G.p == '"')
+		{
+			mmb_val sv = mmb_expr();
+			if (sv.type == T_STR)
+			{
+				strncpy(key, sv.s ? sv.s : "", (size_t)keysz - 1);
+				key[keysz - 1] = 0;
+			}
+		}
+		else
+			mmb_ident(key, keysz);
+	}
+	mmb_skip_sp();
+	mmb_expect(')');
+	return key[0] != 0;
 }
 
 /* Functions that need arguments must see '(' so CONST MAX and PRINT MAX*2 work. */
@@ -1091,80 +1156,86 @@ int mmb_try_function(mmb_val *out)
 	if (mmb_match("MM.INFO$") || mmb_match("MM.INFO"))
 	{
 	lbl_mminfo:
-		call_args(a, 2, &n);
-		if (n >= 1)
+		char key[MMB_MAX_NAME];
+		if (!info_key_arg(key, (int)sizeof(key)))
 		{
-			char key[40];
-			if (a[0].type == T_STR)
-				strncpy(key, a[0].s, sizeof(key) - 1);
-			else
-				key[0] = 0;
-			mmb_upper(key);
-			if (mmb_keyword_eq(key, "MODE") || peek_kw("MODE"))
-			{
-				/* MM.INFO(MODE) -> 1.8 style */
-				*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "HRES"))
-			{
-				*out = mmb_int_val(G.gfx.w);
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "AUDIO") || peek_kw("AUDIO"))
-			{
-				*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "MIXGAP"))
-			{
-				*out = mmb_int_val((int)mmb_audio_mix_gap_ms());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "UNDERRUN"))
-			{
-				*out = mmb_int_val((int)mmb_audio_underruns());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "FIRSTVOL"))
-			{
-				/* Gain applied to the first buffer after play began (#1113). */
-				*out = mmb_int_val((int)mmb_audio_first_mix_vol());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "AUDIORESET"))
-			{
-				*out = mmb_int_val((int)mmb_audio_resets());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "MP3BUF"))
-			{
-				/* Peak MP3 decoder-buffer allocation (#1150). */
-				*out = mmb_int_val((int)mmb_audio_mp3_buffer_peak());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "MP3RATE"))
-			{
-				/* Source sample rate of the last MP3 (#1247). */
-				*out = mmb_int_val((int)mmb_audio_mp3_rate());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "MP3SRC"))
-			{
-				/* Source-rate frames decoded from the last MP3 (#1247). */
-				*out = mmb_int_val((int)mmb_audio_mp3_src_frames());
-				return 1;
-			}
-			if (mmb_keyword_eq(key, "MP3OUT"))
-			{
-				/* 44100 Hz frames mixed from the last MP3 (#1247). */
-				*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
-				return 1;
-			}
+			*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);
+			return 1;
 		}
-		/* MM.INFO(MODE) with keyword inside parens already consumed by call_args as expr - handle MODE ident */
-		*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);
-		return 1;
+		mmb_upper(key);
+		if (mmb_keyword_eq(key, "MODE"))
+		{
+			/* MM.INFO(MODE) -> 1.8 style */
+			*out = mmb_num_val(G.gfx.mode + G.gfx.bits / 100.0);
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "HRES"))
+		{
+			*out = mmb_int_val(G.gfx.w);
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "VRES"))
+		{
+			*out = mmb_int_val(G.gfx.h);
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "VERSION"))
+		{
+			*out = mmb_num_val(info_version_number());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "AUDIO"))
+		{
+			*out = mmb_str_val(G.opt.audio_target ? "HDMI" : "JACK");
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "MIXGAP"))
+		{
+			*out = mmb_int_val((int)mmb_audio_mix_gap_ms());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "UNDERRUN"))
+		{
+			*out = mmb_int_val((int)mmb_audio_underruns());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "FIRSTVOL"))
+		{
+			/* Gain applied to the first buffer after play began (#1113). */
+			*out = mmb_int_val((int)mmb_audio_first_mix_vol());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "AUDIORESET"))
+		{
+			*out = mmb_int_val((int)mmb_audio_resets());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "MP3BUF"))
+		{
+			/* Peak MP3 decoder-buffer allocation (#1150). */
+			*out = mmb_int_val((int)mmb_audio_mp3_buffer_peak());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "MP3RATE"))
+		{
+			/* Source sample rate of the last MP3 (#1247). */
+			*out = mmb_int_val((int)mmb_audio_mp3_rate());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "MP3SRC"))
+		{
+			/* Source-rate frames decoded from the last MP3 (#1247). */
+			*out = mmb_int_val((int)mmb_audio_mp3_src_frames());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "MP3OUT"))
+		{
+			/* 44100 Hz frames mixed from the last MP3 (#1247). */
+			*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
+			return 1;
+		}
+		/* CMM2/PicoMite reject an unknown key; never fall back to MODE. */
+		mmb_error("?SYNTAX ERROR");
 	}
 	if (mmb_match("PLAYING"))
 	{
@@ -1539,7 +1610,9 @@ int mmb_try_function(mmb_val *out)
 	{
 	lbl_dir:
 		char b[512];
+		char filter_buf[8];
 		const char *spec = 0, *filter = 0;
+		filter_buf[0] = 0;
 		mmb_skip_sp();
 		if (*G.p == '(')
 		{
@@ -1554,11 +1627,22 @@ int mmb_try_function(mmb_val *out)
 			mmb_skip_sp();
 			if (*G.p == ',')
 			{
-				mmb_val fv;
 				G.p++;
-				fv = mmb_expr();
-				if (fv.type == T_STR)
-					filter = fv.s;
+				mmb_skip_sp();
+				if (peek_kw("FILE") || peek_kw("DIR") || peek_kw("ALL"))
+					mmb_ident(filter_buf, (int)sizeof(filter_buf));
+				else
+				{
+					mmb_val fv = mmb_expr();
+					if (fv.type == T_STR)
+					{
+						strncpy(filter_buf, fv.s ? fv.s : "",
+							sizeof(filter_buf) - 1);
+						filter_buf[sizeof(filter_buf) - 1] = 0;
+					}
+				}
+				if (filter_buf[0])
+					filter = filter_buf;
 			}
 			mmb_skip_sp();
 			mmb_expect(')');

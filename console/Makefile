@@ -186,7 +186,7 @@ $(RAMDISK_STAMP): FORCE
 $(MMB)/src/ramdisk_data.c: FORCE $(MMB)/../scripts/gen_ramdisk.py $(RAMDISK_FILES) $(RAMDISK_STAMP)
 	python3 $(MMB)/../scripts/gen_ramdisk.py --out $@ --exclude "$(RAMDISK_EXCLUDE)"
 
-$(MMB)/src/util.o $(MMB)/src/cmd_credits.o: mmb_version.h
+$(MMB)/src/util.o $(MMB)/src/cmd_credits.o $(MMB)/src/expr.o: mmb_version.h
 
 .PHONY: FORCE
 FORCE:
