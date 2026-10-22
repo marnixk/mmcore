@@ -193,6 +193,57 @@ def test_for_same_line_empty_range_zero_trip(console):
     assert console.send_line("RUN") == "y\nz"
 
 
+def test_for_fractional_step_advances_issue_1280(console):
+    """#1280: a fractional STEP must advance the loop, not truncate to 0."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I = 0 TO 1 STEP 0.5") == ""
+    assert console.send_line("20 PRINT I;") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("40 PRINT") == ""
+    assert console.send_line("RUN") == "00.51"
+
+
+def test_for_fractional_negative_step_issue_1280(console):
+    """#1280: a fractional negative STEP counts down."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I = 1 TO 0 STEP -0.5") == ""
+    assert console.send_line("20 PRINT I;") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("40 PRINT") == ""
+    assert console.send_line("RUN") == "10.50"
+
+
+def test_for_float_to_bounds_issue_1280(console):
+    """#1280: fractional bounds advance in floating point."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I = 0.5 TO 2 STEP 0.5") == ""
+    assert console.send_line("20 PRINT I;") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("40 PRINT") == ""
+    assert console.send_line("RUN") == "0.511.52"
+
+
+def test_for_variable_fractional_step_issue_1280(console):
+    """#1280: a STEP held in a variable is not truncated either."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 S = 0.5") == ""
+    assert console.send_line("20 FOR I = 0 TO 1 STEP S") == ""
+    assert console.send_line("30 PRINT I;") == ""
+    assert console.send_line("40 NEXT I") == ""
+    assert console.send_line("50 PRINT") == ""
+    assert console.send_line("RUN") == "00.51"
+
+
+def test_for_integer_control_loop_issue_1280(console):
+    """#1280: all-integer ranges keep the exact integer iteration path."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 FOR I = 1 TO 5") == ""
+    assert console.send_line("20 PRINT I;") == ""
+    assert console.send_line("30 NEXT I") == ""
+    assert console.send_line("40 PRINT") == ""
+    assert console.send_line("RUN") == "12345"
+
+
 def test_array_let_mul_add_and_wrap_if(console):
     _write_bas(
         console,
