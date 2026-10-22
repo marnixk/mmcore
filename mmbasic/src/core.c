@@ -2846,6 +2846,23 @@ static const char *stmt_after(const char *np)
 	return 0;
 }
 
+/* True when the FOR range is already exhausted before the first pass:
+ * start > end for a positive step, start < end for a negative step. The
+ * test uses the evaluated values, not just literals, so a variable or
+ * expression bound behaves like CMM2 (#1277). */
+static int for_range_empty(mmb_val from, mmb_val to, mmb_val step)
+{
+	if (from.type == T_INT && to.type == T_INT && step.type == T_INT)
+		return (step.i >= 0 && from.i > to.i) ||
+		       (step.i < 0 && from.i < to.i);
+	{
+		double f = mmb_as_float(from);
+		double t = mmb_as_float(to);
+		double s = mmb_as_float(step);
+		return (s >= 0 && f > t) || (s < 0 && f < t);
+	}
+}
+
 void mmb_cmd_for(void)
 {
 	char name[MMB_MAX_NAME];
@@ -2896,6 +2913,25 @@ void mmb_cmd_for(void)
 				next_pos = np;
 				after_pos = stmt_after(np);
 			}
+		}
+		/* An empty range is tested before the first pass, so the body must
+		 * not run at all (#1277). A same-line body resumes after its NEXT;
+		 * a line body jumps past the matching NEXT line. Immediate mode has
+		 * no stored body to skip, so it keeps line-at-a-time behaviour. */
+		if (for_range_empty(from, to, step))
+		{
+			if (same_line && next_pos)
+			{
+				G.branch_pc = after_pos ? next_pc : next_pc + 1;
+				G.branch_pos = after_pos;
+			}
+			else if (!same_line && jmp_ready && G.run_pc >= 0 &&
+				 G.run_pc < G.nprog && jmp_next[G.run_pc] >= 0)
+			{
+				G.branch_pc = jmp_next[G.run_pc] + 1;
+				G.branch_pos = 0;
+			}
+			return;
 		}
 		strncpy(G.forstack[G.for_sp].var, name, MMB_MAX_NAME - 1);
 		G.forstack[G.for_sp].var[MMB_MAX_NAME - 1] = 0;
