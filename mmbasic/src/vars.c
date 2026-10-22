@@ -480,7 +480,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		return 0;
 	/* Declaring (or implicitly creating) a variable with a built-in's name
 	 * would only fail later, where the token is parsed as that function. */
-	if (t == 0 && mmb_kw_id(nbuf))
+	if (t == 0 && mmb_is_builtin_func(nbuf))
 		mmb_error("?RESERVED WORD");
 	if (type == T_STRUCT)
 		mmb_error("?UNDECLARED");
@@ -638,7 +638,7 @@ void mmb_cmd_dim(void)
 		 * token in the CMM2 tokeniser). Struct variables may shadow a
 		 * built-in: the expression parser resolves x(...)/x.y through the
 		 * struct before the function token. */
-		if (!had_suffix && type != T_STRUCT && mmb_kw_id(name))
+		if (!had_suffix && type != T_STRUCT && mmb_is_builtin_func(name))
 			mmb_error("?RESERVED WORD");
 
 		for (i = 0; i < MMB_MAX_VARS; i++)

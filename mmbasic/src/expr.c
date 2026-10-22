@@ -460,6 +460,126 @@ static void theme_name_copy(char *dst, int n, const char *src)
 	dst[i] = 0;
 }
 
+#define MMB_FUN_TAB(X) \
+	X("RGB", lbl_rgb) \
+	X("THEME", lbl_theme) \
+	X("PIXEL", lbl_pixel) \
+	X("LEN", lbl_len) \
+	X("ASC", lbl_asc) \
+	X("CHR$", lbl_chr) \
+	X("STR$", lbl_str) \
+	X("VAL", lbl_val) \
+	X("LEFT$", lbl_left) \
+	X("RIGHT$", lbl_right) \
+	X("MID$", lbl_mid) \
+	X("UCASE$", lbl_ucase) \
+	X("LCASE$", lbl_lcase) \
+	X("SPACE$", lbl_space) \
+	X("LTRIM$", lbl_ltrim) \
+	X("RTRIM$", lbl_rtrim) \
+	X("TRIM$", lbl_trim) \
+	X("BASE$", lbl_base) \
+	X("FIELD$", lbl_field) \
+	X("DATETIME$", lbl_datetime) \
+	X("DAY$", lbl_day) \
+	X("DIR$", lbl_dir) \
+	X("ABS", lbl_abs) \
+	X("INT", lbl_int) \
+	X("FIX", lbl_fix) \
+	X("CINT", lbl_cint) \
+	X("EVAL", lbl_eval) \
+	X("MATH", lbl_math) \
+	X("SQR", lbl_sqr) \
+	X("SQRT", lbl_sqr) \
+	X("SIN", lbl_sin) \
+	X("COS", lbl_cos) \
+	X("TAN", lbl_tan) \
+	X("ATN", lbl_atn) \
+	X("ATN2", lbl_atn) \
+	X("ATAN", lbl_atn) \
+	X("ATAN2", lbl_atn) \
+	X("RND", lbl_rnd) \
+	X("MM.HRES", lbl_mmhres) \
+	X("MM.VRES", lbl_mmvres) \
+	X("MM.HOST.HRES", lbl_mmhosthres) \
+	X("MM.HOST.VRES", lbl_mmhostvres) \
+	X("MM.HPOS", lbl_mmhpos) \
+	X("MM.VPOS", lbl_mmvpos) \
+	X("MM.INFO$", lbl_mminfo) \
+	X("MM.INFO", lbl_mminfo) \
+	X("MM.RUNTIME", lbl_mmruntime) \
+	X("MM.RUNTIME$", lbl_mmruntime) \
+	X("PLAYING", lbl_playing) \
+	X("EOF", lbl_eof) \
+	X("INSTR", lbl_instr) \
+	X("STRING$", lbl_string) \
+	X("HEX$", lbl_hex) \
+	X("OCT$", lbl_oct) \
+	X("BIN$", lbl_bin) \
+	X("DATE$", lbl_date) \
+	X("TIME$", lbl_time) \
+	X("INKEY$", lbl_inkey) \
+	X("KEYDOWN", lbl_keydown) \
+	X("TIMER", lbl_timer) \
+	X("LOF", lbl_lof) \
+	X("CWD$", lbl_cwd) \
+	X("INPUT$", lbl_input) \
+	X("JSON$", lbl_json) \
+	X("JSON_STRINGIFY$", lbl_json_stringify) \
+	X("ACOS", lbl_acos) \
+	X("ACS", lbl_acos) \
+	X("ASIN", lbl_asin) \
+	X("ASN", lbl_asin) \
+	X("LOC", lbl_loc) \
+	X("SGN", lbl_sgn) \
+	X("EXP", lbl_exp) \
+	X("LOG", lbl_log) \
+	X("PI", lbl_pi) \
+	X("DEG", lbl_deg) \
+	X("RAD", lbl_rad) \
+	X("POS", lbl_pos) \
+	X("CSRLIN", lbl_csrlin) \
+	X("BIT", lbl_bit) \
+	X("BYTE", lbl_byte) \
+	X("EPOCH", lbl_epoch) \
+	X("CHOICE", lbl_choice) \
+	X("FORMAT$", lbl_format) \
+	X("BOUND", lbl_bound) \
+	X("TAB", lbl_tab) \
+	X("MM.VER", lbl_mmver) \
+	X("MM.DEVICE$", lbl_mmdev) \
+	X("MM.CMDLINE$", lbl_mmcmd) \
+	X("TDF.WIDTH", lbl_tdfwidth) \
+	X("TDF.NAME$", lbl_tdfname) \
+	X("TDF.TYPE%", lbl_tdftype) \
+	X("TDF.SPACING%", lbl_tdfspacing) \
+	X("TDF.HEIGHT", lbl_tdfheight) \
+	X("TDF.VARIANTS%", lbl_tdfvariants) \
+	X("TDF.VARIANT%", lbl_tdfvariant) \
+	X("TDF.VARIANTNAME$", lbl_tdfvariantname) \
+	X("MAX", lbl_max) \
+	X("MIN", lbl_min) \
+	X("MM.BATTERY%", lbl_mmbattery) \
+	X("MM.BRIGHTNESS%", lbl_mmbrightness)
+
+static const char *const builtin_func_names[] = {
+#define MMB_FUN_NAME(n, l) n,
+	MMB_FUN_TAB(MMB_FUN_NAME)
+#undef MMB_FUN_NAME
+	0
+};
+
+int mmb_is_builtin_func(const char *name)
+{
+	const char *const *p;
+	if (!name || !*name)
+		return 0;
+	for (p = builtin_func_names; *p; p++)
+		if (mmb_keyword_eq(name, *p))
+			return 1;
+	return 0;
+}
+
 int mmb_try_function(mmb_val *out)
 {
 	mmb_val a[8];
@@ -474,106 +594,9 @@ int mmb_try_function(mmb_val *out)
 
 	if (!finited)
 	{
-		fun_tab[mmb_kw_id("RGB")] = &&lbl_rgb;
-		fun_tab[mmb_kw_id("THEME")] = &&lbl_theme;
-		fun_tab[mmb_kw_id("PIXEL")] = &&lbl_pixel;
-		fun_tab[mmb_kw_id("LEN")] = &&lbl_len;
-		fun_tab[mmb_kw_id("ASC")] = &&lbl_asc;
-		fun_tab[mmb_kw_id("CHR$")] = &&lbl_chr;
-		fun_tab[mmb_kw_id("STR$")] = &&lbl_str;
-		fun_tab[mmb_kw_id("VAL")] = &&lbl_val;
-		fun_tab[mmb_kw_id("LEFT$")] = &&lbl_left;
-		fun_tab[mmb_kw_id("RIGHT$")] = &&lbl_right;
-		fun_tab[mmb_kw_id("MID$")] = &&lbl_mid;
-		fun_tab[mmb_kw_id("UCASE$")] = &&lbl_ucase;
-		fun_tab[mmb_kw_id("LCASE$")] = &&lbl_lcase;
-		fun_tab[mmb_kw_id("SPACE$")] = &&lbl_space;
-		fun_tab[mmb_kw_id("LTRIM$")] = &&lbl_ltrim;
-		fun_tab[mmb_kw_id("RTRIM$")] = &&lbl_rtrim;
-		fun_tab[mmb_kw_id("TRIM$")] = &&lbl_trim;
-		fun_tab[mmb_kw_id("BASE$")] = &&lbl_base;
-		fun_tab[mmb_kw_id("FIELD$")] = &&lbl_field;
-		fun_tab[mmb_kw_id("DATETIME$")] = &&lbl_datetime;
-		fun_tab[mmb_kw_id("DAY$")] = &&lbl_day;
-		fun_tab[mmb_kw_id("DIR$")] = &&lbl_dir;
-		fun_tab[mmb_kw_id("ABS")] = &&lbl_abs;
-		fun_tab[mmb_kw_id("INT")] = &&lbl_int;
-		fun_tab[mmb_kw_id("FIX")] = &&lbl_fix;
-		fun_tab[mmb_kw_id("CINT")] = &&lbl_cint;
-		fun_tab[mmb_kw_id("EVAL")] = &&lbl_eval;
-		fun_tab[mmb_kw_id("MATH")] = &&lbl_math;
-		fun_tab[mmb_kw_id("SQR")] = &&lbl_sqr;
-		fun_tab[mmb_kw_id("SQRT")] = &&lbl_sqr;
-		fun_tab[mmb_kw_id("SIN")] = &&lbl_sin;
-		fun_tab[mmb_kw_id("COS")] = &&lbl_cos;
-		fun_tab[mmb_kw_id("TAN")] = &&lbl_tan;
-		fun_tab[mmb_kw_id("ATN")] = &&lbl_atn;
-		fun_tab[mmb_kw_id("ATN2")] = &&lbl_atn;
-		fun_tab[mmb_kw_id("ATAN")] = &&lbl_atn;
-		fun_tab[mmb_kw_id("ATAN2")] = &&lbl_atn;
-		fun_tab[mmb_kw_id("RND")] = &&lbl_rnd;
-		fun_tab[mmb_kw_id("MM.HRES")] = &&lbl_mmhres;
-		fun_tab[mmb_kw_id("MM.VRES")] = &&lbl_mmvres;
-		fun_tab[mmb_kw_id("MM.HOST.HRES")] = &&lbl_mmhosthres;
-		fun_tab[mmb_kw_id("MM.HOST.VRES")] = &&lbl_mmhostvres;
-		fun_tab[mmb_kw_id("MM.HPOS")] = &&lbl_mmhpos;
-		fun_tab[mmb_kw_id("MM.VPOS")] = &&lbl_mmvpos;
-		fun_tab[mmb_kw_id("MM.INFO$")] = &&lbl_mminfo;
-		fun_tab[mmb_kw_id("MM.INFO")] = &&lbl_mminfo;
-		fun_tab[mmb_kw_id("MM.RUNTIME")] = &&lbl_mmruntime;
-		fun_tab[mmb_kw_id("MM.RUNTIME$")] = &&lbl_mmruntime;
-		fun_tab[mmb_kw_id("PLAYING")] = &&lbl_playing;
-		fun_tab[mmb_kw_id("EOF")] = &&lbl_eof;
-		fun_tab[mmb_kw_id("INSTR")] = &&lbl_instr;
-		fun_tab[mmb_kw_id("STRING$")] = &&lbl_string;
-		fun_tab[mmb_kw_id("HEX$")] = &&lbl_hex;
-		fun_tab[mmb_kw_id("OCT$")] = &&lbl_oct;
-		fun_tab[mmb_kw_id("BIN$")] = &&lbl_bin;
-		fun_tab[mmb_kw_id("DATE$")] = &&lbl_date;
-		fun_tab[mmb_kw_id("TIME$")] = &&lbl_time;
-		fun_tab[mmb_kw_id("INKEY$")] = &&lbl_inkey;
-		fun_tab[mmb_kw_id("KEYDOWN")] = &&lbl_keydown;
-		fun_tab[mmb_kw_id("TIMER")] = &&lbl_timer;
-		fun_tab[mmb_kw_id("LOF")] = &&lbl_lof;
-		fun_tab[mmb_kw_id("CWD$")] = &&lbl_cwd;
-		fun_tab[mmb_kw_id("INPUT$")] = &&lbl_input;
-		fun_tab[mmb_kw_id("JSON$")] = &&lbl_json;
-		fun_tab[mmb_kw_id("JSON_STRINGIFY$")] = &&lbl_json_stringify;
-		fun_tab[mmb_kw_id("ACOS")] = &&lbl_acos;
-		fun_tab[mmb_kw_id("ACS")] = &&lbl_acos;
-		fun_tab[mmb_kw_id("ASIN")] = &&lbl_asin;
-		fun_tab[mmb_kw_id("ASN")] = &&lbl_asin;
-		fun_tab[mmb_kw_id("LOC")] = &&lbl_loc;
-		fun_tab[mmb_kw_id("SGN")] = &&lbl_sgn;
-		fun_tab[mmb_kw_id("EXP")] = &&lbl_exp;
-		fun_tab[mmb_kw_id("LOG")] = &&lbl_log;
-		fun_tab[mmb_kw_id("PI")] = &&lbl_pi;
-		fun_tab[mmb_kw_id("DEG")] = &&lbl_deg;
-		fun_tab[mmb_kw_id("RAD")] = &&lbl_rad;
-		fun_tab[mmb_kw_id("POS")] = &&lbl_pos;
-		fun_tab[mmb_kw_id("CSRLIN")] = &&lbl_csrlin;
-		fun_tab[mmb_kw_id("BIT")] = &&lbl_bit;
-		fun_tab[mmb_kw_id("BYTE")] = &&lbl_byte;
-		fun_tab[mmb_kw_id("EPOCH")] = &&lbl_epoch;
-		fun_tab[mmb_kw_id("CHOICE")] = &&lbl_choice;
-		fun_tab[mmb_kw_id("FORMAT$")] = &&lbl_format;
-		fun_tab[mmb_kw_id("BOUND")] = &&lbl_bound;
-		fun_tab[mmb_kw_id("TAB")] = &&lbl_tab;
-		fun_tab[mmb_kw_id("MM.VER")] = &&lbl_mmver;
-		fun_tab[mmb_kw_id("MM.DEVICE$")] = &&lbl_mmdev;
-		fun_tab[mmb_kw_id("MM.CMDLINE$")] = &&lbl_mmcmd;
-		fun_tab[mmb_kw_id("TDF.WIDTH")] = &&lbl_tdfwidth;
-		fun_tab[mmb_kw_id("TDF.NAME$")] = &&lbl_tdfname;
-		fun_tab[mmb_kw_id("TDF.TYPE%")] = &&lbl_tdftype;
-		fun_tab[mmb_kw_id("TDF.SPACING%")] = &&lbl_tdfspacing;
-		fun_tab[mmb_kw_id("TDF.HEIGHT")] = &&lbl_tdfheight;
-		fun_tab[mmb_kw_id("TDF.VARIANTS%")] = &&lbl_tdfvariants;
-		fun_tab[mmb_kw_id("TDF.VARIANT%")] = &&lbl_tdfvariant;
-		fun_tab[mmb_kw_id("TDF.VARIANTNAME$")] = &&lbl_tdfvariantname;
-		fun_tab[mmb_kw_id("MAX")] = &&lbl_max;
-		fun_tab[mmb_kw_id("MIN")] = &&lbl_min;
-		fun_tab[mmb_kw_id("MM.BATTERY%")] = &&lbl_mmbattery;
-		fun_tab[mmb_kw_id("MM.BRIGHTNESS%")] = &&lbl_mmbrightness;
+#define MMB_FUN_ENTRY(n, l) fun_tab[mmb_kw_id(n)] = &&l;
+		MMB_FUN_TAB(MMB_FUN_ENTRY)
+#undef MMB_FUN_ENTRY
 		finited = 1;
 	}
 	if ((unsigned char)*G.p == 0x80)

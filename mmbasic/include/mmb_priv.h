@@ -1537,5 +1537,7 @@ uint32_t mmb_rng_seed(void);
 
 /* functions inside expressions */
 int mmb_try_function(mmb_val *out);
+/* True when name is a built-in function (reserved as a variable name). */
+int mmb_is_builtin_func(const char *name);
 
 #endif
