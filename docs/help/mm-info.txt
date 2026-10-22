@@ -6,18 +6,21 @@ Return information about the current graphics mode.
 value = MM.INFO
 value = MM.INFO(key)
 
-  key - "MODE" (default returns mode + bits/100), "HRES", "AUDIO"
-        ("HDMI" or "JACK"), "MIXGAP" (longest mixer gap in milliseconds
-        since PLAY started), "UNDERRUN" (times the output queue was
-        empty when the mixer ran), "AUDIORESET" (times PLAY RESET
-        has re-initialised the audio backend), "FIRSTVOL" (the gain
-        applied to the first mixed buffer after playback began; -1 if
-        nothing has played yet), "MP3BUF" (peak bytes the streaming
-        MP3 decoder allocated; bounded, not the file size), or the
-        last MP3's sample rate and frame counts: "MP3RATE" (source
-        rate in Hz), "MP3SRC" (source frames decoded) and "MP3OUT"
-        (44100 Hz frames mixed — MP3SRC * 44100 / MP3RATE when the
-        resampler is correct)
+  key - MODE (default returns mode + bits/100), HRES, VRES, VERSION
+        (firmware version as major.minor.micro), AUDIO ("HDMI" or
+        "JACK"), MIXGAP (longest mixer gap in milliseconds since PLAY
+        started), UNDERRUN (times the output queue was empty when the
+        mixer ran), AUDIORESET (times PLAY RESET has re-initialised the
+        audio backend), FIRSTVOL (the gain applied to the first mixed
+        buffer after playback began; -1 if nothing has played yet),
+        MP3BUF (peak bytes the streaming MP3 decoder allocated;
+        bounded, not the file size), or the last MP3's sample rate and
+        frame counts: MP3RATE (source rate in Hz), MP3SRC (source
+        frames decoded) and MP3OUT (44100 Hz frames mixed — MP3SRC *
+        44100 / MP3RATE when the resampler is correct)
+
+  Keys are bareword keywords, as on the CMM2, so MODE and "MODE" are
+  equivalent and case does not matter. An unknown key is a syntax error.
 
 See also ~MM.INFO$~, ~MODE~, ~AUDIO_TARGET~.
 
