@@ -57,6 +57,7 @@
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
+#define MMB_MAX_IF_DEPTH  32
 #define MMB_MAX_CONST     256
 #define MMB_MAX_SUBS      128
 #define MMB_MAX_LABELS    64
@@ -454,6 +455,7 @@ typedef struct mmb {
 		int next_pc;  /* matching NEXT statement pc, same-line scan (#1004) */
 		const char *next_pos;  /* matching NEXT statement pointer (#1004) */
 		const char *after_pos; /* statement after that NEXT, else NULL (#1004) */
+		int if_depth;  /* block IF depth when the loop was entered (#1273) */
 	} forstack[16];
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
@@ -469,6 +471,7 @@ typedef struct mmb {
 	int data_off;          /* byte offset of the next item in prog[data_line] (#990) */
 	int gosub_sp;
 	int gosub_stack[MMB_MAX_GOSUB];
+	const char *gosub_pos[MMB_MAX_GOSUB]; /* same-line resume after a call (#1276) */
 	int gosub_event[MMB_MAX_GOSUB];
 	int gosub_nsave[MMB_MAX_GOSUB];
 	char gosub_saven[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
@@ -487,9 +490,16 @@ typedef struct mmb {
 		int line_pc;
 		int skip;          /* skip statements on this line */
 		int endif_pc;      /* for if/select */
+		int if_depth;      /* block IF depth when the loop was entered (#1273) */
 	} ctrlstack[MMB_MAX_CTRL];
-	int if_skip;           /* multiline IF: skip statements */
-	int if_taken;          /* multiline IF: true branch taken */
+	/* Per-nesting-level block IF state (#1273).  Each entry is one active
+	 * IF ... END IF block; the top entry owns the current skip decision. */
+	unsigned char if_stack[MMB_MAX_IF_DEPTH];
+	int if_depth;
+	/* One-line IF ... THEN selected a branch and still owns the rest of the
+	 * line: 0 = none, 1 = THEN part (stop at ELSE), 2 = ELSE part (#1276). */
+	int if_inline;
+	int if_armed;          /* if_inline was just set; run the arm statements */
 	int sel_active;
 	int sel_skip;
 	mmb_val sel_val;
@@ -500,8 +510,9 @@ typedef struct mmb {
 	mmb_localsave gosub_local[MMB_MAX_GOSUB][MMB_MAX_LOCALS];
 	int gosub_sel_skip[MMB_MAX_GOSUB];
 	int gosub_sel_active[MMB_MAX_GOSUB];
-	int gosub_if_skip[MMB_MAX_GOSUB];
-	int gosub_if_taken[MMB_MAX_GOSUB];
+	unsigned char gosub_if_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
+	int gosub_if_depth[MMB_MAX_GOSUB];
+	int gosub_if_inline[MMB_MAX_GOSUB];
 	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
 	char *gosub_sel_str[MMB_MAX_GOSUB];
 	int nconst;

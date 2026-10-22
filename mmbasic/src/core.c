@@ -354,6 +354,39 @@ static int match_else_if(void)
 	return 0;
 }
 
+/* Block IF frame states (#1273).  IF_BODY runs the selected branch;
+ * IF_SEARCH is skipping a false IF looking for ELSE/ELSEIF; IF_SHADOW is a
+ * nested IF inside a skipped region (never evaluated, #1274); IF_DONE is a
+ * taken branch whose later ELSE/ELSEIF arms are being skipped. */
+#define IF_BODY   0
+#define IF_SEARCH 1
+#define IF_SHADOW 2
+#define IF_DONE   3
+
+/* 1 when the current line is the ELSE token, without consuming it. */
+static int at_else_kw(void)
+{
+	const char *save = G.p;
+	int r = mmb_match("ELSE");
+	G.p = save;
+	return r;
+}
+
+static int at_elseif_kw(void)
+{
+	const char *save = G.p;
+	int r = mmb_match("ELSEIF");
+	G.p = save;
+	return r;
+}
+
+static void if_push(unsigned char state)
+{
+	if (G.if_depth >= MMB_MAX_IF_DEPTH)
+		mmb_error("?IF");
+	G.if_stack[G.if_depth++] = state;
+}
+
 static int process_line_structure(const char *body)
 {
 	const char *save = G.p;
@@ -378,46 +411,45 @@ static int process_line_structure(const char *body)
 		return 1;
 	}
 
-	if (G.if_skip)
+	/* A frame other than IF_BODY means this line is being skipped.  Only
+	 * the innermost IF_SEARCH frame may evaluate ELSEIF: it is the frame
+	 * whose false IF started the skip, so no outer frame is skipping. */
+	if (G.if_depth > 0 && G.if_stack[G.if_depth - 1] != IF_BODY)
 	{
 		if (match_endif())
 		{
-			G.if_skip--;
-			if (!G.if_skip)
-				G.if_taken = 0;
+			G.if_depth--;
 			G.p = save;
 			return 1;
 		}
 		if (match_else_if())
 		{
-			if (G.if_skip == 1 && !G.if_taken)
+			if (G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
 				mmb_val v = mmb_expr();
 				if (mmb_as_int(v))
-				{
-					G.if_skip = 0;
-					G.if_taken = 1;
-				}
+					G.if_stack[G.if_depth - 1] = IF_BODY;
 			}
 			G.p = save;
 			return 1;
 		}
 		if (mmb_match("ELSE"))
 		{
-			if (G.if_skip == 1 && !G.if_taken)
+			int run = 0;
+			if (G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
-				G.if_skip = 0;
-				G.if_taken = 1;
+				G.if_stack[G.if_depth - 1] = IF_BODY;
+				run = 1;
 			}
 			G.p = save;
-			return G.if_skip != 0;
+			return !run;
 		}
-		if (mmb_match("IF"))
+		/* Nested block IF: count it without evaluating its condition, so
+		 * functions and array indexes in skipped code never run (#1274).
+		 * One-line IFs do not open a block and are skipped whole. */
+		if (line_is_block_if(body))
 		{
-			mmb_val v = mmb_expr();
-			(void)v;
-			if (mmb_match("THEN") && at_end_of_statement())
-				G.if_skip++;
+			if_push(IF_SHADOW);
 			G.p = save;
 			return 1;
 		}
@@ -425,17 +457,18 @@ static int process_line_structure(const char *body)
 		return 1;
 	}
 
-	if (G.if_taken)
+	if (G.if_depth > 0)
 	{
+		/* Executing the body of the innermost taken branch. */
 		if (match_else_if() || mmb_match("ELSE"))
 		{
-			G.if_skip = 1;
+			G.if_stack[G.if_depth - 1] = IF_DONE;
 			G.p = save;
 			return 1;
 		}
 		if (match_endif())
 		{
-			G.if_taken = 0;
+			G.if_depth--;
 			G.p = save;
 			return 1;
 		}
@@ -716,8 +749,13 @@ static void gosub_save_ctrl(int g)
 {
 	G.gosub_sel_skip[g] = G.sel_skip;
 	G.gosub_sel_active[g] = G.sel_active;
-	G.gosub_if_skip[g] = G.if_skip;
-	G.gosub_if_taken[g] = G.if_taken;
+	/* Save the block IF stack and the one-line IF owner so the callee starts
+	 * with a clean structure state and the caller resumes exactly where it
+	 * left off (#1273, #1276). */
+	G.gosub_if_depth[g] = G.if_depth;
+	memcpy(G.gosub_if_stack[g], G.if_stack,
+	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
+	G.gosub_if_inline[g] = G.if_inline;
 	G.gosub_sel_val[g] = G.sel_val;
 	if (G.sel_val.type == T_STR)
 	{
@@ -726,16 +764,20 @@ static void gosub_save_ctrl(int g)
 	}
 	G.sel_skip = 0;
 	G.sel_active = 0;
-	G.if_skip = 0;
-	G.if_taken = 0;
+	G.if_depth = 0;
+	G.if_inline = 0;
+	G.if_armed = 0;
 }
 
 static void gosub_restore_ctrl(int g)
 {
 	G.sel_skip = G.gosub_sel_skip[g];
 	G.sel_active = G.gosub_sel_active[g];
-	G.if_skip = G.gosub_if_skip[g];
-	G.if_taken = G.gosub_if_taken[g];
+	G.if_depth = G.gosub_if_depth[g];
+	memcpy(G.if_stack, G.gosub_if_stack[g],
+	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
+	G.if_inline = G.gosub_if_inline[g];
+	G.if_armed = 0;
 	G.sel_val = G.gosub_sel_val[g];
 	if (G.sel_val.type == T_STR)
 	{
@@ -756,6 +798,7 @@ void mmb_cmd_gosub(void)
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
 		mmb_error("?GOSUB");
 	G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
+	G.gosub_pos[G.gosub_sp] = 0;
 	G.gosub_event[G.gosub_sp] = 0;
 	G.gosub_nsave[G.gosub_sp] = 0;
 	G.gosub_nlocal[G.gosub_sp] = 0;
@@ -764,13 +807,25 @@ void mmb_cmd_gosub(void)
 	G.branch_pc = parse_target();
 }
 
+/* Return to the caller of a SUB/GOSUB.  A statement-level sub call saves a
+ * mid-line position so statements after `name(args) :` still run (#1276). */
+static void gosub_resume_caller(void)
+{
+	G.branch_pc = G.gosub_stack[G.gosub_sp];
+	if (G.gosub_pos[G.gosub_sp])
+	{
+		G.branch_pos = G.gosub_pos[G.gosub_sp];
+		G.gosub_pos[G.gosub_sp] = 0;
+	}
+}
+
 void mmb_cmd_return(void)
 {
 	if (G.gosub_sp <= 0)
 		mmb_error("?RETURN WITHOUT GOSUB");
 	G.gosub_sp--;
 	gosub_restore_top();
-	G.branch_pc = G.gosub_stack[G.gosub_sp];
+	gosub_resume_caller();
 }
 
 static void ctrl_reenter(int type)
@@ -796,6 +851,7 @@ void mmb_cmd_while(void)
 			mmb_error("?WHILE");
 		G.ctrlstack[G.ctrl_sp].type = 1;
 		G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
+		G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
 		G.ctrl_sp++;
 	}
 	else
@@ -808,6 +864,8 @@ void mmb_cmd_wend(void)
 	if (G.ctrl_sp <= 0 || G.ctrlstack[G.ctrl_sp - 1].type != 1)
 		mmb_error("?WEND WITHOUT WHILE");
 	pc = G.ctrlstack[G.ctrl_sp - 1].line_pc;
+	/* Drop any block IF left open in this iteration (#1273). */
+	G.if_depth = G.ctrlstack[G.ctrl_sp - 1].if_depth;
 	G.branch_pc = pc;
 }
 
@@ -836,6 +894,7 @@ void mmb_cmd_do(void)
 	G.ctrlstack[G.ctrl_sp].type = 2;
 	G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
 	G.ctrlstack[G.ctrl_sp].skip = 0;
+	G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
 	G.ctrl_sp++;
 }
 
@@ -858,6 +917,8 @@ void mmb_cmd_loop(void)
 	}
 	else if (*G.p && *G.p != ':' && *G.p != '\'')
 		mmb_syntax();
+	/* Drop any block IF left open in this iteration (#1273). */
+	G.if_depth = G.ctrlstack[G.ctrl_sp - 1].if_depth;
 	if (cond)
 		G.branch_pc = pc;
 	else
@@ -874,6 +935,7 @@ void mmb_cmd_exit_do(void)
 		if (G.ctrlstack[i].type == 2)
 		{
 			G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc) + 1;
+			G.if_depth = G.ctrlstack[i].if_depth;
 			G.ctrl_sp = i;
 			return;
 		}
@@ -912,6 +974,8 @@ void mmb_cmd_exit(void)
 		else
 			G.branch_pc =
 				find_next_pc(G.forstack[G.for_sp - 1].for_pc) + 1;
+		/* Leaving the loop discards IF blocks opened inside its body. */
+		G.if_depth = G.forstack[G.for_sp - 1].if_depth;
 		G.for_sp--;
 		return;
 	}
@@ -945,6 +1009,7 @@ void mmb_cmd_continue(void)
 		else
 			G.branch_pc =
 				find_next_pc(G.forstack[G.for_sp - 1].for_pc);
+		G.if_depth = G.forstack[G.for_sp - 1].if_depth;
 		return;
 	}
 	if (mmb_match("DO"))
@@ -955,6 +1020,7 @@ void mmb_cmd_continue(void)
 			if (G.ctrlstack[i].type == 2)
 			{
 				G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
+				G.if_depth = G.ctrlstack[i].if_depth;
 				return;
 			}
 		}
@@ -1106,8 +1172,8 @@ void mmb_cmd_end_select(void)
 
 void mmb_cmd_endif(void)
 {
-	G.if_skip = 0;
-	G.if_taken = 0;
+	if (G.if_depth > 0)
+		G.if_depth--;
 }
 
 void mmb_cmd_data(void)
@@ -1559,12 +1625,41 @@ void mmb_cmd_line_input(void)
 	mmb_do_assign(name, t ? t : T_STR, nidx, idx, v);
 }
 
+/* A SUB called as a statement returns to the next line by default, which
+ * silently drops `name(args) : stmt` (#1276).  When the call came from a
+ * program line, remember where on that same line execution resumes. */
+static void stmt_call_resume(void)
+{
+	const char *base, *q;
+	int g;
+	if (G.branch_pc < 0 || G.gosub_sp <= 0)
+		return;
+	g = G.gosub_sp - 1;
+	base = (G.run_pc >= 0 && G.run_pc < G.nprog)
+		       ? mmb_tok_line(G.run_pc)
+		       : 0;
+	q = G.p;
+	while (*q == ' ' || *q == '\t')
+		q++;
+	if (!base || G.p < base || G.p >= base + MMB_LINE_LEN ||
+	    *q == 0 || *q == '\'')
+	{
+		/* Nothing follows on this line (or it is not a stable program
+		 * line): no mid-line resume, and no stale inline-IF owner. */
+		G.gosub_if_inline[g] = 0;
+		return;
+	}
+	G.gosub_stack[g] = G.run_pc;
+	G.gosub_pos[g] = (*q == ':') ? q + 1 : q;
+}
+
 void mmb_cmd_call(void)
 {
 	char name[MMB_MAX_NAME];
 	mmb_ident(name, sizeof(name));
 	if (!mmb_call_named_sub(name))
 		mmb_error("?SUB NOT FOUND");
+	stmt_call_resume();
 }
 
 static void gosub_restore_top(void)
@@ -1679,6 +1774,7 @@ int mmb_call_named_sub(const char *name)
 		mmb_error("?GOSUB");
 	g = G.gosub_sp;
 	G.gosub_stack[g] = G.run_pc + 1;
+	G.gosub_pos[g] = 0;
 	G.gosub_event[g] = 0;
 	G.gosub_nsave[g] = G.subs[si].nargs;
 	G.gosub_nlocal[g] = 0;
@@ -1794,7 +1890,7 @@ void mmb_cmd_end_sub(void)
 	{
 		G.gosub_sp--;
 		gosub_restore_top();
-		G.branch_pc = G.gosub_stack[G.gosub_sp];
+		gosub_resume_caller();
 	}
 	else
 		G.branch_pc = G.nprog;
@@ -2642,10 +2738,23 @@ static void if_skip_to_stmt_end(void)
 	}
 }
 
+/* True when this IF sits in the body of a same-line FOR ... NEXT.  That body
+ * owns the rest of the line, so a one-line IF there keeps its historical
+ * single-statement arm (the NEXT and trailing statements must still run). */
+static int if_in_same_line_for_body(void)
+{
+	if (G.for_sp <= 0)
+		return 0;
+	if (!G.forstack[G.for_sp - 1].next_pos)
+		return 0;
+	return G.p >= G.forstack[G.for_sp - 1].pos &&
+	       G.p < G.forstack[G.for_sp - 1].next_pos;
+}
+
 void mmb_cmd_if(void)
 {
 	mmb_val v;
-	int cond;
+	int cond, legacy;
 	int else_id, elseif_id;
 	const char *then0;
 	if (mmb_tcache_try_if())
@@ -2657,10 +2766,10 @@ void mmb_cmd_if(void)
 	mmb_skip_sp();
 	if (at_end_of_statement())
 	{
-		G.if_taken = cond;
-		G.if_skip = cond ? 0 : 1;
+		if_push(cond ? IF_BODY : IF_SEARCH);
 		return;
 	}
+	legacy = if_in_same_line_for_body();
 	if (cond)
 	{
 		if (*G.p >= '0' && *G.p <= '9')
@@ -2695,14 +2804,22 @@ void mmb_cmd_if(void)
 			}
 			G.p = save;
 		}
-		exec_statement();
-		if_skip_to_stmt_end();
+		/* The THEN arm owns every statement up to ELSE or the end of the
+		 * line; the statement loop runs them and stops at ELSE (#1276). */
+		if (legacy)
+		{
+			exec_statement();
+			if_skip_to_stmt_end();
+			return;
+		}
+		G.if_inline = 1;
+		G.if_armed = 1;
 		return;
 	}
 	else_id = mmb_kw_id("ELSE");
 	elseif_id = mmb_kw_id("ELSEIF");
 	then0 = G.p;
-	while (*G.p && *G.p != ':')
+	while (*G.p && !(legacy && *G.p == ':'))
 	{
 		int which;
 		if (*G.p == '\'')
@@ -2723,8 +2840,14 @@ void mmb_cmd_if(void)
 			mmb_skip_sp();
 			if (mmb_as_int(v))
 			{
-				exec_statement();
-				if_skip_to_stmt_end();
+				if (legacy)
+				{
+					exec_statement();
+					if_skip_to_stmt_end();
+					return;
+				}
+				G.if_inline = 1;
+				G.if_armed = 1;
 				return;
 			}
 			then0 = G.p;
@@ -2732,9 +2855,16 @@ void mmb_cmd_if(void)
 		}
 		if (which == 1)
 		{
-			mmb_skip_sp();
-			exec_statement();
-			if_skip_to_stmt_end();
+			if (legacy)
+			{
+				mmb_skip_sp();
+				exec_statement();
+				if_skip_to_stmt_end();
+				return;
+			}
+			/* The ELSE arm owns the rest of the line. */
+			G.if_inline = 2;
+			G.if_armed = 1;
 			return;
 		}
 		if ((unsigned char)*G.p == 0x80)
@@ -2909,6 +3039,7 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].next_pc = next_pc;
 		G.forstack[G.for_sp].next_pos = next_pos;
 		G.forstack[G.for_sp].after_pos = after_pos;
+		G.forstack[G.for_sp].if_depth = G.if_depth;
 		G.forstack[G.for_sp].end_line =
 			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
 				? jmp_next[G.run_pc]
@@ -2950,6 +3081,8 @@ void mmb_cmd_next(void)
 		if ((step >= 0 && cur <= to) || (step < 0 && cur >= to))
 		{
 			G.forstack[G.for_sp - 1].stmt = 1;
+			/* Next iteration: discard IF blocks opened in this one. */
+			G.if_depth = G.forstack[G.for_sp - 1].if_depth;
 		}
 		else
 		{
@@ -2958,6 +3091,7 @@ void mmb_cmd_next(void)
 			strncpy(vname, G.forstack[G.for_sp - 1].var, MMB_MAX_NAME - 1);
 			vname[MMB_MAX_NAME - 1] = 0;
 			G.for_sp--;
+			G.if_depth = G.forstack[G.for_sp].if_depth;
 			G.forstack[G.for_sp].stmt = 0;
 			/* The matching NEXT pc was recorded at FOR (#992). When the
 			 * NEXT we are executing is exactly that line, exiting the
@@ -4193,6 +4327,7 @@ static void exec_statement(void)
 			{
 				if (!mmb_call_named_sub(raw))
 					mmb_syntax();
+				stmt_call_resume();
 				return;
 			}
 			G.p = save;
@@ -4232,18 +4367,49 @@ static void exec_statement(void)
 	mmb_syntax();
 }
 
+/* 1 when the rest of a one-line IF's selected arm must be skipped: the
+ * THEN arm owns statements up to ELSE, so a top-level ELSE/ELSEIF ends it. */
+static int if_inline_stop(void)
+{
+	if (G.if_inline != 1)
+		return 0;
+	if (!at_else_kw() && !at_elseif_kw())
+		return 0;
+	while (*G.p)
+		G.p++;
+	G.if_inline = 0;
+	return 1;
+}
+
 static void exec_stmt_loop(void)
 {
 	for (;;)
 	{
+		if (if_inline_stop())
+			break;
 		exec_statement();
+		if (G.if_armed)
+		{
+			/* The IF selected a one-line arm; run its statements next. */
+			G.if_armed = 0;
+			continue;
+		}
 		if (G.branch_pc >= 0)
+		{
+			/* A sub call keeps its caller's one-line IF state in the
+			 * gosub frame and restores it; any other branch abandons the
+			 * rest of this line. */
+			G.if_inline = 0;
+			G.if_armed = 0;
 			return;
+		}
 		/* A NEXT that advanced requested a loop-back; stop the line so the
 		 * caller can resume the body (same-line FOR/NEXT, #997). */
 		if (G.for_sp > 0 && G.forstack[G.for_sp - 1].stmt == 1)
 			return;
 		mmb_skip_sp();
+		if (if_inline_stop())
+			break;
 		if (*G.p == ':')
 		{
 			G.p++;
@@ -4255,6 +4421,7 @@ static void exec_stmt_loop(void)
 			mmb_syntax();
 		break;
 	}
+	G.if_inline = 0;
 }
 
 static void exec_line_body(const char *body)
@@ -4544,8 +4711,9 @@ static void run_program(void)
 		G.ctrl_sp = 0;
 		G.branch_pc = -1;
 		G.branch_pos = 0;
-		G.if_skip = 0;
-		G.if_taken = 0;
+		G.if_depth = 0;
+		G.if_inline = 0;
+		G.if_armed = 0;
 		G.sel_active = 0;
 		G.sel_skip = 0;
 		G.in_sub = 0;
@@ -4704,8 +4872,9 @@ static int has_unquoted_comma(const char *s)
 static void clear_exec_flags(void)
 {
 	G.running = 0;
-	G.if_skip = 0;
-	G.if_taken = 0;
+	G.if_depth = 0;
+	G.if_inline = 0;
+	G.if_armed = 0;
 	G.sel_skip = 0;
 	G.sel_active = 0;
 	G.branch_pc = -1;
