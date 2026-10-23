@@ -1905,6 +1905,7 @@ static void inkey_drop(int n)
 		n = G.inkey_n;
 	G.inkey_r = (G.inkey_r + n) % MMB_INKEY;
 	G.inkey_n -= n;
+	G.inkey_gen++;
 }
 
 static void inkey_poll(void)
@@ -2054,6 +2055,7 @@ void mmb_inkey_push(int c)
 	G.inkey_q[G.inkey_w] = c;
 	G.inkey_w = (G.inkey_w + 1) % MMB_INKEY;
 	G.inkey_n++;
+	G.inkey_gen++;
 }
 
 static int inkey_decode(int consume, int *out_len)

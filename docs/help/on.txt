@@ -24,9 +24,10 @@ ON MOUSEMOVE subname
   subname - SUB called when a key or pointer event is waiting
   ascii - Colour Maximite 2 key code (see ~KEYBOARD CODES~)
 
-ON KEY subname installs the general key interrupt: subname is called when any
-key is waiting. The key stays in the input buffer for ~INKEY$~ to read. Bare
-ON KEY and ON KEY 0 clear the general interrupt.
+ON KEY subname installs the general key interrupt: subname is called once
+when a key starts waiting. The key stays in the input buffer for ~INKEY$~ to
+read; leaving it unread does not call the handler again until another key
+arrives. Bare ON KEY and ON KEY 0 clear the general interrupt.
 
 ON KEY ascii, subname installs a handler for one key only. The key is removed
 from the input buffer, so INKEY$ does not also return it. This is independent

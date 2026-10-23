@@ -571,6 +571,10 @@ typedef struct mmb {
 	} tick[MMB_MAX_TICK];
 	int inkey_q[MMB_INKEY];
 	int inkey_r, inkey_w, inkey_n;
+	/* Bumped whenever the queue changes (push or drop). The general ON KEY
+	 * handler fires once per change, so an unread key is not re-dispatched
+	 * at every statement/wait-loop boundary. */
+	int inkey_gen, on_key_gen;
 	int keydown[6];
 	int nkeydown;
 	int nlabels;
