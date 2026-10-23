@@ -4776,8 +4776,12 @@ void mmb_run_events(void)
 			G.tick_busy = 0;
 		}
 	}
-	if (G.on_key[0] && G.inkey_n > 0)
+	/* Fire once per queue change (#1293). The general key stays in the
+	 * buffer for INKEY$, so a level check here re-ran the handler on every
+	 * spin of PAUSE/VSYNC while that key remained unread. */
+	if (G.on_key[0] && G.inkey_n > 0 && G.inkey_gen != G.on_key_gen)
 	{
+		G.on_key_gen = G.inkey_gen;
 		saved_pc = G.run_pc;
 		saved_p = G.p;
 		saved_branch = G.branch_pc;
@@ -4873,6 +4877,7 @@ static void run_program(void)
 		G.on_mouseup[0] = 0;
 		G.tick_busy = 0;
 		G.inkey_n = G.inkey_r = G.inkey_w = 0;
+		G.inkey_gen = G.on_key_gen = 0;
 		/* Token/label/jump tables depend only on the program text, so a
 		 * re-RUN of an unchanged program can reuse them (#992). */
 		if (G.prog_dirty || !G.prog_ready)

@@ -302,3 +302,64 @@ def test_general_on_key_fires_during_pause(fresh_console):
     out = _run_and_send(fresh_console, b"q", delay=0.4)
     assert "DRAIN113" in out
     assert "AFTER[]" in out
+
+
+def test_general_on_key_does_not_reenter_unread_key(fresh_console):
+    # #1293: the general handler leaves the key in the buffer for INKEY$, so
+    # a level-triggered dispatch re-ran it on every PAUSE spin (tens of
+    # thousands of calls for one key). It must fire once per key arrival.
+    _load_program(
+        fresh_console,
+        [
+            "10 ON KEY Nop",
+            "20 CNT=0",
+            '30 PRINT "READY"',
+            "40 PAUSE 500",
+            '50 PRINT "CNT";CNT',
+            '60 PRINT "K";ASC(INKEY$)',
+            "70 END",
+            "100 SUB Nop",
+            "110 CNT=CNT+1",
+            "120 END SUB",
+        ],
+    )
+    out = _run_and_send(fresh_console, b"q", delay=0.1)
+    assert "?SYNTAX" not in out.upper()
+    match = re.search(r"CNT(\d+)", out)
+    assert match, out
+    assert int(match.group(1)) <= 3, out
+    assert "K113" in out
+
+
+def test_general_on_key_refires_for_next_key(fresh_console):
+    # #1293: an unread key must not re-fire the handler, but the next key to
+    # arrive must still dispatch it (with the earlier key still queued).
+    con = fresh_console
+    _load_program(
+        con,
+        [
+            "10 ON KEY Nop",
+            "20 CNT=0",
+            '30 PRINT "READY"',
+            "40 PAUSE 400",
+            "50 PAUSE 400",
+            '60 PRINT "CNT";CNT',
+            '70 PRINT "K";ASC(INKEY$);"-";ASC(INKEY$)',
+            "80 END",
+            "100 SUB Nop",
+            "110 CNT=CNT+1",
+            "120 END SUB",
+        ],
+    )
+    con._ser.sendall(b"RUN\r")
+    assert b"READY" in _wait_contains(con, b"READY", timeout=8.0)
+    time.sleep(0.1)
+    con._ser.sendall(b"q")
+    time.sleep(0.5)
+    con._ser.sendall(b"w")
+    out = _until_prompt(con, timeout=8.0)
+    assert "?SYNTAX" not in out.upper()
+    match = re.search(r"CNT(\d+)", out)
+    assert match, out
+    assert int(match.group(1)) == 2, out
+    assert "K113-119" in out
