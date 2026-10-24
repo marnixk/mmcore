@@ -32,11 +32,13 @@ def test_10k_line_program_runs_with_goto_gosub_labels(console):
         "FOR I=20 TO 99950 STEP 10",
         'PRINT #1, STR$(I)+" S=S+1"',
         "NEXT I",
-        'PRINT #1, "99960 GOSUB ENDLABEL"',
+        # Numeric GOSUB/GOTO to lines near the end exercise the binary
+        # line-number search at 10k scale; RESTORE keeps a label target.
+        'PRINT #1, "99960 GOSUB 100010"',
         'PRINT #1, "99970 RESTORE DATALBL"',
         'PRINT #1, "99980 READ X"',
         'PRINT #1, "99990 PRINT ""DONE"";S+X"',
-        'PRINT #1, "100000 GOTO FINISH"',
+        'PRINT #1, "100000 GOTO 100060"',
         'PRINT #1, "100010 ENDLABEL:"',
         'PRINT #1, "100020 S=S+1"',
         'PRINT #1, "100030 RETURN"',
@@ -205,4 +207,26 @@ def test_for_loop_survives_var_table_growth(console):
     lines += ["NEXT I", 'PRINT "DONE"; I']
     _write_bas(console, "VGROW.BAS", lines)
     assert console.send_line('RUN "VGROW.BAS"', timeout=60) == "DONE3"
+
+
+def test_over_512_variables_hash_grows(console):
+    """#1303: the variable name hash grows with the table; 640 distinct
+    variables must all be found again (no duplicate slots, no ?UNDECLARED
+    past the old 512-entry hash)."""
+    nvars = 640
+    names = [f"V{i:03d}" for i in range(1, nvars + 1)]
+    lines = []
+    per_line = 27  # "V512=512:" is 9 chars; keep each PRINT #1 statement < 256
+    for start in range(0, nvars, per_line):
+        chunk = names[start:start + per_line]
+        lines.append(":".join(f"{n}={int(n[1:])}" for n in chunk))
+    # Rewriting V512 proves the lookup finds the ORIGINAL slot (a hash miss
+    # here would silently create a duplicate) and readbacks beyond entry 512.
+    lines += ["V512 = 999", 'PRINT V001; " "; V512; " "; V640']
+    _write_bas(console, "V512.BAS", lines)
+    out = console.send_line('RUN "V512.BAS"', timeout=120)
+    assert out == "1 999 640", out
+    # MEMORY counts distinct variables: a duplicate would show 641.
+    mem = console.send_line("MEMORY", timeout=60)
+    assert "Variables: 640" in mem, mem
 
