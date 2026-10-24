@@ -59,6 +59,7 @@
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
 #define MMB_MAX_IF_DEPTH  32
+#define MMB_MAX_SELECT    32
 #define MMB_MAX_CONST     256
 #define MMB_MAX_SUBS      128
 #define MMB_MAX_LABELS    64
@@ -404,6 +405,18 @@ typedef struct mmb_audio {
 #define MMB_TC_VARS  8
 #define MMB_TC_CONST 8
 
+/* One SELECT CASE nesting level (#1299).  The value is owned by the frame
+ * (str) when the selected expression is a string.  ``skipped`` means this
+ * SELECT itself was reached only through skipped code, so its expression was
+ * never evaluated and its CASE arms must not be. */
+typedef struct mmb_selframe {
+	mmb_val val;
+	char *str;
+	int active;    /* a CASE arm has matched */
+	int skip;      /* statements in this SELECT are being skipped */
+	int skipped;   /* whole SELECT lies in skipped code */
+} mmb_selframe;
+
 typedef struct mmb_tc_ent {
 	const char *key;
 	const char *endp;
@@ -461,6 +474,8 @@ typedef struct mmb {
 		const char *next_pos;  /* matching NEXT statement pointer (#1004) */
 		const char *after_pos; /* statement after that NEXT, else NULL (#1004) */
 		int if_depth;  /* block IF depth when the loop was entered (#1273) */
+		int sel_depth; /* SELECT depth when the loop was entered (#1299) */
+		int seq;       /* creation order across FOR/DO/WHILE (#1300) */
 	} forstack[16];
 	mmb_gfx gfx;
 	mmb_file files[MMB_MAX_FILES + 1];
@@ -496,6 +511,8 @@ typedef struct mmb {
 		int skip;          /* skip statements on this line */
 		int endif_pc;      /* for if/select */
 		int if_depth;      /* block IF depth when the loop was entered (#1273) */
+		int sel_depth;     /* SELECT depth when the loop was entered (#1299) */
+		int seq;           /* creation order across FOR/DO/WHILE (#1300) */
 	} ctrlstack[MMB_MAX_CTRL];
 	/* Per-nesting-level block IF state (#1273).  Each entry is one active
 	 * IF ... END IF block; the top entry owns the current skip decision. */
@@ -508,16 +525,20 @@ typedef struct mmb {
 	/* A SUB/FUNCTION return restored the caller's one-line IF state; the
 	 * callee's END line must not clear it (#1295). */
 	int if_inline_keep;
-	int sel_active;
-	int sel_skip;
-	mmb_val sel_val;
-	char *sel_str;
+	/* Skipped block IFs need only a count, not per-level state, so a deeply
+	 * nested false branch cannot hit the executed-IF depth limit (#1301). */
+	int if_shadow;
+	/* SELECT CASE nesting stack (#1299).  sel_base isolates a SUB/FUNCTION
+	 * call: frames below it belong to the caller and are invisible until the
+	 * call returns. */
+	mmb_selframe selstack[MMB_MAX_SELECT];
+	int sel_sp;
+	int sel_base;
+	int loop_seq;          /* monotonically increasing loop frame order (#1300) */
 	char *func_ret_s;
 	char *gosub_ss[MMB_MAX_GOSUB][MMB_MAX_SUB_ARGS];
 	int gosub_nlocal[MMB_MAX_GOSUB];
 	mmb_localsave gosub_local[MMB_MAX_GOSUB][MMB_MAX_LOCALS];
-	int gosub_sel_skip[MMB_MAX_GOSUB];
-	int gosub_sel_active[MMB_MAX_GOSUB];
 	unsigned char gosub_if_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
 	int gosub_if_depth[MMB_MAX_GOSUB];
 	int gosub_if_inline[MMB_MAX_GOSUB];
@@ -526,8 +547,10 @@ typedef struct mmb {
 	 * opened, or the caller resumes with a stale frame (#1297). */
 	int gosub_ctrl_sp[MMB_MAX_GOSUB];
 	int gosub_for_sp[MMB_MAX_GOSUB];
-	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
-	char *gosub_sel_str[MMB_MAX_GOSUB];
+	/* Caller SELECT frames below sel_base are left in place; only the
+	 * depth/base pair needs saving (#1299). */
+	int gosub_sel_sp[MMB_MAX_GOSUB];
+	int gosub_sel_base[MMB_MAX_GOSUB];
 	int nconst;
 	struct {
 		char name[MMB_MAX_NAME];
