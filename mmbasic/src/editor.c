@@ -4533,14 +4533,16 @@ static void recover_cancel(void)
 	G.ed.dialog = DLG_NONE;
 }
 
+/* Recovery-compare scratch buffer (#1303). Growable; freed on a warm reset. */
+static char *s_recovery_tmp;
+static int s_recovery_tmp_cap;
+
 /* Called after a tab is loaded: if a recovery sidecar survives and differs
  * from the file, ask before replacing the buffer. */
 static void ed_recovery_check(int idx)
 {
 	char rec[160];
 	mmb_ed_tab *t;
-	static char *tmp;
-	static int tmp_cap;
 	unsigned got = 0;
 	int sz;
 
@@ -4556,8 +4558,8 @@ static void ed_recovery_check(int idx)
 	if (sz < 0)
 		return;
 	{
-		int cap = tmp_cap > 0 ? tmp_cap : MMB_ED_BUF;
-		if (sz + 1 > tmp_cap)
+		int cap = s_recovery_tmp_cap > 0 ? s_recovery_tmp_cap : MMB_ED_BUF;
+		if (sz + 1 > s_recovery_tmp_cap)
 		{
 			char *nt;
 			while (cap < sz + 1)
@@ -4565,15 +4567,15 @@ static void ed_recovery_check(int idx)
 			nt = (char *)G.plat->alloc((unsigned)cap);
 			if (!nt)
 				return;
-			if (tmp)
-				G.plat->free(tmp);
-			tmp = nt;
-			tmp_cap = cap;
+			if (s_recovery_tmp)
+				G.plat->free(s_recovery_tmp);
+			s_recovery_tmp = nt;
+			s_recovery_tmp_cap = cap;
 		}
 	}
-	if (mmb_vfs_read(rec, tmp, (unsigned)sz, &got) == 0)
+	if (mmb_vfs_read(rec, s_recovery_tmp, (unsigned)sz, &got) == 0)
 	{
-		if ((int)got == t->len && memcmp(tmp, t->buf, (unsigned)t->len) == 0)
+		if ((int)got == t->len && memcmp(s_recovery_tmp, t->buf, (unsigned)t->len) == 0)
 		{
 			mmb_vfs_kill(rec);
 			return;
@@ -6042,6 +6044,10 @@ void mmb_editor_reset_all(void)
 		if (s_ed[i].find_scratch && G.plat && G.plat->free)
 			G.plat->free(s_ed[i].find_scratch);
 	}
+	if (s_recovery_tmp && G.plat && G.plat->free)
+		G.plat->free(s_recovery_tmp);
+	s_recovery_tmp = 0;
+	s_recovery_tmp_cap = 0;
 	memset(s_ed, 0, sizeof(s_ed));
 }
 

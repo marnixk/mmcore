@@ -273,6 +273,7 @@ static int vars_free_slot(void)
 		if (!G.vars[slot].used)
 			return slot;
 	{
+		mmb_var *old = G.vars;
 		mmb_var *nv = (mmb_var *)G.plat->alloc((unsigned)G.vars_cap * 2 * sizeof(mmb_var));
 		if (!nv)
 			mmb_error("?OUT OF MEMORY");
@@ -281,6 +282,11 @@ static int vars_free_slot(void)
 		G.plat->free(G.vars);
 		G.vars = nv;
 		G.vars_cap *= 2;
+		/* An active FOR loop keeps a live mmb_var* across its body; growth
+		 * moved the table, so rebase every loop variable (#1303). */
+		for (slot = 0; slot < G.for_sp; slot++)
+			if (G.forstack[slot].vp)
+				G.forstack[slot].vp = nv + (G.forstack[slot].vp - old);
 		mmb_tcache_invalidate();
 		mmb_resolve_invalidate();
 		return G.vars_cap / 2; /* first fresh slot of the doubled table */
