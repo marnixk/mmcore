@@ -45,6 +45,8 @@ def test_not_stays_logical(console):
     assert console.send_line("PRINT NOT 5") == "0"
     assert console.send_line("PRINT NOT -1") == "0"
     assert console.send_line("PRINT NOT (1=1)") == "0"
+    assert console.send_line("PRINT NOT 0.5") == "0"
+    assert console.send_line("PRINT NOT 0.0") == "1"
 
 
 def test_inv_bitwise_not(console):

@@ -2433,7 +2433,7 @@ static mmb_val expr_unary(void)
 	    expr_match_unary("NOT", 3))
 	{
 		mmb_val v = expr_unary();
-		return mmb_int_val(mmb_as_int(v) ? 0 : 1);
+		return mmb_int_val(mmb_as_float(v) != 0.0 ? 0 : 1);
 	}
 	if (((unsigned char)*G.p == 0x80 || *G.p == 'I' || *G.p == 'i') &&
 	    expr_match_unary("INV", 3))
