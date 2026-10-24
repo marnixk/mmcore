@@ -377,3 +377,145 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 	}
 	return 0;
 }
+
+/* Read one entry by walking the central directory through a positional
+ * reader. Only the ZIP tail, the central directory headers and the chosen
+ * entry's local header + data are fetched, so inspecting metadata for a large
+ * package costs a few small reads rather than the whole archive. */
+int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		       const char *name, void *out, unsigned out_cap,
+		       unsigned *out_len)
+{
+	unsigned char tail[1024];
+	unsigned char *big = 0;
+	const unsigned char *buf = tail;
+	unsigned tail_n, eocd, nent, cd_off, pos, i;
+	unsigned method = 0, crc = 0, csz = 0, usz = 0, local = 0;
+	unsigned name_len, got;
+	int found = 0, rc = -1;
+
+	if (out_len)
+		*out_len = 0;
+	if (!rd || !name || !name[0] || !out || !out_cap || zip_size < 22)
+		return -1;
+	name_len = (unsigned)strlen(name);
+	tail_n = zip_size < sizeof(tail) ? zip_size : (unsigned)sizeof(tail);
+	if (rd(ctx, zip_size - tail_n, tail, tail_n, &got) != 0 ||
+	    got != tail_n)
+		return -1;
+	if (find_eocd(tail, tail_n, &eocd) != 0)
+	{
+		/* An archive comment can push the EOCD beyond the first tail
+		 * read; retry once with the ZIP-format maximum tail. */
+		unsigned want = zip_size < 22 + 65535u ? zip_size : 22 + 65535u;
+		if (want <= tail_n)
+			return -1;
+		big = G.plat->alloc(want);
+		if (!big)
+			return -1;
+		if (rd(ctx, zip_size - want, big, want, &got) != 0 ||
+		    got != want || find_eocd(big, want, &eocd) != 0)
+			goto done;
+		buf = big;
+	}
+	nent = u16le(buf + eocd + 10);
+	cd_off = u32le(buf + eocd + 16);
+	if (cd_off >= zip_size || nent == 0)
+		goto done;
+	pos = cd_off;
+	for (i = 0; i < nent; i++)
+	{
+		unsigned char h[46];
+		unsigned nlen, elen, clen;
+		if (pos + 46 > zip_size)
+			break;
+		if (rd(ctx, pos, h, 46, &got) != 0 || got != 46)
+			break;
+		if (u32le(h) != 0x02014b50u)
+			break;
+		method = u16le(h + 10);
+		crc = u32le(h + 16);
+		csz = u32le(h + 20);
+		usz = u32le(h + 24);
+		nlen = u16le(h + 28);
+		elen = u16le(h + 30);
+		clen = u16le(h + 32);
+		local = u32le(h + 42);
+		if (pos + 46 + nlen + elen + clen > zip_size)
+			break;
+		if (nlen == name_len && nlen < 128)
+		{
+			char ename[128];
+			if (rd(ctx, pos + 46, ename, nlen, &got) == 0 &&
+			    got == nlen)
+			{
+				ename[nlen] = 0;
+				if (mmb_keyword_eq(ename, name))
+				{
+					found = 1;
+					break;
+				}
+			}
+		}
+		pos += 46 + nlen + elen + clen;
+	}
+	if (!found || usz > out_cap)
+		goto done;
+	{
+		unsigned char lh[30];
+		unsigned ln, lx, data_off;
+
+		if (local + 30 > zip_size)
+			goto done;
+		if (rd(ctx, local, lh, 30, &got) != 0 || got != 30 ||
+		    u32le(lh) != 0x04034b50u)
+			goto done;
+		ln = u16le(lh + 26);
+		lx = u16le(lh + 28);
+		data_off = local + 30 + ln + lx;
+		if (data_off + csz > zip_size)
+			goto done;
+		if (method == 0)
+		{
+			if (csz != usz ||
+			    rd(ctx, data_off, out, usz, &got) != 0 ||
+			    got != usz || mmb_crc32(out, usz) != crc)
+				goto done;
+			if (out_len)
+				*out_len = usz;
+			rc = 0;
+		}
+		else if (method == 8)
+		{
+			unsigned char *comp;
+			unsigned outn = 0;
+
+			if (usz == 0)
+			{
+				if (out_len)
+					*out_len = 0;
+				rc = 0;
+				goto done;
+			}
+			comp = G.plat->alloc(csz ? csz : 1);
+			if (!comp)
+				goto done;
+			if (rd(ctx, data_off, comp, csz, &got) != 0 ||
+			    got != csz ||
+			    mmb_inflate(comp, csz, out, out_cap, &outn) != 0 ||
+			    outn != usz || mmb_crc32(out, outn) != crc)
+			{
+				G.plat->free(comp);
+				goto done;
+			}
+			G.plat->free(comp);
+			if (out_len)
+				*out_len = outn;
+			rc = 0;
+		}
+	}
+done:
+	if (big)
+		G.plat->free(big);
+	return rc;
+}

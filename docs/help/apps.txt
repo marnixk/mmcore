@@ -10,6 +10,11 @@ Opens the home launcher: a list of every `.APP` on the ~PATH~ (default
 it with the same rules as `RUN "name.app"` (mounted read-only as B:, MAIN.BAS
 starts). Esc leaves the launcher and returns to the REPL.
 
+Entries show the package's Title when it has one (the optional `title=` field
+in its `PACKAGE.INF`, as set by the ~PACKAGE~ wizard). Packages without a
+Title, and archives that cannot be read, show the file name without `.APP`.
+Only the label is taken from the metadata; Enter always runs that package.
+
 A bare app name typed at the prompt also runs it, for example:
 
     MYGAME

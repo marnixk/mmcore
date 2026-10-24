@@ -35,6 +35,27 @@ def _make_app(con, root, appname, text="APPOK"):
     return f"A:/{root}/"
 
 
+def _build_app(con, root, srcdir, appname, text, title=None):
+    """Package ``A:/<root>/<appname>.APP`` from ``<root>/<srcdir>``.
+
+    ``title`` is written into PACKAGE.INF before packaging, so the archive
+    carries the same metadata the PACKAGE wizard writes (#1305).
+    """
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line(f'MKDIR "{root}"')
+    con.send_line(f'MKDIR "{root}/{srcdir}"')
+    _write_lines(con, f"{root}/{srcdir}/MAIN.BAS", [f'PRINT "{text}"'])
+    if title is not None:
+        _write_lines(
+            con,
+            f"{root}/{srcdir}/PACKAGE.INF",
+            [f"name={appname}.APP", "main=MAIN.BAS", f"title={title}"],
+        )
+    assert con.send_line(f'CHDIR "A:/{root}"') == ""
+    assert con.send_line(f'PACKAGE "{appname}.APP", "A:/{root}/{srcdir}/"') == ""
+    return f"A:/{root}/"
+
+
 def test_default_path_is_apps_ramdisk(console):
     """#520: the default A:/APPS/ works with a bundled-style package."""
     con = console
@@ -145,6 +166,74 @@ def test_help_apps_path_boot(console):
     opt = dump_topic(console, "OPTION")
     assert "PATH" in opt.upper()
     assert "BOOT" in opt.upper()
+
+
+# --- #1305: launcher labels use the package's stored Title -----------------
+
+
+def test_launcher_shows_package_title(console):
+    con = console
+    root = _build_app(con, "TITLEPK", "SRC", "TITLED", "TITLEOK", "My Great Game")
+    assert con.send_line(f'OPTION PATH "{root}"') == ""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "MY GREAT GAME" in seen, seen
+    assert "TITLED" not in seen, seen  # the Title replaces the stem
+    # Enter still runs the same archive; only the label changed.
+    con._ser.sendall(b"\r")
+    out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
+    assert "TITLEOK" in out, out
+    assert con.send_line("PRINT 21") == "21"
+
+
+def test_launcher_untitled_package_shows_stem(console):
+    con = console
+    root = _build_app(con, "NOTITLE", "SRC", "PLAINAPP", "PLAINOK")
+    assert con.send_line(f'OPTION PATH "{root}"') == ""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "PLAINAPP" in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 22") == "22"
+
+
+def test_launcher_corrupt_package_falls_back_to_stem(console):
+    con = console
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "BADPK"')
+    _write_lines(con, "BADPK/BROKEN.APP", ["this is not a zip archive"])
+    assert con.send_line('OPEN "BADPK/EMPTY.APP" FOR OUTPUT AS #1') == ""
+    assert con.send_line("CLOSE #1") == ""
+    assert con.send_line('OPTION PATH "A:/BADPK/"') == ""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "BROKEN" in seen, seen
+    assert "EMPTY" in seen, seen
+    assert "?PACKAGE" not in seen and "?UNPACK" not in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 23") == "23"
+
+
+def test_launcher_duplicate_titles_keep_distinct_files(console):
+    """Two packages sharing a Title must not collapse into one entry."""
+    con = console
+    _build_app(con, "DUPT", "ONE", "DUPONE", "ONE", "Shared Title")
+    root = _build_app(con, "DUPT", "TWO", "DUPTWO", "TWO", "Shared Title")
+    assert con.send_line(f'OPTION PATH "{root}"') == ""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "SHARED TITLE" in seen, seen
+    visible_stems = [s for s in ("DUPONE", "DUPTWO") if s in seen]
+    assert len(visible_stems) == 1, (visible_stems, seen)
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 24") == "24"
 
 
 # --- #624: launcher overlay dialog with built-in app labels ---------------
