@@ -9,6 +9,26 @@ extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, m
 static mmb_val expr_or(void);
 static mmb_val expr_primary(void);
 
+static int64_t expr_bit_int(mmb_val v)
+{
+	double x;
+	if (v.type == T_INT)
+		return v.i;
+	x = mmb_as_float(v);
+	return x >= 0.0 ? (int64_t)floor(x + 0.5) : (int64_t)ceil(x - 0.5);
+}
+
+static int expr_match_unary(const char *kw, int len)
+{
+	if ((unsigned char)*G.p != 0x80)
+	{
+		char c = G.p[len];
+		if (c == '$' || c == '%' || c == '!')
+			return 0;
+	}
+	return mmb_match(kw);
+}
+
 static int peek_kw(const char *kw)
 {
 	const char *save = G.p;
@@ -2409,10 +2429,17 @@ static mmb_val expr_unary(void)
 		return expr_unary();
 	}
 	mmb_skip_sp();
-	if (((unsigned char)*G.p == 0x80 || *G.p == 'N' || *G.p == 'n') && mmb_match("NOT"))
+	if (((unsigned char)*G.p == 0x80 || *G.p == 'N' || *G.p == 'n') &&
+	    expr_match_unary("NOT", 3))
 	{
 		mmb_val v = expr_unary();
-		return mmb_int_val(mmb_as_int(v) ? 0 : 1);
+		return mmb_int_val(mmb_as_float(v) != 0.0 ? 0 : 1);
+	}
+	if (((unsigned char)*G.p == 0x80 || *G.p == 'I' || *G.p == 'i') &&
+	    expr_match_unary("INV", 3))
+	{
+		mmb_val v = expr_unary();
+		return mmb_int_val(~expr_bit_int(v));
 	}
 	return expr_primary();
 }
@@ -2529,9 +2556,51 @@ static mmb_val expr_add(void)
 	return a;
 }
 
-static mmb_val expr_rel(void)
+static mmb_val expr_shift(void)
 {
 	mmb_val a = expr_add();
+	for (;;)
+	{
+		mmb_skip_sp();
+		if (G.p[0] == '<' && G.p[1] == '<')
+		{
+			mmb_val b;
+			int64_t n, x;
+			G.p += 2;
+			b = expr_add();
+			n = expr_bit_int(b);
+			x = expr_bit_int(a);
+			if (n <= 0)
+				a = mmb_int_val(x);
+			else if (n >= 64)
+				a = mmb_int_val(0);
+			else
+				a = mmb_int_val((int64_t)((uint64_t)x << n));
+		}
+		else if (G.p[0] == '>' && G.p[1] == '>')
+		{
+			mmb_val b;
+			int64_t n, x;
+			G.p += 2;
+			b = expr_add();
+			n = expr_bit_int(b);
+			x = expr_bit_int(a);
+			if (n <= 0)
+				a = mmb_int_val(x);
+			else if (n >= 64)
+				a = mmb_int_val(x < 0 ? -1 : 0);
+			else
+				a = mmb_int_val(x >> n);
+		}
+		else
+			break;
+	}
+	return a;
+}
+
+static mmb_val expr_rel(void)
+{
+	mmb_val a = expr_shift();
 	mmb_skip_sp();
 	{
 		int op = 0; /* 1= 2<> 3< 4> 5<= 6>= */
@@ -2605,7 +2674,7 @@ static mmb_val expr_and(void)
 			break;
 		{
 			mmb_val b = expr_rel();
-			a = mmb_int_val(mmb_as_int(a) && mmb_as_int(b));
+			a = mmb_int_val(expr_bit_int(a) & expr_bit_int(b));
 		}
 	}
 	return a;
@@ -2620,12 +2689,12 @@ static mmb_val expr_or(void)
 		if (((unsigned char)*G.p == 0x80 || *G.p == 'O' || *G.p == 'o') && mmb_match("OR"))
 		{
 			mmb_val b = expr_and();
-			a = mmb_int_val(mmb_as_int(a) || mmb_as_int(b));
+			a = mmb_int_val(expr_bit_int(a) | expr_bit_int(b));
 		}
 		else if (((unsigned char)*G.p == 0x80 || *G.p == 'X' || *G.p == 'x') && mmb_match("XOR"))
 		{
 			mmb_val b = expr_and();
-			a = mmb_int_val((mmb_as_int(a) != 0) ^ (mmb_as_int(b) != 0));
+			a = mmb_int_val(expr_bit_int(a) ^ expr_bit_int(b));
 		}
 		else
 			break;

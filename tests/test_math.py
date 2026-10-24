@@ -124,14 +124,14 @@ def test_math_matrix(console):
     assert console.send_line("PRINT C(0,1)") == "43"
     assert console.send_line("PRINT C(1,1)") == "50"
     assert console.send_line("DIM I(1,1)") == ""
-    assert console.send_line("DIM INV(1,1)") == ""
+    assert console.send_line("DIM INVM(1,1)") == ""
     assert console.send_line("I(0,0)=1") == ""
     assert console.send_line("I(1,0)=0") == ""
     assert console.send_line("I(0,1)=0") == ""
     assert console.send_line("I(1,1)=2") == ""
-    assert console.send_line("MATH M_INVERSE I(), INV()") == ""
-    assert console.send_line("PRINT INV(0,0)") == "1"
-    assert console.send_line("PRINT INV(1,1)") == "0.5"
+    assert console.send_line("MATH M_INVERSE I(), INVM()") == ""
+    assert console.send_line("PRINT INVM(0,0)") == "1"
+    assert console.send_line("PRINT INVM(1,1)") == "0.5"
 
 
 def test_math_vectors_slice_fft_quat(console):
