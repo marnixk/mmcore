@@ -232,6 +232,7 @@ static mmb_var *tc_find_var(const char *name, int type)
 {
 	char nbuf[MMB_MAX_NAME];
 	int t, i;
+	G.acc_on = 0;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
