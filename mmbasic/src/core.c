@@ -1,5 +1,6 @@
 #include "mmb_priv.h"
 #include "frontend.h"
+#include <stdio.h>
 #include <string.h>
 
 extern int mmb_parse_var_ref(char *name, int *nidx, int *idx);
@@ -560,12 +561,36 @@ static void bind_scalar_arg(const char *name, int type)
 static void sub_register(const char *name, int pc, int is_func, int ret_type)
 {
 	int i, slot = -1;
+	int ex, suffixed, sl;
 	char nbuf[MMB_MAX_NAME];
+	char msg[MMB_MAX_NAME + 48];
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
-	if (sub_find(nbuf) >= 0)
-		return;
+	sl = (int)strlen(nbuf);
+	suffixed = sl > 0 &&
+		   (nbuf[sl - 1] == '$' || nbuf[sl - 1] == '%' || nbuf[sl - 1] == '!');
+	mmb_type_suffix(nbuf);
+	/* #1304: a SUB/FUNCTION named like a built-in function (RGB) or colour
+	 * constant (GREY) is unreachable - built-ins resolve first. A suffixed
+	 * name (e.g. FUNCTION grey$) is exempt: the suffix keeps it unambiguous
+	 * when called as grey$(...). */
+	if (!suffixed)
+		mmb_check_user_name(nbuf);
+	ex = sub_find(nbuf);
+	if (ex >= 0)
+	{
+		/* scan_subs() pre-registers every definition, and executing the
+		 * SUB line again registers the same definition (same pc) at
+		 * runtime; that is a no-op. A second definition of the same name
+		 * is a conflict (#1304): the second one would silently never
+		 * bind. */
+		if (G.subs[ex].line_pc == pc)
+			return;
+		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is already a %s", nbuf,
+			 G.subs[ex].is_func ? "FUNCTION" : "SUB");
+		mmb_error(msg);
+	}
 	for (i = 0; i < MMB_MAX_SUBS; i++)
 	{
 		if (!G.subs[i].used && slot < 0)
@@ -599,6 +624,12 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 			break;
 		mmb_ident(G.subs[slot].args[G.subs[slot].nargs], MMB_MAX_NAME);
 		sid = parse_as_sid(&atype);
+		/* #1304: a parameter whose base name collides with a built-in
+		 * function or colour constant is rejected at declaration time,
+		 * even if the SUB/FUNCTION is never called. Struct-typed
+		 * parameters are exempt like struct variables. */
+		if (sid < 0)
+			mmb_check_user_name(G.subs[slot].args[G.subs[slot].nargs]);
 		if (sid >= 0)
 			G.subs[slot].arg_sid[G.subs[slot].nargs] = sid;
 		G.subs[slot].arg_type[G.subs[slot].nargs] = atype;
@@ -651,11 +682,16 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 static void scan_subs(void)
 {
 	int i;
+	int saved_pc = G.run_pc;
 	for (i = 0; i < G.nprog; i++)
 	{
 		const char *save = G.p;
 		char name[MMB_MAX_NAME];
+		char raw[MMB_MAX_NAME];
 		int is_func;
+		/* A declaration-time conflict (#1304) must report this line, not
+		 * whatever line ran last. */
+		G.run_pc = i;
 		G.p = after_label(mmb_tok_line(i));
 		if (mmb_match("SUB"))
 			is_func = 0;
@@ -667,9 +703,12 @@ static void scan_subs(void)
 			continue;
 		}
 		mmb_ident(name, sizeof(name));
-		sub_register(name, i + 1, is_func, mmb_type_suffix(name));
+		strncpy(raw, name, MMB_MAX_NAME - 1);
+		raw[MMB_MAX_NAME - 1] = 0;
+		sub_register(raw, i + 1, is_func, mmb_type_suffix(name));
 		G.p = save;
 	}
+	G.run_pc = saved_pc;
 }
 
 static int file_getc(int fn)
@@ -1272,6 +1311,9 @@ void mmb_cmd_const(void)
 		int t;
 		mmb_val v;
 		mmb_ident(name, sizeof(name));
+		/* #1304: CONST grey = ... declares a value nothing can ever read -
+		 * the named colour resolves first in expressions. */
+		mmb_check_user_name(name);
 		t = mmb_type_suffix(name);
 		mmb_skip_sp();
 		mmb_expect('=');
@@ -1887,7 +1929,8 @@ void mmb_cmd_sub(void)
 	char name[MMB_MAX_NAME];
 	int end_pc;
 	mmb_ident(name, sizeof(name));
-	mmb_type_suffix(name);
+	/* sub_register() strips the suffix itself; pass the raw name so a
+	 * suffixed SUB stays exempt from the built-in name check (#1304). */
 	sub_register(name, G.run_pc + 1, 0, 0);
 	end_pc = find_end_sub_pc(G.run_pc);
 	G.in_sub = 1;
@@ -1897,10 +1940,13 @@ void mmb_cmd_sub(void)
 void mmb_cmd_function(void)
 {
 	char name[MMB_MAX_NAME];
+	char raw[MMB_MAX_NAME];
 	int end_pc, ret_type;
 	mmb_ident(name, sizeof(name));
+	strncpy(raw, name, MMB_MAX_NAME - 1);
+	raw[MMB_MAX_NAME - 1] = 0;
 	ret_type = mmb_type_suffix(name);
-	sub_register(name, G.run_pc + 1, 1, ret_type);
+	sub_register(raw, G.run_pc + 1, 1, ret_type);
 	end_pc = find_end_sub_pc(G.run_pc);
 	G.in_sub = 1;
 	G.branch_pc = end_pc + 1;

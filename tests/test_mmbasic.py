@@ -534,8 +534,11 @@ def test_cmm2_string_function_as_string(console):
 
 def test_const_and_dim_as(console):
     assert console.send_line("NEW") == ""
-    assert console.send_line("CONST MAX=21") == ""
-    assert console.send_line("PRINT MAX*2") == "42"
+    # #1304: a CONST may no longer shadow a built-in function name.
+    assert (
+        console.send_line("CONST MAX=21")
+        == "?NAME CONFLICT: MAX is a built-in function"
+    )
     assert console.send_line("DIM N AS INTEGER") == ""
     assert console.send_line("N=6") == ""
     assert console.send_line("PRINT N*7") == "42"
