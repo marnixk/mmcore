@@ -505,6 +505,9 @@ typedef struct mmb {
 	 * line: 0 = none, 1 = THEN part (stop at ELSE), 2 = ELSE part (#1276). */
 	int if_inline;
 	int if_armed;          /* if_inline was just set; run the arm statements */
+	/* A SUB/FUNCTION return restored the caller's one-line IF state; the
+	 * callee's END line must not clear it (#1295). */
+	int if_inline_keep;
 	int sel_active;
 	int sel_skip;
 	mmb_val sel_val;

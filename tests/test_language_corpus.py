@@ -1025,3 +1025,82 @@ def test_one_line_if_exit_do_owns_colon_statements_1276(console):
         ],
     )
     assert _norm_lines(console.send_line('RUN "IFLINEEXIT.BAS"')) == ["n2f1"]
+
+
+def test_one_line_if_sub_call_runs_only_taken_branch_1295(console):
+    """#1295: a one-line IF whose THEN arm calls a SUB/FUNCTION must not run
+    the ELSE arm (or fail to parse the ELSE), for every call form."""
+    _write_bas(
+        console,
+        "IFCALL.BAS",
+        [
+            "option explicit",
+            "option default integer",
+            "sub show(a$, n)",
+            '  print "show:"; a$; n',
+            "end sub",
+            "sub hi()",
+            '  print "hi"',
+            "end sub",
+            "function f(x)",
+            "  f = x",
+            "end function",
+            "dim i = 8, a",
+            'if i < 9 then show "A", 1 else show "B", 2',
+            'if i < 9 then show("A", 1) else show("B", 2)',
+            "if i < 9 then hi() else a = 5",
+            'print "a:"; a',
+            "if i < 9 then a = f(1) else a = 2",
+            'print "a:"; a',
+            "if i < 9 then hi else a = 5",
+            'print "a:"; a',
+            'if i > 9 then show "A", 1 else show "B", 2',
+        ],
+    )
+    out = console.send_line('RUN "IFCALL.BAS"')
+    assert "?SYNTAX" not in out.upper(), out
+    assert "?UNDECLARED" not in out.upper(), out
+    assert _norm_lines(out) == [
+        "show:A1",
+        "show:A1",
+        "hi",
+        "a:0",
+        "a:1",
+        "hi",
+        "a:1",
+        "show:B2",
+    ]
+
+
+def test_one_line_if_multi_statement_branches_with_calls_1295(console):
+    """#1295: colon-separated THEN/ELSE parts keep owning their statements,
+    including function calls in assignments and SUB calls as statements."""
+    _write_bas(
+        console,
+        "IFCALLMULTI.BAS",
+        [
+            "option explicit",
+            "option default integer",
+            "sub show(a$, n)",
+            '  print "show:"; a$; n',
+            "end sub",
+            "function f(x)",
+            "  f = x",
+            "end function",
+            "dim a = 0, b = 0",
+            "if 1 then a = f(1) : b = f(2) else a = 9 : b = 9",
+            'print "t:"; a; b',
+            "a = 0 : b = 0",
+            "if 0 then a = f(1) : b = f(2) else a = f(3) : b = f(4)",
+            'print "f:"; a; b',
+            "a = 0",
+            'if 1 then show "T", 1 : a = 1 else show "E", 2 : a = 2',
+            'print "t2:"; a',
+            "a = 0",
+            'if 0 then show "T", 1 : a = 1 else show "E", 2 : a = 2',
+            'print "f2:"; a',
+        ],
+    )
+    out = console.send_line('RUN "IFCALLMULTI.BAS"')
+    assert "?SYNTAX" not in out.upper(), out
+    assert _norm_lines(out) == ["t:12", "f:34", "show:T1", "t2:1", "show:E2", "f2:2"]
