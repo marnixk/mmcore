@@ -521,6 +521,11 @@ typedef struct mmb {
 	unsigned char gosub_if_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
 	int gosub_if_depth[MMB_MAX_GOSUB];
 	int gosub_if_inline[MMB_MAX_GOSUB];
+	/* Loop frames owned by the caller: a SUB/FUNCTION/GOSUB that returns
+	 * (EXIT SUB, END SUB, RETURN) must drop the DO/WHILE and FOR frames it
+	 * opened, or the caller resumes with a stale frame (#1297). */
+	int gosub_ctrl_sp[MMB_MAX_GOSUB];
+	int gosub_for_sp[MMB_MAX_GOSUB];
 	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
 	char *gosub_sel_str[MMB_MAX_GOSUB];
 	int nconst;
