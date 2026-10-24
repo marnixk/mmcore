@@ -756,6 +756,8 @@ static void gosub_save_ctrl(int g)
 	memcpy(G.gosub_if_stack[g], G.if_stack,
 	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
 	G.gosub_if_inline[g] = G.if_inline;
+	G.gosub_ctrl_sp[g] = G.ctrl_sp;
+	G.gosub_for_sp[g] = G.for_sp;
 	G.gosub_sel_val[g] = G.sel_val;
 	if (G.sel_val.type == T_STR)
 	{
@@ -779,6 +781,13 @@ static void gosub_restore_ctrl(int g)
 	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
 	G.if_inline = G.gosub_if_inline[g];
 	G.if_armed = 0;
+	/* Drop any DO/WHILE or FOR frames the callee left open.  Only shrink:
+	 * a callee may already have popped a caller frame (EXIT DO searches the
+	 * whole stack), and a return must not resurrect it. */
+	if (G.ctrl_sp > G.gosub_ctrl_sp[g])
+		G.ctrl_sp = G.gosub_ctrl_sp[g];
+	if (G.for_sp > G.gosub_for_sp[g])
+		G.for_sp = G.gosub_for_sp[g];
 	G.sel_val = G.gosub_sel_val[g];
 	if (G.sel_val.type == T_STR)
 	{
