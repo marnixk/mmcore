@@ -190,3 +190,19 @@ def test_small_program_no_regression(console):
     start = time.monotonic()
     assert console.send_line("RUN") == "OK8"
     assert time.monotonic() - start < 10
+
+
+def test_for_loop_survives_var_table_growth(console):
+    """#1303: creating enough variables inside a FOR body grows the variable
+    table while the loop is active; NEXT must still iterate (the loop
+    variable's pointer is rebased across the move)."""
+    nvars = 260
+    names = [f"V{i:03d}" for i in range(1, nvars + 1)]
+    lines = ["FOR I = 1 TO 2"]
+    per_line = 30
+    for start in range(0, nvars, per_line):
+        lines.append(":".join(f"{n}=I" for n in names[start:start + per_line]))
+    lines += ["NEXT I", 'PRINT "DONE"; I']
+    _write_bas(console, "VGROW.BAS", lines)
+    assert console.send_line('RUN "VGROW.BAS"', timeout=60) == "DONE3"
+
