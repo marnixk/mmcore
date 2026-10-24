@@ -5487,9 +5487,9 @@ void mmb_init(const mmb_platform *plat)
 		return;
 	memset(&G, 0, sizeof(G));
 	G.plat = plat;
-	/* The variable hash is file-scope and zero-initialised, which looks like
-	 * a full table to probe; clear it to -1 before any immediate-mode
-	 * variable is created (#998). */
+	/* The variable name hash is file-scope heap state; release any tables a
+	 * previous session left behind before the first variable is created
+	 * (#998, #1303). */
 	mmb_clear_vars(0);
 	mmb_option_reset();
 	mmb_vfs_init();
