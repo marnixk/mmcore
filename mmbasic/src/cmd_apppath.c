@@ -198,6 +198,73 @@ static int at_seen_label(const char *label)
 	return 0;
 }
 
+static int at_pkg_read(void *ctx, unsigned pos, void *buf, unsigned n,
+		       unsigned *got)
+{
+	return mmb_vfs_read_at((const char *)ctx, pos, buf, n, got);
+}
+
+static void at_rtrim(char *s)
+{
+	char *e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
+		*--e = 0;
+}
+
+/* Read the ``title=`` value out of a package's PACKAGE.INF (#1305). Reads
+ * only the ZIP tail, central directory and that one entry, so a large package
+ * costs no more than a few small reads. Returns 0 (leaving out empty) when the
+ * file is missing, corrupt, has no title, or the title is blank. */
+static int at_pkg_title(const char *path, char *out, int outsz)
+{
+	char meta[512];
+	char *line;
+	unsigned n = 0;
+	int sz;
+
+	out[0] = 0;
+	if (outsz < 2)
+		return 0;
+	sz = mmb_vfs_size(path);
+	if (sz < 0 || (unsigned)sz > MMB_ZIP_MAX_BYTES)
+		return 0;
+	if (mmb_zip_read_entry(at_pkg_read, (void *)path, (unsigned)sz,
+			       "PACKAGE.INF", meta, sizeof(meta) - 1,
+			       &n) != 0)
+		return 0;
+	meta[n] = 0;
+	for (line = meta; line && *line;)
+	{
+		char *next = strchr(line, '\n');
+		char *eq;
+
+		if (next)
+			*next++ = 0;
+		while (*line == ' ' || *line == '\t')
+			line++;
+		at_rtrim(line);
+		eq = strchr(line, '=');
+		if (eq)
+		{
+			char *val;
+			*eq = 0;
+			at_rtrim(line);
+			val = eq + 1;
+			while (*val == ' ' || *val == '\t')
+				val++;
+			if (mmb_keyword_eq(line, "title") && val[0])
+			{
+				strncpy(out, val, (unsigned)outsz - 1);
+				out[outsz - 1] = 0;
+				at_rtrim(out);
+				return out[0] != 0;
+			}
+		}
+		line = next;
+	}
+	return 0;
+}
+
 static int at_is_builtin_cmd(const char *name)
 {
 	int i;
@@ -209,7 +276,8 @@ static int at_is_builtin_cmd(const char *name)
 
 static void at_add(const char *dir, const char *fname)
 {
-	char stem[APP_LABEL], full[APP_PATH + APP_NAME];
+	char stem[APP_LABEL], full[APP_PATH + APP_NAME], title[APP_LABEL];
+	char label[APP_LABEL];
 	int n;
 
 	if (AT.nent >= APP_MAX_ENT)
@@ -221,12 +289,35 @@ static void at_add(const char *dir, const char *fname)
 	stem[sizeof(stem) - 1] = 0;
 	if (n - 4 < (int)sizeof(stem))
 		stem[n - 4] = 0;
-	if (!stem[0] || at_seen_label(stem) || at_is_builtin_cmd(stem))
+	if (!stem[0] || at_is_builtin_cmd(stem))
 		return;
 	if (at_join(full, sizeof(full), dir, fname) != 0)
 		return;
+	/* Prefer the package's stored Title (#1305). Duplicate labels fall back
+	 * to the stem, then to the full file name, so two distinct packages are
+	 * never silently collapsed into one entry. */
+	title[0] = 0;
+	at_pkg_title(full, title, sizeof(title));
+	label[0] = 0;
+	if (title[0] && !at_seen_label(title))
+	{
+		strncpy(label, title, sizeof(label) - 1);
+		label[sizeof(label) - 1] = 0;
+	}
+	else if (!at_seen_label(stem))
+	{
+		strncpy(label, stem, sizeof(label) - 1);
+		label[sizeof(label) - 1] = 0;
+	}
+	else if (!at_seen_label(fname))
+	{
+		strncpy(label, fname, sizeof(label) - 1);
+		label[sizeof(label) - 1] = 0;
+	}
+	else
+		return;
 	AT.ent[AT.nent].kind = AT_KIND_PKG;
-	strncpy(AT.ent[AT.nent].label, stem, APP_LABEL - 1);
+	strncpy(AT.ent[AT.nent].label, label, APP_LABEL - 1);
 	AT.ent[AT.nent].label[APP_LABEL - 1] = 0;
 	strncpy(AT.ent[AT.nent].path, full, APP_PATH - 1);
 	AT.ent[AT.nent].path[APP_PATH - 1] = 0;

@@ -1232,6 +1232,17 @@ int mmb_zip_add(mmb_zip_w *z, const char *name, const void *data, unsigned n);
 int mmb_zip_finish(mmb_zip_w *z, unsigned char **out, unsigned *n);
 void mmb_zip_abort(mmb_zip_w *z);
 int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, void *ctx);
+/* Positional range reader used by mmb_zip_read_entry so callers can inspect
+ * one entry without loading a whole archive into memory. */
+typedef int (*mmb_zip_range_fn)(void *ctx, unsigned pos, void *buf,
+				unsigned n, unsigned *got);
+/* Find `name` in a ZIP's central directory and copy its (stored or deflated)
+ * contents into `out`, without reading the archive body. Sets *out_len on
+ * success. Returns -1 when the entry is absent, malformed, too large for
+ * `out_cap`, uses another compression method, or fails its CRC. */
+int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		       const char *name, void *out, unsigned out_cap,
+		       unsigned *out_len);
 int mmb_zip_path_ok(const char *name);
 unsigned mmb_crc32(const void *data, unsigned n);
 int mmb_inflate(const unsigned char *in, unsigned in_len,

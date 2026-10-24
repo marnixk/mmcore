@@ -9,7 +9,8 @@ OPTION BOOT "app$"
 
   REPL - start at the interactive prompt (default).
   LAUNCHER - start in the ~APPS~ home launcher, listing every `.APP` on the
-    ~PATH~. Esc returns to the REPL.
+    ~PATH~. Entries use the package's stored Title (falling back to the file
+    name without `.APP`). Esc returns to the REPL.
   "app$" - start straight into an app. A bare name is resolved on the ~PATH~
     (`MYGAME` finds `MYGAME.APP`); otherwise the value is used as a `RUN`
     target, so a full `A:/APPS/GAME.APP` or `A:/apps/HELLO.BAS` works too.

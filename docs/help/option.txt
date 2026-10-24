@@ -45,7 +45,8 @@ Settings:
   ESCAPE    SEARCH PATH path$    ERROR CONTINUE|ABORT
   PATH "dir$[;dir$...]"
     Directories searched for .APP packages (default A:/APPS/). See ~PATH~,
-    ~APPS~ and the Ctrl+Space picker.
+    ~APPS~ and the Ctrl+Space picker. The picker labels a package with its
+    stored Title, falling back to the file name without .APP.
   BOOT REPL|LAUNCHER|"app$"
     What to do at power-on (default REPL). See ~BOOT~.
   F1..F12 string$    AUDIO ON|OFF
