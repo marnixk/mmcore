@@ -1551,5 +1551,9 @@ uint32_t mmb_rng_seed(void);
 int mmb_try_function(mmb_val *out);
 /* True when name is a built-in function (reserved as a variable name). */
 int mmb_is_builtin_func(const char *name);
+/* Reject a user identifier (SUB/FUNCTION, parameter, DIM/LOCAL/STATIC, CONST,
+ * implicitly created variable) whose base name collides with a built-in
+ * function or named colour constant (#1304). Errors via mmb_error. */
+void mmb_check_user_name(const char *name);
 
 #endif

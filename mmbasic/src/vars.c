@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <stdio.h>
 #include <string.h>
 
 extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val);
@@ -422,11 +423,50 @@ static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
 	return 0;
 }
 
+/* #1304: a user identifier whose base name (type suffix stripped) collides
+ * with a built-in function or a named colour constant can never be reached in
+ * an expression - built-ins and colours resolve before the variable table -
+ * so declaring one used to fail only later, at the call site, or silently
+ * shadowed the wrong way round. Reject it at declaration time with a message
+ * naming the conflicting built-in.
+ *
+ * Command-only keywords (DIR, DRAW, COLOR, ...) are deliberately NOT
+ * reserved: they never produce a value in an expression and real apps use
+ * them as parameter names (mmcore-apps tetris `sub gm.rotate(dir)`, sudoku
+ * `local i, y, draw`, syntaxshock `local near_x, far_x, color`). Suffixed
+ * names (grey%, name$) are exempt: the suffix makes them unambiguous to the
+ * tokeniser and expression parser. */
+void mmb_check_user_name(const char *name)
+{
+	char nbuf[MMB_MAX_NAME];
+	char msg[MMB_MAX_NAME + 48];
+	int n, ok;
+	if (!name || !*name)
+		return;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	n = (int)strlen(nbuf);
+	if (n > 0 && (nbuf[n - 1] == '$' || nbuf[n - 1] == '%' || nbuf[n - 1] == '!'))
+		return;
+	if (mmb_is_builtin_func(nbuf))
+	{
+		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is a built-in function", nbuf);
+		mmb_error(msg);
+	}
+	mmb_named_colour(nbuf, &ok);
+	if (ok)
+	{
+		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is a built-in constant", nbuf);
+		mmb_error(msg);
+	}
+}
+
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
 {
 	int i;
 	char nbuf[MMB_MAX_NAME];
-	int t, typed_lookup;
+	int t, typed_lookup, had_suffix, sl, bare;
 	mmb_var *sv;
 	if (G.opt.profiling && G.running)
 		G.prof.find_var++;
@@ -439,6 +479,15 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		return sv;
 	if (strchr(nbuf, '('))
 		mmb_error("?UNKNOWN");
+	/* A suffix ($/%/!) makes the name unambiguous to the parser, so it
+	 * stays exempt from the built-in name check below (#1304). The
+	 * assignment parser strips the suffix before calling here, so `bare`
+	 * (no type hint from the caller) is the other half of the signal:
+	 * grey% = 1 arrives with type T_INT, grey = 0 with type 0. */
+	sl = (int)strlen(nbuf);
+	had_suffix = sl > 0 &&
+		     (nbuf[sl - 1] == '$' || nbuf[sl - 1] == '%' || nbuf[sl - 1] == '!');
+	bare = (type == 0);
 	t = mmb_type_suffix(nbuf);
 	typed_lookup = (type != 0) || t;
 	if (t)
@@ -479,9 +528,12 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (!create)
 		return 0;
 	/* Declaring (or implicitly creating) a variable with a built-in's name
-	 * would only fail later, where the token is parsed as that function. */
-	if (t == 0 && mmb_is_builtin_func(nbuf))
-		mmb_error("?RESERVED WORD");
+	 * would only fail later, where the token is parsed as that function, or
+	 * silently resolve to the built-in constant (#1304). Built-in function
+	 * names were always rejected here; named colours are rejected only for
+	 * unsuffixed bindings (grey% = 1 stays allowed, as DIM grey% was). */
+	if (!had_suffix && (bare || mmb_is_builtin_func(nbuf)))
+		mmb_check_user_name(nbuf);
 	if (type == T_STRUCT)
 		mmb_error("?UNDECLARED");
 	if (G.opt.explicit)
@@ -633,13 +685,13 @@ void mmb_cmd_dim(void)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
 		if (type == T_STRUCT && struct_idx < 0)
 			mmb_syntax();
-		/* Built-in names (CHOICE, ...) are reserved unless a type suffix
-		 * makes them an ordinary identifier (CHOICE% is not a keyword
-		 * token in the CMM2 tokeniser). Struct variables may shadow a
-		 * built-in: the expression parser resolves x(...)/x.y through the
-		 * struct before the function token. */
-		if (!had_suffix && type != T_STRUCT && mmb_is_builtin_func(name))
-			mmb_error("?RESERVED WORD");
+		/* Built-in names (CHOICE, ...) and named colours (GREY, ...) are
+		 * reserved unless a type suffix makes them an ordinary identifier
+		 * (CHOICE% is not a keyword token in the CMM2 tokeniser). Struct
+		 * variables may shadow a built-in: the expression parser resolves
+		 * x(...)/x.y through the struct before the function token. */
+		if (!had_suffix && type != T_STRUCT)
+			mmb_check_user_name(name);
 
 		for (i = 0; i < MMB_MAX_VARS; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)

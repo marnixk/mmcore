@@ -135,11 +135,14 @@ def test_help_lists_new_commands(console):
     assert "<ON>" in basic or "ON GOTO" in basic
 
 
-def test_const_max_not_function(console):
+def test_const_max_is_rejected(console):
+    # #1304: a CONST may no longer shadow a built-in function name; the
+    # parenthesised call still reaches the built-in MAX.
     assert console.send_line("NEW") == ""
-    assert console.send_line("CONST MAX=21") == ""
-    assert console.send_line("PRINT MAX*2") == "42"
-    # The parenthesised call still reaches the built-in MAX.
+    assert (
+        console.send_line("CONST MAX=21")
+        == "?NAME CONFLICT: MAX is a built-in function"
+    )
     assert console.send_line("PRINT MAX(3, 7)") == "7"
 
 
@@ -218,11 +221,17 @@ def test_mm_info_bareword_keys(console):
 
 
 def test_choice_is_reserved_at_declaration(console):
-    """#1278: DIM must reject a built-in function name, not fail later."""
+    """#1278/#1304: DIM must reject a built-in function name at declaration."""
     assert console.send_line("NEW") == ""
     assert console.send_line("OPTION EXPLICIT") == ""
-    assert "RESERVED" in console.send_line("DIM choice = 1").upper()
-    assert "RESERVED" in console.send_line("DIM CHOICE(2)").upper()
+    assert (
+        console.send_line("DIM choice = 1")
+        == "?NAME CONFLICT: CHOICE is a built-in function"
+    )
+    assert (
+        console.send_line("DIM CHOICE(2)")
+        == "?NAME CONFLICT: CHOICE is a built-in function"
+    )
     # CHOICE() itself keeps working.
     assert console.send_line("PRINT CHOICE(1,9,8)") == "9"
     # A type suffix makes CHOICE% an ordinary identifier in the tokeniser, as
@@ -231,7 +240,10 @@ def test_choice_is_reserved_at_declaration(console):
     assert console.send_line("PRINT choice%") == "1"
     assert console.send_line("OPTION EXPLICIT OFF") == ""
     # Implicit declaration on assignment is rejected the same way.
-    assert "RESERVED" in console.send_line("choice = 1").upper()
+    assert (
+        console.send_line("choice = 1")
+        == "?NAME CONFLICT: CHOICE is a built-in function"
+    )
 
 
 # ---- identifier predicates (host unit test) --------------------------------

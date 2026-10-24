@@ -614,8 +614,10 @@ int mmb_try_function(mmb_val *out)
 					G.p = sp;
 					return 0;
 				}
-				/* A CONST may shadow a built-in name: CONST MAX=21
-				 * then PRINT MAX*2. Only the bare form is shadowed;
+				/* Defensive: a CONST may no longer shadow a built-in
+				 * name (mmb_check_user_name rejects the declaration,
+				 * #1304), but keep honouring a shadowing const if one
+				 * ever exists: only the bare form is shadowed;
 				 * MAX(...) still calls the function. */
 				if (*G.p != '(')
 				{
