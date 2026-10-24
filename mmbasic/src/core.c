@@ -38,6 +38,7 @@ static int s_poll_active;
 #define jmp_ready         (G.jmp_ready)
 #define run_preserve_vars (G.run_preserve_vars)
 static int at_end_of_statement(void);
+static void skip_stmt(const char **pp);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
 static void sub_register(const char *name, int pc, int is_func, int ret_type);
@@ -155,10 +156,12 @@ static int line_match_end(const char *body, const char *kw)
 	return r;
 }
 
-static int line_is_block_if(const char *body)
+/* True when the statement starting at ``at`` is a block IF (its THEN is
+ * followed by the end of that statement). */
+static int at_is_block_if(const char *at)
 {
 	const char *save = G.p;
-	G.p = after_label(body);
+	G.p = at;
 	if (!mmb_match("IF"))
 	{
 		G.p = save;
@@ -189,6 +192,11 @@ static int line_is_block_if(const char *body)
 	}
 	G.p = save;
 	return 0;
+}
+
+static int line_is_block_if(const char *body)
+{
+	return at_is_block_if(after_label(body));
 }
 
 static void build_jumps(void)
@@ -356,13 +364,12 @@ static int match_else_if(void)
 }
 
 /* Block IF frame states (#1273).  IF_BODY runs the selected branch;
- * IF_SEARCH is skipping a false IF looking for ELSE/ELSEIF; IF_SHADOW is a
- * nested IF inside a skipped region (never evaluated, #1274); IF_DONE is a
- * taken branch whose later ELSE/ELSEIF arms are being skipped. */
+ * IF_SEARCH is skipping a false IF looking for ELSE/ELSEIF; IF_DONE is a
+ * taken branch whose later ELSE/ELSEIF arms are being skipped.  Skipped
+ * nested IFs are counted in G.if_shadow instead (#1301). */
 #define IF_BODY   0
 #define IF_SEARCH 1
-#define IF_SHADOW 2
-#define IF_DONE   3
+#define IF_DONE   2
 
 /* 1 when the current line is the ELSE token, without consuming it. */
 static int at_else_kw(void)
@@ -388,29 +395,137 @@ static void if_push(unsigned char state)
 	G.if_stack[G.if_depth++] = state;
 }
 
+/* The innermost SELECT frame visible to this call, or NULL outside a SELECT.
+ * Frames below sel_base belong to a caller and stay hidden until it returns
+ * (#1299). */
+static mmb_selframe *sel_top(void)
+{
+	return G.sel_sp > G.sel_base ? &G.selstack[G.sel_sp - 1] : 0;
+}
+
+static void sel_pop(void)
+{
+	if (G.sel_sp <= G.sel_base)
+		return;
+	G.sel_sp--;
+	if (G.selstack[G.sel_sp].str)
+	{
+		mmb_str_free(G.selstack[G.sel_sp].str);
+		G.selstack[G.sel_sp].str = 0;
+	}
+}
+
+static void sel_truncate(int depth)
+{
+	while (G.sel_sp > depth && G.sel_sp > G.sel_base)
+		sel_pop();
+}
+
+static void sel_reset_all(void)
+{
+	G.sel_base = 0;
+	sel_truncate(0);
+	G.sel_sp = 0;
+}
+
+static void sel_push_skipped(void)
+{
+	mmb_selframe *f;
+	if (G.sel_sp >= MMB_MAX_SELECT)
+		mmb_error("?SELECT");
+	f = &G.selstack[G.sel_sp++];
+	memset(f, 0, sizeof(*f));
+	f->val = mmb_int_val(0);
+	f->skip = 1;
+	f->skipped = 1;
+}
+
+/* Restore the control state a loop (or branch out of it) must resume with. */
+static void loop_restore(int if_depth, int sel_depth)
+{
+	G.if_depth = if_depth;
+	if (G.sel_sp > sel_depth)
+		sel_truncate(sel_depth);
+}
+
+static void pop_ctrl_top(void)
+{
+	if (G.ctrl_sp <= 0)
+		return;
+	G.ctrl_sp--;
+	loop_restore(G.ctrlstack[G.ctrl_sp].if_depth,
+		     G.ctrlstack[G.ctrl_sp].sel_depth);
+}
+
+static void pop_for_top(void)
+{
+	if (G.for_sp <= 0)
+		return;
+	G.for_sp--;
+	loop_restore(G.forstack[G.for_sp].if_depth,
+		     G.forstack[G.for_sp].sel_depth);
+}
+
+/* Drop every loop frame created after the frame with sequence ``seq``, of
+ * either kind, restoring its saved IF/SELECT state (#1300). */
+static void unwind_above_seq(int seq)
+{
+	while (G.for_sp > 0 && G.forstack[G.for_sp - 1].seq > seq)
+		pop_for_top();
+	while (G.ctrl_sp > 0 && G.ctrlstack[G.ctrl_sp - 1].seq > seq)
+		pop_ctrl_top();
+}
+
+/* Number of block IF statements opened on this line, including ones after a
+ * colon.  A line inside skipped code may open more than one (#1301). */
+static int skipped_block_ifs(const char *body)
+{
+	const char *p = after_label(body);
+	int n = 0;
+	for (;;)
+	{
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == 0 || *p == '\'')
+			break;
+		if (at_is_block_if(p))
+			n++;
+		skip_stmt(&p);
+		if (*p == ':')
+		{
+			p++;
+			continue;
+		}
+		break;
+	}
+	return n;
+}
+
+static int line_is_select(const char *body)
+{
+	const char *save = G.p;
+	int r;
+	G.p = after_label(body);
+	r = mmb_match("SELECT");
+	G.p = save;
+	return r;
+}
+
+static int at_case_kw(void)
+{
+	const char *save = G.p;
+	int r = mmb_match("CASE");
+	G.p = save;
+	return r;
+}
+
 static int process_line_structure(const char *body)
 {
 	const char *save = G.p;
+	mmb_selframe *sel;
+
 	G.p = after_label(body);
 	mmb_skip_sp();
-
-	if (G.sel_skip)
-	{
-		if (mmb_match("CASE"))
-		{
-			G.p = save;
-			return 0;
-		}
-		if (mmb_match("END") && mmb_match("SELECT"))
-		{
-			G.sel_skip = 0;
-			G.sel_active = 0;
-			G.p = save;
-			return 1;
-		}
-		G.p = save;
-		return 1;
-	}
 
 	/* A frame other than IF_BODY means this line is being skipped.  Only
 	 * the innermost IF_SEARCH frame may evaluate ELSEIF: it is the frame
@@ -419,13 +534,17 @@ static int process_line_structure(const char *body)
 	{
 		if (match_endif())
 		{
-			G.if_depth--;
+			if (G.if_shadow > 0)
+				G.if_shadow--;
+			else
+				G.if_depth--;
 			G.p = save;
 			return 1;
 		}
 		if (match_else_if())
 		{
-			if (G.if_stack[G.if_depth - 1] == IF_SEARCH)
+			if (G.if_shadow == 0 &&
+			    G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
 				mmb_val v = mmb_expr();
 				if (mmb_as_int(v))
@@ -437,7 +556,8 @@ static int process_line_structure(const char *body)
 		if (mmb_match("ELSE"))
 		{
 			int run = 0;
-			if (G.if_stack[G.if_depth - 1] == IF_SEARCH)
+			if (G.if_shadow == 0 &&
+			    G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
 				G.if_stack[G.if_depth - 1] = IF_BODY;
 				run = 1;
@@ -445,14 +565,40 @@ static int process_line_structure(const char *body)
 			G.p = save;
 			return !run;
 		}
-		/* Nested block IF: count it without evaluating its condition, so
-		 * functions and array indexes in skipped code never run (#1274).
-		 * One-line IFs do not open a block and are skipped whole. */
-		if (line_is_block_if(body))
+		/* Nested block IFs are counted without evaluating their
+		 * conditions, so functions and array indexes in skipped code never
+		 * run (#1274, #1301).  One-line IFs open no block. */
 		{
-			if_push(IF_SHADOW);
+			int n = skipped_block_ifs(body);
+			if (n > 0)
+				G.if_shadow += n;
+		}
+		G.p = save;
+		return 1;
+	}
+
+	/* SELECT CASE that is currently skipping statements.  A nested SELECT
+	 * in skipped code is counted (without evaluating it) so its END SELECT
+	 * cannot close the outer SELECT (#1299). */
+	sel = sel_top();
+	if (sel && sel->skip)
+	{
+		if (line_is_select(body))
+		{
+			sel_push_skipped();
 			G.p = save;
 			return 1;
+		}
+		if (mmb_match("END") && mmb_match("SELECT"))
+		{
+			sel_pop();
+			G.p = save;
+			return 1;
+		}
+		if (!sel->skipped && at_case_kw())
+		{
+			G.p = save;
+			return 0;
 		}
 		G.p = save;
 		return 1;
@@ -786,8 +932,6 @@ static mmb_val read_data_item(void)
 
 static void gosub_save_ctrl(int g)
 {
-	G.gosub_sel_skip[g] = G.sel_skip;
-	G.gosub_sel_active[g] = G.sel_active;
 	/* Save the block IF stack and the one-line IF owner so the callee starts
 	 * with a clean structure state and the caller resumes exactly where it
 	 * left off (#1273, #1276). */
@@ -797,29 +941,26 @@ static void gosub_save_ctrl(int g)
 	G.gosub_if_inline[g] = G.if_inline;
 	G.gosub_ctrl_sp[g] = G.ctrl_sp;
 	G.gosub_for_sp[g] = G.for_sp;
-	G.gosub_sel_val[g] = G.sel_val;
-	if (G.sel_val.type == T_STR)
-	{
-		mmb_str_set(&G.gosub_sel_str[g], G.sel_val.s, -1, 0, "SELECT");
-		G.gosub_sel_val[g].s = G.gosub_sel_str[g];
-	}
-	G.sel_skip = 0;
-	G.sel_active = 0;
+	/* Hide the caller's SELECT frames; the callee pushes above them, so no
+	 * copy is needed and they are intact when it returns (#1299). */
+	G.gosub_sel_sp[g] = G.sel_sp;
+	G.gosub_sel_base[g] = G.sel_base;
+	G.sel_base = G.sel_sp;
 	G.if_depth = 0;
 	G.if_inline = 0;
 	G.if_armed = 0;
 	G.if_inline_keep = 0;
+	G.if_shadow = 0;
 }
 
 static void gosub_restore_ctrl(int g)
 {
-	G.sel_skip = G.gosub_sel_skip[g];
-	G.sel_active = G.gosub_sel_active[g];
 	G.if_depth = G.gosub_if_depth[g];
 	memcpy(G.if_stack, G.gosub_if_stack[g],
 	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
 	G.if_inline = G.gosub_if_inline[g];
 	G.if_armed = 0;
+	G.if_shadow = 0;
 	/* Drop any DO/WHILE or FOR frames the callee left open.  Only shrink:
 	 * a callee may already have popped a caller frame (EXIT DO searches the
 	 * whole stack), and a return must not resurrect it. */
@@ -827,14 +968,10 @@ static void gosub_restore_ctrl(int g)
 		G.ctrl_sp = G.gosub_ctrl_sp[g];
 	if (G.for_sp > G.gosub_for_sp[g])
 		G.for_sp = G.gosub_for_sp[g];
-	G.sel_val = G.gosub_sel_val[g];
-	if (G.sel_val.type == T_STR)
-	{
-		mmb_str_free(G.sel_str);
-		G.sel_str = G.gosub_sel_str[g];
-		G.gosub_sel_str[g] = 0;
-		G.sel_val.s = G.sel_str ? G.sel_str : mmb_str_empty();
-	}
+	/* Drop SELECT frames the callee opened above the caller's stack. */
+	sel_truncate(G.gosub_sel_sp[g]);
+	G.sel_sp = G.gosub_sel_sp[g];
+	G.sel_base = G.gosub_sel_base[g];
 }
 
 void mmb_cmd_goto(void)
@@ -892,10 +1029,35 @@ static void ctrl_reenter(int type)
 	{
 		if (G.ctrlstack[i].type == type && G.ctrlstack[i].line_pc == G.run_pc)
 		{
-			G.ctrl_sp = i;
+			int seq = G.ctrlstack[i].seq;
+			unwind_above_seq(seq);
+			pop_ctrl_top();
 			return;
 		}
 	}
+}
+
+/* Index of the innermost (topmost) loop frame of ``type``, or -1. */
+static int find_ctrl(int type)
+{
+	int i;
+	for (i = G.ctrl_sp - 1; i >= 0; i--)
+		if (G.ctrlstack[i].type == type)
+			return i;
+	return -1;
+}
+
+static void push_ctrl(int type)
+{
+	if (G.ctrl_sp >= MMB_MAX_CTRL)
+		mmb_error(type == 1 ? "?WHILE" : "?DO");
+	G.ctrlstack[G.ctrl_sp].type = type;
+	G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
+	G.ctrlstack[G.ctrl_sp].skip = 0;
+	G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
+	G.ctrlstack[G.ctrl_sp].sel_depth = G.sel_sp;
+	G.ctrlstack[G.ctrl_sp].seq = G.loop_seq++;
+	G.ctrl_sp++;
 }
 
 void mmb_cmd_while(void)
@@ -903,27 +1065,21 @@ void mmb_cmd_while(void)
 	mmb_val v = mmb_expr();
 	ctrl_reenter(1);
 	if (mmb_as_int(v))
-	{
-		if (G.ctrl_sp >= MMB_MAX_CTRL)
-			mmb_error("?WHILE");
-		G.ctrlstack[G.ctrl_sp].type = 1;
-		G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
-		G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
-		G.ctrl_sp++;
-	}
+		push_ctrl(1);
 	else
 		G.branch_pc = find_wend_pc(G.run_pc) + 1;
 }
 
 void mmb_cmd_wend(void)
 {
-	int pc;
-	if (G.ctrl_sp <= 0 || G.ctrlstack[G.ctrl_sp - 1].type != 1)
+	int i = find_ctrl(1);
+	if (i < 0)
 		mmb_error("?WEND WITHOUT WHILE");
-	pc = G.ctrlstack[G.ctrl_sp - 1].line_pc;
-	/* Drop any block IF left open in this iteration (#1273). */
-	G.if_depth = G.ctrlstack[G.ctrl_sp - 1].if_depth;
-	G.branch_pc = pc;
+	unwind_above_seq(G.ctrlstack[i].seq);
+	i = G.ctrl_sp - 1;
+	G.branch_pc = G.ctrlstack[i].line_pc;
+	/* Drop any block IF/SELECT left open in this iteration (#1273, #1299). */
+	loop_restore(G.ctrlstack[i].if_depth, G.ctrlstack[i].sel_depth);
 }
 
 void mmb_cmd_do(void)
@@ -946,21 +1102,18 @@ void mmb_cmd_do(void)
 		G.branch_pc = find_loop_pc(G.run_pc) + 1;
 		return;
 	}
-	if (G.ctrl_sp >= MMB_MAX_CTRL)
-		mmb_error("?DO");
-	G.ctrlstack[G.ctrl_sp].type = 2;
-	G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
-	G.ctrlstack[G.ctrl_sp].skip = 0;
-	G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
-	G.ctrl_sp++;
+	push_ctrl(2);
 }
 
 void mmb_cmd_loop(void)
 {
-	int pc, cond = 1;
-	if (G.ctrl_sp <= 0 || G.ctrlstack[G.ctrl_sp - 1].type != 2)
+	int i, pc, cond = 1;
+	i = find_ctrl(2);
+	if (i < 0)
 		mmb_error("?LOOP WITHOUT DO");
-	pc = G.ctrlstack[G.ctrl_sp - 1].line_pc;
+	unwind_above_seq(G.ctrlstack[i].seq);
+	i = G.ctrl_sp - 1;
+	pc = G.ctrlstack[i].line_pc;
 	mmb_skip_sp();
 	if (mmb_match("WHILE"))
 	{
@@ -974,30 +1127,23 @@ void mmb_cmd_loop(void)
 	}
 	else if (*G.p && *G.p != ':' && *G.p != '\'')
 		mmb_syntax();
-	/* Drop any block IF left open in this iteration (#1273). */
-	G.if_depth = G.ctrlstack[G.ctrl_sp - 1].if_depth;
+	/* Drop any block IF/SELECT left open in this iteration (#1273). */
+	loop_restore(G.ctrlstack[i].if_depth, G.ctrlstack[i].sel_depth);
 	if (cond)
 		G.branch_pc = pc;
 	else
-		G.ctrl_sp--;
+		pop_ctrl_top();
 }
 
 void mmb_cmd_exit_do(void)
 {
-	int i;
-	if (G.ctrl_sp <= 0)
+	int i = find_ctrl(2);
+	if (i < 0)
 		mmb_error("?EXIT DO");
-	for (i = G.ctrl_sp - 1; i >= 0; i--)
-	{
-		if (G.ctrlstack[i].type == 2)
-		{
-			G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc) + 1;
-			G.if_depth = G.ctrlstack[i].if_depth;
-			G.ctrl_sp = i;
-			return;
-		}
-	}
-	mmb_error("?EXIT DO");
+	unwind_above_seq(G.ctrlstack[i].seq);
+	i = G.ctrl_sp - 1;
+	G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc) + 1;
+	pop_ctrl_top();
 }
 
 static int find_next_pc(int from)
@@ -1017,23 +1163,26 @@ void mmb_cmd_exit(void)
 	}
 	if (mmb_match("FOR"))
 	{
-		if (G.for_sp <= 0)
+		int f = G.for_sp - 1;
+		if (f < 0)
 			mmb_error("?EXIT FOR");
-		if (G.forstack[G.for_sp - 1].next_pos)
+		/* Leaving through any loops of another kind drops their frames
+		 * too, restoring the IF/SELECT state they saved (#1300). */
+		unwind_above_seq(G.forstack[f].seq);
+		f = G.for_sp - 1;
+		if (G.forstack[f].next_pos)
 		{
 			/* Same-line loop: resume after the matching NEXT statement,
 			 * falling to the next line when nothing follows it (#1004). */
-			G.branch_pc = G.forstack[G.for_sp - 1].after_pos
-					      ? G.forstack[G.for_sp - 1].next_pc
-					      : G.forstack[G.for_sp - 1].next_pc + 1;
-			G.branch_pos = G.forstack[G.for_sp - 1].after_pos;
+			G.branch_pc = G.forstack[f].after_pos
+					      ? G.forstack[f].next_pc
+					      : G.forstack[f].next_pc + 1;
+			G.branch_pos = G.forstack[f].after_pos;
 		}
 		else
-			G.branch_pc =
-				find_next_pc(G.forstack[G.for_sp - 1].for_pc) + 1;
-		/* Leaving the loop discards IF blocks opened inside its body. */
-		G.if_depth = G.forstack[G.for_sp - 1].if_depth;
-		G.for_sp--;
+			G.branch_pc = find_next_pc(G.forstack[f].for_pc) + 1;
+		/* Leaving the loop discards IF/SELECT blocks opened inside it. */
+		pop_for_top();
 		return;
 	}
 	if (mmb_match("SUB"))
@@ -1054,46 +1203,53 @@ void mmb_cmd_continue(void)
 {
 	if (mmb_match("FOR"))
 	{
-		if (G.for_sp <= 0)
+		int f = G.for_sp - 1;
+		if (f < 0)
 			mmb_error("?CONTINUE FOR");
-		if (G.forstack[G.for_sp - 1].next_pos)
+		/* Skip inner loops of another kind; the target FOR stays open. */
+		unwind_above_seq(G.forstack[f].seq);
+		f = G.for_sp - 1;
+		if (G.forstack[f].next_pos)
 		{
 			/* Same-line loop: resume at the matching NEXT statement, which
 			 * advances the loop when run (#1004). */
-			G.branch_pc = G.forstack[G.for_sp - 1].next_pc;
-			G.branch_pos = G.forstack[G.for_sp - 1].next_pos;
+			G.branch_pc = G.forstack[f].next_pc;
+			G.branch_pos = G.forstack[f].next_pos;
 		}
 		else
-			G.branch_pc =
-				find_next_pc(G.forstack[G.for_sp - 1].for_pc);
-		G.if_depth = G.forstack[G.for_sp - 1].if_depth;
+			G.branch_pc = find_next_pc(G.forstack[f].for_pc);
+		loop_restore(G.forstack[f].if_depth, G.forstack[f].sel_depth);
 		return;
 	}
 	if (mmb_match("DO"))
 	{
-		int i;
-		for (i = G.ctrl_sp - 1; i >= 0; i--)
-		{
-			if (G.ctrlstack[i].type == 2)
-			{
-				G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
-				G.if_depth = G.ctrlstack[i].if_depth;
-				return;
-			}
-		}
-		mmb_error("?CONTINUE DO");
+		int i = find_ctrl(2);
+		if (i < 0)
+			mmb_error("?CONTINUE DO");
+		unwind_above_seq(G.ctrlstack[i].seq);
+		i = G.ctrl_sp - 1;
+		G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
+		loop_restore(G.ctrlstack[i].if_depth,
+			     G.ctrlstack[i].sel_depth);
+		return;
 	}
 }
 
 void mmb_cmd_select(void)
 {
+	mmb_selframe *f;
 	mmb_skip_sp();
 	if (!mmb_match("CASE"))
 		mmb_syntax();
-	G.sel_val = mmb_expr();
-	mmb_val_own(&G.sel_val, &G.sel_str, 0, "SELECT");
-	G.sel_active = 0;
-	G.sel_skip = 1;
+	if (G.sel_sp >= MMB_MAX_SELECT)
+		mmb_error("?SELECT");
+	f = &G.selstack[G.sel_sp++];
+	memset(f, 0, sizeof(*f));
+	f->val = mmb_expr();
+	mmb_val_own(&f->val, &f->str, 0, "SELECT");
+	f->active = 0;
+	f->skip = 1;
+	f->skipped = 0;
 }
 
 static int case_matches(mmb_val sel)
@@ -1185,37 +1341,44 @@ static int case_matches(mmb_val sel)
 
 void mmb_cmd_case(void)
 {
+	mmb_selframe *f = sel_top();
 	mmb_skip_sp();
+	if (!f || f->skipped)
+	{
+		while (*G.p)
+			G.p++;
+		return;
+	}
 	if (mmb_match("ELSE"))
 	{
-		if (!G.sel_active)
+		if (!f->active)
 		{
-			G.sel_skip = 0;
-			G.sel_active = 1;
+			f->skip = 0;
+			f->active = 1;
 		}
 		else
 		{
-			G.sel_skip = 1;
+			f->skip = 1;
 			while (*G.p)
 				G.p++;
 		}
 		return;
 	}
-	if (G.sel_active)
+	if (f->active)
 	{
-		G.sel_skip = 1;
+		f->skip = 1;
 		while (*G.p)
 			G.p++;
 		return;
 	}
-	if (case_matches(G.sel_val))
+	if (case_matches(f->val))
 	{
-		G.sel_skip = 0;
-		G.sel_active = 1;
+		f->skip = 0;
+		f->active = 1;
 	}
 	else
 	{
-		G.sel_skip = 1;
+		f->skip = 1;
 		while (*G.p)
 			G.p++;
 	}
@@ -1223,8 +1386,7 @@ void mmb_cmd_case(void)
 
 void mmb_cmd_end_select(void)
 {
-	G.sel_active = 0;
-	G.sel_skip = 0;
+	sel_pop();
 }
 
 void mmb_cmd_endif(void)
@@ -3189,6 +3351,8 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].next_pos = next_pos;
 		G.forstack[G.for_sp].after_pos = after_pos;
 		G.forstack[G.for_sp].if_depth = G.if_depth;
+		G.forstack[G.for_sp].sel_depth = G.sel_sp;
+		G.forstack[G.for_sp].seq = G.loop_seq++;
 		G.forstack[G.for_sp].end_line =
 			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
 				? jmp_next[G.run_pc]
@@ -3199,28 +3363,47 @@ void mmb_cmd_for(void)
 
 void mmb_cmd_next(void)
 {
-	char name[MMB_MAX_NAME];
-	mmb_var *v;
-	int named = 0;
-	int off;
-	mmb_skip_sp();
-	if (mmb_is_ident_start(*G.p))
+	for (;;)
 	{
-		mmb_ident(name, sizeof(name));
-		mmb_type_suffix(name);
-		named = 1;
-	}
-	if (G.for_sp <= 0)
-		mmb_error("?NEXT WITHOUT FOR");
-	if (named && !mmb_keyword_eq(name, G.forstack[G.for_sp - 1].var))
-		mmb_error("?NEXT WITHOUT FOR");
-	v = G.forstack[G.for_sp - 1].vp;
-	off = G.forstack[G.for_sp - 1].off;
-	if (!v)
-		mmb_error("?NEXT WITHOUT FOR");
-	{
-		int frame = G.for_sp - 1;
-		int cont;
+		char name[MMB_MAX_NAME];
+		mmb_var *v;
+		int named = 0;
+		int off, target, frame, cont;
+
+		mmb_skip_sp();
+		if (mmb_is_ident_start(*G.p))
+		{
+			mmb_ident(name, sizeof(name));
+			mmb_type_suffix(name);
+			named = 1;
+		}
+		if (G.for_sp <= 0)
+			mmb_error("?NEXT WITHOUT FOR");
+		target = G.for_sp - 1;
+		if (named)
+		{
+			int j;
+			target = -1;
+			for (j = G.for_sp - 1; j >= 0; j--)
+				if (mmb_keyword_eq(name, G.forstack[j].var))
+				{
+					target = j;
+					break;
+				}
+			if (target < 0)
+				mmb_error("?NEXT WITHOUT FOR");
+		}
+		/* Find this loop's own frame, dropping abandoned inner loops of
+		 * either kind (#1300). */
+		while (G.for_sp - 1 > target)
+			pop_for_top();
+		unwind_above_seq(G.forstack[target].seq);
+		frame = G.for_sp - 1;
+
+		v = G.forstack[frame].vp;
+		off = G.forstack[frame].off;
+		if (!v)
+			mmb_error("?NEXT WITHOUT FOR");
 		if (G.forstack[frame].float_loop)
 		{
 			double step = G.forstack[frame].step_f;
@@ -3252,29 +3435,42 @@ void mmb_cmd_next(void)
 		}
 		if (cont)
 		{
-			G.forstack[G.for_sp - 1].stmt = 1;
-			/* Next iteration: discard IF blocks opened in this one. */
-			G.if_depth = G.forstack[G.for_sp - 1].if_depth;
+			G.forstack[frame].stmt = 1;
+			/* Next iteration: discard IF/SELECT blocks opened in this one. */
+			loop_restore(G.forstack[frame].if_depth,
+				     G.forstack[frame].sel_depth);
+			return;
 		}
 		else
 		{
 			char vname[MMB_MAX_NAME];
+			const char *pos;
+			int end_line;
 			int i;
-			strncpy(vname, G.forstack[G.for_sp - 1].var, MMB_MAX_NAME - 1);
+			strncpy(vname, G.forstack[frame].var, MMB_MAX_NAME - 1);
 			vname[MMB_MAX_NAME - 1] = 0;
-			G.for_sp--;
-			G.if_depth = G.forstack[G.for_sp].if_depth;
-			G.forstack[G.for_sp].stmt = 0;
+			pos = G.forstack[frame].pos;
+			end_line = G.forstack[frame].end_line;
+			pop_for_top();
+			G.forstack[frame].stmt = 0;
+			/* NEXT a, b: after closing one loop, advance the next in the
+			 * list before deciding where the statement ends (#1301). */
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
 			/* The matching NEXT pc was recorded at FOR (#992). When the
 			 * NEXT we are executing is exactly that line, exiting the
 			 * loop just falls through to the next line, so skip the
 			 * forward scan the old code did. The scan is only needed for
 			 * unusual control flow (duplicate or out-of-order NEXTs). */
-			if (jmp_ready && G.forstack[G.for_sp].end_line == G.run_pc)
+			if (jmp_ready && end_line == G.run_pc)
 				return;
 			/* A same-line loop's matching NEXT is the one just executed, so
 			 * exiting falls through to the rest of the line (#997). */
-			if (G.forstack[G.for_sp].pos)
+			if (pos)
 				return;
 			for (i = G.run_pc + 1; i < G.nprog; i++)
 			{
@@ -3305,6 +3501,7 @@ void mmb_cmd_next(void)
 				}
 				G.p = save;
 			}
+			return;
 		}
 	}
 }
@@ -4986,8 +5183,9 @@ static void run_program(void)
 		G.if_inline = 0;
 		G.if_armed = 0;
 		G.if_inline_keep = 0;
-		G.sel_active = 0;
-		G.sel_skip = 0;
+		G.if_shadow = 0;
+		sel_reset_all();
+		G.loop_seq = 0;
 		G.in_sub = 0;
 		G.data_line = 0;
 		G.data_pos = 0;
@@ -5150,8 +5348,8 @@ static void clear_exec_flags(void)
 	G.if_inline = 0;
 	G.if_armed = 0;
 	G.if_inline_keep = 0;
-	G.sel_skip = 0;
-	G.sel_active = 0;
+	G.if_shadow = 0;
+	sel_reset_all();
 	G.branch_pc = -1;
 	G.branch_pos = 0;
 }
