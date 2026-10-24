@@ -221,6 +221,66 @@ static int tc_is_user_func(const char *name)
 	return 0;
 }
 
+/* Non-throwing variable lookup for the trace-cache compiler. mmb_find_var()
+ * raises a BASIC error when a name is used with the wrong number of subscripts
+ * (an array index variable such as `a(qq(0))` arrives here with nidx == 0, so
+ * mmb_find_var() would raise ?ARRAY). Compilation must never raise: an
+ * unsupported shape has to return -1 and let the interpreter parse the
+ * statement (#1310). Type resolution mirrors mmb_find_var(): an explicit
+ * suffix wins, then an existing unsuffixed binding, then OPTION's default. */
+static mmb_var *tc_find_var(const char *name, int type)
+{
+	char nbuf[MMB_MAX_NAME];
+	int t, i;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	t = mmb_type_suffix(nbuf);
+	if (t)
+		type = t;
+	else if (type == 0)
+	{
+		for (i = 0; i < MMB_MAX_VARS; i++)
+			if (G.vars[i].used && G.vars[i].unsuffixed &&
+			    mmb_keyword_eq(G.vars[i].name, nbuf))
+			{
+				type = G.vars[i].type;
+				break;
+			}
+		if (type == 0 && (G.opt.default_type == T_STR ||
+				  G.opt.default_type == T_INT))
+			type = G.opt.default_type;
+		if (type == 0)
+			type = T_NUM;
+	}
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used && G.vars[i].type == type &&
+		    mmb_keyword_eq(G.vars[i].name, nbuf))
+			return &G.vars[i];
+	return 0;
+}
+
+/* Create a scalar on the LHS path, but only in shapes where mmb_find_var()
+ * cannot raise. On any doubt the compiler bails and the interpreter creates
+ * the variable while executing the statement. */
+static mmb_var *tc_create_scalar(const char *name, int type)
+{
+	int i, nused = 0, is_colour;
+	if (type == T_STR || type == T_STRUCT || strchr(name, '.'))
+		return 0;
+	if (G.opt.explicit || mmb_is_builtin_func(name))
+		return 0;
+	mmb_named_colour(name, &is_colour);
+	if (is_colour)
+		return 0;
+	for (i = 0; i < MMB_MAX_VARS; i++)
+		if (G.vars[i].used)
+			nused++;
+	if (nused >= MMB_MAX_VARS)
+		return 0;
+	return mmb_find_var(name, type, 1, 0, 0);
+}
+
 /* Parse a comma-separated list of simple scalar index variables, up to
  * MMB_MAX_DIMS, and register each with the trace entry.  Returns the count
  * (>=1) or -1 when a subscript is not a plain numeric scalar variable. */
@@ -236,7 +296,7 @@ static int tc_parse_array_idx(tc_ent *e, int *iv)
 			return -1;
 		if (!tc_parse_name(iname, &itype))
 			return -1;
-		v = mmb_find_var(iname, itype, 0, 0, 0);
+		v = tc_find_var(iname, itype);
 		if (!v || v->dims != 0 || v->type == T_STR || v->type == T_STRUCT)
 			return -1;
 		ii = tc_add_var(e, v);
@@ -297,7 +357,7 @@ static int tc_compile_primary(tc_ent *e)
 		G.p++;
 		if (type == T_STR || type == T_STRUCT)
 			return 0;
-		arr = mmb_find_var(name, type, 0, nidx, 0);
+		arr = tc_find_var(name, type);
 		if (!arr || arr->dims != nidx || arr->type == T_STR ||
 		    arr->type == T_STRUCT || G.acc_on)
 			return 0;
@@ -321,7 +381,7 @@ static int tc_compile_primary(tc_ent *e)
 		}
 		if (type == T_STR || type == T_STRUCT)
 			return 0;
-		v = mmb_find_var(name, type, 0, 0, 0);
+		v = tc_find_var(name, type);
 		if (!v || v->dims != 0 || v->type == T_STR || v->type == T_STRUCT || G.acc_on)
 		{
 			G.acc_on = 0;
@@ -435,7 +495,7 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 		G.p++;
 		if (type == T_STR || type == T_STRUCT)
 			return 0;
-		dst = mmb_find_var(name, type, 0, nidx, 0);
+		dst = tc_find_var(name, type);
 		if (!dst || dst->dims != nidx || dst->type == T_STR ||
 		    dst->type == T_STRUCT || G.acc_on)
 			return 0;
@@ -444,7 +504,9 @@ static int tc_compile_let_from_lhs(tc_ent *e)
 	{
 		if (type == T_STR || type == T_STRUCT)
 			return 0;
-		dst = mmb_find_var(name, type, G.opt.explicit ? 0 : 1, 0, 0);
+		dst = tc_find_var(name, type);
+		if (!dst)
+			dst = tc_create_scalar(name, type);
 		if (!dst || dst->dims != 0 || dst->type == T_STR || dst->type == T_STRUCT || G.acc_on)
 		{
 			G.acc_on = 0;
