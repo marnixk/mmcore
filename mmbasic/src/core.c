@@ -767,6 +767,7 @@ static void gosub_save_ctrl(int g)
 	G.if_depth = 0;
 	G.if_inline = 0;
 	G.if_armed = 0;
+	G.if_inline_keep = 0;
 }
 
 static void gosub_restore_ctrl(int g)
@@ -811,12 +812,20 @@ void mmb_cmd_gosub(void)
  * mid-line position so statements after `name(args) :` still run (#1276). */
 static void gosub_resume_caller(void)
 {
+	int mid_line = G.gosub_pos[G.gosub_sp] != 0;
+
 	G.branch_pc = G.gosub_stack[G.gosub_sp];
-	if (G.gosub_pos[G.gosub_sp])
+	if (mid_line)
 	{
 		G.branch_pos = G.gosub_pos[G.gosub_sp];
 		G.gosub_pos[G.gosub_sp] = 0;
 	}
+	/* Returning mid-line (a statement SUB call) or into an expression (a
+	 * FUNCTION) continues the caller's one-line IF arm, so its END line
+	 * must not clear the restored state (#1295).  A plain GOSUB/RETURN to
+	 * the next line owns no inline arm. */
+	G.if_inline_keep =
+		(G.if_inline && (mid_line || G.branch_pc == -2)) ? 1 : 0;
 }
 
 void mmb_cmd_return(void)
@@ -1754,6 +1763,10 @@ int mmb_call_named_sub(const char *name)
 		while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
 		{
 			mmb_skip_sp();
+			/* `if c then hi else ...`: the zero-arg call ends at the
+			 * one-line IF's ELSE, not at an argument (#1295). */
+			if (G.if_inline == 1 && (at_else_kw() || at_elseif_kw()))
+				break;
 			if (*G.p == ',')
 			{
 				args[narg++] = mmb_int_val(0);
@@ -4470,8 +4483,12 @@ static void exec_stmt_loop(void)
 		{
 			/* A sub call keeps its caller's one-line IF state in the
 			 * gosub frame and restores it; any other branch abandons the
-			 * rest of this line. */
-			G.if_inline = 0;
+			 * rest of this line.  A return that restored the caller's
+			 * inline arm must not clear it here (#1295). */
+			if (G.if_inline_keep)
+				G.if_inline_keep = 0;
+			else
+				G.if_inline = 0;
 			G.if_armed = 0;
 			return;
 		}
@@ -4493,7 +4510,10 @@ static void exec_stmt_loop(void)
 			mmb_syntax();
 		break;
 	}
-	G.if_inline = 0;
+	if (G.if_inline_keep)
+		G.if_inline_keep = 0;
+	else
+		G.if_inline = 0;
 }
 
 static void exec_line_body(const char *body)
@@ -4861,6 +4881,7 @@ static void run_program(void)
 		G.if_depth = 0;
 		G.if_inline = 0;
 		G.if_armed = 0;
+		G.if_inline_keep = 0;
 		G.sel_active = 0;
 		G.sel_skip = 0;
 		G.in_sub = 0;
@@ -5024,6 +5045,7 @@ static void clear_exec_flags(void)
 	G.if_depth = 0;
 	G.if_inline = 0;
 	G.if_armed = 0;
+	G.if_inline_keep = 0;
 	G.sel_skip = 0;
 	G.sel_active = 0;
 	G.branch_pc = -1;
