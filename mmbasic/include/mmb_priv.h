@@ -22,8 +22,10 @@
 #define MMB_MAX_NAME      40
 #define MMB_MAX_VARS      256
 #define MMB_MAX_DIMS      4
-#define MMB_MAX_LINES     2048
 #define MMB_LINE_LEN      256
+/* Initial capacity of the growable program store, in lines (#1303). The
+ * store doubles as needed, so this is a memory hint, not a limit. */
+#define MMB_LINES_INIT    256
 #define MMB_MAX_FILES     10
 #define MMB_MAX_PAGES     8
 #define MMB_OPT_DEFAULT_MODE       11 /* 1280x720 */
@@ -59,9 +61,9 @@
 #define MMB_MAX_GOSUB     32
 #define MMB_MAX_CTRL      32
 #define MMB_MAX_IF_DEPTH  32
-#define MMB_MAX_CONST     256
-#define MMB_MAX_SUBS      128
-#define MMB_MAX_LABELS    64
+#define MMB_MAX_CONST     256 /* initial CONST table capacity (#1303) */
+#define MMB_MAX_SUBS      128 /* initial SUB table capacity (#1303) */
+#define MMB_MAX_LABELS    64  /* initial label table capacity (#1303) */
 
 #define T_NUM   1
 #define T_INT   2
@@ -346,7 +348,8 @@ typedef struct mmb_ed_hist {
 typedef struct mmb_ed_tab {
 	int used;
 	char path[128];
-	char buf[MMB_ED_BUF];
+	char *buf;   /* growable heap buffer (#1303) */
+	int cap;     /* allocated capacity of buf */
 	int len;
 	int cx, cy, row0, col0;
 	int dirty;
@@ -416,6 +419,35 @@ typedef struct mmb_tc_ent {
 	int8_t state;
 } mmb_tc_ent;
 
+/* Program-metadata tables (#1303): labels, SUBs and CONSTs were fixed-size
+ * arrays; they are heap tables that grow with the program. */
+typedef struct mmb_label {
+	char name[MMB_MAX_NAME];
+	int pc;
+	int used;
+} mmb_label;
+
+typedef struct mmb_sub {
+	char name[MMB_MAX_NAME];
+	int line_pc;
+	int is_func;
+	int used;
+	int nargs;
+	int ret_sid;
+	int ret_type; /* T_NUM/T_INT/T_STR return type for functions */
+	int arg_sid[MMB_MAX_SUB_ARGS];
+	int arg_type[MMB_MAX_SUB_ARGS]; /* declared scalar type, 0 = from name */
+	char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
+} mmb_sub;
+
+typedef struct mmb_const {
+	char name[MMB_MAX_NAME];
+	int type;
+	mmb_val val;
+	char *s;
+	int used;
+} mmb_const;
+
 typedef struct mmb {
 	const mmb_platform *plat;
 	jmp_buf errjmp;
@@ -424,7 +456,8 @@ typedef struct mmb {
 	int outn;
 	const char *p;
 	mmb_options opt;
-	mmb_var vars[MMB_MAX_VARS];
+	mmb_var *vars;   /* growable variable table (#1303) */
+	int vars_cap;
 	int nvars;
 	int dim_used;
 	mmb_sdef sdef[MMB_MAX_STRUCT_TYPES];
@@ -437,8 +470,12 @@ typedef struct mmb {
 	int acc_base_nidx;
 	int acc_base_idx[MMB_MAX_DIMS];
 	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
-	char prog[MMB_MAX_LINES][MMB_LINE_LEN];
-	int prog_num[MMB_MAX_LINES];
+	/* Program store (#1303): heap-owned arrays that grow on demand. Each
+	 * line is individually strdup'd, so insert/delete move pointers only.
+	 * prog_num is kept sorted; lookups use binary search. */
+	char **prog;
+	int *prog_num;
+	int prog_cap;
 	int nprog;
 	char current_prog[MMB_PROG_NAME];
 	int running;
@@ -529,26 +566,11 @@ typedef struct mmb {
 	mmb_val gosub_sel_val[MMB_MAX_GOSUB];
 	char *gosub_sel_str[MMB_MAX_GOSUB];
 	int nconst;
-	struct {
-		char name[MMB_MAX_NAME];
-		int type;
-		mmb_val val;
-		char *s;
-		int used;
-	} consts[MMB_MAX_CONST];
+	mmb_const *consts;
+	int consts_cap;
 	int nsubs;
-	struct {
-		char name[MMB_MAX_NAME];
-		int line_pc;
-		int is_func;
-		int used;
-		int nargs;
-		int ret_sid;
-		int ret_type; /* T_NUM/T_INT/T_STR return type for functions */
-		int arg_sid[MMB_MAX_SUB_ARGS];
-		int arg_type[MMB_MAX_SUB_ARGS]; /* declared scalar type, 0 = from name */
-		char args[MMB_MAX_SUB_ARGS][MMB_MAX_NAME];
-	} subs[MMB_MAX_SUBS];
+	mmb_sub *subs;
+	int subs_cap;
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS/app exit: next prompt has no leading CR/LF
 				* (consumed by mmb_front_prompt, #957) */
@@ -586,11 +608,8 @@ typedef struct mmb {
 	int keydown[6];
 	int nkeydown;
 	int nlabels;
-	struct {
-		char name[MMB_MAX_NAME];
-		int pc;
-		int used;
-	} labels[MMB_MAX_LABELS];
+	mmb_label *labels;
+	int labels_cap;
 	struct {
 		unsigned t0_ms;
 		unsigned stmt;
@@ -604,14 +623,16 @@ typedef struct mmb {
 		unsigned tcache_bad;
 	} prof;
 	/* Per-console interpreter run state (formerly file statics in core.c)
-	 * so multiple interpreter contexts can suspend and resume. */
-	int jmp_wend[MMB_MAX_LINES];
-	int jmp_loop[MMB_MAX_LINES];
-	int jmp_next[MMB_MAX_LINES];
-	int jmp_endsub[MMB_MAX_LINES];
-	int jmp_else[MMB_MAX_LINES];
-	int jmp_endif[MMB_MAX_LINES];
-	int jmp_endsel[MMB_MAX_LINES];
+	 * so multiple interpreter contexts can suspend and resume. The jump
+	 * tables are heap arrays grown alongside the program (#1303). */
+	int *jmp_wend;
+	int *jmp_loop;
+	int *jmp_next;
+	int *jmp_endsub;
+	int *jmp_else;
+	int *jmp_endif;
+	int *jmp_endsel;
+	int jmp_cap;           /* allocated capacity of the jump tables (#1303) */
 	int jmp_ready;
 	int run_preserve_vars;
 	int prog_dirty;        /* program text changed since last tokenize (#992) */

@@ -81,7 +81,7 @@ static void hash_rebuild(void)
 {
 	int i;
 	hash_clear();
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used)
 			hash_ins(i);
 }
@@ -151,10 +151,38 @@ static int unsuf_lookup(const char *nbuf)
 	return -1;
 }
 
+/* Free slot in the CONST table, doubling it when full (#1303). */
+static int consts_free_slot(void)
+{
+	int i;
+	if (!G.consts)
+	{
+		G.consts = (mmb_const *)G.plat->alloc((unsigned)MMB_MAX_CONST * sizeof(mmb_const));
+		if (!G.consts)
+			mmb_error("?OUT OF MEMORY");
+		memset(G.consts, 0, (unsigned)MMB_MAX_CONST * sizeof(mmb_const));
+		G.consts_cap = MMB_MAX_CONST;
+	}
+	for (i = 0; i < G.consts_cap; i++)
+		if (!G.consts[i].used)
+			return i;
+	{
+		mmb_const *nc = (mmb_const *)G.plat->alloc((unsigned)G.consts_cap * 2 * sizeof(mmb_const));
+		if (!nc)
+			mmb_error("?OUT OF MEMORY");
+		memset(nc, 0, (unsigned)G.consts_cap * 2 * sizeof(mmb_const));
+		memcpy(nc, G.consts, (unsigned)G.consts_cap * sizeof(mmb_const));
+		G.plat->free(G.consts);
+		G.consts = nc;
+		G.consts_cap *= 2;
+		return G.consts_cap / 2;
+	}
+}
+
 void mmb_clear_consts(void)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && G.consts[i].val.type == T_STR)
 		{
@@ -164,27 +192,30 @@ void mmb_clear_consts(void)
 		G.consts[i].used = 0;
 	}
 	G.nconst = 0;
+	if (G.consts)
+	{
+		G.plat->free(G.consts);
+		G.consts = 0;
+	}
+	G.consts_cap = 0;
 	mmb_resolve_invalidate();
 }
 
 void mmb_const_define(const char *name, int type, mmb_val val)
 {
-	int i, slot = -1;
+	int i, slot;
 	char nbuf[MMB_MAX_NAME];
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
 	if (type == 0)
 		type = val.type;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
 			return; /* CMM2 allows CONST inside a SUB on each call */
-		if (!G.consts[i].used && slot < 0)
-			slot = i;
 	}
-	if (slot < 0)
-		mmb_error("?OUT OF MEMORY");
+	slot = consts_free_slot();
 	memset(&G.consts[slot], 0, sizeof(G.consts[slot]));
 	strncpy(G.consts[slot].name, nbuf, MMB_MAX_NAME - 1);
 	G.consts[slot].type = type;
@@ -211,7 +242,7 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	t = mmb_type_suffix(nbuf);
 	if (t)
 		type = t;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
 		{
@@ -224,11 +255,43 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	return 0;
 }
 
+/* Free slot in the variable table, allocating it on first use and doubling
+ * it when full (#1303). Growth moves the table, so both the trace cache and
+ * the resolve cache (which hold mmb_var*) are invalidated. */
+static int vars_free_slot(void)
+{
+	int slot;
+	if (!G.vars)
+	{
+		G.vars = (mmb_var *)G.plat->alloc((unsigned)MMB_MAX_VARS * sizeof(mmb_var));
+		if (!G.vars)
+			mmb_error("?OUT OF MEMORY");
+		memset(G.vars, 0, (unsigned)MMB_MAX_VARS * sizeof(mmb_var));
+		G.vars_cap = MMB_MAX_VARS;
+	}
+	for (slot = 0; slot < G.vars_cap; slot++)
+		if (!G.vars[slot].used)
+			return slot;
+	{
+		mmb_var *nv = (mmb_var *)G.plat->alloc((unsigned)G.vars_cap * 2 * sizeof(mmb_var));
+		if (!nv)
+			mmb_error("?OUT OF MEMORY");
+		memset(nv, 0, (unsigned)G.vars_cap * 2 * sizeof(mmb_var));
+		memcpy(nv, G.vars, (unsigned)G.vars_cap * sizeof(mmb_var));
+		G.plat->free(G.vars);
+		G.vars = nv;
+		G.vars_cap *= 2;
+		mmb_tcache_invalidate();
+		mmb_resolve_invalidate();
+		return G.vars_cap / 2; /* first fresh slot of the doubled table */
+	}
+}
+
 void mmb_clear_vars(int keep_options)
 {
 	int i, d;
 	(void)keep_options;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 	{
 		if (G.vars[i].used)
 		{
@@ -247,6 +310,12 @@ void mmb_clear_vars(int keep_options)
 		}
 		memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	}
+	if (G.vars)
+	{
+		G.plat->free(G.vars);
+		G.vars = 0;
+	}
+	G.vars_cap = 0;
 	G.nvars = 0;
 	G.dim_used = 0;
 	hash_clear();
@@ -323,7 +392,7 @@ mmb_var *mmb_lookup_struct_var(const char *name)
 	i = hash_lookup(nbuf, T_STRUCT);
 	if (i >= 0)
 		return &G.vars[i];
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
 			return &G.vars[i];
 	return 0;
@@ -341,18 +410,14 @@ void mmb_bind_struct_var(const char *name, int sid)
 	sd = mmb_struct_def(sid);
 	if (!sd)
 		mmb_error("?UNKNOWN TYPE");
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
 		{
 			if (G.vars[i].struct_idx != sid)
 				mmb_error("?TYPE MISMATCH");
 			return;
 		}
-	for (slot = 0; slot < MMB_MAX_VARS; slot++)
-		if (!G.vars[slot].used)
-			break;
-	if (slot >= MMB_MAX_VARS)
-		mmb_error("?OUT OF MEMORY");
+	slot = vars_free_slot();
 	sz = sd->total;
 	memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
 	strncpy(G.vars[slot].name, nbuf, MMB_MAX_NAME - 1);
@@ -541,11 +606,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (nidx > 0)
 		mmb_error("?UNDECLARED"); /* arrays must be DIMmed */
 
-	for (i = 0; i < MMB_MAX_VARS; i++)
-		if (!G.vars[i].used)
-			break;
-	if (i >= MMB_MAX_VARS)
-		mmb_error("?OUT OF MEMORY");
+	i = vars_free_slot();
 
 	memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	strncpy(G.vars[i].name, nbuf, MMB_MAX_NAME - 1);
@@ -693,7 +754,7 @@ void mmb_cmd_dim(void)
 		if (!had_suffix && type != T_STRUCT)
 			mmb_check_user_name(name);
 
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
 			{
 				if (G.dim_local)
@@ -709,11 +770,7 @@ void mmb_cmd_dim(void)
 				mmb_error("?ALREADY DECLARED");
 			}
 
-		for (slot = 0; slot < MMB_MAX_VARS; slot++)
-			if (!G.vars[slot].used)
-				break;
-		if (slot >= MMB_MAX_VARS)
-			mmb_error("?OUT OF MEMORY");
+		slot = vars_free_slot();
 		if (G.dim_local && mmb_local_save(slot, 0) < 0)
 			mmb_error("?OUT OF MEMORY");
 
@@ -977,7 +1034,7 @@ void mmb_local_restore(int g)
 	{
 		mmb_localsave *ls = &G.gosub_local[g][k];
 		mmb_var *v;
-		if (ls->slot < 0 || ls->slot >= MMB_MAX_VARS)
+		if (ls->slot < 0 || ls->slot >= G.vars_cap)
 			continue;
 		v = &G.vars[ls->slot];
 		free_var_storage(v);
@@ -1075,7 +1132,7 @@ void mmb_cmd_redim(void)
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
 			{
 				v = &G.vars[i];
@@ -1086,11 +1143,7 @@ void mmb_cmd_redim(void)
 			mmb_error("?INVALID DIMENSION");
 		if (!v)
 		{
-			for (slot = 0; slot < MMB_MAX_VARS; slot++)
-				if (!G.vars[slot].used)
-					break;
-			if (slot >= MMB_MAX_VARS)
-				mmb_error("?OUT OF MEMORY");
+			slot = vars_free_slot();
 			v = &G.vars[slot];
 			memset(v, 0, sizeof(*v));
 			strncpy(v->name, name, MMB_MAX_NAME - 1);

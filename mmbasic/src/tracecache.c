@@ -214,7 +214,7 @@ static int tc_compile_expr(tc_ent *e);
 static int tc_is_user_func(const char *name)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_SUBS; i++)
+	for (i = 0; i < G.nsubs; i++)
 		if (G.subs[i].used && G.subs[i].is_func &&
 		    mmb_keyword_eq(G.subs[i].name, name))
 			return 1;
