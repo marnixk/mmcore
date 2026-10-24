@@ -10,11 +10,14 @@ static void hash_ins(int vi);
 static void hash_rebuild(void);
 static int mmb_local_save(int slot, int existed);
 
-/* Hash table is deliberately larger than MMB_MAX_VARS so the load factor
- * stays below ~0.5 and probing is short (#993). */
-#define MMB_HASH_SIZE 512
-static int var_tab[MMB_HASH_SIZE];
-static int unsuf_tab[MMB_HASH_SIZE];
+/* Variable-name hash tables (#1303). The variable table grows past 512
+ * entries, so the hash is heap-allocated and doubles when the load factor
+ * would pass ~0.5: capacity is always at least twice the number of used
+ * entries (and at least MMB_HASH_MIN), kept in step with vars_cap. */
+#define MMB_HASH_MIN 512
+static int *var_tab;
+static int *unsuf_tab;
+static unsigned hash_cap;
 
 /* Direct-mapped resolve cache (#1002): parsing a statement re-resolves every
  * variable token to an mmb_var* on each execution.  Key by the source-token
@@ -69,19 +72,62 @@ static unsigned hash_key(const char *n, int type)
 
 static void hash_clear(void)
 {
-	int i;
-	for (i = 0; i < MMB_HASH_SIZE; i++)
+	unsigned i;
+	for (i = 0; i < hash_cap; i++)
 	{
 		var_tab[i] = -1;
 		unsuf_tab[i] = -1;
 	}
 }
 
+/* Grow the hash tables so `need_vars` entries keep the load factor at or
+ * below 0.5, then rebuild. Called before a new variable is inserted. */
+static void hash_ensure(unsigned need_vars)
+{
+	unsigned want = 2 * need_vars;
+	unsigned cap = hash_cap > 0 ? hash_cap : MMB_HASH_MIN;
+	int *nt, *nu;
+	if (want <= hash_cap)
+		return;
+	while (cap < want)
+		cap *= 2;
+	nt = (int *)G.plat->alloc(cap * sizeof(int));
+	nu = (int *)G.plat->alloc(cap * sizeof(int));
+	if (!nt || !nu)
+	{
+		if (nt)
+			G.plat->free(nt);
+		if (nu)
+			G.plat->free(nu);
+		mmb_error("?OUT OF MEMORY");
+	}
+	if (var_tab)
+		G.plat->free(var_tab);
+	if (unsuf_tab)
+		G.plat->free(unsuf_tab);
+	var_tab = nt;
+	unsuf_tab = nu;
+	hash_cap = cap;
+	hash_rebuild();
+}
+
+/* Drop the hash tables (NEW / teardown); they regrow on the next insert. */
+static void hash_release(void)
+{
+	if (var_tab)
+		G.plat->free(var_tab);
+	if (unsuf_tab)
+		G.plat->free(unsuf_tab);
+	var_tab = 0;
+	unsuf_tab = 0;
+	hash_cap = 0;
+}
+
 static void hash_rebuild(void)
 {
 	int i;
 	hash_clear();
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used)
 			hash_ins(i);
 }
@@ -89,13 +135,13 @@ static void hash_rebuild(void)
 static void hash_ins(int vi)
 {
 	unsigned h;
-	int i;
-	if (vi < 0 || !G.vars[vi].used)
+	unsigned i;
+	if (vi < 0 || !hash_cap || !G.vars[vi].used)
 		return;
-	h = hash_key(G.vars[vi].name, G.vars[vi].type) % MMB_HASH_SIZE;
-	for (i = 0; i < MMB_HASH_SIZE; i++)
+	h = hash_key(G.vars[vi].name, G.vars[vi].type) % hash_cap;
+	for (i = 0; i < hash_cap; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
+		unsigned s = (h + i) % hash_cap;
 		if (var_tab[s] < 0)
 		{
 			var_tab[s] = vi;
@@ -104,10 +150,10 @@ static void hash_ins(int vi)
 	}
 	if (G.vars[vi].unsuffixed)
 	{
-		h = hash_key(G.vars[vi].name, 0) % MMB_HASH_SIZE;
-		for (i = 0; i < MMB_HASH_SIZE; i++)
+		h = hash_key(G.vars[vi].name, 0) % hash_cap;
+		for (i = 0; i < hash_cap; i++)
 		{
-			int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
+			unsigned s = (h + i) % hash_cap;
 			if (unsuf_tab[s] < 0)
 			{
 				unsuf_tab[s] = vi;
@@ -119,11 +165,14 @@ static void hash_ins(int vi)
 
 static int hash_lookup(const char *nbuf, int type)
 {
-	unsigned h = hash_key(nbuf, type) % MMB_HASH_SIZE;
-	int i;
-	for (i = 0; i < MMB_HASH_SIZE; i++)
+	unsigned h;
+	unsigned i;
+	if (!hash_cap)
+		return -1;
+	h = hash_key(nbuf, type) % hash_cap;
+	for (i = 0; i < hash_cap; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
+		unsigned s = (h + i) % hash_cap;
 		int vi = var_tab[s];
 		if (vi < 0)
 			return -1;
@@ -137,11 +186,14 @@ static int hash_lookup(const char *nbuf, int type)
 
 static int unsuf_lookup(const char *nbuf)
 {
-	unsigned h = hash_key(nbuf, 0) % MMB_HASH_SIZE;
-	int i;
-	for (i = 0; i < MMB_HASH_SIZE; i++)
+	unsigned h;
+	unsigned i;
+	if (!hash_cap)
+		return -1;
+	h = hash_key(nbuf, 0) % hash_cap;
+	for (i = 0; i < hash_cap; i++)
 	{
-		int s = (int)((h + (unsigned)i) % MMB_HASH_SIZE);
+		unsigned s = (h + i) % hash_cap;
 		int vi = unsuf_tab[s];
 		if (vi < 0)
 			return -1;
@@ -151,10 +203,38 @@ static int unsuf_lookup(const char *nbuf)
 	return -1;
 }
 
+/* Free slot in the CONST table, doubling it when full (#1303). */
+static int consts_free_slot(void)
+{
+	int i;
+	if (!G.consts)
+	{
+		G.consts = (mmb_const *)G.plat->alloc((unsigned)MMB_MAX_CONST * sizeof(mmb_const));
+		if (!G.consts)
+			mmb_error("?OUT OF MEMORY");
+		memset(G.consts, 0, (unsigned)MMB_MAX_CONST * sizeof(mmb_const));
+		G.consts_cap = MMB_MAX_CONST;
+	}
+	for (i = 0; i < G.consts_cap; i++)
+		if (!G.consts[i].used)
+			return i;
+	{
+		mmb_const *nc = (mmb_const *)G.plat->alloc((unsigned)G.consts_cap * 2 * sizeof(mmb_const));
+		if (!nc)
+			mmb_error("?OUT OF MEMORY");
+		memset(nc, 0, (unsigned)G.consts_cap * 2 * sizeof(mmb_const));
+		memcpy(nc, G.consts, (unsigned)G.consts_cap * sizeof(mmb_const));
+		G.plat->free(G.consts);
+		G.consts = nc;
+		G.consts_cap *= 2;
+		return G.consts_cap / 2;
+	}
+}
+
 void mmb_clear_consts(void)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && G.consts[i].val.type == T_STR)
 		{
@@ -164,27 +244,30 @@ void mmb_clear_consts(void)
 		G.consts[i].used = 0;
 	}
 	G.nconst = 0;
+	if (G.consts)
+	{
+		G.plat->free(G.consts);
+		G.consts = 0;
+	}
+	G.consts_cap = 0;
 	mmb_resolve_invalidate();
 }
 
 void mmb_const_define(const char *name, int type, mmb_val val)
 {
-	int i, slot = -1;
+	int i, slot;
 	char nbuf[MMB_MAX_NAME];
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
 	if (type == 0)
 		type = val.type;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
 			return; /* CMM2 allows CONST inside a SUB on each call */
-		if (!G.consts[i].used && slot < 0)
-			slot = i;
 	}
-	if (slot < 0)
-		mmb_error("?OUT OF MEMORY");
+	slot = consts_free_slot();
 	memset(&G.consts[slot], 0, sizeof(G.consts[slot]));
 	strncpy(G.consts[slot].name, nbuf, MMB_MAX_NAME - 1);
 	G.consts[slot].type = type;
@@ -211,7 +294,7 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	t = mmb_type_suffix(nbuf);
 	if (t)
 		type = t;
-	for (i = 0; i < MMB_MAX_CONST; i++)
+	for (i = 0; i < G.consts_cap; i++)
 	{
 		if (G.consts[i].used && name_eq(G.consts[i].name, nbuf))
 		{
@@ -224,11 +307,58 @@ int mmb_const_lookup(const char *name, int type, mmb_val *out)
 	return 0;
 }
 
+/* Free slot in the variable table, allocating it on first use and doubling
+ * it when full (#1303). Growth moves the table, so both the trace cache and
+ * the resolve cache (which hold mmb_var*) are invalidated. */
+static int vars_free_slot(void)
+{
+	int slot = -1;
+	int i;
+	if (!G.vars)
+	{
+		G.vars = (mmb_var *)G.plat->alloc((unsigned)MMB_MAX_VARS * sizeof(mmb_var));
+		if (!G.vars)
+			mmb_error("?OUT OF MEMORY");
+		memset(G.vars, 0, (unsigned)MMB_MAX_VARS * sizeof(mmb_var));
+		G.vars_cap = MMB_MAX_VARS;
+	}
+	for (i = 0; i < G.vars_cap; i++)
+		if (!G.vars[i].used)
+		{
+			slot = i;
+			break;
+		}
+	if (slot < 0)
+	{
+		mmb_var *old = G.vars;
+		mmb_var *nv = (mmb_var *)G.plat->alloc((unsigned)G.vars_cap * 2 * sizeof(mmb_var));
+		if (!nv)
+			mmb_error("?OUT OF MEMORY");
+		memset(nv, 0, (unsigned)G.vars_cap * 2 * sizeof(mmb_var));
+		memcpy(nv, G.vars, (unsigned)G.vars_cap * sizeof(mmb_var));
+		G.plat->free(G.vars);
+		G.vars = nv;
+		G.vars_cap *= 2;
+		/* An active FOR loop keeps a live mmb_var* across its body; growth
+		 * moved the table, so rebase every loop variable (#1303). */
+		for (i = 0; i < G.for_sp; i++)
+			if (G.forstack[i].vp)
+				G.forstack[i].vp = nv + (G.forstack[i].vp - old);
+		mmb_tcache_invalidate();
+		mmb_resolve_invalidate();
+		slot = G.vars_cap / 2; /* first fresh slot of the doubled table */
+	}
+	/* Keep the name hash load factor at or below 0.5 so the insert that
+	 * follows this call cannot overflow the probe (#1303). */
+	hash_ensure((unsigned)G.nvars + 1);
+	return slot;
+}
+
 void mmb_clear_vars(int keep_options)
 {
 	int i, d;
 	(void)keep_options;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 	{
 		if (G.vars[i].used)
 		{
@@ -247,9 +377,15 @@ void mmb_clear_vars(int keep_options)
 		}
 		memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	}
+	if (G.vars)
+	{
+		G.plat->free(G.vars);
+		G.vars = 0;
+	}
+	G.vars_cap = 0;
 	G.nvars = 0;
 	G.dim_used = 0;
-	hash_clear();
+	hash_release();
 	mmb_tcache_invalidate();
 	mmb_resolve_invalidate();
 }
@@ -323,7 +459,7 @@ mmb_var *mmb_lookup_struct_var(const char *name)
 	i = hash_lookup(nbuf, T_STRUCT);
 	if (i >= 0)
 		return &G.vars[i];
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
 			return &G.vars[i];
 	return 0;
@@ -341,18 +477,14 @@ void mmb_bind_struct_var(const char *name, int sid)
 	sd = mmb_struct_def(sid);
 	if (!sd)
 		mmb_error("?UNKNOWN TYPE");
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
 		{
 			if (G.vars[i].struct_idx != sid)
 				mmb_error("?TYPE MISMATCH");
 			return;
 		}
-	for (slot = 0; slot < MMB_MAX_VARS; slot++)
-		if (!G.vars[slot].used)
-			break;
-	if (slot >= MMB_MAX_VARS)
-		mmb_error("?OUT OF MEMORY");
+	slot = vars_free_slot();
 	sz = sd->total;
 	memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
 	strncpy(G.vars[slot].name, nbuf, MMB_MAX_NAME - 1);
@@ -541,11 +673,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 	if (nidx > 0)
 		mmb_error("?UNDECLARED"); /* arrays must be DIMmed */
 
-	for (i = 0; i < MMB_MAX_VARS; i++)
-		if (!G.vars[i].used)
-			break;
-	if (i >= MMB_MAX_VARS)
-		mmb_error("?OUT OF MEMORY");
+	i = vars_free_slot();
 
 	memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	strncpy(G.vars[i].name, nbuf, MMB_MAX_NAME - 1);
@@ -693,7 +821,7 @@ void mmb_cmd_dim(void)
 		if (!had_suffix && type != T_STRUCT)
 			mmb_check_user_name(name);
 
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
 			{
 				if (G.dim_local)
@@ -709,11 +837,7 @@ void mmb_cmd_dim(void)
 				mmb_error("?ALREADY DECLARED");
 			}
 
-		for (slot = 0; slot < MMB_MAX_VARS; slot++)
-			if (!G.vars[slot].used)
-				break;
-		if (slot >= MMB_MAX_VARS)
-			mmb_error("?OUT OF MEMORY");
+		slot = vars_free_slot();
 		if (G.dim_local && mmb_local_save(slot, 0) < 0)
 			mmb_error("?OUT OF MEMORY");
 
@@ -977,7 +1101,7 @@ void mmb_local_restore(int g)
 	{
 		mmb_localsave *ls = &G.gosub_local[g][k];
 		mmb_var *v;
-		if (ls->slot < 0 || ls->slot >= MMB_MAX_VARS)
+		if (ls->slot < 0 || ls->slot >= G.vars_cap)
 			continue;
 		v = &G.vars[ls->slot];
 		free_var_storage(v);
@@ -1075,7 +1199,7 @@ void mmb_cmd_redim(void)
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
 			{
 				v = &G.vars[i];
@@ -1086,11 +1210,7 @@ void mmb_cmd_redim(void)
 			mmb_error("?INVALID DIMENSION");
 		if (!v)
 		{
-			for (slot = 0; slot < MMB_MAX_VARS; slot++)
-				if (!G.vars[slot].used)
-					break;
-			if (slot >= MMB_MAX_VARS)
-				mmb_error("?OUT OF MEMORY");
+			slot = vars_free_slot();
 			v = &G.vars[slot];
 			memset(v, 0, sizeof(*v));
 			strncpy(v->name, name, MMB_MAX_NAME - 1);
