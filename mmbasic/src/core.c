@@ -1236,7 +1236,43 @@ void mmb_cmd_endif(void)
 void mmb_cmd_data(void)
 {
 	while (*G.p && *G.p != ':')
+	{
+		/* Same 3-byte keyword tokens as skip_balanced_paren() (#1310): a token
+		 * payload byte can be ':' or 0 and must not end the DATA statement. */
+		if ((unsigned char)*G.p == 0x80)
+		{
+			if (!G.p[1] && !G.p[2])
+			{
+				G.p++;
+				continue;
+			}
+			G.p += 3;
+			continue;
+		}
+		if (*G.p == '"')
+		{
+			G.p++;
+			while (*G.p)
+			{
+				if (*G.p != '"')
+				{
+					G.p++;
+					continue;
+				}
+				G.p++;
+				if (*G.p == '"')
+				{
+					G.p++;
+					continue;
+				}
+				break;
+			}
+			continue;
+		}
+		if (*G.p == '\'')
+			break;
 		G.p++;
+	}
 }
 
 void mmb_cmd_read(void)
@@ -3480,6 +3516,19 @@ static void skip_balanced_paren(void)
 		return;
 	while (*G.p)
 	{
+		/* Keyword tokens are 3-byte escapes (0x80, id lo, id hi). Their
+		 * payload bytes can be 0 (ids < 256), '"', '(' or ')', so scan them
+		 * as one unit instead of character by character (#1310). */
+		if ((unsigned char)*G.p == 0x80)
+		{
+			if (!G.p[1] && !G.p[2])
+			{
+				G.p++;
+				continue;
+			}
+			G.p += 3;
+			continue;
+		}
 		if (*G.p == '"')
 		{
 			G.p++;
