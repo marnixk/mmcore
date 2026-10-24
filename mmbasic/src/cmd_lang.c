@@ -33,7 +33,7 @@ void mmb_cmd_error(void)
 void mmb_cmd_memory(void)
 {
 	int i, used = 0;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used)
 			used++;
 	mmb_out("Program: ");
@@ -602,7 +602,7 @@ void mmb_cmd_sort(void)
 		mmb_skip_sp();
 		mmb_expect(')');
 	}
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && mmb_keyword_eq(G.vars[i].name, name) &&
 		    (t == 0 || G.vars[i].type == t))
 		{

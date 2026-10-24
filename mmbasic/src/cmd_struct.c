@@ -601,7 +601,7 @@ static int parse_empty_member(char *aname, int asz, char *mname, int msz)
 static mmb_var *find_struct_array(const char *name)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == T_STRUCT &&
 		    G.vars[i].dims > 0 && mmb_keyword_eq(G.vars[i].name, name))
 			return &G.vars[i];
@@ -1389,7 +1389,7 @@ int mmb_try_parse_arrview(mmb_arrview *out)
 		mmb_skip_sp();
 	}
 	v = 0;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].dims > 0 &&
 		    mmb_keyword_eq(G.vars[i].name, name))
 		{
