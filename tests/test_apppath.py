@@ -251,7 +251,7 @@ def test_launcher_filters_as_you_type(console):
     root = _build_app(con, "FILTER", "TWO", "STORY", "FILTEROK", "Story Grove")
     assert con.send_line(f'OPTION PATH "{root}"') == ""
     con.drain(quiet=0.2, timeout=2.0)
-    con._ser.sendall(b"APPS\r")
+    con._ser.sendall(b"\x00")  # Ctrl+Space picker
     seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
     assert "STORY GROVE" in seen, seen
     assert "ALPHA APP" in seen, seen
@@ -273,7 +273,7 @@ def test_launcher_filters_as_you_type(console):
     # Backspace removes characters and widens the list again. Three deletes
     # take the filter back to empty, restoring the whole list.
     con.drain(quiet=0.2, timeout=1.0)
-    con._ser.sendall(b"APPS\r")
+    con._ser.sendall(b"\x00")  # Ctrl+Space picker
     con.drain(quiet=0.9, timeout=3.0)
     _launcher_type(con, b"gro")
     seen = _launcher_type(con, b"\x7f\x7f\x7f")
