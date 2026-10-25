@@ -1104,3 +1104,103 @@ def test_one_line_if_multi_statement_branches_with_calls_1295(console):
     out = console.send_line('RUN "IFCALLMULTI.BAS"')
     assert "?SYNTAX" not in out.upper(), out
     assert _norm_lines(out) == ["t:12", "f:34", "show:T1", "t2:1", "show:E2", "f2:2"]
+
+
+def test_float_sub_param_after_integer_param_1315(console):
+    """#1315: a FLOAT parameter keeps its value when an earlier SUB used a
+    same-named INTEGER parameter."""
+    _write_bas(
+        console,
+        "FLOATPARAM1.BAS",
+        [
+            "sub outer(x as integer)",
+            "end sub",
+            "sub show(x as float)",
+            '  print "v="; x',
+            "end sub",
+            "outer(608)",
+            "show(2.5)",
+            "show(3.5)",
+        ],
+    )
+    out = console.send_line('RUN "FLOATPARAM1.BAS"')
+    assert "?" not in out, out
+    assert _norm_lines(out) == ["v=2.5", "v=3.5"]
+
+
+def test_float_function_param_after_default_integer_1315(console):
+    """#1315 repro 2: OPTION DEFAULT INTEGER plus a same-named untyped
+    parameter must not shadow a later AS FLOAT FUNCTION parameter."""
+    _write_bas(
+        console,
+        "FLOATPARAM2.BAS",
+        [
+            "option explicit",
+            "option default integer",
+            "sub inner(a)",
+            "  local w",
+            "  w = a",
+            "end sub",
+            "sub outer(x)",
+            "  inner(x * 2)",
+            "end sub",
+            "function show$(x as float)",
+            "  show$ = str$(x)",
+            "end function",
+            "outer(608)",
+            'print "after: "; show$(2.5)',
+        ],
+    )
+    out = console.send_line('RUN "FLOATPARAM2.BAS"')
+    assert "?" not in out, out
+    assert _norm_lines(out) == ["after: 2.5"]
+
+
+def test_local_initialiser_not_stale_from_other_sub_param_1315(console):
+    """#1315: a LOCAL initialised inside one SUB must not read a same-named
+    parameter of a previously called SUB."""
+    _write_bas(
+        console,
+        "FLOATPARAM3.BAS",
+        [
+            "sub outer(x as integer)",
+            '  print "outer="; x',
+            "end sub",
+            "sub inner()",
+            "  local x = 2.5",
+            '  print "local="; x',
+            "end sub",
+            "outer(608)",
+            "inner()",
+            "inner()",
+        ],
+    )
+    out = console.send_line('RUN "FLOATPARAM3.BAS"')
+    assert "?" not in out, out
+    assert _norm_lines(out) == ["outer=608", "local=2.5", "local=2.5"]
+
+
+def test_tracecached_expr_uses_declared_param_type_1315(console):
+    """#1315: LET/IF trace-cache compilation must resolve a parameter with its
+    declared type, not the first same-named unsuffixed variable."""
+    _write_bas(
+        console,
+        "FLOATPARAM4.BAS",
+        [
+            "sub pint(x as integer)",
+            "end sub",
+            "sub pfloat(x as float)",
+            "  local y",
+            "  y = x",
+            "  if y > 3 then",
+            '    print "y="; y',
+            "  endif",
+            "end sub",
+            "pint(608)",
+            "pfloat(2.5)",
+            "pfloat(4.5)",
+        ],
+    )
+    out = console.send_line('RUN "FLOATPARAM4.BAS"')
+    assert "?" not in out, out
+    assert _norm_lines(out) == ["y=4.5"]

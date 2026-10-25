@@ -245,13 +245,25 @@ static mmb_var *tc_find_var(const char *name, int type)
 		type = t;
 	else if (type == 0)
 	{
-		for (i = 0; i < G.vars_cap; i++)
-			if (G.vars[i].used && G.vars[i].unsuffixed &&
-			    mmb_keyword_eq(G.vars[i].name, nbuf))
-			{
-				type = G.vars[i].type;
-				break;
-			}
+		int at = mmb_bare_name_type(nbuf);
+		if (at >= 0)
+		{
+			/* Mirror mmb_find_var(): a bare parameter name inside a
+			 * SUB/FUNCTION resolves with the declared type of that
+			 * parameter, not the first same-named unsuffixed variable
+			 * (#1315). */
+			type = at ? at : G.opt.default_type;
+		}
+		else
+		{
+			for (i = 0; i < G.vars_cap; i++)
+				if (G.vars[i].used && G.vars[i].unsuffixed &&
+				    mmb_keyword_eq(G.vars[i].name, nbuf))
+				{
+					type = G.vars[i].type;
+					break;
+				}
+		}
 		if (type == 0 && (G.opt.default_type == T_STR ||
 				  G.opt.default_type == T_INT))
 			type = G.opt.default_type;
