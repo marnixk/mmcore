@@ -527,6 +527,8 @@ typedef struct mmb {
 	int data_line, data_pos;
 	int data_off;          /* byte offset of the next item in prog[data_line] (#990) */
 	int gosub_sp;
+	int cur_sub;           /* executing SUB/FUNCTION index, -1 outside */
+	int gosub_sub[MMB_MAX_GOSUB]; /* cur_sub saved per call frame */
 	int gosub_stack[MMB_MAX_GOSUB];
 	const char *gosub_pos[MMB_MAX_GOSUB]; /* same-line resume after a call (#1276) */
 	int gosub_event[MMB_MAX_GOSUB];
@@ -765,6 +767,11 @@ void mmb_clear_vars(int keep_options);
 void mmb_local_restore(int g);
 void mmb_vars_rehash(void);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
+/* Type that a bare (unsuffixed) name denotes in the executing call frame
+ * (#1315): the nearest visible LOCAL binding, else a parameter of the nearest
+ * enclosing SUB/FUNCTION. -1 when the name is not scoped, 0 when it is an
+ * untyped parameter (the OPTION default type applies). */
+int mmb_bare_name_type(const char *name);
 /* Resolve a variable reference parsed from source, caching the binding per
  * source-token address so a repeat execution skips the hash lookup (#1002). */
 mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int create,

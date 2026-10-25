@@ -1201,6 +1201,7 @@ void mmb_cmd_gosub(void)
 	G.gosub_event[G.gosub_sp] = 0;
 	G.gosub_nsave[G.gosub_sp] = 0;
 	G.gosub_nlocal[G.gosub_sp] = 0;
+	G.gosub_sub[G.gosub_sp] = G.cur_sub;
 	gosub_save_ctrl(G.gosub_sp);
 	G.gosub_sp++;
 	G.branch_pc = parse_target();
@@ -2156,6 +2157,7 @@ static void gosub_restore_top(void)
 	}
 	G.opt.explicit = ex;
 	G.gosub_nsave[g] = 0;
+	G.cur_sub = (g > 0) ? G.gosub_sub[g - 1] : -1;
 	gosub_restore_ctrl(g);
 }
 
@@ -2253,6 +2255,7 @@ int mmb_call_named_sub(const char *name)
 	G.gosub_event[g] = 0;
 	G.gosub_nsave[g] = G.subs[si].nargs;
 	G.gosub_nlocal[g] = 0;
+	G.gosub_sub[g] = si;
 	ex = G.opt.explicit;
 	G.opt.explicit = 0;
 	for (i = 0; i < G.subs[si].nargs; i++)
@@ -2330,6 +2333,7 @@ int mmb_call_named_sub(const char *name)
 	}
 	G.opt.explicit = ex;
 	gosub_save_ctrl(g);
+	G.cur_sub = si;
 	G.gosub_sp++;
 	G.branch_pc = G.subs[si].line_pc;
 	return 1;
@@ -2423,6 +2427,7 @@ void mmb_option_reset(void)
 	G.opt.profiling = 0;
 	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;
+	G.cur_sub = -1;
 	G.opt.console = MMB_DEFAULT_CONSOLE;
 	G.opt.console_port = 3;
 	G.opt.crlf = 2;
@@ -5425,6 +5430,7 @@ static void run_program(void)
 		sel_reset_all();
 		G.loop_seq = 0;
 		G.in_sub = 0;
+		G.cur_sub = -1;
 		G.data_line = 0;
 		G.data_pos = 0;
 		G.data_off = 0;

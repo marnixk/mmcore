@@ -594,6 +594,53 @@ void mmb_check_user_name(const char *name)
 	}
 }
 
+int mmb_bare_name_type(const char *name)
+{
+	int g, k;
+	/* Walk the call frames from innermost outwards. A frame's LOCALs shadow
+	 * everything outside it; the SUB/FUNCTION parameters of that frame come
+	 * next. This keeps `x` bound to the parameter declared AS FLOAT in the
+	 * callee even when an earlier same-named parameter was AS INTEGER, and
+	 * to a LOCAL x even when a global/param x of another type exists
+	 * (#1315). */
+	for (g = G.gosub_sp - 1; g >= 0; g--)
+	{
+		int si;
+		for (k = 0; k < G.gosub_nlocal[g]; k++)
+		{
+			int slot = G.gosub_local[g][k].slot;
+			mmb_var *v;
+			if (slot < 0 || slot >= G.vars_cap)
+				continue;
+			v = &G.vars[slot];
+			if (v->used && v->unsuffixed && mmb_keyword_eq(v->name, name))
+				return v->type;
+		}
+		si = G.gosub_sub[g];
+		if (si < 0 || si >= G.nsubs || !G.subs[si].used)
+			continue;
+		for (k = 0; k < G.subs[si].nargs; k++)
+		{
+			char abuf[MMB_MAX_NAME];
+			int sl;
+			if (G.subs[si].arg_sid[k] >= 0)
+				continue;
+			strncpy(abuf, G.subs[si].args[k], MMB_MAX_NAME - 1);
+			abuf[MMB_MAX_NAME - 1] = 0;
+			sl = (int)strlen(abuf);
+			/* A suffixed parameter (x$, x%) is a different variable from
+			 * the bare name, so it must not capture bare lookups. */
+			if (sl && (abuf[sl - 1] == '$' || abuf[sl - 1] == '%' ||
+				   abuf[sl - 1] == '!'))
+				continue;
+			mmb_upper(abuf);
+			if (mmb_keyword_eq(abuf, name))
+				return G.subs[si].arg_type[k];
+		}
+	}
+	return -1;
+}
+
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
 {
 	int i;
@@ -626,11 +673,22 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		type = t;
 	else if (type == 0)
 	{
-		int ui = unsuf_lookup(nbuf);
-		if (ui >= 0)
-			type = G.vars[ui].type;
-		if (type == 0)
-			type = G.opt.default_type;
+		int at = mmb_bare_name_type(nbuf);
+		if (at >= 0)
+		{
+			/* Inside a SUB/FUNCTION a bare name that is one of its
+			 * parameters denotes that parameter's declared type, not the
+			 * first same-named unsuffixed variable (#1315). */
+			type = at ? at : G.opt.default_type;
+		}
+		else
+		{
+			int ui = unsuf_lookup(nbuf);
+			if (ui >= 0)
+				type = G.vars[ui].type;
+			if (type == 0)
+				type = G.opt.default_type;
+		}
 	}
 	if (type == 0 && G.opt.explicit)
 		mmb_error("?EXPLICIT");
