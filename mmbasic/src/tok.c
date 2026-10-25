@@ -37,6 +37,7 @@ static const char *const kws[] = {
 	"MM.INFO", "MM.VER", "MM.HOST.HRES", "MM.HOST.VRES",
 	"MM.RUNTIME", "MM.RUNTIME$",
 	"MM.DEVICE$", "MM.CMDLINE$", "MM.BATTERY%", "MM.BRIGHTNESS%",
+	"MM.ERRNO", "MM.ERRMSG$",
 	"NEXT", "NEW", "NOT", "NAME", "NONE", "NOLED", "NORMAL", "NTP",
 	"OPEN", "OPTION", "OR", "OR_PIXELS", "ON", "OFF", "OUTPUT",
 	"OCT$",

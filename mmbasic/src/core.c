@@ -10,6 +10,8 @@ extern mmb_val mmb_load_var(mmb_var *v, int off);
 static void exec_statement(void);
 static void gosub_restore_top(void);
 static void exec_line_body(const char *body);
+static void exec_line_from(const char *body, const char *at);
+static int exec_line_guarded(const char *body, const char *at);
 static void run_program(void);
 static int line_match(const char *body, const char *kw);
 static int find_wend_pc(int from);
@@ -5010,13 +5012,75 @@ static int if_inline_stop(void)
 	return 1;
 }
 
+/* One statement under an ON ERROR SKIP/IGNORE landing. The landing keeps the
+ * call stack (unlike ON ERROR GOTO) and resumes at the statement after the
+ * one that failed. The previous landing is saved because nested SUB and
+ * FUNCTION bodies install their own. */
+static void exec_statement_guarded(void)
+{
+	const char *next = G.p;
+	jmp_buf saved;
+	int had = G.skip_stmt_valid;
+
+	skip_stmt(&next);
+	if (had)
+		memcpy(saved, G.stmt_errjmp, sizeof(jmp_buf));
+	G.skip_stmt_valid = 1;
+	if (setjmp(G.stmt_errjmp))
+	{
+		s_poll_active = 0; /* longjmp unwound past mmb_poll() */
+		G.p = next;
+	}
+	else
+		exec_statement();
+	G.skip_stmt_valid = had;
+	if (had)
+		memcpy(G.stmt_errjmp, saved, sizeof(jmp_buf));
+}
+
+/* A whole line under the line-level landing, so an error outside a statement
+ * (for example while evaluating a block IF condition) is tolerated too.
+ * Returns non-zero when the trapped error abandoned the rest of the line. */
+static int exec_line_guarded(const char *body, const char *at)
+{
+	int had = G.skip_line_valid;
+
+	if (G.error_skip != 0)
+	{
+		G.skip_line_valid = 1;
+		if (setjmp(G.skip_errjmp))
+		{
+			s_poll_active = 0;
+			G.branch_pc = -1;
+			G.branch_pos = 0;
+			G.skip_line_valid = had;
+			if (G.error_skip > 0)
+				G.error_skip--;
+			return 1;
+		}
+	}
+	if (at)
+		exec_line_from(body, at);
+	else
+		exec_line_body(body);
+	G.skip_line_valid = had;
+	return 0;
+}
+
 static void exec_stmt_loop(void)
 {
 	for (;;)
 	{
 		if (if_inline_stop())
 			break;
-		exec_statement();
+		if (G.error_skip != 0)
+			exec_statement_guarded();
+		else
+			exec_statement();
+		/* SKIP counts the ON ERROR statement itself, so SKIP 1 tolerates
+		 * an error in the next statement only (CMM2/MMBasic semantics). */
+		if (G.error_skip > 0)
+			G.error_skip--;
 		if (G.if_armed)
 		{
 			/* The IF selected a one-line arm; run its statements next. */
@@ -5097,8 +5161,17 @@ static void run_gosub_body(void)
 	int saved_for = G.for_sp;
 	int saved_running = G.running;
 	const char *saved_bpos = G.branch_pos;
+	int saved_skip_valid = G.skip_stmt_valid;
+	int saved_line_valid = G.skip_line_valid;
+	int had_skip = (G.error_skip != 0);
+	jmp_buf saved_skip_jmp, saved_stmt_jmp;
 	mmb_arena_save arena_mark;
 
+	if (had_skip)
+	{
+		memcpy(saved_skip_jmp, G.skip_errjmp, sizeof(jmp_buf));
+		memcpy(saved_stmt_jmp, G.stmt_errjmp, sizeof(jmp_buf));
+	}
 	G.running = 1;
 	if (G.gosub_sp > 0)
 		G.gosub_stack[G.gosub_sp - 1] = -2;
@@ -5115,6 +5188,7 @@ static void run_gosub_body(void)
 	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
 	{
 		int loop;
+		int skipped = 0;
 		const char *resume = 0;
 		mmb_check_break();
 		do
@@ -5124,17 +5198,21 @@ static void run_gosub_body(void)
 			G.branch_pc = -1;
 			if (resume)
 			{
-				exec_line_from(mmb_tok_line(G.run_pc), resume);
+				skipped = exec_line_guarded(
+					mmb_tok_line(G.run_pc), resume);
 				resume = 0;
 			}
 			else if (G.branch_pos)
 			{
-				exec_line_from(mmb_tok_line(G.run_pc),
-					       G.branch_pos);
+				skipped = exec_line_guarded(
+					mmb_tok_line(G.run_pc), G.branch_pos);
 				G.branch_pos = 0;
 			}
 			else
-				exec_line_body(mmb_tok_line(G.run_pc));
+				skipped = exec_line_guarded(
+					mmb_tok_line(G.run_pc), 0);
+			if (skipped)
+				break;
 			if (G.branch_pc == -2)
 				break;
 			if (G.branch_pc >= 0)
@@ -5150,6 +5228,11 @@ static void run_gosub_body(void)
 				loop = 1;
 			}
 		} while (loop && G.running);
+		if (skipped)
+		{
+			G.run_pc++;
+			continue;
+		}
 		if (G.branch_pc == -2)
 			break;
 		if (G.branch_pc >= 0)
@@ -5160,6 +5243,13 @@ static void run_gosub_body(void)
 	G.for_sp = saved_for;
 	G.running = saved_running;
 	G.branch_pos = saved_bpos;
+	G.skip_stmt_valid = saved_skip_valid;
+	G.skip_line_valid = saved_line_valid;
+	if (had_skip)
+	{
+		memcpy(G.skip_errjmp, saved_skip_jmp, sizeof(jmp_buf));
+		memcpy(G.stmt_errjmp, saved_stmt_jmp, sizeof(jmp_buf));
+	}
 	mmb_arena_release(&arena_mark);
 }
 
@@ -5466,6 +5556,11 @@ static void run_program(void)
 		mmb_struct_prepare();
 		G.on_error_pc = -1;
 		G.error_active = 0;
+		G.error_skip = 0;
+		G.skip_stmt_valid = 0;
+		G.skip_line_valid = 0;
+		G.mm_errno = 0;
+		G.mm_errmsg[0] = 0;
 		scan_subs();
 		G.opt.explicit = 0;
 		G.opt.default_type = T_NUM;
@@ -5480,6 +5575,7 @@ static void run_program(void)
 	{
 		int loop;
 		int trapped = 0;
+		int skipped = 0;
 		const char *resume = 0;
 		mmb_check_break();
 		if (mmb_console_switch_pending())
@@ -5509,17 +5605,22 @@ static void run_program(void)
 			}
 			if (resume)
 			{
-				exec_line_from(mmb_tok_line(pc), resume);
+				skipped = exec_line_guarded(
+					mmb_tok_line(pc), resume);
 				resume = 0;
 			}
 			else if (G.branch_pos)
 			{
 				/* EXIT/CONTINUE FOR requested a mid-line resume (#1004). */
-				exec_line_from(mmb_tok_line(pc), G.branch_pos);
+				skipped = exec_line_guarded(
+					mmb_tok_line(pc), G.branch_pos);
 				G.branch_pos = 0;
 			}
 			else
-				exec_line_body(mmb_tok_line(pc));
+				skipped = exec_line_guarded(
+					mmb_tok_line(pc), 0);
+			if (skipped)
+				break;
 			if (G.branch_pc >= 0)
 			{
 				pc = G.branch_pc;
@@ -5533,6 +5634,11 @@ static void run_program(void)
 				loop = 1;
 			}
 		} while (loop && G.running);
+		if (skipped)
+		{
+			pc++;
+			continue;
+		}
 		if (trapped)
 		{
 			unwind_call_frames();

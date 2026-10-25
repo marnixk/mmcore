@@ -165,7 +165,15 @@ int mmb_type_suffix(char *name)
 
 void mmb_error(const char *msg)
 {
-	unsigned i;
+	unsigned i, j;
+
+	/* MM.ERRMSG$ holds just the error text: the location that G.err
+	 * appends below is for the console, not part of the message. */
+	for (j = 0; j < sizeof(G.mm_errmsg) - 1 && msg[j]; j++)
+		G.mm_errmsg[j] = msg[j];
+	G.mm_errmsg[j] = 0;
+	if (G.mm_errno == 0)
+		G.mm_errno = 16; /* MMBasic's generic "there was an error" code */
 	for (i = 0; i < sizeof(G.err) - 1 && msg[i]; i++)
 		G.err[i] = msg[i];
 	if (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
@@ -202,11 +210,26 @@ void mmb_error(const char *msg)
 			G.err[i++] = *p++;
 	}
 	G.err[i] = 0;
-	if (G.running && !G.error_active && G.on_error_pc >= 0)
+	if (G.running && !G.error_active)
 	{
-		G.error_active = 1;
-		G.err_resume_pc = G.run_pc;
-		longjmp(G.run_errjmp, 1);
+		if (G.on_error_pc >= 0)
+		{
+			G.error_active = 1;
+			G.err_resume_pc = G.run_pc;
+			longjmp(G.run_errjmp, 1);
+		}
+		/* ON ERROR SKIP/IGNORE keeps the call stack: the guarded
+		 * statement loop resumes at the next statement. If neither
+		 * landing is live (a handler was installed part-way through
+		 * an unguarded statement), fall through to the normal abort
+		 * rather than jumping into a frame that has returned. */
+		if (G.error_skip != 0)
+		{
+			if (G.skip_stmt_valid)
+				longjmp(G.stmt_errjmp, 1);
+			if (G.skip_line_valid)
+				longjmp(G.skip_errjmp, 1);
+		}
 	}
 	if (G.running)
 		mmb_play_stop_owned();

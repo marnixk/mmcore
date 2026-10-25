@@ -13,6 +13,7 @@ Implemented language:
   IF THEN ELSE ELSEIF ENDIF
   SELECT CASE CASE IS CASE TO CASE ELSE
   GOTO GOSUB RETURN labels ON GOTO ON GOSUB
+  ON ERROR GOTO|SKIP|IGNORE|ABORT|CLEAR RESUME
   DATA READ RESTORE SUB FUNCTION CALL
   #INCLUDE SETTICK ON KEY
   EXIT DO|FOR|SUB|FUNCTION  CONTINUE FOR|DO
@@ -33,8 +34,7 @@ Implemented commands:
 
 Implemented functions: HELP FUNCTIONS.
 
-Accepted but not trapped:
-  ON ERROR
+Trapped errors report MM.ERRNO and MM.ERRMSG$; see ON and RESUME.
 
 Not on this Pi (CMM2 hardware / firmware):
   #DEFINE #COMMENT #MMDEBUG

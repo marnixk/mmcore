@@ -3,12 +3,15 @@ kind: command
 alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON MOUSECLICK, ON MOUSEDOWN, ON MOUSEUP, ON MOUSEMOVE, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
 Jump to the n-th line number (1-based), or call a SUB when a key or pointer
-event is waiting. ON ERROR GOTO installs a runtime error handler; use ~RESUME~
-to continue.
+event is waiting. ON ERROR chooses what happens on a runtime error.
 
 ON n GOTO line [, line]...
 ON n GOSUB line [, line]...
 ON ERROR GOTO line
+ON ERROR SKIP [n]
+ON ERROR IGNORE
+ON ERROR ABORT
+ON ERROR CLEAR
 ON ERROR
 ON KEY subname
 ON KEY 0
@@ -40,7 +43,25 @@ RESUME continues at the failing line, RESUME NEXT at the following line, and
 RESUME line at a chosen line. Without RESUME a second error aborts the program.
 Entering the handler unwinds any active SUB/FUNCTION/GOSUB call frames, so the
 handler sees the enclosing scope; see ~RESUME~ for how that affects the resume
-forms. ON ERROR with no target clears the handler.
+forms.
+
+ON ERROR SKIP [n] ignores errors in the next n statements, then reverts to
+ABORT. The default n is 1. The failing statement is skipped and execution
+carries on at the next one; the call stack is not unwound, so it works inside
+a SUB or FUNCTION. ON ERROR IGNORE ignores errors until the handler is
+changed. ON ERROR ABORT stops trapping and restores the normal abort
+behaviour; it leaves ~MM.ERRNO~ and ~MM.ERRMSG$~ as they are. ON ERROR CLEAR
+clears ~MM.ERRNO~ and ~MM.ERRMSG$~ but keeps the current GOTO/SKIP/IGNORE
+mode in force. Plain ON ERROR removes the handler and clears both variables.
+
+An ignored error sets ~MM.ERRNO~ to a non-zero error code and ~MM.ERRMSG$~ to
+the error text. Both are also set when ON ERROR GOTO traps an error. They are
+cleared at RUN, ON ERROR SKIP, ON ERROR IGNORE and ON ERROR CLEAR.
+
+    ON ERROR SKIP 1
+    OPEN "C:/.scores" FOR OUTPUT AS #1
+    IF MM.ERRNO <> 0 THEN PRINT "Cannot save: "; MM.ERRMSG$
+    ON ERROR ABORT
 
 Example:
 

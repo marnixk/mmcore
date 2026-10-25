@@ -542,7 +542,15 @@ typedef struct mmb {
 	int on_error_pc;       /* ON ERROR GOTO target, -1 when inactive */
 	int error_active;      /* handling a trapped runtime error */
 	int err_resume_pc;     /* line that raised the trapped error */
+	int error_skip;        /* ON ERROR SKIP/IGNORE: 0 abort, -1 ignore,
+				* >0 statements still tolerated */
+	int skip_stmt_valid;   /* stmt_errjmp has the current statement */
+	int skip_line_valid;   /* skip_errjmp has the current line */
+	int mm_errno;          /* MM.ERRNO: 0 when no trapped error */
+	char mm_errmsg[160];   /* MM.ERRMSG$: last trapped error text */
 	jmp_buf run_errjmp;    /* setjmp target while a handler is active */
+	jmp_buf skip_errjmp;   /* line-level SKIP/IGNORE landing */
+	jmp_buf stmt_errjmp;   /* statement-level SKIP/IGNORE landing */
 	int ctrl_sp;
 	struct {
 		int type;          /* 1=while 2=do 3=if 4=select */
