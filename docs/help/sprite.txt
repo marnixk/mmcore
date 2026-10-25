@@ -13,6 +13,7 @@ SPRITE HIDE n
 SPRITE NEXT n, x, y
 SPRITE MOVE
 SPRITE MOVE n, x, y
+SPRITE SCROLL x, y [, fillcolour]
 SPRITE CLOSE n | CLOSE ALL
 
   n - sprite number
@@ -21,6 +22,7 @@ SPRITE CLOSE n | CLOSE ALL
   x, y, w, h - position or READ rectangle
   page - source page for READ
   layer - display layer for SHOW, 0..8; higher numbers draw on top
+  fillcolour - SPRITE SCROLL gap colour; omitted wraps, -1 leaves the gap
 
 Visible sprites composite in ascending numeric layer order, so layer 8 is on
 top of layer 1 and layer 0 is behind everything. Sprites on the same layer keep
@@ -32,9 +34,18 @@ SPRITE NEXT queues a position; SPRITE MOVE with no arguments restores every
 visible sprite then redraws them (applying NEXT). Prefer that when two or
 more sprites move in the same frame.
 
+SPRITE SCROLL moves the background of the current write page under every
+visible sprite: each sprite is hidden, the page is scrolled right by x and up
+by y (wrapping when fillcolour is omitted), then the sprites are redrawn at
+their unchanged positions. Their saved backgrounds follow the scrolled pixels,
+so a later MOVE or HIDE restores the correct scene. It works on off-screen
+pages too and presents once on the visible page.
+
 Example:
 
     SPRITE LOADPNG 1, "SHIP.PNG"
     SPRITE SHOW 1, 40, 40, 1
     SPRITE NEXT 1, 48, 40
     SPRITE MOVE
+
+    SPRITE SCROLL 0, 2, RGB(0,0,0)

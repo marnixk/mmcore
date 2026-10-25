@@ -1,7 +1,19 @@
 """Software CMM2 graphics: IMAGE, FRAMEBUFFER, BLIT buffers, PAGE SCROLL,
 BOX pixel-ops, BITMAP, and TURTLE."""
 
+import os
+
+import pytest
+
 from ihelp_util import dump_topic, open_ihelp, close_ihelp, scroll_all
+
+# Timing guards are opt-in: QEMU timing under parallel load is noisy.
+PERF_ENABLED = os.environ.get("MMCORE_PERF", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 def _is_red(rgb):
@@ -28,6 +40,11 @@ def _pixel(console, x, y):
     return int(out.split()[0])
 
 
+def _pixel_page(console, x, y, page):
+    out = console.send_line(f"PRINT PIXEL({x},{y},{page})")
+    return int(out.split()[0])
+
+
 def _rgb_is_red(v):
     r = (v >> 16) & 255
     g = (v >> 8) & 255
@@ -47,6 +64,13 @@ def _rgb_is_white(v):
     g = (v >> 8) & 255
     b = v & 255
     return r > 200 and g > 200 and b > 200
+
+
+def _rgb_is_blue(v):
+    r = (v >> 16) & 255
+    g = (v >> 8) & 255
+    b = v & 255
+    return b > 150 and r < 130 and g < 130
 
 
 def _rgb_is_black(v):
@@ -113,6 +137,169 @@ def test_page_scroll_and_xor(fresh_console):
     assert _rgb_is_black(_pixel(c, 60, 60))
 
 
+def test_page_scroll_all_directions_and_wrap(fresh_console):
+    """#1317: positive x moves content right, positive y moves it up (the
+    documented CMM2/PAGE semantics), and both axes wrap at the page edge."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,10,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 110, 100, 1))
+    assert _rgb_is_black(_pixel_page(c, 100, 100, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,-10,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 90, 100, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,0,10") == ""
+    assert _rgb_is_red(_pixel_page(c, 100, 90, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,0,-10") == ""
+    assert _rgb_is_red(_pixel_page(c, 100, 110, 1))
+
+    # Wrap across the right and both vertical edges.
+    c.send_line("CLS")
+    c.send_line("PIXEL 630,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,10,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 0, 100, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,5,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,0,10") == ""
+    assert _rgb_is_red(_pixel_page(c, 100, 475, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,475,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,0,-10") == ""
+    assert _rgb_is_red(_pixel_page(c, 100, 5, 1))
+
+    # Both axes move the same pixel.
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,5,3") == ""
+    assert _rgb_is_red(_pixel_page(c, 105, 97, 1))
+    assert _rgb_is_black(_pixel_page(c, 100, 100, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_page_scroll_fill_and_gap(fresh_console):
+    """#1317: an explicit colour fills only the uncovered strip, -1 leaves the
+    old pixels, and omitting the colour wraps."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,10,0,RGB(0,0,255)") == ""
+    assert _rgb_is_red(_pixel_page(c, 110, 100, 1))
+    assert _rgb_is_blue(_pixel_page(c, 5, 100, 1))
+    assert _rgb_is_black(_pixel_page(c, 100, 100, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,0,10,RGB(0,255,0)") == ""
+    assert _rgb_is_red(_pixel_page(c, 100, 90, 1))
+    assert _rgb_is_green(_pixel_page(c, 100, 475, 1))
+
+    c.send_line("CLS")
+    c.send_line("PIXEL 5,100,RGB(0,0,255)")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,10,0,-1") == ""
+    assert _rgb_is_blue(_pixel_page(c, 5, 100, 1))
+    assert _rgb_is_red(_pixel_page(c, 110, 100, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_page_scroll_non_visible_page(fresh_console):
+    """#1317: scrolling an off-screen page must not touch the display page."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    c.send_line("CLS")
+    c.send_line("PIXEL 100,100,RGB(255,0,0)")
+    assert c.send_line("PAGE SCROLL 1,10,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 110, 100, 1))
+    assert _rgb_is_black(_pixel_page(c, 110, 100, 0))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_page_scroll_visible_page_presents(fresh_console):
+    """#1317: a visible-page scroll presents the scrolled pixels."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 100,100,RGB(255,0,0)") == ""
+    assert c.send_line("PAGE SCROLL 0,10,0") == ""
+    assert _rgb_is_red(_pixel(c, 110, 100))
+    assert _rgb_is_black(_pixel(c, 100, 100))
+    r, g, b = c.screen_pixel(110, 100)
+    assert r > 150 and g < 130 and b < 130, (r, g, b)
+    r, g, b = c.screen_pixel(100, 100)
+    assert r < 40 and g < 40 and b < 40, (r, g, b)
+
+
+def test_page_scroll_all_bit_depths(fresh_console):
+    """#1317: the memmove scroll keeps working at every supported depth."""
+    c = fresh_console
+    for bits in (8, 12, 16, 32):
+        assert c.send_line(f"MODE 8,{bits}") == ""
+        assert c.send_line("PAGE WRITE 1") == ""
+        assert c.send_line("CLS") == ""
+        assert c.send_line("PIXEL 50,50,RGB(255,255,255)") == ""
+        assert c.send_line("PAGE SCROLL 1,5,3") == ""
+        assert _rgb_is_white(_pixel_page(c, 55, 47, 1))
+        assert _rgb_is_black(_pixel_page(c, 50, 50, 1))
+
+        # Fill the right and top gaps for a left/down move.
+        assert c.send_line("CLS") == ""
+        assert c.send_line("PIXEL 50,50,RGB(255,255,255)") == ""
+        assert c.send_line("PAGE SCROLL 1,-5,-3,RGB(255,0,0)") == ""
+        assert _rgb_is_white(_pixel_page(c, 45, 53, 1))
+        assert _rgb_is_red(_pixel_page(c, 639, 300, 1))
+        assert _rgb_is_red(_pixel_page(c, 300, 0, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+@pytest.mark.skipif(
+    not PERF_ENABLED, reason="set MMCORE_PERF=1 to run timing guards"
+)
+def test_page_scroll_perf_offscreen_wrap(fresh_console):
+    """#1317 opt-in guard: a wrapped off-screen scroll stays far inside the
+    50 Hz frame budget (20 ms) at both full-screen modes."""
+    c = fresh_console
+    for mode, limit_ms in ((19, 10.0), (16, 20.0)):
+        assert c.send_line(f"MODE {mode},16", timeout=30) == ""
+        assert c.send_line("PAGE WRITE 1") == ""
+        assert c.send_line("CLS", timeout=60) == ""
+        assert c.send_line("NEW") == ""
+        lines = [
+            "N=100",
+            "T=TIMER",
+            "FOR I=1 TO N",
+            "PAGE SCROLL 1,1,0",
+            "NEXT I",
+            "PRINT TIMER-T",
+        ]
+        for i, line in enumerate(lines, 1):
+            assert c.send_line(f"{i * 10} {line}") == ""
+        out = c.send_line("RUN", timeout=120)
+        per_ms = int(out.split()[0]) / 100
+        assert per_ms < limit_ms, (mode, per_ms)
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+
 def test_turtle_and_bitmap(fresh_console):
     c = fresh_console
     assert c.send_line("TURTLE RESET") == ""
@@ -148,6 +335,8 @@ def test_help_cmm2_gfx_topics(console):
     assert "IMAGE" in cmm2
     assert "FRAMEBUFFER" in cmm2
     assert "TURTLE" in cmm2
+    sprite = dump_topic(console, "SPRITE")
+    assert "SPRITE SCROLL" in sprite
 
 
 def test_rgb_alpha_and_page_copy_b(fresh_console):

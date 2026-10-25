@@ -1056,6 +1056,7 @@ void mmb_gfx_image_warp_h(int x, int y, int w, int h, int x1, int y1, int h1,
 void mmb_gfx_image_warp_v(int x, int y, int w, int h, int x1, int y1, int w1,
 			  int x2, int y2, int w2, int srcpage, int skip_black);
 void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill);
+void mmb_gfx_page_scroll_buf(int page, int dx, int dy, int fill, int has_fill);
 void mmb_gfx_page_logic(int op, int p1, int p2, int dst);
 void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int page);
 void mmb_gfx_bitmap(int x, int y, const unsigned char *bits, int nbytes,

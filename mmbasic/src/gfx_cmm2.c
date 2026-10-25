@@ -495,47 +495,219 @@ void mmb_gfx_image_warp_v(int x, int y, int w, int h, int x1, int y1, int w1,
 	G.plat->free(tmp);
 }
 
-void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
+/* Circle's memcpy/memmove fall back to a byte-at-a-time loop unless both
+ * pointers are 8-byte aligned, and its overlapping backward path is always
+ * byte-wise. A page row is only 2-byte aligned, so a one-pixel scroll copied
+ * four times slower than a PAGE COPY. Move four pixels per 64-bit load/store
+ * (AArch64 allows unaligned access) in whichever direction is safe. */
+typedef uint64_t mmb_unaligned_u64 __attribute__((aligned(1), may_alias));
+
+static void fill_span16(uint16_t *p, int n, uint16_t v)
 {
-	int w, h, i, j;
-	uint16_t *pg, *tmp;
-	unsigned bytes, fcol = 0;
-	pg = mmb_gfx_buf_for(page, &w, &h);
-	bytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
-	tmp = G.plat->alloc(bytes);
-	if (!tmp)
-		mmb_error("?OUT OF MEMORY");
-	memcpy(tmp, pg, bytes);
-	if (has_fill && fill >= 0)
-		fcol = mmb_pix_store((unsigned)fill);
-	for (j = 0; j < h; j++)
+	uint64_t quad = ((uint64_t)v << 48) | ((uint64_t)v << 32) |
+			((uint64_t)v << 16) | (uint64_t)v;
+
+	while (n >= 4)
 	{
-		for (i = 0; i < w; i++)
+		*(mmb_unaligned_u64 *)p = quad;
+		p += 4;
+		n -= 4;
+	}
+	while (n-- > 0)
+		*p++ = v;
+}
+
+static void copy_u16_forward(uint16_t *dst, const uint16_t *src, size_t n)
+{
+	size_t i = 0;
+
+	for (; i + 4 <= n; i += 4)
+		*(mmb_unaligned_u64 *)(dst + i) =
+			*(const mmb_unaligned_u64 *)(src + i);
+	for (; i < n; i++)
+		dst[i] = src[i];
+}
+
+static void copy_u16_backward(uint16_t *dst, const uint16_t *src, size_t n)
+{
+	size_t i = n;
+
+	while (i >= 4)
+	{
+		i -= 4;
+		*(mmb_unaligned_u64 *)(dst + i) =
+			*(const mmb_unaligned_u64 *)(src + i);
+	}
+	while (i > 0)
+	{
+		i--;
+		dst[i] = src[i];
+	}
+}
+
+static void move_u16(uint16_t *dst, const uint16_t *src, size_t n)
+{
+	if (dst < src)
+		copy_u16_forward(dst, src, n);
+	else if (dst > src)
+		copy_u16_backward(dst, src, n);
+}
+
+/* Cyclic scroll: content moves right by dx and up by dy, wrapping at the
+ * page edges. Separable in-place row moves; only the strip that wraps is
+ * saved, never a second page buffer. */
+static void scroll_wrap(uint16_t *pg, int w, int h, int dx, int dy)
+{
+	int dym = dy % h;
+	int dxm = dx % w;
+
+	if (dym < 0)
+		dym += h;
+	if (dym > h / 2)
+		dym -= h;
+	if (dxm < 0)
+		dxm += w;
+	if (dxm > w / 2)
+		dxm -= w;
+
+	if (dym != 0)
+	{
+		size_t row = (size_t)w * sizeof(uint16_t);
+		int n = dym > 0 ? dym : -dym;
+		uint16_t *tmp = G.plat->alloc((size_t)n * row);
+		if (!tmp)
+			mmb_error("?OUT OF MEMORY");
+		if (dym > 0)
 		{
-			int si, sj;
-			/* dest (i,j) came from a pixel that moved right dx, up dy */
-			si = i - dx;
-			sj = j + dy;
-			if (!has_fill)
+			/* Content moves up: save the top strip, shift the rest up,
+			 * then wrap the saved strip to the bottom. */
+			memcpy(tmp, pg, (size_t)dym * row);
+			move_u16(pg, pg + (size_t)dym * w,
+				 (size_t)(h - dym) * w);
+			memcpy(pg + (size_t)(h - dym) * w, tmp, (size_t)dym * row);
+		}
+		else
+		{
+			/* Content moves down: save the bottom strip, shift the rest
+			 * down, then wrap the saved strip to the top. */
+			memcpy(tmp, pg + (size_t)(h - n) * w, (size_t)n * row);
+			move_u16(pg + (size_t)n * w, pg, (size_t)(h - n) * w);
+			memcpy(pg, tmp, (size_t)n * row);
+		}
+		G.plat->free(tmp);
+	}
+	if (dxm != 0)
+	{
+		int n = dxm > 0 ? dxm : -dxm;
+		size_t strip = (size_t)n * sizeof(uint16_t);
+		uint16_t *tmp = G.plat->alloc(strip);
+		int j;
+		if (!tmp)
+			mmb_error("?OUT OF MEMORY");
+		for (j = 0; j < h; j++)
+		{
+			uint16_t *row = pg + (size_t)j * w;
+			if (dxm > 0)
 			{
-				si %= w;
-				if (si < 0)
-					si += w;
-				sj %= h;
-				if (sj < 0)
-					sj += h;
-				pg[j * w + i] = tmp[sj * w + si];
-			}
-			else if (si < 0 || sj < 0 || si >= w || sj >= h)
-			{
-				if (fill != -1)
-					pg[j * w + i] = (uint16_t)fcol;
+				/* Content moves right; wrap the right strip left. */
+				memcpy(tmp, row + (w - dxm), strip);
+				move_u16(row + dxm, row, (size_t)(w - dxm));
+				memcpy(row, tmp, strip);
 			}
 			else
-				pg[j * w + i] = tmp[sj * w + si];
+			{
+				/* Content moves left; wrap the left strip right. */
+				memcpy(tmp, row, strip);
+				move_u16(row, row + n, (size_t)(w - n));
+				memcpy(row + (w - n), tmp, strip);
+			}
+		}
+		G.plat->free(tmp);
+	}
+}
+
+/* Rectangular translation: content moves right by dx and up by dy; pixels
+ * whose source falls outside the page are filled (or left alone for -1). */
+static void scroll_fill(uint16_t *pg, int w, int h, int dx, int dy, int fill)
+{
+	int ix0 = dx > 0 ? dx : 0;
+	int ix1 = dx < 0 ? w + dx : w;
+	int jy0 = dy < 0 ? -dy : 0;
+	int jy1 = dy > 0 ? h - dy : h;
+	int bw = ix1 - ix0;
+	int bh = jy1 - jy0;
+
+	if (bw > 0 && bh > 0)
+	{
+		int j;
+		/* Move the live rectangle in the direction that reads rows before
+		 * they are overwritten. */
+		if (dy < 0)
+		{
+			for (j = jy1 - 1; j >= jy0; j--)
+				move_u16(pg + (size_t)j * w + ix0,
+					 pg + (size_t)(j + dy) * w + (ix0 - dx),
+					 (size_t)bw);
+		}
+		else
+		{
+			for (j = jy0; j < jy1; j++)
+				move_u16(pg + (size_t)j * w + ix0,
+					 pg + (size_t)(j + dy) * w + (ix0 - dx),
+					 (size_t)bw);
 		}
 	}
-	G.plat->free(tmp);
+	if (fill != -1)
+	{
+		uint16_t fcol = fill >= 0 ? mmb_pix_store((unsigned)fill) : 0;
+		int cx0 = 0, cx1 = 0, ry0 = 0, ry1 = 0;
+		int j;
+		if (dx > 0)
+			cx1 = dx < w ? dx : w;
+		else if (dx < 0)
+		{
+			cx0 = dx > -w ? w + dx : 0;
+			cx1 = w;
+		}
+		if (dy > 0)
+			ry0 = dy < h ? h - dy : 0;
+		else if (dy < 0)
+			ry1 = -dy < h ? -dy : h;
+		if (cx1 > cx0)
+			for (j = 0; j < h; j++)
+				fill_span16(pg + (size_t)j * w + cx0, cx1 - cx0, fcol);
+		if (dy > 0)
+			ry1 = h;
+		if (ry1 > ry0)
+			for (j = ry0; j < ry1; j++)
+				fill_span16(pg + (size_t)j * w, w, fcol);
+	}
+}
+
+void mmb_gfx_page_scroll_buf(int page, int dx, int dy, int fill, int has_fill)
+{
+	int w, h;
+	uint16_t *pg = mmb_gfx_buf_for(page, &w, &h);
+	if (!pg || w <= 0 || h <= 0 || (dx == 0 && dy == 0))
+		return;
+	if (has_fill)
+		scroll_fill(pg, w, h, dx, dy, fill);
+	else
+		scroll_wrap(pg, w, h, dx, dy);
+}
+
+void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
+{
+	int w, h;
+	mmb_gfx_buf_for(page, &w, &h);
+	mmb_gfx_page_scroll_buf(page, dx, dy, fill, has_fill);
+	/* A scrolled page changes every pixel, so mark the whole page dirty:
+	 * a visible-page present stays one full-frame upload instead of
+	 * re-presenting a stale sub-rect. */
+	if (page == MMB_PAGE_CUR)
+		page = mmb_gfx_writing_fb() ? MMB_PAGE_FB : G.gfx.write_page;
+	if (page == G.gfx.display_page)
+		mmb_gfx_dirty_add(0, 0, w, h);
 	mmb_gfx_present_if(page);
 }
 

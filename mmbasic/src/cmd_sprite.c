@@ -398,6 +398,44 @@ static void show_all_from_order(void)
 	show_from(0);
 }
 
+/* CMM2 SPRITE SCROLL: move the background under stationary sprites. Restore
+ * each visible sprite's saved background, scroll the write page, then redraw
+ * the same sprites at their unchanged positions so they capture the scrolled
+ * pixels as their new background. Present once for the whole frame. */
+static void sprite_scroll(void)
+{
+	int dx, dy, has_fill = 0, fill = 0, i;
+
+	dx = (int)mmb_as_int(mmb_expr());
+	mmb_skip_sp();
+	if (*G.p == ',')
+		G.p++;
+	dy = (int)mmb_as_int(mmb_expr());
+	mmb_skip_sp();
+	if (*G.p == ',')
+	{
+		G.p++;
+		has_fill = 1;
+		fill = (int)mmb_as_int(mmb_expr());
+	}
+
+	hide_all_keep_pos();
+	mmb_gfx_page_scroll_buf(MMB_PAGE_CUR, dx, dy, fill, has_fill);
+	for (i = 0; i < ORDERN; i++)
+	{
+		int ix = ORDER[i];
+		blit_show(ix, G.gfx.sprite[ix].x, G.gfx.sprite[ix].y);
+	}
+	/* Discard the per-sprite restore/show rectangles: one full-frame present
+	 * covers them, so hiding and redrawing sprites never flashes. */
+	s_nrect = 0;
+	if (sprite_page_visible())
+	{
+		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
+		mmb_gfx_present_if(MMB_PAGE_CUR);
+	}
+}
+
 static void add_png_ext(char *path, int pathsz)
 {
 	char *dot = 0, *q = path;
@@ -635,6 +673,11 @@ void mmb_cmd_sprite(void)
 	if (mmb_match("READ"))
 	{
 		sprite_read();
+		return;
+	}
+	if (mmb_match("SCROLL"))
+	{
+		sprite_scroll();
 		return;
 	}
 	if (mmb_match("SHOW"))
