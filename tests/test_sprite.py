@@ -6,6 +6,11 @@ def _pixel(console, x, y):
     return int(out.split()[0])
 
 
+def _pixel_page(console, x, y, page):
+    out = console.send_line(f"PRINT PIXEL({x},{y},{page})")
+    return int(out.split()[0])
+
+
 def _rgb_is_red(v):
     r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
     return r > 150 and g < 130 and b < 130
@@ -19,6 +24,11 @@ def _rgb_is_green(v):
 def _rgb_is_blue(v):
     r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
     return b > 150 and r < 130 and g < 130
+
+
+def _rgb_is_black(v):
+    r, g, b = (v >> 16) & 255, (v >> 8) & 255, v & 255
+    return r < 40 and g < 40 and b < 40
 
 
 def _is_red(rgb):
@@ -263,3 +273,146 @@ def test_sprite_editor_commands_removed(fresh_console):
     assert c.send_line('SPRITE EDIT "ED1.PNG"') == "?SYNTAX ERROR"
     assert c.send_line('SPRITE SHEET "ED3.PNG", 8, 4, 4') == "?SYNTAX ERROR"
     assert c.send_line('SPRITE FONT "SPRFONT"') == "?SYNTAX ERROR"
+
+
+def _setup_scroll_scene(c, sprite_x=50, sprite_y=50, marker=(32, 52)):
+    """Green page 1 with a red 8x8 sprite and a blue marker pixel."""
+    c.send_line("PAGE WRITE 1")
+    c.send_line("CLS")
+    c.send_line("BOX 0,0,640,200,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("BOX 0,0,8,8,1,RGB(255,0,0),RGB(255,0,0)")
+    c.send_line("SPRITE READ 1,0,0,8,8")
+    c.send_line("BOX 0,0,8,8,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line(f"PIXEL {marker[0]},{marker[1]},RGB(0,0,255)")
+    c.send_line(f"SPRITE SHOW 1,{sprite_x},{sprite_y},1")
+
+
+def test_sprite_scroll_four_directions_keep_position_and_background(fresh_console):
+    """#1316: the background scrolls under a stationary sprite; the sprite's
+    saved background follows the scrolled pixels for a later MOVE."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    # (dx, dy, marker that lands exactly under the sprite at 52,52)
+    cases = [
+        (20, 0, (32, 52)),   # content right
+        (-20, 0, (72, 52)),  # content left
+        (0, 20, (52, 72)),   # content up
+        (0, -20, (52, 32)),  # content down
+    ]
+    for dx, dy, marker in cases:
+        assert c.send_line("SPRITE CLOSE ALL") == ""
+        _setup_scroll_scene(c, 50, 50, marker)
+        assert _rgb_is_red(_pixel_page(c, 52, 52, 1))
+        assert c.send_line(f"SPRITE SCROLL {dx},{dy}") == ""
+        assert _rgb_is_red(_pixel_page(c, 52, 52, 1))
+        assert c.send_line("SPRITE MOVE 1,120,50") == ""
+        assert _rgb_is_blue(_pixel_page(c, 52, 52, 1)), (dx, dy)
+        assert _rgb_is_red(_pixel_page(c, 122, 52, 1))
+        assert _rgb_is_green(_pixel_page(c, marker[0], marker[1], 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_sprite_scroll_wraps_under_sprite(fresh_console):
+    """#1316: omitting the colour wraps the background around the page."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    _setup_scroll_scene(c, 5, 50, (627, 52))
+    assert c.send_line("SPRITE SCROLL 20,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 7, 52, 1))
+    assert c.send_line("SPRITE MOVE 1,120,50") == ""
+    assert _rgb_is_blue(_pixel_page(c, 7, 52, 1))
+    assert _rgb_is_green(_pixel_page(c, 627, 52, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_sprite_scroll_fill_colour(fresh_console):
+    """#1316: an explicit colour fills the uncovered strip; the sprite's saved
+    background is the scrolled content, not the fill."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    _setup_scroll_scene(c, 50, 50, (32, 100))
+    assert c.send_line("SPRITE SCROLL 20,0,RGB(0,0,255)") == ""
+    assert _rgb_is_red(_pixel_page(c, 52, 52, 1))
+    assert _rgb_is_blue(_pixel_page(c, 5, 100, 1))
+    assert _rgb_is_green(_pixel_page(c, 32, 100, 1))
+    assert c.send_line("SPRITE MOVE 1,120,50") == ""
+    assert _rgb_is_green(_pixel_page(c, 52, 52, 1))
+    assert _rgb_is_red(_pixel_page(c, 122, 52, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_sprite_scroll_non_visible_page(fresh_console):
+    """#1316: scrolling page 1 updates sprite backgrounds without presenting."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    _setup_scroll_scene(c, 50, 50, (32, 52))
+    assert c.send_line("SPRITE SCROLL 20,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 52, 52, 1))
+    assert _rgb_is_black(_pixel_page(c, 52, 100, 0))
+    assert c.send_line("SPRITE MOVE 1,120,50") == ""
+    assert _rgb_is_blue(_pixel_page(c, 52, 52, 1))
+    assert _rgb_is_red(_pixel_page(c, 122, 52, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_sprite_scroll_multiple_layers_and_outside_pixels(fresh_console):
+    """#1316: every visible sprite keeps its position while the background
+    (including pixels outside the sprites) scrolls; layers stay intact."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    c.send_line("PAGE WRITE 1")
+    c.send_line("CLS")
+    c.send_line("BOX 0,0,300,200,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("BOX 0,0,8,8,1,RGB(255,0,0),RGB(255,0,0)")
+    c.send_line("SPRITE READ 1,0,0,8,8")
+    c.send_line("BOX 0,0,8,8,1,RGB(0,0,255),RGB(0,0,255)")
+    c.send_line("SPRITE READ 2,0,0,8,8")
+    c.send_line("BOX 0,0,8,8,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("PIXEL 32,100,RGB(0,0,255)")
+    c.send_line("SPRITE SHOW 1,50,50,1")
+    c.send_line("SPRITE SHOW 2,52,52,8")
+    assert _rgb_is_red(_pixel_page(c, 51, 51, 1))
+    assert _rgb_is_blue(_pixel_page(c, 53, 53, 1))
+
+    assert c.send_line("SPRITE SCROLL 20,0") == ""
+    assert _rgb_is_red(_pixel_page(c, 51, 51, 1))
+    assert _rgb_is_blue(_pixel_page(c, 53, 53, 1))
+    assert _rgb_is_blue(_pixel_page(c, 52, 100, 1))
+    assert _rgb_is_green(_pixel_page(c, 32, 100, 1))
+
+    # Hiding the top sprite reveals the lower sprite in the overlap and the
+    # scrolled background elsewhere.
+    assert c.send_line("SPRITE HIDE 2") == ""
+    assert _rgb_is_red(_pixel_page(c, 52, 52, 1))
+    assert _rgb_is_green(_pixel_page(c, 58, 58, 1))
+    assert c.send_line("SPRITE MOVE 1,120,50") == ""
+    assert _rgb_is_green(_pixel_page(c, 51, 51, 1))
+    assert _rgb_is_red(_pixel_page(c, 121, 51, 1))
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_sprite_scroll_visible_page_presents(fresh_console):
+    """#1316: on the visible page the scroll and sprite redraw present once."""
+    c = fresh_console
+    assert c.send_line("MODE 8,16") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("PAGE DISPLAY 0") == ""
+    c.send_line("CLS")
+    c.send_line("BOX 0,0,300,200,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("BOX 0,0,8,8,1,RGB(255,0,0),RGB(255,0,0)")
+    c.send_line("SPRITE READ 1,0,0,8,8")
+    c.send_line("BOX 0,0,8,8,1,RGB(0,255,0),RGB(0,255,0)")
+    c.send_line("PIXEL 32,52,RGB(0,0,255)")
+    c.send_line("PIXEL 32,100,RGB(0,0,255)")
+    c.send_line("SPRITE SHOW 1,50,50,1")
+    assert _is_red(c.screen_pixel(52, 52))
+
+    assert c.send_line("SPRITE SCROLL 20,0") == ""
+    assert _is_red(c.screen_pixel(52, 52))
+    assert _is_blue(c.screen_pixel(52, 100))
+    assert _is_green(c.screen_pixel(32, 100))
+
+    assert c.send_line("SPRITE MOVE 1,120,50") == ""
+    assert _is_blue(c.screen_pixel(52, 52))
+    assert _is_red(c.screen_pixel(122, 52))
