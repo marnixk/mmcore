@@ -12,7 +12,9 @@ means an error happened; zero means no trapped error. The exact code is the
 interpreter's generic error value (16); use ~MM.ERRMSG$~ for the text.
 
 MM.ERRNO is cleared to zero when the program starts (RUN), and by ON ERROR
-SKIP, ON ERROR IGNORE and ON ERROR CLEAR.
+SKIP, ON ERROR IGNORE and ON ERROR CLEAR. ON ERROR CLEAR only resets
+~MM.ERRNO~ and ~MM.ERRMSG$~; it leaves the active error mode in force. Use
+ON ERROR ABORT or plain ON ERROR to stop trapping.
 
 See also ~MM.ERRMSG$~, ~ON~, ~RESUME~.
 

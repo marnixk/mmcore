@@ -82,29 +82,46 @@ def test_on_error_ignore_keeps_going(console):
     assert _lines(console.send_line("RUN")) == ["OK=1 E2", "CLEARED=0[]"]
 
 
-def test_on_error_abort_stops_program(console):
+def test_on_error_abort_stops_trapping_and_keeps_vars(console):
     _program(
         console,
         [
-            "10 ON ERROR SKIP 1",
+            "10 ON ERROR IGNORE",
             '20 ERROR "E1"',
             "30 ON ERROR ABORT",
-            '40 ERROR "E2"',
-            '50 PRINT "NOT REACHED"',
+            '40 PRINT "KEPT="; (MM.ERRNO <> 0); " "; MM.ERRMSG$',
+            '50 ERROR "E2"',
+            '60 PRINT "NOT REACHED"',
         ],
     )
     lines = _lines(console.send_line("RUN"))
+    assert lines[0] == "KEPT=1 E1", lines
     assert "NOT REACHED" not in lines
     assert any("E2" in ln for ln in lines), lines
 
 
-def test_on_error_clear_removes_handler(console):
+def test_on_error_clear_resets_vars_but_keeps_mode(console):
     _program(
         console,
         [
-            "10 ON ERROR SKIP 1",
+            "10 ON ERROR IGNORE",
             '20 ERROR "E1"',
             "30 ON ERROR CLEAR",
+            '40 PRINT "CLEARED="; MM.ERRNO; "["; MM.ERRMSG$; "]"',
+            '50 ERROR "E2"',
+            '60 PRINT "AGAIN="; (MM.ERRNO <> 0); " "; MM.ERRMSG$',
+        ],
+    )
+    assert _lines(console.send_line("RUN")) == ["CLEARED=0[]", "AGAIN=1 E2"]
+
+
+def test_bare_on_error_ends_trapping(console):
+    _program(
+        console,
+        [
+            "10 ON ERROR IGNORE",
+            '20 ERROR "E1"',
+            "30 ON ERROR",
             '40 ERROR "E2"',
             '50 PRINT "NOT REACHED"',
         ],

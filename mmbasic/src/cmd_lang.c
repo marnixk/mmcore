@@ -214,16 +214,23 @@ void mmb_cmd_on(void)
 	mmb_skip_sp();
 	if (mmb_match("ERROR"))
 	{
-		G.error_active = 0;
-		G.on_error_pc = -1;
-		G.error_skip = 0;
-		G.skip_stmt_valid = 0;
 		mmb_skip_sp();
 		if (*G.p == 0 || *G.p == ':' || *G.p == '\'' || *G.p == ',')
+		{
+			/* Bare ON ERROR is this interpreter's "clear the handler"
+			 * form; unlike CLEAR it also drops the active mode. */
+			G.error_active = 0;
+			G.on_error_pc = -1;
+			G.error_skip = 0;
+			G.mm_errno = 0;
+			G.mm_errmsg[0] = 0;
 			return;
+		}
 		if (mmb_match("GOTO") || mmb_match("THEN"))
 		{
 			mmb_skip_sp();
+			G.error_active = 0;
+			G.error_skip = 0;
 			G.on_error_pc = mmb_parse_target();
 			return;
 		}
@@ -239,6 +246,8 @@ void mmb_cmd_on(void)
 			/* The count includes the ON ERROR statement itself, so
 			 * SKIP 1 tolerates an error in the next statement and
 			 * then reverts to ABORT, as on the CMM2. */
+			G.error_active = 0;
+			G.on_error_pc = -1;
 			G.error_skip = n + 1;
 			G.mm_errno = 0;
 			G.mm_errmsg[0] = 0;
@@ -246,19 +255,34 @@ void mmb_cmd_on(void)
 		}
 		if (mmb_match("IGNORE"))
 		{
+			G.error_active = 0;
+			G.on_error_pc = -1;
 			G.error_skip = -1;
 			G.mm_errno = 0;
 			G.mm_errmsg[0] = 0;
 			return;
 		}
 		if (mmb_match("ABORT"))
+		{
+			/* ABORT stops trapping but leaves the error variables as
+			 * they are, matching the reference implementation. */
+			G.error_active = 0;
+			G.on_error_pc = -1;
+			G.error_skip = 0;
 			return;
+		}
 		if (mmb_match("CLEAR"))
 		{
+			/* CLEAR resets the error variables only. The current
+			 * GOTO/SKIP/IGNORE mode stays in force. */
 			G.mm_errno = 0;
 			G.mm_errmsg[0] = 0;
 			return;
 		}
+		/* Unknown form: keep the historical "clear the handler". */
+		G.error_active = 0;
+		G.on_error_pc = -1;
+		G.error_skip = 0;
 		return;
 	}
 	if (mmb_match("KEY"))

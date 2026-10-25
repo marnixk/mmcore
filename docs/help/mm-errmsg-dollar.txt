@@ -12,7 +12,9 @@ handler can show what went wrong. The text is the error message without the
 line number or program text that the console adds.
 
 MM.ERRMSG$ is cleared to an empty string when the program starts (RUN), and by
-ON ERROR SKIP, ON ERROR IGNORE and ON ERROR CLEAR.
+ON ERROR SKIP, ON ERROR IGNORE and ON ERROR CLEAR. ON ERROR CLEAR only resets
+~MM.ERRNO~ and ~MM.ERRMSG$~; it leaves the active error mode in force. Use
+ON ERROR ABORT or plain ON ERROR to stop trapping.
 
 See also ~MM.ERRNO~, ~ON~, ~RESUME~.
 
