@@ -12,6 +12,13 @@ OPEN "TCP:host:port" [FOR INPUT|OUTPUT] AS #n
   OUTPUT - create/truncate
   APPEND - write at the end
 
+OUTPUT and APPEND open the file immediately. APPEND creates it when missing,
+even if nothing is written. A file or drive that cannot be written reports
+?FILE at OPEN, so an OPEN/CLOSE pair can check whether a drive is writable.
+On the A: ramdisk and the desktop C:-H: drives, missing parent folders are
+created automatically; on an SD-card or USB FAT volume they must already
+exist.
+
 TCP: host is an IP or DNS name; port is required. No FOR means both
 directions. One TCP client at a time. CONNECT and TERM use the same socket.
 TCP requires an active network (Wi-Fi or Ethernet); without one, OPEN reports

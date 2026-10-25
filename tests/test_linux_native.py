@@ -422,6 +422,100 @@ def test_posix_storage_roundtrip(mmb_linux, tmp_path):
     assert (root / "C" / "A" / "B.TXT").read_text().strip() == "HELLO STORAGE"
 
 
+def test_open_append_creates_file_at_open(mmb_linux, tmp_path):
+    """#1324: POSIX OPEN FOR APPEND creates the target before any write.
+
+    It must also leave an existing file's bytes alone when nothing is written.
+    """
+    root = tmp_path / "drives"
+    cdir = root / "C"
+    cdir.mkdir(parents=True)
+    (cdir / "KEEP1324.TXT").write_text("KEEP")
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+
+    program = (
+        'OPEN "C:/APP1324.TXT" FOR APPEND AS #1\n'
+        'PRINT "["; DIR$("C:/APP1324.TXT", FILE); "]"\n'
+        'CLOSE #1\n'
+        'OPEN "C:/KEEP1324.TXT" FOR APPEND AS #1\n'
+        'CLOSE #1\n'
+    )
+    out = _run_env(mmb_linux, program, env)
+    assert "?FILE" not in out, out
+    assert "[APP1324.TXT]" in out, out
+    assert (cdir / "APP1324.TXT").is_file()
+    assert (cdir / "KEEP1324.TXT").read_text() == "KEEP"
+
+
+def test_open_output_and_append_create_missing_parents(mmb_linux, tmp_path):
+    """#1324: the POSIX backend's create-parents behaviour is intentional."""
+    root = tmp_path / "drives"
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    program = (
+        'OPEN "C:/P1324/OUT/F.TXT" FOR OUTPUT AS #1\n'
+        'CLOSE #1\n'
+        'OPEN "C:/P1324/APP/G.TXT" FOR APPEND AS #1\n'
+        'CLOSE #1\n'
+    )
+    out = _run_env(mmb_linux, program, env)
+    assert "?FILE" not in out, out
+    assert (root / "C" / "P1324" / "OUT" / "F.TXT").is_file()
+    assert (root / "C" / "P1324" / "APP" / "G.TXT").is_file()
+
+
+def test_open_write_errors_reported_at_open(mmb_linux, tmp_path):
+    """#1324: a read-only C: fails at OPEN for OUTPUT and APPEND, no PRINT #."""
+    if os.name != "posix":
+        pytest.skip("needs POSIX mode bits")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root can write to a 0555 directory")
+
+    cdir = tmp_path / "drive" / "C"
+    cdir.mkdir(parents=True)
+    os.chmod(cdir, 0o555)
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "drive"))
+    try:
+        out = _run_env(
+            mmb_linux,
+            'OPEN "C:/.APP1324" FOR APPEND AS #1\n'
+            'OPEN "C:/.OUT1324" FOR OUTPUT AS #1\n'
+            'CLOSE #1\n',
+            env,
+        )
+    finally:
+        os.chmod(cdir, 0o755)
+    assert out.count("?FILE") >= 2, out
+    assert not (cdir / ".APP1324").exists()
+    assert not (cdir / ".OUT1324").exists()
+
+
+def test_open_readonly_file_reported_at_open(mmb_linux, tmp_path):
+    """#1324: a writable drive with a read-only file fails at OPEN too."""
+    if os.name != "posix":
+        pytest.skip("needs POSIX mode bits")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root can write to a 0444 file")
+
+    cdir = tmp_path / "drive" / "C"
+    cdir.mkdir(parents=True)
+    ro = cdir / "RO1324.TXT"
+    ro.write_text("KEEP")
+    os.chmod(ro, 0o444)
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(tmp_path / "drive"))
+    try:
+        out = _run_env(
+            mmb_linux,
+            'OPEN "C:/RO1324.TXT" FOR APPEND AS #1\n'
+            'OPEN "C:/RO1324.TXT" FOR OUTPUT AS #1\n'
+            'CLOSE #1\n',
+            env,
+        )
+    finally:
+        os.chmod(ro, 0o644)
+    assert out.count("?FILE") >= 2, out
+    assert ro.read_text() == "KEEP"
+
+
 def test_dir_long_names_and_truncation(mmb_linux, tmp_path):
     """#666/#981: DIR lists full long names and no longer cuts a big folder.
 
