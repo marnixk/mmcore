@@ -472,7 +472,8 @@ typedef struct ed_sess {
 	int find_confirm;
 	int find_confirm_n;
 	int find_cx, find_row0, find_col0, find_sel, find_anchor;
-	char find_scratch[MMB_ED_BUF];
+	char *find_scratch; /* growable (#1303) */
+	int find_scratch_cap;
 	int errbar_active;
 	char errbar_msg[ERRBAR_MAX];
 	int alt_pend;
@@ -547,6 +548,7 @@ static void ed_char_hold_reset(int idx)
 #define find_sel (s_ed[g_console].find_sel)
 #define find_anchor (s_ed[g_console].find_anchor)
 #define find_scratch (s_ed[g_console].find_scratch)
+#define find_scratch_cap (s_ed[g_console].find_scratch_cap)
 #define errbar_active (s_ed[g_console].errbar_active)
 #define errbar_msg (s_ed[g_console].errbar_msg)
 #define alt_pend (s_ed[g_console].alt_pend)
@@ -835,6 +837,58 @@ static int find_tab_path(const char *path)
 	return -1;
 }
 
+/* ---- growable document buffer (#1303) ------------------------------- */
+
+/* Ensure the tab's heap buffer holds at least `need` bytes (including room
+ * for the NUL). Returns 0 on allocation failure (buffer untouched). */
+static int ed_buf_ensure(mmb_ed_tab *t, int need)
+{
+	int cap = t->cap > 0 ? t->cap : MMB_ED_BUF;
+	char *nb;
+	if (need <= t->cap)
+		return 1;
+	while (cap < need)
+		cap *= 2;
+	nb = (char *)G.plat->alloc((unsigned)cap);
+	if (!nb)
+		return 0;
+	if (t->buf && t->len > 0)
+		memcpy(nb, t->buf, (unsigned)t->len + 1);
+	if (t->buf)
+		G.plat->free(t->buf);
+	t->buf = nb;
+	t->cap = cap;
+	return 1;
+}
+
+static void ed_buf_free(mmb_ed_tab *t)
+{
+	if (t->buf)
+		G.plat->free(t->buf);
+	t->buf = 0;
+	t->cap = 0;
+	t->len = 0;
+}
+
+/* Ensure the per-console find-replace scratch buffer holds `need` bytes. */
+static int find_scratch_ensure(int need)
+{
+	int cap = find_scratch_cap > 0 ? find_scratch_cap : MMB_ED_BUF;
+	char *nb;
+	if (need <= find_scratch_cap)
+		return 1;
+	while (cap < need)
+		cap *= 2;
+	nb = (char *)G.plat->alloc((unsigned)cap);
+	if (!nb)
+		return 0;
+	if (find_scratch)
+		G.plat->free(find_scratch);
+	find_scratch = nb;
+	find_scratch_cap = cap;
+	return 1;
+}
+
 static void load_into(int i, const char *path)
 {
 	unsigned got = 0;
@@ -844,10 +898,16 @@ static void load_into(int i, const char *path)
 	t->used = 1;
 	if (path && path[0])
 	{
+		int sz;
 		canon_ed_path(path, t->path, sizeof(t->path));
-		if (mmb_vfs_read(t->path, t->buf, sizeof(t->buf) - 1, &got) == 0)
+		sz = mmb_vfs_size(t->path);
+		if (sz >= 0 && ed_buf_ensure(t, sz + 2) &&
+		    mmb_vfs_read(t->path, t->buf, (unsigned)sz + 1, &got) == 0)
 			t->len = mmb_normalize_newlines(t->buf, (int)got);
-		t->buf[t->len] = 0;
+		else if (sz >= 0 && !t->buf)
+			set_status("Out of memory");
+		if (t->buf)
+			t->buf[t->len] = 0;
 	}
 	t->cx = 0;
 }
@@ -1903,8 +1963,11 @@ static void hist_raw_insert(mmb_ed_tab *t, int pos, const char *s, int n)
 		pos = 0;
 	if (pos > t->len)
 		pos = t->len;
-	if (t->len + n >= (int)sizeof(t->buf) - 1)
-		n = (int)sizeof(t->buf) - 1 - t->len;
+	if (!ed_buf_ensure(t, t->len + n + 1))
+	{
+		set_status("Out of memory");
+		return;
+	}
 	if (n <= 0)
 		return;
 	if (pos < t->len)
@@ -1995,11 +2058,14 @@ static void insert_char(char c)
 	mmb_ed_tab *t = cur_tab();
 	if (c == '\r')
 		return;
-	if (!t || t->len >= (int)sizeof(t->buf) - 1)
+	if (!t)
 		return;
 	delete_selection(0);
-	if (t->len >= (int)sizeof(t->buf) - 1)
+	if (!ed_buf_ensure(t, t->len + 2))
+	{
+		set_status("Out of memory");
 		return;
+	}
 	hist_record(0, t->cx, &c, 1, 1);
 	if (t->cx < t->len)
 		memmove(t->buf + t->cx + 1, t->buf + t->cx, (unsigned)(t->len - t->cx));
@@ -2018,8 +2084,11 @@ static int insert_at(int pos, const char *s, int n)
 		pos = 0;
 	if (pos > t->len)
 		pos = t->len;
-	if (t->len + n >= (int)sizeof(t->buf) - 1)
-		n = (int)sizeof(t->buf) - 1 - t->len;
+	if (!ed_buf_ensure(t, t->len + n + 1))
+	{
+		set_status("Out of memory");
+		return 0;
+	}
 	if (n <= 0)
 		return 0;
 	if (pos < t->len)
@@ -2288,8 +2357,12 @@ static void paste_kill(void)
 	hist_begin();
 	delete_selection(0);
 	n = killlen;
-	if (t->len + n >= (int)sizeof(t->buf) - 1)
-		n = (int)sizeof(t->buf) - 1 - t->len;
+	if (!ed_buf_ensure(t, t->len + n + 1))
+	{
+		set_status("Out of memory");
+		hist_end();
+		return;
+	}
 	if (n <= 0)
 	{
 		hist_end();
@@ -2499,18 +2572,30 @@ static int find_replace_all_apply(void)
 	int i = 0, o = 0, n = 0;
 	if (!t || find_qlen <= 0)
 		return 0;
-	while (i < t->len && o < MMB_ED_BUF - 1)
+	while (i < t->len)
 	{
 		if (find_match_at(t, i, find_qlen))
 		{
 			int j;
-			for (j = 0; j < find_repllen && o < MMB_ED_BUF - 1; j++)
+			if (!find_scratch_ensure(o + find_repllen + 1))
+			{
+				set_status("Out of memory");
+				return 0;
+			}
+			for (j = 0; j < find_repllen; j++)
 				find_scratch[o++] = find_repl[j];
 			i += find_qlen;
 			n++;
 		}
 		else
+		{
+			if (!find_scratch_ensure(o + 2))
+			{
+				set_status("Out of memory");
+				return 0;
+			}
 			find_scratch[o++] = t->buf[i++];
+		}
 	}
 	find_scratch[o] = 0;
 	hist_begin();
@@ -4343,6 +4428,9 @@ static void close_tab_now(void)
 		editor_leave_now();
 		return;
 	}
+	/* The closed tab's heap buffer would be leaked by the struct move, so
+	 * drop it first (#1303). */
+	ed_buf_free(&G.ed.tab[G.ed.cur]);
 	for (i = G.ed.cur; i < G.ed.ntabs - 1; i++)
 		G.ed.tab[i] = G.ed.tab[i + 1];
 	G.ed.ntabs--;
@@ -4403,8 +4491,16 @@ static void recover_apply(void)
 	mmb_ed_tab *t = (recover_tab >= 0 && recover_tab < G.ed.ntabs)
 				? &G.ed.tab[recover_tab] : cur_tab();
 	unsigned got = 0;
-	if (t && recover_sidecar[0] &&
-	    mmb_vfs_read(recover_sidecar, t->buf, sizeof(t->buf) - 1, &got) == 0)
+	int sz;
+	if (!t || !recover_sidecar[0])
+	{
+		confirm_recover = 0;
+		G.ed.dialog = DLG_NONE;
+		return;
+	}
+	sz = mmb_vfs_size(recover_sidecar);
+	if (sz >= 0 && ed_buf_ensure(t, sz + 2) &&
+	    mmb_vfs_read(recover_sidecar, t->buf, (unsigned)sz + 1, &got) == 0)
 	{
 		hist_reset(t);
 		t->len = mmb_normalize_newlines(t->buf, (int)got);
@@ -4417,6 +4513,8 @@ static void recover_apply(void)
 		t->dirty = 1;
 		set_status("Recovered");
 	}
+	else if (sz >= 0)
+		set_status("Out of memory");
 	confirm_recover = 0;
 	G.ed.dialog = DLG_NONE;
 }
@@ -4435,14 +4533,18 @@ static void recover_cancel(void)
 	G.ed.dialog = DLG_NONE;
 }
 
+/* Recovery-compare scratch buffer (#1303). Growable; freed on a warm reset. */
+static char *s_recovery_tmp;
+static int s_recovery_tmp_cap;
+
 /* Called after a tab is loaded: if a recovery sidecar survives and differs
  * from the file, ask before replacing the buffer. */
 static void ed_recovery_check(int idx)
 {
 	char rec[160];
 	mmb_ed_tab *t;
-	static char tmp[MMB_ED_BUF];
 	unsigned got = 0;
+	int sz;
 
 	if (idx < 0 || idx >= G.ed.ntabs)
 		return;
@@ -4452,9 +4554,28 @@ static void ed_recovery_check(int idx)
 	ed_rec_path(t->path, rec, sizeof(rec));
 	if (!mmb_vfs_exists(rec))
 		return;
-	if (mmb_vfs_read(rec, tmp, sizeof(tmp) - 1, &got) == 0)
+	sz = mmb_vfs_size(rec);
+	if (sz < 0)
+		return;
 	{
-		if ((int)got == t->len && memcmp(tmp, t->buf, (unsigned)t->len) == 0)
+		int cap = s_recovery_tmp_cap > 0 ? s_recovery_tmp_cap : MMB_ED_BUF;
+		if (sz + 1 > s_recovery_tmp_cap)
+		{
+			char *nt;
+			while (cap < sz + 1)
+				cap *= 2;
+			nt = (char *)G.plat->alloc((unsigned)cap);
+			if (!nt)
+				return;
+			if (s_recovery_tmp)
+				G.plat->free(s_recovery_tmp);
+			s_recovery_tmp = nt;
+			s_recovery_tmp_cap = cap;
+		}
+	}
+	if (mmb_vfs_read(rec, s_recovery_tmp, (unsigned)sz, &got) == 0)
+	{
+		if ((int)got == t->len && memcmp(s_recovery_tmp, t->buf, (unsigned)t->len) == 0)
 		{
 			mmb_vfs_kill(rec);
 			return;
@@ -5913,6 +6034,20 @@ void mmb_editor_on_ihelp_exit(void)
  * cleared separately. */
 void mmb_editor_reset_all(void)
 {
+	int i;
+	/* The per-console field macros expand on the bare names, so undef them
+	 * to reach the struct fields directly here. */
+#undef find_scratch
+#undef find_scratch_cap
+	for (i = 0; i < MMB_MAX_CONSOLES; i++)
+	{
+		if (s_ed[i].find_scratch && G.plat && G.plat->free)
+			G.plat->free(s_ed[i].find_scratch);
+	}
+	if (s_recovery_tmp && G.plat && G.plat->free)
+		G.plat->free(s_recovery_tmp);
+	s_recovery_tmp = 0;
+	s_recovery_tmp_cap = 0;
 	memset(s_ed, 0, sizeof(s_ed));
 }
 

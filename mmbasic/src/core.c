@@ -26,17 +26,9 @@ static void exec_error_reset(int was_running);
  * interpreter's setjmp error landings can clear it after an unwind. */
 static int s_poll_active;
 
-/* Jump tables and run flags are per-console interpreter state now that more
- * than one context exists; map the old names onto the active context. */
-#define jmp_wend          (G.jmp_wend)
-#define jmp_loop          (G.jmp_loop)
-#define jmp_next          (G.jmp_next)
-#define jmp_endsub        (G.jmp_endsub)
-#define jmp_else          (G.jmp_else)
-#define jmp_endif         (G.jmp_endif)
-#define jmp_endsel        (G.jmp_endsel)
-#define jmp_ready         (G.jmp_ready)
-#define run_preserve_vars (G.run_preserve_vars)
+/* Jump tables and run flags are per-console interpreter state; the names
+ * below always address the active context's fields (G.jmp_*, G.jmp_ready,
+ * G.run_preserve_vars). */
 static int at_end_of_statement(void);
 static void skip_stmt(const char **pp);
 static int process_line_structure(const char *body);
@@ -46,12 +38,190 @@ static mmb_val read_data_item(void);
 static int file_getc(int fn);
 static void file_ungetc(int fn, int c);
 
-int mmb_find_line_pc(int num)
+/* ---- growable program store (#1303) -------------------------------- */
+
+static void oom_error(const char *file, int line)
+{
+	char msg[192];
+	if (file && file[0] && line > 0)
+		sprintf(msg, "?OUT OF MEMORY in %s:%d", file, line);
+	else
+		strcpy(msg, "?OUT OF MEMORY");
+	mmb_error(msg);
+}
+
+static void *prog_alloc(unsigned n, const char *file, int line)
+{
+	void *p = G.plat->alloc(n);
+	if (!p)
+		oom_error(file, line);
+	return p;
+}
+
+/* strdup on the platform heap. */
+static char *prog_strdup(const char *s, const char *file, int line)
+{
+	unsigned n = (unsigned)strlen(s) + 1;
+	char *p = (char *)prog_alloc(n, file, line);
+	memcpy(p, s, n);
+	return p;
+}
+
+/* Double the prog/prog_num pointer arrays so they hold at least `need`
+ * lines. Old lines are carried across (pointers only); on failure the
+ * original tables are untouched and ?OUT OF MEMORY is raised. */
+static void prog_grow(int need, const char *file, int line)
+{
+	int cap = G.prog_cap > 0 ? G.prog_cap : MMB_LINES_INIT;
+	char **np;
+	int *nn;
+	while (cap < need)
+		cap *= 2;
+	np = (char **)G.plat->alloc((unsigned)cap * sizeof(char *));
+	nn = (int *)G.plat->alloc((unsigned)cap * sizeof(int));
+	if (!np || !nn)
+	{
+		if (np)
+			G.plat->free(np);
+		if (nn)
+			G.plat->free(nn);
+		oom_error(file, line);
+	}
+	if (G.prog && G.nprog > 0)
+	{
+		memcpy(np, G.prog, (unsigned)G.nprog * sizeof(char *));
+		memcpy(nn, G.prog_num, (unsigned)G.nprog * sizeof(int));
+	}
+	if (G.prog)
+		G.plat->free(G.prog);
+	if (G.prog_num)
+		G.plat->free(G.prog_num);
+	G.prog = np;
+	G.prog_num = nn;
+	G.prog_cap = cap;
+}
+
+/* Grow the seven jump tables to at least `need` lines (lazily, at RUN). */
+static void jmp_grow(int need)
+{
+	int cap = G.jmp_cap > 0 ? G.jmp_cap : MMB_LINES_INIT;
+	int *n[7];
+	int *o[7];
+	int i, k;
+	while (cap < need)
+		cap *= 2;
+	if (G.jmp_cap >= need && G.jmp_wend)
+		return;
+	memset(n, 0, sizeof(n));
+	for (i = 0; i < 7; i++)
+	{
+		n[i] = (int *)G.plat->alloc((unsigned)cap * sizeof(int));
+		if (!n[i])
+		{
+			for (k = 0; k < i; k++)
+				G.plat->free(n[k]);
+			mmb_error("?OUT OF MEMORY");
+		}
+	}
+	o[0] = G.jmp_wend; o[1] = G.jmp_loop; o[2] = G.jmp_next;
+	o[3] = G.jmp_endsub; o[4] = G.jmp_else; o[5] = G.jmp_endif;
+	o[6] = G.jmp_endsel;
+	for (i = 0; i < 7; i++)
+		if (o[i])
+			G.plat->free(o[i]);
+	G.jmp_wend = n[0]; G.jmp_loop = n[1]; G.jmp_next = n[2];
+	G.jmp_endsub = n[3]; G.jmp_else = n[4]; G.jmp_endif = n[5];
+	G.jmp_endsel = n[6];
+	G.jmp_cap = cap;
+}
+
+/* Free every strdup'd line, the pointer arrays and the jump tables
+ * (NEW / console teardown), returning the store to its empty state. */
+static void prog_release(void)
 {
 	int i;
-	for (i = 0; i < G.nprog; i++)
-		if (G.prog_num[i] == num)
-			return i;
+	if (G.prog)
+	{
+		for (i = 0; i < G.nprog; i++)
+			if (G.prog[i])
+				G.plat->free(G.prog[i]);
+		G.plat->free(G.prog);
+		G.prog = 0;
+	}
+	if (G.prog_num)
+	{
+		G.plat->free(G.prog_num);
+		G.prog_num = 0;
+	}
+	G.prog_cap = 0;
+	G.nprog = 0;
+	if (G.jmp_wend)
+	{
+		G.plat->free(G.jmp_wend);
+		G.plat->free(G.jmp_loop);
+		G.plat->free(G.jmp_next);
+		G.plat->free(G.jmp_endsub);
+		G.plat->free(G.jmp_else);
+		G.plat->free(G.jmp_endif);
+		G.plat->free(G.jmp_endsel);
+		G.jmp_wend = G.jmp_loop = G.jmp_next = 0;
+		G.jmp_endsub = G.jmp_else = G.jmp_endif = G.jmp_endsel = 0;
+	}
+	G.jmp_cap = 0;
+	G.jmp_ready = 0;
+}
+
+/* Binary search over the sorted prog_num table; -1 when absent. */
+static int find_line_idx(int num)
+{
+	int lo = 0, hi = G.nprog - 1;
+	while (lo <= hi)
+	{
+		int mid = (lo + hi) >> 1;
+		if (G.prog_num[mid] == num)
+			return mid;
+		if (G.prog_num[mid] < num)
+			lo = mid + 1;
+		else
+			hi = mid - 1;
+	}
+	return -1;
+}
+
+/* Clear the SUB table for a fresh run while keeping its capacity (#1303). */
+static void subs_clear(void)
+{
+	int i;
+	for (i = 0; i < G.subs_cap; i++)
+		G.subs[i].used = 0;
+	G.nsubs = 0;
+}
+
+/* Drop the label table (NEW / teardown); it regrows on the next RUN. */
+static void labels_release(void)
+{
+	if (G.labels)
+		G.plat->free(G.labels);
+	G.labels = 0;
+	G.labels_cap = 0;
+	G.nlabels = 0;
+}
+
+/* Drop the SUB table (NEW / teardown). */
+static void subs_release(void)
+{
+	if (G.subs)
+		G.plat->free(G.subs);
+	G.subs = 0;
+	G.subs_cap = 0;
+	G.nsubs = 0;
+}
+
+int mmb_find_line_pc(int num)
+{
+	int i = find_line_idx(num);
+	if (i >= 0)
+		return i;
 	mmb_error("?LINE NOT FOUND");
 	return 0;
 }
@@ -80,7 +250,7 @@ static const char *after_label(const char *body)
 static int find_label_pc(const char *name)
 {
 	int i;
-	for (i = 0; i < MMB_MAX_LABELS; i++)
+	for (i = 0; i < G.nlabels; i++)
 		if (G.labels[i].used && mmb_keyword_eq(G.labels[i].name, name))
 			return G.labels[i].pc;
 	mmb_error("?LABEL NOT FOUND");
@@ -107,12 +277,32 @@ static int parse_target(void)
 	}
 }
 
+/* Double the label table so the next label fits (#1303). The prescan used to
+ * silently drop every label after the 64th; now it grows, and only a real
+ * allocation failure stops it. */
+static void labels_grow(void)
+{
+	int cap = G.labels_cap > 0 ? G.labels_cap : MMB_MAX_LABELS;
+	mmb_label *nl;
+	if (G.labels_cap > 0 && G.nlabels < G.labels_cap)
+		return;
+	nl = (mmb_label *)G.plat->alloc((unsigned)cap * 2 * sizeof(mmb_label));
+	if (!nl)
+		mmb_error("?OUT OF MEMORY");
+	if (G.labels)
+	{
+		memcpy(nl, G.labels, (unsigned)cap * sizeof(mmb_label));
+		G.plat->free(G.labels);
+	}
+	G.labels = nl;
+	G.labels_cap = cap * 2;
+}
+
 static void scan_labels(void)
 {
 	int i;
-	memset(G.labels, 0, sizeof(G.labels));
 	G.nlabels = 0;
-	for (i = 0; i < G.nprog && G.nlabels < MMB_MAX_LABELS; i++)
+	for (i = 0; i < G.nprog; i++)
 	{
 		const char *save = G.p;
 		char name[MMB_MAX_NAME];
@@ -124,6 +314,7 @@ static void scan_labels(void)
 			mmb_skip_sp();
 			if (*G.p == ':')
 			{
+				labels_grow();
 				mmb_upper(name);
 				strncpy(G.labels[G.nlabels].name, name, MMB_MAX_NAME - 1);
 				G.labels[G.nlabels].pc = i;
@@ -203,11 +394,12 @@ static void build_jumps(void)
 {
 	int i, sp;
 	int st[MMB_MAX_CTRL];
-	jmp_ready = 0;
+	jmp_grow(G.nprog);
+	G.jmp_ready = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
-		jmp_wend[i] = jmp_loop[i] = jmp_next[i] = -1;
-		jmp_endsub[i] = jmp_else[i] = jmp_endif[i] = jmp_endsel[i] = -1;
+		G.jmp_wend[i] = G.jmp_loop[i] = G.jmp_next[i] = -1;
+		G.jmp_endsub[i] = G.jmp_else[i] = G.jmp_endif[i] = G.jmp_endsel[i] = -1;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -218,7 +410,7 @@ static void build_jumps(void)
 				st[sp++] = i;
 		}
 		else if (line_match(G.prog[i], "WEND") && sp > 0)
-			jmp_wend[st[--sp]] = i;
+			G.jmp_wend[st[--sp]] = i;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -229,7 +421,7 @@ static void build_jumps(void)
 				st[sp++] = i;
 		}
 		else if (line_match(G.prog[i], "LOOP") && sp > 0)
-			jmp_loop[st[--sp]] = i;
+			G.jmp_loop[st[--sp]] = i;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -240,7 +432,7 @@ static void build_jumps(void)
 				st[sp++] = i;
 		}
 		else if (line_match(G.prog[i], "NEXT") && sp > 0)
-			jmp_next[st[--sp]] = i;
+			G.jmp_next[st[--sp]] = i;
 	}
 	/* SUB/END SUB with a single stack pass instead of scanning forward for
 	 * each definition (#992). Definitions are not lexically nested, but the
@@ -257,7 +449,7 @@ static void build_jumps(void)
 		}
 		else if (sp > 0 && mmb_match("END") &&
 			 (mmb_match("SUB") || mmb_match("FUNCTION")))
-			jmp_endsub[st[--sp]] = i;
+			G.jmp_endsub[st[--sp]] = i;
 		G.p = save;
 	}
 	sp = 0;
@@ -271,12 +463,12 @@ static void build_jumps(void)
 		else if (sp > 0 && (line_match(G.prog[i], "ELSE") ||
 				     line_match(G.prog[i], "ELSEIF")))
 		{
-			if (jmp_else[st[sp - 1]] < 0)
-				jmp_else[st[sp - 1]] = i;
+			if (G.jmp_else[st[sp - 1]] < 0)
+				G.jmp_else[st[sp - 1]] = i;
 		}
 		else if (sp > 0 && (line_match(G.prog[i], "ENDIF") ||
 				     line_match_end(G.prog[i], "IF")))
-			jmp_endif[st[--sp]] = i;
+			G.jmp_endif[st[--sp]] = i;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -289,48 +481,48 @@ static void build_jumps(void)
 				st[sp++] = i;
 		}
 		else if (mmb_match("END") && mmb_match("SELECT") && sp > 0)
-			jmp_endsel[st[--sp]] = i;
+			G.jmp_endsel[st[--sp]] = i;
 		G.p = save;
 	}
-	jmp_ready = 1;
+	G.jmp_ready = 1;
 }
 
 static int find_wend_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_wend[from] >= 0)
-		return jmp_wend[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_wend[from] >= 0)
+		return G.jmp_wend[from];
 	mmb_error("?WEND");
 	return G.nprog;
 }
 
 static int find_loop_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_loop[from] >= 0)
-		return jmp_loop[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_loop[from] >= 0)
+		return G.jmp_loop[from];
 	mmb_error("?LOOP");
 	return G.nprog;
 }
 
 static int find_endif_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endif[from] >= 0)
-		return jmp_endif[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_endif[from] >= 0)
+		return G.jmp_endif[from];
 	mmb_error("?ENDIF");
 	return G.nprog;
 }
 
 static int find_end_select_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endsel[from] >= 0)
-		return jmp_endsel[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_endsel[from] >= 0)
+		return G.jmp_endsel[from];
 	mmb_error("?END SELECT");
 	return G.nprog;
 }
 
 static int find_end_sub_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_endsub[from] >= 0)
-		return jmp_endsub[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_endsub[from] >= 0)
+		return G.jmp_endsub[from];
 	mmb_error("?END SUB");
 	return G.nprog;
 }
@@ -629,12 +821,12 @@ static int sub_find(const char *name)
 {
 	int i;
 	char nbuf[MMB_MAX_NAME];
-	if (G.nsubs <= 0)
+	if (G.nsubs <= 0 || !G.subs)
 		return -1;
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
-	for (i = 0; i < MMB_MAX_SUBS; i++)
+	for (i = 0; i < G.nsubs; i++)
 		if (G.subs[i].used && mmb_keyword_eq(G.subs[i].name, nbuf))
 			return i;
 	return -1;
@@ -704,9 +896,31 @@ static void bind_scalar_arg(const char *name, int type)
 	}
 }
 
+/* Double the SUB table when it is full (#1303). The 129th definition used to
+ * fail with a misleading ?OUT OF MEMORY; the table now grows like the
+ * program store. */
+static void subs_grow(void)
+{
+	int cap = G.subs_cap > 0 ? G.subs_cap : MMB_MAX_SUBS;
+	mmb_sub *ns = (mmb_sub *)G.plat->alloc((unsigned)cap * 2 * sizeof(mmb_sub));
+	if (!ns)
+		mmb_error("?OUT OF MEMORY");
+	/* Zero the whole new table: sub_register() picks the first !used slot,
+	 * and sub_find() only walks the first nsubs entries, so garbage `used`
+	 * bits would scatter definitions beyond its reach (#1303). */
+	memset(ns, 0, (unsigned)cap * 2 * sizeof(mmb_sub));
+	if (G.subs)
+	{
+		memcpy(ns, G.subs, (unsigned)cap * sizeof(mmb_sub));
+		G.plat->free(G.subs);
+	}
+	G.subs = ns;
+	G.subs_cap = cap * 2;
+}
+
 static void sub_register(const char *name, int pc, int is_func, int ret_type)
 {
-	int i, slot = -1;
+	int i, slot;
 	int ex, suffixed, sl;
 	char nbuf[MMB_MAX_NAME];
 	char msg[MMB_MAX_NAME + 48];
@@ -737,13 +951,12 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 			 G.subs[ex].is_func ? "FUNCTION" : "SUB");
 		mmb_error(msg);
 	}
-	for (i = 0; i < MMB_MAX_SUBS; i++)
-	{
-		if (!G.subs[i].used && slot < 0)
-			slot = i;
-	}
-	if (slot < 0)
-		mmb_error("?OUT OF MEMORY");
+	/* Dense append (#1303): sub_find() walks the first nsubs entries, so a
+	 * definition must land at slot nsubs (growing only when full) rather
+	 * than a free-slot scan that scatters it out of that range. */
+	if (G.nsubs >= G.subs_cap)
+		subs_grow();
+	slot = G.nsubs;
 	strncpy(G.subs[slot].name, nbuf, MMB_MAX_NAME - 1);
 	G.subs[slot].line_pc = pc;
 	G.subs[slot].is_func = is_func;
@@ -1148,8 +1361,8 @@ void mmb_cmd_exit_do(void)
 
 static int find_next_pc(int from)
 {
-	if (jmp_ready && from >= 0 && from < G.nprog && jmp_next[from] >= 0)
-		return jmp_next[from];
+	if (G.jmp_ready && from >= 0 && from < G.nprog && G.jmp_next[from] >= 0)
+		return G.jmp_next[from];
 	mmb_error("?NEXT");
 	return G.nprog;
 }
@@ -2270,10 +2483,16 @@ static int starts_with_line_number(const char *s, int *num, const char **rest)
 	return 1;
 }
 
-static void store_line(int num, const char *text)
+/* Store one program line. Lines are individually heap-allocated and the
+ * prog_num table stays sorted, so replace/delete/insert move pointers only.
+ * An append (num greater than the last line) takes the fast path; inserts
+ * binary-search for the position. `srcfile`/`srcline` name the source for an
+ * ?OUT OF MEMORY report (0/0 = interactive input). */
+static void store_line(int num, const char *text, const char *srcfile, int srcline)
 {
 	int i, j, n;
 	char buf[MMB_LINE_LEN];
+	char *dup;
 
 	G.prog_dirty = 1; /* token/jump tables are stale until the next RUN (#992) */
 	/* Editing a line rewrites its token text in place, so a resolve-cache
@@ -2294,38 +2513,52 @@ static void store_line(int num, const char *text)
 	text = buf;
 	if (text[0] == 0)
 	{
-		for (i = 0; i < G.nprog; i++)
-			if (G.prog_num[i] == num)
-			{
-				for (j = i; j < G.nprog - 1; j++)
-				{
-					memcpy(G.prog[j], G.prog[j + 1], MMB_LINE_LEN);
-					G.prog_num[j] = G.prog_num[j + 1];
-				}
-				G.nprog--;
-				return;
-			}
+		i = find_line_idx(num);
+		if (i < 0)
+			return;
+		G.plat->free(G.prog[i]);
+		for (j = i; j < G.nprog - 1; j++)
+		{
+			G.prog[j] = G.prog[j + 1];
+			G.prog_num[j] = G.prog_num[j + 1];
+		}
+		G.prog[G.nprog - 1] = 0;
+		G.nprog--;
 		return;
 	}
-	for (i = 0; i < G.nprog; i++)
-		if (G.prog_num[i] == num)
+	i = find_line_idx(num);
+	if (i >= 0)
+	{
+		dup = prog_strdup(text, srcfile, srcline);
+		G.plat->free(G.prog[i]);
+		G.prog[i] = dup;
+		return;
+	}
+	/* Insert position: first line number greater than num. */
+	if (G.nprog == 0 || num > G.prog_num[G.nprog - 1])
+		i = G.nprog;
+	else
+	{
+		int lo = 0, hi = G.nprog - 1;
+		while (lo <= hi)
 		{
-			strncpy(G.prog[i], text, MMB_LINE_LEN - 1);
-			G.prog[i][MMB_LINE_LEN - 1] = 0;
-			return;
+			int mid = (lo + hi) >> 1;
+			if (G.prog_num[mid] > num)
+				hi = mid - 1;
+			else
+				lo = mid + 1;
 		}
-	if (G.nprog >= MMB_MAX_LINES)
-		mmb_error("?PROGRAM FULL");
-	for (i = 0; i < G.nprog; i++)
-		if (G.prog_num[i] > num)
-			break;
+		i = lo;
+	}
+	if (G.nprog >= G.prog_cap)
+		prog_grow(G.nprog + 1, srcfile, srcline);
+	dup = prog_strdup(text, srcfile, srcline);
 	for (j = G.nprog; j > i; j--)
 	{
-		memcpy(G.prog[j], G.prog[j - 1], MMB_LINE_LEN);
+		G.prog[j] = G.prog[j - 1];
 		G.prog_num[j] = G.prog_num[j - 1];
 	}
-	strncpy(G.prog[i], text, MMB_LINE_LEN - 1);
-	G.prog[i][MMB_LINE_LEN - 1] = 0;
+	G.prog[i] = dup;
 	G.prog_num[i] = num;
 	G.nprog++;
 }
@@ -2694,6 +2927,7 @@ static void load_basic_file(const char *path, int *auto_n, int depth)
 static void load_basic_text(const char *path, const char *text, int *auto_n, int depth)
 {
 	const char *s = text;
+	int lineno = 0;
 	while (*s)
 	{
 		char line[MMB_LINE_LEN];
@@ -2705,6 +2939,7 @@ static void load_basic_text(const char *path, const char *text, int *auto_n, int
 		line[li] = 0;
 		while (*s == '\n' || *s == '\r')
 			s++;
+		lineno++;
 		kind = is_include_line(line, inc, sizeof(inc));
 		if (kind == 2)
 		{
@@ -2715,10 +2950,10 @@ static void load_basic_text(const char *path, const char *text, int *auto_n, int
 		if (kind == 1)
 			continue;
 		if (starts_with_line_number(line, &num, &rest))
-			store_line(num, rest);
+			store_line(num, rest, path, lineno);
 		else if (line[0])
 		{
-			store_line(*auto_n, line);
+			store_line(*auto_n, line, path, lineno);
 			*auto_n += 10;
 		}
 	}
@@ -2742,7 +2977,9 @@ static void chdir_to_file(const char *path)
 
 void mmb_cmd_new(void)
 {
-	G.nprog = 0;
+	prog_release(); /* drops every line plus the store and jump tables (#1303) */
+	labels_release();
+	subs_release();
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
 	G.current_prog[0] = 0;
@@ -2751,8 +2988,6 @@ void mmb_cmd_new(void)
 	mmb_struct_clear();
 	mmb_clear_consts();
 	mmb_close_tcp_files();
-	memset(G.subs, 0, sizeof(G.subs));
-	G.nsubs = 0;
 	G.on_key[0] = 0;
 	memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
 	G.opt.autorun = 0;
@@ -2775,6 +3010,9 @@ void mmb_cmd_list(void)
 			(void)nb;
 		}
 		mmb_out(G.prog[i]);
+		/* G.out is 4 KB; a long program would otherwise be cut off
+		 * mid-LIST (#1303). Flush per line so the whole program prints. */
+		mmb_out_flush();
 	}
 }
 
@@ -2794,7 +3032,7 @@ static void load_prog_from_disk(const char *name)
 		strncat(fname, ".BAS", sizeof(fname) - strlen(fname) - 1);
 	strncpy(G.current_prog, fname, sizeof(G.current_prog) - 1);
 	G.current_prog[sizeof(G.current_prog) - 1] = 0;
-	G.nprog = 0;
+	prog_release(); /* drop the previous program's lines before loading (#1303) */
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
 	chdir_to_file(fname);
@@ -2889,7 +3127,7 @@ void mmb_cmd_chain(void)
 	}
 	else
 		load_prog_from_disk(fname);
-	run_preserve_vars = 1;
+	G.run_preserve_vars = 1;
 	run_program();
 	if (mounted_pkg)
 	{
@@ -3323,10 +3561,10 @@ void mmb_cmd_for(void)
 				G.branch_pc = after_pos ? next_pc : next_pc + 1;
 				G.branch_pos = after_pos;
 			}
-			else if (!same_line && jmp_ready && G.run_pc >= 0 &&
-				 G.run_pc < G.nprog && jmp_next[G.run_pc] >= 0)
+			else if (!same_line && G.jmp_ready && G.run_pc >= 0 &&
+				 G.run_pc < G.nprog && G.jmp_next[G.run_pc] >= 0)
 			{
-				G.branch_pc = jmp_next[G.run_pc] + 1;
+				G.branch_pc = G.jmp_next[G.run_pc] + 1;
 				G.branch_pos = 0;
 			}
 			return;
@@ -3354,8 +3592,8 @@ void mmb_cmd_for(void)
 		G.forstack[G.for_sp].sel_depth = G.sel_sp;
 		G.forstack[G.for_sp].seq = G.loop_seq++;
 		G.forstack[G.for_sp].end_line =
-			(jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
-				? jmp_next[G.run_pc]
+			(G.jmp_ready && G.run_pc >= 0 && G.run_pc < G.nprog)
+				? G.jmp_next[G.run_pc]
 				: -1;
 		G.for_sp++;
 	}
@@ -3466,7 +3704,7 @@ void mmb_cmd_next(void)
 			 * loop just falls through to the next line, so skip the
 			 * forward scan the old code did. The scan is only needed for
 			 * unusual control flow (duplicate or out-of-order NEXTs). */
-			if (jmp_ready && end_line == G.run_pc)
+			if (G.jmp_ready && end_line == G.run_pc)
 				return;
 			/* A same-line loop's matching NEXT is the one just executed, so
 			 * exiting falls through to the rest of the line (#997). */
@@ -5190,8 +5428,7 @@ static void run_program(void)
 		G.data_line = 0;
 		G.data_pos = 0;
 		G.data_off = 0;
-		memset(G.subs, 0, sizeof(G.subs));
-		G.nsubs = 0;
+		subs_clear();
 		memset(G.tick, 0, sizeof(G.tick));
 		G.on_key[0] = 0;
 		memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
@@ -5214,12 +5451,12 @@ static void run_program(void)
 		/* A fresh run may execute re-tokenized text at addresses the cache
 		 * saw last run, so drop every parsed binding (#1002). */
 		mmb_resolve_invalidate();
-		if (!run_preserve_vars)
+		if (!G.run_preserve_vars)
 		{
 			mmb_clear_vars(1);
 			mmb_clear_consts();
 		}
-		run_preserve_vars = 0;
+		G.run_preserve_vars = 0;
 		mmb_struct_prepare();
 		G.on_error_pc = -1;
 		G.error_active = 0;
@@ -5458,7 +5695,7 @@ const char *mmb_exec_line(const char *line)
 	}
 	if (starts_with_line_number(line, &num, &rest))
 	{
-		store_line(num, rest);
+		store_line(num, rest, 0, 0);
 		return G.out;
 	}
 	if (line[0] == '*')
@@ -5497,9 +5734,9 @@ void mmb_init(const mmb_platform *plat)
 		return;
 	memset(&G, 0, sizeof(G));
 	G.plat = plat;
-	/* The variable hash is file-scope and zero-initialised, which looks like
-	 * a full table to probe; clear it to -1 before any immediate-mode
-	 * variable is created (#998). */
+	/* The variable name hash is file-scope heap state; release any tables a
+	 * previous session left behind before the first variable is created
+	 * (#998, #1303). */
 	mmb_clear_vars(0);
 	mmb_option_reset();
 	mmb_vfs_init();
@@ -5519,6 +5756,7 @@ void mmb_init(const mmb_platform *plat)
 
 void mmb_reset(void)
 {
+	int i;
 	mmb_pkg_unmount();
 	mmb_clear_vars(0);
 	/* All pool-owned strings (variables, constants, saved call frames) are
@@ -5528,7 +5766,21 @@ void mmb_reset(void)
 	mmb_strpool_reset();
 	mmb_option_reset();
 	mmb_play_stop();
-	G.nprog = 0;
+	/* Release the growable program store and its tables (#1303): the fixed
+	 * 512 KB prog array was inline in this struct, so its heap replacement
+	 * must be freed explicitly before the context is discarded or reused. */
+	prog_release();
+	labels_release();
+	subs_release();
+	mmb_clear_consts();
+	/* EDIT tabs own growable document buffers; the editor session statics
+	 * (kill buffer, find scratch) are dropped by mmb_editor_reset_all. */
+	for (i = 0; i < MMB_ED_TABS; i++)
+	{
+		if (G.ed.tab[i].buf)
+			G.plat->free(G.ed.tab[i].buf);
+		memset(&G.ed.tab[i], 0, sizeof(G.ed.tab[i]));
+	}
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
 	mmb_tok_release();

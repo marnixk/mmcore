@@ -2196,7 +2196,7 @@ int mmb_try_function(mmb_val *out)
 		}
 		mmb_expect(')');
 		v = 0;
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && mmb_keyword_eq(G.vars[i].name, name))
 			{
 				v = &G.vars[i];

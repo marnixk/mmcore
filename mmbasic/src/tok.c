@@ -278,8 +278,6 @@ void mmb_tokenize_program(void)
 	{
 		char *buf;
 		cap = G.nprog + 32;
-		if (cap > MMB_MAX_LINES)
-			cap = MMB_MAX_LINES;
 		if (!G.plat || !G.plat->alloc)
 		{
 			tok_ready = 0;
