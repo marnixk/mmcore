@@ -149,6 +149,8 @@ MM.BATTERY%	MM.BATTERY%	topic	dedicated topic
 MM.BRIGHTNESS%	MM.BRIGHTNESS%	topic	dedicated topic
 MM.CMDLINE$	MM.CMDLINE$	topic	dedicated topic
 MM.DEVICE$	MM.DEVICE$	topic	dedicated topic
+MM.ERRMSG$	MM.ERRMSG$	topic	dedicated topic
+MM.ERRNO	MM.ERRNO	topic	dedicated topic
 MM.HPOS	MM.HPOS	topic	dedicated topic
 MM.HRES	MM.HRES	topic	dedicated topic
 MM.INFO	MM.INFO	topic	dedicated topic

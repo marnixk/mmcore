@@ -39,6 +39,7 @@ Other: PLAYING() DATE$ TIME$ TIMER POS CSRLIN
   POS is the 1-based console column, CSRLIN the 1-based console row.
   MM.VER MM.DEVICE$ MM.CMDLINE$ MM.RUNTIME$
   MM.BATTERY% MM.BRIGHTNESS% (read-only; MM.BRIGHTNESS% is also assignable)
+  MM.ERRNO MM.ERRMSG$ (last trapped error; see ~ON~)
   STRUCT() SIZEOF|OFFSET|TYPE|FIND
   JSON$(json$, path$)
   JSON_STRINGIFY$(var)

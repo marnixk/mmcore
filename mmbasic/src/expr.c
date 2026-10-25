@@ -580,7 +580,9 @@ static void theme_name_copy(char *dst, int n, const char *src)
 	X("MAX", lbl_max) \
 	X("MIN", lbl_min) \
 	X("MM.BATTERY%", lbl_mmbattery) \
-	X("MM.BRIGHTNESS%", lbl_mmbrightness)
+	X("MM.BRIGHTNESS%", lbl_mmbrightness) \
+	X("MM.ERRNO", lbl_mmerrno) \
+	X("MM.ERRMSG$", lbl_mmerrmsg)
 
 static const char *const builtin_func_names[] = {
 #define MMB_FUN_NAME(n, l) n,
@@ -2230,6 +2232,30 @@ int mmb_try_function(mmb_val *out)
 			buf[sp] = 0;
 			*out = mmb_arena_val(buf);
 		}
+		return 1;
+	}
+	if (mmb_match("MM.ERRNO"))
+	{
+	lbl_mmerrno:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+		*out = mmb_int_val(G.mm_errno);
+		return 1;
+	}
+	if (mmb_match("MM.ERRMSG$"))
+	{
+	lbl_mmerrmsg:
+		mmb_skip_sp();
+		if (*G.p == '(')
+		{
+			G.p++;
+			mmb_expect(')');
+		}
+		*out = mmb_str_val(G.mm_errmsg);
 		return 1;
 	}
 	if (mmb_match("MM.VER"))

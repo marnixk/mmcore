@@ -1,0 +1,24 @@
+name: MM.ERRNO
+kind: command
+
+Return the error code of the last trapped runtime error, or zero when there
+has not been one.
+
+errno = MM.ERRNO
+
+MM.ERRNO is read-only. It is set when ~ON~ ERROR SKIP or ~ON~ ERROR IGNORE
+skips a statement, and when ~ON~ ERROR GOTO traps an error. A non-zero value
+means an error happened; zero means no trapped error. The exact code is the
+interpreter's generic error value (16); use ~MM.ERRMSG$~ for the text.
+
+MM.ERRNO is cleared to zero when the program starts (RUN), and by ON ERROR
+SKIP, ON ERROR IGNORE and ON ERROR CLEAR.
+
+See also ~MM.ERRMSG$~, ~ON~, ~RESUME~.
+
+Example:
+
+    ON ERROR SKIP 1
+    OPEN "C:/.scores" FOR OUTPUT AS #1
+    IF MM.ERRNO <> 0 THEN PRINT "Cannot save: "; MM.ERRMSG$
+    ON ERROR ABORT
