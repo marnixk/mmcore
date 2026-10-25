@@ -77,6 +77,9 @@ typedef struct app_tui_state {
 	int mode;   /* APPTUI_PICK or APPTUI_LAUNCH */
 	int nent, sel, top;
 	app_entry ent[APP_MAX_ENT];
+	int nview;             /* entries matching filter, in view order */
+	int view[APP_MAX_ENT]; /* indexes into ent[] */
+	char filter[APP_LABEL]; /* typed substring, empty = no filter */
 	int esc;
 	unsigned esc_at;
 	char status[96];
@@ -324,6 +327,52 @@ static void at_add(const char *dir, const char *fname)
 	AT.nent++;
 }
 
+static char at_upper(char c)
+{
+	return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+}
+
+/* Case-insensitive substring test: does ``hay`` contain ``needle``? */
+static int at_contains_ci(const char *hay, const char *needle)
+{
+	const char *h;
+
+	if (!needle[0])
+		return 1;
+	for (h = hay; *h; h++)
+	{
+		const char *a = h, *b = needle;
+		while (*a && *b && at_upper(*a) == at_upper(*b))
+		{
+			a++;
+			b++;
+		}
+		if (!*b)
+			return 1;
+	}
+	return 0;
+}
+
+/* Rebuild the filtered view (#1320). Selection and scroll are clamped to the
+ * new list so Backspace/widening never leaves an out-of-range row selected. */
+static void at_refilter(void)
+{
+	int i;
+
+	AT.nview = 0;
+	for (i = 0; i < AT.nent; i++)
+	{
+		if (at_contains_ci(AT.ent[i].label, AT.filter))
+			AT.view[AT.nview++] = i;
+	}
+	if (AT.sel >= AT.nview)
+		AT.sel = AT.nview > 0 ? AT.nview - 1 : 0;
+	if (AT.sel < 0)
+		AT.sel = 0;
+	if (AT.top > AT.nview)
+		AT.top = AT.nview > 0 ? AT.nview - 1 : 0;
+}
+
 static void at_scan(void)
 {
 	char listing[APP_LISTING];
@@ -331,6 +380,7 @@ static void at_scan(void)
 	int i;
 
 	AT.nent = 0;
+	AT.nview = 0;
 	AT.sel = 0;
 	AT.top = 0;
 	/* User packages first (so a boot launcher defaults to them), then the
@@ -390,6 +440,7 @@ static void at_scan(void)
 		AT.ent[AT.nent].cmd[APP_LABEL - 1] = 0;
 		AT.nent++;
 	}
+	at_refilter();
 }
 
 static void at_close(void)
@@ -405,12 +456,13 @@ static void at_close(void)
 static void at_run_selected(void)
 {
 	char cmd[APP_PATH + 16];
+	int idx = AT.sel >= 0 && AT.sel < AT.nview ? AT.view[AT.sel] : -1;
 
-	if (AT.sel < 0 || AT.sel >= AT.nent)
+	if (idx < 0)
 		return;
-	if (AT.ent[AT.sel].kind == AT_KIND_CMD)
+	if (AT.ent[idx].kind == AT_KIND_CMD)
 	{
-		strncpy(cmd, AT.ent[AT.sel].cmd, sizeof(cmd) - 1);
+		strncpy(cmd, AT.ent[idx].cmd, sizeof(cmd) - 1);
 		cmd[sizeof(cmd) - 1] = 0;
 		at_close();
 		if (cmd[0])
@@ -418,14 +470,26 @@ static void at_run_selected(void)
 		return;
 	}
 	strcpy(cmd, "RUN \"");
-	strncat(cmd, AT.ent[AT.sel].path, sizeof(cmd) - 8);
+	strncat(cmd, AT.ent[idx].path, sizeof(cmd) - 8);
 	strcat(cmd, "\"");
 	at_close();
 	mmb_exec_line(cmd);
 }
 
+static void at_draw(void);
+
 static void at_escape(void)
 {
+	/* Esc clears an active filter first (#1320); only a second Esc (or one
+	 * with nothing to clear) leaves the launcher. */
+	if (AT.filter[0])
+	{
+		AT.filter[0] = 0;
+		at_refilter();
+		if (AT.active)
+			at_draw();
+		return;
+	}
 	at_close();
 }
 
@@ -436,7 +500,7 @@ static void at_move(int dir)
 		if (AT.sel > 0)
 			AT.sel--;
 	}
-	else if (AT.sel + 1 < AT.nent)
+	else if (AT.sel + 1 < AT.nview)
 		AT.sel++;
 }
 
@@ -460,7 +524,16 @@ static void at_draw(void)
 	tui_dialog_panel(x, y, w, h, title, AT_FG, AT_BG,
 			 AT_BRD_FG, AT_BRD_BG, AT_TITLE_FG, AT_TITLE_BG);
 
-	if (AT.mode == APPTUI_LAUNCH)
+	if (AT.filter[0])
+	{
+		char intro[APP_LABEL + 16];
+
+		intro[0] = 0;
+		at_append(intro, sizeof(intro), "Filter: ");
+		at_append(intro, sizeof(intro), AT.filter);
+		tui_puts(x + 2, y + 2, intro, AT_HOT, AT_BG);
+	}
+	else if (AT.mode == APPTUI_LAUNCH)
 		tui_puts(x + 2, y + 2, "Choose an app. Esc returns to the REPL.",
 			 AT_HOT, AT_BG);
 	else
@@ -483,14 +556,17 @@ static void at_draw(void)
 		int ry = listy + i;
 		int fg = AT_FG, bg = AT_BG;
 		char row[APP_LABEL + 4];
-		if (idx >= AT.nent)
+		if (idx >= AT.nview)
 		{
 			tui_fill(x + 1, ry, w - 2, 1, ' ', AT_FG, AT_BG);
+			if (AT.nview == 0 && i == 0)
+				tui_pad(x + 2, ry, "  No matches", w - 4,
+					AT_ERR_FG, AT_ERR_BG);
 			continue;
 		}
 		row[0] = 0;
 		at_append(row, sizeof(row), idx == AT.sel ? "> " : "  ");
-		at_append(row, sizeof(row), AT.ent[idx].label);
+		at_append(row, sizeof(row), AT.ent[AT.view[idx]].label);
 		if (idx == AT.sel)
 		{
 			fg = AT_SEL_FG;
@@ -571,6 +647,34 @@ const char *mmb_apptui_key(char c)
 	{
 		AT.esc = 1;
 		AT.esc_at = mmb_now_ms();
+		return G.out;
+	}
+	if (c == 8 || c == 127)
+	{
+		int n = (int)strlen(AT.filter);
+
+		if (n > 0)
+		{
+			AT.filter[n - 1] = 0;
+			at_refilter();
+			if (AT.active)
+				at_draw();
+		}
+		return G.out;
+	}
+	/* Printable characters start or extend the name filter (#1320). */
+	if (c >= 32 && c <= 126)
+	{
+		int n = (int)strlen(AT.filter);
+
+		if (n < (int)sizeof(AT.filter) - 1)
+		{
+			AT.filter[n] = c;
+			AT.filter[n + 1] = 0;
+		}
+		at_refilter();
+		if (AT.active)
+			at_draw();
 		return G.out;
 	}
 	if (c == '\r' || c == '\n')
