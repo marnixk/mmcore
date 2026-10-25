@@ -227,6 +227,13 @@ Do **not** merge or release. Stop at “PR ready”.
 
 ## Spawning workers
 
+**Model: DeepSeek Flash only.** Every worker thread runs on the default
+`deepseek/deepseek-flash` (variant `high`), the same as the coordinator. Spawn
+workers with `t3-orchestrate.mjs spawn` and do **not** pass `--model`; never
+start a worker through T3's delegate-task tool, and never pick
+`deepseek/deepseek-v4-pro` (or any Pro/`max` variant) for any thread, even for
+a hard bundle: Pro is billed separately. Only the user can ask for another model.
+
 **Mandatory worker preamble.** The coordinator writes each per-bundle prompt by
 hand, so it must paste the preamble from the **Worker prompt template** (below)
 as the first lines of every prompt: read `<worktree>/AGENTS.md`, then read the
