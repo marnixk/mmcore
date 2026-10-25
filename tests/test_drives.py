@@ -38,6 +38,29 @@ def test_open_on_a_drive(console):
     assert "DRV.TXT" in listing.upper()
 
 
+def test_open_append_creates_file_at_open(console):
+    """#1324: OPEN FOR APPEND creates the file immediately, before any write."""
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('OPEN "A:/APP1324.TXT" FOR APPEND AS #1') == ""
+    exists = console.send_line('PRINT "["; DIR$("A:/APP1324.TXT", FILE); "]"')
+    assert exists == "[APP1324.TXT]", exists
+    assert console.send_line("CLOSE #1") == ""
+
+
+def test_open_creates_missing_parent_folders(console):
+    """#1324: A: OPEN creates missing parents for OUTPUT and APPEND.
+
+    This is the documented, intentional mkdir -p behaviour (unlike CMM2).
+    """
+    assert console.send_line('CHDIR "A:/"') == ""
+    assert console.send_line('OPEN "A:/P1324/OUT/F.TXT" FOR OUTPUT AS #1') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert console.send_line('OPEN "A:/P1324/APP/G.TXT" FOR APPEND AS #1') == ""
+    assert console.send_line("CLOSE #1") == ""
+    assert "F.TXT" in console.send_line('DIR "A:/P1324/OUT"').upper()
+    assert "G.TXT" in console.send_line('DIR "A:/P1324/APP"').upper()
+
+
 def test_dir_a_glob(console):
     listing = console.send_line('DIR "A:/tests/*.PNG"')
     assert "TEST.PNG" in listing.upper()
@@ -403,6 +426,48 @@ def test_fat_append_reuses_write_handle(kernel_image):
             assert "APP0" in out and "APP19" in out
             assert out.index("ONE") < out.index("APP0") < out.index("APP19")
             assert "APP.TXT" in con.send_line('DIR "C:/"').upper()
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_fat_open_append_creates_file_at_open(kernel_image):
+    """#1324: the FAT backend also creates an APPEND target at OPEN."""
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBAP1324", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            assert con.send_line('CHDIR "C:"') == ""
+            assert con.send_line('OPEN "APP1324.TXT" FOR APPEND AS #1') == ""
+            exists = con.send_line(
+                'PRINT "["; DIR$("C:/APP1324.TXT", FILE); "]"'
+            )
+            assert exists == "[APP1324.TXT]", exists
+            assert con.send_line("CLOSE #1") == ""
+            # OUTPUT likewise creates the target at OPEN, even with no write.
+            assert con.send_line('OPEN "OUT1324.TXT" FOR OUTPUT AS #1') == ""
+            exists = con.send_line(
+                'PRINT "["; DIR$("C:/OUT1324.TXT", FILE); "]"'
+            )
+            assert exists == "[OUT1324.TXT]", exists
+            assert con.send_line("CLOSE #1") == ""
         finally:
             con.stop()
     finally:

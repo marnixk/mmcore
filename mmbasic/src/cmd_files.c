@@ -1014,7 +1014,10 @@ void mmb_cmd_open(void)
 	{
 		if (mmb_vfs_readonly_path(path))
 			mmb_error("?READ ONLY");
-		if (mode == 1 && mmb_vfs_write(path, "", 0, 0) != 0)
+		/* Open the target now rather than on the first PRINT #: OUTPUT
+		 * truncates/creates it and APPEND creates it when missing, so a
+		 * non-writable file or drive reports at OPEN. */
+		if (mmb_vfs_write(path, "", 0, mode == 2) != 0)
 			mmb_error("?FILE");
 	}
 	if (G.files[fn].open)
