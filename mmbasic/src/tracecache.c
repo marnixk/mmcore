@@ -236,12 +236,16 @@ static mmb_var *tc_find_var(const char *name, int type)
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
+	/* The variable table is lazily allocated now (#1303), so it can be
+	 * NULL before the first variable exists. */
+	if (!G.vars)
+		return 0;
 	t = mmb_type_suffix(nbuf);
 	if (t)
 		type = t;
 	else if (type == 0)
 	{
-		for (i = 0; i < MMB_MAX_VARS; i++)
+		for (i = 0; i < G.vars_cap; i++)
 			if (G.vars[i].used && G.vars[i].unsuffixed &&
 			    mmb_keyword_eq(G.vars[i].name, nbuf))
 			{
@@ -254,7 +258,7 @@ static mmb_var *tc_find_var(const char *name, int type)
 		if (type == 0)
 			type = T_NUM;
 	}
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used && G.vars[i].type == type &&
 		    mmb_keyword_eq(G.vars[i].name, nbuf))
 			return &G.vars[i];
@@ -274,10 +278,15 @@ static mmb_var *tc_create_scalar(const char *name, int type)
 	mmb_named_colour(name, &is_colour);
 	if (is_colour)
 		return 0;
-	for (i = 0; i < MMB_MAX_VARS; i++)
+	/* Bail when the lazily allocated table is absent or full: creating the
+	 * variable here could allocate/grow it and invalidate the trace cache
+	 * mid-compile (#1303). The interpreter creates it instead. */
+	if (!G.vars)
+		return 0;
+	for (i = 0; i < G.vars_cap; i++)
 		if (G.vars[i].used)
 			nused++;
-	if (nused >= MMB_MAX_VARS)
+	if (nused >= G.vars_cap)
 		return 0;
 	return mmb_find_var(name, type, 1, 0, 0);
 }
