@@ -236,6 +236,64 @@ def test_launcher_duplicate_titles_keep_distinct_files(console):
     assert con.send_line("PRINT 24") == "24"
 
 
+# --- #1320: type-to-filter in the launcher --------------------------------
+
+
+def _launcher_type(con, keys):
+    con._ser.sendall(keys)
+    return con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+
+
+def test_launcher_filters_as_you_type(console):
+    """Typing narrows the list, Backspace widens it, Esc clears the filter."""
+    con = console
+    root = _build_app(con, "FILTER", "ONE", "ALPHA", "ALPHAOK", "Alpha App")
+    root = _build_app(con, "FILTER", "TWO", "STORY", "FILTEROK", "Story Grove")
+    assert con.send_line(f'OPTION PATH "{root}"') == ""
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"\x00")  # Ctrl+Space picker
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "STORY GROVE" in seen, seen
+    assert "ALPHA APP" in seen, seen
+
+    # Case-insensitive substring: "gro" keeps Story Grove, drops Alpha/the
+    # builtins that do not match.
+    seen = _launcher_type(con, b"gro")
+    assert "STORY GROVE" in seen, seen
+    assert "ALPHA APP" not in seen, seen
+    assert "EDITOR" not in seen, seen
+    assert "FILTER: GRO" in seen, seen
+
+    # Enter runs the filtered selection.
+    con._ser.sendall(b"\r")
+    out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
+    assert "FILTEROK" in out, out
+    assert con.send_line("PRINT 31") == "31"
+
+    # Backspace removes characters and widens the list again. Three deletes
+    # take the filter back to empty, restoring the whole list.
+    con.drain(quiet=0.2, timeout=1.0)
+    con._ser.sendall(b"\x00")  # Ctrl+Space picker
+    con.drain(quiet=0.9, timeout=3.0)
+    _launcher_type(con, b"gro")
+    seen = _launcher_type(con, b"\x7f\x7f\x7f")
+    assert "ALPHA APP" in seen, seen
+    assert "EDITOR" in seen, seen
+    assert "CHOOSE AN APP" in seen, seen
+
+    # Esc clears a non-empty filter but leaves the launcher open; a second
+    # Esc closes it.
+    seen = _launcher_type(con, b"GRO")
+    assert "STORY GROVE" in seen, seen
+    assert "ALPHA APP" not in seen, seen
+    seen = _launcher_type(con, b"\x1b")
+    assert "ALPHA APP" in seen, seen
+    assert "EDITOR" in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 32") == "32"
+
+
 # --- #624: launcher overlay dialog with built-in app labels ---------------
 
 
