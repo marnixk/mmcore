@@ -204,23 +204,23 @@ static void sdl_present_rgb(int x, int y, int w, int h,
  * the whole RUN to roughly one line per frame (#1080). Repaint at most once
  * per display frame instead; a fast loop then reaches the event loop's own
  * final present almost immediately, and a long draw stays at the refresh
- * rate. Input is still pumped on every line so BREAK stays responsive. */
+ * rate. BREAK/ON KEY only need the SDL event queue drained at a millisecond
+ * boundary (sdl_input_pump_limited), not on every line: under real X11 a
+ * SDL_PollEvent per line cost about 1 us, roughly 3x a cached line. */
 #define SDL_PRESENT_MIN_MS 16u
 
 static void sdl_poll_input(void)
 {
 	static unsigned last_present;
+	unsigned now;
 
 	if (!mmb_is_running())
 		return;
-	sdl_input_pump();
-	{
-		unsigned now = mmb_now_ms();
-
-		if ((unsigned)(now - last_present) < SDL_PRESENT_MIN_MS)
-			return;
-		last_present = now;
-	}
+	now = mmb_now_ms();
+	sdl_input_pump_limited(now);
+	if ((unsigned)(now - last_present) < SDL_PRESENT_MIN_MS)
+		return;
+	last_present = now;
 	sdl_video_present();
 }
 

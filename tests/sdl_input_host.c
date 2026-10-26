@@ -122,6 +122,15 @@ int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy)
 
 static int fails;
 
+static void expect_true(const char *name, int cond)
+{
+	if (!cond)
+	{
+		fprintf(stderr, "FAIL %s\n", name);
+		fails++;
+	}
+}
+
 static void push_text(const char *s)
 {
 	SDL_Event e;
@@ -306,8 +315,47 @@ static void expect_super_same(const char *name, SDL_Keycode super_sym,
 	}
 }
 
-int main(void)
+/* #1370: time the per-line primitive. The unconditional pump is what every
+ * BASIC line used to do; the limited one is what it does now when the
+ * millisecond clock has not advanced. Print ns/call so the Python test can
+ * report the drop. */
+static double bench_ns_per_call(void (*fn)(void), int n)
 {
+	Uint64 f = SDL_GetPerformanceFrequency();
+	Uint64 t0 = SDL_GetPerformanceCounter();
+	int i;
+
+	for (i = 0; i < n; i++)
+		fn();
+	return (double)(SDL_GetPerformanceCounter() - t0) * 1e9 /
+	       ((double)f * (double)n);
+}
+
+static unsigned s_bench_now;
+
+static void bench_limited(void)
+{
+	(void)sdl_input_pump_limited(s_bench_now);
+}
+
+static void benchmark(void)
+{
+	const int n = 50000;
+	double force, limited;
+
+	sdl_input_pump();
+	force = bench_ns_per_call(sdl_input_pump, n);
+	/* Prime the limiter at this clock value, then all n calls are skipped. */
+	s_bench_now = 123456u;
+	sdl_input_pump_limited(s_bench_now);
+	limited = bench_ns_per_call(bench_limited, n);
+	printf("bench force_ns=%.1f limited_ns=%.1f\n", force, limited);
+}
+
+int main(int argc, char **argv)
+{
+	int run_benchmark = argc > 1 && strcmp(argv[1], "--benchmark") == 0;
+
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0)
 	{
 		fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
@@ -1127,6 +1175,45 @@ int main(void)
 	push_finger_motion(2, 0.9f, 0.9f, 0.4f, 0.4f);
 	sdl_input_pump();
 	expect_mouse("touchpad ignores second finger", 0, 0, 0);
+
+	/* #1370: the per-line poll drains SDL at most once per millisecond.
+	 * Keys arriving inside that window are held in the SDL queue, not
+	 * dropped, and the next due poll drains the whole burst. */
+	reset();
+	g_running = 1;
+	push_text("A");
+	expect_true("limited: first poll pumps", sdl_input_pump_limited(1000) == 1);
+	expect_queue("limited first poll", "A");
+	push_text("B");
+	expect_true("limited: same-millisecond poll is skipped", sdl_input_pump_limited(1000) == 0);
+	expect_queue("limited same-ms key waits", "A");
+	expect_true("limited: next-millisecond poll pumps", sdl_input_pump_limited(1001) == 1);
+	expect_queue("limited next-ms key drained", "AB");
+
+	reset();
+	g_running = 1;
+	push_text("C");
+	push_text("D");
+	expect_true("limited: burst poll pumps", sdl_input_pump_limited(2000) == 1);
+	expect_queue("limited drains whole burst", "CD");
+
+	/* Ctrl-C in a skipped window must still latch BREAK as soon as the
+	 * next poll is due, and take_break still runs every line. */
+	reset();
+	g_running = 1;
+	push_key(SDLK_c, KMOD_CTRL);
+	expect_true("limited: break key waits for next ms",
+		    sdl_input_pump_limited(2000) == 0);
+	expect_true("limited: no stale break", sdl_input_take_break() == 0);
+	expect_true("limited: break poll pumps", sdl_input_pump_limited(2001) == 1);
+	expect_true("limited: ctrl-c latched break", sdl_input_take_break() == 1);
+
+	if (run_benchmark)
+	{
+		benchmark();
+		SDL_Quit();
+		return fails ? 1 : 0;
+	}
 
 	SDL_Quit();
 	if (fails)
