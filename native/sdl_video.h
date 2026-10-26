@@ -51,9 +51,16 @@ unsigned sdl_native_to_rgb(unsigned native);
 /* Mark the current program frame ready and service the display grid. The
  * present happens at the display frame boundary derived from the refresh
  * rate; called between boundaries it just leaves the dirty regions pending
- * for the line-loop poll to flush (#1367). Never blocks for vsync: the
- * renderer is created without SDL_RENDERER_PRESENTVSYNC and the copy is paced
- * here instead, so SETTICK/ON KEY handlers keep their cadence. */
+ * for the line-loop poll to flush (#1367). The renderer is created without
+ * SDL_RENDERER_PRESENTVSYNC, so there is no blocking swap.
+ *
+ * Rendering backends split by platform (#1380): a software renderer, or a
+ * KMS/DRM scanout, copies straight into the panel and is aligned to the grid
+ * boundary just before the present so the copy cannot start mid-frame (the
+ * #1265 tear). That costs up to one frame of SETTICK/ON KEY jitter on those
+ * platforms. Accelerated/composited renderers (macOS, Windows, X11/Wayland
+ * with a compositor) present without any wait and stay stall-free, because
+ * the compositor does the vblank for us. */
 void sdl_video_present(void);
 
 /* Flush any pending dirty regions immediately, ignoring the display grid.
@@ -73,9 +80,15 @@ int sdl_video_present_due(void);
 unsigned long long sdl_video_frame_period_us(void);
 
 /* Whether presents are believed to wait for the vertical blank. The SDL
- * backend no longer relies on a blocking present (it always paces itself), so
- * this is 0; kept as a debug aid. */
+ * backend no longer relies on a blocking present (it paces itself), so this is
+ * 0; kept as a debug aid. */
 int sdl_video_present_is_vsynced(void);
+
+/* Whether the present path aligns the scanout copy to the display-grid
+ * boundary before SDL_RenderPresent(). True for a software renderer or a
+ * KMS/DRM scanout; false for an accelerated/composited window. MMB_SDL_ALIGN_PRESENT=1|0
+ * overrides the detection. Test/debug aid. */
+int sdl_video_present_aligns(void);
 
 /* Mark only a rectangle of the software framebuffer as changed. The present
  * then converts and uploads just those regions instead of the whole panel,
@@ -141,5 +154,15 @@ const char *sdl_video_window_title(void);
 
 /* Write the software framebuffer as a binary PPM (headless test/debug aid). */
 int sdl_video_dump_ppm(const char *path);
+
+/* Test/debug seams for the present alignment wait. The clock hook supplies the
+ * monotonic microseconds used for pacing and the sleep hook is called with the
+ * remaining microseconds; both must be a consistent fake, or NULL to restore
+ * the SDL clock and the real coarse-delay/fine-spin sleep. The align hook
+ * forces the platform split so a host test can exercise both branches without
+ * a real software/KMS panel. */
+void sdl_video_set_present_clock(unsigned long long (*now_us)(void),
+				 void (*sleep_us)(unsigned long long));
+void sdl_video_set_present_align(int on);
 
 #endif

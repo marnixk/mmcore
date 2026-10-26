@@ -48,11 +48,43 @@ static int s_dirty_n;
 static sdl_pace s_pace;
 static unsigned long long s_frame_period_us; /* cached, 0 until first use */
 
+/* Whether the present path waits for the grid boundary before the scanout
+ * copy (#1380). A software renderer and a KMS/DRM scanout copy straight into
+ * the panel, so the copy must start at the top of a display frame. An
+ * accelerated/composited window lets the compositor do the vblank, so it must
+ * not wait (that would only stall SETTICK/ON KEY for up to a frame).
+ * MMB_SDL_ALIGN_PRESENT forces either policy for testing. */
+static int s_align_present;
+
+/* Test/debug seams; see sdl_video.h. */
+static unsigned long long (*s_now_us_hook)(void);
+static void (*s_sleep_us_hook)(unsigned long long);
+
+void sdl_video_set_present_clock(unsigned long long (*now_us)(void),
+				 void (*sleep_us)(unsigned long long))
+{
+	s_now_us_hook = now_us;
+	s_sleep_us_hook = sleep_us;
+}
+
+void sdl_video_set_present_align(int on)
+{
+	s_align_present = on ? 1 : 0;
+}
+
+int sdl_video_present_aligns(void)
+{
+	return s_align_present;
+}
+
 static unsigned long long pace_now_us(void)
 {
-	Uint64 freq = SDL_GetPerformanceFrequency();
-	Uint64 count = SDL_GetPerformanceCounter();
+	Uint64 freq, count;
 
+	if (s_now_us_hook)
+		return s_now_us_hook();
+	freq = SDL_GetPerformanceFrequency();
+	count = SDL_GetPerformanceCounter();
 	if (!freq)
 		return (unsigned long long)SDL_GetTicks() * 1000ull;
 	return (count / freq) * 1000000ull +
@@ -112,6 +144,54 @@ int sdl_pace_step(sdl_pace *p, unsigned long long now_us)
 	else
 		p->next_us += p->period_us;
 	return 1;
+}
+
+/* Sleep until target_us on the pacing clock. A coarse SDL_Delay carries the
+ * bulk of the wait; the final ~2 ms are a fine spin so the scanout copy starts
+ * close to the boundary even where the scheduler rounds a millisecond delay. */
+static void sleep_until_us(unsigned long long target_us)
+{
+	for (;;)
+	{
+		unsigned long long now = pace_now_us();
+		unsigned long long remain;
+
+		if (now >= target_us)
+			return;
+		remain = target_us - now;
+		if (s_sleep_us_hook)
+		{
+			s_sleep_us_hook(remain);
+			/* The hook must move the clock; never spin on a stuck
+			 * fake (a test that forgets to advance it). */
+			if (pace_now_us() <= now)
+				return;
+			continue;
+		}
+		if (remain > 2000)
+			SDL_Delay((Uint32)((remain - 2000) / 1000));
+	}
+}
+
+/* Wait for the single display-grid boundary, bounded to at most one frame.
+ * sdl_pace_step() has already advanced next_us to the boundary this present
+ * belongs to, so this is the same clock that gated the present, not a second
+ * frame timer. A stale grid (long pause, mode change) is already resynced by
+ * the step; the cap keeps an odd clock from ever slipping two frames. */
+static void present_align_wait(void)
+{
+	unsigned long long now = pace_now_us();
+	unsigned long long target = s_pace.next_us;
+	unsigned long long cap;
+
+	if (!s_pace.valid || !target)
+		return;
+	cap = now + (s_pace.period_us ? s_pace.period_us :
+				       sdl_video_frame_period_us());
+	if (target > cap)
+		target = cap;
+	if (target > now)
+		sleep_until_us(target);
 }
 
 static int dirty_area(const sdl_dirty_rect *r)
@@ -391,6 +471,48 @@ static void set_window_icon(void)
 	SDL_FreeSurface(icon);
 }
 
+/* MMB_SDL_ALIGN_PRESENT=1|0 forces the scanout alignment policy; -1 keeps the
+ * platform detection. */
+static int align_env_override(void)
+{
+	const char *v = SDL_getenv("MMB_SDL_ALIGN_PRESENT");
+
+	if (!v)
+		return -1;
+	if (v[0] == '1')
+		return 1;
+	if (v[0] == '0')
+		return 0;
+	return -1;
+}
+
+/* A KMS/DRM video driver scans out directly: there is no compositor to
+ * vblank the swap for us. */
+static int video_driver_is_scanout(const char *driver)
+{
+	return driver && (strcmp(driver, "kmsdrm") == 0 ||
+			  strcmp(driver, "drm") == 0);
+}
+
+/* Decide once, after the renderer exists, whether this present path must
+ * align the scanout copy (#1380). A software renderer and a KMS/DRM driver
+ * both copy into scanout and tear without alignment; an accelerated window on
+ * a compositor does not, so it stays stall-free. */
+static void detect_present_alignment(void)
+{
+	SDL_RendererInfo info;
+	int override = align_env_override();
+	int software = 0;
+
+	if (SDL_GetRendererInfo(s_ren, &info) == 0)
+		software = (info.flags & SDL_RENDERER_SOFTWARE) != 0;
+	if (override >= 0)
+		s_align_present = override;
+	else
+		s_align_present = software ||
+			video_driver_is_scanout(SDL_GetCurrentVideoDriver());
+}
+
 int sdl_video_open(int w, int h)
 {
 	set_app_identity();
@@ -414,13 +536,16 @@ int sdl_video_open(int w, int h)
 	 * stalls the interpreter and its SETTICK/ON KEY handlers for up to a
 	 * whole frame. sdl_video_present() paces the scanout copy on its own
 	 * display-period grid instead, which also removes the second clock the
-	 * old frame wait added. */
+	 * old frame wait added. Software/KMS scanout still waits for that grid
+	 * boundary before the copy (up to one frame of jitter); accelerated/
+	 * composited renderers do not (#1380). */
 	s_ren = SDL_CreateRenderer(s_win, sdl_video_render_driver_index(),
 				   SDL_RENDERER_ACCELERATED);
 	if (!s_ren)
 		s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
 	if (!s_ren)
 		return 0;
+	detect_present_alignment();
 	s_frame_period_us = 0;
 	s_pace.valid = 0;
 	s_pace.next_us = 0;
@@ -605,8 +730,11 @@ static void upload_rect(const sdl_dirty_rect *r)
 /* Upload every pending rectangle, then copy the whole texture into the
  * drawable and present it. The list is consumed before the (possibly slow)
  * upload so a caller that draws again during the present starts a fresh
- * list. */
-static void flush_present(void)
+ * list. When align is set, the present waits for the display-grid boundary
+ * just before SDL_RenderPresent() so a software/KMS scanout copy cannot start
+ * mid-frame (#1265 over the #1367 grid); a forced present passes 0 so it is
+ * still immediate. */
+static void flush_present(int align)
 {
 	sdl_dirty_rect list[SDL_DIRTY_MAX];
 	int n, i;
@@ -648,10 +776,12 @@ static void flush_present(void)
 	dst.w = dw;
 	dst.h = dh;
 	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
-	/* #1265: with no blocking vsync the copy reaches scanout as soon as it
-	 * runs, so it must start at a frame boundary to avoid tearing. The grid
-	 * above is that boundary; this is the same clock that gates the poll,
-	 * so no second wait is needed. */
+	/* #1380: only a renderer that copies straight into scanout needs the
+	 * copy to start at a display-grid boundary. The wait is the same grid
+	 * that gated the present (sdl_pace_step above), not a second clock.
+	 * Accelerated/composited renderers skip it and stay stall-free. */
+	if (align)
+		present_align_wait();
 	SDL_RenderPresent(s_ren);
 }
 
@@ -661,13 +791,13 @@ void sdl_video_present(void)
 		return; /* not at a display frame boundary yet */
 	if (s_dirty_n <= 0)
 		return;
-	flush_present();
+	flush_present(s_align_present);
 }
 
 void sdl_video_present_now(void)
 {
 	if (s_dirty_n > 0)
-		flush_present();
+		flush_present(0);
 	/* Re-anchor: the next paced present is due immediately rather than
 	 * waiting out a phase that belonged to the forced frame. */
 	s_pace.period_us = sdl_video_frame_period_us();

@@ -1871,16 +1871,31 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     assert "sdl_scale_map_rect" not in video
     assert "SDL_RenderFillRect" in video
     assert "SDL_RenderClear(s_ren)" not in video
-    # #1367: one microsecond display grid gates the line-loop present. There
-    # is no longer a millisecond limiter in the platform and no second
-    # SDL_Delay frame wait in the present path.
+    # #1367/#1380: one microsecond display grid gates the line-loop present.
+    # There is no millisecond limiter in the platform and no separate
+    # frame-wait clock; the alignment wait reuses this grid.
     assert "sdl_video_present_due" in plat
     assert "SDL_PRESENT_MIN_MS" not in plat
     assert "sdl_frame_wait" not in video
-    assert "SDL_Delay(" not in video
     assert "sdl_video_frame_period_us" in video
     assert "sdl_pace_step" in video
     assert "sdl_pace_peek" in video
+    # #1380: the scanout alignment is split by platform. A software renderer
+    # or a KMS/DRM driver copies straight into scanout and waits for the grid
+    # boundary before that copy; an accelerated/composited window does not.
+    assert "SDL_RENDERER_SOFTWARE" in video
+    assert "kmsdrm" in video and '"drm"' in video
+    assert "MMB_SDL_ALIGN_PRESENT" in video
+    assert "sdl_video_present_aligns" in video
+    assert "present_align_wait" in video
+    # The bounded wait sits immediately before the present and only runs on
+    # the aligned branch; the forced/program-boundary present passes 0 so it
+    # stays immediate.
+    assert "if (align)\n\t\tpresent_align_wait();" in video
+    assert "flush_present(0)" in video
+    # SDL_Delay survives only in the bounded alignment sleep, not as a second
+    # clock in the present path.
+    assert video.count("SDL_Delay(") == 1
     # Deliberately no blocking renderer vsync (#1367): a blocking present
     # stalls the interpreter and its SETTICK/ON KEY handlers.
     assert "SDL_RENDERER_PRESENTVSYNC)" not in video
