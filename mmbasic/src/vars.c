@@ -916,6 +916,52 @@ int mmb_bare_name_type(const char *name)
 	return -1;
 }
 
+/* Same resolution rules as mmb_find_var(), but never raises and never creates:
+ * a miss is simply "not an existing variable".  The trace-cache compiler uses
+ * this so a (re)compile is O(1) in the number of globals instead of scanning
+ * the whole table (#1385). */
+mmb_var *mmb_lookup_var_nothrow(const char *name, int type)
+{
+	char nbuf[MMB_MAX_NAME];
+	int t, i;
+	G.acc_on = 0;
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	/* The variable table is lazily allocated now (#1303), so it can be
+	 * NULL before the first variable exists. */
+	if (!G.vars)
+		return 0;
+	t = mmb_type_suffix(nbuf);
+	if (t)
+		type = t;
+	else if (type == 0)
+	{
+		int at = mmb_bare_name_type(nbuf);
+		if (at >= 0)
+		{
+			/* Mirror mmb_find_var(): a bare parameter name inside a
+			 * SUB/FUNCTION resolves with the declared type of that
+			 * parameter, not the first same-named unsuffixed variable
+			 * (#1315). */
+			type = at ? at : G.opt.default_type;
+		}
+		else
+		{
+			int ui = unsuf_lookup(nbuf);
+			if (ui >= 0)
+				type = G.vars[ui].type;
+		}
+		if (type == 0 && (G.opt.default_type == T_STR ||
+				  G.opt.default_type == T_INT))
+			type = G.opt.default_type;
+		if (type == 0)
+			type = T_NUM;
+	}
+	i = hash_lookup(nbuf, type);
+	return i >= 0 ? &G.vars[i] : 0;
+}
+
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx)
 {
 	int i;

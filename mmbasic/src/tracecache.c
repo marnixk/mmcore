@@ -575,51 +575,9 @@ static int tc_is_user_func(const char *name)
  * suffix wins, then an existing unsuffixed binding, then OPTION's default. */
 static mmb_var *tc_find_var(const char *name, int type)
 {
-	char nbuf[MMB_MAX_NAME];
-	int t, i;
-	G.acc_on = 0;
-	strncpy(nbuf, name, MMB_MAX_NAME - 1);
-	nbuf[MMB_MAX_NAME - 1] = 0;
-	mmb_upper(nbuf);
-	/* The variable table is lazily allocated now (#1303), so it can be
-	 * NULL before the first variable exists. */
-	if (!G.vars)
-		return 0;
-	t = mmb_type_suffix(nbuf);
-	if (t)
-		type = t;
-	else if (type == 0)
-	{
-		int at = mmb_bare_name_type(nbuf);
-		if (at >= 0)
-		{
-			/* Mirror mmb_find_var(): a bare parameter name inside a
-			 * SUB/FUNCTION resolves with the declared type of that
-			 * parameter, not the first same-named unsuffixed variable
-			 * (#1315). */
-			type = at ? at : G.opt.default_type;
-		}
-		else
-		{
-			for (i = 0; i < G.vars_cap; i++)
-				if (G.vars[i].used && G.vars[i].unsuffixed &&
-				    mmb_keyword_eq(G.vars[i].name, nbuf))
-				{
-					type = G.vars[i].type;
-					break;
-				}
-		}
-		if (type == 0 && (G.opt.default_type == T_STR ||
-				  G.opt.default_type == T_INT))
-			type = G.opt.default_type;
-		if (type == 0)
-			type = T_NUM;
-	}
-	for (i = 0; i < G.vars_cap; i++)
-		if (G.vars[i].used && G.vars[i].type == type &&
-		    mmb_keyword_eq(G.vars[i].name, nbuf))
-			return &G.vars[i];
-	return 0;
+	/* Resolved through the #1303 name hash, so a compile is O(1) in the
+	 * number of globals rather than two linear sweeps (#1385). */
+	return mmb_lookup_var_nothrow(name, type);
 }
 
 /* Create a scalar on the LHS path, but only in shapes where mmb_find_var()
@@ -627,7 +585,7 @@ static mmb_var *tc_find_var(const char *name, int type)
  * the variable while executing the statement. */
 static mmb_var *tc_create_scalar(const char *name, int type)
 {
-	int i, nused = 0, is_colour;
+	int is_colour;
 	if (type == T_STR || type == T_STRUCT || strchr(name, '.'))
 		return 0;
 	if (G.opt.explicit || mmb_is_builtin_func(name))
@@ -638,12 +596,7 @@ static mmb_var *tc_create_scalar(const char *name, int type)
 	/* Bail when the lazily allocated table is absent or full: creating the
 	 * variable here could allocate/grow it and invalidate the trace cache
 	 * mid-compile (#1303). The interpreter creates it instead. */
-	if (!G.vars)
-		return 0;
-	for (i = 0; i < G.vars_cap; i++)
-		if (G.vars[i].used)
-			nused++;
-	if (nused >= G.vars_cap)
+	if (!G.vars || G.nvars >= G.vars_cap)
 		return 0;
 	return mmb_find_var(name, type, 1, 0, 0);
 }
