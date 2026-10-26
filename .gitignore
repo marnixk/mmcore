@@ -59,3 +59,6 @@ mmbasic/src/help_data.c
 mmbasic/src/ramdisk_data.c
 mmbasic/src/ramdisk_data.stamp
 mmbasic/src/ramdisk_data.native.stamp
+
+# Interrupt fuzz failure artifacts (#1352)
+tests/artifacts/

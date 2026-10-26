@@ -1,0 +1,85 @@
+name: Interrupt fuzz (manual)
+
+# Soak/stress harness for the interrupt invariant (#1352): with a handler that
+# never touches program state, SETTICK must not change what a program computes.
+#
+# Deliberately NOT triggered by pull requests or pushes to master. It is a
+# manual/scheduled soak over many more generated programs than the default
+# pytest run, so it can never block a normal PR. Run it from the Actions tab
+# ("Run workflow") or let the weekly schedule pick it up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      programs:
+        description: Number of generated programs
+        required: false
+        default: "6"
+      iterations:
+        description: BASIC loop iterations per program
+        required: false
+        default: "1000"
+      seed:
+        description: Base generator seed
+        required: false
+        default: "1352"
+  schedule:
+    # Monday 03:17 UTC. Change or remove if the soak is not wanted.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MMCORE_INTERRUPT_FUZZ_PROGRAMS: ${{ github.event.inputs.programs || '6' }}
+      MMCORE_INTERRUPT_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '1000' }}
+      MMCORE_INTERRUPT_FUZZ_SEED: ${{ github.event.inputs.seed || '1352' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install QEMU and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential qemu-system-arm curl xz-utils
+
+      - name: Install ARM GNU toolchain
+        run: |
+          set -euo pipefail
+          ver=15.2.rel1
+          dir="arm-gnu-toolchain-${ver}-x86_64-aarch64-none-elf"
+          url="https://developer.arm.com/-/media/Files/downloads/gnu/${ver}/binrel/${dir}.tar.xz"
+          curl -fsSL "$url" -o /tmp/toolchain.tar.xz
+          tar -xJf /tmp/toolchain.tar.xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$dir/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build kernel
+        run: scripts/build.sh
+
+      - name: Run interrupt fuzz
+        run: |
+          python -m pytest -p no:cacheprovider tests/test_interrupt_fuzz.py -q \
+            --durations=10
+
+      - name: Upload failing programs and outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interrupt-fuzz-artifacts
+          path: tests/artifacts/interrupt_fuzz/
+          if-no-files-found: ignore
