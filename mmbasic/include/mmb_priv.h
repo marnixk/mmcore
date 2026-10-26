@@ -600,6 +600,10 @@ typedef struct mmb {
 	int gosub_if_pc_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
 	int gosub_if_depth[MMB_MAX_GOSUB];
 	int gosub_if_inline[MMB_MAX_GOSUB];
+	/* Caller's skipped-nested-IF count.  An interrupt handler can run between
+	 * lines in the middle of a skip, so the count must survive the call
+	 * (#1342). */
+	int gosub_if_shadow[MMB_MAX_GOSUB];
 	/* Loop frames owned by the caller: a SUB/FUNCTION/GOSUB that returns
 	 * (EXIT SUB, END SUB, RETURN) must drop the DO/WHILE and FOR frames it
 	 * opened, or the caller resumes with a stale frame (#1297). */
