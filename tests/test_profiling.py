@@ -23,6 +23,7 @@ PERF_ENABLED = os.environ.get("MMCORE_PERF", "").strip().lower() in (
 PERF_RE = re.compile(
     r"\[PERF\] elapsed=(\d+) ms  statements=(\d+)  match=(\d+)  "
     r"expr=(\d+)  findvar=(\d+)  break=(\d+)  present=(\d+)"
+    r"(?:  tcache=(\d+)/(\d+)/(\d+))?"
 )
 
 
@@ -37,8 +38,20 @@ def _write_bas(console: MMBasicConsole, path: str, lines: list[str]) -> None:
 def parse_perf(out: str) -> dict[str, int]:
     m = PERF_RE.search(out.replace("\r", "\n"))
     assert m, out
-    keys = ("elapsed", "statements", "match", "expr", "findvar", "break", "present")
-    return {k: int(v) for k, v in zip(keys, m.groups())}
+    keys = (
+        "elapsed",
+        "statements",
+        "match",
+        "expr",
+        "findvar",
+        "break",
+        "present",
+        "tcache_hit",
+        "tcache_comp",
+        "tcache_bad",
+    )
+    vals = tuple(int(v) if v is not None else 0 for v in m.groups())
+    return dict(zip(keys, vals))
 
 
 def _run_kernel(
@@ -161,6 +174,46 @@ def test_profiling_tracecache_2d_array_let(console):
     assert off["findvar"] < 100
     assert on["findvar"] < 100
     assert on["expr"] < off["expr"] // 10
+
+
+def _local_loop_kernel(local: bool) -> list[str]:
+    lines = ["DIM TOTAL", "SUB HELPER(X)"]
+    if local:
+        lines += ["  LOCAL Z", "  Z = X * 2"]
+    lines += [
+        "END SUB",
+        "FOR I = 1 TO 300",
+        "  TOTAL = TOTAL + I",
+        "  HELPER I",
+        "NEXT I",
+        "PRINT TOTAL",
+    ]
+    return lines
+
+
+def test_local_does_not_flush_trace_cache_1368(console):
+    """#1368: a SUB with LOCAL must not clear the trace cache, so the caller's
+    loop statements keep replaying from cache and produce the same result."""
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    _write_bas(console, "TCLP.BAS", _local_loop_kernel(False))
+    assert console.send_line("OPTION PROFILING ON") == ""
+    out_plain = console.send_line('RUN "TCLP.BAS"', timeout=30)
+    plain = parse_perf(out_plain)
+    assert "45150" in out_plain, out_plain
+
+    _write_bas(console, "TCLL.BAS", _local_loop_kernel(True))
+    out_local = console.send_line('RUN "TCLL.BAS"', timeout=30)
+    local = parse_perf(out_local)
+    assert "45150" in out_local, out_local
+
+    # Before #1368 the LOCAL call flushed every entry after each iteration:
+    # the local variant recorded 0 hits and recompiled the whole loop.  The
+    # caller's statements must still hit, i.e. only the LOCAL slot is
+    # affected (its body naturally recompiles because the slot is freed).
+    assert local["tcache_hit"] >= plain["tcache_hit"] // 2
+    assert local["tcache_hit"] > 200
+    assert local["tcache_comp"] < 400
+    assert local["findvar"] <= plain["findvar"]
 
 
 def test_tracecache_chain_invalidates(console):
