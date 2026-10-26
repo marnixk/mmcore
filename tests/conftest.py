@@ -50,6 +50,20 @@ def _baked_version(image: str = KERNEL) -> str | None:
     return match.group(1).decode("utf-8", "replace") if match else None
 
 
+def _expected_version(image: str = KERNEL) -> str:
+    """The version the tests should expect from a running image.
+
+    Read it from the image itself, never from a fresh ``git describe``. A
+    release tag created while the suite is running would otherwise change the
+    expectation underneath an image that predates it (#1322). Real staleness
+    against ``git describe`` is still handled once, before boot, by
+    ``_kernel_is_stale()`` / the ``kernel_image`` fixture.
+    """
+    baked = _baked_version(image)
+    assert baked is not None, f"{image} has no baked version banner"
+    return baked
+
+
 def _needs_version_rebuild(baked: str | None, described: str) -> bool:
     """Whether the image's baked version no longer matches the tree.
 
