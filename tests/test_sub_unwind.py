@@ -108,6 +108,68 @@ def test_end_sub_reached_through_goto_drops_loop_frame(console):
     assert lines == ["call1", "call2", "call3", "call4", "done"], lines
 
 
+def test_end_in_function_stops_the_program(console):
+    """#1343: END inside a FUNCTION must stop RUN, not just leave the call."""
+    program = [
+        "10 OPTION EXPLICIT",
+        "20 OPTION DEFAULT INTEGER",
+        "30 DIM X",
+        "40 FUNCTION f()",
+        '50 PRINT "in f"',
+        "60 END",
+        "70 f = 1",
+        "80 END FUNCTION",
+        "90 X = f()",
+        '100 PRINT "AFTER X="; X',
+    ]
+    lines = _run_program(console, program)
+    assert lines == ["in f"], lines
+
+
+def test_end_in_sub_called_from_function_stops_the_program(console):
+    """#1343: END in a SUB reached from a FUNCTION must unwind past both."""
+    program = [
+        "10 OPTION EXPLICIT",
+        "20 OPTION DEFAULT INTEGER",
+        "30 DIM X",
+        "40 SUB g()",
+        '50 PRINT "in g"',
+        "60 END",
+        "70 END SUB",
+        "80 FUNCTION f()",
+        "90 g",
+        "100 f = 1",
+        "110 END FUNCTION",
+        "120 X = f()",
+        '130 PRINT "AFTER X="; X',
+    ]
+    lines = _run_program(console, program)
+    assert lines == ["in g"], lines
+
+
+def test_end_in_statement_sub_still_stops_the_program(console):
+    program = [
+        "10 SUB s()",
+        '20 PRINT "in s"',
+        "30 END",
+        "40 END SUB",
+        "50 s",
+        '60 PRINT "AFTER"',
+    ]
+    lines = _run_program(console, program)
+    assert lines == ["in s"], lines
+
+
+def test_end_in_main_program_still_stops(console):
+    program = [
+        '10 PRINT "before"',
+        "20 END",
+        '30 PRINT "AFTER"',
+    ]
+    lines = _run_program(console, program)
+    assert lines == ["before"], lines
+
+
 def test_nested_sub_calls_keep_the_outer_loop_frame(console):
     program = [
         "10 SUB INNER(N)",

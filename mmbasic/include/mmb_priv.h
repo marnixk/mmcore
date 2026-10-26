@@ -492,6 +492,10 @@ typedef struct mmb {
 	int nprog;
 	char current_prog[MMB_PROG_NAME];
 	int running;
+	/* END/STOP requested.  Unlike running, a FUNCTION/SUB body does not
+	 * restore this on return, so an END inside a call stops the program
+	 * (#1343).  Cleared when a fresh RUN starts. */
+	int end_req;
 	int run_suspended;      /* virtual-console switch suspended RUN */
 	int for_sp;
 	struct {
