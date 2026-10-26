@@ -1272,6 +1272,7 @@ static void gosub_save_ctrl(int g)
 	memcpy(G.gosub_if_pc_stack[g], G.if_pc_stack,
 	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.gosub_if_inline[g] = G.if_inline;
+	G.gosub_if_shadow[g] = G.if_shadow;
 	G.gosub_ctrl_sp[g] = G.ctrl_sp;
 	G.gosub_for_sp[g] = G.for_sp;
 	/* Hide the caller's SELECT frames; the callee pushes above them, so no
@@ -1295,7 +1296,10 @@ static void gosub_restore_ctrl(int g)
 	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.if_inline = G.gosub_if_inline[g];
 	G.if_armed = 0;
-	G.if_shadow = 0;
+	/* Restore, do not zero: an event handler may return into the middle of a
+	 * skipped arm, whose nested-IF count still owns the pending END IF
+	 * (#1342). */
+	G.if_shadow = G.gosub_if_shadow[g];
 	/* Drop any DO/WHILE or FOR frames the callee left open.  Only shrink:
 	 * a callee may already have popped a caller frame (EXIT DO searches the
 	 * whole stack), and a return must not resurrect it. */

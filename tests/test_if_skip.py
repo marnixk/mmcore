@@ -181,6 +181,59 @@ def test_block_if_state_across_sub_call_in_taken_arm(console):
     assert _run(console) == ["sa", "b"]
 
 
+def test_tick_during_skipped_arm_keeps_nested_if_count(console):
+    """An interrupt inside a skipped arm must not lose the nested-IF count.
+
+    The tick fires between lines of ``SCAN`` while a false block IF is skipping
+    its body, which contains a nested block IF.  The outer IF is opened mid-line
+    on an ``ELSE`` arm so the arm-to-arm jump cannot skip the body (#1333) and
+    the count in ``if_shadow`` owns the walk.  The nested ``END IF`` must still
+    pair with the nested block, so the statements after it stay skipped and the
+    reference result is preserved (#1342).
+    """
+    _load(
+        console,
+        [
+            "10 DIM A(8)",
+            "20 TK = 0",
+            "30 BAD = 0",
+            "40 SUB TICK()",
+            "50 TK = TK + 1",
+            "60 END SUB",
+            "70 SUB SCAN()",
+            "80 W = 8",
+            "90 C = 0",
+            "100 FOR R = 8 TO 0 STEP -1",
+            "110 IF 0 THEN",
+            "120 X = 0",
+            "130 ELSE : IF A(R) < 0 THEN",
+            "140 IF R <> W THEN",
+            "150 C = C + 1",
+            "160 END IF",
+            "170 W = W - 1",
+            "180 END IF",
+            "190 NEXT R",
+            "200 END SUB",
+            "210 FOR K = 0 TO 8 : A(K) = (K MOD 3) - 1 : NEXT K",
+            "220 SCAN()",
+            "230 REF = W * 100 + C",
+            "240 SETTICK 1, TICK",
+            "250 FOR K = 1 TO 20000",
+            "260 SCAN()",
+            "270 IF W * 100 + C <> REF THEN BAD = BAD + 1",
+            "280 NEXT K",
+            "290 SETTICK 0, TICK",
+            '300 PRINT "bad=";BAD;" ref=";REF;" tk=";TK',
+        ],
+    )
+    out = _run(console, timeout=120.0)
+    assert len(out) == 1, out
+    fields = dict(part.split("=", 1) for part in out[0].split())
+    assert fields["ref"] == "503", out
+    assert fields["bad"] == "0", out
+    assert int(fields["tk"]) > 0, out
+
+
 def _timing_program(iterations=20000):
     """Three loops with the same taken arm but 2, 21 and 0 arms total."""
     lines = []
