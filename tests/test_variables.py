@@ -429,3 +429,24 @@ def test_help_variable_gaps(console):
     assert "COMMON" in out
     dim = dump_topic(console, "DIM")
     assert "SHARED" in dim
+
+
+def test_suffixed_colour_named_variables_read(console):
+    """#1307: a type suffix makes a colour-named identifier a variable."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("DIM grey% = 5") == ""
+    assert console.send_line("PRINT grey%") == "5"
+    assert console.send_line("PRINT grey% + 1") == "6"
+    assert console.send_line('DIM red$ LENGTH 4') == ""
+    assert console.send_line('red$ = "hi"') == ""
+    assert console.send_line("PRINT red$") == "hi"
+    assert console.send_line("DIM blue! = 1.5") == ""
+    assert console.send_line("PRINT blue!") == "1.5"
+
+
+def test_unsuffixed_colour_constants_still_resolve(console):
+    """#1307: the colour constants themselves keep their values."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("PRINT RED") == "11141120"
+    assert console.send_line("PRINT grey") == "8421504"
+    assert console.send_line("PRINT RED + BLUE") == "11141290"

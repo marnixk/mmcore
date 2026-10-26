@@ -29,6 +29,13 @@ static int expr_match_unary(const char *kw, int len)
 	return mmb_match(kw);
 }
 
+/* A type suffix or a struct path after a name means the name is a variable,
+ * not the named colour constant of the same base name (#1307). */
+static int colour_name_suffix(char c)
+{
+	return c == '$' || c == '%' || c == '!' || c == '.';
+}
+
 static int peek_kw(const char *kw)
 {
 	const char *save = G.p;
@@ -2359,7 +2366,8 @@ ident_tail:
 	if (mmb_try_user_function(out))
 		return 1;
 
-	/* named colours as identifiers */
+	/* named colours as identifiers. A type suffix or a struct path after the
+	 * name means this is a variable, not the colour constant (#1307). */
 	{
 		char name[32];
 		const char *save2 = G.p;
@@ -2369,7 +2377,7 @@ ident_tail:
 		if (mmb_tok_expand(name, (int)sizeof(name)))
 		{
 			col = mmb_named_colour(name, &ok);
-			if (ok)
+			if (ok && !colour_name_suffix(*G.p))
 			{
 				*out = mmb_int_val((int64_t)col);
 				return 1;
@@ -2385,7 +2393,7 @@ ident_tail:
 			if (i)
 			{
 				col = mmb_named_colour(name, &ok);
-				if (ok)
+				if (ok && !colour_name_suffix(*G.p))
 				{
 					*out = mmb_int_val((int64_t)col);
 					return 1;
