@@ -9,6 +9,64 @@ static void alloc_var_storage(mmb_var *v, int n);
 static void hash_ins(int vi);
 static void hash_rebuild(void);
 static int mmb_local_save(int slot, int existed);
+static void var_sig_update(int slot);
+
+/* Per-slot identity of the current binding, and the generation it had when a
+ * returning LOCAL frame released it.  A LOCAL re-created in the same slot with
+ * the same name/type/dims is the same binding, so its trace/resolve cache
+ * entries can come back instead of forcing a recompile on every call
+ * (#1328).  Nothing else revives a generation: any other binding bumps it. */
+static unsigned *slot_sig;
+static unsigned *reuse_gen;
+/* Generations handed to recycled slots live in a separate range so freeing a
+ * LOCAL can invalidate those slots without advancing G.var_gen (which would
+ * force the trace cache to retry a statement it already knows it cannot
+ * compile, rescanning the variable table on every call). */
+static unsigned free_gen_seq;
+
+/* Stable hash of everything a trace-cache entry assumes about a binding. */
+static unsigned var_binding_sig(const mmb_var *v)
+{
+	unsigned h = 2166136261u;
+	const unsigned char *p;
+	int i;
+	if (!v->name[0])
+		return 0;
+	for (p = (const unsigned char *)v->name; *p; p++)
+	{
+		h ^= *p;
+		h *= 16777619u;
+	}
+#define MIX_SIG(x)                                     \
+	do                                             \
+	{                                              \
+		unsigned _x = (unsigned)(x);           \
+		int _b;                                \
+		for (_b = 0; _b < 4; _b++)             \
+		{                                      \
+			h ^= (_x >> (8 * _b)) & 0xffu; \
+			h *= 16777619u;                \
+		}                                      \
+	} while (0)
+	MIX_SIG(v->type);
+	MIX_SIG(v->dims);
+	MIX_SIG(v->size);
+	MIX_SIG(v->struct_idx);
+	MIX_SIG(v->unsuffixed);
+	MIX_SIG(v->maxlen);
+	for (i = 0; i < v->dims && i < MMB_MAX_DIMS; i++)
+		MIX_SIG(v->dim[i]);
+#undef MIX_SIG
+	return h ? h : 1;
+}
+
+static void var_sig_update(int slot)
+{
+	if (slot_sig)
+		slot_sig[slot] = var_binding_sig(&G.vars[slot]);
+	if (reuse_gen)
+		reuse_gen[slot] = 0;
+}
 
 /* Take a fresh binding generation for `slot` (#1368).  Any trace-cache or
  * resolve-cache entry holding this mmb_var* is then stale, but only that
@@ -18,7 +76,34 @@ static unsigned var_bind_gen(int slot)
 {
 	G.var_gen++;
 	G.vars[slot].gen = G.var_gen;
+	var_sig_update(slot);
 	return G.var_gen;
+}
+
+/* Bind a fresh LOCAL into a recycled slot.  When the slot's last binding was
+ * the same name/type/dims and it was released by a LOCAL return, put back the
+ * generation it had then: the cached entries still describe exactly this
+ * binding, so a helper called in a loop keeps its compiled body.  A different
+ * binding (or a slot that was never a matching LOCAL) gets a new generation
+ * as usual. */
+static void var_bind_local(int slot)
+{
+	unsigned sig = var_binding_sig(&G.vars[slot]);
+	if (slot_sig && reuse_gen && sig != 0 && slot_sig[slot] == sig &&
+	    reuse_gen[slot] != 0)
+	{
+		G.vars[slot].gen = reuse_gen[slot];
+		reuse_gen[slot] = 0;
+	}
+	else
+	{
+		G.var_gen++;
+		G.vars[slot].gen = G.var_gen;
+	}
+	if (slot_sig)
+		slot_sig[slot] = sig;
+	if (reuse_gen)
+		reuse_gen[slot] = 0;
 }
 
 /* Variable-name hash tables (#1303). The variable table grows past 512
@@ -29,6 +114,16 @@ static unsigned var_bind_gen(int slot)
 static int *var_tab;
 static int *unsuf_tab;
 static unsigned hash_cap;
+
+/* Free-slot list (#1328).  vars_free_slot() used to scan the variable table
+ * for the first unused slot, so creating a LOCAL's fresh slot cost O(number
+ * of globals) and LOCAL/JOIN grew with the program.  Slots released by a
+ * returning LOCAL frame are kept on a LIFO list; alloc_high bounds the
+ * never-yet-handed-out prefix so the common path is O(1). */
+static int *free_next;
+static unsigned free_cap;
+static int free_head = -1;
+static unsigned alloc_high;
 
 /* Direct-mapped resolve cache (#1002): parsing a statement re-resolves every
  * variable token to an mmb_var* on each execution.  Key by the source-token
@@ -217,6 +312,59 @@ static int unsuf_lookup(const char *nbuf)
 	return -1;
 }
 
+/* Remove `vi` from one open-addressed table.  Backward-shift the rest of the
+ * probe cluster into the hole so entries stored after it stay reachable. */
+static void hash_unlink(int *tab, unsigned home, int vi, int unsuf)
+{
+	unsigned mask = hash_cap - 1;
+	unsigned i = home, j;
+	while (tab[i] != vi)
+	{
+		if (tab[i] < 0)
+			return;
+		i = (i + 1) & mask;
+	}
+	tab[i] = -1;
+	j = i;
+	for (;;)
+	{
+		int w;
+		unsigned hw;
+		j = (j + 1) & mask;
+		w = tab[j];
+		if (w < 0)
+			break;
+		hw = unsuf ? hash_key(G.vars[w].name, 0) % hash_cap
+			   : hash_key(G.vars[w].name, G.vars[w].type) % hash_cap;
+		/* The hole at i is on w's probe path from hw to j, so w can move
+		 * back into it without becoming unreachable. */
+		if (((j - hw) & mask) >= ((j - i) & mask))
+		{
+			tab[i] = w;
+			tab[j] = -1;
+			i = j;
+		}
+	}
+}
+
+/* Drop the hash entries for a slot that is being freed (LOCAL return).  A
+ * wholesale hash_rebuild() here was O(vars_cap) per call (#1328). */
+static void hash_del(int vi)
+{
+	unsigned h;
+	if (vi < 0 || vi >= G.vars_cap || !G.vars[vi].used)
+		return;
+	if (!hash_cap)
+		return;
+	h = hash_key(G.vars[vi].name, G.vars[vi].type) % hash_cap;
+	hash_unlink(var_tab, h, vi, 0);
+	if (G.vars[vi].unsuffixed)
+	{
+		h = hash_key(G.vars[vi].name, 0) % hash_cap;
+		hash_unlink(unsuf_tab, h, vi, 1);
+	}
+}
+
 /* Free slot in the CONST table, doubling it when full (#1303). */
 static int consts_free_slot(void)
 {
@@ -335,17 +483,33 @@ static int vars_free_slot(void)
 			mmb_error("?OUT OF MEMORY");
 		memset(G.vars, 0, (unsigned)MMB_MAX_VARS * sizeof(mmb_var));
 		G.vars_cap = MMB_MAX_VARS;
+		free_next = (int *)G.plat->alloc((unsigned)MMB_MAX_VARS * sizeof(int));
+		if (!free_next)
+			mmb_error("?OUT OF MEMORY");
+		memset(free_next, 0xff, (unsigned)MMB_MAX_VARS * sizeof(int));
+		free_cap = MMB_MAX_VARS;
+		free_head = -1;
+		alloc_high = 0;
+		slot_sig = (unsigned *)G.plat->alloc((unsigned)MMB_MAX_VARS * sizeof(unsigned));
+		reuse_gen = (unsigned *)G.plat->alloc((unsigned)MMB_MAX_VARS * sizeof(unsigned));
+		if (!slot_sig || !reuse_gen)
+			mmb_error("?OUT OF MEMORY");
+		memset(slot_sig, 0, (unsigned)MMB_MAX_VARS * sizeof(unsigned));
+		memset(reuse_gen, 0, (unsigned)MMB_MAX_VARS * sizeof(unsigned));
 	}
-	for (i = 0; i < G.vars_cap; i++)
-		if (!G.vars[i].used)
-		{
-			slot = i;
-			break;
-		}
+	if (free_head >= 0)
+	{
+		slot = free_head;
+		free_head = free_next[slot];
+		free_next[slot] = -1;
+	}
+	else if (alloc_high < G.vars_cap)
+		slot = (int)alloc_high++;
 	if (slot < 0)
 	{
 		mmb_var *old = G.vars;
 		mmb_var *nv = (mmb_var *)G.plat->alloc((unsigned)G.vars_cap * 2 * sizeof(mmb_var));
+		int *nf;
 		if (!nv)
 			mmb_error("?OUT OF MEMORY");
 		memset(nv, 0, (unsigned)G.vars_cap * 2 * sizeof(mmb_var));
@@ -353,6 +517,34 @@ static int vars_free_slot(void)
 		G.plat->free(G.vars);
 		G.vars = nv;
 		G.vars_cap *= 2;
+		nf = (int *)G.plat->alloc((unsigned)G.vars_cap * sizeof(int));
+		if (!nf)
+			mmb_error("?OUT OF MEMORY");
+		memset(nf, 0xff, (unsigned)G.vars_cap * sizeof(int));
+		memcpy(nf, free_next, (unsigned)free_cap * sizeof(int));
+		G.plat->free(free_next);
+		free_next = nf;
+		free_cap = G.vars_cap;
+		{
+			unsigned *ns = (unsigned *)G.plat->alloc((unsigned)G.vars_cap * sizeof(unsigned));
+			unsigned *nr = (unsigned *)G.plat->alloc((unsigned)G.vars_cap * sizeof(unsigned));
+			if (!ns || !nr)
+				mmb_error("?OUT OF MEMORY");
+			memset(ns, 0, (unsigned)G.vars_cap * sizeof(unsigned));
+			memset(nr, 0, (unsigned)G.vars_cap * sizeof(unsigned));
+			if (slot_sig)
+			{
+				memcpy(ns, slot_sig, (unsigned)(G.vars_cap / 2) * sizeof(unsigned));
+				G.plat->free(slot_sig);
+			}
+			if (reuse_gen)
+			{
+				memcpy(nr, reuse_gen, (unsigned)(G.vars_cap / 2) * sizeof(unsigned));
+				G.plat->free(reuse_gen);
+			}
+			slot_sig = ns;
+			reuse_gen = nr;
+		}
 		/* An active FOR loop keeps a live mmb_var* across its body; growth
 		 * moved the table, so rebase every loop variable (#1303). */
 		for (i = 0; i < G.for_sp; i++)
@@ -360,7 +552,7 @@ static int vars_free_slot(void)
 				G.forstack[i].vp = nv + (G.forstack[i].vp - old);
 		mmb_tcache_invalidate();
 		mmb_resolve_invalidate();
-		slot = G.vars_cap / 2; /* first fresh slot of the doubled table */
+		slot = (int)alloc_high++; /* first fresh slot of the doubled table */
 	}
 	/* Keep the name hash load factor at or below 0.5 so the insert that
 	 * follows this call cannot overflow the probe (#1303). */
@@ -399,6 +591,25 @@ void mmb_clear_vars(int keep_options)
 	G.vars_cap = 0;
 	G.nvars = 0;
 	G.dim_used = 0;
+	if (free_next)
+	{
+		G.plat->free(free_next);
+		free_next = 0;
+	}
+	if (slot_sig)
+	{
+		G.plat->free(slot_sig);
+		slot_sig = 0;
+	}
+	if (reuse_gen)
+	{
+		G.plat->free(reuse_gen);
+		reuse_gen = 0;
+	}
+	free_cap = 0;
+	free_head = -1;
+	alloc_high = 0;
+	free_gen_seq = 0;
 	hash_release();
 	mmb_tcache_invalidate();
 	mmb_resolve_invalidate();
@@ -947,21 +1158,25 @@ void mmb_cmd_dim(void)
 		if (!had_suffix && type != T_STRUCT)
 			mmb_check_user_name(name);
 
-		for (i = 0; i < G.vars_cap; i++)
-			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
+		/* The name hash is authoritative, so an exact name+type lookup is
+		 * O(1) instead of scanning the whole variable table (#1328).  LOCAL
+		 * runs this on every call of a SUB/FUNCTION with locals, so the
+		 * linear scan made its cost grow with the number of globals. */
+		i = hash_lookup(name, type);
+		if (i >= 0)
+		{
+			if (G.dim_local)
 			{
-				if (G.dim_local)
-				{
-					int r = mmb_local_save(i, 1);
-					if (r < 0)
-						mmb_error("?OUT OF MEMORY");
-					slot = i;
-					if (r == 0)
-						goto dim_init; /* already local here, or no frame */
-					goto dim_reinit;
-				}
-				mmb_error("?ALREADY DECLARED");
+				int r = mmb_local_save(i, 1);
+				if (r < 0)
+					mmb_error("?OUT OF MEMORY");
+				slot = i;
+				if (r == 0)
+					goto dim_init; /* already local here, or no frame */
+				goto dim_reinit;
 			}
+			mmb_error("?ALREADY DECLARED");
+		}
 
 		slot = vars_free_slot();
 		if (G.dim_local && mmb_local_save(slot, 0) < 0)
@@ -983,7 +1198,10 @@ void mmb_cmd_dim(void)
 		G.vars[slot].struct_idx = struct_idx;
 		alloc_var_storage(&G.vars[slot], n);
 		G.nvars++;
-		var_bind_gen(slot);
+		if (G.dim_local)
+			var_bind_local(slot);
+		else
+			var_bind_gen(slot);
 		hash_ins(slot);
 		if (dims)
 			G.dim_used = 1;
@@ -1225,7 +1443,7 @@ void mmb_vars_rehash(void)
 
 void mmb_local_restore(int g)
 {
-	int k, i, rebuild = 0;
+	int k, i;
 	if (G.gosub_nlocal[g] <= 0)
 		return;
 	for (k = G.gosub_nlocal[g] - 1; k >= 0; k--)
@@ -1252,20 +1470,34 @@ void mmb_local_restore(int g)
 		}
 		else
 		{
+			/* The scoped binding never existed outside this frame, so drop
+			 * just its name entries and recycle the slot.  A full
+			 * hash_rebuild() here was O(vars_cap) per LOCAL call (#1328).
+			 * Keep the binding signature and its old generation so the
+			 * same LOCAL next call can revive the cached body; the new
+			 * generation makes every entry stale in the meantime. */
+			unsigned oldgen = v->gen;
+			unsigned sig = var_binding_sig(v);
+			hash_del(ls->slot);
 			memset(v, 0, sizeof(*v));
 			G.nvars--;
-			rebuild = 1;
+			v->gen = 0x80000000u + (++free_gen_seq);
+			if (slot_sig)
+				slot_sig[ls->slot] = sig;
+			if (reuse_gen)
+				reuse_gen[ls->slot] = oldgen;
+			free_next[ls->slot] = free_head;
+			free_head = ls->slot;
+			continue;
 		}
-		/* The restored binding (or the freed slot) is a different meaning
-		 * than the scoped one: bump the slot generation so any cached
-		 * pointer to it falls back to the interpreter (#1368).  Entries for
-		 * variables this frame did not touch stay valid, so no wholesale
-		 * trace/resolve flush is needed. */
+		/* The restored binding is a different meaning than the scoped one:
+		 * bump the slot generation so any cached pointer to it falls back
+		 * to the interpreter (#1368).  Entries for variables this frame did
+		 * not touch stay valid, so no wholesale trace/resolve flush is
+		 * needed. */
 		var_bind_gen(ls->slot);
 	}
 	G.gosub_nlocal[g] = 0;
-	if (rebuild)
-		hash_rebuild();
 }
 
 void mmb_cmd_redim(void)
