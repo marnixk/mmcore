@@ -5546,6 +5546,16 @@ static void exec_statement_guarded(void)
 		memcpy(G.stmt_errjmp, saved, sizeof(jmp_buf));
 }
 
+/* Count down an ON ERROR SKIP window. When it expires the RUN baseline takes
+ * over again: -1 for OPTION ERROR CONTINUE, 0 for abort. */
+static void error_skip_expire(void)
+{
+	if (G.error_skip <= 0)
+		return;
+	if (--G.error_skip == 0)
+		G.error_skip = G.error_skip_base;
+}
+
 /* A whole line under the line-level landing, so an error outside a statement
  * (for example while evaluating a block IF condition) is tolerated too.
  * Returns non-zero when the trapped error abandoned the rest of the line. */
@@ -5562,8 +5572,7 @@ static int exec_line_guarded(const char *body, const char *at)
 			G.branch_pc = -1;
 			G.branch_pos = 0;
 			G.skip_line_valid = had;
-			if (G.error_skip > 0)
-				G.error_skip--;
+			error_skip_expire();
 			return 1;
 		}
 	}
@@ -5587,8 +5596,7 @@ static void exec_stmt_loop(void)
 			exec_statement();
 		/* SKIP counts the ON ERROR statement itself, so SKIP 1 tolerates
 		 * an error in the next statement only (CMM2/MMBasic semantics). */
-		if (G.error_skip > 0)
-			G.error_skip--;
+		error_skip_expire();
 		if (G.if_armed)
 		{
 			/* The IF selected a one-line arm; run its statements next. */
@@ -6223,7 +6231,10 @@ static void run_program(void)
 		mmb_struct_prepare();
 		G.on_error_pc = -1;
 		G.error_active = 0;
-		G.error_skip = 0;
+		/* OPTION ERROR CONTINUE is the persistent RUN fallback; an explicit
+		 * ON ERROR mode overrides it until plain ON ERROR or a new RUN. */
+		G.error_skip_base = G.opt.error_continue ? -1 : 0;
+		G.error_skip = G.error_skip_base;
 		G.skip_stmt_valid = 0;
 		G.skip_line_valid = 0;
 		G.mm_errno = 0;

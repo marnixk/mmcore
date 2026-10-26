@@ -218,10 +218,12 @@ void mmb_cmd_on(void)
 		if (*G.p == 0 || *G.p == ':' || *G.p == '\'' || *G.p == ',')
 		{
 			/* Bare ON ERROR is this interpreter's "clear the handler"
-			 * form; unlike CLEAR it also drops the active mode. */
+			 * form; unlike CLEAR it also drops the active mode and
+			 * returns to the OPTION ERROR CONTINUE/ABORT baseline. */
 			G.error_active = 0;
 			G.on_error_pc = -1;
-			G.error_skip = 0;
+			G.error_skip_base = G.opt.error_continue ? -1 : 0;
+			G.error_skip = G.error_skip_base;
 			G.mm_errno = 0;
 			G.mm_errmsg[0] = 0;
 			return;
@@ -264,10 +266,12 @@ void mmb_cmd_on(void)
 		}
 		if (mmb_match("ABORT"))
 		{
-			/* ABORT stops trapping but leaves the error variables as
+			/* ABORT stops trapping for the rest of this RUN, overriding
+			 * OPTION ERROR CONTINUE, but leaves the error variables as
 			 * they are, matching the reference implementation. */
 			G.error_active = 0;
 			G.on_error_pc = -1;
+			G.error_skip_base = 0;
 			G.error_skip = 0;
 			return;
 		}
@@ -279,10 +283,12 @@ void mmb_cmd_on(void)
 			G.mm_errmsg[0] = 0;
 			return;
 		}
-		/* Unknown form: keep the historical "clear the handler". */
+		/* Unknown form: keep the historical "clear the handler", which
+		 * returns to the OPTION ERROR CONTINUE/ABORT baseline. */
 		G.error_active = 0;
 		G.on_error_pc = -1;
-		G.error_skip = 0;
+		G.error_skip_base = G.opt.error_continue ? -1 : 0;
+		G.error_skip = G.error_skip_base;
 		return;
 	}
 	if (mmb_match("KEYDOWN"))
