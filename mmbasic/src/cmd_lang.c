@@ -409,14 +409,7 @@ void mmb_cmd_on(void)
 	if (target < 0)
 		return;
 	if (gosub)
-	{
-		if (G.gosub_sp >= MMB_MAX_GOSUB)
-			mmb_error("?GOSUB");
-		G.gosub_stack[G.gosub_sp] = G.run_pc + 1;
-		G.gosub_event[G.gosub_sp] = 0;
-		G.gosub_nsave[G.gosub_sp] = 0;
-		G.gosub_sp++;
-	}
+		gosub_push_return();
 	G.branch_pc = mmb_find_line_pc(target);
 }
 
