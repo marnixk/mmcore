@@ -124,6 +124,7 @@ static int tc_add_var(tc_ent *e, mmb_var *v)
 	if (e->nvp >= TC_VARS)
 		return -1;
 	e->vp[e->nvp] = v;
+	e->vgen[e->nvp] = v->gen;
 	return e->nvp++;
 }
 
@@ -682,11 +683,27 @@ static void tc_store_arrn(mmb_var *arr, mmb_var **idx, int n, double x)
 		arr->data.f[off] = x;
 }
 
+/* A cached entry is only replayable while every variable it was compiled
+ * against still has the same binding (#1368).  LOCAL shadows/restores and new
+ * DIMs bump the affected slot's generation; a mismatch means the slow
+ * interpreter path must re-resolve and recompile, so the cache can never read
+ * a slot that was freed and reused for a different name, type or dims. */
+static int tc_entry_valid(const tc_ent *e)
+{
+	int i;
+	for (i = 0; i < e->nvp; i++)
+		if (!e->vp[i] || e->vp[i]->gen != e->vgen[i])
+			return 0;
+	return 1;
+}
+
 static int tc_replay(tc_ent *e)
 {
 	double stk[TC_STK];
 	int sp = 0;
 	int pc = 0;
+	if (!tc_entry_valid(e))
+		return 0;
 	while (pc < e->ncode)
 	{
 		uint8_t op = e->code[pc++];
@@ -818,12 +835,24 @@ static int tc_try(int is_if)
 	if (!e)
 		return 0;
 	if (e->state < 0)
-		return 0;
+	{
+		/* A statement that failed to compile may become compilable once
+		 * the binding set changes (a later DIM).  Retry only then, so the
+		 * old wholesale DIM flush is not needed (#1368). */
+		if (e->fail_gen == G.var_gen)
+			return 0;
+		e->state = 0;
+	}
 	if (e->state > 0)
 	{
-		if (G.opt.profiling)
-			G.prof.tcache_hit++;
-		return tc_replay(e);
+		if (!tc_entry_valid(e))
+			e->state = 0; /* stale binding: recompile below */
+		else
+		{
+			if (G.opt.profiling)
+				G.prof.tcache_hit++;
+			return tc_replay(e);
+		}
 	}
 	save = G.p;
 	memset(&tmp, 0, sizeof(tmp));
@@ -836,6 +865,7 @@ static int tc_try(int is_if)
 			tc_compiling = 0;
 			G.p = save;
 			e->state = -1;
+			e->fail_gen = G.var_gen;
 			if (G.opt.profiling)
 				G.prof.tcache_bad++;
 			return 0;
@@ -846,6 +876,7 @@ static int tc_try(int is_if)
 		tc_compiling = 0;
 		G.p = save;
 		e->state = -1;
+		e->fail_gen = G.var_gen;
 		if (G.opt.profiling)
 			G.prof.tcache_bad++;
 		return 0;

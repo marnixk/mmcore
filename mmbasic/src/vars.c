@@ -10,6 +10,17 @@ static void hash_ins(int vi);
 static void hash_rebuild(void);
 static int mmb_local_save(int slot, int existed);
 
+/* Take a fresh binding generation for `slot` (#1368).  Any trace-cache or
+ * resolve-cache entry holding this mmb_var* is then stale, but only that
+ * entry: entries for untouched slots stay valid.  Must be called after the
+ * slot's fields (including any memset) are set for the new binding. */
+static unsigned var_bind_gen(int slot)
+{
+	G.var_gen++;
+	G.vars[slot].gen = G.var_gen;
+	return G.var_gen;
+}
+
 /* Variable-name hash tables (#1303). The variable table grows past 512
  * entries, so the hash is heap-allocated and doubles when the load factor
  * would pass ~0.5: capacity is always at least twice the number of used
@@ -22,9 +33,11 @@ static unsigned hash_cap;
 /* Direct-mapped resolve cache (#1002): parsing a statement re-resolves every
  * variable token to an mmb_var* on each execution.  Key by the source-token
  * address (unique per occurrence) plus the operand shape, so a repeat
- * execution of the same statement reuses the binding.  Any change to the
- * variable table or program text bumps the generation, invalidating all
- * entries, and no pointer is returned across a rebuild. */
+ * execution of the same statement reuses the binding.  Program text changes
+ * and table moves/rehashes bump the generation, invalidating all entries.  A
+ * single slot rebound by LOCAL or DIM keeps the entry address valid but bumps
+ * the variable's own generation, which is checked before the cached pointer is
+ * returned (#1368). */
 #define MMB_RC_SIZE 256
 typedef struct {
 	const char *ref;
@@ -32,6 +45,7 @@ typedef struct {
 	int type;
 	int nidx;
 	mmb_var *v;
+	unsigned vgen; /* v->gen when cached (#1368) */
 	/* The resolved name is compared on a hit so a reused transient parse
 	 * buffer (EXECUTE/EVAL) at the same address cannot return a stale
 	 * binding for different text. */
@@ -497,6 +511,7 @@ void mmb_bind_struct_var(const char *name, int sid)
 	G.vars[slot].data.blob = G.plat->alloc((unsigned)sz);
 	memset(G.vars[slot].data.blob, 0, (unsigned)sz);
 	G.nvars++;
+	var_bind_gen(slot);
 	hash_ins(slot);
 	mmb_resolve_invalidate();
 }
@@ -805,6 +820,7 @@ mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx
 		G.vars[i].data.f[0] = 0;
 	}
 	G.nvars++;
+	var_bind_gen(i);
 	hash_ins(i);
 	if (idx)
 		*idx = 0;
@@ -823,7 +839,7 @@ mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int creat
 		return mmb_find_var(name, type, create, nidx, idx);
 	e = rc_slot(ref);
 	if (e->ref == ref && e->gen == rc_gen && e->type == type &&
-	    e->nidx == nidx && strcmp(e->name, name) == 0)
+	    e->nidx == nidx && e->v->gen == e->vgen && strcmp(e->name, name) == 0)
 		return e->v;
 	v = mmb_find_var(name, type, create, nidx, idx);
 	if (!v)
@@ -833,6 +849,7 @@ mmb_var *mmb_find_var_ref(const char *ref, const char *name, int type, int creat
 	e->type = type;
 	e->nidx = nidx;
 	e->v = v;
+	e->vgen = v->gen;
 	strncpy(e->name, name, MMB_MAX_NAME - 1);
 	e->name[MMB_MAX_NAME - 1] = 0;
 	return v;
@@ -842,8 +859,10 @@ void mmb_cmd_dim(void)
 {
 	/* DIM [SHARED] [INTEGER|FLOAT|STRING] name(d1[,d2...]) [AS type] [, ...] */
 	int group = 0;
-	mmb_tcache_invalidate();
-	mmb_resolve_invalidate();
+	/* No wholesale cache flush here (#1368): creating a slot leaves every
+	 * existing binding at the same address, and rebinding one (LOCAL
+	 * shadow) bumps only that slot's generation.  vars_free_slot() still
+	 * invalidates both caches when it has to move the table. */
 	mmb_skip_sp();
 	(void)mmb_match("SHARED"); /* MMBasic variables are global already */
 	mmb_skip_sp();
@@ -964,6 +983,7 @@ void mmb_cmd_dim(void)
 		G.vars[slot].struct_idx = struct_idx;
 		alloc_var_storage(&G.vars[slot], n);
 		G.nvars++;
+		var_bind_gen(slot);
 		hash_ins(slot);
 		if (dims)
 			G.dim_used = 1;
@@ -971,7 +991,10 @@ void mmb_cmd_dim(void)
 		goto dim_init;
 	dim_reinit:
 		/* A scoped LOCAL shadows an existing binding whose storage was
-		 * detached into this frame's save record, so rebind it fresh. */
+		 * detached into this frame's save record, so rebind it fresh.
+		 * The slot address stays put but its meaning changed, so bump the
+		 * generation: cached entries for the old binding fall back to the
+		 * interpreter instead of reading the scoped variable (#1368). */
 		{
 			int oldunsuf = G.vars[slot].unsuffixed;
 			G.vars[slot].type = type;
@@ -986,6 +1009,7 @@ void mmb_cmd_dim(void)
 			G.vars[slot].unsuffixed = !had_suffix;
 			G.vars[slot].struct_idx = struct_idx;
 			alloc_var_storage(&G.vars[slot], n);
+			var_bind_gen(slot);
 			if (oldunsuf != G.vars[slot].unsuffixed)
 				hash_rebuild();
 			if (dims)
@@ -1232,12 +1256,16 @@ void mmb_local_restore(int g)
 			G.nvars--;
 			rebuild = 1;
 		}
+		/* The restored binding (or the freed slot) is a different meaning
+		 * than the scoped one: bump the slot generation so any cached
+		 * pointer to it falls back to the interpreter (#1368).  Entries for
+		 * variables this frame did not touch stay valid, so no wholesale
+		 * trace/resolve flush is needed. */
+		var_bind_gen(ls->slot);
 	}
 	G.gosub_nlocal[g] = 0;
 	if (rebuild)
 		hash_rebuild();
-	mmb_tcache_invalidate();
-	mmb_resolve_invalidate();
 }
 
 void mmb_cmd_redim(void)
@@ -1418,7 +1446,10 @@ void mmb_cmd_redim(void)
 		else if (type == T_STRUCT && ob)
 			G.plat->free(ob);
 		if (is_new)
+		{
+			var_bind_gen((int)(v - G.vars));
 			hash_ins((int)(v - G.vars));
+		}
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{

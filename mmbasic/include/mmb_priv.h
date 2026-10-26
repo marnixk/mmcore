@@ -138,6 +138,12 @@ typedef struct mmb_var {
 	int used;
 	int unsuffixed; /* 1 = DIM INTEGER N / A=1; 0 = A% / A$ */
 	int maxlen;     /* DIM ... LENGTH n: hard string cap (0 = unbounded) */
+	/* Binding generation (#1368): bumped whenever this slot is freed,
+	 * reused or rebound (LOCAL shadow/restore, new DIM).  Caches that hold
+	 * an mmb_var* compare the generation instead of flushing wholesale, so
+	 * a cache hit can never read a slot that now means a different name,
+	 * type or dims.  A mismatch always falls back to the interpreter. */
+	unsigned gen;
 } mmb_var;
 
 /* One LOCAL declaration in the current SUB/FUNCTION frame: the binding that
@@ -430,10 +436,15 @@ typedef struct mmb_tc_ent {
 	uint8_t code[MMB_TC_CODE];
 	int ncode;
 	mmb_var *vp[MMB_TC_VARS];
+	unsigned vgen[MMB_TC_VARS]; /* binding generation of each vp (#1368) */
 	int nvp;
 	double c[MMB_TC_CONST];
 	int nc;
 	int8_t state;
+	/* G.var_gen when this entry last failed to compile.  A later binding
+	 * change (DIM/LOCAL) makes the statement worth retrying, without any
+	 * full-cache flush (#1368). */
+	unsigned fail_gen;
 } mmb_tc_ent;
 
 /* Program-metadata tables (#1303): labels, SUBs and CONSTs were fixed-size
@@ -575,6 +586,11 @@ typedef struct mmb {
 	int vars_cap;
 	int nvars;
 	int dim_used;
+	/* Monotonic binding-generation counter (#1368).  Every slot free,
+	 * reuse or rebind takes a fresh value, stored in mmb_var.gen; caches
+	 * validate a held pointer against it.  It also lets a failed
+	 * trace-cache compile be retried once the binding set changes. */
+	unsigned var_gen;
 	mmb_sdef sdef[MMB_MAX_STRUCT_TYPES];
 	int nstruct;
 	int acc_on;
