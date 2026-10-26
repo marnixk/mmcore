@@ -222,6 +222,92 @@ def test_quit_local_does_not_run_quit(mmb):
     assert "SURVIVED" in out, out
 
 
+# ---- #1337: bare command assignments must not run the command -------------
+
+def test_bare_quit_assignment_exact_repro(mmb):
+    out = _run(mmb, [
+        "10 quit = 0",
+        '20 PRINT "after"',
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?NAME CONFLICT: QUIT is a reserved command @10:" in out, out
+    assert "after" not in out, out
+    assert "SURVIVED" in out, "the interpreter must survive the error"
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    ["quit", "end", "stop", "reboot", "restart", "shutdown"],
+)
+def test_bare_terminating_assignment_rejected(mmb, keyword):
+    out = _run(mmb, [
+        "10 %s = 0" % keyword,
+        '20 PRINT "after"',
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?NAME CONFLICT: %s is a reserved command" % keyword.upper() in out, out
+    assert "after" not in out, out
+    assert "SURVIVED" in out, out
+
+
+@pytest.mark.parametrize(
+    "line, name",
+    [
+        ("quit = 0", "QUIT"),
+        ("quit=0", "QUIT"),
+        ("quit  =  0", "QUIT"),
+        # non-terminating command-only keywords that hijack an assignment
+        ("run = 0", "RUN"),
+        ("new = 0", "NEW"),
+        ("chain = 0", "CHAIN"),
+    ],
+)
+def test_bare_command_assignment_rejected_immediately(mmb, line, name):
+    out = _run(mmb, [line, 'PRINT "SURVIVED"'])
+    assert "?NAME CONFLICT: %s is a reserved command" % name in out, out
+    assert "SURVIVED" in out, out
+
+
+def test_multiword_end_forms_still_run(mmb):
+    out = _run(mmb, [
+        "10 IF 1 THEN",
+        '20 PRINT "IFOK"',
+        "30 END IF",
+        "40 TYPE pt",
+        "50 x AS INTEGER",
+        "60 END TYPE",
+        "70 SELECT CASE 1",
+        "80 CASE 1",
+        '90 PRINT "SELOK"',
+        "100 END SELECT",
+        "110 SUB s",
+        '120 PRINT "SUBOK"',
+        "130 END SUB",
+        "140 s",
+        "150 FUNCTION f1(a)",
+        "160 f1 = a + 1",
+        "170 END FUNCTION",
+        "180 PRINT f1(41)",
+        "RUN",
+    ])
+    assert "IFOK" in out, out
+    assert "SELOK" in out, out
+    assert "SUBOK" in out, out
+    assert "42" in out, out
+    assert "NAME CONFLICT" not in out, out
+
+
+def test_run_command_forms_still_run(mmb):
+    out = _run(mmb, ['10 PRINT "RAN"', "RUN"])
+    assert "RAN" in out, out
+    assert "NAME CONFLICT" not in out, out
+    out = _run(mmb, ['RUN "no-such-file.bas"', 'PRINT "SURVIVED"'])
+    assert "NAME CONFLICT" not in out, out
+    assert "SURVIVED" in out, out
+
+
 # ---- #1335: SUB/FUNCTION parameter colliding with a global CONST -----------
 
 def test_sub_param_const_clash_named_at_definition(mmb):

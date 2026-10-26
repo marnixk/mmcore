@@ -782,6 +782,7 @@ void mmb_tok_release(void); /* free the instance-owned tokenized program (#1013)
 const char *mmb_tok_line(int pc);
 const char *mmb_tok_immediate(const char *src);
 int mmb_kw_id(const char *kw);
+const char *mmb_kw_name(int id);
 void mmb_tokenize_text(const char *src, char *dst, int dstsz);
 int mmb_match_token(const char *kw);
 int mmb_tok_expand(char *dst, int dstsz);
@@ -1640,5 +1641,8 @@ int mmb_is_builtin_func(const char *name);
  * implicitly created variable) whose base name collides with a built-in
  * function or named colour constant (#1304). Errors via mmb_error. */
 void mmb_check_user_name(const char *name);
+/* True when a bare assignment to this keyword would be dispatched as the
+ * command instead (#1337). */
+int mmb_command_hijacks_assignment(const char *name);
 
 #endif

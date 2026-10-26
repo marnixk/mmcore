@@ -593,6 +593,25 @@ static int is_terminating_command(const char *nbuf)
 	return 0;
 }
 
+/* #1337: command keywords whose token is dispatched before an assignment is
+ * recognised. A bare assignment shaped like `quit = 0` otherwise runs the
+ * command instead of storing the value. This is the terminating set above
+ * plus the command-only keywords that hijack an assignment without ending the
+ * session (`run = 0` reruns the program, `new = 0` clears it, `chain = 0`
+ * loads a file). Command syntax such as `RUN "file"` is untouched: callers
+ * only consult this when the keyword token is followed by `=`. */
+int mmb_command_hijacks_assignment(const char *name)
+{
+	static const char *const extra[] = { "RUN", "NEW", "CHAIN", 0 };
+	int i;
+	if (is_terminating_command(name))
+		return 1;
+	for (i = 0; extra[i]; i++)
+		if (strcmp(name, extra[i]) == 0)
+			return 1;
+	return 0;
+}
+
 void mmb_check_user_name(const char *name)
 {
 	char nbuf[MMB_MAX_NAME];

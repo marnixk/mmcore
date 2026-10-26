@@ -358,6 +358,18 @@ def test_quit_keyword_rejected_as_dim_name(console):
     assert console.send_line('PRINT "SURVIVED"') == "SURVIVED"
 
 
+def test_bare_quit_assignment_does_not_run_quit(console):
+    """#1337: an undeclared QUIT = 0 is a name conflict, not a QUIT."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 QUIT = 0") == ""
+    assert console.send_line('20 PRINT "after"') == ""
+    err = console.send_line("RUN")
+    assert "NAME CONFLICT" in err.upper()
+    assert "RESERVED COMMAND" in err.upper()
+    assert "AFTER" not in err.upper()
+    assert console.send_line('PRINT "SURVIVED"') == "SURVIVED"
+
+
 def test_sub_param_const_collision_is_named(console):
     """#1335: the ?CONST error names the parameter and the SUB."""
     assert console.send_line("NEW") == ""
