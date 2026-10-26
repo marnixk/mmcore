@@ -573,6 +573,7 @@ typedef struct mmb {
 	/* Per-nesting-level block IF state (#1273).  Each entry is one active
 	 * IF ... END IF block; the top entry owns the current skip decision. */
 	unsigned char if_stack[MMB_MAX_IF_DEPTH];
+	int if_pc_stack[MMB_MAX_IF_DEPTH]; /* line that opened each block IF */
 	int if_depth;
 	/* One-line IF ... THEN selected a branch and still owns the rest of the
 	 * line: 0 = none, 1 = THEN part (stop at ELSE), 2 = ELSE part (#1276). */
@@ -596,6 +597,7 @@ typedef struct mmb {
 	int gosub_nlocal[MMB_MAX_GOSUB];
 	mmb_localsave gosub_local[MMB_MAX_GOSUB][MMB_MAX_LOCALS];
 	unsigned char gosub_if_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
+	int gosub_if_pc_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
 	int gosub_if_depth[MMB_MAX_GOSUB];
 	int gosub_if_inline[MMB_MAX_GOSUB];
 	/* Loop frames owned by the caller: a SUB/FUNCTION/GOSUB that returns

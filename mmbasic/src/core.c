@@ -35,6 +35,7 @@ static int s_poll_active;
  * G.run_preserve_vars). */
 static int at_end_of_statement(void);
 static void skip_stmt(const char **pp);
+static int line_block_ifs(const char *body);
 static int process_line_structure(const char *body);
 static int sub_find(const char *name);
 static void sub_register(const char *name, int pc, int is_func, int ret_type);
@@ -389,15 +390,11 @@ static int at_is_block_if(const char *at)
 	return 0;
 }
 
-static int line_is_block_if(const char *body)
-{
-	return at_is_block_if(after_label(body));
-}
-
 static void build_jumps(void)
 {
 	int i, sp;
-	int st[MMB_MAX_CTRL];
+	/* First half is the IF-line stack, second half the last arm of each. */
+	int st[MMB_MAX_CTRL * 2];
 	jmp_grow(G.nprog);
 	G.jmp_ready = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -456,23 +453,62 @@ static void build_jumps(void)
 			G.jmp_endsub[st[--sp]] = i;
 		G.p = save;
 	}
+	/* Block IF arms.  jmp_else is an arm chain: an IF links to its first
+	 * ELSE/ELSEIF, each arm links to the next one, and the last structural
+	 * line links to the matching ENDIF.  jmp_endif points every line of the
+	 * block (IF and arms) at that ENDIF, so a skip can tell whether a line
+	 * belongs to the block at the top of the IF stack (#1333).  Parse the
+	 * tokenized line: raw text treats ``ELSE : ...`` as a label because the
+	 * keyword is followed by a colon. */
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
-		if (line_is_block_if(G.prog[i]))
+		const char *line = mmb_tok_line(i);
+		int n, is_arm = 0;
+		/* A line may both close an arm and open a new block IF after a
+		 * colon, so handle the leading token first and push the rest. */
+		if (sp > 0 && (line_match(line, "ENDIF") ||
+			       line_match_end(line, "IF")))
 		{
-			if (sp < MMB_MAX_CTRL)
-				st[sp++] = i;
+			int fi, last, a;
+			sp--;
+			fi = st[sp];
+			last = st[sp + MMB_MAX_CTRL];
+			if (last >= 0)
+				G.jmp_else[last] = i;
+			if (fi >= 0)
+			{
+				G.jmp_endif[fi] = i;
+				for (a = G.jmp_else[fi]; a >= 0 && a != i;
+				     a = G.jmp_else[a])
+					G.jmp_endif[a] = i;
+			}
 		}
-		else if (sp > 0 && (line_match(G.prog[i], "ELSE") ||
-				     line_match(G.prog[i], "ELSEIF")))
+		else if (sp > 0 && (line_match(line, "ELSE") ||
+				    line_match(line, "ELSEIF")))
 		{
-			if (G.jmp_else[st[sp - 1]] < 0)
-				G.jmp_else[st[sp - 1]] = i;
+			int last = st[sp - 1 + MMB_MAX_CTRL];
+			if (last >= 0)
+				G.jmp_else[last] = i;
+			st[sp - 1 + MMB_MAX_CTRL] = i;
+			is_arm = 1;
 		}
-		else if (sp > 0 && (line_match(G.prog[i], "ENDIF") ||
-				     line_match_end(G.prog[i], "IF")))
-			G.jmp_endif[st[--sp]] = i;
+		/* A line may open more than one block IF through colons (#1301).
+		 * Only the first can be named by this line; later ones get -1 so
+		 * their arms cannot alias the first block's table entries.  An
+		 * arm line keeps its jmp_else slot for the arm chain, so a block
+		 * IF after its colon is not named either. */
+		n = line_block_ifs(line);
+		{
+			int k;
+			for (k = 0; k < n && sp < MMB_MAX_CTRL; k++)
+			{
+				int pc = k == 0 && !is_arm ? i : -1;
+				st[sp] = pc;
+				st[sp + MMB_MAX_CTRL] = pc;
+				sp++;
+			}
+		}
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
@@ -584,11 +620,13 @@ static int at_elseif_kw(void)
 	return r;
 }
 
-static void if_push(unsigned char state)
+static void if_push(unsigned char state, int pc)
 {
 	if (G.if_depth >= MMB_MAX_IF_DEPTH)
 		mmb_error("?IF");
-	G.if_stack[G.if_depth++] = state;
+	G.if_stack[G.if_depth] = state;
+	G.if_pc_stack[G.if_depth] = pc;
+	G.if_depth++;
 }
 
 /* The innermost SELECT frame visible to this call, or NULL outside a SELECT.
@@ -673,8 +711,9 @@ static void unwind_above_seq(int seq)
 }
 
 /* Number of block IF statements opened on this line, including ones after a
- * colon.  A line inside skipped code may open more than one (#1301). */
-static int skipped_block_ifs(const char *body)
+ * colon.  A line may open more than one (#1301), and the jump tables need the
+ * same count so each matching ENDIF pairs at the right depth (#1333). */
+static int line_block_ifs(const char *body)
 {
 	const char *p = after_label(body);
 	int n = 0;
@@ -765,7 +804,7 @@ static int process_line_structure(const char *body)
 		 * conditions, so functions and array indexes in skipped code never
 		 * run (#1274, #1301).  One-line IFs open no block. */
 		{
-			int n = skipped_block_ifs(body);
+			int n = line_block_ifs(body);
 			if (n > 0)
 				G.if_shadow += n;
 		}
@@ -819,6 +858,48 @@ static int process_line_structure(const char *body)
 
 	G.p = save;
 	return 0;
+}
+
+/* After a structural line has run, return the pc a skipping block IF should
+ * resume at, or -1 to keep the line-by-line fallback (#1333).  A search hops
+ * arm to arm until one is taken or the matching ENDIF is reached; a taken arm
+ * that has ended at ELSE/ELSEIF jumps past the ENDIF.  The jump is only safe
+ * when ``pc`` is a structural line of the block at the top of the IF stack: a
+ * GOTO into the middle of a skipped block, an immediate-mode IF or a mid-line
+ * block IF has no matching end, so those keep walking. */
+static int if_skip_pc(int pc)
+{
+	int top, ifpc, end, t;
+
+	if (!G.jmp_ready || G.if_depth <= 0 || G.if_shadow != 0)
+		return -1;
+	if (pc < 0 || pc >= G.nprog)
+		return -1;
+	top = G.if_depth - 1;
+	ifpc = G.if_pc_stack[top];
+	if (ifpc < 0 || ifpc >= G.nprog)
+		return -1;
+	end = G.jmp_endif[ifpc];
+	if (end < 0 || G.jmp_endif[pc] != end)
+		return -1;
+	if (G.if_stack[top] == IF_SEARCH)
+	{
+		t = G.jmp_else[pc];
+		if (t < 0)
+			return -1;
+		if (t == end)
+		{
+			G.if_depth--;
+			return end + 1;
+		}
+		return t;
+	}
+	if (G.if_stack[top] == IF_DONE)
+	{
+		G.if_depth--;
+		return end + 1;
+	}
+	return -1;
 }
 
 static int sub_find(const char *name)
@@ -1188,6 +1269,8 @@ static void gosub_save_ctrl(int g)
 	G.gosub_if_depth[g] = G.if_depth;
 	memcpy(G.gosub_if_stack[g], G.if_stack,
 	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
+	memcpy(G.gosub_if_pc_stack[g], G.if_pc_stack,
+	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.gosub_if_inline[g] = G.if_inline;
 	G.gosub_ctrl_sp[g] = G.ctrl_sp;
 	G.gosub_for_sp[g] = G.for_sp;
@@ -1208,6 +1291,8 @@ static void gosub_restore_ctrl(int g)
 	G.if_depth = G.gosub_if_depth[g];
 	memcpy(G.if_stack, G.gosub_if_stack[g],
 	       (size_t)G.if_depth * sizeof(G.if_stack[0]));
+	memcpy(G.if_pc_stack, G.gosub_if_pc_stack[g],
+	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.if_inline = G.gosub_if_inline[g];
 	G.if_armed = 0;
 	G.if_shadow = 0;
@@ -3415,7 +3500,7 @@ void mmb_cmd_if(void)
 	mmb_skip_sp();
 	if (at_end_of_statement())
 	{
-		if_push(cond ? IF_BODY : IF_SEARCH);
+		if_push(cond ? IF_BODY : IF_SEARCH, G.run_pc);
 		return;
 	}
 	legacy = if_in_same_line_for_body();
@@ -5433,6 +5518,12 @@ static void run_gosub_body(void)
 		} while (loop && G.running);
 		if (skipped)
 		{
+			int jump = if_skip_pc(G.run_pc);
+			if (jump >= 0)
+			{
+				G.run_pc = jump;
+				continue;
+			}
 			G.run_pc++;
 			continue;
 		}
@@ -5440,6 +5531,14 @@ static void run_gosub_body(void)
 			break;
 		if (G.branch_pc >= 0)
 			continue;
+		{
+			int jump = if_skip_pc(G.run_pc);
+			if (jump >= 0)
+			{
+				G.run_pc = jump;
+				continue;
+			}
+		}
 		G.run_pc++;
 	}
 	G.ctrl_sp = saved_ctrl;
@@ -5868,6 +5967,12 @@ static void run_program(void)
 		} while (loop && G.running);
 		if (skipped)
 		{
+			int jump = if_skip_pc(pc);
+			if (jump >= 0)
+			{
+				pc = jump;
+				continue;
+			}
 			pc++;
 			continue;
 		}
@@ -5880,6 +5985,14 @@ static void run_program(void)
 		}
 		if (G.branch_pc >= 0)
 			continue;
+		{
+			int jump = if_skip_pc(pc);
+			if (jump >= 0)
+			{
+				pc = jump;
+				continue;
+			}
+		}
 		pc++;
 	}
 	if (G.opt.profiling)
