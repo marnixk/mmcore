@@ -415,10 +415,12 @@ typedef struct mmb_audio {
  * its variables. */
 #define MMB_TC_SLOTS 256
 /* The table starts at MMB_TC_SLOTS and doubles on demand (#1369). A flat
- * 4096-slot table would add 1 MB per console (mmb_tc_ent is 256 bytes), so a
- * program that never needs the room keeps paying only for the inline base. */
+ * 4096-slot table would add more than 1 MB per console (mmb_tc_ent is a few
+ * hundred bytes), so a program that never needs the room keeps paying only
+ * for the inline base.  MMB_TC_CODE grew for expression-index array accesses
+ * and compound IF conditions (#1370). */
 #define MMB_TC_MAX_SLOTS 4096
-#define MMB_TC_CODE  48
+#define MMB_TC_CODE  64
 #define MMB_TC_VARS  8
 #define MMB_TC_CONST 8
 /* Failed compiles live in a compact negative set instead of taking a full
@@ -448,7 +450,13 @@ typedef struct mmb_tc_ent {
 	unsigned vgen[MMB_TC_VARS]; /* binding generation of each vp (#1368) */
 	int nvp;
 	double c[MMB_TC_CONST];
+	int64_t ci[MMB_TC_CONST]; /* T_INT constants keep full 64-bit precision */
+	uint8_t ctype[MMB_TC_CONST];
 	int nc;
+	/* Resolved target of a cached `IF ... THEN GOTO/GOSUB` (#1370).  The
+	 * program text (and therefore both label and line-number tables) is
+	 * fixed while an entry is live; re-tokenizing invalidates the cache. */
+	int branch_pc;
 	int8_t state;
 	/* Second-chance bit used when a full table has to evict a cold entry. */
 	uint8_t ref;
