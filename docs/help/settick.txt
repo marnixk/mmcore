@@ -9,6 +9,11 @@ SETTICK period, handler [, slot]
   handler - SUB name
   slot - 0 to 3 (default 0)
 
+The period is measured from the moment the handler runs, not from the moment
+it was due. A late handler therefore pushes every later tick back by the same
+lateness (drift). For exact timing, compare a "due" time against TIMER in the
+handler instead of relying on the period alone.
+
 Example:
 
     SETTICK 10, GameTick

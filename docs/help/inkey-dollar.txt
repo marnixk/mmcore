@@ -5,6 +5,10 @@ Return the next console key as a one-character string, or "" if none. Never
 blocks, except a short wait to finish a VT100 sequence. Arrow and function
 keys return one-byte codes (see table below).
 
+A lone Escape waits up to 30 ms for the rest of a VT100 CSI sequence before
+INKEY$ returns it. Called from an interrupt handler, that wait also delays the
+handler and any due SETTICK until the sequence completes (or the 30 ms expire).
+
 INKEY$
 INKEY$()
 

@@ -2996,6 +2996,8 @@ void mmb_cmd_new(void)
 	mmb_clear_consts();
 	mmb_close_tcp_files();
 	G.on_key[0] = 0;
+	G.on_keydown[0] = 0;
+	G.on_keydown_gen = G.keydown_gen;
 	memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
 	G.opt.autorun = 0;
 }
@@ -5364,8 +5366,8 @@ void mmb_run_events(void)
 	if (!G.running || G.tick_busy)
 		return;
 	/* Skip the clock read entirely when nothing is registered (#988). */
-	if (!G.on_key[0] && !on_key_ascii_active() && !G.on_mouseclick[0] &&
-	    !G.on_mousemove[0] && !G.on_mouseup[0])
+	if (!G.on_key[0] && !G.on_keydown[0] && !on_key_ascii_active() &&
+	    !G.on_mouseclick[0] && !G.on_mousemove[0] && !G.on_mouseup[0])
 	{
 		int any = 0;
 		for (i = 0; i < MMB_MAX_TICK; i++)
@@ -5450,6 +5452,27 @@ void mmb_run_events(void)
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
 	}
+	/* ON KEYDOWN fires once per real held-set change: a press or a release,
+	 * never an OS auto-repeat (an unchanged set does not bump keydown_gen).
+	 * It does not touch the INKEY$ queue, so menus that read INKEY$ are not
+	 * affected. The handler reads KEYDOWN() for the new set. */
+	if (G.on_keydown[0] && G.keydown_gen != G.on_keydown_gen)
+	{
+		G.on_keydown_gen = G.keydown_gen;
+		saved_pc = G.run_pc;
+		saved_p = G.p;
+		saved_branch = G.branch_pc;
+		saved_sp = G.gosub_sp;
+		G.tick_busy = 1;
+		G.p = "";
+		if (mmb_call_named_sub(G.on_keydown))
+			run_gosub_body();
+		G.run_pc = saved_pc;
+		G.p = saved_p;
+		G.branch_pc = saved_branch;
+		G.gosub_sp = saved_sp;
+		G.tick_busy = 0;
+	}
 	{
 		int mx, my, mb, ev;
 		char abuf[64];
@@ -5527,6 +5550,8 @@ static void run_program(void)
 		subs_clear();
 		memset(G.tick, 0, sizeof(G.tick));
 		G.on_key[0] = 0;
+		G.on_keydown[0] = 0;
+		G.on_keydown_gen = G.keydown_gen;
 		memset(G.on_key_ascii, 0, sizeof(G.on_key_ascii));
 		G.on_mouseclick[0] = 0;
 		G.on_mousemove[0] = 0;

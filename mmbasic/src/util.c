@@ -2198,14 +2198,26 @@ void mmb_inkey_consume(int n)
 
 void mmb_keydown_set(const int *codes, int n)
 {
-	int i;
+	int i, changed;
+
 	if (n < 0)
 		n = 0;
 	if (n > 6)
 		n = 6;
-	G.nkeydown = n;
+	changed = n != G.nkeydown;
 	for (i = 0; i < n; i++)
+	{
+		if (G.keydown[i] != codes[i])
+			changed = 1;
 		G.keydown[i] = codes[i];
+	}
+	G.nkeydown = n;
+	/* ON KEYDOWN runs off this generation, so an unchanged set (SDL key
+	 * repeat, or Circle re-reporting the same USB HID state) must not look
+	 * like a new press. Publish the generation last: by the time the
+	 * interpreter sees it, the new set is already in place. */
+	if (changed)
+		G.keydown_gen++;
 }
 
 int mmb_keydown_get(int n)

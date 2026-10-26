@@ -19,6 +19,11 @@ each KEYDOWN(n) against the code you want. To test one key, scan the
 list; there is no separate scan-code test. KEYDOWN() does not use PC/AT
 scan codes.
 
+KEYDOWN() is a level: it reports the keys held right now. To react to a
+change instead of polling, install ~ON KEYDOWN~; its handler runs once for
+each press or release (never for an operating-system repeat) and reads the
+new set with KEYDOWN().
+
 See also ~INKEY$~ and ~KEYBOARD CODES~.
 
 Example:

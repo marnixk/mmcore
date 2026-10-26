@@ -159,27 +159,38 @@ int main(void)
 	int none[1] = { 0 };
 	int left[1] = { 130 };
 	int right_esc[2] = { 131, 27 };
-	int i, paddle = 100, quit = 0;
+	int i, paddle = 100, quit = 0, gen;
 
 	mmb_keydown_set(none, 0);
 	check(mmb_keydown_get(0) == 0, "empty count");
 	check(mmb_keydown_get(1) == 0, "empty index");
+	gen = G.keydown_gen;
+	mmb_keydown_set(none, 0);
+	check(G.keydown_gen == gen, "empty set republished is not a change");
 
 	/* sprites.bas style: iterate the held-key list from KEYDOWN(0). */
 	mmb_keydown_set(left, 1);
 	check(mmb_keydown_get(0) == 1, "left count");
 	check(mmb_keydown_get(1) == 130, "left code");
 	check(mmb_keydown_get(2) == 0, "list ends after one key");
+	check(G.keydown_gen == gen + 1, "press bumps the held-set generation");
 	for (i = 1; i <= mmb_keydown_get(0); i++)
 		if (mmb_keydown_get(i) == 130)
 			paddle -= 3;
 	check(paddle == 97, "paddle moved left");
+
+	/* An OS repeat re-reports the same held set: no new event. */
+	gen = G.keydown_gen;
+	mmb_keydown_set(left, 1);
+	check(G.keydown_gen == gen, "repeat does not bump the generation");
 
 	/* Holding right and Escape must move the paddle and quit. */
 	mmb_keydown_set(right_esc, 2);
 	check(mmb_keydown_get(0) == 2, "two held");
 	check(mmb_keydown_get(1) == 131, "right code");
 	check(mmb_keydown_get(2) == 27, "escape code");
+	check(G.keydown_gen == gen + 1, "adding a key bumps the generation");
+	gen = G.keydown_gen;
 	for (i = 1; i <= mmb_keydown_get(0); i++)
 	{
 		if (mmb_keydown_get(i) == 131)
@@ -189,6 +200,10 @@ int main(void)
 	}
 	check(paddle == 100, "paddle moved right");
 	check(quit == 1, "escape quits");
+
+	/* Releasing everything is a change too (the ON KEYDOWN release event). */
+	mmb_keydown_set(none, 0);
+	check(G.keydown_gen == gen + 1, "release bumps the generation");
 
 	printf("%s\n", fails ? "FAILURES" : "ALL OK");
 	return fails ? 1 : 0;
