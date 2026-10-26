@@ -1911,6 +1911,41 @@ def test_native_console_and_tui_mark_rects_not_whole_screen():
     assert tui.count("sdl_video_mark_dirty()") == 1
 
 
+def test_tui_glyph_marks_one_cell_not_per_pixel(tmp_path):
+    """#1379: a TUI glyph marks its cell once, not 128 pixel rects.
+
+    After #1367 the dirty list is a bounded scan, so marking per pixel made a
+    full-screen redraw pay a ~16x factor. Checked behaviourally in a host build
+    of sdl_tui.c: each glyph/scaled glyph/fill records one enclosing rect.
+    """
+    exe = os.path.join(str(tmp_path), "sdl_tui_dirty_host")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-I",
+            os.path.join(REPO, "native"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_tui_dirty_host.c"),
+            os.path.join(REPO, "native", "sdl_tui.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    out = subprocess.run([exe], check=True, capture_output=True, text=True)
+    assert "all checks passed" in out.stdout
+
+
 def test_graphics_present_is_not_per_line(mmb_linux, tmp_path):
     """#1080: drawing to the visible page must not cost a present per line.
 

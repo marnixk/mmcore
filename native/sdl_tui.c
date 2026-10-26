@@ -14,7 +14,7 @@ extern const unsigned char mmb_tnr_32x64[95 * 64 * 4];
 
 static const unsigned char *s_font = mmb_cp437_8x16;
 
-static void plot(int x, int y, uint16_t v)
+static void put_pixel(int x, int y, uint16_t v)
 {
 	uint16_t *fb;
 	int w, h;
@@ -27,10 +27,7 @@ static void plot(int x, int y, uint16_t v)
 		return;
 	fb = sdl_video_fb();
 	if (fb)
-	{
 		fb[(size_t)y * w + x] = v;
-		sdl_video_mark_dirty_rect(x, y, 1, 1);
-	}
 }
 
 static unsigned char glyph_row(unsigned ch, unsigned y)
@@ -84,9 +81,10 @@ void sdl_tui_glyph(int col, int row, unsigned ch, unsigned fg_rgb, unsigned bg_r
 		unsigned bits = glyph_row(ch, (unsigned)y);
 
 		for (x = 0; x < TUI_CW; x++)
-			plot(x0 + x, y0 + y,
-			     (bits & (0x80u >> x)) ? fg : bg);
+			put_pixel(x0 + x, y0 + y,
+				  (bits & (0x80u >> x)) ? fg : bg);
 	}
+	sdl_video_mark_dirty_rect(x0, y0, TUI_CW, TUI_CH);
 }
 
 void sdl_tui_present(int y0, int y1)
@@ -220,8 +218,10 @@ void sdl_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
 
 				if (ink_only && !on)
 					continue;
-				plot(x_px + (int)x, y0 + (int)y, on ? fg : bg);
+				put_pixel(x_px + (int)x, y0 + (int)y,
+					  on ? fg : bg);
 			}
+		sdl_video_mark_dirty_rect(x_px, y0, (int)gw, (int)gh);
 		return;
 	}
 
@@ -238,11 +238,12 @@ void sdl_tui_glyph_n_px(int x_px, int y_px, unsigned ch, unsigned fg_rgb,
 				if (ink_only && !on)
 					continue;
 				for (sx = 0; sx < (unsigned)scale; sx++)
-					plot(x_px + (int)(x * scale + sx),
-					     y0 + (int)(y * scale + sy),
-					     on ? fg : bg);
+					put_pixel(x_px + (int)(x * scale + sx),
+						  y0 + (int)(y * scale + sy),
+						  on ? fg : bg);
 			}
 	}
+	sdl_video_mark_dirty_rect(x_px, y0, TUI_CW * scale, TUI_CH * scale);
 }
 
 void sdl_tui_glyph_n(int col, int row, unsigned ch, unsigned fg_rgb,
@@ -271,5 +272,6 @@ void sdl_tui_fill_px(int x_px, int y_px, int w, int h, unsigned rgb)
 		return;
 	for (y = 0; y < h; y++)
 		for (x = 0; x < w; x++)
-			plot(x_px + x, y_px + y, fill);
+			put_pixel(x_px + x, y_px + y, fill);
+	sdl_video_mark_dirty_rect(x_px, y_px, w, h);
 }
