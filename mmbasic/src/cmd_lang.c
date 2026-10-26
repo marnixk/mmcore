@@ -383,6 +383,12 @@ void mmb_cmd_on(void)
 	}
 	v = mmb_expr();
 	n = (int)mmb_as_int(v);
+	/* The controlling value is an index into the list, not a line number.
+	 * QuickBasic accepts 0..255; 0 and anything past the last target fall
+	 * through to the next statement, while a negative or >255 value is an
+	 * error (the reference implementation checks this range first). */
+	if (n < 0 || n > 255)
+		mmb_error("?INVALID");
 	mmb_skip_sp();
 	if (mmb_match("GOSUB"))
 		gosub = 1;
@@ -394,9 +400,9 @@ void mmb_cmd_on(void)
 	target = -1;
 	for (;;)
 	{
-		mmb_val ln = mmb_expr();
+		int pc = mmb_parse_target();
 		if (i == n)
-			target = (int)mmb_as_int(ln);
+			target = pc;
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
@@ -406,11 +412,11 @@ void mmb_cmd_on(void)
 		}
 		break;
 	}
-	if (target < 0)
+	if (n == 0 || n > i)
 		return;
 	if (gosub)
 		gosub_push_return();
-	G.branch_pc = mmb_find_line_pc(target);
+	G.branch_pc = target;
 }
 
 void mmb_cmd_mid(void)
