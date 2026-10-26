@@ -414,9 +414,18 @@ typedef struct mmb_audio {
  * variable pointers bound to that console) alias another console's, freezing
  * its variables. */
 #define MMB_TC_SLOTS 256
+/* The table starts at MMB_TC_SLOTS and doubles on demand (#1369). A flat
+ * 4096-slot table would add 1 MB per console (mmb_tc_ent is 256 bytes), so a
+ * program that never needs the room keeps paying only for the inline base. */
+#define MMB_TC_MAX_SLOTS 4096
 #define MMB_TC_CODE  48
 #define MMB_TC_VARS  8
 #define MMB_TC_CONST 8
+/* Failed compiles live in a compact negative set instead of taking a full
+ * slot, so setup code that cannot be cached cannot crowd out hot statements.
+ * A negative entry is a key plus the binding generation it failed at. */
+#define MMB_TC_NEG_SLOTS 256
+#define MMB_TC_NEG_MAX_SLOTS 4096
 
 /* One SELECT CASE nesting level (#1299).  The value is owned by the frame
  * (str) when the selected expression is a string.  ``skipped`` means this
@@ -441,11 +450,22 @@ typedef struct mmb_tc_ent {
 	double c[MMB_TC_CONST];
 	int nc;
 	int8_t state;
+	/* Second-chance bit used when a full table has to evict a cold entry. */
+	uint8_t ref;
 	/* G.var_gen when this entry last failed to compile.  A later binding
 	 * change (DIM/LOCAL) makes the statement worth retrying, without any
-	 * full-cache flush (#1368). */
+	 * full-cache flush (#1368).  Failed compiles now live in the negative
+	 * set; kept here so the entry layout (and padding) does not change. */
 	unsigned fail_gen;
 } mmb_tc_ent;
+
+/* One key that failed to compile at binding generation ``fail_gen`` (#1369).
+ * The statement is not compiled again until G.var_gen changes, exactly like
+ * the old state == -1 slot, but it costs 16 bytes instead of 256. */
+typedef struct mmb_tc_neg {
+	const char *key;
+	unsigned fail_gen;
+} mmb_tc_neg;
 
 /* Program-metadata tables (#1303): labels, SUBs and CONSTs were fixed-size
  * arrays; they are heap tables that grow with the program. */
@@ -835,8 +855,18 @@ typedef struct mmb {
 	int tcap;              /* capacity of tprog, in MMB_LINE_LEN lines */
 	int tok_ready;         /* tprog holds the current program text */
 	char tline[MMB_LINE_LEN]; /* immediate-mode tokenize buffer (#1013) */
-	/* Trace cache for this instance (#1013); see mmb_tc_ent above. */
-	mmb_tc_ent tcache[MMB_TC_SLOTS];
+	/* Trace cache for this instance (#1013); see mmb_tc_ent above. The
+	 * active table is tcache_base until a program needs more slots, when it
+	 * moves to a heap table (tcache) that grows by doubling (#1369). */
+	mmb_tc_ent *tcache;
+	unsigned tcache_cap;  /* slots in the active table (power of two) */
+	unsigned tcache_used; /* occupied slots, including stale bindings */
+	unsigned tcache_hand; /* clock eviction hand for a full table */
+	mmb_tc_neg *tcneg;    /* active negative set, same inline/heap scheme */
+	unsigned tcneg_cap;
+	unsigned tcneg_used;
+	mmb_tc_ent tcache_base[MMB_TC_SLOTS];
+	mmb_tc_neg tcneg_base[MMB_TC_NEG_SLOTS];
 } mmb;
 
 /* Virtual consoles: one interpreter context per console. The active context

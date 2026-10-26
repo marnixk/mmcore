@@ -5,11 +5,16 @@
  * instance's variables, so a shared table aliased across consoles. The slot
  * struct and capacity constants are in mmb_priv.h. */
 #define TC_SLOTS MMB_TC_SLOTS
+#define TC_MAX_SLOTS MMB_TC_MAX_SLOTS
+#define TC_NEG_SLOTS MMB_TC_NEG_SLOTS
+#define TC_NEG_MAX_SLOTS MMB_TC_NEG_MAX_SLOTS
 #define TC_CODE  MMB_TC_CODE
 #define TC_VARS  MMB_TC_VARS
 #define TC_CONST MMB_TC_CONST
 #define TC_STK   8
+#define TC_PROBES 8
 #define tc_ent   mmb_tc_ent
+#define tc_neg   mmb_tc_neg
 
 enum {
 	TC_PUSHC = 1,
@@ -38,36 +43,318 @@ enum {
 #define tab (G.tcache)
 static int tc_compiling;
 
+/* Both tables start inline (tcache_base/tcneg_base) and move to a heap table
+ * only when a program fills the base. A context memset to zero (fresh console,
+ * warm reset) lazily restores the inline tables here. */
+static void tc_ensure(void)
+{
+	if (!G.tcache || !G.tcache_cap)
+	{
+		G.tcache = G.tcache_base;
+		G.tcache_cap = TC_SLOTS;
+		G.tcache_used = 0;
+		G.tcache_hand = 0;
+		memset(G.tcache_base, 0, sizeof(G.tcache_base));
+	}
+	if (!G.tcneg || !G.tcneg_cap)
+	{
+		G.tcneg = G.tcneg_base;
+		G.tcneg_cap = TC_NEG_SLOTS;
+		G.tcneg_used = 0;
+		memset(G.tcneg_base, 0, sizeof(G.tcneg_base));
+	}
+}
+
 void mmb_tcache_invalidate(void)
 {
-	memset(G.tcache, 0, sizeof(G.tcache));
+	/* Return any grown table so a large program does not pin its high-water
+	 * mark for the rest of the console's life (#1369). */
+	if (G.tcache && G.tcache != G.tcache_base && G.plat && G.plat->free)
+		G.plat->free(G.tcache);
+	G.tcache = G.tcache_base;
+	G.tcache_cap = TC_SLOTS;
+	G.tcache_used = 0;
+	G.tcache_hand = 0;
+	memset(G.tcache_base, 0, sizeof(G.tcache_base));
+
+	if (G.tcneg && G.tcneg != G.tcneg_base && G.plat && G.plat->free)
+		G.plat->free(G.tcneg);
+	G.tcneg = G.tcneg_base;
+	G.tcneg_cap = TC_NEG_SLOTS;
+	G.tcneg_used = 0;
+	memset(G.tcneg_base, 0, sizeof(G.tcneg_base));
 }
 
-static unsigned tc_hash(const char *k)
+static unsigned tc_hash(const char *k, unsigned cap)
 {
 	uintptr_t x = (uintptr_t)k;
-	return (unsigned)((x >> 4) ^ (x >> 9)) & (TC_SLOTS - 1);
+	return (unsigned)((x >> 4) ^ (x >> 9)) & (cap - 1);
 }
 
-static tc_ent *tc_lookup(const char *key, int create)
+/* Look up a compiled statement. Only entries that were fully compiled are in
+ * this table; failed compiles live in the negative set. */
+static tc_ent *tc_lookup(const char *key)
 {
-	unsigned h = tc_hash(key);
-	int n;
-	for (n = 0; n < 8; n++)
+	unsigned cap, h, n;
+	if (!G.tcache || !G.tcache_cap)
+		return 0;
+	cap = G.tcache_cap;
+	h = tc_hash(key, cap);
+	for (n = 0; n < TC_PROBES; n++)
 	{
-		tc_ent *e = &tab[(h + (unsigned)n) & (TC_SLOTS - 1)];
+		tc_ent *e = &tab[(h + n) & (cap - 1)];
 		if (e->key == key)
 			return e;
 		if (!e->key)
-		{
-			if (!create)
-				return 0;
-			e->key = key;
-			e->state = 0;
-			return e;
-		}
+			return 0;
 	}
 	return 0;
+}
+
+/* Remove one compiled entry and close the linear-probe hole so entries stored
+ * after it stay reachable. A stale binding (LOCAL exit, DIM) is dropped this
+ * way rather than by leaking an unreachable slot (#1368, #1369). */
+static void tc_remove(tc_ent *victim)
+{
+	unsigned cap = G.tcache_cap, mask = cap - 1;
+	unsigned i = (unsigned)(victim - G.tcache);
+	unsigned j = i;
+
+	/* Zero first: a full table has no other hole, and the shift loop needs
+	 * one to terminate. */
+	G.tcache[i].key = 0;
+	for (;;)
+	{
+		tc_ent *e;
+		unsigned home, di, dj;
+		j = (j + 1) & mask;
+		e = &G.tcache[j];
+		if (!e->key)
+			break;
+		home = tc_hash(e->key, cap);
+		di = (i - home) & mask;
+		dj = (j - home) & mask;
+		if (di <= dj)
+		{
+			G.tcache[i] = *e;
+			i = j;
+		}
+	}
+	memset(&G.tcache[i], 0, sizeof(G.tcache[i]));
+	if (G.tcache_used)
+		G.tcache_used--;
+}
+
+static int tc_grow(void)
+{
+	unsigned cap = G.tcache_cap, ncap, i, k, mask;
+	unsigned used = 0;
+	tc_ent *nt;
+
+	if (cap >= TC_MAX_SLOTS || !G.plat || !G.plat->alloc)
+		return 0;
+	ncap = cap * 2;
+	if (ncap > TC_MAX_SLOTS)
+		ncap = TC_MAX_SLOTS;
+	nt = (tc_ent *)G.plat->alloc(ncap * sizeof(*nt));
+	if (!nt)
+		return 0;
+	memset(nt, 0, ncap * sizeof(*nt));
+	mask = ncap - 1;
+	for (i = 0; i < cap; i++)
+	{
+		tc_ent *old = &tab[i];
+		unsigned h;
+		if (!old->key)
+			continue;
+		h = tc_hash(old->key, ncap);
+		/* Keep the invariant that every stored key is reachable within
+		 * TC_PROBES lookups. A rare key that would land further out is
+		 * dropped and simply recompiled when it next runs. */
+		for (k = 0; k < TC_PROBES; k++)
+		{
+			tc_ent *dst = &nt[(h + k) & mask];
+			if (!dst->key)
+			{
+				*dst = *old;
+				used++;
+				break;
+			}
+		}
+	}
+	if (G.tcache != G.tcache_base && G.plat->free)
+		G.plat->free(G.tcache);
+	G.tcache = nt;
+	G.tcache_cap = ncap;
+	G.tcache_used = used;
+	return 1;
+}
+
+/* Pick a victim inside the new key's probe window so the replacement stays
+ * reachable from its own hash. Second chance clears the window's reference
+ * bits before wrapping. Only a table already at TC_MAX_SLOTS gets here. */
+static tc_ent *tc_evict(unsigned h)
+{
+	unsigned cap = G.tcache_cap, mask = cap - 1, n;
+	for (n = 0; n < TC_PROBES; n++)
+	{
+		tc_ent *e = &tab[(h + n) & mask];
+		if (!e->key || !e->ref)
+			return e;
+	}
+	for (n = 0; n < TC_PROBES; n++)
+		tab[(h + n) & mask].ref = 0;
+	return &tab[h & mask];
+}
+
+/* Find or reserve a slot for a compiled statement, growing the table when its
+ * probe window is full and there is room, otherwise evicting a cold entry. */
+static tc_ent *tc_insert(const char *key)
+{
+	for (;;)
+	{
+		unsigned cap = G.tcache_cap, mask = cap - 1;
+		unsigned h = tc_hash(key, cap), n;
+		tc_ent *e;
+
+		for (n = 0; n < TC_PROBES; n++)
+		{
+			e = &tab[(h + n) & mask];
+			if (e->key == key)
+				return e;
+			if (!e->key)
+			{
+				memset(e, 0, sizeof(*e));
+				e->key = key;
+				e->state = 0;
+				e->ref = 1;
+				G.tcache_used++;
+				if (G.tcache_cap < TC_MAX_SLOTS &&
+				    G.tcache_used * 4 >= G.tcache_cap * 3 &&
+				    tc_grow())
+					return tc_lookup(key); /* table moved */
+				return e;
+			}
+		}
+		if (G.tcache_cap < TC_MAX_SLOTS && tc_grow())
+			continue;
+		e = tc_evict(h);
+		memset(e, 0, sizeof(*e));
+		e->key = key;
+		e->state = 0;
+		e->ref = 1;
+		return e;
+	}
+}
+
+/* Failed compiles: a compact open-addressed set keyed by the same statement
+ * pointer. A retry happens only when G.var_gen changes, matching the old
+ * state == -1 slot's fail_gen check (#1368), without consuming 256 bytes. */
+static tc_neg *tcneg_find(const char *key)
+{
+	unsigned cap, h, n;
+	if (!G.tcneg || !G.tcneg_cap)
+		return 0;
+	cap = G.tcneg_cap;
+	h = tc_hash(key, cap);
+	for (n = 0; n < TC_PROBES; n++)
+	{
+		tc_neg *e = &G.tcneg[(h + n) & (cap - 1)];
+		if (e->key == key)
+			return e;
+		if (!e->key)
+			return 0;
+	}
+	return 0;
+}
+
+static int tcneg_grow(void)
+{
+	unsigned cap = G.tcneg_cap, ncap, i, k, mask;
+	unsigned used = 0;
+	tc_neg *nt;
+
+	if (cap >= TC_NEG_MAX_SLOTS || !G.plat || !G.plat->alloc)
+		return 0;
+	ncap = cap * 2;
+	if (ncap > TC_NEG_MAX_SLOTS)
+		ncap = TC_NEG_MAX_SLOTS;
+	nt = (tc_neg *)G.plat->alloc(ncap * sizeof(*nt));
+	if (!nt)
+		return 0;
+	memset(nt, 0, ncap * sizeof(*nt));
+	mask = ncap - 1;
+	for (i = 0; i < cap; i++)
+	{
+		tc_neg *old = &G.tcneg[i];
+		unsigned h;
+		if (!old->key)
+			continue;
+		h = tc_hash(old->key, ncap);
+		for (k = 0; k < TC_PROBES; k++)
+		{
+			tc_neg *dst = &nt[(h + k) & mask];
+			if (!dst->key)
+			{
+				*dst = *old;
+				used++;
+				break;
+			}
+		}
+	}
+	if (G.tcneg != G.tcneg_base && G.plat->free)
+		G.plat->free(G.tcneg);
+	G.tcneg = nt;
+	G.tcneg_cap = ncap;
+	G.tcneg_used = used;
+	return 1;
+}
+
+static void tcneg_add(const char *key, unsigned gen)
+{
+	for (;;)
+	{
+		unsigned cap = G.tcneg_cap, mask = cap - 1;
+		unsigned h = tc_hash(key, cap), n;
+		tc_neg *e;
+
+		for (n = 0; n < TC_PROBES; n++)
+		{
+			e = &G.tcneg[(h + n) & mask];
+			if (e->key == key)
+			{
+				e->fail_gen = gen;
+				return;
+			}
+			if (!e->key)
+			{
+				e->key = key;
+				e->fail_gen = gen;
+				G.tcneg_used++;
+				if (G.tcneg_cap < TC_NEG_MAX_SLOTS &&
+				    G.tcneg_used * 4 >= G.tcneg_cap * 3)
+					tcneg_grow();
+				return;
+			}
+		}
+		if (G.tcneg_cap < TC_NEG_MAX_SLOTS && tcneg_grow())
+			continue;
+		/* At capacity: prefer dropping a statement that failed under an
+		 * older binding set, whose retry is already due. */
+		e = &G.tcneg[h & mask];
+		for (n = 0; n < TC_PROBES; n++)
+		{
+			tc_neg *cand = &G.tcneg[(h + n) & mask];
+			if (cand->key && cand->fail_gen != G.var_gen)
+			{
+				e = cand;
+				break;
+			}
+		}
+		e->key = key;
+		e->fail_gen = gen;
+		return;
+	}
 }
 
 static int tc_emit(tc_ent *e, uint8_t op)
@@ -828,63 +1115,58 @@ static int tc_try(int is_if)
 	const char *save;
 	tc_ent *e;
 	tc_ent tmp;
+	tc_neg *neg;
+	int ok;
+
 	if (!G.running || !G.opt.tracecache || tc_compiling)
 		return 0;
+	tc_ensure();
 	key = G.p;
-	e = tc_lookup(key, 1);
-	if (!e)
-		return 0;
-	if (e->state < 0)
+	e = tc_lookup(key);
+	if (e)
 	{
-		/* A statement that failed to compile may become compilable once
-		 * the binding set changes (a later DIM).  Retry only then, so the
-		 * old wholesale DIM flush is not needed (#1368). */
-		if (e->fail_gen == G.var_gen)
-			return 0;
-		e->state = 0;
-	}
-	if (e->state > 0)
-	{
-		if (!tc_entry_valid(e))
-			e->state = 0; /* stale binding: recompile below */
-		else
+		if (e->state > 0 && tc_entry_valid(e))
 		{
+			e->ref = 1;
 			if (G.opt.profiling)
 				G.prof.tcache_hit++;
 			return tc_replay(e);
 		}
+		/* Stale binding: drop the entry so the recompile below cannot be
+		 * shadowed by a pointer that was freed and reused (#1368). */
+		tc_remove(e);
+	}
+	neg = tcneg_find(key);
+	if (neg && neg->fail_gen == G.var_gen)
+	{
+		/* Known-bad for this binding set: do not retry on every run. */
+		return 0;
 	}
 	save = G.p;
 	memset(&tmp, 0, sizeof(tmp));
 	tmp.key = key;
 	tc_compiling = 1;
 	if (is_if)
+		ok = tc_compile_if(&tmp) && tc_emit(&tmp, TC_END);
+	else
+		ok = tc_compile_let_from_lhs(&tmp) && tc_emit(&tmp, TC_END);
+	tc_compiling = 0;
+	if (!ok)
 	{
-		if (!tc_compile_if(&tmp) || !tc_emit(&tmp, TC_END))
-		{
-			tc_compiling = 0;
-			G.p = save;
-			e->state = -1;
-			e->fail_gen = G.var_gen;
-			if (G.opt.profiling)
-				G.prof.tcache_bad++;
-			return 0;
-		}
-	}
-	else if (!tc_compile_let_from_lhs(&tmp) || !tc_emit(&tmp, TC_END))
-	{
-		tc_compiling = 0;
 		G.p = save;
-		e->state = -1;
-		e->fail_gen = G.var_gen;
+		tcneg_add(key, G.var_gen);
 		if (G.opt.profiling)
 			G.prof.tcache_bad++;
 		return 0;
 	}
-	tc_compiling = 0;
 	tmp.endp = G.p;
 	tmp.state = 1;
-	*e = tmp;
+	tmp.ref = 1;
+	e = tc_insert(key);
+	if (e)
+		*e = tmp;
+	else
+		e = &tmp;
 	G.p = save;
 	if (G.opt.profiling)
 		G.prof.tcache_comp++;
