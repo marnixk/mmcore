@@ -150,3 +150,43 @@ def test_help_control_gaps(console):
         out = dump_topic(console, topic)
         assert out != "?SYNTAX ERROR"
         assert topic in out
+
+
+def test_keyword_colon_wend_still_pairs(console):
+    """#1341: ``WEND : ...`` is a WEND, not a label, so the WHILE pairs."""
+    assert console.send_line("NEW") == ""
+    for line in (
+        "10 I = 0",
+        "20 WHILE I < 3",
+        "30 I = I + 1",
+        "40 WEND : X = 1",
+        "50 PRINT I",
+    ):
+        assert console.send_line(line) == "", line
+    out = console.send_line("RUN", timeout=8.0)
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["3"], out
+
+
+def test_immediate_for_then_colon_line_runs_all_statements(console):
+    """#1374: an immediate same-line FOR must finish before the next line;
+    it must not leave a pending loop-back that truncates that line after its
+    first colon-separated statement."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("FOR I=0 TO 2: NEXT") == ""
+    assert console.send_line("PRINT I") == "3"
+    assert console.send_line("X=5: Y=6") == ""
+    assert console.send_line('PRINT X;" ";Y') == "5 6"
+
+    assert console.send_line("DIM A(3)") == ""
+    assert console.send_line("FOR I=0 TO 2: NEXT") == ""
+    assert console.send_line("A(0)=5: A(1)=6") == ""
+    assert console.send_line('PRINT A(0);" ";A(1)') == "5 6"
+
+    # The same pending-loop cleanup applies when NEXT is entered on its own
+    # immediate line.
+    assert console.send_line("NEW") == ""
+    assert console.send_line("FOR I=1 TO 3") == ""
+    assert console.send_line("NEXT I") == ""
+    assert console.send_line("X=5: Y=6") == ""
+    assert console.send_line('PRINT X;" ";Y') == "5 6"
