@@ -219,6 +219,30 @@ def test_local_array_shadow_in_hot_loop_keeps_global(console):
     assert console.send_line("RUN") == "10"
 
 
+def test_local_fresh_with_many_globals(console):
+    """#1328: a fresh LOCAL still binds and restores correctly when the table
+    already holds hundreds of globals (which used to slow LOCAL linearly)."""
+    assert console.send_line("NEW") == ""
+    names = [f"GV{i}" for i in range(1, 401)]
+    for i in range(0, len(names), 8):
+        assert console.send_line("DIM INTEGER " + ", ".join(names[i : i + 8])) == ""
+    assert console.send_line("DIM INTEGER TOTAL, G") == ""
+    assert console.send_line("10 SUB PICK") == ""
+    assert console.send_line("20 LOCAL Q, G") == ""
+    assert console.send_line("30 Q = Q + 1") == ""
+    assert console.send_line("40 G = G + 100") == ""
+    assert console.send_line("50 TOTAL = TOTAL + Q") == ""
+    assert console.send_line("60 END SUB") == ""
+    assert console.send_line("100 G = 7 : GV400 = 400") == ""
+    assert console.send_line("110 FOR I = 1 TO 3 : PICK : NEXT I") == ""
+    assert console.send_line("120 PRINT TOTAL") == ""
+    assert console.send_line("130 PRINT G") == ""
+    assert console.send_line("140 PRINT GV400") == ""
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert lines == ["3", "7", "400"], out
+
+
 def test_error_in_sub_restores_caller_local(console):
     """#692: a trapped error unwinds the SUB frame, so the caller's LOCAL
     binding comes back before the ON ERROR handler runs."""

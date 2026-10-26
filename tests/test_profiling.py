@@ -216,6 +216,43 @@ def test_local_does_not_flush_trace_cache_1368(console):
     assert local["findvar"] <= plain["findvar"]
 
 
+def _many_globals_lines(count: int) -> list[str]:
+    names = [f"GV{i}" for i in range(1, count + 1)]
+    return [
+        "DIM INTEGER " + ", ".join(names[i : i + 8])
+        for i in range(0, len(names), 8)
+    ]
+
+
+def test_local_many_globals_does_not_recompile_1328(console):
+    """#1328: with many globals, a SUB with LOCALs must not recompile its body
+    on every call.  The old linear variable-table scans forced a trace-cache
+    miss per call; the binding generations now survive a fresh LOCAL return."""
+    lines = _many_globals_lines(400) + [
+        "DIM INTEGER TOTAL",
+        "SUB HELPER(X)",
+        "  LOCAL Z, W",
+        "  Z = X * 2",
+        "  W = Z + 1",
+        "  TOTAL = TOTAL + W",
+        "END SUB",
+        "FOR I = 1 TO 300",
+        "  HELPER I",
+        "NEXT I",
+        "PRINT TOTAL",
+    ]
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    _write_bas(console, "TCG.BAS", lines)
+    assert console.send_line("OPTION PROFILING ON") == ""
+    out = console.send_line('RUN "TCG.BAS"', timeout=30)
+    # 2*sum(1..300) + 300 = 90600
+    assert "90600" in out, out
+    p = parse_perf(out)
+    assert p["statements"] >= 600, p
+    assert p["tcache_hit"] > 500, p
+    assert p["tcache_comp"] < 60, p
+
+
 def test_tracecache_chain_invalidates(console):
     """#1007: CHAIN re-tokenizes the next program, so the trace cache must be
     dropped too. Otherwise a compiled entry from the previous program is
