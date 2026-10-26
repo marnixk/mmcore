@@ -183,6 +183,42 @@ def test_local_in_loop_resets_between_calls(console):
     assert console.send_line("RUN") == "3\n3"
 
 
+def test_local_shadow_in_hot_loop_keeps_global_value(console):
+    """#1368: a cached LET in the caller must not replay against the LOCAL
+    slot while a callee shadows the same name, and the global must return."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    assert console.send_line("10 SUB SHADOW") == ""
+    assert console.send_line("20 LOCAL X") == ""
+    assert console.send_line("30 X = 100") == ""
+    assert console.send_line("40 END SUB") == ""
+    assert console.send_line("50 X = 5") == ""
+    assert console.send_line("60 FOR I = 1 TO 5") == ""
+    assert console.send_line("70 X = X + 1") == ""
+    assert console.send_line("80 SHADOW") == ""
+    assert console.send_line("90 NEXT I") == ""
+    assert console.send_line("100 PRINT X") == ""
+    assert console.send_line("RUN") == "10"
+
+
+def test_local_array_shadow_in_hot_loop_keeps_global(console):
+    """#1368: the same slot-generation rule protects a cached array access."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    assert console.send_line("10 DIM A(2)") == ""
+    assert console.send_line("20 A(1) = 7") == ""
+    assert console.send_line("30 SUB SHADOW") == ""
+    assert console.send_line("40 LOCAL A(3)") == ""
+    assert console.send_line("50 A(1) = 99") == ""
+    assert console.send_line("60 END SUB") == ""
+    assert console.send_line("70 FOR I = 1 TO 3") == ""
+    assert console.send_line("80 A(1) = A(1) + 1") == ""
+    assert console.send_line("90 SHADOW") == ""
+    assert console.send_line("100 NEXT I") == ""
+    assert console.send_line("110 PRINT A(1)") == ""
+    assert console.send_line("RUN") == "10"
+
+
 def test_error_in_sub_restores_caller_local(console):
     """#692: a trapped error unwinds the SUB frame, so the caller's LOCAL
     binding comes back before the ON ERROR handler runs."""
