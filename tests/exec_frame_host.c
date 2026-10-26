@@ -78,6 +78,23 @@ static void nested_set_p_body(void *arg)
 	mmb_nested_set_p("after-args");
 }
 
+/* A self-contained island that closes caller frames (the unbalanced
+ * LOOP/NEXT case) and asks for a branch.  mmb_nested_pop_exact() must put the
+ * caller's depths back, unlike the shrink-only SUB/event pop. */
+static void nested_island_body(void *arg)
+{
+	(void)arg;
+	G.run_pc = 999;
+	G.branch_pc = 42;
+	G.branch_pos = "island-pos";
+	G.p = "island-p";
+	G.if_depth = 0;
+	G.if_shadow = 9;
+	G.sel_sp = 0;
+	G.ctrl_sp = 1;
+	G.for_sp = 0;
+}
+
 static jmp_buf unwind_jmp;
 
 static void nested_unwind_inner(void *arg)
@@ -404,6 +421,73 @@ int main(void)
 	CHECK(G.for_sp == 3);
 	CHECK(G.loop_seq == 20);
 	CHECK(G.dim_local == 5);
+
+	/* EXECUTE island: an exact pop discards even a body that closed caller
+	 * loop frames, so the post-call invariant is the pre-call snapshot. */
+	G.run_pc = 10;
+	G.branch_pc = -1;
+	G.branch_pos = 0;
+	G.p = "caller-p";
+	G.if_depth = 2;
+	G.if_stack[0] = 4;
+	G.if_stack[1] = 5;
+	G.if_pc_stack[0] = 100;
+	G.if_pc_stack[1] = 200;
+	G.if_shadow = 3;
+	G.sel_sp = 2;
+	G.sel_base = 0;
+	G.ctrl_sp = 4;
+	G.for_sp = 3;
+	G.loop_seq = 20;
+	G.dim_local = 5;
+	G.nested_depth = 0;
+	mmb_nested_push();
+	CHECK(G.nested_depth == 1);
+	CHECK(G.if_depth == 0);
+	CHECK(G.sel_base == G.sel_sp);
+	{
+		const mmb_exec_frame *top = mmb_nested_top();
+		CHECK(top != 0);
+		CHECK(top->if_depth == 2);
+		CHECK(top->ctrl_sp == 4);
+		CHECK(top->for_sp == 3);
+	}
+	nested_island_body(0);
+	mmb_nested_pop_exact();
+	CHECK(G.nested_depth == 0);
+	CHECK(G.run_pc == 10);
+	CHECK(G.branch_pc == -1);
+	CHECK(G.branch_pos == 0);
+	CHECK(G.p && strcmp(G.p, "caller-p") == 0);
+	CHECK(G.if_depth == 2);
+	CHECK(G.if_stack[0] == 4 && G.if_stack[1] == 5);
+	CHECK(G.if_pc_stack[0] == 100 && G.if_pc_stack[1] == 200);
+	CHECK(G.if_shadow == 3);
+	CHECK(G.sel_sp == 2);
+	CHECK(G.sel_base == 0);
+	CHECK(G.ctrl_sp == 4);
+	CHECK(G.for_sp == 3);
+	CHECK(G.loop_seq == 20);
+	CHECK(G.dim_local == 5);
+
+	/* A drop keeps what the body installed (RETURN inside EXECUTE) while
+	 * still releasing the arena mark and clearing nested_depth. */
+	G.branch_pc = -1;
+	G.p = "caller-p";
+	G.nested_depth = 0;
+	{
+		int releases = release_calls;
+
+		mmb_nested_push();
+		nested_island_body(0);
+		mmb_nested_drop();
+		CHECK(G.nested_depth == 0);
+		CHECK(release_calls == releases + 1);
+	}
+	CHECK(G.branch_pc == 42);
+	CHECK(G.if_depth == 0);
+	CHECK(G.ctrl_sp == 1);
+	CHECK(G.for_sp == 0);
 
 	free(m);
 	printf("exec_frame: all checks passed\n");

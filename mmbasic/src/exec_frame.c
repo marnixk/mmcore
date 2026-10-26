@@ -192,16 +192,61 @@ mmb_arena_save *mmb_nested_arena(void)
 	return &G.nested_frame[G.nested_depth - 1].arena;
 }
 
-void mmb_run_nested(void (*body)(void *), void *arg, enum mmb_nested_kind kind)
+/* Push a frame without committing to the restore-always policy of
+ * mmb_run_nested().  EXECUTE needs to inspect what the body asked for (a
+ * branch, a RETURN, END) before choosing between restore and drop, so it
+ * drives the same push/enter primitives directly. */
+void mmb_nested_push(void)
 {
 	int depth = G.nested_depth;
 
-	(void)kind;
 	if (depth >= MMB_MAX_NESTED)
 		mmb_error("?NESTING");
 	mmb_frame_capture(&G.nested_frame[depth]);
 	G.nested_depth = depth + 1;
 	mmb_frame_enter();
+}
+
+/* The frame captured for the body that is currently running. */
+mmb_exec_frame *mmb_nested_top(void)
+{
+	if (G.nested_depth <= 0)
+		return 0;
+	return &G.nested_frame[G.nested_depth - 1];
+}
+
+/* Pop a self-contained island and restore the caller exactly.  Unlike the
+ * shrink-only pop used by SUB/event entries, this puts the DO/FOR depths back
+ * even if the body closed a caller frame with a stray LOOP/NEXT. */
+void mmb_nested_pop_exact(void)
+{
+	mmb_exec_frame *f;
+
+	if (G.nested_depth <= 0)
+		return;
+	G.nested_depth--;
+	f = &G.nested_frame[G.nested_depth];
+	mmb_frame_restore(f);
+}
+
+/* Pop without restoring control flow: the body already restored the relevant
+ * state itself (RETURN inside EXECUTE).  The arena watermark is still
+ * released so dynamic temporaries do not accumulate. */
+void mmb_nested_drop(void)
+{
+	mmb_exec_frame *f;
+
+	if (G.nested_depth <= 0)
+		return;
+	G.nested_depth--;
+	f = &G.nested_frame[G.nested_depth];
+	mmb_arena_release(&f->arena);
+}
+
+void mmb_run_nested(void (*body)(void *), void *arg, enum mmb_nested_kind kind)
+{
+	(void)kind;
+	mmb_nested_push();
 	body(arg);
 	nested_pop();
 }
