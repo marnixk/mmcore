@@ -920,6 +920,33 @@ static void subs_grow(void)
 	G.subs_cap = cap * 2;
 }
 
+/* #1335: a SUB/FUNCTION parameter whose name matches a global CONST can never
+ * be bound - expressions and the argument store resolve the CONST first - and
+ * it used to fail only at the call site with a bare ?CONST that named nothing.
+ * Report the parameter and its SUB instead. CONSTs are cleared before RUN and
+ * scan_subs() prescans before any CONST line executes, so this also runs when
+ * the definition line executes (and again at the call) to catch CONSTs that
+ * were defined after the prescan. */
+static void check_param_consts(int si)
+{
+	int i;
+	char msg[MMB_MAX_NAME * 2 + 48];
+	if (G.nconst <= 0)
+		return;
+	for (i = 0; i < G.subs[si].nargs; i++)
+	{
+		mmb_val cv;
+		if (G.subs[si].arg_sid[i] >= 0)
+			continue;
+		if (mmb_const_lookup(G.subs[si].args[i], 0, &cv))
+		{
+			snprintf(msg, sizeof(msg), "?CONST %s used as parameter of %s",
+				 G.subs[si].args[i], G.subs[si].name);
+			mmb_error(msg);
+		}
+	}
+}
+
 static void sub_register(const char *name, int pc, int is_func, int ret_type)
 {
 	int i, slot;
@@ -948,7 +975,12 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 		 * is a conflict (#1304): the second one would silently never
 		 * bind. */
 		if (G.subs[ex].line_pc == pc)
+		{
+			/* A CONST defined at runtime before this line may collide
+			 * with a parameter that prescan could not see (#1335). */
+			check_param_consts(ex);
 			return;
+		}
 		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is already a %s", nbuf,
 			 G.subs[ex].is_func ? "FUNCTION" : "SUB");
 		mmb_error(msg);
@@ -1032,6 +1064,7 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 			}
 		}
 	}
+	check_param_consts(slot);
 	G.nsubs++;
 }
 
@@ -2194,6 +2227,10 @@ int mmb_call_named_sub(const char *name)
 	si = sub_find(base);
 	if (si < 0)
 		return 0;
+	/* A CONST defined after the prescan (or after the definition line) still
+	 * collides when the call binds the parameter; name it here instead of
+	 * letting mmb_do_assign raise a bare ?CONST at the caller (#1335). */
+	check_param_consts(si);
 	mmb_skip_sp();
 	if (*G.p == '(')
 	{

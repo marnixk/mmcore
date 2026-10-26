@@ -567,7 +567,32 @@ static mmb_var *try_struct_path(char *nbuf, int nidx, int *idx)
  * them as parameter names (mmcore-apps tetris `sub gm.rotate(dir)`, sudoku
  * `local i, y, draw`, syntaxshock `local near_x, far_x, color`). Suffixed
  * names (grey%, name$) are exempt: the suffix makes them unambiguous to the
- * tokeniser and expression parser. */
+ * tokeniser and expression parser.
+ *
+ * Commands that end the interpreter (QUIT, END, STOP, REBOOT, RESTART,
+ * SHUTDOWN) are also rejected: a bare assignment to such a name is dispatched
+ * as the command before it can reach the variable table (#1334). */
+/* #1334: commands that terminate or restart the interpreter are dispatched
+ * before an assignment is even recognised, so a variable declared with one of
+ * these names silently runs the command when it is later assigned:
+ *
+ *     LOCAL quit : quit = 0     ' exits without a message
+ *
+ * Only this terminating set is reserved here. Command-only keywords that do
+ * not end the session (DIR, DRAW, COLOR, ...) stay usable as names; real apps
+ * pass them as parameters (#1304). */
+static int is_terminating_command(const char *nbuf)
+{
+	static const char *const names[] = {
+		"QUIT", "END", "STOP", "REBOOT", "RESTART", "SHUTDOWN", 0
+	};
+	int i;
+	for (i = 0; names[i]; i++)
+		if (strcmp(nbuf, names[i]) == 0)
+			return 1;
+	return 0;
+}
+
 void mmb_check_user_name(const char *name)
 {
 	char nbuf[MMB_MAX_NAME];
@@ -590,6 +615,11 @@ void mmb_check_user_name(const char *name)
 	if (ok)
 	{
 		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is a built-in constant", nbuf);
+		mmb_error(msg);
+	}
+	if (is_terminating_command(nbuf))
+	{
+		snprintf(msg, sizeof(msg), "?NAME CONFLICT: %s is a reserved command", nbuf);
 		mmb_error(msg);
 	}
 }
