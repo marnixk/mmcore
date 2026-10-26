@@ -538,6 +538,7 @@ typedef struct mmb {
 	mmb_val func_ret;
 	int branch_pc;         /* GOTO/GOSUB/RETURN/loop control */
 	const char *branch_pos;/* mid-line resume at branch_pc, else NULL (#1004) */
+	const char *stmt_start;/* token start of the statement being executed */
 	int run_pc;            /* current program line index */
 	int on_error_pc;       /* ON ERROR GOTO target, -1 when inactive */
 	int error_active;      /* handling a trapped runtime error */
@@ -557,6 +558,14 @@ typedef struct mmb {
 		int line_pc;
 		int skip;          /* skip statements on this line */
 		int endif_pc;      /* for if/select */
+		/* A DO that does not start its line resumes at its own statement
+		 * on loop-back, and carries the matching LOOP location so EXIT /
+		 * CONTINUE DO work without a line-granular jump entry (#1329). */
+		int mid_line;
+		const char *pos;        /* DO statement pointer, loop-back resume */
+		int loop_pc;            /* matching LOOP line, -1 when unknown */
+		const char *loop_pos;   /* matching LOOP statement, else NULL */
+		const char *after_loop; /* statement after that LOOP, else NULL */
 		int if_depth;      /* block IF depth when the loop was entered (#1273) */
 		int sel_depth;     /* SELECT depth when the loop was entered (#1299) */
 		int seq;           /* creation order across FOR/DO/WHILE (#1300) */
