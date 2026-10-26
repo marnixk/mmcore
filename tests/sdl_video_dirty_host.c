@@ -1,6 +1,6 @@
 /*
  * Host test for native/sdl_video.c dirty-rectangle presentation and present
- * pacing (#1080, #1367).
+ * pacing (#1080, #1367, #1380).
  *
  * A graphics-heavy program changes only a small part of the screen between
  * presents. sdl_video_present() must convert and upload a small list of
@@ -10,12 +10,18 @@
  * clock (the old 16 ms limiter plus 17 ms frame wait) and no catch-up burst
  * after a stall.
  *
+ * #1380 splits the present by platform: software/KMS scanout waits for that
+ * grid boundary before the copy (anti-tear, up to one frame of jitter) while
+ * an accelerated/composited renderer presents without waiting. A fake clock
+ * proves both branches deterministically, without a real panel.
+ *
  * Runs headless under SDL_VIDEODRIVER=dummy.
  */
 #include "sdl_video.h"
 
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Stand-ins for the generated branding array the real build links. */
 const unsigned char mmcore_icon[4] = {0, 0, 255, 255};
@@ -157,10 +163,120 @@ static void check_present_pacing(void)
 	      "no catch-up burst after a stall");
 }
 
+static unsigned long long fake_now_us;
+static int fake_sleeps;
+static unsigned long long fake_slept_us;
+
+static unsigned long long fake_clock(void)
+{
+	return fake_now_us;
+}
+
+static void fake_sleep(unsigned long long us)
+{
+	fake_sleeps++;
+	fake_slept_us += us;
+	fake_now_us += us;
+}
+
+/* #1380: prove the platform split on a fake clock. An aligned present waits
+ * for the single display-grid boundary, at most one frame; an accelerated
+ * present returns without waiting. Both keep the one-period cadence and neither
+ * accumulates a catch-up backlog after a stall. */
+static void check_present_alignment(void)
+{
+	unsigned long long period = sdl_video_frame_period_us();
+	unsigned long long start, next_draw, last = 0, min_gap = ~0ull;
+	unsigned long long max_gap = 0, before, stalled;
+	int presents = 0, first = 1;
+
+	sdl_video_set_present_clock(fake_clock, fake_sleep);
+
+	/* Accelerated/composited: the compositor does the vblank, so the
+	 * present must not block the interpreter. */
+	sdl_video_set_present_align(0);
+	fake_now_us = 4000000;
+	sdl_video_present_now(); /* re-anchor the grid */
+	sdl_video_mark_dirty_rect(1, 1, 2, 2);
+	fake_sleeps = 0;
+	fake_slept_us = 0;
+	before = fake_now_us;
+	sdl_video_present();
+	CHECK(sdl_video_dirty_count() == 0, "accelerated present runs");
+	CHECK(fake_now_us == before, "accelerated present does not wait");
+	CHECK(fake_sleeps == 0, "accelerated present never sleeps");
+
+	/* Software/KMS: every paced present lands on a grid boundary, so the
+	 * scanout copy starts at the top of a display frame. */
+	sdl_video_set_present_align(1);
+	fake_now_us = 5000000;
+	sdl_video_present_now();
+	start = fake_now_us;
+	next_draw = fake_now_us;
+	fake_sleeps = 0;
+	fake_slept_us = 0;
+	sdl_video_mark_dirty_rect(1, 1, 2, 2);
+	while (fake_now_us < start + 2000000ull)
+	{
+		if (fake_now_us >= next_draw)
+		{
+			sdl_video_mark_dirty_rect(1, 1, 2, 2);
+			next_draw += 16000;
+		}
+		sdl_video_present();
+		if (sdl_video_dirty_count() == 0)
+		{
+			if (!first)
+			{
+				unsigned long long gap = fake_now_us - last;
+
+				if (gap < min_gap)
+					min_gap = gap;
+				if (gap > max_gap)
+					max_gap = gap;
+			}
+			first = 0;
+			last = fake_now_us;
+			presents++;
+		}
+		else
+			fake_now_us += 500;
+	}
+	CHECK(presents >= 118 && presents <= 121,
+	      "aligned: one present per display frame");
+	CHECK(min_gap >= period - 1, "aligned: presents are one period apart");
+	CHECK(max_gap <= period + 500, "aligned: no dropped-frame stutter");
+	CHECK(fake_sleeps == presents, "aligned: every present waits");
+	CHECK(fake_slept_us <= (unsigned long long)presents * period,
+	      "aligned: each wait is at most one frame");
+
+	/* A stall resyncs to now and waits at most one frame; it must not fire
+	 * a backlog of catch-up presents. */
+	fake_now_us += 10 * period;
+	sdl_video_mark_dirty_rect(1, 1, 2, 2);
+	stalled = fake_now_us;
+	sdl_video_present();
+	CHECK(sdl_video_dirty_count() == 0, "stalled aligned present fires once");
+	CHECK(fake_now_us - stalled <= period,
+	      "stalled aligned wait is at most one frame");
+	sdl_video_mark_dirty_rect(1, 1, 2, 2);
+	before = fake_now_us;
+	sdl_video_present();
+	CHECK(fake_now_us - before >= period - 1,
+	      "no catch-up burst after a stall");
+	CHECK(sdl_video_dirty_count() == 0, "next boundary consumes the rect");
+
+	sdl_video_set_present_clock(NULL, NULL);
+	sdl_video_set_present_align(0);
+}
+
 int main(void)
 {
 	int i;
 
+	/* The dummy driver exposes a software renderer; with no override the
+	 * detected policy must align the scanout copy. */
+	unsetenv("MMB_SDL_ALIGN_PRESENT");
 	if (!sdl_video_open(640, 480))
 	{
 		fprintf(stderr, "FAIL sdl_video_open: %s\n", SDL_GetError());
@@ -170,6 +286,12 @@ int main(void)
 	/* #1367: the backend no longer relies on a blocking swap for pacing. */
 	CHECK(sdl_video_present_is_vsynced() == 0,
 	      "pacing is explicit, not renderer vsync");
+	/* #1380: a software renderer is a scanout path, so it aligns. */
+	CHECK(sdl_video_present_aligns() == 1,
+	      "software renderer aligns by default");
+	/* The real-clock dirty-rect checks below must not sleep; the aligned
+	 * path is exercised deterministically at the end. */
+	sdl_video_set_present_align(0);
 
 	/* A fresh open marks the whole framebuffer dirty as one rect. */
 	CHECK(sdl_video_dirty_count() == 1, "open marks one rect");
@@ -243,6 +365,7 @@ int main(void)
 	CHECK(sdl_video_dirty_count() == 0, "boundary consumes the rect");
 
 	check_present_pacing();
+	check_present_alignment();
 
 	sdl_video_close();
 
