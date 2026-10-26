@@ -285,6 +285,33 @@ void mmb_cmd_on(void)
 		G.error_skip = 0;
 		return;
 	}
+	if (mmb_match("KEYDOWN"))
+	{
+		/* ON KEYDOWN sub fires when the KEYDOWN() held set changes, press
+		 * or release. It is independent of the INKEY$ queue; the handler
+		 * reads KEYDOWN() itself. Bare ON KEYDOWN (or 0) clears it. */
+		mmb_skip_sp();
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+		{
+			G.on_keydown[0] = 0;
+			return;
+		}
+		if ((*G.p >= '0' && *G.p <= '9') || *G.p == '-' || *G.p == '+' ||
+		    *G.p == '.' || *G.p == '(')
+		{
+			if (mmb_as_int(mmb_expr()) != 0)
+				mmb_syntax();
+			G.on_keydown[0] = 0;
+			return;
+		}
+		on_named_sub(G.on_keydown, sizeof(G.on_keydown));
+		if (!G.on_keydown[0])
+			mmb_error("?INVALID");
+		/* Only changes after registration are dispatched; a key already
+		 * down when the handler is installed is a level, not an event. */
+		G.on_keydown_gen = G.keydown_gen;
+		return;
+	}
 	if (mmb_match("KEY"))
 	{
 		mmb_skip_sp();

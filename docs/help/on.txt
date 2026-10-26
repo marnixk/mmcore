@@ -1,6 +1,6 @@
 name: ON
 kind: command
-alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON MOUSECLICK, ON MOUSEDOWN, ON MOUSEUP, ON MOUSEMOVE, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
+alias: ON GOTO, ON GOSUB, ON ERROR, ON KEY, ON KEYDOWN, ON MOUSECLICK, ON MOUSEDOWN, ON MOUSEUP, ON MOUSEMOVE, ON COM, ON TIMER, ON PLAY, ON PEN, ON STRIG
 
 Jump to the n-th line number (1-based), or call a SUB when a key or pointer
 event is waiting. ON ERROR chooses what happens on a runtime error.
@@ -17,6 +17,8 @@ ON KEY subname
 ON KEY 0
 ON KEY ascii, subname
 ON KEY ascii, 0
+ON KEYDOWN subname
+ON KEYDOWN 0
 ON MOUSECLICK subname
 ON MOUSEDOWN subname
 ON MOUSEUP subname
@@ -36,7 +38,23 @@ ON KEY ascii, subname installs a handler for one key only. The key is removed
 from the input buffer, so INKEY$ does not also return it. This is independent
 of the general ON KEY handler, so both can be active at once. Up to 24
 per-key handlers may be registered; ON KEY ascii, 0 removes one. Use the same
-codes as INKEY$, for example Escape 27 and arrows 128-131.
+codes as INKEY$, for example Escape 27 and arrows 128-131. Per-key dispatch
+stops at the first queued key with no handler of its own, so keys behind it
+wait until the program reads INKEY$.
+
+ON KEYDOWN subname is the held-keys interrupt. It runs whenever the
+~KEYDOWN~() held set changes: a key goes down or a held key comes up. It
+never fires for an operating-system key repeat, and it does not read or
+consume the INKEY$ queue, so a menu that polls INKEY$ keeps working. The
+handler takes no arguments; read the new set with KEYDOWN(0) and KEYDOWN(n)
+(or just track the keys it cares about). Bare ON KEYDOWN and ON KEYDOWN 0
+clear the handler. Keys already down when the handler is installed do not
+fire an event; dispatch starts with the next change. This is the handler to
+use for "move while an arrow is held" without polling KEYDOWN() from a tick.
+
+Key and mouse handlers run between program lines and during ~PAUSE~ or
+~VSYNC_WAIT~ waits, never in the middle of a statement, and they never nest
+with each other or with ~SETTICK~.
 
 ON ERROR GOTO jumps to the handler when a runtime error occurs during RUN.
 RESUME continues at the failing line, RESUME NEXT at the following line, and

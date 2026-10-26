@@ -619,6 +619,7 @@ typedef struct mmb {
 	unsigned clk_ms;
 	int dim_local;
 	char on_key[MMB_MAX_NAME];
+	char on_keydown[MMB_MAX_NAME];   /* ON KEYDOWN held-set handler */
 	struct {
 		int code;
 		char sub[MMB_MAX_NAME];
@@ -640,6 +641,10 @@ typedef struct mmb {
 	int inkey_gen, on_key_gen;
 	int keydown[6];
 	int nkeydown;
+	/* Bumped only when the held set actually changes (a new key goes down or
+	 * a held key goes up). OS auto-repeat republishes the same set, so it
+	 * does not bump this and the ON KEYDOWN handler does not re-fire. */
+	int keydown_gen, on_keydown_gen;
 	int nlabels;
 	mmb_label *labels;
 	int labels_cap;
