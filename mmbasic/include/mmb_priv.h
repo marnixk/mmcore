@@ -760,6 +760,67 @@ typedef struct mmb_arena_save {
 } mmb_arena_save;
 void mmb_arena_mark(mmb_arena_save *m);
 void mmb_arena_release(mmb_arena_save *m);
+
+/* What a captured frame resumes on.  Position is restored from run_pc,
+ * branch_pc/branch_pos and p; the kind records which of those owns the resume
+ * so a later push/pop can dispatch without re-inferring it. */
+enum mmb_resume_kind {
+	MMB_RESUME_P = 0,       /* continue the current line at G.p */
+	MMB_RESUME_BRANCH_PC,   /* jump to branch_pc */
+	MMB_RESUME_BRANCH_POS   /* resume inside run_pc at branch_pos */
+};
+
+/* Complete execution state for one nested entry: everything the interpreter
+ * must put back after a handler, FUNCTION call or SUB call returns.  It is
+ * deliberately a plain value type (no heap), so capture/restore are struct
+ * copies and are safe on the interrupt path.
+ *
+ * It sits beside the gosub_* side arrays rather than embedding them: the side
+ * arrays are indexed by gosub_sp and shared with the call-frame protocol, so
+ * moving them here would change every call site.  See exec_frame.c.
+ *
+ * Excluded on purpose: running and end_req (an END inside a nested body must
+ * stop the whole program, #1343), gosub_sp and the gosub/call arrays (owned
+ * by the call-frame push/pop), the ctrl/for/sel stack contents (only their
+ * depths are framed; the arrays stay shared), and acc_* / ON ERROR jump state
+ * (a cache and a longjmp landing, not restorable from a plain snapshot). */
+typedef struct mmb_exec_frame {
+	/* Program position */
+	int run_pc;
+	int branch_pc;
+	const char *branch_pos;
+	const char *p;
+	enum mmb_resume_kind resume;
+
+	/* Block IF */
+	int if_depth;
+	unsigned char if_stack[MMB_MAX_IF_DEPTH];
+	int if_pc_stack[MMB_MAX_IF_DEPTH];
+	int if_shadow;
+
+	/* One-line IF */
+	int if_inline;
+	int if_armed;
+	int if_inline_keep;
+
+	/* SELECT CASE */
+	int sel_sp;
+	int sel_base;
+
+	/* DO/WHILE and FOR */
+	int ctrl_sp;
+	int for_sp;
+	int loop_seq;
+
+	int dim_local;
+
+	/* Expression-temporary high-water mark. */
+	mmb_arena_save arena;
+} mmb_exec_frame;
+
+void mmb_frame_capture(mmb_exec_frame *f);
+void mmb_frame_restore(mmb_exec_frame *f);
+
 char *mmb_tmp_alloc(int n);
 char *mmb_str_alloc(int n);
 void mmb_str_free(char *p);
