@@ -1320,7 +1320,12 @@ void mmb_cmd_goto(void)
 	G.branch_pc = parse_target();
 }
 
-void mmb_cmd_gosub(void)
+/* Push the caller's return frame for GOSUB and ON n GOSUB (#1349).  Both
+ * statements must save exactly the same state: RETURN always restores the
+ * gosub_* checkpoint, so a partial push would make it restore stale control
+ * flow from an earlier call (or zeros) over the caller's open IF / SELECT /
+ * DO state.  Keep this the only place that pushes a statement-level frame. */
+void gosub_push_return(void)
 {
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
 		mmb_error("?GOSUB");
@@ -1332,6 +1337,11 @@ void mmb_cmd_gosub(void)
 	G.gosub_sub[G.gosub_sp] = G.cur_sub;
 	gosub_save_ctrl(G.gosub_sp);
 	G.gosub_sp++;
+}
+
+void mmb_cmd_gosub(void)
+{
+	gosub_push_return();
 	G.branch_pc = parse_target();
 }
 

@@ -1080,6 +1080,7 @@ void mmb_cmd_line_input(void);
 void mmb_cmd_seek(void);
 void mmb_cmd_goto(void);
 void mmb_cmd_gosub(void);
+void gosub_push_return(void);
 void mmb_cmd_return(void);
 void mmb_cmd_while(void);
 void mmb_cmd_wend(void);
