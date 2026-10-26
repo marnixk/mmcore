@@ -8,9 +8,12 @@ EXECUTE string$
 
   string$ - command or statement text, up to 255 characters
 
-Variables are shared with the running program. Control flow inside the executed
-text applies to the current program, so a GOTO/GOSUB may branch away. EXECUTE
-does not accept multi-line block structures.
+Variables are shared with the running program. The executed text has its own
+control-flow context: a block IF, SELECT CASE or loop started in the string is
+discarded when EXECUTE returns, and the caller's IF, SELECT and loop state is
+unchanged. A GOTO or GOSUB in the string still branches away after EXECUTE
+returns, and END stops the whole program. EXECUTE does not accept multi-line
+block structures.
 
 Example:
 

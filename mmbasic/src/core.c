@@ -1315,6 +1315,29 @@ static void gosub_restore_ctrl(int g)
 	G.sel_base = G.gosub_sel_base[g];
 }
 
+/* A GOSUB issued from inside EXECUTE pushes its return frame while the
+ * dynamic body is running in the clean EXECUTE island, so gosub_save_ctrl()
+ * captured that island's empty IF/SELECT state.  The target itself runs after
+ * EXECUTE returns, on the caller's line flow, and RETURN must put the
+ * caller's structure back.  Re-point the new frame's checkpoint at the
+ * snapshot EXECUTE took before entering the island. */
+static void gosub_rebase_ctrl(int g, const mmb_exec_frame *f)
+{
+	G.gosub_if_depth[g] = f->if_depth;
+	memcpy(G.gosub_if_stack[g], f->if_stack,
+	       (size_t)f->if_depth * sizeof(G.gosub_if_stack[0][0]));
+	memcpy(G.gosub_if_pc_stack[g], f->if_pc_stack,
+	       (size_t)f->if_depth * sizeof(G.gosub_if_pc_stack[0][0]));
+	G.gosub_if_inline[g] = f->if_inline;
+	G.gosub_if_armed[g] = f->if_armed;
+	G.gosub_if_inline_keep[g] = f->if_inline_keep;
+	G.gosub_if_shadow[g] = f->if_shadow;
+	G.gosub_ctrl_sp[g] = f->ctrl_sp;
+	G.gosub_for_sp[g] = f->for_sp;
+	G.gosub_sel_sp[g] = f->sel_sp;
+	G.gosub_sel_base[g] = f->sel_base;
+}
+
 void mmb_cmd_goto(void)
 {
 	G.branch_pc = parse_target();
@@ -5449,17 +5472,52 @@ static void exec_line_from(const char *body, const char *at)
 	exec_stmt_loop();
 }
 
+/* Run dynamic code as a self-contained island (#1354).  The body starts with
+ * a clean block-IF/SELECT view and every structure change it makes is
+ * discarded on the exact pop, so a partial block IF or a stray ENDIF/LOOP/
+ * NEXT cannot leak into the caller's stacks.  A control-flow request it makes
+ * is still honoured: the branch starts after EXECUTE, while the caller's
+ * structure state is restored first.
+ *
+ *   GOTO / IF n THEN: pop the island, then branch on the caller's state.
+ *   GOSUB / CALL:     the new call frame returns to the caller's state (the
+ *                     checkpoint is rebased onto the island snapshot), and
+ *                     the target runs once EXECUTE has returned.
+ *   RETURN / END SUB: the gosub restore has already installed the enclosing
+ *                     caller's state, so the island is dropped, not popped.
+ *   END / STOP:       end_req/running are not part of a frame and are never
+ *                     restored; the program stays stopped (#1343).
+ */
 void mmb_cmd_execute(void)
 {
 	mmb_val v = mmb_expr();
 	char body[MMB_LINE_LEN];
 	const char *save;
+	int gosub_before, branch_pc;
+	mmb_exec_frame *island;
+
 	if (v.type != T_STR)
 		mmb_error("?TYPE MISMATCH");
 	save = G.p;
 	mmb_tokenize_text(v.s ? v.s : "", body, (int)sizeof(body));
+	gosub_before = G.gosub_sp;
+	mmb_nested_push();
+	island = mmb_nested_top();
 	exec_line_body(body);
+	branch_pc = G.branch_pc;
+	if (G.gosub_sp < gosub_before)
+		/* RETURN / END SUB already restored the enclosing call's state. */
+		mmb_nested_drop();
+	else if (G.gosub_sp > gosub_before)
+	{
+		gosub_rebase_ctrl(gosub_before, island);
+		mmb_nested_drop();
+	}
+	else
+		mmb_nested_pop_exact();
 	G.p = save;
+	if (branch_pc >= 0)
+		G.branch_pc = branch_pc;
 }
 
 /* Entry parameters for one nested GOSUB body.  The call itself runs inside

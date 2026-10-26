@@ -542,6 +542,12 @@ void mmb_frame_enter(void);
 void mmb_frame_restore(mmb_exec_frame *f);
 void mmb_frame_restore_nested(mmb_exec_frame *f);
 void mmb_run_nested(void (*body)(void *), void *arg, enum mmb_nested_kind kind);
+/* Branch-aware nested entry used by EXECUTE: push/enter, then either an exact
+ * pop (discard the island) or a drop (the body restored the caller itself). */
+void mmb_nested_push(void);
+mmb_exec_frame *mmb_nested_top(void);
+void mmb_nested_pop_exact(void);
+void mmb_nested_drop(void);
 void mmb_nested_unwind(void);
 void mmb_nested_set_p(const char *p);
 mmb_arena_save *mmb_nested_arena(void);
