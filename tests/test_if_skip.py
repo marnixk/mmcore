@@ -422,3 +422,56 @@ def test_endif_colon_trailing_if_inside_skipped_block(console):
         ],
     )
     assert _run(console) == ["b"]
+
+
+def test_end_select_colon_runs_following_statement(console):
+    """#1390: END SELECT closes a skipping SELECT without eating the colon."""
+    _load(
+        console,
+        [
+            "10 SELECT CASE 1",
+            "20 CASE 2",
+            '30 END SELECT : PRINT "c"',
+            '40 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["c", "b"]
+
+
+def test_end_select_colon_nested_select_still_pairs(console):
+    """The inner END SELECT resumes only its own trailing statement."""
+    _load(
+        console,
+        [
+            "10 SELECT CASE 1",
+            "20 CASE 1",
+            "30   SELECT CASE 2",
+            "40   CASE 3",
+            '50   END SELECT : PRINT "c"',
+            '60   PRINT "b"',
+            "70 END SELECT",
+            '80 PRINT "d"',
+        ],
+    )
+    assert _run(console) == ["c", "b", "d"]
+
+
+def test_end_select_colon_trailing_select_inside_skipped_select(console):
+    """While an outer SELECT still skips, a trailing SELECT keeps its frame."""
+    _load(
+        console,
+        [
+            "10 SELECT CASE 1",
+            "20 CASE 2",
+            "30   SELECT CASE 1",
+            "40   CASE 3",
+            '50   END SELECT : SELECT CASE 1',
+            "60   CASE 3",
+            "70   END SELECT",
+            "80 CASE 1",
+            '90   PRINT "c"',
+            "100 END SELECT",
+            '110 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["c", "b"]
