@@ -302,7 +302,7 @@ int main(int argc, char **argv)
 		run_line(cmd);
 		if (!cli->stay)
 		{
-			sdl_video_present();
+			sdl_video_present_now();
 			sdl_video_close();
 			return 0;
 		}
@@ -312,7 +312,7 @@ int main(int argc, char **argv)
 		run_line(mmb_cli_term_run_line());
 		if (!cli->stay && !mmb_in_term())
 		{
-			sdl_video_present();
+			sdl_video_present_now();
 			sdl_video_close();
 			return 0; /* TERM never started */
 		}
@@ -320,7 +320,7 @@ int main(int argc, char **argv)
 	else if (cli->mode == MMB_CLI_LINE && cli->line)
 	{
 		run_line(cli->line);
-		sdl_video_present();
+		sdl_video_present_now();
 		sdl_video_close();
 		return 0;
 	}
@@ -356,6 +356,9 @@ int main(int argc, char **argv)
 		sdl_video_present();
 	}
 
+	/* Flush a frame drawn just before the quit/exit so the final state is
+	 * not lost waiting for a display boundary that will never come. */
+	sdl_video_present_now();
 	if (getenv("MMB_SDL_DUMP"))
 		sdl_video_dump_ppm(getenv("MMB_SDL_DUMP"));
 

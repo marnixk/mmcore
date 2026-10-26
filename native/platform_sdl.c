@@ -165,6 +165,11 @@ static void sdl_present_native(int x, int y, int w, int h, const void *pix,
 		}
 	}
 	sdl_video_mark_dirty_rect(x, y, w, h);
+	/* A page copy/blit to the displayed page is the program's frame
+	 * boundary. Present here when the display grid is due; otherwise the
+	 * dirty regions stay pending and the line-loop poll flushes them at the
+	 * next display boundary (#1367). */
+	sdl_video_present();
 }
 
 static void sdl_present_rgb(int x, int y, int w, int h,
@@ -193,35 +198,27 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 		}
 	}
 	sdl_video_mark_dirty_rect(x, y, w, h);
+	sdl_video_present();
 }
 
 /* Called from mmb_check_break while a program runs: pump SDL input and
  * repaint so the window stays alive during long RUNs.
  *
  * check_break runs once per program line, so presenting on every call made a
- * graphics loop (LINE/PLOT in a FOR) pay a present per line. With
- * SDL_RENDERER_PRESENTVSYNC each present waits for a vblank, which throttled
- * the whole RUN to roughly one line per frame (#1080). Repaint at most once
- * per display frame instead; a fast loop then reaches the event loop's own
- * final present almost immediately, and a long draw stays at the refresh
- * rate. BREAK/ON KEY only need the SDL event queue drained at a millisecond
- * boundary (sdl_input_pump_limited), not on every line: under real X11 a
- * SDL_PollEvent per line cost about 1 us, roughly 3x a cached line. */
-#define SDL_PRESENT_MIN_MS 16u
-
+ * graphics loop (LINE/PLOT in a FOR) pay a present per line. The present is
+ * now gated by the one display-period grid in sdl_video.c (#1367): the peek is
+ * cheap, and the copy only runs at a display frame boundary. That same grid
+ * paces the page-copy present, so there is no second clock to beat against.
+ * BREAK/ON KEY only need the SDL event queue drained at a millisecond boundary
+ * (sdl_input_pump_limited), not on every line: under real X11 a SDL_PollEvent
+ * per line cost about 1 us, roughly 3x a cached line. */
 static void sdl_poll_input(void)
 {
-	static unsigned last_present;
-	unsigned now;
-
 	if (!mmb_is_running())
 		return;
-	now = mmb_now_ms();
-	sdl_input_pump_limited(now);
-	if ((unsigned)(now - last_present) < SDL_PRESENT_MIN_MS)
-		return;
-	last_present = now;
-	sdl_video_present();
+	sdl_input_pump_limited(mmb_now_ms());
+	if (sdl_video_present_due())
+		sdl_video_present();
 }
 
 static int sdl_mouse_state(mmb_mouse_state *out)
@@ -253,11 +250,10 @@ static void sdl_present_set_flip(int on)
 
 static int sdl_wait_vsync(void)
 {
-	/* The present path owns the sync (#1265): sdl_video_present() measures
-	 * whether SDL_RenderPresent() really waits for the vertical blank and,
-	 * when it does not, aligns the scanout copy to a display frame. JUKE/AFK
-	 * call this hook before painting, so waiting here too would pace them a
-	 * second time and halve their frame rate. */
+	/* The present path owns the sync (#1367): sdl_video_present() paces the
+	 * scanout copy on the display-period grid. JUKE/AFK call this hook before
+	 * painting, so waiting here too would pace them a second time and halve
+	 * their frame rate. */
 	return 0;
 }
 
