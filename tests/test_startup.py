@@ -7,17 +7,8 @@ import re
 import subprocess
 import time
 
+from conftest import _expected_version
 from harness import MMBasicConsole
-
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _mmb_version():
-    return subprocess.check_output(
-        ["git", "describe", "--tags", "--always"],
-        cwd=REPO,
-        text=True,
-    ).strip()
 
 
 def test_startup_banner(kernel_image):
@@ -27,7 +18,7 @@ def test_startup_banner(kernel_image):
         raw = con.boot_log
         text = raw.decode(errors="replace")
         low = text.lower()
-        ver = _mmb_version()
+        ver = _expected_version(kernel_image)
         assert f"mmcore operating system - {ver} - 2026 (c) marnix kok" in low
         assert "mmbasic" in low
         assert "copyright 2011-2026 geoff graham" in low
@@ -312,3 +303,37 @@ def test_kernel_staleness_uses_baked_version(monkeypatch, tmp_path):
     monkeypatch.setenv("MMB_VERSION", "v1.0.0")
     monkeypatch.setattr(conftest, "_git_describe", lambda: "v1.0.0-1-gabc1234")
     assert not conftest._kernel_is_stale(str(image))
+
+
+def test_version_expectation_survives_release_tag(tmp_path, monkeypatch):
+    """Regression for #1322: a release tag created after the image was built
+    must not change what the banner and CREDITS tests expect.
+
+    The image below was built at ``v0.281.0-8-g2fdae9c``; a concurrent release
+    then tags that commit ``v0.282.0``. Both tests must still compare against
+    the version baked into the image, not the new ``git describe``.
+    """
+    import inspect
+
+    import conftest
+    import test_credits
+    import test_startup
+
+    image = tmp_path / "kernel8.img"
+    image.write_bytes(
+        b"mmcore operating system - v0.281.0-8-g2fdae9c - 2026 (c) "
+        b"Marnix Kok"
+    )
+    monkeypatch.setattr(conftest, "_git_describe", lambda: "v0.282.0")
+
+    assert conftest._expected_version(str(image)) == "v0.281.0-8-g2fdae9c"
+    assert conftest._expected_version(str(image)) != conftest._git_describe()
+
+    # Both tests must source their version from the image, not git describe.
+    # Build the needles so this test's own source cannot match itself.
+    legacy_helper = "_" + "mmb_version"
+    image_needle = "_expected_version(" + "kernel_image)"
+    for module in (test_startup, test_credits):
+        source = inspect.getsource(module)
+        assert legacy_helper not in source, module.__name__
+        assert image_needle in source, module.__name__
