@@ -498,18 +498,11 @@ mmb_val mmb_int_val(int64_t i)
 
 typedef struct mmb_freeblk { struct mmb_freeblk *next; } mmb_freeblk;
 typedef struct mmb_slab { struct mmb_slab *next; } mmb_slab;
-typedef struct mmb_achunk {
-	struct mmb_achunk *next;
-	unsigned used, size;
-} mmb_achunk;
 
 static mmb_freeblk *s_free[MMB_STR_MAX_CLS + 1];
 static mmb_slab *s_slabs;
 static char *s_slab;
 static unsigned s_slab_left;
-
-static mmb_achunk *s_arena;
-static mmb_achunk *s_arena_cur;
 
 static char s_empty[1] = { 0 };
 #define MMB_EMPTY ((char *)s_empty)
@@ -781,7 +774,8 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	return cur;
 }
 
-/* Temporary arena: bump-allocate, never free individually. */
+/* Temporary arena: bump-allocate, never free individually. Each console owns
+ * its chunk list in G.arena; chunks are allocated on first use and reused. */
 char *mmb_tmp_alloc(int n)
 {
 	unsigned aligned;
@@ -790,12 +784,12 @@ char *mmb_tmp_alloc(int n)
 	aligned = ((unsigned)n + 15u) & ~15u;
 	for (;;)
 	{
-		mmb_achunk *c = s_arena_cur;
+		mmb_achunk *c = G.arena_cur;
 		if (!c || c->size - c->used < aligned)
 		{
 			if (c && c->next)
 			{
-				s_arena_cur = c->next;
+				G.arena_cur = c->next;
 				continue;
 			}
 			{
@@ -809,16 +803,16 @@ char *mmb_tmp_alloc(int n)
 				nc->next = 0;
 				nc->used = 0;
 				nc->size = csz - (unsigned)sizeof(mmb_achunk);
-				if (!s_arena)
-					s_arena = nc;
+				if (!G.arena)
+					G.arena = nc;
 				else
 				{
-					mmb_achunk *t = s_arena;
+					mmb_achunk *t = G.arena;
 					while (t->next)
 						t = t->next;
 					t->next = nc;
 				}
-				s_arena_cur = nc;
+				G.arena_cur = nc;
 				continue;
 			}
 		}
@@ -833,9 +827,9 @@ char *mmb_tmp_alloc(int n)
 void mmb_str_reset(void)
 {
 	mmb_achunk *c;
-	for (c = s_arena; c; c = c->next)
+	for (c = G.arena; c; c = c->next)
 		c->used = 0;
-	s_arena_cur = s_arena;
+	G.arena_cur = G.arena;
 }
 
 /* Remember the current arena high-water mark. A nested run_gosub_body()
@@ -844,8 +838,8 @@ void mmb_str_reset(void)
  * user FUNCTION/SUB or event body (#1275). */
 void mmb_arena_mark(mmb_arena_save *m)
 {
-	m->chunk = s_arena_cur;
-	m->used = s_arena_cur ? s_arena_cur->used : 0;
+	m->chunk = G.arena_cur;
+	m->used = G.arena_cur ? G.arena_cur->used : 0;
 }
 
 void mmb_arena_release(mmb_arena_save *m)
@@ -853,15 +847,32 @@ void mmb_arena_release(mmb_arena_save *m)
 	mmb_achunk *c;
 	if (!m->chunk)
 	{
-		for (c = s_arena; c; c = c->next)
+		for (c = G.arena; c; c = c->next)
 			c->used = 0;
-		s_arena_cur = s_arena;
+		G.arena_cur = G.arena;
 		return;
 	}
 	for (c = ((mmb_achunk *)m->chunk)->next; c; c = c->next)
 		c->used = 0;
 	((mmb_achunk *)m->chunk)->used = m->used;
-	s_arena_cur = (mmb_achunk *)m->chunk;
+	G.arena_cur = (mmb_achunk *)m->chunk;
+}
+
+/* Discard the current console's arena chunks. Called when the context is
+ * reset or destroyed, so per-console arenas do not leak across console
+ * resets (#1351). Chunks are retained between RUNs for reuse. */
+void mmb_arena_free(void)
+{
+	mmb_achunk *c = G.arena;
+
+	while (c)
+	{
+		mmb_achunk *next = c->next;
+		G.plat->free(c);
+		c = next;
+	}
+	G.arena = 0;
+	G.arena_cur = 0;
 }
 
 mmb_val mmb_arena_val(char *p)

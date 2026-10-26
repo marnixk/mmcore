@@ -465,6 +465,14 @@ typedef struct mmb_const {
 	int used;
 } mmb_const;
 
+/* One chunk of the expression-temporary bump arena.  The chunk list is owned
+ * by the console context (mmb.arena) so two consoles never share temporaries
+ * (#1351). */
+typedef struct mmb_achunk {
+	struct mmb_achunk *next;
+	unsigned used, size;
+} mmb_achunk;
+
 /* Expression-temporary arena high-water mark. */
 typedef struct mmb_arena_save {
 	void *chunk;
@@ -472,6 +480,8 @@ typedef struct mmb_arena_save {
 } mmb_arena_save;
 void mmb_arena_mark(mmb_arena_save *m);
 void mmb_arena_release(mmb_arena_save *m);
+/* Release every arena chunk of the current context (console reset/destroy). */
+void mmb_arena_free(void);
 
 /* What a captured frame resumes on.  Position is restored from run_pc,
  * branch_pc/branch_pos and p; the kind records which of those owns the resume
@@ -574,6 +584,11 @@ typedef struct mmb {
 	int acc_sid;
 	int acc_base_nidx;
 	int acc_base_idx[MMB_MAX_DIMS];
+	/* Expression-temporary arena for this console. The chunks are allocated
+	 * lazily and retained across program lines/runs; mmb_arena_free() returns
+	 * them when the context is reset or destroyed (#1351). */
+	mmb_achunk *arena;
+	mmb_achunk *arena_cur;
 	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
 	/* Program store (#1303): heap-owned arrays that grow on demand. Each
 	 * line is individually strdup'd, so insert/delete move pointers only.

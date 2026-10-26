@@ -239,6 +239,95 @@ def test_running_program_suspends_and_resumes(kernel_image):
         con.stop()
 
 
+def test_string_arena_is_per_console(kernel_image):
+    """#1351: each console's string-temporary arena is independent.
+
+    Both consoles run a string-heavy expression loop (concatenation, STR$,
+    LEFT$/RIGHT$) that overlaps a switch, then finish with a deterministic
+    checksum. Switching away from a running loop and back must not mix the
+    two consoles' expression temporaries or persistent strings.
+    """
+    prog1 = (
+        b"10 T0 = TIMER\r"
+        b"20 DIM A$\r"
+        b"30 DO\r"
+        b'40 A$ = "C1:" + STR$(I MOD 17) + ":" + STR$(LEN(STR$(I)))\r'
+        b'50 B$ = A$ + "|" + A$\r'
+        b"60 I = I + 1\r"
+        b"70 LOOP UNTIL TIMER > T0 + 3000\r"
+        b'80 S$ = ""\r'
+        b"90 FOR J = 1 TO 120\r"
+        b"100 S$ = S$ + STR$(J MOD 10)\r"
+        b"110 NEXT J\r"
+        b'120 PRINT "C1:" + STR$(LEN(S$)) + ":" + LEFT$(S$,12) + ":" + RIGHT$(S$,12)\r'
+    )
+    prog2 = (
+        b"10 T0 = TIMER\r"
+        b"20 DIM A$\r"
+        b"30 DO\r"
+        b'40 A$ = "C2:" + STR$(I MOD 19) + ":" + STR$(LEN(STR$(I)))\r'
+        b'50 B$ = A$ + "|" + A$\r'
+        b"60 I = I + 1\r"
+        b"70 LOOP UNTIL TIMER > T0 + 3000\r"
+        b'80 S$ = ""\r'
+        b"90 FOR J = 1 TO 80\r"
+        b"100 S$ = S$ + STR$(J MOD 10)\r"
+        b"110 NEXT J\r"
+        b'120 PRINT "C2:" + STR$(LEN(S$)) + ":" + LEFT$(S$,12) + ":" + RIGHT$(S$,12)\r'
+    )
+    con = _usb_console(kernel_image)
+    con.start()
+    try:
+        con.drain(quiet=0.3, timeout=2.0)
+        con._ser.sendall(prog1)
+        time.sleep(0.8)
+        con.drain(quiet=0.2)
+
+        # Start console 1's loop, then switch away mid-run.
+        con._ser.sendall(b"RUN\r")
+        time.sleep(0.8)
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+
+        # Console 2 gets its own program and starts while console 1 is parked.
+        con._ser.sendall(prog2)
+        time.sleep(0.8)
+        con.drain(quiet=0.2)
+        con._ser.sendall(b"RUN\r")
+        time.sleep(0.8)
+        _switch(con, 1)
+
+        seen1 = ""
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            seen1 += con.drain(quiet=0.4).decode(errors="ignore")
+            if "C1:" in seen1:
+                break
+        assert "C1:120:123456789012:901234567890" in _plain(seen1), seen1
+
+        # Console 2 resumes and finishes with its own arena and strings.
+        _switch(con, 2)
+        seen2 = ""
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            seen2 += con.drain(quiet=0.4).decode(errors="ignore")
+            if "C2:" in seen2:
+                break
+        assert "C2:80:123456789012:901234567890" in _plain(seen2), seen2
+
+        # Persistent strings are still per-console after the extra switches.
+        _switch(con, 1)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT LEN(S$)") == "120"
+        assert con.send_line("PRINT LEFT$(S$,5)") == "12345"
+        _switch(con, 2)
+        con.drain(quiet=0.3, timeout=2.0)
+        assert con.send_line("PRINT LEN(S$)") == "80"
+        assert con.send_line("PRINT LEFT$(S$,5)") == "12345"
+    finally:
+        con.stop()
+
+
 def _last_done(text: str) -> int | None:
     """Last ``DONE <n>`` counter value printed by the loop program."""
     found = re.findall(r"DONE\s+(\d+)", text)

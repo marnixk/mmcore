@@ -6307,6 +6307,9 @@ void mmb_reset(void)
 	 * so return the pooled slabs too (#989). mmb_strpool_reset had no
 	 * callers and every warm reset leaked them until the host freed them. */
 	mmb_strpool_reset();
+	/* The expression arena is per-console now (#1351); return its chunks on
+	 * a reset so a discarded context cannot leak them. */
+	mmb_arena_free();
 	mmb_option_reset();
 	mmb_play_stop();
 	/* Release the growable program store and its tables (#1303): the fixed

@@ -238,12 +238,17 @@ void mmb_warm_reset(void)
 static void console_bring_up(int idx, const mmb *from)
 {
 	mmb *save = g_cur;
+	int existing = g_mmb[idx] != 0;
 
 	if (!g_mmb[idx] && from->plat && from->plat->alloc)
 		g_mmb[idx] = (mmb *)from->plat->alloc(sizeof(mmb));
 	if (!g_mmb[idx])
 		return;
 	g_cur = g_mmb[idx];
+	/* The context is about to be wiped; return the per-console arena chunks
+	 * first so re-bringing up an existing slot does not leak them (#1351). */
+	if (existing)
+		mmb_arena_free();
 	memset(g_cur, 0, sizeof(mmb));
 	g_cur->plat = from->plat;
 	mmb_option_reset();
