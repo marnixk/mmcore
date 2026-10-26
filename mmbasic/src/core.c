@@ -4452,6 +4452,25 @@ static int try_tok_cmd(void)
 	id = (unsigned char)G.p[1] | ((unsigned char)G.p[2] << 8);
 	if (id && id < 512 && tab[id])
 	{
+		/* #1337: `quit = 0` is assignment-shaped, but the token is
+		 * dispatched as the command before assignment parsing, which
+		 * silently ends RUN. Reject the assignment instead of running
+		 * the command. Multi-word forms such as `END IF` and `END SUB`
+		 * are followed by another token, not `=`, so they are safe. */
+		const char *save = G.p;
+		int assignment_shaped;
+		G.p += 3;
+		mmb_skip_sp();
+		assignment_shaped = (*G.p == '=');
+		G.p = save;
+		if (assignment_shaped && mmb_command_hijacks_assignment(mmb_kw_name(id)))
+		{
+			char msg[MMB_MAX_NAME + 64];
+			snprintf(msg, sizeof(msg),
+				 "?NAME CONFLICT: %s is a reserved command",
+				 mmb_kw_name(id));
+			mmb_error(msg);
+		}
 		G.p += 3;
 		tab[id]();
 		return 1;

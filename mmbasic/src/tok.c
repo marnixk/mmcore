@@ -150,6 +150,14 @@ int mmb_kw_id(const char *kw)
 	return lookup_kw(kw);
 }
 
+const char *mmb_kw_name(int id)
+{
+	init_kw();
+	if (id < 1 || id > nkw)
+		return "";
+	return kwu[id - 1];
+}
+
 static void emit_tok(char *dst, int *o, int id)
 {
 	dst[(*o)++] = TK_ESC;
