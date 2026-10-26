@@ -15,6 +15,13 @@ void sdl_input_init(void);
  * inkey queue) and handling quit/resize/fullscreen. */
 void sdl_input_pump(void);
 
+/* The per-program-line poll: drain SDL events at most once per millisecond.
+ * Returns non-zero when it pumped, zero when this call was inside the rate
+ * limit. now_ms is the caller's monotonic millisecond clock (mmb_now_ms()).
+ * The full pump stays available for blocking line input, which must not wait
+ * a millisecond for its first key. */
+int sdl_input_pump_limited(unsigned now_ms);
+
 /* Return and clear a latched BREAK. While a program runs, a key matching the
  * configured BREAK key (mmb_break_key(), Ctrl+C by default) is latched here
  * instead of reaching INKEY$, mirroring Circle's TakeBreak. */

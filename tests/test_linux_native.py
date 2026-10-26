@@ -313,6 +313,61 @@ def test_sdl_input_line_capture(tmp_path):
     assert "all checks passed" in out.stdout
 
 
+def test_sdl_input_pump_is_rate_limited(tmp_path):
+    """#1370: a BASIC line must not pay an SDL_PollEvent every time.
+
+    The host checks in tests/sdl_input_host.c prove a key or Ctrl-C that
+    arrives inside the 1 ms window is not lost (the next due poll drains the
+    whole burst). This runs the same binary in --benchmark mode to report the
+    per-line cost before/after the gate.
+    """
+    sdl = subprocess.run(
+        ["pkg-config", "--cflags", "--libs", "sdl2"],
+        capture_output=True,
+        text=True,
+    )
+    if sdl.returncode != 0:
+        pytest.skip("SDL2 not found (pkg-config sdl2 missing)")
+    exe = os.path.join(str(tmp_path), "sdl_input_host_bench")
+    subprocess.run(
+        [
+            "cc",
+            "-O0",
+            "-Wall",
+            "-Werror",
+            "-DMMB_PLATFORM_POSIX",
+            "-I",
+            os.path.join(REPO, "native"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
+            *sdl.stdout.split(),
+            "-o",
+            exe,
+            os.path.join(REPO, "tests", "sdl_input_host.c"),
+            os.path.join(REPO, "native", "sdl_input.c"),
+        ],
+        check=True,
+        cwd=REPO,
+    )
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+    out = subprocess.run(
+        [exe, "--benchmark"], check=True, capture_output=True, text=True, env=env
+    )
+    m = re.search(
+        r"bench force_ns=([0-9.]+) limited_ns=([0-9.]+)", out.stdout
+    )
+    assert m, out.stdout + out.stderr
+    force, limited = float(m.group(1)), float(m.group(2))
+    assert limited < force * 0.5, (
+        f"per-line SDL poll is not cheaper: unconditional {force:.1f} ns vs "
+        f"gated {limited:.1f} ns"
+    )
+
+
 def test_sdl_clipboard_fallback(tmp_path):
     """#525: the SDL host clipboard falls back to an in-process buffer.
 

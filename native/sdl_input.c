@@ -1008,3 +1008,23 @@ void sdl_input_pump(void)
 	 * a switch is in flight. */
 	vt_sync();
 }
+
+/* mmb_check_break() runs once per BASIC line, and SDL_PollEvent under a real
+ * X11 server costs about 1 us there (about 3x a cached line). A key that
+ * arrives is still drained on the next millisecond boundary, which is far
+ * below the eye/hand and keeps BREAK and ON KEY prompt; nothing waits for a
+ * backlog because each pump drains the whole queue. */
+#define SDL_INPUT_PUMP_MIN_MS 1u
+
+int sdl_input_pump_limited(unsigned now_ms)
+{
+	static unsigned last_pump;
+	static int primed;
+
+	if (primed && (unsigned)(now_ms - last_pump) < SDL_INPUT_PUMP_MIN_MS)
+		return 0;
+	primed = 1;
+	last_pump = now_ms;
+	sdl_input_pump();
+	return 1;
+}
