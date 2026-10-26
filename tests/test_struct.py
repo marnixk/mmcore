@@ -466,3 +466,24 @@ def test_help_type_and_struct(console):
     assert "typename" in dim.lower() or "TYPE" in dim
     lst = dump_topic(console, "LIST")
     assert "LIST TYPE" in lst or "TYPE" in lst
+
+
+def test_struct_fields_named_after_colours(console):
+    """#1307: colour-named struct members are paths, not colour constants."""
+    _prog(
+        console,
+        [
+            "TYPE Cells",
+            "red AS INTEGER",
+            "grey AS INTEGER",
+            "END TYPE",
+            "DIM c AS Cells",
+            "c.red = 4",
+            "c.grey = 8",
+            "PRINT c.red + c.grey",
+            "PRINT c.red",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "12" in out
+    assert "4" in out
