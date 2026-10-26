@@ -156,6 +156,14 @@ Run the suite:
 .venv/bin/python -m pytest        # builds the image, then runs the tests
 ```
 
+An optional interrupt-fuzz soak (`tests/test_interrupt_fuzz.py`, #1352) runs
+generated programs with `SETTICK 1` and compares their output with timers off.
+It is bounded by default; set `MMCORE_INTERRUPT_FUZZ_PROGRAMS`,
+`MMCORE_INTERRUPT_FUZZ_ITERATIONS`, `MMCORE_INTERRUPT_FUZZ_SEED` (and
+`MMCORE_INTERRUPT_FUZZ_TIMEOUT`) for a longer run. A manual/weekly
+`.github/workflows/interrupt-fuzz.yml` job runs a larger soak; it is never
+triggered by pull requests or pushes to `master`.
+
 Each test types a command and checks the console output — e.g. `PRINT 2+3`
 must print `5`, and `PRINT "HELLO"` must print `HELLO`. The suite also covers
 types (`$`, `%`, `ARRAY()`), `OPTION` subcommands, graphics `MODE`s, file
