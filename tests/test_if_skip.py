@@ -156,6 +156,25 @@ def test_else_arm_with_colon_statements(console):
     assert _run(console) == ["e", "b", "c"]
 
 
+def test_keyword_before_colon_is_not_a_label(console):
+    """#1341: ``ELSE :`` / ``ENDIF :`` are structure, not phantom labels, so
+    the arm and ENDIF pairing survives."""
+    _load(
+        console,
+        [
+            "10 IF 0 THEN",
+            '20 PRINT "X"',
+            "30 ELSE : IF 1 THEN",
+            '40 PRINT "b"',
+            "50 ENDIF : IF 1 THEN",
+            '60 PRINT "c"',
+            "70 ENDIF",
+            '80 PRINT "d"',
+        ],
+    )
+    assert _run(console) == ["b", "c", "d"]
+
+
 def test_block_if_state_across_sub_call_in_taken_arm(console):
     """A SUB's own block IF does not disturb the caller's arm (#1295)."""
     _load(

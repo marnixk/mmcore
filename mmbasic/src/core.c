@@ -30,6 +30,12 @@ static void exec_error_reset(int was_running);
  * interpreter's setjmp error landings can clear it after an unwind. */
 static int s_poll_active;
 
+/* The tokenized buffer of the immediate line being executed, or NULL when
+ * running a stored program. mmb_cmd_for() uses it to recognise a same-line
+ * FOR/NEXT body in immediate mode, where there is no run_pc line to test
+ * pointer containment against (#1374). */
+static const char *s_immediate_line;
+
 /* Jump tables and run flags are per-console interpreter state; the names
  * below always address the active context's fields (G.jmp_*, G.jmp_ready,
  * G.run_preserve_vars). */
@@ -242,7 +248,10 @@ static const char *after_label(const char *body)
 	{
 		mmb_ident(name, sizeof(name));
 		mmb_skip_sp();
-		if (*G.p == ':')
+		/* A keyword is never a label. Raw (untokenized) text still spells
+		 * keywords as letters, so reject them here as well as relying on
+		 * the token escape to hide them (#1341). */
+		if (*G.p == ':' && mmb_kw_id(name) == 0)
 		{
 			G.p++;
 			result = G.p;
@@ -311,13 +320,15 @@ static void scan_labels(void)
 	{
 		const char *save = G.p;
 		char name[MMB_MAX_NAME];
-		G.p = G.prog[i];
+		/* Tokenized text: a keyword is a 3-byte escape and cannot be read as
+		 * a label name (#1341). */
+		G.p = mmb_tok_line(i);
 		mmb_skip_sp();
 		if (mmb_is_ident_start(*G.p))
 		{
 			mmb_ident(name, sizeof(name));
 			mmb_skip_sp();
-			if (*G.p == ':')
+			if (*G.p == ':' && mmb_kw_id(name) == 0)
 			{
 				labels_grow();
 				mmb_upper(name);
@@ -405,34 +416,34 @@ static void build_jumps(void)
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
-		if (line_match(G.prog[i], "WHILE"))
+		if (line_match(mmb_tok_line(i), "WHILE"))
 		{
 			if (sp < MMB_MAX_CTRL)
 				st[sp++] = i;
 		}
-		else if (line_match(G.prog[i], "WEND") && sp > 0)
+		else if (line_match(mmb_tok_line(i), "WEND") && sp > 0)
 			G.jmp_wend[st[--sp]] = i;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
-		if (line_match(G.prog[i], "DO"))
+		if (line_match(mmb_tok_line(i), "DO"))
 		{
 			if (sp < MMB_MAX_CTRL)
 				st[sp++] = i;
 		}
-		else if (line_match(G.prog[i], "LOOP") && sp > 0)
+		else if (line_match(mmb_tok_line(i), "LOOP") && sp > 0)
 			G.jmp_loop[st[--sp]] = i;
 	}
 	sp = 0;
 	for (i = 0; i < G.nprog; i++)
 	{
-		if (line_match(G.prog[i], "FOR"))
+		if (line_match(mmb_tok_line(i), "FOR"))
 		{
 			if (sp < MMB_MAX_CTRL)
 				st[sp++] = i;
 		}
-		else if (line_match(G.prog[i], "NEXT") && sp > 0)
+		else if (line_match(mmb_tok_line(i), "NEXT") && sp > 0)
 			G.jmp_next[st[--sp]] = i;
 	}
 	/* SUB/END SUB with a single stack pass instead of scanning forward for
@@ -442,7 +453,7 @@ static void build_jumps(void)
 	for (i = 0; i < G.nprog; i++)
 	{
 		const char *save = G.p;
-		G.p = after_label(G.prog[i]);
+		G.p = after_label(mmb_tok_line(i));
 		if (mmb_match("SUB") || mmb_match("FUNCTION"))
 		{
 			if (sp < MMB_MAX_CTRL)
@@ -514,7 +525,7 @@ static void build_jumps(void)
 	for (i = 0; i < G.nprog; i++)
 	{
 		const char *save = G.p;
-		G.p = after_label(G.prog[i]);
+		G.p = after_label(mmb_tok_line(i));
 		if (mmb_match("SELECT"))
 		{
 			if (sp < MMB_MAX_CTRL)
@@ -2902,6 +2913,11 @@ void mmb_cmd_print(void)
 		{
 		mmb_val v;
 		mmb_skip_sp();
+		/* Whitespace after a trailing `;` (or `,`) must not turn the `:`
+		 * statement separator into the start of another PRINT item
+		 * (#1361). */
+		if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
+			break;
 		if (mmb_print_try_at())
 			continue;
 		if (*G.p == '#' )
@@ -3838,14 +3854,16 @@ void mmb_cmd_for(void)
 		int next_pc = -1;
 		const char *base, *body = 0;
 		const char *next_pos = 0, *after_pos = 0;
+		int immediate = 0;
 		mmb_var *v = mmb_find_var(name, t, 0, nidx, idx);
 		if (!v)
 			mmb_error("?FOR");
 		off = mmb_var_offset(v, nidx, idx);
 		/* A body after `:` on the FOR line must resume mid-line on loop-back,
 		 * not at the next line (#997). Only trust the pointer when it lies
-		 * inside the tokenized program line: EXECUTE strings run from a local
-		 * buffer whose pointer would dangle once the statement returns. */
+		 * inside the tokenized line being executed: EXECUTE strings run from
+		 * a local buffer whose pointer would dangle once the statement
+		 * returns, and immediate lines have no run_pc. */
 		mmb_skip_sp();
 		base = (G.run_pc >= 0 && G.run_pc < G.nprog) ? mmb_tok_line(G.run_pc) : 0;
 		if (*G.p == ':' && base && G.p >= base && G.p < base + MMB_LINE_LEN)
@@ -3853,10 +3871,20 @@ void mmb_cmd_for(void)
 			same_line = 1;
 			body = G.p + 1;
 		}
+		else if (*G.p == ':' && s_immediate_line &&
+			 G.p >= s_immediate_line &&
+			 G.p < s_immediate_line + MMB_LINE_LEN)
+		{
+			same_line = 1;
+			immediate = 1;
+			body = G.p + 1;
+		}
 		/* Same-line FOR/NEXT is not in the line-granular jump table, so
 		 * scan for the matching NEXT at statement level (#1004). This lets
-		 * EXIT/CONTINUE FOR resume mid-line instead of reporting ?NEXT. */
-		if (same_line)
+		 * EXIT/CONTINUE FOR resume mid-line instead of reporting ?NEXT.
+		 * An immediate line has no program pc to walk, so its driver (in
+		 * mmb_exec_line) resumes the recorded body position directly. */
+		if (same_line && !immediate)
 		{
 			int npc = -1;
 			const char *np = find_matching_next(G.run_pc, body, &npc);
@@ -4031,7 +4059,7 @@ void mmb_cmd_next(void)
 			{
 				const char *save = G.p;
 				char nbuf[MMB_MAX_NAME];
-				G.p = after_label(G.prog[i]);
+				G.p = after_label(mmb_tok_line(i));
 				if (mmb_match("FOR"))
 				{
 					G.p = save;
@@ -5945,8 +5973,11 @@ static void run_program(void)
 		 * re-RUN of an unchanged program can reuse them (#992). */
 		if (G.prog_dirty || !G.prog_ready)
 		{
-			scan_labels();
+			/* Tokenize first: label and jump prescans must parse exactly the
+			 * text the interpreter runs, so a keyword before a colon is not
+			 * mistaken for a label (#1341). */
 			mmb_tokenize_program();
+			scan_labels();
 			build_jumps();
 			G.prog_dirty = 0;
 			G.prog_ready = 1;
@@ -6247,7 +6278,38 @@ const char *mmb_exec_line(const char *line)
 		mmb_cmd_run();
 		return G.out;
 	}
-	exec_line_body(mmb_tok_immediate(line));
+	{
+		const char *body = mmb_tok_immediate(line);
+		const char *save_imm = s_immediate_line;
+		int for_base = G.for_sp;
+
+		s_immediate_line = body;
+		exec_line_body(body);
+		/* Immediate mode has no run_program loop to consume a same-line
+		 * FOR/NEXT back-edge, so finish those iterations here (#1374).
+		 * Multi-line immediate loops keep their line-at-a-time behaviour:
+		 * only a frame with a recorded same-line body is resumed. */
+		while (s_immediate_line && G.branch_pc < 0 && G.for_sp > for_base &&
+		       G.forstack[G.for_sp - 1].stmt == 1)
+		{
+			const char *pos = G.forstack[G.for_sp - 1].pos;
+			G.forstack[G.for_sp - 1].stmt = 0;
+			if (!pos || pos < body || pos >= body + MMB_LINE_LEN)
+				break;
+			exec_line_from(body, pos);
+		}
+		/* A NEXT on its own line has no same-line body to resume; drop any
+		 * pending loop-back request so the next immediate line is not
+		 * truncated after its first statement. The loop frames stay, so a
+		 * later NEXT can still advance the counter. */
+		{
+			int fi;
+			for (fi = 0; fi < G.for_sp; fi++)
+				if (G.forstack[fi].stmt == 1)
+					G.forstack[fi].stmt = 0;
+		}
+		s_immediate_line = save_imm;
+	}
 	return G.out;
 }
 

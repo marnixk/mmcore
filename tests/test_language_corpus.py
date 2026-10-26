@@ -32,6 +32,18 @@ def test_immediate_and_run_same_print(console):
     assert console.send_line("RUN") == "2"
 
 
+def test_print_trailing_semicolon_spaced_colon(console):
+    """#1361: whitespace between a trailing `;` and the `:` statement
+    separator must not change how the PRINT is parsed."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('PRINT "a"; : PRINT "b"') == "ab"
+    assert console.send_line('PRINT "c";: PRINT "d"') == "cd"
+    assert console.send_line("FOR I = 1 TO 2 : PRINT I; : NEXT I") == "12"
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 PRINT "a"; : PRINT "b"') == ""
+    assert console.send_line("RUN") == "ab"
+
+
 def test_for_print_semicolon_exact(console):
     assert console.send_line("NEW") == ""
     assert console.send_line("10 FOR I=1 TO 3") == ""
