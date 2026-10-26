@@ -443,8 +443,11 @@ def test_package_run_app_over_95_nodes(fresh_console):
     (PKG_MAX), so an archive with more than ~95 files plus the intermediate
     directories the mount synthesises failed with ?PACKAGE even though it
     packed. 96 files plus MAIN.BAS is 99 mounted nodes; the table now grows on
-    the heap. A fresh console keeps the seeded ramdisk (147 nodes) from
-    starving the ~100-node source tree.
+    the heap. The seeded ramdisk is 157 nodes (147 files + 10 directories);
+    HUGE/, 96 Z files, MAIN.BAS, HUGEGEN.BAS and HUGE.APP then fill A: to
+    VFS_MAX, so the one-off generator is removed after it seeds the files to
+    free the archive's node. That keeps the test on the over-95-node B: mount
+    rather than on A: capacity.
     """
     console = fresh_console
     assert console.send_line('CHDIR "A:/"') == ""
@@ -473,6 +476,7 @@ def test_package_run_app_over_95_nodes(fresh_console):
         ],
     )
     assert "SEEDED" in console.send_line('RUN "HUGEGEN.BAS"')
+    assert console.send_line('KILL "A:/HUGEGEN.BAS"') == ""
     assert console.send_line('PACKAGE "HUGE.APP", "HUGE/"') == ""
     run = console.send_line('RUN "HUGE.APP"')
     assert "?PACKAGE" not in run.upper(), run
