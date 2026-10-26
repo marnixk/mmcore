@@ -333,6 +333,45 @@ def test_sub_argument_as_string_restores_caller(console):
     assert console.send_line("RUN") == "inner\nouter"
 
 
+def test_quit_keyword_rejected_as_local_name(console):
+    """#1334: LOCAL QUIT must not silently run the QUIT command."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line("10 SUB S2") == ""
+    assert console.send_line("20 LOCAL QUIT") == ""
+    assert console.send_line('30 PRINT "before"') == ""
+    assert console.send_line("40 QUIT = 0") == ""
+    assert console.send_line('50 PRINT "after"') == ""
+    assert console.send_line("60 END SUB") == ""
+    assert console.send_line("70 S2") == ""
+    err = console.send_line("RUN")
+    assert "NAME CONFLICT" in err.upper()
+    assert "RESERVED COMMAND" in err.upper()
+    assert console.send_line('PRINT "SURVIVED"') == "SURVIVED"
+
+
+def test_quit_keyword_rejected_as_dim_name(console):
+    """#1334: DIM QUIT is rejected instead of hijacking the assignment."""
+    assert console.send_line("NEW") == ""
+    err = console.send_line("DIM QUIT")
+    assert "NAME CONFLICT" in err.upper()
+    assert "RESERVED COMMAND" in err.upper()
+    assert console.send_line('PRINT "SURVIVED"') == "SURVIVED"
+
+
+def test_sub_param_const_collision_is_named(console):
+    """#1335: the ?CONST error names the parameter and the SUB."""
+    assert console.send_line("NEW") == ""
+    assert console.send_line('10 CONST BIG$ = "abc"') == ""
+    assert console.send_line("20 SUB S1(BIG$)") == ""
+    assert console.send_line("30 PRINT BIG$") == ""
+    assert console.send_line("40 END SUB") == ""
+    assert console.send_line('50 S1("x")') == ""
+    err = console.send_line("RUN")
+    assert "CONST BIG$" in err.upper()
+    assert "PARAMETER OF S1" in err.upper()
+    assert console.send_line('PRINT "SURVIVED"') == "SURVIVED"
+
+
 def test_help_variable_gaps(console):
     out = dump_topic(console, "REDIM")
     assert "PRESERVE" in out

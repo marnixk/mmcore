@@ -182,6 +182,92 @@ def test_command_only_keywords_stay_allowed(mmb):
     assert "NAME CONFLICT" not in out, out
 
 
+# ---- #1334: terminating command keywords cannot be variable names ---------
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "LOCAL quit",
+        "DIM quit",
+        "STATIC quit",
+        "LOCAL end",
+        "DIM stop",
+        "DIM reboot",
+        "DIM restart",
+        "DIM shutdown",
+    ],
+)
+def test_terminating_command_rejected_as_name(mmb, line):
+    out = _run(mmb, [line, 'PRINT "SURVIVED"'])
+    assert "?NAME CONFLICT: " in out, out
+    assert "is a reserved command" in out, out
+    assert "SURVIVED" in out, "the interpreter must survive the error"
+
+
+def test_quit_local_does_not_run_quit(mmb):
+    out = _run(mmb, [
+        "10 SUB s2()",
+        "20 LOCAL quit",
+        "30 PRINT \"before\"",
+        "40 quit = 0",
+        "50 PRINT \"after\"",
+        "60 END SUB",
+        "70 s2()",
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?NAME CONFLICT: QUIT is a reserved command @20:" in out, out
+    assert "before" not in out, out
+    assert "after" not in out, out
+    assert "SURVIVED" in out, out
+
+
+# ---- #1335: SUB/FUNCTION parameter colliding with a global CONST -----------
+
+def test_sub_param_const_clash_named_at_definition(mmb):
+    out = _run(mmb, [
+        "10 CONST BIG$ = \"abc\"",
+        "20 SUB s1(big$)",
+        "30 PRINT big$",
+        "40 END SUB",
+        "50 s1(\"x\")",
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?CONST BIG$ used as parameter of S1 @20:" in out, out
+    assert "SURVIVED" in out, out
+
+
+def test_function_param_const_clash_named_at_definition(mmb):
+    out = _run(mmb, [
+        "10 CONST BIG$ = \"abc\"",
+        "20 FUNCTION s1(big$)",
+        "30 s1 = big$",
+        "40 END FUNCTION",
+        "50 PRINT s1(\"x\")",
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?CONST BIG$ used as parameter of S1 @20:" in out, out
+    assert "SURVIVED" in out, out
+
+
+def test_sub_param_const_clash_named_at_call_after_prescan(mmb):
+    # CONST is declared after the SUB, so prescan and the definition line
+    # cannot see it; the call-time check must still name the parameter.
+    out = _run(mmb, [
+        "10 SUB s1(big$)",
+        "20 PRINT big$",
+        "30 END SUB",
+        "40 CONST BIG$ = \"abc\"",
+        "50 s1(\"x\")",
+        "RUN",
+        'PRINT "SURVIVED"',
+    ])
+    assert "?CONST BIG$ used as parameter of S1 @50:" in out, out
+    assert "SURVIVED" in out, out
+
+
 def test_duplicate_dim_message_unchanged(mmb):
     out = _run(mmb, ["DIM x=1 : DIM x=2"])
     assert "?ALREADY DECLARED" in out, out
