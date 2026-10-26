@@ -29,30 +29,117 @@ static uint16_t *s_stage;  /* RGB565 for SDL */
 static int s_w, s_h;
 static int s_window_scale = 1; /* window client size = FB size * this */
 static int s_quit;
-static int s_dirty;
-static int s_dirty_x0, s_dirty_y0, s_dirty_x1, s_dirty_y1;
-/* Present pacing (#1265). SDL_RenderPresent only waits for the vertical blank
- * when the renderer actually honours SDL_RENDERER_PRESENTVSYNC. The flag alone
- * is not trustworthy: SDL's software renderer advertises it yet returns in
- * 0 ms, and a KMS/EGL driver may also fail to block in the swap. Start from
- * the renderer-info hint, then time each present and flip to explicit frame
- * pacing if the call returns without waiting. */
-static int s_present_software;   /* software renderer never waits for blank */
-static int s_present_synced;     /* current belief: present waits for blank */
-static float s_present_ms;       /* running average of present call duration */
-static int s_present_samples;    /* presents since the last mode change */
-static unsigned s_frame_interval; /* display frame period in ms */
-static unsigned s_frame_next;     /* millis at the next frame boundary */
 
-/* Union a changed rectangle into the pending dirty area. A running program
+/* A small fixed list of changed rectangles. A few 16x16 sprites spread over
+ * the screen stay a few small uploads instead of one screen-sized union box
+ * (#1367). Only when the list is full does a new rect coalesce into the one
+ * whose union grows least; whole-screen marks still replace the list. */
+#define SDL_DIRTY_MAX 16
+typedef struct {
+	int x, y, w, h;
+} sdl_dirty_rect;
+static sdl_dirty_rect s_dirty[SDL_DIRTY_MAX];
+static int s_dirty_n;
+
+/* One display-period pacing grid (#1367). The same grid gates the line-loop
+ * present and the scanout alignment, so the two can no longer beat against
+ * each other. It is derived from the actual refresh rate, in microseconds so
+ * 60 Hz is 16667 us and not the old 16 ms / 17 ms pair. */
+static sdl_pace s_pace;
+static unsigned long long s_frame_period_us; /* cached, 0 until first use */
+
+static unsigned long long pace_now_us(void)
+{
+	Uint64 freq = SDL_GetPerformanceFrequency();
+	Uint64 count = SDL_GetPerformanceCounter();
+
+	if (!freq)
+		return (unsigned long long)SDL_GetTicks() * 1000ull;
+	return (count / freq) * 1000000ull +
+	       (count % freq) * 1000000ull / freq;
+}
+
+unsigned long long sdl_video_frame_period_us(void)
+{
+	SDL_DisplayMode mode;
+	int hz = 0;
+
+	if (s_frame_period_us)
+		return s_frame_period_us;
+	if (SDL_GetCurrentDisplayMode(0, &mode) == 0)
+		hz = mode.refresh_rate;
+	if (hz < 24 || hz > 240)
+		hz = 60;
+	s_frame_period_us = (unsigned long long)((1000000.0 / (double)hz) + 0.5);
+	if (!s_frame_period_us)
+		s_frame_period_us = 16667;
+	return s_frame_period_us;
+}
+
+void sdl_pace_init(sdl_pace *p, unsigned long long period_us,
+		   unsigned long long now_us)
+{
+	if (!p)
+		return;
+	if (!period_us)
+		period_us = 16667;
+	p->period_us = period_us;
+	p->next_us = now_us + period_us;
+	p->valid = 1;
+}
+
+int sdl_pace_peek(const sdl_pace *p, unsigned long long now_us)
+{
+	if (!p || !p->valid)
+		return 1;
+	return now_us >= p->next_us;
+}
+
+int sdl_pace_step(sdl_pace *p, unsigned long long now_us)
+{
+	if (!p || !p->valid)
+	{
+		if (p)
+			sdl_pace_init(p, p->period_us, now_us);
+		return 1;
+	}
+	if (now_us < p->next_us)
+		return 0;
+	if (now_us - p->next_us >= p->period_us)
+		/* Fell more than a frame behind (a pause, a mode change): resync
+		 * to now rather than presenting a backlog of catch-up frames. */
+		p->next_us = now_us + p->period_us;
+	else
+		p->next_us += p->period_us;
+	return 1;
+}
+
+static int dirty_area(const sdl_dirty_rect *r)
+{
+	return r->w * r->h;
+}
+
+/* Area of the bounding box of a and b. */
+static int dirty_union_area(const sdl_dirty_rect *r, int x, int y, int x1,
+			    int y1)
+{
+	int ux0 = r->x < x ? r->x : x;
+	int uy0 = r->y < y ? r->y : y;
+	int ux1 = r->x + r->w > x1 ? r->x + r->w : x1;
+	int uy1 = r->y + r->h > y1 ? r->y + r->h : y1;
+
+	return (ux1 - ux0) * (uy1 - uy0);
+}
+
+/* Union a changed rectangle into the pending dirty list. A running program
  * changes only a small part of the screen between presents; converting and
- * uploading just that area makes the per-present cost proportional to the
+ * uploading just those areas makes the per-present cost proportional to the
  * change rather than to the panel size (a Chromebook is 1366x768). */
 void sdl_video_mark_dirty_rect(int x, int y, int w, int h)
 {
-	int x1, y1;
+	int x1, y1, i, best, best_grow;
 
-	if (w <= 0 || h <= 0)
+	if (w <= 0 || h <= 0 || s_w <= 0 || s_h <= 0)
 		return;
 	x1 = x + w;
 	y1 = y + h;
@@ -66,52 +153,124 @@ void sdl_video_mark_dirty_rect(int x, int y, int w, int h)
 		y1 = s_h;
 	if (x >= x1 || y >= y1)
 		return;
-	if (!s_dirty)
+
+	/* Already covered: nothing to do. */
+	for (i = 0; i < s_dirty_n; i++)
 	{
-		s_dirty_x0 = x;
-		s_dirty_y0 = y;
-		s_dirty_x1 = x1;
-		s_dirty_y1 = y1;
-		s_dirty = 1;
+		const sdl_dirty_rect *r = &s_dirty[i];
+
+		if (x >= r->x && y >= r->y && x1 <= r->x + r->w &&
+		    y1 <= r->y + r->h)
+			return;
+	}
+
+	if (s_dirty_n < SDL_DIRTY_MAX)
+	{
+		sdl_dirty_rect *r = &s_dirty[s_dirty_n++];
+
+		r->x = x;
+		r->y = y;
+		r->w = x1 - x;
+		r->h = y1 - y;
 		return;
 	}
-	if (x < s_dirty_x0)
-		s_dirty_x0 = x;
-	if (y < s_dirty_y0)
-		s_dirty_y0 = y;
-	if (x1 > s_dirty_x1)
-		s_dirty_x1 = x1;
-	if (y1 > s_dirty_y1)
-		s_dirty_y1 = y1;
+
+	/* The list is full: coalesce into the rect whose union grows least. */
+	best = 0;
+	best_grow = dirty_union_area(&s_dirty[0], x, y, x1, y1) -
+		    dirty_area(&s_dirty[0]);
+	for (i = 1; i < s_dirty_n; i++)
+	{
+		int grow = dirty_union_area(&s_dirty[i], x, y, x1, y1) -
+			   dirty_area(&s_dirty[i]);
+
+		if (grow < best_grow)
+		{
+			best = i;
+			best_grow = grow;
+		}
+	}
+	{
+		sdl_dirty_rect *r = &s_dirty[best];
+		int ux0 = r->x < x ? r->x : x;
+		int uy0 = r->y < y ? r->y : y;
+		int ux1 = r->x + r->w > x1 ? r->x + r->w : x1;
+		int uy1 = r->y + r->h > y1 ? r->y + r->h : y1;
+
+		r->x = ux0;
+		r->y = uy0;
+		r->w = ux1 - ux0;
+		r->h = uy1 - uy0;
+	}
 }
 
 void sdl_video_dirty_rect(int *x, int *y, int *w, int *h)
 {
+	int i, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+
+	if (s_dirty_n > 0)
+	{
+		x0 = s_dirty[0].x;
+		y0 = s_dirty[0].y;
+		x1 = x0 + s_dirty[0].w;
+		y1 = y0 + s_dirty[0].h;
+		for (i = 1; i < s_dirty_n; i++)
+		{
+			if (s_dirty[i].x < x0)
+				x0 = s_dirty[i].x;
+			if (s_dirty[i].y < y0)
+				y0 = s_dirty[i].y;
+			if (s_dirty[i].x + s_dirty[i].w > x1)
+				x1 = s_dirty[i].x + s_dirty[i].w;
+			if (s_dirty[i].y + s_dirty[i].h > y1)
+				y1 = s_dirty[i].y + s_dirty[i].h;
+		}
+	}
 	if (x)
-		*x = s_dirty ? s_dirty_x0 : 0;
+		*x = x0;
 	if (y)
-		*y = s_dirty ? s_dirty_y0 : 0;
+		*y = y0;
 	if (w)
-		*w = s_dirty ? s_dirty_x1 - s_dirty_x0 : 0;
+		*w = x1 - x0;
 	if (h)
-		*h = s_dirty ? s_dirty_y1 - s_dirty_y0 : 0;
+		*h = y1 - y0;
+}
+
+int sdl_video_dirty_count(void)
+{
+	return s_dirty_n;
+}
+
+int sdl_video_dirty_rect_at(int i, int *x, int *y, int *w, int *h)
+{
+	if (i < 0 || i >= s_dirty_n)
+		return 0;
+	if (x)
+		*x = s_dirty[i].x;
+	if (y)
+		*y = s_dirty[i].y;
+	if (w)
+		*w = s_dirty[i].w;
+	if (h)
+		*h = s_dirty[i].h;
+	return 1;
 }
 
 /* Mark the whole screen. Unlike sdl_video_mark_dirty_rect() this replaces any
- * pending rectangle: callers use it after a mode change or a full-screen fill,
- * when an older, larger rectangle may no longer fit the new buffers. */
+ * pending rectangles: callers use it after a mode change or a full-screen
+ * fill, when an older, larger rectangle may no longer fit the new buffers. */
 void sdl_video_mark_dirty(void)
 {
 	if (s_w <= 0 || s_h <= 0)
 	{
-		s_dirty = 0;
+		s_dirty_n = 0;
 		return;
 	}
-	s_dirty_x0 = 0;
-	s_dirty_y0 = 0;
-	s_dirty_x1 = s_w;
-	s_dirty_y1 = s_h;
-	s_dirty = 1;
+	s_dirty[0].x = 0;
+	s_dirty[0].y = 0;
+	s_dirty[0].w = s_w;
+	s_dirty[0].h = s_h;
+	s_dirty_n = 1;
 }
 
 unsigned sdl_rgb_to_native(unsigned rgb888)
@@ -249,35 +408,23 @@ int sdl_video_open(int w, int h)
 	set_window_icon();
 
 	/* A framebuffer build must pick GLES2/EGL explicitly (index) or the KMS
-	 * scanout stays black; other builds and drivers use SDL's default. */
+	 * scanout stays black; other builds and drivers use SDL's default.
+	 *
+	 * Deliberately no SDL_RENDERER_PRESENTVSYNC (#1367): a blocking present
+	 * stalls the interpreter and its SETTICK/ON KEY handlers for up to a
+	 * whole frame. sdl_video_present() paces the scanout copy on its own
+	 * display-period grid instead, which also removes the second clock the
+	 * old frame wait added. */
 	s_ren = SDL_CreateRenderer(s_win, sdl_video_render_driver_index(),
-				   SDL_RENDERER_ACCELERATED |
-				   SDL_RENDERER_PRESENTVSYNC);
+				   SDL_RENDERER_ACCELERATED);
 	if (!s_ren)
 		s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
 	if (!s_ren)
 		return 0;
-	{
-		SDL_RendererInfo info;
-
-		/* The renderer-info flags are only a starting hint. A software
-		 * renderer never waits for the blank; an accelerated renderer is
-		 * trusted only until the first presents are timed (see
-		 * sdl_present_measure()). */
-		s_present_software = 0;
-		s_present_synced = 0;
-		s_present_ms = 0.0f;
-		s_present_samples = 0;
-		if (SDL_GetRendererInfo(s_ren, &info) == 0)
-		{
-			s_present_software =
-				(info.flags & SDL_RENDERER_SOFTWARE) != 0;
-			s_present_synced = !s_present_software &&
-				(info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
-		}
-	}
-	s_frame_interval = 0;
-	s_frame_next = 0;
+	s_frame_period_us = 0;
+	s_pace.valid = 0;
+	s_pace.next_us = 0;
+	s_pace.period_us = sdl_video_frame_period_us();
 
 	if (!sdl_video_resize(w, h))
 		return 0;
@@ -330,6 +477,12 @@ int sdl_video_resize(int w, int h)
 	s_w = w;
 	s_h = h;
 	sdl_video_mark_dirty();
+	/* A mode change may also change the refresh rate: re-derive the grid and
+	 * re-anchor it so the first new frame is not delayed by a stale phase. */
+	s_frame_period_us = 0;
+	s_pace.period_us = sdl_video_frame_period_us();
+	s_pace.next_us = 0;
+	s_pace.valid = 0; /* present the first frame of the new mode at once */
 	if (s_win)
 		SDL_SetWindowSize(s_win, w * s_window_scale,
 				  h * s_window_scale);
@@ -404,105 +557,24 @@ static void present_clear_band(int x, int y, int w, int h)
 
 int sdl_video_present_is_vsynced(void)
 {
-	return s_present_synced;
+	/* The renderer is created without PRESENTVSYNC and the present path
+	 * paces itself, so it never relies on the swap blocking for the blank. */
+	return 0;
 }
 
-/* Display frame period in milliseconds. The refresh rate comes from the
- * current mode; a driver that reports nothing useful (dummy/headless) falls
- * back to 60 Hz. */
-static unsigned sdl_frame_period_ms(void)
+int sdl_video_present_due(void)
 {
-	SDL_DisplayMode mode;
-	int hz = 0;
-
-	if (SDL_GetCurrentDisplayMode(0, &mode) == 0)
-		hz = mode.refresh_rate;
-	if (hz < 24 || hz > 240)
-		hz = 60;
-	return (unsigned)((1000 + hz / 2) / hz);
+	return sdl_pace_peek(&s_pace, pace_now_us());
 }
 
-/* Track how long SDL_RenderPresent() took and decide whether presents really
- * wait for the vertical blank. A blocking present spends a sizeable part of a
- * frame inside the call; a non-blocking one queues the copy and returns in a
- * few ms. Three samples after each change are required so one unusually early
- * vblank cannot flip the mode on its own. The thresholds are far apart: a
- * genuine vsync wait averages around half a frame at a uniform arrival phase,
- * while a copy-and-return present stays near zero. */
-static void sdl_present_measure(unsigned ms)
+/* Convert one changed rectangle to RGB565 and upload just that region. */
+static void upload_rect(const sdl_dirty_rect *r)
 {
-	float interval;
+	SDL_Rect src;
+	int x, y, x0 = r->x, y0 = r->y, x1 = r->x + r->w, y1 = r->y + r->h;
 
-	if (s_present_samples++ == 0)
-		s_present_ms = (float)ms;
-	else
-		s_present_ms += ((float)ms - s_present_ms) * 0.2f;
-	if (s_present_software || s_present_samples < 3)
-		return;
-	if (!s_frame_interval)
-		s_frame_interval = sdl_frame_period_ms();
-	interval = (float)s_frame_interval;
-	if (s_present_synced && s_present_ms < interval * 0.25f)
-	{
-		s_present_synced = 0;
-		s_present_samples = 0;
-	}
-	else if (!s_present_synced && s_present_ms > interval * 0.70f)
-	{
-		s_present_synced = 1;
-		s_present_samples = 0;
-	}
-}
-
-/* Start the next present at the top of a display frame. Only used when the
- * renderer does not already pause presents for vsync: a software/KMS renderer
- * copies the whole frame into scanout, and starting that copy at an arbitrary
- * point makes the visualiser tear. Presenting at a frame boundary gives the
- * copy the frame interval before scanout reaches it. This runs on the present
- * path (once per main-loop frame, not per program line), so it caps the frame
- * rate without throttling the interpreter (#1080). */
-static void sdl_frame_wait(void)
-{
-	unsigned now, interval, next;
-
-	if (!s_frame_interval)
-		s_frame_interval = sdl_frame_period_ms();
-	interval = s_frame_interval;
-	now = SDL_GetTicks();
-	if (!s_frame_next)
-		s_frame_next = now;
-	next = s_frame_next;
-	if ((int)(now - next) > (int)interval)
-		next = now; /* fell behind (pause, mode change): resync */
-	if ((int)(now - next) < 0)
-		SDL_Delay(next - now);
-	s_frame_next = next + interval;
-}
-
-void sdl_video_present(void)
-{
-	int x0, y0, x1, y1, y, x;
-	int ow = 0, oh = 0, dx, dy, dw, dh;
-	SDL_Rect src, dst;
-
-	if (!s_dirty)
-		return;
-	if (!s_tex || !s_fb || !s_stage)
-		return;
-
-	/* Take the pending dirty rectangle and clear it before the (possibly
-	 * slow) upload so a caller that draws again during the present starts a
-	 * fresh rectangle. */
-	x0 = s_dirty_x0;
-	y0 = s_dirty_y0;
-	x1 = s_dirty_x1;
-	y1 = s_dirty_y1;
-	s_dirty = 0;
-	if (x0 >= x1 || y0 >= y1)
-		return;
-
-	/* Convert RGB555 (green at bit 6) to SDL's RGB565, but only the region
-	 * that changed. */
+	/* Convert RGB555 (green at bit 6) to SDL's RGB565, but only this
+	 * region. */
 	for (y = y0; y < y1; y++)
 	{
 		const uint16_t *srow = s_fb + (size_t)y * (size_t)s_w;
@@ -511,25 +583,46 @@ void sdl_video_present(void)
 		for (x = x0; x < x1; x++)
 		{
 			uint16_t v = srow[x];
-			unsigned r = (v >> 11) & 0x1Fu;
-			unsigned g = (v >> 6) & 0x1Fu;
-			unsigned b = v & 0x1Fu;
-			unsigned g6 = (g << 1) | (g >> 4);
+			unsigned rr = (v >> 11) & 0x1Fu;
+			unsigned gg = (v >> 6) & 0x1Fu;
+			unsigned bb = v & 0x1Fu;
+			unsigned g6 = (gg << 1) | (gg >> 4);
 
-			drow[x] = (uint16_t)((r << 11) | (g6 << 5) | b);
+			drow[x] = (uint16_t)((rr << 11) | (g6 << 5) | bb);
 		}
 	}
 
-	/* Update only that rectangle of the streaming texture. SDL_UpdateTexture
-	 * treats a non-NULL rect as a sub-region whose pixels start at the given
-	 * pointer, with pitch still spanning a full row. */
+	/* SDL_UpdateTexture treats a non-NULL rect as a sub-region whose pixels
+	 * start at the given pointer, with pitch still spanning a full row. */
 	src.x = x0;
 	src.y = y0;
-	src.w = x1 - x0;
-	src.h = y1 - y0;
-	SDL_UpdateTexture(s_tex, &src,
-			  s_stage + (size_t)y0 * (size_t)s_w + x0,
+	src.w = r->w;
+	src.h = r->h;
+	SDL_UpdateTexture(s_tex, &src, s_stage + (size_t)y0 * (size_t)s_w + x0,
 			  s_w * (int)sizeof(uint16_t));
+}
+
+/* Upload every pending rectangle, then copy the whole texture into the
+ * drawable and present it. The list is consumed before the (possibly slow)
+ * upload so a caller that draws again during the present starts a fresh
+ * list. */
+static void flush_present(void)
+{
+	sdl_dirty_rect list[SDL_DIRTY_MAX];
+	int n, i;
+	int ow = 0, oh = 0, dx, dy, dw, dh;
+	SDL_Rect dst;
+
+	if (!s_tex || !s_fb || !s_stage)
+		return; /* keep the rects pending until the buffers exist */
+	n = s_dirty_n;
+	s_dirty_n = 0;
+	if (n <= 0)
+		return;
+	for (i = 0; i < n; i++)
+		list[i] = s_dirty[i];
+	for (i = 0; i < n; i++)
+		upload_rect(&list[i]);
 
 	/* Integer scale into the drawable, centred with black bars. */
 	sdl_video_host_size(&ow, &oh);
@@ -543,7 +636,7 @@ void sdl_video_present(void)
 	present_clear_band(0, dy, dx, dh);
 	present_clear_band(dx + dw, dy, ow - (dx + dw), dh);
 
-	/* Copy the whole texture, not just the dirty sub-rectangle. SDL's
+	/* Copy the whole texture, not just the dirty sub-rectangles. SDL's
 	 * accelerated renderer flips between back buffers on SDL_RenderPresent,
 	 * so any cell a partial copy leaves untouched belongs to an older frame.
 	 * Windowed compositors hide that, but fullscreen buffer flipping shows it
@@ -555,20 +648,31 @@ void sdl_video_present(void)
 	dst.w = dw;
 	dst.h = dh;
 	SDL_RenderCopy(s_ren, s_tex, 0, &dst);
-	/* #1265: a renderer that does not really wait for vsync copies into
-	 * scanout as soon as the present runs, which tears while the visualiser
-	 * animates. Start that copy at a frame boundary instead. The decision is
-	 * made from measured present durations, so an accelerated renderer that
-	 * silently ignores PRESENTVSYNC is caught too; a genuinely vsynced
-	 * renderer blocks below without the extra wait. */
-	if (!s_present_synced)
-		sdl_frame_wait();
-	{
-		unsigned t0 = SDL_GetTicks();
+	/* #1265: with no blocking vsync the copy reaches scanout as soon as it
+	 * runs, so it must start at a frame boundary to avoid tearing. The grid
+	 * above is that boundary; this is the same clock that gates the poll,
+	 * so no second wait is needed. */
+	SDL_RenderPresent(s_ren);
+}
 
-		SDL_RenderPresent(s_ren);
-		sdl_present_measure(SDL_GetTicks() - t0);
-	}
+void sdl_video_present(void)
+{
+	if (!sdl_pace_step(&s_pace, pace_now_us()))
+		return; /* not at a display frame boundary yet */
+	if (s_dirty_n <= 0)
+		return;
+	flush_present();
+}
+
+void sdl_video_present_now(void)
+{
+	if (s_dirty_n > 0)
+		flush_present();
+	/* Re-anchor: the next paced present is due immediately rather than
+	 * waiting out a phase that belonged to the forced frame. */
+	s_pace.period_us = sdl_video_frame_period_us();
+	s_pace.next_us = 0;
+	s_pace.valid = 0;
 }
 
 void sdl_video_request_quit(void)
@@ -604,8 +708,13 @@ void sdl_video_set_fullscreen(int on)
 			SDL_SetWindowSize(s_win, s_w * s_window_scale,
 					  s_h * s_window_scale);
 	}
-	/* The drawable changed: force a full repaint (and a fresh letterbox). */
+	/* The drawable changed: force a full repaint (and a fresh letterbox), and
+	 * re-anchor the pacing grid in case the refresh rate changed. */
 	sdl_video_mark_dirty();
+	s_frame_period_us = 0;
+	s_pace.period_us = sdl_video_frame_period_us();
+	s_pace.next_us = 0;
+	s_pace.valid = 0; /* the repaint is due immediately */
 }
 
 /* Set the windowed client-size multiplier (1 = 1:1, 2 = --double). Applies

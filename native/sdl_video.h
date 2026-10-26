@@ -48,25 +48,73 @@ int sdl_video_window_to_fb(int wx, int wy, int *fx, int *fy);
 unsigned sdl_rgb_to_native(unsigned rgb888);
 unsigned sdl_native_to_rgb(unsigned native);
 
+/* Mark the current program frame ready and service the display grid. The
+ * present happens at the display frame boundary derived from the refresh
+ * rate; called between boundaries it just leaves the dirty regions pending
+ * for the line-loop poll to flush (#1367). Never blocks for vsync: the
+ * renderer is created without SDL_RENDERER_PRESENTVSYNC and the copy is paced
+ * here instead, so SETTICK/ON KEY handlers keep their cadence. */
 void sdl_video_present(void);
+
+/* Flush any pending dirty regions immediately, ignoring the display grid.
+ * Only for shutdown / a final frame, where waiting another display frame
+ * would lose the last drawing. */
+void sdl_video_present_now(void);
+
 void sdl_video_mark_dirty(void);
 
-/* Whether presents are currently believed to wait for the vertical blank.
- * Seeded from the renderer-info flags, then verified from the measured
- * duration of SDL_RenderPresent(); when false, sdl_video_present() aligns the
- * scanout copy to a display frame itself so animations do not tear. */
+/* Non-zero when the display frame grid is at a present boundary now. A cheap,
+ * non-mutating peek: the per-line poll uses it so it only calls
+ * sdl_video_present() at a boundary instead of on every program line. */
+int sdl_video_present_due(void);
+
+/* The display frame period in microseconds, derived from the current mode's
+ * refresh rate (60 Hz fallback when the driver reports nothing useful). */
+unsigned long long sdl_video_frame_period_us(void);
+
+/* Whether presents are believed to wait for the vertical blank. The SDL
+ * backend no longer relies on a blocking present (it always paces itself), so
+ * this is 0; kept as a debug aid. */
 int sdl_video_present_is_vsynced(void);
 
 /* Mark only a rectangle of the software framebuffer as changed. The present
- * then converts and uploads just that region instead of the whole panel, which
- * keeps the per-present cost proportional to what a graphics-heavy program
- * actually drew. Coordinates are clamped to the framebuffer; an empty rect is
+ * then converts and uploads just those regions instead of the whole panel,
+ * which keeps the per-present cost proportional to what a graphics-heavy
+ * program actually drew. A small fixed list of disjoint rectangles is kept;
+ * only when it is full is a new rectangle coalesced into the one whose union
+ * grows least. Coordinates are clamped to the framebuffer; an empty rect is
  * ignored. sdl_video_mark_dirty() remains the whole-screen case. */
 void sdl_video_mark_dirty_rect(int x, int y, int w, int h);
 
-/* The dirty rectangle not yet presented, or w == 0 when clean. Test/debug aid
- * for the coalescing in sdl_video_present(). */
+/* The bounding box of every dirty rectangle not yet presented, or w == 0 when
+ * clean. Test/debug aid. */
 void sdl_video_dirty_rect(int *x, int *y, int *w, int *h);
+
+/* Number of pending dirty rectangles (test/debug). */
+int sdl_video_dirty_count(void);
+
+/* Copy pending dirty rectangle i (0 <= i < sdl_video_dirty_count()) to the
+ * out pointers. Returns 1 when i is in range, 0 otherwise. Test/debug aid. */
+int sdl_video_dirty_rect_at(int i, int *x, int *y, int *w, int *h);
+
+/* Deterministic present pacing grid. sdl_video.c uses this for the real
+ * present path; tests feed synthetic timestamps to prove there is a single
+ * display-period grid and at most one present per frame (#1367). */
+typedef struct {
+	unsigned long long period_us;
+	unsigned long long next_us;
+	int valid;
+} sdl_pace;
+
+void sdl_pace_init(sdl_pace *p, unsigned long long period_us,
+		   unsigned long long now_us);
+/* Non-zero when now_us is at/past the next boundary; does not advance. */
+int sdl_pace_peek(const sdl_pace *p, unsigned long long now_us);
+/* Advance the grid at a boundary and return 1 when a present should run now.
+ * If we fell more than a whole frame behind (pause, mode change), resync to
+ * now instead of accumulating a backlog of catch-up presents. */
+int sdl_pace_step(sdl_pace *p, unsigned long long now_us);
+
 int sdl_video_should_quit(void);
 void sdl_video_request_quit(void);
 void sdl_video_toggle_fullscreen(void);

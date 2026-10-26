@@ -1842,12 +1842,14 @@ def test_sdl_present_dirty_rect_host(tmp_path):
 
 
 def test_sdl_present_is_dirty_rect_and_rate_limited():
-    """#1080: the RUN poll must not present once per program line.
+    """#1080/#1367: the RUN poll must not present per line, and there is one
+    display-period grid for both the present and the scanout alignment.
 
     check_break runs per line; an unconditional present there (or a full-frame
     conversion in sdl_video_present) made a LINE loop pay ~a vblank per line on
-    a Chromebook. Guard the two properties structurally, since the timing guard
-    below only catches a gross regression.
+    a Chromebook. Guard the structural properties, since the timing guard below
+    only catches a gross regression. The deterministic pacing test lives in
+    tests/sdl_video_dirty_host.c.
     """
     video = open(
         os.path.join(REPO, "native", "sdl_video.c"), encoding="utf-8"
@@ -1855,8 +1857,10 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     plat = open(
         os.path.join(REPO, "native", "platform_sdl.c"), encoding="utf-8"
     ).read()
-    # Only the dirty rectangle is converted and uploaded.
+    # Only the dirty rectangles are converted and uploaded, as a list.
     assert "sdl_video_mark_dirty_rect" in video
+    assert "SDL_DIRTY_MAX" in video
+    assert "sdl_video_dirty_rect_at" in video
     assert "SDL_UpdateTexture(s_tex, &src" in video
     # #1083/#1090: only the letterbox bands are cleared, not the whole
     # drawable, but the whole texture is copied every present. SDL's
@@ -1867,19 +1871,24 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     assert "sdl_scale_map_rect" not in video
     assert "SDL_RenderFillRect" in video
     assert "SDL_RenderClear(s_ren)" not in video
-    # sdl_poll_input() gates the present behind a minimum interval.
-    assert "SDL_PRESENT_MIN_MS" in plat
-    # #1265: when presents do not really wait for vblank, sdl_video_present()
-    # aligns the scanout copy to a display frame itself. The renderer-info
-    # flag is only a hint: the present call is timed, so an accelerated
-    # renderer that ignores PRESENTVSYNC is caught as well.
+    # #1367: one microsecond display grid gates the line-loop present. There
+    # is no longer a millisecond limiter in the platform and no second
+    # SDL_Delay frame wait in the present path.
+    assert "sdl_video_present_due" in plat
+    assert "SDL_PRESENT_MIN_MS" not in plat
+    assert "sdl_frame_wait" not in video
+    assert "SDL_Delay(" not in video
+    assert "sdl_video_frame_period_us" in video
+    assert "sdl_pace_step" in video
+    assert "sdl_pace_peek" in video
+    # Deliberately no blocking renderer vsync (#1367): a blocking present
+    # stalls the interpreter and its SETTICK/ON KEY handlers.
+    assert "SDL_RENDERER_PRESENTVSYNC)" not in video
     assert "sdl_video_present_is_vsynced" in video
-    assert "s_present_software" in video
-    assert "sdl_present_measure" in video
-    assert "if (!s_present_synced)" in video
-    assert "sdl_present_measure(SDL_GetTicks() - t0)" in video
-    assert "s_present_synced = 0;" in video
-    assert "s_present_synced = 1;" in video
+    # A page copy/blit to the displayed page presents at the program frame
+    # boundary; the line-loop poll is the bounded fallback.
+    assert "sdl_video_present();" in plat
+    assert "sdl_video_present_now" in video
 
 
 def test_native_console_and_tui_mark_rects_not_whole_screen():
