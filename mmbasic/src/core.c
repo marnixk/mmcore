@@ -16,6 +16,8 @@ static void run_program(void);
 static int line_match(const char *body, const char *kw);
 static int find_wend_pc(int from);
 static int find_loop_pc(int from);
+static const char *find_matching_loop(int pc, const char *p, int *out_pc);
+static const char *stmt_after(const char *np);
 static int find_endif_pc(int from);
 static int find_end_select_pc(int from);
 static int find_end_sub_pc(int from);
@@ -1303,6 +1305,11 @@ static void push_ctrl(int type)
 	G.ctrlstack[G.ctrl_sp].type = type;
 	G.ctrlstack[G.ctrl_sp].line_pc = G.run_pc;
 	G.ctrlstack[G.ctrl_sp].skip = 0;
+	G.ctrlstack[G.ctrl_sp].mid_line = 0;
+	G.ctrlstack[G.ctrl_sp].pos = 0;
+	G.ctrlstack[G.ctrl_sp].loop_pc = -1;
+	G.ctrlstack[G.ctrl_sp].loop_pos = 0;
+	G.ctrlstack[G.ctrl_sp].after_loop = 0;
 	G.ctrlstack[G.ctrl_sp].if_depth = G.if_depth;
 	G.ctrlstack[G.ctrl_sp].sel_depth = G.sel_sp;
 	G.ctrlstack[G.ctrl_sp].seq = G.loop_seq++;
@@ -1334,6 +1341,10 @@ void mmb_cmd_wend(void)
 void mmb_cmd_do(void)
 {
 	int cond = 1;
+	int mid_line = 0;
+	const char *pos = 0;
+	int loop_pc = -1;
+	const char *loop_pos = 0, *after_loop = 0;
 	mmb_skip_sp();
 	if (mmb_match("WHILE"))
 	{
@@ -1345,13 +1356,72 @@ void mmb_cmd_do(void)
 		mmb_val v = mmb_expr();
 		cond = mmb_as_int(v) == 0;
 	}
+	/* A DO that does not start its line must not restart the line on
+	 * loop-back; resume at the DO statement itself instead (#1329). Find the
+	 * matching LOOP at statement boundaries too, for EXIT/CONTINUE DO and a
+	 * false DO WHILE. Only trust a pointer inside the tokenized program line
+	 * (EXECUTE strings run from a local buffer). */
+	{
+		const char *base = (G.run_pc >= 0 && G.run_pc < G.nprog)
+					   ? mmb_tok_line(G.run_pc)
+					   : 0;
+		if (base && G.stmt_start >= base &&
+		    G.stmt_start < base + MMB_LINE_LEN &&
+		    !line_match(G.prog[G.run_pc], "DO"))
+		{
+			int i;
+			mid_line = 1;
+			pos = G.stmt_start;
+			/* Re-entering the DO on loop-back reuses the location
+			 * found on the first pass instead of rescanning. */
+			for (i = G.ctrl_sp - 1; i >= 0; i--)
+				if (G.ctrlstack[i].type == 2 &&
+				    G.ctrlstack[i].line_pc == G.run_pc &&
+				    G.ctrlstack[i].mid_line)
+				{
+					loop_pc = G.ctrlstack[i].loop_pc;
+					loop_pos = G.ctrlstack[i].loop_pos;
+					after_loop = G.ctrlstack[i].after_loop;
+					break;
+				}
+			if (loop_pc < 0)
+			{
+				const char *lp = find_matching_loop(G.run_pc, G.p,
+								    &loop_pc);
+				if (lp)
+				{
+					loop_pos = lp;
+					after_loop = stmt_after(lp);
+				}
+			}
+		}
+	}
 	ctrl_reenter(2);
 	if (!cond)
 	{
-		G.branch_pc = find_loop_pc(G.run_pc) + 1;
+		if (mid_line && loop_pc >= 0)
+		{
+			if (after_loop)
+			{
+				G.branch_pc = loop_pc;
+				G.branch_pos = after_loop;
+			}
+			else
+				G.branch_pc = loop_pc + 1;
+		}
+		else
+			G.branch_pc = find_loop_pc(G.run_pc) + 1;
 		return;
 	}
 	push_ctrl(2);
+	if (mid_line)
+	{
+		G.ctrlstack[G.ctrl_sp - 1].mid_line = 1;
+		G.ctrlstack[G.ctrl_sp - 1].pos = pos;
+		G.ctrlstack[G.ctrl_sp - 1].loop_pc = loop_pc;
+		G.ctrlstack[G.ctrl_sp - 1].loop_pos = loop_pos;
+		G.ctrlstack[G.ctrl_sp - 1].after_loop = after_loop;
+	}
 }
 
 void mmb_cmd_loop(void)
@@ -1379,7 +1449,13 @@ void mmb_cmd_loop(void)
 	/* Drop any block IF/SELECT left open in this iteration (#1273). */
 	loop_restore(G.ctrlstack[i].if_depth, G.ctrlstack[i].sel_depth);
 	if (cond)
+	{
 		G.branch_pc = pc;
+		/* A mid-line DO resumes at its own statement, not the line start,
+		 * so statements before it do not run again (#1329). */
+		if (G.ctrlstack[i].mid_line)
+			G.branch_pos = G.ctrlstack[i].pos;
+	}
 	else
 		pop_ctrl_top();
 }
@@ -1391,7 +1467,20 @@ void mmb_cmd_exit_do(void)
 		mmb_error("?EXIT DO");
 	unwind_above_seq(G.ctrlstack[i].seq);
 	i = G.ctrl_sp - 1;
-	G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc) + 1;
+	if (G.ctrlstack[i].mid_line && G.ctrlstack[i].loop_pc >= 0)
+	{
+		/* Resume after the matching LOOP, which may share the DO's line
+		 * and have statements after it (#1329). */
+		if (G.ctrlstack[i].after_loop)
+		{
+			G.branch_pc = G.ctrlstack[i].loop_pc;
+			G.branch_pos = G.ctrlstack[i].after_loop;
+		}
+		else
+			G.branch_pc = G.ctrlstack[i].loop_pc + 1;
+	}
+	else
+		G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc) + 1;
 	pop_ctrl_top();
 }
 
@@ -1477,7 +1566,15 @@ void mmb_cmd_continue(void)
 			mmb_error("?CONTINUE DO");
 		unwind_above_seq(G.ctrlstack[i].seq);
 		i = G.ctrl_sp - 1;
-		G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
+		if (G.ctrlstack[i].mid_line && G.ctrlstack[i].loop_pc >= 0)
+		{
+			/* Jump to the LOOP statement itself, wherever it is on its
+			 * line (#1329). */
+			G.branch_pc = G.ctrlstack[i].loop_pc;
+			G.branch_pos = G.ctrlstack[i].loop_pos;
+		}
+		else
+			G.branch_pc = find_loop_pc(G.ctrlstack[i].line_pc);
 		loop_restore(G.ctrlstack[i].if_depth,
 			     G.ctrlstack[i].sel_depth);
 		return;
@@ -3511,6 +3608,47 @@ static const char *find_matching_next(int pc, const char *p, int *out_pc)
 	return 0;
 }
 
+/* Locate the LOOP statement matching the DO at pc whose body starts at p
+ * (#1329). Like find_matching_next, matching happens at statement boundaries
+ * and walks across lines, so a mid-line DO and its LOOP are found even though
+ * build_jumps only indexes whole lines. */
+static const char *find_matching_loop(int pc, const char *p, int *out_pc)
+{
+	int depth = 1;
+	while (pc < G.nprog)
+	{
+		while (*p)
+		{
+			const char *save = G.p;
+			int is_do = 0, is_loop = 0;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (*p == 0 || *p == '\'')
+				break;
+			G.p = p;
+			if (mmb_match("DO"))
+				is_do = 1;
+			else if (mmb_match("LOOP"))
+				is_loop = 1;
+			G.p = save;
+			if (is_do)
+				depth++;
+			else if (is_loop && --depth == 0)
+			{
+				*out_pc = pc;
+				return p;
+			}
+			skip_stmt(&p);
+			if (*p == ':')
+				p++;
+		}
+		pc++;
+		if (pc < G.nprog)
+			p = after_label(mmb_tok_line(pc));
+	}
+	return 0;
+}
+
 /* First statement after the NEXT at np, or NULL when it is the last statement
  * on its line (#1004). */
 static const char *stmt_after(const char *np)
@@ -4324,6 +4462,7 @@ static int try_tok_cmd(void)
 static void exec_statement(void)
 {
 	mmb_skip_sp();
+	G.stmt_start = G.p;
 	if (*G.p == 0 || *G.p == '\'')
 		return;
 	if (G.opt.profiling && G.running)
@@ -5237,15 +5376,21 @@ static void run_gosub_body(void)
 			G.branch_pc = -1;
 			if (resume)
 			{
-				skipped = exec_line_guarded(
-					mmb_tok_line(G.run_pc), resume);
+				const char *at = resume;
 				resume = 0;
+				G.branch_pos = 0;
+				skipped = exec_line_guarded(
+					mmb_tok_line(G.run_pc), at);
 			}
 			else if (G.branch_pos)
 			{
-				skipped = exec_line_guarded(
-					mmb_tok_line(G.run_pc), G.branch_pos);
+				/* Clear the position before running the rest of the
+				 * line: EXIT SUB / END SUB / RETURN in those statements
+				 * sets a new one, which must survive (#1332). */
+				const char *at = G.branch_pos;
 				G.branch_pos = 0;
+				skipped = exec_line_guarded(
+					mmb_tok_line(G.run_pc), at);
 			}
 			else
 				skipped = exec_line_guarded(
@@ -5667,16 +5812,22 @@ static void run_program(void)
 			}
 			if (resume)
 			{
-				skipped = exec_line_guarded(
-					mmb_tok_line(pc), resume);
+				const char *at = resume;
 				resume = 0;
+				G.branch_pos = 0;
+				skipped = exec_line_guarded(
+					mmb_tok_line(pc), at);
 			}
 			else if (G.branch_pos)
 			{
-				/* EXIT/CONTINUE FOR requested a mid-line resume (#1004). */
-				skipped = exec_line_guarded(
-					mmb_tok_line(pc), G.branch_pos);
+				/* EXIT/CONTINUE FOR requested a mid-line resume (#1004).
+				 * Clear it before executing: EXIT SUB / END SUB / RETURN
+				 * inside the resumed statements sets a new position that
+				 * must not be wiped (#1332). */
+				const char *at = G.branch_pos;
 				G.branch_pos = 0;
+				skipped = exec_line_guarded(
+					mmb_tok_line(pc), at);
 			}
 			else
 				skipped = exec_line_guarded(
