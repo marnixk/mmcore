@@ -9,6 +9,7 @@
 #include "mmbasic.h"
 #include "mmb_priv.h"
 
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,62 @@ void mmb_arena_release(mmb_arena_save *m)
 	release_calls++;
 	release_chunk = m->chunk;
 	release_used = m->used;
+}
+
+/* SELECT frames are freed through the string pool in the real build.  The
+ * tests only truncate frames with no string value, so the stub is enough. */
+void mmb_str_free(char *p)
+{
+	(void)p;
+}
+
+void mmb_error(const char *msg)
+{
+	fprintf(stderr, "unexpected mmb_error: %s\n", msg);
+	exit(3);
+}
+
+static void nested_clean_body(void *arg)
+{
+	int *ran = arg;
+
+	*ran = 1;
+	G.run_pc = 500;
+	G.branch_pc = 3;
+	G.branch_pos = "callee-pos";
+	G.p = "callee-p";
+	G.if_depth = 1;
+	G.if_shadow = 9;
+	G.if_inline = 2;
+	G.if_armed = 1;
+	G.if_inline_keep = 1;
+	G.sel_sp = 4;
+	G.ctrl_sp = 6;
+	G.for_sp = 5;
+	G.loop_seq = 77;
+	G.dim_local = 21;
+	G.running = 0;
+	G.end_req = 1;
+}
+
+static void nested_set_p_body(void *arg)
+{
+	(void)arg;
+	mmb_nested_set_p("after-args");
+}
+
+static jmp_buf unwind_jmp;
+
+static void nested_unwind_inner(void *arg)
+{
+	(void)arg;
+	longjmp(unwind_jmp, 1);
+}
+
+static void nested_unwind_outer(void *arg)
+{
+	(void)arg;
+	mmb_run_nested(nested_unwind_inner, 0, MMB_NESTED_GOSUB);
 }
 
 #define CHECK(cond) \
@@ -164,6 +221,189 @@ int main(void)
 	G.branch_pos = 0;
 	mmb_frame_capture(&f);
 	CHECK(f.resume == MMB_RESUME_P);
+
+	/* mmb_frame_enter() clears the callee-visible structure state and hides
+	 * the caller's SELECT frames, without touching position or loop depth. */
+	G.run_pc = 99;
+	G.branch_pc = 5;
+	G.branch_pos = "enter-pos";
+	G.p = "enter-p";
+	G.if_depth = 3;
+	G.if_shadow = 5;
+	G.if_inline = 2;
+	G.if_armed = 1;
+	G.if_inline_keep = 1;
+	G.sel_sp = 4;
+	G.sel_base = 1;
+	G.ctrl_sp = 7;
+	G.for_sp = 6;
+	mmb_frame_enter();
+	CHECK(G.if_depth == 0);
+	CHECK(G.if_shadow == 0);
+	CHECK(G.if_inline == 0);
+	CHECK(G.if_armed == 0);
+	CHECK(G.if_inline_keep == 0);
+	CHECK(G.sel_sp == 4);
+	CHECK(G.sel_base == 4);
+	CHECK(G.ctrl_sp == 7);
+	CHECK(G.for_sp == 6);
+	CHECK(G.run_pc == 99);
+	CHECK(G.branch_pc == 5);
+	CHECK(G.p && strcmp(G.p, "enter-p") == 0);
+
+	/* Nested restore is an exact snapshot for IF/position, truncates SELECT
+	 * frames the callee opened, and only shrinks loop depths. */
+	G.run_pc = 10;
+	G.branch_pc = -1;
+	G.branch_pos = 0;
+	G.p = "caller-p";
+	G.if_depth = 2;
+	G.if_stack[0] = 4;
+	G.if_stack[1] = 5;
+	G.if_pc_stack[0] = 100;
+	G.if_pc_stack[1] = 200;
+	G.if_shadow = 3;
+	G.if_inline = 1;
+	G.if_armed = 0;
+	G.if_inline_keep = 0;
+	G.sel_sp = 2;
+	G.sel_base = 0;
+	G.ctrl_sp = 4;
+	G.for_sp = 3;
+	G.loop_seq = 20;
+	G.dim_local = 5;
+	mmb_frame_capture(&f);
+	G.run_pc = 999;
+	G.branch_pc = 7;
+	G.branch_pos = "callee-pos";
+	G.p = "callee-p";
+	G.if_depth = 0;
+	G.if_shadow = 9;
+	G.if_inline = 0;
+	G.sel_sp = 4;
+	G.sel_base = 2;
+	G.ctrl_sp = 6;
+	G.for_sp = 5;
+	G.loop_seq = 30;
+	G.dim_local = 9;
+	mmb_frame_restore_nested(&f);
+	CHECK(G.run_pc == 10);
+	CHECK(G.branch_pc == -1);
+	CHECK(G.branch_pos == 0);
+	CHECK(G.p && strcmp(G.p, "caller-p") == 0);
+	CHECK(G.if_depth == 2);
+	CHECK(G.if_shadow == 3);
+	CHECK(G.if_stack[0] == 4 && G.if_stack[1] == 5);
+	CHECK(G.if_pc_stack[0] == 100 && G.if_pc_stack[1] == 200);
+	CHECK(G.if_inline == 1);
+	CHECK(G.sel_sp == 2);
+	CHECK(G.sel_base == 0);
+	CHECK(G.ctrl_sp == 4);
+	CHECK(G.for_sp == 3);
+	CHECK(G.loop_seq == 20);
+	CHECK(G.dim_local == 5);
+
+	/* A callee that popped a caller loop must not get it resurrected. */
+	G.ctrl_sp = 2;
+	G.for_sp = 1;
+	mmb_frame_restore_nested(&f);
+	CHECK(G.ctrl_sp == 2);
+	CHECK(G.for_sp == 1);
+
+	/* mmb_run_nested: capture, enter, body, one pop, caller invariant. */
+	G.run_pc = 10;
+	G.branch_pc = -1;
+	G.branch_pos = 0;
+	G.p = "caller-p";
+	G.if_depth = 2;
+	G.if_shadow = 3;
+	G.if_inline = 1;
+	G.if_armed = 0;
+	G.if_inline_keep = 0;
+	G.sel_sp = 2;
+	G.sel_base = 0;
+	G.ctrl_sp = 4;
+	G.for_sp = 3;
+	G.loop_seq = 20;
+	G.dim_local = 5;
+	G.running = 1;
+	G.end_req = 0;
+	{
+		int ran = 0;
+		int marks = mark_calls;
+		int releases = release_calls;
+
+		mmb_run_nested(nested_clean_body, &ran, MMB_NESTED_GOSUB);
+		CHECK(ran == 1);
+		CHECK(G.nested_depth == 0);
+		CHECK(mark_calls == marks + 1);
+		CHECK(release_calls == releases + 1);
+		CHECK(G.run_pc == 10);
+		CHECK(G.branch_pc == -1);
+		CHECK(G.branch_pos == 0);
+		CHECK(G.p && strcmp(G.p, "caller-p") == 0);
+		CHECK(G.if_depth == 2);
+		CHECK(G.if_shadow == 3);
+		CHECK(G.if_inline == 1);
+		CHECK(G.if_armed == 0);
+		CHECK(G.if_inline_keep == 0);
+		CHECK(G.sel_sp == 2);
+		CHECK(G.sel_base == 0);
+		CHECK(G.ctrl_sp == 4);
+		CHECK(G.for_sp == 3);
+		CHECK(G.loop_seq == 20);
+		CHECK(G.dim_local == 5);
+		/* Lifecycle is never part of the frame. */
+		CHECK(G.running == 0);
+		CHECK(G.end_req == 1);
+	}
+
+	/* The expression path can update the captured resume pointer. */
+	G.p = "caller-p";
+	G.end_req = 0;
+	G.running = 1;
+	mmb_run_nested(nested_set_p_body, 0, MMB_NESTED_GOSUB);
+	CHECK(G.p != 0 && strcmp(G.p, "after-args") == 0);
+
+	/* A longjmp abandons the C frames; mmb_nested_unwind restores every
+	 * outstanding entry and releases its arena mark. */
+	G.run_pc = 10;
+	G.branch_pc = -1;
+	G.branch_pos = 0;
+	G.p = "caller-p";
+	G.if_depth = 2;
+	G.if_shadow = 3;
+	G.if_inline = 1;
+	G.if_armed = 0;
+	G.if_inline_keep = 0;
+	G.sel_sp = 2;
+	G.sel_base = 0;
+	G.ctrl_sp = 4;
+	G.for_sp = 3;
+	G.loop_seq = 20;
+	G.dim_local = 5;
+	G.nested_depth = 0;
+	if (setjmp(unwind_jmp) == 0)
+	{
+		mmb_run_nested(nested_unwind_outer, 0, MMB_NESTED_GOSUB);
+		CHECK(0);
+	}
+	CHECK(G.nested_depth == 2);
+	mmb_nested_unwind();
+	CHECK(G.nested_depth == 0);
+	CHECK(G.run_pc == 10);
+	CHECK(G.branch_pc == -1);
+	CHECK(G.branch_pos == 0);
+	CHECK(G.p && strcmp(G.p, "caller-p") == 0);
+	CHECK(G.if_depth == 2);
+	CHECK(G.if_shadow == 3);
+	CHECK(G.if_inline == 1);
+	CHECK(G.sel_sp == 2);
+	CHECK(G.sel_base == 0);
+	CHECK(G.ctrl_sp == 4);
+	CHECK(G.for_sp == 3);
+	CHECK(G.loop_seq == 20);
+	CHECK(G.dim_local == 5);
 
 	free(m);
 	printf("exec_frame: all checks passed\n");

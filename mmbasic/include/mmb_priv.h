@@ -59,6 +59,10 @@
 #define MMB_AUTOSAVE_MS   60000
 #define MMB_PROG_NAME     80
 #define MMB_MAX_GOSUB     32
+/* Nested entries (FUNCTION calls, GOSUB bodies, event handlers).  One frame
+ * per entry; a little above MMB_MAX_GOSUB because an event handler can nest
+ * inside a FUNCTION body before the gosub limit is reached. */
+#define MMB_MAX_NESTED    40
 #define MMB_MAX_CTRL      32
 #define MMB_MAX_IF_DEPTH  32
 #define MMB_MAX_SELECT    32
@@ -461,6 +465,88 @@ typedef struct mmb_const {
 	int used;
 } mmb_const;
 
+/* Expression-temporary arena high-water mark. */
+typedef struct mmb_arena_save {
+	void *chunk;
+	unsigned used;
+} mmb_arena_save;
+void mmb_arena_mark(mmb_arena_save *m);
+void mmb_arena_release(mmb_arena_save *m);
+
+/* What a captured frame resumes on.  Position is restored from run_pc,
+ * branch_pc/branch_pos and p; the kind records which of those owns the resume
+ * so a later push/pop can dispatch without re-inferring it. */
+enum mmb_resume_kind {
+	MMB_RESUME_P = 0,       /* continue the current line at G.p */
+	MMB_RESUME_BRANCH_PC,   /* jump to branch_pc */
+	MMB_RESUME_BRANCH_POS   /* resume inside run_pc at branch_pos */
+};
+
+/* Complete execution state for one nested entry: everything the interpreter
+ * must put back after a handler, FUNCTION call or SUB call returns.  It is
+ * deliberately a plain value type (no heap), so capture/restore are struct
+ * copies and are safe on the interrupt path.
+ *
+ * It sits beside the gosub_* side arrays rather than embedding them: the side
+ * arrays are indexed by gosub_sp and shared with the call-frame protocol, so
+ * moving them here would change every call site.  See exec_frame.c.
+ *
+ * Excluded on purpose: running and end_req (an END inside a nested body must
+ * stop the whole program, #1343), gosub_sp and the gosub/call arrays (owned
+ * by the call-frame push/pop), the ctrl/for/sel stack contents (only their
+ * depths are framed; the arrays stay shared), and acc_* / ON ERROR jump state
+ * (a cache and a longjmp landing, not restorable from a plain snapshot). */
+typedef struct mmb_exec_frame {
+	/* Program position */
+	int run_pc;
+	int branch_pc;
+	const char *branch_pos;
+	const char *p;
+	enum mmb_resume_kind resume;
+
+	/* Block IF */
+	int if_depth;
+	unsigned char if_stack[MMB_MAX_IF_DEPTH];
+	int if_pc_stack[MMB_MAX_IF_DEPTH];
+	int if_shadow;
+
+	/* One-line IF */
+	int if_inline;
+	int if_armed;
+	int if_inline_keep;
+
+	/* SELECT CASE */
+	int sel_sp;
+	int sel_base;
+
+	/* DO/WHILE and FOR */
+	int ctrl_sp;
+	int for_sp;
+	int loop_seq;
+
+	int dim_local;
+
+	/* Expression-temporary high-water mark. */
+	mmb_arena_save arena;
+} mmb_exec_frame;
+
+/* Why a nested body is running.  Kept for call-site clarity and future
+ * per-kind policy; the frame restore is the same for all of them. */
+enum mmb_nested_kind {
+	MMB_NESTED_GOSUB = 0,   /* GOSUB, SUB/FUNCTION body, event handler */
+	MMB_NESTED_EVENT        /* reserved for call sites that need to differ */
+};
+
+void mmb_frame_capture(mmb_exec_frame *f);
+void mmb_frame_enter(void);
+void mmb_frame_restore(mmb_exec_frame *f);
+void mmb_frame_restore_nested(mmb_exec_frame *f);
+void mmb_run_nested(void (*body)(void *), void *arg, enum mmb_nested_kind kind);
+void mmb_nested_unwind(void);
+void mmb_nested_set_p(const char *p);
+mmb_arena_save *mmb_nested_arena(void);
+void mmb_sel_truncate(int depth);
+
 typedef struct mmb {
 	const mmb_platform *plat;
 	jmp_buf errjmp;
@@ -697,6 +783,10 @@ typedef struct mmb {
 	int jmp_cap;           /* allocated capacity of the jump tables (#1303) */
 	int jmp_ready;
 	int run_preserve_vars;
+	/* mmb_run_nested saves each caller frame here so the single pop path can
+	 * restore it, including after an ON ERROR longjmp unwinds the C stack. */
+	mmb_exec_frame nested_frame[MMB_MAX_NESTED];
+	int nested_depth;
 	int prog_dirty;        /* program text changed since last tokenize (#992) */
 	int prog_ready;        /* tokenizer + jump tables are current (#992) */
 	int break_primed;      /* rate limiter for mmb_check_break's heavy work (#988) */
@@ -759,72 +849,6 @@ mmb_val mmb_str_valn(const char *s, int n);
 mmb_val mmb_arena_val(char *p);
 void mmb_str_reset(void);
 void mmb_strpool_reset(void);
-typedef struct mmb_arena_save {
-	void *chunk;
-	unsigned used;
-} mmb_arena_save;
-void mmb_arena_mark(mmb_arena_save *m);
-void mmb_arena_release(mmb_arena_save *m);
-
-/* What a captured frame resumes on.  Position is restored from run_pc,
- * branch_pc/branch_pos and p; the kind records which of those owns the resume
- * so a later push/pop can dispatch without re-inferring it. */
-enum mmb_resume_kind {
-	MMB_RESUME_P = 0,       /* continue the current line at G.p */
-	MMB_RESUME_BRANCH_PC,   /* jump to branch_pc */
-	MMB_RESUME_BRANCH_POS   /* resume inside run_pc at branch_pos */
-};
-
-/* Complete execution state for one nested entry: everything the interpreter
- * must put back after a handler, FUNCTION call or SUB call returns.  It is
- * deliberately a plain value type (no heap), so capture/restore are struct
- * copies and are safe on the interrupt path.
- *
- * It sits beside the gosub_* side arrays rather than embedding them: the side
- * arrays are indexed by gosub_sp and shared with the call-frame protocol, so
- * moving them here would change every call site.  See exec_frame.c.
- *
- * Excluded on purpose: running and end_req (an END inside a nested body must
- * stop the whole program, #1343), gosub_sp and the gosub/call arrays (owned
- * by the call-frame push/pop), the ctrl/for/sel stack contents (only their
- * depths are framed; the arrays stay shared), and acc_* / ON ERROR jump state
- * (a cache and a longjmp landing, not restorable from a plain snapshot). */
-typedef struct mmb_exec_frame {
-	/* Program position */
-	int run_pc;
-	int branch_pc;
-	const char *branch_pos;
-	const char *p;
-	enum mmb_resume_kind resume;
-
-	/* Block IF */
-	int if_depth;
-	unsigned char if_stack[MMB_MAX_IF_DEPTH];
-	int if_pc_stack[MMB_MAX_IF_DEPTH];
-	int if_shadow;
-
-	/* One-line IF */
-	int if_inline;
-	int if_armed;
-	int if_inline_keep;
-
-	/* SELECT CASE */
-	int sel_sp;
-	int sel_base;
-
-	/* DO/WHILE and FOR */
-	int ctrl_sp;
-	int for_sp;
-	int loop_seq;
-
-	int dim_local;
-
-	/* Expression-temporary high-water mark. */
-	mmb_arena_save arena;
-} mmb_exec_frame;
-
-void mmb_frame_capture(mmb_exec_frame *f);
-void mmb_frame_restore(mmb_exec_frame *f);
 
 char *mmb_tmp_alloc(int n);
 char *mmb_str_alloc(int n);

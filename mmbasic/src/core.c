@@ -651,8 +651,7 @@ static void sel_pop(void)
 
 static void sel_truncate(int depth)
 {
-	while (G.sel_sp > depth && G.sel_sp > G.sel_base)
-		sel_pop();
+	mmb_sel_truncate(depth);
 }
 
 static void sel_reset_all(void)
@@ -2397,6 +2396,11 @@ static void unwind_call_frames(void)
 		gosub_restore_top();
 	}
 	G.in_sub = 0;
+	/* The longjmp abandoned any nested run_gosub_body C frame.  Its
+	 * mmb_run_nested entry is still recorded in G, so pop it here after the
+	 * gosub saves have been restored (the reverse order would let a late
+	 * gosub_restore_ctrl overwrite the caller state with the callee's). */
+	mmb_nested_unwind();
 }
 
 int mmb_call_named_sub(const char *name)
@@ -5448,28 +5452,23 @@ void mmb_cmd_execute(void)
 	G.p = save;
 }
 
-static void run_gosub_body(void)
-{
-	int saved_ctrl = G.ctrl_sp;
-	int saved_for = G.for_sp;
-	int saved_running = G.running;
-	const char *saved_bpos = G.branch_pos;
-	int saved_skip_valid = G.skip_stmt_valid;
-	int saved_line_valid = G.skip_line_valid;
-	int had_skip = (G.error_skip != 0);
-	jmp_buf saved_skip_jmp, saved_stmt_jmp;
-	mmb_arena_save arena_mark;
+/* Entry parameters for one nested GOSUB body.  The call itself runs inside
+ * the frame so the snapshot is the true caller state, before gosub_save_ctrl
+ * clears it for the callee. */
+struct gosub_body_call {
+	const char *name;
+	const char *entry_p;
+	int expr_result;
+	int called;
+};
 
-	if (G.end_req)
-		/* END already ran (for example in an earlier event body): do not
-		 * enter another callee and resurrect the stopped program (#1343). */
-		return;
-	if (had_skip)
-	{
-		memcpy(saved_skip_jmp, G.skip_errjmp, sizeof(jmp_buf));
-		memcpy(saved_stmt_jmp, G.stmt_errjmp, sizeof(jmp_buf));
-	}
-	G.running = 1;
+/* Run the callee's statements until RETURN / END SUB / END FUNCTION / END or
+ * an error leaves the loop.  Called inside mmb_run_nested, so it never saves
+ * or restores caller control flow itself. */
+static void run_gosub_loop(void)
+{
+	mmb_arena_save *arena_mark = mmb_nested_arena();
+
 	if (G.gosub_sp > 0)
 		G.gosub_stack[G.gosub_sp - 1] = -2;
 	G.run_pc = G.branch_pc;
@@ -5481,7 +5480,6 @@ static void run_gosub_body(void)
 	 * arguments, variables) are pooled already. Release only back to this
 	 * body's entry mark, never a full reset: the caller may still hold
 	 * temporaries earlier in the statement being evaluated (#1275). */
-	mmb_arena_mark(&arena_mark);
 	while (G.running && G.run_pc >= 0 && G.run_pc < G.nprog)
 	{
 		int loop;
@@ -5491,7 +5489,7 @@ static void run_gosub_body(void)
 		do
 		{
 			loop = 0;
-			mmb_arena_release(&arena_mark);
+			mmb_arena_release(arena_mark);
 			G.branch_pc = -1;
 			if (resume)
 			{
@@ -5556,12 +5554,54 @@ static void run_gosub_body(void)
 		}
 		G.run_pc++;
 	}
-	G.ctrl_sp = saved_ctrl;
-	G.for_sp = saved_for;
+}
+
+static void run_gosub_entry(void *arg)
+{
+	struct gosub_body_call *call = arg;
+
+	G.p = call->entry_p;
+	if (!mmb_call_named_sub(call->name))
+		return;
+	call->called = 1;
+	if (call->expr_result)
+		/* The expression resumes after the argument list, not at the
+		 * opening paren captured before the call parsed it. */
+		mmb_nested_set_p(G.p);
+	run_gosub_loop();
+}
+
+/* One nested GOSUB / SUB / FUNCTION / event entry.  The frame owns the caller
+ * snapshot, the clean callee structure state and the single pop path; the skip
+ * landing and the running flag are lifecycle, not control flow, so they stay
+ * here.  Returns non-zero when the named callee was found and entered. */
+static int run_gosub_body(const char *name, const char *entry_p, int expr_result)
+{
+	struct gosub_body_call call;
+	int saved_running = G.running;
+	int saved_skip_valid = G.skip_stmt_valid;
+	int saved_line_valid = G.skip_line_valid;
+	int had_skip = (G.error_skip != 0);
+	jmp_buf saved_skip_jmp, saved_stmt_jmp;
+
+	if (G.end_req)
+		/* END already ran (for example in an earlier event body): do not
+		 * enter another callee and resurrect the stopped program (#1343). */
+		return 0;
+	if (had_skip)
+	{
+		memcpy(saved_skip_jmp, G.skip_errjmp, sizeof(jmp_buf));
+		memcpy(saved_stmt_jmp, G.stmt_errjmp, sizeof(jmp_buf));
+	}
+	call.name = name;
+	call.entry_p = entry_p;
+	call.expr_result = expr_result;
+	call.called = 0;
+	G.running = 1;
+	mmb_run_nested(run_gosub_entry, &call, MMB_NESTED_GOSUB);
 	/* An END inside this body is a program stop, not a per-call state
 	 * change, so do not restore the running flag it cleared (#1343). */
 	G.running = G.end_req ? 0 : saved_running;
-	G.branch_pos = saved_bpos;
 	G.skip_stmt_valid = saved_skip_valid;
 	G.skip_line_valid = saved_line_valid;
 	if (had_skip)
@@ -5569,7 +5609,7 @@ static void run_gosub_body(void)
 		memcpy(G.skip_errjmp, saved_skip_jmp, sizeof(jmp_buf));
 		memcpy(G.stmt_errjmp, saved_stmt_jmp, sizeof(jmp_buf));
 	}
-	mmb_arena_release(&arena_mark);
+	return call.called;
 }
 
 int mmb_try_user_function(mmb_val *out)
@@ -5577,8 +5617,6 @@ int mmb_try_user_function(mmb_val *out)
 	const char *save = G.p;
 	char name[MMB_MAX_NAME];
 	char raw[MMB_MAX_NAME];
-	int saved_pc, saved_sp, saved_branch;
-	const char *saved_p;
 	int si;
 
 	mmb_skip_sp();
@@ -5600,22 +5638,16 @@ int mmb_try_user_function(mmb_val *out)
 		G.p = save;
 		return 0;
 	}
-	saved_pc = G.run_pc;
-	saved_branch = G.branch_pc;
-	saved_sp = G.gosub_sp;
 	memset(&G.func_ret, 0, sizeof(G.func_ret));
 	G.func_ret.type = G.subs[si].ret_type ? G.subs[si].ret_type : T_NUM;
-	if (!mmb_call_named_sub(raw))
+	/* The nested helper calls the FUNCTION inside the frame, so the caller's
+	 * run_pc/branch_pc/G.p and the call frame are restored on its one pop
+	 * path (and by unwind_call_frames after a trapped error). */
+	if (!run_gosub_body(raw, G.p, 1))
 	{
 		G.p = save;
 		return 0;
 	}
-	saved_p = G.p;
-	run_gosub_body();
-	G.run_pc = saved_pc;
-	G.branch_pc = saved_branch;
-	G.gosub_sp = saved_sp;
-	G.p = saved_p;
 	/* G.func_ret/G.func_ret_s is a single shared slot: a later nested call
 	 * (the next argument, or the other side of a concatenation) would
 	 * overwrite it while the caller still holds this value. Detach the
@@ -5674,11 +5706,24 @@ static const char *on_key_ascii_handler(int code)
 	return 0;
 }
 
+/* Run one registered handler through the single nested-entry path.  The frame
+ * restores the interrupted program's position and control state; gosub_sp is
+ * call-frame state, so a handler that left without a normal RETURN (END) must
+ * not leak its frame into the next dispatch. */
+static void run_event_handler(const char *name, const char *args)
+{
+	int saved_sp = G.gosub_sp;
+
+	G.tick_busy = 1;
+	run_gosub_body(name, args, 0);
+	G.gosub_sp = saved_sp;
+	G.tick_busy = 0;
+}
+
 void mmb_run_events(void)
 {
 	unsigned now;
-	int i, saved_pc, saved_sp, saved_branch;
-	const char *saved_p;
+	int i;
 
 	if (!G.running || G.tick_busy)
 		return;
@@ -5704,19 +5749,7 @@ void mmb_run_events(void)
 		if (now - G.tick[i].last < (unsigned)G.tick[i].period)
 			continue;
 		G.tick[i].last = now;
-		saved_pc = G.run_pc;
-		saved_p = G.p;
-		saved_branch = G.branch_pc;
-		saved_sp = G.gosub_sp;
-		G.tick_busy = 1;
-		G.p = "";
-		if (mmb_call_named_sub(G.tick[i].sub))
-			run_gosub_body();
-		G.run_pc = saved_pc;
-		G.p = saved_p;
-		G.branch_pc = saved_branch;
-		G.gosub_sp = saved_sp;
-		G.tick_busy = 0;
+		run_event_handler(G.tick[i].sub, "");
 		if (G.end_req)
 			return;
 	}
@@ -5736,19 +5769,7 @@ void mmb_run_events(void)
 			if (!sub)
 				break;
 			mmb_inkey_consume(len);
-			saved_pc = G.run_pc;
-			saved_p = G.p;
-			saved_branch = G.branch_pc;
-			saved_sp = G.gosub_sp;
-			G.tick_busy = 1;
-			G.p = "";
-			if (mmb_call_named_sub(sub))
-				run_gosub_body();
-			G.run_pc = saved_pc;
-			G.p = saved_p;
-			G.branch_pc = saved_branch;
-			G.gosub_sp = saved_sp;
-			G.tick_busy = 0;
+			run_event_handler(sub, "");
 			if (G.end_req)
 				return;
 		}
@@ -5759,19 +5780,7 @@ void mmb_run_events(void)
 	if (G.on_key[0] && G.inkey_n > 0 && G.inkey_gen != G.on_key_gen)
 	{
 		G.on_key_gen = G.inkey_gen;
-		saved_pc = G.run_pc;
-		saved_p = G.p;
-		saved_branch = G.branch_pc;
-		saved_sp = G.gosub_sp;
-		G.tick_busy = 1;
-		G.p = "";
-		if (mmb_call_named_sub(G.on_key))
-			run_gosub_body();
-		G.run_pc = saved_pc;
-		G.p = saved_p;
-		G.branch_pc = saved_branch;
-		G.gosub_sp = saved_sp;
-		G.tick_busy = 0;
+		run_event_handler(G.on_key, "");
 		if (G.end_req)
 			return;
 	}
@@ -5782,19 +5791,7 @@ void mmb_run_events(void)
 	if (G.on_keydown[0] && G.keydown_gen != G.on_keydown_gen)
 	{
 		G.on_keydown_gen = G.keydown_gen;
-		saved_pc = G.run_pc;
-		saved_p = G.p;
-		saved_branch = G.branch_pc;
-		saved_sp = G.gosub_sp;
-		G.tick_busy = 1;
-		G.p = "";
-		if (mmb_call_named_sub(G.on_keydown))
-			run_gosub_body();
-		G.run_pc = saved_pc;
-		G.p = saved_p;
-		G.branch_pc = saved_branch;
-		G.gosub_sp = saved_sp;
-		G.tick_busy = 0;
+		run_event_handler(G.on_keydown, "");
 		if (G.end_req)
 			return;
 	}
@@ -5826,19 +5823,7 @@ void mmb_run_events(void)
 			}
 			abuf[n++] = ')';
 			abuf[n] = 0;
-			saved_pc = G.run_pc;
-			saved_p = G.p;
-			saved_branch = G.branch_pc;
-			saved_sp = G.gosub_sp;
-			G.tick_busy = 1;
-			G.p = abuf;
-			if (mmb_call_named_sub(sub))
-				run_gosub_body();
-			G.run_pc = saved_pc;
-			G.p = saved_p;
-			G.branch_pc = saved_branch;
-			G.gosub_sp = saved_sp;
-			G.tick_busy = 0;
+			run_event_handler(sub, abuf);
 			if (G.end_req)
 				return;
 		}
@@ -5860,6 +5845,7 @@ static void run_program(void)
 		mmb_str_reset();
 		G.for_sp = 0;
 		G.gosub_sp = 0;
+		G.nested_depth = 0;
 		G.ctrl_sp = 0;
 		G.branch_pc = -1;
 		G.branch_pos = 0;
@@ -6089,6 +6075,9 @@ static void exec_error_reset(int was_running)
 	s_poll_active = 0;	/* longjmp unwound past mmb_poll() */
 	G.outn = 0;
 	G.out[0] = 0;
+	/* An unhandled error can also abandon a nested run_gosub_body C frame.
+	 * Drop its recorded frame before clearing the execution flags. */
+	mmb_nested_unwind();
 	clear_exec_flags();
 	mmb_pkg_unmount();
 	if (was_running || pages_off)
