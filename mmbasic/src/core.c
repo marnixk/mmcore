@@ -12,6 +12,7 @@ static void gosub_restore_top(void);
 static void exec_line_body(const char *body);
 static void exec_line_from(const char *body, const char *at);
 static int exec_line_guarded(const char *body, const char *at);
+static void run_gosub_loop(void);
 static void run_program(void);
 static int line_match(const char *body, const char *kw);
 static int find_wend_pc(int from);
@@ -796,6 +797,41 @@ static int line_is_select(const char *body)
 	return r;
 }
 
+/* True when the statement starting at ``at`` opens a SELECT block. */
+static int at_is_select_open(const char *at)
+{
+	const char *save = G.p;
+	int r;
+	G.p = at;
+	r = mmb_match("SELECT");
+	G.p = save;
+	return r;
+}
+
+/* Number of SELECT blocks lexically opened in the remainder of a skipped
+ * line, so their END SELECT statements still pair with them (#1390). */
+static int select_openers_from(const char *p)
+{
+	int n = 0;
+	for (;;)
+	{
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == 0 || *p == '\'')
+			break;
+		if (at_is_select_open(p))
+			n++;
+		skip_stmt(&p);
+		if (*p == ':')
+		{
+			p++;
+			continue;
+		}
+		break;
+	}
+	return n;
+}
+
 static int at_case_kw(void)
 {
 	const char *save = G.p;
@@ -911,8 +947,20 @@ static int process_line_structure(const char *body)
 		if (mmb_match("END") && mmb_match("SELECT"))
 		{
 			sel_pop();
-			G.p = save;
-			return 1;
+			/* Statements after the colon are still skipped while an
+			 * outer block is skipping, but any SELECT opened by them
+			 * still needs its own frame to pair with its END SELECT
+			 * (#1390).  When this closed the last skipping block, resume
+			 * the statement loop after the colon, as ENDIF does (#1387). */
+			if (structure_skipping())
+			{
+				int n = select_openers_from(G.p);
+				while (n-- > 0)
+					sel_push_skipped();
+				G.p = save;
+				return 1;
+			}
+			return resume_after_endif();
 		}
 		if (!sel->skipped && at_case_kw())
 		{
@@ -2462,6 +2510,15 @@ static void stmt_call_resume(void)
 	q = G.p;
 	while (*q == ' ' || *q == '\t')
 		q++;
+	/* A statement SUB called from a live EXECUTE body resumes inside that
+	 * heap body: mmb_cmd_execute keeps it alive while it runs the deferred
+	 * call, so a same-line FOR can continue (#1391). */
+	if (in_exec_body(G.p))
+	{
+		G.gosub_stack[g] = G.run_pc;
+		G.gosub_pos[g] = (*q == ':') ? q + 1 : q;
+		return;
+	}
 	if (!base || G.p < base || G.p >= base + MMB_LINE_LEN ||
 	    *q == 0 || *q == '\'')
 	{
@@ -5612,7 +5669,10 @@ static void exec_line_from(const char *body, const char *at)
  *   GOTO / IF n THEN: pop the island, then branch on the caller's state.
  *   GOSUB / CALL:     the new call frame returns to the caller's state (the
  *                     checkpoint is rebased onto the island snapshot), and
- *                     the target runs once EXECUTE has returned.
+ *                     the target runs once EXECUTE has returned.  A
+ *                     statement SUB that has a same-line continuation is
+ *                     different: it runs inside the live island so a
+ *                     same-line FOR keeps its frame (#1391).
  *   RETURN / END SUB: the gosub restore has already installed the enclosing
  *                     caller's state, so the island is dropped, not popped.
  *   END / STOP:       end_req/running are not part of a frame and are never
@@ -5624,6 +5684,7 @@ void mmb_cmd_execute(void)
 	char *body;
 	const char *save;
 	int gosub_before, branch_pc, body_depth;
+	int exec_run_pc = G.run_pc;
 	mmb_exec_frame *island;
 
 	if (v.type != T_STR)
@@ -5650,6 +5711,32 @@ void mmb_cmd_execute(void)
 	 * into it, so no branch_pos can dangle into a freed buffer. */
 	while (G.running && !G.end_req)
 	{
+		/* A statement SUB called from the live body with a same-line
+		 * continuation runs here, inside the island, so the FOR frame and
+		 * the heap body stay alive and the loop resumes after the call
+		 * (#1391).  Its call frame was pushed by mmb_call_named_sub with
+		 * the island as checkpoint, so the caller's state is still
+		 * restored by the island's own pop (#1354). */
+		if (G.branch_pc >= 0 && G.gosub_sp > gosub_before &&
+		    G.gosub_pos[G.gosub_sp - 1] &&
+		    in_exec_body(G.gosub_pos[G.gosub_sp - 1]))
+		{
+			run_gosub_loop();
+			G.run_pc = exec_run_pc;
+			if (!G.running || G.end_req ||
+			    G.gosub_sp > gosub_before)
+				break;
+			if (G.branch_pc == -2 && G.branch_pos &&
+			    in_exec_body(G.branch_pos))
+			{
+				const char *at = G.branch_pos;
+				G.branch_pc = -1;
+				G.branch_pos = 0;
+				exec_line_from(body, at);
+				continue;
+			}
+			break;
+		}
 		if (G.branch_pc >= 0)
 		{
 			if (G.branch_pc == G.run_pc && in_exec_body(G.branch_pos))

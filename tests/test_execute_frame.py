@@ -280,3 +280,49 @@ def test_execute_same_line_exit_for(console):
             '20 PRINT "after"',
         ],
     ) == ["1", "after"]
+
+
+def test_execute_same_line_for_calls_statement_sub(console):
+    """#1391: a statement SUB in the live body returns into the loop."""
+    assert _run(
+        console,
+        [
+            "10 SUB SHOW(N)",
+            "20 PRINT N",
+            "30 END SUB",
+            '40 EXECUTE "FOR I=1 TO 2: SHOW(I): NEXT"',
+            '50 PRINT "done"',
+        ],
+    ) == ["1", "2", "done"]
+
+
+def test_execute_same_line_for_calls_nested_statement_sub(console):
+    """A SUB called from the deferred body may call another statement SUB."""
+    assert _run(
+        console,
+        [
+            "10 SUB OUTER(N)",
+            "20   INNER(N)",
+            "30 END SUB",
+            "40 SUB INNER(N)",
+            "50   PRINT N",
+            "60 END SUB",
+            '70 EXECUTE "FOR I=1 TO 2: OUTER(I): NEXT"',
+        ],
+    ) == ["1", "2"]
+
+
+def test_execute_same_line_for_statement_sub_calls_function(console):
+    """The SUB that runs inside the island can still call a FUNCTION."""
+    assert _run(
+        console,
+        [
+            "10 FUNCTION DBL(N)",
+            "20   DBL = N * 2",
+            "30 END FUNCTION",
+            "40 SUB SHOW(N)",
+            "50   PRINT DBL(N)",
+            "60 END SUB",
+            '70 EXECUTE "FOR I=1 TO 2: SHOW(I): NEXT"',
+        ],
+    ) == ["2", "4"]
