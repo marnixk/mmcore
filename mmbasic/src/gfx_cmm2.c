@@ -202,6 +202,72 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 	if (w <= 0 || h <= 0)
 		return;
 
+	/* Transparent, native-format copy (#1370 item 4): skip the RGB888 snap
+	 * (which allocates and converts every source pixel) and the per-pixel
+	 * mmb_gfx_plot (bounds, colour conversion, dirty tracking, set_pixel).
+	 * Native 0 is the only black in every supported 16-bit pixel format, so
+	 * skipping zero matches the old (c & 0xFFFFFF) == 0 test on the converted
+	 * source colour. Overlapping same-page copies still snapshot first. */
+	if (ori & 4)
+	{
+		int overlap;
+
+		src = mmb_gfx_buf_for(srcpage, &sw, &sh);
+		dst = mmb_gfx_buf_for(MMB_PAGE_CUR, &dw, &dh);
+		overlap = src == dst &&
+			  !(x2 + w <= x1 || x1 + w <= x2 ||
+			    y2 + h <= y1 || y1 + h <= y2);
+		if (!overlap)
+		{
+			int flip = G.opt.y_axis_up;
+
+			/* Common unrotated, unclipped case: one run copy per row. */
+			if (ori == 4 && !flip && x1 >= 0 && y1 >= 0 &&
+			    x1 + w <= sw && y1 + h <= sh && x2 >= 0 && y2 >= 0 &&
+			    x2 + w <= dw && y2 + h <= dh)
+			{
+				for (j = 0; j < h; j++)
+					mmb_blit_sprite_row16(dst + (y2 + j) * dw + x2,
+							      src + (y1 + j) * sw + x1,
+							      (unsigned)w);
+			}
+			else
+			{
+				for (j = 0; j < h; j++)
+				{
+					int sj = (ori & 2) ? h - 1 - j : j;
+					int sy = flip ? sh - 1 - (y1 + sj) : y1 + sj;
+					int dy = flip ? dh - 1 - (y2 + j) : y2 + j;
+
+					if (dy < 0 || dy >= dh)
+						continue;
+					for (i = 0; i < w; i++)
+					{
+						int si = (ori & 1) ? w - 1 - i : i;
+						int sx = x1 + si;
+						int dx = x2 + i;
+						uint16_t v;
+
+						if (dx < 0 || dx >= dw || sx < 0 ||
+						    sx >= sw || sy < 0 || sy >= sh)
+							continue;
+						v = src[sy * sw + sx];
+						if (!v)
+							continue;
+						dst[dy * dw + dx] = v;
+					}
+				}
+			}
+			if (!mmb_gfx_writing_fb() &&
+			    G.gfx.write_page == G.gfx.display_page)
+			{
+				mmb_gfx_dirty_add(x2, y2, w, h);
+				mmb_gfx_dirty_flush();
+			}
+			return;
+		}
+	}
+
 	/* Opaque, unrotated rect: native DMA / row copy (skip RGB888 snap). */
 	if (ori == 0)
 	{

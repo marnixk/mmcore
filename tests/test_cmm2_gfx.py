@@ -73,6 +73,27 @@ def _rgb_is_blue(v):
     return b > 150 and r < 130 and g < 130
 
 
+def _rgb_is_yellow(v):
+    r = (v >> 16) & 255
+    g = (v >> 8) & 255
+    b = v & 255
+    return r > 150 and g > 150 and b < 130
+
+
+def _rgb_is_cyan(v):
+    r = (v >> 16) & 255
+    g = (v >> 8) & 255
+    b = v & 255
+    return g > 150 and b > 150 and r < 130
+
+
+def _rgb_is_magenta(v):
+    r = (v >> 16) & 255
+    g = (v >> 8) & 255
+    b = v & 255
+    return r > 150 and b > 150 and g < 130
+
+
 def _rgb_is_black(v):
     r = (v >> 16) & 255
     g = (v >> 8) & 255
@@ -109,6 +130,191 @@ def test_blit_read_write_and_copy(fresh_console):
     assert c.send_line("BLIT 30,30,300,40,16,16") == ""
     assert _rgb_is_red(_pixel(c, 308, 48))
     assert c.send_line("BLIT CLOSE #1") == ""
+
+
+def test_blit_transparent_copy_basic_clipped_and_paged(fresh_console):
+    """Mode-4 BLIT skips black source pixels, clips both rects, works from a
+    non-current source page and only dirties the destination it touched."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 0,0,8,8,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    assert c.send_line("BOX 2,2,2,2,1,0,0") == ""
+    assert c.send_line("PIXEL 5,5,RGB(0,255,0)") == ""
+    assert c.send_line("PIXEL 7,7,RGB(0,255,0)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 10,10,8,8,1,RGB(0,0,255),RGB(0,0,255)") == ""
+    assert c.send_line("BLIT 0,0,10,10,8,8,1,4") == ""
+    assert _rgb_is_red(_pixel(c, 10, 10))
+    assert _rgb_is_blue(_pixel(c, 12, 12))  # source hole: dest kept
+    assert _rgb_is_blue(_pixel(c, 13, 13))
+    assert _rgb_is_green(_pixel(c, 17, 17))
+    assert _rgb_is_black(_pixel(c, 9, 10))  # outside dest rect
+    assert _rgb_is_black(_pixel(c, 18, 18))
+
+    # Destination partly off the left/top edge.
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BLIT 0,0,-2,-3,8,8,1,4") == ""
+    assert _rgb_is_black(_pixel(c, 0, 0))  # src (2,3) is a hole
+    assert _rgb_is_red(_pixel(c, 0, 1))  # src (2,4)
+    assert _rgb_is_red(_pixel(c, 2, 0))  # src (4,3)
+    assert _rgb_is_green(_pixel(c, 5, 4))  # src (7,7)
+    assert _rgb_is_black(_pixel(c, 6, 0))  # still outside the rect
+
+    # Source partly off the left/top edge: those pixels are transparent.
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 20,20,8,8,1,RGB(0,0,255),RGB(0,0,255)") == ""
+    assert c.send_line("BLIT -2,-2,20,20,8,8,1,4") == ""
+    assert _rgb_is_blue(_pixel(c, 20, 20))
+    assert _rgb_is_blue(_pixel(c, 21, 21))
+    assert _rgb_is_red(_pixel(c, 22, 22))  # src (0,0)
+    assert _rgb_is_red(_pixel(c, 22, 23))  # src (0,1)
+    assert _rgb_is_blue(_pixel(c, 24, 24))  # src (2,2) hole
+    assert _rgb_is_green(_pixel(c, 27, 27))
+
+    # Copy from page 2 into page 1 while page 0 is displayed.
+    assert c.send_line("PAGE WRITE 2") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 0,0,4,4,1,RGB(255,255,0),RGB(255,255,0)") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 40,40,4,4,1,RGB(0,255,0),RGB(0,255,0)") == ""
+    assert c.send_line("BLIT 0,0,40,40,4,4,2,4") == ""
+    assert _rgb_is_yellow(_pixel_page(c, 40, 40, 1))
+    assert _rgb_is_black(_pixel_page(c, 40, 40, 0))  # display page untouched
+    assert c.send_line("PAGE WRITE 0") == ""
+
+
+def test_graphics_args_fast_path_equivalence(fresh_console):
+    """The #1370 fast argument path returns the same values as mmb_expr() for
+    literals, scalars, array elements, constants, expressions, FRAMEBUFFER and
+    malformed input."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 0,0,4,4,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("DIM A(7)") == ""
+    for i, v in enumerate([0, 0, 10, 10, 4, 4, 1, 0]):
+        assert c.send_line(f"A({i})={v}") == ""
+    for name, v in (("X1", 0), ("Y1", 0), ("X2", 20), ("Y2", 20),
+                    ("W", 4), ("H", 4), ("P", 1), ("ORI", 0)):
+        assert c.send_line(f"{name}={v}") == ""
+    assert c.send_line("I=0") == ""
+    assert c.send_line("CONST C0=0") == ""
+
+    # Scalar array element (fast path).
+    assert c.send_line("BLIT A(0),A(1),A(2),A(3),A(4),A(5),A(6),A(7)") == ""
+    assert _rgb_is_red(_pixel(c, 10, 10))
+    # Full expressions and an expression array index (fallback).
+    assert c.send_line("BLIT X1+0,Y1+0,X2+0,Y2+0,W+0,H+0,P+0,ORI+0") == ""
+    assert _rgb_is_red(_pixel(c, 20, 20))
+    assert c.send_line("BLIT A(I),A(I),30,10,A(I)+4,A(I)+4,A(I)+1,A(I)") == ""
+    assert _rgb_is_red(_pixel(c, 30, 10))
+    # CONST (fast path).
+    assert c.send_line("BLIT C0,C0,40,10,4,4,1,C0") == ""
+    assert _rgb_is_red(_pixel(c, 40, 10))
+
+    # BOX also uses the shared parser.
+    for name, v in (("BX", 100), ("BY", 100), ("BW", 4), ("BH", 4)):
+        assert c.send_line(f"{name}={v}") == ""
+    assert c.send_line("BOX BX,BY,BW,BH,1,RGB(0,255,0),RGB(0,255,0)") == ""
+    assert _rgb_is_green(_pixel(c, 101, 101))
+
+    # FRAMEBUFFER is still a keyword in the page slot.
+    assert c.send_line("FRAMEBUFFER CREATE 1280,720") == ""
+    assert c.send_line("FRAMEBUFFER WRITE") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 0,0,4,4,1,RGB(0,0,255),RGB(0,0,255)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("BLIT 0,0,50,10,4,4,FRAMEBUFFER") == ""
+    assert _rgb_is_blue(_pixel(c, 50, 10))
+    assert c.send_line("FRAMEBUFFER CLOSE") == ""
+
+    # Errors match the expression parser's.
+    assert c.send_line('BLIT "x",0,60,10,4,4,1,0') == "?TYPE MISMATCH"
+    assert c.send_line("BLIT 0,0,60,10,4") == "?SYNTAX ERROR"
+    assert c.send_line("BLIT 0,0,60,10,4,4,1,0+") == "?SYNTAX ERROR"
+
+
+def test_blit_transparent_rotations(fresh_console):
+    """Mode-4 BLIT with the X/Y flip bits keeps the previous mapping."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("PIXEL 0,0,RGB(255,0,0)") == ""
+    assert c.send_line("PIXEL 1,0,RGB(0,255,0)") == ""
+    assert c.send_line("PIXEL 2,0,RGB(0,0,255)") == ""
+    assert c.send_line("PIXEL 0,1,RGB(255,255,0)") == ""
+    assert c.send_line("PIXEL 1,1,RGB(0,0,0)") == ""
+    assert c.send_line("PIXEL 2,1,RGB(255,0,255)") == ""
+    assert c.send_line("PIXEL 0,2,RGB(0,255,255)") == ""
+    assert c.send_line("PIXEL 1,2,RGB(255,255,255)") == ""
+    assert c.send_line("PIXEL 2,2,RGB(0,255,0)") == ""
+    assert c.send_line("PAGE WRITE 0") == ""
+    assert c.send_line("CLS") == ""
+
+    # ori 5: flip X.
+    assert c.send_line("PIXEL 11,11,RGB(16,16,16)") == ""
+    assert c.send_line("BLIT 0,0,10,10,3,3,1,5") == ""
+    assert _rgb_is_blue(_pixel(c, 10, 10))
+    assert _rgb_is_green(_pixel(c, 11, 10))
+    assert _rgb_is_red(_pixel(c, 12, 10))
+    assert _rgb_is_magenta(_pixel(c, 10, 11))
+    assert _pixel(c, 11, 11) == 0x101010  # hole skipped
+    assert _rgb_is_yellow(_pixel(c, 12, 11))
+    assert _rgb_is_green(_pixel(c, 10, 12))
+    assert _rgb_is_white(_pixel(c, 11, 12))
+    assert _rgb_is_cyan(_pixel(c, 12, 12))
+
+    # ori 6: flip Y.
+    assert c.send_line("PIXEL 21,11,RGB(16,16,16)") == ""
+    assert c.send_line("BLIT 0,0,20,10,3,3,1,6") == ""
+    assert _rgb_is_cyan(_pixel(c, 20, 10))
+    assert _rgb_is_white(_pixel(c, 21, 10))
+    assert _rgb_is_green(_pixel(c, 22, 10))
+    assert _rgb_is_yellow(_pixel(c, 20, 11))
+    assert _pixel(c, 21, 11) == 0x101010
+    assert _rgb_is_magenta(_pixel(c, 22, 11))
+    assert _rgb_is_red(_pixel(c, 20, 12))
+    assert _rgb_is_green(_pixel(c, 21, 12))
+    assert _rgb_is_blue(_pixel(c, 22, 12))
+
+    # ori 7: flip both.
+    assert c.send_line("PIXEL 31,11,RGB(16,16,16)") == ""
+    assert c.send_line("BLIT 0,0,30,10,3,3,1,7") == ""
+    assert _rgb_is_green(_pixel(c, 30, 10))
+    assert _rgb_is_white(_pixel(c, 31, 10))
+    assert _rgb_is_cyan(_pixel(c, 32, 10))
+    assert _rgb_is_magenta(_pixel(c, 30, 11))
+    assert _pixel(c, 31, 11) == 0x101010
+    assert _rgb_is_yellow(_pixel(c, 32, 11))
+    assert _rgb_is_blue(_pixel(c, 30, 12))
+    assert _rgb_is_green(_pixel(c, 31, 12))
+    assert _rgb_is_red(_pixel(c, 32, 12))
+
+
+def test_blit_transparent_overlapping_same_page(fresh_console):
+    """An overlapping same-page transparent BLIT still reads the snapshot."""
+    c = fresh_console
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 18,10,10,1,1,RGB(0,0,255),RGB(0,0,255)") == ""
+    assert c.send_line("BOX 10,10,10,1,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    assert c.send_line("PIXEL 12,10,RGB(0,0,0)") == ""
+    assert c.send_line("PIXEL 18,10,RGB(0,255,0)") == ""
+    assert c.send_line("BLIT 10,10,18,10,10,1,0,4") == ""
+    assert _rgb_is_red(_pixel(c, 18, 10))  # src (0,0)
+    assert _rgb_is_red(_pixel(c, 19, 10))  # src (1,0), overlaps old dest
+    assert _rgb_is_blue(_pixel(c, 20, 10))  # src (2,0) hole: dest kept
+    assert _rgb_is_green(_pixel(c, 26, 10))  # src (8,0) read from snapshot
+    assert _rgb_is_red(_pixel(c, 27, 10))  # src (9,0)
+    assert _rgb_is_red(_pixel(c, 10, 10))  # source left edge untouched
+    assert _rgb_is_black(_pixel(c, 12, 10))
 
 
 def test_framebuffer_window(fresh_console):
@@ -431,3 +637,66 @@ def test_page1_is_not_composited_over_display(fresh_console):
     assert r > 200 and g < 80 and b < 80, (r, g, b)
     assert c.send_line("PAGE DISPLAY 0") == ""
     assert c.send_line("PAGE WRITE 0") == ""
+
+
+@pytest.mark.skipif(
+    not PERF_ENABLED, reason="set MMCORE_PERF=1 to run timing guards"
+)
+def test_blit_fast_path_perf(fresh_console):
+    """#1370 opt-in guard: variable arguments stay near literal cost and a
+    mode-4 transparent 32x32 BLIT stays near the opaque one."""
+    c = fresh_console
+    assert c.send_line("PAGE WRITE 1") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("BOX 0,0,32,32,1,RGB(255,0,0),RGB(255,0,0)") == ""
+    assert c.send_line("BOX 4,4,8,8,1,0,0") == ""
+    # Copy into a hidden page so the benchmark measures the copy, not the
+    # per-frame present caused by blitting onto the display page.
+    assert c.send_line("PAGE WRITE 2") == ""
+    assert c.send_line("CLS") == ""
+    assert c.send_line("NEW") == ""
+    lines = [
+        "X1=0",
+        "Y1=0",
+        "X2=100",
+        "Y2=100",
+        "W=32",
+        "H=32",
+        "P=1",
+        "ORI=0",
+        "N=10000",
+        "T=TIMER",
+        "FOR I=1 TO N",
+        "BLIT X1,Y1,X2,Y2,W,H,P,ORI",
+        "NEXT I",
+        "A=(TIMER-T)*1000/N",
+        "T=TIMER",
+        "FOR I=1 TO N",
+        "BLIT 0,0,100,100,32,32,1,0",
+        "NEXT I",
+        "B=(TIMER-T)*1000/N",
+        "ORI=4",
+        "T=TIMER",
+        "FOR I=1 TO N",
+        "BLIT X1,Y1,X2,Y2,W,H,P,ORI",
+        "NEXT I",
+        "C=(TIMER-T)*1000/N",
+        "T=TIMER",
+        "FOR I=1 TO N",
+        "NEXT I",
+        "D=(TIMER-T)*1000/N",
+        "PRINT A;\" \";B;\" \";C;\" \";D",
+    ]
+    for i, line in enumerate(lines, 10):
+        assert c.send_line(f"{i * 10} {line}") == ""
+    out = c.send_line("RUN", timeout=180)
+    var_us, lit_us, trans_us, empty_us = (float(v) for v in out.split()[:4])
+    var_us -= empty_us
+    lit_us -= empty_us
+    trans_us -= empty_us
+    print(
+        f"\nBLIT 32x32 us: var={var_us} literal={lit_us} "
+        f"transparent={trans_us} (empty loop {empty_us})"
+    )
+    assert var_us < lit_us * 3 + 0.5, (var_us, lit_us)
+    assert trans_us < lit_us * 4 + 0.5, (trans_us, lit_us)

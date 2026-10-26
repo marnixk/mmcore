@@ -4,6 +4,204 @@
 
 extern void mmb_gfx_copy_page(int src, int dst, int blit);
 
+/* Fast argument path for the graphics commands (#1370 item 1).
+ *
+ * Statement arguments used to go through the whole expression parser even for
+ * a bare number or a scalar variable, which made a 7-argument BLIT with
+ * variables ~9x slower than the same BLIT with literals. These helpers parse
+ * only the simple shapes that dominate game loops -- a decimal integer
+ * literal, a scalar variable, or a scalar array element with literal/plain
+ * scalar indices -- and hand everything else back to mmb_expr() unchanged.
+ *
+ * Every helper restores G.p before returning 0, so a fallback sees exactly
+ * the input the expression parser would have seen. That keeps errors and
+ * side effects identical for expressions, functions, strings, arrays,
+ * FRAMEBUFFER and malformed input. */
+
+static int gfx_arg_end(char c)
+{
+	return c == 0 || c == ',' || c == ':' || c == '\'';
+}
+
+static int gfx_is_user_func(const char *name)
+{
+	char nbuf[MMB_MAX_NAME];
+	int i;
+
+	strncpy(nbuf, name, MMB_MAX_NAME - 1);
+	nbuf[MMB_MAX_NAME - 1] = 0;
+	mmb_upper(nbuf);
+	for (i = 0; i < G.nsubs; i++)
+		if (G.subs[i].used && G.subs[i].is_func &&
+		    mmb_keyword_eq(G.subs[i].name, nbuf))
+			return 1;
+	return 0;
+}
+
+/* Parse one simple scalar term. Used for array indices. Returns 0 (with G.p
+ * restored) when the term is anything richer than a literal or scalar. */
+static int gfx_fast_scalar(mmb_val *out)
+{
+	const char *save = G.p;
+	char name[MMB_MAX_NAME], bare[MMB_MAX_NAME];
+	int nl = 0, t, is_colour;
+	mmb_val cv;
+	mmb_var *v;
+
+	mmb_skip_sp();
+	if (mmb_is_digit(*G.p))
+	{
+		int64_t i = 0;
+		while (mmb_is_digit(*G.p))
+		{
+			i = i * 10 + (*G.p - '0');
+			G.p++;
+		}
+		if (*G.p == '.' || *G.p == 'e' || *G.p == 'E')
+			goto slow;
+		mmb_skip_sp();
+		if (*G.p != ',' && *G.p != ')')
+			goto slow;
+		*out = mmb_int_val(i);
+		return 1;
+	}
+	if (*G.p == 0x80 || !mmb_is_ident_start(*G.p))
+		goto slow;
+	while (mmb_is_ident(*G.p) && *G.p != '.' && nl < MMB_MAX_NAME - 2)
+	{
+		char ch = *G.p++;
+		if (ch >= 'a' && ch <= 'z')
+			ch = (char)(ch - 32);
+		name[nl++] = ch;
+	}
+	if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+		name[nl++] = *G.p++;
+	name[nl] = 0;
+	if (!nl || *G.p == '.' || *G.p == '(')
+		goto slow;
+	strncpy(bare, name, MMB_MAX_NAME - 1);
+	bare[MMB_MAX_NAME - 1] = 0;
+	t = mmb_type_suffix(bare);
+	/* Built-ins and named colours would win over a variable in mmb_expr(). */
+	if (mmb_kw_id(name) > 0)
+		goto slow;
+	(void)mmb_named_colour(bare, &is_colour);
+	if (is_colour)
+		goto slow;
+	mmb_skip_sp();
+	if (*G.p != ',' && *G.p != ')')
+		goto slow;
+	if (mmb_const_lookup(name, t, &cv))
+	{
+		*out = cv;
+		return 1;
+	}
+	v = mmb_find_var(name, t, 1, 0, 0);
+	*out = mmb_load_var(v, 0);
+	return 1;
+slow:
+	G.p = save;
+	return 0;
+}
+
+/* Parse a bare scalar variable / simple array element. Returns 0 with G.p
+ * restored for anything else. */
+static int gfx_fast_var(mmb_val *out)
+{
+	const char *ref = G.p;
+	char name[MMB_MAX_NAME], bare[MMB_MAX_NAME];
+	int nl = 0, t, nidx = 0, idx[MMB_MAX_DIMS], off, is_colour;
+	mmb_val cv;
+	mmb_var *v;
+
+	if (*G.p == 0x80 || !mmb_is_ident_start(*G.p))
+		return 0;
+	while (mmb_is_ident(*G.p) && *G.p != '.' && nl < MMB_MAX_NAME - 2)
+	{
+		char ch = *G.p++;
+		if (ch >= 'a' && ch <= 'z')
+			ch = (char)(ch - 32);
+		name[nl++] = ch;
+	}
+	if (*G.p == '$' || *G.p == '%' || *G.p == '!')
+		name[nl++] = *G.p++;
+	name[nl] = 0;
+	if (!nl || *G.p == '.')
+		return 0;
+	strncpy(bare, name, MMB_MAX_NAME - 1);
+	bare[MMB_MAX_NAME - 1] = 0;
+	t = mmb_type_suffix(bare);
+	/* Keep functions and colour names on the expression parser. */
+	if (mmb_kw_id(name) > 0 || gfx_is_user_func(bare))
+		return 0;
+	(void)mmb_named_colour(bare, &is_colour);
+	if (is_colour)
+		return 0;
+	if (*G.p == '(')
+	{
+		G.p++;
+		for (;;)
+		{
+			mmb_val iv;
+			if (nidx >= MMB_MAX_DIMS)
+				return 0;
+			if (!gfx_fast_scalar(&iv))
+				return 0;
+			idx[nidx++] = (int)mmb_as_int(iv);
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
+		if (*G.p != ')')
+			return 0;
+		G.p++;
+	}
+	mmb_skip_sp();
+	if (!gfx_arg_end(*G.p))
+		return 0;
+	if (nidx == 0 && mmb_const_lookup(name, t, &cv))
+	{
+		*out = cv;
+		return 1;
+	}
+	v = mmb_find_var_ref(ref, name, t, 1, nidx, idx);
+	off = mmb_elem_off(v, nidx, idx);
+	*out = mmb_load_var(v, off);
+	return 1;
+}
+
+static int gfx_fast_arg(mmb_val *out)
+{
+	const char *save = G.p;
+
+	mmb_skip_sp();
+	if (mmb_is_digit(*G.p))
+	{
+		int64_t i = 0;
+		while (mmb_is_digit(*G.p))
+		{
+			i = i * 10 + (*G.p - '0');
+			G.p++;
+		}
+		if (*G.p == '.' || *G.p == 'e' || *G.p == 'E')
+			goto slow;
+		mmb_skip_sp();
+		if (!gfx_arg_end(*G.p))
+			goto slow;
+		*out = mmb_int_val(i);
+		return 1;
+	}
+	if (gfx_fast_var(out))
+		return 1;
+slow:
+	G.p = save;
+	return 0;
+}
+
 static int parse_args(mmb_val *a, int maxn)
 {
 	int n = 0;
@@ -24,7 +222,9 @@ static int parse_args(mmb_val *a, int maxn)
 			}
 			break;
 		}
-		a[n++] = mmb_expr();
+		if (!gfx_fast_arg(&a[n]))
+			a[n] = mmb_expr();
+		n++;
 		mmb_skip_sp();
 		if (*G.p == ',')
 		{
@@ -72,7 +272,8 @@ static int parse_gfx_args(mmb_val *a, int *is_fb, int maxn)
 		else
 		{
 			is_fb[n] = 0;
-			a[n] = mmb_expr();
+			if (!gfx_fast_arg(&a[n]))
+				a[n] = mmb_expr();
 		}
 		n++;
 		mmb_skip_sp();
