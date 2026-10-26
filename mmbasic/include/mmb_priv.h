@@ -970,6 +970,12 @@ void mmb_clear_vars(int keep_options);
 void mmb_local_restore(int g);
 void mmb_vars_rehash(void);
 mmb_var *mmb_find_var(const char *name, int type, int create, int nidx, int *idx);
+/* Non-throwing O(1) lookup for the trace-cache compiler (#1385): resolve
+ * `name` through the same name hash and type rules as mmb_find_var(), but
+ * return NULL instead of raising or creating.  A miss means "not a variable"
+ * (a user function, constant or struct path) and lets the caller bail to the
+ * interpreter. */
+mmb_var *mmb_lookup_var_nothrow(const char *name, int type);
 /* Type that a bare (unsuffixed) name denotes in the executing call frame
  * (#1315): the nearest visible LOCAL binding, else a parameter of the nearest
  * enclosing SUB/FUNCTION. -1 when the name is not scoped, 0 when it is an

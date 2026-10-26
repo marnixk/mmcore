@@ -278,6 +278,44 @@ def test_tracecache_expression_subscripts_in_local_sub(console):
     assert perf["tcache_bad"] < 10, perf
 
 
+def test_tracecache_find_var_many_globals_1385(console):
+    """#1385: a compile with many globals resolves the same binding.
+
+    The shadowed global is declared last, so the old linear scan had to walk
+    the whole table for every recompile.  ``LOCAL ZZ`` rebinds it on each call
+    and forces the body to compile again, while ``SAME`` exercises the
+    unsuffixed-binding type lookup and a same-named FLOAT/INTEGER pair.
+    """
+    names = [f"G{i}" for i in range(1, 1200)]
+    lines = ["OPTION DEFAULT INTEGER", "DIM I, X"]
+    for i in range(0, len(names), 8):
+        lines.append("DIM " + ", ".join(names[i : i + 8]))
+    lines += [
+        "DIM FLOAT SAME",
+        "DIM INTEGER SAME%",
+        "DIM ZZ",
+        "SAME = 1.5",
+        "SAME% = 7",
+        "ZZ = 40",
+        "SUB F",
+        "  LOCAL ZZ",
+        "  ZZ = ZZ + 1",
+        "  X = X + ZZ",
+        "  SAME = SAME + 0.5",
+        "END SUB",
+        "FOR I = 1 TO 50",
+        "  F",
+        "NEXT I",
+        'PRINT "X=";X;" SAME=";INT(SAME*10);" SAME%=";SAME%;" ZZ=";ZZ',
+    ]
+    assert console.send_line("OPTION PROFILING ON") == ""
+    out = _compare(console, "TCFINDVAR.BAS", lines, timeout=60.0)
+    assert _lines(out)[0] == "X=50 SAME=265 SAME%=7 ZZ=40", out
+    perf = _perf(out)
+    assert perf["tcache_comp"] > 0, perf
+    assert perf["tcache_bad"] == 0, perf
+
+
 def test_tracecache_expression_subscripts_after_redim(console):
     """REDIM bumps the array generation on every pass; recompiles stay correct."""
     lines = [
