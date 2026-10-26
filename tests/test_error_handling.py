@@ -1,4 +1,7 @@
-"""ON ERROR SKIP/IGNORE/ABORT/CLEAR and MM.ERRNO / MM.ERRMSG$ (#1323)."""
+"""ON ERROR SKIP/IGNORE/ABORT/CLEAR and MM.ERRNO / MM.ERRMSG$ (#1323),
+and OPTION ERROR CONTINUE as the persistent RUN fallback (#1327)."""
+
+import pytest
 
 
 def _lines(out):
@@ -207,3 +210,125 @@ def test_in_sub_file_error_repro(console):
     assert lines[-1] == "after save", lines
     assert lines[0].startswith("SAVE FAILED: "), lines
     assert "FILE" in lines[0].upper(), lines
+
+
+@pytest.fixture
+def error_continue(console):
+    assert console.send_line("OPTION ERROR CONTINUE") == ""
+    try:
+        yield console
+    finally:
+        assert console.send_line("OPTION ERROR ABORT") == ""
+
+
+def test_option_error_continue_repro(error_continue):
+    """The issue repro: the failing statement is skipped and the next runs."""
+    _program(error_continue, ['10 ERROR "BOOM"', '20 PRINT "continued"'])
+    assert _lines(error_continue.send_line("RUN")) == ["continued"]
+
+
+def test_option_error_continue_sets_errno_and_errmsg(error_continue):
+    _program(
+        error_continue,
+        [
+            '10 ERROR "BOOM"',
+            '20 PRINT "NO="; (MM.ERRNO <> 0)',
+            '30 PRINT "MSG="; MM.ERRMSG$',
+        ],
+    )
+    assert _lines(error_continue.send_line("RUN")) == ["NO=1", "MSG=BOOM"]
+
+
+def test_option_error_continue_is_persistent_across_runs(error_continue):
+    _program(error_continue, ['10 ERROR "BOOM"', '20 PRINT "continued"'])
+    assert _lines(error_continue.send_line("RUN")) == ["continued"]
+    assert _lines(error_continue.send_line("RUN")) == ["continued"]
+
+
+def test_option_error_continue_keeps_sub_call_stack(error_continue):
+    _program(
+        error_continue,
+        [
+            "10 SUB boom()",
+            '20 ERROR "SUB BOOM"',
+            '30 PRINT "IN SUB"',
+            "40 END SUB",
+            "50 boom()",
+            '60 PRINT "AFTER SUB"',
+        ],
+    )
+    assert _lines(error_continue.send_line("RUN")) == ["IN SUB", "AFTER SUB"]
+
+
+def test_on_error_skip_expiry_returns_to_continue(error_continue):
+    _program(
+        error_continue,
+        [
+            "10 ON ERROR SKIP 1",
+            '20 ERROR "E1"',
+            '30 ERROR "E2"',
+            '40 PRINT "AFTER="; MM.ERRMSG$',
+        ],
+    )
+    assert _lines(error_continue.send_line("RUN")) == ["AFTER=E2"]
+
+
+def test_on_error_abort_overrides_option_continue(error_continue):
+    _program(
+        error_continue,
+        [
+            "10 ON ERROR ABORT",
+            '20 ERROR "E1"',
+            '30 PRINT "NOT REACHED"',
+        ],
+    )
+    lines = _lines(error_continue.send_line("RUN"))
+    assert "NOT REACHED" not in lines, lines
+    assert any("E1" in ln for ln in lines), lines
+
+
+def test_plain_on_error_restores_option_continue(error_continue):
+    _program(
+        error_continue,
+        [
+            "10 ON ERROR ABORT",
+            "20 ON ERROR",
+            '30 ERROR "E1"',
+            '40 PRINT "CONTINUED="; MM.ERRMSG$',
+        ],
+    )
+    assert _lines(error_continue.send_line("RUN")) == ["CONTINUED=E1"]
+
+
+def test_on_error_goto_still_jumps_with_option_continue(error_continue):
+    _program(
+        error_continue,
+        [
+            "10 ON ERROR GOTO 100",
+            '20 ERROR "GOTO BOOM"',
+            '30 PRINT "NOT REACHED"',
+            "40 END",
+            '100 PRINT "HANDLER="; MM.ERRMSG$',
+            "110 END",
+        ],
+    )
+    assert _lines(error_continue.send_line("RUN")) == ["HANDLER=GOTO BOOM"]
+
+
+def test_option_error_abort_restores_abort(console):
+    assert console.send_line("OPTION ERROR CONTINUE") == ""
+    assert console.send_line("OPTION ERROR ABORT") == ""
+    _program(console, ['10 ERROR "BOOM"', '20 PRINT "NOT REACHED"'])
+    lines = _lines(console.send_line("RUN"))
+    assert "NOT REACHED" not in lines, lines
+    assert any("BOOM" in ln for ln in lines), lines
+
+
+def test_option_error_continue_does_not_change_immediate_mode(console):
+    assert console.send_line("OPTION ERROR CONTINUE") == ""
+    try:
+        out = console.send_line('ERROR "IMMEDIATE BOOM"')
+        assert "IMMEDIATE BOOM" in out, out
+        assert console.send_line('PRINT "ALIVE"') == "ALIVE"
+    finally:
+        assert console.send_line("OPTION ERROR ABORT") == ""

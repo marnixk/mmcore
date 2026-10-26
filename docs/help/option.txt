@@ -110,6 +110,16 @@ Settings:
   TERM SCROLLBACK n
     Lines of TERM history kept for Page Up / search. Default 200, 0 off.
 
+ERROR CONTINUE sets the persistent RUN default: a runtime error skips the
+failing statement and continues with the next one, keeps the SUB/FUNCTION call
+stack, and sets ~MM.ERRNO~ and ~MM.ERRMSG$~ silently. It is the same behaviour
+as ~ON ERROR IGNORE~, but lasts across RUNs. ERROR ABORT is the default and
+stops the program on the first untrapped error. An explicit ~ON ERROR~ GOTO,
+SKIP, IGNORE or ABORT overrides this default for the current RUN; SKIP returns
+to it when its count expires, plain ~ON ERROR~ restores it, and ON ERROR ABORT
+overrides it until the next RUN. The setting does not change immediate-mode
+errors, which always abort.
+
 Example:
 
     OPTION BASE 1

@@ -700,6 +700,8 @@ typedef struct mmb {
 	int err_resume_pc;     /* line that raised the trapped error */
 	int error_skip;        /* ON ERROR SKIP/IGNORE: 0 abort, -1 ignore,
 				* >0 statements still tolerated */
+	int error_skip_base;   /* RUN fallback when no explicit ON ERROR mode:
+				* -1 OPTION ERROR CONTINUE, 0 ABORT */
 	int skip_stmt_valid;   /* stmt_errjmp has the current statement */
 	int skip_line_valid;   /* skip_errjmp has the current line */
 	int mm_errno;          /* MM.ERRNO: 0 when no trapped error */
