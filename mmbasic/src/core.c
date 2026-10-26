@@ -1272,6 +1272,8 @@ static void gosub_save_ctrl(int g)
 	memcpy(G.gosub_if_pc_stack[g], G.if_pc_stack,
 	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.gosub_if_inline[g] = G.if_inline;
+	G.gosub_if_armed[g] = G.if_armed;
+	G.gosub_if_inline_keep[g] = G.if_inline_keep;
 	G.gosub_if_shadow[g] = G.if_shadow;
 	G.gosub_ctrl_sp[g] = G.ctrl_sp;
 	G.gosub_for_sp[g] = G.for_sp;
@@ -1295,7 +1297,8 @@ static void gosub_restore_ctrl(int g)
 	memcpy(G.if_pc_stack, G.gosub_if_pc_stack[g],
 	       (size_t)G.if_depth * sizeof(G.if_pc_stack[0]));
 	G.if_inline = G.gosub_if_inline[g];
-	G.if_armed = 0;
+	G.if_armed = G.gosub_if_armed[g];
+	G.if_inline_keep = G.gosub_if_inline_keep[g];
 	/* Restore, do not zero: an event handler may return into the middle of a
 	 * skipped arm, whose nested-IF count still owns the pending END IF
 	 * (#1342). */

@@ -604,6 +604,11 @@ typedef struct mmb {
 	int gosub_if_pc_stack[MMB_MAX_GOSUB][MMB_MAX_IF_DEPTH];
 	int gosub_if_depth[MMB_MAX_GOSUB];
 	int gosub_if_inline[MMB_MAX_GOSUB];
+	/* The rest of the one-line IF owner: an arm may already be running when
+	 * an interrupt or nested call checkpoints the caller, so save these
+	 * beside if_inline instead of clearing them for the callee (#1353). */
+	int gosub_if_armed[MMB_MAX_GOSUB];
+	int gosub_if_inline_keep[MMB_MAX_GOSUB];
 	/* Caller's skipped-nested-IF count.  An interrupt handler can run between
 	 * lines in the middle of a skip, so the count must survive the call
 	 * (#1342). */

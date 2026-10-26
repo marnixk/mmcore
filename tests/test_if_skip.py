@@ -271,6 +271,63 @@ def _timings(out):
     return values["TS"], values["TL"], values["TE"]
 
 
+def _one_line_if_interrupt_program(tick_period):
+    """One-line IF arms with calls and PAUSE, run with and without ticks.
+
+    ``tick_period`` is 1 for the interrupt run and 0 for the timers-off
+    reference.  Every PAUSE leaves the tick plenty of time to fire, so the
+    gosub checkpoint is exercised while a one-line arm is in progress
+    (#1353).  The output must not depend on the interrupt.
+    """
+    return [
+        "10 TK = 0",
+        "20 SUB TICK()",
+        "30 TK = TK + 1",
+        "40 END SUB",
+        "50 SUB S()",
+        '60 PRINT "s";',
+        "70 PAUSE 40",
+        '80 PRINT "S";',
+        "90 END SUB",
+        "100 FUNCTION F()",
+        "110 PAUSE 40",
+        "120 F = 7",
+        "130 END FUNCTION",
+        "140 X = 0 : Y = 0",
+        f"150 SETTICK {tick_period}, TICK",
+        '160 IF 1 THEN S() : PRINT "t1" : X = 1 ELSE PRINT "e1" : X = 2',
+        '170 IF 1 THEN Y = F() : PRINT "t2";Y : X = 3 ELSE PRINT "e2" : X = 4',
+        '180 IF 1 THEN PAUSE 40 : PRINT "t3" : X = 5 ELSE PRINT "e3" : X = 6',
+        '190 IF 0 THEN PRINT "t4" : X = 7 ELSE S() : PRINT "e4" : X = 8',
+        '200 IF 0 THEN X = 9 ELSE Y = F() : PRINT "e5";Y : X = 10',
+        '210 IF 0 THEN S() : PRINT "bad" : X = 11',
+        "220 SETTICK 0, TICK",
+        '230 PRINT "out";X;Y',
+        '240 PRINT "tk";TK > 0',
+    ]
+
+
+def test_one_line_if_arm_survives_settick_interrupt(console):
+    """A tick during a one-line IF arm must not change which arm owns the line.
+
+    The arm calls a SUB and a FUNCTION and also polls events with PAUSE while
+    SETTICK runs at 1 ms, then continues with more statements on the same line.
+    The taken and untaken branches are covered, including an ELSE on the same
+    line.  The same program with timers off must print exactly the same arm
+    output (#1353).
+    """
+    expected = ["sSt1", "t27", "t3", "sSe4", "e57", "out107"]
+    _load(console, _one_line_if_interrupt_program(1))
+    timed = _run(console, timeout=30.0)
+    assert timed[-1] == "tk1", timed
+    assert timed[:-1] == expected, timed
+
+    _load(console, _one_line_if_interrupt_program(0))
+    untimed = _run(console, timeout=30.0)
+    assert untimed[-1] == "tk0", untimed
+    assert untimed[:-1] == expected, untimed
+
+
 def test_long_chain_costs_like_short_chain(console):
     """Skipping 19 extra arms must not cost several times the short chain.
 
