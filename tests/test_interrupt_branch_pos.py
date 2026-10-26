@@ -20,6 +20,8 @@ Every RUN uses a short timeout: a regression must fail fast instead of stalling
 the suite.
 """
 
+import time
+
 RUN_TIMEOUT = 30.0
 
 
@@ -191,3 +193,94 @@ def test_exit_sub_after_same_line_sub_call_with_settick(console):
     untimed = _run_program(console, _exit_sub_program(0))
     assert timed == ["back, n=1", "tk1"], timed
     assert untimed == ["back, n=1", "tk0"], untimed
+
+
+def test_error_in_tick_handler_clears_tick_busy(console):
+    """#1359: a caught error in a tick handler must not stop later ticks.
+
+    ``tick_busy`` used to stay set because ON ERROR GOTO longjmp'd past the
+    handler's C frame.  The first error is caught and resumed; the second only
+    happens if ticks are dispatching again, and the counter must keep moving.
+    """
+    lines = [
+        "10 DIM INTEGER TC, EC, ARMED",
+        "20 ON ERROR GOTO 200",
+        "30 SUB T()",
+        "40 TC = TC + 1",
+        '50 IF ARMED THEN ARMED = 0 : ERROR "tickboom"',
+        "60 END SUB",
+        "70 SETTICK 1, T",
+        "80 ARMED = 1",
+        "85 PAUSE 30",
+        '90 PRINT "first";TC',
+        "95 ARMED = 1",
+        "100 PAUSE 30",
+        '110 PRINT "second";TC',
+        "115 SETTICK 0, T",
+        '120 PRINT "caught";EC',
+        "130 END",
+        "200 EC = EC + 1",
+        "210 IF EC = 1 THEN RESUME 90",
+        "220 RESUME 110",
+    ]
+    out = _run_program(console, lines)
+    values = {}
+    for line in out:
+        for key in ("first", "second", "caught"):
+            if line.startswith(key):
+                values[key] = int(line[len(key):])
+    assert values.get("caught") == 2, out
+    assert values["second"] > values["first"], out
+
+
+def _wait_for(con, token, timeout=8.0):
+    deadline = time.time() + timeout
+    seen = b""
+    while time.time() < deadline:
+        chunk = con._recv(con._ser)
+        if chunk:
+            seen += chunk
+            if token in seen:
+                return seen
+        else:
+            time.sleep(0.05)
+    return seen
+
+
+def test_error_in_on_key_handler_clears_tick_busy(fresh_console):
+    """#1359: ON KEY takes the same run_event_handler() path as SETTICK."""
+    con = fresh_console
+    _load(
+        con,
+        [
+            "10 DIM INTEGER KC, EC, ARMED",
+            "20 ON ERROR GOTO 200",
+            "30 SUB K()",
+            "40 KC = KC + 1",
+            '50 IF ARMED THEN ARMED = 0 : ERROR "keyboom"',
+            "60 END SUB",
+            "70 ON KEY K",
+            "80 ARMED = 1",
+            '90 PRINT "READY"',
+            "100 PAUSE 1000",
+            '110 PRINT "kc";KC',
+            "120 ARMED = 1",
+            '125 PRINT "READY2"',
+            "130 PAUSE 1000",
+            '140 PRINT "kc2";KC',
+            '150 PRINT "caught";EC',
+            "160 END",
+            "200 EC = EC + 1",
+            "210 IF EC = 1 THEN RESUME 110",
+            "220 RESUME 140",
+        ],
+    )
+    con._ser.sendall(b"RUN\r")
+    assert b"READY" in _wait_for(con, b"READY"), "no READY"
+    con._ser.sendall(b"q")
+    armed = _wait_for(con, b"READY2")
+    assert b"kc1" in armed, armed
+    con._ser.sendall(b"q")
+    out = _wait_for(con, b"caught2")
+    assert b"kc2" in out, out
+    assert b"caught2" in out, out

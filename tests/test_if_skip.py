@@ -360,3 +360,65 @@ def test_long_chain_costs_like_short_chain(console):
     ts, tl, te = _timings(_run(console, timeout=120.0))
     assert ts > 0 and te > 0, (ts, tl, te)
     assert tl < ts * 3 + 25, f"long chain too slow: short={ts}ms long={tl}ms empty={te}ms"
+
+
+def test_endif_colon_runs_following_statement(console):
+    """#1387: ENDIF closes the block but does not consume the rest of the line."""
+    _load(
+        console,
+        [
+            "10 IF 1 THEN",
+            '20 PRINT "a"',
+            '30 ENDIF : PRINT "c"',
+            '40 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["a", "c", "b"]
+
+
+def test_endif_colon_opens_trailing_false_block_if(console):
+    """A block IF after ENDIF opens at runtime, so its body is skipped."""
+    _load(
+        console,
+        [
+            "10 IF 1 THEN",
+            '20 PRINT "a"',
+            "30 ENDIF : IF 0 THEN",
+            '40 PRINT "X"',
+            "50 ENDIF",
+            '60 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["a", "b"]
+
+
+def test_endif_colon_opens_trailing_true_block_if(console):
+    _load(
+        console,
+        [
+            "10 IF 1 THEN",
+            '20 PRINT "a"',
+            "30 ENDIF : IF 1 THEN",
+            '40 PRINT "c"',
+            "50 ENDIF",
+            '60 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["a", "c", "b"]
+
+
+def test_endif_colon_trailing_if_inside_skipped_block(console):
+    """A trailing IF on an ENDIF line is counted while the outer block skips."""
+    _load(
+        console,
+        [
+            "10 IF 0 THEN",
+            "20   IF 1 THEN",
+            "30   ENDIF : IF 1 THEN",
+            '40     PRINT "X"',
+            "50   ENDIF",
+            "60 ENDIF",
+            '70 PRINT "b"',
+        ],
+    )
+    assert _run(console) == ["b"]

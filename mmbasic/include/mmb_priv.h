@@ -852,6 +852,11 @@ typedef struct mmb {
 	 * restore it, including after an ON ERROR longjmp unwinds the C stack. */
 	mmb_exec_frame nested_frame[MMB_MAX_NESTED];
 	int nested_depth;
+	/* Heap-allocated tokenized EXECUTE bodies, indexed by nested depth.  A
+	 * same-line FOR that dynamic code opens records a resume pointer into
+	 * this buffer, so it must stay alive until the loop finishes and must
+	 * be released when an error unwinds the entry (#1364). */
+	char *exec_body[MMB_MAX_NESTED];
 	int prog_dirty;        /* program text changed since last tokenize (#992) */
 	int prog_ready;        /* tokenizer + jump tables are current (#992) */
 	int break_primed;      /* rate limiter for mmb_check_break's heavy work (#988) */
