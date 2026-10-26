@@ -36,6 +36,39 @@ static int s_poll_active;
  * pointer containment against (#1374). */
 static const char *s_immediate_line;
 
+/* The heap body of the innermost EXECUTE entry, or NULL.  mmb_cmd_for() checks
+ * containment here to recognise a same-line FOR/NEXT body in dynamic code
+ * (#1364), and the free helpers below release it on every exit path. */
+static const char *exec_body_base(void)
+{
+	if (G.nested_depth <= 0)
+		return 0;
+	return G.exec_body[G.nested_depth - 1];
+}
+
+static int in_exec_body(const char *p)
+{
+	const char *b = exec_body_base();
+	return b && p && p >= b && p < b + MMB_LINE_LEN;
+}
+
+static void exec_body_free(int depth)
+{
+	if (depth < 0 || depth >= MMB_MAX_NESTED || !G.exec_body[depth])
+		return;
+	G.plat->free(G.exec_body[depth]);
+	G.exec_body[depth] = 0;
+}
+
+/* Drop every outstanding EXECUTE body.  Called when an error longjmps past
+ * the C frame that would have freed its body, and before a fresh RUN. */
+static void exec_bodies_clear(void)
+{
+	int i;
+	for (i = 0; i < MMB_MAX_NESTED; i++)
+		exec_body_free(i);
+}
+
 /* Jump tables and run flags are per-console interpreter state; the names
  * below always address the active context's fields (G.jmp_*, G.jmp_ready,
  * G.run_preserve_vars). */
@@ -720,12 +753,11 @@ static void unwind_above_seq(int seq)
 		pop_ctrl_top();
 }
 
-/* Number of block IF statements opened on this line, including ones after a
- * colon.  A line may open more than one (#1301), and the jump tables need the
- * same count so each matching ENDIF pairs at the right depth (#1333). */
-static int line_block_ifs(const char *body)
+/* Number of block IF statements opened from p onward, at statement
+ * boundaries.  Used both for a whole line and for the remainder after a
+ * leading ENDIF so skipped code counts every block it lexically opens. */
+static int block_ifs_from(const char *p)
 {
-	const char *p = after_label(body);
 	int n = 0;
 	for (;;)
 	{
@@ -746,6 +778,14 @@ static int line_block_ifs(const char *body)
 	return n;
 }
 
+/* Number of block IF statements opened on this line, including ones after a
+ * colon.  A line may open more than one (#1301), and the jump tables need the
+ * same count so each matching ENDIF pairs at the right depth (#1333). */
+static int line_block_ifs(const char *body)
+{
+	return block_ifs_from(after_label(body));
+}
+
 static int line_is_select(const char *body)
 {
 	const char *save = G.p;
@@ -762,6 +802,31 @@ static int at_case_kw(void)
 	int r = mmb_match("CASE");
 	G.p = save;
 	return r;
+}
+
+/* Consume the separator after a structural ENDIF so the statement loop starts
+ * on the first trailing statement.  Returns the exec_line_body() code that
+ * resumes the line at G.p. */
+static int resume_after_endif(void)
+{
+	mmb_skip_sp();
+	if (*G.p == ':')
+	{
+		G.p++;
+		mmb_skip_sp();
+	}
+	return 2;
+}
+
+/* True when the current line would be skipped by block-IF or SELECT state.
+ * Used after an ENDIF to decide whether the statements after it may run. */
+static int structure_skipping(void)
+{
+	mmb_selframe *sel = sel_top();
+
+	if (G.if_depth > 0 && G.if_stack[G.if_depth - 1] != IF_BODY)
+		return 1;
+	return sel && sel->skip;
 }
 
 static int process_line_structure(const char *body)
@@ -783,8 +848,17 @@ static int process_line_structure(const char *body)
 				G.if_shadow--;
 			else
 				G.if_depth--;
-			G.p = save;
-			return 1;
+			/* Statements after the colon must still be skipped, but any
+			 * block IF they lexically open still needs a frame count so
+			 * its later ENDIF pairs correctly.  When this ENDIF closed the
+			 * last skipping frame, resume at the colon instead (#1387). */
+			if (structure_skipping())
+			{
+				G.if_shadow += block_ifs_from(G.p);
+				G.p = save;
+				return 1;
+			}
+			return resume_after_endif();
 		}
 		if (match_else_if())
 		{
@@ -860,9 +934,17 @@ static int process_line_structure(const char *body)
 		}
 		if (match_endif())
 		{
-			G.if_depth--;
-			G.p = save;
-			return 1;
+			if (G.if_depth > 0)
+				G.if_depth--;
+			if (structure_skipping())
+			{
+				G.if_shadow += block_ifs_from(G.p);
+				G.p = save;
+				return 1;
+			}
+			/* The block is closed; a trailing statement (including a new
+			 * block IF) runs after the colon (#1387). */
+			return resume_after_endif();
 		}
 	}
 
@@ -2445,6 +2527,12 @@ static void unwind_call_frames(void)
 	 * gosub saves have been restored (the reverse order would let a late
 	 * gosub_restore_ctrl overwrite the caller state with the callee's). */
 	mmb_nested_unwind();
+	/* An event handler's run_event_handler() C frame was also abandoned, so
+	 * its tick_busy guard never cleared; without this no later tick/key/
+	 * mouse handler would dispatch (#1359).  EXECUTE bodies owned by the
+	 * unwound entries are released here too (#1364). */
+	G.tick_busy = 0;
+	exec_bodies_clear();
 }
 
 int mmb_call_named_sub(const char *name)
@@ -3862,11 +3950,16 @@ void mmb_cmd_for(void)
 		/* A body after `:` on the FOR line must resume mid-line on loop-back,
 		 * not at the next line (#997). Only trust the pointer when it lies
 		 * inside the tokenized line being executed: EXECUTE strings run from
-		 * a local buffer whose pointer would dangle once the statement
-		 * returns, and immediate lines have no run_pc. */
+		 * a heap body that mmb_cmd_execute keeps alive for the loop (#1364),
+		 * and immediate lines have no run_pc. */
 		mmb_skip_sp();
 		base = (G.run_pc >= 0 && G.run_pc < G.nprog) ? mmb_tok_line(G.run_pc) : 0;
-		if (*G.p == ':' && base && G.p >= base && G.p < base + MMB_LINE_LEN)
+		if (*G.p == ':' && in_exec_body(G.p))
+		{
+			same_line = 1;
+			body = G.p + 1;
+		}
+		else if (*G.p == ':' && base && G.p >= base && G.p < base + MMB_LINE_LEN)
 		{
 			same_line = 1;
 			body = G.p + 1;
@@ -5484,8 +5577,17 @@ static void exec_stmt_loop(void)
 
 static void exec_line_body(const char *body)
 {
-	if (process_line_structure(body))
+	int structure = process_line_structure(body);
+
+	/* 2 means a leading ENDIF was consumed and the rest of the line must run
+	 * from the current position, including a block IF after its colon
+	 * (#1387).  1 skips the whole line. */
+	if (structure)
+	{
+		if (structure == 2)
+			exec_stmt_loop();
 		return;
+	}
 	G.p = after_label(body);
 	exec_stmt_loop();
 }
@@ -5519,19 +5621,57 @@ static void exec_line_from(const char *body, const char *at)
 void mmb_cmd_execute(void)
 {
 	mmb_val v = mmb_expr();
-	char body[MMB_LINE_LEN];
+	char *body;
 	const char *save;
-	int gosub_before, branch_pc;
+	int gosub_before, branch_pc, body_depth;
 	mmb_exec_frame *island;
 
 	if (v.type != T_STR)
 		mmb_error("?TYPE MISMATCH");
 	save = G.p;
-	mmb_tokenize_text(v.s ? v.s : "", body, (int)sizeof(body));
 	gosub_before = G.gosub_sp;
 	mmb_nested_push();
+	body_depth = G.nested_depth - 1;
+	/* The body must outlive this C frame: a same-line FOR records its
+	 * resume position in the buffer, and the loop can still be running when
+	 * the statement returns (#1364).  It is freed below once every pending
+	 * back-edge has been driven, or by the error unwind if the entry is
+	 * abandoned.  Allocate inside the entry so a nesting overflow cannot
+	 * strand the buffer. */
+	body = (char *)G.plat->alloc(MMB_LINE_LEN);
+	if (!body)
+		mmb_error("?OUT OF MEMORY");
+	G.exec_body[body_depth] = body;
+	mmb_tokenize_text(v.s ? v.s : "", body, MMB_LINE_LEN);
 	island = mmb_nested_top();
 	exec_line_body(body);
+	/* Drive same-line loop back-edges and the mid-line branches they ask
+	 * for here, while the body is alive.  run_program never sees a pointer
+	 * into it, so no branch_pos can dangle into a freed buffer. */
+	while (G.running && !G.end_req)
+	{
+		if (G.branch_pc >= 0)
+		{
+			if (G.branch_pc == G.run_pc && in_exec_body(G.branch_pos))
+			{
+				const char *at = G.branch_pos;
+				G.branch_pc = -1;
+				G.branch_pos = 0;
+				exec_line_from(body, at);
+				continue;
+			}
+			break;
+		}
+		if (G.for_sp > 0 && G.forstack[G.for_sp - 1].stmt == 1 &&
+		    in_exec_body(G.forstack[G.for_sp - 1].pos))
+		{
+			const char *at = G.forstack[G.for_sp - 1].pos;
+			G.forstack[G.for_sp - 1].stmt = 0;
+			exec_line_from(body, at);
+			continue;
+		}
+		break;
+	}
 	branch_pc = G.branch_pc;
 	if (G.gosub_sp < gosub_before)
 		/* RETURN / END SUB already restored the enclosing call's state. */
@@ -5543,6 +5683,7 @@ void mmb_cmd_execute(void)
 	}
 	else
 		mmb_nested_pop_exact();
+	exec_body_free(body_depth);
 	G.p = save;
 	if (branch_pc >= 0)
 		G.branch_pc = branch_pc;
@@ -5941,6 +6082,7 @@ static void run_program(void)
 		mmb_str_reset();
 		G.for_sp = 0;
 		G.gosub_sp = 0;
+		exec_bodies_clear();
 		G.nested_depth = 0;
 		G.ctrl_sp = 0;
 		G.branch_pc = -1;
@@ -6175,8 +6317,12 @@ static void exec_error_reset(int was_running)
 	G.outn = 0;
 	G.out[0] = 0;
 	/* An unhandled error can also abandon a nested run_gosub_body C frame.
-	 * Drop its recorded frame before clearing the execution flags. */
+	 * Drop its recorded frame before clearing the execution flags.  A
+	 * breakout from an event handler must not leave tick_busy set (#1359),
+	 * and dynamic EXECUTE bodies must not leak (#1364). */
 	mmb_nested_unwind();
+	G.tick_busy = 0;
+	exec_bodies_clear();
 	clear_exec_flags();
 	mmb_pkg_unmount();
 	if (was_running || pages_off)

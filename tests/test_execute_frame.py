@@ -219,3 +219,64 @@ def test_execute_end_stops_whole_program(console):
             '60 PRINT "not"',
         ],
     ) == ["in"]
+
+
+def test_execute_same_line_for_runs_every_iteration(console):
+    """#1364: the dynamic body stays alive for the loop's back-edge."""
+    assert _run(
+        console,
+        [
+            '10 PRINT "before"',
+            '20 EXECUTE "FOR I=1 TO 2: PRINT I: NEXT"',
+            '30 PRINT "after"',
+        ],
+    ) == ["before", "1", "2", "after"]
+
+
+def test_execute_same_line_for_inside_caller_if(console):
+    """The loop resumes in caller structure state, so ENDIF still pairs."""
+    assert _run(
+        console,
+        [
+            "10 IF 1 THEN",
+            '20   EXECUTE "FOR I=1 TO 2: PRINT I: NEXT"',
+            '30   PRINT "after"',
+            "40 ENDIF",
+            '50 PRINT "done"',
+        ],
+    ) == ["1", "2", "after", "done"]
+
+
+def test_execute_same_line_for_calls_function_each_pass(console):
+    """The heap body also supports nested FUNCTION calls inside the loop."""
+    assert _run(
+        console,
+        [
+            "10 FUNCTION DBL(N)",
+            "20 DBL = N * 2",
+            "30 END FUNCTION",
+            '40 EXECUTE "FOR I=1 TO 2: PRINT DBL(I): NEXT"',
+        ],
+    ) == ["2", "4"]
+
+
+def test_execute_nested_same_line_for(console):
+    """Two same-line loops in one body resume from the same live buffer."""
+    assert _run(
+        console,
+        [
+            '10 EXECUTE "FOR I=1 TO 2: FOR J=1 TO 2: PRINT I;J: NEXT J: NEXT I"',
+            '20 PRINT "done"',
+        ],
+    ) == ["11", "12", "21", "22", "done"]
+
+
+def test_execute_same_line_exit_for(console):
+    """EXIT FOR leaves the dynamic loop without dangling into the buffer."""
+    assert _run(
+        console,
+        [
+            '10 EXECUTE "FOR I=1 TO 5: IF I=2 THEN EXIT FOR: PRINT I: NEXT"',
+            '20 PRINT "after"',
+        ],
+    ) == ["1", "after"]
