@@ -3251,6 +3251,10 @@ void mmb_cmd_list(void)
 void mmb_cmd_end(void)
 {
 	G.running = 0;
+	/* A FUNCTION/SUB body saves and restores G.running around its call
+	 * (#1343), so record the stop separately and let run_gosub_body leave
+	 * the interpreter stopped instead of undoing it. */
+	G.end_req = 1;
 	mmb_play_stop_owned();
 }
 
@@ -5453,6 +5457,10 @@ static void run_gosub_body(void)
 	jmp_buf saved_skip_jmp, saved_stmt_jmp;
 	mmb_arena_save arena_mark;
 
+	if (G.end_req)
+		/* END already ran (for example in an earlier event body): do not
+		 * enter another callee and resurrect the stopped program (#1343). */
+		return;
 	if (had_skip)
 	{
 		memcpy(saved_skip_jmp, G.skip_errjmp, sizeof(jmp_buf));
@@ -5547,7 +5555,9 @@ static void run_gosub_body(void)
 	}
 	G.ctrl_sp = saved_ctrl;
 	G.for_sp = saved_for;
-	G.running = saved_running;
+	/* An END inside this body is a program stop, not a per-call state
+	 * change, so do not restore the running flag it cleared (#1343). */
+	G.running = G.end_req ? 0 : saved_running;
 	G.branch_pos = saved_bpos;
 	G.skip_stmt_valid = saved_skip_valid;
 	G.skip_line_valid = saved_line_valid;
@@ -5704,6 +5714,8 @@ void mmb_run_events(void)
 		G.branch_pc = saved_branch;
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
+		if (G.end_req)
+			return;
 	}
 	if (on_key_ascii_active() && G.inkey_n > 0)
 	{
@@ -5734,6 +5746,8 @@ void mmb_run_events(void)
 			G.branch_pc = saved_branch;
 			G.gosub_sp = saved_sp;
 			G.tick_busy = 0;
+			if (G.end_req)
+				return;
 		}
 	}
 	/* Fire once per queue change (#1293). The general key stays in the
@@ -5755,6 +5769,8 @@ void mmb_run_events(void)
 		G.branch_pc = saved_branch;
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
+		if (G.end_req)
+			return;
 	}
 	/* ON KEYDOWN fires once per real held-set change: a press or a release,
 	 * never an OS auto-repeat (an unchanged set does not bump keydown_gen).
@@ -5776,6 +5792,8 @@ void mmb_run_events(void)
 		G.branch_pc = saved_branch;
 		G.gosub_sp = saved_sp;
 		G.tick_busy = 0;
+		if (G.end_req)
+			return;
 	}
 	{
 		int mx, my, mb, ev;
@@ -5818,6 +5836,8 @@ void mmb_run_events(void)
 			G.branch_pc = saved_branch;
 			G.gosub_sp = saved_sp;
 			G.tick_busy = 0;
+			if (G.end_req)
+				return;
 		}
 	}
 }
@@ -5828,6 +5848,7 @@ static void run_program(void)
 	int resume = G.run_suspended;
 
 	G.running = 1;
+	G.end_req = 0;
 	G.run_suspended = 0;
 	if (!resume)
 	{
@@ -6042,6 +6063,7 @@ static int has_unquoted_comma(const char *s)
 static void clear_exec_flags(void)
 {
 	G.running = 0;
+	G.end_req = 0;
 	G.if_depth = 0;
 	G.if_inline = 0;
 	G.if_armed = 0;
