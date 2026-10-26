@@ -319,3 +319,80 @@ def test_profiling_page1_offscreen_copy_bulk(console):
     # Page 1 is offscreen (display page 0), so none of the writes present.
     assert p["present"] == 0
     assert p["elapsed"] < 250
+
+
+def test_tracecache_survives_full_256_slots_1369(console):
+    """#1369: the old fixed 256-slot table filled for good during setup, so
+    hot loop statements never found a slot and were re-parsed on every pass.
+
+    Generate a program with 280 distinct cacheable setup statements (more than
+    the old table held) plus 100 distinct statements that cannot be compiled,
+    then run a hot loop. The table must grow, failed compiles must sit in the
+    compact negative set (one bad count, not one per execution), and the hot
+    statements must replay with identical results.
+    """
+    generator = [
+        'OPEN "TCCAP.BAS" FOR OUTPUT AS #1',
+        'PRINT #1, "DIM A(8)"',
+        'PRINT #1, "X=0"',
+        'PRINT #1, "T=0"',
+        'PRINT #1, "U=0"',
+        'PRINT #1, "Z=0"',
+        "FOR I = 1 TO 280",
+        'PRINT #1, "X="+LTRIM$(STR$(I))',
+        "NEXT I",
+        "FOR I = 1 TO 100",
+        'PRINT #1, "X=ABS(-"+LTRIM$(STR$(I))+")"',
+        "NEXT I",
+        'PRINT #1, "FOR J=1 TO 40"',
+        'PRINT #1, "FOR K=0 TO 4"',
+        'PRINT #1, "A(K)=A(K)+1"',
+        'PRINT #1, "T=T+A(K)"',
+        'PRINT #1, "IF T>0 THEN U=U+1"',
+        'PRINT #1, "IF T>0 THEN Z=ABS(-T)"',
+        'PRINT #1, "NEXT K"',
+        'PRINT #1, "NEXT J"',
+        'PRINT #1, "PRINT A(0);A(3);T;U"',
+        "CLOSE #1",
+    ]
+    assert console.send_line("NEW") == ""
+    _write_bas(console, "TCGEN.BAS", generator)
+    gen = console.send_line('RUN "TCGEN.BAS"', timeout=30)
+    assert "?SYNTAX" not in gen.upper(), gen
+
+    def result_lines(text: str) -> list[str]:
+        return [
+            ln.strip()
+            for ln in text.replace("\r", "\n").split("\n")
+            if ln.strip() and "[PERF]" not in ln
+        ]
+
+    assert console.send_line("OPTION TRACECACHE OFF") == ""
+    assert console.send_line("OPTION PROFILING ON") == ""
+    off_out = console.send_line('RUN "TCCAP.BAS"', timeout=60)
+    off = parse_perf(off_out)
+    assert off["tcache_hit"] == 0
+    assert off["tcache_comp"] == 0
+
+    assert console.send_line("OPTION TRACECACHE ON") == ""
+    on_out = console.send_line('RUN "TCCAP.BAS"', timeout=60)
+    on = parse_perf(on_out)
+
+    # A full table must never change the answer.
+    assert result_lines(on_out) == result_lines(off_out)
+    assert result_lines(on_out) == ["40404100200"], on_out
+
+    # The 280 setup statements exceed the old capacity and are all compiled
+    # once; the hot loop (3 cacheable statements x 200 passes) then replays.
+    assert on["tcache_comp"] >= 280, on
+    assert on["tcache_hit"] > 400, on
+    # 100 setup failures + the one hot failure, not 100 + 200 retries.
+    assert on["tcache_bad"] < 150, on
+
+    # CLEAR must invalidate the grown table and the negative set, not leave
+    # stale entries behind: the same run rebuilds both and still replays.
+    assert console.send_line("CLEAR") == ""
+    cleared_out = console.send_line('RUN "TCCAP.BAS"', timeout=60)
+    cleared = parse_perf(cleared_out)
+    assert result_lines(cleared_out) == ["40404100200"], cleared_out
+    assert cleared["tcache_hit"] > 400, cleared
