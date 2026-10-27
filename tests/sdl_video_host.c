@@ -20,6 +20,10 @@ const unsigned char mmcore_icon[4] = {0, 0, 255, 255};
 const unsigned int mmcore_icon_w = 1;
 const unsigned int mmcore_icon_h = 1;
 
+/* The frame profiler is not under test; sdl_video.c only calls these. */
+void mmb_frame_prof_wait_begin(void) {}
+void mmb_frame_prof_wait_end(void) {}
+
 static int fails;
 
 #define CHECK(cond, msg)                                                       \
