@@ -1272,9 +1272,12 @@ def test_switch_keeps_per_console_edit_pick_list(kernel_image):
     con.start()
     try:
         con.drain(quiet=0.3, timeout=2.0)
-        assert con.send_line('OPEN "A:/tests/ZLONE.BAS" FOR OUTPUT AS #1') == ""
+        # Give console 1 its own directory so the quick-open list contains only
+        # this test's entry, not every file the shared A:/tests seed carries.
+        assert con.send_line('MKDIR "A:/pickone"') == ""
+        assert con.send_line('OPEN "A:/pickone/ZLONE.BAS" FOR OUTPUT AS #1') == ""
         assert con.send_line("CLOSE #1") == ""
-        assert con.send_line('CHDIR "A:/tests"') == ""
+        assert con.send_line('CHDIR "A:/pickone"') == ""
         _edit(con, "X.BAS")
         con._ser.sendall(bytes([16]))  # Ctrl+P quick open
         seen = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
