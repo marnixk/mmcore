@@ -46,7 +46,7 @@ flowchart LR
   subgraph present [Per dirty rect]
     DMA[SetArea DMA or memcpy to FB]
     SYNC[present_sync_console_rect CPU copy into terminal cache]
-    WAIT[present_wait DMA completion spin + mmb_play_mix]
+    WAIT[present_wait profiler phase / sync SetArea]
   end
   VC[VideoCore HDMI scanout]
   P1 -->|BLIT| P0
@@ -60,7 +60,7 @@ Key code:
 - BLIT → present: `mmbasic/src/gfx_cmm2.c` (`mmb_gfx_blit_copy` → `mmb_gfx_dirty_flush`).
 - Present: `mmb_gfx_present` / `mmb_gfx_present_rect` → `console/platform.cpp` `plat_present_native` → `CBcmFrameBuffer::SetArea` (`circle/lib/bcmframebuffer.cpp`).
 - **Console cache reconcile** (Pi only): `plat_present_sync_console_rect` / `present_sync_console_region` copies pixels into Circle’s terminal backing store so the next text row flush does not stomp graphics (`console/platform.cpp` ~1370–1458). **Runs on every partial present**, not only full-screen `PAGE DISPLAY`.
-- **DMA wait**: `plat_present_wait` spins until async SetArea completes, calling `mmb_play_mix()` (`console/platform.cpp` ~71–75).
+- **DMA wait**: present `SetArea` is synchronous on the Pi backend (Circle waits on the DMA channel itself), so `plat_present_wait` has nothing to wait for and is a no-op; `present_wait_dma()` still brackets it for the frame profiler. Only the TERM async path has a real in-flight flag (`plat_term_present_drain`), and since #1404 it waits without calling `mmb_play_mix()` (`console/platform.cpp`).
 - **Full-frame flip + vsync**: only when `PAGE DISPLAY` sets `present_set_flip(1)` and a full-screen present uses `plat_set_area_flip` (VSync + `SetVirtualOffset`) (`console/platform.cpp` ~87–108, `mmbasic/src/cmd_graphics.c` ~758–775). Void Runner’s incremental `scr.flush()` path does **not** use this flip.
 
 HDMI framebuffer depth is typically **16-bit RGB565** (Circle `DEPTH`); soft pages stay **RGB555** in RAM.
@@ -131,17 +131,18 @@ Rough gains are **perceived game speed** (effective FPS or simulation progress),
 - Pin display-page rows for DMA-friendly alignment at mode set.
 - Reuse bounce buffers (already partially pooled for TERM).
 
-### 3. `plat_present_wait` + audio mix in the present hot path
+### 3. Present wait / audio mix coupling (resolved: the flag was dead)
 
 **Evidence**
 
-- Every present waits on `s_present_busy` with `mmb_play_mix()` in the spin (`platform.cpp` ~71–74, `gfx.c` `present_wait_dma`).
+- Every present uses Circle's synchronous `SetArea`, so `plat_present_wait` had nothing to wait for: `s_present_busy` went stale when d42998d switched to the synchronous call and was never set again. The `mmb_play_mix()` inside that loop was unreachable, so this path was already free and the estimate below did not apply to it.
+- The real remaining coupling was the TERM async drain (`plat_term_present_drain`), which spun on `s_term_in_flight` calling `mmb_play_mix()` every iteration. #1404 removed it and polls the completion flag with a short delay instead; audio keeps being serviced by the normal poll loop.
 
-**Expected gain**: **~5–15%** when audio idle; higher if JUKE/audio active.
+**Expected gain**: small and TERM-only (one drain per paint). There is no present-path gain because `s_present_busy` was never set.
 
 **Issue ideas**
 
-- Mix on a timer IRQ only; block present on DMA flag without full poll stack.
+- Done in #1404.
 
 ### 4. SDL fb: dirty-rect upload + single pacing grid (Chromebook advantage)
 
@@ -285,7 +286,7 @@ Optional native present microbench: build `mmcore-fb`, run with `SDL_VIDEODRIVER
 | 2 | Defer or narrow `mmb_gfx_sync_console` on partial presents | `gfx.c`, `platform.cpp` | 1.2–1.8× with (1) |
 | 3 | Bulk terminal cache sync for RGB565 blocks | `platform.cpp` `present_sync_console_region` | 10–30% present time |
 | 4 | Coalesce HDMI dirty rects (Pi) similar to SDL `sdl_video_mark_dirty_rect` | `gfx.c` + `platform.cpp` | 15–40% |
-| 5 | Reduce `present_wait` + audio mix coupling | `platform.cpp`, `gfx.c` | 5–15% |
+| 5 | Reduce `present_wait` + audio mix coupling | `platform.cpp`, `gfx.c` | resolved in #1404 (flag was dead; TERM drain only) |
 | 6 | Optional Circle display-period pacing aligned with #1367 semantics | `platform.cpp` / new hook | fairness / tear only |
 | 7 | Document Chromebook arch (x86_64 vs aarch64) in INSTALL for perf comparisons | docs | N/A |
 
