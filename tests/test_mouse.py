@@ -669,11 +669,16 @@ def reconcile_run(tmp_path_factory):
     exe = tmp / "driver"
     # -ffunction-sections/-fdata-sections + gc-sections let the driver link
     # only mmb_gfx_present_native()/mmb_gfx_sync_console() and their callees;
-    # the rest of gfx.c is dropped instead of needing stubs.
+    # the rest of gfx.c is dropped instead of needing stubs. gfx.c's present
+    # path calls the mmb_frame_prof_* hooks, so frame_prof.c must be compiled
+    # in for those symbols (the profiler stays inactive: opt is zeroed).
+    # frame_prof.c carries a vestigial unused local in write_csv(), so relax
+    # just that warning rather than -Werror the whole fixture away.
     gc = ["-Wl,-dead_strip"] if sys.platform == "darwin" else ["-Wl,--gc-sections"]
     subprocess.run(
         [
             "cc", "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+            "-Wno-unused-variable",
             "-DMMB_PLATFORM_POSIX", "-ffunction-sections", "-fdata-sections",
             "-I", os.path.join(REPO, "mmbasic", "include"),
             "-I", SRC,
@@ -681,6 +686,7 @@ def reconcile_run(tmp_path_factory):
             "-o", str(exe),
             str(tmp / "driver.c"),
             os.path.join(SRC, "gfx.c"),
+            os.path.join(SRC, "frame_prof.c"),
             MOUSE_C,
         ],
         check=True,
