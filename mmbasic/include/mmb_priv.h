@@ -199,6 +199,8 @@ typedef struct mmb_options {
 	int mouse_sens;
 	int pin;
 	int profiling;
+	int frame_profile;
+	char frame_profile_path[96];
 	int tracecache;
 	int ram_prog;
 	int status;
@@ -959,6 +961,19 @@ void mmb_cmd_locate(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
+
+unsigned long long mmb_now_us(void);
+void mmb_frame_prof_env_init(void);
+void mmb_frame_prof_run_begin(void);
+void mmb_frame_prof_run_end(void);
+void mmb_frame_prof_draw_begin(void);
+void mmb_frame_prof_draw_end(void);
+void mmb_frame_prof_present_begin(void);
+void mmb_frame_prof_present_end(void);
+void mmb_frame_prof_wait_begin(void);
+void mmb_frame_prof_wait_end(void);
+void mmb_frame_prof_stmt_tick(void);
+void mmb_frame_prof_set_output_path(const char *path);
 void mmb_tokenize_program(void);
 void mmb_tok_release(void); /* free the instance-owned tokenized program (#1013) */
 const char *mmb_tok_line(int pc);

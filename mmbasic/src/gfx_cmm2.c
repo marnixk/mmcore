@@ -201,6 +201,7 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 
 	if (w <= 0 || h <= 0)
 		return;
+	mmb_frame_prof_draw_begin();
 
 	/* Transparent, native-format copy (#1370 item 4): skip the RGB888 snap
 	 * (which allocates and converts every source pixel) and the per-pixel
@@ -264,7 +265,7 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 				mmb_gfx_dirty_add(x2, y2, w, h);
 				mmb_gfx_dirty_flush();
 			}
-			return;
+			goto blit_copy_done;
 		}
 	}
 
@@ -334,7 +335,7 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 					mmb_gfx_dirty_add(x2, y2, w, h);
 					mmb_gfx_dirty_flush();
 				}
-				return;
+				goto blit_copy_done;
 			}
 		}
 	}
@@ -353,6 +354,8 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 		}
 	}
 	G.plat->free(tmp);
+blit_copy_done:
+	mmb_frame_prof_draw_end();
 }
 
 void mmb_gfx_blit_read(int n, int x, int y, int w, int h, int srcpage)

@@ -812,6 +812,18 @@ static void option_dispatch(void)
 		G.opt.profiling = onoff();
 		return;
 	}
+	if (mmb_match("FRAMEPROFILE"))
+	{
+		G.opt.frame_profile = onoff();
+		mmb_skip_sp();
+		if (*G.p == '"')
+		{
+			mmb_val v = mmb_expr();
+			if (v.type == T_STR && v.s && v.s[0])
+				mmb_frame_prof_set_output_path(v.s);
+		}
+		return;
+	}
 	if (mmb_match("TRACECACHE"))
 	{
 		G.opt.tracecache = onoff();

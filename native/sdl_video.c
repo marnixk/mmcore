@@ -1,5 +1,6 @@
 #include "sdl_video.h"
 #include "sdl_scale.h"
+#include "mmb_priv.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -781,7 +782,11 @@ static void flush_present(int align)
 	 * that gated the present (sdl_pace_step above), not a second clock.
 	 * Accelerated/composited renderers skip it and stay stall-free. */
 	if (align)
+	{
+		mmb_frame_prof_wait_begin();
 		present_align_wait();
+		mmb_frame_prof_wait_end();
+	}
 	SDL_RenderPresent(s_ren);
 }
 
