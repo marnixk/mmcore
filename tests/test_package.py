@@ -443,14 +443,30 @@ def test_package_run_app_over_95_nodes(fresh_console):
     (PKG_MAX), so an archive with more than ~95 files plus the intermediate
     directories the mount synthesises failed with ?PACKAGE even though it
     packed. 96 files plus MAIN.BAS is 99 mounted nodes; the table now grows on
-    the heap. The seeded ramdisk is 157 nodes (147 files + 10 directories);
-    HUGE/, 96 Z files, MAIN.BAS, HUGEGEN.BAS and HUGE.APP then fill A: to
-    VFS_MAX, so the one-off generator is removed after it seeds the files to
-    free the archive's node. That keeps the test on the over-95-node B: mount
-    rather than on A: capacity.
+    the heap. A: has a fixed node budget (VFS_MAX) that the seeded ramdisk
+    already uses most of, so free the large audio fixtures this test does not
+    use to make room. HUGE/, 96 Z files, MAIN.BAS and HUGEGEN.BAS then fill
+    what is left, and the one-off generator is removed after it seeds the files
+    to free the archive's node. That keeps the test on the over-95-node B:
+    mount rather than on A: capacity.
     """
     console = fresh_console
     assert console.send_line('CHDIR "A:/"') == ""
+    # #1412: don't depend on the seed's exact node count. Free the bulky media
+    # fixtures under A:/tests (none are used here) so a seeded demo or fixture
+    # added later cannot push the HUGE/ tree over VFS_MAX.
+    for unused in (
+        "BIG.MP3",
+        "RATE22.MP3",
+        "RATE32.MP3",
+        "RATE48.MP3",
+        "TEST.MP3",
+        "ZBAD.MP3",
+        "ZV1.MP3",
+        "ZV2.MP3",
+        "TEST.WAV",
+    ):
+        assert console.send_line(f'KILL "A:/tests/{unused}"') == ""
     assert console.send_line('MKDIR "HUGE"') == ""
     _write_lines(
         console,
