@@ -1407,6 +1407,38 @@ def test_prompt_ctrl_l_keeps_line_native(mmb_linux, tmp_path):
     assert "\x1b[H\x1b[2J" in out, repr(out)
 
 
+def test_editor_ctrl_o_empty_untitled_after_c_drive_native(mmb_linux, tmp_path):
+    """#1382: Ctrl+O on an empty untitled EDIT buffer after C: must not SIGSEGV.
+
+    The native SDL target crashed in outline_scan() because an untitled tab
+    has a NULL document buffer.  The outline must open and the app stay alive.
+    """
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    drive = tmp_path / "drive"
+    (drive / "C").mkdir(parents=True)
+    s = NativeSession(
+        tmp_path, env={"MMB_DRIVE_ROOT": str(drive)}, binary=SDL_BIN
+    )
+    s.feed("C:")
+    s.feed("PRINT CWD$")
+    s.feed("EDIT")
+    s.wait_ms(300)
+    s.key("ctrl+o")
+    s.wait_ms(400)
+    s.key("esc")
+    s.wait_ms(200)
+    s.key("alt+x")
+    s.wait_ms(200)
+    s.feed("PRINT 42")
+    s.quit()
+    out = s.run(timeout=60)
+    assert s._proc.returncode == 0, out
+    assert "C:/" in out, out
+    assert "Outline" in out, out
+    assert "42" in out, out
+
+
 def _make_app(path):
     """A minimal packaged app: a zip with MAIN.BAS at the root."""
     with zipfile.ZipFile(path, "w") as z:

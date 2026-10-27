@@ -2,8 +2,11 @@
 
 import os
 import re
+import shutil
 import subprocess
 import time
+
+import pytest
 
 from harness import MMBasicConsole
 
@@ -1932,6 +1935,54 @@ def test_editor_ctrl_o_opens_outline_not_save(kernel_image):
         _keys(con, b"\x1b", quiet=0.4)
         _keys(con, bytes([1]) + b"x", quiet=0.5)
         _keys(con, b"d", quiet=0.7)
+    finally:
+        con.stop()
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_editor_ctrl_o_empty_untitled_after_c_drive(kernel_image, tmp_path):
+    """#1382: Ctrl+O on an empty untitled buffer after C: must not crash.
+
+    In this build Ctrl+O is the outline navigator; the real file Open dialog
+    is F3 or File > Open.  Both must survive an empty EDIT buffer on C:.
+    """
+    img = tmp_path / "sd.img"
+    subprocess.run(
+        ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["mkfs.vfat", "-F", "32", "-n", "MMBAPOPEN", str(img)],
+        check=True,
+        capture_output=True,
+    )
+    os.sync()
+    con = MMBasicConsole(
+        kernel_image,
+        extra_qemu=["-drive", f"file={img},if=sd,format=raw"],
+        boot_timeout=30,
+    )
+    con.start()
+    try:
+        assert con.send_line("C:") == ""
+        assert con.send_line("PRINT CWD$").upper().startswith("C:")
+        con.drain(quiet=0.1)
+        con._ser.sendall(b"EDIT\r")
+        seen = _plain(con.drain(quiet=0.8).decode(errors="replace"))
+        assert "UNTITLED" in seen, seen
+        outline = _keys(con, bytes([15]), quiet=0.8)
+        assert "Outline" in outline, outline
+        assert "Enter=go" in outline, outline
+        assert "Name" not in outline, outline
+        _keys(con, b"\x1b", quiet=0.4)
+        opened = _keys(con, bytes([1]) + b"fo", quiet=0.6)
+        assert "Name" in opened, opened
+        assert "Files" in opened and "Directories" in opened, opened
+        assert "C:" in opened, opened
+        _keys(con, b"\x1b", quiet=0.4)
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
     finally:
         con.stop()
 
