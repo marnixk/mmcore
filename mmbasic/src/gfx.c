@@ -357,6 +357,53 @@ void mmb_gfx_dirty_add(int x, int y, int w, int h)
 		G.gfx.dirty_y1 = y1;
 }
 
+/* Present the dirty AABB, then reconcile only the rectangle it wrote into the
+ * bare-metal console's cached pixel buffer. A partial present leaves every
+ * other pixel in the cache valid, so scanning the whole display page here is
+ * wasted work on the Pi hot path (#1403). Platforms without the rect hook keep
+ * the full-page sync. */
+static void present_dirty_and_sync(void)
+{
+	int x, y, x1, y1, hw, hh;
+	uint16_t *pg;
+
+	if (!G.gfx.dirty)
+		return;
+	x = G.gfx.dirty_x0;
+	y = G.gfx.dirty_y0;
+	x1 = G.gfx.dirty_x1;
+	y1 = G.gfx.dirty_y1;
+	mmb_gfx_present();
+	if (!G.plat || !G.plat->present_sync_console)
+		return;
+	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
+	hh = G.plat->hdmi_height ? G.plat->hdmi_height() : G.gfx.h;
+	if (hw > G.gfx.w)
+		hw = G.gfx.w;
+	if (hh > G.gfx.h)
+		hh = G.gfx.h;
+	if (x1 > hw)
+		x1 = hw;
+	if (y1 > hh)
+		y1 = hh;
+	if (x >= x1 || y >= y1)
+		return;
+	if (!G.plat->present_sync_console_rect)
+	{
+		mmb_gfx_sync_console(G.gfx.display_page);
+		return;
+	}
+	/* The AABB may include unchanged pixels between two dirty rects, but it
+	 * is all current page content, so copying it is correct. */
+	pg = page_buf(G.gfx.display_page);
+	G.plat->present_sync_console_rect(x, y, x1 - x, y1 - y,
+					  pg + y * G.gfx.w + x, G.gfx.w);
+	/* The rect sync overwrote the cursor footprint in the cache with page
+	 * pixels (the page never holds the cursor), so re-apply it, exactly like
+	 * the full-page sync does (#1088). */
+	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
+}
+
 void mmb_gfx_dirty_flush(void)
 {
 	if (!G.gfx.dirty)
@@ -370,14 +417,12 @@ void mmb_gfx_dirty_flush(void)
 		s_present_pending = 1;
 		return;
 	}
-	mmb_gfx_present();
-	/* A partial present writes the dirty AABB straight to the
-	 * framebuffer, bypassing the bare-metal console's cached text/pixel
-	 * buffer. Reconcile it so the next console row flush cannot
-	 * re-stamp the pre-present pixels (#1072). Unlike mmb_gfx_present()
-	 * this is frequency-safe today: only BLIT COPY's visible-page path
-	 * calls it (AFK/JUKE render via mmb_gfx_present() directly). */
-	mmb_gfx_sync_console(G.gfx.display_page);
+	/* A partial present writes the dirty AABB straight to the framebuffer,
+	 * bypassing the bare-metal console's cached text/pixel buffer. Reconcile
+	 * it so the next console row flush cannot re-stamp the pre-present
+	 * pixels (#1072). Only BLIT COPY's visible-page path calls this
+	 * (AFK/JUKE render via mmb_gfx_present() directly). */
+	present_dirty_and_sync();
 }
 
 /* Present the deferred display-page AABB, if any. Safe to call from any
@@ -390,8 +435,7 @@ void mmb_gfx_flush_pending(void)
 	s_present_pending = 0;
 	if (!G.gfx.dirty)
 		return;
-	mmb_gfx_present();
-	mmb_gfx_sync_console(G.gfx.display_page);
+	present_dirty_and_sync();
 }
 
 static void present_wait_dma(void)
