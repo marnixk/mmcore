@@ -459,6 +459,10 @@ void sdl_harness_poll(void)
 
 	if (!s_active)
 		return;
+	/* A `feed RUN` step enters the program synchronously, so the poll that
+	 * drives the rest of the script while RUN is active is a nested call.
+	 * Do not rate-limit or reentrancy-guard this: one queued step per call is
+	 * the contract (#1399). */
 	if (s_queued == 0)
 		hs_read_new();
 	if (hs_pop(&st))

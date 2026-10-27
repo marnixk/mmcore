@@ -1407,6 +1407,37 @@ def test_prompt_ctrl_l_keeps_line_native(mmb_linux, tmp_path):
     assert "\x1b[H\x1b[2J" in out, repr(out)
 
 
+def test_sdl_harness_commands_run_during_run(mmb_linux, tmp_path):
+    """#1399: feed/text/shot script commands execute while a program is RUNning.
+
+    The main SDL loop is blocked during RUN.  Without polling the harness from
+    the platform input path, the commands after ``feed RUN`` never run and an
+    INKEY$ menu loop sits there until the external watchdog kills it.
+    """
+    if not sdl_backend_available():
+        pytest.skip("SDL2 backend not built (pkg-config sdl2 missing)")
+    s = NativeSession(tmp_path)
+    s.feed("10 K$=INKEY$")
+    s.feed('20 IF K$="" THEN GOTO 10')
+    s.feed('30 PRINT "GOT:";K$')
+    s.feed("40 END")
+    s.feed("RUN")
+    s.wait_ms(300)
+    shot = s.shot("during-run.ppm")
+    s.wait_ms(100)
+    s.text("a")
+    s.wait_ms(300)
+    s.quit()
+    out = s.run(timeout=15)
+    assert s._proc is not None and s._proc.returncode == 0, out
+    # The key injected during RUN reached the program's INKEY$ loop.
+    assert "GOT:" in out and ("GOT:a" in out or "GOT:A" in out), out
+    # The shot command also ran during RUN and produced a real PPM.
+    assert os.path.isfile(shot) and os.path.getsize(shot) > 0, shot
+    with open(shot, "rb") as f:
+        assert f.read(2) == b"P6"
+
+
 def test_editor_ctrl_o_empty_untitled_after_c_drive_native(mmb_linux, tmp_path):
     """#1382: Ctrl+O on an empty untitled EDIT buffer after C: must not SIGSEGV.
 
