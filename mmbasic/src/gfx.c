@@ -28,6 +28,16 @@ static const struct { int id, w, h; } kModes[] = {
 	{ 20, 683, 384 },
 };
 
+/* A display-page BLIT marked the dirty AABB but its present was deferred so
+ * several BLITs in one BASIC frame upload once (#1402). Flushed at the
+ * interpreter's next safe boundary by mmb_gfx_flush_pending(). */
+static int s_present_pending;
+
+static int present_defer_allowed(void)
+{
+	return G.plat && G.plat->coalesce_presents;
+}
+
 #define MMB_RGB_AFLAG 0x10000000u
 
 /* Software COLOR16 (5-5-5, green at bit 6) when platform hooks are unset. */
@@ -307,6 +317,7 @@ uint16_t *mmb_gfx_buf_for(int page, int *w, int *h)
 void mmb_gfx_dirty_reset(void)
 {
 	G.gfx.dirty = 0;
+	s_present_pending = 0;
 }
 
 void mmb_gfx_dirty_add(int x, int y, int w, int h)
@@ -348,17 +359,39 @@ void mmb_gfx_dirty_add(int x, int y, int w, int h)
 
 void mmb_gfx_dirty_flush(void)
 {
-	if (G.gfx.dirty)
+	if (!G.gfx.dirty)
+		return;
+	if (present_defer_allowed())
 	{
-		mmb_gfx_present();
-		/* A partial present writes the dirty AABB straight to the
-		 * framebuffer, bypassing the bare-metal console's cached text/pixel
-		 * buffer. Reconcile it so the next console row flush cannot
-		 * re-stamp the pre-present pixels (#1072). Unlike mmb_gfx_present()
-		 * this is frequency-safe today: only BLIT COPY's visible-page path
-		 * calls it (AFK/JUKE render via mmb_gfx_present() directly). */
-		mmb_gfx_sync_console(G.gfx.display_page);
+		/* Hold the present and keep extending the dirty AABB so the next
+		 * dirty_flush in this BASIC frame costs nothing. The interpreter
+		 * flushes at its next poll/text/PAGE DISPLAY/program-end boundary,
+		 * so a pending present never outlives one ~1 ms statement batch. */
+		s_present_pending = 1;
+		return;
 	}
+	mmb_gfx_present();
+	/* A partial present writes the dirty AABB straight to the
+	 * framebuffer, bypassing the bare-metal console's cached text/pixel
+	 * buffer. Reconcile it so the next console row flush cannot
+	 * re-stamp the pre-present pixels (#1072). Unlike mmb_gfx_present()
+	 * this is frequency-safe today: only BLIT COPY's visible-page path
+	 * calls it (AFK/JUKE render via mmb_gfx_present() directly). */
+	mmb_gfx_sync_console(G.gfx.display_page);
+}
+
+/* Present the deferred display-page AABB, if any. Safe to call from any
+ * interpreter boundary: no-op when no BLIT present is pending, including
+ * after another path (PAGE COPY/DISPLAY, CLS) already presented. */
+void mmb_gfx_flush_pending(void)
+{
+	if (!s_present_pending)
+		return;
+	s_present_pending = 0;
+	if (!G.gfx.dirty)
+		return;
+	mmb_gfx_present();
+	mmb_gfx_sync_console(G.gfx.display_page);
 }
 
 static void present_wait_dma(void)
@@ -518,6 +551,9 @@ void mmb_gfx_present(void)
 		G.prof.gfx_present++;
 	if (!G.plat)
 		return;
+	/* Any present consumes a deferred BLIT AABB: the dirty rects it holds
+	 * are exactly the ones presented below. */
+	s_present_pending = 0;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	pg = page_buf(G.gfx.display_page);
@@ -614,6 +650,7 @@ void mmb_gfx_init(void)
 {
 	int hw = G.plat && G.plat->hdmi_width ? G.plat->hdmi_width() : 640;
 	int hh = G.plat && G.plat->hdmi_height ? G.plat->hdmi_height() : 480;
+	s_present_pending = 0;
 	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
@@ -740,6 +777,9 @@ void mmb_gfx_reset_console(int wipe)
 {
 	int i;
 
+	/* Show a deferred frame before the console takes the screen back
+	 * (program end, error landing, console switch). */
+	mmb_gfx_flush_pending();
 	G.gfx.write_fb = 0;
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
@@ -753,6 +793,7 @@ void mmb_gfx_reset_console(int wipe)
 	G.gfx.bg = MMB_DEFAULT_BG;
 	if (G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(G.gfx.bg);
+	mmb_gfx_dirty_reset();
 	mmb_console_apply_colour();
 }
 

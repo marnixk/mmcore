@@ -4440,6 +4440,10 @@ void mmb_check_break(void)
 		return;
 	G.break_primed = 1;
 	G.break_ms = now;
+	/* End of a statement batch: present any deferred display-page BLIT
+	 * AABB before the device/audio poll, so presents are paced at this
+	 * ~1 ms boundary instead of per dirty rect (#1402). */
+	mmb_gfx_flush_pending();
 	mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
@@ -6667,6 +6671,9 @@ void mmb_poll(void)
 	if (s_poll_active)
 		return;
 	s_poll_active = 1;
+	/* Host-poll boundary: never leave a deferred BLIT present pending across
+	 * a PAUSE/VSYNC/host-loop poll (#1402). */
+	mmb_gfx_flush_pending();
 	mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
