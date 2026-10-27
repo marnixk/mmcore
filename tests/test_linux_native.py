@@ -1834,8 +1834,15 @@ def test_sdl_video_window_setup(tmp_path):
             "-O0",
             "-Wall",
             "-Werror",
+            "-DMMB_PLATFORM_POSIX",
             "-I",
             os.path.join(REPO, "native"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
             *sdl.stdout.split(),
             "-o",
             exe,
@@ -1882,8 +1889,15 @@ def test_sdl_present_dirty_rect_host(tmp_path):
             "-O0",
             "-Wall",
             "-Werror",
+            "-DMMB_PLATFORM_POSIX",
             "-I",
             os.path.join(REPO, "native"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
             "-o",
             exe,
             os.path.join(REPO, "tests", "sdl_video_dirty_host.c"),
@@ -1951,10 +1965,13 @@ def test_sdl_present_is_dirty_rect_and_rate_limited():
     assert "MMB_SDL_ALIGN_PRESENT" in video
     assert "sdl_video_present_aligns" in video
     assert "present_align_wait" in video
-    # The bounded wait sits immediately before the present and only runs on
-    # the aligned branch; the forced/program-boundary present passes 0 so it
-    # stays immediate.
-    assert "if (align)\n\t\tpresent_align_wait();" in video
+    # The bounded wait sits inside the aligned branch (which also brackets the
+    # wait with the frame-profiler hooks) and only runs there; the
+    # forced/program-boundary present passes 0 so it stays immediate.
+    align_branch = video.split("if (align)", 1)[1].split(
+        "SDL_RenderPresent", 1
+    )[0]
+    assert "present_align_wait();" in align_branch
     assert "flush_present(0)" in video
     # SDL_Delay survives only in the bounded alignment sleep, not as a second
     # clock in the present path.
@@ -2091,8 +2108,15 @@ def _build_sdl_framebuffer_host(tmp_path, name, extra=()):
             "-O0",
             "-Wall",
             "-Werror",
+            "-DMMB_PLATFORM_POSIX",
             "-I",
             os.path.join(REPO, "native"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "include"),
+            "-I",
+            os.path.join(REPO, "mmbasic", "third_party"),
+            "-I",
+            os.path.join(REPO, "console"),
             *extra,
             *sdl.stdout.split(),
             "-o",
