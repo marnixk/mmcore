@@ -16,6 +16,7 @@
 #include "sdl_input.h"
 #include "sdl_audio.h"
 #include "sdl_clipboard.h"
+#include "sdl_harness.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -216,6 +217,10 @@ static void sdl_poll_input(void)
 {
 	if (!mmb_is_running())
 		return;
+	/* The main loop is blocked while a program runs, so drive the scripted
+	 * headless harness from here. One command per line keeps the cadence
+	 * independent of the game's loop speed (#1399). */
+	sdl_harness_poll();
 	sdl_input_pump_limited(mmb_now_ms());
 	if (sdl_video_present_due())
 		sdl_video_present();
