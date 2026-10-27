@@ -2846,6 +2846,8 @@ void mmb_option_reset(void)
 	G.opt.tab = 2;
 	G.opt.break_key = 3;
 	G.opt.profiling = 0;
+	G.opt.frame_profile = 0;
+	G.opt.frame_profile_path[0] = 0;
 	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;
 	G.cur_sub = -1;
@@ -4248,11 +4250,15 @@ void mmb_cmd_pause(void)
 	if (G.plat && G.plat->millis)
 		/* One device/app poll per spin (mmb_poll), plus the cheap break
 		 * and event checks — previously both poll stacks ran (#988). */
+	{
+		mmb_frame_prof_wait_begin();
 		while ((mmb_now_ms() - start) < ms)
 		{
 			mmb_poll();
 			mmb_break_events();
 		}
+		mmb_frame_prof_wait_end();
+	}
 	(void)ms;
 }
 
@@ -4261,6 +4267,7 @@ void mmb_cmd_vsync_wait(void)
 	static unsigned last;
 	unsigned now;
 
+	mmb_frame_prof_wait_begin();
 	if (G.plat && G.plat->wait_vsync)
 		G.plat->wait_vsync();
 	now = mmb_now_ms();
@@ -4272,6 +4279,7 @@ void mmb_cmd_vsync_wait(void)
 			mmb_break_events();
 		}
 	}
+	mmb_frame_prof_wait_end();
 	last = mmb_now_ms();
 }
 
@@ -4797,6 +4805,8 @@ static void exec_statement(void)
 		return;
 	if (G.opt.profiling && G.running)
 		G.prof.stmt++;
+	if (G.opt.frame_profile && G.running)
+		mmb_frame_prof_stmt_tick();
 	if (try_tok_cmd())
 		return;
 	if (mmb_match("REM"))
@@ -6174,6 +6184,7 @@ static void run_program(void)
 	{
 		if (G.opt.profiling)
 			mmb_prof_reset();
+		mmb_frame_prof_run_begin();
 		mmb_str_reset();
 		G.for_sp = 0;
 		G.gosub_sp = 0;
@@ -6348,6 +6359,7 @@ static void run_program(void)
 		}
 		pc++;
 	}
+	mmb_frame_prof_run_end();
 	if (G.opt.profiling)
 		mmb_prof_report();
 	G.running = 0;
@@ -6595,6 +6607,7 @@ void mmb_init(const mmb_platform *plat)
 	 * settings_finish() below stamps a real 0..100 value (#1163). */
 	g_audio.vol_l = g_audio.vol_r = MMB_AUDIO_VOL_UNSET;
 	mmb_settings_load();
+	mmb_frame_prof_env_init();
 	mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();

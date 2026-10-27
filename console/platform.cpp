@@ -393,6 +393,11 @@ static unsigned plat_millis(void)
 	return CTimer::GetClockTicks() / 1000;
 }
 
+extern "C" unsigned long long mmb_circle_now_us(void)
+{
+	return (unsigned long long)CTimer::GetClockTicks();
+}
+
 /* NTP sync: Circle's clock feeds FatFs get_fattime(), so file timestamps
  * track the synced time. SetTime() takes local time when bLocal is TRUE and
  * UTC otherwise; the timezone is stored separately for display. */

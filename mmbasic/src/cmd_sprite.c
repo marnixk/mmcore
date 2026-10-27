@@ -624,13 +624,15 @@ static void sprite_next(void)
 static void sprite_move(void)
 {
 	int id, x, y, ix;
+
+	mmb_frame_prof_draw_begin();
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
 		hide_all_keep_pos();
 		show_all_from_order();
 		rect_flush();
-		return;
+		goto sprite_move_done;
 	}
 	id = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
@@ -646,7 +648,7 @@ static void sprite_move(void)
 	{
 		int p = order_pos(ix);
 		if (p < 0)
-			return;
+			goto sprite_move_done;
 		restore_from_top_to(p);
 		G.gfx.sprite[ix].x = x;
 		G.gfx.sprite[ix].y = y;
@@ -659,6 +661,8 @@ static void sprite_move(void)
 		G.gfx.sprite[ix].x = x;
 		G.gfx.sprite[ix].y = y;
 	}
+sprite_move_done:
+	mmb_frame_prof_draw_end();
 }
 
 void mmb_cmd_sprite(void)

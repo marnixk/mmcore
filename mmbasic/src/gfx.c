@@ -363,8 +363,10 @@ void mmb_gfx_dirty_flush(void)
 
 static void present_wait_dma(void)
 {
+	mmb_frame_prof_wait_begin();
 	if (G.plat && G.plat->present_wait)
 		G.plat->present_wait();
+	mmb_frame_prof_wait_end();
 }
 
 void mmb_gfx_present_if(int page)
@@ -493,6 +495,7 @@ void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 {
 	if (!G.plat || !pix)
 		return;
+	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	present_native_or_rgb(x, y, w, h, pix, stride);
 	/* The overlay rect is written straight to the framebuffer, bypassing the
@@ -504,6 +507,7 @@ void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 	 * hook: native builds carry no console. */
 	if (G.plat->present_sync_console_rect)
 		G.plat->present_sync_console_rect(x, y, w, h, pix, stride);
+	mmb_frame_prof_present_end();
 }
 
 void mmb_gfx_present(void)
@@ -514,6 +518,7 @@ void mmb_gfx_present(void)
 		G.prof.gfx_present++;
 	if (!G.plat)
 		return;
+	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
@@ -550,6 +555,7 @@ void mmb_gfx_present(void)
 	/* Software cursor (#792): composited last, from pg, so the page
 	 * buffers are never written by pointer movement. */
 	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
+	mmb_frame_prof_present_end();
 }
 
 void mmb_gfx_present_rect(int x, int y, int w, int h)
@@ -558,6 +564,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	uint16_t *pg;
 	if (!G.plat)
 		return;
+	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	pg = page_buf(G.gfx.display_page);
 	hw = G.plat->hdmi_width ? G.plat->hdmi_width() : G.gfx.w;
@@ -600,6 +607,7 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 		G.plat->present_sync_console_rect(x, y, x1 - x, y1 - y,
 						  pg + y * G.gfx.w + x, G.gfx.w);
 	mmb_mouse_cursor_present(pg, G.gfx.w, G.gfx.h);
+	mmb_frame_prof_present_end();
 }
 
 void mmb_gfx_init(void)
