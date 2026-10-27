@@ -1403,7 +1403,7 @@ static void outline_scan(void)
 	int i = 0;
 
 	pick_n = 0;
-	if (!t)
+	if (!t || !t->buf || t->len <= 0)
 		return;
 	while (i <= t->len && pick_n < ED_PICK_MAX)
 	{
