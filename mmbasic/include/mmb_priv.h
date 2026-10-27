@@ -1250,6 +1250,7 @@ void mmb_gfx_sync_console(int page);
 void mmb_gfx_dirty_reset(void);
 void mmb_gfx_dirty_add(int x, int y, int w, int h);
 void mmb_gfx_dirty_flush(void);
+void mmb_gfx_flush_pending(void);
 uint16_t *mmb_gfx_buf_for(int page, int *w, int *h);
 unsigned mmb_rgb_to_native(unsigned rgb888);
 unsigned mmb_native_to_rgb(unsigned native);

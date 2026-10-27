@@ -960,6 +960,10 @@ void mmb_console_write(const char *s)
 	n = (unsigned)strlen(s);
 	if (!n)
 		return;
+	/* Text output is a safe boundary: show a deferred graphics present first
+	 * so the console row flush cannot be stamped over by a later present, and
+	 * a presented frame cannot hide the text just written (#1402). */
+	mmb_gfx_flush_pending();
 	if (G.plat && G.plat->write_serial)
 		G.plat->write_serial(s, n);
 	if (G.plat && G.plat->write_screen)

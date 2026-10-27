@@ -1759,6 +1759,11 @@ void mmb_platform_bind(CKernel *k)
 	plat.present_set_flip = plat_present_set_flip;
 	plat.present_sync_console = plat_present_sync_console;
 	plat.present_sync_console_rect = plat_present_sync_console_rect;
+	/* Circle: let the interpreter coalesce display-page BLIT presents into
+	 * one HDMI upload per statement batch instead of one per dirty rect
+	 * (#1402). QEMU and Pi both present synchronously here, so the deferred
+	 * frame is correct either way. */
+	plat.coalesce_presents = 1;
 	plat.rgb_to_native = plat_rgb_to_native;
 	plat.native_to_rgb = plat_native_to_rgb;
 	plat.wait_vsync = plat_wait_vsync;

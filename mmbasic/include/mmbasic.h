@@ -176,6 +176,13 @@ typedef struct mmb_platform {
 	 * cache without copying the whole screen. */
 	void (*present_sync_console_rect)(int x, int y, int w, int h,
 					  const void *pix, int stride);
+	/* Non-zero when the interpreter may hold display-page BLIT presents and
+	 * coalesce their dirty rects into one upload at its next flush boundary
+	 * (#1402). The interpreter still presents at every boundary it can see
+	 * (poll, text write, PAGE DISPLAY, program end), so a host only sets
+	 * this when a deferred present is safe. Zero keeps every present
+	 * immediate (SDL/native hosts pace their own presents). */
+	int coalesce_presents;
 	/* RGB888 <-> HDMI-native colour (DEPTH). Used by page storage. */
 	unsigned (*rgb_to_native)(unsigned rgb888);
 	unsigned (*native_to_rgb)(unsigned native);

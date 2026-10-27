@@ -2,6 +2,7 @@
 BOX pixel-ops, BITMAP, and TURTLE."""
 
 import os
+import re
 
 import pytest
 
@@ -43,6 +44,34 @@ def _pixel(console, x, y):
 def _pixel_page(console, x, y, page):
     out = console.send_line(f"PRINT PIXEL({x},{y},{page})")
     return int(out.split()[0])
+
+
+def _write_bas(console, path, lines):
+    assert console.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        esc = line.replace('"', '""')
+        assert console.send_line(f'PRINT #1, "{esc}"') == ""
+    assert console.send_line("CLOSE #1") == ""
+
+
+def _profile_frames(console, reader="FPFRAMES.BAS"):
+    """Return the frame-profiler's present count for the last RUN."""
+    _write_bas(
+        console,
+        reader,
+        [
+            'OPEN "A:/.mmcore-frame-profile.csv" FOR INPUT AS #1',
+            "FOR I=1 TO 4",
+            "LINE INPUT #1, L$",
+            "PRINT L$",
+            "NEXT I",
+            "CLOSE #1",
+        ],
+    )
+    out = console.send_line(f'RUN "{reader}"', timeout=8.0)
+    m = re.search(r"# frames=(\d+)", out)
+    assert m, out
+    return int(m.group(1))
 
 
 def _rgb_is_red(v):
@@ -700,3 +729,75 @@ def test_blit_fast_path_perf(fresh_console):
     )
     assert var_us < lit_us * 3 + 0.5, (var_us, lit_us)
     assert trans_us < lit_us * 4 + 0.5, (trans_us, lit_us)
+
+
+def test_visible_blits_coalesce_into_one_present(fresh_console):
+    """#1402: several display-page BLITs in one BASIC frame upload once.
+
+    The frame profiler records one frame per present, so the CSV frame count is
+    the coalescing signal (QEMU timing is not Pi hardware timing). The visible
+    framebuffer still shows every blitted rect after the deferred present is
+    flushed at the next boundary.
+    """
+    c = fresh_console
+    assert c.send_line("OPTION FRAMEPROFILE ON") == ""
+    _write_bas(
+        c,
+        "COALESCE.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "BOX 0,0,32,32,1,RGB(255,0,0),RGB(255,0,0)",
+            "BOX 40,0,32,32,1,RGB(0,255,0),RGB(0,255,0)",
+            "BOX 80,0,32,32,1,RGB(0,0,255),RGB(0,0,255)",
+            "PAGE WRITE 0",
+            "CLS RGB(0,0,0)",
+            "BLIT 0,0,200,200,32,32,1,0 : BLIT 40,0,240,200,32,32,1,0"
+            " : BLIT 80,0,280,200,32,32,1,0",
+            "PAUSE 30",
+        ],
+    )
+    out = c.send_line('RUN "COALESCE.BAS"', timeout=12.0)
+    assert "?" not in out
+
+    red, green, blue, black = c.screen_pixels(
+        [(210, 210), (250, 210), (290, 210), (340, 210)]
+    )
+    assert _is_red(red), red
+    assert _is_green(green), green
+    assert blue[2] > 150 and blue[0] < 130 and blue[1] < 130, blue
+    assert _is_black(black), black
+
+    assert _profile_frames(c) == 1
+
+
+def test_deferred_present_flushes_before_console_text(fresh_console):
+    """#1402: a pending BLIT present must be shown before PRINT draws text.
+
+    The blit covers the text row, so a present applied after the console write
+    would paint the whole row solid red and erase the glyphs.
+    """
+    c = fresh_console
+    _write_bas(
+        c,
+        "TEXTFLUSH.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(255,0,0)",
+            "PAGE WRITE 0",
+            "CLS RGB(0,0,0)",
+            "BLIT 0,0,0,0,160,40,1,0",
+            'PRINT "WWWW"',
+        ],
+    )
+    out = c.send_line('RUN "TEXTFLUSH.BAS"', timeout=12.0)
+    assert "?" not in out
+
+    row = c.screen_pixels([(x, 8) for x in range(0, 48, 2)])
+    # Glyph strokes survive the deferred present: at least one bright text
+    # pixel in the row the blit also covers.
+    assert any(min(px) > 100 for px in row), row
+    below = c.screen_pixel(100, 30)
+    assert _is_red(below), below

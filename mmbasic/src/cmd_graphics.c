@@ -1317,6 +1317,8 @@ int mmb_screenshot_capture(const char *path)
 
 	if (!path || !path[0] || !G.plat || !G.plat->get_pixel)
 		return -1;
+	/* Capture the frame a deferred BLIT present is still holding (#1402). */
+	mmb_gfx_flush_pending();
 	w = G.plat->hdmi_width ? G.plat->hdmi_width() : 0;
 	h = G.plat->hdmi_height ? G.plat->hdmi_height() : 0;
 	if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
