@@ -109,10 +109,8 @@ static void emit_n (CKernel *k, const void *p, unsigned n)
 		 * stalled reader cannot hang the kernel forever). Service the
 		 * audio mixer while we wait so a caller writing a large buffer in
 		 * one ser()/PRINT cannot starve JUKE/PLAY for the whole ring
-		 * drain (#1166); the platform DMA wait does the same
-		 * (plat_present_wait() in console/platform.cpp). Rate-limit to
-		 * about one mix per 10 ms of waiting so a normal write is not
-		 * slowed. */
+		 * drain (#1166). Rate-limit to about one mix per 10 ms of waiting
+		 * so a normal write is not slowed. */
 		unsigned spins = 0;
 		while (left && spins < 100000)
 		{

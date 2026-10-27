@@ -6,12 +6,16 @@ same pattern will validate the real MMBasic implementation once it is ported
 onto Circle from picomite-fork.
 """
 
+import os
 import re
 import time
 
 import pytest
 
 from harness import MMBasicConsole
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 ARITHMETIC = [
@@ -200,3 +204,27 @@ def test_first_print_after_app_exit_keeps_newline(fresh_console):
     # buggy home_prompt branch emits "1+1\r2\n" (result glued after the CR).
     assert re.search(rb"1\+1\r+\n", raw), raw
     assert b"2" in raw
+
+
+def test_present_wait_does_not_run_audio_mix():
+    """#1404: the present/TERM DMA wait must not run the audio mixer stack.
+
+    Presents use Circle's synchronous ``SetArea``, so the Pi
+    ``plat_present_wait`` has nothing to wait for (its old ``s_present_busy``
+    flag was never set after the switch to sync DMA). The TERM async drain
+    still has a real in-flight flag; it must poll that flag without calling
+    ``mmb_play_mix()`` from the spin so audio stays on the normal poll path.
+    """
+    plat = open(os.path.join(REPO, "console", "platform.cpp"), encoding="utf-8").read()
+    assert "AtomicGet(&s_present_busy)" not in plat
+    assert "static volatile int s_present_busy" not in plat
+    wait = re.search(
+        r"static void term_present_wait_dma\(void\)\n\{(.*?)\n\}", plat, re.S
+    )
+    assert wait, "term_present_wait_dma missing"
+    assert "mmb_play_mix" not in wait.group(1)
+    assert "s_term_in_flight" in wait.group(1)
+    assert "term_present_wait_dma();" in plat
+    assert not re.search(
+        r"while \(AtomicGet\(&s_term_in_flight\)\)\s*\n\s*mmb_play_mix", plat
+    )

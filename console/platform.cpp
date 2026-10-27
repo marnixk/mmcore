@@ -65,13 +65,15 @@ static void fb_draw_visible(CBcmFrameBuffer *fb)
 }
 
 #ifndef NO_SCREEN_DMA_BURST_LENGTH
-/* Serialise presents against any leftover async SetArea from older kernels. */
-static volatile int s_present_busy;
-
+/* Presents use Circle's synchronous SetArea, which waits on the DMA channel
+ * internally, so there is never an in-flight present to wait for here. (The
+ * old s_present_busy flag went permanently stale when d42998d switched to the
+ * synchronous call; #1404 removed it together with the mmb_play_mix() spin
+ * that could run the full audio mixer on every iteration.) The hook stays
+ * because present_wait_dma() drives the frame profiler's wait phase and other
+ * backends may present asynchronously. */
 static void plat_present_wait(void)
 {
-	while (AtomicGet(&s_present_busy))
-		mmb_play_mix();
 }
 
 static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
@@ -79,8 +81,9 @@ static void plat_set_area(CBcmFrameBuffer *fb, const CDisplay::TArea &area,
 {
 	plat_present_wait();
 	fb_draw_visible(fb);
-	/* Synchronous DMA Wait() — IRQ completion can leave s_present_busy /
-	 * m_nDMAInUse stuck, which hangs TERM Alt-X in plat_fill / free_pages. */
+	/* Synchronous DMA Wait() inside SetArea. An IRQ-completion present can
+	 * leave Circle's m_nDMAInUse stuck, which hangs TERM Alt-X in plat_fill /
+	 * free_pages. */
 	fb->SetArea(area, pix);
 }
 
@@ -1267,6 +1270,21 @@ static void plat_term_present_async(int x, int y, int w, int h,
 #endif
 }
 
+/* Wait for an async TERM SetArea to complete. The DMA completion IRQ
+ * (term_present_done) clears s_term_in_flight. Poll it with a short delay
+ * rather than spinning through mmb_play_mix(): the audio mixer stack is not
+ * part of the present wait (#1404), and audio keeps being serviced by the
+ * normal poll loop. A plain WFI is not safe here: if the completion IRQ lands
+ * between the flag check and the sleep, the wake-up can be lost until an
+ * unrelated interrupt fires. */
+#ifndef NO_SCREEN_DMA_BURST_LENGTH
+static void term_present_wait_dma(void)
+{
+	while (AtomicGet(&s_term_in_flight))
+		CTimer::SimpleusDelay(100);
+}
+#endif
+
 static void plat_term_present_drain(void)
 {
 #ifdef NO_SCREEN_DMA_BURST_LENGTH
@@ -1278,8 +1296,7 @@ static void plat_term_present_drain(void)
 
 	for (;;)
 	{
-		while (AtomicGet(&s_term_in_flight))
-			mmb_play_mix();
+		term_present_wait_dma();
 		pending = 0;
 		DisableInterrupts();
 		if (s_term_pending)
