@@ -257,10 +257,18 @@ static int is_colour_val(mmb_val v)
 /* IMAGE/BLIT/PAGE accept the FRAMEBUFFER keyword where a page number goes. */
 static int parse_gfx_args(mmb_val *a, int *is_fb, int maxn)
 {
-	int n = 0;
+	int n = 0, cn = 0;
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 		return 0;
+	/* Replay a compiled argument list when the statement's shape is
+	 * integer-only; FRAMEBUFFER or any richer expression declines and the
+	 * normal parser below handles it unchanged (#1421). */
+	if (mmb_tcache_try_args(a, maxn, &cn) && cn > 0)
+	{
+		memset(is_fb, 0, (size_t)maxn * sizeof(is_fb[0]));
+		return cn;
+	}
 	while (n < maxn && *G.p && *G.p != ':' && *G.p != '\'')
 	{
 		mmb_skip_sp();
