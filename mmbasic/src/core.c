@@ -25,6 +25,9 @@ static int find_end_sub_pc(int from);
 static int find_next_pc(int from);
 static void build_jumps(void);
 static void mmb_break_events(void);
+static void mmb_poll_fast(void);
+static void mmb_poll_slow(int gate_storage);
+static void poll_storage_throttled(void);
 static void exec_error_reset(int was_running);
 
 /* mmb_poll() re-entrancy guard (see mmb_poll below). File scope so the
@@ -4248,14 +4251,28 @@ void mmb_cmd_pause(void)
 	unsigned ms = (unsigned)mmb_as_int(v);
 	unsigned start = mmb_now_ms();
 	if (G.plat && G.plat->millis)
-		/* One device/app poll per spin (mmb_poll), plus the cheap break
-		 * and event checks — previously both poll stacks ran (#988). */
+		/* The fast spin keeps input, SETTICK/events and audio responsive.
+		 * The device/app poll stack (WLAN, network, NTP, settings, ...)
+		 * runs on a ~1 ms gate like mmb_check_break, and the storage walk
+		 * (hotplug probing) only once a second (#1417). Before this,
+		 * every spin re-walked every drive: getenv + snprintf + stat
+		 * dominated a PAUSE-heavy game loop. */
 	{
+		unsigned slow_ms = start;
+		int slow_primed = 0;
+		unsigned now = start;
 		mmb_frame_prof_wait_begin();
-		while ((mmb_now_ms() - start) < ms)
+		while ((now - start) < ms)
 		{
-			mmb_poll();
+			if (!slow_primed || (int)(now - slow_ms) >= 1)
+			{
+				slow_primed = 1;
+				slow_ms = now;
+				mmb_poll_slow(1);
+			}
+			mmb_poll_fast();
 			mmb_break_events();
+			now = mmb_now_ms();
 		}
 		mmb_frame_prof_wait_end();
 	}
@@ -4273,10 +4290,20 @@ void mmb_cmd_vsync_wait(void)
 	now = mmb_now_ms();
 	if (last != 0 && (now - last) < 50)
 	{
-		while ((mmb_now_ms() - last) < 16)
+		unsigned slow_ms = now;
+		int slow_primed = 0;
+		unsigned t = now;
+		while ((t - last) < 16)
 		{
-			mmb_poll();
+			if (!slow_primed || (int)(t - slow_ms) >= 1)
+			{
+				slow_primed = 1;
+				slow_ms = t;
+				mmb_poll_slow(1);
+			}
+			mmb_poll_fast();
 			mmb_break_events();
+			t = mmb_now_ms();
 		}
 	}
 	mmb_frame_prof_wait_end();
@@ -4444,7 +4471,9 @@ void mmb_check_break(void)
 	 * AABB before the device/audio poll, so presents are paced at this
 	 * ~1 ms boundary instead of per dirty rect (#1402). */
 	mmb_gfx_flush_pending();
-	mmb_storage_poll();
+	/* Drive hotplug probing is expensive and only needs ~1 s resolution
+	 * (#1417); the rest of the device/audio stack stays on this 1 ms gate. */
+	poll_storage_throttled();
 	mmb_wlan_poll();
 	mmb_net_yield();
 	mmb_play_mix();
@@ -6665,16 +6694,40 @@ void mmb_reset(void)
  * a no-op instead of re-entering the poll stack. mmb_error()'s longjmp can
  * leave the guard set, so the setjmp error landings clear it (see run_program
  * and mmb_exec_line). */
-void mmb_poll(void)
+/* Storage/hotplug probing is expensive (on the POSIX host it rebuilds and
+ * stats every drive path) and hotplug only needs to be noticed within about a
+ * second, so the interpreter's spin loops poll it on a 1 s gate (#1417). */
+static void poll_storage_throttled(void)
+{
+	static unsigned last;
+	static int primed;
+	unsigned now = mmb_now_ms();
+	if (primed && (int)(now - last) < 1000)
+		return;
+	primed = 1;
+	last = now;
+	mmb_storage_poll();
+}
+
+/* The part of the host poll that PAUSE/VSYNC must keep on every spin: audio
+ * queue fill and a deferred display present. Keyboard/events are handled by
+ * mmb_break_events(). */
+static void mmb_poll_fast(void)
+{
+	mmb_gfx_flush_pending();
+	mmb_play_mix();
+}
+
+/* The device/app poll stack. `gate_storage` is set by the PAUSE/VSYNC spin so
+ * the drive walk runs at most once a second; the host-loop mmb_poll() keeps
+ * probing on every call so an interactive hotplug notice is immediate. */
+static void mmb_poll_slow(int gate_storage)
 {
 	static int net_boot;
-	if (s_poll_active)
-		return;
-	s_poll_active = 1;
-	/* Host-poll boundary: never leave a deferred BLIT present pending across
-	 * a PAUSE/VSYNC/host-loop poll (#1402). */
-	mmb_gfx_flush_pending();
-	mmb_storage_poll();
+	if (gate_storage)
+		poll_storage_throttled();
+	else
+		mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
 	if (!net_boot && G.opt.ethernet_enabled)
@@ -6717,5 +6770,14 @@ void mmb_poll(void)
 	if (mmb_yield_count() > 0)
 		mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
+}
+
+void mmb_poll(void)
+{
+	if (s_poll_active)
+		return;
+	s_poll_active = 1;
+	mmb_poll_fast();
+	mmb_poll_slow(0);
 	s_poll_active = 0;
 }
