@@ -1101,9 +1101,10 @@ static int tc_entry_valid(const tc_ent *e)
 	return 1;
 }
 
-/* Replay an entry. With `out` non-NULL (a bare condition compiled by
- * mmb_tcache_try_cond), the single value left on the stack is returned. */
-static int tc_replay_out(tc_ent *e, mmb_val *out)
+/* Replay an entry. When `out` is set, the values left on the stack are
+ * copied out (an expression list compiled by mmb_tcache_try_args, or a single
+ * bare IF/ELSEIF condition); `*nvals` receives how many. */
+static int tc_replay_out(tc_ent *e, mmb_val *out, int maxout, int *nvals)
 {
 	mmb_val stk[TC_STK];
 	int sp = 0;
@@ -1306,19 +1307,60 @@ static int tc_replay_out(tc_ent *e, mmb_val *out)
 	G.p = e->endp;
 	if (out)
 	{
-		if (sp != 1)
+		int k;
+		if (sp > maxout)
 			return 0;
-		*out = stk[0];
+		for (k = 0; k < sp; k++)
+			out[k] = stk[k];
+		if (nvals)
+			*nvals = sp;
 	}
 	return 1;
 }
 
 static int tc_replay(tc_ent *e)
 {
-	return tc_replay_out(e, 0);
+	return tc_replay_out(e, 0, 0, 0);
 }
 
-static int tc_try(int kind, mmb_val *out)
+/* Single-value replay for a bare condition (mmb_tcache_try_cond). */
+static int tc_replay_value(tc_ent *e, mmb_val *out)
+{
+	int n = 0;
+	if (!tc_replay_out(e, out, 1, &n))
+		return 0;
+	return n == 1;
+}
+
+/* Compile a comma-separated numeric expression list up to maxn values. */
+static int tc_compile_arglist(tc_ent *e, int maxn)
+{
+	int n = 0;
+	for (;;)
+	{
+		if (n >= maxn)
+			return 0;
+		if (!tc_compile_expr(e))
+			return 0;
+		n++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	if (!tc_at_stmt_end())
+		return 0;
+	return n > 0;
+}
+
+/* Cache an integer graphics argument list (BLIT/SPRITE). The caller falls
+ * back to its normal parser on 0; every non-integer shape the expression
+ * compiler cannot prove safe (strings, user functions, FRAMEBUFFER, ...)
+ * declines here (#1421). */
+int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
 {
 	const char *key;
 	const char *save;
@@ -1339,7 +1381,64 @@ static int tc_try(int kind, mmb_val *out)
 			e->ref = 1;
 			if (G.opt.profiling)
 				G.prof.tcache_hit++;
-			return tc_replay_out(e, kind == 2 ? out : 0);
+			return tc_replay_out(e, out, maxn, nvals);
+		}
+		tc_remove(e);
+	}
+	neg = tcneg_find(key);
+	if (neg && neg->fail_gen == G.var_gen)
+		return 0;
+	save = G.p;
+	memset(&tmp, 0, sizeof(tmp));
+	tmp.key = key;
+	tc_compiling = 1;
+	ok = tc_compile_arglist(&tmp, maxn);
+	tc_compiling = 0;
+	if (!ok)
+	{
+		G.p = save;
+		tcneg_add(key, G.var_gen);
+		if (G.opt.profiling)
+			G.prof.tcache_bad++;
+		return 0;
+	}
+	tmp.endp = G.p;
+	tmp.state = 1;
+	tmp.ref = 1;
+	e = tc_insert(key);
+	if (e)
+		*e = tmp;
+	else
+		e = &tmp;
+	G.p = save;
+	if (G.opt.profiling)
+		G.prof.tcache_comp++;
+	return tc_replay_out(e, out, maxn, nvals);
+}
+
+static int tc_try(int kind, mmb_val *out)
+
+{
+	const char *key;
+	const char *save;
+	tc_ent *e;
+	tc_ent tmp;
+	tc_neg *neg;
+	int ok;
+
+	if (!G.running || !G.opt.tracecache || tc_compiling)
+		return 0;
+	tc_ensure();
+	key = G.p;
+	e = tc_lookup(key);
+	if (e)
+	{
+		if (e->state > 0 && tc_entry_valid(e))
+		{
+			e->ref = 1;
+			if (G.opt.profiling)
+				G.prof.tcache_hit++;
+			return kind == 2 ? tc_replay_value(e, out) : tc_replay(e);
 		}
 		/* Stale binding: drop the entry so the recompile below cannot be
 		 * shadowed by a pointer that was freed and reused (#1368). */
@@ -1381,7 +1480,7 @@ static int tc_try(int kind, mmb_val *out)
 	G.p = save;
 	if (G.opt.profiling)
 		G.prof.tcache_comp++;
-	return tc_replay_out(e, kind == 2 ? out : 0);
+	return kind == 2 ? tc_replay_value(e, out) : tc_replay(e);
 }
 
 int mmb_tcache_try_let(void)

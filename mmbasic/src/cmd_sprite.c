@@ -569,20 +569,38 @@ static void sprite_read(void)
 static void sprite_show(void)
 {
 	int id, x, y, layer = 1, ix;
-	id = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	x = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	y = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
+	const char *save = G.p;
+	mmb_val a[4];
+	int n = 0;
+	/* Replay a compiled integer argument list; any other shape (or an
+	 * unexpected count, including too many) goes through the parser below
+	 * so arity errors are unchanged (#1421). */
+	if (mmb_tcache_try_args(a, 4, &n) && (n == 3 || n == 4))
 	{
-		G.p++;
-		layer = (int)mmb_as_int(mmb_expr());
+		id = (int)mmb_as_int(a[0]);
+		x = (int)mmb_as_int(a[1]);
+		y = (int)mmb_as_int(a[2]);
+		if (n == 4)
+			layer = (int)mmb_as_int(a[3]);
+	}
+	else
+	{
+		G.p = save;
+		id = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		x = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		y = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			layer = (int)mmb_as_int(mmb_expr());
+		}
 	}
 	ix = sprite_ix(id);
 	sprite_show_at(ix, x, y, layer);
@@ -607,15 +625,28 @@ static void sprite_hide(void)
 static void sprite_next(void)
 {
 	int ix, x, y;
-	ix = sprite_ix((int)mmb_as_int(mmb_expr()));
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	x = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	y = (int)mmb_as_int(mmb_expr());
+	const char *save = G.p;
+	mmb_val a[3];
+	int n = 0;
+	if (mmb_tcache_try_args(a, 3, &n) && n == 3)
+	{
+		ix = sprite_ix((int)mmb_as_int(a[0]));
+		x = (int)mmb_as_int(a[1]);
+		y = (int)mmb_as_int(a[2]);
+	}
+	else
+	{
+		G.p = save;
+		ix = sprite_ix((int)mmb_as_int(mmb_expr()));
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		x = (int)mmb_as_int(mmb_expr());
+		mmb_skip_sp();
+		if (*G.p == ',')
+			G.p++;
+		y = (int)mmb_as_int(mmb_expr());
+	}
 	G.gfx.sprite[ix].next_x = x;
 	G.gfx.sprite[ix].next_y = y;
 	G.gfx.sprite[ix].has_next = 1;
@@ -634,15 +665,30 @@ static void sprite_move(void)
 		rect_flush();
 		goto sprite_move_done;
 	}
-	id = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	x = (int)mmb_as_int(mmb_expr());
-	mmb_skip_sp();
-	if (*G.p == ',')
-		G.p++;
-	y = (int)mmb_as_int(mmb_expr());
+	{
+		const char *save = G.p;
+		mmb_val a[3];
+		int n = 0;
+		if (mmb_tcache_try_args(a, 3, &n) && n == 3)
+		{
+			id = (int)mmb_as_int(a[0]);
+			x = (int)mmb_as_int(a[1]);
+			y = (int)mmb_as_int(a[2]);
+		}
+		else
+		{
+			G.p = save;
+			id = (int)mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			if (*G.p == ',')
+				G.p++;
+			x = (int)mmb_as_int(mmb_expr());
+			mmb_skip_sp();
+			if (*G.p == ',')
+				G.p++;
+			y = (int)mmb_as_int(mmb_expr());
+		}
+	}
 	ix = sprite_ix(id);
 	if (G.gfx.sprite[ix].vis)
 	{

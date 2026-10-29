@@ -54,6 +54,29 @@ next i
 dt = timer - t0
 print "BENCH,blit_160x96,"; n; ","; dt
 
+n = 50000
+t0 = timer
+for i = 1 to n
+next i
+dt = timer - t0
+print "BENCH,empty_for,"; n; ","; dt
+
+' Tile-style BLIT: every argument is a name or an expression, like Jetpack's
+' blit (id mod 20)*lay.tile, ... (24x24 source page cell).
+t0 = timer
+for i = 1 to n
+  blit (i mod 20) * 24, ((i \ 20) mod 16) * 24, 24, 24, 1, 0
+next i
+dt = timer - t0
+print "BENCH,blit_tile_expr,"; n; ","; dt
+
+t0 = timer
+for i = 1 to n
+  sprite show 1, 80 + (i mod 16), 140, 1
+next i
+dt = timer - t0
+print "BENCH,sprite_show_expr,"; n; ","; dt
+
 n = 20000
 sprite show 1, 100, 100, 1
 t0 = timer

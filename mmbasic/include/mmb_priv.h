@@ -1020,6 +1020,7 @@ void mmb_tcache_invalidate(void);
 int mmb_tcache_try_let(void);
 int mmb_tcache_try_if(void);
 int mmb_tcache_try_cond(mmb_val *out);
+int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals);
 void mmb_if_push_block(int cond);
 void mmb_cmd_print(void);
 void mmb_cmd_dim(void);
