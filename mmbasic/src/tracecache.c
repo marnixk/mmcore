@@ -1333,7 +1333,7 @@ static int tc_replay_value(tc_ent *e, mmb_val *out)
 }
 
 /* Compile a comma-separated numeric expression list up to maxn values. */
-static int tc_compile_arglist(tc_ent *e, int maxn)
+static int tc_compile_arglist(tc_ent *e, int maxn, int *n_out)
 {
 	int n = 0;
 	for (;;)
@@ -1353,14 +1353,74 @@ static int tc_compile_arglist(tc_ent *e, int maxn)
 	}
 	if (!tc_at_stmt_end())
 		return 0;
+	*n_out = n;
 	return n > 0;
 }
 
-/* Cache an integer graphics argument list (BLIT/SPRITE). The caller falls
- * back to its normal parser on 0; every non-integer shape the expression
- * compiler cannot prove safe (strings, user functions, FRAMEBUFFER, ...)
- * declines here (#1421). */
-int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
+/* Compile a SUB/FUNCTION call argument list: the parenthesised form
+ * ``(expr, ...)`` (endp just after ')') or the bare statement form
+ * ``expr, ...`` (endp at end of statement). A zero-argument call is valid in
+ * both forms. */
+static int tc_compile_call_args(tc_ent *e, int maxn, int *n_out)
+{
+	int n = 0;
+	mmb_skip_sp();
+	if (*G.p == '(')
+	{
+		G.p++;
+		mmb_skip_sp();
+		if (*G.p == ')')
+		{
+			G.p++;
+			*n_out = 0;
+			return 1;
+		}
+		for (;;)
+		{
+			if (n >= maxn || !tc_compile_expr(e))
+				return 0;
+			n++;
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
+		if (*G.p != ')')
+			return 0;
+		G.p++;
+		*n_out = n;
+		return 1;
+	}
+	if (tc_at_stmt_end())
+	{
+		*n_out = 0;
+		return 1;
+	}
+	for (;;)
+	{
+		if (n >= maxn || !tc_compile_expr(e))
+			return 0;
+		n++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	if (!tc_at_stmt_end())
+		return 0;
+	*n_out = n;
+	return 1;
+}
+
+/* Shared cache machinery for argument lists (call mode 1) and graphics
+ * statements (mode 0). */
+static int tc_try_args_mode(int call_mode, mmb_val *out, int maxn, int *nvals)
 {
 	const char *key;
 	const char *save;
@@ -1392,7 +1452,13 @@ int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
 	memset(&tmp, 0, sizeof(tmp));
 	tmp.key = key;
 	tc_compiling = 1;
-	ok = tc_compile_arglist(&tmp, maxn);
+	{
+		int cn = 0;
+		if (call_mode)
+			ok = tc_compile_call_args(&tmp, maxn, &cn);
+		else
+			ok = tc_compile_arglist(&tmp, maxn, &cn);
+	}
 	tc_compiling = 0;
 	if (!ok)
 	{
@@ -1414,6 +1480,21 @@ int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
 	if (G.opt.profiling)
 		G.prof.tcache_comp++;
 	return tc_replay_out(e, out, maxn, nvals);
+}
+
+/* Cache an integer graphics argument list (BLIT/SPRITE). The caller falls
+ * back to its normal parser on 0; every non-integer shape the expression
+ * compiler cannot prove safe (strings, user functions, FRAMEBUFFER, ...)
+ * declines here (#1421). */
+int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
+{
+	return tc_try_args_mode(0, out, maxn, nvals);
+}
+
+/* Cache a user SUB/FUNCTION argument list at its call site (#1420). */
+int mmb_tcache_try_call_args(mmb_val *out, int maxn, int *nvals)
+{
+	return tc_try_args_mode(1, out, maxn, nvals);
 }
 
 static int tc_try(int kind, mmb_val *out)
