@@ -683,6 +683,13 @@ static void if_push(unsigned char state, int pc)
 	G.if_depth++;
 }
 
+/* Push the frame for a block IF whose condition the trace cache evaluated
+ * (#1419). The pc is the current line, exactly like mmb_cmd_if's own push. */
+void mmb_if_push_block(int cond)
+{
+	if_push(cond ? IF_BODY : IF_SEARCH, G.run_pc);
+}
+
 /* The innermost SELECT frame visible to this call, or NULL outside a SELECT.
  * Frames below sel_base belong to a caller and stay hidden until it returns
  * (#1299). */
@@ -910,7 +917,11 @@ static int process_line_structure(const char *body)
 			if (G.if_shadow == 0 &&
 			    G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
-				mmb_val v = mmb_expr();
+				mmb_val v;
+				/* Compile the ELSEIF condition once, like the IF line
+				 * itself (#1419); fall back to the parser otherwise. */
+				if (!mmb_tcache_try_cond(&v))
+					v = mmb_expr();
 				if (mmb_as_int(v))
 					G.if_stack[G.if_depth - 1] = IF_BODY;
 			}
