@@ -9,6 +9,10 @@ int g_console = 0;
 static int s_initialized[MMB_MAX_CONSOLES];
 static int s_shown[MMB_MAX_CONSOLES];
 static int s_pending = -1;
+/* The console whose screen is actually shown. Unlike g_console this does not
+ * change while a background yield callback temporarily selects its owner
+ * (#1427), so painting code can tell "focused" from "just running here". */
+static int s_visible = 0;
 
 /* Background yield callbacks (yield.c) run while their owning console is not
  * active. Select that console's interpreter context for the callback and hand
@@ -49,6 +53,7 @@ void mmb_console_init(void)
 	memset(s_initialized, 0, sizeof(s_initialized));
 	memset(s_shown, 0, sizeof(s_shown));
 	g_console = 0;
+	s_visible = 0;
 	g_cur = g_mmb[0];
 	s_initialized[0] = 1;
 	s_shown[0] = 1; /* the host prints the boot banner and prompt */
@@ -63,6 +68,11 @@ int mmb_console_count(void)
 int mmb_console_active(void)
 {
 	return g_console;
+}
+
+int mmb_console_visible(void)
+{
+	return s_visible;
 }
 
 /* Release the interpreter-owned allocations (vars, graphics pages, sprites)
@@ -114,6 +124,7 @@ void mmb_console_reset(void)
 	memset(s_shown, 0, sizeof(s_shown));
 	s_pending = -1;
 	g_console = 0;
+	s_visible = 0;
 	g_cur = g_mmb[0];
 	/* A fresh session starts at the ramdisk root, like boot. */
 	mmb_vfs_cwd_reset();
@@ -296,6 +307,7 @@ static int console_do_switch(int idx)
 
 	g_console = idx;
 	g_cur = g_mmb[idx];
+	s_visible = idx;
 	mmb_front_select(idx);
 	/* The editor on this screen now owns the keyboard: drop any Ctrl+Alt
 	 * hold clock left over from the screen we are leaving (#810). */

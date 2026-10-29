@@ -1,5 +1,6 @@
 #include "mmb_priv.h"
 #include "frontend.h"
+#include "session.h"
 
 /*
  * JUKE: a first-party retro music player (ScreamTracker-era feel).
@@ -1342,6 +1343,12 @@ static void juke_frame(void)
 	int back, w = U.w, h = U.h;
 
 	if (!U.active)
+		return;
+	/* #1427: a background yield callback temporarily selects its owning
+	 * console (g_console) so queue work keeps that console's ownership. A
+	 * nested poll from a storage read can reach this path while another
+	 * console is on screen; never paint onto the shared display then. */
+	if (g_console != mmb_console_visible())
 		return;
 	if (G.plat && G.plat->wait_vsync)
 		G.plat->wait_vsync();
