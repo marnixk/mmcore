@@ -6915,7 +6915,16 @@ static void mmb_poll_fast(void)
  * probing on every call so an interactive hotplug notice is immediate. */
 static void mmb_poll_slow(int gate_storage)
 {
+	int was_poll_active = s_poll_active;
 	static int net_boot;
+
+	/* The PAUSE/VSYNC spin calls this directly, outside mmb_poll()'s guard.
+	 * Without holding the guard here, a storage_yield() inside an app poll
+	 * (or a background yield callback) re-enters mmb_poll() while a
+	 * non-visible console is temporarily selected, and that nested poll can
+	 * paint that console over the screen that is actually shown (#1427).
+	 * The outer spin already polls every ~1 ms, so nesting buys nothing. */
+	s_poll_active = 1;
 	if (gate_storage)
 		poll_storage_throttled();
 	else
@@ -6962,6 +6971,7 @@ static void mmb_poll_slow(int gate_storage)
 	if (mmb_yield_count() > 0)
 		mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
+	s_poll_active = was_poll_active;
 }
 
 void mmb_poll(void)
