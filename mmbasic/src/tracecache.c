@@ -41,6 +41,7 @@ enum {
 	TC_EQ,
 	TC_NE,
 	TC_JZ,
+	TC_IFBLOCK, /* block IF: pop condition, push IF_BODY/IF_SEARCH */
 	TC_GOTO,    /* target is e->branch_pc */
 	TC_GOSUB,   /* target is e->branch_pc, pushes the caller frame */
 	TC_END
@@ -1016,12 +1017,15 @@ static int tc_compile_if(tc_ent *e)
 	int pc;
 	if (!tc_compile_expr(e))
 		return 0;
-	if (!tc_emit(e, TC_JZ))
-		return 0;
 	if (!mmb_match("THEN"))
 		return 0;
 	mmb_skip_sp();
+	/* A THEN at end of line opens a multi-line block IF. Evaluate its
+	 * condition here and push the same IF_BODY/IF_SEARCH frame the
+	 * interpreter would have pushed (#1419). */
 	if (tc_at_stmt_end())
+		return tc_emit(e, TC_IFBLOCK);
+	if (!tc_emit(e, TC_JZ))
 		return 0;
 	if (mmb_match("GOTO"))
 	{
@@ -1097,7 +1101,9 @@ static int tc_entry_valid(const tc_ent *e)
 	return 1;
 }
 
-static int tc_replay(tc_ent *e)
+/* Replay an entry. With `out` non-NULL (a bare condition compiled by
+ * mmb_tcache_try_cond), the single value left on the stack is returned. */
+static int tc_replay_out(tc_ent *e, mmb_val *out)
 {
 	mmb_val stk[TC_STK];
 	int sp = 0;
@@ -1116,6 +1122,13 @@ static int tc_replay(tc_ent *e)
 			if (mmb_as_int(stk[--sp]) == 0)
 				break;
 			continue;
+		}
+		if (op == TC_IFBLOCK)
+		{
+			if (sp < 1)
+				return 0;
+			mmb_if_push_block(mmb_as_int(stk[--sp]) != 0);
+			break;
 		}
 		if (op == TC_GOTO)
 		{
@@ -1291,10 +1304,21 @@ static int tc_replay(tc_ent *e)
 		return 0;
 	}
 	G.p = e->endp;
+	if (out)
+	{
+		if (sp != 1)
+			return 0;
+		*out = stk[0];
+	}
 	return 1;
 }
 
-static int tc_try(int is_if)
+static int tc_replay(tc_ent *e)
+{
+	return tc_replay_out(e, 0);
+}
+
+static int tc_try(int kind, mmb_val *out)
 {
 	const char *key;
 	const char *save;
@@ -1315,7 +1339,7 @@ static int tc_try(int is_if)
 			e->ref = 1;
 			if (G.opt.profiling)
 				G.prof.tcache_hit++;
-			return tc_replay(e);
+			return tc_replay_out(e, kind == 2 ? out : 0);
 		}
 		/* Stale binding: drop the entry so the recompile below cannot be
 		 * shadowed by a pointer that was freed and reused (#1368). */
@@ -1331,8 +1355,10 @@ static int tc_try(int is_if)
 	memset(&tmp, 0, sizeof(tmp));
 	tmp.key = key;
 	tc_compiling = 1;
-	if (is_if)
+	if (kind == 1)
 		ok = tc_compile_if(&tmp) && tc_emit(&tmp, TC_END);
+	else if (kind == 2)
+		ok = tc_compile_expr(&tmp) && tc_emit(&tmp, TC_END);
 	else
 		ok = tc_compile_let_from_lhs(&tmp) && tc_emit(&tmp, TC_END);
 	tc_compiling = 0;
@@ -1355,15 +1381,20 @@ static int tc_try(int is_if)
 	G.p = save;
 	if (G.opt.profiling)
 		G.prof.tcache_comp++;
-	return tc_replay(e);
+	return tc_replay_out(e, kind == 2 ? out : 0);
 }
 
 int mmb_tcache_try_let(void)
 {
-	return tc_try(0);
+	return tc_try(0, 0);
 }
 
 int mmb_tcache_try_if(void)
 {
-	return tc_try(1);
+	return tc_try(1, 0);
+}
+
+int mmb_tcache_try_cond(mmb_val *out)
+{
+	return tc_try(2, out);
 }
