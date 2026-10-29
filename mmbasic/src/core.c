@@ -8,6 +8,8 @@ extern void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, m
 extern mmb_val mmb_load_var(mmb_var *v, int off);
 
 static void exec_statement(void);
+static void exec_statement_impl(void);
+static void mmb_check_break_impl(void);
 static void gosub_restore_top(void);
 static void exec_line_body(const char *body);
 static void exec_line_from(const char *body, const char *at);
@@ -3209,6 +3211,8 @@ static void do_let(void)
 	const char *lhs_ref;
 	if (mmb_tcache_try_let())
 		return;
+	if (mmb_stmtprof_active)
+		mmb_stmtprof_note_uncached();
 	lhs_ref = G.p;
 	t = mmb_parse_var_ref(name, &nidx, idx);
 	mmb_skip_sp();
@@ -3704,6 +3708,8 @@ void mmb_cmd_if(void)
 	const char *then0;
 	if (mmb_tcache_try_if())
 		return;
+	if (mmb_stmtprof_active)
+		mmb_stmtprof_note_uncached();
 	v = mmb_expr();
 	cond = mmb_as_int(v) != 0;
 	if (!mmb_match("THEN"))
@@ -4379,6 +4385,8 @@ void mmb_resume_program(void)
 		return;
 	if (setjmp(G.errjmp))
 	{
+		mmb_stmtprof_set_depth(0);
+		mmb_stmtprof_run_end();
 		exec_error_reset(G.running);
 		G.run_suspended = 0;
 		mmb_out("\r\n");
@@ -4421,7 +4429,7 @@ static void mmb_break_events(void)
 	mmb_run_events();
 }
 
-void mmb_check_break(void)
+static void mmb_check_break_impl(void)
 {
 	unsigned now;
 
@@ -4448,6 +4456,17 @@ void mmb_check_break(void)
 	mmb_wlan_poll();
 	mmb_net_yield();
 	mmb_play_mix();
+}
+
+void mmb_check_break(void)
+{
+	if (mmb_stmtprof_active && mmb_stmtprof_enter_break())
+	{
+		mmb_check_break_impl();
+		mmb_stmtprof_leave();
+		return;
+	}
+	mmb_check_break_impl();
 }
 
 static void skip_balanced_paren(void)
@@ -4802,6 +4821,29 @@ static int try_tok_cmd(void)
 }
 
 static void exec_statement(void)
+{
+	if (!mmb_stmtprof_active)
+	{
+		exec_statement_impl();
+		return;
+	}
+	mmb_skip_sp();
+	G.stmt_start = G.p;
+	if (*G.p == 0 || *G.p == '\'')
+	{
+		exec_statement_impl();
+		return;
+	}
+	if (mmb_stmtprof_enter_slow())
+	{
+		exec_statement_impl();
+		mmb_stmtprof_leave();
+		return;
+	}
+	exec_statement_impl();
+}
+
+static void exec_statement_impl(void)
 {
 	mmb_skip_sp();
 	G.stmt_start = G.p;
@@ -5548,13 +5590,17 @@ static void exec_statement_guarded(void)
 	if (had)
 		memcpy(saved, G.stmt_errjmp, sizeof(jmp_buf));
 	G.skip_stmt_valid = 1;
-	if (setjmp(G.stmt_errjmp))
 	{
-		s_poll_active = 0; /* longjmp unwound past mmb_poll() */
-		G.p = next;
+		volatile int sp_depth = mmb_stmtprof_depth();
+		if (setjmp(G.stmt_errjmp))
+		{
+			s_poll_active = 0; /* longjmp unwound past mmb_poll() */
+			mmb_stmtprof_set_depth(sp_depth);
+			G.p = next;
+		}
+		else
+			exec_statement();
 	}
-	else
-		exec_statement();
 	G.skip_stmt_valid = had;
 	if (had)
 		memcpy(G.stmt_errjmp, saved, sizeof(jmp_buf));
@@ -5579,10 +5625,12 @@ static int exec_line_guarded(const char *body, const char *at)
 
 	if (G.error_skip != 0)
 	{
+		volatile int sp_depth = mmb_stmtprof_depth();
 		G.skip_line_valid = 1;
 		if (setjmp(G.skip_errjmp))
 		{
 			s_poll_active = 0;
+			mmb_stmtprof_set_depth(sp_depth);
 			G.branch_pc = -1;
 			G.branch_pos = 0;
 			G.skip_line_valid = had;
@@ -5910,6 +5958,8 @@ static void run_gosub_entry(void *arg)
 	if (!mmb_call_named_sub(call->name))
 		return;
 	call->called = 1;
+	if (mmb_stmtprof_active)
+		mmb_stmtprof_hit_sub(call->name);
 	if (call->expr_result)
 		/* The expression resumes after the argument list, not at the
 		 * opening paren captured before the call parsed it. */
@@ -6189,6 +6239,7 @@ static void run_program(void)
 		if (G.opt.profiling)
 			mmb_prof_reset();
 		mmb_frame_prof_run_begin();
+		mmb_stmtprof_run_begin();
 		mmb_str_reset();
 		G.for_sp = 0;
 		G.gosub_sp = 0;
@@ -6292,6 +6343,7 @@ static void run_program(void)
 				if (setjmp(G.run_errjmp))
 				{
 					s_poll_active = 0;	/* unwound past mmb_poll() */
+					mmb_stmtprof_set_depth(0);
 					trapped = 1;
 					break;
 				}
@@ -6364,6 +6416,7 @@ static void run_program(void)
 		pc++;
 	}
 	mmb_frame_prof_run_end();
+	mmb_stmtprof_run_end();
 	if (G.opt.profiling)
 		mmb_prof_report();
 	G.running = 0;
@@ -6453,6 +6506,8 @@ const char *mmb_exec_line(const char *line)
 	mmb_str_reset();
 	if (setjmp(G.errjmp))
 	{
+		mmb_stmtprof_set_depth(0);
+		mmb_stmtprof_run_end();
 		exec_error_reset(G.running);
 		mmb_out(G.err[0] ? G.err : "?SYNTAX ERROR");
 		return G.out;
@@ -6612,6 +6667,7 @@ void mmb_init(const mmb_platform *plat)
 	g_audio.vol_l = g_audio.vol_r = MMB_AUDIO_VOL_UNSET;
 	mmb_settings_load();
 	mmb_frame_prof_env_init();
+	mmb_stmtprof_env_init();
 	mmb_gfx_apply_default_mode();
 	mmb_audio_apply_options();
 	mmb_console_apply_colour();

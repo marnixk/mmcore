@@ -1,0 +1,69 @@
+Microbenchmark results. Profiler off (MMB_STMTPROF unset). TIMER is integer
+milliseconds. ns/exec subtracts an empty FOR/NEXT of the same trip count.
+
+Host: x86_64 Linux, native/mmbasic and native/mmcore, -O2 -g, SDL dummy for
+gfx.bas. Not a Pi 400. This file is the run recorded for
+docs/analysis/jetpack-inner-loop-hotspots.md.
+
+Baseline used in the write-up: cached `a = a + 1` under OPTION DEFAULT INTEGER
+with the trace cache on, 145 ns/exec.
+
+--- bench/hotspots/interp_few.bas (no extra FUNCTIONs) ---
+
+BENCH,empty_for,2000000,95
+BENCH,int_inc,2000000,379          -> 142 ns
+BENCH,int_lt,2000000,390           -> 148 ns
+BENCH,keydown0,2000000,1011        -> 458 ns
+BENCH,empty_for_off,2000000,91
+BENCH,int_inc_off,2000000,850      -> 380 ns   (OPTION TRACECACHE OFF)
+BENCH,int_lt_off,2000000,955       -> 432 ns
+
+--- bench/hotspots/interp.bas (~100 unused FUNCTIONs, Jetpack-sized table) ---
+
+Empty FOR: 1500000 trips = 68 ms (45 ns/trip); 200000 trips = 10 ms (50 ns).
+
+Cached (trace cache on):
+  suffix_inc   a% = a% + 1                 147 ns    1.0x
+  int_inc      a = a + 1                   145 ns    1.0x baseline
+  float_inc    f = f + 1                   150 ns    1.0x
+  dotted_inc   pl.x = pl.x + 1             156 ns    1.1x
+  int_lt       b = (a < 1000000)           150 ns    1.0x
+  if_lt        if a < 1000000 then b = b + 1    94 ns
+  idiv         c = b \ 7                   149 ns    1.0x
+  mod          c = b mod 7                 150 ns    1.0x
+  arr1         ar(x) = ar(x) + 1           185 ns    1.3x
+  arr2         grid(x, y) = grid(x, y) + 1 215 ns    1.5x
+  if_chain     4-arm multi-line IF        2085 ns   14x
+  select_case  4-arm SELECT CASE          1575 ns   11x
+  gosub                                   390 ns    2.7x
+  sub_empty                               785 ns    5.4x
+  sub_body     one integer increment      935 ns    6.4x
+  sub_local    LOCAL + increment         1425 ns    9.8x
+  fn_add1      b = add1(b)               1405 ns    9.7x
+  keydown0     k = keydown(0)             460 ns    3.2x
+  isdown       key.isDown clone          2145 ns   15x
+  str_cat      s$ = "jet" + "pack"        280 ns    1.9x
+  mid$                                    570 ns    3.9x
+  mm_hres                                 275 ns    1.9x
+  mm_info_mode                            435 ns    3.0x
+
+OPTION TRACECACHE OFF, same ~100 FUNCTIONs:
+  int_inc_off                             580 ns    4.0x
+  dotted_inc_off                          730 ns    5.0x
+  arr2_off                               2155 ns   15x
+  int_lt_off                              640 ns    4.4x
+  keydown0_off                            460 ns    (KEYDOWN is never cached)
+
+The 200 ns gap between int_inc_off here (580) and in interp_few.bas (380) is
+the linear SUB/FUNCTION scan, about 1 ns per name per primary.
+
+--- bench/hotspots/gfx.bas (MODE 20, 683x384, SDL dummy) ---
+
+BENCH,mode,683,384
+page_copy      400 * PAGE COPY 1 TO 0     202 us   (includes present of the display page)
+blit_32        100000 * 32x32 BLIT       1.61 us
+blit_160x96    20000 * 160x96 BLIT        16.1 us
+sprite_next_move  20000 * SPRITE NEXT + SPRITE MOVE   8.3 us
+
+PEEK and POKE are not implemented in mmbasic/src (they are not in the keyword
+table). They are not a hotspot on this interpreter.
