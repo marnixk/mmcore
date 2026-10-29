@@ -558,12 +558,8 @@ static int tc_compile_expr(tc_ent *e);
  * array and mmb_find_var() would fault with "?NOT AN ARRAY". */
 static int tc_is_user_func(const char *name)
 {
-	int i;
-	for (i = 0; i < G.nsubs; i++)
-		if (G.subs[i].used && G.subs[i].is_func &&
-		    mmb_keyword_eq(G.subs[i].name, name))
-			return 1;
-	return 0;
+	/* The SUB name index makes this O(1) at compile time (#1418). */
+	return mmb_sub_is_func(name);
 }
 
 /* Non-throwing variable lookup for the trace-cache compiler. mmb_find_var()
