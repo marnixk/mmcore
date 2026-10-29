@@ -109,6 +109,36 @@ def test_on_error_unwinds_a_fast_call(console):
     assert "NO" not in lines, lines
 
 
+def test_argument_expressions_and_fallbacks(console):
+    """Arithmetic args replay; nested calls/strings fall back, and a bare
+    call in a one-line IF still stops at ELSE."""
+    lines = _run(console, [
+        "FUNCTION DBL(N)",
+        "  DBL = N * 2",
+        "END FUNCTION",
+        "FUNCTION SUM3(A,B,C)",
+        "  SUM3 = A + B + C",
+        "END FUNCTION",
+        "FUNCTION MIX(A,B)",
+        "  MIX = A * 10 + B",
+        "END FUNCTION",
+        "FUNCTION NAME$(S$)",
+        '  NAME$ = S$ + "!"',
+        "END FUNCTION",
+        "PRINT SUM3(DBL(1), DBL(2), 3)",
+        'PRINT NAME$("hi")',
+        "FOR I = 1 TO 3",
+        "  PRINT MIX(I + 1, I * 2)",
+        "NEXT I",
+        "SUB S(N)",
+        '  PRINT "S";N',
+        "END SUB",
+        "IF 1 THEN S 5 ELSE S 6",
+        "IF 0 THEN S 7 ELSE S 8",
+    ])
+    assert lines == ["9", "hi!", "22", "34", "46", "S5", "S8"], lines
+
+
 def test_redefine_across_new_and_run(console):
     lines = _run(console, [
         "SUB M(X)",

@@ -2718,7 +2718,7 @@ static void unwind_call_frames(void)
 /* `si` may be a sub_find() result the caller already has; -1 looks it up.
  * Call sites that resolved the name (bare SUB calls, user FUNCTIONs) pass it
  * so one call does not scan the SUB table twice (#1420). */
-static int call_named_sub_si(const char *name, int si)
+static int call_named_sub_si(const char *name, int si, int cache_args)
 {
 	int i, narg = 0, ex, g;
 	mmb_val args[MMB_MAX_SUB_ARGS];
@@ -2740,59 +2740,75 @@ static int call_named_sub_si(const char *name, int si)
 	 * collides when the call binds the parameter; name it here instead of
 	 * letting mmb_do_assign raise a bare ?CONST at the caller (#1335). */
 	check_param_consts(si);
-	mmb_skip_sp();
-	if (*G.p == '(')
 	{
-		G.p++;
-		mmb_skip_sp();
-		if (*G.p != ')')
+		const char *asave = G.p;
+		int cn = 0;
+		/* Replay this call site's argument expressions when they are simple
+		 * numeric shapes (#1420). Event handlers pass transient buffers, so
+		 * they never take this path (cache_args = 0). */
+		if (cache_args &&
+		    mmb_tcache_try_call_args(args, MMB_MAX_SUB_ARGS, &cn))
+			narg = cn;
+		else
 		{
-			while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ')' && *G.p != ':' && *G.p != '\'')
-			{
-				mmb_skip_sp();
-				if (*G.p == ',')
-				{
-					args[narg++] = mmb_int_val(0);
-					G.p++;
-					continue;
-				}
-				args[narg++] = mmb_expr();
-				mmb_skip_sp();
-				if (*G.p == ',')
-				{
-					G.p++;
-					continue;
-				}
-				break;
-			}
-		}
-		mmb_skip_sp();
-		if (*G.p == ')')
-			G.p++;
-	}
-	else if (*G.p && *G.p != ':' && *G.p != '\'')
-	{
-		while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
-		{
+			G.p = asave;
 			mmb_skip_sp();
-			/* `if c then hi else ...`: the zero-arg call ends at the
-			 * one-line IF's ELSE, not at an argument (#1295). */
-			if (G.if_inline == 1 && (at_else_kw() || at_elseif_kw()))
-				break;
-			if (*G.p == ',')
-			{
-				args[narg++] = mmb_int_val(0);
-				G.p++;
-				continue;
-			}
-			args[narg++] = mmb_expr();
-			mmb_skip_sp();
-			if (*G.p == ',')
+			if (*G.p == '(')
 			{
 				G.p++;
-				continue;
+				mmb_skip_sp();
+				if (*G.p != ')')
+				{
+					while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ')' && *G.p != ':' && *G.p != '\'')
+					{
+						mmb_skip_sp();
+						if (*G.p == ',')
+						{
+							args[narg++] = mmb_int_val(0);
+							G.p++;
+							continue;
+						}
+						args[narg++] = mmb_expr();
+						mmb_skip_sp();
+						if (*G.p == ',')
+						{
+							G.p++;
+							continue;
+						}
+						break;
+					}
+				}
+				mmb_skip_sp();
+				if (*G.p == ')')
+					G.p++;
 			}
-			break;
+			else if (*G.p && *G.p != ':' && *G.p != '\'')
+			{
+				while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
+				{
+					mmb_skip_sp();
+					/* `if c then hi else ...`: the zero-arg call ends
+					 * at the one-line IF's ELSE, not at an argument
+					 * (#1295). */
+					if (G.if_inline == 1 &&
+					    (at_else_kw() || at_elseif_kw()))
+						break;
+					if (*G.p == ',')
+					{
+						args[narg++] = mmb_int_val(0);
+						G.p++;
+						continue;
+					}
+					args[narg++] = mmb_expr();
+					mmb_skip_sp();
+					if (*G.p == ',')
+					{
+						G.p++;
+						continue;
+					}
+					break;
+				}
+			}
 		}
 	}
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
@@ -2917,12 +2933,12 @@ static int call_named_sub_si(const char *name, int si)
 
 int mmb_call_named_sub(const char *name)
 {
-	return call_named_sub_si(name, -1);
+	return call_named_sub_si(name, -1, 1);
 }
 
 int mmb_call_named_sub_resolved(const char *name, int si)
 {
-	return call_named_sub_si(name, si);
+	return call_named_sub_si(name, si, 1);
 }
 
 void mmb_cmd_sub(void)
@@ -6001,6 +6017,7 @@ struct gosub_body_call {
 	int expr_result;
 	int called;
 	int si;         /* pre-resolved SUB index, or -1 */
+	int cache_args; /* 1 for program-text calls, 0 for transient buffers */
 };
 
 /* Run the callee's statements until RETURN / END SUB / END FUNCTION / END or
@@ -6102,7 +6119,7 @@ static void run_gosub_entry(void *arg)
 	struct gosub_body_call *call = arg;
 
 	G.p = call->entry_p;
-	if (!call_named_sub_si(call->name, call->si))
+	if (!call_named_sub_si(call->name, call->si, call->cache_args))
 		return;
 	call->called = 1;
 	if (call->expr_result)
@@ -6117,7 +6134,7 @@ static void run_gosub_entry(void *arg)
  * landing and the running flag are lifecycle, not control flow, so they stay
  * here.  Returns non-zero when the named callee was found and entered. */
 static int run_gosub_body_known(const char *name, const char *entry_p,
-				int expr_result, int si)
+				int expr_result, int si, int cache_args)
 {
 	struct gosub_body_call call;
 	int saved_running = G.running;
@@ -6140,6 +6157,7 @@ static int run_gosub_body_known(const char *name, const char *entry_p,
 	call.expr_result = expr_result;
 	call.called = 0;
 	call.si = si;
+	call.cache_args = cache_args;
 	G.running = 1;
 	mmb_run_nested(run_gosub_entry, &call, MMB_NESTED_GOSUB);
 	/* An END inside this body is a program stop, not a per-call state
@@ -6157,7 +6175,8 @@ static int run_gosub_body_known(const char *name, const char *entry_p,
 
 static int run_gosub_body(const char *name, const char *entry_p, int expr_result)
 {
-	return run_gosub_body_known(name, entry_p, expr_result, -1);
+	/* Event handlers pass literal/stack argument buffers, not program text. */
+	return run_gosub_body_known(name, entry_p, expr_result, -1, 0);
 }
 
 int mmb_try_user_function(mmb_val *out)
@@ -6191,7 +6210,7 @@ int mmb_try_user_function(mmb_val *out)
 	/* The nested helper calls the FUNCTION inside the frame, so the caller's
 	 * run_pc/branch_pc/G.p and the call frame are restored on its one pop
 	 * path (and by unwind_call_frames after a trapped error). */
-	if (!run_gosub_body_known(raw, G.p, 1, si))
+	if (!run_gosub_body_known(raw, G.p, 1, si, 1))
 	{
 		G.p = save;
 		return 0;
