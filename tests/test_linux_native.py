@@ -763,6 +763,44 @@ def test_posix_drive_label_and_eject(mmb_linux, tmp_path):
     assert "?DRIVE" in out.upper(), out
 
 
+def test_posix_hotplug_seen_during_pause(mmb_linux, tmp_path):
+    """#1417: drive hotplug is still noticed within ~1 s inside PAUSE.
+
+    The PAUSE spin only walks the host drives on a one-second gate; this
+    checks the notice still appears while a long PAUSE is running.
+    """
+    import time
+
+    root = tmp_path / "root"
+    root.mkdir()
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    p = subprocess.Popen(
+        [mmb_linux],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    try:
+        p.stdin.write("PAUSE 3000\n")
+        p.stdin.flush()
+        # Let boot finish and the PAUSE spin take its initial drive snapshot,
+        # then plug the drive in; the one-second gate must notice it.
+        time.sleep(0.8)
+        (root / "D").mkdir(parents=True, exist_ok=True)
+        time.sleep(1.5)
+        p.stdin.write("QUIT\n")
+        p.stdin.flush()
+        out = p.communicate(timeout=15)[0]
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert "D: USB mounted" in out, out
+
+
 def test_posix_hotplug_notice(mmb_linux, tmp_path):
     """#518/#523: a volume appearing/disappearing raises a notice."""
     import time

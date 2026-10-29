@@ -124,6 +124,24 @@ def test_tick_handler_fires_with_pause(console):
     assert _run(console, "\n".join(program) + "\n") == ["tk1"]
 
 
+def test_pause_duration_unchanged_by_gated_poll(console):
+    """PAUSE still waits the requested time with the slow poll on a gate.
+
+    The spin keeps input/events/audio, but device and drive polling moved to
+    ~1 ms / ~1 s gates (#1417).  The wait itself must not end early.
+    """
+    program = [
+        "10 T0 = TIMER",
+        "20 PAUSE 150",
+        '30 PRINT "DT"; TIMER - T0',
+        "40 END",
+    ]
+    lines = _run(console, "\n".join(program) + "\n")
+    assert len(lines) == 1 and lines[0].startswith("DT"), lines
+    elapsed = int(lines[0][2:])
+    assert 140 <= elapsed <= 2000, elapsed
+
+
 @pytest.mark.parametrize("index", range(PROGRAMS))
 def test_generated_program_is_interrupt_invariant(console, index):
     """Timers off and SETTICK 1 must produce exactly the same output."""
