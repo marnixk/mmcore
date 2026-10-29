@@ -242,6 +242,8 @@ static void subs_clear(void)
 	int i;
 	for (i = 0; i < G.subs_cap; i++)
 		G.subs[i].used = 0;
+	if (G.sub_hash)
+		memset(G.sub_hash, 0, (size_t)G.sub_hash_cap * sizeof(int));
 	G.nsubs = 0;
 }
 
@@ -263,6 +265,10 @@ static void subs_release(void)
 	G.subs = 0;
 	G.subs_cap = 0;
 	G.nsubs = 0;
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
 }
 
 int mmb_find_line_pc(int num)
@@ -1045,6 +1051,78 @@ static int if_skip_pc(int pc)
 	return -1;
 }
 
+/* Case-insensitive FNV-1a over a name, masked to the table size (a power of
+ * two). Names are stored uppercase, but callers may pass mixed case. */
+static unsigned sub_hash_key(const char *name, unsigned cap)
+{
+	unsigned h = 2166136261u;
+	while (*name)
+	{
+		unsigned char c = (unsigned char)*name++;
+		if (c >= 'a' && c <= 'z')
+			c = (unsigned char)(c - 32);
+		h = (h ^ c) * 16777619u;
+	}
+	return h & (cap - 1);
+}
+
+/* Insert into a table with room for every current entry plus one. */
+static void sub_hash_put(int si)
+{
+	unsigned cap = (unsigned)G.sub_hash_cap;
+	unsigned h = sub_hash_key(G.subs[si].name, cap);
+	unsigned n;
+	for (n = 0; n < cap; n++)
+	{
+		int *slot = &G.sub_hash[(h + n) & (cap - 1)];
+		if (!*slot)
+		{
+			*slot = si + 1;
+			return;
+		}
+	}
+}
+
+/* Build the index for `need` entries, replacing any existing table. Returns 0
+ * when the allocation fails; the old table is left alone (sub_find() may still
+ * use it until a new definition makes it stale). */
+static int sub_hash_build(int need)
+{
+	unsigned cap = 16;
+	int *h;
+	int i;
+	while (cap < (unsigned)need * 2u)
+		cap <<= 1;
+	h = (int *)G.plat->alloc(cap * sizeof(int));
+	if (!h)
+		return 0;
+	memset(h, 0, (size_t)cap * sizeof(int));
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = h;
+	G.sub_hash_cap = (int)cap;
+	for (i = 0; i < G.nsubs; i++)
+		if (G.subs[i].used)
+			sub_hash_put(i);
+	return 1;
+}
+
+/* Make sure the index can take one more definition. On failure drop it so
+ * sub_find() falls back to the linear scan instead of missing a name. */
+static int sub_hash_ensure(void)
+{
+	if (G.sub_hash &&
+	    (unsigned)G.sub_hash_cap >= (unsigned)(G.nsubs + 1) * 2u)
+		return 1;
+	if (sub_hash_build(G.nsubs + 1))
+		return 1;
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
+	return 0;
+}
+
 static int sub_find(const char *name)
 {
 	int i;
@@ -1054,10 +1132,33 @@ static int sub_find(const char *name)
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
+	if (sub_hash_ensure())
+	{
+		unsigned cap = (unsigned)G.sub_hash_cap;
+		unsigned h = sub_hash_key(nbuf, cap);
+		unsigned n;
+		for (n = 0; n < cap; n++)
+		{
+			int e = G.sub_hash[(h + n) & (cap - 1)];
+			if (!e)
+				return -1;
+			i = e - 1;
+			if (i < G.nsubs && G.subs[i].used &&
+			    mmb_keyword_eq(G.subs[i].name, nbuf))
+				return i;
+		}
+		return -1;
+	}
 	for (i = 0; i < G.nsubs; i++)
 		if (G.subs[i].used && mmb_keyword_eq(G.subs[i].name, nbuf))
 			return i;
 	return -1;
+}
+
+int mmb_sub_is_func(const char *name)
+{
+	int si = sub_find(name);
+	return si >= 0 && G.subs[si].is_func;
 }
 
 /* Parse an optional ``AS <type>`` clause.  Returns -1 when no AS is present,
@@ -1144,6 +1245,11 @@ static void subs_grow(void)
 	}
 	G.subs = ns;
 	G.subs_cap = cap * 2;
+	/* The name index is rebuilt lazily against the new table. */
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
 }
 
 /* #1335: a SUB/FUNCTION parameter whose name matches a global CONST can never
@@ -1291,6 +1397,11 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 		}
 	}
 	check_param_consts(slot);
+	if (G.sub_hash)
+	{
+		if (sub_hash_ensure())
+			sub_hash_put(slot);
+	}
 	G.nsubs++;
 }
 

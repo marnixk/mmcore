@@ -783,6 +783,11 @@ typedef struct mmb {
 	int nsubs;
 	mmb_sub *subs;
 	int subs_cap;
+	/* Case-insensitive name index into G.subs: open addressing, each slot
+	 * holds si+1 (0 = empty). Built lazily and kept in step with
+	 * sub_register()/subs_clear() so sub_find() is O(1) (#1418). */
+	int *sub_hash;
+	int sub_hash_cap;
 	int in_sub;            /* executing inside sub body */
 	int home_prompt;       /* CLS/app exit: next prompt has no leading CR/LF
 				* (consumed by mmb_front_prompt, #957) */
@@ -1826,6 +1831,7 @@ void mmb_cmd_sprite(void);
 void mmb_sprite_reset(void);
 int mmb_call_named_sub(const char *name);
 int mmb_try_user_function(mmb_val *out);
+int mmb_sub_is_func(const char *name);
 int mmb_play_wav(const char *path);
 void mmb_play_tts(void);
 
