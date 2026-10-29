@@ -962,6 +962,21 @@ void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
 
+/* Opt-in per-statement wall-time profiler. Off unless MMB_STMTPROF is set.
+ * mmb_stmtprof_active is 1 only while a profiled RUN is in progress. */
+extern int mmb_stmtprof_active;
+void mmb_stmtprof_env_init(void);
+void mmb_stmtprof_run_begin(void);
+void mmb_stmtprof_run_end(void);
+int mmb_stmtprof_enter_slow(void);
+int mmb_stmtprof_enter_break(void);
+void mmb_stmtprof_leave(void);
+void mmb_stmtprof_note_uncached(void);
+void mmb_stmtprof_hit_builtin(int id);
+void mmb_stmtprof_hit_sub(const char *name);
+int mmb_stmtprof_depth(void);
+void mmb_stmtprof_set_depth(int depth);
+
 unsigned long long mmb_now_us(void);
 void mmb_frame_prof_env_init(void);
 void mmb_frame_prof_run_begin(void);
