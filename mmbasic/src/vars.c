@@ -1988,6 +1988,14 @@ int mmb_parse_var_ref(char *name, int *nidx, int *idx)
 	return t;
 }
 
+/* Store into an already-resolved scalar binding. Used by the SUB/FUNCTION
+ * fast path, which has just looked the parameter up, to avoid a second and
+ * third name lookup for the same assignment (#1420). */
+void mmb_store_var(mmb_var *v, mmb_val val)
+{
+	store(v, 0, val);
+}
+
 void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val)
 {
 	int off = 0;
