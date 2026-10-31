@@ -1201,8 +1201,8 @@ void mmb_print_startup(void)
 
 	startup_logo();
 
-	/* Leave the top rows clear for the logo. */
-	mmb_console_write("\n\n\n\n");
+	/* Leave the top rows clear for the logo (wordmark plus the colour bar). */
+	mmb_console_write("\n\n\n\n\n");
 	mmb_console_write("\x1b[37m");
 	startup_centred("mmcore operating system - " MMB_VERSION " - 2026 (c) Marnix Kok");
 	mmb_console_write("\n");
