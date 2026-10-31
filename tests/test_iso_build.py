@@ -1904,9 +1904,9 @@ def test_png_to_ppm_converts_the_splash(tmp_path):
     # Black border all round...
     for x, y in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
         assert pixel(x, y) == b"\x00\x00\x00"
-    # ...and the wordmark, not the old metallic "M": a solid band of visible
-    # pixels in the centre rows, at ramdisk/mmcore.png's native 303x50 size
-    # (its visible bbox is 296x47), centred on a 1024x768 canvas.
+    # ...and the wordmark plus the five-colour bar, not the old metallic "M".
+    # ramdisk/mmcore.png is alpha-composited on black and centred. The opaque
+    # span is the wordmark width (296) and, with the bar, 53px tall.
     visible = [
         (x, y)
         for y in range(height)
@@ -1916,9 +1916,37 @@ def test_png_to_ppm_converts_the_splash(tmp_path):
     assert len(visible) > 1000, len(visible)
     xs = [x for x, _ in visible]
     ys = [y for _, y in visible]
-    assert (max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) == (296, 47)
+    assert (max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) == (296, 53)
     assert abs((min(xs) + max(xs)) / 2 - width / 2) <= 1
     assert abs((min(ys) + max(ys)) / 2 - height / 2) <= 1
+    # Website CSS: --red #e8262b, --orange #ff8a00, --yellow #ffd21f,
+    # --green #16b04a, --cyan #13a8e8. One row is five solid runs of those.
+    bar = [
+        bytes.fromhex("e8262b"),
+        bytes.fromhex("ff8a00"),
+        bytes.fromhex("ffd21f"),
+        bytes.fromhex("16b04a"),
+        bytes.fromhex("13a8e8"),
+    ]
+    found_bar = False
+    for y in range(height):
+        runs = []
+        x = 0
+        while x < width:
+            c = pixel(x, y)
+            if c == b"\x00\x00\x00":
+                x += 1
+                continue
+            x1 = x + 1
+            while x1 < width and pixel(x1, y) == c:
+                x1 += 1
+            if x1 - x >= 40:
+                runs.append(c)
+            x = x1
+        if runs == bar:
+            found_bar = True
+            break
+    assert found_bar, "splash colour bar should be red, orange, yellow, green, cyan"
     # NOTE: the exact centre pixel can fall in the gap between glyphs, so the
     # band/bbox checks above (not a single pixel) are what prove the wordmark.
 

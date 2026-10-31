@@ -61,6 +61,9 @@ def test_startup_banner(kernel_image):
         assert 300 < min(xs) and max(xs) < 980, (min(xs), max(xs))
         assert abs((min(xs) + max(xs)) / 2 - 640) < 40, (min(xs), max(xs))
         assert [p for p in dim if p[1] >= 64], "banner text should sit below the logo"
+        # Colour bar under the wordmark: website CSS red, orange, yellow,
+        # green, cyan, left to right. HDMI is RGB565, so match loosely.
+        assert _colour_bar_order(pix), "boot logo colour bar should be red-orange-yellow-green-cyan"
 
         ocr = con.ocr_screen(crop="1280x256+0+0").lower()
         assert "mmcore" in ocr
@@ -93,6 +96,49 @@ def _is_grey_prompt(rgb):
         and 120 <= r <= 200
         and r + g + b < 620
     )
+
+
+def _bar_name(rgb):
+    """Bucket a pixel into the website colour-bar segments.
+
+    Boot HDMI is 16-bit, so the CSS colours (#e8262b, #ff8a00, #ffd21f,
+    #16b04a, #13a8e8) come back quantised. Thresholds stay clear of the
+    chrome wordmark, which is near-grey.
+    """
+    r, g, b = rgb
+    if r >= 180 and g <= 90 and b <= 110 and r > g + 80:
+        return "red"
+    if r >= 200 and 80 <= g < 180 and b <= 70:
+        return "orange"
+    if r >= 200 and g >= 180 and b <= 90:
+        return "yellow"
+    if g >= 120 and r <= 90 and b <= 140 and g > r + 50 and g >= b:
+        return "green"
+    if b >= 160 and g >= 90 and r <= 90 and b > g:
+        return "blue"
+    return None
+
+
+def _colour_bar_order(pix):
+    """True when some row is red, orange, yellow, green, blue left to right."""
+    rows = {}
+    for (x, y), rgb in pix.items():
+        name = _bar_name(rgb)
+        if name:
+            rows.setdefault(y, []).append((x, name))
+    order = ("red", "orange", "yellow", "green", "blue")
+    for hits in rows.values():
+        hits.sort()
+        seen = []
+        for _, name in hits:
+            if not seen or seen[-1][0] != name:
+                seen.append([name, 1])
+            else:
+                seen[-1][1] += 1
+        names = [name for name, n in seen if n >= 8]
+        if tuple(names) == order:
+            return True
+    return False
 
 
 def _png_rgb(png, crop=None):
