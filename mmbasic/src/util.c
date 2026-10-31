@@ -1151,7 +1151,8 @@ static void startup_centred(const char *s)
 	mmb_console_write("\n");
 }
 
-/* Draw the A:/mmcore.png wordmark centred near the top of the screen. */
+/* Draw the A:/mmcore.png wordmark and colour bar, centred near the top.
+ * The PNG is blitted 1:1 so the chrome edges stay crisp at every MODE. */
 static void startup_logo(void)
 {
 	const unsigned char *file = 0;
