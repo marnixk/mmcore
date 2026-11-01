@@ -34,6 +34,7 @@ mmb_audio g_audio;
 static uint16_t page[W * H];
 static uint16_t presented[W * H];
 static int present_calls, sync_full_calls, sync_rect_calls;
+static int set_pixel_calls;
 static int sync_x = -1, sync_y = -1, sync_w = -1, sync_h = -1;
 static uint16_t sync_pix[W * H];
 
@@ -65,6 +66,8 @@ static void rec_present(int x, int y, int w, int h, const void *p, int s)
 }
 static void rec_sync_full(const void *p, int w, int h, int s)
 { (void)p; (void)w; (void)h; (void)s; sync_full_calls++; }
+static void rec_set_pixel(int x, int y, unsigned rgb)
+{ (void)x; (void)y; (void)rgb; set_pixel_calls++; }
 static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
 {
 	const uint16_t *src = p;
@@ -79,7 +82,7 @@ static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
 
 static void reset_counts(void)
 {
-	present_calls = sync_full_calls = sync_rect_calls = 0;
+	present_calls = sync_full_calls = sync_rect_calls = set_pixel_calls = 0;
 	sync_x = sync_y = sync_w = sync_h = -1;
 }
 
@@ -105,6 +108,7 @@ int main(void)
 	plat.present_native = rec_present;
 	plat.present_sync_console = rec_sync_full;
 	plat.present_sync_console_rect = rec_sync_rect;
+	plat.set_pixel = rec_set_pixel;
 	plat.alloc = my_alloc;
 	plat.free = my_free;
 	g_cur->running = 1;
@@ -171,6 +175,52 @@ int main(void)
 	}
 	printf("OK no_console\n");
 
+	/* 4. A background console keeps drawing into its own page and dirty AABB
+	 * but never writes the shared display: no present, no console-cache sync
+	 * and no SetPixel (#1432). The deferred union uploads once the console
+	 * becomes visible again. */
+	plat.coalesce_presents = 0;
+	plat.present_sync_console = rec_sync_full;
+	plat.present_sync_console_rect = rec_sync_rect;
+	g_cur->gfx.background = 1;
+	g_cur->gfx.write_page = 0;
+	g_cur->gfx.display_page = 0;
+	g_cur->gfx.dirty = 0;
+	reset_counts();
+	{
+		uint16_t before = pg[3 * W + 2];
+		mmb_gfx_plot(2, 3, 0x00FF00);
+		if (pg[3 * W + 2] == before) {
+			printf("FAIL background_page_not_drawn\n");
+			return 1;
+		}
+	}
+	mmb_gfx_present_rect(0, 0, 4, 4);
+	mmb_gfx_present_native(0, 0, 2, 2, pg, W);
+	mmb_gfx_sync_console(0);
+	mmb_gfx_present();
+	if (present_calls != 0 || sync_rect_calls != 0 || sync_full_calls != 0 ||
+	    set_pixel_calls != 0) {
+		printf("FAIL background_wrote_display p=%d r=%d f=%d s=%d\n",
+		       present_calls, sync_rect_calls, sync_full_calls,
+		       set_pixel_calls);
+		return 1;
+	}
+	if (!g_cur->gfx.dirty) {
+		printf("FAIL background_lost_dirty\n");
+		return 1;
+	}
+	printf("OK background_isolated\n");
+
+	g_cur->gfx.background = 0;
+	reset_counts();
+	mmb_gfx_present();
+	if (present_calls != 1) {
+		printf("FAIL background_resume_present p=%d\n", present_calls);
+		return 1;
+	}
+	printf("OK background_resume\n");
+
 	printf("ALL OK\n");
 	return 0;
 }
@@ -211,5 +261,6 @@ def test_partial_blit_syncs_only_presented_rect(sync_run):
 
 
 def test_partial_blit_sync_markers(sync_run):
-    for marker in ("OK rect_present", "OK coalesce_rect", "OK no_console"):
+    for marker in ("OK rect_present", "OK coalesce_rect", "OK no_console",
+                   "OK background_isolated", "OK background_resume"):
         assert marker in sync_run.stdout, (marker, sync_run.stdout)

@@ -330,11 +330,21 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	/* HDMI-native page buffers. Every page is a plain pixel plane. */
+	/* HDMI-native page buffers. Every page is a plain pixel plane. They
+	 * belong to this interpreter context, so a virtual console's PAGE 0 is
+	 * private even while another console is on the shared display (#1432). */
 	uint16_t *page[MMB_MAX_PAGES];
 	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
 	int dirty;
 	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
+	/* Deferred display-page present (#1402). Per console: a pending frame
+	 * must not be flushed by whichever console happens to poll next. */
+	int present_pending;
+	/* This context is not the console whose screen is shown (#1432). It still
+	 * draws into its own page[] buffers, but must never write the shared
+	 * framebuffer, its cached text/pixel buffer, or the present flip state.
+	 * The session manager updates this on every switch. */
+	int background;
 } mmb_gfx;
 
 typedef struct mmb_ed_hop {
