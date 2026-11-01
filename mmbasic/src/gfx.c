@@ -29,10 +29,10 @@ static const struct { int id, w, h; } kModes[] = {
 };
 
 /* A display-page BLIT marked the dirty AABB but its present was deferred so
- * several BLITs in one BASIC frame upload once (#1402). Flushed at the
- * interpreter's next safe boundary by mmb_gfx_flush_pending(). */
-static int s_present_pending;
-
+ * several BLITs in one BASIC frame upload once (#1402). The flag lives in
+ * mmb_gfx (per console) so a background console's deferred frame cannot be
+ * consumed by whichever console polls next. Flushed at the interpreter's next
+ * safe boundary by mmb_gfx_flush_pending(). */
 static int present_defer_allowed(void)
 {
 	return G.plat && G.plat->coalesce_presents;
@@ -317,7 +317,7 @@ uint16_t *mmb_gfx_buf_for(int page, int *w, int *h)
 void mmb_gfx_dirty_reset(void)
 {
 	G.gfx.dirty = 0;
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
 }
 
 void mmb_gfx_dirty_add(int x, int y, int w, int h)
@@ -369,6 +369,10 @@ static void present_dirty_and_sync(void)
 
 	if (!G.gfx.dirty)
 		return;
+	/* A backgrounded console keeps the dirty AABB for its next visible
+	 * present; it must not touch the scanout or the console cache (#1432). */
+	if (G.gfx.background)
+		return;
 	x = G.gfx.dirty_x0;
 	y = G.gfx.dirty_y0;
 	x1 = G.gfx.dirty_x1;
@@ -414,7 +418,7 @@ void mmb_gfx_dirty_flush(void)
 		 * dirty_flush in this BASIC frame costs nothing. The interpreter
 		 * flushes at its next poll/text/PAGE DISPLAY/program-end boundary,
 		 * so a pending present never outlives one ~1 ms statement batch. */
-		s_present_pending = 1;
+		G.gfx.present_pending = 1;
 		return;
 	}
 	/* A partial present writes the dirty AABB straight to the framebuffer,
@@ -430,9 +434,9 @@ void mmb_gfx_dirty_flush(void)
  * after another path (PAGE COPY/DISPLAY, CLS) already presented. */
 void mmb_gfx_flush_pending(void)
 {
-	if (!s_present_pending)
+	if (!G.gfx.present_pending)
 		return;
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
 	if (!G.gfx.dirty)
 		return;
 	present_dirty_and_sync();
@@ -484,6 +488,9 @@ void mmb_gfx_sync_console(int page)
 	uint16_t *buf;
 
 	if (!G.plat || !G.plat->present_sync_console)
+		return;
+	/* The console cache describes the visible screen only (#1432). */
+	if (G.gfx.background)
 		return;
 	buf = mmb_gfx_buf_for(page, &pw, &ph);
 	G.plat->present_sync_console(buf, pw, ph, pw);
@@ -572,6 +579,10 @@ void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 {
 	if (!G.plat || !pix)
 		return;
+	/* Overlay presents (software cursor) belong to the visible screen; a
+	 * background console must never stamp one onto it (#1432). */
+	if (G.gfx.background)
+		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	present_native_or_rgb(x, y, w, h, pix, stride);
@@ -597,7 +608,13 @@ void mmb_gfx_present(void)
 		return;
 	/* Any present consumes a deferred BLIT AABB: the dirty rects it holds
 	 * are exactly the ones presented below. */
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
+	/* Only the console whose screen is shown may write the shared display.
+	 * A background console keeps its frame in its private page buffers and
+	 * its dirty AABB, then presents the union when it becomes visible
+	 * (#1432). */
+	if (G.gfx.background)
+		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	pg = page_buf(G.gfx.display_page);
@@ -643,6 +660,10 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	int hw, hh, x1, y1;
 	uint16_t *pg;
 	if (!G.plat)
+		return;
+	/* A background console's dirty AABB already covers this rect, so the
+	 * next visible present uploads it then (#1432). */
+	if (G.gfx.background)
 		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
@@ -694,7 +715,6 @@ void mmb_gfx_init(void)
 {
 	int hw = G.plat && G.plat->hdmi_width ? G.plat->hdmi_width() : 640;
 	int hh = G.plat && G.plat->hdmi_height ? G.plat->hdmi_height() : 480;
-	s_present_pending = 0;
 	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
@@ -799,7 +819,10 @@ void mmb_gfx_set_mode(int mode, int bits)
 		mmb_error("?INVALID MODE");
 	present_wait_dma();
 	mmb_play_mix();
-	if (G.plat && G.plat->resize_hdmi)
+	/* A background console changes only its own geometry; the display is
+	 * retuned to it by mmb_gfx_reapply_mode() when it becomes visible
+	 * (#1432). */
+	if (!G.gfx.background && G.plat && G.plat->resize_hdmi)
 		G.plat->resize_hdmi(w, h);
 	mmb_play_mix();
 	free_pages();
@@ -812,9 +835,10 @@ void mmb_gfx_set_mode(int mode, int bits)
 	G.gfx.display_page = 0;
 	mmb_gfx_dirty_reset();
 	page_buf(0);
-	if (G.plat && G.plat->fill_screen)
+	if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	mmb_console_apply_colour();
+	if (!G.gfx.background)
+		mmb_console_apply_colour();
 }
 
 void mmb_gfx_reset_console(int wipe)
@@ -829,16 +853,20 @@ void mmb_gfx_reset_console(int wipe)
 	G.gfx.display_page = 0;
 	for (i = 0; i < MMB_MAX_SPRITE; i++)
 		G.gfx.sprite[i].vis = 0;
-	if (G.plat && G.plat->present_set_flip)
+	/* The hardware half of the reset belongs to the visible console only.
+	 * A background app closing (for example during a warm reset) keeps its
+	 * own page/terminal state and never touches the shared display (#1432). */
+	if (!G.gfx.background && G.plat && G.plat->present_set_flip)
 		G.plat->present_set_flip(0);
 	if (!wipe)
 		return;
 	G.gfx.fg = MMB_DEFAULT_FG;
 	G.gfx.bg = MMB_DEFAULT_BG;
-	if (G.plat && G.plat->fill_screen)
+	if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(G.gfx.bg);
 	mmb_gfx_dirty_reset();
-	mmb_console_apply_colour();
+	if (!G.gfx.background)
+		mmb_console_apply_colour();
 }
 
 void mmb_gfx_plot(int x, int y, unsigned rgb)
@@ -860,11 +888,15 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	pg[by * tw + x] = np;
 	if (mmb_gfx_writing_fb())
 		return;
-	/* Expand dirty AABB when drawing to the visible page. */
+	/* Expand dirty AABB when drawing to the display page. A background
+	 * console still tracks it so the next visible present uploads the union,
+	 * but only the visible console writes the shared framebuffer (#1432). */
 	if (G.gfx.write_page == G.gfx.display_page)
+	{
 		mmb_gfx_dirty_add(x, by, 1, 1);
-	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
-		G.plat->set_pixel(x, by, mmb_native_to_rgb(np));
+		if (!G.gfx.background && G.plat && G.plat->set_pixel)
+			G.plat->set_pixel(x, by, mmb_native_to_rgb(np));
+	}
 }
 
 unsigned mmb_gfx_get_page(int x, int y, int page)
@@ -941,7 +973,9 @@ void mmb_gfx_cls(unsigned rgb)
 		return;
 	if (G.gfx.write_page == G.gfx.display_page)
 	{
-		if (G.plat && G.plat->fill_screen)
+		/* A background console clears only its own page; the dirty AABB
+		 * records the full frame for its next visible present (#1432). */
+		if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		{
 			G.plat->fill_screen(mmb_native_to_rgb(np));
 			mmb_gfx_dirty_reset();
@@ -1010,7 +1044,7 @@ static void span_target_pixel(struct span_target *t, int x, int y)
 	if (!t->live)
 		return;
 	span_target_mark(t, x, by);
-	if (G.plat && G.plat->set_pixel)
+	if (!G.gfx.background && G.plat && G.plat->set_pixel)
 		G.plat->set_pixel(x, by, t->live_rgb);
 }
 
@@ -1038,7 +1072,7 @@ static void span_target_row(struct span_target *t, int x, int y, int w)
 		return;
 	span_target_mark(t, x, by);
 	span_target_mark(t, x + w - 1, by);
-	if (G.plat && G.plat->set_pixel)
+	if (!G.gfx.background && G.plat && G.plat->set_pixel)
 		for (px = 0; px < w; px++)
 			G.plat->set_pixel(x + px, by, t->live_rgb);
 }
