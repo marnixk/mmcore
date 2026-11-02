@@ -174,6 +174,7 @@ void mmb_gfx_fb_window(int x, int y, int page)
 			d[j * dw + i] = c;
 		}
 	}
+	mmb_gfx_page_damage_add(page, 0, 0, G.gfx.w, G.gfx.h);
 	mmb_gfx_present_if(page);
 }
 
@@ -359,6 +360,10 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 	}
 	G.plat->free(tmp);
 blit_copy_done:
+	if (!mmb_gfx_writing_fb())
+		mmb_gfx_page_damage_add(G.gfx.write_page, x2,
+					G.opt.y_axis_up ? G.gfx.h - h - y2 : y2,
+					w, h);
 	mmb_frame_prof_draw_end();
 }
 
@@ -770,6 +775,7 @@ void mmb_gfx_page_scroll_buf(int page, int dx, int dy, int fill, int has_fill)
 		scroll_fill(pg, w, h, dx, dy, fill);
 	else
 		scroll_wrap(pg, w, h, dx, dy);
+	mmb_gfx_page_damage_add(page, 0, 0, w, h);
 }
 
 void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
@@ -814,6 +820,7 @@ void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 			d[j * wd + i] = (uint16_t)r;
 		}
 	}
+	mmb_gfx_page_damage_add(dst, 0, 0, w, h);
 	mmb_gfx_present_if(dst);
 }
 
@@ -849,6 +856,8 @@ void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int pag
 			pg[yy * sw + xx] = c;
 		}
 	}
+	mmb_gfx_page_damage_add(page, x,
+				G.opt.y_axis_up ? sh - y - h : y, w, h);
 	mmb_gfx_present_if(page);
 }
 

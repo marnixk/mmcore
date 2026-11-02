@@ -341,6 +341,17 @@ typedef struct mmb_gfx {
 	/* Deferred display-page present (#1402). Per console: a pending frame
 	 * must not be flushed by whichever console happens to poll next. */
 	int present_pending;
+	/* Per-page damage for delta PAGE COPY (#1436). valid marks an AABB that
+	 * has been tracked since the last full invalidation; page_gen advances
+	 * on every tracked write so a destination can tell whether its last
+	 * source is still current. */
+	struct {
+		int valid;
+		int x0, y0, x1, y1;
+	} page_damage[MMB_MAX_PAGES];
+	unsigned page_gen[MMB_MAX_PAGES];
+	int page_copy_src[MMB_MAX_PAGES];
+	unsigned page_copy_gen[MMB_MAX_PAGES];
 	/* This context is not the console whose screen is shown (#1432). It still
 	 * draws into its own page[] buffers, but must never write the shared
 	 * framebuffer, its cached text/pixel buffer, or the present flip state.
@@ -1262,6 +1273,9 @@ void mmb_gfx_glyph_cell_topdown_h(int x, int y, unsigned ch, unsigned fg,
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
+void mmb_gfx_page_damage_add(int page, int x, int y, int w, int h);
+void mmb_gfx_page_damage_invalidate(void);
+int mmb_gfx_copy_page(int src, int dst, int blit);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,

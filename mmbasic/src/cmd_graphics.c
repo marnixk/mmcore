@@ -2,7 +2,7 @@
 #include <math.h>
 #include <string.h>
 
-extern void mmb_gfx_copy_page(int src, int dst, int blit);
+extern int mmb_gfx_copy_page(int src, int dst, int blit);
 
 /* Fast argument path for the graphics commands (#1370 item 1).
  *
@@ -831,11 +831,14 @@ void mmb_cmd_page(void)
 			}
 			else if (*G.p && *G.p != ':' && *G.p != '\'')
 				(void)mmb_expr();
-			mmb_gfx_copy_page(src, dst, blit);
+			if (mmb_gfx_copy_page(src, dst, blit))
+				mmb_gfx_present_if(dst);
 		}
 		else
-			mmb_gfx_copy_page(src, dst, 0);
-		mmb_gfx_present_if(dst);
+		{
+			if (mmb_gfx_copy_page(src, dst, 0))
+				mmb_gfx_present_if(dst);
+		}
 		return;
 	}
 	mmb_syntax();

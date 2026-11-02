@@ -128,5 +128,30 @@ print "BENCH,sprite_move_hidden,"; n; ","; dt
 page write 0
 option fastdraw off
 
+' PAGE COPY damage tracking (#1436): an unchanged source skips the copy and
+' present entirely; a small repeated source rectangle copies only that rect.
+option fastdraw on
+page write 1
+cls rgb(0, 0, 0)
+box 10, 10, 40, 40, 1, rgb(200, 40, 40), rgb(200, 40, 40)
+page copy 1 to 0
+n = 400
+t0 = timer
+for i = 1 to n
+  page copy 1 to 0
+next i
+dt = timer - t0
+print "BENCH,page_copy_static_fastdraw,"; n; ","; dt
+
+t0 = timer
+for i = 1 to n
+  box 20, 20, 8, 8, 1, rgb(40, 40, 200), rgb(40, 40, 200)
+  page copy 1 to 0
+next i
+dt = timer - t0
+print "BENCH,page_copy_small_damage,"; n; ","; dt
+page write 0
+option fastdraw off
+
 print "DONE gfx"
 end

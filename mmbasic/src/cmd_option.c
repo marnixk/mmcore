@@ -815,6 +815,8 @@ static void option_dispatch(void)
 	if (mmb_match("FASTDRAW"))
 	{
 		G.opt.fastdraw = onoff();
+		/* Writes made while tracking was off are not in page_gen. */
+		mmb_gfx_page_damage_invalidate();
 		return;
 	}
 	if (mmb_match("FRAMEPROFILE"))

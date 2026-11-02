@@ -263,6 +263,11 @@ static void rect_flush(void)
 {
 	int i;
 
+	if (s_nrect && G.opt.fastdraw && !mmb_gfx_writing_fb())
+		for (i = 0; i < s_nrect; i++)
+			mmb_gfx_page_damage_add(G.gfx.write_page,
+						s_rects[i].x, s_rects[i].y,
+						s_rects[i].w, s_rects[i].h);
 	if (s_nrect && sprite_page_visible())
 	{
 		/* OPTION FASTDRAW: union the per-sprite rectangles into the deferred
