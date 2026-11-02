@@ -1845,6 +1845,14 @@ void mmb_run_events(void);
 void mmb_cmd_settick(void);
 void mmb_cmd_sprite(void);
 void mmb_sprite_reset(void);
+/* Deferred hidden-page sprite recorder (#1434). pending is non-zero while a
+ * replay is owed; the other helpers materialise, conditionally materialise
+ * for a page read, or drop the recorded log. */
+extern int mmb_sprite_defer_pending;
+void mmb_sprite_defer_flush(void);
+void mmb_sprite_defer_flush_page(int page);
+void mmb_sprite_defer_invalidate_page(int page);
+void mmb_sprite_defer_discard(void);
 int mmb_call_named_sub(const char *name);
 int mmb_call_named_sub_resolved(const char *name, int si);
 int mmb_try_user_function(mmb_val *out);

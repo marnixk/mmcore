@@ -93,5 +93,40 @@ next i
 dt = timer - t0
 print "BENCH,sprite_next_move,"; n; ","; dt
 
+' Visible-page sprite move: per-rect presents (OFF) versus one deferred AABB
+' per statement (FASTDRAW ON, #1433).
+option fastdraw off
+sprite show 1, 100, 100, 1
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 140
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_visible_off,"; n; ","; dt
+
+option fastdraw on
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 140
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_visible_on,"; n; ","; dt
+
+' Hidden-page sprite move: no presents either way; FASTDRAW records only the
+' final state and replays once when the page is materialised (#1434).
+page write 1
+sprite show 1, 100, 200, 1
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 200
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_hidden,"; n; ","; dt
+page write 0
+option fastdraw off
+
 print "DONE gfx"
 end

@@ -11,6 +11,7 @@ static int s_seq;
 static void order_remove(int ix);
 static void hide_all_keep_pos(void);
 static void show_all_from_order(void);
+static void show_one(int ix);
 
 typedef struct {
 	int x, y, w, h;
@@ -18,6 +19,20 @@ typedef struct {
 
 static spr_rect s_rects[MMB_MAX_SPRITE * 2];
 static int s_nrect;
+
+/* Deferred hidden-page sprite drawing (#1434). While the write page is not
+ * displayed, OPTION FASTDRAW records only the final desired sprite state. At
+ * the next read or page/lifecycle boundary it replays once: restore whatever
+ * is physically composited, then redraw the sorted visible list. This removes
+ * repeated intermediate restore/show work; a hidden page already uploads
+ * nothing, so the recorder saves page-buffer CPU, not HDMI presents. */
+int mmb_sprite_defer_pending;
+static int s_drawn[MMB_MAX_SPRITE];   /* physically composited into the page */
+static int s_drawn_x[MMB_MAX_SPRITE];
+static int s_drawn_y[MMB_MAX_SPRITE];
+static int s_defer;                   /* recording for the current write page */
+static int s_defer_page;
+static int s_defer_dirty;
 
 static int sprite_ix(int n)
 {
@@ -49,12 +64,14 @@ static void sprite_free_ix(int ix)
 	G.gfx.sprite[ix].h = 0;
 	G.gfx.sprite[ix].seq = 0;
 	G.gfx.sprite[ix].has_next = 0;
+	s_drawn[ix] = 0;
 	order_remove(ix);
 }
 
 void mmb_sprite_reset(void)
 {
 	int i;
+	mmb_sprite_defer_discard();
 	for (i = 0; i < MMB_MAX_SPRITE; i++)
 		sprite_free_ix(i);
 	ORDERN = 0;
@@ -178,11 +195,9 @@ static int sprite_page_visible(void)
 	return G.gfx.write_page == G.gfx.display_page;
 }
 
-static int sprite_clip(int ix, int *ox, int *oy, int *ow, int *oh,
-		       int *sx, int *sy, int *pw, int *ph)
+static int sprite_clip(int ix, int x, int y, int *ox, int *oy, int *ow,
+		       int *oh, int *sx, int *sy, int *pw, int *ph)
 {
-	int x = G.gfx.sprite[ix].x;
-	int y = G.gfx.sprite[ix].y;
 	int w = G.gfx.sprite[ix].w;
 	int h = G.gfx.sprite[ix].h;
 
@@ -300,16 +315,18 @@ static void rect_flush(void)
 	s_nrect = 0;
 }
 
-static void blit_restore(int ix)
+/* Restore the saved background at the position it was captured from. Replay
+ * uses the stored physical coordinates because a recorded move has already
+ * updated the sprite's desired x/y. */
+static void blit_restore_at(int ix, int x, int y)
 {
 	int ox, oy, ow, oh, sx, sy, pw, ph, sw;
 	uint16_t *pg;
 
-	if (!G.gfx.sprite[ix].vis || !G.gfx.sprite[ix].store)
+	if (!s_drawn[ix] || !G.gfx.sprite[ix].store)
 		return;
-	rect_push(G.gfx.sprite[ix].x, G.gfx.sprite[ix].y,
-		  G.gfx.sprite[ix].w, G.gfx.sprite[ix].h);
-	if (sprite_clip(ix, &ox, &oy, &ow, &oh, &sx, &sy, &pw, &ph))
+	rect_push(x, y, G.gfx.sprite[ix].w, G.gfx.sprite[ix].h);
+	if (sprite_clip(ix, x, y, &ox, &oy, &ow, &oh, &sx, &sy, &pw, &ph))
 	{
 		sw = G.gfx.sprite[ix].w;
 		pg = sprite_buf(&pw, &ph);
@@ -317,7 +334,18 @@ static void blit_restore(int ix)
 				     G.gfx.sprite[ix].store + sy * sw + sx, sw,
 				     ow, oh);
 	}
-	G.gfx.sprite[ix].vis = 0;
+	s_drawn[ix] = 0;
+}
+
+static void blit_restore(int ix)
+{
+	if (s_defer)
+	{
+		s_defer_dirty = 1;
+		mmb_sprite_defer_pending = 1;
+		return;
+	}
+	blit_restore_at(ix, G.gfx.sprite[ix].x, G.gfx.sprite[ix].y);
 }
 
 static void blit_show(int ix, int x, int y)
@@ -328,13 +356,20 @@ static void blit_show(int ix, int x, int y)
 	G.gfx.sprite[ix].x = x;
 	G.gfx.sprite[ix].y = y;
 	ensure_store(ix);
+	if (s_defer)
+	{
+		/* Record the final desired state only; the replay draws it. */
+		s_defer_dirty = 1;
+		mmb_sprite_defer_pending = 1;
+		return;
+	}
 	if (!G.gfx.sprite[ix].store || !G.gfx.sprite[ix].npix)
 	{
-		G.gfx.sprite[ix].vis = 1;
+		s_drawn[ix] = 0;
 		return;
 	}
 	sw = G.gfx.sprite[ix].w;
-	if (sprite_clip(ix, &ox, &oy, &ow, &oh, &sx, &sy, &pw, &ph))
+	if (sprite_clip(ix, x, y, &ox, &oy, &ow, &oh, &sx, &sy, &pw, &ph))
 	{
 		pg = sprite_buf(&pw, &ph);
 		mmb_blit_copy_rect16(G.gfx.sprite[ix].store + sy * sw + sx, sw,
@@ -343,7 +378,9 @@ static void blit_show(int ix, int x, int y)
 					G.gfx.sprite[ix].npix + sy * sw + sx, sw,
 					ow, oh);
 	}
-	G.gfx.sprite[ix].vis = 1;
+	s_drawn[ix] = 1;
+	s_drawn_x[ix] = x;
+	s_drawn_y[ix] = y;
 	rect_push(x, y, G.gfx.sprite[ix].w, G.gfx.sprite[ix].h);
 }
 
@@ -400,6 +437,7 @@ static void sprite_show_at(int ix, int x, int y, int layer)
 	}
 	if (!was)
 	{
+		G.gfx.sprite[ix].vis = 1;
 		G.gfx.sprite[ix].seq = ++s_seq;
 		G.gfx.sprite[ix].x = x;
 		G.gfx.sprite[ix].y = y;
@@ -441,6 +479,110 @@ static void show_all_from_order(void)
 	show_from(0);
 }
 
+/* Replay the recorded hidden-page state into the page buffer. Restore every
+ * physically composited sprite at its stored position, then draw the final
+ * sorted visible list once. */
+void mmb_sprite_defer_flush(void)
+{
+	int i, was_defer;
+
+	if (!s_defer_dirty)
+	{
+		mmb_sprite_defer_pending = 0;
+		return;
+	}
+	was_defer = s_defer;
+	s_defer = 0;
+	for (i = 0; i < MMB_MAX_SPRITE; i++)
+		if (s_drawn[i])
+			blit_restore_at(i, s_drawn_x[i], s_drawn_y[i]);
+	for (i = 0; i < ORDERN; i++)
+		show_one(ORDER[i]);
+	s_defer_dirty = 0;
+	mmb_sprite_defer_pending = 0;
+	rect_flush();
+	s_defer = was_defer;
+}
+
+/* Flush only when `page` is the page being recorded. Reads (PIXEL, SPRITE
+ * READ, BLIT READ) call this before observing the page buffer. */
+void mmb_sprite_defer_flush_page(int page)
+{
+	if (!mmb_sprite_defer_pending)
+		return;
+	if (page == MMB_PAGE_CUR)
+	{
+		if (mmb_gfx_writing_fb())
+			return;
+		page = G.gfx.write_page;
+	}
+	if (!s_defer || page != s_defer_page || page != G.gfx.write_page)
+		return;
+	mmb_sprite_defer_flush();
+}
+
+/* A PAGE COPY into the recorded page overwrites every composited sprite, so
+ * drop the physical state while keeping the desired logical state. */
+void mmb_sprite_defer_invalidate_page(int page)
+{
+	if (!s_defer || page != s_defer_page)
+		return;
+	memset(s_drawn, 0, sizeof(s_drawn));
+	s_defer_dirty = 0;
+	mmb_sprite_defer_pending = 0;
+}
+
+/* Mode change / reset: the recorded page is about to be freed, so the log can
+ * never be replayed. Drop it without touching the page. */
+void mmb_sprite_defer_discard(void)
+{
+	s_defer = 0;
+	s_defer_page = -1;
+	s_defer_dirty = 0;
+	mmb_sprite_defer_pending = 0;
+	memset(s_drawn, 0, sizeof(s_drawn));
+}
+
+static int sprite_defer_wanted(void)
+{
+	return G.opt.fastdraw && !mmb_gfx_writing_fb() &&
+	       G.gfx.write_page != G.gfx.display_page;
+}
+
+/* Start recording for a hidden write page, or materialise the pending state
+ * when the page becomes visible or FASTDRAW is turned off. */
+static void sprite_defer_update(void)
+{
+	int want = sprite_defer_wanted();
+
+	if (want)
+	{
+		if (!s_defer)
+		{
+			s_defer = 1;
+			s_defer_page = G.gfx.write_page;
+			s_defer_dirty = 0;
+			mmb_sprite_defer_pending = 0;
+		}
+		else if (s_defer_page != G.gfx.write_page)
+		{
+			/* The page-switch hook should have flushed; never move a
+			 * recorded log to the wrong page. */
+			s_defer_page = G.gfx.write_page;
+			s_defer_dirty = 0;
+			mmb_sprite_defer_pending = 0;
+		}
+		return;
+	}
+	if (s_defer)
+	{
+		mmb_sprite_defer_flush();
+		s_defer = 0;
+	}
+	s_defer_dirty = 0;
+	mmb_sprite_defer_pending = 0;
+}
+
 /* CMM2 SPRITE SCROLL: move the background under stationary sprites. Restore
  * each visible sprite's saved background, scroll the write page, then redraw
  * the same sprites at their unchanged positions so they capture the scrolled
@@ -449,6 +591,10 @@ static void sprite_scroll(void)
 {
 	int dx, dy, has_fill = 0, fill = 0, i;
 
+	/* The scroll moves the pixels under the sprites, so replay the recorded
+	 * state first and then operate on the real page (#1434). */
+	mmb_sprite_defer_flush();
+	s_defer = 0;
 	dx = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
 	if (*G.p == ',')
@@ -477,6 +623,7 @@ static void sprite_scroll(void)
 		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
 		mmb_gfx_present_if(MMB_PAGE_CUR);
 	}
+	sprite_defer_update();
 }
 
 static void add_png_ext(char *path, int pathsz)
@@ -661,6 +808,7 @@ static void sprite_hide(void)
 		return;
 	restore_from_top_to(p);
 	order_remove(ix);
+	G.gfx.sprite[ix].vis = 0;
 	show_from(p);
 	rect_flush();
 }
@@ -756,15 +904,20 @@ sprite_move_done:
 
 void mmb_cmd_sprite(void)
 {
+	sprite_defer_update();
 	if (mmb_match("LOADPNG") || mmb_match("LOAD"))
 	{
 		if (mmb_match("PNG"))
 			;
+		/* New content invalidates any recorded draw of this id. */
+		mmb_sprite_defer_flush();
 		sprite_loadpng();
 		return;
 	}
 	if (mmb_match("READ"))
 	{
+		/* SPRITE READ observes the page buffer. */
+		mmb_sprite_defer_flush();
 		sprite_read();
 		return;
 	}
@@ -796,6 +949,10 @@ void mmb_cmd_sprite(void)
 	if (mmb_match("CLOSE") || mmb_match("RESTORE"))
 	{
 		int ix;
+		/* CLOSE frees the saved background, so the page must be physical
+		 * before the restore/show bookkeeping runs. */
+		mmb_sprite_defer_flush();
+		s_defer = 0;
 		if (mmb_match("ALL"))
 		{
 			hide_all_keep_pos();

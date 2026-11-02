@@ -818,6 +818,9 @@ void mmb_gfx_set_mode(int mode, int bits)
 	if (!w)
 		mmb_error("?INVALID MODE");
 	present_wait_dma();
+	/* The page buffers are about to be freed: a recorded hidden-page sprite
+	 * log can never be replayed after that (#1434). */
+	mmb_sprite_defer_discard();
 	mmb_play_mix();
 	/* A background console changes only its own geometry; the display is
 	 * retuned to it by mmb_gfx_reapply_mode() when it becomes visible
@@ -846,7 +849,10 @@ void mmb_gfx_reset_console(int wipe)
 	int i;
 
 	/* Show a deferred frame before the console takes the screen back
-	 * (program end, error landing, console switch). */
+	 * (program end, error landing, console switch). A hidden-page sprite
+	 * recording is materialised first so the page holds its final state
+	 * (#1434). */
+	mmb_sprite_defer_flush();
 	mmb_gfx_flush_pending();
 	G.gfx.write_fb = 0;
 	G.gfx.write_page = 0;
@@ -887,6 +893,9 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	uint16_t *pg;
 	int tw, th, by;
 	uint16_t np;
+	/* Recorded hidden-page sprites precede any unrelated pixel write. */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	tw = tgt_w();
 	th = tgt_h();
 	y = map_y(y);
@@ -916,6 +925,10 @@ unsigned mmb_gfx_get_page(int x, int y, int page)
 	int w, h, by;
 	uint16_t *pg;
 
+	/* A read must observe recorded hidden-page sprites, not the pre-sprite
+	 * page (#1434). */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush_page(page);
 	pg = mmb_gfx_buf_for(page, &w, &h);
 	by = mmb_gfx_map_y(y, h);
 	if (x < 0 || by < 0 || x >= w || by >= h)
@@ -973,6 +986,10 @@ void mmb_gfx_cls(unsigned rgb)
 	int tw, th;
 	uint16_t *pg;
 	uint16_t np;
+	/* A non-sprite write must land after the recorded sprites, so replay
+	 * first (#1434). */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	np = mmb_pix_store(rgb);
 	tw = tgt_w();
 	th = tgt_h();
@@ -1016,6 +1033,8 @@ struct span_target {
 static void span_target_init(struct span_target *t, unsigned rgb)
 {
 	int fb = mmb_gfx_writing_fb();
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	t->pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
 	t->w = fb ? G.gfx.fb_w : G.gfx.w;
 	t->h = fb ? G.gfx.fb_h : G.gfx.h;
@@ -1454,6 +1473,8 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 	}
 	if (w < 1 || h < 1)
 		return;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	tw = tgt_w();
 	th = tgt_h();
 	np = mmb_pix_store(rgb);
@@ -1505,6 +1526,8 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
 	int sw, sh, dw, dh, row;
 	unsigned row_bytes, total;
 
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	s = mmb_gfx_buf_for(srcpage, &sw, &sh);
 	d = mmb_gfx_buf_for(dstpage, &dw, &dh);
 	if (!s || !d || w < 1 || h < 1)
@@ -1610,6 +1633,8 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 
 	if (gh != 14)
 		gh = 16;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	font = (gh == 14) ? mmb_cp437_8x14 : mmb_cp437_8x16;
 	tw = tgt_w();
 	th = tgt_h();

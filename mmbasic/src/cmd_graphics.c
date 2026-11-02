@@ -759,6 +759,8 @@ void mmb_cmd_page(void)
 		}
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
+		/* Never move a recorded hidden-page sprite log to another page. */
+		mmb_sprite_defer_flush();
 		G.gfx.write_fb = 0;
 		G.gfx.write_page = pg;
 		return;
@@ -769,7 +771,8 @@ void mmb_cmd_page(void)
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
 		/* Materialise any deferred sprite present before the display page
-		 * changes, so the new frame is complete (#1433). */
+		 * changes, so the new frame is complete (#1433, #1434). */
+		mmb_sprite_defer_flush_page(pg);
 		mmb_gfx_flush_pending();
 		G.gfx.display_page = pg;
 		/* Force a full-frame present. Clearing dirty then taking the
@@ -800,6 +803,14 @@ void mmb_cmd_page(void)
 		{
 			G.p++;
 			dst = (int)mmb_as_int(mmb_expr());
+		}
+		/* A recorded source must be materialised before it is copied. A
+		 * recorded destination is overwritten, so its log is dropped. */
+		if (mmb_sprite_defer_pending)
+		{
+			mmb_sprite_defer_flush_page(src);
+			if (dst != src)
+				mmb_sprite_defer_invalidate_page(dst);
 		}
 		mmb_skip_sp();
 		if (*G.p == ',')
