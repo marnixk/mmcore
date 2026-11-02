@@ -35,6 +35,7 @@ static uint16_t page[W * H];
 static uint16_t presented[W * H];
 static int present_calls, sync_full_calls, sync_rect_calls;
 static int set_pixel_calls;
+static int present_x, present_y, present_w, present_h;
 static int sync_x = -1, sync_y = -1, sync_w = -1, sync_h = -1;
 static uint16_t sync_pix[W * H];
 
@@ -43,11 +44,17 @@ void mmb_error(const char *m) { (void)m; }
 int mmb_mouse_read(mmb_mouse_state *o) { if (o) *o = mock; return mock.present; }
 void mmb_upper(char *s) { (void)s; }
 
-/* The frame profiler is not under test; gfx.c only calls these. */
+/* The frame profiler and sprite recorder are not under test; gfx.c only
+ * calls these. */
 void mmb_frame_prof_present_begin(void) {}
 void mmb_frame_prof_present_end(void) {}
 void mmb_frame_prof_wait_begin(void) {}
 void mmb_frame_prof_wait_end(void) {}
+int mmb_sprite_defer_pending;
+void mmb_sprite_defer_flush(void) {}
+void mmb_sprite_defer_flush_page(int page) { (void)page; }
+void mmb_sprite_defer_invalidate_page(int page) { (void)page; }
+void mmb_sprite_defer_discard(void) {}
 
 static void *my_alloc(unsigned n) { return malloc(n); }
 static void my_free(void *p) { free(p); }
@@ -57,6 +64,7 @@ static void rec_present(int x, int y, int w, int h, const void *p, int s)
 	const uint16_t *src = p;
 	int r, c;
 	present_calls++;
+	present_x = x; present_y = y; present_w = w; present_h = h;
 	for (r = 0; r < h; r++)
 		for (c = 0; c < w; c++) {
 			int dx = x + c, dy = y + r;
@@ -68,6 +76,15 @@ static void rec_sync_full(const void *p, int w, int h, int s)
 { (void)p; (void)w; (void)h; (void)s; sync_full_calls++; }
 static void rec_set_pixel(int x, int y, unsigned rgb)
 { (void)x; (void)y; (void)rgb; set_pixel_calls++; }
+static int native_calls, native_bad;
+static unsigned native_expect;
+static void rec_set_pixel_native(int x, int y, unsigned native)
+{
+	(void)x; (void)y;
+	native_calls++;
+	if (native != native_expect)
+		native_bad++;
+}
 static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
 {
 	const uint16_t *src = p;
@@ -83,6 +100,7 @@ static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
 static void reset_counts(void)
 {
 	present_calls = sync_full_calls = sync_rect_calls = set_pixel_calls = 0;
+	present_x = present_y = present_w = present_h = -1;
 	sync_x = sync_y = sync_w = sync_h = -1;
 }
 
@@ -221,6 +239,102 @@ int main(void)
 	}
 	printf("OK background_resume\n");
 
+	/* 5. A native-pixel hook removes the colour round trip for live writes
+	 * (#1435): plot and the span fast path pass the page pixel unchanged,
+	 * and the RGB fallback still runs when the hook is absent. */
+	g_cur->gfx.background = 0;
+	g_cur->gfx.bits = 16;
+	g_cur->gfx.write_page = 0;
+	g_cur->gfx.display_page = 0;
+	g_cur->gfx.dirty = 0;
+	plat.set_pixel_native = rec_set_pixel_native;
+	reset_counts();
+	native_calls = native_bad = 0;
+	native_expect = mmb_pix_store(0x336699);
+	mmb_gfx_plot(5, 5, 0x336699);
+	if (native_calls != 1 || native_bad != 0 || set_pixel_calls != 0) {
+		printf("FAIL native_plot n=%d bad=%d s=%d\n",
+		       native_calls, native_bad, set_pixel_calls);
+		return 1;
+	}
+	native_calls = 0;
+	mmb_gfx_line(10, 10, 13, 10, 0x336699, 1);
+	if (native_calls != 4 || native_bad != 0 || set_pixel_calls != 0) {
+		printf("FAIL native_span n=%d bad=%d s=%d\n",
+		       native_calls, native_bad, set_pixel_calls);
+		return 1;
+	}
+	plat.set_pixel_native = 0;
+	reset_counts();
+	native_calls = 0;
+	mmb_gfx_plot(6, 6, 0x336699);
+	if (set_pixel_calls != 1 || native_calls != 0) {
+		printf("FAIL native_fallback s=%d n=%d\n",
+		       set_pixel_calls, native_calls);
+		return 1;
+	}
+	printf("OK native_pixel\n");
+
+	/* 6. Delta PAGE COPY (#1436): a first copy is full, later copies upload
+	 * only the source's damaged AABB, and an unchanged source skips both the
+	 * copy and the present. */
+	g_cur->gfx.background = 0;
+	g_cur->gfx.bits = 16;
+	g_cur->gfx.write_page = 1;
+	g_cur->gfx.display_page = 0;
+	g_cur->gfx.dirty = 0;
+	g_cur->opt.fastdraw = 1;
+	mmb_gfx_page_damage_invalidate();
+	{
+		uint16_t *p0, *p1;
+		int pw, ph, j;
+
+		p1 = mmb_gfx_buf_for(1, &pw, &ph);
+		p0 = mmb_gfx_buf_for(0, &pw, &ph);
+		for (j = 0; j < W * H; j++)
+			p1[j] = (uint16_t)(j * 7 + 3);
+		memset(p0, 0, sizeof(uint16_t) * W * H);
+		reset_counts();
+		if (!mmb_gfx_copy_page(1, 0, 0)) {
+			printf("FAIL copy_first_skipped\n");
+			return 1;
+		}
+		mmb_gfx_present_if(0);
+		if (present_calls != 1 || present_x != 0 || present_y != 0 ||
+		    present_w != W || present_h != H) {
+			printf("FAIL copy_first %d %d,%d %dx%d\n", present_calls,
+			       present_x, present_y, present_w, present_h);
+			return 1;
+		}
+		g_cur->gfx.write_page = 1;
+		g_cur->gfx.display_page = 0;
+		g_cur->gfx.dirty = 0;
+		mmb_gfx_plot(20, 10, 0x336699);
+		mmb_gfx_plot(21, 10, 0x336699);
+		reset_counts();
+		if (!mmb_gfx_copy_page(1, 0, 0)) {
+			printf("FAIL copy_delta_skipped\n");
+			return 1;
+		}
+		mmb_gfx_present_if(0);
+		if (present_calls != 1 || present_x != 20 || present_y != 10 ||
+		    present_w != 2 || present_h != 1) {
+			printf("FAIL copy_delta %d %d,%d %dx%d\n", present_calls,
+			       present_x, present_y, present_w, present_h);
+			return 1;
+		}
+		reset_counts();
+		if (mmb_gfx_copy_page(1, 0, 0)) {
+			printf("FAIL copy_static_copied\n");
+			return 1;
+		}
+		if (present_calls != 0) {
+			printf("FAIL copy_static_presented %d\n", present_calls);
+			return 1;
+		}
+	}
+	printf("OK page_copy_damage\n");
+
 	printf("ALL OK\n");
 	return 0;
 }
@@ -262,5 +376,6 @@ def test_partial_blit_syncs_only_presented_rect(sync_run):
 
 def test_partial_blit_sync_markers(sync_run):
     for marker in ("OK rect_present", "OK coalesce_rect", "OK no_console",
-                   "OK background_isolated", "OK background_resume"):
+                   "OK background_isolated", "OK background_resume",
+                   "OK native_pixel", "OK page_copy_damage"):
         assert marker in sync_run.stdout, (marker, sync_run.stdout)

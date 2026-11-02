@@ -26,6 +26,11 @@ Settings:
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE
   LEGACY ON|OFF     MILLISECONDS ON|OFF
   MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF
+  FASTDRAW ON|OFF
+    Defer and coalesce sprite presents and hidden-page sprite drawing (default
+    OFF). The final page is identical, but pixels may appear later than with
+    immediate drawing, so a program that reads the page between draw commands
+    should leave it OFF.
   TRACECACHE ON|OFF
   PROMPT BARE|CWD   immediate prompt (see ~PROMPT~)
     CWD (default) is DOS $p$g: drive and path then >, e.g. A:/> or A:/PRDIR>.

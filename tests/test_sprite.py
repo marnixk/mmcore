@@ -416,3 +416,111 @@ def test_sprite_scroll_visible_page_presents(fresh_console):
     assert c.send_line("SPRITE MOVE 1,120,50") == ""
     assert _is_blue(c.screen_pixel(52, 52))
     assert _is_red(c.screen_pixel(122, 52))
+
+
+def _write_bas(console, path, lines):
+    assert console.send_line(f'OPEN "{path}" FOR OUTPUT AS #1') == ""
+    for line in lines:
+        esc = line.replace('"', '""')
+        assert console.send_line(f'PRINT #1, "{esc}"') == ""
+    assert console.send_line("CLOSE #1") == ""
+
+
+def _run_deferred_scene(console, fastdraw):
+    """Run a hidden-page sprite scene with FASTDRAW on or off and report it."""
+    assert console.send_line(f"OPTION FASTDRAW {'ON' if fastdraw else 'OFF'}") == ""
+    _write_bas(
+        console,
+        "DEFER.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "BOX 0,0,300,200,1,RGB(0,200,0),RGB(0,200,0)",
+            "BOX 0,0,16,16,1,RGB(255,0,0),RGB(255,0,0)",
+            "SPRITE READ 1,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,200,0),RGB(0,200,0)",
+            "PAGE WRITE 2",
+            "CLS RGB(0,0,0)",
+            "PAGE WRITE 1",
+            "SPRITE SHOW 1,50,50,1",
+            "IF PIXEL(55,55,1) = 0 THEN PRINT \"BADPIXEL\"",
+            "SPRITE MOVE 1,80,50",
+            "SPRITE READ 2,85,55,1,1",
+            "IF PIXEL(85,55,1) = 0 THEN PRINT \"BADREAD\"",
+            "SPRITE MOVE 1,110,60",
+            "CLS RGB(0,200,0)",
+            "IF (PIXEL(115,65,1) AND &HFFFFFF) = RGB(255,0,0) THEN PRINT \"BADCLS\"",
+            "SPRITE SHOW 1,150,60,1",
+            "BLIT 0,0,150,60,16,16,2,0",
+            "IF PIXEL(155,65,1) <> 0 THEN PRINT \"BADBLIT\"",
+            "SPRITE SHOW 2,200,60,1",
+            "SPRITE SCROLL 5,3",
+            "PAGE COPY 1 TO 0",
+            "T=0",
+            "FOR Y=0 TO 190 STEP 10",
+            "FOR X=0 TO 310 STEP 10",
+            "T=T+PIXEL(X,Y,1)",
+            "NEXT X",
+            "NEXT Y",
+            'PRINT "SUM ";T',
+            "PAUSE 30",
+        ],
+    )
+    out = console.send_line('RUN "DEFER.BAS"', timeout=30.0)
+    assert "?" not in out, out
+    assert "BADPIXEL" not in out, out
+    assert "BADREAD" not in out, out
+    assert "BADCLS" not in out, out
+    assert "BADBLIT" not in out, out
+    return out
+
+
+def test_hidden_page_sprite_recorder_matches_immediate(fresh_console):
+    """#1434: recorded hidden-page sprite ops replay to the immediate pixels.
+
+    The scene interleaves PIXEL, SPRITE READ, CLS, BLIT and SPRITE SCROLL, so
+    every flush trigger has to replay the recorded state before it runs. Run
+    with FASTDRAW off first to capture today's immediate page checksum.
+    """
+    c = fresh_console
+    off = _run_deferred_scene(c, False)
+    on = _run_deferred_scene(c, True)
+    assert "SUM " in off, off
+    assert "SUM " in on, on
+    assert off.split("SUM ", 1)[1].split()[0] == on.split("SUM ", 1)[1].split()[0]
+    # PAGE COPY at the end presented the composed page.
+    assert _is_green(c.screen_pixel(5, 195))
+    assert _is_green(c.screen_pixel(300, 195))
+    assert c.send_line("OPTION FASTDRAW OFF") == ""
+
+
+def test_hidden_page_sprite_loop_presents_once(fresh_console):
+    """#1434: a hidden-page sprite loop uploads nothing; PAGE COPY uploads once."""
+    c = fresh_console
+    assert c.send_line("OPTION FASTDRAW ON") == ""
+    assert c.send_line("OPTION FRAMEPROFILE ON") == ""
+    _write_bas(
+        c,
+        "HIDDENLOOP.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "BOX 0,0,16,16,1,RGB(255,0,0),RGB(255,0,0)",
+            "SPRITE READ 1,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "SPRITE SHOW 1,10,200,1",
+            "FOR I=1 TO 200",
+            "SPRITE NEXT 1,10+(I MOD 20),200",
+            "SPRITE MOVE",
+            "NEXT I",
+            "PAGE COPY 1 TO 0",
+            "PAUSE 30",
+        ],
+    )
+    out = c.send_line('RUN "HIDDENLOOP.BAS"', timeout=20.0)
+    assert "?" not in out, out
+    from test_cmm2_gfx import _profile_frames
+    assert _is_red(c.screen_pixel(15, 208))
+    assert _profile_frames(c) == 1

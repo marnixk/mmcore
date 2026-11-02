@@ -197,7 +197,10 @@ static CBcmFrameBuffer *plat_fb_visible(void)
 	return fb;
 }
 
-static void plat_set_pixel(int x, int y, unsigned rgb)
+/* Draw a pixel already in the page's native depth format. The page stores
+ * exactly what rgb_to_raw() produces, so this is the same pixel set_pixel
+ * would write after its RGB888 round trip (#1435). */
+static void plat_set_pixel_native(int x, int y, unsigned native)
 {
 	CBcmFrameBuffer *fb;
 	CScreenDevice *sc;
@@ -209,7 +212,7 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 	if (x < 0 || y < 0 || (unsigned)x >= sc->GetWidth() ||
 	    (unsigned)y >= sc->GetHeight())
 		return;
-	c = (CDisplay::TRawColor)rgb_to_raw(rgb);
+	c = (CDisplay::TRawColor)native;
 	fb = plat_fb_visible();
 	if (s_fb_flip_ok && fb)
 	{
@@ -219,6 +222,11 @@ static void plat_set_pixel(int x, int y, unsigned rgb)
 	{
 		sc->SetPixel((unsigned)x, (unsigned)y, (TScreenColor)c);
 	}
+}
+
+static void plat_set_pixel(int x, int y, unsigned rgb)
+{
+	plat_set_pixel_native(x, y, rgb_to_raw(rgb));
 }
 
 /* Boot-splash pixel: write through the terminal's own pixel buffer so a
@@ -1724,6 +1732,7 @@ void mmb_platform_bind(CKernel *k)
 	plat.write_screen = plat_write_screen;
 	plat.ansi_truecolour = 1; /* Circle terminal patch: ESC[48;2;r;g;bm */
 	plat.set_pixel = plat_set_pixel;
+	plat.set_pixel_native = plat_set_pixel_native;
 	plat.console_pixel = plat_console_pixel;
 	plat.get_pixel = plat_get_pixel;
 	plat.fill_screen = plat_fill;

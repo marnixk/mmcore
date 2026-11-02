@@ -772,6 +772,49 @@ def test_visible_blits_coalesce_into_one_present(fresh_console):
     assert _profile_frames(c) == 1
 
 
+def test_visible_sprite_moves_coalesce_into_one_present(fresh_console):
+    """#1433: OPTION FASTDRAW unions visible sprite rects into one present.
+
+    A no-argument SPRITE MOVE queues two rects per sprite. With FASTDRAW the
+    per-rect presents are replaced by one deferred dirty-AABB present, while
+    the final pixels match the immediate path.
+    """
+    c = fresh_console
+    assert c.send_line("OPTION FASTDRAW ON") == ""
+    assert c.send_line("OPTION FRAMEPROFILE ON") == ""
+    _write_bas(
+        c,
+        "SPRITEFD.BAS",
+        [
+            "MODE 8,16",
+            "CLS RGB(0,0,0)",
+            "BOX 0,0,16,16,1,RGB(255,0,0),RGB(255,0,0)",
+            "SPRITE READ 1,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "BOX 0,0,16,16,1,RGB(0,255,0),RGB(0,255,0)",
+            "SPRITE READ 2,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "SPRITE SHOW 1,100,100,1 : SPRITE NEXT 1,120,100"
+            " : SPRITE SHOW 2,200,100,1 : SPRITE NEXT 2,220,100"
+            " : SPRITE MOVE",
+            "PAUSE 30",
+        ],
+    )
+    out = c.send_line('RUN "SPRITEFD.BAS"', timeout=12.0)
+    assert "?" not in out
+
+    red = c.screen_pixel(125, 105)
+    green = c.screen_pixel(225, 105)
+    old_red = c.screen_pixel(105, 105)
+    old_green = c.screen_pixel(205, 105)
+    assert _is_red(red), red
+    assert _is_green(green), green
+    assert _is_black(old_red), old_red
+    assert _is_black(old_green), old_green
+    assert _profile_frames(c) == 1
+    assert c.send_line("OPTION FASTDRAW OFF") == ""
+
+
 def test_deferred_present_flushes_before_console_text(fresh_console):
     """#1402: a pending BLIT present must be shown before PRINT draws text.
 
@@ -801,3 +844,89 @@ def test_deferred_present_flushes_before_console_text(fresh_console):
     assert any(min(px) > 100 for px in row), row
     below = c.screen_pixel(100, 30)
     assert _is_red(below), below
+
+
+def _run_page_copy_scene(console, fastdraw):
+    assert console.send_line(f"OPTION FASTDRAW {'ON' if fastdraw else 'OFF'}") == ""
+    _write_bas(
+        console,
+        "PAGEDMG.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "BOX 10,10,40,40,1,RGB(255,0,0),RGB(255,0,0)",
+            "PAGE COPY 1 TO 0",
+            "BOX 20,20,8,8,1,RGB(0,0,255),RGB(0,0,255)",
+            "PAGE COPY 1 TO 0",
+            "BOX 60,60,16,16,1,RGB(0,200,0),RGB(0,200,0)",
+            "SPRITE READ 1,60,60,16,16",
+            "BOX 60,60,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "SPRITE SHOW 1,100,100,1",
+            "SPRITE MOVE 1,120,100",
+            "PAGE COPY 1 TO 0",
+            "BLIT 120,100,200,100,16,16,1,4",
+            "PAGE COPY 1 TO 0",
+            "PAGE SCROLL 1,2,3",
+            "PAGE COPY 1 TO 0",
+            "PAGE WRITE 2",
+            "PAGE COPY 1 TO 2",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,40)",
+            "PAGE COPY 1 TO 0",
+            "T=0",
+            "FOR Y=0 TO 470 STEP 10",
+            "FOR X=0 TO 630 STEP 10",
+            "T=T+PIXEL(X,Y,0)",
+            "NEXT X",
+            "NEXT Y",
+            'PRINT "SUM ";T',
+            "PAUSE 30",
+        ],
+    )
+    out = console.send_line('RUN "PAGEDMG.BAS"', timeout=30.0)
+    assert "?" not in out, out
+    return out
+
+
+def test_page_copy_damage_matches_full_copy(fresh_console):
+    """#1436: delta PAGE COPY reproduces the full-copy pixels.
+
+    The scene copies after a small BOX, a sprite move, a transparent BLIT and
+    a PAGE SCROLL, and between PAGE WRITE switches. FASTDRAW off is the
+    full-copy baseline.
+    """
+    c = fresh_console
+    off = _run_page_copy_scene(c, False)
+    on = _run_page_copy_scene(c, True)
+    assert "SUM " in off, off
+    assert "SUM " in on, on
+    assert off.split("SUM ", 1)[1].split()[0] == on.split("SUM ", 1)[1].split()[0]
+    assert c.send_line("OPTION FASTDRAW OFF") == ""
+
+
+def test_page_copy_static_source_skips_presents(fresh_console):
+    """#1436: an unchanged source page copies and presents zero times."""
+    c = fresh_console
+    assert c.send_line("OPTION FASTDRAW ON") == ""
+    assert c.send_line("OPTION FRAMEPROFILE ON") == ""
+    _write_bas(
+        c,
+        "PAGESTATIC.BAS",
+        [
+            "MODE 8,16",
+            "PAGE WRITE 1",
+            "CLS RGB(0,0,0)",
+            "BOX 10,10,40,40,1,RGB(255,0,0),RGB(255,0,0)",
+            "PAGE COPY 1 TO 0",
+            "FOR I=1 TO 100",
+            "PAGE COPY 1 TO 0",
+            "NEXT I",
+            "PAUSE 30",
+        ],
+    )
+    out = c.send_line('RUN "PAGESTATIC.BAS"', timeout=20.0)
+    assert "?" not in out, out
+    red = c.screen_pixel(40, 45)
+    assert _is_red(red), red
+    assert _profile_frames(c) == 1
