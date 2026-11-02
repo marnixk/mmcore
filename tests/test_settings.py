@@ -128,6 +128,25 @@ def test_option_persists_to_hidden_ini(console):
     assert "[core]" in ini
 
 
+def test_option_fastdraw_defaults_off_and_persists(console):
+    """#1433: OPTION FASTDRAW is off by default, listed and persisted."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST")
+    assert "FASTDRAW" not in listed
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION FASTDRAW OFF" in all_listed
+    assert console.send_line("OPTION FASTDRAW ON") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION FASTDRAW ON" in listed
+    ini = _read_ini(console)
+    assert "fastdraw=1" in ini
+    assert console.send_line("OPTION FASTDRAW OFF") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "FASTDRAW" not in listed
+    ini = _read_ini(console)
+    assert "fastdraw=0" in ini
+
+
 def test_brightness_and_volume_persist(console):
     """#1157: MM.BRIGHTNESS% and PLAY VOLUME write .mmbasic.ini and the
     factory defaults seed all three keys."""

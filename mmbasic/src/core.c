@@ -3028,6 +3028,7 @@ void mmb_option_reset(void)
 	G.opt.break_key = 3;
 	G.opt.profiling = 0;
 	G.opt.frame_profile = 0;
+	G.opt.fastdraw = 0;
 	G.opt.frame_profile_path[0] = 0;
 	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;

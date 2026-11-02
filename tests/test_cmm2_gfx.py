@@ -772,6 +772,49 @@ def test_visible_blits_coalesce_into_one_present(fresh_console):
     assert _profile_frames(c) == 1
 
 
+def test_visible_sprite_moves_coalesce_into_one_present(fresh_console):
+    """#1433: OPTION FASTDRAW unions visible sprite rects into one present.
+
+    A no-argument SPRITE MOVE queues two rects per sprite. With FASTDRAW the
+    per-rect presents are replaced by one deferred dirty-AABB present, while
+    the final pixels match the immediate path.
+    """
+    c = fresh_console
+    assert c.send_line("OPTION FASTDRAW ON") == ""
+    assert c.send_line("OPTION FRAMEPROFILE ON") == ""
+    _write_bas(
+        c,
+        "SPRITEFD.BAS",
+        [
+            "MODE 8,16",
+            "CLS RGB(0,0,0)",
+            "BOX 0,0,16,16,1,RGB(255,0,0),RGB(255,0,0)",
+            "SPRITE READ 1,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "BOX 0,0,16,16,1,RGB(0,255,0),RGB(0,255,0)",
+            "SPRITE READ 2,0,0,16,16",
+            "BOX 0,0,16,16,1,RGB(0,0,0),RGB(0,0,0)",
+            "SPRITE SHOW 1,100,100,1 : SPRITE NEXT 1,120,100"
+            " : SPRITE SHOW 2,200,100,1 : SPRITE NEXT 2,220,100"
+            " : SPRITE MOVE",
+            "PAUSE 30",
+        ],
+    )
+    out = c.send_line('RUN "SPRITEFD.BAS"', timeout=12.0)
+    assert "?" not in out
+
+    red = c.screen_pixel(125, 105)
+    green = c.screen_pixel(225, 105)
+    old_red = c.screen_pixel(105, 105)
+    old_green = c.screen_pixel(205, 105)
+    assert _is_red(red), red
+    assert _is_green(green), green
+    assert _is_black(old_red), old_red
+    assert _is_black(old_green), old_green
+    assert _profile_frames(c) == 1
+    assert c.send_line("OPTION FASTDRAW OFF") == ""
+
+
 def test_deferred_present_flushes_before_console_text(fresh_console):
     """#1402: a pending BLIT present must be shown before PRINT draws text.
 

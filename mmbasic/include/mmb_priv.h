@@ -200,6 +200,7 @@ typedef struct mmb_options {
 	int pin;
 	int profiling;
 	int frame_profile;
+	int fastdraw;          /* OPTION FASTDRAW: coalesce/defer graphics writes */
 	char frame_profile_path[96];
 	int tracecache;
 	int ram_prog;

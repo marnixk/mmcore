@@ -248,8 +248,51 @@ static void rect_flush(void)
 {
 	int i;
 
-	if (sprite_page_visible())
+	if (s_nrect && sprite_page_visible())
 	{
+		/* OPTION FASTDRAW: union the per-sprite rectangles into the deferred
+		 * dirty AABB so a no-argument SPRITE MOVE uploads once instead of
+		 * 2 * MMB_MAX_SPRITE times (#1433). Fall back to one present per
+		 * rect when the union would upload far more unchanged area than the
+		 * rectangles themselves, or when the platform has no rect
+		 * console-sync hook (the deferred path reconciles the console once
+		 * for the whole AABB). */
+		if (G.opt.fastdraw && G.plat &&
+		    G.plat->present_sync_console_rect)
+		{
+			int x0 = s_rects[0].x, y0 = s_rects[0].y;
+			int x1 = s_rects[0].x + s_rects[0].w;
+			int y1 = s_rects[0].y + s_rects[0].h;
+			long sum = 0;
+
+			for (i = 0; i < s_nrect; i++)
+			{
+				int rx1 = s_rects[i].x + s_rects[i].w;
+				int ry1 = s_rects[i].y + s_rects[i].h;
+
+				if (s_rects[i].x < x0)
+					x0 = s_rects[i].x;
+				if (s_rects[i].y < y0)
+					y0 = s_rects[i].y;
+				if (rx1 > x1)
+					x1 = rx1;
+				if (ry1 > y1)
+					y1 = ry1;
+				sum += (long)s_rects[i].w * s_rects[i].h;
+			}
+			if (sum > 0 &&
+			    (long)(x1 - x0) * (y1 - y0) <= sum * 4)
+			{
+				for (i = 0; i < s_nrect; i++)
+					mmb_gfx_dirty_add(s_rects[i].x,
+							  s_rects[i].y,
+							  s_rects[i].w,
+							  s_rects[i].h);
+				mmb_gfx_dirty_flush();
+				s_nrect = 0;
+				return;
+			}
+		}
 		for (i = 0; i < s_nrect; i++)
 			mmb_gfx_present_rect(s_rects[i].x, s_rects[i].y,
 					     s_rects[i].w, s_rects[i].h);

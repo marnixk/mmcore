@@ -768,6 +768,9 @@ void mmb_cmd_page(void)
 		int pg = (int)mmb_as_int(mmb_expr());
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
+		/* Materialise any deferred sprite present before the display page
+		 * changes, so the new frame is complete (#1433). */
+		mmb_gfx_flush_pending();
 		G.gfx.display_page = pg;
 		/* Force a full-frame present. Clearing dirty then taking the
 		 * !dirty present path can leave HDMI on a prior live-SetPixel
@@ -784,7 +787,11 @@ void mmb_cmd_page(void)
 	}
 	if (mmb_match("COPY"))
 	{
-		int src = (int)mmb_as_int(mmb_expr());
+		int src;
+		/* A deferred sprite present must be on screen before PAGE COPY
+		 * reads or replaces the pages (#1433). */
+		mmb_gfx_flush_pending();
+		src = (int)mmb_as_int(mmb_expr());
 		int dst = src;
 		mmb_skip_sp();
 		if (mmb_match("TO"))

@@ -812,6 +812,11 @@ static void option_dispatch(void)
 		G.opt.profiling = onoff();
 		return;
 	}
+	if (mmb_match("FASTDRAW"))
+	{
+		G.opt.fastdraw = onoff();
+		return;
+	}
 	if (mmb_match("FRAMEPROFILE"))
 	{
 		G.opt.frame_profile = onoff();
@@ -1423,6 +1428,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.prompt ? "OPTION PROMPT CWD" : "OPTION PROMPT BARE");
 	if (all || G.opt.profiling)
 		ol_line(&n, G.opt.profiling ? "OPTION PROFILING ON" : "OPTION PROFILING OFF");
+	if (all || G.opt.fastdraw)
+		ol_line(&n, G.opt.fastdraw ? "OPTION FASTDRAW ON" : "OPTION FASTDRAW OFF");
 	if (all || !G.opt.tracecache)
 		ol_line(&n, G.opt.tracecache ? "OPTION TRACECACHE ON" : "OPTION TRACECACHE OFF");
 	if (all || G.opt.ram_prog || (!G.opt.ram_prog && G.opt.flash_page))
