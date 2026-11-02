@@ -68,6 +68,15 @@ static void rec_sync_full(const void *p, int w, int h, int s)
 { (void)p; (void)w; (void)h; (void)s; sync_full_calls++; }
 static void rec_set_pixel(int x, int y, unsigned rgb)
 { (void)x; (void)y; (void)rgb; set_pixel_calls++; }
+static int native_calls, native_bad;
+static unsigned native_expect;
+static void rec_set_pixel_native(int x, int y, unsigned native)
+{
+	(void)x; (void)y;
+	native_calls++;
+	if (native != native_expect)
+		native_bad++;
+}
 static void rec_sync_rect(int x, int y, int w, int h, const void *p, int s)
 {
 	const uint16_t *src = p;
@@ -221,6 +230,42 @@ int main(void)
 	}
 	printf("OK background_resume\n");
 
+	/* 5. A native-pixel hook removes the colour round trip for live writes
+	 * (#1435): plot and the span fast path pass the page pixel unchanged,
+	 * and the RGB fallback still runs when the hook is absent. */
+	g_cur->gfx.background = 0;
+	g_cur->gfx.bits = 16;
+	g_cur->gfx.write_page = 0;
+	g_cur->gfx.display_page = 0;
+	g_cur->gfx.dirty = 0;
+	plat.set_pixel_native = rec_set_pixel_native;
+	reset_counts();
+	native_calls = native_bad = 0;
+	native_expect = mmb_pix_store(0x336699);
+	mmb_gfx_plot(5, 5, 0x336699);
+	if (native_calls != 1 || native_bad != 0 || set_pixel_calls != 0) {
+		printf("FAIL native_plot n=%d bad=%d s=%d\n",
+		       native_calls, native_bad, set_pixel_calls);
+		return 1;
+	}
+	native_calls = 0;
+	mmb_gfx_line(10, 10, 13, 10, 0x336699, 1);
+	if (native_calls != 4 || native_bad != 0 || set_pixel_calls != 0) {
+		printf("FAIL native_span n=%d bad=%d s=%d\n",
+		       native_calls, native_bad, set_pixel_calls);
+		return 1;
+	}
+	plat.set_pixel_native = 0;
+	reset_counts();
+	native_calls = 0;
+	mmb_gfx_plot(6, 6, 0x336699);
+	if (set_pixel_calls != 1 || native_calls != 0) {
+		printf("FAIL native_fallback s=%d n=%d\n",
+		       set_pixel_calls, native_calls);
+		return 1;
+	}
+	printf("OK native_pixel\n");
+
 	printf("ALL OK\n");
 	return 0;
 }
@@ -262,5 +307,6 @@ def test_partial_blit_syncs_only_presented_rect(sync_run):
 
 def test_partial_blit_sync_markers(sync_run):
     for marker in ("OK rect_present", "OK coalesce_rect", "OK no_console",
-                   "OK background_isolated", "OK background_resume"):
+                   "OK background_isolated", "OK background_resume",
+                   "OK native_pixel"):
         assert marker in sync_run.stdout, (marker, sync_run.stdout)

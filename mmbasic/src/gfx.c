@@ -869,6 +869,19 @@ void mmb_gfx_reset_console(int wipe)
 		mmb_console_apply_colour();
 }
 
+/* Write one already-quantised pixel to the live display. Platforms that can
+ * consume the page's native format skip the native -> RGB888 -> native round
+ * trip (#1435); the rest keep the existing RGB888 path. */
+static void live_set_pixel(int x, int y, uint16_t np)
+{
+	if (G.gfx.background || !G.plat)
+		return;
+	if (G.plat->set_pixel_native)
+		G.plat->set_pixel_native(x, y, np);
+	else if (G.plat->set_pixel)
+		G.plat->set_pixel(x, y, mmb_native_to_rgb(np));
+}
+
 void mmb_gfx_plot(int x, int y, unsigned rgb)
 {
 	uint16_t *pg;
@@ -894,8 +907,7 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	if (G.gfx.write_page == G.gfx.display_page)
 	{
 		mmb_gfx_dirty_add(x, by, 1, 1);
-		if (!G.gfx.background && G.plat && G.plat->set_pixel)
-			G.plat->set_pixel(x, by, mmb_native_to_rgb(np));
+		live_set_pixel(x, by, np);
 	}
 }
 
@@ -997,7 +1009,6 @@ struct span_target {
 	uint16_t *pg;
 	int w, h;
 	uint16_t np;
-	unsigned live_rgb;
 	int live; /* visible display page: dirty-track and set_pixel */
 	int dx0, dy0, dx1, dy1;
 };
@@ -1010,7 +1021,6 @@ static void span_target_init(struct span_target *t, unsigned rgb)
 	t->h = fb ? G.gfx.fb_h : G.gfx.h;
 	t->np = mmb_pix_store(rgb);
 	t->live = !fb && G.gfx.write_page == G.gfx.display_page;
-	t->live_rgb = t->live ? mmb_native_to_rgb(t->np) : 0;
 	t->dx0 = 0;
 	t->dy0 = 0;
 	t->dx1 = -1;
@@ -1044,8 +1054,7 @@ static void span_target_pixel(struct span_target *t, int x, int y)
 	if (!t->live)
 		return;
 	span_target_mark(t, x, by);
-	if (!G.gfx.background && G.plat && G.plat->set_pixel)
-		G.plat->set_pixel(x, by, t->live_rgb);
+	live_set_pixel(x, by, t->np);
 }
 
 static void span_target_row(struct span_target *t, int x, int y, int w)
@@ -1072,9 +1081,8 @@ static void span_target_row(struct span_target *t, int x, int y, int w)
 		return;
 	span_target_mark(t, x, by);
 	span_target_mark(t, x + w - 1, by);
-	if (!G.gfx.background && G.plat && G.plat->set_pixel)
-		for (px = 0; px < w; px++)
-			G.plat->set_pixel(x + px, by, t->live_rgb);
+	for (px = 0; px < w; px++)
+		live_set_pixel(x + px, by, t->np);
 }
 
 static void span_target_flush(struct span_target *t)
