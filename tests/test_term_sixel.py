@@ -5,8 +5,10 @@ command the final byte selects, so a sixel payload never lands in the cell
 grid as text.  Later phases add the decoder and the image plane.
 """
 
+import time
+
 from harness import MMBasicConsole, TermReplay
-from test_term import _plain, _quit
+from test_term import _pane_grey_hits, _plain, _quit
 from test_term_replay import _open_replay
 
 
@@ -135,6 +137,78 @@ def test_dcs_can_aborts(kernel_image):
         assert "CANPAY" not in text
         _quit(con)
         assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def _is_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 170 and g < 90 and b < 90
+
+
+RED_COLUMN = b"\x1b[1;1H\x1bPq#0;2;100;0;0~\x1b\\"
+
+
+def test_sixel_draws_red_at_cursor_cell(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        seen = _session(con, replay)
+        replay._to_guest(RED_COLUMN)
+        time.sleep(0.4)
+        replay.pump_once(recv_tcp=False)
+        hits = con.screen_pixels([(160, 0), (161, 2), (163, 4), (167, 1)])
+        assert any(_is_red(p) for p in hits), hits
+        text = _plain(seen)
+        assert "0;2;100" not in text
+        _quit(con)
+        assert con.send_line("PRINT 1+1") == "2"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_text_after_image_is_on_next_row(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        seen = _session(con, replay)
+        replay._to_guest(RED_COLUMN + b"OK")
+        more = replay.wait_serial(lambda s: "OK" in _plain(s), timeout=8.0)
+        time.sleep(0.3)
+        replay.pump_once(recv_tcp=False)
+        # The image occupies row 0; 'O' is drawn on row 1, column 0.
+        assert _pane_grey_hits(con, 0, 1) > 0
+        hits = con.screen_pixels([(160, 0), (161, 2)])
+        assert any(_is_red(p) for p in hits), hits
+        assert "OK" in _plain(seen + more)
+        _quit(con)
+        assert con.send_line("PRINT 2+2") == "4"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_moves_up_with_text_scroll(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        # Place the image on pane row 5, then scroll the pane three rows.
+        replay._to_guest(RED_COLUMN.replace(b"\x1b[1;1H", b"\x1b[6;1H"))
+        time.sleep(0.3)
+        replay._to_guest(b"\x1b[32;1H\n\n\n")
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        # Rows 5.. move to 2..; pixel (162, 2*16+2) should be red.
+        hits = con.screen_pixels([(160, 33), (160, 34), (160, 35)])
+        assert any(_is_red(p) for p in hits), hits
+        _quit(con)
+        assert con.send_line("PRINT 3+3") == "6"
     finally:
         replay.stop()
         con.stop()
