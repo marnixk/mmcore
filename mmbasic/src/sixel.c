@@ -107,6 +107,11 @@ static void six_fill(sixel_image *s, int x, int y, int w, int h, uint16_t c)
 
 static void six_put(sixel_image *s, int x, int y, uint16_t c)
 {
+	/* A failed plane allocation still runs the grammar, but writes
+	 * nothing.  The caller discards the image and the payload is never
+	 * printed as text. */
+	if (!s->pix)
+		return;
 	if (x < s->ox || y < s->oy || x >= s->ox + s->maxw ||
 	    y >= s->oy + s->maxh || x >= s->width || y >= s->height)
 		return;

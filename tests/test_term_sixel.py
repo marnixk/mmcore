@@ -412,3 +412,84 @@ def test_sixel_decsdm_pins_image_and_keeps_cursor(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+def test_sixel_view_cycle_and_typing(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0)])
+
+        # F10, then 'w' cycles Boxed -> 80x25: MODE changes and the plane is
+        # freed.  The menu must close cleanly and the session must keep typing.
+        replay.send_keys(b"\x1b[21~")
+        time.sleep(0.4)
+        replay.send_keys(b"w")
+        time.sleep(0.9)
+        replay.send_keys(b"\x1b\x1b")
+        time.sleep(0.6)
+        assert con.screen_size() == (640, 400)
+        replay._to_guest(b"VIEWOK")
+        more = replay.wait_serial(lambda s: "VIEWOK" in _plain(s), timeout=8.0)
+        assert "VIEWOK" in _plain(more)
+        _quit(con)
+        assert con.send_line("PRINT 10+10") == "20"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_leave_and_reenter(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0)])
+        _quit(con)
+        assert con.send_line("PRINT 11+11") == "22"
+
+        # A fresh session allocates a fresh plane; the old one was freed.
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0)])
+        _quit(con)
+        assert con.send_line("PRINT 12+12") == "24"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_scrollback_paging_does_not_fault(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0)])
+
+        # Push the image off the top with plenty of scrollback lines.
+        replay._to_guest(b"\x1b[32;1H" + b"SCROLLLINE\r\n" * 40)
+        time.sleep(0.8)
+        replay.pump_once(recv_tcp=False)
+        assert not _red_points(con, [(160, 0)])
+
+        # Page Up paints the text cells (not the freed plane); Page Down
+        # returns to live without a fault.
+        replay.send_keys(b"\x1b[5~")
+        time.sleep(0.8)
+        replay.pump_once(recv_tcp=False)
+        assert not _red_points(con, [(160, 0), (160, 2)])
+        replay.send_keys(b"\x1b[6~")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        _quit(con)
+        assert con.send_line("PRINT 13+13") == "26"
+    finally:
+        replay.stop()
+        con.stop()
