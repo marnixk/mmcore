@@ -30,7 +30,8 @@ Settings:
     Defer and coalesce sprite presents and hidden-page sprite drawing (default
     OFF). The final page is identical, but pixels may appear later than with
     immediate drawing, so a program that reads the page between draw commands
-    should leave it OFF.
+    should leave it OFF. Per-session only: it is not saved to the settings
+    file.
   TRACECACHE ON|OFF
   PROMPT BARE|CWD   immediate prompt (see ~PROMPT~)
     CWD (default) is DOS $p$g: drive and path then >, e.g. A:/> or A:/PRDIR>.

@@ -162,8 +162,8 @@ final page is identical, so it should be opt-in. The switch would be:
 - parsed beside `OPTION PROFILING` (`cmd_option.c:810-814`) using the existing
   `onoff()` helper, and printed by `mmb_option_list()` (`cmd_option.c:1424-1425`);
 - defaulted off in `mmb_option_reset()` (`core.c:3029-3031`);
-- persisted as `fastdraw=` through the option table in `settings.c:208-209`
-  (load) and `settings.c:417` (save);
+- not loaded from or written to `.mmbasic.ini`: it is a per-session switch,
+  since a later boot must not silently defer drawing (see `settings.c`);
 - documented in `docs/help/option.txt` (the `OPTION` block, around line 29),
   then `mmbasic/src/help_data.c` regenerated from the help sources.
 

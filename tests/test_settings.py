@@ -128,23 +128,29 @@ def test_option_persists_to_hidden_ini(console):
     assert "[core]" in ini
 
 
-def test_option_fastdraw_defaults_off_and_persists(console):
-    """#1433: OPTION FASTDRAW is off by default, listed and persisted."""
+def test_option_fastdraw_defaults_off_and_is_not_persisted(console):
+    """#1433: OPTION FASTDRAW is off by default and listed, but per-session.
+
+    It changes when pixels appear, so it must not leak into a later boot from
+    .mmbasic.ini; a program that relies on immediate drawing leaves it OFF.
+    """
     assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
     listed = console.send_line("OPTION LIST")
     assert "FASTDRAW" not in listed
     all_listed = console.send_line("OPTION LIST ALL")
     assert "OPTION FASTDRAW OFF" in all_listed
+    ini = _read_ini(console)
+    assert "fastdraw" not in ini
     assert console.send_line("OPTION FASTDRAW ON") == ""
     listed = console.send_line("OPTION LIST")
     assert "OPTION FASTDRAW ON" in listed
     ini = _read_ini(console)
-    assert "fastdraw=1" in ini
+    assert "fastdraw" not in ini
     assert console.send_line("OPTION FASTDRAW OFF") == ""
     listed = console.send_line("OPTION LIST")
     assert "FASTDRAW" not in listed
     ini = _read_ini(console)
-    assert "fastdraw=0" in ini
+    assert "fastdraw" not in ini
 
 
 def test_brightness_and_volume_persist(console):
