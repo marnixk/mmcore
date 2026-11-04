@@ -87,6 +87,15 @@
 #define TM_BOX_BL      0xC0u
 #define TM_BOX_BR      0xD9u
 #define TM_ANSI_OSC_MS  2000
+/* ansi_st values for DCS: parameters before the final byte, the body, and the
+ * byte after an ESC that may be the string terminator. */
+#define TM_ANSI_DCS_PARAM 8
+#define TM_ANSI_DCS_BODY  9
+#define TM_ANSI_DCS_ESC   10
+/* Sixel/DCS framing. A full-screen image over a slow link can be silent for
+ * longer than the OSC watchdog, so the DCS gets its own idle and body caps. */
+#define TM_DCS_IDLE_MS  30000
+#define TM_DCS_MAX      (4u * 1024u * 1024u)
 #define TM_REPLAY_HEX   512
 #define TM_FILE_LINE    1280
 #define TM_FILE_PEND    16
@@ -138,6 +147,9 @@ typedef struct {
 	int ansi_narg;
 	int ansi_arg[TM_ANSI_ARGS];
 	int ansi_priv;
+	unsigned dcs_at;       /* last DCS byte, for the idle abort */
+	unsigned dcs_n;        /* DCS body bytes seen, for the cap */
+	int dcs_sixel;         /* open DCS is a sixel command (q final) */
 	int sav_row;
 	int sav_col;
 	int scroll_top;        /* DECSTBM scrolling region, 0-based inclusive */
@@ -4217,6 +4229,97 @@ static void ansi_reset_csi(void)
 		T.ansi_arg[i] = 0;
 }
 
+static int ansi_dcs_open(void)
+{
+	return T.ansi_st == TM_ANSI_DCS_PARAM ||
+	       T.ansi_st == TM_ANSI_DCS_BODY ||
+	       T.ansi_st == TM_ANSI_DCS_ESC;
+}
+
+static void ansi_dcs_begin(void)
+{
+	ansi_reset_csi();
+	T.ansi_st = TM_ANSI_DCS_PARAM;
+	T.dcs_n = 0;
+	T.dcs_sixel = 0;
+	T.dcs_at = mmb_now_ms();
+}
+
+/* Leave a DCS without printing any of its tail.  The sixel decoder hooks in
+ * later phases; framing alone only has to restore ground. */
+static void ansi_dcs_end(void)
+{
+	T.ansi_st = 0;
+	T.dcs_sixel = 0;
+}
+
+/* Returns 1 when the byte belonged to an open DCS. */
+static int ansi_feed(unsigned char b);
+
+static int ansi_dcs_feed(unsigned char b)
+{
+	if (++T.dcs_n > TM_DCS_MAX)
+	{
+		ansi_dcs_end();
+		return 1;
+	}
+	T.dcs_at = mmb_now_ms();
+	if (T.ansi_st == TM_ANSI_DCS_PARAM)
+	{
+		if (b >= '0' && b <= '9')
+		{
+			if (T.ansi_narg == 0)
+				T.ansi_narg = 1;
+			T.ansi_arg[T.ansi_narg - 1] =
+				T.ansi_arg[T.ansi_narg - 1] * 10 + (b - '0');
+			return 1;
+		}
+		if (b == ';')
+		{
+			if (T.ansi_narg < TM_ANSI_ARGS)
+				T.ansi_narg++;
+			return 1;
+		}
+		if (b == '?')
+		{
+			T.ansi_priv = 1;
+			return 1;
+		}
+		if (b >= '@' && b <= '~')
+		{
+			T.dcs_sixel = (b == 'q');
+			T.ansi_st = TM_ANSI_DCS_BODY;
+			return 1;
+		}
+		return 1;
+	}
+	if (T.ansi_st == TM_ANSI_DCS_ESC)
+	{
+		if (b == '\\')
+		{
+			ansi_dcs_end();
+			return 1;
+		}
+		/* A lone ESC aborts the image, and the ESC itself is fed back so a
+		 * missing terminator cannot eat the rest of the session. */
+		ansi_dcs_end();
+		ansi_feed(27);
+		return ansi_feed(b) ? 1 : 0;
+	}
+	/* Body. */
+	if (b == 0x9C || b == 0x18 || b == 0x1A)
+	{
+		ansi_dcs_end();
+		return 1;
+	}
+	if (b == 27)
+	{
+		T.ansi_st = TM_ANSI_DCS_ESC;
+		return 1;
+	}
+	return 1;
+}
+
 static int ansi_feed(unsigned char b)
 {
 	if (T.ansi_st == 0)
@@ -4226,8 +4329,19 @@ static int ansi_feed(unsigned char b)
 			T.ansi_st = 1;
 			return 1;
 		}
+		/* 8-bit C1 DCS (0x90) and ST (0x9C): img2sixel defaults to the
+		 * 7-bit form, but accepting the C1 forms is cheap. */
+		if (b == 0x90)
+		{
+			ansi_dcs_begin();
+			return 1;
+		}
+		if (b == 0x9C)
+			return 1;
 		return 0;
 	}
+	if (ansi_dcs_open())
+		return ansi_dcs_feed(b);
 	if (T.ansi_st == 1)
 	{
 		if (b == '[')
@@ -4240,6 +4354,11 @@ static int ansi_feed(unsigned char b)
 		{
 			T.ansi_st = 4;
 			T.ansi_at = mmb_now_ms();
+			return 1;
+		}
+		if (b == 'P')
+		{
+			ansi_dcs_begin();
 			return 1;
 		}
 		if (b == '7')
@@ -4340,6 +4459,12 @@ static int iac_cmd_byte(unsigned char b)
 
 static void ansi_watchdog(void)
 {
+	if (ansi_dcs_open())
+	{
+		if (T.dcs_at && mmb_now_ms() - T.dcs_at > TM_DCS_IDLE_MS)
+			ansi_dcs_end();
+		return;
+	}
 	if (T.ansi_st != 4 && T.ansi_st != 5)
 		return;
 	if (T.ansi_at && mmb_now_ms() - T.ansi_at > TM_ANSI_OSC_MS)
@@ -5261,7 +5386,7 @@ static int term_rx_interpret(void)
 		unsigned char b = mmb_net_rxbuf_at(&term_rx, 0);
 		unsigned avail = mmb_net_rxbuf_used(&term_rx);
 
-		if (zmodem_scan(b))
+		if (!ansi_dcs_open() && zmodem_scan(b))
 		{
 			term_rx_consume(1);
 			zmodem_start();
