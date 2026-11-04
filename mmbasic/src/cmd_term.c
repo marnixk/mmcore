@@ -1,6 +1,7 @@
 #include "mmb_priv.h"
 #include "mmb_zmodem.h"
 #include "net_rxbuf.h"
+#include "sixel.h"
 #include <string.h>
 
 #define IAC   255
@@ -152,6 +153,15 @@ typedef struct {
 	unsigned dcs_at;       /* last DCS byte, for the idle abort */
 	unsigned dcs_n;        /* DCS body bytes seen, for the cap */
 	int dcs_sixel;         /* open DCS is a sixel command (q final) */
+	int six_on;            /* decoding a sixel image */
+	int six_ok;            /* the plane is allocated and the decoder is live */
+	int six_scrolled;      /* text rows scrolled while placing this image */
+	int six_top;           /* visible top of the image, in plane pixels */
+	int six_origin_row;
+	sixel_image six;
+	int img_dirty;         /* a sixel updated the plane since the last draw */
+	int img_x, img_y, img_w, img_h;
+	int img_lo, img_hi;    /* pane rows the image covers */
 	int sav_row;
 	int sav_col;
 	int scroll_top;        /* DECSTBM scrolling region, 0-based inclusive */
@@ -242,6 +252,19 @@ typedef struct {
 
 static tm_state T_s[MMB_MAX_CONSOLES];
 #define T (T_s[g_console])
+
+/* A native-pixel plane beside the cell grid, one per console, allocated on
+ * the first sixel.  Coverage records which cells the plane owns so
+ * term_draw_row can composite them instead of glyphs.  The pixel buffer and
+ * coverage bytes are one heap block; the struct lives beside it. */
+typedef struct {
+	uint16_t *pix;
+	unsigned char *cov;
+	int w, h, stride;
+} term_plane;
+
+static term_plane *P_s[MMB_MAX_CONSOLES];
+#define P (*P_s[g_console])
 
 /* Set while mmb_term_poll() runs from a background yield callback (#858): the
  * session is drained and interpreted, but nothing may be painted. */
@@ -1293,6 +1316,124 @@ static void mark_dirty_full(void)
 	T.need_draw = 1;
 }
 
+/* ---- sixel plane ----------------------------------------------------- */
+
+static void term_plane_free(int idx)
+{
+	term_plane *p = P_s[idx];
+
+	if (!p)
+		return;
+	if (G.plat && G.plat->free)
+	{
+		G.plat->free(p->pix);
+		G.plat->free(p);
+	}
+	P_s[idx] = 0;
+}
+
+static int term_plane_alloc(void)
+{
+	term_plane *p;
+	void *block;
+	unsigned pixbytes, covbytes;
+	int w, h;
+
+	if (P_s[g_console])
+		return 0;
+	if (!G.plat || !G.plat->alloc)
+		return -1;
+	w = term_width() * TM_CW;
+	h = T.pane_rows * T.cell_h;
+	if (w < 1 || h < 1)
+		return -1;
+	pixbytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
+	covbytes = TM_MAX_ROWS * TM_MAX_COLS;
+	p = (term_plane *)G.plat->alloc((unsigned)sizeof(term_plane));
+	block = G.plat->alloc(pixbytes + covbytes);
+	if (!p || !block)
+	{
+		if (p && G.plat->free)
+			G.plat->free(p);
+		if (block && G.plat->free)
+			G.plat->free(block);
+		return -1;
+	}
+	memset(block, 0, pixbytes + covbytes);
+	p->pix = (uint16_t *)block;
+	p->cov = (unsigned char *)block + pixbytes;
+	p->w = w;
+	p->h = h;
+	p->stride = w;
+	P_s[g_console] = p;
+	return 0;
+}
+
+static void term_plane_clear(void)
+{
+	if (!P_s[g_console])
+		return;
+	memset(P.pix, 0, (size_t)P.w * (size_t)P.h * sizeof(uint16_t));
+	memset(P.cov, 0, TM_MAX_ROWS * TM_MAX_COLS);
+}
+
+/* Scroll the plane pixels and coverage inside the DECSTBM region, matching
+ * the cell scroll.  Rows that leave the top are dropped. */
+static void term_plane_scroll_up(int n)
+{
+	term_plane *p = P_s[g_console];
+	int top, bot, rows, r;
+
+	if (!p)
+		return;
+	top = T.scroll_top;
+	bot = T.scroll_bot;
+	rows = bot - top + 1;
+	if (rows < 1)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > rows)
+		n = rows;
+	if (n < rows)
+		memmove(p->pix + top * T.cell_h * p->stride,
+			p->pix + (top + n) * T.cell_h * p->stride,
+			(size_t)(rows - n) * T.cell_h * p->stride *
+				sizeof(uint16_t));
+	memset(p->pix + (bot - n + 1) * T.cell_h * p->stride, 0,
+	       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
+	for (r = top; r <= bot - n; r++)
+		memmove(p->cov + r * TM_MAX_COLS,
+			p->cov + (r + n) * TM_MAX_COLS, TM_MAX_COLS);
+	for (r = bot - n + 1; r <= bot; r++)
+		memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+}
+
+/* Composite one run of covered cells from the plane into page 2. */
+static void term_plane_blit(int r, int c0, int c1)
+{
+	uint16_t *page;
+	int bw, bh, dy;
+	int x, y;
+	int n = c1 - c0;
+
+	if (!P_s[g_console])
+		return;
+	page = mmb_gfx_buf_for(TM_PAGE, &bw, &bh);
+	if (!page)
+		return;
+	x = (T.pane_left + c0) * TM_CW;
+	y = T.pane_top + r * T.cell_h;
+	for (dy = 0; dy < T.cell_h; dy++)
+	{
+		if (y + dy >= bh)
+			break;
+		memcpy(page + (y + dy) * bw + x,
+		       P.pix + (r * T.cell_h + dy) * P.stride + c0 * TM_CW,
+		       (size_t)n * TM_CW * sizeof(uint16_t));
+	}
+}
+
 static void term_draw(void);
 static void term_draw_row(int r);
 
@@ -1323,6 +1464,7 @@ static void pane_scroll_up(void)
 
 	if (bot <= top)
 		return;
+	term_plane_scroll_up(1);
 	/* Only a region anchored at the pane top spills into scrollback; a
 	 * sub-region scroll discards the line at its top margin. (#1225) */
 	if (top == 0)
@@ -1598,8 +1740,24 @@ static void term_draw_row(int r)
 	if (r < 0 || r >= T.pane_rows)
 		return;
 	y = T.pane_top + r * T.cell_h;
-	for (c = 0; c < term_width(); c++)
+	c = 0;
+	while (c < term_width())
 	{
+		/* A covered run composites the plane; adjacent cells are one
+		 * scanline memcpy.  Page Up shows the text cells instead. */
+		if (T.sb_view <= 0 && P_s[g_console] &&
+		    P.cov[r * TM_MAX_COLS + c])
+		{
+			int c0 = c;
+
+			while (c < term_width() && P.cov[r * TM_MAX_COLS + c])
+				c++;
+			term_plane_blit(r, c0, c);
+			/* Force the glyph path when coverage clears later. */
+			for (x = c0; x < c; x++)
+				term_cell_sh[r][x] = 0;
+			continue;
+		}
 		x = (T.pane_left + c) * TM_CW;
 		term_view_cell(r, c, &ch, &fg, &bg);
 		if (!ch)
@@ -1612,10 +1770,12 @@ static void term_draw_row(int r)
 			bg = t;
 		}
 		key = term_shadow_key(ch, fg, bg);
-		if (key == term_cell_sh[r][c])
-			continue;
-		term_cell_sh[r][c] = key;
-		term_cell(x, y, ch, fg, bg);
+		if (key != term_cell_sh[r][c])
+		{
+			term_cell_sh[r][c] = key;
+			term_cell(x, y, ch, fg, bg);
+		}
+		c++;
 	}
 }
 
@@ -1786,6 +1946,38 @@ static void term_draw(void)
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 					T.vid_cols * TM_CW, T.cell_h);
 		}
+		else if (T.img_dirty)
+		{
+			int a, b;
+
+			/* Present the image box, not the whole pane.  Text damage
+			 * outside the image rows still needs its own band. */
+			term_rect_union(&px, &py, &pw, &ph, T.img_x, T.img_y,
+					T.img_w, T.img_h);
+			if (lo >= 0 && hi >= lo)
+			{
+				a = lo;
+				b = hi;
+				if (a < T.img_lo)
+				{
+					int e = b < T.img_lo - 1 ? b : T.img_lo - 1;
+
+					term_rect_union(&px, &py, &pw, &ph, x0,
+							T.pane_top + a * T.cell_h,
+							pane_w, (e - a + 1) * T.cell_h);
+				}
+				if (b > T.img_hi)
+				{
+					int s = a > T.img_hi + 1 ? a : T.img_hi + 1;
+
+					term_rect_union(&px, &py, &pw, &ph, x0,
+							T.pane_top + s * T.cell_h,
+							pane_w, (b - s + 1) * T.cell_h);
+				}
+			}
+			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+					T.vid_cols * TM_CW, T.cell_h);
+		}
 		else if (lo >= 0 && hi >= lo)
 		{
 			int y = T.pane_top + lo * T.cell_h;
@@ -1805,6 +1997,7 @@ static void term_draw(void)
 	T.dirty_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
+	T.img_dirty = 0;
 	T.cur_shown = T.cur_vis;
 	T.cur_shown_row = T.cur_row;
 }
@@ -1845,6 +2038,7 @@ static void term_exit(void)
 	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
 	 * session's counters; free the large scrollback ring on leave (#767). */
 	term_sb_free(g_console);
+	term_plane_free(g_console);
 }
 
 static void replay_tx(const unsigned char *p, unsigned n)
@@ -2335,6 +2529,10 @@ static void term_cycle_view(void)
 	}
 	else
 		T.letterbox = 1;
+	/* The plane tracks the pane size; drop it and let the next image
+	 * allocate the new size (rescaling a live image is not worth it). */
+	term_plane_free(g_console);
+	T.img_dirty = 0;
 	term_apply_session_mode();
 	term_layout();
 	term_reset_scroll_region();
@@ -4260,6 +4458,143 @@ static void ansi_exec_priv(char cmd)
 	}
 }
 
+/* ---- sixel image session --------------------------------------------- */
+
+/* Make room before a six-pixel band runs past the bottom of the scrolling
+ * region.  Each scroll moves the text cells and the plane up one text row,
+ * and the image's coordinates follow, so the visible part is the bottom. */
+static void term_sixel_ensure_room(void)
+{
+	int limit, region_rows;
+
+	if (!T.six_ok || T.scroll_bot <= T.scroll_top)
+		return;
+	limit = (T.scroll_bot + 1) * T.cell_h;
+	region_rows = T.scroll_bot - T.scroll_top + 1;
+	while (T.six.y + 6 > limit && T.six_scrolled < region_rows)
+	{
+		pane_scroll_up();
+		T.six.y -= T.cell_h;
+		T.six.bottom -= T.cell_h;
+		if (T.six.bottom < 0)
+			T.six.bottom = 0;
+		T.six_top -= T.cell_h;
+		if (T.six_top < 0)
+			T.six_top = 0;
+		T.six_scrolled++;
+	}
+}
+
+static void term_sixel_begin(int p1, int p2, int p3)
+{
+	sixel_config cfg;
+	int ox, oy;
+
+	T.six_on = 0;
+	T.six_ok = 0;
+	if (term_plane_alloc() != 0)
+		return;      /* discard the DCS payload; never print it */
+	ox = T.cur_col * TM_CW;
+	oy = T.cur_row * T.cell_h;
+	if (ox < 0)
+		ox = 0;
+	if (oy < 0)
+		oy = 0;
+	if (ox > P.w)
+		ox = P.w;
+	if (oy > P.h)
+		oy = P.h;
+	memset(&cfg, 0, sizeof cfg);
+	cfg.pix = P.pix;
+	cfg.stride = P.stride;
+	cfg.width = P.w;
+	cfg.height = P.h;
+	cfg.ox = ox;
+	cfg.oy = 0;
+	cfg.p1 = p1;
+	cfg.p2 = p2;
+	cfg.p3 = p3;
+	cfg.bg = mmb_pix_store(term_paper());
+	cfg.pack = mmb_pix_store;
+	cfg.cover = P.cov;
+	cfg.cover_cols = TM_MAX_COLS;
+	cfg.cell_w = TM_CW;
+	cfg.cell_h = T.cell_h;
+	sixel_begin(&T.six, &cfg);
+	T.six.y = oy;
+	T.six.bottom = oy;
+	T.six.right = ox;
+	T.six.maxh = (T.scroll_bot + 1) * T.cell_h;
+	if (T.six.maxh > P.h)
+		T.six.maxh = P.h;
+	T.six_top = oy;
+	T.six_origin_row = T.cur_row;
+	T.six_scrolled = 0;
+	T.six_on = 1;
+	T.six_ok = 1;
+}
+
+static void term_sixel_feed(unsigned char b)
+{
+	if (!T.six_on)
+		return;
+	term_sixel_ensure_room();
+	sixel_feed(&T.six, b);
+}
+
+static void term_sixel_end(void)
+{
+	int row, left, right, top, bot, r;
+
+	if (!T.six_on)
+		return;
+	T.six_on = 0;
+	if (!T.six_ok)
+		return;
+	sixel_finish(&T.six);
+	T.six_ok = 0;
+	if (T.six.painted_w <= 0 || T.six.painted_h <= 0)
+		return;
+
+	/* Cursor to column 0 of the cell row below the image. */
+	row = (T.six.bottom + T.cell_h - 1) / T.cell_h;
+	if (row < 0)
+		row = 0;
+	if (row >= T.pane_rows)
+		row = T.pane_rows - 1;
+	T.cur_row = row;
+	T.cur_col = 0;
+
+	left = T.six.ox;
+	right = T.six.right;
+	top = T.six_top;
+	bot = T.six.bottom;
+	if (left < 0)
+		left = 0;
+	if (top < 0)
+		top = 0;
+	if (right > P.w)
+		right = P.w;
+	if (bot > P.h)
+		bot = P.h;
+	if (right > left && bot > top)
+	{
+		T.img_x = T.pane_left * TM_CW + left;
+		T.img_y = T.pane_top + top;
+		T.img_w = right - left;
+		T.img_h = bot - top;
+		T.img_lo = top / T.cell_h;
+		T.img_hi = (bot - 1) / T.cell_h;
+		if (T.img_hi >= T.pane_rows)
+			T.img_hi = T.pane_rows - 1;
+		T.img_dirty = 1;
+		for (r = T.img_lo; r <= T.img_hi; r++)
+			mark_dirty_row(r);
+	}
+	mark_dirty_row(T.cur_row);
+	T.need_draw = 1;
+}
+
 static void ansi_reset_csi(void)
 {
 	int i;
@@ -4285,10 +4620,10 @@ static void ansi_dcs_begin(void)
 	T.dcs_at = mmb_now_ms();
 }
 
-/* Leave a DCS without printing any of its tail.  The sixel decoder hooks in
- * later phases; framing alone only has to restore ground. */
+/* Leave a DCS without printing any of its tail. */
 static void ansi_dcs_end(void)
 {
+	term_sixel_end();
 	T.ansi_st = 0;
 	T.dcs_sixel = 0;
 }
@@ -4328,6 +4663,9 @@ static int ansi_dcs_feed(unsigned char b)
 		if (b >= '@' && b <= '~')
 		{
 			T.dcs_sixel = (b == 'q');
+			if (T.dcs_sixel)
+				term_sixel_begin(T.ansi_arg[0], T.ansi_arg[1],
+						 T.ansi_arg[2]);
 			T.ansi_st = TM_ANSI_DCS_BODY;
 			return 1;
 		}
@@ -4357,6 +4695,8 @@ static int ansi_dcs_feed(unsigned char b)
 		T.ansi_st = TM_ANSI_DCS_ESC;
 		return 1;
 	}
+	if (T.dcs_sixel)
+		term_sixel_feed(b);
 	return 1;
 }
 

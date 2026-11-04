@@ -94,24 +94,15 @@ static int six_pct(int v)
 	return v * 255 / 100;
 }
 
+static void six_put(sixel_image *s, int x, int y, uint16_t c);
+
 static void six_fill(sixel_image *s, int x, int y, int w, int h, uint16_t c)
 {
 	int i, j;
 
 	for (j = 0; j < h; j++)
 		for (i = 0; i < w; i++)
-		{
-			int px = x + i, py = y + j;
-
-			if (px < s->ox || py < s->oy || px >= s->ox + s->maxw ||
-			    py >= s->oy + s->maxh || px >= s->width || py >= s->height)
-				continue;
-			s->pix[py * s->stride + px] = c;
-			if (py + 1 > s->bottom)
-				s->bottom = py + 1;
-			if (px + 1 > s->right)
-				s->right = px + 1;
-		}
+			six_put(s, x + i, y + j, c);
 }
 
 static void six_put(sixel_image *s, int x, int y, uint16_t c)
@@ -124,6 +115,14 @@ static void six_put(sixel_image *s, int x, int y, uint16_t c)
 		s->bottom = y + 1;
 	if (x + 1 > s->right)
 		s->right = x + 1;
+	if (s->cover && s->cell_w > 0 && s->cell_h > 0)
+	{
+		int cc = x / s->cell_w;
+		int cr = y / s->cell_h;
+
+		if (cr >= 0 && cc >= 0)
+			s->cover[cr * s->cover_cols + cc] = 1;
+	}
 }
 
 /* One sixel character: six vertical pixels in the active register.
@@ -274,6 +273,10 @@ void sixel_begin(sixel_image *s, const sixel_config *cfg)
 	s->p2 = (cfg->p2 == 1) ? 1 : 0;
 	s->bg = cfg->bg;
 	s->pack = cfg->pack;
+	s->cover = cfg->cover;
+	s->cover_cols = cfg->cover_cols;
+	s->cell_w = cfg->cell_w;
+	s->cell_h = cfg->cell_h;
 	for (i = 0; i < 16; i++)
 		s->pal[i] = six_pack(s, s_vt340[i]);
 	for (i = 16; i < 256; i++)

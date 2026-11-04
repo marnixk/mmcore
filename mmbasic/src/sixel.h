@@ -22,6 +22,9 @@ typedef struct {
 	int p1, p2, p3;    /* DCS P1;P2;P3 (P1/P3 ignored) */
 	uint16_t bg;       /* packed background captured at q */
 	sixel_pack_fn pack;
+	unsigned char *cover; /* optional per-cell coverage bytes */
+	int cover_cols;
+	int cell_w, cell_h;   /* cell size for coverage */
 } sixel_config;
 
 typedef enum {
@@ -39,6 +42,10 @@ typedef struct {
 	int p2;
 	uint16_t bg;
 	sixel_pack_fn pack;
+
+	unsigned char *cover;
+	int cover_cols;
+	int cell_w, cell_h;
 
 	uint16_t pal[256];
 	int reg;
