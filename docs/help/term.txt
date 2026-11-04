@@ -47,7 +47,10 @@ scroll updates the cell buffer and redraws the pane so a burst of BBS ANSI
 newlines is one present, not a pixel shift per line.
 
 ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL/ECH) plus telnet
-TTYPE=ANSI and DA/DSR replies for BBS autodetection. Erasing keeps the current
+TTYPE=ANSI and DA/DSR replies for BBS autodetection. SGR 5/6 are treated as
+iCE colours: the blink bit selects the bright half of the 40-47 background
+palette instead of blinking, so BBS art gets all 16 background colours.
+SGR 25 clears the bright bit. Erasing keeps the current
 SGR background (Background Color Erase), so full-width bars such as irssi's
 status line fill to the edge. NAWS reports 80 columns when boxed and the Full
 MODE width when full. ESC ( B charset sequences are eaten so they do not print a

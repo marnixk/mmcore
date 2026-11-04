@@ -15,7 +15,9 @@ restored.
 
 An ANSI preview interprets the file as a VT100/ANSI terminal would (SGR
 colours, cursor movement, erase, save/restore) using IBM VGA CP437 glyphs and
-the standard 16-colour palette on a black screen in the current MODE. Lines
+the standard 16-colour palette on a black screen in the current MODE. SGR 5/6
+are treated as iCE colours: blink selects a bright 40-47 background rather
+than blinking text, and SGR 25 clears it. Lines
 auto-wrap at 80 columns like a real ANSI terminal, whatever the MODE. Up/Down
 scroll a row and PgUp/PgDn a page through art taller than the screen; content
 is kept, so earlier rows remain reachable. Press F to toggle the authentic
