@@ -102,7 +102,7 @@ static fu_state F_s[MMB_MAX_CONSOLES];
 typedef struct {
 	int cols;
 	int row, col;
-	int fg, bg, bold, inv;
+	int fg, bg, bold, inv, ice;
 	int sav_row, sav_col;
 	int st;
 	int args[8], narg, priv;
@@ -117,6 +117,7 @@ static an_parser an_ps[MMB_MAX_CONSOLES];
 #define an_p_bg   (AP.bg)
 #define an_p_bold (AP.bold)
 #define an_p_inv  (AP.inv)
+#define an_p_ice  (AP.ice)
 #define an_p_sav_row (AP.sav_row)
 #define an_p_sav_col (AP.sav_col)
 #define an_p_st   (AP.st)
@@ -1425,9 +1426,20 @@ static void an_touch(int row)
 		F.an_rows = row + 1;
 }
 
+/* iCE colours: SGR 5 is the blink bit on a VGA, but ANSI art uses it as the
+ * high bit of a 40-47 background to reach all 16 background colours. Always
+ * treat it that way; blinking text is not needed by BBS/ANSI content. */
+static int an_bg(void)
+{
+	if (an_p_ice && an_p_bg < 8)
+		return an_p_bg + 8;
+	return an_p_bg;
+}
+
 static void an_clear_cells(int r0, int c0, int r1, int c1)
 {
 	int r, c;
+	int bg = an_bg();
 	if (!an_scr)
 		return;
 	if (r0 < 0)
@@ -1442,8 +1454,8 @@ static void an_clear_cells(int r0, int c0, int r1, int c1)
 		for (c = c0; c < c1; c++)
 		{
 			an_scr[r][c].ch = ' ';
-			an_scr[r][c].fg = (unsigned char)(an_p_inv ? an_p_bg : an_p_fg);
-			an_scr[r][c].bg = (unsigned char)(an_p_inv ? an_p_fg : an_p_bg);
+			an_scr[r][c].fg = (unsigned char)(an_p_inv ? bg : an_p_fg);
+			an_scr[r][c].bg = (unsigned char)(an_p_inv ? an_p_fg : bg);
 		}
 }
 
@@ -1537,7 +1549,7 @@ static void an_put(unsigned char ch)
 	fg = an_p_fg;
 	if (an_p_bold && fg < 8)
 		fg += 8;
-	bg = an_p_bg;
+	bg = an_bg();
 	if (an_p_inv)
 	{
 		int t = fg;
@@ -1565,11 +1577,16 @@ static void an_sgr(void)
 			an_p_bg = 0;
 			an_p_bold = 0;
 			an_p_inv = 0;
+			an_p_ice = 0;
 		}
 		else if (v == 1)
 			an_p_bold = 1;
+		else if (v == 5 || v == 6)
+			an_p_ice = 1;
 		else if (v == 22)
 			an_p_bold = 0;
+		else if (v == 25)
+			an_p_ice = 0;
 		else if (v == 7)
 			an_p_inv = 1;
 		else if (v == 27)
@@ -1767,6 +1784,7 @@ static void an_feed(unsigned char b)
 			an_p_bg = 0;
 			an_p_bold = 0;
 			an_p_inv = 0;
+			an_p_ice = 0;
 			an_p_st = 0;
 			return;
 		}
@@ -1838,6 +1856,7 @@ static void an_reset(int cols)
 	an_p_bg = 0;
 	an_p_bold = 0;
 	an_p_inv = 0;
+	an_p_ice = 0;
 	an_p_sav_row = an_p_sav_col = 0;
 	an_p_st = 0;
 	an_p_narg = 0;

@@ -134,6 +134,8 @@ typedef struct {
 	unsigned cur_bg;
 	int ansi_bold;
 	int ansi_inv;
+	int ansi_ice;          /* SGR 5/6: high bit of a 40-47 background */
+	int ansi_bg_base;      /* palette bg index 0-15, -1 for 256-colour RGB */
 	int ansi_st;
 	int ansi_narg;
 	int ansi_arg[TM_ANSI_ARGS];
@@ -908,12 +910,28 @@ static unsigned term_paper(void)
 	return T.ansi_inv ? T.cur_fg : T.cur_bg;
 }
 
+/* Apply the iCE high bit to the selected palette background. SGR 5 is the
+ * blink attribute on a real VGA, but every BBS/ANSI file here wants the 16
+ * background colours it unlocks instead of blinking text. */
+static void ansi_update_bg(void)
+{
+	int idx;
+	if (T.ansi_bg_base < 0)
+		return;
+	idx = T.ansi_bg_base;
+	if (T.ansi_ice && idx < 8)
+		idx += 8;
+	T.cur_bg = ansi_pal(idx);
+}
+
 static void term_reset_pen(void)
 {
 	T.cur_fg = TM_FG;
 	T.cur_bg = TM_BG;
 	T.ansi_bold = 0;
 	T.ansi_inv = 0;
+	T.ansi_ice = 0;
+	T.ansi_bg_base = 0;
 }
 
 /* The USB keyboard delivers Alt+key as Ctrl+A then the key, so a byte 1 on
@@ -3774,10 +3792,20 @@ static void ansi_sgr(void)
 			term_reset_pen();
 		else if (v == 1)
 			T.ansi_bold = 1;
+		else if (v == 5 || v == 6)
+		{
+			T.ansi_ice = 1;
+			ansi_update_bg();
+		}
 		else if (v == 7)
 			T.ansi_inv = 1;
 		else if (v == 22)
 			T.ansi_bold = 0;
+		else if (v == 25)
+		{
+			T.ansi_ice = 0;
+			ansi_update_bg();
+		}
 		else if (v == 27)
 			T.ansi_inv = 0;
 		else if (v >= 30 && v <= 37)
@@ -3785,20 +3813,32 @@ static void ansi_sgr(void)
 		else if (v >= 90 && v <= 97)
 			T.cur_fg = ansi_pal(v - 90 + 8);
 		else if (v >= 40 && v <= 47)
-			T.cur_bg = ansi_pal(v - 40);
+		{
+			T.ansi_bg_base = v - 40;
+			ansi_update_bg();
+		}
 		else if (v >= 100 && v <= 107)
-			T.cur_bg = ansi_pal(v - 100 + 8);
+		{
+			T.ansi_bg_base = v - 100 + 8;
+			ansi_update_bg();
+		}
 		else if (v == 39)
 			T.cur_fg = TM_FG;
 		else if (v == 49)
-			T.cur_bg = TM_BG;
+		{
+			T.ansi_bg_base = 0;
+			ansi_update_bg();
+		}
 		else if ((v == 38 || v == 48) && i + 2 < n && T.ansi_arg[i + 1] == 5)
 		{
 			unsigned c = ansi_256(T.ansi_arg[i + 2]);
 			if (v == 38)
 				T.cur_fg = c;
 			else
+			{
+				T.ansi_bg_base = -1;
 				T.cur_bg = c;
+			}
 			i += 2;
 		}
 	}

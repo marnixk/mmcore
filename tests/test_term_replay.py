@@ -494,6 +494,61 @@ def test_term_replay_bce_erases_with_background(kernel_image):
         con.stop()
 
 
+def _is_bright_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 200 and 40 < g < 140 and 40 < b < 140
+
+
+def _is_dark_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 100 and g < 40 and b < 40
+
+
+def test_term_replay_ice_colors_use_bright_backgrounds(kernel_image):
+    """SGR 5/6 turn the blink bit into the bright background bit (iCE colours)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+
+        def cell(row: int, col: int):
+            return con.screen_pixel(20 * 8 + col * 8 + 4, row * 16 + 8)
+
+        # Blink before the background, and after it, must both go bright.
+        for seq in (b"\x1b[5;41m", b"\x1b[41;5m"):
+            replay._to_guest(b"\x1b[0m\x1b[2J")
+            _replay_settle(replay)
+            replay._to_guest(b"\x1b[?25l\x1b[1;1H" + seq + b"    ")
+            _replay_settle(replay)
+            for col in range(4):
+                assert _is_bright_red(cell(0, col)), (seq, col, cell(0, col))
+
+        # Rapid blink selects the same high bit.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[6;44m    ")
+        _replay_settle(replay)
+        for col in range(4):
+            r, g, b = cell(0, col)
+            assert b > 200 and 40 < r < 140 and 40 < g < 140, cell(0, col)
+
+        # SGR 25 clears the high bit, leaving the normal background.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[5;41m\x1b[25m    ")
+        _replay_settle(replay)
+        for col in range(4):
+            assert _is_dark_red(cell(0, col)), (col, cell(0, col))
+        con.capture_png("/opt/cursor/artifacts/term_ice_colors.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def _is_green(rgb) -> bool:
     r, g, b = rgb
     return g > 100 and g > r + 40 and g > b + 40

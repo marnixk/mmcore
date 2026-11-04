@@ -66,6 +66,20 @@ def test_files_ansi_preview_colours_and_exit(fresh_console):
     _keys(con, b"q")
 
 
+def test_files_ansi_ice_colors_use_bright_backgrounds(fresh_console):
+    """SGR 5/6 select the bright half of the background palette (iCE colours)."""
+    con = fresh_console
+    _open_ansi(con, "ICE.ANS")
+    # Rows 2, 4 and 6: SGR 5 before 41, 41 before 5, and 5;44 -> bright red/blue.
+    assert _is_colour(con.screen_pixel(20, 20), (255, 85, 85)), con.screen_pixel(20, 20)
+    assert _is_colour(con.screen_pixel(20, 52), (255, 85, 85)), con.screen_pixel(20, 52)
+    assert _is_colour(con.screen_pixel(20, 84), (85, 85, 255)), con.screen_pixel(20, 84)
+    # Row 8: SGR 25 clears the blink bit, so the background is dark red again.
+    assert _is_colour(con.screen_pixel(20, 116), (170, 0, 0)), con.screen_pixel(20, 116)
+    _keys(con, b"\x1b", quiet=0.8)
+    _keys(con, b"q")
+
+
 def test_files_ansi_toggle_80x25(fresh_console):
     con = fresh_console
     _open_ansi(con)
