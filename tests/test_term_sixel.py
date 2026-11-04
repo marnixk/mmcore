@@ -5,11 +5,19 @@ command the final byte selects, so a sixel payload never lands in the cell
 grid as text.  Later phases add the decoder and the image plane.
 """
 
+import os
+import shutil
+import subprocess
 import time
+
+import pytest
 
 from harness import MMBasicConsole, TermReplay
 from test_term import _pane_grey_hits, _plain, _quit
 from test_term_replay import _open_replay
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FIXTURES = os.path.join(REPO, "tests", "term", "sixel")
 
 
 def _session(con, replay):
@@ -346,17 +354,19 @@ def test_sixel_insert_and_delete_chars_shift_pixels(kernel_image):
 
 
 def _reply(replay, query, timeout=3.0):
-    before = len(replay.pending_out)
+    # Each query is isolated: clear the outbound buffer and wait for a
+    # complete reply (CSI finals end in 'c', 't' or 'S').
+    replay.pending_out = b""
+    time.sleep(0.1)
     replay._to_guest(query)
     deadline = time.time() + timeout
     while time.time() < deadline:
         replay.pump_once(recv_tcp=False)
-        if len(replay.pending_out) > before:
-            break
+        data = replay.pending_out
+        if data and data[-1:] in (b"c", b"t", b"S"):
+            return data
         time.sleep(0.02)
-    time.sleep(0.05)
-    replay.pump_once(recv_tcp=False)
-    return replay.pending_out[before:]
+    return replay.pending_out
 
 
 def test_sixel_da_xtwinops_xtsmgraphics(kernel_image):
@@ -490,6 +500,145 @@ def test_sixel_scrollback_paging_does_not_fault(kernel_image):
         replay.pump_once(recv_tcp=False)
         _quit(con)
         assert con.send_line("PRINT 13+13") == "26"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def _send_fixture(replay, name, cup=b"\x1b[1;1H"):
+    data = open(os.path.join(FIXTURES, name), "rb").read()
+    replay._to_guest(cup + data, chunk=24, delay=0.01)
+    time.sleep(1.2)
+    replay.pump_once(recv_tcp=False)
+
+
+def test_sixel_fixture_img2sixel_red(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_fixture(replay, "red-img2sixel-p16.sixel")
+        assert _red_points(con, [(160, 0), (168, 4), (174, 14)])
+        _quit(con)
+        assert con.send_line("PRINT 14+14") == "28"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_fixture_chafa_16_colours(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_fixture(replay, "pattern-chafa-16.sixel")
+        coords = [(160 + x, y) for y in range(0, 72, 8) for x in range(0, 72, 8)]
+        cols = con.screen_pixels(coords)
+        distinct = {c for c in cols if c != (0, 0, 0)}
+        assert len(distinct) >= 3, sorted(distinct)[:10]
+        _quit(con)
+        assert con.send_line("PRINT 15+15") == "30"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_fixture_img2sixel_256_colours(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_fixture(replay, "photo-img2sixel-p256.sixel")
+        coords = [(160 + x, y) for y in range(0, 32) for x in range(0, 32)]
+        cols = con.screen_pixels(coords)
+        distinct = {c for c in cols if c != (0, 0, 0)}
+        assert len(distinct) > 16, sorted(distinct)[:10]
+        _quit(con)
+        assert con.send_line("PRINT 16+16") == "32"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_fixture_lsix_montage(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_fixture(replay, "two-lsix.sixel")
+        coords = [(x, y) for y in range(0, 136, 4) for x in range(160, 640, 4)]
+        cols = con.screen_pixels(coords)
+        distinct = {c for c in cols if c != (0, 0, 0)}
+        assert len(distinct) >= 5, sorted(distinct)[:10]
+        assert any(_is_red(c) for c in cols), "lsix montage did not render"
+        _quit(con)
+        assert con.send_line("PRINT 17+17") == "34"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+@pytest.mark.skipif(
+    os.environ.get("MMCORE_LIVE_NET") != "1",
+    reason="set MMCORE_LIVE_NET=1 to run live img2sixel/chafa/lsix",
+)
+def test_sixel_live_tools(kernel_image):
+    for tool in ("img2sixel", "chafa", "lsix"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} not installed")
+
+    red = subprocess.run(
+        [
+            "img2sixel", "-p", "16", "-w", "16", "-h", "16",
+            os.path.join(FIXTURES, "red.png"),
+        ],
+        check=True, capture_output=True,
+    ).stdout
+    pattern = subprocess.run(
+        [
+            "chafa", "--format=sixels", "--colors=16", "--size=8x8",
+            "--view-size=8x8", os.path.join(FIXTURES, "pattern.png"),
+        ],
+        check=True, capture_output=True,
+    ).stdout
+    lsix = subprocess.run(
+        ["lsix", os.path.join(FIXTURES, "red.png"),
+         os.path.join(FIXTURES, "pattern.png")],
+        check=True, capture_output=True, stdin=subprocess.DEVNULL,
+        env={**os.environ, "LSIX_FORCE_SIXEL_SUPPORT": "1"},
+        timeout=30,
+    ).stdout
+    assert b"\x1bP" in red and b"\x1bP" in pattern and b"\x1bP" in lsix
+
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        replay._to_guest(b"\x1b[1;1H" + red, chunk=24, delay=0.01)
+        time.sleep(1.0)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 0), (168, 4)])
+        replay._to_guest(b"\x1b[1;1H" + pattern, chunk=24, delay=0.01)
+        time.sleep(1.2)
+        replay.pump_once(recv_tcp=False)
+        cols = con.screen_pixels(
+            [(160 + x, y) for y in range(0, 64, 8) for x in range(0, 64, 8)]
+        )
+        assert len({c for c in cols if c != (0, 0, 0)}) >= 3
+        replay._to_guest(b"\x1b[1;1H" + lsix, chunk=24, delay=0.01)
+        time.sleep(1.2)
+        replay.pump_once(recv_tcp=False)
+        assert any(
+            c != (0, 0, 0)
+            for c in con.screen_pixels([(x, y) for y in (0, 8) for x in (160, 300)])
+        )
+        _quit(con)
+        assert con.send_line("PRINT 18+18") == "36"
     finally:
         replay.stop()
         con.stop()
