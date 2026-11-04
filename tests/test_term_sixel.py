@@ -212,3 +212,133 @@ def test_sixel_moves_up_with_text_scroll(kernel_image):
     finally:
         replay.stop()
         con.stop()
+
+
+# A solid red 16x48 block: two cells wide, three cell rows tall.
+RED_BLOCK = (
+    b'\x1bPq"1;1;16;48#0;2;100;0;0'
+    + b"!16~"
+    + b"-!16~" * 7
+    + b"\x1b\\"
+)
+
+
+def _send_block(con, replay, cup=b"\x1b[1;1H"):
+    replay._to_guest(cup + RED_BLOCK)
+    time.sleep(0.5)
+    replay.pump_once(recv_tcp=False)
+
+
+def _red_points(con, coords):
+    return any(_is_red(p) for p in con.screen_pixels(coords))
+
+
+def test_sixel_overwrite_and_menu_roundtrip(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0), (170, 2)])
+
+        # A glyph over the image's first cell replaces it; the next cell
+        # keeps its sixel pixels.
+        replay._to_guest(b"\x1b[1;1HX")
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        assert _pane_grey_hits(con, 0, 0) > 0
+        assert _red_points(con, [(170, 2)]), "neighbouring sixel pixels lost"
+
+        # Opening and closing the menu repaints from the plane: the glyph and
+        # the image both come back.
+        replay.send_keys(b"\x1b[21~")
+        time.sleep(0.4)
+        replay.send_keys(b"\x1b\x1b")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _pane_grey_hits(con, 0, 0) > 0
+        assert _red_points(con, [(170, 2)])
+
+        _quit(con)
+        assert con.send_line("PRINT 4+4") == "8"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_ed2_clears_pixels(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 0), (170, 2), (160, 40)])
+        replay._to_guest(b"\x1b[2J")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert not _red_points(con, [(160, 0), (170, 2), (160, 40)])
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_insert_and_delete_line_move_pixels(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 2)])
+
+        # IL at row 0 pushes the image down one cell row.
+        replay._to_guest(b"\x1b[1;1H\x1b[L")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 18)]), "image did not move down"
+        assert not _red_points(con, [(160, 2)])
+
+        # DL pulls it back up.
+        replay._to_guest(b"\x1b[1;1H\x1b[M")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 2)]), "image did not move back up"
+
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_insert_and_delete_chars_shift_pixels(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay)
+        assert _red_points(con, [(160, 2)])
+
+        # ICH at column 0 shifts the row right one cell.
+        replay._to_guest(b"\x1b[1;1H\x1b[@")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(168, 2)]), "image did not shift right"
+        assert not _red_points(con, [(160, 2)])
+
+        # DCH shifts it back.
+        replay._to_guest(b"\x1b[1;1H\x1b[P")
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 2)]), "image did not shift back left"
+
+        _quit(con)
+        assert con.send_line("PRINT 7+7") == "14"
+    finally:
+        replay.stop()
+        con.stop()
