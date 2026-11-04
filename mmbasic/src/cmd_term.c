@@ -509,6 +509,8 @@ static uint64_t term_shadow_key(unsigned ch, unsigned fg, unsigned bg)
 }
 
 static void pane_clear_row(int row);
+static void term_plane_uncover_cell(int r, int c);
+static void term_plane_uncover_range(int r, int c0, int c1);
 static void pane_puts(const char *s);
 static void pane_newline(void);
 static void tcp_close_quiet(void);
@@ -1273,6 +1275,7 @@ static void pane_clear_row(int row)
 		T.cell_fg[row][c] = TM_FG;
 		T.cell_bg[row][c] = TM_BG;
 	}
+	term_plane_uncover_range(row, 0, term_width());
 }
 
 /* Erase a row to the current SGR pen, so erased cells keep the active
@@ -1289,6 +1292,7 @@ static void pane_erase_row_pen(int row)
 		T.cell_fg[row][c] = term_pen();
 		T.cell_bg[row][c] = term_paper();
 	}
+	term_plane_uncover_range(row, 0, term_width());
 }
 
 static void mark_dirty_row(int row)
@@ -1377,17 +1381,19 @@ static void term_plane_clear(void)
 	memset(P.cov, 0, TM_MAX_ROWS * TM_MAX_COLS);
 }
 
-/* Scroll the plane pixels and coverage inside the DECSTBM region, matching
- * the cell scroll.  Rows that leave the top are dropped. */
-static void term_plane_scroll_up(int n)
+/* Scroll pixels and coverage inside [top,bot], matching the cell scroll.
+ * Rows that leave the region are dropped. */
+static void term_plane_scroll_rows(int top, int bot, int n, int up)
 {
 	term_plane *p = P_s[g_console];
-	int top, bot, rows, r;
+	int rows, r;
 
 	if (!p)
 		return;
-	top = T.scroll_top;
-	bot = T.scroll_bot;
+	if (top < 0)
+		top = 0;
+	if (bot >= T.pane_rows)
+		bot = T.pane_rows - 1;
 	rows = bot - top + 1;
 	if (rows < 1)
 		return;
@@ -1395,18 +1401,121 @@ static void term_plane_scroll_up(int n)
 		n = 1;
 	if (n > rows)
 		n = rows;
-	if (n < rows)
-		memmove(p->pix + top * T.cell_h * p->stride,
-			p->pix + (top + n) * T.cell_h * p->stride,
-			(size_t)(rows - n) * T.cell_h * p->stride *
-				sizeof(uint16_t));
-	memset(p->pix + (bot - n + 1) * T.cell_h * p->stride, 0,
-	       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
-	for (r = top; r <= bot - n; r++)
-		memmove(p->cov + r * TM_MAX_COLS,
-			p->cov + (r + n) * TM_MAX_COLS, TM_MAX_COLS);
-	for (r = bot - n + 1; r <= bot; r++)
-		memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+	if (up)
+	{
+		if (n < rows)
+			memmove(p->pix + top * T.cell_h * p->stride,
+				p->pix + (top + n) * T.cell_h * p->stride,
+				(size_t)(rows - n) * T.cell_h * p->stride *
+					sizeof(uint16_t));
+		memset(p->pix + (bot - n + 1) * T.cell_h * p->stride, 0,
+		       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
+		for (r = top; r <= bot - n; r++)
+			memmove(p->cov + r * TM_MAX_COLS,
+				p->cov + (r + n) * TM_MAX_COLS, TM_MAX_COLS);
+		for (r = bot - n + 1; r <= bot; r++)
+			memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+	}
+	else
+	{
+		if (n < rows)
+			memmove(p->pix + (top + n) * T.cell_h * p->stride,
+				p->pix + top * T.cell_h * p->stride,
+				(size_t)(rows - n) * T.cell_h * p->stride *
+					sizeof(uint16_t));
+		memset(p->pix + top * T.cell_h * p->stride, 0,
+		       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
+		for (r = bot; r >= top + n; r--)
+			memmove(p->cov + r * TM_MAX_COLS,
+				p->cov + (r - n) * TM_MAX_COLS, TM_MAX_COLS);
+		for (r = top; r < top + n; r++)
+			memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+	}
+}
+
+static void term_plane_scroll_up(int n)
+{
+	term_plane_scroll_rows(T.scroll_top, T.scroll_bot, n, 1);
+}
+
+/* Clear one cell's coverage so the glyph path owns it again.  The shadow key
+ * is zeroed so the next glyph paints even if the character did not change. */
+static void term_plane_uncover_cell(int r, int c)
+{
+	if (!P_s[g_console] || r < 0 || r >= T.pane_rows || c < 0 ||
+	    c >= term_width())
+		return;
+	P.cov[r * TM_MAX_COLS + c] = 0;
+	term_cell_sh[r][c] = 0;
+}
+
+static void term_plane_uncover_range(int r, int c0, int c1)
+{
+	int c;
+
+	for (c = c0; c < c1; c++)
+		term_plane_uncover_cell(r, c);
+}
+
+/* ICH/DCH: shift one row's pixels and coverage by n cells. */
+static void term_plane_shift_cols(int r, int col, int n, int right)
+{
+	term_plane *p = P_s[g_console];
+	int w, dy, i;
+	unsigned char *cov;
+
+	if (!p || r < 0 || r >= T.pane_rows)
+		return;
+	w = term_width();
+	if (col < 0)
+		col = 0;
+	if (col >= w)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > w - col)
+		n = w - col;
+	if (n <= 0)
+		return;
+	cov = p->cov + r * TM_MAX_COLS;
+	for (dy = 0; dy < T.cell_h; dy++)
+	{
+		uint16_t *line = p->pix + (r * T.cell_h + dy) * p->stride;
+
+		if (right)
+		{
+			if (w - col - n > 0)
+				memmove(line + (col + n) * TM_CW, line + col * TM_CW,
+					(size_t)(w - col - n) * TM_CW *
+						sizeof(uint16_t));
+		}
+		else
+		{
+			if (w - col - n > 0)
+				memmove(line + col * TM_CW, line + (col + n) * TM_CW,
+					(size_t)(w - col - n) * TM_CW *
+						sizeof(uint16_t));
+		}
+	}
+	if (right)
+	{
+		if (w - col - n > 0)
+			memmove(cov + col + n, cov + col, (size_t)(w - col - n));
+		memset(cov + col, 0, (size_t)n);
+	}
+	else
+	{
+		if (w - col - n > 0)
+			memmove(cov + col, cov + col + n, (size_t)(w - col - n));
+		memset(cov + (w - n), 0, (size_t)n);
+	}
+	for (i = 0; i < n; i++)
+	{
+		int c = right ? col + i : w - n + i;
+
+		if (c >= 0 && c < w)
+			term_cell_sh[r][c] = 0;
+	}
 }
 
 /* Composite one run of covered cells from the plane into page 2. */
@@ -1519,6 +1628,7 @@ static void pane_put(char ch)
 		pane_newline();
 	if (T.cur_col < term_width() && T.cur_row < T.pane_rows)
 	{
+		term_plane_uncover_cell(T.cur_row, T.cur_col);
 		T.cell[T.cur_row][T.cur_col] = ch;
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
@@ -4104,6 +4214,7 @@ static void ansi_erase_line(int mode)
 		T.cell_fg[T.cur_row][c] = term_pen();
 		T.cell_bg[T.cur_row][c] = term_paper();
 	}
+	term_plane_uncover_range(T.cur_row, a, b);
 	mark_dirty_row(T.cur_row);
 }
 
@@ -4134,12 +4245,14 @@ static void ansi_erase_disp(int mode)
 			T.cell_fg[r][c] = fg;
 			T.cell_bg[r][c] = bg;
 		}
+		term_plane_uncover_range(r, ca, cb);
 		mark_dirty_row(r);
 	}
 	if (mode == 2 || mode == 3)
 	{
 		T.cur_row = 0;
 		T.cur_col = 0;
+		term_plane_clear();
 		mark_dirty_full();
 		return;
 	}
@@ -4147,6 +4260,7 @@ static void ansi_erase_disp(int mode)
 
 static void ansi_blank_cell(int r, int c)
 {
+	term_plane_uncover_cell(r, c);
 	T.cell[r][c] = ' ';
 	T.cell_fg[r][c] = term_pen();
 	T.cell_bg[r][c] = term_paper();
@@ -4168,6 +4282,7 @@ static void ansi_insert_lines(int n)
 		n = 1;
 	if (n > bot - T.cur_row + 1)
 		n = bot - T.cur_row + 1;
+	term_plane_scroll_rows(T.cur_row, bot, n, 0);
 	for (r = bot; r >= T.cur_row + n; r--)
 		for (c = 0; c < w; c++)
 		{
@@ -4196,6 +4311,7 @@ static void ansi_delete_lines(int n)
 		n = 1;
 	if (n > bot - T.cur_row + 1)
 		n = bot - T.cur_row + 1;
+	term_plane_scroll_rows(T.cur_row, bot, n, 1);
 	for (r = T.cur_row; r <= bot - n; r++)
 		for (c = 0; c < w; c++)
 		{
@@ -4226,6 +4342,7 @@ static void ansi_insert_chars(int n)
 		n = w - T.cur_col;
 	if (n <= 0)
 		return;
+	term_plane_shift_cols(T.cur_row, T.cur_col, n, 1);
 	for (c = w - 1; c >= T.cur_col + n; c--)
 	{
 		T.cell[T.cur_row][c] = T.cell[T.cur_row][c - n];
@@ -4253,6 +4370,7 @@ static void ansi_delete_chars(int n)
 		n = w - T.cur_col;
 	if (n <= 0)
 		return;
+	term_plane_shift_cols(T.cur_row, T.cur_col, n, 0);
 	for (c = T.cur_col; c < w - n; c++)
 	{
 		T.cell[T.cur_row][c] = T.cell[T.cur_row][c + n];
@@ -4292,6 +4410,7 @@ static void ansi_scroll_pane(int n, int up)
 		n = 1;
 	if (n > rows)
 		n = rows;
+	term_plane_scroll_rows(top, bot, n, up);
 	if (up)
 	{
 		for (r = top; r <= bot - n; r++)
