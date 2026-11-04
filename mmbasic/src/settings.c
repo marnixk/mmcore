@@ -207,8 +207,8 @@ static void apply_core(const char *k, const char *v)
 		G.opt.pin = parse_int(v);
 	else if (mmb_keyword_eq(k, "profiling"))
 		G.opt.profiling = parse_int(v);
-	else if (mmb_keyword_eq(k, "fastdraw"))
-		G.opt.fastdraw = parse_int(v);
+	/* `fastdraw` is deliberately not loaded: OPTION FASTDRAW is a per-session
+	 * switch and must not survive a reboot from a stale .mmbasic.ini. */
 	else if (mmb_keyword_eq(k, "prompt"))
 		G.opt.prompt = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "status"))
@@ -417,7 +417,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "mouse_sens", G.opt.mouse_sens);
 	kv_int(buf, sizeof(buf), "pin", G.opt.pin);
 	kv_int(buf, sizeof(buf), "profiling", G.opt.profiling);
-	kv_int(buf, sizeof(buf), "fastdraw", G.opt.fastdraw);
+	/* OPTION FASTDRAW is per-session: never write it to .mmbasic.ini. */
 	kv_int(buf, sizeof(buf), "prompt", G.opt.prompt);
 	kv_int(buf, sizeof(buf), "status", G.opt.status);
 	append(buf, sizeof(buf), "vcc=");
