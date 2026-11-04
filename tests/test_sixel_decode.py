@@ -164,6 +164,37 @@ int main(void)
 	dec("\"1;1;4;6#1;2;100;0;0", 1, 0);
 	check("raster_without_data", last_adv == 6 && last_pw == 0);
 
+	/* 11. A failed target allocation discards the image silently: the
+	 *     decoder still consumes the grammar but writes no pixels and
+	 *     marks no coverage. */
+	{
+		unsigned char cov[8 * 4];
+		sixel_config c;
+		sixel_image s;
+		const unsigned char *p;
+		int clean = 1;
+
+		memset(cov, 0, sizeof(cov));
+		memset(&c, 0, sizeof(c));
+		c.pix = NULL;
+		c.stride = W;
+		c.width = W;
+		c.height = H;
+		c.cover = cov;
+		c.cover_cols = 8;
+		c.cell_w = 8;
+		c.cell_h = 16;
+		c.pack = pack;
+		sixel_begin(&s, &c);
+		for (p = (const unsigned char *)"#0;2;100;0;0~"; *p; p++)
+			sixel_feed(&s, *p);
+		sixel_finish(&s);
+		for (x = 0; x < (int)sizeof(cov); x++)
+			clean = clean && cov[x] == 0;
+		check("alloc_failure_discards",
+		      clean && s.painted_w == 0 && s.painted_h == 0);
+	}
+
 	printf("FAILURES %d\n", fails);
 	return fails ? 1 : 0;
 }
