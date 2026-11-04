@@ -155,6 +155,7 @@ typedef struct {
 	int dcs_sixel;         /* open DCS is a sixel command (q final) */
 	int six_on;            /* decoding a sixel image */
 	int six_ok;            /* the plane is allocated and the decoder is live */
+	int sixel_scroll;      /* DECSDM: default on, mode 80 set turns it off */
 	int six_scrolled;      /* text rows scrolled while placing this image */
 	int six_top;           /* visible top of the image, in plane pixels */
 	int six_origin_row;
@@ -4197,6 +4198,97 @@ static int ansi_arg(int i, int dflt)
 	return dflt;
 }
 
+static char *ansi_put_uint(char *p, unsigned v)
+{
+	char tmp[12];
+	int n = 0;
+
+	if (!v)
+	{
+		*p++ = '0';
+		return p;
+	}
+	while (v)
+	{
+		tmp[n++] = (char)('0' + v % 10u);
+		v /= 10u;
+	}
+	while (n > 0)
+		*p++ = tmp[--n];
+	return p;
+}
+
+/* XTWINOPS report: CSI kind ; height ; width t */
+static void ansi_reply_xtwin(int kind, int height, int width)
+{
+	char buf[40];
+	char *p = buf;
+
+	*p++ = 27;
+	*p++ = '[';
+	p = ansi_put_uint(p, (unsigned)kind);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)height);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)width);
+	*p++ = 't';
+	*p = 0;
+	ansi_reply(buf);
+}
+
+/* XTSMGRAPHICS reply: CSI ? Pi ; status ; a [; b] S */
+static void ansi_reply_xtsm(int pi, int status, int a, int b, int two)
+{
+	char buf[48];
+	char *p = buf;
+
+	*p++ = 27;
+	*p++ = '[';
+	*p++ = '?';
+	p = ansi_put_uint(p, (unsigned)pi);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)status);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)a);
+	if (two)
+	{
+		*p++ = ';';
+		p = ansi_put_uint(p, (unsigned)b);
+	}
+	*p++ = 'S';
+	*p = 0;
+	ansi_reply(buf);
+}
+
+static void ansi_exec_xtsm(void)
+{
+	int pi = T.ansi_narg > 0 ? T.ansi_arg[0] : 0;
+	int pa = T.ansi_narg > 1 ? T.ansi_arg[1] : 0;
+	int w = term_width() * TM_CW;
+	int h = T.pane_rows * T.cell_h;
+
+	if (pi == 1)
+	{
+		if (pa == 1 || pa == 2 || pa == 4)
+			ansi_reply_xtsm(1, 0, 256, 0, 0);
+		else if (pa == 3)
+			ansi_reply_xtsm(1, 3, 0, 0, 0);
+		else
+			ansi_reply_xtsm(1, 2, 0, 0, 0);
+	}
+	else if (pi == 2)
+	{
+		if (pa == 1 || pa == 2 || pa == 4)
+			ansi_reply_xtsm(2, 0, w, h, 1);
+		else if (pa == 3)
+			ansi_reply_xtsm(2, 3, 0, 0, 0);
+		else
+			ansi_reply_xtsm(2, 2, 0, 0, 0);
+	}
+	else
+		ansi_reply_xtsm(pi, 1, 0, 0, 0);
+}
+
 static void ansi_erase_line(int mode)
 {
 	int c, a, b;
@@ -4557,13 +4649,33 @@ static void ansi_exec_csi(char cmd)
 			ansi_reply("\x1b[0n");
 	}
 	else if (cmd == 'c')
-		ansi_reply("\x1b[?1;2c");
+		ansi_reply("\x1b[?1;2;4c");
+	else if (cmd == 't')
+	{
+		int q = T.ansi_narg > 0 ? T.ansi_arg[0] : 0;
+		int h = T.pane_rows * T.cell_h;
+		int w = term_width() * TM_CW;
+
+		if (q == 14)
+			ansi_reply_xtwin(4, h, w);
+		else if (q == 16)
+			ansi_reply_xtwin(6, T.cell_h, TM_CW);
+		else if (q == 18)
+			ansi_reply_xtwin(8, T.pane_rows, term_width());
+		else if (q == 11)
+			ansi_reply("\x1b[1t");
+	}
 }
 
 static void ansi_exec_priv(char cmd)
 {
 	int i, n, v;
 
+	if (cmd == 'S')
+	{
+		ansi_exec_xtsm();
+		return;
+	}
 	if (cmd != 'h' && cmd != 'l')
 		return;
 	n = T.ansi_narg > 0 ? T.ansi_narg : 1;
@@ -4574,6 +4686,8 @@ static void ansi_exec_priv(char cmd)
 		v = T.ansi_arg[i];
 		if (v == 25)
 			term_set_cursor_vis(cmd == 'h');
+		else if (v == 80)
+			T.sixel_scroll = (cmd == 'l');
 	}
 }
 
@@ -4586,7 +4700,7 @@ static void term_sixel_ensure_room(void)
 {
 	int limit, region_rows;
 
-	if (!T.six_ok || T.scroll_bot <= T.scroll_top)
+	if (!T.six_ok || !T.sixel_scroll || T.scroll_bot <= T.scroll_top)
 		return;
 	limit = (T.scroll_bot + 1) * T.cell_h;
 	region_rows = T.scroll_bot - T.scroll_top + 1;
@@ -4613,8 +4727,17 @@ static void term_sixel_begin(int p1, int p2, int p3)
 	T.six_ok = 0;
 	if (term_plane_alloc() != 0)
 		return;      /* discard the DCS payload; never print it */
-	ox = T.cur_col * TM_CW;
-	oy = T.cur_row * T.cell_h;
+	if (T.sixel_scroll)
+	{
+		ox = T.cur_col * TM_CW;
+		oy = T.cur_row * T.cell_h;
+	}
+	else
+	{
+		/* DECSDM: pin the image at the pane origin. */
+		ox = 0;
+		oy = 0;
+	}
 	if (ox < 0)
 		ox = 0;
 	if (oy < 0)
@@ -4643,7 +4766,7 @@ static void term_sixel_begin(int p1, int p2, int p3)
 	T.six.y = oy;
 	T.six.bottom = oy;
 	T.six.right = ox;
-	T.six.maxh = (T.scroll_bot + 1) * T.cell_h;
+	T.six.maxh = T.sixel_scroll ? (T.scroll_bot + 1) * T.cell_h : P.h;
 	if (T.six.maxh > P.h)
 		T.six.maxh = P.h;
 	T.six_top = oy;
@@ -4675,14 +4798,17 @@ static void term_sixel_end(void)
 	if (T.six.painted_w <= 0 || T.six.painted_h <= 0)
 		return;
 
-	/* Cursor to column 0 of the cell row below the image. */
-	row = (T.six.bottom + T.cell_h - 1) / T.cell_h;
-	if (row < 0)
-		row = 0;
-	if (row >= T.pane_rows)
-		row = T.pane_rows - 1;
-	T.cur_row = row;
-	T.cur_col = 0;
+	if (T.sixel_scroll)
+	{
+		/* Cursor to column 0 of the cell row below the image. */
+		row = (T.six.bottom + T.cell_h - 1) / T.cell_h;
+		if (row < 0)
+			row = 0;
+		if (row >= T.pane_rows)
+			row = T.pane_rows - 1;
+		T.cur_row = row;
+		T.cur_col = 0;
+	}
 
 	left = T.six.ox;
 	right = T.six.right;
@@ -6769,6 +6895,7 @@ void mmb_cmd_term(void)
 	T.replay = !T.file_replay && host_is_replay();
 	T.letterbox = 1;
 	T.mode80x25 = 0;
+	T.sixel_scroll = 1;
 	term_reset_pen();
 
 	ser("TERM\r\n");

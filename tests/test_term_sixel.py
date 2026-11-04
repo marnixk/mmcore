@@ -147,7 +147,8 @@ def _is_red(rgb) -> bool:
     return r > 170 and g < 90 and b < 90
 
 
-RED_COLUMN = b"\x1b[1;1H\x1bPq#0;2;100;0;0~\x1b\\"
+RED_SIXEL = b"\x1bPq#0;2;100;0;0~\x1b\\"
+RED_COLUMN = b"\x1b[1;1H" + RED_SIXEL
 
 
 def test_sixel_draws_red_at_cursor_cell(kernel_image):
@@ -339,6 +340,75 @@ def test_sixel_insert_and_delete_chars_shift_pixels(kernel_image):
 
         _quit(con)
         assert con.send_line("PRINT 7+7") == "14"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def _reply(replay, query, timeout=3.0):
+    before = len(replay.pending_out)
+    replay._to_guest(query)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        replay.pump_once(recv_tcp=False)
+        if len(replay.pending_out) > before:
+            break
+        time.sleep(0.02)
+    time.sleep(0.05)
+    replay.pump_once(recv_tcp=False)
+    return replay.pending_out[before:]
+
+
+def test_sixel_da_xtwinops_xtsmgraphics(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        assert b"?1;2;4c" in _reply(replay, b"\x1b[c")
+        assert b"[4;512;640t" in _reply(replay, b"\x1b[14t")
+        assert b"[6;16;8t" in _reply(replay, b"\x1b[16t")
+        assert b"[8;32;80t" in _reply(replay, b"\x1b[18t")
+        assert b"[?1;0;256S" in _reply(replay, b"\x1b[?1;1;0S")
+        assert b"[?1;0;256S" in _reply(replay, b"\x1b[?1;2;0S")
+        assert b"[?2;0;640;512S" in _reply(replay, b"\x1b[?2;1;0S")
+        assert b"[?1;3;0S" in _reply(replay, b"\x1b[?1;3;0S")
+        assert b"[?3;1;0S" in _reply(replay, b"\x1b[?3;1;0S")
+        _quit(con)
+        assert con.send_line("PRINT 8+8") == "16"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_sixel_decsdm_pins_image_and_keeps_cursor(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        # DECSDM set: scrolling off, image at the pane origin, cursor stays.
+        replay._to_guest(b"\x1b[?80h\x1b[6;1H" + RED_SIXEL)
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 0)]), "image not at pane origin"
+        assert not _red_points(con, [(160, 80)])
+        replay._to_guest(b"Z")
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        assert _pane_grey_hits(con, 0, 5) > 0, "cursor moved under DECSDM"
+
+        # DECSDM reset: scrolling on again, image at the cursor, cursor moves.
+        replay._to_guest(b"\x1b[?80l\x1b[6;1H" + RED_SIXEL)
+        time.sleep(0.6)
+        replay.pump_once(recv_tcp=False)
+        assert _red_points(con, [(160, 80)]), "image not at the cursor row"
+        replay._to_guest(b"W")
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        assert _pane_grey_hits(con, 0, 6) > 0, "cursor did not advance"
+        _quit(con)
+        assert con.send_line("PRINT 9+9") == "18"
     finally:
         replay.stop()
         con.stop()
