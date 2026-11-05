@@ -929,6 +929,37 @@ def _pixel_at(data, w, x, y):
     return data[i], data[i + 1], data[i + 2]
 
 
+@pytest.mark.parametrize("bits", [8, 16])
+def test_print_paper_matches_cls_fill(mmb_linux, tmp_path, bits):
+    """#1462: PRINT cell paper must be byte-identical to the CLS fill.
+
+    Native text used to paint its paper from its own 16-colour ANSI palette
+    while CLS went through mmb_pix_store. The two agreed for 16-bit modes but
+    not 8-bit, where the RGB332 quantiser maps the CGA colours differently.
+    Every palette entry is checked on a fresh cleared screen.
+    """
+    for bg in range(16):
+        fg = 0 if bg == 15 else 15
+        program = (
+            f"MODE 8,{bits}\n"
+            f"COLOR {fg},{bg}\n"
+            "CLS\n"
+            'PRINT "MMMM"\n'
+        )
+        w, h, data = _run_sdl_dump(
+            mmb_linux, program, tmp_path, f"paper_{bits}_{bg}"
+        )
+        colors = set(zip(data[0::3], data[1::3], data[2::3]))
+        fill = _pixel_at(data, w, w - 20, h - 20)
+        fg_rgb = (0, 0, 0) if fg == 0 else (255, 255, 255)
+        assert colors <= {fill, fg_rgb}, (
+            bits,
+            bg,
+            sorted(colors - {fill, fg_rgb}),
+        )
+        assert fg_rgb in colors, (bits, bg, "text was not drawn")
+
+
 def _is_prompt_grey(rgb):
     r, g, b = rgb
     return (
