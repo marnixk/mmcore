@@ -2413,14 +2413,17 @@ def test_term_bookmarks_reload_after_file_replaced(mmb_linux, tmp_path):
     write_cfg("Alpha")
     s = NativeSession(tmp_path, env={"MMB_DRIVE_ROOT": str(drive)}, binary=SDL_BIN)
     enter_term_and_list(s)
-    s.wait_ms(3000)      # hold here so the file can change mid-session
+    # Order the file replacement against the guest instead of racing a sleep:
+    # the first list must be read before Beta replaces the file on disk.
+    first_list = s.mark("first-list.seen")
     s.start()
+    s.wait_mark(first_list)
 
-    time.sleep(1.6)
     write_cfg("Beta")    # same path, new inode
     leave_term(s)
     enter_term_and_list(s)
-    s.wait_ms(400)
+    second_list = s.mark("second-list.seen")
+    s.wait_mark(second_list)
     s.quit()
     out = s.wait(timeout=60)
     assert out.count("Bookmarks\nAlpha") >= 1, out
