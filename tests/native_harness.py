@@ -256,3 +256,18 @@ class NativeSession:
                     last = exc
             time.sleep(0.02)
         raise TimeoutError("no framebuffer capture at %s (%s)" % (path, last))
+
+    @staticmethod
+    def wait_mark(path: str, timeout: float = 30.0) -> None:
+        """Wait until a queued ``mark`` step has run in the guest.
+
+        A mark is written by the harness after the preceding scripted steps
+        have been executed, so it lets a test order work in the guest against
+        host-side file changes without a wall-clock sleep.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.exists(path):
+                return
+            time.sleep(0.02)
+        raise TimeoutError("harness never reached mark %s" % path)
