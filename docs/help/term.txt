@@ -66,10 +66,10 @@ and only safe names [A-Za-z0-9._-] up to 64 chars. C;DrawJXL, DrawJXLBlob,
 DrawPPM and DrawPPMBlob accept SX/SY/SW/SH, DX/DY (negative values clip),
 FX/FY flips, and integer ZX/ZY zoom; the built-in J40 decoder handles JPEG XL
 and the image reader handles PPM/PGM/PBM. Q;JXL answers 1 when JXL is
-available and CSI < c reports pixel operations. The default DA1 is still
-CSI ?1;2;4c; OPTION TERM CTERM ON answers with the CTerm identity so doors
-choose the Blob verbs. Masks (MASK/MFILE/MBUF), Load* buffers and P;Copy /
-P;Paste are not implemented.
+available and CSI < c reports pixel operations. DA1 answers with the CTerm
+identity by default so doors choose the Blob verbs; `OPTION TERM CTERM OFF`
+uses the plain CSI ?1;2;4c reply instead. Masks (MASK/MFILE/MBUF), Load*
+buffers and P;Copy / P;Paste are not implemented.
 
 Alt+X exits and restores the previous MODE. F10 opens the Terminal menu
 (WORDPAD-style: the top bar is a full-width menu colour only while the menu is

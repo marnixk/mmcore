@@ -117,8 +117,9 @@ Settings:
     Lines of TERM history kept for Page Up / search. Default 200, 0 off.
   TERM CTERM ON|OFF
     Answer DA1 with the SyncTERM CTerm identity so BBS doors choose the APC
-    Blob image verbs. Default OFF; the plain `CSI ?1;2;4c` reply is used
-    otherwise. Image verbs still work when a door sends them directly.
+    image, Blob and pixel verbs. Default ON; `OPTION TERM CTERM OFF` uses the
+    plain `CSI ?1;2;4c` reply instead. Image verbs still work when a door sends
+    them directly.
 
 ERROR CONTINUE sets the persistent RUN default: a runtime error skips the
 failing statement and continues with the next one, keeps the SUB/FUNCTION call

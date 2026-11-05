@@ -702,7 +702,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
-	G.opt.term_cterm = 0;
+	G.opt.term_cterm = 1;
 	g_audio.vol_l = G.opt.volume_l;
 	g_audio.vol_r = G.opt.volume_r;
 	mmb_audio_apply_options();

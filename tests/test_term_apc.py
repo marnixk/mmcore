@@ -120,7 +120,7 @@ def test_apc_capability_replies(kernel_image):
         _session(con, replay)
         replay.pending_out = b""
         replay._to_guest(b"\x1b[c")
-        assert b"?1;2;4c" in _wait_out(replay, b"?1;2;4c")
+        assert b"[=67;84;101;114;109;1;332c" in _wait_out(replay, b"1;332c")
 
         replay.pending_out = b""
         replay._to_guest(b"\x1b[<c")
@@ -136,7 +136,7 @@ def test_apc_capability_replies(kernel_image):
         con.stop()
 
 
-def test_cterm_identity_is_opt_in(kernel_image):
+def test_cterm_identity_can_be_disabled(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
     replay = TermReplay(con, "127.0.0.1", 1)
@@ -144,23 +144,55 @@ def test_cterm_identity_is_opt_in(kernel_image):
         _session(con, replay)
         replay.pending_out = b""
         replay._to_guest(b"\x1b[c")
-        assert b"[=67;84;101;114;109" not in _wait_out(replay, b";4c")
+        assert b"[=67;84;101;114;109;1;332c" in _wait_out(replay, b"332c")
         _quit(con)
 
-        assert con.send_line("OPTION TERM CTERM ON") == ""
+        assert con.send_line("OPTION TERM CTERM OFF") == ""
         replay2 = TermReplay(con, "127.0.0.1", 1)
         try:
             _session(con, replay2)
             replay2.pending_out = b""
             replay2._to_guest(b"\x1b[c")
-            assert b"[=67;84;101;114;109;1;332c" in _wait_out(
-                replay2, b"332c"
-            )
+            assert b"?1;2;4c" in _wait_out(replay2, b"?1;2;4c")
             _quit(con)
         finally:
             replay2.stop()
-        assert con.send_line("OPTION TERM CTERM OFF") == ""
+        assert con.send_line("OPTION TERM CTERM ON") == ""
         assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_deadmodemsociety_jxl_detection(kernel_image):
+    """The DOOMDoor CTerm handshake behind the deadmodemsociety JXL menu.
+
+    The door only probes JPEG XL after DA1 returns the CTerm identity, then
+    requires ESC[=1;1-n from Q;JXL and version >= 1.329 to offer the mode.
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        replay.pending_out = b""
+        replay._to_guest(b"\x1b[c")
+        assert b"\x1b[=67;84;101;114;109;1;332c" in _wait_out(replay, b"332c")
+
+        replay.pending_out = b""
+        replay._to_guest(
+            b"\x1b_SyncTERM:Q;JXL\x1b\\"
+            b"\x1b_SyncTERM:Q;libsndfile\x1b\\"
+            b"\x1b_SyncTERM:Q;libsndfileFormat;32;96\x1b\\"
+            b"\x1b_SyncTERM:Q;libsndfileFormat;1;5\x1b\\"
+            b"\x1b[<0c\x1b[?2;1S\x1b[5n"
+        )
+        out = _wait_out(replay, b"\x1b[0n")
+        assert b"\x1b[=1;1-n" in out
+        assert b"\x1b[<0;4c" in out
+        assert b"\x1b[?2;0;" in out
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
     finally:
         replay.stop()
         con.stop()
