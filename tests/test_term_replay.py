@@ -549,6 +549,35 @@ def test_term_replay_ice_colors_use_bright_backgrounds(kernel_image):
         con.stop()
 
 
+def test_term_replay_truecolor_sgr(kernel_image):
+    """SGR 38;2 / 48;2 select 24-bit foreground and background colours."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+
+        # 48;2 background: spaces paint a solid blue row.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[48;2;0;0;255m   ")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, [0, 1, 2]) == 3, "48;2 must set the background"
+
+        # 38;2 foreground: the full block fills its cells with red.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[38;2;255;0;0m\xdb\xdb\xdb")
+        _replay_settle(replay)
+        assert _red_count(con, 0, [0, 1, 2]) == 3, "38;2 must set the foreground"
+
+        _quit(con)
+        assert con.send_line("PRINT 7+7") == "14"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def _is_green(rgb) -> bool:
     r, g, b = rgb
     return g > 100 and g > r + 40 and g > b + 40

@@ -4200,6 +4200,20 @@ static void ansi_sgr(void)
 			T.ansi_bg_base = 0;
 			ansi_update_bg();
 		}
+		else if ((v == 38 || v == 48) && i + 4 < n && T.ansi_arg[i + 1] == 2)
+		{
+			unsigned c = mmb_rgb_pack(T.ansi_arg[i + 2] & 255,
+						  T.ansi_arg[i + 3] & 255,
+						  T.ansi_arg[i + 4] & 255);
+			if (v == 38)
+				T.cur_fg = c;
+			else
+			{
+				T.ansi_bg_base = -1;
+				T.cur_bg = c;
+			}
+			i += 4;
+		}
 		else if ((v == 38 || v == 48) && i + 2 < n && T.ansi_arg[i + 1] == 5)
 		{
 			unsigned c = ansi_256(T.ansi_arg[i + 2]);

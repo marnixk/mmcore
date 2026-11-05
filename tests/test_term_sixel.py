@@ -375,7 +375,7 @@ def test_sixel_da_xtwinops_xtsmgraphics(kernel_image):
     replay = TermReplay(con, "127.0.0.1", 1)
     try:
         _session(con, replay)
-        assert b"?1;2;4c" in _reply(replay, b"\x1b[c")
+        assert b"[=67;84;101;114;109;1;332c" in _reply(replay, b"\x1b[c")
         assert b"[4;512;640t" in _reply(replay, b"\x1b[14t")
         assert b"[6;16;8t" in _reply(replay, b"\x1b[16t")
         assert b"[8;32;80t" in _reply(replay, b"\x1b[18t")
