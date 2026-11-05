@@ -423,6 +423,10 @@ static void sdl_shutdown(void)
 static const mmb_platform sdl_plat = {
 	.write_serial = sdl_serial,
 	.write_screen = sdl_screen,
+	/* mmb_console_apply_colour emits the CLS-quantised colour as SGR
+	 * 48;2;R;G;B; sdl_console paints it through the same conversion as
+	 * mmb_pix_store, so PRINT paper matches the CLS fill for every MODE. */
+	.ansi_truecolour = 1,
 	.set_pixel = sdl_set_pixel,
 	.set_pixel_native = sdl_set_pixel_native,
 	.get_pixel = sdl_get_pixel,
