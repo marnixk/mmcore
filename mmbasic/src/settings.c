@@ -280,6 +280,8 @@ static void apply_core(const char *k, const char *v)
 	}
 	else if (mmb_keyword_eq(k, "term_autolog"))
 		G.opt.term_autolog = parse_int(v) ? 1 : 0;
+	else if (mmb_keyword_eq(k, "term_cterm"))
+		G.opt.term_cterm = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "wordpad_view"))
 	{
 		G.opt.wordpad_view = parse_int(v);
@@ -453,6 +455,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "term_log", G.opt.term_log);
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
+	kv_int(buf, sizeof(buf), "term_cterm", G.opt.term_cterm);
 	kv_int(buf, sizeof(buf), "wordpad_view", G.opt.wordpad_view);
 	kv_str(buf, sizeof(buf), "afk_password", G.opt.afk_password);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
@@ -699,6 +702,7 @@ void mmb_cmd_factory_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
+	G.opt.term_cterm = 0;
 	g_audio.vol_l = G.opt.volume_l;
 	g_audio.vol_r = G.opt.volume_r;
 	mmb_audio_apply_options();
