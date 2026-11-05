@@ -678,6 +678,7 @@ static void option_dispatch(void)
 		if (mmb_match("CTERM"))
 		{
 			G.opt.term_cterm = onoff();
+			mmb_settings_save();
 			return;
 		}
 		mmb_syntax();

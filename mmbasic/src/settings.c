@@ -161,6 +161,10 @@ static int saw_theme_key, saw_edit_theme_key;
 /* Whether the brightness/volume keys were present, so a config written before
  * #1157 does not force a default over the live panel / audio state. */
 static int saw_brightness_key, saw_volume_key;
+/* Old configs carried term_cterm=0 as the default before the CTerm identity
+ * became the default. The companion key marks a real user choice, so a config
+ * without it can be migrated to the new default (see settings_finish). */
+static int saw_term_cterm_key, saw_term_cterm_explicit;
 
 static void apply_core(const char *k, const char *v)
 {
@@ -281,7 +285,12 @@ static void apply_core(const char *k, const char *v)
 	else if (mmb_keyword_eq(k, "term_autolog"))
 		G.opt.term_autolog = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "term_cterm"))
+	{
 		G.opt.term_cterm = parse_int(v) ? 1 : 0;
+		saw_term_cterm_key = 1;
+	}
+	else if (mmb_keyword_eq(k, "term_cterm_explicit"))
+		saw_term_cterm_explicit = parse_int(v) ? 1 : 0;
 	else if (mmb_keyword_eq(k, "wordpad_view"))
 	{
 		G.opt.wordpad_view = parse_int(v);
@@ -456,6 +465,7 @@ void mmb_settings_save(void)
 	kv_int(buf, sizeof(buf), "term_scrollback", G.opt.term_scrollback);
 	kv_int(buf, sizeof(buf), "term_autolog", G.opt.term_autolog);
 	kv_int(buf, sizeof(buf), "term_cterm", G.opt.term_cterm);
+	kv_int(buf, sizeof(buf), "term_cterm_explicit", 1);
 	kv_int(buf, sizeof(buf), "wordpad_view", G.opt.wordpad_view);
 	kv_str(buf, sizeof(buf), "afk_password", G.opt.afk_password);
 	kv_int(buf, sizeof(buf), "fg", (int64_t)G.gfx.fg);
@@ -557,6 +567,11 @@ static void settings_finish(void)
 #if defined(MMB_PLATFORM_POSIX)
 	(void)mmb_brightness_set(G.opt.brightness);
 #endif
+	/* Before the CTerm identity became the default, saves wrote term_cterm=0
+	 * even when the user never chose it. Migrate those configs to ON; a real
+	 * OPTION TERM CTERM OFF carries the companion key and is preserved. */
+	if (saw_term_cterm_key && !saw_term_cterm_explicit)
+		G.opt.term_cterm = 1;
 	if (!saw_volume_key)
 		G.opt.volume_l = G.opt.volume_r = 100;
 	if (G.opt.volume_l < 0)
@@ -582,6 +597,8 @@ void mmb_settings_load(void)
 	saw_edit_theme_key = 0;
 	saw_brightness_key = 0;
 	saw_volume_key = 0;
+	saw_term_cterm_key = 0;
+	saw_term_cterm_explicit = 0;
 	choose_path();
 	if (!mmb_vfs_exists(settings_path))
 	{
