@@ -200,8 +200,8 @@ def test_release_notes_mention_windows_signing():
 
 
 def test_windows_packaging_derives_icon_from_branding():
-    """#537: the .exe icon comes from the shared branding art, not the old blue
-    procedural tile."""
+    """#537/#1463: the .exe icon comes from the shared branding art, not the
+    old blue procedural tile or the old red-streaked M."""
     gen = open(os.path.join(SCRIPTS, "gen-appicon.py"), encoding="utf-8").read()
     assert "assets" in gen and "mmcore-app-icon.png" in gen
     build = open(os.path.join(SCRIPTS, "build-windows.sh"), encoding="utf-8").read()
@@ -212,25 +212,39 @@ def test_windows_packaging_derives_icon_from_branding():
     assert "windres" in mk and "mmcore.rc" in mk
 
 
+def test_branding_svg_is_the_website_favicon():
+    """#1463: the app icon keeps the mmcore.dev favicon chrome 'm' artwork."""
+    svg = open(
+        os.path.join(REPO, "assets", "branding", "mmcore-app-icon.svg"),
+        encoding="utf-8",
+    ).read()
+    assert "<title>mmcore</title>" in svg
+    assert "#c4c4c5" in svg and "#6c6c6e" in svg, "website chrome gradient stops"
+    assert 'stroke="#000000"' in svg, "solid black outline"
+    assert "viewBox=" in svg
+
+
 def test_gen_appicon_emits_branding_png_and_ico(tmp_path):
     gen = os.path.join(SCRIPTS, "gen-appicon.py")
     mod = _load_gen_appicon()
     w, h, bpp, src = mod.load_branding()
     assert (w, h) == (1024, 1024), "branding art must stay 1024x1024"
+    assert bpp == 4, "master PNG keeps a transparent background"
 
-    rgba = mod.resize(src, w, h, bpp, 64, 64)
-    reds = sum(
+    alphas = src[3::4]
+    assert 0 in alphas and 255 in alphas, "transparent outside, opaque glyph"
+    blacks = sum(
         1
-        for i in range(0, len(rgba), 4)
-        if rgba[i] > 120 and rgba[i + 1] < 90 and rgba[i + 2] < 90
+        for i in range(0, len(src), 4)
+        if src[i + 3] > 200 and max(src[i], src[i + 1], src[i + 2]) < 16
     )
     silvers = sum(
         1
-        for i in range(0, len(rgba), 4)
-        if min(rgba[i], rgba[i + 1], rgba[i + 2]) > 140
+        for i in range(0, len(src), 4)
+        if min(src[i], src[i + 1], src[i + 2]) > 140
     )
-    assert reds > 0, "branding art should carry red energy streaks"
-    assert silvers > 0, "branding art should carry the chrome M"
+    assert blacks > 0, "branding art should carry the solid black outline"
+    assert silvers > 0, "branding art should carry the chrome m"
 
     png = tmp_path / "icon256.png"
     _run([sys.executable, gen, str(png), "256"])
@@ -248,6 +262,19 @@ def test_gen_appicon_emits_branding_png_and_ico(tmp_path):
         off = 6 + 16 * i
         blob_off = struct.unpack("<I", idata[off + 12 : off + 16])[0]
         assert idata[blob_off : blob_off + 8] == b"\x89PNG\r\n\x1a\n"
+
+    hicolor = tmp_path / "hicolor"
+    _run([sys.executable, gen, "--hicolor", str(hicolor)])
+    for size in mod.HICOLOR_SIZES:
+        data = (hicolor / ("%dx%d" % (size, size)) / "apps" / "mmcore.png").read_bytes()
+        assert struct.unpack(">II", data[16:24]) == (size, size)
+
+    previews = tmp_path / "previews"
+    _run([sys.executable, gen, "--preview", str(previews)])
+    for name in ("light", "dark"):
+        data = (previews / ("mmcore-app-icon-preview-%s.png" % name)).read_bytes()
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", data[16:24]) == (808, 560)
 
 
 # --- Authenticode signing helper (#552) ------------------------------------

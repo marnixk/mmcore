@@ -1705,7 +1705,7 @@ def test_macos_release_requires_notarization(tmp_path):
 
 
 def test_native_packaging_derives_icons_from_branding():
-    """#537: AppImage and .app icons derive from the shared branding art."""
+    """#537/#1463: AppImage and .app icons derive from the website favicon art."""
     gen = open(os.path.join(REPO, "scripts", "gen-appicon.py"), encoding="utf-8").read()
     mac = open(
         os.path.join(REPO, "scripts", "package-macos-app.sh"), encoding="utf-8"
@@ -1714,8 +1714,14 @@ def test_native_packaging_derives_icons_from_branding():
         os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
     ).read()
     assert "assets" in gen and "mmcore-app-icon.png" in gen
+    assert "mmcore-app-icon.svg" in gen, "documented single source of truth"
     assert "gen-appicon.py" in mac and "--iconset" in mac
-    assert "gen-appicon.py" in lin and "mmcore.png" in lin
+    assert "gen-appicon.py" in lin and "--hicolor" in lin and "mmcore.png" in lin
+    assert "--hicolor" in gen
+    for name in ("mmcore-app-icon.svg", "mmcore-app-icon.png"):
+        assert os.path.isfile(os.path.join(REPO, "assets", "branding", name)), name
+    for name in ("mmcore-app-icon-preview-light.png", "mmcore-app-icon-preview-dark.png"):
+        assert os.path.isfile(os.path.join(REPO, "assets", "branding", name)), name
 
 
 def test_native_packaging_bakes_release_version_into_binary():
