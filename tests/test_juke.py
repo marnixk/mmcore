@@ -385,14 +385,21 @@ def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
     n = len(ys)
     saw_gaps = saw_segments = saw_quiet_tip = saw_bright_tip = False
     best_tip = 0
-    for _ in range(10):
+    stable_frames = 0
+    for _ in range(14):
         px = con.screen_pixels(coords)
-        for i in range(24):
-            col = px[i * n:(i + 1) * n]
-            runs = _bar_column_runs(col)
-            # Every segment is a single flat colour; a continuous gradient
-            # would put several colours in one run. The caps are flat too.
-            assert all(len(set(cols)) == 1 for _, cols in runs), (i, runs)
+        columns = [px[i * n:(i + 1) * n] for i in range(24)]
+        runs_by_col = [_bar_column_runs(col) for col in columns]
+        # A screendump can land while QEMU is mid-repaint, leaving one bar
+        # rectangle half old and half new: a single run with two colours.
+        # That is a torn frame, not a continuous gradient, so retry the
+        # sample instead of asserting on it (#1415).
+        if any(len(set(cols)) != 1
+               for runs in runs_by_col for _, cols in runs):
+            time.sleep(0.15)
+            continue
+        stable_frames += 1
+        for i, runs in enumerate(runs_by_col):
             real = [r for r in runs if not _is_peak_cap(r)]
             if not real:
                 continue
@@ -421,6 +428,7 @@ def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
             break
         time.sleep(0.15)
     _quit_juke(con)
+    assert stable_frames, "every spectrum sample was a partially rendered frame"
     assert saw_segments, "expected stacked LED segments in a spectrum bar"
     assert saw_gaps, "expected dark gaps between the stacked segments"
     assert saw_quiet_tip, "expected a quiet band to stop in the dark ramp"
