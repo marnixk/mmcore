@@ -57,6 +57,20 @@ MODE width when full. ESC ( B charset sequences are eaten so they do not print a
 stray B. OSC strings time out. Glyphs are IBM VGA 8x16 (CP437), so box drawing
 and shade characters 176-178 match a DOS VGA terminal.
 
+APC (ESC _ ... ST), PM (ESC ^ ... ST) and SOS (ESC X ... ST) strings are
+framed and swallowed; only APC bodies beginning "SyncTERM:" are interpreted.
+SyncTERM image verbs draw into the same pixel plane as sixel without moving
+the cursor or scrolling, clipped to the pane. C;S / C;L keep a per-session
+memory cache (no SD writes): 64 files, 4 MB each, 16 MB total, LRU eviction,
+and only safe names [A-Za-z0-9._-] up to 64 chars. C;DrawJXL, DrawJXLBlob,
+DrawPPM and DrawPPMBlob accept SX/SY/SW/SH, DX/DY (negative values clip),
+FX/FY flips, and integer ZX/ZY zoom; the built-in J40 decoder handles JPEG XL
+and the image reader handles PPM/PGM/PBM. Q;JXL answers 1 when JXL is
+available and CSI < c reports pixel operations. The default DA1 is still
+CSI ?1;2;4c; OPTION TERM CTERM ON answers with the CTerm identity so doors
+choose the Blob verbs. Masks (MASK/MFILE/MBUF), Load* buffers and P;Copy /
+P;Paste are not implemented.
+
 Alt+X exits and restores the previous MODE. F10 opens the Terminal menu
 (WORDPAD-style: the top bar is a full-width menu colour only while the menu is
 active). The status bar (Alt-X, F10 Menu, Echo, host) is shown only while that
