@@ -153,6 +153,25 @@ def test_option_fastdraw_defaults_off_and_is_not_persisted(console):
     assert "fastdraw" not in ini
 
 
+def test_term_cterm_defaults_on_and_explicit_off_persists(console):
+    """CTerm identity is on by default; an explicit OFF is saved with a marker."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION TERM CTERM ON" in all_listed
+    ini = _read_ini(console)
+    assert "term_cterm=1" in ini
+    assert "term_cterm_explicit=1" in ini
+
+    assert console.send_line("OPTION TERM CTERM OFF") == ""
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION TERM CTERM OFF" in all_listed
+    ini = _read_ini(console)
+    assert "term_cterm=0" in ini
+    assert "term_cterm_explicit=1" in ini
+
+    assert console.send_line("OPTION TERM CTERM ON") == ""
+
+
 def test_brightness_and_volume_persist(console):
     """#1157: MM.BRIGHTNESS% and PLAY VOLUME write .mmbasic.ini and the
     factory defaults seed all three keys."""
