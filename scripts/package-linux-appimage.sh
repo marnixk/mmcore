@@ -44,12 +44,11 @@ BIN="${REPO_ROOT}/native/mmcore"
 log "Staging AppDir"
 rm -rf "${APPDIR}"
 mkdir -p "${APPDIR}/usr/bin" \
-	 "${APPDIR}/usr/share/applications" \
-	 "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
+	 "${APPDIR}/usr/share/applications"
 cp "${BIN}" "${APPDIR}/usr/bin/mmcore"
 
-python3 "${REPO_ROOT}/scripts/gen-appicon.py" \
-	"${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png"
+python3 "${REPO_ROOT}/scripts/gen-appicon.py" --hicolor \
+	"${APPDIR}/usr/share/icons/hicolor"
 cp "${APPDIR}/usr/share/icons/hicolor/256x256/apps/mmcore.png" \
 	"${APPDIR}/mmcore.png"
 
