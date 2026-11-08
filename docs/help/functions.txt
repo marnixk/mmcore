@@ -43,6 +43,7 @@ Other: PLAYING() DATE$ TIME$ TIMER POS CSRLIN
   STRUCT() SIZEOF|OFFSET|TYPE|FIND
   JSON$(json$, path$)
   JSON_STRINGIFY$(var)
+  WEB$() WEB(... AS Type) WEBSTATUS WEBHEADER$(name$); see ~WEB~.
   DATE$= and TIME$= set the clock strings.
 
 OPTION ANGLE DEGREES makes SIN/COS/TAN/ATN use degrees.

@@ -2,7 +2,7 @@ name: JSON$
 kind: command
 alias: JSON
 
-Query a JSON object stored in a STRING (255). Missing keys, null, objects and
+Query a JSON object stored in a STRING (growable, no 255 limit). Missing keys, null, objects and
 arrays return "". Invalid JSON is an error. ~JSON_PARSE~ and ~JSON_STRINGIFY$~
 map a TYPE.
 

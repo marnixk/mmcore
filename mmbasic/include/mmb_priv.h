@@ -976,6 +976,10 @@ void mmb_need_num(mmb_val v);
 mmb_val mmb_json_query(const char *js, const char *path);
 void mmb_cmd_json_parse(void);
 mmb_val mmb_json_stringify(mmb_val v);
+/* Fill a TYPE record (sid, already zeroed, G.sdef[sid].total bytes) from JSON
+ * using the same mapping as JSON_PARSE. Returns 0 on success, -1 on malformed
+ * JSON and -2 when the root is not a JSON object. */
+int mmb_json_parse_struct(int sid, const char *js, unsigned char *rec);
 void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
 void mmb_out_flush(void);
@@ -1630,6 +1634,31 @@ void mmb_net_yield(void);
 int mmb_net_udp_roundtrip(const char *host, int port,
 			  const void *tx, unsigned txlen,
 			  void *rx, unsigned rxcap, int timeout_ms);
+
+/* ---- WEB (PicoMite parity + high-level HTTP) ------------------------- */
+/* Expression forms: WEB$() returns text, WEB(... AS Type) returns a TYPE.
+ * mmb_web_fn() consumes the opening '(' and parses the whole call. */
+mmb_val mmb_web_fn(int text_form);
+void mmb_cmd_web(void);
+void mmb_web_cleanup(void);
+int mmb_web_status_get(void);
+mmb_val mmb_web_header_val(const char *name);
+
+/* TLS transport seam. Implemented with OpenSSL when the native build finds
+ * it (-DMMB_HAVE_TLS); every other backend (Circle, Windows) returns the
+ * "TLS unavailable" stubs so the build stays green and HTTPS reports a clear
+ * platform limitation. Verification of the server certificate and hostname is
+ * on by default; mmb_net_tls_set_verify(0) is the explicit insecure mode. */
+int mmb_net_tls_available(void);
+int mmb_net_tls_open(const char *host, int port, int timeout_ms);
+int mmb_net_tls_send(const void *data, unsigned n);
+int mmb_net_tls_recv(void *data, unsigned maxn);
+int mmb_net_tls_rx_avail(void);
+int mmb_net_tls_peer_closed(void);
+const char *mmb_net_tls_errmsg(void);
+void mmb_net_tls_close(void);
+int mmb_net_tls_set_ca_pem(const char *pem, int len);
+void mmb_net_tls_set_verify(int verify);
 
 int mmb_net_srv_listen(int port);
 int mmb_net_srv_port(int lsn);
