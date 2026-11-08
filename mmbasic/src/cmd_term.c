@@ -5536,13 +5536,28 @@ static int term_mask_resolve(const term_draw_opts *o, int sw, int sh,
 		if (px > TM_MASK_MAX_PIXELS)
 			return -1;
 		need = (size_t)((px + 7u) / 8u);
-		if (tm_b64_decode(o->mask_ptr, o->mask_len, (unsigned)need,
+		if (tm_b64_decode(o->mask_ptr, o->mask_len, TM_APC_MAX,
 				  &buf, &outlen) != 0)
 			return -1;
 		if (outlen < need)
 		{
 			free(buf);
 			return -1;
+		}
+		if (outlen > need)
+		{
+			/* SyncTERM accepts padding past the packed bitmap; keep
+			 * only the bytes the sampler can address. */
+			unsigned char *trim = (unsigned char *)malloc(need);
+
+			if (!trim)
+			{
+				free(buf);
+				return -1;
+			}
+			memcpy(trim, buf, need);
+			free(buf);
+			buf = trim;
 		}
 		m->bits = buf;
 		m->w = mw;
