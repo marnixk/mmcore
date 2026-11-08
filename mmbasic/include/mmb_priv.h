@@ -1874,6 +1874,22 @@ int mmb_try_user_function(mmb_val *out);
 int mmb_sub_is_func(const char *name);
 int mmb_play_wav(const char *path);
 void mmb_play_tts(void);
+/* Additive WAV sound effects (#1474). Effects mix on top of the active music
+ * engine (or play on their own when music is stopped) without touching the
+ * music's playback state or position. Up to MMB_SFX_VOICES (4) play at once;
+ * the oldest is replaced when all voices are busy. volume is 0..100 or a
+ * negative value to use the current PLAY SFX VOLUME default. */
+int mmb_sfx_play(const char *path, int volume);
+/* Stop every effect; music keeps playing. */
+void mmb_sfx_stop_all(void);
+/* Stop effects started by the current console (program-exit teardown). */
+void mmb_sfx_stop_owned(void);
+int mmb_sfx_active(void);
+void mmb_sfx_set_volume(int volume);
+int mmb_sfx_volume(void);
+/* Frames mixed for the current music track since it started; effects do not
+ * change it. 0 while no track is playing. MM.INFO("AUDIOPOS"). */
+unsigned mmb_audio_position(void);
 
 
 int mmb_keyword_eq(const char *a, const char *b);
