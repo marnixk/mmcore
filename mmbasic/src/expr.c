@@ -553,6 +553,10 @@ static void theme_name_copy(char *dst, int n, const char *src)
 	X("INPUT$", lbl_input) \
 	X("JSON$", lbl_json) \
 	X("JSON_STRINGIFY$", lbl_json_stringify) \
+	X("WEB", lbl_web) \
+	X("WEB$", lbl_web_str) \
+	X("WEBSTATUS", lbl_webstatus) \
+	X("WEBHEADER$", lbl_webheader) \
 	X("ACOS", lbl_acos) \
 	X("ACS", lbl_acos) \
 	X("ASIN", lbl_asin) \
@@ -1886,6 +1890,36 @@ int mmb_try_function(mmb_val *out)
 		if (n != 1)
 			mmb_syntax();
 		*out = mmb_json_stringify(a[0]);
+		return 1;
+	}
+	if (mmb_match("WEB$"))
+	{
+	lbl_web_str:
+		*out = mmb_web_fn(1);
+		return 1;
+	}
+	if (mmb_match("WEB"))
+	{
+	lbl_web:
+		*out = mmb_web_fn(0);
+		return 1;
+	}
+	if (match_fun("WEBSTATUS"))
+	{
+	lbl_webstatus:
+		call_args(a, 0, &n);
+		if (n != 0)
+			mmb_syntax();
+		*out = mmb_int_val(mmb_web_status_get());
+		return 1;
+	}
+	if (match_fun("WEBHEADER$"))
+	{
+	lbl_webheader:
+		call_args(a, 1, &n);
+		if (n != 1 || a[0].type != T_STR)
+			mmb_error("?TYPE MISMATCH");
+		*out = mmb_web_header_val(a[0].s);
 		return 1;
 	}
 	if (mmb_match("ACOS") || mmb_match("ACS"))

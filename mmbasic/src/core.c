@@ -4867,6 +4867,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
+		tab[mmb_kw_id("WEB")] = mmb_cmd_web;
 		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
 		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
 		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
@@ -6858,6 +6859,7 @@ void mmb_reset(void)
 	mmb_arena_free();
 	mmb_option_reset();
 	mmb_play_stop();
+	mmb_web_cleanup();
 	/* Release the growable program store and its tables (#1303): the fixed
 	 * 512 KB prog array was inline in this struct, so its heap replacement
 	 * must be freed explicitly before the context is discarded or reused. */

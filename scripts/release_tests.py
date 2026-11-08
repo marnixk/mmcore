@@ -176,6 +176,21 @@ RULES: tuple[Rule, ...] = (
         "JSON sources changed",
     ),
     Rule(
+        "web",
+        (
+            "mmbasic/src/cmd_web.c",
+            "native/net_tls.c",
+            "docs/help/web.txt",
+        ),
+        (
+            "tests/test_web.py",
+            "tests/test_json.py",
+            "tests/test_tcp.py",
+            "tests/test_help_docs.py",
+        ),
+        "WEB / HTTP sources changed",
+    ),
+    Rule(
         "struct",
         ("mmbasic/src/cmd_struct.c",),
         ("tests/test_struct.py",),
