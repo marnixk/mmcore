@@ -1288,6 +1288,25 @@ int mmb_try_function(mmb_val *out)
 			*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
 			return 1;
 		}
+		if (mmb_keyword_eq(key, "AUDIOPOS"))
+		{
+			/* Frames mixed for the current track since it started. WAV
+			 * effects do not reset or advance it (#1474). */
+			*out = mmb_int_val((int)mmb_audio_position());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "SFXVOICES"))
+		{
+			/* Number of WAV effects currently playing (#1474). */
+			*out = mmb_int_val(mmb_sfx_active());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "SFXVOL"))
+		{
+			/* Default gain applied to new effects (#1474). */
+			*out = mmb_int_val(mmb_sfx_volume());
+			return 1;
+		}
 		/* CMM2/PicoMite reject an unknown key; never fall back to MODE. */
 		mmb_error("?SYNTAX ERROR");
 	}
