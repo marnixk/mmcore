@@ -64,12 +64,19 @@ the cursor or scrolling, clipped to the pane. C;S / C;L keep a per-session
 memory cache (no SD writes): 64 files, 4 MB each, 16 MB total, LRU eviction,
 and only safe names [A-Za-z0-9._-] up to 64 chars. C;DrawJXL, DrawJXLBlob,
 DrawPPM and DrawPPMBlob accept SX/SY/SW/SH, DX/DY (negative values clip),
-FX/FY flips, and integer ZX/ZY zoom; the built-in J40 decoder handles JPEG XL
-and the image reader handles PPM/PGM/PBM. Q;JXL answers 1 when JXL is
-available and CSI < c reports pixel operations. DA1 answers with the CTerm
-identity by default so doors choose the Blob verbs; `OPTION TERM CTERM OFF`
-uses the plain CSI ?1;2;4c reply instead. Masks (MASK/MFILE/MBUF), Load*
-buffers and P;Copy / P;Paste are not implemented.
+FX/FY flips, integer ZX/ZY zoom, and masks: MX/MY/MW/MH place the mask,
+MASK= is an inline base64 packed bitmap, MFILE= names a cached PBM, and MBUF
+uses the loaded mask buffer. Cleared mask bits leave the screen underneath.
+The built-in J40 decoder handles JPEG XL and the image reader handles
+PPM/PGM/PBM. C;LoadPPM and C;LoadJXL (cache or Blob) decode into one of two
+per-session pixel buffers selected with B=0 or B=1; C;LoadPBM/LoadPBMBlob
+load the mask buffer. P;Copy copies a pane rectangle (B=, X=, Y=, W=, H=)
+into a buffer and P;Paste draws it with the Draw options plus B=. Decoded
+buffers and masks are limited to 4 megapixels and dropped silently when over
+quota or malformed. Q;JXL answers 1 when JXL is available and CSI < c
+reports pixel operations. DA1 answers with the CTerm identity by default so
+doors choose the Blob verbs; `OPTION TERM CTERM OFF` uses the plain
+CSI ?1;2;4c reply instead.
 
 Alt+X exits and restores the previous MODE. F10 opens the Terminal menu
 (WORDPAD-style: the top bar is a full-width menu colour only while the menu is

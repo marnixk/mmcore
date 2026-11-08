@@ -48,7 +48,216 @@ def _is_red(rgb) -> bool:
     return r > 170 and g < 90 and b < 90
 
 
+def _is_blue(rgb) -> bool:
+    r, g, b = rgb
+    return b > 170 and r < 90 and g < 90
+
+
+def _is_grey(rgb) -> bool:
+    r, g, b = rgb
+    return r > 100 and g > 100 and b > 100 and abs(r - g) < 40 and abs(g - b) < 40
+
+
 RED_PPM = b"P6\n8 8\n255\n" + bytes([255, 0, 0]) * 64
+BLUE_PPM = b"P6\n8 8\n255\n" + bytes([0, 0, 255]) * 64
+RED_PPM_16 = b"P6\n16 8\n255\n" + bytes([255, 0, 0]) * 128
+
+
+def _apc(cmd: bytes) -> bytes:
+    return b"\x1b_SyncTERM:" + cmd + b"\x1b\\"
+
+
+def _pbm_p4(width: int, rows) -> bytes:
+    """Binary PBM: each row is a bytes object (1 = black = draw)."""
+    return b"P4\n%d %d\n" % (width, len(rows)) + b"".join(rows)
+
+
+# 8-wide mask with the left half set (draw) and right half clear.
+HALF8 = bytes([0xF0]) * 8
+# 16-wide mask: first cell drawn, second cell transparent (glyph shows).
+LEFT_CELL16 = bytes([0xFF, 0x00]) * 8
+
+
+def _apc_image_paste(opts: bytes) -> bytes:
+    return _apc(b"P;Paste;" + opts)
+
+
+def _plain_hits(con, coords):
+    return con.screen_pixels(coords)
+
+
+def test_paste_inline_mask(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        replay._to_guest(_apc(b"C;LoadPPMBlob;B=0;" + _b64(RED_PPM)))
+        replay._to_guest(
+            _apc_image_paste(
+                b"B=0;DX=0;DY=0;MW=8;MH=8;MASK=" + _b64(HALF8)
+            )
+        )
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(con, [(160, 2), (163, 6), (166, 2), (174, 5)])
+        assert _is_red(hits[0]) and _is_red(hits[1]), hits
+        assert not _is_red(hits[2]) and not _is_red(hits[3]), hits
+        replay._to_guest(b"AFTERMASK")
+        more = replay.wait_serial(lambda s: "AFTERMASK" in _plain(s), timeout=8.0)
+        assert "AFTERMASK" in _plain(more)
+        _quit(con)
+        assert con.send_line("PRINT 12+12") == "24"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_cache_load_and_mfile(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        replay._to_guest(_apc(b"C;S;red.ppm;" + _b64(RED_PPM)))
+        replay._to_guest(_apc(b"C;S;half.pbm;" + _b64(_pbm_p4(8, [HALF8[:1]] * 8))))
+        replay._to_guest(_apc(b"C;LoadPPM;B=1;red.ppm"))
+        replay._to_guest(
+            _apc_image_paste(
+                b"B=1;DX=64;DY=0;MFILE=half.pbm;MX=0;MY=0"
+            )
+        )
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(con, [(224, 2), (227, 6), (229, 2), (231, 5)])
+        assert _is_red(hits[0]) and _is_red(hits[1]), hits
+        assert not _is_red(hits[2]) and not _is_red(hits[3]), hits
+        _quit(con)
+        assert con.send_line("PRINT 13+13") == "26"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_load_jxl_cache_and_blob(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        jxl = _fixture("red.jxl")
+        replay._to_guest(_apc(b"C;S;red.jxl;" + _b64(jxl)))
+        replay._to_guest(_apc(b"C;LoadJXL;B=0;red.jxl"))
+        replay._to_guest(_apc_image_paste(b"B=0;DX=0;DY=0"))
+        replay._to_guest(_apc(b"C;LoadJXLBlob;B=1;" + _b64(jxl)))
+        replay._to_guest(_apc_image_paste(b"B=1;DX=64;DY=0"))
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(con, [(160, 2), (167, 6), (224, 2), (231, 6)])
+        assert all(_is_red(p) for p in hits), hits
+        _quit(con)
+        assert con.send_line("PRINT 14+14") == "28"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_copy_and_paste_buffer(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        replay._to_guest(
+            _apc(b"C;DrawPPMBlob;DX=0;DY=0;" + _b64(RED_PPM))
+        )
+        replay._to_guest(_apc(b"P;Copy;B=0;X=0;Y=0;W=8;H=8"))
+        replay._to_guest(
+            _apc(b"C;LoadPPMBlob;B=1;" + _b64(BLUE_PPM))
+        )
+        replay._to_guest(_apc_image_paste(b"B=1;DX=0;DY=0"))
+        replay._to_guest(_apc_image_paste(b"B=0;DX=64;DY=0"))
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(con, [(160, 2), (167, 5), (224, 2), (231, 5)])
+        assert _is_blue(hits[0]) and _is_blue(hits[1]), hits
+        assert _is_red(hits[2]) and _is_red(hits[3]), hits
+        _quit(con)
+        assert con.send_line("PRINT 15+15") == "30"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_mask_transparent_keeps_glyph(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        # Two full white-bg cells at the pane origin, then let the pane paint
+        # before the masked image primes its cells.
+        replay._to_guest(b"\x1b[H\x1b[47m  \x1b[0m")
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        replay._to_guest(
+            _apc(b"C;LoadPPMBlob;B=0;" + _b64(RED_PPM_16))
+        )
+        replay._to_guest(
+            _apc_image_paste(
+                b"B=0;DX=0;DY=0;MW=16;MH=8;MASK=" + _b64(LEFT_CELL16)
+            )
+        )
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(con, [(160, 2), (172, 2), (172, 8)])
+        assert _is_red(hits[0]), hits
+        assert _is_grey(hits[1]) and _is_grey(hits[2]), hits
+        _quit(con)
+        assert con.send_line("PRINT 16+16") == "32"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_masked_syncdoom_style_replay(kernel_image):
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        mask_pbm = _pbm_p4(8, [HALF8[:1]] * 8)
+        # Frame 1: red through the loaded mask buffer.
+        replay._to_guest(_apc(b"C;LoadPPMBlob;B=0;" + _b64(RED_PPM)))
+        replay._to_guest(_apc(b"C;LoadPBMBlob;" + _b64(mask_pbm)))
+        replay._to_guest(_apc_image_paste(b"B=0;DX=0;DY=0;MBUF"))
+        # Frame 2: blue through the same mask at another location.
+        replay._to_guest(_apc(b"C;LoadPPMBlob;B=1;" + _b64(BLUE_PPM)))
+        replay._to_guest(_apc_image_paste(b"B=1;DX=64;DY=0;MBUF"))
+        time.sleep(0.5)
+        replay.pump_once(recv_tcp=False)
+        hits = _plain_hits(
+            con,
+            [(160, 2), (166, 2), (224, 2), (230, 2)],
+        )
+        assert _is_red(hits[0]) and not _is_red(hits[1]), hits
+        assert _is_blue(hits[2]) and not _is_blue(hits[3]), hits
+        # Bad verb arguments must drop silently and leave the frame alone.
+        replay._to_guest(_apc(b"C;LoadPPMBlob;B=2;" + _b64(RED_PPM)))
+        replay._to_guest(_apc(b"C;LoadPBMBlob;!!!!"))
+        replay._to_guest(_apc_image_paste(b"B=9;DX=0;DY=0"))
+        replay._to_guest(_apc_image_paste(b"B=0;DX=0;DY=0;MASK=!!!!;MW=8;MH=8"))
+        replay._to_guest(b"AFTERMASK")
+        more = replay.wait_serial(lambda s: "AFTERMASK" in _plain(s), timeout=8.0)
+        assert "AFTERMASK" in _plain(more)
+        hits = _plain_hits(con, [(160, 2), (166, 2)])
+        assert _is_red(hits[0]) and not _is_red(hits[1]), hits
+        _quit(con)
+        assert con.send_line("PRINT 17+17") == "34"
+    finally:
+        replay.stop()
+        con.stop()
+
 
 
 def test_apc_payload_is_swallowed(kernel_image):

@@ -108,6 +108,16 @@
 #define TM_CACHE_FILE_MAX (4u * 1024u * 1024u)
 #define TM_CACHE_TOTAL_MAX (16u * 1024u * 1024u)
 #define TM_CACHE_NAME   65
+/* Decoded SyncTERM buffers live beside the cache: two paste buffers and one
+ * mask buffer per console.  4 Mpx caps each (12 MB per paste buffer) so a
+ * door cannot pin unbounded heap when it loads repeated frames. */
+#define TM_PIXBUF_MAX_PIXELS (4u * 1024u * 1024u)
+#define TM_MASK_MAX_PIXELS   (4u * 1024u * 1024u)
+#define TM_PIXBUF_COUNT      2
+#define TM_MASK_NONE   0
+#define TM_MASK_INLINE 1
+#define TM_MASK_FILE   2
+#define TM_MASK_BUF    3
 #define TM_REPLAY_HEX   512
 #define TM_FILE_LINE    1280
 #define TM_FILE_PEND    16
@@ -138,7 +148,18 @@ typedef struct {
 	int dx, dy;
 	int zx, zy;
 	int fx, fy;
+	int mx, my, mw, mh;
+	int mask_kind;         /* TM_MASK_* */
+	const char *mask_ptr;  /* inline MASK= base64, inside the APC body */
+	unsigned mask_len;
+	char mfile[TM_CACHE_NAME];
+	int buf;               /* B= paste/load buffer selector */
 } term_draw_opts;
+
+typedef struct {
+	int x, y, w, h;
+	int buf;
+} term_copy_opts;
 
 typedef struct {
 	int active;
@@ -302,6 +323,47 @@ typedef struct {
 
 static term_plane *P_s[MMB_MAX_CONSOLES];
 #define P (*P_s[g_console])
+
+/* SyncTERM C;Load* / P;Copy paste buffers (B=0/1) and the C;LoadPBM mask
+ * buffer, one set per console.  Pixel buffers use the decoder's RGB888 layout
+ * so a Load can move its result in without another copy. */
+static mmb_img_rgb PB_s[MMB_MAX_CONSOLES][TM_PIXBUF_COUNT];
+#define PB (PB_s[g_console])
+
+typedef struct {
+	unsigned char *bits;   /* tightly packed row-major, MSB-first, 1=draw */
+	int w, h;
+	int owned;             /* bits came from a temporary decode */
+} term_mask;
+
+static term_mask TMASK_s[MMB_MAX_CONSOLES];
+#define TMASK (TMASK_s[g_console])
+
+static void term_pixbuf_free_one(int idx, int b)
+{
+	if (PB_s[idx][b].rgb)
+		free(PB_s[idx][b].rgb);
+	PB_s[idx][b].rgb = NULL;
+	PB_s[idx][b].w = 0;
+	PB_s[idx][b].h = 0;
+}
+
+static void term_pixbuf_free_all(int idx)
+{
+	int b;
+
+	for (b = 0; b < TM_PIXBUF_COUNT; b++)
+		term_pixbuf_free_one(idx, b);
+}
+
+static void term_mask_free(int idx)
+{
+	if (TMASK_s[idx].bits)
+		free(TMASK_s[idx].bits);
+	TMASK_s[idx].bits = NULL;
+	TMASK_s[idx].w = 0;
+	TMASK_s[idx].h = 0;
+}
 
 static unsigned char *A_s[MMB_MAX_CONSOLES];
 static unsigned A_cap_s[MMB_MAX_CONSOLES];
@@ -474,6 +536,8 @@ static void term_sb_free(int idx)
 
 static void term_cache_free(int idx);
 static void term_apc_buf_free(int idx);
+static void term_pixbuf_free_all(int idx);
+static void term_mask_free(int idx);
 
 static void term_session_free(int idx)
 {
@@ -483,6 +547,8 @@ static void term_session_free(int idx)
 	term_sb_free(idx);
 	term_cache_free(idx);
 	term_apc_buf_free(idx);
+	term_pixbuf_free_all(idx);
+	term_mask_free(idx);
 }
 
 static void term_dl_open(void);
@@ -2194,6 +2260,8 @@ static void term_exit(void)
 	mmb_yield_remove(term_bg_yield);
 	term_cache_free(g_console);
 	term_apc_buf_free(g_console);
+	term_pixbuf_free_all(g_console);
+	term_mask_free(g_console);
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
 	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
@@ -5263,11 +5331,32 @@ static int tm_draw_key(const char *t, size_t n, term_draw_opts *o)
 		return 1;
 	}
 	if (n == 4 && memcmp(t, "MBUF", 4) == 0)
+	{
+		o->mask_kind = TM_MASK_BUF;
 		return 1;
-	if (n > 6 && memcmp(t, "MFILE=", 6) == 0)
+	}
+	if (n >= 6 && memcmp(t, "MFILE=", 6) == 0)
+	{
+		v = t + 6;
+		vn = n - 6;
+		if (vn < 1 || vn >= TM_CACHE_NAME)
+			return -1;
+		memcpy(o->mfile, v, vn);
+		o->mfile[vn] = 0;
+		if (!term_safe_name(o->mfile))
+			return -1;
+		o->mask_kind = TM_MASK_FILE;
 		return 1;
-	if (n > 5 && memcmp(t, "MASK=", 5) == 0)
+	}
+	if (n >= 5 && memcmp(t, "MASK=", 5) == 0)
+	{
+		o->mask_ptr = t + 5;
+		o->mask_len = (unsigned)(n - 5);
+		o->mask_kind = TM_MASK_INLINE;
 		return 1;
+	}
+	if (n >= 3 && t[0] == 'B' && t[1] == '=')
+		return tm_opt_int(t + 2, n - 2, &o->buf, 0) == 0 ? 1 : -1;
 	if (n < 4 || t[2] != '=')
 		return 0;
 	v = t + 3;
@@ -5288,13 +5377,14 @@ static int tm_draw_key(const char *t, size_t n, term_draw_opts *o)
 		return tm_opt_int(v, vn, &o->zx, 0) == 0 ? 1 : -1;
 	if (t[0] == 'Z' && t[1] == 'Y')
 		return tm_opt_int(v, vn, &o->zy, 0) == 0 ? 1 : -1;
-	if ((t[0] == 'M' && t[1] == 'X') || (t[0] == 'M' && t[1] == 'Y') ||
-	    (t[0] == 'M' && t[1] == 'W') || (t[0] == 'M' && t[1] == 'H'))
-	{
-		int dummy;
-
-		return tm_opt_int(v, vn, &dummy, 0) == 0 ? 1 : -1;
-	}
+	if (t[0] == 'M' && t[1] == 'X')
+		return tm_opt_int(v, vn, &o->mx, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'Y')
+		return tm_opt_int(v, vn, &o->my, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'W')
+		return tm_opt_int(v, vn, &o->mw, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'H')
+		return tm_opt_int(v, vn, &o->mh, 0) == 0 ? 1 : -1;
 	return 0;
 }
 
@@ -5375,10 +5465,142 @@ static void term_plane_prime_cells(int x0, int y0, int x1, int y1)
 	G.gfx.write_page = saved;
 }
 
+/* Decode a PBM (P1/P4) from the cache into the tightly packed bit layout the
+ * SyncTERM mask sampler uses: black pixels are "draw". */
+static int term_mask_from_pbm(const unsigned char *data, unsigned len,
+			      term_mask *m)
+{
+	mmb_img_rgb img;
+	unsigned char *bits;
+	size_t n, bytes, i;
+	int x, y, w, h;
+
+	memset(&img, 0, sizeof(img));
+	if (!data || len < 2 || data[0] != 'P' ||
+	    (data[1] != '1' && data[1] != '4'))
+		return -1;
+	if (mmb_ppm_decode(data, len, TM_MASK_MAX_PIXELS, &img) != 0)
+		return -1;
+	w = img.w;
+	h = img.h;
+	n = (size_t)w * (size_t)h;
+	bytes = (n + 7u) / 8u;
+	bits = (unsigned char *)malloc(bytes ? bytes : 1);
+	if (!bits)
+	{
+		mmb_img_free(&img);
+		return -1;
+	}
+	memset(bits, 0, bytes ? bytes : 1);
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+		{
+			const unsigned char *p = img.rgb +
+				((size_t)y * (size_t)w + (size_t)x) * 3u;
+
+			if (p[0] == 0 && p[1] == 0 && p[2] == 0)
+			{
+				i = (size_t)y * (size_t)w + (size_t)x;
+				bits[i >> 3] |= (unsigned char)(0x80u >> (i & 7u));
+			}
+		}
+	mmb_img_free(&img);
+	m->bits = bits;
+	m->w = w;
+	m->h = h;
+	m->owned = 1;
+	return 0;
+}
+
+/* Resolve the Draw/Paste mask tokens.  sw/sh are the effective source
+ * rectangle, needed to default MW/MH and to bound-check MFILE/MBUF.  A
+ * requested mask that does not validate drops the whole frame, matching
+ * SyncTERM (it does not fall back to an unmasked draw). */
+static int term_mask_resolve(const term_draw_opts *o, int sw, int sh,
+			     term_mask *m)
+{
+	memset(m, 0, sizeof(*m));
+	if (o->mask_kind == TM_MASK_INLINE)
+	{
+		unsigned char *buf = NULL;
+		unsigned outlen = 0;
+		unsigned long long px;
+		size_t need;
+		int mw, mh;
+
+		mw = o->mw > 0 ? o->mw : sw;
+		mh = o->mh > 0 ? o->mh : sh;
+		if (mw < 1 || mh < 1)
+			return -1;
+		px = (unsigned long long)(unsigned)mw * (unsigned)mh;
+		if (px > TM_MASK_MAX_PIXELS)
+			return -1;
+		need = (size_t)((px + 7u) / 8u);
+		if (tm_b64_decode(o->mask_ptr, o->mask_len, TM_APC_MAX,
+				  &buf, &outlen) != 0)
+			return -1;
+		if (outlen < need)
+		{
+			free(buf);
+			return -1;
+		}
+		if (outlen > need)
+		{
+			/* SyncTERM accepts padding past the packed bitmap; keep
+			 * only the bytes the sampler can address. */
+			unsigned char *trim = (unsigned char *)malloc(need);
+
+			if (!trim)
+			{
+				free(buf);
+				return -1;
+			}
+			memcpy(trim, buf, need);
+			free(buf);
+			buf = trim;
+		}
+		m->bits = buf;
+		m->w = mw;
+		m->h = mh;
+		m->owned = 1;
+	}
+	else if (o->mask_kind == TM_MASK_FILE)
+	{
+		term_cache_ent *e = term_cache_find(o->mfile);
+
+		if (!e || term_mask_from_pbm(e->data, e->len, m) != 0)
+			return -1;
+	}
+	else if (o->mask_kind == TM_MASK_BUF)
+	{
+		term_mask *src = &TMASK_s[g_console];
+
+		if (!src->bits)
+			return -1;
+		*m = *src;
+		m->owned = 0;
+	}
+	else
+		return -1;
+
+	if (o->mx < 0 || o->my < 0 ||
+	    (long long)o->mx + sw > m->w ||
+	    (long long)o->my + sh > m->h)
+	{
+		if (m->owned)
+			free(m->bits);
+		memset(m, 0, sizeof(*m));
+		return -1;
+	}
+	return 0;
+}
+
 static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 {
 	int sx, sy, sw, sh, zx, zy, x, y;
 	long long dx, dy, x0, x1, y0, y1;
+	term_mask mask;
+	int have_mask = 0;
 
 	if (!img || !img->rgb || img->w < 1 || img->h < 1)
 		return;
@@ -5398,8 +5620,16 @@ static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 		sw = img->w - sx;
 	if (sh > img->h - sy)
 		sh = img->h - sy;
-	if (sw < 1 || sh < 1 || term_plane_alloc() != 0)
+	if (sw < 1 || sh < 1)
 		return;
+	if (o->mask_kind != TM_MASK_NONE)
+	{
+		if (term_mask_resolve(o, sw, sh, &mask) != 0)
+			return;
+		have_mask = 1;
+	}
+	if (term_plane_alloc() != 0)
+		goto fail;
 	dx = o->dx;
 	dy = o->dy;
 	x0 = dx;
@@ -5415,7 +5645,7 @@ static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 	if (y1 > P.h)
 		y1 = P.h;
 	if (x1 <= x0 || y1 <= y0)
-		return;
+		goto fail;
 	term_plane_prime_cells((int)x0, (int)y0, (int)x1, (int)y1);
 	for (y = (int)y0; y < (int)y1; y++)
 	{
@@ -5439,6 +5669,14 @@ static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 				continue;
 			if (o->fx)
 				sxi = sw - 1 - sxi;
+			if (have_mask)
+			{
+				int mi = (o->my + syi) * mask.w + o->mx + sxi;
+
+				if (!(mask.bits[mi >> 3] &
+				      (unsigned char)(0x80u >> (mi & 7u))))
+					continue;
+			}
 			xx = sx + sxi;
 			p = img->rgb + ((size_t)yy * (size_t)img->w +
 					(size_t)xx) * 3u;
@@ -5447,6 +5685,24 @@ static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 				(unsigned)p[2]);
 			P.cov[(y / T.cell_h) * TM_MAX_COLS + x / TM_CW] = 1;
 		}
+	}
+	if (have_mask)
+	{
+		/* Coverage is cell-granular.  The rect was primed from the
+		 * current screen, so claiming the whole rect composites those
+		 * glyph pixels under transparent mask bits instead of dropping
+		 * to the glyph path (which would paint over the image). */
+		int r0 = (int)y0 / T.cell_h;
+		int r1 = ((int)y1 - 1) / T.cell_h;
+		int c0 = (int)x0 / TM_CW;
+		int c1 = ((int)x1 - 1) / TM_CW;
+		int r, c;
+
+		for (r = r0; r <= r1; r++)
+			for (c = c0; c <= c1; c++)
+				if (r >= 0 && r < T.pane_rows && c >= 0 &&
+				    c < term_width())
+					P.cov[r * TM_MAX_COLS + c] = 1;
 	}
 	T.img_x = T.pane_left * TM_CW + (int)x0;
 	T.img_y = T.pane_top + (int)y0;
@@ -5460,6 +5716,9 @@ static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
 		mark_dirty_row(y);
 	T.img_dirty = 1;
 	T.need_draw = 1;
+fail:
+	if (have_mask && mask.owned)
+		free(mask.bits);
 }
 
 static void term_apc_image(int jxl, const unsigned char *data, unsigned len,
@@ -5516,6 +5775,162 @@ static void term_apc_store(const char *rest, unsigned len)
 	free(buf);
 }
 
+static int tm_copy_key(const char *t, size_t n, term_copy_opts *o)
+{
+	if (n < 3 || t[1] != '=')
+		return 0;
+	if (t[0] == 'X')
+		return tm_opt_int(t + 2, n - 2, &o->x, 0) == 0 ? 1 : -1;
+	if (t[0] == 'Y')
+		return tm_opt_int(t + 2, n - 2, &o->y, 0) == 0 ? 1 : -1;
+	if (t[0] == 'W')
+		return tm_opt_int(t + 2, n - 2, &o->w, 0) == 0 ? 1 : -1;
+	if (t[0] == 'H')
+		return tm_opt_int(t + 2, n - 2, &o->h, 0) == 0 ? 1 : -1;
+	if (t[0] == 'B')
+		return tm_opt_int(t + 2, n - 2, &o->buf, 0) == 0 ? 1 : -1;
+	return 0;
+}
+
+/* P;Copy has only options, no trailing filename/payload. */
+static int tm_copy_parse(const char *p, term_copy_opts *o)
+{
+	while (p && *p == ';')
+	{
+		const char *t = p + 1;
+		const char *e = strchr(t, ';');
+		size_t n = e ? (size_t)(e - t) : strlen(t);
+
+		if (tm_copy_key(t, n, o) != 1)
+			return -1;
+		if (!e)
+			return 0;
+		p = e;
+	}
+	return p && *p == 0 ? 0 : -1;
+}
+
+static void term_apc_copy(const char *rest)
+{
+	term_copy_opts o;
+	mmb_img_rgb nb;
+	int x, y, w, h, yy, xx;
+
+	memset(&o, 0, sizeof(o));
+	if (tm_copy_parse(rest, &o) != 0)
+		return;
+	if (o.buf < 0 || o.buf >= TM_PIXBUF_COUNT)
+		return;
+	if (term_plane_alloc() != 0)
+		return;
+	x = o.x;
+	y = o.y;
+	if (x > P.w)
+		x = P.w;
+	if (y > P.h)
+		y = P.h;
+	w = o.w > 0 ? o.w : P.w - x;
+	h = o.h > 0 ? o.h : P.h - y;
+	if (w > P.w - x)
+		w = P.w - x;
+	if (h > P.h - y)
+		h = P.h - y;
+	if (w < 1 || h < 1)
+		return;
+	if ((unsigned long long)(unsigned)w * (unsigned)h >
+	    TM_PIXBUF_MAX_PIXELS)
+		return;
+	memset(&nb, 0, sizeof(nb));
+	nb.rgb = (unsigned char *)malloc((size_t)w * (size_t)h * 3u);
+	if (!nb.rgb)
+		return;
+	nb.w = w;
+	nb.h = h;
+	/* Prime uncovered cells from the live screen so a copy includes text
+	 * as well as image-plane pixels. */
+	term_plane_prime_cells(x, y, x + w, y + h);
+	for (yy = 0; yy < h; yy++)
+	{
+		const uint16_t *src = P.pix + (size_t)(y + yy) * P.stride + x;
+		unsigned char *dst = nb.rgb + (size_t)yy * (size_t)w * 3u;
+
+		for (xx = 0; xx < w; xx++)
+		{
+			unsigned c = mmb_native_to_rgb(src[xx]);
+
+			dst[xx * 3] = (unsigned char)(c >> 16);
+			dst[xx * 3 + 1] = (unsigned char)(c >> 8);
+			dst[xx * 3 + 2] = (unsigned char)c;
+		}
+	}
+	term_pixbuf_free_one(g_console, o.buf);
+	PB[o.buf] = nb;
+}
+
+/* C;LoadPPM/LoadJXL/LoadPBM and their Blob forms: options are B= only (PBM
+ * has no buffer selector), then a cache name or the base64 payload. */
+static void term_apc_load(int jxl, int blob, int mask_only, const char *rest)
+{
+	term_draw_opts o;
+	const char *payload;
+	unsigned char *buf = NULL;
+	unsigned outlen = 0;
+
+	memset(&o, 0, sizeof(o));
+	o.zx = 1;
+	o.zy = 1;
+	payload = tm_draw_payload(NULL, 0, rest, &o);
+	if (!payload || !*payload)
+		return;
+	if (blob)
+	{
+		if (tm_b64_decode(payload, (unsigned)strlen(payload),
+				  TM_APC_MAX, &buf, &outlen) != 0)
+			return;
+	}
+	else
+	{
+		term_cache_ent *e;
+
+		if (!term_safe_name(payload))
+			return;
+		e = term_cache_find(payload);
+		if (!e)
+			return;
+		buf = e->data;
+		outlen = e->len;
+	}
+	if (mask_only)
+	{
+		term_mask nm;
+
+		memset(&nm, 0, sizeof(nm));
+		if (term_mask_from_pbm(buf, outlen, &nm) == 0)
+		{
+			term_mask_free(g_console);
+			TMASK = nm;
+		}
+	}
+	else if (o.buf >= 0 && o.buf < TM_PIXBUF_COUNT)
+	{
+		mmb_img_rgb img;
+		int rc;
+
+		memset(&img, 0, sizeof(img));
+		rc = jxl ? mmb_jxl_decode(buf, outlen, TM_PIXBUF_MAX_PIXELS,
+					  &img)
+			 : mmb_ppm_decode(buf, outlen, TM_PIXBUF_MAX_PIXELS,
+					  &img);
+		if (rc == 0)
+		{
+			term_pixbuf_free_one(g_console, o.buf);
+			PB[o.buf] = img;
+		}
+	}
+	if (blob)
+		free(buf);
+}
+
 static void term_apc_dispatch(const char *body, unsigned len)
 {
 	const char *p;
@@ -5543,6 +5958,63 @@ static void term_apc_dispatch(const char *body, unsigned len)
 		const char *pat = rem == 3 ? "*" : p + 4;
 
 		term_apc_list(pat);
+		return;
+	}
+	if (rem >= sizeof("C;LoadJXLBlob") - 1 &&
+	    memcmp(p, "C;LoadJXLBlob", sizeof("C;LoadJXLBlob") - 1) == 0)
+	{
+		term_apc_load(1, 1, 0, p + sizeof("C;LoadJXLBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadJXL") - 1 &&
+	    memcmp(p, "C;LoadJXL", sizeof("C;LoadJXL") - 1) == 0)
+	{
+		term_apc_load(1, 0, 0, p + sizeof("C;LoadJXL") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPPMBlob") - 1 &&
+	    memcmp(p, "C;LoadPPMBlob", sizeof("C;LoadPPMBlob") - 1) == 0)
+	{
+		term_apc_load(0, 1, 0, p + sizeof("C;LoadPPMBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPPM") - 1 &&
+	    memcmp(p, "C;LoadPPM", sizeof("C;LoadPPM") - 1) == 0)
+	{
+		term_apc_load(0, 0, 0, p + sizeof("C;LoadPPM") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPBMBlob") - 1 &&
+	    memcmp(p, "C;LoadPBMBlob", sizeof("C;LoadPBMBlob") - 1) == 0)
+	{
+		term_apc_load(0, 1, 1, p + sizeof("C;LoadPBMBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPBM") - 1 &&
+	    memcmp(p, "C;LoadPBM", sizeof("C;LoadPBM") - 1) == 0)
+	{
+		term_apc_load(0, 0, 1, p + sizeof("C;LoadPBM") - 1);
+		return;
+	}
+	if (rem >= sizeof("P;Copy") - 1 &&
+	    memcmp(p, "P;Copy", sizeof("P;Copy") - 1) == 0)
+	{
+		term_apc_copy(p + sizeof("P;Copy") - 1);
+		return;
+	}
+	if (rem >= sizeof("P;Paste") - 1 &&
+	    memcmp(p, "P;Paste", sizeof("P;Paste") - 1) == 0)
+	{
+		memset(&o, 0, sizeof(o));
+		o.zx = 1;
+		o.zy = 1;
+		payload = tm_draw_payload(body, len,
+					  p + sizeof("P;Paste") - 1, &o);
+		if (payload)
+			return;
+		if (o.buf < 0 || o.buf >= TM_PIXBUF_COUNT || !PB[o.buf].rgb)
+			return;
+		term_draw_image(&PB[o.buf], &o);
 		return;
 	}
 	memset(&o, 0, sizeof(o));
@@ -7938,6 +8410,8 @@ void mmb_cmd_term(void)
 		mmb_error("?OUT OF MEMORY");
 	term_cache_free(g_console);
 	term_apc_buf_free(g_console);
+	term_pixbuf_free_all(g_console);
+	term_mask_free(g_console);
 	memset(&T, 0, sizeof(T));
 	H.n = 0;
 	H.head = 0;
