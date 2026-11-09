@@ -304,6 +304,57 @@ def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
         con.stop()
 
 
+def test_term_replay_page_keys_forwarded_by_default(kernel_image):
+    """#1481: with Scroll buffer unchecked, PageUp/PageDown reach the host."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        # Let the opening pane dump drain before feeding function keys, so
+        # the ESC byte cannot idle out between UART reads.
+        time.sleep(0.8)
+        replay.pump_once(recv_tcp=False)
+        replay.send_keys(b"\x1b[5~")
+        out = _outbound_until(replay, lambda chunk: b"\x1b[5~" in chunk)
+        assert b"\x1b[5~" in out, out
+        time.sleep(0.4)
+        replay.send_keys(b"\x1b[6~")
+        out = _outbound_until(replay, lambda chunk: b"\x1b[6~" in chunk)
+        assert b"\x1b[6~" in out, out
+        _quit(con)
+        assert con.send_line("PRINT 8+8") == "16"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_scroll_buffer_on_keeps_page_keys_local(kernel_image):
+    """#1481: checking Scroll buffer consumes PageUp/PageDown locally."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        replay.send_keys(b"\x1b[21~")
+        replay.wait_serial(lambda s: "Scroll buffer" in s, timeout=6.0)
+        replay.send_keys(b"s")
+        replay.wait_serial(lambda s: "[x] Scroll buffer" in s, timeout=6.0)
+        replay.send_keys(b"\x1b")
+        time.sleep(0.2)
+        replay.pump_once(recv_tcp=False)
+        before = _outbound(replay)
+        replay.send_keys(b"\x1b[5~\x1b[6~")
+        extra = replay.wait_serial(lambda s: "SCROLL -" in s, timeout=1.0)
+        assert "SCROLL -" not in extra
+        assert _outbound(replay) == before
+        _quit(con)
+        assert con.send_line("PRINT 9+9") == "18"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def test_term_replay_backspace_sends_del_in_char_mode(kernel_image):
     """#1255: in telnet character mode Backspace must send DEL, not BS.
 

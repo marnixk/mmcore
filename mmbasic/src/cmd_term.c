@@ -66,7 +66,7 @@
 #define TM_DL_CANCEL    2
 #define TM_DL_LIST      3
 #define TM_DL_DIRS      48
-#define TM_MENU_ITEMS   5
+#define TM_MENU_ITEMS   6
 #define TM_BTN_NEW      0
 #define TM_BTN_EDIT     1
 #define TM_BTN_DEL      2
@@ -1271,6 +1271,8 @@ static void term_serial_dump(void)
 		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
 		ser(term_width_label());
 		ser("\r\n");
+		ser(G.opt.term_scroll_buffer ? "[x] Scroll buffer\r\n"
+					     : "[ ] Scroll buffer\r\n");
 		ser("Exit\r\n");
 	}
 	term_serial_dump_dlg();
@@ -1883,17 +1885,21 @@ static void term_draw_menu(void)
 	int x0, y0, w, i, n, wlen, drop_h, bar_w;
 	const char *items[TM_MENU_ITEMS];
 	char echo[16];
+	char scroll[24];
 	unsigned brd = TM_DLG_FG;
 	unsigned title_fg, title_bg;
 
 	if (!T.menu && !T.alt_pend)
 		return;
 	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
+	strcpy(scroll, G.opt.term_scroll_buffer ? "[x] Scroll buffer"
+						 : "[ ] Scroll buffer");
 	items[0] = "Bookmarks";
 	items[1] = echo;
 	items[2] = term_width_label();
 	items[3] = "Download folder";
-	items[4] = "Exit";
+	items[4] = scroll;
+	items[5] = "Exit";
 	n = TM_MENU_ITEMS;
 	w = 10;
 	for (i = 0; i < n; i++)
@@ -2156,7 +2162,7 @@ static void term_draw(void)
 
 		if (T.menu || T.alt_pend)
 		{
-			int top_h = T.menu ? 8 * T.cell_h : T.cell_h;
+			int top_h = T.menu ? (TM_MENU_ITEMS + 3) * T.cell_h : T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
@@ -2654,6 +2660,22 @@ static void term_toggle_echo(void)
 	}
 }
 
+static void term_toggle_scroll_buffer(void)
+{
+	G.opt.term_scroll_buffer = G.opt.term_scroll_buffer ? 0 : 1;
+	if (!G.opt.term_scroll_buffer && T.sb_view > 0)
+		sb_to_live();
+	mmb_settings_save();
+	if (T.menu || T.alt_pend)
+		term_overlay_chrome();
+	else
+	{
+		mark_dirty_full();
+		term_draw();
+		term_serial_dump();
+	}
+}
+
 static void term_fill_pages(void)
 {
 	int saved = G.gfx.write_page;
@@ -2821,7 +2843,8 @@ static void term_overlay_chrome(void)
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
-		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * T.cell_h);
+		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW,
+				(TM_MENU_ITEMS + 3) * T.cell_h);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 				T.vid_cols * TM_CW, T.cell_h);
 		if (pw > 0 && ph > 0)
@@ -4114,6 +4137,11 @@ static void term_menu_activate(void)
 	if (T.menu_sel == 3)
 	{
 		term_dl_open();
+		return;
+	}
+	if (T.menu_sel == 4)
+	{
+		term_toggle_scroll_buffer();
 		return;
 	}
 	term_exit();
@@ -8162,16 +8190,21 @@ static int esc_feed(char c)
 				esc_reset();
 				return 1;
 			}
-			if (T.csi_n == 5 && (T.sb_view > 0 || H.n > 0))
+			if (T.csi_n == 5 || T.csi_n == 6)
 			{
-				sb_scroll_by(page);
-				esc_reset();
-				return 1;
-			}
-			if (T.csi_n == 6 && T.sb_view > 0)
-			{
-				sb_scroll_by(-page);
-				esc_reset();
+				if (G.opt.term_scroll_buffer)
+				{
+					if (T.csi_n == 5)
+					{
+						if (T.sb_view > 0 || H.n > 0)
+							sb_scroll_by(page);
+					}
+					else if (T.sb_view > 0)
+						sb_scroll_by(-page);
+					esc_reset();
+					return 1;
+				}
+				esc_send();
 				return 1;
 			}
 			if (T.csi_n == 1 && T.sb_view > 0)
@@ -8822,6 +8855,11 @@ const char *mmb_term_key(char c)
 		if (c == 'w' || c == 'W' || c == 'o' || c == 'O')
 		{
 			term_cycle_view();
+			return "";
+		}
+		if (c == 's' || c == 'S')
+		{
+			term_toggle_scroll_buffer();
 			return "";
 		}
 		if (c == 'b' || c == 'B' || c == 'k' || c == 'K')
