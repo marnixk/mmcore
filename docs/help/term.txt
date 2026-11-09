@@ -87,16 +87,18 @@ is sent to the remote so GNU screen, tmux and friends get their prefix; use F10
 for TERM's own menu there. A real USB Alt+X still exits.
 
 Scrollback keeps the last OPTION TERM SCROLLBACK lines (default 200) above the
-pane. Once lines have scrolled off, Page Up / Page Down page through history,
-Home/End jump to the oldest line or back to live, and q returns to the live
-pane. Up/Down are sent to the session as normal cursor keys. Press / to search
-back for text (case insensitive), Enter jumps to the newest match, then n and
-N step to older and newer matches. The status row shows SCROLL -n while you
-are back in history; typing any other key returns to the live pane first. Set
-OPTION TERM SCROLLBACK 0 to disable history.
+pane. Page Up / Page Down are sent to the session by default. Check "Scroll
+buffer" in the Terminal menu to page through history with Page Up / Page Down
+instead; Home/End jump to the oldest line or back to live, and q returns to the
+live pane. The checkmark is remembered in .mmbasic.ini. Up/Down are always sent
+to the session as normal cursor keys. Press / to search back for text (case
+insensitive), Enter jumps to the newest match, then n and N step to older and
+newer matches. The status row shows SCROLL -n while you are back in history;
+typing any other key returns to the live pane first. Set OPTION TERM SCROLLBACK
+0 to disable history.
 
 Terminal menu: Bookmarks, Echo ON/OFF, View: Full/Boxed/80x25, Download folder,
-Exit.
+Scroll buffer, Exit. Press S to toggle Scroll buffer.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
 Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
 bookmark host, port, echo, letterbox, and optional 80x25 mode (MODE 2 640x400,

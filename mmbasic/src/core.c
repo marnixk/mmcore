@@ -3058,6 +3058,7 @@ void mmb_option_reset(void)
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
 	G.opt.term_cterm = 1;
+	G.opt.term_scroll_buffer = 0;
 	G.opt.wordpad_view = 0;
 	G.opt.wifi_country[0] = 'U';
 	G.opt.wifi_country[1] = 'S';

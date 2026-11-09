@@ -1,6 +1,8 @@
 """Persistent INI settings, hidden dotfiles, FACTORY_RESET, and OPTION WIFI."""
 
+from harness import MMBasicConsole
 from ihelp_util import dump_topic
+from test_term import _open_term, _quit
 
 
 def _settings_open(con):
@@ -339,6 +341,33 @@ def test_option_term_log_persists(console):
     assert "TERM LOG" not in listed
     ini = _read_ini(console)
     assert "term_log=0" in ini
+
+
+def test_term_scroll_buffer_menu_toggle_persists(kernel_image):
+    """#1481: the TERM menu checkmark survives leaving and re-entering TERM."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b[21~")
+        menu = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "[ ] Scroll buffer" in menu
+        con._ser.sendall(b"s")
+        toggled = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "[x] Scroll buffer" in toggled
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+        ini = _read_ini(con)
+        assert "term_scroll_buffer=1" in ini
+
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b[21~")
+        again = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "[x] Scroll buffer" in again
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        con.stop()
 
 
 def test_option_wifi_debug_on_persists(console):
