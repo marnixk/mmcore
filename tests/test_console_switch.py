@@ -777,7 +777,7 @@ def _term_download_dialog(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 
@@ -1180,7 +1180,7 @@ def _open_term_download(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 

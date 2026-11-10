@@ -74,6 +74,7 @@ typedef struct mmb_vfs_rbuf {
 	int cap;
 	int len;
 	unsigned start;
+	unsigned gen;
 } mmb_vfs_rbuf;
 
 typedef struct mmb_file {
@@ -159,6 +160,9 @@ int mmb_vfs_read_at(const char *path, unsigned pos, void *data, unsigned n, unsi
 int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
 		      void *data, unsigned n, unsigned *got);
 void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r);
+/* Bumped when the backing store is remounted after a suspend (server.cpp /
+ * storage_posix.c); the read-ahead cache drops stale generations. */
+unsigned mmb_storage_generation(void);
 int mmb_vfs_resolve(const char *path, char *out, int outsz);
 int mmb_vfs_exists(const char *path);
 int mmb_vfs_mkdir(const char *path);

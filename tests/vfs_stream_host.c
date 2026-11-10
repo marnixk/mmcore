@@ -54,6 +54,7 @@ static int fat_is_target(const char *path)
 
 /* ---- FAT volume stubs (the A: tests stay on A:; C: is the fake above) - */
 int mmb_fat_ready(int letter) { return letter == 'C'; }
+unsigned mmb_storage_generation(void) { return 0; }
 int mmb_fat_chdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_mkdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
 int mmb_fat_rmdir(int letter, const char *path) { (void)letter; (void)path; return -1; }
