@@ -1269,7 +1269,7 @@ static void term_serial_dump(void)
 	{
 		ser("Terminal\r\n");
 		ser("Bookmarks\r\n");
-		ser("Download folder\r\n");
+		ser("Downloads Folder\r\n");
 		ser("----------------\r\n");
 		ser(term_width_label());
 		ser("\r\n");
@@ -1899,7 +1899,7 @@ static void term_draw_menu(void)
 	if (!T.menu && !T.alt_pend)
 		return;
 	items[0] = "Bookmarks";
-	items[1] = "Download folder";
+	items[1] = "Downloads Folder";
 	items[2] = term_width_label();
 	items[3] = "Echo";
 	items[4] = "Scrollback";

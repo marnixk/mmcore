@@ -512,7 +512,7 @@ def test_term_menu_checkbox_order(kernel_image):
         menu = _menu(con)
         order = [
             "Bookmarks",
-            "Download folder",
+            "Downloads Folder",
             "----------------",
             "View: Boxed",
             "Echo [x]",

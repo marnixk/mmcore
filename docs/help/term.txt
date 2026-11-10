@@ -98,7 +98,7 @@ newer matches. The status row shows SCROLL -n while you are back in history;
 typing any other key returns to the live pane first. Set OPTION TERM SCROLLBACK
 0 to disable history.
 
-Terminal menu, top to bottom: Bookmarks, Download folder, a separator, View:
+Terminal menu, top to bottom: Bookmarks, Downloads Folder, a separator, View:
 Full/Boxed/80x25, Echo, Scrollback, a separator, Exit. Echo and Scrollback show
 a right-aligned [ ] / [x] checkbox. Press S to toggle Scrollback.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
