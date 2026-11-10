@@ -351,10 +351,10 @@ def test_term_scroll_buffer_menu_toggle_persists(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         con._ser.sendall(b"\x1b[21~")
         menu = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
-        assert "[ ] Scroll buffer" in menu
+        assert "Scrollback [ ]" in menu
         con._ser.sendall(b"s")
         toggled = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
-        assert "[x] Scroll buffer" in toggled
+        assert "Scrollback [x]" in toggled
         _quit(con)
         assert con.send_line("PRINT 5+5") == "10"
         ini = _read_ini(con)
@@ -363,7 +363,7 @@ def test_term_scroll_buffer_menu_toggle_persists(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         con._ser.sendall(b"\x1b[21~")
         again = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
-        assert "[x] Scroll buffer" in again
+        assert "Scrollback [x]" in again
         _quit(con)
         assert con.send_line("PRINT 6+6") == "12"
     finally:

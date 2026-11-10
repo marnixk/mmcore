@@ -217,35 +217,48 @@ static void six_finish_hash(sixel_image *s)
 static void six_finish_raster(sixel_image *s)
 {
 	int have_w = 0, have_h = 0;
+	int bx = s->x - s->ox;   /* image start relative to the clip origin */
+	int by = s->y - s->oy;
+	int fw = 0, fh = 0;
 
 	if (s->have_cur)
 		six_push_param(s);
+	if (bx < 0)
+		bx = 0;
+	if (by < 0)
+		by = 0;
 	if (s->npar >= 3 && s->par[2] > 0)
 	{
 		int w = s->par[2];
 
-		if (w > s->width - s->ox)
-			w = s->width - s->ox;
+		if (w > s->width - s->ox - bx)
+			w = s->width - s->ox - bx;
 		if (w < 0)
 			w = 0;
-		s->maxw = w;
+		s->maxw = bx + w;
+		fw = w;
 		have_w = 1;
 	}
 	if (s->npar >= 4 && s->par[3] > 0)
 	{
 		int h = s->par[3];
 
-		if (h > s->height - s->oy)
-			h = s->height - s->oy;
+		if (h > s->height - s->oy - by)
+			h = s->height - s->oy - by;
 		if (h < 0)
 			h = 0;
-		s->maxh = h;
+		/* The clip box is image-relative.  TERM may start the image
+		 * below the top of the pane, so include that offset or the
+		 * whole raster is clipped away. */
+		s->maxh = by + h;
+		s->advance_h = h;
+		fh = h;
 		have_h = 1;
 	}
 	s->have_raster = have_w && have_h;
 	/* Pan/Pad are pixel aspect, ignored: HDMI pixels are square. */
 	if (s->have_raster && s->p2 != 1)
-		six_fill(s, s->ox, s->oy, s->maxw, s->maxh, s->bg);
+		six_fill(s, s->x, s->y, fw, fh, s->bg);
 }
 
 static void six_repeat(sixel_image *s, uint32_t n, unsigned char b)
@@ -374,9 +387,7 @@ void sixel_feed(sixel_image *s, unsigned char b)
 
 void sixel_finish(sixel_image *s)
 {
-	if (s->have_raster)
-		s->advance_h = s->maxh;
-	else
+	if (!s->have_raster)
 		s->advance_h = s->bottom > s->oy ? s->bottom - s->oy : 0;
 	s->painted_w = s->right > s->ox ? s->right - s->ox : 0;
 	s->painted_h = s->bottom > s->oy ? s->bottom - s->oy : 0;

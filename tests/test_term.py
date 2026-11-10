@@ -493,12 +493,40 @@ def test_term_alt_t_terminal_menu_then_x_exits(kernel_image):
         assert "Terminal" in menu
         assert "File" not in menu
         assert "Exit" in menu
-        assert "Echo ON" in menu
+        assert "Echo [x]" in menu
         assert "Boxed" in menu
         assert "Bookmarks" in menu
         con._ser.sendall(b"x")
         _plain(con.drain(quiet=0.8, timeout=15).decode(errors="replace"))
         assert con.send_line("PRINT 3+4") == "7"
+    finally:
+        con.stop()
+
+
+def test_term_menu_checkbox_order(kernel_image):
+    """#1487: grouped menu with right-aligned Echo/Scrollback checkboxes."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        menu = _menu(con)
+        order = [
+            "Bookmarks",
+            "Download folder",
+            "----------------",
+            "View: Boxed",
+            "Echo [x]",
+            "Scrollback [ ]",
+            "----------------",
+            "Exit",
+        ]
+        pos = -1
+        for item in order:
+            found = menu.find(item, pos + 1)
+            assert found > pos, (item, menu)
+            pos = found
+        _quit(con)
+        assert con.send_line("PRINT 3+5") == "8"
     finally:
         con.stop()
 
@@ -854,13 +882,13 @@ def test_term_file_menu_echo_toggle(kernel_image):
         _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
         con._ser.sendall(bytes([1]) + b"t")
         menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "Echo ON" in menu
+        assert "Echo [x]" in menu
         con._ser.sendall(b"e")
         toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "Echo OFF" in toggled
+        assert "Echo [ ]" in toggled
         con._ser.sendall(b"e")
         again = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "Echo ON" in again
+        assert "Echo [x]" in again
         _quit(con)
         assert con.send_line("PRINT 2+3") == "5"
     finally:
@@ -897,7 +925,7 @@ def test_term_demo_local_echo_and_hide(kernel_image):
         _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
         con._ser.sendall(b"e")
         off = _plain(con.drain(quiet=0.5, timeout=6).decode(errors="replace"))
-        assert "Echo OFF" in off
+        assert "Echo [ ]" in off
         con._ser.sendall(b"\x1b")
         time.sleep(0.12)
         _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
