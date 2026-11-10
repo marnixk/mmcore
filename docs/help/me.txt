@@ -3,9 +3,8 @@ kind: page
 
 Welcome to mmCore
 
-mmCore is the operating system around MMBasic on Raspberry Pi hardware (and
-QEMU). It gives you drives, fullscreen tools, networking, and the MMBasic
-language.
+mmCore is the operating system around MMBasic on Raspberry Pi hardware. It
+gives you drives, fullscreen tools, networking, and the MMBasic language.
 
 Drives
 
@@ -19,10 +18,14 @@ the current folder.
 
 Builtin tools
 
-  ~FILES~    dual-pane file manager
-  ~WORDPAD~  simple text document editor
-  ~EDIT~     fullscreen program editor
-  ~TERM~     serial / TCP terminal
+  ~FILES~     dual-pane file manager
+  ~WORDPAD~   simple text document editor
+  ~EDIT~      fullscreen program editor
+  ~TERM~      serial / TCP terminal
+  ~SETTINGS~  system settings hub
+  ~PAINT~     mouse-driven pixel paint
+
+Ctrl+Space opens the ~APPS~ launcher at the prompt.
 
 Getting online
 
