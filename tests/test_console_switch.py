@@ -1441,11 +1441,11 @@ def _enable_scroll_buffer(con) -> None:
     """#1481: PageUp pages local history only when Scroll buffer is checked."""
     con._ser.sendall(b"\x1b[21~")
     menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-    assert "Scroll buffer" in menu, menu
-    if "[x] Scroll buffer" not in menu:
+    assert "Scrollback" in menu, menu
+    if "Scrollback [x]" not in menu:
         con._ser.sendall(b"s")
         toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-        assert "[x] Scroll buffer" in toggled, toggled
+        assert "Scrollback [x]" in toggled, toggled
     con._ser.sendall(b"\x1b")
     time.sleep(0.15)
     con.drain(quiet=0.3, timeout=4)

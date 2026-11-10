@@ -242,6 +242,28 @@ def _red_points(con, coords):
     return any(_is_red(p) for p in con.screen_pixels(coords))
 
 
+def test_sixel_raster_below_pane_top_draws(kernel_image):
+    """A raster image lower in the pane is not clipped to its own height.
+
+    The sixel clip box is image-relative, so an image starting at row 20 must
+    still paint all 48 of its rows (#1488).
+    """
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _session(con, replay)
+        _send_block(con, replay, cup=b"\x1b[20;1H")
+        assert _red_points(
+            con, [(160, 306), (168, 320), (174, 350)]
+        ), "raster image at row 20 was clipped away"
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def test_sixel_overwrite_and_menu_roundtrip(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

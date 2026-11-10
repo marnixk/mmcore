@@ -67,6 +67,7 @@
 #define TM_DL_LIST      3
 #define TM_DL_DIRS      48
 #define TM_MENU_ITEMS   6
+#define TM_MENU_ROWS    8
 #define TM_BTN_NEW      0
 #define TM_BTN_EDIT     1
 #define TM_BTN_DEL      2
@@ -1268,11 +1269,14 @@ static void term_serial_dump(void)
 	{
 		ser("Terminal\r\n");
 		ser("Bookmarks\r\n");
-		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
+		ser("Downloads Folder\r\n");
+		ser("----------------\r\n");
 		ser(term_width_label());
 		ser("\r\n");
-		ser(G.opt.term_scroll_buffer ? "[x] Scroll buffer\r\n"
-					     : "[ ] Scroll buffer\r\n");
+		ser(term_want_echo() ? "Echo [x]\r\n" : "Echo [ ]\r\n");
+		ser(G.opt.term_scroll_buffer ? "Scrollback [x]\r\n"
+					     : "Scrollback [ ]\r\n");
+		ser("----------------\r\n");
 		ser("Exit\r\n");
 	}
 	term_serial_dump_dlg();
@@ -1880,29 +1884,28 @@ static void term_draw_status(void)
 	term_put_str_bg((T.vid_cols - n) * TM_CW, y, right, fg, bg);
 }
 
+/* Drop-down row -> selectable item index, or -1 for a separator. */
+static const signed char tm_menu_row_sel[TM_MENU_ROWS] = {
+	0, 1, -1, 2, 3, 4, -1, 5
+};
+
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i, n, wlen, drop_h, bar_w;
+	int x0, y0, w, i, row, wlen, drop_h, bar_w;
 	const char *items[TM_MENU_ITEMS];
-	char echo[16];
-	char scroll[24];
 	unsigned brd = TM_DLG_FG;
 	unsigned title_fg, title_bg;
 
 	if (!T.menu && !T.alt_pend)
 		return;
-	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
-	strcpy(scroll, G.opt.term_scroll_buffer ? "[x] Scroll buffer"
-						 : "[ ] Scroll buffer");
 	items[0] = "Bookmarks";
-	items[1] = echo;
+	items[1] = "Downloads Folder";
 	items[2] = term_width_label();
-	items[3] = "Download folder";
-	items[4] = scroll;
+	items[3] = "Echo";
+	items[4] = "Scrollback";
 	items[5] = "Exit";
-	n = TM_MENU_ITEMS;
 	w = 10;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < TM_MENU_ITEMS; i++)
 	{
 		wlen = (int)strlen(items[i]);
 		if (wlen + 2 > w)
@@ -1920,27 +1923,53 @@ static void term_draw_menu(void)
 		return;
 	x0 = TM_CW;
 	y0 = T.cell_h;
-	drop_h = n + 2;
+	drop_h = TM_MENU_ROWS + 2;
 	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * T.cell_h, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
 	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
-	for (i = 0; i < n; i++)
+	for (row = 0; row < TM_MENU_ROWS; row++)
 	{
-		int y = y0 + (1 + i) * T.cell_h;
-		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
-		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
+		int y = y0 + (1 + row) * T.cell_h;
+		int sel = tm_menu_row_sel[row];
 
 		term_cell(x0, y, TM_BOX_V, brd, TM_DLG_BG);
-		term_fill_cells(x0 + TM_CW, y, w - 2, bg);
-		term_cell(x0 + TM_CW, y, ' ', fg, bg);
-		term_put_str_bg(x0 + 2 * TM_CW, y, items[i], fg, bg);
-		term_cell(x0 + (w - 2) * TM_CW, y, ' ', fg, bg);
+		if (sel < 0)
+		{
+			for (i = 1; i < w - 1; i++)
+				term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd,
+					  TM_DLG_BG);
+		}
+		else
+		{
+			unsigned fg = (sel == T.menu_sel) ? TM_SEL_FG
+							 : TM_DLG_FG;
+			unsigned bg = (sel == T.menu_sel) ? TM_SEL_BG
+							 : TM_DLG_BG;
+
+			term_fill_cells(x0 + TM_CW, y, w - 2, bg);
+			term_cell(x0 + TM_CW, y, ' ', fg, bg);
+			term_put_str_bg(x0 + 2 * TM_CW, y, items[sel], fg,
+					bg);
+			/* Echo and Scrollback carry their state as a
+			 * right-aligned checkbox so the item text does not
+			 * shift when it is toggled. */
+			if (sel == 3 || sel == 4)
+			{
+				int on = (sel == 3)
+						 ? term_want_echo()
+						 : G.opt.term_scroll_buffer;
+
+				term_put_str_bg(x0 + (w - 5) * TM_CW, y,
+						on ? "[x]" : "[ ]", fg, bg);
+			}
+			term_cell(x0 + (w - 2) * TM_CW, y, ' ', fg, bg);
+		}
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
-		int y = y0 + (n + 1) * T.cell_h;
+		int y = y0 + (TM_MENU_ROWS + 1) * T.cell_h;
 		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
 		for (i = 1; i < w - 1; i++)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
@@ -2162,7 +2191,7 @@ static void term_draw(void)
 
 		if (T.menu || T.alt_pend)
 		{
-			int top_h = T.menu ? (TM_MENU_ITEMS + 3) * T.cell_h : T.cell_h;
+			int top_h = T.menu ? (TM_MENU_ROWS + 3) * T.cell_h : T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
@@ -2844,7 +2873,7 @@ static void term_overlay_chrome(void)
 		int px = 0, py = 0, pw = 0, ph = 0;
 
 		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW,
-				(TM_MENU_ITEMS + 3) * T.cell_h);
+				(TM_MENU_ROWS + 3) * T.cell_h);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 				T.vid_cols * TM_CW, T.cell_h);
 		if (pw > 0 && ph > 0)
@@ -4126,7 +4155,7 @@ static void term_menu_activate(void)
 	}
 	if (T.menu_sel == 1)
 	{
-		term_toggle_echo();
+		term_dl_open();
 		return;
 	}
 	if (T.menu_sel == 2)
@@ -4136,7 +4165,7 @@ static void term_menu_activate(void)
 	}
 	if (T.menu_sel == 3)
 	{
-		term_dl_open();
+		term_toggle_echo();
 		return;
 	}
 	if (T.menu_sel == 4)

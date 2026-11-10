@@ -45,7 +45,7 @@ static void check(const char *name, int cond)
 	}
 }
 
-static void dec(const char *body, int p2, unsigned bg_rgb)
+static void dec_at(const char *body, int p2, unsigned bg_rgb, int oy)
 {
 	sixel_config c;
 	sixel_image s;
@@ -58,7 +58,7 @@ static void dec(const char *body, int p2, unsigned bg_rgb)
 	c.width = W;
 	c.height = H;
 	c.ox = 0;
-	c.oy = 0;
+	c.oy = oy;
 	c.p2 = p2;
 	c.bg = pack(bg_rgb);
 	c.pack = pack;
@@ -69,6 +69,11 @@ static void dec(const char *body, int p2, unsigned bg_rgb)
 	last_adv = s.advance_h;
 	last_pw = s.painted_w;
 	last_ph = s.painted_h;
+}
+
+static void dec(const char *body, int p2, unsigned bg_rgb)
+{
+	dec_at(body, p2, bg_rgb, 0);
 }
 
 int main(void)
@@ -129,6 +134,13 @@ int main(void)
 	check("raster_bg_fill", px(2, 2) == blue);
 	dec("\"1;1;4;6#1;2;100;0;0~", 1, 0x0000FF);
 	check("raster_no_fill_when_p2_one", px(2, 2) == 0);
+
+	/* A raster that starts below the pane top still draws its full height:
+	 * the clip box is relative to the image origin, not the pane top. */
+	dec_at("\"1;1;4;6#1;2;100;0;0!10~", 1, 0, 9);
+	check("raster_at_offset",
+	      px(0, 9) == red && px(0, 14) == red && px(0, 15) == 0 &&
+	      px(3, 14) == red && px(4, 9) == 0 && last_adv == 6);
 
 	/* 6. DEC HLS vectors; hue 0 is blue and saturation 0 is grey. */
 	dec("#0;1;0;50;100~", 0, 0);

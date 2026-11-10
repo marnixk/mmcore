@@ -337,9 +337,9 @@ def test_term_replay_scroll_buffer_on_keeps_page_keys_local(kernel_image):
     try:
         _open_replay(con, replay, connect=False)
         replay.send_keys(b"\x1b[21~")
-        replay.wait_serial(lambda s: "Scroll buffer" in s, timeout=6.0)
+        replay.wait_serial(lambda s: "Scrollback" in s, timeout=6.0)
         replay.send_keys(b"s")
-        replay.wait_serial(lambda s: "[x] Scroll buffer" in s, timeout=6.0)
+        replay.wait_serial(lambda s: "Scrollback [x]" in s, timeout=6.0)
         replay.send_keys(b"\x1b")
         time.sleep(0.2)
         replay.pump_once(recv_tcp=False)

@@ -36,7 +36,7 @@ def _toggle_scroll_buffer(con, checked):
     menu = _menu(con)
     con._ser.sendall(b"s")
     toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
-    want = "[x] Scroll buffer" if checked else "[ ] Scroll buffer"
+    want = "Scrollback [x]" if checked else "Scrollback [ ]"
     assert want in toggled, toggled
     _close_menu(con)
     return menu
@@ -62,7 +62,7 @@ def test_term_scroll_buffer_default_off_leaves_view_live(kernel_image):
         assert "line 40" in _open_demo(con)
         con.drain(quiet=0.3, timeout=3)
         menu = _menu(con)
-        assert "[ ] Scroll buffer" in menu
+        assert "Scrollback [ ]" in menu
         _close_menu(con)
         up = _key(con, b"\x1b[5~")
         assert "SCROLL -" not in up
