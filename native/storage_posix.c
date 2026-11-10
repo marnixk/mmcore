@@ -26,7 +26,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#if defined(__linux__)
 #include <sys/wait.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -685,6 +687,14 @@ static int is_mountpoint(const char *path)
 }
 
 /* Run a mount helper without letting its diagnostics paint over the UI. */
+#if defined(_WIN32)
+/* The Windows desktop build has no live ISO or mount helpers. */
+static int run_mount(char *const argv[])
+{
+	(void)argv;
+	return -1;
+}
+#else
 static int run_mount(char *const argv[])
 {
 	pid_t pid;
@@ -711,6 +721,7 @@ static int run_mount(char *const argv[])
 		return -1;
 	return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
 }
+#endif
 
 static void mount_label_from_root(const char *root, char *label, size_t cap)
 {
