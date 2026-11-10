@@ -20,18 +20,15 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
-
-#if defined(__linux__)
-#include <fcntl.h>
-#include <time.h>
 #include <sys/wait.h>
-#endif
+#include <time.h>
+#include <unistd.h>
 
 #define DRIVE_LO 'C'
 #define DRIVE_HI 'H'
@@ -547,28 +544,95 @@ static void rd_cache_close_all(void)
 /* ---- live-ISO persistence guard --------------------------------------- *
  * On the live ISO the C: home lives on the MMCORE volume mounted at
  * MMB_DRIVE_ROOT. Suspend-to-RAM can reset the USB/SD controller, after which
- * the mount may be gone or read-only; mmcore keeps running from the squashfs
- * and would silently write configuration to the RAM overlay. Detect a resume
- * (the gap between CLOCK_BOOTTIME and CLOCK_MONOTONIC grows), try to remount
- * the volume, and report whether C: is currently volatile. */
+ * the mount may be gone, read-only, or still listed but backed by a dead
+ * filesystem; mmcore keeps running from the squashfs and would silently write
+ * configuration to the RAM overlay. Detect a resume (the gap between
+ * CLOCK_BOOTTIME and CLOCK_MONOTONIC grows), remount the volume, re-point C:
+ * and report whether C: is currently volatile.
+ *
+ * The recovery itself is POSIX, not Linux-only: the clock check is the only
+ * Linux piece, and the host test drives the same recovery through
+ * storage_mount_ops so the remount/re-point path is covered without a live
+ * ISO. */
 #if defined(__linux__)
 static long long s_suspend_offset_ms;
 static int s_suspend_tracked;
+#endif
 static int s_live_boot = -1;
 static int s_overlay_backed = -1;
+static char s_overlay_root[P_BUF];
 static int s_overlay_lost_notified;
 static int s_overlay_broken;
+static unsigned s_storage_generation;
+
+/* Bumped whenever the backing store is remounted/re-pointed. The VFS uses it
+ * to drop per-file read-ahead buffers that were filled before a suspend, so a
+ * file open across it is reopened against the recovered volume. */
+unsigned mmb_storage_generation(void)
+{
+	return s_storage_generation;
+}
+
+#ifdef MMB_STORAGE_TEST
+static int s_test_live = -1;
+static int s_test_overlay = -1;
+static const storage_mount_ops *s_test_ops;
+
+void mmb_storage_test_set_live(int live)
+{
+	s_test_live = live;
+}
+
+void mmb_storage_test_set_overlay(int overlay)
+{
+	s_test_overlay = overlay;
+}
+
+void mmb_storage_test_set_ops(const storage_mount_ops *ops)
+{
+	s_test_ops = ops;
+}
+
+void mmb_storage_test_reset(void)
+{
+	s_test_live = -1;
+	s_test_overlay = -1;
+	s_test_ops = 0;
+}
+#endif
+
+static int root_has(const char *root, const char *rel)
+{
+	char path[P_BUF];
+
+	snprintf(path, sizeof path, "%s/%s", root, rel);
+	return is_dir(path);
+}
+
+static int root_has_file(const char *root, const char *rel)
+{
+	char path[P_BUF];
+
+	snprintf(path, sizeof path, "%s/%s", root, rel);
+	return access(path, F_OK) == 0;
+}
 
 /* --read-write seeds /.mmcore-rw and rw/upper + rw/work; live-init then uses
  * that volume as the root overlay's upper. Detect it at boot, before a resume
  * can drop the mount and make the paths unreadable. */
-static int live_overlay_backed(void)
+static int live_overlay_backed(const char *root)
 {
-	if (s_overlay_backed < 0)
-		s_overlay_backed =
-			(is_dir("/media/mmcore/rw/upper") &&
-			 is_dir("/media/mmcore/rw/work") &&
-			 access("/media/mmcore/.mmcore-rw", F_OK) == 0) ? 1 : 0;
+#ifdef MMB_STORAGE_TEST
+	if (s_test_overlay >= 0)
+		return s_test_overlay;
+#endif
+	if (s_overlay_backed >= 0 && s_overlay_root[0] &&
+	    strcmp(s_overlay_root, root) == 0)
+		return s_overlay_backed;
+	snprintf(s_overlay_root, sizeof s_overlay_root, "%s", root);
+	s_overlay_backed =
+		(root_has(root, "rw/upper") && root_has(root, "rw/work") &&
+		 root_has_file(root, ".mmcore-rw")) ? 1 : 0;
 	return s_overlay_backed;
 }
 
@@ -578,6 +642,10 @@ static int linux_is_live_boot(void)
 	FILE *f;
 	size_t n;
 
+#ifdef MMB_STORAGE_TEST
+	if (s_test_live >= 0)
+		return s_test_live;
+#endif
 	if (s_live_boot >= 0)
 		return s_live_boot;
 	s_live_boot = 0;
@@ -656,24 +724,23 @@ static void mount_label_from_root(const char *root, char *label, size_t cap)
 			label[i] = (char)(label[i] - 'a' + 'A');
 }
 
-static int try_mount_root(const char *root)
+/* Mount the volume carrying `label` at `path`, writable. */
+static int mount_by_label(const char *path, const char *label)
 {
 	static const char *const helpers[] = {
 		"/bin/mount", "/sbin/mount", "/usr/bin/mount"
 	};
-	char label[64];
 	size_t i;
 
-	mount_label_from_root(root, label, sizeof label);
 	for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
 	{
-		char *argv[] = { (char *)helpers[i], "-o", "rw", "-L", label,
-				 (char *)root, 0 };
+		char *argv[] = { (char *)helpers[i], "-o", "rw", "-L",
+				 (char *)label, (char *)path, 0 };
 
-		if (run_mount(argv) == 0 && is_mountpoint(root))
-			return 1;
+		if (run_mount(argv) == 0)
+			return 0;
 	}
-	return 0;
+	return -1;
 }
 
 static int remount_root_rw(const char *root)
@@ -708,61 +775,144 @@ static int root_overlay_writable(void)
 	return 1;
 }
 
+/* A write into the drive root proves the (re)mounted filesystem is alive and
+ * accepts writes, rather than being a mount entry backed by a dead device. */
+static int drive_root_writable(const char *root)
+{
+	char path[P_BUF];
+	int fd;
+
+	snprintf(path, sizeof path, "%s/.mmcore-persist-probe", root);
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0)
+		return 0;
+	close(fd);
+	unlink(path);
+	return 1;
+}
+
+static const storage_mount_ops s_default_ops = {
+	is_mountpoint,
+	mount_by_label,
+	remount_root_rw,
+	root_overlay_writable,
+	drive_root_writable,
+	0
+};
+
+static const storage_mount_ops *storage_ops(void)
+{
+#ifdef MMB_STORAGE_TEST
+	if (s_test_ops)
+		return s_test_ops;
+#endif
+	return &s_default_ops;
+}
+
+/* Try to put C: back on a live mount. The configured root is tried first; if
+ * that mount is dead (or, with --read-write, the root overlay's stale upper
+ * prevents mounting there), a fresh mountpoint is used and MMB_DRIVE_ROOT is
+ * re-pointed at it. That keeps files on C: saving to the card even when only
+ * the session's own overlay needs a reboot. */
+static int recover_drive_root(const char *root, const char *label,
+			      const storage_mount_ops *ops, char *out,
+			      size_t outsz)
+{
+	const char *candidates[4];
+	int n = 0, i;
+
+	candidates[n++] = root;
+	if (ops->recovery_path && ops->recovery_path[0] &&
+	    strcmp(ops->recovery_path, root) != 0)
+		candidates[n++] = ops->recovery_path;
+	candidates[n++] = "/run/mmcore-recovered";
+	if (strcmp(root, "/media/mmcore-recovered") != 0)
+		candidates[n++] = "/media/mmcore-recovered";
+
+	for (i = 0; i < n; i++)
+	{
+		const char *p = candidates[i];
+
+		mkdir(p, 0777);
+		if (ops->mount_label(p, label) == 0 && ops->root_writable(p))
+		{
+			snprintf(out, (size_t)outsz, "%s", p);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static void revalidate_live_root(void)
 {
+	const storage_mount_ops *ops = storage_ops();
 	const char *env = getenv("MMB_DRIVE_ROOT");
 	char fallback[] = "/media/mmcore";
 	const char *root = (env && env[0]) ? env : fallback;
-	int mounted = is_mountpoint(root);
+	char label[64], recovered[P_BUF];
+	int overlay = live_overlay_backed(root);
+	int mounted = ops->is_mountpoint(root);
 
-	if (live_overlay_backed())
+	mount_label_from_root(root, label, sizeof label);
+
+	if (mounted)
 	{
-		/* The root overlay's upper lives on this volume (--read-write).
-		 * A normal resume leaves the mount in place: lift a read-only
-		 * remount and carry on. If the volume dropped, mounting it again
-		 * would restore C: but leave the overlay's cached upper stale
-		 * (/tmp writes fail with EIO), so a reboot is the only safe
-		 * recovery. */
-		if (mounted)
+		/* A normal resume leaves the mount in place: lift a read-only
+		 * remount and prove the volume (and, with --read-write, the
+		 * root overlay's upper on it) still accepts writes. */
+		(void)ops->remount_rw(root);
+		if (ops->root_writable(root) &&
+		    (!overlay || ops->overlay_writable()))
 		{
-			(void)remount_root_rw(root);
 			rd_cache_close_all();
 			s_init = 0;
-			if (root_overlay_writable())
-				return;
+			s_overlay_broken = 0;
+			s_overlay_lost_notified = 0;
+			s_storage_generation++;
+			return;
 		}
+	}
+
+	/* The mount is gone, or it is still listed while its filesystem is
+	 * dead/stale (the USB/SD controller behind it was reset in suspend).
+	 * Remount the volume by label and re-point C: at whichever mountpoint
+	 * works, closing every cached handle so open files reopen on it. */
+	if (recover_drive_root(root, label, ops, recovered, sizeof recovered))
+	{
+		/* Point C: at the mount that worked: a fallback path when the
+		 * configured one is dead, or root itself when the volume only
+		 * arrived now. */
+		setenv("MMB_DRIVE_ROOT", recovered, 1);
+		s_init = 0;
+		rd_cache_close_all();
+		s_overlay_broken = 0;
+		s_storage_generation++;
+		if (overlay && !s_overlay_lost_notified)
+		{
+			s_overlay_lost_notified = 1;
+			mmb_storage_notice(
+				"!MMCORE C: recovered after suspend: reboot to restore session storage");
+		}
+		return;
+	}
+
+	if (overlay)
+	{
+		/* Even a fresh C: mount is impossible, so the honest diagnostic
+		 * is all that is left: the root overlay's upper is unrecoverable
+		 * in place and a reboot is required. */
 		s_overlay_broken = 1;
 		if (!s_overlay_lost_notified)
 		{
 			s_overlay_lost_notified = 1;
 			mmb_storage_notice("!MMCORE reset after suspend: reboot to recover storage");
 		}
-		return;
 	}
-
-	if (!mounted)
-	{
-		mkdir(root, 0777);
-		mounted = try_mount_root(root);
-		if (mounted && !(env && env[0]))
-		{
-			/* The volume arrived after startup: point C: at it from
-			 * now on instead of the RAM-overlay home. */
-			setenv("MMB_DRIVE_ROOT", root, 1);
-			s_init = 0;
-		}
-	}
-	if (!mounted)
-		return;
-	/* ext4 can come back read-only after a device reset. */
-	(void)remount_root_rw(root);
-	/* Drop cached handles and the cached root: C: is live again. */
-	rd_cache_close_all();
-	s_init = 0;
 }
 
 static void storage_check_resume(void)
 {
+#if defined(__linux__)
 	struct timespec bt, mt;
 	long long off;
 
@@ -778,7 +928,12 @@ static void storage_check_resume(void)
 		s_suspend_tracked = 1;
 		s_suspend_offset_ms = off;
 		/* Cache --read-write at boot, while the volume is mounted. */
-		(void)live_overlay_backed();
+		{
+			const char *env = getenv("MMB_DRIVE_ROOT");
+
+			(void)live_overlay_backed(
+				(env && env[0]) ? env : "/media/mmcore");
+		}
 		return;
 	}
 	/* BOOTTIME - MONOTONIC only grows while the machine is suspended. */
@@ -789,24 +944,20 @@ static void storage_check_resume(void)
 	}
 	else if (off < s_suspend_offset_ms)
 		s_suspend_offset_ms = off; /* clock source reset/oddity */
-}
-#else
-static void storage_check_resume(void) { }
 #endif
+}
 
 void mmb_storage_revalidate(void)
 {
-#if defined(__linux__)
 	if (linux_is_live_boot())
 		revalidate_live_root();
-#endif
 }
 
 int mmb_storage_persistence_lost(void)
 {
-#if defined(__linux__)
+	const storage_mount_ops *ops = storage_ops();
 	const char *root;
-	int mounted;
+	char fallback[] = "/media/mmcore";
 
 	if (!linux_is_live_boot())
 		return 0;
@@ -814,11 +965,8 @@ int mmb_storage_persistence_lost(void)
 	if (s_overlay_broken)
 		return 1;
 	root = getenv("MMB_DRIVE_ROOT");
-	mounted = is_mountpoint((root && root[0]) ? root : "/media/mmcore");
-	return mounted ? 0 : 1;
-#else
-	return 0;
-#endif
+	root = (root && root[0]) ? root : fallback;
+	return ops->is_mountpoint(root) ? 0 : 1;
 }
 
 /* Close the cached handle only when it is the file being modified, so a write

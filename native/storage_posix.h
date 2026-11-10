@@ -7,4 +7,23 @@
  * under the root. Returns 0 on success, -1 for a bad letter or unusable path. */
 int storage_posix_mount(int letter, const char *path);
 
+/* Mount operations used to recover C: after a suspend/resume. The Linux build
+ * fills these with the real mount commands; the host test overrides them with
+ * stubs so the recovery/re-point path can run without a live ISO. */
+typedef struct storage_mount_ops {
+	int (*is_mountpoint)(const char *path);
+	int (*mount_label)(const char *path, const char *label);
+	int (*remount_rw)(const char *path);
+	int (*overlay_writable)(void);
+	int (*root_writable)(const char *root);
+	const char *recovery_path; /* extra mountpoint, or NULL */
+} storage_mount_ops;
+
+#ifdef MMB_STORAGE_TEST
+void mmb_storage_test_set_live(int live);
+void mmb_storage_test_set_overlay(int overlay);
+void mmb_storage_test_set_ops(const storage_mount_ops *ops);
+void mmb_storage_test_reset(void);
+#endif
+
 #endif
