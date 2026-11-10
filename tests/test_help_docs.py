@@ -22,6 +22,18 @@ def test_help_dir_has_overview_and_contents():
     assert "FOR" in names
 
 
+def test_me_page_lists_tools_and_has_no_qemu():
+    topics = gen_help.load_topics()
+    me = next(t for t in topics if t["name"].upper() == "ME")
+    assert "QEMU" not in me["text"]
+    for item in ("~SETTINGS~", "~PAINT~", "Ctrl+Space"):
+        assert item in me["text"], item
+    links = gen_help.extract_links(me["text"])
+    assert "SETTINGS" in links
+    assert "PAINT" in links
+    assert "APPS" in links
+
+
 def test_overview_marks_for_explicitly():
     topics = gen_help.load_topics()
     ov = next(t for t in topics if t["name"].upper() == "OVERVIEW")
