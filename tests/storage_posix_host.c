@@ -14,8 +14,10 @@
  * SDK turns that name into a macro once <stdio.h> is seen (the native build
  * includes it the same way, so this mirrors the real translation unit). */
 #include "mmb_priv.h"
+#include "storage_posix.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +108,128 @@ static void write_file(const char *path, const char *data)
 	check(mmb_fat_write('C', path, data, (unsigned)strlen(data), 0) == 0,
 	      "seed mmb_fat_write");
 }
+
+static int put_text(const char *path, const char *text)
+{
+	FILE *f = fopen(path, "wb");
+	if (!f)
+		return 0;
+	fputs(text, f);
+	fclose(f);
+	return 1;
+}
+
+static int file_text_is(const char *path, const char *want)
+{
+	char buf[64];
+	FILE *f = fopen(path, "rb");
+	size_t n;
+
+	if (!f)
+		return 0;
+	n = fread(buf, 1, sizeof buf - 1, f);
+	fclose(f);
+	buf[n] = 0;
+	return strcmp(buf, want) == 0;
+}
+
+#ifdef MMB_STORAGE_TEST
+/* ---- fake live-ISO mount backend ------------------------------------- *
+ * The old root still looks mounted (a dead entry the kernel has not dropped)
+ * but its filesystem no longer accepts writes; a remount at the same path is
+ * refused (stale superblock), while a fresh mountpoint comes back healthy. */
+static char soc_old[512];
+static char soc_new[512];
+static int soc_recovered;
+
+static int soc_is_mount(const char *path)
+{
+	return strcmp(path, soc_old) == 0 || strcmp(path, soc_new) == 0;
+}
+
+static int soc_mount(const char *path, const char *label)
+{
+	char sub[600];
+
+	(void)label;
+	if (strcmp(path, soc_old) == 0)
+		return -1; /* the dead superblock still owns the device */
+	if (strcmp(path, soc_new) != 0)
+		return -1;
+	if (mkdir(path, 0777) != 0 && errno != EEXIST)
+		return -1;
+	snprintf(sub, sizeof sub, "%s/C", path);
+	if (mkdir(sub, 0777) != 0 && errno != EEXIST)
+		return -1;
+	soc_recovered = 1;
+	return 0;
+}
+
+static int soc_remount(const char *path)
+{
+	(void)path;
+	return -1; /* read-only remount of the dead mount cannot succeed */
+}
+
+static int soc_overlay_writable(void)
+{
+	return 0; /* the overlay upper on the old volume is stale */
+}
+
+static int soc_root_writable(const char *path)
+{
+	return soc_recovered && strcmp(path, soc_new) == 0;
+}
+
+static storage_mount_ops soc_ops = {
+	soc_is_mount,
+	soc_mount,
+	soc_remount,
+	soc_overlay_writable,
+	soc_root_writable,
+	0
+};
+
+/* Everything fails: the volume cannot be found for a fresh mount. */
+static int fail_is_mount(const char *path)
+{
+	(void)path;
+	return 1;
+}
+
+static int fail_mount(const char *path, const char *label)
+{
+	(void)path;
+	(void)label;
+	return -1;
+}
+
+static int fail_remount(const char *path)
+{
+	(void)path;
+	return -1;
+}
+
+static int fail_overlay_writable(void)
+{
+	return 0;
+}
+
+static int fail_root_writable(const char *path)
+{
+	(void)path;
+	return 0;
+}
+
+static const storage_mount_ops fail_ops = {
+	fail_is_mount,
+	fail_mount,
+	fail_remount,
+	fail_overlay_writable,
+	fail_root_writable,
+	0
+};
+#endif
 
 int main(void)
 {
@@ -212,6 +336,85 @@ int main(void)
 	mmb_storage_revalidate();
 	check(!mmb_storage_persistence_lost(),
 	      "persistence not reported lost off the live ISO");
+
+#ifdef MMB_STORAGE_TEST
+	/* 11. Resume with --read-write: the old mount is still listed but its
+	 * filesystem is dead. The recovery must remount MMCORE at a fresh
+	 * mountpoint, re-point C: at it, and close cached streams so a file
+	 * open across the sleep reads and saves on the recovered volume. */
+	{
+		char sp[600], old_save[600], new_save[600];
+		char new_r[600], new_p[600];
+
+		snprintf(sp, sizeof sp, "%s/rw/upper", root);
+		mkdir(sp, 0777);
+		snprintf(sp, sizeof sp, "%s/rw/work", root);
+		mkdir(sp, 0777);
+		snprintf(sp, sizeof sp, "%s/.mmcore-rw", root);
+		check(put_text(sp, ""), "seed --read-write marker");
+
+		snprintf(soc_old, sizeof soc_old, "%s", root);
+		snprintf(soc_new, sizeof soc_new, "%s.recovered", root);
+		snprintf(sp, sizeof sp, "%s/C", soc_new);
+		mkdir(soc_new, 0777);
+		mkdir(sp, 0777);
+		snprintf(new_r, sizeof new_r, "%s/R.TXT", sp);
+		snprintf(new_p, sizeof new_p, "%s/PERSIST.TXT", sp);
+		check(put_text(new_r, "NEWDATA"), "seed recovered R.TXT");
+		check(put_text(new_p, "KEEP"), "seed recovered PERSIST.TXT");
+
+		/* A file opened (and read) before the suspend is cached on the
+		 * old mount. */
+		write_file("/R.TXT", "OLD");
+		check(read_is('C', "/R.TXT", 0, "OLD", 3), "read before suspend");
+		check(count_handles(rpath) == 1, "old stream cached");
+
+		setenv("MMB_DRIVE_ROOT", root, 1);
+		soc_ops.recovery_path = soc_new;
+		mmb_storage_test_set_live(1);
+		mmb_storage_test_set_overlay(1);
+		mmb_storage_test_set_ops(&soc_ops);
+		soc_recovered = 0;
+
+		mmb_storage_revalidate();
+
+		check(soc_recovered, "recovery mounted the volume");
+		check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), soc_new) == 0,
+		      "C: re-pointed at the recovered mount");
+		check(!mmb_storage_persistence_lost(),
+		      "persistence live after recovery");
+		check(count_handles(rpath) == 0, "stale stream closed on resume");
+		check(read_is('C', "/R.TXT", 0, "NEWDATA", 7),
+		      "open file re-read from recovered mount");
+		check(read_is('C', "/PERSIST.TXT", 0, "KEEP", 4),
+		      "recovered volume files readable");
+
+		check(mmb_fat_write('C', "/SAVE.TXT", "AFTER", 5, 0) == 0,
+		      "save after recovery");
+		snprintf(new_save, sizeof new_save, "%s/C/SAVE.TXT", soc_new);
+		snprintf(old_save, sizeof old_save, "%s/C/SAVE.TXT", soc_old);
+		check(file_text_is(new_save, "AFTER"),
+		      "save landed on the recovered volume");
+		check(access(old_save, F_OK) != 0,
+		      "no silent write into the dead mount");
+
+		/* 12. If even a fresh mount fails, keep the honest diagnostic
+		 * and report persistence lost instead of pretending. */
+		{
+			char failroot[600];
+
+			snprintf(failroot, sizeof failroot, "%s.dead", root);
+			mkdir(failroot, 0777);
+			setenv("MMB_DRIVE_ROOT", failroot, 1);
+			mmb_storage_test_set_ops(&fail_ops);
+			mmb_storage_revalidate();
+			check(mmb_storage_persistence_lost(),
+			      "lost store reported when recovery fails");
+		}
+		mmb_storage_test_reset();
+	}
+#endif
 
 	if (fails)
 	{

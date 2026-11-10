@@ -284,6 +284,7 @@ typedef struct mmb_vfs_rbuf {
 	int cap;            /* allocated capacity */
 	int len;            /* valid bytes in buf (0 = empty) */
 	unsigned start;     /* file offset of buf[0] */
+	unsigned gen;       /* storage generation the bytes came from */
 } mmb_vfs_rbuf;
 
 typedef struct mmb_file {
@@ -1502,6 +1503,11 @@ void mmb_storage_unmount(void);
  * platforms return 0 (nothing to guard). */
 void mmb_storage_revalidate(void);
 int mmb_storage_persistence_lost(void);
+
+/* Bumped when the backing store is remounted after a suspend. A per-file
+ * read-ahead buffer filled from an older generation is stale: drop it so an
+ * open file reopens against the recovered volume. */
+unsigned mmb_storage_generation(void);
 
 /* Hotplug/idle notices from the storage layer (USB mount/unmount, eject).
  * Printed at the prompt unless a full-screen app claims them (FILES hint). */

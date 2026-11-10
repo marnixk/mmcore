@@ -31,6 +31,7 @@ def test_storage_posix_read_cache(tmp_path):
             "-Wextra",
             "-Werror",
             "-DMMB_PLATFORM_POSIX",
+            "-DMMB_STORAGE_TEST",
             "-I",
             os.path.join(REPO, "native"),
             "-I",
