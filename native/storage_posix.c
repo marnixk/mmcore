@@ -60,6 +60,9 @@ static void drive_dir_raw(int letter, char *out, int outsz);
 static void rd_cache_close(int letter);
 static void rd_cache_close_path(int letter, const char *full);
 static void storage_check_resume(void);
+static void storage_guard(void);
+static int storage_io_retry(int letter, int err);
+static int is_mountpoint(const char *path);
 
 int storage_posix_mount(int letter, const char *path)
 {
@@ -293,12 +296,23 @@ int mmb_fat_ready(int letter)
 {
 	char db[P_BUF];
 
-	storage_check_resume();
-	ensure_root();
-	if (!drive_of(letter) || s_ejected[letter - 'A'])
-		return 0;
-	drive_dir_raw(letter, db, sizeof db);
-	return is_dir(db);
+	for (;;)
+	{
+		int present, err;
+
+		storage_guard();
+		ensure_root();
+		if (!drive_of(letter) || s_ejected[letter - 'A'])
+			return 0;
+		drive_dir_raw(letter, db, sizeof db);
+		errno = 0;
+		present = is_dir(db);
+		if (present)
+			return 1;
+		err = errno;
+		if (!storage_io_retry(letter, err))
+			return 0;
+	}
 }
 
 /* Validate that a directory-absolute path names a directory. The current
@@ -308,68 +322,150 @@ int mmb_fat_chdir(int letter, const char *path)
 {
 	char full[P_BUF];
 
-	ensure_root();
-	if (!path || !path[0] || strcmp(path, "/") == 0)
+	for (;;)
 	{
-		char db[P_BUF];
-		if (!drive_of(letter))
+		int err;
+
+		storage_guard();
+		ensure_root();
+		if (!path || !path[0] || strcmp(path, "/") == 0)
+		{
+			char db[P_BUF];
+
+			if (!drive_of(letter))
+				return -1;
+			drive_dir_raw(letter, db, sizeof db);
+			errno = 0;
+			if (is_dir(db))
+				return 0;
+			err = errno;
+		}
+		else
+		{
+			errno = 0;
+			if (build_path(letter, path, full, sizeof full, 1) &&
+			    is_dir(full))
+				return 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
 			return -1;
-		drive_dir_raw(letter, db, sizeof db);
-		return is_dir(db) ? 0 : -1;
 	}
-	if (!build_path(letter, path, full, sizeof full, 1) || !is_dir(full))
-		return -1;
-	return 0;
 }
 
 int mmb_fat_mkdir(int letter, const char *path)
 {
 	char full[P_BUF];
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 0))
-		return -1;
-	/* A directory change can introduce or remove a name the cached path
-	 * resolution depended on; drop the volume's handle to be safe. */
-	rd_cache_close(letter);
-	mkdirs(full);
-	return is_dir(full) ? 0 : -1;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 0))
+		{
+			err = errno;
+		}
+		else
+		{
+			/* A directory change can introduce or remove a name the
+			 * cached path resolution depended on; drop the volume's
+			 * handle to be safe. */
+			rd_cache_close(letter);
+			mkdirs(full);
+			errno = 0;
+			if (is_dir(full))
+				return 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
 }
 
 int mmb_fat_rmdir(int letter, const char *path)
 {
 	char full[P_BUF];
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 1))
-		return -1;
-	rd_cache_close(letter);
-	return rmdir(full) == 0 ? 0 : -1;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 1))
+		{
+			err = errno;
+		}
+		else
+		{
+			rd_cache_close(letter);
+			if (rmdir(full) == 0)
+				return 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
 }
 
 int mmb_fat_unlink(int letter, const char *path)
 {
 	char full[P_BUF];
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 1))
-		return -1;
-	rd_cache_close(letter);
-	return unlink(full) == 0 ? 0 : -1;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 1))
+		{
+			err = errno;
+		}
+		else
+		{
+			rd_cache_close(letter);
+			if (unlink(full) == 0)
+				return 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
 }
 
 int mmb_fat_rename(int letter, const char *from, const char *to)
 {
 	char a[P_BUF], b[P_BUF];
 
-	ensure_root();
-	if (!build_path(letter, from, a, sizeof a, 1))
-		return -1;
-	if (!build_path(letter, to, b, sizeof b, 0))
-		return -1;
-	/* The cached handle can name either end of the rename. */
-	rd_cache_close(letter);
-	return rename(a, b) == 0 ? 0 : -1;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, from, a, sizeof a, 1) ||
+		    !build_path(letter, to, b, sizeof b, 0))
+		{
+			err = errno;
+		}
+		else
+		{
+			/* The cached handle can name either end of the rename. */
+			rd_cache_close(letter);
+			if (rename(a, b) == 0)
+				return 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
 }
 
 int mmb_fat_exists(int letter, const char *path)
@@ -377,10 +473,26 @@ int mmb_fat_exists(int letter, const char *path)
 	char full[P_BUF];
 	struct stat st;
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 1))
-		return 0;
-	return stat(full, &st) == 0;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 1))
+		{
+			err = errno;
+		}
+		else
+		{
+			if (stat(full, &st) == 0)
+				return 1;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return 0;
+	}
 }
 
 int mmb_fat_size(int letter, const char *path)
@@ -388,12 +500,26 @@ int mmb_fat_size(int letter, const char *path)
 	char full[P_BUF];
 	struct stat st;
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 1))
-		return -1;
-	if (stat(full, &st) != 0 || S_ISDIR(st.st_mode))
-		return -1;
-	return (int)st.st_size;
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 1))
+		{
+			err = errno;
+		}
+		else
+		{
+			if (stat(full, &st) == 0)
+				return S_ISDIR(st.st_mode) ? -1 : (int)st.st_size;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
 }
 
 int mmb_fat_isdir(int letter, const char *path)
@@ -401,12 +527,28 @@ int mmb_fat_isdir(int letter, const char *path)
 	char full[P_BUF];
 	struct stat st;
 
-	ensure_root();
-	if (!path || !path[0] || strcmp(path, "/") == 0)
-		return 1; /* drive root is always a directory */
-	if (!build_path(letter, path, full, sizeof full, 1))
-		return 0;
-	return stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		if (!path || !path[0] || strcmp(path, "/") == 0)
+			return 1; /* drive root is always a directory */
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 1))
+		{
+			err = errno;
+		}
+		else
+		{
+			if (stat(full, &st) == 0)
+				return S_ISDIR(st.st_mode) ? 1 : 0;
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return 0;
+	}
 }
 
 int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
@@ -416,47 +558,67 @@ int mmb_fat_list(int letter, const char *dir, const char *pat, char *out,
 	DIR *d;
 	struct dirent *e;
 
-	ensure_root();
-	if (out && outsz > 0)
-		out[0] = 0;
-	if (truncated)
-		*truncated = 0;
-	if (!dir || !dir[0] || strcmp(dir, "/") == 0)
-		drive_dir_raw(letter, full, sizeof full);
-	else if (!build_path(letter, dir, full, sizeof full, 1))
-		return -1;
-	d = opendir(full);
-	if (!d)
-		return -1;
-	if (!pat || !pat[0])
-		pat = "*"; /* a bare directory (e.g. DIR "C:/") lists everything */
-	while ((e = readdir(d)))
+	for (;;)
 	{
-		int isd;
-		size_t used;
+		int err;
 
-		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
-			continue;
-		if (!glob_ci(pat, e->d_name))
-			continue;
-		isd = dirent_is_dir(full, e);
-		used = out ? strlen(out) : 0;
-		if (out && used + strlen(e->d_name) + 2 < (size_t)outsz)
+		storage_guard();
+		ensure_root();
+		if (out && outsz > 0)
+			out[0] = 0;
+		if (truncated)
+			*truncated = 0;
+		errno = 0;
+		if (!dir || !dir[0] || strcmp(dir, "/") == 0)
+			drive_dir_raw(letter, full, sizeof full);
+		else if (!build_path(letter, dir, full, sizeof full, 1))
 		{
-			strcat(out, e->d_name);
-			if (isd)
-				strcat(out, "/");
-			strcat(out, "\n");
+			err = errno;
+			goto list_retry;
 		}
-		else
+		d = opendir(full);
+		if (!d)
 		{
-			if (truncated)
-				*truncated = 1;
-			break;
+			err = errno;
+			goto list_retry;
 		}
+		if (!pat || !pat[0])
+			pat = "*"; /* a bare directory (e.g. DIR "C:/") lists everything */
+		errno = 0;
+		while ((e = readdir(d)))
+		{
+			int isd;
+			size_t used;
+
+			if (strcmp(e->d_name, ".") == 0 ||
+			    strcmp(e->d_name, "..") == 0)
+				continue;
+			if (!glob_ci(pat, e->d_name))
+				continue;
+			isd = dirent_is_dir(full, e);
+			used = out ? strlen(out) : 0;
+			if (out && used + strlen(e->d_name) + 2 < (size_t)outsz)
+			{
+				strcat(out, e->d_name);
+				if (isd)
+					strcat(out, "/");
+				strcat(out, "\n");
+			}
+			else
+			{
+				if (truncated)
+					*truncated = 1;
+				break;
+			}
+		}
+		err = errno;
+		closedir(d);
+		if (err == 0)
+			return 0;
+	list_retry:
+		if (!storage_io_retry(letter, err))
+			return -1;
 	}
-	closedir(d);
-	return 0;
 }
 
 int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
@@ -466,42 +628,66 @@ int mmb_fat_list_entries(int letter, const char *dir, const char *pat,
 	char sub[P_BUF];
 	DIR *d;
 	struct dirent *e;
-	int n = 0, total = 0, i;
+	int n, total, i;
 	struct stat st;
 
-	ensure_root();
-	if (truncated)
-		*truncated = 0;
-	if (!out || max <= 0)
-		return -1;
-	if (!dir || !dir[0] || strcmp(dir, "/") == 0)
-		drive_dir_raw(letter, full, sizeof full);
-	else if (!build_path(letter, dir, full, sizeof full, 1))
-		return -1;
-	d = opendir(full);
-	if (!d)
-		return -1;
-	if (!pat || !pat[0])
-		pat = "*";
-	while ((e = readdir(d)))
+	for (;;)
 	{
-		int isd;
-		mmb_dirent ent;
+		int err;
 
-		if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
-			continue;
-		if (!glob_ci(pat, e->d_name))
-			continue;
-		isd = dirent_is_dir(full, e);
-		memset(&ent, 0, sizeof(ent));
-		snprintf(ent.name, sizeof(ent.name), "%s", e->d_name);
-		ent.is_dir = isd;
-		ent.size = -1; /* stat()ed lazily below, only for the kept entries */
-		total++;
-		/* Keep the sorted-first `max` regardless of readdir order (#676). */
-		mmb_dirent_offer(out, &n, max, &ent);
+		storage_guard();
+		ensure_root();
+		n = 0;
+		total = 0;
+		if (truncated)
+			*truncated = 0;
+		if (!out || max <= 0)
+			return -1;
+		errno = 0;
+		if (!dir || !dir[0] || strcmp(dir, "/") == 0)
+			drive_dir_raw(letter, full, sizeof full);
+		else if (!build_path(letter, dir, full, sizeof full, 1))
+		{
+			err = errno;
+			goto entries_retry;
+		}
+		d = opendir(full);
+		if (!d)
+		{
+			err = errno;
+			goto entries_retry;
+		}
+		if (!pat || !pat[0])
+			pat = "*";
+		errno = 0;
+		while ((e = readdir(d)))
+		{
+			int isd;
+			mmb_dirent ent;
+
+			if (strcmp(e->d_name, ".") == 0 ||
+			    strcmp(e->d_name, "..") == 0)
+				continue;
+			if (!glob_ci(pat, e->d_name))
+				continue;
+			isd = dirent_is_dir(full, e);
+			memset(&ent, 0, sizeof(ent));
+			snprintf(ent.name, sizeof(ent.name), "%s", e->d_name);
+			ent.is_dir = isd;
+			ent.size = -1; /* stat()ed lazily below */
+			total++;
+			/* Keep the sorted-first `max` regardless of readdir order
+			 * (#676). */
+			mmb_dirent_offer(out, &n, max, &ent);
+		}
+		err = errno;
+		closedir(d);
+		if (err == 0)
+			break;
+	entries_retry:
+		if (!storage_io_retry(letter, err))
+			return -1;
 	}
-	closedir(d);
 	/* #694: fill sizes without stat()ing every name the filesystem enumerated.
 	 * The d_type fast path in dirent_is_dir already gives the directory bit, so
 	 * only the regular files that survived the cap need a size lookup. */
@@ -543,29 +729,60 @@ static void rd_cache_close_all(void)
 		rd_cache_close(letter);
 }
 
-/* ---- live-ISO persistence guard --------------------------------------- *
- * On the live ISO the C: home lives on the MMCORE volume mounted at
- * MMB_DRIVE_ROOT. Suspend-to-RAM can reset the USB/SD controller, after which
- * the mount may be gone, read-only, or still listed but backed by a dead
- * filesystem; mmcore keeps running from the squashfs and would silently write
- * configuration to the RAM overlay. Detect a resume (the gap between
- * CLOCK_BOOTTIME and CLOCK_MONOTONIC grows), remount the volume, re-point C:
- * and report whether C: is currently volatile.
+/* ---- persistence recovery after standby ------------------------------- *
+ * mmcore's persistent volumes can disappear or go stale when suspend-to-RAM
+ * resets the SD/USB controller behind them. That is true for a live boot
+ * (MMCORE, optionally the read-write overlay) and for a disk install, whose
+ * GRUB line names MMCORE-SYS as C: and MMCORE-DATA as D:.
+ *
+ * Recovery is enabled by either boot shape: mmcore.live=1, or mmcore.sys= on
+ * an installed command line. Which label backs which drive is an explicit map
+ * built from that command line and the drive mounts, never from a mount-point
+ * basename: after one recovery the path may be a fallback, and deriving the
+ * label from it would look for a volume that cannot exist. Each volume keeps
+ * its ORIGINAL mountpoint so later sleeps and settings paths stay stable.
+ *
+ * A resume is detected from the growing gap between CLOCK_BOOTTIME and
+ * CLOCK_MONOTONIC. The same recovery runs when an I/O call fails with
+ * EIO/ENODEV/EROFS/ESTALE at any other time, because the device may only
+ * re-enumerate seconds after userspace resumed. The mount is retried with
+ * backoff for up to ~30 s: remount in place first, then lazy-umount and mount
+ * by label at the original mountpoint.
  *
  * The recovery itself is POSIX, not Linux-only: the clock check is the only
  * Linux piece, and the host test drives the same recovery through
  * storage_mount_ops so the remount/re-point path is covered without a live
  * ISO. */
+#define STORAGE_VOL_MAX 2
+#define STORAGE_RECOVER_ATTEMPTS 60
+#define STORAGE_RECOVER_DELAY_MS 500
+
+typedef struct {
+	char letter;
+	char label[64];
+	char path[P_BUF]; /* original mountpoint; never rewritten */
+	int lost_notified;
+} storage_volume;
+
 #if defined(__linux__)
 static long long s_suspend_offset_ms;
 static int s_suspend_tracked;
 #endif
 static int s_live_boot = -1;
+static int s_installed_boot;
+static int s_recovery_enabled = -1;
+static int s_boot_scanned;
+static char s_sys_spec[128];
+static char s_data_spec[128];
 static int s_overlay_backed = -1;
 static char s_overlay_root[P_BUF];
 static int s_overlay_lost_notified;
 static int s_overlay_broken;
+static int s_in_recovery;
 static unsigned s_storage_generation;
+static storage_volume s_vols[STORAGE_VOL_MAX];
+static int s_vol_count;
+static int s_vol_map_valid;
 
 /* Bumped whenever the backing store is remounted/re-pointed. The VFS uses it
  * to drop per-file read-ahead buffers that were filled before a suspend, so a
@@ -579,10 +796,16 @@ unsigned mmb_storage_generation(void)
 static int s_test_live = -1;
 static int s_test_overlay = -1;
 static const storage_mount_ops *s_test_ops;
+static char s_test_cmdline[512];
+static int s_test_recover_attempts = -1;
+static int s_test_recover_delay = -1;
 
 void mmb_storage_test_set_live(int live)
 {
 	s_test_live = live;
+	s_boot_scanned = 0;
+	s_recovery_enabled = -1;
+	s_vol_map_valid = 0;
 }
 
 void mmb_storage_test_set_overlay(int overlay)
@@ -595,11 +818,37 @@ void mmb_storage_test_set_ops(const storage_mount_ops *ops)
 	s_test_ops = ops;
 }
 
+void mmb_storage_test_set_cmdline(const char *cmdline)
+{
+	snprintf(s_test_cmdline, sizeof s_test_cmdline, "%s",
+		 cmdline ? cmdline : "");
+	s_boot_scanned = 0;
+	s_recovery_enabled = -1;
+	s_vol_map_valid = 0;
+}
+
+void mmb_storage_test_set_recovery(int attempts, int delay_ms)
+{
+	s_test_recover_attempts = attempts;
+	s_test_recover_delay = delay_ms;
+}
+
 void mmb_storage_test_reset(void)
 {
 	s_test_live = -1;
 	s_test_overlay = -1;
 	s_test_ops = 0;
+	s_test_cmdline[0] = 0;
+	s_test_recover_attempts = -1;
+	s_test_recover_delay = -1;
+	s_boot_scanned = 0;
+	s_recovery_enabled = -1;
+	s_vol_map_valid = 0;
+	s_overlay_backed = -1;
+	s_overlay_root[0] = 0;
+	s_overlay_broken = 0;
+	s_overlay_lost_notified = 0;
+	s_vol_count = 0;
 }
 #endif
 
@@ -626,7 +875,10 @@ static int live_overlay_backed(const char *root)
 {
 #ifdef MMB_STORAGE_TEST
 	if (s_test_overlay >= 0)
+	{
+		s_overlay_backed = s_test_overlay;
 		return s_test_overlay;
+	}
 #endif
 	if (s_overlay_backed >= 0 && s_overlay_root[0] &&
 	    strcmp(s_overlay_root, root) == 0)
@@ -638,28 +890,157 @@ static int live_overlay_backed(const char *root)
 	return s_overlay_backed;
 }
 
-static int linux_is_live_boot(void)
+static void cmdline_spec(const char *cmdline, const char *prefix, char *out,
+			 size_t cap)
 {
-	char buf[512];
+	char work[512];
+	char *tok, *save;
+
+	out[0] = 0;
+	snprintf(work, sizeof work, "%s", cmdline);
+	for (tok = strtok_r(work, " \t\r\n", &save); tok;
+	     tok = strtok_r(0, " \t\r\n", &save))
+	{
+		size_t n = strlen(prefix);
+
+		if (strncmp(tok, prefix, n) == 0)
+		{
+			snprintf(out, cap, "%s", tok + n);
+			return;
+		}
+	}
+}
+
+static void spec_label(const char *spec, const char *fallback, char *out,
+		       size_t cap)
+{
+	if (strncmp(spec, "LABEL=", 6) == 0 && spec[6])
+		snprintf(out, cap, "%s", spec + 6);
+	else
+		snprintf(out, cap, "%s", fallback);
+}
+
+static void storage_boot_scan(void)
+{
+	static char proc_cmdline[512];
+	const char *cmd = 0;
 	FILE *f;
 	size_t n;
 
+	if (s_boot_scanned)
+		return;
+#ifdef MMB_STORAGE_TEST
+	if (s_test_cmdline[0])
+		cmd = s_test_cmdline;
+#endif
+	if (!cmd)
+	{
+		f = fopen("/proc/cmdline", "rb");
+		if (f)
+		{
+			n = fread(proc_cmdline, 1, sizeof(proc_cmdline) - 1, f);
+			fclose(f);
+			proc_cmdline[n] = 0;
+			cmd = proc_cmdline;
+		}
+		else
+			cmd = "";
+	}
+	s_sys_spec[0] = 0;
+	s_data_spec[0] = 0;
+	s_live_boot = strstr(cmd, "mmcore.live=1") ? 1 : 0;
+	cmdline_spec(cmd, "mmcore.sys=", s_sys_spec, sizeof s_sys_spec);
+	cmdline_spec(cmd, "mmcore.data=", s_data_spec, sizeof s_data_spec);
+	s_installed_boot = s_sys_spec[0] != 0;
 #ifdef MMB_STORAGE_TEST
 	if (s_test_live >= 0)
-		return s_test_live;
+	{
+		s_live_boot = s_test_live;
+		if (s_live_boot)
+			s_installed_boot = 0;
+	}
 #endif
-	if (s_live_boot >= 0)
-		return s_live_boot;
-	s_live_boot = 0;
-	f = fopen("/proc/cmdline", "rb");
-	if (!f)
+	s_recovery_enabled = s_live_boot || s_installed_boot;
+	s_boot_scanned = 1;
+}
+
+static int storage_recovery_enabled(void)
+{
+	if (s_recovery_enabled < 0)
+		storage_boot_scan();
+	return s_recovery_enabled;
+}
+
+static storage_volume *storage_volume_for(int letter)
+{
+	int i;
+
+	if (!s_vol_map_valid)
 		return 0;
-	n = fread(buf, 1, sizeof(buf) - 1, f);
-	fclose(f);
-	buf[n] = 0;
-	if (strstr(buf, "mmcore.live=1"))
-		s_live_boot = 1;
-	return s_live_boot;
+	for (i = 0; i < s_vol_count; i++)
+		if (s_vols[i].letter == letter)
+			return &s_vols[i];
+	return 0;
+}
+
+/* Build the explicit drive -> label map. C: is MMCORE-SYS on an installed
+ * disk and MMCORE on a live boot; D: is MMCORE-DATA when --drive mounted it.
+ * The original mountpoint comes from the environment/option that set the
+ * drive, so recovery never has to guess it from a path. */
+static void storage_volume_map(void)
+{
+	const char *env;
+	storage_volume *v;
+
+	if (s_vol_map_valid)
+		return;
+	storage_boot_scan();
+	memset(s_vols, 0, sizeof s_vols);
+	s_vol_count = 0;
+	if (!s_recovery_enabled)
+	{
+		s_vol_map_valid = 1;
+		return;
+	}
+
+	env = getenv("MMB_DRIVE_ROOT");
+	/* A read-only live session without a persistent MMCORE partition has no
+	 * volume to recover; do not spend the retry budget on it after every
+	 * resume. A partition that was mounted (or is still present) is mapped. */
+	if (s_live_boot && !(env && env[0]) && !is_mountpoint("/media/mmcore") &&
+	    !is_dir("/media/mmcore"))
+	{
+		s_vol_map_valid = 1;
+		return;
+	}
+
+	v = &s_vols[s_vol_count++];
+	v->letter = 'C';
+	if (s_live_boot)
+		snprintf(v->label, sizeof v->label, "MMCORE");
+	else
+		spec_label(s_sys_spec, "MMCORE-SYS", v->label, sizeof v->label);
+	if (env && env[0])
+		snprintf(v->path, sizeof v->path, "%s", env);
+	else if (s_live_boot)
+		snprintf(v->path, sizeof v->path, "/media/mmcore");
+	else
+		snprintf(v->path, sizeof v->path, "/media/mmcore-sys");
+
+	if (s_installed_boot && s_has_override['D' - 'A'])
+	{
+		v = &s_vols[s_vol_count++];
+		v->letter = 'D';
+		spec_label(s_data_spec, "MMCORE-DATA", v->label,
+			   sizeof v->label);
+		snprintf(v->path, sizeof v->path, "%s",
+			 s_override['D' - 'A']);
+	}
+
+	/* Cache the overlay bit while the original C: mount is still readable;
+	 * after a resume the volume backing it may be gone. */
+	(void)live_overlay_backed(s_vols[0].path);
+	s_vol_map_valid = 1;
 }
 
 /* A mount point has a different device id from its parent directory. */
@@ -723,18 +1104,6 @@ static int run_mount(char *const argv[])
 }
 #endif
 
-static void mount_label_from_root(const char *root, char *label, size_t cap)
-{
-	const char *base = strrchr(root, '/');
-	size_t i;
-
-	base = (base && base[1]) ? base + 1 : root;
-	snprintf(label, cap, "%s", base);
-	for (i = 0; label[i]; i++)
-		if (label[i] >= 'a' && label[i] <= 'z')
-			label[i] = (char)(label[i] - 'a' + 'A');
-}
-
 /* Mount the volume carrying `label` at `path`, writable. */
 static int mount_by_label(const char *path, const char *label)
 {
@@ -765,6 +1134,25 @@ static int remount_root_rw(const char *root)
 	{
 		char *argv[] = { (char *)helpers[i], "-o", "remount,rw",
 				 (char *)root, 0 };
+
+		if (run_mount(argv) == 0)
+			return 0;
+	}
+	return -1;
+}
+
+/* Drop a dead mount entry so the volume can be mounted again at the same
+ * original path. Lazy (`-l`) never blocks on busy files. */
+static int unmount_lazy_path(const char *path)
+{
+	static const char *const helpers[] = {
+		"/bin/umount", "/sbin/umount", "/usr/bin/umount"
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
+	{
+		char *argv[] = { (char *)helpers[i], "-l", (char *)path, 0 };
 
 		if (run_mount(argv) == 0)
 			return 0;
@@ -808,7 +1196,8 @@ static const storage_mount_ops s_default_ops = {
 	remount_root_rw,
 	root_overlay_writable,
 	drive_root_writable,
-	0
+	0,
+	unmount_lazy_path
 };
 
 static const storage_mount_ops *storage_ops(void)
@@ -820,105 +1209,226 @@ static const storage_mount_ops *storage_ops(void)
 	return &s_default_ops;
 }
 
-/* Try to put C: back on a live mount. The configured root is tried first; if
- * that mount is dead (or, with --read-write, the root overlay's stale upper
- * prevents mounting there), a fresh mountpoint is used and MMB_DRIVE_ROOT is
- * re-pointed at it. That keeps files on C: saving to the card even when only
- * the session's own overlay needs a reboot. */
-static int recover_drive_root(const char *root, const char *label,
-			      const storage_mount_ops *ops, char *out,
-			      size_t outsz)
+static void storage_sleep_ms(int ms)
 {
+#if defined(_WIN32)
+	Sleep((DWORD)ms);
+#else
+	usleep((useconds_t)ms * 1000);
+#endif
+}
+
+static int volume_overlay(const storage_volume *v)
+{
+	return v->letter == 'C' && s_overlay_backed == 1;
+}
+
+/* Return 0 when the volume could not be recovered, 1 when it is fully usable
+ * at `used`, and 2 when C: is usable but a --read-write overlay still needs a
+ * reboot. `fresh` is set when the volume had to be mounted (or retried), so
+ * the caller can report a recovery without spam on a normal resume. */
+static int recover_volume(const storage_volume *v, char *used, size_t usedsz,
+			  int *fresh)
+{
+	const storage_mount_ops *ops = storage_ops();
 	const char *candidates[4];
-	int n = 0, i;
+	int n = 0, i, attempt;
+	int attempts = STORAGE_RECOVER_ATTEMPTS;
+	int delay = STORAGE_RECOVER_DELAY_MS;
+	int overlay = volume_overlay(v);
 
-	candidates[n++] = root;
-	if (ops->recovery_path && ops->recovery_path[0] &&
-	    strcmp(ops->recovery_path, root) != 0)
-		candidates[n++] = ops->recovery_path;
-	candidates[n++] = "/run/mmcore-recovered";
-	if (strcmp(root, "/media/mmcore-recovered") != 0)
-		candidates[n++] = "/media/mmcore-recovered";
-
-	for (i = 0; i < n; i++)
+#ifdef MMB_STORAGE_TEST
+	if (s_test_recover_attempts >= 0)
+		attempts = s_test_recover_attempts;
+	if (s_test_recover_delay >= 0)
+		delay = s_test_recover_delay;
+#endif
+	*fresh = 0;
+	candidates[n++] = v->path;
+	/* A dead mount entry can keep the original pathname occupied even after
+	 * a lazy umount. C: may then use a fresh mountpoint; the label is still
+	 * the explicit one, so a later sleep finds the volume again. */
+	if (v->letter == 'C')
 	{
-		const char *p = candidates[i];
+		if (ops->recovery_path && ops->recovery_path[0] &&
+		    strcmp(ops->recovery_path, v->path) != 0)
+			candidates[n++] = ops->recovery_path;
+		candidates[n++] = "/run/mmcore-recovered";
+		if (strcmp(v->path, "/media/mmcore-recovered") != 0)
+			candidates[n++] = "/media/mmcore-recovered";
+	}
 
-		mkdir(p, 0777);
-		if (ops->mount_label(p, label) == 0 && ops->root_writable(p))
+	for (attempt = 0; attempt < attempts; attempt++)
+	{
+		for (i = 0; i < n; i++)
 		{
-			snprintf(out, (size_t)outsz, "%s", p);
-			return 1;
+			const char *p = candidates[i];
+
+			if (i == 0 && ops->is_mountpoint(p))
+			{
+				(void)ops->remount_rw(p);
+				if (ops->root_writable(p))
+				{
+					snprintf(used, usedsz, "%s", p);
+					return overlay &&
+							       !ops->overlay_writable()
+						       ? 2
+						       : 1;
+				}
+				if (ops->unmount_lazy)
+					(void)ops->unmount_lazy(p);
+			}
+			mkdir(p, 0777);
+			if (ops->mount_label(p, v->label) == 0 &&
+			    ops->root_writable(p))
+			{
+				snprintf(used, usedsz, "%s", p);
+				*fresh = 1;
+				return overlay && !ops->overlay_writable() ? 2 : 1;
+			}
 		}
+		if (attempt + 1 < attempts && delay > 0)
+			storage_sleep_ms(delay);
 	}
 	return 0;
 }
 
-static void revalidate_live_root(void)
+static void storage_apply_recovered(storage_volume *v, const char *used,
+				    int result, int fresh)
 {
-	const storage_mount_ops *ops = storage_ops();
-	const char *env = getenv("MMB_DRIVE_ROOT");
-	char fallback[] = "/media/mmcore";
-	const char *root = (env && env[0]) ? env : fallback;
-	char label[64], recovered[P_BUF];
-	int overlay = live_overlay_backed(root);
-	int mounted = ops->is_mountpoint(root);
+	if (v->letter == 'C')
+		setenv("MMB_DRIVE_ROOT", used, 1);
+	else if (v->letter == 'D')
+		snprintf(s_override[v->letter - 'A'],
+			 sizeof s_override[0], "%s", used);
+	s_init = 0;
+	rd_cache_close_all();
+	s_storage_generation++;
+	v->lost_notified = 0;
 
-	mount_label_from_root(root, label, sizeof label);
-
-	if (mounted)
+	if (v->letter == 'C')
 	{
-		/* A normal resume leaves the mount in place: lift a read-only
-		 * remount and prove the volume (and, with --read-write, the
-		 * root overlay's upper on it) still accepts writes. */
-		(void)ops->remount_rw(root);
-		if (ops->root_writable(root) &&
-		    (!overlay || ops->overlay_writable()))
+		if (result == 1)
 		{
-			rd_cache_close_all();
-			s_init = 0;
 			s_overlay_broken = 0;
 			s_overlay_lost_notified = 0;
-			s_storage_generation++;
-			return;
 		}
-	}
-
-	/* The mount is gone, or it is still listed while its filesystem is
-	 * dead/stale (the USB/SD controller behind it was reset in suspend).
-	 * Remount the volume by label and re-point C: at whichever mountpoint
-	 * works, closing every cached handle so open files reopen on it. */
-	if (recover_drive_root(root, label, ops, recovered, sizeof recovered))
-	{
-		/* Point C: at the mount that worked: a fallback path when the
-		 * configured one is dead, or root itself when the volume only
-		 * arrived now. */
-		setenv("MMB_DRIVE_ROOT", recovered, 1);
-		s_init = 0;
-		rd_cache_close_all();
-		s_overlay_broken = 0;
-		s_storage_generation++;
-		if (overlay && !s_overlay_lost_notified)
+		else if (!s_overlay_lost_notified)
 		{
 			s_overlay_lost_notified = 1;
 			mmb_storage_notice(
-				"!MMCORE C: recovered after suspend: reboot to restore session storage");
+				"!MMCORE C: recovered after standby: reboot to restore session storage");
 		}
-		return;
 	}
+	if (fresh && result == 1)
+	{
+		char msg[64];
+
+		snprintf(msg, sizeof msg,
+			 "!MMCORE %c: storage recovered after standby",
+			 v->letter);
+		mmb_storage_notice(msg);
+	}
+}
+
+static void storage_note_lost(storage_volume *v)
+{
+	int overlay = volume_overlay(v);
 
 	if (overlay)
 	{
-		/* Even a fresh C: mount is impossible, so the honest diagnostic
-		 * is all that is left: the root overlay's upper is unrecoverable
-		 * in place and a reboot is required. */
 		s_overlay_broken = 1;
 		if (!s_overlay_lost_notified)
 		{
 			s_overlay_lost_notified = 1;
-			mmb_storage_notice("!MMCORE reset after suspend: reboot to recover storage");
+			mmb_storage_notice(
+				"!MMCORE reset after standby: reboot to recover storage");
 		}
 	}
+	if (!v->lost_notified)
+	{
+		char msg[64];
+
+		v->lost_notified = 1;
+		if (!overlay)
+		{
+			snprintf(msg, sizeof msg,
+				 "!MMCORE %c: storage unavailable after standby",
+				 v->letter);
+			mmb_storage_notice(msg);
+		}
+	}
+}
+
+static void storage_revalidate_all(void)
+{
+	int i;
+
+	if (!storage_recovery_enabled())
+		return;
+	storage_volume_map();
+	for (i = 0; i < s_vol_count; i++)
+	{
+		storage_volume *v = &s_vols[i];
+		char used[P_BUF];
+		int fresh = 0;
+		int result;
+
+		if (s_in_recovery)
+			return;
+		s_in_recovery = 1;
+		result = recover_volume(v, used, sizeof used, &fresh);
+		s_in_recovery = 0;
+		if (result)
+			storage_apply_recovered(v, used, result, fresh);
+		else
+			storage_note_lost(v);
+	}
+}
+
+static int storage_recover_letter(int letter)
+{
+	storage_volume *v;
+	char used[P_BUF];
+	int fresh = 0;
+	int result;
+
+	if (!storage_recovery_enabled())
+		return 0;
+	storage_volume_map();
+	v = storage_volume_for(letter);
+	if (!v || s_in_recovery)
+		return 0;
+	s_in_recovery = 1;
+	result = recover_volume(v, used, sizeof used, &fresh);
+	s_in_recovery = 0;
+	if (!result)
+		return 0;
+	storage_apply_recovered(v, used, result, fresh);
+	return 1;
+}
+
+static int storage_io_error(int err)
+{
+	if (err == EIO || err == ENODEV || err == EROFS)
+		return 1;
+#ifdef ESTALE
+	if (err == ESTALE)
+		return 1;
+#endif
+	return 0;
+}
+
+static int storage_io_retry(int letter, int err)
+{
+	if (!storage_io_error(err))
+		return 0;
+	return storage_recover_letter(letter);
+}
+
+static void storage_guard(void)
+{
+	storage_check_resume();
 }
 
 static void storage_check_resume(void)
@@ -927,8 +1437,9 @@ static void storage_check_resume(void)
 	struct timespec bt, mt;
 	long long off;
 
-	if (!linux_is_live_boot())
+	if (!storage_recovery_enabled())
 		return;
+	storage_volume_map();
 	if (clock_gettime(CLOCK_BOOTTIME, &bt) != 0 ||
 	    clock_gettime(CLOCK_MONOTONIC, &mt) != 0)
 		return;
@@ -938,20 +1449,13 @@ static void storage_check_resume(void)
 	{
 		s_suspend_tracked = 1;
 		s_suspend_offset_ms = off;
-		/* Cache --read-write at boot, while the volume is mounted. */
-		{
-			const char *env = getenv("MMB_DRIVE_ROOT");
-
-			(void)live_overlay_backed(
-				(env && env[0]) ? env : "/media/mmcore");
-		}
 		return;
 	}
 	/* BOOTTIME - MONOTONIC only grows while the machine is suspended. */
 	if (off - s_suspend_offset_ms >= 2000)
 	{
 		s_suspend_offset_ms = off;
-		revalidate_live_root();
+		storage_revalidate_all();
 	}
 	else if (off < s_suspend_offset_ms)
 		s_suspend_offset_ms = off; /* clock source reset/oddity */
@@ -960,25 +1464,32 @@ static void storage_check_resume(void)
 
 void mmb_storage_revalidate(void)
 {
-	if (linux_is_live_boot())
-		revalidate_live_root();
+	storage_revalidate_all();
 }
 
 int mmb_storage_persistence_lost(void)
 {
 	const storage_mount_ops *ops = storage_ops();
 	const char *root;
-	char fallback[] = "/media/mmcore";
 
-	if (!linux_is_live_boot())
+	if (!storage_recovery_enabled())
 		return 0;
 	storage_check_resume();
 	if (s_overlay_broken)
 		return 1;
+	storage_volume_map();
 	root = getenv("MMB_DRIVE_ROOT");
-	root = (root && root[0]) ? root : fallback;
+	if (!root || !root[0])
+		root = s_vol_count ? s_vols[0].path : "/media/mmcore";
 	return ops->is_mountpoint(root) ? 0 : 1;
 }
+
+#ifdef MMB_STORAGE_TEST
+int mmb_storage_test_io_error(int letter, int err)
+{
+	return storage_io_retry(letter, err);
+}
+#endif
 
 /* Close the cached handle only when it is the file being modified, so a write
  * to another file on the same volume (e.g. COPY's destination) does not force
@@ -1029,77 +1540,184 @@ static int fat_write_impl(int letter, const char *path, const void *data,
 		return -1;
 	if (n && fwrite(data, 1, n, f) != n)
 	{
+		int err = errno;
+
 		fclose(f);
+		errno = err;
 		return -1;
 	}
-	fclose(f);
+	if (fclose(f) != 0)
+		return -1;
 	return 0;
 }
 
 int mmb_fat_write(int letter, const char *path, const void *data, unsigned n,
 		  int append)
 {
-	int rc;
-
-	storage_check_resume();
-	rc = fat_write_impl(letter, path, data, n, append);
-	if (rc != 0 && letter == 'C')
+	for (;;)
 	{
-		/* A reset persistence mount is the common cause of a write
-		 * failure on the live ISO; try to recover once before giving
-		 * up (the caller surfaces the failure). */
-		mmb_storage_revalidate();
-		rc = fat_write_impl(letter, path, data, n, append);
+		int err;
+
+		storage_guard();
+		errno = 0;
+		if (fat_write_impl(letter, path, data, n, append) == 0)
+			return 0;
+		err = errno;
+		if (!storage_io_retry(letter, err))
+			return -1;
 	}
-	return rc;
+}
+
+/* Streaming write handle. A FILE* alone is not enough: after a remount the
+ * open stream names the old inode, so wwrite must reopen the original path on
+ * the recovered mount and continue at the byte offset it had reached. */
+typedef struct {
+	FILE *f;
+	int letter;
+	int append;
+	char path[P_BUF];
+	unsigned long long pos;
+	unsigned gen;
+} fat_wstream;
+
+static int wstream_reopen(fat_wstream *w)
+{
+	char full[P_BUF];
+	FILE *f;
+	long at;
+
+	ensure_root();
+	if (!build_path(w->letter, w->path, full, sizeof full, 0))
+		return -1;
+	if (w->append)
+		f = fopen(full, "ab");
+	else if (w->pos > 0)
+	{
+		f = fopen(full, "r+b");
+		if (!f)
+			f = fopen(full, "w+b");
+	}
+	else
+		f = fopen(full, "wb");
+	if (!f)
+		return -1;
+	at = (long)w->pos;
+	if (!w->append && at > 0 && fseek(f, at, SEEK_SET) != 0)
+	{
+		fclose(f);
+		return -1;
+	}
+	if (w->f)
+		fclose(w->f);
+	w->f = f;
+	w->gen = mmb_storage_generation();
+	return 0;
 }
 
 void *mmb_fat_wopen(int letter, const char *path, int append)
 {
 	char full[P_BUF];
+	fat_wstream *w;
 	FILE *f;
+	long at;
 
-	ensure_root();
-	if (!build_path(letter, path, full, sizeof full, 0))
-		return 0;
-	/* A streaming writer takes over the file; drop any cached read handle so
-	 * it cannot serve the pre-write bytes. */
-	rd_cache_close_path(letter, full);
-	mkdirs_parent(full);
-	f = fopen(full, append ? "ab" : "wb");
-	return f; /* FILE* is the opaque handle */
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		ensure_root();
+		errno = 0;
+		if (!build_path(letter, path, full, sizeof full, 0))
+		{
+			err = errno;
+		}
+		else
+		{
+			/* A streaming writer takes over the file; drop any cached
+			 * read handle so it cannot serve the pre-write bytes. */
+			rd_cache_close_path(letter, full);
+			mkdirs_parent(full);
+			f = fopen(full, append ? "ab" : "wb");
+			if (f)
+			{
+				at = append ? ftell(f) : 0;
+				if (at < 0)
+					at = 0;
+				w = malloc(sizeof *w);
+				if (!w)
+				{
+					fclose(f);
+					return 0;
+				}
+				w->f = f;
+				w->letter = letter;
+				w->append = append;
+				snprintf(w->path, sizeof w->path, "%s", path);
+				w->pos = (unsigned long long)at;
+				w->gen = mmb_storage_generation();
+				return w;
+			}
+			err = errno;
+		}
+		if (!storage_io_retry(letter, err))
+			return 0;
+	}
 }
 
 int mmb_fat_wwrite(void *handle, const void *data, unsigned n)
 {
-	FILE *f = handle;
+	fat_wstream *w = handle;
+	const unsigned char *p = data;
+	unsigned done = 0;
 
-	if (!f)
+	if (!w || !w->f)
 		return -1;
-	if (n && fwrite(data, 1, n, f) != n)
+	if (!n)
+		return 0;
+	if (w->gen != mmb_storage_generation() && wstream_reopen(w) != 0)
 		return -1;
-	return 0;
+	for (;;)
+	{
+		size_t wrote;
+		int err;
+
+		errno = 0;
+		wrote = fwrite(p + done, 1, n - done, w->f);
+		done += (unsigned)wrote;
+		w->pos += wrote;
+		if (done == n)
+			return 0;
+		err = errno;
+		if (!storage_io_retry(w->letter, err))
+			return -1;
+		if (wstream_reopen(w) != 0)
+			return -1;
+	}
 }
 
 int mmb_fat_wclose(void *handle)
 {
-	FILE *f = handle;
+	fat_wstream *w = handle;
 
-	if (!f)
+	if (!w)
 		return -1;
-	return fclose(f) == 0 ? 0 : -1;
+	if (w->f && fclose(w->f) != 0)
+	{
+		free(w);
+		return -1;
+	}
+	free(w);
+	return 0;
 }
 
-int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
-		    unsigned n, unsigned *got)
+static int fat_read_at_impl(int letter, const char *path, unsigned pos,
+			    void *data, unsigned n, unsigned *got)
 {
 	char full[P_BUF];
 	int idx;
 	FILE *f;
 
-	/* A read can be the first storage access after a standby resume; let the
-	 * guard revalidate/remount before resolving the path. */
-	storage_check_resume();
 	ensure_root();
 	if (got)
 		*got = 0;
@@ -1144,6 +1762,14 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	{
 		size_t r = fread(data, 1, n, f);
 
+		if (ferror(f))
+		{
+			int err = errno;
+
+			rd_cache_close(letter);
+			errno = err;
+			return -1;
+		}
 		if (r == 0)
 		{
 			struct stat st;
@@ -1174,6 +1800,23 @@ int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
 	return 0;
 }
 
+int mmb_fat_read_at(int letter, const char *path, unsigned pos, void *data,
+		    unsigned n, unsigned *got)
+{
+	for (;;)
+	{
+		int err;
+
+		storage_guard();
+		errno = 0;
+		if (fat_read_at_impl(letter, path, pos, data, n, got) == 0)
+			return 0;
+		err = errno;
+		if (!storage_io_retry(letter, err))
+			return -1;
+	}
+}
+
 static const char *drive_kind(int letter)
 {
 	if (letter == 'C')
@@ -1193,6 +1836,7 @@ int mmb_fat_label(int letter, char *out, int outsz)
 
 	if (out && outsz > 0)
 		out[0] = 0;
+	storage_guard();
 	ensure_root();
 	if (!drive_of(letter) || !out || outsz <= 0)
 		return -1;
@@ -1222,6 +1866,7 @@ int mmb_fat_eject(int letter)
 
 	if (!drive_of(letter) || letter == 'C')
 		return -1;
+	storage_guard();
 	ensure_root();
 	drive_dir_raw(letter, db, sizeof db);
 	if (!is_dir(db) || s_ejected[letter - 'A'])
@@ -1247,6 +1892,7 @@ void mmb_fat_drive_line(int letter, char *out, int outsz)
 	if (!drive_of(letter))
 		return;
 	kind = drive_kind(letter);
+	storage_guard();
 	ensure_root();
 	drive_dir_raw(letter, db, sizeof db);
 	lab[0] = 0;
@@ -1266,6 +1912,7 @@ void mmb_storage_poll(void)
 {
 	int letter;
 
+	storage_guard();
 	ensure_root();
 	for (letter = DRIVE_LO; letter <= DRIVE_HI; letter++)
 	{
