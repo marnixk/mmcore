@@ -117,30 +117,46 @@ reboot to make the override persistent. Otherwise the policy is fixed at
 image-build time (the file lives under
 `scripts/iso/rootfs-overlay/etc/mmcore/`).
 
-A suspend can reset the USB/SD controller behind `MMCORE`, so the mount may be
-gone, read-only, or still listed while its filesystem is dead after wake.
-mmcore detects a resume from the growing gap between `CLOCK_BOOTTIME` and
-`CLOCK_MONOTONIC`, then re-checks the volume by writing a probe file into it.
+A suspend can reset the SD/USB controller behind the mmcore volumes, so a mount
+may be gone, read-only, or still listed while its filesystem is dead after
+wake. This applies to a live stick (`MMCORE`) and to an installed disk or SD
+card (`MMCORE-SYS` as `C:`, `MMCORE-DATA` as `D:`). mmcore detects a resume
+from the growing gap between `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`, and it
+also treats `EIO`/`ENODEV`/`EROFS`/`ESTALE` from any VFS operation as a stale
+mount at any time, not only immediately after a resume.
+
+Each drive is mapped explicitly to its label from the boot command line
+(`mmcore.live=1`, or `mmcore.sys=`/`mmcore.data=` on an installed boot), never
+from the current mount path. That keeps repeated sleep/wake cycles working:
 
 - **The volume is still usable** (normal resume, including a short standby):
   mmcore lifts a read-only remount in place and carries on. With `--read-write`
   the same volume is also the root overlay's upper, so the mount identity is
   kept and standby keeps working.
-- **The mount is gone or its filesystem is dead/stale**: mmcore remounts the
-  volume by label (`MMCORE`, or the basename of `MMB_DRIVE_ROOT`). It first
-  tries the configured mountpoint, then a fresh one (`/run/mmcore-recovered`,
-  `/media/mmcore-recovered`) and re-points C: at whichever works. Cached
-  streams are closed, and the per-file read-ahead buffer is dropped, so a file
-  that was open across the suspend reopens and later saves land on the
-  remounted card. With `--read-write` the root overlay's upper cannot be
-  repaired in place even when C: comes back, so the session prints
-  `!MMCORE C: recovered after suspend: reboot to restore session storage`; user
-  files and settings still save to `C:`, only the session's own temp files need
-  the reboot.
+- **The mount is gone, stale, or the device wakes late**: mmcore waits and
+  retries by label for up to ~30 s (SD/USB controllers can re-enumerate seconds
+  after userspace resumes). It drops a dead mount with a lazy umount and mounts
+  the label at the **original** mountpoint (`/media/mmcore-sys`,
+  `/media/mmcore-data`, `/media/mmcore`), so later sleeps and settings paths
+  stay valid. Cached streams are closed and streaming writers reopen on the
+  recovered mount, so files open across the suspend continue reading and
+  saving. A fully successful recovery prints `!MMCORE C: storage recovered
+  after standby` and does **not** ask for a reboot.
+- **C: recovered but a `--read-write` overlay is stale**: user files and
+  settings still save to `C:`, but the session's own temp files need a reboot,
+  so mmcore prints `!MMCORE C: recovered after standby: reboot to restore
+  session storage`.
 - **Even C: cannot be remounted** (the card did not come back): the honest
-  `!MMCORE reset after suspend: reboot to recover storage` is printed, and the
+  `!MMCORE reset after standby: reboot to recover storage` is printed, and the
   next settings/bookmark save reports `!settings ... storage unavailable` (or
   `session-only`) instead of silently writing to the RAM overlay.
+
+The whole guard lives in the `mmcore` binary, so `mmcore-update` on an install
+and `install-usb.sh --update` on a live stick both deliver it without a
+reinstall. On hardware, check `cat /proc/cmdline` (installed boots show
+`mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA` and no
+`mmcore.live=1`), `dmesg | grep -iE 'mmc|I/O error'`, and
+`/tmp/mmcore.stderr`.
 
 At the MMBasic prompt, `SHUTDOWN` performs the same style of power-off on the
 framebuffer image (and on a Raspberry Pi). The native Linux/macOS/Windows desktop
