@@ -1,17 +1,7 @@
 # Jetpack inner loop: where the interpreter spends time
 
-> **Status: the per-statement numbers here are not reproducible on
-> `master`.** This analysis was produced with an opt-in statement profiler
-> from `092da69` that was never merged: `mmbasic/src/stmt_prof.c`,
-> `tests/test_stmtprof.py`, and `scripts/jetpack_hotspot.py` are absent
-> from `master` (see "Availability on this branch"). The per-statement
-> tables below are historical measurements, not something you can re-run
-> from this tree. The supported profiler here is the frame-phase profiler
-> (`OPTION FRAMEPROFILE ON` / `MMCORE_FRAME_PROFILE=1`), and the isolated
-> microbenchmarks in `bench/hotspots/` still run.
-
-Investigation only. Nothing here changes the interpreter. The default
-build does not time statements.
+Investigation only. Nothing here changes the interpreter unless
+`MMB_STMTPROF` is set. The default build does not time statements.
 
 The workload is [Jetpack](https://github.com/marnixk/mmcore-apps) at
 `72bce5453ad8be55f6537d8e10b575827e6ea440` (`games/jetpack`). Level 0 is
@@ -29,16 +19,14 @@ microseconds will not.
 
 ## Method
 
-1. **Statement profiler (historical; not on `master`).** Opt-in exclusive
-   timer in `mmbasic/src/stmt_prof.c` (from `092da69`), armed only when
+1. Opt-in exclusive timer in `mmbasic/src/stmt_prof.c`, armed only when
    `MMB_STMTPROF` is set (`1` writes `C:/.mmcore-stmtprof.csv`; any other
    value is a host path or a drive path). Unset, empty, `0`, and `off`
    leave `mmb_stmtprof_active` at 0. The hot path is that one load.
    Time is a cycle counter (`rdtscp` on x86_64, `cntvct_el0` on AArch64)
    converted with the run's `CLOCK_MONOTONIC` span. `busy_ns` subtracts
    the measured cost of the two timer reads. A `SUB`/`FUNCTION` body and
-   `mmb_check_break` are their own rows, not part of the caller. None of
-   this source or the `MMB_STMTPROF` switch is on `master`.
+   `mmb_check_break` are their own rows, not part of the caller.
 2. The same runs set `MMCORE_FRAME_PROFILE=1` (or `OPTION FRAMEPROFILE
    ON`) for the frame CSV: `interp_us` / `draw_us` / `present_us` /
    `wait_us` per frame, written to `C:/.mmcore-frame-profile.csv` unless
@@ -54,8 +42,7 @@ microseconds will not.
    That profile is still enough to name the C functions. It was taken
    **without** `MMB_STMTPROF`.
 
-Driver: `scripts/jetpack_hotspot.py` (not on `master`; see "Availability
-on this branch"). Benches: `scripts/hotspot_bench.py` (present).
+Driver: `scripts/jetpack_hotspot.py`. Benches: `scripts/hotspot_bench.py`.
 
 Each run printed, then ended:
 
@@ -458,30 +445,17 @@ level 37's 88 µs dirty blit is a real upload (`flush_present`).
 ## How to reproduce
 
 ```bash
-# Builds native/mmbasic and native/mmcore (SDL) from mmbasic/src.
+# stmt_prof.c is built via native/Makefile wildcard and console/Makefile
 make -C native -j$(nproc) CC="cc -fno-omit-frame-pointer"
 
-# Isolated ns/exec; no statement profiler involved.
+# isolated ns/exec, statement profiler off
 python3 scripts/hotspot_bench.py
+
+# 48 logic frames, MODE 20, levels 0 and 37, idle and Right
+# requires a checkout of mmcore-apps (this run used /tmp/mmcore-apps @ 72bce54)
+MMCORE_APPS=/path/to/mmcore-apps python3 scripts/jetpack_hotspot.py --work /tmp/jp-hotspot
 ```
 
-The 48-frame game runs that produced the `JPRESULT` table above used
-`scripts/jetpack_hotspot.py`, which is not on `master`. To get
-frame-phase data for a game on this branch, set `MMCORE_FRAME_PROFILE=1`
-(or run `OPTION FRAMEPROFILE ON ["path"]` before `RUN`) and read
-`C:/.mmcore-frame-profile.csv`: one row per frame with `interp_us`,
-`draw_us`, `present_us`, `wait_us`, `stmts`, and `present_calls`. That
-gives phase totals, not the per-statement rows quoted above.
-
-`tests/test_stmtprof.py` is not on `master`; `tests/test_frame_profile.py`
-covers the supported frame profiler.
-
-## Availability on this branch
-
-| item | on `master`? |
-| --- | --- |
-| `mmbasic/src/stmt_prof.c` (statement profiler) | no — added in `092da69`, never merged |
-| `tests/test_stmtprof.py` | no |
-| `scripts/jetpack_hotspot.py` (game driver) | no |
-| `bench/hotspots/`, `scripts/hotspot_bench.py` | yes |
-| frame profiler (`OPTION FRAMEPROFILE`, `MMCORE_FRAME_PROFILE`) | yes |
+`tests/test_stmtprof.py` checks that the flag is off by default and
+that a cached `a% = a% + 1` is recorded when it is on.
+`tests/test_frame_profile.py` covers the frame-phase profiler.

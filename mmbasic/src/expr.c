@@ -665,6 +665,8 @@ int mmb_try_function(mmb_val *out)
 			G.p = sp;
 			G.p += 3;
 			mmb_skip_sp();
+			if (mmb_stmtprof_active)
+				mmb_stmtprof_hit_builtin(id);
 			goto *fun_tab[id];
 		}
 		goto ident_tail;
@@ -700,6 +702,8 @@ int mmb_try_function(mmb_val *out)
 						return 0;
 					}
 				}
+				if (mmb_stmtprof_active)
+					mmb_stmtprof_hit_builtin(aid);
 				goto *fun_tab[aid];
 			}
 			G.p = s2;
