@@ -743,7 +743,7 @@ static void cmd_sort(void)
 	mmb_var *v;
 	mmb_smem *m;
 	int flags = 0, i, j, sz;
-	unsigned char tmp[MMB_STRUCT_RET_MAX];
+	unsigned char *tmp;
 	if (!parse_empty_member(aname, sizeof(aname), mname, sizeof(mname)))
 		mmb_syntax();
 	mmb_skip_sp();
@@ -757,8 +757,7 @@ static void cmd_sort(void)
 		mmb_error("?ARRAY");
 	member_meta(v, mname, &m);
 	sz = G.sdef[v->struct_idx].total;
-	if (sz > MMB_STRUCT_RET_MAX)
-		mmb_error("?OVERFLOW");
+	tmp = (unsigned char *)mmb_tmp_alloc(sz);
 	for (i = 1; i < v->size; i++)
 	{
 		memcpy(tmp, mmb_struct_elem(v, i), (unsigned)sz);
@@ -977,7 +976,7 @@ static void cmd_swap(void)
 {
 	int e1, e2, sz;
 	mmb_var *a, *b;
-	unsigned char tmp[MMB_STRUCT_RET_MAX];
+	unsigned char *tmp;
 	a = parse_struct_var(&e1, 0);
 	mmb_skip_sp();
 	mmb_expect(',');
@@ -985,8 +984,7 @@ static void cmd_swap(void)
 	if (a->struct_idx != b->struct_idx)
 		mmb_error("?TYPE MISMATCH");
 	sz = G.sdef[a->struct_idx].total;
-	if (sz > MMB_STRUCT_RET_MAX)
-		mmb_error("?OVERFLOW");
+	tmp = (unsigned char *)mmb_tmp_alloc(sz);
 	memcpy(tmp, mmb_struct_elem(a, e1), (unsigned)sz);
 	memcpy(mmb_struct_elem(a, e1), mmb_struct_elem(b, e2), (unsigned)sz);
 	memcpy(mmb_struct_elem(b, e2), tmp, (unsigned)sz);

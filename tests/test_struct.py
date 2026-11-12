@@ -487,3 +487,120 @@ def test_struct_fields_named_after_colours(console):
     out = console.send_line("RUN")
     assert "12" in out
     assert "4" in out
+
+
+# #1496: a FUNCTION may return a TYPE larger than the old fixed 64 KB staging
+# buffer. BigItem is 3 * (1024 + 4) = 3084 bytes, so BigBag (25 items) is
+# ~77 KB.
+_BIG_TYPE = [
+    "TYPE BigItem",
+    "a AS STRING LENGTH 1024",
+    "b AS STRING LENGTH 1024",
+    "c AS STRING LENGTH 1024",
+    "END TYPE",
+    "TYPE BigBag",
+    "items(24) AS BigItem",
+    "END TYPE",
+]
+
+
+def test_function_returns_type_over_64k(console):
+    _prog(
+        console,
+        _BIG_TYPE
+        + [
+            "FUNCTION MakeBag() AS BigBag",
+            "LOCAL b AS BigBag",
+            'b.items(0).a = "first"',
+            'b.items(12).b = "middle"',
+            'b.items(24).c = "last"',
+            "MakeBag = b",
+            "END FUNCTION",
+            "DIM got AS BigBag",
+            "got = MakeBag()",
+            "PRINT got.items(0).a",
+            "PRINT got.items(12).b",
+            "PRINT got.items(24).c",
+            'PRINT STRUCT(SIZEOF "BigBag")',
+        ],
+    )
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert "first" in lines
+    assert "middle" in lines
+    assert "last" in lines
+    assert any(ln.isdigit() and int(ln) > 65536 for ln in lines), out
+
+
+def test_nested_and_recursive_large_type_return(console):
+    _prog(
+        console,
+        _BIG_TYPE
+        + [
+            "FUNCTION MakeBag() AS BigBag",
+            "LOCAL b AS BigBag",
+            'b.items(0).a = "fromMake"',
+            "MakeBag = b",
+            "END FUNCTION",
+            "FUNCTION WrapBag() AS BigBag",
+            "LOCAL t AS BigBag",
+            "t = MakeBag()",
+            't.items(0).b = "wrapped"',
+            "WrapBag = t",
+            "END FUNCTION",
+            "FUNCTION RecurBag(n AS INTEGER) AS BigBag",
+            "LOCAL t AS BigBag",
+            "IF n > 0 THEN",
+            "t = RecurBag(n - 1)",
+            "END IF",
+            't.items(0).c = "level" + STR$(n)',
+            "RecurBag = t",
+            "END FUNCTION",
+            "DIM w AS BigBag",
+            "w = WrapBag()",
+            "PRINT w.items(0).a",
+            "PRINT w.items(0).b",
+            "DIM r AS BigBag",
+            "r = RecurBag(4)",
+            "PRINT r.items(0).c",
+        ],
+    )
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert "fromMake" in lines
+    assert "wrapped" in lines
+    assert any("level4" == ln.replace(" ", "") for ln in lines), out
+
+
+def test_struct_sort_and_swap_over_64k(console):
+    _prog(
+        console,
+        [
+            "TYPE BigItem",
+            "a AS STRING LENGTH 1024",
+            "b AS STRING LENGTH 1024",
+            "c AS STRING LENGTH 1024",
+            "END TYPE",
+            "TYPE BigBag",
+            "key AS INTEGER",
+            "items(24) AS BigItem",
+            "END TYPE",
+            "DIM bags(2) AS BigBag",
+            "bags(0).key = 3",
+            'bags(0).items(0).a = "three"',
+            "bags(1).key = 1",
+            'bags(1).items(0).a = "one"',
+            "bags(2).key = 2",
+            'bags(2).items(0).a = "two"',
+            "STRUCT SORT bags().key",
+            "PRINT bags(0).items(0).a",
+            "PRINT bags(1).items(0).a",
+            "PRINT bags(2).items(0).a",
+            "STRUCT SWAP bags(0), bags(2)",
+            "PRINT bags(0).items(0).a",
+            "PRINT bags(2).items(0).a",
+        ],
+    )
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert lines == ["one", "two", "three", "three", "one"], out
