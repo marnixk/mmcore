@@ -71,6 +71,7 @@ _JUKE_BAR_GAP = 6
 _JUKE_BLOCK_H = 14
 _JUKE_BLOCK_GAP = 4
 _LOGO_LIME = (0xC5, 0xFB, 0x00)
+_RIOT_MIN_T = 0.30  # visible floor for the lowest block (#1497)
 
 
 def _bar_layout(w: int, h: int) -> tuple[int, int, int]:
@@ -108,6 +109,7 @@ def _riot_block_rgb(i: int, pitch: int, maxh: int) -> tuple[int, int, int]:
     """JUKE's riot-block colour for block `i` (see juke_block_colour())."""
     hh = (i + 0.5) * pitch / maxh
     t = min(1.0, max(0.0, (hh - 0.12) / 0.66)) ** 1.7
+    t = _RIOT_MIN_T + (1.0 - _RIOT_MIN_T) * t
     return tuple(int(c * t) for c in _LOGO_LIME)
 
 
@@ -329,12 +331,12 @@ def _is_peak_cap(run: tuple[int, list[tuple[int, int, int]]]) -> bool:
 
 
 def test_juke_spectrum_bars_are_riot_blocks(fresh_console):
-    """#1486: 43x18 px flat blocks with 5 px gaps, steepened black->lime ramp.
+    """#1486: 43x18 px flat blocks with 5 px gaps, steepened lime ramp.
 
     At 1280x720 the spec pins the geometry: 43 px bars, 8 px apart, stacked
     whole 18 px blocks on a 23 px pitch. Every block is one flat colour from
-    the steepened ramp, so the bottom of a bar stays black and the top reaches
-    the logo lime.
+    the steepened ramp: the bottom shows a visible dark lime (#1497) and the
+    top reaches the logo lime.
 
     A QEMU screendump takes several seconds, so queue ten copies of the 3 s
     TEST.WAV to keep audio live while the capture lands.
@@ -395,8 +397,11 @@ def test_juke_spectrum_bars_are_riot_blocks(fresh_console):
     assert saw_blocks, "expected at least one riot block"
     assert saw_stack, "expected a multi-block bar stack"
     assert saw_upper, "expected a loud bar to climb the upper ramp"
-    # The ramp endpoints from the spec: black below 12%, full lime from 78%.
-    assert _riot_block_rgb(0, pitch, maxh) == (0, 0, 0)
+    # The ramp endpoints: a visible dark-lime floor at the bottom (#1497)
+    # and full lime from 78%.
+    floor = _riot_block_rgb(0, pitch, maxh)
+    assert floor == tuple(int(c * _RIOT_MIN_T) for c in _LOGO_LIME)
+    assert sum(floor) > 100, floor
     assert _riot_block_rgb(15, pitch, maxh) == _LOGO_LIME
 
 

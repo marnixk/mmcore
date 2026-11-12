@@ -47,9 +47,10 @@
 #define JUKE_BAR_GAP      6    /* gap between bars at 100%              */
 #define JUKE_BLOCK_H     14    /* flat block height at 100% (~18 px)    */
 #define JUKE_BLOCK_GAP    4    /* black gap between blocks (~5 px)      */
-#define JUKE_BAR_MS      66    /* bars sample at 15 fps (#1486)         */
+#define JUKE_BLOCK_MIN_T 0.30f /* visible floor for the lowest block    */
 #define JUKE_PEAK_HOLD_MS 400  /* peak line holds before it falls       */
-#define JUKE_PEAK_FALL 0.012f  /* peak drop per 33 ms frame (~2.8 s)    */
+#define JUKE_PEAK_FALL_MS 2750 /* full-height peak fall duration (ms)   */
+#define JUKE_HALF_PI     1.5707963f
 /* The fixed 8x16 CP437 pixel font paints upper-case letters and digits in
  * cell rows 2..11: two blank rows above the cap line and four below. Centring
  * that painted span (not the whole cell, whose lower leading is deeper) is
@@ -69,10 +70,12 @@ typedef struct {
 	int muted;
 	int vol_saved;
 	unsigned last_ms;
-	float bands[MMB_AUDIO_BANDS];     /* last 15 fps spectrum sample */
-	unsigned bands_ms;
+	float bands[MMB_AUDIO_BANDS];     /* latest spectrum sample */
 	float peak[MMB_AUDIO_BANDS];
 	unsigned peak_at[MMB_AUDIO_BANDS]; /* when the peak last took a new high */
+	float peak_fall_from[MMB_AUDIO_BANDS]; /* height the current fall started at */
+	unsigned peak_fall_at[MMB_AUDIO_BANDS];
+	int peak_falling[MMB_AUDIO_BANDS];
 	short scope_hist[JUKE_SCOPE_HIST][JUKE_SCOPE_N];
 	int scope_head;
 	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
@@ -323,9 +326,10 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Riot-block colour (#1486): the block's centre height above the baseline
- * maps through a steepened black -> logo-lime ramp, so the bottom of a bar
- * stays black and only the top fifth reaches full lime. */
+/* Riot-block colour (#1486, #1497): the block's centre height above the
+ * baseline maps through a steepened black -> logo-lime ramp, but the ramp
+ * starts at a visible dark lime instead of black so the lowest blocks still
+ * show up on screen. Only the top fifth reaches full lime. */
 static unsigned juke_block_colour(int i, int pitch, int maxh)
 {
 	float h = ((float)i + 0.5f) * (float)pitch / (float)maxh;
@@ -335,7 +339,7 @@ static unsigned juke_block_colour(int i, int pitch, int maxh)
 		t = 0.0f;
 	if (t > 1.0f)
 		t = 1.0f;
-	t = (float)powf(t, 1.7f);
+	t = JUKE_BLOCK_MIN_T + (1.0f - JUKE_BLOCK_MIN_T) * (float)powf(t, 1.7f);
 	return juke_mix(0x000000u, U.col_block, t);
 }
 
@@ -1122,15 +1126,10 @@ static void juke_paint_vis(int w, int h)
 
 	juke_paint_scope(w);
 
-	/* Bars sample at 15 fps so they are less twitchy (#1486); between samples
-	 * the last values stay on screen. The peak hold/fall still advances on the
-	 * 33 ms frame. */
+	/* Sample the spectrum every frame (#1497). The old 15 fps throttle made
+	 * the bars feel sluggish, so they now track the ~30 fps repaint. */
 	now = mmb_now_ms();
-	if (U.bands_ms == 0 || now - U.bands_ms >= JUKE_BAR_MS)
-	{
-		mmb_audio_spectrum(U.bands, MMB_AUDIO_BANDS);
-		U.bands_ms = now;
-	}
+	mmb_audio_spectrum(U.bands, MMB_AUDIO_BANDS);
 
 	/* Riot blocks: 24 centred bar stacks, no guide lines and no baseline. The
 	 * bar field is deliberately short so the full-size wordmark still fits
@@ -1178,21 +1177,42 @@ static void juke_paint_vis(int w, int h)
 					  juke_block_colour(b, pitch, maxh));
 
 		/* One smooth peak line per bar, not snapped to the block grid. A new
-		 * high snaps it one gap above the top block and holds ~400 ms; after
-		 * that it falls 0.012 of full height per frame but never below the
-		 * bar's own top. */
+		 * high snaps it one gap above the top block and holds ~400 ms. After
+		 * that it follows a quarter-cosine (sine) curve: it starts falling
+		 * slowly and speeds up as it drops, instead of the old linear ramp
+		 * (#1497). The fall still advances one smooth pixel position per
+		 * frame and never drops below the bar's own top. */
 		bar_top = (float)(blocks * pitch) / (float)maxh;
 		p = U.peak[i];
 		if (bar_top > p)
 		{
 			p = bar_top;
 			U.peak_at[i] = now;
+			U.peak_falling[i] = 0;
 		}
 		else if (now - U.peak_at[i] >= JUKE_PEAK_HOLD_MS)
 		{
-			p -= JUKE_PEAK_FALL;
-			if (p < bar_top)
+			float from, dur, t;
+
+			/* A clamped peak is released from wherever it currently sits,
+			 * so a bar that drops away lets it fall smoothly from the top. */
+			if (!U.peak_falling[i])
+			{
+				U.peak_falling[i] = 1;
+				U.peak_fall_from[i] = p;
+				U.peak_fall_at[i] = now;
+			}
+			from = U.peak_fall_from[i];
+			dur = from * (float)JUKE_PEAK_FALL_MS;
+			t = dur > 0.0f ? (float)(now - U.peak_fall_at[i]) / dur : 1.0f;
+			if (t > 1.0f)
+				t = 1.0f;
+			p = from * (float)cosf(t * JUKE_HALF_PI);
+			if (p <= bar_top)
+			{
 				p = bar_top;
+				U.peak_falling[i] = 0;
+			}
 		}
 		U.peak[i] = p;
 		if (p > 0.0f)
