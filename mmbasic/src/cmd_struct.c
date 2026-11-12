@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <limits.h>
 #include <string.h>
 
 static int align8(int off)
@@ -100,8 +101,11 @@ static int parse_member_type(int *type, int *size)
 
 static void finalize_type(mmb_sdef *d)
 {
-	if (has_numeric_mem(d))
-		d->total = align8(d->total);
+	if (!has_numeric_mem(d))
+		return;
+	if (d->total > INT_MAX - 7)
+		mmb_error("?OVERFLOW");
+	d->total = align8(d->total);
 }
 
 static int parse_one_member(mmb_sdef *d)
@@ -139,21 +143,35 @@ static int parse_one_member(mmb_sdef *d)
 		mmb_error("?UNKNOWN TYPE");
 	for (i = 0; i < dims; i++)
 	{
-		int n = dim[i] - G.opt.base + 1;
+		int64_t n = (int64_t)dim[i] - G.opt.base + 1;
 		if (n <= 0)
 			mmb_error("?INVALID DIMENSION");
-		count *= n;
+		if (n > INT_MAX || count > INT_MAX / (int)n)
+			mmb_error("?OVERFLOW");
+		count *= (int)n;
 	}
 	off = d->total;
 	if (type == T_INT || type == T_NUM || type == T_STRUCT)
+	{
+		if (off > INT_MAX - 7)
+			mmb_error("?OVERFLOW");
 		off = align8(off);
+	}
 	esz = 0;
 	if (type == T_INT || type == T_NUM)
 		esz = 8;
 	else if (type == T_STR)
+	{
+		if (size > INT_MAX - MMB_STRUCT_STRLEN)
+			mmb_error("?OVERFLOW");
 		esz = size + MMB_STRUCT_STRLEN;
+	}
 	else if (type == T_STRUCT)
 		esz = G.sdef[size].total;
+	if (esz > 0 && count > INT_MAX / esz)
+		mmb_error("?OVERFLOW");
+	if (off > INT_MAX - esz * count)
+		mmb_error("?OVERFLOW");
 	m = &d->mem[d->nmem];
 	memset(m, 0, sizeof(*m));
 	strncpy(m->name, name, MMB_MAX_NAME - 1);

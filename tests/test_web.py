@@ -91,6 +91,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._send(200, b'{"name":"Ada","age":42}', "application/json")
         elif self.path.startswith("/big"):
             self._send(200, b"A" * 3000)
+        elif self.path.startswith("/blob"):
+            body = getattr(self.server, "blob", b"")
+            if getattr(self.server, "blob_chunked", False):
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    # One chunk keeps the client's rebuild-on-recv decoder
+                    # linear even for a 10 MiB body.
+                    self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n"
+                                     % (len(body), body))
+                except OSError:
+                    pass
+            else:
+                self._send(200, body, "application/json")
         elif self.path.startswith("/malformed"):
             self._send(200, b"{not json", "application/json")
         elif self.path.startswith("/missing"):
@@ -351,6 +367,27 @@ def test_large_body_and_request(mmb, http_srv, tmp_path):
     out = run(mmb, program, tmp_path)
     assert http_srv.records[0]["body"] == b"A" * 2000
     assert "GET-LEN:3000" in out
+
+
+@pytest.mark.parametrize("chunked", [False, True], ids=["content-length", "chunked"])
+@pytest.mark.parametrize(
+    "size",
+    [20000, 65536, 1024 * 1024, 10 * 1024 * 1024],
+    ids=["20k", "64k", "1m", "10m"],
+)
+def test_large_response_bodies(mmb, http_srv, tmp_path, chunked, size):
+    """Bodies at and above every pool boundary, both framing styles."""
+    http_srv.blob = b"Z" * size
+    http_srv.blob_chunked = chunked
+    port = _port(http_srv)
+    out = run(
+        mmb,
+        'r$ = WEB$(HTTP GET "http://127.0.0.1:%d/blob")\n'
+        'PRINT "LEN:"; LEN(r$)\n' % port,
+        tmp_path,
+        timeout=180,
+    )
+    assert "LEN:%d" % size in out, out[-800:]
 
 
 def test_non_2xx_body_is_available(mmb, http_srv, tmp_path):

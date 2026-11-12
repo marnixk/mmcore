@@ -1,5 +1,6 @@
 #include "mmb_priv.h"
 #include "mmb_version.h"
+#include <limits.h>
 
 #ifndef MMB_VERSION
 #define MMB_VERSION "dev"
@@ -493,11 +494,22 @@ mmb_val mmb_int_val(int64_t i)
 #define MMB_STR_HDR     8
 #define MMB_STR_MIN_CLS 4                  /* 16-byte smallest slab class  */
 #define MMB_STR_MAX_CLS 16                 /* 64 KiB largest slab class    */
-#define MMB_SLAB_SIZE   (64 * 1024)
+#define MMB_STR_MAX_TOTAL (1u << MMB_STR_MAX_CLS)
+/* The block header stores the total size in the low 31 bits and this flag in
+ * the top bit. It tells a slab block from a large block allocated directly
+ * with G.plat->alloc(), which mmb_str_alloc only does above MMB_STR_MAX_TOTAL;
+ * pool_free_raw must not put a direct block on a size-class free list. */
+#define MMB_STR_DIRECT  0x80000000u
+#define MMB_STR_TOTAL_M 0x7fffffffu
 #define MMB_ARENA_CHUNK (64 * 1024)
 
 typedef struct mmb_freeblk { struct mmb_freeblk *next; } mmb_freeblk;
 typedef struct mmb_slab { struct mmb_slab *next; } mmb_slab;
+
+/* A slab must hold its own header plus the largest size class. A bare 64 KiB
+ * slab could not hold a 64 KiB block once the header was added, so the
+ * class-16 allocation stepped 8 bytes past the mapping (#1501). */
+#define MMB_SLAB_SIZE   (MMB_STR_MAX_TOTAL + (unsigned)sizeof(mmb_slab))
 
 static mmb_freeblk *s_free[MMB_STR_MAX_CLS + 1];
 static mmb_slab *s_slabs;
@@ -519,11 +531,16 @@ static int log2_ceil(unsigned v)
 	return c;
 }
 
-static unsigned blk_total(const char *data)
+static unsigned blk_header(const char *data)
 {
 	unsigned t;
 	memcpy(&t, data - MMB_STR_HDR, sizeof(t));
 	return t;
+}
+
+static unsigned blk_total(const char *data)
+{
+	return blk_header(data) & MMB_STR_TOTAL_M;
 }
 
 /* Byte length currently stored in the block (excluding the NUL). Keeping it
@@ -552,11 +569,13 @@ static char *pool_alloc_raw(int need)
 	unsigned total;
 	if (need < 1)
 		need = 1;
+	if ((unsigned)need > MMB_STR_TOTAL_M - MMB_STR_HDR)
+		return 0;
 	total = (unsigned)need + MMB_STR_HDR;
-	if (total <= (1u << MMB_STR_MAX_CLS))
+	if (total <= MMB_STR_MAX_TOTAL)
 	{
 		int cls = log2_ceil(total);
-		unsigned bsz;
+		unsigned bsz, hdr;
 		char *raw;
 		if (cls < MMB_STR_MIN_CLS)
 			cls = MMB_STR_MIN_CLS;
@@ -583,15 +602,18 @@ static char *pool_alloc_raw(int need)
 			s_slab += bsz;
 			s_slab_left -= bsz;
 		}
-		memcpy(raw, &bsz, sizeof(bsz));
+		hdr = bsz;
+		memcpy(raw, &hdr, sizeof(hdr));
 		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
 	{
 		char *raw = (char *)G.plat->alloc(total);
+		unsigned hdr;
 		if (!raw)
 			return 0;
-		memcpy(raw, &total, sizeof(total));
+		hdr = total | MMB_STR_DIRECT;
+		memcpy(raw, &hdr, sizeof(hdr));
 		memset(raw + sizeof(unsigned), 0, sizeof(unsigned));
 		return raw + MMB_STR_HDR;
 	}
@@ -599,11 +621,13 @@ static char *pool_alloc_raw(int need)
 
 static void pool_free_raw(char *data)
 {
-	unsigned total;
+	unsigned hdr, total;
 	if (!data || data == MMB_EMPTY)
 		return;
-	total = blk_total(data);
-	if (total <= (1u << MMB_STR_MAX_CLS))
+	hdr = blk_header(data);
+	total = hdr & MMB_STR_TOTAL_M;
+	if (!(hdr & MMB_STR_DIRECT) && total >= (1u << MMB_STR_MIN_CLS) &&
+	    total <= MMB_STR_MAX_TOTAL)
 	{
 		int cls = log2_ceil(total);
 		mmb_freeblk *f = (mmb_freeblk *)(data - MMB_STR_HDR);
@@ -644,6 +668,8 @@ char *mmb_str_alloc(int n)
 	char *p;
 	if (n < 0)
 		n = 0;
+	if (n == INT_MAX)
+		mmb_error("?OUT OF MEMORY");
 	p = pool_alloc_raw(n + 1);
 	if (!p)
 		mmb_error("?OUT OF MEMORY");
@@ -706,6 +732,8 @@ char *mmb_str_set(char **slot, const char *s, int len, int maxlen, const char *w
 		return 0;
 	if (len < 0)
 		len = s ? (int)strlen(s) : 0;
+	if (len >= INT_MAX)
+		mmb_error("?OUT OF MEMORY");
 	if (maxlen > 0 && len > maxlen)
 		str_overflow(what, len, maxlen);
 	cur = *slot;
@@ -747,15 +775,21 @@ char *mmb_str_append(char **slot, const char *s, int len, int maxlen, const char
 	clen = cur ? (int)blk_len(cur) : 0;
 	if (len < 0)
 		len = s ? (int)strlen(s) : 0;
+	if (len > INT_MAX - 1 - clen)
+		mmb_error("?OUT OF MEMORY");
 	if (maxlen > 0 && clen + len > maxlen)
 		str_overflow(what, clen + len, maxlen);
 	if (!cur || (int)blk_cap(cur) < clen + len)
 	{
-		int need = clen + len + 1;
 		int cap = cur ? (int)blk_cap(cur) : 0;
+		int need;
 		char *nb;
-		if (cap && cap * 2 > need)
+		if (cap > INT_MAX / 2)
+			need = cap;
+		else
 			need = cap * 2;
+		if (need < clen + len + 1)
+			need = clen + len + 1;
 		nb = pool_alloc_raw(need);
 		if (!nb)
 			mmb_error("?OUT OF MEMORY");

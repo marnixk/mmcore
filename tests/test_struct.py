@@ -604,3 +604,31 @@ def test_struct_sort_and_swap_over_64k(console):
     out = console.send_line("RUN")
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     assert lines == ["one", "two", "three", "three", "one"], out
+
+
+def test_type_layout_overflow_raises_error(console):
+    _prog(
+        console,
+        [
+            "TYPE Huge",
+            "a(50000, 50000) AS INTEGER",
+            "END TYPE",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "OVERFLOW" in out.upper(), out
+    assert console.send_line("PRINT 1") == "1"
+
+
+def test_type_size_overflow_raises_error(console):
+    _prog(
+        console,
+        [
+            "TYPE Huge",
+            "a(2000000000) AS INTEGER",
+            "END TYPE",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "OVERFLOW" in out.upper(), out
+    assert console.send_line("PRINT 1") == "1"

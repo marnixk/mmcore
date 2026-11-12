@@ -1,4 +1,5 @@
 #include "mmb_priv.h"
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -689,6 +690,32 @@ mmb_var *mmb_lookup_struct_var(const char *name)
 	return i >= 0 ? &G.vars[i] : 0;
 }
 
+/* Allocate storage for a variable, raising a BASIC error on overflow or a
+ * failed allocation. The interpreter must never memset a null pointer just
+ * because a large DIM or TYPE ran the machine out of memory. */
+static void *alloc_bytes(uint64_t bytes)
+{
+	void *p;
+
+	if (bytes == 0)
+		bytes = 1;
+	if (bytes > UINT_MAX)
+		mmb_error("?OUT OF MEMORY");
+	p = G.plat->alloc((unsigned)bytes);
+	if (!p)
+		mmb_error("?OUT OF MEMORY");
+	return p;
+}
+
+static void *alloc_zeroed(uint64_t bytes)
+{
+	void *p = alloc_bytes(bytes);
+
+	if (bytes)
+		memset(p, 0, (size_t)bytes);
+	return p;
+}
+
 void mmb_bind_struct_var(const char *name, int sid)
 {
 	char nbuf[MMB_MAX_NAME];
@@ -720,8 +747,7 @@ void mmb_bind_struct_var(const char *name, int sid)
 	G.vars[slot].struct_idx = sid;
 	G.vars[slot].used = 1;
 	G.vars[slot].unsuffixed = 1;
-	G.vars[slot].data.blob = G.plat->alloc((unsigned)sz);
-	memset(G.vars[slot].data.blob, 0, (unsigned)sz);
+	G.vars[slot].data.blob = alloc_zeroed(sz > 0 ? (uint64_t)sz : 0);
 	G.nvars++;
 	var_bind_gen(slot);
 	hash_ins(slot);
@@ -1422,28 +1448,24 @@ static void alloc_var_storage(mmb_var *v, int n)
 {
 	int i;
 	set_var_stride(v);
+	/* Clear the union first: an allocation failure raises ?OUT OF MEMORY,
+	 * and a stale pointer here would be freed twice by the next cleanup. */
+	v->data.s = 0;
 	if (v->type == T_INT)
-	{
-		v->data.i = G.plat->alloc((unsigned)n * sizeof(int64_t));
-		memset(v->data.i, 0, (unsigned)n * sizeof(int64_t));
-	}
+		v->data.i = alloc_zeroed((uint64_t)n * sizeof(int64_t));
 	else if (v->type == T_STR)
 	{
-		v->data.s = G.plat->alloc((unsigned)n * sizeof(char *));
+		v->data.s = alloc_bytes((uint64_t)n * sizeof(char *));
 		for (i = 0; i < n; i++)
 			v->data.s[i] = mmb_str_empty();
 	}
 	else if (v->type == T_STRUCT)
 	{
 		int sz = G.sdef[v->struct_idx].total;
-		v->data.blob = G.plat->alloc((unsigned)n * (unsigned)sz);
-		memset(v->data.blob, 0, (unsigned)n * (unsigned)sz);
+		v->data.blob = alloc_zeroed((uint64_t)n * (uint64_t)sz);
 	}
 	else
-	{
-		v->data.f = G.plat->alloc((unsigned)n * sizeof(double));
-		memset(v->data.f, 0, (unsigned)n * sizeof(double));
-	}
+		v->data.f = alloc_zeroed((uint64_t)n * sizeof(double));
 }
 
 /* Record the binding of `slot` for the current SUB/FUNCTION frame so it can be
