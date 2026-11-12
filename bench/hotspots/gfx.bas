@@ -54,6 +54,29 @@ next i
 dt = timer - t0
 print "BENCH,blit_160x96,"; n; ","; dt
 
+n = 50000
+t0 = timer
+for i = 1 to n
+next i
+dt = timer - t0
+print "BENCH,empty_for,"; n; ","; dt
+
+' Tile-style BLIT: every argument is a name or an expression, like Jetpack's
+' blit (id mod 20)*lay.tile, ... (24x24 source page cell).
+t0 = timer
+for i = 1 to n
+  blit (i mod 20) * 24, ((i \ 20) mod 16) * 24, 24, 24, 1, 0
+next i
+dt = timer - t0
+print "BENCH,blit_tile_expr,"; n; ","; dt
+
+t0 = timer
+for i = 1 to n
+  sprite show 1, 80 + (i mod 16), 140, 1
+next i
+dt = timer - t0
+print "BENCH,sprite_show_expr,"; n; ","; dt
+
 n = 20000
 sprite show 1, 100, 100, 1
 t0 = timer
@@ -69,6 +92,66 @@ for i = 1 to n
 next i
 dt = timer - t0
 print "BENCH,sprite_next_move,"; n; ","; dt
+
+' Visible-page sprite move: per-rect presents (OFF) versus one deferred AABB
+' per statement (FASTDRAW ON, #1433).
+option fastdraw off
+sprite show 1, 100, 100, 1
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 140
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_visible_off,"; n; ","; dt
+
+option fastdraw on
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 140
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_visible_on,"; n; ","; dt
+
+' Hidden-page sprite move: no presents either way; FASTDRAW records only the
+' final state and replays once when the page is materialised (#1434).
+page write 1
+sprite show 1, 100, 200, 1
+t0 = timer
+for i = 1 to n
+  sprite next 1, 80 + (i mod 16), 200
+  sprite move
+next i
+dt = timer - t0
+print "BENCH,sprite_move_hidden,"; n; ","; dt
+page write 0
+option fastdraw off
+
+' PAGE COPY damage tracking (#1436): an unchanged source skips the copy and
+' present entirely; a small repeated source rectangle copies only that rect.
+option fastdraw on
+page write 1
+cls rgb(0, 0, 0)
+box 10, 10, 40, 40, 1, rgb(200, 40, 40), rgb(200, 40, 40)
+page copy 1 to 0
+n = 400
+t0 = timer
+for i = 1 to n
+  page copy 1 to 0
+next i
+dt = timer - t0
+print "BENCH,page_copy_static_fastdraw,"; n; ","; dt
+
+t0 = timer
+for i = 1 to n
+  box 20, 20, 8, 8, 1, rgb(40, 40, 200), rgb(40, 40, 200)
+  page copy 1 to 0
+next i
+dt = timer - t0
+print "BENCH,page_copy_small_damage,"; n; ","; dt
+page write 0
+option fastdraw off
 
 print "DONE gfx"
 end

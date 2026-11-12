@@ -155,6 +155,8 @@ void mmb_gfx_fb_window(int x, int y, int page)
 {
 	int i, j, dw, dh;
 	uint16_t *d;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	if (!G.gfx.fb)
 		mmb_error("?FRAMEBUFFER");
 	if (page == MMB_PAGE_FB)
@@ -172,6 +174,7 @@ void mmb_gfx_fb_window(int x, int y, int page)
 			d[j * dw + i] = c;
 		}
 	}
+	mmb_gfx_page_damage_add(page, 0, 0, G.gfx.w, G.gfx.h);
 	mmb_gfx_present_if(page);
 }
 
@@ -201,6 +204,8 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 
 	if (w <= 0 || h <= 0)
 		return;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	mmb_frame_prof_draw_begin();
 
 	/* Transparent, native-format copy (#1370 item 4): skip the RGB888 snap
@@ -355,6 +360,10 @@ void mmb_gfx_blit_copy(int x1, int y1, int x2, int y2, int w, int h, int srcpage
 	}
 	G.plat->free(tmp);
 blit_copy_done:
+	if (!mmb_gfx_writing_fb())
+		mmb_gfx_page_damage_add(G.gfx.write_page, x2,
+					G.opt.y_axis_up ? G.gfx.h - h - y2 : y2,
+					w, h);
 	mmb_frame_prof_draw_end();
 }
 
@@ -756,13 +765,17 @@ static void scroll_fill(uint16_t *pg, int w, int h, int dx, int dy, int fill)
 void mmb_gfx_page_scroll_buf(int page, int dx, int dy, int fill, int has_fill)
 {
 	int w, h;
-	uint16_t *pg = mmb_gfx_buf_for(page, &w, &h);
+	uint16_t *pg;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
+	pg = mmb_gfx_buf_for(page, &w, &h);
 	if (!pg || w <= 0 || h <= 0 || (dx == 0 && dy == 0))
 		return;
 	if (has_fill)
 		scroll_fill(pg, w, h, dx, dy, fill);
 	else
 		scroll_wrap(pg, w, h, dx, dy);
+	mmb_gfx_page_damage_add(page, 0, 0, w, h);
 }
 
 void mmb_gfx_page_scroll(int page, int dx, int dy, int fill, int has_fill)
@@ -784,6 +797,8 @@ void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 {
 	int w1, h1, w2, h2, wd, hd, w, h, i, j;
 	uint16_t *a, *b, *d;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	a = mmb_gfx_buf_for(p1, &w1, &h1);
 	b = mmb_gfx_buf_for(p2, &w2, &h2);
 	d = mmb_gfx_buf_for(dst, &wd, &hd);
@@ -805,6 +820,7 @@ void mmb_gfx_page_logic(int op, int p1, int p2, int dst)
 			d[j * wd + i] = (uint16_t)r;
 		}
 	}
+	mmb_gfx_page_damage_add(dst, 0, 0, w, h);
 	mmb_gfx_present_if(dst);
 }
 
@@ -813,6 +829,8 @@ void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int pag
 	int sw, sh, i, j;
 	uint16_t *pg;
 	uint16_t cn;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	cn = (uint16_t)mmb_rgb_to_native(mmb_quantize(col));
 	pg = mmb_gfx_buf_for(page, &sw, &sh);
 	if (w < 0) { x += w; w = -w; }
@@ -838,6 +856,8 @@ void mmb_gfx_box_logic(int op, int x, int y, int w, int h, unsigned col, int pag
 			pg[yy * sw + xx] = c;
 		}
 	}
+	mmb_gfx_page_damage_add(page, x,
+				G.opt.y_axis_up ? sh - y - h : y, w, h);
 	mmb_gfx_present_if(page);
 }
 

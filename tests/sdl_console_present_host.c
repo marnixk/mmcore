@@ -205,6 +205,46 @@ int main(void)
 		}
 	}
 
+	/* #1462: a 24-bit background SGR (the colour mmb_console_apply_colour
+	 * emits for CLS) must paint through sdl_rgb_to_native, the same
+	 * conversion the graphics fill uses. A space has no glyph pixels, so
+	 * the whole first cell is paper. */
+	sdl_console_reset();
+	{
+		const char *seq = "\x1b[48;2;18;52;86m ";
+
+		sdl_console_write(seq, (unsigned)strlen(seq));
+	}
+	{
+		uint16_t want = (uint16_t)sdl_rgb_to_native(0x123456u);
+		int r, c, bad = 0;
+
+		for (r = 0; r < 16; r++)
+			for (c = 0; c < 8; c++)
+				if (g_fb[r * 640 + c] != want)
+					bad++;
+		if (bad)
+		{
+			fprintf(stderr,
+				"FAIL: true-colour paper not used for %d pixels\n",
+				bad);
+			fails++;
+		}
+	}
+
+	/* A following 16-colour background must switch the paper back. */
+	sdl_console_reset();
+	{
+		const char *seq = "\x1b[48;2;18;52;86m\x1b[40m ";
+
+		sdl_console_write(seq, (unsigned)strlen(seq));
+	}
+	if (g_fb[0] != 0)
+	{
+		fprintf(stderr, "FAIL: ANSI background did not clear true-colour\n");
+		fails++;
+	}
+
 	g_presents = 0;
 	sdl_console_fill(0);
 	if (g_presents != 0)

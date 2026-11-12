@@ -553,6 +553,10 @@ static void theme_name_copy(char *dst, int n, const char *src)
 	X("INPUT$", lbl_input) \
 	X("JSON$", lbl_json) \
 	X("JSON_STRINGIFY$", lbl_json_stringify) \
+	X("WEB", lbl_web) \
+	X("WEB$", lbl_web_str) \
+	X("WEBSTATUS", lbl_webstatus) \
+	X("WEBHEADER$", lbl_webheader) \
 	X("ACOS", lbl_acos) \
 	X("ACS", lbl_acos) \
 	X("ASIN", lbl_asin) \
@@ -1292,6 +1296,25 @@ int mmb_try_function(mmb_val *out)
 			*out = mmb_int_val((int)mmb_audio_mp3_out_frames());
 			return 1;
 		}
+		if (mmb_keyword_eq(key, "AUDIOPOS"))
+		{
+			/* Frames mixed for the current track since it started. WAV
+			 * effects do not reset or advance it (#1474). */
+			*out = mmb_int_val((int)mmb_audio_position());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "SFXVOICES"))
+		{
+			/* Number of WAV effects currently playing (#1474). */
+			*out = mmb_int_val(mmb_sfx_active());
+			return 1;
+		}
+		if (mmb_keyword_eq(key, "SFXVOL"))
+		{
+			/* Default gain applied to new effects (#1474). */
+			*out = mmb_int_val(mmb_sfx_volume());
+			return 1;
+		}
 		/* CMM2/PicoMite reject an unknown key; never fall back to MODE. */
 		mmb_error("?SYNTAX ERROR");
 	}
@@ -1890,6 +1913,36 @@ int mmb_try_function(mmb_val *out)
 		if (n != 1)
 			mmb_syntax();
 		*out = mmb_json_stringify(a[0]);
+		return 1;
+	}
+	if (mmb_match("WEB$"))
+	{
+	lbl_web_str:
+		*out = mmb_web_fn(1);
+		return 1;
+	}
+	if (mmb_match("WEB"))
+	{
+	lbl_web:
+		*out = mmb_web_fn(0);
+		return 1;
+	}
+	if (match_fun("WEBSTATUS"))
+	{
+	lbl_webstatus:
+		call_args(a, 0, &n);
+		if (n != 0)
+			mmb_syntax();
+		*out = mmb_int_val(mmb_web_status_get());
+		return 1;
+	}
+	if (match_fun("WEBHEADER$"))
+	{
+	lbl_webheader:
+		call_args(a, 1, &n);
+		if (n != 1 || a[0].type != T_STR)
+			mmb_error("?TYPE MISMATCH");
+		*out = mmb_web_header_val(a[0].s);
 		return 1;
 	}
 	if (mmb_match("ACOS") || mmb_match("ACS"))

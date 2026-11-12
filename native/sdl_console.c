@@ -24,6 +24,11 @@ static uint16_t s_pal[16];
 static int s_cols, s_rows;
 static int s_cx, s_cy;
 static unsigned s_fg, s_bg;
+/* 24-bit background (SGR 48;2;R;G;B), the exact colour the graphics fill
+ * quantised for the current MODE. Native builds emit it so a PRINT cell's
+ * paper is byte-identical to a CLS fill (see mmb_console_apply_colour). */
+static int s_bg_true;
+static unsigned s_bg_rgb;
 static int s_bold;
 
 /* Block cursor (like Circle's SetCursorBlock): inverse video over the cell, so
@@ -49,6 +54,20 @@ static void init_pal(void)
 		s_pal[i] = (uint16_t)sdl_rgb_to_native(s_pal_rgb[i]);
 }
 
+/* The foreground stays on the 16-colour palette; the background may be an
+ * arbitrary 24-bit SGR colour. Both resolve through sdl_rgb_to_native, the
+ * same conversion mmb_pix_store uses for the CLS fill. */
+static uint16_t fg_pixel(void)
+{
+	return s_pal[s_fg & 15];
+}
+
+static uint16_t bg_pixel(void)
+{
+	return s_bg_true ? (uint16_t)sdl_rgb_to_native(s_bg_rgb)
+			 : s_pal[s_bg & 15];
+}
+
 static void draw_cell(int col, int row, unsigned ch)
 {
 	const unsigned char *g;
@@ -64,8 +83,8 @@ static void draw_cell(int col, int row, unsigned ch)
 	x = col * CELL_W;
 	y = row * CELL_H;
 	g = &mmb_cp437_8x16[(ch & 0xFFu) * 16u];
-	fg = s_pal[s_fg];
-	bg = s_pal[s_bg];
+	fg = fg_pixel();
+	bg = bg_pixel();
 	for (r = 0; r < CELL_H; r++)
 	{
 		unsigned bits = g[r];
@@ -127,8 +146,8 @@ static void cursor_draw(void)
 		memcpy(s_cur_save + r * CELL_W,
 		       fb + (size_t)(s_cur_py + r) * sw + s_cur_px,
 		       CELL_W * sizeof(uint16_t));
-	fg = s_pal[s_fg & 15];
-	bg = s_pal[s_bg & 15];
+	fg = fg_pixel();
+	bg = bg_pixel();
 	for (r = 0; r < CELL_H; r++)
 	{
 		uint16_t *dst = fb + (size_t)(s_cur_py + r) * sw + s_cur_px;
@@ -141,12 +160,12 @@ static void cursor_draw(void)
 	sdl_video_mark_dirty_rect(s_cur_px, s_cur_py, CELL_W, CELL_H);
 }
 
-static void clear_cells(int x0, int y0, int x1, int y1, unsigned bg)
+static void clear_cells(int x0, int y0, int x1, int y1)
 {
 	uint16_t *fb = sdl_video_fb();
 	int sw = sdl_video_width();
 	int sh = sdl_video_height();
-	uint16_t v = s_pal[bg];
+	uint16_t v = bg_pixel();
 	int x, y, r, c;
 
 	if (!fb)
@@ -191,7 +210,7 @@ static void scroll_up(void)
 	int sh = sdl_video_height();
 	int band = CELL_H;
 	int last = (sh > band) ? sh - band : 0;
-	uint16_t bg = s_pal[s_bg];
+	uint16_t bg = bg_pixel();
 	size_t i;
 
 	if (!fb)
@@ -232,11 +251,11 @@ static void put_char(unsigned ch)
 static void erase_line(int mode)
 {
 	if (mode == 0)
-		clear_cells(s_cx, s_cy, s_cols, s_cy + 1, s_bg);
+		clear_cells(s_cx, s_cy, s_cols, s_cy + 1);
 	else if (mode == 1)
-		clear_cells(0, s_cy, s_cx + 1, s_cy + 1, s_bg);
+		clear_cells(0, s_cy, s_cx + 1, s_cy + 1);
 	else if (mode == 2)
-		clear_cells(0, s_cy, s_cols, s_cy + 1, s_bg);
+		clear_cells(0, s_cy, s_cols, s_cy + 1);
 }
 
 static void erase_display(int mode)
@@ -244,16 +263,16 @@ static void erase_display(int mode)
 	if (mode == 0)
 	{
 		erase_line(0);
-		clear_cells(0, s_cy + 1, s_cols, s_rows, s_bg);
+		clear_cells(0, s_cy + 1, s_cols, s_rows);
 	}
 	else if (mode == 1)
 	{
 		erase_line(1);
-		clear_cells(0, 0, s_cols, s_cy, s_bg);
+		clear_cells(0, 0, s_cols, s_cy);
 	}
 	else if (mode == 2)
 	{
-		clear_cells(0, 0, s_cols, s_rows, s_bg);
+		clear_cells(0, 0, s_cols, s_rows);
 	}
 }
 
@@ -267,10 +286,23 @@ static void set_sgr(void)
 	{
 		int p = any ? s_par[i] : 0;
 
-		if (p == 0)
+		if (p == 48 && i + 4 < count && s_par[i + 1] == 2)
+		{
+			/* 48;2;R;G;B: the exact colour the CLS fill used. */
+			int r = s_par[i + 2] & 255;
+			int g = s_par[i + 3] & 255;
+			int b = s_par[i + 4] & 255;
+
+			s_bg_rgb = ((unsigned)r << 16) | ((unsigned)g << 8) |
+				   (unsigned)b;
+			s_bg_true = 1;
+			i += 4;
+		}
+		else if (p == 0)
 		{
 			s_fg = 7;
 			s_bg = 0;
+			s_bg_true = 0;
 			s_bold = 0;
 		}
 		else if (p == 1)
@@ -284,11 +316,20 @@ static void set_sgr(void)
 		else if (p == 39)
 			s_fg = 7;
 		else if (p >= 40 && p <= 47)
+		{
 			s_bg = (unsigned)(p - 40);
+			s_bg_true = 0;
+		}
 		else if (p >= 100 && p <= 107)
+		{
 			s_bg = (unsigned)(p - 100 + 8);
+			s_bg_true = 0;
+		}
 		else if (p == 49)
+		{
 			s_bg = 0;
+			s_bg_true = 0;
+		}
 	}
 }
 
@@ -482,6 +523,8 @@ void sdl_console_reset(void)
 	s_cy = 0;
 	s_fg = 7;
 	s_bg = 0;
+	s_bg_true = 0;
+	s_bg_rgb = 0;
 	s_bold = 0;
 	s_esc = 0;
 	s_csi_priv = 0;
@@ -549,6 +592,8 @@ static struct {
 	int w, h;
 	int cols, rows;
 	int cx, cy, fg, bg, bold, cur_vis;
+	int bg_true;
+	unsigned bg_rgb;
 	int esc, npar, have_par, csi_priv;
 	int par[MAX_PARAM];
 } s_cons[MMB_MAX_CONSOLES];
@@ -581,6 +626,8 @@ int sdl_console_save(int slot, int tui)
 	s_cons[slot].cy = s_cy;
 	s_cons[slot].fg = (int)s_fg;
 	s_cons[slot].bg = (int)s_bg;
+	s_cons[slot].bg_true = s_bg_true;
+	s_cons[slot].bg_rgb = s_bg_rgb;
 	s_cons[slot].bold = s_bold;
 	s_cons[slot].cur_vis = s_cur_vis;
 	s_cons[slot].esc = s_esc;
@@ -620,6 +667,8 @@ int sdl_console_restore(int slot, int tui)
 	s_cy = s_cons[slot].cy;
 	s_fg = (unsigned)s_cons[slot].fg;
 	s_bg = (unsigned)s_cons[slot].bg;
+	s_bg_true = s_cons[slot].bg_true;
+	s_bg_rgb = s_cons[slot].bg_rgb;
 	s_bold = s_cons[slot].bold;
 	s_cur_vis = s_cons[slot].cur_vis;
 	s_esc = s_cons[slot].esc;

@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """Generate the mmcore app icons from the shared branding art.
 
-Source of truth: ``assets/branding/mmcore-app-icon.png`` (1024x1024, the
-chrome M on black with red streaks). Every native package icon is derived
-from it by box-filtered resizing:
+Source of truth: ``assets/branding/mmcore-app-icon.svg`` -- the mmcore.dev
+website favicon (lowercase chrome ``m`` with a solid black outline), centred
+on a square canvas. ``assets/branding/mmcore-app-icon.png`` is the 1024x1024
+master rendered from that SVG with librsvg (``rsvg-convert``); it is committed
+because this generator is deliberately stdlib-only so CI needs no image
+tooling. Regenerate it after changing the SVG with:
+
+    rsvg-convert -w 1024 -h 1024 \
+        assets/branding/mmcore-app-icon.svg \
+        -o assets/branding/mmcore-app-icon.png
+
+Every native package icon is derived from the master PNG by alpha-aware
+box-filtered resizing:
 
     gen-appicon.py OUT.png [SIZE]   one PNG (default 256)
     gen-appicon.py --iconset DIR    the ten macOS .iconset PNGs
     gen-appicon.py --ico OUT.ico    a multi-size Windows .ico
+    gen-appicon.py --hicolor DIR    Linux hicolor SIZE/SIZE/apps PNGs
     gen-appicon.py --carray NAME SIZE OUT.c   a C RGBA byte array
+    gen-appicon.py --preview DIR    light/dark preview sheets
 
 Stdlib only (zlib + struct), so CI needs no image tooling.
 """
@@ -38,6 +50,9 @@ ICONSET = [
 
 # Windows .ico sizes (Vista+ reads PNG-compressed entries).
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
+
+# Linux hicolor theme sizes (AppImage desktop integration).
+HICOLOR_SIZES = [16, 32, 48, 64, 128, 256, 512]
 
 
 def _be32(b: bytes, o: int) -> int:
@@ -119,7 +134,11 @@ def decode_png(data: bytes):
 
 
 def resize(src: bytes, sw: int, sh: int, bpp: int, nw: int, nh: int) -> bytes:
-    """Box-filter ``src`` down to ``nw`` x ``nh`` and return RGBA bytes."""
+    """Box-filter ``src`` down to ``nw`` x ``nh`` and return straight RGBA bytes.
+
+    Alpha is averaged in premultiplied space so transparent pixels outside the
+    black outline do not bleed dark fringes into the edge of the glyph.
+    """
     out = bytearray(nw * nh * 4)
     o = 0
     for dy in range(nh):
@@ -134,18 +153,23 @@ def resize(src: bytes, sw: int, sh: int, bpp: int, nw: int, nh: int) -> bytes:
                 base = sy * sw * bpp
                 for sx in range(x0, x1):
                     p = base + sx * bpp
-                    r += src[p]
-                    g += src[p + 1]
-                    b += src[p + 2]
                     if bpp == 4:
-                        a += src[p + 3]
+                        alpha = src[p + 3]
+                        r += src[p] * alpha
+                        g += src[p + 1] * alpha
+                        b += src[p + 2] * alpha
+                        a += alpha
+                    else:
+                        r += src[p]
+                        g += src[p + 1]
+                        b += src[p + 2]
+                        a += 255
                     count += 1
-            if bpp == 3:
-                a = 255 * count
-            out[o] = r // count
-            out[o + 1] = g // count
-            out[o + 2] = b // count
             out[o + 3] = a // count
+            if a:
+                out[o] = r // a
+                out[o + 1] = g // a
+                out[o + 2] = b // a
             o += 4
     return bytes(out)
 
@@ -175,6 +199,39 @@ def encode_png(w: int, h: int, rgba: bytes) -> bytes:
 
 def write_png(path, w: int, h: int, rgba: bytes) -> None:
     Path(path).write_bytes(encode_png(w, h, rgba))
+
+
+PREVIEW_SIZES = [16, 32, 128, 512]
+
+
+def _blend_over(rgba: bytes, size: int, bg) -> bytes:
+    out = bytearray(size * size * 4)
+    for i in range(0, len(out), 4):
+        a = rgba[i + 3]
+        out[i] = (rgba[i] * a + bg[0] * (255 - a)) // 255
+        out[i + 1] = (rgba[i + 1] * a + bg[1] * (255 - a)) // 255
+        out[i + 2] = (rgba[i + 2] * a + bg[2] * (255 - a)) // 255
+        out[i + 3] = 255
+    return bytes(out)
+
+
+def write_preview(path, src, sw: int, sh: int, bpp: int, bg) -> tuple:
+    """Write a row of the icon at 16/32/128/512 px over a solid background."""
+    pad = 24
+    gap = 24
+    width = pad * 2 + sum(PREVIEW_SIZES) + gap * (len(PREVIEW_SIZES) - 1)
+    height = pad * 2 + max(PREVIEW_SIZES)
+    canvas = bytearray(bytes(bg) + b"\xff") * (width * height)
+    x = pad
+    for size in PREVIEW_SIZES:
+        icon = _blend_over(resize(src, sw, sh, bpp, size, size), size, bg)
+        y = pad + (max(PREVIEW_SIZES) - size)
+        for row in range(size):
+            dst = ((y + row) * width + x) * 4
+            canvas[dst : dst + size * 4] = icon[row * size * 4 : (row + 1) * size * 4]
+        x += size + gap
+    write_png(path, width, height, bytes(canvas))
+    return width, height
 
 
 def write_ico(path, images) -> None:
@@ -226,6 +283,23 @@ def main(argv) -> int:
         print("wrote %s (%d sizes)" % (argv[1], len(images)))
         return 0
 
+    if argv[0] == "--hicolor":
+        if len(argv) < 2:
+            raise SystemExit("gen-appicon: --hicolor needs a directory")
+        outdir = Path(argv[1])
+        w, h, bpp, src = load_branding()
+        for size in HICOLOR_SIZES:
+            appdir = outdir / ("%dx%d" % (size, size)) / "apps"
+            appdir.mkdir(parents=True, exist_ok=True)
+            write_png(
+                appdir / "mmcore.png",
+                size,
+                size,
+                resize(src, w, h, bpp, size, size),
+            )
+        print("wrote %s (%d sizes)" % (outdir, len(HICOLOR_SIZES)))
+        return 0
+
     if argv[0] == "--carray":
         if len(argv) < 4:
             raise SystemExit(
@@ -251,6 +325,22 @@ def main(argv) -> int:
         lines.append("const unsigned int %s_h = %d;" % (name, size))
         Path(argv[3]).write_text("\n".join(lines) + "\n")
         print("wrote %s (%dx%d)" % (argv[3], size, size))
+        return 0
+
+    if argv[0] == "--preview":
+        if len(argv) < 2:
+            raise SystemExit("gen-appicon: --preview needs a directory")
+        outdir = Path(argv[1])
+        outdir.mkdir(parents=True, exist_ok=True)
+        w, h, bpp, src = load_branding()
+        backgrounds = [
+            ("light", (245, 245, 245)),
+            ("dark", (27, 27, 27)),
+        ]
+        for name, bg in backgrounds:
+            path = outdir / ("mmcore-app-icon-preview-%s.png" % name)
+            pw, ph = write_preview(path, src, w, h, bpp, bg)
+            print("wrote %s (%dx%d)" % (path, pw, ph))
         return 0
 
     out = argv[0]

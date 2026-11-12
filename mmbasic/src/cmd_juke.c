@@ -1,5 +1,7 @@
 #include "mmb_priv.h"
+#include <math.h>
 #include "frontend.h"
+#include "session.h"
 
 /*
  * JUKE: a first-party retro music player (ScreamTracker-era feel).
@@ -38,8 +40,17 @@
 #define JUKE_SCOPE_H     52    /* oscilloscope inset height          */
 #define JUKE_LIST_ROW    18
 #define JUKE_LINE_H      16    /* fixed pixel-font line height (#1118)  */
-#define JUKE_BAR_SEG      8    /* spectrum LED segment height at 100%   */
-#define JUKE_BAR_GAP      2    /* dark gap between LED segments         */
+/* Riot-blocks visualiser (#1486). Sizes are 960x540 design units and scale
+ * with the layout: at 1280x720 (133%) a block is 18 px tall with a 5 px gap
+ * and a bar is 43 px wide with an 8 px gap. */
+#define JUKE_BAR_W       32    /* bar width at 100%                     */
+#define JUKE_BAR_GAP      6    /* gap between bars at 100%              */
+#define JUKE_BLOCK_H     14    /* flat block height at 100% (~18 px)    */
+#define JUKE_BLOCK_GAP    4    /* black gap between blocks (~5 px)      */
+#define JUKE_BLOCK_MIN_T 0.30f /* visible floor for the lowest block    */
+#define JUKE_PEAK_HOLD_MS 400  /* peak line holds before it falls       */
+#define JUKE_PEAK_FALL_MS 2750 /* full-height peak fall duration (ms)   */
+#define JUKE_HALF_PI     1.5707963f
 /* The fixed 8x16 CP437 pixel font paints upper-case letters and digits in
  * cell rows 2..11: two blank rows above the cap line and four below. Centring
  * that painted span (not the whole cell, whose lower leading is deeper) is
@@ -59,14 +70,20 @@ typedef struct {
 	int muted;
 	int vol_saved;
 	unsigned last_ms;
+	float bands[MMB_AUDIO_BANDS];     /* latest spectrum sample */
 	float peak[MMB_AUDIO_BANDS];
+	unsigned peak_at[MMB_AUDIO_BANDS]; /* when the peak last took a new high */
+	float peak_fall_from[MMB_AUDIO_BANDS]; /* height the current fall started at */
+	unsigned peak_fall_at[MMB_AUDIO_BANDS];
+	int peak_falling[MMB_AUDIO_BANDS];
 	short scope_hist[JUKE_SCOPE_HIST][JUKE_SCOPE_N];
 	int scope_head;
 	uint32_t *logo;                /* decoded graffiti wordmark (#914) */
 	int logo_w, logo_h;
 	unsigned col_bg, col_panel, col_panel2, col_track, col_text, col_dim;
 	unsigned col_bar_lo, col_bar_hi, col_scan, col_peak;
-	unsigned col_scope_lo, col_vol, col_base;
+	unsigned col_block, col_vis_peak;
+	unsigned col_scope_lo, col_vol;
 	int list_on;
 	int sel;
 	int sel_item;
@@ -94,6 +111,9 @@ static juke_ui s_ui[MMB_MAX_CONSOLES];
 #define U (s_ui[g_console])
 /* Scale a design-space (960x540) coordinate to the current framebuffer. */
 #define JS(v) ((v) * U.s / 100)
+/* Like JS but rounds to nearest, for the bar geometry whose design values are
+ * chosen so 133% lands on the 43/8/18/5 px spec at 1280x720 (#1486). */
+#define JSR(v) (((v) * U.s + 50) / 100)
 static juke_queue s_q;
 static unsigned s_rand = 0x9E3779B9u;
 
@@ -306,15 +326,21 @@ static unsigned juke_mix(unsigned a, unsigned b, float t)
 	return (unsigned)((r << 16) | (g << 8) | bl);
 }
 
-/* Black base -> lime tip ramp (#1055, no grey mid), shared by the bar
- * segments (#1254). */
-static unsigned juke_grad(float t)
+/* Riot-block colour (#1486, #1497): the block's centre height above the
+ * baseline maps through a steepened black -> logo-lime ramp, but the ramp
+ * starts at a visible dark lime instead of black so the lowest blocks still
+ * show up on screen. Only the top fifth reaches full lime. */
+static unsigned juke_block_colour(int i, int pitch, int maxh)
 {
+	float h = ((float)i + 0.5f) * (float)pitch / (float)maxh;
+	float t = (h - 0.12f) / 0.66f;
+
 	if (t < 0.0f)
 		t = 0.0f;
 	if (t > 1.0f)
 		t = 1.0f;
-	return juke_mix(U.col_bar_lo, U.col_bar_hi, t);
+	t = JUKE_BLOCK_MIN_T + (1.0f - JUKE_BLOCK_MIN_T) * (float)powf(t, 1.7f);
+	return juke_mix(0x000000u, U.col_block, t);
 }
 
 /* Muted graffiti accents: magenta -> cyan -> lime, for the VOL fill edge. */
@@ -341,12 +367,13 @@ static void juke_load_colours(void)
 	U.col_text = 0xFFFFFFu;     /* plain white           */
 	U.col_dim = 0x6A95ACu;      /* cool steel blue       */
 	U.col_bar_lo = 0x000000u;   /* black bar base        */
-	U.col_bar_hi = 0x9DEE5Eu;   /* lime bar tip          */
+	U.col_bar_hi = 0x9DEE5Eu;   /* lime UI accent        */
+	U.col_block = 0xC5FB00u;    /* logo lime block tip   */
+	U.col_vis_peak = 0xFF2A2Au; /* retro red peak line   */
 	U.col_scan = 0xBEE65Au;     /* bright scope trace    */
-	U.col_peak = 0xC8E664u;     /* light lime cap        */
+	U.col_peak = 0xC8E664u;     /* light lime UI accent  */
 	U.col_scope_lo = 0x2A3038u; /* cool dark ghost       */
 	U.col_vol = 0xB4BCC2u;      /* VOL body grey         */
-	U.col_base = 0x464A50u;     /* spectrum baseline     */
 }
 
 /* ---- paths / queue ---------------------------------------------------- */
@@ -1094,92 +1121,114 @@ static void juke_paint_scope(int w)
 
 static void juke_paint_vis(int w, int h)
 {
-	float bands[MMB_AUDIO_BANDS];
-	int i, x0, x1, bw, gap, base, maxh, pad, seg, seg_gap, step;
+	int i, x0, bw, gap, base, maxh, block, block_gap, pitch;
+	unsigned now;
 
 	juke_paint_scope(w);
-	mmb_audio_spectrum(bands, MMB_AUDIO_BANDS);
 
-	/* Spectrum: 24 segmented black-to-lime bars, no midfield guide lines. The
+	/* Sample the spectrum every frame (#1497). The old 15 fps throttle made
+	 * the bars feel sluggish, so they now track the ~30 fps repaint. */
+	now = mmb_now_ms();
+	mmb_audio_spectrum(U.bands, MMB_AUDIO_BANDS);
+
+	/* Riot blocks: 24 centred bar stacks, no guide lines and no baseline. The
 	 * bar field is deliberately short so the full-size wordmark still fits
-	 * above it, and it is centred so the leftover width splits evenly on both
-	 * sides instead of pooling to the right of the last band. */
-	pad = JS(14);
+	 * above it; centring the span splits the leftover width evenly. */
 	base = h - JS(71);
 	maxh = base - JS(190);
-	if (maxh < 24)
-		maxh = 24;
-	gap = JS(3);
-	if (gap < 2)
-		gap = 2;
-	bw = (w - 2 * pad) / MMB_AUDIO_BANDS - gap;
+	bw = JSR(JUKE_BAR_W);
+	gap = JSR(JUKE_BAR_GAP);
 	if (bw < 2)
 		bw = 2;
+	if (gap < 2)
+		gap = 2;
+	block = JS(JUKE_BLOCK_H);
+	block_gap = JS(JUKE_BLOCK_GAP);
+	if (block < 3)
+		block = 3;
+	if (block_gap < 1)
+		block_gap = 1;
+	pitch = block + block_gap;
+	if (maxh < pitch)
+		maxh = pitch;
 	{
 		int span = MMB_AUDIO_BANDS * bw + (MMB_AUDIO_BANDS - 1) * gap;
-		x0 = pad + (w - 2 * pad - span) / 2;
-		if (x0 < pad)
-			x0 = pad;
-		x1 = x0 + span;
+		x0 = (w - span) / 2;
+		if (x0 < 0)
+			x0 = 0;
 	}
-
-	/* LED-like segments: a flat rectangle per step with a dark gap between
-	 * them, scaled with the layout so the stack reads the same at every
-	 * supported resolution. */
-	seg = JS(JUKE_BAR_SEG);
-	seg_gap = JS(JUKE_BAR_GAP);
-	if (seg < 3)
-		seg = 3;
-	if (seg_gap < 1)
-		seg_gap = 1;
-	step = seg + seg_gap;
 
 	for (i = 0; i < MMB_AUDIO_BANDS; i++)
 	{
 		int bx = x0 + i * (bw + gap);
-		int bh = (int)(bands[i] * (float)maxh);
-		int y, pycap;
-		float p;
+		int bh = (int)(U.bands[i] * (float)maxh);
+		int blocks, b;
+		float bar_top, p;
 
-		if (bh < 2)
-			bh = 2;
+		if (bh < 0)
+			bh = 0;
 		if (bh > maxh)
 			bh = maxh;
-		/* Each segment's colour is sampled by its height above the baseline,
-		 * not by the bar's own height (#1254). The ramp therefore stops where
-		 * the band's intensity stops: a loud band climbs all the way to lime
-		 * while a quiet one never leaves the dark end. */
-		for (y = 0; y < bh; y += step)
-		{
-			int sh = seg;
-			float frac;
-			if (y + sh > bh)
-				sh = bh - y;
-			if (sh <= 0)
-				break;
-			frac = (float)(y + sh / 2) / (float)maxh;
-			mmb_gfx_fill_rect(bx, base - y - sh, bw, sh,
-					  juke_grad(frac));
-		}
+		/* Whole blocks only: the stack ends at the last full block. */
+		blocks = bh / pitch;
+		for (b = 0; b < blocks; b++)
+			mmb_gfx_fill_rect(bx, base - (b + 1) * pitch + block_gap,
+					  bw, block,
+					  juke_block_colour(b, pitch, maxh));
 
-		/* Peak cap falls slowly. */
+		/* One smooth peak line per bar, not snapped to the block grid. A new
+		 * high snaps it one gap above the top block and holds ~400 ms. After
+		 * that it follows a quarter-cosine (sine) curve: it starts falling
+		 * slowly and speeds up as it drops, instead of the old linear ramp
+		 * (#1497). The fall still advances one smooth pixel position per
+		 * frame and never drops below the bar's own top. */
+		bar_top = (float)(blocks * pitch) / (float)maxh;
 		p = U.peak[i];
-		if (bands[i] > p)
-			p = bands[i];
-		else
+		if (bar_top > p)
 		{
-			p -= 0.012f;
-			if (p < 0.0f)
-				p = 0.0f;
+			p = bar_top;
+			U.peak_at[i] = now;
+			U.peak_falling[i] = 0;
+		}
+		else if (now - U.peak_at[i] >= JUKE_PEAK_HOLD_MS)
+		{
+			float from, dur, t;
+
+			/* A clamped peak is released from wherever it currently sits,
+			 * so a bar that drops away lets it fall smoothly from the top. */
+			if (!U.peak_falling[i])
+			{
+				U.peak_falling[i] = 1;
+				U.peak_fall_from[i] = p;
+				U.peak_fall_at[i] = now;
+			}
+			from = U.peak_fall_from[i];
+			dur = from * (float)JUKE_PEAK_FALL_MS;
+			t = dur > 0.0f ? (float)(now - U.peak_fall_at[i]) / dur : 1.0f;
+			if (t > 1.0f)
+				t = 1.0f;
+			p = from * (float)cosf(t * JUKE_HALF_PI);
+			if (p <= bar_top)
+			{
+				p = bar_top;
+				U.peak_falling[i] = 0;
+			}
 		}
 		U.peak[i] = p;
-		pycap = base - (int)(p * (float)maxh) - 2;
-		if (pycap < base - maxh - 2)
-			pycap = base - maxh - 2;
-		mmb_gfx_fill_rect(bx, pycap, bw, 1, U.col_peak);
+		if (p > 0.0f)
+		{
+			int ph = JSR(2);
+			int py;
+			if (ph < 2)
+				ph = 2;
+			py = base - (int)(p * (float)maxh) - ph;
+			if (py < base - maxh - ph)
+				py = base - maxh - ph;
+			mmb_gfx_fill_rect(bx, py, bw, ph, U.col_vis_peak);
+		}
 	}
 
-	mmb_gfx_fill_rect(x0, base, x1 - x0, 1, U.col_base);
+	/* No baseline: the old purple/grey line is gone (#1486). */
 }
 
 /* Modal shortcut list opened with `?` (#1114). It is painted last so it sits
@@ -1342,6 +1391,12 @@ static void juke_frame(void)
 	int back, w = U.w, h = U.h;
 
 	if (!U.active)
+		return;
+	/* #1427: a background yield callback temporarily selects its owning
+	 * console (g_console) so queue work keeps that console's ownership. A
+	 * nested poll from a storage read can reach this path while another
+	 * console is on screen; never paint onto the shared display then. */
+	if (g_console != mmb_console_visible())
 		return;
 	if (G.plat && G.plat->wait_vsync)
 		G.plat->wait_vsync();

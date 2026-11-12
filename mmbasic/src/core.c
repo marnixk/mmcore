@@ -27,6 +27,9 @@ static int find_end_sub_pc(int from);
 static int find_next_pc(int from);
 static void build_jumps(void);
 static void mmb_break_events(void);
+static void mmb_poll_fast(void);
+static void mmb_poll_slow(int gate_storage);
+static void poll_storage_throttled(void);
 static void exec_error_reset(int was_running);
 
 /* mmb_poll() re-entrancy guard (see mmb_poll below). File scope so the
@@ -241,6 +244,8 @@ static void subs_clear(void)
 	int i;
 	for (i = 0; i < G.subs_cap; i++)
 		G.subs[i].used = 0;
+	if (G.sub_hash)
+		memset(G.sub_hash, 0, (size_t)G.sub_hash_cap * sizeof(int));
 	G.nsubs = 0;
 }
 
@@ -262,6 +267,10 @@ static void subs_release(void)
 	G.subs = 0;
 	G.subs_cap = 0;
 	G.nsubs = 0;
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
 }
 
 int mmb_find_line_pc(int num)
@@ -676,6 +685,13 @@ static void if_push(unsigned char state, int pc)
 	G.if_depth++;
 }
 
+/* Push the frame for a block IF whose condition the trace cache evaluated
+ * (#1419). The pc is the current line, exactly like mmb_cmd_if's own push. */
+void mmb_if_push_block(int cond)
+{
+	if_push(cond ? IF_BODY : IF_SEARCH, G.run_pc);
+}
+
 /* The innermost SELECT frame visible to this call, or NULL outside a SELECT.
  * Frames below sel_base belong to a caller and stay hidden until it returns
  * (#1299). */
@@ -903,7 +919,11 @@ static int process_line_structure(const char *body)
 			if (G.if_shadow == 0 &&
 			    G.if_stack[G.if_depth - 1] == IF_SEARCH)
 			{
-				mmb_val v = mmb_expr();
+				mmb_val v;
+				/* Compile the ELSEIF condition once, like the IF line
+				 * itself (#1419); fall back to the parser otherwise. */
+				if (!mmb_tcache_try_cond(&v))
+					v = mmb_expr();
 				if (mmb_as_int(v))
 					G.if_stack[G.if_depth - 1] = IF_BODY;
 			}
@@ -1044,6 +1064,78 @@ static int if_skip_pc(int pc)
 	return -1;
 }
 
+/* Case-insensitive FNV-1a over a name, masked to the table size (a power of
+ * two). Names are stored uppercase, but callers may pass mixed case. */
+static unsigned sub_hash_key(const char *name, unsigned cap)
+{
+	unsigned h = 2166136261u;
+	while (*name)
+	{
+		unsigned char c = (unsigned char)*name++;
+		if (c >= 'a' && c <= 'z')
+			c = (unsigned char)(c - 32);
+		h = (h ^ c) * 16777619u;
+	}
+	return h & (cap - 1);
+}
+
+/* Insert into a table with room for every current entry plus one. */
+static void sub_hash_put(int si)
+{
+	unsigned cap = (unsigned)G.sub_hash_cap;
+	unsigned h = sub_hash_key(G.subs[si].name, cap);
+	unsigned n;
+	for (n = 0; n < cap; n++)
+	{
+		int *slot = &G.sub_hash[(h + n) & (cap - 1)];
+		if (!*slot)
+		{
+			*slot = si + 1;
+			return;
+		}
+	}
+}
+
+/* Build the index for `need` entries, replacing any existing table. Returns 0
+ * when the allocation fails; the old table is left alone (sub_find() may still
+ * use it until a new definition makes it stale). */
+static int sub_hash_build(int need)
+{
+	unsigned cap = 16;
+	int *h;
+	int i;
+	while (cap < (unsigned)need * 2u)
+		cap <<= 1;
+	h = (int *)G.plat->alloc(cap * sizeof(int));
+	if (!h)
+		return 0;
+	memset(h, 0, (size_t)cap * sizeof(int));
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = h;
+	G.sub_hash_cap = (int)cap;
+	for (i = 0; i < G.nsubs; i++)
+		if (G.subs[i].used)
+			sub_hash_put(i);
+	return 1;
+}
+
+/* Make sure the index can take one more definition. On failure drop it so
+ * sub_find() falls back to the linear scan instead of missing a name. */
+static int sub_hash_ensure(void)
+{
+	if (G.sub_hash &&
+	    (unsigned)G.sub_hash_cap >= (unsigned)(G.nsubs + 1) * 2u)
+		return 1;
+	if (sub_hash_build(G.nsubs + 1))
+		return 1;
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
+	return 0;
+}
+
 static int sub_find(const char *name)
 {
 	int i;
@@ -1053,10 +1145,33 @@ static int sub_find(const char *name)
 	strncpy(nbuf, name, MMB_MAX_NAME - 1);
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
+	if (sub_hash_ensure())
+	{
+		unsigned cap = (unsigned)G.sub_hash_cap;
+		unsigned h = sub_hash_key(nbuf, cap);
+		unsigned n;
+		for (n = 0; n < cap; n++)
+		{
+			int e = G.sub_hash[(h + n) & (cap - 1)];
+			if (!e)
+				return -1;
+			i = e - 1;
+			if (i < G.nsubs && G.subs[i].used &&
+			    mmb_keyword_eq(G.subs[i].name, nbuf))
+				return i;
+		}
+		return -1;
+	}
 	for (i = 0; i < G.nsubs; i++)
 		if (G.subs[i].used && mmb_keyword_eq(G.subs[i].name, nbuf))
 			return i;
 	return -1;
+}
+
+int mmb_sub_is_func(const char *name)
+{
+	int si = sub_find(name);
+	return si >= 0 && G.subs[si].is_func;
 }
 
 /* Parse an optional ``AS <type>`` clause.  Returns -1 when no AS is present,
@@ -1102,19 +1217,17 @@ static int parse_as_sid(int *type_out)
 
 /* Bind an argument to a variable of its declared scalar type, and make that
  * binding reachable by the bare (unsuffixed) name when the declaration was
- * unsuffixed -- mirroring how FUNCTION return values are bound. */
-static void bind_scalar_arg(const char *name, int type)
+ * unsuffixed -- mirroring how FUNCTION return values are bound. The caller
+ * has already resolved (and, when needed, created) the binding, so this does
+ * not repeat the name lookup (#1420). */
+static void bind_scalar_arg_v(mmb_var *v, const char *name, int type)
 {
 	char last;
-	int suffixed, unsuf, idx = 0;
-	mmb_var *v;
-	if (!type || type == T_STRUCT)
+	int suffixed, unsuf;
+	if (!type || type == T_STRUCT || !v)
 		return;
 	last = name[0] ? name[strlen(name) - 1] : 0;
 	suffixed = (last == '$' || last == '%' || last == '!');
-	v = mmb_find_var(name, type, 1, 0, &idx);
-	if (!v)
-		return;
 	unsuf = !suffixed && type != (G.opt.default_type ? G.opt.default_type : T_NUM);
 	if (v->unsuffixed != unsuf)
 	{
@@ -1143,6 +1256,11 @@ static void subs_grow(void)
 	}
 	G.subs = ns;
 	G.subs_cap = cap * 2;
+	/* The name index is rebuilt lazily against the new table. */
+	if (G.sub_hash)
+		G.plat->free(G.sub_hash);
+	G.sub_hash = 0;
+	G.sub_hash_cap = 0;
 }
 
 /* #1335: a SUB/FUNCTION parameter whose name matches a global CONST can never
@@ -1290,6 +1408,11 @@ static void sub_register(const char *name, int pc, int is_func, int ret_type)
 		}
 	}
 	check_param_consts(slot);
+	if (G.sub_hash)
+	{
+		if (sub_hash_ensure())
+			sub_hash_put(slot);
+	}
 	G.nsubs++;
 }
 
@@ -2594,9 +2717,12 @@ static void unwind_call_frames(void)
 	exec_bodies_clear();
 }
 
-int mmb_call_named_sub(const char *name)
+/* `si` may be a sub_find() result the caller already has; -1 looks it up.
+ * Call sites that resolved the name (bare SUB calls, user FUNCTIONs) pass it
+ * so one call does not scan the SUB table twice (#1420). */
+static int call_named_sub_si(const char *name, int si, int cache_args)
 {
-	int si, i, narg = 0, ex, g;
+	int i, narg = 0, ex, g;
 	mmb_val args[MMB_MAX_SUB_ARGS];
 	char nbuf[MMB_MAX_NAME];
 	char base[MMB_MAX_NAME];
@@ -2608,66 +2734,83 @@ int mmb_call_named_sub(const char *name)
 	strncpy(base, nbuf, MMB_MAX_NAME - 1);
 	base[MMB_MAX_NAME - 1] = 0;
 	mmb_type_suffix(base);
-	si = sub_find(base);
+	if (si < 0 || !G.subs || si >= G.nsubs || !G.subs[si].used)
+		si = sub_find(base);
 	if (si < 0)
 		return 0;
 	/* A CONST defined after the prescan (or after the definition line) still
 	 * collides when the call binds the parameter; name it here instead of
 	 * letting mmb_do_assign raise a bare ?CONST at the caller (#1335). */
 	check_param_consts(si);
-	mmb_skip_sp();
-	if (*G.p == '(')
 	{
-		G.p++;
-		mmb_skip_sp();
-		if (*G.p != ')')
+		const char *asave = G.p;
+		int cn = 0;
+		/* Replay this call site's argument expressions when they are simple
+		 * numeric shapes (#1420). Event handlers pass transient buffers, so
+		 * they never take this path (cache_args = 0). */
+		if (cache_args &&
+		    mmb_tcache_try_call_args(args, MMB_MAX_SUB_ARGS, &cn))
+			narg = cn;
+		else
 		{
-			while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ')' && *G.p != ':' && *G.p != '\'')
-			{
-				mmb_skip_sp();
-				if (*G.p == ',')
-				{
-					args[narg++] = mmb_int_val(0);
-					G.p++;
-					continue;
-				}
-				args[narg++] = mmb_expr();
-				mmb_skip_sp();
-				if (*G.p == ',')
-				{
-					G.p++;
-					continue;
-				}
-				break;
-			}
-		}
-		mmb_skip_sp();
-		if (*G.p == ')')
-			G.p++;
-	}
-	else if (*G.p && *G.p != ':' && *G.p != '\'')
-	{
-		while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
-		{
+			G.p = asave;
 			mmb_skip_sp();
-			/* `if c then hi else ...`: the zero-arg call ends at the
-			 * one-line IF's ELSE, not at an argument (#1295). */
-			if (G.if_inline == 1 && (at_else_kw() || at_elseif_kw()))
-				break;
-			if (*G.p == ',')
-			{
-				args[narg++] = mmb_int_val(0);
-				G.p++;
-				continue;
-			}
-			args[narg++] = mmb_expr();
-			mmb_skip_sp();
-			if (*G.p == ',')
+			if (*G.p == '(')
 			{
 				G.p++;
-				continue;
+				mmb_skip_sp();
+				if (*G.p != ')')
+				{
+					while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ')' && *G.p != ':' && *G.p != '\'')
+					{
+						mmb_skip_sp();
+						if (*G.p == ',')
+						{
+							args[narg++] = mmb_int_val(0);
+							G.p++;
+							continue;
+						}
+						args[narg++] = mmb_expr();
+						mmb_skip_sp();
+						if (*G.p == ',')
+						{
+							G.p++;
+							continue;
+						}
+						break;
+					}
+				}
+				mmb_skip_sp();
+				if (*G.p == ')')
+					G.p++;
 			}
-			break;
+			else if (*G.p && *G.p != ':' && *G.p != '\'')
+			{
+				while (narg < MMB_MAX_SUB_ARGS && *G.p && *G.p != ':' && *G.p != '\'')
+				{
+					mmb_skip_sp();
+					/* `if c then hi else ...`: the zero-arg call ends
+					 * at the one-line IF's ELSE, not at an argument
+					 * (#1295). */
+					if (G.if_inline == 1 &&
+					    (at_else_kw() || at_elseif_kw()))
+						break;
+					if (*G.p == ',')
+					{
+						args[narg++] = mmb_int_val(0);
+						G.p++;
+						continue;
+					}
+					args[narg++] = mmb_expr();
+					mmb_skip_sp();
+					if (*G.p == ',')
+					{
+						G.p++;
+						continue;
+					}
+					break;
+				}
+			}
 		}
 	}
 	if (G.gosub_sp >= MMB_MAX_GOSUB)
@@ -2690,8 +2833,11 @@ int mmb_call_named_sub(const char *name)
 		G.gosub_saven[g][i][MMB_MAX_NAME - 1] = 0;
 		/* Look the caller's binding up with the declared type so a value
 		 * stored under a suffix (e.g. A$ for an ``AS STRING`` argument) is
-		 * saved and restored rather than shadowed by a fresh slot. */
-		v = mmb_find_var(G.subs[si].args[i], atype, 0, 0, &idx);
+		 * saved and restored rather than shadowed by a fresh slot. The
+		 * parameter-name token is a stable, unique key, so the resolve
+		 * cache can answer the repeat lookup (#1420). */
+		v = mmb_find_var_ref(G.subs[si].args[i], G.subs[si].args[i],
+				     atype, 0, 0, &idx);
 		if (v)
 		{
 			G.gosub_savev[g][i] = mmb_load_var(v, 0);
@@ -2701,11 +2847,29 @@ int mmb_call_named_sub(const char *name)
 		else
 			memset(&G.gosub_savev[g][i], 0, sizeof(G.gosub_savev[g][i]));
 		if (G.subs[si].arg_sid[i] >= 0)
+		{
 			mmb_bind_struct_var(G.subs[si].args[i], G.subs[si].arg_sid[i]);
+			if (i < narg)
+				mmb_do_assign(G.subs[si].args[i], atype, 0, 0, args[i]);
+		}
 		else
-			bind_scalar_arg(G.subs[si].args[i], G.subs[si].arg_type[i]);
-		if (i < narg)
-			mmb_do_assign(G.subs[si].args[i], atype, 0, 0, args[i]);
+		{
+			/* One lookup serves the save, the type binding and the store.
+			 * A declared scalar type is created even for an omitted
+			 * argument, exactly as bind_scalar_arg() used to do. */
+			if (!v && (i < narg || G.subs[si].arg_type[i] != 0))
+				v = mmb_find_var_ref(G.subs[si].args[i],
+						     G.subs[si].args[i], atype, 1, 0,
+						     &idx);
+			bind_scalar_arg_v(v, G.subs[si].args[i], G.subs[si].arg_type[i]);
+			if (i < narg)
+			{
+				if (v)
+					mmb_store_var(v, args[i]);
+				else
+					mmb_do_assign(G.subs[si].args[i], atype, 0, 0, args[i]);
+			}
+		}
 	}
 	if (G.subs[si].is_func)
 	{
@@ -2734,7 +2898,14 @@ int mmb_call_named_sub(const char *name)
 			int rtype = G.subs[si].ret_type ? G.subs[si].ret_type : T_NUM;
 			char last = nbuf[0] ? nbuf[strlen(nbuf) - 1] : 0;
 			int suffixed = (last == '$' || last == '%' || last == '!');
-			mmb_var *rv = mmb_find_var(nbuf, rtype, 1, 0, &idx);
+			int deftype = G.opt.default_type ? G.opt.default_type : T_NUM;
+			/* The save lookup above already resolved the common numeric
+			 * return variable; only a typed string/numeric binding that
+			 * differs from the default needs to be pinned again. */
+			mmb_var *rv = (v && rtype == deftype)
+					      ? v
+					      : mmb_find_var_ref((const char *)&G.subs[si],
+								 nbuf, rtype, 1, 0, &idx);
 			if (rv)
 			{
 				/* An explicit return type on an unsuffixed name (e.g.
@@ -2748,9 +2919,9 @@ int mmb_call_named_sub(const char *name)
 					mmb_vars_rehash();
 				}
 				if (rtype == T_STR)
-					mmb_do_assign(nbuf, T_STR, 0, 0, mmb_str_val(""));
+					mmb_store_var(rv, mmb_str_val(""));
 				else
-					mmb_do_assign(nbuf, rtype, 0, 0, mmb_num_val(0));
+					mmb_store_var(rv, mmb_num_val(0));
 			}
 		}
 	}
@@ -2760,6 +2931,16 @@ int mmb_call_named_sub(const char *name)
 	G.gosub_sp++;
 	G.branch_pc = G.subs[si].line_pc;
 	return 1;
+}
+
+int mmb_call_named_sub(const char *name)
+{
+	return call_named_sub_si(name, -1, 1);
+}
+
+int mmb_call_named_sub_resolved(const char *name, int si)
+{
+	return call_named_sub_si(name, si, 1);
 }
 
 void mmb_cmd_sub(void)
@@ -2803,6 +2984,36 @@ void mmb_cmd_end_sub(void)
 	G.in_sub = 0;
 }
 
+/* Detach a STRUCT return value from the callee's locals, which are freed by
+ * mmb_cmd_end_sub(). The staging buffer grows to the TYPE's real size, so a
+ * return is no longer capped at the old fixed 64 KB (#1496). */
+static void stage_struct_return(mmb_val *v)
+{
+	int sz;
+	unsigned char *src;
+
+	if (v->struct_idx < 0 || v->struct_idx >= MMB_MAX_STRUCT_TYPES ||
+	    !G.sdef[v->struct_idx].used)
+		return;
+	sz = G.sdef[v->struct_idx].total;
+	if (sz <= 0)
+		return;
+	src = v->blob;
+	if (sz > G.func_ret_blob_cap)
+	{
+		unsigned char *nb = G.plat->alloc((unsigned)sz);
+		if (!nb)
+			mmb_error("?OUT OF MEMORY");
+		if (G.func_ret_blob)
+			G.plat->free(G.func_ret_blob);
+		G.func_ret_blob = nb;
+		G.func_ret_blob_cap = sz;
+	}
+	if (src != G.func_ret_blob)
+		memcpy(G.func_ret_blob, src, (unsigned)sz);
+	v->blob = G.func_ret_blob;
+}
+
 void mmb_cmd_end_function(void)
 {
 	int g;
@@ -2821,13 +3032,7 @@ void mmb_cmd_end_function(void)
 			{
 				G.func_ret = mmb_load_var(v, 0);
 				if (G.func_ret.type == T_STRUCT && G.func_ret.blob)
-				{
-					int sz = G.sdef[G.func_ret.struct_idx].total;
-					if (sz > MMB_STRUCT_RET_MAX)
-						mmb_error("?OVERFLOW");
-					memcpy(G.func_ret_blob, G.func_ret.blob, (unsigned)sz);
-					G.func_ret.blob = G.func_ret_blob;
-				}
+					stage_struct_return(&G.func_ret);
 				else
 					mmb_val_own(&G.func_ret, &G.func_ret_s, 0, fname);
 			}
@@ -2849,6 +3054,7 @@ void mmb_option_reset(void)
 	G.opt.break_key = 3;
 	G.opt.profiling = 0;
 	G.opt.frame_profile = 0;
+	G.opt.fastdraw = 0;
 	G.opt.frame_profile_path[0] = 0;
 	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;
@@ -2877,6 +3083,8 @@ void mmb_option_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
+	G.opt.term_cterm = 1;
+	G.opt.term_scroll_buffer = 0;
 	G.opt.wordpad_view = 0;
 	G.opt.wifi_country[0] = 'U';
 	G.opt.wifi_country[1] = 'S';
@@ -4254,14 +4462,28 @@ void mmb_cmd_pause(void)
 	unsigned ms = (unsigned)mmb_as_int(v);
 	unsigned start = mmb_now_ms();
 	if (G.plat && G.plat->millis)
-		/* One device/app poll per spin (mmb_poll), plus the cheap break
-		 * and event checks — previously both poll stacks ran (#988). */
+		/* The fast spin keeps input, SETTICK/events and audio responsive.
+		 * The device/app poll stack (WLAN, network, NTP, settings, ...)
+		 * runs on a ~1 ms gate like mmb_check_break, and the storage walk
+		 * (hotplug probing) only once a second (#1417). Before this,
+		 * every spin re-walked every drive: getenv + snprintf + stat
+		 * dominated a PAUSE-heavy game loop. */
 	{
+		unsigned slow_ms = start;
+		int slow_primed = 0;
+		unsigned now = start;
 		mmb_frame_prof_wait_begin();
-		while ((mmb_now_ms() - start) < ms)
+		while ((now - start) < ms)
 		{
-			mmb_poll();
+			if (!slow_primed || (int)(now - slow_ms) >= 1)
+			{
+				slow_primed = 1;
+				slow_ms = now;
+				mmb_poll_slow(1);
+			}
+			mmb_poll_fast();
 			mmb_break_events();
+			now = mmb_now_ms();
 		}
 		mmb_frame_prof_wait_end();
 	}
@@ -4279,10 +4501,20 @@ void mmb_cmd_vsync_wait(void)
 	now = mmb_now_ms();
 	if (last != 0 && (now - last) < 50)
 	{
-		while ((mmb_now_ms() - last) < 16)
+		unsigned slow_ms = now;
+		int slow_primed = 0;
+		unsigned t = now;
+		while ((t - last) < 16)
 		{
-			mmb_poll();
+			if (!slow_primed || (int)(t - slow_ms) >= 1)
+			{
+				slow_primed = 1;
+				slow_ms = t;
+				mmb_poll_slow(1);
+			}
+			mmb_poll_fast();
 			mmb_break_events();
+			t = mmb_now_ms();
 		}
 	}
 	mmb_frame_prof_wait_end();
@@ -4452,7 +4684,9 @@ static void mmb_check_break_impl(void)
 	 * AABB before the device/audio poll, so presents are paced at this
 	 * ~1 ms boundary instead of per dirty rect (#1402). */
 	mmb_gfx_flush_pending();
-	mmb_storage_poll();
+	/* Drive hotplug probing is expensive and only needs ~1 s resolution
+	 * (#1417); the rest of the device/audio stack stays on this 1 ms gate. */
+	poll_storage_throttled();
 	mmb_wlan_poll();
 	mmb_net_yield();
 	mmb_play_mix();
@@ -4677,6 +4911,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
+		tab[mmb_kw_id("WEB")] = mmb_cmd_web;
 		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
 		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
 		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
@@ -5518,12 +5753,15 @@ static void exec_statement_impl(void)
 			strncpy(raw, name, MMB_MAX_NAME - 1);
 			raw[MMB_MAX_NAME - 1] = 0;
 			mmb_type_suffix(name);
-			if (sub_find(name) >= 0)
 			{
-				if (!mmb_call_named_sub(raw))
-					mmb_syntax();
-				stmt_call_resume();
-				return;
+				int si = sub_find(name);
+				if (si >= 0)
+				{
+					if (!mmb_call_named_sub_resolved(raw, si))
+						mmb_syntax();
+					stmt_call_resume();
+					return;
+				}
 			}
 			G.p = save;
 		}
@@ -5854,6 +6092,8 @@ struct gosub_body_call {
 	const char *entry_p;
 	int expr_result;
 	int called;
+	int si;         /* pre-resolved SUB index, or -1 */
+	int cache_args; /* 1 for program-text calls, 0 for transient buffers */
 };
 
 /* Run the callee's statements until RETURN / END SUB / END FUNCTION / END or
@@ -5955,7 +6195,7 @@ static void run_gosub_entry(void *arg)
 	struct gosub_body_call *call = arg;
 
 	G.p = call->entry_p;
-	if (!mmb_call_named_sub(call->name))
+	if (!call_named_sub_si(call->name, call->si, call->cache_args))
 		return;
 	call->called = 1;
 	if (mmb_stmtprof_active)
@@ -5971,7 +6211,8 @@ static void run_gosub_entry(void *arg)
  * snapshot, the clean callee structure state and the single pop path; the skip
  * landing and the running flag are lifecycle, not control flow, so they stay
  * here.  Returns non-zero when the named callee was found and entered. */
-static int run_gosub_body(const char *name, const char *entry_p, int expr_result)
+static int run_gosub_body_known(const char *name, const char *entry_p,
+				int expr_result, int si, int cache_args)
 {
 	struct gosub_body_call call;
 	int saved_running = G.running;
@@ -5993,6 +6234,8 @@ static int run_gosub_body(const char *name, const char *entry_p, int expr_result
 	call.entry_p = entry_p;
 	call.expr_result = expr_result;
 	call.called = 0;
+	call.si = si;
+	call.cache_args = cache_args;
 	G.running = 1;
 	mmb_run_nested(run_gosub_entry, &call, MMB_NESTED_GOSUB);
 	/* An END inside this body is a program stop, not a per-call state
@@ -6006,6 +6249,12 @@ static int run_gosub_body(const char *name, const char *entry_p, int expr_result
 		memcpy(G.stmt_errjmp, saved_stmt_jmp, sizeof(jmp_buf));
 	}
 	return call.called;
+}
+
+static int run_gosub_body(const char *name, const char *entry_p, int expr_result)
+{
+	/* Event handlers pass literal/stack argument buffers, not program text. */
+	return run_gosub_body_known(name, entry_p, expr_result, -1, 0);
 }
 
 int mmb_try_user_function(mmb_val *out)
@@ -6039,7 +6288,7 @@ int mmb_try_user_function(mmb_val *out)
 	/* The nested helper calls the FUNCTION inside the frame, so the caller's
 	 * run_pc/branch_pc/G.p and the call frame are restored on its one pop
 	 * path (and by unwind_call_frames after a trapped error). */
-	if (!run_gosub_body(raw, G.p, 1))
+	if (!run_gosub_body_known(raw, G.p, 1, si, 1))
 	{
 		G.p = save;
 		return 0;
@@ -6676,6 +6925,14 @@ void mmb_init(const mmb_platform *plat)
 	mmb_clock_init();
 }
 
+void mmb_func_ret_blob_free(void)
+{
+	if (G.func_ret_blob)
+		G.plat->free(G.func_ret_blob);
+	G.func_ret_blob = 0;
+	G.func_ret_blob_cap = 0;
+}
+
 void mmb_reset(void)
 {
 	int i;
@@ -6689,8 +6946,10 @@ void mmb_reset(void)
 	/* The expression arena is per-console now (#1351); return its chunks on
 	 * a reset so a discarded context cannot leak them. */
 	mmb_arena_free();
+	mmb_func_ret_blob_free();
 	mmb_option_reset();
 	mmb_play_stop();
+	mmb_web_cleanup();
 	/* Release the growable program store and its tables (#1303): the fixed
 	 * 512 KB prog array was inline in this struct, so its heap replacement
 	 * must be freed explicitly before the context is discarded or reused. */
@@ -6721,16 +6980,49 @@ void mmb_reset(void)
  * a no-op instead of re-entering the poll stack. mmb_error()'s longjmp can
  * leave the guard set, so the setjmp error landings clear it (see run_program
  * and mmb_exec_line). */
-void mmb_poll(void)
+/* Storage/hotplug probing is expensive (on the POSIX host it rebuilds and
+ * stats every drive path) and hotplug only needs to be noticed within about a
+ * second, so the interpreter's spin loops poll it on a 1 s gate (#1417). */
+static void poll_storage_throttled(void)
 {
-	static int net_boot;
-	if (s_poll_active)
+	static unsigned last;
+	static int primed;
+	unsigned now = mmb_now_ms();
+	if (primed && (int)(now - last) < 1000)
 		return;
-	s_poll_active = 1;
-	/* Host-poll boundary: never leave a deferred BLIT present pending across
-	 * a PAUSE/VSYNC/host-loop poll (#1402). */
-	mmb_gfx_flush_pending();
+	primed = 1;
+	last = now;
 	mmb_storage_poll();
+}
+
+/* The part of the host poll that PAUSE/VSYNC must keep on every spin: audio
+ * queue fill and a deferred display present. Keyboard/events are handled by
+ * mmb_break_events(). */
+static void mmb_poll_fast(void)
+{
+	mmb_gfx_flush_pending();
+	mmb_play_mix();
+}
+
+/* The device/app poll stack. `gate_storage` is set by the PAUSE/VSYNC spin so
+ * the drive walk runs at most once a second; the host-loop mmb_poll() keeps
+ * probing on every call so an interactive hotplug notice is immediate. */
+static void mmb_poll_slow(int gate_storage)
+{
+	int was_poll_active = s_poll_active;
+	static int net_boot;
+
+	/* The PAUSE/VSYNC spin calls this directly, outside mmb_poll()'s guard.
+	 * Without holding the guard here, a storage_yield() inside an app poll
+	 * (or a background yield callback) re-enters mmb_poll() while a
+	 * non-visible console is temporarily selected, and that nested poll can
+	 * paint that console over the screen that is actually shown (#1427).
+	 * The outer spin already polls every ~1 ms, so nesting buys nothing. */
+	s_poll_active = 1;
+	if (gate_storage)
+		poll_storage_throttled();
+	else
+		mmb_storage_poll();
 	mmb_wlan_poll();
 	mmb_net_yield();
 	if (!net_boot && G.opt.ethernet_enabled)
@@ -6773,5 +7065,15 @@ void mmb_poll(void)
 	if (mmb_yield_count() > 0)
 		mmb_yield_run(mmb_now_ms());
 	mmb_front_poll();
+	s_poll_active = was_poll_active;
+}
+
+void mmb_poll(void)
+{
+	if (s_poll_active)
+		return;
+	s_poll_active = 1;
+	mmb_poll_fast();
+	mmb_poll_slow(0);
 	s_poll_active = 0;
 }

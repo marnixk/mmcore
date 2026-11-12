@@ -4034,7 +4034,7 @@ static void draw_body(void)
 				{
 					unsigned chfg, chbg;
 					unsigned ch;
-					int skip, left, adv, on_cur;
+					int skip, left, adv, on_cur, selected;
 
 					if (!vis_ch_at(style, hide_prefix, i, ls, indent_len,
 						       prefix_len, &ch))
@@ -4059,9 +4059,10 @@ static void draw_body(void)
 						break;
 					chfg = fg;
 					chbg = bg;
+					selected = in_sel(i);
 					if (emph_at(i, ls, le, style))
 						chfg = intense_fg();
-					if (in_sel(i))
+					if (selected)
 					{
 						chfg = WP_SEL_FG;
 						chbg = WP_SEL_BG;
@@ -4076,7 +4077,7 @@ static void draw_body(void)
 					{
 						if (scale > 1)
 						{
-							if (on_cur)
+							if (on_cur || selected)
 								wp_fill_px(x_px, screen_row * 16,
 									   adv, vh * 16, chbg);
 							wp_glyph_px(x_px - left, screen_row * 16,

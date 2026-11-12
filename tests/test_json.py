@@ -36,7 +36,6 @@ def test_help_json(console):
     assert out != "?SYNTAX ERROR"
     assert "JSON$(json$" in out.replace(" ", "") or "path$" in out
     assert "main.temp" in out
-    assert "WEB TCP" not in out
     assert "JSON_PARSE" in out
     fns = dump_topic(console, "FUNCTIONS")
     assert "JSON$" in fns
@@ -154,7 +153,6 @@ def test_help_json_parse_stringify(console):
     assert p != "?SYNTAX ERROR"
     assert "JSON_PARSE" in p
     assert "unchanged" in p.lower() or "null" in p.lower()
-    assert "WEB TCP" not in p
     s = dump_topic(console, "JSON_STRINGIFY$")
     assert s != "?SYNTAX ERROR"
     assert "JSON_STRINGIFY$" in s
@@ -167,7 +165,6 @@ def test_help_json_parse_stringify(console):
     assert out != "?SYNTAX ERROR"
     assert "JSON$(json$" in out.replace(" ", "") or "path$" in out
     assert "main.temp" in out
-    assert "WEB TCP" not in out
     fns = dump_topic(console, "FUNCTIONS")
     assert "JSON$" in fns
     alias = dump_topic(console, "JSON")

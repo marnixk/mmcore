@@ -41,6 +41,7 @@ enum {
 	TC_EQ,
 	TC_NE,
 	TC_JZ,
+	TC_IFBLOCK, /* block IF: pop condition, push IF_BODY/IF_SEARCH */
 	TC_GOTO,    /* target is e->branch_pc */
 	TC_GOSUB,   /* target is e->branch_pc, pushes the caller frame */
 	TC_END
@@ -558,12 +559,8 @@ static int tc_compile_expr(tc_ent *e);
  * array and mmb_find_var() would fault with "?NOT AN ARRAY". */
 static int tc_is_user_func(const char *name)
 {
-	int i;
-	for (i = 0; i < G.nsubs; i++)
-		if (G.subs[i].used && G.subs[i].is_func &&
-		    mmb_keyword_eq(G.subs[i].name, name))
-			return 1;
-	return 0;
+	/* The SUB name index makes this O(1) at compile time (#1418). */
+	return mmb_sub_is_func(name);
 }
 
 /* Non-throwing variable lookup for the trace-cache compiler. mmb_find_var()
@@ -1020,12 +1017,15 @@ static int tc_compile_if(tc_ent *e)
 	int pc;
 	if (!tc_compile_expr(e))
 		return 0;
-	if (!tc_emit(e, TC_JZ))
-		return 0;
 	if (!mmb_match("THEN"))
 		return 0;
 	mmb_skip_sp();
+	/* A THEN at end of line opens a multi-line block IF. Evaluate its
+	 * condition here and push the same IF_BODY/IF_SEARCH frame the
+	 * interpreter would have pushed (#1419). */
 	if (tc_at_stmt_end())
+		return tc_emit(e, TC_IFBLOCK);
+	if (!tc_emit(e, TC_JZ))
 		return 0;
 	if (mmb_match("GOTO"))
 	{
@@ -1101,7 +1101,10 @@ static int tc_entry_valid(const tc_ent *e)
 	return 1;
 }
 
-static int tc_replay(tc_ent *e)
+/* Replay an entry. When `out` is set, the values left on the stack are
+ * copied out (an expression list compiled by mmb_tcache_try_args, or a single
+ * bare IF/ELSEIF condition); `*nvals` receives how many. */
+static int tc_replay_out(tc_ent *e, mmb_val *out, int maxout, int *nvals)
 {
 	mmb_val stk[TC_STK];
 	int sp = 0;
@@ -1120,6 +1123,13 @@ static int tc_replay(tc_ent *e)
 			if (mmb_as_int(stk[--sp]) == 0)
 				break;
 			continue;
+		}
+		if (op == TC_IFBLOCK)
+		{
+			if (sp < 1)
+				return 0;
+			mmb_if_push_block(mmb_as_int(stk[--sp]) != 0);
+			break;
 		}
 		if (op == TC_GOTO)
 		{
@@ -1295,10 +1305,122 @@ static int tc_replay(tc_ent *e)
 		return 0;
 	}
 	G.p = e->endp;
+	if (out)
+	{
+		int k;
+		if (sp > maxout)
+			return 0;
+		for (k = 0; k < sp; k++)
+			out[k] = stk[k];
+		if (nvals)
+			*nvals = sp;
+	}
 	return 1;
 }
 
-static int tc_try(int is_if)
+static int tc_replay(tc_ent *e)
+{
+	return tc_replay_out(e, 0, 0, 0);
+}
+
+/* Single-value replay for a bare condition (mmb_tcache_try_cond). */
+static int tc_replay_value(tc_ent *e, mmb_val *out)
+{
+	int n = 0;
+	if (!tc_replay_out(e, out, 1, &n))
+		return 0;
+	return n == 1;
+}
+
+/* Compile a comma-separated numeric expression list up to maxn values. */
+static int tc_compile_arglist(tc_ent *e, int maxn, int *n_out)
+{
+	int n = 0;
+	for (;;)
+	{
+		if (n >= maxn)
+			return 0;
+		if (!tc_compile_expr(e))
+			return 0;
+		n++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	if (!tc_at_stmt_end())
+		return 0;
+	*n_out = n;
+	return n > 0;
+}
+
+/* Compile a SUB/FUNCTION call argument list: the parenthesised form
+ * ``(expr, ...)`` (endp just after ')') or the bare statement form
+ * ``expr, ...`` (endp at end of statement). A zero-argument call is valid in
+ * both forms. */
+static int tc_compile_call_args(tc_ent *e, int maxn, int *n_out)
+{
+	int n = 0;
+	mmb_skip_sp();
+	if (*G.p == '(')
+	{
+		G.p++;
+		mmb_skip_sp();
+		if (*G.p == ')')
+		{
+			G.p++;
+			*n_out = 0;
+			return 1;
+		}
+		for (;;)
+		{
+			if (n >= maxn || !tc_compile_expr(e))
+				return 0;
+			n++;
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				continue;
+			}
+			break;
+		}
+		if (*G.p != ')')
+			return 0;
+		G.p++;
+		*n_out = n;
+		return 1;
+	}
+	if (tc_at_stmt_end())
+	{
+		*n_out = 0;
+		return 1;
+	}
+	for (;;)
+	{
+		if (n >= maxn || !tc_compile_expr(e))
+			return 0;
+		n++;
+		mmb_skip_sp();
+		if (*G.p == ',')
+		{
+			G.p++;
+			continue;
+		}
+		break;
+	}
+	if (!tc_at_stmt_end())
+		return 0;
+	*n_out = n;
+	return 1;
+}
+
+/* Shared cache machinery for argument lists (call mode 1) and graphics
+ * statements (mode 0). */
+static int tc_try_args_mode(int call_mode, mmb_val *out, int maxn, int *nvals)
 {
 	const char *key;
 	const char *save;
@@ -1319,7 +1441,85 @@ static int tc_try(int is_if)
 			e->ref = 1;
 			if (G.opt.profiling)
 				G.prof.tcache_hit++;
-			return tc_replay(e);
+			return tc_replay_out(e, out, maxn, nvals);
+		}
+		tc_remove(e);
+	}
+	neg = tcneg_find(key);
+	if (neg && neg->fail_gen == G.var_gen)
+		return 0;
+	save = G.p;
+	memset(&tmp, 0, sizeof(tmp));
+	tmp.key = key;
+	tc_compiling = 1;
+	{
+		int cn = 0;
+		if (call_mode)
+			ok = tc_compile_call_args(&tmp, maxn, &cn);
+		else
+			ok = tc_compile_arglist(&tmp, maxn, &cn);
+	}
+	tc_compiling = 0;
+	if (!ok)
+	{
+		G.p = save;
+		tcneg_add(key, G.var_gen);
+		if (G.opt.profiling)
+			G.prof.tcache_bad++;
+		return 0;
+	}
+	tmp.endp = G.p;
+	tmp.state = 1;
+	tmp.ref = 1;
+	e = tc_insert(key);
+	if (e)
+		*e = tmp;
+	else
+		e = &tmp;
+	G.p = save;
+	if (G.opt.profiling)
+		G.prof.tcache_comp++;
+	return tc_replay_out(e, out, maxn, nvals);
+}
+
+/* Cache an integer graphics argument list (BLIT/SPRITE). The caller falls
+ * back to its normal parser on 0; every non-integer shape the expression
+ * compiler cannot prove safe (strings, user functions, FRAMEBUFFER, ...)
+ * declines here (#1421). */
+int mmb_tcache_try_args(mmb_val *out, int maxn, int *nvals)
+{
+	return tc_try_args_mode(0, out, maxn, nvals);
+}
+
+/* Cache a user SUB/FUNCTION argument list at its call site (#1420). */
+int mmb_tcache_try_call_args(mmb_val *out, int maxn, int *nvals)
+{
+	return tc_try_args_mode(1, out, maxn, nvals);
+}
+
+static int tc_try(int kind, mmb_val *out)
+
+{
+	const char *key;
+	const char *save;
+	tc_ent *e;
+	tc_ent tmp;
+	tc_neg *neg;
+	int ok;
+
+	if (!G.running || !G.opt.tracecache || tc_compiling)
+		return 0;
+	tc_ensure();
+	key = G.p;
+	e = tc_lookup(key);
+	if (e)
+	{
+		if (e->state > 0 && tc_entry_valid(e))
+		{
+			e->ref = 1;
+			if (G.opt.profiling)
+				G.prof.tcache_hit++;
+			return kind == 2 ? tc_replay_value(e, out) : tc_replay(e);
 		}
 		/* Stale binding: drop the entry so the recompile below cannot be
 		 * shadowed by a pointer that was freed and reused (#1368). */
@@ -1335,8 +1535,10 @@ static int tc_try(int is_if)
 	memset(&tmp, 0, sizeof(tmp));
 	tmp.key = key;
 	tc_compiling = 1;
-	if (is_if)
+	if (kind == 1)
 		ok = tc_compile_if(&tmp) && tc_emit(&tmp, TC_END);
+	else if (kind == 2)
+		ok = tc_compile_expr(&tmp) && tc_emit(&tmp, TC_END);
 	else
 		ok = tc_compile_let_from_lhs(&tmp) && tc_emit(&tmp, TC_END);
 	tc_compiling = 0;
@@ -1359,15 +1561,20 @@ static int tc_try(int is_if)
 	G.p = save;
 	if (G.opt.profiling)
 		G.prof.tcache_comp++;
-	return tc_replay(e);
+	return kind == 2 ? tc_replay_value(e, out) : tc_replay(e);
 }
 
 int mmb_tcache_try_let(void)
 {
-	return tc_try(0);
+	return tc_try(0, 0);
 }
 
 int mmb_tcache_try_if(void)
 {
-	return tc_try(1);
+	return tc_try(1, 0);
+}
+
+int mmb_tcache_try_cond(mmb_val *out)
+{
+	return tc_try(2, out);
 }

@@ -777,7 +777,7 @@ def _term_download_dialog(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 
@@ -1180,7 +1180,7 @@ def _open_term_download(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 
@@ -1437,6 +1437,20 @@ def _term_page_up(con, quiet=0.7, timeout=8.0) -> str:
     return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
 
 
+def _enable_scroll_buffer(con) -> None:
+    """#1481: PageUp pages local history only when Scroll buffer is checked."""
+    con._ser.sendall(b"\x1b[21~")
+    menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+    assert "Scrollback" in menu, menu
+    if "Scrollback [x]" not in menu:
+        con._ser.sendall(b"s")
+        toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Scrollback [x]" in toggled, toggled
+    con._ser.sendall(b"\x1b")
+    time.sleep(0.15)
+    con.drain(quiet=0.3, timeout=4)
+
+
 def test_switch_keeps_per_console_term_scrollback(kernel_image):
     """#767: TERM's scrollback ring is per-console. Opening TERM on a second
     console must not wipe the first console's history, and each console pages
@@ -1447,6 +1461,7 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
         # Console 1: fill the ring, then page back into it.
         seen = _open_term_demoburst(con)
         assert "line 40" in seen, seen
+        _enable_scroll_buffer(con)
         con.drain(quiet=0.3, timeout=3.0)
         up = _term_page_up(con)
         assert "SCROLL -" in up, up
@@ -1457,6 +1472,7 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
         con.drain(quiet=0.3, timeout=2.0)
         seen2 = _open_term_demoburst(con)
         assert "line 40" in seen2, seen2
+        _enable_scroll_buffer(con)
         con.drain(quiet=0.3, timeout=3.0)
         up2 = _term_page_up(con)
         assert "SCROLL -" in up2, up2
@@ -1551,3 +1567,73 @@ def test_s3m_keeps_mixing_while_term_repaints(kernel_image):
     finally:
         con.stop()
 
+
+
+@pytest.mark.skipif(shutil.which("mkfs.vfat") is None, reason="mkfs.vfat not installed")
+def test_juke_background_track_change_does_not_paint_focused_page0(kernel_image):
+    """#1427: a JUKE queue that advances while its console is backgrounded
+    must not draw its UI over the focused console's PAGE 0.
+
+    The tracks live on a physical (SD) volume so the background track change
+    reads through storage_yield(). That yield calls mmb_poll() from inside
+    the background callback (where g_console is temporarily the JUKE owner)
+    and used to repaint JUKE over the visible console.
+    """
+    fd, img = tempfile.mkstemp(suffix=".img")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["dd", "if=/dev/zero", f"of={img}", "bs=1M", "count=64"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["mkfs.vfat", "-F", "32", "-n", "MMBJUKE", img],
+            check=True, capture_output=True,
+        )
+        os.sync()
+        con = MMBasicConsole(
+            kernel_image,
+            extra_qemu=[
+                "-device", "usb-kbd",
+                "-drive", f"file={img},if=sd,format=raw",
+            ],
+            boot_timeout=30,
+        )
+        con.start()
+        try:
+            con.drain(quiet=0.3, timeout=2.0)
+            assert con.send_line('CHDIR "C:/"') == ""
+            assert con.send_line('MKDIR "JB"') == ""
+            assert con.send_line('COPY "A:/tests/BIG.MP3" TO "C:/JB/A.MP3"') == ""
+            assert con.send_line('COPY "A:/tests/BIG.MP3" TO "C:/JB/B.MP3"') == ""
+            con._ser.sendall(b'JUKE "C:/JB"\r')
+            time.sleep(1.0)
+            con.drain(quiet=0.5)
+
+            # Console 2 stays focused and shows a solid blue PAGE 0. The
+            # program keeps polling (PAUSE), so the off-screen queue advances;
+            # each track change loads the next MP3 from the SD volume.
+            _switch(con, 2)
+            con.drain(quiet=0.3, timeout=2.0)
+            assert con.send_line("10 MODE 12,16: CLS RGB(0,0,255)") == ""
+            assert con.send_line("20 DO: PAUSE 50: LOOP") == ""
+            con._ser.sendall(b"RUN\r")
+            time.sleep(1.0)
+            con.drain(quiet=0.3, timeout=2.0)
+
+            # Two BIG.MP3 copies wrap, so a track change lands inside this
+            # window even if the first one had already ended before the switch.
+            time.sleep(14.0)
+
+            w, h = con.screen_size()
+            pts = [(x, y) for y in range(20, h - 20, 60)
+                   for x in range(20, w - 20, 80)]
+            off_blue = [
+                rgb for rgb in con.screen_pixels(pts)
+                if not (rgb[2] > 150 and rgb[0] < 90 and rgb[1] < 90)
+            ]
+            assert not off_blue, f"{len(off_blue)} non-blue pixels: {off_blue[:8]}"
+        finally:
+            con.stop()
+    finally:
+        os.unlink(img)

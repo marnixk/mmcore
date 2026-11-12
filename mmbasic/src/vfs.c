@@ -916,6 +916,7 @@ void mmb_vfs_rbuf_free(mmb_vfs_rbuf *r)
 	r->cap = 0;
 	r->len = 0;
 	r->start = 0;
+	r->gen = mmb_storage_generation();
 }
 
 /* Read `n` bytes at `pos` through the read-ahead cache. The caller owns the
@@ -932,6 +933,15 @@ int mmb_vfs_rbuf_read(mmb_vfs_rbuf *r, const char *path, unsigned pos,
 		*got = 0;
 	if (!r || n == 0)
 		return mmb_vfs_read_at(path, pos, data, n, got);
+	/* A suspend/resume remount invalidates anything fetched before it: the
+	 * file may now live on a different device/inode, so refetch instead of
+	 * serving pre-suspend bytes to a file left open across the sleep. */
+	if (r->gen != mmb_storage_generation())
+	{
+		r->len = 0;
+		r->start = 0;
+		r->gen = mmb_storage_generation();
+	}
 	if (n >= MMB_VFS_RBUF)
 	{
 		/* A large read already goes to the backend in one call, so cache it

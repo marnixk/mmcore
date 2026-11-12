@@ -310,6 +310,28 @@ static void json_fill_struct(unsigned char *rec, int sid, const cJSON *obj)
 	}
 }
 
+/* Shared TYPE/JSON mapping used by JSON_PARSE and WEB(... AS Type). The record
+ * must already be zeroed and sized G.sdef[sid].total. */
+int mmb_json_parse_struct(int sid, const char *js, unsigned char *rec)
+{
+	cJSON *root;
+
+	if (!rec || sid < 0 || sid >= G.nstruct)
+		return -1;
+	json_hooks();
+	root = cJSON_Parse(js ? js : "");
+	if (!root)
+		return -1;
+	if (!cJSON_IsObject(root))
+	{
+		cJSON_Delete(root);
+		return -2;
+	}
+	json_fill_struct(rec, sid, root);
+	cJSON_Delete(root);
+	return 0;
+}
+
 void mmb_cmd_json_parse(void)
 {
 	mmb_val js;

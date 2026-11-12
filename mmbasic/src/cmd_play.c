@@ -84,6 +84,34 @@ static unsigned s_audio_resets;
 static short s_pending[MIX_CHUNK * 2];
 static unsigned s_pending_n;
 
+/* ---- Additive WAV sound effects (#1474) ------------------------------- *
+ * Effects are a small fixed pool of voices mixed on top of whatever the main
+ * engine is producing (MP3/MOD/XM/S3M/WAV/TONE) inside emit_pcm(), so starting
+ * or ending one never stops, restarts or rewinds the music. When no music is
+ * playing the same voices are pumped on their own as a stream of silence plus
+ * effects. Each voice owns a decoded copy of its WAV data and frees it when it
+ * finishes, is stopped, or is stolen by a newer trigger. */
+#define MMB_SFX_VOICES 4
+typedef struct mmb_sfx_voice {
+	unsigned char *data;
+	unsigned n;   /* bytes of PCM payload */
+	unsigned pos; /* next mixer frame to render from this voice */
+	int ch, bits, rate;
+	int vol;      /* 0..100 per-trigger gain */
+	int owner;    /* console that triggered it, -1 = none */
+	unsigned seq; /* start order; lowest is stolen first */
+	int active;
+} mmb_sfx_voice;
+
+static mmb_sfx_voice s_sfx[MMB_SFX_VOICES];
+static unsigned s_sfx_seq;
+static int s_sfx_vol = 100; /* PLAY SFX VOLUME default */
+/* Standalone pump flag: set while effects are being paced on their own
+ * because no music engine is running. The music path reuses
+ * s_mix_origin/g_audio.samples_decoded for its clock. */
+static int s_sfx_pump;
+static unsigned s_sfx_origin, s_sfx_decoded;
+
 /* ---- MP3 streaming (#1150) -------------------------------------------- *
  * The MP3 path used to allocate a buffer the size of the whole file and hand
  * it to drmp3_init_memory(). A long track could not start until the entire
@@ -357,6 +385,16 @@ static void apply_vol(short *pcm, unsigned nframes)
 	}
 }
 
+/* Frames are attributed to the music position while a track drives the
+ * mixer, or to the standalone effect clock while effects play alone. */
+static void audio_count(unsigned n)
+{
+	if (s_sfx_pump)
+		s_sfx_decoded += n;
+	else
+		g_audio.samples_decoded += n;
+}
+
 static int flush_pending(void)
 {
 	int w;
@@ -365,7 +403,7 @@ static int flush_pending(void)
 		return 1;
 	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
 	{
-		g_audio.samples_decoded += s_pending_n;
+		audio_count(s_pending_n);
 		s_pending_n = 0;
 		return 1;
 	}
@@ -374,7 +412,7 @@ static int flush_pending(void)
 		w = 0;
 	if ((unsigned)w >= s_pending_n)
 	{
-		g_audio.samples_decoded += s_pending_n;
+		audio_count(s_pending_n);
 		s_pending_n = 0;
 		return 1;
 	}
@@ -384,9 +422,110 @@ static int flush_pending(void)
 		memmove(s_pending, s_pending + (unsigned)w * 2,
 			left * 2 * sizeof(short));
 		s_pending_n = left;
-		g_audio.samples_decoded += (unsigned)w;
+		audio_count((unsigned)w);
 	}
 	return 0;
+}
+
+static int sat_add(int a, int b)
+{
+	int v = a + b;
+	if (v > 32767)
+		v = 32767;
+	if (v < -32768)
+		v = -32768;
+	return v;
+}
+
+static int sfx_active_count(void)
+{
+	int i, n = 0;
+
+	for (i = 0; i < MMB_SFX_VOICES; i++)
+		if (s_sfx[i].active)
+			n++;
+	return n;
+}
+
+static void sfx_release(mmb_sfx_voice *v)
+{
+	if (v->data && G.plat && G.plat->free)
+		G.plat->free(v->data);
+	v->data = 0;
+	v->n = v->pos = 0;
+	v->ch = v->bits = v->rate = 0;
+	v->vol = 0;
+	v->owner = -1;
+	v->active = 0;
+}
+
+/* Add every active effect into a music buffer (or a silent buffer when no
+ * music engine is running). The music was already scaled by g_audio volume,
+ * so each voice is scaled by its own gain and summed with saturation: the
+ * sum can never wrap around and flip sign. */
+static void mix_sfx_into(short *pcm, unsigned nframes)
+{
+	int v;
+
+	for (v = 0; v < MMB_SFX_VOICES; v++)
+	{
+		mmb_sfx_voice *s = &s_sfx[v];
+		unsigned i, bytes, rate, pos;
+		int ch, gain;
+
+		if (!s->active || !s->data)
+			continue;
+		ch = s->ch < 1 ? 1 : s->ch;
+		bytes = (unsigned)(s->bits / 8) * (unsigned)ch;
+		rate = s->rate > 0 ? (unsigned)s->rate : MIX_RATE;
+		if (!bytes)
+		{
+			sfx_release(s);
+			continue;
+		}
+		gain = s->vol;
+		if (gain < 0)
+			gain = 0;
+		if (gain > 100)
+			gain = 100;
+		pos = s->pos;
+		for (i = 0; i < nframes; i++)
+		{
+			unsigned src = (unsigned)((unsigned long)pos *
+						  (unsigned long)rate / MIX_RATE);
+			unsigned off = src * bytes;
+			int l, r;
+
+			if (off + bytes > s->n)
+			{
+				sfx_release(s);
+				break;
+			}
+			if (s->bits == 16)
+			{
+				l = (short)(s->data[off] | (s->data[off + 1] << 8));
+				if (ch > 1)
+					r = (short)(s->data[off + 2] |
+						    (s->data[off + 3] << 8));
+				else
+					r = l;
+			}
+			else
+			{
+				l = ((int)s->data[off] - 128) << 8;
+				r = ch > 1 ?
+					    (((int)s->data[off + 1] - 128) << 8) :
+					    l;
+			}
+			l = l * gain / 100;
+			r = r * gain / 100;
+			pcm[i * 2] = (short)sat_add(pcm[i * 2], l);
+			pcm[i * 2 + 1] = (short)sat_add(pcm[i * 2 + 1], r);
+			pos++;
+		}
+		if (s->active)
+			s->pos = pos;
+	}
 }
 
 static unsigned emit_pcm(short *pcm, unsigned nframes)
@@ -397,9 +536,10 @@ static unsigned emit_pcm(short *pcm, unsigned nframes)
 		return 0;
 	viz_tap(pcm, nframes);
 	apply_vol(pcm, nframes);
+	mix_sfx_into(pcm, nframes);
 	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
 	{
-		g_audio.samples_decoded += nframes;
+		audio_count(nframes);
 		return nframes;
 	}
 	w = G.plat->audio_write(pcm, nframes);
@@ -413,7 +553,36 @@ static unsigned emit_pcm(short *pcm, unsigned nframes)
 		memcpy(s_pending, pcm + (unsigned)w * 2, left * 2 * sizeof(short));
 		s_pending_n = left;
 	}
-	g_audio.samples_decoded += (unsigned)w;
+	audio_count((unsigned)w);
+	return (unsigned)w;
+}
+
+/* Effects-only output when no music engine is running: the buffer starts as
+ * silence, so no music volume is applied and only the voice gains matter. */
+static unsigned emit_sfx_only(short *pcm, unsigned nframes)
+{
+	int w;
+
+	if (!nframes)
+		return 0;
+	mix_sfx_into(pcm, nframes);
+	if (!G.opt.audio_on || !G.plat || !G.plat->audio_write)
+	{
+		audio_count(nframes);
+		return nframes;
+	}
+	w = G.plat->audio_write(pcm, nframes);
+	if (w < 0)
+		w = 0;
+	if ((unsigned)w < nframes)
+	{
+		unsigned left = nframes - (unsigned)w;
+		if (left > MIX_CHUNK)
+			left = MIX_CHUNK;
+		memcpy(s_pending, pcm + (unsigned)w * 2, left * 2 * sizeof(short));
+		s_pending_n = left;
+	}
+	audio_count((unsigned)w);
 	return (unsigned)w;
 }
 
@@ -473,7 +642,7 @@ static void play_teardown(void)
 	s_pending_n = 0;
 }
 
-void mmb_play_stop(void)
+static void play_stop_engine(void)
 {
 	s_ended_natural = 0;
 	if (G.plat && G.plat->audio_flush)
@@ -481,10 +650,19 @@ void mmb_play_stop(void)
 	play_teardown();
 }
 
+/* Explicit stop: silence the shared engine for every console. */
+void mmb_play_stop(void)
+{
+	mmb_sfx_stop_all();
+	play_stop_engine();
+}
+
+/* Program-exit teardown: only this console's music and effects (#805). */
 void mmb_play_stop_owned(void)
 {
+	mmb_sfx_stop_owned();
 	if (g_audio.owner == g_console)
-		mmb_play_stop();
+		play_stop_engine();
 }
 
 /* #1024: recover a backend left dirty by USB contention or a ring underrun.
@@ -530,6 +708,170 @@ static int load_bytes(const char *path, unsigned char **out, unsigned *n)
 	}
 	*n = got;
 	return 0;
+}
+
+/* Decode a PCM WAV file into a heap buffer. *out->data is allocated with the
+ * platform allocator and the caller owns it. Shared by the primary PLAY WAV
+ * engine and the effect voices. */
+typedef struct wav_pcm {
+	unsigned char *data;
+	unsigned n;
+	int ch, bits, rate;
+} wav_pcm;
+
+static int wav_load(const char *path, wav_pcm *out)
+{
+	unsigned n = 0, pos, data_off = 0, data_sz = 0;
+	unsigned char *buf = 0;
+	int ch = 1, bits = 16, rate = MIX_RATE, fmt = 1;
+
+	if (!out)
+		return -1;
+	out->data = 0;
+	out->n = 0;
+	out->ch = out->bits = out->rate = 0;
+	if (load_bytes(path, &buf, &n) != 0)
+		return -1;
+	if (n < 44 || memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	pos = 12;
+	while (pos + 8 <= n)
+	{
+		unsigned sz = (unsigned)buf[pos + 4] | ((unsigned)buf[pos + 5] << 8) |
+			      ((unsigned)buf[pos + 6] << 16) | ((unsigned)buf[pos + 7] << 24);
+		if (memcmp(buf + pos, "fmt ", 4) == 0 && pos + 8 + sz <= n && sz >= 16)
+		{
+			fmt = buf[pos + 8] | (buf[pos + 9] << 8);
+			ch = buf[pos + 10] | (buf[pos + 11] << 8);
+			rate = (int)((unsigned)buf[pos + 12] | ((unsigned)buf[pos + 13] << 8) |
+				     ((unsigned)buf[pos + 14] << 16) | ((unsigned)buf[pos + 15] << 24));
+			bits = buf[pos + 22] | (buf[pos + 23] << 8);
+		}
+		else if (memcmp(buf + pos, "data", 4) == 0)
+		{
+			data_off = pos + 8;
+			data_sz = sz;
+			if (data_off + data_sz > n)
+				data_sz = n - data_off;
+			break;
+		}
+		pos += 8 + ((sz + 1) & ~1u);
+	}
+	if (fmt != 1 || !data_sz || (bits != 8 && bits != 16))
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	out->data = G.plat->alloc(data_sz);
+	if (!out->data)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	memcpy(out->data, buf + data_off, data_sz);
+	G.plat->free(buf);
+	out->n = data_sz;
+	out->ch = ch;
+	out->bits = bits;
+	out->rate = rate > 0 ? rate : MIX_RATE;
+	return 0;
+}
+
+void mmb_sfx_stop_all(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_SFX_VOICES; i++)
+		sfx_release(&s_sfx[i]);
+	s_sfx_pump = 0;
+}
+
+void mmb_sfx_stop_owned(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_SFX_VOICES; i++)
+		if (s_sfx[i].active && s_sfx[i].owner == g_console)
+			sfx_release(&s_sfx[i]);
+	if (!sfx_active_count())
+		s_sfx_pump = 0;
+}
+
+int mmb_sfx_active(void)
+{
+	return sfx_active_count();
+}
+
+void mmb_sfx_set_volume(int volume)
+{
+	if (volume < 0)
+		volume = 0;
+	if (volume > 100)
+		volume = 100;
+	s_sfx_vol = volume;
+}
+
+int mmb_sfx_volume(void)
+{
+	return s_sfx_vol;
+}
+
+int mmb_sfx_play(const char *path, int volume)
+{
+	wav_pcm w;
+	mmb_sfx_voice *v = 0;
+	int i;
+
+	if (!path || !path[0])
+		return -1;
+	if (wav_load(path, &w) != 0)
+		return -1;
+	for (i = 0; i < MMB_SFX_VOICES; i++)
+		if (!s_sfx[i].active)
+		{
+			v = &s_sfx[i];
+			break;
+		}
+	if (!v)
+	{
+		/* All voices busy: replace the oldest trigger (smallest seq). */
+		v = &s_sfx[0];
+		for (i = 1; i < MMB_SFX_VOICES; i++)
+			if (s_sfx[i].seq < v->seq)
+				v = &s_sfx[i];
+		sfx_release(v);
+	}
+	v->data = w.data;
+	v->n = w.n;
+	v->pos = 0;
+	v->ch = w.ch;
+	v->bits = w.bits;
+	v->rate = w.rate;
+	v->vol = volume < 0 ? s_sfx_vol : volume;
+	if (v->vol < 0)
+		v->vol = 0;
+	if (v->vol > 100)
+		v->vol = 100;
+	v->owner = g_console;
+	s_sfx_seq++;
+	if (!s_sfx_seq)
+		s_sfx_seq = 1;
+	v->seq = s_sfx_seq;
+	v->active = 1;
+	/* If music is playing this just adds the new voice to the next mix;
+	 * with no music the standalone pump rebases its clock and starts. */
+	if (!g_audio.playing)
+		s_sfx_pump = 0;
+	mmb_play_mix();
+	return 0;
+}
+
+unsigned mmb_audio_position(void)
+{
+	return g_audio.samples_decoded;
 }
 
 static void play_begin(int kind, const char *path)
@@ -663,64 +1005,22 @@ int mmb_play_s3m(const char *path)
 
 int mmb_play_wav(const char *path)
 {
-	unsigned n = 0, pos, data_off = 0, data_sz = 0;
-	unsigned char *buf = 0;
-	int ch = 1, bits = 16, rate = MIX_RATE, fmt = 1;
+	wav_pcm w;
 
 	mmb_play_stop();
-	if (load_bytes(path, &buf, &n) != 0)
+	if (wav_load(path, &w) != 0)
 		return -1;
-	if (n < 44 || memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0)
-	{
-		G.plat->free(buf);
-		return -1;
-	}
-	pos = 12;
-	while (pos + 8 <= n)
-	{
-		unsigned sz = (unsigned)buf[pos + 4] | ((unsigned)buf[pos + 5] << 8) |
-			      ((unsigned)buf[pos + 6] << 16) | ((unsigned)buf[pos + 7] << 24);
-		if (memcmp(buf + pos, "fmt ", 4) == 0 && pos + 8 + sz <= n && sz >= 16)
-		{
-			fmt = buf[pos + 8] | (buf[pos + 9] << 8);
-			ch = buf[pos + 10] | (buf[pos + 11] << 8);
-			rate = (int)((unsigned)buf[pos + 12] | ((unsigned)buf[pos + 13] << 8) |
-				     ((unsigned)buf[pos + 14] << 16) | ((unsigned)buf[pos + 15] << 24));
-			bits = buf[pos + 22] | (buf[pos + 23] << 8);
-		}
-		else if (memcmp(buf + pos, "data", 4) == 0)
-		{
-			data_off = pos + 8;
-			data_sz = sz;
-			if (data_off + data_sz > n)
-				data_sz = n - data_off;
-			break;
-		}
-		pos += 8 + ((sz + 1) & ~1u);
-	}
-	if (fmt != 1 || !data_sz || (bits != 8 && bits != 16))
-	{
-		G.plat->free(buf);
-		return -1;
-	}
-	s_wav = G.plat->alloc(data_sz);
-	if (!s_wav)
-	{
-		G.plat->free(buf);
-		return -1;
-	}
-	memcpy(s_wav, buf + data_off, data_sz);
-	G.plat->free(buf);
-	s_wav_n = data_sz;
+	s_wav = w.data;
+	s_wav_n = w.n;
 	s_wav_off = 0;
-	s_wav_ch = ch;
-	s_wav_bits = bits;
-	s_wav_rate = rate > 0 ? rate : MIX_RATE;
+	s_wav_ch = w.ch;
+	s_wav_bits = w.bits;
+	s_wav_rate = w.rate;
 	play_begin(5, path);
 	return 0;
 }
 
-static unsigned due_frames(void)
+static unsigned due_frames_for(unsigned origin, unsigned decoded)
 {
 	unsigned free_n = ~0u;
 
@@ -746,18 +1046,28 @@ static unsigned due_frames(void)
 	}
 
 	{
-		unsigned elapsed = mmb_now_ms() - s_mix_origin;
+		unsigned elapsed = mmb_now_ms() - origin;
 		unsigned due = MIX_PREROLL +
 			(unsigned)((unsigned long)elapsed * MIX_RATE / 1000u);
-		if (due < g_audio.samples_decoded)
+		if (due < decoded)
 			return 0;
-		due -= g_audio.samples_decoded;
+		due -= decoded;
 		if (due > MIX_CHUNK)
 			due = MIX_CHUNK;
 		if (free_n < due)
 			due = free_n;
 		return due;
 	}
+}
+
+static unsigned due_frames(void)
+{
+	return due_frames_for(s_mix_origin, g_audio.samples_decoded);
+}
+
+static unsigned sfx_due_frames(void)
+{
+	return due_frames_for(s_sfx_origin, s_sfx_decoded);
 }
 
 static void mp3_resample_reset(void)
@@ -1045,18 +1355,64 @@ void mmb_play_mix(void)
 	unsigned gap;
 	int keep = 1;
 	int loops;
+	int music;
 	static int busy;
 
 	if (busy)
 		return;
-	if (!g_audio.playing)
-		return;
-	now = mmb_now_ms();
-	if (g_audio.paused)
+	music = g_audio.playing && !g_audio.paused;
+	if (!music && !mmb_sfx_active())
 	{
+		s_sfx_pump = 0;
+		return;
+	}
+	now = mmb_now_ms();
+	if (g_audio.playing && g_audio.paused)
+	{
+		/* PLAY PAUSE holds the whole output, effects included. */
 		s_mix_at = now;
 		return;
 	}
+	busy = 1;
+	if (!music)
+	{
+		/* No music engine: pace a stream of silence plus any live effects
+		 * on its own clock, so an effect plays even when only it is active. */
+		short pcm[MIX_CHUNK * 2];
+
+		if (!s_sfx_pump)
+		{
+			s_sfx_pump = 1;
+			s_sfx_origin = now;
+			s_sfx_decoded = 0;
+		}
+		if (!flush_pending())
+		{
+			busy = 0;
+			return;
+		}
+		for (loops = 0; loops < MIX_FILL_MAX; loops++)
+		{
+			n = sfx_due_frames();
+			if (n == 0)
+				break;
+			memset(pcm, 0, n * 2 * sizeof(short));
+			emit_sfx_only(pcm, n);
+			if (!mmb_sfx_active())
+				break;
+			if (s_pending_n)
+				break;
+		}
+		if (!mmb_sfx_active())
+		{
+			if (G.plat && G.plat->audio_kick)
+				G.plat->audio_kick();
+			s_sfx_pump = 0;
+		}
+		busy = 0;
+		return;
+	}
+	s_sfx_pump = 0;
 	if (s_mix_at != 0)
 	{
 		gap = now - s_mix_at;
@@ -1068,7 +1424,6 @@ void mmb_play_mix(void)
 			s_underruns++;
 	}
 	s_mix_at = now;
-	busy = 1;
 	if (!flush_pending())
 	{
 		busy = 0;
@@ -1569,6 +1924,39 @@ void mmb_cmd_play(void)
 		if (mmb_play_s3m(v.s) != 0)
 			mmb_error("?S3M");
 		return;
+	}
+	if (mmb_match("SFX"))
+	{
+		/* PLAY SFX file$ [, volume] adds an effect on top of the music;
+		 * PLAY SFX VOLUME n sets the default effect gain (0..100);
+		 * PLAY SFX STOP silences effects only. */
+		if (mmb_match("VOLUME"))
+		{
+			int vol = (int)mmb_as_int(mmb_expr());
+			mmb_sfx_set_volume(vol);
+			return;
+		}
+		if (mmb_match("STOP"))
+		{
+			mmb_sfx_stop_all();
+			return;
+		}
+		{
+			mmb_val v = mmb_expr();
+			int vol = -1;
+
+			if (v.type != T_STR)
+				mmb_syntax();
+			mmb_skip_sp();
+			if (*G.p == ',')
+			{
+				G.p++;
+				vol = (int)mmb_as_int(mmb_expr());
+			}
+			/* A missing/unsupported clip is not fatal, matching PLAY WAV. */
+			(void)mmb_sfx_play(v.s, vol);
+			return;
+		}
 	}
 	if (mmb_match("WAV") || mmb_match("EFFECT") || mmb_match("SOUND"))
 	{

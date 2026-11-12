@@ -62,7 +62,7 @@ static const char *const kws[] = {
 	"UNTIL", "UNPACK", "UCASE$", "UP", "UPPER", "USBKEYBOARD",
 	"VAL", "VSYNC_WAIT", "WHILE", "WEND", "WORDPAD",
 	"WARP_H", "WARP_V", "WINDOW", "WRITE", "WIFI", "VERY", "XFER", "XOR",
-	"XOR_PIXELS", "Y_AXIS",
+	"XOR_PIXELS", "Y_AXIS", "WEB", "WEB$", "WEBSTATUS", "WEBHEADER$",
 	"FORMAT$", "CHOICE", "BOUND", "CINT", "EVAL", "KEYDOWN", "ASC",
 	"DEG", "RAD", "POS", "EXTRACT", "INSERT",
 	"LSET", "RSET", "LTRIM$", "RTRIM$", "TRIM$", "BASE$", "FIELD$",

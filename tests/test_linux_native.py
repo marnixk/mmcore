@@ -763,6 +763,44 @@ def test_posix_drive_label_and_eject(mmb_linux, tmp_path):
     assert "?DRIVE" in out.upper(), out
 
 
+def test_posix_hotplug_seen_during_pause(mmb_linux, tmp_path):
+    """#1417: drive hotplug is still noticed within ~1 s inside PAUSE.
+
+    The PAUSE spin only walks the host drives on a one-second gate; this
+    checks the notice still appears while a long PAUSE is running.
+    """
+    import time
+
+    root = tmp_path / "root"
+    root.mkdir()
+    env = dict(os.environ, MMB_DRIVE_ROOT=str(root))
+    p = subprocess.Popen(
+        [mmb_linux],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    try:
+        p.stdin.write("PAUSE 3000\n")
+        p.stdin.flush()
+        # Let boot finish and the PAUSE spin take its initial drive snapshot,
+        # then plug the drive in; the one-second gate must notice it.
+        time.sleep(0.8)
+        (root / "D").mkdir(parents=True, exist_ok=True)
+        time.sleep(1.5)
+        p.stdin.write("QUIT\n")
+        p.stdin.flush()
+        out = p.communicate(timeout=15)[0]
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert "D: USB mounted" in out, out
+
+
 def test_posix_hotplug_notice(mmb_linux, tmp_path):
     """#518/#523: a volume appearing/disappearing raises a notice."""
     import time
@@ -889,6 +927,37 @@ def test_ansi_console_colour(mmb_linux, tmp_path):
 def _pixel_at(data, w, x, y):
     i = (y * w + x) * 3
     return data[i], data[i + 1], data[i + 2]
+
+
+@pytest.mark.parametrize("bits", [8, 16])
+def test_print_paper_matches_cls_fill(mmb_linux, tmp_path, bits):
+    """#1462: PRINT cell paper must be byte-identical to the CLS fill.
+
+    Native text used to paint its paper from its own 16-colour ANSI palette
+    while CLS went through mmb_pix_store. The two agreed for 16-bit modes but
+    not 8-bit, where the RGB332 quantiser maps the CGA colours differently.
+    Every palette entry is checked on a fresh cleared screen.
+    """
+    for bg in range(16):
+        fg = 0 if bg == 15 else 15
+        program = (
+            f"MODE 8,{bits}\n"
+            f"COLOR {fg},{bg}\n"
+            "CLS\n"
+            'PRINT "MMMM"\n'
+        )
+        w, h, data = _run_sdl_dump(
+            mmb_linux, program, tmp_path, f"paper_{bits}_{bg}"
+        )
+        colors = set(zip(data[0::3], data[1::3], data[2::3]))
+        fill = _pixel_at(data, w, w - 20, h - 20)
+        fg_rgb = (0, 0, 0) if fg == 0 else (255, 255, 255)
+        assert colors <= {fill, fg_rgb}, (
+            bits,
+            bg,
+            sorted(colors - {fill, fg_rgb}),
+        )
+        assert fg_rgb in colors, (bits, bg, "text was not drawn")
 
 
 def _is_prompt_grey(rgb):
@@ -1667,7 +1736,7 @@ def test_macos_release_requires_notarization(tmp_path):
 
 
 def test_native_packaging_derives_icons_from_branding():
-    """#537: AppImage and .app icons derive from the shared branding art."""
+    """#537/#1463: AppImage and .app icons derive from the website favicon art."""
     gen = open(os.path.join(REPO, "scripts", "gen-appicon.py"), encoding="utf-8").read()
     mac = open(
         os.path.join(REPO, "scripts", "package-macos-app.sh"), encoding="utf-8"
@@ -1676,8 +1745,14 @@ def test_native_packaging_derives_icons_from_branding():
         os.path.join(REPO, "scripts", "package-linux-appimage.sh"), encoding="utf-8"
     ).read()
     assert "assets" in gen and "mmcore-app-icon.png" in gen
+    assert "mmcore-app-icon.svg" in gen, "documented single source of truth"
     assert "gen-appicon.py" in mac and "--iconset" in mac
-    assert "gen-appicon.py" in lin and "mmcore.png" in lin
+    assert "gen-appicon.py" in lin and "--hicolor" in lin and "mmcore.png" in lin
+    assert "--hicolor" in gen
+    for name in ("mmcore-app-icon.svg", "mmcore-app-icon.png"):
+        assert os.path.isfile(os.path.join(REPO, "assets", "branding", name)), name
+    for name in ("mmcore-app-icon-preview-light.png", "mmcore-app-icon-preview-dark.png"):
+        assert os.path.isfile(os.path.join(REPO, "assets", "branding", name)), name
 
 
 def test_native_packaging_bakes_release_version_into_binary():
@@ -2369,14 +2444,17 @@ def test_term_bookmarks_reload_after_file_replaced(mmb_linux, tmp_path):
     write_cfg("Alpha")
     s = NativeSession(tmp_path, env={"MMB_DRIVE_ROOT": str(drive)}, binary=SDL_BIN)
     enter_term_and_list(s)
-    s.wait_ms(3000)      # hold here so the file can change mid-session
+    # Order the file replacement against the guest instead of racing a sleep:
+    # the first list must be read before Beta replaces the file on disk.
+    first_list = s.mark("first-list.seen")
     s.start()
+    s.wait_mark(first_list)
 
-    time.sleep(1.6)
     write_cfg("Beta")    # same path, new inode
     leave_term(s)
     enter_term_and_list(s)
-    s.wait_ms(400)
+    second_list = s.mark("second-list.seen")
+    s.wait_mark(second_list)
     s.quit()
     out = s.wait(timeout=60)
     assert out.count("Bookmarks\nAlpha") >= 1, out

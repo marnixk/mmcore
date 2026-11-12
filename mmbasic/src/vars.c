@@ -681,13 +681,12 @@ mmb_var *mmb_lookup_struct_var(const char *name)
 	nbuf[MMB_MAX_NAME - 1] = 0;
 	mmb_upper(nbuf);
 	mmb_type_suffix(nbuf);
+	/* The name hash is authoritative for struct variables too, so a miss
+	 * needs no full-table sweep (#1393). The trace-cache compiler calls
+	 * this for every dotted name; a plain dotted variable such as
+	 * ``DIM POS.X`` is not a struct member and must stay O(1). */
 	i = hash_lookup(nbuf, T_STRUCT);
-	if (i >= 0)
-		return &G.vars[i];
-	for (i = 0; i < G.vars_cap; i++)
-		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
-			return &G.vars[i];
-	return 0;
+	return i >= 0 ? &G.vars[i] : 0;
 }
 
 void mmb_bind_struct_var(const char *name, int sid)
@@ -702,13 +701,15 @@ void mmb_bind_struct_var(const char *name, int sid)
 	sd = mmb_struct_def(sid);
 	if (!sd)
 		mmb_error("?UNKNOWN TYPE");
-	for (i = 0; i < G.vars_cap; i++)
-		if (G.vars[i].used && G.vars[i].type == T_STRUCT && name_eq(G.vars[i].name, nbuf))
-		{
-			if (G.vars[i].struct_idx != sid)
-				mmb_error("?TYPE MISMATCH");
-			return;
-		}
+	/* Resolve an existing struct binding through the name hash so binding a
+	 * struct argument on every SUB call is O(1) in the global count (#1393). */
+	i = hash_lookup(nbuf, T_STRUCT);
+	if (i >= 0)
+	{
+		if (G.vars[i].struct_idx != sid)
+			mmb_error("?TYPE MISMATCH");
+		return;
+	}
 	slot = vars_free_slot();
 	sz = sd->total;
 	memset(&G.vars[slot], 0, sizeof(G.vars[slot]));
@@ -1612,12 +1613,11 @@ void mmb_cmd_redim(void)
 		}
 		if (type == 0)
 			type = G.opt.default_type ? G.opt.default_type : T_NUM;
-		for (i = 0; i < G.vars_cap; i++)
-			if (G.vars[i].used && name_eq(G.vars[i].name, name) && G.vars[i].type == type)
-			{
-				v = &G.vars[i];
-				break;
-			}
+		/* The name hash resolves an existing array in O(1); REDIM in a loop
+		 * must not scan the whole global table (#1393). */
+		i = hash_lookup(name, type);
+		if (i >= 0)
+			v = &G.vars[i];
 		n = elem_count(dim, dims);
 		if (n <= 0)
 			mmb_error("?INVALID DIMENSION");
@@ -1986,6 +1986,14 @@ int mmb_parse_var_ref(char *name, int *nidx, int *idx)
 		break;
 	}
 	return t;
+}
+
+/* Store into an already-resolved scalar binding. Used by the SUB/FUNCTION
+ * fast path, which has just looked the parameter up, to avoid a second and
+ * third name lookup for the same assignment (#1420). */
+void mmb_store_var(mmb_var *v, mmb_val val)
+{
+	store(v, 0, val);
 }
 
 void mmb_do_assign(const char *name, int type_hint, int nidx, int *idx, mmb_val val)

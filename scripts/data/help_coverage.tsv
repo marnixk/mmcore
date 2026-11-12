@@ -261,3 +261,7 @@ WEND	WHILE	alias	alias of WHILE
 WHILE	WHILE	topic	dedicated topic
 WORDPAD	WORDPAD	topic	dedicated topic
 XFER	XFER	topic	dedicated topic
+WEB	WEB	topic	dedicated topic
+WEB$	WEB	alias	high-level HTTP text request; see WEB
+WEBSTATUS	WEB	alias	last HTTP status; see WEB
+WEBHEADER$	WEB	alias	HTTP response header lookup; see WEB

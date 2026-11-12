@@ -27,8 +27,10 @@ microseconds will not.
    converted with the run's `CLOCK_MONOTONIC` span. `busy_ns` subtracts
    the measured cost of the two timer reads. A `SUB`/`FUNCTION` body and
    `mmb_check_break` are their own rows, not part of the caller.
-2. The same runs set `MMCORE_FRAME_PROFILE=1` (existing frame CSV:
-   interp / draw / present / wait).
+2. The same runs set `MMCORE_FRAME_PROFILE=1` (or `OPTION FRAMEPROFILE
+   ON`) for the frame CSV: `interp_us` / `draw_us` / `present_us` /
+   `wait_us` per frame, written to `C:/.mmcore-frame-profile.csv` unless
+   a path is given.
 3. Isolated programs in `bench/hotspots/` (`interp_few.bas`,
    `interp.bas`, `gfx.bas`) run with the profiler **off**. `TIMER`
    milliseconds minus an empty `FOR`/`NEXT` are the ns/exec figures in
@@ -443,10 +445,10 @@ level 37's 88 µs dirty blit is a real upload (`flush_present`).
 ## How to reproduce
 
 ```bash
-# profiler object is already in native/Makefile (wildcard) and console/Makefile
+# stmt_prof.c is built via native/Makefile wildcard and console/Makefile
 make -C native -j$(nproc) CC="cc -fno-omit-frame-pointer"
 
-# isolated ns/exec, profiler off
+# isolated ns/exec, statement profiler off
 python3 scripts/hotspot_bench.py
 
 # 48 logic frames, MODE 20, levels 0 and 37, idle and Right
@@ -456,3 +458,4 @@ MMCORE_APPS=/path/to/mmcore-apps python3 scripts/jetpack_hotspot.py --work /tmp/
 
 `tests/test_stmtprof.py` checks that the flag is off by default and
 that a cached `a% = a% + 1` is recorded when it is on.
+`tests/test_frame_profile.py` covers the frame-phase profiler.

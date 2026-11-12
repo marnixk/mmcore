@@ -315,7 +315,7 @@ def test_term_download_folder_dialog(kernel_image):
         con.drain(quiet=0.6, timeout=10.0)
         con._ser.sendall(bytes([1]) + b"t")
         con.drain(quiet=0.4, timeout=8.0)
-        con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+        con._ser.sendall(b"\x1b[B\r")
         seen = _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
         assert "Download folder" in seen, seen
         assert "Use" in seen and "Cancel" in seen, seen

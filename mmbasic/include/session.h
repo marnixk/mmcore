@@ -23,6 +23,12 @@ int mmb_console_count(void);
 /* Active console index, 0-based. */
 int mmb_console_active(void);
 
+/* Console whose screen is actually shown, 0-based. This differs from
+ * mmb_console_active() only while a background yield callback temporarily
+ * selects its owning console, so painting code can tell whether its console
+ * is the focused one (#1427). */
+int mmb_console_visible(void);
+
 /* Switch to console idx (0-based). Returns 1 when the active console
  * changed. A request is ignored when idx is out of range or already active.
  * While a program is running the switch is deferred; the host must call

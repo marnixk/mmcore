@@ -1,4 +1,4 @@
-"""TERM scrollback: history paging and search (#528)."""
+"""TERM scrollback: history paging, the Scroll buffer toggle, and search (#528)."""
 
 import time
 
@@ -20,6 +20,28 @@ def _key(con, data, quiet=0.7, timeout=8.0):
     return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
 
 
+def _menu(con):
+    con._ser.sendall(b"\x1b[21~")
+    return _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+
+
+def _close_menu(con):
+    con._ser.sendall(b"\x1b")
+    time.sleep(0.15)
+    return _plain(con.drain(quiet=0.3, timeout=4).decode(errors="replace"))
+
+
+def _toggle_scroll_buffer(con, checked):
+    """Toggle the menu item and close the menu; returns the opened menu text."""
+    menu = _menu(con)
+    con._ser.sendall(b"s")
+    toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+    want = "Scrollback [x]" if checked else "Scrollback [ ]"
+    assert want in toggled, toggled
+    _close_menu(con)
+    return menu
+
+
 def test_option_term_scrollback_roundtrip(console):
     assert console.send_line("OPTION TERM SCROLLBACK 32") == ""
     listed = console.send_line("OPTION LIST")
@@ -32,6 +54,26 @@ def test_option_term_scrollback_roundtrip(console):
     assert "OPTION TERM SCROLLBACK" not in listed
 
 
+def test_term_scroll_buffer_default_off_leaves_view_live(kernel_image):
+    """#1481: by default PageUp/PageDown belong to the remote, not the buffer."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert "line 40" in _open_demo(con)
+        con.drain(quiet=0.3, timeout=3)
+        menu = _menu(con)
+        assert "Scrollback [ ]" in menu
+        _close_menu(con)
+        up = _key(con, b"\x1b[5~")
+        assert "SCROLL -" not in up
+        down = _key(con, b"\x1b[6~")
+        assert "SCROLL -" not in down
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        con.stop()
+
+
 def test_term_scrollback_pages_history(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()
@@ -39,6 +81,7 @@ def test_term_scrollback_pages_history(kernel_image):
         seen = _open_demo(con)
         assert "line 40" in seen
         con.drain(quiet=0.3, timeout=3)
+        _toggle_scroll_buffer(con, True)
         up = _key(con, b"\x1b[5~")
         assert "SCROLL -" in up
         assert "TERM demo" in up
@@ -52,6 +95,25 @@ def test_term_scrollback_pages_history(kernel_image):
         con.stop()
 
 
+def test_term_scroll_buffer_toggle_off_returns_live(kernel_image):
+    """Unchecking the item while paged back releases the view immediately."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        assert "line 40" in _open_demo(con)
+        con.drain(quiet=0.3, timeout=3)
+        _toggle_scroll_buffer(con, True)
+        up = _key(con, b"\x1b[5~")
+        assert "SCROLL -" in up
+        _toggle_scroll_buffer(con, False)
+        paged = _key(con, b"\x1b[5~")
+        assert "SCROLL -" not in paged
+        _quit(con)
+        assert con.send_line("PRINT 7+7") == "14"
+    finally:
+        con.stop()
+
+
 def test_term_scrollback_arrows_do_not_scroll(kernel_image):
     """#592: Up/Down are cursor keys, not scrollback controls."""
     con = MMBasicConsole(kernel_image)
@@ -59,6 +121,7 @@ def test_term_scrollback_arrows_do_not_scroll(kernel_image):
     try:
         assert "line 40" in _open_demo(con)
         con.drain(quiet=0.3, timeout=3)
+        _toggle_scroll_buffer(con, True)
         up = _key(con, b"\x1b[A")
         assert "SCROLL -" not in up
         con.drain(quiet=0.3, timeout=3)
@@ -80,6 +143,7 @@ def test_term_scrollback_page_and_home(kernel_image):
     try:
         assert "line 40" in _open_demo(con)
         con.drain(quiet=0.3, timeout=3)
+        _toggle_scroll_buffer(con, True)
         pgup = _key(con, b"\x1b[5~")
         assert "SCROLL -" in pgup
         home = _key(con, b"\x1b[1~")
@@ -99,6 +163,7 @@ def test_term_scrollback_search(kernel_image):
     try:
         assert "line 40" in _open_demo(con)
         con.drain(quiet=0.3, timeout=3)
+        _toggle_scroll_buffer(con, True)
         _key(con, b"\x1b[5~")
         prompt = _key(con, b"/")
         assert "Search:" in prompt

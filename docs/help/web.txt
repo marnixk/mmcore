@@ -1,0 +1,151 @@
+name: WEB
+kind: command
+alias: WEB$, WEBSTATUS, WEBHEADER$
+
+TCP/TLS networking and HTTP requests. WEB$() returns the response text;
+WEB(... AS Type) parses a JSON response into a TYPE using the same mapping as
+~JSON_PARSE~. A TYPE payload is serialized with ~JSON_STRINGIFY$~.
+
+High-level HTTP
+
+  r$ = WEB$(HTTP GET url$)
+  r$ = WEB$(HTTP DELETE url$)
+  r$ = WEB$(HTTP POST url$, payload)
+  r$ = WEB$(HTTP PUT url$, payload)
+  r$ = WEB$(HTTP PATCH url$, payload)
+
+  r$ = WEB$(HTTP GET url$ HEADERS headers$())
+  r$ = WEB$(HTTP POST url$, payload HEADERS headers$())
+
+  p = WEB(HTTP GET url$ AS PersonType)
+  p = WEB(HTTP GET url$ HEADERS headers$() AS PersonType)
+  p = WEB(HTTP POST url$, payload HEADERS headers$() AS PersonType)
+
+  url$     - http:// or https:// URL
+  payload  - STRING sent as the raw body, or a TYPE value sent as JSON
+  headers$() - STRING array, one "Name: value" per element
+  Type     - a TYPE defined with ~TYPE~
+
+The HEADERS clause is optional for every verb and both result forms; when AS
+is present it comes last. WEB$ always returns text, so it does not accept AS.
+WEB without AS is a syntax error.
+
+HTTPS selects TLS from the URL scheme. Server certificate and hostname
+verification are on by default. Use WEB TLS CA file$ to trust a private CA
+and WEB TLS NOVERIFY to disable verification explicitly (insecure).
+
+Response access: WEBSTATUS returns the last response status code (0 before
+any request). WEBHEADER$("name") returns a response header value, case
+insensitive, or "". WEB follows redirects (301/302/303/307/308, at most 5);
+WEBSTATUS and WEBHEADER$ describe the final response. A non-2xx response is
+not an error in text form: the body is returned and WEBSTATUS holds the code.
+A typed request raises ?JSON when the body is not valid JSON, and ?TYPE
+MISMATCH when the result is assigned to a different TYPE.
+
+Custom headers override generated ones (Host, User-Agent, Accept, Connection,
+Content-Type) by name. Content-Length is always generated; a custom
+Content-Length is rejected. Header names and values must not contain CR or LF
+(request-injection guard). Authorization values are never printed or logged.
+
+Request bodies have no 255/256 character limit: they use the growable string
+arena and the actual allocation. Implementation limits: URL host 255 bytes,
+request target 4095 bytes, response headers 64 KiB, response body 16 MiB, and
+5 redirects. Exceeding a limit raises ?WEB with a clear message.
+
+Low-level TCP/TLS client
+
+  WEB OPEN TCP CLIENT address$, port [,timeout_ms]
+  WEB OPEN TLS CLIENT address$, port [,timeout_ms]
+  WEB TCP CLIENT REQUEST request$, buff%() [,timeout_ms]
+  WEB TCP CLIENT WRITE data%() [,timeout_ms]
+  WEB TCP CLIENT READ buff%() [,timeout_ms]
+  WEB CLOSE TCP CLIENT
+
+buff%() and data%() are INTEGER arrays. The first linear element holds the
+length and the following elements hold one byte each (0..255). With OPTION
+BASE 0 that is buff%(0) for the length and buff%(1..) for the bytes; with
+OPTION BASE 1 the same linear layout starts at buff%(1). REQUEST sends
+request$ and reads until the peer closes or the timeout expires.
+
+Plain TCP uses the same single machine-wide socket as OPEN "TCP:" and CONNECT
+(see ~OPEN~ and ~CONNECT~); WEB claims it for the calling console, so a WEB
+call and an open TCP: stream cannot run together. TLS uses a separate
+connection. WEB TIMEOUT ms sets the default connect/read/send timeout
+(default 30000, max 600000). The break key aborts a waiting transfer; the
+socket is released on the next WEB call, WEB CLOSE TCP CLIENT, NEW or RESET.
+Low-level client/server connections persist until closed this way.
+
+WEB TLS CA file$ loads a PEM CA bundle or certificate. WEB TLS VERIFY (the
+default) enables verification; WEB TLS NOVERIFY disables it and is insecure.
+
+Server
+
+  WEB TCP PORT port
+  WEB TCP INTERRUPT
+  WEB TCP READ buff%() [,timeout_ms]
+  WEB TCP SEND data%() [,timeout_ms]
+  WEB TCP CLOSE
+  WEB TRANSMIT CODE cb%, nnn%
+  WEB TRANSMIT FILE cb%, filename$, content-type$
+  WEB TRANSMIT PAGE cb%, filename$ [,buffersize]
+
+WEB TCP PORT starts a listener (replacing any previous one). WEB TCP
+INTERRUPT accepts a waiting client and makes it current; the interpreter is
+polled explicitly rather than called back, which is an intentional difference
+from PicoMite's interrupt callback. WEB TCP READ/SEND operate on the current
+connection. WEB TCP CLOSE ends the current connection and leaves the listener
+running. cb% is accepted for PicoMite compatibility; this implementation has
+one current server connection.
+
+TRANSMIT CODE sends an HTTP status line and empty body for nnn%. TRANSMIT
+FILE sends status 200 with content-type$ and the file contents. TRANSMIT PAGE
+reads the file as an HTML template and substitutes expressions written as
+<% expr %> (or {{ expr }}); buffersize is accepted for compatibility and
+ignored because output grows as needed.
+
+PicoMite parity matrix
+
+  Capability                     mmcore
+  WEB OPEN TCP CLIENT            yes
+  WEB OPEN TLS CLIENT            native with TLS; no on Circle (see below)
+  WEB TCP CLIENT REQUEST         yes
+  WEB TCP CLIENT WRITE           yes
+  WEB TCP CLIENT READ            yes
+  WEB CLOSE TCP CLIENT           yes
+  WEB TLS CA / NOVERIFY          native only; Circle reports no TLS
+  WEB TCP INTERRUPT/READ/SEND    yes (poll model, see above)
+  WEB TCP CLOSE                  yes
+  WEB TCP PORT                   yes
+  WEB TRANSMIT PAGE/FILE/CODE    yes
+  255/256-char request limit     not reproduced (growable strings)
+
+Platform limitations
+
+The bare-metal Circle build has no vendored TLS stack yet, so https:// URLs
+and WEB OPEN TLS CLIENT report ?WEB: TLS unavailable. Plain HTTP, the TCP
+client, the server and TRANSMIT work. The native host build links OpenSSL when
+pkg-config finds it; otherwise it reports the same limitation. macOS universal
+app bundles are built without TLS because Homebrew's OpenSSL is single-arch.
+
+Returned text and JSON are data only, never executed. PAGE substitution is the
+one explicit evaluation feature and only runs in WEB TRANSMIT PAGE.
+
+Examples
+
+    DIM h$(1)
+    h$(0) = "Accept: application/json"
+    r$ = WEB$(HTTP GET "https://api.example.com/v1/status" HEADERS h$())
+    PRINT WEBSTATUS
+    PRINT r$
+
+    TYPE Person
+      name AS STRING * 64
+      age AS INTEGER
+    END TYPE
+    DIM p AS Person
+    p = WEB(HTTP GET "https://api.example.com/v1/person" AS Person)
+    PRINT p.name, p.age
+
+    p.age = 43
+    r$ = WEB$(HTTP PUT "https://api.example.com/v1/person", p)
+    PRINT WEBSTATUS

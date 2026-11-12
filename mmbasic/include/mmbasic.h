@@ -69,6 +69,10 @@ typedef struct mmb_platform {
 	 * and need no true-colour escape. */
 	int ansi_truecolour;
 	void (*set_pixel)(int x, int y, unsigned rgb888);
+	/* Draw one pixel already in the page's native format, avoiding the
+	 * native -> RGB888 -> native round trip of set_pixel. Optional; NULL
+	 * falls back to set_pixel. The hook must clip exactly like set_pixel. */
+	void (*set_pixel_native)(int x, int y, unsigned native);
 	/* Draw a pixel that must survive console text flushes (boot-splash
 	 * logo). A bare-metal console keeps its own pixel buffer and repaints
 	 * changed rows over the framebuffer, which erases pixels written with

@@ -304,6 +304,57 @@ def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
         con.stop()
 
 
+def test_term_replay_page_keys_forwarded_by_default(kernel_image):
+    """#1481: with Scroll buffer unchecked, PageUp/PageDown reach the host."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        # Let the opening pane dump drain before feeding function keys, so
+        # the ESC byte cannot idle out between UART reads.
+        time.sleep(0.8)
+        replay.pump_once(recv_tcp=False)
+        replay.send_keys(b"\x1b[5~")
+        out = _outbound_until(replay, lambda chunk: b"\x1b[5~" in chunk)
+        assert b"\x1b[5~" in out, out
+        time.sleep(0.4)
+        replay.send_keys(b"\x1b[6~")
+        out = _outbound_until(replay, lambda chunk: b"\x1b[6~" in chunk)
+        assert b"\x1b[6~" in out, out
+        _quit(con)
+        assert con.send_line("PRINT 8+8") == "16"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_scroll_buffer_on_keeps_page_keys_local(kernel_image):
+    """#1481: checking Scroll buffer consumes PageUp/PageDown locally."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+        replay.send_keys(b"\x1b[21~")
+        replay.wait_serial(lambda s: "Scrollback" in s, timeout=6.0)
+        replay.send_keys(b"s")
+        replay.wait_serial(lambda s: "Scrollback [x]" in s, timeout=6.0)
+        replay.send_keys(b"\x1b")
+        time.sleep(0.2)
+        replay.pump_once(recv_tcp=False)
+        before = _outbound(replay)
+        replay.send_keys(b"\x1b[5~\x1b[6~")
+        extra = replay.wait_serial(lambda s: "SCROLL -" in s, timeout=1.0)
+        assert "SCROLL -" not in extra
+        assert _outbound(replay) == before
+        _quit(con)
+        assert con.send_line("PRINT 9+9") == "18"
+    finally:
+        replay.stop()
+        con.stop()
+
+
 def test_term_replay_backspace_sends_del_in_char_mode(kernel_image):
     """#1255: in telnet character mode Backspace must send DEL, not BS.
 
@@ -489,6 +540,90 @@ def test_term_replay_bce_erases_with_background(kernel_image):
 
         _quit(con)
         assert con.send_line("PRINT 6*7") == "42"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def _is_bright_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 200 and 40 < g < 140 and 40 < b < 140
+
+
+def _is_dark_red(rgb) -> bool:
+    r, g, b = rgb
+    return r > 100 and g < 40 and b < 40
+
+
+def test_term_replay_ice_colors_use_bright_backgrounds(kernel_image):
+    """SGR 5/6 turn the blink bit into the bright background bit (iCE colours)."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+
+        def cell(row: int, col: int):
+            return con.screen_pixel(20 * 8 + col * 8 + 4, row * 16 + 8)
+
+        # Blink before the background, and after it, must both go bright.
+        for seq in (b"\x1b[5;41m", b"\x1b[41;5m"):
+            replay._to_guest(b"\x1b[0m\x1b[2J")
+            _replay_settle(replay)
+            replay._to_guest(b"\x1b[?25l\x1b[1;1H" + seq + b"    ")
+            _replay_settle(replay)
+            for col in range(4):
+                assert _is_bright_red(cell(0, col)), (seq, col, cell(0, col))
+
+        # Rapid blink selects the same high bit.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[6;44m    ")
+        _replay_settle(replay)
+        for col in range(4):
+            r, g, b = cell(0, col)
+            assert b > 200 and 40 < r < 140 and 40 < g < 140, cell(0, col)
+
+        # SGR 25 clears the high bit, leaving the normal background.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[5;41m\x1b[25m    ")
+        _replay_settle(replay)
+        for col in range(4):
+            assert _is_dark_red(cell(0, col)), (col, cell(0, col))
+        con.capture_png("/opt/cursor/artifacts/term_ice_colors.png")
+
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+    finally:
+        replay.stop()
+        con.stop()
+
+
+def test_term_replay_truecolor_sgr(kernel_image):
+    """SGR 38;2 / 48;2 select 24-bit foreground and background colours."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    replay = TermReplay(con, "127.0.0.1", 1)
+    try:
+        _open_replay(con, replay, connect=False)
+
+        # 48;2 background: spaces paint a solid blue row.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[48;2;0;0;255m   ")
+        _replay_settle(replay)
+        assert _blue_count(con, 0, [0, 1, 2]) == 3, "48;2 must set the background"
+
+        # 38;2 foreground: the full block fills its cells with red.
+        replay._to_guest(b"\x1b[0m\x1b[2J")
+        _replay_settle(replay)
+        replay._to_guest(b"\x1b[?25l\x1b[1;1H\x1b[38;2;255;0;0m\xdb\xdb\xdb")
+        _replay_settle(replay)
+        assert _red_count(con, 0, [0, 1, 2]) == 3, "38;2 must set the foreground"
+
+        _quit(con)
+        assert con.send_line("PRINT 7+7") == "14"
     finally:
         replay.stop()
         con.stop()
