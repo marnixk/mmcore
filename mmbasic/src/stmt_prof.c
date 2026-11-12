@@ -5,6 +5,52 @@
 #include <string.h>
 #if defined(MMB_PLATFORM_POSIX)
 #include <time.h>
+#else
+/* Circle/newlib link without strrchr or qsort; used only at run_end. */
+static const char *sp_strrchr(const char *s, int c)
+{
+	const char *last = 0;
+
+	for (; s && *s; s++)
+	{
+		if ((unsigned char)*s == (unsigned char)c)
+			last = s;
+	}
+	return last;
+}
+#undef strrchr
+#define strrchr sp_strrchr
+
+static void sp_qsort(void *base, size_t n, size_t size,
+		     int (*cmp)(const void *, const void *))
+{
+	unsigned char *a = (unsigned char *)base;
+	size_t gap, i, j, k;
+
+	for (gap = n / 2; gap > 0; gap /= 2)
+	{
+		for (i = gap; i < n; i++)
+		{
+			for (j = i; j >= gap; j -= gap)
+			{
+				unsigned char *x = a + (j - gap) * size;
+				unsigned char *y = a + j * size;
+
+				if (cmp(x, y) <= 0)
+					break;
+				for (k = 0; k < size; k++)
+				{
+					unsigned char t = x[k];
+
+					x[k] = y[k];
+					y[k] = t;
+				}
+			}
+		}
+	}
+}
+#undef qsort
+#define qsort sp_qsort
 #endif
 
 /* Opt-in per-statement profiler (MMB_STMTPROF).
