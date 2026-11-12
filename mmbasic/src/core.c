@@ -6543,7 +6543,11 @@ static void run_program(void)
 			mmb_clear_consts();
 		}
 		G.run_preserve_vars = 0;
-		mmb_struct_prepare();
+		/* Reset the error landings before anything that can call mmb_error().
+		 * mmb_struct_prepare() parses TYPE layouts and may raise OUT OF
+		 * MEMORY or OVERFLOW; with a stale on_error_pc it would longjmp to
+		 * an uninitialised run_errjmp and crash instead of reporting the
+		 * error (#1501). */
 		G.on_error_pc = -1;
 		G.error_active = 0;
 		/* OPTION ERROR CONTINUE is the persistent RUN fallback; an explicit
@@ -6554,6 +6558,7 @@ static void run_program(void)
 		G.skip_line_valid = 0;
 		G.mm_errno = 0;
 		G.mm_errmsg[0] = 0;
+		mmb_struct_prepare();
 		scan_subs();
 		G.opt.explicit = 0;
 		G.opt.default_type = T_NUM;
