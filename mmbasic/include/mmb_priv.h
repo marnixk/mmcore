@@ -80,7 +80,6 @@
 #define MMB_MAX_STRUCT_NEST     8
 #define MMB_STRUCT_STR_DEFAULT  1024
 #define MMB_STRUCT_STRLEN       4
-#define MMB_STRUCT_RET_MAX      65536
 
 /* Struct STRING members carry a 32-bit length followed by the characters. */
 #define MMB_STRUCT_STRLEN_PUT(p, n) \
@@ -548,6 +547,8 @@ void mmb_arena_mark(mmb_arena_save *m);
 void mmb_arena_release(mmb_arena_save *m);
 /* Release every arena chunk of the current context (console reset/destroy). */
 void mmb_arena_free(void);
+/* Release the current context's STRUCT function-return staging buffer (#1496). */
+void mmb_func_ret_blob_free(void);
 
 /* What a captured frame resumes on.  Position is restored from run_pc,
  * branch_pc/branch_pos and p; the kind records which of those owns the resume
@@ -660,7 +661,12 @@ typedef struct mmb {
 	 * them when the context is reset or destroyed (#1351). */
 	mmb_achunk *arena;
 	mmb_achunk *arena_cur;
-	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
+	/* Staging copy for a STRUCT FUNCTION return (#1496). The callee's local
+	 * blob is freed when its frame is popped, so the value is copied here
+	 * first. Grown on demand: a TYPE may be far larger than the old fixed
+	 * 64 KB buffer. Freed by mmb_func_ret_blob_free(). */
+	unsigned char *func_ret_blob;
+	int func_ret_blob_cap;
 	/* Program store (#1303): heap-owned arrays that grow on demand. Each
 	 * line is individually strdup'd, so insert/delete move pointers only.
 	 * prog_num is kept sorted; lookups use binary search. */

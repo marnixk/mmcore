@@ -259,9 +259,13 @@ static void console_bring_up(int idx, const mmb *from)
 		return;
 	g_cur = g_mmb[idx];
 	/* The context is about to be wiped; return the per-console arena chunks
-	 * first so re-bringing up an existing slot does not leak them (#1351). */
+	 * and the STRUCT return staging buffer first so re-bringing up an
+	 * existing slot does not leak them (#1351, #1496). */
 	if (existing)
+	{
 		mmb_arena_free();
+		mmb_func_ret_blob_free();
+	}
 	memset(g_cur, 0, sizeof(mmb));
 	g_cur->plat = from->plat;
 	mmb_option_reset();
