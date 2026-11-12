@@ -1,6 +1,8 @@
 #include "mmb_priv.h"
 #include "mmb_zmodem.h"
 #include "net_rxbuf.h"
+#include "sixel.h"
+#include "jxl_dec.h"
 #include <string.h>
 
 #define IAC   255
@@ -64,7 +66,8 @@
 #define TM_DL_CANCEL    2
 #define TM_DL_LIST      3
 #define TM_DL_DIRS      48
-#define TM_MENU_ITEMS   5
+#define TM_MENU_ITEMS   6
+#define TM_MENU_ROWS    8
 #define TM_BTN_NEW      0
 #define TM_BTN_EDIT     1
 #define TM_BTN_DEL      2
@@ -87,6 +90,35 @@
 #define TM_BOX_BL      0xC0u
 #define TM_BOX_BR      0xD9u
 #define TM_ANSI_OSC_MS  2000
+/* ansi_st values for DCS: parameters before the final byte, the body, and the
+ * byte after an ESC that may be the string terminator. */
+#define TM_ANSI_DCS_PARAM 8
+#define TM_ANSI_DCS_BODY  9
+#define TM_ANSI_DCS_ESC   10
+#define TM_ANSI_APC_BODY  11
+#define TM_ANSI_APC_ESC   12
+#define TM_ANSI_STR_BODY  13
+#define TM_ANSI_STR_ESC   14
+/* Sixel/DCS framing. A full-screen image over a slow link can be silent for
+ * longer than the OSC watchdog, so the DCS gets its own idle and body caps. */
+#define TM_DCS_IDLE_MS  30000
+#define TM_DCS_MAX      (4u * 1024u * 1024u)
+#define TM_APC_IDLE_MS  30000
+#define TM_APC_MAX      (8u * 1024u * 1024u)
+#define TM_CACHE_ENTRIES 64
+#define TM_CACHE_FILE_MAX (4u * 1024u * 1024u)
+#define TM_CACHE_TOTAL_MAX (16u * 1024u * 1024u)
+#define TM_CACHE_NAME   65
+/* Decoded SyncTERM buffers live beside the cache: two paste buffers and one
+ * mask buffer per console.  4 Mpx caps each (12 MB per paste buffer) so a
+ * door cannot pin unbounded heap when it loads repeated frames. */
+#define TM_PIXBUF_MAX_PIXELS (4u * 1024u * 1024u)
+#define TM_MASK_MAX_PIXELS   (4u * 1024u * 1024u)
+#define TM_PIXBUF_COUNT      2
+#define TM_MASK_NONE   0
+#define TM_MASK_INLINE 1
+#define TM_MASK_FILE   2
+#define TM_MASK_BUF    3
 #define TM_REPLAY_HEX   512
 #define TM_FILE_LINE    1280
 #define TM_FILE_PEND    16
@@ -96,6 +128,39 @@
 #define TM_SB_MAX       256
 #define TM_SB_COLS      TM_MAX_COLS
 #define TM_SB_QUERY     64
+
+typedef struct {
+	char name[TM_CACHE_NAME];
+	unsigned char *data;
+	unsigned len;
+	unsigned used;
+	unsigned char md5[16];
+	int live;
+} term_cache_ent;
+
+typedef struct {
+	term_cache_ent e[TM_CACHE_ENTRIES];
+	unsigned tick;
+	unsigned total;
+} term_cache;
+
+typedef struct {
+	int sx, sy, sw, sh;
+	int dx, dy;
+	int zx, zy;
+	int fx, fy;
+	int mx, my, mw, mh;
+	int mask_kind;         /* TM_MASK_* */
+	const char *mask_ptr;  /* inline MASK= base64, inside the APC body */
+	unsigned mask_len;
+	char mfile[TM_CACHE_NAME];
+	int buf;               /* B= paste/load buffer selector */
+} term_draw_opts;
+
+typedef struct {
+	int x, y, w, h;
+	int buf;
+} term_copy_opts;
 
 typedef struct {
 	int active;
@@ -134,10 +199,28 @@ typedef struct {
 	unsigned cur_bg;
 	int ansi_bold;
 	int ansi_inv;
+	int ansi_ice;          /* SGR 5/6: high bit of a 40-47 background */
+	int ansi_bg_base;      /* palette bg index 0-15, -1 for 256-colour RGB */
 	int ansi_st;
 	int ansi_narg;
 	int ansi_arg[TM_ANSI_ARGS];
 	int ansi_priv;
+	unsigned dcs_at;       /* last DCS byte, for the idle abort */
+	unsigned dcs_n;        /* DCS body bytes seen, for the cap */
+	int dcs_sixel;         /* open DCS is a sixel command (q final) */
+	unsigned apc_at;       /* last APC/PM/SOS byte, for the idle abort */
+	unsigned apc_n;        /* APC/PM/SOS body bytes seen, for the cap */
+	int apc_store;         /* 1 for APC (dispatch), 0 for PM/SOS */
+	int six_on;            /* decoding a sixel image */
+	int six_ok;            /* the plane is allocated and the decoder is live */
+	int sixel_scroll;      /* DECSDM: default on, mode 80 set turns it off */
+	int six_scrolled;      /* text rows scrolled while placing this image */
+	int six_top;           /* visible top of the image, in plane pixels */
+	int six_origin_row;
+	sixel_image six;
+	int img_dirty;         /* a sixel updated the plane since the last draw */
+	int img_x, img_y, img_w, img_h;
+	int img_lo, img_hi;    /* pane rows the image covers */
 	int sav_row;
 	int sav_col;
 	int scroll_top;        /* DECSTBM scrolling region, 0-based inclusive */
@@ -228,6 +311,67 @@ typedef struct {
 
 static tm_state T_s[MMB_MAX_CONSOLES];
 #define T (T_s[g_console])
+
+/* A native-pixel plane beside the cell grid, one per console, allocated on
+ * the first sixel.  Coverage records which cells the plane owns so
+ * term_draw_row can composite them instead of glyphs.  The pixel buffer and
+ * coverage bytes are one heap block; the struct lives beside it. */
+typedef struct {
+	uint16_t *pix;
+	unsigned char *cov;
+	int w, h, stride;
+} term_plane;
+
+static term_plane *P_s[MMB_MAX_CONSOLES];
+#define P (*P_s[g_console])
+
+/* SyncTERM C;Load* / P;Copy paste buffers (B=0/1) and the C;LoadPBM mask
+ * buffer, one set per console.  Pixel buffers use the decoder's RGB888 layout
+ * so a Load can move its result in without another copy. */
+static mmb_img_rgb PB_s[MMB_MAX_CONSOLES][TM_PIXBUF_COUNT];
+#define PB (PB_s[g_console])
+
+typedef struct {
+	unsigned char *bits;   /* tightly packed row-major, MSB-first, 1=draw */
+	int w, h;
+	int owned;             /* bits came from a temporary decode */
+} term_mask;
+
+static term_mask TMASK_s[MMB_MAX_CONSOLES];
+#define TMASK (TMASK_s[g_console])
+
+static void term_pixbuf_free_one(int idx, int b)
+{
+	if (PB_s[idx][b].rgb)
+		free(PB_s[idx][b].rgb);
+	PB_s[idx][b].rgb = NULL;
+	PB_s[idx][b].w = 0;
+	PB_s[idx][b].h = 0;
+}
+
+static void term_pixbuf_free_all(int idx)
+{
+	int b;
+
+	for (b = 0; b < TM_PIXBUF_COUNT; b++)
+		term_pixbuf_free_one(idx, b);
+}
+
+static void term_mask_free(int idx)
+{
+	if (TMASK_s[idx].bits)
+		free(TMASK_s[idx].bits);
+	TMASK_s[idx].bits = NULL;
+	TMASK_s[idx].w = 0;
+	TMASK_s[idx].h = 0;
+}
+
+static unsigned char *A_s[MMB_MAX_CONSOLES];
+static unsigned A_cap_s[MMB_MAX_CONSOLES];
+static term_cache *TC_s[MMB_MAX_CONSOLES];
+#define A (A_s[g_console])
+#define A_cap (A_cap_s[g_console])
+#define TC (*TC_s[g_console])
 
 /* Set while mmb_term_poll() runs from a background yield callback (#858): the
  * session is drained and interpreted, but nothing may be painted. */
@@ -391,12 +535,21 @@ static void term_sb_free(int idx)
 	H_s[idx] = 0;
 }
 
+static void term_cache_free(int idx);
+static void term_apc_buf_free(int idx);
+static void term_pixbuf_free_all(int idx);
+static void term_mask_free(int idx);
+
 static void term_session_free(int idx)
 {
 	if (L_s[idx] && G.plat && G.plat->free)
 		G.plat->free(L_s[idx]);
 	L_s[idx] = 0;
 	term_sb_free(idx);
+	term_cache_free(idx);
+	term_apc_buf_free(idx);
+	term_pixbuf_free_all(idx);
+	term_mask_free(idx);
 }
 
 static void term_dl_open(void);
@@ -472,6 +625,8 @@ static uint64_t term_shadow_key(unsigned ch, unsigned fg, unsigned bg)
 }
 
 static void pane_clear_row(int row);
+static void term_plane_uncover_cell(int r, int c);
+static void term_plane_uncover_range(int r, int c0, int c1);
 static void pane_puts(const char *s);
 static void pane_newline(void);
 static void tcp_close_quiet(void);
@@ -908,12 +1063,28 @@ static unsigned term_paper(void)
 	return T.ansi_inv ? T.cur_fg : T.cur_bg;
 }
 
+/* Apply the iCE high bit to the selected palette background. SGR 5 is the
+ * blink attribute on a real VGA, but every BBS/ANSI file here wants the 16
+ * background colours it unlocks instead of blinking text. */
+static void ansi_update_bg(void)
+{
+	int idx;
+	if (T.ansi_bg_base < 0)
+		return;
+	idx = T.ansi_bg_base;
+	if (T.ansi_ice && idx < 8)
+		idx += 8;
+	T.cur_bg = ansi_pal(idx);
+}
+
 static void term_reset_pen(void)
 {
 	T.cur_fg = TM_FG;
 	T.cur_bg = TM_BG;
 	T.ansi_bold = 0;
 	T.ansi_inv = 0;
+	T.ansi_ice = 0;
+	T.ansi_bg_base = 0;
 }
 
 /* The USB keyboard delivers Alt+key as Ctrl+A then the key, so a byte 1 on
@@ -1098,9 +1269,14 @@ static void term_serial_dump(void)
 	{
 		ser("Terminal\r\n");
 		ser("Bookmarks\r\n");
-		ser(term_want_echo() ? "Echo ON\r\n" : "Echo OFF\r\n");
+		ser("Downloads Folder\r\n");
+		ser("----------------\r\n");
 		ser(term_width_label());
 		ser("\r\n");
+		ser(term_want_echo() ? "Echo [x]\r\n" : "Echo [ ]\r\n");
+		ser(G.opt.term_scroll_buffer ? "Scrollback [x]\r\n"
+					     : "Scrollback [ ]\r\n");
+		ser("----------------\r\n");
 		ser("Exit\r\n");
 	}
 	term_serial_dump_dlg();
@@ -1220,6 +1396,7 @@ static void pane_clear_row(int row)
 		T.cell_fg[row][c] = TM_FG;
 		T.cell_bg[row][c] = TM_BG;
 	}
+	term_plane_uncover_range(row, 0, term_width());
 }
 
 /* Erase a row to the current SGR pen, so erased cells keep the active
@@ -1236,6 +1413,7 @@ static void pane_erase_row_pen(int row)
 		T.cell_fg[row][c] = term_pen();
 		T.cell_bg[row][c] = term_paper();
 	}
+	term_plane_uncover_range(row, 0, term_width());
 }
 
 static void mark_dirty_row(int row)
@@ -1261,6 +1439,229 @@ static void mark_dirty_full(void)
 {
 	T.dirty_full = 1;
 	T.need_draw = 1;
+}
+
+/* ---- sixel plane ----------------------------------------------------- */
+
+static void term_plane_free(int idx)
+{
+	term_plane *p = P_s[idx];
+
+	if (!p)
+		return;
+	if (G.plat && G.plat->free)
+	{
+		G.plat->free(p->pix);
+		G.plat->free(p);
+	}
+	P_s[idx] = 0;
+}
+
+static int term_plane_alloc(void)
+{
+	term_plane *p;
+	void *block;
+	unsigned pixbytes, covbytes;
+	int w, h;
+
+	if (P_s[g_console])
+		return 0;
+	if (!G.plat || !G.plat->alloc)
+		return -1;
+	w = term_width() * TM_CW;
+	h = T.pane_rows * T.cell_h;
+	if (w < 1 || h < 1)
+		return -1;
+	pixbytes = (unsigned)w * (unsigned)h * sizeof(uint16_t);
+	covbytes = TM_MAX_ROWS * TM_MAX_COLS;
+	p = (term_plane *)G.plat->alloc((unsigned)sizeof(term_plane));
+	block = G.plat->alloc(pixbytes + covbytes);
+	if (!p || !block)
+	{
+		if (p && G.plat->free)
+			G.plat->free(p);
+		if (block && G.plat->free)
+			G.plat->free(block);
+		return -1;
+	}
+	memset(block, 0, pixbytes + covbytes);
+	p->pix = (uint16_t *)block;
+	p->cov = (unsigned char *)block + pixbytes;
+	p->w = w;
+	p->h = h;
+	p->stride = w;
+	P_s[g_console] = p;
+	return 0;
+}
+
+static void term_plane_clear(void)
+{
+	if (!P_s[g_console])
+		return;
+	memset(P.pix, 0, (size_t)P.w * (size_t)P.h * sizeof(uint16_t));
+	memset(P.cov, 0, TM_MAX_ROWS * TM_MAX_COLS);
+}
+
+/* Scroll pixels and coverage inside [top,bot], matching the cell scroll.
+ * Rows that leave the region are dropped. */
+static void term_plane_scroll_rows(int top, int bot, int n, int up)
+{
+	term_plane *p = P_s[g_console];
+	int rows, r;
+
+	if (!p)
+		return;
+	if (top < 0)
+		top = 0;
+	if (bot >= T.pane_rows)
+		bot = T.pane_rows - 1;
+	rows = bot - top + 1;
+	if (rows < 1)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > rows)
+		n = rows;
+	if (up)
+	{
+		if (n < rows)
+			memmove(p->pix + top * T.cell_h * p->stride,
+				p->pix + (top + n) * T.cell_h * p->stride,
+				(size_t)(rows - n) * T.cell_h * p->stride *
+					sizeof(uint16_t));
+		memset(p->pix + (bot - n + 1) * T.cell_h * p->stride, 0,
+		       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
+		for (r = top; r <= bot - n; r++)
+			memmove(p->cov + r * TM_MAX_COLS,
+				p->cov + (r + n) * TM_MAX_COLS, TM_MAX_COLS);
+		for (r = bot - n + 1; r <= bot; r++)
+			memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+	}
+	else
+	{
+		if (n < rows)
+			memmove(p->pix + (top + n) * T.cell_h * p->stride,
+				p->pix + top * T.cell_h * p->stride,
+				(size_t)(rows - n) * T.cell_h * p->stride *
+					sizeof(uint16_t));
+		memset(p->pix + top * T.cell_h * p->stride, 0,
+		       (size_t)n * T.cell_h * p->stride * sizeof(uint16_t));
+		for (r = bot; r >= top + n; r--)
+			memmove(p->cov + r * TM_MAX_COLS,
+				p->cov + (r - n) * TM_MAX_COLS, TM_MAX_COLS);
+		for (r = top; r < top + n; r++)
+			memset(p->cov + r * TM_MAX_COLS, 0, TM_MAX_COLS);
+	}
+}
+
+static void term_plane_scroll_up(int n)
+{
+	term_plane_scroll_rows(T.scroll_top, T.scroll_bot, n, 1);
+}
+
+/* Clear one cell's coverage so the glyph path owns it again.  The shadow key
+ * is zeroed so the next glyph paints even if the character did not change. */
+static void term_plane_uncover_cell(int r, int c)
+{
+	if (!P_s[g_console] || r < 0 || r >= T.pane_rows || c < 0 ||
+	    c >= term_width())
+		return;
+	P.cov[r * TM_MAX_COLS + c] = 0;
+	term_cell_sh[r][c] = 0;
+}
+
+static void term_plane_uncover_range(int r, int c0, int c1)
+{
+	int c;
+
+	for (c = c0; c < c1; c++)
+		term_plane_uncover_cell(r, c);
+}
+
+/* ICH/DCH: shift one row's pixels and coverage by n cells. */
+static void term_plane_shift_cols(int r, int col, int n, int right)
+{
+	term_plane *p = P_s[g_console];
+	int w, dy, i;
+	unsigned char *cov;
+
+	if (!p || r < 0 || r >= T.pane_rows)
+		return;
+	w = term_width();
+	if (col < 0)
+		col = 0;
+	if (col >= w)
+		return;
+	if (n < 1)
+		n = 1;
+	if (n > w - col)
+		n = w - col;
+	if (n <= 0)
+		return;
+	cov = p->cov + r * TM_MAX_COLS;
+	for (dy = 0; dy < T.cell_h; dy++)
+	{
+		uint16_t *line = p->pix + (r * T.cell_h + dy) * p->stride;
+
+		if (right)
+		{
+			if (w - col - n > 0)
+				memmove(line + (col + n) * TM_CW, line + col * TM_CW,
+					(size_t)(w - col - n) * TM_CW *
+						sizeof(uint16_t));
+		}
+		else
+		{
+			if (w - col - n > 0)
+				memmove(line + col * TM_CW, line + (col + n) * TM_CW,
+					(size_t)(w - col - n) * TM_CW *
+						sizeof(uint16_t));
+		}
+	}
+	if (right)
+	{
+		if (w - col - n > 0)
+			memmove(cov + col + n, cov + col, (size_t)(w - col - n));
+		memset(cov + col, 0, (size_t)n);
+	}
+	else
+	{
+		if (w - col - n > 0)
+			memmove(cov + col, cov + col + n, (size_t)(w - col - n));
+		memset(cov + (w - n), 0, (size_t)n);
+	}
+	for (i = 0; i < n; i++)
+	{
+		int c = right ? col + i : w - n + i;
+
+		if (c >= 0 && c < w)
+			term_cell_sh[r][c] = 0;
+	}
+}
+
+/* Composite one run of covered cells from the plane into page 2. */
+static void term_plane_blit(int r, int c0, int c1)
+{
+	uint16_t *page;
+	int bw, bh, dy;
+	int x, y;
+	int n = c1 - c0;
+
+	if (!P_s[g_console])
+		return;
+	page = mmb_gfx_buf_for(TM_PAGE, &bw, &bh);
+	if (!page)
+		return;
+	x = (T.pane_left + c0) * TM_CW;
+	y = T.pane_top + r * T.cell_h;
+	for (dy = 0; dy < T.cell_h; dy++)
+	{
+		if (y + dy >= bh)
+			break;
+		memcpy(page + (y + dy) * bw + x,
+		       P.pix + (r * T.cell_h + dy) * P.stride + c0 * TM_CW,
+		       (size_t)n * TM_CW * sizeof(uint16_t));
+	}
 }
 
 static void term_draw(void);
@@ -1293,6 +1694,7 @@ static void pane_scroll_up(void)
 
 	if (bot <= top)
 		return;
+	term_plane_scroll_up(1);
 	/* Only a region anchored at the pane top spills into scrollback; a
 	 * sub-region scroll discards the line at its top margin. (#1225) */
 	if (top == 0)
@@ -1347,6 +1749,7 @@ static void pane_put(char ch)
 		pane_newline();
 	if (T.cur_col < term_width() && T.cur_row < T.pane_rows)
 	{
+		term_plane_uncover_cell(T.cur_row, T.cur_col);
 		T.cell[T.cur_row][T.cur_col] = ch;
 		T.cell_fg[T.cur_row][T.cur_col] = term_pen();
 		T.cell_bg[T.cur_row][T.cur_col] = term_paper();
@@ -1481,25 +1884,28 @@ static void term_draw_status(void)
 	term_put_str_bg((T.vid_cols - n) * TM_CW, y, right, fg, bg);
 }
 
+/* Drop-down row -> selectable item index, or -1 for a separator. */
+static const signed char tm_menu_row_sel[TM_MENU_ROWS] = {
+	0, 1, -1, 2, 3, 4, -1, 5
+};
+
 static void term_draw_menu(void)
 {
-	int x0, y0, w, i, n, wlen, drop_h, bar_w;
+	int x0, y0, w, i, row, wlen, drop_h, bar_w;
 	const char *items[TM_MENU_ITEMS];
-	char echo[16];
 	unsigned brd = TM_DLG_FG;
 	unsigned title_fg, title_bg;
 
 	if (!T.menu && !T.alt_pend)
 		return;
-	strcpy(echo, term_want_echo() ? "Echo ON" : "Echo OFF");
 	items[0] = "Bookmarks";
-	items[1] = echo;
+	items[1] = "Downloads Folder";
 	items[2] = term_width_label();
-	items[3] = "Download folder";
-	items[4] = "Exit";
-	n = TM_MENU_ITEMS;
+	items[3] = "Echo";
+	items[4] = "Scrollback";
+	items[5] = "Exit";
 	w = 10;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < TM_MENU_ITEMS; i++)
 	{
 		wlen = (int)strlen(items[i]);
 		if (wlen + 2 > w)
@@ -1517,27 +1923,53 @@ static void term_draw_menu(void)
 		return;
 	x0 = TM_CW;
 	y0 = T.cell_h;
-	drop_h = n + 2;
+	drop_h = TM_MENU_ROWS + 2;
 	mmb_gfx_fill_rect_topdown(x0, y0, w * TM_CW, drop_h * T.cell_h, TM_DLG_BG);
 	term_cell(x0, y0, TM_BOX_TL, brd, TM_DLG_BG);
 	for (i = 1; i < w - 1; i++)
 		term_cell(x0 + i * TM_CW, y0, TM_BOX_H, brd, TM_DLG_BG);
 	term_cell(x0 + (w - 1) * TM_CW, y0, TM_BOX_TR, brd, TM_DLG_BG);
-	for (i = 0; i < n; i++)
+	for (row = 0; row < TM_MENU_ROWS; row++)
 	{
-		int y = y0 + (1 + i) * T.cell_h;
-		unsigned fg = (i == T.menu_sel) ? TM_SEL_FG : TM_DLG_FG;
-		unsigned bg = (i == T.menu_sel) ? TM_SEL_BG : TM_DLG_BG;
+		int y = y0 + (1 + row) * T.cell_h;
+		int sel = tm_menu_row_sel[row];
 
 		term_cell(x0, y, TM_BOX_V, brd, TM_DLG_BG);
-		term_fill_cells(x0 + TM_CW, y, w - 2, bg);
-		term_cell(x0 + TM_CW, y, ' ', fg, bg);
-		term_put_str_bg(x0 + 2 * TM_CW, y, items[i], fg, bg);
-		term_cell(x0 + (w - 2) * TM_CW, y, ' ', fg, bg);
+		if (sel < 0)
+		{
+			for (i = 1; i < w - 1; i++)
+				term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd,
+					  TM_DLG_BG);
+		}
+		else
+		{
+			unsigned fg = (sel == T.menu_sel) ? TM_SEL_FG
+							 : TM_DLG_FG;
+			unsigned bg = (sel == T.menu_sel) ? TM_SEL_BG
+							 : TM_DLG_BG;
+
+			term_fill_cells(x0 + TM_CW, y, w - 2, bg);
+			term_cell(x0 + TM_CW, y, ' ', fg, bg);
+			term_put_str_bg(x0 + 2 * TM_CW, y, items[sel], fg,
+					bg);
+			/* Echo and Scrollback carry their state as a
+			 * right-aligned checkbox so the item text does not
+			 * shift when it is toggled. */
+			if (sel == 3 || sel == 4)
+			{
+				int on = (sel == 3)
+						 ? term_want_echo()
+						 : G.opt.term_scroll_buffer;
+
+				term_put_str_bg(x0 + (w - 5) * TM_CW, y,
+						on ? "[x]" : "[ ]", fg, bg);
+			}
+			term_cell(x0 + (w - 2) * TM_CW, y, ' ', fg, bg);
+		}
 		term_cell(x0 + (w - 1) * TM_CW, y, TM_BOX_V, brd, TM_DLG_BG);
 	}
 	{
-		int y = y0 + (n + 1) * T.cell_h;
+		int y = y0 + (TM_MENU_ROWS + 1) * T.cell_h;
 		term_cell(x0, y, TM_BOX_BL, brd, TM_DLG_BG);
 		for (i = 1; i < w - 1; i++)
 			term_cell(x0 + i * TM_CW, y, TM_BOX_H, brd, TM_DLG_BG);
@@ -1568,8 +2000,24 @@ static void term_draw_row(int r)
 	if (r < 0 || r >= T.pane_rows)
 		return;
 	y = T.pane_top + r * T.cell_h;
-	for (c = 0; c < term_width(); c++)
+	c = 0;
+	while (c < term_width())
 	{
+		/* A covered run composites the plane; adjacent cells are one
+		 * scanline memcpy.  Page Up shows the text cells instead. */
+		if (T.sb_view <= 0 && P_s[g_console] &&
+		    P.cov[r * TM_MAX_COLS + c])
+		{
+			int c0 = c;
+
+			while (c < term_width() && P.cov[r * TM_MAX_COLS + c])
+				c++;
+			term_plane_blit(r, c0, c);
+			/* Force the glyph path when coverage clears later. */
+			for (x = c0; x < c; x++)
+				term_cell_sh[r][x] = 0;
+			continue;
+		}
 		x = (T.pane_left + c) * TM_CW;
 		term_view_cell(r, c, &ch, &fg, &bg);
 		if (!ch)
@@ -1582,10 +2030,12 @@ static void term_draw_row(int r)
 			bg = t;
 		}
 		key = term_shadow_key(ch, fg, bg);
-		if (key == term_cell_sh[r][c])
-			continue;
-		term_cell_sh[r][c] = key;
-		term_cell(x, y, ch, fg, bg);
+		if (key != term_cell_sh[r][c])
+		{
+			term_cell_sh[r][c] = key;
+			term_cell(x, y, ch, fg, bg);
+		}
+		c++;
 	}
 }
 
@@ -1741,7 +2191,7 @@ static void term_draw(void)
 
 		if (T.menu || T.alt_pend)
 		{
-			int top_h = T.menu ? 8 * T.cell_h : T.cell_h;
+			int top_h = T.menu ? (TM_MENU_ROWS + 3) * T.cell_h : T.cell_h;
 
 			term_rect_union(&px, &py, &pw, &ph, x0, 0, pane_w, pane_h);
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
@@ -1753,6 +2203,38 @@ static void term_draw(void)
 		{
 			term_rect_union(&px, &py, &pw, &ph, 0, 0,
 					T.vid_cols * TM_CW, pane_h);
+			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
+					T.vid_cols * TM_CW, T.cell_h);
+		}
+		else if (T.img_dirty)
+		{
+			int a, b;
+
+			/* Present the image box, not the whole pane.  Text damage
+			 * outside the image rows still needs its own band. */
+			term_rect_union(&px, &py, &pw, &ph, T.img_x, T.img_y,
+					T.img_w, T.img_h);
+			if (lo >= 0 && hi >= lo)
+			{
+				a = lo;
+				b = hi;
+				if (a < T.img_lo)
+				{
+					int e = b < T.img_lo - 1 ? b : T.img_lo - 1;
+
+					term_rect_union(&px, &py, &pw, &ph, x0,
+							T.pane_top + a * T.cell_h,
+							pane_w, (e - a + 1) * T.cell_h);
+				}
+				if (b > T.img_hi)
+				{
+					int s = a > T.img_hi + 1 ? a : T.img_hi + 1;
+
+					term_rect_union(&px, &py, &pw, &ph, x0,
+							T.pane_top + s * T.cell_h,
+							pane_w, (b - s + 1) * T.cell_h);
+				}
+			}
 			term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 					T.vid_cols * TM_CW, T.cell_h);
 		}
@@ -1775,6 +2257,7 @@ static void term_draw(void)
 	T.dirty_full = 0;
 	T.dirty_lo = -1;
 	T.dirty_hi = -1;
+	T.img_dirty = 0;
 	T.cur_shown = T.cur_vis;
 	T.cur_shown_row = T.cur_row;
 }
@@ -1810,11 +2293,16 @@ static void term_exit(void)
 		mmb_net_rxbuf_init(&term_rx, term_rx_store, MMB_NET_RX_CAP);
 	mmb_net_rxbuf_reset(&term_rx);
 	mmb_yield_remove(term_bg_yield);
+	term_cache_free(g_console);
+	term_apc_buf_free(g_console);
+	term_pixbuf_free_all(g_console);
+	term_mask_free(g_console);
 	memset(&T, 0, sizeof(T));
 	s_iac_n = 0;
 	/* Keep the small log buffer so OPTION TERM LOG OFF can still report this
 	 * session's counters; free the large scrollback ring on leave (#767). */
 	term_sb_free(g_console);
+	term_plane_free(g_console);
 }
 
 static void replay_tx(const unsigned char *p, unsigned n)
@@ -2201,6 +2689,22 @@ static void term_toggle_echo(void)
 	}
 }
 
+static void term_toggle_scroll_buffer(void)
+{
+	G.opt.term_scroll_buffer = G.opt.term_scroll_buffer ? 0 : 1;
+	if (!G.opt.term_scroll_buffer && T.sb_view > 0)
+		sb_to_live();
+	mmb_settings_save();
+	if (T.menu || T.alt_pend)
+		term_overlay_chrome();
+	else
+	{
+		mark_dirty_full();
+		term_draw();
+		term_serial_dump();
+	}
+}
+
 static void term_fill_pages(void)
 {
 	int saved = G.gfx.write_page;
@@ -2305,6 +2809,10 @@ static void term_cycle_view(void)
 	}
 	else
 		T.letterbox = 1;
+	/* The plane tracks the pane size; drop it and let the next image
+	 * allocate the new size (rescaling a live image is not worth it). */
+	term_plane_free(g_console);
+	T.img_dirty = 0;
 	term_apply_session_mode();
 	term_layout();
 	term_reset_scroll_region();
@@ -2364,7 +2872,8 @@ static void term_overlay_chrome(void)
 	{
 		int px = 0, py = 0, pw = 0, ph = 0;
 
-		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW, 8 * T.cell_h);
+		term_rect_union(&px, &py, &pw, &ph, 0, 0, T.vid_cols * TM_CW,
+				(TM_MENU_ROWS + 3) * T.cell_h);
 		term_rect_union(&px, &py, &pw, &ph, 0, term_status_y(),
 				T.vid_cols * TM_CW, T.cell_h);
 		if (pw > 0 && ph > 0)
@@ -3646,7 +4155,7 @@ static void term_menu_activate(void)
 	}
 	if (T.menu_sel == 1)
 	{
-		term_toggle_echo();
+		term_dl_open();
 		return;
 	}
 	if (T.menu_sel == 2)
@@ -3656,7 +4165,12 @@ static void term_menu_activate(void)
 	}
 	if (T.menu_sel == 3)
 	{
-		term_dl_open();
+		term_toggle_echo();
+		return;
+	}
+	if (T.menu_sel == 4)
+	{
+		term_toggle_scroll_buffer();
 		return;
 	}
 	term_exit();
@@ -3774,10 +4288,20 @@ static void ansi_sgr(void)
 			term_reset_pen();
 		else if (v == 1)
 			T.ansi_bold = 1;
+		else if (v == 5 || v == 6)
+		{
+			T.ansi_ice = 1;
+			ansi_update_bg();
+		}
 		else if (v == 7)
 			T.ansi_inv = 1;
 		else if (v == 22)
 			T.ansi_bold = 0;
+		else if (v == 25)
+		{
+			T.ansi_ice = 0;
+			ansi_update_bg();
+		}
 		else if (v == 27)
 			T.ansi_inv = 0;
 		else if (v >= 30 && v <= 37)
@@ -3785,20 +4309,46 @@ static void ansi_sgr(void)
 		else if (v >= 90 && v <= 97)
 			T.cur_fg = ansi_pal(v - 90 + 8);
 		else if (v >= 40 && v <= 47)
-			T.cur_bg = ansi_pal(v - 40);
+		{
+			T.ansi_bg_base = v - 40;
+			ansi_update_bg();
+		}
 		else if (v >= 100 && v <= 107)
-			T.cur_bg = ansi_pal(v - 100 + 8);
+		{
+			T.ansi_bg_base = v - 100 + 8;
+			ansi_update_bg();
+		}
 		else if (v == 39)
 			T.cur_fg = TM_FG;
 		else if (v == 49)
-			T.cur_bg = TM_BG;
+		{
+			T.ansi_bg_base = 0;
+			ansi_update_bg();
+		}
+		else if ((v == 38 || v == 48) && i + 4 < n && T.ansi_arg[i + 1] == 2)
+		{
+			unsigned c = mmb_rgb_pack(T.ansi_arg[i + 2] & 255,
+						  T.ansi_arg[i + 3] & 255,
+						  T.ansi_arg[i + 4] & 255);
+			if (v == 38)
+				T.cur_fg = c;
+			else
+			{
+				T.ansi_bg_base = -1;
+				T.cur_bg = c;
+			}
+			i += 4;
+		}
 		else if ((v == 38 || v == 48) && i + 2 < n && T.ansi_arg[i + 1] == 5)
 		{
 			unsigned c = ansi_256(T.ansi_arg[i + 2]);
 			if (v == 38)
 				T.cur_fg = c;
 			else
+			{
+				T.ansi_bg_base = -1;
 				T.cur_bg = c;
+			}
 			i += 2;
 		}
 	}
@@ -3837,6 +4387,97 @@ static int ansi_arg(int i, int dflt)
 	return dflt;
 }
 
+static char *ansi_put_uint(char *p, unsigned v)
+{
+	char tmp[12];
+	int n = 0;
+
+	if (!v)
+	{
+		*p++ = '0';
+		return p;
+	}
+	while (v)
+	{
+		tmp[n++] = (char)('0' + v % 10u);
+		v /= 10u;
+	}
+	while (n > 0)
+		*p++ = tmp[--n];
+	return p;
+}
+
+/* XTWINOPS report: CSI kind ; height ; width t */
+static void ansi_reply_xtwin(int kind, int height, int width)
+{
+	char buf[40];
+	char *p = buf;
+
+	*p++ = 27;
+	*p++ = '[';
+	p = ansi_put_uint(p, (unsigned)kind);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)height);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)width);
+	*p++ = 't';
+	*p = 0;
+	ansi_reply(buf);
+}
+
+/* XTSMGRAPHICS reply: CSI ? Pi ; status ; a [; b] S */
+static void ansi_reply_xtsm(int pi, int status, int a, int b, int two)
+{
+	char buf[48];
+	char *p = buf;
+
+	*p++ = 27;
+	*p++ = '[';
+	*p++ = '?';
+	p = ansi_put_uint(p, (unsigned)pi);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)status);
+	*p++ = ';';
+	p = ansi_put_uint(p, (unsigned)a);
+	if (two)
+	{
+		*p++ = ';';
+		p = ansi_put_uint(p, (unsigned)b);
+	}
+	*p++ = 'S';
+	*p = 0;
+	ansi_reply(buf);
+}
+
+static void ansi_exec_xtsm(void)
+{
+	int pi = T.ansi_narg > 0 ? T.ansi_arg[0] : 0;
+	int pa = T.ansi_narg > 1 ? T.ansi_arg[1] : 0;
+	int w = term_width() * TM_CW;
+	int h = T.pane_rows * T.cell_h;
+
+	if (pi == 1)
+	{
+		if (pa == 1 || pa == 2 || pa == 4)
+			ansi_reply_xtsm(1, 0, 256, 0, 0);
+		else if (pa == 3)
+			ansi_reply_xtsm(1, 3, 0, 0, 0);
+		else
+			ansi_reply_xtsm(1, 2, 0, 0, 0);
+	}
+	else if (pi == 2)
+	{
+		if (pa == 1 || pa == 2 || pa == 4)
+			ansi_reply_xtsm(2, 0, w, h, 1);
+		else if (pa == 3)
+			ansi_reply_xtsm(2, 3, 0, 0, 0);
+		else
+			ansi_reply_xtsm(2, 2, 0, 0, 0);
+	}
+	else
+		ansi_reply_xtsm(pi, 1, 0, 0, 0);
+}
+
 static void ansi_erase_line(int mode)
 {
 	int c, a, b;
@@ -3854,6 +4495,7 @@ static void ansi_erase_line(int mode)
 		T.cell_fg[T.cur_row][c] = term_pen();
 		T.cell_bg[T.cur_row][c] = term_paper();
 	}
+	term_plane_uncover_range(T.cur_row, a, b);
 	mark_dirty_row(T.cur_row);
 }
 
@@ -3884,12 +4526,14 @@ static void ansi_erase_disp(int mode)
 			T.cell_fg[r][c] = fg;
 			T.cell_bg[r][c] = bg;
 		}
+		term_plane_uncover_range(r, ca, cb);
 		mark_dirty_row(r);
 	}
 	if (mode == 2 || mode == 3)
 	{
 		T.cur_row = 0;
 		T.cur_col = 0;
+		term_plane_clear();
 		mark_dirty_full();
 		return;
 	}
@@ -3897,6 +4541,7 @@ static void ansi_erase_disp(int mode)
 
 static void ansi_blank_cell(int r, int c)
 {
+	term_plane_uncover_cell(r, c);
 	T.cell[r][c] = ' ';
 	T.cell_fg[r][c] = term_pen();
 	T.cell_bg[r][c] = term_paper();
@@ -3918,6 +4563,7 @@ static void ansi_insert_lines(int n)
 		n = 1;
 	if (n > bot - T.cur_row + 1)
 		n = bot - T.cur_row + 1;
+	term_plane_scroll_rows(T.cur_row, bot, n, 0);
 	for (r = bot; r >= T.cur_row + n; r--)
 		for (c = 0; c < w; c++)
 		{
@@ -3946,6 +4592,7 @@ static void ansi_delete_lines(int n)
 		n = 1;
 	if (n > bot - T.cur_row + 1)
 		n = bot - T.cur_row + 1;
+	term_plane_scroll_rows(T.cur_row, bot, n, 1);
 	for (r = T.cur_row; r <= bot - n; r++)
 		for (c = 0; c < w; c++)
 		{
@@ -3976,6 +4623,7 @@ static void ansi_insert_chars(int n)
 		n = w - T.cur_col;
 	if (n <= 0)
 		return;
+	term_plane_shift_cols(T.cur_row, T.cur_col, n, 1);
 	for (c = w - 1; c >= T.cur_col + n; c--)
 	{
 		T.cell[T.cur_row][c] = T.cell[T.cur_row][c - n];
@@ -4003,6 +4651,7 @@ static void ansi_delete_chars(int n)
 		n = w - T.cur_col;
 	if (n <= 0)
 		return;
+	term_plane_shift_cols(T.cur_row, T.cur_col, n, 0);
 	for (c = T.cur_col; c < w - n; c++)
 	{
 		T.cell[T.cur_row][c] = T.cell[T.cur_row][c + n];
@@ -4042,6 +4691,7 @@ static void ansi_scroll_pane(int n, int up)
 		n = 1;
 	if (n > rows)
 		n = rows;
+	term_plane_scroll_rows(top, bot, n, up);
 	if (up)
 	{
 		for (r = top; r <= bot - n; r++)
@@ -4188,13 +4838,43 @@ static void ansi_exec_csi(char cmd)
 			ansi_reply("\x1b[0n");
 	}
 	else if (cmd == 'c')
-		ansi_reply("\x1b[?1;2c");
+	{
+		if (G.opt.term_cterm)
+			ansi_reply("\x1b[=67;84;101;114;109;1;332c");
+		else
+			ansi_reply("\x1b[?1;2;4c");
+	}
+	else if (cmd == 't')
+	{
+		int q = T.ansi_narg > 0 ? T.ansi_arg[0] : 0;
+		int h = T.pane_rows * T.cell_h;
+		int w = term_width() * TM_CW;
+
+		if (q == 14)
+			ansi_reply_xtwin(4, h, w);
+		else if (q == 16)
+			ansi_reply_xtwin(6, T.cell_h, TM_CW);
+		else if (q == 18)
+			ansi_reply_xtwin(8, T.pane_rows, term_width());
+		else if (q == 11)
+			ansi_reply("\x1b[1t");
+	}
 }
 
 static void ansi_exec_priv(char cmd)
 {
 	int i, n, v;
 
+	if (cmd == 'c' && T.ansi_priv == 2)
+	{
+		ansi_reply("\x1b[<0;4c");
+		return;
+	}
+	if (cmd == 'S')
+	{
+		ansi_exec_xtsm();
+		return;
+	}
 	if (cmd != 'h' && cmd != 'l')
 		return;
 	n = T.ansi_narg > 0 ? T.ansi_narg : 1;
@@ -4205,7 +4885,1449 @@ static void ansi_exec_priv(char cmd)
 		v = T.ansi_arg[i];
 		if (v == 25)
 			term_set_cursor_vis(cmd == 'h');
+		else if (v == 80)
+			T.sixel_scroll = (cmd == 'l');
 	}
+}
+
+/* ---- SyncTERM APC cache, decoder and draw --------------------------- */
+
+typedef struct {
+	uint32_t a, b, c, d;
+	uint64_t len;
+	unsigned char buf[64];
+} tm_md5;
+
+static uint32_t tm_md5_rol(uint32_t x, int n)
+{
+	return (x << n) | (x >> (32 - n));
+}
+
+static void tm_md5_block(tm_md5 *m, const unsigned char *p)
+{
+	static const uint32_t K[64] = {
+		0xd76aa478u, 0xe8c7b756u, 0x242070dbu, 0xc1bdceeeu,
+		0xf57c0fafu, 0x4787c62au, 0xa8304613u, 0xfd469501u,
+		0x698098d8u, 0x8b44f7afu, 0xffff5bb1u, 0x895cd7beu,
+		0x6b901122u, 0xfd987193u, 0xa679438eu, 0x49b40821u,
+		0xf61e2562u, 0xc040b340u, 0x265e5a51u, 0xe9b6c7aau,
+		0xd62f105du, 0x02441453u, 0xd8a1e681u, 0xe7d3fbc8u,
+		0x21e1cde6u, 0xc33707d6u, 0xf4d50d87u, 0x455a14edu,
+		0xa9e3e905u, 0xfcefa3f8u, 0x676f02d9u, 0x8d2a4c8au,
+		0xfffa3942u, 0x8771f681u, 0x6d9d6122u, 0xfde5380cu,
+		0xa4beea44u, 0x4bdecfa9u, 0xf6bb4b60u, 0xbebfbc70u,
+		0x289b7ec6u, 0xeaa127fau, 0xd4ef3085u, 0x04881d05u,
+		0xd9d4d039u, 0xe6db99e5u, 0x1fa27cf8u, 0xc4ac5665u,
+		0xf4292244u, 0x432aff97u, 0xab9423a7u, 0xfc93a039u,
+		0x655b59c3u, 0x8f0ccc92u, 0xffeff47du, 0x85845dd1u,
+		0x6fa87e4fu, 0xfe2ce6e0u, 0xa3014314u, 0x4e0811a1u,
+		0xf7537e82u, 0xbd3af235u, 0x2ad7d2bbu, 0xeb86d391u
+	};
+	static const int S[64] = {
+		7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+		5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+		4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+		6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+	};
+	uint32_t w[16], a = m->a, b = m->b, c = m->c, d = m->d;
+	int i;
+
+	for (i = 0; i < 16; i++)
+		w[i] = (uint32_t)p[i * 4] | ((uint32_t)p[i * 4 + 1] << 8) |
+		       ((uint32_t)p[i * 4 + 2] << 16) |
+		       ((uint32_t)p[i * 4 + 3] << 24);
+	for (i = 0; i < 64; i++)
+	{
+		uint32_t f, g, t;
+
+		if (i < 16)
+		{
+			f = (b & c) | (~b & d);
+			g = (uint32_t)i;
+		}
+		else if (i < 32)
+		{
+			f = (d & b) | (~d & c);
+			g = (uint32_t)(5 * i + 1) & 15u;
+		}
+		else if (i < 48)
+		{
+			f = b ^ c ^ d;
+			g = (uint32_t)(3 * i + 5) & 15u;
+		}
+		else
+		{
+			f = c ^ (b | ~d);
+			g = (uint32_t)(7 * i) & 15u;
+		}
+		t = d;
+		d = c;
+		c = b;
+		b = b + tm_md5_rol(a + f + K[i] + w[g], S[i]);
+		a = t;
+	}
+	m->a += a;
+	m->b += b;
+	m->c += c;
+	m->d += d;
+}
+
+static void tm_md5_init(tm_md5 *m)
+{
+	m->a = 0x67452301u;
+	m->b = 0xefcdab89u;
+	m->c = 0x98badcfeu;
+	m->d = 0x10325476u;
+	m->len = 0;
+}
+
+static void tm_md5_update(tm_md5 *m, const void *data, unsigned n)
+{
+	const unsigned char *p = (const unsigned char *)data;
+	unsigned have = (unsigned)(m->len & 63u);
+	unsigned i;
+
+	m->len += n;
+	if (have)
+	{
+		i = 64u - have;
+		if (i > n)
+			i = n;
+		memcpy(m->buf + have, p, i);
+		if (have + i < 64)
+			return;
+		tm_md5_block(m, m->buf);
+		p += i;
+		n -= i;
+	}
+	while (n >= 64)
+	{
+		tm_md5_block(m, p);
+		p += 64;
+		n -= 64;
+	}
+	if (n)
+		memcpy(m->buf, p, n);
+}
+
+static void tm_md5_final(tm_md5 *m, unsigned char out[16])
+{
+	static const unsigned char pad[64] = { 0x80 };
+	uint64_t bits = m->len * 8u;
+	unsigned char tail[8];
+	unsigned have = (unsigned)(m->len & 63u);
+	unsigned padn = have < 56 ? 56 - have : 120 - have;
+	int i;
+
+	for (i = 0; i < 8; i++)
+		tail[i] = (unsigned char)(bits >> (i * 8));
+	tm_md5_update(m, pad, padn);
+	tm_md5_update(m, tail, 8);
+	for (i = 0; i < 4; i++)
+	{
+		out[i] = (unsigned char)(m->a >> (i * 8));
+		out[i + 4] = (unsigned char)(m->b >> (i * 8));
+		out[i + 8] = (unsigned char)(m->c >> (i * 8));
+		out[i + 12] = (unsigned char)(m->d >> (i * 8));
+	}
+}
+
+static void tm_md5_hex(const unsigned char digest[16], char out[33])
+{
+	static const char hex[] = "0123456789abcdef";
+	int i;
+
+	for (i = 0; i < 16; i++)
+	{
+		out[i * 2] = hex[digest[i] >> 4];
+		out[i * 2 + 1] = hex[digest[i] & 15];
+	}
+	out[32] = 0;
+}
+
+static int term_safe_name(const char *s)
+{
+	size_t i, n;
+
+	if (!s)
+		return 0;
+	n = strlen(s);
+	if (n < 1 || n >= TM_CACHE_NAME || s[0] == '.')
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		char c = s[i];
+
+		if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		      (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+		      c == '-'))
+			return 0;
+		if (c == '.' && i + 1 < n && s[i + 1] == '.')
+			return 0;
+	}
+	return 1;
+}
+
+static int term_cache_ensure(void)
+{
+	if (TC_s[g_console])
+		return 0;
+	if (!G.plat || !G.plat->alloc)
+		return -1;
+	TC_s[g_console] = (term_cache *)G.plat->alloc(sizeof(term_cache));
+	if (!TC_s[g_console])
+		return -1;
+	memset(TC_s[g_console], 0, sizeof(term_cache));
+	return 0;
+}
+
+static void term_cache_drop(term_cache_ent *e)
+{
+	if (e->data && G.plat && G.plat->free)
+		G.plat->free(e->data);
+	e->data = NULL;
+	e->len = 0;
+	e->live = 0;
+	e->name[0] = 0;
+}
+
+static void term_cache_free(int idx)
+{
+	term_cache *c = TC_s[idx];
+	int i;
+
+	if (!c)
+		return;
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+		if (c->e[i].live)
+			term_cache_drop(&c->e[i]);
+	if (G.plat && G.plat->free)
+		G.plat->free(c);
+	TC_s[idx] = 0;
+}
+
+static term_cache_ent *term_cache_find(const char *name)
+{
+	int i;
+
+	if (!TC_s[g_console])
+		return NULL;
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+	{
+		if (TC.e[i].live && strcmp(TC.e[i].name, name) == 0)
+		{
+			TC.e[i].used = ++TC.tick;
+			return &TC.e[i];
+		}
+	}
+	return NULL;
+}
+
+static void term_cache_evict(void)
+{
+	term_cache_ent *victim = NULL;
+	int i;
+
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+	{
+		term_cache_ent *e = &TC.e[i];
+
+		if (!e->live)
+			continue;
+		if (!victim || e->used < victim->used)
+			victim = e;
+	}
+	if (!victim)
+		return;
+	TC.total -= victim->len;
+	term_cache_drop(victim);
+}
+
+static int term_cache_store(const char *name, const unsigned char *data,
+			    unsigned len)
+{
+	term_cache_ent *e = NULL;
+	tm_md5 md5;
+	int i;
+
+	if (!term_safe_name(name) || len > TM_CACHE_FILE_MAX ||
+	    term_cache_ensure() != 0)
+		return -1;
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+	{
+		if (TC.e[i].live && strcmp(TC.e[i].name, name) == 0)
+		{
+			TC.total -= TC.e[i].len;
+			term_cache_drop(&TC.e[i]);
+			break;
+		}
+	}
+	while (TC.total + len > TM_CACHE_TOTAL_MAX)
+	{
+		unsigned before = TC.total;
+
+		term_cache_evict();
+		if (TC.total == before)
+			return -1;
+	}
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+	{
+		if (!TC.e[i].live)
+		{
+			e = &TC.e[i];
+			break;
+		}
+	}
+	while (!e)
+	{
+		unsigned before = TC.total;
+
+		term_cache_evict();
+		if (TC.total == before)
+			return -1;
+		for (i = 0; i < TM_CACHE_ENTRIES; i++)
+			if (!TC.e[i].live)
+			{
+				e = &TC.e[i];
+				break;
+			}
+	}
+	if (len)
+	{
+		e->data = (unsigned char *)G.plat->alloc(len);
+		if (!e->data)
+			return -1;
+		memcpy(e->data, data, len);
+	}
+	else
+		e->data = NULL;
+	e->len = len;
+	e->live = 1;
+	e->used = ++TC.tick;
+	strncpy(e->name, name, TM_CACHE_NAME - 1);
+	e->name[TM_CACHE_NAME - 1] = 0;
+	tm_md5_init(&md5);
+	tm_md5_update(&md5, data, len);
+	tm_md5_final(&md5, e->md5);
+	TC.total += len;
+	return 0;
+}
+
+static int term_glob_match(const char *pat, const char *s)
+{
+	const char *star = NULL, *ss = s;
+
+	while (*s)
+	{
+		if (*pat == '?' || *pat == *s)
+		{
+			pat++;
+			s++;
+		}
+		else if (*pat == '*')
+		{
+			star = pat++;
+			ss = s;
+		}
+		else if (star)
+		{
+			pat = star + 1;
+			s = ++ss;
+		}
+		else
+			return 0;
+	}
+	while (*pat == '*')
+		pat++;
+	return *pat == 0;
+}
+
+static void term_apc_list(const char *pat)
+{
+	char line[TM_CACHE_NAME + 40];
+	char hex[33];
+	int i;
+
+	ansi_reply("\x1b_SyncTERM:C;L\n");
+	if (!TC_s[g_console] || !pat)
+	{
+		ansi_reply("\x1b\\");
+		return;
+	}
+	for (i = 0; i < TM_CACHE_ENTRIES; i++)
+	{
+		term_cache_ent *e = &TC.e[i];
+		size_t n;
+
+		if (!e->live || !term_glob_match(pat, e->name))
+			continue;
+		tm_md5_hex(e->md5, hex);
+		n = strlen(e->name);
+		memcpy(line, e->name, n);
+		line[n++] = '\t';
+		memcpy(line + n, hex, 32);
+		n += 32;
+		line[n++] = '\n';
+		line[n] = 0;
+		ansi_reply(line);
+	}
+	ansi_reply("\x1b\\");
+}
+
+static int tm_b64_val(unsigned char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		return c - 'A';
+	if (c >= 'a' && c <= 'z')
+		return c - 'a' + 26;
+	if (c >= '0' && c <= '9')
+		return c - '0' + 52;
+	if (c == '+')
+		return 62;
+	if (c == '/')
+		return 63;
+	return -1;
+}
+
+static int tm_b64_decode(const char *s, unsigned n, unsigned max_out,
+			 unsigned char **out, unsigned *outlen)
+{
+	unsigned i, chars = 0, pad = 0, o = 0, acc = 0, bits = 0;
+	unsigned char *buf;
+	int seen_pad = 0;
+
+	for (i = 0; i < n; i++)
+	{
+		unsigned char c = (unsigned char)s[i];
+
+		if (c == '\r' || c == '\n')
+			continue;
+		if (c == '=')
+		{
+			seen_pad = 1;
+			pad++;
+			if (pad > 2)
+				return -1;
+			continue;
+		}
+		if (seen_pad || tm_b64_val(c) < 0)
+			return -1;
+		chars++;
+	}
+	if (chars == 0 || (chars & 3u) == 1u || ((chars + pad) & 3u) != 0)
+		return -1;
+	i = (chars + pad) / 4u * 3u - pad;
+	if (i > max_out)
+		return -1;
+	buf = (unsigned char *)malloc(i ? i : 1);
+	if (!buf)
+		return -1;
+	for (i = 0; i < n; i++)
+	{
+		unsigned char c = (unsigned char)s[i];
+		int v;
+
+		if (c == '\r' || c == '\n')
+			continue;
+		v = tm_b64_val(c);
+		if (v < 0)
+			break;
+		acc = (acc << 6) | (unsigned)v;
+		bits += 6;
+		if (bits >= 8)
+		{
+			bits -= 8;
+			buf[o++] = (unsigned char)((acc >> bits) & 255u);
+		}
+	}
+	*out = buf;
+	*outlen = o;
+	return 0;
+}
+
+static int tm_opt_int(const char *s, size_t n, int *out, int neg)
+{
+	size_t i = 0;
+	long v = 0;
+	int sign = 1;
+
+	if (n == 0)
+		return -1;
+	if (s[0] == '-')
+	{
+		if (!neg)
+			return -1;
+		sign = -1;
+		i = 1;
+	}
+	if (i >= n)
+		return -1;
+	for (; i < n; i++)
+	{
+		if (s[i] < '0' || s[i] > '9')
+			return -1;
+		v = v * 10 + (s[i] - '0');
+		if (v > 1048576L)
+			return -1;
+	}
+	*out = (int)(v * sign);
+	return 0;
+}
+
+static int tm_draw_key(const char *t, size_t n, term_draw_opts *o)
+{
+	const char *v;
+	size_t vn;
+
+	if (n == 2 && t[0] == 'F' && (t[1] == 'X' || t[1] == 'Y'))
+	{
+		if (t[1] == 'X')
+			o->fx = 1;
+		else
+			o->fy = 1;
+		return 1;
+	}
+	if (n == 4 && memcmp(t, "MBUF", 4) == 0)
+	{
+		o->mask_kind = TM_MASK_BUF;
+		return 1;
+	}
+	if (n >= 6 && memcmp(t, "MFILE=", 6) == 0)
+	{
+		v = t + 6;
+		vn = n - 6;
+		if (vn < 1 || vn >= TM_CACHE_NAME)
+			return -1;
+		memcpy(o->mfile, v, vn);
+		o->mfile[vn] = 0;
+		if (!term_safe_name(o->mfile))
+			return -1;
+		o->mask_kind = TM_MASK_FILE;
+		return 1;
+	}
+	if (n >= 5 && memcmp(t, "MASK=", 5) == 0)
+	{
+		o->mask_ptr = t + 5;
+		o->mask_len = (unsigned)(n - 5);
+		o->mask_kind = TM_MASK_INLINE;
+		return 1;
+	}
+	if (n >= 3 && t[0] == 'B' && t[1] == '=')
+		return tm_opt_int(t + 2, n - 2, &o->buf, 0) == 0 ? 1 : -1;
+	if (n < 4 || t[2] != '=')
+		return 0;
+	v = t + 3;
+	vn = n - 3;
+	if (t[0] == 'S' && t[1] == 'X')
+		return tm_opt_int(v, vn, &o->sx, 0) == 0 ? 1 : -1;
+	if (t[0] == 'S' && t[1] == 'Y')
+		return tm_opt_int(v, vn, &o->sy, 0) == 0 ? 1 : -1;
+	if (t[0] == 'S' && t[1] == 'W')
+		return tm_opt_int(v, vn, &o->sw, 0) == 0 ? 1 : -1;
+	if (t[0] == 'S' && t[1] == 'H')
+		return tm_opt_int(v, vn, &o->sh, 0) == 0 ? 1 : -1;
+	if (t[0] == 'D' && t[1] == 'X')
+		return tm_opt_int(v, vn, &o->dx, 1) == 0 ? 1 : -1;
+	if (t[0] == 'D' && t[1] == 'Y')
+		return tm_opt_int(v, vn, &o->dy, 1) == 0 ? 1 : -1;
+	if (t[0] == 'Z' && t[1] == 'X')
+		return tm_opt_int(v, vn, &o->zx, 0) == 0 ? 1 : -1;
+	if (t[0] == 'Z' && t[1] == 'Y')
+		return tm_opt_int(v, vn, &o->zy, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'X')
+		return tm_opt_int(v, vn, &o->mx, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'Y')
+		return tm_opt_int(v, vn, &o->my, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'W')
+		return tm_opt_int(v, vn, &o->mw, 0) == 0 ? 1 : -1;
+	if (t[0] == 'M' && t[1] == 'H')
+		return tm_opt_int(v, vn, &o->mh, 0) == 0 ? 1 : -1;
+	return 0;
+}
+
+static const char *tm_draw_payload(const char *body, unsigned len,
+				   const char *p, term_draw_opts *o)
+{
+	(void)body;
+	(void)len;
+	while (*p == ';')
+	{
+		const char *t = p + 1;
+		const char *e = strchr(t, ';');
+		size_t n = e ? (size_t)(e - t) : strlen(t);
+		int k = tm_draw_key(t, n, o);
+
+		if (k < 0)
+			return NULL;
+		if (k == 0)
+			return t;
+		if (!e)
+			return NULL;
+		p = e;
+	}
+	return NULL;
+}
+
+static void term_plane_prime_cells(int x0, int y0, int x1, int y1)
+{
+	uint16_t *page;
+	int bw, bh, c0, c1, r0, r1, r, c;
+	int saved;
+
+	if (!P_s[g_console])
+		return;
+	page = mmb_gfx_buf_for(TM_PAGE, &bw, &bh);
+	if (!page)
+		return;
+	c0 = x0 / TM_CW;
+	c1 = (x1 - 1) / TM_CW;
+	r0 = y0 / T.cell_h;
+	r1 = (y1 - 1) / T.cell_h;
+	if (c0 < 0)
+		c0 = 0;
+	if (r0 < 0)
+		r0 = 0;
+	if (c1 >= term_width())
+		c1 = term_width() - 1;
+	if (r1 >= T.pane_rows)
+		r1 = T.pane_rows - 1;
+	saved = G.gfx.write_page;
+	G.gfx.write_page = TM_PAGE;
+	for (r = r0; r <= r1; r++)
+	{
+		for (c = c0; c <= c1; c++)
+		{
+			unsigned ch, fg, bg;
+			int px = (T.pane_left + c) * TM_CW;
+			int py = T.pane_top + r * T.cell_h;
+			int dy;
+
+			if (P.cov[r * TM_MAX_COLS + c])
+				continue;
+			term_view_cell(r, c, &ch, &fg, &bg);
+			term_cell(px, py, ch ? ch : ' ', fg, bg);
+			for (dy = 0; dy < T.cell_h; dy++)
+			{
+				int plane_y = r * T.cell_h + dy;
+
+				if (py + dy >= bh || plane_y >= P.h ||
+				    px + TM_CW > bw || c * TM_CW + TM_CW > P.w)
+					break;
+				memcpy(P.pix + plane_y * P.stride + c * TM_CW,
+				       page + (py + dy) * bw + px,
+				       TM_CW * sizeof(uint16_t));
+			}
+		}
+	}
+	G.gfx.write_page = saved;
+}
+
+/* Decode a PBM (P1/P4) from the cache into the tightly packed bit layout the
+ * SyncTERM mask sampler uses: black pixels are "draw". */
+static int term_mask_from_pbm(const unsigned char *data, unsigned len,
+			      term_mask *m)
+{
+	mmb_img_rgb img;
+	unsigned char *bits;
+	size_t n, bytes, i;
+	int x, y, w, h;
+
+	memset(&img, 0, sizeof(img));
+	if (!data || len < 2 || data[0] != 'P' ||
+	    (data[1] != '1' && data[1] != '4'))
+		return -1;
+	if (mmb_ppm_decode(data, len, TM_MASK_MAX_PIXELS, &img) != 0)
+		return -1;
+	w = img.w;
+	h = img.h;
+	n = (size_t)w * (size_t)h;
+	bytes = (n + 7u) / 8u;
+	bits = (unsigned char *)malloc(bytes ? bytes : 1);
+	if (!bits)
+	{
+		mmb_img_free(&img);
+		return -1;
+	}
+	memset(bits, 0, bytes ? bytes : 1);
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+		{
+			const unsigned char *p = img.rgb +
+				((size_t)y * (size_t)w + (size_t)x) * 3u;
+
+			if (p[0] == 0 && p[1] == 0 && p[2] == 0)
+			{
+				i = (size_t)y * (size_t)w + (size_t)x;
+				bits[i >> 3] |= (unsigned char)(0x80u >> (i & 7u));
+			}
+		}
+	mmb_img_free(&img);
+	m->bits = bits;
+	m->w = w;
+	m->h = h;
+	m->owned = 1;
+	return 0;
+}
+
+/* Resolve the Draw/Paste mask tokens.  sw/sh are the effective source
+ * rectangle, needed to default MW/MH and to bound-check MFILE/MBUF.  A
+ * requested mask that does not validate drops the whole frame, matching
+ * SyncTERM (it does not fall back to an unmasked draw). */
+static int term_mask_resolve(const term_draw_opts *o, int sw, int sh,
+			     term_mask *m)
+{
+	memset(m, 0, sizeof(*m));
+	if (o->mask_kind == TM_MASK_INLINE)
+	{
+		unsigned char *buf = NULL;
+		unsigned outlen = 0;
+		unsigned long long px;
+		size_t need;
+		int mw, mh;
+
+		mw = o->mw > 0 ? o->mw : sw;
+		mh = o->mh > 0 ? o->mh : sh;
+		if (mw < 1 || mh < 1)
+			return -1;
+		px = (unsigned long long)(unsigned)mw * (unsigned)mh;
+		if (px > TM_MASK_MAX_PIXELS)
+			return -1;
+		need = (size_t)((px + 7u) / 8u);
+		if (tm_b64_decode(o->mask_ptr, o->mask_len, TM_APC_MAX,
+				  &buf, &outlen) != 0)
+			return -1;
+		if (outlen < need)
+		{
+			free(buf);
+			return -1;
+		}
+		if (outlen > need)
+		{
+			/* SyncTERM accepts padding past the packed bitmap; keep
+			 * only the bytes the sampler can address. */
+			unsigned char *trim = (unsigned char *)malloc(need);
+
+			if (!trim)
+			{
+				free(buf);
+				return -1;
+			}
+			memcpy(trim, buf, need);
+			free(buf);
+			buf = trim;
+		}
+		m->bits = buf;
+		m->w = mw;
+		m->h = mh;
+		m->owned = 1;
+	}
+	else if (o->mask_kind == TM_MASK_FILE)
+	{
+		term_cache_ent *e = term_cache_find(o->mfile);
+
+		if (!e || term_mask_from_pbm(e->data, e->len, m) != 0)
+			return -1;
+	}
+	else if (o->mask_kind == TM_MASK_BUF)
+	{
+		term_mask *src = &TMASK_s[g_console];
+
+		if (!src->bits)
+			return -1;
+		*m = *src;
+		m->owned = 0;
+	}
+	else
+		return -1;
+
+	if (o->mx < 0 || o->my < 0 ||
+	    (long long)o->mx + sw > m->w ||
+	    (long long)o->my + sh > m->h)
+	{
+		if (m->owned)
+			free(m->bits);
+		memset(m, 0, sizeof(*m));
+		return -1;
+	}
+	return 0;
+}
+
+static void term_draw_image(const mmb_img_rgb *img, const term_draw_opts *o)
+{
+	int sx, sy, sw, sh, zx, zy, x, y;
+	long long dx, dy, x0, x1, y0, y1;
+	term_mask mask;
+	int have_mask = 0;
+
+	if (!img || !img->rgb || img->w < 1 || img->h < 1)
+		return;
+	sx = o->sx;
+	sy = o->sy;
+	sw = o->sw;
+	sh = o->sh;
+	zx = o->zx > 0 ? o->zx : 1;
+	zy = o->zy > 0 ? o->zy : 1;
+	if (sx < 0 || sy < 0 || sx >= img->w || sy >= img->h)
+		return;
+	if (sw <= 0)
+		sw = img->w - sx;
+	if (sh <= 0)
+		sh = img->h - sy;
+	if (sw > img->w - sx)
+		sw = img->w - sx;
+	if (sh > img->h - sy)
+		sh = img->h - sy;
+	if (sw < 1 || sh < 1)
+		return;
+	if (o->mask_kind != TM_MASK_NONE)
+	{
+		if (term_mask_resolve(o, sw, sh, &mask) != 0)
+			return;
+		have_mask = 1;
+	}
+	if (term_plane_alloc() != 0)
+		goto fail;
+	dx = o->dx;
+	dy = o->dy;
+	x0 = dx;
+	y0 = dy;
+	x1 = dx + (long long)sw * zx;
+	y1 = dy + (long long)sh * zy;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > P.w)
+		x1 = P.w;
+	if (y1 > P.h)
+		y1 = P.h;
+	if (x1 <= x0 || y1 <= y0)
+		goto fail;
+	term_plane_prime_cells((int)x0, (int)y0, (int)x1, (int)y1);
+	for (y = (int)y0; y < (int)y1; y++)
+	{
+		long long ly = (long long)y - dy;
+		int syi = (int)(ly / zy);
+		int yy;
+
+		if (syi < 0 || syi >= sh)
+			continue;
+		if (o->fy)
+			syi = sh - 1 - syi;
+		yy = sy + syi;
+		for (x = (int)x0; x < (int)x1; x++)
+		{
+			long long lx = (long long)x - dx;
+			int sxi = (int)(lx / zx);
+			int xx;
+			const unsigned char *p;
+
+			if (sxi < 0 || sxi >= sw)
+				continue;
+			if (o->fx)
+				sxi = sw - 1 - sxi;
+			if (have_mask)
+			{
+				int mi = (o->my + syi) * mask.w + o->mx + sxi;
+
+				if (!(mask.bits[mi >> 3] &
+				      (unsigned char)(0x80u >> (mi & 7u))))
+					continue;
+			}
+			xx = sx + sxi;
+			p = img->rgb + ((size_t)yy * (size_t)img->w +
+					(size_t)xx) * 3u;
+			P.pix[y * P.stride + x] = mmb_pix_store(
+				((unsigned)p[0] << 16) | ((unsigned)p[1] << 8) |
+				(unsigned)p[2]);
+			P.cov[(y / T.cell_h) * TM_MAX_COLS + x / TM_CW] = 1;
+		}
+	}
+	if (have_mask)
+	{
+		/* Coverage is cell-granular.  The rect was primed from the
+		 * current screen, so claiming the whole rect composites those
+		 * glyph pixels under transparent mask bits instead of dropping
+		 * to the glyph path (which would paint over the image). */
+		int r0 = (int)y0 / T.cell_h;
+		int r1 = ((int)y1 - 1) / T.cell_h;
+		int c0 = (int)x0 / TM_CW;
+		int c1 = ((int)x1 - 1) / TM_CW;
+		int r, c;
+
+		for (r = r0; r <= r1; r++)
+			for (c = c0; c <= c1; c++)
+				if (r >= 0 && r < T.pane_rows && c >= 0 &&
+				    c < term_width())
+					P.cov[r * TM_MAX_COLS + c] = 1;
+	}
+	T.img_x = T.pane_left * TM_CW + (int)x0;
+	T.img_y = T.pane_top + (int)y0;
+	T.img_w = (int)(x1 - x0);
+	T.img_h = (int)(y1 - y0);
+	T.img_lo = (int)(y0 / T.cell_h);
+	T.img_hi = (int)((y1 - 1) / T.cell_h);
+	if (T.img_hi >= T.pane_rows)
+		T.img_hi = T.pane_rows - 1;
+	for (y = T.img_lo; y <= T.img_hi; y++)
+		mark_dirty_row(y);
+	T.img_dirty = 1;
+	T.need_draw = 1;
+fail:
+	if (have_mask && mask.owned)
+		free(mask.bits);
+}
+
+static void term_apc_image(int jxl, const unsigned char *data, unsigned len,
+			   const term_draw_opts *o)
+{
+	mmb_img_rgb img;
+	int rc;
+
+	memset(&img, 0, sizeof(img));
+	term_yield();
+	rc = jxl ? mmb_jxl_decode(data, len, 4000000u, &img)
+		 : mmb_ppm_decode(data, len, 4000000u, &img);
+	if (rc == 0)
+		term_draw_image(&img, o);
+	mmb_img_free(&img);
+	term_yield();
+}
+
+static void term_apc_store(const char *rest, unsigned len)
+{
+	const char *sep;
+	char name[TM_CACHE_NAME];
+	unsigned char *buf = NULL;
+	unsigned nlen, blen, outlen;
+
+	if (!rest || len < 1)
+		return;
+	{
+		unsigned k;
+
+		sep = NULL;
+		for (k = 0; k < len; k++)
+		{
+			if (rest[k] == ';')
+			{
+				sep = rest + k;
+				break;
+			}
+		}
+	}
+	if (!sep)
+		return;
+	nlen = (unsigned)(sep - rest);
+	if (nlen < 1 || nlen >= TM_CACHE_NAME)
+		return;
+	memcpy(name, rest, nlen);
+	name[nlen] = 0;
+	if (!term_safe_name(name))
+		return;
+	blen = len - nlen - 1;
+	if (tm_b64_decode(sep + 1, blen, TM_CACHE_FILE_MAX, &buf, &outlen) != 0)
+		return;
+	term_cache_store(name, buf, outlen);
+	free(buf);
+}
+
+static int tm_copy_key(const char *t, size_t n, term_copy_opts *o)
+{
+	if (n < 3 || t[1] != '=')
+		return 0;
+	if (t[0] == 'X')
+		return tm_opt_int(t + 2, n - 2, &o->x, 0) == 0 ? 1 : -1;
+	if (t[0] == 'Y')
+		return tm_opt_int(t + 2, n - 2, &o->y, 0) == 0 ? 1 : -1;
+	if (t[0] == 'W')
+		return tm_opt_int(t + 2, n - 2, &o->w, 0) == 0 ? 1 : -1;
+	if (t[0] == 'H')
+		return tm_opt_int(t + 2, n - 2, &o->h, 0) == 0 ? 1 : -1;
+	if (t[0] == 'B')
+		return tm_opt_int(t + 2, n - 2, &o->buf, 0) == 0 ? 1 : -1;
+	return 0;
+}
+
+/* P;Copy has only options, no trailing filename/payload. */
+static int tm_copy_parse(const char *p, term_copy_opts *o)
+{
+	while (p && *p == ';')
+	{
+		const char *t = p + 1;
+		const char *e = strchr(t, ';');
+		size_t n = e ? (size_t)(e - t) : strlen(t);
+
+		if (tm_copy_key(t, n, o) != 1)
+			return -1;
+		if (!e)
+			return 0;
+		p = e;
+	}
+	return p && *p == 0 ? 0 : -1;
+}
+
+static void term_apc_copy(const char *rest)
+{
+	term_copy_opts o;
+	mmb_img_rgb nb;
+	int x, y, w, h, yy, xx;
+
+	memset(&o, 0, sizeof(o));
+	if (tm_copy_parse(rest, &o) != 0)
+		return;
+	if (o.buf < 0 || o.buf >= TM_PIXBUF_COUNT)
+		return;
+	if (term_plane_alloc() != 0)
+		return;
+	x = o.x;
+	y = o.y;
+	if (x > P.w)
+		x = P.w;
+	if (y > P.h)
+		y = P.h;
+	w = o.w > 0 ? o.w : P.w - x;
+	h = o.h > 0 ? o.h : P.h - y;
+	if (w > P.w - x)
+		w = P.w - x;
+	if (h > P.h - y)
+		h = P.h - y;
+	if (w < 1 || h < 1)
+		return;
+	if ((unsigned long long)(unsigned)w * (unsigned)h >
+	    TM_PIXBUF_MAX_PIXELS)
+		return;
+	memset(&nb, 0, sizeof(nb));
+	nb.rgb = (unsigned char *)malloc((size_t)w * (size_t)h * 3u);
+	if (!nb.rgb)
+		return;
+	nb.w = w;
+	nb.h = h;
+	/* Prime uncovered cells from the live screen so a copy includes text
+	 * as well as image-plane pixels. */
+	term_plane_prime_cells(x, y, x + w, y + h);
+	for (yy = 0; yy < h; yy++)
+	{
+		const uint16_t *src = P.pix + (size_t)(y + yy) * P.stride + x;
+		unsigned char *dst = nb.rgb + (size_t)yy * (size_t)w * 3u;
+
+		for (xx = 0; xx < w; xx++)
+		{
+			unsigned c = mmb_native_to_rgb(src[xx]);
+
+			dst[xx * 3] = (unsigned char)(c >> 16);
+			dst[xx * 3 + 1] = (unsigned char)(c >> 8);
+			dst[xx * 3 + 2] = (unsigned char)c;
+		}
+	}
+	term_pixbuf_free_one(g_console, o.buf);
+	PB[o.buf] = nb;
+}
+
+/* C;LoadPPM/LoadJXL/LoadPBM and their Blob forms: options are B= only (PBM
+ * has no buffer selector), then a cache name or the base64 payload. */
+static void term_apc_load(int jxl, int blob, int mask_only, const char *rest)
+{
+	term_draw_opts o;
+	const char *payload;
+	unsigned char *buf = NULL;
+	unsigned outlen = 0;
+
+	memset(&o, 0, sizeof(o));
+	o.zx = 1;
+	o.zy = 1;
+	payload = tm_draw_payload(NULL, 0, rest, &o);
+	if (!payload || !*payload)
+		return;
+	if (blob)
+	{
+		if (tm_b64_decode(payload, (unsigned)strlen(payload),
+				  TM_APC_MAX, &buf, &outlen) != 0)
+			return;
+	}
+	else
+	{
+		term_cache_ent *e;
+
+		if (!term_safe_name(payload))
+			return;
+		e = term_cache_find(payload);
+		if (!e)
+			return;
+		buf = e->data;
+		outlen = e->len;
+	}
+	if (mask_only)
+	{
+		term_mask nm;
+
+		memset(&nm, 0, sizeof(nm));
+		if (term_mask_from_pbm(buf, outlen, &nm) == 0)
+		{
+			term_mask_free(g_console);
+			TMASK = nm;
+		}
+	}
+	else if (o.buf >= 0 && o.buf < TM_PIXBUF_COUNT)
+	{
+		mmb_img_rgb img;
+		int rc;
+
+		memset(&img, 0, sizeof(img));
+		rc = jxl ? mmb_jxl_decode(buf, outlen, TM_PIXBUF_MAX_PIXELS,
+					  &img)
+			 : mmb_ppm_decode(buf, outlen, TM_PIXBUF_MAX_PIXELS,
+					  &img);
+		if (rc == 0)
+		{
+			term_pixbuf_free_one(g_console, o.buf);
+			PB[o.buf] = img;
+		}
+	}
+	if (blob)
+		free(buf);
+}
+
+static void term_apc_dispatch(const char *body, unsigned len)
+{
+	const char *p;
+	unsigned rem;
+	term_draw_opts o;
+	const char *payload;
+
+	if (!body || len < 9 || memcmp(body, "SyncTERM:", 9) != 0)
+		return;
+	p = body + 9;
+	rem = len - 9;
+	if (rem >= 5 && memcmp(p, "Q;JXL", 5) == 0)
+	{
+		ansi_reply("\x1b[=1;1-n");
+		return;
+	}
+	if (rem >= 4 && memcmp(p, "C;S;", 4) == 0)
+	{
+		term_apc_store(p + 4, rem - 4);
+		return;
+	}
+	if (rem >= 3 && memcmp(p, "C;L", 3) == 0 &&
+	    (rem == 3 || p[3] == ';'))
+	{
+		const char *pat = rem == 3 ? "*" : p + 4;
+
+		term_apc_list(pat);
+		return;
+	}
+	if (rem >= sizeof("C;LoadJXLBlob") - 1 &&
+	    memcmp(p, "C;LoadJXLBlob", sizeof("C;LoadJXLBlob") - 1) == 0)
+	{
+		term_apc_load(1, 1, 0, p + sizeof("C;LoadJXLBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadJXL") - 1 &&
+	    memcmp(p, "C;LoadJXL", sizeof("C;LoadJXL") - 1) == 0)
+	{
+		term_apc_load(1, 0, 0, p + sizeof("C;LoadJXL") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPPMBlob") - 1 &&
+	    memcmp(p, "C;LoadPPMBlob", sizeof("C;LoadPPMBlob") - 1) == 0)
+	{
+		term_apc_load(0, 1, 0, p + sizeof("C;LoadPPMBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPPM") - 1 &&
+	    memcmp(p, "C;LoadPPM", sizeof("C;LoadPPM") - 1) == 0)
+	{
+		term_apc_load(0, 0, 0, p + sizeof("C;LoadPPM") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPBMBlob") - 1 &&
+	    memcmp(p, "C;LoadPBMBlob", sizeof("C;LoadPBMBlob") - 1) == 0)
+	{
+		term_apc_load(0, 1, 1, p + sizeof("C;LoadPBMBlob") - 1);
+		return;
+	}
+	if (rem >= sizeof("C;LoadPBM") - 1 &&
+	    memcmp(p, "C;LoadPBM", sizeof("C;LoadPBM") - 1) == 0)
+	{
+		term_apc_load(0, 0, 1, p + sizeof("C;LoadPBM") - 1);
+		return;
+	}
+	if (rem >= sizeof("P;Copy") - 1 &&
+	    memcmp(p, "P;Copy", sizeof("P;Copy") - 1) == 0)
+	{
+		term_apc_copy(p + sizeof("P;Copy") - 1);
+		return;
+	}
+	if (rem >= sizeof("P;Paste") - 1 &&
+	    memcmp(p, "P;Paste", sizeof("P;Paste") - 1) == 0)
+	{
+		memset(&o, 0, sizeof(o));
+		o.zx = 1;
+		o.zy = 1;
+		payload = tm_draw_payload(body, len,
+					  p + sizeof("P;Paste") - 1, &o);
+		if (payload)
+			return;
+		if (o.buf < 0 || o.buf >= TM_PIXBUF_COUNT || !PB[o.buf].rgb)
+			return;
+		term_draw_image(&PB[o.buf], &o);
+		return;
+	}
+	memset(&o, 0, sizeof(o));
+	o.zx = 1;
+	o.zy = 1;
+	if (rem >= sizeof("C;DrawJXLBlob") - 1 &&
+	    memcmp(p, "C;DrawJXLBlob", sizeof("C;DrawJXLBlob") - 1) == 0)
+	{
+		p += sizeof("C;DrawJXLBlob") - 1;
+		payload = tm_draw_payload(body, len, p, &o);
+		if (!payload)
+			return;
+		{
+			unsigned char *buf = NULL;
+			unsigned outlen;
+
+			if (tm_b64_decode(payload,
+					  (unsigned)strlen(payload),
+					  TM_APC_MAX, &buf, &outlen) != 0)
+				return;
+			term_apc_image(1, buf, outlen, &o);
+			free(buf);
+		}
+		return;
+	}
+	if (rem >= sizeof("C;DrawJXL") - 1 &&
+	    memcmp(p, "C;DrawJXL", sizeof("C;DrawJXL") - 1) == 0)
+	{
+		term_cache_ent *e;
+
+		p += sizeof("C;DrawJXL") - 1;
+		payload = tm_draw_payload(body, len, p, &o);
+		if (!payload || !term_safe_name(payload))
+			return;
+		e = term_cache_find(payload);
+		if (e)
+			term_apc_image(1, e->data, e->len, &o);
+		return;
+	}
+	if (rem >= sizeof("C;DrawPPMBlob") - 1 &&
+	    memcmp(p, "C;DrawPPMBlob", sizeof("C;DrawPPMBlob") - 1) == 0)
+	{
+		p += sizeof("C;DrawPPMBlob") - 1;
+		payload = tm_draw_payload(body, len, p, &o);
+		if (!payload)
+			return;
+		{
+			unsigned char *buf = NULL;
+			unsigned outlen;
+
+			if (tm_b64_decode(payload,
+					  (unsigned)strlen(payload),
+					  TM_APC_MAX, &buf, &outlen) != 0)
+				return;
+			term_apc_image(0, buf, outlen, &o);
+			free(buf);
+		}
+		return;
+	}
+	if (rem >= sizeof("C;DrawPPM") - 1 &&
+	    memcmp(p, "C;DrawPPM", sizeof("C;DrawPPM") - 1) == 0)
+	{
+		term_cache_ent *e;
+
+		p += sizeof("C;DrawPPM") - 1;
+		payload = tm_draw_payload(body, len, p, &o);
+		if (!payload || !term_safe_name(payload))
+			return;
+		e = term_cache_find(payload);
+		if (e)
+			term_apc_image(0, e->data, e->len, &o);
+		return;
+	}
+}
+
+static void term_apc_buf_free(int idx)
+{
+	if (A_s[idx])
+		free(A_s[idx]);
+	A_s[idx] = 0;
+	A_cap_s[idx] = 0;
+}
+
+static int term_apc_buf_put(unsigned char b)
+{
+	unsigned cap;
+
+	if (T.apc_n + 1 >= TM_APC_MAX)
+		return -1;
+	if (T.apc_n + 2 > A_cap)
+	{
+		unsigned char *p;
+
+		cap = A_cap ? A_cap : 4096;
+		while (cap < T.apc_n + 2 && cap < TM_APC_MAX + 1)
+			cap *= 2;
+		if (cap > TM_APC_MAX + 1)
+			cap = TM_APC_MAX + 1;
+		p = (unsigned char *)realloc(A, cap);
+		if (!p)
+			return -1;
+		A = p;
+		A_cap = cap;
+	}
+	A[T.apc_n++] = b;
+	A[T.apc_n] = 0;
+	return 0;
+}
+
+/* ---- sixel image session --------------------------------------------- */
+
+/* Make room before a six-pixel band runs past the bottom of the scrolling
+ * region.  Each scroll moves the text cells and the plane up one text row,
+ * and the image's coordinates follow, so the visible part is the bottom. */
+static void term_sixel_ensure_room(void)
+{
+	int limit, region_rows;
+
+	if (!T.six_ok || !T.sixel_scroll || T.scroll_bot <= T.scroll_top)
+		return;
+	limit = (T.scroll_bot + 1) * T.cell_h;
+	region_rows = T.scroll_bot - T.scroll_top + 1;
+	while (T.six.y + 6 > limit && T.six_scrolled < region_rows)
+	{
+		pane_scroll_up();
+		T.six.y -= T.cell_h;
+		T.six.bottom -= T.cell_h;
+		if (T.six.bottom < 0)
+			T.six.bottom = 0;
+		T.six_top -= T.cell_h;
+		if (T.six_top < 0)
+			T.six_top = 0;
+		T.six_scrolled++;
+	}
+}
+
+static void term_sixel_begin(int p1, int p2, int p3)
+{
+	sixel_config cfg;
+	int ox, oy;
+
+	T.six_on = 0;
+	T.six_ok = 0;
+	if (term_plane_alloc() != 0)
+		return;      /* discard the DCS payload; never print it */
+	if (T.sixel_scroll)
+	{
+		ox = T.cur_col * TM_CW;
+		oy = T.cur_row * T.cell_h;
+	}
+	else
+	{
+		/* DECSDM: pin the image at the pane origin. */
+		ox = 0;
+		oy = 0;
+	}
+	if (ox < 0)
+		ox = 0;
+	if (oy < 0)
+		oy = 0;
+	if (ox > P.w)
+		ox = P.w;
+	if (oy > P.h)
+		oy = P.h;
+	memset(&cfg, 0, sizeof cfg);
+	cfg.pix = P.pix;
+	cfg.stride = P.stride;
+	cfg.width = P.w;
+	cfg.height = P.h;
+	cfg.ox = ox;
+	cfg.oy = 0;
+	cfg.p1 = p1;
+	cfg.p2 = p2;
+	cfg.p3 = p3;
+	cfg.bg = mmb_pix_store(term_paper());
+	cfg.pack = mmb_pix_store;
+	cfg.cover = P.cov;
+	cfg.cover_cols = TM_MAX_COLS;
+	cfg.cell_w = TM_CW;
+	cfg.cell_h = T.cell_h;
+	sixel_begin(&T.six, &cfg);
+	T.six.y = oy;
+	T.six.bottom = oy;
+	T.six.right = ox;
+	T.six.maxh = T.sixel_scroll ? (T.scroll_bot + 1) * T.cell_h : P.h;
+	if (T.six.maxh > P.h)
+		T.six.maxh = P.h;
+	T.six_top = oy;
+	T.six_origin_row = T.cur_row;
+	T.six_scrolled = 0;
+	T.six_on = 1;
+	T.six_ok = 1;
+}
+
+static void term_sixel_feed(unsigned char b)
+{
+	if (!T.six_on)
+		return;
+	term_sixel_ensure_room();
+	sixel_feed(&T.six, b);
+}
+
+static void term_sixel_end(void)
+{
+	int row, left, right, top, bot, r;
+
+	if (!T.six_on)
+		return;
+	T.six_on = 0;
+	if (!T.six_ok)
+		return;
+	sixel_finish(&T.six);
+	T.six_ok = 0;
+	if (T.six.painted_w <= 0 || T.six.painted_h <= 0)
+		return;
+
+	if (T.sixel_scroll)
+	{
+		/* Cursor to column 0 of the cell row below the image. */
+		row = (T.six.bottom + T.cell_h - 1) / T.cell_h;
+		if (row < 0)
+			row = 0;
+		if (row >= T.pane_rows)
+			row = T.pane_rows - 1;
+		T.cur_row = row;
+		T.cur_col = 0;
+	}
+
+	left = T.six.ox;
+	right = T.six.right;
+	top = T.six_top;
+	bot = T.six.bottom;
+	if (left < 0)
+		left = 0;
+	if (top < 0)
+		top = 0;
+	if (right > P.w)
+		right = P.w;
+	if (bot > P.h)
+		bot = P.h;
+	if (right > left && bot > top)
+	{
+		T.img_x = T.pane_left * TM_CW + left;
+		T.img_y = T.pane_top + top;
+		T.img_w = right - left;
+		T.img_h = bot - top;
+		T.img_lo = top / T.cell_h;
+		T.img_hi = (bot - 1) / T.cell_h;
+		if (T.img_hi >= T.pane_rows)
+			T.img_hi = T.pane_rows - 1;
+		T.img_dirty = 1;
+		for (r = T.img_lo; r <= T.img_hi; r++)
+			mark_dirty_row(r);
+	}
+	mark_dirty_row(T.cur_row);
+	T.need_draw = 1;
 }
 
 static void ansi_reset_csi(void)
@@ -4217,6 +6339,185 @@ static void ansi_reset_csi(void)
 		T.ansi_arg[i] = 0;
 }
 
+static int ansi_dcs_open(void)
+{
+	return T.ansi_st == TM_ANSI_DCS_PARAM ||
+	       T.ansi_st == TM_ANSI_DCS_BODY ||
+	       T.ansi_st == TM_ANSI_DCS_ESC;
+}
+
+static void ansi_dcs_begin(void)
+{
+	ansi_reset_csi();
+	T.ansi_st = TM_ANSI_DCS_PARAM;
+	T.dcs_n = 0;
+	T.dcs_sixel = 0;
+	T.dcs_at = mmb_now_ms();
+}
+
+/* Leave a DCS without printing any of its tail. */
+static void ansi_dcs_end(void)
+{
+	term_sixel_end();
+	T.ansi_st = 0;
+	T.dcs_sixel = 0;
+}
+
+/* Returns 1 when the byte belonged to an open DCS. */
+static int ansi_feed(unsigned char b);
+
+static int ansi_dcs_feed(unsigned char b)
+{
+	if (++T.dcs_n > TM_DCS_MAX)
+	{
+		ansi_dcs_end();
+		return 1;
+	}
+	T.dcs_at = mmb_now_ms();
+	if (T.ansi_st == TM_ANSI_DCS_PARAM)
+	{
+		if (b >= '0' && b <= '9')
+		{
+			if (T.ansi_narg == 0)
+				T.ansi_narg = 1;
+			T.ansi_arg[T.ansi_narg - 1] =
+				T.ansi_arg[T.ansi_narg - 1] * 10 + (b - '0');
+			return 1;
+		}
+		if (b == ';')
+		{
+			if (T.ansi_narg < TM_ANSI_ARGS)
+				T.ansi_narg++;
+			return 1;
+		}
+		if (b == '?')
+		{
+			T.ansi_priv = 1;
+			return 1;
+		}
+		if (b >= '@' && b <= '~')
+		{
+			T.dcs_sixel = (b == 'q');
+			if (T.dcs_sixel)
+				term_sixel_begin(T.ansi_arg[0], T.ansi_arg[1],
+						 T.ansi_arg[2]);
+			T.ansi_st = TM_ANSI_DCS_BODY;
+			return 1;
+		}
+		return 1;
+	}
+	if (T.ansi_st == TM_ANSI_DCS_ESC)
+	{
+		if (b == '\\')
+		{
+			ansi_dcs_end();
+			return 1;
+		}
+		/* A lone ESC aborts the image, and the ESC itself is fed back so a
+		 * missing terminator cannot eat the rest of the session. */
+		ansi_dcs_end();
+		ansi_feed(27);
+		return ansi_feed(b) ? 1 : 0;
+	}
+	/* Body. */
+	if (b == 0x9C || b == 0x18 || b == 0x1A)
+	{
+		ansi_dcs_end();
+		return 1;
+	}
+	if (b == 27)
+	{
+		T.ansi_st = TM_ANSI_DCS_ESC;
+		return 1;
+	}
+	if (T.dcs_sixel)
+		term_sixel_feed(b);
+	return 1;
+}
+
+static int ansi_apc_open(void)
+{
+	return T.ansi_st == TM_ANSI_APC_BODY ||
+	       T.ansi_st == TM_ANSI_APC_ESC ||
+	       T.ansi_st == TM_ANSI_STR_BODY ||
+	       T.ansi_st == TM_ANSI_STR_ESC;
+}
+
+static void ansi_apc_begin(int store)
+{
+	ansi_reset_csi();
+	T.ansi_st = store ? TM_ANSI_APC_BODY : TM_ANSI_STR_BODY;
+	T.apc_n = 0;
+	T.apc_store = store;
+	T.apc_at = mmb_now_ms();
+}
+
+static void ansi_apc_end(void)
+{
+	int store = T.apc_store;
+	unsigned n = T.apc_n;
+
+	T.ansi_st = 0;
+	T.apc_store = 0;
+	T.apc_n = 0;
+	if (store && n && A_s[g_console])
+		term_apc_dispatch((const char *)A, n);
+}
+
+static int ansi_apc_feed(unsigned char b)
+{
+	if (T.ansi_st == TM_ANSI_APC_ESC || T.ansi_st == TM_ANSI_STR_ESC)
+	{
+		if (b == '\\')
+		{
+			ansi_apc_end();
+			return 1;
+		}
+		ansi_apc_end();
+		ansi_feed(27);
+		return ansi_feed(b) ? 1 : 0;
+	}
+	if (T.apc_n >= TM_APC_MAX)
+	{
+		ansi_apc_end();
+		return 1;
+	}
+	T.apc_at = mmb_now_ms();
+	if (b == 0x9C || b == 0x18 || b == 0x1A)
+	{
+		ansi_apc_end();
+		return 1;
+	}
+	if (b == 27)
+	{
+		T.ansi_st = (T.ansi_st == TM_ANSI_APC_BODY)
+				    ? TM_ANSI_APC_ESC
+				    : TM_ANSI_STR_ESC;
+		return 1;
+	}
+	if (T.ansi_st == TM_ANSI_APC_BODY)
+	{
+		if (b < 0x08 || (b > 0x0D && b < 0x20) || b > 0x7E)
+		{
+			ansi_apc_end();
+			return ansi_feed(b) ? 1 : 0;
+		}
+		if (T.apc_store)
+		{
+			if (term_apc_buf_put(b) != 0)
+			{
+				ansi_apc_end();
+				return 1;
+			}
+		}
+		else
+			T.apc_n++;
+	}
+	else
+		T.apc_n++;
+	return 1;
+}
+
 static int ansi_feed(unsigned char b)
 {
 	if (T.ansi_st == 0)
@@ -4226,8 +6527,31 @@ static int ansi_feed(unsigned char b)
 			T.ansi_st = 1;
 			return 1;
 		}
+		/* 8-bit C1 DCS (0x90) and ST (0x9C): img2sixel defaults to the
+		 * 7-bit form, but accepting the C1 forms is cheap. */
+		if (b == 0x90)
+		{
+			ansi_dcs_begin();
+			return 1;
+		}
+		if (b == 0x9F)
+		{
+			ansi_apc_begin(1);
+			return 1;
+		}
+		if (b == 0x9E || b == 0x98)
+		{
+			ansi_apc_begin(0);
+			return 1;
+		}
+		if (b == 0x9C)
+			return 1;
 		return 0;
 	}
+	if (ansi_dcs_open())
+		return ansi_dcs_feed(b);
+	if (ansi_apc_open())
+		return ansi_apc_feed(b);
 	if (T.ansi_st == 1)
 	{
 		if (b == '[')
@@ -4240,6 +6564,21 @@ static int ansi_feed(unsigned char b)
 		{
 			T.ansi_st = 4;
 			T.ansi_at = mmb_now_ms();
+			return 1;
+		}
+		if (b == 'P')
+		{
+			ansi_dcs_begin();
+			return 1;
+		}
+		if (b == '_')
+		{
+			ansi_apc_begin(1);
+			return 1;
+		}
+		if (b == '^' || b == 'X')
+		{
+			ansi_apc_begin(0);
 			return 1;
 		}
 		if (b == '7')
@@ -4297,6 +6636,11 @@ static int ansi_feed(unsigned char b)
 		T.ansi_priv = 1;
 		return 1;
 	}
+	if (b == '<')
+	{
+		T.ansi_priv = 2;
+		return 1;
+	}
 	if (b >= '0' && b <= '9')
 	{
 		if (T.ansi_narg == 0)
@@ -4340,6 +6684,18 @@ static int iac_cmd_byte(unsigned char b)
 
 static void ansi_watchdog(void)
 {
+	if (ansi_dcs_open())
+	{
+		if (T.dcs_at && mmb_now_ms() - T.dcs_at > TM_DCS_IDLE_MS)
+			ansi_dcs_end();
+		return;
+	}
+	if (ansi_apc_open())
+	{
+		if (T.apc_at && mmb_now_ms() - T.apc_at > TM_APC_IDLE_MS)
+			ansi_apc_end();
+		return;
+	}
 	if (T.ansi_st != 4 && T.ansi_st != 5)
 		return;
 	if (T.ansi_at && mmb_now_ms() - T.ansi_at > TM_ANSI_OSC_MS)
@@ -5261,7 +7617,7 @@ static int term_rx_interpret(void)
 		unsigned char b = mmb_net_rxbuf_at(&term_rx, 0);
 		unsigned avail = mmb_net_rxbuf_used(&term_rx);
 
-		if (zmodem_scan(b))
+		if (!ansi_dcs_open() && zmodem_scan(b))
 		{
 			term_rx_consume(1);
 			zmodem_start();
@@ -5863,16 +8219,21 @@ static int esc_feed(char c)
 				esc_reset();
 				return 1;
 			}
-			if (T.csi_n == 5 && (T.sb_view > 0 || H.n > 0))
+			if (T.csi_n == 5 || T.csi_n == 6)
 			{
-				sb_scroll_by(page);
-				esc_reset();
-				return 1;
-			}
-			if (T.csi_n == 6 && T.sb_view > 0)
-			{
-				sb_scroll_by(-page);
-				esc_reset();
+				if (G.opt.term_scroll_buffer)
+				{
+					if (T.csi_n == 5)
+					{
+						if (T.sb_view > 0 || H.n > 0)
+							sb_scroll_by(page);
+					}
+					else if (T.sb_view > 0)
+						sb_scroll_by(-page);
+					esc_reset();
+					return 1;
+				}
+				esc_send();
 				return 1;
 			}
 			if (T.csi_n == 1 && T.sb_view > 0)
@@ -6109,6 +8470,10 @@ void mmb_cmd_term(void)
 
 	if (term_session_alloc() != 0)
 		mmb_error("?OUT OF MEMORY");
+	term_cache_free(g_console);
+	term_apc_buf_free(g_console);
+	term_pixbuf_free_all(g_console);
+	term_mask_free(g_console);
 	memset(&T, 0, sizeof(T));
 	H.n = 0;
 	H.head = 0;
@@ -6145,6 +8510,7 @@ void mmb_cmd_term(void)
 	T.replay = !T.file_replay && host_is_replay();
 	T.letterbox = 1;
 	T.mode80x25 = 0;
+	T.sixel_scroll = 1;
 	term_reset_pen();
 
 	ser("TERM\r\n");
@@ -6518,6 +8884,11 @@ const char *mmb_term_key(char c)
 		if (c == 'w' || c == 'W' || c == 'o' || c == 'O')
 		{
 			term_cycle_view();
+			return "";
+		}
+		if (c == 's' || c == 'S')
+		{
+			term_toggle_scroll_buffer();
 			return "";
 		}
 		if (c == 'b' || c == 'B' || c == 'k' || c == 'K')

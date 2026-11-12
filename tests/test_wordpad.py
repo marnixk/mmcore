@@ -877,6 +877,35 @@ def test_wordpad_h3_is_taller_than_body(kernel_image):
         con.stop()
 
 
+def test_wordpad_selected_heading_uses_selection_background(kernel_image):
+    """#1460: a selected H1 keeps the selection background under its ink."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _apply_slate_theme(con)
+        sel_bg = _theme_rgb(con, "SELECT_BG")
+        _open(con)
+        _keys(con, b"# Title\rbody text", quiet=0.8)
+        # From the end of the body, Shift+Up selects the whole header line.
+        _keys(con, b"\x1b[1;2A", quiet=0.5)
+        time.sleep(0.3)
+        ox = _pane_left_px(con)
+        coords = [
+            (ox + x, y)
+            for x in range(2, 160, 2)
+            for y in range(18, 78, 2)
+        ]
+        pixels = con.screen_pixels(coords)
+        hits = sum(1 for p in pixels if _rgb_close(p, sel_bg))
+        assert hits > len(pixels) // 3, (
+            f"selected heading background {sel_bg}: "
+            f"{hits}/{len(pixels)} pixels"
+        )
+        _quit(con)
+    finally:
+        con.stop()
+
+
 def test_wordpad_dialog_surface_stands_out(kernel_image):
     con = MMBasicConsole(kernel_image)
     con.start()

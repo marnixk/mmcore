@@ -1906,7 +1906,7 @@ def test_png_to_ppm_converts_the_splash(tmp_path):
         assert pixel(x, y) == b"\x00\x00\x00"
     # ...and the wordmark plus the five-colour bar, not the old metallic "M".
     # ramdisk/mmcore.png is alpha-composited on black and centred. The opaque
-    # span is the wordmark width (296) and, with the bar, 53px tall.
+    # span is the wordmark width (300) and, with the bar, 60px tall.
     visible = [
         (x, y)
         for y in range(height)
@@ -1916,7 +1916,7 @@ def test_png_to_ppm_converts_the_splash(tmp_path):
     assert len(visible) > 1000, len(visible)
     xs = [x for x, _ in visible]
     ys = [y for _, y in visible]
-    assert (max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) == (296, 53)
+    assert (max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) == (300, 60)
     assert abs((min(xs) + max(xs)) / 2 - width / 2) <= 1
     assert abs((min(ys) + max(ys)) / 2 - height / 2) <= 1
     # Website CSS: --red #e8262b, --orange #ff8a00, --yellow #ffd21f,

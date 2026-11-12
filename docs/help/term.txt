@@ -47,12 +47,36 @@ scroll updates the cell buffer and redraws the pane so a burst of BBS ANSI
 newlines is one present, not a pixel shift per line.
 
 ANSI/VT100 (SGR colours, cursor on/off, CUB/CUF, ED/EL/ECH) plus telnet
-TTYPE=ANSI and DA/DSR replies for BBS autodetection. Erasing keeps the current
+TTYPE=ANSI and DA/DSR replies for BBS autodetection. SGR 5/6 are treated as
+iCE colours: the blink bit selects the bright half of the 40-47 background
+palette instead of blinking, so BBS art gets all 16 background colours.
+SGR 25 clears the bright bit. Erasing keeps the current
 SGR background (Background Color Erase), so full-width bars such as irssi's
 status line fill to the edge. NAWS reports 80 columns when boxed and the Full
 MODE width when full. ESC ( B charset sequences are eaten so they do not print a
 stray B. OSC strings time out. Glyphs are IBM VGA 8x16 (CP437), so box drawing
 and shade characters 176-178 match a DOS VGA terminal.
+
+APC (ESC _ ... ST), PM (ESC ^ ... ST) and SOS (ESC X ... ST) strings are
+framed and swallowed; only APC bodies beginning "SyncTERM:" are interpreted.
+SyncTERM image verbs draw into the same pixel plane as sixel without moving
+the cursor or scrolling, clipped to the pane. C;S / C;L keep a per-session
+memory cache (no SD writes): 64 files, 4 MB each, 16 MB total, LRU eviction,
+and only safe names [A-Za-z0-9._-] up to 64 chars. C;DrawJXL, DrawJXLBlob,
+DrawPPM and DrawPPMBlob accept SX/SY/SW/SH, DX/DY (negative values clip),
+FX/FY flips, integer ZX/ZY zoom, and masks: MX/MY/MW/MH place the mask,
+MASK= is an inline base64 packed bitmap, MFILE= names a cached PBM, and MBUF
+uses the loaded mask buffer. Cleared mask bits leave the screen underneath.
+The built-in J40 decoder handles JPEG XL and the image reader handles
+PPM/PGM/PBM. C;LoadPPM and C;LoadJXL (cache or Blob) decode into one of two
+per-session pixel buffers selected with B=0 or B=1; C;LoadPBM/LoadPBMBlob
+load the mask buffer. P;Copy copies a pane rectangle (B=, X=, Y=, W=, H=)
+into a buffer and P;Paste draws it with the Draw options plus B=. Decoded
+buffers and masks are limited to 4 megapixels and dropped silently when over
+quota or malformed. Q;JXL answers 1 when JXL is available and CSI < c
+reports pixel operations. DA1 answers with the CTerm identity by default so
+doors choose the Blob verbs; `OPTION TERM CTERM OFF` uses the plain
+CSI ?1;2;4c reply instead.
 
 Alt+X exits and restores the previous MODE. F10 opens the Terminal menu
 (WORDPAD-style: the top bar is a full-width menu colour only while the menu is
@@ -63,16 +87,20 @@ is sent to the remote so GNU screen, tmux and friends get their prefix; use F10
 for TERM's own menu there. A real USB Alt+X still exits.
 
 Scrollback keeps the last OPTION TERM SCROLLBACK lines (default 200) above the
-pane. Once lines have scrolled off, Page Up / Page Down page through history,
-Home/End jump to the oldest line or back to live, and q returns to the live
-pane. Up/Down are sent to the session as normal cursor keys. Press / to search
-back for text (case insensitive), Enter jumps to the newest match, then n and
-N step to older and newer matches. The status row shows SCROLL -n while you
-are back in history; typing any other key returns to the live pane first. Set
-OPTION TERM SCROLLBACK 0 to disable history.
+pane. Page Up / Page Down are sent to the session by default. Check
+"Scrollback" in the Terminal menu to page through history with Page Up /
+Page Down instead; Home/End jump to the oldest line or back to live, and q
+returns to the live pane. The checkmark is remembered in .mmbasic.ini.
+Up/Down are always sent to the session as normal cursor keys. Press / to
+search back for text (case
+insensitive), Enter jumps to the newest match, then n and N step to older and
+newer matches. The status row shows SCROLL -n while you are back in history;
+typing any other key returns to the live pane first. Set OPTION TERM SCROLLBACK
+0 to disable history.
 
-Terminal menu: Bookmarks, Echo ON/OFF, View: Full/Boxed/80x25, Download folder,
-Exit.
+Terminal menu, top to bottom: Bookmarks, Downloads Folder, a separator, View:
+Full/Boxed/80x25, Echo, Scrollback, a separator, Exit. Echo and Scrollback show
+a right-aligned [ ] / [x] checkbox. Press S to toggle Scrollback.
 Bookmarks persist in C:/.termconfig (A: if no SD). New/Edit/Delete/Connect;
 Alt+S saves, Alt+C cancels. Connect drops the current session and applies the
 bookmark host, port, echo, letterbox, and optional 80x25 mode (MODE 2 640x400,

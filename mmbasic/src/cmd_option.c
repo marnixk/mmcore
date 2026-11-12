@@ -675,6 +675,12 @@ static void option_dispatch(void)
 			mmb_term_scrollback_set(n);
 			return;
 		}
+		if (mmb_match("CTERM"))
+		{
+			G.opt.term_cterm = onoff();
+			mmb_settings_save();
+			return;
+		}
 		mmb_syntax();
 	}
 	if (mmb_match("BREAK"))
@@ -810,6 +816,13 @@ static void option_dispatch(void)
 	if (mmb_match("PROFILING"))
 	{
 		G.opt.profiling = onoff();
+		return;
+	}
+	if (mmb_match("FASTDRAW"))
+	{
+		G.opt.fastdraw = onoff();
+		/* Writes made while tracking was off are not in page_gen. */
+		mmb_gfx_page_damage_invalidate();
 		return;
 	}
 	if (mmb_match("FRAMEPROFILE"))
@@ -1423,6 +1436,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.prompt ? "OPTION PROMPT CWD" : "OPTION PROMPT BARE");
 	if (all || G.opt.profiling)
 		ol_line(&n, G.opt.profiling ? "OPTION PROFILING ON" : "OPTION PROFILING OFF");
+	if (all || G.opt.fastdraw)
+		ol_line(&n, G.opt.fastdraw ? "OPTION FASTDRAW ON" : "OPTION FASTDRAW OFF");
 	if (all || !G.opt.tracecache)
 		ol_line(&n, G.opt.tracecache ? "OPTION TRACECACHE ON" : "OPTION TRACECACHE OFF");
 	if (all || G.opt.ram_prog || (!G.opt.ram_prog && G.opt.flash_page))
@@ -1569,6 +1584,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.term_autolog ? "OPTION TERM AUTOLOG ON" : "OPTION TERM AUTOLOG OFF");
 	if (all || G.opt.term_scrollback != 200)
 		ol_line_int(&n, "OPTION TERM SCROLLBACK ", G.opt.term_scrollback);
+	if (all || G.opt.term_cterm)
+		ol_line(&n, G.opt.term_cterm ? "OPTION TERM CTERM ON" : "OPTION TERM CTERM OFF");
 	if (all || G.opt.netdrv_enabled)
 	{
 		if (G.opt.netdrv_enabled && G.opt.netdrv_unc[0])

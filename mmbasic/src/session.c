@@ -55,6 +55,7 @@ void mmb_console_init(void)
 	g_console = 0;
 	s_visible = 0;
 	g_cur = g_mmb[0];
+	g_cur->gfx.background = 0;
 	s_initialized[0] = 1;
 	s_shown[0] = 1; /* the host prints the boot banner and prompt */
 	mmb_front_select(0);
@@ -126,6 +127,7 @@ void mmb_console_reset(void)
 	g_console = 0;
 	s_visible = 0;
 	g_cur = g_mmb[0];
+	g_cur->gfx.background = 0;
 	/* A fresh session starts at the ramdisk root, like boot. */
 	mmb_vfs_cwd_reset();
 	s_initialized[0] = 1;
@@ -257,9 +259,13 @@ static void console_bring_up(int idx, const mmb *from)
 		return;
 	g_cur = g_mmb[idx];
 	/* The context is about to be wiped; return the per-console arena chunks
-	 * first so re-bringing up an existing slot does not leak them (#1351). */
+	 * and the STRUCT return staging buffer first so re-bringing up an
+	 * existing slot does not leak them (#1351, #1496). */
 	if (existing)
+	{
 		mmb_arena_free();
+		mmb_func_ret_blob_free();
+	}
 	memset(g_cur, 0, sizeof(mmb));
 	g_cur->plat = from->plat;
 	mmb_option_reset();
@@ -305,8 +311,14 @@ static int console_do_switch(int idx)
 	 * being active (#811). */
 	mmb_paint_console_deactivated(g_console);
 
+	/* From here on the console we are leaving is off-screen: it keeps its
+	 * own page buffers and dirty AABB, but the graphics layer must not let it
+	 * write the shared display (#1432). */
+	if (g_mmb[g_console])
+		g_mmb[g_console]->gfx.background = 1;
 	g_console = idx;
 	g_cur = g_mmb[idx];
+	g_cur->gfx.background = 0;
 	s_visible = idx;
 	mmb_front_select(idx);
 	/* The editor on this screen now owns the keyboard: drop any Ctrl+Alt

@@ -358,6 +358,11 @@ extern "C" int mmb_storage_persistence_lost (void)
 	return 0;
 }
 
+extern "C" unsigned mmb_storage_generation (void)
+{
+	return 0;
+}
+
 int mmb_fat_ready(int letter)
 {
 	int i = slot_of(letter);

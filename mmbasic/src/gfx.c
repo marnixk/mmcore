@@ -29,10 +29,10 @@ static const struct { int id, w, h; } kModes[] = {
 };
 
 /* A display-page BLIT marked the dirty AABB but its present was deferred so
- * several BLITs in one BASIC frame upload once (#1402). Flushed at the
- * interpreter's next safe boundary by mmb_gfx_flush_pending(). */
-static int s_present_pending;
-
+ * several BLITs in one BASIC frame upload once (#1402). The flag lives in
+ * mmb_gfx (per console) so a background console's deferred frame cannot be
+ * consumed by whichever console polls next. Flushed at the interpreter's next
+ * safe boundary by mmb_gfx_flush_pending(). */
 static int present_defer_allowed(void)
 {
 	return G.plat && G.plat->coalesce_presents;
@@ -317,7 +317,7 @@ uint16_t *mmb_gfx_buf_for(int page, int *w, int *h)
 void mmb_gfx_dirty_reset(void)
 {
 	G.gfx.dirty = 0;
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
 }
 
 void mmb_gfx_dirty_add(int x, int y, int w, int h)
@@ -357,6 +357,75 @@ void mmb_gfx_dirty_add(int x, int y, int w, int h)
 		G.gfx.dirty_y1 = y1;
 }
 
+/* Forget every per-page copy/damage assumption. Called on MODE and whenever
+ * OPTION FASTDRAW changes, because writes made while tracking was off are not
+ * visible in page_gen (#1436). */
+void mmb_gfx_page_damage_invalidate(void)
+{
+	int i;
+
+	for (i = 0; i < MMB_MAX_PAGES; i++)
+	{
+		G.gfx.page_damage[i].valid = 0;
+		G.gfx.page_gen[i] = 0;
+		G.gfx.page_copy_src[i] = -1;
+		G.gfx.page_copy_gen[i] = 0;
+	}
+}
+
+/* Record a page-buffer write. A write always invalidates the page's status as
+ * a known copy of some other page. */
+void mmb_gfx_page_damage_add(int page, int x, int y, int w, int h)
+{
+	int x1, y1;
+
+	if (!G.opt.fastdraw)
+		return;
+	if (page == MMB_PAGE_CUR)
+	{
+		if (mmb_gfx_writing_fb())
+			return;
+		page = G.gfx.write_page;
+	}
+	if (page == MMB_PAGE_FB || page < 0 || page >= G.gfx.pages)
+		return;
+	if (w <= 0 || h <= 0)
+		return;
+	x1 = x + w;
+	y1 = y + h;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x1 > G.gfx.w)
+		x1 = G.gfx.w;
+	if (y1 > G.gfx.h)
+		y1 = G.gfx.h;
+	if (x >= x1 || y >= y1)
+		return;
+	if (!G.gfx.page_damage[page].valid)
+	{
+		G.gfx.page_damage[page].x0 = x;
+		G.gfx.page_damage[page].y0 = y;
+		G.gfx.page_damage[page].x1 = x1;
+		G.gfx.page_damage[page].y1 = y1;
+		G.gfx.page_damage[page].valid = 1;
+	}
+	else
+	{
+		if (x < G.gfx.page_damage[page].x0)
+			G.gfx.page_damage[page].x0 = x;
+		if (y < G.gfx.page_damage[page].y0)
+			G.gfx.page_damage[page].y0 = y;
+		if (x1 > G.gfx.page_damage[page].x1)
+			G.gfx.page_damage[page].x1 = x1;
+		if (y1 > G.gfx.page_damage[page].y1)
+			G.gfx.page_damage[page].y1 = y1;
+	}
+	G.gfx.page_gen[page]++;
+	G.gfx.page_copy_src[page] = -1;
+}
+
 /* Present the dirty AABB, then reconcile only the rectangle it wrote into the
  * bare-metal console's cached pixel buffer. A partial present leaves every
  * other pixel in the cache valid, so scanning the whole display page here is
@@ -368,6 +437,10 @@ static void present_dirty_and_sync(void)
 	uint16_t *pg;
 
 	if (!G.gfx.dirty)
+		return;
+	/* A backgrounded console keeps the dirty AABB for its next visible
+	 * present; it must not touch the scanout or the console cache (#1432). */
+	if (G.gfx.background)
 		return;
 	x = G.gfx.dirty_x0;
 	y = G.gfx.dirty_y0;
@@ -414,7 +487,7 @@ void mmb_gfx_dirty_flush(void)
 		 * dirty_flush in this BASIC frame costs nothing. The interpreter
 		 * flushes at its next poll/text/PAGE DISPLAY/program-end boundary,
 		 * so a pending present never outlives one ~1 ms statement batch. */
-		s_present_pending = 1;
+		G.gfx.present_pending = 1;
 		return;
 	}
 	/* A partial present writes the dirty AABB straight to the framebuffer,
@@ -430,9 +503,9 @@ void mmb_gfx_dirty_flush(void)
  * after another path (PAGE COPY/DISPLAY, CLS) already presented. */
 void mmb_gfx_flush_pending(void)
 {
-	if (!s_present_pending)
+	if (!G.gfx.present_pending)
 		return;
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
 	if (!G.gfx.dirty)
 		return;
 	present_dirty_and_sync();
@@ -485,6 +558,9 @@ void mmb_gfx_sync_console(int page)
 
 	if (!G.plat || !G.plat->present_sync_console)
 		return;
+	/* The console cache describes the visible screen only (#1432). */
+	if (G.gfx.background)
+		return;
 	buf = mmb_gfx_buf_for(page, &pw, &ph);
 	G.plat->present_sync_console(buf, pw, ph, pw);
 	/* The page sync above leaves the console cache holding page pixels. The
@@ -496,35 +572,96 @@ void mmb_gfx_sync_console(int page)
 		mmb_mouse_cursor_present(buf, pw, ph);
 }
 
-void mmb_gfx_copy_page(int src, int dst, int blit)
+static void copy_page_rect(uint16_t *s, uint16_t *d, int x0, int y0,
+			   int x1, int y1, int blit)
+{
+	int w = G.gfx.w;
+	int x, y;
+	unsigned row_bytes = (unsigned)(x1 - x0) * sizeof(uint16_t);
+
+	if (!blit)
+	{
+		for (y = y0; y < y1; y++)
+			memcpy(d + y * w + x0, s + y * w + x0, row_bytes);
+		return;
+	}
+	for (y = y0; y < y1; y++)
+		for (x = x0; x < x1; x++)
+			if (s[y * w + x] != 0)
+				d[y * w + x] = s[y * w + x];
+}
+
+/* Copy a whole page, or with OPTION FASTDRAW only the source's damaged AABB
+ * when this destination still holds the previous copy of that source. Returns
+ * 1 when the destination changed, 0 when the copy (and its present) can be
+ * skipped (#1436). */
+int mmb_gfx_copy_page(int src, int dst, int blit)
 {
 	unsigned n, i, bytes;
 	uint16_t *s, *d;
+	int x0 = 0, y0 = 0, x1 = G.gfx.w, y1 = G.gfx.h;
+	int full = 1;
+
 	if (src < 0 || src >= G.gfx.pages || dst < 0 || dst >= G.gfx.pages)
 		mmb_error("?PAGE");
+	if (src == dst)
+		return 0;
+	/* The source has not changed since it was last copied here: the
+	 * destination already holds it, so skip both the copy and the present. */
+	if (G.opt.fastdraw && G.gfx.page_copy_src[dst] == src &&
+	    G.gfx.page_copy_gen[dst] == G.gfx.page_gen[src])
+		return 0;
 	s = page_buf(src);
 	d = page_buf(dst);
 	n = (unsigned)G.gfx.w * (unsigned)G.gfx.h;
 	bytes = n * sizeof(uint16_t);
-	if (!blit)
+	/* A previous copy into this destination plus tracked source damage: only
+	 * the damaged rectangle can differ, so copy just that. */
+	if (G.opt.fastdraw && G.gfx.page_copy_src[dst] == src &&
+	    G.gfx.page_damage[src].valid)
 	{
-		/* Opaque full-page copy: DMA when large enough and available. */
-		if (bytes >= 4096u && G.plat && G.plat->dma_copy &&
-		    G.plat->dma_copy(d, s, bytes))
-			;
+		x0 = G.gfx.page_damage[src].x0;
+		y0 = G.gfx.page_damage[src].y0;
+		x1 = G.gfx.page_damage[src].x1;
+		y1 = G.gfx.page_damage[src].y1;
+		if (x0 < x1 && y0 < y1)
+			full = 0;
+	}
+	if (!full)
+	{
+		copy_page_rect(s, d, x0, y0, x1, y1, blit);
+		mmb_gfx_page_damage_add(dst, x0, y0, x1 - x0, y1 - y0);
+		if (dst == G.gfx.display_page)
+			mmb_gfx_dirty_add(x0, y0, x1 - x0, y1 - y0);
+	}
+	else
+	{
+		if (!blit)
+		{
+			/* Opaque full-page copy: DMA when large enough and
+			 * available. */
+			if (bytes >= 4096u && G.plat && G.plat->dma_copy &&
+			    G.plat->dma_copy(d, s, bytes))
+				;
+			else
+				memcpy(d, s, bytes);
+		}
 		else
-			memcpy(d, s, bytes);
+		{
+			for (i = 0; i < n; i++)
+				if (s[i] != 0)
+					d[i] = s[i];
+		}
+		mmb_gfx_page_damage_add(dst, 0, 0, G.gfx.w, G.gfx.h);
 		if (dst == G.gfx.display_page)
 			mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
-		return;
 	}
-	for (i = 0; i < n; i++)
+	if (G.opt.fastdraw)
 	{
-		if (s[i] != 0)
-			d[i] = s[i];
+		G.gfx.page_copy_src[dst] = src;
+		G.gfx.page_copy_gen[dst] = G.gfx.page_gen[src];
 	}
-	if (dst == G.gfx.display_page)
-		mmb_gfx_dirty_add(0, 0, G.gfx.w, G.gfx.h);
+	return 1;
 }
 
 static void present_native_or_rgb(int x, int y, int w, int h,
@@ -572,6 +709,10 @@ void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
 {
 	if (!G.plat || !pix)
 		return;
+	/* Overlay presents (software cursor) belong to the visible screen; a
+	 * background console must never stamp one onto it (#1432). */
+	if (G.gfx.background)
+		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	present_native_or_rgb(x, y, w, h, pix, stride);
@@ -597,7 +738,13 @@ void mmb_gfx_present(void)
 		return;
 	/* Any present consumes a deferred BLIT AABB: the dirty rects it holds
 	 * are exactly the ones presented below. */
-	s_present_pending = 0;
+	G.gfx.present_pending = 0;
+	/* Only the console whose screen is shown may write the shared display.
+	 * A background console keeps its frame in its private page buffers and
+	 * its dirty AABB, then presents the union when it becomes visible
+	 * (#1432). */
+	if (G.gfx.background)
+		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
 	pg = page_buf(G.gfx.display_page);
@@ -643,6 +790,10 @@ void mmb_gfx_present_rect(int x, int y, int w, int h)
 	int hw, hh, x1, y1;
 	uint16_t *pg;
 	if (!G.plat)
+		return;
+	/* A background console's dirty AABB already covers this rect, so the
+	 * next visible present uploads it then (#1432). */
+	if (G.gfx.background)
 		return;
 	mmb_frame_prof_present_begin();
 	present_wait_dma();
@@ -694,7 +845,6 @@ void mmb_gfx_init(void)
 {
 	int hw = G.plat && G.plat->hdmi_width ? G.plat->hdmi_width() : 640;
 	int hh = G.plat && G.plat->hdmi_height ? G.plat->hdmi_height() : 480;
-	s_present_pending = 0;
 	mmb_sprite_reset();
 	free_pages();
 	memset(&G.gfx, 0, sizeof(G.gfx));
@@ -798,8 +948,14 @@ void mmb_gfx_set_mode(int mode, int bits)
 	if (!w)
 		mmb_error("?INVALID MODE");
 	present_wait_dma();
+	/* The page buffers are about to be freed: a recorded hidden-page sprite
+	 * log can never be replayed after that (#1434). */
+	mmb_sprite_defer_discard();
 	mmb_play_mix();
-	if (G.plat && G.plat->resize_hdmi)
+	/* A background console changes only its own geometry; the display is
+	 * retuned to it by mmb_gfx_reapply_mode() when it becomes visible
+	 * (#1432). */
+	if (!G.gfx.background && G.plat && G.plat->resize_hdmi)
 		G.plat->resize_hdmi(w, h);
 	mmb_play_mix();
 	free_pages();
@@ -811,10 +967,12 @@ void mmb_gfx_set_mode(int mode, int bits)
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	mmb_gfx_dirty_reset();
+	mmb_gfx_page_damage_invalidate();
 	page_buf(0);
-	if (G.plat && G.plat->fill_screen)
+	if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(0);
-	mmb_console_apply_colour();
+	if (!G.gfx.background)
+		mmb_console_apply_colour();
 }
 
 void mmb_gfx_reset_console(int wipe)
@@ -822,23 +980,43 @@ void mmb_gfx_reset_console(int wipe)
 	int i;
 
 	/* Show a deferred frame before the console takes the screen back
-	 * (program end, error landing, console switch). */
+	 * (program end, error landing, console switch). A hidden-page sprite
+	 * recording is materialised first so the page holds its final state
+	 * (#1434). */
+	mmb_sprite_defer_flush();
 	mmb_gfx_flush_pending();
 	G.gfx.write_fb = 0;
 	G.gfx.write_page = 0;
 	G.gfx.display_page = 0;
 	for (i = 0; i < MMB_MAX_SPRITE; i++)
 		G.gfx.sprite[i].vis = 0;
-	if (G.plat && G.plat->present_set_flip)
+	/* The hardware half of the reset belongs to the visible console only.
+	 * A background app closing (for example during a warm reset) keeps its
+	 * own page/terminal state and never touches the shared display (#1432). */
+	if (!G.gfx.background && G.plat && G.plat->present_set_flip)
 		G.plat->present_set_flip(0);
 	if (!wipe)
 		return;
 	G.gfx.fg = MMB_DEFAULT_FG;
 	G.gfx.bg = MMB_DEFAULT_BG;
-	if (G.plat && G.plat->fill_screen)
+	if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		G.plat->fill_screen(G.gfx.bg);
 	mmb_gfx_dirty_reset();
-	mmb_console_apply_colour();
+	if (!G.gfx.background)
+		mmb_console_apply_colour();
+}
+
+/* Write one already-quantised pixel to the live display. Platforms that can
+ * consume the page's native format skip the native -> RGB888 -> native round
+ * trip (#1435); the rest keep the existing RGB888 path. */
+static void live_set_pixel(int x, int y, uint16_t np)
+{
+	if (G.gfx.background || !G.plat)
+		return;
+	if (G.plat->set_pixel_native)
+		G.plat->set_pixel_native(x, y, np);
+	else if (G.plat->set_pixel)
+		G.plat->set_pixel(x, y, mmb_native_to_rgb(np));
 }
 
 void mmb_gfx_plot(int x, int y, unsigned rgb)
@@ -846,6 +1024,9 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	uint16_t *pg;
 	int tw, th, by;
 	uint16_t np;
+	/* Recorded hidden-page sprites precede any unrelated pixel write. */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	tw = tgt_w();
 	th = tgt_h();
 	y = map_y(y);
@@ -860,11 +1041,15 @@ void mmb_gfx_plot(int x, int y, unsigned rgb)
 	pg[by * tw + x] = np;
 	if (mmb_gfx_writing_fb())
 		return;
-	/* Expand dirty AABB when drawing to the visible page. */
+	mmb_gfx_page_damage_add(G.gfx.write_page, x, by, 1, 1);
+	/* Expand dirty AABB when drawing to the display page. A background
+	 * console still tracks it so the next visible present uploads the union,
+	 * but only the visible console writes the shared framebuffer (#1432). */
 	if (G.gfx.write_page == G.gfx.display_page)
+	{
 		mmb_gfx_dirty_add(x, by, 1, 1);
-	if (G.gfx.write_page == G.gfx.display_page && G.plat && G.plat->set_pixel)
-		G.plat->set_pixel(x, by, mmb_native_to_rgb(np));
+		live_set_pixel(x, by, np);
+	}
 }
 
 unsigned mmb_gfx_get_page(int x, int y, int page)
@@ -872,6 +1057,10 @@ unsigned mmb_gfx_get_page(int x, int y, int page)
 	int w, h, by;
 	uint16_t *pg;
 
+	/* A read must observe recorded hidden-page sprites, not the pre-sprite
+	 * page (#1434). */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush_page(page);
 	pg = mmb_gfx_buf_for(page, &w, &h);
 	by = mmb_gfx_map_y(y, h);
 	if (x < 0 || by < 0 || x >= w || by >= h)
@@ -929,6 +1118,10 @@ void mmb_gfx_cls(unsigned rgb)
 	int tw, th;
 	uint16_t *pg;
 	uint16_t np;
+	/* A non-sprite write must land after the recorded sprites, so replay
+	 * first (#1434). */
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	np = mmb_pix_store(rgb);
 	tw = tgt_w();
 	th = tgt_h();
@@ -939,9 +1132,12 @@ void mmb_gfx_cls(unsigned rgb)
 	fill_u16(pg, (unsigned)tw * (unsigned)th, np);
 	if (mmb_gfx_writing_fb())
 		return;
+	mmb_gfx_page_damage_add(G.gfx.write_page, 0, 0, tw, th);
 	if (G.gfx.write_page == G.gfx.display_page)
 	{
-		if (G.plat && G.plat->fill_screen)
+		/* A background console clears only its own page; the dirty AABB
+		 * records the full frame for its next visible present (#1432). */
+		if (!G.gfx.background && G.plat && G.plat->fill_screen)
 		{
 			G.plat->fill_screen(mmb_native_to_rgb(np));
 			mmb_gfx_dirty_reset();
@@ -963,7 +1159,7 @@ struct span_target {
 	uint16_t *pg;
 	int w, h;
 	uint16_t np;
-	unsigned live_rgb;
+	int fb;   /* drawing the framebuffer, not a page */
 	int live; /* visible display page: dirty-track and set_pixel */
 	int dx0, dy0, dx1, dy1;
 };
@@ -971,12 +1167,14 @@ struct span_target {
 static void span_target_init(struct span_target *t, unsigned rgb)
 {
 	int fb = mmb_gfx_writing_fb();
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	t->pg = fb ? G.gfx.fb : page_buf(G.gfx.write_page);
 	t->w = fb ? G.gfx.fb_w : G.gfx.w;
 	t->h = fb ? G.gfx.fb_h : G.gfx.h;
 	t->np = mmb_pix_store(rgb);
+	t->fb = fb;
 	t->live = !fb && G.gfx.write_page == G.gfx.display_page;
-	t->live_rgb = t->live ? mmb_native_to_rgb(t->np) : 0;
 	t->dx0 = 0;
 	t->dy0 = 0;
 	t->dx1 = -1;
@@ -1007,11 +1205,10 @@ static void span_target_pixel(struct span_target *t, int x, int y)
 	if (x < 0 || by < 0 || x >= t->w || by >= t->h)
 		return;
 	t->pg[by * t->w + x] = t->np;
+	span_target_mark(t, x, by);
 	if (!t->live)
 		return;
-	span_target_mark(t, x, by);
-	if (G.plat && G.plat->set_pixel)
-		G.plat->set_pixel(x, by, t->live_rgb);
+	live_set_pixel(x, by, t->np);
 }
 
 static void span_target_row(struct span_target *t, int x, int y, int w)
@@ -1034,18 +1231,23 @@ static void span_target_row(struct span_target *t, int x, int y, int w)
 	if (w < 1)
 		return;
 	fill_u16(t->pg + by * t->w + x, (unsigned)w, t->np);
-	if (!t->live)
-		return;
 	span_target_mark(t, x, by);
 	span_target_mark(t, x + w - 1, by);
-	if (G.plat && G.plat->set_pixel)
-		for (px = 0; px < w; px++)
-			G.plat->set_pixel(x + px, by, t->live_rgb);
+	if (!t->live)
+		return;
+	for (px = 0; px < w; px++)
+		live_set_pixel(x + px, by, t->np);
 }
 
 static void span_target_flush(struct span_target *t)
 {
-	if (t->live && t->dx1 >= t->dx0)
+	if (t->dx1 < t->dx0)
+		return;
+	if (!t->fb)
+		mmb_gfx_page_damage_add(G.gfx.write_page, t->dx0, t->dy0,
+					t->dx1 - t->dx0 + 1,
+					t->dy1 - t->dy0 + 1);
+	if (t->live)
 		mmb_gfx_dirty_add(t->dx0, t->dy0, t->dx1 - t->dx0 + 1,
 				  t->dy1 - t->dy0 + 1);
 }
@@ -1412,6 +1614,8 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 	}
 	if (w < 1 || h < 1)
 		return;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	tw = tgt_w();
 	th = tgt_h();
 	np = mmb_pix_store(rgb);
@@ -1439,6 +1643,9 @@ static void fill_rect_flip(int x, int y, int w, int h, unsigned rgb, int flip_y)
 			pg[by * tw + px] = np;
 		}
 	}
+	if (!mmb_gfx_writing_fb())
+		mmb_gfx_page_damage_add(G.gfx.write_page, x,
+					flip_y ? th - y - h : y, w, h);
 	if (mmb_gfx_writing_fb())
 		return;
 	if (G.gfx.write_page == G.gfx.display_page)
@@ -1463,6 +1670,8 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
 	int sw, sh, dw, dh, row;
 	unsigned row_bytes, total;
 
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	s = mmb_gfx_buf_for(srcpage, &sw, &sh);
 	d = mmb_gfx_buf_for(dstpage, &dw, &dh);
 	if (!s || !d || w < 1 || h < 1)
@@ -1498,6 +1707,7 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
 			;
 		else
 			memcpy(d, s, total);
+		mmb_gfx_page_damage_add(dstpage, x, y, w, h);
 		return;
 	}
 	for (row = 0; row < h; row++)
@@ -1506,6 +1716,7 @@ void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h)
 		if ((row & 15) == 15)
 			mmb_net_yield();
 	}
+	mmb_gfx_page_damage_add(dstpage, x, y, w, h);
 }
 
 void mmb_gfx_glyph_cp437(int x, int y, unsigned ch, unsigned rgb)
@@ -1568,6 +1779,8 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 
 	if (gh != 14)
 		gh = 16;
+	if (mmb_sprite_defer_pending)
+		mmb_sprite_defer_flush();
 	font = (gh == 14) ? mmb_cp437_8x14 : mmb_cp437_8x16;
 	tw = tgt_w();
 	th = tgt_h();
@@ -1592,6 +1805,8 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 				continue;
 			glyph_cell_row_opaque(pg, tw, by, x, fg_n, bg_n, bits);
 		}
+		mmb_gfx_page_damage_add(G.gfx.write_page, x,
+					flip_y ? th - y - gh : y, 8, gh);
 		return;
 	}
 	for (row = 0; row < gh; row++)
@@ -1608,6 +1823,8 @@ static void glyph_cell_flip(int x, int y, unsigned ch, unsigned fg, unsigned bg,
 			pg[by * tw + px] = (bits & (unsigned char)(0x80u >> col)) ? fg_n : bg_n;
 		}
 	}
+	mmb_gfx_page_damage_add(G.gfx.write_page, x,
+				flip_y ? th - y - gh : y, 8, gh);
 }
 
 void mmb_gfx_glyph_cell(int x, int y, unsigned ch, unsigned fg, unsigned bg)

@@ -130,14 +130,14 @@ class TermReplay:
         text = reason.encode("ascii", errors="replace")
         self.con._ser.sendall(bytes([RS]) + b"RC " + text + b"\n")
 
-    def _to_guest(self, data: bytes) -> None:
+    def _to_guest(self, data: bytes, chunk: int = 32, delay: float = 0.0) -> None:
         assert self.con._ser is not None
         old_timeout = self.con._ser.gettimeout()
         self.con._ser.settimeout(0.4)
         try:
             off = 0
             while off < len(data):
-                piece = data[off : off + 32]
+                piece = data[off : off + chunk]
                 off += len(piece)
                 hexpart = piece.hex()
                 frame = bytes([RS]) + b"RX" + hexpart.encode("ascii") + b"\n"
@@ -157,6 +157,8 @@ class TermReplay:
                 if extra:
                     with self._lock:
                         self.serial_buf += extra
+                if delay > 0:
+                    time.sleep(delay)
         finally:
             self.con._ser.settimeout(old_timeout)
 

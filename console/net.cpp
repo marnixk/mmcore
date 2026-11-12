@@ -1296,3 +1296,45 @@ int mmb_net_srv_ip(char *buf, int bufsize)
 }
 
 #endif
+
+/*
+ * TLS for WEB is not available on the bare-metal Circle build yet: vendoring
+ * and wiring a TLS stack is tracked as a follow-up. These stubs keep the WEB
+ * command family linkable and make every HTTPS form report the platform
+ * limitation instead of failing to build.
+ */
+extern "C" {
+
+int mmb_net_tls_available(void) { return 0; }
+void mmb_net_tls_close(void) {}
+int mmb_net_tls_set_ca_pem(const char *pem, int len)
+{
+	(void)pem;
+	(void)len;
+	return -1;
+}
+void mmb_net_tls_set_verify(int verify) { (void)verify; }
+int mmb_net_tls_open(const char *host, int port, int timeout_ms)
+{
+	(void)host;
+	(void)port;
+	(void)timeout_ms;
+	return -1;
+}
+int mmb_net_tls_send(const void *data, unsigned n)
+{
+	(void)data;
+	(void)n;
+	return -1;
+}
+int mmb_net_tls_recv(void *data, unsigned maxn)
+{
+	(void)data;
+	(void)maxn;
+	return -1;
+}
+int mmb_net_tls_rx_avail(void) { return 0; }
+int mmb_net_tls_peer_closed(void) { return 1; }
+const char *mmb_net_tls_errmsg(void) { return "TLS unavailable"; }
+
+}

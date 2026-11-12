@@ -69,7 +69,6 @@ def test_help_open_tcp(console):
     out = dump_topic(console, "OPEN")
     assert out != "?SYNTAX ERROR"
     assert "TCP:" in out
-    assert "WEB" not in out
     pr = dump_topic(console, "PRINT")
     assert "TCP" in pr
     cl = dump_topic(console, "CLOSE")
@@ -88,7 +87,7 @@ def test_help_input_dollar_and_functions(console):
     fns = dump_topic(console, "FUNCTIONS")
     assert "INPUT$" in fns
     assert "TCP" in fns
-    assert "WEB" not in fns
+    assert "WEB" in fns
     assert "count first" in fns.lower() or "RX" in fns or "non-blocking" in fns.lower()
     eof = dump_topic(console, "EOF")
     assert "TCP" in eof or "not connected" in eof.lower() or "RX" in eof

@@ -777,7 +777,7 @@ def _term_download_dialog(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 
@@ -1180,7 +1180,7 @@ def _open_term_download(con) -> str:
     con.drain(quiet=0.6, timeout=12.0)
     con._ser.sendall(bytes([1]) + b"t")
     con.drain(quiet=0.4, timeout=8.0)
-    con._ser.sendall(b"\x1b[B\x1b[B\x1b[B\r")
+    con._ser.sendall(b"\x1b[B\r")
     return _plain(con.drain(quiet=0.6, timeout=8.0).decode(errors="replace"))
 
 
@@ -1437,6 +1437,20 @@ def _term_page_up(con, quiet=0.7, timeout=8.0) -> str:
     return _plain(con.drain(quiet=quiet, timeout=timeout).decode(errors="replace"))
 
 
+def _enable_scroll_buffer(con) -> None:
+    """#1481: PageUp pages local history only when Scroll buffer is checked."""
+    con._ser.sendall(b"\x1b[21~")
+    menu = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+    assert "Scrollback" in menu, menu
+    if "Scrollback [x]" not in menu:
+        con._ser.sendall(b"s")
+        toggled = _plain(con.drain(quiet=0.6, timeout=8).decode(errors="replace"))
+        assert "Scrollback [x]" in toggled, toggled
+    con._ser.sendall(b"\x1b")
+    time.sleep(0.15)
+    con.drain(quiet=0.3, timeout=4)
+
+
 def test_switch_keeps_per_console_term_scrollback(kernel_image):
     """#767: TERM's scrollback ring is per-console. Opening TERM on a second
     console must not wipe the first console's history, and each console pages
@@ -1447,6 +1461,7 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
         # Console 1: fill the ring, then page back into it.
         seen = _open_term_demoburst(con)
         assert "line 40" in seen, seen
+        _enable_scroll_buffer(con)
         con.drain(quiet=0.3, timeout=3.0)
         up = _term_page_up(con)
         assert "SCROLL -" in up, up
@@ -1457,6 +1472,7 @@ def test_switch_keeps_per_console_term_scrollback(kernel_image):
         con.drain(quiet=0.3, timeout=2.0)
         seen2 = _open_term_demoburst(con)
         assert "line 40" in seen2, seen2
+        _enable_scroll_buffer(con)
         con.drain(quiet=0.3, timeout=3.0)
         up2 = _term_page_up(con)
         assert "SCROLL -" in up2, up2

@@ -80,7 +80,6 @@
 #define MMB_MAX_STRUCT_NEST     8
 #define MMB_STRUCT_STR_DEFAULT  1024
 #define MMB_STRUCT_STRLEN       4
-#define MMB_STRUCT_RET_MAX      65536
 
 /* Struct STRING members carry a 32-bit length followed by the characters. */
 #define MMB_STRUCT_STRLEN_PUT(p, n) \
@@ -200,6 +199,7 @@ typedef struct mmb_options {
 	int pin;
 	int profiling;
 	int frame_profile;
+	int fastdraw;          /* OPTION FASTDRAW: coalesce/defer graphics writes */
 	char frame_profile_path[96];
 	int tracecache;
 	int ram_prog;
@@ -245,6 +245,8 @@ typedef struct mmb_options {
 	int term_log;          /* OPTION TERM LOG ON|OFF (default OFF) */
 	int term_scrollback;   /* OPTION TERM SCROLLBACK lines (default 200) */
 	int term_autolog;      /* OPTION TERM AUTOLOG ON|OFF (default OFF) */
+	int term_cterm;        /* OPTION TERM CTERM ON|OFF (default ON) */
+	int term_scroll_buffer; /* TERM "Scroll buffer" toggle (default OFF) */
 	int wordpad_view;      /* WORDPAD last view: 0 normal 1 wide 2 narrow */
 	char ntp_server[64];   /* OPTION NTP SERVER "host[:port]" (#524) */
 	int ntp_enabled;       /* OPTION NTP: MMB_NTP_AUTO/0 OFF/1 ON (#581) */
@@ -281,6 +283,7 @@ typedef struct mmb_vfs_rbuf {
 	int cap;            /* allocated capacity */
 	int len;            /* valid bytes in buf (0 = empty) */
 	unsigned start;     /* file offset of buf[0] */
+	unsigned gen;       /* storage generation the bytes came from */
 } mmb_vfs_rbuf;
 
 typedef struct mmb_file {
@@ -330,11 +333,32 @@ typedef struct mmb_gfx {
 	int turtle_fy[MMB_TURTLE_MAX];
 	unsigned fg, bg;
 	int font, font_scale;
-	/* HDMI-native page buffers. Every page is a plain pixel plane. */
+	/* HDMI-native page buffers. Every page is a plain pixel plane. They
+	 * belong to this interpreter context, so a virtual console's PAGE 0 is
+	 * private even while another console is on the shared display (#1432). */
 	uint16_t *page[MMB_MAX_PAGES];
 	/* Dirty AABB for present_rect coalescing (x0,y0 inclusive; x1,y1 exclusive). */
 	int dirty;
 	int dirty_x0, dirty_y0, dirty_x1, dirty_y1;
+	/* Deferred display-page present (#1402). Per console: a pending frame
+	 * must not be flushed by whichever console happens to poll next. */
+	int present_pending;
+	/* Per-page damage for delta PAGE COPY (#1436). valid marks an AABB that
+	 * has been tracked since the last full invalidation; page_gen advances
+	 * on every tracked write so a destination can tell whether its last
+	 * source is still current. */
+	struct {
+		int valid;
+		int x0, y0, x1, y1;
+	} page_damage[MMB_MAX_PAGES];
+	unsigned page_gen[MMB_MAX_PAGES];
+	int page_copy_src[MMB_MAX_PAGES];
+	unsigned page_copy_gen[MMB_MAX_PAGES];
+	/* This context is not the console whose screen is shown (#1432). It still
+	 * draws into its own page[] buffers, but must never write the shared
+	 * framebuffer, its cached text/pixel buffer, or the present flip state.
+	 * The session manager updates this on every switch. */
+	int background;
 } mmb_gfx;
 
 typedef struct mmb_ed_hop {
@@ -523,6 +547,8 @@ void mmb_arena_mark(mmb_arena_save *m);
 void mmb_arena_release(mmb_arena_save *m);
 /* Release every arena chunk of the current context (console reset/destroy). */
 void mmb_arena_free(void);
+/* Release the current context's STRUCT function-return staging buffer (#1496). */
+void mmb_func_ret_blob_free(void);
 
 /* What a captured frame resumes on.  Position is restored from run_pc,
  * branch_pc/branch_pos and p; the kind records which of those owns the resume
@@ -635,7 +661,12 @@ typedef struct mmb {
 	 * them when the context is reset or destroyed (#1351). */
 	mmb_achunk *arena;
 	mmb_achunk *arena_cur;
-	unsigned char func_ret_blob[MMB_STRUCT_RET_MAX];
+	/* Staging copy for a STRUCT FUNCTION return (#1496). The callee's local
+	 * blob is freed when its frame is popped, so the value is copied here
+	 * first. Grown on demand: a TYPE may be far larger than the old fixed
+	 * 64 KB buffer. Freed by mmb_func_ret_blob_free(). */
+	unsigned char *func_ret_blob;
+	int func_ret_blob_cap;
 	/* Program store (#1303): heap-owned arrays that grow on demand. Each
 	 * line is individually strdup'd, so insert/delete move pointers only.
 	 * prog_num is kept sorted; lookups use binary search. */
@@ -953,6 +984,10 @@ void mmb_need_num(mmb_val v);
 mmb_val mmb_json_query(const char *js, const char *path);
 void mmb_cmd_json_parse(void);
 mmb_val mmb_json_stringify(mmb_val v);
+/* Fill a TYPE record (sid, already zeroed, G.sdef[sid].total bytes) from JSON
+ * using the same mapping as JSON_PARSE. Returns 0 on success, -1 on malformed
+ * JSON and -2 when the root is not a JSON object. */
+int mmb_json_parse_struct(int sid, const char *js, unsigned char *rec);
 void mmb_print_val(mmb_val v);
 void mmb_out(const char *s);
 void mmb_out_flush(void);
@@ -1251,6 +1286,9 @@ void mmb_gfx_glyph_cell_topdown_h(int x, int y, unsigned ch, unsigned fg,
 void mmb_gfx_fill_rect(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_fill_rect_topdown(int x, int y, int w, int h, unsigned rgb);
 void mmb_gfx_copy_rect(int srcpage, int dstpage, int x, int y, int w, int h);
+void mmb_gfx_page_damage_add(int page, int x, int y, int w, int h);
+void mmb_gfx_page_damage_invalidate(void);
+int mmb_gfx_copy_page(int src, int dst, int blit);
 void mmb_gfx_present(void);
 void mmb_gfx_present_rect(int x, int y, int w, int h);
 void mmb_gfx_present_native(int x, int y, int w, int h, const uint16_t *pix,
@@ -1472,6 +1510,11 @@ void mmb_storage_unmount(void);
 void mmb_storage_revalidate(void);
 int mmb_storage_persistence_lost(void);
 
+/* Bumped when the backing store is remounted after a suspend. A per-file
+ * read-ahead buffer filled from an older generation is stale: drop it so an
+ * open file reopens against the recovered volume. */
+unsigned mmb_storage_generation(void);
+
 /* Hotplug/idle notices from the storage layer (USB mount/unmount, eject).
  * Printed at the prompt unless a full-screen app claims them (FILES hint). */
 void mmb_storage_notice(const char *msg);
@@ -1604,6 +1647,31 @@ void mmb_net_yield(void);
 int mmb_net_udp_roundtrip(const char *host, int port,
 			  const void *tx, unsigned txlen,
 			  void *rx, unsigned rxcap, int timeout_ms);
+
+/* ---- WEB (PicoMite parity + high-level HTTP) ------------------------- */
+/* Expression forms: WEB$() returns text, WEB(... AS Type) returns a TYPE.
+ * mmb_web_fn() consumes the opening '(' and parses the whole call. */
+mmb_val mmb_web_fn(int text_form);
+void mmb_cmd_web(void);
+void mmb_web_cleanup(void);
+int mmb_web_status_get(void);
+mmb_val mmb_web_header_val(const char *name);
+
+/* TLS transport seam. Implemented with OpenSSL when the native build finds
+ * it (-DMMB_HAVE_TLS); every other backend (Circle, Windows) returns the
+ * "TLS unavailable" stubs so the build stays green and HTTPS reports a clear
+ * platform limitation. Verification of the server certificate and hostname is
+ * on by default; mmb_net_tls_set_verify(0) is the explicit insecure mode. */
+int mmb_net_tls_available(void);
+int mmb_net_tls_open(const char *host, int port, int timeout_ms);
+int mmb_net_tls_send(const void *data, unsigned n);
+int mmb_net_tls_recv(void *data, unsigned maxn);
+int mmb_net_tls_rx_avail(void);
+int mmb_net_tls_peer_closed(void);
+const char *mmb_net_tls_errmsg(void);
+void mmb_net_tls_close(void);
+int mmb_net_tls_set_ca_pem(const char *pem, int len);
+void mmb_net_tls_set_verify(int verify);
 
 int mmb_net_srv_listen(int port);
 int mmb_net_srv_port(int lsn);
@@ -1834,12 +1902,36 @@ void mmb_run_events(void);
 void mmb_cmd_settick(void);
 void mmb_cmd_sprite(void);
 void mmb_sprite_reset(void);
+/* Deferred hidden-page sprite recorder (#1434). pending is non-zero while a
+ * replay is owed; the other helpers materialise, conditionally materialise
+ * for a page read, or drop the recorded log. */
+extern int mmb_sprite_defer_pending;
+void mmb_sprite_defer_flush(void);
+void mmb_sprite_defer_flush_page(int page);
+void mmb_sprite_defer_invalidate_page(int page);
+void mmb_sprite_defer_discard(void);
 int mmb_call_named_sub(const char *name);
 int mmb_call_named_sub_resolved(const char *name, int si);
 int mmb_try_user_function(mmb_val *out);
 int mmb_sub_is_func(const char *name);
 int mmb_play_wav(const char *path);
 void mmb_play_tts(void);
+/* Additive WAV sound effects (#1474). Effects mix on top of the active music
+ * engine (or play on their own when music is stopped) without touching the
+ * music's playback state or position. Up to MMB_SFX_VOICES (4) play at once;
+ * the oldest is replaced when all voices are busy. volume is 0..100 or a
+ * negative value to use the current PLAY SFX VOLUME default. */
+int mmb_sfx_play(const char *path, int volume);
+/* Stop every effect; music keeps playing. */
+void mmb_sfx_stop_all(void);
+/* Stop effects started by the current console (program-exit teardown). */
+void mmb_sfx_stop_owned(void);
+int mmb_sfx_active(void);
+void mmb_sfx_set_volume(int volume);
+int mmb_sfx_volume(void);
+/* Frames mixed for the current music track since it started; effects do not
+ * change it. 0 while no track is playing. MM.INFO("AUDIOPOS"). */
+unsigned mmb_audio_position(void);
 
 
 int mmb_keyword_eq(const char *a, const char *b);

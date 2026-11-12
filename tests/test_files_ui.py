@@ -701,6 +701,21 @@ def test_files_many_entries_reports_truncation(fresh_console):
     with 97 entries is cut at 96 and reported instead of silently dropped.
     """
     con = fresh_console
+    # The seeded ramdisk already uses most of A:'s fixed node budget
+    # (VFS_MAX). Free bulky fixtures this test does not use so BIG/SUB plus 96
+    # files fit; do not depend on the seed's exact node count (#1459).
+    for unused in (
+        "BIG.MP3",
+        "RATE22.MP3",
+        "RATE32.MP3",
+        "RATE48.MP3",
+        "TEST.MP3",
+        "ZBAD.MP3",
+        "ZV1.MP3",
+        "ZV2.MP3",
+        "TEST.WAV",
+    ):
+        assert con.send_line(f'KILL "A:/tests/{unused}"') == ""
     for line in (
         '10 MKDIR "A:/BIG"',
         '15 MKDIR "A:/BIG/SUB"',

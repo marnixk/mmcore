@@ -1,6 +1,8 @@
 """Persistent INI settings, hidden dotfiles, FACTORY_RESET, and OPTION WIFI."""
 
+from harness import MMBasicConsole
 from ihelp_util import dump_topic
+from test_term import _open_term, _quit
 
 
 def _settings_open(con):
@@ -126,6 +128,50 @@ def test_option_persists_to_hidden_ini(console):
     assert "tab=4" in ini
     assert "break=4" in ini
     assert "[core]" in ini
+
+
+def test_option_fastdraw_defaults_off_and_is_not_persisted(console):
+    """#1433: OPTION FASTDRAW is off by default and listed, but per-session.
+
+    It changes when pixels appear, so it must not leak into a later boot from
+    .mmbasic.ini; a program that relies on immediate drawing leaves it OFF.
+    """
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    listed = console.send_line("OPTION LIST")
+    assert "FASTDRAW" not in listed
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION FASTDRAW OFF" in all_listed
+    ini = _read_ini(console)
+    assert "fastdraw" not in ini
+    assert console.send_line("OPTION FASTDRAW ON") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "OPTION FASTDRAW ON" in listed
+    ini = _read_ini(console)
+    assert "fastdraw" not in ini
+    assert console.send_line("OPTION FASTDRAW OFF") == ""
+    listed = console.send_line("OPTION LIST")
+    assert "FASTDRAW" not in listed
+    ini = _read_ini(console)
+    assert "fastdraw" not in ini
+
+
+def test_term_cterm_defaults_on_and_explicit_off_persists(console):
+    """CTerm identity is on by default; an explicit OFF is saved with a marker."""
+    assert console.send_line("FACTORY_RESET") == "Factory defaults restored"
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION TERM CTERM ON" in all_listed
+    ini = _read_ini(console)
+    assert "term_cterm=1" in ini
+    assert "term_cterm_explicit=1" in ini
+
+    assert console.send_line("OPTION TERM CTERM OFF") == ""
+    all_listed = console.send_line("OPTION LIST ALL")
+    assert "OPTION TERM CTERM OFF" in all_listed
+    ini = _read_ini(console)
+    assert "term_cterm=0" in ini
+    assert "term_cterm_explicit=1" in ini
+
+    assert console.send_line("OPTION TERM CTERM ON") == ""
 
 
 def test_brightness_and_volume_persist(console):
@@ -295,6 +341,33 @@ def test_option_term_log_persists(console):
     assert "TERM LOG" not in listed
     ini = _read_ini(console)
     assert "term_log=0" in ini
+
+
+def test_term_scroll_buffer_menu_toggle_persists(kernel_image):
+    """#1481: the TERM menu checkmark survives leaving and re-entering TERM."""
+    con = MMBasicConsole(kernel_image)
+    con.start()
+    try:
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b[21~")
+        menu = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "Scrollback [ ]" in menu
+        con._ser.sendall(b"s")
+        toggled = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "Scrollback [x]" in toggled
+        _quit(con)
+        assert con.send_line("PRINT 5+5") == "10"
+        ini = _read_ini(con)
+        assert "term_scroll_buffer=1" in ini
+
+        _open_term(con, 'TERM "demo", 23', quiet=0.8, timeout=10.0)
+        con._ser.sendall(b"\x1b[21~")
+        again = con.drain(quiet=0.6, timeout=8).decode(errors="replace")
+        assert "Scrollback [x]" in again
+        _quit(con)
+        assert con.send_line("PRINT 6+6") == "12"
+    finally:
+        con.stop()
 
 
 def test_option_wifi_debug_on_persists(console):

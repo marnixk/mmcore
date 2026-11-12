@@ -2982,6 +2982,36 @@ void mmb_cmd_end_sub(void)
 	G.in_sub = 0;
 }
 
+/* Detach a STRUCT return value from the callee's locals, which are freed by
+ * mmb_cmd_end_sub(). The staging buffer grows to the TYPE's real size, so a
+ * return is no longer capped at the old fixed 64 KB (#1496). */
+static void stage_struct_return(mmb_val *v)
+{
+	int sz;
+	unsigned char *src;
+
+	if (v->struct_idx < 0 || v->struct_idx >= MMB_MAX_STRUCT_TYPES ||
+	    !G.sdef[v->struct_idx].used)
+		return;
+	sz = G.sdef[v->struct_idx].total;
+	if (sz <= 0)
+		return;
+	src = v->blob;
+	if (sz > G.func_ret_blob_cap)
+	{
+		unsigned char *nb = G.plat->alloc((unsigned)sz);
+		if (!nb)
+			mmb_error("?OUT OF MEMORY");
+		if (G.func_ret_blob)
+			G.plat->free(G.func_ret_blob);
+		G.func_ret_blob = nb;
+		G.func_ret_blob_cap = sz;
+	}
+	if (src != G.func_ret_blob)
+		memcpy(G.func_ret_blob, src, (unsigned)sz);
+	v->blob = G.func_ret_blob;
+}
+
 void mmb_cmd_end_function(void)
 {
 	int g;
@@ -3000,13 +3030,7 @@ void mmb_cmd_end_function(void)
 			{
 				G.func_ret = mmb_load_var(v, 0);
 				if (G.func_ret.type == T_STRUCT && G.func_ret.blob)
-				{
-					int sz = G.sdef[G.func_ret.struct_idx].total;
-					if (sz > MMB_STRUCT_RET_MAX)
-						mmb_error("?OVERFLOW");
-					memcpy(G.func_ret_blob, G.func_ret.blob, (unsigned)sz);
-					G.func_ret.blob = G.func_ret_blob;
-				}
+					stage_struct_return(&G.func_ret);
 				else
 					mmb_val_own(&G.func_ret, &G.func_ret_s, 0, fname);
 			}
@@ -3028,6 +3052,7 @@ void mmb_option_reset(void)
 	G.opt.break_key = 3;
 	G.opt.profiling = 0;
 	G.opt.frame_profile = 0;
+	G.opt.fastdraw = 0;
 	G.opt.frame_profile_path[0] = 0;
 	G.opt.tracecache = 1;
 	G.opt.colourcode = 1;
@@ -3056,6 +3081,8 @@ void mmb_option_reset(void)
 	G.opt.term_log = 0;
 	G.opt.term_scrollback = 200;
 	G.opt.term_autolog = 0;
+	G.opt.term_cterm = 1;
+	G.opt.term_scroll_buffer = 0;
 	G.opt.wordpad_view = 0;
 	G.opt.wifi_country[0] = 'U';
 	G.opt.wifi_country[1] = 'S';
@@ -4865,6 +4892,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("TYPE")] = mmb_cmd_type;
 		tab[mmb_kw_id("STRUCT")] = mmb_cmd_struct;
 		tab[mmb_kw_id("JSON_PARSE")] = mmb_cmd_json_parse;
+		tab[mmb_kw_id("WEB")] = mmb_cmd_web;
 		tab[mmb_kw_id("LOCAL")] = mmb_cmd_local;
 		tab[mmb_kw_id("STATIC")] = mmb_cmd_static;
 		tab[mmb_kw_id("ERROR")] = mmb_cmd_error;
@@ -6841,6 +6869,14 @@ void mmb_init(const mmb_platform *plat)
 	mmb_clock_init();
 }
 
+void mmb_func_ret_blob_free(void)
+{
+	if (G.func_ret_blob)
+		G.plat->free(G.func_ret_blob);
+	G.func_ret_blob = 0;
+	G.func_ret_blob_cap = 0;
+}
+
 void mmb_reset(void)
 {
 	int i;
@@ -6854,8 +6890,10 @@ void mmb_reset(void)
 	/* The expression arena is per-console now (#1351); return its chunks on
 	 * a reset so a discarded context cannot leak them. */
 	mmb_arena_free();
+	mmb_func_ret_blob_free();
 	mmb_option_reset();
 	mmb_play_stop();
+	mmb_web_cleanup();
 	/* Release the growable program store and its tables (#1303): the fixed
 	 * 512 KB prog array was inline in this struct, so its heap replacement
 	 * must be freed explicitly before the context is discarded or reused. */

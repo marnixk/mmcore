@@ -18,6 +18,9 @@ PLAY WAV file$
 PLAY MODFILE file$     (PLAY MOD file$)
 PLAY XM file$          (PLAY XMFILE file$)
 PLAY S3M file$         (PLAY S3MFILE file$)
+PLAY SFX file$ [, volume]
+PLAY SFX VOLUME volume
+PLAY SFX STOP
 
 BEEP [frequency [, duration]]
 
@@ -26,6 +29,7 @@ BEEP [frequency [, duration]]
   duration - TONE / BEEP length in milliseconds; for TONE omit to hold
              until PLAY STOP (BEEP defaults to 120)
   file$ - audio file path
+  volume - 0..100 effect gain (default 100, set by PLAY SFX VOLUME)
 
 On systems without audio output, files decode but no sound is heard; PLAYING()
 reflects playback state.
@@ -54,6 +58,36 @@ reports the peak bytes the decoder allocated. MP3s at 22.05, 32, 44.1 and
 source; MM.INFO("MP3RATE"), "MP3SRC" and "MP3OUT" report the last file's source
 rate and decoded/mixed frame counts.
 
+Sound effects:
+
+PLAY SFX adds a short WAV effect on top of the current music instead of
+replacing it. Starting or ending an effect never stops, restarts, rewinds or
+pauses the music, and it never blocks the program: the effect is mixed by the
+audio service in the background, so the game loop keeps running. Effects also
+play when no music is active; only their own output is sent.
+
+Four effect voices mix at once. Triggering a fifth replaces the oldest one
+still playing; retriggering the same file therefore overlaps with it until the
+limit is reached. PLAY SFX STOP ends every effect and leaves the music alone.
+PLAY STOP still stops everything. PLAY PAUSE pauses music and effects together,
+and starting a new main track (PLAY MP3/WAV/MOD/XM/S3M/TONE) also ends any
+effects because it replaces the shared engine.
+
+Each voice is scaled by its own volume (the optional second argument, or the
+PLAY SFX VOLUME default), and the music keeps its PLAY VOLUME gain, so the two
+can be balanced independently. Music and effects are summed with saturation:
+the mix clamps at full scale and never wraps around to the opposite sign.
+MM.INFO("SFXVOICES") is the number of effects currently playing,
+MM.INFO("SFXVOL") is the default effect gain, and MM.INFO("AUDIOPOS") is the
+number of frames mixed for the current track; triggering or stopping an effect
+does not change AUDIOPOS. PLAYING() still reports the main track only, so it
+stays 1 while an effect plays over music and 0 when only an effect is active.
+
+The mixer runs on every supported backend before PCM reaches the platform
+sink, so concurrent effects behave the same on HDMI, the analogue jack and the
+native SDL audio target. On a system with no audio device, effects decode and
+mix but no sound is heard, the same as PLAY.
+
 Example:
 
     OPTION AUDIO_TARGET HDMI
@@ -61,3 +95,16 @@ Example:
     PLAY MP3 "tests/TEST.MP3"
     PLAY S3M "tests/TEST.S3M"
     PRINT PLAYING()
+
+A game loop keeps a music track running and fires effects on events:
+
+    OPTION AUDIO_TARGET HDMI
+    PLAY MP3 "music/theme.mp3"
+    PLAY SFX VOLUME 60
+    DO
+      IF KEYDOWN(32) THEN PLAY SFX "sound/jump.wav"
+      IF KEYDOWN(13) THEN PLAY SFX "sound/coin.wav", 80
+      ' ... update and draw the game ...
+    LOOP
+
+The same program is seeded as A:/apps/SFXTEST.BAS.

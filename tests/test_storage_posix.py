@@ -1,8 +1,11 @@
-"""Host test: the native POSIX storage read cache (#1151).
+"""Host test: the native POSIX storage backend (#1151, #1493).
 
 Compiles the real ``native/storage_posix.c`` against a tiny shim and checks
 ``mmb_fat_read_at`` keeps one open handle per volume across forward reads,
-invalidates it on write/rename/unlink, and still returns the right bytes.
+invalidates it on write/rename/unlink, and still returns the right bytes. It
+also drives the standby-recovery path through fake mount ops: an installed
+``mmcore.sys=`` command line, a late-waking device, repeated sleep/wake cycles,
+streaming writes across a remount, and D:/MMCORE-DATA recovery.
 """
 
 import os
@@ -31,6 +34,7 @@ def test_storage_posix_read_cache(tmp_path):
             "-Wextra",
             "-Werror",
             "-DMMB_PLATFORM_POSIX",
+            "-DMMB_STORAGE_TEST",
             "-I",
             os.path.join(REPO, "native"),
             "-I",

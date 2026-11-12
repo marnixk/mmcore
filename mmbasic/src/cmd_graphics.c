@@ -2,7 +2,7 @@
 #include <math.h>
 #include <string.h>
 
-extern void mmb_gfx_copy_page(int src, int dst, int blit);
+extern int mmb_gfx_copy_page(int src, int dst, int blit);
 
 /* Fast argument path for the graphics commands (#1370 item 1).
  *
@@ -759,6 +759,8 @@ void mmb_cmd_page(void)
 		}
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
+		/* Never move a recorded hidden-page sprite log to another page. */
+		mmb_sprite_defer_flush();
 		G.gfx.write_fb = 0;
 		G.gfx.write_page = pg;
 		return;
@@ -768,6 +770,10 @@ void mmb_cmd_page(void)
 		int pg = (int)mmb_as_int(mmb_expr());
 		if (pg < 0 || pg >= G.gfx.pages)
 			mmb_error("?PAGE");
+		/* Materialise any deferred sprite present before the display page
+		 * changes, so the new frame is complete (#1433, #1434). */
+		mmb_sprite_defer_flush_page(pg);
+		mmb_gfx_flush_pending();
 		G.gfx.display_page = pg;
 		/* Force a full-frame present. Clearing dirty then taking the
 		 * !dirty present path can leave HDMI on a prior live-SetPixel
@@ -784,7 +790,11 @@ void mmb_cmd_page(void)
 	}
 	if (mmb_match("COPY"))
 	{
-		int src = (int)mmb_as_int(mmb_expr());
+		int src;
+		/* A deferred sprite present must be on screen before PAGE COPY
+		 * reads or replaces the pages (#1433). */
+		mmb_gfx_flush_pending();
+		src = (int)mmb_as_int(mmb_expr());
 		int dst = src;
 		mmb_skip_sp();
 		if (mmb_match("TO"))
@@ -793,6 +803,14 @@ void mmb_cmd_page(void)
 		{
 			G.p++;
 			dst = (int)mmb_as_int(mmb_expr());
+		}
+		/* A recorded source must be materialised before it is copied. A
+		 * recorded destination is overwritten, so its log is dropped. */
+		if (mmb_sprite_defer_pending)
+		{
+			mmb_sprite_defer_flush_page(src);
+			if (dst != src)
+				mmb_sprite_defer_invalidate_page(dst);
 		}
 		mmb_skip_sp();
 		if (*G.p == ',')
@@ -813,11 +831,14 @@ void mmb_cmd_page(void)
 			}
 			else if (*G.p && *G.p != ':' && *G.p != '\'')
 				(void)mmb_expr();
-			mmb_gfx_copy_page(src, dst, blit);
+			if (mmb_gfx_copy_page(src, dst, blit))
+				mmb_gfx_present_if(dst);
 		}
 		else
-			mmb_gfx_copy_page(src, dst, 0);
-		mmb_gfx_present_if(dst);
+		{
+			if (mmb_gfx_copy_page(src, dst, 0))
+				mmb_gfx_present_if(dst);
+		}
 		return;
 	}
 	mmb_syntax();

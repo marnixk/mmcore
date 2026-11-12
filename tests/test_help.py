@@ -301,7 +301,6 @@ def test_help_open_tcp_stream(console):
     out = dump_topic(console, "OPEN")
     assert out != "?SYNTAX ERROR"
     assert "TCP:" in out
-    assert "WEB" not in out
     fns = dump_topic(console, "FUNCTIONS")
     assert "INPUT$(nbr" in fns or "nbr,#n" in fns.replace(" ", "")
     assert "TCP" in fns
@@ -451,3 +450,17 @@ def test_ihelp_topic_opens_at_top_when_taller_than_viewport(fresh_console):
     scrolled = scroll_all(con, seen)
     assert "play stop" in scrolled.lower()
     close_ihelp(con)
+
+
+def test_help_web(console):
+    out = dump_topic(console, "WEB")
+    assert out != "?SYNTAX ERROR"
+    compact = out.replace(" ", "")
+    assert "WEB$(HTTPGET" in compact or "WEB$(" in compact
+    assert "AS PersonType" in out or "AS Type" in out
+    assert "WEB TCP PORT" in out.replace("  ", " ")
+    fns = dump_topic(console, "FUNCTIONS")
+    assert "WEB$" in fns
+    assert "WEBSTATUS" in fns or "WEBSTATUS" in fns.upper()
+    cont = dump_topic(console, "CONTENTS")
+    assert "WEB" in cont

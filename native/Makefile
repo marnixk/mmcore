@@ -89,6 +89,25 @@ CFLAGS += -DMMB_PLATFORM_POSIX \
 CFLAGS  += $(ARCHFLAGS)
 LDLIBS  += -lm
 
+# TLS for WEB. OpenSSL is optional: when pkg-config finds it the native build
+# compiles the real backend (native/net_tls.c), else that file supplies stubs
+# and HTTPS reports "TLS unavailable". Universal macOS slices are deliberately
+# built without TLS: Homebrew's OpenSSL is a single-arch dynamic library, so
+# linking it would either break the x86_64 slice or make the packaged app
+# depend on a developer-only install (documented in docs/help/web.txt).
+ifneq ($(WIN_BUILD),)
+TLS_LIBS :=
+else ifneq ($(MACOS_ARCH),)
+TLS_LIBS :=
+else
+TLS_CFLAGS := $(shell pkg-config --cflags openssl 2>/dev/null)
+TLS_LIBS   := $(shell pkg-config --libs openssl 2>/dev/null)
+endif
+ifneq ($(strip $(TLS_LIBS)),)
+CFLAGS += -DMMB_HAVE_TLS=1 $(TLS_CFLAGS)
+LDLIBS += $(TLS_LIBS)
+endif
+
 SDL_CFLAGS ?= $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null)
 # MinGW's sdl2.pc hardcodes SDL's WinMain shim; we supply main() ourselves.
@@ -142,7 +161,7 @@ endif
 SMB2_SRCS := $(filter-out $(SMB2_DIR)/lib/sync.c,$(wildcard $(SMB2_DIR)/lib/*.c))
 
 COMMON_SRCS := $(MMB_SRCS) $(TP_SRCS) $(SMB2_SRCS) $(CONSOLE)/net_rxbuf.c \
-	       storage_posix.c $(NET_SRC) cli.c
+	       storage_posix.c $(NET_SRC) net_tls.c cli.c
 STDIO_SRCS := platform_stdio.c main.c
 SDL_SRCS   := platform_sdl.c sdl_video.c sdl_scale.c sdl_console.c sdl_tui.c \
 	      sdl_input.c sdl_audio.c sdl_clipboard.c sdl_harness.c main_sdl.c

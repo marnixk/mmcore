@@ -81,6 +81,115 @@ def test_help_play_mentions_wav(console):
     assert "TEST.WAV" in out
 
 
+def test_play_sfx_mixes_over_music(console):
+    """#1474: an effect plays on top of the music without touching its clock.
+
+    BIG.MP3 is long enough to stay playing across the whole check. The effect
+    is the seeded 3 s TEST.WAV; AUDIOPOS (frames mixed for the track) must keep
+    rising and never jump back to 0 when the effect starts or ends.
+    """
+    assert console.send_line('PLAY MP3 "tests/BIG.MP3"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    console.send_line("PAUSE 300")
+    before = int(console.send_line('PRINT MM.INFO("AUDIOPOS")'))
+    assert before > 0, before
+
+    assert console.send_line('PLAY SFX "tests/TEST.WAV"') == ""
+    assert console.send_line("PRINT PLAYING()") == "1"
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "1"
+    console.send_line("PAUSE 300")
+    pos = int(console.send_line('PRINT MM.INFO("AUDIOPOS")'))
+    assert pos > before, (before, pos)
+    assert console.send_line("PRINT PLAYING()") == "1"
+
+    # Wait for the effect to finish on its own; music must survive it.
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        if console.send_line('PRINT MM.INFO("SFXVOICES")') == "0":
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("effect never finished")
+    assert console.send_line("PRINT PLAYING()") == "1"
+    after = int(console.send_line('PRINT MM.INFO("AUDIOPOS")'))
+    assert after > pos, (pos, after)
+    console.send_line("PLAY STOP")
+    assert console.send_line("PRINT PLAYING()") == "0"
+
+
+def test_play_sfx_stop_keeps_music(console):
+    """#1474: PLAY SFX STOP silences effects only; the track keeps running."""
+    assert console.send_line('PLAY MP3 "tests/BIG.MP3"') == ""
+    assert console.send_line('PLAY SFX "tests/TEST.WAV"') == ""
+    console.send_line("PAUSE 200")
+    before = int(console.send_line('PRINT MM.INFO("AUDIOPOS")'))
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "1"
+    assert console.send_line("PLAY SFX STOP") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "0"
+    assert console.send_line("PRINT PLAYING()") == "1"
+    after = int(console.send_line('PRINT MM.INFO("AUDIOPOS")'))
+    assert after >= before, (before, after)
+    console.send_line("PLAY STOP")
+
+
+def test_play_sfx_plays_without_music(console):
+    """#1474: effects have their own pump when no music engine is active."""
+    assert console.send_line("PLAY STOP") == ""
+    assert console.send_line("PLAY SFX STOP") == ""
+    assert console.send_line('PLAY SFX "tests/TEST.WAV"') == ""
+    # PLAYING() reports the main track, not effects; AUDIOPOS stays 0 because
+    # the effect never advances the music clock.
+    assert console.send_line("PRINT PLAYING()") == "0"
+    console.send_line("PAUSE 300")
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "1"
+    assert console.send_line('PRINT MM.INFO("AUDIOPOS")') == "0"
+    assert console.send_line("PLAY SFX STOP") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "0"
+
+
+def test_play_sfx_overlapping_voice_limit(console):
+    """#1474: four voices overlap and the fifth replaces the oldest."""
+    assert console.send_line("PLAY SFX STOP") == ""
+    for _ in range(5):
+        assert console.send_line('PLAY SFX "tests/TEST.WAV"') == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "4"
+    assert console.send_line("PLAY SFX STOP") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "0"
+
+
+def test_play_sfx_volume_default_and_clamp(console):
+    assert console.send_line("PLAY SFX VOLUME 40") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOL")') == "40"
+    assert console.send_line("PLAY SFX VOLUME 250") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOL")') == "100"
+    assert console.send_line("PLAY SFX VOLUME -5") == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOL")') == "0"
+    assert console.send_line("PLAY SFX VOLUME 100") == ""
+
+
+def test_play_sfx_missing_file_is_not_fatal(console):
+    assert console.send_line("PLAY SFX STOP") == ""
+    assert console.send_line('PLAY SFX "tests/NOPE.WAV"') == ""
+    assert console.send_line('PRINT MM.INFO("SFXVOICES")') == "0"
+
+
+def test_sfx_example_is_seeded_and_uses_the_api():
+    path = os.path.join(REPO_ROOT, "ramdisk", "apps", "SFXTEST.BAS")
+    text = open(path, encoding="utf-8").read().upper()
+    assert "PLAY SFX" in text
+    assert "PLAY SFX VOLUME" in text
+    assert "PLAYING()" in text
+    assert "LOOP" in text
+
+
+def test_help_play_mentions_sfx(console):
+    out = dump_topic(console, "PLAY")
+    assert "PLAY SFX" in out
+    assert "SFXVOICES" in out
+    assert "AUDIOPOS" in out
+    assert "saturat" in out.lower()
+
+
 def test_play_mp3_mixes_and_stops(console):
     assert console.send_line('PLAY MP3 "tests/TEST.MP3"') == ""
     # Seeded MP3 is short; real-time mix may already have finished.

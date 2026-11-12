@@ -101,15 +101,20 @@ static const char *sdl_runtime(void)
 #endif
 }
 
-static void sdl_set_pixel(int x, int y, unsigned rgb)
+static void sdl_set_pixel_native(int x, int y, unsigned native)
 {
 	uint16_t *fb = sdl_video_fb();
 
 	if (!fb || x < 0 || y < 0 || x >= sdl_video_width() ||
 	    y >= sdl_video_height())
 		return;
-	fb[y * sdl_video_width() + x] = (uint16_t)sdl_rgb_to_native(rgb);
+	fb[y * sdl_video_width() + x] = (uint16_t)native;
 	sdl_video_mark_dirty_rect(x, y, 1, 1);
+}
+
+static void sdl_set_pixel(int x, int y, unsigned rgb)
+{
+	sdl_set_pixel_native(x, y, sdl_rgb_to_native(rgb));
 }
 
 static unsigned sdl_get_pixel(int x, int y)
@@ -418,7 +423,12 @@ static void sdl_shutdown(void)
 static const mmb_platform sdl_plat = {
 	.write_serial = sdl_serial,
 	.write_screen = sdl_screen,
+	/* mmb_console_apply_colour emits the CLS-quantised colour as SGR
+	 * 48;2;R;G;B; sdl_console paints it through the same conversion as
+	 * mmb_pix_store, so PRINT paper matches the CLS fill for every MODE. */
+	.ansi_truecolour = 1,
 	.set_pixel = sdl_set_pixel,
+	.set_pixel_native = sdl_set_pixel_native,
 	.get_pixel = sdl_get_pixel,
 	.fill_screen = sdl_fill,
 	.hdmi_width = sdl_width,

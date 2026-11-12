@@ -26,6 +26,12 @@ Settings:
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE
   LEGACY ON|OFF     MILLISECONDS ON|OFF
   MOUSE OFF|n [, sens]   PIN n   PROFILING ON|OFF
+  FASTDRAW ON|OFF
+    Defer and coalesce sprite presents and hidden-page sprite drawing (default
+    OFF). The final page is identical, but pixels may appear later than with
+    immediate drawing, so a program that reads the page between draw commands
+    should leave it OFF. Per-session only: it is not saved to the settings
+    file.
   TRACECACHE ON|OFF
   PROMPT BARE|CWD   immediate prompt (see ~PROMPT~)
     CWD (default) is DOS $p$g: drive and path then >, e.g. A:/> or A:/PRDIR>.
@@ -109,6 +115,11 @@ Settings:
     Start a fresh TERM log automatically for each new session. Default OFF.
   TERM SCROLLBACK n
     Lines of TERM history kept for Page Up / search. Default 200, 0 off.
+  TERM CTERM ON|OFF
+    Answer DA1 with the SyncTERM CTerm identity so BBS doors choose the APC
+    image, Blob and pixel verbs. Default ON; `OPTION TERM CTERM OFF` uses the
+    plain `CSI ?1;2;4c` reply instead. Image verbs still work when a door sends
+    them directly.
 
 ERROR CONTINUE sets the persistent RUN default: a runtime error skips the
 failing statement and continues with the next one, keeps the SUB/FUNCTION call
@@ -132,6 +143,7 @@ Example:
     OPTION NETWORK DRIVE "\\host\share","user","pass"
     OPTION TERM LOG ON
     OPTION TERM SCROLLBACK 400
+    OPTION TERM CTERM ON
     OPTION PROMPT CWD
     OPTION PATH "A:/APPS/"
     OPTION BOOT REPL

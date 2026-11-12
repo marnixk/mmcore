@@ -66,26 +66,51 @@ def _prep_queue(con: MMBasicConsole, copies) -> None:
         assert con.send_line(f'COPY "{src}" TO "{dst}"') == ""
 
 
-def _bar_layout(w: int) -> tuple[int, int, int]:
-    """Mirror JUKE's centred spectrum-bar geometry (see cmd_juke.c)."""
-    gap = 3
-    bw = (w - 28) // 24 - gap
-    if bw < 2:
-        bw = 2
-    span = 24 * bw + 23 * gap
-    x0 = 14 + (w - 28 - span) // 2
-    return max(x0, 14), bw, gap
+_JUKE_BAR_W = 32       # design units (see cmd_juke.c)
+_JUKE_BAR_GAP = 6
+_JUKE_BLOCK_H = 14
+_JUKE_BLOCK_GAP = 4
+_LOGO_LIME = (0xC5, 0xFB, 0x00)
+_RIOT_MIN_T = 0.30  # visible floor for the lowest block (#1497)
 
 
-def _bar_centres(w: int) -> list[int]:
-    x0, bw, gap = _bar_layout(w)
+def _bar_layout(w: int, h: int) -> tuple[int, int, int]:
+    """Mirror JUKE's centred riot-block bar geometry (see cmd_juke.c)."""
+    s = _juke_scale(w, h)
+    bw = max(2, (_JUKE_BAR_W * s + 50) // 100)
+    gap = max(2, (_JUKE_BAR_GAP * s + 50) // 100)
+    x0 = max(0, (w - (24 * bw + 23 * gap)) // 2)
+    return x0, bw, gap
+
+
+def _bar_centres(w: int, h: int) -> list[int]:
+    x0, bw, gap = _bar_layout(w, h)
     return [x0 + i * (bw + gap) + bw // 2 for i in range(24)]
 
 
-def _gap_after(w: int, band: int) -> int:
+def _gap_after(w: int, h: int, band: int) -> int:
     """An x coordinate inside the gap between `band` and the next bar."""
-    x0, bw, gap = _bar_layout(w)
+    x0, bw, gap = _bar_layout(w, h)
     return x0 + band * (bw + gap) + bw + gap // 2
+
+
+def _block_metrics(w: int, h: int) -> tuple[int, int, int, int, int, int]:
+    """Mirror the stack: (block, block_gap, pitch, base, maxh, peak_h)."""
+    s = _juke_scale(w, h)
+    block = max(3, _JUKE_BLOCK_H * s // 100)
+    block_gap = max(1, _JUKE_BLOCK_GAP * s // 100)
+    base = h - 71 * s // 100
+    maxh = max(block + block_gap, base - 190 * s // 100)
+    peak_h = max(2, (2 * s + 50) // 100)
+    return block, block_gap, block + block_gap, base, maxh, peak_h
+
+
+def _riot_block_rgb(i: int, pitch: int, maxh: int) -> tuple[int, int, int]:
+    """JUKE's riot-block colour for block `i` (see juke_block_colour())."""
+    hh = (i + 0.5) * pitch / maxh
+    t = min(1.0, max(0.0, (hh - 0.12) / 0.66)) ** 1.7
+    t = _RIOT_MIN_T + (1.0 - _RIOT_MIN_T) * t
+    return tuple(int(c * t) for c in _LOGO_LIME)
 
 
 def test_help_juke(console):
@@ -224,9 +249,9 @@ def test_juke_has_fixed_grey_palette(fresh_console):
     _open_juke(con, "tests/TEST.MOD")
     # The canvas/backing stays near-black even under a light system theme.
     # (gap after band 12) is the space between bars, so it is never a bar.
-    w, _h = con.screen_size()
+    w, h = con.screen_size()
     dark = [con.screen_pixel(2, 2), con.screen_pixel(480, 2),
-            con.screen_pixel(_gap_after(w, 12), 300), con.screen_pixel(2, 494)]
+            con.screen_pixel(_gap_after(w, h, 12), 300), con.screen_pixel(2, 494)]
     assert all(r + g + b < 140 for r, g, b in dark), dark
 
     _quit_juke(con)
@@ -272,24 +297,13 @@ def test_juke_scope_lives_in_its_own_panel(fresh_console):
     _quit_juke(con)
 
 
-def _on_black_lime_ramp(c: tuple[int, int, int], tol: int = 30) -> bool:
-    """True when a bar pixel lies on the straight black (0x000000) -> lime
-    (0x9DEE5E) line. The removed grey stop (0x767C82) is neutral, so it has
-    no green-dominant hue and misses the line."""
-    r, g, b = c
-    if g < 40 or g < r or g < b:
-        return False
-    t = g / 238.0  # lime green channel
-    return abs(r - 157 * t) <= tol and abs(b - 94 * t) <= tol
-
-
 def _bar_column_runs(col: list[tuple[int, int, int]],
                      threshold: int = 25) -> list[tuple[int, list[tuple[int, int, int]]]]:
     """Maximal runs of lit pixels in one bar column, bottom-up.
 
-    Returns ``(start_index, colours)`` per run. A run is one flat bar
-    rectangle (or the 1px peak-hold cap); the dark gap between stacked LED
-    segments is below the threshold and splits them.
+    Returns ``(start_index, colours)`` per run. A run is one flat riot block
+    (or the red peak line); the black gap between stacked blocks is below the
+    threshold and splits them.
     """
     runs = []
     cur: list[tuple[int, int, int]] = []
@@ -308,126 +322,144 @@ def _bar_column_runs(col: list[tuple[int, int, int]],
 
 
 def _is_peak_cap(run: tuple[int, list[tuple[int, int, int]]]) -> bool:
-    """The peak-hold cap is a 1px light-lime line above the bar (#1254)."""
+    """The peak line is a short run of bright retro red (#FF2A2A)."""
     _start, cols = run
-    if len(cols) != 1:
+    if len(cols) > 6:
         return False
-    r, g, b = cols[0]
-    return r >= 190 and g >= 210 and b <= 130
+    r, g, b = cols[len(cols) // 2]
+    return r >= 180 and g <= 100 and b <= 100
 
 
-def test_juke_spectrum_bars_run_black_lime(fresh_console):
-    """#1055: the per-bar ramp runs straight black -> lime, with no grey stop."""
-    con = fresh_console
-    # TEST.WAV is a three-second tone, so the bars stay tall long enough to
-    # sample the gradient (the MOD fixture is only a brief blip).
-    _open_juke(con, "tests/TEST.WAV")
-    _w, h = con.screen_size()
-    base = h - 71
-    maxh = base - 190
-    xs = _bar_centres(_w)
-    ys = list(range(base - 1, base - maxh, -1))
-    coords = [(x, y) for x in xs for y in ys]
-    n = len(ys)
-    saw_black = saw_mid_ramp = False
-    for _ in range(8):
-        px = con.screen_pixels(coords)
-        for i in range(24):
-            col = px[i * n:(i + 1) * n]
-            # The peak cap is not part of the bar; skip it so the ramp checks
-            # look at real segments. The lowest pixels fade to black, which is
-            # the black end of the ramp.
-            runs = [r for r in _bar_column_runs(col) if not _is_peak_cap(r)]
-            if len(runs) < 2:
-                continue
-            if runs[0][0] > 0:
-                saw_black = True
-            # The bar midpoint must sit on the straight black->lime line; the
-            # old ramp put a neutral grey there instead. (TEST.WAV's bands do
-            # not reach the lime endpoint, so the midpoint is the check.)
-            mid = runs[len(runs) // 2][1]
-            if _on_black_lime_ramp(mid[len(mid) // 2]):
-                saw_mid_ramp = True
-        if saw_black and saw_mid_ramp:
-            break
-        time.sleep(0.2)
-    _quit_juke(con)
-    assert saw_mid_ramp, "expected the bar midpoint on the straight black->lime ramp"
-    assert saw_black, "expected the spectrum bar base to fade to black"
+def test_juke_spectrum_bars_are_riot_blocks(fresh_console):
+    """#1486: 43x18 px flat blocks with 5 px gaps, steepened lime ramp.
 
+    At 1280x720 the spec pins the geometry: 43 px bars, 8 px apart, stacked
+    whole 18 px blocks on a 23 px pitch. Every block is one flat colour from
+    the steepened ramp: the bottom shows a visible dark lime (#1497) and the
+    top reaches the logo lime.
 
-def test_juke_spectrum_bars_are_segmented_leds(fresh_console):
-    """#1254/#1265: flat LED segments whose ramp follows band intensity.
-
-    The tip of each bar must sit at the ramp position for that bar's height
-    above the baseline, not at the ramp's end: loud bands reach lime and quiet
-    ones stay dark. Each rectangle is one solid colour, with a dark gap between
-    stacked segments instead of a continuous gradient.
-
-    #1265: the adaptive gain must lift ordinary music out of the dark end, so
-    a loud fixture also has to reach the mid/upper segments instead of every
-    bar sitting near the baseline.
-
-    A QEMU screendump takes several seconds, by which time a single 3 s
-    TEST.WAV has already ended. Queue ten copies instead so the visualiser is
-    still playing live audio when the capture lands (JUKE auto-advances).
+    A QEMU screendump takes several seconds, so queue ten copies of the 3 s
+    TEST.WAV to keep audio live while the capture lands.
     """
     con = fresh_console
-    copies = [("tests/TEST.WAV", "JQSP/%02d.WAV" % i) for i in range(10)]
+    assert con.send_line("MODE 11,32") == ""  # 1280x720
+    copies = [("tests/TEST.WAV", "JQR/%02d.WAV" % i) for i in range(10)]
     _prep_queue(con, copies)
-    _open_juke(con, "JQSP")
-    _w, h = con.screen_size()
-    base = h - 71
-    maxh = base - 190
-    xs = _bar_centres(_w)
+    _open_juke(con, "JQR", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (1280, 720)
+    x0, bw, gap = _bar_layout(w, h)
+    block, block_gap, pitch, base, maxh, _peak_h = _block_metrics(w, h)
+    assert (bw, gap, block, block_gap, pitch, base, maxh) == (
+        43, 8, 18, 5, 23, 626, 374)
+    xs = _bar_centres(w, h)
     ys = list(range(base - 1, base - maxh, -1))
     coords = [(x, y) for x in xs for y in ys]
     n = len(ys)
-    saw_gaps = saw_segments = saw_quiet_tip = saw_bright_tip = False
-    best_tip = 0
-    for _ in range(10):
+    saw_blocks = saw_stack = saw_upper = False
+    stable = 0
+    for _ in range(16):
         px = con.screen_pixels(coords)
-        for i in range(24):
-            col = px[i * n:(i + 1) * n]
-            runs = _bar_column_runs(col)
-            # Every segment is a single flat colour; a continuous gradient
-            # would put several colours in one run. The caps are flat too.
-            assert all(len(set(cols)) == 1 for _, cols in runs), (i, runs)
+        columns = [px[i * n:(i + 1) * n] for i in range(24)]
+        runs_by_col = [_bar_column_runs(col) for col in columns]
+        # A screendump can land mid-repaint, leaving a block half old and half
+        # new; retry rather than assert on a torn frame (#1415).
+        if any(len(set(cols)) != 1
+               for runs in runs_by_col for _, cols in runs):
+            time.sleep(0.15)
+            continue
+        stable += 1
+        for i, runs in enumerate(runs_by_col):
             real = [r for r in runs if not _is_peak_cap(r)]
             if not real:
                 continue
-            if len(real) >= 4:
-                saw_segments = True
-            if any(b[0] - (a[0] + len(a[1])) >= 1
-                   for a, b in zip(real, real[1:])):
-                saw_gaps = True
-            # The top rectangle's colour is sampled at its own height, so a
-            # bar that only climbs half as far only shows the dark half of
-            # the black -> lime ramp.
-            start, cols = real[-1]
-            tip = cols[0]
-            k = start + len(cols) // 2
-            best_tip = max(best_tip, k)
-            t = tip[1] / 238.0
-            assert abs(tip[0] - 157 * t) <= 20, (i, k, tip)
-            assert abs(tip[2] - 94 * t) <= 20, (i, k, tip)
-            expected_g = 238.0 * k / maxh
-            assert abs(tip[1] - expected_g) <= 12, (i, k, tip, expected_g)
-            if k < maxh // 2:
-                saw_quiet_tip = True
-            if k >= maxh * 62 // 100:
-                saw_bright_tip = True
-        if saw_gaps and saw_segments and saw_quiet_tip and saw_bright_tip:
+            saw_blocks = True
+            if len(real) >= 2:
+                saw_stack = True
+            for k, (start, cols) in enumerate(real):
+                b = start // pitch
+                assert start % pitch == 0, (i, start, pitch)
+                assert len(cols) == block, (i, start, len(cols), block)
+                if k + 1 < len(real):
+                    assert real[k + 1][0] - (start + len(cols)) == block_gap, (
+                        i, start, real[k + 1][0])
+                got = cols[len(cols) // 2]
+                want = _riot_block_rgb(b, pitch, maxh)
+                assert all(abs(a - c) <= 12 for a, c in zip(got, want)), (
+                    i, b, got, want)
+                if want[1] > 200:
+                    saw_upper = True
+        if saw_stack and saw_upper:
             break
         time.sleep(0.15)
     _quit_juke(con)
-    assert saw_segments, "expected stacked LED segments in a spectrum bar"
-    assert saw_gaps, "expected dark gaps between the stacked segments"
-    assert saw_quiet_tip, "expected a quiet band to stop in the dark ramp"
-    assert saw_bright_tip, (
-        f"adaptive gain left every bar in the dark end (best tip "
-        f"{best_tip}/{maxh})"
-    )
+    assert stable, "every spectrum sample was a partially rendered frame"
+    assert saw_blocks, "expected at least one riot block"
+    assert saw_stack, "expected a multi-block bar stack"
+    assert saw_upper, "expected a loud bar to climb the upper ramp"
+    # The ramp endpoints: a visible dark-lime floor at the bottom (#1497)
+    # and full lime from 78%.
+    floor = _riot_block_rgb(0, pitch, maxh)
+    assert floor == tuple(int(c * _RIOT_MIN_T) for c in _LOGO_LIME)
+    assert sum(floor) > 100, floor
+    assert _riot_block_rgb(15, pitch, maxh) == _LOGO_LIME
+
+
+def test_juke_spectrum_has_one_red_peak_and_no_baseline(fresh_console):
+    """#1486: one smooth red peak line per bar, and no baseline at all."""
+    con = fresh_console
+    assert con.send_line("MODE 11,32") == ""  # 1280x720
+    copies = [("tests/TEST.WAV", "JQP/%02d.WAV" % i) for i in range(10)]
+    _prep_queue(con, copies)
+    _open_juke(con, "JQP", keep_mode=True)
+    w, h = con.screen_size()
+    assert (w, h) == (1280, 720)
+    x0, bw, gap = _bar_layout(w, h)
+    _block, _block_gap, _pitch, base, maxh, peak_h = _block_metrics(w, h)
+    assert peak_h == 3
+    xs = _bar_centres(w, h)
+    ys = list(range(base - 1, base - maxh, -1))
+    # Sample the bar's centre and both edges in one frame, so a moving peak is
+    # compared at the same instant instead of across two screendumps.
+    cols = []
+    for i, cx in enumerate(xs):
+        bx = x0 + i * (bw + gap)
+        cols += [bx + 1, cx, bx + bw - 2]
+    coords = [(x, y) for x in cols for y in ys]
+    n = len(ys)
+    saw_peak = False
+    for _ in range(16):
+        px = con.screen_pixels(coords)
+        columns = [px[i * n:(i + 1) * n] for i in range(24 * 3)]
+        torn = False
+        for i in range(24):
+            left, mid, right = columns[i * 3:i * 3 + 3]
+            found = [[r for r in _bar_column_runs(c) if _is_peak_cap(r)]
+                     for c in (left, mid, right)]
+            assert all(len(p) <= 1 for p in found), (i, found)  # one per bar
+            if not any(found):
+                continue
+            if not all(found):
+                torn = True  # caught mid-repaint; try another frame
+                break
+            starts = [p[0][0] for p in found]
+            assert len(set(starts)) == 1, (i, starts)  # spans the full width
+            assert all(len(p[0][1]) == peak_h for p in found), (
+                i, [len(p[0][1]) for p in found])
+            saw_peak = True
+        if torn:
+            time.sleep(0.15)
+            continue
+        if saw_peak:
+            break
+        time.sleep(0.15)
+
+    # No baseline: the row at the baseline is plain black between the bars.
+    row = con.screen_pixels(
+        [(x, base) for x in range(x0, x0 + 24 * (bw + gap) - gap, 2)])
+    assert all(sum(c) < 30 for c in row), [c for c in row if sum(c) >= 30][:4]
+    _quit_juke(con)
+    assert saw_peak, "expected a red peak line over a bar"
 
 
 def test_juke_spectrum_has_no_guide_lines(fresh_console):
@@ -439,7 +471,7 @@ def test_juke_spectrum_has_no_guide_lines(fresh_console):
     maxh = base - 190
     # The gap between bands 0 and 1 has no bar or cap.
     ys = [base - maxh * i // 4 for i in (1, 2, 3)]
-    got = con.screen_pixels([(_gap_after(_w, 0), y) for y in ys])
+    got = con.screen_pixels([(_gap_after(_w, h, 0), y) for y in ys])
     assert all(sum(c) < 30 for c in got), got
     _quit_juke(con)
 

@@ -1,4 +1,4 @@
-/* Host test for the POSIX native storage read cache (#1151).
+/* Host test for the POSIX native storage backend (#1151, #1493).
  *
  * native/storage_posix.c's mmb_fat_read_at() used to fopen/fseek/fread/fclose
  * on every call, so a chunked reader reopened (and reseeked) the file for every
@@ -7,6 +7,12 @@
  * the handle is reused across forward reads, invalidated on write/rename/unlink,
  * and still returns the right bytes for backward / out-of-order reads.
  *
+ * The same binary then drives the standby-recovery path through fake mount ops
+ * (#1493): installed ``mmcore.sys=``/``mmcore.data=`` boot, a late device,
+ * two sleep/wake cycles, an open streaming writer across a remount, and
+ * D:/MMCORE-DATA recovery. No loop device is needed; the fake backend is the
+ * mount seam the real Linux build fills with mount/umount helpers.
+ *
  * "One open handle" is counted by scanning the process fd table and matching
  * the target file's dev/inode, so it needs no libc fopen interposition.
  */
@@ -14,8 +20,10 @@
  * SDK turns that name into a macro once <stdio.h> is seen (the native build
  * includes it the same way, so this mirrors the real translation unit). */
 #include "mmb_priv.h"
+#include "storage_posix.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +114,466 @@ static void write_file(const char *path, const char *data)
 	check(mmb_fat_write('C', path, data, (unsigned)strlen(data), 0) == 0,
 	      "seed mmb_fat_write");
 }
+
+static int put_text(const char *path, const char *text)
+{
+	FILE *f = fopen(path, "wb");
+	if (!f)
+		return 0;
+	fputs(text, f);
+	fclose(f);
+	return 1;
+}
+
+static int file_text_is(const char *path, const char *want)
+{
+	char buf[64];
+	FILE *f = fopen(path, "rb");
+	size_t n;
+
+	if (!f)
+		return 0;
+	n = fread(buf, 1, sizeof buf - 1, f);
+	fclose(f);
+	buf[n] = 0;
+	return strcmp(buf, want) == 0;
+}
+
+#ifdef MMB_STORAGE_TEST
+/* ---- fake mount backend ---------------------------------------------- *
+ * Each volume has an explicit label and a current mounted/writable state.
+ * A mount can be made to fail (a dead superblock still owns the path) or to
+ * fail a few times first (a device that re-enumerates after resume). */
+#define FAKE_VOL_MAX 6
+
+typedef struct {
+	char path[600];
+	char label[64];
+	int mounted;
+	int mount_ok;
+	int remount_ok;
+	int writable;
+	int delay;
+	int mounts;
+} fake_vol;
+
+static fake_vol fv[FAKE_VOL_MAX];
+static int nfv;
+static int fake_overlay_ok;
+static int fake_label_mismatch;
+
+static void fake_reset(void)
+{
+	memset(fv, 0, sizeof fv);
+	nfv = 0;
+	fake_overlay_ok = 0;
+	fake_label_mismatch = 0;
+}
+
+static fake_vol *fake_get(const char *path)
+{
+	int i;
+
+	for (i = 0; i < nfv; i++)
+		if (strcmp(fv[i].path, path) == 0)
+			return &fv[i];
+	return 0;
+}
+
+static fake_vol *fake_add(const char *path, const char *label)
+{
+	fake_vol *v = &fv[nfv++];
+
+	memset(v, 0, sizeof *v);
+	snprintf(v->path, sizeof v->path, "%s", path);
+	snprintf(v->label, sizeof v->label, "%s", label);
+	return v;
+}
+
+static int fake_is_mount(const char *path)
+{
+	fake_vol *v = fake_get(path);
+
+	return v && v->mounted;
+}
+
+static int fake_mount(const char *path, const char *label)
+{
+	fake_vol *v = fake_get(path);
+	char sub[700];
+
+	if (!v)
+		return -1;
+	if (strcmp(v->label, label) != 0)
+	{
+		fake_label_mismatch++;
+		return -1;
+	}
+	if (v->delay > 0)
+	{
+		v->delay--;
+		return -1;
+	}
+	if (!v->mount_ok)
+		return -1;
+	mkdir(path, 0777);
+	snprintf(sub, sizeof sub, "%s/C", path);
+	mkdir(sub, 0777);
+	v->mounted = 1;
+	v->writable = 1;
+	v->mounts++;
+	return 0;
+}
+
+static int fake_remount(const char *path)
+{
+	fake_vol *v = fake_get(path);
+
+	if (v && v->remount_ok)
+	{
+		v->mounted = 1;
+		v->writable = 1;
+		return 0;
+	}
+	return -1;
+}
+
+static int fake_overlay_writable(void)
+{
+	return fake_overlay_ok;
+}
+
+static int fake_root_writable(const char *path)
+{
+	fake_vol *v = fake_get(path);
+
+	return v && v->mounted && v->writable;
+}
+
+static int fake_unmount(const char *path)
+{
+	fake_vol *v = fake_get(path);
+
+	if (v)
+	{
+		v->mounted = 0;
+		v->writable = 0;
+	}
+	return 0;
+}
+
+static storage_mount_ops fake_ops = {
+	fake_is_mount,
+	fake_mount,
+	fake_remount,
+	fake_overlay_writable,
+	fake_root_writable,
+	0,
+	fake_unmount
+};
+
+static void use_fake_ops(const char *recovery_path)
+{
+	fake_ops.recovery_path = recovery_path;
+	mmb_storage_test_set_ops(&fake_ops);
+}
+
+/* 1. An installed command line (mmcore.sys=) must enable recovery, and both
+ * MMCORE-SYS (C:) and MMCORE-DATA (D:) must remount by their own labels. */
+static void scenario_installed(const char *base)
+{
+	char croot[600], droot[600];
+	fake_vol *c, *d;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/inst-c", base);
+	snprintf(droot, sizeof droot, "%s/inst-d", base);
+	mkdir(croot, 0777);
+	mkdir(droot, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	storage_posix_mount('D', droot);
+	mmb_storage_test_set_cmdline(
+		"mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(2, 0);
+	c = fake_add(croot, "MMCORE-SYS");
+	c->mounted = 1;
+	c->mount_ok = 1;
+	c->remount_ok = 0;
+	c->writable = 0;
+	d = fake_add(droot, "MMCORE-DATA");
+	d->mounted = 1;
+	d->mount_ok = 1;
+	d->remount_ok = 0;
+	d->writable = 0;
+	use_fake_ops(0);
+
+	mmb_storage_revalidate();
+
+	check(fake_label_mismatch == 0, "installed labels are explicit");
+	check(c->mounted && c->writable && c->mounts == 1,
+	      "MMCORE-SYS recovered at the original C: path");
+	check(d->mounted && d->writable && d->mounts == 1,
+	      "MMCORE-DATA recovered at the original D: path");
+	check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), croot) == 0,
+	      "installed C: keeps its original mountpoint");
+	check(!mmb_storage_persistence_lost(), "installed storage healthy");
+}
+
+/* 2. The SD/USB device can appear only seconds after userspace resumed: the
+ * recovery retries the label mount with backoff. */
+static void scenario_delayed_device(const char *base)
+{
+	char croot[600];
+	fake_vol *c;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/delay-c", base);
+	mkdir(croot, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	mmb_storage_test_set_cmdline("mmcore.live=1");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(5, 0);
+	c = fake_add(croot, "MMCORE");
+	c->mount_ok = 1;
+	c->delay = 3;
+	use_fake_ops(0);
+
+	mmb_storage_revalidate();
+
+	check(c->mounted && c->mounts == 1,
+	      "late device mounted after the retry budget");
+	check(fake_label_mismatch == 0, "late mount used MMCORE");
+}
+
+/* 3. Two sleep/wake cycles: the first recovers to a fallback path, the
+ * second must still look for MMCORE (never the fallback's basename) and move
+ * C: back to its original mountpoint. */
+static void scenario_two_sleeps(const char *base)
+{
+	char croot[600], fallback[600];
+	fake_vol *c, *f;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/sleep-c", base);
+	snprintf(fallback, sizeof fallback, "%s/sleep-recovered", base);
+	mkdir(croot, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	mmb_storage_test_set_cmdline("mmcore.live=1");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(2, 0);
+	c = fake_add(croot, "MMCORE");
+	c->mounted = 1;
+	c->mount_ok = 0;
+	c->remount_ok = 0;
+	c->writable = 0;
+	f = fake_add(fallback, "MMCORE");
+	f->mount_ok = 1;
+	use_fake_ops(fallback);
+
+	mmb_storage_revalidate();
+	check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), fallback) == 0,
+	      "first wake recovers to the fallback mountpoint");
+	check(f->mounts == 1 && fake_label_mismatch == 0,
+	      "fallback mounted by MMCORE label");
+
+	c->mount_ok = 1;
+	mmb_storage_revalidate();
+	check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), croot) == 0,
+	      "second wake returns C: to its original mountpoint");
+	check(c->mounts == 1 && f->mounts == 1,
+	      "second recovery mounted the original path");
+	check(fake_label_mismatch == 0,
+	      "repeated sleeps never derive a label from the fallback path");
+}
+
+/* 4. A streaming writer open across a remount reopens the recovered mount and
+ * continues at its byte offset. */
+static void scenario_streaming_write(const char *base)
+{
+	char croot[600], fallback[600], fc[700];
+	char old_file[700], new_file[700];
+	fake_vol *c, *f;
+	void *h;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/stream-c", base);
+	snprintf(fallback, sizeof fallback, "%s/stream-recovered", base);
+	mkdir(croot, 0777);
+	mkdir(fallback, 0777);
+	snprintf(fc, sizeof fc, "%s/C", fallback);
+	mkdir(fc, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	mmb_storage_test_set_cmdline("mmcore.live=1");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(2, 0);
+	c = fake_add(croot, "MMCORE");
+	c->mounted = 1;
+	c->mount_ok = 1;
+	c->remount_ok = 1;
+	c->writable = 1;
+	f = fake_add(fallback, "MMCORE");
+	f->mount_ok = 1;
+	use_fake_ops(fallback);
+
+	h = mmb_fat_wopen('C', "/STREAM.TXT", 0);
+	check(h != 0, "streaming writer opened");
+	check(mmb_fat_wwrite(h, "AAAA", 4) == 0, "stream first chunk");
+
+	/* The recovered volume already holds the bytes written so far. */
+	snprintf(new_file, sizeof new_file, "%s/C/STREAM.TXT", fallback);
+	check(put_text(new_file, "AAAA"), "seed recovered stream file");
+	c->writable = 0;
+	c->remount_ok = 0;
+	c->mount_ok = 0;
+
+	mmb_storage_revalidate();
+	check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), fallback) == 0,
+	      "stream recovery used the fallback mountpoint");
+	check(mmb_fat_wwrite(h, "BBBB", 4) == 0,
+	      "stream write after remount");
+	check(mmb_fat_wclose(h) == 0, "stream closed");
+	snprintf(old_file, sizeof old_file, "%s/C/STREAM.TXT", croot);
+	check(file_text_is(new_file, "AAAABBBB"),
+	      "open stream continued on the recovered mount");
+	check(!file_text_is(old_file, "AAAABBBB"),
+	      "stream did not keep writing into the dead mount");
+}
+
+/* 5. D:/MMCORE-DATA recovers on its own label, and a stale-mount I/O error at
+ * any time (not just after a resume) drives the same recovery. */
+static void scenario_data_and_io_error(const char *base)
+{
+	char croot[600], droot[600];
+	fake_vol *c, *d;
+	unsigned gen;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/data-c", base);
+	snprintf(droot, sizeof droot, "%s/data-d", base);
+	mkdir(croot, 0777);
+	mkdir(droot, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	storage_posix_mount('D', droot);
+	mmb_storage_test_set_cmdline(
+		"mmcore.sys=LABEL=MMCORE-SYS mmcore.data=LABEL=MMCORE-DATA");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(2, 0);
+	c = fake_add(croot, "MMCORE-SYS");
+	c->mounted = 1;
+	c->mount_ok = 1;
+	c->remount_ok = 1;
+	c->writable = 1;
+	d = fake_add(droot, "MMCORE-DATA");
+	d->mounted = 1;
+	d->mount_ok = 1;
+	d->remount_ok = 0;
+	d->writable = 0;
+	use_fake_ops(0);
+
+	gen = mmb_storage_generation();
+	check(mmb_storage_test_io_error('D', EIO) == 1,
+	      "D: stale I/O error triggers recovery");
+	check(d->mounted && d->writable && d->mounts == 1,
+	      "MMCORE-DATA recovered by label");
+	check(mmb_storage_generation() == gen + 1,
+	      "generation bumped for open-handle invalidation");
+	check(fake_label_mismatch == 0, "D: recovery used MMCORE-DATA");
+
+	/* Non-stale errors must not run the recovery path. */
+	check(mmb_storage_test_io_error('D', EACCES) == 0,
+	      "non-stale errno is not a mount failure");
+}
+
+/* 6. A file read beforehand reopens on the recovered mount, and a later save
+ * lands there rather than in the dead mount. */
+static void scenario_read_reopen(const char *base)
+{
+	char croot[600], fallback[600], fc[700];
+	char old_file[700], new_file[700], new_save[700], old_save[700];
+	fake_vol *c, *f;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/read-c", base);
+	snprintf(fallback, sizeof fallback, "%s/read-recovered", base);
+	mkdir(croot, 0777);
+	snprintf(old_file, sizeof old_file, "%s/C/R.TXT", croot);
+	mkdir(croot, 0777);
+	snprintf(fc, sizeof fc, "%s/C", croot);
+	mkdir(fc, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	mmb_storage_test_set_cmdline("mmcore.live=1");
+	mmb_storage_test_set_overlay(0);
+	mmb_storage_test_set_recovery(2, 0);
+	c = fake_add(croot, "MMCORE");
+	c->mounted = 1;
+	c->mount_ok = 0;
+	c->remount_ok = 0;
+	c->writable = 1;
+	f = fake_add(fallback, "MMCORE");
+	f->mount_ok = 1;
+	use_fake_ops(fallback);
+
+	check(put_text(old_file, "OLD"), "seed old R.TXT");
+	snprintf(new_file, sizeof new_file, "%s/C/R.TXT", fallback);
+	snprintf(new_save, sizeof new_save, "%s/C/SAVE.TXT", fallback);
+	snprintf(old_save, sizeof old_save, "%s/C/SAVE.TXT", croot);
+	mkdir(fallback, 0777);
+	snprintf(fc, sizeof fc, "%s/C", fallback);
+	mkdir(fc, 0777);
+	check(put_text(new_file, "NEWDATA"), "seed recovered R.TXT");
+
+	check(read_is('C', "/R.TXT", 0, "OLD", 3), "read before standby");
+	c->writable = 0;
+	mmb_storage_revalidate();
+	check(getenv("MMB_DRIVE_ROOT") &&
+		      strcmp(getenv("MMB_DRIVE_ROOT"), fallback) == 0,
+	      "read recovery used the fallback mountpoint");
+	check(read_is('C', "/R.TXT", 0, "NEWDATA", 7),
+	      "open file re-read from recovered mount");
+	check(mmb_fat_write('C', "/SAVE.TXT", "AFTER", 5, 0) == 0,
+	      "save after recovery");
+	check(file_text_is(new_save, "AFTER"),
+	      "save landed on the recovered volume");
+	check(access(old_save, F_OK) != 0,
+	      "no silent write into the dead mount");
+	check(fake_label_mismatch == 0, "read recovery used MMCORE");
+}
+
+/* 7. If the volume never returns, report persistence lost instead of
+ * pretending the session is safe. */
+static void scenario_unrecoverable(const char *base)
+{
+	char croot[600], fallback[600];
+	fake_vol *c, *f;
+
+	fake_reset();
+	snprintf(croot, sizeof croot, "%s/broken-c", base);
+	snprintf(fallback, sizeof fallback, "%s/broken-recovered", base);
+	mkdir(croot, 0777);
+	setenv("MMB_DRIVE_ROOT", croot, 1);
+	mmb_storage_test_set_cmdline("mmcore.live=1");
+	mmb_storage_test_set_overlay(1);
+	mmb_storage_test_set_recovery(1, 0);
+	c = fake_add(croot, "MMCORE");
+	c->mounted = 1;
+	c->mount_ok = 0;
+	c->remount_ok = 0;
+	c->writable = 0;
+	f = fake_add(fallback, "MMCORE");
+	f->mount_ok = 0;
+	fake_overlay_ok = 0;
+	use_fake_ops(fallback);
+
+	mmb_storage_revalidate();
+	check(mmb_storage_persistence_lost(),
+	      "lost store reported when every mount fails");
+}
+#endif
 
 int main(void)
 {
@@ -212,6 +680,23 @@ int main(void)
 	mmb_storage_revalidate();
 	check(!mmb_storage_persistence_lost(),
 	      "persistence not reported lost off the live ISO");
+
+#ifdef MMB_STORAGE_TEST
+	scenario_installed(root);
+	mmb_storage_test_reset();
+	scenario_delayed_device(root);
+	mmb_storage_test_reset();
+	scenario_two_sleeps(root);
+	mmb_storage_test_reset();
+	scenario_streaming_write(root);
+	mmb_storage_test_reset();
+	scenario_data_and_io_error(root);
+	mmb_storage_test_reset();
+	scenario_read_reopen(root);
+	mmb_storage_test_reset();
+	scenario_unrecoverable(root);
+	mmb_storage_test_reset();
+#endif
 
 	if (fails)
 	{
