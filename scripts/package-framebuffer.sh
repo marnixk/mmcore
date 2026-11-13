@@ -46,10 +46,33 @@ if [ "${SKIP_BUILD:-}" != "1" ]; then
 fi
 [ -x "${BIN}" ] || die "${BIN} not built (SDL2 dev headers missing?)"
 
+bundle_tls_libs() {
+	# Ship libssl/libcrypto next to the binary so HTTPS works on hosts without
+	# the matching distro packages (the AppImage gets the same via linuxdeploy).
+	local dest="${STAGE}/lib" lib path
+
+	mkdir -p "${dest}"
+	for lib in libssl libcrypto; do
+		path="$(ldd "${1}" 2>/dev/null | awk -v n="${lib}" '$1 ~ "^"n {print $3; exit}')"
+		[ -n "${path}" ] && [ -r "${path}" ] \
+			|| die "could not locate ${lib} for bundling (is libssl-dev installed?)"
+		cp -L "${path}" "${dest}/"
+	done
+	command -v patchelf >/dev/null 2>&1 \
+		|| die "patchelf is required to bundle OpenSSL (install patchelf)"
+	patchelf --set-rpath '$ORIGIN/lib' "${STAGE}/mmcore-fb"
+}
+
 log "Staging ${STAGE}"
 rm -rf "${STAGE}" "${OUT}"
 mkdir -p "${STAGE}"
 cp "${BIN}" "${STAGE}/mmcore-fb"
+if ldd "${BIN}" 2>/dev/null | grep -q 'libssl'; then
+	log "Bundling OpenSSL for HTTPS"
+	bundle_tls_libs "${BIN}"
+else
+	die "mmcore-fb was built without OpenSSL (install libssl-dev)"
+fi
 
 cat > "${STAGE}/README.md" <<'EOF'
 # mmcore-fb — Linux framebuffer (KMS/DRM) build
@@ -65,6 +88,10 @@ terminal (VT), not from inside a desktop session.
 - `libdrm2` and `libgbm1`
 - ALSA (`libasound2`) for `PLAY`/audio
 - a DRM/KMS-capable kernel driver for your GPU
+
+OpenSSL (`libssl` / `libcrypto`) for HTTPS is bundled in `lib/` next to this
+binary, so `WEB` over `https://` works without extra packages. CA certificates
+still come from the host (`/etc/ssl/certs` on most distributions).
 
 On Debian/Ubuntu:
 

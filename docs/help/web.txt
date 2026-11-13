@@ -123,9 +123,14 @@ Platform limitations
 
 The bare-metal Circle build has no vendored TLS stack yet, so https:// URLs
 and WEB OPEN TLS CLIENT report ?WEB: TLS unavailable. Plain HTTP, the TCP
-client, the server and TRANSMIT work. The native host build links OpenSSL when
-pkg-config finds it; otherwise it reports the same limitation. macOS universal
-app bundles are built without TLS because Homebrew's OpenSSL is single-arch.
+client, the server and TRANSMIT work. Other native Linux builds link OpenSSL
+when pkg-config finds it at compile time; otherwise they report the same
+limitation. The Linux framebuffer build (`mmcore-fb`) and the Alpine live ISO
+require OpenSSL at build time and ship it at runtime (the release tarball
+bundles libssl next to the binary; the ISO installs `openssl` and the
+ca-certificates trust store). macOS universal app bundles are built without TLS
+because Homebrew's OpenSSL is single-arch. The Linux AppImage bundles OpenSSL
+via linuxdeploy when the build links it.
 
 Returned text and JSON are data only, never executed. PAGE substitution is the
 one explicit evaluation feature and only runs in WEB TRANSMIT PAGE.

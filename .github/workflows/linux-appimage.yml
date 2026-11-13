@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libsdl2-dev python3 curl file
+            build-essential pkg-config libsdl2-dev libssl-dev python3 curl file
 
       - name: Build AppImage
         run: scripts/package-linux-appimage.sh

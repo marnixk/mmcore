@@ -49,3 +49,26 @@ def test_framebuffer_workflow_attaches_to_releases():
     assert "ubuntu-22.04" in wf
     assert "SDL_VIDEODRIVER=dummy" in wf
     assert ASSET in wf
+    assert "libssl-dev" in wf
+    assert "libssl" in wf
+
+
+def test_framebuffer_packages_bundle_openssl():
+    pkg = open(
+        os.path.join(SCRIPTS, "package-framebuffer.sh"), encoding="utf-8"
+    ).read()
+    assert "patchelf" in pkg
+    assert "ORIGIN/lib" in pkg
+    assert "libssl" in pkg
+
+
+def test_framebuffer_makefile_requires_openssl():
+    makefile = open(os.path.join(REPO, "native", "Makefile"), encoding="utf-8").read()
+    assert "mmcore-fb requires OpenSSL" in makefile
+
+
+def test_iso_mmcore_build_requires_openssl():
+    path = os.path.join(SCRIPTS, "iso", "build-mmcore.sh")
+    text = open(path, encoding="utf-8").read()
+    assert "openssl-dev" in text
+    assert "libssl" in text

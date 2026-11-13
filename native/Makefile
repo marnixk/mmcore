@@ -106,6 +106,9 @@ endif
 ifneq ($(strip $(TLS_LIBS)),)
 CFLAGS += -DMMB_HAVE_TLS=1 $(TLS_CFLAGS)
 LDLIBS += $(TLS_LIBS)
+else ifneq ($(FB),)
+# mmcore-fb is the live ISO / KMS device target; HTTPS must always compile in.
+$(error mmcore-fb requires OpenSSL (install libssl-dev or Alpine openssl-dev))
 endif
 
 SDL_CFLAGS ?= $(shell pkg-config --cflags sdl2 2>/dev/null)
