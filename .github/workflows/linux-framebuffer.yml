@@ -32,12 +32,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libsdl2-dev python3 file
+            build-essential pkg-config libsdl2-dev libssl-dev python3 file patchelf
 
       - name: Build framebuffer tarball
         env:
           VERSION: ${{ github.event.release.tag_name }}
         run: scripts/package-framebuffer.sh
+
+      - name: Verify mmcore-fb links OpenSSL (TLS)
+        run: |
+          readelf -d native/mmcore-fb | grep -q 'NEEDED.*libssl'
 
       - name: Smoke-test the binary
         run: |

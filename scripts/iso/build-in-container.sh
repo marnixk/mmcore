@@ -101,7 +101,7 @@ apk add --no-cache --quiet --root "${ROOTFS}" --initdb --arch "${ARCH}" \
 	alsa-lib alsa-utils alsa-ucm-conf libgcc \
 	libdrm mesa mesa-gbm mesa-egl mesa-gles mesa-dri-gallium \
 	eudev-libs libxkbcommon \
-	e2fsprogs dosfstools blkid ca-certificates \
+	e2fsprogs dosfstools blkid ca-certificates openssl \
 	parted gptfdisk util-linux-misc grub grub-efi grub-bios efibootmgr \
 	${FW_KEEP}
 

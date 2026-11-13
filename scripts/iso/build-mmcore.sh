@@ -19,8 +19,8 @@ die() {
 }
 
 log "Installing mmcore build dependencies"
-apk add --no-cache --quiet build-base pkgconf sdl2-dev python3 alsa-lib bash \
-	linux-headers >/dev/null
+apk add --no-cache --quiet build-base pkgconf sdl2-dev openssl-dev python3 \
+	alsa-lib bash linux-headers >/dev/null
 
 # The native build only needs these trees (no Circle/picomite submodules).
 rm -rf "${BUILD_DIR}"
@@ -76,6 +76,8 @@ make -C "${BUILD_DIR}/native" sdl-fb \
 
 [ -x "${BUILD_DIR}/native/mmcore-fb" ] \
 	|| die "mmcore-fb was not built"
+ldd "${BUILD_DIR}/native/mmcore-fb" 2>/dev/null | grep -q 'libssl' \
+	|| die "mmcore-fb was built without OpenSSL (WEB HTTPS will not work)"
 mkdir -p "${ROOTFS}/usr/local/bin"
 cp "${BUILD_DIR}/native/mmcore-fb" "${ROOTFS}/usr/local/bin/mmcore"
 chmod 0755 "${ROOTFS}/usr/local/bin/mmcore"

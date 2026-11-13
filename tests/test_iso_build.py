@@ -1968,6 +1968,13 @@ def test_live_console_hints_install_and_update_on_tty2():
     assert os.path.getsize(motd) == 0
 
 
+def test_builder_installs_openssl_runtime():
+    """#1503: mmcore-fb on the ISO must link libssl at build and load it at runtime."""
+    builder = open(BUILDER, encoding="utf-8").read()
+    assert "ca-certificates openssl" in builder or "ca-certificates openssl \\" in builder
+    assert "openssl" in builder
+
+
 def test_builder_guarantees_the_ca_bundle():
     """#896: mmcore-update's HTTPS download must verify the GitHub cert."""
     builder = open(BUILDER, encoding="utf-8").read()
