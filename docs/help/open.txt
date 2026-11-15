@@ -3,11 +3,13 @@ kind: command
 
 Open a disk file, or a TCP client stream. Stream numbers are 1 to 10.
 
-OPEN file$ [FOR INPUT|OUTPUT|APPEND] AS #n
+OPEN file$ [FOR INPUT [HEADERS headers$()]] AS #n
+OPEN file$ FOR OUTPUT|APPEND AS #n
 OPEN "TCP:host:port" [FOR INPUT|OUTPUT] AS #n
 
-  file$ - disk path
+  file$ - disk path, or an http:// or https:// URL for input
   #n - stream number 1 to 10
+  headers$() - STRING array, one "Name: value" per element
   INPUT - read
   OUTPUT - create/truncate
   APPEND - write at the end
@@ -30,3 +32,14 @@ Example:
     PRINT #1, "HELLO"
     CLOSE #1
     OPEN "TCP:192.168.1.50:80" AS #1
+
+Web URLs
+
+OPEN accepts an http:// or https:// URL only FOR INPUT. The body is
+downloaded into memory with the same HTTP/TLS code as ~WEB~, written to a
+private temporary A: file, and then read as a normal file (LINE INPUT, INPUT$,
+LOF, EOF and seeking all work). The temporary file is removed by CLOSE. The
+optional HEADERS clause has the same syntax as the WEB commands, for
+authenticated or restricted URLs, and ~WEB~ TIMEOUT ms applies. HTTP 4xx/5xx
+(the error names the status), DNS/TLS failure and timeout raise normal BASIC
+errors, so ~ON ERROR~ can catch them. WRITE to a URL stream reports ?READ ONLY.

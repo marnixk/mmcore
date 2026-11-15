@@ -11,6 +11,15 @@ text console. No include file is needed:
     TDF PRINT 0, 3, "HELLO"
     TDF CLOSE
 
+TDF LOAD file$ [, variant [, slot]] [HEADERS headers$()]
+TDF NAMED file$, name$ [, slot] [HEADERS headers$()]
+
+file$ is a .TDF path or an http:// or https:// URL. The optional HEADERS
+clause has the same syntax as the WEB commands, for authenticated or
+restricted URLs; the download uses the same HTTP/TLS code as ~WEB~, grows
+dynamically and honours ~WEB~ TIMEOUT. HTTP 4xx/5xx (the error names the
+status), DNS/TLS failure and timeout raise normal BASIC errors.
+
 TDF PRINT x, y, s$ draws at character cell x (column, 0-based) and y (row,
 0-based) and leaves the cursor after the last glyph. Glyphs are ASCII 33 to
 126; a space advances by the font's letter spacing.

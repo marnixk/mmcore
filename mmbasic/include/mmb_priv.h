@@ -272,6 +272,7 @@ typedef struct mmb_options {
 
 #define MMB_FK_FILE 0
 #define MMB_FK_TCP  1
+#define MMB_FK_URL  2 /* OPEN of an http(s) URL: private temp file, read-only */
 #define MMB_FM_BOTH 3
 
 /* Read-ahead cache for one open input file (#1205). A network drive (Z:)
@@ -1691,6 +1692,16 @@ void mmb_url_release(void *token);
  * it on demand, and OPTION WEB CACHE OFF, RUN and NEW clear and free it. */
 void mmb_web_cache_clear(void);
 
+/* Loader-side helpers shared by the commands that read a whole file by name
+ * (#1506). mmb_parse_headers_clause() consumes an optional HEADERS h$()
+ * clause at the cursor and returns 1 when present. mmb_read_file_all() reads
+ * a local file or an http(s) URL into a platform-allocated buffer (NUL
+ * terminated; never the string pool): 0 local success, 1 URL success (with
+ * *token set for mmb_url_release), -1 local failure. URL failures raise. */
+int mmb_parse_headers_clause(mmb_arrview *hdr);
+int mmb_read_file_all(const char *path, mmb_arrview *hdr, int have_hdr,
+		      unsigned char **out, unsigned *outn, void **token);
+
 /* TLS transport seam. Implemented with OpenSSL when the native build finds
  * it (-DMMB_HAVE_TLS); every other backend (Circle, Windows) returns the
  * "TLS unavailable" stubs so the build stays green and HTTPS reports a clear
@@ -1884,6 +1895,12 @@ int mmb_play_mp3(const char *path);
 int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
 int mmb_play_s3m(const char *path);
+/* In-memory variants for URL playback (#1506); each takes ownership of the
+ * platform-allocated file buffer and frees it when playback ends. */
+int mmb_play_mp3_buf(unsigned char *file, unsigned n, const char *name);
+int mmb_play_mod_buf(unsigned char *file, unsigned n, const char *name);
+int mmb_play_xm_buf(unsigned char *file, unsigned n, const char *name);
+int mmb_play_s3m_buf(unsigned char *file, unsigned n, const char *name);
 int mmb_load_jpeg(const char *path, int x, int y);
 int mmb_load_jpeg_buf(const unsigned char *file, unsigned n, int x, int y);
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
@@ -1950,6 +1967,7 @@ int mmb_call_named_sub_resolved(const char *name, int si);
 int mmb_try_user_function(mmb_val *out);
 int mmb_sub_is_func(const char *name);
 int mmb_play_wav(const char *path);
+int mmb_play_wav_buf(unsigned char *file, unsigned n, const char *name);
 void mmb_play_tts(void);
 /* Additive WAV sound effects (#1474). Effects mix on top of the active music
  * engine (or play on their own when music is stopped) without touching the
@@ -1957,6 +1975,7 @@ void mmb_play_tts(void);
  * the oldest is replaced when all voices are busy. volume is 0..100 or a
  * negative value to use the current PLAY SFX VOLUME default. */
 int mmb_sfx_play(const char *path, int volume);
+int mmb_sfx_play_buf(unsigned char *file, unsigned n, int volume);
 /* Stop every effect; music keeps playing. */
 void mmb_sfx_stop_all(void);
 /* Stop effects started by the current console (program-exit teardown). */

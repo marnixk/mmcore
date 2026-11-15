@@ -68,6 +68,7 @@ static int s_s3m_n; /* stereo frames available in s_s3m_mix */
 static int s_s3m_i; /* frames already consumed from s_s3m_mix */
 static unsigned char *s_moddata;
 static unsigned char *s_xmdata;
+static unsigned char *s_mp3_data;
 static unsigned char *s_wav;
 static unsigned s_wav_n, s_wav_off;
 static int s_wav_ch, s_wav_bits, s_wav_rate;
@@ -624,6 +625,11 @@ static void play_teardown(void)
 		G.plat->free(s_xmdata);
 		s_xmdata = 0;
 	}
+	if (s_mp3_data)
+	{
+		G.plat->free(s_mp3_data);
+		s_mp3_data = 0;
+	}
 	if (s_wav)
 	{
 		G.plat->free(s_wav);
@@ -719,10 +725,9 @@ typedef struct wav_pcm {
 	int ch, bits, rate;
 } wav_pcm;
 
-static int wav_load(const char *path, wav_pcm *out)
+static int wav_load_buf(const unsigned char *buf, unsigned n, wav_pcm *out)
 {
-	unsigned n = 0, pos, data_off = 0, data_sz = 0;
-	unsigned char *buf = 0;
+	unsigned pos, data_off = 0, data_sz = 0;
 	int ch = 1, bits = 16, rate = MIX_RATE, fmt = 1;
 
 	if (!out)
@@ -730,13 +735,10 @@ static int wav_load(const char *path, wav_pcm *out)
 	out->data = 0;
 	out->n = 0;
 	out->ch = out->bits = out->rate = 0;
-	if (load_bytes(path, &buf, &n) != 0)
+	if (!buf || n < 44)
 		return -1;
-	if (n < 44 || memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0)
-	{
-		G.plat->free(buf);
+	if (memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0)
 		return -1;
-	}
 	pos = 12;
 	while (pos + 8 <= n)
 	{
@@ -761,23 +763,29 @@ static int wav_load(const char *path, wav_pcm *out)
 		pos += 8 + ((sz + 1) & ~1u);
 	}
 	if (fmt != 1 || !data_sz || (bits != 8 && bits != 16))
-	{
-		G.plat->free(buf);
 		return -1;
-	}
 	out->data = G.plat->alloc(data_sz);
 	if (!out->data)
-	{
-		G.plat->free(buf);
 		return -1;
-	}
 	memcpy(out->data, buf + data_off, data_sz);
-	G.plat->free(buf);
 	out->n = data_sz;
 	out->ch = ch;
 	out->bits = bits;
 	out->rate = rate > 0 ? rate : MIX_RATE;
 	return 0;
+}
+
+static int wav_load(const char *path, wav_pcm *out)
+{
+	unsigned n = 0;
+	unsigned char *buf = 0;
+	int rc;
+
+	if (load_bytes(path, &buf, &n) != 0)
+		return -1;
+	rc = wav_load_buf(buf, n, out);
+	G.plat->free(buf);
+	return rc;
 }
 
 void mmb_sfx_stop_all(void)
@@ -819,16 +827,11 @@ int mmb_sfx_volume(void)
 	return s_sfx_vol;
 }
 
-int mmb_sfx_play(const char *path, int volume)
+static int sfx_start(wav_pcm *w, int volume)
 {
-	wav_pcm w;
 	mmb_sfx_voice *v = 0;
 	int i;
 
-	if (!path || !path[0])
-		return -1;
-	if (wav_load(path, &w) != 0)
-		return -1;
 	for (i = 0; i < MMB_SFX_VOICES; i++)
 		if (!s_sfx[i].active)
 		{
@@ -844,12 +847,12 @@ int mmb_sfx_play(const char *path, int volume)
 				v = &s_sfx[i];
 		sfx_release(v);
 	}
-	v->data = w.data;
-	v->n = w.n;
+	v->data = w->data;
+	v->n = w->n;
 	v->pos = 0;
-	v->ch = w.ch;
-	v->bits = w.bits;
-	v->rate = w.rate;
+	v->ch = w->ch;
+	v->bits = w->bits;
+	v->rate = w->rate;
 	v->vol = volume < 0 ? s_sfx_vol : volume;
 	if (v->vol < 0)
 		v->vol = 0;
@@ -867,6 +870,31 @@ int mmb_sfx_play(const char *path, int volume)
 		s_sfx_pump = 0;
 	mmb_play_mix();
 	return 0;
+}
+
+int mmb_sfx_play(const char *path, int volume)
+{
+	wav_pcm w;
+
+	if (!path || !path[0])
+		return -1;
+	if (wav_load(path, &w) != 0)
+		return -1;
+	return sfx_start(&w, volume);
+}
+
+int mmb_sfx_play_buf(unsigned char *file, unsigned n, int volume)
+{
+	wav_pcm w;
+	int rc;
+
+	if (!file)
+		return -1;
+	rc = wav_load_buf(file, n, &w);
+	G.plat->free(file);
+	if (rc != 0)
+		return -1;
+	return sfx_start(&w, volume);
 }
 
 unsigned mmb_audio_position(void)
@@ -941,6 +969,36 @@ int mmb_play_mp3(const char *path)
 	return 0;
 }
 
+/* In-memory variant for URL loads: takes ownership of `file`. */
+int mmb_play_mp3_buf(unsigned char *file, unsigned n, const char *name)
+{
+	drmp3_allocation_callbacks allocs;
+
+	if (!file || n == 0)
+	{
+		if (file)
+			G.plat->free(file);
+		return -1;
+	}
+	mmb_play_stop();
+	s_mp3_peak_alloc = 0;
+	allocs.pUserData = 0;
+	allocs.onMalloc = mp3_stream_alloc;
+	allocs.onRealloc = 0;
+	allocs.onFree = mp3_stream_free;
+	s_mp3_data = file;
+	if (!drmp3_init_memory(&s_mp3, s_mp3_data, n, &allocs))
+	{
+		G.plat->free(s_mp3_data);
+		s_mp3_data = 0;
+		return -1;
+	}
+	mp3_resample_reset();
+	s_mp3_on = 1;
+	play_begin(1, name);
+	return 0;
+}
+
 int mmb_play_mod(const char *path)
 {
 	unsigned n = 0;
@@ -956,6 +1014,25 @@ int mmb_play_mod(const char *path)
 	return 0;
 }
 
+int mmb_play_mod_buf(unsigned char *file, unsigned n, const char *name)
+{
+	if (!file)
+		return -1;
+	mmb_play_stop();
+	s_moddata = file;
+	hxcmod_init(&s_mod);
+	hxcmod_setcfg(&s_mod, MIX_RATE, 1, 1);
+	if (!hxcmod_load(&s_mod, s_moddata, (int)n))
+	{
+		G.plat->free(s_moddata);
+		s_moddata = 0;
+		return -1;
+	}
+	s_mod_on = 1;
+	play_begin(2, name);
+	return 0;
+}
+
 int mmb_play_xm(const char *path)
 {
 	unsigned n = 0;
@@ -968,6 +1045,22 @@ int mmb_play_xm(const char *path)
 	 * (see the one-shot policy in docs/help/play.txt), so JUKE advances its
 	 * queue instead of looping the module forever. */
 	play_begin(3, path);
+	return 0;
+}
+
+int mmb_play_xm_buf(unsigned char *file, unsigned n, const char *name)
+{
+	if (!file)
+		return -1;
+	mmb_play_stop();
+	s_xmdata = file;
+	if (jar_xm_create_context_safe(&s_xm, (const char *)s_xmdata, n, MIX_RATE) != 0)
+	{
+		G.plat->free(s_xmdata);
+		s_xmdata = 0;
+		return -1;
+	}
+	play_begin(3, name);
 	return 0;
 }
 
@@ -1003,6 +1096,34 @@ int mmb_play_s3m(const char *path)
 	return 0;
 }
 
+int mmb_play_s3m_buf(unsigned char *file, unsigned n, const char *name)
+{
+	struct data d;
+	char msg[64];
+
+	if (!file)
+		return -1;
+	mmb_play_stop();
+	d.buffer = (char *)file;
+	d.length = (int)n;
+	s_s3m_mod = module_load(&d, msg);
+	G.plat->free(file);
+	if (!s_s3m_mod)
+		return -1;
+	if (s_s3m_mod->default_tempo != 0 && s_s3m_mod->default_tempo < 32)
+		s_s3m_mod->default_tempo = 125;
+	s_s3m = new_replay(s_s3m_mod, MIX_RATE, 1);
+	if (!s_s3m)
+	{
+		dispose_module(s_s3m_mod);
+		s_s3m_mod = 0;
+		return -1;
+	}
+	s_s3m_n = s_s3m_i = 0;
+	play_begin(6, name);
+	return 0;
+}
+
 int mmb_play_wav(const char *path)
 {
 	wav_pcm w;
@@ -1017,6 +1138,28 @@ int mmb_play_wav(const char *path)
 	s_wav_bits = w.bits;
 	s_wav_rate = w.rate;
 	play_begin(5, path);
+	return 0;
+}
+
+int mmb_play_wav_buf(unsigned char *file, unsigned n, const char *name)
+{
+	wav_pcm w;
+	int rc;
+
+	if (!file)
+		return -1;
+	rc = wav_load_buf(file, n, &w);
+	G.plat->free(file);
+	if (rc != 0)
+		return -1;
+	mmb_play_stop();
+	s_wav = w.data;
+	s_wav_n = w.n;
+	s_wav_off = 0;
+	s_wav_ch = w.ch;
+	s_wav_bits = w.bits;
+	s_wav_rate = w.rate;
+	play_begin(5, name);
 	return 0;
 }
 
@@ -1803,6 +1946,31 @@ int mmb_media_title(const char *path, char *dst, int n)
 	return 0;
 }
 
+/* Copy a path expression before a later HEADERS expression can reuse the
+ * string arena. mmb_tmp_alloc() keeps it valid for this command. */
+static char *play_copy_path(mmb_val v)
+{
+	int n;
+	char *p;
+
+	if (v.type != T_STR)
+		mmb_syntax();
+	n = (int)strlen(v.s ? v.s : "");
+	p = mmb_tmp_alloc(n + 1);
+	if (!p)
+		mmb_error("?OUT OF MEMORY");
+	memcpy(p, v.s ? v.s : "", (size_t)n + 1);
+	return p;
+}
+
+static void play_fetch_url(const char *path, mmb_arrview *hdr, int have_hdr,
+			   unsigned char **file, unsigned *n)
+{
+	void *token = 0;
+
+	mmb_url_fetch(path, have_hdr ? hdr : 0, have_hdr, file, n, &token);
+}
+
 void mmb_cmd_play(void)
 {
 	if (mmb_match("STOP"))
@@ -1891,37 +2059,85 @@ void mmb_cmd_play(void)
 	}
 	if (mmb_match("MP3"))
 	{
-		mmb_val v = mmb_expr();
-		if (v.type != T_STR)
-			mmb_syntax();
-		if (mmb_play_mp3(v.s) != 0)
+		char *path = play_copy_path(mmb_expr());
+		mmb_arrview hdr;
+		int have_hdr;
+
+		mmb_skip_sp();
+		have_hdr = mmb_parse_headers_clause(&hdr);
+		if (mmb_url_is_url(path))
+		{
+			unsigned char *file = 0;
+			unsigned n = 0;
+
+			play_fetch_url(path, &hdr, have_hdr, &file, &n);
+			if (mmb_play_mp3_buf(file, n, path) != 0)
+				mmb_error("?MP3");
+		}
+		else if (mmb_play_mp3(path) != 0)
 			mmb_error("?MP3");
 		return;
 	}
 	if (mmb_match("MODFILE") || mmb_match("MOD"))
 	{
-		mmb_val v = mmb_expr();
-		if (v.type != T_STR)
-			mmb_syntax();
-		if (mmb_play_mod(v.s) != 0)
+		char *path = play_copy_path(mmb_expr());
+		mmb_arrview hdr;
+		int have_hdr;
+
+		mmb_skip_sp();
+		have_hdr = mmb_parse_headers_clause(&hdr);
+		if (mmb_url_is_url(path))
+		{
+			unsigned char *file = 0;
+			unsigned n = 0;
+
+			play_fetch_url(path, &hdr, have_hdr, &file, &n);
+			if (mmb_play_mod_buf(file, n, path) != 0)
+				return;
+		}
+		else if (mmb_play_mod(path) != 0)
 			return;
 		return;
 	}
 	if (mmb_match("XM") || mmb_match("XMFILE"))
 	{
-		mmb_val v = mmb_expr();
-		if (v.type != T_STR)
-			mmb_syntax();
-		if (mmb_play_xm(v.s) != 0)
+		char *path = play_copy_path(mmb_expr());
+		mmb_arrview hdr;
+		int have_hdr;
+
+		mmb_skip_sp();
+		have_hdr = mmb_parse_headers_clause(&hdr);
+		if (mmb_url_is_url(path))
+		{
+			unsigned char *file = 0;
+			unsigned n = 0;
+
+			play_fetch_url(path, &hdr, have_hdr, &file, &n);
+			if (mmb_play_xm_buf(file, n, path) != 0)
+				mmb_error("?XM");
+		}
+		else if (mmb_play_xm(path) != 0)
 			mmb_error("?XM");
 		return;
 	}
 	if (mmb_match("S3M") || mmb_match("S3MFILE"))
 	{
-		mmb_val v = mmb_expr();
-		if (v.type != T_STR)
-			mmb_syntax();
-		if (mmb_play_s3m(v.s) != 0)
+		char *path = play_copy_path(mmb_expr());
+		mmb_arrview hdr;
+		int have_hdr;
+
+		mmb_skip_sp();
+		have_hdr = mmb_parse_headers_clause(&hdr);
+		if (mmb_url_is_url(path))
+		{
+			unsigned char *file = 0;
+			unsigned n = 0;
+
+			play_fetch_url(path, &hdr, have_hdr, &file, &n);
+			if (mmb_play_s3m_buf(file, n, path) != 0)
+				mmb_error("?S3M");
+		}
+		else if (mmb_play_s3m(path) != 0)
 			mmb_error("?S3M");
 		return;
 	}
@@ -1942,28 +2158,49 @@ void mmb_cmd_play(void)
 			return;
 		}
 		{
-			mmb_val v = mmb_expr();
-			int vol = -1;
+			char *path = play_copy_path(mmb_expr());
+			mmb_arrview hdr;
+			int have_hdr, vol = -1;
 
-			if (v.type != T_STR)
-				mmb_syntax();
 			mmb_skip_sp();
 			if (*G.p == ',')
 			{
 				G.p++;
 				vol = (int)mmb_as_int(mmb_expr());
 			}
+			mmb_skip_sp();
+			have_hdr = mmb_parse_headers_clause(&hdr);
 			/* A missing/unsupported clip is not fatal, matching PLAY WAV. */
-			(void)mmb_sfx_play(v.s, vol);
+			if (mmb_url_is_url(path))
+			{
+				unsigned char *file = 0;
+				unsigned n = 0;
+
+				play_fetch_url(path, &hdr, have_hdr, &file, &n);
+				(void)mmb_sfx_play_buf(file, n, vol);
+			}
+			else
+				(void)mmb_sfx_play(path, vol);
 			return;
 		}
 	}
 	if (mmb_match("WAV") || mmb_match("EFFECT") || mmb_match("SOUND"))
 	{
-		mmb_val v = mmb_expr();
-		if (v.type != T_STR)
-			mmb_syntax();
-		if (mmb_play_wav(v.s) != 0)
+		char *path = play_copy_path(mmb_expr());
+		mmb_arrview hdr;
+		int have_hdr;
+
+		mmb_skip_sp();
+		have_hdr = mmb_parse_headers_clause(&hdr);
+		if (mmb_url_is_url(path))
+		{
+			unsigned char *file = 0;
+			unsigned n = 0;
+
+			play_fetch_url(path, &hdr, have_hdr, &file, &n);
+			(void)mmb_play_wav_buf(file, n, path);
+		}
+		else if (mmb_play_wav(path) != 0)
 			return; /* missing/unsupported clip: keep the program running */
 		return;
 	}

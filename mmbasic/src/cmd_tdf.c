@@ -81,26 +81,25 @@ static int tdf_name_eq(const char *a, const char *b)
 
 /* Read path$ fully, select variant `index` (or the first record named
  * `want_name` when non-NULL) and install it into `slot`. Errors longjmp. */
-static void tdf_load_file(const char *path, int index, const char *want_name,
-			  int slot)
+static void tdf_load_file(const char *path, mmb_arrview *hdr, int have_hdr,
+			  int index, const char *want_name, int slot)
 {
 	mmb_tdf f;
-	unsigned char *buf;
+	unsigned char *buf = 0;
 	unsigned got = 0;
-	int sz, variants, i;
+	int variants, i;
 
-	sz = mmb_vfs_size(path);
-	if (sz < 20)
-		mmb_error("TDF: file not found or too small");
 	if (!G.plat || !G.plat->alloc || !G.plat->free)
 		mmb_error("TDF: no allocator");
-	buf = (unsigned char *)G.plat->alloc((unsigned)sz + 1);
-	if (!buf)
-		mmb_error("TDF: out of memory");
-	if (mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0)
+	if (!mmb_url_is_url(path) && mmb_vfs_size(path) < 20)
+		mmb_error("TDF: file not found or too small");
+	if (mmb_read_file_all(path, hdr, have_hdr, &buf, &got, 0) != 0 &&
+	    !mmb_url_is_url(path))
+		mmb_error("TDF: cannot read file");
+	if (got < 20)
 	{
 		G.plat->free(buf);
-		mmb_error("TDF: cannot read file");
+		mmb_error("TDF: file not found or too small");
 	}
 	buf[got] = 0;
 
@@ -148,9 +147,11 @@ static void tdf_load_file(const char *path, int index, const char *want_name,
 
 /* Copy an expression as a filesystem path. The string arena can be reused by a
  * later expression, so the copy must happen before the next mmb_expr(). */
-static void tdf_take_path(char *dst, int n)
+static char *tdf_take_path(void)
 {
 	mmb_val v;
+	char *path;
+	int n;
 
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
@@ -158,19 +159,21 @@ static void tdf_take_path(char *dst, int n)
 	v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
-	if (n > 0)
-	{
-		strncpy(dst, v.s ? v.s : "", (size_t)n - 1);
-		dst[n - 1] = 0;
-	}
+	n = (int)strlen(v.s ? v.s : "");
+	path = mmb_tmp_alloc(n + 1);
+	if (!path)
+		mmb_error("?OUT OF MEMORY");
+	memcpy(path, v.s ? v.s : "", (size_t)n + 1);
+	return path;
 }
 
 static void tdf_cmd_load(void)
 {
-	char path[128];
-	int variant = -1, slot = -1;
+	char *path;
+	mmb_arrview hdr;
+	int have_hdr, variant = -1, slot = -1;
 
-	tdf_take_path(path, (int)sizeof(path));
+	path = tdf_take_path();
 	mmb_skip_sp();
 	if (*G.p == ',')
 	{
@@ -183,24 +186,27 @@ static void tdf_cmd_load(void)
 			slot = (int)mmb_as_int(mmb_expr());
 		}
 	}
+	mmb_skip_sp();
+	have_hdr = mmb_parse_headers_clause(&hdr);
 	if (variant < 0)
 		variant = 0;
 	if (slot < 0)
 		slot = 0;
 	if (slot >= TDF_MAX_FONTS)
 		mmb_error("TDF: bad slot");
-	tdf_load_file(path, variant, 0, slot);
+	tdf_load_file(path, &hdr, have_hdr, variant, 0, slot);
 	g_tdf_active = slot;
 }
 
 static void tdf_cmd_named(void)
 {
-	char path[128];
+	char *path;
 	char name[MMB_MAX_NAME];
 	mmb_val v;
-	int slot = -1;
+	mmb_arrview hdr;
+	int have_hdr, slot = -1;
 
-	tdf_take_path(path, (int)sizeof(path));
+	path = tdf_take_path();
 	mmb_skip_sp();
 	if (*G.p != ',')
 		mmb_syntax();
@@ -216,11 +222,13 @@ static void tdf_cmd_named(void)
 		G.p++;
 		slot = (int)mmb_as_int(mmb_expr());
 	}
+	mmb_skip_sp();
+	have_hdr = mmb_parse_headers_clause(&hdr);
 	if (slot < 0)
 		slot = 0;
 	if (slot >= TDF_MAX_FONTS)
 		mmb_error("TDF: bad slot");
-	tdf_load_file(path, 0, name, slot);
+	tdf_load_file(path, &hdr, have_hdr, 0, name, slot);
 	g_tdf_active = slot;
 }
 

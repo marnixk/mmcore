@@ -6,7 +6,7 @@ rectangle, MOVE/HIDE restore it. Only those rectangles are presented —
 the whole screen is not marked dirty. Missing image files create an empty
 placeholder.
 
-SPRITE LOADPNG n, file$ [, colour]
+SPRITE LOADPNG n, file$ [, colour] [HEADERS headers$()]
 SPRITE READ n, x, y, w, h [, page]
 SPRITE SHOW n, x, y [, layer]
 SPRITE HIDE n
@@ -17,8 +17,9 @@ SPRITE SCROLL x, y [, fillcolour]
 SPRITE CLOSE n | CLOSE ALL
 
   n - sprite number
-  file$ - PNG path (with or without .PNG)
+  file$ - PNG path (with or without .PNG), or an http:// or https:// URL
   colour - key colour treated as transparent
+  headers$() - STRING array, one "Name: value" per element
   x, y, w, h - position or READ rectangle
   page - source page for READ
   layer - display layer for SHOW, 0..8; higher numbers draw on top
@@ -49,3 +50,14 @@ Example:
     SPRITE MOVE
 
     SPRITE SCROLL 0, 2, RGB(0,0,0)
+
+Web URLs
+
+SPRITE LOADPNG accepts an http:// or https:// URL and downloads the PNG with
+the same HTTP/TLS code as ~WEB~ before decoding. The optional HEADERS clause
+has the same syntax as the WEB commands, for authenticated or restricted URLs.
+Downloads grow dynamically with no fixed size cap, and ~WEB~ TIMEOUT ms sets
+the network timeout (default 30000). HTTP 4xx/5xx (the error names the status),
+DNS/TLS failure and timeout raise normal BASIC errors, so ~ON ERROR~ can catch
+them. A missing local file still creates the empty placeholder; a URL failure
+is an error.

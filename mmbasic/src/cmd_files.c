@@ -787,7 +787,11 @@ void mmb_file_close_n(int fn)
 		mmb_tcp_release();
 	}
 	else
+	{
 		mmb_vfs_rbuf_free(&G.files[fn].rbuf);
+		if (G.files[fn].kind == MMB_FK_URL)
+			mmb_vfs_kill(G.files[fn].path);
+	}
 	memset(&G.files[fn], 0, sizeof(G.files[fn]));
 	G.files[fn].ungot = -1;
 }
@@ -881,6 +885,8 @@ void mmb_file_write(int fn, const char *buf, unsigned n)
 			mmb_error("?FILE");
 		return;
 	}
+	if (G.files[fn].kind == MMB_FK_URL)
+		mmb_error("?READ ONLY");
 	if (mmb_vfs_readonly_path(G.files[fn].path))
 		mmb_error("?READ ONLY");
 	if (mmb_vfs_write(G.files[fn].path, buf, n, 1) != 0)
@@ -938,17 +944,34 @@ static void tcp_open_fail(void)
 	mmb_error(e);
 }
 
+/* Temp-file counter for OPEN of a URL. The downloaded body lives in a private
+ * A: file so the normal read/seeking/EOF path applies; CLOSE removes it. */
+static unsigned s_url_tmp_seq;
+
 void mmb_cmd_open(void)
 {
 	char path[128];
-	int mode = 0, fn = 1, tcp = 0;
+	int mode = 0, fn = 1, tcp = 0, is_url = 0, have_hdr = 0;
 	char host[80];
 	int port = 0;
+	char *url_path = 0;
+	mmb_arrview hdr;
 	mmb_val v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
 	tcp = is_tcp_spec(v.s);
-	if (tcp)
+	is_url = !tcp && mmb_url_is_url(v.s);
+	if (is_url)
+	{
+		int len = (int)strlen(v.s ? v.s : "");
+
+		url_path = mmb_tmp_alloc(len + 1);
+		if (!url_path)
+			mmb_error("?OUT OF MEMORY");
+		memcpy(url_path, v.s ? v.s : "", (size_t)len + 1);
+		path[0] = 0;
+	}
+	else if (tcp)
 	{
 		strncpy(path, v.s, sizeof(path) - 1);
 		path[sizeof(path) - 1] = 0;
@@ -978,6 +1001,10 @@ void mmb_cmd_open(void)
 		mode = MMB_FM_BOTH;
 	if (tcp && mode == 2)
 		mmb_syntax();
+	if (is_url && mode != 0)
+		mmb_error("?READ ONLY");
+	mmb_skip_sp();
+	have_hdr = mmb_parse_headers_clause(&hdr);
 	if (!mmb_match("AS"))
 		mmb_syntax();
 	mmb_skip_sp();
@@ -986,6 +1013,39 @@ void mmb_cmd_open(void)
 	fn = (int)mmb_as_int(mmb_expr());
 	if (fn < 1 || fn > MMB_MAX_FILES)
 		mmb_error("?FILE NUMBER");
+	if (is_url)
+	{
+		unsigned char *buf = 0;
+		unsigned n = 0;
+		void *token = 0;
+		char tmp[40];
+		int tries = 0;
+
+		mmb_url_fetch(url_path, have_hdr ? &hdr : 0, have_hdr, &buf, &n,
+			      &token);
+		do
+		{
+			s_url_tmp_seq++;
+			sprintf(tmp, "A:/~WEB%u.TMP", s_url_tmp_seq);
+		} while (mmb_vfs_exists(tmp) && ++tries < 1000);
+		if (mmb_vfs_write(tmp, buf, n, 0) != 0)
+		{
+			mmb_vfs_kill(tmp);
+			mmb_url_release(token);
+			mmb_error("?FILE");
+		}
+		mmb_url_release(token);
+		if (G.files[fn].open)
+			mmb_file_close_n(fn);
+		memset(&G.files[fn], 0, sizeof(G.files[fn]));
+		G.files[fn].open = 1;
+		G.files[fn].mode = 0;
+		G.files[fn].kind = MMB_FK_URL;
+		G.files[fn].ungot = -1;
+		G.files[fn].pos = 0;
+		strncpy(G.files[fn].path, tmp, sizeof(G.files[fn].path) - 1);
+		return;
+	}
 	if (tcp)
 	{
 		int other, owner;

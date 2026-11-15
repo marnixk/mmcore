@@ -13,12 +13,12 @@ PLAY PAUSE
 PLAY RESUME
 PLAY VOLUME left [, right]
 PLAY TONE left, right [, duration]
-PLAY MP3 file$
-PLAY WAV file$
-PLAY MODFILE file$     (PLAY MOD file$)
-PLAY XM file$          (PLAY XMFILE file$)
-PLAY S3M file$         (PLAY S3MFILE file$)
-PLAY SFX file$ [, volume]
+PLAY MP3 file$ [HEADERS headers$()]
+PLAY WAV file$ [HEADERS headers$()]
+PLAY MODFILE file$ [HEADERS headers$()]     (PLAY MOD file$)
+PLAY XM file$ [HEADERS headers$()]          (PLAY XMFILE file$)
+PLAY S3M file$ [HEADERS headers$()]         (PLAY S3MFILE file$)
+PLAY SFX file$ [, volume] [HEADERS headers$()]
 PLAY SFX VOLUME volume
 PLAY SFX STOP
 
@@ -108,3 +108,13 @@ A game loop keeps a music track running and fires effects on events:
     LOOP
 
 The same program is seeded as A:/apps/SFXTEST.BAS.
+
+Web URLs
+
+Each file argument may be an http:// or https:// URL. The whole file is
+downloaded into memory with the same HTTP/TLS code as ~WEB~ before playback
+starts, so the optional HEADERS clause works for authenticated or restricted
+URLs and ~WEB~ TIMEOUT ms applies. Downloads grow dynamically with no fixed
+size cap. HTTP 4xx/5xx (the error names the status), DNS/TLS failure and
+timeout raise normal BASIC errors, which ~ON ERROR~ can catch; a missing local
+clip keeps the previous non-fatal behaviour (PLAY WAV/SFX stay silent).

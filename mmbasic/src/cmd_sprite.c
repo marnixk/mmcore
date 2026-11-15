@@ -649,11 +649,13 @@ static void add_png_ext(char *path, int pathsz)
 static void sprite_loadpng(void)
 {
 	mmb_val v;
-	char path[128];
+	char small[128];
+	char *path = small;
 	unsigned char *file = 0;
 	uint32_t *pix = 0;
-	int id, w = 0, h = 0, sz, has_trans = 0;
+	int id, w = 0, h = 0, sz, has_trans = 0, is_url, have_hdr;
 	unsigned got = 0, trans_rgb = 0;
+	mmb_arrview hdr;
 
 	id = (int)mmb_as_int(mmb_expr());
 	mmb_skip_sp();
@@ -662,9 +664,21 @@ static void sprite_loadpng(void)
 	v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
-	strncpy(path, v.s, sizeof(path) - 1);
-	path[sizeof(path) - 1] = 0;
-	add_png_ext(path, sizeof(path));
+	is_url = mmb_url_is_url(v.s);
+	if (is_url)
+	{
+		int len = (int)strlen(v.s ? v.s : "");
+		path = mmb_tmp_alloc(len + 8);
+		if (!path)
+			mmb_error("?OUT OF MEMORY");
+		memcpy(path, v.s, (size_t)len + 1);
+	}
+	else
+	{
+		strncpy(small, v.s ? v.s : "", sizeof(small) - 1);
+		small[sizeof(small) - 1] = 0;
+		add_png_ext(small, sizeof(small));
+	}
 	mmb_skip_sp();
 	if (*G.p == ',')
 	{
@@ -672,23 +686,22 @@ static void sprite_loadpng(void)
 		has_trans = 1;
 		trans_rgb = mmb_colour_from_int(mmb_as_int(mmb_expr()));
 	}
-	sz = mmb_vfs_size(path);
-	if (sz < 0)
+	mmb_skip_sp();
+	have_hdr = mmb_parse_headers_clause(&hdr);
+	if (!is_url)
 	{
-		uint32_t *empty = G.plat->alloc(8 * 8 * sizeof(uint32_t));
-		if (empty)
-			memset(empty, 0, 8 * 8 * sizeof(uint32_t));
-		sprite_store(id, empty, 8, 8);
-		return;
+		sz = mmb_vfs_size(path);
+		if (sz < 0)
+		{
+			uint32_t *empty = G.plat->alloc(8 * 8 * sizeof(uint32_t));
+			if (empty)
+				memset(empty, 0, 8 * 8 * sizeof(uint32_t));
+			sprite_store(id, empty, 8, 8);
+			return;
+		}
 	}
-	file = G.plat->alloc((unsigned)sz + 1);
-	if (!file)
-		mmb_error("?OUT OF MEMORY");
-	if (mmb_vfs_read(path, file, (unsigned)sz, &got) != 0)
-	{
-		G.plat->free(file);
+	if (mmb_read_file_all(path, &hdr, have_hdr, &file, &got, 0) < 0)
 		mmb_error("?PNG");
-	}
 	if (mmb_png_decode_rgba(file, got, &pix, &w, &h) != 0)
 	{
 		G.plat->free(file);
