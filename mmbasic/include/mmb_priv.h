@@ -222,6 +222,7 @@ typedef struct mmb_options {
 	int edit_theme;        /* editor colour theme, -1 = follow system */
 	int edit_jump_break;   /* jump to the line on a run break/error */
 	int autosave;          /* OPTION AUTOSAVE ON|OFF (default ON) */
+	int web_cache;         /* OPTION WEB CACHE ON|OFF (default OFF, #1507) */
 	int escape;
 	char search_path[128];
 	char app_path[128];    /* OPTION PATH: .APP dirs, ';' separated (#520) */
@@ -1683,6 +1684,12 @@ int mmb_url_is_url(const char *path);
 int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 		  unsigned char **out, unsigned *outn, void **token);
 void mmb_url_release(void *token);
+
+/* In-memory URL session cache (#1507). OPTION WEB CACHE ON enables it; the
+ * bytes of a successful 2xx GET are keyed by URL plus the exact request
+ * headers, so a repeat load makes no network request. WEB CACHE CLEAR empties
+ * it on demand, and OPTION WEB CACHE OFF, RUN and NEW clear and free it. */
+void mmb_web_cache_clear(void);
 
 /* TLS transport seam. Implemented with OpenSSL when the native build finds
  * it (-DMMB_HAVE_TLS); every other backend (Circle, Windows) returns the

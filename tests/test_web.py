@@ -677,6 +677,175 @@ def test_load_png_url_over_one_megabyte(mmb, http_srv, tmp_path):
     assert _pixel(out) >= 0
 
 
+# ---- in-memory session cache (#1507) --------------------------------
+
+
+def _blob_url(srv):
+    return "http://127.0.0.1:%d/blob" % _port(srv)
+
+
+def _load_url_prog(srv, n=2, prefix=()):
+    url = _blob_url(srv)
+    lines = list(prefix) + ["MODE 1"]
+    lines += ['LOAD PNG "%s"' % url for _ in range(n)]
+    lines.append('PRINT "DONE"')
+    return "\n".join(lines)
+
+
+def test_web_cache_off_by_default_refetches(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    out = run(mmb, _load_url_prog(http_srv, 2), tmp_path)
+    assert "DONE" in out and "?WEB" not in out and "?PNG" not in out
+    assert len(http_srv.records) == 2
+
+
+def test_web_cache_on_avoids_second_request(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    out = run(
+        mmb,
+        _load_url_prog(http_srv, 2, prefix=["OPTION WEB CACHE ON"]),
+        tmp_path,
+    )
+    assert "DONE" in out and "?WEB" not in out and "?PNG" not in out
+    assert len(http_srv.records) == 1
+
+
+def test_web_cache_headers_make_separate_entries(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    url = _blob_url(http_srv)
+    program = "\n".join(
+        [
+            "OPTION WEB CACHE ON",
+            "MODE 1",
+            "DIM h$(1)",
+            'h$(0) = "X-Token: a"',
+            'LOAD PNG "%s" HEADERS h$()' % url,
+            'LOAD PNG "%s" HEADERS h$()' % url,
+            'h$(0) = "X-Token: b"',
+            'LOAD PNG "%s" HEADERS h$()' % url,
+            'LOAD PNG "%s"' % url,
+            'PRINT "DONE"',
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "DONE" in out and "?WEB" not in out and "?PNG" not in out
+    assert [r["headers"].get("X-Token") for r in http_srv.records] == [
+        "a",
+        "b",
+        None,
+    ]
+
+
+def test_web_cache_clear_forces_refetch(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    url = _blob_url(http_srv)
+    program = "\n".join(
+        [
+            "OPTION WEB CACHE ON",
+            "MODE 1",
+            'LOAD PNG "%s"' % url,
+            'LOAD PNG "%s"' % url,
+            "WEB CACHE CLEAR",
+            'LOAD PNG "%s"' % url,
+            'PRINT "DONE"',
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "DONE" in out and "?WEB" not in out and "?PNG" not in out
+    assert len(http_srv.records) == 2
+
+
+def test_web_cache_run_forces_refetch(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    url = _blob_url(http_srv)
+    program = "\n".join(
+        [
+            "10 OPTION WEB CACHE ON",
+            "20 MODE 1",
+            '30 LOAD PNG "%s"' % url,
+            '40 PRINT "RUN-DONE"',
+            "RUN",
+            "RUN",
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert out.count("RUN-DONE") == 2, out[-800:]
+    assert "?WEB" not in out and "?PNG" not in out
+    assert len(http_srv.records) == 2
+
+
+def test_web_cache_off_clears_and_refetches(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    url = _blob_url(http_srv)
+    program = "\n".join(
+        [
+            "OPTION WEB CACHE ON",
+            "MODE 1",
+            'LOAD PNG "%s"' % url,
+            "OPTION WEB CACHE OFF",
+            'LOAD PNG "%s"' % url,
+            'LOAD PNG "%s"' % url,
+            'PRINT "DONE"',
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "DONE" in out and "?WEB" not in out and "?PNG" not in out
+    assert len(http_srv.records) == 3
+
+
+def test_web_cache_web_get_only_and_non_get(mmb, http_srv, tmp_path):
+    port = _port(http_srv)
+    base = "http://127.0.0.1:%d" % port
+    program = "\n".join(
+        [
+            "OPTION WEB CACHE ON",
+            'a$ = WEB$(HTTP GET "%s/text")' % base,
+            'b$ = WEB$(HTTP GET "%s/text")' % base,
+            'PRINT "STATUS="; WEBSTATUS',
+            'c$ = WEB$(HTTP DELETE "%s/echo")' % base,
+            'd$ = WEB$(HTTP DELETE "%s/echo")' % base,
+            'e$ = WEB$(HTTP POST "%s/echo", "x")' % base,
+            'f$ = WEB$(HTTP POST "%s/echo", "x")' % base,
+            'PRINT "A="; a$; " B="; b$',
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "A=HELLO B=HELLO" in out
+    assert "STATUS=200" in out
+    assert [r["method"] for r in http_srv.records] == [
+        "GET",
+        "DELETE",
+        "DELETE",
+        "POST",
+        "POST",
+    ]
+    assert http_srv.records[0]["path"] == "/text"
+
+
+def test_web_cache_typed_get(mmb, http_srv, tmp_path):
+    port = _port(http_srv)
+    program = "\n".join(
+        numbered(
+            [
+                "OPTION WEB CACHE ON",
+                "TYPE P",
+                "name AS STRING * 32",
+                "age AS INTEGER",
+                "END TYPE",
+                "DIM p AS P",
+                'p = WEB(HTTP GET "http://127.0.0.1:%d/person" AS P)' % port,
+                'p = WEB(HTTP GET "http://127.0.0.1:%d/person" AS P)' % port,
+                'PRINT "NAME="; p.name',
+                'PRINT "AGE="; p.age',
+            ]
+        )
+    )
+    out = run(mmb, program, tmp_path)
+    assert "NAME=Ada" in out
+    assert "AGE=42" in out
+    assert len(http_srv.records) == 1
+
+
 def test_load_png_from_https_url(mmb, https_srv, tmp_path):
     srv, _cert = https_srv
     _tls_available(mmb, srv, tmp_path)

@@ -120,6 +120,9 @@ def test_remaining_option_subcommands(console):
         "OPTION EDIT FONT NORMAL",
         "OPTION EDIT THEME TURBO",
         "OPTION USBKEYBOARD US",
+        "OPTION WEB CACHE ON",
+        "WEB CACHE CLEAR",
+        "OPTION WEB CACHE OFF",
         "OPTION RESET",
     ]
     for cmd in cmds:
