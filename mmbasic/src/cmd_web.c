@@ -1114,6 +1114,13 @@ static void http_request(wb_t *body, const char *method0, const web_url *u0,
 
 /* ---- shared URL fetch layer (#1505) ---------------------------------- */
 
+static void web_cache_key(wb_t *k, const char *url, const web_url *u,
+			  const char *method, mmb_arrview *hdr, int have_hdr);
+static int web_cache_load(const char *key, unsigned keyn,
+			  unsigned char **out, unsigned *outn);
+static void web_cache_store(const char *key, unsigned keyn,
+			    const unsigned char *body, unsigned n);
+
 int mmb_url_is_url(const char *path)
 {
 	return path && (!strncmp(path, "http://", 7) ||
@@ -1130,7 +1137,10 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 {
 	web_url u;
 	wb_t body;
+	wb_t key;
 	char msg[64];
+	int have_key = 0;
+	int cached = 0;
 
 	if (!mmb_url_is_url(url))
 		return 0;
@@ -1138,6 +1148,21 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 		mmb_error("?WEB: URL must start with http:// or https://");
 	if (have_hdr && (!hdr || hdr->moff >= 0 || hdr->v->type != T_STR))
 		mmb_error("?TYPE MISMATCH");
+
+	if (G.opt.web_cache)
+	{
+		web_cache_key(&key, url, &u, "GET", have_hdr ? hdr : 0,
+			      have_hdr);
+		have_key = 1;
+		cached = web_cache_load(key.p, key.n, out, outn);
+	}
+	if (cached)
+	{
+		wb_free(&key);
+		if (token)
+			*token = *out;
+		return 1;
+	}
 
 	wb_init_mode(&body, 0, 1);
 	http_request(&body, "GET", &u, 0, 0, 0, 0,
@@ -1147,9 +1172,15 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 		int status = s_status;
 
 		wb_free(&body);
+		if (have_key)
+			wb_free(&key);
 		sprintf(msg, "?WEB: HTTP %d", status);
 		mmb_error(msg);
 	}
+	if (have_key)
+		web_cache_store(key.p, key.n, (unsigned char *)body.p, body.n);
+	if (have_key)
+		wb_free(&key);
 	*out = (unsigned char *)body.p;
 	*outn = body.n;
 	if (token)
@@ -1163,7 +1194,166 @@ void mmb_url_release(void *token)
 		G.plat->free(token);
 }
 
+/* ---- in-memory session cache (#1507) --------------------------------- */
+
+/* One cached response: the key is the URL followed by the exact request
+ * bytes (method line plus headers), so a change in URL, method or any header
+ * selects a different entry. The cache holds only successful 2xx GET
+ * responses and grows with the platform allocator, so its memory is not part
+ * of the string pool and has no fixed cap. */
+typedef struct web_cache_entry {
+	char *key;
+	unsigned keyn;
+	unsigned char *body;
+	unsigned n;
+	int status;
+	char *hdrs;
+	unsigned hdrsn;
+	struct web_cache_entry *next;
+} web_cache_entry;
+
+static web_cache_entry *s_cache;
+
+static void web_cache_entry_free(web_cache_entry *e)
+{
+	if (!e)
+		return;
+	if (e->key)
+		G.plat->free(e->key);
+	if (e->body)
+		G.plat->free(e->body);
+	if (e->hdrs)
+		G.plat->free(e->hdrs);
+	G.plat->free(e);
+}
+
+void mmb_web_cache_clear(void)
+{
+	web_cache_entry *e = s_cache;
+
+	while (e)
+	{
+		web_cache_entry *nx = e->next;
+
+		web_cache_entry_free(e);
+		e = nx;
+	}
+	s_cache = 0;
+}
+
+static web_cache_entry *web_cache_find(const char *key, unsigned keyn)
+{
+	web_cache_entry *e;
+
+	for (e = s_cache; e; e = e->next)
+		if (e->keyn == keyn && !memcmp(e->key, key, keyn))
+			return e;
+	return 0;
+}
+
+static unsigned char *web_cache_copy(const unsigned char *p, unsigned n)
+{
+	unsigned char *c = (unsigned char *)G.plat->alloc(n ? n : 1);
+
+	if (!c)
+		mmb_error("?OUT OF MEMORY");
+	if (n)
+		memcpy(c, p, n);
+	return c;
+}
+
+/* Build the cache key for an outgoing request. The body is always empty
+ * because only GETs without a payload are cached. */
+static void web_cache_key(wb_t *k, const char *url, const web_url *u,
+			  const char *method, mmb_arrview *hdr, int have_hdr)
+{
+	wb_init_mode(k, 0, 1);
+	wb_puts(k, url);
+	wb_putc(k, '\n');
+	build_request(k, u, method, 0, 0, 0, 0, hdr, have_hdr, 0);
+}
+
+/* Return a caller-owned copy of the cached body and restore the response
+ * status/headers that WEBSTATUS/WEBHEADER$ report. 0 on a miss. */
+static int web_cache_load(const char *key, unsigned keyn,
+			  unsigned char **out, unsigned *outn)
+{
+	web_cache_entry *e = web_cache_find(key, keyn);
+
+	if (!e)
+		return 0;
+	*out = web_cache_copy(e->body, e->n);
+	*outn = e->n;
+	s_status = e->status;
+	if (s_resp_headers)
+	{
+		mmb_str_free(s_resp_headers);
+		s_resp_headers = 0;
+		s_resp_headers_len = 0;
+	}
+	if (e->hdrs && e->hdrsn)
+	{
+		s_resp_headers = mmb_str_alloc((int)e->hdrsn);
+		if (s_resp_headers)
+		{
+			memcpy(s_resp_headers, e->hdrs, e->hdrsn);
+			s_resp_headers[e->hdrsn] = 0;
+			s_resp_headers_len = e->hdrsn;
+		}
+	}
+	return 1;
+}
+
+static void web_cache_store(const char *key, unsigned keyn,
+			    const unsigned char *body, unsigned n)
+{
+	web_cache_entry *e = web_cache_find(key, keyn);
+
+	if (e)
+		return;
+	e = (web_cache_entry *)G.plat->alloc(sizeof(*e));
+	if (!e)
+		mmb_error("?OUT OF MEMORY");
+	memset(e, 0, sizeof(*e));
+	e->key = (char *)G.plat->alloc(keyn ? keyn : 1);
+	if (!e->key)
+	{
+		G.plat->free(e);
+		mmb_error("?OUT OF MEMORY");
+	}
+	memcpy(e->key, key, keyn);
+	e->keyn = keyn;
+	e->body = web_cache_copy(body, n);
+	e->n = n;
+	e->status = s_status;
+	if (s_resp_headers && s_resp_headers_len)
+	{
+		e->hdrs = (char *)G.plat->alloc(s_resp_headers_len);
+		if (!e->hdrs)
+		{
+			G.plat->free(e->key);
+			G.plat->free(e->body);
+			G.plat->free(e);
+			mmb_error("?OUT OF MEMORY");
+		}
+		memcpy(e->hdrs, s_resp_headers, s_resp_headers_len);
+		e->hdrsn = s_resp_headers_len;
+	}
+	e->next = s_cache;
+	s_cache = e;
+}
+
 /* ---- high-level expression ------------------------------------------ */
+
+/* Release the buffer web_function read from: a cache copy or the network
+ * body. The cache copy is platform memory while body is a string-pool wb_t. */
+static void web_put_body(int cached, const unsigned char *src, wb_t *body)
+{
+	if (cached)
+		G.plat->free((void *)src);
+	else
+		wb_free(body);
+}
 
 static mmb_val web_function(int text_form)
 {
@@ -1178,6 +1368,11 @@ static mmb_val web_function(int text_form)
 	unsigned blen = 0;
 	web_url u;
 	wb_t body;
+	wb_t key;
+	int have_key = 0;
+	int cached = 0;
+	const unsigned char *src = 0;
+	unsigned srclen = 0;
 
 	mmb_expect('(');
 	mmb_skip_sp();
@@ -1254,19 +1449,42 @@ static mmb_val web_function(int text_form)
 	if (url_parse(url.s, &u) != 0)
 		mmb_error("?WEB: URL must start with http:// or https://");
 
+	/* Only plain GETs are cacheable; POST/PUT/PATCH/DELETE always hit the
+	 * network because they may carry side effects (#1507). */
 	wb_init_mode(&body, WEB_BODY_MAX, 0);
-	http_request(&body, method, &u, bodyp, blen, has_payload, payload_json,
-		     have_hdr ? &hdr : 0, have_hdr);
+	if (G.opt.web_cache && !has_payload && !strcmp(method, "GET"))
+	{
+		unsigned char *cb = 0;
+
+		web_cache_key(&key, url.s, &u, method,
+			      have_hdr ? &hdr : 0, have_hdr);
+		have_key = 1;
+		cached = web_cache_load(key.p, key.n, &cb, &srclen);
+		if (cached)
+			src = cb;
+	}
+	if (!cached)
+	{
+		http_request(&body, method, &u, bodyp, blen, has_payload,
+			     payload_json, have_hdr ? &hdr : 0, have_hdr);
+		src = (const unsigned char *)body.p;
+		srclen = body.n;
+		/* Only successful responses are cached. */
+		if (have_key && s_status >= 200 && s_status <= 299)
+			web_cache_store(key.p, key.n, src, srclen);
+	}
+	if (have_key)
+		wb_free(&key);
 
 	if (text_form)
 	{
 		char *out;
 
-		out = mmb_tmp_alloc((int)body.n + 1);
-		if (body.n)
-			memcpy(out, body.p, body.n);
-		out[body.n] = 0;
-		wb_free(&body);
+		out = mmb_tmp_alloc((int)srclen + 1);
+		if (srclen)
+			memcpy(out, src, srclen);
+		out[srclen] = 0;
+		web_put_body(cached, src, &body);
 		return mmb_arena_val(out);
 	}
 	else
@@ -1276,11 +1494,11 @@ static mmb_val web_function(int text_form)
 		char *js;
 		int rc;
 
-		js = mmb_tmp_alloc((int)body.n + 1);
-		if (body.n)
-			memcpy(js, body.p, body.n);
-		js[body.n] = 0;
-		wb_free(&body);
+		js = mmb_tmp_alloc((int)srclen + 1);
+		if (srclen)
+			memcpy(js, src, srclen);
+		js[srclen] = 0;
+		web_put_body(cached, src, &body);
 
 		blob = (unsigned char *)mmb_tmp_alloc(sz);
 		memset(blob, 0, (size_t)sz);
@@ -1755,6 +1973,13 @@ static char *render_page(const char *src, unsigned n, unsigned *outn)
 
 void mmb_cmd_web(void)
 {
+	if (mmb_match("CACHE"))
+	{
+		if (!mmb_match("CLEAR"))
+			mmb_syntax();
+		mmb_web_cache_clear();
+		return;
+	}
 	if (mmb_match("OPEN"))
 	{
 		if (mmb_match("TLS"))
@@ -1974,6 +2199,7 @@ void mmb_cmd_web(void)
 
 void mmb_web_cleanup(void)
 {
+	mmb_web_cache_clear();
 	tr_close();
 	if (s_sconn >= 0)
 	{

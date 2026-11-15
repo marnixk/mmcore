@@ -52,6 +52,26 @@ arena and the actual allocation. Implementation limits: URL host 255 bytes,
 request target 4095 bytes, response headers 64 KiB, response body 16 MiB, and
 5 redirects. Exceeding a limit raises ?WEB with a clear message.
 
+Session cache
+
+  OPTION WEB CACHE ON|OFF
+  WEB CACHE CLEAR
+
+OPTION WEB CACHE ON keeps successful (2xx) HTTP GET responses in memory for
+the session (default OFF). The cache key is the URL plus the exact request
+headers, so changing either selects a separate entry. A repeated GET of the
+same key returns the cached bytes without a network request, and WEBSTATUS
+and WEBHEADER$ still report the stored response. Only GET is cached: POST,
+PUT, PATCH and DELETE always reach the server because they may have side
+effects. The same cache serves URL loads through LOAD PNG/JPG, which fetch
+with GET.
+
+WEB CACHE CLEAR empties the cache on demand, for example before a dashboard
+refreshes an image. RUN and NEW clear it automatically so each run fetches
+fresh data, and OPTION WEB CACHE OFF also clears and frees it. The cache grows
+as needed with no fixed cap and is never written to disk; it is not persisted
+across a reboot.
+
 Low-level TCP/TLS client
 
   WEB OPEN TCP CLIENT address$, port [,timeout_ms]

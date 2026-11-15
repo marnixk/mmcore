@@ -21,6 +21,14 @@ Settings:
     WORDPAD to a <file>.rec sidecar (default ON, about once a minute). OFF
     disables only the periodic checkpoint; saving on leave still writes the
     real file.
+  WEB CACHE ON|OFF
+    Keep successful HTTP GET responses in memory for the session (default
+    OFF). URL loads through LOAD PNG/JPG and WEB$/WEB requests then reuse a
+    stored response when the URL and request headers match, with no network
+    request. Only GET is cached; POST, PUT, PATCH and DELETE always fetch.
+    See ~WEB~ and WEB CACHE CLEAR. RUN and NEW clear the cache, as does
+    OPTION WEB CACHE OFF. Per-session only: it is not saved to the settings
+    file.
   COLOURCODE ON|OFF|REVERSE
   CONSOLE SCREEN|SERIAL|BOTH|NONE|SAVE|PORT n
   CRLF CRLF|CR|LF   BAUDRATE n  CASE UPPER|LOWER|TITLE

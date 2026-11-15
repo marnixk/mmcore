@@ -698,6 +698,21 @@ static void option_dispatch(void)
 		G.opt.autosave = onoff();
 		return;
 	}
+	if (mmb_match("WEB"))
+	{
+		if (!mmb_match("CACHE"))
+			mmb_syntax();
+		if (mmb_match("ON"))
+			G.opt.web_cache = 1;
+		else if (mmb_match("OFF"))
+		{
+			G.opt.web_cache = 0;
+			mmb_web_cache_clear();
+		}
+		else
+			mmb_syntax();
+		return;
+	}
 	if (mmb_match("COLOURCODE") || mmb_match("COLORCODE"))
 	{
 		if (mmb_match("REVERSE"))
@@ -1366,6 +1381,8 @@ void mmb_option_list(int all)
 		ol_line(&n, G.opt.autorun ? "OPTION AUTORUN ON" : "OPTION AUTORUN OFF");
 	if (all || !G.opt.autosave)
 		ol_line(&n, G.opt.autosave ? "OPTION AUTOSAVE ON" : "OPTION AUTOSAVE OFF");
+	if (all || G.opt.web_cache)
+		ol_line(&n, G.opt.web_cache ? "OPTION WEB CACHE ON" : "OPTION WEB CACHE OFF");
 	if (all || !G.opt.colourcode || G.opt.colourcode_reverse)
 	{
 		if (G.opt.colourcode_reverse)

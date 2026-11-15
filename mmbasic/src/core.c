@@ -3047,6 +3047,7 @@ void mmb_cmd_end_function(void)
 }
 void mmb_option_reset(void)
 {
+	mmb_web_cache_clear(); /* default is CACHE OFF, so drop stored URLs (#1507) */
 	memset(&G.opt, 0, sizeof(G.opt));
 	G.opt.base = 0;
 	G.opt.default_type = T_NUM;
@@ -3625,6 +3626,7 @@ void mmb_cmd_new(void)
 	prog_release(); /* drops every line plus the store and jump tables (#1303) */
 	labels_release();
 	subs_release();
+	mmb_web_cache_clear(); /* NEW starts a fresh session (#1507) */
 	G.prog_dirty = 1;
 	G.prog_ready = 0;
 	G.current_prog[0] = 0;
@@ -3695,6 +3697,8 @@ void mmb_cmd_run(void)
 	char fname[128];
 	int from_disk = 0;
 	int mounted_pkg = 0;
+
+	mmb_web_cache_clear(); /* each RUN fetches fresh data (#1507) */
 	mmb_skip_sp();
 	if (*G.p && *G.p != ':' && *G.p != '\'')
 	{
