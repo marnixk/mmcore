@@ -9,6 +9,8 @@ build has no TLS stack (OpenSSL missing) or openssl cannot make a cert.
 import http.server
 import json
 import os
+import random
+import re
 import shutil
 import socket
 import ssl
@@ -505,6 +507,190 @@ def test_timeout_keeps_interpreter_usable(mmb, http_srv, tmp_path):
     assert "?WEB: response timeout" in out
     assert "AFTER-TIMEOUT" in out
     assert "42" in out
+
+
+# ---- URL file loads (#1505) ------------------------------------------
+
+ASSET_DIR = os.path.join(REPO, "ramdisk", "tests")
+
+
+def _asset(name):
+    with open(os.path.join(ASSET_DIR, name), "rb") as fh:
+        return fh.read()
+
+
+def _make_png(width, height, rgb):
+    import struct
+    import zlib
+
+    row = bytes(rgb) * width
+    raw = b"".join(b"\x00" + row for _ in range(height))
+
+    def chunk(typ, data):
+        return (
+            struct.pack(">I", len(data))
+            + typ
+            + data
+            + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(raw, 0))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _pixel(out, label="PIX"):
+    m = re.search(label + r":\s*(\d+)", out)
+    assert m, out[-800:]
+    return int(m.group(1))
+
+
+def test_load_png_from_http_url(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    port = _port(http_srv)
+    out = run(
+        mmb,
+        'MODE 1\nCLS\nLOAD PNG "http://127.0.0.1:%d/blob"\n'
+        'PRINT "PIX:"; PIXEL(0,0)\n' % port,
+        tmp_path,
+    )
+    assert "?PNG" not in out and "?WEB" not in out, out[-800:]
+    assert ((_pixel(out) >> 16) & 255) > 150
+    assert http_srv.records[0]["path"] == "/blob"
+
+
+def test_load_png_url_headers(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.PNG")
+    port = _port(http_srv)
+    program = "\n".join(
+        [
+            "DIM h$(2)",
+            'h$(0) = "X-Token: secret"',
+            'h$(1) = "Accept: image/png"',
+            "MODE 1",
+            'LOAD PNG "http://127.0.0.1:%d/blob" HEADERS h$()' % port,
+            'PRINT "OK"',
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "?WEB" not in out and "?PNG" not in out, out[-800:]
+    assert "OK" in out
+    rec = http_srv.records[0]
+    assert rec["headers"].get("X-Token") == "secret"
+    assert rec["headers"].get("Accept") == "image/png"
+
+
+def test_load_jpg_from_http_url(mmb, http_srv, tmp_path):
+    http_srv.blob = _asset("TEST.JPG")
+    port = _port(http_srv)
+    out = run(
+        mmb,
+        'MODE 1\nCLS\nLOAD JPG "http://127.0.0.1:%d/blob"\n'
+        'PRINT "PIX:"; PIXEL(1,1)\n' % port,
+        tmp_path,
+    )
+    assert "?JPEG" not in out and "?WEB" not in out, out[-800:]
+    assert ((_pixel(out) >> 16) & 255) > 60
+
+
+def test_load_png_url_404_is_catchable(mmb, http_srv, tmp_path):
+    port = _port(http_srv)
+    program = "\n".join(
+        [
+            "10 ON ERROR GOTO 80",
+            "20 MODE 1",
+            '30 LOAD PNG "http://127.0.0.1:%d/missing"' % port,
+            '40 PRINT "NOTREACHED"',
+            "50 END",
+            '80 PRINT "ERR:"; MM.ERRMSG$',
+            '90 PRINT "ALIVE:"; 6*7',
+            "RUN",
+        ]
+    )
+    out = run(mmb, program, tmp_path)
+    assert "NOTREACHED" not in out
+    assert "404" in out, out[-800:]
+    assert "ALIVE: 42" in out or "ALIVE:42" in out
+
+
+def test_load_png_url_timeout_is_catchable(mmb, http_srv, tmp_path):
+    port = _port(http_srv)
+    program = "\n".join(
+        [
+            "10 ON ERROR GOTO 80",
+            "20 WEB TIMEOUT 300",
+            "30 MODE 1",
+            '40 LOAD PNG "http://127.0.0.1:%d/slow"' % port,
+            '50 PRINT "NOTREACHED"',
+            "60 END",
+            '80 PRINT "ERR:"; MM.ERRMSG$',
+            '90 PRINT "ALIVE:"; 6*7',
+            "RUN",
+        ]
+    )
+    out = run(mmb, program, tmp_path, timeout=30)
+    assert "NOTREACHED" not in out
+    assert "timeout" in out.lower(), out[-800:]
+    assert "ALIVE: 42" in out or "ALIVE:42" in out
+
+
+def test_load_png_url_over_one_megabyte(mmb, http_srv, tmp_path):
+    width, height = 900, 700
+    noise = random.Random(1505).randbytes(width * height * 3)
+    rows = b"".join(
+        b"\x00" + noise[y * width * 3:(y + 1) * width * 3]
+        for y in range(height)
+    )
+    import struct
+    import zlib
+
+    def chunk(typ, data):
+        return (
+            struct.pack(">I", len(data))
+            + typ
+            + data
+            + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(rows, 0))
+        + chunk(b"IEND", b"")
+    )
+    assert len(png) > 1024 * 1024
+    http_srv.blob = png
+    port = _port(http_srv)
+    out = run(
+        mmb,
+        'MODE 1\nCLS\nLOAD PNG "http://127.0.0.1:%d/blob"\n'
+        'PRINT "PIX:"; PIXEL(3,3)\n' % port,
+        tmp_path,
+        timeout=120,
+    )
+    assert "?PNG" not in out and "?WEB" not in out, out[-800:]
+    assert _pixel(out) >= 0
+
+
+def test_load_png_from_https_url(mmb, https_srv, tmp_path):
+    srv, _cert = https_srv
+    _tls_available(mmb, srv, tmp_path)
+    srv.blob = _asset("TEST.PNG")
+    port = _port(srv)
+    out = run(
+        mmb,
+        'WEB TLS NOVERIFY\nMODE 1\nCLS\n'
+        'LOAD PNG "https://localhost:%d/blob"\n'
+        'PRINT "PIX:"; PIXEL(0,0)\n' % port,
+        tmp_path,
+    )
+    assert "?PNG" not in out and "?WEB" not in out, out[-800:]
+    assert ((_pixel(out) >> 16) & 255) > 150
 
 
 # ---- HTTPS -----------------------------------------------------------

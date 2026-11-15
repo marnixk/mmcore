@@ -120,26 +120,19 @@ int mmb_img_probe(const char *path, int *w, int *h)
 	return -1;
 }
 
-int mmb_load_jpeg(const char *path, int x, int y)
+int mmb_load_jpeg_buf(const unsigned char *file, unsigned n, int x, int y)
 {
-	unsigned char *file = 0;
-	unsigned n = 0;
 	pjpeg_image_info_t info;
 	jctx ctx;
 	unsigned char status;
 	int mx, my;
 	jpeg_bind_bufs();
-	if (read_file(path, &file, &n) != 0)
-		return -1;
 	ctx.p = file;
 	ctx.n = n;
 	ctx.off = 0;
 	status = pjpeg_decode_init(&info, jpeg_need_bytes, &ctx, 0);
 	if (status)
-	{
-		G.plat->free(file);
 		return -1;
-	}
 	for (my = 0; my < info.m_MCUSPerCol; my++)
 	{
 		for (mx = 0; mx < info.m_MCUSPerRow; mx++)
@@ -147,10 +140,7 @@ int mmb_load_jpeg(const char *path, int x, int y)
 			int i, j, bw, origin_x, origin_y;
 			status = pjpeg_decode_mcu();
 			if (status)
-			{
-				G.plat->free(file);
 				return status == PJPG_NO_MORE_BLOCKS ? 0 : -1;
-			}
 			bw = info.m_MCUWidth / 8;
 			if (bw < 1)
 				bw = 1;
@@ -170,8 +160,19 @@ int mmb_load_jpeg(const char *path, int x, int y)
 				}
 		}
 	}
-	G.plat->free(file);
 	return 0;
+}
+
+int mmb_load_jpeg(const char *path, int x, int y)
+{
+	unsigned char *file = 0;
+	unsigned n = 0;
+	int rc;
+	if (read_file(path, &file, &n) != 0)
+		return -1;
+	rc = mmb_load_jpeg_buf(file, n, x, y);
+	G.plat->free(file);
+	return rc;
 }
 
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb)
@@ -188,11 +189,15 @@ int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_r
 
 void mmb_cmd_load(void)
 {
-	char path[128];
+	const char *path;
 	int x = 0, y = 0, has_trans = 0;
 	unsigned trans_rgb = 0;
 	mmb_val v;
 	int is_jpg = 0, is_png = 0;
+	mmb_arrview hdr;
+	int have_hdr = 0;
+	int is_url;
+
 	if (mmb_match("JPG") || mmb_match("JPEG"))
 		is_jpg = 1;
 	else if (mmb_match("PNG"))
@@ -202,8 +207,7 @@ void mmb_cmd_load(void)
 	v = mmb_expr();
 	if (v.type != T_STR)
 		mmb_syntax();
-	strncpy(path, v.s, sizeof(path) - 1);
-	path[sizeof(path) - 1] = 0;
+	path = v.s ? v.s : "";
 	mmb_skip_sp();
 	if (*G.p == ',')
 	{
@@ -223,27 +227,55 @@ void mmb_cmd_load(void)
 			}
 		}
 	}
+	mmb_skip_sp();
+	if (mmb_match("HEADERS"))
+	{
+		if (!mmb_try_parse_arrview(&hdr))
+			mmb_syntax();
+		if (hdr.moff >= 0 || hdr.v->type != T_STR)
+			mmb_error("?TYPE MISMATCH");
+		have_hdr = 1;
+		mmb_skip_sp();
+	}
+	is_url = mmb_url_is_url(path);
 	if (!is_jpg && !is_png)
 	{
-		char *dot = 0;
-		char *q = path;
-		while (*q)
+		const char *dot = 0;
+		const char *q = path;
+		while (*q && *q != '?' && *q != '#')
 		{
 			if (*q == '.')
 				dot = q;
 			q++;
 		}
-		if (dot && mmb_keyword_eq(dot, ".APP"))
+		if (!is_url && dot && mmb_keyword_eq(dot, ".APP"))
 			mmb_error("?FILE");
 		if (dot && (mmb_keyword_eq(dot, ".JPG") || mmb_keyword_eq(dot, ".JPEG")))
 			is_jpg = 1;
 		else
 			is_png = 1;
 	}
+	if (is_jpg && mmb_gfx_writing_fb())
+		mmb_error("?FRAMEBUFFER");
+	if (is_url)
+	{
+		unsigned char *buf = 0;
+		unsigned n = 0;
+		void *tok = 0;
+		int rc;
+
+		mmb_url_fetch(path, have_hdr ? &hdr : 0, have_hdr, &buf, &n, &tok);
+		if (is_jpg)
+			rc = mmb_load_jpeg_buf(buf, n, x, y);
+		else
+			rc = mmb_png_decode(buf, n, x, y, has_trans, trans_rgb);
+		mmb_url_release(tok);
+		if (rc != 0)
+			mmb_error(is_jpg ? "?JPEG" : "?PNG");
+		return;
+	}
 	if (is_jpg)
 	{
-		if (mmb_gfx_writing_fb())
-			mmb_error("?FRAMEBUFFER");
 		if (mmb_load_jpeg(path, x, y) != 0)
 		{
 			if (mmb_vfs_size(path) >= 0)
