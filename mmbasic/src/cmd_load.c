@@ -44,9 +44,60 @@ static int read_file(const char *path, unsigned char **buf, unsigned *n)
 	if (mmb_vfs_read(path, *buf, (unsigned)sz, &got) != 0)
 	{
 		G.plat->free(*buf);
+		*buf = 0;
 		return -1;
 	}
 	*n = got;
+	return 0;
+}
+
+/* ---- shared loader helpers (#1506) ----------------------------------- */
+
+int mmb_parse_headers_clause(mmb_arrview *hdr)
+{
+	if (!mmb_match("HEADERS"))
+		return 0;
+	if (!mmb_try_parse_arrview(hdr))
+		mmb_syntax();
+	if (hdr->moff >= 0 || hdr->v->type != T_STR)
+		mmb_error("?TYPE MISMATCH");
+	mmb_skip_sp();
+	return 1;
+}
+
+int mmb_read_file_all(const char *path, mmb_arrview *hdr, int have_hdr,
+		      unsigned char **out, unsigned *outn, void **token)
+{
+	unsigned char *buf = 0;
+	unsigned n = 0;
+	int rc;
+
+	if (token)
+		*token = 0;
+	if (mmb_url_is_url(path))
+	{
+		void *tok = 0;
+
+		mmb_url_fetch(path, have_hdr ? hdr : 0, have_hdr, &buf, &n, &tok);
+		if (!buf)
+		{
+			buf = G.plat->alloc(1);
+			if (!buf)
+				mmb_error("?OUT OF MEMORY");
+			buf[0] = 0;
+			tok = buf;
+		}
+		*out = buf;
+		*outn = n;
+		if (token)
+			*token = tok;
+		return 1;
+	}
+	rc = read_file(path, &buf, &n);
+	if (rc != 0)
+		return -1;
+	*out = buf;
+	*outn = n;
 	return 0;
 }
 
