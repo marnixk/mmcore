@@ -1672,6 +1672,18 @@ void mmb_web_cleanup(void);
 int mmb_web_status_get(void);
 mmb_val mmb_web_header_val(const char *name);
 
+/* Shared URL fetch layer for file loaders (#1505). mmb_url_is_url() reports
+ * whether a path is http(s)://. mmb_url_fetch() downloads a URL into a
+ * dynamically grown platform buffer (no fixed size cap, never the string
+ * pool) and returns 1; it returns 0 for a non-URL path. The optional STRING
+ * array `hdr` carries "Name: value" HEADERS entries, exactly like WEB. The
+ * caller releases the buffer with mmb_url_release(). HTTP/network/TLS/timeout
+ * failures raise a catchable BASIC error (non-2xx names the status). */
+int mmb_url_is_url(const char *path);
+int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
+		  unsigned char **out, unsigned *outn, void **token);
+void mmb_url_release(void *token);
+
 /* TLS transport seam. Implemented with OpenSSL when the native build finds
  * it (-DMMB_HAVE_TLS); every other backend (Circle, Windows) returns the
  * "TLS unavailable" stubs so the build stays green and HTTPS reports a clear
@@ -1866,6 +1878,7 @@ int mmb_play_mod(const char *path);
 int mmb_play_xm(const char *path);
 int mmb_play_s3m(const char *path);
 int mmb_load_jpeg(const char *path, int x, int y);
+int mmb_load_jpeg_buf(const unsigned char *file, unsigned n, int x, int y);
 int mmb_load_png(const char *path, int x, int y, int has_trans, unsigned trans_rgb);
 int mmb_img_probe(const char *path, int *w, int *h);
 int mmb_png_decode_rgba(const unsigned char *file, unsigned n,

@@ -3,16 +3,29 @@ kind: command
 
 Load an image onto the current WRITE page.
 
-LOAD [JPG|JPEG|PNG] file$ [, x, y [, colour]]
+LOAD [JPG|JPEG|PNG] file$ [, x, y [, colour]] [HEADERS headers$()]
 
-  file$ - image path
+  file$ - image path, or an http:// or https:// URL
   x, y - top-left destination (default 0, 0)
   colour - key colour treated as transparent; integer 0-31 maps to the IBM palette
+  headers$() - STRING array, one "Name: value" per element
 
 JPG/JPEG uses the JPEG decoder. PNG (and BMP/GIF/IMAGE as a keyword) uses the
 PNG decoder. With no type keyword, .JPG/.JPEG selects JPEG; otherwise PNG.
+
+Web URLs
+
+When file$ starts with http:// or https:// the image is downloaded into memory
+with the same HTTP/TLS code as ~WEB~ and then decoded. The optional HEADERS
+clause has the same syntax as the WEB commands, for authenticated or restricted
+URLs. Downloads grow dynamically with no fixed size cap and the load blocks
+until the transfer completes. ~WEB~ TIMEOUT ms sets the network timeout
+(default 30000). HTTP 4xx/5xx (the error names the status), DNS/TLS failure and
+timeout raise normal BASIC errors, so ~ON ERROR~ can catch them. Builds without
+a TLS stack report that https is unavailable.
 
 Example:
 
     LOAD PNG "tests/TEST.PNG"
     LOAD JPG "tests/TEST.JPG", 0, 0
+    LOAD PNG "https://example.com/a.png", 10, 20 HEADERS h$()

@@ -66,6 +66,12 @@ typedef struct {
 	char *p;
 	unsigned n;
 	unsigned cap;
+	/* 0 = no fixed body cap (the shared URL loader, #1505). WEB bodies
+	 * keep WEB_BODY_MAX so an untrusted server cannot exhaust memory. */
+	unsigned maxn;
+	/* 1 = allocate with the platform allocator instead of the string
+	 * pool. Download bodies must never live in the string pool (#1501). */
+	int plat;
 } wb_t;
 
 static void wb_init(wb_t *b)
@@ -73,15 +79,56 @@ static void wb_init(wb_t *b)
 	b->p = 0;
 	b->n = 0;
 	b->cap = 0;
+	b->maxn = 0;
+	b->plat = 0;
+}
+
+static void wb_init_mode(wb_t *b, unsigned maxn, int plat)
+{
+	wb_init(b);
+	b->maxn = maxn;
+	b->plat = plat;
+}
+
+/* Free and reinitialise, preserving the allocator and body cap (redirects). */
+static void wb_reset(wb_t *b)
+{
+	unsigned maxn = b->maxn;
+	int plat = b->plat;
+
+	wb_init_mode(b, maxn, plat);
 }
 
 static void wb_free(wb_t *b)
 {
 	if (b->p)
-		mmb_str_free(b->p);
+	{
+		if (b->plat)
+			G.plat->free(b->p);
+		else
+			mmb_str_free(b->p);
+	}
 	b->p = 0;
 	b->n = 0;
 	b->cap = 0;
+}
+
+static char *wb_alloc(wb_t *b, unsigned n)
+{
+	return b->plat ? (char *)G.plat->alloc(n) : mmb_str_alloc((int)n);
+}
+
+static void wb_dealloc(wb_t *b, char *p)
+{
+	if (b->plat)
+		G.plat->free(p);
+	else
+		mmb_str_free(p);
+}
+
+static int wb_too_big(wb_t *b)
+{
+	return b->maxn && b->n > b->maxn;
 }
 
 static void wb_reserve(wb_t *b, unsigned extra)
@@ -99,12 +146,14 @@ static void wb_reserve(wb_t *b, unsigned extra)
 			mmb_error("?OUT OF MEMORY");
 		cap *= 2;
 	}
-	np = mmb_str_alloc((int)cap);
+	np = wb_alloc(b, cap);
+	if (!np)
+		mmb_error("?OUT OF MEMORY");
 	if (b->p)
 	{
 		if (b->n)
 			memcpy(np, b->p, b->n);
-		mmb_str_free(b->p);
+		wb_dealloc(b, b->p);
 	}
 	b->p = np;
 	b->cap = cap;
@@ -756,7 +805,7 @@ static int dechunk(const char *p, unsigned n, wb_t *out, int *done)
 			h = hexval(p[j]);
 			if (h < 0)
 				return -1;
-			if (sz > (WEB_BODY_MAX >> 4))
+			if (sz > (0x7fffffffu >> 4))
 				return -1;
 			sz = sz * 16 + (unsigned)h;
 			any = 1;
@@ -793,7 +842,7 @@ static int dechunk(const char *p, unsigned n, wb_t *out, int *done)
 		if (j + sz > n)
 			return 1;
 		wb_put(out, p + j, sz);
-		if (out->n > WEB_BODY_MAX)
+		if (wb_too_big(out))
 			return -1;
 		j += sz;
 		if (j >= n)
@@ -821,8 +870,11 @@ static void read_response(wb_t *body)
 	int chunked, have_len;
 	long clen = 0;
 
-	wb_init(&raw);
-	wb_init(body);
+	/* Keep the body's allocator/cap; the raw gather buffer follows it so a
+	 * download body never touches the string pool (#1501, #1505). */
+	wb_init_mode(&raw, body->maxn ? body->maxn + WEB_HDR_MAX : 0,
+		     body->plat);
+	wb_init_mode(body, body->maxn, body->plat);
 
 	/* headers */
 	while (!have_headers)
@@ -875,7 +927,8 @@ static void read_response(wb_t *body)
 			clen = clen * 10 + (*q - '0');
 			q++;
 			ok = 1;
-			if (clen > (long)WEB_BODY_MAX)
+			if ((body->maxn && clen > (long)body->maxn) ||
+			    clen > 0x7fffffffL)
 			{
 				wb_free(&raw);
 				wb_free(body);
@@ -919,7 +972,7 @@ static void read_response(wb_t *body)
 				wb_free(body);
 				web_fail("?WEB: response timeout");
 			}
-			if (raw.n > WEB_BODY_MAX + WEB_HDR_MAX)
+			if (raw.maxn && raw.n > raw.maxn)
 			{
 				wb_free(&raw);
 				wb_free(body);
@@ -940,7 +993,7 @@ static void read_response(wb_t *body)
 			{
 				wb_put(&raw, tmp, (unsigned)n);
 				have = raw.n - header_end;
-				if (raw.n > WEB_BODY_MAX + WEB_HDR_MAX)
+				if (raw.maxn && raw.n > raw.maxn)
 				{
 					wb_free(&raw);
 					wb_free(body);
@@ -967,7 +1020,7 @@ static void read_response(wb_t *body)
 		int n;
 
 		wb_put(body, raw.p + header_end, raw.n - header_end);
-		if (body->n > WEB_BODY_MAX)
+		if (wb_too_big(body))
 		{
 			wb_free(&raw);
 			wb_free(body);
@@ -979,7 +1032,7 @@ static void read_response(wb_t *body)
 			if (n > 0)
 			{
 				wb_put(body, tmp, (unsigned)n);
-				if (body->n > WEB_BODY_MAX)
+				if (wb_too_big(body))
 				{
 					wb_free(&raw);
 					wb_free(body);
@@ -1052,11 +1105,62 @@ static void http_request(wb_t *body, const char *method0, const web_url *u0,
 			u = nu;
 			redirects++;
 			wb_free(body);
-			wb_init(body);
+			wb_reset(body);
 			continue;
 		}
 		return;
 	}
+}
+
+/* ---- shared URL fetch layer (#1505) ---------------------------------- */
+
+int mmb_url_is_url(const char *path)
+{
+	return path && (!strncmp(path, "http://", 7) ||
+			!strncmp(path, "https://", 8));
+}
+
+/* Fetch an http(s) URL with the same HTTP/TLS code as WEB. The body uses a
+ * dynamically grown platform buffer (never the string pool) with no fixed
+ * size cap, and the caller releases it with mmb_url_release(). A non-URL path
+ * returns 0. Network, TLS, timeout and non-2xx failures raise a catchable
+ * BASIC error; non-2xx includes the status code. */
+int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
+		  unsigned char **out, unsigned *outn, void **token)
+{
+	web_url u;
+	wb_t body;
+	char msg[64];
+
+	if (!mmb_url_is_url(url))
+		return 0;
+	if (url_parse(url, &u) != 0)
+		mmb_error("?WEB: URL must start with http:// or https://");
+	if (have_hdr && (!hdr || hdr->moff >= 0 || hdr->v->type != T_STR))
+		mmb_error("?TYPE MISMATCH");
+
+	wb_init_mode(&body, 0, 1);
+	http_request(&body, "GET", &u, 0, 0, 0, 0,
+		     have_hdr ? hdr : 0, have_hdr);
+	if (s_status < 200 || s_status > 299)
+	{
+		int status = s_status;
+
+		wb_free(&body);
+		sprintf(msg, "?WEB: HTTP %d", status);
+		mmb_error(msg);
+	}
+	*out = (unsigned char *)body.p;
+	*outn = body.n;
+	if (token)
+		*token = body.p;
+	return 1;
+}
+
+void mmb_url_release(void *token)
+{
+	if (token)
+		G.plat->free(token);
 }
 
 /* ---- high-level expression ------------------------------------------ */
@@ -1150,7 +1254,7 @@ static mmb_val web_function(int text_form)
 	if (url_parse(url.s, &u) != 0)
 		mmb_error("?WEB: URL must start with http:// or https://");
 
-	wb_init(&body);
+	wb_init_mode(&body, WEB_BODY_MAX, 0);
 	http_request(&body, method, &u, bodyp, blen, has_payload, payload_json,
 		     have_hdr ? &hdr : 0, have_hdr);
 
