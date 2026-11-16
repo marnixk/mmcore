@@ -304,6 +304,25 @@ def test_term_replay_ctrl_a_forwarded_to_remote(kernel_image):
         con.stop()
 
 
+def _forward_key(replay, seq: bytes, attempts: int = 5) -> bytes:
+    """Send one CSI key sequence until the guest forwards it.
+
+    TERM flushes a partial escape sequence after a 60 ms idle gap
+    (``TM_ESC_IDLE_MS``). QEMU serial scheduling occasionally splits the
+    four bytes across that gap, which forwards the key as literal text, so a
+    single press is not deterministic. Repeating the keypress keeps the
+    assertion about forwarding intact without depending on host timing.
+    """
+    out = _outbound(replay)
+    for _ in range(attempts):
+        replay.send_keys(seq)
+        out = _outbound_until(replay, lambda chunk: seq in chunk, timeout=1.5)
+        if seq in out:
+            break
+        time.sleep(0.1)
+    return out
+
+
 def test_term_replay_page_keys_forwarded_by_default(kernel_image):
     """#1481: with Scroll buffer unchecked, PageUp/PageDown reach the host."""
     con = MMBasicConsole(kernel_image)
@@ -315,12 +334,10 @@ def test_term_replay_page_keys_forwarded_by_default(kernel_image):
         # the ESC byte cannot idle out between UART reads.
         time.sleep(0.8)
         replay.pump_once(recv_tcp=False)
-        replay.send_keys(b"\x1b[5~")
-        out = _outbound_until(replay, lambda chunk: b"\x1b[5~" in chunk)
+        out = _forward_key(replay, b"\x1b[5~")
         assert b"\x1b[5~" in out, out
         time.sleep(0.4)
-        replay.send_keys(b"\x1b[6~")
-        out = _outbound_until(replay, lambda chunk: b"\x1b[6~" in chunk)
+        out = _forward_key(replay, b"\x1b[6~")
         assert b"\x1b[6~" in out, out
         _quit(con)
         assert con.send_line("PRINT 8+8") == "16"
