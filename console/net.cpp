@@ -624,6 +624,18 @@ int mmb_net_tcp_status(void)
 	return 0;
 }
 
+/* Hand the connected socket to another transport (TLS), which then owns it.
+ * The TCP statics are cleared so mmb_net_tcp_close() does not delete it. */
+extern "C" CSocket *mmb_net_tcp_take_socket(void)
+{
+	CSocket *sock = s_sock;
+
+	s_sock = 0;
+	s_rxn = 0;
+	s_rxoff = 0;
+	return sock;
+}
+
 int mmb_net_tcp_open(const char *host, int port)
 {
 	unsigned start;
@@ -1298,11 +1310,11 @@ int mmb_net_srv_ip(char *buf, int bufsize)
 #endif
 
 /*
- * TLS for WEB is not available on the bare-metal Circle build yet: vendoring
- * and wiring a TLS stack is tracked as a follow-up. These stubs keep the WEB
- * command family linkable and make every HTTPS form report the platform
- * limitation instead of failing to build.
+ * Without a vendored TLS stack (TLS=0 build) the WEB command family still
+ * needs these symbols: report the platform limitation instead of failing to
+ * build. With MMB_CIRCLE_TLS they live in console/net_tls.cpp.
  */
+#ifndef MMB_CIRCLE_TLS
 extern "C" {
 
 int mmb_net_tls_available(void) { return 0; }
@@ -1338,3 +1350,4 @@ int mmb_net_tls_peer_closed(void) { return 1; }
 const char *mmb_net_tls_errmsg(void) { return "TLS unavailable"; }
 
 }
+#endif /* !MMB_CIRCLE_TLS */

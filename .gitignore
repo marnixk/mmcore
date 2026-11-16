@@ -62,3 +62,6 @@ mmbasic/src/ramdisk_data.native.stamp
 
 # Interrupt fuzz failure artifacts (#1352)
 tests/artifacts/
+
+# Generated from the vendored CA bundle at build time
+mmbasic/third_party/mbedtls/ca_bundle.c
