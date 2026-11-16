@@ -375,20 +375,25 @@ def test_sixel_insert_and_delete_chars_shift_pixels(kernel_image):
         con.stop()
 
 
-def _reply(replay, query, timeout=3.0):
+def _reply(replay, query, timeout=3.0, attempts=3):
     # Each query is isolated: clear the outbound buffer and wait for a
-    # complete reply (CSI finals end in 'c', 't' or 'S').
-    replay.pending_out = b""
-    time.sleep(0.1)
-    replay._to_guest(query)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        replay.pump_once(recv_tcp=False)
-        data = replay.pending_out
-        if data and data[-1:] in (b"c", b"t", b"S"):
-            return data
-        time.sleep(0.02)
-    return replay.pending_out
+    # complete reply (CSI finals end in 'c', 't' or 'S'). TERM flushes a
+    # partial ESC after 60 ms (TM_ESC_IDLE_MS) and QEMU serial scheduling
+    # occasionally splits the query across that gap, dropping the reply
+    # entirely; repeat the query until one is answered.
+    data = b""
+    for _ in range(attempts):
+        replay.pending_out = b""
+        time.sleep(0.1)
+        replay._to_guest(query)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            replay.pump_once(recv_tcp=False)
+            data = replay.pending_out
+            if data and data[-1:] in (b"c", b"t", b"S"):
+                return data
+            time.sleep(0.02)
+    return data
 
 
 def test_sixel_da_xtwinops_xtsmgraphics(kernel_image):
