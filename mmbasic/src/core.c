@@ -2989,13 +2989,14 @@ void mmb_cmd_end_sub(void)
  * return is no longer capped at the old fixed 64 KB (#1496). */
 static void stage_struct_return(mmb_val *v)
 {
-	int sz;
+	int sz, sid;
 	unsigned char *src;
 
 	if (v->struct_idx < 0 || v->struct_idx >= MMB_MAX_STRUCT_TYPES ||
 	    !G.sdef[v->struct_idx].used)
 		return;
-	sz = G.sdef[v->struct_idx].total;
+	sid = v->struct_idx;
+	sz = G.sdef[sid].total;
 	if (sz <= 0)
 		return;
 	src = v->blob;
@@ -3005,12 +3006,28 @@ static void stage_struct_return(mmb_val *v)
 		if (!nb)
 			mmb_error("?OUT OF MEMORY");
 		if (G.func_ret_blob)
+		{
+			if (G.func_ret_blob_sid >= 0)
+				mmb_struct_free_record(G.func_ret_blob,
+						       G.func_ret_blob_sid);
 			G.plat->free(G.func_ret_blob);
+		}
 		G.func_ret_blob = nb;
 		G.func_ret_blob_cap = sz;
+		G.func_ret_blob_sid = -1;
 	}
 	if (src != G.func_ret_blob)
-		memcpy(G.func_ret_blob, src, (unsigned)sz);
+	{
+		/* Dynamic STRING members must not alias the callee's locals: the
+		 * frame (and its pool blocks) is released on END FUNCTION. Copy
+		 * them into the staging record, replacing the previous return. */
+		if (G.func_ret_blob_sid >= 0)
+			mmb_struct_free_record(G.func_ret_blob,
+					       G.func_ret_blob_sid);
+		memset(G.func_ret_blob, 0, (unsigned)sz);
+		mmb_struct_copy_record(G.func_ret_blob, src, sid, MMB_STR_OWN_POOL);
+		G.func_ret_blob_sid = sid;
+	}
 	v->blob = G.func_ret_blob;
 }
 
@@ -3631,6 +3648,9 @@ void mmb_cmd_new(void)
 	G.prog_ready = 0;
 	G.current_prog[0] = 0;
 	mmb_pkg_unmount();
+	/* The staging record's STRING members are pool blocks; release them while
+	 * the TYPE layout that describes them still exists (#1512). */
+	mmb_func_ret_blob_free();
 	mmb_clear_vars(1);
 	mmb_struct_clear();
 	mmb_clear_consts();
@@ -6310,8 +6330,10 @@ int mmb_try_user_function(mmb_val *out)
 	{
 		int sz = G.sdef[out->struct_idx].total;
 		char *p = mmb_tmp_alloc(sz);
-		memcpy(p, out->blob, (size_t)sz);
-		out->blob = p;
+		memset(p, 0, (size_t)sz);
+		mmb_struct_copy_record((unsigned char *)p, out->blob,
+				       out->struct_idx, MMB_STR_OWN_ARENA);
+		out->blob = (unsigned char *)p;
 	}
 	return 1;
 }
@@ -6547,6 +6569,9 @@ static void run_program(void)
 			mmb_clear_consts();
 		}
 		G.run_preserve_vars = 0;
+		/* Release a pending STRUCT return before mmb_struct_prepare() clears
+		 * the TYPE layouts its STRING members need to be freed (#1512). */
+		mmb_func_ret_blob_free();
 		/* Reset the error landings before anything that can call mmb_error().
 		 * mmb_struct_prepare() parses TYPE layouts and may raise OUT OF
 		 * MEMORY or OVERFLOW; with a stale on_error_pc it would longjmp to
@@ -6937,9 +6962,14 @@ void mmb_init(const mmb_platform *plat)
 void mmb_func_ret_blob_free(void)
 {
 	if (G.func_ret_blob)
+	{
+		if (G.func_ret_blob_sid >= 0)
+			mmb_struct_free_record(G.func_ret_blob, G.func_ret_blob_sid);
 		G.plat->free(G.func_ret_blob);
+	}
 	G.func_ret_blob = 0;
 	G.func_ret_blob_cap = 0;
+	G.func_ret_blob_sid = -1;
 }
 
 void mmb_reset(void)
@@ -6947,6 +6977,9 @@ void mmb_reset(void)
 	int i;
 	mmb_pkg_unmount();
 	mmb_clear_vars(0);
+	/* Release the STRUCT return staging record before the pooled slabs it may
+	 * reference are returned (#1512). */
+	mmb_func_ret_blob_free();
 	/* All pool-owned strings (variables, constants, saved call frames) are
 	 * released above or belong to a context that is about to be discarded,
 	 * so return the pooled slabs too (#989). mmb_strpool_reset had no
@@ -6955,7 +6988,6 @@ void mmb_reset(void)
 	/* The expression arena is per-console now (#1351); return its chunks on
 	 * a reset so a discarded context cannot leak them. */
 	mmb_arena_free();
-	mmb_func_ret_blob_free();
 	mmb_option_reset();
 	mmb_play_stop();
 	mmb_web_cleanup();

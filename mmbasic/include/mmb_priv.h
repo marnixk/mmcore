@@ -78,19 +78,17 @@
 #define MMB_MAX_STRUCT_TYPES    32
 #define MMB_MAX_STRUCT_MEMBERS  16
 #define MMB_MAX_STRUCT_NEST     8
+/* Capacity a STRING member had before #1512; only used to read old
+ * fixed-layout STRUCT binary files. */
 #define MMB_STRUCT_STR_DEFAULT  1024
 #define MMB_STRUCT_STRLEN       4
-
-/* Struct STRING members carry a 32-bit length followed by the characters. */
-#define MMB_STRUCT_STRLEN_PUT(p, n) \
-	do { \
-		(p)[0] = (unsigned char)(n); \
-		(p)[1] = (unsigned char)((n) >> 8); \
-		(p)[2] = (unsigned char)((n) >> 16); \
-		(p)[3] = (unsigned char)((n) >> 24); \
-	} while (0)
-#define MMB_STRUCT_STRLEN_GET(p) \
-	((int)((p)[0] | ((p)[1] << 8) | ((p)[2] << 16) | ((unsigned)(p)[3] << 24)))
+/* A STRING member slot is a pointer plus an ownership tag. Dynamic members
+ * have no inline characters: the record only stores the pointer, so the
+ * characters can grow without touching the record layout (#1512). */
+#define MMB_STRUCT_STR_SLOT     16
+#define MMB_STR_OWN_NONE        0
+#define MMB_STR_OWN_POOL        1 /* mmb_str_alloc() block, freed per slot   */
+#define MMB_STR_OWN_ARENA       2 /* mmb_tmp_alloc() block, arena owns it    */
 
 typedef struct mmb_val {
 	int type;          /* T_NUM, T_INT, T_STR, T_STRUCT */
@@ -104,7 +102,7 @@ typedef struct mmb_val {
 typedef struct mmb_smem {
 	char name[MMB_MAX_NAME];
 	int type;
-	int size;
+	int size;      /* T_STR: maximum length, -1 = unbounded (#1512) */
 	int offset;
 	int dims;
 	int dim[MMB_MAX_DIMS];
@@ -666,9 +664,13 @@ typedef struct mmb {
 	/* Staging copy for a STRUCT FUNCTION return (#1496). The callee's local
 	 * blob is freed when its frame is popped, so the value is copied here
 	 * first. Grown on demand: a TYPE may be far larger than the old fixed
-	 * 64 KB buffer. Freed by mmb_func_ret_blob_free(). */
+	 * 64 KB buffer. Dynamic STRING members keep their pool blocks alive
+	 * here (owned by the staging record), so the TYPE and the record that
+	 * owns those blocks are tracked together. Freed by
+	 * mmb_func_ret_blob_free(). */
 	unsigned char *func_ret_blob;
 	int func_ret_blob_cap;
+	int func_ret_blob_sid; /* -1 = no record stored */
 	/* Program store (#1303): heap-owned arrays that grow on demand. Each
 	 * line is individually strdup'd, so insert/delete move pointers only.
 	 * prog_num is kept sorted; lookups use binary search. */
@@ -1091,6 +1093,17 @@ void mmb_cmd_end_type(void);
 void mmb_cmd_struct(void);
 void mmb_cmd_list_type(void);
 unsigned char *mmb_struct_elem(mmb_var *v, int off);
+/* Dynamic TYPE STRING member helpers (#1512). A slot holds a pointer and an
+ * ownership tag; store frees the previous value and copies (honouring a
+ * maximum), copy/free walk whole records including member arrays and nested
+ * TYPEs. */
+void mmb_struct_str_store(unsigned char *slot, const char *s, int max, int owner,
+			  const char *what);
+const char *mmb_struct_str_get(const unsigned char *slot);
+void mmb_struct_free_record(unsigned char *rec, int sid);
+void mmb_struct_free_array(unsigned char *blob, int sid, int nrec);
+void mmb_struct_copy_record(unsigned char *dst, const unsigned char *src, int sid,
+			    int owner);
 int mmb_try_parse_arrview(mmb_arrview *out);
 double mmb_arrview_get(mmb_arrview a, int i);
 void mmb_arrview_set(mmb_arrview a, int i, double x);

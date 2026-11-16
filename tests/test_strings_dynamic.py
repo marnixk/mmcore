@@ -89,7 +89,8 @@ def test_unbounded_default(console):
     assert console.send_line("RUN") == "5000"
 
 
-def test_struct_string_default_is_1024(console):
+def test_struct_string_default_is_dynamic(console):
+    """#1512: a STRING member without LENGTH has no fixed 1024 cap."""
     _prog(
         console,
         [
@@ -110,11 +111,10 @@ def test_struct_string_default_is_1024(console):
             "END TYPE",
             "DIM t AS T",
             't.a = STRING$(1100, "z")',
-            "PRINT 1",
+            "PRINT LEN(t.a)",
         ],
     )
-    out = console.send_line("RUN")
-    assert "OVERFLOW" in out.upper(), out
+    assert console.send_line("RUN") == "1100"
 
 
 def test_struct_member_length_cap(console):

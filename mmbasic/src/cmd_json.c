@@ -177,40 +177,10 @@ static int mem_esz(const mmb_smem *m)
 	if (m->type == T_INT || m->type == T_NUM)
 		return 8;
 	if (m->type == T_STR)
-		return m->size + MMB_STRUCT_STRLEN;
+		return MMB_STRUCT_STR_SLOT;
 	if (m->type == T_STRUCT && m->size >= 0 && m->size < G.nstruct)
 		return G.sdef[m->size].total;
 	return 0;
-}
-
-static void json_pack_str(unsigned char *p, int max, const char *s)
-{
-	int n = 0;
-
-	if (!s)
-		s = "";
-	while (s[n] && n < max)
-		n++;
-	MMB_STRUCT_STRLEN_PUT(p, n);
-	if (n)
-		memcpy(p + MMB_STRUCT_STRLEN, s, (unsigned)n);
-	if (n < max)
-		memset(p + MMB_STRUCT_STRLEN + n, 0, (unsigned)(max - n));
-}
-
-static void json_unpack_str(const unsigned char *p, int max, char *out, int outsz)
-{
-	int n = MMB_STRUCT_STRLEN_GET(p);
-
-	if (n < 0)
-		n = 0;
-	if (n > max)
-		n = max;
-	if (n > outsz - 1)
-		n = outsz - 1;
-	if (n)
-		memcpy(out, p + MMB_STRUCT_STRLEN, (unsigned)n);
-	out[n] = 0;
 }
 
 static int64_t json_to_int(const cJSON *item)
@@ -223,15 +193,17 @@ static int64_t json_to_int(const cJSON *item)
 }
 
 static int json_fill_value(unsigned char *p, const mmb_smem *m,
-			   const cJSON *item, char *err, size_t errlen);
+			   const cJSON *item, char *err, size_t errlen, int owner);
 static int json_fill_struct(unsigned char *rec, int sid, const cJSON *obj,
-			    char *err, size_t errlen);
+			    char *err, size_t errlen, int owner);
 
 /* Return -1 with err filled in rather than calling mmb_error() directly: the
  * caller still owns the parsed cJSON tree and must cJSON_Delete() it before a
- * longjmp escapes, or every overflowing member leaks the whole response. */
+ * longjmp escapes, or every overflowing member leaks the whole response.
+ * `owner` is where dynamic STRING member bytes come from: ARENA for a
+ * statement temporary (WEB(... AS T)), POOL for a variable record. */
 static int json_fill_value(unsigned char *p, const mmb_smem *m,
-			   const cJSON *item, char *err, size_t errlen)
+			   const cJSON *item, char *err, size_t errlen, int owner)
 {
 	if (!item || cJSON_IsNull(item) || cJSON_IsInvalid(item))
 		return 0;
@@ -266,24 +238,25 @@ static int json_fill_value(unsigned char *p, const mmb_smem *m,
 		if (cJSON_IsString(item) && item->valuestring)
 		{
 			int slen = (int)strlen(item->valuestring);
-			if (slen > m->size)
+			if (m->size >= 0 && slen > m->size)
 			{
 				snprintf(err, errlen,
 					 "?OVERFLOW: %s needs %d, LENGTH %d",
 					 m->name, slen, m->size);
 				return -1;
 			}
-			json_pack_str(p, m->size, item->valuestring);
+			mmb_struct_str_store(p, item->valuestring, m->size, owner,
+					     m->name);
 		}
 		return 0;
 	}
 	if (m->type == T_STRUCT && cJSON_IsObject(item))
-		return json_fill_struct(p, m->size, item, err, errlen);
+		return json_fill_struct(p, m->size, item, err, errlen, owner);
 	return 0;
 }
 
 static int json_fill_struct(unsigned char *rec, int sid, const cJSON *obj,
-			    char *err, size_t errlen)
+			    char *err, size_t errlen, int owner)
 {
 	mmb_sdef *d;
 	int i;
@@ -312,17 +285,20 @@ static int json_fill_struct(unsigned char *rec, int sid, const cJSON *obj,
 			for (j = 0; j < n; j++)
 				if (json_fill_value(rec + m->offset + j * esz, m,
 						    cJSON_GetArrayItem(item, j),
-						    err, errlen) < 0)
+						    err, errlen, owner) < 0)
 					return -1;
 		}
-		else if (json_fill_value(rec + m->offset, m, item, err, errlen) < 0)
+		else if (json_fill_value(rec + m->offset, m, item, err, errlen,
+					 owner) < 0)
 			return -1;
 	}
 	return 0;
 }
 
-/* Shared TYPE/JSON mapping used by JSON_PARSE and WEB(... AS Type). The record
- * must already be zeroed and sized G.sdef[sid].total. */
+/* Shared TYPE/JSON mapping used by WEB(... AS Type). The record must already be
+ * zeroed, sized G.sdef[sid].total, and live in the statement arena: dynamic
+ * STRING members are stored there because the temporary is consumed into a
+ * variable within the same statement. */
 int mmb_json_parse_struct(int sid, const char *js, unsigned char *rec)
 {
 	cJSON *root;
@@ -339,7 +315,8 @@ int mmb_json_parse_struct(int sid, const char *js, unsigned char *rec)
 		cJSON_Delete(root);
 		return -2;
 	}
-	if (json_fill_struct(rec, sid, root, err, sizeof(err)) < 0)
+	if (json_fill_struct(rec, sid, root, err, sizeof(err),
+			     MMB_STR_OWN_ARENA) < 0)
 	{
 		cJSON_Delete(root);
 		mmb_error(err);
@@ -388,7 +365,8 @@ void mmb_cmd_json_parse(void)
 				if (json_fill_struct(mmb_struct_elem(v, i),
 						     v->struct_idx,
 						     cJSON_GetArrayItem(root, i),
-						     err, sizeof(err)) < 0)
+						     err, sizeof(err),
+						     MMB_STR_OWN_POOL) < 0)
 				{
 					cJSON_Delete(root);
 					mmb_error(err);
@@ -396,7 +374,7 @@ void mmb_cmd_json_parse(void)
 		}
 	}
 	else if (json_fill_struct(mmb_struct_elem(v, eoff), v->struct_idx, root,
-				  err, sizeof(err)) < 0)
+				  err, sizeof(err), MMB_STR_OWN_POOL) < 0)
 	{
 		cJSON_Delete(root);
 		mmb_error(err);
@@ -522,11 +500,7 @@ static int emit_value(char *dst, int cap, int n, const unsigned char *p, const m
 		return emit_num(dst, cap, n, x);
 	}
 	if (m->type == T_STR)
-	{
-		char *tmp = mmb_tmp_alloc(m->size + 1);
-		json_unpack_str(p, m->size, tmp, m->size + 1);
-		return emit_quoted(dst, cap, n, tmp);
-	}
+		return emit_quoted(dst, cap, n, mmb_struct_str_get(p));
 	if (m->type == T_STRUCT)
 		return emit_struct(dst, cap, n, p, m->size);
 	return n;
