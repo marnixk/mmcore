@@ -1682,10 +1682,6 @@ def test_wordpad_exit_reopen_with_file_cycles(kernel_image):
         con.stop()
 
 
-def _usb_console(kernel_image):
-    return MMBasicConsole(kernel_image, extra_qemu=["-device", "usb-kbd"])
-
-
 def _seed_long_doc(con, lines: int = 120, path: str = "LONG.MD") -> None:
     """Write a document long enough that the cursor must scroll the pane."""
     for line in (
@@ -1701,59 +1697,14 @@ def _seed_long_doc(con, lines: int = 120, path: str = "LONG.MD") -> None:
     assert con.send_line("NEW") == ""
 
 
-def test_wordpad_scroll_keeps_audio_mixing(kernel_image):
-    """#1160: holding a cursor key scrolls the pane and music keeps playing.
-
-    Mirrors the TERM repaint/audio test (#936).  WORDPAD streams every visible
-    row to the serial console on each redraw, so the hold is drained like a
-    serial reader (a saturated 115200-baud TX ring is what starves the mixer
-    on hardware).  The drained rows prove the view really scrolled, and
-    MIXGAP stays well under the queued cushion.
-    """
-    con = _usb_console(kernel_image)
-    con.start()
-    try:
-        _seed_long_doc(con)
-        # A fast repeat drives many scroll frames in the hold window.
-        assert con.send_line("OPTION USBKEYBOARD REPEAT 100, 30") == ""
-        assert con.send_line('PLAY S3M "tests/TEST.S3M"') == ""
-        assert con.send_line("PRINT PLAYING()") == "1"
-        # MIXGAP is cumulative and load-sensitive, so this baseline only
-        # sanity-checks that the mixer is running at all (#1170).
-        base_gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
-        assert base_gap < 1000, base_gap
-        assert "[WORDPAD]" in _open(con, 'WORDPAD "LONG.MD"', quiet=1.0)
-        con.key_down("down")
-        rows = _plain(con.drain(quiet=0.3, timeout=1.5).decode(errors="replace"))
-        con.key_up("down")
-        time.sleep(0.2)
-        seen = {int(m) for m in re.findall(r"line (\d+)", rows)}
-        # The pane started at line 1; the held key must have scrolled well past
-        # the initial window (~23 text rows).
-        assert seen and max(seen) >= 30, sorted(seen)
-        _quit(con)
-        gap = int(con.send_line('PRINT MM.INFO("MIXGAP")'))
-        underrun = con.send_line('PRINT MM.INFO("UNDERRUN")')
-        playing = con.send_line("PRINT PLAYING()")
-        con.send_line("PLAY STOP")
-        # Measure the gap the scroll *added* over the pre-scroll baseline
-        # rather than an absolute bound: a busy parallel host pushes MIXGAP up
-        # even when the fix works, while a real starvation still blows the
-        # margin (#1170).
-        assert gap < base_gap + 150, (base_gap, gap)
-        assert underrun == "0", underrun
-        assert playing == "1", playing
-    finally:
-        con.stop()
-
-
 def test_wordpad_scroll_path_services_audio():
     """#1160: structural guard for the audio servicing in the scroll path.
 
     The QEMU harness has no real HDMI/PWM audio and blocks the vCPU when the
-    serial reader stalls, so the timing above cannot show the hardware stall;
-    this deterministic check keeps the mixer call from being dropped from the
-    scroll and serial-dump hot paths (mirrors TERM #936).
+    serial reader stalls, so the timing test (tests/test_wordpad_scroll_audio.py)
+    cannot show the hardware stall; this deterministic check keeps the mixer
+    call from being dropped from the scroll and serial-dump hot paths (mirrors
+    TERM #936).
     """
     src = _repo_source(os.path.join("mmbasic", "src", "cmd_wordpad.c"))
     code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
