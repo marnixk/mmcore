@@ -7,6 +7,14 @@ MMBasic layout). PIXEL pos().x, pos().y and MATH SCALE arr().x use the same
 empty-index member view (see ~PIXEL~ / ~MATH~). See ~TYPE~ for DIM AS and
 dots.
 
+STRING members are dynamic: without LENGTH they hold any length that fits in
+memory, and with LENGTH n they hold up to n characters. SAVE writes a
+versioned variable-length format ("MST2") that stores every STRING member in
+full, and LOAD reads it back into the same TYPE definition. A file written by
+a build older than the dynamic-member change (raw fixed-layout records) is
+rejected with ?FILE: incompatible STRUCT layout; re-save it from the program
+that owns the data.
+
 STRUCT COPY src TO dst    or src, dst
 STRUCT COPY src() TO dst()  (whole arrays)
 STRUCT SORT arr().member [, flags]
@@ -22,7 +30,8 @@ STRUCT(OFFSET "T", "m")
 STRUCT(TYPE "T", "m")
 STRUCT(FIND arr().member, value [, start])
 
-  SIZEOF - record size in bytes
+  SIZEOF - fixed record size in bytes (STRING members store a pointer, not
+           their characters)
   TYPE() - returns 1 FLOAT, 2 STRING, 4 INTEGER
   FIND - returns the index or -1
 

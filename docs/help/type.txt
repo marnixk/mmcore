@@ -14,14 +14,22 @@ END TYPE
 
   name - type name
   member - field name
-  LENGTH n - string capacity for STRING members (default 1024); assigning
-             more than n characters raises ?OVERFLOW
-  othertype - nested TYPE name
+  LENGTH n - optional maximum length for a STRING member (default: no limit);
+             assigning more than n characters raises ?OVERFLOW
 
-Members: INTEGER (64-bit), FLOAT, STRING LENGTH n, nested types. INT means
-INTEGER inside TYPE. Access with var.member and arr(i).member. Whole-struct
-assign copies the same type only. A period can appear in a variable name unless
-the left side is a TYPE variable.
+Members: INTEGER (64-bit), FLOAT, STRING, nested types. INT means INTEGER
+inside TYPE. A STRING member without LENGTH grows automatically like a plain
+string variable, with no cap other than available memory (multi-megabyte
+values work). LENGTH n keeps the member dynamic up to a maximum of n
+characters, so programs that rely on ?OVERFLOW keep working. Access with
+var.member and arr(i).member. Whole-struct assign copies the same type only
+(deep copy, including STRING members). A period can appear in a variable name
+unless the left side is a TYPE variable.
+
+A STRING member is stored out of line, so STRUCT(SIZEOF) reports the fixed
+record size (a STRING slot is 16 bytes) and not the characters held in it.
+STRUCT SAVE/LOAD write a versioned variable-length binary format that carries
+STRING members in full; see ~STRUCT~.
 
 Example:
 

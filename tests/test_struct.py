@@ -492,11 +492,14 @@ def test_struct_fields_named_after_colours(console):
 # #1496: a FUNCTION may return a TYPE larger than the old fixed 64 KB staging
 # buffer. BigItem is 3 * (1024 + 4) = 3084 bytes, so BigBag (25 items) is
 # ~77 KB.
+# A STRING member is now a pointer slot (#1512), so the record needs explicit
+# numeric bulk to stay over the old 64 KB staging limit.
 _BIG_TYPE = [
     "TYPE BigItem",
     "a AS STRING LENGTH 1024",
     "b AS STRING LENGTH 1024",
     "c AS STRING LENGTH 1024",
+    "pad(400) AS INTEGER",
     "END TYPE",
     "TYPE BigBag",
     "items(24) AS BigItem",
@@ -580,6 +583,7 @@ def test_struct_sort_and_swap_over_64k(console):
             "a AS STRING LENGTH 1024",
             "b AS STRING LENGTH 1024",
             "c AS STRING LENGTH 1024",
+            "pad(400) AS INTEGER",
             "END TYPE",
             "TYPE BigBag",
             "key AS INTEGER",
@@ -632,3 +636,168 @@ def test_type_size_overflow_raises_error(console):
     out = console.send_line("RUN")
     assert "OVERFLOW" in out.upper(), out
     assert console.send_line("PRINT 1") == "1"
+
+
+# #1512: a STRING member without LENGTH grows like a plain string variable, with
+# no cap other than memory. LENGTH n stays valid as a maximum.
+def test_type_dynamic_member_100k_and_2m(console):
+    _prog(
+        console,
+        [
+            "TYPE T",
+            "a AS STRING",
+            "END TYPE",
+            "DIM t AS T",
+            't.a = STRING$(100000, "a")',
+            "PRINT LEN(t.a)",
+            't.a = STRING$(2000000, "b")',
+            "PRINT LEN(t.a); ASC(t.a)",
+        ],
+    )
+    lines = [ln.strip() for ln in console.send_line("RUN").split("\n") if ln.strip()]
+    assert "100000" in lines, lines
+    assert any("2000000" in ln for ln in lines), lines
+
+
+def test_type_dynamic_member_json_31k(console):
+    _prog(
+        console,
+        [
+            "TYPE News",
+            "title AS STRING",
+            "body AS STRING",
+            "id AS INTEGER",
+            "END TYPE",
+            "DIM n AS News",
+            'j$ = "{""title"":""brief"",""body"":""" + STRING$(31000, "x") + """,""id"":42}"',
+            "JSON_PARSE j$, n",
+            "PRINT LEN(n.body); n.id",
+            "PRINT LEN(JSON_STRINGIFY$(n))",
+        ],
+    )
+    lines = [ln.strip() for ln in console.send_line("RUN").split("\n") if ln.strip()]
+    assert any("31000" in ln for ln in lines), lines
+    assert any(ln.isdigit() and int(ln) > 31000 for ln in lines), lines
+
+
+def test_type_dynamic_length_is_maximum(console):
+    _prog(
+        console,
+        [
+            "TYPE L",
+            "a AS STRING LENGTH 8",
+            "END TYPE",
+            "DIM l AS L",
+            'l.a = "12345678"',
+            "PRINT LEN(l.a)",
+        ],
+    )
+    assert console.send_line("RUN") == "8"
+    _prog(
+        console,
+        [
+            "TYPE L",
+            "a AS STRING LENGTH 8",
+            "END TYPE",
+            "DIM l AS L",
+            'l.a = "123456789"',
+            "PRINT 1",
+        ],
+    )
+    out = console.send_line("RUN")
+    assert "OVERFLOW" in out.upper(), out
+    assert console.send_line("PRINT 1") == "1"
+
+
+def test_type_dynamic_arrays_copy_and_scope(console):
+    _prog(
+        console,
+        [
+            "TYPE Item",
+            "key AS INTEGER",
+            "name AS STRING",
+            "END TYPE",
+            "SUB Grow(n AS INTEGER)",
+            "LOCAL b AS Item, i AS INTEGER",
+            "FOR i = 1 TO n",
+            'b.name = STRING$(40000, "g")',
+            "NEXT i",
+            "PRINT LEN(b.name)",
+            "END SUB",
+            "DIM arr(3) AS Item",
+            'arr(1).name = STRING$(100000, "y")',
+            "arr(1).key = 5",
+            "arr(2) = arr(1)",
+            "arr(1).name = \"changed\"",
+            "PRINT arr(2).key; LEN(arr(2).name); arr(1).name",
+            "FOR k = 1 TO 3",
+            "Grow k",
+            "NEXT k",
+            "FUNCTION Make(n AS INTEGER) AS Item",
+            "LOCAL b AS Item",
+            'b.name = "made" + STR$(n)',
+            "Make = b",
+            "END FUNCTION",
+            "DIM got AS Item",
+            "got = Make(7)",
+            "PRINT got.name",
+            "ERASE",
+            "PRINT 1",
+        ],
+    )
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.split("\n") if ln.strip()]
+    assert any(ln.startswith("5100000") and ln.endswith("changed") for ln in lines), lines
+    assert lines.count("40000") == 3, lines
+    assert "made7" in lines, lines
+
+
+def test_type_dynamic_save_load(console):
+    _prog(
+        console,
+        [
+            "TYPE Rec",
+            "id AS INTEGER",
+            "text AS STRING",
+            "w AS FLOAT",
+            "END TYPE",
+            "DIM a(2) AS Rec",
+            'a(0).text = STRING$(50000, "z")',
+            "a(0).id = 7",
+            "a(0).w = 1.5",
+            'a(1).text = "second"',
+            "a(1).id = 9",
+            "a(1).w = 2.25",
+            'OPEN "R.DAT" FOR OUTPUT AS #1',
+            "STRUCT SAVE #1, a()",
+            "CLOSE #1",
+            "DIM b(2) AS Rec",
+            'OPEN "R.DAT" FOR INPUT AS #1',
+            "STRUCT LOAD #1, b()",
+            "CLOSE #1",
+            "PRINT b(0).id; LEN(b(0).text); b(0).w",
+            "PRINT b(1).id; b(1).text; b(1).w",
+        ],
+    )
+    out = console.send_line("RUN")
+    lines = [ln.strip() for ln in out.split("\n") if ln.strip()]
+    assert any("50000" in ln for ln in lines), lines
+    assert any("second" in ln for ln in lines), lines
+
+
+def test_type_dynamic_list_type_has_no_default_length(console):
+    _prog(
+        console,
+        [
+            "TYPE Dyn",
+            "a AS STRING",
+            "b AS STRING LENGTH 16",
+            "END TYPE",
+            "DIM d AS Dyn",
+        ],
+    )
+    assert console.send_line("RUN") == ""
+    out = console.send_line("LIST TYPE Dyn").upper()
+    lines = [ln.strip() for ln in out.splitlines() if " AS STRING" in ln]
+    assert any(ln.endswith("AS STRING") for ln in lines), out
+    assert any("LENGTH 16" in ln for ln in lines), out

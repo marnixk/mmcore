@@ -22,7 +22,7 @@ static int mem_elem_size(const mmb_smem *m)
 	if (m->type == T_INT || m->type == T_NUM)
 		return 8;
 	if (m->type == T_STR)
-		return m->size + MMB_STRUCT_STRLEN;
+		return MMB_STRUCT_STR_SLOT;
 	if (m->type == T_STRUCT && m->size >= 0 && m->size < G.nstruct)
 		return G.sdef[m->size].total;
 	return 0;
@@ -78,7 +78,7 @@ static int parse_member_type(int *type, int *size)
 	if (mmb_match("STRING"))
 	{
 		*type = T_STR;
-		*size = MMB_STRUCT_STR_DEFAULT;
+		*size = -1; /* no LENGTH: grow dynamically (#1512) */
 		mmb_skip_sp();
 		if (mmb_match("LENGTH"))
 		{
@@ -151,21 +151,16 @@ static int parse_one_member(mmb_sdef *d)
 		count *= (int)n;
 	}
 	off = d->total;
-	if (type == T_INT || type == T_NUM || type == T_STRUCT)
-	{
-		if (off > INT_MAX - 7)
-			mmb_error("?OVERFLOW");
-		off = align8(off);
-	}
+	/* Every member is 8-byte based (STRING members are a pointer slot), so
+	 * keep each member naturally aligned. */
+	if (off > INT_MAX - 7)
+		mmb_error("?OVERFLOW");
+	off = align8(off);
 	esz = 0;
 	if (type == T_INT || type == T_NUM)
 		esz = 8;
 	else if (type == T_STR)
-	{
-		if (size > INT_MAX - MMB_STRUCT_STRLEN)
-			mmb_error("?OVERFLOW");
-		esz = size + MMB_STRUCT_STRLEN;
-	}
+		esz = MMB_STRUCT_STR_SLOT;
 	else if (type == T_STRUCT)
 		esz = G.sdef[size].total;
 	if (esz > 0 && count > INT_MAX / esz)
@@ -452,28 +447,137 @@ int mmb_struct_resolve(mmb_var *v, const char *path, int nidx, const int *idx)
 	return 0;
 }
 
-static void pack_str(unsigned char *p, int max, const char *s)
+static char *str_slot_ptr(const unsigned char *slot)
 {
-	int n = 0;
-	if (!s)
-		s = "";
-	while (s[n] && n < max)
-		n++;
-	MMB_STRUCT_STRLEN_PUT(p, n);
-	if (n)
-		memcpy(p + MMB_STRUCT_STRLEN, s, (unsigned)n);
-	if (n < max)
-		memset(p + MMB_STRUCT_STRLEN + n, 0, (unsigned)(max - n));
+	char *p = 0;
+	memcpy(&p, slot, sizeof(p));
+	return p;
 }
 
-static mmb_val unpack_str(const unsigned char *p, int max)
+static int str_slot_owner(const unsigned char *slot)
 {
-	int n = MMB_STRUCT_STRLEN_GET(p);
-	if (n > max)
-		n = max;
-	if (n < 0)
-		n = 0;
-	return mmb_str_valn((const char *)(p + MMB_STRUCT_STRLEN), n);
+	int k = 0;
+	memcpy(&k, slot + sizeof(char *), sizeof(k));
+	return k;
+}
+
+static void str_slot_set(unsigned char *slot, char *p, int owner)
+{
+	int k = p ? owner : MMB_STR_OWN_NONE;
+	memcpy(slot, &p, sizeof(p));
+	memcpy(slot + sizeof(char *), &k, sizeof(k));
+}
+
+static void str_slot_free(unsigned char *slot)
+{
+	char *p = str_slot_ptr(slot);
+	if (p && str_slot_owner(slot) == MMB_STR_OWN_POOL)
+		mmb_str_free(p);
+	memset(slot, 0, MMB_STRUCT_STR_SLOT);
+}
+
+void mmb_struct_str_store(unsigned char *slot, const char *s, int max, int owner,
+			  const char *what)
+{
+	int len;
+	char *p;
+
+	if (!slot)
+		return;
+	if (!s)
+		s = "";
+	len = (int)strlen(s);
+	if (max >= 0 && len > max)
+	{
+		char msg[160];
+		sprintf(msg, "?OVERFLOW: %s needs %d, LENGTH %d",
+			what && what[0] ? what : "member", len, max);
+		mmb_error(msg);
+	}
+	str_slot_free(slot);
+	if (!len)
+		return;
+	if (owner == MMB_STR_OWN_ARENA)
+	{
+		p = mmb_tmp_alloc(len + 1);
+		memcpy(p, s, (size_t)len + 1);
+		str_slot_set(slot, p, MMB_STR_OWN_ARENA);
+		return;
+	}
+	p = 0;
+	mmb_str_set(&p, s, len, -1, what);
+	str_slot_set(slot, p, MMB_STR_OWN_POOL);
+}
+
+const char *mmb_struct_str_get(const unsigned char *slot)
+{
+	const char *p = slot ? str_slot_ptr(slot) : 0;
+	return p ? p : "";
+}
+
+void mmb_struct_free_record(unsigned char *rec, int sid)
+{
+	const mmb_sdef *d;
+	int i, j, esz;
+
+	if (!rec || sid < 0 || sid >= G.nstruct || !G.sdef[sid].used)
+		return;
+	d = &G.sdef[sid];
+	for (i = 0; i < d->nmem; i++)
+	{
+		const mmb_smem *m = &d->mem[i];
+		esz = mem_elem_size(m);
+		for (j = 0; j < m->count; j++)
+		{
+			unsigned char *p = rec + m->offset + j * esz;
+			if (m->type == T_STR)
+				str_slot_free(p);
+			else if (m->type == T_STRUCT)
+				mmb_struct_free_record(p, m->size);
+		}
+	}
+}
+
+void mmb_struct_free_array(unsigned char *blob, int sid, int nrec)
+{
+	int i;
+	if (!blob || sid < 0 || sid >= G.nstruct || !G.sdef[sid].used)
+		return;
+	for (i = 0; i < nrec; i++)
+		mmb_struct_free_record(blob + (unsigned)i * (unsigned)G.sdef[sid].total, sid);
+}
+
+/* Deep-copy a record (including nested TYPEs and member arrays). Strings are
+ * copied into `owner` storage: POOL for a variable record, ARENA for a
+ * statement temporary. The destination need not be zeroed; any STRING slot it
+ * already holds is released as it is overwritten. */
+void mmb_struct_copy_record(unsigned char *dst, const unsigned char *src, int sid,
+			    int owner)
+{
+	const mmb_sdef *d;
+	int i, j, esz;
+
+	if (!dst || !src || dst == src || sid < 0 || sid >= G.nstruct ||
+	    !G.sdef[sid].used)
+		return;
+	d = &G.sdef[sid];
+	for (i = 0; i < d->nmem; i++)
+	{
+		const mmb_smem *m = &d->mem[i];
+		esz = mem_elem_size(m);
+		for (j = 0; j < m->count; j++)
+		{
+			unsigned char *dp = dst + m->offset + j * esz;
+			const unsigned char *sp = src + m->offset + j * esz;
+			if (m->type == T_INT || m->type == T_NUM)
+				memcpy(dp, sp, 8);
+			else if (m->type == T_STR)
+				mmb_struct_str_store(dp, mmb_struct_str_get(sp), m->size,
+						     owner, m->name);
+			else if (m->type == T_STRUCT)
+				mmb_struct_copy_record(dp, sp, m->size, owner);
+		}
+	}
 }
 
 void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val)
@@ -494,25 +598,16 @@ void mmb_struct_store_member(mmb_var *v, int eoff, mmb_val val)
 	}
 	else if (G.acc_mtype == T_STR)
 	{
-		int slen;
 		if (val.type != T_STR)
 			mmb_error("?TYPE MISMATCH");
-		slen = val.s ? (int)strlen(val.s) : 0;
-		if (slen > G.acc_msize)
-		{
-			char msg[160];
-			sprintf(msg, "?OVERFLOW: member needs %d, LENGTH %d",
-				slen, G.acc_msize);
-			mmb_error(msg);
-		}
-		pack_str(base, G.acc_msize, val.s);
+		mmb_struct_str_store(base, val.s, G.acc_msize, MMB_STR_OWN_POOL, "member");
 	}
 	else if (G.acc_mtype == T_STRUCT)
 	{
 		if (val.type != T_STRUCT || val.struct_idx != G.acc_sid)
 			mmb_error("?TYPE MISMATCH");
 		if (val.blob)
-			memcpy(base, val.blob, (unsigned)G.acc_msize);
+			mmb_struct_copy_record(base, val.blob, G.acc_sid, MMB_STR_OWN_POOL);
 	}
 }
 
@@ -537,7 +632,7 @@ mmb_val mmb_struct_load_member(mmb_var *v, int eoff)
 		return mmb_num_val(x);
 	}
 	if (G.acc_mtype == T_STR)
-		return unpack_str(base, G.acc_msize);
+		return mmb_str_val(mmb_struct_str_get(base));
 	out.type = T_STRUCT;
 	out.struct_idx = G.acc_sid;
 	out.blob = base;
@@ -566,11 +661,10 @@ static mmb_var *parse_struct_var(int *eoff, int want_member)
 
 static void copy_struct(mmb_var *dst, int doff, mmb_var *src, int soff)
 {
-	int sz;
 	if (dst->struct_idx != src->struct_idx)
 		mmb_error("?TYPE MISMATCH");
-	sz = G.sdef[dst->struct_idx].total;
-	memcpy(mmb_struct_elem(dst, doff), mmb_struct_elem(src, soff), (unsigned)sz);
+	mmb_struct_copy_record(mmb_struct_elem(dst, doff), mmb_struct_elem(src, soff),
+			       dst->struct_idx, MMB_STR_OWN_POOL);
 }
 
 static int at_name(void)
@@ -719,9 +813,9 @@ static int cmp_blob(const unsigned char *a, const unsigned char *b, mmb_smem *m,
 	}
 	else if (m->type == T_STR)
 	{
-		int na = a[0], nb = b[0], n, i;
-		const char *sa = (const char *)(a + 1);
-		const char *sb = (const char *)(b + 1);
+		const char *sa = mmb_struct_str_get(a);
+		const char *sb = mmb_struct_str_get(b);
+		int na = (int)strlen(sa), nb = (int)strlen(sb), n, i;
 		if ((flags & 4) && na == 0 && nb != 0)
 			r = 1;
 		else if ((flags & 4) && nb == 0 && na != 0)
@@ -832,10 +926,8 @@ static void cmd_extract(void)
 			d->data.f[i] = x;
 		}
 		else if (m->type == T_STR)
-		{
-			mmb_val s = unpack_str(p, m->size);
-			mmb_str_set(&d->data.s[i], s.s, -1, d->maxlen, d->name);
-		}
+			mmb_str_set(&d->data.s[i], mmb_struct_str_get(p), -1, d->maxlen,
+				    d->name);
 	}
 }
 
@@ -879,7 +971,8 @@ static void cmd_insert(void)
 			memcpy(p, &x, 8);
 		}
 		else if (m->type == T_STR)
-			pack_str(p, m->size, s->data.s[i]);
+			mmb_struct_str_store(p, s->data.s[i], m->size,
+					     MMB_STR_OWN_POOL, m->name);
 	}
 }
 
@@ -910,7 +1003,7 @@ static void print_one(mmb_var *v, int eoff)
 			mmb_print_val(mmb_num_val(x));
 		}
 		else if (m->type == T_STR)
-			mmb_print_val(unpack_str(p, m->size));
+			mmb_print_val(mmb_str_val(mmb_struct_str_get(p)));
 		else
 			mmb_out("[STRUCT]");
 	}
@@ -983,11 +1076,15 @@ static void cmd_clear(void)
 	sz = G.sdef[v->struct_idx].total;
 	if (whole)
 	{
+		mmb_struct_free_array(mmb_struct_elem(v, 0), v->struct_idx, v->size);
 		for (i = 0; i < v->size; i++)
 			memset(mmb_struct_elem(v, i), 0, (unsigned)sz);
 	}
 	else
+	{
+		mmb_struct_free_record(mmb_struct_elem(v, 0), v->struct_idx);
 		memset(mmb_struct_elem(v, 0), 0, (unsigned)sz);
+	}
 }
 
 static void cmd_swap(void)
@@ -1053,9 +1150,192 @@ static int file_write_at(int fn, const void *data, unsigned n)
 	return 0;
 }
 
+/* STRUCT SAVE/LOAD binary format (#1512).
+ *
+ * Dynamic STRING members have no fixed inline width, so a record can no
+ * longer be written as a raw blob. Each saved record is:
+ *
+ *   "MST2"                       4-byte format tag
+ *   member data in declaration order, arrays element by element:
+ *     INTEGER / FLOAT            8 bytes (native, as before)
+ *     STRING                     uint32 length then that many bytes
+ *     nested TYPE                that TYPE's member data, recursively
+ *
+ * The tag lets LOAD reject a file written by the pre-#1512 fixed-layout
+ * build with a clear BASIC error instead of misreading it. */
+static const unsigned char struct_save_magic[4] = { 'M', 'S', 'T', '2' };
+
+static void enc_put32(unsigned char *p, unsigned v)
+{
+	p[0] = (unsigned char)v;
+	p[1] = (unsigned char)(v >> 8);
+	p[2] = (unsigned char)(v >> 16);
+	p[3] = (unsigned char)(v >> 24);
+}
+
+static unsigned enc_get32(const unsigned char *p)
+{
+	return (unsigned)p[0] | ((unsigned)p[1] << 8) | ((unsigned)p[2] << 16) |
+	       ((unsigned)p[3] << 24);
+}
+
+static int enc_body_size(const unsigned char *rec, int sid)
+{
+	const mmb_sdef *d;
+	int i, j, esz, n = 0;
+
+	if (sid < 0 || sid >= G.nstruct || !G.sdef[sid].used)
+		mmb_error("?TYPE MISMATCH");
+	d = &G.sdef[sid];
+	for (i = 0; i < d->nmem; i++)
+	{
+		const mmb_smem *m = &d->mem[i];
+		esz = mem_elem_size(m);
+		for (j = 0; j < m->count; j++)
+		{
+			const unsigned char *p = rec + m->offset + j * esz;
+			if (m->type == T_INT || m->type == T_NUM)
+				n += 8;
+			else if (m->type == T_STR)
+			{
+				int len = (int)strlen(mmb_struct_str_get(p));
+				if (n > INT_MAX - 4 - len)
+					mmb_error("?OVERFLOW");
+				n += 4 + len;
+			}
+			else
+			{
+				int sub = enc_body_size(p, m->size);
+				if (n > INT_MAX - sub)
+					mmb_error("?OVERFLOW");
+				n += sub;
+			}
+			if (n > INT_MAX - 4)
+				mmb_error("?OVERFLOW");
+		}
+	}
+	return n;
+}
+
+static unsigned char *enc_body(unsigned char *p, const unsigned char *rec, int sid)
+{
+	const mmb_sdef *d = &G.sdef[sid];
+	int i, j, esz;
+
+	for (i = 0; i < d->nmem; i++)
+	{
+		const mmb_smem *m = &d->mem[i];
+		esz = mem_elem_size(m);
+		for (j = 0; j < m->count; j++)
+		{
+			const unsigned char *s = rec + m->offset + j * esz;
+			if (m->type == T_INT || m->type == T_NUM)
+			{
+				memcpy(p, s, 8);
+				p += 8;
+			}
+			else if (m->type == T_STR)
+			{
+				const char *str = mmb_struct_str_get(s);
+				unsigned len = (unsigned)strlen(str);
+				enc_put32(p, len);
+				p += 4;
+				if (len)
+					memcpy(p, str, len);
+				p += len;
+			}
+			else
+				p = enc_body(p, s, m->size);
+		}
+	}
+	return p;
+}
+
+static void file_read_exact(int fn, void *buf, unsigned n)
+{
+	unsigned got = 0;
+
+	if (n == 0)
+		return;
+	if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos, buf, n,
+			    &got) != 0 ||
+	    got != n)
+		mmb_error("?FILE");
+	G.files[fn].pos += (int)n;
+}
+
+/* Decode member data; the destination record must already be zeroed. */
+static void dec_body(int fn, unsigned char *rec, int sid)
+{
+	const mmb_sdef *d;
+	int i, j, esz;
+
+	if (sid < 0 || sid >= G.nstruct || !G.sdef[sid].used)
+		mmb_error("?TYPE MISMATCH");
+	d = &G.sdef[sid];
+	for (i = 0; i < d->nmem; i++)
+	{
+		const mmb_smem *m = &d->mem[i];
+		esz = mem_elem_size(m);
+		for (j = 0; j < m->count; j++)
+		{
+			unsigned char *p = rec + m->offset + j * esz;
+			if (m->type == T_INT || m->type == T_NUM)
+				file_read_exact(fn, p, 8);
+			else if (m->type == T_STR)
+			{
+				unsigned char hdr[4];
+				unsigned len;
+				char *tmp;
+				file_read_exact(fn, hdr, 4);
+				len = enc_get32(hdr);
+				if (len > (unsigned)INT_MAX - 1)
+					mmb_error("?FILE");
+				if (m->size >= 0 && len > (unsigned)m->size)
+					mmb_error("?OVERFLOW");
+				tmp = mmb_tmp_alloc((int)len + 1);
+				file_read_exact(fn, tmp, len);
+				tmp[len] = 0;
+				mmb_struct_str_store(p, tmp, m->size, MMB_STR_OWN_POOL,
+						     m->name);
+			}
+			else
+				dec_body(fn, p, m->size);
+		}
+	}
+}
+
+static void struct_save_record(int fn, const unsigned char *rec, int sid)
+{
+	int body = enc_body_size(rec, sid);
+	unsigned char *buf;
+
+	if (body > INT_MAX - 4)
+		mmb_error("?OVERFLOW");
+	buf = (unsigned char *)G.plat->alloc((unsigned)body + 4u);
+	if (!buf)
+		mmb_error("?OUT OF MEMORY");
+	memcpy(buf, struct_save_magic, 4);
+	enc_body(buf + 4, rec, sid);
+	file_write_at(fn, buf, (unsigned)body + 4u);
+	G.plat->free(buf);
+}
+
+static void struct_load_record(int fn, unsigned char *rec, int sid)
+{
+	unsigned char magic[4];
+
+	file_read_exact(fn, magic, 4);
+	if (memcmp(magic, struct_save_magic, 4) != 0)
+		mmb_error("?FILE: incompatible STRUCT layout");
+	mmb_struct_free_record(rec, sid);
+	memset(rec, 0, (unsigned)G.sdef[sid].total);
+	dec_body(fn, rec, sid);
+}
+
 static void cmd_save_load(int save)
 {
-	int fn, whole = 0, one = 0, idxv = 0, i, n, sz;
+	int fn, whole = 0, one = 0, idxv = 0, i, n;
 	mmb_var *v;
 	char name[MMB_MAX_NAME];
 	mmb_skip_sp();
@@ -1096,23 +1376,15 @@ static void cmd_save_load(int save)
 	}
 	if (!v || v->type != T_STRUCT)
 		mmb_error("?TYPE MISMATCH");
-	sz = G.sdef[v->struct_idx].total;
 	if (whole)
 	{
 		n = v->size;
 		for (i = 0; i < n; i++)
 		{
 			if (save)
-				file_write_at(fn, mmb_struct_elem(v, i), (unsigned)sz);
+				struct_save_record(fn, mmb_struct_elem(v, i), v->struct_idx);
 			else
-			{
-				unsigned got = 0;
-				if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
-						    mmb_struct_elem(v, i), (unsigned)sz, &got) != 0 ||
-				    (int)got != sz)
-					mmb_error("?FILE");
-				G.files[fn].pos += sz;
-			}
+				struct_load_record(fn, mmb_struct_elem(v, i), v->struct_idx);
 		}
 		return;
 	}
@@ -1120,16 +1392,9 @@ static void cmd_save_load(int save)
 	if (i < 0 || i >= v->size)
 		mmb_error("?INDEX OUT OF BOUNDS");
 	if (save)
-		file_write_at(fn, mmb_struct_elem(v, i), (unsigned)sz);
+		struct_save_record(fn, mmb_struct_elem(v, i), v->struct_idx);
 	else
-	{
-		unsigned got = 0;
-		if (mmb_vfs_read_at(G.files[fn].path, (unsigned)G.files[fn].pos,
-				    mmb_struct_elem(v, i), (unsigned)sz, &got) != 0 ||
-		    (int)got != sz)
-			mmb_error("?FILE");
-		G.files[fn].pos += sz;
-	}
+		struct_load_record(fn, mmb_struct_elem(v, i), v->struct_idx);
 }
 
 void mmb_cmd_struct(void)
@@ -1202,7 +1467,7 @@ void mmb_cmd_list_type(void)
 			else if (m->type == T_STR)
 			{
 				mmb_out("STRING");
-				if (m->size != MMB_STRUCT_STR_DEFAULT)
+				if (m->size >= 0)
 				{
 					mmb_out(" LENGTH ");
 					mmb_outf(0, m->size);
@@ -1331,9 +1596,9 @@ static int fun_find(mmb_val *out)
 		}
 		else if (m->type == T_STR && want.type == T_STR)
 		{
-			mmb_val s = unpack_str(p, m->size);
-			hit = mmb_keyword_eq(s.s, want.s) ||
-			      (s.s && want.s && strcmp(s.s, want.s) == 0);
+			const char *s = mmb_struct_str_get(p);
+			hit = mmb_keyword_eq(s, want.s) ||
+			      (s && want.s && strcmp(s, want.s) == 0);
 		}
 		if (hit)
 		{

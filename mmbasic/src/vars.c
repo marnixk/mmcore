@@ -580,7 +580,12 @@ void mmb_clear_vars(int keep_options)
 			else if (G.vars[i].type == T_NUM && G.vars[i].data.f)
 				G.plat->free(G.vars[i].data.f);
 			else if (G.vars[i].type == T_STRUCT && G.vars[i].data.blob)
+			{
+				mmb_struct_free_array(G.vars[i].data.blob,
+						      G.vars[i].struct_idx,
+						      G.vars[i].size);
 				G.plat->free(G.vars[i].data.blob);
+			}
 		}
 		memset(&G.vars[i], 0, sizeof(G.vars[i]));
 	}
@@ -1439,6 +1444,7 @@ static void free_var_storage(mmb_var *v)
 	}
 	else if (v->type == T_STRUCT && v->data.blob)
 	{
+		mmb_struct_free_array(v->data.blob, v->struct_idx, v->size);
 		G.plat->free(v->data.blob);
 		v->data.blob = 0;
 	}
@@ -1728,8 +1734,12 @@ void mmb_cmd_redim(void)
 				else if (type == T_NUM)
 					v->data.f[noff] = of[oi_index];
 				else
-					memcpy(v->data.blob + (unsigned)noff * (unsigned)sz,
-					       ob + (unsigned)oi_index * (unsigned)sz, (unsigned)sz);
+					mmb_struct_copy_record(v->data.blob + (unsigned)noff *
+								       (unsigned)sz,
+							       ob + (unsigned)oi_index *
+									(unsigned)sz,
+							       v->struct_idx,
+							       MMB_STR_OWN_POOL);
 			}
 		}
 		if (type == T_STR && os)
@@ -1744,7 +1754,10 @@ void mmb_cmd_redim(void)
 		else if (type == T_NUM && of)
 			G.plat->free(of);
 		else if (type == T_STRUCT && ob)
+		{
+			mmb_struct_free_array(ob, v->struct_idx, old_size);
 			G.plat->free(ob);
+		}
 		if (is_new)
 		{
 			var_bind_gen((int)(v - G.vars));
@@ -1825,11 +1838,10 @@ static void store(mmb_var *v, int off, mmb_val val)
 	}
 	if (v->type == T_STRUCT)
 	{
-		int sz;
 		if (val.type != T_STRUCT || val.struct_idx != v->struct_idx || !val.blob)
 			mmb_error("?TYPE MISMATCH");
-		sz = G.sdef[v->struct_idx].total;
-		memcpy(mmb_struct_elem(v, off), val.blob, (unsigned)sz);
+		mmb_struct_copy_record(mmb_struct_elem(v, off), val.blob,
+				       v->struct_idx, MMB_STR_OWN_POOL);
 		return;
 	}
 	if (v->type == T_STR)
