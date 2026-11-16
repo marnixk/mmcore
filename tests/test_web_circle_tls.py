@@ -34,6 +34,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         body = b"CIRCLE-TLS-OK"
+        self._reply(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        self._reply(b"CIRCLE-POST-OK:" + body)
+
+    def _reply(self, body):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
@@ -118,11 +126,65 @@ def test_circle_https_verified_and_noverify(net_console, https_srv, tmp_path):
     assert "CIRCLE-TLS-OK" not in out, out
 
     # Trusting the server's CA makes the verified request succeed, which also
-    # proves the IP-SAN hostname check accepts 10.0.2.2.
+    # proves the SNI/hostname check accepts the guest's host literal.
     _install_ca(con, cert)
     assert con.send_line('WEB TLS CA "A:/CA.PEM"') == ""
     out = con.send_line('PRINT WEB$(HTTP GET "%s")' % url, timeout=30)
     assert "CIRCLE-TLS-OK" in out, out
+
+    # POST goes through the same TLS transport and request writer.
+    out = con.send_line(
+        'PRINT WEB$(HTTP POST "%s", "hello")' % url, timeout=30
+    )
+    assert "CIRCLE-POST-OK:hello" in out, out
+
+    # Low-level TLS client: WEB OPEN TLS CLIENT + TCP CLIENT REQUEST share the
+    # same seam and receive path as the high-level forms.
+    out = con.send_line("DIM b%(2048)")
+    out += con.send_line(
+        'WEB OPEN TLS CLIENT "%s",%d, 5000' % (HOST, port), timeout=30
+    )
+    assert "?" not in out, out
+    out = con.send_line(
+        'WEB TCP CLIENT REQUEST "GET /text HTTP/1.0" + CHR$(13) + CHR$(10) + '
+        'CHR$(13) + CHR$(10), b%(), 5000',
+        timeout=30,
+    )
+    assert "?" not in out, out
+    out = con.send_line('s$ = ""')
+    out += con.send_line(
+        "IF b%(0) > 0 THEN FOR i = 1 TO b%(0): "
+        "s$ = s$ + CHR$(b%(i)): NEXT i"
+    )
+    out += con.send_line('PRINT "RAW="; s$', timeout=30)
+    assert "CIRCLE-TLS-OK" in out, out
+    assert con.send_line("WEB CLOSE TCP CLIENT") == ""
+
+    # WEB TCP CLIENT WRITE / READ: build the raw request as a byte array.
+    out = con.send_line("DIM w%(128)")
+    out += con.send_line(
+        'q$ = "GET /text HTTP/1.0" + CHR$(13) + CHR$(10) + CHR$(13) + CHR$(10)'
+    )
+    out += con.send_line("w%(0) = LEN(q$)")
+    out += con.send_line(
+        "FOR i = 1 TO w%(0): w%(i) = ASC(MID$(q$, i, 1)): NEXT i"
+    )
+    out += con.send_line(
+        'WEB OPEN TLS CLIENT "%s",%d, 5000' % (HOST, port), timeout=30
+    )
+    assert "?" not in out, out
+    assert con.send_line("WEB TCP CLIENT WRITE w%(), 5000") == ""
+    out = con.send_line('s$ = ""')
+    for _ in range(3):
+        out += con.send_line("WEB TCP CLIENT READ b%(), 5000", timeout=30)
+        out += con.send_line(
+            "IF b%(0) > 0 THEN FOR i = 1 TO b%(0): "
+            "s$ = s$ + CHR$(b%(i)): NEXT i"
+        )
+    assert "?" not in out, out
+    out = con.send_line('PRINT "WRAW="; s$', timeout=30)
+    assert "CIRCLE-TLS-OK" in out, out
+    assert con.send_line("WEB CLOSE TCP CLIENT") == ""
 
     # WEB TLS NOVERIFY is the explicit insecure opt-out.
     assert con.send_line("WEB TLS NOVERIFY") == ""
