@@ -32,6 +32,22 @@ $(SMB2_OBJS): DEFINE += -DMD5Init=mmb_smb2_MD5Init \
 			 -DMD5Update=mmb_smb2_MD5Update \
 			 -DMD5Final=mmb_smb2_MD5Final
 
+# Vendored mbedTLS 2.28 (#1479) gives the bare-metal build HTTPS. The custom
+# config disables every OS dependency; console/net_tls.cpp supplies the socket
+# BIO, hardware entropy and trust store. Set MMB_TLS=0 to build the old
+# "TLS unavailable" stubs instead.
+MMB_TLS    ?= 1
+MBEDTLS    = $(MMB)/third_party/mbedtls
+MBEDTLS_CA_PEM = $(MBEDTLS)/cacert.pem
+MBEDTLS_CA_C   = $(MBEDTLS)/ca_bundle.c
+ifeq ($(MMB_TLS),1)
+DEFINE += -DMMB_CIRCLE_TLS=1 \
+	  -DMBEDTLS_CONFIG_FILE='"mmb_mbedtls_config.h"'
+MBEDTLS_SRCS = $(wildcard $(MBEDTLS)/library/*.c)
+MBEDTLS_OBJS = $(MBEDTLS_SRCS:.c=.o)
+TLS_OBJS     = net_tls.o $(MBEDTLS_OBJS) $(MBEDTLS_CA_C:.c=.o)
+endif
+
 OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_rxbuf.o audio.o \
 	  smb2_sock.o \
 	  $(MMB)/src/netfs_smb2.o \
@@ -120,7 +136,8 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/third_party/hxcmod.o \
 	  $(MMB)/third_party/ibxm.o \
 	  $(MMB)/third_party/upng.o \
-	  $(MMB)/third_party/cJSON.o
+	  $(MMB)/third_party/cJSON.o \
+	  $(TLS_OBJS)
 
 LIBS	= $(CIRCLEHOME)/lib/net/libnet.a \
 	  $(CIRCLEHOME)/lib/sched/libsched.a \
@@ -140,7 +157,8 @@ endif
 
 EXTRAINCLUDE = -I . -I $(MMB)/include -I $(MMB)/third_party \
 	       -I $(SMB2)/include/circle -I $(SMB2)/include \
-	       -I $(SMB2)/include/smb2 -I $(SMB2)/lib
+	       -I $(SMB2)/include/smb2 -I $(SMB2)/lib \
+	       -I $(MBEDTLS)/include -I $(MBEDTLS)
 
 # MMB_HAVE_SMB2 enables the shared Z: backend (netfs_smb2.c) and the OPTION
 # NETWORK DRIVE parser. HAVE_CONFIG_H picks up include/circle/config.h (the
@@ -170,6 +188,7 @@ EXTRACLEAN = $(MMB)/src/*.o $(MMB)/src/*.d \
 	     $(MMB)/src/help_data.c \
 	     $(MMB)/src/ramdisk_data.c $(MMB)/src/ramdisk_data.stamp \
 	     $(MMB)/third_party/*.o $(MMB)/third_party/*.d \
+	     $(MBEDTLS)/ca_bundle.c \
 	     $(SMB2)/lib/*.o $(SMB2)/lib/*.d \
 	     mmb_version.h
 
@@ -180,6 +199,9 @@ mmb_version.h: FORCE
 
 $(MMB)/src/help_data.c: $(MMB)/../scripts/gen_help.py $(HELP_DOCS)
 	python3 $(MMB)/../scripts/gen_help.py $(MMB)/src/help_data.c
+
+$(MMB)/third_party/mbedtls/ca_bundle.c: $(MMB)/../scripts/gen_ca_bundle.py $(MBEDTLS_CA_PEM)
+	python3 $(MMB)/../scripts/gen_ca_bundle.py --src $(MBEDTLS_CA_PEM) --out $@
 
 $(RAMDISK_STAMP): FORCE
 	python3 $(MMB)/../scripts/gen_ramdisk.py --stamp-out $@ --exclude "$(RAMDISK_EXCLUDE)"
