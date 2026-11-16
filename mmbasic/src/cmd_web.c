@@ -1139,7 +1139,7 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 	wb_t body;
 	wb_t key;
 	char msg[64];
-	int have_key = 0;
+	int cache_on = 0;
 	int cached = 0;
 
 	if (!mmb_url_is_url(url))
@@ -1151,14 +1151,17 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 
 	if (G.opt.web_cache)
 	{
+		cache_on = 1;
 		web_cache_key(&key, url, &u, "GET", have_hdr ? hdr : 0,
 			      have_hdr);
-		have_key = 1;
 		cached = web_cache_load(key.p, key.n, out, outn);
+		/* Release the key before the network call. http_request()
+		 * raises through mmb_error()/longjmp on any transport failure,
+		 * which would leak this platform buffer (#1511). */
+		wb_free(&key);
 	}
 	if (cached)
 	{
-		wb_free(&key);
 		if (token)
 			*token = *out;
 		return 1;
@@ -1172,15 +1175,16 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 		int status = s_status;
 
 		wb_free(&body);
-		if (have_key)
-			wb_free(&key);
 		sprintf(msg, "?WEB: HTTP %d", status);
 		mmb_error(msg);
 	}
-	if (have_key)
+	if (cache_on)
+	{
+		web_cache_key(&key, url, &u, "GET", have_hdr ? hdr : 0,
+			      have_hdr);
 		web_cache_store(key.p, key.n, (unsigned char *)body.p, body.n);
-	if (have_key)
 		wb_free(&key);
+	}
 	*out = (unsigned char *)body.p;
 	*outn = body.n;
 	if (token)
@@ -1369,7 +1373,7 @@ static mmb_val web_function(int text_form)
 	web_url u;
 	wb_t body;
 	wb_t key;
-	int have_key = 0;
+	int cache_on = 0;
 	int cached = 0;
 	const unsigned char *src = 0;
 	unsigned srclen = 0;
@@ -1456,10 +1460,14 @@ static mmb_val web_function(int text_form)
 	{
 		unsigned char *cb = 0;
 
+		cache_on = 1;
 		web_cache_key(&key, url.s, &u, method,
 			      have_hdr ? &hdr : 0, have_hdr);
-		have_key = 1;
 		cached = web_cache_load(key.p, key.n, &cb, &srclen);
+		/* Release the key before the network call. http_request()
+		 * raises through mmb_error()/longjmp on any transport failure,
+		 * which would leak this platform buffer (#1511). */
+		wb_free(&key);
 		if (cached)
 			src = cb;
 	}
@@ -1469,12 +1477,16 @@ static mmb_val web_function(int text_form)
 			     payload_json, have_hdr ? &hdr : 0, have_hdr);
 		src = (const unsigned char *)body.p;
 		srclen = body.n;
-		/* Only successful responses are cached. */
-		if (have_key && s_status >= 200 && s_status <= 299)
+		/* Only successful responses are cached. The key is rebuilt here,
+		 * after the network call, so a transport failure cannot leak it. */
+		if (cache_on && s_status >= 200 && s_status <= 299)
+		{
+			web_cache_key(&key, url.s, &u, method,
+				      have_hdr ? &hdr : 0, have_hdr);
 			web_cache_store(key.p, key.n, src, srclen);
+			wb_free(&key);
+		}
 	}
-	if (have_key)
-		wb_free(&key);
 
 	if (text_form)
 	{

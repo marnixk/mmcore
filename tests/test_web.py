@@ -846,6 +846,53 @@ def test_web_cache_typed_get(mmb, http_srv, tmp_path):
     assert len(http_srv.records) == 1
 
 
+def _unused_port():
+    """A port with nothing listening, so a connect is refused immediately."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def test_web_cache_on_network_failure_no_key_leak(mmb, tmp_path):
+    """#1511: a cache-on GET that fails in the network layer must not leak its
+    platform-allocated cache key.  http_request() raises through
+    mmb_error()/longjmp, so the key has to be out of the longjmp window; the
+    native stdio platform allocates with plain malloc/free and exposes no heap
+    accounting to assert on, so this test drives both cache-on callers
+    (WEB$ and the shared mmb_url_fetch() used by LOAD PNG) through repeated
+    connection-refused failures and checks each is caught and the interpreter
+    stays usable."""
+    port = _unused_port()
+    program = "\n".join(
+        [
+            "10 OPTION WEB CACHE ON",
+            "20 WEB TIMEOUT 500",
+            "30 N = 0",
+            "40 ON ERROR GOTO 200",
+            "50 FOR I = 1 TO 10",
+            '60 R$ = WEB$(HTTP GET "http://127.0.0.1:%d/text")' % port,
+            "70 NEXT I",
+            "80 MODE 1",
+            "90 FOR I = 1 TO 10",
+            '100 LOAD PNG "http://127.0.0.1:%d/blob"' % port,
+            "110 NEXT I",
+            '120 PRINT "DONE:"; N',
+            "130 PRINT \"ALIVE:\"; 6*7",
+            "140 END",
+            "200 N = N + 1",
+            '210 IF INSTR(MM.ERRMSG$, "WEB") = 0 THEN PRINT "BADERR:"; MM.ERRMSG$',
+            "220 RESUME NEXT",
+            "RUN",
+        ]
+    )
+    out = run(mmb, program, tmp_path, timeout=60)
+    assert "DONE: 20" in out or "DONE:20" in out, out[-800:]
+    assert "ALIVE: 42" in out or "ALIVE:42" in out, out[-800:]
+    assert "BADERR" not in out, out[-800:]
+
+
 def test_load_png_from_https_url(mmb, https_srv, tmp_path):
     srv, _cert = https_srv
     _tls_available(mmb, srv, tmp_path)
