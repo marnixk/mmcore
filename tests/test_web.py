@@ -893,6 +893,54 @@ def test_web_cache_on_network_failure_no_key_leak(mmb, tmp_path):
     assert "BADERR" not in out, out[-800:]
 
 
+def test_web_header_rejection_no_cache_key_or_request_leak(mmb, tmp_path):
+    """#1514: HEADERS with a bad element must be rejected before web_cache_key()
+    allocates the platform key (cache ON) or http_request() allocates its
+    string-pool request buffer (cache OFF), because build_request() raises
+    through mmb_error()/longjmp.  The native stdio platform uses plain
+    malloc/free and exposes no heap accounting, so this drives both cache modes
+    and both callers (WEB$ and LOAD PNG from mmb_url_fetch) through repeated
+    bad-header failures and checks each is caught and the interpreter stays
+    usable."""
+    port = _unused_port()
+    url = "http://127.0.0.1:%d/text" % port
+    png = "http://127.0.0.1:%d/blob" % port
+    body = [
+        "30 N = 0",
+        "40 ON ERROR GOTO 300",
+        "50 DIM h$(1)",
+        "60 FOR I = 1 TO 5",
+        '70 h$(0) = "BadHeader"',
+        '80 R$ = WEB$(HTTP GET "%s" HEADERS h$())' % url,
+        '90 h$(0) = "X-Bad: a" + CHR$(13)',
+        '100 R$ = WEB$(HTTP GET "%s" HEADERS h$())' % url,
+        '110 h$(0) = "Content-Length: 5"',
+        '120 R$ = WEB$(HTTP GET "%s" HEADERS h$())' % url,
+        "130 NEXT I",
+        "140 MODE 1",
+        "150 FOR I = 1 TO 5",
+        '160 h$(0) = "BadHeader"',
+        '170 LOAD PNG "%s" HEADERS h$()' % png,
+        '180 h$(0) = "X-Bad: a" + CHR$(13)',
+        '190 LOAD PNG "%s" HEADERS h$()' % png,
+        '200 h$(0) = "Content-Length: 5"',
+        '210 LOAD PNG "%s" HEADERS h$()' % png,
+        "220 NEXT I",
+        '230 PRINT "DONE:"; N',
+        '240 PRINT "ALIVE:"; 6*7',
+        "250 END",
+        "300 N = N + 1",
+        '310 IF INSTR(MM.ERRMSG$, "WEB") = 0 THEN PRINT "BADERR:"; MM.ERRMSG$',
+        "320 RESUME NEXT",
+    ]
+    for cache in ("ON", "OFF"):
+        program = "\n".join(["OPTION WEB CACHE " + cache] + body + ["RUN"])
+        out = run(mmb, program, tmp_path, timeout=60)
+        assert "DONE: 30" in out or "DONE:30" in out, (cache, out[-800:])
+        assert "ALIVE: 42" in out or "ALIVE:42" in out, (cache, out[-800:])
+        assert "BADERR" not in out, (cache, out[-800:])
+
+
 def test_load_png_from_https_url(mmb, https_srv, tmp_path):
     srv, _cert = https_srv
     _tls_available(mmb, srv, tmp_path)

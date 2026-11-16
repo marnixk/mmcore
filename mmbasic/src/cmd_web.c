@@ -673,6 +673,35 @@ static int header_element(const char *el, const char **name, int *nlen,
 	return 0;
 }
 
+/* Reject a header array that cannot be turned into a request line. This runs
+ * before callers allocate the cache key or request buffer: build_request()
+ * raises through mmb_error()/longjmp, so a bad header found there would leak
+ * whichever buffer is already live (#1514). */
+static void validate_headers(mmb_arrview *hdr, int have_hdr, int drop_auth)
+{
+	int i;
+
+	if (!have_hdr)
+		return;
+	for (i = 0; i < hdr->count; i++)
+	{
+		const char *el = hdr->v->data.s[i];
+		const char *nm, *vl;
+		int nl, vlen;
+
+		if (!el || !*el)
+			continue;
+		if (strchr(el, '\r') || strchr(el, '\n'))
+			mmb_error("?WEB: CR/LF in header");
+		if (header_element(el, &nm, &nl, &vl, &vlen) != 0)
+			mmb_error("?WEB: bad header");
+		if (drop_auth && nl == 13 && ci_eq_n(nm, "Authorization", 13))
+			continue;
+		if (nl == 14 && ci_eq_n(nm, "Content-Length", 14))
+			mmb_error("?WEB: custom Content-Length not allowed");
+	}
+}
+
 static void build_request(wb_t *req, const web_url *u, const char *method,
 			  const char *body, unsigned blen, int has_body,
 			  int body_json, mmb_arrview *hdr, int have_hdr,
@@ -681,6 +710,7 @@ static void build_request(wb_t *req, const web_url *u, const char *method,
 	int i;
 	int c_host = 0, c_ua = 0, c_accept = 0, c_conn = 0, c_ct = 0;
 
+	validate_headers(hdr, have_hdr, drop_auth);
 	if (have_hdr)
 	{
 		for (i = 0; i < hdr->count; i++)
@@ -691,10 +721,8 @@ static void build_request(wb_t *req, const web_url *u, const char *method,
 
 			if (!el || !*el)
 				continue;
-			if (strchr(el, '\r') || strchr(el, '\n'))
-				mmb_error("?WEB: CR/LF in header");
 			if (header_element(el, &nm, &nl, &vl, &vlen) != 0)
-				mmb_error("?WEB: bad header");
+				continue;
 			if (drop_auth && nl == 13 && ci_eq_n(nm, "Authorization", 13))
 				continue;
 			if (nl == 4 && ci_eq_n(nm, "Host", 4))
@@ -707,8 +735,6 @@ static void build_request(wb_t *req, const web_url *u, const char *method,
 				c_conn = 1;
 			else if (nl == 12 && ci_eq_n(nm, "Content-Type", 12))
 				c_ct = 1;
-			else if (nl == 14 && ci_eq_n(nm, "Content-Length", 14))
-				mmb_error("?WEB: custom Content-Length not allowed");
 		}
 	}
 
@@ -1064,6 +1090,11 @@ static void http_request(wb_t *body, const char *method0, const web_url *u0,
 	strncpy(method, method0, sizeof(method) - 1);
 	method[sizeof(method) - 1] = 0;
 
+	/* Reject bad headers before the request buffer is allocated inside the
+	 * loop: build_request() would otherwise longjmp with wb_t req live
+	 * (#1514). The headers do not change across redirects. */
+	validate_headers(hdr, have_hdr, 0);
+
 	for (;;)
 	{
 		wb_t req;
@@ -1271,6 +1302,9 @@ static unsigned char *web_cache_copy(const unsigned char *p, unsigned n)
 static void web_cache_key(wb_t *k, const char *url, const web_url *u,
 			  const char *method, mmb_arrview *hdr, int have_hdr)
 {
+	/* Validate before allocating the key so a header error cannot longjmp
+	 * with the platform buffer live (#1514). */
+	validate_headers(hdr, have_hdr, 0);
 	wb_init_mode(k, 0, 1);
 	wb_puts(k, url);
 	wb_putc(k, '\n');
