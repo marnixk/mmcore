@@ -48,7 +48,11 @@ def _read(path):
 def test_wordpad_change_selects_only_wordpad_suites():
     sel = rt.select(["mmbasic/src/cmd_wordpad.c"])
     assert not sel.full
-    assert sel.suites == ["tests/test_wordpad.py", "tests/test_wordpad_fonts.py"]
+    assert sel.suites == [
+        "tests/test_wordpad.py",
+        "tests/test_wordpad_fonts.py",
+        "tests/test_wordpad_scroll_audio.py",
+    ]
     assert any("wordpad" in reason and "cmd_wordpad.c" in reason for reason in sel.reasons)
 
 
@@ -148,6 +152,7 @@ def test_selection_unions_and_dedupes():
         [
             "tests/test_wordpad.py",
             "tests/test_wordpad_fonts.py",
+            "tests/test_wordpad_scroll_audio.py",
             "tests/test_juke.py",
         ]
     )
