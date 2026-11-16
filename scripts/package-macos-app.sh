@@ -9,15 +9,19 @@
 # (universal) from the official libsdl.org release and cached under .cache/, so
 # Homebrew SDL2 is not needed.
 #
-# The bundle is portable: SDL2 (the only non-system dependency) is copied into
+# The bundle is portable: SDL2 (the only dynamic dependency) is copied into
 # Contents/Frameworks and the executable's install names are rewritten to load
-# it from `@rpath`.
+# it from `@rpath`. OpenSSL for WEB HTTPS is built as a static library per
+# slice (scripts/build-openssl-macos.sh), so the app has no OpenSSL dylib
+# dependency and both slices get TLS.
 #
 # Environment:
 #   MACOS_ARCHES        architectures to build/lipo (default "arm64 x86_64").
 #                       Set e.g. MACOS_ARCHES=arm64 for a single-slice build.
 #   SDL2_VERSION        official SDL2 release to fetch (default 2.32.6).
 #   SDL2_CACHE          download/extract cache dir (default .cache/sdl2-<ver>).
+#   OPENSSL_VERSION     static OpenSSL release to build (default 3.5.4).
+#   OPENSSL_CACHE       cache dir (default .cache/openssl-<ver>).
 #   SIGN_IDENTITY       codesign identity. Defaults to a "Developer ID
 #                       Application" certificate for Marnix Kok, else any
 #                       "Apple Development" one, else ad-hoc ("-").
@@ -75,6 +79,9 @@ SDL2_VERSION="${SDL2_VERSION:-2.32.6}"
 SDL2_CACHE="${SDL2_CACHE:-${REPO_ROOT}/.cache/sdl2-${SDL2_VERSION}}"
 SDL2_STAGE="${SDL2_CACHE}/libSDL2-2.0.0.dylib"
 SDL2_INCLUDE="${SDL2_CACHE}/include"
+OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.4}"
+OPENSSL_CACHE="${OPENSSL_CACHE:-${REPO_ROOT}/.cache/openssl-${OPENSSL_VERSION}}"
+export OPENSSL_VERSION OPENSSL_CACHE
 
 # "universal" when more than one slice (the default), else the arch name, so
 # the asset name matches what is actually inside the zip.
@@ -146,9 +153,16 @@ ensure_sdl2() {
 	mv -f "${SDL2_STAGE}.tmp" "${SDL2_STAGE}"
 }
 
+# Build (or reuse) the pinned static OpenSSL for every requested slice.
+ensure_openssl() {
+	log "Building static OpenSSL ${OPENSSL_VERSION} (${MACOS_ARCHES})"
+	"${REPO_ROOT}/scripts/build-openssl-macos.sh" ${MACOS_ARCHES}
+}
+
 # Build the SDL slice for each architecture and lipo them into native/mmcore.
 build_universal_binary() {
 	ensure_sdl2
+	ensure_openssl
 	log "Building native SDL binary (${MACOS_ARCHES})"
 	# install_name_tool invalidates SDL2's original signature and Apple
 	# Silicon refuses to load an invalidly-signed dylib; ad-hoc sign the
@@ -157,14 +171,29 @@ build_universal_binary() {
 
 	local sd_cflags="-I${SDL2_INCLUDE}/SDL2 -I${SDL2_INCLUDE} -D_THREAD_SAFE"
 	local sd_libs="${SDL2_STAGE}"
-	local slices=() arch slice
+	local slices=() arch slice ossl tls_cflags tls_libs
 	for arch in ${MACOS_ARCHES}; do
+		ossl="${OPENSSL_CACHE}/${arch}"
+		tls_cflags="-I${ossl}/include"
+		tls_libs="${ossl}/lib/libssl.a ${ossl}/lib/libcrypto.a"
+		[ -f "${ossl}/lib/libssl.a" ] && [ -f "${ossl}/lib/libcrypto.a" ] \
+			|| die "static OpenSSL for ${arch} is missing under ${ossl}"
 		make -C "${REPO_ROOT}/native" sdl \
 			MMB_VERSION="${MMB_VERSION}" \
 			MACOS_ARCH="${arch}" \
+			TLS_CFLAGS="${tls_cflags}" TLS_LIBS="${tls_libs}" \
 			SDL_CFLAGS="${sd_cflags}" SDL_LIBS="${sd_libs}"
 		slice="${REPO_ROOT}/native/mmcore-${arch}"
 		[ -x "${slice}" ] || die "${slice} was not built"
+		# A static OpenSSL must leave no libssl/libcrypto dylib load command;
+		# the string check proves the real backend compiled in, not the stub.
+		case "$(otool -L "${slice}")" in
+		*libssl* | *libcrypto*)
+			die "${slice} links a dynamic OpenSSL; the bundle must be self-contained"
+			;;
+		esac
+		grep -aq "TLS handshake failed" "${slice}" \
+			|| die "${slice} was built without the TLS backend"
 		slices+=("${slice}")
 	done
 

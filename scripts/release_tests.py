@@ -369,6 +369,7 @@ RULES: tuple[Rule, ...] = (
             "scripts/github-release.sh",
             "scripts/package-release.sh",
             "scripts/package-macos-app.sh",
+            "scripts/build-openssl-macos.sh",
             "scripts/package-windows.sh",
             "scripts/sign-windows-exe.sh",
             "scripts/mmcore-notary-env.sh",
@@ -377,6 +378,7 @@ RULES: tuple[Rule, ...] = (
         ),
         (
             "tests/test_macos_release.py",
+            "tests/test_macos_tls.py",
             "tests/test_pizero2_release.py",
             "tests/test_windows_release.py",
             "tests/test_framebuffer_release.py",

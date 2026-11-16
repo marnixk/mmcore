@@ -304,9 +304,30 @@ It compiles each architecture separately (`MACOS_ARCHES`, default
 universal SDL2 from libsdl.org and caches it under `.cache/sdl2-<version>/`
 (Homebrew SDL2 is not required and would only provide the host architecture).
 
-SDL2 is the only non-system dependency; it is copied into
+SDL2 is the only dynamic dependency; it is copied into
 `Contents/Frameworks/` and the executable's install names are rewritten to load
 it from `@rpath`, so the bundle runs on Macs without Homebrew.
+
+WEB `https://` works in both slices: `scripts/build-openssl-macos.sh` builds
+the pinned OpenSSL release (`OPENSSL_VERSION`, default `3.5.4`) as a static
+library for each architecture, cached under `.cache/openssl-<version>/<arch>/`,
+and each slice links its own copy. Nothing OpenSSL-related is added to
+`Contents/Frameworks`, so the app never depends on Homebrew or another Mac's
+OpenSSL. Server certificate and hostname verification stay on by default and
+use the macOS system roots (`/etc/ssl/cert.pem`); `WEB TLS CA` trusts a private
+CA and `WEB TLS NOVERIFY` is the explicit insecure mode.
+
+After packaging, the HTTPS path can be checked without a network:
+
+```bash
+MMCORE_MACOS_APP=dist/mmcore.app \
+  .venv/bin/python -m pytest tests/test_macos_tls.py -q
+```
+
+The test starts a loopback HTTPS server with a throwaway CA, runs the packaged
+binary under each architecture the bundle contains, and verifies a
+`WEB$(HTTP GET "https://...")` request with `WEB TLS CA` (skipping a slice when
+Rosetta is unavailable for it).
 
 The bundle is signed automatically: a keychain `Developer ID Application`
 certificate is preferred, then `Apple Development` (fine on the build Mac), then

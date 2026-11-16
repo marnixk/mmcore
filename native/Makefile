@@ -89,19 +89,25 @@ CFLAGS += -DMMB_PLATFORM_POSIX \
 CFLAGS  += $(ARCHFLAGS)
 LDLIBS  += -lm
 
-# TLS for WEB. OpenSSL is optional: when pkg-config finds it the native build
-# compiles the real backend (native/net_tls.c), else that file supplies stubs
-# and HTTPS reports "TLS unavailable". Universal macOS slices are deliberately
-# built without TLS: Homebrew's OpenSSL is a single-arch dynamic library, so
-# linking it would either break the x86_64 slice or make the packaged app
-# depend on a developer-only install (documented in docs/help/web.txt).
+# TLS for WEB. OpenSSL is optional on a plain native build: when pkg-config
+# finds it the native build compiles the real backend (native/net_tls.c), else
+# that file supplies stubs and HTTPS reports "TLS unavailable".
+#
+# A universal macOS slice cannot use Homebrew's OpenSSL (single-arch dylib),
+# so scripts/build-openssl-macos.sh builds static OpenSSL per slice and
+# scripts/package-macos-app.sh passes TLS_CFLAGS/TLS_LIBS here. Refuse to
+# build a TLS-less slice: silently shipping ?WEB: TLS unavailable is the bug
+# this path exists to prevent (#1480).
 ifneq ($(WIN_BUILD),)
+TLS_CFLAGS :=
 TLS_LIBS :=
 else ifneq ($(MACOS_ARCH),)
-TLS_LIBS :=
+ifeq ($(strip $(TLS_LIBS)),)
+$(error macOS slice $(MACOS_ARCH) needs TLS_CFLAGS/TLS_LIBS; build OpenSSL with scripts/build-openssl-macos.sh and use scripts/package-macos-app.sh)
+endif
 else
-TLS_CFLAGS := $(shell pkg-config --cflags openssl 2>/dev/null)
-TLS_LIBS   := $(shell pkg-config --libs openssl 2>/dev/null)
+TLS_CFLAGS ?= $(shell pkg-config --cflags openssl 2>/dev/null)
+TLS_LIBS   ?= $(shell pkg-config --libs openssl 2>/dev/null)
 endif
 ifneq ($(strip $(TLS_LIBS)),)
 CFLAGS += -DMMB_HAVE_TLS=1 $(TLS_CFLAGS)

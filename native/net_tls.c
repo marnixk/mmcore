@@ -116,6 +116,36 @@ void mmb_net_tls_set_verify(int verify)
 	s_verify = verify != 0;
 }
 
+/*
+ * Load the platform trust anchors. A static/bundled OpenSSL has no guarantee
+ * that its compiled-in OPENSSLDIR exists on the user's Mac, but every macOS
+ * release ships the system root list at /etc/ssl/cert.pem. Loading it in
+ * addition to the defaults keeps public HTTPS working in the packaged app
+ * (a custom CA from WEB TLS CA is still added on top by install_ca()).
+ */
+static void load_default_ca_store(SSL_CTX *ctx)
+{
+	SSL_CTX_set_default_verify_paths(ctx);
+#if defined(__APPLE__)
+	{
+		static const char *const files[] = {
+			"/etc/ssl/cert.pem",
+			"/private/etc/ssl/cert.pem",
+		};
+		size_t i;
+
+		for (i = 0; i < sizeof files / sizeof files[0]; i++)
+		{
+			if (access(files[i], R_OK) == 0)
+			{
+				SSL_CTX_load_verify_locations(ctx, files[i], 0);
+				break;
+			}
+		}
+	}
+#endif
+}
+
 static int install_ca(SSL_CTX *ctx)
 {
 	BIO *bio;
@@ -226,7 +256,7 @@ int mmb_net_tls_open(const char *host, int port, int timeout_ms)
 		return -1;
 	}
 	SSL_CTX_set_min_proto_version(s_ctx, TLS1_2_VERSION);
-	SSL_CTX_set_default_verify_paths(s_ctx);
+	load_default_ca_store(s_ctx);
 	if (install_ca(s_ctx) != 0)
 	{
 		close(fd);
