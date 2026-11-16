@@ -115,3 +115,46 @@ def test_skip_notary_escape_hatch_builds_unnotarized():
     assert 'MMCORE_REQUIRE_NOTARY=0 VERSION="${version}"' in rel
     # Documented in the usage text so it is discoverable.
     assert "MMCORE_SKIP_NOTARY=1" in rel
+
+
+OPENSSL_BUILDER = os.path.join(SCRIPTS, "build-openssl-macos.sh")
+MAKEFILE = os.path.join(REPO, "native", "Makefile")
+WEB_DOC = os.path.join(REPO, "docs", "help", "web.txt")
+
+
+def test_macos_slices_build_static_openssl_per_arch():
+    """#1480: both slices must carry TLS, not just the plain native build."""
+    pkg = open(PACKAGER, encoding="utf-8").read()
+    helper = open(OPENSSL_BUILDER, encoding="utf-8").read()
+    assert os.access(OPENSSL_BUILDER, os.X_OK), OPENSSL_BUILDER
+    _run([BASH, "-n", OPENSSL_BUILDER])
+    # The packager builds per-slice OpenSSL and hands the makefile static libs.
+    assert "build-openssl-macos.sh" in pkg
+    assert "TLS_CFLAGS=" in pkg and "TLS_LIBS=" in pkg
+    assert "libssl.a" in pkg and "libcrypto.a" in pkg
+    # It also rejects a slice that still depends on a dynamic OpenSSL.
+    assert "otool -L" in pkg and "dynamic OpenSSL" in pkg
+    # The helper builds static libraries from the pinned release, per arch.
+    assert "no-shared" in helper and "build_libs" in helper
+    assert "darwin64-arm64-cc" in helper and "darwin64-x86_64-cc" in helper
+    assert "openssldir=/etc/ssl" in helper
+
+
+def test_makefile_no_longer_disables_tls_for_universal_slices():
+    mk = open(MAKEFILE, encoding="utf-8").read()
+    # A MACOS_ARCH build without OpenSSL fails loudly instead of silently
+    # shipping ?WEB: TLS unavailable.
+    assert "macOS slice $(MACOS_ARCH) needs TLS_CFLAGS/TLS_LIBS" in mk
+    assert "TLS_CFLAGS ?=" in mk and "TLS_LIBS   ?=" in mk
+    # The old deliberate no-TLS branch is gone: the MACOS_ARCH arm assigns
+    # nothing (it requires the caller's TLS_LIBS instead).
+    macos = mk.split("else ifneq ($(MACOS_ARCH),)", 1)[1].split("else", 1)[0]
+    assert "TLS_LIBS :=" not in macos
+    assert "TLS_CFLAGS :=" not in macos
+
+
+def test_web_help_drops_universal_bundle_tls_limitation():
+    doc = open(WEB_DOC, encoding="utf-8").read()
+    assert "macOS universal app bundles statically link" in doc
+    assert "built without TLS" not in doc
+    assert "Homebrew's OpenSSL is single-arch" not in doc
