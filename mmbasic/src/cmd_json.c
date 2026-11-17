@@ -143,6 +143,15 @@ static int json_item_text(const cJSON *item, char *out, int outsz)
 	return 0;
 }
 
+/* Parse a JSON document into a cJSON tree using the interpreter allocator
+ * (#1525). The HUB keeps the tree alive while it copies fields, then releases
+ * it with cJSON_Delete(). Returns NULL on malformed input. */
+void *mmb_json_parse_tree(const char *text)
+{
+	json_hooks();
+	return cJSON_Parse(text ? text : "");
+}
+
 mmb_val mmb_json_query(const char *js, const char *path)
 {
 	cJSON *parse;

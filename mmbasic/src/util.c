@@ -9,6 +9,26 @@
 mmb *g_mmb[MMB_MAX_CONSOLES];
 mmb *g_cur;
 
+static const char *s_release_version_override;
+
+void mmb_release_version_set(const char *version)
+{
+	s_release_version_override = version;
+}
+
+const char *mmb_release_version(void)
+{
+#if defined(MMB_PLATFORM_POSIX)
+	const char *env = getenv("MMCORE_RELEASE_VERSION");
+
+	if (env && *env)
+		return env;
+#endif
+	if (s_release_version_override && s_release_version_override[0])
+		return s_release_version_override;
+	return MMB_VERSION;
+}
+
 void mmb_skip_sp(void)
 {
 	while (*G.p == ' ' || *G.p == '\t' || *G.p == '\r')

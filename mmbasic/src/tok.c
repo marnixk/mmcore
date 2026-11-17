@@ -22,7 +22,7 @@ static const char *const kws[] = {
 	"FACTORY_RESET", "FACTORY", "FLOAT", "FIX", "FORWARD", "FILL",
 	"FLASH", "FAST",
 	"GOTO", "GOSUB", "GUI",
-	"HELP", "HEX$", "HEADING", "HDMI", "HDMI0", "HEARTBEAT",
+	"HELP", "HEX$", "HEADING", "HDMI", "HDMI0", "HEARTBEAT", "HUB",
 	"IHELP", "IF", "INC", "INPUT", "INPUT$", "INT", "INTEGER", "IMAGE",
 	"INSTR", "IPCONFIG", "INKEY$", "IS",
 	"JSON_STRINGIFY$", "JSON_PARSE", "JSON$", "JSON", "JUKE",

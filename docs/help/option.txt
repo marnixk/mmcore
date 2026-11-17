@@ -61,6 +61,10 @@ Settings:
     Directories searched for .APP packages (default A:/APPS/). See ~PATH~,
     ~APPS~ and the Ctrl+Space picker. The picker labels a package with its
     stored Title, falling back to the file name without .APP.
+  HUB URL "url$"
+    Base URL of the package hub index (default https://hub.mmcore.dev/). A
+    trailing slash is added when missing. `OPTION HUB URL DEFAULT` restores
+    the default. Point it at a local server to test the hub. See ~HUB~.
   BOOT REPL|LAUNCHER|"app$"
     What to do at power-on (default REPL). See ~BOOT~.
   F1..F12 string$    AUDIO ON|OFF
@@ -154,6 +158,7 @@ Example:
     OPTION TERM CTERM ON
     OPTION PROMPT CWD
     OPTION PATH "A:/APPS/"
+    OPTION HUB URL "https://hub.mmcore.dev/"
     OPTION BOOT REPL
     OPTION AFK PASSWORD "open sesame"
     OPTION LIST

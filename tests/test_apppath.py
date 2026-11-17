@@ -58,6 +58,19 @@ def _build_app(con, root, srcdir, appname, text, title=None, category=None):
     return f"A:/{root}/"
 
 
+def _dismiss(con, times=3):
+    """Close a launcher/picker (and any filter or confirm) after a failure.
+
+    The trailing space absorbs a lone ESC prefix so the next send_line() is
+    not swallowed as an escape sequence; send_line() trims it at the prompt.
+    """
+    for _ in range(times):
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.5, timeout=2.0)
+    con._ser.sendall(b" ")
+    con.drain(quiet=0.3, timeout=1.0)
+
+
 def test_default_path_is_apps_ramdisk(console):
     """#520: the default A:/APPS/ works with a bundled-style package."""
     con = console
@@ -99,26 +112,29 @@ def test_ctrl_space_picker_runs_and_cancels(console):
     assert console.send_line(f'OPTION PATH "{root}"') == ""
     con = console
     con.drain(quiet=0.2, timeout=2.0)
-    con._ser.sendall(b"\x00")  # Ctrl+Space
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace")
-    assert "PICKME" in seen.upper()
-    assert "APPS" in seen.upper()
-    assert "Move" in seen  # #569: hotkey tags render once, not "<Move>>"
-    assert ">>" not in seen
-    # #1524: the picker is label-sorted, so narrow to the package first.
-    con._ser.sendall(b"PICK")
-    con.drain(quiet=0.9, timeout=3.0)
-    con._ser.sendall(b"\r")
-    out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
-    assert "PICKED" in out
-    assert con.send_line("PRINT 3") == "3"
+    try:
+        con._ser.sendall(b"\x00")  # Ctrl+Space
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace")
+        assert "PICKME" in seen.upper()
+        assert "APPS" in seen.upper()
+        assert "Move" in seen  # #569: hotkey tags render once, not "<Move>>"
+        assert ">>" not in seen
+        # #1524: the picker is label-sorted, so narrow to the package first.
+        con._ser.sendall(b"PICK")
+        con.drain(quiet=0.9, timeout=3.0)
+        con._ser.sendall(b"\r")
+        out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
+        assert "PICKED" in out
+        assert con.send_line("PRINT 3") == "3"
 
-    # Esc cancels back to the prompt unchanged.
-    con.drain(quiet=0.2, timeout=1.0)
-    con._ser.sendall(b"\x00")
-    con.drain(quiet=0.9, timeout=3.0)
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+        # Esc cancels back to the prompt unchanged.
+        con.drain(quiet=0.2, timeout=1.0)
+        con._ser.sendall(b"\x00")
+        con.drain(quiet=0.9, timeout=3.0)
+        con._ser.sendall(b"\x1b")
+        con.drain(quiet=0.9, timeout=3.0)
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 4") == "4"
 
 
@@ -128,11 +144,13 @@ def test_apps_command_launcher(console):
     con = console
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace")
-    assert "HOMEGAME" in seen.upper()
-    assert "HOME" in seen.upper()
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "HOMEGAME" in seen
+        assert "HOME" in seen
+        assert "> HUB" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 5") == "5"
 
 
@@ -182,13 +200,22 @@ def test_launcher_shows_package_title(console):
     assert con.send_line(f'OPTION PATH "{root}"') == ""
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "MY GREAT GAME" in seen, seen
-    assert "TITLED" not in seen, seen  # the Title replaces the stem
-    # Enter still runs the same archive; only the label changed.
-    con._ser.sendall(b"\r")
-    out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
-    assert "TITLEOK" in out, out
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "MY GREAT GAME" in seen, seen
+        assert "TITLED" not in seen, seen  # the Title replaces the stem
+        # #1524/#1525: the pinned HUB row is selected first.
+        assert "HUB" in seen, seen
+        assert "> HUB" in seen, seen
+        # Move past HUB, then Enter runs the same archive; only the label
+        # changed.
+        con._ser.sendall(b"\x1b[B")
+        con.drain(quiet=0.5, timeout=2.0)
+        con._ser.sendall(b"\r")
+        out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
+        assert "TITLEOK" in out, out
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 21") == "21"
 
 
@@ -198,10 +225,12 @@ def test_launcher_untitled_package_shows_stem(console):
     assert con.send_line(f'OPTION PATH "{root}"') == ""
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "PLAINAPP" in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "PLAINAPP" in seen, seen
+        assert "> HUB" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 22") == "22"
 
 
@@ -215,12 +244,13 @@ def test_launcher_corrupt_package_falls_back_to_stem(console):
     assert con.send_line('OPTION PATH "A:/BADPK/"') == ""
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "BROKEN" in seen, seen
-    assert "EMPTY" in seen, seen
-    assert "?PACKAGE" not in seen and "?UNPACK" not in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "BROKEN" in seen, seen
+        assert "EMPTY" in seen, seen
+        assert "?PACKAGE" not in seen and "?UNPACK" not in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 23") == "23"
 
 
@@ -232,12 +262,13 @@ def test_launcher_duplicate_titles_keep_distinct_files(console):
     assert con.send_line(f'OPTION PATH "{root}"') == ""
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "SHARED TITLE" in seen, seen
-    visible_stems = [s for s in ("DUPONE", "DUPTWO") if s in seen]
-    assert len(visible_stems) == 1, (visible_stems, seen)
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "SHARED TITLE" in seen, seen
+        visible_stems = [s for s in ("DUPONE", "DUPTWO") if s in seen]
+        assert len(visible_stems) == 1, (visible_stems, seen)
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 24") == "24"
 
 
@@ -250,7 +281,7 @@ def _keys(con, keys, quiet=0.9):
 
 
 def test_apps_launcher_groups_by_category(console):
-    """Fixed category order, non-empty headers, and Left/Right jumps."""
+    """Fixed category order, HUB pinned on top, and Left/Right jumps."""
     con = console
     _build_app(con, "GRPPK", "GAME", "ZETA", "ZETAOK", "Zeta Game", "GAMES")
     _build_app(con, "GRPPK", "TOOL", "ALPHA", "ALPHAOK", "Alpha Tool", "UTILITIES")
@@ -258,40 +289,49 @@ def test_apps_launcher_groups_by_category(console):
     assert con.send_line('OPTION PATH "A:/GRPPK/"') == ""
 
     con.drain(quiet=0.2, timeout=2.0)
-    seen = _keys(con, b"APPS\r")
-    for header in ("GAMES (1)", "UTILITIES (1)", "OTHER (1)", "BUILT-IN (8)"):
-        assert header in seen, (header, seen)
-    assert "> ZETA GAME" in seen, seen
-    positions = [
-        seen.index(h)
-        for h in ("GAMES (1)", "UTILITIES (1)", "OTHER (1)", "BUILT-IN (8)")
-    ]
-    assert positions == sorted(positions), (positions, seen)
+    con._ser.sendall(b"APPS\r")
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        for header in ("GAMES (1)", "UTILITIES (1)", "OTHER (1)", "BUILT-IN (8)"):
+            assert header in seen, (header, seen)
+        # #1525: the pinned HUB header and row come first and are selected.
+        assert "HUB" in seen, seen
+        assert "> HUB" in seen, seen
+        positions = [
+            seen.index(h)
+            for h in ("HUB", "GAMES (1)", "UTILITIES (1)", "OTHER (1)",
+                      "BUILT-IN (8)")
+        ]
+        assert positions == sorted(positions), (positions, seen)
 
-    # Right/Left jump to the first app of the next/previous category.
-    seen = _keys(con, b"\x1b[C")
-    assert "> ALPHA TOOL" in seen, seen
-    seen = _keys(con, b"\x1b[C")
-    assert "> MISC APP" in seen, seen
-    seen = _keys(con, b"\x1b[D")
-    assert "> ALPHA TOOL" in seen, seen
-    # Down/Up skip the header rows.
-    seen = _keys(con, b"\x1b[B")
-    assert "> MISC APP" in seen, seen
-    seen = _keys(con, b"\x1b[A")
-    assert "> ALPHA TOOL" in seen, seen
+        # Right/Left jump to the first app of the next/previous category,
+        # starting from the HUB row and skipping its header.
+        seen = _keys(con, b"\x1b[C")
+        assert "> ZETA GAME" in seen, seen
+        seen = _keys(con, b"\x1b[C")
+        assert "> ALPHA TOOL" in seen, seen
+        seen = _keys(con, b"\x1b[C")
+        assert "> MISC APP" in seen, seen
+        seen = _keys(con, b"\x1b[D")
+        assert "> ALPHA TOOL" in seen, seen
+        # Down/Up skip the header rows.
+        seen = _keys(con, b"\x1b[B")
+        assert "> MISC APP" in seen, seen
+        seen = _keys(con, b"\x1b[A")
+        assert "> ALPHA TOOL" in seen, seen
 
-    # Type-to-filter narrows to the matching app. (Header hiding is covered
-    # deterministically by tests/test_app_list.py; the serial stream is
-    # incremental, so cleared rows are not resent as text.)
-    seen = _keys(con, b"tool")
-    assert "UTILITIES (1)" in seen, seen
-    assert "> ALPHA TOOL" in seen, seen
+        # Type-to-filter narrows to the matching app (and hides HUB). (Header
+        # hiding is covered deterministically by tests/test_app_list.py; the
+        # serial stream is incremental, so cleared rows are not resent.)
+        seen = _keys(con, b"tool")
+        assert "UTILITIES (1)" in seen, seen
+        assert "> ALPHA TOOL" in seen, seen
 
-    seen = _keys(con, b"\x1b")  # first Esc clears the filter
-    assert "GAMES (1)" in seen and "OTHER (1)" in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+        seen = _keys(con, b"\x1b")  # first Esc clears the filter
+        assert "GAMES (1)" in seen and "OTHER (1)" in seen, seen
+        assert "HUB" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 26") == "26"
 
 
@@ -303,25 +343,25 @@ def test_ctrl_space_tab_cycles_categories(console):
     assert con.send_line('OPTION PATH "A:/TABPK/"') == ""
 
     con.drain(quiet=0.2, timeout=2.0)
-    seen = _keys(con, b"\x00")  # Ctrl+Space
-    assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
+    try:
+        seen = _keys(con, b"\x00")  # Ctrl+Space
+        assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
 
-    seen = _keys(con, b"\t")
-    assert "APPS: GAMES" in seen and "GAME A" in seen, seen
-    assert "TOOL A" not in seen, seen
+        seen = _keys(con, b"\t")
+        assert "APPS: GAMES" in seen and "GAME A" in seen, seen
+        assert "TOOL A" not in seen, seen
 
-    seen = _keys(con, b"\t")
-    assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
-    assert "GAME A" not in seen, seen
+        seen = _keys(con, b"\t")
+        assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
+        assert "GAME A" not in seen, seen
 
-    seen = _keys(con, b"\t")
-    assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
+        seen = _keys(con, b"\t")
+        assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
 
-    seen = _keys(con, b"\x1b[Z")  # Shift+Tab from ALL wraps backwards
-    assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
-
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+        seen = _keys(con, b"\x1b[Z")  # Shift+Tab from ALL wraps backwards
+        assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 27") == "27"
 
 
@@ -340,46 +380,46 @@ def test_launcher_filters_as_you_type(console):
     root = _build_app(con, "FILTER", "TWO", "STORY", "FILTEROK", "Story Grove")
     assert con.send_line(f'OPTION PATH "{root}"') == ""
     con.drain(quiet=0.2, timeout=2.0)
-    con._ser.sendall(b"\x00")  # Ctrl+Space picker
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "STORY GROVE" in seen, seen
-    assert "ALPHA APP" in seen, seen
+    try:
+        con._ser.sendall(b"\x00")  # Ctrl+Space picker
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "STORY GROVE" in seen, seen
+        assert "ALPHA APP" in seen, seen
 
-    # Case-insensitive substring: "gro" keeps Story Grove, drops Alpha/the
-    # builtins that do not match.
-    seen = _launcher_type(con, b"gro")
-    assert "STORY GROVE" in seen, seen
-    assert "ALPHA APP" not in seen, seen
-    assert "EDITOR" not in seen, seen
-    assert "FILTER: GRO" in seen, seen
+        # Case-insensitive substring: "gro" keeps Story Grove, drops Alpha/the
+        # builtins that do not match.
+        seen = _launcher_type(con, b"gro")
+        assert "STORY GROVE" in seen, seen
+        assert "ALPHA APP" not in seen, seen
+        assert "EDITOR" not in seen, seen
+        assert "FILTER: GRO" in seen, seen
 
-    # Enter runs the filtered selection.
-    con._ser.sendall(b"\r")
-    out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
-    assert "FILTEROK" in out, out
-    assert con.send_line("PRINT 31") == "31"
+        # Enter runs the filtered selection.
+        con._ser.sendall(b"\r")
+        out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
+        assert "FILTEROK" in out, out
 
-    # Backspace removes characters and widens the list again. Three deletes
-    # take the filter back to empty, restoring the whole list.
-    con.drain(quiet=0.2, timeout=1.0)
-    con._ser.sendall(b"\x00")  # Ctrl+Space picker
-    con.drain(quiet=0.9, timeout=3.0)
-    _launcher_type(con, b"gro")
-    seen = _launcher_type(con, b"\x7f\x7f\x7f")
-    assert "ALPHA APP" in seen, seen
-    assert "EDITOR" in seen, seen
-    assert "CHOOSE AN APP" in seen, seen
+        # Backspace removes characters and widens the list again. Three
+        # deletes take the filter back to empty, restoring the whole list.
+        con.drain(quiet=0.2, timeout=1.0)
+        con._ser.sendall(b"\x00")  # Ctrl+Space picker
+        con.drain(quiet=0.9, timeout=3.0)
+        _launcher_type(con, b"gro")
+        seen = _launcher_type(con, b"\x7f\x7f\x7f")
+        assert "ALPHA APP" in seen, seen
+        assert "EDITOR" in seen, seen
+        assert "CHOOSE AN APP" in seen, seen
 
-    # Esc clears a non-empty filter but leaves the launcher open; a second
-    # Esc closes it.
-    seen = _launcher_type(con, b"GRO")
-    assert "STORY GROVE" in seen, seen
-    assert "ALPHA APP" not in seen, seen
-    seen = _launcher_type(con, b"\x1b")
-    assert "ALPHA APP" in seen, seen
-    assert "EDITOR" in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+        # Esc clears a non-empty filter but leaves the launcher open; a second
+        # Esc closes it.
+        seen = _launcher_type(con, b"GRO")
+        assert "STORY GROVE" in seen, seen
+        assert "ALPHA APP" not in seen, seen
+        seen = _launcher_type(con, b"\x1b")
+        assert "ALPHA APP" in seen, seen
+        assert "EDITOR" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 32") == "32"
 
 
@@ -396,35 +436,43 @@ def test_launcher_del_removes_app(console):
 
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "VICTIM" in seen, seen
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "VICTIM" in seen, seen
+        assert "> HUB" in seen, seen
 
-    # Del asks for confirmation; N keeps the app (a second Del prompts again).
-    con._ser.sendall(b"\x1b[3~")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "REMOVE VICTIM?" in seen, seen
-    con._ser.sendall(b"n")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "REMOVE VICTIM?" not in seen, seen
+        # Move past the pinned HUB row onto the package.
+        con._ser.sendall(b"\x1b[B")
+        con.drain(quiet=0.5, timeout=2.0)
 
-    # Del + Y removes the .APP and rescans.
-    con._ser.sendall(b"\x1b[3~")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "REMOVE VICTIM?" in seen, seen
-    con._ser.sendall(b"y")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "REMOVED VICTIM" in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+        # Del asks for confirmation; N keeps the app (a second Del prompts
+        # again).
+        con._ser.sendall(b"\x1b[3~")
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "REMOVE VICTIM?" in seen, seen
+        con._ser.sendall(b"n")
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "REMOVE VICTIM?" not in seen, seen
+
+        # Del + Y removes the .APP and rescans.
+        con._ser.sendall(b"\x1b[3~")
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "REMOVE VICTIM?" in seen, seen
+        con._ser.sendall(b"y")
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "REMOVED VICTIM" in seen, seen
+    finally:
+        _dismiss(con)
 
     # Reopening rescans the PATH: the entry is gone, built-ins remain.
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    assert "VICTIM" not in seen, seen
-    assert "EDITOR" in seen, seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        assert "VICTIM" not in seen, seen
+        assert "EDITOR" in seen, seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 25") == "25"
 
 
@@ -436,30 +484,34 @@ def test_apps_launcher_lists_builtins_with_labels(console):
     con = console
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
-    labels = (
-        "EDITOR",
-        "FILE MANAGER",
-        "WORD PROCESSOR",
-        "PAINT",
-        "JUKEBOX",
-        "TERMINAL",
-        "HELP",
-        "SETTINGS",
-    )
-    for label in labels:
-        assert label in seen, (label, seen)
-    # #793: exactly this order, Terminal immediately after Jukebox.
-    positions = [seen.index(label) for label in labels]
-    assert positions == sorted(positions), (labels, positions)
-    # Package and Connect are no longer offered, but their commands remain.
-    assert "PACKAGE" not in seen
-    assert "CONNECT" not in seen
-    # The overlay frame, not a full-width HOME/APPS title bar. ``APPS``
-    # opens the boot-style launcher (title HOME); Ctrl+Space uses APPS.
-    assert "HOME" in seen
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+        labels = (
+            "EDITOR",
+            "FILE MANAGER",
+            "WORD PROCESSOR",
+            "PAINT",
+            "JUKEBOX",
+            "TERMINAL",
+            "HELP",
+            "SETTINGS",
+        )
+        for label in labels:
+            assert label in seen, (label, seen)
+        # #793: exactly this order, Terminal immediately after Jukebox.
+        positions = [seen.index(label) for label in labels]
+        assert positions == sorted(positions), (labels, positions)
+        # #1525: the pinned HUB row is above the built-in group and selected.
+        assert "> HUB" in seen, seen
+        assert seen.index("HUB") < seen.index("EDITOR"), seen
+        # Package and Connect are no longer offered, but their commands remain.
+        assert "PACKAGE" not in seen
+        assert "CONNECT" not in seen
+        # The overlay frame, not a full-width HOME/APPS title bar. ``APPS``
+        # opens the boot-style launcher (title HOME); Ctrl+Space uses APPS.
+        assert "HOME" in seen
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 11") == "11"
 
 
@@ -494,28 +546,30 @@ def test_apps_launcher_chrome_matches_settings(console):
 
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    con.drain(quiet=0.9, timeout=3.0)
-    apps = con.screen_pixels([
-        _cell(ax - 1, ay),         # backdrop margin, left of the panel
-        _cell(ax + 2, ay + 1),     # title bar interior
-        _cell(ax + aw // 2, ay),   # top frame
-        _cell(ax + aw - 3, ay + 2),  # body row, right of the intro text
-    ])
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        con.drain(quiet=0.9, timeout=3.0)
+        apps = con.screen_pixels([
+            _cell(ax - 1, ay),         # backdrop margin, left of the panel
+            _cell(ax + 2, ay + 1),     # title bar interior
+            _cell(ax + aw // 2, ay),   # top frame
+            _cell(ax + aw - 3, ay + 2),  # body row, right of the intro text
+        ])
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 12") == "12"
 
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"SETTINGS\r")
-    con.drain(quiet=0.9, timeout=3.0)
-    settings = con.screen_pixels([
-        _cell(2, 2),
-        _cell(sx + 2, sy + 1),
-        _cell(sx + sw // 2, sy),
-        _cell(sx + sw - 3, sy + 2),
-    ])
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        con.drain(quiet=0.9, timeout=3.0)
+        settings = con.screen_pixels([
+            _cell(2, 2),
+            _cell(sx + 2, sy + 1),
+            _cell(sx + sw // 2, sy),
+            _cell(sx + sw - 3, sy + 2),
+        ])
+    finally:
+        _dismiss(con)
     assert con.send_line("PRINT 13") == "13"
 
     for role, a, s in zip(
@@ -540,22 +594,25 @@ def test_apps_launcher_status_header(console):
 
     con = console
     for opener in (b"\x00", b"APPS\r"):  # Ctrl+Space picker, HOME launcher
-        rows = _launcher_rows(con, opener)
-        clock_row = next(
-            i
-            for i, ln in enumerate(rows)
-            if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
-        )
-        assert "[100%]" in rows[clock_row], (opener, rows[clock_row])
-        panel_top = next(
-            i for i, ln in enumerate(rows) if ln.strip().startswith("+")
-        )
-        assert clock_row < panel_top, (opener, clock_row, panel_top, rows[:4])
-        assert (
-            "+" not in rows[clock_row] and "|" not in rows[clock_row]
-        ), (opener, rows[clock_row])
-        con._ser.sendall(b"\x1b")
-        con.drain(quiet=0.9, timeout=3.0)
+        try:
+            rows = _launcher_rows(con, opener)
+            clock_row = next(
+                i
+                for i, ln in enumerate(rows)
+                if re.search(r"\d{2}:\d{2} / \d{1,2} [A-Z][a-z]{2} \d{4}", ln)
+            )
+            assert "[100%]" in rows[clock_row], (opener, rows[clock_row])
+            panel_top = next(
+                i for i, ln in enumerate(rows) if ln.strip().startswith("+")
+            )
+            assert clock_row < panel_top, (opener, clock_row, panel_top, rows[:4])
+            assert (
+                "+" not in rows[clock_row] and "|" not in rows[clock_row]
+            ), (opener, rows[clock_row])
+            if opener == b"APPS\r":
+                assert any("> HUB" in ln.upper() for ln in rows), rows
+        finally:
+            _dismiss(con)
     assert con.send_line("PRINT 7") == "7"
 
 
@@ -565,9 +622,10 @@ def test_apps_launcher_restores_screen_on_close(fresh_console):
     con.send_line('PRINT "OVERLAYMARK"')
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
-    con.drain(quiet=0.9, timeout=3.0)
-    con._ser.sendall(b"\x1b")
-    con.drain(quiet=0.9, timeout=3.0)
+    try:
+        con.drain(quiet=0.9, timeout=3.0)
+    finally:
+        _dismiss(con)
     text = "".join(con.ocr_screen(crop="640x400+0+0").split())
     assert "OVERLAYMARK" in text
     assert con.send_line("PRINT 3") == "3"
@@ -655,7 +713,11 @@ def test_boot_to_launcher_from_sd(kernel_image):
         try:
             log = con.boot_log.decode(errors="replace")
             assert "GAME" in log.upper(), log
+            # #1525: the pinned HUB row is selected first; move onto GAME.
+            assert "HUB" in log.upper(), log
             con.prompt = b"> "
+            con._ser.sendall(b"\x1b[B")
+            con.drain(quiet=0.5, timeout=2.0)
             con._ser.sendall(b"\r")
             out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
             assert "BOOTAPP" in out, out

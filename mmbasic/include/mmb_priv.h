@@ -224,6 +224,7 @@ typedef struct mmb_options {
 	int escape;
 	char search_path[128];
 	char app_path[128];    /* OPTION PATH: .APP dirs, ';' separated (#520) */
+	char hub_url[192];     /* OPTION HUB URL: index base, always ends '/' (#1525) */
 	int boot_mode;         /* OPTION BOOT: 0 REPL, 1 launcher, 2 app (#515) */
 	char boot_app[80];     /* OPTION BOOT "name": app to run at power-on */
 	char fkey[12][65];     /* F1..F12 */
@@ -267,6 +268,9 @@ typedef struct mmb_options {
 
 /* Default OPTION PATH: first-party .APP packages ship on the ramdisk (#520). */
 #define MMB_APP_PATH_DEFAULT "A:/APPS/"
+
+/* Default HUB index base (#1525). OPTION HUB URL keeps a trailing '/'. */
+#define MMB_HUB_DEFAULT_URL "https://hub.mmcore.dev/"
 
 #define MMB_FK_FILE 0
 #define MMB_FK_TCP  1
@@ -1003,6 +1007,13 @@ int mmb_print_try_at(void);
 void mmb_print_track(const char *s, unsigned n);
 void mmb_cmd_locate(void);
 void mmb_outf(const char *fmt_num, int64_t n); /* simple integer out */
+
+/* Release version baked at build time (MMB_VERSION, e.g. v0.312.0-5-gabc).
+ * The HUB compares minver against this. mmb_release_version_set() is a host
+ * test hook (the MMCORE_RELEASE_VERSION environment variable also overrides
+ * it on the native builds); normal code never calls the setter. */
+const char *mmb_release_version(void);
+void mmb_release_version_set(const char *version);
 void mmb_prof_reset(void);
 void mmb_prof_report(void);
 
@@ -1634,6 +1645,11 @@ void mmb_apptui_poll(void);
 void mmb_cmd_apps(void);
 void mmb_boot_start(void);
 
+/* HUB engine (#1525). MMB_HAVE_HUB lets the parallel APPS-launcher work
+ * (#1524) add its HUB entry only once both branches are merged. */
+#define MMB_HAVE_HUB 1
+void mmb_cmd_hub(void);
+
 /* System-wide appearance settings: the SETTINGS theme picker (#509). */
 void mmb_cmd_settings(void);
 int mmb_settings_active(void);
@@ -1702,7 +1718,27 @@ mmb_val mmb_web_header_val(const char *name);
 int mmb_url_is_url(const char *path);
 int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 		  unsigned char **out, unsigned *outn, void **token);
+
+/* Progress hook for the download path. `total` is 0 when unknown (no
+ * Content-Length and no hint). Return non-zero to cancel. */
+typedef int (*mmb_url_progress_fn)(unsigned bytes_done, unsigned bytes_total,
+				   void *ctx);
+
+/* Non-throwing variant used by the HUB engine (#1525). Same transport and
+ * buffer ownership as mmb_url_fetch(), but a failure returns -1 with a message
+ * in `err` instead of raising: `status_out` carries the HTTP status when the
+ * server replied (0 for network/TLS/timeout). Cancelling via `cb` returns -1
+ * with "?CANCELLED". `total_hint` supplies the expected size when the server
+ * omits Content-Length. Returns 1 on success, 0 for a non-URL path. */
+int mmb_url_fetch_ex(const char *url, mmb_arrview *hdr, int have_hdr,
+		     unsigned char **out, unsigned *outn, void **token,
+		     int *status_out, char *err, int errsz,
+		     mmb_url_progress_fn cb, void *ctx, unsigned total_hint);
 void mmb_url_release(void *token);
+
+/* cJSON bridge for C callers (#1525). The returned tree uses the interpreter
+ * allocator and must be released with cJSON_Delete(); NULL on bad JSON. */
+void *mmb_json_parse_tree(const char *text);
 
 /* In-memory URL session cache (#1507). OPTION WEB CACHE ON enables it; the
  * bytes of a successful 2xx GET are keyed by URL plus the exact request
