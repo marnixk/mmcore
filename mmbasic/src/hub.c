@@ -174,6 +174,7 @@ static void hub_app_clear(hub_app *a)
 	HUB_FREE_FIELD(icon);
 	HUB_FREE_FIELD(thumb);
 	HUB_FREE_FIELD(about);
+	HUB_FREE_FIELD(changes);
 	HUB_FREE_FIELD(installed_path);
 	HUB_FREE_FIELD(installed_version);
 #undef HUB_FREE_FIELD
@@ -549,10 +550,11 @@ static int hub_parse_apps(const cJSON *root, char *err, int errsz)
 		a->icon = hub_strdup(hub_json_str(obj, "icon"));
 		a->thumb = hub_strdup(hub_json_str(obj, "thumb"));
 		a->about = hub_strdup(hub_json_str(obj, "about"));
+		a->changes = hub_strdup(hub_json_str(obj, "changes"));
 		if (!a->id || !a->file || !a->title || !a->author ||
 		    !a->category || !a->version || !a->summary || !a->minver ||
 		    !a->sha256 || !a->updated || !a->icon || !a->thumb ||
-		    !a->about)
+		    !a->about || !a->changes)
 		{
 			hub_err_out_of_memory(err, errsz);
 			return -1;

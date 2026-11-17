@@ -264,8 +264,9 @@ def test_cancel_button_stops_install(native_mmcore, hub, tmp_path):
     s.wait_ms(250)
     detail = s.snapshot("detail.ppm")
     s.key("enter")          # start the blocking INSTALL
-    # MODE 9 is 1024x768; the CANCEL button centres at (512, 413).
-    s.move(512, 413)
+    # MODE 9 is 1024x768. The dialog is 62% by 64% and the CANCEL
+    # button sits on its bottom edge; the centre is (512, 598).
+    s.move(512, 598)
     s.down("l")
     s.up("l")
     s.move(0, 0)
@@ -281,3 +282,56 @@ def test_cancel_button_stops_install(native_mmcore, hub, tmp_path):
     assert _tmp_leftovers(apps_dir) == [], _tmp_leftovers(apps_dir)
     assert _same(detail, back), "CANCEL did not return to the detail page"
     assert "?HUB" not in out, out
+
+
+def _orange(ppm):
+    """Pixels in the size-chip / WHAT'S NEW orange, not the gold frame."""
+    d = ppm.data
+    n = 0
+    for i in range(0, len(d), 3):
+        r, g, b = d[i], d[i + 1], d[i + 2]
+        if r > 230 and 130 < g < 190 and b < 80:
+            n += 1
+    return n
+
+
+def test_sparse_metadata_hides_empty_fields(native_mmcore, hub, tmp_path):
+    """Empty version, author, summary and size draw nothing, and WHAT'S NEW
+    appears only when the index carries a changes blurb."""
+    sparse = app_entry("puzzle")
+    sparse.update({
+        "id": "sparse",
+        "title": "Sparse",
+        "author": "",
+        "version": "",
+        "summary": "",
+        "size": 0,
+        "category": "GAMES",
+        "about": "Just the description.",
+        "changes": "",
+        "icon": "",
+        "thumb": "",
+        "shots": [],
+    })
+    rich = app_entry("puzzle", category="GAMES")
+    rich["changes"] = "New rotation. Faster drop."
+    hub.add_index("/index.json", index_doc(apps=[sparse, rich]))
+
+    s, _ = _session(tmp_path, hub, preinstalled=())
+    s.key("enter")
+    s.wait_ms(400)
+    bare = s.snapshot("bare.ppm")
+    s.key("esc")
+    s.wait_ms(200)
+    s.key("down")
+    s.wait_ms(150)
+    s.key("enter")
+    s.wait_ms(400)
+    full = s.snapshot("full.ppm")
+    s.quit()
+    out = s.run()
+
+    assert "?HUB" not in out, out
+    assert not _same(bare, full)
+    assert _orange(bare) < 30, _orange(bare)
+    assert _orange(full) > _orange(bare) + 40

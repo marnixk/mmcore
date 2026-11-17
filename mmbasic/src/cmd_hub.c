@@ -151,6 +151,8 @@ typedef struct hub_tab {
 } hub_tab;
 static hub_tab s_tabs[MMB_APP_CATEGORY_COUNT + 1];
 static int s_ntabs;
+static int s_tab_scale;
+static hub_rect s_modal_x;
 
 /* ---- text ------------------------------------------------------------ */
 
@@ -414,10 +416,13 @@ static int hub_wrap_lines(const char *s, int cols)
 
 /* Draw wrapped text, skipping `skip` lines and stopping at `maxlines`. */
 static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
-			  int skip, int maxlines, unsigned col)
+			  int skip, int maxlines, unsigned col, int scale)
 {
 	const char *q = s;
 	int line = 0, cx = 0;
+
+	if (scale < 1)
+		scale = 1;
 
 	if (!s || !*s)
 		return;
@@ -466,8 +471,9 @@ static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
 				continue;
 			}
 			if (line >= skip && line < skip + maxlines)
-				hub_text_n(x + cx * 8, y + (line - skip) * lineh,
-					   word, (unsigned)take, col, 1);
+				hub_text_n(x + cx * 8 * scale,
+					   y + (line - skip) * lineh,
+					   word, (unsigned)take, col, scale);
 			word += take;
 			wl -= take;
 			cx += take;
@@ -503,109 +509,383 @@ static void hub_vline(int x, int y, int h, unsigned col, int t)
 	mmb_gfx_fill_rect(x, y, t, h, col);
 }
 
+static int hub_has(const char *s)
+{
+	return s && s[0];
+}
+
+static void hub_upper(const char *s, char *out, int n)
+{
+	int i = 0;
+
+	if (!s)
+		s = "";
+	if (n < 1)
+		return;
+	for (; s[i] && i < n - 1; i++)
+	{
+		unsigned char c = (unsigned char)s[i];
+
+		if (c >= 'a' && c <= 'z')
+			c = (unsigned char)(c - 32);
+		out[i] = (char)c;
+	}
+	out[i] = 0;
+}
+
+/* Body copy stays one step behind `p` so 720p matches the mockup's pixel
+ * font instead of a double-size blow-up. */
+static int hub_ui_scale(void)
+{
+	return U.p >= 3 ? 2 : 1;
+}
+
+static unsigned hub_lerp(unsigned a, unsigned b, int t, int n)
+{
+	int ar, ag, ab, br, bg, bb;
+
+	if (n < 1)
+		n = 1;
+	if (t < 0)
+		t = 0;
+	if (t > n)
+		t = n;
+	ar = (int)((a >> 16) & 255);
+	ag = (int)((a >> 8) & 255);
+	ab = (int)(a & 255);
+	br = (int)((b >> 16) & 255);
+	bg = (int)((b >> 8) & 255);
+	bb = (int)(b & 255);
+	return (unsigned)((ar + (br - ar) * t / n) << 16) |
+	       (unsigned)((ag + (bg - ag) * t / n) << 8) |
+	       (unsigned)(ab + (bb - ab) * t / n);
+}
+
+/* Chunkier display type: the CP437 bitmap, a vertical gradient and a slight
+ * italic lean. Used for the detail title. */
+static void hub_grad_text(int x, int y, const char *s, unsigned top,
+			  unsigned bot, int scale, int slant, unsigned shade)
+{
+	const char *q;
+	int pass, passes;
+
+	if (!s || scale < 1)
+		return;
+	passes = shade ? 2 : 1;
+	for (pass = 0; pass < passes; pass++)
+	{
+		int cx = x;
+
+		for (q = s; *q; q++)
+		{
+			unsigned char ch = (unsigned char)*q;
+			int row, colbit;
+			int outline = scale >= 3 ? 2 : 1;
+
+			if (ch == '\n' || ch == '\r')
+				continue;
+			for (row = 0; row < 16; row++)
+			{
+				unsigned char bits = mmb_cp437_8x16[ch * 16u + row];
+				unsigned col = hub_lerp(top, bot, row, 15);
+				int lean = slant ? (15 - row) * scale / 5 : 0;
+				int sy, sx;
+
+				for (colbit = 0; colbit < 8; colbit++)
+				{
+					int px, py;
+
+					if (!(bits & (unsigned char)(0x80u >> colbit)))
+						continue;
+					for (sy = 0; sy < scale; sy++)
+					{
+						for (sx = 0; sx < scale; sx++)
+						{
+							px = cx + colbit * scale + sx + lean;
+							py = y + row * scale + sy;
+							if (pass == 0 && shade)
+							{
+								int oy, ox;
+
+								for (oy = -outline; oy <= outline; oy++)
+									for (ox = -outline; ox <= outline; ox++)
+										if (ox || oy)
+											mmb_gfx_plot(px + ox, py + oy, shade);
+							}
+							else
+								mmb_gfx_plot(px, py, col);
+						}
+					}
+				}
+			}
+			cx += 8 * scale;
+		}
+	}
+}
+
 static void hub_bevel(hub_rect r, unsigned fill)
 {
-	int t = U.p;
+	int t = U.p < 2 ? 1 : U.p;
 
 	hub_fill(r, fill);
 	hub_hline(r.x, r.y, r.w, HUB_BORDER_L, t);
 	hub_vline(r.x, r.y, r.h, HUB_BORDER_L, t);
 	hub_hline(r.x, r.y + r.h - t, r.w, HUB_BORDER_D, t);
 	hub_vline(r.x + r.w - t, r.y, r.h, HUB_BORDER_D, t);
-	mmb_gfx_box(r.x, r.y, r.w, r.h, HUB_BG2, t, -1);
 }
 
 static void hub_dither_bg(void)
 {
-	int x, y, step = 6 * U.p;
+	int x, y, step = 4 * U.p;
 
-	mmb_gfx_fill_rect(0, 0, U.w, U.h, HUB_BG);
+	if (step < 3)
+		step = 3;
+	mmb_gfx_fill_rect(0, 0, U.w, U.h, 0x07091A);
 	for (y = 0; y < U.h; y += step)
-		for (x = (y / step % 2) * step; x < U.w; x += step * 2)
-			mmb_gfx_fill_rect(x, y, U.p, U.p, HUB_BG2);
+		for (x = 0; x < U.w; x += step)
+			if ((((x + y) / step) & 3) == 0)
+				mmb_gfx_plot(x, y, 0x14182E);
 }
 
-static void hub_glow(hub_rect r, unsigned col)
+static void hub_face(int x0, int y0, int x1, int y1, int x2, int y2,
+		     int x3, int y3, unsigned col)
 {
-	int t = U.p;
+	int xs[4], ys[4];
 
-	mmb_gfx_box(r.x - 2 * t, r.y - 2 * t, r.w + 4 * t, r.h + 4 * t,
-		    col, t, -1);
-	mmb_gfx_box(r.x - t, r.y - t, r.w + 2 * t, r.h + 2 * t,
-		    HUB_CYAN_D, t, -1);
+	xs[0] = x0; ys[0] = y0;
+	xs[1] = x1; ys[1] = y1;
+	xs[2] = x2; ys[2] = y2;
+	xs[3] = x3; ys[3] = y3;
+	mmb_gfx_fill_polygon(xs, ys, 4, col);
 }
 
-/* ---- the cube logo --------------------------------------------------- */
+static void hub_window(int x0, int y0, int x1, int y1, int x2, int y2,
+		       int x3, int y3, unsigned col, unsigned edge, int t)
+{
+	int xs[4], ys[4], nx[4], ny[4];
+	int i, cx = 0, cy = 0;
 
-static void hub_cube(int cx, int cy, int size)
+	xs[0] = x0; ys[0] = y0;
+	xs[1] = x1; ys[1] = y1;
+	xs[2] = x2; ys[2] = y2;
+	xs[3] = x3; ys[3] = y3;
+	for (i = 0; i < 4; i++)
+	{
+		cx += xs[i];
+		cy += ys[i];
+	}
+	cx /= 4;
+	cy /= 4;
+	for (i = 0; i < 4; i++)
+	{
+		nx[i] = xs[i] + (cx - xs[i]) * 28 / 100;
+		ny[i] = ys[i] + (cy - ys[i]) * 28 / 100;
+	}
+	if (col)
+		mmb_gfx_fill_polygon(nx, ny, 4, col);
+	if (t > 0)
+	{
+		for (i = 0; i < 4; i++)
+			mmb_gfx_line(nx[i], ny[i], nx[(i + 1) & 3],
+				     ny[(i + 1) & 3], edge, t);
+	}
+}
+
+/* Isometric cube shared by the header mark and the loading screen.
+ * `size` is the width. `neon` draws the thick magenta/cyan wireframe. */
+static void hub_cube(int cx, int cy, int size, int neon)
 {
 	int hw = size / 2;
-	int hh = size * 55 / 100;
-	int xs[4], ys[4];
-	int ax = cx, ay = cy - hh;
-	int bx = cx + hw, by = cy - hh / 2;
-	int cxx = cx + hw, cyy = cy + hh / 2;
-	int dx = cx, dy = cy + hh;
-	int ex = cx - hw, ey = cy + hh / 2;
-	int fx = cx - hw, fy = cy - hh / 2;
-	int e = U.p < 2 ? 1 : 2;
+	int rise = size / 4;
+	int vh = size * 50 / 100;
+	int total, y0, t, core;
+	int tx, ty, trx, try_, tlx, tly, mx, my, brx, bry, blx, bly, bx, by;
+	unsigned et, el, er, glow_l, glow_r, glow_t;
 
-	/* Isometric cube: top, left and right faces with neon edges. */
-	xs[0] = ax; ys[0] = ay; xs[1] = bx; ys[1] = by;
-	xs[2] = cx; ys[2] = cy; xs[3] = fx; ys[3] = fy;
-	mmb_gfx_fill_polygon(xs, ys, 4, 0x1B2340);
-	xs[0] = fx; ys[0] = fy; xs[1] = cx; ys[1] = cy;
-	xs[2] = dx; ys[2] = dy; xs[3] = ex; ys[3] = ey;
-	mmb_gfx_fill_polygon(xs, ys, 4, 0x241148);
-	xs[0] = cx; ys[0] = cy; xs[1] = bx; ys[1] = by;
-	xs[2] = cxx; ys[2] = cyy; xs[3] = dx; ys[3] = dy;
-	mmb_gfx_fill_polygon(xs, ys, 4, 0x0C3546);
+	if (hw < 3)
+		hw = 3;
+	if (rise < 2)
+		rise = 2;
+	if (vh < 4)
+		vh = 4;
+	total = 2 * rise + vh;
+	y0 = cy - total / 2;
+	t = size / 16;
+	if (t < 1)
+		t = 1;
+	if (t > 12)
+		t = 12;
+	core = t > 3 ? t / 2 : 1;
+	tx = cx;
+	ty = y0;
+	trx = cx + hw;
+	try_ = y0 + rise;
+	tlx = cx - hw;
+	tly = y0 + rise;
+	mx = cx;
+	my = y0 + 2 * rise;
+	brx = cx + hw;
+	bry = y0 + rise + vh;
+	blx = cx - hw;
+	bly = y0 + rise + vh;
+	bx = cx;
+	by = y0 + total;
+	if (neon)
+	{
+		et = 0xF6F8FF;
+		el = 0xE040FB;
+		er = 0x29D3F0;
+		glow_t = 0x6A78A0;
+		glow_l = 0xA020A8;
+		glow_r = 0x1088A0;
+		/* Hollow wireframe: inner frame on each face, no fill, so
+		 * the back edges stay visible. */
+		hub_window(tx, ty, trx, try_, mx, my, tlx, tly, 0,
+			   0xC8D4F0, core);
+		hub_window(tlx, tly, mx, my, bx, by, blx, bly, 0, el, core);
+		hub_window(mx, my, trx, try_, brx, bry, bx, by, 0, er, core);
+	}
+	else
+	{
+		et = 0xF4F6FF;
+		el = 0xC8CCD8;
+		er = 0x9AA0B4;
+		glow_t = glow_l = glow_r = 0;
+		hub_face(tx, ty, trx, try_, mx, my, tlx, tly, 0x4A5270);
+		hub_face(tlx, tly, mx, my, bx, by, blx, bly, 0x343C58);
+		hub_face(mx, my, trx, try_, brx, bry, bx, by, 0x242C48);
+	}
+	if (neon && t > 1)
+	{
+		mmb_gfx_line(tx, ty, trx, try_, glow_t, t + t / 2);
+		mmb_gfx_line(tx, ty, tlx, tly, glow_t, t + t / 2);
+		mmb_gfx_line(tlx, tly, blx, bly, glow_l, t + t / 2);
+		mmb_gfx_line(blx, bly, bx, by, glow_l, t + t / 2);
+		mmb_gfx_line(trx, try_, brx, bry, glow_r, t + t / 2);
+		mmb_gfx_line(brx, bry, bx, by, glow_r, t + t / 2);
+		mmb_gfx_line(mx, my, bx, by, glow_t, t);
+	}
+	mmb_gfx_line(tx, ty, trx, try_, et, t);
+	mmb_gfx_line(tx, ty, tlx, tly, et, t);
+	mmb_gfx_line(tlx, tly, blx, bly, el, t);
+	mmb_gfx_line(blx, bly, bx, by, el, t);
+	mmb_gfx_line(trx, try_, brx, bry, er, t);
+	mmb_gfx_line(brx, bry, bx, by, er, t);
+	mmb_gfx_line(tx, ty, mx, my, et, core + 1);
+	mmb_gfx_line(tlx, tly, mx, my, el, core);
+	mmb_gfx_line(trx, try_, mx, my, er, core);
+	mmb_gfx_line(mx, my, bx, by, et, t);
+	if (neon && core > 1)
+	{
+		mmb_gfx_line(tx, ty, trx, try_, 0xFFFFFF, core);
+		mmb_gfx_line(tx, ty, tlx, tly, 0xFFFFFF, core);
+		mmb_gfx_line(mx, my, bx, by, 0xFFFFFF, core);
+	}
+	if (neon && size >= 80)
+	{
+		int s = size / 6;
+		int i;
+		static const int dx[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+		static const int dy[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+		int len[8];
+		unsigned col[8] = {
+			0xFFFFFF, 0xE8C0FF, 0xFFFFFF, 0xB0F4FF,
+			0xFFFFFF, 0xB0F4FF, 0xFFFFFF, 0xE8C0FF
+		};
 
-	mmb_gfx_line(ax, ay, bx, by, HUB_BORDER_L, e);
-	mmb_gfx_line(ax, ay, fx, fy, HUB_BORDER_L, e);
-	mmb_gfx_line(bx, by, cxx, cyy, HUB_CYAN, e);
-	mmb_gfx_line(fx, fy, ex, ey, HUB_MAGENTA, e);
-	mmb_gfx_line(cxx, cyy, dx, dy, HUB_CYAN, e);
-	mmb_gfx_line(ex, ey, dx, dy, HUB_PURPLE, e);
-	mmb_gfx_line(cx, cy, ax, ay, HUB_BORDER_L, e);
-	mmb_gfx_line(cx, cy, dx, dy, HUB_PURPLE, e);
-	mmb_gfx_line(cx, cy, bx, by, HUB_CYAN_D, e);
-	mmb_gfx_line(cx, cy, fx, fy, HUB_PURPLE_D, e);
+		len[0] = s;
+		len[1] = s * 2 / 3;
+		len[2] = s * 5 / 6;
+		len[3] = s / 3;
+		len[4] = s / 4;
+		len[5] = s / 3;
+		len[6] = s * 5 / 6;
+		len[7] = s * 2 / 3;
+		for (i = 0; i < 8; i++)
+			mmb_gfx_line(tx, ty, tx + dx[i] * len[i],
+				     ty + dy[i] * len[i], col[i],
+				     (i & 1) ? 1 : 2);
+		mmb_gfx_fill_rect(tx - 2, ty - 2, 5, 5, 0xFFFFFF);
+		mmb_gfx_fill_rect(tx - 1, ty - 6, 3, 13, 0xFFFFFF);
+		mmb_gfx_fill_rect(tx - 6, ty - 1, 13, 3, 0xFFFFFF);
+	}
 }
 
-/* ---- ornaments ------------------------------------------------------- */
-
-static void hub_ornament(int x, int y, int sx, int sy)
+/* Filled rect in a corner-local frame. sx/sy are +1 or -1. */
+static void hub_fill_rel(int x, int y, int sx, int sy, int rx, int ry,
+			 int rw, int rh, unsigned col)
 {
-	int p = U.p;
+	int px, py;
 
-	/* An L of bronze and purple with a small ring, mirrored by sx/sy. */
-	mmb_gfx_line(x, y, x + sx * 26 * p, y, HUB_BRONZE, p < 2 ? 1 : 2);
-	mmb_gfx_line(x, y, x, y + sy * 26 * p, HUB_BRONZE, p < 2 ? 1 : 2);
-	mmb_gfx_line(x + sx * 3 * p, y + sy * 8 * p,
-		     x + sx * 18 * p, y + sy * 8 * p, HUB_PURPLE,
-		     p < 2 ? 1 : 2);
-	mmb_gfx_line(x + sx * 8 * p, y + sy * 3 * p,
-		     x + sx * 8 * p, y + sy * 18 * p, HUB_PURPLE,
-		     p < 2 ? 1 : 2);
-	mmb_gfx_circle(x + sx * 13 * p, y + sy * 3 * p, 4 * p,
-		       HUB_MAGENTA, p < 2 ? 1 : 2, -1);
-	mmb_gfx_circle(x + sx * 3 * p, y + sy * 13 * p, 4 * p,
-		       HUB_CYAN, p < 2 ? 1 : 2, -1);
+	if (rw < 1 || rh < 1)
+		return;
+	px = sx > 0 ? x + rx : x - rx - rw + 1;
+	py = sy > 0 ? y + ry : y - ry - rh + 1;
+	mmb_gfx_fill_rect(px, py, rw, rh, col);
+}
+
+/* One bronze bracket, mirrored onto all four corners. No stars. */
+static void hub_corner(int x, int y, int sx, int sy, int arm)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	int thick = 3 * p;
+	int riv = 2 * p + 1;
+	int inset;
+
+	if (thick < 3)
+		thick = 3;
+	if (arm < thick * 3)
+		arm = thick * 3;
+	hub_fill_rel(x, y, sx, sy, 0, 0, arm, thick, 0xE0A44A);
+	hub_fill_rel(x, y, sx, sy, 0, 0, thick, arm, 0xE0A44A);
+	hub_fill_rel(x, y, sx, sy, 0, 0, arm, p, 0xF6D090);
+	hub_fill_rel(x, y, sx, sy, 0, 0, p, arm, 0xF6D090);
+	hub_fill_rel(x, y, sx, sy, 0, thick - p, arm, p, 0x8A5820);
+	hub_fill_rel(x, y, sx, sy, thick - p, 0, p, arm, 0x8A5820);
+	inset = thick + p;
+	hub_fill_rel(x, y, sx, sy, inset, inset, arm - inset - p, p + 1,
+		     HUB_PURPLE);
+	hub_fill_rel(x, y, sx, sy, inset, inset, p + 1, arm - inset - p,
+		     HUB_PURPLE);
+	hub_fill_rel(x, y, sx, sy, p, p, riv, riv, 0xFFF0C8);
+	hub_fill_rel(x, y, sx, sy, arm - riv - p, p, riv, riv, HUB_CYAN);
+	hub_fill_rel(x, y, sx, sy, p, arm - riv - p, riv, riv, HUB_MAGENTA);
+}
+
+static void hub_frame_chrome(hub_rect r)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	int arm = 26 * p;
+	int outer = 2 * p + 1;
+	int inset;
+
+	if (r.w < 8 || r.h < 8)
+		return;
+	if (arm > r.w / 4)
+		arm = r.w / 4;
+	if (arm > r.h / 4)
+		arm = r.h / 4;
+	if (arm < 14)
+		arm = 14;
+	mmb_gfx_box(r.x, r.y, r.w, r.h, 0xC89848, outer, -1);
+	inset = outer;
+	mmb_gfx_box(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset,
+		    0x6A30C0, p + 1, -1);
+	inset += p + 1;
+	mmb_gfx_box(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset,
+		    0x3A2858, p, -1);
+	hub_corner(r.x, r.y, 1, 1, arm);
+	hub_corner(r.x + r.w - 1, r.y, -1, 1, arm);
+	hub_corner(r.x, r.y + r.h - 1, 1, -1, arm);
+	hub_corner(r.x + r.w - 1, r.y + r.h - 1, -1, -1, arm);
 }
 
 static void hub_ornate_frame(hub_rect r, unsigned fill)
 {
-	int p = U.p, c = 10 * p;
-
-	hub_bevel(r, fill);
-	mmb_gfx_box(r.x + 3 * p, r.y + 3 * p, r.w - 6 * p, r.h - 6 * p,
-		    HUB_PURPLE_D, p, -1);
-	hub_ornament(r.x, r.y, 1, 1);
-	hub_ornament(r.x + r.w - 1, r.y, -1, 1);
-	hub_ornament(r.x, r.y + r.h - 1, 1, -1);
-	hub_ornament(r.x + r.w - 1, r.y + r.h - 1, -1, -1);
-	(void)c;
+	if (r.w < 8 || r.h < 8)
+		return;
+	hub_fill(r, fill);
+	hub_frame_chrome(r);
 }
 
 /* ---- images ---------------------------------------------------------- */
@@ -781,23 +1061,25 @@ static void hub_draw_image_cover(uint32_t *pix, int iw, int ih, hub_rect r)
 	}
 }
 
-static void hub_app_icon(hub_app *a, hub_rect r, int greyed)
+static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 {
 	hub_img *im = a ? hub_img_find(a->icon) : 0;
+	int p = U.p < 2 ? 1 : U.p;
 
 	hub_fill(r, 0x0B0F22);
 	if (im && im->pix)
 		hub_draw_image(im->pix, im->w, im->h, r);
 	else
-		hub_cube(r.x + r.w / 2, r.y + r.h / 2, r.w * 3 / 4);
-	mmb_gfx_box(r.x, r.y, r.w, r.h, HUB_BORDER_D, U.p, -1);
+		hub_cube(r.x + r.w / 2, r.y + r.h / 2, r.w * 3 / 4, 0);
+	if (framed)
+		mmb_gfx_box(r.x, r.y, r.w, r.h, 0x3A4068, p, -1);
 	if (greyed)
 	{
-		/* Desaturate cheaply: hatch the framed icon with the greyed tone. */
-		int step = 3 * U.p;
+		int x, y;
 
-		for (int y = r.y; y < r.y + r.h; y += step)
-			hub_hline(r.x, y, r.w, HUB_GREY, U.p);
+		for (y = r.y; y < r.y + r.h; y += 2)
+			for (x = r.x + (y & 1); x < r.x + r.w; x += 2)
+				mmb_gfx_plot(x, y, 0x12162A);
 	}
 }
 
@@ -890,15 +1172,36 @@ static hub_app *hub_cur(void)
 static void hub_layout_now(void)
 {
 	int tab_w = 0;
-	int i;
+	int i, scale, longest, avail, n;
 
-	for (i = 0; i < s_ntabs; i++)
 	{
-		int w = hub_text_w(s_tabs[i].name, 1) + 6 * U.p;
+		int pw = U.w / 640 < U.h / 360 ? U.w / 640 : U.h / 360;
 
-		if (w > tab_w)
-			tab_w = w;
+		if (pw < 1)
+			pw = 1;
+		U.p = pw;
 	}
+	scale = U.p >= 3 ? 2 : 1;
+	n = s_ntabs > 0 ? s_ntabs : 1;
+	avail = U.w - 8 * (U.p < 1 ? 1 : U.p);
+	for (;;)
+	{
+		longest = 0;
+		for (i = 0; i < s_ntabs; i++)
+		{
+			int w = hub_text_w(s_tabs[i].name, scale);
+
+			if (w > longest)
+				longest = w;
+		}
+		if (scale <= 1 || n * (longest + 8 * U.p) <= avail)
+			break;
+		scale--;
+	}
+	if (scale < 1)
+		scale = 1;
+	s_tab_scale = scale;
+	tab_w = longest + 8 * U.p;
 	hub_layout_compute(&U.L, U.w, U.h, s_ntabs, tab_w);
 	U.p = U.L.p;
 	U.layout_w = U.w;
@@ -907,39 +1210,98 @@ static void hub_layout_now(void)
 
 /* ---- progress bar ---------------------------------------------------- */
 
+/* Loading bar: bevelled track, segments fading magenta to cyan. `hi`/`lo`
+ * override the gradient (the error state passes red). */
 static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 {
-	int p = U.p;
-	int inner = r.w - 6 * p;
-	int segw = 10 * p;
+	int p = U.p < 1 ? 1 : U.p;
+	int pad = 3 * p;
+	int inner = r.w - 2 * pad;
+	int segw = 12 * p;
+	int gap = 2 * p;
 	int nseg, i, fill;
+	int gradient = (hi == 0);
 
-	if (inner < 6 * p)
-		inner = 6 * p;
-	nseg = inner / (segw + 2 * p);
-	if (nseg < 1)
-		nseg = 1;
-	segw = (inner - (nseg - 1) * 2 * p) / nseg;
+	if (inner < 8 * p)
+		inner = 8 * p;
+	nseg = inner / (segw + gap);
+	if (nseg < 8)
+		nseg = 8;
+	if (nseg > 18)
+		nseg = 18;
+	segw = (inner - (nseg - 1) * gap) / nseg;
 	if (segw < 3 * p)
 		segw = 3 * p;
+	if (pct < 0)
+		pct = 0;
+	if (pct > 100)
+		pct = 100;
 	fill = nseg * pct / 100;
-	hub_bevel(r, 0x0B0F22);
+	if (pct > 0 && fill < 1)
+		fill = 1;
+	hub_fill(r, 0x10131C);
+	mmb_gfx_box(r.x, r.y, r.w, r.h, 0xC8CCD8, p, -1);
+	mmb_gfx_box(r.x + p, r.y + p, r.w - 2 * p, r.h - 2 * p, 0x3A3E4C, p, -1);
 	for (i = 0; i < nseg; i++)
 	{
 		hub_rect s;
-		unsigned col = i < fill ? hi : lo;
+		unsigned col;
 
-		s.x = r.x + 3 * p + i * (segw + 2 * p);
-		s.y = r.y + 3 * p;
+		s.x = r.x + pad + i * (segw + gap);
+		s.y = r.y + pad;
 		s.w = segw;
-		s.h = r.h - 6 * p;
-		if (s.x + s.w > r.x + r.w - 3 * p)
+		s.h = r.h - 2 * pad;
+		if (s.h < 2 || s.x + s.w > r.x + r.w - pad)
 			break;
+		if (i < fill)
+		{
+			if (gradient)
+				col = hub_lerp(0xE000C8, 0x00E4EC, i, nseg - 1);
+			else
+				col = hi;
+		}
+		else
+			col = lo ? lo : 0x1A1E2A;
 		hub_fill(s, col);
-		hub_hline(s.x, s.y, s.w, col == hi ? HUB_TEXT : HUB_BORDER_D,
-			  p);
-		hub_hline(s.x, s.y + s.h - p, s.w,
-			  col == hi ? HUB_PURPLE_D : HUB_BG2, p);
+		if (i < fill)
+			hub_hline(s.x, s.y, s.w,
+				  hub_lerp(col, 0xFFFFFF, 1, 3), 1);
+	}
+}
+
+/* Install dialog: one lime bar with diagonal stripes. */
+static void hub_stripebar(hub_rect r, int pct)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	int pad = 3 * p;
+	int inner_w, fill_w, x, y;
+
+	if (pct < 0)
+		pct = 0;
+	if (pct > 100)
+		pct = 100;
+	hub_fill(r, 0x10131C);
+	mmb_gfx_box(r.x, r.y, r.w, r.h, 0x8A9098, p, -1);
+	inner_w = r.w - 2 * pad;
+	if (inner_w < 1)
+		return;
+	fill_w = inner_w * pct / 100;
+	if (pct > 0 && fill_w < 2 * p)
+		fill_w = 2 * p;
+	if (fill_w > 0)
+	{
+		hub_rect f = { r.x + pad, r.y + pad, fill_w, r.h - 2 * pad };
+
+		hub_fill(f, 0x3CBA34);
+		hub_hline(f.x, f.y, f.w, 0xB6F08A, 1);
+		for (y = f.y; y < f.y + f.h; y++)
+		{
+			for (x = f.x; x < f.x + f.w; x++)
+			{
+				if (((x + y) / (p < 1 ? 1 : p)) % 6 < 2)
+					mmb_gfx_plot(x, y, 0x1E6E18);
+			}
+		}
 	}
 }
 
@@ -947,53 +1309,60 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 
 static void hub_paint_loading(void)
 {
-	int p = U.p, y, title_scale;
+	int p = U.p < 1 ? 1 : U.p;
 	hub_rect bar;
 	const char *title = "MMCORE SOFTWARE HUB";
-	int tw, tx;
+	int title_scale = p < 2 ? 1 : (p > 3 ? 3 : p);
+	int cube_s = U.h * 46 / 100;
+	int cube_h, title_h, bar_h, block, top, cy, ty, tx, tw;
 	int pct;
+	int i;
 
-	hub_dither_bg();
-	hub_cube(U.w / 2, U.h / 2 - 70 * p, 90 * p);
+	if (cube_s > U.w * 32 / 100)
+		cube_s = U.w * 32 / 100;
+	if (cube_s < 72)
+		cube_s = 72;
+	/* The cube is about as tall as it is wide, plus the sparkle. */
+	cube_h = cube_s + cube_s / 5;
+	title_h = 16 * title_scale;
+	bar_h = 26 * p;
+	block = cube_h + 12 * p + title_h + 12 * p + bar_h;
+	top = (U.h - block) / 2;
+	if (top < 4 * p)
+		top = 4 * p;
 
-	title_scale = p >= 2 ? 3 : 2;
-	tw = hub_big_w(title, title_scale);
+	mmb_gfx_fill_rect(0, 0, U.w, U.h, 0x05060C);
+	cy = top + cube_s / 5 + cube_s / 2;
+	hub_cube(U.w / 2, cy, cube_s, 1);
+
+	tw = hub_text_w(title, title_scale);
 	tx = (U.w - tw) / 2;
-	y = U.h / 2 + 45 * p;
-	hub_big_text(tx, y, title, HUB_MAGENTA, title_scale);
-	/* Thin dotted rules either side of the title. */
-	for (int side = 0; side < 2; side++)
+	ty = top + cube_h + 10 * p;
+	hub_text(tx, ty, title, 0xC060F0, title_scale);
+	for (i = 0; i < 12; i++)
 	{
-		int ry = y + 10 * title_scale;
-		int start = side ? tx + tw + 8 * p : tx - 8 * p;
+		int dot = 2 * p;
+		int gap = 6 * p;
+		int ry = ty + title_h / 2 - dot / 2;
+		int lx = tx - 10 * p - (12 - i) * gap;
+		int rx = tx + tw + 10 * p + i * gap;
+		unsigned lc = hub_lerp(0x7010A0, 0xC060F0, i, 11);
+		unsigned rc = hub_lerp(0xC060F0, 0x20D0E8, i, 11);
 
-		if (!side)
-		{
-			/* right aligned dots */
-			int x;
-
-			for (x = start - 4 * p; x > start - 40 * p && x > 10 * p;
-			     x -= 6 * p)
-				mmb_gfx_fill_rect(x, ry, 2 * p, 2 * p,
-						  HUB_PURPLE);
-		}
-		else
-		{
-			int x;
-
-			for (x = start; x < start + 40 * p && x < U.w - 10 * p;
-			     x += 6 * p)
-				mmb_gfx_fill_rect(x, ry, 2 * p, 2 * p,
-						  HUB_PURPLE);
-		}
+		if (lx > 8 * p)
+			mmb_gfx_fill_rect(lx, ry, dot, dot, lc);
+		if (rx + dot < U.w - 8 * p)
+			mmb_gfx_fill_rect(rx, ry, dot, dot, rc);
 	}
 
-	bar.w = U.w * 60 / 100;
-	if (bar.w > 420 * p)
-		bar.w = 420 * p;
-	bar.h = 18 * p;
+	bar.w = U.w * 58 / 100;
+	if (bar.w > 380 * p)
+		bar.w = 380 * p;
+	if (bar.w < 80 * p)
+		bar.w = U.w - 16 * p;
+	bar.h = bar_h;
 	bar.x = (U.w - bar.w) / 2;
-	bar.y = y + 34 * p;
+	bar.y = ty + title_h + 14 * p;
 
 	if (U.state != HUB_ST_LOADING)
 		return;
@@ -1014,19 +1383,21 @@ static void hub_paint_loading(void)
 
 		pct = 60 + (U.icon_total ? done * 35 / U.icon_total : 35);
 	}
-	hub_segbar(bar, pct, U.err ? HUB_RED : HUB_LIME,
-		   U.err ? HUB_RED_D : HUB_LIME_D);
+	if (U.err)
+		hub_segbar(bar, pct, HUB_RED, HUB_RED_D);
+	else
+		hub_segbar(bar, pct, 0, 0);
 
 	if (U.err)
 	{
-		int rw = hub_text_w(U.errmsg, p >= 2 ? 2 : 1);
+		int scale = hub_ui_scale();
+		int rw = hub_text_w(U.errmsg, scale);
 		int rx = (U.w - rw) / 2;
-		int ry = bar.y + bar.h + 12 * p;
+		int ry = bar.y + bar.h + 10 * p;
 
 		if (rx < 8 * p)
 			rx = 8 * p;
-		hub_text_trunc(rx, ry, U.errmsg, HUB_RED, p >= 2 ? 2 : 1,
-			       U.w - 2 * rx);
+		hub_text_trunc(rx, ry, U.errmsg, HUB_RED, scale, U.w - 2 * rx);
 	}
 }
 
@@ -1035,41 +1406,52 @@ static void hub_paint_loading(void)
 static const char *hub_state_badge(hub_app *a, unsigned *col,
 				   unsigned *fill, char *buf, int bufsz)
 {
-	*col = HUB_TEXT;
+	*col = 0xFFFFFF;
 	*fill = HUB_PANEL2;
 	if (!a)
-		return buf;
+		return "";
 	switch (a->state)
 	{
 	case HUB_INSTALLED:
-		*col = HUB_LIME;
-		*fill = 0x1B3010;
+		*col = 0xFFFFFF;
+		*fill = 0x2E9A32;
 		return "INSTALLED";
 	case HUB_UPDATE:
-		*col = HUB_ORANGE;
-		*fill = 0x3A2408;
+		*col = 0xFFFFFF;
+		*fill = 0xD07018;
 		return "UPDATE";
 	case HUB_NEEDS_NEWER:
-		*col = HUB_RED;
-		*fill = 0x3A0E0E;
-		snprintf(buf, (size_t)bufsz, "NEEDS v%s",
-			 a->minver && a->minver[0] ? a->minver : "?");
+		*col = 0xFFFFFF;
+		*fill = 0xD02828;
+		if (hub_has(a->minver))
+			snprintf(buf, (size_t)bufsz, "NEEDS v%s", a->minver);
+		else
+			snprintf(buf, (size_t)bufsz, "NEEDS");
 		return buf;
 	default:
 		return "";
 	}
 }
 
-static void hub_chip(int x, int y, const char *text, unsigned col,
-		     unsigned fill, int scale)
+/* Filled pill. Returns the width drawn, or 0 when `text` is empty. */
+static int hub_chip(int x, int y, const char *text, unsigned col,
+		    unsigned fill, int scale)
 {
-	int p = U.p;
-	int w = hub_text_w(text, scale) + 8 * p;
-	int h = 16 * scale + 4 * p;
+	int p = U.p < 1 ? 1 : U.p;
+	int w, h, t;
 
+	if (!hub_has(text))
+		return 0;
+	if (scale < 1)
+		scale = 1;
+	w = hub_text_w(text, scale) + 8 * p;
+	h = 16 * scale + 4 * p;
+	t = p < 2 ? 1 : p;
 	hub_fill((hub_rect){ x, y, w, h }, fill);
-	mmb_gfx_box(x, y, w, h, col, p, -1);
+	mmb_gfx_box(x, y, w, h, col, t, -1);
+	hub_hline(x + t, y + t, w - 2 * t, hub_lerp(fill, 0xFFFFFF, 1, 4), 1);
 	hub_text(x + 4 * p, y + (h - 16 * scale) / 2, text, col, scale);
+	return w;
 }
 
 static void hub_size_text(long size, char *out, int outsz)
@@ -1138,113 +1520,160 @@ static void hub_scroll_sel(void)
 	}
 }
 
+static void hub_badge(int x, int y, int w, int h, const char *text,
+		      unsigned fill, unsigned ink)
+{
+	int t = U.p < 2 ? 1 : 2;
+
+	hub_fill((hub_rect){ x, y, w, h }, fill);
+	hub_hline(x, y, w, hub_lerp(fill, 0xFFFFFF, 1, 3), t);
+	hub_hline(x, y + h - t, w, hub_lerp(fill, 0x000000, 1, 2), t);
+	hub_vline(x, y, h, hub_lerp(fill, 0xFFFFFF, 1, 4), t);
+	hub_vline(x + w - t, y, h, hub_lerp(fill, 0x000000, 1, 3), t);
+	{
+		int scale = hub_ui_scale();
+
+		if (16 * scale > h - 2)
+			scale = 1;
+		hub_text(x + (w - hub_text_w(text, scale)) / 2,
+			 y + (h - 16 * scale) / 2, text, ink, scale);
+	}
+}
+
 static void hub_draw_row(int i, int y, int h, int selected)
 {
 	hub_app *a = hub_get(U.ids[i]);
 	hub_rect r, icon;
-	int p = U.p;
-	int greyed;
-	int x, ty;
-	char buf[64], badgebuf[64];
+	int p = U.p < 1 ? 1 : U.p;
+	int greyed, scale, x, ty, lim;
+	char title[96], summary[160], author[64], sz[32], badgebuf[64];
 	const char *badge;
 	unsigned bcol, bfill;
 	int narrow = U.L.mode == HUB_LAYOUT_NARROW;
+	int bw = 0, bh = 0, bx, by;
+	int meta_w = 0;
 
 	if (!a)
 		return;
-	r.x = U.L.list.x + 2 * p;
-	r.y = y;
-	r.w = U.L.list.w - 4 * p;
+	r.x = U.L.list.x + 3 * p;
+	r.y = y + p;
+	r.w = U.L.list.w - 6 * p;
 	r.h = h - 2 * p;
+	if (r.h < 8)
+		return;
 	greyed = a->state == HUB_NEEDS_NEWER;
-
+	scale = hub_ui_scale();
 	if (selected)
 	{
-		hub_glow(r, HUB_CYAN_D);
-		hub_fill(r, 0x1A2142);
+		hub_fill(r, 0x16304A);
+		mmb_gfx_box(r.x, r.y, r.w, r.h, HUB_CYAN, p < 2 ? 1 : 2, -1);
 	}
 	else
-		hub_fill(r, (i & 1) ? HUB_PANEL2 : HUB_PANEL);
-	mmb_gfx_box(r.x, r.y, r.w, r.h, selected ? HUB_CYAN : HUB_BORDER_D,
-		    selected ? (p < 2 ? 1 : 2) : p, -1);
+		hub_hline(r.x + 4 * p, r.y + r.h - 1, r.w - 8 * p, 0x1A2036, 1);
 
-	icon.w = icon.h = 32 * p;
-	icon.x = r.x + 6 * p;
-	icon.y = r.y + (r.h - icon.h) / 2;
-	if (selected && narrow)
-		icon.y = r.y + 6 * p;
-	hub_app_icon(a, icon, greyed);
+	icon.w = icon.h = 26 * p;
+	if (icon.h > r.h - 6 * p)
+		icon.h = icon.w = r.h - 6 * p;
+	if (icon.w < 12)
+		icon.w = icon.h = 12;
+	icon.x = r.x + 4 * p;
+	icon.y = r.y + (narrow && selected ? 4 * p : (r.h - icon.h) / 2);
+	hub_app_icon(a, icon, greyed, 1);
 
-	x = icon.x + icon.w + 8 * p;
-	ty = icon.y;
-	if (!narrow)
-		ty = r.y + 10 * p;
+	hub_upper(hub_has(a->title) ? a->title : a->id, title, sizeof(title));
+	summary[0] = 0;
+	if (hub_has(a->summary))
+		snprintf(summary, sizeof(summary), "%s", a->summary);
+	author[0] = 0;
+	if (hub_has(a->author))
+		snprintf(author, sizeof(author), "%s", a->author);
+	sz[0] = 0;
+	if (a->size > 0)
+		hub_size_text(a->size, sz, sizeof(sz));
+	badge = hub_state_badge(a, &bcol, &bfill, badgebuf, sizeof(badgebuf));
+	if (badge && badge[0])
 	{
-		int lim = r.x + r.w - 8 * p - (narrow ? 0 : 100 * p);
-
-		hub_text_trunc(x, ty, a->title ? a->title : a->id,
-			       greyed ? HUB_GREY : HUB_TEXT, p, lim - x);
-		hub_text_trunc(x, ty + 16 * p + 2 * p,
-			       a->summary ? a->summary : "",
-			       greyed ? HUB_GREY : HUB_DIM, p >= 2 ? 1 : 1,
-			       lim - x);
+		bw = hub_text_w(badge, scale) + 10 * p;
+		bh = 16 * scale + 6 * p;
+		if (bh > r.h - 4 * p)
+			bh = r.h - 4 * p;
 	}
+	meta_w = hub_text_w(author, scale);
+	if (hub_text_w(sz, scale) > meta_w)
+		meta_w = hub_text_w(sz, scale);
+	if (bw)
+		meta_w += bw + 6 * p;
+	x = icon.x + icon.w + 6 * p;
+	lim = r.x + r.w - 6 * p - meta_w;
+	if (lim < x + 16)
+		lim = r.x + r.w - 6 * p;
+	ty = icon.y + (icon.h - (summary[0] ? 16 * scale * 2 + 2 * p :
+				 16 * scale)) / 2;
+	if (ty < r.y + 2 * p)
+		ty = r.y + 2 * p;
+	hub_text_trunc(x, ty, title, greyed ? HUB_GREY : HUB_TEXT, scale,
+		       lim - x);
+	if (summary[0])
+		hub_text_trunc(x, ty + 16 * scale + 2 * p, summary,
+			       greyed ? HUB_GREY : HUB_DIM, scale, lim - x);
 
 	if (selected && narrow)
 	{
-		int iw = r.w - 12 * p;
+		int iw = r.w - 10 * p;
 		int ih = iw * 9 / 16;
-		hub_rect ir;
+		hub_rect ir, frame;
 		const char *rel = hub_preview_rel(a);
 		hub_img *im = hub_img_find(rel);
 
-		if (ih > U.L.list.h * 45 / 100)
-			ih = U.L.list.h * 45 / 100;
-		ir.x = r.x + 6 * p;
-		ir.y = ty + 34 * p;
-		ir.w = iw;
-		ir.h = ih;
-		hub_fill(ir, 0x0B0F22);
-		if (im && im->pix)
-			hub_draw_image(im->pix, im->w, im->h, ir);
-		else
+		if (ih > U.L.list.h * 42 / 100)
+			ih = U.L.list.h * 42 / 100;
+		frame.x = r.x + 4 * p;
+		frame.y = ty + (summary[0] ? 34 * scale : 18 * scale) + 6 * p;
+		frame.w = iw;
+		frame.h = ih;
+		if (frame.y + frame.h > r.y + r.h - 2 * p)
+			frame.h = r.y + r.h - 2 * p - frame.y;
+		if (frame.h > 16 * p)
 		{
-			hub_fill(ir, 0x0B0F22);
-			hub_app_icon(a, (hub_rect){ ir.x + ir.w / 2 - 16 * p,
-						    ir.y + ir.h / 2 - 16 * p,
-						    32 * p, 32 * p }, 0);
+			hub_ornate_frame(frame, 0x0B0F22);
+			ir.x = frame.x + 8 * p;
+			ir.y = frame.y + 8 * p;
+			ir.w = frame.w - 16 * p;
+			ir.h = frame.h - 16 * p;
+			if (ir.w > 0 && ir.h > 0)
+			{
+				hub_fill(ir, 0x070910);
+				if (im && im->pix)
+					hub_draw_image_cover(im->pix, im->w, im->h, ir);
+				else
+					hub_cube(ir.x + ir.w / 2, ir.y + ir.h / 2,
+						 ir.h * 2 / 3, 1);
+			}
+			hub_frame_chrome(frame);
 		}
-		mmb_gfx_box(ir.x - p, ir.y - p, ir.w + 2 * p, ir.h + 2 * p,
-			    HUB_PURPLE_D, p, -1);
 	}
 
-	/* Right side: author and size, with the state badge above them. */
-	badge = hub_state_badge(a, &bcol, &bfill, badgebuf, sizeof(badgebuf));
-	if (badge[0])
+	bx = r.x + r.w - 4 * p - bw;
+	by = r.y + (r.h - bh) / 2;
+	if (narrow && selected)
+		by = r.y + 4 * p;
+	if (bw > 0)
+		hub_badge(bx, by, bw, bh, badge, bfill, bcol);
 	{
-		int scale = 1;
-		int bw = hub_text_w(badge, scale) + 8 * p;
-		int bh = 16 * scale + 2 * p;
-		int bx = r.x + r.w - bw - 6 * p;
-		int by = r.y + 3 * p;
+		int mx = (bw ? bx : r.x + r.w) - 6 * p;
+		int my = by + (bh - (sz[0] && author[0] ? 16 * scale * 2 + p :
+				      16 * scale)) / 2;
+		unsigned col = greyed ? HUB_GREY : HUB_DIM;
 
-		hub_fill((hub_rect){ bx, by, bw, bh }, bfill);
-		mmb_gfx_box(bx, by, bw, bh, bcol, p, -1);
-		hub_text(bx + 4 * p, by + (bh - 16 * scale) / 2, badge, bcol,
-			 scale);
-	}
-	{
-		int scale = 1;
-		char linebuf[96];
-		int ay = r.y + r.h - 6 * p - 16 * scale;
-
-		if (p == 1 && badge[0] && ay < r.y + 22 * p)
-			ay = r.y + 22 * p;
-		hub_size_text(a->size, buf, sizeof(buf));
-		snprintf(linebuf, sizeof(linebuf), "%s - %s",
-			 a->author && a->author[0] ? a->author : "unknown", buf);
-		hub_text_r(r.x + r.w - 6 * p, ay, linebuf,
-			   greyed ? HUB_GREY : HUB_DIM, scale);
+		if (my < r.y + 2 * p)
+			my = r.y + 2 * p;
+		if (author[0])
+		{
+			hub_text_r(mx, my, author, col, scale);
+			my += 16 * scale + p;
+		}
+		if (sz[0])
+			hub_text_r(mx, my, sz, col, scale);
 	}
 }
 
@@ -1252,89 +1681,100 @@ static void hub_paint_listing(void)
 {
 	hub_app *cur = hub_cur();
 	hub_rect hdr = U.L.header;
-	int p = U.p;
-	int i, y;
+	int p = U.p < 1 ? 1 : U.p;
+	int i, y, mark;
 
 	hub_dither_bg();
 
-	/* Header: small cube + mmcore HUB. */
-	hub_bevel(hdr, HUB_PANEL);
-	hub_cube(hdr.x + 16 * p, hdr.y + hdr.h / 2, 18 * p);
-	hub_text(hdr.x + 32 * p, hdr.y + (hdr.h - 16 * p) / 2, "mmcore",
-		 HUB_TEXT, p);
-	hub_text(hdr.x + 32 * p + hub_text_w("mmcore ", p), hdr.y +
-		 (hdr.h - 16 * p) / 2, "HUB", HUB_MAGENTA, p);
-
-	/* Content panel first: the selected tab's open foot is painted over its
-	 * top border so the tab blends into the panel. */
-	hub_bevel(U.L.content, HUB_PANEL);
-	mmb_gfx_box(U.L.content.x + p, U.L.content.y + p,
-		    U.L.content.w - 2 * p, U.L.content.h - 2 * p,
-		    HUB_BORDER_D, p, -1);
-
-	/* Tabs. */
-	for (i = 0; i < s_ntabs; i++)
+	hub_bevel(hdr, 0x101428);
+	hub_cube(hdr.x + 14 * p, hdr.y + hdr.h / 2, hdr.h * 3 / 4, 0);
+	mark = p >= 3 ? 3 : (p >= 2 ? 2 : 1);
 	{
-		int row = i / U.L.tabs_per_row;
-		int col = i % U.L.tabs_per_row;
-		int tx = U.L.tabs.x + col * (U.L.tab_w + U.L.tab_gap);
-		int ty = U.L.tabs.y + row * (U.L.tab_h + U.L.tab_gap);
-		int sel = s_tabs[i].cat == U.tab;
-		hub_rect tr = { tx, ty, U.L.tab_w, U.L.tab_h };
-		unsigned fill = sel ? HUB_PANEL : HUB_PANEL2;
-		int scale = 1;
+		int ty = hdr.y + (hdr.h - 16 * mark) / 2;
+		int tx = hdr.x + hdr.h;
 
-		if (i < (int)(sizeof(s_tabbox) / sizeof(s_tabbox[0])))
+		if (ty < hdr.y)
+			ty = hdr.y;
+		hub_text(tx, ty, "mmcore", HUB_TEXT, mark);
+		hub_text(tx + hub_text_w("mmcore ", mark), ty, "HUB",
+			 HUB_MAGENTA, mark);
+	}
+
+	hub_fill(U.L.content, HUB_PANEL);
+	mmb_gfx_box(U.L.content.x, U.L.content.y, U.L.content.w, U.L.content.h,
+		    HUB_BORDER_D, p, -1);
+	hub_hline(U.L.content.x, U.L.content.y, U.L.content.w, HUB_BORDER_L, p);
+
+	{
+		int cols = U.L.tabs_per_row > 0 ? U.L.tabs_per_row : 1;
+		int gap = U.L.tab_gap;
+		int tw = U.L.tab_w;
+		int scale = s_tab_scale > 0 ? s_tab_scale : 1;
+
+		if (s_ntabs > 0)
 		{
-			s_tabbox[s_ntabbox].r = tr;
-			s_tabbox[s_ntabbox].value = s_tabs[i].cat;
-			s_ntabbox++;
+			int nfit = U.L.tab_rows == 1 ? s_ntabs : cols;
+
+			tw = (U.L.tabs.w - (nfit - 1) * gap) / nfit;
+			if (tw < 8)
+				tw = 8;
 		}
-		hub_fill(tr, fill);
-		if (sel)
+		for (i = 0; i < s_ntabs; i++)
 		{
-			/* Open at the bottom: the selected tab shares the content
-			 * panel's top border and has inverted bottom corners. */
-			int foot_y = tr.y + tr.h;
-			int foot_h = U.L.content.y + p - foot_y;
-			int r = 3 * p;
-			int k;
-
-			if (foot_h < 1)
-				foot_h = 1;
-			hub_fill((hub_rect){ tr.x, foot_y, tr.w, foot_h },
-				 HUB_PANEL);
-			hub_hline(tr.x, tr.y, tr.w, HUB_BORDER_L, p);
-			hub_vline(tr.x, tr.y, tr.h + foot_h, HUB_BORDER_L, p);
-			hub_vline(tr.x + tr.w - p, tr.y, tr.h + foot_h,
-				  HUB_BORDER_D, p);
-			/* Inverted corners: sweep outwards into the panel border. */
-			for (k = 0; k <= r; k++)
+			int row = i / cols;
+			int col = i % cols;
 			{
-				int yy = foot_y + foot_h - p - k;
+				int tx = U.L.tabs.x + col * (tw + gap);
+				int ty = U.L.tabs.y + row * (U.L.tab_h + gap);
+				int sel = s_tabs[i].cat == U.tab;
+				hub_rect tr = { tx, ty, tw, U.L.tab_h };
 
-				mmb_gfx_plot(tr.x + k, yy, HUB_BORDER_L);
-				mmb_gfx_plot(tr.x + tr.w - 1 - k, yy,
-					     HUB_BORDER_D);
+				if (i < (int)(sizeof(s_tabbox) / sizeof(s_tabbox[0])))
+				{
+					s_tabbox[s_ntabbox].r = tr;
+					s_tabbox[s_ntabbox].value = s_tabs[i].cat;
+					s_ntabbox++;
+				}
+				if (sel)
+				{
+					int foot_y = tr.y + tr.h;
+					int foot_h = U.L.content.y + p - foot_y;
+					int k, rad = 3 * p;
+
+					if (foot_h < 1)
+						foot_h = 1;
+					hub_fill(tr, HUB_PANEL);
+					hub_fill((hub_rect){ tr.x, foot_y, tr.w, foot_h },
+						 HUB_PANEL);
+					hub_hline(tr.x, tr.y, tr.w, HUB_MAGENTA, p < 2 ? 1 : 2);
+					hub_vline(tr.x, tr.y, tr.h + foot_h, HUB_BORDER_L, p);
+					hub_vline(tr.x + tr.w - p, tr.y, tr.h + foot_h,
+						  HUB_BORDER_D, p);
+					for (k = 0; k <= rad; k++)
+					{
+						mmb_gfx_plot(tr.x - k, foot_y + foot_h - p,
+							     HUB_BORDER_L);
+						mmb_gfx_plot(tr.x + tr.w - 1 + k,
+							     foot_y + foot_h - p,
+							     HUB_BORDER_D);
+					}
+					hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
+									     scale)) / 2,
+						 tr.y + (tr.h - 16 * scale) / 2,
+						 s_tabs[i].name, HUB_MAGENTA, scale);
+				}
+				else
+				{
+					hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
+									     scale)) / 2,
+						 tr.y + (tr.h - 16 * scale) / 2,
+						 s_tabs[i].name, HUB_DIM, scale);
+				}
 			}
-			hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-							   scale)) / 2,
-				 tr.y + (tr.h - 16 * scale) / 2, s_tabs[i].name,
-				 HUB_MAGENTA, scale);
-		}
-		else
-		{
-			mmb_gfx_box(tr.x, tr.y, tr.w, tr.h, HUB_BORDER_D, p,
-				    -1);
-			hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-							   scale)) / 2,
-				 tr.y + (tr.h - 16 * scale) / 2, s_tabs[i].name,
-				 HUB_DIM, scale);
 		}
 	}
 
-	/* Rows. */
-	y = U.L.list.y + 3 * p;
+	y = U.L.list.y + 2 * p;
 	for (i = U.list_top; i < U.nids; i++)
 	{
 		int h = hub_row_h(i, i == U.sel);
@@ -1355,56 +1795,74 @@ static void hub_paint_listing(void)
 	if (U.L.mode == HUB_LAYOUT_WIDE)
 	{
 		hub_rect pr = U.L.preview;
-		hub_rect ir;
-		hub_img *im;
+		hub_rect frame, ir;
+		hub_img *im = 0;
 		const char *rel = 0;
 		int ty;
+		int frame_h;
 
-		hub_ornate_frame(pr, HUB_PANEL);
-		ir.x = pr.x + 8 * p;
-		ir.y = pr.y + 8 * p;
-		ir.w = pr.w - 16 * p;
-		ir.h = (pr.h * 45 / 100);
-		if (ir.h > ir.w * 9 / 16)
-			ir.h = ir.w * 9 / 16;
-		hub_fill(ir, 0x0B0F22);
+		pr.x += 4 * p;
+		pr.y += 4 * p;
+		pr.w -= 8 * p;
+		pr.h -= 8 * p;
+		hub_ornate_frame(pr, 0x101428);
+		frame.x = pr.x + 10 * p;
+		frame.y = pr.y + 10 * p;
+		frame.w = pr.w - 20 * p;
+		frame_h = frame.w * 10 / 16;
+		if (frame_h > pr.h * 58 / 100)
+			frame_h = pr.h * 58 / 100;
+		frame.h = frame_h;
+		mmb_gfx_box(frame.x, frame.y, frame.w, frame.h, 0x6A5080,
+			    p, -1);
+		mmb_gfx_box(frame.x + p, frame.y + p, frame.w - 2 * p,
+			    frame.h - 2 * p, 0xC8A060, p < 2 ? 1 : p, -1);
+		ir.x = frame.x + 3 * p;
+		ir.y = frame.y + 3 * p;
+		ir.w = frame.w - 6 * p;
+		ir.h = frame.h - 6 * p;
+		hub_fill(ir, 0x070910);
 		if (cur)
 			rel = hub_preview_rel(cur);
 		im = hub_img_find(rel);
-		if (im && im->pix)
-			hub_draw_image(im->pix, im->w, im->h, ir);
-		else if (cur)
-			hub_app_icon(cur, (hub_rect){ ir.x + ir.w / 2 -
-						      24 * p,
-						      ir.y + ir.h / 2 -
-						      24 * p,
-						      48 * p, 48 * p }, 0);
-		mmb_gfx_box(ir.x - p, ir.y - p, ir.w + 2 * p, ir.h + 2 * p,
-			    HUB_PURPLE_D, p, -1);
+		if (im && im->pix && ir.w > 0 && ir.h > 0)
+			hub_draw_image_cover(im->pix, im->w, im->h, ir);
+		else if (cur && ir.w > 0)
+			hub_cube(ir.x + ir.w / 2, ir.y + ir.h / 2,
+				 ir.h * 2 / 3, 1);
+		hub_frame_chrome(pr);
 
-		ty = ir.y + ir.h + 8 * p;
-		if (cur)
+		ty = frame.y + frame.h + 8 * p;
+		if (cur && ty < pr.y + pr.h - 8 * p)
 		{
-			char vbuf[32];
-			char line[96];
+			char line[120];
+			char shown[96];
+			int scale = hub_ui_scale();
 
-			hub_text_trunc(pr.x + 10 * p, ty,
-				       cur->title ? cur->title : cur->id,
-				       HUB_TEXT, p, pr.w - 20 * p);
-			snprintf(vbuf, sizeof(vbuf), "v%s",
-				 cur->version && cur->version[0] ?
-				 cur->version : "?");
-			hub_text(pr.x + 10 * p, ty + 18 * p, vbuf, HUB_CYAN,
-				 p >= 2 ? 1 : 1);
-			snprintf(line, sizeof(line), "by %s",
-				 cur->author && cur->author[0] ?
-				 cur->author : "unknown");
-			hub_text(pr.x + 10 * p, ty + 34 * p, line, HUB_DIM, 1);
-			hub_wrap_draw(pr.x + 10 * p, ty + 54 * p,
-				      cur->summary ? cur->summary : "",
-				      hub_wrap_cols(pr.w - 20 * p, 1), 16,
-				      0, (pr.y + pr.h - ty - 60 * p) / 16,
-				      HUB_DIM);
+			hub_upper(hub_has(cur->title) ? cur->title : cur->id,
+				  shown, sizeof(shown));
+			if (hub_has(cur->version))
+				snprintf(line, sizeof(line), "%s v%s", shown,
+					 cur->version);
+			else
+				snprintf(line, sizeof(line), "%s", shown);
+			hub_text_trunc(pr.x + 12 * p, ty, line, HUB_TEXT, scale,
+				       pr.w - 24 * p);
+			ty += 16 * scale + 4 * p;
+			if (hub_has(cur->author) && ty < pr.y + pr.h - 16)
+			{
+				snprintf(line, sizeof(line), "by %s", cur->author);
+				hub_text_trunc(pr.x + 12 * p, ty, line, HUB_DIM,
+					       scale, pr.w - 24 * p);
+				ty += 16 * scale + 4 * p;
+			}
+			if (hub_has(cur->summary) && ty < pr.y + pr.h - 8)
+				hub_wrap_draw(pr.x + 12 * p, ty, cur->summary,
+					      hub_wrap_cols(pr.w - 24 * p, scale),
+					      16 * scale, 0,
+					      (pr.y + pr.h - ty - 8 * p) /
+					      (16 * scale),
+					      HUB_DIM, scale);
 		}
 	}
 }
@@ -1414,75 +1872,106 @@ static void hub_paint_listing(void)
 static const char *hub_button_label(hub_app *a, unsigned *col,
 				    unsigned *fill, char *buf, int bufsz)
 {
-	*col = HUB_TEXT;
-	*fill = HUB_PANEL2;
+	*col = 0x2E9A32;
+	*fill = 1;
 	if (!a)
 		return "";
 	switch (a->state)
 	{
 	case HUB_INSTALLED:
-		*col = HUB_CYAN;
-		*fill = 0x0C2A36;
+		*col = 0x1490C0;
 		return "RUN";
 	case HUB_UPDATE:
-		*col = HUB_ORANGE;
-		*fill = 0x3A2408;
+		*col = 0xE07020;
 		return "UPDATE";
 	case HUB_NEEDS_NEWER:
-		*col = HUB_GREY;
-		*fill = HUB_PANEL;
-		snprintf(buf, (size_t)bufsz, "NEEDS v%s",
-			 a->minver && a->minver[0] ? a->minver : "?");
+		*col = 0x4A5068;
+		*fill = 0;
+		if (hub_has(a->minver))
+			snprintf(buf, (size_t)bufsz, "NEEDS v%s", a->minver);
+		else
+			snprintf(buf, (size_t)bufsz, "NEEDS");
 		return buf;
 	default:
-		*col = HUB_LIME;
-		*fill = 0x17300C;
 		return "INSTALL";
 	}
+}
+
+static void hub_action_button(hub_rect b, const char *label, unsigned accent,
+			      int enabled)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	int t = p < 2 ? 1 : 2;
+	unsigned fill = enabled ? hub_lerp(0x000000, accent, 2, 3) : 0x2A2E3A;
+	unsigned top = enabled ? hub_lerp(accent, 0xFFFFFF, 1, 2) : 0x6A7080;
+	unsigned bot = enabled ? hub_lerp(accent, 0x000000, 1, 2) : 0x14161C;
+	int scale = hub_ui_scale();
+
+	hub_fill(b, fill);
+	hub_hline(b.x, b.y, b.w, top, t);
+	hub_vline(b.x, b.y, b.h, top, t);
+	hub_hline(b.x, b.y + b.h - t, b.w, bot, t);
+	hub_vline(b.x + b.w - t, b.y, b.h, bot, t);
+	mmb_gfx_box(b.x + 2 * p, b.y + 2 * p, b.w - 4 * p, b.h - 4 * p,
+		    top, p < 2 ? 1 : p, -1);
+	if (16 * scale + 4 > b.h)
+		scale = 1;
+	hub_text(b.x + (b.w - hub_text_w(label, scale)) / 2,
+		 b.y + (b.h - 16 * scale) / 2, label,
+		 enabled ? 0xFFFFFF : HUB_GREY, scale);
 }
 
 static void hub_draw_main_button(hub_rect area)
 {
 	hub_app *a = hub_cur();
-	int p = U.p;
-	int bw = area.w * 62 / 100;
-	int bh = 26 * p;
+	int p = U.p < 1 ? 1 : U.p;
+	int bw = area.w * 70 / 100;
 	hub_rect b;
 	char buf[64];
 	const char *label;
-	unsigned col, fill;
-	int scale = p >= 2 ? 2 : 1;
+	unsigned accent, enabled;
 
-	if (bw < 90 * p)
-		bw = 90 * p;
-	if (bw > area.w - 8 * p)
+	if (bw < 80 * p)
 		bw = area.w - 8 * p;
-	b.x = area.x + (area.w - bw) / 2;
-	b.y = area.y + (area.h - bh) / 2;
+	if (bw > 240 * p)
+		bw = 240 * p;
+	if (bw > area.w - 4 * p)
+		bw = area.w - 4 * p;
+	if (bw < 20)
+		bw = area.w;
 	b.w = bw;
-	b.h = bh;
-	label = hub_button_label(a, &col, &fill, buf, sizeof(buf));
-	hub_fill(b, fill);
-	mmb_gfx_box(b.x, b.y, b.w, b.h, col, p, -1);
-	mmb_gfx_box(b.x + p, b.y + p, b.w - 2 * p, b.h - 2 * p,
-		    HUB_BORDER_D, p, -1);
-	hub_text(b.x + (b.w - hub_text_w(label, scale)) / 2,
-		 b.y + (b.h - 16 * scale) / 2, label, col, scale);
+	b.h = area.h > 8 * p ? area.h - 4 * p : area.h;
+	if (b.h < 16)
+		b.h = area.h > 0 ? area.h : 16;
+	b.x = area.x + (area.w - b.w) / 2;
+	b.y = area.y + (area.h - b.h) / 2;
+	label = hub_button_label(a, &accent, &enabled, buf, sizeof(buf));
+	hub_action_button(b, label, accent, enabled);
 	s_mainbtn = b;
 	s_has_mainbtn = 1;
 }
 
 static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 {
-	int p = U.p;
-	int lh = 16;
-	int cols = hub_wrap_cols(r.w - 6 * p, 1);
-	const char *text = (a && a->about && a->about[0]) ? a->about :
-			   (a ? a->summary : "");
-	int lines = hub_wrap_lines(text ? text : "", cols);
-	int rows = r.h / lh;
-	int maxscroll = lines - rows;
+	int p = U.p < 1 ? 1 : U.p;
+	int scale = hub_ui_scale();
+	int lh = 16 * scale + 4 * (U.p < 1 ? 1 : U.p);
+	int cols = hub_wrap_cols(r.w - 8 * p, scale);
+	const char *body = (a && hub_has(a->about)) ? a->about :
+			   (a && hub_has(a->summary) ? a->summary : "");
+	const char *changes = (a && hub_has(a->changes)) ? a->changes : "";
+	int body_lines = hub_wrap_lines(body, cols);
+	int ch_lines = changes[0] ? hub_wrap_lines(changes, cols) : 0;
+	int head = changes[0] ? body_lines + 1 : -1;
+	int ch_at = changes[0] ? body_lines + 2 : -1;
+	int lines = body_lines + (changes[0] ? 2 + ch_lines : 0);
+	int rows = lh > 0 ? r.h / lh : 0;
+	int maxscroll;
+	int i;
 
+	if (rows < 1)
+		rows = 1;
+	maxscroll = lines - rows;
 	if (maxscroll < 0)
 		maxscroll = 0;
 	if (scroll > maxscroll)
@@ -1491,21 +1980,33 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 		scroll = 0;
 	if (a)
 		U.about_scroll = scroll;
-	if (text && text[0])
-		hub_wrap_draw(r.x, r.y, text, cols, lh, scroll, rows, HUB_TEXT);
-	if (maxscroll > 0)
+	for (i = 0; i < rows; i++)
 	{
-		/* Thin overflow indicator on the right edge only. */
+		int line = scroll + i;
+		int y = r.y + i * lh;
+
+		if (line < body_lines && body[0])
+			hub_wrap_draw(r.x, y, body, cols, lh, line, 1,
+				      HUB_TEXT, scale);
+		else if (line == head)
+			hub_text(r.x, y, "WHAT'S NEW", HUB_ORANGE, scale);
+		else if (ch_at >= 0 && line >= ch_at &&
+			 line < ch_at + ch_lines)
+			hub_wrap_draw(r.x, y, changes, cols, lh,
+				      line - ch_at, 1, HUB_DIM, scale);
+	}
+	if (maxscroll > 0 && r.h > 4 * p)
+	{
 		int track = r.h - 2 * p;
-		int thumb = track * rows / lines;
-		int pos = track * scroll / lines;
+		int thumb = track * rows / (lines > 0 ? lines : 1);
+		int pos = lines > 0 ? track * scroll / lines : 0;
 
 		if (thumb < 8 * p)
 			thumb = 8 * p;
-		mmb_gfx_fill_rect(r.x + r.w - p, r.y + p, p, track,
-				  HUB_BORDER_D);
-		mmb_gfx_fill_rect(r.x + r.w - p, r.y + p + pos, p, thumb,
-				  HUB_CYAN);
+		if (thumb > track)
+			thumb = track;
+		mmb_gfx_fill_rect(r.x + r.w - p, r.y, p, track, 0x2A3048);
+		mmb_gfx_fill_rect(r.x + r.w - p, r.y + pos, p, thumb, 0x8A90A8);
 	}
 }
 
@@ -1513,86 +2014,86 @@ static void hub_draw_detail(void)
 {
 	hub_app *a = hub_cur();
 	hub_layout *L = &U.L;
-	int p = U.p;
+	int p = U.p < 1 ? 1 : U.p;
 	hub_rect shot = L->detail_shot;
 	hub_rect img;
 	hub_img *im;
 	const char *rel;
-	int scale;
+	int narrow = L->mode == HUB_LAYOUT_NARROW;
 
 	hub_dither_bg();
-	hub_bevel(L->detail, HUB_PANEL);
+	hub_fill(L->detail, 0x0C1024);
+	mmb_gfx_box(L->detail.x, L->detail.y, L->detail.w, L->detail.h,
+		    0x2A3050, p, -1);
 
-	/* Framed screenshot with the same ornament on all four corners. */
-	hub_ornate_frame(shot, HUB_PANEL2);
-	img.x = shot.x + 7 * p;
-	img.y = shot.y + 7 * p;
-	img.w = shot.w - 14 * p;
-	img.h = shot.h - 14 * p;
-	hub_fill(img, 0x0B0F22);
+	hub_ornate_frame(shot, 0x101428);
+	img.x = shot.x + 12 * p;
+	img.y = shot.y + 12 * p;
+	img.w = shot.w - 24 * p;
+	img.h = shot.h - 24 * p;
+	if (img.w < 4)
+		img.w = 4;
+	if (img.h < 4)
+		img.h = 4;
+	hub_fill(img, 0x070910);
 	rel = hub_detail_rel(a);
 	im = hub_img_find(rel);
 	if (im && im->pix)
 		hub_draw_image_cover(im->pix, im->w, im->h, img);
 	else if (a)
-		hub_app_icon(a, (hub_rect){ img.x + img.w / 2 - 32 * p,
-					    img.y + img.h / 2 - 32 * p,
-					    64 * p, 64 * p }, 0);
-	mmb_gfx_box(img.x - p, img.y - p, img.w + 2 * p, img.h + 2 * p,
-		    HUB_PURPLE_D, p, -1);
+		hub_cube(img.x + img.w / 2, img.y + img.h / 2,
+			 img.h * 2 / 3, 1);
+	hub_frame_chrome(shot);
 
-	/* Shot thumbnails or dots. */
 	s_nshotbox = 0;
-	if (a && a->nshots > 0)
+	if (a && a->nshots > 1)
 	{
 		int n = a->nshots;
 		int avail = L->detail_thumbs.w - 4 * p;
-		int th = L->detail_thumbs.h - 2 * p;
+		int th = L->detail_thumbs.h - 4 * p;
 		int tw2 = th * 16 / 9;
-		int i, x = L->detail_thumbs.x;
+		int i, x;
 
-		if (tw2 < 8 * p)
-			tw2 = 8 * p;
-		if (n * (tw2 + 3 * p) > avail)
+		if (th < 6)
+			th = L->detail_thumbs.h;
+		if (tw2 < 8)
+			tw2 = 8;
+		if (n * (tw2 + 3 * p) > avail || th < 10)
 		{
-			/* Dots when there is no room. */
-			int dots = n;
-			int dw = 8 * p;
-			int total = dots * (dw + 2 * p);
+			int dw = 7 * p;
+			int total = n * (dw + 3 * p);
+			int cy = L->detail_thumbs.y + L->detail_thumbs.h / 2;
 
-			x = L->detail_thumbs.x +
-			    (L->detail_thumbs.w - total) / 2;
-			for (i = 0; i < dots; i++)
-				mmb_gfx_circle(x + i * (dw + 2 * p) + dw / 2,
-					       L->detail_thumbs.y +
-					       L->detail_thumbs.h / 2,
-					       3 * p,
-					       i == U.detail_shot ? HUB_CYAN :
-					       HUB_BORDER_D, p, -1);
-			mmb_gfx_circle(x + U.detail_shot * (dw + 2 * p) +
-				       dw / 2,
-				       L->detail_thumbs.y +
-				       L->detail_thumbs.h / 2, 3 * p, HUB_CYAN,
-				       p, -1);
+			x = L->detail_thumbs.x + (L->detail_thumbs.w - total) / 2;
+			for (i = 0; i < n; i++)
+			{
+				int on = i == U.detail_shot;
+
+				mmb_gfx_fill_rect(x + i * (dw + 3 * p),
+						  cy - dw / 2, dw, dw,
+						  on ? HUB_CYAN : 0x3A4060);
+			}
 		}
 		else
 		{
+			int total = n * (tw2 + 3 * p) - 3 * p;
+
+			x = L->detail_thumbs.x +
+			    (L->detail_thumbs.w - total) / 2;
 			for (i = 0; i < n; i++)
 			{
-				hub_rect tr = { x, L->detail_thumbs.y, tw2, th };
+				hub_rect tr = { x, L->detail_thumbs.y + 2 * p,
+						tw2, th };
 				hub_img *ti = hub_img_find(a->shots[i]);
 
-				hub_fill(tr, 0x0B0F22);
+				hub_fill(tr, 0x070910);
 				if (ti && ti->pix)
-					hub_draw_image(ti->pix, ti->w, ti->h,
-						       tr);
+					hub_draw_image(ti->pix, ti->w, ti->h, tr);
 				mmb_gfx_box(tr.x, tr.y, tr.w, tr.h,
 					    i == U.detail_shot ? HUB_CYAN :
-					    HUB_BORDER_D,
-					    i == U.detail_shot ? (p < 2 ? 1 :
-								  2) : p, -1);
-				if (i < (int)(sizeof(s_shotbox) /
-					      sizeof(s_shotbox[0])))
+					    0x3A4068,
+					    i == U.detail_shot ? 2 : 1, -1);
+				if (i < (int)(sizeof(s_shotbox) / sizeof(s_shotbox[0])))
 				{
 					s_shotbox[s_nshotbox].r = tr;
 					s_shotbox[s_nshotbox].value = i;
@@ -1603,79 +2104,122 @@ static void hub_draw_detail(void)
 		}
 	}
 
-	/* Title and icon. */
-	scale = p >= 3 ? 4 : (p >= 2 ? 3 : 2);
-	img.w = 32 * p;
-	img.h = 32 * p;
-	img.x = L->detail_title.x + L->detail_title.w - img.w - 4 * p;
-	img.y = L->detail_title.y + 2 * p;
-	if (!(a && a->icon && a->icon[0]))
-	{
-		img.x = L->detail_title.x;
-		img.w = L->detail_title.w;
-		img.y = L->detail_title.y;
-		img.h = L->detail_title.h;
-	}
-	if (a)
-		hub_app_icon(a, img, a->state == HUB_NEEDS_NEWER);
-	{
-		int maxw = L->detail_title.w - (a && a->icon && a->icon[0] ?
-						img.w + 10 * p : 0);
-		const char *title = a ? (a->title ? a->title : a->id) : "";
-
-		hub_big_shadow(L->detail_title.x,
-			       L->detail_title.y +
-			       (L->detail_title.h - 16 * scale) / 2,
-			       title, HUB_TEXT, HUB_PURPLE, scale, maxw);
-	}
-
-	/* Tag chips. */
 	if (a)
 	{
-		char vbuf[32], sbuf[32];
+		char upper[96];
+		char line1[64], line2[64];
+		int two = 0;
+		int scale = U.p >= 2 ? U.p * 2 : 2;
+		int lines, block_h, icon_s, text_w, maxw;
+		int tx, ty, ix, iy;
+		char *sp;
+
+		if (scale > 6)
+			scale = 6;
+		hub_upper(hub_has(a->title) ? a->title : a->id, upper,
+			  sizeof(upper));
+		line2[0] = 0;
+		snprintf(line1, sizeof(line1), "%s", upper);
+		sp = strchr(line1, ' ');
+		if (sp && sp != line1 && sp[1])
+		{
+			snprintf(line2, sizeof(line2), "%s", sp + 1);
+			*sp = 0;
+			two = 1;
+		}
+		lines = two ? 2 : 1;
+		icon_s = L->detail_title.h * 70 / 100;
+		if (icon_s > 48 * p)
+			icon_s = 48 * p;
+		if (icon_s < 16 * p)
+			icon_s = 16 * p;
+		if (icon_s > L->detail_title.h - 2 * p)
+			icon_s = L->detail_title.h - 2 * p;
+		maxw = L->detail_title.w - icon_s - 12 * p;
+		if (maxw < 16)
+			maxw = L->detail_title.w;
+		while (scale > 1 &&
+		       (16 * scale * lines + (lines - 1) * 2 * p >
+			L->detail_title.h ||
+			hub_text_w(line1, scale) > maxw ||
+			(two && hub_text_w(line2, scale) > maxw)))
+			scale--;
+		block_h = 16 * scale * lines + (lines - 1) * 2 * p;
+		text_w = hub_text_w(line1, scale);
+		if (two && hub_text_w(line2, scale) > text_w)
+			text_w = hub_text_w(line2, scale);
+		if (narrow)
+		{
+			ix = L->detail_title.x;
+			tx = ix + icon_s + 8 * p;
+		}
+		else
+		{
+			int pair = text_w + 8 * p + icon_s;
+			int left = L->detail_title.x +
+				   (L->detail_title.w - pair) / 2;
+
+			if (left < L->detail_title.x)
+				left = L->detail_title.x;
+			tx = left;
+			ix = left + text_w + 8 * p;
+		}
+		ty = L->detail_title.y + (L->detail_title.h - block_h) / 2;
+		if (ty < L->detail_title.y)
+			ty = L->detail_title.y;
+		iy = ty + (block_h - icon_s) / 2;
+		hub_app_icon(a, (hub_rect){ ix, iy, icon_s, icon_s },
+			     a->state == HUB_NEEDS_NEWER, 0);
+		hub_grad_text(tx, ty, line1, 0xFFFFFF, 0xB0B6C8, scale, 1,
+			      0x120818);
+		if (two)
+		{
+			int y2 = ty + 16 * scale + 2 * p;
+
+			hub_grad_text(tx, y2, line2, 0xF0D0FF, 0x6820C8,
+				      scale, 1, 0x140820);
+		}
+	}
+
+	if (a)
+	{
 		int x = L->detail_chips.x;
 		int y = L->detail_chips.y;
-		int maxx = L->detail_chips.x + L->detail_chips.w;
-		char line[96];
+		int maxx = L->detail_chips.x + L->detail_chips.w - 4 * p;
+		int scale = hub_ui_scale();
+		char buf[96];
 
-		snprintf(line, sizeof(line), "by %s",
-			 a->author && a->author[0] ? a->author : "unknown");
-		hub_chip(x, y, line, HUB_TEXT, HUB_PANEL2, 1);
-		x += hub_text_w(line, 1) + 12 * p;
-		snprintf(vbuf, sizeof(vbuf), "v%s",
-			 a->version && a->version[0] ? a->version : "?");
-		if (x + hub_text_w(vbuf, 1) + 8 * p < maxx)
+		if (hub_has(a->author))
 		{
-			hub_chip(x, y, vbuf, HUB_CYAN, HUB_PANEL2, 1);
-			x += hub_text_w(vbuf, 1) + 12 * p;
+			snprintf(buf, sizeof(buf), "by %s", a->author);
+			x += hub_chip(x, y, buf, 0xE0B0FF, 0x24143A, scale) +
+			     4 * p;
 		}
-		hub_size_text(a->size, sbuf, sizeof(sbuf));
-		if (x + hub_text_w(sbuf, 1) + 8 * p < maxx)
+		if (hub_has(a->version) && x < maxx)
 		{
-			hub_chip(x, y, sbuf, HUB_DIM, HUB_PANEL2, 1);
-			x += hub_text_w(sbuf, 1) + 12 * p;
+			snprintf(buf, sizeof(buf), "v%s", a->version);
+			x += hub_chip(x, y, buf, HUB_CYAN, 0x0C2430, scale) +
+			     4 * p;
 		}
-		if (a->category && a->category[0] &&
-		    x + hub_text_w(a->category, 1) + 8 * p < maxx)
+		if (a->size > 0 && x < maxx)
 		{
-			hub_chip(x, y, a->category, HUB_PURPLE, HUB_PANEL2, 1);
-			x += hub_text_w(a->category, 1) + 12 * p;
+			hub_size_text(a->size, buf, sizeof(buf));
+			x += hub_chip(x, y, buf, HUB_ORANGE, 0x2A1A08, scale) +
+			     4 * p;
 		}
-		if (a->state == HUB_NEEDS_NEWER)
+		if (hub_has(a->category) && x < maxx)
+			x += hub_chip(x, y, a->category, 0xD090F0, 0x24143A,
+				      scale) + 4 * p;
+		if (a->state == HUB_NEEDS_NEWER && x < maxx)
 		{
-			char nb[64];
-			int nw;
-
-			snprintf(nb, sizeof(nb), "NEEDS MMCORE v%s",
-				 a->minver && a->minver[0] ? a->minver : "?");
-			nw = hub_text_w(nb, 1) + 8 * p;
-			if (x + nw > maxx)
-			{
-				x = maxx - nw;
-				y += L->detail_chips.h;
-			}
-			hub_chip(x, y, nb, HUB_RED, 0x3A0E0E, 1);
+			if (hub_has(a->minver))
+				snprintf(buf, sizeof(buf), "NEEDS MMCORE v%s",
+					 a->minver);
+			else
+				snprintf(buf, sizeof(buf), "NEEDS MMCORE");
+			hub_chip(x, y, buf, HUB_RED, 0x3A1010, scale);
 		}
+		(void)maxx;
 	}
 
 	hub_draw_about(L->detail_about, a, U.about_scroll);
@@ -1686,7 +2230,7 @@ static void hub_draw_detail(void)
 
 static void hub_modal_rect(hub_rect *m, int wunits, int hunits)
 {
-	int p = U.p;
+	int p = U.p < 1 ? 1 : U.p;
 	int w = wunits * p;
 	int h = hunits * p;
 
@@ -1700,68 +2244,161 @@ static void hub_modal_rect(hub_rect *m, int wunits, int hunits)
 	m->h = h;
 }
 
+static void hub_rocket(int x, int y, int s)
+{
+	/* 16x28 grid, s pixels per cell. Nose at the top. */
+	hub_fill((hub_rect){ x + 6 * s, y, 4 * s, 3 * s }, 0xD8E0F0);
+	hub_fill((hub_rect){ x + 4 * s, y + 3 * s, 8 * s, 4 * s }, 0x9AA8C4);
+	hub_fill((hub_rect){ x + 5 * s, y + 5 * s, 6 * s, 3 * s }, 0x29D3F0);
+	hub_fill((hub_rect){ x + 3 * s, y + 7 * s, 10 * s, 10 * s }, 0x6A7A9A);
+	hub_fill((hub_rect){ x + 5 * s, y + 9 * s, 6 * s, 5 * s }, 0xC8D4E8);
+	hub_fill((hub_rect){ x, y + 10 * s, 3 * s, 8 * s }, 0xC87820);
+	hub_fill((hub_rect){ x + 13 * s, y + 10 * s, 3 * s, 8 * s }, 0xC87820);
+	hub_fill((hub_rect){ x + 1 * s, y + 12 * s, 2 * s, 4 * s }, 0xE8A040);
+	hub_fill((hub_rect){ x + 13 * s, y + 12 * s, 2 * s, 4 * s }, 0xE8A040);
+	hub_fill((hub_rect){ x + 6 * s, y + 17 * s, 4 * s, 4 * s }, 0xF0E060);
+	hub_fill((hub_rect){ x + 5 * s, y + 20 * s, 6 * s, 4 * s }, 0xF09020);
+	hub_fill((hub_rect){ x + 6 * s, y + 23 * s, 4 * s, 4 * s }, 0xE04020);
+	hub_fill((hub_rect){ x + 7 * s, y + 26 * s, 2 * s, 3 * s }, 0xFFD080);
+}
+
+static void hub_floppy(int x, int y, int s)
+{
+	int i;
+
+	hub_fill((hub_rect){ x, y, 16 * s, 16 * s }, 0x3A48D0);
+	hub_fill((hub_rect){ x + s, y + s, 14 * s, 14 * s }, 0x2A38B0);
+	hub_fill((hub_rect){ x + 2 * s, y + 2 * s, 12 * s, 5 * s }, 0xE8ECF4);
+	hub_fill((hub_rect){ x + 10 * s, y + 2 * s, 3 * s, 3 * s }, 0x202838);
+	hub_fill((hub_rect){ x + 4 * s, y + 9 * s, 8 * s, 5 * s }, 0x101428);
+	hub_fill((hub_rect){ x + 6 * s, y + 10 * s, 4 * s, 3 * s }, 0xC0C8E0);
+	for (i = 0; i < 3; i++)
+	{
+		int rad = (5 + i * 3) * s;
+		int ax = x + 14 * s;
+		int ay = y + 2 * s;
+
+		mmb_gfx_line(ax, ay - rad, ax + rad * 2 / 3, ay - rad / 2,
+			     0xD070F0, s);
+		mmb_gfx_line(ax + rad * 2 / 3, ay - rad / 2, ax + rad, ay,
+			     0xD070F0, s);
+	}
+}
+
 static void hub_paint_install_modal(int failed)
 {
 	hub_app *a = hub_get(U.inst_index);
-	hub_rect m, bar;
-	int p = U.p;
-	int y;
+	hub_rect m, bar, b;
+	int p = U.p < 1 ? 1 : U.p;
+	int y, scale;
 	char buf[192];
+	char title[128];
 
-	hub_modal_rect(&m, 500, 250);
-	hub_ornate_frame(m, HUB_PANEL2);
-	y = m.y + 14 * p;
+	m.w = U.w * 62 / 100;
+	m.h = U.h * 64 / 100;
+	if (m.w < 300 * p)
+		m.w = 300 * p;
+	if (m.h < 200 * p)
+		m.h = 200 * p;
+	if (m.w > U.w - 12 * p)
+		m.w = U.w - 12 * p;
+	if (m.h > U.h - 12 * p)
+		m.h = U.h - 12 * p;
+	m.x = (U.w - m.w) / 2;
+	m.y = (U.h - m.h) / 2;
+	hub_ornate_frame(m, 0x101428);
+
+	scale = p >= 2 ? 2 : 1;
+	if (16 * scale + 8 > 36 * p)
+		scale = 1;
 	{
 		const char *verb = a && a->state == HUB_UPDATE ? "UPDATING" :
 				   "INSTALLING";
-		snprintf(buf, sizeof(buf), "%s %s v%s", verb,
-			 a ? (a->title ? a->title : a->id) : "",
-			 a && a->version ? a->version : "");
-	}
-	hub_text_trunc(m.x + 12 * p, y, buf, HUB_TEXT, p >= 2 ? 2 : 1,
-		       m.w - 24 * p);
-	y += 30 * p;
+		char name[64];
+		int th = 16 * scale;
 
+		hub_upper(a ? (hub_has(a->title) ? a->title : a->id) : "",
+			  name, sizeof(name));
+		if (a && hub_has(a->version))
+			snprintf(title, sizeof(title), "%s %s v%s", verb, name,
+				 a->version);
+		else
+			snprintf(title, sizeof(title), "%s %s", verb, name);
+		hub_text_trunc(m.x + (m.w - hub_text_w(title, scale)) / 2,
+			       m.y + 10 * p + (22 * p - th) / 2, title,
+			       HUB_TEXT, scale, m.w - 56 * p);
+		hub_hline(m.x + 14 * p, m.y + 34 * p, m.w - 28 * p, 0x3A3058,
+			  p);
+	}
+	{
+		int xsz = 16 * p;
+
+		s_modal_x.x = m.x + m.w - xsz - 14 * p;
+		s_modal_x.y = m.y + 10 * p;
+		s_modal_x.w = xsz;
+		s_modal_x.h = xsz;
+		hub_fill(s_modal_x, 0x1A1E30);
+		mmb_gfx_box(s_modal_x.x, s_modal_x.y, xsz, xsz, 0xC8CCD8, p, -1);
+		mmb_gfx_line(s_modal_x.x + 4 * p, s_modal_x.y + 4 * p,
+			     s_modal_x.x + xsz - 4 * p,
+			     s_modal_x.y + xsz - 4 * p, HUB_TEXT, p);
+		mmb_gfx_line(s_modal_x.x + xsz - 4 * p, s_modal_x.y + 4 * p,
+			     s_modal_x.x + 4 * p,
+			     s_modal_x.y + xsz - 4 * p, HUB_TEXT, p);
+	}
+
+	y = m.y + 48 * p;
 	if (!failed)
 	{
 		unsigned kb = (U.inst_done + 1023) / 1024;
 		unsigned total = (U.inst_total + 1023) / 1024;
+		int rs = p < 2 ? 1 : 3;
+		int lx = m.x + 28 * p + 16 * rs;
 
-		snprintf(buf, sizeof(buf), "DOWNLOADING  %u / %u KB", kb,
-			 total);
-		hub_text(m.x + 16 * p, y, buf, HUB_TEXT, 1);
-		y += 22 * p;
-		bar.x = m.x + 16 * p;
+		if (m.w > 220 * p)
+			hub_rocket(m.x + 18 * p, y, rs);
+		hub_text(lx, y, "DOWNLOADING", HUB_LIME, scale);
+		snprintf(buf, sizeof(buf), "%u / %u KB", kb, total);
+		hub_text(lx + hub_text_w("DOWNLOADING  ", scale), y, buf,
+			 HUB_TEXT, scale);
+		y += 16 * scale + 8 * p;
+		bar.x = lx;
 		bar.y = y;
-		bar.w = m.w - 32 * p;
-		bar.h = 18 * p;
-		hub_segbar(bar, U.inst_total ?
-			   (int)((uint64_t)U.inst_done * 100u /
-				 (unsigned)U.inst_total) : 0,
-			   HUB_LIME, HUB_LIME_D);
-		y += 26 * p;
-
-		snprintf(buf, sizeof(buf), "CHECKSUM   %s",
+		bar.w = m.x + m.w - 22 * p - lx;
+		bar.h = 20 * p;
+		hub_stripebar(bar, U.inst_total ?
+			      (int)((uint64_t)U.inst_done * 100u /
+				    (unsigned)U.inst_total) : 0);
+		y += bar.h + 12 * p;
+		hub_text(lx, y, "CHECKSUM", HUB_CYAN, scale);
+		snprintf(buf, sizeof(buf), "%s",
 			 U.inst_checksum == 1 ? "OK" :
-			 U.inst_checksum == 2 ? "FAILED" :
-			 (U.inst_done && U.inst_total &&
-			  U.inst_done >= U.inst_total ? "..." : "..."));
-		hub_text(m.x + 16 * p, y, buf,
+			 U.inst_checksum == 2 ? "FAILED" : "...");
+		hub_text(lx + hub_text_w("CHECKSUM  ", scale), y, buf,
 			 U.inst_checksum == 2 ? HUB_RED :
-			 U.inst_checksum == 1 ? HUB_LIME : HUB_TEXT, 1);
-		y += 22 * p;
-		snprintf(buf, sizeof(buf), "TARGET   %s", U.inst_target);
-		hub_text_trunc(m.x + 16 * p, y, buf, HUB_DIM, 1,
-			       m.w - 32 * p);
-		y += 28 * p;
+			 U.inst_checksum == 1 ? HUB_LIME : HUB_TEXT, scale);
+		y += 16 * scale + 8 * p;
+		hub_text(lx, y, "TARGET", HUB_MAGENTA, scale);
+		snprintf(buf, sizeof(buf), "%s",
+			 U.inst_target[0] ? U.inst_target : "");
+		hub_text_trunc(lx + hub_text_w("TARGET  ", scale), y, buf,
+			       HUB_TEXT, scale,
+			       m.x + m.w - 48 * p -
+			       (lx + hub_text_w("TARGET  ", scale)));
+		if (m.w > 240 * p)
+			hub_floppy(m.x + m.w - 22 * p, m.y + m.h - 22 * p,
+				   rs);
 		{
-			int bw = 100 * p, bh = 24 * p;
-			hub_rect b = { m.x + (m.w - bw) / 2, y, bw, bh };
+			int bw = 120 * p;
+			int bh = 28 * p;
 
-			hub_fill(b, HUB_PANEL);
-			mmb_gfx_box(b.x, b.y, b.w, b.h, HUB_BORDER_L, p, -1);
-			hub_text(b.x + (b.w - hub_text_w("CANCEL", 1)) / 2,
-				 b.y + (b.h - 16) / 2, "CANCEL", HUB_TEXT, 1);
+			if (bw > m.w / 2)
+				bw = m.w / 2;
+			b.w = bw;
+			b.h = bh;
+			b.x = m.x + (m.w - bw) / 2;
+			b.y = m.y + m.h - bh - 16 * p;
+			hub_action_button(b, "CANCEL", 0xA0A8B8, 1);
 			s_modal_cancel = b;
 			s_has_cancel = 1;
 		}
@@ -1770,17 +2407,17 @@ static void hub_paint_install_modal(int failed)
 	{
 		snprintf(buf, sizeof(buf), "%s",
 			 U.errmsg[0] ? U.errmsg : "INSTALL FAILED");
-		hub_text_trunc(m.x + 16 * p, y, buf, HUB_RED, 1,
+		hub_text_trunc(m.x + 16 * p, y, buf, HUB_RED, scale,
 			       m.w - 32 * p);
-		y += 34 * p;
 		{
-			int bw = 80 * p, bh = 24 * p;
-			hub_rect b = { m.x + (m.w - bw) / 2, y, bw, bh };
+			int bw = 70 * p;
+			int bh = 26 * p;
 
-			hub_fill(b, HUB_PANEL);
-			mmb_gfx_box(b.x, b.y, b.w, b.h, HUB_BORDER_L, p, -1);
-			hub_text(b.x + (b.w - hub_text_w("OK", 1)) / 2,
-				 b.y + (b.h - 16) / 2, "OK", HUB_TEXT, 1);
+			b.w = bw;
+			b.h = bh;
+			b.x = m.x + (m.w - bw) / 2;
+			b.y = m.y + m.h - bh - 16 * p;
+			hub_action_button(b, "OK", 0x6A7088, 1);
 			s_modal_ok = b;
 			s_has_ok = 1;
 		}
@@ -1791,44 +2428,33 @@ static void hub_paint_remove_modal(void)
 {
 	hub_app *a = hub_get(U.ids[U.sel < U.nids ? U.sel : 0]);
 	hub_rect m;
-	int p = U.p;
+	int p = U.p < 1 ? 1 : U.p;
 	char buf[192];
-	int bw = 84 * p, bh = 24 * p, y;
+	int bw = 72 * p, bh = 26 * p, y;
+	int scale = hub_ui_scale();
 
-	hub_modal_rect(&m, 360, 150);
-	hub_ornate_frame(m, HUB_PANEL2);
-	snprintf(buf, sizeof(buf), "REMOVE %s?", a ? (a->title ? a->title :
-						      a->id) : "");
-	hub_text_trunc(m.x + 12 * p, m.y + 16 * p, buf, HUB_TEXT,
-		       p >= 2 ? 2 : 1, m.w - 24 * p);
-	y = m.y + m.h - 34 * p;
-	s_modal_yes.x = m.x + m.w / 2 - bw - 10 * p;
+	hub_modal_rect(&m, 340, 130);
+	hub_ornate_frame(m, 0x101428);
+	snprintf(buf, sizeof(buf), "REMOVE %s?",
+		 a ? (hub_has(a->title) ? a->title : a->id) : "");
+	hub_text_trunc(m.x + 14 * p, m.y + 16 * p, buf, HUB_TEXT, scale,
+		       m.w - 28 * p);
+	y = m.y + m.h - bh - 14 * p;
+	s_modal_yes.x = m.x + m.w / 2 - bw - 8 * p;
 	s_modal_yes.y = y;
 	s_modal_yes.w = bw;
 	s_modal_yes.h = bh;
-	s_modal_no.x = m.x + m.w / 2 + 10 * p;
+	s_modal_no.x = m.x + m.w / 2 + 8 * p;
 	s_modal_no.y = y;
 	s_modal_no.w = bw;
 	s_modal_no.h = bh;
 	s_has_yesno = 1;
-	{
-		int focus[2] = { 0, 1 };
-		hub_rect *br[2] = { &s_modal_yes, &s_modal_no };
-		const char *labels[2] = { "YES", "NO" };
-
-		for (int i = 0; i < 2; i++)
-		{
-			int on = U.remove_focus == focus[i];
-
-			hub_fill(*br[i], on ? 0x17300C : HUB_PANEL);
-			mmb_gfx_box(br[i]->x, br[i]->y, br[i]->w, br[i]->h,
-				    on ? HUB_LIME : HUB_BORDER_L, p, -1);
-			hub_text(br[i]->x + (br[i]->w -
-					     hub_text_w(labels[i], 1)) / 2,
-				 br[i]->y + (br[i]->h - 16) / 2, labels[i],
-				 on ? HUB_LIME : HUB_TEXT, 1);
-		}
-	}
+	hub_action_button(s_modal_yes, "YES",
+			  U.remove_focus == 0 ? 0x2E9A32 : 0x3A4058,
+			  1);
+	hub_action_button(s_modal_no, "NO",
+			  U.remove_focus == 1 ? 0xC87820 : 0x3A4058,
+			  1);
 }
 
 static void hub_paint(void)
@@ -2304,7 +2930,8 @@ static void hub_install_pump(void)
 		U.mx = ms.x;
 		U.my = ms.y;
 		if (click && s_has_cancel &&
-		    hub_rect_contains(&s_modal_cancel, ms.x, ms.y))
+		    (hub_rect_contains(&s_modal_cancel, ms.x, ms.y) ||
+		     hub_rect_contains(&s_modal_x, ms.x, ms.y)))
 			hub_request_install_cancel();
 	}
 	U.inst_pump = 0;
@@ -2617,7 +3244,9 @@ static void hub_mouse_click(int x, int y)
 
 	if (U.state == HUB_ST_INSTALL)
 	{
-		if (s_has_cancel && hub_rect_contains(&s_modal_cancel, x, y))
+		if (s_has_cancel &&
+		    (hub_rect_contains(&s_modal_cancel, x, y) ||
+		     hub_rect_contains(&s_modal_x, x, y)))
 			hub_request_install_cancel();
 		return;
 	}

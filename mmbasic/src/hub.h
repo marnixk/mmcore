@@ -26,6 +26,7 @@ typedef struct hub_app {
 	char *icon;
 	char *thumb;
 	char *about;
+	char *changes; /* INFO/CHANGES.TXT text, empty when the file is absent */
 	char **shots;
 	int nshots;
 	long size;
