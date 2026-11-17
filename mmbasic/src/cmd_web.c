@@ -1100,9 +1100,6 @@ static void read_response(wb_t *body)
 		 * progress point here instead of completing unscathed (#1532). */
 		web_progress_check(&raw, body, have, (unsigned)clen);
 		wb_put(body, raw.p + header_end, have);
-		/* The body may have arrived with the headers (the read loop above
-		 * never ran), so report completion and honour a cancel request. */
-		web_progress_check(&raw, body, have, (unsigned)clen);
 	}
 	else
 	{
