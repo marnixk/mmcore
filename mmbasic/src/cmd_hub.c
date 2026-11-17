@@ -211,6 +211,50 @@ static int hub_text_w(const char *s, int scale)
 	return (int)strlen(s) * 8 * scale;
 }
 
+/* Nearest-neighbour scale of the 8x16 face to an arbitrary cell. Used for
+ * the detail paragraph, which sits between the 8px and 16px sizes. */
+static void hub_text_cell(int x, int y, const char *s, unsigned n,
+			  unsigned col, int gw, int gh)
+{
+	unsigned i;
+
+	if (!s || gw < 1 || gh < 1)
+		return;
+	for (i = 0; i < n; i++)
+	{
+		unsigned char ch = (unsigned char)s[i];
+		int row, colbit;
+
+		if (ch == '\n' || ch == '\r')
+			continue;
+		for (row = 0; row < 16; row++)
+		{
+			unsigned char bits = mmb_cp437_8x16[ch * 16u + row];
+			int y0 = y + row * gh / 16;
+			int y1 = y + (row + 1) * gh / 16;
+
+			for (colbit = 0; colbit < 8; colbit++)
+			{
+				int x0, x1, px, py;
+
+				if (!(bits & (unsigned char)(0x80u >> colbit)))
+					continue;
+				x0 = x + (int)i * gw + colbit * gw / 8;
+				x1 = x + (int)i * gw + (colbit + 1) * gw / 8;
+				for (py = y0; py < y1; py++)
+					for (px = x0; px < x1; px++)
+					{
+						if (s_clip &&
+						    (px < s_cx0 || py < s_cy0 ||
+						     px >= s_cx1 || py >= s_cy1))
+							continue;
+						mmb_gfx_plot(px, py, col);
+					}
+			}
+		}
+	}
+}
+
 static void hub_text(int x, int y, const char *s, unsigned col, int scale)
 {
 	if (!s)
@@ -426,13 +470,23 @@ static int hub_wrap_lines(const char *s, int cols)
 
 /* Draw wrapped text, skipping `skip` lines and stopping at `maxlines`. */
 static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
-			  int skip, int maxlines, unsigned col, int scale)
+			  int skip, int maxlines, unsigned col, int scale,
+			  int gw, int gh)
 {
 	const char *q = s;
 	int line = 0, cx = 0;
+	int cw;
 
 	if (scale < 1)
 		scale = 1;
+	if (gw < 1)
+	{
+		gw = 8 * scale;
+		gh = 16 * scale;
+	}
+	if (gh < 1)
+		gh = gw * 2;
+	cw = gw;
 
 	if (!s || !*s)
 		return;
@@ -481,9 +535,18 @@ static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
 				continue;
 			}
 			if (line >= skip && line < skip + maxlines)
-				hub_text_n(x + cx * 8 * scale,
-					   y + (line - skip) * lineh,
-					   word, (unsigned)take, col, scale);
+			{
+				if (cw == 8 * scale && gh == 16 * scale)
+					hub_text_n(x + cx * cw,
+						   y + (line - skip) * lineh,
+						   word, (unsigned)take, col,
+						   scale);
+				else
+					hub_text_cell(x + cx * cw,
+						      y + (line - skip) * lineh,
+						      word, (unsigned)take, col,
+						      gw, gh);
+			}
 			word += take;
 			wl -= take;
 			cx += take;
@@ -793,8 +856,8 @@ static void hub_cube(int cx, int cy, int size, int neon)
 	t = size / 16;
 	if (t < 1)
 		t = 1;
-	if (t > 12)
-		t = 12;
+	if (t > 10)
+		t = 10;
 	core = t > 3 ? t / 2 : 1;
 	tx = cx;
 	ty = y0;
@@ -837,13 +900,29 @@ static void hub_cube(int cx, int cy, int size, int neon)
 	}
 	if (neon && t > 1)
 	{
-		mmb_gfx_line(tx, ty, trx, try_, glow_t, t + t / 2);
-		mmb_gfx_line(tx, ty, tlx, tly, glow_t, t + t / 2);
-		mmb_gfx_line(tlx, tly, blx, bly, glow_l, t + t / 2);
-		mmb_gfx_line(blx, bly, bx, by, glow_l, t + t / 2);
-		mmb_gfx_line(trx, try_, brx, bry, glow_r, t + t / 2);
-		mmb_gfx_line(brx, bry, bx, by, glow_r, t + t / 2);
-		mmb_gfx_line(mx, my, bx, by, glow_t, t);
+		/* A 3px dimmer stroke past the bright core, then a 2px
+		 * step, so the wireframe reads as a glow rather than a
+		 * hard line. */
+		int halo = t + 6;
+		int mid = t + 3;
+		unsigned mid_t = 0xC8D4FF;
+		unsigned mid_l = 0xE060FF;
+		unsigned mid_r = 0x40E8FF;
+
+		mmb_gfx_line(tx, ty, trx, try_, glow_t, halo);
+		mmb_gfx_line(tx, ty, tlx, tly, glow_t, halo);
+		mmb_gfx_line(tlx, tly, blx, bly, glow_l, halo);
+		mmb_gfx_line(blx, bly, bx, by, glow_l, halo);
+		mmb_gfx_line(trx, try_, brx, bry, glow_r, halo);
+		mmb_gfx_line(brx, bry, bx, by, glow_r, halo);
+		mmb_gfx_line(mx, my, bx, by, glow_t, halo);
+		mmb_gfx_line(tx, ty, trx, try_, mid_t, mid);
+		mmb_gfx_line(tx, ty, tlx, tly, mid_t, mid);
+		mmb_gfx_line(tlx, tly, blx, bly, mid_l, mid);
+		mmb_gfx_line(blx, bly, bx, by, mid_l, mid);
+		mmb_gfx_line(trx, try_, brx, bry, mid_r, mid);
+		mmb_gfx_line(brx, bry, bx, by, mid_r, mid);
+		mmb_gfx_line(mx, my, bx, by, mid_t, mid);
 	}
 	mmb_gfx_line(tx, ty, trx, try_, et, t);
 	mmb_gfx_line(tx, ty, tlx, tly, et, t);
@@ -1321,9 +1400,23 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 	fill = nseg * pct / 100;
 	if (pct > 0 && fill < 1)
 		fill = 1;
-	hub_fill(r, 0x10131C);
-	mmb_gfx_box(r.x, r.y, r.w, r.h, 0xC8CCD8, p, -1);
-	mmb_gfx_box(r.x + p, r.y + p, r.w - 2 * p, r.h - 2 * p, 0x3A3E4C, p, -1);
+	{
+		int rad = r.h / 3;
+
+		if (rad < 4)
+			rad = 4;
+		if (rad > r.h / 2)
+			rad = r.h / 2;
+		if (rad > 8 * p)
+			rad = 8 * p;
+		/* Dark track. Unfilled segments are not painted, so the
+		 * empty part stays this colour. */
+		mmb_gfx_rbox(r.x, r.y, r.w, r.h, rad, 0x080A12, 1, 0x080A12);
+		mmb_gfx_rbox(r.x, r.y, r.w, r.h, rad, 0xC8CCD8, p + 1, -1);
+		mmb_gfx_rbox(r.x + p + 1, r.y + p + 1, r.w - 2 * (p + 1),
+			     r.h - 2 * (p + 1), rad > p + 1 ? rad - p - 1 : 1,
+			     0x3A3E4C, p, -1);
+	}
 	for (i = 0; i < nseg; i++)
 	{
 		hub_rect s;
@@ -1335,19 +1428,14 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 		s.h = r.h - 2 * pad;
 		if (s.h < 2 || s.x + s.w > r.x + r.w - pad)
 			break;
-		if (i < fill)
-		{
-			if (gradient)
-				col = hub_lerp(0xE000C8, 0x00E4EC, i, nseg - 1);
-			else
-				col = hi;
-		}
+		if (i >= fill)
+			continue;
+		if (gradient)
+			col = hub_lerp(0xE000C8, 0x00E4EC, i, nseg - 1);
 		else
-			col = lo ? lo : 0x1A1E2A;
+			col = hi ? hi : lo;
 		hub_fill(s, col);
-		if (i < fill)
-			hub_hline(s.x, s.y, s.w,
-				  hub_lerp(col, 0xFFFFFF, 1, 3), 1);
+		hub_hline(s.x, s.y, s.w, hub_lerp(col, 0xFFFFFF, 1, 3), 1);
 	}
 }
 
@@ -1394,38 +1482,48 @@ static void hub_paint_loading(void)
 	int p = U.p < 1 ? 1 : U.p;
 	hub_rect bar;
 	const char *title = "MMCORE SOFTWARE HUB";
-	int title_scale = p < 2 ? 1 : (p > 3 ? 3 : p);
-	int cube_s = U.h * 46 / 100;
-	int cube_h, title_h, bar_h, block, top, cy, ty, tx, tw;
-	int pct;
+	int title_n = 19;
+	/* Wider than the 8x16 face so the wordmark matches the mockup's
+	 * width (about a third of the screen) while staying one step up. */
+	int gw = (U.w * 32 / 100 + title_n - 1) / title_n;
+	int gh;
+	/* About a quarter larger than the old centred cube, kept just inside
+	 * the mockup once the glow is included. */
+	int cube_s = U.h * 52 / 100;
+	int spark, spark_top, cy, ty, tx, tw;
+	int bar_h, pct;
 	int i;
 
-	if (cube_s > U.w * 32 / 100)
-		cube_s = U.w * 32 / 100;
-	if (cube_s < 72)
-		cube_s = 72;
-	/* The cube is about as tall as it is wide, plus the sparkle. */
-	cube_h = cube_s + cube_s / 5;
-	title_h = 16 * title_scale;
-	bar_h = 26 * p;
-	block = cube_h + 12 * p + title_h + 12 * p + bar_h;
-	top = (U.h - block) / 2;
-	if (top < 4 * p)
-		top = 4 * p;
+	if (gw < 8 * p)
+		gw = 8 * p;
+	if (gw > 40)
+		gw = 40;
+	gh = gw * 3 / 2;
+	if (gh < 16)
+		gh = 16;
+	if (cube_s > U.w * 40 / 100)
+		cube_s = U.w * 40 / 100;
+	if (cube_s < 90)
+		cube_s = 90;
+	bar_h = 28 * p;
+	/* Top of the sparkle sits near 8% of the screen; the cube hangs
+	 * below it instead of being centred with the title. */
+	spark = cube_s / 6;
+	spark_top = U.h * 8 / 100;
 
 	mmb_gfx_fill_rect(0, 0, U.w, U.h, 0x05060C);
-	cy = top + cube_s / 5 + cube_s / 2;
+	cy = spark_top + spark + cube_s / 2;
 	hub_cube(U.w / 2, cy, cube_s, 1);
 
-	tw = hub_text_w(title, title_scale);
+	tw = title_n * gw;
 	tx = (U.w - tw) / 2;
-	ty = top + cube_h + 10 * p;
-	hub_text(tx, ty, title, 0xC060F0, title_scale);
+	ty = cy + cube_s / 2 + 18 * p;
+	hub_text_cell(tx, ty, title, (unsigned)title_n, 0xC060F0, gw, gh);
 	for (i = 0; i < 12; i++)
 	{
-		int dot = 2 * p;
+		int dot = 2 * p + 1;
 		int gap = 6 * p;
-		int ry = ty + title_h / 2 - dot / 2;
+		int ry = ty + gh / 2 - dot / 2;
 		int lx = tx - 10 * p - (12 - i) * gap;
 		int rx = tx + tw + 10 * p + i * gap;
 		unsigned lc = hub_lerp(0x7010A0, 0xC060F0, i, 11);
@@ -1437,14 +1535,14 @@ static void hub_paint_loading(void)
 			mmb_gfx_fill_rect(rx, ry, dot, dot, rc);
 	}
 
-	bar.w = U.w * 58 / 100;
-	if (bar.w > 380 * p)
-		bar.w = 380 * p;
+	bar.w = U.w * 57 / 100;
 	if (bar.w < 80 * p)
+		bar.w = U.w - 16 * p;
+	if (bar.w > U.w - 16 * p)
 		bar.w = U.w - 16 * p;
 	bar.h = bar_h;
 	bar.x = (U.w - bar.w) / 2;
-	bar.y = ty + title_h + 14 * p;
+	bar.y = ty + gh + 10 * p;
 
 	if (U.state != HUB_ST_LOADING)
 		return;
@@ -2011,7 +2109,7 @@ static void hub_paint_listing(void)
 					      16 * bscale, 0,
 					      (pr.y + pr.h - ty - 6 * p) /
 					      (16 * bscale),
-					      HUB_DIM, bscale);
+					      HUB_DIM, bscale, 0, 0);
 		}
 	}
 }
@@ -2113,21 +2211,28 @@ static void hub_draw_main_button(hub_rect area)
 static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 {
 	int p = U.p < 1 ? 1 : U.p;
-	int scale = U.p >= 3 ? 2 : 1;
-	int lh = 16 * scale + 10 * (U.p < 1 ? 1 : U.p);
-	int cols = hub_wrap_cols(r.w - 8 * p, scale);
+	/* One and a half times the listing summary: 12px at 720p, about
+	 * 44 characters across the column, with the mockup's line pitch. */
+	int gw = (U.p >= 3 ? 16 : 8) * 3 / 2;
+	int gh = gw * 2;
+	int lh = gh + 11 * (U.p < 1 ? 1 : U.p) / 2;
+	int cols = (r.w - 16 * p) / gw;
 	const char *body = (a && hub_has(a->about)) ? a->about :
 			   (a && hub_has(a->summary) ? a->summary : "");
 	const char *changes = (a && hub_has(a->changes)) ? a->changes : "";
-	int body_lines = hub_wrap_lines(body, cols);
-	int ch_lines = changes[0] ? hub_wrap_lines(changes, cols) : 0;
-	int head = changes[0] ? body_lines + 1 : -1;
-	int ch_at = changes[0] ? body_lines + 2 : -1;
-	int lines = body_lines + (changes[0] ? 2 + ch_lines : 0);
-	int rows = lh > 0 ? r.h / lh : 0;
+	int body_lines, ch_lines;
+	int head, ch_at, lines, rows;
 	int maxscroll;
 	int i;
 
+	if (cols < 8)
+		cols = 8;
+	body_lines = hub_wrap_lines(body, cols);
+	ch_lines = changes[0] ? hub_wrap_lines(changes, cols) : 0;
+	head = changes[0] ? body_lines + 1 : -1;
+	ch_at = changes[0] ? body_lines + 2 : -1;
+	lines = body_lines + (changes[0] ? 2 + ch_lines : 0);
+	rows = lh > 0 ? r.h / lh : 0;
 	if (rows < 1)
 		rows = 1;
 	maxscroll = lines - rows;
@@ -2145,14 +2250,19 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 		int y = r.y + i * lh;
 
 		if (line < body_lines && body[0])
+		{
 			hub_wrap_draw(r.x, y, body, cols, lh, line, 1,
-				      HUB_TEXT, scale);
+				      HUB_TEXT, 1, gw, gh);
+			hub_wrap_draw(r.x + 1, y, body, cols, lh, line, 1,
+				      HUB_TEXT, 1, gw, gh);
+		}
 		else if (line == head)
-			hub_text(r.x, y, "WHAT'S NEW", HUB_ORANGE, scale);
+			hub_text_cell(r.x, y, "WHAT'S NEW", 9, HUB_ORANGE,
+				      gw, gh);
 		else if (ch_at >= 0 && line >= ch_at &&
 			 line < ch_at + ch_lines)
 			hub_wrap_draw(r.x, y, changes, cols, lh,
-				      line - ch_at, 1, HUB_DIM, scale);
+				      line - ch_at, 1, HUB_DIM, 1, gw, gh);
 	}
 	if (r.h > 8 * p)
 	{
@@ -2269,13 +2379,13 @@ static void hub_draw_detail(void)
 		char upper[96];
 		char line1[64], line2[64];
 		int two = 0;
-		int scale = U.p >= 2 ? U.p * 2 + 1 : 3;
-		int lines, block_h, icon_s, text_w, maxw;
+		int scale = 8;
+		int lines, block_h, icon_s;
 		int tx, ty, ix, iy;
 		char *sp;
 
-		if (scale > 8)
-			scale = 8;
+		if (U.p < 2)
+			scale = 4;
 		hub_upper(hub_has(a->title) ? a->title : a->id, upper,
 			  sizeof(upper));
 		line2[0] = 0;
@@ -2288,26 +2398,23 @@ static void hub_draw_detail(void)
 			two = 1;
 		}
 		lines = two ? 2 : 1;
-		icon_s = L->detail_title.h * 70 / 100;
-		if (icon_s > 48 * p)
-			icon_s = 48 * p;
-		if (icon_s < 16 * p)
-			icon_s = 16 * p;
-		if (icon_s > L->detail_title.h - 2 * p)
-			icon_s = L->detail_title.h - 2 * p;
-		maxw = L->detail_title.w - icon_s - 12 * p;
-		if (maxw < 16)
-			maxw = L->detail_title.w;
-		while (scale > 1 &&
-		       (16 * scale * lines + (lines - 1) * 2 * p >
-			L->detail_title.h ||
-			hub_text_w(line1, scale) > maxw ||
-			(two && hub_text_w(line2, scale) > maxw)))
+		/* The icon is as tall as the two title lines and sits at the
+		 * right; the words fill the column to its left. */
+		while (scale > 1)
+		{
+			int bh = 16 * scale * lines + (lines - 1) * 2 * p;
+			int mw = L->detail_title.w - bh - 12 * p;
+
+			if (bh <= L->detail_title.h && mw > 16 &&
+			    hub_text_w(line1, scale) <= mw &&
+			    (!two || hub_text_w(line2, scale) <= mw))
+				break;
 			scale--;
+		}
 		block_h = 16 * scale * lines + (lines - 1) * 2 * p;
-		text_w = hub_text_w(line1, scale);
-		if (two && hub_text_w(line2, scale) > text_w)
-			text_w = hub_text_w(line2, scale);
+		icon_s = block_h;
+		if (icon_s > L->detail_title.h)
+			icon_s = L->detail_title.h;
 		if (narrow)
 		{
 			ix = L->detail_title.x;
@@ -2315,14 +2422,8 @@ static void hub_draw_detail(void)
 		}
 		else
 		{
-			int pair = text_w + 8 * p + icon_s;
-			int left = L->detail_title.x +
-				   (L->detail_title.w - pair) / 2;
-
-			if (left < L->detail_title.x)
-				left = L->detail_title.x;
-			tx = left;
-			ix = left + text_w + 8 * p;
+			ix = L->detail_title.x + L->detail_title.w - icon_s;
+			tx = L->detail_title.x;
 		}
 		ty = L->detail_title.y + (L->detail_title.h - block_h) / 2;
 		if (ty < L->detail_title.y)
@@ -2335,8 +2436,13 @@ static void hub_draw_detail(void)
 		if (two)
 		{
 			int y2 = ty + 16 * scale + 2 * p;
+			int x2 = tx;
+			int w1 = hub_text_w(line1, scale);
+			int w2 = hub_text_w(line2, scale);
 
-			hub_grad_text(tx, y2, line2, 0xF0D0FF, 0x6820C8,
+			if (w2 < w1)
+				x2 = tx + (w1 - w2) / 2;
+			hub_grad_text(x2, y2, line2, 0xF0D0FF, 0x6820C8,
 				      scale, 1, 0x140820);
 		}
 	}

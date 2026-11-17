@@ -103,7 +103,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int dw = (L->detail.w - gap) * 55 / 100;
 		int dh = L->detail.h;
 		int thumbs_h = 34 * p;
-		int title_h = 88 * p;
+		int title_h = 108 * p;
 		int chips_h = 28 * p;
 		int button_h = 40 * p;
 		int shot_h;
