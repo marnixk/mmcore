@@ -5,17 +5,39 @@ List and run packaged `.APP` applications found on the app path.
 
 APPS
 
-Opens the home launcher: a list of every `.APP` on the ~PATH~ (default
-`A:/APPS/`; see ~OPTION~ PATH). Pick one with Up/Down and press Enter to run
-it with the same rules as `RUN "name.app"` (mounted read-only as B:, MAIN.BAS
-starts). Esc leaves the launcher and returns to the REPL.
+Opens the home launcher: every `.APP` on the ~PATH~ (default `A:/APPS/`; see
+~OPTION~ PATH) grouped under category header rows. Pick one with Up/Down and
+press Enter to run it with the same rules as `RUN "name.app"` (mounted
+read-only as B:, MAIN.BAS starts). Esc leaves the launcher and returns to the
+REPL.
+
+Categories come from the package metadata (`PACKAGE.INF`, as written by
+~PACKAGE~): games, demos, creative, audio, productivity, development,
+utilities, internet, learning, and other. A package with no category, or one
+whose archive cannot be read, is listed under OTHER using its file name
+without `.APP`. Within a category entries are sorted by label,
+case-insensitively. Empty categories are not shown.
+
+Header rows show the category name, its count (for example `GAMES (10)`) and
+a rule; they are not selectable. Up/Down moves between apps and skips
+headers. Left/Right jumps to the first app of the previous/next non-empty
+category. PgUp/PgDn page, Home/End go to the first/last app. The built-in
+applications (Editor, Files, WordPad, Paint, Jukebox, Terminal, Help,
+Settings) follow the categories under their own BUILT-IN heading.
 
 Entries show the package's Title when it has one (the optional `title=` field
-in its `PACKAGE.INF`, as set by ~PACKAGE~). Other metadata keys (author,
-category, version, summary, minver) are described in ~PACKAGE.INF~. Packages
-without a Title, and archives that cannot be read, show the file name without
-`.APP`. Only the label is taken from the metadata; Enter always runs that
-package.
+in its `PACKAGE.INF`, as set by ~PACKAGE~), with the `summary=` line dimmed to
+the right. Other metadata keys (author, category, version, summary, minver)
+are described in ~PACKAGE.INF~.
+
+Typing filters the list: a case-insensitive match on the label or summary
+keeps an app, and headers with no matching apps disappear. Backspace widens
+the filter; Esc clears it before it closes the launcher.
+
+Del removes the highlighted app from the PATH. The status line asks
+`Remove <label>? [y/N]`; press Y to delete the `.APP` file (errors such as a
+read-only drive are reported) and N or Esc to keep it. The launcher rescans
+after a removal. Built-in apps cannot be removed.
 
 A bare app name typed at the prompt also runs it, for example:
 
@@ -27,10 +49,15 @@ language.
 
 Ctrl+Space
 
-At the prompt, Ctrl+Space opens a quick picker of the same apps. Enter runs
-the highlighted app; Esc cancels and leaves the line unchanged. When the PATH
-is empty (or lists no `.APP` packages) the picker still opens and shows that
-no apps were found.
+At the prompt, Ctrl+Space opens a quick picker of the same apps as a compact
+flat list sorted by label, with each app's category id shown dimmed on the
+right. Enter runs the highlighted app; Esc cancels and leaves the line
+unchanged. Typing filters the picker as in the launcher.
+
+Tab cycles a category filter: ALL, then each non-empty category, then back to
+ALL; Shift+Tab cycles backwards. The title line shows the active filter, for
+example `APPS: GAMES`, and typing filters within that category. When the PATH
+is empty (or lists no `.APP` packages) the picker still opens.
 
 Boot
 

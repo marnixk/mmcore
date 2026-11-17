@@ -35,22 +35,24 @@ def _make_app(con, root, appname, text="APPOK"):
     return f"A:/{root}/"
 
 
-def _build_app(con, root, srcdir, appname, text, title=None):
+def _build_app(con, root, srcdir, appname, text, title=None, category=None):
     """Package ``A:/<root>/<appname>.APP`` from ``<root>/<srcdir>``.
 
-    ``title`` is written into PACKAGE.INF before packaging, so the archive
-    carries the same metadata the PACKAGE wizard writes (#1305).
+    ``title`` and ``category`` are written into PACKAGE.INF before packaging,
+    so the archive carries the same metadata the PACKAGE wizard writes
+    (#1305, #1524).
     """
     assert con.send_line('CHDIR "A:/"') == ""
     con.send_line(f'MKDIR "{root}"')
     con.send_line(f'MKDIR "{root}/{srcdir}"')
     _write_lines(con, f"{root}/{srcdir}/MAIN.BAS", [f'PRINT "{text}"'])
-    if title is not None:
-        _write_lines(
-            con,
-            f"{root}/{srcdir}/PACKAGE.INF",
-            [f"name={appname}.APP", "main=MAIN.BAS", f"title={title}"],
-        )
+    if title is not None or category is not None:
+        lines = [f"name={appname}.APP", "main=MAIN.BAS"]
+        if title is not None:
+            lines.append(f"title={title}")
+        if category is not None:
+            lines.append(f"category={category}")
+        _write_lines(con, f"{root}/{srcdir}/PACKAGE.INF", lines)
     assert con.send_line(f'CHDIR "A:/{root}"') == ""
     assert con.send_line(f'PACKAGE "{appname}.APP", "A:/{root}/{srcdir}/"') == ""
     return f"A:/{root}/"
@@ -103,6 +105,9 @@ def test_ctrl_space_picker_runs_and_cancels(console):
     assert "APPS" in seen.upper()
     assert "Move" in seen  # #569: hotkey tags render once, not "<Move>>"
     assert ">>" not in seen
+    # #1524: the picker is label-sorted, so narrow to the package first.
+    con._ser.sendall(b"PICK")
+    con.drain(quiet=0.9, timeout=3.0)
     con._ser.sendall(b"\r")
     out = con.drain(quiet=1.2, timeout=8.0).decode(errors="replace")
     assert "PICKED" in out
@@ -236,6 +241,90 @@ def test_launcher_duplicate_titles_keep_distinct_files(console):
     assert con.send_line("PRINT 24") == "24"
 
 
+# --- #1524: grouping, category headers and Left/Right jumps ----------------
+
+
+def _keys(con, keys, quiet=0.9):
+    con._ser.sendall(keys)
+    return con.drain(quiet=quiet, timeout=3.0).decode(errors="replace").upper()
+
+
+def test_apps_launcher_groups_by_category(console):
+    """Fixed category order, non-empty headers, and Left/Right jumps."""
+    con = console
+    _build_app(con, "GRPPK", "GAME", "ZETA", "ZETAOK", "Zeta Game", "GAMES")
+    _build_app(con, "GRPPK", "TOOL", "ALPHA", "ALPHAOK", "Alpha Tool", "UTILITIES")
+    _build_app(con, "GRPPK", "MISC", "MISC", "MISCOK", "Misc App")
+    assert con.send_line('OPTION PATH "A:/GRPPK/"') == ""
+
+    con.drain(quiet=0.2, timeout=2.0)
+    seen = _keys(con, b"APPS\r")
+    for header in ("GAMES (1)", "UTILITIES (1)", "OTHER (1)", "BUILT-IN (8)"):
+        assert header in seen, (header, seen)
+    assert "> ZETA GAME" in seen, seen
+    positions = [
+        seen.index(h)
+        for h in ("GAMES (1)", "UTILITIES (1)", "OTHER (1)", "BUILT-IN (8)")
+    ]
+    assert positions == sorted(positions), (positions, seen)
+
+    # Right/Left jump to the first app of the next/previous category.
+    seen = _keys(con, b"\x1b[C")
+    assert "> ALPHA TOOL" in seen, seen
+    seen = _keys(con, b"\x1b[C")
+    assert "> MISC APP" in seen, seen
+    seen = _keys(con, b"\x1b[D")
+    assert "> ALPHA TOOL" in seen, seen
+    # Down/Up skip the header rows.
+    seen = _keys(con, b"\x1b[B")
+    assert "> MISC APP" in seen, seen
+    seen = _keys(con, b"\x1b[A")
+    assert "> ALPHA TOOL" in seen, seen
+
+    # Type-to-filter narrows to the matching app. (Header hiding is covered
+    # deterministically by tests/test_app_list.py; the serial stream is
+    # incremental, so cleared rows are not resent as text.)
+    seen = _keys(con, b"tool")
+    assert "UTILITIES (1)" in seen, seen
+    assert "> ALPHA TOOL" in seen, seen
+
+    seen = _keys(con, b"\x1b")  # first Esc clears the filter
+    assert "GAMES (1)" in seen and "OTHER (1)" in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 26") == "26"
+
+
+def test_ctrl_space_tab_cycles_categories(console):
+    """Tab / Shift+Tab cycle the picker's non-empty category filter."""
+    con = console
+    _build_app(con, "TABPK", "GAME", "GAMEA", "GAMEOK", "Game A", "GAMES")
+    _build_app(con, "TABPK", "TOOL", "TOOLA", "TOOLOK", "Tool A", "UTILITIES")
+    assert con.send_line('OPTION PATH "A:/TABPK/"') == ""
+
+    con.drain(quiet=0.2, timeout=2.0)
+    seen = _keys(con, b"\x00")  # Ctrl+Space
+    assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
+
+    seen = _keys(con, b"\t")
+    assert "APPS: GAMES" in seen and "GAME A" in seen, seen
+    assert "TOOL A" not in seen, seen
+
+    seen = _keys(con, b"\t")
+    assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
+    assert "GAME A" not in seen, seen
+
+    seen = _keys(con, b"\t")
+    assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
+
+    seen = _keys(con, b"\x1b[Z")  # Shift+Tab from ALL wraps backwards
+    assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
+
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 27") == "27"
+
+
 # --- #1320: type-to-filter in the launcher --------------------------------
 
 
@@ -294,6 +383,51 @@ def test_launcher_filters_as_you_type(console):
     assert con.send_line("PRINT 32") == "32"
 
 
+# --- #1524: Del removes an installed app from the launcher -----------------
+
+
+def test_launcher_del_removes_app(console):
+    """Del prompts; N keeps the .APP, Y deletes it and rescans."""
+    con = console
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "DELPK"')
+    _write_lines(con, "DELPK/VICTIM.APP", ["this is not a zip archive"])
+    assert con.send_line('OPTION PATH "A:/DELPK/"') == ""
+
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "VICTIM" in seen, seen
+
+    # Del asks for confirmation; N keeps the app (a second Del prompts again).
+    con._ser.sendall(b"\x1b[3~")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "REMOVE VICTIM?" in seen, seen
+    con._ser.sendall(b"n")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "REMOVE VICTIM?" not in seen, seen
+
+    # Del + Y removes the .APP and rescans.
+    con._ser.sendall(b"\x1b[3~")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "REMOVE VICTIM?" in seen, seen
+    con._ser.sendall(b"y")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "REMOVED VICTIM" in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+
+    # Reopening rescans the PATH: the entry is gone, built-ins remain.
+    con.drain(quiet=0.2, timeout=2.0)
+    con._ser.sendall(b"APPS\r")
+    seen = con.drain(quiet=0.9, timeout=3.0).decode(errors="replace").upper()
+    assert "VICTIM" not in seen, seen
+    assert "EDITOR" in seen, seen
+    con._ser.sendall(b"\x1b")
+    con.drain(quiet=0.9, timeout=3.0)
+    assert con.send_line("PRINT 25") == "25"
+
+
 # --- #624: launcher overlay dialog with built-in app labels ---------------
 
 
@@ -350,17 +484,19 @@ def test_apps_launcher_chrome_matches_settings(console):
 
     The picker previously drew its body on the editor surface (edit_bg) and
     its frame in the title colour, so it did not match the SETTINGS hub's
-    dialog surfaces. Sample the same roles in both dialogs.
+    dialog surfaces. Sample the same roles in both dialogs. #1524 sizes the
+    launcher from the screen (cols-4 x rows-2) instead of a fixed 52x16.
     """
     con = console
-    ax, ay, aw, _ = _panel_rect(con, 52, 16)
+    pw, ph = con.screen_size()
+    ax, ay, aw, _ = _panel_rect(con, pw // 8 - 4, ph // 16 - 2)
     sx, sy, sw, _ = _panel_rect(con, 68, 13)
 
     con.drain(quiet=0.2, timeout=2.0)
     con._ser.sendall(b"APPS\r")
     con.drain(quiet=0.9, timeout=3.0)
     apps = con.screen_pixels([
-        _cell(2, 2),               # backdrop margin, left of the panel
+        _cell(ax - 1, ay),         # backdrop margin, left of the panel
         _cell(ax + 2, ay + 1),     # title bar interior
         _cell(ax + aw // 2, ay),   # top frame
         _cell(ax + aw - 3, ay + 2),  # body row, right of the intro text
