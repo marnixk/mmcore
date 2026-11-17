@@ -25,7 +25,7 @@ typedef struct hub_layout {
 	int mode;   /* HUB_LAYOUT_WIDE or HUB_LAYOUT_NARROW */
 	int margin;
 	int gap;
-	int row_h;  /* listing row height in pixels (44p) */
+	int row_h;  /* listing row height in pixels (56p) */
 
 	/* Listing screen (also used for the loading screen's content box). */
 	hub_rect header;

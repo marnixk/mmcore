@@ -44,7 +44,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 	L->mode = hub_layout_mode(w, h);
 	L->margin = m = 4 * p;
 	L->gap = gap = 4 * p;
-	L->row_h = 44 * p;
+	L->row_h = 56 * p;
 
 	/* Short header: the mockup bar is only a little taller than the wordmark. */
 	rect_set(&L->header, m, m, w - 2 * m, 22 * p);
@@ -55,7 +55,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 	if (tab_w < 24 * p)
 		tab_w = 24 * p;
 	L->tab_w = tab_w;
-	L->tab_h = 20 * p;
+	L->tab_h = 26 * p;
 	L->tab_gap = 2 * p;
 	per_row = (w - 2 * m + L->tab_gap) / (tab_w + L->tab_gap);
 	if (per_row < 1)
@@ -111,9 +111,9 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int dw = (L->detail.w - gap) * 55 / 100;
 		int dh = L->detail.h;
 		int thumbs_h = 34 * p;
-		int title_h = 72 * p;
-		int chips_h = 22 * p;
-		int button_h = 34 * p;
+		int title_h = 88 * p;
+		int chips_h = 28 * p;
+		int button_h = 26 * p;
 		int shot_h;
 		int rx;
 		int need;
@@ -175,9 +175,9 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int dh = L->detail.h;
 		int shot_h = L->detail.w * 9 / 16 + 6 * p;
 		int thumbs_h = 24 * p;
-		int title_h = 56 * p;
-		int chips_h = 20 * p;
-		int button_h = 28 * p;
+		int title_h = 72 * p;
+		int chips_h = 26 * p;
+		int button_h = 24 * p;
 		int gaps = 6 * p;
 		int over;
 

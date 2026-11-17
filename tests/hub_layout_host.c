@@ -61,7 +61,7 @@ static void check_listing(hub_layout *L, int w, int h, int wide)
 		      "narrow layout has no side preview");
 		check(L->list.w == L->content.w, "narrow list spans the panel");
 	}
-	check(L->row_h == 44 * L->p, "row height is 44p");
+	check(L->row_h == 56 * L->p, "row height is 56p");
 	check(L->tab_rows >= 1, "tab rows");
 }
 

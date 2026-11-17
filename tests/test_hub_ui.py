@@ -57,7 +57,7 @@ def _session(tmp_path, hub, mode="9,16", preinstalled=("jetpack",)):
     s.feed(set_url(hub.base))
     s.feed("MODE %s" % mode)
     s.feed("HUB")
-    s.wait_ms(1500)
+    s.wait_ms(2000)
     s.start()
     return s, root
 

@@ -46,6 +46,7 @@
 
 #define HUB_ESC_IDLE_MS 60
 #define HUB_LOAD_DELAY_MS 700
+#define HUB_LOAD_HOLD_MS 800
 #define HUB_FRAME_MS 45
 #define HUB_ASSET_MS 25
 
@@ -533,11 +534,36 @@ static void hub_upper(const char *s, char *out, int n)
 	out[i] = 0;
 }
 
-/* Body copy stays one step behind `p` so 720p matches the mockup's pixel
- * font instead of a double-size blow-up. */
+/* Listing titles fill about 40% of the row. Body copy, chips, badges and
+ * the button label sit one step down so they stay readable beside them. */
+static int hub_title_scale(void)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	int row = U.L.row_h > 16 ? U.L.row_h : 56 * p;
+	int s = row * 2 / 5 / 16;
+
+	if (s < 1)
+		s = 1;
+	if (s > 4)
+		s = 4;
+	/* Take the next size when the row still holds a title and a summary. */
+	if (s < 4 && 16 * (s + 1) + 16 * s + 6 * p <= row)
+		s++;
+	return s;
+}
+
+static int hub_body_scale(void)
+{
+	int s = hub_title_scale() - 1;
+
+	if (s < 1)
+		s = 1;
+	return s;
+}
+
 static int hub_ui_scale(void)
 {
-	return U.p >= 3 ? 2 : 1;
+	return hub_body_scale();
 }
 
 static unsigned hub_lerp(unsigned a, unsigned b, int t, int n)
@@ -580,7 +606,8 @@ static void hub_grad_text(int x, int y, const char *s, unsigned top,
 		{
 			unsigned char ch = (unsigned char)*q;
 			int row, colbit;
-			int outline = scale >= 3 ? 2 : 1;
+			int outline = scale >= 4 ? 3 : (scale >= 2 ? 2 : 1);
+			int bold = scale >= 2 ? (scale + 1) / 3 : 0;
 
 			if (ch == '\n' || ch == '\r')
 				continue;
@@ -613,7 +640,14 @@ static void hub_grad_text(int x, int y, const char *s, unsigned top,
 											mmb_gfx_plot(px + ox, py + oy, shade);
 							}
 							else
+							{
 								mmb_gfx_plot(px, py, col);
+								if (bold)
+								{
+									mmb_gfx_plot(px + bold, py, col);
+									mmb_gfx_plot(px, py + bold, col);
+								}
+							}
 						}
 					}
 				}
@@ -1072,7 +1106,14 @@ static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 	else
 		hub_cube(r.x + r.w / 2, r.y + r.h / 2, r.w * 3 / 4, 0);
 	if (framed)
-		mmb_gfx_box(r.x, r.y, r.w, r.h, 0x3A4068, p, -1);
+	{
+		int t = p < 2 ? 1 : 2;
+
+		mmb_gfx_box(r.x, r.y, r.w, r.h, 0xC8A060, t, -1);
+		if (r.w > 4 * t && r.h > 4 * t)
+			mmb_gfx_box(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t,
+				    0x6A30C0, t, -1);
+	}
 	if (greyed)
 	{
 		int x, y;
@@ -1181,11 +1222,13 @@ static void hub_layout_now(void)
 			pw = 1;
 		U.p = pw;
 	}
-	scale = U.p >= 3 ? 2 : 1;
+	scale = U.p >= 2 ? 2 : 1;
 	n = s_ntabs > 0 ? s_ntabs : 1;
 	avail = U.w - 8 * (U.p < 1 ? 1 : U.p);
 	for (;;)
 	{
+		int floor = U.p >= 2 ? 2 : 1;
+
 		longest = 0;
 		for (i = 0; i < s_ntabs; i++)
 		{
@@ -1194,7 +1237,8 @@ static void hub_layout_now(void)
 			if (w > longest)
 				longest = w;
 		}
-		if (scale <= 1 || n * (longest + 8 * U.p) <= avail)
+		/* Stay at the larger size even when the labels wrap to two rows. */
+		if (scale <= floor || n * (longest + 8 * U.p) <= avail)
 			break;
 		scale--;
 	}
@@ -1373,16 +1417,18 @@ static void hub_paint_loading(void)
 		pct = el >= HUB_LOAD_DELAY_MS ? 42 :
 		      (int)(el * 42 / HUB_LOAD_DELAY_MS);
 	}
-	else if (!U.load_done)
-		pct = 55;
 	else if (U.err)
 		pct = 55;
-	else
+	else if (U.load_done)
+		pct = 100;
+	else if (U.icon_total > 0)
 	{
 		int done = U.icon_total - U.icon_stage;
 
-		pct = 60 + (U.icon_total ? done * 35 / U.icon_total : 35);
+		pct = 60 + done * 35 / U.icon_total;
 	}
+	else
+		pct = 55;
 	if (U.err)
 		hub_segbar(bar, pct, HUB_RED, HUB_RED_D);
 	else
@@ -1520,24 +1566,24 @@ static void hub_scroll_sel(void)
 	}
 }
 
+/* Outlined pill: dark fill, coloured border, large label in the same colour. */
 static void hub_badge(int x, int y, int w, int h, const char *text,
 		      unsigned fill, unsigned ink)
 {
-	int t = U.p < 2 ? 1 : 2;
+	int p = U.p < 1 ? 1 : U.p;
+	int t = p < 2 ? 1 : 2;
+	int scale = hub_body_scale();
 
-	hub_fill((hub_rect){ x, y, w, h }, fill);
-	hub_hline(x, y, w, hub_lerp(fill, 0xFFFFFF, 1, 3), t);
-	hub_hline(x, y + h - t, w, hub_lerp(fill, 0x000000, 1, 2), t);
-	hub_vline(x, y, h, hub_lerp(fill, 0xFFFFFF, 1, 4), t);
-	hub_vline(x + w - t, y, h, hub_lerp(fill, 0x000000, 1, 3), t);
-	{
-		int scale = hub_ui_scale();
-
-		if (16 * scale > h - 2)
-			scale = 1;
-		hub_text(x + (w - hub_text_w(text, scale)) / 2,
-			 y + (h - 16 * scale) / 2, text, ink, scale);
-	}
+	(void)ink;
+	hub_fill((hub_rect){ x, y, w, h }, 0x101428);
+	mmb_gfx_box(x, y, w, h, fill, t, -1);
+	if (w > 4 * t && h > 4 * t)
+		mmb_gfx_box(x + t, y + t, w - 2 * t, h - 2 * t,
+			    hub_lerp(fill, 0xFFFFFF, 1, 3), 1, -1);
+	if (16 * scale > h - 2)
+		scale = 1;
+	hub_text(x + (w - hub_text_w(text, scale)) / 2,
+		 y + (h - 16 * scale) / 2, text, fill, scale);
 }
 
 static void hub_draw_row(int i, int y, int h, int selected)
@@ -1545,7 +1591,7 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	hub_app *a = hub_get(U.ids[i]);
 	hub_rect r, icon;
 	int p = U.p < 1 ? 1 : U.p;
-	int greyed, scale, x, ty, lim;
+	int greyed, scale, tscale, x, ty, lim;
 	char title[96], summary[160], author[64], sz[32], badgebuf[64];
 	const char *badge;
 	unsigned bcol, bfill;
@@ -1562,7 +1608,8 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	if (r.h < 8)
 		return;
 	greyed = a->state == HUB_NEEDS_NEWER;
-	scale = hub_ui_scale();
+	tscale = hub_title_scale();
+	scale = hub_body_scale();
 	if (selected)
 	{
 		hub_fill(r, 0x16304A);
@@ -1571,13 +1618,16 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	else
 		hub_hline(r.x + 4 * p, r.y + r.h - 1, r.w - 8 * p, 0x1A2036, 1);
 
-	icon.w = icon.h = 26 * p;
-	if (icon.h > r.h - 6 * p)
-		icon.h = icon.w = r.h - 6 * p;
-	if (icon.w < 12)
-		icon.w = icon.h = 12;
-	icon.x = r.x + 4 * p;
-	icon.y = r.y + (narrow && selected ? 4 * p : (r.h - icon.h) / 2);
+	icon.h = (narrow && selected ? U.L.row_h : r.h) - 4 * p;
+	if (icon.h < 12)
+		icon.h = 12;
+	if (icon.h > r.h - 4 * p)
+		icon.h = r.h - 4 * p;
+	icon.w = icon.h;
+	if (icon.w > r.w / 4)
+		icon.w = icon.h = r.w / 4;
+	icon.x = r.x + 3 * p;
+	icon.y = r.y + (narrow && selected ? 2 * p : (r.h - icon.h) / 2);
 	hub_app_icon(a, icon, greyed, 1);
 
 	hub_upper(hub_has(a->title) ? a->title : a->id, title, sizeof(title));
@@ -1607,14 +1657,18 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	lim = r.x + r.w - 6 * p - meta_w;
 	if (lim < x + 16)
 		lim = r.x + r.w - 6 * p;
-	ty = icon.y + (icon.h - (summary[0] ? 16 * scale * 2 + 2 * p :
-				 16 * scale)) / 2;
-	if (ty < r.y + 2 * p)
-		ty = r.y + 2 * p;
-	hub_text_trunc(x, ty, title, greyed ? HUB_GREY : HUB_TEXT, scale,
+	{
+		int block = 16 * tscale +
+			    (summary[0] ? 3 * p + 16 * scale : 0);
+
+		ty = r.y + (narrow && selected ? 2 * p : (r.h - block) / 2);
+	}
+	if (ty < r.y + p)
+		ty = r.y + p;
+	hub_text_trunc(x, ty, title, greyed ? HUB_GREY : HUB_TEXT, tscale,
 		       lim - x);
 	if (summary[0])
-		hub_text_trunc(x, ty + 16 * scale + 2 * p, summary,
+		hub_text_trunc(x, ty + 16 * tscale + 2 * p, summary,
 			       greyed ? HUB_GREY : HUB_DIM, scale, lim - x);
 
 	if (selected && narrow)
@@ -1628,7 +1682,8 @@ static void hub_draw_row(int i, int y, int h, int selected)
 		if (ih > U.L.list.h * 42 / 100)
 			ih = U.L.list.h * 42 / 100;
 		frame.x = r.x + 4 * p;
-		frame.y = ty + (summary[0] ? 34 * scale : 18 * scale) + 6 * p;
+		frame.y = ty + 16 * tscale +
+			  (summary[0] ? 16 * scale + 4 * p : 0) + 6 * p;
 		frame.w = iw;
 		frame.h = ih;
 		if (frame.y + frame.h > r.y + r.h - 2 * p)
@@ -1801,26 +1856,32 @@ static void hub_paint_listing(void)
 		int ty;
 		int frame_h;
 
+		int tscale = hub_title_scale();
+		int bscale = hub_body_scale();
+		int cap;
+
 		pr.x += 4 * p;
 		pr.y += 4 * p;
 		pr.w -= 8 * p;
 		pr.h -= 8 * p;
+		/* Title, author and two lines of summary sit under the shot. */
+		cap = 16 * tscale + 16 * bscale * 3 + 16 * p;
+		if (cap > pr.h / 2)
+			cap = pr.h / 2;
 		hub_ornate_frame(pr, 0x101428);
-		frame.x = pr.x + 10 * p;
-		frame.y = pr.y + 10 * p;
-		frame.w = pr.w - 20 * p;
-		frame_h = frame.w * 10 / 16;
-		if (frame_h > pr.h * 58 / 100)
-			frame_h = pr.h * 58 / 100;
+		frame.x = pr.x + 8 * p;
+		frame.y = pr.y + 8 * p;
+		frame.w = pr.w - 16 * p;
+		frame_h = pr.h - cap - 12 * p;
+		if (frame_h < 24 * p)
+			frame_h = 24 * p;
+		if (frame.y + frame_h > pr.y + pr.h - cap)
+			frame_h = pr.y + pr.h - cap - frame.y;
 		frame.h = frame_h;
-		mmb_gfx_box(frame.x, frame.y, frame.w, frame.h, 0x6A5080,
-			    p, -1);
-		mmb_gfx_box(frame.x + p, frame.y + p, frame.w - 2 * p,
-			    frame.h - 2 * p, 0xC8A060, p < 2 ? 1 : p, -1);
-		ir.x = frame.x + 3 * p;
-		ir.y = frame.y + 3 * p;
-		ir.w = frame.w - 6 * p;
-		ir.h = frame.h - 6 * p;
+		ir.x = frame.x + 2 * p;
+		ir.y = frame.y + 2 * p;
+		ir.w = frame.w - 4 * p;
+		ir.h = frame.h - 4 * p;
 		hub_fill(ir, 0x070910);
 		if (cur)
 			rel = hub_preview_rel(cur);
@@ -1832,12 +1893,11 @@ static void hub_paint_listing(void)
 				 ir.h * 2 / 3, 1);
 		hub_frame_chrome(pr);
 
-		ty = frame.y + frame.h + 8 * p;
+		ty = frame.y + frame.h + 6 * p;
 		if (cur && ty < pr.y + pr.h - 8 * p)
 		{
 			char line[120];
 			char shown[96];
-			int scale = hub_ui_scale();
 
 			hub_upper(hub_has(cur->title) ? cur->title : cur->id,
 				  shown, sizeof(shown));
@@ -1846,23 +1906,23 @@ static void hub_paint_listing(void)
 					 cur->version);
 			else
 				snprintf(line, sizeof(line), "%s", shown);
-			hub_text_trunc(pr.x + 12 * p, ty, line, HUB_TEXT, scale,
+			hub_text_trunc(pr.x + 12 * p, ty, line, HUB_TEXT, tscale,
 				       pr.w - 24 * p);
-			ty += 16 * scale + 4 * p;
+			ty += 16 * tscale + 3 * p;
 			if (hub_has(cur->author) && ty < pr.y + pr.h - 16)
 			{
 				snprintf(line, sizeof(line), "by %s", cur->author);
 				hub_text_trunc(pr.x + 12 * p, ty, line, HUB_DIM,
-					       scale, pr.w - 24 * p);
-				ty += 16 * scale + 4 * p;
+					       bscale, pr.w - 24 * p);
+				ty += 16 * bscale + 3 * p;
 			}
 			if (hub_has(cur->summary) && ty < pr.y + pr.h - 8)
 				hub_wrap_draw(pr.x + 12 * p, ty, cur->summary,
-					      hub_wrap_cols(pr.w - 24 * p, scale),
-					      16 * scale, 0,
-					      (pr.y + pr.h - ty - 8 * p) /
-					      (16 * scale),
-					      HUB_DIM, scale);
+					      hub_wrap_cols(pr.w - 24 * p, bscale),
+					      16 * bscale, 0,
+					      (pr.y + pr.h - ty - 6 * p) /
+					      (16 * bscale),
+					      HUB_DIM, bscale);
 		}
 	}
 }
@@ -1905,7 +1965,7 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 	unsigned fill = enabled ? hub_lerp(0x000000, accent, 2, 3) : 0x2A2E3A;
 	unsigned top = enabled ? hub_lerp(accent, 0xFFFFFF, 1, 2) : 0x6A7080;
 	unsigned bot = enabled ? hub_lerp(accent, 0x000000, 1, 2) : 0x14161C;
-	int scale = hub_ui_scale();
+	int scale = hub_body_scale();
 
 	hub_fill(b, fill);
 	hub_hline(b.x, b.y, b.w, top, t);
@@ -1931,18 +1991,29 @@ static void hub_draw_main_button(hub_rect area)
 	const char *label;
 	unsigned accent, enabled;
 
-	if (bw < 80 * p)
-		bw = area.w - 8 * p;
-	if (bw > 240 * p)
-		bw = 240 * p;
+	{
+		int ls = hub_body_scale();
+		const char *probe;
+		char pbuf[64];
+		unsigned ac, en;
+
+		probe = hub_button_label(a, &ac, &en, pbuf, sizeof(pbuf));
+		bw = hub_text_w(probe, ls) + 24 * p;
+		(void)ac;
+		(void)en;
+	}
+	if (bw < 72 * p)
+		bw = 72 * p;
+	if (bw > area.w * 55 / 100)
+		bw = area.w * 55 / 100;
 	if (bw > area.w - 4 * p)
 		bw = area.w - 4 * p;
 	if (bw < 20)
 		bw = area.w;
 	b.w = bw;
-	b.h = area.h > 8 * p ? area.h - 4 * p : area.h;
-	if (b.h < 16)
-		b.h = area.h > 0 ? area.h : 16;
+	b.h = 16 * hub_body_scale() + 10 * p;
+	if (b.h > area.h)
+		b.h = area.h > 0 ? area.h : b.h;
 	b.x = area.x + (area.w - b.w) / 2;
 	b.y = area.y + (area.h - b.h) / 2;
 	label = hub_button_label(a, &accent, &enabled, buf, sizeof(buf));
@@ -2109,13 +2180,13 @@ static void hub_draw_detail(void)
 		char upper[96];
 		char line1[64], line2[64];
 		int two = 0;
-		int scale = U.p >= 2 ? U.p * 2 : 2;
+		int scale = U.p >= 2 ? U.p * 2 + 1 : 3;
 		int lines, block_h, icon_s, text_w, maxw;
 		int tx, ty, ix, iy;
 		char *sp;
 
-		if (scale > 6)
-			scale = 6;
+		if (scale > 8)
+			scale = 8;
 		hub_upper(hub_has(a->title) ? a->title : a->id, upper,
 			  sizeof(upper));
 		line2[0] = 0;
@@ -2186,7 +2257,7 @@ static void hub_draw_detail(void)
 		int x = L->detail_chips.x;
 		int y = L->detail_chips.y;
 		int maxx = L->detail_chips.x + L->detail_chips.w - 4 * p;
-		int scale = hub_ui_scale();
+		int scale = hub_body_scale();
 		char buf[96];
 
 		if (hub_has(a->author))
@@ -2786,19 +2857,23 @@ static void hub_load_index_now(void)
 		hub_layout_now();
 		U.icon_total = hub_count() < 6 ? hub_count() : 6;
 		U.icon_stage = U.icon_total;
-		for (i = 0; i < U.icon_stage; i++)
+		hub_frame();
+		for (i = 0; i < U.icon_total; i++)
 		{
 			hub_app *a = hub_get(i);
 
 			if (a && a->icon && a->icon[0])
 				hub_img_try(a->icon);
+			if (U.icon_stage > 0)
+				U.icon_stage--;
+			hub_frame();
 		}
 		hub_rebuild_ids();
 		hub_scroll_sel();
 	}
 	U.load_done = 1;
 	U.icon_stage = 0;
-	U.state = HUB_ST_LIST;
+	U.last_load = mmb_now_ms();
 	U.dirty = 1;
 	hub_frame();
 }
@@ -3378,6 +3453,14 @@ void mmb_hub_poll(void)
 	if (U.state == HUB_ST_LOADING && !U.load_started &&
 	    now - (unsigned)U.started >= HUB_LOAD_DELAY_MS)
 		hub_load_index_now();
+	/* Resample the clock. `now` was taken before the index fetch, so
+	 * subtracting last_load from it underflows and skips the hold. */
+	if (U.state == HUB_ST_LOADING && U.load_done && !U.err &&
+	    mmb_now_ms() - U.last_load >= HUB_LOAD_HOLD_MS)
+	{
+		U.state = HUB_ST_LIST;
+		U.dirty = 1;
+	}
 
 	if (U.active && U.state != HUB_ST_LOADING && now - U.last_asset >=
 	    HUB_ASSET_MS)
