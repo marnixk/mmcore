@@ -61,8 +61,9 @@ static void check_listing(hub_layout *L, int w, int h, int wide)
 		      "narrow layout has no side preview");
 		check(L->list.w == L->content.w, "narrow list spans the panel");
 	}
-	check(L->row_h == 44 * L->p, "row height is 44p");
-	check(L->tab_rows >= 1, "tab rows");
+	check(L->row_h == 48 * L->p, "row height is 48p");
+	check(L->header.x == 0 && L->header.w == w, "header is full width");
+	check(L->tab_rows == 1, "tabs stay on one row");
 }
 
 static void check_detail(hub_layout *L)
@@ -124,9 +125,10 @@ int main(void)
 	check(L.list.w > 0 && L.list.h > 0, "tiny geometry still lays out");
 	check(L.p == 1, "p clamps to 1");
 
-	/* Tab wrapping: a narrow screen wraps the 11 tabs into several rows. */
+	/* Tabs never wrap. A narrow strip stays one row high; the UI scrolls. */
 	hub_layout_compute(&L, 800, 600, 11, 120);
-	check(L.tab_rows >= 2, "narrow tabs wrap");
+	check(L.tab_rows == 1, "narrow tabs do not wrap");
+	check(L.tabs.h == L.tab_h, "tab strip is a single row");
 	check(L.tabs.y + L.tabs.h < L.content.y, "tabs stay above content");
 
 	/* Wide tabs fit one row at 1920 with normal labels. */

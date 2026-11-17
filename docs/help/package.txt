@@ -54,6 +54,7 @@ Optional, packed like any other folder. PACKAGE never requires it:
 
   INFO/ICON.PNG    32x32 icon
   INFO/THUMB.PNG   160x90 thumbnail
+  INFO/HERO.PNG    640x360 scene, optional
   INFO/SHOT1.PNG .. INFO/SHOT4.PNG  screenshots
   INFO/ABOUT.TXT   long description, plain text
 
