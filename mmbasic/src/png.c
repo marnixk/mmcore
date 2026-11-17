@@ -187,7 +187,7 @@ int mmb_png_decode_rgba(const unsigned char *file, unsigned n,
 			const unsigned char *p = buf + (j * w + i) * bpp;
 			unsigned a = (bpp == 4) ? p[3] : 255;
 			unsigned rgb = mmb_rgb_pack(p[0], p[1], p[2]);
-			pix[j * w + i] = (a == 0) ? 0 : (rgb | 0xFF000000u);
+			pix[j * w + i] = rgb | ((uint32_t)a << 24);
 		}
 	upng_free(u);
 	*out = pix;
