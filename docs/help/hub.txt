@@ -1,0 +1,54 @@
+name: HUB
+kind: command
+
+Browse and install applications from the mmcore package hub.
+
+HUB
+HUB LIST
+HUB INSTALL id$
+HUB UPDATE
+HUB REMOVE id$
+HUB FETCH relpath$
+
+The hub reads an index from `OPTION HUB URL` (default
+https://hub.mmcore.dev/) and installs `.APP` packages into the first writable
+directory on ~OPTION~ PATH. The index lists each package's id, version, size
+and SHA-256 checksum. Downloads are checked against both before anything is
+written, so a corrupt or tampered package is rejected instead of installed.
+
+HUB and HUB LIST print one line per package: id, version, and state
+(NOT INSTALLED, INSTALLED, UPDATE or NEEDS NEWER). INSTALLED means the
+package is already present; UPDATE means the index carries a newer version
+than the installed `PACKAGE.INF`. NEEDS NEWER means the package asks for a
+newer mmcore (`minver`) than this build.
+
+HUB INSTALL "id" downloads and installs (or updates) one package. Progress is
+printed while it runs. Failures are ordinary catchable BASIC errors whose text
+is one of:
+
+    OFFLINE               no network, DNS or usable TLS
+    SERVER ERROR n        the server answered with HTTP status n
+    UNSUPPORTED INDEX     the index is not schema 1 (a newer mmcore may help)
+    CHECKSUM FAILED       size or SHA-256 did not match the index
+    NEEDS MMCORE x.y.z    the package needs a newer mmcore
+    NO WRITABLE APP FOLDER  no PATH directory can be written
+    NOT FOUND / NOT INSTALLED / REMOVE FAILED / WRITE FAILED / CANCELLED
+
+HUB UPDATE installs every package whose state is UPDATE. HUB REMOVE "id"
+deletes the installed `.APP` and recomputes its state. HUB FETCH "path"
+downloads one asset relative to the hub root (used for icons, thumbnails and
+screenshots) and prints its byte count; an empty path makes no request.
+
+Installed packages are found by scanning every PATH directory for
+`<id>.APP` (case-insensitive) and by matching the `name` field in a package's
+`PACKAGE.INF`. A package installed this way runs with its bare name, exactly
+like any other PATH app; see ~APPS~.
+
+Example:
+
+    OPTION HUB URL "https://hub.mmcore.dev/"
+    HUB LIST
+    HUB INSTALL "jetpack"
+    JETPACK
+    HUB UPDATE
+    HUB REMOVE "jetpack"

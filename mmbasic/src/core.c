@@ -3110,6 +3110,8 @@ void mmb_option_reset(void)
 	G.opt.prompt = MMB_OPT_DEFAULT_PROMPT;
 	strncpy(G.opt.app_path, MMB_APP_PATH_DEFAULT, sizeof(G.opt.app_path) - 1);
 	G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
+	strncpy(G.opt.hub_url, MMB_HUB_DEFAULT_URL, sizeof(G.opt.hub_url) - 1);
+	G.opt.hub_url[sizeof(G.opt.hub_url) - 1] = 0;
 	G.opt.boot_mode = 0;
 	G.opt.boot_app[0] = 0;
 	G.opt.ntp_enabled = MMB_NTP_AUTO;
@@ -5007,6 +5009,7 @@ static int try_tok_cmd(void)
 		tab[mmb_kw_id("PACKAGE")] = mmb_cmd_package;
 		tab[mmb_kw_id("UNPACK")] = mmb_cmd_unpack;
 		tab[mmb_kw_id("APPS")] = mmb_cmd_apps;
+		tab[mmb_kw_id("HUB")] = mmb_cmd_hub;
 		tab[mmb_kw_id("CHDIR")] = mmb_cmd_chdir;
 		tab[mmb_kw_id("DRIVE")] = mmb_cmd_drive;
 		tab[mmb_kw_id("EJECT")] = mmb_cmd_eject;

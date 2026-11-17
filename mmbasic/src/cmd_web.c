@@ -126,6 +126,22 @@ static void wb_dealloc(wb_t *b, char *p)
 		mmb_str_free(p);
 }
 
+/* Non-throwing fetch landing (#1525). When s_landing is set, a transport
+ * failure copies a message into the caller's buffer and longjmps there instead
+ * of raising a BASIC error. s_landing_code distinguishes an error (1) from a
+ * progress-callback cancel (2). Outside this mode the old raising behaviour is
+ * unchanged. */
+static jmp_buf *s_landing;
+static char *s_landing_err;
+static int s_landing_errsz;
+static int s_landing_code;
+static mmb_url_progress_fn s_progress;
+static void *s_progress_ctx;
+static unsigned s_progress_hint;
+/* The in-flight request buffer, freed by web_land() if a failure longjmps out
+ * of http_request() before its own wb_free(). */
+static wb_t *s_live_req;
+
 static int wb_too_big(wb_t *b)
 {
 	return b->maxn && b->n > b->maxn;
@@ -222,10 +238,28 @@ static void tr_close(void)
 	s_tr = TR_NONE;
 }
 
-static void web_fail(const char *msg)
+static void web_land(const char *msg, int code)
 {
 	tr_close();
-	mmb_error(msg);
+	if (s_live_req)
+	{
+		wb_free(s_live_req);
+		s_live_req = 0;
+	}
+	if (s_landing)
+	{
+		if (s_landing_err && s_landing_errsz > 0)
+			snprintf(s_landing_err, (size_t)s_landing_errsz, "%s",
+				 msg ? msg : "?WEB: failed");
+		s_landing_code = code;
+		longjmp(*s_landing, 1);
+	}
+	mmb_error(msg ? msg : "?WEB: failed");
+}
+
+static void web_fail(const char *msg)
+{
+	web_land(msg, 1);
 }
 
 static void web_failf(const char *prefix, const char *detail)
@@ -885,6 +919,20 @@ static int dechunk(const char *p, unsigned n, wb_t *out, int *done)
 	}
 }
 
+/* Report download progress and honour a cancel request. The caller passes the
+ * live buffers so they are released before the landing longjmp. */
+static void web_progress_check(wb_t *raw, wb_t *body, unsigned done,
+			       unsigned total)
+{
+	if (!s_progress)
+		return;
+	if (!s_progress(done, total, s_progress_ctx))
+		return;
+	wb_free(raw);
+	wb_free(body);
+	web_land("?CANCELLED", 2);
+}
+
 static void read_response(wb_t *body)
 {
 	char tmp[WEB_RX_TMP];
@@ -964,6 +1012,10 @@ static void read_response(wb_t *body)
 		have_len = ok;
 	}
 
+	web_progress_check(&raw, body, 0,
+			   have_len ? (unsigned)clen
+				    : (chunked ? 0 : s_progress_hint));
+
 	if (chunked)
 	{
 		for (;;)
@@ -974,6 +1026,7 @@ static void read_response(wb_t *body)
 			int closed = 0;
 			int n;
 
+			web_progress_check(&raw, body, body->n, s_progress_hint);
 			if (r < 0)
 			{
 				wb_free(&raw);
@@ -1025,6 +1078,10 @@ static void read_response(wb_t *body)
 					wb_free(body);
 					web_fail("?WEB: response body too large");
 				}
+				web_progress_check(&raw, body,
+						   have > (unsigned)clen
+						   ? (unsigned)clen : have,
+						   (unsigned)clen);
 			}
 			else if (closed)
 				break;
@@ -1052,6 +1109,7 @@ static void read_response(wb_t *body)
 			wb_free(body);
 			web_fail("?WEB: response body too large");
 		}
+		web_progress_check(&raw, body, body->n, s_progress_hint);
 		while (!closed)
 		{
 			n = web_recv_wait(tmp, sizeof(tmp), tmo, &closed);
@@ -1064,6 +1122,8 @@ static void read_response(wb_t *body)
 					wb_free(body);
 					web_fail("?WEB: response body too large");
 				}
+				web_progress_check(&raw, body, body->n,
+						   s_progress_hint);
 			}
 			else if (n == 0)
 				break; /* idle timeout ends a close-delimited body */
@@ -1104,8 +1164,10 @@ static void http_request(wb_t *body, const char *method0, const web_url *u0,
 		wb_init(&req);
 		build_request(&req, &u, method, p, pn, has, isjson, hdr,
 			      have_hdr, cross);
+		s_live_req = &req;
 		web_open(u.host, u.port, u.tls, s_timeout_ms);
 		web_send_all(req.p, req.n, s_timeout_ms);
+		s_live_req = 0;
 		wb_free(&req);
 		read_response(body);
 		status = s_status;
@@ -1221,6 +1283,114 @@ int mmb_url_fetch(const char *url, mmb_arrview *hdr, int have_hdr,
 	if (token)
 		*token = body.p;
 	return 1;
+}
+
+/* Non-throwing fetch (#1525). Same transport as mmb_url_fetch(), but
+ * transport/TLS/timeout failures and non-2xx statuses come back as -1 with a
+ * message in `err` instead of raising a BASIC error. A progress callback may
+ * cancel a download; the partial body is discarded. Returns 1 on success, 0 for
+ * a non-URL path, -1 on failure. */
+int mmb_url_fetch_ex(const char *url, mmb_arrview *hdr, int have_hdr,
+		     unsigned char **out, unsigned *outn, void **token,
+		     int *status_out, char *err, int errsz,
+		     mmb_url_progress_fn cb, void *ctx, unsigned total_hint)
+{
+	web_url u;
+	wb_t body;
+	jmp_buf jb;
+	jmp_buf *save_landing = s_landing;
+	char *save_err = s_landing_err;
+	int save_errsz = s_landing_errsz;
+	mmb_url_progress_fn save_prog = s_progress;
+	void *save_ctx = s_progress_ctx;
+	unsigned save_hint = s_progress_hint;
+	int jumped;
+
+	if (out)
+		*out = 0;
+	if (outn)
+		*outn = 0;
+	if (token)
+		*token = 0;
+	if (status_out)
+		*status_out = 0;
+	if (err && errsz > 0)
+		err[0] = 0;
+	if (!mmb_url_is_url(url))
+		return 0;
+	if (url_parse(url, &u) != 0)
+	{
+		if (err && errsz > 0)
+			snprintf(err, (size_t)errsz,
+				 "?WEB: URL must start with http:// or https://");
+		return -1;
+	}
+	if (have_hdr && (!hdr || hdr->moff >= 0 || hdr->v->type != T_STR))
+	{
+		if (err && errsz > 0)
+			snprintf(err, (size_t)errsz, "?TYPE MISMATCH");
+		return -1;
+	}
+
+	wb_init_mode(&body, 0, 1);
+	s_status = 0;
+	s_landing = &jb;
+	s_landing_err = err;
+	s_landing_errsz = errsz;
+	s_progress = cb;
+	s_progress_ctx = ctx;
+	s_progress_hint = total_hint;
+	s_landing_code = 0;
+
+	jumped = setjmp(jb);
+	if (!jumped)
+	{
+		http_request(&body, "GET", &u, 0, 0, 0, 0,
+			     have_hdr ? hdr : 0, have_hdr);
+		if (status_out)
+			*status_out = s_status;
+		if (s_status < 200 || s_status > 299)
+		{
+			int st = s_status;
+
+			wb_free(&body);
+			if (err && errsz > 0)
+				snprintf(err, (size_t)errsz, "?WEB: HTTP %d", st);
+			s_landing = save_landing;
+			s_landing_err = save_err;
+			s_landing_errsz = save_errsz;
+			s_progress = save_prog;
+			s_progress_ctx = save_ctx;
+			s_progress_hint = save_hint;
+			return -1;
+		}
+		*out = (unsigned char *)body.p;
+		*outn = body.n;
+		if (token)
+			*token = body.p;
+		s_landing = save_landing;
+		s_landing_err = save_err;
+		s_landing_errsz = save_errsz;
+		s_progress = save_prog;
+		s_progress_ctx = save_ctx;
+		s_progress_hint = save_hint;
+		return 1;
+	}
+
+	/* web_land() jumped here with a message already in err. */
+	wb_free(&body);
+	jumped = s_landing_code;
+	if (status_out)
+		*status_out = (jumped == 2) ? 0 : s_status;
+	s_landing = save_landing;
+	s_landing_err = save_err;
+	s_landing_errsz = save_errsz;
+	s_progress = save_prog;
+	s_progress_ctx = save_ctx;
+	s_progress_hint = save_hint;
+	if (jumped == 2 && err && errsz > 0)
+		snprintf(err, (size_t)errsz, "?CANCELLED");
+	return -1;
 }
 
 void mmb_url_release(void *token)

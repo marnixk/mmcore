@@ -117,6 +117,7 @@ IPCONFIG	IPCONFIG	topic	dedicated topic
 JSON$	JSON$	topic	dedicated topic
 JSON_PARSE	JSON_PARSE	topic	dedicated topic
 JSON_STRINGIFY$	JSON_STRINGIFY$	topic	dedicated topic
+HUB	HUB	topic	dedicated topic
 JUKE	JUKE	topic	dedicated topic
 KEYDOWN	KEYDOWN	topic	dedicated topic
 KILL	KILL	topic	dedicated topic

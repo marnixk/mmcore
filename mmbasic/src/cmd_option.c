@@ -1065,6 +1065,41 @@ static void option_dispatch(void)
 		G.opt.app_path[sizeof(G.opt.app_path) - 1] = 0;
 		return;
 	}
+	if (mmb_match("HUB"))
+	{
+		/* HUB index base (#1525). Always stored with a trailing '/'. */
+		mmb_val v;
+		unsigned n;
+
+		if (!mmb_match("URL"))
+			mmb_syntax();
+		if (mmb_match("DEFAULT"))
+		{
+			strncpy(G.opt.hub_url, MMB_HUB_DEFAULT_URL,
+				sizeof(G.opt.hub_url) - 1);
+			G.opt.hub_url[sizeof(G.opt.hub_url) - 1] = 0;
+			return;
+		}
+		v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(G.opt.hub_url, v.s ? v.s : "",
+			sizeof(G.opt.hub_url) - 2);
+		G.opt.hub_url[sizeof(G.opt.hub_url) - 2] = 0;
+		n = (unsigned)strlen(G.opt.hub_url);
+		if (n && G.opt.hub_url[n - 1] != '/')
+		{
+			G.opt.hub_url[n++] = '/';
+			G.opt.hub_url[n] = 0;
+		}
+		if (!n)
+		{
+			strncpy(G.opt.hub_url, MMB_HUB_DEFAULT_URL,
+				sizeof(G.opt.hub_url) - 1);
+			G.opt.hub_url[sizeof(G.opt.hub_url) - 1] = 0;
+		}
+		return;
+	}
 	if (mmb_match("BOOT"))
 	{
 		/* Power-on destination: REPL (default), the launcher, or a
@@ -1651,6 +1686,16 @@ void mmb_option_list(int all)
 			mmb_out("\n");
 		mmb_out("OPTION PATH \"");
 		mmb_out(G.opt.app_path);
+		mmb_out("\"");
+		n++;
+	}
+	if (all || (G.opt.hub_url[0] &&
+		    !mmb_keyword_eq(G.opt.hub_url, MMB_HUB_DEFAULT_URL)))
+	{
+		if (n)
+			mmb_out("\n");
+		mmb_out("OPTION HUB URL \"");
+		mmb_out(G.opt.hub_url);
 		mmb_out("\"");
 		n++;
 	}
