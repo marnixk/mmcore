@@ -125,8 +125,22 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "package",
-        ("mmbasic/src/cmd_package.c", "mmbasic/src/zip.c", "mmbasic/src/inflate.c"),
-        ("tests/test_package.py", "tests/test_unpack.py"),
+        (
+            "mmbasic/src/cmd_package.c",
+            "mmbasic/src/zip.c",
+            "mmbasic/src/inflate.c",
+            "mmbasic/src/app_category.c",
+            "mmbasic/src/pkg_info.c",
+            "mmbasic/src/pkg_info_read.c",
+            "docs/help/package*.txt",
+        ),
+        (
+            "tests/test_package.py",
+            "tests/test_unpack.py",
+            "tests/test_apppath.py",
+            "tests/test_pkg_info.py",
+            "tests/test_help_docs.py",
+        ),
         "PACKAGE / archive sources changed",
     ),
     Rule(

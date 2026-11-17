@@ -1,0 +1,52 @@
+name: PACKAGE.INF
+kind: page
+
+Package metadata file stored at the root of an .APP archive.
+
+Format
+
+One `key=value` per line, lower-case keys, `\n` line endings, no quoting. A
+trailing carriage return is accepted when reading. Blank lines, lines without
+`=`, and unknown keys are ignored. Key names are matched case-insensitively
+when reading; values keep their case (category is stored upper-case). A
+duplicate key uses the last value. Leading and trailing spaces around keys and
+values are trimmed, and a value may contain `=` and spaces.
+
+Keys
+
+  name      package id, e.g. GAME.APP
+  main      entry file, always MAIN.BAS
+  title     display name shown in launchers and lists
+  author    author name
+  category  one of the ten category ids, stored upper-case
+  version   app version, dotted numbers such as 1.2 or 1.2.3
+  summary   one-line description shown in lists, at most 80 characters
+  minver    oldest mmcore release that can run the app, e.g. 0.312.0
+
+There are no tags or website keys; the long description lives in
+INFO/ABOUT.TXT in the archive.
+
+Categories (fixed order)
+
+GAMES, DEMOS, CREATIVE, AUDIO, PRODUCTIVITY, DEVELOPMENT, UTILITIES,
+INTERNET, LEARNING, OTHER. Matching is case-insensitive. A missing or unknown
+category reads as OTHER.
+
+Reading and writing
+
+PACKAGE writes this file in every package it builds; the authoring wizard and
+the command form both merge folder$/PACKAGE.INF into it. The shared reader
+tolerates a missing, empty or malformed file: all fields are empty and the
+category is OTHER. The mmcore-apps packer (tools/package/pack_app.py) writes
+the same bytes for the same keys.
+
+Example:
+
+    name=JETPACK.APP
+    main=MAIN.BAS
+    title=Jetpack
+    author=marnix
+    category=GAMES
+    version=1.2
+    summary=Fly, grab the gems, avoid the robots.
+    minver=0.312.0

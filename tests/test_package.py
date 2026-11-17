@@ -212,9 +212,8 @@ def test_package_wizard_creates_app(console):
     assert "GAME" in seen.upper()
     seen = _wiz_keys(con, b"\r")  # choose folder -> name form
     assert "GAME.APP" in seen.upper()
-    _wiz_keys(con, b"\r")  # -> title
-    _wiz_keys(con, b"\r")  # -> author
-    seen = _wiz_keys(con, b"\r")  # create
+    for _ in range(6):  # title, author, category, version, summary, create
+        seen = _wiz_keys(con, b"\r")
     assert "WROTE" in seen.upper()
     _wiz_keys(con, b" ")  # any key closes
 
@@ -291,6 +290,13 @@ def test_package_wizard_metadata(console):
     assert "MY GAME" in seen.upper()
     _wiz_keys(con, b"\r")  # title -> author
     _wiz_keys(con, b"Me")  # author text
+    _wiz_keys(con, b"\r")  # author -> category
+    seen = _wiz_keys(con, b"\x1b[C")  # category picker: OTHER -> GAMES
+    assert "GAMES" in seen.upper()
+    _wiz_keys(con, b"\r")  # -> version
+    _wiz_keys(con, b"1.2")  # version text
+    _wiz_keys(con, b"\r")  # -> summary
+    _wiz_keys(con, b"Fast fun")  # summary text
     seen = _wiz_keys(con, b"\r")  # create
     assert "WROTE" in seen.upper()
     _wiz_keys(con, b" ")  # close
@@ -301,6 +307,140 @@ def test_package_wizard_metadata(console):
     meta = con.send_line('CAT "PACKAGE.INF"')
     assert "TITLE=MY GAME" in meta.upper()
     assert "AUTHOR=ME" in meta.upper()
+    assert "CATEGORY=GAMES" in meta.upper()
+    assert "VERSION=1.2" in meta.upper()
+    assert "SUMMARY=FAST FUN" in meta.upper()
+
+
+def _merged_meta(con, app, outdir):
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line(f'MKDIR "{outdir}"')
+    assert con.send_line(f'CHDIR "A:/{outdir}"') == ""
+    assert con.send_line(f'UNPACK "A:/{app}"') == ""
+    meta = con.send_line('CAT "PACKAGE.INF"')
+    assert con.send_line('CHDIR "A:/"') == ""
+    return meta
+
+
+def test_package_category_and_folder_inf_merge(console):
+    """#1523: folder INF is the base, name/main are set, CATEGORY overrides."""
+    con = console
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "CATPKG"')
+    _write_lines(con, "CATPKG/MAIN.BAS", ['PRINT "CATOK"'])
+    _write_lines(
+        con,
+        "CATPKG/PACKAGE.INF",
+        [
+            "name=OLD.APP",
+            "main=MAIN.BAS",
+            "title=Old Title",
+            "author=Me",
+            "category=demos",
+            "version=1.2",
+            "summary=Sorted fun",
+            "minver=0.300",
+        ],
+    )
+    assert con.send_line('PACKAGE "A:/CAT.APP", "CATPKG/" CATEGORY "games"') == ""
+    meta = _merged_meta(con, "CAT.APP", "CATOUT")
+    upper = meta.upper()
+    assert "NAME=CAT.APP" in upper, meta
+    assert "MAIN=MAIN.BAS" in upper, meta
+    assert "TITLE=OLD TITLE" in upper, meta
+    assert "AUTHOR=ME" in upper, meta
+    assert "CATEGORY=GAMES" in upper, meta
+    assert "VERSION=1.2" in upper, meta
+    assert "SUMMARY=SORTED FUN" in upper, meta
+    assert "MINVER=0.300" in upper, meta
+    assert "CATOK" in con.send_line('RUN "A:/CAT.APP"')
+
+    # The folder's own PACKAGE.INF must not be packed twice: a program that
+    # unpacks into a fresh folder would see ?FILE EXISTS on a duplicate entry.
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "CATOUT2"')
+    _write_lines(
+        con,
+        "A:/CATDUP.BAS",
+        ['CHDIR "A:/CATOUT2"', 'UNPACK "A:/CAT.APP"', 'PRINT "UNPKOK"'],
+    )
+    out = con.send_line('RUN "A:/CATDUP.BAS"').upper()
+    assert "UNPKOK" in out, out
+    assert "FILE EXISTS" not in out, out
+
+
+def test_package_category_error_is_catchable(console):
+    con = console
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "ERRCAT"')
+    _write_lines(con, "ERRCAT/MAIN.BAS", ["PRINT 1"])
+    assert con.send_line("NEW") == ""
+    for line in (
+        "10 ON ERROR GOTO 100",
+        '20 PACKAGE "BADCAT.APP", "ERRCAT/" CATEGORY "bogus"',
+        '30 PRINT "NOPE"',
+        "40 END",
+        '100 PRINT "CAUGHT:"; MM.ERRMSG$',
+    ):
+        assert con.send_line(line) == ""
+    out = con.send_line("RUN").upper()
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert any(ln.startswith("CAUGHT:?INVALID CATEGORY") for ln in lines), out
+    assert "NOPE" not in lines, out
+    assert con.send_line('DIR "A:/"').upper().count("BADCAT.APP") == 0
+    con.send_line("NEW")
+
+
+def test_package_bad_version_is_catchable(console):
+    con = console
+    assert con.send_line('CHDIR "A:/"') == ""
+    con.send_line('MKDIR "ERRVER"')
+    _write_lines(con, "ERRVER/MAIN.BAS", ["PRINT 1"])
+    _write_lines(con, "ERRVER/PACKAGE.INF", ["name=E.APP", "version=1.x"])
+    assert con.send_line("NEW") == ""
+    for line in (
+        "10 ON ERROR GOTO 100",
+        '20 PACKAGE "BADVER.APP", "ERRVER/"',
+        '30 PRINT "NOPE"',
+        "40 END",
+        '100 PRINT "CAUGHT:"; MM.ERRMSG$',
+    ):
+        assert con.send_line(line) == ""
+    out = con.send_line("RUN").upper()
+    lines = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+    assert any(ln.startswith("CAUGHT:?INVALID VERSION") for ln in lines), out
+    assert "NOPE" not in lines, out
+    con.send_line("NEW")
+
+
+def test_package_wizard_prefills_folder_inf(console):
+    con = console
+    _wiz_root(con, "WIZP")
+    assert con.send_line('MKDIR "AUDIOAPP"') == ""
+    _write_lines(con, "AUDIOAPP/MAIN.BAS", ['PRINT "AUD"'])
+    _write_lines(
+        con,
+        "AUDIOAPP/PACKAGE.INF",
+        [
+            "name=SOUND.APP",
+            "title=Sound Tool",
+            "author=Ann",
+            "category=audio",
+            "version=2.0",
+            "summary=Beeps and boops",
+        ],
+    )
+    _wiz_open(con)
+    _wiz_keys(con, b"\x1b[B")  # highlight AUDIOAPP
+    seen = _wiz_keys(con, b"\r")  # choose -> form prefilled from INF
+    upper = seen.upper()
+    assert "SOUND.APP" in upper, seen
+    assert "SOUND TOOL" in upper, seen
+    assert "AUDIO" in upper, seen
+    assert "2.0" in upper, seen
+    _wiz_keys(con, b"\x1b")  # back to folder list
+    _wiz_keys(con, b"\x1b")  # cancel
+    assert con.send_line("PRINT 1+1") == "2"
 
 
 def test_load_app_is_rejected(console):

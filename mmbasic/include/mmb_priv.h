@@ -1606,6 +1606,11 @@ typedef int (*mmb_zip_range_fn)(void *ctx, unsigned pos, void *buf,
 int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
 		       const char *name, void *out, unsigned out_cap,
 		       unsigned *out_len);
+/* Uncompressed size of one entry from the central directory, without reading
+ * its data. Lets a caller allocate an exact dynamic buffer (#1523). Returns 0
+ * on success, -1 when the entry is absent or the archive is malformed. */
+int mmb_zip_entry_size(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		       const char *name, unsigned *usize);
 int mmb_zip_path_ok(const char *name);
 unsigned mmb_crc32(const void *data, unsigned n);
 int mmb_inflate(const unsigned char *in, unsigned in_len,

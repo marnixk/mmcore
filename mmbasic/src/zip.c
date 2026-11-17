@@ -378,25 +378,24 @@ int mmb_zip_foreach(const unsigned char *zip, unsigned n, mmb_zip_file_fn fn, vo
 	return 0;
 }
 
-/* Read one entry by walking the central directory through a positional
- * reader. Only the ZIP tail, the central directory headers and the chosen
- * entry's local header + data are fetched, so inspecting metadata for a large
- * package costs a few small reads rather than the whole archive. */
-int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
-		       const char *name, void *out, unsigned out_cap,
-		       unsigned *out_len)
+typedef struct zip_ent_meta {
+	unsigned method, crc, csz, usz, local;
+} zip_ent_meta;
+
+/* Walk the central directory through a positional reader for one entry.
+ * Only the ZIP tail and the central directory headers are fetched. Returns 0
+ * when found and fills *m, -1 when absent or malformed. */
+static int zip_locate(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		      const char *name, zip_ent_meta *m)
 {
 	unsigned char tail[1024];
 	unsigned char *big = 0;
 	const unsigned char *buf = tail;
 	unsigned tail_n, eocd, nent, cd_off, pos, i;
-	unsigned method = 0, crc = 0, csz = 0, usz = 0, local = 0;
 	unsigned name_len, got;
 	int found = 0, rc = -1;
 
-	if (out_len)
-		*out_len = 0;
-	if (!rd || !name || !name[0] || !out || !out_cap || zip_size < 22)
+	if (!rd || !name || !name[0] || zip_size < 22)
 		return -1;
 	name_len = (unsigned)strlen(name);
 	tail_n = zip_size < sizeof(tail) ? zip_size : (unsigned)sizeof(tail);
@@ -433,14 +432,14 @@ int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
 			break;
 		if (u32le(h) != 0x02014b50u)
 			break;
-		method = u16le(h + 10);
-		crc = u32le(h + 16);
-		csz = u32le(h + 20);
-		usz = u32le(h + 24);
+		m->method = u16le(h + 10);
+		m->crc = u32le(h + 16);
+		m->csz = u32le(h + 20);
+		m->usz = u32le(h + 24);
 		nlen = u16le(h + 28);
 		elen = u16le(h + 30);
 		clen = u16le(h + 32);
-		local = u32le(h + 42);
+		m->local = u32le(h + 42);
 		if (pos + 46 + nlen + elen + clen > zip_size)
 			break;
 		if (nlen == name_len && nlen < 128)
@@ -459,30 +458,75 @@ int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
 		}
 		pos += 46 + nlen + elen + clen;
 	}
-	if (!found || usz > out_cap)
-		goto done;
+	if (found)
+		rc = 0;
+done:
+	if (big)
+		G.plat->free(big);
+	return rc;
+}
+
+/* Uncompressed size of one entry, from the central directory. Returns 0 on
+ * success, -1 when absent or malformed. Lets callers size a dynamic buffer
+ * before reading an entry (no fixed cap, #1523). */
+int mmb_zip_entry_size(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		       const char *name, unsigned *usize)
+{
+	zip_ent_meta m;
+
+	if (!usize)
+		return -1;
+	*usize = 0;
+	if (zip_locate(rd, ctx, zip_size, name, &m) != 0)
+		return -1;
+	*usize = m.usz;
+	return 0;
+}
+
+/* Read one entry by walking the central directory through a positional
+ * reader. Only the ZIP tail, the central directory headers and the chosen
+ * entry's local header + data are fetched, so inspecting metadata for a large
+ * package costs a few small reads rather than the whole archive. */
+int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
+		       const char *name, void *out, unsigned out_cap,
+		       unsigned *out_len)
+{
+	zip_ent_meta m;
+	unsigned got;
+	int rc = -1;
+
+	if (out_len)
+		*out_len = 0;
+	if (!rd || !name || !name[0] || !out || !out_cap || zip_size < 22)
+		return -1;
+	if (zip_locate(rd, ctx, zip_size, name, &m) != 0)
+		return -1;
+	if (m.usz > out_cap)
+		return -1;
 	{
 		unsigned char lh[30];
 		unsigned ln, lx, data_off;
+		unsigned method = m.method, crc = m.crc, csz = m.csz;
+		unsigned local = m.local;
 
 		if (local + 30 > zip_size)
-			goto done;
+			return -1;
 		if (rd(ctx, local, lh, 30, &got) != 0 || got != 30 ||
 		    u32le(lh) != 0x04034b50u)
-			goto done;
+			return -1;
 		ln = u16le(lh + 26);
 		lx = u16le(lh + 28);
 		data_off = local + 30 + ln + lx;
 		if (data_off + csz > zip_size)
-			goto done;
+			return -1;
 		if (method == 0)
 		{
-			if (csz != usz ||
-			    rd(ctx, data_off, out, usz, &got) != 0 ||
-			    got != usz || mmb_crc32(out, usz) != crc)
-				goto done;
+			if (csz != m.usz ||
+			    rd(ctx, data_off, out, m.usz, &got) != 0 ||
+			    got != m.usz || mmb_crc32(out, m.usz) != crc)
+				return -1;
 			if (out_len)
-				*out_len = usz;
+				*out_len = m.usz;
 			rc = 0;
 		}
 		else if (method == 8)
@@ -490,23 +534,22 @@ int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
 			unsigned char *comp;
 			unsigned outn = 0;
 
-			if (usz == 0)
+			if (m.usz == 0)
 			{
 				if (out_len)
 					*out_len = 0;
-				rc = 0;
-				goto done;
+				return 0;
 			}
 			comp = G.plat->alloc(csz ? csz : 1);
 			if (!comp)
-				goto done;
+				return -1;
 			if (rd(ctx, data_off, comp, csz, &got) != 0 ||
 			    got != csz ||
 			    mmb_inflate(comp, csz, out, out_cap, &outn) != 0 ||
-			    outn != usz || mmb_crc32(out, outn) != crc)
+			    outn != m.usz || mmb_crc32(out, outn) != crc)
 			{
 				G.plat->free(comp);
-				goto done;
+				return -1;
 			}
 			G.plat->free(comp);
 			if (out_len)
@@ -514,8 +557,5 @@ int mmb_zip_read_entry(mmb_zip_range_fn rd, void *ctx, unsigned zip_size,
 			rc = 0;
 		}
 	}
-done:
-	if (big)
-		G.plat->free(big);
 	return rc;
 }
