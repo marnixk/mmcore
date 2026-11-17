@@ -17,13 +17,18 @@ static const char *const k_names[] = {
 	"badge-installed", "badge-update", "badge-needs",
 	"tab", "tab-on", "button", "bar-frame", "bar-fill", "bar-stripe",
 	"corner-tl", "corner-tr", "corner-bl", "corner-br", "edge-h", "edge-v",
-	"scroll-track", "scroll-thumb", "title-font",
+	"scroll-track", "scroll-thumb", "title-font", "ui-font",
 	0
 };
 
 /* One cell per character, two rows (chrome then purple). */
 static const char k_font[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,'!?:-+/()";
+
+/* Monospace UI face. Same order as scripts/gen_hub_assets.py UI_ORDER. */
+static const char k_ui[] =
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	"0123456789 .,'!?:-+/()%&#\"";
 
 typedef struct chrome_img {
 	const char *name;
@@ -528,23 +533,116 @@ int hub_chrome_title(const char *text, int x, int y, int row)
 	return pen - x;
 }
 
-int hub_chrome_badge(const char *label, int x, int y, int *out_w, int *out_h)
+int hub_chrome_badge(const char *label, int x, int y, int w, int h)
 {
 	const char *name = 0;
 
-	if (!label)
+	if (!label || w < 4 || h < 4)
 		return 0;
-	if (strcmp(label, "INSTALLED") == 0)
+	if (strncmp(label, "INSTALLED", 9) == 0)
 		name = "badge-installed";
-	else if (strcmp(label, "UPDATE") == 0)
+	else if (strncmp(label, "UPDATE", 6) == 0)
 		name = "badge-update";
-	else if (strcmp(label, "NEEDS v0.320") == 0)
+	else if (strncmp(label, "NEEDS", 5) == 0)
 		name = "badge-needs";
-	if (!name || !hub_chrome_has(name))
+	if (!name)
 		return 0;
-	if (out_w)
-		*out_w = hub_chrome_w(name);
-	if (out_h)
-		*out_h = hub_chrome_h(name);
-	return hub_chrome_blit(name, x, y);
+	return hub_chrome_slice(name, x, y, w, h, 10);
+}
+
+static int ui_cell(chrome_img *im, int *cw, int *ch)
+{
+	int n = (int)strlen(k_ui);
+
+	if (!im || !im->pix || n < 1 || im->h < 1)
+		return 0;
+	*cw = im->w / n;
+	*ch = im->h;
+	return *cw > 0 && *ch > 0;
+}
+
+static int ui_index(char ch)
+{
+	const char *p = strchr(k_ui, ch);
+
+	return p ? (int)(p - k_ui) : -1;
+}
+
+static void chrome_stretch_tint(chrome_img *im, int sx0, int sy0, int sw, int sh,
+				int dx, int dy, int dw, int dh, unsigned rgb)
+{
+	int y, x;
+
+	if (!im || !im->pix || sw < 1 || sh < 1 || dw < 1 || dh < 1)
+		return;
+	for (y = 0; y < dh; y++)
+	{
+		int sy = sy0 + (int)((long)y * sh / dh);
+
+		if (sy < 0)
+			sy = 0;
+		if (sy >= im->h)
+			sy = im->h - 1;
+		for (x = 0; x < dw; x++)
+		{
+			int sx = sx0 + (int)((long)x * sw / dw);
+			uint32_t p;
+
+			if (sx < 0)
+				sx = 0;
+			if (sx >= im->w)
+				sx = im->w - 1;
+			p = im->pix[sy * im->w + sx];
+			chrome_plot(dx + x, dy + y, rgb, p >> 24);
+		}
+	}
+}
+
+int hub_chrome_ui_h(void)
+{
+	chrome_img *im = chrome_find("ui-font");
+	int cw, ch;
+
+	if (!ui_cell(im, &cw, &ch))
+		return 0;
+	return ch * im->scale;
+}
+
+int hub_chrome_ui_w(const char *text, int zoom)
+{
+	chrome_img *im = chrome_find("ui-font");
+	int cw, ch;
+
+	if (!text || !ui_cell(im, &cw, &ch))
+		return 0;
+	if (zoom < 1)
+		zoom = 1;
+	return (int)strlen(text) * cw * im->scale * zoom;
+}
+
+int hub_chrome_ui(const char *text, int x, int y, unsigned rgb, int zoom)
+{
+	chrome_img *im = chrome_find("ui-font");
+	int cw, ch, pen, dw, dh;
+	const char *s;
+
+	if (!text || !ui_cell(im, &cw, &ch))
+		return 0;
+	if (zoom < 1)
+		zoom = 1;
+	dw = cw * im->scale * zoom;
+	dh = ch * im->scale * zoom;
+	pen = x;
+	for (s = text; *s; s++)
+	{
+		int idx = ui_index(*s);
+
+		if (idx < 0)
+			idx = ui_index(' ');
+		if (idx < 0)
+			continue;
+		chrome_stretch_tint(im, idx * cw, 0, cw, ch, pen, y, dw, dh, rgb);
+		pen += dw;
+	}
+	return pen - x;
 }

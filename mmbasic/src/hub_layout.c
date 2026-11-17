@@ -105,7 +105,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int thumbs_h = 34 * p;
 		int title_h = 108 * p;
 		int chips_h = 28 * p;
-		int button_h = 40 * p;
+		int button_h = 48 * p;
 		int shot_h;
 		int rx;
 		int need;
@@ -169,7 +169,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int thumbs_h = 24 * p;
 		int title_h = 72 * p;
 		int chips_h = 26 * p;
-		int button_h = 36 * p;
+		int button_h = 44 * p;
 		int gaps = 6 * p;
 		int over;
 

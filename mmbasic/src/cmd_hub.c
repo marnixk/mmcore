@@ -537,7 +537,21 @@ static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
 			}
 			if (line >= skip && line < skip + maxlines)
 			{
-				if (cw == 8 * scale && gh == 16 * scale)
+				if (hub_chrome_has("ui-font") &&
+				    cw == hub_chrome_ui_w("M", 1))
+				{
+					char buf[160];
+					int n = take;
+
+					if (n > (int)sizeof(buf) - 1)
+						n = (int)sizeof(buf) - 1;
+					memcpy(buf, word, (size_t)n);
+					buf[n] = 0;
+					hub_chrome_ui(buf, x + cx * cw,
+						      y + (line - skip) * lineh,
+						      col, 1);
+				}
+				else if (cw == 8 * scale && gh == 16 * scale)
 					hub_text_n(x + cx * cw,
 						   y + (line - skip) * lineh,
 						   word, (unsigned)take, col,
@@ -676,6 +690,83 @@ static int hub_title_scale(void)
 static int hub_ui_scale(void)
 {
 	return hub_body_scale();
+}
+
+/* UI face from A:/hub/ui-font. zoom is an extra integer scale. The CP437
+ * face is the fallback when the sheet is missing. */
+static int hub_ui_h(int zoom)
+{
+	int h;
+
+	if (zoom < 1)
+		zoom = 1;
+	h = hub_chrome_ui_h();
+	if (h > 0)
+		return h * zoom;
+	return 16 * zoom;
+}
+
+static int hub_ui_w(const char *s, int zoom)
+{
+	if (zoom < 1)
+		zoom = 1;
+	if (hub_chrome_has("ui-font"))
+		return hub_chrome_ui_w(s, zoom);
+	return hub_text_w(s, zoom);
+}
+
+static void hub_label(int x, int y, const char *s, unsigned col, int zoom)
+{
+	if (!s)
+		return;
+	if (zoom < 1)
+		zoom = 1;
+	if (hub_chrome_ui(s, x, y, col, zoom))
+		return;
+	hub_text(x, y, s, col, zoom);
+}
+
+static void hub_ui_r(int right, int y, const char *s, unsigned col, int zoom)
+{
+	hub_label(right - hub_ui_w(s, zoom), y, s, col, zoom);
+}
+
+static void hub_ui_trunc(int x, int y, const char *s, unsigned col,
+			   int zoom, int maxw)
+{
+	char buf[160];
+	int adv, maxc, n;
+
+	if (!s)
+		return;
+	if (zoom < 1)
+		zoom = 1;
+	adv = hub_ui_w("M", zoom);
+	if (adv < 1)
+		adv = 8 * zoom;
+	if (maxw <= 0)
+		return;
+	maxc = maxw / adv;
+	n = (int)strlen(s);
+	if (n > maxc)
+	{
+		if (maxc < 0)
+			maxc = 0;
+		if (maxc > (int)sizeof(buf) - 1)
+			maxc = (int)sizeof(buf) - 1;
+		if (maxc > 3)
+		{
+			memcpy(buf, s, (size_t)(maxc - 3));
+			memcpy(buf + maxc - 3, "...", 4);
+		}
+		else
+		{
+			memcpy(buf, s, (size_t)maxc);
+			buf[maxc] = 0;
+		}
+		s = buf;
+	}
+	hub_label(x, y, s, col, zoom);
 }
 
 static unsigned hub_lerp(unsigned a, unsigned b, int t, int n)
@@ -1232,7 +1323,33 @@ static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 	int p = U.p < 2 ? 1 : U.p;
 
 	hub_fill(r, 0x0B0F22);
-	if (im && im->pix)
+	if (im && im->pix && framed == 2)
+	{
+		int s = 1;
+		int dw, dh, ox, oy, yy, xx;
+
+		while ((s + 1) * im->w <= r.w - 4 * p &&
+		       (s + 1) * im->h <= r.h - 4 * p)
+			s++;
+		dw = im->w * s;
+		dh = im->h * s;
+		ox = r.x + (r.w - dw) / 2;
+		oy = r.y + (r.h - dh) / 2;
+		for (yy = 0; yy < dh; yy++)
+		{
+			int sy = yy / s;
+
+			for (xx = 0; xx < dw; xx++)
+			{
+				uint32_t c = im->pix[sy * im->w + xx / s];
+
+				if (!(c >> 24))
+					continue;
+				mmb_gfx_plot(ox + xx, oy + yy, c & 0xFFFFFFu);
+			}
+		}
+	}
+	else if (im && im->pix)
 		hub_draw_image(im->pix, im->w, im->h, r);
 	else if (!hub_chrome_fit("icon-cube", r.x, r.y, r.w, r.h, 100))
 		hub_cube(r.x + r.w / 2, r.y + r.h / 2, r.w * 3 / 4, 0);
@@ -1679,13 +1796,13 @@ static int hub_chip(int x, int y, const char *text, unsigned col,
 		return 0;
 	if (scale < 1)
 		scale = 1;
-	w = hub_text_w(text, scale) + 8 * p;
-	h = 16 * scale + 4 * p;
+	w = hub_ui_w(text, 1) + 8 * p;
+	h = hub_ui_h(1) + 4 * p;
 	t = p < 2 ? 1 : p;
 	hub_fill((hub_rect){ x, y, w, h }, fill);
 	mmb_gfx_box(x, y, w, h, col, t, -1);
 	hub_hline(x + t, y + t, w - 2 * t, hub_lerp(fill, 0xFFFFFF, 1, 4), 1);
-	hub_text(x + 4 * p, y + (h - 16 * scale) / 2, text, col, scale);
+	hub_label(x + 4 * p, y + (h - hub_ui_h(1)) / 2, text, col, 1);
 	return w;
 }
 
@@ -1780,7 +1897,7 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	hub_app *a = hub_get(U.ids[i]);
 	hub_rect r, icon;
 	int p = U.p < 1 ? 1 : U.p;
-	int greyed, scale, tscale, x, ty, lim;
+	int greyed, x, ty, lim;
 	char title[96], summary[160], author[64], sz[32], badgebuf[64];
 	const char *badge;
 	unsigned bcol, bfill;
@@ -1797,8 +1914,6 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	if (r.h < 8)
 		return;
 	greyed = a->state == HUB_NEEDS_NEWER;
-	tscale = hub_title_scale();
-	scale = hub_body_scale();
 	if (selected)
 	{
 		hub_fill(r, 0x16304A);
@@ -1832,30 +1947,14 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	badge = hub_state_badge(a, &bcol, &bfill, badgebuf, sizeof(badgebuf));
 	if (badge && badge[0])
 	{
-		const char *art = 0;
-
-		if (strcmp(badge, "INSTALLED") == 0)
-			art = "badge-installed";
-		else if (strcmp(badge, "UPDATE") == 0)
-			art = "badge-update";
-		else if (strcmp(badge, "NEEDS v0.320") == 0)
-			art = "badge-needs";
-		if (art && hub_chrome_has(art))
-		{
-			bw = hub_chrome_w(art);
-			bh = hub_chrome_h(art);
-		}
-		else
-		{
-			bw = hub_text_w(badge, scale) + 10 * p;
-			bh = 16 * scale + 6 * p;
-		}
+		bw = hub_ui_w(badge, 1) + 12 * p;
+		bh = hub_ui_h(1) + 8 * p;
 		if (bh > r.h - 4 * p)
 			bh = r.h - 4 * p;
 	}
-	meta_w = hub_text_w(author, scale);
-	if (hub_text_w(sz, scale) > meta_w)
-		meta_w = hub_text_w(sz, scale);
+	meta_w = hub_ui_w(author, 1);
+	if (hub_ui_w(sz, 1) > meta_w)
+		meta_w = hub_ui_w(sz, 1);
 	if (bw)
 		meta_w += bw + 6 * p;
 	x = icon.x + icon.w + 6 * p;
@@ -1863,18 +1962,17 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	if (lim < x + 16)
 		lim = r.x + r.w - 6 * p;
 	{
-		int block = 16 * tscale +
-			    (summary[0] ? 3 * p + 16 * scale : 0);
+		int block = hub_ui_h(2) +
+			    (summary[0] ? 2 * p + hub_ui_h(1) : 0);
 
 		ty = r.y + (narrow && selected ? 2 * p : (r.h - block) / 2);
 	}
 	if (ty < r.y + p)
 		ty = r.y + p;
-	hub_text_trunc(x, ty, title, greyed ? HUB_GREY : HUB_TEXT, tscale,
-		       lim - x);
+	hub_ui_trunc(x, ty, title, greyed ? HUB_GREY : HUB_TEXT, 2, lim - x);
 	if (summary[0])
-		hub_text_trunc(x, ty + 16 * tscale + 2 * p, summary,
-			       greyed ? HUB_GREY : HUB_DIM, scale, lim - x);
+		hub_ui_trunc(x, ty + hub_ui_h(2) + 2 * p, summary,
+			       greyed ? HUB_GREY : HUB_DIM, 1, lim - x);
 
 	if (selected && narrow)
 	{
@@ -1887,8 +1985,8 @@ static void hub_draw_row(int i, int y, int h, int selected)
 		if (ih > U.L.list.h * 42 / 100)
 			ih = U.L.list.h * 42 / 100;
 		frame.x = r.x + 4 * p;
-		frame.y = ty + 16 * tscale +
-			  (summary[0] ? 16 * scale + 4 * p : 0) + 6 * p;
+		frame.y = ty + hub_ui_h(2) +
+			  (summary[0] ? hub_ui_h(1) + 4 * p : 0) + 6 * p;
 		frame.w = iw;
 		frame.h = ih;
 		if (frame.y + frame.h > r.y + r.h - 2 * p)
@@ -1917,23 +2015,31 @@ static void hub_draw_row(int i, int y, int h, int selected)
 	by = r.y + (r.h - bh) / 2;
 	if (narrow && selected)
 		by = r.y + 4 * p;
-	if (bw > 0 && !hub_chrome_badge(badge, bx, by, 0, 0))
-		hub_badge(bx, by, bw, bh, badge, bfill, bcol);
+	if (bw > 0)
+	{
+		if (hub_chrome_badge(badge, bx, by, bw, bh))
+			hub_label(bx + (bw - hub_ui_w(badge, 1)) / 2,
+				 by + (bh - hub_ui_h(1)) / 2,
+				 badge, bfill, 1);
+		else
+			hub_badge(bx, by, bw, bh, badge, bfill, bcol);
+	}
 	{
 		int mx = (bw ? bx : r.x + r.w) - 6 * p;
-		int my = by + (bh - (sz[0] && author[0] ? 16 * scale * 2 + p :
-				      16 * scale)) / 2;
+		int stack = (sz[0] && author[0]) ? hub_ui_h(1) * 2 + p :
+			    hub_ui_h(1);
+		int my = by + (bh - stack) / 2;
 		unsigned col = greyed ? HUB_GREY : HUB_DIM;
 
 		if (my < r.y + 2 * p)
 			my = r.y + 2 * p;
 		if (author[0])
 		{
-			hub_text_r(mx, my, author, col, scale);
-			my += 16 * scale + p;
+			hub_ui_r(mx, my, author, col, 1);
+			my += hub_ui_h(1) + p;
 		}
 		if (sz[0])
-			hub_text_r(mx, my, sz, col, scale);
+			hub_ui_r(mx, my, sz, col, 1);
 	}
 }
 
@@ -2003,7 +2109,7 @@ static void hub_paint_listing(void)
 		s_tab_scale = scale;
 		for (i = 0; i < n; i++)
 		{
-			widths[i] = hub_text_w(s_tabs[i].name, scale) + 12 * p;
+			widths[i] = hub_ui_w(s_tabs[i].name, 1) + 14 * p;
 			if (widths[i] < 24 * p)
 				widths[i] = 24 * p;
 			total += widths[i];
@@ -2088,18 +2194,16 @@ static void hub_paint_listing(void)
 					hub_vline(tr.x + tr.w - p, tr.y, tr.h + foot_h,
 						  HUB_BORDER_D, p);
 				}
-				hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-								   scale)) / 2,
-					 tr.y + (tr.h - 16 * scale) / 2,
-					 s_tabs[i].name, HUB_MAGENTA, scale);
+				hub_label(tr.x + (tr.w - hub_ui_w(s_tabs[i].name, 1)) / 2,
+					 tr.y + (tr.h - hub_ui_h(1)) / 2,
+					 s_tabs[i].name, HUB_MAGENTA, 1);
 			}
 			else
 			{
 				hub_chrome_slice("tab", tr.x, tr.y, tr.w, tr.h, 8);
-				hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-								   scale)) / 2,
-					 tr.y + (tr.h - 16 * scale) / 2,
-					 s_tabs[i].name, HUB_DIM, scale);
+				hub_label(tr.x + (tr.w - hub_ui_w(s_tabs[i].name, 1)) / 2,
+					 tr.y + (tr.h - hub_ui_h(1)) / 2,
+					 s_tabs[i].name, HUB_DIM, 1);
 			}
 			x += tw + gap;
 		}
@@ -2253,12 +2357,12 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 	    (strcmp(label, "UPDATE") == 0 || strcmp(label, "INSTALL") == 0) &&
 	    hub_chrome_slice("button", b.x, b.y, b.w, b.h, 18))
 	{
-		int tx = b.x + (b.w - hub_text_w(label, scale)) / 2;
-		int ty = b.y + (b.h - 16 * scale) / 2;
+		int zoom = hub_ui_h(2) + 6 * p <= b.h ? 2 : 1;
+		int tw = hub_ui_w(label, zoom);
+		int th = hub_ui_h(zoom);
 
-		hub_text(tx, ty, label, 0xFFFFFF, scale);
-		if (scale >= 2)
-			hub_text(tx + 1, ty, label, 0xFFFFFF, scale);
+		hub_label(b.x + (b.w - tw) / 2, b.y + (b.h - th) / 2,
+			 label, 0xFFFFFF, zoom);
 		return;
 	}
 	hub_fill(b, fill);
@@ -2302,7 +2406,7 @@ static void hub_draw_main_button(hub_rect area)
 	if (bw < 20)
 		bw = area.w;
 	b.w = bw;
-	b.h = area.h > 8 * p ? area.h - 2 * p : area.h;
+	b.h = area.h > 8 ? area.h : 16;
 	if (b.h < 16)
 		b.h = area.h > 0 ? area.h : 16;
 	b.x = area.x + (area.w - b.w) / 2;
@@ -2316,12 +2420,14 @@ static void hub_draw_main_button(hub_rect area)
 static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 {
 	int p = U.p < 1 ? 1 : U.p;
-	/* One and a half times the listing summary: 12px at 720p, about
-	 * 44 characters across the column, with the mockup's line pitch. */
-	int gw = (U.p >= 3 ? 16 : 8) * 3 / 2;
-	int gh = gw * 2;
-	int lh = gh + 11 * (U.p < 1 ? 1 : U.p) / 2;
+	/* The UI face at zoom 1 is about 44 characters across this column. */
+	int gw = hub_chrome_has("ui-font") ? hub_chrome_ui_w("M", 1) :
+		 ((U.p >= 3 ? 16 : 8) * 3 / 2);
+	int gh = hub_chrome_has("ui-font") ? hub_chrome_ui_h() : gw * 2;
+	int lh = gh + (hub_chrome_has("ui-font") ? 8 * p :
+		       11 * (U.p < 1 ? 1 : U.p) / 2);
 	int cols = (r.w - 16 * p) / gw;
+	int face = hub_chrome_has("ui-font");
 	const char *body = (a && hub_has(a->about)) ? a->about :
 			   (a && hub_has(a->summary) ? a->summary : "");
 	const char *changes = (a && hub_has(a->changes)) ? a->changes : "";
@@ -2358,12 +2464,18 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 		{
 			hub_wrap_draw(r.x, y, body, cols, lh, line, 1,
 				      HUB_TEXT, 1, gw, gh);
-			hub_wrap_draw(r.x + 1, y, body, cols, lh, line, 1,
-				      HUB_TEXT, 1, gw, gh);
+			if (!face)
+				hub_wrap_draw(r.x + 1, y, body, cols, lh, line, 1,
+					      HUB_TEXT, 1, gw, gh);
 		}
 		else if (line == head)
-			hub_text_cell(r.x, y, "WHAT'S NEW", 9, HUB_ORANGE,
-				      gw, gh);
+		{
+			if (face)
+				hub_label(r.x, y, "WHAT'S NEW", HUB_ORANGE, 1);
+			else
+				hub_text_cell(r.x, y, "WHAT'S NEW", 9, HUB_ORANGE,
+					      gw, gh);
+		}
 		else if (ch_at >= 0 && line >= ch_at &&
 			 line < ch_at + ch_lines)
 			hub_wrap_draw(r.x, y, changes, cols, lh,
@@ -2515,12 +2627,29 @@ static void hub_draw_detail(void)
 			int w1 = hub_chrome_title_w(line1, 0);
 			int w2 = two ? hub_chrome_title_w(line2, 1) : 0;
 			int avail;
+			hub_img *icon_im = hub_img_find(a->icon);
+			int isrc = (icon_im && icon_im->w > 0) ? icon_im->w : 32;
+			int isrch = (icon_im && icon_im->h > 0) ? icon_im->h : isrc;
+			int iscale = 1;
 
 			block_h = two ? lh * 2 + gap : lh;
-			avail = L->detail_title.w - block_h - 12 * p;
-			if (avail < 16 || w1 > avail || (two && w2 > avail))
-				goto title_procedural;
-			icon_s = block_h;
+			/* Integer-scaled app icon, framed tight, as tall as the slot. */
+			while ((iscale + 1) * isrc + 8 * p <= L->detail_title.h &&
+			       (iscale + 1) * isrch + 8 * p <= L->detail_title.h)
+				iscale++;
+			for (;;)
+			{
+				icon_s = isrc * iscale + 8 * p;
+				if (icon_s > L->detail_title.h)
+					icon_s = L->detail_title.h;
+				avail = L->detail_title.w - icon_s - 12 * p;
+				if (avail >= 16 && w1 <= avail &&
+				    (!two || w2 <= avail))
+					break;
+				if (iscale <= 1)
+					goto title_procedural;
+				iscale--;
+			}
 			if (icon_s > L->detail_title.h)
 				icon_s = L->detail_title.h;
 			if (narrow)
@@ -2538,7 +2667,7 @@ static void hub_draw_detail(void)
 				ty = L->detail_title.y;
 			iy = ty + (block_h - icon_s) / 2;
 			hub_app_icon(a, (hub_rect){ ix, iy, icon_s, icon_s },
-				     a->state == HUB_NEEDS_NEWER, 0);
+				     a->state == HUB_NEEDS_NEWER, 2);
 			hub_chrome_title(line1, tx, ty, 0);
 			if (two)
 			{
@@ -2584,7 +2713,7 @@ static void hub_draw_detail(void)
 			ty = L->detail_title.y;
 		iy = ty + (block_h - icon_s) / 2;
 		hub_app_icon(a, (hub_rect){ ix, iy, icon_s, icon_s },
-			     a->state == HUB_NEEDS_NEWER, 0);
+			     a->state == HUB_NEEDS_NEWER, 2);
 		hub_grad_text(tx, ty, line1, 0xFFFFFF, 0xB0B6C8, scale, 1,
 			      0x120818);
 		if (two)

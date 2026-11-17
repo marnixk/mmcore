@@ -34,7 +34,12 @@ int hub_chrome_title(const char *text, int x, int y, int row);
 int hub_chrome_title_w(const char *text, int row);
 int hub_chrome_title_h(void);
 
-/* Baked pill, or 0 when this label has no matching asset. */
-int hub_chrome_badge(const char *label, int x, int y, int *out_w, int *out_h);
+/* 9-slice pill for INSTALLED / UPDATE / NEEDS. The label is drawn separately. */
+int hub_chrome_badge(const char *label, int x, int y, int w, int h);
+
+/* Monospace UI face. `zoom` is an extra integer scale (1 or 2). */
+int hub_chrome_ui(const char *text, int x, int y, unsigned rgb, int zoom);
+int hub_chrome_ui_w(const char *text, int zoom);
+int hub_chrome_ui_h(void);
 
 #endif
