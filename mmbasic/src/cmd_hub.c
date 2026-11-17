@@ -1210,6 +1210,128 @@ static void hub_images_free(void)
 	s_imgcap = 0;
 }
 
+/* `about` and `changes` are either prose or a catalogue path
+ * (info/<id>/about.txt). A path has a slash and no whitespace. */
+#define HUB_DOC_MAX 8
+#define HUB_DOC_BYTES 16384
+
+typedef struct hub_doc {
+	char *rel;
+	char *text;
+} hub_doc;
+
+static hub_doc s_doc[HUB_DOC_MAX];
+static int s_ndoc;
+
+static int hub_ends_txt(const char *s)
+{
+	int n = (int)strlen(s);
+
+	if (n < 4)
+		return 0;
+	s += n - 4;
+	return s[0] == '.' &&
+	       (s[1] == 't' || s[1] == 'T') &&
+	       (s[2] == 'x' || s[2] == 'X') &&
+	       (s[3] == 't' || s[3] == 'T');
+}
+
+/* A catalogue text file, not prose and not an image. hero.png also has a
+ * slash and no spaces, so the suffix is what keeps it on the image path. */
+static int hub_is_docpath(const char *s)
+{
+	const char *p;
+
+	if (!hub_has(s) || !hub_ends_txt(s))
+		return 0;
+	for (p = s; *p; p++)
+	{
+		if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+			return 0;
+	}
+	return strchr(s, '/') != 0;
+}
+
+static hub_doc *hub_doc_find(const char *rel)
+{
+	int i;
+
+	for (i = 0; i < s_ndoc; i++)
+		if (s_doc[i].rel && strcmp(s_doc[i].rel, rel) == 0)
+			return &s_doc[i];
+	return 0;
+}
+
+/* Inline prose is returned as-is. A path yields the fetched text, or
+ * `fallback` until that fetch finishes (so the path itself is not drawn). */
+static const char *hub_doc_body(const char *field, const char *fallback)
+{
+	hub_doc *d;
+
+	if (!fallback)
+		fallback = "";
+	if (!hub_is_docpath(field))
+		return hub_has(field) ? field : fallback;
+	d = hub_doc_find(field);
+	if (d && d->text && d->text[0])
+		return d->text;
+	return fallback;
+}
+
+static int hub_doc_try(const char *rel)
+{
+	hub_doc *d;
+	unsigned char *buf = 0;
+	unsigned n = 0, keep;
+	char err[96];
+	char *text;
+
+	if (!hub_is_docpath(rel) || hub_doc_find(rel) || s_ndoc >= HUB_DOC_MAX)
+		return 0;
+	d = &s_doc[s_ndoc];
+	memset(d, 0, sizeof(*d));
+	d->rel = G.plat->alloc(strlen(rel) + 1);
+	if (!d->rel)
+		return 0;
+	memcpy(d->rel, rel, strlen(rel) + 1);
+	s_ndoc++;
+	text = G.plat->alloc(1);
+	if (text)
+		text[0] = 0;
+	if (hub_fetch(rel, &buf, &n, err, sizeof(err)) == 0 && buf && n)
+	{
+		keep = n > HUB_DOC_BYTES ? HUB_DOC_BYTES : n;
+		if (text)
+			G.plat->free(text);
+		text = G.plat->alloc(keep + 1);
+		if (text)
+		{
+			memcpy(text, buf, keep);
+			text[keep] = 0;
+		}
+	}
+	d->text = text;
+	if (buf)
+		G.plat->free(buf);
+	return 1;
+}
+
+static void hub_docs_free(void)
+{
+	int i;
+
+	for (i = 0; i < s_ndoc; i++)
+	{
+		if (s_doc[i].rel)
+			G.plat->free(s_doc[i].rel);
+		if (s_doc[i].text)
+			G.plat->free(s_doc[i].text);
+		s_doc[i].rel = 0;
+		s_doc[i].text = 0;
+	}
+	s_ndoc = 0;
+}
+
 /* Fetch and decode one asset (lazily, one per poll tick). Returns 1 when it
  * made an attempt, 0 when the asset was already known. */
 static int hub_img_try(const char *rel)
@@ -2154,11 +2276,16 @@ static void hub_paint_listing(void)
 		if (n > 0 && total <= view)
 		{
 			int extra = view - total;
+			int cap = 8 * p;
 			int add = extra / n;
-			int rem = extra - add * n;
 
+			/* Leftover pixels are a few per tab when all ten fit.
+			 * A catalogue with only ALL and GAMES would otherwise
+			 * stretch each bracket across half the screen. */
+			if (add > cap)
+				add = cap;
 			for (i = 0; i < n; i++)
-				widths[i] += add + (i < rem ? 1 : 0);
+				widths[i] += add;
 			scroll = 0;
 		}
 		else if (n > 0)
@@ -2470,9 +2597,9 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 		       11 * (U.p < 1 ? 1 : U.p) / 2);
 	int cols = (r.w - 16 * p) / gw;
 	int face = hub_chrome_has("ui-font");
-	const char *body = (a && hub_has(a->about)) ? a->about :
-			   (a && hub_has(a->summary) ? a->summary : "");
-	const char *changes = (a && hub_has(a->changes)) ? a->changes : "";
+	const char *body = hub_doc_body(a ? a->about : 0,
+					a && hub_has(a->summary) ? a->summary : "");
+	const char *changes = hub_doc_body(a ? a->changes : 0, "");
 	int body_lines, ch_lines;
 	int head, ch_at, lines, rows;
 	int maxscroll;
@@ -3121,6 +3248,7 @@ static void hub_leave(void)
 		return;
 	U.active = 0;
 	hub_images_free();
+	hub_docs_free();
 	hub_chrome_free();
 	hub_free_ids();
 	hub_free();
@@ -3329,6 +3457,10 @@ static const char *hub_need_asset(void)
 			if (rel && !hub_img_find(rel))
 				return rel;
 		}
+		if (hub_is_docpath(cur->about) && !hub_doc_find(cur->about))
+			return cur->about;
+		if (hub_is_docpath(cur->changes) && !hub_doc_find(cur->changes))
+			return cur->changes;
 		return 0;
 	}
 	/* Listing: the selected preview first, then the visible icons. */
@@ -3997,7 +4129,12 @@ void mmb_hub_poll(void)
 		if (rel)
 		{
 			U.last_asset = now;
-			if (hub_img_try(rel))
+			if (hub_is_docpath(rel))
+			{
+				if (hub_doc_try(rel))
+					U.dirty = 1;
+			}
+			else if (hub_img_try(rel))
 				U.dirty = 1;
 		}
 	}

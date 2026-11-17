@@ -34,8 +34,9 @@ has one, then the screenshots; with no hero it is the screenshots (or the
 thumbnail when there are none). The hero is also the first thumbnail. Then the
 title and icon, and one info row (author, version,
 size, category). Empty fields are left out. The description sits directly under
-that row. A WHAT'S NEW section is shown only when the index entry carries the
-text of INFO/CHANGES.TXT. There is one main button: `INSTALL`, `UPDATE`, `RUN`
+that row. `about` is either that text or a path such as info/<id>/about.txt,
+which is loaded in the background. A WHAT'S NEW section is shown only when the
+index entry carries the text of INFO/CHANGES.TXT (or a path to that text). There is one main button: `INSTALL`, `UPDATE`, `RUN`
 or a greyed `NEEDS v<minver>` when the device is too old. The install dialog
 shows the download and checksum progress and can be cancelled with Esc. RUN
 leaves the hub and starts the installed app exactly like the APPS launcher.
