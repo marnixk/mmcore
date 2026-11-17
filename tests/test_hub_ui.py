@@ -10,12 +10,14 @@ backend and are skipped without it.
 
 import os
 import shutil
+import time
 
 import pytest
 
 from native_harness import NativeSession, Ppm, SDL_BIN, build_native, \
     sdl_backend_available
-from test_hub import APPS, HubServer, make_app, preinstall, set_url
+from test_hub import APPS, HubServer, app_entry, index_doc, make_app, \
+    preinstall, set_url
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cc") is None or shutil.which("make") is None,
@@ -62,6 +64,15 @@ def _session(tmp_path, hub, mode="9,16", preinstalled=("jetpack",)):
 
 def _same(a: Ppm, b: Ppm) -> bool:
     return a.data == b.data
+
+
+def _wait_file(path, timeout=10.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.isfile(path):
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def test_tabs_left_right(native_mmcore, hub, tmp_path):
@@ -188,11 +199,85 @@ def test_install_then_run(native_mmcore, hub, tmp_path):
     s.wait_ms(600)
     installed = s.mark("installed")
     s.wait_mark(installed)
-    assert os.path.isfile(path), "install did not write puzzle.APP"
+    # The install input pump may consume harness steps while the transfer is
+    # still unwinding, so poll the file instead of assuming the mark implies
+    # the rename has completed.
+    assert _wait_file(path), "install did not write puzzle.APP"
     s.key("enter")          # the main button is now RUN
     s.wait_ms(400)
     ran = s.mark("ran")
     s.wait_mark(ran)
     s.quit()
-    out = s.run()
+    out = s.wait(timeout=30)
     assert "PUZZLE RAN" in out, out
+
+
+def _bulk_session(tmp_path, hub, delay=0.03):
+    """HUB with a single 8 KB app whose body is served in throttled chunks."""
+    hub.add_index("/index.json", index_doc(apps=[app_entry("bulk")]))
+    hub.throttle("/apps/bulk.app", delay)
+    return _session(tmp_path, hub, preinstalled=())
+
+
+def _tmp_leftovers(apps_dir):
+    if not os.path.isdir(apps_dir):
+        return []
+    return [n for n in os.listdir(apps_dir) if n.endswith(".tmp")]
+
+
+def test_esc_cancels_inflight_install(native_mmcore, hub, tmp_path):
+    s, root = _bulk_session(tmp_path, hub)
+    apps_dir = os.path.join(root, "C", "APPS")
+    app = os.path.join(apps_dir, "bulk.APP")
+
+    s.key("enter")          # open the detail page
+    s.wait_ms(250)
+    detail = s.snapshot("detail.ppm")
+    s.key("enter")          # start the blocking INSTALL
+    s.key("esc")            # cancelled by the install input pump
+    # A following text byte makes the front-end screenshot decoder replay the
+    # buffered Esc immediately instead of waiting for its idle timeout, so the
+    # cancel does not race the transfer. The no-op moves soak up one harness
+    # step per progress callback before the scripted marker runs.
+    s.text("x")
+    s.move(0, 0)
+    s.move(0, 0)
+    s.move(0, 0)
+    done = s.mark("cancelled")
+    s.wait_mark(done)
+    back = s.snapshot("back.ppm")
+    s.quit()
+    out = s.wait(timeout=30)
+
+    assert not os.path.exists(app), "cancel still wrote bulk.APP"
+    assert _tmp_leftovers(apps_dir) == [], _tmp_leftovers(apps_dir)
+    assert _same(detail, back), "cancel did not return to the detail page"
+    assert "?HUB" not in out, out
+
+
+def test_cancel_button_stops_install(native_mmcore, hub, tmp_path):
+    s, root = _bulk_session(tmp_path, hub)
+    apps_dir = os.path.join(root, "C", "APPS")
+    app = os.path.join(apps_dir, "bulk.APP")
+
+    s.key("enter")
+    s.wait_ms(250)
+    detail = s.snapshot("detail.ppm")
+    s.key("enter")          # start the blocking INSTALL
+    # MODE 9 is 1024x768; the CANCEL button centres at (512, 413).
+    s.move(512, 413)
+    s.down("l")
+    s.up("l")
+    s.move(0, 0)
+    s.move(0, 0)
+    s.move(0, 0)
+    done = s.mark("cancelled")
+    s.wait_mark(done)
+    back = s.snapshot("back.ppm")
+    s.quit()
+    out = s.wait(timeout=30)
+
+    assert not os.path.exists(app), "CANCEL still wrote bulk.APP"
+    assert _tmp_leftovers(apps_dir) == [], _tmp_leftovers(apps_dir)
+    assert _same(detail, back), "CANCEL did not return to the detail page"
+    assert "?HUB" not in out, out
