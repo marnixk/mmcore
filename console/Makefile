@@ -82,6 +82,7 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/inflate.o \
 	  $(MMB)/src/cmd_package.o \
 	  $(MMB)/src/app_category.o \
+	  $(MMB)/src/app_list.o \
 	  $(MMB)/src/pkg_info.o \
 	  $(MMB)/src/pkg_info_read.o \
 	  $(MMB)/src/cmd_apppath.o \
