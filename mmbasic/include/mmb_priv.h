@@ -1645,10 +1645,16 @@ void mmb_apptui_poll(void);
 void mmb_cmd_apps(void);
 void mmb_boot_start(void);
 
-/* HUB engine (#1525). MMB_HAVE_HUB lets the parallel APPS-launcher work
- * (#1524) add its HUB entry only once both branches are merged. */
+/* HUB engine (#1525) and screens (#1526). MMB_HAVE_HUB lets the parallel
+ * APPS-launcher work (#1524) add its HUB entry only once both branches are
+ * merged. */
 #define MMB_HAVE_HUB 1
 void mmb_cmd_hub(void);
+void mmb_hub_open(void);
+int mmb_in_hub(void);
+const char *mmb_hub_key(char c);
+void mmb_hub_close(void);
+void mmb_hub_poll(void);
 
 /* System-wide appearance settings: the SETTINGS theme picker (#509). */
 void mmb_cmd_settings(void);

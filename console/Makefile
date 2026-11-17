@@ -87,6 +87,8 @@ OBJS	= main.o kernel.o platform.o storage.o wlan.o wlan_escan.o eth.o net.o net_
 	  $(MMB)/src/pkg_info_read.o \
 	  $(MMB)/src/sha256.o \
 	  $(MMB)/src/hub.o \
+	  $(MMB)/src/hub_layout.o \
+	  $(MMB)/src/cmd_hub.o \
 	  $(MMB)/src/cmd_apppath.o \
 	  $(MMB)/src/cmd_settings.o \
 	  $(MMB)/src/cmd_files.o \

@@ -7103,6 +7103,7 @@ static void mmb_poll_slow(int gate_storage)
 	mmb_paint_poll();
 	mmb_afk_poll();
 	mmb_juke_poll();
+	mmb_hub_poll();
 	/* #858: run the cooperative background callbacks registered by apps on
 	 * non-active consoles (JUKE queue, TERM/CONNECT socket drain). Rate
 	 * limits live in the registry, so this is cheap on every yield. */

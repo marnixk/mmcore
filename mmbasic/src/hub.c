@@ -1237,7 +1237,9 @@ void mmb_cmd_hub(void)
 	mmb_skip_sp();
 	if (*G.p == 0 || *G.p == ':' || *G.p == '\'')
 	{
-		hub_cmd_list();
+		/* Bare HUB opens the full-screen hub (#1526). The text forms below
+		 * stay available for scripts and headless use. */
+		mmb_hub_open();
 		return;
 	}
 	if (mmb_match("LIST"))

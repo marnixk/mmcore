@@ -308,7 +308,7 @@ int mmb_front_in_app(void)
 	       mmb_in_term() || mmb_in_connect() || mmb_in_ihelp() ||
 	       mmb_in_afk() || mmb_in_juke() ||
 	       mmb_in_paint() || mmb_in_package() ||
-	       mmb_settings_active() || mmb_apptui_active();
+	       mmb_settings_active() || mmb_apptui_active() || mmb_in_hub();
 }
 
 static void submit(void)
@@ -556,6 +556,13 @@ static void front_feed_dispatch(char c)
 	{
 		fe_puts(mmb_juke_key(c));
 		if (!mmb_in_juke())
+			mmb_front_prompt();
+		return;
+	}
+	if (mmb_in_hub())
+	{
+		fe_puts(mmb_hub_key(c));
+		if (!mmb_in_hub())
 			mmb_front_prompt();
 		return;
 	}
