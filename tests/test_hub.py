@@ -387,6 +387,24 @@ def test_cancel_tiny_body_still_offers_progress(mmb, hub, tmp_path):
     assert leftovers == [], leftovers
 
 
+def test_hero_is_optional_and_cached(mmb, hub, tmp_path):
+    entry = app_entry("jetpack", category="GAMES")
+    entry["hero"] = "info/jetpack/HERO.PNG"
+    plain = app_entry("puzzle")
+    hub.add_index("/index.json", index_doc(apps=[entry, plain]))
+    hub.routes["/info/jetpack/HERO.PNG"] = (200, TINY_PNG, "image/png")
+    out = run(mmb, [
+        set_url(hub.base),
+        "HUB LIST",
+        'HUB FETCH "info/jetpack/HERO.PNG"',
+        'HUB FETCH "info/jetpack/HERO.PNG"',
+    ], tmp_path)
+    assert "jetpack" in out and "puzzle" in out, out
+    assert "FETCH %d" % len(TINY_PNG) in out, out
+    heroes = [p for p in hub.requests if "HERO" in p.upper()]
+    assert heroes == ["/info/jetpack/HERO.PNG"], hub.requests
+
+
 def test_empty_relpath_makes_no_request(mmb, hub, tmp_path):
     out = run(mmb, [
         set_url(hub.base),

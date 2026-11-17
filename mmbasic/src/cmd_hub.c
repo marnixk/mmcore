@@ -1372,24 +1372,56 @@ static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 	}
 }
 
+/* Gallery index 0 is the hero when the index has one, then the screenshots. */
+static int hub_gallery_count(hub_app *a)
+{
+	int n;
+
+	if (!a)
+		return 0;
+	n = a->nshots > 0 ? a->nshots : 0;
+	if (hub_has(a->hero))
+		n++;
+	return n;
+}
+
+static const char *hub_gallery_rel(hub_app *a, int index)
+{
+	if (!a || index < 0)
+		return 0;
+	if (hub_has(a->hero))
+	{
+		if (index == 0)
+			return a->hero;
+		index--;
+	}
+	if (index < a->nshots && a->shots[index] && a->shots[index][0])
+		return a->shots[index];
+	return 0;
+}
+
 static const char *hub_preview_rel(hub_app *a)
 {
 	if (!a)
 		return 0;
-	if (a->thumb && a->thumb[0])
-		return a->thumb;
+	if (hub_has(a->hero))
+		return a->hero;
 	if (a->nshots > 0 && a->shots[0] && a->shots[0][0])
 		return a->shots[0];
+	if (hub_has(a->thumb))
+		return a->thumb;
 	return 0;
 }
 
 static const char *hub_detail_rel(hub_app *a)
 {
+	const char *rel;
+
 	if (!a)
 		return 0;
-	if (a->nshots > 0 && U.detail_shot >= 0 && U.detail_shot < a->nshots &&
-	    a->shots[U.detail_shot] && a->shots[U.detail_shot][0])
-		return a->shots[U.detail_shot];
+	rel = hub_gallery_rel(a, U.detail_shot);
+	if (rel)
+		return rel;
 	return hub_preview_rel(a);
 }
 
@@ -2237,21 +2269,21 @@ static void hub_paint_listing(void)
 		int ty;
 		int frame_h;
 
-		int tscale = hub_title_scale();
-		int bscale = hub_body_scale();
+		int line_h = hub_ui_h(1);
 		int cap;
 
+		if (line_h < 8)
+			line_h = 16;
 		pr.x += 4 * p;
 		pr.y += 4 * p;
 		pr.w -= 8 * p;
 		pr.h -= 8 * p;
-		/* The shot is the top of the card; the caption fills the rest,
-		 * which is where the mockup puts the title and the blurb. */
-		cap = pr.h * 38 / 100;
-		if (cap < 16 * tscale + 16 * bscale * 3 + 8 * p)
-			cap = 16 * tscale + 16 * bscale * 3 + 8 * p;
-		if (cap > pr.h * 48 / 100)
-			cap = pr.h * 48 / 100;
+		/* Title, byline and two lines of summary, at the UI font size. */
+		cap = line_h * 4 + 14 * p;
+		if (cap > pr.h * 40 / 100)
+			cap = pr.h * 40 / 100;
+		if (cap < line_h * 2)
+			cap = line_h * 2;
 		hub_ornate_frame(pr, 0x101428);
 		frame.x = pr.x + 8 * p;
 		frame.y = pr.y + 8 * p;
@@ -2283,6 +2315,18 @@ static void hub_paint_listing(void)
 			char line[120];
 			char shown[96];
 
+			int gw = hub_chrome_has("ui-font") ?
+				 hub_chrome_ui_w("M", 1) : 8;
+			int gh = hub_chrome_has("ui-font") ? hub_chrome_ui_h() : 16;
+			int lh = gh + 2 * p;
+			int cols;
+
+			if (gw < 1)
+				gw = 8;
+			cols = (pr.w - 24 * p) / gw;
+			if (cols < 1)
+				cols = 1;
+
 			hub_upper(hub_has(cur->title) ? cur->title : cur->id,
 				  shown, sizeof(shown));
 			if (hub_has(cur->version))
@@ -2290,23 +2334,21 @@ static void hub_paint_listing(void)
 					 cur->version);
 			else
 				snprintf(line, sizeof(line), "%s", shown);
-			hub_text_trunc(pr.x + 12 * p, ty, line, HUB_TEXT, tscale,
-				       pr.w - 24 * p);
-			ty += 16 * tscale + 3 * p;
-			if (hub_has(cur->author) && ty < pr.y + pr.h - 16)
+			hub_ui_trunc(pr.x + 12 * p, ty, line, HUB_TEXT, 1,
+				     pr.w - 24 * p);
+			ty += line_h + 3 * p;
+			if (hub_has(cur->author) && ty < pr.y + pr.h - line_h)
 			{
 				snprintf(line, sizeof(line), "by %s", cur->author);
-				hub_text_trunc(pr.x + 12 * p, ty, line, HUB_DIM,
-					       bscale, pr.w - 24 * p);
-				ty += 16 * bscale + 3 * p;
+				hub_ui_trunc(pr.x + 12 * p, ty, line, HUB_DIM, 1,
+					     pr.w - 24 * p);
+				ty += line_h + 2 * p;
 			}
-			if (hub_has(cur->summary) && ty < pr.y + pr.h - 8)
+			if (hub_has(cur->summary) && ty < pr.y + pr.h - 8 && lh > 0)
 				hub_wrap_draw(pr.x + 12 * p, ty, cur->summary,
-					      hub_wrap_cols(pr.w - 24 * p, bscale),
-					      16 * bscale, 0,
-					      (pr.y + pr.h - ty - 6 * p) /
-					      (16 * bscale),
-					      HUB_DIM, bscale, 0, 0);
+					      cols, lh, 0,
+					      (pr.y + pr.h - ty - 4 * p) / lh,
+					      HUB_DIM, 1, gw, gh);
 		}
 	}
 }
@@ -2538,9 +2580,9 @@ static void hub_draw_detail(void)
 	hub_frame_chrome(shot);
 
 	s_nshotbox = 0;
-	if (a && a->nshots > 1)
+	if (a && hub_gallery_count(a) > 1)
 	{
-		int n = a->nshots;
+		int n = hub_gallery_count(a);
 		int avail = L->detail_thumbs.w - 4 * p;
 		int th = L->detail_thumbs.h - 4 * p;
 		int tw2 = th * 16 / 9;
@@ -2576,7 +2618,7 @@ static void hub_draw_detail(void)
 			{
 				hub_rect tr = { x, L->detail_thumbs.y + 2 * p,
 						tw2, th };
-				hub_img *ti = hub_img_find(a->shots[i]);
+				hub_img *ti = hub_img_find(hub_gallery_rel(a, i));
 
 				hub_fill(tr, 0x070910);
 				if (ti && ti->pix)
@@ -3281,10 +3323,12 @@ static const char *hub_need_asset(void)
 			return rel;
 		if (cur->icon && cur->icon[0] && !hub_img_find(cur->icon))
 			return cur->icon;
-		for (i = 0; i < cur->nshots && i < 8; i++)
-			if (cur->shots[i] && cur->shots[i][0] &&
-			    !hub_img_find(cur->shots[i]))
-				return cur->shots[i];
+		for (i = 0; i < hub_gallery_count(cur) && i < 8; i++)
+		{
+			rel = hub_gallery_rel(cur, i);
+			if (rel && !hub_img_find(rel))
+				return rel;
+		}
 		return 0;
 	}
 	/* Listing: the selected preview first, then the visible icons. */
@@ -3652,9 +3696,10 @@ static void hub_arrow(int code, unsigned arg)
 		{
 			hub_app *a = hub_cur();
 
-			if (a && a->nshots > 0)
+			if (a && hub_gallery_count(a) > 0)
 			{
-				U.detail_shot = (U.detail_shot + 1) % a->nshots;
+				U.detail_shot = (U.detail_shot + 1) %
+						hub_gallery_count(a);
 				U.dirty = 1;
 			}
 		}
@@ -3662,10 +3707,11 @@ static void hub_arrow(int code, unsigned arg)
 		{
 			hub_app *a = hub_cur();
 
-			if (a && a->nshots > 0)
+			if (a && hub_gallery_count(a) > 0)
 			{
-				U.detail_shot = (U.detail_shot + a->nshots - 1) %
-						a->nshots;
+				int n = hub_gallery_count(a);
+
+				U.detail_shot = (U.detail_shot + n - 1) % n;
 				U.dirty = 1;
 			}
 		}

@@ -16,8 +16,8 @@ import pytest
 
 from native_harness import NativeSession, Ppm, SDL_BIN, build_native, \
     sdl_backend_available
-from test_hub import APPS, HubServer, app_entry, index_doc, make_app, \
-    preinstall, set_url
+from test_hub import APPS, TINY_PNG, HubServer, app_entry, index_doc, \
+    make_app, preinstall, set_url
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cc") is None or shutil.which("make") is None,
@@ -73,6 +73,18 @@ def _wait_file(path, timeout=10.0):
             return True
         time.sleep(0.02)
     return False
+
+
+def test_listing_fetches_hero(native_mmcore, hub, tmp_path):
+    entry = app_entry("jetpack", category="GAMES")
+    entry["hero"] = "info/jetpack/HERO.PNG"
+    hub.add_index("/index.json", index_doc(apps=[entry]))
+    hub.routes["/info/jetpack/HERO.PNG"] = (200, TINY_PNG, "image/png")
+    s, _ = _session(tmp_path, hub, preinstalled=())
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out, out
+    assert "/info/jetpack/HERO.PNG" in hub.requests, hub.requests
 
 
 def test_tabs_left_right(native_mmcore, hub, tmp_path):

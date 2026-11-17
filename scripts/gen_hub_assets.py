@@ -566,6 +566,15 @@ def main() -> None:
     # label is drawn with the UI font on top of a 9-slice.
     tab_on = clear_interior(trim(knock(listing.crop((118, 72, 246, 118)), 14), 0), 8)
     tab = clear_interior(trim(knock(listing.crop((250, 72, 390, 118)), 14), 0), 8)
+    # The mockup draws a colon between brackets. It sits in the inactive
+    # tab's right 9-slice cap and is copied between every tab. The mark is
+    # JPEG-gray, not pure white, so clear the cap and keep the frame edge.
+    tp = tab.load()
+    tw, th = tab.size
+    cap = 14
+    for y in range(6, th - 8):
+        for x in range(tw - cap, tw):
+            tp[x, y] = (0, 0, 0, 0)
     save_pair(tab_on, "tab-on")
     save_pair(tab, "tab")
 

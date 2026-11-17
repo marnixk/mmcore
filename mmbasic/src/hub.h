@@ -25,6 +25,7 @@ typedef struct hub_app {
 	char *updated;
 	char *icon;
 	char *thumb;
+	char *hero; /* optional info/<id>/HERO.PNG; empty when the index omits it */
 	char *about;
 	char *changes; /* INFO/CHANGES.TXT text, empty when the file is absent */
 	char **shots;

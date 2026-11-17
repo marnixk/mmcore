@@ -23,12 +23,16 @@ The listing shows `ALL` and every non-empty category as tabs. Each row has the
 app icon, title, summary, author, size and a state badge: `INSTALLED` (lime),
 `UPDATE` (orange) or `NEEDS v<minver>` (red). Apps that need a newer mmcore are
 shown greyed but can still be selected. In a wide window the selected app's
-summary, version, author and thumbnail appear in a preview panel on the right;
-in a narrow window the selected row expands to show them inline. The preview
-loads in the background, so the list stays responsive.
+summary, version, author and picture appear in a preview panel on the right;
+in a narrow window the selected row expands to show them inline. The picture
+is the optional hero (info/<id>/HERO.PNG), otherwise the first screenshot,
+otherwise the thumbnail. It loads in the background, so the list stays
+responsive.
 
-The detail page has no header. It shows a large screenshot (or the thumbnail or
-icon when it has none), the title and icon, then one info row (author, version,
+The detail page has no header. The large picture is the hero when the index
+has one, then the screenshots; with no hero it is the screenshots (or the
+thumbnail when there are none). The hero is also the first thumbnail. Then the
+title and icon, and one info row (author, version,
 size, category). Empty fields are left out. The description sits directly under
 that row. A WHAT'S NEW section is shown only when the index entry carries the
 text of INFO/CHANGES.TXT. There is one main button: `INSTALL`, `UPDATE`, `RUN`
@@ -77,8 +81,9 @@ is one of:
 
 HUB UPDATE installs every package whose state is UPDATE. HUB REMOVE "id"
 deletes the installed `.APP` and recomputes its state. HUB FETCH "path"
-downloads one asset relative to the hub root (used for icons, thumbnails and
-screenshots) and prints its byte count; an empty path makes no request.
+downloads one asset relative to the hub root (used for icons, heroes,
+thumbnails and screenshots) and prints its byte count; an empty path makes
+no request. Repeated fetches of the same path come from the hub's cache.
 
 Installed packages are found by scanning every PATH directory for
 `<id>.APP` (case-insensitive) and by matching the `name` field in a package's
