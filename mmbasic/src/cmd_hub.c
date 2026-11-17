@@ -100,6 +100,8 @@ typedef struct hub_ui {
 	int inst_index;
 	unsigned inst_done, inst_total;
 	int inst_checksum; /* 0 .., 1 OK, 2 FAILED */
+	int inst_cancel;   /* cancel requested while the transfer blocks */
+	int inst_pump;     /* guard: the install input pump is not re-entrant */
 	char inst_target[256];
 
 	int mx, my, buttons, wheel;
@@ -113,6 +115,20 @@ typedef struct hub_ui {
 } hub_ui;
 
 static hub_ui U;
+
+/* Record a cancel request for the in-flight install/update transfer. While
+ * hub_install() blocks in the HTTP client the modal must keep its state, so
+ * this only raises a flag the progress callback observes; hub_start_install()
+ * unwinds to the previous screen once the transfer has been abandoned. */
+static void hub_request_install_cancel(void)
+{
+	if (U.state != HUB_ST_INSTALL || U.inst_cancel)
+		return;
+	U.inst_cancel = 1;
+	U.dirty = 1;
+}
+
+static void hub_install_pump(void);
 
 static hub_img *s_img;
 static int s_nimg, s_imgcap;
@@ -1944,12 +1960,13 @@ static int hub_install_target_path(hub_app *a, char *out, int outsz)
 static int hub_install_progress(unsigned done, unsigned total, void *ctx)
 {
 	(void)ctx;
+	hub_install_pump();
 	if (total && U.inst_total != total)
 		U.inst_total = total;
 	U.inst_done = done;
 	U.dirty = 1;
 	hub_frame();
-	return 0;
+	return U.inst_cancel ? 1 : 0;
 }
 
 static void hub_start_install(void)
@@ -1963,6 +1980,8 @@ static void hub_start_install(void)
 	U.inst_done = 0;
 	U.inst_total = a->size > 0 ? (unsigned)a->size : 0;
 	U.inst_checksum = 0;
+	U.inst_cancel = 0;
+	U.inst_pump = 0;
 	U.inst_target[0] = 0;
 	hub_install_target_path(a, U.inst_target, sizeof(U.inst_target));
 	U.prev_state = U.state;
@@ -1972,6 +1991,19 @@ static void hub_start_install(void)
 	if (hub_install(U.inst_index, hub_install_progress, 0, err,
 			sizeof(err)) != 0)
 	{
+		U.inst_cancel = 0;
+		/* A cancel is not a failure: no error dialog, no state change,
+		 * and the engine has already discarded the partial download. */
+		if (err[0] && strstr(err, "CANCELLED"))
+		{
+			U.inst_checksum = 0;
+			U.state = U.prev_state;
+			U.dirty = 1;
+			hub_rebuild_ids();
+			hub_scroll_sel();
+			hub_frame();
+			return;
+		}
 		snprintf(U.errmsg, sizeof(U.errmsg), "%s",
 			 err[0] ? err : "INSTALL FAILED");
 		U.inst_checksum = 2;
@@ -1979,6 +2011,7 @@ static void hub_start_install(void)
 		hub_frame();
 		return;
 	}
+	U.inst_cancel = 0;
 	U.inst_checksum = 1;
 	U.state = U.prev_state;
 	U.dirty = 1;
@@ -2219,8 +2252,7 @@ static void hub_esc_action(void)
 		U.dirty = 1;
 		break;
 	case HUB_ST_INSTALL:
-		U.state = U.prev_state;
-		U.dirty = 1;
+		hub_request_install_cancel();
 		break;
 	case HUB_ST_DETAIL:
 		U.state = HUB_ST_LIST;
@@ -2231,6 +2263,51 @@ static void hub_esc_action(void)
 		hub_leave();
 		break;
 	}
+}
+
+/* Pump input while hub_install() blocks inside the HTTP client. The platform
+ * poll delivers queued SDL/serial bytes; on the serial console they land in
+ * the INKEY queue (drain them here), on the SDL console the front end feeds
+ * them straight to mmb_hub_key(). Only a cancel request is observed: the
+ * install modal must not change state or repaint itself before the transfer
+ * has unwound (hub_start_install does the transition). */
+static void hub_install_pump(void)
+{
+	mmb_mouse_state ms;
+	int n = 0;
+
+	if (U.inst_pump)
+		return;
+	U.inst_pump = 1;
+	if (G.plat && G.plat->poll_input)
+		G.plat->poll_input();
+	/* Flush a lone Esc the screenshot-hotkey decoder buffered. */
+	mmb_front_poll();
+	while (n++ < 64)
+	{
+		int c = mmb_inkey_pop();
+
+		if (c < 0)
+			break;
+		if (c == 27)
+			hub_request_install_cancel();
+	}
+	/* A key delivered straight to the front end reaches mmb_hub_key(),
+	 * which records an Esc cancel while INSTALL is active. */
+	/* The CANCEL button is a mouse target too: poll the pointer and detect
+	 * the release edge the same way mmb_hub_poll() does. */
+	if (mmb_mouse_read(&ms) && ms.present)
+	{
+		int click = (U.buttons & 1) && !(ms.buttons & 1);
+
+		U.buttons = ms.buttons;
+		U.mx = ms.x;
+		U.my = ms.y;
+		if (click && s_has_cancel &&
+		    hub_rect_contains(&s_modal_cancel, ms.x, ms.y))
+			hub_request_install_cancel();
+	}
+	U.inst_pump = 0;
 }
 
 static int hub_key_direct(char c)
@@ -2257,6 +2334,11 @@ static int hub_key_direct(char c)
 			U.dirty = 1;
 			handled = 1;
 		}
+		break;
+	case HUB_ST_INSTALL:
+		/* The transfer blocks the main loop; only Esc/CANCEL cancels it
+		 * (hub_install_pump records the request). Ignore every other
+		 * key so the modal cannot change state mid-download. */
 		break;
 	case HUB_ST_REMOVE:
 		if (c == 'y' || c == 'Y')
@@ -2435,6 +2517,17 @@ const char *mmb_hub_key(char c)
 {
 	if (!U.active)
 		return "";
+	if (U.state == HUB_ST_INSTALL)
+	{
+		/* The transfer blocks the main loop, so there is no idle timer
+		 * to tell a lone Esc from a CSI sequence. Esc/Ctrl+C is the
+		 * documented cancel gesture here, and arrows/other keys have no
+		 * meaning in the modal: record the request and let the download
+		 * progress callback unwind it. */
+		if (c == 27 || c == 3)
+			hub_request_install_cancel();
+		return "";
+	}
 	if (U.esc)
 	{
 		unsigned char uc = (unsigned char)c;
@@ -2522,6 +2615,12 @@ static void hub_mouse_click(int x, int y)
 {
 	int v;
 
+	if (U.state == HUB_ST_INSTALL)
+	{
+		if (s_has_cancel && hub_rect_contains(&s_modal_cancel, x, y))
+			hub_request_install_cancel();
+		return;
+	}
 	if (U.state == HUB_ST_REMOVE)
 	{
 		if (hub_rect_contains(&s_modal_yes, x, y))

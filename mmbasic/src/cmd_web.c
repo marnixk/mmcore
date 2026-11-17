@@ -1095,6 +1095,10 @@ static void read_response(wb_t *body)
 		have = raw.n - header_end;
 		if (have > (unsigned)clen)
 			have = (unsigned)clen;
+		/* A body that arrived whole with the headers never entered the
+		 * receive loop above, so offer the cancel callback its final
+		 * progress point here instead of completing unscathed (#1532). */
+		web_progress_check(&raw, body, have, (unsigned)clen);
 		wb_put(body, raw.p + header_end, have);
 	}
 	else

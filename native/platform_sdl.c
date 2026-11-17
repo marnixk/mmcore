@@ -207,8 +207,10 @@ static void sdl_present_rgb(int x, int y, int w, int h,
 	sdl_video_present();
 }
 
-/* Called from mmb_check_break while a program runs: pump SDL input and
- * repaint so the window stays alive during long RUNs.
+/* Called from mmb_check_break while a program runs and from blocking
+ * interpreter paths that keep the main loop off the stack (the HUB
+ * install/update download pumps input to let Esc cancel it): pump SDL input
+ * and repaint so the window stays alive.
  *
  * check_break runs once per program line, so presenting on every call made a
  * graphics loop (LINE/PLOT in a FOR) pay a present per line. The present is
@@ -220,11 +222,10 @@ static void sdl_present_rgb(int x, int y, int w, int h,
  * per line cost about 1 us, roughly 3x a cached line. */
 static void sdl_poll_input(void)
 {
-	if (!mmb_is_running())
-		return;
-	/* The main loop is blocked while a program runs, so drive the scripted
-	 * headless harness from here. One command per line keeps the cadence
-	 * independent of the game's loop speed (#1399). */
+	/* The main loop is blocked while a program runs or a blocking download
+	 * is in flight, so drive the scripted headless harness from here. One
+	 * command per line keeps the cadence independent of the loop speed
+	 * (#1399). */
 	sdl_harness_poll();
 	sdl_input_pump_limited(mmb_now_ms());
 	if (sdl_video_present_due())

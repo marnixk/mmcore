@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 import zipfile
 
 import pytest
@@ -37,11 +38,14 @@ TINY_PNG = bytes.fromhex(
 )
 
 
-def make_app(name, title, version, main="PRINT \"APP RAN\"\n", minver=""):
+def make_app(name, title, version, main="PRINT \"APP RAN\"\n", minver="",
+             pad=0):
     """Deterministic stored zip with MAIN.BAS first and PACKAGE.INF last."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
         zf.writestr("MAIN.BAS", main)
+        if pad:
+            zf.writestr("DATA.BIN", b"\0" * pad)
         zf.writestr(
             "PACKAGE.INF",
             "name=%s\nmain=MAIN.BAS\ntitle=%s\nversion=%s\nminver=%s\n"
@@ -56,6 +60,9 @@ APPS = {
     "future": make_app("future", "Future", "1.0", 'PRINT "FUTURE RAN"\n',
                        minver="0.400.0"),
     "badsum": make_app("badsum", "Bad Sum", "0.1", 'PRINT "BADSUM RAN"\n'),
+    # Larger than the 1600-byte transport read (#1532) so a download always
+    # crosses several progress callbacks, never just one coalesced read.
+    "bulk": make_app("bulk", "Bulk", "1.0", 'PRINT "BULK RAN"\n', pad=8192),
 }
 
 
@@ -101,13 +108,19 @@ def index_doc(schema=1, apps=None):
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def _send(self, code, body, ctype="application/octet-stream"):
+    def _send(self, code, body, ctype="application/octet-stream", delay=0.0):
         try:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if delay > 0 and len(body) > 256:
+                for i in range(0, len(body), 512):
+                    self.wfile.write(body[i:i + 512])
+                    self.wfile.flush()
+                    time.sleep(delay)
+            else:
+                self.wfile.write(body)
         except OSError:
             pass
 
@@ -118,7 +131,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._send(404, b"missing")
             return
         code, body, ctype = route
-        self._send(code, body, ctype)
+        self._send(code, body, ctype, self.server.delays.get(self.path, 0.0))
 
     def log_message(self, *args):
         pass
@@ -127,10 +140,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 class HubServer:
     def __init__(self, tmp_path):
         self.routes = {}
+        self.delays = {}
         self.requests = []
         self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.srv.daemon_threads = True
         self.srv.routes = self.routes
+        self.srv.delays = self.delays
         self.srv.requests = self.requests
         self.thread = threading.Thread(target=self.srv.serve_forever,
                                        daemon=True)
@@ -150,6 +165,10 @@ class HubServer:
                 200, data, "application/octet-stream")
             self.routes["/info/%s/icon.png" % app_id] = (
                 200, TINY_PNG, "image/png")
+
+    def throttle(self, path, delay):
+        """Pause `delay` seconds between 512-byte body chunks."""
+        self.delays[path] = delay
 
     def close(self):
         self.srv.shutdown()
@@ -335,6 +354,26 @@ def test_remove_deletes_file(mmb, hub, tmp_path):
 
 
 def test_cancel_leaves_no_temp(mmb, hub, tmp_path):
+    apps_dir = os.path.join(str(tmp_path), "C", "APPS")
+    os.makedirs(apps_dir, exist_ok=True)
+    # The body must exceed one 1600-byte transport read (#1532): with a tiny
+    # fixture the whole response can arrive in a single chunk, so make the
+    # download cross a real chunk boundary before the cancel threshold hits.
+    hub.add_index("/index.json", index_doc(apps=[app_entry("bulk")]))
+    out = run(mmb, [
+        'OPTION PATH "C:/APPS/"',
+        set_url(hub.base),
+        'HUB INSTALL "bulk"',
+    ], tmp_path, env={"MMCORE_HUB_CANCEL_AFTER": "10"})
+    assert "CANCELLED" in out, out
+    assert not os.path.exists(os.path.join(apps_dir, "bulk.APP"))
+    leftovers = [n for n in os.listdir(apps_dir) if n.endswith(".tmp")]
+    assert leftovers == [], leftovers
+
+
+def test_cancel_tiny_body_still_offers_progress(mmb, hub, tmp_path):
+    """A body that arrives whole with the headers must still reach the cancel
+    callback once before the install commits (#1532)."""
     apps_dir = os.path.join(str(tmp_path), "C", "APPS")
     os.makedirs(apps_dir, exist_ok=True)
     out = run(mmb, [
