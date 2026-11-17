@@ -5,15 +5,60 @@ Zip the contents of a folder into a package file (ZIP store). Paths inside the
 archive are relative to that folder. folder$ must contain MAIN.BAS.
 
 PACKAGE pkg$, folder$
+PACKAGE pkg$, folder$ CATEGORY cat$
 
-  pkg$ - output package path (e.g. GAME.APP)
-  folder$ - folder to zip (must contain MAIN.BAS)
+  pkg$     - output package path (e.g. GAME.APP)
+  folder$  - folder to zip (must contain MAIN.BAS)
+  CATEGORY - optional category id clause (no comma); see the list below
+  cat$     - one of the category ids, case-insensitive
 
 If pkg$ exists at the prompt: File exists, overwrite? [Y/n]. Empty or Y
 overwrites; N leaves the file. From a running program a collision is ?FILE
-EXISTS. RUN "name.app" mounts the zip read-only as B: and runs MAIN.BAS. B: is
-not listed by DRIVE and cannot be selected in FILES or CHDIR at the prompt.
-After RUN, EDIT does not open the zip file.
+EXISTS. A bad category id raises ?INVALID CATEGORY (catchable with ~ON~ ERROR).
+RUN "name.app" mounts the zip read-only as B: and runs MAIN.BAS. B: is not
+listed by DRIVE and cannot be selected in FILES or CHDIR at the prompt. After
+RUN, EDIT does not open the zip file.
+
+PACKAGE.INF
+
+Every package carries a PACKAGE.INF at the archive root. If the source folder
+has its own PACKAGE.INF, its keys are the base metadata; PACKAGE sets name and
+main=MAIN.BAS and the CATEGORY clause overrides category. The folder's own
+PACKAGE.INF is not packed twice: the merged file is appended last. The file
+format and every key are documented in ~PACKAGE.INF~.
+
+Metadata keys used here: name, main, title, author, category, version,
+summary, minver. Empty optional keys are omitted. summary is truncated to 80
+characters (not an error). version and minver must be dotted numbers such as
+1.2 or 0.312.0; anything else raises ?INVALID VERSION.
+
+Categories (fixed order, used by APPS and the HUB)
+
+  GAMES         games
+  DEMOS         demoscene, demos, visual showcases
+  CREATIVE      graphics, pixel and sprite tools
+  AUDIO         trackers, players, synths
+  PRODUCTIVITY  text, spreadsheets, office
+  DEVELOPMENT   editors, assemblers, libraries, dev tools
+  UTILITIES     file and system tools
+  INTERNET      web, FTP and feed clients
+  LEARNING      tutorials, examples
+  OTHER         fallback for missing or unknown categories
+
+Matching is case-insensitive and the stored value is upper-case. A package
+with no category reads as OTHER.
+
+INFO/ folder
+
+Optional, packed like any other folder. PACKAGE never requires it:
+
+  INFO/ICON.PNG    32x32 icon
+  INFO/THUMB.PNG   160x90 thumbnail
+  INFO/SHOT1.PNG .. INFO/SHOT4.PNG  screenshots
+  INFO/ABOUT.TXT   long description, plain text
+
+If INFO/ICON.PNG exists and is not 32x32, PACKAGE prints a warning (not an
+error) at the prompt.
 
 Wizard
 
@@ -24,17 +69,20 @@ form so you do not have to remember the syntax:
   1. Choose folder - lists subfolders of the current folder, and "."
      for the current folder. Entries without MAIN.BAS are flagged and
      cannot be packaged.
-  2. Name and optional metadata - the package name defaults to
-     <folder>.APP. Title and author are optional and are stored in a
-     PACKAGE.INF file inside the archive.
+  2. Name and metadata - the package name defaults to <folder>.APP, then
+     Title, Author, Category, Version and Summary. Left/Right cycle the
+     ten category ids. Every field is prefilled from folder$/PACKAGE.INF
+     when that file exists.
   3. Confirm - writes the .APP in the current folder.
 
 Keys: Up/Down move, Enter selects or advances, Tab moves between fields
-in step 2, Esc goes back (or cancels from step 1). Esc from the first step
-closes the dialog and restores the prompt. Use CHDIR first to reach another
-folder or drive. PACKAGE with arguments still works from a program.
+in step 2, Left/Right change the category, Esc goes back (or cancels from
+step 1). Esc from the first step closes the dialog and restores the prompt.
+Use CHDIR first to reach another folder or drive. PACKAGE with arguments
+still works from a program.
 
 Example:
 
     PACKAGE "GAME.APP", "GAME/"
+    PACKAGE "GAME.APP", "GAME/" CATEGORY "games"
     RUN "GAME.APP"

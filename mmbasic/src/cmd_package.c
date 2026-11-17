@@ -1,5 +1,6 @@
 #include "mmb_priv.h"
 #include "tui.h"
+#include "pkg_info.h"
 
 static void strip_slash(char *s)
 {
@@ -13,6 +14,20 @@ static void strip_slash(char *s)
 			break;
 		s[--n] = 0;
 	}
+}
+
+static const char *pkg_basename(const char *p)
+{
+	const char *base = p;
+	if (!p)
+		return "";
+	while (*p)
+	{
+		if (*p == '/' || *p == '\\')
+			base = p + 1;
+		p++;
+	}
+	return base;
 }
 
 static void join_rel(char *out, int outsz, const char *dir, const char *name)
@@ -54,6 +69,103 @@ static int folder_has_main(const char *folder)
 	char p[160];
 	join_rel(p, sizeof(p), folder, "MAIN.BAS");
 	return mmb_vfs_exists(p) && !mmb_vfs_isdir(p);
+}
+
+static void pkg_trim(char *s)
+{
+	char *e;
+	if (!s)
+		return;
+	while (*s == ' ' || *s == '\t')
+		memmove(s, s + 1, strlen(s));
+	e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t'))
+		*--e = 0;
+}
+
+/* Read a whole file into a heap buffer (NUL-terminated). */
+static int pkg_read_text(const char *path, char **out, unsigned *outn)
+{
+	int sz;
+	unsigned got = 0;
+	char *buf;
+
+	*out = 0;
+	*outn = 0;
+	if (!mmb_vfs_exists(path) || mmb_vfs_isdir(path))
+		return -1;
+	sz = mmb_vfs_size(path);
+	if (sz < 0)
+		return -1;
+	buf = G.plat->alloc((unsigned)sz + 1);
+	if (!buf)
+		return -1;
+	if (sz > 0 && mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0)
+	{
+		G.plat->free(buf);
+		return -1;
+	}
+	buf[got] = 0;
+	*out = buf;
+	*outn = got;
+	return 0;
+}
+
+/* Folder metadata is the base for a package (#1523). Absent INF leaves an
+ * empty struct so the caller only writes name/main. */
+static void pkg_load_folder_info(const char *folder, struct mmb_pkg_info *pi)
+{
+	char path[160];
+	char *text = 0;
+	unsigned n = 0;
+
+	mmb_pkg_info_init(pi);
+	join_rel(path, sizeof(path), folder, "PACKAGE.INF");
+	if (pkg_read_text(path, &text, &n) != 0)
+		return;
+	mmb_pkg_info_parse(text, n, pi);
+	G.plat->free(text);
+}
+
+/* Dotted numeric version: ^[0-9]+(\.[0-9]+)*$; empty is allowed. */
+static int pkg_version_ok(const char *s)
+{
+	if (!s || !s[0])
+		return 1;
+	if (*s < '0' || *s > '9')
+		return 0;
+	for (;;)
+	{
+		while (*s >= '0' && *s <= '9')
+			s++;
+		if (!*s)
+			return 1;
+		if (*s != '.')
+			return 0;
+		s++;
+		if (*s < '0' || *s > '9')
+			return 0;
+	}
+}
+
+/* Optional INFO/ICON.PNG must be 32x32; warn (not fail) when it is not. */
+static int pkg_icon_warning(const char *folder, char *msg, int msgsz)
+{
+	char path[160];
+	int w = 0, h = 0;
+
+	if (!msg || msgsz < 2)
+		return 0;
+	msg[0] = 0;
+	join_rel(path, sizeof(path), folder, "INFO/ICON.PNG");
+	if (!mmb_vfs_exists(path) || mmb_vfs_isdir(path))
+		return 0;
+	if (mmb_img_probe(path, &w, &h) != 0)
+		return 0;
+	if (w == 32 && h == 32)
+		return 0;
+	sprintf(msg, "Warning: INFO/ICON.PNG is %dx%d, expected 32x32", w, h);
+	return 1;
 }
 
 #define PKG_DIR_ENT_INIT 64
@@ -139,6 +251,10 @@ static int pack_walk(mmb_zip_w *z, const char *absdir, const char *rel,
 			continue;
 		strncpy(name, ents[i].name, sizeof(name) - 1);
 		name[sizeof(name) - 1] = 0;
+		/* The folder's own PACKAGE.INF is merged and appended last, never
+		 * packed twice (#1523). Only the root one is special. */
+		if (!is_dir && !rel[0] && mmb_keyword_eq(name, "PACKAGE.INF"))
+			continue;
 		join_rel(child_abs, sizeof(child_abs), absdir, name);
 		if (rel[0])
 			join_rel(child_rel, sizeof(child_rel), rel, name);
@@ -354,7 +470,10 @@ static void package_error(int rc)
 
 void mmb_cmd_package(void)
 {
-	char pkg[128], folder[128];
+	char pkg[128], folder[128], cat[64], warn[96];
+	char *meta = 0;
+	unsigned mn = 0;
+	struct mmb_pkg_info pi;
 	mmb_val v;
 
 	/* Bare PACKAGE at the prompt is the authoring wizard; scripts keep the
@@ -380,21 +499,77 @@ void mmb_cmd_package(void)
 	strncpy(folder, v.s, sizeof(folder) - 1);
 	folder[sizeof(folder) - 1] = 0;
 	strip_slash(folder);
+	cat[0] = 0;
+	mmb_skip_sp();
+	if (mmb_match("CATEGORY"))
+	{
+		v = mmb_expr();
+		if (v.type != T_STR)
+			mmb_syntax();
+		strncpy(cat, v.s, sizeof(cat) - 1);
+		cat[sizeof(cat) - 1] = 0;
+		pkg_trim(cat);
+	}
 	if (!strchr(pkg, '.'))
 		strncat(pkg, ".APP", sizeof(pkg) - strlen(pkg) - 1);
 	if (!folder[0] || !mmb_vfs_isdir(folder))
 		mmb_error("?DIRECTORY");
 	if (!folder_has_main(folder))
 		mmb_error("?NO MAIN.BAS");
+
+	/* Folder INF is the base; PACKAGE sets name/main and CATEGORY overrides
+	 * the folder category (#1523). Validate the merged result before the
+	 * overwrite prompt. */
+	pkg_load_folder_info(folder, &pi);
+	if (cat[0])
+	{
+		if (!mmb_app_category_valid(cat))
+		{
+			mmb_pkg_info_free(&pi);
+			mmb_error("?INVALID CATEGORY");
+		}
+		mmb_pkg_info_set(&pi, "category", cat);
+	}
+	if (pi.category && pi.category[0] && !mmb_app_category_valid(pi.category))
+	{
+		mmb_pkg_info_free(&pi);
+		mmb_error("?INVALID CATEGORY");
+	}
+	if (!pkg_version_ok(pi.version) || !pkg_version_ok(pi.minver))
+	{
+		mmb_pkg_info_free(&pi);
+		mmb_error("?INVALID VERSION");
+	}
+	mmb_pkg_info_set(&pi, "name", pkg_basename(pkg));
+	if (mmb_pkg_info_build(&pi, &meta, &mn) != 0)
+	{
+		mmb_pkg_info_free(&pi);
+		mmb_error("?OUT OF MEMORY");
+	}
+	mmb_pkg_info_free(&pi);
+
 	if (mmb_vfs_exists(pkg) && !mmb_vfs_isdir(pkg))
 	{
 		if (G.running)
+		{
+			G.plat->free(meta);
 			mmb_error("?FILE EXISTS");
+		}
 		if (!confirm_overwrite())
+		{
+			G.plat->free(meta);
 			return;
+		}
 	}
 	{
-		int rc = package_build(pkg, folder, 0);
+		int rc = package_build(pkg, folder, meta);
+		G.plat->free(meta);
+		if (rc == 0 && pkg_icon_warning(folder, warn, sizeof(warn)))
+		{
+			mmb_console_write("\r\n");
+			mmb_console_write(warn);
+			mmb_console_write("\r\n");
+		}
 		if (rc)
 			package_error(rc);
 	}
@@ -406,6 +581,7 @@ void mmb_cmd_package(void)
 
 #define PW_MAX_ENT 128
 #define PW_NAME    80
+#define PW_SUMMARY 96
 #define PW_PATH    160
 #define PW_LIST    4096
 
@@ -414,6 +590,7 @@ void mmb_cmd_package(void)
 #define PW_DONE   2
 
 #define PW_ESC_IDLE_MS 60
+#define PW_FIELDS 6
 
 static const mmb_ed_theme *pwth(void)
 {
@@ -447,6 +624,9 @@ typedef struct {
 	char pkg[PW_NAME];
 	char title[PW_NAME];
 	char author[PW_NAME];
+	int cat_idx;
+	char version[PW_NAME];
+	char summary[PW_SUMMARY];
 	int field;
 	int overwrite;
 	int esc;
@@ -472,6 +652,14 @@ static void pw_append(char *dst, int sz, const char *s)
 	if (n >= sz - 1 || !s)
 		return;
 	strncat(dst, s, (unsigned)(sz - n - 1));
+}
+
+static void pw_copy(char *dst, int sz, const char *src)
+{
+	if (!src)
+		src = "";
+	strncpy(dst, src, (unsigned)sz - 1);
+	dst[sz - 1] = 0;
 }
 
 static int pw_has_main(int i)
@@ -568,35 +756,39 @@ static void pw_choose_folder(void)
 	pw_default_name();
 	PW.title[0] = 0;
 	PW.author[0] = 0;
+	PW.version[0] = 0;
+	PW.summary[0] = 0;
+	PW.cat_idx = MMB_APP_CATEGORY_OTHER;
+	{
+		/* Prefill from the folder's own PACKAGE.INF when present (#1523). */
+		struct mmb_pkg_info pi;
+		pkg_load_folder_info(PW.folder, &pi);
+		if (pi.name && pi.name[0])
+			pw_copy(PW.pkg, sizeof(PW.pkg), pi.name);
+		if (pi.title)
+			pw_copy(PW.title, sizeof(PW.title), pi.title);
+		if (pi.author)
+			pw_copy(PW.author, sizeof(PW.author), pi.author);
+		if (pi.version)
+			pw_copy(PW.version, sizeof(PW.version), pi.version);
+		if (pi.summary)
+			pw_copy(PW.summary, sizeof(PW.summary), pi.summary);
+		if (pi.cat_index >= 0 && pi.cat_index < mmb_app_category_count())
+			PW.cat_idx = pi.cat_index;
+		mmb_pkg_info_free(&pi);
+	}
 	PW.field = 0;
 	PW.overwrite = 0;
 	PW.phase = PW_FORM;
 	pw_set_status("");
 }
 
-static void pw_build_meta(char *dst, int sz)
-{
-	dst[0] = 0;
-	pw_append(dst, sz, "name=");
-	pw_append(dst, sz, PW.pkg);
-	pw_append(dst, sz, "\nmain=MAIN.BAS\n");
-	if (PW.title[0])
-	{
-		pw_append(dst, sz, "title=");
-		pw_append(dst, sz, PW.title);
-		pw_append(dst, sz, "\n");
-	}
-	if (PW.author[0])
-	{
-		pw_append(dst, sz, "author=");
-		pw_append(dst, sz, PW.author);
-		pw_append(dst, sz, "\n");
-	}
-}
-
 static void pw_create(void)
 {
-	char meta[512];
+	struct mmb_pkg_info pi;
+	char *meta = 0;
+	unsigned mn = 0;
+	char warn[96];
 	int rc;
 
 	if (!PW.pkg[0])
@@ -612,8 +804,28 @@ static void pw_create(void)
 		pw_set_status("File exists: Enter overwrites, Esc goes back");
 		return;
 	}
-	pw_build_meta(meta, sizeof(meta));
+	if (!pkg_version_ok(PW.version))
+	{
+		pw_set_status("?INVALID VERSION");
+		return;
+	}
+	/* Keep any folder INF keys the form does not edit (e.g. minver). */
+	pkg_load_folder_info(PW.folder, &pi);
+	mmb_pkg_info_set(&pi, "name", PW.pkg);
+	mmb_pkg_info_set(&pi, "title", PW.title);
+	mmb_pkg_info_set(&pi, "author", PW.author);
+	mmb_pkg_info_set(&pi, "category", mmb_app_category_name(PW.cat_idx));
+	mmb_pkg_info_set(&pi, "version", PW.version);
+	mmb_pkg_info_set(&pi, "summary", PW.summary);
+	if (mmb_pkg_info_build(&pi, &meta, &mn) != 0)
+	{
+		mmb_pkg_info_free(&pi);
+		pw_set_status("?OUT OF MEMORY");
+		return;
+	}
+	mmb_pkg_info_free(&pi);
 	rc = package_build(PW.pkg, PW.folder, meta);
+	G.plat->free(meta);
 	if (rc != 0)
 	{
 		if (rc == 1)
@@ -627,7 +839,10 @@ static void pw_create(void)
 		return;
 	}
 	PW.phase = PW_DONE;
-	pw_set_status("");
+	if (pkg_icon_warning(PW.folder, warn, sizeof(warn)))
+		pw_set_status(warn);
+	else
+		pw_set_status("");
 }
 
 static void pw_move(int dir)
@@ -649,7 +864,7 @@ static void pw_move(int dir)
 			if (PW.field > 0)
 				PW.field--;
 		}
-		else if (PW.field < 2)
+		else if (PW.field < PW_FIELDS - 1)
 			PW.field++;
 	}
 }
@@ -667,20 +882,16 @@ static void pw_field_edit(char c)
 {
 	char *buf;
 	int cap;
-	if (PW.field == 0)
+
+	/* Field 3 is the category picker (Left/Right), not a text entry. */
+	switch (PW.field)
 	{
-		buf = PW.pkg;
-		cap = (int)sizeof(PW.pkg);
-	}
-	else if (PW.field == 1)
-	{
-		buf = PW.title;
-		cap = (int)sizeof(PW.title);
-	}
-	else
-	{
-		buf = PW.author;
-		cap = (int)sizeof(PW.author);
+	case 0: buf = PW.pkg; cap = (int)sizeof(PW.pkg); break;
+	case 1: buf = PW.title; cap = (int)sizeof(PW.title); break;
+	case 2: buf = PW.author; cap = (int)sizeof(PW.author); break;
+	case 4: buf = PW.version; cap = (int)sizeof(PW.version); break;
+	case 5: buf = PW.summary; cap = (int)sizeof(PW.summary); break;
+	default: return;
 	}
 	if (c == 8 || c == 127)
 	{
@@ -704,7 +915,7 @@ static void pw_key_form(char c)
 {
 	if (c == '\t')
 	{
-		if (PW.field < 2)
+		if (PW.field < PW_FIELDS - 1)
 			PW.field++;
 		else
 			PW.field = 0;
@@ -712,13 +923,22 @@ static void pw_key_form(char c)
 	}
 	if (c == '\r' || c == '\n')
 	{
-		if (PW.field < 2)
+		if (PW.field < PW_FIELDS - 1)
 			PW.field++;
 		else
 			pw_create();
 		return;
 	}
 	pw_field_edit(c);
+}
+
+static void pw_cycle_category(int dir)
+{
+	int n = mmb_app_category_count();
+
+	if (n <= 0)
+		return;
+	PW.cat_idx = (PW.cat_idx + dir + n) % n;
 }
 
 static void pw_key_done(void)
@@ -754,6 +974,20 @@ const char *mmb_package_key(char c)
 			pw_move(-1);
 		else if (c == 'B')
 			pw_move(1);
+		else if (c == 'C')
+		{
+			if (PW.phase == PW_FORM && PW.field == 3)
+				pw_cycle_category(1);
+			else
+				pw_move(1);
+		}
+		else if (c == 'D')
+		{
+			if (PW.phase == PW_FORM && PW.field == 3)
+				pw_cycle_category(-1);
+			else
+				pw_move(-1);
+		}
 		if (PW.active)
 			pw_draw();
 		return G.out;
@@ -904,8 +1138,8 @@ static void pw_draw_form(void)
 	int x, y, w, h;
 	char line[PW_PATH + 32];
 
-	pw_panel("PACKAGE WIZARD", 72, 14, &x, &y, &w, &h);
-	tui_puts(x + 2, y + 2, "Step 2/3  Name and optional metadata", PW_STR, PW_BG);
+	pw_panel("PACKAGE WIZARD", 72, 17, &x, &y, &w, &h);
+	tui_puts(x + 2, y + 2, "Step 2/3  Name and metadata", PW_STR, PW_BG);
 	line[0] = 0;
 	pw_append(line, sizeof(line), "Folder: ");
 	pw_append(line, sizeof(line), PW.folder);
@@ -915,6 +1149,10 @@ static void pw_draw_form(void)
 	pw_draw_field(x, y + 5, w, "Package : ", PW.pkg, PW.field == 0);
 	pw_draw_field(x, y + 6, w, "Title   : ", PW.title, PW.field == 1);
 	pw_draw_field(x, y + 7, w, "Author  : ", PW.author, PW.field == 2);
+	pw_draw_field(x, y + 8, w, "Category: ",
+		      mmb_app_category_name(PW.cat_idx), PW.field == 3);
+	pw_draw_field(x, y + 9, w, "Version : ", PW.version, PW.field == 4);
+	pw_draw_field(x, y + 10, w, "Summary : ", PW.summary, PW.field == 5);
 
 	tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
 	if (PW.status[0])
@@ -924,7 +1162,7 @@ static void pw_draw_form(void)
 			 "Enter advances; on the last field it creates the .APP.",
 			 PW_DIM, PW_BG);
 	pw_status_bar(x + 1, y + h - 2, w - 2,
-		      "<Tab/Up/Down> Field  <Enter> Next/Create  <Esc> Back");
+		      "<Tab/Up/Down> Field  <Left/Right> Category  <Enter> Next/Create  <Esc> Back");
 }
 
 static void pw_draw_done(void)
@@ -943,6 +1181,11 @@ static void pw_draw_done(void)
 	tui_puts(x + 2, y + 6, "RUN \"<name>.APP\" mounts it read-only as B:.",
 		 PW_DIM, PW_BG);
 	tui_fill(x + 1, y + h - 3, w - 2, 1, ' ', PW_FG, PW_BG);
+	if (PW.status[0])
+		tui_puts(x + 2, y + h - 3, PW.status, PW_ERR_FG, PW_ERR_BG);
+	else
+		tui_puts(x + 2, y + h - 3, "Package is ready.",
+			 PW_DIM, PW_BG);
 	pw_status_bar(x + 1, y + h - 2, w - 2, "<Any key> Close");
 }
 

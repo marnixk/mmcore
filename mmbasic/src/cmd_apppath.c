@@ -1,6 +1,7 @@
 #include "mmb_priv.h"
 #include "frontend.h"
 #include "tui.h"
+#include "pkg_info.h"
 
 /*
  * App PATH and home launcher (#515, #520).
@@ -201,71 +202,22 @@ static int at_seen_label(const char *label)
 	return 0;
 }
 
-static int at_pkg_read(void *ctx, unsigned pos, void *buf, unsigned n,
-		       unsigned *got)
+/* Packages store their display name in PACKAGE.INF's title= field (#1305).
+ * The shared reader tolerates a missing or malformed INF (#1523). */
+static void at_pkg_title(const char *path, char *out, int outsz)
 {
-	return mmb_vfs_read_at((const char *)ctx, pos, buf, n, got);
-}
-
-static void at_rtrim(char *s)
-{
-	char *e = s + strlen(s);
-	while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
-		*--e = 0;
-}
-
-/* Read the ``title=`` value out of a package's PACKAGE.INF (#1305). Reads
- * only the ZIP tail, central directory and that one entry, so a large package
- * costs no more than a few small reads. Returns 0 (leaving out empty) when the
- * file is missing, corrupt, has no title, or the title is blank. */
-static int at_pkg_title(const char *path, char *out, int outsz)
-{
-	char meta[512];
-	char *line;
-	unsigned n = 0;
-	int sz;
+	struct mmb_pkg_info pi;
 
 	out[0] = 0;
 	if (outsz < 2)
-		return 0;
-	sz = mmb_vfs_size(path);
-	if (sz < 0 || (unsigned)sz > MMB_ZIP_MAX_BYTES)
-		return 0;
-	if (mmb_zip_read_entry(at_pkg_read, (void *)path, (unsigned)sz,
-			       "PACKAGE.INF", meta, sizeof(meta) - 1,
-			       &n) != 0)
-		return 0;
-	meta[n] = 0;
-	for (line = meta; line && *line;)
+		return;
+	mmb_pkg_info_read(path, &pi);
+	if (pi.title && pi.title[0])
 	{
-		char *next = strchr(line, '\n');
-		char *eq;
-
-		if (next)
-			*next++ = 0;
-		while (*line == ' ' || *line == '\t')
-			line++;
-		at_rtrim(line);
-		eq = strchr(line, '=');
-		if (eq)
-		{
-			char *val;
-			*eq = 0;
-			at_rtrim(line);
-			val = eq + 1;
-			while (*val == ' ' || *val == '\t')
-				val++;
-			if (mmb_keyword_eq(line, "title") && val[0])
-			{
-				strncpy(out, val, (unsigned)outsz - 1);
-				out[outsz - 1] = 0;
-				at_rtrim(out);
-				return out[0] != 0;
-			}
-		}
-		line = next;
+		strncpy(out, pi.title, (unsigned)outsz - 1);
+		out[outsz - 1] = 0;
 	}
-	return 0;
+	mmb_pkg_info_free(&pi);
 }
 
 static int at_is_builtin_cmd(const char *name)
