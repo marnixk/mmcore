@@ -25,7 +25,7 @@ typedef struct hub_layout {
 	int mode;   /* HUB_LAYOUT_WIDE or HUB_LAYOUT_NARROW */
 	int margin;
 	int gap;
-	int row_h;  /* listing row height in pixels (56p) */
+	int row_h;  /* listing row height in pixels (48p) */
 
 	/* Listing screen (also used for the loading screen's content box). */
 	hub_rect header;
@@ -34,7 +34,8 @@ typedef struct hub_layout {
 	hub_rect list;
 	hub_rect preview;
 
-	/* Tab control: `tabs` holds every row; tabs_per_row/rows describe it. */
+	/* Tab control: always one row. The UI scrolls it when the labels
+	 * do not fit. */
 	int tab_rows;
 	int tab_h;
 	int tab_gap;

@@ -44,33 +44,25 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 	L->mode = hub_layout_mode(w, h);
 	L->margin = m = 4 * p;
 	L->gap = gap = 4 * p;
-	L->row_h = 56 * p;
+	L->row_h = 48 * p;
 
-	/* Short header: the mockup bar is only a little taller than the wordmark. */
-	rect_set(&L->header, m, m, w - 2 * m, 22 * p);
+	/* Full-width wordmark bar. The cube and the logo sit inside it. */
+	rect_set(&L->header, 0, 0, w, 34 * p);
 
-	/* Tab control: one row when the labels fit, otherwise wrap. The width
-	 * estimate is supplied by the UI (its own font metrics); a sane default
-	 * keeps the layout module usable on its own. */
-	if (tab_w < 24 * p)
-		tab_w = 24 * p;
+	/* Tabs are always one row. When the labels do not fit, the UI scrolls
+	 * the strip; it never wraps. `tab_w` is the caller's natural label width
+	 * and is kept for that scroller. */
+	if (tab_w < 16 * p)
+		tab_w = 16 * p;
 	L->tab_w = tab_w;
-	L->tab_h = 26 * p;
+	L->tab_h = 20 * p;
 	L->tab_gap = 2 * p;
-	per_row = (w - 2 * m + L->tab_gap) / (tab_w + L->tab_gap);
-	if (per_row < 1)
-		per_row = 1;
+	per_row = n_tabs > 0 ? n_tabs : 1;
+	rows = 1;
 	L->tabs_per_row = per_row;
-	if (n_tabs <= 1)
-		rows = 1;
-	else if (n_tabs <= per_row)
-		rows = 1;
-	else
-		rows = (n_tabs + per_row - 1) / per_row;
 	L->tab_rows = rows;
 	tab_y = L->header.y + L->header.h + gap;
-	rect_set(&L->tabs, m, tab_y,
-		 w - 2 * m, rows * L->tab_h + (rows - 1) * L->tab_gap);
+	rect_set(&L->tabs, m, tab_y, w - 2 * m, L->tab_h);
 
 	content_y = L->tabs.y + L->tabs.h + gap;
 	content_h = h - m - content_y;
@@ -113,7 +105,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int thumbs_h = 34 * p;
 		int title_h = 88 * p;
 		int chips_h = 28 * p;
-		int button_h = 26 * p;
+		int button_h = 40 * p;
 		int shot_h;
 		int rx;
 		int need;
@@ -160,7 +152,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 			 L->detail_title.y + title_h,
 			 L->detail.w - dw - gap, chips_h);
 		rect_set(&L->detail_button, rx,
-			 L->detail.y + L->detail.h - button_h,
+			 L->detail.y + L->detail.h - button_h - 12 * p,
 			 L->detail.w - dw - gap, button_h);
 		rect_set(&L->detail_about, rx,
 			 L->detail_chips.y + L->detail_chips.h + gap,
@@ -177,7 +169,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 		int thumbs_h = 24 * p;
 		int title_h = 72 * p;
 		int chips_h = 26 * p;
-		int button_h = 24 * p;
+		int button_h = 36 * p;
 		int gaps = 6 * p;
 		int over;
 

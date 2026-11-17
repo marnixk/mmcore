@@ -153,6 +153,8 @@ typedef struct hub_tab {
 static hub_tab s_tabs[MMB_APP_CATEGORY_COUNT + 1];
 static int s_ntabs;
 static int s_tab_scale;
+static int s_clip;
+static int s_cx0, s_cy0, s_cx1, s_cy1;
 static hub_rect s_modal_x;
 
 /* ---- text ------------------------------------------------------------ */
@@ -183,10 +185,17 @@ static void hub_text_n(int x, int y, const char *s, unsigned n, unsigned col,
 
 					for (sy = 0; sy < scale; sy++)
 						for (sx = 0; sx < scale; sx++)
-							mmb_gfx_plot(x + i * 8 * scale +
-									     colbit * scale + sx,
-								     y + row * scale + sy,
-								     col);
+						{
+							int px = x + i * 8 * scale +
+								 colbit * scale + sx;
+							int py = y + row * scale + sy;
+
+							if (s_clip &&
+							    (px < s_cx0 || py < s_cy0 ||
+							     px >= s_cx1 || py >= s_cy1))
+								continue;
+							mmb_gfx_plot(px, py, col);
+						}
 				}
 			}
 		}
@@ -490,24 +499,75 @@ static void hub_wrap_draw(int x, int y, const char *s, int cols, int lineh,
 
 /* ---- colours / primitives -------------------------------------------- */
 
+/* Optional clip, used while a tab strip scrolls past the panel edge. */
+static void hub_clip_set(int x0, int y0, int x1, int y1)
+{
+	s_clip = 1;
+	s_cx0 = x0;
+	s_cy0 = y0;
+	s_cx1 = x1;
+	s_cy1 = y1;
+}
+
+static void hub_clip_clear(void)
+{
+	s_clip = 0;
+}
+
+static int hub_clip_rect(hub_rect *r)
+{
+	if (!r)
+		return 0;
+	if (s_clip)
+	{
+		if (r->x < s_cx0)
+		{
+			r->w -= s_cx0 - r->x;
+			r->x = s_cx0;
+		}
+		if (r->y < s_cy0)
+		{
+			r->h -= s_cy0 - r->y;
+			r->y = s_cy0;
+		}
+		if (r->x + r->w > s_cx1)
+			r->w = s_cx1 - r->x;
+		if (r->y + r->h > s_cy1)
+			r->h = s_cy1 - r->y;
+	}
+	return r->w > 0 && r->h > 0;
+}
+
 static void hub_fill(hub_rect r, unsigned col)
 {
-	if (r.w > 0 && r.h > 0)
+	if (hub_clip_rect(&r))
 		mmb_gfx_fill_rect(r.x, r.y, r.w, r.h, col);
 }
 
 static void hub_hline(int x, int y, int w, unsigned col, int t)
 {
+	hub_rect r;
+
 	if (t < 1)
 		t = 1;
-	mmb_gfx_fill_rect(x, y, w, t, col);
+	r.x = x;
+	r.y = y;
+	r.w = w;
+	r.h = t;
+	hub_fill(r, col);
 }
 
 static void hub_vline(int x, int y, int h, unsigned col, int t)
 {
+	hub_rect r;
+
 	if (t < 1)
 		t = 1;
-	mmb_gfx_fill_rect(x, y, t, h, col);
+	r.x = x;
+	r.y = y;
+	r.w = t;
+	r.h = h;
+	hub_fill(r, col);
 }
 
 static int hub_has(const char *s)
@@ -534,31 +594,17 @@ static void hub_upper(const char *s, char *out, int n)
 	out[i] = 0;
 }
 
-/* Listing titles fill about 40% of the row. Body copy, chips, badges and
- * the button label sit one step down so they stay readable beside them. */
-static int hub_title_scale(void)
-{
-	int p = U.p < 1 ? 1 : U.p;
-	int row = U.L.row_h > 16 ? U.L.row_h : 56 * p;
-	int s = row * 2 / 5 / 16;
-
-	if (s < 1)
-		s = 1;
-	if (s > 4)
-		s = 4;
-	/* Take the next size when the row still holds a title and a summary. */
-	if (s < 4 && 16 * (s + 1) + 16 * s + 6 * p <= row)
-		s++;
-	return s;
-}
-
+/* The listing title is twice the summary. At 720p that is 32px over 16px,
+ * which is what fits six rows. Detail body copy uses the same step so a
+ * paragraph still fits above the button. */
 static int hub_body_scale(void)
 {
-	int s = hub_title_scale() - 1;
+	return U.p >= 3 ? 2 : 1;
+}
 
-	if (s < 1)
-		s = 1;
-	return s;
+static int hub_title_scale(void)
+{
+	return hub_body_scale() * 2;
 }
 
 static int hub_ui_scale(void)
@@ -1222,28 +1268,20 @@ static void hub_layout_now(void)
 			pw = 1;
 		U.p = pw;
 	}
-	scale = U.p >= 2 ? 2 : 1;
+	/* Small labels, one size. The strip scrolls instead of growing. */
+	scale = 1;
 	n = s_ntabs > 0 ? s_ntabs : 1;
 	avail = U.w - 8 * (U.p < 1 ? 1 : U.p);
-	for (;;)
+	longest = 0;
+	for (i = 0; i < s_ntabs; i++)
 	{
-		int floor = U.p >= 2 ? 2 : 1;
+		int w = hub_text_w(s_tabs[i].name, scale);
 
-		longest = 0;
-		for (i = 0; i < s_ntabs; i++)
-		{
-			int w = hub_text_w(s_tabs[i].name, scale);
-
-			if (w > longest)
-				longest = w;
-		}
-		/* Stay at the larger size even when the labels wrap to two rows. */
-		if (scale <= floor || n * (longest + 8 * U.p) <= avail)
-			break;
-		scale--;
+		if (w > longest)
+			longest = w;
 	}
-	if (scale < 1)
-		scale = 1;
+	(void)n;
+	(void)avail;
 	s_tab_scale = scale;
 	tab_w = longest + 8 * U.p;
 	hub_layout_compute(&U.L, U.w, U.h, s_ntabs, tab_w);
@@ -1741,17 +1779,24 @@ static void hub_paint_listing(void)
 
 	hub_dither_bg();
 
-	hub_bevel(hdr, 0x101428);
-	hub_cube(hdr.x + 14 * p, hdr.y + hdr.h / 2, hdr.h * 3 / 4, 0);
-	mark = p >= 3 ? 3 : (p >= 2 ? 2 : 1);
+	hub_fill(hdr, 0x101428);
+	hub_hline(hdr.x, hdr.y, hdr.w, 0x2A3058, p < 2 ? 1 : 2);
+	hub_hline(hdr.x, hdr.y + hdr.h - p, hdr.w, 0xC8A060, p < 2 ? 1 : 2);
+	mark = 1;
+	while (mark < 4 && 16 * (mark + 1) <= hdr.h - 8 * p)
+		mark++;
+	hub_cube(hdr.x + hdr.h / 2, hdr.y + hdr.h / 2, hdr.h * 3 / 4, 0);
 	{
 		int ty = hdr.y + (hdr.h - 16 * mark) / 2;
-		int tx = hdr.x + hdr.h;
+		int tx = hdr.x + hdr.h + 4 * p;
 
 		if (ty < hdr.y)
 			ty = hdr.y;
 		hub_text(tx, ty, "mmcore", HUB_TEXT, mark);
+		hub_text(tx + 1, ty, "mmcore", HUB_TEXT, mark);
 		hub_text(tx + hub_text_w("mmcore ", mark), ty, "HUB",
+			 HUB_MAGENTA, mark);
+		hub_text(tx + hub_text_w("mmcore ", mark) + 1, ty, "HUB",
 			 HUB_MAGENTA, mark);
 	}
 
@@ -1761,72 +1806,113 @@ static void hub_paint_listing(void)
 	hub_hline(U.L.content.x, U.L.content.y, U.L.content.w, HUB_BORDER_L, p);
 
 	{
-		int cols = U.L.tabs_per_row > 0 ? U.L.tabs_per_row : 1;
 		int gap = U.L.tab_gap;
-		int tw = U.L.tab_w;
-		int scale = s_tab_scale > 0 ? s_tab_scale : 1;
+		int scale = 1;
+		int widths[16];
+		int n = s_ntabs;
+		int total = 0, scroll = 0, view, sel = 0;
+		int x;
 
-		if (s_ntabs > 0)
+		if (n > 16)
+			n = 16;
+		s_tab_scale = scale;
+		for (i = 0; i < n; i++)
 		{
-			int nfit = U.L.tab_rows == 1 ? s_ntabs : cols;
-
-			tw = (U.L.tabs.w - (nfit - 1) * gap) / nfit;
-			if (tw < 8)
-				tw = 8;
+			widths[i] = hub_text_w(s_tabs[i].name, scale) + 12 * p;
+			if (widths[i] < 24 * p)
+				widths[i] = 24 * p;
+			total += widths[i];
+			if (s_tabs[i].cat == U.tab)
+				sel = i;
 		}
-		for (i = 0; i < s_ntabs; i++)
+		if (n > 1)
+			total += (n - 1) * gap;
+		view = U.L.tabs.w;
+		if (n > 0 && total <= view)
 		{
-			int row = i / cols;
-			int col = i % cols;
+			int extra = view - total;
+			int add = extra / n;
+			int rem = extra - add * n;
+
+			for (i = 0; i < n; i++)
+				widths[i] += add + (i < rem ? 1 : 0);
+			scroll = 0;
+		}
+		else if (n > 0)
+		{
+			int sx = 0, sel_x = 0, sel_w = widths[0];
+
+			for (i = 0; i < n; i++)
 			{
-				int tx = U.L.tabs.x + col * (tw + gap);
-				int ty = U.L.tabs.y + row * (U.L.tab_h + gap);
-				int sel = s_tabs[i].cat == U.tab;
-				hub_rect tr = { tx, ty, tw, U.L.tab_h };
-
-				if (i < (int)(sizeof(s_tabbox) / sizeof(s_tabbox[0])))
+				if (i == sel)
 				{
-					s_tabbox[s_ntabbox].r = tr;
-					s_tabbox[s_ntabbox].value = s_tabs[i].cat;
-					s_ntabbox++;
+					sel_x = sx;
+					sel_w = widths[i];
 				}
-				if (sel)
-				{
-					int foot_y = tr.y + tr.h;
-					int foot_h = U.L.content.y + p - foot_y;
-					int k, rad = 3 * p;
-
-					if (foot_h < 1)
-						foot_h = 1;
-					hub_fill(tr, HUB_PANEL);
-					hub_fill((hub_rect){ tr.x, foot_y, tr.w, foot_h },
-						 HUB_PANEL);
-					hub_hline(tr.x, tr.y, tr.w, HUB_MAGENTA, p < 2 ? 1 : 2);
-					hub_vline(tr.x, tr.y, tr.h + foot_h, HUB_BORDER_L, p);
-					hub_vline(tr.x + tr.w - p, tr.y, tr.h + foot_h,
-						  HUB_BORDER_D, p);
-					for (k = 0; k <= rad; k++)
-					{
-						mmb_gfx_plot(tr.x - k, foot_y + foot_h - p,
-							     HUB_BORDER_L);
-						mmb_gfx_plot(tr.x + tr.w - 1 + k,
-							     foot_y + foot_h - p,
-							     HUB_BORDER_D);
-					}
-					hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-									     scale)) / 2,
-						 tr.y + (tr.h - 16 * scale) / 2,
-						 s_tabs[i].name, HUB_MAGENTA, scale);
-				}
-				else
-				{
-					hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
-									     scale)) / 2,
-						 tr.y + (tr.h - 16 * scale) / 2,
-						 s_tabs[i].name, HUB_DIM, scale);
-				}
+				sx += widths[i] + gap;
 			}
+			if (sel_x + sel_w > view)
+				scroll = sel_x + sel_w - view;
+			if (sel_x < scroll)
+				scroll = sel_x;
+			if (scroll > total - view)
+				scroll = total - view;
+			if (scroll < 0)
+				scroll = 0;
 		}
+		hub_clip_set(U.L.tabs.x, U.L.tabs.y,
+			     U.L.tabs.x + U.L.tabs.w,
+			     U.L.content.y + p + 2);
+		x = U.L.tabs.x - scroll;
+		for (i = 0; i < n; i++)
+		{
+			int selon = s_tabs[i].cat == U.tab;
+			int tw = widths[i];
+			hub_rect tr = { x, U.L.tabs.y, tw, U.L.tab_h };
+			hub_rect hit = tr;
+
+			if (hit.x < U.L.tabs.x)
+			{
+				hit.w -= U.L.tabs.x - hit.x;
+				hit.x = U.L.tabs.x;
+			}
+			if (hit.x + hit.w > U.L.tabs.x + U.L.tabs.w)
+				hit.w = U.L.tabs.x + U.L.tabs.w - hit.x;
+			if (hit.w > 0 &&
+			    i < (int)(sizeof(s_tabbox) / sizeof(s_tabbox[0])))
+			{
+				s_tabbox[s_ntabbox].r = hit;
+				s_tabbox[s_ntabbox].value = s_tabs[i].cat;
+				s_ntabbox++;
+			}
+			if (selon)
+			{
+				int foot_y = tr.y + tr.h;
+				int foot_h = U.L.content.y + p - foot_y;
+
+				if (foot_h < 1)
+					foot_h = 1;
+				hub_fill(tr, HUB_PANEL);
+				hub_fill((hub_rect){ tr.x, foot_y, tr.w, foot_h },
+					 HUB_PANEL);
+				hub_hline(tr.x, tr.y, tr.w, HUB_MAGENTA,
+					  p < 2 ? 1 : 2);
+				hub_vline(tr.x, tr.y, tr.h + foot_h, HUB_BORDER_L, p);
+				hub_vline(tr.x + tr.w - p, tr.y, tr.h + foot_h,
+					  HUB_BORDER_D, p);
+				hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
+								   scale)) / 2,
+					 tr.y + (tr.h - 16 * scale) / 2,
+					 s_tabs[i].name, HUB_MAGENTA, scale);
+			}
+			else
+				hub_text(tr.x + (tr.w - hub_text_w(s_tabs[i].name,
+								   scale)) / 2,
+					 tr.y + (tr.h - 16 * scale) / 2,
+					 s_tabs[i].name, HUB_DIM, scale);
+			x += tw + gap;
+		}
+		hub_clip_clear();
 	}
 
 	y = U.L.list.y + 2 * p;
@@ -1864,10 +1950,13 @@ static void hub_paint_listing(void)
 		pr.y += 4 * p;
 		pr.w -= 8 * p;
 		pr.h -= 8 * p;
-		/* Title, author and two lines of summary sit under the shot. */
-		cap = 16 * tscale + 16 * bscale * 3 + 16 * p;
-		if (cap > pr.h / 2)
-			cap = pr.h / 2;
+		/* The shot is the top of the card; the caption fills the rest,
+		 * which is where the mockup puts the title and the blurb. */
+		cap = pr.h * 38 / 100;
+		if (cap < 16 * tscale + 16 * bscale * 3 + 8 * p)
+			cap = 16 * tscale + 16 * bscale * 3 + 8 * p;
+		if (cap > pr.h * 48 / 100)
+			cap = pr.h * 48 / 100;
 		hub_ornate_frame(pr, 0x101428);
 		frame.x = pr.x + 8 * p;
 		frame.y = pr.y + 8 * p;
@@ -1965,8 +2054,10 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 	unsigned fill = enabled ? hub_lerp(0x000000, accent, 2, 3) : 0x2A2E3A;
 	unsigned top = enabled ? hub_lerp(accent, 0xFFFFFF, 1, 2) : 0x6A7080;
 	unsigned bot = enabled ? hub_lerp(accent, 0x000000, 1, 2) : 0x14161C;
-	int scale = hub_body_scale();
+	int scale = 1;
 
+	while (scale < 4 && 16 * (scale + 1) + 8 * p <= b.h)
+		scale++;
 	hub_fill(b, fill);
 	hub_hline(b.x, b.y, b.w, top, t);
 	hub_vline(b.x, b.y, b.h, top, t);
@@ -1976,44 +2067,41 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 		    top, p < 2 ? 1 : p, -1);
 	if (16 * scale + 4 > b.h)
 		scale = 1;
-	hub_text(b.x + (b.w - hub_text_w(label, scale)) / 2,
-		 b.y + (b.h - 16 * scale) / 2, label,
-		 enabled ? 0xFFFFFF : HUB_GREY, scale);
+	{
+		int tx = b.x + (b.w - hub_text_w(label, scale)) / 2;
+		int ty = b.y + (b.h - 16 * scale) / 2;
+		unsigned ink = enabled ? 0xFFFFFF : HUB_GREY;
+
+		hub_text(tx, ty, label, ink, scale);
+		if (scale >= 2)
+			hub_text(tx + 1, ty, label, ink, scale);
+	}
 }
 
 static void hub_draw_main_button(hub_rect area)
 {
 	hub_app *a = hub_cur();
 	int p = U.p < 1 ? 1 : U.p;
-	int bw = area.w * 70 / 100;
+	int bw = area.w / 3;
 	hub_rect b;
 	char buf[64];
 	const char *label;
 	unsigned accent, enabled;
 
-	{
-		int ls = hub_body_scale();
-		const char *probe;
-		char pbuf[64];
-		unsigned ac, en;
-
-		probe = hub_button_label(a, &ac, &en, pbuf, sizeof(pbuf));
-		bw = hub_text_w(probe, ls) + 24 * p;
-		(void)ac;
-		(void)en;
-	}
-	if (bw < 72 * p)
-		bw = 72 * p;
-	if (bw > area.w * 55 / 100)
-		bw = area.w * 55 / 100;
+	/* The mockup button is about half the text column, which reads as
+	 * a large block under the paragraph. */
+	if (bw < area.w / 2)
+		bw = area.w / 2;
+	if (bw > area.w * 56 / 100)
+		bw = area.w * 56 / 100;
 	if (bw > area.w - 4 * p)
 		bw = area.w - 4 * p;
 	if (bw < 20)
 		bw = area.w;
 	b.w = bw;
-	b.h = 16 * hub_body_scale() + 10 * p;
-	if (b.h > area.h)
-		b.h = area.h > 0 ? area.h : b.h;
+	b.h = area.h > 8 * p ? area.h - 2 * p : area.h;
+	if (b.h < 16)
+		b.h = area.h > 0 ? area.h : 16;
 	b.x = area.x + (area.w - b.w) / 2;
 	b.y = area.y + (area.h - b.h) / 2;
 	label = hub_button_label(a, &accent, &enabled, buf, sizeof(buf));
@@ -2025,8 +2113,8 @@ static void hub_draw_main_button(hub_rect area)
 static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 {
 	int p = U.p < 1 ? 1 : U.p;
-	int scale = hub_ui_scale();
-	int lh = 16 * scale + 4 * (U.p < 1 ? 1 : U.p);
+	int scale = U.p >= 3 ? 2 : 1;
+	int lh = 16 * scale + 10 * (U.p < 1 ? 1 : U.p);
 	int cols = hub_wrap_cols(r.w - 8 * p, scale);
 	const char *body = (a && hub_has(a->about)) ? a->about :
 			   (a && hub_has(a->summary) ? a->summary : "");
@@ -2066,18 +2154,19 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 			hub_wrap_draw(r.x, y, changes, cols, lh,
 				      line - ch_at, 1, HUB_DIM, scale);
 	}
-	if (maxscroll > 0 && r.h > 4 * p)
+	if (r.h > 8 * p)
 	{
 		int track = r.h - 2 * p;
-		int thumb = track * rows / (lines > 0 ? lines : 1);
+		int thumb = lines > 0 ? track * rows / lines : track;
 		int pos = lines > 0 ? track * scroll / lines : 0;
 
 		if (thumb < 8 * p)
 			thumb = 8 * p;
 		if (thumb > track)
 			thumb = track;
-		mmb_gfx_fill_rect(r.x + r.w - p, r.y, p, track, 0x2A3048);
-		mmb_gfx_fill_rect(r.x + r.w - p, r.y + pos, p, thumb, 0x8A90A8);
+		mmb_gfx_fill_rect(r.x + r.w - 2 * p, r.y, 2 * p, track, 0x2A3048);
+		mmb_gfx_fill_rect(r.x + r.w - 2 * p, r.y + pos, 2 * p, thumb,
+				  0x8A90A8);
 	}
 }
 
@@ -2257,7 +2346,7 @@ static void hub_draw_detail(void)
 		int x = L->detail_chips.x;
 		int y = L->detail_chips.y;
 		int maxx = L->detail_chips.x + L->detail_chips.w - 4 * p;
-		int scale = hub_body_scale();
+		int scale = U.p >= 2 ? 2 : 1;
 		char buf[96];
 
 		if (hub_has(a->author))
