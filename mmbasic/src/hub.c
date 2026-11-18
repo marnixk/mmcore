@@ -152,6 +152,180 @@ static char *hub_join(const char *dir, const char *name)
 	return out;
 }
 
+/* ---- persistent index/asset cache (#1544) ---------------------------- */
+
+#define HUB_DISK_MAX_BYTES (8u * 1024u * 1024u)
+
+static int s_offline;
+
+/* The directory HUB keeps its cached index and assets in. It follows the
+ * install-target rule from #1542: C:/APPS/ when it exists and is writable,
+ * otherwise the first writable PATH folder (A:/APPS/ by default). The cache
+ * is a hidden `.hub` folder inside it. Caller frees. */
+static char *hub_cache_dir(void)
+{
+	const char *p = mmb_app_path();
+	char dir[160];
+	char *base = 0, *out;
+
+	if (mmb_app_path_has(p, MMB_APP_PATH_SD) &&
+	    mmb_vfs_isdir(MMB_APP_PATH_SD) &&
+	    !mmb_vfs_readonly_path(MMB_APP_PATH_SD))
+		base = hub_strdup(MMB_APP_PATH_SD);
+	while (!base && p && *p)
+	{
+		const char *e = p;
+		int dn;
+
+		while (*e && *e != ';')
+			e++;
+		dn = (int)(e - p);
+		if (dn > (int)sizeof(dir) - 1)
+			dn = (int)sizeof(dir) - 1;
+		memcpy(dir, p, (unsigned)dn);
+		dir[dn] = 0;
+		hub_trim(dir);
+		p = *e ? e + 1 : e;
+		if (!dir[0])
+			continue;
+		if (mmb_vfs_exists(dir))
+		{
+			if (!mmb_vfs_isdir(dir) || mmb_vfs_readonly_path(dir))
+				continue;
+		}
+		else if (!hub_ci_eq(dir, MMB_APP_PATH_DEFAULT))
+			continue;
+		else if (mmb_vfs_mkdir(dir) != 0)
+			continue;
+		base = hub_strdup(dir);
+	}
+	if (!base)
+		return 0;
+	out = hub_join(base, ".hub");
+	G.plat->free(base);
+	return out;
+}
+
+/* Create every directory in `dir`, including its last component. */
+static int hub_cache_mkdirs(const char *dir)
+{
+	char tmp[256];
+	int i, n;
+
+	if (!dir || !dir[0] || strlen(dir) >= sizeof(tmp))
+		return -1;
+	strcpy(tmp, dir);
+	n = (int)strlen(tmp);
+	while (n > 1 && tmp[n - 1] == '/')
+		tmp[--n] = 0;
+	for (i = 0; i <= n; i++)
+	{
+		if (tmp[i] == '/' && i > 2)
+		{
+			char save = tmp[i];
+
+			tmp[i] = 0;
+			if (!mmb_vfs_isdir(tmp) && mmb_vfs_mkdir(tmp) != 0)
+			{
+				tmp[i] = save;
+				return -1;
+			}
+			tmp[i] = save;
+		}
+	}
+	if (!mmb_vfs_isdir(tmp) && mmb_vfs_mkdir(tmp) != 0)
+		return -1;
+	return 0;
+}
+
+static int hub_cache_rel_ok(const char *rel)
+{
+	return rel && rel[0] && rel[0] != '/' && rel[0] != '\\' &&
+	       !strstr(rel, "..");
+}
+
+/* Full path for a cache-relative name, or NULL when it is unsafe. */
+static char *hub_cache_path(const char *rel)
+{
+	char *dir, *path;
+
+	if (!hub_cache_rel_ok(rel))
+		return 0;
+	dir = hub_cache_dir();
+	if (!dir)
+		return 0;
+	path = hub_join(dir, rel);
+	G.plat->free(dir);
+	return path;
+}
+
+/* Persist one downloaded file. Failures are best-effort: the network load
+ * that produced the bytes has already succeeded. */
+static void hub_cache_store(const char *rel, const void *data, unsigned n)
+{
+	char *path = hub_cache_path(rel);
+	char *parent;
+	char *slash;
+	int i;
+
+	if (!path)
+		return;
+	parent = hub_strdup(path);
+	if (parent)
+	{
+		slash = 0;
+		for (i = 0; parent[i]; i++)
+			if (parent[i] == '/')
+				slash = parent + i;
+		if (slash)
+		{
+			*slash = 0;
+			hub_cache_mkdirs(parent);
+		}
+		G.plat->free(parent);
+	}
+	mmb_vfs_write(path, data, n, 0);
+	G.plat->free(path);
+}
+
+/* Read a cached file, NUL-terminated for JSON. Caller frees. */
+static unsigned char *hub_cache_load(const char *rel, unsigned *n)
+{
+	char *path;
+	unsigned char *buf;
+	unsigned got = 0;
+	int sz;
+
+	if (n)
+		*n = 0;
+	path = hub_cache_path(rel);
+	if (!path)
+		return 0;
+	sz = mmb_vfs_size(path);
+	if (sz <= 0 || (unsigned)sz > HUB_DISK_MAX_BYTES)
+	{
+		G.plat->free(path);
+		return 0;
+	}
+	buf = G.plat->alloc((unsigned)sz + 1);
+	if (!buf)
+	{
+		G.plat->free(path);
+		return 0;
+	}
+	if (mmb_vfs_read(path, buf, (unsigned)sz, &got) != 0 || got == 0)
+	{
+		G.plat->free(buf);
+		G.plat->free(path);
+		return 0;
+	}
+	buf[got] = 0;
+	G.plat->free(path);
+	if (n)
+		*n = got;
+	return buf;
+}
+
 /* ---- app records ----------------------------------------------------- */
 
 static void hub_app_clear(hub_app *a)
@@ -598,49 +772,15 @@ static int hub_parse_apps(const cJSON *root, char *err, int errsz)
 	return 0;
 }
 
-int hub_load_index(char *err, int errsz)
+static int hub_parse_index_data(const char *buf, char *err, int errsz)
 {
-	unsigned char *buf = 0;
-	unsigned n = 0;
-	void *token = 0;
-	int status = 0, rc;
-	char *url;
 	cJSON *root;
 	const cJSON *schema;
 	int schema_n;
 
-	if (err && errsz > 0)
-		err[0] = 0;
-	hub_free();
-	url = hub_url_join("index.json");
-	if (!url)
-	{
-		hub_err_out_of_memory(err, errsz);
-		return -1;
-	}
-	rc = mmb_url_fetch_ex(url, 0, 0, &buf, &n, &token, &status, err, errsz,
-			      0, 0, 0);
-	G.plat->free(url);
-	if (rc <= 0)
-	{
-		if (rc == 0)
-			hub_set_err(err, errsz, "UNSUPPORTED INDEX: not an http(s) URL");
-		else if (err && errsz > 0 && strstr(err, "CANCELLED"))
-			hub_set_err(err, errsz, "CANCELLED");
-		else if (status > 0)
-			hub_set_err(err, errsz, "SERVER ERROR %d", status);
-		else
-			hub_set_err(err, errsz, "OFFLINE");
-		if (token)
-			mmb_url_release(token);
-		return -1;
-	}
-
-	root = (cJSON *)mmb_json_parse_tree((const char *)buf);
+	root = (cJSON *)mmb_json_parse_tree(buf);
 	if (!root)
 	{
-		if (token)
-			mmb_url_release(token);
 		hub_set_err(err, errsz, "UNSUPPORTED INDEX");
 		return -1;
 	}
@@ -655,22 +795,88 @@ int hub_load_index(char *err, int errsz)
 		else
 			hub_set_err(err, errsz, "UNSUPPORTED INDEX");
 		cJSON_Delete(root);
-		if (token)
-			mmb_url_release(token);
 		return -1;
 	}
 	if (hub_parse_apps(root, err, errsz) != 0)
 	{
 		cJSON_Delete(root);
 		hub_free();
+		return -1;
+	}
+	cJSON_Delete(root);
+	hub_compute_states();
+	return 0;
+}
+
+int hub_is_offline(void)
+{
+	return s_offline;
+}
+
+int hub_load_index(char *err, int errsz)
+{
+	unsigned char *buf = 0;
+	unsigned n = 0;
+	void *token = 0;
+	int status = 0, rc;
+	char *url;
+
+	if (err && errsz > 0)
+		err[0] = 0;
+	hub_free();
+	s_offline = 0;
+	url = hub_url_join("index.json");
+	if (!url)
+	{
+		hub_err_out_of_memory(err, errsz);
+		return -1;
+	}
+	rc = mmb_url_fetch_ex(url, 0, 0, &buf, &n, &token, &status, err, errsz,
+			      0, 0, 0);
+	G.plat->free(url);
+	if (rc <= 0)
+	{
+		unsigned char *cached;
+		unsigned cn = 0;
+
+		if (token)
+			mmb_url_release(token);
+		/* The network is down: use the last successful catalogue. Only
+		 * a first run with nothing cached keeps the error screen. */
+		cached = hub_cache_load("index.json", &cn);
+		if (cached)
+		{
+			if (hub_parse_index_data((const char *)cached, err,
+						 errsz) == 0)
+			{
+				G.plat->free(cached);
+				s_offline = 1;
+				return 0;
+			}
+			G.plat->free(cached);
+		}
+		if (rc == 0)
+			hub_set_err(err, errsz, "UNSUPPORTED INDEX: not an http(s) URL");
+		else if (err && errsz > 0 && strstr(err, "CANCELLED"))
+			hub_set_err(err, errsz, "CANCELLED");
+		else if (status > 0)
+			hub_set_err(err, errsz, "SERVER ERROR %d", status);
+		else
+			hub_set_err(err, errsz,
+				    "OFFLINE - CONNECT ONCE TO LOAD THE HUB");
+		return -1;
+	}
+
+	if (hub_parse_index_data((const char *)buf, err, errsz) != 0)
+	{
 		if (token)
 			mmb_url_release(token);
 		return -1;
 	}
-	cJSON_Delete(root);
+	/* A successful load refreshes the cached catalogue. */
+	hub_cache_store("index.json", buf, n);
 	if (token)
 		mmb_url_release(token);
-	hub_compute_states();
 	return 0;
 }
 
@@ -774,6 +980,26 @@ int hub_fetch(const char *relpath, unsigned char **buf, unsigned *n,
 	G.plat->free(url);
 	if (rc <= 0)
 	{
+		unsigned char *cached;
+		unsigned cn = 0;
+
+		if (token)
+			mmb_url_release(token);
+		/* Offline: fall back to the bytes saved on the last successful
+		 * fetch, so cached icons, heroes, shots and text still draw. */
+		cached = hub_cache_load(relpath, &cn);
+		if (cached)
+		{
+			if (err && errsz > 0)
+				err[0] = 0;
+			if (n)
+				*n = cn;
+			if (buf)
+				*buf = cached;
+			else
+				G.plat->free(cached);
+			return 0;
+		}
 		if (rc == 0)
 			hub_set_err(err, errsz, "UNSUPPORTED URL");
 		else if (err && errsz > 0 && strstr(err, "CANCELLED"))
@@ -782,10 +1008,10 @@ int hub_fetch(const char *relpath, unsigned char **buf, unsigned *n,
 			hub_set_err(err, errsz, "SERVER ERROR %d", status);
 		else
 			hub_set_err(err, errsz, "OFFLINE");
-		if (token)
-			mmb_url_release(token);
 		return -1;
 	}
+
+	hub_cache_store(relpath, data, dn);
 
 	e = G.plat->alloc(sizeof(*e));
 	if (e)
@@ -1189,6 +1415,8 @@ static void hub_cmd_list(void)
 {
 	if (hub_load_or_fail() != 0)
 		return;
+	if (hub_is_offline())
+		hub_print_line("HUB: OFFLINE (CACHED)");
 	hub_print_apps();
 }
 

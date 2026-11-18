@@ -87,6 +87,9 @@ typedef struct hub_ui {
 	int icon_total;
 	int err;
 	char errmsg[192];
+	int offline;     /* listing came from the on-disk cache (#1544) */
+	int offline_note;
+	unsigned offline_note_at;
 
 	int tab;         /* -1 = ALL, else an app category index */
 	int *ids;        /* app indices in display order */
@@ -2539,6 +2542,18 @@ static void hub_paint_listing(void)
 		}
 	}
 
+	if (U.offline)
+	{
+		int scale = 1;
+		int w = hub_ui_w("OFFLINE", scale) + 10 * p;
+		int h = hub_ui_h(scale) + 6 * p;
+		int x = hdr.x + hdr.w - w - 6 * p;
+		int y = hdr.y + (hdr.h - h) / 2;
+
+		if (x > hdr.x)
+			hub_chip(x, y, "OFFLINE", 0xFFD080, 0x2A1A08, scale);
+	}
+
 	hub_fill(U.L.content, HUB_PANEL);
 	mmb_gfx_box(U.L.content.x, U.L.content.y, U.L.content.w, U.L.content.h,
 		    HUB_BORDER_D, p, -1);
@@ -2742,6 +2757,15 @@ static const char *hub_button_label(hub_app *a, unsigned *col,
 	*fill = 1;
 	if (!a)
 		return "";
+	/* Cached browsing is read-only: INSTALL and UPDATE need the network,
+	 * so they use the grey NEEDS form while offline (#1544). */
+	if (U.offline &&
+	    (a->state == HUB_NOT_INSTALLED || a->state == HUB_UPDATE))
+	{
+		*col = 0x4A5068;
+		*fill = 0;
+		return a->state == HUB_UPDATE ? "UPDATE" : "INSTALL";
+	}
 	switch (a->state)
 	{
 	case HUB_INSTALLED:
@@ -2827,6 +2851,9 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 	 * NEEDS is the grey form. The slice keeps the rim and stretches the
 	 * face; the height stays the asset's own pixels. */
 	if (label && strncmp(label, "NEEDS", 5) == 0)
+		art = "button-needs";
+	else if (!enabled && label &&
+		 (strcmp(label, "INSTALL") == 0 || strcmp(label, "UPDATE") == 0))
 		art = "button-needs";
 	else if (enabled && label && strcmp(label, "UPDATE") == 0)
 		art = "button-update";
@@ -3424,6 +3451,22 @@ static void hub_draw_detail(void)
 
 	hub_draw_about(L->detail_about, a, U.about_scroll);
 	hub_draw_main_button(L->detail_button);
+
+	if (U.offline_note)
+	{
+		int scale = 1;
+		int w = hub_ui_w("OFFLINE - CONNECT TO INSTALL", scale) + 10 * p;
+		int h = hub_ui_h(scale) + 6 * p;
+		int x = L->detail.x + (L->detail.w - w) / 2;
+		int y = L->detail_button.y - h - 4 * p;
+
+		if (x < L->detail.x + p)
+			x = L->detail.x + p;
+		if (y < L->detail.y)
+			y = L->detail.y;
+		hub_chip(x, y, "OFFLINE - CONNECT TO INSTALL",
+			 0xFFD080, 0x2A1A08, scale);
+	}
 }
 
 /* ---- modals ---------------------------------------------------------- */
@@ -3898,7 +3941,18 @@ static void hub_activate(void)
 		return;
 	}
 	if (a->state == HUB_NOT_INSTALLED || a->state == HUB_UPDATE)
+	{
+		if (U.offline)
+		{
+			/* Read-only cached mode: say OFFLINE instead of starting a
+			 * download that is certain to fail (#1544). */
+			U.offline_note = 1;
+			U.offline_note_at = mmb_now_ms();
+			U.dirty = 1;
+			return;
+		}
 		hub_start_install();
+	}
 }
 
 /* ---- asset loading --------------------------------------------------- */
@@ -3964,6 +4018,8 @@ static void hub_load_index_now(void)
 	U.load_started = 1;
 	U.err = 0;
 	U.load_done = 0;
+	U.offline = 0;
+	U.offline_note = 0;
 	if (hub_load_index(err, sizeof(err)) != 0)
 	{
 		U.err = 1;
@@ -3973,6 +4029,7 @@ static void hub_load_index_now(void)
 		hub_frame();
 		return;
 	}
+	U.offline = hub_is_offline();
 	hub_build_tabs();
 	{
 		int i;
@@ -4093,6 +4150,20 @@ static void hub_esc_action(void)
 	}
 }
 
+/* Re-run the index fetch from cached browsing. If it still fails the cache
+ * opens again; when it succeeds the refreshed catalogue replaces it. */
+static void hub_retry_online(void)
+{
+	U.err = 0;
+	U.offline = 0;
+	U.offline_note = 0;
+	U.load_started = 0;
+	U.load_done = 0;
+	U.started = (int)mmb_now_ms();
+	U.state = HUB_ST_LOADING;
+	U.dirty = 1;
+}
+
 /* Pump input while hub_install() blocks inside the HTTP client. The platform
  * poll delivers queued SDL/serial bytes; on the serial console they land in
  * the INKEY queue (drain them here), on the SDL console the front end feeds
@@ -4146,13 +4217,10 @@ static int hub_key_direct(char c)
 	switch (U.state)
 	{
 	case HUB_ST_LOADING:
-		if (U.err && (c == '\r' || c == '\n'))
+		if (U.err && (c == '\r' || c == '\n' ||
+			      c == 'r' || c == 'R'))
 		{
-			U.started = (int)mmb_now_ms();
-			U.load_started = 0;
-			U.load_done = 0;
-			U.err = 0;
-			U.dirty = 1;
+			hub_retry_online();
 			handled = 1;
 		}
 		break;
@@ -4199,7 +4267,12 @@ static int hub_key_direct(char c)
 		}
 		break;
 	case HUB_ST_LIST:
-		if (c == '\r' || c == '\n')
+		if (U.offline && (c == 'r' || c == 'R'))
+		{
+			hub_retry_online();
+			handled = 1;
+		}
+		else if (c == '\r' || c == '\n')
 		{
 			if (U.nids > 0)
 			{
@@ -4226,7 +4299,12 @@ static int hub_key_direct(char c)
 		}
 		break;
 	case HUB_ST_DETAIL:
-		if (c == '\r' || c == '\n')
+		if (U.offline && (c == 'r' || c == 'R'))
+		{
+			hub_retry_online();
+			handled = 1;
+		}
+		else if (c == '\r' || c == '\n')
 		{
 			hub_activate();
 			handled = 1;
@@ -4569,6 +4647,12 @@ void mmb_hub_poll(void)
 		U.dirty = 1;
 	}
 	now = mmb_now_ms();
+
+	if (U.offline_note && now - U.offline_note_at >= 2500)
+	{
+		U.offline_note = 0;
+		U.dirty = 1;
+	}
 
 	if (U.esc == 1 && now - U.esc_at >= HUB_ESC_IDLE_MS)
 	{

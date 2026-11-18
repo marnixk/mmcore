@@ -16,8 +16,8 @@ import pytest
 
 from native_harness import NativeSession, Ppm, SDL_BIN, build_native, \
     sdl_backend_available
-from test_hub import APPS, TINY_PNG, HubServer, app_entry, index_doc, \
-    make_app, preinstall, set_url
+from test_hub import APPS, BIN, TINY_PNG, HubServer, app_entry, index_doc, \
+    make_app, preinstall, run as hub_run, set_url
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cc") is None or shutil.which("make") is None,
@@ -367,3 +367,91 @@ def test_sparse_metadata_hides_empty_fields(native_mmcore, hub, tmp_path):
     assert not _same(bare, full)
     assert _orange(bare) < 30, _orange(bare)
     assert _orange(full) > _orange(bare) + 40
+
+
+# --- offline cache mode (#1544) ---------------------------------------------
+
+
+def _dead_base():
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return "http://127.0.0.1:%d/" % port
+
+
+def _populate_cache(hub, root):
+    os.makedirs(os.path.join(root, "C", "APPS"), exist_ok=True)
+    out = hub_run(BIN, [set_url(hub.base), "HUB LIST"], root)
+    assert "jetpack" in out, out
+    assert os.path.isfile(os.path.join(root, "C", "APPS", ".hub",
+                                       "index.json")), out
+
+
+def _offline_session(tmp_path, root):
+    work = os.path.join(str(tmp_path), "work-offline")
+    s = NativeSession(work, env={
+        "MMB_DRIVE_ROOT": root,
+        "MMCORE_RELEASE_VERSION": "0.312.0",
+    })
+    s.feed('OPTION PATH "C:/APPS/"')
+    s.feed('OPTION HUB URL "%s"' % _dead_base())
+    s.feed("MODE 9,16")
+    s.feed("HUB")
+    s.wait_ms(2200)
+    s.start()
+    return s
+
+
+def _amber_badge(ppm):
+    """Pixels in the offline badge amber, not the header's bronze rim."""
+    d = ppm.data
+    n = 0
+    for i in range(0, len(d), 3):
+        r, g, b = d[i], d[i + 1], d[i + 2]
+        if r > 240 and 185 < g < 225 and 95 < b < 155:
+            n += 1
+    return n
+
+
+def test_offline_cached_list_shows_and_run_works(native_mmcore, hub, tmp_path):
+    root = os.path.join(str(tmp_path), "root")
+    _populate_cache(hub, root)
+    preinstall(root, "jetpack", APPS["jetpack"])
+    s = _offline_session(tmp_path, root)
+    listing = s.snapshot("offline-list.ppm")
+    assert _amber_badge(listing) > 20, "offline badge did not draw"
+    assert listing.nonblack() > 1000, "offline listing did not draw"
+
+    s.key("enter")          # first row (jetpack) -> detail
+    s.wait_ms(350)
+    s.key("enter")          # RUN, not INSTALL
+    s.wait_ms(400)
+    ran = s.mark("ran")
+    s.wait_mark(ran)
+    s.quit()
+    out = s.run()
+    assert "JETPACK RAN" in out, out
+    assert "?HUB" not in out, out
+
+
+def test_offline_install_is_disabled(native_mmcore, hub, tmp_path):
+    root = os.path.join(str(tmp_path), "root")
+    _populate_cache(hub, root)
+    s = _offline_session(tmp_path, root)
+    app = os.path.join(root, "C", "APPS", "jetpack.APP")
+
+    s.key("enter")          # first row (jetpack, not installed) -> detail
+    s.wait_ms(350)
+    before = s.snapshot("offline-detail.ppm")
+    s.key("enter")          # should show the OFFLINE note, not download
+    s.wait_ms(350)
+    after = s.snapshot("offline-note.ppm")
+    s.quit()
+    out = s.run()
+
+    assert not _same(before, after), "OFFLINE note did not appear"
+    assert not os.path.exists(app), "offline INSTALL wrote the app"
+    assert "?HUB" not in out, out
