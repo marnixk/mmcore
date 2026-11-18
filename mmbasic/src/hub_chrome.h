@@ -25,6 +25,22 @@ int hub_chrome_slice(const char *name, int x, int y, int w, int h, int slice2);
 
 /* Preview/detail frame: four corner ornaments and tiled edges. */
 int hub_chrome_frame(int x, int y, int w, int h);
+/* Rim thickness in screen pixels (0 without the frame art). */
+int hub_chrome_frame_band(void);
+
+/* Frame geometry of scripts/gen_hub_pixel_art.py in 1x pixels: the inner
+ * corners are cut by HUB_FRAME_CUT (x+y steps), so content inset by
+ * HUB_FRAME_PAD from the rim never meets a corner ornament. */
+#define HUB_FRAME_CUT 10
+#define HUB_FRAME_PAD 5
+
+/* Progress bar (bar-frame / bar-fill) in 1x pixels. */
+#define HUB_BAR_INSET 5
+#define HUB_BAR_SEG 18
+#define HUB_BAR_GAP 2
+
+/* Scrollbar arrow cap (button + gap) in 1x rows of scroll-track. */
+#define HUB_SCROLL_CAP 9
 
 /* Scrollbar track (stretched) and thumb. */
 int hub_chrome_scroll(int x, int y, int w, int h, int thumb_y, int thumb_h);

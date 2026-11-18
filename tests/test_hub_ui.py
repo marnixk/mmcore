@@ -295,9 +295,10 @@ def test_cancel_button_stops_install(native_mmcore, hub, tmp_path):
     s.wait_ms(250)
     detail = s.snapshot("detail.ppm")
     s.key("enter")          # start the blocking INSTALL
-    # MODE 9 is 1024x768. The dialog is 62% by 64% and the CANCEL
-    # button sits on its bottom edge; the centre is (512, 598).
-    s.move(512, 598)
+    # MODE 9 is 1024x768 (p=1). The dialog is 195px tall and centred, and
+    # the 44px CANCEL plate sits on the bottom of its clear area: the
+    # button spans y 422..465, so its centre is (512, 444).
+    s.move(512, 444)
     s.down("l")
     s.up("l")
     s.move(0, 0)

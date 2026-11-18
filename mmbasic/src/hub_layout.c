@@ -44,7 +44,7 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 	L->mode = hub_layout_mode(w, h);
 	L->margin = m = 4 * p;
 	L->gap = gap = 4 * p;
-	L->row_h = 48 * p;
+	L->row_h = 44 * p;
 
 	/* Full-width wordmark bar. The cube and the logo sit inside it. */
 	rect_set(&L->header, 0, 0, w, 34 * p);

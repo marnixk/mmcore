@@ -16,7 +16,7 @@ static const char *const k_names[] = {
 	"loading-cube", "load-title", "header-cube", "wordmark", "icon-cube",
 	"badge-installed", "badge-update", "badge-needs",
 	"tab", "tab-on", "button", "button-update", "button-needs",
-	"bar-frame", "bar-fill", "bar-stripe",
+	"bar-frame", "bar-fill",
 	"corner-tl", "corner-tr", "corner-bl", "corner-br",
 	"edge-h", "edge-hb", "edge-v", "edge-vr",
 	"scroll-track", "scroll-thumb", "title-font", "ui-font",
@@ -389,59 +389,56 @@ static void chrome_tile(const char *name, int x, int y, int w, int h)
 		}
 }
 
+/* Rim thickness in screen pixels: the frame edge to the content area. */
+int hub_chrome_frame_band(void)
+{
+	if (!hub_chrome_has("corner-tl") || !hub_chrome_has("edge-h"))
+		return 0;
+	return hub_chrome_h("edge-h");
+}
+
 int hub_chrome_frame(int x, int y, int w, int h)
 {
-	int tlw, tlh, trw, trh, blw, blh, brw, brh;
-	int gapw, gaph;
+	int cw, ch, band;
 
-	/* Corners stay at the sheet's integer scale. The edge bitmaps share
-	 * the corner's origin, so tiling them from the corner's far edge puts
-	 * the rim on the same pixels. They are not fitted to a new size. */
-	if (!hub_chrome_has("corner-tl") || w < 16 || h < 16)
+	/* Four equal corner pieces at the sheet's integer scale and rim tiles
+	 * repeated between them. The corners are opaque everywhere except the
+	 * content cut, so nothing under the rim shows through. */
+	if (!hub_chrome_has("corner-tl") || !hub_chrome_has("edge-h") ||
+	    !hub_chrome_has("edge-v") || w < 16 || h < 16)
 		return 0;
-	tlw = hub_chrome_w("corner-tl");
-	tlh = hub_chrome_h("corner-tl");
-	trw = hub_chrome_w("corner-tr");
-	trh = hub_chrome_h("corner-tr");
-	blw = hub_chrome_w("corner-bl");
-	blh = hub_chrome_h("corner-bl");
-	brw = hub_chrome_w("corner-br");
-	brh = hub_chrome_h("corner-br");
-	if (trw < 1)
-		trw = tlw;
-	if (trh < 1)
-		trh = tlh;
-	if (blw < 1)
-		blw = tlw;
-	if (blh < 1)
-		blh = tlh;
-	if (brw < 1)
-		brw = trw;
-	if (brh < 1)
-		brh = trh;
-	if (tlw + trw >= w || tlh + blh >= h)
+	cw = hub_chrome_w("corner-tl");
+	ch = hub_chrome_h("corner-tl");
+	band = hub_chrome_h("edge-h");
+	if (cw * 2 > w || ch * 2 > h || band < 1)
 		return 0;
+	if (w - 2 * cw > 0)
+	{
+		chrome_tile("edge-h", x + cw, y, w - 2 * cw, band);
+		if (hub_chrome_has("edge-hb"))
+			chrome_tile("edge-hb", x + cw, y + h - band, w - 2 * cw,
+				    band);
+	}
+	if (h - 2 * ch > 0)
+	{
+		chrome_tile("edge-v", x, y + ch, band, h - 2 * ch);
+		if (hub_chrome_has("edge-vr"))
+			chrome_tile("edge-vr", x + w - band, y + ch, band,
+				    h - 2 * ch);
+	}
 	hub_chrome_blit("corner-tl", x, y);
-	hub_chrome_blit("corner-tr", x + w - trw, y);
-	hub_chrome_blit("corner-bl", x, y + h - blh);
-	hub_chrome_blit("corner-br", x + w - brw, y + h - brh);
-	gapw = w - tlw - trw;
-	gaph = h - tlh - blh;
-	if (gapw > 0 && hub_chrome_has("edge-h"))
-		chrome_tile("edge-h", x + tlw, y, gapw, tlh);
-	if (gapw > 0 && hub_chrome_has("edge-hb"))
-		chrome_tile("edge-hb", x + blw, y + h - blh, w - blw - brw, blh);
-	if (gaph > 0 && hub_chrome_has("edge-v"))
-		chrome_tile("edge-v", x, y + tlh, tlw, gaph);
-	if (gaph > 0 && hub_chrome_has("edge-vr"))
-		chrome_tile("edge-vr", x + w - trw, y + trh, trw,
-			    h - trh - brh);
+	hub_chrome_blit("corner-tr", x + w - cw, y);
+	hub_chrome_blit("corner-bl", x, y + h - ch);
+	hub_chrome_blit("corner-br", x + w - cw, y + h - ch);
 	return 1;
 }
 
 int hub_chrome_scroll(int x, int y, int w, int h, int thumb_y, int thumb_h)
 {
-	if (!hub_chrome_has("scroll-track") || h < 4)
+	chrome_img *im = chrome_find("scroll-track");
+	int cap, inner, ty, th;
+
+	if (!im || !im->pix || h < 4)
 		return 0;
 	/* Native width, so the track is not squeezed to the slot. */
 	{
@@ -452,15 +449,46 @@ int hub_chrome_scroll(int x, int y, int w, int h, int thumb_y, int thumb_h)
 		if (tw > 0)
 			w = tw;
 	}
-	hub_chrome_slice("scroll-track", x, y, w, h, 8);
-	if (thumb_h > 0 && hub_chrome_has("scroll-thumb"))
+	/* The arrow caps are HUB_SCROLL_CAP rows of the 1x sheet. */
+	cap = HUB_SCROLL_CAP * im->variant * im->scale;
+	if (cap * 2 + 4 > h)
+		cap = h / 4;
+	{
+		/* Caps at their own pixels, the groove rows stretched between. */
+		int sc = HUB_SCROLL_CAP * im->variant;
+		int sm = im->h - 2 * sc;
+
+		if (sm < 1)
+			return 0;
+		chrome_stretch(im, 0, 0, im->w, sc, x, y, w, cap);
+		chrome_stretch(im, 0, sc, im->w, sm, x, y + cap, w, h - 2 * cap);
+		chrome_stretch(im, 0, im->h - sc, im->w, sc, x, y + h - cap, w,
+			       cap);
+	}
+	if (thumb_h <= 0 || !hub_chrome_has("scroll-thumb"))
+		return 1;
+	/* The caller's thumb is in track units. Map it between the arrows so
+	 * it never covers either cap. */
+	inner = h - 2 * cap;
+	if (inner < 2)
+		return 1;
+	ty = (int)((long)thumb_y * inner / h);
+	th = (int)((long)thumb_h * inner / h);
+	if (th < hub_chrome_h("scroll-thumb"))
+		th = hub_chrome_h("scroll-thumb");
+	if (th > inner)
+		th = inner;
+	if (ty < 0)
+		ty = 0;
+	if (ty + th > inner)
+		ty = inner - th;
 	{
 		int tw = hub_chrome_w("scroll-thumb");
 
 		if (tw < 1)
 			tw = w;
-		hub_chrome_slice("scroll-thumb", x + (w - tw) / 2, y + thumb_y,
-				 tw, thumb_h, 4);
+		hub_chrome_slice("scroll-thumb", x + (w - tw) / 2, y + cap + ty,
+				 tw, th, 6);
 	}
 	return 1;
 }

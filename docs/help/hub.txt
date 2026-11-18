@@ -39,8 +39,10 @@ as info/<id>/about.txt, which is loaded in the background. A WHAT'S NEW
 section is shown only when the index entry carries the text of
 INFO/CHANGES.TXT (or a path to that text). There is one main button: `INSTALL`, `UPDATE`, `RUN`
 or a greyed `NEEDS v<minver>` when the device is too old. The install dialog
-shows the download and checksum progress and can be cancelled with Esc. RUN
-leaves the hub and starts the installed app exactly like the APPS launcher.
+shows the download progress and can be cancelled with Esc or its CANCEL
+button. When the package is in place it shows DONE with a RUN button: Enter
+or RUN starts the app, Esc goes back. RUN leaves the hub and starts the
+installed app exactly like the APPS launcher.
 
 Controls:
 

@@ -908,30 +908,10 @@ def main() -> None:
     save_raw_pair(tint_button_gold(button), "button-update")
     save_raw_pair(tint_button_grey(button), "button-needs")
 
-    px = install.load()
-
-    # Green striped install bar.
-    xs, ys = [], []
-    for y in range(200, 520):
-        for x in range(300, 1000):
-            r, g, b, _ = px[x, y]
-            if g > 120 and g > r + 30 and g > b + 20:
-                xs.append(x)
-                ys.append(y)
-    if xs:
-        # The word DOWNLOADING sits above the bar; keep the dense lower band.
-        y_bar = max(ys) - 36
-        box = (min(xs) - 4, y_bar, max(xs) + 5, max(ys) + 6)
-        stripe = trim(knock(install.crop(box), 16), 0)
-        save_raw_pair(stripe, "bar-stripe")
-
-    for name, im in content_frame(detail).items():
-        save_raw_pair(im, name)
-
-    track = detail.crop((1240, 240, 1264, 690))
-    save_raw_pair(trim(knock(track, 18), 0), "scroll-track")
-    thumb = detail.crop((1240, 236, 1264, 268))
-    save_raw_pair(trim(knock(thumb, 18), 0), "scroll-thumb")
+    # The frame, tabs, progress bar and scrollbar are hand-built pixel art
+    # (scripts/gen_hub_pixel_art.py), not mockup crops.
+    import gen_hub_pixel_art
+    gen_hub_pixel_art.main()
 
     save_hi = make_font()
     w, h = save_hi.size
