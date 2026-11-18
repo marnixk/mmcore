@@ -7,7 +7,11 @@ OPTION PATH "dir$[;dir$...]"
 
 The value is one directory or a semicolon-separated list. The default is
 `A:/APPS/`, so first-party apps shipped on the ramdisk are found without any
-setup. An empty string clears the path.
+setup. With the default path, `C:/APPS/` is searched first whenever that
+folder exists on the SD card, so apps installed there (by ~HUB~, which
+installs to `C:/APPS/` when it exists) survive a power cycle and shadow a
+ramdisk copy of the same name. An explicit path is used exactly as given.
+An empty string clears the path.
 
 The path is used by ~APPS~, the Ctrl+Space picker, a bare app name typed at
 the prompt, and `OPTION BOOT` into an app. Search stops at the first

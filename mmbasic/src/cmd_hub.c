@@ -3745,51 +3745,17 @@ static void hub_leave(void)
 	mmb_gfx_reset_console(1);
 }
 
-static int hub_install_target_path(hub_app *a, char *out, int outsz)
+/* The dialog shows the same path hub_install() will write. */
+static int hub_install_target_path(int index, char *out, int outsz)
 {
-	const char *p = G.opt.app_path;
+	char *t = hub_target_path(index);
 
 	out[0] = 0;
-	if (!a)
+	if (!t)
 		return -1;
-	if (a->installed_path && a->installed_path[0])
-	{
-		snprintf(out, (size_t)outsz, "%s", a->installed_path);
-		return 0;
-	}
-	while (p && *p)
-	{
-		const char *e = p;
-		int dn;
-		char dir[160];
-
-		while (*e && *e != ';')
-			e++;
-		dn = (int)(e - p);
-		if (dn > (int)sizeof(dir) - 1)
-			dn = (int)sizeof(dir) - 1;
-		memcpy(dir, p, (unsigned)dn);
-		dir[dn] = 0;
-		p = *e ? e + 1 : e;
-		{
-			char *q = dir;
-
-			while (*q == ' ' || *q == '\t')
-				q++;
-			if (q != dir)
-				memmove(dir, q, strlen(q) + 1);
-		}
-		if (!dir[0])
-			continue;
-		if (dir[strlen(dir) - 1] == '/')
-			snprintf(out, (size_t)outsz, "%s%s.APP", dir,
-				 a->id ? a->id : "");
-		else
-			snprintf(out, (size_t)outsz, "%s/%s.APP", dir,
-				 a->id ? a->id : "");
-		return 0;
-	}
-	return -1;
+	snprintf(out, (size_t)outsz, "%s", t);
+	G.plat->free(t);
+	return 0;
 }
 
 static int hub_install_progress(unsigned done, unsigned total, void *ctx)
@@ -3818,7 +3784,8 @@ static void hub_start_install(void)
 	U.inst_cancel = 0;
 	U.inst_pump = 0;
 	U.inst_target[0] = 0;
-	hub_install_target_path(a, U.inst_target, sizeof(U.inst_target));
+	hub_install_target_path(U.inst_index, U.inst_target,
+				sizeof(U.inst_target));
 	U.prev_state = U.state;
 	U.state = HUB_ST_INSTALL;
 	U.errmsg[0] = 0;

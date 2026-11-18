@@ -197,7 +197,7 @@ int mmb_app_resolve(const char *name, char *out, int outsz)
 		return 0;
 	}
 
-	p = G.opt.app_path;
+	p = mmb_app_path();
 	while (p && *p)
 	{
 		const char *e = p;
@@ -220,6 +220,97 @@ int mmb_app_resolve(const char *name, char *out, int outsz)
 			return 1;
 		}
 		p = *e ? e + 1 : e;
+	}
+	return 0;
+}
+
+/* Directory names compare case-insensitively with an optional trailing
+ * slash, so "c:/apps" matches "C:/APPS/". */
+static int at_dir_eq(const char *a, const char *b)
+{
+	int na = (int)strlen(a), nb = (int)strlen(b);
+
+	while (na && (a[na - 1] == '/' || a[na - 1] == '\\'))
+		na--;
+	while (nb && (b[nb - 1] == '/' || b[nb - 1] == '\\'))
+		nb--;
+	if (na != nb)
+		return 0;
+	while (na--)
+	{
+		char x = a[na], y = b[na];
+
+		if (x >= 'a' && x <= 'z')
+			x = (char)(x - 32);
+		if (y >= 'a' && y <= 'z')
+			y = (char)(y - 32);
+		if (x == '\\')
+			x = '/';
+		if (y == '\\')
+			y = '/';
+		if (x != y)
+			return 0;
+	}
+	return 1;
+}
+
+/* Is `dir` one of the semicolon-separated entries of `path`? */
+int mmb_app_path_has(const char *path, const char *dir)
+{
+	while (path && *path)
+	{
+		const char *e = path;
+		char one[APP_PATH];
+		int n;
+
+		while (*e && *e != ';')
+			e++;
+		n = (int)(e - path);
+		if (n > (int)sizeof(one) - 1)
+			n = (int)sizeof(one) - 1;
+		memcpy(one, path, (unsigned)n);
+		one[n] = 0;
+		at_trim(one);
+		if (one[0] && at_dir_eq(one, dir))
+			return 1;
+		path = *e ? e + 1 : e;
+	}
+	return 0;
+}
+
+/* The PATH every app lookup uses. An explicit OPTION PATH is used as is; the
+ * default (A:/APPS/, the ramdisk) gains C:/APPS/ in front of it when that
+ * folder exists, so apps installed to the SD card are found first and a
+ * newer copy there shadows a bundled one of the same name. */
+const char *mmb_app_path(void)
+{
+	static char eff[sizeof(G.opt.app_path) + sizeof(MMB_APP_PATH_SD) + 2];
+	const char *p = G.opt.app_path;
+
+	if (!at_dir_eq(p, MMB_APP_PATH_DEFAULT))
+		return p;
+	if (!mmb_vfs_isdir(MMB_APP_PATH_SD))
+		return p;
+	snprintf(eff, sizeof(eff), "%s;%s", MMB_APP_PATH_SD, p);
+	return eff;
+}
+
+/* A package file name already listed from an earlier PATH folder: the later
+ * copy is shadowed (a bare name runs the first one), so it is not listed. */
+static int at_seen_file(const char *fname)
+{
+	int i;
+
+	for (i = 0; i < AT.nent; i++)
+	{
+		const char *path = AT.ent[i].path, *base;
+
+		if (AT.ent[i].kind != AT_KIND_PKG)
+			continue;
+		base = strrchr(path, '/');
+		base = base ? base + 1 : path;
+		if (mmb_keyword_eq(base, fname))
+			return 1;
 	}
 	return 0;
 }
@@ -288,7 +379,7 @@ static void at_add(const char *dir, const char *fname)
 	stem[sizeof(stem) - 1] = 0;
 	if (n - 4 < (int)sizeof(stem))
 		stem[n - 4] = 0;
-	if (!stem[0] || at_is_builtin_cmd(stem))
+	if (!stem[0] || at_is_builtin_cmd(stem) || at_seen_file(fname))
 		return;
 	if (at_join(full, sizeof(full), dir, fname) != 0)
 		return;
@@ -389,7 +480,7 @@ static void at_rebuild(void)
 static void at_scan(void)
 {
 	char listing[APP_LISTING];
-	const char *p = G.opt.app_path;
+	const char *p = mmb_app_path();
 	int i;
 
 	at_free_entries();

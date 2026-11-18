@@ -268,6 +268,10 @@ typedef struct mmb_options {
 
 /* Default OPTION PATH: first-party .APP packages ship on the ramdisk (#520). */
 #define MMB_APP_PATH_DEFAULT "A:/APPS/"
+/* Persistent app folder on the SD card. With the default PATH it is searched
+ * first and is where HUB installs, whenever the folder exists (A: is the
+ * ramdisk and does not survive a power cycle). */
+#define MMB_APP_PATH_SD "C:/APPS/"
 
 /* Default HUB index base (#1525). OPTION HUB URL keeps a trailing '/'. */
 #define MMB_HUB_DEFAULT_URL "https://hub.mmcore.dev/"
@@ -1637,6 +1641,8 @@ void mmb_cmd_unpack(void);
 /* App PATH, bare-token runner, Ctrl+Space picker, and boot launcher
  * (#515 boot-to-app / home, #520 PATH + picker). */
 int mmb_app_resolve(const char *name, char *out, int outsz);
+const char *mmb_app_path(void);
+int mmb_app_path_has(const char *path, const char *dir);
 int mmb_apptui_active(void);
 int mmb_apptui_launcher(void);
 const char *mmb_apptui_key(char c);
