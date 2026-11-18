@@ -3,7 +3,7 @@
 /* Ramdisk node budget shared by the A: ramdisk and the build-time ramdisk/
  * seeding (scripts/gen_ramdisk.py reads this define). Each seeded file and
  * each directory it needs counts as one node. */
-#define VFS_MAX 256
+#define VFS_MAX 512
 /* Initial package (B:) node capacity. The table lives on the heap and grows
  * on demand (#715): the old fixed PKG_MAX = 96 capped a mounted .APP at 96
  * nodes (files plus the intermediate directories the mount creates), so a
