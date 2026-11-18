@@ -495,29 +495,161 @@ def keep_frame(im: Image.Image) -> Image.Image:
     return trim(im, 0)
 
 
-def erase_button_label(im: Image.Image) -> Image.Image:
-    """Paint over the baked label with the face colour beside it.
+def save_raw_pair(im: Image.Image, name: str) -> None:
+    """Write 2x and a nearest 1x half without posterising.
 
-    The bronze gradient and the bevel stay. Filling the whole control with
-    one colour hides that art when the slice stretches.
+    The action button's gradient is a few units per row. Quantising it to a
+    handful of colours turns the face into a flat fill.
     """
     im = im.convert("RGBA")
     w, h = im.size
-    pix = im.load()
-    # Stay inside the gold bevel. The baked word sits in the middle of the
-    # face; the sample column is the plain bronze just beside the left edge.
-    sx = max(12, int(w * 0.07))
-    x0 = sx + 4
-    x1 = w - (sx + 8)
-    y0 = int(h * 0.16)
-    y1 = int(h * 0.80)
-    for y in range(y0, y1):
-        sample = pix[sx, y]
-        if sample[3] < 20:
+    if w % 2:
+        im = im.crop((0, 0, w - 1, h))
+        w -= 1
+    if h % 2:
+        im = im.crop((0, 0, w, h - 1))
+        h -= 1
+    p2 = OUT / f"{name}-2.png"
+    p1 = OUT / f"{name}-1.png"
+    im.save(p2, optimize=True)
+    small = im.resize((w // 2, h // 2), Image.Resampling.NEAREST)
+    small.save(p1, optimize=True)
+    print(f"{name:16} 2x {w:4}x{h:<4} {p2.stat().st_size:6}  "
+          f"1x {small.size[0]:4}x{small.size[1]:<4} {p1.stat().st_size:6}")
+
+
+def cut_action_button(detail: Image.Image) -> Image.Image:
+    """The mockup UPDATE control, with the baked word filled from the face.
+
+    Panel pixels are cleared only where they touch the crop edge, so the
+    copper rim, the stepped corners and the outer shadow stay. The word is
+    replaced by the gradient on either side of it. Nothing is recoloured.
+    """
+    crop = detail.crop((768, 576, 1102, 704)).convert("RGBA")
+    pix = crop.load()
+    w, h = crop.size
+    seen = bytearray(w * h)
+    stack = [(x, 0) for x in range(w)] + [(x, h - 1) for x in range(w)]
+    stack += [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)]
+
+    def is_panel(r: int, g: int, b: int) -> bool:
+        return b + 8 >= r and max(r, g, b) < 55 and r < 40
+
+    while stack:
+        x, y = stack.pop()
+        if x < 0 or y < 0 or x >= w or y >= h:
             continue
-        for x in range(x0, x1):
-            if pix[x, y][3] > 20:
-                pix[x, y] = sample
+        i = y * w + x
+        if seen[i]:
+            continue
+        r, g, b, _ = pix[x, y]
+        if not is_panel(r, g, b):
+            continue
+        seen[i] = 1
+        pix[x, y] = (0, 0, 0, 0)
+        stack.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    xs, ys = [], []
+    for y in range(h):
+        for x in range(w):
+            if pix[x, y][3] > 10:
+                xs.append(x)
+                ys.append(y)
+    btn = crop.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
+    bp = btn.load()
+    bw, bh = btn.size
+    wx, wy = [], []
+    for y in range(bh):
+        for x in range(bw):
+            r, g, b, a = bp[x, y]
+            if a > 200 and min(r, g, b) > 170 and abs(r - b) < 40:
+                wx.append(x)
+                wy.append(y)
+    if not wx:
+        return btn
+    x0, x1 = min(wx) - 6, max(wx) + 7
+    y0, y1 = min(wy) - 5, max(wy) + 6
+    lx = max(0, x0 - 14)
+    mask = [[0] * bw for _ in range(bh)]
+    for y in range(max(0, y0), min(bh, y1)):
+        sample = bp[lx, y]
+        for x in range(max(0, x0), min(bw, x1)):
+            r, g, b, _ = bp[x, y]
+            dist = abs(r - sample[0]) + abs(g - sample[1]) + abs(b - sample[2])
+            if dist > 26 or min(r, g, b) > 160:
+                mask[y][x] = 1
+    dil = [row[:] for row in mask]
+    for y in range(bh):
+        for x in range(bw):
+            if not mask[y][x]:
+                continue
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    yy, xx = y + dy, x + dx
+                    if 0 <= yy < bh and 0 <= xx < bw:
+                        dil[yy][xx] = 1
+    for y in range(bh):
+        for x in range(bw):
+            if not dil[y][x]:
+                continue
+            xl = x
+            while xl > 0 and dil[y][xl]:
+                xl -= 1
+            xr = x
+            while xr < bw - 1 and dil[y][xr]:
+                xr += 1
+            if dil[y][xl]:
+                bp[x, y] = bp[min(bw - 1, xr), y]
+                continue
+            if dil[y][xr]:
+                bp[x, y] = bp[xl, y]
+                continue
+            span = max(1, xr - xl)
+            t = (x - xl) / span
+            left, right = bp[xl, y], bp[xr, y]
+            bp[x, y] = (
+                int(left[0] * (1 - t) + right[0] * t),
+                int(left[1] * (1 - t) + right[1] * t),
+                int(left[2] * (1 - t) + right[2] * t),
+                255,
+            )
+    return btn
+
+
+def tint_button_gold(im: Image.Image) -> Image.Image:
+    """Same bevel, face shifted toward gold so UPDATE reads apart from INSTALL."""
+    im = im.copy()
+    pix = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pix[x, y]
+            if a < 20:
+                continue
+            if r > 200 and g > 130:
+                pix[x, y] = (min(255, r + 8), min(255, g + 30), min(70, b), a)
+            elif r > 60 and r > b + 15:
+                pix[x, y] = (
+                    min(255, int(r * 1.04) + 16),
+                    min(255, int(g * 1.6) + 18),
+                    max(0, b // 3),
+                    a,
+                )
+    return im
+
+
+def tint_button_grey(im: Image.Image) -> Image.Image:
+    """Desaturated face for the disabled NEEDS control."""
+    im = im.copy()
+    pix = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pix[x, y]
+            if a < 16:
+                continue
+            yv = (r * 3 + g * 6 + b) // 10
+            yv = yv * 7 // 10
+            pix[x, y] = (yv, yv, yv + min(8, yv // 8), a)
     return im
 
 
@@ -604,21 +736,12 @@ def main() -> None:
     save_pair(tab_on, "tab-on")
     save_pair(tab, "tab")
 
-    button = trim(knock(detail.crop((780, 590, 1160, 700)), 16), 1)
-    button = erase_button_label(button)
-    # Crop to the opaque face. Corner specks would keep the empty margin,
-    # and a 9-slice would then draw a short button inside a tall slot.
-    bw, bh = button.size
-    bp = button.load()
-    x0, x1 = int(bw * 0.35), int(bw * 0.65)
-    rows = [y for y in range(bh)
-            if any(bp[x, y][3] > 20 for x in range(x0, x1))]
-    y0, y1 = int(bh * 0.35), int(bh * 0.65)
-    cols = [x for x in range(bw)
-            if any(bp[x, y][3] > 20 for y in range(y0, y1))]
-    if rows and cols:
-        button = button.crop((cols[0], rows[0], cols[-1] + 1, rows[-1] + 1))
-    save_pair(button, "button")
+    # Mockup pixels, label filled from the face. INSTALL and RUN share it.
+    # UPDATE is the same shape pushed toward gold. NEEDS is the grey form.
+    button = cut_action_button(detail)
+    save_raw_pair(button, "button")
+    save_raw_pair(tint_button_gold(button), "button-update")
+    save_raw_pair(tint_button_grey(button), "button-needs")
 
     px = install.load()
 

@@ -1398,6 +1398,93 @@ static void hub_draw_image(uint32_t *pix, int iw, int ih, hub_rect r)
 	}
 }
 
+/* Whole picture, centred. An integer scale keeps pixel art on the grid.
+ * Anything that does not fit at 1:1 is an area downsample, not a crop. */
+static void hub_draw_image_fit(uint32_t *pix, int iw, int ih, hub_rect r)
+{
+	int n, dw, dh, ox, oy, x, y;
+
+	if (!pix || iw < 1 || ih < 1 || r.w < 1 || r.h < 1)
+		return;
+	n = r.w / iw;
+	if (r.h / ih < n)
+		n = r.h / ih;
+	if (n >= 1)
+	{
+		dw = iw * n;
+		dh = ih * n;
+		ox = r.x + (r.w - dw) / 2;
+		oy = r.y + (r.h - dh) / 2;
+		for (y = 0; y < dh; y++)
+		{
+			int sy = y / n;
+
+			for (x = 0; x < dw; x++)
+			{
+				uint32_t c = pix[sy * iw + x / n];
+
+				if (c >> 24)
+					mmb_gfx_plot(ox + x, oy + y, c & 0xFFFFFFu);
+			}
+		}
+		return;
+	}
+	dw = r.w;
+	dh = (int)((long)r.w * ih / iw);
+	if (dh > r.h || dh < 1)
+	{
+		dh = r.h;
+		dw = (int)((long)r.h * iw / ih);
+		if (dw < 1)
+			dw = 1;
+	}
+	if (dh < 1)
+		dh = 1;
+	ox = r.x + (r.w - dw) / 2;
+	oy = r.y + (r.h - dh) / 2;
+	for (y = 0; y < dh; y++)
+	{
+		int sy0 = (int)((long)y * ih / dh);
+		int sy1 = (int)((long)(y + 1) * ih / dh);
+
+		if (sy1 <= sy0)
+			sy1 = sy0 + 1;
+		if (sy1 > ih)
+			sy1 = ih;
+		for (x = 0; x < dw; x++)
+		{
+			int sx0 = (int)((long)x * iw / dw);
+			int sx1 = (int)((long)(x + 1) * iw / dw);
+			unsigned sr = 0, sg = 0, sb = 0, npx = 0;
+			int sy, sx;
+
+			if (sx1 <= sx0)
+				sx1 = sx0 + 1;
+			if (sx1 > iw)
+				sx1 = iw;
+			for (sy = sy0; sy < sy1; sy++)
+			{
+				for (sx = sx0; sx < sx1; sx++)
+				{
+					uint32_t c = pix[sy * iw + sx];
+
+					if (!(c >> 24))
+						continue;
+					sr += (c >> 16) & 255u;
+					sg += (c >> 8) & 255u;
+					sb += c & 255u;
+					npx++;
+				}
+			}
+			if (!npx)
+				continue;
+			mmb_gfx_plot(ox + x, oy + y,
+				     ((sr / npx) << 16) | ((sg / npx) << 8) |
+				     (sb / npx));
+		}
+	}
+}
+
 static void hub_draw_image_cover(uint32_t *pix, int iw, int ih, hub_rect r)
 {
 	int sx0, sy0, sw, sh, x, y;
@@ -2504,6 +2591,53 @@ static const char *hub_button_label(hub_app *a, unsigned *col,
 	}
 }
 
+/* White bitmap label with a 1px dark ring and a 2px drop shadow.
+ * The cap is the closest zoom to about 40% of the button. */
+static void hub_button_caption(hub_rect b, const char *label, int enabled)
+{
+	int cap1 = hub_ui_h(1) * 7 / 9;
+	int zoom, best, bestd, tw, th, x, y;
+	unsigned ink = enabled ? 0xFFFFFFu : 0xC8C8D0u;
+	unsigned shade = enabled ? 0x140800u : 0x202028u;
+
+	if (cap1 < 1)
+		cap1 = 1;
+	best = 1;
+	bestd = 100000;
+	for (zoom = 1; zoom <= 4; zoom++)
+	{
+		int cap = cap1 * zoom;
+		int d;
+
+		if (hub_ui_w(label, zoom) > b.w - 8)
+			continue;
+		if (cap > b.h * 55 / 100)
+			continue;
+		d = cap - b.h * 40 / 100;
+		if (d < 0)
+			d = -d;
+		if (d < bestd)
+		{
+			bestd = d;
+			best = zoom;
+		}
+	}
+	tw = hub_ui_w(label, best);
+	th = hub_ui_h(best);
+	x = b.x + (b.w - tw) / 2;
+	y = b.y + (b.h - th) / 2;
+	hub_label(x + 2, y + 2, label, shade, best);
+	hub_label(x - 1, y, label, shade, best);
+	hub_label(x + 1, y, label, shade, best);
+	hub_label(x, y - 1, label, shade, best);
+	hub_label(x, y + 1, label, shade, best);
+	hub_label(x - 1, y - 1, label, shade, best);
+	hub_label(x + 1, y - 1, label, shade, best);
+	hub_label(x - 1, y + 1, label, shade, best);
+	hub_label(x + 1, y + 1, label, shade, best);
+	hub_label(x, y, label, ink, best);
+}
+
 static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 			      int enabled)
 {
@@ -2513,23 +2647,35 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 	unsigned top = enabled ? hub_lerp(accent, 0xFFFFFF, 1, 2) : 0x6A7080;
 	unsigned bot = enabled ? hub_lerp(accent, 0x000000, 1, 2) : 0x14161C;
 	int scale = 1;
+	const char *art = 0;
 
 	while (scale < 4 && 16 * (scale + 1) + 8 * p <= b.h)
 		scale++;
-	/* INSTALL, UPDATE and RUN are the button PNG plus the label.
-	 * A solid fill here covers the bevel. NEEDS stays the grey control. */
-	if (enabled && label &&
-	    (strcmp(label, "UPDATE") == 0 || strcmp(label, "INSTALL") == 0 ||
-	     strcmp(label, "RUN") == 0) &&
-	    hub_chrome_slice("button", b.x, b.y, b.w, b.h, 16))
+	/* INSTALL and RUN are the mockup bevel. UPDATE is the gold form.
+	 * NEEDS is the grey form. The slice keeps the rim and stretches the
+	 * face; the height stays the asset's own pixels. */
+	if (label && strncmp(label, "NEEDS", 5) == 0)
+		art = "button-needs";
+	else if (enabled && label && strcmp(label, "UPDATE") == 0)
+		art = "button-update";
+	else if (enabled && label &&
+		 (strcmp(label, "INSTALL") == 0 || strcmp(label, "RUN") == 0))
+		art = "button";
+	if (art && hub_chrome_has(art))
 	{
-		int zoom = hub_ui_h(2) + 6 * p <= b.h ? 2 : 1;
-		int tw = hub_ui_w(label, zoom);
-		int th = hub_ui_h(zoom);
+		int bh = hub_chrome_h(art);
+		hub_rect face = b;
 
-		hub_label(b.x + (b.w - tw) / 2, b.y + (b.h - th) / 2,
-			 label, 0xFFFFFF, zoom);
-		return;
+		if (bh > 8 && bh < b.h)
+		{
+			face.h = bh;
+			face.y = b.y + (b.h - bh) / 2;
+		}
+		if (hub_chrome_slice(art, face.x, face.y, face.w, face.h, 18))
+		{
+			hub_button_caption(face, label, enabled);
+			return;
+		}
 	}
 	hub_fill(b, fill);
 	hub_hline(b.x, b.y, b.w, top, t);
@@ -2686,7 +2832,7 @@ static void hub_draw_framed(hub_rect frame, const char *rel, int cube)
 	hub_fill(img, 0x070910);
 	im = hub_img_find(rel);
 	if (im && im->pix)
-		hub_draw_image_cover(im->pix, im->w, im->h, img);
+		hub_draw_image_fit(im->pix, im->w, im->h, img);
 	else if (cube)
 		hub_cube(img.x + img.w / 2, img.y + img.h / 2,
 			 img.h * 2 / 3, 1);

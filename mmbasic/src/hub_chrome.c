@@ -15,7 +15,8 @@
 static const char *const k_names[] = {
 	"loading-cube", "load-title", "header-cube", "wordmark", "icon-cube",
 	"badge-installed", "badge-update", "badge-needs",
-	"tab", "tab-on", "button", "bar-frame", "bar-fill", "bar-stripe",
+	"tab", "tab-on", "button", "button-update", "button-needs",
+	"bar-frame", "bar-fill", "bar-stripe",
 	"corner-tl", "corner-tr", "corner-bl", "corner-br", "edge-h", "edge-v",
 	"scroll-track", "scroll-thumb", "title-font", "ui-font",
 	0
