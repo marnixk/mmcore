@@ -260,6 +260,14 @@ static void test_flat_picker(void)
 	      "builtins are outside the OTHER filter");
 	app_list_free(&al);
 
+	/* #1546: the picker can filter on the BUILT-IN group too. */
+	app_list_init(&al);
+	check(app_list_build(&al, src, 5, "", APP_LIST_CAT_BUILTIN, 0) == 0,
+	      "flat BUILT-IN");
+	check(al.nrow == 1 && row_app(&al, 0, "Editor"),
+	      "flat BUILT-IN filter keeps only builtins");
+	app_list_free(&al);
+
 	/* Category filter combines with the type filter. */
 	app_list_init(&al);
 	check(app_list_build(&al, src, 5, "z", 0, 0) == 0, "flat combined");

@@ -51,7 +51,7 @@ void app_list_free(struct app_list *al);
 
 /* Rebuild `al` from `src`. `filter` is a case-insensitive substring matched
  * against each label and summary (NULL/empty = no filter). `cat_filter` is a
- * category index, APP_LIST_CAT_HUB, or -1 for ALL. `flags` combines
+ * category index, APP_LIST_CAT_BUILTIN, or -1 for ALL. `flags` combines
  * APP_LIST_GROUPED (category headers, fixed order; the launcher) and
  * APP_LIST_HUB (pinned HUB header + entry first, grouped mode only).
  * Without GROUPED the list is flat and label-sorted (the picker).
