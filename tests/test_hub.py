@@ -253,6 +253,26 @@ def test_install_writes_file_and_app_runs(mmb, hub, tmp_path):
         assert fh.read() == APPS["jetpack"]
 
 
+def test_large_download_installs_intact(mmb, hub, tmp_path):
+    """A multi-kB body installs byte-for-byte with the larger RX buffer (#1547).
+
+    The size and SHA-256 are checked against the index, so a truncated or
+    doubled transfer fails instead of writing a broken app."""
+    apps_dir = os.path.join(str(tmp_path), "C", "APPS")
+    os.makedirs(apps_dir, exist_ok=True)
+    hub.add_index("/index.json", index_doc(apps=[app_entry("bulk")]))
+    out = run(mmb, [
+        'OPTION PATH "C:/APPS/"',
+        set_url(hub.base),
+        'HUB INSTALL "bulk"',
+    ], tmp_path)
+    assert "INSTALLED" in out, out
+    path = os.path.join(apps_dir, "bulk.APP")
+    assert os.path.isfile(path)
+    with open(path, "rb") as fh:
+        assert fh.read() == APPS["bulk"]
+
+
 def test_checksum_mismatch_writes_nothing(mmb, hub, tmp_path):
     apps_dir = os.path.join(str(tmp_path), "C", "APPS")
     os.makedirs(apps_dir, exist_ok=True)

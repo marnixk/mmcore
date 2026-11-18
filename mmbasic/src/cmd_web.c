@@ -47,7 +47,12 @@
 #define WEB_URL_HOST_MAX   256
 #define WEB_URL_PATH_MAX   4096
 #define WEB_REDIR_MAX      5
-#define WEB_RX_TMP         1600
+/* Receive scratch size (#1547). The old 1600 bytes matched Circle's single
+ * network frame, so every WEB download made one recv + progress-callback call
+ * per frame. A larger buffer drains several frames per call (the Circle layer
+ * loops over FRAME_BUFFER_SIZE internally) and lets POSIX builds take the whole
+ * socket read at once, cutting per-chunk overhead on HUB app downloads. */
+#define WEB_RX_TMP         8192
 
 static unsigned s_timeout_ms = WEB_DEF_TIMEOUT_MS;
 static int s_status;

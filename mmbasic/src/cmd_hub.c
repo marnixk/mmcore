@@ -50,6 +50,12 @@
 #define HUB_LOAD_HOLD_MS 800
 #define HUB_FRAME_MS 45
 #define HUB_ASSET_MS 25
+/* Modal progress only repaints the bar and its two labels, but the transfer
+ * can call back many times per second. Cap those partial repaints so the
+ * download spends its time on the network, not on the display (#1547). */
+#define HUB_PROGRESS_MS 80
+/* Clear colour inside the ornate install frame (hub_ornate_frame fill). */
+#define HUB_MODAL_BG   0x0E1128u
 
 enum {
 	HUB_ST_LOADING = 0,
@@ -74,6 +80,7 @@ typedef struct hub_box {
 
 typedef struct hub_ui {
 	int active;
+	int console;     /* owning virtual console (HUB is a single instance) */
 	int saved_mode, saved_bits, saved_font_scale;
 	int w, h, p;
 	hub_layout L;
@@ -115,6 +122,7 @@ typedef struct hub_ui {
 	int esc;
 	unsigned esc_at, esc_arg;
 	unsigned last_frame, last_asset, last_load;
+	unsigned inst_redraw_at; /* last partial install-modal repaint */
 
 	int dirty;
 	int layout_w, layout_h;
@@ -162,6 +170,22 @@ static int s_clip;
 static int s_cx0, s_cy0, s_cx1, s_cy1;
 static hub_rect s_modal_x;
 static int s_list_rpad; /* scrollbar width taken from the rows */
+
+/* Geometry captured by the last full paint so a download/loading progress
+ * tick can repaint only the bar and its labels instead of the whole screen
+ * (#1549, #1550). A negative percent means "nothing captured yet"; any full
+ * repaint or resize drops the capture and the next tick falls back to a full
+ * frame. */
+static hub_rect s_loading_bar;
+static int s_loading_pct;
+static int s_loading_ok;
+static int s_loading_err;
+static hub_rect s_inst_bar;
+static hub_rect s_inst_status;
+static int s_inst_rim_l, s_inst_rim_r, s_inst_label_y;
+static int s_inst_pct;
+static int s_inst_mode;
+static int s_inst_bar_ok;
 
 /* ---- text ------------------------------------------------------------ */
 
@@ -1784,15 +1808,18 @@ static void hub_layout_now(void)
 /* ---- progress bar ---------------------------------------------------- */
 
 /* Loading bar: bevelled track, segments fading magenta to cyan. `hi`/`lo`
- * override the gradient (the error state passes red). */
-static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
+ * override the gradient (the error state passes red). `from_pct` >= 0 is an
+ * incremental tick: the track is already on screen, so only the segments
+ * between the old and new fill are painted (#1550). */
+static void hub_segbar_range(hub_rect r, int from_pct, int pct,
+			     unsigned hi, unsigned lo)
 {
 	int p = U.p < 1 ? 1 : U.p;
 	int pad = 3 * p;
 	int inner = r.w - 2 * pad;
 	int segw = 12 * p;
 	int gap = 2 * p;
-	int nseg, i, fill;
+	int nseg, i, fill, fill0 = 0;
 	int gradient = (hi == 0);
 
 	if (inner < 8 * p)
@@ -1812,6 +1839,15 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 	fill = nseg * pct / 100;
 	if (pct > 0 && fill < 1)
 		fill = 1;
+	if (from_pct >= 0)
+	{
+		fill0 = nseg * from_pct / 100;
+		if (from_pct > 0 && fill0 < 1)
+			fill0 = 1;
+		if (fill0 > fill)
+			fill0 = fill;
+	}
+	else
 	{
 		int rad = r.h / 3;
 
@@ -1829,7 +1865,7 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 			     r.h - 2 * (p + 1), rad > p + 1 ? rad - p - 1 : 1,
 			     0x3A3E4C, p, -1);
 	}
-	for (i = 0; i < nseg; i++)
+	for (i = fill0; i < fill; i++)
 	{
 		hub_rect s;
 		unsigned col;
@@ -1840,8 +1876,6 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 		s.h = r.h - 2 * pad;
 		if (s.h < 2 || s.x + s.w > r.x + r.w - pad)
 			break;
-		if (i >= fill)
-			continue;
 		if (gradient)
 			col = hub_lerp(0xE000C8, 0x00E4EC, i, nseg - 1);
 		else
@@ -1849,6 +1883,22 @@ static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
 		hub_fill(s, col);
 		hub_hline(s.x, s.y, s.w, hub_lerp(col, 0xFFFFFF, 1, 3), 1);
 	}
+}
+
+static void hub_segbar(hub_rect r, int pct, unsigned hi, unsigned lo)
+{
+	hub_segbar_range(r, -1, pct, hi, lo);
+}
+
+/* Paint only the segments that a forward progress tick adds. */
+static void hub_segbar_add(hub_rect r, int from_pct, int pct, unsigned hi,
+			   unsigned lo)
+{
+	if (from_pct < 0)
+		from_pct = 0;
+	if (pct <= from_pct)
+		return;
+	hub_segbar_range(r, from_pct, pct, hi, lo);
 }
 
 /* Width of a block bar that holds whole blocks only and fits in `maxw`. */
@@ -1872,18 +1922,21 @@ static int hub_blockbar_w(int maxw)
 
 /* Loading / install progress: the bar-frame 9-slice at its own height and
  * whole blocks from bar-fill. The blocks are exactly the inner height, so
- * nothing is drawn over the rim at any step. */
-static int hub_blockbar(hub_rect bar, int pct)
+ * nothing is drawn over the rim at any step. `from_pct` >= 0 skips the frame
+ * and repaints only the newly filled blocks, so a forward tick never flashes
+ * the empty track before the new fill (#1550). */
+static int hub_blockbar_range(hub_rect bar, int from_pct, int pct)
 {
 	int p = U.p < 1 ? 1 : U.p;
 	int pitch = (HUB_BAR_SEG + HUB_BAR_GAP) * p;
 	int inset = HUB_BAR_INSET * p;
-	int fh, fw, n, k, show;
+	int fh, fw, n, k, k0 = 0, show, show0 = 0;
 
 	if (!hub_chrome_has("bar-frame") || !hub_chrome_has("bar-fill"))
 		return 0;
 	bar.h = hub_chrome_h("bar-frame");
-	if (!hub_chrome_slice("bar-frame", bar.x, bar.y, bar.w, bar.h, 16))
+	if (from_pct < 0 &&
+	    !hub_chrome_slice("bar-frame", bar.x, bar.y, bar.w, bar.h, 16))
 		return 0;
 	fw = hub_chrome_w("bar-fill");
 	fh = hub_chrome_h("bar-fill");
@@ -1899,16 +1952,73 @@ static int hub_blockbar(hub_rect bar, int pct)
 		k = 1;
 	if (k < 1 || fh < 1)
 		return 1;
+	if (from_pct >= 0)
+	{
+		k0 = (n * from_pct + 50) / 100;
+		if (from_pct > 0 && k0 < 1)
+			k0 = 1;
+		if (k0 > k)
+			k0 = k;
+	}
 	show = k * pitch - HUB_BAR_GAP * p;
+	show0 = k0 * pitch - HUB_BAR_GAP * p;
+	if (show0 < 0)
+		show0 = 0;
+	if (show0 >= show)
+		return 1;
 	/* Blocks keep their place in the gradient as the bar grows. */
-	hub_chrome_clip(bar.x + inset, bar.y + inset, bar.x + inset + show,
-			bar.y + inset + fh);
+	hub_chrome_clip(bar.x + inset + show0, bar.y + inset,
+			bar.x + inset + show, bar.y + inset + fh);
 	hub_chrome_blit("bar-fill", bar.x + inset, bar.y + inset);
 	hub_chrome_unclip();
 	return 1;
 }
 
+static int hub_blockbar(hub_rect bar, int pct)
+{
+	return hub_blockbar_range(bar, -1, pct);
+}
+
+/* Paint only the blocks a forward progress tick adds. Returns 0 when the
+ * chrome assets are absent so the caller can fall back to a segment bar. */
+static int hub_blockbar_add(hub_rect bar, int from_pct, int pct)
+{
+	if (!hub_chrome_has("bar-frame") || !hub_chrome_has("bar-fill"))
+		return 0;
+	if (from_pct < 0)
+		from_pct = 0;
+	if (pct <= from_pct)
+		return 1;
+	return hub_blockbar_range(bar, from_pct, pct);
+}
+
 /* ---- loading screen -------------------------------------------------- */
+
+/* The loading bar's value: a timed crawl before the index request, then the
+ * index/icon stages. Shared by the full paint and the partial tick. */
+static int hub_loading_pct(void)
+{
+	if (U.state != HUB_ST_LOADING)
+		return 0;
+	if (!U.load_started)
+	{
+		unsigned el = mmb_now_ms() - (unsigned)U.started;
+
+		return el >= HUB_LOAD_DELAY_MS ? 42 :
+		       (int)(el * 42 / HUB_LOAD_DELAY_MS);
+	}
+	if (U.err)
+		return 55;
+	if (U.load_done)
+		return 100;
+	if (U.icon_total > 0)
+	{
+		int done = U.icon_total - U.icon_stage;
+
+		return 60 + done * 35 / U.icon_total;
+	}
+	return 55;
+}
 
 static void hub_paint_loading(void)
 {
@@ -2010,31 +2120,18 @@ static void hub_paint_loading(void)
 loading_pct:
 	if (U.state != HUB_ST_LOADING)
 		return;
-	if (!U.load_started)
-	{
-		unsigned el = mmb_now_ms() - (unsigned)U.started;
-
-		pct = el >= HUB_LOAD_DELAY_MS ? 42 :
-		      (int)(el * 42 / HUB_LOAD_DELAY_MS);
-	}
-	else if (U.err)
-		pct = 55;
-	else if (U.load_done)
-		pct = 100;
-	else if (U.icon_total > 0)
-	{
-		int done = U.icon_total - U.icon_stage;
-
-		pct = 60 + done * 35 / U.icon_total;
-	}
-	else
-		pct = 55;
+	pct = hub_loading_pct();
 	if (U.err)
 		hub_segbar(bar, pct, HUB_RED, HUB_RED_D);
 	else if (hub_blockbar(bar, pct))
 		;
 	else
 		hub_segbar(bar, pct, 0, 0);
+	/* Remember where the bar is so a later tick can repaint only it. */
+	s_loading_bar = bar;
+	s_loading_pct = pct;
+	s_loading_ok = 1;
+	s_loading_err = U.err ? 1 : 0;
 
 	if (U.err)
 	{
@@ -2047,6 +2144,23 @@ loading_pct:
 			rx = 8 * p;
 		hub_text_trunc(rx, ry, U.errmsg, HUB_RED, scale, U.w - 2 * rx);
 	}
+}
+
+/* A loading tick: only the bar changes, so repaint its newly filled part over
+ * the frame that is already on screen. Avoids the full-screen present that
+ * made the bar flicker on Pi hardware (#1550). Returns 0 when the percentage
+ * has not advanced, so the caller can skip the present entirely rather than
+ * letting an empty dirty rect turn into a full-frame upload. */
+static int hub_paint_loading_update(void)
+{
+	int pct = hub_loading_pct();
+
+	if (pct == s_loading_pct)
+		return 0;
+	if (!hub_blockbar_add(s_loading_bar, s_loading_pct, pct))
+		hub_segbar_add(s_loading_bar, s_loading_pct, pct, 0, 0);
+	s_loading_pct = pct;
+	return 1;
 }
 
 /* ---- badges ---------------------------------------------------------- */
@@ -3507,6 +3621,50 @@ static void hub_label_edges(int left, int right, int y, const char *s,
 		hub_label(right + r - hub_ui_w(s, 1), y, s, col, 1);
 }
 
+/* Status line + byte counter for the install dialog. Shared by the full
+ * paint and the partial progress tick so they can never disagree. */
+static void hub_install_status(hub_app *a, int mode, int *pct_out,
+			       const char **status, unsigned *scol,
+			       char *right, int rightsz)
+{
+	int pct = U.inst_total ? (int)((uint64_t)U.inst_done * 100u /
+				      (unsigned)U.inst_total) : 0;
+
+	right[0] = 0;
+	if (mode == 1)
+	{
+		*status = "FAILED";
+		*scol = HUB_RED;
+	}
+	else if (mode == 2)
+	{
+		*status = "DONE";
+		*scol = HUB_LIME;
+		pct = 100;
+		snprintf(right, (size_t)rightsz, "%u KB",
+			 (U.inst_total + 1023) / 1024);
+	}
+	else
+	{
+		unsigned kb = (U.inst_done + 1023) / 1024;
+		unsigned total = (U.inst_total + 1023) / 1024;
+
+		if (U.inst_total && U.inst_done >= U.inst_total)
+		{
+			*status = "INSTALLING";
+			*scol = HUB_CYAN;
+		}
+		else
+		{
+			*status = a && a->state == HUB_UPDATE ? "UPDATING" :
+				  "DOWNLOADING";
+			*scol = HUB_LIME;
+		}
+		snprintf(right, (size_t)rightsz, "%u / %u KB", kb, total);
+	}
+	*pct_out = pct;
+}
+
 static void hub_paint_install_modal(int mode)
 {
 	hub_app *a = hub_get(U.inst_index);
@@ -3521,6 +3679,7 @@ static void hub_paint_install_modal(int mode)
 	unsigned scol;
 	int y, pct, rim_l, rim_r;
 
+	s_inst_bar_ok = 0;
 	if (lh < 8)
 		lh = 16;
 	if (btn_h < 16 * p)
@@ -3569,41 +3728,8 @@ static void hub_paint_install_modal(int mode)
 	y += p + 10 * p;
 
 	/* Status line: what is happening on the left, the numbers right. */
-	right[0] = 0;
-	pct = U.inst_total ? (int)((uint64_t)U.inst_done * 100u /
-				    (unsigned)U.inst_total) : 0;
-	if (mode == 1)
-	{
-		status = "FAILED";
-		scol = HUB_RED;
-		pct = U.inst_total ? pct : 0;
-	}
-	else if (mode == 2)
-	{
-		status = "DONE";
-		scol = HUB_LIME;
-		pct = 100;
-		snprintf(right, sizeof(right), "%u KB",
-			 (U.inst_total + 1023) / 1024);
-	}
-	else
-	{
-		unsigned kb = (U.inst_done + 1023) / 1024;
-		unsigned total = (U.inst_total + 1023) / 1024;
-
-		if (U.inst_total && U.inst_done >= U.inst_total)
-		{
-			status = "INSTALLING";
-			scol = HUB_CYAN;
-		}
-		else
-		{
-			status = a && a->state == HUB_UPDATE ? "UPDATING" :
-				 "DOWNLOADING";
-			scol = HUB_LIME;
-		}
-		snprintf(right, sizeof(right), "%u / %u KB", kb, total);
-	}
+	hub_install_status(a, mode, &pct, &status, &scol, right,
+			   sizeof(right));
 	/* The labels hang off the bar's silver rim: status and target start at
 	 * its left edge, the size ends at its right edge (by visible ink). */
 	bar.w = hub_blockbar_w(c.w);
@@ -3615,6 +3741,19 @@ static void hub_paint_install_modal(int mode)
 	hub_label_edges(rim_l, -1, y, status, scol);
 	if (right[0])
 		hub_label_edges(-1, rim_r, y, right, HUB_TEXT);
+	/* Remember the dynamic geometry so a transfer tick can repaint just the
+	 * status row and the newly filled bar (#1549, #1550). */
+	if (mode == 0)
+	{
+		s_inst_bar = bar;
+		s_inst_status = (hub_rect){ c.x, y, c.w, lh };
+		s_inst_rim_l = rim_l;
+		s_inst_rim_r = rim_r;
+		s_inst_label_y = y;
+		s_inst_pct = pct;
+		s_inst_mode = mode;
+		s_inst_bar_ok = 1;
+	}
 	y = bar.y;
 	if (!hub_blockbar(bar, pct))
 		hub_segbar(bar, pct, mode == 1 ? HUB_RED : HUB_LIME,
@@ -3656,6 +3795,36 @@ static void hub_paint_install_modal(int mode)
 		s_modal_ok = b;
 		s_has_ok = 1;
 	}
+}
+
+/* A transfer tick: repaint only the status row and the newly filled blocks of
+ * the bar. Progress only moves forward, so nothing needs clearing to black
+ * first; the rest of the dialog and the screen under it stay untouched. This
+ * also keeps the full-frame present out of the download loop, which was the
+ * source of the Pi 400 page-flip flicker (#1549, #1550). */
+static void hub_install_modal_update(void)
+{
+	hub_app *a = hub_get(U.inst_index);
+	int pct;
+	const char *status;
+	unsigned scol;
+	char right[64];
+
+	hub_install_status(a, 0, &pct, &status, &scol, right, sizeof(right));
+	/* The labels are transparent glyphs, so clear their row first to drop
+	 * the previous digits (a shrinking KB count would otherwise ghost). */
+	hub_fill(s_inst_status, HUB_MODAL_BG);
+	hub_label_edges(s_inst_rim_l, -1, s_inst_label_y, status, scol);
+	if (right[0])
+		hub_label_edges(-1, s_inst_rim_r, s_inst_label_y, right,
+				HUB_TEXT);
+	if (!hub_blockbar_add(s_inst_bar, s_inst_pct, pct))
+		hub_segbar_add(s_inst_bar, s_inst_pct, pct, HUB_LIME,
+			       HUB_LIME_D);
+	s_inst_pct = pct;
+	/* Only the dirty union drawn above is uploaded, not the whole frame. */
+	mmb_gfx_present();
+	U.last_frame = mmb_now_ms();
 }
 
 static void hub_paint_remove_modal(void)
@@ -3742,6 +3911,10 @@ static void hub_frame(void)
 {
 	if (!U.active)
 		return;
+	/* Only the owning console paints HUB. Switching to another screen must
+	 * leave that screen alone until focus comes back (#1548). */
+	if (U.console != g_console)
+		return;
 	if (g_console != mmb_console_visible())
 		return;
 	G.gfx.write_page = 0;
@@ -3754,8 +3927,24 @@ static void hub_frame(void)
 	s_has_yesno = 0;
 	s_has_cancel = 0;
 	s_has_ok = 0;
-	hub_paint();
-	mmb_gfx_dirty_add(0, 0, U.w, U.h);
+	/* A loading bar tick with the same screen underneath only needs the bar
+	 * redrawn; every other change (error, new screen, resize) takes the
+	 * full paint so no stale geometry survives. */
+	if (U.state == HUB_ST_LOADING && s_loading_ok && !U.err &&
+	    !s_loading_err)
+	{
+		if (!hub_paint_loading_update())
+		{
+			U.dirty = 0;
+			U.last_frame = mmb_now_ms();
+			return;
+		}
+	}
+	else
+	{
+		hub_paint();
+		mmb_gfx_dirty_add(0, 0, U.w, U.h);
+	}
 	mmb_gfx_present();
 	U.dirty = 0;
 	U.last_frame = mmb_now_ms();
@@ -3803,13 +3992,30 @@ static int hub_install_target_path(int index, char *out, int outsz)
 
 static int hub_install_progress(unsigned done, unsigned total, void *ctx)
 {
+	unsigned now;
+
 	(void)ctx;
+	/* Input is still pumped on every chunk so Esc/CANCEL stay responsive;
+	 * only the repaint is capped. A transfer can call back thousands of
+	 * times, and repainting the whole dialog each time both starved the
+	 * download (#1547) and tore the screen on Pi (#1549). */
 	hub_install_pump();
 	if (total && U.inst_total != total)
 		U.inst_total = total;
 	U.inst_done = done;
 	U.dirty = 1;
-	hub_frame();
+	now = mmb_now_ms();
+	if (!s_inst_bar_ok || s_inst_mode != 0)
+	{
+		hub_frame();
+		U.inst_redraw_at = now;
+	}
+	else if (now - U.inst_redraw_at >= HUB_PROGRESS_MS ||
+		 (total && done >= total))
+	{
+		hub_install_modal_update();
+		U.inst_redraw_at = now;
+	}
 	return U.inst_cancel ? 1 : 0;
 }
 
@@ -4429,7 +4635,7 @@ static void hub_arrow(int code, unsigned arg)
 
 const char *mmb_hub_key(char c)
 {
-	if (!U.active)
+	if (!mmb_in_hub())
 		return "";
 	if (U.state == HUB_ST_INSTALL)
 	{
@@ -4506,7 +4712,10 @@ void mmb_hub_close(void)
 
 int mmb_in_hub(void)
 {
-	return U.active;
+	/* HUB only owns the screen, keyboard and mouse of its own console.
+	 * A virtual-console switch parks it (state intact) until focus comes
+	 * back (#1548). */
+	return U.active && U.console == g_console;
 }
 
 /* ---- mouse ----------------------------------------------------------- */
@@ -4639,11 +4848,19 @@ void mmb_hub_poll(void)
 
 	if (!U.active)
 		return;
+	/* Dormant while another virtual console is in front. Its saved screen
+	 * is restored on return, so skip every timer, input and repaint here
+	 * rather than drawing over the focused screen (#1548). */
+	if (U.console != g_console)
+		return;
 	if (G.gfx.w != U.layout_w || G.gfx.h != U.layout_h)
 	{
 		U.w = G.gfx.w > 0 ? G.gfx.w : 640;
 		U.h = G.gfx.h > 0 ? G.gfx.h : 360;
 		hub_layout_now();
+		/* Old bar geometry no longer fits; the next tick full-paints. */
+		s_loading_ok = 0;
+		s_inst_bar_ok = 0;
 		U.dirty = 1;
 	}
 	now = mmb_now_ms();
@@ -4716,11 +4933,21 @@ void mmb_hub_open(void)
 {
 	hub_rect r;
 
+	/* Single instance across virtual consoles (#1548). HUB keeps one global
+	 * state, so starting it again while it runs on another screen would
+	 * either wipe that state or shadow it. */
 	if (U.active)
+	{
+		mmb_error("?HUB: already running");
 		return;
+	}
 	if (G.running)
 		mmb_error("?Not available in RUN");
 	memset(&U, 0, sizeof(U));
+	U.console = mmb_console_active();
+	s_loading_ok = 0;
+	s_loading_err = 0;
+	s_inst_bar_ok = 0;
 	U.saved_mode = G.gfx.mode;
 	U.saved_bits = G.gfx.bits;
 	U.saved_font_scale = G.gfx.font_scale;
@@ -4745,10 +4972,15 @@ void mmb_hub_open(void)
 	U.buttons = 0;
 	U.last_frame = 0;
 	U.last_asset = 0;
+	U.inst_redraw_at = 0;
 	r.x = 0;
 	r.y = 0;
 	r.w = U.w;
 	r.h = U.h;
 	(void)r;
+	/* The console cursor belongs to the REPL; hide it while HUB owns the
+	 * screen so a virtual-console snapshot cannot stamp it over the UI
+	 * (#1548). PAINT and TERM do the same. */
+	mmb_hw_cursor(0);
 	hub_frame();
 }
