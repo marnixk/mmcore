@@ -104,6 +104,7 @@ typedef struct app_tui_state {
 	int page;               /* rows per page from the last layout */
 	int catf;               /* picker category filter, -1 = ALL */
 	int present[MMB_APP_CATEGORY_COUNT]; /* non-empty package categories */
+	int builtin_present;    /* picker BUILT-IN group has entries */
 	char filter[APP_LABEL]; /* typed substring, empty = no filter */
 	int esc;
 	unsigned esc_at;
@@ -446,9 +447,15 @@ static void at_compute_present(void)
 	int i;
 
 	memset(AT.present, 0, sizeof(AT.present));
+	AT.builtin_present = 0;
 	for (i = 0; i < AT.nent; i++)
-		if (AT.ent[i].cat >= 0 && AT.ent[i].cat < mmb_app_category_count())
+	{
+		if (AT.ent[i].cat == APP_LIST_CAT_BUILTIN)
+			AT.builtin_present = 1;
+		else if (AT.ent[i].cat >= 0 &&
+			 AT.ent[i].cat < mmb_app_category_count())
 			AT.present[AT.ent[i].cat] = 1;
+	}
 }
 
 /* Rebuild the visible row list from the entries (and the HUB pinned entry
@@ -645,27 +652,27 @@ static void at_end(void)
 		AT.sel = n;
 }
 
-/* Tab / Shift+Tab in the picker: ALL -> first non-empty category -> ... ->
- * OTHER -> ALL, skipping categories with no installed packages. */
+/* Tab / Shift+Tab in the picker: ALL -> BUILT-IN -> first non-empty category
+ * -> ... -> OTHER -> ALL, skipping groups with no entries (#1546). */
 static void at_cycle_cat(int dir)
 {
-	int cats[MMB_APP_CATEGORY_COUNT];
-	int i, k = 0, cur, ring, p;
+	int ring[MMB_APP_CATEGORY_COUNT + 2];
+	int i, cur = 0, nring = 0, p;
 
+	ring[nring++] = -1;
+	if (AT.builtin_present)
+		ring[nring++] = APP_LIST_CAT_BUILTIN;
 	for (i = 0; i < mmb_app_category_count(); i++)
 		if (AT.present[i])
-			cats[k++] = i;
-	cur = 0;
-	if (AT.catf >= 0)
-		for (i = 0; i < k; i++)
-			if (cats[i] == AT.catf)
-				cur = i + 1;
-	ring = k + 1;
+			ring[nring++] = i;
+	for (i = 0; i < nring; i++)
+		if (ring[i] == AT.catf)
+			cur = i;
 	p = cur + dir;
-	p %= ring;
+	p %= nring;
 	if (p < 0)
-		p += ring;
-	AT.catf = p == 0 ? -1 : cats[p - 1];
+		p += nring;
+	AT.catf = ring[p];
 	at_rebuild();
 	AT.sel = app_list_first(&AT.list);
 }
@@ -939,6 +946,8 @@ static void at_draw(void)
 
 	if (AT.mode == APPTUI_LAUNCH)
 		strcpy(title, " HOME ");
+	else if (AT.catf == APP_LIST_CAT_BUILTIN)
+		strcpy(title, " APPS: BUILT-IN ");
 	else if (AT.catf >= 0)
 		snprintf(title, sizeof(title), " APPS: %s ",
 			 mmb_app_category_name(AT.catf));

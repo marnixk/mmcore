@@ -336,7 +336,7 @@ def test_apps_launcher_groups_by_category(console):
 
 
 def test_ctrl_space_tab_cycles_categories(console):
-    """Tab / Shift+Tab cycle the picker's non-empty category filter."""
+    """Tab / Shift+Tab cycle ALL, BUILT-IN, then non-empty categories (#1546)."""
     con = console
     _build_app(con, "TABPK", "GAME", "GAMEA", "GAMEOK", "Game A", "GAMES")
     _build_app(con, "TABPK", "TOOL", "TOOLA", "TOOLOK", "Tool A", "UTILITIES")
@@ -346,6 +346,10 @@ def test_ctrl_space_tab_cycles_categories(console):
     try:
         seen = _keys(con, b"\x00")  # Ctrl+Space
         assert "APPS: ALL" in seen and "GAME A" in seen and "TOOL A" in seen, seen
+
+        seen = _keys(con, b"\t")
+        assert "APPS: BUILT-IN" in seen and "WORD PROCESSOR" in seen, seen
+        assert "GAME A" not in seen and "TOOL A" not in seen, seen
 
         seen = _keys(con, b"\t")
         assert "APPS: GAMES" in seen and "GAME A" in seen, seen
@@ -360,6 +364,10 @@ def test_ctrl_space_tab_cycles_categories(console):
 
         seen = _keys(con, b"\x1b[Z")  # Shift+Tab from ALL wraps backwards
         assert "APPS: UTILITIES" in seen and "TOOL A" in seen, seen
+        seen = _keys(con, b"\x1b[Z")  # ...continues backwards into GAMES...
+        assert "APPS: GAMES" in seen, seen
+        seen = _keys(con, b"\x1b[Z")  # ...and then BUILT-IN.
+        assert "APPS: BUILT-IN" in seen, seen
     finally:
         _dismiss(con)
     assert con.send_line("PRINT 27") == "27"
