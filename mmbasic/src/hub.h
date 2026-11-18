@@ -47,6 +47,10 @@ typedef int (*hub_progress_fn)(unsigned bytes_done, unsigned bytes_total,
  * "OFFLINE", "SERVER ERROR <code>" or "UNSUPPORTED INDEX ...". */
 int hub_load_index(char *err, int errsz);
 
+/* Non-zero when hub_load_index() succeeded from the on-disk cache because the
+ * network fetch failed (#1544). Cleared by the next successful online load. */
+int hub_is_offline(void);
+
 int hub_count(void);
 hub_app *hub_get(int i);
 

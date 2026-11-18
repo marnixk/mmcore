@@ -489,7 +489,8 @@ def test_reinstall_stays_where_installed(mmb, hub, tmp_path):
         'PRINT "AT "; DIR$("A:/APPS/jetpack.APP")',
     ], tmp_path)
     assert "AT JETPACK.APP" in out.upper(), out
-    assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == [], out
+    assert [n for n in os.listdir(os.path.join(str(tmp_path), "C", "APPS"))
+            if not n.startswith(".")] == [], out
 
 
 def test_update_goes_to_installed_copy(mmb, hub, tmp_path):
@@ -506,7 +507,8 @@ def test_update_goes_to_installed_copy(mmb, hub, tmp_path):
     ], tmp_path, after=["JETPACK"])
     assert "UPDATE" in out, out
     assert "JETPACK RAN" in out and "OLD" not in out.split("HUB")[-1], out
-    assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == [], out
+    assert [n for n in os.listdir(os.path.join(str(tmp_path), "C", "APPS"))
+            if not n.startswith(".")] == [], out
 
 
 def test_c_apps_copy_shadows_ramdisk_copy(mmb, hub, tmp_path):
@@ -539,3 +541,75 @@ def test_explicit_path_is_respected(mmb, hub, tmp_path):
     assert os.path.isfile(os.path.join(str(tmp_path), "C", "MINE",
                                        "jetpack.APP"))
     assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == []
+
+
+# --- offline cache (#1544) --------------------------------------------------
+
+
+def _dead_base():
+    """A loopback address with nothing listening."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return "http://127.0.0.1:%d/" % port
+
+
+def _cache_index(root):
+    return os.path.join(str(root), "C", "APPS", ".hub", "index.json")
+
+
+def _cached_ids(root):
+    with open(_cache_index(root), "rb") as fh:
+        return [a["id"] for a in json.load(fh)["apps"]]
+
+
+def test_cache_written_after_load(mmb, hub, tmp_path):
+    """A successful load saves index.json and the assets it downloads."""
+    os.makedirs(os.path.join(str(tmp_path), "C", "APPS"))
+    out = run(mmb, [
+        set_url(hub.base),
+        "HUB LIST",
+        'HUB FETCH "info/jetpack/icon.png"',
+    ], tmp_path)
+    assert "jetpack" in out and "FETCH %d" % len(TINY_PNG) in out, out
+    assert os.path.isfile(_cache_index(tmp_path)), out
+    assert _cached_ids(tmp_path) == ["jetpack", "puzzle", "future", "badsum"]
+    icon = os.path.join(str(tmp_path), "C", "APPS", ".hub", "info",
+                        "jetpack", "icon.png")
+    assert os.path.isfile(icon), out
+    with open(icon, "rb") as fh:
+        assert fh.read() == TINY_PNG
+
+
+def test_offline_uses_cached_index(mmb, hub, tmp_path):
+    """With a cache an offline load lists the catalogue instead of failing."""
+    os.makedirs(os.path.join(str(tmp_path), "C", "APPS"))
+    run(mmb, [set_url(hub.base), "HUB LIST"], tmp_path)
+    out = run(mmb, [set_url(_dead_base()), "HUB LIST"], tmp_path)
+    assert "HUB: OFFLINE (CACHED)" in out, out
+    assert "jetpack" in out and "NOT INSTALLED" in out, out
+    assert "SERVER ERROR" not in out, out
+
+
+def test_offline_without_cache_shows_first_time_message(mmb, tmp_path):
+    """The first run with no connection keeps the error and asks to connect."""
+    out = run(mmb, [set_url(_dead_base()), "HUB LIST"], tmp_path)
+    assert "OFFLINE" in out, out
+    assert "CONNECT ONCE" in out, out
+    assert not os.path.exists(_cache_index(tmp_path)), out
+
+
+def test_cache_refreshes_when_back_online(mmb, hub, tmp_path):
+    """A later successful load replaces the cached catalogue."""
+    os.makedirs(os.path.join(str(tmp_path), "C", "APPS"))
+    hub.add_index("/index.json", index_doc(apps=[app_entry("jetpack")]))
+    run(mmb, [set_url(hub.base), "HUB LIST"], tmp_path)
+    assert _cached_ids(tmp_path) == ["jetpack"]
+    hub.add_index("/index.json", index_doc(apps=[app_entry("puzzle")]))
+    out = run(mmb, [set_url(hub.base), "HUB LIST"], tmp_path)
+    assert "puzzle" in out and "jetpack" not in out, out
+    assert _cached_ids(tmp_path) == ["puzzle"]
+    # The refreshed cache is what a later offline start sees.
+    out = run(mmb, [set_url(_dead_base()), "HUB LIST"], tmp_path)
+    assert "puzzle" in out and "jetpack" not in out, out
