@@ -209,7 +209,8 @@ static int al_flat(struct app_list *al, const struct app_list_src *src, int n,
 
 	for (i = 0; i < n; i++)
 	{
-		if (cat_filter >= 0 && al_normal_category(src[i].category) != cat_filter)
+		if ((cat_filter >= 0 || cat_filter == APP_LIST_CAT_BUILTIN) &&
+		    al_normal_category(src[i].category) != cat_filter)
 			continue;
 		if (!al_visible(&src[i], filter))
 			continue;
