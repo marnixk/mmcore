@@ -434,3 +434,108 @@ def test_option_hub_url_trailing_slash_and_default(mmb, tmp_path):
     run(mmb, ['OPTION HUB URL "http://persisted.test"'], tmp_path)
     out = run(mmb, ["OPTION LIST"], tmp_path)
     assert 'OPTION HUB URL "http://persisted.test/"' in out, out
+
+
+# --- default install target: C:/APPS when it exists, else the ramdisk -------
+
+
+def stage(root, name, data):
+    """Put a package under C:/STAGE so the program can COPY it to A:."""
+    d = os.path.join(str(root), "C", "STAGE")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, name), "wb") as fh:
+        fh.write(data)
+    return "C:/STAGE/" + name
+
+
+def test_default_path_installs_to_c_apps(mmb, hub, tmp_path):
+    """No OPTION PATH: an existing C:/APPS/ is the install target, and the
+    app is found there (INSTALLED, bare-name RUN)."""
+    apps_dir = os.path.join(str(tmp_path), "C", "APPS")
+    os.makedirs(apps_dir)
+    out = run(mmb, [
+        set_url(hub.base),
+        'HUB INSTALL "jetpack"',
+        "HUB LIST",
+    ], tmp_path, after=["JETPACK"])
+    assert "INSTALLED" in out and "NOT INSTALLED" not in out.split(
+        "jetpack", 1)[1].splitlines()[0], out
+    assert "JETPACK RAN" in out, out
+    with open(os.path.join(apps_dir, "jetpack.APP"), "rb") as fh:
+        assert fh.read() == APPS["jetpack"]
+
+
+def test_default_path_without_c_apps_uses_ramdisk(mmb, hub, tmp_path):
+    """Without C:/APPS/ the install falls back to A:/APPS/ as before."""
+    os.makedirs(os.path.join(str(tmp_path), "C"))
+    out = run(mmb, [
+        set_url(hub.base),
+        'HUB INSTALL "jetpack"',
+        'PRINT "AT "; DIR$("A:/APPS/jetpack.APP")',
+    ], tmp_path, after=["JETPACK"])
+    assert "AT JETPACK.APP" in out.upper(), out
+    assert "JETPACK RAN" in out, out
+    assert not os.path.exists(os.path.join(str(tmp_path), "C", "APPS"))
+
+
+def test_reinstall_stays_where_installed(mmb, hub, tmp_path):
+    """An app already on A: is overwritten in place, not duplicated on C:."""
+    os.makedirs(os.path.join(str(tmp_path), "C"))
+    out = run(mmb, [
+        set_url(hub.base),
+        'HUB INSTALL "jetpack"',
+        'MKDIR "C:/APPS"',
+        'HUB INSTALL "jetpack"',
+        'PRINT "AT "; DIR$("A:/APPS/jetpack.APP")',
+    ], tmp_path)
+    assert "AT JETPACK.APP" in out.upper(), out
+    assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == [], out
+
+
+def test_update_goes_to_installed_copy(mmb, hub, tmp_path):
+    """UPDATE overwrites the copy that is installed (here on A:) even though
+    new installs would go to C:/APPS/."""
+    os.makedirs(os.path.join(str(tmp_path), "C", "APPS"))
+    src = stage(tmp_path, "old.APP",
+                make_app("jetpack", "Jetpack", "1.0", 'PRINT "OLD"\n'))
+    out = run(mmb, [
+        'COPY "%s" TO "A:/APPS/jetpack.APP"' % src,
+        set_url(hub.base),
+        "HUB LIST",
+        "HUB UPDATE",
+    ], tmp_path, after=["JETPACK"])
+    assert "UPDATE" in out, out
+    assert "JETPACK RAN" in out and "OLD" not in out.split("HUB")[-1], out
+    assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == [], out
+
+
+def test_c_apps_copy_shadows_ramdisk_copy(mmb, hub, tmp_path):
+    """The same app on C:/APPS/ and A:/APPS/: C: is searched first, so the
+    hub sees the current C: copy (INSTALLED, no UPDATE) and RUN starts it."""
+    preinstall(tmp_path, "jetpack", APPS["jetpack"])
+    src = stage(tmp_path, "old.APP",
+                make_app("jetpack", "Jetpack", "1.0", 'PRINT "OLD"\n'))
+    out = run(mmb, [
+        'COPY "%s" TO "A:/APPS/jetpack.APP"' % src,
+        set_url(hub.base),
+        "HUB LIST",
+    ], tmp_path, after=["JETPACK"])
+    row = [l for l in out.splitlines() if "jetpack" in l.lower() and
+           "INSTALLED" in l.upper()]
+    assert row and "UPDATE" not in row[0], out
+    assert "JETPACK RAN" in out and "\nOLD" not in out, out
+
+
+def test_explicit_path_is_respected(mmb, hub, tmp_path):
+    """An explicit OPTION PATH without C:/APPS/ is not changed."""
+    os.makedirs(os.path.join(str(tmp_path), "C", "APPS"))
+    os.makedirs(os.path.join(str(tmp_path), "C", "MINE"))
+    out = run(mmb, [
+        'OPTION PATH "C:/MINE/"',
+        set_url(hub.base),
+        'HUB INSTALL "jetpack"',
+    ], tmp_path)
+    assert "INSTALLED" in out, out
+    assert os.path.isfile(os.path.join(str(tmp_path), "C", "MINE",
+                                       "jetpack.APP"))
+    assert os.listdir(os.path.join(str(tmp_path), "C", "APPS")) == []

@@ -64,6 +64,7 @@ int hub_fetch(const char *relpath, unsigned char **buf, unsigned *n,
 /* Install or update app `i`. Verifies size and SHA-256 before writing, writes
  * `<target>.tmp` and renames it into place. Returns 0 on success. */
 int hub_install(int i, hub_progress_fn cb, void *ctx, char *err, int errsz);
+char *hub_target_path(int i);
 
 /* Delete the installed .APP for app `i` and recompute its state. */
 int hub_remove(int i, char *err, int errsz);

@@ -60,8 +60,12 @@ Controls:
   click the main button, and click outside a dialog to cancel it.
 
 The hub reads an index from `OPTION HUB URL` (default
-https://hub.mmcore.dev/) and installs `.APP` packages into the first writable
-directory on ~OPTION~ PATH. The index lists each package's id, version, size
+https://hub.mmcore.dev/) and installs `.APP` packages into `C:/APPS/` when
+that folder exists (A: is the ramdisk and is lost at power-off), otherwise
+into the first writable directory on ~OPTION~ PATH (by default `A:/APPS/`).
+With the default PATH, `C:/APPS/` is also searched first, so installed apps
+show up in ~APPS~ and run by name. An app that is already installed is
+updated in place, wherever it lives, and is listed once. The index lists each package's id, version, size
 and SHA-256 checksum. Downloads are checked against both before anything is
 written, so a corrupt or tampered package is rejected instead of installed.
 

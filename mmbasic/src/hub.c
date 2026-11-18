@@ -345,7 +345,7 @@ static mmb_dirent *hub_list_entries(const char *dir, int *count)
  * OPTION PATH directory. */
 static void hub_scan_installed(hub_inst_list *l)
 {
-	const char *p = G.opt.app_path;
+	const char *p = mmb_app_path();
 
 	memset(l, 0, sizeof(*l));
 	while (p && *p)
@@ -823,10 +823,42 @@ int hub_fetch(const char *relpath, unsigned char **buf, unsigned *n,
 
 /* ---- install / remove ------------------------------------------------ */
 
+static char *hub_target_in(const char *dir, const char *id)
+{
+	char *target = hub_join(dir, id);
+
+	if (target)
+	{
+		char *with_ext = G.plat->alloc((unsigned)strlen(target) + 5);
+
+		if (with_ext)
+		{
+			strcpy(with_ext, target);
+			strcat(with_ext, ".APP");
+		}
+		G.plat->free(target);
+		target = with_ext;
+	}
+	return target;
+}
+
+/* Where a new install goes. C:/APPS/ (the SD card) wins whenever it exists,
+ * is writable and is on the PATH, because A: is the ramdisk; otherwise the
+ * first writable PATH folder, creating the default A:/APPS/ if needed.
+ * Updates never come here: they overwrite the copy that is installed. */
 static char *hub_install_target(const char *id, char *err, int errsz)
 {
-	const char *p = G.opt.app_path;
+	const char *p = mmb_app_path();
 
+	if (mmb_app_path_has(p, MMB_APP_PATH_SD) &&
+	    mmb_vfs_isdir(MMB_APP_PATH_SD) &&
+	    !mmb_vfs_readonly_path(MMB_APP_PATH_SD))
+	{
+		char *target = hub_target_in(MMB_APP_PATH_SD, id);
+
+		if (target)
+			return target;
+	}
 	while (p && *p)
 	{
 		const char *e = p;
@@ -854,24 +886,27 @@ static char *hub_install_target(const char *id, char *err, int errsz)
 			continue;
 		else if (mmb_vfs_mkdir(dir) != 0)
 			continue;
-		target = hub_join(dir, id);
-		if (target)
-		{
-			char *with_ext = G.plat->alloc((unsigned)strlen(target) + 5);
-
-			if (with_ext)
-			{
-				strcpy(with_ext, target);
-				strcat(with_ext, ".APP");
-			}
-			G.plat->free(target);
-			target = with_ext;
-		}
+		target = hub_target_in(dir, id);
 		if (target)
 			return target;
 	}
 	hub_set_err(err, errsz, "NO WRITABLE APP FOLDER");
 	return 0;
+}
+
+/* The path HUB would write app `i` to: its installed copy, else the new
+ * install target. Caller frees. */
+char *hub_target_path(int i)
+{
+	hub_app *a;
+	char err[64];
+
+	if (i < 0 || i >= s_napps)
+		return 0;
+	a = &s_apps[i];
+	if (a->installed_path)
+		return hub_strdup(a->installed_path);
+	return hub_install_target(a->id ? a->id : "", err, sizeof(err));
 }
 
 int hub_install(int i, hub_progress_fn cb, void *ctx, char *err, int errsz)
