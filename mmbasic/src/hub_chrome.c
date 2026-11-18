@@ -696,6 +696,43 @@ int hub_chrome_ui_w(const char *text, int zoom)
 	return (int)strlen(text) * cw * im->scale * zoom;
 }
 
+/* Blank columns before the first and after the last glyph's ink, in
+ * screen pixels, so a label can be placed by its visible edge. */
+static int ui_glyph_ink(chrome_img *im, int idx, int cw, int ch, int last)
+{
+	int x, y, n = 0;
+
+	for (x = 0; x < cw; x++)
+	{
+		int col = last ? cw - 1 - x : x;
+
+		for (y = 0; y < ch; y++)
+			if (im->pix[y * im->w + idx * cw + col] >> 24)
+				return n;
+		n++;
+	}
+	return 0;
+}
+
+void hub_chrome_ui_bearing(const char *text, int zoom, int *left, int *right)
+{
+	chrome_img *im = chrome_find("ui-font");
+	int cw, ch, a, b, n;
+
+	*left = *right = 0;
+	if (!text || !*text || !ui_cell(im, &cw, &ch))
+		return;
+	if (zoom < 1)
+		zoom = 1;
+	n = (int)strlen(text);
+	a = ui_index(text[0]);
+	b = ui_index(text[n - 1]);
+	if (a >= 0)
+		*left = ui_glyph_ink(im, a, cw, ch, 0) * im->scale * zoom;
+	if (b >= 0)
+		*right = ui_glyph_ink(im, b, cw, ch, 1) * im->scale * zoom;
+}
+
 int hub_chrome_ui(const char *text, int x, int y, unsigned rgb, int zoom)
 {
 	chrome_img *im = chrome_find("ui-font");

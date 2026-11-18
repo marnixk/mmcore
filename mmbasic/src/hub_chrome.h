@@ -36,6 +36,8 @@ int hub_chrome_frame_band(void);
 
 /* Progress bar (bar-frame / bar-fill) in 1x pixels. */
 #define HUB_BAR_INSET 5
+/* bar-frame: 1 asset px of dark outline outside the visible silver rim. */
+#define HUB_BAR_OUTLINE 1
 #define HUB_BAR_SEG 18
 #define HUB_BAR_GAP 2
 
@@ -56,6 +58,7 @@ int hub_chrome_badge(const char *label, int x, int y, int w, int h);
 /* Monospace UI face. `zoom` is an extra integer scale (1 or 2). */
 int hub_chrome_ui(const char *text, int x, int y, unsigned rgb, int zoom);
 int hub_chrome_ui_w(const char *text, int zoom);
+void hub_chrome_ui_bearing(const char *text, int zoom, int *left, int *right);
 int hub_chrome_ui_h(void);
 
 #endif

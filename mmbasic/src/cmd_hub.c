@@ -3447,6 +3447,23 @@ static void hub_modal_rect(hub_rect *m, int wunits, int hunits)
 /* Install dialog. One framed panel in the HUB's own art: the app icon and
  * name, a status line, the block bar from the loading screen and a single
  * plate button. `mode` 0 is the transfer, 1 a failure, 2 done. */
+/* Place a one-zoom label by its visible ink: left >= 0 puts the first ink
+ * column there, otherwise right puts the column after the last ink there. */
+static void hub_label_edges(int left, int right, int y, const char *s,
+			    unsigned col)
+{
+	int l = 0, r = 0;
+
+	if (!s || !*s)
+		return;
+	if (hub_chrome_has("ui-font"))
+		hub_chrome_ui_bearing(s, 1, &l, &r);
+	if (left >= 0)
+		hub_label(left - l, y, s, col, 1);
+	else
+		hub_label(right + r - hub_ui_w(s, 1), y, s, col, 1);
+}
+
 static void hub_paint_install_modal(int mode)
 {
 	hub_app *a = hub_get(U.inst_index);
@@ -3459,7 +3476,7 @@ static void hub_paint_install_modal(int mode)
 	char name[96], buf[192], right[64];
 	const char *status;
 	unsigned scol;
-	int y, pct, tw;
+	int y, pct, rim_l, rim_r;
 
 	if (lh < 8)
 		lh = 16;
@@ -3544,16 +3561,18 @@ static void hub_paint_install_modal(int mode)
 		}
 		snprintf(right, sizeof(right), "%u / %u KB", kb, total);
 	}
-	hub_label(c.x, y, status, scol, 1);
-	tw = hub_ui_w(right, 1);
-	if (right[0])
-		hub_label(c.x + c.w - tw, y, right, HUB_TEXT, 1);
-	y += lh + 6 * p;
-
+	/* The labels hang off the bar's silver rim: status and target start at
+	 * its left edge, the size ends at its right edge (by visible ink). */
 	bar.w = hub_blockbar_w(c.w);
 	bar.h = bar_h;
 	bar.x = c.x + (c.w - bar.w) / 2;
-	bar.y = y;
+	bar.y = y + lh + 6 * p;
+	rim_l = bar.x + HUB_BAR_OUTLINE * p;
+	rim_r = bar.x + bar.w - HUB_BAR_OUTLINE * p;
+	hub_label_edges(rim_l, -1, y, status, scol);
+	if (right[0])
+		hub_label_edges(-1, rim_r, y, right, HUB_TEXT);
+	y = bar.y;
 	if (!hub_blockbar(bar, pct))
 		hub_segbar(bar, pct, mode == 1 ? HUB_RED : HUB_LIME,
 			   mode == 1 ? HUB_RED_D : HUB_LIME_D);
@@ -3565,7 +3584,14 @@ static void hub_paint_install_modal(int mode)
 	else
 		snprintf(buf, sizeof(buf), "%s%s", mode == 2 ? "SAVED TO " : "",
 			 U.inst_target[0] ? U.inst_target : "");
-	hub_ui_trunc(c.x, y, buf, mode == 1 ? HUB_RED : HUB_DIM, 1, c.w);
+	{
+		int l = 0, r = 0;
+
+		if (hub_chrome_has("ui-font"))
+			hub_chrome_ui_bearing(buf, 1, &l, &r);
+		hub_ui_trunc(rim_l - l, y, buf, mode == 1 ? HUB_RED : HUB_DIM,
+			     1, rim_r - rim_l + l);
+	}
 
 	/* One plate button, centred on the bottom of the clear area. */
 	b.w = 120 * p;
