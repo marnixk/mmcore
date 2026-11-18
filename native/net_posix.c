@@ -29,7 +29,9 @@
 #define MSG_NOSIGNAL 0
 #endif
 
-#define RXCAP 1600
+/* Socket read scratch (#1547): match the WEB transfer buffer so one recv can
+ * satisfy a whole download chunk instead of capping every read at one frame. */
+#define RXCAP 8192
 #define SRV_MAX_LISTEN 2
 #define SRV_MAX_CONN 4
 

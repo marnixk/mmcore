@@ -243,6 +243,47 @@ def test_install_then_run(native_mmcore, hub, tmp_path):
     assert "PUZZLE RAN" in out, out
 
 
+# --- virtual consoles and single instance (#1548) ---------------------------
+
+
+def test_switching_console_keeps_hub_state(native_mmcore, hub, tmp_path):
+    """Ctrl+Alt+2 must show the other console, not paint HUB over it, and
+    Ctrl+Alt+1 must bring the HUB screen back unchanged."""
+    s, _ = _session(tmp_path, hub)
+    hub_before = s.snapshot("hub-before.ppm")
+    s.key("ctrl+alt+2")
+    s.wait_ms(300)
+    other = s.snapshot("console-2.ppm")
+    s.key("ctrl+alt+1")
+    s.wait_ms(300)
+    hub_back = s.snapshot("hub-back.ppm")
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out, out
+    assert not _same(hub_before, other), "HUB stayed on the forwarded screen"
+    assert _same(hub_before, hub_back), \
+        "returning to the HUB console did not restore its screen"
+
+
+def test_second_hub_instance_is_refused(native_mmcore, hub, tmp_path):
+    """HUB is one global app, so starting it on another console while it runs
+    is refused and the original keeps its state."""
+    s, _ = _session(tmp_path, hub)
+    hub_before = s.snapshot("hub-before.ppm")
+    s.key("ctrl+alt+2")
+    s.wait_ms(300)
+    s.feed("HUB")
+    s.wait_ms(300)
+    s.key("ctrl+alt+1")
+    s.wait_ms(300)
+    hub_back = s.snapshot("hub-back.ppm")
+    s.quit()
+    out = s.run()
+    assert "?HUB: already running" in out, out
+    assert _same(hub_before, hub_back), \
+        "a refused second HUB disturbed the running one"
+
+
 def _bulk_session(tmp_path, hub, delay=0.03):
     """HUB with a single 8 KB app whose body is served in throttled chunks."""
     hub.add_index("/index.json", index_doc(apps=[app_entry("bulk")]))
