@@ -297,6 +297,19 @@ const char *mmb_app_path(void)
 
 /* A package file name already listed from an earlier PATH folder: the later
  * copy is shadowed (a bare name runs the first one), so it is not listed. */
+/* Circle's util.h has strchr but not strrchr; find the last occurrence. */
+static const char *at_last(const char *s, int c)
+{
+	const char *last = 0;
+
+	for (; s && *s; s++)
+	{
+		if ((unsigned char)*s == (unsigned char)c)
+			last = s;
+	}
+	return last;
+}
+
 static int at_seen_file(const char *fname)
 {
 	int i;
@@ -307,7 +320,7 @@ static int at_seen_file(const char *fname)
 
 		if (AT.ent[i].kind != AT_KIND_PKG)
 			continue;
-		base = strrchr(path, '/');
+		base = at_last(path, '/');
 		base = base ? base + 1 : path;
 		if (mmb_keyword_eq(base, fname))
 			return 1;
