@@ -29,14 +29,15 @@ is the optional hero (info/<id>/HERO.PNG), otherwise the first screenshot,
 otherwise the thumbnail. It loads in the background, so the list stays
 responsive.
 
-The detail page has no header. The large picture is the hero when the index
-has one, then the screenshots; with no hero it is the screenshots (or the
-thumbnail when there are none). The hero is also the first thumbnail. Then the
-title and icon, and one info row (author, version,
-size, category). Empty fields are left out. The description sits directly under
-that row. `about` is either that text or a path such as info/<id>/about.txt,
-which is loaded in the background. A WHAT'S NEW section is shown only when the
-index entry carries the text of INFO/CHANGES.TXT (or a path to that text). There is one main button: `INSTALL`, `UPDATE`, `RUN`
+The detail page has no header. The large picture and its thumbnail strip are
+the screenshots. When the index has a hero it is framed at the top of the
+right column (full width, 16:9), with the title in the text font above the
+info row. With no hero that corner is the large title and icon. Then one info
+row (author, version, size, category). Empty fields are left out. The
+description sits under that row. `about` is either that text or a path such
+as info/<id>/about.txt, which is loaded in the background. A WHAT'S NEW
+section is shown only when the index entry carries the text of
+INFO/CHANGES.TXT (or a path to that text). There is one main button: `INSTALL`, `UPDATE`, `RUN`
 or a greyed `NEEDS v<minver>` when the device is too old. The install dialog
 shows the download and checksum progress and can be cancelled with Esc. RUN
 leaves the hub and starts the installed app exactly like the APPS launcher.

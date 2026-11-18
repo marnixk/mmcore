@@ -495,6 +495,32 @@ def keep_frame(im: Image.Image) -> Image.Image:
     return trim(im, 0)
 
 
+def erase_button_label(im: Image.Image) -> Image.Image:
+    """Paint over the baked label with the face colour beside it.
+
+    The bronze gradient and the bevel stay. Filling the whole control with
+    one colour hides that art when the slice stretches.
+    """
+    im = im.convert("RGBA")
+    w, h = im.size
+    pix = im.load()
+    # Stay inside the gold bevel. The baked word sits in the middle of the
+    # face; the sample column is the plain bronze just beside the left edge.
+    sx = max(12, int(w * 0.07))
+    x0 = sx + 4
+    x1 = w - (sx + 8)
+    y0 = int(h * 0.16)
+    y1 = int(h * 0.80)
+    for y in range(y0, y1):
+        sample = pix[sx, y]
+        if sample[3] < 20:
+            continue
+        for x in range(x0, x1):
+            if pix[x, y][3] > 20:
+                pix[x, y] = sample
+    return im
+
+
 def clear_interior(im: Image.Image, inset: int) -> Image.Image:
     """Fill the inside of a control with its own body colour, dropping baked text."""
     im = im.convert("RGBA")
@@ -579,7 +605,7 @@ def main() -> None:
     save_pair(tab, "tab")
 
     button = trim(knock(detail.crop((780, 590, 1160, 700)), 16), 1)
-    button = clear_interior(button, 16)
+    button = erase_button_label(button)
     # Crop to the opaque face. Corner specks would keep the empty margin,
     # and a 9-slice would then draw a short button inside a tall slot.
     bw, bh = button.size

@@ -1494,30 +1494,20 @@ static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 	}
 }
 
-/* Gallery index 0 is the hero when the index has one, then the screenshots. */
+/* The left viewer and its strip are screenshots only. The hero, when the
+ * index has one, is the picture at the top of the right column. */
 static int hub_gallery_count(hub_app *a)
 {
-	int n;
-
-	if (!a)
+	if (!a || a->nshots < 0)
 		return 0;
-	n = a->nshots > 0 ? a->nshots : 0;
-	if (hub_has(a->hero))
-		n++;
-	return n;
+	return a->nshots;
 }
 
 static const char *hub_gallery_rel(hub_app *a, int index)
 {
-	if (!a || index < 0)
+	if (!a || index < 0 || index >= a->nshots)
 		return 0;
-	if (hub_has(a->hero))
-	{
-		if (index == 0)
-			return a->hero;
-		index--;
-	}
-	if (index < a->nshots && a->shots[index] && a->shots[index][0])
+	if (a->shots[index] && a->shots[index][0])
 		return a->shots[index];
 	return 0;
 }
@@ -1544,7 +1534,11 @@ static const char *hub_detail_rel(hub_app *a)
 	rel = hub_gallery_rel(a, U.detail_shot);
 	if (rel)
 		return rel;
-	return hub_preview_rel(a);
+	if (a->nshots > 0 && a->shots[0] && a->shots[0][0])
+		return a->shots[0];
+	if (hub_has(a->thumb))
+		return a->thumb;
+	return 0;
 }
 
 /* ---- tabs ------------------------------------------------------------ */
@@ -2522,9 +2516,12 @@ static void hub_action_button(hub_rect b, const char *label, unsigned accent,
 
 	while (scale < 4 && 16 * (scale + 1) + 8 * p <= b.h)
 		scale++;
+	/* INSTALL, UPDATE and RUN are the button PNG plus the label.
+	 * A solid fill here covers the bevel. NEEDS stays the grey control. */
 	if (enabled && label &&
-	    (strcmp(label, "UPDATE") == 0 || strcmp(label, "INSTALL") == 0) &&
-	    hub_chrome_slice("button", b.x, b.y, b.w, b.h, 18))
+	    (strcmp(label, "UPDATE") == 0 || strcmp(label, "INSTALL") == 0 ||
+	     strcmp(label, "RUN") == 0) &&
+	    hub_chrome_slice("button", b.x, b.y, b.w, b.h, 16))
 	{
 		int zoom = hub_ui_h(2) + 6 * p <= b.h ? 2 : 1;
 		int tw = hub_ui_w(label, zoom);
@@ -2671,40 +2668,208 @@ static void hub_draw_about(hub_rect r, hub_app *a, int scroll)
 	}
 }
 
+static void hub_draw_framed(hub_rect frame, const char *rel, int cube)
+{
+	int p = U.p < 1 ? 1 : U.p;
+	hub_rect img;
+	hub_img *im;
+
+	hub_ornate_frame(frame, 0x101428);
+	img.x = frame.x + 12 * p;
+	img.y = frame.y + 12 * p;
+	img.w = frame.w - 24 * p;
+	img.h = frame.h - 24 * p;
+	if (img.w < 4)
+		img.w = 4;
+	if (img.h < 4)
+		img.h = 4;
+	hub_fill(img, 0x070910);
+	im = hub_img_find(rel);
+	if (im && im->pix)
+		hub_draw_image_cover(im->pix, im->w, im->h, img);
+	else if (cube)
+		hub_cube(img.x + img.w / 2, img.y + img.h / 2,
+			 img.h * 2 / 3, 1);
+	hub_frame_chrome(frame);
+}
+
+/* One line in the UI face, zoom 2 when the column is wide enough. */
+static int hub_hero_title_zoom(hub_app *a, int width)
+{
+	const char *title;
+	int p = U.p < 1 ? 1 : U.p;
+
+	title = a && hub_has(a->title) ? a->title : (a ? a->id : "");
+	if (title && hub_ui_w(title, 2) <= width - 8 * p)
+		return 2;
+	return 1;
+}
+
+/* Hero at the top of the right column (under the thumbnails when the
+ * screen is narrow). The picture's frame is the column width and the
+ * picture inside it is 16:9. A short screen keeps that ratio and centres
+ * a narrower frame rather than squashing it. */
+static void hub_place_hero(hub_layout *L, hub_app *a)
+{
+	int p = L->p < 1 ? 1 : L->p;
+	int gap = L->gap > 0 ? L->gap : 4 * p;
+	int narrow = L->mode == HUB_LAYOUT_NARROW;
+	int inset = 12 * p;
+	int rx, rw, y, bottom, title_h, chips_h, button_h, hero_h;
+	int min_about, zoom, inner_w;
+
+	rx = narrow ? L->detail.x : L->detail_shot.x + L->detail_shot.w + gap;
+	rw = narrow ? L->detail.w : L->detail.x + L->detail.w - rx;
+	if (rw < 32)
+		rw = 32;
+	zoom = hub_hero_title_zoom(a, rw);
+	title_h = hub_ui_h(zoom) + 4 * p;
+	chips_h = 28 * p;
+	button_h = narrow ? 44 * p : 48 * p;
+	min_about = hub_ui_h(1) * 2 + 4 * p;
+	bottom = L->detail.y + L->detail.h;
+	inner_w = rw - 2 * inset;
+	if (inner_w < 16)
+		inner_w = 16;
+	hero_h = inner_w * 9 / 16 + 2 * inset;
+
+	if (narrow)
+	{
+		int thumbs_h = L->detail_thumbs.h;
+		int room, shot_h, inner_h, frame_w;
+
+		/* Two framed 16:9 pictures, one under the other. A full-width
+		 * pair does not fit, so each frame is only as wide as 16:9
+		 * allows and sits in the middle of the panel. */
+		room = bottom - L->detail.y - thumbs_h - title_h - chips_h -
+		       button_h - min_about - hub_ui_h(1) - 5 * gap - p;
+		if (room < 64 * p)
+			room = 64 * p;
+		shot_h = room * 40 / 100;
+		if (shot_h < 24 * p)
+			shot_h = 24 * p;
+		inner_h = shot_h - 2 * inset;
+		if (inner_h < 16)
+			inner_h = 16;
+		inner_w = inner_h * 16 / 9;
+		frame_w = inner_w + 2 * inset;
+		if (frame_w > L->detail.w)
+		{
+			frame_w = L->detail.w;
+			inner_w = frame_w - 2 * inset;
+			if (inner_w < 16)
+				inner_w = 16;
+			shot_h = inner_w * 9 / 16 + 2 * inset;
+		}
+		L->detail_shot.x = L->detail.x + (L->detail.w - frame_w) / 2;
+		L->detail_shot.w = frame_w;
+		L->detail_shot.h = shot_h;
+		L->detail_thumbs.y = L->detail.y + shot_h + p;
+		y = L->detail_thumbs.y + thumbs_h + gap;
+		room = bottom - y - title_h - chips_h - button_h - min_about -
+		       hub_ui_h(1) - 4 * gap;
+		rw = L->detail.w;
+		inner_w = rw - 2 * inset;
+		if (inner_w < 16)
+			inner_w = 16;
+		hero_h = inner_w * 9 / 16 + 2 * inset;
+		if (hero_h > room && room > 24 * p)
+		{
+			inner_h = room - 2 * inset;
+			if (inner_h < 16)
+				inner_h = 16;
+			inner_w = inner_h * 16 / 9;
+			hero_h = inner_h + 2 * inset;
+			rw = inner_w + 2 * inset;
+		}
+		rx = L->detail.x + (L->detail.w - rw) / 2;
+	}
+	else
+	{
+		int room;
+
+		y = L->detail.y;
+		room = bottom - y - title_h - chips_h - button_h - min_about -
+		       4 * gap - 8 * p;
+		if (hero_h > room && room > 24 * p)
+		{
+			int inner_h = room - 2 * inset;
+
+			if (inner_h < 16)
+				inner_h = 16;
+			inner_w = inner_h * 16 / 9;
+			if (inner_w > rw - 2 * inset)
+				inner_w = rw - 2 * inset;
+			hero_h = inner_h + 2 * inset;
+			rw = inner_w + 2 * inset;
+			rx = L->detail_shot.x + L->detail_shot.w + gap +
+			     ((L->detail.x + L->detail.w) -
+			      (L->detail_shot.x + L->detail_shot.w + gap) - rw) / 2;
+		}
+	}
+	if (hero_h < 16)
+		hero_h = 16;
+	L->detail_title.x = rx;
+	L->detail_title.y = y;
+	L->detail_title.w = rw;
+	L->detail_title.h = hero_h;
+	y += hero_h + gap;
+	L->detail_chips.x = rx;
+	L->detail_chips.y = y + title_h;
+	L->detail_chips.w = rw;
+	L->detail_chips.h = chips_h;
+	if (narrow)
+	{
+		/* The pictures are centred. The title, chips and paragraph
+		 * still use the full panel so the line length stays readable. */
+		L->detail_chips.x = L->detail.x;
+		L->detail_chips.w = L->detail.w;
+		L->detail_button.x = L->detail.x;
+		L->detail_button.y = L->detail_chips.y + chips_h + gap;
+		L->detail_button.w = L->detail.w;
+		L->detail_button.h = button_h;
+		L->detail_about.x = L->detail.x;
+		L->detail_about.y = L->detail_button.y + button_h + gap;
+		L->detail_about.w = L->detail.w;
+		L->detail_about.h = bottom - L->detail_about.y;
+	}
+	else
+	{
+		L->detail_button.x = rx;
+		L->detail_button.w = rw;
+		L->detail_button.h = button_h;
+		L->detail_button.y = bottom - button_h - 4 * p;
+		L->detail_about.x = rx;
+		L->detail_about.y = L->detail_chips.y + chips_h + gap;
+		L->detail_about.w = rw;
+		L->detail_about.h = L->detail_button.y - gap - L->detail_about.y;
+	}
+	if (L->detail_about.h < 1)
+		L->detail_about.h = 1;
+}
+
 static void hub_draw_detail(void)
 {
 	hub_app *a = hub_cur();
 	hub_layout *L = &U.L;
 	int p = U.p < 1 ? 1 : U.p;
-	hub_rect shot = L->detail_shot;
-	hub_rect img;
-	hub_img *im;
-	const char *rel;
-	int narrow = L->mode == HUB_LAYOUT_NARROW;
+	hub_rect shot;
+	int narrow;
+
+	if (a && hub_has(a->hero))
+	{
+		hub_layout_now();
+		hub_place_hero(L, a);
+	}
+	shot = L->detail_shot;
+	narrow = L->mode == HUB_LAYOUT_NARROW;
 
 	hub_dither_bg();
 	hub_fill(L->detail, 0x0C1024);
 	mmb_gfx_box(L->detail.x, L->detail.y, L->detail.w, L->detail.h,
 		    0x2A3050, p, -1);
 
-	hub_ornate_frame(shot, 0x101428);
-	img.x = shot.x + 12 * p;
-	img.y = shot.y + 12 * p;
-	img.w = shot.w - 24 * p;
-	img.h = shot.h - 24 * p;
-	if (img.w < 4)
-		img.w = 4;
-	if (img.h < 4)
-		img.h = 4;
-	hub_fill(img, 0x070910);
-	rel = hub_detail_rel(a);
-	im = hub_img_find(rel);
-	if (im && im->pix)
-		hub_draw_image_cover(im->pix, im->w, im->h, img);
-	else if (a)
-		hub_cube(img.x + img.w / 2, img.y + img.h / 2,
-			 img.h * 2 / 3, 1);
-	hub_frame_chrome(shot);
+	hub_draw_framed(shot, hub_detail_rel(a), a != 0);
 
 	s_nshotbox = 0;
 	if (a && hub_gallery_count(a) > 1)
@@ -2765,7 +2930,20 @@ static void hub_draw_detail(void)
 		}
 	}
 
-	if (a)
+	if (a && hub_has(a->hero))
+	{
+		const char *title = hub_has(a->title) ? a->title : a->id;
+		int zoom = hub_hero_title_zoom(a, L->detail_chips.w);
+		int th = hub_ui_h(zoom);
+		int ty = L->detail_chips.y - (th + 4 * p);
+
+		hub_draw_framed(L->detail_title, a->hero, 0);
+		if (ty < L->detail_title.y + L->detail_title.h)
+			ty = L->detail_title.y + L->detail_title.h + 2 * p;
+		hub_ui_trunc(L->detail_chips.x, ty, title, 0xFFFFFF, zoom,
+			     L->detail_chips.w);
+	}
+	else if (a)
 	{
 		char upper[96];
 		char line1[64], line2[64];
@@ -3451,6 +3629,8 @@ static const char *hub_need_asset(void)
 			return rel;
 		if (cur->icon && cur->icon[0] && !hub_img_find(cur->icon))
 			return cur->icon;
+		if (hub_has(cur->hero) && !hub_img_find(cur->hero))
+			return cur->hero;
 		for (i = 0; i < hub_gallery_count(cur) && i < 8; i++)
 		{
 			rel = hub_gallery_rel(cur, i);
