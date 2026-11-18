@@ -87,6 +87,25 @@ def test_listing_fetches_hero(native_mmcore, hub, tmp_path):
     assert "/info/jetpack/HERO.PNG" in hub.requests, hub.requests
 
 
+def test_detail_loads_about_path(native_mmcore, hub, tmp_path):
+    """A path in `about` is fetched; prose with spaces is left as text."""
+    entry = app_entry("jetpack", category="GAMES")
+    entry["about"] = "info/jetpack/about.txt"
+    entry["changes"] = "New maps. Same belt."
+    hub.add_index("/index.json", index_doc(apps=[entry]))
+    hub.routes["/info/jetpack/about.txt"] = (
+        200, b"Fly the jetpack.\n", "text/plain")
+    s, _ = _session(tmp_path, hub, preinstalled=())
+    s.key("enter")
+    s.wait_ms(800)
+    s.quit()
+    out = s.run()
+    assert "?SYNTAX" not in out, out
+    # run() replays the session, so each catalogue load fetches the file once.
+    assert hub.requests.count("/info/jetpack/about.txt") == hub.requests.count(
+        "/index.json") > 0, hub.requests
+
+
 def test_tabs_left_right(native_mmcore, hub, tmp_path):
     s, _ = _session(tmp_path, hub)
     listing = s.snapshot("listing.ppm")

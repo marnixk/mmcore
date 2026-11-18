@@ -430,11 +430,12 @@ def make_font() -> Image.Image:
 
     for index, ch in enumerate(FONT_ORDER):
         strokes = TITLE_STROKES.get(ch, [])
-        big = Image.new("RGBA", (cell_w * 3, cell_h * 3), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(big)
+        # Drawn at the 2x cell. No downsample: a 3x-then-scale step smears
+        # the strokes the same way a fractional chrome scale does.
+        small = Image.new("RGBA", (cell_w, cell_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(small)
         for pts in strokes:
-            _stroke(draw, pts, stroke_w * 3, scale * 3, shear, 8 * 3, 6 * 3, 40)
-        small = big.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
+            _stroke(draw, pts, stroke_w, scale, shear, 8, 6, 40)
         mask = small.getchannel("A")
         # A couple of pixels of dark outline around the smooth core.
         outline = mask.filter(ImageFilter.MaxFilter(5))
@@ -495,6 +496,164 @@ def keep_frame(im: Image.Image) -> Image.Image:
     return trim(im, 0)
 
 
+def save_raw_pair(im: Image.Image, name: str) -> None:
+    """Write 2x and a nearest 1x half without posterising.
+
+    The action button's gradient is a few units per row. Quantising it to a
+    handful of colours turns the face into a flat fill.
+    """
+    im = im.convert("RGBA")
+    w, h = im.size
+    if w % 2:
+        im = im.crop((0, 0, w - 1, h))
+        w -= 1
+    if h % 2:
+        im = im.crop((0, 0, w, h - 1))
+        h -= 1
+    p2 = OUT / f"{name}-2.png"
+    p1 = OUT / f"{name}-1.png"
+    im.save(p2, optimize=True)
+    small = im.resize((w // 2, h // 2), Image.Resampling.NEAREST)
+    small.save(p1, optimize=True)
+    print(f"{name:16} 2x {w:4}x{h:<4} {p2.stat().st_size:6}  "
+          f"1x {small.size[0]:4}x{small.size[1]:<4} {p1.stat().st_size:6}")
+
+
+def cut_action_button(detail: Image.Image) -> Image.Image:
+    """The mockup UPDATE control, with the baked word filled from the face.
+
+    Panel pixels are cleared only where they touch the crop edge, so the
+    copper rim, the stepped corners and the outer shadow stay. The word is
+    replaced by the gradient on either side of it. Nothing is recoloured.
+    """
+    crop = detail.crop((768, 576, 1102, 704)).convert("RGBA")
+    pix = crop.load()
+    w, h = crop.size
+    seen = bytearray(w * h)
+    stack = [(x, 0) for x in range(w)] + [(x, h - 1) for x in range(w)]
+    stack += [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)]
+
+    def is_panel(r: int, g: int, b: int) -> bool:
+        return b + 8 >= r and max(r, g, b) < 55 and r < 40
+
+    while stack:
+        x, y = stack.pop()
+        if x < 0 or y < 0 or x >= w or y >= h:
+            continue
+        i = y * w + x
+        if seen[i]:
+            continue
+        r, g, b, _ = pix[x, y]
+        if not is_panel(r, g, b):
+            continue
+        seen[i] = 1
+        pix[x, y] = (0, 0, 0, 0)
+        stack.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    xs, ys = [], []
+    for y in range(h):
+        for x in range(w):
+            if pix[x, y][3] > 10:
+                xs.append(x)
+                ys.append(y)
+    btn = crop.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
+    bp = btn.load()
+    bw, bh = btn.size
+    wx, wy = [], []
+    for y in range(bh):
+        for x in range(bw):
+            r, g, b, a = bp[x, y]
+            if a > 200 and min(r, g, b) > 170 and abs(r - b) < 40:
+                wx.append(x)
+                wy.append(y)
+    if not wx:
+        return btn
+    x0, x1 = min(wx) - 6, max(wx) + 7
+    y0, y1 = min(wy) - 5, max(wy) + 6
+    lx = max(0, x0 - 14)
+    mask = [[0] * bw for _ in range(bh)]
+    for y in range(max(0, y0), min(bh, y1)):
+        sample = bp[lx, y]
+        for x in range(max(0, x0), min(bw, x1)):
+            r, g, b, _ = bp[x, y]
+            dist = abs(r - sample[0]) + abs(g - sample[1]) + abs(b - sample[2])
+            if dist > 26 or min(r, g, b) > 160:
+                mask[y][x] = 1
+    dil = [row[:] for row in mask]
+    for y in range(bh):
+        for x in range(bw):
+            if not mask[y][x]:
+                continue
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    yy, xx = y + dy, x + dx
+                    if 0 <= yy < bh and 0 <= xx < bw:
+                        dil[yy][xx] = 1
+    for y in range(bh):
+        for x in range(bw):
+            if not dil[y][x]:
+                continue
+            xl = x
+            while xl > 0 and dil[y][xl]:
+                xl -= 1
+            xr = x
+            while xr < bw - 1 and dil[y][xr]:
+                xr += 1
+            if dil[y][xl]:
+                bp[x, y] = bp[min(bw - 1, xr), y]
+                continue
+            if dil[y][xr]:
+                bp[x, y] = bp[xl, y]
+                continue
+            span = max(1, xr - xl)
+            t = (x - xl) / span
+            left, right = bp[xl, y], bp[xr, y]
+            bp[x, y] = (
+                int(left[0] * (1 - t) + right[0] * t),
+                int(left[1] * (1 - t) + right[1] * t),
+                int(left[2] * (1 - t) + right[2] * t),
+                255,
+            )
+    return btn
+
+
+def tint_button_gold(im: Image.Image) -> Image.Image:
+    """Same bevel, face shifted toward gold so UPDATE reads apart from INSTALL."""
+    im = im.copy()
+    pix = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pix[x, y]
+            if a < 20:
+                continue
+            if r > 200 and g > 130:
+                pix[x, y] = (min(255, r + 8), min(255, g + 30), min(70, b), a)
+            elif r > 60 and r > b + 15:
+                pix[x, y] = (
+                    min(255, int(r * 1.04) + 16),
+                    min(255, int(g * 1.6) + 18),
+                    max(0, b // 3),
+                    a,
+                )
+    return im
+
+
+def tint_button_grey(im: Image.Image) -> Image.Image:
+    """Desaturated face for the disabled NEEDS control."""
+    im = im.copy()
+    pix = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pix[x, y]
+            if a < 16:
+                continue
+            yv = (r * 3 + g * 6 + b) // 10
+            yv = yv * 7 // 10
+            pix[x, y] = (yv, yv, yv + min(8, yv // 8), a)
+    return im
+
+
 def clear_interior(im: Image.Image, inset: int) -> Image.Image:
     """Fill the inside of a control with its own body colour, dropping baked text."""
     im = im.convert("RGBA")
@@ -510,31 +669,194 @@ def clear_interior(im: Image.Image, inset: int) -> Image.Image:
     return im
 
 
-def corners_and_edges(listing: Image.Image):
-    """Ornaments from the listing preview card."""
-    px = listing.load()
-    w, h = listing.size
-    xs, ys = [], []
-    for y in range(110, h - 8):
-        for x in range(790, w - 4):
-            r, g, b = px[x, y][:3]
-            if r > 150 and 90 < g < 200 and b < 120 and r > g + 10:
-                xs.append(x)
-                ys.append(y)
-    x0, x1 = min(xs), max(xs) + 1
-    y0, y1 = min(ys), max(ys) + 1
-    side = 70
-    boxes = {
-        "corner-tl": (x0 - 8, y0 - 8, x0 + side, y0 + side),
-        "corner-tr": (x1 - side, y0 - 8, x1 + 8, y0 + side),
-        "corner-bl": (x0 - 8, y1 - side, x0 + side, y1 + 8),
-        "corner-br": (x1 - side, y1 - side, x1 + 8, y1 + 8),
+def _ornament(r: int, g: int, b: int) -> bool:
+    """Copper, purple and the silver highlight. Not the photo, not the navy."""
+    if r > 155 and r > b + 45 and 55 < g < 210 and r > g:
+        return True
+    if b > 85 and b > g + 18 and b > r - 10 and max(r, g, b) > 90:
+        return True
+    return False
+
+
+def _photo(r: int, g: int, b: int) -> bool:
+    return g > r + 4 and g > 32
+
+
+def _keep_component(mask, min_px: int) -> None:
+    """Drop specks that are not part of a real ornament."""
+    h = len(mask)
+    w = len(mask[0])
+    seen = bytearray(w * h)
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            if seen[i] or not mask[y][x]:
+                continue
+            stack = [(x, y)]
+            cells = []
+            seen[i] = 1
+            while stack:
+                cx, cy = stack.pop()
+                cells.append((cx, cy))
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    xx, yy = cx + dx, cy + dy
+                    if xx < 0 or yy < 0 or xx >= w or yy >= h:
+                        continue
+                    j = yy * w + xx
+                    if seen[j] or not mask[yy][xx]:
+                        continue
+                    seen[j] = 1
+                    stack.append((xx, yy))
+            if len(cells) < min_px:
+                for cx, cy in cells:
+                    mask[cy][cx] = 0
+
+
+def _cut_corner(src: Image.Image, box, bands, interior) -> Image.Image:
+    """Native crop. `bands` are source rectangles of the straight rim to keep
+    whole, including the dark groove, so the edge tile can continue them.
+    """
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    sp = src.load()
+    pix = [[sp[x0 + x, y0 + y][:3] for x in range(w)] for y in range(h)]
+    orn = [[_ornament(*pix[y][x]) for x in range(w)] for y in range(h)]
+    # The star's white sparkle sits inside the copper, not on the photo.
+    for y in range(h):
+        for x in range(w):
+            r, g, b = pix[y][x]
+            if min(r, g, b) < 190 or not (r > 140 and r > b + 20):
+                # sparkle is bright; the second clause is the copper neighbour
+                pass
+            if min(r, g, b) > 200 and any(
+                0 <= y + dy < h and 0 <= x + dx < w and
+                pix[y + dy][x + dx][0] > 170 and
+                pix[y + dy][x + dx][2] < 120 and
+                pix[y + dy][x + dx][0] > pix[y + dy][x + dx][2] + 50
+                for dy in range(-2, 3) for dx in range(-2, 3)
+            ):
+                orn[y][x] = True
+    grow = [row[:] for row in orn]
+    for _ in range(2):
+        nxt = [row[:] for row in grow]
+        for y in range(h):
+            for x in range(w):
+                if grow[y][x]:
+                    continue
+                r, g, b = pix[y][x]
+                if _photo(r, g, b) or max(r, g, b) > 60:
+                    continue
+                if any(
+                    0 <= y + dy < h and 0 <= x + dx < w and grow[y + dy][x + dx]
+                    for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                ):
+                    nxt[y][x] = True
+        grow = nxt
+    for y in range(h):
+        for x in range(w):
+            sx, sy = x0 + x, y0 + y
+            for bx0, by0, bx1, by1 in bands:
+                if bx0 <= sx < bx1 and by0 <= sy < by1:
+                    grow[y][x] = True
+    # The photo sits inside the rim. Keep ornament pixels and their fringe.
+    ix0, iy0, ix1, iy1 = interior
+    for y in range(h):
+        for x in range(w):
+            sx, sy = x0 + x, y0 + y
+            in_band = any(bx0 <= sx < bx1 and by0 <= sy < by1
+                          for bx0, by0, bx1, by1 in bands)
+            if in_band or orn[y][x]:
+                continue
+            if not (ix0 <= sx < ix1 and iy0 <= sy < iy1):
+                continue
+            near = any(
+                0 <= y + dy < h and 0 <= x + dx < w and orn[y + dy][x + dx]
+                for dy in range(-2, 3) for dx in range(-2, 3)
+            )
+            r, g, b = pix[y][x]
+            if _photo(r, g, b) or max(r, g, b) > 70 or not near:
+                grow[y][x] = False
+    _keep_component(grow, 12)
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    op = out.load()
+    for y in range(h):
+        for x in range(w):
+            if grow[y][x]:
+                r, g, b = pix[y][x]
+                op[x, y] = (r, g, b, 255)
+    return out
+
+
+def _edge_from_corner(src: Image.Image, corner_box, band, along: str,
+                      span: int) -> Image.Image:
+    """A strip whose pixels are the source rows or columns just past the
+    corner, in the same band the corner kept. Row 0 of a horizontal edge is
+    the corner's top source row, so the two bitmaps share a y origin.
+    """
+    x0, y0, x1, y1 = corner_box
+    sp = src.load()
+    if along == "h":
+        im = Image.new("RGBA", (span, y1 - y0), (0, 0, 0, 0))
+        ip = im.load()
+        by0, by1 = band[1], band[3]
+        for y in range(y1 - y0):
+            sy = y0 + y
+            if not (by0 <= sy < by1):
+                continue
+            for x in range(span):
+                r, g, b = sp[x1 + x, sy][:3]
+                ip[x, y] = (r, g, b, 255)
+        return im
+    im = Image.new("RGBA", (x1 - x0, span), (0, 0, 0, 0))
+    ip = im.load()
+    bx0, bx1 = band[0], band[2]
+    for y in range(span):
+        for x in range(x1 - x0):
+            sx = x0 + x
+            if not (bx0 <= sx < bx1):
+                continue
+            r, g, b = sp[sx, y1 + y][:3]
+            ip[x, y] = (r, g, b, 255)
+    return im
+
+
+def content_frame(detail: Image.Image):
+    """Screenshot-frame corners and edges from the detail mockup.
+
+    Top corners share a y crop and bottom corners share a y crop, so a
+    horizontal edge cut from the same rows meets both rims. Left corners
+    share an x crop, and so do the right corners.
+    """
+    # Straight rim bands, measured on 3-detail-wide.jpg.
+    top = (96, 29, 520, 54)
+    bot = (160, 458, 520, 484)
+    left = (30, 176, 57, 360)
+    right = (646, 176, 674, 360)
+    # Crops include the full star (top) or scroll (bottom) plus a run of
+    # straight rim on the two inner sides. Even sizes, join side uncropped.
+    tl = (8, 8, 148, 176)
+    tr = (496, 8, 688, 176)
+    bl = (8, 360, 148, 504)
+    br = (496, 360, 688, 504)
+    # Bands the corner itself must keep (the rim run inside the crop).
+    tl_bands = [(96, 29, 148, 54), (30, 70, 48, 176)]
+    tr_bands = [(496, 29, 646, 54), (646, 70, 674, 176)]
+    bl_bands = [(30, 360, 48, 458), (96, 458, 148, 484)]
+    br_bands = [(646, 360, 674, 458), (496, 458, 646, 484)]
+    # Interior is the photograph. Anything bright in there that is not the
+    # ornament is a leftover pixel from the mockup picture.
+    out = {
+        "corner-tl": _cut_corner(detail, tl, tl_bands, (64, 56, 148, 176)),
+        "corner-tr": _cut_corner(detail, tr, tr_bands, (496, 56, 640, 176)),
+        "corner-bl": _cut_corner(detail, bl, bl_bands, (64, 360, 148, 450)),
+        "corner-br": _cut_corner(detail, br, br_bands, (496, 360, 640, 450)),
     }
-    out = {name: keep_frame(listing.crop(box)) for name, box in boxes.items()}
-    mid = (x0 + x1) // 2
-    out["edge-h"] = keep_frame(listing.crop((mid - 16, y0 - 6, mid + 16, y0 + 18)))
-    out["edge-v"] = keep_frame(listing.crop((x0 - 6, (y0 + y1) // 2 - 16,
-                                             x0 + 18, (y0 + y1) // 2 + 16)))
+    # Edges are the next source pixels after the corner, same origin, so the
+    # rim line is the same row or column on both sides of the join.
+    out["edge-h"] = _edge_from_corner(detail, tl, top, "h", 64)
+    out["edge-hb"] = _edge_from_corner(detail, bl, bot, "h", 64)
+    out["edge-v"] = _edge_from_corner(detail, tl, left, "v", 48)
+    out["edge-vr"] = _edge_from_corner(detail, tr, right, "v", 48)
     return out
 
 
@@ -545,22 +867,23 @@ def main() -> None:
     loading = load("1-loading.jpg")
     install = load("6-install-dialog.jpg")
 
-    save_pair(crop_knock(loading, (400, 20, 900, 530), 14, 0), "loading-cube", 24)
+    # Mockup pixels, no palette quantize. The cube crop includes the sparkle.
+    save_raw_pair(crop_knock(loading, (400, 20, 900, 530), 14, 0), "loading-cube")
     # Include the dotted leaders. The box stops above the progress bar so a
     # segment does not survive as a stray dot after the word HUB.
-    save_pair(crop_knock(loading, (268, 530, 1014, 566), 12, 0), "load-title")
+    save_raw_pair(crop_knock(loading, (268, 530, 1014, 566), 12, 0), "load-title")
     frame, fill = split_bar(loading.crop((260, 580, 1030, 670)))
-    save_pair(frame, "bar-frame")
-    save_pair(fill, "bar-fill")
+    save_raw_pair(frame, "bar-frame")
+    save_raw_pair(fill, "bar-fill")
 
-    save_pair(crop_knock(listing, (16, 6, 74, 70), 20, 0), "header-cube")
-    save_pair(tint_hub(crop_knock(listing, (78, 10, 320, 58), 20, 0)), "wordmark")
+    save_raw_pair(crop_knock(listing, (16, 6, 74, 70), 20, 0), "header-cube")
+    save_raw_pair(tint_hub(crop_knock(listing, (78, 10, 320, 58), 20, 0)), "wordmark")
     # Same cube is the fallback app icon.
-    save_pair(crop_knock(listing, (16, 6, 74, 70), 20, 0), "icon-cube")
+    save_raw_pair(crop_knock(listing, (16, 6, 74, 70), 20, 0), "icon-cube")
 
-    save_pair(make_pill((40, 220, 70, 255), (8, 28, 16, 255)), "badge-installed", 8)
-    save_pair(make_pill((230, 120, 30, 255), (48, 22, 8, 255)), "badge-update", 8)
-    save_pair(make_pill((220, 48, 48, 255), (40, 10, 14, 255)), "badge-needs", 8)
+    save_raw_pair(make_pill((40, 220, 70, 255), (8, 28, 16, 255)), "badge-installed")
+    save_raw_pair(make_pill((230, 120, 30, 255), (48, 22, 8, 255)), "badge-update")
+    save_raw_pair(make_pill((220, 48, 48, 255), (40, 10, 14, 255)), "badge-needs")
 
     # Active tab (GAMES) and a quiet tab (DEMOS). Text is cleared so the
     # label is drawn with the UI font on top of a 9-slice.
@@ -575,24 +898,15 @@ def main() -> None:
     for y in range(6, th - 8):
         for x in range(tw - cap, tw):
             tp[x, y] = (0, 0, 0, 0)
-    save_pair(tab_on, "tab-on")
-    save_pair(tab, "tab")
+    save_raw_pair(tab_on, "tab-on")
+    save_raw_pair(tab, "tab")
 
-    button = trim(knock(detail.crop((780, 590, 1160, 700)), 16), 1)
-    button = clear_interior(button, 16)
-    # Crop to the opaque face. Corner specks would keep the empty margin,
-    # and a 9-slice would then draw a short button inside a tall slot.
-    bw, bh = button.size
-    bp = button.load()
-    x0, x1 = int(bw * 0.35), int(bw * 0.65)
-    rows = [y for y in range(bh)
-            if any(bp[x, y][3] > 20 for x in range(x0, x1))]
-    y0, y1 = int(bh * 0.35), int(bh * 0.65)
-    cols = [x for x in range(bw)
-            if any(bp[x, y][3] > 20 for y in range(y0, y1))]
-    if rows and cols:
-        button = button.crop((cols[0], rows[0], cols[-1] + 1, rows[-1] + 1))
-    save_pair(button, "button")
+    # Mockup pixels, label filled from the face. INSTALL and RUN share it.
+    # UPDATE is the same shape pushed toward gold. NEEDS is the grey form.
+    button = cut_action_button(detail)
+    save_raw_pair(button, "button")
+    save_raw_pair(tint_button_gold(button), "button-update")
+    save_raw_pair(tint_button_grey(button), "button-needs")
 
     px = install.load()
 
@@ -609,15 +923,15 @@ def main() -> None:
         y_bar = max(ys) - 36
         box = (min(xs) - 4, y_bar, max(xs) + 5, max(ys) + 6)
         stripe = trim(knock(install.crop(box), 16), 0)
-        save_pair(stripe, "bar-stripe")
+        save_raw_pair(stripe, "bar-stripe")
 
-    for name, im in corners_and_edges(listing).items():
-        save_pair(im, name)
+    for name, im in content_frame(detail).items():
+        save_raw_pair(im, name)
 
-    track = detail.crop((1246, 248, 1258, 688))
-    save_pair(trim(knock(track, 20), 0), "scroll-track")
-    thumb = detail.crop((1246, 250, 1258, 268))
-    save_pair(trim(knock(thumb, 20), 0), "scroll-thumb")
+    track = detail.crop((1240, 240, 1264, 690))
+    save_raw_pair(trim(knock(track, 18), 0), "scroll-track")
+    thumb = detail.crop((1240, 236, 1264, 268))
+    save_raw_pair(trim(knock(thumb, 18), 0), "scroll-thumb")
 
     save_hi = make_font()
     w, h = save_hi.size
