@@ -10,14 +10,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#define CHROME_MAX 32
+#define CHROME_MAX 48
 
 static const char *const k_names[] = {
 	"loading-cube", "load-title", "header-cube", "wordmark", "icon-cube",
 	"badge-installed", "badge-update", "badge-needs",
 	"tab", "tab-on", "button", "button-update", "button-needs",
 	"bar-frame", "bar-fill", "bar-stripe",
-	"corner-tl", "corner-tr", "corner-bl", "corner-br", "edge-h", "edge-v",
+	"corner-tl", "corner-tr", "corner-bl", "corner-br",
+	"edge-h", "edge-hb", "edge-v", "edge-vr",
 	"scroll-track", "scroll-thumb", "title-font", "ui-font",
 	0
 };
@@ -345,76 +346,96 @@ int hub_chrome_slice(const char *name, int x, int y, int w, int h, int slice2)
 	return 1;
 }
 
+/* Repeat the bitmap at its integer scale and clip. A partial tile is the
+ * leading source pixels, not a resample, so a rim stays on the same row. */
 static void chrome_tile(const char *name, int x, int y, int w, int h)
 {
 	chrome_img *im = chrome_find(name);
-	int tw, th, yy, xx;
+	int scale, tw, th, yy, xx;
 
 	if (!im || !im->pix || w < 1 || h < 1)
 		return;
-	tw = im->w * im->scale;
-	th = im->h * im->scale;
-	if (tw < 1)
-		tw = 1;
-	if (th < 1)
-		th = 1;
+	scale = im->scale < 1 ? 1 : im->scale;
+	tw = im->w * scale;
+	th = im->h * scale;
 	for (yy = 0; yy < h; yy += th)
 		for (xx = 0; xx < w; xx += tw)
 		{
 			int dw = tw, dh = th;
-
-			int sw, sh;
+			int dy, dx;
 
 			if (xx + dw > w)
 				dw = w - xx;
 			if (yy + dh > h)
 				dh = h - yy;
-			sw = dw * im->w / tw;
-			sh = dh * im->h / th;
-			if (sw < 1)
-				sw = 1;
-			if (sh < 1)
-				sh = 1;
-			chrome_stretch(im, 0, 0, sw, sh, x + xx, y + yy, dw, dh);
+			for (dy = 0; dy < dh; dy++)
+			{
+				int sy = dy / scale;
+
+				if (sy >= im->h)
+					sy = im->h - 1;
+				for (dx = 0; dx < dw; dx++)
+				{
+					int sx = dx / scale;
+					uint32_t p;
+
+					if (sx >= im->w)
+						sx = im->w - 1;
+					p = im->pix[sy * im->w + sx];
+					chrome_plot(x + xx + dx, y + yy + dy,
+						    p & 0xFFFFFFu, p >> 24);
+				}
+			}
 		}
 }
 
 int hub_chrome_frame(int x, int y, int w, int h)
 {
-	int cw, ch, ew, eh;
+	int tlw, tlh, trw, trh, blw, blh, brw, brh;
+	int gapw, gaph;
 
+	/* Corners stay at the sheet's integer scale. The edge bitmaps share
+	 * the corner's origin, so tiling them from the corner's far edge puts
+	 * the rim on the same pixels. They are not fitted to a new size. */
 	if (!hub_chrome_has("corner-tl") || w < 16 || h < 16)
 		return 0;
-	cw = hub_chrome_w("corner-tl");
-	ch = hub_chrome_h("corner-tl");
-	if (cw * 2 > w)
-		cw = w / 3;
-	if (ch * 2 > h)
-		ch = h / 3;
-	hub_chrome_fit("corner-tl", x, y, cw, ch, 100);
-	hub_chrome_fit("corner-tr", x + w - cw, y, cw, ch, 100);
-	hub_chrome_fit("corner-bl", x, y + h - ch, cw, ch, 100);
-	hub_chrome_fit("corner-br", x + w - cw, y + h - ch, cw, ch, 100);
-	ew = hub_chrome_w("edge-h");
-	eh = hub_chrome_h("edge-h");
-	if (eh < 1)
-		eh = ch / 4;
-	if (eh > ch)
-		eh = ch;
-	chrome_tile("edge-h", x + cw, y, w - 2 * cw, eh > 0 ? eh : 2);
-	chrome_tile("edge-h", x + cw, y + h - (eh > 0 ? eh : 2), w - 2 * cw,
-		    eh > 0 ? eh : 2);
-	ew = hub_chrome_w("edge-v");
-	eh = hub_chrome_h("edge-v");
-	(void)eh;
-	if (ew < 1)
-		ew = cw / 4;
-	if (ew > cw)
-		ew = cw;
-	chrome_tile("edge-v", x, y + ch, ew > 0 ? ew : 2, h - 2 * ch);
-	chrome_tile("edge-v", x + w - (ew > 0 ? ew : 2), y + ch,
-		    ew > 0 ? ew : 2, h - 2 * ch);
-	(void)ew;
+	tlw = hub_chrome_w("corner-tl");
+	tlh = hub_chrome_h("corner-tl");
+	trw = hub_chrome_w("corner-tr");
+	trh = hub_chrome_h("corner-tr");
+	blw = hub_chrome_w("corner-bl");
+	blh = hub_chrome_h("corner-bl");
+	brw = hub_chrome_w("corner-br");
+	brh = hub_chrome_h("corner-br");
+	if (trw < 1)
+		trw = tlw;
+	if (trh < 1)
+		trh = tlh;
+	if (blw < 1)
+		blw = tlw;
+	if (blh < 1)
+		blh = tlh;
+	if (brw < 1)
+		brw = trw;
+	if (brh < 1)
+		brh = trh;
+	if (tlw + trw >= w || tlh + blh >= h)
+		return 0;
+	hub_chrome_blit("corner-tl", x, y);
+	hub_chrome_blit("corner-tr", x + w - trw, y);
+	hub_chrome_blit("corner-bl", x, y + h - blh);
+	hub_chrome_blit("corner-br", x + w - brw, y + h - brh);
+	gapw = w - tlw - trw;
+	gaph = h - tlh - blh;
+	if (gapw > 0 && hub_chrome_has("edge-h"))
+		chrome_tile("edge-h", x + tlw, y, gapw, tlh);
+	if (gapw > 0 && hub_chrome_has("edge-hb"))
+		chrome_tile("edge-hb", x + blw, y + h - blh, w - blw - brw, blh);
+	if (gaph > 0 && hub_chrome_has("edge-v"))
+		chrome_tile("edge-v", x, y + tlh, tlw, gaph);
+	if (gaph > 0 && hub_chrome_has("edge-vr"))
+		chrome_tile("edge-vr", x + w - trw, y + trh, trw,
+			    h - trh - brh);
 	return 1;
 }
 
@@ -422,9 +443,25 @@ int hub_chrome_scroll(int x, int y, int w, int h, int thumb_y, int thumb_h)
 {
 	if (!hub_chrome_has("scroll-track") || h < 4)
 		return 0;
+	/* Native width, so the track is not squeezed to the slot. */
+	{
+		int tw = hub_chrome_w("scroll-track");
+
+		if (tw > 0)
+			x += (w - tw) / 2;
+		if (tw > 0)
+			w = tw;
+	}
 	hub_chrome_slice("scroll-track", x, y, w, h, 8);
 	if (thumb_h > 0 && hub_chrome_has("scroll-thumb"))
-		hub_chrome_fit("scroll-thumb", x, y + thumb_y, w, thumb_h, 100);
+	{
+		int tw = hub_chrome_w("scroll-thumb");
+
+		if (tw < 1)
+			tw = w;
+		hub_chrome_slice("scroll-thumb", x + (w - tw) / 2, y + thumb_y,
+				 tw, thumb_h, 4);
+	}
 	return 1;
 }
 
@@ -548,6 +585,16 @@ int hub_chrome_badge(const char *label, int x, int y, int w, int h)
 		name = "badge-needs";
 	if (!name)
 		return 0;
+	/* Native height so the cap is not resampled. Only the middle stretches. */
+	{
+		int bh = hub_chrome_h(name);
+
+		if (bh > 4 && bh <= h)
+		{
+			y += (h - bh) / 2;
+			h = bh;
+		}
+	}
 	return hub_chrome_slice(name, x, y, w, h, 10);
 }
 

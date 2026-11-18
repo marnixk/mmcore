@@ -1560,7 +1560,11 @@ static void hub_app_icon(hub_app *a, hub_rect r, int greyed, int framed)
 	}
 	else if (im && im->pix)
 		hub_draw_image(im->pix, im->w, im->h, r);
-	else if (!hub_chrome_fit("icon-cube", r.x, r.y, r.w, r.h, 100))
+	else if (hub_chrome_has("icon-cube"))
+		hub_chrome_blit("icon-cube",
+				r.x + (r.w - hub_chrome_w("icon-cube")) / 2,
+				r.y + (r.h - hub_chrome_h("icon-cube")) / 2);
+	else
 		hub_cube(r.x + r.w / 2, r.y + r.h / 2, r.w * 3 / 4, 0);
 	if (framed)
 	{
@@ -1968,9 +1972,26 @@ loading_pct:
 		int inset = 6 * p;
 
 		hub_chrome_slice("bar-frame", bar.x, bar.y, bar.w, bar.h, 16);
-		if (inset * 2 < bar.w && inset * 2 < bar.h)
-			hub_chrome_fit("bar-fill", bar.x + inset, bar.y + inset,
-				       bar.w - 2 * inset, bar.h - 2 * inset, pct);
+		if (inset * 2 < bar.w && inset * 2 < bar.h && pct > 0)
+		{
+			int fw = hub_chrome_w("bar-fill");
+			int fh = hub_chrome_h("bar-fill");
+			int inner_w = bar.w - 2 * inset;
+			int show = inner_w * pct / 100;
+
+			if (fw > 0 && show > 0)
+			{
+				if (show > fw)
+					show = fw;
+				hub_chrome_clip(bar.x + inset,
+						bar.y + (bar.h - fh) / 2,
+						bar.x + inset + show,
+						bar.y + (bar.h + fh) / 2);
+				hub_chrome_blit("bar-fill", bar.x + inset,
+						bar.y + (bar.h - fh) / 2);
+				hub_chrome_unclip();
+			}
+		}
 	}
 	else
 		hub_segbar(bar, pct, 0, 0);
@@ -2020,24 +2041,49 @@ static const char *hub_state_badge(hub_app *a, unsigned *col,
 	}
 }
 
-/* Filled pill. Returns the width drawn, or 0 when `text` is empty. */
+/* Rounded pill, integer radius. Returns the width drawn, or 0 when empty. */
 static int hub_chip(int x, int y, const char *text, unsigned col,
 		    unsigned fill, int scale)
 {
 	int p = U.p < 1 ? 1 : U.p;
-	int w, h, t;
+	int w, h, t, rad, yy, xx;
 
 	if (!hub_has(text))
 		return 0;
 	if (scale < 1)
 		scale = 1;
-	w = hub_ui_w(text, 1) + 8 * p;
-	h = hub_ui_h(1) + 4 * p;
-	t = p < 2 ? 1 : p;
-	hub_fill((hub_rect){ x, y, w, h }, fill);
-	mmb_gfx_box(x, y, w, h, col, t, -1);
-	hub_hline(x + t, y + t, w - 2 * t, hub_lerp(fill, 0xFFFFFF, 1, 4), 1);
-	hub_label(x + 4 * p, y + (h - hub_ui_h(1)) / 2, text, col, 1);
+	w = hub_ui_w(text, 1) + 10 * p;
+	h = hub_ui_h(1) + 6 * p;
+	t = p < 2 ? 1 : 2;
+	rad = 4 * p;
+	if (rad * 2 >= h)
+		rad = h / 2;
+	for (yy = 0; yy < h; yy++)
+		for (xx = 0; xx < w; xx++)
+		{
+			int cx = xx < rad ? rad : (xx >= w - rad ? w - 1 - rad : xx);
+			int cy = yy < rad ? rad : (yy >= h - rad ? h - 1 - rad : yy);
+			int dx = xx - cx, dy = yy - cy;
+			int edge;
+
+			if (dx * dx + dy * dy > rad * rad)
+				continue;
+			edge = 0;
+			if (xx < t || yy < t || xx >= w - t || yy >= h - t)
+				edge = 1;
+			else
+			{
+				int ix = xx < rad ? rad : (xx >= w - rad ? w - 1 - rad : xx);
+				int iy = yy - t < rad ? rad :
+					 (yy - t >= h - rad ? h - 1 - rad : yy - t);
+				int ex = xx - ix, ey = (yy - t) - iy;
+
+				if (ex * ex + ey * ey > rad * rad)
+					edge = 1;
+			}
+			mmb_gfx_plot(x + xx, y + yy, edge ? col : fill);
+		}
+	hub_label(x + 5 * p, y + (h - hub_ui_h(1)) / 2, text, col, 1);
 	return w;
 }
 
@@ -2399,7 +2445,13 @@ static void hub_paint_listing(void)
 		{
 			int selon = s_tabs[i].cat == U.tab;
 			int tw = widths[i];
-			hub_rect tr = { x, U.L.tabs.y, tw, U.L.tab_h };
+			int art_h = hub_chrome_h(selon ? "tab-on" : "tab");
+			hub_rect tr;
+
+			if (art_h < 8 || art_h > U.L.tab_h)
+				art_h = U.L.tab_h;
+			tr = (hub_rect){ x, U.L.tabs.y + (U.L.tab_h - art_h) / 2,
+					 tw, art_h };
 			hub_rect hit = tr;
 
 			if (hit.x < U.L.tabs.x)

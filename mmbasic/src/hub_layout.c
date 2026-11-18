@@ -55,7 +55,8 @@ void hub_layout_compute(hub_layout *L, int w, int h, int n_tabs, int tab_w)
 	if (tab_w < 16 * p)
 		tab_w = 16 * p;
 	L->tab_w = tab_w;
-	L->tab_h = 20 * p;
+	/* Tall enough for the mockup tab art at 1:1 (about 46px at 2x). */
+	L->tab_h = 24 * p;
 	L->tab_gap = 2 * p;
 	per_row = n_tabs > 0 ? n_tabs : 1;
 	rows = 1;
